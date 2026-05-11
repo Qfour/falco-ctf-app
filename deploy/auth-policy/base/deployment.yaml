@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-policy
+  namespace: auth-policy
+  labels:
+    app.kubernetes.io/name: auth-policy
+    app.kubernetes.io/part-of: falco-ctf
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: auth-policy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: auth-policy
+        app.kubernetes.io/part-of: falco-ctf
+    spec:
+      containers:
+        - name: auth-policy
+          image: docker.io/falco-ctf/auth-policy
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: OAUTH2_PROXY_AUTH_URL
+              value: "http://oauth2-proxy.oauth2-proxy.svc.cluster.local:80/oauth2/auth"
+            - name: EXPECTED_EMAIL_DOMAIN
+              value: "example.invalid"
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            requests: { cpu: 25m, memory: 32Mi }
+            limits:   { cpu: 200m, memory: 128Mi }

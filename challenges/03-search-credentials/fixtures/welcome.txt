@@ -1,0 +1,15 @@
+Welcome to falco-ctf challenge 03: search-credentials
+======================================================
+
+Goal:
+  Falco ルール "Search Private Keys or Passwords" を発火させてクリア。
+
+Hint:
+  攻撃者がよく `find` や `grep` で SSH 鍵や AWS credentials を探す。
+  Falco は「コマンドラインに id_rsa 等が含まれるか」だけ見ている。
+  実ファイルが無くても発火する。
+
+Try:
+  find /tmp -iname id_rsa
+
+Clear: scoreboard で `03-search-credentials` 列に ✓ が付けば成功。

@@ -1,0 +1,10 @@
+# 05-evade-shell-spawn: evade style.
+# Solved when the user POSTs the correct flag AND the listed Falco rule did
+# NOT fire from their challenge container in the last `windowSeconds`.
+
+challengeId: "05-evade-shell-spawn"
+type: evade
+forbiddenRules:
+  - "Run shell untrusted"
+expectedFlag: "FALCO{shell_with_n0_un7rust3d_p4r3nt}"
+windowSeconds: 10

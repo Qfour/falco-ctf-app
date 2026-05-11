@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+patches:
+  - target: { kind: PersistentVolumeClaim, name: scoreboard-data }
+    patch: |-
+      - op: add
+        path: /spec/storageClassName
+        value: local-path
+  - target: { kind: Ingress, name: scoreboard }
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: scoreboard.192.168.64.2.nip.io
+      - op: add
+        path: /spec/tls
+        value:
+          - hosts: [scoreboard.192.168.64.2.nip.io]
+images:
+  - name: docker.io/falco-ctf/scoreboard
+    newTag: dev

@@ -1,0 +1,76 @@
+name: build-push
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io/${{ github.repository_owner }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: scoreboard
+            context: .
+            dockerfile: scoreboard/Dockerfile
+          - name: auth-policy
+            context: .
+            dockerfile: auth-policy/Dockerfile
+          - name: ttyd
+            context: images/ttyd
+            dockerfile: images/ttyd/Dockerfile
+          - name: challenge
+            context: images/challenge
+            dockerfile: images/challenge/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tag
+        id: tag
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build (and push on non-PR)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ${{ env.REGISTRY }}/falco-ctf-${{ matrix.name }}:${{ steps.tag.outputs.tag }}
+            ${{ env.REGISTRY }}/falco-ctf-${{ matrix.name }}:latest
+
+  lint-kustomize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: imranismail/setup-kustomize@v2
+      - run: |
+          for d in deploy/*/overlays/*; do
+            echo "== $d =="
+            kustomize build "$d" >/dev/null
+          done

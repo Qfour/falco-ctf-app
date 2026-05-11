@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.code-workspace
+
+# Secrets — never commit
+.env
+.env.*
+*.key
+*.pem
+*.crt
+kubeconfig*
+
+# Local SQLite (scoreboard dev)
+*.db
+scoreboard/dev-data/
+
+# Claude Code local-only
+.claude/settings.local.json

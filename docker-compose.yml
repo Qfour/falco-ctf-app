@@ -1,0 +1,47 @@
+# Local app dev loop. Runs scoreboard + auth-policy + a mock falcosidekick
+# event poster. Falco / oauth2-proxy / Dex live in the platform repo (colima k3s).
+#
+# Quick test of scoreboard:
+#   curl -X POST http://localhost:8000/falco/events -H 'content-type: application/json' \
+#     -d '{"rule":"Read sensitive file untrusted","priority":"Warning","output_fields":{"k8s.ns.name":"ctf-user1","container.image.repository":"falco-ctf/challenge"}}'
+#   curl http://localhost:8000/api/state | jq
+
+services:
+  scoreboard:
+    build:
+      context: .
+      dockerfile: scoreboard/Dockerfile
+    image: docker.io/falco-ctf/scoreboard:dev
+    ports:
+      - "8000:8000"
+    environment:
+      CHALLENGES_DIR: /app/challenges
+      SCOREBOARD_DB: /var/lib/scoreboard/scoreboard.db
+    volumes:
+      - scoreboard-data:/var/lib/scoreboard
+      # Mount challenges/ live so falco-rule.yaml edits reload on container restart.
+      - ./challenges:/app/challenges:ro
+
+  auth-policy:
+    build:
+      context: .
+      dockerfile: auth-policy/Dockerfile
+    image: docker.io/falco-ctf/auth-policy:dev
+    ports:
+      - "8001:8000"
+    environment:
+      # No real oauth2-proxy locally — point at a fake that always 202s.
+      OAUTH2_PROXY_AUTH_URL: http://mock-oauth2/oauth2/auth
+      EXPECTED_EMAIL_DOMAIN: ctf.local
+    depends_on:
+      - mock-oauth2
+
+  # Tiny static server pretending to be oauth2-proxy's auth subrequest.
+  # Always returns 202 with X-Auth-Request-Email = user1@ctf.local.
+  mock-oauth2:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./scripts/mock-oauth2.conf:/etc/nginx/conf.d/default.conf:ro
+
+volumes:
+  scoreboard-data:

@@ -1,0 +1,8 @@
+# 01-read-shadow: trigger-style challenge.
+# Solved when the user causes Falco to fire the listed default rule from
+# their challenge container — no flag submission required.
+
+challengeId: "01-read-shadow"
+type: trigger
+expectedRules:
+  - "Read sensitive file untrusted"
