@@ -10,6 +10,7 @@ on:
 env:
   SYSDIG_SECURE_URL: https://app.au1.sysdig.com
   SEVERITY_AT_LEAST: high
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   test:
