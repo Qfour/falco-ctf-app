@@ -149,8 +149,9 @@ func TestPersistence_ReopenLoadsState(t *testing.T) {
 	if snap.Solved[store.SolveKey{User: "alice", Challenge: "01-read"}] != "2026-05-11T00:00:00Z" {
 		t.Fatal("solved row did not persist")
 	}
-	if snap.EventsPerUser["alice"] != 2 {
-		t.Fatalf("event count did not persist: got %d, want 2", snap.EventsPerUser["alice"])
+	// eventsPerUser is in-memory only — resets to zero on restart by design.
+	if snap.EventsPerUser["alice"] != 0 {
+		t.Fatalf("event count should reset on reopen (in-memory only): got %d", snap.EventsPerUser["alice"])
 	}
 }
 

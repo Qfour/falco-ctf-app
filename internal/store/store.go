@@ -1,12 +1,12 @@
 // Package store owns scoreboard persistence and in-memory state.
 //
 // Persistence (SQLite, WAL):
-//   - solved          (user, challenge, at)  PRIMARY KEY (user, challenge)
-//   - events_per_user (user PRIMARY KEY, count)
+//   - solved (user, challenge, at)  PRIMARY KEY (user, challenge)
 //
-// In-memory only:
-//   - ruleFires per user: bounded to the last 5 minutes per user. Pod
-//     restart loses this; evade windowing is briefly less strict until
+// In-memory only (reset on pod restart):
+//   - eventsPerUser: dashboard counter. Not used for scoring.
+//   - ruleFires per user: bounded to the last 5 minutes per user.
+//     Evade windowing is briefly less strict after a restart until
 //     events flow again.
 //
 // All state mutations go through methods on Store and are guarded by a
@@ -65,10 +65,7 @@ func Open(path string) (*Store, error) {
           at        TEXT NOT NULL,
           PRIMARY KEY (user, challenge)
         );
-        CREATE TABLE IF NOT EXISTS events_per_user (
-          user  TEXT PRIMARY KEY,
-          count INTEGER NOT NULL DEFAULT 0
-        );
+        DROP TABLE IF EXISTS events_per_user;
     `); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("schema init: %w", err)
@@ -94,48 +91,26 @@ func (s *Store) loadFromDB() error {
 	if err != nil {
 		return err
 	}
+	defer rows.Close()
 	for rows.Next() {
 		var k SolveKey
 		var at string
 		if err := rows.Scan(&k.User, &k.Challenge, &at); err != nil {
-			rows.Close()
 			return err
 		}
 		s.solved[k] = at
 	}
-	rows.Close()
-
-	rows, err = s.db.Query("SELECT user, count FROM events_per_user")
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var u string
-		var c int
-		if err := rows.Scan(&u, &c); err != nil {
-			return err
-		}
-		s.eventsPerUser[u] = c
-	}
-	return nil
+	return rows.Err()
 }
 
-// RecordRuleFire bumps the per-user event count, persists it, and appends to
-// the bounded in-memory ruleFires window. Returns the user's new event count.
+// RecordRuleFire bumps the per-user event count (in-memory only) and appends
+// to the bounded ruleFires window. Returns the user's new event count.
 func (s *Store) RecordRuleFire(user, rule string, atUnix float64) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.eventsPerUser[user]++
 	count := s.eventsPerUser[user]
-	if _, err := s.db.Exec(
-		`INSERT INTO events_per_user (user, count) VALUES (?, ?)
-         ON CONFLICT(user) DO UPDATE SET count = excluded.count`,
-		user, count,
-	); err != nil {
-		return 0, err
-	}
 
 	fires := append(s.ruleFires[user], ruleFire{Rule: rule, At: atUnix})
 	cutoff := atUnix - float64(RetentionSeconds)
