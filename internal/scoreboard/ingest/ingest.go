@@ -38,6 +38,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 }
 
 func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	var ev oapi.ReceiveFalcoEventJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&ev); err != nil {
 		metrics.FalcoEventsReceived.WithLabelValues("decode_error").Inc()

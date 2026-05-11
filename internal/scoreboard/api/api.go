@@ -53,6 +53,7 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
 	var req oapi.SubmitFlagJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		metrics.SubmissionsTotal.WithLabelValues(cid, "bad_request").Inc()
