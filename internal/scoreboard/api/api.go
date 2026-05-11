@@ -15,7 +15,9 @@ import (
 	"time"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/metrics"
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/oapi"
 	"github.com/Qfour/falco-ctf-app/internal/store"
 )
 
@@ -37,29 +39,24 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 // --- submit -----------------------------------------------------------------
 
-type submitReq struct {
-	User string `json:"user"`
-	Flag string `json:"flag"`
-}
-
 func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 	cid := r.PathValue("cid")
 	ch, ok := h.cat[cid]
 	if !ok {
 		metrics.SubmissionsTotal.WithLabelValues(cid, "unknown_challenge").Inc()
-		writeJSON(w, http.StatusNotFound, map[string]any{"detail": "unknown challenge: " + cid})
+		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"error": "unknown challenge: " + cid})
 		return
 	}
 	if ch.Type != "evade" {
 		metrics.SubmissionsTotal.WithLabelValues(cid, "not_evade").Inc()
-		writeJSON(w, http.StatusBadRequest, map[string]any{"detail": cid + " is not an evade challenge"})
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": cid + " is not an evade challenge"})
 		return
 	}
 
-	var req submitReq
+	var req oapi.SubmitFlagJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		metrics.SubmissionsTotal.WithLabelValues(cid, "bad_request").Inc()
-		writeJSON(w, http.StatusBadRequest, map[string]any{"detail": err.Error()})
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
 	user := strings.TrimSpace(req.User)
@@ -67,12 +64,12 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 
 	if user == "" {
 		metrics.SubmissionsTotal.WithLabelValues(cid, "bad_request").Inc()
-		writeJSON(w, http.StatusBadRequest, map[string]any{"detail": "user required"})
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "user required"})
 		return
 	}
 	if flag != ch.ExpectedFlag {
 		metrics.SubmissionsTotal.WithLabelValues(cid, "wrong_flag").Inc()
-		writeJSON(w, http.StatusOK, map[string]any{"correct": false, "reason": "flag mismatch"})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"correct": false, "reason": "flag mismatch"})
 		return
 	}
 
@@ -80,7 +77,7 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 	offending := h.store.RecentForbiddenFires(user, ch.ForbiddenRules, now, ch.WindowSeconds)
 	if len(offending) > 0 {
 		metrics.SubmissionsTotal.WithLabelValues(cid, "not_evaded").Inc()
-		writeJSON(w, http.StatusOK, map[string]any{
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"correct": true,
 			"evaded":  false,
 			"reason": fmt.Sprintf(
@@ -100,7 +97,7 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 		metrics.SolvesTotal.WithLabelValues(cid, "evade").Inc()
 	}
 	metrics.SubmissionsTotal.WithLabelValues(cid, "solved").Inc()
-	writeJSON(w, http.StatusOK, map[string]any{
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"correct": true,
 		"evaded":  true,
 		"solved":  true,
@@ -111,7 +108,7 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 // --- state ------------------------------------------------------------------
 
 func (h *Handler) state(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, h.buildState())
+	httpx.WriteJSON(w, http.StatusOK, h.buildState())
 }
 
 func (h *Handler) buildState() map[string]any {
@@ -252,8 +249,3 @@ func (h *Handler) buildState() map[string]any {
 	}
 }
 
-func writeJSON(w http.ResponseWriter, status int, body any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(body)
-}

@@ -11,11 +11,14 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/metrics"
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/oapi"
 	"github.com/Qfour/falco-ctf-app/internal/store"
 )
 
@@ -34,25 +37,25 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /falco/events", h.receive)
 }
 
-type event struct {
-	Rule         string                 `json:"rule"`
-	Time         string                 `json:"time"`
-	OutputFields map[string]interface{} `json:"output_fields"`
-}
-
 func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
-	var ev event
+	var ev oapi.ReceiveFalcoEventJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&ev); err != nil {
 		metrics.FalcoEventsReceived.WithLabelValues("decode_error").Inc()
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
-	ns, _ := ev.OutputFields["k8s.ns.name"].(string)
-	pod, _ := ev.OutputFields["k8s.pod.name"].(string)
+
+	var ns, pod string
+	if ev.OutputFields.K8sNsName != nil {
+		ns = *ev.OutputFields.K8sNsName
+	}
+	if ev.OutputFields.K8sPodName != nil {
+		pod = *ev.OutputFields.K8sPodName
+	}
 
 	if !strings.HasPrefix(ns, "ctf-") || pod != "workspace" {
 		metrics.FalcoEventsReceived.WithLabelValues("ignored").Inc()
-		writeJSON(w, http.StatusOK, map[string]any{"ignored": true, "reason": "not a ctf workspace event"})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"ignored": true, "reason": "not a ctf workspace event"})
 		return
 	}
 	user := strings.TrimPrefix(ns, "ctf-")
@@ -64,11 +67,10 @@ func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 	// timestamp (`at`), prefer the receipt time so the dashboard shows
 	// "just now" even when falcosidekick buffering or kernel→userspace lag
 	// delays delivery.
-	ts := ev.Time
-	if ts == "" {
-		ts = recvAt
+	var tsUnix float64
+	if ev.Time != nil {
+		tsUnix = float64(ev.Time.Unix()) + float64(ev.Time.Nanosecond())/1e9
 	}
-	tsUnix := parseISOToUnix(ts)
 	if tsUnix == 0 {
 		tsUnix = float64(h.now().Unix())
 	}
@@ -76,7 +78,7 @@ func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 	if _, err := h.store.RecordRuleFire(user, ev.Rule, tsUnix); err != nil {
 		h.logger.Error("record rule fire", "err", err)
 		metrics.FalcoEventsReceived.WithLabelValues("store_error").Inc()
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
 	metrics.FalcoEventsReceived.WithLabelValues("accepted").Inc()
@@ -87,7 +89,7 @@ func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 		if ch.Type != "trigger" {
 			continue
 		}
-		if !contains(ch.ExpectedRules, ev.Rule) {
+		if !slices.Contains(ch.ExpectedRules, ev.Rule) {
 			continue
 		}
 		newly, err := h.store.MarkSolved(user, cid, recvAt)
@@ -100,40 +102,5 @@ func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"accepted": true, "user": user, "rule": ev.Rule})
-}
-
-func writeJSON(w http.ResponseWriter, status int, body any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(body)
-}
-
-func contains(s []string, v string) bool {
-	for _, x := range s {
-		if x == v {
-			return true
-		}
-	}
-	return false
-}
-
-// parseISOToUnix accepts the falcosidekick `time` field (RFC3339 with
-// optional fractional seconds and trailing Z). Returns 0 on parse failure
-// — the caller substitutes "now".
-func parseISOToUnix(ts string) float64 {
-	if ts == "" {
-		return 0
-	}
-	for _, layout := range []string{
-		time.RFC3339Nano,
-		time.RFC3339,
-		"2006-01-02T15:04:05.000000Z",
-		"2006-01-02T15:04:05Z",
-	} {
-		if t, err := time.Parse(layout, ts); err == nil {
-			return float64(t.Unix()) + float64(t.Nanosecond())/1e9
-		}
-	}
-	return 0
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"accepted": true, "user": user, "rule": ev.Rule})
 }

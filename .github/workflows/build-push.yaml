@@ -13,11 +13,21 @@ env:
   SEVERITY_AT_LEAST: high
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Go vet + test
+        run: docker build -f Dockerfile.test --progress=plain .
+
   build:
     runs-on: ubuntu-latest
     permissions:
       contents: read
     strategy:
+      fail-fast: false
       matrix:
         include:
           - name: scoreboard

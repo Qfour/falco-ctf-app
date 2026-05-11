@@ -24,6 +24,11 @@ spec:
         - name: auth-policy
           image: docker.io/falco-ctf/auth-policy
           imagePullPolicy: IfNotPresent
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           ports:
             - name: http
               containerPort: 8000

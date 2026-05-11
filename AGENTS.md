@@ -4,7 +4,7 @@
 
 ## Project Overview
 
-- **Stack**: Go 1.23 (net/http + log/slog + embed) + Alpine Dockerfile + Kustomize
+- **Stack**: Go 1.23 (net/http + log/slog + embed) + distroless/Alpine Dockerfile + Kustomize
 - **Direct Go deps**: `gopkg.in/yaml.v3` (catalog YAML), `modernc.org/sqlite` (pure-Go, CGO 不要)
 - **Purpose**: Falco CTF のアプリ層(scoreboard / auth-policy / user-facing images / challenges)
 - **Project label**: `falco-ctf`
@@ -85,12 +85,13 @@ windowSeconds: 10
 
 ### Dockerfile 規約
 
-- scoreboard / auth-policy は multi-stage: builder = `golang:1.23-alpine`、最終 = `alpine:3.20`
+- scoreboard / auth-policy は multi-stage: builder = `golang:1.23-alpine`、最終 = `gcr.io/distroless/static-debian12:nonroot`
 - ttyd / challenge は `alpine:3.20` 単段
 - Go ビルドは `CGO_ENABLED=0 -ldflags="-s -w" -trimpath` で static binary
-- 最終 USER は **非 root (1000)**。例外: `images/challenge/` は CTF realism のため root
+- runtime UID: scoreboard / auth-policy = **65532** (distroless nonroot)、ttyd = **1000**、challenge = **root** (CTF realism)
 - scoreboard / auth-policy は build context = repo root (`COPY cmd/<app> ./cmd/<app>` + `COPY internal ./internal`)
 - ttyd / challenge は build context = `images/<name>/`
+- 詳細・SecurityContext は `.claude/rules/falco-ctf-app-conventions.md` 参照
 
 ### Kustomize 規約
 
@@ -100,20 +101,14 @@ windowSeconds: 10
 
 ## Boundaries
 
-- **Do NOT** challenges/ を別 repo に分離する
-  → scoreboard が `expectedRules` を読むので密結合。リリースサイクルが一致する必要
-- **Do NOT** Dockerfile に機微情報を焼き込む
-  → Secret + envFrom を使う
-- **Do NOT** challenge コンテナの Dockerfile に Service / Ingress を追加する想定で書く
-  → private 接続要件。ttyd の `kubectl exec` のみが入口(platform 側 chart で強制)
-- **Do NOT** scoreboard を replica >1 で動かす
-  → SQLite。並行書込不可。本番でも `strategy: Recreate` + replica 1
-- **Do NOT** auth-policy の `X-Auth-Request-Email` 解釈を緩める
-  → `<username>@` で始まることを必ず照合。緩めると別ユーザの workspace に到達できる
-- **Do NOT** `git add .` / `git add -A`
-  → 明示パス指定。`.env` や `.db` の混入を防ぐ
+制約の正典は `.claude/rules/falco-ctf-app-conventions.md`。
+以下は最重要の禁則のみ再掲する。
+
+- **Do NOT** scoreboard を replica >1 で動かす (SQLite 並行書込不可)
+- **Do NOT** auth-policy の email 照合を prefix-exact から緩める
 - **Do NOT** image tag を `latest` で本番 deploy
-  → git SHA pin 必須。platform 側 PR で bump
+- **Do NOT** `git add .` / `git add -A`
+- **Do NOT** Dockerfile / yaml に実シークレットを焼き込む
 
 ## Always
 

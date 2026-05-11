@@ -29,7 +29,7 @@
     ],
     "deny": [
       "Bash(git add -A*)",
-      "Bash(git add .*)",
+      "Bash(git add --all*)",
       "Bash(git push --force*)",
       "Bash(git push -f *)",
       "Bash(kubectl delete*--all*)",
