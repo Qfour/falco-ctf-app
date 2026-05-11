@@ -13,6 +13,8 @@ info:
     on both sides.
 
 servers:
+  - url: http://localhost:8000
+    description: local dev (docker compose)
   - url: http://scoreboard.scoreboard.svc.cluster.local
     description: in-cluster service
   - url: https://scoreboard.{ingressHost}
@@ -192,14 +194,17 @@ components:
             evade rule-fire windowing, not for solve `at`.
         output_fields:
           type: object
-          required: [k8s.ns.name, k8s.pod.name]
+          description: |
+            Arbitrary Falco output fields map. The values at
+            `k8s.ns.name` (must be `ctf-<username>`) and
+            `k8s.pod.name` (must be `workspace`) drive the routing filter;
+            missing or non-matching events are silently ignored.
+          additionalProperties: {}
           properties:
             k8s.ns.name:
               type: string
-              description: must be `ctf-<username>` for the event to count
             k8s.pod.name:
               type: string
-              description: must be exactly `workspace`
 
     State:
       type: object
@@ -219,7 +224,9 @@ components:
             properties:
               user: { type: string }
               solved: { type: integer }
-              earliest: { type: string, format: date-time }
+              earliest:
+                type: string
+                description: RFC3339 timestamp of the user's first solve; "9999" sentinel if solved == 0.
               events: { type: integer }
               rank: { type: integer }
         challenges:
@@ -242,7 +249,8 @@ components:
                 type: array
                 items: { type: string }
               first_solver:
-                type: [string, "null"]
+                type: string
+                nullable: true
         recent_solves:
           type: array
           maxItems: 15

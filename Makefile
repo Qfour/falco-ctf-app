@@ -14,7 +14,7 @@ IMAGES   := scoreboard auth-policy ttyd challenge
 # host repo are not shared into the VM.
 GO_IMAGE ?= golang:1.23-alpine
 
-.PHONY: help dev dev-down build push load-colima deploy-local lint test tidy clean
+.PHONY: help dev dev-down build push load-colima deploy-local lint test tidy gen clean
 
 help:
 	@echo "Targets:"
@@ -27,6 +27,7 @@ help:
 	@echo "  lint          — kustomize build all overlays (validate Kustomize)"
 	@echo "  test          — go test ./... (runs in $(GO_IMAGE) container)"
 	@echo "  tidy          — go mod tidy (runs in $(GO_IMAGE) container)"
+	@echo "  gen           — regenerate Go types from OpenAPI specs (docs/openapi-*.yaml)"
 	@echo "  clean         — remove built images locally"
 
 dev:
@@ -61,6 +62,11 @@ test:
 # does not share the host repo path into its VM by default).
 tidy:
 	docker build -f Dockerfile.tidy --target export -o . .
+
+# Re-generates internal/*/oapi/types.gen.go from docs/openapi-*.yaml.
+# Commit the result; CI diff-check will catch spec/code drift.
+gen:
+	docker build -f Dockerfile.gen --target export -o . .
 
 clean:
 	@for img in $(IMAGES); do docker rmi -f $(REGISTRY)/$$img:$(TAG) 2>/dev/null || true; done

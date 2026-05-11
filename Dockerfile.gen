@@ -1,0 +1,15 @@
+FROM golang:1.23-alpine AS gen
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+# Pin to a specific release; bump when upgrading the spec toolchain.
+RUN go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.3.0
+COPY docs/ ./docs/
+COPY api/ ./api/
+RUN mkdir -p internal/scoreboard/oapi internal/authpolicy/oapi
+RUN oapi-codegen --config api/cfg-scoreboard.yaml  docs/openapi-scoreboard.yaml
+RUN oapi-codegen --config api/cfg-auth-policy.yaml docs/openapi-auth-policy.yaml
+
+FROM scratch AS export
+COPY --from=gen /src/internal/scoreboard/oapi/  /internal/scoreboard/oapi/
+COPY --from=gen /src/internal/authpolicy/oapi/  /internal/authpolicy/oapi/

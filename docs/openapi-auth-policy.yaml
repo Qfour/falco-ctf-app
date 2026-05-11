@@ -17,6 +17,8 @@ info:
     admission webhook blocks).
 
 servers:
+  - url: http://localhost:8001
+    description: local dev (docker compose)
   - url: http://auth-policy.auth-policy.svc.cluster.local
     description: in-cluster service
 
