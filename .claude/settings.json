@@ -9,7 +9,56 @@
       "Bash(git status:*)",
       "Bash(git diff:*)",
       "Bash(git log:*)",
-      "Bash(curl:*)"
+      "Bash(git fetch:*)",
+      "Bash(git show:*)",
+      "Bash(curl:*)",
+      "Bash(gh:*)",
+      "Bash(jq:*)",
+      "Bash(go vet:*)",
+      "Bash(go test:*)",
+      "Bash(go mod tidy)",
+      "Bash(go build:*)",
+      "Bash(grep:*)",
+      "Bash(find . *)",
+      "Bash(find ./*)",
+      "Bash(awk:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)"
+    ],
+    "deny": [
+      "Bash(git add -A*)",
+      "Bash(git add .*)",
+      "Bash(git push --force*)",
+      "Bash(git push -f *)",
+      "Bash(kubectl delete*--all*)",
+      "Bash(rm -rf /*)",
+      "Bash(rm -rf ~*)",
+      "Bash(docker system prune*-f*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash scripts/claude-hook-postedit.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "make lint"
+          }
+        ]
+      }
     ]
   }
 }

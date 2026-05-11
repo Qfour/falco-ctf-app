@@ -74,8 +74,9 @@ falco-ctf-app/
 - **ローカル全層起動** → `make dev` (compose) または `make deploy-local` (colima)
 - **テスト** → `make test` (Docker 内で `go vet` + 全パッケージの `go test ./...`)
 - **依存更新** → `go.mod` 編集後 `make tidy` で go.sum を host に export
-- **新しい challenge 追加** → `challenges/<NN>-<slug>/` を作って falco-rule.yaml と
-  README を書く。scoreboard を再起動して認識させる(catalog は起動時 1 回ロード)
+- **新しい challenge 追加** → `.claude/skills/add-challenge.md` の手順を参照
+- **OpenAPI 再生成** → `.claude/skills/regen-openapi.md` の手順を参照
+- **image tag を platform 側に pin** → `.claude/skills/bump-image-tag.md` の手順を参照
 - 規約・境界は AGENTS.md と `.claude/rules/` を参照
 
 ## Model routing (Claude Code)
