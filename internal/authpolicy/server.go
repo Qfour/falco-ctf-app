@@ -43,7 +43,14 @@ func NewHandler(cfg Config, logger *slog.Logger) *Handler {
 	h := &Handler{
 		cfg:    cfg,
 		logger: logger,
-		client: &http.Client{Timeout: cfg.UpstreamTimeout},
+		client: &http.Client{
+			Timeout: cfg.UpstreamTimeout,
+			Transport: &http.Transport{
+				MaxIdleConnsPerHost: 64,
+				IdleConnTimeout:     90 * time.Second,
+				DisableCompression:  true,
+			},
+		},
 		mux:    http.NewServeMux(),
 	}
 	h.mux.HandleFunc("GET /healthz", h.healthz)
