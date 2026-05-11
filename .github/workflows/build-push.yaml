@@ -9,6 +9,7 @@ on:
 
 env:
   SYSDIG_SECURE_URL: https://app.au1.sysdig.com
+  CLI_SCANNER_VERSION: "1.26.0"
   SEVERITY_AT_LEAST: high
 
 jobs:
@@ -124,6 +125,7 @@ jobs:
           image-tag: falco-ctf-${{ matrix.image }}:${{ steps.tag.outputs.tag }}
           sysdig-secure-token: ${{ secrets.SYSDIG_SECURE_TOKEN }}
           sysdig-secure-url: ${{ env.SYSDIG_SECURE_URL }}
+          cli-scanner-version: ${{ env.CLI_SCANNER_VERSION }}
           stop-on-failed-policy-eval: true
           severity-at-least: ${{ env.SEVERITY_AT_LEAST }}
 
@@ -136,6 +138,7 @@ jobs:
           image-tag: falco-ctf-${{ matrix.image }}:${{ steps.tag.outputs.tag }}
           sysdig-secure-token: ${{ secrets.SYSDIG_SECURE_TOKEN }}
           sysdig-secure-url: ${{ env.SYSDIG_SECURE_URL }}
+          cli-scanner-version: ${{ env.CLI_SCANNER_VERSION }}
           stop-on-failed-policy-eval: true
           severity-at-least: ${{ env.SEVERITY_AT_LEAST }}
 
