@@ -95,5 +95,15 @@ func parseFile(path, dirName string) (Challenge, error) {
 	if ch.WindowSeconds <= 0 {
 		ch.WindowSeconds = 10
 	}
+	switch ch.Type {
+	case "evade":
+		if ch.ExpectedFlag == "" {
+			return Challenge{}, fmt.Errorf("evade challenge %q: expectedFlag must not be empty", ch.ID)
+		}
+	case "trigger":
+		if len(ch.ExpectedRules) == 0 {
+			return Challenge{}, fmt.Errorf("trigger challenge %q: expectedRules must not be empty", ch.ID)
+		}
+	}
 	return ch, nil
 }
