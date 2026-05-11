@@ -116,6 +116,18 @@ jobs:
           stop-on-failed-policy-eval: true
           severity-at-least: ${{ env.SEVERITY_AT_LEAST }}
 
+      - name: Retry Sysdig CLI Scanner (on MainDB download failure)
+        id: scan_retry
+        if: steps.scan.outcome == 'failure' && hashFiles('sarif.json') == ''
+        continue-on-error: true
+        uses: sysdiglabs/scan-action@v6
+        with:
+          image-tag: falco-ctf-${{ matrix.image }}:${{ steps.tag.outputs.tag }}
+          sysdig-secure-token: ${{ secrets.SYSDIG_SECURE_TOKEN }}
+          sysdig-secure-url: ${{ env.SYSDIG_SECURE_URL }}
+          stop-on-failed-policy-eval: true
+          severity-at-least: ${{ env.SEVERITY_AT_LEAST }}
+
       - name: Upload SARIF report
         if: hashFiles('sarif.json') != ''
         uses: github/codeql-action/upload-sarif@v4
@@ -124,15 +136,15 @@ jobs:
           category: sysdig-${{ matrix.image }}
 
       - name: Fail on policy violation
-        if: steps.scan.outcome == 'failure' && hashFiles('sarif.json') != ''
+        if: hashFiles('sarif.json') != '' && (steps.scan.outcome == 'failure' || steps.scan_retry.outcome == 'failure')
         run: |
           echo "::error::Policy violations found. See the Security tab for details."
           exit 1
 
-      - name: Warn on scan infrastructure error
-        if: steps.scan.outcome == 'failure' && hashFiles('sarif.json') == ''
+      - name: Warn on persistent scan infrastructure error
+        if: hashFiles('sarif.json') == '' && steps.scan.outcome == 'failure' && steps.scan_retry.outcome != 'success'
         run: |
-          echo "::warning::Sysdig scan infrastructure error (no SARIF produced). Results unavailable for this run."
+          echo "::warning::Sysdig scan failed after retry (MainDB unreachable). Results unavailable for this run."
 
   lint-kustomize:
     runs-on: ubuntu-latest
