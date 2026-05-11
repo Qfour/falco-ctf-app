@@ -105,6 +105,17 @@ jobs:
       - name: Load Docker image
         run: docker load -i ${{ matrix.image }}.tar
 
+      - name: Check Sysdig connectivity
+        run: |
+          echo "=== DNS ==="
+          dig +short app.au1.sysdig.com || nslookup app.au1.sysdig.com || true
+          echo "=== HTTPS ==="
+          curl -sSf --max-time 10 \
+            -H "Authorization: Bearer ${{ secrets.SYSDIG_SECURE_TOKEN }}" \
+            "${{ env.SYSDIG_SECURE_URL }}/api/scanning/v1/system/status" \
+            | head -c 512 \
+            || echo "EXIT $?"
+
       - name: Sysdig CLI Scanner
         id: scan
         continue-on-error: true
@@ -127,6 +138,15 @@ jobs:
           sysdig-secure-url: ${{ env.SYSDIG_SECURE_URL }}
           stop-on-failed-policy-eval: true
           severity-at-least: ${{ env.SEVERITY_AT_LEAST }}
+
+      - name: Upload scan logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: scan-logs-${{ matrix.image }}
+          path: scan-logs/
+          if-no-files-found: ignore
+          retention-days: 3
 
       - name: Upload SARIF report
         if: hashFiles('sarif.json') != ''
