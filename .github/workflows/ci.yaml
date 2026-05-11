@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ------------------------------------------------------------------
+  # Go test (go vet + go test ./...)
+  # Branch protection check: "test"
+  # ------------------------------------------------------------------
+  test:
+    uses: Qfour/falco-ctf-ci/.github/workflows/go-test.yaml@main
+    with:
+      dockerfile: Dockerfile.test
+
+  # ------------------------------------------------------------------
+  # Kustomize lint
+  # Branch protection check: "lint-kustomize"
+  # ------------------------------------------------------------------
+  lint-kustomize:
+    uses: Qfour/falco-ctf-ci/.github/workflows/kustomize-lint.yaml@main
+
+  # ------------------------------------------------------------------
+  # Image pipeline (build → scan → push) per service
+  # Branch protection checks: "build (scoreboard)", "build (auth-policy)", etc.
+  # Push: main branch and v* tags only. PRs run build+scan only.
+  # ------------------------------------------------------------------
+  build:
+    name: build (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: scoreboard
+            context: .
+            dockerfile: scoreboard/Dockerfile
+          - name: auth-policy
+            context: .
+            dockerfile: auth-policy/Dockerfile
+          - name: ttyd
+            context: images/ttyd
+            dockerfile: images/ttyd/Dockerfile
+          - name: challenge
+            context: images/challenge
+            dockerfile: images/challenge/Dockerfile
+    uses: Qfour/falco-ctf-ci/.github/workflows/image-pipeline.yaml@main
+    with:
+      name: ${{ matrix.name }}
+      context: ${{ matrix.context }}
+      dockerfile: ${{ matrix.dockerfile }}
+      push: ${{ github.event_name == 'push' }}
+      registry: ${{ vars.ECR_REGISTRY }}
+      aws-region: ${{ vars.AWS_REGION }}
+      scan-continue-on-error: false
+      sysdig-secure-url: https://app.au1.sysdig.com
+    secrets:
+      sysdig-token: ${{ secrets.SYSDIG_SECURE_TOKEN }}
+      aws-role-arn: ${{ secrets.AWS_ROLE_ARN }}
