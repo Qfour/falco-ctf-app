@@ -10,10 +10,11 @@ cd "$(dirname "$0")/.."
 REGISTRY="${REGISTRY:-falco-ctf}"
 TAG="${TAG:-dev}"
 
-# name|context|dockerfile  (context relative to repo root)
+# name|context|dockerfile  (paths relative to repo root — `-f` is resolved
+# from cwd by modern Docker / BuildKit, not from context)
 declare -a IMAGES=(
-  "ttyd|images/ttyd|Dockerfile"
-  "challenge|images/challenge|Dockerfile"
+  "ttyd|images/ttyd|images/ttyd/Dockerfile"
+  "challenge|images/challenge|images/challenge/Dockerfile"
   "scoreboard|.|scoreboard/Dockerfile"
   "auth-policy|.|auth-policy/Dockerfile"
 )
