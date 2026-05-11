@@ -23,6 +23,7 @@ jobs:
         run: docker build -f Dockerfile.test --progress=plain .
 
   build:
+    name: build (${{ matrix.name }})
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -77,6 +78,7 @@ jobs:
           retention-days: 1
 
   scan:
+    name: scan (${{ matrix.image }})
     needs: build
     runs-on: ubuntu-latest
     permissions:

@@ -68,6 +68,24 @@ falco-ctf-app/
 | Webhook payload | `POST /falco/events` の JSON は falcosidekick 標準形。フィールドキー変更は両 repo 同時 PR |
 | Cookie domain | `.<ctf-domain>` は platform が決定。app 側は前提とする |
 
+## ブランチ戦略 (GitHub Flow + release タグ)
+
+```
+feature/<topic> または fix/<topic>   ← main から派生
+        ↓  PR → CI green → squash merge
+       main                           ← 常に deployable
+        ↓  annotated tag
+  v2026.06.01-ctf                    ← CTF 開催リリース
+        ↓  CI が再 build → image push (4サービス同一 tag, I4/I5)
+```
+
+- **feature ブランチ命名**: `feature/<topic>` / `fix/<topic>` / `chal/<NN>-<slug>`
+- **PR**: main への squash merge。CI (test / build / lint-kustomize) が必須 gate
+- **リリース**: `git tag -a v<YYYY.MM.DD>[-<suffix>] -m "<message>"` → push
+  - tag push で CI が再ビルドし `v*` タグの image が push される
+  - tag = 本番 deploy に使う image tag (Hard Invariant I4)
+- **hotfix**: `fix/<topic>` ブランチ → PR → squash → 新 tag を打ち直す
+
 ## Claude Code Workflow
 
 - **イメージビルド + colima 取込** → `make load-colima`
