@@ -50,3 +50,18 @@ var SubmissionsTotal = promauto.NewCounterVec(
 	},
 	[]string{"challenge_id", "outcome"},
 )
+
+// HTTPRequestDuration measures handler latency per route.
+//
+//	route:  Go 1.22 ServeMux pattern (e.g. "POST /falco/events")
+//	method: HTTP method
+//	status: response status code as string
+var HTTPRequestDuration = promauto.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Namespace: "scoreboard",
+		Name:      "http_request_duration_seconds",
+		Help:      "HTTP request latency by route, method, and status.",
+		Buckets:   prometheus.DefBuckets,
+	},
+	[]string{"route", "method", "status"},
+)
