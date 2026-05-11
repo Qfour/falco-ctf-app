@@ -10,17 +10,28 @@ Falco CTF のアプリケーション層。scoreboard / auth-policy / ttyd / cha
 
 ```
 falco-ctf-app/
-├── scoreboard/         FastAPI (Falco webhook → SQLite)
-├── auth-policy/        FastAPI (oauth2-proxy 経由で host↔email 認可)
+├── cmd/                Go entry points (scoreboard / auth-policy)。起動と wiring のみ
+├── internal/           catalog (yaml ローダ) / store (SQLite + state) /
+│                       scoreboard (handlers + HTML embed) / authpolicy (handlers)
+├── scoreboard/         Dockerfile のみ (Go multi-stage, challenges/ 焼込)
+├── auth-policy/        Dockerfile のみ (Go multi-stage, stdlib のみ)
 ├── images/{ttyd,challenge}/   Dockerfile のみ
 ├── challenges/<NN>-<slug>/    README + falco-rule.yaml + fixtures + values.yaml
 ├── deploy/<app>/{base,overlays/<env>}/   Kustomize
 ├── scripts/            build-and-load.sh (colima 用), mock-oauth2.conf
 ├── docker-compose.yml  ローカル dev (scoreboard + auth-policy + mock-oauth2)
-└── Makefile            dev / build / push / load-colima / deploy-local
+├── Dockerfile.{test,tidy}  bind mount 不要の `go test` / `go mod tidy` (colima 用)
+├── go.mod / go.sum
+└── Makefile            dev / build / test / tidy / push / load-colima / deploy-local
 ```
 
 ## 設計判断 (why, not what)
+
+- **両サービス Go (旧 Python から刷新)** — auth-policy は認証 hot path、scoreboard
+  は webhook 受信パス。image サイズとコールドスタートが効く層なので Go static binary
+  に統一。SQLite は pure-Go の `modernc.org/sqlite` を採用して CGO 不要 (Alpine builder
+  だけで完結)。HTML ダッシュボードは `embed.FS` で焼き込み、HTTP routing は
+  `net/http` (1.22+ pattern routing) のみで chi/echo 不要。
 
 - **scoreboard と challenges/ は同一 repo** — 採点ロジック(`expectedRules`)が
   challenge メタデータを直接読むので、リリースサイクルが完全一致。別 repo にすると
@@ -43,6 +54,11 @@ falco-ctf-app/
 - **docker-compose に mock-oauth2 を含める** — auth-policy 単体テストのため。
   本物の Dex を立てるコストを払わずに /check 経路が動く。
 
+- **`Dockerfile.test` / `Dockerfile.tidy` を分離** — Colima は host repo path を VM に
+  共有しないため `docker run -v` が効かない。代わりに build context 経由で `go test` /
+  `go mod tidy` を実行し、後者は `--target export -o .` で go.mod/go.sum を host に
+  書き戻す。ローカル Go インストール不要で済む。
+
 ## クロスリポ契約 (falco-ctf-platform 側との接点)
 
 | 接点 | 契約 |
@@ -56,6 +72,8 @@ falco-ctf-app/
 
 - **イメージビルド + colima 取込** → `make load-colima`
 - **ローカル全層起動** → `make dev` (compose) または `make deploy-local` (colima)
+- **テスト** → `make test` (Docker 内で `go vet` + 全パッケージの `go test ./...`)
+- **依存更新** → `go.mod` 編集後 `make tidy` で go.sum を host に export
 - **新しい challenge 追加** → `challenges/<NN>-<slug>/` を作って falco-rule.yaml と
-  README を書く。scoreboard を再起動して認識させる
+  README を書く。scoreboard を再起動して認識させる(catalog は起動時 1 回ロード)
 - 規約・境界は AGENTS.md と `.claude/rules/` を参照

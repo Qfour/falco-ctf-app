@@ -1,0 +1,21 @@
+# Generates go.mod / go.sum without needing a local Go toolchain or host
+# bind mounts (Colima does not share the host repo path into its VM by
+# default). Used by `make tidy`:
+#
+#   docker build -f Dockerfile.tidy --target export -o . .
+#
+# After running, the up-to-date go.mod and go.sum land in the repo root.
+FROM golang:1.23-alpine AS tidy
+WORKDIR /src
+
+COPY go.mod ./
+COPY go.su[m] ./
+COPY cmd ./cmd
+COPY internal ./internal
+
+RUN go mod tidy
+
+# `scratch` lets `docker build -o .` extract files to the host.
+FROM scratch AS export
+COPY --from=tidy /src/go.mod /
+COPY --from=tidy /src/go.sum /

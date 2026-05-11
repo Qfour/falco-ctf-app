@@ -9,7 +9,12 @@ REGISTRY ?= docker.io/falco-ctf
 TAG      ?= dev
 IMAGES   := scoreboard auth-policy ttyd challenge
 
-.PHONY: help dev dev-down build push load-colima deploy-local lint test clean
+# Go toolchain runs inside Docker (no local Go required). `test` uses
+# `docker build` so it works under Colima too, where bind mounts of the
+# host repo are not shared into the VM.
+GO_IMAGE ?= golang:1.23-alpine
+
+.PHONY: help dev dev-down build push load-colima deploy-local lint test tidy clean
 
 help:
 	@echo "Targets:"
@@ -20,6 +25,8 @@ help:
 	@echo "  load-colima   — load images into colima k3s containerd (local only)"
 	@echo "  deploy-local  — kubectl apply -k deploy/<app>/overlays/local"
 	@echo "  lint          — kustomize build all overlays (validate Kustomize)"
+	@echo "  test          — go test ./... (runs in $(GO_IMAGE) container)"
+	@echo "  tidy          — go mod tidy (runs in $(GO_IMAGE) container)"
 	@echo "  clean         — remove built images locally"
 
 dev:
@@ -46,6 +53,14 @@ deploy-local:
 
 lint:
 	@for d in deploy/*/overlays/*; do echo "== $$d =="; kubectl kustomize $$d >/dev/null; done
+
+test:
+	docker build -f Dockerfile.test --progress=plain -t falco-ctf/gotest:local .
+
+# Uses a `docker build -o .` export stage so it works under Colima (which
+# does not share the host repo path into its VM by default).
+tidy:
+	docker build -f Dockerfile.tidy --target export -o . .
 
 clean:
 	@for img in $(IMAGES); do docker rmi -f $(REGISTRY)/$$img:$(TAG) 2>/dev/null || true; done

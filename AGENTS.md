@@ -4,7 +4,8 @@
 
 ## Project Overview
 
-- **Stack**: Python 3.12 (FastAPI) + Alpine Dockerfile + Kustomize
+- **Stack**: Go 1.23 (net/http + log/slog + embed) + Alpine Dockerfile + Kustomize
+- **Direct Go deps**: `gopkg.in/yaml.v3` (catalog YAML), `modernc.org/sqlite` (pure-Go, CGO 不要)
 - **Purpose**: Falco CTF のアプリ層(scoreboard / auth-policy / user-facing images / challenges)
 - **Project label**: `falco-ctf`
 - **Cross-repo**: 基盤は `falco-ctf-platform`
@@ -12,8 +13,8 @@
 ## Commands
 
 ```bash
-# ローカル dev (hot-reload)
-make dev                                  # docker compose up
+# ローカル dev
+make dev                                  # docker compose up (Go バイナリは image 内で build)
 make dev-down
 
 # image build / push
@@ -24,6 +25,12 @@ make load-colima                          # colima k3s containerd に取込 (loc
 # colima にデプロイ
 make deploy-local                         # kubectl apply -k deploy/*/overlays/local
 
+# Go テスト (Docker 内で go vet + 全パッケージの go test ./...)
+make test
+
+# 依存更新 (go.mod 編集後 go.sum を host に export)
+make tidy
+
 # Kustomize 整合性チェック
 make lint
 
@@ -31,6 +38,7 @@ make lint
 curl -X POST http://localhost:8000/falco/events -H 'content-type: application/json' \
   -d '{"rule":"Read sensitive file untrusted","priority":"Warning",
        "output_fields":{"k8s.ns.name":"ctf-user1",
+                        "k8s.pod.name":"workspace",
                         "container.image.repository":"falco-ctf/challenge"}}'
 curl http://localhost:8000/api/state | jq
 ```
@@ -39,8 +47,12 @@ curl http://localhost:8000/api/state | jq
 
 ### File naming
 
-- Python app: `<app>/{Dockerfile, requirements.txt, app/main.py}`
-- イメージのみ: `images/<name>/Dockerfile`
+- Go entry: `cmd/<app>/main.go` (起動・env パース・signal handling のみ)
+- Go パッケージ: `internal/<pkg>/{<file>.go, <file>_test.go}`
+  (テストは `<pkg>_test` 外部パッケージで書き、公開 API のみを exercise する)
+- 埋め込みアセット: `internal/<pkg>/templates/*` を `//go:embed` で焼込
+- Service Dockerfile: `<app>/Dockerfile` (build context = repo root)
+- イメージのみ: `images/<name>/Dockerfile` (build context = `images/<name>/`)
 - 課題: `challenges/<NN>-<slug>/` (NN は 2 桁ゼロパディング、slug は kebab-case)
 - Kustomize: `deploy/<app>/{base,overlays/<env>}/kustomization.yaml`
 - スクリプト: `scripts/<name>.sh` (kebab-case)
@@ -73,9 +85,11 @@ windowSeconds: 10
 
 ### Dockerfile 規約
 
-- 全イメージ Alpine ベース (`python:3.12-alpine` / `alpine:3.20`)
+- scoreboard / auth-policy は multi-stage: builder = `golang:1.23-alpine`、最終 = `alpine:3.20`
+- ttyd / challenge は `alpine:3.20` 単段
+- Go ビルドは `CGO_ENABLED=0 -ldflags="-s -w" -trimpath` で static binary
 - 最終 USER は **非 root (1000)**。例外: `images/challenge/` は CTF realism のため root
-- scoreboard / auth-policy は build context = repo root (`COPY <app>/...` 形式)
+- scoreboard / auth-policy は build context = repo root (`COPY cmd/<app> ./cmd/<app>` + `COPY internal ./internal`)
 - ttyd / challenge は build context = `images/<name>/`
 
 ### Kustomize 規約
@@ -105,6 +119,9 @@ windowSeconds: 10
 
 - ✅ scoreboard / auth-policy / ttyd / challenge の image tag は **同一 git SHA**
   (CI で一括 push)
+- ✅ Go コード変更後は `make test` で全パッケージ(catalog / store / scoreboard / authpolicy)
+  の単体テスト通過確認
+- ✅ `go.mod` 編集後は `make tidy` で go.sum を更新してコミット
 - ✅ challenge 追加時は scoreboard に動作確認(`POST /falco/events` で expected
   ルール → `/api/state` に solved 反映)
 - ✅ Kustomize 編集後は `make lint` で全 overlay を `kustomize build`
