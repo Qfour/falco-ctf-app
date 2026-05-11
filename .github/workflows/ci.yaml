@@ -13,7 +13,7 @@ jobs:
   # Branch protection check: "test"
   # ------------------------------------------------------------------
   test:
-    uses: Qfour/falco-ctf-ci/.github/workflows/go-test.yaml@main
+    uses: Qfour/qfour-workflows/.github/workflows/go-test.yaml@main
     with:
       dockerfile: Dockerfile.test
 
@@ -22,7 +22,7 @@ jobs:
   # Branch protection check: "lint-kustomize"
   # ------------------------------------------------------------------
   lint-kustomize:
-    uses: Qfour/falco-ctf-ci/.github/workflows/kustomize-lint.yaml@main
+    uses: Qfour/qfour-workflows/.github/workflows/kustomize-lint.yaml@main
 
   # ------------------------------------------------------------------
   # Image pipeline (build → scan → push) per service
@@ -47,7 +47,7 @@ jobs:
           - name: challenge
             context: images/challenge
             dockerfile: images/challenge/Dockerfile
-    uses: Qfour/falco-ctf-ci/.github/workflows/image-pipeline.yaml@main
+    uses: Qfour/qfour-workflows/.github/workflows/image-pipeline.yaml@main
     with:
       name: ${{ matrix.name }}
       context: ${{ matrix.context }}
