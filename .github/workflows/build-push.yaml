@@ -7,16 +7,16 @@ on:
   pull_request:
     branches: [main]
 
-permissions:
-  contents: read
-  packages: write
-
 env:
-  REGISTRY: ghcr.io/${{ github.repository_owner }}
+  SYSDIG_SECURE_URL: https://app.au1.sysdig.com
+  CLI_SCANNER_VERSION: "1.26.0"
+  SEVERITY_AT_LEAST: high
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       matrix:
         include:
@@ -37,13 +37,47 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: Login to GHCR
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
+      - name: Compute tag
+        id: tag
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build image
+        uses: docker/build-push-action@v6
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          load: true
+          tags: falco-ctf-${{ matrix.name }}:${{ steps.tag.outputs.tag }}
+
+      - name: Save image for scan
+        run: |
+          docker save falco-ctf-${{ matrix.name }}:${{ steps.tag.outputs.tag }} \
+            -o ${{ matrix.name }}.tar
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image-${{ matrix.name }}
+          path: ${{ matrix.name }}.tar
+          retention-days: 1
+
+  scan:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [scoreboard, auth-policy, ttyd, challenge]
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Compute tag
         id: tag
@@ -54,18 +88,36 @@ jobs:
             echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Build (and push on non-PR)
-        uses: docker/build-push-action@v6
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
         with:
-          context: ${{ matrix.context }}
-          file: ${{ matrix.dockerfile }}
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: |
-            ${{ env.REGISTRY }}/falco-ctf-${{ matrix.name }}:${{ steps.tag.outputs.tag }}
-            ${{ env.REGISTRY }}/falco-ctf-${{ matrix.name }}:latest
+          name: docker-image-${{ matrix.image }}
+
+      - name: Load Docker image
+        run: docker load -i ${{ matrix.image }}.tar
+
+      - name: Sysdig CLI Scanner
+        id: scan
+        uses: sysdiglabs/scan-action@v6
+        with:
+          image-tag: falco-ctf-${{ matrix.image }}:${{ steps.tag.outputs.tag }}
+          sysdig-secure-token: ${{ secrets.SYSDIG_SECURE_TOKEN }}
+          sysdig-secure-url: ${{ env.SYSDIG_SECURE_URL }}
+          cli-scanner-version: ${{ env.CLI_SCANNER_VERSION }}
+          stop-on-failed-policy-eval: true
+          severity-at-least: ${{ env.SEVERITY_AT_LEAST }}
+
+      - name: Upload SARIF report
+        if: success() || failure()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ github.workspace }}/sarif.json
+          category: sysdig-${{ matrix.image }}
 
   lint-kustomize:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: imranismail/setup-kustomize@v2
