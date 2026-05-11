@@ -20,9 +20,9 @@ spec:
         app.kubernetes.io/part-of: falco-ctf
     spec:
       securityContext:
-        runAsUser: 1000
-        runAsGroup: 1000
-        fsGroup: 1000
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
       containers:
         - name: scoreboard
           image: docker.io/falco-ctf/scoreboard

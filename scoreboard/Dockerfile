@@ -15,18 +15,13 @@ COPY internal ./internal
 
 RUN CGO_ENABLED=0 GOOS=linux go build \
       -ldflags="-s -w" -trimpath \
-      -o /out/scoreboard ./cmd/scoreboard
+      -o /out/scoreboard ./cmd/scoreboard \
+ && mkdir -p /out/var/lib/scoreboard
 
-FROM alpine:3.20
-RUN apk add --no-cache ca-certificates \
- && adduser -D -u 1000 app \
- && mkdir -p /var/lib/scoreboard \
- && chown 1000:1000 /var/lib/scoreboard
-
-COPY --from=build --chown=1000:1000 /out/scoreboard /app/scoreboard
-COPY --chown=1000:1000 challenges /app/challenges
-
-USER 1000:1000
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=build --chown=65532:65532 /out/scoreboard /app/scoreboard
+COPY --from=build --chown=65532:65532 /out/var/lib/scoreboard /var/lib/scoreboard
+COPY --chown=65532:65532 challenges /app/challenges
 
 EXPOSE 8000
 ENTRYPOINT ["/app/scoreboard"]

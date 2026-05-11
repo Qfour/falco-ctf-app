@@ -17,6 +17,9 @@ spec:
         app.kubernetes.io/name: auth-policy
         app.kubernetes.io/part-of: falco-ctf
     spec:
+      securityContext:
+        runAsUser: 65532
+        runAsGroup: 65532
       containers:
         - name: auth-policy
           image: docker.io/falco-ctf/auth-policy

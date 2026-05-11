@@ -77,3 +77,22 @@ falco-ctf-app/
 - **新しい challenge 追加** → `challenges/<NN>-<slug>/` を作って falco-rule.yaml と
   README を書く。scoreboard を再起動して認識させる(catalog は起動時 1 回ロード)
 - 規約・境界は AGENTS.md と `.claude/rules/` を参照
+
+## Model routing (Claude Code)
+
+デフォルトは Sonnet (`.claude/settings.json` で固定)。目的別に
+サブエージェントへ委譲する。詳細は `.claude/rules/model-routing.md`。
+
+| 用途 | 使うコマンド | モデル |
+|---|---|---|
+| 設計提案 / RCA / トレードオフ分析 | `/architect <topic>` | Opus |
+| 実装・テスト追加 | main session のまま | Sonnet |
+| pre-PR レビュー (project-aware) | `/review` | Opus |
+| セキュリティ深掘り | `/security-audit` | Opus |
+| git commit | `/commit` | Haiku |
+
+注意:
+- `/architect` の提案を受けたあと、**実装は main session に戻ってやる**
+  (再委譲は context 二度払い)
+- `/commit` は push しない (人間の判断で実行)
+- 3 行の編集は agent に投げない (spawn オーバーヘッドが上回る)

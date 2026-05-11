@@ -17,11 +17,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
       -ldflags="-s -w" -trimpath \
       -o /out/auth-policy ./cmd/auth-policy
 
-FROM alpine:3.20
-RUN apk add --no-cache ca-certificates \
- && adduser -D -u 1000 app
-COPY --from=build --chown=1000:1000 /out/auth-policy /app/auth-policy
-
-USER 1000:1000
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=build --chown=65532:65532 /out/auth-policy /app/auth-policy
 EXPOSE 8000
 ENTRYPOINT ["/app/auth-policy"]
