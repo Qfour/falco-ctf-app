@@ -1,0 +1,269 @@
+openapi: 3.1.0
+info:
+  title: falco-ctf scoreboard
+  version: "1"
+  description: |
+    Ingests falcosidekick customWebhook events, attributes them to CTF
+    users via the `ctf-<username>/workspace` namespace+pod convention,
+    and serves the live dashboard.
+
+    The contract here is **load-bearing across the falco-ctf-platform
+    repo** (falcosidekick output config, deploy manifests). Changing
+    URLs, query semantics, or JSON shapes requires a coordinated PR
+    on both sides.
+
+servers:
+  - url: http://scoreboard.scoreboard.svc.cluster.local
+    description: in-cluster service
+  - url: https://scoreboard.{ingressHost}
+    description: ingress
+    variables:
+      ingressHost:
+        default: example.invalid
+
+paths:
+  /healthz:
+    get:
+      summary: Liveness + readiness probe
+      operationId: healthz
+      responses:
+        "200":
+          description: process alive, store opened, catalog loaded
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, challenges, db, solved_loaded]
+                properties:
+                  ok: { type: boolean, const: true }
+                  challenges:
+                    type: array
+                    items: { type: string }
+                    description: catalog ids (sorted)
+                  db:
+                    type: string
+                    description: path to SQLite file inside the pod
+                  solved_loaded:
+                    type: integer
+                    description: count of solves loaded from disk at startup
+
+  /metrics:
+    get:
+      summary: Prometheus metrics exposition
+      operationId: metrics
+      description: |
+        Standard Prometheus text format. Exposes scoreboard counters
+        (see below) plus the default Go runtime metrics.
+
+        Metric series:
+          - `scoreboard_ingest_falco_events_received_total{outcome}`
+              outcome ∈ {accepted, ignored, decode_error, store_error}
+          - `scoreboard_solves_total{challenge_id, kind}`
+              kind ∈ {trigger, evade}
+          - `scoreboard_api_submissions_total{challenge_id, outcome}`
+              outcome ∈ {solved, wrong_flag, not_evaded, unknown_challenge,
+                         not_evade, bad_request}
+      responses:
+        "200":
+          description: Prometheus exposition
+          content:
+            text/plain: {}
+
+  /falco/events:
+    post:
+      summary: Receive a falcosidekick event
+      operationId: receiveFalcoEvent
+      description: |
+        Idempotent ingest endpoint. Events outside the
+        `ctf-<username>/workspace` ns+pod pair are silently ignored.
+
+        For trigger-type challenges, a matching rule fire records a
+        solve. The visible `at` timestamp uses the scoreboard receipt
+        time (not Falco's event time) — Falco can deliver buffered
+        events with stale timestamps and we don't want that to
+        retro-date the dashboard.
+
+        The Falco-side `time` field still drives the rule-fire window
+        used by evade challenge submissions.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FalcoEvent"
+      responses:
+        "200":
+          description: Event accepted or ignored
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    properties:
+                      accepted: { type: boolean, const: true }
+                      user: { type: string }
+                      rule: { type: string }
+                  - type: object
+                    properties:
+                      ignored: { type: boolean, const: true }
+                      reason: { type: string }
+        "400":
+          description: malformed JSON body
+
+  /api/challenges/{cid}/submit:
+    post:
+      summary: Submit a flag for an evade-type challenge
+      operationId: submitFlag
+      parameters:
+        - in: path
+          name: cid
+          required: true
+          schema: { type: string }
+          description: challenge id (e.g. `02-evade-shadow-read`)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user, flag]
+              properties:
+                user: { type: string }
+                flag: { type: string }
+      responses:
+        "200":
+          description: |
+            Submission processed. Inspect `correct` / `evaded` / `solved`
+            to determine the outcome.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  correct: { type: boolean }
+                  evaded: { type: boolean }
+                  solved: { type: boolean }
+                  user: { type: string }
+                  reason: { type: string }
+        "400":
+          description: not an evade challenge, or missing `user`
+        "404":
+          description: unknown challenge id
+
+  /api/state:
+    get:
+      summary: Full dashboard JSON
+      operationId: getState
+      responses:
+        "200":
+          description: Full state snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/State"
+
+  /:
+    get:
+      summary: HTML dashboard (live-updated via polling /api/state)
+      operationId: dashboard
+      responses:
+        "200":
+          description: dashboard HTML
+          content:
+            text/html: {}
+        "404":
+          description: served when path != "/"
+
+components:
+  schemas:
+    FalcoEvent:
+      type: object
+      description: falcosidekick customWebhook payload (subset we consume)
+      required: [rule, output_fields]
+      properties:
+        rule:
+          type: string
+          description: Falco rule name (matched against catalog `expectedRules` / `forbiddenRules`)
+        time:
+          type: string
+          format: date-time
+          description: |
+            Falco-side detection time. Optional; used only for
+            evade rule-fire windowing, not for solve `at`.
+        output_fields:
+          type: object
+          required: [k8s.ns.name, k8s.pod.name]
+          properties:
+            k8s.ns.name:
+              type: string
+              description: must be `ctf-<username>` for the event to count
+            k8s.pod.name:
+              type: string
+              description: must be exactly `workspace`
+
+    State:
+      type: object
+      required: [stats, leaderboard, challenges, recent_solves, now]
+      properties:
+        stats:
+          type: object
+          properties:
+            users: { type: integer }
+            challenges: { type: integer }
+            solves: { type: integer }
+            events: { type: integer }
+        leaderboard:
+          type: array
+          items:
+            type: object
+            properties:
+              user: { type: string }
+              solved: { type: integer }
+              earliest: { type: string, format: date-time }
+              events: { type: integer }
+              rank: { type: integer }
+        challenges:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              type:
+                type: string
+                enum: [trigger, evade]
+              expectedRules:
+                type: array
+                items: { type: string }
+              forbiddenRules:
+                type: array
+                items: { type: string }
+              solved_count: { type: integer }
+              solvers:
+                type: array
+                items: { type: string }
+              first_solver:
+                type: [string, "null"]
+        recent_solves:
+          type: array
+          maxItems: 15
+          items:
+            type: object
+            properties:
+              user: { type: string }
+              challenge: { type: string }
+              at: { type: string, format: date-time }
+        solved:
+          description: back-compat — same shape as recent_solves but unbounded
+          type: array
+          items:
+            type: object
+            properties:
+              user: { type: string }
+              challenge: { type: string }
+              at: { type: string, format: date-time }
+        events_per_user:
+          type: object
+          additionalProperties: { type: integer }
+        now:
+          type: string
+          format: date-time

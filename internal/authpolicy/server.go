@@ -22,6 +22,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type Config struct {
@@ -45,6 +47,7 @@ func NewHandler(cfg Config, logger *slog.Logger) *Handler {
 		mux:    http.NewServeMux(),
 	}
 	h.mux.HandleFunc("GET /healthz", h.healthz)
+	h.mux.Handle("GET /metrics", promhttp.Handler())
 	h.mux.HandleFunc("GET /check", h.check)
 	return h
 }
@@ -68,12 +71,14 @@ func (h *Handler) healthz(w http.ResponseWriter, _ *http.Request) {
 func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 	host := r.URL.Query().Get("host")
 	if host == "" {
+		checksTotal.WithLabelValues("bad_request").Inc()
 		http.Error(w, "missing ?host= query param", http.StatusBadRequest)
 		return
 	}
 
 	upstream, err := http.NewRequestWithContext(r.Context(), http.MethodGet, h.cfg.OAuth2ProxyURL, nil)
 	if err != nil {
+		checksTotal.WithLabelValues("upstream_error").Inc()
 		http.Error(w, fmt.Sprintf("build request: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -85,8 +90,11 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 		upstream.Header.Set("Authorization", a)
 	}
 
+	start := time.Now()
 	resp, err := h.client.Do(upstream)
+	upstreamDuration.Observe(time.Since(start).Seconds())
 	if err != nil {
+		checksTotal.WithLabelValues("upstream_error").Inc()
 		h.logger.Warn("oauth2-proxy unreachable", "err", err)
 		http.Error(w, fmt.Sprintf("oauth2-proxy unreachable: %v", err), http.StatusBadGateway)
 		return
@@ -96,11 +104,13 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 	switch resp.StatusCode {
 	case http.StatusUnauthorized:
 		// Let ingress-nginx auth-signin redirect to /oauth2/start.
+		checksTotal.WithLabelValues("unauthenticated").Inc()
 		http.Error(w, "not authenticated", http.StatusUnauthorized)
 		return
 	case http.StatusAccepted:
 		// authenticated — identity headers are populated; fall through to email check.
 	default:
+		checksTotal.WithLabelValues("upstream_error").Inc()
 		http.Error(w,
 			fmt.Sprintf("oauth2-proxy returned %d", resp.StatusCode),
 			resp.StatusCode,
@@ -111,6 +121,7 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 	email := resp.Header.Get("X-Auth-Request-Email")
 	// Boundary: require "<host>@" exact prefix so `alice2@...` does not satisfy host=alice.
 	if !strings.HasPrefix(email, host+"@") {
+		checksTotal.WithLabelValues("forbidden").Inc()
 		http.Error(w,
 			fmt.Sprintf("forbidden: %q does not match host %q", email, host),
 			http.StatusForbidden,
@@ -126,5 +137,6 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 	if v := resp.Header.Get("X-Auth-Request-Preferred-Username"); v != "" {
 		w.Header().Set("X-Auth-Request-Preferred-Username", v)
 	}
+	checksTotal.WithLabelValues("ok").Inc()
 	w.WriteHeader(http.StatusOK)
 }

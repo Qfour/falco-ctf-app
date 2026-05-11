@@ -310,3 +310,27 @@ func TestUnknownPath_404(t *testing.T) {
 		t.Fatalf("expected 404, got %d", w.Code)
 	}
 }
+
+func TestMetricsEndpoint_ExposesScoreboardCounters(t *testing.T) {
+	f := newFixture(t, nil)
+	// Drive one ingest path so a counter has a non-zero value to expose.
+	f.do("POST", "/falco/events", map[string]any{
+		"rule":          "Read sensitive file untrusted",
+		"output_fields": map[string]any{"k8s.ns.name": "ctf-alice", "k8s.pod.name": "workspace"},
+	})
+
+	w := f.do("GET", "/metrics", nil)
+	if w.Code != 200 {
+		t.Fatalf("status: %d", w.Code)
+	}
+	body := w.Body.String()
+	for _, want := range []string{
+		"scoreboard_ingest_falco_events_received_total",
+		"scoreboard_solves_total",
+		"go_goroutines", // go runtime metrics come for free with promhttp
+	} {
+		if !bytes.Contains([]byte(body), []byte(want)) {
+			t.Errorf("/metrics missing expected series %q", want)
+		}
+	}
+}

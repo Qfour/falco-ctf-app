@@ -1,0 +1,111 @@
+openapi: 3.1.0
+info:
+  title: falco-ctf auth-policy
+  version: "1"
+  description: |
+    Combines oauth2-proxy authentication with a host↔email binding
+    check, exposed as an ingress-nginx `auth-url` subrequest target.
+
+      ingress ── /check?host=<expected-username> ──►  authpolicy
+                                                         │
+                                                         └─► oauth2-proxy /oauth2/auth
+                                                                (cookie forwarded)
+
+    Plain `auth-url: oauth2-proxy/oauth2/auth` would let any logged-in
+    user reach any user's workspace. This service closes that gap
+    without requiring ingress-nginx snippet annotations (which the
+    admission webhook blocks).
+
+servers:
+  - url: http://auth-policy.auth-policy.svc.cluster.local
+    description: in-cluster service
+
+paths:
+  /healthz:
+    get:
+      summary: Liveness + readiness
+      operationId: healthz
+      responses:
+        "200":
+          description: alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  oauth2_proxy: { type: string }
+                  domain: { type: string }
+
+  /metrics:
+    get:
+      summary: Prometheus metrics
+      operationId: metrics
+      description: |
+        Metric series:
+          - `auth_policy_checks_total{result}`
+              result ∈ {ok, unauthenticated, forbidden, bad_request, upstream_error}
+          - `auth_policy_upstream_duration_seconds` (histogram)
+        Plus the default Go runtime metrics.
+      responses:
+        "200":
+          description: Prometheus exposition
+          content:
+            text/plain: {}
+
+  /check:
+    get:
+      summary: Authorize a workspace request
+      operationId: check
+      description: |
+        Called by ingress-nginx as an `auth-url` subrequest before
+        proxying to a user's `workspace` Service.
+
+        Decision tree:
+
+        | upstream oauth2-proxy returns | email prefix matches `host` | response |
+        |---|---|---|
+        | 401 | n/a | **401** — ingress redirects to /oauth2/start |
+        | 202 | yes | **200** — identity headers propagated upstream |
+        | 202 | no  | **403** — cross-user, no redirect |
+        | 5xx | n/a | **5xx** — surface upstream error |
+        | unreachable | n/a | **502** |
+
+        The match is **prefix-exact**: email must start with `<host>@`.
+        `alice2@…` does NOT satisfy `host=alice`.
+      parameters:
+        - in: query
+          name: host
+          required: true
+          schema: { type: string }
+          description: Expected username (== first label of the workspace ingress host)
+        - in: header
+          name: Cookie
+          schema: { type: string }
+          description: Forwarded to oauth2-proxy
+        - in: header
+          name: Authorization
+          schema: { type: string }
+          description: Forwarded to oauth2-proxy (if present)
+      responses:
+        "200":
+          description: |
+            Authorized. Response headers include identity for the upstream:
+              - `X-Auth-Request-Email`
+              - `X-Auth-Request-User`
+              - `X-Auth-Request-Preferred-Username`
+          headers:
+            X-Auth-Request-Email:
+              schema: { type: string }
+            X-Auth-Request-User:
+              schema: { type: string }
+            X-Auth-Request-Preferred-Username:
+              schema: { type: string }
+        "400":
+          description: missing `host` query parameter
+        "401":
+          description: unauthenticated — ingress should redirect to /oauth2/start
+        "403":
+          description: authenticated, but the user's email doesn't match `host`
+        "502":
+          description: oauth2-proxy unreachable
