@@ -70,13 +70,16 @@ falco-ctf-app/
 
 ## ブランチ戦略 (GitHub Flow + release タグ)
 
-```
-feature/<topic> または fix/<topic>   ← main から派生
-        ↓  PR → CI green → squash merge
-       main                           ← 常に deployable
-        ↓  annotated tag
-  v2026.06.01-ctf                    ← CTF 開催リリース
-        ↓  CI が再 build → image push (4サービス同一 tag, I4/I5)
+```mermaid
+gitGraph
+   commit id: "..."
+   branch feature/topic
+   checkout feature/topic
+   commit id: "implement"
+   commit id: "fix"
+   checkout main
+   merge feature/topic id: "squash merge (CI green)"
+   commit id: "release" tag: "v2026.06.01-ctf"
 ```
 
 - **feature ブランチ命名**: `feature/<topic>` / `fix/<topic>` / `chal/<NN>-<slug>`

@@ -28,6 +28,32 @@ is acceptable at CTF scale (50 users, < 100 events/s peak). For a
 significant scale-up, switch to mattn/go-sqlite3 or migrate to
 PostgreSQL (see "Migration paths" below).
 
+## Schema Overview
+
+```mermaid
+erDiagram
+    solved {
+        TEXT user PK "extracted from ctf-<username> namespace"
+        TEXT challenge PK "catalog id e.g. 01-read-shadow"
+        TEXT at "RFC3339Nano UTC — receipt time for trigger, submit time for evade"
+    }
+    events_per_user {
+        TEXT user PK
+        INTEGER count "monotonic, incremented on every Falco event"
+    }
+    ruleFires["ruleFires (in-memory only)"] {
+        TEXT user PK
+        TEXT rule
+        INT unix_seconds "Falco event time — used for evade window check"
+    }
+
+    solved }o--|| events_per_user : "same user key"
+    ruleFires }o--|| events_per_user : "same user key"
+```
+
+`ruleFires` is a bounded in-memory sliding window (last `RetentionSeconds=300` per user).
+It is **not** persisted to SQLite — see "In-memory only" section below.
+
 ## Tables
 
 ### `solved`

@@ -6,6 +6,27 @@ type: skill
 
 # Image Tag 更新手順（platform 側 pin）
 
+## Cross-repo Flow
+
+```mermaid
+sequenceDiagram
+    participant Dev as Developer
+    participant AppCI as falco-ctf-app CI
+    participant GHCR as GHCR
+    participant Platform as falco-ctf-platform
+
+    Dev->>AppCI: push / merge to main
+    AppCI->>AppCI: make test + make build
+    AppCI->>GHCR: docker push ×4 images (tag = git-sha)
+    AppCI-->>Dev: CI green ✓
+
+    Dev->>Dev: git rev-parse --short HEAD → SHA
+    Dev->>Platform: PR: kustomize newTag = SHA (all 4 images)
+    Platform->>Platform: kustomize build lint
+    Platform-->>Dev: CI green ✓
+    Dev->>Platform: Merge PR → deploy to cluster
+```
+
 ## 前提
 
 - 当リポジトリ (`falco-ctf-app`) の main ブランチでビルドが完了

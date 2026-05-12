@@ -6,6 +6,35 @@ Falco CTF のアプリケーション層。scoreboard / auth-policy / 参加者�
 基盤(Falco, ingress-nginx, Dex, oauth2-proxy, cert-manager)とユーザ workspace
 払い出し chart は **`falco-ctf-platform`** にある。
 
+## System Architecture
+
+```mermaid
+flowchart LR
+    subgraph platform["falco-ctf-platform"]
+        ingress["ingress-nginx"]
+        oauth["oauth2-proxy / Dex"]
+        falco["Falco"]
+        fsidekick["falcosidekick"]
+    end
+
+    subgraph app["falco-ctf-app (this repo)"]
+        authpolicy["auth-policy\n(email↔host check)"]
+        scoreboard["scoreboard\n(POST /falco/events)"]
+        ttyd["ttyd\n(Web terminal)"]
+        challenge["challenge\n(container)"]
+    end
+
+    User -->|"HTTPS /<username>/*"| ingress
+    ingress -->|"auth_request"| oauth
+    oauth -->|"X-Auth-Request-Email"| authpolicy
+    authpolicy -->|"200 / 403"| oauth
+    oauth -->|"proxy_pass"| ttyd
+    ttyd -->|"kubectl exec"| challenge
+
+    falco -->|"event"| fsidekick
+    fsidekick -->|"POST /falco/events"| scoreboard
+```
+
 ## 構成
 
 ```

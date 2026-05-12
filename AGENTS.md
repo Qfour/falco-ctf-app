@@ -133,6 +133,28 @@ windowSeconds: 10
 | `priority` | `Warning` | フィルタ用 (notice 以上を採点対象) |
 | `time` | `2026-05-08T07:15:32Z` | 重複イベント排除 |
 
+```mermaid
+flowchart TD
+    E["Falco Event JSON\n(POST /falco/events)"]
+
+    E -->|"output_fields[k8s.ns.name]\nstrip ctf- prefix"| U["user identifier"]
+    E -->|"output_fields[container.image.repository]\nmust contain falco-ctf/challenge"| F{"CTF event?"}
+    E -->|"priority ≥ Notice"| PF{"priority pass?"}
+    E -->|"rule"| R["match expectedRules\n/ forbiddenRules"]
+    E -->|"time (Falco clock)"| W["evade window\nrolling buffer"]
+
+    F -->|no| DROP["drop event"]
+    PF -->|no| DROP
+
+    U --> INC["events_per_user++"]
+    F -->|yes| INC
+    PF -->|yes| INC
+
+    R -->|"trigger: expectedRule matched"| SOLVED["INSERT INTO solved"]
+    R -->|"evade: forbiddenRule matched"| W
+    W --> BLOCK["block submit\nfor windowSeconds"]
+```
+
 ## 関連リポジトリ
 
 | Repo | 関係 |

@@ -34,6 +34,28 @@ sh /opt/ctf/httpd
 cat /opt/ctf/httpd | sh
 ```
 
+## Submit Flow (organizer reference)
+
+```mermaid
+sequenceDiagram
+    participant P as Participant
+    participant S as scoreboard
+    participant DB as SQLite
+
+    Note over P,S: Participant reads flag without exec-ing /opt/ctf/httpd as httpd
+
+    P->>S: POST /api/challenges/05-evade-shell-spawn/submit\n{"user":"alice","flag":"FALCO{...}"}
+    S->>S: Validate flag == expectedFlag
+    S->>S: Scan ruleFires[alice] — last windowSeconds=10s (Falco time)
+
+    alt No forbidden rule fired in window
+        S->>DB: INSERT OR IGNORE INTO solved (alice, 05-evade-shell-spawn, now())
+        S-->>P: 200 {"solved": true}
+    else "Run shell untrusted" fired within 10s
+        S-->>P: 403 {"solved": false, "reason": "forbidden rule fired"}
+    end
+```
+
 ## 仕組みの解説 (講評用)
 
 | 実行コマンド | proc.comm | 子 sh の proc.pname | 発火 |

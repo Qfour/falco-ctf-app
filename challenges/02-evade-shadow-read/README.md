@@ -60,6 +60,28 @@ curl -s -X POST "${FALCO_CTF_SCOREBOARD}/api/challenges/${FALCO_CTF_CHALLENGE}/s
   -d "{\"user\":\"${FALCO_CTF_USER}\",\"flag\":\"FALCO{...}\"}"
 ```
 
+## Submit Flow (organizer reference)
+
+```mermaid
+sequenceDiagram
+    participant P as Participant
+    participant S as scoreboard
+    participant DB as SQLite
+
+    Note over P,S: Participant reads /etc/shadow via alternate path (no rule fire)
+
+    P->>S: POST /api/challenges/02-evade-shadow-read/submit\n{"user":"alice","flag":"FALCO{...}"}
+    S->>S: Validate flag == expectedFlag
+    S->>S: Scan ruleFires[alice] — last windowSeconds=10s (Falco time)
+
+    alt No forbidden rule fired in window
+        S->>DB: INSERT OR IGNORE INTO solved (alice, 02-evade-shadow-read, now())
+        S-->>P: 200 {"solved": true}
+    else "Read sensitive file untrusted" fired within 10s
+        S-->>P: 403 {"solved": false, "reason": "forbidden rule fired"}
+    end
+```
+
 ## 仕組みの解説 (講評用)
 
 - Falco の rule は **path 文字列マッチ**で判定するため、同じ inode を別 path
