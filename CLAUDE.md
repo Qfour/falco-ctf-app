@@ -98,7 +98,57 @@ gitGraph
 - **新しい challenge 追加** → `.claude/skills/add-challenge.md` の手順を参照
 - **OpenAPI 再生成** → `.claude/skills/regen-openapi.md` の手順を参照
 - **image tag を platform 側に pin** → `.claude/skills/bump-image-tag.md` の手順を参照
+- **ローカル CVE スキャン** → `make scan TAG=local` (PR 前に実施。`SYSDIG_SECURE_API_TOKEN` 必須)
+- **CVE 調査** → `/headless-cloud-security:sysdig-investigate [image-name]` (下記参照)
+- **CVE 修正 PR** → `/headless-cloud-security:sysdig-remediate <image-name> [ticket-key]` (下記参照)
 - 規約・境界は AGENTS.md と `.claude/rules/` を参照
+
+## Sysdig Skills による脆弱性修正ワークフロー
+
+### 前提 (初回のみ)
+
+```bash
+# 1. プラグインインストール (Claude Code 上で一度だけ実行)
+/plugin marketplace add sysdig/skills
+/plugin install headless-cloud-security@sysdig-skills
+
+# 2. シェルプロファイルに認証情報を追加
+export SYSDIG_SECURE_URL="https://app.au1.sysdig.com"
+export SYSDIG_SECURE_API_TOKEN="<Settings → Sysdig Secure API で生成>"
+```
+
+### 2 つの入力フロー
+
+**推奨フロー (PR 前にスキャン・修正まで完結)**
+```bash
+# ① ビルド・動作確認
+make build TAG=local
+
+# ② ローカルスキャン (結果が Sysdig Secure に ingested される)
+make scan TAG=local          # SYSDIG_SECURE_API_TOKEN が必要
+
+# ③ CI ログ / scan 出力の resultId を使って調査・修正
+/headless-cloud-security:sysdig-investigate falco-ctf-scoreboard
+/headless-cloud-security:sysdig-remediate falco-ctf-scoreboard
+
+# ④ 修正を feature ブランチに取り込んで PR 作成
+#    → CI scan が merge gate (Critical/High があれば merge ブロック)
+#    → merge 後は ECR push のみ (scan は非ブロッキング・記録用)
+```
+
+**緊急修正フロー (CI scan が Critical/High を検出した場合)**
+```bash
+# CI の build ジョブが失敗 → scan の resultId を CI ログから取得して修正
+/headless-cloud-security:sysdig-investigate falco-ctf-ttyd
+/headless-cloud-security:sysdig-remediate falco-ctf-ttyd
+```
+
+### Skills コマンド早見表
+
+| コマンド | 何をするか |
+|---|---|
+| `/headless-cloud-security:sysdig-investigate [image]` | Sysdig Secure から CVE 取得・優先度付け・修正計画提示 |
+| `/headless-cloud-security:sysdig-remediate <image> [ticket]` | Dockerfile/go.mod パッチ生成 + PR 作成 |
 
 ## Model routing (Claude Code)
 
@@ -111,6 +161,8 @@ gitGraph
 | 実装・テスト追加 | main session のまま | Sonnet |
 | pre-PR レビュー (project-aware) | `/review` | Opus |
 | セキュリティ深掘り | `/security-audit` | Opus |
+| CVE 調査・優先度付け | `/headless-cloud-security:sysdig-investigate [image]` | Sonnet + Sysdig Skills |
+| CVE 修正 PR 作成 | `/headless-cloud-security:sysdig-remediate <image>` | Sonnet + Sysdig Skills |
 | git commit | `/commit` | Haiku |
 
 注意:

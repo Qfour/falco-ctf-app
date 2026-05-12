@@ -5,16 +5,17 @@
 #   charts/ctf-user values and deploy/*/overlays/local kustomization.
 #   Override for CI: `make build REGISTRY=ghcr.io/sysdig TAG=$(git rev-parse --short HEAD)`.
 
-REGISTRY ?= docker.io/falco-ctf
-TAG      ?= dev
-IMAGES   := scoreboard auth-policy ttyd challenge
+REGISTRY     ?= docker.io/falco-ctf
+TAG          ?= dev
+IMAGES       := scoreboard auth-policy ttyd challenge
+SYSDIG_URL   ?= https://app.au1.sysdig.com
 
 # Go toolchain runs inside Docker (no local Go required). `test` uses
 # `docker build` so it works under Colima too, where bind mounts of the
 # host repo are not shared into the VM.
 GO_IMAGE ?= golang:1.23-alpine
 
-.PHONY: help dev dev-down build push load-colima deploy-local lint test tidy gen clean
+.PHONY: help dev dev-down build push load-colima deploy-local lint test tidy gen clean scan
 
 help:
 	@echo "Targets:"
@@ -28,6 +29,7 @@ help:
 	@echo "  test          — go test ./... (runs in $(GO_IMAGE) container)"
 	@echo "  tidy          — go mod tidy (runs in $(GO_IMAGE) container)"
 	@echo "  gen           — regenerate Go types from OpenAPI specs (docs/openapi-*.yaml)"
+	@echo "  scan          — sysdig-cli-scanner on all built images (SYSDIG_SECURE_API_TOKEN required)"
 	@echo "  clean         — remove built images locally"
 
 dev:
@@ -67,6 +69,16 @@ tidy:
 # Commit the result; CI diff-check will catch spec/code drift.
 gen:
 	docker build -f Dockerfile.gen --target export -o . .
+
+scan:
+	@command -v sysdig-cli-scanner >/dev/null 2>&1 || \
+	  { echo "error: sysdig-cli-scanner not found — install from https://docs.sysdig.com/en/docs/sysdig-secure/vulnerabilities/pipeline/"; exit 1; }
+	@[ -n "$$SYSDIG_SECURE_API_TOKEN" ] || \
+	  { echo "error: SYSDIG_SECURE_API_TOKEN is not set"; exit 1; }
+	@for img in $(IMAGES); do \
+	  echo "==> scanning $(REGISTRY)/$$img:$(TAG)"; \
+	  sysdig-cli-scanner --apiurl $(SYSDIG_URL) $(REGISTRY)/$$img:$(TAG); \
+	done
 
 clean:
 	@for img in $(IMAGES); do docker rmi -f $(REGISTRY)/$$img:$(TAG) 2>/dev/null || true; done

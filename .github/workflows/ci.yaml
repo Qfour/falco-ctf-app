@@ -59,7 +59,7 @@ jobs:
       push: ${{ github.event_name == 'push' }}
       registry: ${{ vars.ECR_REGISTRY }}
       aws-region: ${{ vars.AWS_REGION }}
-      scan-continue-on-error: false
+      scan-continue-on-error: ${{ github.event_name == 'push' }}
       sysdig-secure-url: https://app.au1.sysdig.com
     secrets:
       sysdig-token: ${{ secrets.SYSDIG_SECURE_TOKEN }}
