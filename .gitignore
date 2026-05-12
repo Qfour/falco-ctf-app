@@ -28,3 +28,6 @@ scoreboard/dev-data/
 
 # Claude Code local-only
 .claude/settings.local.json
+
+# Local Sysdig scanner output
+scan-logs/

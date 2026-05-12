@@ -75,10 +75,10 @@ scan:
 	  { echo "error: sysdig-cli-scanner not found — install from https://docs.sysdig.com/en/docs/sysdig-secure/vulnerabilities/pipeline/"; exit 1; }
 	@[ -n "$$SYSDIG_SECURE_API_TOKEN" ] || \
 	  { echo "error: SYSDIG_SECURE_API_TOKEN is not set"; exit 1; }
-	@for img in $(IMAGES); do \
+	@SCAN_FAIL=0; for img in $(IMAGES); do \
 	  echo "==> scanning $(REGISTRY)/$$img:$(TAG)"; \
-	  sysdig-cli-scanner --apiurl $(SYSDIG_URL) $(REGISTRY)/$$img:$(TAG); \
-	done
+	  sysdig-cli-scanner --apiurl $(SYSDIG_URL) $(REGISTRY)/$$img:$(TAG) || SCAN_FAIL=1; \
+	done; exit $$SCAN_FAIL
 
 clean:
 	@for img in $(IMAGES); do docker rmi -f $(REGISTRY)/$$img:$(TAG) 2>/dev/null || true; done

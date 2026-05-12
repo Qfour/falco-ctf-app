@@ -117,38 +117,71 @@ export SYSDIG_SECURE_URL="https://app.au1.sysdig.com"
 export SYSDIG_SECURE_API_TOKEN="<Settings → Sysdig Secure API で生成>"
 ```
 
-### 2 つの入力フロー
+### 標準開発フロー
 
-**推奨フロー (PR 前にスキャン・修正まで完結)**
-```bash
-# ① ビルド・動作確認
-make build TAG=local
+PR を作成する前に全イメージの CVE をゼロにする。`sysdig-remediate` が
+修正を適用したら必ずリビルド・再スキャンしてから次のステップへ進む。
 
-# ② ローカルスキャン (結果が Sysdig Secure に ingested される)
-make scan TAG=local          # SYSDIG_SECURE_API_TOKEN が必要
-
-# ③ CI ログ / scan 出力の resultId を使って調査・修正
-/headless-cloud-security:sysdig-investigate falco-ctf-scoreboard
-/headless-cloud-security:sysdig-remediate falco-ctf-scoreboard
-
-# ④ 修正を feature ブランチに取り込んで PR 作成
-#    → CI scan が merge gate (Critical/High があれば merge ブロック)
-#    → merge 後は ECR push のみ (scan は非ブロッキング・記録用)
+```mermaid
+flowchart TD
+  A["① コード修正\n(feature ブランチ上)"] --> B["② make build TAG=local"]
+  B --> C["③ make scan TAG=local"]
+  C --> D["④ /sysdig-investigate [image]"]
+  D --> E{CVE あり?}
+  E -- Yes --> F["⑤ /sysdig-remediate <image>"]
+  F --> A
+  E -- No --> G["⑥ PR 作成"]
 ```
 
-**緊急修正フロー (CI scan が Critical/High を検出した場合)**
+**① コード修正**  
+feature ブランチ (`feature/<topic>` / `fix/<topic>`) 上で変更を加える。
+Dockerfile・go.mod・ソースコードなど、内容を問わずすべての変更がここに入る。
+`sysdig-remediate` が生成したパッチもこのステップの成果物として扱う。
+
+**② ビルド**
 ```bash
-# CI の build ジョブが失敗 → scan の resultId を CI ログから取得して修正
+make build TAG=local
+```
+
+**③ ローカルスキャン**
+```bash
+make scan TAG=local   # SYSDIG_SECURE_API_TOKEN が必要
+```
+スキャン結果が Sysdig Secure に ingest される。`scan-logs/` に resultId が出力される。
+
+**④ 調査**
+```bash
+/headless-cloud-security:sysdig-investigate [image-name]
+```
+Critical/High が 0 件 → ⑥へ。1 件以上 → ⑤へ。
+
+**⑤ 修正**
+```bash
+/headless-cloud-security:sysdig-remediate <image-name>
+```
+Dockerfile / go.mod へのパッチを生成してローカルブランチに適用する。
+変更が生じたら **① に戻る** (rebuild → re-scan で修正を確認)。
+
+**⑥ PR 作成**  
+全イメージ Clean を確認してから PR を作成する。  
+CI scan は merge gate として最終チェックを行う (安全網)。
+
+---
+
+**緊急修正フロー (CI scan が Critical/High を検出して merge ブロックされた場合)**
+```bash
+# CI ログから resultId を取得し、直接 investigate → remediate を実行
 /headless-cloud-security:sysdig-investigate falco-ctf-ttyd
 /headless-cloud-security:sysdig-remediate falco-ctf-ttyd
 ```
+修正後にローカルで ② → ③ → ④ を再実行して Clean を確認してから push する。
 
 ### Skills コマンド早見表
 
 | コマンド | 何をするか |
 |---|---|
 | `/headless-cloud-security:sysdig-investigate [image]` | Sysdig Secure から CVE 取得・優先度付け・修正計画提示 |
-| `/headless-cloud-security:sysdig-remediate <image> [ticket]` | Dockerfile/go.mod パッチ生成 + PR 作成 |
+| `/headless-cloud-security:sysdig-remediate <image>` | Dockerfile/go.mod パッチ生成 + ローカルブランチへ適用 |
 
 ## Model routing (Claude Code)
 
