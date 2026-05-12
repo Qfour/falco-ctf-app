@@ -13,7 +13,7 @@ jobs:
   # Branch protection check: "test"
   # ------------------------------------------------------------------
   test:
-    uses: Qfour/qfour-workflows/.github/workflows/go-test.yaml@main
+    uses: Qfour/homelab-workflows/.github/workflows/go-test.yaml@main
     with:
       dockerfile: Dockerfile.test
 
@@ -22,7 +22,7 @@ jobs:
   # Branch protection check: "lint-kustomize"
   # ------------------------------------------------------------------
   lint-kustomize:
-    uses: Qfour/qfour-workflows/.github/workflows/kustomize-lint.yaml@main
+    uses: Qfour/homelab-workflows/.github/workflows/kustomize-lint.yaml@main
 
   # ------------------------------------------------------------------
   # Image pipeline (build → scan → push) per service
@@ -55,7 +55,7 @@ jobs:
             context: images/challenge
             dockerfile: images/challenge/Dockerfile
             scan-continue-on-error: false
-    uses: Qfour/qfour-workflows/.github/workflows/image-pipeline.yaml@main
+    uses: Qfour/homelab-workflows/.github/workflows/image-pipeline.yaml@main
     with:
       name: ${{ matrix.name }}
       context: ${{ matrix.context }}
