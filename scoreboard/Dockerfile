@@ -4,7 +4,7 @@
 # The challenges/ catalog is baked into the image (Falco-rule files that
 # the scoreboard reads at startup). Local dev overlays it via a volume
 # mount in docker-compose.yml.
-FROM golang:1.23-alpine AS build
+FROM golang:1.24-alpine AS build
 WORKDIR /src
 
 COPY go.mod go.sum ./
