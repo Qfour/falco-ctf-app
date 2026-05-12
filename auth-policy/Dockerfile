@@ -1,6 +1,6 @@
 # auth-policy — Go service. Build context = repo root.
 #   docker build -f auth-policy/Dockerfile -t <registry>/auth-policy:<tag> .
-FROM golang:1.24-alpine AS build
+FROM golang:1.25-alpine AS build
 WORKDIR /src
 
 # Copy module files first for layer caching. `go.su[m]` is a glob that
