@@ -31,6 +31,10 @@ jobs:
   # ------------------------------------------------------------------
   build:
     name: build (${{ matrix.name }})
+    permissions:
+      contents: read
+      security-events: write
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
