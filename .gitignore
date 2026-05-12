@@ -28,6 +28,7 @@ scoreboard/dev-data/
 
 # Claude Code local-only
 .claude/settings.local.json
+.claude/last-test-commit
 
 # Local Sysdig scanner output
 scan-logs/
