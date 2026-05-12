@@ -6,11 +6,11 @@ FROM alpine:3.20
 ARG KUBECTL_VERSION=v1.36.0
 
 RUN apk add --no-cache \
-        ttyd \
-        bash \
-        ca-certificates \
-        curl \
-        tini \
+        "ttyd=1.7.7-r0" \
+        "bash=5.2.26-r0" \
+        "ca-certificates=20260413-r0" \
+        "curl=8.14.1-r2" \
+        "tini=0.19.0-r3" \
  && ARCH="$(uname -m)" \
  && case "${ARCH}" in \
         aarch64) ARCH=arm64 ;; \

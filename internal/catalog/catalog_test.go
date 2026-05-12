@@ -87,28 +87,42 @@ windowSeconds: 15
 	}
 }
 
-func TestLoad_TypeInference(t *testing.T) {
+func TestLoad_TypeRequired(t *testing.T) {
 	dir := t.TempDir()
-	// no `type:`, has expectedRules → trigger
+	// no `type:` field — must return an error (inference was removed)
 	writeChallenge(t, dir, "a", `expectedRules: ["X"]`)
-	// no `type:`, no expectedRules → evade
-	writeChallenge(t, dir, "b", `forbiddenRules: ["Y"]
-expectedFlag: "F"`)
-	cat, err := catalog.Load(dir)
-	if err != nil {
-		t.Fatal(err)
+	_, err := catalog.Load(dir)
+	if err == nil {
+		t.Fatal("expected error for missing type:, got nil")
 	}
-	if cat["a"].Type != "trigger" {
-		t.Errorf("a: expected trigger from inference, got %q", cat["a"].Type)
+}
+
+func TestLoad_UnknownTypeError(t *testing.T) {
+	dir := t.TempDir()
+	writeChallenge(t, dir, "a", `type: unknown
+expectedRules: ["X"]`)
+	_, err := catalog.Load(dir)
+	if err == nil {
+		t.Fatal("expected error for unknown type value, got nil")
 	}
-	if cat["b"].Type != "evade" {
-		t.Errorf("b: expected evade from inference, got %q", cat["b"].Type)
+}
+
+func TestLoad_InvalidFlag(t *testing.T) {
+	dir := t.TempDir()
+	writeChallenge(t, dir, "bad-flag", `
+type: evade
+expectedFlag: "invalid-flag-format"
+`)
+	_, err := catalog.Load(dir)
+	if err == nil {
+		t.Fatal("expected error for invalid expectedFlag format, got nil")
 	}
 }
 
 func TestLoad_IDFallbackToDirName(t *testing.T) {
 	dir := t.TempDir()
-	writeChallenge(t, dir, "07-no-id", `expectedRules: ["Z"]`)
+	writeChallenge(t, dir, "07-no-id", `type: trigger
+expectedRules: ["Z"]`)
 	cat, err := catalog.Load(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -134,15 +148,41 @@ func TestLoad_SkipsDirsWithoutFalcoRule(t *testing.T) {
 
 func TestIDs_Sorted(t *testing.T) {
 	dir := t.TempDir()
-	writeChallenge(t, dir, "03-c", `expectedRules: ["a"]`)
-	writeChallenge(t, dir, "01-a", `expectedRules: ["a"]`)
-	writeChallenge(t, dir, "02-b", `expectedRules: ["a"]`)
+	writeChallenge(t, dir, "03-c", `type: trigger
+expectedRules: ["a"]`)
+	writeChallenge(t, dir, "01-a", `type: trigger
+expectedRules: ["a"]`)
+	writeChallenge(t, dir, "02-b", `type: trigger
+expectedRules: ["a"]`)
 	cat, err := catalog.Load(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ids := cat.IDs()
 	want := []string{"01-a", "02-b", "03-c"}
+	for i, id := range ids {
+		if id != want[i] {
+			t.Errorf("IDs[%d]: got %q, want %q", i, id, want[i])
+		}
+	}
+}
+
+func TestLoad_RealChallenges(t *testing.T) {
+	cat, err := catalog.Load("../../challenges")
+	if err != nil {
+		t.Fatalf("failed to load real challenges: %v", err)
+	}
+	want := []string{
+		"01-read-shadow",
+		"02-evade-shadow-read",
+		"03-search-credentials",
+		"04-spawn-shell-untrusted",
+		"05-evade-shell-spawn",
+	}
+	ids := cat.IDs()
+	if len(ids) != len(want) {
+		t.Fatalf("expected %d challenges, got %d: %v", len(want), len(ids), ids)
+	}
 	for i, id := range ids {
 		if id != want[i] {
 			t.Errorf("IDs[%d]: got %q, want %q", i, id, want[i])

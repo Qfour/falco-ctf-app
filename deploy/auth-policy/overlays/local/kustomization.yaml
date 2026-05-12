@@ -5,9 +5,18 @@ resources:
 patches:
   - target: { kind: Deployment, name: auth-policy }
     patch: |-
-      - op: replace
-        path: /spec/template/spec/containers/0/env/1/value
-        value: "ctf.local"
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: auth-policy
+      spec:
+        template:
+          spec:
+            containers:
+              - name: auth-policy
+                env:
+                  - name: EXPECTED_EMAIL_DOMAIN
+                    value: "ctf.local"
 images:
   - name: docker.io/falco-ctf/auth-policy
     newTag: dev

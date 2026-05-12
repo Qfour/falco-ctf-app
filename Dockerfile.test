@@ -5,16 +5,14 @@
 # Usage:
 #   docker build -f Dockerfile.test .
 #   make test
-FROM golang:1.23-alpine
+FROM golang:1.25-alpine
 
 WORKDIR /src
 
-COPY go.mod ./
-COPY go.su[m] ./
+COPY go.mod go.sum ./
 RUN go mod download
 
-COPY cmd ./cmd
-COPY internal ./internal
+COPY . .
 
 RUN go vet ./...
 RUN go test ./... -count=1

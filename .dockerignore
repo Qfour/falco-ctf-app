@@ -1,0 +1,19 @@
+# Version control and CI
+.git
+.github
+
+# Claude Code settings
+.claude
+
+# Kubernetes manifests — not needed in any image build
+deploy/
+
+# Scan output
+scan-logs/
+
+# Secrets and local state
+*.db
+.env
+*.pem
+*.key
+*.cert
