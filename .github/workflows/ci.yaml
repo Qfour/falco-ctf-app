@@ -42,15 +42,19 @@ jobs:
           - name: scoreboard
             context: .
             dockerfile: scoreboard/Dockerfile
+            scan-continue-on-error: false
           - name: auth-policy
             context: .
             dockerfile: auth-policy/Dockerfile
+            scan-continue-on-error: false
           - name: ttyd
             context: images/ttyd
             dockerfile: images/ttyd/Dockerfile
+            scan-continue-on-error: true  # TEMP: kubectl embeds Go 1.26.2 CVEs; unblock until kubectl v1.36.1 ships
           - name: challenge
             context: images/challenge
             dockerfile: images/challenge/Dockerfile
+            scan-continue-on-error: false
     uses: Qfour/qfour-workflows/.github/workflows/image-pipeline.yaml@main
     with:
       name: ${{ matrix.name }}
@@ -59,7 +63,7 @@ jobs:
       push: ${{ github.event_name == 'push' }}
       registry: ${{ vars.ECR_REGISTRY }}
       aws-region: ${{ vars.AWS_REGION }}
-      scan-continue-on-error: ${{ github.event_name == 'push' }}
+      scan-continue-on-error: ${{ matrix.scan-continue-on-error }}
       sysdig-secure-url: https://app.au1.sysdig.com
     secrets:
       sysdig-token: ${{ secrets.SYSDIG_SECURE_TOKEN }}
