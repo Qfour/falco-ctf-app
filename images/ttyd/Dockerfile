@@ -3,7 +3,7 @@
 # has only `pods/exec` on this Pod's name.
 FROM alpine:3.20
 
-ARG KUBECTL_VERSION=v1.31.0
+ARG KUBECTL_VERSION=v1.36.0
 
 RUN apk add --no-cache \
         ttyd \
