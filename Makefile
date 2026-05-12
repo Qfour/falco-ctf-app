@@ -1,19 +1,19 @@
 # falco-ctf-app — application-side build / dev / deploy targets.
 #
 # Conventions:
-#   REGISTRY/TAG control image naming. Defaults match the platform repo's
-#   charts/ctf-user values and deploy/*/overlays/local kustomization.
-#   Override for CI: `make build REGISTRY=ghcr.io/sysdig TAG=$(git rev-parse --short HEAD)`.
+#   REGISTRY/TAG control image naming. TAG defaults to the current git SHA.
+#   For local k8s deploy with the overlay (newTag: dev): make build TAG=dev && make deploy-local
+#   For local CVE scan: make scan TAG=local (builds first automatically)
 
 REGISTRY     ?= docker.io/falco-ctf
-TAG          ?= dev
+TAG          ?= $(shell git rev-parse --short HEAD)
 IMAGES       := scoreboard auth-policy ttyd challenge
 SYSDIG_URL   ?= https://app.au1.sysdig.com
 
 # Go toolchain runs inside Docker (no local Go required). `test` uses
 # `docker build` so it works under Colima too, where bind mounts of the
 # host repo are not shared into the VM.
-GO_IMAGE ?= golang:1.23-alpine
+GO_IMAGE ?= golang:1.25-alpine
 
 .PHONY: help dev dev-down build push load-colima deploy-local lint test tidy gen clean scan
 
@@ -70,7 +70,7 @@ tidy:
 gen:
 	docker build -f Dockerfile.gen --target export -o . .
 
-scan:
+scan: build
 	@command -v sysdig-cli-scanner >/dev/null 2>&1 || \
 	  { echo "error: sysdig-cli-scanner not found — install from https://docs.sysdig.com/en/docs/sysdig-secure/vulnerabilities/pipeline/"; exit 1; }
 	@[ -n "$$SYSDIG_SECURE_API_TOKEN" ] || \

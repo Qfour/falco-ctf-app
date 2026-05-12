@@ -8,7 +8,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 REGISTRY="${REGISTRY:-falco-ctf}"
-TAG="${TAG:-dev}"
+TAG="${TAG:-$(git rev-parse --short HEAD)}"
 
 # name|context|dockerfile  (paths relative to repo root — `-f` is resolved
 # from cwd by modern Docker / BuildKit, not from context)

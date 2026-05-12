@@ -31,8 +31,8 @@
 
 | サービス | builder | final |
 |---|---|---|
-| scoreboard | `golang:1.23-alpine` | `gcr.io/distroless/static-debian12:nonroot` |
-| auth-policy | `golang:1.23-alpine` | `gcr.io/distroless/static-debian12:nonroot` |
+| scoreboard | `golang:1.25-alpine` | `gcr.io/distroless/static-debian12:nonroot` |
+| auth-policy | `golang:1.25-alpine` | `gcr.io/distroless/static-debian12:nonroot` |
 | ttyd | (single-stage) | `alpine:3.20` |
 | challenge | (single-stage) | `alpine:3.20` |
 

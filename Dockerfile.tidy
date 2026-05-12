@@ -5,13 +5,11 @@
 #   docker build -f Dockerfile.tidy --target export -o . .
 #
 # After running, the up-to-date go.mod and go.sum land in the repo root.
-FROM golang:1.23-alpine AS tidy
+FROM golang:1.25-alpine AS tidy
 WORKDIR /src
 
-COPY go.mod ./
-COPY go.su[m] ./
-COPY cmd ./cmd
-COPY internal ./internal
+COPY go.mod go.su[m] ./
+COPY . .
 
 RUN go mod tidy
 

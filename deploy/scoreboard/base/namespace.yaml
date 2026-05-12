@@ -4,3 +4,7 @@ metadata:
   name: scoreboard
   labels:
     app.kubernetes.io/part-of: falco-ctf
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: latest

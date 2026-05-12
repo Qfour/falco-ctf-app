@@ -3,10 +3,10 @@
 // Schema:
 //
 //	challengeId:   string (defaults to directory name)
-//	type:          "trigger" | "evade" (inferred from expectedRules presence if absent)
+//	type:          "trigger" | "evade" (required)
 //	expectedRules: []string  — solve when one of these rules fires
 //	forbiddenRules:[]string  — submission rejected if any fired in the last windowSeconds
-//	expectedFlag:  string
+//	expectedFlag:  string (required for "evade"; must match FALCO{...})
 //	windowSeconds: int (default 10)
 package catalog
 
@@ -14,10 +14,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 
 	"gopkg.in/yaml.v3"
 )
+
+var flagRE = regexp.MustCompile(`^FALCO\{[^}]+\}$`)
 
 type Challenge struct {
 	ID             string   `yaml:"challengeId"`
@@ -86,11 +89,7 @@ func parseFile(path, dirName string) (Challenge, error) {
 		ch.ID = dirName
 	}
 	if ch.Type == "" {
-		if len(ch.ExpectedRules) > 0 {
-			ch.Type = "trigger"
-		} else {
-			ch.Type = "evade"
-		}
+		return Challenge{}, fmt.Errorf("challenge %q: type must be \"trigger\" or \"evade\"", ch.ID)
 	}
 	if ch.WindowSeconds <= 0 {
 		ch.WindowSeconds = 10
@@ -100,10 +99,15 @@ func parseFile(path, dirName string) (Challenge, error) {
 		if ch.ExpectedFlag == "" {
 			return Challenge{}, fmt.Errorf("evade challenge %q: expectedFlag must not be empty", ch.ID)
 		}
+		if !flagRE.MatchString(ch.ExpectedFlag) {
+			return Challenge{}, fmt.Errorf("evade challenge %q: expectedFlag must match FALCO{...}", ch.ID)
+		}
 	case "trigger":
 		if len(ch.ExpectedRules) == 0 {
 			return Challenge{}, fmt.Errorf("trigger challenge %q: expectedRules must not be empty", ch.ID)
 		}
+	default:
+		return Challenge{}, fmt.Errorf("challenge %q: unknown type %q, must be \"trigger\" or \"evade\"", ch.ID, ch.Type)
 	}
 	return ch, nil
 }
