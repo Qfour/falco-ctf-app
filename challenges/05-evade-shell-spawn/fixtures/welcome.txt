@@ -16,5 +16,5 @@ Try (3 通り):
   cat /opt/ctf/httpd | sh     # pipe 経由
 
 Submit:
-  source /opt/ctf/fixtures/submit.sh
+  source /opt/ctf/fixtures/05-evade-shell-spawn/submit.sh
   submit 'FALCO{...}'

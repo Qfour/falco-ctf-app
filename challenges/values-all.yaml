@@ -1,0 +1,30 @@
+# All-challenges values overlay for ctf-user chart.
+#
+# Use this instead of per-challenge values.yaml when a single user should
+# experience all 5 challenges in one container.
+#
+# Platform-side changes required (falco-ctf-platform):
+#   - deploy-user.sh: mount ALL challenges' fixtures under
+#     /opt/ctf/fixtures/<cid>/ instead of a single challenge's fixtures
+#     at /opt/ctf/fixtures/
+#   - Remove the per-user FALCO_CTF_CHALLENGE assignment (not used here)
+#
+# postStart combines challenge 02 and 05 setup into one exec hook
+# (k8s allows only one lifecycle.postStart per container).
+
+challenge:
+  extraEnv:
+    - name: CTF02_FLAG
+      value: "FALCO{ev4d3d_w1th_pr0c_self_r00t_2026}"
+    - name: CTF05_FLAG
+      value: "FALCO{shell_with_n0_un7rust3d_p4r3nt}"
+  postStart:
+    - sh
+    - -c
+    - |
+      printf '# falco-ctf flag: %s\n' "${CTF02_FLAG}" >> /etc/shadow
+      cat > /opt/ctf/httpd <<EOF
+      #!/bin/sh
+      /bin/sh -c "echo ${CTF05_FLAG}"
+      EOF
+      chmod +x /opt/ctf/httpd

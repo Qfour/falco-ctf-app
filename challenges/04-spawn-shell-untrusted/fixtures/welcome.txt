@@ -11,7 +11,7 @@ Hint:
   シェルを別名で保存して実行すれば proc.pname を制御できる。
 
 Try:
-  sh /opt/ctf/fixtures/fake-httpd.sh
+  sh /opt/ctf/fixtures/04-spawn-shell-untrusted/fake-httpd.sh
 
 Or do it yourself:
   cat > /tmp/httpd <<'EOF'

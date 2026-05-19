@@ -11,5 +11,5 @@ Hint:
   別経路で同じファイルに到達できないか考えてみよう。
 
 Submit:
-  source /opt/ctf/fixtures/submit.sh
+  source /opt/ctf/fixtures/02-evade-shadow-read/submit.sh
   submit 'FALCO{...}'
