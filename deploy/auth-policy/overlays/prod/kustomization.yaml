@@ -1,0 +1,42 @@
+# auth-policy — production overlay (EKS).
+#
+# auth-policy sits on the auth hot path of every workspace request, so this
+# overlay scales it to 2 with anti-affinity + PDB. Replace
+# REPLACE_WITH_GIT_SHA at deploy time with the actual image tag.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+  - poddisruptionbudget.yaml
+
+images:
+  - name: docker.io/falco-ctf/auth-policy
+    newName: ghcr.io/sysdig/falco-ctf-auth-policy
+    newTag: REPLACE_WITH_GIT_SHA
+
+patches:
+  # Production: real OAuth provider host and (eventual) corporate email
+  # domain. Update EXPECTED_EMAIL_DOMAIN to match the IdP narrowed in
+  # oauth2-proxy's `email_domains`.
+  - target: { kind: Deployment, name: auth-policy }
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: auth-policy
+      spec:
+        replicas: 2
+        template:
+          spec:
+            topologySpreadConstraints:
+              - maxSkew: 1
+                topologyKey: topology.kubernetes.io/zone
+                whenUnsatisfiable: ScheduleAnyway
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: auth-policy
+            containers:
+              - name: auth-policy
+                env:
+                  - name: EXPECTED_EMAIL_DOMAIN
+                    value: "ctf.example.com"   # TODO: replace with real IdP domain

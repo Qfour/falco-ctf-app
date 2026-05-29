@@ -54,6 +54,59 @@ func newFixture(t *testing.T, now func() time.Time) *fixture {
 	return &fixture{t: t, cat: cat, st: st, srv: srv}
 }
 
+// falcoEventBody builds a minimal valid /falco/events payload. Tests pass
+// option funcs to override defaults; image repo + workspace pod are baked in
+// so the H2 filter doesn't drop legitimate test events.
+func falcoEventBody(rule, user string, opts ...func(map[string]any)) map[string]any {
+	body := map[string]any{
+		"rule": rule,
+		"output_fields": map[string]any{
+			"k8s.ns.name":               "ctf-" + user,
+			"k8s.pod.name":              "workspace",
+			"container.image.repository": "docker.io/falco-ctf/challenge",
+		},
+	}
+	for _, o := range opts {
+		o(body)
+	}
+	return body
+}
+
+// withRawNS overrides k8s.ns.name on an event for "ignored" path tests.
+func withRawNS(ns string) func(map[string]any) {
+	return func(b map[string]any) {
+		b["output_fields"].(map[string]any)["k8s.ns.name"] = ns
+	}
+}
+
+// withRawPod overrides k8s.pod.name on an event for "ignored" path tests.
+func withRawPod(pod string) func(map[string]any) {
+	return func(b map[string]any) {
+		b["output_fields"].(map[string]any)["k8s.pod.name"] = pod
+	}
+}
+
+// withImageRepo overrides container.image.repository.
+func withImageRepo(repo string) func(map[string]any) {
+	return func(b map[string]any) {
+		b["output_fields"].(map[string]any)["container.image.repository"] = repo
+	}
+}
+
+// withPriority sets the top-level priority field.
+func withPriority(p string) func(map[string]any) {
+	return func(b map[string]any) {
+		b["priority"] = p
+	}
+}
+
+// withTime sets the top-level time field (kept for tests covering Falco lag).
+func withTime(s string) func(map[string]any) {
+	return func(b map[string]any) {
+		b["time"] = s
+	}
+}
+
 func (f *fixture) do(method, target string, body any) *httptest.ResponseRecorder {
 	f.t.Helper()
 	var r *http.Request
@@ -92,13 +145,7 @@ func TestHealthz(t *testing.T) {
 
 func TestFalcoEvents_IgnoresNonCTFNamespace(t *testing.T) {
 	f := newFixture(t, nil)
-	w := f.do("POST", "/falco/events", map[string]any{
-		"rule": "Read sensitive file untrusted",
-		"output_fields": map[string]any{
-			"k8s.ns.name":  "kube-system",
-			"k8s.pod.name": "workspace",
-		},
-	})
+	w := f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "alice", withRawNS("kube-system")))
 	if w.Code != 200 {
 		t.Fatal(w.Code)
 	}
@@ -109,28 +156,46 @@ func TestFalcoEvents_IgnoresNonCTFNamespace(t *testing.T) {
 
 func TestFalcoEvents_IgnoresNonWorkspacePod(t *testing.T) {
 	f := newFixture(t, nil)
-	w := f.do("POST", "/falco/events", map[string]any{
-		"rule": "Read sensitive file untrusted",
-		"output_fields": map[string]any{
-			"k8s.ns.name":  "ctf-alice",
-			"k8s.pod.name": "sidecar",
-		},
-	})
+	w := f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "alice", withRawPod("sidecar")))
 	if decode(t, w)["ignored"] != true {
 		t.Fatalf("non-workspace pod must be ignored: %s", w.Body)
 	}
 }
 
+// App-H2: events from a pod whose image is not falco-ctf/challenge must be
+// rejected even if namespace/pod match the workspace pattern.
+func TestFalcoEvents_IgnoresNonChallengeContainer(t *testing.T) {
+	f := newFixture(t, nil)
+	w := f.do("POST", "/falco/events", falcoEventBody(
+		"Read sensitive file untrusted", "alice",
+		withImageRepo("docker.io/library/alpine"),
+	))
+	if decode(t, w)["ignored"] != true {
+		t.Fatalf("non-challenge container events must be ignored: %s", w.Body)
+	}
+}
+
+// App-H2: events explicitly tagged below the Notice priority threshold are
+// dropped to match the Falco rule contract.
+func TestFalcoEvents_IgnoresBelowMinimumPriority(t *testing.T) {
+	f := newFixture(t, nil)
+	for _, p := range []string{"Debug", "Informational"} {
+		w := f.do("POST", "/falco/events", falcoEventBody(
+			"Read sensitive file untrusted", "alice",
+			withPriority(p),
+		))
+		if decode(t, w)["ignored"] != true {
+			t.Fatalf("%s-priority events must be ignored: %s", p, w.Body)
+		}
+	}
+}
+
 func TestFalcoEvents_TriggerSolves(t *testing.T) {
 	f := newFixture(t, nil)
-	w := f.do("POST", "/falco/events", map[string]any{
-		"rule": "Read sensitive file untrusted",
-		"time": "2026-05-11T10:00:00Z",
-		"output_fields": map[string]any{
-			"k8s.ns.name":  "ctf-alice",
-			"k8s.pod.name": "workspace",
-		},
-	})
+	w := f.do("POST", "/falco/events", falcoEventBody(
+		"Read sensitive file untrusted", "alice",
+		withTime("2026-05-11T10:00:00Z"),
+	))
 	if w.Code != 200 {
 		t.Fatal(w.Code)
 	}
@@ -147,13 +212,7 @@ func TestFalcoEvents_TriggerSolves(t *testing.T) {
 
 func TestFalcoEvents_NonMatchingRuleDoesNotSolve(t *testing.T) {
 	f := newFixture(t, nil)
-	f.do("POST", "/falco/events", map[string]any{
-		"rule": "Unrelated rule",
-		"output_fields": map[string]any{
-			"k8s.ns.name":  "ctf-alice",
-			"k8s.pod.name": "workspace",
-		},
-	})
+	f.do("POST", "/falco/events", falcoEventBody("Unrelated rule", "alice"))
 	if got := decode(t, f.do("GET", "/api/state", nil))["stats"].(map[string]any)["solves"]; got.(float64) != 0 {
 		t.Fatalf("expected 0 solves, got %v", got)
 	}
@@ -198,15 +257,10 @@ func TestSubmit_CorrectFlag_WithRecentForbiddenFire_NotSolved(t *testing.T) {
 	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
 	f := newFixture(t, func() time.Time { return now })
 
-	// Fire forbidden rule just before submission (within window=10s).
-	f.do("POST", "/falco/events", map[string]any{
-		"rule": "Read sensitive file untrusted",
-		"time": now.Add(-2 * time.Second).Format(time.RFC3339),
-		"output_fields": map[string]any{
-			"k8s.ns.name":  "ctf-alice",
-			"k8s.pod.name": "workspace",
-		},
-	})
+	// Fire forbidden rule at the same server `now` as the submit — inside the
+	// 10s window. Note: rule-fire timestamps now derive from server time, not
+	// the (attacker-controlled) ev.Time. See App-H3.
+	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "alice"))
 
 	w := f.do("POST", "/api/challenges/02-evade/submit", map[string]any{"user": "alice", "flag": "FALCO{ok}"})
 	m := decode(t, w)
@@ -219,23 +273,41 @@ func TestSubmit_CorrectFlag_WithRecentForbiddenFire_NotSolved(t *testing.T) {
 }
 
 func TestSubmit_CorrectFlag_AfterWindow_Solves(t *testing.T) {
-	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
-	f := newFixture(t, func() time.Time { return now })
+	// Mutable clock: forbidden fire is recorded at t=10:00:00, the submit
+	// happens at t=10:00:30 — 30s later, well past the 10s evade window.
+	// Since App-H3 the recorded fire time is server-side now(), so advancing
+	// the test clock between the fire and the submit is required.
+	var clock time.Time
+	f := newFixture(t, func() time.Time { return clock })
 
-	// Fire forbidden rule 30s ago — outside the 10s window.
-	f.do("POST", "/falco/events", map[string]any{
-		"rule": "Read sensitive file untrusted",
-		"time": now.Add(-30 * time.Second).Format(time.RFC3339),
-		"output_fields": map[string]any{
-			"k8s.ns.name":  "ctf-alice",
-			"k8s.pod.name": "workspace",
-		},
-	})
+	clock = time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "alice"))
 
+	clock = clock.Add(30 * time.Second)
 	w := f.do("POST", "/api/challenges/02-evade/submit", map[string]any{"user": "alice", "flag": "FALCO{ok}"})
 	m := decode(t, w)
 	if m["solved"] != true {
-		t.Fatalf("expected solved (old fire outside window): %v", m)
+		t.Fatalf("expected solved (fire outside 10s window): %v", m)
+	}
+}
+
+// App-H3: a forged event with ev.Time set far in the past must NOT escape
+// the evade window. Rule-fire timestamps are taken from server time, so the
+// attacker cannot pre-age their own forbidden fire.
+func TestFalcoEvents_EvadeWindow_IgnoresAttackerTime(t *testing.T) {
+	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+	f := newFixture(t, func() time.Time { return now })
+
+	// Attacker tries to bury the forbidden fire 1 hour ago.
+	f.do("POST", "/falco/events", falcoEventBody(
+		"Read sensitive file untrusted", "alice",
+		withTime(now.Add(-1*time.Hour).Format(time.RFC3339)),
+	))
+
+	w := f.do("POST", "/api/challenges/02-evade/submit", map[string]any{"user": "alice", "flag": "FALCO{ok}"})
+	m := decode(t, w)
+	if m["evaded"] != false {
+		t.Fatalf("evade window must be evaluated against server time, not ev.Time: %v", m)
 	}
 }
 
@@ -247,16 +319,10 @@ func TestLeaderboard_TieBreakByEarliest(t *testing.T) {
 	f := newFixture(t, func() time.Time { return clock })
 
 	clock = time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
-	f.do("POST", "/falco/events", map[string]any{
-		"rule":          "Read sensitive file untrusted",
-		"output_fields": map[string]any{"k8s.ns.name": "ctf-alice", "k8s.pod.name": "workspace"},
-	})
+	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "alice"))
 
 	clock = time.Date(2026, 5, 11, 10, 30, 0, 0, time.UTC)
-	f.do("POST", "/falco/events", map[string]any{
-		"rule":          "Read sensitive file untrusted",
-		"output_fields": map[string]any{"k8s.ns.name": "ctf-bob", "k8s.pod.name": "workspace"},
-	})
+	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "bob"))
 
 	lb := decode(t, f.do("GET", "/api/state", nil))["leaderboard"].([]any)
 	if lb[0].(map[string]any)["user"] != "alice" {
@@ -272,11 +338,10 @@ func TestFalcoEvents_SolveTimestampUsesReceiptTime(t *testing.T) {
 	fixedNow := time.Date(2026, 5, 11, 11, 38, 0, 0, time.UTC)
 	f := newFixture(t, func() time.Time { return fixedNow })
 
-	f.do("POST", "/falco/events", map[string]any{
-		"rule":          "Read sensitive file untrusted",
-		"time":          "2026-05-11T10:00:00Z", // 1.5h before "now" — simulates Falco lag
-		"output_fields": map[string]any{"k8s.ns.name": "ctf-alice", "k8s.pod.name": "workspace"},
-	})
+	f.do("POST", "/falco/events", falcoEventBody(
+		"Read sensitive file untrusted", "alice",
+		withTime("2026-05-11T10:00:00Z"), // 1.5h before "now" — simulates Falco lag
+	))
 
 	solved := decode(t, f.do("GET", "/api/state", nil))["solved"].([]any)
 	if len(solved) != 1 {
@@ -314,10 +379,7 @@ func TestUnknownPath_404(t *testing.T) {
 func TestMetricsEndpoint_ExposesScoreboardCounters(t *testing.T) {
 	f := newFixture(t, nil)
 	// Drive one ingest path so a counter has a non-zero value to expose.
-	f.do("POST", "/falco/events", map[string]any{
-		"rule":          "Read sensitive file untrusted",
-		"output_fields": map[string]any{"k8s.ns.name": "ctf-alice", "k8s.pod.name": "workspace"},
-	})
+	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "alice"))
 
 	w := f.do("GET", "/metrics", nil)
 	if w.Code != 200 {

@@ -1,0 +1,34 @@
+# scoreboard — production overlay (EKS).
+#
+# Pre-deploy checklist:
+#   - Replace ghcr.io/sysdig/falco-ctf if a different registry is used.
+#   - kustomize edit set image docker.io/falco-ctf/scoreboard=<registry>/scoreboard:<git-sha>
+#   - Patch host in ingress-host.yaml with the real Route53 zone.
+#   - Confirm storageClassName matches the cluster (gp3 default for EKS 1.30+).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+  - poddisruptionbudget.yaml
+
+images:
+  # Invariant I4/I5: replace REPLACE_WITH_GIT_SHA at deploy time via
+  # `kustomize edit set image docker.io/falco-ctf/scoreboard=<registry>/scoreboard:<sha>`
+  # so the rendered manifest pins an immutable tag. Failing to set this will
+  # render `:REPLACE_WITH_GIT_SHA` and the Deployment will not pull anything,
+  # making the misconfiguration loud and obvious.
+  - name: docker.io/falco-ctf/scoreboard
+    newName: ghcr.io/sysdig/falco-ctf-scoreboard
+    newTag: REPLACE_WITH_GIT_SHA
+
+patches:
+  # SQLite-backed PVC: EKS gp3 is the cost/perf sweet spot for single-writer
+  # workloads. The base PVC leaves storageClassName unset on purpose so each
+  # environment pins its own.
+  - target: { kind: PersistentVolumeClaim, name: scoreboard-data }
+    patch: |-
+      - op: add
+        path: /spec/storageClassName
+        value: gp3
+  - target: { kind: Ingress, name: scoreboard }
+    path: ingress-host.yaml
