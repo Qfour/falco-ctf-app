@@ -46,6 +46,7 @@ func New(cat catalog.Catalog, s *store.Store, logger *slog.Logger, now func() ti
 
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/state", h.state)
+	mux.HandleFunc("GET /api/users/{user}/me", h.userMe)
 	submitMW := h.submitLimiter.Middleware(ratelimit.ClientIP)
 	mux.Handle("POST /api/challenges/{cid}/submit", submitMW(http.HandlerFunc(h.submit)))
 }
@@ -138,6 +139,73 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 		"evaded":  true,
 		"solved":  true,
 		"user":    user,
+	})
+}
+
+// --- /api/users/{user}/me ---------------------------------------------------
+
+// userMe serves the participant self-service projection of state.
+// Includes:
+//   - solved challenges for this user, in solve order
+//   - the next unsolved challenge id (by catalog order) so the page can
+//     surface a "what to try next" link
+//   - the rule fires recorded for this user in the last 60s — gives the
+//     participant immediate feedback on which Falco rule they just triggered
+//     without needing operator help (cuts the most common support question)
+//
+// Auth: the endpoint is unauthenticated by design. The CTF event treats
+// per-user progress as public information (the scoreboard is also public).
+// If hosted behind the per-user ttyd ingress (auth-policy gated) the chart
+// can rewrite /me to add the X-Auth-Request-Email check; that's an opt-in.
+func (h *Handler) userMe(w http.ResponseWriter, r *http.Request) {
+	user := strings.TrimSpace(r.PathValue("user"))
+	if user == "" {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "user required"})
+		return
+	}
+
+	snap := h.store.Snapshot()
+	ids := h.cat.IDs()
+	now := h.now()
+
+	type solveEntry struct {
+		Challenge string `json:"challenge"`
+		At        string `json:"at"`
+	}
+	solved := make([]solveEntry, 0)
+	solvedSet := make(map[string]struct{})
+	for k, at := range snap.Solved {
+		if k.User != user {
+			continue
+		}
+		solved = append(solved, solveEntry{Challenge: k.Challenge, At: at})
+		solvedSet[k.Challenge] = struct{}{}
+	}
+	sort.SliceStable(solved, func(i, j int) bool { return solved[i].At < solved[j].At })
+
+	// Next unsolved by catalog order. nil if user has solved everything.
+	var nextUnsolved *string
+	for _, cid := range ids {
+		if _, done := solvedSet[cid]; !done {
+			c := cid
+			nextUnsolved = &c
+			break
+		}
+	}
+
+	// Last 60s of rule fires — short enough that the most recent action is
+	// always at the bottom but old activity ages out quickly.
+	fires := h.store.RecentRuleFires(user, float64(now.Unix()), 60)
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"user":              user,
+		"solved":            solved,
+		"solved_count":      len(solved),
+		"total_challenges":  len(ids),
+		"next_unsolved":     nextUnsolved,
+		"recent_rule_fires": fires,
+		"events":            snap.EventsPerUser[user],
+		"now":               now.UTC().Format(time.RFC3339Nano),
 	})
 }
 

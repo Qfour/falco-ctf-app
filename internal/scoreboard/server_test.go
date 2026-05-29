@@ -354,6 +354,99 @@ func TestFalcoEvents_SolveTimestampUsesReceiptTime(t *testing.T) {
 	}
 }
 
+// ---------------- /me page + /api/users/{user}/me ----------------
+
+func TestUserMe_MissingUser_Rejected(t *testing.T) {
+	f := newFixture(t, nil)
+	// Empty user segment must not yield a usable /me response. Stdlib mux
+	// may 301-redirect "//me" to "/me" before our handler sees it, which
+	// also satisfies the "no usable response for an empty user" intent.
+	w := f.do("GET", "/api/users//me", nil)
+	switch w.Code {
+	case http.StatusBadRequest, http.StatusNotFound, http.StatusMovedPermanently:
+		// expected
+	default:
+		t.Fatalf("expected 301/400/404 for empty user, got %d", w.Code)
+	}
+}
+
+func TestUserMe_NoActivity_ReturnsEmptyShape(t *testing.T) {
+	f := newFixture(t, nil)
+	w := f.do("GET", "/api/users/alice/me", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: %d", w.Code)
+	}
+	m := decode(t, w)
+	if m["user"] != "alice" {
+		t.Errorf("user echo: %v", m["user"])
+	}
+	if m["solved_count"].(float64) != 0 {
+		t.Errorf("solved_count: %v", m["solved_count"])
+	}
+	if m["total_challenges"].(float64) != 2 {
+		t.Errorf("total_challenges: %v", m["total_challenges"])
+	}
+	// next_unsolved should be the first catalog id ("01-read-shadow" or
+	// "02-evade" — Catalog.IDs sorts lexicographically).
+	if m["next_unsolved"] == nil {
+		t.Errorf("expected a next_unsolved id, got nil")
+	}
+	fires, _ := m["recent_rule_fires"].([]any)
+	if len(fires) != 0 {
+		t.Errorf("expected no rule fires, got %d", len(fires))
+	}
+}
+
+func TestUserMe_AfterSolve_SurfacesProgress(t *testing.T) {
+	f := newFixture(t, nil)
+	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "alice"))
+
+	w := f.do("GET", "/api/users/alice/me", nil)
+	if w.Code != http.StatusOK {
+		t.Fatal(w.Code)
+	}
+	m := decode(t, w)
+	if m["solved_count"].(float64) != 1 {
+		t.Fatalf("expected 1 solve, got %v", m["solved_count"])
+	}
+	solved := m["solved"].([]any)
+	first := solved[0].(map[string]any)
+	if first["challenge"] != "01-read-shadow" {
+		t.Errorf("solved.challenge: %v", first["challenge"])
+	}
+	if m["next_unsolved"] != "02-evade" {
+		t.Errorf("next_unsolved should advance to 02-evade, got %v", m["next_unsolved"])
+	}
+}
+
+func TestUserMe_RecentRuleFires(t *testing.T) {
+	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+	f := newFixture(t, func() time.Time { return now })
+
+	// Fire a rule but not a trigger rule — just records to the user's window.
+	f.do("POST", "/falco/events", falcoEventBody("Generic file access", "alice"))
+
+	m := decode(t, f.do("GET", "/api/users/alice/me", nil))
+	fires := m["recent_rule_fires"].([]any)
+	if len(fires) != 1 {
+		t.Fatalf("expected 1 rule fire, got %d (%v)", len(fires), fires)
+	}
+	if fires[0].(map[string]any)["rule"] != "Generic file access" {
+		t.Errorf("rule name: %v", fires[0])
+	}
+}
+
+func TestMeHTML_ServedAtMe(t *testing.T) {
+	f := newFixture(t, nil)
+	w := f.do("GET", "/me?user=alice", nil)
+	if w.Code != 200 {
+		t.Fatalf("status: %d", w.Code)
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte("<title>falco-ctf · me")) {
+		t.Fatalf("/me html missing expected title")
+	}
+}
+
 func TestIndexHTML_ServedAtRoot(t *testing.T) {
 	f := newFixture(t, nil)
 	w := f.do("GET", "/", nil)

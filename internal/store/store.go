@@ -143,6 +143,31 @@ func (s *Store) MarkSolved(user, challenge, at string) (newly bool, err error) {
 	return true, nil
 }
 
+// RuleFire is the public projection of a recorded Falco rule fire.
+// Returned by RecentRuleFires for participant self-service displays.
+type RuleFire struct {
+	Rule string  `json:"rule"`
+	At   float64 `json:"at"` // unix seconds
+}
+
+// RecentRuleFires returns all rule fires for `user` within the last
+// `windowSeconds`, in arrival order. Unlike RecentForbiddenFires (which
+// returns a *set* of rule names for evade-window checks), this returns the
+// raw stream so the participant /me page can show what they just triggered.
+func (s *Store) RecentRuleFires(user string, now float64, windowSeconds int) []RuleFire {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cutoff := now - float64(windowSeconds)
+	fires := s.ruleFires[user]
+	out := make([]RuleFire, 0, len(fires))
+	for _, f := range fires {
+		if f.At >= cutoff {
+			out = append(out, RuleFire{Rule: f.Rule, At: f.At})
+		}
+	}
+	return out
+}
+
 // RecentForbiddenFires returns the *set* of forbidden rules (sorted) that
 // fired for `user` within the last `windowSeconds` from `now`. Empty slice
 // means the evade window is clean.
