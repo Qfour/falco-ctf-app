@@ -9,6 +9,7 @@ resources:
   - ../../base
   - poddisruptionbudget.yaml
   - servicemonitor.yaml
+  - prometheusrule.yaml
 
 images:
   - name: docker.io/falco-ctf/auth-policy
