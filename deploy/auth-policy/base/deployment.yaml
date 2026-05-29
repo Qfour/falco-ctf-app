@@ -17,6 +17,7 @@ spec:
         app.kubernetes.io/name: auth-policy
         app.kubernetes.io/part-of: falco-ctf
     spec:
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532

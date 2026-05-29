@@ -19,6 +19,10 @@ spec:
         app.kubernetes.io/name: scoreboard
         app.kubernetes.io/part-of: falco-ctf
     spec:
+      # scoreboard never calls the Kubernetes API. Disable token automount
+      # so a pod compromise cannot use the in-pod token to enumerate the
+      # cluster.
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532

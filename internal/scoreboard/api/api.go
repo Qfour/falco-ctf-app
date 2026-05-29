@@ -18,37 +18,67 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/metrics"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/oapi"
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/ratelimit"
 	"github.com/Qfour/falco-ctf-app/internal/store"
 )
 
 type Handler struct {
-	cat    catalog.Catalog
-	store  *store.Store
-	logger *slog.Logger
-	now    func() time.Time
+	cat            catalog.Catalog
+	store          *store.Store
+	logger         *slog.Logger
+	now            func() time.Time
+	submitLimiter  *ratelimit.Limiter
 }
 
 func New(cat catalog.Catalog, s *store.Store, logger *slog.Logger, now func() time.Time) *Handler {
-	return &Handler{cat: cat, store: s, logger: logger, now: now}
+	// /submit accepts a claimed user identity. Without per-IP throttling a
+	// participant who scraped someone else's flag could brute-force submits.
+	// 1 req/s with burst 10 lets legitimate typing through but blocks
+	// automated flooding.
+	return &Handler{
+		cat:           cat,
+		store:         s,
+		logger:        logger,
+		now:           now,
+		submitLimiter: ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now),
+	}
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/state", h.state)
-	mux.HandleFunc("POST /api/challenges/{cid}/submit", h.submit)
+	submitMW := h.submitLimiter.Middleware(ratelimit.ClientIP)
+	mux.Handle("POST /api/challenges/{cid}/submit", submitMW(http.HandlerFunc(h.submit)))
 }
 
 // --- submit -----------------------------------------------------------------
 
 func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 	cid := r.PathValue("cid")
+	// auditLog: every branch below records a structured line so post-event
+	// triage can answer "who submitted what flag against which challenge",
+	// even when the result is rejection. Identity (`user`) is claimed by
+	// the request body — never verified — so always log the source address
+	// alongside it for cross-referencing.
+	auditLog := func(outcome string, extra ...any) {
+		fields := []any{
+			"cid", cid,
+			"remote_addr", r.RemoteAddr,
+			"outcome", outcome,
+		}
+		fields = append(fields, extra...)
+		h.logger.Info("submit", fields...)
+	}
+
 	ch, ok := h.cat[cid]
 	if !ok {
 		metrics.SubmissionsTotal.WithLabelValues(cid, "unknown_challenge").Inc()
+		auditLog("unknown_challenge")
 		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"error": "unknown challenge: " + cid})
 		return
 	}
 	if ch.Type != "evade" {
 		metrics.SubmissionsTotal.WithLabelValues(cid, "not_evade").Inc()
+		auditLog("not_evade")
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": cid + " is not an evade challenge"})
 		return
 	}
@@ -57,6 +87,7 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 	var req oapi.SubmitFlagJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		metrics.SubmissionsTotal.WithLabelValues(cid, "bad_request").Inc()
+		auditLog("bad_request", "err", err.Error())
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
@@ -65,11 +96,13 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 
 	if user == "" {
 		metrics.SubmissionsTotal.WithLabelValues(cid, "bad_request").Inc()
+		auditLog("bad_request", "reason", "missing user")
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "user required"})
 		return
 	}
 	if flag != ch.ExpectedFlag {
 		metrics.SubmissionsTotal.WithLabelValues(cid, "wrong_flag").Inc()
+		auditLog("wrong_flag", "user", user)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"correct": false, "reason": "flag mismatch"})
 		return
 	}
@@ -78,6 +111,7 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 	offending := h.store.RecentForbiddenFires(user, ch.ForbiddenRules, now, ch.WindowSeconds)
 	if len(offending) > 0 {
 		metrics.SubmissionsTotal.WithLabelValues(cid, "not_evaded").Inc()
+		auditLog("not_evaded", "user", user, "offending_rules", offending)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"correct": true,
 			"evaded":  false,
@@ -98,6 +132,7 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 		metrics.SolvesTotal.WithLabelValues(cid, "evade").Inc()
 	}
 	metrics.SubmissionsTotal.WithLabelValues(cid, "solved").Inc()
+	auditLog("solved", "user", user, "newly", newly)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"correct": true,
 		"evaded":  true,

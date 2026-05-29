@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -128,14 +129,34 @@ func TestCheck_UpstreamUnreachable_Returns502(t *testing.T) {
 	}
 }
 
-func TestCheck_UpstreamUnexpectedStatus_PassesThrough(t *testing.T) {
+// App-M3 regression pin: oauth2-proxy upstream errors must NOT leak through.
+// Anything other than 200/401/202 should look like a generic 502 to the
+// requester, regardless of the upstream's actual status / body.
+func TestCheck_UpstreamUnexpectedStatus_MaskedAs502(t *testing.T) {
 	upstream := fakeOAuth2Proxy(t, func(_ *http.Request) (int, string) {
 		return http.StatusInternalServerError, ""
 	})
 	defer upstream.Close()
 	h := newHandler(upstream.URL)
 	resp := do(t, h, "/check?host=alice", nil)
-	if resp.StatusCode != http.StatusInternalServerError {
-		t.Fatalf("expected 500 passed through, got %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("expected 502 (masked), got %d", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if strings.Contains(string(body), "500") {
+		t.Fatalf("response body must not leak upstream status: %q", body)
+	}
+}
+
+// App-M4: garbled `host` values (containing @, /, whitespace) must 400 before
+// the request is even forwarded to oauth2-proxy.
+func TestCheck_InvalidHost_Returns400(t *testing.T) {
+	h := newHandler("http://example.invalid")
+	for _, host := range []string{"alice@evil", "alice/admin", "alice space", "ALICE", "../etc"} {
+		target := "/check?host=" + url.QueryEscape(host)
+		resp := do(t, h, target, nil)
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("host=%q must 400, got %d", host, resp.StatusCode)
+		}
 	}
 }

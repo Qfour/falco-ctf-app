@@ -20,11 +20,18 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
+
+// validHost matches the username slugs Dex / oauth2-proxy emit. Restricting
+// the `host` query param to this shape rejects garbled inputs (containing
+// `@`, `/`, whitespace, etc.) before they reach the upstream-status branch
+// and avoids confusing metrics labels.
+var validHost = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 type Config struct {
 	OAuth2ProxyURL      string
@@ -82,6 +89,11 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing ?host= query param", http.StatusBadRequest)
 		return
 	}
+	if !validHost.MatchString(host) {
+		checksTotal.WithLabelValues("bad_request").Inc()
+		http.Error(w, "invalid ?host= value", http.StatusBadRequest)
+		return
+	}
 
 	upstream, err := http.NewRequestWithContext(r.Context(), http.MethodGet, h.cfg.OAuth2ProxyURL, nil)
 	if err != nil {
@@ -117,11 +129,12 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 	case http.StatusAccepted:
 		// authenticated — identity headers are populated; fall through to email check.
 	default:
+		// Don't leak upstream status / body to the requester. Anything other
+		// than 200/401/202 from oauth2-proxy is an internal failure mode that
+		// should look like a generic 502 to the outside.
 		checksTotal.WithLabelValues("upstream_error").Inc()
-		http.Error(w,
-			fmt.Sprintf("oauth2-proxy returned %d", resp.StatusCode),
-			resp.StatusCode,
-		)
+		h.logger.Warn("oauth2-proxy unexpected status", "status", resp.StatusCode)
+		http.Error(w, "upstream error", http.StatusBadGateway)
 		return
 	}
 

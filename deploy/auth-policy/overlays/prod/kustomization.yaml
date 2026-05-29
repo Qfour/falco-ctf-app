@@ -8,6 +8,7 @@ kind: Kustomization
 resources:
   - ../../base
   - poddisruptionbudget.yaml
+  - servicemonitor.yaml
 
 images:
   - name: docker.io/falco-ctf/auth-policy

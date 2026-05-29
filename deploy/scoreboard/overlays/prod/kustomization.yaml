@@ -10,6 +10,8 @@ kind: Kustomization
 resources:
   - ../../base
   - poddisruptionbudget.yaml
+  - backup-cronjob.yaml
+  - servicemonitor.yaml
 
 images:
   # Invariant I4/I5: replace REPLACE_WITH_GIT_SHA at deploy time via
