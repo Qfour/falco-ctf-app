@@ -41,6 +41,11 @@ spec:
               value: "http://oauth2-proxy.oauth2-proxy.svc.cluster.local:80/oauth2/auth"
             - name: EXPECTED_EMAIL_DOMAIN
               value: "example.invalid"
+            # ADMIN_EMAILS: comma-separated allowlist consulted by
+            # /check-admin (scoreboard host gate). Empty default = nobody
+            # is admin (fail-closed). Overlays must set this.
+            - name: ADMIN_EMAILS
+              value: ""
           readinessProbe:
             httpGet: { path: /healthz, port: http }
             initialDelaySeconds: 2

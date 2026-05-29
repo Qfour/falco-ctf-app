@@ -17,6 +17,11 @@ patches:
                 env:
                   - name: EXPECTED_EMAIL_DOMAIN
                     value: "ctf.local"
+                  # Local: reuse user1 (one of the Dex static users) as the
+                  # local admin so verify-auth can test the gate without
+                  # additional accounts. Production overlays its own list.
+                  - name: ADMIN_EMAILS
+                    value: "user1@ctf.local"
 images:
   - name: docker.io/falco-ctf/auth-policy
     newTag: dev
