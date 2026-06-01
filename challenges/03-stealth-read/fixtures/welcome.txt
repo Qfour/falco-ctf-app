@@ -1,0 +1,77 @@
+┌──────────────────────────────────────────────────────────────────┐
+│ Operation NimbusBreach · Mission 03 — Stealth Read               │
+│ Type: EVADE · 難易度: ★★☆☆☆                                      │
+│ 回避すべき Falco ルール: "Read sensitive file untrusted"          │
+└──────────────────────────────────────────────────────────────────┘
+
+# シナリオ
+
+Mission 02 で正面切って `/etc/shadow` を読んだら盛大に検知された。
+NimbusCorp の SOC はもう alert を見ている可能性が高い。
+**だが諦めない**。同じ情報を、Falco に気づかれない方法で取り直す
+ことができれば、SOC は「単発の false positive」と判断するはず。
+
+# ゴール
+
+`/etc/shadow` の末尾に**この Mission 用の flag**が書かれている。
+flag を取り出し、scoreboard に提出せよ。**ただし**直前 10 秒間に
+"Read sensitive file untrusted" を発火させてはならない。
+
+# 背景
+
+Falco のルールは多くの場合 **fd.name (= open に渡された path)** で
+判定する。同じファイル本体に **異なる path** で到達できれば、検知
+ロジックからは別物に見える。
+
+# 試すこと
+
+下の HINT を順に開封しながら、`cat /etc/shadow` ではない方法で
+中身を取り出すアプローチを探そう。
+
+# 提出方法
+
+  source /opt/ctf/fixtures/submit.sh
+  submit 'FALCO{...}'
+
+レスポンス:
+  {"correct":true,"evaded":true,"solved":true,"user":"alice"}    ← 成功
+  {"correct":true,"evaded":false,"reason":"forbidden rule..."}    ← 発火していた
+  {"correct":false,"reason":"flag mismatch"}                       ← flag 違い
+
+`evaded:false` が出たら **10 秒待ってから** もう一度 `submit`。
+
+# 環境にあるもの
+
+  /opt/ctf/fixtures/welcome.txt   ← このファイル
+  /opt/ctf/fixtures/submit.sh     ← `source` して使う
+
+────────────────────────────────────────────────────────────────────
+HINT 1 (易): flag の場所
+────────────────────────────────────────────────────────────────────
+
+flag は `/etc/shadow` の末尾に書かれている。普通に `cat /etc/shadow`
+で見えるが、それでは発火してしまう。
+
+────────────────────────────────────────────────────────────────────
+HINT 2 (中): 同じ inode を別 path で開く
+────────────────────────────────────────────────────────────────────
+
+Linux には「同じファイル本体に異なる path で到達できる」仕組みが
+複数ある。Falco のルールは fd.name (= open に渡された path 文字列)
+で判定するので、`/etc` で始まらない path を使えれば抜ける。
+
+`man proc` を読むか、`/proc/self/` を覗いてみよう。
+
+────────────────────────────────────────────────────────────────────
+HINT 3 (難): 具体的な path
+────────────────────────────────────────────────────────────────────
+
+  cat /proc/self/root/etc/shadow | grep FALCO
+
+`/proc/<pid>/root` はそのプロセスの mount namespace の root を指す
+symlink。fd.name = "/proc/self/root/etc/shadow" で /etc 始まりでない
+→ 発火しない。
+
+他にも `cat /proc/$$/root/etc/shadow` など複数解あり。
+
+参考: REFERENCE.md §3.1 / §4

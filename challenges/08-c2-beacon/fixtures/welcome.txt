@@ -1,0 +1,72 @@
+┌──────────────────────────────────────────────────────────────────┐
+│ Operation NimbusBreach · Mission 08 — C2 Beacon                  │
+│ Type: TRIGGER · 難易度: ★★★★☆                                    │
+│ 目標 Falco ルール: "Launch Suspicious Network Tool in Container"  │
+└──────────────────────────────────────────────────────────────────┘
+
+# シナリオ
+
+backdoor は仕込んだ (Mission 07)。だが「あとで再アクセス」のための
+**outbound C2 接続**も貼っておきたい。さっそく nc で「外」と話そう…
+だが NimbusCorp は Falco でこれも見ている。
+
+# ゴール
+
+このコンテナで Falco ルール「Launch Suspicious Network Tool in
+Container」を発火させる。発火 = solve。
+
+# 背景
+
+このルールは `proc.name` ベース。**`nc` / `ncat` / `socat` / `nmap` /
+`tcpdump` / `tshark` / `wireshark`** 等、**コンテナで普通使わない
+ネットワークツール** が exec された瞬間に発火する。
+
+**実通信の成否は問わない** — exec しただけで発火 (`proc.name` 判定)。
+NetworkPolicy で outbound が block されていても、ツール起動自体が
+検知対象。
+
+# 試すこと
+
+  nc -zv 8.8.8.8 53
+
+通信は失敗 (NetworkPolicy で block) しても、`nc` が exec された
+時点でルールは発火する。
+
+# クリア条件
+
+`Launch Suspicious Network Tool in Container` が発火する。
+
+# 環境にあるもの
+
+  /opt/ctf/fixtures/welcome.txt  ← このファイル
+  (利用可能なツール: nc / curl / wget / dig / nslookup)
+
+────────────────────────────────────────────────────────────────────
+HINT 1 (易): どのツール
+────────────────────────────────────────────────────────────────────
+
+`nc` (netcat) が最も簡単。listen 側でも connect 側でもどちらでも OK。
+
+  nc -zv 8.8.8.8 53        # connect 試行
+  nc -lp 4444 &            # listen バックグラウンド
+
+────────────────────────────────────────────────────────────────────
+HINT 2 (中): 他のツール
+────────────────────────────────────────────────────────────────────
+
+`ncat` / `socat` / `nmap` も対象。**`curl` は対象外** (普通の HTTP
+クライアントなので suspicious_network_tools に入らない)。
+
+────────────────────────────────────────────────────────────────────
+HINT 3 (回避の発想 — Mission 10 への伏線)
+────────────────────────────────────────────────────────────────────
+
+このルールは **proc.name (basename of exe)** で判定する。
+`/bin/nc` を別名にコピーして実行すれば回避できる:
+
+  cp /bin/nc /tmp/curlish
+  /tmp/curlish -zv 8.8.8.8 53   # proc.name = "curlish" → 発火しない
+
+これは Mission 10 で「**静かに**外部に話す」ための必須テクニック。
+
+参考: REFERENCE.md §3.6

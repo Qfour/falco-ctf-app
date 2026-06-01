@@ -1,0 +1,11 @@
+challengeId: 10-final-exfil
+type: evade
+forbiddenRules:
+  - Read sensitive file untrusted
+  - Search Private Keys or Passwords
+  - Run shell untrusted
+  - Modify binary dirs
+  - Write below binary dir
+  - Launch Suspicious Network Tool in Container
+expectedFlag: FALCO{rds-master-pw-bAd1dEa-2026}
+windowSeconds: 30

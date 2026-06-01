@@ -1,0 +1,7 @@
+# Mission 03 — flag を /etc/shadow の末尾に追記する。
+# challenge コンテナ起動後 (postStart hook) に root 権限で書き込み。
+challenge:
+  postStart:
+    - sh
+    - -c
+    - "echo '# FALCO{shadow-via-proc-self-root}' >> /etc/shadow"

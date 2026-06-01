@@ -304,36 +304,54 @@ scoreboard は ルール名 + k8s.ns.name + image.repository を見て、
 
 ## ルールの判定は「文字列」次第
 
-CTF で扱う 3 ルール、それぞれ判定に使うフィールド:
+CTF で扱う 6 ルール、それぞれ判定に使うフィールド:
 
 | ルール | 判定するフィールド | 意味 |
 |---|---|---|
-| Read sensitive file untrusted | `fd.name` | open に渡したパス |
+| Read sensitive file untrusted | `fd.name` | open に渡した path |
 | Search Private Keys or Passwords | `proc.cmdline` | コマンドライン文字列 |
 | Run shell untrusted | `proc.pname` | 親プロセスの comm |
+| Modify binary dirs | `fd.directory` | 書き込み対象 dir |
+| Write below binary dir | `fd.directory` | (拡張 bin dir 含む) |
+| Launch Suspicious Network Tool | `proc.name` | 実行ファイル basename |
 
 **全部、攻撃者が(間接的に)コントロールできる文字列**。
 
 > speaker: ここが今日のキーフレーズ。「Falco は文字列マッチで判定する。
 > その文字列を攻撃者がいじれるなら、ルールは抜けられる」。
+> 攻撃者の発想と防御者の発想を **同じ語彙** で語れるのが Falco の良さ。
 
 ---
 
-## だから 5 問は trigger と evade のセット
+## Operation NimbusBreach — 10 missions
 
-| # | 種類 | ねらい |
-|---|---|---|
-| 01 | trigger | ルールが**そもそも何で発火するか**を体で理解 |
-| **02** | **evade** | 01 の同じルールを **path 経由で回避** |
-| 03 | trigger | cmdline 判定型ルールを発火 |
-| 04 | trigger | proc.pname 判定型ルールを発火 |
-| **05** | **evade** | 04 の同じルールを **exec の仕方で回避** |
+> あなたは NimbusCorp の本番 K8s クラスタに潜入したペンテスター。
+> 目標は本番 DB の master credential を盗み出すこと。
+> NimbusCorp は **Falco を導入**している。**「見つからずに最後まで辿り着け」**。
 
-evade を解けたら、次の段階としては:
-**「自分が運用者だったら、このバイパスをどう塞ぐか?」**
+ATT&CK のキルチェーン順 + trigger/evade の対 (5 ペア):
+
+| # | Mission | 種類 | Falco rule | 想定難易度 |
+|---|---|---|---|---|
+| 01 | Initial Recon | trigger | Modify binary dirs | ★☆☆☆☆ |
+| 02 | Credential Files | trigger | Read sensitive file untrusted | ★☆☆☆☆ |
+| **03** | **Stealth Read** | **evade** | (02 の回避) | ★★☆☆☆ |
+| 04 | Key Search | trigger | Search Private Keys or Passwords | ★★☆☆☆ |
+| **05** | **Silent Search** | **evade** | (04 の回避) | ★★★☆☆ |
+| 06 | Web RCE Shell | trigger | Run shell untrusted | ★★★☆☆ |
+| 07 | Persist | trigger | Write below binary dir | ★★★☆☆ |
+| 08 | C2 Beacon | trigger | Launch Suspicious Network Tool | ★★★★☆ |
+| 09 | Cryptojacker | trigger | crypto miner 検知 | ★★★★☆ |
+| **10** | **The Final Exfil ★BOSS★** | **evade** | **上記 6 ルールを同時回避** | ★★★★★ |
+
+10 を解いた段階で、次の問い:
+**「もし自分が運用者なら、このバイパスをどう塞ぐか?」**
 
 > speaker: 「ルールを書く人 = ルールを抜く人」両方の視点を持って
-> ほしい。今日はその基礎体力をつける場。
+> ほしい。今日はその基礎体力をつける場。10 を解けた人にはぜひ
+> 「もし自分が SOC エンジニアなら 03 のバイパスをどう塞ぐか?」を
+> 聞いてみる (= `fd.ino` ベースのルール / Sysdig Secure の rule
+> chain 等)。
 
 ---
 

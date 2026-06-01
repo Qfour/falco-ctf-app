@@ -1,0 +1,62 @@
+┌──────────────────────────────────────────────────────────────────┐
+│ Operation NimbusBreach · Mission 05 — Silent Search              │
+│ Type: EVADE · 難易度: ★★★☆☆                                      │
+│ 回避すべき Falco ルール: "Search Private Keys or Passwords"       │
+└──────────────────────────────────────────────────────────────────┘
+
+# シナリオ
+
+Mission 04 で雑に `find` を投げて即バレた。**cmdline に id_rsa を含
+めない** 方法で同じ情報を取り直せ。
+すでに鍵の場所は分かっている: `/root/.ssh/id_rsa`。
+
+# ゴール
+
+`/root/.ssh/id_rsa` の中身に**この Mission 用の flag**が埋め込まれて
+いる。flag を抜き取り、scoreboard に提出。**ただし**直前 10 秒間に
+「Search Private Keys or Passwords」を発火させてはならない。
+
+# 背景
+
+ルールは `proc.cmdline` (= 各 exec'd プロセスの /proc/<pid>/cmdline)
+の文字列マッチで判定する。**shell の組み込み機能**を活かして、
+fork-exec される子プロセスの cmdline から **キーワードそのものを
+消す** のがコツ。
+
+# 試すこと
+
+下の HINT を順に開封しながら、cmdline に "id_rsa" を出さない方法で
+ファイルの中身を読む。
+
+# 提出方法
+
+  source /opt/ctf/fixtures/submit.sh
+  submit 'FALCO{...}'
+
+────────────────────────────────────────────────────────────────────
+HINT 1 (易): ファイルの場所
+────────────────────────────────────────────────────────────────────
+
+flag は `/root/.ssh/id_rsa` の中身に埋まっている。普通に
+`cat /root/.ssh/id_rsa` で見えるが…
+
+────────────────────────────────────────────────────────────────────
+HINT 2 (中): cmdline に "id_rsa" を出さない
+────────────────────────────────────────────────────────────────────
+
+`cat /root/.ssh/id_rsa` だと exec された cat の /proc/<pid>/cmdline は
+`cat /root/.ssh/id_rsa` で、Falco rule が拾う。
+**shell の機能で path を引数に取らせず**にファイルを開けないか?
+
+────────────────────────────────────────────────────────────────────
+HINT 3 (難): 入力リダイレクト
+────────────────────────────────────────────────────────────────────
+
+  cat < /root/.ssh/id_rsa | grep FALCO
+  xxd < /root/.ssh/id_rsa
+  od -c < /root/.ssh/id_rsa
+
+shell が `<` を解釈してファイルを開き stdin に渡すので、子プロセス
+`cat` の cmdline は **"cat" のみ**。引数に "id_rsa" が現れない。
+
+参考: REFERENCE.md §3.2

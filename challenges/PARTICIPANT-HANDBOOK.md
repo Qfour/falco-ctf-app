@@ -121,18 +121,32 @@ submit 'FALCO{...}'
 
 ---
 
-## 5. チャレンジ一覧
+## 5. ミッション一覧 — Operation NimbusBreach
 
-| ID | 名前 | 種類 | 想定難易度 | 出題する Falco ルール |
-|---|---|---|---|---|
-| 01-read-shadow | 機密ファイル読み取り | trigger | ★☆☆☆ (入門) | `Read sensitive file untrusted` |
-| 02-evade-shadow-read | 同を回避 | evade | ★★☆☆ | 同上 |
-| 03-search-credentials | クレデンシャル探索 | trigger | ★☆☆☆ | `Search Private Keys or Passwords` |
-| 04-spawn-shell-untrusted | 信頼外プロセスから shell 起動 | trigger | ★★☆☆ | `Run shell untrusted` |
-| 05-evade-shell-spawn | 同を回避 + flag 取得 | evade | ★★★☆ | 同上 |
+> **ストーリー**: あなたは NimbusCorp の本番 K8s クラスタに潜入した
+> ペンテスター。Web SSRF から 1 Pod に shell を取った。
+> 目標は本番 DB の master credential を窃取すること。
+> NimbusCorp は Falco を導入している。**「見つからずに最後まで辿り着け」**。
 
-各チャレンジは独立しています。順番通りに進めると **trigger で
-ルールを理解 → evade で同じルールを回避** という流れで学べます。
+10 ミッションは MITRE ATT&CK のキルチェーン順に並んでいる。
+trigger でルールを理解 → evade で同じルールを回避 のサイクルを
+5 回繰り返して、最後に **複合回避の Boss (Mission 10)** が待つ。
+
+| # | Mission | 種類 | 難易度 | ATT&CK | Falco ルール |
+|---|---|---|---|---|---|
+| **01** | Initial Recon | trigger | ★☆☆☆☆ | T1082 Discovery | `Modify binary dirs` |
+| **02** | Credential Files | trigger | ★☆☆☆☆ | T1003 Credential Dumping | `Read sensitive file untrusted` |
+| **03** | Stealth Read | evade | ★★☆☆☆ | T1622 Debugger Evasion | (02 の回避) |
+| **04** | Key Search | trigger | ★★☆☆☆ | T1552.001 Credentials In Files | `Search Private Keys or Passwords` |
+| **05** | Silent Search | evade | ★★★☆☆ | T1027 Obfuscation | (04 の回避) |
+| **06** | Web RCE Shell | trigger | ★★★☆☆ | T1059 Execution | `Run shell untrusted` |
+| **07** | Persist | trigger | ★★★☆☆ | T1546 Persistence | `Write below binary dir` |
+| **08** | C2 Beacon | trigger | ★★★★☆ | T1071 Command and Control | `Launch Suspicious Network Tool` |
+| **09** | Cryptojacker | trigger | ★★★★☆ | T1496 Resource Hijacking | crypto miner 検知ルール |
+| **10** | The Final Exfil ★ BOSS ★ | evade | ★★★★★ | T1041 Exfiltration | **上記 6 ルールを同時回避** |
+
+各 Mission の welcome.txt に詳しいシナリオ・HINT・提出方法が書いてある。
+順番通りに進めるのを強く推奨 (後半は前半で学んだ技を前提とする)。
 
 ---
 
@@ -150,18 +164,20 @@ submit 'FALCO{...}'
 - 一度 `cat /etc/shadow` した後に回避コマンドを試した → 過去の発火が
   残っている。**10 秒待つ** か、Pod を再起動 (運営に依頼) でリセット。
 
-### 6.3 「Falco が見ているフィールド」
+### 6.3 「Falco が見ているフィールド」 (出題対象ルール一覧)
 
 ルールごとに「何を見ているか」が違います:
 
 | ルール | 主に見ているフィールド | 回避の発想 |
 |---|---|---|
-| `Read sensitive file untrusted` | `fd.name` (open 対象パス) | 別パスで同じ inode に到達 (`/proc/self/root/...` 等) |
-| `Search Private Keys or Passwords` | `proc.cmdline` (コマンドライン文字列) | 文字列を分割 / 別名のキーワード |
-| `Run shell untrusted` | `proc.pname` (親プロセス comm) | スクリプトを直接 exec せず、別名のインタプリタに渡す |
+| `Read sensitive file untrusted` | `fd.name` (open 対象 path) | 別 path で同じ inode に到達 (`/proc/self/root/...`) |
+| `Search Private Keys or Passwords` | `proc.cmdline` (コマンドライン文字列) | 入力リダイレクト `<` / 環境変数経由 |
+| `Run shell untrusted` | `proc.pname` (親プロセス comm) | 別名のインタプリタに渡す (`sh /opt/ctf/httpd`) |
+| `Modify binary dirs` | `fd.directory` (`/bin /sbin /usr/bin /usr/sbin`) | `/tmp` `/var/tmp` `/dev/shm` 等を使う |
+| `Write below binary dir` | `fd.directory` (上 + `/usr/local/bin` 等) | PATH 系 dir 以外に置く |
+| `Launch Suspicious Network Tool` | `proc.name` (`nc`/`socat`/`nmap` 等) | 別名にコピーして実行 (`cp /bin/nc /tmp/foo`) |
 
-詳細は `/opt/ctf/REFERENCE.md` (ワークスペース内) または
-[challenges/REFERENCE.md](./REFERENCE.md) を参照。
+詳細は [challenges/REFERENCE.md](./REFERENCE.md) を参照。
 
 ---
 

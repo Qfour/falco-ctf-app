@@ -1,0 +1,4 @@
+challengeId: 01-initial-recon
+type: trigger
+expectedRules:
+  - Modify binary dirs

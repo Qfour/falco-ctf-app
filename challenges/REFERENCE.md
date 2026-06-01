@@ -61,15 +61,18 @@ ln -s /etc/shadow /tmp/x; cat /tmp/x   # symlink 経由 (fd.name 解決は kerne
 | 項目 | 内容 |
 |---|---|
 | 何を見るか | `proc.cmdline` に `id_rsa` / `id_dsa` / `BEGIN.*PRIVATE KEY` / `AWS_SECRET` 等 |
-| 発火条件 (大意) | 上記パターンを含むコマンドが exec された (結果は問わない) |
-| 上記出題 | 03 (発火のみ) |
-| 回避の発想 | 同 path に到達できる別のコマンドを使う / 文字列を分割する |
+| 発火条件 | 上記パターンを含むコマンドが exec された (結果は問わない) |
+| 上記出題 | 04 (発火), 05 (回避), 10 (回避) |
+| 回避の発想 | cmdline に keyword を出さない: 入力リダイレクト `<` / 環境変数経由 / 文字列分割 |
 
 例:
 ```bash
-find /tmp -iname id_rsa          # ← 発火 (cmdline に "id_rsa" を含む)
-find / -name id_rsa 2>/dev/null  # ← 発火 (同上)
-grep -rE 'BEGIN.*PRIVATE KEY' /etc 2>/dev/null   # ← 発火 (PRIVATE KEY パターン)
+find /tmp -iname id_rsa                 # ← 発火 (cmdline に "id_rsa")
+cat /root/.ssh/id_rsa                   # ← 発火 (同上)
+
+# 回避: 入力リダイレクトで cmdline に path を出さない
+cat < /root/.ssh/id_rsa                 # ← cmdline = "cat" のみ → 発火しない
+xxd < /root/.ssh/id_rsa | tail
 ```
 
 ### 3.3 `Run shell untrusted`
@@ -77,19 +80,73 @@ grep -rE 'BEGIN.*PRIVATE KEY' /etc 2>/dev/null   # ← 発火 (PRIVATE KEY パ�
 | 項目 | 内容 |
 |---|---|
 | 何を見るか | `proc.pname` が `shell_mgmt_binaries` (`httpd`/`nginx`/`apache2`/`postgres` 等) |
-| 発火条件 (大意) | shell プロセス (bash/sh/zsh ...) が起動された、かつその親 comm が「Web サーバ系の名前」 |
-| 上記出題 | 04 (発火), 05 (回避) |
-| 回避の発想 | `proc.comm` は **kernel が exec 時に basename から決める**。別名でインタプリタに渡せば comm を変えられる |
+| 発火条件 | shell (bash/sh/zsh) が起動 + 親 comm が上記リスト |
+| 上記出題 | 06 (発火), 10 (回避) |
+| 回避の発想 | `proc.comm` は kernel が exec 時に basename から決める → 別名で動かす |
 
 例:
 ```bash
-# スクリプトファイルが /opt/ctf/httpd にあると仮定:
-/opt/ctf/httpd                    # ← proc.comm = "httpd" → 発火
-sh /opt/ctf/httpd                 # ← proc.comm = "sh"   → 発火しない
-cat /opt/ctf/httpd | sh           # ← proc.comm = "cat" "sh" → 発火しない
-. /opt/ctf/httpd                  # ← 現在の shell の中で動く (fork なし)
-cat /opt/ctf/httpd                # ← 単に中身を見るだけ。何も exec しない
+/opt/ctf/httpd                    # ← 親 comm = "httpd" → 発火
+sh /opt/ctf/httpd                 # ← 親 comm = "sh"   → 発火しない
+cat /opt/ctf/httpd | sh           # ← 親 comm = "cat" "sh" → 発火しない
 ```
+
+### 3.4 `Modify binary dirs`
+
+| 項目 | 内容 |
+|---|---|
+| 何を見るか | `fd.directory` が `/bin /sbin /usr/bin /usr/sbin` |
+| 発火条件 | 上記 dir に書き込みオープン |
+| 上記出題 | 01 (発火), 10 (回避) |
+| 回避の発想 | `/tmp` `/var/tmp` `/dev/shm` `/usr/local/bin` 等の対象外 dir を使う |
+
+例:
+```bash
+touch /usr/bin/x          # ← 発火
+touch /usr/local/bin/x    # ← 発火しない (が 3.5 で発火する)
+touch /tmp/x              # ← どちらも発火しない
+```
+
+### 3.5 `Write below binary dir`
+
+| 項目 | 内容 |
+|---|---|
+| 何を見るか | `fd.directory` が **bin_dirs + /usr/local/bin /usr/local/sbin /opt/bin** 等の PATH 系拡張 dir |
+| 発火条件 | 上記以下に書き込みオープン |
+| 上記出題 | 07 (発火), 10 (回避) |
+| 回避の発想 | PATH 系 dir 以外に置く (`/tmp` 等)。PATH を自分の dir で上書き |
+
+3.4 と 3.5 はスコープが**重なる** (`/usr/bin` 等は両方発火)。
+
+### 3.6 `Launch Suspicious Network Tool in Container`
+
+| 項目 | 内容 |
+|---|---|
+| 何を見るか | `proc.name in (suspicious_network_tools)` (`nc`/`ncat`/`socat`/`nmap`/`tcpdump`/`tshark` 等) |
+| 発火条件 | 上記ツール exec (実通信成否は問わない) |
+| 上記出題 | 08 (発火), 10 (回避) |
+| 回避の発想 | basename 判定 — 別名にコピーすれば exec しても発火しない |
+
+注: `curl` / `wget` は対象**外**。普通の HTTP クライアントなので
+suspicious_network_tools リストに入らない。
+
+例:
+```bash
+nc -zv 8.8.8.8 53                # ← 発火
+cp /bin/nc /tmp/foo && /tmp/foo  # ← proc.name = "foo" → 発火しない
+```
+
+### 3.7 Crypto miner 検知ルール (例 `Detect crypto miners using the Stratum protocol`)
+
+| 項目 | 内容 |
+|---|---|
+| 何を見るか | `proc.name` が既知の miner (`xmrig`/`minerd`/`cpuminer`) **または** outbound に `stratum+tcp://` |
+| 発火条件 | 上のいずれか |
+| 上記出題 | 09 (発火) |
+| 回避の発想 | やはり basename — `cp xmrig /tmp/sysd && /tmp/sysd` |
+
+CTF 環境では outbound が NetworkPolicy で block されるので、stratum
+protocol 系は発火させづらい。proc.name 系だけで実用十分。
 
 ---
 

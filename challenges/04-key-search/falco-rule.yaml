@@ -1,0 +1,4 @@
+challengeId: 04-key-search
+type: trigger
+expectedRules:
+  - Search Private Keys or Passwords

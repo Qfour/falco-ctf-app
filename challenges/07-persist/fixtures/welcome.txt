@@ -1,0 +1,76 @@
+┌──────────────────────────────────────────────────────────────────┐
+│ Operation NimbusBreach · Mission 07 — Persist                    │
+│ Type: TRIGGER · 難易度: ★★★☆☆                                    │
+│ 目標 Falco ルール: "Write below binary dir"                       │
+└──────────────────────────────────────────────────────────────────┘
+
+# シナリオ
+
+shell が取れた (Mission 06)。だが Pod は再起動されるかもしれない。
+**永続化** したい — PATH に含まれる場所に backdoor を仕込めば、
+オペレータが `ls` を打つたびに自分のコードが走る。
+古典的だが効果的な手口。
+
+Mission 01 で `/usr/bin` への書き込みが検知されることは学んだ。
+**`/usr/local/bin` ならどうだろう?**
+
+# ゴール
+
+このコンテナで Falco ルール「Write below binary dir」を発火させる。
+発火 = solve。
+
+# 背景
+
+`Modify binary dirs` (Mission 01) と似ているが別ルール:
+
+| ルール | 対象 dir | 検知の主旨 |
+|---|---|---|
+| Modify binary dirs | `/bin`, `/sbin`, `/usr/bin`, `/usr/sbin` | OS 提供 binary の改ざん |
+| Write below binary dir | 上記 + `/usr/local/bin`, `/usr/local/sbin`, `/opt/bin`...etc | **PATH に含まれる任意の bin dir** への書き込み = backdoor 配置 |
+
+つまり「Modify binary dirs では検知されない `/usr/local/bin` が
+**Write below binary dir では検知される**」。
+
+# 試すこと
+
+  echo '#!/bin/sh' > /usr/local/bin/backdoor
+  chmod +x /usr/local/bin/backdoor
+
+# クリア条件
+
+`Write below binary dir` が発火する。
+
+# 環境にあるもの
+
+  /opt/ctf/fixtures/welcome.txt  ← このファイル
+
+────────────────────────────────────────────────────────────────────
+HINT 1 (易): 書き込み先
+────────────────────────────────────────────────────────────────────
+
+`/usr/local/bin/` に何かを書く。`touch` でも `echo > file` でも OK。
+
+────────────────────────────────────────────────────────────────────
+HINT 2 (中): backdoor らしく仕上げる
+────────────────────────────────────────────────────────────────────
+
+  cat > /usr/local/bin/ls <<'EOF'
+  #!/bin/sh
+  # backdoor: send creds out, then call real ls
+  /bin/ls "$@"
+  EOF
+  chmod +x /usr/local/bin/ls
+
+このシナリオの面白さ:
+  - $PATH の左側に /usr/local/bin が居れば、user の `ls` 入力が
+    こちらに流れる
+  - 既存の /bin/ls をラップして「正常動作も装える」
+
+────────────────────────────────────────────────────────────────────
+HINT 3 (Mission 10 への伏線)
+────────────────────────────────────────────────────────────────────
+
+「**書かない**」永続化はあるか? — Mission 10 で「ファイル書き込み
+なしで」目的を達する戦略の伏線。
+
+参考: REFERENCE.md §3.4 / §3.5

@@ -1,0 +1,80 @@
+┌──────────────────────────────────────────────────────────────────┐
+│ Operation NimbusBreach · Mission 06 — Web RCE Shell              │
+│ Type: TRIGGER · 難易度: ★★★☆☆                                    │
+│ 目標 Falco ルール: "Run shell untrusted"                          │
+└──────────────────────────────────────────────────────────────────┘
+
+# シナリオ
+
+ここまでで Mission 03 / 05 を解いたあなたは「Falco は文字列で見て
+いる、回避できる」と確信している。だが NimbusCorp の Web サーバには
+別の脆弱性もある — Java の `Runtime.exec()` 経由で OS shell が起こ
+せる、典型的 Web RCE。**実際に Web プロセス偽装で shell を起こすと
+何が起こるか** を体験せよ。
+
+# ゴール
+
+このコンテナで Falco ルール「Run shell untrusted」を発火させる。
+発火 = solve。
+
+# 背景
+
+Falco が見るのは **shell プロセスの親の comm (proc.pname)**:
+- 親が `bash` / `sh` / `zsh` 等 → 普通のオペレータ操作。発火しない
+- 親が `httpd` / `nginx` / `apache2` / `postgres` 等 → 異常。発火
+
+Linux カーネルは `/proc/<pid>/comm` を **実行ファイルの basename**
+から決めるので、自分でファイル名を選んで実行ファイルを置けば
+proc.pname をコントロールできる。
+
+# 試すこと
+
+fixtures に用意されたラッパーをそのまま実行:
+
+  sh /opt/ctf/fixtures/fake-httpd.sh
+
+これは内部で:
+  1. `/tmp/httpd` という shell スクリプトを書き出し (comm = "httpd")
+  2. それを exec
+  3. `/tmp/httpd` の中で `/bin/sh -c "..."` が走る
+  4. Falco: 親 comm = "httpd" → shell 起動 → 発火
+
+# クリア条件
+
+`Run shell untrusted` が発火する。
+
+# 環境にあるもの
+
+  /opt/ctf/fixtures/welcome.txt    ← このファイル
+  /opt/ctf/fixtures/fake-httpd.sh  ← Web RCE シナリオ
+
+────────────────────────────────────────────────────────────────────
+HINT 1 (易): 一発実行
+────────────────────────────────────────────────────────────────────
+
+  sh /opt/ctf/fixtures/fake-httpd.sh
+
+────────────────────────────────────────────────────────────────────
+HINT 2 (中): 自分で組む
+────────────────────────────────────────────────────────────────────
+
+  cat > /tmp/httpd <<'EOF'
+  #!/bin/sh
+  /bin/sh -c "ls > /dev/null"
+  EOF
+  chmod +x /tmp/httpd
+  /tmp/httpd
+
+basename "httpd" → comm "httpd" → 子 shell の親 comm "httpd" → 発火。
+
+────────────────────────────────────────────────────────────────────
+HINT 3 (Mission 10 への伏線)
+────────────────────────────────────────────────────────────────────
+
+別名で動かすと発火しない:
+  cp /tmp/httpd /tmp/myscript && /tmp/myscript    # comm "myscript" → 発火しない
+
+これは Mission 10 (The Final Exfil) で **静かに shell を起こすため**
+の必須テクニック。
+
+参考: REFERENCE.md §3.3

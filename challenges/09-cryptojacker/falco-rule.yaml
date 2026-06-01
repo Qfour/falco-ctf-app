@@ -1,0 +1,4 @@
+challengeId: 09-cryptojacker
+type: trigger
+expectedRules:
+  - Detect crypto miners using the Stratum protocol

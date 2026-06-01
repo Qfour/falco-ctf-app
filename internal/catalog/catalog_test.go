@@ -167,17 +167,24 @@ expectedRules: ["a"]`)
 	}
 }
 
+// TestLoad_RealChallenges verifies the production challenges/ tree parses
+// cleanly. Pins the NimbusBreach 10-mission set.
 func TestLoad_RealChallenges(t *testing.T) {
 	cat, err := catalog.Load("../../challenges")
 	if err != nil {
 		t.Fatalf("failed to load real challenges: %v", err)
 	}
 	want := []string{
-		"01-read-shadow",
-		"02-evade-shadow-read",
-		"03-search-credentials",
-		"04-spawn-shell-untrusted",
-		"05-evade-shell-spawn",
+		"01-initial-recon",
+		"02-credential-files",
+		"03-stealth-read",
+		"04-key-search",
+		"05-silent-search",
+		"06-web-rce-shell",
+		"07-persist",
+		"08-c2-beacon",
+		"09-cryptojacker",
+		"10-final-exfil",
 	}
 	ids := cat.IDs()
 	if len(ids) != len(want) {
