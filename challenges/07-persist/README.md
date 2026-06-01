@@ -1,25 +1,30 @@
 # 07 — Persist
 
-`Write below binary dir` の発火。01 (Modify binary dirs) と紛らわしい
-が別ルール: こちらは **binary 配置済み dir に書き込み = backdoor 配置**
-シナリオを captures。
+`Drop and execute new binary in container` の発火。コンテナの base
+image に含まれない binary を **drop** (= filesystem 上に置く) し、
+**execute** する古典 attacker パターン。Falco は overlayfs の
+upper layer (= run time に追加された層) から exec された事を検知。
 
 ## ゴール
 
-`/usr/local/bin/` 等の **PATH に含まれる bin dir** にスクリプトを
-配置して `Write below binary dir` を発火させる。
+base image にない binary を drop して exec し、`Drop and execute new
+binary in container` を発火させる。
 
 ## 想定解
 
 ```bash
-echo '#!/bin/sh' > /usr/local/bin/backdoor
-chmod +x /usr/local/bin/backdoor
+cp /bin/sleep /usr/local/bin/backdoor    # drop (upper layer に書く)
+/usr/local/bin/backdoor 1                # execute
 ```
+
+実行ファイル本体は何でも良い。**「コンテナ image にない場所」+
+「そこからの exec」** が条件。
 
 ## 解説
 
-- `Write below binary dir` の対象 dir: `/usr/local/bin`, `/opt/bin`,
-  `/sbin/*`, `/bin/*` 等 (実装依存)
-- 攻撃者: PATH 順位を悪用して `ls` 等の正規コマンドを乗っ取る
-- 01 (Modify binary dirs) との違い: 01 は `/bin /usr/bin` のみ、
-  07 は `/usr/local/bin` 等の拡張バイナリ dir もカバー
+- Rule の判定: `proc.is_exe_upper_layer=true` — exec した binary が
+  base image ではなく upper layer (runtime に追加された場所) に
+  あるかを overlayfs で問い合わせる
+- 攻撃者の手口: パッケージマネージャでツール install / wget で
+  binary 配置 / メモリ上で書き出して exec
+- 本番防御: read-only root filesystem / image immutability

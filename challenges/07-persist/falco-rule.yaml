@@ -1,4 +1,4 @@
 challengeId: 07-persist
 type: trigger
 expectedRules:
-  - Write below binary dir
+  - Drop and execute new binary in container

@@ -1,13 +1,14 @@
 ┌──────────────────────────────────────────────────────────────────┐
 │ Operation NimbusBreach · Mission 10 — The Final Exfil  ★ BOSS ★  │
 │ Type: EVADE · 難易度: ★★★★★                                      │
-│ 回避すべき Falco ルール (6 つ):                                     │
-│   ・Read sensitive file untrusted                                 │
-│   ・Search Private Keys or Passwords                              │
-│   ・Run shell untrusted                                           │
-│   ・Modify binary dirs                                            │
-│   ・Write below binary dir                                        │
-│   ・Launch Suspicious Network Tool in Container                   │
+│ 回避すべき Falco ルール (7 つ):                                     │
+│   01 Contact K8S API Server From Container                       │
+│   02 Read sensitive file untrusted                               │
+│   04 Search Private Keys or Passwords                            │
+│   06 Run shell untrusted                                         │
+│   07 Drop and execute new binary in container                    │
+│   08 Redirect STDOUT/STDIN to Network Connection in Container    │
+│   09 Create Hardlink Over Sensitive Files                        │
 └──────────────────────────────────────────────────────────────────┘
 
 # シナリオ
@@ -24,7 +25,7 @@ Mission で学んだ **すべての検知ルール** を、**30 秒の window �
 # ゴール
 
 `/etc/shadow` の末尾、`# NIMBUS_FINAL: FALCO{...}` 行から flag を
-取り出して提出。**直前 30 秒間に 6 つの禁止ルールのいずれも発火
+取り出して提出。**直前 30 秒間に 7 つの禁止ルールのいずれも発火
 させていないこと**。
 
 # 戦略
@@ -35,7 +36,7 @@ Mission で学んだ **すべての検知ルール** を、**30 秒の window �
                             (Read sensitive file untrusted を回避)
   Mission 05 のテクニック → 入力リダイレクトで cmdline 隠し (今回は不要)
   Mission 06 のテクニック → shell 起こすなら別名で
-  Mission 08 のテクニック → ネットワークツール使うなら別名で
+  Mission 09 のテクニック → hardlink ではなく cp で別ファイルに
 
 # 提出方法
 
@@ -65,14 +66,13 @@ HINT 1 (易): flag の場所は分かっている
 HINT 2 (中): 主犯は Read sensitive file untrusted だけ
 ────────────────────────────────────────────────────────────────────
 
-flag を読むためだけなら、Mission 03 と同じテクニックで OK。
+flag を読むためだけなら、Mission 03 と同じテクニックで OK:
 
   cat /proc/self/root/etc/shadow | grep NIMBUS_FINAL
 
-他の 5 ルール (Search Private Keys / Run shell untrusted / Modify
-binary dirs / Write below binary dir / Launch Suspicious Network
-Tool) は **自分から踏まない限り発火しない**。だが過去 30 秒に踏
-んでいたら結果は同じ。
+他の 6 ルール (K8s API / Search Private Keys / Run shell / Drop+exec
+/ Redirect STDIN/OUT / Create Hardlink) は **自分から踏まない限り
+発火しない**。だが過去 30 秒に他の Mission で踏んでいたら結果は同じ。
 
 ────────────────────────────────────────────────────────────────────
 HINT 3 (運営からのアドバイス)

@@ -1,66 +1,70 @@
 ┌──────────────────────────────────────────────────────────────────┐
 │ Operation NimbusBreach · Mission 01 — Initial Recon              │
 │ Type: TRIGGER · 難易度: ★☆☆☆☆ (入門)                              │
-│ 目標 Falco ルール: "Modify binary dirs"                           │
+│ 目標 Falco ルール: "Contact K8S API Server From Container"        │
 └──────────────────────────────────────────────────────────────────┘
 
 # シナリオ
 
-NimbusCorp の Web フロントエンドの SSRF 脆弱性を突き、ようやく Pod に
-侵入できた。リバースシェルが立ち上がったところだ。
-「root として書き込めるはず…」  最初に確認したくなるのは普通だが、
-NimbusCorp のクラスタには Falco がいる。**最初の書き込みで即検知される**
-ことを身をもって学べ。
+NimbusCorp の Web フロントエンドの SSRF 脆弱性を突き、ようやく Pod
+内部に侵入した。最初の一手は環境把握 — Kubernetes クラスタの
+**API server に話しかけて何が動いているかを探る**。
+だが NimbusCorp のクラスタには Falco がいる。**ServiceAccount を
+持たない pod からの API access は即検知される** ことを身をもって
+学べ。
 
 # ゴール
 
-このコンテナで Falco ルール「Modify binary dirs」を発火させる。
-発火 = solve (提出操作は不要)。
+このコンテナで Falco ルール「Contact K8S API Server From Container」を
+発火させる。発火 = solve (提出操作は不要)。
 
 # 背景
 
-`Modify binary dirs` ルールは **`/bin` / `/sbin` / `/usr/bin` / `/usr/sbin`**
-のいずれかに **書き込みオープン** された syscall を見ている。
-攻撃者がバックドアを既存 binary に差し替える / 新規 binary を
-配置する典型挙動。
+K8s API は本来、cluster の controller / kubelet / SA を持つ正規
+workload からしかアクセスされない。**外部から侵入した attacker が
+最初にやる動き** が API への匿名 connect — リスト一覧、リソース
+列挙、token 確認等。Falco はこれを直接検知する。
 
 # 試すこと
 
-```bash
-touch /usr/bin/backdoor
-```
+  curl -sk https://kubernetes.default.svc/api
 
-これだけで発火する。
+curl が SA token を持たないので response は 401 / 403 になるが、
+**TCP connect は通る** → connect syscall を Falco が捕まえ rule 発火。
 
 # クリア条件
 
-ユーザ Namespace (`ctf-$FALCO_CTF_USER`) の challenge コンテナで
-Falco が「Modify binary dirs」を発火させる。
+`Contact K8S API Server From Container` がユーザ Namespace で
+発火する。
 
 # 環境にあるもの
 
   /opt/ctf/fixtures/welcome.txt  ← このファイル
 
 ────────────────────────────────────────────────────────────────────
-HINT 1 (易): どこに書き込めば発火するか
+HINT 1 (易): API host
 ────────────────────────────────────────────────────────────────────
 
-`/bin`, `/sbin`, `/usr/bin`, `/usr/sbin` のどれかに **書き込もう**。
-書き込む内容は何でもいい。
+cluster 内部からは `kubernetes.default.svc` で API server に到達
+できる (in-cluster DNS)。HTTPS で 443 番。
 
 ────────────────────────────────────────────────────────────────────
 HINT 2 (中): 試すコマンド例
 ────────────────────────────────────────────────────────────────────
 
-  touch /usr/bin/anything
-  echo hello > /bin/new-file
-  cp /bin/ls /usr/sbin/myls
+  curl -sk https://kubernetes.default.svc/api          # JSON 一覧
+  curl -sk https://kubernetes.default.svc/version       # version 確認
+  wget -q -O- --no-check-certificate https://kubernetes.default.svc/
+
+`-k` / `--no-check-certificate` は self-signed CA 用。
 
 ────────────────────────────────────────────────────────────────────
-HINT 3 (発展): /usr/local/bin はどうだろう?
+HINT 3 (発展): なぜ正規 workload は発火しないのか
 ────────────────────────────────────────────────────────────────────
 
-`/usr/local/bin` は Falco の `bin_dirs` リストに **入っていない**
-(標準 rules)。書き込んでも発火しない。これが Mission 07 の伏線になる。
+Falco は `k8s_containers` macro でシステム pod (kube-proxy, coredns,
+等) を除外している。さらに `user_known_contact_k8s_api_server_
+activities` で組織側の例外を足せる。**未知の pod からの API
+connect** だけが残る。
 
 参考: REFERENCE.md §3.4

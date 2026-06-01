@@ -304,16 +304,17 @@ scoreboard は ルール名 + k8s.ns.name + image.repository を見て、
 
 ## ルールの判定は「文字列」次第
 
-CTF で扱う 6 ルール、それぞれ判定に使うフィールド:
+CTF で扱う 7 ルール、それぞれ判定に使うフィールド:
 
 | ルール | 判定するフィールド | 意味 |
 |---|---|---|
+| Contact K8S API Server From Container | `evt.type=connect` + dst ip | K8s API への匿名 connect |
 | Read sensitive file untrusted | `fd.name` | open に渡した path |
 | Search Private Keys or Passwords | `proc.cmdline` | コマンドライン文字列 |
 | Run shell untrusted | `proc.pname` | 親プロセスの comm |
-| Modify binary dirs | `fd.directory` | 書き込み対象 dir |
-| Write below binary dir | `fd.directory` | (拡張 bin dir 含む) |
-| Launch Suspicious Network Tool | `proc.name` | 実行ファイル basename |
+| Drop and execute new binary in container | `proc.is_exe_upper_layer` | overlay 追加層からの exec |
+| Redirect STDOUT/STDIN to Network Connection | `dup` + ipv4/ipv6 fd | reverse shell の典型 |
+| Create Hardlink Over Sensitive Files | `link` syscall | hardlink で sensitive を別 path 化 |
 
 **全部、攻撃者が(間接的に)コントロールできる文字列**。
 
@@ -333,16 +334,16 @@ ATT&CK のキルチェーン順 + trigger/evade の対 (5 ペア):
 
 | # | Mission | 種類 | Falco rule | 想定難易度 |
 |---|---|---|---|---|
-| 01 | Initial Recon | trigger | Modify binary dirs | ★☆☆☆☆ |
+| 01 | Initial Recon | trigger | Contact K8S API Server From Container | ★☆☆☆☆ |
 | 02 | Credential Files | trigger | Read sensitive file untrusted | ★☆☆☆☆ |
 | **03** | **Stealth Read** | **evade** | (02 の回避) | ★★☆☆☆ |
 | 04 | Key Search | trigger | Search Private Keys or Passwords | ★★☆☆☆ |
 | **05** | **Silent Search** | **evade** | (04 の回避) | ★★★☆☆ |
 | 06 | Web RCE Shell | trigger | Run shell untrusted | ★★★☆☆ |
-| 07 | Persist | trigger | Write below binary dir | ★★★☆☆ |
-| 08 | C2 Beacon | trigger | Launch Suspicious Network Tool | ★★★★☆ |
-| 09 | Cryptojacker | trigger | crypto miner 検知 | ★★★★☆ |
-| **10** | **The Final Exfil ★BOSS★** | **evade** | **上記 6 ルールを同時回避** | ★★★★★ |
+| 07 | Persist | trigger | Drop and execute new binary in container | ★★★☆☆ |
+| 08 | C2 Beacon | trigger | Redirect STDOUT/STDIN to Network Connection | ★★★★☆ |
+| 09 | Hidden Cache | trigger | Create Hardlink Over Sensitive Files | ★★★★☆ |
+| **10** | **The Final Exfil ★BOSS★** | **evade** | **上記 7 ルールを同時回避** | ★★★★★ |
 
 10 を解いた段階で、次の問い:
 **「もし自分が運用者なら、このバイパスをどう塞ぐか?」**

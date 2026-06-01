@@ -1,4 +1,4 @@
 challengeId: 01-initial-recon
 type: trigger
 expectedRules:
-  - Modify binary dirs
+  - Contact K8S API Server From Container

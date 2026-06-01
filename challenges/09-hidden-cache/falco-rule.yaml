@@ -1,0 +1,4 @@
+challengeId: 09-hidden-cache
+type: trigger
+expectedRules:
+  - Create Hardlink Over Sensitive Files

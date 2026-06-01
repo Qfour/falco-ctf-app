@@ -183,7 +183,7 @@ func TestLoad_RealChallenges(t *testing.T) {
 		"06-web-rce-shell",
 		"07-persist",
 		"08-c2-beacon",
-		"09-cryptojacker",
+		"09-hidden-cache",
 		"10-final-exfil",
 	}
 	ids := cat.IDs()

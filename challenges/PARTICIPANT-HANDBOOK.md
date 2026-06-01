@@ -134,16 +134,16 @@ trigger でルールを理解 → evade で同じルールを回避 のサイク
 
 | # | Mission | 種類 | 難易度 | ATT&CK | Falco ルール |
 |---|---|---|---|---|---|
-| **01** | Initial Recon | trigger | ★☆☆☆☆ | T1082 Discovery | `Modify binary dirs` |
+| **01** | Initial Recon | trigger | ★☆☆☆☆ | T1082 Discovery | `Contact K8S API Server From Container` |
 | **02** | Credential Files | trigger | ★☆☆☆☆ | T1003 Credential Dumping | `Read sensitive file untrusted` |
 | **03** | Stealth Read | evade | ★★☆☆☆ | T1622 Debugger Evasion | (02 の回避) |
 | **04** | Key Search | trigger | ★★☆☆☆ | T1552.001 Credentials In Files | `Search Private Keys or Passwords` |
 | **05** | Silent Search | evade | ★★★☆☆ | T1027 Obfuscation | (04 の回避) |
 | **06** | Web RCE Shell | trigger | ★★★☆☆ | T1059 Execution | `Run shell untrusted` |
-| **07** | Persist | trigger | ★★★☆☆ | T1546 Persistence | `Write below binary dir` |
-| **08** | C2 Beacon | trigger | ★★★★☆ | T1071 Command and Control | `Launch Suspicious Network Tool` |
-| **09** | Cryptojacker | trigger | ★★★★☆ | T1496 Resource Hijacking | crypto miner 検知ルール |
-| **10** | The Final Exfil ★ BOSS ★ | evade | ★★★★★ | T1041 Exfiltration | **上記 6 ルールを同時回避** |
+| **07** | Persist | trigger | ★★★☆☆ | T1546 Persistence | `Drop and execute new binary in container` |
+| **08** | C2 Beacon | trigger | ★★★★☆ | T1071 Command and Control | `Redirect STDOUT/STDIN to Network Connection` |
+| **09** | Hidden Cache | trigger | ★★★★☆ | T1564 Hide Artifacts | `Create Hardlink Over Sensitive Files` |
+| **10** | The Final Exfil ★ BOSS ★ | evade | ★★★★★ | T1041 Exfiltration | **上記 7 ルールを同時回避** |
 
 各 Mission の welcome.txt に詳しいシナリオ・HINT・提出方法が書いてある。
 順番通りに進めるのを強く推奨 (後半は前半で学んだ技を前提とする)。
@@ -170,12 +170,13 @@ trigger でルールを理解 → evade で同じルールを回避 のサイク
 
 | ルール | 主に見ているフィールド | 回避の発想 |
 |---|---|---|
+| `Contact K8S API Server From Container` | `evt.type=connect` + dst ip in API server | curl しない / SA token を持って正規 access |
 | `Read sensitive file untrusted` | `fd.name` (open 対象 path) | 別 path で同じ inode に到達 (`/proc/self/root/...`) |
 | `Search Private Keys or Passwords` | `proc.cmdline` (コマンドライン文字列) | 入力リダイレクト `<` / 環境変数経由 |
 | `Run shell untrusted` | `proc.pname` (親プロセス comm) | 別名のインタプリタに渡す (`sh /opt/ctf/httpd`) |
-| `Modify binary dirs` | `fd.directory` (`/bin /sbin /usr/bin /usr/sbin`) | `/tmp` `/var/tmp` `/dev/shm` 等を使う |
-| `Write below binary dir` | `fd.directory` (上 + `/usr/local/bin` 等) | PATH 系 dir 以外に置く |
-| `Launch Suspicious Network Tool` | `proc.name` (`nc`/`socat`/`nmap` 等) | 別名にコピーして実行 (`cp /bin/nc /tmp/foo`) |
+| `Drop and execute new binary in container` | `proc.is_exe_upper_layer=true` | base image にある binary だけ使う |
+| `Redirect STDOUT/STDIN to Network Connection` | `dup` + socket fd → stdin/out/err | dup2 を使わない / socket を作らない |
+| `Create Hardlink Over Sensitive Files` | `link` syscall + sensitive_files macro | hardlink ではなく `cp` で別 inode に複製 |
 
 詳細は [challenges/REFERENCE.md](./REFERENCE.md) を参照。
 

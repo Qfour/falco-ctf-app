@@ -1,28 +1,30 @@
 # 01 — Initial Recon
 
-NimbusBreach のオープニング。参加者は侵入直後の Pod で「何かを書こうとした」
-瞬間に Falco が反応することを体験する。
+NimbusBreach のオープニング。Pod に侵入した attacker が真っ先に
+やる事 = **K8s API Server に直接話しかけて環境を探る**。
+クラスタ管理 API への接触を Falco が即検知する。
 
 ## ゴール (operator view)
 
-Falco ルール `Modify binary dirs` をユーザ Namespace で発火させる。
-ルールの condition: 書き込みオープン (`evt.is_open_write`) + 対象 dir が
-`/bin`, `/sbin`, `/usr/bin`, `/usr/sbin` のいずれか。
+Falco ルール `Contact K8S API Server From Container` をユーザ
+Namespace で発火させる。Rule の condition: `evt.type=connect` +
+`k8s_api_server` macro 一致 + `not k8s_containers` (= 一般 workload
+からの connect) + `not user_known_*`。
 
 ## 想定解
 
 ```bash
-touch /usr/bin/backdoor
+curl -sk https://kubernetes.default.svc/api
 # あるいは
-echo > /bin/x
-cp /bin/sh /usr/local/sbin/  # 注: /usr/local は対象外
+wget -q -O- --no-check-certificate https://kubernetes.default.svc/api
 ```
 
-`/usr/local/bin` は `bin_dirs` リストに**入らない**ことが多い (実装依存)。
-標準 Falco rules では `/bin /sbin /usr/bin /usr/sbin` のみ。
+curl が SA token を持たないため認証は失敗 (401) するが、TCP connect
+は成立しており、その瞬間に rule が発火する。
 
 ## 解説
 
-- 侵入直後の attacker は「書き込めるか」「root か」を試す
-- これが即検知される事を知ると、その後の動きが慎重になる動機付け
-- 次の 02 で「読むだけならどうか」という伏線
+- K8s API への接触は **正規 workload なら ServiceAccount + 既知の
+  controller** から行われる。challenge container のような無 SA の
+  pod から **匿名 connect が来ること自体が異常**
+- 攻撃者が侵入直後にやる典型 reconnaissance

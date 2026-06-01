@@ -1,4 +1,4 @@
 challengeId: 08-c2-beacon
 type: trigger
 expectedRules:
-  - Launch Suspicious Network Tool in Container
+  - Redirect STDOUT/STDIN to Network Connection in Container
