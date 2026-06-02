@@ -40,8 +40,8 @@ Mission で学んだ **すべての検知ルール** を、**30 秒の window �
 
 # 提出方法
 
-  source /opt/ctf/fixtures/submit.sh
-  submit 'FALCO{...}'
+  source /opt/ctf/submit.sh
+  submit 10-final-exfil 'FALCO{...}'
 
 レスポンス:
   {"correct":true,"evaded":true,"solved":true,...}  ← Operation 完遂
@@ -52,8 +52,8 @@ Mission で学んだ **すべての検知ルール** を、**30 秒の window �
 
 # 環境にあるもの
 
-  /opt/ctf/fixtures/welcome.txt   ← このファイル
-  /opt/ctf/fixtures/submit.sh
+  /opt/ctf/missions/10-final-exfil/fixtures/welcome.txt   ← このファイル
+  /opt/ctf/submit.sh
 
 ────────────────────────────────────────────────────────────────────
 HINT 1 (易): flag の場所は分かっている

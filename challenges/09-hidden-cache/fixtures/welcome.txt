@@ -53,7 +53,7 @@ Falco rule は **sensitive_files macro に該当するファイル** に対す�
 
 # 環境にあるもの
 
-  /opt/ctf/fixtures/welcome.txt  ← このファイル
+  /opt/ctf/missions/09-hidden-cache/fixtures/welcome.txt  ← このファイル
 
 ────────────────────────────────────────────────────────────────────
 HINT 1 (易): 一発実行

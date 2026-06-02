@@ -2,8 +2,9 @@
 
 ようこそ。これは **Falco CTF** イベントの参加者向け資料です。
 当日の前に一度目を通し、イベント中はワークスペース内からいつでも
-参照できるようにしてください (`cat /opt/ctf/fixtures/welcome.txt` で
-各チャレンジの個別ガイドが見られます)。
+参照できるようにしてください。ログイン直後に `/opt/ctf/INDEX.txt`
+が表示され、そこからミッションごとの welcome.txt
+(`/opt/ctf/missions/<NN>-<slug>/fixtures/welcome.txt`) に辿れます。
 
 ---
 
@@ -42,13 +43,15 @@ URL を開くと OIDC ログイン画面に転送されるので、それを入�
 ### 2.2 ワークスペースに置かれているもの
 
 ログイン直後のディレクトリは `/` (root) ですが、課題用の素材は
-`/opt/ctf/` に集約されています。
+`/opt/ctf/` に集約されています。1 つのワークスペースに **10
+ミッション全部** が同時にロードされているので、好きな順で進められます。
 
 | パス | 中身 |
 |---|---|
-| `/opt/ctf/fixtures/welcome.txt` | **このチャレンジの説明**。最初に必ず読む |
-| `/opt/ctf/fixtures/submit.sh` | (evade チャレンジのみ) flag 提出関数 |
-| `/opt/ctf/fixtures/*` | チャレンジ固有のスクリプト・データ |
+| `/opt/ctf/INDEX.txt` | ミッション一覧 (ログイン時に自動表示) |
+| `/opt/ctf/missions/<NN>-<slug>/fixtures/welcome.txt` | **各ミッションの説明**。最初に必ず読む |
+| `/opt/ctf/submit.sh` | (evade ミッションのみ) flag 提出関数 |
+| `/opt/ctf/missions/<NN>-<slug>/README.md` | ミッションの背景・想定解 |
 
 使えるツール:
 
@@ -59,9 +62,10 @@ URL を開くと OIDC ログイン画面に転送されるので、それを入�
 
 > 環境変数で **自分が誰か** が分かります:
 > ```bash
-> echo $FALCO_CTF_USER         # → 自分のユーザ名
-> echo $FALCO_CTF_CHALLENGE    # → 取り組み中のチャレンジ ID
+> echo $FALCO_CTF_USER         # → 自分のユーザ名 (scoreboard key)
 > ```
+> ミッション ID は `submit` 関数の引数で都度指定します
+> (`submit 03-stealth-read 'FALCO{...}'` のように)。
 
 ### 2.3 自分が他のユーザに干渉できないこと
 
@@ -93,10 +97,10 @@ NetworkPolicy + RBAC で他ユーザの workspace には到達できません。
 
 ```bash
 # Step 1: スクリプトを source して submit 関数を有効化
-source /opt/ctf/fixtures/submit.sh
+source /opt/ctf/submit.sh
 
 # Step 2: 関数を呼び出して flag を投げる
-submit 'FALCO{...}'
+submit <mission-id> 'FALCO{...}'
 ```
 
 レスポンス例:
@@ -184,13 +188,13 @@ trigger でルールを理解 → evade で同じルールを回避 のサイク
 
 ## 7. 行き詰まったら
 
-1. `cat /opt/ctf/fixtures/welcome.txt` を再読 — ヒントが段階別に書かれている
+1. `cat /opt/ctf/missions/<NN>-<slug>/fixtures/welcome.txt` を再読 — ヒントが段階別に書かれている
 2. 同じワークスペースで `man <command>` (alpine の `man` パッケージは
    入っていない場合がありますが) もしくは `<command> --help`
 3. それでも分からなければ運営に質問。質問の質を上げるために、以下を
    伝えてください:
    - 自分のユーザ名 (`echo $FALCO_CTF_USER`)
-   - 取り組み中のチャレンジ ID
+   - 取り組み中のミッション ID (例: `03-stealth-read`)
    - 試したコマンド (最後の 2-3 個)
    - 期待した結果と実際の結果
 

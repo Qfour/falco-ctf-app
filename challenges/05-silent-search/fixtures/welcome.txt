@@ -30,8 +30,8 @@ fork-exec される子プロセスの cmdline から **キーワードそのも�
 
 # 提出方法
 
-  source /opt/ctf/fixtures/submit.sh
-  submit 'FALCO{...}'
+  source /opt/ctf/submit.sh
+  submit 05-silent-search 'FALCO{...}'
 
 ────────────────────────────────────────────────────────────────────
 HINT 1 (易): ファイルの場所

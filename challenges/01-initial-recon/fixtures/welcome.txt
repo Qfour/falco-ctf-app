@@ -46,7 +46,7 @@ curl が SA token を持たないので response は 401 / 403 になるが、
 
 # 環境にあるもの
 
-  /opt/ctf/fixtures/welcome.txt  ← このファイル
+  /opt/ctf/missions/01-initial-recon/fixtures/welcome.txt  ← このファイル
 
 ────────────────────────────────────────────────────────────────────
 HINT 1 (易): API host

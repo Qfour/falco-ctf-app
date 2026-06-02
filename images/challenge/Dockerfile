@@ -1,6 +1,10 @@
 # challenge base image — the playground users actually type into.
-# Per-challenge fixtures are mounted/overlaid by the Helm chart at deploy time
-# (see charts/ctf-user/templates/configmap-fixtures.yaml).
+#
+# Build context: **repo root** (so `challenges/` is reachable as a
+# build context path). Per-challenge fixtures are still mountable via
+# the Helm chart's ConfigMap for legacy single-mission deploys, but
+# all-missions mode reads from the image-baked /opt/ctf/missions/
+# directory below.
 FROM alpine:3.20
 
 # Tools commonly required by Falco-detection-style CTF challenges.
@@ -23,6 +27,40 @@ RUN apk add --no-cache \
         shadow \
         ca-certificates \
  && echo 'PS1="\u@\h:\w\$ "' >> /etc/profile
+
+# Bake the 10 missions + cross-mission helpers into the image. This is
+# the source-of-truth for all-missions mode (deploy-user.sh <user> all):
+# the workspace pod has every welcome.txt + fixture available from
+# the first second of its life, no operator switching between missions.
+COPY challenges/ /opt/ctf/missions/
+COPY challenges/submit-all.sh /opt/ctf/submit.sh
+RUN chmod 0644 /opt/ctf/submit.sh
+
+# Quick orientation at login. Printed by /etc/profile additions below.
+RUN printf '%s\n' \
+  '┌─ Operation NimbusBreach — 10 missions ─────────────────────────┐' \
+  '│ Read each mission brief in order:                              │' \
+  '│                                                                │' \
+  '│   cat /opt/ctf/missions/01-initial-recon/fixtures/welcome.txt  │' \
+  '│   cat /opt/ctf/missions/02-credential-files/fixtures/welcome.txt│' \
+  '│   cat /opt/ctf/missions/03-stealth-read/fixtures/welcome.txt   │' \
+  '│   ...                                                          │' \
+  '│                                                                │' \
+  '│ Submit (evade challenges only):                                │' \
+  '│                                                                │' \
+  '│   source /opt/ctf/submit.sh                                    │' \
+  '│   submit <mission-id> '"'"'<flag>'"'"'                                 │' \
+  '│                                                                │' \
+  '│ Reference card:                                                │' \
+  '│   cat /opt/ctf/missions/REFERENCE.md                           │' \
+  '│                                                                │' \
+  '│ Participant handbook (pre-event reading):                      │' \
+  '│   cat /opt/ctf/missions/PARTICIPANT-HANDBOOK.md                │' \
+  '└────────────────────────────────────────────────────────────────┘' \
+  > /opt/ctf/INDEX.txt
+
+# Greet on login so participants always see the entry point.
+RUN echo 'cat /opt/ctf/INDEX.txt 2>/dev/null' >> /etc/profile
 
 # Default sleep keeps the container alive; ttyd reaches it via kubectl exec.
 CMD ["sleep", "infinity"]

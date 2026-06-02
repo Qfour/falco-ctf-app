@@ -30,8 +30,8 @@ Falco のルールは多くの場合 **fd.name (= open に渡された path)** �
 
 # 提出方法
 
-  source /opt/ctf/fixtures/submit.sh
-  submit 'FALCO{...}'
+  source /opt/ctf/submit.sh
+  submit 03-stealth-read 'FALCO{...}'
 
 レスポンス:
   {"correct":true,"evaded":true,"solved":true,"user":"alice"}    ← 成功
@@ -42,8 +42,8 @@ Falco のルールは多くの場合 **fd.name (= open に渡された path)** �
 
 # 環境にあるもの
 
-  /opt/ctf/fixtures/welcome.txt   ← このファイル
-  /opt/ctf/fixtures/submit.sh     ← `source` して使う
+  /opt/ctf/missions/03-stealth-read/fixtures/welcome.txt   ← このファイル
+  /opt/ctf/submit.sh     ← `source` して使う
 
 ────────────────────────────────────────────────────────────────────
 HINT 1 (易): flag の場所

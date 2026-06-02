@@ -9,7 +9,8 @@
 
 ```bash
 echo $FALCO_CTF_USER         # ユーザ名 (= ctf-<username> namespace の username)
-echo $FALCO_CTF_CHALLENGE    # 現在取り組み中の challenge id
+cat /opt/ctf/INDEX.txt       # 10 ミッション一覧 (ログイン時に自動表示)
+ls /opt/ctf/missions/        # ミッション directory
 hostname                     # = pod 名 (workspace)
 cat /etc/os-release          # alpine 3.20 ベース
 ```
@@ -180,12 +181,13 @@ cp /etc/shadow /tmp/c                 # ← Create Hardlink は発火しない
 
 ## 6. 行き詰まったときの定石
 
-1. **welcome.txt を再読** — チャレンジ固有のヒントが書いてある (`cat /opt/ctf/fixtures/welcome.txt`)
+1. **welcome.txt を再読** — ミッション固有のヒントが書いてある
+   (`cat /opt/ctf/missions/<NN>-<slug>/fixtures/welcome.txt`)
 2. **Falco ルール本体を読む** — 何を見ているかを直接確認
    - 参考: https://github.com/falcosecurity/rules/blob/main/rules/falco_rules.yaml
 3. **`/proc/self/<...>`** に逃げる — `/proc/<pid>/root` / `/proc/<pid>/cmdline` 等
 4. **シェル組み込み (builtin) で代用** — `cat foo.txt` → `printf '%s\n' "$(< foo.txt)"` 等
-5. **fixtures 内のスクリプトを覗く** — `cat /opt/ctf/fixtures/submit.sh` 等で
+5. **fixtures 内のスクリプトを覗く** — `cat /opt/ctf/submit.sh` 等で
    提出ロジックの中身がわかる
 
 ---

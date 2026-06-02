@@ -50,7 +50,7 @@ bash の `<>` は:
 
 # 環境にあるもの
 
-  /opt/ctf/fixtures/welcome.txt  ← このファイル
+  /opt/ctf/missions/08-c2-beacon/fixtures/welcome.txt  ← このファイル
 
 ────────────────────────────────────────────────────────────────────
 HINT 1 (易): bash の /dev/tcp

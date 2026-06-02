@@ -41,7 +41,7 @@ style: |
 
 <br>
 
-参加者ハンドブック: `/opt/ctf/fixtures/welcome.txt`
+参加者ハンドブック: `/opt/ctf/INDEX.txt` → `/opt/ctf/missions/<NN>-<slug>/fixtures/welcome.txt`
 
 > speaker: 今日の流れ — まず 25 分で **「Falco とは何か / なぜ要るか /
 > ルールはどう書かれているか」** を話します。その後すぐにワークスペースに
@@ -367,13 +367,15 @@ ATT&CK のキルチェーン順 + trigger/evade の対 (5 ペア):
 
 2. **Web ターミナル (ttyd)** が開く
 
-3. 最初のコマンド (必ず):
+3. 最初の画面 — ログイン時に **`/opt/ctf/INDEX.txt`** が自動表示。
+   そこから次のコマンドへ:
    ```bash
-   cat /opt/ctf/fixtures/welcome.txt
+   cat /opt/ctf/missions/01-initial-recon/fixtures/welcome.txt
    ```
+   10 ミッション全部が同じワークスペースに既に展開済み。
 
 4. trigger 課題: コマンド実行 → 自動 solve
-5. evade 課題: `source /opt/ctf/fixtures/submit.sh && submit 'FALCO{...}'`
+5. evade 課題: `source /opt/ctf/submit.sh && submit <mission-id> 'FALCO{...}'`
 
 詰まったら welcome.txt の HINT 1 → 2 → 3 を開封。
 
@@ -383,11 +385,12 @@ ATT&CK のキルチェーン順 + trigger/evade の対 (5 ペア):
 
 ```bash
 $FALCO_CTF_USER          # 自分のユーザ名
-$FALCO_CTF_CHALLENGE     # 今のチャレンジ ID
+ls /opt/ctf/missions/    # 10 ミッション一覧
+cat /opt/ctf/INDEX.txt   # ログイン時に自動表示される overview
 
 # evade の提出
-source /opt/ctf/fixtures/submit.sh
-submit 'FALCO{...}'
+source /opt/ctf/submit.sh
+submit <mission-id> 'FALCO{...}'
 ```
 
 `PARTICIPANT-HANDBOOK.md` と `REFERENCE.md` は事前配布版。

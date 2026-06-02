@@ -32,7 +32,7 @@ Falco は **コンテナ内であっても host kernel の syscall** を観測�
 
 # 環境にあるもの
 
-  /opt/ctf/fixtures/welcome.txt  ← このファイル
+  /opt/ctf/missions/02-credential-files/fixtures/welcome.txt  ← このファイル
 
 ────────────────────────────────────────────────────────────────────
 HINT 1 (易): どの sensitive file を開けばいいか

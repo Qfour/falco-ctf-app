@@ -31,7 +31,7 @@ proc.pname をコントロールできる。
 
 fixtures に用意されたラッパーをそのまま実行:
 
-  sh /opt/ctf/fixtures/fake-httpd.sh
+  sh /opt/ctf/missions/06-web-rce-shell/fixtures/fake-httpd.sh
 
 これは内部で:
   1. `/tmp/httpd` という shell スクリプトを書き出し (comm = "httpd")
@@ -45,14 +45,14 @@ fixtures に用意されたラッパーをそのまま実行:
 
 # 環境にあるもの
 
-  /opt/ctf/fixtures/welcome.txt    ← このファイル
-  /opt/ctf/fixtures/fake-httpd.sh  ← Web RCE シナリオ
+  /opt/ctf/missions/06-web-rce-shell/fixtures/welcome.txt    ← このファイル
+  /opt/ctf/missions/06-web-rce-shell/fixtures/fake-httpd.sh  ← Web RCE シナリオ
 
 ────────────────────────────────────────────────────────────────────
 HINT 1 (易): 一発実行
 ────────────────────────────────────────────────────────────────────
 
-  sh /opt/ctf/fixtures/fake-httpd.sh
+  sh /opt/ctf/missions/06-web-rce-shell/fixtures/fake-httpd.sh
 
 ────────────────────────────────────────────────────────────────────
 HINT 2 (中): 自分で組む

@@ -44,7 +44,7 @@ runtime に attacker が新しい binary を「**書く**」と、その書き�
 
 # 環境にあるもの
 
-  /opt/ctf/fixtures/welcome.txt  ← このファイル
+  /opt/ctf/missions/07-persist/fixtures/welcome.txt  ← このファイル
 
 ────────────────────────────────────────────────────────────────────
 HINT 1 (易): 流れ

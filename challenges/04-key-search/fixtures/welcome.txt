@@ -34,7 +34,7 @@ movement には SSH 鍵 / AWS credential のほうが便利。
 
 # 環境にあるもの
 
-  /opt/ctf/fixtures/welcome.txt  ← このファイル
+  /opt/ctf/missions/04-key-search/fixtures/welcome.txt  ← このファイル
 
 ────────────────────────────────────────────────────────────────────
 HINT 1 (易): キーワード
