@@ -261,6 +261,14 @@ func (h *Handler) userMe(w http.ResponseWriter, r *http.Request) {
 	ids := h.cat.IDs()
 	now := h.now()
 
+	// Catalog membership — filters out stale solves whose challenge id was
+	// renamed or removed from the catalog (otherwise solved_count exceeds
+	// total_challenges and the UI shows "SOLVED 15/10").
+	idSet := make(map[string]struct{}, len(ids))
+	for _, cid := range ids {
+		idSet[cid] = struct{}{}
+	}
+
 	type solveEntry struct {
 		Challenge string `json:"challenge"`
 		At        string `json:"at"`
@@ -269,6 +277,9 @@ func (h *Handler) userMe(w http.ResponseWriter, r *http.Request) {
 	solvedSet := make(map[string]struct{})
 	for k, at := range snap.Solved {
 		if k.User != user {
+			continue
+		}
+		if _, ok := idSet[k.Challenge]; !ok {
 			continue
 		}
 		solved = append(solved, solveEntry{Challenge: k.Challenge, At: at})
@@ -318,11 +329,23 @@ func (h *Handler) buildState() map[string]any {
 	snap := h.store.Snapshot()
 	ids := h.cat.IDs()
 
+	// Catalog membership — filters out stale solves whose challenge id was
+	// renamed or removed (e.g. early-prototype `01-read-shadow` still in the
+	// SQLite after the NimbusBreach rewrite). Without this the leaderboard
+	// can credit users for retired challenges and report SOLVED 15/10.
+	idSet := make(map[string]struct{}, len(ids))
+	for _, cid := range ids {
+		idSet[cid] = struct{}{}
+	}
+
 	userSet := map[string]struct{}{}
 	for u := range snap.EventsPerUser {
 		userSet[u] = struct{}{}
 	}
 	for k := range snap.Solved {
+		if _, ok := idSet[k.Challenge]; !ok {
+			continue
+		}
 		userSet[k.User] = struct{}{}
 	}
 	users := make([]string, 0, len(userSet))
@@ -333,6 +356,9 @@ func (h *Handler) buildState() map[string]any {
 
 	perUserSolves := map[string][][2]string{}
 	for k, at := range snap.Solved {
+		if _, ok := idSet[k.Challenge]; !ok {
+			continue
+		}
 		perUserSolves[k.User] = append(perUserSolves[k.User], [2]string{k.Challenge, at})
 	}
 
@@ -387,6 +413,9 @@ func (h *Handler) buildState() map[string]any {
 	}
 	perChalSolvers := map[string][][2]string{}
 	for k, at := range snap.Solved {
+		if _, ok := idSet[k.Challenge]; !ok {
+			continue
+		}
 		perChalSolvers[k.Challenge] = append(perChalSolvers[k.Challenge], [2]string{k.User, at})
 	}
 	challenges := make([]chStat, 0, len(ids))
@@ -432,6 +461,9 @@ func (h *Handler) buildState() map[string]any {
 	}
 	allSolves := make([]recentEntry, 0, len(snap.Solved))
 	for k, at := range snap.Solved {
+		if _, ok := idSet[k.Challenge]; !ok {
+			continue
+		}
 		allSolves = append(allSolves, recentEntry{
 			User:        k.User,
 			DisplayName: displayOf(k.User),
