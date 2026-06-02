@@ -16,6 +16,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -127,16 +128,26 @@ func (s *Store) loadFromDB() error {
 	return dn.Err()
 }
 
-// SetDisplayName records or updates the participant-chosen display name for
-// `user`. Identity (`user`) is the auth-derived stable key — anything that
-// scores or audits goes via identity. `name` is purely cosmetic and may be
-// changed at any time.
+// ErrDisplayNameAlreadySet is returned by SetDisplayName when the user
+// already has a name recorded. Display names are operator-seeded at
+// workspace deploy time (via deploy-user.sh --display-name) and not
+// re-settable afterwards — the property keeps the leaderboard's name ↔
+// real participant binding stable across the event.
+var ErrDisplayNameAlreadySet = errors.New("display name already set")
+
+// SetDisplayName records the operator-supplied display name for `user`.
+// First-set-wins: if a display name is already recorded, the call
+// returns ErrDisplayNameAlreadySet without modifying the row. Identity
+// (`user`) is the auth-derived stable key — anything that scores or
+// audits goes via identity; `name` is purely cosmetic.
 func (s *Store) SetDisplayName(user, name, at string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if existing, ok := s.displayNames[user]; ok && existing != "" {
+		return ErrDisplayNameAlreadySet
+	}
 	if _, err := s.db.Exec(
-		`INSERT INTO display_names (user, name, set_at) VALUES (?, ?, ?)
-		 ON CONFLICT(user) DO UPDATE SET name=excluded.name, set_at=excluded.set_at`,
+		`INSERT INTO display_names (user, name, set_at) VALUES (?, ?, ?)`,
 		user, name, at,
 	); err != nil {
 		return err
