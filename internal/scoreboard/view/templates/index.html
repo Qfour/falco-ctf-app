@@ -236,7 +236,7 @@
         const rankCls = p.rank <= 3 ? 'rank-' + p.rank : '';
         return `<tr>
           <td><span class="rank ${rankCls}">#${p.rank}</span></td>
-          <td><span class="user-cell"><span class="avatar">${avatarChar(p.user)}</span>${esc(p.user)}</span></td>
+          <td><span class="user-cell"><span class="avatar">${avatarChar(p.display_name || p.user)}</span>${esc(p.display_name || p.user)}</span></td>
           <td><span class="score-cell">${p.solved}<span class="total">/${totalChal}</span></span></td>
           <td><div class="progress"><div class="progress-bar" style="width:${pct}%"></div></div></td>
           <td><span class="events-cell">${p.events.toLocaleString()}</span></td>
@@ -287,7 +287,7 @@
         seen.add(key);
         return `<div class="activity-item${fresh ? ' fresh' : ''}">
           <div style="min-width:0">
-            <span class="who">${esc(s.user)}</span>
+            <span class="who">${esc(s.display_name || s.user)}</span>
             <span class="verb">solved</span>
             <span class="what">${esc(s.challenge)}</span>
           </div>

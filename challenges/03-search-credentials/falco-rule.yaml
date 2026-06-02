@@ -1,8 +1,0 @@
-# 03-search-credentials: trigger style.
-# Solved when the user causes Falco to fire the listed default rule from
-# their challenge container — no flag submission required.
-
-challengeId: "03-search-credentials"
-type: trigger
-expectedRules:
-  - "Search Private Keys or Passwords"

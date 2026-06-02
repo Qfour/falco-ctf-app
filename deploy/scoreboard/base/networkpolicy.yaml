@@ -48,6 +48,18 @@ spec:
       ports:
         - protocol: TCP
           port: 8000
+    # ctf-user workspaces → /api/users/{user}/me + /api/users/{user}/display-name +
+    # /api/challenges/{cid}/submit. NP can't restrict by path, so this opens
+    # port 8000 wholesale; the scoreboard's App-H2 ingest filter
+    # (container.image.repository must contain "falco-ctf/challenge",
+    # priority >= Notice) prevents the workspace from forging /falco/events.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              app.kubernetes.io/name: ctf-user
+      ports:
+        - protocol: TCP
+          port: 8000
   egress:
     # kube-dns only — the scoreboard never originates outbound traffic.
     - to:

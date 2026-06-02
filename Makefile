@@ -42,7 +42,7 @@ build:
 	docker build -t $(REGISTRY)/scoreboard:$(TAG)  -f scoreboard/Dockerfile  .
 	docker build -t $(REGISTRY)/auth-policy:$(TAG) -f auth-policy/Dockerfile .
 	docker build -t $(REGISTRY)/ttyd:$(TAG)        -f images/ttyd/Dockerfile      images/ttyd
-	docker build -t $(REGISTRY)/challenge:$(TAG)   -f images/challenge/Dockerfile images/challenge
+	docker build -t $(REGISTRY)/challenge:$(TAG)   -f images/challenge/Dockerfile .
 
 push:
 	@for img in $(IMAGES); do docker push $(REGISTRY)/$$img:$(TAG); done

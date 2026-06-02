@@ -1,0 +1,4 @@
+challengeId: 08-c2-beacon
+type: trigger
+expectedRules:
+  - Redirect STDOUT/STDIN to Network Connection in Container

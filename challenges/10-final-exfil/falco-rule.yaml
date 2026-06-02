@@ -1,0 +1,12 @@
+challengeId: 10-final-exfil
+type: evade
+forbiddenRules:
+  - Contact K8S API Server From Container
+  - Read sensitive file untrusted
+  - Search Private Keys or Passwords
+  - Run shell untrusted
+  - Drop and execute new binary in container
+  - Redirect STDOUT/STDIN to Network Connection in Container
+  - Create Hardlink Over Sensitive Files
+expectedFlag: FALCO{rds-master-pw-bAd1dEa-2026}
+windowSeconds: 30

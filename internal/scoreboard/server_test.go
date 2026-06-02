@@ -354,6 +354,179 @@ func TestFalcoEvents_SolveTimestampUsesReceiptTime(t *testing.T) {
 	}
 }
 
+// ---------------- /me page + /api/users/{user}/me ----------------
+
+func TestUserMe_MissingUser_Rejected(t *testing.T) {
+	f := newFixture(t, nil)
+	// Empty user segment must not yield a usable /me response. Stdlib mux
+	// may 301-redirect "//me" to "/me" before our handler sees it, which
+	// also satisfies the "no usable response for an empty user" intent.
+	w := f.do("GET", "/api/users//me", nil)
+	switch w.Code {
+	case http.StatusBadRequest, http.StatusNotFound, http.StatusMovedPermanently:
+		// expected
+	default:
+		t.Fatalf("expected 301/400/404 for empty user, got %d", w.Code)
+	}
+}
+
+func TestUserMe_NoActivity_ReturnsEmptyShape(t *testing.T) {
+	f := newFixture(t, nil)
+	w := f.do("GET", "/api/users/alice/me", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: %d", w.Code)
+	}
+	m := decode(t, w)
+	if m["user"] != "alice" {
+		t.Errorf("user echo: %v", m["user"])
+	}
+	if m["solved_count"].(float64) != 0 {
+		t.Errorf("solved_count: %v", m["solved_count"])
+	}
+	if m["total_challenges"].(float64) != 2 {
+		t.Errorf("total_challenges: %v", m["total_challenges"])
+	}
+	// next_unsolved should be the first catalog id ("01-read-shadow" or
+	// "02-evade" — Catalog.IDs sorts lexicographically).
+	if m["next_unsolved"] == nil {
+		t.Errorf("expected a next_unsolved id, got nil")
+	}
+	fires, _ := m["recent_rule_fires"].([]any)
+	if len(fires) != 0 {
+		t.Errorf("expected no rule fires, got %d", len(fires))
+	}
+}
+
+func TestUserMe_AfterSolve_SurfacesProgress(t *testing.T) {
+	f := newFixture(t, nil)
+	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "alice"))
+
+	w := f.do("GET", "/api/users/alice/me", nil)
+	if w.Code != http.StatusOK {
+		t.Fatal(w.Code)
+	}
+	m := decode(t, w)
+	if m["solved_count"].(float64) != 1 {
+		t.Fatalf("expected 1 solve, got %v", m["solved_count"])
+	}
+	solved := m["solved"].([]any)
+	first := solved[0].(map[string]any)
+	if first["challenge"] != "01-read-shadow" {
+		t.Errorf("solved.challenge: %v", first["challenge"])
+	}
+	if m["next_unsolved"] != "02-evade" {
+		t.Errorf("next_unsolved should advance to 02-evade, got %v", m["next_unsolved"])
+	}
+}
+
+func TestUserMe_RecentRuleFires(t *testing.T) {
+	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+	f := newFixture(t, func() time.Time { return now })
+
+	// Fire a rule but not a trigger rule — just records to the user's window.
+	f.do("POST", "/falco/events", falcoEventBody("Generic file access", "alice"))
+
+	m := decode(t, f.do("GET", "/api/users/alice/me", nil))
+	fires := m["recent_rule_fires"].([]any)
+	if len(fires) != 1 {
+		t.Fatalf("expected 1 rule fire, got %d (%v)", len(fires), fires)
+	}
+	if fires[0].(map[string]any)["rule"] != "Generic file access" {
+		t.Errorf("rule name: %v", fires[0])
+	}
+}
+
+// ---------------- /api/users/{user}/display-name ----------------
+
+func TestDisplayName_SetThenReadInState(t *testing.T) {
+	f := newFixture(t, nil)
+	w := f.do("POST", "/api/users/alice/display-name", map[string]any{"name": "Alice ★"})
+	if w.Code != 200 {
+		t.Fatalf("status: %d body=%s", w.Code, w.Body)
+	}
+	m := decode(t, w)
+	if m["display_name"] != "Alice ★" || m["user"] != "alice" {
+		t.Fatalf("response: %v", m)
+	}
+
+	// /api/users/{user}/me reflects it
+	got := decode(t, f.do("GET", "/api/users/alice/me", nil))
+	if got["display_name"] != "Alice ★" {
+		t.Errorf("/me display_name: %v", got["display_name"])
+	}
+
+	// /api/state leaderboard entries get it too (need at least one solve to
+	// surface alice in the leaderboard — fire a trigger).
+	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "alice"))
+	state := decode(t, f.do("GET", "/api/state", nil))
+	lb := state["leaderboard"].([]any)
+	first := lb[0].(map[string]any)
+	if first["display_name"] != "Alice ★" {
+		t.Errorf("leaderboard display_name: %v (full row=%v)", first["display_name"], first)
+	}
+}
+
+func TestDisplayName_DefaultsToIdentity(t *testing.T) {
+	f := newFixture(t, nil)
+	// Never set; me should fall back to identity.
+	got := decode(t, f.do("GET", "/api/users/bob/me", nil))
+	if got["display_name"] != "bob" {
+		t.Fatalf("expected fallback to identity, got %v", got["display_name"])
+	}
+}
+
+func TestDisplayName_Validation(t *testing.T) {
+	f := newFixture(t, nil)
+	bad := []map[string]any{
+		{"name": ""},                                          // empty
+		{"name": "<script>"},                                   // HTML metachar
+		{"name": "ab&cd"},                                      // HTML metachar
+		{"name": "ab\x00cd"},                                   // control char
+		{"name": "1234567890123456789012345678901234567890"},   // > 32 runes
+	}
+	for _, b := range bad {
+		w := f.do("POST", "/api/users/alice/display-name", b)
+		if w.Code != 400 {
+			t.Errorf("name=%v should be 400, got %d", b["name"], w.Code)
+		}
+	}
+}
+
+// Display name is first-set-only — operators seed it at workspace deploy
+// time and participants cannot overwrite. Pins the 409-on-second-set
+// contract so a future revert to last-write-wins is loud.
+func TestDisplayName_FirstSetWinsSecondReturns409(t *testing.T) {
+	f := newFixture(t, nil)
+	w1 := f.do("POST", "/api/users/alice/display-name", map[string]any{"name": "First"})
+	if w1.Code != 200 {
+		t.Fatalf("first set should succeed, got %d", w1.Code)
+	}
+	w2 := f.do("POST", "/api/users/alice/display-name", map[string]any{"name": "Second"})
+	if w2.Code != http.StatusConflict {
+		t.Fatalf("second set should be 409, got %d", w2.Code)
+	}
+	body := decode(t, w2)
+	if body["display_name"] != "First" {
+		t.Errorf("conflict body should echo current name, got %v", body["display_name"])
+	}
+	// /me still reflects the first name
+	got := decode(t, f.do("GET", "/api/users/alice/me", nil))
+	if got["display_name"] != "First" {
+		t.Fatalf("first name should persist, got %v", got["display_name"])
+	}
+}
+
+func TestMeHTML_ServedAtMe(t *testing.T) {
+	f := newFixture(t, nil)
+	w := f.do("GET", "/me?user=alice", nil)
+	if w.Code != 200 {
+		t.Fatalf("status: %d", w.Code)
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte("<title>falco-ctf · me")) {
+		t.Fatalf("/me html missing expected title")
+	}
+}
+
 func TestIndexHTML_ServedAtRoot(t *testing.T) {
 	f := newFixture(t, nil)
 	w := f.do("GET", "/", nil)

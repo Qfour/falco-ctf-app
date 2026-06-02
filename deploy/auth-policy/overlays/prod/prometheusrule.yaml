@@ -1,0 +1,56 @@
+# Prometheus Operator alerts for auth-policy.
+#
+# auth-policy sits on the auth hot path of every workspace request —
+# latency and error budgets are tighter than scoreboard.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: auth-policy
+  namespace: auth-policy
+  labels:
+    app.kubernetes.io/name: auth-policy
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: auth-policy.rules
+      interval: 30s
+      rules:
+        - alert: AuthPolicyAllDown
+          # prod has 2 replicas + topologySpread. 0 available = total auth
+          # outage = participants cannot reach their workspaces.
+          expr: |
+            kube_deployment_status_replicas_available{namespace="auth-policy",deployment="auth-policy"} == 0
+          for: 1m
+          labels:
+            severity: critical
+            component: auth-policy
+          annotations:
+            summary: "auth-policy has zero available replicas — workspaces are blocked"
+            description: "All auth-policy pods are unavailable. Every workspace ingress will 502. Check pod logs and oauth2-proxy reachability."
+
+        - alert: AuthPolicyHighLatency
+          expr: |
+            histogram_quantile(0.99,
+              sum by (le) (rate(authpolicy_upstream_request_duration_seconds_bucket[5m]))
+            ) > 0.2
+          for: 5m
+          labels:
+            severity: warning
+            component: auth-policy
+          annotations:
+            summary: "auth-policy p99 upstream latency >200ms"
+            description: "oauth2-proxy /oauth2/auth subrequests are slow. Inspect oauth2-proxy / Dex health."
+
+        - alert: AuthPolicyUpstreamErrors
+          # `upstream_error` includes 5xx from oauth2-proxy AND network
+          # failures reaching it. Either is operator-actionable.
+          expr: |
+            sum(rate(authpolicy_checks_total{result="upstream_error"}[5m]))
+              / sum(rate(authpolicy_checks_total[5m])) > 0.01
+          for: 5m
+          labels:
+            severity: warning
+            component: auth-policy
+          annotations:
+            summary: "auth-policy upstream-error rate >1%"
+            description: "auth-policy is masking upstream errors as 502. Workspaces are intermittently inaccessible. Check oauth2-proxy / Dex / network policy."

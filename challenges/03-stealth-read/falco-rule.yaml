@@ -1,0 +1,6 @@
+challengeId: 03-stealth-read
+type: evade
+forbiddenRules:
+  - Read sensitive file untrusted
+expectedFlag: FALCO{shadow-via-proc-self-root}
+windowSeconds: 10

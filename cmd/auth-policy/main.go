@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -21,6 +22,10 @@ func main() {
 		OAuth2ProxyURL:      env("OAUTH2_PROXY_AUTH_URL", "http://oauth2-proxy.oauth2-proxy.svc.cluster.local:80/oauth2/auth"),
 		ExpectedEmailDomain: env("EXPECTED_EMAIL_DOMAIN", "ctf.local"),
 		UpstreamTimeout:     5 * time.Second,
+		// ADMIN_EMAILS is a comma-separated allowlist consulted by
+		// /check-admin (scoreboard host gate). Empty / unset = nobody is
+		// admin = fail-closed.
+		AdminEmails: splitCSV(env("ADMIN_EMAILS", "")),
 	}
 	addr := env("LISTEN_ADDR", ":8000")
 
@@ -59,4 +64,21 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// splitCSV parses a comma-separated env var. Whitespace around items is
+// trimmed; empty items are dropped.
+func splitCSV(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

@@ -9,6 +9,7 @@ resources:
   - ../../base
   - poddisruptionbudget.yaml
   - servicemonitor.yaml
+  - prometheusrule.yaml
 
 images:
   - name: docker.io/falco-ctf/auth-policy
@@ -41,3 +42,9 @@ patches:
                 env:
                   - name: EXPECTED_EMAIL_DOMAIN
                     value: "ctf.example.com"   # TODO: replace with real IdP domain
+                  # ADMIN_EMAILS gates the scoreboard host. Populate with the
+                  # ops team mailbox(es) — comma-separated, case-insensitive.
+                  # Empty = nobody (fail-closed). TODO: source from
+                  # ExternalSecrets once Phase 6 lands.
+                  - name: ADMIN_EMAILS
+                    value: "ctf-ops@example.com"   # TODO: real ops aliases

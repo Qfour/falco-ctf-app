@@ -1,0 +1,28 @@
+# All-missions mode — used by `deploy-user.sh <user> all`.
+#
+# Combines the per-evade postStart setup of missions 03 / 05 / 10 into a
+# single hook so one workspace pod hosts the entire NimbusBreach run.
+#
+# Flag content stays in sync with each mission's individual values.yaml;
+# update them together when a flag changes.
+challenge:
+  postStart:
+    - sh
+    - -c
+    - |
+      set -eu
+      # ── Mission 03 (Stealth Read) — flag at end of /etc/shadow ─────────
+      echo '# FALCO{shadow-via-proc-self-root}' >> /etc/shadow
+
+      # ── Mission 05 (Silent Search) — flag inside a fake SSH key ───────
+      mkdir -p /root/.ssh
+      cat > /root/.ssh/id_rsa <<'EOF'
+      -----BEGIN OPENSSH PRIVATE KEY-----
+      b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAA
+      tzc2gtZWQyNTUxOQAAACBmFALCO{cmdline-obfuscation-wins}_FAKEKEY=
+      -----END OPENSSH PRIVATE KEY-----
+      EOF
+      chmod 600 /root/.ssh/id_rsa
+
+      # ── Mission 10 (Final Exfil) — separate NIMBUS_FINAL line ─────────
+      echo '# NIMBUS_FINAL: FALCO{rds-master-pw-bAd1dEa-2026}' >> /etc/shadow

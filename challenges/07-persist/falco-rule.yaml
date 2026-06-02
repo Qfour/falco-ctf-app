@@ -1,0 +1,4 @@
+challengeId: 07-persist
+type: trigger
+expectedRules:
+  - Drop and execute new binary in container

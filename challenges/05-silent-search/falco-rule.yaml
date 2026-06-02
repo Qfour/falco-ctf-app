@@ -1,0 +1,6 @@
+challengeId: 05-silent-search
+type: evade
+forbiddenRules:
+  - Search Private Keys or Passwords
+expectedFlag: FALCO{cmdline-obfuscation-wins}
+windowSeconds: 10
