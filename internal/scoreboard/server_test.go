@@ -436,6 +436,72 @@ func TestUserMe_RecentRuleFires(t *testing.T) {
 	}
 }
 
+// ---------------- /api/users/{user}/display-name ----------------
+
+func TestDisplayName_SetThenReadInState(t *testing.T) {
+	f := newFixture(t, nil)
+	w := f.do("POST", "/api/users/alice/display-name", map[string]any{"name": "Alice ★"})
+	if w.Code != 200 {
+		t.Fatalf("status: %d body=%s", w.Code, w.Body)
+	}
+	m := decode(t, w)
+	if m["display_name"] != "Alice ★" || m["user"] != "alice" {
+		t.Fatalf("response: %v", m)
+	}
+
+	// /api/users/{user}/me reflects it
+	got := decode(t, f.do("GET", "/api/users/alice/me", nil))
+	if got["display_name"] != "Alice ★" {
+		t.Errorf("/me display_name: %v", got["display_name"])
+	}
+
+	// /api/state leaderboard entries get it too (need at least one solve to
+	// surface alice in the leaderboard — fire a trigger).
+	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "alice"))
+	state := decode(t, f.do("GET", "/api/state", nil))
+	lb := state["leaderboard"].([]any)
+	first := lb[0].(map[string]any)
+	if first["display_name"] != "Alice ★" {
+		t.Errorf("leaderboard display_name: %v (full row=%v)", first["display_name"], first)
+	}
+}
+
+func TestDisplayName_DefaultsToIdentity(t *testing.T) {
+	f := newFixture(t, nil)
+	// Never set; me should fall back to identity.
+	got := decode(t, f.do("GET", "/api/users/bob/me", nil))
+	if got["display_name"] != "bob" {
+		t.Fatalf("expected fallback to identity, got %v", got["display_name"])
+	}
+}
+
+func TestDisplayName_Validation(t *testing.T) {
+	f := newFixture(t, nil)
+	bad := []map[string]any{
+		{"name": ""},                                          // empty
+		{"name": "<script>"},                                   // HTML metachar
+		{"name": "ab&cd"},                                      // HTML metachar
+		{"name": "ab\x00cd"},                                   // control char
+		{"name": "1234567890123456789012345678901234567890"},   // > 32 runes
+	}
+	for _, b := range bad {
+		w := f.do("POST", "/api/users/alice/display-name", b)
+		if w.Code != 400 {
+			t.Errorf("name=%v should be 400, got %d", b["name"], w.Code)
+		}
+	}
+}
+
+func TestDisplayName_ReSetReplaces(t *testing.T) {
+	f := newFixture(t, nil)
+	f.do("POST", "/api/users/alice/display-name", map[string]any{"name": "First"})
+	f.do("POST", "/api/users/alice/display-name", map[string]any{"name": "Second"})
+	got := decode(t, f.do("GET", "/api/users/alice/me", nil))
+	if got["display_name"] != "Second" {
+		t.Fatalf("re-set should overwrite, got %v", got["display_name"])
+	}
+}
+
 func TestMeHTML_ServedAtMe(t *testing.T) {
 	f := newFixture(t, nil)
 	w := f.do("GET", "/me?user=alice", nil)

@@ -4,6 +4,16 @@
 │ 目標 Falco ルール: "Contact K8S API Server From Container"        │
 └──────────────────────────────────────────────────────────────────┘
 
+# Step 0 — 表示名を決める (任意)
+
+scoreboard に表示する **display name** を設定できる。識別子
+(`user1` など) はそのまま、表示だけ好きな名前にできる:
+
+  source /opt/ctf/fixtures/submit.sh
+  set_display_name 'あなたの好きな名前'
+
+何度でも変更可能。設定しなければ識別子がそのまま表示される。
+
 # シナリオ
 
 NimbusCorp の Web フロントエンドの SSRF 脆弱性を突き、ようやく Pod

@@ -39,6 +39,7 @@ type Store struct {
 	solved        map[SolveKey]string // value = ISO-8601 timestamp
 	eventsPerUser map[string]int
 	ruleFires     map[string][]ruleFire // user -> bounded list (RetentionSeconds)
+	displayNames  map[string]string     // user -> participant-chosen display name
 }
 
 type ruleFire struct {
@@ -65,6 +66,11 @@ func Open(path string) (*Store, error) {
           at        TEXT NOT NULL,
           PRIMARY KEY (user, challenge)
         );
+        CREATE TABLE IF NOT EXISTS display_names (
+          user   TEXT PRIMARY KEY,
+          name   TEXT NOT NULL,
+          set_at TEXT NOT NULL
+        );
         DROP TABLE IF EXISTS events_per_user;
     `); err != nil {
 		db.Close()
@@ -76,6 +82,7 @@ func Open(path string) (*Store, error) {
 		solved:        make(map[SolveKey]string),
 		eventsPerUser: make(map[string]int),
 		ruleFires:     make(map[string][]ruleFire),
+		displayNames:  make(map[string]string),
 	}
 	if err := s.loadFromDB(); err != nil {
 		db.Close()
@@ -91,16 +98,63 @@ func (s *Store) loadFromDB() error {
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
 	for rows.Next() {
 		var k SolveKey
 		var at string
 		if err := rows.Scan(&k.User, &k.Challenge, &at); err != nil {
+			rows.Close()
 			return err
 		}
 		s.solved[k] = at
 	}
-	return rows.Err()
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	dn, err := s.db.Query("SELECT user, name FROM display_names")
+	if err != nil {
+		return err
+	}
+	defer dn.Close()
+	for dn.Next() {
+		var user, name string
+		if err := dn.Scan(&user, &name); err != nil {
+			return err
+		}
+		s.displayNames[user] = name
+	}
+	return dn.Err()
+}
+
+// SetDisplayName records or updates the participant-chosen display name for
+// `user`. Identity (`user`) is the auth-derived stable key — anything that
+// scores or audits goes via identity. `name` is purely cosmetic and may be
+// changed at any time.
+func (s *Store) SetDisplayName(user, name, at string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := s.db.Exec(
+		`INSERT INTO display_names (user, name, set_at) VALUES (?, ?, ?)
+		 ON CONFLICT(user) DO UPDATE SET name=excluded.name, set_at=excluded.set_at`,
+		user, name, at,
+	); err != nil {
+		return err
+	}
+	s.displayNames[user] = name
+	return nil
+}
+
+// DisplayName returns the chosen name for `user`, falling back to `user`
+// itself when none is set. Callers should not need to handle the missing
+// case — the fallback keeps rendering paths uniform.
+func (s *Store) DisplayName(user string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if n, ok := s.displayNames[user]; ok && n != "" {
+		return n
+	}
+	return user
 }
 
 // RecordRuleFire bumps the per-user event count (in-memory only) and appends
@@ -202,6 +256,7 @@ func (s *Store) RecentForbiddenFires(user string, forbidden []string, now float6
 type Snapshot struct {
 	Solved        map[SolveKey]string
 	EventsPerUser map[string]int
+	DisplayNames  map[string]string
 }
 
 func (s *Store) Snapshot() Snapshot {
@@ -210,12 +265,16 @@ func (s *Store) Snapshot() Snapshot {
 	out := Snapshot{
 		Solved:        make(map[SolveKey]string, len(s.solved)),
 		EventsPerUser: make(map[string]int, len(s.eventsPerUser)),
+		DisplayNames:  make(map[string]string, len(s.displayNames)),
 	}
 	for k, v := range s.solved {
 		out.Solved[k] = v
 	}
 	for k, v := range s.eventsPerUser {
 		out.EventsPerUser[k] = v
+	}
+	for k, v := range s.displayNames {
+		out.DisplayNames[k] = v
 	}
 	return out
 }

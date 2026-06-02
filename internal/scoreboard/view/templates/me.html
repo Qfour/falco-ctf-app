@@ -193,11 +193,13 @@
       nextHTML = `<span class="target">No challenges loaded yet</span>`;
     }
 
+    const displayName = d.display_name || user;
+    const identitySuffix = (displayName !== user) ? ` <span style="color:var(--text-mute); font-weight:400; font-size:0.85rem">(${esc(user)})</span>` : '';
     document.getElementById('page').innerHTML = `
       <section class="ident">
-        <div class="avatar">${avatarChar(user)}</div>
+        <div class="avatar">${avatarChar(displayName)}</div>
         <div>
-          <div class="who-name">${esc(user)}</div>
+          <div class="who-name">${esc(displayName)}${identitySuffix}</div>
           <div class="who-status">${solvedCount > 0 ? solvedCount + ' challenge' + (solvedCount === 1 ? '' : 's') + ' solved · ' + events.toLocaleString() + ' Falco events triggered' : 'Just getting started · ' + events.toLocaleString() + ' Falco events seen'}</div>
         </div>
         <div class="progress-mini">
