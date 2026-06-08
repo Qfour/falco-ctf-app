@@ -18,6 +18,17 @@ var checksTotal = promauto.NewCounterVec(
 	[]string{"result"},
 )
 
+// adminChecksTotal mirrors checksTotal for /check-admin so operators can
+// alert on admin-gate failures separately from the per-user gate.
+var adminChecksTotal = promauto.NewCounterVec(
+	prometheus.CounterOpts{
+		Namespace: "auth_policy",
+		Name:      "admin_checks_total",
+		Help:      "auth-policy /check-admin decisions, labelled by outcome.",
+	},
+	[]string{"result"},
+)
+
 // upstreamDuration tracks how long the oauth2-proxy subrequest takes.
 // Used to spot regressions in the auth hot path.
 var upstreamDuration = promauto.NewHistogram(

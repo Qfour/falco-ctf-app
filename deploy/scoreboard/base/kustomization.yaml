@@ -6,10 +6,17 @@ resources:
   - deployment.yaml
   - service.yaml
   - ingress.yaml
-commonLabels:
-  app.kubernetes.io/name: scoreboard
-  app.kubernetes.io/part-of: falco-ctf
-  app.kubernetes.io/managed-by: kustomize
-images:
-  - name: docker.io/falco-ctf/scoreboard
-    newTag: dev
+  - networkpolicy.yaml
+labels:
+  # `includeSelectors: false` — these labels are decorative and must NOT
+  # propagate into NetworkPolicy podSelectors / Service selectors. The old
+  # `commonLabels:` field did propagate, which made kube-dns egress rules
+  # require non-existent labels on the kube-dns pod and silently broke DNS.
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/name: scoreboard
+      app.kubernetes.io/part-of: falco-ctf
+      app.kubernetes.io/managed-by: kustomize
+# Intentionally no `images:` here — `base/` is environment-neutral
+# (Invariant I4: image tags must be set per-overlay; never default to a
+# floating tag in base).

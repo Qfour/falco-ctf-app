@@ -1,0 +1,27 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: scoreboard
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "256k"
+    # auth-signin for the admin gate (auth-url from base). TODO: replace
+    # dnsSuffix when the real Route53 zone lands.
+    nginx.ingress.kubernetes.io/auth-signin: "https://auth.ctf.example.com/oauth2/start?rd=$scheme://$host$escaped_request_uri"
+spec:
+  rules:
+    - host: scoreboard.ctf.example.com   # TODO: replace with real Route53 zone
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: scoreboard
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - scoreboard.ctf.example.com
+      secretName: scoreboard-tls

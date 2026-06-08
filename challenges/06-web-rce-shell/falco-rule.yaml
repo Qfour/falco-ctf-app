@@ -1,0 +1,4 @@
+challengeId: 06-web-rce-shell
+type: trigger
+expectedRules:
+  - Run shell untrusted

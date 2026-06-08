@@ -9,26 +9,27 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #07090f;
-    --bg-elev: #0d1119;
-    --surface: #131826;
-    --surface-2: #1a2030;
-    --border: #232a3d;
-    --border-strong: #2d3852;
-    --text: #e6ebf5;
-    --text-dim: #94a3b8;
-    --text-mute: #64748b;
-    --accent: #22d3ee;
-    --accent-2: #06b6d4;
-    --accent-glow: rgba(34, 211, 238, 0.18);
-    --success: #34d399;
-    --success-glow: rgba(52, 211, 153, 0.35);
-    --warn: #fbbf24;
-    --evade: #fbbf24;
-    --trigger: #22d3ee;
-    --gold: #fbbf24;
-    --silver: #cbd5e1;
-    --bronze: #d97706;
+    /* Sysdig palette — Lumin (#BDF78B) primary + neutral grays only. */
+    --bg: #1E1E22;           /* Gray 80 */
+    --bg-elev: #2B2D30;      /* Gray 70 */
+    --surface: #2B2D30;      /* Gray 70 */
+    --surface-2: #3E4042;    /* Gray 60 */
+    --border: #3E4042;       /* Gray 60 */
+    --border-strong: #535557;/* Gray 50 */
+    --text: #FFFFFF;         /* White */
+    --text-dim: #BBBDBF;     /* Gray 20 */
+    --text-mute: #8A8C8E;    /* Gray 30 */
+    --accent: #BDF78B;       /* Lumin */
+    --accent-2: #A8E975;     /* Lumin darker tint (gradient pair) */
+    --accent-glow: rgba(189, 247, 139, 0.22);
+    --success: #BDF78B;      /* Palette has no separate success — reuse Lumin */
+    --success-glow: rgba(189, 247, 139, 0.35);
+    --warn: #BDF78B;
+    --evade: #BBBDBF;        /* Gray 20 — distinguished from trigger by hue */
+    --trigger: #BDF78B;
+    --gold: #BDF78B;         /* Rank 1 = Lumin */
+    --silver: #EAEBED;       /* Rank 2 = Gray 10 */
+    --bronze: #8A8C8E;       /* Rank 3 = Gray 30 */
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -36,8 +37,8 @@
   body {
     background: var(--bg);
     background-image:
-      radial-gradient(at 20% -10%, rgba(34, 211, 238, 0.08) 0px, transparent 50%),
-      radial-gradient(at 85% 5%, rgba(168, 85, 247, 0.06) 0px, transparent 50%);
+      radial-gradient(at 20% -10%, rgba(189, 247, 139, 0.08) 0px, transparent 50%),
+      radial-gradient(at 85% 5%, rgba(189, 247, 139, 0.04) 0px, transparent 50%);
     background-attachment: fixed;
     color: var(--text);
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -83,11 +84,11 @@
   tbody tr:hover { background: var(--surface-2); }
   tbody td { padding: 0.875rem 1.5rem; border-top: 1px solid var(--border); vertical-align: middle; }
   .rank { font-family: 'JetBrains Mono', monospace; font-size: 1.1rem; font-weight: 700; width: 60px; }
-  .rank-1 { color: var(--gold); text-shadow: 0 0 8px rgba(251, 191, 36, 0.5); }
+  .rank-1 { color: var(--gold); text-shadow: 0 0 8px rgba(189, 247, 139, 0.5); }
   .rank-2 { color: var(--silver); }
   .rank-3 { color: var(--bronze); }
   .user-cell { font-family: 'JetBrains Mono', monospace; font-weight: 600; font-size: 0.95rem; }
-  .user-cell .avatar { display: inline-block; width: 24px; height: 24px; border-radius: 50%; background: linear-gradient(135deg, var(--accent), #a855f7); color: var(--bg); text-align: center; line-height: 24px; font-size: 0.7rem; margin-right: 0.5rem; vertical-align: -7px; font-weight: 700; }
+  .user-cell .avatar { display: inline-block; width: 24px; height: 24px; border-radius: 50%; background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: var(--bg); text-align: center; line-height: 24px; font-size: 0.7rem; margin-right: 0.5rem; vertical-align: -7px; font-weight: 700; }
   .score-cell { font-family: 'JetBrains Mono', monospace; font-size: 1rem; }
   .score-cell .total { color: var(--text-mute); }
   .progress { width: 100%; height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; min-width: 120px; }
@@ -98,12 +99,12 @@
   .challenges { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem; padding: 1.25rem 1.5rem; }
   .challenge { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 0.5rem; padding: 1rem; transition: all 0.2s; position: relative; }
   .challenge:hover { border-color: var(--border-strong); transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3); }
-  .challenge.full { border-color: var(--success); background: linear-gradient(135deg, var(--bg-elev) 0%, rgba(52, 211, 153, 0.05) 100%); }
+  .challenge.full { border-color: var(--success); background: linear-gradient(135deg, var(--bg-elev) 0%, rgba(189, 247, 139, 0.05) 100%); }
   .challenge .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
   .challenge .num { font-family: 'JetBrains Mono', monospace; color: var(--text-mute); font-size: 0.75rem; font-weight: 600; letter-spacing: 0.05em; }
   .badge { padding: 3px 9px; border-radius: 4px; font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 700; }
-  .badge-trigger { background: rgba(34, 211, 238, 0.12); color: var(--trigger); border: 1px solid rgba(34, 211, 238, 0.3); }
-  .badge-evade { background: rgba(251, 191, 36, 0.12); color: var(--evade); border: 1px solid rgba(251, 191, 36, 0.3); }
+  .badge-trigger { background: rgba(189, 247, 139, 0.12); color: var(--trigger); border: 1px solid rgba(189, 247, 139, 0.3); }
+  .badge-evade { background: rgba(187, 189, 191, 0.10); color: var(--evade); border: 1px solid rgba(187, 189, 191, 0.3); }
   .challenge .name { font-weight: 600; margin-bottom: 0.5rem; color: var(--text); font-size: 0.95rem; }
   .challenge .rule { color: var(--text-dim); font-size: 0.7rem; font-family: 'JetBrains Mono', monospace; margin-bottom: 0.75rem; line-height: 1.4; word-break: break-word; }
   .challenge .dots { display: flex; gap: 5px; margin-bottom: 0.5rem; }
@@ -235,7 +236,7 @@
         const rankCls = p.rank <= 3 ? 'rank-' + p.rank : '';
         return `<tr>
           <td><span class="rank ${rankCls}">#${p.rank}</span></td>
-          <td><span class="user-cell"><span class="avatar">${avatarChar(p.user)}</span>${esc(p.user)}</span></td>
+          <td><span class="user-cell"><span class="avatar">${avatarChar(p.display_name || p.user)}</span>${esc(p.display_name || p.user)}</span></td>
           <td><span class="score-cell">${p.solved}<span class="total">/${totalChal}</span></span></td>
           <td><div class="progress"><div class="progress-bar" style="width:${pct}%"></div></div></td>
           <td><span class="events-cell">${p.events.toLocaleString()}</span></td>
@@ -286,7 +287,7 @@
         seen.add(key);
         return `<div class="activity-item${fresh ? ' fresh' : ''}">
           <div style="min-width:0">
-            <span class="who">${esc(s.user)}</span>
+            <span class="who">${esc(s.display_name || s.user)}</span>
             <span class="verb">solved</span>
             <span class="what">${esc(s.challenge)}</span>
           </div>

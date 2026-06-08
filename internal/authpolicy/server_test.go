@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -29,6 +30,16 @@ func newHandler(upstreamURL string) *authpolicy.Handler {
 		OAuth2ProxyURL:      upstreamURL,
 		ExpectedEmailDomain: "ctf.local",
 		UpstreamTimeout:     2 * time.Second,
+	}
+	return authpolicy.NewHandler(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+}
+
+func newAdminHandler(upstreamURL string, admins ...string) *authpolicy.Handler {
+	cfg := authpolicy.Config{
+		OAuth2ProxyURL:      upstreamURL,
+		ExpectedEmailDomain: "ctf.local",
+		UpstreamTimeout:     2 * time.Second,
+		AdminEmails:         admins,
 	}
 	return authpolicy.NewHandler(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
@@ -128,14 +139,104 @@ func TestCheck_UpstreamUnreachable_Returns502(t *testing.T) {
 	}
 }
 
-func TestCheck_UpstreamUnexpectedStatus_PassesThrough(t *testing.T) {
+// App-M3 regression pin: oauth2-proxy upstream errors must NOT leak through.
+// Anything other than 200/401/202 should look like a generic 502 to the
+// requester, regardless of the upstream's actual status / body.
+func TestCheck_UpstreamUnexpectedStatus_MaskedAs502(t *testing.T) {
 	upstream := fakeOAuth2Proxy(t, func(_ *http.Request) (int, string) {
 		return http.StatusInternalServerError, ""
 	})
 	defer upstream.Close()
 	h := newHandler(upstream.URL)
 	resp := do(t, h, "/check?host=alice", nil)
-	if resp.StatusCode != http.StatusInternalServerError {
-		t.Fatalf("expected 500 passed through, got %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("expected 502 (masked), got %d", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if strings.Contains(string(body), "500") {
+		t.Fatalf("response body must not leak upstream status: %q", body)
+	}
+}
+
+// ---------------- /check-admin ----------------
+
+func TestCheckAdmin_NotAuthenticated_Returns401(t *testing.T) {
+	upstream := fakeOAuth2Proxy(t, func(_ *http.Request) (int, string) {
+		return http.StatusUnauthorized, ""
+	})
+	defer upstream.Close()
+	h := newAdminHandler(upstream.URL, "ops@ctf.local")
+	resp := do(t, h, "/check-admin", nil)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 from /check-admin without cookie, got %d", resp.StatusCode)
+	}
+}
+
+func TestCheckAdmin_AuthenticatedAdmin_Returns200(t *testing.T) {
+	upstream := fakeOAuth2Proxy(t, func(_ *http.Request) (int, string) {
+		return http.StatusAccepted, "ops@ctf.local"
+	})
+	defer upstream.Close()
+	h := newAdminHandler(upstream.URL, "ops@ctf.local", "lead@ctf.local")
+	resp := do(t, h, "/check-admin", map[string]string{"Cookie": "_oauth2_proxy=foo"})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("admin should get 200, got %d", resp.StatusCode)
+	}
+	if resp.Header.Get("X-Auth-Request-Email") != "ops@ctf.local" {
+		t.Errorf("identity headers should propagate, got %q", resp.Header.Get("X-Auth-Request-Email"))
+	}
+}
+
+func TestCheckAdmin_AuthenticatedNonAdmin_Returns403(t *testing.T) {
+	upstream := fakeOAuth2Proxy(t, func(_ *http.Request) (int, string) {
+		return http.StatusAccepted, "alice@ctf.local"
+	})
+	defer upstream.Close()
+	h := newAdminHandler(upstream.URL, "ops@ctf.local")
+	resp := do(t, h, "/check-admin", map[string]string{"Cookie": "_oauth2_proxy=foo"})
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("non-admin should get 403, got %d", resp.StatusCode)
+	}
+}
+
+// Fail-closed: empty AdminEmails (default config) denies everyone, even
+// successfully authenticated callers.
+func TestCheckAdmin_EmptyAllowlist_DeniesAll(t *testing.T) {
+	upstream := fakeOAuth2Proxy(t, func(_ *http.Request) (int, string) {
+		return http.StatusAccepted, "anyone@ctf.local"
+	})
+	defer upstream.Close()
+	h := newAdminHandler(upstream.URL) // no admins configured
+	resp := do(t, h, "/check-admin", map[string]string{"Cookie": "_oauth2_proxy=foo"})
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("empty allowlist must fail-closed, got %d", resp.StatusCode)
+	}
+}
+
+// Allowlist match is case-insensitive — `OPS@ctf.local` should be granted
+// even when the env var has `ops@ctf.local`. Avoids surprises when the
+// IdP returns mixed-case emails.
+func TestCheckAdmin_CaseInsensitive(t *testing.T) {
+	upstream := fakeOAuth2Proxy(t, func(_ *http.Request) (int, string) {
+		return http.StatusAccepted, "OPS@CTF.LOCAL"
+	})
+	defer upstream.Close()
+	h := newAdminHandler(upstream.URL, "ops@ctf.local")
+	resp := do(t, h, "/check-admin", map[string]string{"Cookie": "_oauth2_proxy=foo"})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("case-insensitive match expected, got %d", resp.StatusCode)
+	}
+}
+
+// App-M4: garbled `host` values (containing @, /, whitespace) must 400 before
+// the request is even forwarded to oauth2-proxy.
+func TestCheck_InvalidHost_Returns400(t *testing.T) {
+	h := newHandler("http://example.invalid")
+	for _, host := range []string{"alice@evil", "alice/admin", "alice space", "ALICE", "../etc"} {
+		target := "/check?host=" + url.QueryEscape(host)
+		resp := do(t, h, target, nil)
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("host=%q must 400, got %d", host, resp.StatusCode)
+		}
 	}
 }

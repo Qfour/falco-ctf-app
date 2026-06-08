@@ -1,0 +1,10 @@
+# Mission 10 — final flag を /etc/shadow 末尾の特別行に埋め込む。
+# 02 / 03 と同じ場所だが、参加者が 10 を解くタイミングでは
+# 「同じ場所でも、すべての禁止ルールを発火させずに retrieve できるか」
+# が問われる。
+challenge:
+  postStart:
+    - sh
+    - -c
+    - |
+      echo '# NIMBUS_FINAL: FALCO{rds-master-pw-bAd1dEa-2026}' >> /etc/shadow

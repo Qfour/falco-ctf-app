@@ -17,6 +17,9 @@ patches:
         path: /spec/tls
         value:
           - hosts: [scoreboard.192.168.64.2.nip.io]
+      - op: add
+        path: /metadata/annotations/nginx.ingress.kubernetes.io~1auth-signin
+        value: "http://auth.192.168.64.2.nip.io/oauth2/start?rd=$scheme://$host$escaped_request_uri"
 images:
   - name: docker.io/falco-ctf/scoreboard
     newTag: dev

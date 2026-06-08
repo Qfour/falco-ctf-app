@@ -1,0 +1,4 @@
+challengeId: 02-credential-files
+type: trigger
+expectedRules:
+  - Read sensitive file untrusted

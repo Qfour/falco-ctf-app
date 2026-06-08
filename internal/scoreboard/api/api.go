@@ -7,48 +7,95 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/metrics"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/oapi"
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/ratelimit"
 	"github.com/Qfour/falco-ctf-app/internal/store"
 )
 
+// validUser matches the auth-derived identity username slug — same shape
+// auth-policy enforces on incoming /check?host=… so the two sides agree.
+var validUser = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+
+// invalidDisplayName rejects characters that would break either UI
+// rendering (HTML metachars) or shell display (control chars). A 32-rune
+// max keeps leaderboard columns predictable.
+var invalidDisplayName = regexp.MustCompile(`[<>&"'\x00-\x1f\x7f]`)
+
 type Handler struct {
-	cat    catalog.Catalog
-	store  *store.Store
-	logger *slog.Logger
-	now    func() time.Time
+	cat                catalog.Catalog
+	store              *store.Store
+	logger             *slog.Logger
+	now                func() time.Time
+	submitLimiter      *ratelimit.Limiter
+	displayNameLimiter *ratelimit.Limiter
 }
 
 func New(cat catalog.Catalog, s *store.Store, logger *slog.Logger, now func() time.Time) *Handler {
-	return &Handler{cat: cat, store: s, logger: logger, now: now}
+	// /submit accepts a claimed user identity. Without per-IP throttling a
+	// participant who scraped someone else's flag could brute-force submits.
+	// 1 req/s with burst 10 lets legitimate typing through but blocks
+	// automated flooding.
+	return &Handler{
+		cat:                cat,
+		store:              s,
+		logger:             logger,
+		now:                now,
+		submitLimiter:      ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now),
+		displayNameLimiter: ratelimit.New(0.2 /* one every 5s */, 5 /* burst */).WithNow(now),
+	}
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/state", h.state)
-	mux.HandleFunc("POST /api/challenges/{cid}/submit", h.submit)
+	mux.HandleFunc("GET /api/users/{user}/me", h.userMe)
+	submitMW := h.submitLimiter.Middleware(ratelimit.ClientIP)
+	mux.Handle("POST /api/challenges/{cid}/submit", submitMW(http.HandlerFunc(h.submit)))
+	dnMW := h.displayNameLimiter.Middleware(ratelimit.ClientIP)
+	mux.Handle("POST /api/users/{user}/display-name", dnMW(http.HandlerFunc(h.setDisplayName)))
 }
 
 // --- submit -----------------------------------------------------------------
 
 func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 	cid := r.PathValue("cid")
+	// auditLog: every branch below records a structured line so post-event
+	// triage can answer "who submitted what flag against which challenge",
+	// even when the result is rejection. Identity (`user`) is claimed by
+	// the request body — never verified — so always log the source address
+	// alongside it for cross-referencing.
+	auditLog := func(outcome string, extra ...any) {
+		fields := []any{
+			"cid", cid,
+			"remote_addr", r.RemoteAddr,
+			"outcome", outcome,
+		}
+		fields = append(fields, extra...)
+		h.logger.Info("submit", fields...)
+	}
+
 	ch, ok := h.cat[cid]
 	if !ok {
 		metrics.SubmissionsTotal.WithLabelValues(cid, "unknown_challenge").Inc()
+		auditLog("unknown_challenge")
 		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"error": "unknown challenge: " + cid})
 		return
 	}
 	if ch.Type != "evade" {
 		metrics.SubmissionsTotal.WithLabelValues(cid, "not_evade").Inc()
+		auditLog("not_evade")
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": cid + " is not an evade challenge"})
 		return
 	}
@@ -57,6 +104,7 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 	var req oapi.SubmitFlagJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		metrics.SubmissionsTotal.WithLabelValues(cid, "bad_request").Inc()
+		auditLog("bad_request", "err", err.Error())
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
@@ -65,11 +113,13 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 
 	if user == "" {
 		metrics.SubmissionsTotal.WithLabelValues(cid, "bad_request").Inc()
+		auditLog("bad_request", "reason", "missing user")
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "user required"})
 		return
 	}
 	if flag != ch.ExpectedFlag {
 		metrics.SubmissionsTotal.WithLabelValues(cid, "wrong_flag").Inc()
+		auditLog("wrong_flag", "user", user)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"correct": false, "reason": "flag mismatch"})
 		return
 	}
@@ -78,6 +128,7 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 	offending := h.store.RecentForbiddenFires(user, ch.ForbiddenRules, now, ch.WindowSeconds)
 	if len(offending) > 0 {
 		metrics.SubmissionsTotal.WithLabelValues(cid, "not_evaded").Inc()
+		auditLog("not_evaded", "user", user, "offending_rules", offending)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"correct": true,
 			"evaded":  false,
@@ -98,11 +149,173 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 		metrics.SolvesTotal.WithLabelValues(cid, "evade").Inc()
 	}
 	metrics.SubmissionsTotal.WithLabelValues(cid, "solved").Inc()
+	auditLog("solved", "user", user, "newly", newly, "display_name", h.store.DisplayName(user))
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"correct": true,
-		"evaded":  true,
-		"solved":  true,
-		"user":    user,
+		"correct":      true,
+		"evaded":       true,
+		"solved":       true,
+		"user":         user,
+		"display_name": h.store.DisplayName(user),
+	})
+}
+
+// --- /api/users/{user}/display-name ----------------------------------------
+
+// setDisplayName lets a participant pick a cosmetic name shown on the
+// scoreboard. Identity (`user`) stays anchored to the auth-derived slug;
+// only the rendered name changes. Re-runnable any number of times.
+//
+// Body shape:  {"name": "Alice"}
+// Constraints: 1..32 runes, no <>&"' or control chars (UI / shell safety).
+//
+// Auth: this endpoint is reached from the participant's own workspace pod
+// via the cluster-internal Service. The scoreboard NetworkPolicy admits
+// ctf-* namespaces for /api/users/* and /api/challenges/*; participants
+// can only set their *own* display name in practice because the workspace
+// shell only knows its own $FALCO_CTF_USER. Lacking cryptographic proof
+// of identity is intentional — see audit log entries for traceability.
+func (h *Handler) setDisplayName(w http.ResponseWriter, r *http.Request) {
+	user := strings.TrimSpace(r.PathValue("user"))
+	if !validUser.MatchString(user) {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "name required"})
+		return
+	}
+	if n := utf8.RuneCountInString(name); n > 32 {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "name too long (max 32 runes)"})
+		return
+	}
+	if invalidDisplayName.MatchString(name) {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "name contains forbidden characters"})
+		return
+	}
+
+	at := h.now().UTC().Format(time.RFC3339Nano)
+	if err := h.store.SetDisplayName(user, name, at); err != nil {
+		if errors.Is(err, store.ErrDisplayNameAlreadySet) {
+			h.logger.Warn("display_name conflict",
+				"user", user,
+				"requested_name", name,
+				"current", h.store.DisplayName(user),
+				"remote_addr", r.RemoteAddr,
+			)
+			httpx.WriteJSON(w, http.StatusConflict, map[string]any{
+				"error":        "display name already set; ask the operator if you need to change it",
+				"user":         user,
+				"display_name": h.store.DisplayName(user),
+			})
+			return
+		}
+		h.logger.Error("set display name", "err", err, "user", user)
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	h.logger.Info("display_name",
+		"user", user,
+		"display_name", name,
+		"remote_addr", r.RemoteAddr,
+	)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"ok":           true,
+		"user":         user,
+		"display_name": name,
+	})
+}
+
+// --- /api/users/{user}/me ---------------------------------------------------
+
+// userMe serves the participant self-service projection of state.
+// Includes:
+//   - solved challenges for this user, in solve order
+//   - the next unsolved challenge id (by catalog order) so the page can
+//     surface a "what to try next" link
+//   - the rule fires recorded for this user in the last 60s — gives the
+//     participant immediate feedback on which Falco rule they just triggered
+//     without needing operator help (cuts the most common support question)
+//
+// Auth: the endpoint is unauthenticated by design. The CTF event treats
+// per-user progress as public information (the scoreboard is also public).
+// If hosted behind the per-user ttyd ingress (auth-policy gated) the chart
+// can rewrite /me to add the X-Auth-Request-Email check; that's an opt-in.
+func (h *Handler) userMe(w http.ResponseWriter, r *http.Request) {
+	user := strings.TrimSpace(r.PathValue("user"))
+	if user == "" {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "user required"})
+		return
+	}
+
+	snap := h.store.Snapshot()
+	ids := h.cat.IDs()
+	now := h.now()
+
+	// Catalog membership — filters out stale solves whose challenge id was
+	// renamed or removed from the catalog (otherwise solved_count exceeds
+	// total_challenges and the UI shows "SOLVED 15/10").
+	idSet := make(map[string]struct{}, len(ids))
+	for _, cid := range ids {
+		idSet[cid] = struct{}{}
+	}
+
+	type solveEntry struct {
+		Challenge string `json:"challenge"`
+		At        string `json:"at"`
+	}
+	solved := make([]solveEntry, 0)
+	solvedSet := make(map[string]struct{})
+	for k, at := range snap.Solved {
+		if k.User != user {
+			continue
+		}
+		if _, ok := idSet[k.Challenge]; !ok {
+			continue
+		}
+		solved = append(solved, solveEntry{Challenge: k.Challenge, At: at})
+		solvedSet[k.Challenge] = struct{}{}
+	}
+	sort.SliceStable(solved, func(i, j int) bool { return solved[i].At < solved[j].At })
+
+	// Next unsolved by catalog order. nil if user has solved everything.
+	var nextUnsolved *string
+	for _, cid := range ids {
+		if _, done := solvedSet[cid]; !done {
+			c := cid
+			nextUnsolved = &c
+			break
+		}
+	}
+
+	// Last 60s of rule fires — short enough that the most recent action is
+	// always at the bottom but old activity ages out quickly.
+	fires := h.store.RecentRuleFires(user, float64(now.Unix()), 60)
+
+	displayName := user
+	if n, ok := snap.DisplayNames[user]; ok && n != "" {
+		displayName = n
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"user":              user,
+		"display_name":      displayName,
+		"solved":            solved,
+		"solved_count":      len(solved),
+		"total_challenges":  len(ids),
+		"next_unsolved":     nextUnsolved,
+		"recent_rule_fires": fires,
+		"events":            snap.EventsPerUser[user],
+		"now":               now.UTC().Format(time.RFC3339Nano),
 	})
 }
 
@@ -116,11 +329,23 @@ func (h *Handler) buildState() map[string]any {
 	snap := h.store.Snapshot()
 	ids := h.cat.IDs()
 
+	// Catalog membership — filters out stale solves whose challenge id was
+	// renamed or removed (e.g. early-prototype `01-read-shadow` still in the
+	// SQLite after the NimbusBreach rewrite). Without this the leaderboard
+	// can credit users for retired challenges and report SOLVED 15/10.
+	idSet := make(map[string]struct{}, len(ids))
+	for _, cid := range ids {
+		idSet[cid] = struct{}{}
+	}
+
 	userSet := map[string]struct{}{}
 	for u := range snap.EventsPerUser {
 		userSet[u] = struct{}{}
 	}
 	for k := range snap.Solved {
+		if _, ok := idSet[k.Challenge]; !ok {
+			continue
+		}
 		userSet[k.User] = struct{}{}
 	}
 	users := make([]string, 0, len(userSet))
@@ -131,15 +356,25 @@ func (h *Handler) buildState() map[string]any {
 
 	perUserSolves := map[string][][2]string{}
 	for k, at := range snap.Solved {
+		if _, ok := idSet[k.Challenge]; !ok {
+			continue
+		}
 		perUserSolves[k.User] = append(perUserSolves[k.User], [2]string{k.Challenge, at})
 	}
 
 	type lbEntry struct {
-		User     string `json:"user"`
-		Solved   int    `json:"solved"`
-		Earliest string `json:"earliest"`
-		Events   int    `json:"events"`
-		Rank     int    `json:"rank"`
+		User        string `json:"user"`
+		DisplayName string `json:"display_name"`
+		Solved      int    `json:"solved"`
+		Earliest    string `json:"earliest"`
+		Events      int    `json:"events"`
+		Rank        int    `json:"rank"`
+	}
+	displayOf := func(u string) string {
+		if n, ok := snap.DisplayNames[u]; ok && n != "" {
+			return n
+		}
+		return u
 	}
 	leaderboard := make([]lbEntry, 0, len(users))
 	for _, u := range users {
@@ -150,10 +385,11 @@ func (h *Handler) buildState() map[string]any {
 			}
 		}
 		leaderboard = append(leaderboard, lbEntry{
-			User:     u,
-			Solved:   len(perUserSolves[u]),
-			Earliest: earliest,
-			Events:   snap.EventsPerUser[u],
+			User:        u,
+			DisplayName: displayOf(u),
+			Solved:      len(perUserSolves[u]),
+			Earliest:    earliest,
+			Events:      snap.EventsPerUser[u],
 		})
 	}
 	sort.SliceStable(leaderboard, func(i, j int) bool {
@@ -177,6 +413,9 @@ func (h *Handler) buildState() map[string]any {
 	}
 	perChalSolvers := map[string][][2]string{}
 	for k, at := range snap.Solved {
+		if _, ok := idSet[k.Challenge]; !ok {
+			continue
+		}
 		perChalSolvers[k.Challenge] = append(perChalSolvers[k.Challenge], [2]string{k.User, at})
 	}
 	challenges := make([]chStat, 0, len(ids))
@@ -215,13 +454,22 @@ func (h *Handler) buildState() map[string]any {
 	}
 
 	type recentEntry struct {
-		User      string `json:"user"`
-		Challenge string `json:"challenge"`
-		At        string `json:"at"`
+		User        string `json:"user"`
+		DisplayName string `json:"display_name"`
+		Challenge   string `json:"challenge"`
+		At          string `json:"at"`
 	}
 	allSolves := make([]recentEntry, 0, len(snap.Solved))
 	for k, at := range snap.Solved {
-		allSolves = append(allSolves, recentEntry{User: k.User, Challenge: k.Challenge, At: at})
+		if _, ok := idSet[k.Challenge]; !ok {
+			continue
+		}
+		allSolves = append(allSolves, recentEntry{
+			User:        k.User,
+			DisplayName: displayOf(k.User),
+			Challenge:   k.Challenge,
+			At:          at,
+		})
 	}
 	sort.SliceStable(allSolves, func(i, j int) bool { return allSolves[i].At > allSolves[j].At })
 	recent := allSolves

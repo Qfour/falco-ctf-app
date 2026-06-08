@@ -1,7 +1,8 @@
-// Package view serves the embedded HTML dashboard at GET /.
+// Package view serves the embedded HTML dashboards at GET / and GET /me.
 //
-// The HTML/CSS/JS is shipped via go:embed so the binary needs no
-// filesystem assets at runtime.
+// Both pages are static — they fetch live state via /api/state and
+// /api/users/{user}/me respectively. The HTML / CSS / JS is shipped via
+// go:embed so the binary needs no filesystem assets at runtime.
 package view
 
 import (
@@ -12,12 +13,16 @@ import (
 //go:embed templates/index.html
 var indexHTML string
 
+//go:embed templates/me.html
+var meHTML string
+
 type Handler struct{}
 
 func New() *Handler { return &Handler{} }
 
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /", h.index)
+	mux.HandleFunc("GET /me", h.me)
 }
 
 func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
@@ -29,4 +34,12 @@ func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(indexHTML))
+}
+
+// me serves the participant self-service page. The HTML reads `?user=<name>`
+// client-side and calls /api/users/<name>/me; the route itself is permissive
+// so an empty / missing user just renders an instructional landing screen.
+func (h *Handler) me(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(meHTML))
 }

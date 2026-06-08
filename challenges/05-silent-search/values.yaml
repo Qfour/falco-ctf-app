@@ -1,0 +1,15 @@
+# Mission 05 — fake SSH key を /root/.ssh/id_rsa として埋め込む。
+# 中身に flag を含めておき、cmdline に "id_rsa" を出さずに読めるかを問う。
+challenge:
+  postStart:
+    - sh
+    - -c
+    - |
+      mkdir -p /root/.ssh && \
+      cat > /root/.ssh/id_rsa <<'EOF'
+      -----BEGIN OPENSSH PRIVATE KEY-----
+      b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAA
+      tzc2gtZWQyNTUxOQAAACBmFALCO{cmdline-obfuscation-wins}_FAKEKEY=
+      -----END OPENSSH PRIVATE KEY-----
+      EOF
+      chmod 600 /root/.ssh/id_rsa

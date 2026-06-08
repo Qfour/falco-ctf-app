@@ -1,0 +1,13 @@
+# scoreboard is replicas=1 (SQLite single-writer, Invariant I1). Block
+# voluntary evictions so node drains during the event cannot take the
+# leaderboard offline. Involuntary disruptions (node failure) still apply.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: scoreboard
+  namespace: scoreboard
+spec:
+  maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: scoreboard

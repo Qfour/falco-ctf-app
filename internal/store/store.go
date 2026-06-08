@@ -16,6 +16,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -39,6 +40,7 @@ type Store struct {
 	solved        map[SolveKey]string // value = ISO-8601 timestamp
 	eventsPerUser map[string]int
 	ruleFires     map[string][]ruleFire // user -> bounded list (RetentionSeconds)
+	displayNames  map[string]string     // user -> participant-chosen display name
 }
 
 type ruleFire struct {
@@ -65,6 +67,11 @@ func Open(path string) (*Store, error) {
           at        TEXT NOT NULL,
           PRIMARY KEY (user, challenge)
         );
+        CREATE TABLE IF NOT EXISTS display_names (
+          user   TEXT PRIMARY KEY,
+          name   TEXT NOT NULL,
+          set_at TEXT NOT NULL
+        );
         DROP TABLE IF EXISTS events_per_user;
     `); err != nil {
 		db.Close()
@@ -76,6 +83,7 @@ func Open(path string) (*Store, error) {
 		solved:        make(map[SolveKey]string),
 		eventsPerUser: make(map[string]int),
 		ruleFires:     make(map[string][]ruleFire),
+		displayNames:  make(map[string]string),
 	}
 	if err := s.loadFromDB(); err != nil {
 		db.Close()
@@ -91,16 +99,73 @@ func (s *Store) loadFromDB() error {
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
 	for rows.Next() {
 		var k SolveKey
 		var at string
 		if err := rows.Scan(&k.User, &k.Challenge, &at); err != nil {
+			rows.Close()
 			return err
 		}
 		s.solved[k] = at
 	}
-	return rows.Err()
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	dn, err := s.db.Query("SELECT user, name FROM display_names")
+	if err != nil {
+		return err
+	}
+	defer dn.Close()
+	for dn.Next() {
+		var user, name string
+		if err := dn.Scan(&user, &name); err != nil {
+			return err
+		}
+		s.displayNames[user] = name
+	}
+	return dn.Err()
+}
+
+// ErrDisplayNameAlreadySet is returned by SetDisplayName when the user
+// already has a name recorded. Display names are operator-seeded at
+// workspace deploy time (via deploy-user.sh --display-name) and not
+// re-settable afterwards — the property keeps the leaderboard's name ↔
+// real participant binding stable across the event.
+var ErrDisplayNameAlreadySet = errors.New("display name already set")
+
+// SetDisplayName records the operator-supplied display name for `user`.
+// First-set-wins: if a display name is already recorded, the call
+// returns ErrDisplayNameAlreadySet without modifying the row. Identity
+// (`user`) is the auth-derived stable key — anything that scores or
+// audits goes via identity; `name` is purely cosmetic.
+func (s *Store) SetDisplayName(user, name, at string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if existing, ok := s.displayNames[user]; ok && existing != "" {
+		return ErrDisplayNameAlreadySet
+	}
+	if _, err := s.db.Exec(
+		`INSERT INTO display_names (user, name, set_at) VALUES (?, ?, ?)`,
+		user, name, at,
+	); err != nil {
+		return err
+	}
+	s.displayNames[user] = name
+	return nil
+}
+
+// DisplayName returns the chosen name for `user`, falling back to `user`
+// itself when none is set. Callers should not need to handle the missing
+// case — the fallback keeps rendering paths uniform.
+func (s *Store) DisplayName(user string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if n, ok := s.displayNames[user]; ok && n != "" {
+		return n
+	}
+	return user
 }
 
 // RecordRuleFire bumps the per-user event count (in-memory only) and appends
@@ -143,6 +208,31 @@ func (s *Store) MarkSolved(user, challenge, at string) (newly bool, err error) {
 	return true, nil
 }
 
+// RuleFire is the public projection of a recorded Falco rule fire.
+// Returned by RecentRuleFires for participant self-service displays.
+type RuleFire struct {
+	Rule string  `json:"rule"`
+	At   float64 `json:"at"` // unix seconds
+}
+
+// RecentRuleFires returns all rule fires for `user` within the last
+// `windowSeconds`, in arrival order. Unlike RecentForbiddenFires (which
+// returns a *set* of rule names for evade-window checks), this returns the
+// raw stream so the participant /me page can show what they just triggered.
+func (s *Store) RecentRuleFires(user string, now float64, windowSeconds int) []RuleFire {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cutoff := now - float64(windowSeconds)
+	fires := s.ruleFires[user]
+	out := make([]RuleFire, 0, len(fires))
+	for _, f := range fires {
+		if f.At >= cutoff {
+			out = append(out, RuleFire{Rule: f.Rule, At: f.At})
+		}
+	}
+	return out
+}
+
 // RecentForbiddenFires returns the *set* of forbidden rules (sorted) that
 // fired for `user` within the last `windowSeconds` from `now`. Empty slice
 // means the evade window is clean.
@@ -177,6 +267,7 @@ func (s *Store) RecentForbiddenFires(user string, forbidden []string, now float6
 type Snapshot struct {
 	Solved        map[SolveKey]string
 	EventsPerUser map[string]int
+	DisplayNames  map[string]string
 }
 
 func (s *Store) Snapshot() Snapshot {
@@ -185,12 +276,16 @@ func (s *Store) Snapshot() Snapshot {
 	out := Snapshot{
 		Solved:        make(map[SolveKey]string, len(s.solved)),
 		EventsPerUser: make(map[string]int, len(s.eventsPerUser)),
+		DisplayNames:  make(map[string]string, len(s.displayNames)),
 	}
 	for k, v := range s.solved {
 		out.Solved[k] = v
 	}
 	for k, v := range s.eventsPerUser {
 		out.EventsPerUser[k] = v
+	}
+	for k, v := range s.displayNames {
+		out.DisplayNames[k] = v
 	}
 	return out
 }
