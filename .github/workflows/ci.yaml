@@ -52,7 +52,7 @@ jobs:
             dockerfile: images/ttyd/Dockerfile
             scan-continue-on-error: true  # TEMP: kubectl embeds Go 1.26.2 CVEs; unblock until kubectl v1.36.1 ships
           - name: challenge
-            context: images/challenge
+            context: .
             dockerfile: images/challenge/Dockerfile
             scan-continue-on-error: false
     uses: Qfour/homelab-workflows/.github/workflows/image-pipeline.yaml@main
