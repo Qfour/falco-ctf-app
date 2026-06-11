@@ -70,7 +70,28 @@ securityContext:
 
 | 接点 | 詳細 |
 |---|---|
-| Image tag | `${REGISTRY}/falco-ctf-{scoreboard,auth-policy,ttyd,challenge}:<git-sha>` |
+| Image tag | `${REGISTRY}/falco-ctf-{scoreboard,auth-policy,ttyd,challenge}:<git-sha>` (registry の repo 名は `falco-ctf/X` slash 推奨; `falco-ctf-X` dash も ingest 受理) |
 | Challenges path | platform の `deploy-user.sh --challenges-dir` が当 repo `challenges/` を指す |
 | Webhook payload | `POST /falco/events` は falcosidekick 標準形。フィールドキー変更は両 repo 同時 PR |
 | Cookie domain | `.<ctf-domain>` は platform が決定。app 側は前提とする |
+
+## scoreboard ingest フィルタ (defense-in-depth)
+
+`internal/scoreboard/ingest/ingest.go` の image substring check は
+`falco-ctf/challenge` **または** `falco-ctf-challenge` を受理する。
+ECR が repo 名で `/` を許すので slash 命名が正式だが、containerd の
+image dedup で push 名と Falco 報告名が乖離するケース (同一 digest を
+別 repo にも push したケース) に対応するため dash 形も許容。
+
+新しい registry を追加する場合は image string が `falco-ctf/challenge` /
+`falco-ctf-challenge` のどちらかを含むよう repo 命名する。
+
+## Prod overlay の placeholder (commit してはいけない値)
+
+- `deploy/scoreboard/overlays/prod/ingress-host.yaml` の `scoreboard.<dns>` / `auth.<dns>`
+- `deploy/auth-policy/overlays/prod/kustomization.yaml` の `EXPECTED_EMAIL_DOMAIN` / `ADMIN_EMAILS`
+- `deploy/{scoreboard,auth-policy}/overlays/prod/kustomization.yaml` の image registry / tag
+
+これらは **stand-up 時に kustomize edit / sed で置換** する想定 (base は
+placeholder のまま)。CI でも commit には placeholder 値が入る。本物の値が
+入った状態の overlay は手元の working tree only。

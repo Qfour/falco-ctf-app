@@ -8,10 +8,10 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-body-size: "256k"
     # auth-signin for the admin gate (auth-url from base). TODO: replace
     # dnsSuffix when the real Route53 zone lands.
-    nginx.ingress.kubernetes.io/auth-signin: "https://auth.ctf.example.com/oauth2/start?rd=$scheme://$host$escaped_request_uri"
+    nginx.ingress.kubernetes.io/auth-signin: "https://auth.example.invalid/oauth2/start?rd=$scheme://$host$escaped_request_uri"
 spec:
   rules:
-    - host: scoreboard.ctf.example.com   # TODO: replace with real Route53 zone
+    - host: scoreboard.example.invalid   # TODO: replace with real Route53 zone
       http:
         paths:
           - path: /
@@ -23,5 +23,5 @@ spec:
                   number: 80
   tls:
     - hosts:
-        - scoreboard.ctf.example.com
+        - scoreboard.example.invalid
       secretName: scoreboard-tls

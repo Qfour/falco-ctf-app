@@ -89,7 +89,10 @@ func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 	// produces; an attacker would need to set this in the forged JSON, but
 	// adding the explicit check makes the contract from AGENTS.md actionable.
 	imageRepo, _ := ev.OutputFields.AdditionalProperties["container.image.repository"].(string)
-	if !strings.Contains(imageRepo, "falco-ctf/challenge") {
+	// Accept both `falco-ctf/challenge` (preferred, e.g. ghcr) and
+	// `falco-ctf-challenge` (e.g. ECR cached path after retag) since the
+	// substring choice depends on the registry's repo-naming conventions.
+	if !strings.Contains(imageRepo, "falco-ctf/challenge") && !strings.Contains(imageRepo, "falco-ctf-challenge") {
 		metrics.FalcoEventsReceived.WithLabelValues("ignored").Inc()
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"ignored": true, "reason": "not a challenge container"})
 		return
