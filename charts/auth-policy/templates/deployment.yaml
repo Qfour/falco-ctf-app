@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-policy
+  namespace: auth-policy
+  labels:
+    {{- include "auth-policy.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: auth-policy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: auth-policy
+        app.kubernetes.io/part-of: falco-ctf
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      {{- if .Values.highAvailability }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: auth-policy
+      {{- end }}
+      containers:
+        - name: auth-policy
+          image: {{ include "auth-policy.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: OAUTH2_PROXY_AUTH_URL
+              value: {{ .Values.env.oauth2ProxyAuthUrl | quote }}
+            - name: EXPECTED_EMAIL_DOMAIN
+              value: {{ .Values.env.expectedEmailDomain | quote }}
+            # ADMIN_EMAILS: allowlist consulted by /check-admin (scoreboard host
+            # gate). Empty default = nobody is admin (fail-closed).
+            - name: ADMIN_EMAILS
+              value: {{ .Values.env.adminEmails | quote }}
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

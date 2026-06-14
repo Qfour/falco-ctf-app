@@ -1,0 +1,66 @@
+# scoreboard NetworkPolicies — default-deny + scoped ingress for the audiences
+# that legitimately reach this Pod. See AGENTS.md threat model (Falco webhook
+# authenticity): without this, any cluster pod could POST forged events.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: scoreboard-default-deny
+  namespace: scoreboard
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: scoreboard-allow
+  namespace: scoreboard
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: scoreboard
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # falcosidekick webhook → /falco/events
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: falco
+      ports:
+        - protocol: TCP
+          port: 8000
+    # dashboard / API / metrics from ingress-nginx
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8000
+    # ctf-user workspaces → /api/users/{user}/me + submit. NP can't restrict by
+    # path; the scoreboard ingest filter prevents the workspace forging events.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              app.kubernetes.io/name: ctf-user
+      ports:
+        - protocol: TCP
+          port: 8000
+  egress:
+    # kube-dns only — the scoreboard never originates outbound traffic.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

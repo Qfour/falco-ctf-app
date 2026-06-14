@@ -1,0 +1,47 @@
+# scoreboard chart values. Env-specific values (image tag, host, storageClass,
+# flags secret) are supplied by falco-ctf-platform's helmfile per environment.
+
+# Invariant I1: scoreboard is single-writer (SQLite). Do not raise.
+replicas: 1
+
+image:
+  repository: docker.io/falco-ctf/scoreboard
+  # tag MUST be a git SHA in real deploys (Invariant I4). Empty → Chart.appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+env:
+  challengesDir: /app/challenges
+  dbPath: /var/lib/scoreboard/scoreboard.db
+
+persistence:
+  size: 1Gi
+  # local: local-path, prod (EKS): gp3. Unset → cluster default.
+  storageClassName: ""
+
+# Real per-event flags. When enabled, mount a Secret as FLAGS_FILE so
+# ApplyFlagOverrides replaces the FALCO{dev-...} placeholders baked into the
+# image. The Secret is created by the platform from events/<date>/flags.sops.yaml
+# (key: flags.yaml). Disabled = use the dev placeholders (local).
+flagsSecret:
+  enabled: false
+  name: scoreboard-flags
+  key: flags.yaml
+
+ingress:
+  enabled: true
+  className: nginx
+  host: scoreboard.example.invalid
+  tls: false
+  # secretName for the TLS cert. Empty = rely on ingress-nginx's wildcard
+  # default-ssl-certificate (local). Prod sets a name (e.g. scoreboard-tls)
+  # paired with a cert-manager issuer annotation below.
+  tlsSecretName: ""
+  # Per-environment oauth2-proxy sign-in URL for the admin gate. Empty = omit.
+  authSignin: ""
+  # Extra annotations merged in (e.g. cert-manager issuer, ssl-redirect in prod).
+  annotations: {}
+
+resources:
+  requests: { cpu: 25m, memory: 64Mi }
+  limits:   { cpu: 200m, memory: 256Mi }

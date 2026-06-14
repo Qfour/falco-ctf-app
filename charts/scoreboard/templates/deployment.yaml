@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scoreboard
+  namespace: scoreboard
+  labels:
+    {{- include "scoreboard.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: scoreboard
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: scoreboard
+        app.kubernetes.io/part-of: falco-ctf
+    spec:
+      # scoreboard never calls the Kubernetes API. Disable token automount so a
+      # pod compromise cannot use the in-pod token to enumerate the cluster.
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: scoreboard
+          image: {{ include "scoreboard.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: CHALLENGES_DIR
+              value: {{ .Values.env.challengesDir | quote }}
+            - name: SCOREBOARD_DB
+              value: {{ .Values.env.dbPath | quote }}
+            {{- if .Values.flagsSecret.enabled }}
+            - name: FLAGS_FILE
+              value: /etc/ctf-flags/{{ .Values.flagsSecret.key }}
+            {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/scoreboard
+            {{- if .Values.flagsSecret.enabled }}
+            - name: flags
+              mountPath: /etc/ctf-flags
+              readOnly: true
+            {{- end }}
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: scoreboard-data
+        {{- if .Values.flagsSecret.enabled }}
+        - name: flags
+          secret:
+            secretName: {{ .Values.flagsSecret.name }}
+        {{- end }}

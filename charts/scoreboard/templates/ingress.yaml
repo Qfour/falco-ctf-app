@@ -1,0 +1,42 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: scoreboard
+  namespace: scoreboard
+  labels:
+    {{- include "scoreboard.labels" . | nindent 4 }}
+  annotations:
+    # Operator-only gate. auth-policy /check-admin returns 200 only when the
+    # logged-in oauth2-proxy email is in the ADMIN_EMAILS allowlist. Without
+    # this any logged-in user could reach the scoreboard / /me dashboards.
+    nginx.ingress.kubernetes.io/auth-url: "http://auth-policy.auth-policy.svc.cluster.local:80/check-admin"
+    nginx.ingress.kubernetes.io/auth-response-headers: "X-Auth-Request-User,X-Auth-Request-Email,X-Auth-Request-Preferred-Username"
+    {{- with .Values.ingress.authSignin }}
+    nginx.ingress.kubernetes.io/auth-signin: {{ . | quote }}
+    {{- end }}
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: scoreboard
+                port:
+                  number: 80
+  {{- if .Values.ingress.tls }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      {{- with .Values.ingress.tlsSecretName }}
+      secretName: {{ . }}
+      {{- end }}
+  {{- end }}
+{{- end }}

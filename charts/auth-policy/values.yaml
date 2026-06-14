@@ -1,0 +1,23 @@
+# auth-policy chart values. Env-specific values (image tag, email domain, admin
+# allowlist) are supplied by falco-ctf-platform's helmfile per environment.
+
+replicas: 1
+
+image:
+  repository: docker.io/falco-ctf/auth-policy
+  tag: ""
+  pullPolicy: IfNotPresent
+
+env:
+  oauth2ProxyAuthUrl: "http://oauth2-proxy.oauth2-proxy.svc.cluster.local:80/oauth2/auth"
+  # Invariant I8: prefix-exact <username>@ match. Must match oauth2-proxy email_domains.
+  expectedEmailDomain: "example.invalid"
+  # /check-admin allowlist (comma-separated). Empty = nobody (fail-closed).
+  adminEmails: ""
+
+# Prod runs 2 replicas with zone spread (auth hot path). Local leaves false.
+highAvailability: false
+
+resources:
+  requests: { cpu: 25m, memory: 32Mi }
+  limits:   { cpu: 200m, memory: 128Mi }

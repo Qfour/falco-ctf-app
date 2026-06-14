@@ -1,0 +1,7 @@
+apiVersion: v2
+name: scoreboard
+description: Falco CTF scoreboard — ingests falcosidekick webhooks, scores solves, serves the dashboard
+type: application
+version: 0.1.0
+# appVersion is set at publish time to the falco-ctf-app git SHA (Invariant I4/I5).
+appVersion: "0.0.0"
