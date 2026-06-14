@@ -79,3 +79,40 @@ jobs:
     secrets:
       sysdig-token: ${{ secrets.SYSDIG_SECURE_TOKEN }}
       aws-role-arn: ${{ secrets.AWS_ROLE_ARN }}
+
+  # ------------------------------------------------------------------
+  # Publish Helm charts to ECR (OCI). Same git SHA as the images
+  # (Invariant I5). Push only on main / v* tags. Chart version is a SemVer
+  # prerelease pinned to the SHA so prod can pin an immutable artifact.
+  # ------------------------------------------------------------------
+  publish-charts:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: ECR login (helm OCI)
+        run: |
+          aws ecr get-login-password --region "${{ vars.AWS_REGION }}" \
+            | helm registry login --username AWS --password-stdin "${{ vars.ECR_REGISTRY }}"
+      - name: Package & push charts
+        run: |
+          set -euo pipefail
+          SHA="$(git rev-parse --short HEAD)"
+          VERSION="0.1.0-${SHA}"
+          REG="${{ vars.ECR_REGISTRY }}"
+          for c in scoreboard auth-policy ctf-user; do
+            # ECR repositories are not auto-created; ensure charts/<c> exists.
+            aws ecr describe-repositories --repository-names "charts/${c}" --region "${{ vars.AWS_REGION }}" >/dev/null 2>&1 \
+              || aws ecr create-repository --repository-name "charts/${c}" --region "${{ vars.AWS_REGION }}" >/dev/null
+            helm package "charts/${c}" --version "${VERSION}" --app-version "${SHA}"
+            helm push "${c}-${VERSION}.tgz" "oci://${REG}/charts"
+          done
+          echo "published charts at version ${VERSION} → oci://${REG}/charts/{scoreboard,auth-policy,ctf-user}"
