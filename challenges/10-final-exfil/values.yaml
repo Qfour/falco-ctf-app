@@ -1,10 +1,10 @@
-# Mission 10 — final flag を /etc/shadow 末尾の特別行に埋め込む。
-# 02 / 03 と同じ場所だが、参加者が 10 を解くタイミングでは
-# 「同じ場所でも、すべての禁止ルールを発火させずに retrieve できるか」
-# が問われる。
+# GENERATED from 10-final-exfil/plant.sh by gen-values.sh — DO NOT EDIT.
+# Run `make gen-values` after editing plant.sh.
 challenge:
   postStart:
     - sh
     - -c
     - |
-      echo '# NIMBUS_FINAL: FALCO{rds-master-pw-bAd1dEa-2026}' >> /etc/shadow
+      # Mission 10 (Final Exfil) — plant the final flag as a NIMBUS_FINAL line at the
+      # end of /etc/shadow. CTF_FLAG_10_FINAL_EXFIL is injected by the ctf-user chart.
+      echo "# NIMBUS_FINAL: ${CTF_FLAG_10_FINAL_EXFIL:?flag env not set by ctf-user chart}" >> /etc/shadow

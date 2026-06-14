@@ -38,28 +38,35 @@ challengeId: "${NN}-${SLUG}"
 type: evade
 forbiddenRules:
   - "Exact Falco Rule Name Here"
-expectedFlag: "FALCO{descriptive_l33tspeak_2026}"
+# placeholder のみ。実フラグはコミットしない (public repo)。
+expectedFlag: "FALCO{dev-${SLUG}}"
 windowSeconds: 10
 ```
 
-フラグ重複確認:
+> **フラグは外部注入**。`falco-rule.yaml` には `FALCO{dev-<slug>}` の placeholder
+> だけを書く。実フラグは `falco-ctf-platform` の `events/<date>/flags.sops.yaml`
+> に置き、デプロイ時に scoreboard へ `FLAGS_FILE`、challenge コンテナへ
+> `CTF_FLAG_<ID>` env として注入される。`make check-flags` が実フラグ混入を block。
+
+ID 重複確認:
 ```bash
-grep -r "expectedFlag" challenges/   # 重複がないこと
 grep -r "challengeId" challenges/    # ID 重複がないこと
 ```
 
-## 4. `values.yaml` を書く（evade 型のみ）
+## 4. `plant.sh` を書く（evade 型のみ）
 
-```yaml
-challenge:
-  extraEnv:
-    - name: CTF${NN}_FLAG
-      value: "FALCO{...}"
-  postStart:
-    - sh
-    - -c
-    - >-
-      printf '# falco-ctf flag: %s\n' "${CTF${NN}_FLAG}" >> /etc/shadow
+フラグを container に仕込むシェルを `plant.sh` に書く。**フラグ実値は書かず**、
+env var `CTF_FLAG_<ID>` を参照する (`<ID>` = challengeId の `-` を `_`、大文字。
+例: `03-stealth-read` → `CTF_FLAG_03_STEALTH_READ`)。
+
+```sh
+# challenges/${NN}-${SLUG}/plant.sh
+echo "# ${CTF_FLAG_${NN}_${SLUG_UPPER}:?flag env not set by ctf-user chart}" >> /etc/shadow
+```
+
+`values.yaml` / `values-all.yaml` は **plant.sh から生成**する。手書きしない:
+```bash
+make gen-values   # plant.sh → 各 values.yaml + values-all.yaml を再生成
 ```
 
 ## 5. `fixtures/welcome.txt` を書く
@@ -73,8 +80,8 @@ challenge:
 evade 型は `fixtures/submit.sh` も作る:
 ```bash
 #!/bin/sh
-# フラグを scoreboard に提出する
-FLAG=${1:-$CTF${NN}_FLAG}
+# フラグを scoreboard に提出する (フラグは参加者が取得して引数で渡す)
+FLAG=${1:?usage: submit FALCO{...}}
 curl -s -X POST http://scoreboard.scoreboard.svc.cluster.local:8000/falco/submit \
   -H "Content-Type: application/json" \
   -d "{\"challengeId\":\"${NN}-${SLUG}\",\"flag\":\"${FLAG}\"}"
@@ -107,7 +114,10 @@ curl -s http://localhost:8000/api/state | jq '.challenges[] | select(.id == "${N
 ## チェックリスト
 
 - [ ] `challengeId` が一意
-- [ ] `expectedFlag` が一意（evade のみ）
+- [ ] `expectedFlag` は `FALCO{dev-<slug>}` placeholder（evade のみ。実フラグを書かない）
+- [ ] 実フラグを `falco-ctf-platform` の `events/<date>/flags.sops.yaml` に追加
+- [ ] `make gen-values` 実行済（`plant.sh` → values 同期）
+- [ ] `make check-flags` が pass（実フラグ混入なし・values 同期）
 - [ ] Falco ルール名が公式と完全一致
 - [ ] `fixtures/welcome.txt` が存在
 - [ ] `README.md` が全セクションを持つ

@@ -8,5 +8,6 @@ forbiddenRules:
   - Drop and execute new binary in container
   - Redirect STDOUT/STDIN to Network Connection in Container
   - Create Hardlink Over Sensitive Files
-expectedFlag: FALCO{rds-master-pw-bAd1dEa-2026}
+# Placeholder for local dev/tests. Real flag injected at deploy via FLAGS_FILE.
+expectedFlag: FALCO{dev-final-exfil}
 windowSeconds: 30

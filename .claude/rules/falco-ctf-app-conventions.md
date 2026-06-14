@@ -53,8 +53,23 @@ securityContext:
 ## Security
 
 - `.env` / kubeconfig / `*.key` / `*.pem` / `*.db` はコミットしない
-- 課題用ダミー値 (`P@ssw0rd`, `flag{...}`) は LOW 扱い、明確にダミーと示す
+- **実フラグをコミットしない (public repo)**。`falco-rule.yaml` は `FALCO{dev-<slug>}`
+  placeholder のみ。実フラグは platform `events/<date>/flags.sops.yaml`。
+  `make check-flags` (CI: `flag-guard`、PreCommit hook) が混入を block。
+- 課題用ダミー値 (`P@ssw0rd`) は LOW 扱い、明確にダミーと示す
 - `git add .` / `git add -A` 禁止 (明示パス指定のみ)
+
+## フラグ注入 (flag injection) — 単一ソース
+
+- 採点側: scoreboard が `FLAGS_FILE` (yaml `{flags: {id: FALCO{...}}}`) を読み、
+  evade challenge の `expectedFlag` を起動時に上書き (`catalog.ApplyFlagOverrides`、
+  fail-closed)。空なら placeholder のまま (local/test)。
+- 仕込み側: `challenges/<NN>/plant.sh` が唯一の正典。フラグ実値は書かず
+  `${CTF_FLAG_<ID>}` env を参照 (`<ID>` = challengeId 大文字・`-`→`_`)。
+- `values.yaml` / `values-all.yaml` は `make gen-values` で plant.sh から生成。
+  **手書き禁止**。CI `flag-guard` が同期を検証。
+- 採点フラグ (FLAGS_FILE) と仕込みフラグ (CTF_FLAG_*) は platform の
+  同一 `flags.sops.yaml` から render され、必ず一致する。
 
 ## Scope / 影響範囲
 
@@ -74,6 +89,7 @@ securityContext:
 | Challenges path | platform の `deploy-user.sh --challenges-dir` が当 repo `challenges/` を指す |
 | Webhook payload | `POST /falco/events` は falcosidekick 標準形。フィールドキー変更は両 repo 同時 PR |
 | Cookie domain | `.<ctf-domain>` は platform が決定。app 側は前提とする |
+| Flags | platform `events/<date>/flags.sops.yaml` が正典。scoreboard へ `FLAGS_FILE`、challenge コンテナへ `CTF_FLAG_<ID>` env として注入。app は `FALCO{dev-<slug>}` placeholder のみ保持。dev default 値は両 repo で一致させる |
 
 ## scoreboard ingest フィルタ (defense-in-depth)
 

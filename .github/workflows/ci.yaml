@@ -25,6 +25,17 @@ jobs:
     uses: Qfour/homelab-workflows/.github/workflows/kustomize-lint.yaml@main
 
   # ------------------------------------------------------------------
+  # Flag hygiene: no real flags in the public repo + generated values in sync.
+  # Branch protection check: "flag-guard"
+  # ------------------------------------------------------------------
+  flag-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: check flags & generated values
+        run: ./scripts/check-flags.sh
+
+  # ------------------------------------------------------------------
   # Image pipeline (build → scan → push) per service
   # Branch protection checks: "build (scoreboard)", "build (auth-policy)", etc.
   # Push: main branch and v* tags only. PRs run build+scan only.

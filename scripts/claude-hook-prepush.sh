@@ -23,4 +23,21 @@ if [[ -n "$SECRET_FILES" ]]; then
     exit 1
 fi
 
+# Block real CTF flag literals leaking into the public repo (allow FALCO{dev-...}
+# and FALCO{...}). Scope to staged content only for speed.
+if echo "$STAGED" | grep -qE '(^|/)challenges/'; then
+    BAD_FLAGS=$(git diff --cached -U0 -- challenges/ \
+        | grep -E '^\+' \
+        | grep -oE 'FALCO\{[^}]*\}' \
+        | sort -u \
+        | grep -vE '^FALCO\{dev-.*\}$' \
+        | grep -vE '^FALCO\{\.\.\.\}$' || true)
+    if [[ -n "$BAD_FLAGS" ]]; then
+        echo "⛔ blocked: 実フラグらしき文字列が staged に含まれています (public repo):" >&2
+        echo "$BAD_FLAGS" | sed 's/^/  /' >&2
+        echo "実フラグは platform events/<date>/flags.sops.yaml に置き、ここは FALCO{dev-...} を使ってください" >&2
+        exit 1
+    fi
+fi
+
 exit 0

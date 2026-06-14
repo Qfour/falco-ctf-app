@@ -2,5 +2,6 @@ challengeId: 05-silent-search
 type: evade
 forbiddenRules:
   - Search Private Keys or Passwords
-expectedFlag: FALCO{cmdline-obfuscation-wins}
+# Placeholder for local dev/tests. Real flag injected at deploy via FLAGS_FILE.
+expectedFlag: FALCO{dev-silent-search}
 windowSeconds: 10

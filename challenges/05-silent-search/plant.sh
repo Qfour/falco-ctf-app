@@ -1,0 +1,11 @@
+# Mission 05 (Silent Search) — embed the flag inside a fake OpenSSH private key
+# so the player must read it without putting "id_rsa" on the command line.
+# CTF_FLAG_05_SILENT_SEARCH is injected by the ctf-user chart.
+mkdir -p /root/.ssh
+cat > /root/.ssh/id_rsa <<EOF
+-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAA
+tzc2gtZWQyNTUxOQAAACBm${CTF_FLAG_05_SILENT_SEARCH:?flag env not set by ctf-user chart}_FAKEKEY=
+-----END OPENSSH PRIVATE KEY-----
+EOF
+chmod 600 /root/.ssh/id_rsa

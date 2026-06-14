@@ -25,13 +25,20 @@ func main() {
 	challengesDir := env("CHALLENGES_DIR", "/app/challenges")
 	dbPath := env("SCOREBOARD_DB", "/var/lib/scoreboard/scoreboard.db")
 	addr := env("LISTEN_ADDR", ":8000")
+	// FLAGS_FILE injects real per-event flags over the FALCO{dev-...}
+	// placeholders baked into the public image. Empty = use placeholders.
+	flagsFile := env("FLAGS_FILE", "")
 
 	cat, err := catalog.Load(challengesDir)
 	if err != nil {
 		logger.Error("catalog load failed", "dir", challengesDir, "err", err)
 		os.Exit(1)
 	}
-	logger.Info("catalog loaded", "dir", challengesDir, "challenges", cat.IDs())
+	if err := cat.ApplyFlagOverrides(flagsFile); err != nil {
+		logger.Error("flag overrides failed", "file", flagsFile, "err", err)
+		os.Exit(1)
+	}
+	logger.Info("catalog loaded", "dir", challengesDir, "challenges", cat.IDs(), "flag_overrides", flagsFile != "")
 
 	st, err := store.Open(dbPath)
 	if err != nil {

@@ -14,8 +14,9 @@ flag を取り出して提出する。
 
 ## Flag
 
-`FALCO{rds-master-pw-bAd1dEa-2026}` — postStart で `/etc/shadow` 末尾の
-特別行 (`# NIMBUS_FINAL: ...`) として書き込まれる。
+postStart (`plant.sh`) で `/etc/shadow` 末尾の特別行
+(`# NIMBUS_FINAL: FALCO{...}`) として書き込まれる。実値はイベント毎に注入
+(`CTF_FLAG_10_FINAL_EXFIL`)。ローカルは dev default。
 
 ## 想定解
 
@@ -26,7 +27,7 @@ cat /proc/self/root/etc/shadow | grep NIMBUS_FINAL
 
 # 2. 提出
 source /opt/ctf/fixtures/submit.sh
-submit 'FALCO{rds-master-pw-bAd1dEa-2026}'
+submit 'FALCO{...}'
 ```
 
 **注意**: window=30s 中に他のチャレンジで発火させた古い rule fire が

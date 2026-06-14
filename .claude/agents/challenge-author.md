@@ -37,22 +37,26 @@ challengeId: "<NN>-<slug>"
 type: evade
 forbiddenRules:
   - "Exact Falco rule name"
-expectedFlag: "FALCO{descriptive_l33tspeak_2026}"
+# placeholder only — real flag injected at deploy via FLAGS_FILE (public repo).
+expectedFlag: "FALCO{dev-<slug>}"
 windowSeconds: 10
 ```
 
-## values.yaml (evade challenges)
+## plant.sh + generated values (evade challenges)
 
-```yaml
-challenge:
-  extraEnv:
-    - name: CTF<NN>_FLAG
-      value: "FALCO{...}"
-  postStart:
-    - sh
-    - -c
-    - >-
-      printf '# falco-ctf flag: %s\n' "${CTF<NN>_FLAG}" >> /path/to/seed
+Flags are injected, never written into the repo. Author a `plant.sh` that seeds
+the flag using the `CTF_FLAG_<ID>` env var (`<ID>` = challengeId upper-cased,
+`-`→`_`); the ctf-user chart supplies the value (dev default locally, real flag
+from the platform events secret in prod):
+
+```sh
+# challenges/<NN>-<slug>/plant.sh
+echo "# ${CTF_FLAG_<NN>_<SLUG>:?flag env not set by ctf-user chart}" >> /etc/shadow
+```
+
+Then regenerate the Helm overlays (never hand-edit values.yaml / values-all.yaml):
+```bash
+make gen-values
 ```
 
 ## Authoring process
@@ -67,15 +71,18 @@ When asked to CREATE a challenge:
    `https://github.com/falcosecurity/rules/blob/main/rules/falco_rules.yaml`
    or the rule list the user provides. Exact name match is critical.
 4. **Design the solve path**: ensure at least one realistic method works inside Alpine/busybox
-5. **Write the flag** for evade type: `FALCO{<evocative_snake_case_2026>}`.
-   Check uniqueness: `grep -r "expectedFlag" challenges/` — no duplicates.
+5. **Flag** for evade type: write a `FALCO{dev-<slug>}` placeholder in
+   falco-rule.yaml and author `plant.sh`; the real flag goes into
+   falco-ctf-platform `events/<date>/flags.sops.yaml`. Never commit a real flag.
+   Run `make gen-values` then `make check-flags`.
 6. **Check `challengeId` uniqueness**: `grep -r "challengeId" challenges/`
 
 When asked to REVIEW a challenge:
 
 - Verify falco-rule.yaml schema completeness and rule name accuracy
 - For evade: verify `windowSeconds` is realistic (>= 5, typically 10)
-- For evade: verify `values.yaml` seeds the flag correctly
+- For evade: verify `plant.sh` seeds the flag via `CTF_FLAG_<ID>` and that
+  `values.yaml` / `values-all.yaml` are regenerated (`make gen-values` clean)
 - Check README has: 出題文, クリア条件, 想定解, 仕組みの解説, ヒント (難易度別)
 - Verify `fixtures/welcome.txt` gives enough context without spoiling
 - For evade: verify `fixtures/submit.sh` posts to scoreboard endpoint correctly

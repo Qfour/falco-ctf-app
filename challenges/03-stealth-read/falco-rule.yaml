@@ -2,5 +2,8 @@ challengeId: 03-stealth-read
 type: evade
 forbiddenRules:
   - Read sensitive file untrusted
-expectedFlag: FALCO{shadow-via-proc-self-root}
+# Placeholder for local dev/tests. Real flag injected at deploy via FLAGS_FILE
+# (rendered from falco-ctf-platform events/<date>/flags.sops.yaml). Must equal
+# the ctf-user chart's dev default so local end-to-end submit passes.
+expectedFlag: FALCO{dev-stealth-read}
 windowSeconds: 10

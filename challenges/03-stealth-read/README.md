@@ -11,7 +11,9 @@ flag を取得し、scoreboard に提出する。windowSeconds=10。
 
 ## Flag
 
-`FALCO{shadow-via-proc-self-root}` (postStart で `/etc/shadow` 末尾に追記)
+postStart (`plant.sh`) で `/etc/shadow` 末尾に `# FALCO{...}` として追記。
+実値はイベント毎に注入される (`CTF_FLAG_03_STEALTH_READ`)。ローカルでは
+chart の dev default `FALCO{dev-stealth-read}`。
 
 ## 想定解
 
