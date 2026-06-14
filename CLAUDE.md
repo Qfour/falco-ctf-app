@@ -43,7 +43,7 @@ falco-ctf-app/
 
 - **auth-policy は別サービス** — oauth2-proxy 単体では「認証済ユーザ = 全 workspace
   到達可」になる問題を解消するため。`X-Auth-Request-Email` を読んで
-  `<username>@` 一致を確認する小さな FastAPI。
+  `<username>@` 一致を確認する小さな Go サービス。
 
 - **ttyd / challenge イメージはここに置く** — ユーザの体験面はアプリ層の責務。
   platform 側の ctf-user chart は image tag を values で pin するだけ。
@@ -107,8 +107,9 @@ gitGraph
 
 ## Model routing (Claude Code)
 
-デフォルトは Sonnet (`.claude/settings.json` で固定)。目的別に
-サブエージェントへ委譲する。詳細は `.claude/rules/model-routing.md`。
+デフォルトはセッション起動時のモデル (settings.json でのピン留めは廃止。
+最新世代を推奨)。目的別にサブエージェントへ委譲する。
+詳細は `.claude/rules/model-routing.md`。
 
 | 用途 | 使うコマンド | モデル |
 |---|---|---|

@@ -30,5 +30,5 @@ scoreboard/dev-data/
 .claude/settings.local.json
 .claude/last-test-commit
 
-# Local Sysdig scanner output
-scan-logs/
+# Local Sysdig scanner output (dir and stray log file)
+scan-logs
