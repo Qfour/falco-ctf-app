@@ -17,7 +17,9 @@ falco-ctf-app/
 ├── auth-policy/        Dockerfile のみ (Go multi-stage, stdlib のみ)
 ├── images/{ttyd,challenge}/   Dockerfile のみ
 ├── challenges/<NN>-<slug>/    README + falco-rule.yaml + fixtures + values.yaml
-├── deploy/<app>/{base,overlays/<env>}/   Kustomize
+├── charts/             Helm charts: scoreboard / auth-policy / ctf-user
+│                       (platform helmfile が OCI/path で参照; ctf-user は P2 で platform から移設)
+├── deploy/<app>/{base,overlays/<env>}/   Kustomize (旧; helmfile 移行で段階的に retire 予定)
 ├── scripts/            build-and-load.sh (colima 用), mock-oauth2.conf
 ├── docker-compose.yml  ローカル dev (scoreboard + auth-policy + mock-oauth2)
 ├── Dockerfile.{test,tidy}  bind mount 不要の `go test` / `go mod tidy` (colima 用)

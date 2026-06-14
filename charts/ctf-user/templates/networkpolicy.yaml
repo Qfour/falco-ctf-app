@@ -1,0 +1,64 @@
+{{- if .Values.networkPolicy.enabled }}
+# Workspace NetworkPolicy.
+#
+# Ingress: only ingress-nginx may reach ttyd port. The challenge container
+# exposes nothing externally; its only entry is in-Pod `kubectl exec` from
+# the ttyd container.
+#
+# Egress (opt-in via networkPolicy.egress.enabled): kube-dns + the
+# Kubernetes API server only. Locks down the challenge container so it
+# cannot reach scoreboard/falco/oauth2-proxy and forge webhook events.
+# `apiServerCidr` must be set to the real apiserver endpoint CIDR or ttyd's
+# `kubectl exec` to challenge will be blocked.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: workspace-ingress
+  namespace: {{ include "ctf-user.namespace" . }}
+  labels:
+    {{- include "ctf-user.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "ctf-user.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    {{- if .Values.networkPolicy.egress.enabled }}
+    - Egress
+    {{- end }}
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: {{ .Values.ttyd.port }}
+  {{- if .Values.networkPolicy.egress.enabled }}
+  egress:
+    # kube-dns
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- with .Values.networkPolicy.egress.apiServerCidr }}
+    # Kubernetes API server (required for ttyd's `kubectl exec`).
+    - to:
+        - ipBlock:
+            cidr: {{ . }}
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 6443
+    {{- end }}
+  {{- end }}
+{{- end }}

@@ -1,0 +1,46 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ttyd
+  namespace: {{ include "ctf-user.namespace" . }}
+  labels:
+    {{- include "ctf-user.labels" . | nindent 4 }}
+  annotations:
+    # ttyd uses websockets — keep connections open long enough for interactive shells.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    # ttyd (libwebsockets) doesn't tolerate nginx's pooled keepalive connections;
+    # without these, the first GET after a session keepalive stalls 15 s on
+    # `upstream prematurely closed connection`. Disable buffering and keepalive
+    # at the upstream side, retry on 502 immediately.
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/upstream-keepalive-connections: "0"
+    nginx.ingress.kubernetes.io/proxy-next-upstream: "error timeout http_502 http_504"
+    nginx.ingress.kubernetes.io/proxy-next-upstream-tries: "3"
+    nginx.ingress.kubernetes.io/proxy-next-upstream-timeout: "5"
+    {{- if .Values.auth.enabled }}
+    # auth-policy front door: oauth2-proxy auth + host↔email check.
+    nginx.ingress.kubernetes.io/auth-url: {{ tpl .Values.auth.authUrl . | quote }}
+    nginx.ingress.kubernetes.io/auth-signin: {{ tpl .Values.auth.authSignin . | quote }}
+    nginx.ingress.kubernetes.io/auth-response-headers: "X-Auth-Request-User,X-Auth-Request-Email,X-Auth-Request-Preferred-Username"
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  tls:
+    - hosts:
+        - {{ include "ctf-user.ingressHost" . }}
+      # No secretName → ingress-nginx falls back to its `default-ssl-certificate`
+      # (the cert-manager-issued wildcard for *.192.168.64.2.nip.io).
+  rules:
+    - host: {{ include "ctf-user.ingressHost" . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ttyd
+                port:
+                  number: 80
+{{- end }}

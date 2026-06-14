@@ -1,0 +1,115 @@
+# workspace Pod = ttyd container (public via Service) + challenge container (private).
+# Containers share the Pod network namespace; ttyd reaches challenge via in-cluster
+# `kubectl exec` (its SA only allows pods/exec on this Pod by name).
+#
+# We use a Pod (not Deployment) on purpose:
+#   - Static name "workspace" is required by RBAC resourceNames.
+#   - Per-user state is ephemeral — if the Pod dies, the user is reset (intentional).
+#   - Helm will recreate the Pod on `helm upgrade` if container fields change.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: workspace
+  namespace: {{ include "ctf-user.namespace" . }}
+  labels:
+    {{- include "ctf-user.labels" . | nindent 4 }}
+spec:
+  serviceAccountName: ttyd
+  automountServiceAccountToken: true
+  restartPolicy: Always
+  enableServiceLinks: false
+  securityContext:
+    runAsNonRoot: false   # challenge intentionally runs as root for CTF realism
+  containers:
+    - name: ttyd
+      image: "{{ .Values.ttyd.image.repository }}:{{ .Values.ttyd.image.tag }}"
+      imagePullPolicy: {{ .Values.ttyd.image.pullPolicy }}
+      # ttyd does not need root; harden against post-compromise escalation.
+      # The challenge container intentionally keeps its CTF-realistic posture.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        readOnlyRootFilesystem: true
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: RuntimeDefault
+      ports:
+        - name: http
+          containerPort: {{ .Values.ttyd.port }}
+          protocol: TCP
+      env:
+        - name: TTYD_PORT
+          value: "{{ .Values.ttyd.port }}"
+        - name: TTYD_TARGET_CONTAINER
+          value: "challenge"
+      resources:
+        {{- toYaml .Values.ttyd.resources | nindent 8 }}
+      readinessProbe:
+        tcpSocket:
+          port: http
+        initialDelaySeconds: 2
+        periodSeconds: 5
+      # With readOnlyRootFilesystem above, kubectl can't write its discovery
+      # cache to $HOME/.kube/cache and libwebsocket has nowhere to scratch.
+      # Two tmpfs emptyDirs give ttyd the few scratch paths it needs.
+      volumeMounts:
+        - name: ttyd-home
+          mountPath: /home/ttyd
+        - name: ttyd-tmp
+          mountPath: /tmp
+
+    - name: challenge
+      image: "{{ .Values.challenge.image.repository }}:{{ .Values.challenge.image.tag }}"
+      imagePullPolicy: {{ .Values.challenge.image.pullPolicy }}
+      command: ["sleep", "infinity"]
+      env:
+        - name: FALCO_CTF_USER
+          value: "{{ .Values.username }}"
+        - name: FALCO_CTF_CHALLENGE
+          value: "{{ .Values.challengeId }}"
+        - name: FALCO_CTF_SCOREBOARD
+          value: "http://scoreboard.scoreboard.svc:80"
+        {{- /* Inject CTF_FLAG_<ID> for this workspace's mission(s) only. */}}
+        {{- if .Values.challenge.allMissions }}
+        {{- range $id, $flag := .Values.challenge.flags }}
+        - name: CTF_FLAG_{{ $id | upper | replace "-" "_" }}
+          value: {{ $flag | quote }}
+        {{- end }}
+        {{- else if hasKey .Values.challenge.flags .Values.challengeId }}
+        - name: CTF_FLAG_{{ .Values.challengeId | upper | replace "-" "_" }}
+          value: {{ get .Values.challenge.flags .Values.challengeId | quote }}
+        {{- end }}
+        {{- with .Values.challenge.extraEnv }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      resources:
+        {{- toYaml .Values.challenge.resources | nindent 8 }}
+      {{- with .Values.challenge.postStart }}
+      lifecycle:
+        postStart:
+          exec:
+            command:
+              {{- toYaml . | nindent 14 }}
+      {{- end }}
+      {{- if .Values.challenge.fixtures }}
+      volumeMounts:
+        - name: fixtures
+          mountPath: /opt/ctf/fixtures
+          readOnly: true
+      {{- end }}
+
+  volumes:
+    - name: ttyd-home
+      emptyDir:
+        sizeLimit: 16Mi
+    - name: ttyd-tmp
+      emptyDir:
+        sizeLimit: 32Mi
+    {{- if .Values.challenge.fixtures }}
+    - name: fixtures
+      configMap:
+        name: challenge-fixtures
+    {{- end }}

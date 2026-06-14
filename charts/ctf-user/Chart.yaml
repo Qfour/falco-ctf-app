@@ -1,0 +1,10 @@
+apiVersion: v2
+name: ctf-user
+description: Per-user CTF environment (Namespace + workspace Pod with ttyd + challenge)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - falco
+  - ctf
+  - ttyd

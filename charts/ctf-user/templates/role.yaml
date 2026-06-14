@@ -1,0 +1,35 @@
+# ttyd's SA gets ONLY exec into the workspace pod's challenge container.
+# `pods/exec` (verb create) is required by `kubectl exec`. `pods` get is
+# required so kubectl can fetch the Pod metadata before exec'ing.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ttyd-exec
+  namespace: {{ include "ctf-user.namespace" . }}
+  labels:
+    {{- include "ctf-user.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    resourceNames: ["workspace"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    resourceNames: ["workspace"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ttyd-exec
+  namespace: {{ include "ctf-user.namespace" . }}
+  labels:
+    {{- include "ctf-user.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: ttyd
+    namespace: {{ include "ctf-user.namespace" . }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ttyd-exec

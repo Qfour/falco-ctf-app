@@ -1,0 +1,17 @@
+# Only the ttyd port is exposed via Service. challenge container has no Service.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ttyd
+  namespace: {{ include "ctf-user.namespace" . }}
+  labels:
+    {{- include "ctf-user.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "ctf-user.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: {{ .Values.ttyd.port }}
+      protocol: TCP
