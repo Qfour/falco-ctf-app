@@ -33,6 +33,6 @@ scoreboard/dev-data/
 # Local Sysdig scanner output (dir and stray log file)
 scan-logs
 
-# Event production materials (decks/prompts contain real flags) — keep untracked
-# until relocated to falco-ctf-platform events/ (REFACTORING.md P3).
+# Event production materials moved to falco-ctf-platform events/<date>/decks/
+# (they embed real flags). Guard against re-creating them in this public repo.
 challenges/decks/
