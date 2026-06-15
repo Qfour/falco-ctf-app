@@ -1,5 +1,5 @@
 ┌──────────────────────────────────────────────────────────────────┐
-│ Operation NimbusBreach · Mission 05 — Silent Search              │
+│ CTF Company · Mission 05 — Silent Search                         │
 │ Type: EVADE · 難易度: ★★★☆☆                                      │
 │ 回避すべき Falco ルール: "Search Private Keys or Passwords"       │
 └──────────────────────────────────────────────────────────────────┘

@@ -456,7 +456,7 @@ func (h *Handler) buildState() map[string]any {
 
 	// Catalog membership — filters out stale solves whose challenge id was
 	// renamed or removed (e.g. early-prototype `01-read-shadow` still in the
-	// SQLite after the NimbusBreach rewrite). Without this the leaderboard
+	// SQLite after the 10-mission rewrite). Without this the leaderboard
 	// can credit users for retired challenges and report SOLVED 15/10.
 	idSet := make(map[string]struct{}, len(ids))
 	for _, cid := range ids {

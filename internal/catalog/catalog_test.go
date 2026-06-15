@@ -168,7 +168,7 @@ expectedRules: ["a"]`)
 }
 
 // TestLoad_RealChallenges verifies the production challenges/ tree parses
-// cleanly. Pins the NimbusBreach 10-mission set.
+// cleanly. Pins the CTF Company 10-mission set.
 func TestLoad_RealChallenges(t *testing.T) {
 	cat, err := catalog.Load("../../challenges")
 	if err != nil {

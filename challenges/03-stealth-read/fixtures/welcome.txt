@@ -1,5 +1,5 @@
 ┌──────────────────────────────────────────────────────────────────┐
-│ Operation NimbusBreach · Mission 03 — Stealth Read               │
+│ CTF Company · Mission 03 — Stealth Read                          │
 │ Type: EVADE · 難易度: ★★☆☆☆                                      │
 │ 回避すべき Falco ルール: "Read sensitive file untrusted"          │
 └──────────────────────────────────────────────────────────────────┘
@@ -7,7 +7,7 @@
 # シナリオ
 
 Mission 02 で正面切って `/etc/shadow` を読んだら盛大に検知された。
-NimbusCorp の SOC はもう alert を見ている可能性が高い。
+CTF Company の SOC はもう alert を見ている可能性が高い。
 **だが諦めない**。同じ情報を、Falco に気づかれない方法で取り直す
 ことができれば、SOC は「単発の false positive」と判断するはず。
 

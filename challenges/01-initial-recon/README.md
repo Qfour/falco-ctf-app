@@ -1,6 +1,6 @@
 # 01 — Initial Recon
 
-NimbusBreach のオープニング。Pod に侵入した attacker が真っ先に
+CTF Company のオープニング。Pod に侵入した attacker が真っ先に
 やる事 = **K8s API Server に直接話しかけて環境を探る**。
 クラスタ管理 API への接触を Falco が即検知する。
 

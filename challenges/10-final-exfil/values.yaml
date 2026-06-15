@@ -5,6 +5,17 @@ challenge:
     - sh
     - -c
     - |
-      # Mission 10 (Final Exfil) — plant the final flag as a NIMBUS_FINAL line at the
-      # end of /etc/shadow. CTF_FLAG_10_FINAL_EXFIL is injected by the ctf-user chart.
-      echo "# NIMBUS_FINAL: ${CTF_FLAG_10_FINAL_EXFIL:?flag env not set by ctf-user chart}" >> /etc/shadow
+      # Mission 10 (Final Exfil) — split the master key into 3 fragments and hide
+      # each in a distinct sensitive file. The participant must read all three
+      # silently (Mission 03 technique) and reassemble them into the FALCO{...} flag.
+      # CTF_FLAG_10_FINAL_EXFIL is injected by the ctf-user chart.
+      FLAG="${CTF_FLAG_10_FINAL_EXFIL:?flag env not set by ctf-user chart}"
+      inner="${FLAG#FALCO\{}"; inner="${inner%\}}"
+      len=${#inner}; t=$(( (len + 2) / 3 ))
+      f1=$(printf %s "$inner" | cut -c"1-${t}")
+      f2=$(printf %s "$inner" | cut -c"$((t + 1))-$((2 * t))")
+      f3=$(printf %s "$inner" | cut -c"$((2 * t + 1))-")
+      echo "# CTF_FRAGMENT_1: ${f1}" >> /etc/shadow
+      echo "# CTF_FRAGMENT_2: ${f2}" >> /etc/sudoers
+      mkdir -p /root/.ssh && chmod 700 /root/.ssh
+      echo "# CTF_FRAGMENT_3: ${f3}" >> /root/.ssh/authorized_keys

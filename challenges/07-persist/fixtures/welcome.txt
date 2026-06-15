@@ -1,5 +1,5 @@
 ┌──────────────────────────────────────────────────────────────────┐
-│ Operation NimbusBreach · Mission 07 — Persist                    │
+│ CTF Company · Mission 07 — Persist                               │
 │ Type: TRIGGER · 難易度: ★★★☆☆                                    │
 │ 目標 Falco ルール: "Drop and execute new binary in container"     │
 └──────────────────────────────────────────────────────────────────┘

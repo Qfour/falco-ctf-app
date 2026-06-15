@@ -1,10 +1,10 @@
-# The unified NimbusBreach scenario — all 10 missions, canonical 01→10 order
+# The unified CTF Company scenario — all 10 missions, canonical 01→10 order
 # (recon → cred access → evade → harvest → RCE → persist → C2 → hide → exfil boss).
 # This is THE scenario every edition runs. Editions differ only in time budget
 # and how much is hands-on vs walked through (解説) — see playbook-*.md. The
 # scoreboard always shows all 10 so the full arc is visible and completed.
 id: nimbusbreach-full
-title: "Operation NimbusBreach — Full Scenario (10 missions)"
+title: "CTF Company — Full Scenario (10 missions)"
 challenges:
   - 01-initial-recon
   - 02-credential-files

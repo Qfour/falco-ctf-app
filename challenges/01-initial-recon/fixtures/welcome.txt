@@ -1,5 +1,5 @@
 ┌──────────────────────────────────────────────────────────────────┐
-│ Operation NimbusBreach · Mission 01 — Initial Recon              │
+│ CTF Company · Mission 01 — Initial Recon                         │
 │ Type: TRIGGER · 難易度: ★☆☆☆☆ (入門)                              │
 │ 目標 Falco ルール: "Contact K8S API Server From Container"        │
 └──────────────────────────────────────────────────────────────────┘
@@ -16,10 +16,10 @@ display name に置き換わる。1〜32 文字、`< > & " '` と制御文字は
 
 # シナリオ
 
-NimbusCorp の Web フロントエンドの SSRF 脆弱性を突き、ようやく Pod
+CTF Company の Web フロントエンドの SSRF 脆弱性を突き、ようやく Pod
 内部に侵入した。最初の一手は環境把握 — Kubernetes クラスタの
 **API server に話しかけて何が動いているかを探る**。
-だが NimbusCorp のクラスタには Falco がいる。**ServiceAccount を
+だが CTF Company のクラスタには Falco がいる。**ServiceAccount を
 持たない pod からの API access は即検知される** ことを身をもって
 学べ。
 
