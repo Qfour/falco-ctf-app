@@ -1,51 +1,48 @@
-# scenarios/ — event compositions
+# scenarios/ — the event scenario + time-budget editions
 
-A **challenge** (`challenges/<NN>-slug>/`) is a reusable unit. A **scenario**
-selects and sequences a subset of them into one event, sized for a time budget.
-This lets the same challenge library serve different formats without forking
-content.
+A **challenge** (`challenges/<NN>-slug>/`) is a reusable unit. The challenges
+01→10 together ARE the **unified NimbusBreach scenario** (recon → cred access →
+evade → harvest → … → exfil boss). Every event runs this same scenario.
+
+What differs between events is the **edition** — the time budget and how much is
+hands-on vs walked through (解説). An edition never changes the scenario or its
+order; it just decides which missions participants solve themselves and which
+the facilitator demonstrates, always completing the full 01→10 arc.
 
 ```
-scenarios/<name>/
-├── scenario.yaml   # id, title, ordered challenge ids (machine-read)
-├── playbook.md     # (optional) facilitator run-of-show / timing
-└── debrief.md      # (optional) post-event walkthrough
-```
-
-`scenario.yaml` is the only machine-consumed file:
-
-```yaml
-id: intro-2h
-title: "..."
-challenges: [01-initial-recon, 02-credential-files, 03-stealth-read, ...]
+scenarios/<scenario>/
+├── scenario.yaml     # id, title, ordered challenge ids (machine-read)
+├── playbook-<edition>.md   # facilitator run-of-show for a time budget
+└── debrief.md        # post-event walkthrough (all missions, reusable)
 ```
 
 ## Ordering principle
 
-Challenges 01–10 ARE the canonical, unified storyline (recon → cred access →
-evade → harvest → … → exfil boss). **Scenarios keep that ascending order** —
-they select a subset, never reorder it. This keeps the narrative aligned with
-the scoreboard, which always sorts challenges by id. Non-beginner editions use
-the full unified track; the beginner edition is just a shorter ascending slice.
+Challenges 01–10 are the canonical storyline. **Scenarios keep that ascending
+order — never reorder.** This keeps the narrative aligned with the scoreboard,
+which always sorts challenges by id. Editions select *how* missions are run
+(hands-on / 解説), not *which* — the full arc is always covered.
 
 ## How the scoreboard uses it
 
-The scoreboard bakes `scenarios/` into its image. Set `SCENARIO_FILE` (chart
-value `env.scenarioFile`) to a manifest path to restrict scoring + `/api/state`
-to that scenario's challenges:
+The scoreboard bakes `scenarios/` into its image. `SCENARIO_FILE` (chart value
+`env.scenarioFile`) restricts scoring + `/api/state` to a scenario's challenges:
 
 ```
-SCENARIO_FILE=/app/scenarios/intro-2h/scenario.yaml
+SCENARIO_FILE=/app/scenarios/nimbusbreach-full/scenario.yaml   # all 10 (= default)
 ```
 
-Unset = all challenges (the default / full library). Restrict is fail-closed:
-a scenario referencing a missing challenge id won't start.
+Unset = all challenges (same as nimbusbreach-full). Restrict is fail-closed: a
+scenario referencing a missing challenge id won't start. (The mechanism stays
+available for any future genuinely-shorter subset edition.)
 
-## Current scenarios
+## Scenario + editions
 
-| name | challenges | use |
+| | challenges | notes |
 |---|---|---|
-| `nimbusbreach-full` | all 10, ascending (trigger + evade + boss) | **unified standard track** — every non-beginner edition (long-form ~3h+, advanced) |
-| `intro-2h` | 6, ascending slice (01,02,03,04,06,08) | 2-hour beginner edition (30m intro / 60m CTF / 30m debrief) |
+| scenario `nimbusbreach-full` | all 10, ascending (trigger + evade + boss) | the one unified storyline; scoreboard shows all 10 |
+| edition `playbook-2h.md` | hands-on 01,02,03,04,06,08 · 解説 05,07,09,10 | **本番リハーサル** (30m intro / 60m hands-on / 30m 解説); completes the full arc in 2h |
 
-Add a new format = add a `scenarios/<name>/` dir; never delete challenges.
+Longer editions (本番) just move 解説 missions into hands-on — same scenario,
+same order, more time. Add a new edition = add a `playbook-<edition>.md`; never
+delete challenges or reorder.
