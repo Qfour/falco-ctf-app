@@ -93,11 +93,20 @@ type State struct {
 // StateChallengesType defines model for State.Challenges.Type.
 type StateChallengesType string
 
+// AdminSetDisplayNameJSONBody defines parameters for AdminSetDisplayName.
+type AdminSetDisplayNameJSONBody struct {
+	// Name 1..32 runes, no <>&"' or control chars
+	Name string `json:"name"`
+}
+
 // SubmitFlagJSONBody defines parameters for SubmitFlag.
 type SubmitFlagJSONBody struct {
 	Flag string `json:"flag"`
 	User string `json:"user"`
 }
+
+// AdminSetDisplayNameJSONRequestBody defines body for AdminSetDisplayName for application/json ContentType.
+type AdminSetDisplayNameJSONRequestBody AdminSetDisplayNameJSONBody
 
 // SubmitFlagJSONRequestBody defines body for SubmitFlag for application/json ContentType.
 type SubmitFlagJSONRequestBody SubmitFlagJSONBody

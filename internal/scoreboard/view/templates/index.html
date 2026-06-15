@@ -63,6 +63,9 @@
   .updated { color: var(--text-mute); font-size: 0.7rem; margin-top: 0.25rem; text-align: right; }
   .reset-btn { margin-top: 0.5rem; padding: 0.3rem 0.7rem; font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em; color: var(--text-mute); background: transparent; border: 1px solid var(--text-mute); border-radius: 6px; cursor: pointer; opacity: 0.6; transition: opacity 0.15s, color 0.15s, border-color 0.15s; }
   .reset-btn:hover { opacity: 1; color: var(--danger, #ff5c5c); border-color: var(--danger, #ff5c5c); }
+  .name-edit { margin-left: 0.4rem; padding: 0 0.25rem; font-size: 0.75rem; line-height: 1; color: var(--text-mute); background: transparent; border: none; cursor: pointer; opacity: 0; transition: opacity 0.15s; }
+  tr:hover .name-edit { opacity: 0.55; }
+  .name-edit:hover { opacity: 1; color: var(--accent); }
 
   /* ===== Stats ===== */
   .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 2rem; }
@@ -239,7 +242,7 @@
         const rankCls = p.rank <= 3 ? 'rank-' + p.rank : '';
         return `<tr>
           <td><span class="rank ${rankCls}">#${p.rank}</span></td>
-          <td><span class="user-cell"><span class="avatar">${avatarChar(p.display_name || p.user)}</span>${esc(p.display_name || p.user)}</span></td>
+          <td><span class="user-cell"><span class="avatar">${avatarChar(p.display_name || p.user)}</span>${esc(p.display_name || p.user)}<button class="name-edit" data-user="${esc(p.user)}" title="Rename on scoreboard (admin)">✎</button></span></td>
           <td><span class="score-cell">${p.solved}<span class="total">/${totalChal}</span></span></td>
           <td><div class="progress"><div class="progress-bar" style="width:${pct}%"></div></div></td>
           <td><span class="events-cell">${p.events.toLocaleString()}</span></td>
@@ -300,6 +303,25 @@
     }
     firstRender = false;
   }
+
+  // Admin rename: delegated on the (persistent) tbody since rows re-render.
+  document.getElementById('lb-body').addEventListener('click', async (e) => {
+    const btn = e.target.closest('.name-edit');
+    if (!btn) return;
+    const user = btn.dataset.user;
+    const name = prompt('Scoreboard name for ' + user + ' (blank cancels):');
+    if (name === null) return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    try {
+      const r = await fetch('/api/admin/users/' + encodeURIComponent(user) + '/display-name', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: trimmed }),
+      });
+      if (r.ok) { await refresh(); }
+      else { alert('Rename failed (HTTP ' + r.status + '). Admin only / invalid name (1-32 chars, no <>&"\').'); }
+    } catch (err) { alert('Rename request error: ' + err); }
+  });
 
   const resetBtn = document.getElementById('reset-btn');
   if (resetBtn) {

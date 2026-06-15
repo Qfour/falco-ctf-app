@@ -177,6 +177,51 @@ func TestAdminReset(t *testing.T) {
 	}
 }
 
+func TestAdminSetDisplayName(t *testing.T) {
+	cat := catalog.Catalog{"01-x": catalog.Challenge{ID: "01-x", Type: "trigger", ExpectedRules: []string{"r"}, WindowSeconds: 10}}
+	st, err := store.Open(filepath.Join(t.TempDir(), "s.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := scoreboard.NewHandler(cat, st, logger, scoreboard.WithAdminEmails([]string{"admin@ctf.local"}))
+
+	post := func(email, user, name string) int {
+		body, _ := json.Marshal(map[string]string{"name": name})
+		r := httptest.NewRequest("POST", "/api/admin/users/"+user+"/display-name", bytes.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		if email != "" {
+			r.Header.Set("X-Auth-Request-Email", email)
+		}
+		w := httptest.NewRecorder()
+		srv.ServeHTTP(w, r)
+		return w.Code
+	}
+
+	// non-admin (no header) → 403, name unchanged (default = username)
+	if code := post("", "user5", "Mallory"); code != http.StatusForbidden {
+		t.Fatalf("non-admin set must 403, got %d", code)
+	}
+	if got := st.DisplayName("user5"); got != "user5" {
+		t.Fatalf("default must stay username, got %q", got)
+	}
+	// admin sets → 200
+	if code := post("admin@ctf.local", "user5", "Alice"); code != http.StatusOK {
+		t.Fatalf("admin set must 200, got %d", code)
+	}
+	if got := st.DisplayName("user5"); got != "Alice" {
+		t.Fatalf("name not set, got %q", got)
+	}
+	// admin CHANGES (override, unlike participant first-set-only) → 200
+	if code := post("admin@ctf.local", "user5", "Alice (renamed)"); code != http.StatusOK {
+		t.Fatalf("admin override must 200, got %d", code)
+	}
+	if got := st.DisplayName("user5"); got != "Alice (renamed)" {
+		t.Fatalf("override failed, got %q", got)
+	}
+}
+
 func TestHealthz(t *testing.T) {
 	f := newFixture(t, nil)
 	w := f.do("GET", "/healthz", nil)

@@ -179,6 +179,45 @@ paths:
         "403":
           description: caller is not an admin (or no auth header present)
 
+  /api/admin/users/{user}/display-name:
+    post:
+      summary: Set or overwrite a user's scoreboard display name (admin)
+      operationId: adminSetDisplayName
+      description: |
+        Admin-only operator override (same auth as /api/admin/reset). Assigns or
+        corrects the name shown on the leaderboard for `user`; last-write-wins
+        (unlike the participant POST /api/users/{user}/display-name, which is
+        first-set-only). Default remains the username when never set.
+      parameters:
+        - in: path
+          name: user
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, description: "1..32 runes, no <>&\"' or control chars" }
+      responses:
+        "200":
+          description: name set
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  user: { type: string }
+                  display_name: { type: string }
+        "400":
+          description: invalid user or name
+        "403":
+          description: caller is not an admin
+
   /api/state:
     get:
       summary: Full dashboard JSON

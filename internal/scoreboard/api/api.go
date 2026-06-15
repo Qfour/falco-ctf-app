@@ -70,6 +70,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/state", h.state)
 	mux.HandleFunc("GET /api/users/{user}/me", h.userMe)
 	mux.HandleFunc("POST /api/admin/reset", h.reset)
+	mux.HandleFunc("POST /api/admin/users/{user}/display-name", h.adminSetDisplayName)
 	submitMW := h.submitLimiter.Middleware(ratelimit.ClientIP)
 	mux.Handle("POST /api/challenges/{cid}/submit", submitMW(http.HandlerFunc(h.submit)))
 	dnMW := h.displayNameLimiter.Middleware(ratelimit.ClientIP)
@@ -78,15 +79,25 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 // --- admin reset ------------------------------------------------------------
 
-// reset wipes the scoreboard results (solves + event counters), e.g. after a
-// test1 demo run before the real event. Admin-only: the scoreboard dashboard
-// host is already gated by auth-policy /check-admin, but this also verifies the
-// propagated X-Auth-Request-Email is in ADMIN_EMAILS so the endpoint cannot be
-// triggered over the cluster-internal Service (workspace/falco paths, which
-// carry no auth header). Empty allowlist = nobody (fail-closed).
-func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
+// isAdmin reports whether the request carries an admin identity. The admin
+// email is propagated by auth-policy (X-Auth-Request-Email) only on the
+// admin-gated ingress path; requests over the cluster-internal Service
+// (workspace/falco) carry no such header and are rejected. Empty allowlist =
+// nobody (fail-closed).
+func (h *Handler) isAdmin(r *http.Request) (string, bool) {
 	email := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Auth-Request-Email")))
-	if _, ok := h.adminSet[email]; email == "" || !ok {
+	if email == "" {
+		return "", false
+	}
+	_, ok := h.adminSet[email]
+	return email, ok
+}
+
+// reset wipes the scoreboard results (solves + event counters), e.g. after a
+// test1 demo run before the real event. Admin-only (see isAdmin).
+func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
+	email, ok := h.isAdmin(r)
+	if !ok {
 		h.logger.Warn("reset denied", "remote_addr", r.RemoteAddr, "email", email)
 		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "admin only"})
 		return
@@ -99,6 +110,58 @@ func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
 	}
 	h.logger.Info("scoreboard reset", "by", email, "cleared_solves", n)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "cleared_solves": n})
+}
+
+// validDisplayName trims + validates a display name: 1..32 runes, no HTML/shell
+// metachars. Shared by the participant and admin set endpoints.
+func validDisplayName(raw string) (string, error) {
+	name := strings.TrimSpace(raw)
+	if name == "" {
+		return "", fmt.Errorf("name required")
+	}
+	if utf8.RuneCountInString(name) > 32 {
+		return "", fmt.Errorf("name too long (max 32 runes)")
+	}
+	if invalidDisplayName.MatchString(name) {
+		return "", fmt.Errorf("name contains forbidden characters")
+	}
+	return name, nil
+}
+
+// adminSetDisplayName sets or OVERWRITES any user's display name (operator
+// override, last-write-wins). Admin-only (see isAdmin). Lets the operator
+// assign/correct scoreboard names; default stays the username when unset.
+func (h *Handler) adminSetDisplayName(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.isAdmin(r); !ok {
+		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "admin only"})
+		return
+	}
+	user := strings.TrimSpace(r.PathValue("user"))
+	if !validUser.MatchString(user) {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	name, err := validDisplayName(req.Name)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	at := h.now().UTC().Format(time.RFC3339Nano)
+	if err := h.store.SetDisplayNameAdmin(user, name, at); err != nil {
+		h.logger.Error("admin set display name", "err", err, "user", user)
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	h.logger.Info("admin display_name", "user", user, "display_name", name, "remote_addr", r.RemoteAddr)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "user": user, "display_name": name})
 }
 
 // --- submit -----------------------------------------------------------------
@@ -223,17 +286,9 @@ func (h *Handler) setDisplayName(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
-	name := strings.TrimSpace(req.Name)
-	if name == "" {
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "name required"})
-		return
-	}
-	if n := utf8.RuneCountInString(name); n > 32 {
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "name too long (max 32 runes)"})
-		return
-	}
-	if invalidDisplayName.MatchString(name) {
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "name contains forbidden characters"})
+	name, err := validDisplayName(req.Name)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
 

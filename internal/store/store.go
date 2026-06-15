@@ -161,6 +161,24 @@ func (s *Store) SetDisplayName(user, name, at string) error {
 	return nil
 }
 
+// SetDisplayNameAdmin sets or OVERWRITES the display name for `user`
+// (last-write-wins). Unlike the participant-facing SetDisplayName (first-set-
+// only, anti-grief), this is the operator path: assign or correct any user's
+// name mid-event. Gated to admins at the API layer.
+func (s *Store) SetDisplayNameAdmin(user, name, at string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := s.db.Exec(
+		`INSERT INTO display_names (user, name, set_at) VALUES (?, ?, ?)
+		 ON CONFLICT(user) DO UPDATE SET name = excluded.name, set_at = excluded.set_at`,
+		user, name, at,
+	); err != nil {
+		return err
+	}
+	s.displayNames[user] = name
+	return nil
+}
+
 // DisplayName returns the chosen name for `user`, falling back to `user`
 // itself when none is set. Callers should not need to handle the missing
 // case — the fallback keeps rendering paths uniform.
