@@ -1,9 +1,9 @@
 ---
-description: Delegate to manifest-reviewer subagent for Kustomize/deploy-only review. Use when only deploy/ files changed.
-argument-hint: [optional overlay name or concern]
+description: Delegate to manifest-reviewer subagent for Helm chart review. Use when only charts/ files changed.
+argument-hint: [optional chart name or concern]
 ---
 
-Use the `manifest-reviewer` subagent (Opus) to review only the `deploy/` changes on this branch.
+Use the `manifest-reviewer` subagent (Opus) to review only the `charts/` changes on this branch.
 
 If the user specified a focus area, pass it forward: $ARGUMENTS
 

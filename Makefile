@@ -2,7 +2,9 @@
 #
 # Conventions:
 #   REGISTRY/TAG control image naming. TAG defaults to the current git SHA.
-#   For local k8s deploy with the overlay (newTag: dev): make build TAG=dev && make deploy-local
+#   For local k8s deploy: make load-colima then `helmfile -e local apply` in
+#   falco-ctf-platform (canonical). `make deploy-local` installs just the two
+#   app charts for app-only iteration.
 #   For local CVE scan: make scan TAG=local (builds first automatically)
 
 REGISTRY     ?= docker.io/falco-ctf
@@ -24,8 +26,8 @@ help:
 	@echo "  build         — docker build all images ($(REGISTRY)/<name>:$(TAG))"
 	@echo "  push          — docker push all images"
 	@echo "  load-colima   — load images into colima k3s containerd (local only)"
-	@echo "  deploy-local  — kubectl apply -k deploy/<app>/overlays/local"
-	@echo "  lint          — kustomize build all overlays (validate Kustomize)"
+	@echo "  deploy-local  — helm upgrade --install scoreboard + auth-policy charts (local)"
+	@echo "  lint          — helm lint all charts/"
 	@echo "  test          — go test ./... (runs in $(GO_IMAGE) container)"
 	@echo "  tidy          — go mod tidy (runs in $(GO_IMAGE) container)"
 	@echo "  gen           — regenerate Go types from OpenAPI specs (docs/openapi-*.yaml)"
@@ -52,12 +54,22 @@ push:
 load-colima: build
 	./scripts/build-and-load.sh
 
+# App-only cluster iteration. The full local stack (ingress / dex / oauth2-proxy
+# / falco) comes from falco-ctf-platform `helmfile -e local apply`; this installs
+# just the two app charts with local-equivalent values (images tagged :dev via
+# make load-colima). Namespaces are created by the charts.
 deploy-local:
-	kubectl apply -k deploy/scoreboard/overlays/local
-	kubectl apply -k deploy/auth-policy/overlays/local
+	helm upgrade --install scoreboard charts/scoreboard -n scoreboard \
+	  --set image.tag=dev \
+	  --set persistence.storageClassName=local-path \
+	  --set ingress.host=scoreboard.192.168.64.2.nip.io --set ingress.tls=true \
+	  --set ingress.authSignin='http://auth.192.168.64.2.nip.io/oauth2/start?rd=$$scheme://$$host$$escaped_request_uri'
+	helm upgrade --install auth-policy charts/auth-policy -n auth-policy \
+	  --set image.tag=dev \
+	  --set env.expectedEmailDomain=ctf.local --set env.adminEmails=user1@ctf.local
 
 lint:
-	@for d in deploy/*/overlays/*; do echo "== $$d =="; kubectl kustomize $$d >/dev/null; done
+	@for c in charts/*; do echo "== $$c =="; helm lint "$$c"; done
 
 test:
 	docker build -f Dockerfile.test --progress=plain -t falco-ctf/gotest:local .

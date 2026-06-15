@@ -12,7 +12,7 @@ CLAUDE.md は概要のみ持ち、詳細はこのファイルを参照する。
 |---|---|
 | `cmd/**`, `internal/**`, `go.mod`, `go.sum`, `scoreboard/Dockerfile`, `auth-policy/Dockerfile` | **A: Go コード** |
 | `images/*/Dockerfile`, `Dockerfile.test`, `Dockerfile.tidy`, `Dockerfile.gen` | **D: イメージ** |
-| `deploy/**` のみ | **B: Manifest** |
+| `charts/**` のみ | **B: Chart** |
 | `challenges/**` のみ | **C: Challenge** |
 
 Stop hook (`scripts/claude-hook-stop.sh`) がセッション終了時に自動判定して
@@ -49,23 +49,24 @@ flowchart TD
 
 ---
 
-## パターン B: Manifest 変更 (`deploy/`)
+## パターン B: Chart 変更 (`charts/`)
 
 ```mermaid
 flowchart TD
-  A["[Sonnet] manifest 修正\nPostEdit: kustomize build 自動"] --> B["Stop hook: make lint"]
+  A["[Sonnet] chart 修正\nPostEdit: helm lint + template 自動"] --> B["Stop hook: make lint"]
   B -->|fail| A
   B -->|pass| C["/commit (Haiku)"]
-  C --> D["/review-manifests"]
+  C --> D["/review-manifests (render を確認)"]
   D --> E["PR 作成"]
 ```
 
-`make build` / `make scan` は不要 (イメージ変更なし)
+`make build` / `make scan` は不要 (イメージ変更なし)。
+deploy/ kustomize は廃止 — k8s マニフェストは `charts/{scoreboard,auth-policy,ctf-user}` の Helm chart が正典。
 
 | ゲート | タイミング | 必須 | コマンド |
 |---|---|---|---|
-| kustomize build | PostEdit 自動 | ✅ | `scripts/claude-hook-postedit.sh` |
-| make lint | Stop 自動 | ✅ | `make lint` |
+| helm lint + template | PostEdit 自動 | ✅ | `scripts/claude-hook-postedit.sh` |
+| make lint | Stop 自動 | ✅ | `make lint` (helm lint charts/*) |
 | /review-manifests | PR 直前 | ✅ | `/review-manifests` |
 
 ---
@@ -117,7 +118,7 @@ flowchart TD
 | ゲート | A | B | C | D |
 |---|---|---|---|---|
 | go vet (PostEdit) | ✅ 自動 | — | — | — |
-| kustomize build (PostEdit) | — | ✅ 自動 | — | — |
+| helm lint + template (PostEdit) | — | ✅ 自動 | — | — |
 | falco-rule schema (PostEdit) | — | — | ✅ 自動 | — |
 | docker build --check (PostEdit) | — | — | — | ✅ 自動 |
 | make test (Stop) | ✅ 自動 | — | — | — |
@@ -154,8 +155,9 @@ pipeline-only 環境では SysQL の findings API が空。
 
 | チェック | ローカル | CI |
 |---|---|---|
-| go test | Stop hook 自動 | PR blocking |
-| kustomize lint | Stop hook 自動 | PR blocking |
+| go test | Stop hook 自動 | PR blocking (test) |
+| helm lint + template | Stop hook 自動 | PR blocking (chart-lint) |
+| flag/values hygiene | pre-commit hook | PR blocking (flag-guard) |
 | image build | `make build` (scan に内包) | 全 PR |
 | CVE scan | `make scan` — 主チェック | PR blocking (ttyd は暫定除外) |
 | image push | なし | main マージ・tag push のみ |

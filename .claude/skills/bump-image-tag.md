@@ -1,10 +1,13 @@
 ---
 name: bump-image-tag
-description: Procedure for pinning a new image tag (git SHA) in falco-ctf-platform after building and pushing images.
+description: Procedure for pinning a new app version (git SHA) for a CTF event — updates falco-ctf-platform events/<date>/versions.yaml and the prod helmfile values.
 type: skill
 ---
 
-# Image Tag 更新手順（platform 側 pin）
+# App version pin 更新手順（platform 側）
+
+イメージとチャートは CI が **同一 git SHA** で ECR (OCI) に publish する
+(Invariant I5)。本番が使うバージョンは `falco-ctf-platform` の **1 箇所**でピンする。
 
 ## Cross-repo Flow
 
@@ -12,77 +15,58 @@ type: skill
 sequenceDiagram
     participant Dev as Developer
     participant AppCI as falco-ctf-app CI
-    participant GHCR as GHCR
+    participant ECR as ECR (images + OCI charts)
     participant Platform as falco-ctf-platform
 
-    Dev->>AppCI: push / merge to main
-    AppCI->>AppCI: make test + make build
-    AppCI->>GHCR: docker push ×4 images (tag = git-sha)
+    Dev->>AppCI: push / merge to main (or v* tag)
+    AppCI->>AppCI: test + flag-guard + chart-lint + build/scan
+    AppCI->>ECR: push images :<sha> + charts/<name>:0.1.0-<sha>
     AppCI-->>Dev: CI green ✓
-
-    Dev->>Dev: git rev-parse --short HEAD → SHA
-    Dev->>Platform: PR: kustomize newTag = SHA (all 4 images)
-    Platform->>Platform: kustomize build lint
-    Platform-->>Dev: CI green ✓
-    Dev->>Platform: Merge PR → deploy to cluster
+    Dev->>Platform: events/<date>/versions.yaml の app.ref を <sha> に
+    Platform->>Platform: prod env appImageTag/appChartVersion を反映
 ```
 
 ## 前提
 
-- 当リポジトリ (`falco-ctf-app`) の main ブランチでビルドが完了
-- CI (GitHub Actions `build-push.yaml`) が完走し、Sysdig scan が PASS
+- `falco-ctf-app` の main / tag で CI が完走（test / flag-guard / chart-lint /
+  build+scan / publish-charts すべて green、Sysdig scan PASS）
 
 ## 1. 使用する SHA を確認
 
 ```bash
-git log --oneline -5          # 当リポジトリの最新 SHA
-git rev-parse --short HEAD    # 7 文字 SHA
+git -C ../falco-ctf-app rev-parse --short HEAD   # publish された image/chart tag
 ```
 
-CI が push した tag = この SHA の最初の 7 文字（`steps.tag.outputs.tag`）。
+CI は images を `:<sha>`、charts を `0.1.0-<sha>` で publish 済み。
 
-## 2. ECR (将来) / 現在はローカルの場合
+## 2. events/<date>/versions.yaml を更新
 
+```yaml
+app:
+  repo: github.com/Qfour/falco-ctf-app
+  ref: <sha>          # ← ここを更新
+```
+
+## 3. prod helmfile 値に反映
+
+`helmfile/environments/prod.yaml.gotmpl`（または events/versions.yaml から供給）:
+
+```yaml
+appImageTag: "<sha>"
+appChartVersion: "0.1.0-<sha>"
+ecrRegistry: "<acct>.dkr.ecr.<region>.amazonaws.com"
+```
+
+確認:
 ```bash
-SHA=$(git rev-parse --short HEAD)
-echo "Image tag to pin: $SHA"
+cd helmfile && AWS_PROFILE=... helmfile -e prod template --selector name=scoreboard | grep image:
+# → <registry>/falco-ctf/scoreboard:<sha> が出ること
 ```
 
-## 3. falco-ctf-platform 側で kustomize imageTag を更新
+## 4. チェックリスト
 
-```bash
-# falco-ctf-platform リポジトリに移動
-cd ../falco-ctf-platform
-
-# scoreboard と auth-policy の両方を更新
-kustomize edit set image \
-  ghcr.io/<owner>/falco-ctf-scoreboard:${SHA} \
-  ghcr.io/<owner>/falco-ctf-auth-policy:${SHA} \
-  ghcr.io/<owner>/falco-ctf-ttyd:${SHA} \
-  ghcr.io/<owner>/falco-ctf-challenge:${SHA}
-
-# または直接 kustomization.yaml を編集して newTag を SHA に変更
-```
-
-## 4. platform 側 PR を作成
-
-```bash
-BRANCH="bump-image-${SHA}"
-git checkout -b "$BRANCH"
-git add deploy/
-git commit -m "chore: bump image tags to ${SHA}"
-gh pr create \
-  --title "chore: bump image tags to ${SHA}" \
-  --body "falco-ctf-app SHA: ${SHA}
-  
-Built images: scoreboard / auth-policy / ttyd / challenge
-Sysdig scan: PASS (see Actions run)"
-```
-
-## 5. チェックリスト
-
-- [ ] CI `build-push.yaml` が完走している
-- [ ] Sysdig scan が 4 イメージすべて PASS
-- [ ] platform 側 kustomization.yaml の `newTag` が SHA と一致
-- [ ] `latest` タグが本番 overlay に入っていない（規約違反）
-- [ ] platform 側 PR の CI が通っている
+- [ ] app CI が完走（publish-charts 含む）、Sysdig scan 4 イメージ PASS
+- [ ] `events/<date>/versions.yaml` の `app.ref` が SHA と一致
+- [ ] prod の `appImageTag` / `appChartVersion` が SHA と整合
+- [ ] `latest` を本番で使っていない（Invariant I4）
+- [ ] images と charts が同一 SHA（Invariant I5）

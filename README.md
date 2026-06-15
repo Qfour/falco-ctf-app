@@ -45,13 +45,13 @@ falco-ctf-app/
 │   ├── ttyd/           ユーザが触る Web ターミナル
 │   └── challenge/      challenge コンテナのベースイメージ
 ├── challenges/<NN>-<slug>/
-│   ├── README.md       出題文 + 想定解
+│   ├── README.md       出題文 + 想定解 (operator/author 向け)
 │   ├── falco-rule.yaml scoreboard が読む期待ルール定義
-│   ├── fixtures/       challenge コンテナに mount するファイル
-│   └── values.yaml     (任意) ctf-user chart に重ねる values overlay
-├── deploy/             K8s マニフェスト (Kustomize)
-│   ├── scoreboard/{base,overlays/local}/
-│   └── auth-policy/{base,overlays/local}/
+│   ├── fixtures/       参加者向けファイル (challenge イメージに焼込)
+│   ├── plant.sh        (evade) フラグ仕込み単一ソース → make gen-values
+│   └── values.yaml     (生成物) ctf-user chart の postStart overlay
+├── charts/             Helm charts (platform helmfile が参照)
+│   ├── scoreboard/  auth-policy/  ctf-user/
 ├── scripts/
 │   ├── build-and-load.sh  colima k3s 用イメージ取込
 │   └── mock-oauth2.conf   ローカル dev 用 oauth2-proxy モック
@@ -84,17 +84,18 @@ curl -i http://localhost:8001/check?host=user1
 
 ```bash
 make load-colima          # build → colima containerd へ取込
-make deploy-local         # kubectl apply -k deploy/*/overlays/local
+make deploy-local         # helm upgrade --install scoreboard + auth-policy (app のみ)
+# full local stack は falco-ctf-platform で: helmfile -e local apply
 ```
 
 ## イメージ
 
 | Image | 用途 | 消費側 |
 |---|---|---|
-| `scoreboard` | Falco webhook 受信 + ユーザ×課題マトリクス | `deploy/scoreboard/` |
-| `auth-policy` | ingress-nginx auth-url 前段 (host↔email) | `deploy/auth-policy/` |
-| `ttyd` | Web ターミナル (kubectl exec バックエンド) | platform `charts/ctf-user/` |
-| `challenge` | challenge コンテナのベースイメージ | platform `charts/ctf-user/` |
+| `scoreboard` | Falco webhook 受信 + ユーザ×課題マトリクス | `charts/scoreboard/` |
+| `auth-policy` | ingress-nginx auth-url 前段 (host↔email) | `charts/auth-policy/` |
+| `ttyd` | Web ターミナル (kubectl exec バックエンド) | `charts/ctf-user/` |
+| `challenge` | challenge コンテナのベースイメージ | `charts/ctf-user/` |
 
 本番 (EKS) では GHCR から pull。tag は git SHA。
 

@@ -5,8 +5,8 @@
 # Claude Code settings
 .claude
 
-# Kubernetes manifests — not needed in any image build
-deploy/
+# Helm charts — not needed in any image build
+charts/
 
 # Scan output
 scan-logs/

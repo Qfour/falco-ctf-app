@@ -22,7 +22,7 @@
 | I4 | image tag は **git SHA** で push。`latest` で本番 deploy 禁止 |
 | I5 | 全 4 イメージ (scoreboard / auth-policy / ttyd / challenge) を **同一 git SHA** でビルド・push |
 | I6 | challenges/ は scoreboard と同一 repo に置く (falco-rule.yaml が scoreboard の一次消費) |
-| I7 | `base/` は環境非依存。hostname / domain は placeholder (`example.invalid`) |
+| I7 | chart の `values.yaml` default は環境非依存。host/domain/registry は placeholder (`example.invalid` / `docker.io/falco-ctf`)。環境値は platform helmfile が供給 |
 | I8 | auth-policy は `X-Auth-Request-Email` を **prefix-exact** (`<username>@`) で照合。緩めない |
 | I9 | challenge コンテナ Dockerfile に Service / Ingress を追加しない |
 | I10 | Dockerfile / yaml にトークン・実シークレットを焼き込まない |
@@ -79,14 +79,15 @@ securityContext:
 | `auth-policy/` | セキュリティ境界。`X-Auth-Request-Email` 解釈は絶対に緩めない |
 | `challenges/<NN>-<slug>/` | その課題のみ |
 | `images/{ttyd,challenge}/` | 全ユーザ環境に影響 |
-| `deploy/<app>/base/` | 全環境。`overlays/<env>/` は当該環境のみ |
+| `charts/<name>/` | 全環境。default は環境非依存、環境値は platform helmfile が供給 |
 
 ## Cross-repo 契約 (falco-ctf-platform との接点)
 
 | 接点 | 詳細 |
 |---|---|
 | Image tag | `${REGISTRY}/falco-ctf-{scoreboard,auth-policy,ttyd,challenge}:<git-sha>` (registry の repo 名は `falco-ctf/X` slash 推奨; `falco-ctf-X` dash も ingest 受理) |
-| Challenges path | platform の `deploy-user.sh --challenges-dir` が当 repo `challenges/` を指す |
+| Charts | `charts/{scoreboard,auth-policy,ctf-user}` を CI が `oci://<ECR>/charts` へ `0.1.0-<sha>` で publish。platform helmfile が local=path / prod=OCI で参照 |
+| Challenges path | `deploy-user.sh --challenges-dir` (ctf-user chart 同梱、当 repo `challenges/` を default 参照) |
 | Webhook payload | `POST /falco/events` は falcosidekick 標準形。フィールドキー変更は両 repo 同時 PR |
 | Cookie domain | `.<ctf-domain>` は platform が決定。app 側は前提とする |
 | Flags | platform `events/<date>/flags.sops.yaml` が正典。scoreboard へ `FLAGS_FILE`、challenge コンテナへ `CTF_FLAG_<ID>` env として注入。app は `FALCO{dev-<slug>}` placeholder のみ保持。dev default 値は両 repo で一致させる |
@@ -102,12 +103,12 @@ image dedup で push 名と Falco 報告名が乖離するケース (同一 dige
 新しい registry を追加する場合は image string が `falco-ctf/challenge` /
 `falco-ctf-challenge` のどちらかを含むよう repo 命名する。
 
-## Prod overlay の placeholder (commit してはいけない値)
+## Prod 値の供給 (chart には焼き込まない)
 
-- `deploy/scoreboard/overlays/prod/ingress-host.yaml` の `scoreboard.<dns>` / `auth.<dns>`
-- `deploy/auth-policy/overlays/prod/kustomization.yaml` の `EXPECTED_EMAIL_DOMAIN` / `ADMIN_EMAILS`
-- `deploy/{scoreboard,auth-policy}/overlays/prod/kustomization.yaml` の image registry / tag
+scoreboard / auth-policy / ctf-user chart の `values.yaml` は placeholder default
+のみ (`example.invalid` / `docker.io/falco-ctf` / `FALCO{dev-...}` / `ADMIN_EMAILS=""`)。
+本番値 (実 host・ECR registry・image tag・EXPECTED_EMAIL_DOMAIN・ADMIN_EMAILS) は
+**platform helmfile の prod 環境値**が供給する (`falco-ctf-platform/helmfile/environments/prod.yaml.gotmpl`
++ `releases/{scoreboard,auth-policy}/values*.gotmpl`)。chart に実値をコミットしない。
 
-これらは **stand-up 時に kustomize edit / sed で置換** する想定 (base は
-placeholder のまま)。CI でも commit には placeholder 値が入る。本物の値が
-入った状態の overlay は手元の working tree only。
+> kustomize `deploy/` は P2 で廃止。k8s マニフェストの正典は `charts/`。

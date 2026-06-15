@@ -18,11 +18,24 @@ jobs:
       dockerfile: Dockerfile.test
 
   # ------------------------------------------------------------------
-  # Kustomize lint
-  # Branch protection check: "lint-kustomize"
+  # Helm chart lint + template (replaces the old kustomize-lint).
+  # Branch protection check: "chart-lint"
+  # NOTE: update branch protection — remove required "lint-kustomize",
+  # add required "chart-lint".
   # ------------------------------------------------------------------
-  lint-kustomize:
-    uses: Qfour/homelab-workflows/.github/workflows/kustomize-lint.yaml@main
+  chart-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: helm lint + template all charts
+        run: |
+          set -euo pipefail
+          for c in charts/*; do
+            echo "== $c =="
+            helm lint "$c"
+            helm template "$c" >/dev/null
+          done
 
   # ------------------------------------------------------------------
   # Flag hygiene: no real flags in the public repo + generated values in sync.

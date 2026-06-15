@@ -18,8 +18,7 @@ falco-ctf-app/
 ├── images/{ttyd,challenge}/   Dockerfile のみ
 ├── challenges/<NN>-<slug>/    README + falco-rule.yaml + fixtures + values.yaml
 ├── charts/             Helm charts: scoreboard / auth-policy / ctf-user
-│                       (platform helmfile が OCI/path で参照; ctf-user は P2 で platform から移設)
-├── deploy/<app>/{base,overlays/<env>}/   Kustomize (旧; helmfile 移行で段階的に retire 予定)
+│                       (platform helmfile が OCI/path で参照; k8s マニフェストの正典)
 ├── scripts/            build-and-load.sh (colima 用), mock-oauth2.conf
 ├── docker-compose.yml  ローカル dev (scoreboard + auth-policy + mock-oauth2)
 ├── Dockerfile.{test,tidy}  bind mount 不要の `go test` / `go mod tidy` (colima 用)
@@ -85,7 +84,7 @@ gitGraph
 ```
 
 - **feature ブランチ命名**: `feature/<topic>` / `fix/<topic>` / `chal/<NN>-<slug>`
-- **PR**: main への squash merge。CI (test / build / lint-kustomize) が必須 gate
+- **PR**: main への squash merge。CI (test / build / chart-lint / flag-guard) が必須 gate
 - **リリース**: `git tag -a v<YYYY.MM.DD>[-<suffix>] -m "<message>"` → push
   - tag push で CI が再ビルドし `v*` タグの image が push される
   - tag = 本番 deploy に使う image tag (Hard Invariant I4)

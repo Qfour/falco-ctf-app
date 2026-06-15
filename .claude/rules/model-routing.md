@@ -16,7 +16,7 @@
 | 設計提案・トレードオフ分析・RCA | `/architect <topic>` | Opus |
 | 仕様が明確な実装・テスト追加 | main session のまま | Sonnet (default) |
 | pre-PR レビュー (コード + manifest 並走) | `/review` | Opus × 2 並列 |
-| deploy/ だけ変わったときの manifest レビュー | `/review-manifests` | Opus |
+| charts/ だけ変わったときの manifest レビュー | `/review-manifests` | Opus |
 | セキュリティ深掘りレビュー | `/security-audit` | Opus |
 | challenge 新規作成・レビュー | `challenge-author` agent | Opus |
 | git commit | `/commit` | Haiku |

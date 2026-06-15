@@ -1,5 +1,5 @@
 ---
-description: Pre-PR review — runs reviewer (code) and manifest-reviewer (deploy/) as parallel subagents, then merges the verdicts.
+description: Pre-PR review — runs reviewer (code) and manifest-reviewer (charts/) as parallel subagents, then merges the verdicts.
 argument-hint: [optional focus area]
 ---
 
@@ -8,8 +8,8 @@ concurrently. Do NOT run them sequentially.
 
 1. **`reviewer` subagent** — Go code correctness, auth-policy boundaries, scoreboard logic,
    test coverage, style consistency, cross-repo contract drift.
-2. **`manifest-reviewer` subagent** — `deploy/**/*.yaml` invariants: replica count, strategy,
-   UID 65532, image tag, base/ placeholders, SecurityContext, kustomize build.
+2. **`manifest-reviewer` subagent** — `charts/**` invariants: replica count, strategy,
+   UID 65532, image tag, placeholder defaults, SecurityContext, helm lint + template.
 
 Pass any focus area to the reviewer: $ARGUMENTS
 

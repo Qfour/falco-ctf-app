@@ -22,8 +22,8 @@ make build                                # 全イメージを REGISTRY=$REGISTR
 make push
 make load-colima                          # colima k3s containerd に取込 (local only)
 
-# colima にデプロイ
-make deploy-local                         # kubectl apply -k deploy/*/overlays/local
+# colima にデプロイ (app のみ; full stack は platform の helmfile -e local apply)
+make deploy-local                         # helm upgrade --install scoreboard + auth-policy
 
 # Go テスト (Docker 内で go vet + 全パッケージの go test ./...)
 make test
@@ -54,17 +54,18 @@ curl http://localhost:8000/api/state | jq
 - Service Dockerfile: `<app>/Dockerfile` (build context = repo root)
 - イメージのみ: `images/<name>/Dockerfile` (build context = `images/<name>/`)
 - 課題: `challenges/<NN>-<slug>/` (NN は 2 桁ゼロパディング、slug は kebab-case)
-- Kustomize: `deploy/<app>/{base,overlays/<env>}/kustomization.yaml`
+- Helm chart: `charts/<name>/{Chart.yaml,values.yaml,templates/}` (scoreboard / auth-policy / ctf-user)
 - スクリプト: `scripts/<name>.sh` (kebab-case)
 
 ### Challenge ディレクトリ規約
 
 ```
 challenges/<NN>-<slug>/
-├── README.md            # 出題文 + ヒント + 想定解
-├── fixtures/            # challenge コンテナへ仕込むファイル (ConfigMap 経由 mount)
+├── README.md            # 出題文 + ヒント + 想定解 (operator/author 向け)
+├── fixtures/            # 参加者向けファイル (challenge イメージに焼込 /opt/ctf/missions/)
 ├── falco-rule.yaml      # challengeId + type + expected/forbiddenRules (scoreboard が読む)
-└── values.yaml          # (任意) ctf-user chart に重ねる Helm values overlay
+├── plant.sh            # (evade) フラグ仕込みスクリプト単一ソース → make gen-values
+└── values.yaml          # (生成物) ctf-user chart の postStart overlay (plant.sh から)
 ```
 
 `falco-rule.yaml` 必須フィールド:
@@ -93,11 +94,13 @@ windowSeconds: 10
 - ttyd / challenge は build context = `images/<name>/`
 - 詳細・SecurityContext は `.claude/rules/falco-ctf-app-conventions.md` 参照
 
-### Kustomize 規約
+### Helm chart 規約
 
-- `base/` は環境非依存。host / domain は placeholder (`example.invalid`)
-- `overlays/<env>/` で実値をパッチ
-- `images:` field で tag を上書き(`newTag: <git-sha>`)
+- `values.yaml` default は環境非依存。host / domain / registry は placeholder
+  (`example.invalid` / `docker.io/falco-ctf`)
+- 環境値 (host / tag / storageClass / admin / HA) は platform helmfile が供給
+- image tag は空 default (→ Chart.appVersion) か git SHA。`latest` 不可
+- CI が `oci://<ECR>/charts` へ `0.1.0-<sha>` で publish
 
 ## Boundaries
 
@@ -119,7 +122,7 @@ windowSeconds: 10
 - ✅ `go.mod` 編集後は `make tidy` で go.sum を更新してコミット
 - ✅ challenge 追加時は scoreboard に動作確認(`POST /falco/events` で expected
   ルール → `/api/state` に solved 反映)
-- ✅ Kustomize 編集後は `make lint` で全 overlay を `kustomize build`
+- ✅ chart 編集後は `make lint` で全チャートを `helm lint` (+ CI で helm template)
 - ✅ 機微情報は環境変数で渡す。Dockerfile / yaml にハードコードしない
 
 ## Falco event JSON フィールド早見表

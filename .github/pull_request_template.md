@@ -21,10 +21,10 @@
 - [ ] イメージ変更あり → `make scan TAG=local` 実施・全イメージ Clean 確認
 - [ ] `/review-code` 通過
 
-### パターン B: Manifest 変更 (`deploy/`)
+### パターン B: Chart 変更 (`charts/`)
 
-- [ ] `make lint` ローカルで通過
-- [ ] `base/` に hostname / secrets を含めていない (I7, I10)
+- [ ] `make lint` (helm lint) ローカルで通過
+- [ ] `values.yaml` default に実 host / registry / secrets を含めていない (I7, I10)
 - [ ] `/review-manifests` 通過
 
 ### パターン C: Challenge 追加 (`challenges/`)

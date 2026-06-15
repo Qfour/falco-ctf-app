@@ -26,15 +26,14 @@ case "$FILE" in
       go vet "./$PKG" 2>&1 || true
     fi
     ;;
-  */deploy/*.yaml|*/deploy/**/*.yaml)
-    # Validate kustomize overlays when a deploy manifest changes
-    if command -v kubectl >/dev/null 2>&1; then
-      REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-      for d in "$REPO_ROOT"/deploy/*/overlays/*/; do
-        [[ -d "$d" ]] || continue
-        kubectl kustomize "$d" >/dev/null 2>&1 \
-          || echo "kustomize: build failed for $d" >&2
-      done
+  */charts/*/templates/*.yaml|*/charts/*/values.yaml|*/charts/*/Chart.yaml)
+    # Lint + render the chart when a chart file changes.
+    if command -v helm >/dev/null 2>&1; then
+      # chart dir = two levels up from templates/, or the dir of values/Chart.
+      CHART_DIR=$(dirname "$FILE")
+      [[ "$(basename "$CHART_DIR")" == "templates" ]] && CHART_DIR=$(dirname "$CHART_DIR")
+      helm lint "$CHART_DIR" >/dev/null 2>&1 || echo "helm lint: failed for $CHART_DIR" >&2
+      helm template "$CHART_DIR" >/dev/null 2>&1 || echo "helm template: render failed for $CHART_DIR" >&2
     fi
     ;;
   */challenges/*/falco-rule.yaml)
