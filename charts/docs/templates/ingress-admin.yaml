@@ -1,0 +1,41 @@
+{{- if and .Values.ingress.enabled .Values.ingress.adminHost }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: docs-admin
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "docs.labels" . | nindent 4 }}
+  annotations:
+    # 運営ゲート: auth-policy /check-admin (ADMIN_EMAILS のみ通過)。未ログインは
+    # auth-signin へ。nginx 側は docs-admin. host prefix で想定解・解説ルートを返す。
+    nginx.ingress.kubernetes.io/auth-url: {{ .Values.ingress.adminAuthUrl | quote }}
+    {{- with .Values.ingress.authSignin }}
+    nginx.ingress.kubernetes.io/auth-signin: {{ . | quote }}
+    {{- end }}
+    nginx.ingress.kubernetes.io/auth-response-headers: "X-Auth-Request-User,X-Auth-Request-Email"
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ .Values.ingress.adminHost | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: docs
+                port:
+                  number: 80
+  {{- if .Values.ingress.tls }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.adminHost | quote }}
+      {{- with .Values.ingress.tlsSecretName }}
+      secretName: {{ . | quote }}
+      {{- end }}
+  {{- end }}
+{{- end }}

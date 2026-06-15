@@ -1,27 +1,43 @@
 #!/usr/bin/env bash
-# Generate one MkDocs page per challenge from the canonical challenges/ tree.
+# Generate MkDocs pages per challenge from the canonical challenges/ tree.
 # Single source of truth: challenges/<NN>-<slug>/{fixtures/welcome.txt,README.md}.
-# Images (optional) come from docs/assets/missions/<NN>-<slug>/*.
+# Images (optional): docs/assets/missions/<NN>-<slug>/*.
 #
-# Run from docs-site/ with the repo root as $1 (default ..). Idempotent.
-#   ./gen-pages.sh ..
+# Two modes control what each page contains:
+#   participant — mission brief only (welcome.txt). NO 想定解 / 解説 (no spoilers).
+#   admin       — brief + 攻略と解説 (README body). 運営専用。
+#
+# Run from docs-site/ with repo root as $1 (default ..) and mode as $2.
+#   ./gen-pages.sh .. participant
+#   ./gen-pages.sh .. admin
 set -euo pipefail
 
 ROOT="${1:-..}"
+MODE="${2:-participant}"
+case "$MODE" in participant|admin) ;; *) echo "mode must be participant|admin" >&2; exit 2;; esac
 MISS="docs/missions"
+rm -rf "$MISS"
 mkdir -p "$MISS"
 shopt -s nullglob
 
-cat > "$MISS/index.md" <<'EOF'
-# ミッション一覧
-
-Operation NimbusBreach の全ミッション。各ページに **ミッションブリーフ** と
-**攻略・解説**、ページ上部から **PDF ダウンロード** が利用できます。
-EOF
+{
+  echo "# ミッション一覧"
+  echo
+  if [ "$MODE" = admin ]; then
+    echo '!!! warning "運営専用ビュー"'
+    echo "    各ページに **想定解・解説** を含みます。参加者には配布しないこと。"
+    echo
+    echo "Operation NimbusBreach の全ミッション。ミッションブリーフ + 攻略・解説、"
+    echo "ページ上部から PDF をダウンロードできます。"
+  else
+    echo "Operation NimbusBreach の全ミッション。各ページにミッションブリーフ、"
+    echo "ページ上部から PDF をダウンロードできます。"
+  fi
+} > "$MISS/index.md"
 
 for d in "$ROOT"/challenges/[0-9][0-9]-*/; do
   [ -d "$d" ] || continue
-  nn="$(basename "$d")"                 # e.g. 01-initial-recon
+  nn="$(basename "$d")"
   readme="$d/README.md"
   [ -f "$readme" ] || { echo "skip $nn (no README.md)"; continue; }
   title="$(sed -n '1s/^#[[:space:]]*//p' "$readme")"
@@ -31,6 +47,10 @@ for d in "$ROOT"/challenges/[0-9][0-9]-*/; do
   {
     echo "# ${title}"
     echo
+    if [ "$MODE" = admin ]; then
+      echo '!!! warning "運営専用 — 想定解・解説を含む"'
+      echo
+    fi
     echo "[PDF をダウンロード](/pdf/${nn}.pdf){ .md-button .md-button--primary }"
     echo
     for img in docs/assets/missions/"$nn"/*; do
@@ -47,9 +67,11 @@ for d in "$ROOT"/challenges/[0-9][0-9]-*/; do
       echo '```'
       echo
     fi
-    echo "## 攻略と解説"
-    echo
-    tail -n +2 "$readme"
+    if [ "$MODE" = admin ]; then
+      echo "## 攻略と解説"
+      echo
+      tail -n +2 "$readme"
+    fi
   } > "$page"
-  echo "generated $page"
+  echo "generated [$MODE] $page"
 done

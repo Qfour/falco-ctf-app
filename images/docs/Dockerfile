@@ -29,18 +29,24 @@ COPY challenges/ ./challenges/
 COPY docs-site/ ./docs-site/
 
 WORKDIR /build/docs-site
-RUN bash gen-pages.sh .. \
- && mkdocs build --strict -d /site \
- && mkdir -p /site/pdf \
- && for f in docs/missions/[0-9][0-9]-*.md; do \
-        n="$(basename "${f%.md}")"; \
-        pandoc "$f" -o "/site/pdf/${n}.pdf" \
-            --pdf-engine=weasyprint \
-            --resource-path="docs/missions" \
-            --metadata title="Falco CTF — ${n}" || exit 1; \
-        echo "pdf: /site/pdf/${n}.pdf"; \
-    done \
- && ls -1 /site/pdf/*.pdf | wc -l
+# Build twice from the same source. gen-pages.sh decides what each page contains:
+#   participant → /site        (brief only — no 想定解/解説, even in the PDF)
+#   admin       → /site-admin  (brief + 攻略と解説; 運営専用)
+RUN for mode in participant admin; do \
+        out=/site; name="Falco CTF — 課題ドキュメント"; \
+        if [ "$mode" = admin ]; then out=/site-admin; name="Falco CTF — 課題ドキュメント (運営用)"; fi; \
+        bash gen-pages.sh .. "$mode" \
+     && DOCS_SITE_NAME="$name" mkdocs build --strict -d "$out" \
+     && mkdir -p "$out/pdf" \
+     && for f in docs/missions/[0-9][0-9]-*.md; do \
+            n="$(basename "${f%.md}")"; \
+            pandoc "$f" -o "$out/pdf/${n}.pdf" \
+                --pdf-engine=weasyprint \
+                --resource-path="docs/missions" \
+                --metadata title="Falco CTF — ${n}" || exit 1; \
+        done \
+     && echo "[$mode] $(ls -1 $out/pdf/*.pdf | wc -l) PDFs -> $out"; \
+    done
 
 # ── serve ───────────────────────────────────────────────────────────
 # nginx-unprivileged listens on 8080 as a non-root user (uid 101) — fits
@@ -51,5 +57,8 @@ FROM nginxinc/nginx-unprivileged:1.27-alpine
 # stage is already world-readable (dirs 0755 / files 0644) so it needs no chmod
 # (a blanket --chmod=0644 would strip dir traversal → 403).
 COPY --chmod=0644 docs-site/nginx.conf /etc/nginx/conf.d/default.conf
+# participant root (brief only):
 COPY --from=build /site /usr/share/nginx/html
+# 運営 root (想定解・解説込み) — gated at the ingress by /check-admin:
+COPY --from=build /site-admin /usr/share/nginx/html-admin
 EXPOSE 8080
