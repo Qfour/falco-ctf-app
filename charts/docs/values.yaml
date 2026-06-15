@@ -1,0 +1,30 @@
+# docs chart values. Env-specific values (image tag, host, sign-in URL, TLS)
+# are supplied by falco-ctf-platform's helmfile per environment.
+
+replicas: 1
+
+image:
+  repository: docker.io/falco-ctf/docs
+  # tag MUST be a git SHA in real deploys. Empty → Chart.appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+resources:
+  requests: { cpu: 10m, memory: 24Mi }
+  limits:   { cpu: 200m, memory: 128Mi }
+
+ingress:
+  enabled: true
+  className: nginx
+  host: docs.example.invalid
+  tls: false
+  # secretName for the TLS cert. Empty = rely on ingress-nginx's wildcard
+  # default-ssl-certificate (local). Prod can set a name.
+  tlsSecretName: ""
+  # auth-url: ANY authenticated participant (oauth2-proxy directly, no host
+  # binding). Unlike workspaces (auth-policy /check?host) or the scoreboard
+  # (/check-admin), the docs site is readable by every logged-in user.
+  authUrl: "http://oauth2-proxy.oauth2-proxy.svc.cluster.local:80/oauth2/auth"
+  authSignin: ""
+  # Extra annotations merged in (e.g. ssl-redirect in prod).
+  annotations: {}

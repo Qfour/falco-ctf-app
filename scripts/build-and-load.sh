@@ -17,6 +17,7 @@ declare -a IMAGES=(
   "challenge|.|images/challenge/Dockerfile"
   "scoreboard|.|scoreboard/Dockerfile"
   "auth-policy|.|auth-policy/Dockerfile"
+  "docs|.|images/docs/Dockerfile"
 )
 
 # Optional positional filter — pass image names to build a subset.
@@ -50,4 +51,4 @@ done
 
 info "[verify] images visible to k3s"
 ( cd / && colima ssh -- sudo ctr -n k8s.io images ls -q ) \
-  | grep -E "${REGISTRY}/(ttyd|challenge|scoreboard|auth-policy):" || true
+  | grep -E "${REGISTRY}/(ttyd|challenge|scoreboard|auth-policy|docs):" || true

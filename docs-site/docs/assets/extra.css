@@ -1,0 +1,11 @@
+/* Challenge images: keep them readable but bounded, with a subtle frame. */
+.md-typeset img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+
+/* Mission brief code blocks (welcome.txt ASCII art) — preserve layout. */
+.md-typeset pre > code {
+  white-space: pre;
+}

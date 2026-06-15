@@ -1,0 +1,41 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: docs
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "docs.labels" . | nindent 4 }}
+  annotations:
+    # Participant gate: any authenticated user (oauth2-proxy /oauth2/auth).
+    # No host↔email binding — the docs are shared, read-only for all logins.
+    nginx.ingress.kubernetes.io/auth-url: {{ .Values.ingress.authUrl | quote }}
+    {{- with .Values.ingress.authSignin }}
+    nginx.ingress.kubernetes.io/auth-signin: {{ . | quote }}
+    {{- end }}
+    nginx.ingress.kubernetes.io/auth-response-headers: "X-Auth-Request-User,X-Auth-Request-Email"
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: docs
+                port:
+                  number: 80
+  {{- if .Values.ingress.tls }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      {{- with .Values.ingress.tlsSecretName }}
+      secretName: {{ . | quote }}
+      {{- end }}
+  {{- end }}
+{{- end }}

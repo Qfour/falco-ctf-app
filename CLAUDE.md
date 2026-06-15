@@ -15,9 +15,11 @@ falco-ctf-app/
 │                       scoreboard (handlers + HTML embed) / authpolicy (handlers)
 ├── scoreboard/         Dockerfile のみ (Go multi-stage, challenges/ 焼込)
 ├── auth-policy/        Dockerfile のみ (Go multi-stage, stdlib のみ)
-├── images/{ttyd,challenge}/   Dockerfile のみ
+├── images/{ttyd,challenge,docs}/  Dockerfile のみ (docs = MkDocs+PDF サイト)
 ├── challenges/<NN>-<slug>/    README + falco-rule.yaml + fixtures + values.yaml
-├── charts/             Helm charts: scoreboard / auth-policy / ctf-user
+├── docs-site/          MkDocs Material プロジェクト (gen-pages.sh が challenges/ から
+│                       ミッションページ生成 → images/docs が site+PDF を焼く)
+├── charts/             Helm charts: scoreboard / auth-policy / ctf-user / docs
 │                       (platform helmfile が OCI/path で参照; k8s マニフェストの正典)
 ├── scripts/            build-and-load.sh (colima 用), mock-oauth2.conf
 ├── docker-compose.yml  ローカル dev (scoreboard + auth-policy + mock-oauth2)
@@ -64,7 +66,7 @@ falco-ctf-app/
 
 | 接点 | 契約 |
 |---|---|
-| Image | `${REGISTRY}/falco-ctf-{ttyd,challenge,scoreboard,auth-policy}:<tag>`。tag は git SHA。platform 側 chart/manifest が values で pin |
+| Image | `${REGISTRY}/falco-ctf-{ttyd,challenge,scoreboard,auth-policy,docs}:<tag>`。tag は git SHA。platform 側 chart/manifest が values で pin |
 | Challenges path | platform の `deploy-user.sh --challenges-dir <path>` が当 repo の `challenges/` を指す。CI では sparse checkout |
 | Webhook payload | `POST /falco/events` の JSON は falcosidekick 標準形。フィールドキー変更は両 repo 同時 PR |
 | Cookie domain | `.<ctf-domain>` は platform が決定。app 側は前提とする |

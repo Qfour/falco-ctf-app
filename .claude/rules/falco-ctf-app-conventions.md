@@ -11,6 +11,7 @@
 | auth-policy | **65532** | distroless/static-debian12:nonroot |
 | ttyd | **1000** | alpine adduser -D -u 1000 ttyd |
 | challenge | **root (0)** | CTF realism — ユーザが体験するシェル環境 |
+| docs | **101** | nginxinc/nginx-unprivileged (静的サイト配信) |
 
 ## Hard Invariants (違反は即 blocking)
 
@@ -20,7 +21,7 @@
 | I2 | scoreboard / auth-policy のコンテナ `runAsUser: 65532` |
 | I3 | scoreboard PVC `fsGroup: 65532` |
 | I4 | image tag は **git SHA** で push。`latest` で本番 deploy 禁止 |
-| I5 | 全 4 イメージ (scoreboard / auth-policy / ttyd / challenge) を **同一 git SHA** でビルド・push |
+| I5 | 全 5 イメージ (scoreboard / auth-policy / ttyd / challenge / docs) を **同一 git SHA** でビルド・push |
 | I6 | challenges/ は scoreboard と同一 repo に置く (falco-rule.yaml が scoreboard の一次消費) |
 | I7 | chart の `values.yaml` default は環境非依存。host/domain/registry は placeholder (`example.invalid` / `docker.io/falco-ctf`)。環境値は platform helmfile が供給 |
 | I8 | auth-policy `/check` は `X-Auth-Request-Email` を **prefix-exact** (`<username>@`) で照合。**唯一の例外**: email が `ADMIN_EMAILS` に含まれる場合は任意の workspace を許可 (運営の全 workspace アクセス)。それ以外で prefix 一致を緩めない |
@@ -35,6 +36,11 @@
 | auth-policy | `golang:1.25-alpine` | `gcr.io/distroless/static-debian12:nonroot` |
 | ttyd | (single-stage) | `alpine:3.20` |
 | challenge | (single-stage) | `alpine:3.20` |
+| docs | `python:3.12-slim` (mkdocs-material + pandoc + weasyprint) | `nginxinc/nginx-unprivileged:1.27-alpine` |
+
+- docs イメージの build context = repo root (`challenges/` を読んで gen-pages.sh が
+  ミッションページを生成。`README.md` の H1 をタイトル、`fixtures/welcome.txt` を
+  ブリーフ、本文を「攻略と解説」に流し込む。単一ソース = challenges/)
 
 - Go ビルドは `CGO_ENABLED=0 -ldflags="-s -w" -trimpath` で static binary
 - scoreboard / auth-policy の build context = repo root
@@ -85,8 +91,8 @@ securityContext:
 
 | 接点 | 詳細 |
 |---|---|
-| Image tag | `${REGISTRY}/falco-ctf-{scoreboard,auth-policy,ttyd,challenge}:<git-sha>` (registry の repo 名は `falco-ctf/X` slash 推奨; `falco-ctf-X` dash も ingest 受理) |
-| Charts | `charts/{scoreboard,auth-policy,ctf-user}` を CI が `oci://<ECR>/charts` へ `0.1.0-<sha>` で publish。platform helmfile が local=path / prod=OCI で参照 |
+| Image tag | `${REGISTRY}/falco-ctf-{scoreboard,auth-policy,ttyd,challenge,docs}:<git-sha>` (registry の repo 名は `falco-ctf/X` slash 推奨; `falco-ctf-X` dash も ingest 受理) |
+| Charts | `charts/{scoreboard,auth-policy,ctf-user,docs}` を platform helmfile が local=path / prod=OCI で参照 (CI publish は現状停止 → prod も local clone path。`project_ci_free_prod` 参照) |
 | Challenges path | `deploy-user.sh --challenges-dir` (ctf-user chart 同梱、当 repo `challenges/` を default 参照) |
 | Webhook payload | `POST /falco/events` は falcosidekick 標準形。フィールドキー変更は両 repo 同時 PR |
 | Cookie domain | `.<ctf-domain>` は platform が決定。app 側は前提とする |

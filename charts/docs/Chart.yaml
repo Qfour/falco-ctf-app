@@ -1,0 +1,6 @@
+apiVersion: v2
+name: docs
+description: Falco CTF challenge documentation site (MkDocs Material + per-mission PDF)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
