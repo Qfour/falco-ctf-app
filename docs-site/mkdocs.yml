@@ -7,18 +7,12 @@ theme:
   name: material
   language: ja
   palette:
-    - scheme: default
-      primary: indigo
-      accent: indigo
-      toggle:
-        icon: material/weather-night
-        name: ダークモードへ
-    - scheme: slate
-      primary: indigo
-      accent: indigo
-      toggle:
-        icon: material/weather-sunny
-        name: ライトモードへ
+    scheme: slate
+    primary: black
+    accent: cyan
+  font:
+    text: Inter
+    code: JetBrains Mono
   features:
     - navigation.sections
     - navigation.top

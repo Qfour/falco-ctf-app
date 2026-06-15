@@ -1,30 +1,104 @@
-/* Challenge images: keep them readable but bounded, with a subtle frame. */
-.md-typeset img {
-  max-width: 100%;
-  height: auto;
-  border-radius: 6px;
+/* ===========================================================================
+   Falco CTF docs — cyber-dark + Falco Blue neon, matching the scoreboard.
+   =========================================================================== */
+@import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&display=swap');
+
+/* ---- palette (slate scheme overrides) ---- */
+[data-md-color-scheme="slate"] {
+  --falco: #00CBE2;
+  --md-default-bg-color: #070B10;
+  --md-default-fg-color: #EAF7FA;
+  --md-default-fg-color--light: #9DB4BF;
+  --md-default-fg-color--lighter: #5C7480;
+  --md-default-fg-color--lightest: #1C2A35;
+  --md-typeset-color: #EAF7FA;
+  --md-primary-fg-color: #0D141B;        /* dark header (not bright blue) */
+  --md-primary-fg-color--light: #131A21;
+  --md-primary-fg-color--dark: #070B10;
+  --md-primary-bg-color: #EAF7FA;
+  --md-accent-fg-color: #00CBE2;
+  --md-typeset-a-color: #00CBE2;
+  --md-code-bg-color: #0F1820;
+  --md-code-fg-color: #EAF7FA;
 }
+
+/* ---- cyber-dark background + faint Falco-Blue grid ---- */
+body {
+  background:
+    radial-gradient(at 15% -8%, rgba(0, 203, 226, 0.10) 0px, transparent 42%),
+    radial-gradient(at 88% 0%, rgba(183, 140, 255, 0.05) 0px, transparent 38%),
+    var(--md-default-bg-color);
+}
+body::before {
+  content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background-image:
+    linear-gradient(rgba(0, 203, 226, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 203, 226, 0.035) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse at 50% 0%, #000 30%, transparent 80%);
+}
+.md-grid { position: relative; z-index: 1; }
+
+/* ---- header: dark with a neon underline ---- */
+.md-header {
+  background: #0D141B;
+  border-bottom: 1px solid #1C2A35;
+  box-shadow: 0 1px 0 rgba(0, 203, 226, 0.35), 0 4px 18px rgba(0, 0, 0, 0.45);
+}
+.md-header__title { font-family: 'Chakra Petch', sans-serif; font-weight: 700; letter-spacing: 0.02em; }
+.md-tabs { background: #0A0F15; }
+
+/* ---- typography: Chakra Petch headings, neon h1 ---- */
+.md-typeset h1, .md-typeset h2, .md-typeset h3,
+.md-nav__title, .md-ellipsis { font-family: 'Chakra Petch', sans-serif; letter-spacing: 0.01em; }
+.md-typeset h1 {
+  color: var(--falco); font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+  text-shadow: 0 0 20px rgba(0, 203, 226, 0.4);
+}
+.md-typeset h2 { color: #EAF7FA; font-weight: 600; border-bottom: 1px solid #1C2A35; padding-bottom: 0.2em; }
+.md-typeset h2::before { content: '▸ '; color: var(--falco); }
+.md-typeset a { color: var(--falco); }
+.md-typeset a:hover { text-shadow: 0 0 10px rgba(0, 203, 226, 0.45); }
+
+/* ---- nav: neon active state ---- */
+.md-nav__link--active, .md-nav__link:focus, .md-nav__link:hover { color: var(--falco); }
+.md-nav__item .md-nav__link--active { text-shadow: 0 0 8px rgba(0, 203, 226, 0.35); }
+
+/* ---- code blocks ---- */
+.md-typeset pre > code, .md-typeset code { border: 1px solid #1C2A35; }
+.md-typeset .highlight { border-radius: 8px; }
+
+/* ---- PDF download button (.md-button) → neon ---- */
+.md-typeset .md-button {
+  border: 1px solid var(--falco); color: var(--falco); border-radius: 6px;
+  font-family: 'Chakra Petch', sans-serif; letter-spacing: 0.03em; transition: all 0.15s;
+}
+.md-typeset .md-button:hover, .md-typeset .md-button--primary {
+  background: var(--falco); color: #070B10; border-color: var(--falco);
+  box-shadow: 0 0 18px rgba(0, 203, 226, 0.45);
+}
+
+/* ---- admonitions: subtle neon ---- */
+.md-typeset .admonition, .md-typeset details {
+  border-radius: 8px; border-left-width: 3px; background: #0F1820;
+}
+
+/* ---- tables ---- */
+.md-typeset table:not([class]) { border: 1px solid #1C2A35; border-radius: 8px; overflow: hidden; }
+.md-typeset table:not([class]) th { background: #0D141B; font-family: 'Chakra Petch', sans-serif; }
+
+/* ===== Challenge images: bounded, subtle frame ===== */
+.md-typeset img { max-width: 100%; height: auto; border-radius: 6px; }
 
 /* Mission brief code blocks (welcome.txt ASCII art) — preserve layout. */
-.md-typeset pre > code {
-  white-space: pre;
-}
+.md-typeset pre > code { white-space: pre; }
 
-/* Time-gated hints (assets/hints.js). */
+/* ===== Time-gated / operator-released hints (assets/hints.js) ===== */
 .ctf-hint {
-  border: 1px solid var(--md-default-fg-color--lightest);
-  border-radius: 6px;
-  padding: 0.4rem 0.8rem;
-  margin: 0.8rem 0;
+  border: 1px solid #1C2A35; border-radius: 8px; padding: 0.5rem 1rem; margin: 1rem 0;
+  background: #0F1820;
 }
 .ctf-hint--unlocked,
-.ctf-hint--released {
-  border-color: var(--md-accent-fg-color);
-}
-.ctf-hint-ctl {
-  color: var(--md-default-fg-color--light);
-  padding: 0.2rem 0;
-}
-.ctf-hint-release {
-  cursor: pointer;
-}
+.ctf-hint--released { border-color: var(--falco); box-shadow: 0 0 16px rgba(0, 203, 226, 0.2); }
+.ctf-hint-ctl { color: #5C7480; padding: 0.2rem 0; }
+.ctf-hint-release { cursor: pointer; }
