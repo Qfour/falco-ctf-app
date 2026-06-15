@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
-"""Generate MkDocs mission pages + pandoc PDF sources from the canonical
-challenges/ tree (single source of truth).
+"""Generate MkDocs mission pages from the canonical challenges/ tree.
 
   python3 gen-pages.py <repo-root> <mode>     # mode: participant | admin
 
-Outputs (relative to docs-site/, both gitignored):
-  docs/missions/<NN>.md   — site pages (MkDocs). participant: brief + time-gated
-                            hints (HTML+JS). admin: brief + 攻略と解説 + plain hints.
-  pdfsrc/<NN>.md          — pandoc sources (static; hints always shown plainly).
+Output (relative to docs-site/, gitignored):
+  docs/missions/<NN>.md   — participant: brief + operator-released hints (HTML+JS).
+                            admin: brief + 攻略と解説 + hints.
 
 Per challenge the brief comes from fixtures/welcome.txt; the "# 表示名について"
 section is stripped (it lives on the はじめに page) and trailing HINT blocks are
-split out so they can be revealed over time on the site.
+split out so they can be released by the operator on the site.
 """
 import os, re, shutil, sys
 
@@ -20,10 +18,9 @@ mode = sys.argv[2] if len(sys.argv) > 2 else "participant"
 if mode not in ("participant", "admin"):
     sys.exit("mode must be participant|admin")
 
-MISS, PDFSRC = "docs/missions", "pdfsrc"
-for d in (MISS, PDFSRC):
-    shutil.rmtree(d, ignore_errors=True)
-    os.makedirs(d)
+MISS = "docs/missions"
+shutil.rmtree(MISS, ignore_errors=True)
+os.makedirs(MISS)
 
 BAR = re.compile(r"^[─\-]{3,}\s*$")
 
@@ -81,12 +78,10 @@ def split_after_background(brief):
     return before, after
 
 
-def page(nn, title, welcome_path, readme_path, rule_path, target):
+def page(nn, title, welcome_path, readme_path, rule_path):
     out = [f"# {title}\n"]
     if mode == "admin":
         out.append('!!! warning "運営専用 — 想定解・解説を含む"\n')
-    if target == "site":
-        out.append(f"[PDF をダウンロード](/pdf/{nn}.pdf){{ .md-button .md-button--primary }}\n")
     imgdir = os.path.join("docs/assets/missions", nn)
     if os.path.isdir(imgdir):
         for img in sorted(os.listdir(imgdir)):
@@ -115,20 +110,15 @@ def page(nn, title, welcome_path, readme_path, rule_path, target):
 
     if hints:
         out.append("## ヒント\n")
-        if target == "site":
-            # Operator-controlled reveal (assets/hints.js): participants see a
-            # hint only after an admin releases it; admin pages get a release
-            # button. State lives in the scoreboard (GET/POST /api/hints).
-            admin_cls = " ctf-hint--admin" if mode == "admin" else ""
-            for idx, h in enumerate(hints, 1):
-                out.append(f'<div class="ctf-hint{admin_cls}" data-mission="{nn}" data-hint="{idx}" markdown="1">')
-                out.append(f"**{h['title']}**\n")
-                out.append("```text\n" + "\n".join(h["body"]) + "\n```")
-                out.append("</div>\n")
-        else:
-            for h in hints:  # pdf: static, always visible
-                out.append(f"### {h['title']}\n")
-                out.append("```text\n" + "\n".join(h["body"]) + "\n```\n")
+        # Operator-controlled reveal (assets/hints.js): participants see a hint
+        # only after an admin releases it; admin pages get a release button.
+        # State lives in the scoreboard (GET/POST /api/hints).
+        admin_cls = " ctf-hint--admin" if mode == "admin" else ""
+        for idx, h in enumerate(hints, 1):
+            out.append(f'<div class="ctf-hint{admin_cls}" data-mission="{nn}" data-hint="{idx}" markdown="1">')
+            out.append(f"**{h['title']}**\n")
+            out.append("```text\n" + "\n".join(h["body"]) + "\n```")
+            out.append("</div>\n")
 
     if mode == "admin" and readme_path and os.path.isfile(readme_path):
         body = open(readme_path, encoding="utf-8").read().splitlines()[1:]  # drop H1
@@ -146,7 +136,7 @@ with open(os.path.join(MISS, "index.md"), "w", encoding="utf-8") as f:
     f.write("# ミッション一覧\n\n" + banner +
             "Operation NimbusBreach の全ミッション。各ページにミッションブリーフ"
             + ("と攻略・解説" if mode == "admin" else "")
-            + "、ページ上部から PDF をダウンロードできます。\n")
+            + "を掲載しています。\n")
 
 challenges = sorted(
     d for d in os.listdir(os.path.join(root, "challenges"))
@@ -163,7 +153,5 @@ for nn in challenges:
     welcome = os.path.join(cdir, "fixtures", "welcome.txt")
     rule = os.path.join(cdir, "rule.yaml")
     open(os.path.join(MISS, f"{nn}.md"), "w", encoding="utf-8").write(
-        page(nn, title, welcome, readme, rule, "site"))
-    open(os.path.join(PDFSRC, f"{nn}.md"), "w", encoding="utf-8").write(
-        page(nn, title, welcome, readme, rule, "pdf"))
+        page(nn, title, welcome, readme, rule))
     print(f"[{mode}] {nn}")
