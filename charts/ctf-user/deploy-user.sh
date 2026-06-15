@@ -38,6 +38,7 @@ DEFAULT_CHALLENGES_DIR="${REPO_ROOT}/challenges"
 CHALLENGES_DIR=""
 DISPLAY_NAME=""
 FLAGS_FILE=""
+DNS_SUFFIX=""
 POSITIONAL=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -45,6 +46,10 @@ while [[ $# -gt 0 ]]; do
       CHALLENGES_DIR="${2:?--challenges-dir requires a path}"; shift 2 ;;
     --challenges-dir=*)
       CHALLENGES_DIR="${1#--challenges-dir=}"; shift ;;
+    --dns-suffix)
+      DNS_SUFFIX="${2:?--dns-suffix requires a value}"; shift 2 ;;
+    --dns-suffix=*)
+      DNS_SUFFIX="${1#--dns-suffix=}"; shift ;;
     --display-name)
       DISPLAY_NAME="${2:?--display-name requires a value}"; shift 2 ;;
     --display-name=*)
@@ -162,6 +167,7 @@ info "[2/${LAST_STEP}] helm upgrade --install ${RELEASE} (challenge=${CHALLENGE_
 helm upgrade --install "${RELEASE}" "${CHART_DIR}" \
   --set "username=${USERNAME}" \
   --set "challengeId=${CHALLENGE_ID}" \
+  ${DNS_SUFFIX:+--set dnsSuffix="${DNS_SUFFIX}"} \
   ${VALUES_ARGS:+"${VALUES_ARGS[@]}"} \
   ${FLAG_ARGS:+"${FLAG_ARGS[@]}"} \
   --wait --timeout 2m

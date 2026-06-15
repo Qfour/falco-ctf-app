@@ -12,6 +12,7 @@ RUN go mod download
 
 COPY cmd/auth-policy ./cmd/auth-policy
 COPY internal/authpolicy ./internal/authpolicy
+COPY internal/serverutil ./internal/serverutil
 
 RUN CGO_ENABLED=0 GOOS=linux go build \
       -ldflags="-s -w" -trimpath \
