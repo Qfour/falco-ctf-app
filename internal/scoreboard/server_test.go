@@ -658,7 +658,7 @@ func TestIndexHTML_ServedAtRoot(t *testing.T) {
 	if ct := w.Header().Get("Content-Type"); ct == "" {
 		t.Fatalf("missing Content-Type")
 	}
-	if !bytes.Contains(w.Body.Bytes(), []byte("<title>falco-ctf")) {
+	if !bytes.Contains(w.Body.Bytes(), []byte("<title>Falco CTF")) {
 		t.Fatalf("html body did not contain expected title")
 	}
 }

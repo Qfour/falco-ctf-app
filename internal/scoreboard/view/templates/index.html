@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>falco-ctf · scoreboard</title>
+<title>Falco CTF · scoreboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    /* Sysdig palette — Lumin (#BDF78B) primary + neutral grays only. */
+    /* Palette — Falco Blue (#00CBE2) primary + neutral grays. */
     --bg: #1E1E22;           /* Gray 80 */
     --bg-elev: #2B2D30;      /* Gray 70 */
     --surface: #2B2D30;      /* Gray 70 */
@@ -19,15 +19,15 @@
     --text: #FFFFFF;         /* White */
     --text-dim: #BBBDBF;     /* Gray 20 */
     --text-mute: #8A8C8E;    /* Gray 30 */
-    --accent: #BDF78B;       /* Lumin */
-    --accent-2: #A8E975;     /* Lumin darker tint (gradient pair) */
-    --accent-glow: rgba(189, 247, 139, 0.22);
-    --success: #BDF78B;      /* Palette has no separate success — reuse Lumin */
-    --success-glow: rgba(189, 247, 139, 0.35);
-    --warn: #BDF78B;
+    --accent: #00CBE2;       /* Lumin */
+    --accent-2: #00A9BD;     /* Lumin darker tint (gradient pair) */
+    --accent-glow: rgba(0, 203, 226, 0.22);
+    --success: #00CBE2;      /* Palette has no separate success — reuse Lumin */
+    --success-glow: rgba(0, 203, 226, 0.35);
+    --warn: #00CBE2;
     --evade: #BBBDBF;        /* Gray 20 — distinguished from trigger by hue */
-    --trigger: #BDF78B;
-    --gold: #BDF78B;         /* Rank 1 = Lumin */
+    --trigger: #00CBE2;
+    --gold: #00CBE2;         /* Rank 1 = Lumin */
     --silver: #EAEBED;       /* Rank 2 = Gray 10 */
     --bronze: #8A8C8E;       /* Rank 3 = Gray 30 */
   }
@@ -37,8 +37,8 @@
   body {
     background: var(--bg);
     background-image:
-      radial-gradient(at 20% -10%, rgba(189, 247, 139, 0.08) 0px, transparent 50%),
-      radial-gradient(at 85% 5%, rgba(189, 247, 139, 0.04) 0px, transparent 50%);
+      radial-gradient(at 20% -10%, rgba(0, 203, 226, 0.08) 0px, transparent 50%),
+      radial-gradient(at 85% 5%, rgba(0, 203, 226, 0.04) 0px, transparent 50%);
     background-attachment: fixed;
     color: var(--text);
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -89,11 +89,10 @@
   tbody tr:hover { background: var(--surface-2); }
   tbody td { padding: 0.875rem 1.5rem; border-top: 1px solid var(--border); vertical-align: middle; }
   .rank { font-family: 'JetBrains Mono', monospace; font-size: 1.1rem; font-weight: 700; width: 60px; }
-  .rank-1 { color: var(--gold); text-shadow: 0 0 8px rgba(189, 247, 139, 0.5); }
+  .rank-1 { color: var(--gold); text-shadow: 0 0 8px rgba(0, 203, 226, 0.5); }
   .rank-2 { color: var(--silver); }
   .rank-3 { color: var(--bronze); }
   .user-cell { font-family: 'JetBrains Mono', monospace; font-weight: 600; font-size: 0.95rem; }
-  .user-cell .avatar { display: inline-block; width: 24px; height: 24px; border-radius: 50%; background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: var(--bg); text-align: center; line-height: 24px; font-size: 0.7rem; margin-right: 0.5rem; vertical-align: -7px; font-weight: 700; }
   .score-cell { font-family: 'JetBrains Mono', monospace; font-size: 1rem; }
   .score-cell .total { color: var(--text-mute); }
   .progress { width: 100%; height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; min-width: 120px; }
@@ -104,7 +103,7 @@
   .challenges { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem; padding: 1.25rem 1.5rem; }
   .challenge { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 0.5rem; padding: 1rem; transition: all 0.2s; position: relative; }
   .challenge:hover { border-color: var(--border-strong); transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3); }
-  .challenge.full { border-color: var(--success); background: linear-gradient(135deg, var(--bg-elev) 0%, rgba(189, 247, 139, 0.05) 100%); }
+  .challenge.full { border-color: var(--success); background: linear-gradient(135deg, var(--bg-elev) 0%, rgba(0, 203, 226, 0.05) 100%); }
   .challenge.clickable { cursor: pointer; }
   .challenge.clickable:hover { border-color: var(--accent); }
   .detail-head { justify-content: flex-start; gap: 0.85rem; }
@@ -113,7 +112,7 @@
   .challenge .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
   .challenge .num { font-family: 'JetBrains Mono', monospace; color: var(--text-mute); font-size: 0.75rem; font-weight: 600; letter-spacing: 0.05em; }
   .badge { padding: 3px 9px; border-radius: 4px; font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 700; }
-  .badge-trigger { background: rgba(189, 247, 139, 0.12); color: var(--trigger); border: 1px solid rgba(189, 247, 139, 0.3); }
+  .badge-trigger { background: rgba(0, 203, 226, 0.12); color: var(--trigger); border: 1px solid rgba(0, 203, 226, 0.3); }
   .badge-evade { background: rgba(187, 189, 191, 0.10); color: var(--evade); border: 1px solid rgba(187, 189, 191, 0.3); }
   .challenge .name { font-weight: 600; margin-bottom: 0.5rem; color: var(--text); font-size: 0.95rem; }
   .challenge .rule { color: var(--text-dim); font-size: 0.7rem; font-family: 'JetBrains Mono', monospace; margin-bottom: 0.75rem; line-height: 1.4; word-break: break-word; }
@@ -155,7 +154,7 @@
 <body>
   <header>
     <div class="brand">
-      <h1>falco<span class="accent">-ctf</span> <span class="light mono">scoreboard</span></h1>
+      <h1>Falco <span class="accent">CTF</span> <span class="light mono">scoreboard</span></h1>
       <div class="subtitle">Capture the Flag · Runtime detection challenge</div>
     </div>
     <div>
@@ -227,7 +226,6 @@
     return Math.floor(s / 86400) + 'd ago';
   }
   function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-  function avatarChar(u) { return (u || '?').slice(-1).toUpperCase(); }
   function fmtDelta(ms) {
     const s = Math.max(0, Math.round(ms / 1000));
     if (s < 60) return s + 's';
@@ -261,9 +259,6 @@
     // ---- stats ----
     document.getElementById('stats').innerHTML = `
       <div class="stat"><div class="label">Participants</div><div class="value">${d.stats.users}</div></div>
-      <div class="stat"><div class="label">Challenges</div><div class="value">${d.stats.challenges}</div></div>
-      <div class="stat"><div class="label">Total solves</div><div class="value">${d.stats.solves}<span class="sub">/ ${maxPossible || '—'}</span></div></div>
-      <div class="stat"><div class="label">Falco events</div><div class="value">${d.stats.events.toLocaleString()}</div></div>
     `;
 
     // ---- leaderboard ----
@@ -274,10 +269,11 @@
     } else {
       lb.innerHTML = d.leaderboard.map(p => {
         const pct = totalChal ? Math.round(100 * p.solved / totalChal) : 0;
-        const rankCls = p.rank <= 3 ? 'rank-' + p.rank : '';
+        const ranked = p.solved > 0;
+        const rankCls = ranked && p.rank <= 3 ? 'rank-' + p.rank : '';
         return `<tr>
-          <td><span class="rank ${rankCls}">#${p.rank}</span></td>
-          <td><span class="user-cell"><span class="avatar">${avatarChar(p.display_name || p.user)}</span>${esc(p.display_name || p.user)}<button class="name-edit" data-user="${esc(p.user)}" title="Rename on scoreboard (admin)">✎</button></span></td>
+          <td><span class="rank ${rankCls}">${ranked ? '#' + p.rank : '-'}</span></td>
+          <td><span class="user-cell">${esc(p.display_name || p.user)}<button class="name-edit" data-user="${esc(p.user)}" title="Rename on scoreboard (admin)">✎</button></span></td>
           <td><span class="score-cell">${p.solved}<span class="total">/${totalChal}</span></span></td>
           <td><div class="progress"><div class="progress-bar" style="width:${pct}%"></div></div></td>
           <td><span class="events-cell">${p.events.toLocaleString()}</span></td>
@@ -373,7 +369,7 @@
       const delta = rank === 1 ? '🏆 first' : '+' + fmtDelta(new Date(s.at).getTime() - firstAt);
       return `<tr>
         <td><span class="rank ${rankCls}">#${rank}</span></td>
-        <td><span class="user-cell"><span class="avatar">${avatarChar(s.display_name || s.user)}</span>${esc(s.display_name || s.user)}</span></td>
+        <td><span class="user-cell">${esc(s.display_name || s.user)}</span></td>
         <td><span class="when" title="${esc(s.at)}">${fmtAgo(s.at)}</span></td>
         <td style="text-align:right" class="mono">${delta}</td>
       </tr>`;

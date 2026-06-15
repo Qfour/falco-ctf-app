@@ -523,8 +523,15 @@ func (h *Handler) buildState() map[string]any {
 		}
 		return leaderboard[i].Earliest < leaderboard[j].Earliest
 	})
+	// Rank only participants who have solved something; the board is already
+	// sorted by Solved desc, so solvers occupy the top contiguously and get
+	// ranks 1..M. Zero-solve participants keep Rank 0 → the UI renders "-".
+	rank := 0
 	for i := range leaderboard {
-		leaderboard[i].Rank = i + 1
+		if leaderboard[i].Solved > 0 {
+			rank++
+			leaderboard[i].Rank = rank
+		}
 	}
 
 	type chSolver struct {
