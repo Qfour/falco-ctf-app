@@ -300,3 +300,22 @@ func (s *Store) SolvedCount() int {
 	defer s.mu.Unlock()
 	return len(s.solved)
 }
+
+// Reset clears all solves (DB + memory) and the in-memory event / rule-fire
+// counters, returning the scoreboard to an empty state. Returns how many
+// solves were cleared. Display names are deliberately preserved — they are
+// operator-seeded participant identities (re-set only on workspace deploy),
+// not "results". Used by the admin reset endpoint to wipe a demo/test run
+// before the real event starts.
+func (s *Store) Reset() (clearedSolves int, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := s.db.Exec("DELETE FROM solved"); err != nil {
+		return 0, fmt.Errorf("reset solved: %w", err)
+	}
+	clearedSolves = len(s.solved)
+	s.solved = make(map[SolveKey]string)
+	s.eventsPerUser = make(map[string]int)
+	s.ruleFires = make(map[string][]ruleFire)
+	return clearedSolves, nil
+}

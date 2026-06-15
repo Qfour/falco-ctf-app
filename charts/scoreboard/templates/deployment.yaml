@@ -49,6 +49,10 @@ spec:
             - name: SCENARIO_FILE
               value: {{ . | quote }}
             {{- end }}
+            {{- with .Values.env.adminEmails }}
+            - name: ADMIN_EMAILS
+              value: {{ . | quote }}
+            {{- end }}
             {{- if .Values.flagsSecret.enabled }}
             - name: FLAGS_FILE
               value: /etc/ctf-flags/{{ .Values.flagsSecret.key }}

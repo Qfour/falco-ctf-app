@@ -17,6 +17,10 @@ env:
   # scenario manifest, e.g. /app/scenarios/killchain-2h/scenario.yaml.
   # Empty = all challenges.
   scenarioFile: ""
+  # Comma-separated admin emails — gates POST /api/admin/reset (verified
+  # against the auth-policy-propagated X-Auth-Request-Email). Empty = nobody.
+  # Use the same list as auth-policy's ADMIN_EMAILS.
+  adminEmails: ""
 
 persistence:
   size: 1Gi

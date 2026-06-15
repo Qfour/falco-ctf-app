@@ -41,13 +41,20 @@ type Handler struct {
 	now                func() time.Time
 	submitLimiter      *ratelimit.Limiter
 	displayNameLimiter *ratelimit.Limiter
+	adminSet           map[string]struct{}
 }
 
-func New(cat catalog.Catalog, s *store.Store, logger *slog.Logger, now func() time.Time) *Handler {
+func New(cat catalog.Catalog, s *store.Store, logger *slog.Logger, now func() time.Time, adminEmails []string) *Handler {
 	// /submit accepts a claimed user identity. Without per-IP throttling a
 	// participant who scraped someone else's flag could brute-force submits.
 	// 1 req/s with burst 10 lets legitimate typing through but blocks
 	// automated flooding.
+	adminSet := make(map[string]struct{}, len(adminEmails))
+	for _, e := range adminEmails {
+		if e = strings.TrimSpace(strings.ToLower(e)); e != "" {
+			adminSet[e] = struct{}{}
+		}
+	}
 	return &Handler{
 		cat:                cat,
 		store:              s,
@@ -55,16 +62,43 @@ func New(cat catalog.Catalog, s *store.Store, logger *slog.Logger, now func() ti
 		now:                now,
 		submitLimiter:      ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now),
 		displayNameLimiter: ratelimit.New(0.2 /* one every 5s */, 5 /* burst */).WithNow(now),
+		adminSet:           adminSet,
 	}
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/state", h.state)
 	mux.HandleFunc("GET /api/users/{user}/me", h.userMe)
+	mux.HandleFunc("POST /api/admin/reset", h.reset)
 	submitMW := h.submitLimiter.Middleware(ratelimit.ClientIP)
 	mux.Handle("POST /api/challenges/{cid}/submit", submitMW(http.HandlerFunc(h.submit)))
 	dnMW := h.displayNameLimiter.Middleware(ratelimit.ClientIP)
 	mux.Handle("POST /api/users/{user}/display-name", dnMW(http.HandlerFunc(h.setDisplayName)))
+}
+
+// --- admin reset ------------------------------------------------------------
+
+// reset wipes the scoreboard results (solves + event counters), e.g. after a
+// test1 demo run before the real event. Admin-only: the scoreboard dashboard
+// host is already gated by auth-policy /check-admin, but this also verifies the
+// propagated X-Auth-Request-Email is in ADMIN_EMAILS so the endpoint cannot be
+// triggered over the cluster-internal Service (workspace/falco paths, which
+// carry no auth header). Empty allowlist = nobody (fail-closed).
+func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
+	email := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Auth-Request-Email")))
+	if _, ok := h.adminSet[email]; email == "" || !ok {
+		h.logger.Warn("reset denied", "remote_addr", r.RemoteAddr, "email", email)
+		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "admin only"})
+		return
+	}
+	n, err := h.store.Reset()
+	if err != nil {
+		h.logger.Error("reset failed", "err", err)
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	h.logger.Info("scoreboard reset", "by", email, "cleared_solves", n)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "cleared_solves": n})
 }
 
 // --- submit -----------------------------------------------------------------

@@ -61,6 +61,8 @@
   .live::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--success); box-shadow: 0 0 10px var(--success-glow); animation: pulse 1.6s ease-in-out infinite; }
   @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(1.2); } }
   .updated { color: var(--text-mute); font-size: 0.7rem; margin-top: 0.25rem; text-align: right; }
+  .reset-btn { margin-top: 0.5rem; padding: 0.3rem 0.7rem; font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em; color: var(--text-mute); background: transparent; border: 1px solid var(--text-mute); border-radius: 6px; cursor: pointer; opacity: 0.6; transition: opacity 0.15s, color 0.15s, border-color 0.15s; }
+  .reset-btn:hover { opacity: 1; color: var(--danger, #ff5c5c); border-color: var(--danger, #ff5c5c); }
 
   /* ===== Stats ===== */
   .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 2rem; }
@@ -151,6 +153,7 @@
     <div>
       <div class="live">● LIVE</div>
       <div class="updated mono" id="updated">connecting…</div>
+      <button id="reset-btn" class="reset-btn" title="Clear all solves (admin only)">Reset board</button>
     </div>
   </header>
 
@@ -296,6 +299,25 @@
       }).join('');
     }
     firstRender = false;
+  }
+
+  const resetBtn = document.getElementById('reset-btn');
+  if (resetBtn) {
+    resetBtn.addEventListener('click', async () => {
+      if (!confirm('Reset the scoreboard? This clears all solves and event counts (display names are kept).')) return;
+      try {
+        const r = await fetch('/api/admin/reset', { method: 'POST' });
+        if (r.ok) {
+          const d = await r.json();
+          await refresh();
+          alert('Scoreboard reset — cleared ' + (d.cleared_solves ?? 0) + ' solve(s).');
+        } else {
+          alert('Reset failed (HTTP ' + r.status + '). Admin only.');
+        }
+      } catch (e) {
+        alert('Reset request error: ' + e);
+      }
+    });
   }
 
   refresh();

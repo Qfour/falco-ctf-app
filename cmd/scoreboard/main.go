@@ -26,6 +26,9 @@ func main() {
 	// SCENARIO_FILE restricts scoring + /api/state to one event composition
 	// (e.g. the 2-hour killchain subset). Empty = all challenges.
 	scenarioFile := serverutil.Env("SCENARIO_FILE", "")
+	// ADMIN_EMAILS gates POST /api/admin/reset (verified against the
+	// auth-policy-propagated X-Auth-Request-Email). Empty = nobody.
+	adminEmails := serverutil.SplitCSV(serverutil.Env("ADMIN_EMAILS", ""))
 
 	cat, err := catalog.Load(challengesDir)
 	if err != nil {
@@ -59,7 +62,10 @@ func main() {
 	defer st.Close()
 	logger.Info("store opened", "path", dbPath, "solved_loaded", st.SolvedCount())
 
-	handler := scoreboard.NewHandler(cat, st, logger, scoreboard.WithDBPath(dbPath))
+	handler := scoreboard.NewHandler(cat, st, logger,
+		scoreboard.WithDBPath(dbPath),
+		scoreboard.WithAdminEmails(adminEmails),
+	)
 
 	err = serverutil.Serve(addr, handler, logger, func() {
 		logger.Info("listening", "addr", addr)

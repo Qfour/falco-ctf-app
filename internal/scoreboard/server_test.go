@@ -131,6 +131,52 @@ func decode(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
 	return m
 }
 
+func TestAdminReset(t *testing.T) {
+	cat := catalog.Catalog{
+		"02-evade": catalog.Challenge{ID: "02-evade", Type: "evade", ExpectedFlag: "FALCO{ok}", WindowSeconds: 10},
+	}
+	st, err := store.Open(filepath.Join(t.TempDir(), "s.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if _, err := st.MarkSolved("user1", "02-evade", "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := scoreboard.NewHandler(cat, st, logger, scoreboard.WithAdminEmails([]string{"admin@ctf.local"}))
+
+	post := func(email string) int {
+		r := httptest.NewRequest("POST", "/api/admin/reset", nil)
+		if email != "" {
+			r.Header.Set("X-Auth-Request-Email", email)
+		}
+		w := httptest.NewRecorder()
+		srv.ServeHTTP(w, r)
+		return w.Code
+	}
+
+	// No auth header (cluster-internal Service path: workspace/falco) → 403,
+	// solve preserved.
+	if code := post(""); code != http.StatusForbidden {
+		t.Fatalf("no-header reset must 403, got %d", code)
+	}
+	if st.SolvedCount() != 1 {
+		t.Fatal("denied reset must not clear solves")
+	}
+	// Non-admin authenticated email → 403.
+	if code := post("user1@ctf.local"); code != http.StatusForbidden {
+		t.Fatalf("non-admin reset must 403, got %d", code)
+	}
+	// Admin → 200, solves cleared.
+	if code := post("admin@ctf.local"); code != http.StatusOK {
+		t.Fatalf("admin reset must 200, got %d", code)
+	}
+	if st.SolvedCount() != 0 {
+		t.Fatal("admin reset must clear solves")
+	}
+}
+
 func TestHealthz(t *testing.T) {
 	f := newFixture(t, nil)
 	w := f.do("GET", "/healthz", nil)

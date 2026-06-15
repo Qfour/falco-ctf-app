@@ -152,6 +152,33 @@ paths:
         "404":
           description: unknown challenge id
 
+  /api/admin/reset:
+    post:
+      summary: Reset the scoreboard (clear solves + event counters)
+      operationId: adminReset
+      description: |
+        Admin-only. Wipes all solves and in-memory event/rule-fire counters,
+        returning the board to empty. Display names are preserved. Used to clear
+        a demo/test run before the real event.
+
+        Authorization: the caller's `X-Auth-Request-Email` (propagated by
+        auth-policy on the admin-gated scoreboard host) must be in the
+        scoreboard's `ADMIN_EMAILS`. Requests without that header — i.e. over the
+        cluster-internal Service from a workspace/falco pod — are rejected. Empty
+        allowlist denies everyone (fail-closed).
+      responses:
+        "200":
+          description: reset done
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  cleared_solves: { type: integer }
+        "403":
+          description: caller is not an admin (or no auth header present)
+
   /api/state:
     get:
       summary: Full dashboard JSON

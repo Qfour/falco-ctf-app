@@ -29,18 +29,23 @@ import (
 )
 
 type Handler struct {
-	cat    catalog.Catalog
-	store  *store.Store
-	logger *slog.Logger
-	mux    *http.ServeMux
-	dbPath string
-	now    func() time.Time
+	cat         catalog.Catalog
+	store       *store.Store
+	logger      *slog.Logger
+	mux         *http.ServeMux
+	dbPath      string
+	now         func() time.Time
+	adminEmails []string
 }
 
 type Option func(*Handler)
 
 func WithNow(f func() time.Time) Option { return func(h *Handler) { h.now = f } }
 func WithDBPath(p string) Option        { return func(h *Handler) { h.dbPath = p } }
+
+// WithAdminEmails sets the allowlist for admin-only endpoints (POST
+// /api/admin/reset). Empty = nobody (fail-closed).
+func WithAdminEmails(e []string) Option { return func(h *Handler) { h.adminEmails = e } }
 
 func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts ...Option) *Handler {
 	h := &Handler{
@@ -58,7 +63,7 @@ func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts .
 	h.mux.Handle("GET /metrics", promhttp.Handler())
 
 	ingest.New(cat, s, logger, h.now).Register(h.mux)
-	api.New(cat, s, logger, h.now).Register(h.mux)
+	api.New(cat, s, logger, h.now, h.adminEmails).Register(h.mux)
 	view.New().Register(h.mux)
 
 	return h
