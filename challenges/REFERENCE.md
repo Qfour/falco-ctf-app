@@ -46,8 +46,10 @@ cat /etc/os-release          # alpine 3.20 ベース
 |---|---|
 | 何を見るか | `fd.name` が `/etc/shadow` / `/etc/sudoers` / `/etc/pam.d/*` 等の sensitive_files に一致 |
 | 発火条件 (大意) | `open_read` syscall で対象パスを開いた + 開いたプロセスが trusted リスト外 |
-| 上記出題 | 01 (発火), 02 (回避) |
+| 出題 | **02 (発火)**, **03 (回避)** |
 | 回避の発想 | path 文字列マッチ → 同じファイルに別の path で到達できれば抜ける |
+
+実 condition (抜粋): `open_read and sensitive_files and proc_name_exists and not proc.name in (許可リスト...) and not <user_known 例外>`
 
 主な回避路 (例):
 ```bash
@@ -63,8 +65,10 @@ ln -s /etc/shadow /tmp/x; cat /tmp/x   # symlink 経由 (fd.name 解決は kerne
 |---|---|
 | 何を見るか | `proc.cmdline` に `id_rsa` / `id_dsa` / `BEGIN.*PRIVATE KEY` / `AWS_SECRET` 等 |
 | 発火条件 | 上記パターンを含むコマンドが exec された (結果は問わない) |
-| 上記出題 | 04 (発火), 05 (回避), 10 (回避) |
+| 出題 | **04 (発火)**, **05 (回避)**, 10 (回避) |
 | 回避の発想 | cmdline に keyword を出さない: 入力リダイレクト `<` / 環境変数経由 / 文字列分割 |
+
+実 condition (抜粋): `spawned_process and ((grep_commands and private_key_or_password) or (proc.name=find and proc.args contains "id_rsa" ...))`
 
 例:
 ```bash
@@ -80,10 +84,12 @@ xxd < /root/.ssh/id_rsa | tail
 
 | 項目 | 内容 |
 |---|---|
-| 何を見るか | `proc.pname` が `shell_mgmt_binaries` (`httpd`/`nginx`/`apache2`/`postgres` 等) |
+| 何を見るか | `proc.pname` (親 comm) が `protected_shell_spawner` (`httpd`/`nginx`/`apache2`/`postgres` 等) |
 | 発火条件 | shell (bash/sh/zsh) が起動 + 親 comm が上記リスト |
-| 上記出題 | 06 (発火), 10 (回避) |
+| 出題 | **06 (発火)**, 10 (回避) |
 | 回避の発想 | `proc.comm` は kernel が exec 時に basename から決める → 別名で動かす |
+
+実 condition (抜粋): `spawned_process and shell_procs and proc.pname exists and protected_shell_spawner and not proc.pname in (shell_binaries, ...)`
 
 例:
 ```bash
@@ -92,14 +98,16 @@ sh /opt/ctf/httpd                 # ← 親 comm = "sh"   → 発火しない
 cat /opt/ctf/httpd | sh           # ← 親 comm = "cat" "sh" → 発火しない
 ```
 
-### 3.4 `Modify binary dirs`
+### 3.4 `Contact K8S API Server From Container`
 
 | 項目 | 内容 |
 |---|---|
-| 何を見るか | `evt.type=connect` + dst ip = K8s API server + `not k8s_containers` + `not user_known_*` |
+| 何を見るか | `evt.type=connect` + dst = K8s API server + `not k8s_containers` + `not user_known_*` |
 | 発火条件 | system pod 以外のコンテナから K8s API への connect |
-| 上記出題 | 01 (発火), 10 (回避) |
-| 回避の発想 | API server に話しかけない。 |
+| 出題 | **01 (発火)**, 10 (回避) |
+| 回避の発想 | API server に話しかけない (connect しない) |
+
+実 condition (抜粋): `evt.type=connect and (fd.typechar=4 or fd.typechar=6) and container and k8s_api_server and not k8s_containers and not user_known_contact_k8s_api_server_activities`
 
 例:
 ```bash
@@ -112,8 +120,10 @@ curl -sk https://kubernetes.default.svc/api    # ← 発火 (401 でも connect 
 |---|---|
 | 何を見るか | `spawned_process` + container + `proc.is_exe_upper_layer=true` |
 | 発火条件 | overlayfs の upper layer (= runtime に追加された層) から exec |
-| 上記出題 | 07 (発火), 10 (回避) |
+| 出題 | **07 (発火)**, 10 (回避) |
 | 回避の発想 | base image に元々ある binary だけ使う |
+
+実 condition (抜粋): `spawned_process and container and proc.is_exe_upper_layer=true and not container.image.repository in (known_drop_and_execute_containers)`
 
 例:
 ```bash
@@ -127,8 +137,10 @@ cp /bin/sleep /tmp/x && /tmp/x 1    # ← 発火 (/tmp/x は upper layer)
 |---|---|
 | 何を見るか | `dup` syscall + container + `fd.type ∈ {ipv4,ipv6}` + `evt.rawres ∈ {0,1,2}` |
 | 発火条件 | network socket fd を stdin/stdout/stderr に dup する (= reverse shell の典型) |
-| 上記出題 | 08 (発火), 10 (回避) |
+| 出題 | **08 (発火)**, 10 (回避) |
 | 回避の発想 | reverse shell pattern を使わない。data 転送は curl / wget で済ます |
+
+実 condition (抜粋): `dup and container and evt.rawres in (0,1,2) and fd.type in ("ipv4","ipv6") and not user_known_stand_streams_redirect_activities`
 
 例:
 ```bash
@@ -143,8 +155,10 @@ curl https://example.com -o /tmp/x       # ← 普通の HTTP — 発火しな�
 |---|---|
 | 何を見るか | `link` / `symlink` syscall + 対象が `sensitive_files` macro 該当 |
 | 発火条件 | sensitive file への hard/symbolic link 作成 |
-| 上記出題 | 09 (発火: Hardlink), 10 (回避: Hardlink) |
+| 出題 | **09 (発火: Hardlink)**, 10 (回避: Hardlink) |
 | 回避の発想 | link せず `cp` で別 inode に複製。または別の sensitive 判定外ファイルへの link |
+
+実 condition (抜粋, Hardlink): `create_hardlink and (evt.arg.oldpath in (sensitive_file_names))`
 
 例:
 ```bash
