@@ -64,6 +64,22 @@ def parse_welcome(text):
     return "\n".join(brief), hints
 
 
+def strip_sections(text, headers):
+    """Drop '# <header>' sections (the header line through the next '# ')."""
+    out, skip = [], False
+    for ln in text.split("\n"):
+        if any(ln.startswith("# " + h) for h in headers):
+            skip = True
+            continue
+        if skip and ln.startswith("# "):
+            skip = False
+        if not skip:
+            out.append(ln)
+    while out and not out[-1].strip():
+        out.pop()
+    return "\n".join(out)
+
+
 def split_after_background(brief):
     """Split the brief right after its '# 背景' section so the Falco rule can be
     inserted there. Returns (before_incl_background, after) or (brief, "") when
@@ -91,6 +107,9 @@ def page(nn, title, welcome_path, readme_path, rule_path):
     brief, hints = ("", [])
     if welcome_path and os.path.isfile(welcome_path):
         brief, hints = parse_welcome(open(welcome_path, encoding="utf-8").read())
+    # 試すこと / クリア条件 / 環境にあるもの are direct answers — operator (admin) only.
+    if brief and mode != "admin":
+        brief = strip_sections(brief, ["試すこと", "クリア条件", "環境にあるもの"])
     rule = ""
     if rule_path and os.path.isfile(rule_path):
         rule = open(rule_path, encoding="utf-8").read().strip("\n")
