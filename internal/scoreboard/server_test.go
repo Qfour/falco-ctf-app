@@ -583,27 +583,22 @@ func TestDisplayName_Validation(t *testing.T) {
 	}
 }
 
-// Display name is first-set-only — operators seed it at workspace deploy
-// time and participants cannot overwrite. Pins the 409-on-second-set
-// contract so a future revert to last-write-wins is loud.
-func TestDisplayName_FirstSetWinsSecondReturns409(t *testing.T) {
+// Participants can set AND change their own display name (last-write-wins).
+// Pins the self-service rename contract.
+func TestDisplayName_ParticipantCanChange(t *testing.T) {
 	f := newFixture(t, nil)
 	w1 := f.do("POST", "/api/users/alice/display-name", map[string]any{"name": "First"})
 	if w1.Code != 200 {
 		t.Fatalf("first set should succeed, got %d", w1.Code)
 	}
 	w2 := f.do("POST", "/api/users/alice/display-name", map[string]any{"name": "Second"})
-	if w2.Code != http.StatusConflict {
-		t.Fatalf("second set should be 409, got %d", w2.Code)
+	if w2.Code != 200 {
+		t.Fatalf("second set (change) should succeed, got %d", w2.Code)
 	}
-	body := decode(t, w2)
-	if body["display_name"] != "First" {
-		t.Errorf("conflict body should echo current name, got %v", body["display_name"])
-	}
-	// /me still reflects the first name
+	// /me reflects the latest name
 	got := decode(t, f.do("GET", "/api/users/alice/me", nil))
-	if got["display_name"] != "First" {
-		t.Fatalf("first name should persist, got %v", got["display_name"])
+	if got["display_name"] != "Second" {
+		t.Fatalf("latest name should win, got %v", got["display_name"])
 	}
 }
 

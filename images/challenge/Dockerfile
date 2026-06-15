@@ -40,7 +40,8 @@ RUN apk add --no-cache \
 # files here (README.md / falco-rule.yaml / plant.sh / values*.yaml).
 COPY challenges/ /opt/ctf/missions/
 COPY challenges/submit-all.sh /opt/ctf/submit.sh
-RUN chmod 0644 /opt/ctf/submit.sh
+COPY challenges/setname.sh /opt/ctf/setname.sh
+RUN chmod 0644 /opt/ctf/submit.sh /opt/ctf/setname.sh
 
 # Quick orientation at login. Printed by /etc/profile additions below.
 RUN printf '%s\n' \
@@ -56,6 +57,9 @@ RUN printf '%s\n' \
   '│                                                                │' \
   '│   source /opt/ctf/submit.sh                                    │' \
   '│   submit <mission-id> '"'"'<flag>'"'"'                                 │' \
+  '│                                                                │' \
+  '│ Set your scoreboard name (optional, change anytime):           │' \
+  '│   source /opt/ctf/setname.sh && setname '"'"'Your Name'"'"'              │' \
   '│                                                                │' \
   '│ Reference card:                                                │' \
   '│   cat /opt/ctf/missions/REFERENCE.md                           │' \

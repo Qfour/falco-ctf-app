@@ -6,10 +6,13 @@
 
 # 表示名について
 
-scoreboard に出るあなたの名前は **運営が事前に登録** している。
-識別子 (`user1` 等) と表示名 (`Alice` 等) は別物 — submit や認証は
-identity で動き、表示だけ運営登録の display name に置き換わる仕組み。
-名前を変えたい場合は運営に声をかけてください。
+scoreboard に出る名前は **default で識別子 (`user1` 等)**。自分で好きな
+表示名に変更できる(いつでも何回でも):
+
+  source /opt/ctf/setname.sh && setname 'あなたの名前'
+
+識別子と表示名は別物 — submit や認証は identity で動き、表示だけが
+display name に置き換わる。1〜32 文字、`< > & " '` と制御文字は不可。
 
 # シナリオ
 

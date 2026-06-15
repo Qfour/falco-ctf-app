@@ -184,10 +184,10 @@ paths:
       summary: Set or overwrite a user's scoreboard display name (admin)
       operationId: adminSetDisplayName
       description: |
-        Admin-only operator override (same auth as /api/admin/reset). Assigns or
-        corrects the name shown on the leaderboard for `user`; last-write-wins
-        (unlike the participant POST /api/users/{user}/display-name, which is
-        first-set-only). Default remains the username when never set.
+        Operator path to set/correct ANY user's leaderboard name (admin-gated,
+        same auth as /api/admin/reset). Last-write-wins. Participants set/change
+        their OWN name via the (open, workspace-reachable) POST
+        /api/users/{user}/display-name. Both upsert; default is the username.
       parameters:
         - in: path
           name: user

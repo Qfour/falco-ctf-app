@@ -16,7 +16,6 @@ package store
 
 import (
 	"database/sql"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -133,39 +132,13 @@ func (s *Store) loadFromDB() error {
 	return dn.Err()
 }
 
-// ErrDisplayNameAlreadySet is returned by SetDisplayName when the user
-// already has a name recorded. Display names are operator-seeded at
-// workspace deploy time (via deploy-user.sh --display-name) and not
-// re-settable afterwards — the property keeps the leaderboard's name ↔
-// real participant binding stable across the event.
-var ErrDisplayNameAlreadySet = errors.New("display name already set")
-
-// SetDisplayName records the operator-supplied display name for `user`.
-// First-set-wins: if a display name is already recorded, the call
-// returns ErrDisplayNameAlreadySet without modifying the row. Identity
-// (`user`) is the auth-derived stable key — anything that scores or
-// audits goes via identity; `name` is purely cosmetic.
+// SetDisplayName sets or OVERWRITES the display name for `user`
+// (last-write-wins). Used by both the participant self-service path
+// (`/api/users/{user}/display-name`, keyed to the workspace's own
+// $FALCO_CTF_USER) and the admin override (`/api/admin/users/{user}/...`).
+// Identity (`user`) is the auth-derived stable key; `name` is purely cosmetic.
+// Unset users render as their username (see DisplayName).
 func (s *Store) SetDisplayName(user, name, at string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if existing, ok := s.displayNames[user]; ok && existing != "" {
-		return ErrDisplayNameAlreadySet
-	}
-	if _, err := s.db.Exec(
-		`INSERT INTO display_names (user, name, set_at) VALUES (?, ?, ?)`,
-		user, name, at,
-	); err != nil {
-		return err
-	}
-	s.displayNames[user] = name
-	return nil
-}
-
-// SetDisplayNameAdmin sets or OVERWRITES the display name for `user`
-// (last-write-wins). Unlike the participant-facing SetDisplayName (first-set-
-// only, anti-grief), this is the operator path: assign or correct any user's
-// name mid-event. Gated to admins at the API layer.
-func (s *Store) SetDisplayNameAdmin(user, name, at string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, err := s.db.Exec(

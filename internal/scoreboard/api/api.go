@@ -7,7 +7,6 @@ package api
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -155,7 +154,7 @@ func (h *Handler) adminSetDisplayName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	at := h.now().UTC().Format(time.RFC3339Nano)
-	if err := h.store.SetDisplayNameAdmin(user, name, at); err != nil {
+	if err := h.store.SetDisplayName(user, name, at); err != nil {
 		h.logger.Error("admin set display name", "err", err, "user", user)
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -294,20 +293,6 @@ func (h *Handler) setDisplayName(w http.ResponseWriter, r *http.Request) {
 
 	at := h.now().UTC().Format(time.RFC3339Nano)
 	if err := h.store.SetDisplayName(user, name, at); err != nil {
-		if errors.Is(err, store.ErrDisplayNameAlreadySet) {
-			h.logger.Warn("display_name conflict",
-				"user", user,
-				"requested_name", name,
-				"current", h.store.DisplayName(user),
-				"remote_addr", r.RemoteAddr,
-			)
-			httpx.WriteJSON(w, http.StatusConflict, map[string]any{
-				"error":        "display name already set; ask the operator if you need to change it",
-				"user":         user,
-				"display_name": h.store.DisplayName(user),
-			})
-			return
-		}
 		h.logger.Error("set display name", "err", err, "user", user)
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
