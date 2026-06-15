@@ -13,6 +13,10 @@ image:
 env:
   challengesDir: /app/challenges
   dbPath: /var/lib/scoreboard/scoreboard.db
+  # Restrict scoring + dashboard to one event composition. Path to a baked
+  # scenario manifest, e.g. /app/scenarios/killchain-2h/scenario.yaml.
+  # Empty = all challenges.
+  scenarioFile: ""
 
 persistence:
   size: 1Gi

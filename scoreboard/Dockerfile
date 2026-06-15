@@ -1,9 +1,9 @@
 # scoreboard — Go service. Build context = repo root.
 #   docker build -f scoreboard/Dockerfile -t <registry>/scoreboard:<tag> .
 #
-# The challenges/ catalog is baked into the image (Falco-rule files that
-# the scoreboard reads at startup). Local dev overlays it via a volume
-# mount in docker-compose.yml.
+# The challenges/ catalog + scenarios/ manifests are baked into the image
+# (read at startup; scenarios/ selects an event composition via SCENARIO_FILE).
+# Local dev overlays challenges/ via a volume mount in docker-compose.yml.
 FROM golang:1.25-alpine AS build
 WORKDIR /src
 
@@ -22,6 +22,7 @@ FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build --chown=65532:65532 /out/scoreboard /app/scoreboard
 COPY --from=build --chown=65532:65532 /out/var/lib/scoreboard /var/lib/scoreboard
 COPY --chown=65532:65532 challenges /app/challenges
+COPY --chown=65532:65532 scenarios /app/scenarios
 
 EXPOSE 8000
 ENTRYPOINT ["/app/scoreboard"]

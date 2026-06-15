@@ -45,6 +45,10 @@ spec:
               value: {{ .Values.env.challengesDir | quote }}
             - name: SCOREBOARD_DB
               value: {{ .Values.env.dbPath | quote }}
+            {{- with .Values.env.scenarioFile }}
+            - name: SCENARIO_FILE
+              value: {{ . | quote }}
+            {{- end }}
             {{- if .Values.flagsSecret.enabled }}
             - name: FLAGS_FILE
               value: /etc/ctf-flags/{{ .Values.flagsSecret.key }}

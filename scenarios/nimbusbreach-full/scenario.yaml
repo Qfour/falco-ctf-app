@@ -1,0 +1,15 @@
+# Full NimbusBreach track — all 10 missions (trigger + evade + boss).
+# The original, long-form scenario (~3h+). Kept as the comprehensive track.
+id: nimbusbreach-full
+title: "Operation NimbusBreach — Full Track (10 missions)"
+challenges:
+  - 01-initial-recon
+  - 02-credential-files
+  - 03-stealth-read
+  - 04-key-search
+  - 05-silent-search
+  - 06-web-rce-shell
+  - 07-persist
+  - 08-c2-beacon
+  - 09-hidden-cache
+  - 10-final-exfil

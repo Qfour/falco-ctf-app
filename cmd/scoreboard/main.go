@@ -23,6 +23,9 @@ func main() {
 	// FLAGS_FILE injects real per-event flags over the FALCO{dev-...}
 	// placeholders baked into the public image. Empty = use placeholders.
 	flagsFile := serverutil.Env("FLAGS_FILE", "")
+	// SCENARIO_FILE restricts scoring + /api/state to one event composition
+	// (e.g. the 2-hour killchain subset). Empty = all challenges.
+	scenarioFile := serverutil.Env("SCENARIO_FILE", "")
 
 	cat, err := catalog.Load(challengesDir)
 	if err != nil {
@@ -33,7 +36,20 @@ func main() {
 		logger.Error("flag overrides failed", "file", flagsFile, "err", err)
 		os.Exit(1)
 	}
-	logger.Info("catalog loaded", "dir", challengesDir, "challenges", cat.IDs(), "flag_overrides", flagsFile != "")
+	scenarioID := ""
+	if scenarioFile != "" {
+		sc, err := catalog.LoadScenario(scenarioFile)
+		if err != nil {
+			logger.Error("scenario load failed", "file", scenarioFile, "err", err)
+			os.Exit(1)
+		}
+		if cat, err = cat.Restrict(sc.Challenges); err != nil {
+			logger.Error("scenario restrict failed", "scenario", sc.ID, "err", err)
+			os.Exit(1)
+		}
+		scenarioID = sc.ID
+	}
+	logger.Info("catalog loaded", "dir", challengesDir, "challenges", cat.IDs(), "flag_overrides", flagsFile != "", "scenario", scenarioID)
 
 	st, err := store.Open(dbPath)
 	if err != nil {
