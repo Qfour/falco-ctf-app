@@ -20,25 +20,33 @@ type FalcoEvent struct {
 	// OutputFields Arbitrary Falco output fields map. The values at
 	// `k8s.ns.name` (must be `ctf-<username>`) and
 	// `k8s.pod.name` (must be `workspace`) drive the routing filter;
-	// missing or non-matching events are silently ignored.
+	// `container.image.repository` must contain the challenge image
+	// substring. Missing or non-matching events are silently ignored.
 	OutputFields FalcoEvent_OutputFields `json:"output_fields"`
+
+	// Priority Falco priority (e.g. Notice, Warning, Critical). Optional.
+	// Events explicitly at Debug/Informational/Info are ignored;
+	// missing/unknown priority passes through for compatibility.
+	Priority *string `json:"priority,omitempty"`
 
 	// Rule Falco rule name (matched against catalog `expectedRules` / `forbiddenRules`)
 	Rule string `json:"rule"`
 
-	// Time Falco-side detection time. Optional; used only for
-	// evade rule-fire windowing, not for solve `at`.
+	// Time Falco-side detection time. Optional; retained as a log field
+	// only — the rule-fire window uses server receipt time, not this.
 	Time *time.Time `json:"time,omitempty"`
 }
 
 // FalcoEvent_OutputFields Arbitrary Falco output fields map. The values at
 // `k8s.ns.name` (must be `ctf-<username>`) and
 // `k8s.pod.name` (must be `workspace`) drive the routing filter;
-// missing or non-matching events are silently ignored.
+// `container.image.repository` must contain the challenge image
+// substring. Missing or non-matching events are silently ignored.
 type FalcoEvent_OutputFields struct {
-	K8sNsName            *string                `json:"k8s.ns.name,omitempty"`
-	K8sPodName           *string                `json:"k8s.pod.name,omitempty"`
-	AdditionalProperties map[string]interface{} `json:"-"`
+	ContainerImageRepository *string                `json:"container.image.repository,omitempty"`
+	K8sNsName                *string                `json:"k8s.ns.name,omitempty"`
+	K8sPodName               *string                `json:"k8s.pod.name,omitempty"`
+	AdditionalProperties     map[string]interface{} `json:"-"`
 }
 
 // State defines model for State.
@@ -122,6 +130,14 @@ func (a *FalcoEvent_OutputFields) UnmarshalJSON(b []byte) error {
 		return err
 	}
 
+	if raw, found := object["container.image.repository"]; found {
+		err = json.Unmarshal(raw, &a.ContainerImageRepository)
+		if err != nil {
+			return fmt.Errorf("error reading 'container.image.repository': %w", err)
+		}
+		delete(object, "container.image.repository")
+	}
+
 	if raw, found := object["k8s.ns.name"]; found {
 		err = json.Unmarshal(raw, &a.K8sNsName)
 		if err != nil {
@@ -156,6 +172,13 @@ func (a *FalcoEvent_OutputFields) UnmarshalJSON(b []byte) error {
 func (a FalcoEvent_OutputFields) MarshalJSON() ([]byte, error) {
 	var err error
 	object := make(map[string]json.RawMessage)
+
+	if a.ContainerImageRepository != nil {
+		object["container.image.repository"], err = json.Marshal(a.ContainerImageRepository)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'container.image.repository': %w", err)
+		}
+	}
 
 	if a.K8sNsName != nil {
 		object["k8s.ns.name"], err = json.Marshal(a.K8sNsName)

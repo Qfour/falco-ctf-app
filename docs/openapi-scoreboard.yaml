@@ -186,24 +186,33 @@ components:
         rule:
           type: string
           description: Falco rule name (matched against catalog `expectedRules` / `forbiddenRules`)
+        priority:
+          type: string
+          description: |
+            Falco priority (e.g. Notice, Warning, Critical). Optional.
+            Events explicitly at Debug/Informational/Info are ignored;
+            missing/unknown priority passes through for compatibility.
         time:
           type: string
           format: date-time
           description: |
-            Falco-side detection time. Optional; used only for
-            evade rule-fire windowing, not for solve `at`.
+            Falco-side detection time. Optional; retained as a log field
+            only — the rule-fire window uses server receipt time, not this.
         output_fields:
           type: object
           description: |
             Arbitrary Falco output fields map. The values at
             `k8s.ns.name` (must be `ctf-<username>`) and
             `k8s.pod.name` (must be `workspace`) drive the routing filter;
-            missing or non-matching events are silently ignored.
+            `container.image.repository` must contain the challenge image
+            substring. Missing or non-matching events are silently ignored.
           additionalProperties: {}
           properties:
             k8s.ns.name:
               type: string
             k8s.pod.name:
+              type: string
+            container.image.repository:
               type: string
 
     State:

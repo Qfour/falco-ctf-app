@@ -53,20 +53,11 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("POST /falco/events", mw(http.HandlerFunc(h.receive)))
 }
 
-// incomingEvent extends the OpenAPI-generated FalcoEvent with `priority`,
-// which falcosidekick sends at the top level but isn't in our minimal spec.
-// `container.image.repository` is read separately from OutputFields'
-// AdditionalProperties below.
-type incomingEvent struct {
-	OutputFields oapi.FalcoEvent_OutputFields `json:"output_fields"`
-	Rule         string                       `json:"rule"`
-	Time         *time.Time                   `json:"time,omitempty"`
-	Priority     *string                      `json:"priority,omitempty"`
-}
-
 func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
-	var ev incomingEvent
+	// oapi.FalcoEvent is the OpenAPI-generated contract (docs/openapi-scoreboard.yaml,
+	// shared with falco-ctf-platform's falcosidekick config).
+	var ev oapi.FalcoEvent
 	if err := json.NewDecoder(r.Body).Decode(&ev); err != nil {
 		metrics.FalcoEventsReceived.WithLabelValues("decode_error").Inc()
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
@@ -92,7 +83,10 @@ func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 	// container.image.repository field is part of the Falco event Falco itself
 	// produces; an attacker would need to set this in the forged JSON, but
 	// adding the explicit check makes the contract from AGENTS.md actionable.
-	imageRepo, _ := ev.OutputFields.AdditionalProperties["container.image.repository"].(string)
+	var imageRepo string
+	if ev.OutputFields.ContainerImageRepository != nil {
+		imageRepo = *ev.OutputFields.ContainerImageRepository
+	}
 	// Accept both `falco-ctf/challenge` (preferred, e.g. ghcr) and
 	// `falco-ctf-challenge` (e.g. ECR cached path after retag) since the
 	// substring choice depends on the registry's repo-naming conventions.
