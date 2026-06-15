@@ -1,5 +1,5 @@
 ┌──────────────────────────────────────────────────────────────────┐
-│ Operation NimbusBreach · Mission 04 — Key Search                 │
+│ CTF Company · Mission 04 — Key Search                            │
 │ Type: TRIGGER · 難易度: ★★☆☆☆                                    │
 │ 目標 Falco ルール: "Search Private Keys or Passwords"             │
 └──────────────────────────────────────────────────────────────────┘

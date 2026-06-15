@@ -1,5 +1,5 @@
 ┌──────────────────────────────────────────────────────────────────┐
-│ Operation NimbusBreach · Mission 09 — Hidden Cache               │
+│ CTF Company · Mission 09 — Hidden Cache                          │
 │ Type: TRIGGER · 難易度: ★★★★☆                                    │
 │ 目標 Falco ルール: "Create Hardlink Over Sensitive Files"         │
 └──────────────────────────────────────────────────────────────────┘
@@ -12,7 +12,7 @@ C2 channel は貼った (Mission 08)。だが SOC が異常検知に動き出し
 そこで使うのが **hardlink**。元のファイルを `unlink` されても、
 inode 参照カウントが 0 にならない限り中身は残り続ける。
 
-NimbusCorp の Falco は **sensitive file への hardlink 作成** も
+CTF Company の Falco は **sensitive file への hardlink 作成** も
 ちゃんと見ている。
 
 # ゴール

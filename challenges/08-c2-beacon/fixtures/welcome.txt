@@ -1,5 +1,5 @@
 ┌──────────────────────────────────────────────────────────────────┐
-│ Operation NimbusBreach · Mission 08 — C2 Beacon                  │
+│ CTF Company · Mission 08 — C2 Beacon                             │
 │ Type: TRIGGER · 難易度: ★★★★☆                                    │
 │ 目標 Falco ルール: "Redirect STDOUT/STDIN to Network Connection"  │
 └──────────────────────────────────────────────────────────────────┘
@@ -10,7 +10,7 @@ backdoor は仕込んだ (Mission 07)。だが「あとで再アクセス」の�
 **reverse shell** を貼っておきたい。古典 reverse shell payload は
 **network socket fd を stdout / stderr に dup する** ことで、
 attacker server 側のターミナルにシェルを生やす。
-NimbusCorp の Falco は、まさにこの **dup 操作** を見ている。
+CTF Company の Falco は、まさにこの **dup 操作** を見ている。
 
 # ゴール
 

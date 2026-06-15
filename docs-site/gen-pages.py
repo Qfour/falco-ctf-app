@@ -153,7 +153,7 @@ banner = (
 )
 with open(os.path.join(MISS, "index.md"), "w", encoding="utf-8") as f:
     f.write("# ミッション一覧\n\n" + banner +
-            "Operation NimbusBreach の全ミッション。各ページにミッションブリーフ"
+            "CTF Company の全ミッション。各ページにミッションブリーフ"
             + ("と攻略・解説" if mode == "admin" else "")
             + "を掲載しています。\n")
 

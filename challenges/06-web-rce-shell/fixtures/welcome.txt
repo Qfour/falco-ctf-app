@@ -1,5 +1,5 @@
 ┌──────────────────────────────────────────────────────────────────┐
-│ Operation NimbusBreach · Mission 06 — Web RCE Shell              │
+│ CTF Company · Mission 06 — Web RCE Shell                         │
 │ Type: TRIGGER · 難易度: ★★★☆☆                                    │
 │ 目標 Falco ルール: "Run shell untrusted"                          │
 └──────────────────────────────────────────────────────────────────┘
@@ -7,7 +7,7 @@
 # シナリオ
 
 ここまでで Mission 03 / 05 を解いたあなたは「Falco は文字列で見て
-いる、回避できる」と確信している。だが NimbusCorp の Web サーバには
+いる、回避できる」と確信している。だが CTF Company の Web サーバには
 別の脆弱性もある — Java の `Runtime.exec()` 経由で OS shell が起こ
 せる、典型的 Web RCE。**実際に Web プロセス偽装で shell を起こすと
 何が起こるか** を体験せよ。

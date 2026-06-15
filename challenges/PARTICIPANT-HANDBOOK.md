@@ -125,12 +125,12 @@ submit <mission-id> 'FALCO{...}'
 
 ---
 
-## 5. ミッション一覧 — Operation NimbusBreach
+## 5. ミッション一覧 — CTF Company
 
-> **ストーリー**: あなたは NimbusCorp の本番 K8s クラスタに潜入した
+> **ストーリー**: あなたは CTF Company の本番 K8s クラスタに潜入した
 > ペンテスター。Web SSRF から 1 Pod に shell を取った。
 > 目標は本番 DB の master credential を窃取すること。
-> NimbusCorp は Falco を導入している。**「見つからずに最後まで辿り着け」**。
+> CTF Company は Falco を導入している。**「見つからずに最後まで辿り着け」**。
 
 10 ミッションは MITRE ATT&CK のキルチェーン順に並んでいる。
 trigger でルールを理解 → evade で同じルールを回避 のサイクルを

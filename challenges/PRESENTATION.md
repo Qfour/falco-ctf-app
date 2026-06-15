@@ -324,11 +324,11 @@ CTF で扱う 7 ルール、それぞれ判定に使うフィールド:
 
 ---
 
-## Operation NimbusBreach — 10 missions
+## CTF Company — 10 missions
 
-> あなたは NimbusCorp の本番 K8s クラスタに潜入したペンテスター。
+> あなたは CTF Company の本番 K8s クラスタに潜入したペンテスター。
 > 目標は本番 DB の master credential を盗み出すこと。
-> NimbusCorp は **Falco を導入**している。**「見つからずに最後まで辿り着け」**。
+> CTF Company は **Falco を導入**している。**「見つからずに最後まで辿り着け」**。
 
 ATT&CK のキルチェーン順 + trigger/evade の対 (5 ペア):
 

@@ -1,7 +1,7 @@
 # scenarios/ — the event scenario + time-budget editions
 
 A **challenge** (`challenges/<NN>-slug>/`) is a reusable unit. The challenges
-01→10 together ARE the **unified NimbusBreach scenario** (recon → cred access →
+01→10 together ARE the **unified CTF Company scenario** (recon → cred access →
 evade → harvest → … → exfil boss). Every event runs this same scenario.
 
 What differs between events is the **edition** — the time budget and how much is

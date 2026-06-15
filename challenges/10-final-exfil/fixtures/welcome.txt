@@ -1,5 +1,5 @@
 ┌──────────────────────────────────────────────────────────────────┐
-│ Operation NimbusBreach · Mission 10 — The Final Exfil  ★ BOSS ★  │
+│ CTF Company · Mission 10 — The Final Exfil  ★ BOSS ★             │
 │ Type: EVADE · 難易度: ★★★★★                                      │
 │ 回避すべき Falco ルール (7 つ):                                     │
 │   01 Contact K8S API Server From Container                       │
@@ -13,30 +13,41 @@
 
 # シナリオ
 
-ついに目的のターゲットに辿り着いた — NimbusCorp の本番 RDS
-master password が `/etc/shadow` の末尾、`# NIMBUS_FINAL:` で始まる
-行に書かれている (なぜそこに置かれているかは聞くな、ストーリーだ)。
+ついに最深部 — CTF Company の **master key** に手が届いた。だが運用
+チームも無策ではない。鍵は **3 つの断片に分割** され、それぞれ別の
+「王冠の宝石 (crown jewels)」ファイルに隠されている:
 
-これを取り出して持ち帰れば operation 完遂。**だが** ここまでの
-Mission で学んだ **すべての検知ルール** を、**30 秒の window 内で
-1 つも発火させてはいけない**。雑なコマンドを 1 つ打てば 30 秒待ち
-直し。
+  断片 1 → /etc/shadow                (行頭 `# CTF_FRAGMENT_1:`)
+  断片 2 → /etc/sudoers               (行頭 `# CTF_FRAGMENT_2:`)
+  断片 3 → /root/.ssh/authorized_keys (行頭 `# CTF_FRAGMENT_3:`)
+
+3 つすべてを集めて組み立てれば operation 完遂。**だが** これらは
+いずれも sensitive file — 雑に読めば即 "Read sensitive file untrusted"。
+しかも今回は **7 つの検知ルールを 1 つも、30 秒の window 内で発火
+させてはならない**。1 つでも踏めば 30 秒の待ち直し。
 
 # ゴール
 
-`/etc/shadow` の末尾、`# NIMBUS_FINAL: FALCO{...}` 行から flag を
-取り出して提出。**直前 30 秒間に 7 つの禁止ルールのいずれも発火
-させていないこと**。
+3 つの断片を静かに回収し、順 (1→2→3) に連結して `FALCO{...}` の形に
+して提出する。**直前 30 秒間に 7 つの禁止ルールのいずれも発火させて
+いないこと**。
+
+  - 断片は各ファイル末尾の `# CTF_FRAGMENT_N:` 行に書かれている
+  - 3 つを順に連結し `FALCO{...}` で囲んだものが flag
+  - 1 つでも欠ければ flag mismatch (= 単一ファイルの盗み読みでは解けない)
 
 # 戦略
 
-ここまで学んだテクニックを **組み合わせる**:
+Mission 03 の **/proc/self/root 経由読み取り** を、3 つの sensitive
+file すべてに適用するのが本筋:
 
-  Mission 03 のテクニック → /proc/self/root 経由で /etc/shadow を読む
-                            (Read sensitive file untrusted を回避)
-  Mission 05 のテクニック → 入力リダイレクトで cmdline 隠し (今回は不要)
-  Mission 06 のテクニック → shell 起こすなら別名で
-  Mission 09 のテクニック → hardlink ではなく cp で別ファイルに
+  Mission 03 → /proc/self/root/<path> で 3 ファイルを静かに読む
+  Mission 09 の裏返し → hardlink (`ln`) は今回 **禁止ルール**。
+                        /tmp へ退避する近道は塞がれている
+  Mission 05 → grep/find で断片を「探す」と Search ルールに触れうる。
+               場所は判っているので探索は不要
+
+3 ファイルを 1 行で回収してから、30 秒静かに待って submit するのが安全。
 
 # 提出方法
 
@@ -46,6 +57,7 @@ Mission で学んだ **すべての検知ルール** を、**30 秒の window �
 レスポンス:
   {"correct":true,"evaded":true,"solved":true,...}  ← Operation 完遂
   {"correct":true,"evaded":false,"reason":"forbidden rule(s) [...] fired in the last 30s..."}
+  {"correct":false,"reason":"flag mismatch"}         ← 断片の連結ミス
 
 `evaded:false` だったら **30 秒** 静かに待ち、もう一度 `submit`。
 (他の Mission の探索で発火した記録が残っている可能性大)
@@ -56,34 +68,39 @@ Mission で学んだ **すべての検知ルール** を、**30 秒の window �
   /opt/ctf/submit.sh
 
 ────────────────────────────────────────────────────────────────────
-HINT 1 (易): flag の場所は分かっている
+HINT 1 (易): 断片は 3 つ、場所は判っている
 ────────────────────────────────────────────────────────────────────
 
-`/etc/shadow` の末尾、`# NIMBUS_FINAL:` で始まる 1 行。
-普通に cat したら 1 つ目の禁止ルールで即 fail。
+  /etc/shadow                → # CTF_FRAGMENT_1:
+  /etc/sudoers               → # CTF_FRAGMENT_2:
+  /root/.ssh/authorized_keys → # CTF_FRAGMENT_3:
+
+どれも sensitive file。普通に cat すれば 1 つ目の断片で即 fail。
 
 ────────────────────────────────────────────────────────────────────
-HINT 2 (中): 主犯は Read sensitive file untrusted だけ
+HINT 2 (中): Mission 03 のテクニックを 3 回
 ────────────────────────────────────────────────────────────────────
 
-flag を読むためだけなら、Mission 03 と同じテクニックで OK:
+Read sensitive file untrusted は fd.name (open に渡した path) で判定。
+/proc/self/root を噛ませれば /etc 始まりにならず発火しない:
 
-  cat /proc/self/root/etc/shadow | grep NIMBUS_FINAL
+  for f in etc/shadow etc/sudoers root/.ssh/authorized_keys; do
+    cat /proc/self/root/$f
+  done | grep CTF_FRAGMENT
 
-他の 6 ルール (K8s API / Search Private Keys / Run shell / Drop+exec
-/ Redirect STDIN/OUT / Create Hardlink) は **自分から踏まない限り
-発火しない**。だが過去 30 秒に他の Mission で踏んでいたら結果は同じ。
+hardlink (Mission 09) で /tmp に逃がす手は今回 **禁止ルール** なので使えない。
+入力リダイレクト (Mission 05) は cmdline は隠せるが open path は
+/etc のままなので Read ルールには無力 — 必ず /proc/self/root を使う。
 
 ────────────────────────────────────────────────────────────────────
-HINT 3 (運営からのアドバイス)
+HINT 3 (難): 組み立てて、静かに待って、出す
 ────────────────────────────────────────────────────────────────────
 
-他の Mission の探索で踏んだ rule fire は **30 秒で window から
-抜ける** 仕様。
+  1. 上記 1 行で 3 断片を回収
+  2. 表示された FRAGMENT_1 / _2 / _3 を順に連結し FALCO{...} で囲む
+  3. **30 秒** 何もせず待つ (過去の rule fire を window から抜く)
+  4. submit 10-final-exfil 'FALCO{...}'
 
-submit の前に **30 秒静かに待つ**:
-  1. 取得作業をやる (Mission 03 同じ手順で flag を取る)
-  2. **30 秒待つ** (sleep 30 ではなく、何もせず待つ)
-  3. submit
+断片を 1 つでも取りこぼすと flag mismatch。3 つ揃えてから組み立てること。
 
 参考: REFERENCE.md §3 全般 / §6

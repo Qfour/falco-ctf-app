@@ -1,5 +1,5 @@
 site_name: !ENV [DOCS_SITE_NAME, "Falco CTF — 課題ドキュメント"]
-site_description: Operation NimbusBreach — 課題ごとのブリーフと PDF
+site_description: CTF Company — 課題ごとのミッションブリーフ
 docs_dir: docs
 use_directory_urls: true
 
