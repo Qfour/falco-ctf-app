@@ -17,7 +17,7 @@ SYSDIG_URL   ?= https://app.au1.sysdig.com
 # host repo are not shared into the VM.
 GO_IMAGE ?= golang:1.25-alpine
 
-.PHONY: help dev dev-down build push load-colima deploy-local lint test tidy gen gen-values check-flags clean scan
+.PHONY: help dev dev-down build push load-colima deploy-local lint test tidy gen gen-values check-flags check-rules clean scan
 
 help:
 	@echo "Targets:"
@@ -33,6 +33,7 @@ help:
 	@echo "  gen           — regenerate Go types from OpenAPI specs (docs/openapi-*.yaml)"
 	@echo "  gen-values    — regenerate challenge values.yaml / values-all.yaml from plant.sh"
 	@echo "  check-flags   — fail if real flags leak into tracked files or values are stale"
+	@echo "  check-rules   — fail if a challenge references a non-existent Falco rule"
 	@echo "  scan          — sysdig-cli-scanner on all built images (SYSDIG_SECURE_API_TOKEN required)"
 	@echo "  clean         — remove built images locally"
 
@@ -89,6 +90,9 @@ gen-values:
 
 check-flags:
 	./scripts/check-flags.sh
+
+check-rules:
+	./scripts/check-challenge-rules.sh
 
 scan: build
 	@command -v sysdig-cli-scanner >/dev/null 2>&1 || \
