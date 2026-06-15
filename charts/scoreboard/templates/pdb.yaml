@@ -1,0 +1,16 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+# scoreboard is replicas=1 (SQLite single-writer, Invariant I1). Block voluntary
+# evictions so node drains during the event can't take the leaderboard offline.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: scoreboard
+  namespace: scoreboard
+  labels:
+    {{- include "scoreboard.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: scoreboard
+{{- end }}

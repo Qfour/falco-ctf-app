@@ -1,0 +1,17 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+# auth-policy is on the auth hot path of every workspace request. With prod
+# replicas=2, keep at least one available so voluntary node drains stay
+# non-disruptive.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: auth-policy
+  namespace: auth-policy
+  labels:
+    {{- include "auth-policy.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: auth-policy
+{{- end }}

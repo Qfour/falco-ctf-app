@@ -1,0 +1,64 @@
+{{- if .Values.monitoring.enabled }}
+# Prometheus Operator alerts. Requires kube-prometheus-stack CRDs.
+# Metric names/labels match the scoreboard's actual exposition
+# (internal/scoreboard/metrics): the ingest counter labels by `outcome`,
+# 5xx is observed via the http_request_duration histogram's `status` label.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: scoreboard
+  namespace: scoreboard
+  labels:
+    app.kubernetes.io/name: scoreboard
+    release: {{ .Values.monitoring.prometheusReleaseLabel }}
+spec:
+  groups:
+    - name: scoreboard.rules
+      interval: 30s
+      rules:
+        - alert: ScoreboardPodDown
+          expr: |
+            kube_deployment_status_replicas_available{namespace="scoreboard",deployment="scoreboard"} == 0
+          for: 1m
+          labels:
+            severity: critical
+            component: scoreboard
+          annotations:
+            summary: "scoreboard pod down — scoring is paused"
+            description: "0 available replicas for >1m. Scoring is offline (replicas=1 + Recreate). Check pod logs and PVC mount."
+
+        - alert: ScoreboardIngestErrorRate
+          expr: |
+            sum(rate(scoreboard_ingest_falco_events_received_total{outcome="store_error"}[5m]))
+              / sum(rate(scoreboard_ingest_falco_events_received_total[5m])) > 0.01
+          for: 5m
+          labels:
+            severity: warning
+            component: scoreboard
+          annotations:
+            summary: "scoreboard /falco/events store-error rate >1%"
+            description: "Events reach the scoreboard but the SQLite write fails. Check PVC free space and WAL state."
+
+        - alert: ScoreboardHTTP5xxRate
+          expr: |
+            sum(rate(scoreboard_http_request_duration_seconds_count{status=~"5.."}[5m]))
+              / sum(rate(scoreboard_http_request_duration_seconds_count[5m])) > 0.01
+          for: 5m
+          labels:
+            severity: warning
+            component: scoreboard
+          annotations:
+            summary: "scoreboard 5xx rate >1%"
+            description: "Participants/falcosidekick are seeing 5xx (submit or ingest). Inspect pod logs and SQLite write health."
+
+        - alert: ScoreboardNoFalcoEvents
+          expr: |
+            sum(increase(scoreboard_ingest_falco_events_received_total{outcome="accepted"}[5m])) == 0
+          for: 5m
+          labels:
+            severity: warning
+            component: scoreboard
+          annotations:
+            summary: "no Falco events accepted by scoreboard in 5m"
+            description: "Either a very quiet event, or the Falco→falcosidekick→scoreboard path is broken. Run scripts/verify.sh."
+{{- end }}

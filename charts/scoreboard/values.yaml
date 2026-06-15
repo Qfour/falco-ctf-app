@@ -45,3 +45,19 @@ ingress:
 resources:
   requests: { cpu: 25m, memory: 64Mi }
   limits:   { cpu: 200m, memory: 256Mi }
+
+# Prod hardening — off by default (local), enabled via helmfile prod env.
+podDisruptionBudget:
+  enabled: false   # maxUnavailable: 0 (replicas=1; block voluntary drains)
+
+backup:
+  enabled: false
+  schedule: "5 * * * *"            # hourly at HH:05
+  image: amazon/aws-cli:2.18.5
+  s3Bucket: ""                     # required when enabled
+  clusterName: falco-ctf
+  serviceAccountRoleArn: ""        # IRSA role with s3:PutObject (Terraform)
+
+monitoring:
+  enabled: false                   # needs Prometheus Operator CRDs
+  prometheusReleaseLabel: kube-prometheus-stack
