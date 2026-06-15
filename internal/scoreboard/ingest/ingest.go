@@ -40,6 +40,10 @@ func New(cat catalog.Catalog, s *store.Store, logger *slog.Logger, now func() ti
 		store:   s,
 		logger:  logger,
 		now:     now,
+		// Intentionally fixed: sized for a single-cluster CTF (a few hundred
+		// participants × low syscall-event rate). falcosidekick is the only
+		// legitimate caller; this caps a misconfigured/looping sender, not a
+		// tuning knob. Revisit only if load testing (scripts/load.sh) shows 429s.
 		limiter: ratelimit.New(100 /* req/s */, 200 /* burst */).WithNow(now),
 	}
 }

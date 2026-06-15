@@ -26,6 +26,11 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// RetentionSeconds is how long recent Falco rule-fires are kept for the evade
+// forbidden-rule lookback. Intentionally fixed at 5 min: comfortably covers the
+// largest challenge windowSeconds (30s today) plus operator margin, while
+// bounding the in-memory/table growth. Not an operator tuning knob — raising it
+// only matters if a challenge ever needs a >5min evade window.
 const RetentionSeconds = 300
 
 type SolveKey struct {

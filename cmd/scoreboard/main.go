@@ -5,29 +5,24 @@
 package main
 
 import (
-	"context"
-	"errors"
 	"log/slog"
-	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
-	"time"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard"
+	"github.com/Qfour/falco-ctf-app/internal/serverutil"
 	"github.com/Qfour/falco-ctf-app/internal/store"
 )
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
-	challengesDir := env("CHALLENGES_DIR", "/app/challenges")
-	dbPath := env("SCOREBOARD_DB", "/var/lib/scoreboard/scoreboard.db")
-	addr := env("LISTEN_ADDR", ":8000")
+	challengesDir := serverutil.Env("CHALLENGES_DIR", "/app/challenges")
+	dbPath := serverutil.Env("SCOREBOARD_DB", "/var/lib/scoreboard/scoreboard.db")
+	addr := serverutil.Env("LISTEN_ADDR", ":8000")
 	// FLAGS_FILE injects real per-event flags over the FALCO{dev-...}
 	// placeholders baked into the public image. Empty = use placeholders.
-	flagsFile := env("FLAGS_FILE", "")
+	flagsFile := serverutil.Env("FLAGS_FILE", "")
 
 	cat, err := catalog.Load(challengesDir)
 	if err != nil {
@@ -50,33 +45,11 @@ func main() {
 
 	handler := scoreboard.NewHandler(cat, st, logger, scoreboard.WithDBPath(dbPath))
 
-	srv := &http.Server{
-		Addr:              addr,
-		Handler:           handler,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
-	go func() {
+	err = serverutil.Serve(addr, handler, logger, func() {
 		logger.Info("listening", "addr", addr)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("listen failed", "err", err)
-			os.Exit(1)
-		}
-	}()
-
-	<-ctx.Done()
-	logger.Info("shutting down")
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_ = srv.Shutdown(shutdownCtx)
-}
-
-func env(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
+	})
+	if err != nil {
+		logger.Error("listen failed", "err", err)
+		os.Exit(1)
 	}
-	return fallback
 }
