@@ -32,6 +32,12 @@ RUN apk add --no-cache \
 # the source-of-truth for all-missions mode (deploy-user.sh <user> all):
 # the workspace pod has every welcome.txt + fixture available from
 # the first second of its life, no operator switching between missions.
+#
+# INTENTIONAL (guided-event decision, 2026-06): the whole challenges/ tree is
+# baked, including README.md (想定解) and falco-rule.yaml. This is a guided
+# learning event, not a blind competition — participants are allowed to read
+# briefs/solutions. If this ever becomes competitive, exclude operator/author
+# files here (README.md / falco-rule.yaml / plant.sh / values*.yaml).
 COPY challenges/ /opt/ctf/missions/
 COPY challenges/submit-all.sh /opt/ctf/submit.sh
 RUN chmod 0644 /opt/ctf/submit.sh
