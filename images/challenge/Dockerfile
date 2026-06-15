@@ -41,7 +41,19 @@ RUN apk add --no-cache \
 COPY challenges/ /opt/ctf/missions/
 COPY challenges/submit-all.sh /opt/ctf/submit.sh
 COPY challenges/setname.sh /opt/ctf/setname.sh
-RUN chmod 0644 /opt/ctf/submit.sh /opt/ctf/setname.sh
+COPY challenges/submit-yaml.sh /opt/ctf/submit-yaml.sh
+RUN chmod 0644 /opt/ctf/submit.sh /opt/ctf/setname.sh /opt/ctf/submit-yaml.sh
+
+# answers.yaml — editable template for batch submission. Auto-listed from the
+# EVADE missions (the only ones needing a flag); trigger missions are omitted.
+RUN { echo '# EVADE 課題で読み取ったフラグを記入し、submit-yaml で一括提出:'; \
+      echo '#   sh /opt/ctf/submit-yaml.sh'; \
+      echo '# trigger 課題は提出不要(Falco 発火で自動 solve)。'; \
+      for f in /opt/ctf/missions/[0-9][0-9]-*/falco-rule.yaml; do \
+        if grep -q 'type:[[:space:]]*evade' "$f"; then \
+          id=$(awk '/^challengeId:/{print $2}' "$f"); echo "${id}: "; \
+        fi; \
+      done; } > /opt/ctf/answers.yaml
 
 # Quick orientation at login. Printed by /etc/profile additions below.
 RUN printf '%s\n' \
@@ -53,10 +65,12 @@ RUN printf '%s\n' \
   '│   cat /opt/ctf/missions/03-stealth-read/fixtures/welcome.txt   │' \
   '│   ...                                                          │' \
   '│                                                                │' \
-  '│ Submit (evade challenges only):                                │' \
+  '│ Submit (evade challenges only) — pick one:                     │' \
   '│                                                                │' \
-  '│   source /opt/ctf/submit.sh                                    │' \
-  '│   submit <mission-id> '"'"'<flag>'"'"'                                 │' \
+  '│   a) source /opt/ctf/submit.sh                                 │' \
+  '│      submit <mission-id> '"'"'<flag>'"'"'                              │' \
+  '│   b) vi /opt/ctf/answers.yaml   # fill flags, then:            │' \
+  '│      sh /opt/ctf/submit-yaml.sh # submit all at once           │' \
   '│                                                                │' \
   '│ Set your scoreboard name (optional, change anytime):           │' \
   '│   source /opt/ctf/setname.sh && setname '"'"'Your Name'"'"'              │' \

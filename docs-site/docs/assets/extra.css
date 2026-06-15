@@ -9,3 +9,22 @@
 .md-typeset pre > code {
   white-space: pre;
 }
+
+/* Time-gated hints (assets/hints.js). */
+.ctf-hint {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 6px;
+  padding: 0.4rem 0.8rem;
+  margin: 0.8rem 0;
+}
+.ctf-hint--unlocked,
+.ctf-hint--released {
+  border-color: var(--md-accent-fg-color);
+}
+.ctf-hint-ctl {
+  color: var(--md-default-fg-color--light);
+  padding: 0.2rem 0;
+}
+.ctf-hint-release {
+  cursor: pointer;
+}

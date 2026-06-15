@@ -29,16 +29,18 @@ COPY challenges/ ./challenges/
 COPY docs-site/ ./docs-site/
 
 WORKDIR /build/docs-site
-# Build twice from the same source. gen-pages.sh decides what each page contains:
+# Build twice from the same source. gen-pages.py decides what each page contains:
 #   participant → /site        (brief only — no 想定解/解説, even in the PDF)
 #   admin       → /site-admin  (brief + 攻略と解説; 運営専用)
+# Site pages (docs/missions) carry time-gated hints (HTML+JS); PDF sources
+# (pdfsrc) carry the same hints inline (static), so pandoc renders cleanly.
 RUN for mode in participant admin; do \
         out=/site; name="Falco CTF — 課題ドキュメント"; \
         if [ "$mode" = admin ]; then out=/site-admin; name="Falco CTF — 課題ドキュメント (運営用)"; fi; \
-        bash gen-pages.sh .. "$mode" \
+        python3 gen-pages.py .. "$mode" \
      && DOCS_SITE_NAME="$name" mkdocs build --strict -d "$out" \
      && mkdir -p "$out/pdf" \
-     && for f in docs/missions/[0-9][0-9]-*.md; do \
+     && for f in pdfsrc/[0-9][0-9]-*.md; do \
             n="$(basename "${f%.md}")"; \
             pandoc "$f" -o "$out/pdf/${n}.pdf" \
                 --pdf-engine=weasyprint \

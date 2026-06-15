@@ -77,6 +77,16 @@ securityContext:
 - 採点フラグ (FLAGS_FILE) と仕込みフラグ (CTF_FLAG_*) は platform の
   同一 `flags.sops.yaml` から render され、必ず一致する。
 
+## 課題ドキュメント用 rule.yaml (challenges/<NN>/rule.yaml)
+
+- docs サイトが「背景の後」に描画する **表示用 Falco ルール抜粋**。`falco-rule.yaml`
+  (scoreboard metadata: expectedRules/forbiddenRules) とは別物。
+- **デプロイ中の実ルールセットから抽出**して精度を担保(本番 Falco と一致):
+  `kubectl -n falco exec <falco-pod> -c falco -- cat /etc/falco/falco_rules.yaml` から
+  各課題の expectedRules + forbiddenRules の rule ブロックを抽出 → `challenges/<NN>/rule.yaml`。
+- **Falco バージョンを上げたら再抽出**(condition/output が変わるため)。docs の
+  gen-pages.py は存在すれば描画、無ければスキップ(必須ではない)。
+
 ## Scope / 影響範囲
 
 | 変更箇所 | 影響 |

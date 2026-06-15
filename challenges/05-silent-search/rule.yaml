@@ -1,0 +1,19 @@
+- rule: Search Private Keys or Passwords
+  desc: >
+    Detect attempts to search for private keys or passwords using the grep or find command. This is often seen with
+    unsophisticated attackers, as there are many ways to access files using bash built-ins that could go unnoticed.
+    Regardless, this serves as a solid baseline detection that can be tailored to cover these gaps while maintaining
+    an acceptable noise level.
+  condition: >
+    spawned_process
+    and ((grep_commands and private_key_or_password) or
+         (proc.name = "find" and (proc.args contains "id_rsa" or
+                                  proc.args contains "id_dsa" or
+                                  proc.args contains "id_ed25519" or
+                                  proc.args contains "id_ecdsa"
+          )
+        ))
+  output: Grep private keys or passwords activities found | evt_type=%evt.type user=%user.name user_uid=%user.uid user_loginuid=%user.loginuid process=%proc.name proc_exepath=%proc.exepath parent=%proc.pname command=%proc.cmdline terminal=%proc.tty exe_flags=%evt.arg.flags
+  priority:
+    WARNING
+  tags: [maturity_stable, host, container, process, filesystem, mitre_credential_access, T1552.001]

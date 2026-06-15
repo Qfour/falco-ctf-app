@@ -45,6 +45,13 @@ type Store struct {
 	eventsPerUser map[string]int
 	ruleFires     map[string][]ruleFire // user -> bounded list (RetentionSeconds)
 	displayNames  map[string]string     // user -> participant-chosen display name
+	hintReleased  map[hintKey]bool      // (mission,hint) operator-released to participants
+}
+
+// hintKey identifies one hint of one mission for operator-controlled release.
+type hintKey struct {
+	Mission string
+	Hint    int
 }
 
 type ruleFire struct {
@@ -76,6 +83,12 @@ func Open(path string) (*Store, error) {
           name   TEXT NOT NULL,
           set_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS hint_release (
+          mission TEXT NOT NULL,
+          hint    INTEGER NOT NULL,
+          at      TEXT NOT NULL,
+          PRIMARY KEY (mission, hint)
+        );
         DROP TABLE IF EXISTS events_per_user;
     `); err != nil {
 		db.Close()
@@ -88,6 +101,7 @@ func Open(path string) (*Store, error) {
 		eventsPerUser: make(map[string]int),
 		ruleFires:     make(map[string][]ruleFire),
 		displayNames:  make(map[string]string),
+		hintReleased:  make(map[hintKey]bool),
 	}
 	if err := s.loadFromDB(); err != nil {
 		db.Close()
@@ -129,7 +143,61 @@ func (s *Store) loadFromDB() error {
 		}
 		s.displayNames[user] = name
 	}
-	return dn.Err()
+	if err := dn.Err(); err != nil {
+		return err
+	}
+
+	hr, err := s.db.Query("SELECT mission, hint FROM hint_release")
+	if err != nil {
+		return err
+	}
+	defer hr.Close()
+	for hr.Next() {
+		var k hintKey
+		if err := hr.Scan(&k.Mission, &k.Hint); err != nil {
+			return err
+		}
+		s.hintReleased[k] = true
+	}
+	return hr.Err()
+}
+
+// ReleaseHint marks (mission, hint) as released to participants, or revokes it
+// when released=false. Operator-controlled; the participant docs site polls
+// ReleasedHints and reveals only released hints. Idempotent.
+func (s *Store) ReleaseHint(mission string, hint int, released bool, at string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if released {
+		if _, err := s.db.Exec(
+			`INSERT INTO hint_release (mission, hint, at) VALUES (?, ?, ?)
+			 ON CONFLICT(mission, hint) DO UPDATE SET at = excluded.at`,
+			mission, hint, at,
+		); err != nil {
+			return err
+		}
+		s.hintReleased[hintKey{mission, hint}] = true
+		return nil
+	}
+	if _, err := s.db.Exec("DELETE FROM hint_release WHERE mission = ? AND hint = ?", mission, hint); err != nil {
+		return err
+	}
+	delete(s.hintReleased, hintKey{mission, hint})
+	return nil
+}
+
+// ReleasedHints returns the released hints as mission -> sorted hint indices.
+func (s *Store) ReleasedHints() map[string][]int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string][]int, len(s.hintReleased))
+	for k := range s.hintReleased {
+		out[k.Mission] = append(out[k.Mission], k.Hint)
+	}
+	for _, hs := range out {
+		sort.Ints(hs)
+	}
+	return out
 }
 
 // SetDisplayName sets or OVERWRITES the display name for `user`

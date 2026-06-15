@@ -28,6 +28,10 @@ import (
 // auth-policy enforces on incoming /check?host=… so the two sides agree.
 var validUser = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
+// validMission matches a mission directory slug (e.g. "01-initial-recon"),
+// the data-mission key the docs site sends when releasing a hint.
+var validMission = regexp.MustCompile(`^[0-9]{2}-[a-z0-9-]{1,60}$`)
+
 // invalidDisplayName rejects characters that would break either UI
 // rendering (HTML metachars) or shell display (control chars). A 32-rune
 // max keeps leaderboard columns predictable.
@@ -70,6 +74,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/users/{user}/me", h.userMe)
 	mux.HandleFunc("POST /api/admin/reset", h.reset)
 	mux.HandleFunc("POST /api/admin/users/{user}/display-name", h.adminSetDisplayName)
+	mux.HandleFunc("GET /api/hints", h.hints)
+	mux.HandleFunc("POST /api/admin/hints", h.releaseHint)
 	submitMW := h.submitLimiter.Middleware(ratelimit.ClientIP)
 	mux.Handle("POST /api/challenges/{cid}/submit", submitMW(http.HandlerFunc(h.submit)))
 	dnMW := h.displayNameLimiter.Middleware(ratelimit.ClientIP)
@@ -109,6 +115,51 @@ func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
 	}
 	h.logger.Info("scoreboard reset", "by", email, "cleared_solves", n)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "cleared_solves": n})
+}
+
+// --- operator-controlled hints ---------------------------------------------
+
+// hints returns the operator-released hints as {mission: [hintIdx...]}. Public
+// read: the participant docs site polls this and reveals only released hints
+// (replaces the old client-side timer, which couldn't be coordinated fairly).
+func (h *Handler) hints(w http.ResponseWriter, _ *http.Request) {
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"released": h.store.ReleasedHints()})
+}
+
+// releaseHint releases (or revokes) one mission hint to participants. Admin-only
+// (see isAdmin). Body: {"mission":"01-initial-recon","hint":1,"released":true}.
+func (h *Handler) releaseHint(w http.ResponseWriter, r *http.Request) {
+	email, ok := h.isAdmin(r)
+	if !ok {
+		h.logger.Warn("hint release denied", "remote_addr", r.RemoteAddr, "email", email)
+		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "admin only"})
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
+	var req struct {
+		Mission  string `json:"mission"`
+		Hint     int    `json:"hint"`
+		Released bool   `json:"released"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	if !validMission.MatchString(req.Mission) {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid mission"})
+		return
+	}
+	if req.Hint < 1 || req.Hint > 20 {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid hint index"})
+		return
+	}
+	if err := h.store.ReleaseHint(req.Mission, req.Hint, req.Released, h.now().UTC().Format(time.RFC3339)); err != nil {
+		h.logger.Error("hint release failed", "err", err)
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	h.logger.Info("hint release", "by", email, "mission", req.Mission, "hint", req.Hint, "released", req.Released)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "mission": req.Mission, "hint": req.Hint, "released": req.Released})
 }
 
 // validDisplayName trims + validates a display name: 1..32 runes, no HTML/shell

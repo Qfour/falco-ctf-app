@@ -30,9 +30,13 @@ theme:
 extra_css:
   - assets/extra.css
 
+extra_javascript:
+  - assets/hints.js
+
 markdown_extensions:
   - admonition
   - attr_list
+  - md_in_html
   - tables
   - toc:
       permalink: true

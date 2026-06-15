@@ -1,0 +1,21 @@
+- rule: Drop and execute new binary in container
+  desc: >
+    Detect if an executable not belonging to the base image of a container is being executed.
+    The drop and execute pattern can be observed very often after an attacker gained an initial foothold.
+    is_exe_upper_layer filter field only applies for container runtimes that use overlayfs as union mount filesystem.
+    Adopters can utilize the provided template list known_drop_and_execute_containers containing allowed container
+    images known to execute binaries not included in their base image. Alternatively, you could exclude non-production
+    namespaces in Kubernetes settings by adjusting the rule further. This helps reduce noise by applying application
+    and environment-specific knowledge to this rule. Common anti-patterns include administrators or SREs performing
+    ad-hoc debugging.
+  condition: >
+    spawned_process
+    and container
+    and proc.is_exe_upper_layer=true
+    and not container.image.repository in (known_drop_and_execute_containers)
+    and not known_drop_and_execute_activities
+  output: Executing binary not part of base image | proc_exe=%proc.exe proc_sname=%proc.sname gparent=%proc.aname[2] proc_exe_ino_ctime=%proc.exe_ino.ctime proc_exe_ino_mtime=%proc.exe_ino.mtime proc_exe_ino_ctime_duration_proc_start=%proc.exe_ino.ctime_duration_proc_start proc_cwd=%proc.cwd container_start_ts=%container.start_ts evt_type=%evt.type user=%user.name user_uid=%user.uid user_loginuid=%user.loginuid process=%proc.name proc_exepath=%proc.exepath parent=%proc.pname command=%proc.cmdline terminal=%proc.tty exe_flags=%evt.arg.flags
+  priority: CRITICAL
+  tags: [maturity_stable, container, process, mitre_persistence, TA0003, PCI_DSS_11.5.1]
+
+# RFC1918 addresses were assigned for private network usage

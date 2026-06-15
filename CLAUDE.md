@@ -16,7 +16,8 @@ falco-ctf-app/
 ├── scoreboard/         Dockerfile のみ (Go multi-stage, challenges/ 焼込)
 ├── auth-policy/        Dockerfile のみ (Go multi-stage, stdlib のみ)
 ├── images/{ttyd,challenge,docs}/  Dockerfile のみ (docs = MkDocs+PDF サイト)
-├── challenges/<NN>-<slug>/    README + falco-rule.yaml + fixtures + values.yaml
+├── challenges/<NN>-<slug>/    README + falco-rule.yaml + rule.yaml + fixtures + values.yaml
+│                       (rule.yaml = 表示用 Falco ルール抜粋。docs サイトが背景の後に描画)
 ├── docs-site/          MkDocs Material プロジェクト (gen-pages.sh が challenges/ から
 │                       ミッションページ生成 → images/docs が site+PDF を焼く)
 ├── charts/             Helm charts: scoreboard / auth-policy / ctf-user / docs
