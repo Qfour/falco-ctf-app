@@ -130,6 +130,32 @@ func TestCheck_EmailPrefixBoundary(t *testing.T) {
 	}
 }
 
+// Admin override: an ADMIN_EMAILS member reaches ANY user's workspace host.
+func TestCheck_Admin_ReachesAnyHost_Returns200(t *testing.T) {
+	upstream := fakeOAuth2Proxy(t, func(_ *http.Request) (int, string) {
+		return http.StatusAccepted, "admin@ctf.local"
+	})
+	defer upstream.Close()
+	h := newAdminHandler(upstream.URL, "admin@ctf.local")
+	resp := do(t, h, "/check?host=user7", map[string]string{"Cookie": "_oauth2_proxy=foo"})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("admin should reach any workspace, got %d", resp.StatusCode)
+	}
+}
+
+// Non-admin still bound to their own host even when an allowlist exists.
+func TestCheck_NonAdminWrongHost_StillForbidden(t *testing.T) {
+	upstream := fakeOAuth2Proxy(t, func(_ *http.Request) (int, string) {
+		return http.StatusAccepted, "user3@ctf.local"
+	})
+	defer upstream.Close()
+	h := newAdminHandler(upstream.URL, "admin@ctf.local")
+	resp := do(t, h, "/check?host=user7", map[string]string{"Cookie": "_oauth2_proxy=foo"})
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("non-admin cross-user must stay 403, got %d", resp.StatusCode)
+	}
+}
+
 func TestCheck_UpstreamUnreachable_Returns502(t *testing.T) {
 	// Port 1 reliably refuses connections immediately.
 	h := newHandler("http://127.0.0.1:1/oauth2/auth")

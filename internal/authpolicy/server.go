@@ -6,6 +6,7 @@
 //	GET /check?host=<expected-username>
 //	  ingress ──► oauth2-proxy /oauth2/auth ──► X-Auth-Request-Email
 //	         ├ email starts with "<host>@" → 200
+//	         ├ email ∈ ADMIN_EMAILS        → 200 (admins reach any workspace)
 //	         ├ email otherwise            → 403
 //	         └ no auth at all             → 401
 //
@@ -185,6 +186,16 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 		}
 		checksTotal.WithLabelValues(label).Inc()
 		http.Error(w, up.body, up.status)
+		return
+	}
+
+	// Admins reach any workspace (operator override). This is the one
+	// intentional exception to the <host>@ binding below — gated by the same
+	// ADMIN_EMAILS allowlist as /check-admin (fail-closed when empty).
+	if _, isAdmin := h.adminSet[strings.ToLower(up.email)]; isAdmin {
+		propagateIdentity(w, up.headers)
+		checksTotal.WithLabelValues("ok_admin").Inc()
+		w.WriteHeader(http.StatusOK)
 		return
 	}
 

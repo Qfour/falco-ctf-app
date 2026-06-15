@@ -23,7 +23,7 @@
 | I5 | 全 4 イメージ (scoreboard / auth-policy / ttyd / challenge) を **同一 git SHA** でビルド・push |
 | I6 | challenges/ は scoreboard と同一 repo に置く (falco-rule.yaml が scoreboard の一次消費) |
 | I7 | chart の `values.yaml` default は環境非依存。host/domain/registry は placeholder (`example.invalid` / `docker.io/falco-ctf`)。環境値は platform helmfile が供給 |
-| I8 | auth-policy は `X-Auth-Request-Email` を **prefix-exact** (`<username>@`) で照合。緩めない |
+| I8 | auth-policy `/check` は `X-Auth-Request-Email` を **prefix-exact** (`<username>@`) で照合。**唯一の例外**: email が `ADMIN_EMAILS` に含まれる場合は任意の workspace を許可 (運営の全 workspace アクセス)。それ以外で prefix 一致を緩めない |
 | I9 | challenge コンテナ Dockerfile に Service / Ingress を追加しない |
 | I10 | Dockerfile / yaml にトークン・実シークレットを焼き込まない |
 
