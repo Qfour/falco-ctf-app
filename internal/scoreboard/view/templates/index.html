@@ -282,14 +282,11 @@
   // ---------------- helpers ----------------
   const seen = new Set();
   let firstRender = true;
-  function fmtAgo(iso) {
-    const ms = Date.now() - new Date(iso).getTime();
-    const s = Math.max(0, Math.floor(ms / 1000));
-    if (s < 5)    return 'just now';
-    if (s < 60)   return s + 's ago';
-    if (s < 3600) return Math.floor(s / 60) + 'm ago';
-    if (s < 86400) return Math.floor(s / 3600) + 'h ago';
-    return Math.floor(s / 86400) + 'd ago';
+  // Solve time as a 24-hour local clock (HH:MM:SS).
+  function fmtTime(iso) {
+    const d = new Date(iso);
+    const p = n => String(n).padStart(2, '0');
+    return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
   }
   function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   // Progress as one segment per mission; `done` of `total` lit.
@@ -399,7 +396,7 @@
             <span class="verb">cleared</span>
             <span class="what">${esc(s.challenge)}</span>
           </div>
-          <span class="when" title="${esc(s.at)}">${fmtAgo(s.at)}</span>
+          <span class="when" title="${esc(s.at)}">${fmtTime(s.at)}</span>
         </div>`;
       }).join('');
     }
@@ -490,7 +487,7 @@
       return `<tr>
         <td><span class="rank ${rankCls}">#${rank}</span></td>
         <td><span class="user-cell">${esc(s.display_name || s.user)}</span></td>
-        <td><span class="when" title="${esc(s.at)}">${fmtAgo(s.at)}</span></td>
+        <td><span class="when" title="${esc(s.at)}">${fmtTime(s.at)}</span></td>
         <td style="text-align:right" class="mono">${delta}</td>
       </tr>`;
     }).join('');
