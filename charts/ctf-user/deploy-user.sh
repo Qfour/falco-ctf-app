@@ -162,12 +162,28 @@ info "[1/${LAST_STEP}] rotate workspace Pod (Pod fields are immutable across hel
 # Errors here would only mean the namespace doesn't exist yet, also fine.
 kubectl -n "${NS}" delete pod workspace --ignore-not-found --wait=true >/dev/null 2>&1 || true
 
+# Prod image override (chart default is docker.io/falco-ctf/*:dev for local). Set
+#   FALCO_CTF_REGISTRY  = <acct>.dkr.ecr.<region>.amazonaws.com/falco-ctf
+#   FALCO_CTF_IMAGE_TAG = <git SHA>
+# to pull ttyd/challenge from ECR. The challenge repo must keep the
+# `falco-ctf/challenge` substring (scoreboard ingest filter).
+IMAGE_ARGS=()
+if [[ -n "${FALCO_CTF_REGISTRY:-}" ]]; then
+  IMAGE_ARGS+=(--set "ttyd.image.repository=${FALCO_CTF_REGISTRY}/ttyd")
+  IMAGE_ARGS+=(--set "challenge.image.repository=${FALCO_CTF_REGISTRY}/challenge")
+fi
+if [[ -n "${FALCO_CTF_IMAGE_TAG:-}" ]]; then
+  IMAGE_ARGS+=(--set "ttyd.image.tag=${FALCO_CTF_IMAGE_TAG}")
+  IMAGE_ARGS+=(--set "challenge.image.tag=${FALCO_CTF_IMAGE_TAG}")
+fi
+
 info "[2/${LAST_STEP}] helm upgrade --install ${RELEASE} (challenge=${CHALLENGE_ID})"
 # `${arr:+"${arr[@]}"}` lets these expand to nothing when empty under `set -u`.
 helm upgrade --install "${RELEASE}" "${CHART_DIR}" \
   --set "username=${USERNAME}" \
   --set "challengeId=${CHALLENGE_ID}" \
   ${DNS_SUFFIX:+--set dnsSuffix="${DNS_SUFFIX}"} \
+  ${IMAGE_ARGS:+"${IMAGE_ARGS[@]}"} \
   ${VALUES_ARGS:+"${VALUES_ARGS[@]}"} \
   ${FLAG_ARGS:+"${FLAG_ARGS[@]}"} \
   --wait --timeout 2m

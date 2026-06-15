@@ -72,6 +72,8 @@ spec:
           value: "{{ .Values.challengeId }}"
         - name: FALCO_CTF_SCOREBOARD
           value: "http://scoreboard.scoreboard.svc:80"
+        - name: FALCO_CTF_DNS_SUFFIX
+          value: "{{ .Values.dnsSuffix }}"
         {{- /* Inject CTF_FLAG_<ID> for this workspace's mission(s) only. */}}
         {{- if .Values.challenge.allMissions }}
         {{- range $id, $flag := .Values.challenge.flags }}

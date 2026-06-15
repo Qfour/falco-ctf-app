@@ -42,7 +42,8 @@ COPY challenges/ /opt/ctf/missions/
 COPY challenges/submit-all.sh /opt/ctf/submit.sh
 COPY challenges/setname.sh /opt/ctf/setname.sh
 COPY challenges/submit-yaml.sh /opt/ctf/submit-yaml.sh
-RUN chmod 0644 /opt/ctf/submit.sh /opt/ctf/setname.sh /opt/ctf/submit-yaml.sh
+COPY challenges/banner.sh /opt/ctf/banner.sh
+RUN chmod 0644 /opt/ctf/submit.sh /opt/ctf/setname.sh /opt/ctf/submit-yaml.sh /opt/ctf/banner.sh
 
 # answers.yaml — editable template for batch submission. Auto-listed from the
 # EVADE missions (the only ones needing a flag); trigger missions are omitted.
@@ -55,36 +56,10 @@ RUN { echo '# EVADE 課題で読み取ったフラグを記入し、submit-yaml 
         fi; \
       done; } > /opt/ctf/answers.yaml
 
-# Quick orientation at login. Printed by /etc/profile additions below.
-RUN printf '%s\n' \
-  '┌─ Operation NimbusBreach — 10 missions ─────────────────────────┐' \
-  '│ Read each mission brief in order:                              │' \
-  '│                                                                │' \
-  '│   cat /opt/ctf/missions/01-initial-recon/fixtures/welcome.txt  │' \
-  '│   cat /opt/ctf/missions/02-credential-files/fixtures/welcome.txt│' \
-  '│   cat /opt/ctf/missions/03-stealth-read/fixtures/welcome.txt   │' \
-  '│   ...                                                          │' \
-  '│                                                                │' \
-  '│ Submit (evade challenges only) — pick one:                     │' \
-  '│                                                                │' \
-  '│   a) source /opt/ctf/submit.sh                                 │' \
-  '│      submit <mission-id> '"'"'<flag>'"'"'                              │' \
-  '│   b) vi /opt/ctf/answers.yaml   # fill flags, then:            │' \
-  '│      sh /opt/ctf/submit-yaml.sh # submit all at once           │' \
-  '│                                                                │' \
-  '│ Set your scoreboard name (optional, change anytime):           │' \
-  '│   source /opt/ctf/setname.sh && setname '"'"'Your Name'"'"'              │' \
-  '│                                                                │' \
-  '│ Reference card:                                                │' \
-  '│   cat /opt/ctf/missions/REFERENCE.md                           │' \
-  '│                                                                │' \
-  '│ Participant handbook (pre-event reading):                      │' \
-  '│   cat /opt/ctf/missions/PARTICIPANT-HANDBOOK.md                │' \
-  '└────────────────────────────────────────────────────────────────┘' \
-  > /opt/ctf/INDEX.txt
-
-# Greet on login so participants always see the entry point.
-RUN echo 'cat /opt/ctf/INDEX.txt 2>/dev/null' >> /etc/profile
+# Greet on login. banner.sh builds the docs/scoreboard URLs from
+# $FALCO_CTF_DNS_SUFFIX (set by the ctf-user chart) so the same image serves
+# local + prod. Docs (briefs/hints/PDF) live on the docs site, not in-terminal.
+RUN echo 'sh /opt/ctf/banner.sh 2>/dev/null' >> /etc/profile
 
 # Default sleep keeps the container alive; ttyd reaches it via kubectl exec.
 CMD ["sleep", "infinity"]
