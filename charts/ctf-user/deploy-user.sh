@@ -5,8 +5,8 @@
 # rotate them in place. This wrapper deletes the workspace Pod when a chart
 # upgrade is detected so Helm always reaches the desired state.
 #
-# Challenge content (fixtures/ + values.yaml) lives in this repo's challenges/;
-# pass --challenges-dir to point elsewhere.
+# Per-challenge values.yaml (postStart) lives in this repo's challenges/; pass
+# --challenges-dir to point elsewhere. Briefs/fixtures are image-baked.
 #
 # Usage:
 #   deploy-user.sh [--challenges-dir <path>] [--display-name <name>] \
@@ -75,7 +75,7 @@ if [[ ! -d "${CHALLENGES_DIR}" ]]; then
   echo "  (override with --challenges-dir <path> or FALCO_CTF_CHALLENGES_DIR)" >&2
   exit 1
 fi
-# Resolve to absolute path so helm --set-file can find fixtures even if cwd changes.
+# Resolve to absolute path so helm -f can find the values overlay if cwd changes.
 CHALLENGES_DIR="$(cd "${CHALLENGES_DIR}" && pwd)"
 
 # Real per-event flags (from events/<ev>/flags.dec.yaml, shape `{flags: {id: FALCO{...}}}`).
@@ -108,9 +108,10 @@ green()  { printf '\033[32m%s\033[0m\n' "$*"; }
 yellow() { printf '\033[33m%s\033[0m\n' "$*"; }
 info()   { printf '\033[36m%s\033[0m\n' "$*"; }
 
-# All-missions mode: challenge-id == "all". Skip per-challenge fixture
-# loading (everything is image-baked at /opt/ctf/missions/) and apply the
-# combined postStart from challenges/values-all.yaml.
+# All-missions mode: challenge-id == "all". Apply the combined postStart from
+# challenges/values-all.yaml. Fixtures/briefs are image-baked at
+# /opt/ctf/missions/ (challenge Dockerfile COPY challenges/) for every mode —
+# no per-challenge file injection.
 ALL_MODE=0
 if [[ "${CHALLENGE_ID}" == "all" ]]; then
   ALL_MODE=1
@@ -123,13 +124,11 @@ if [[ "${ALL_MODE}" -eq 1 ]]; then
     exit 1
   fi
   info "using challenges dir: ${CHALLENGES_DIR} (all-missions mode)"
-  SET_FILE_ARGS=()
   VALUES_ARGS=(-f "${ALL_VALUES}")
   # all-missions: inject every mission's CTF_FLAG_<ID> into the one workspace.
   FLAG_ARGS+=(--set "challenge.allMissions=true")
 else
   CHALLENGE_DIR="${CHALLENGES_DIR}/${CHALLENGE_ID}"
-  FIXTURES_DIR="${CHALLENGE_DIR}/fixtures"
   CHALLENGE_VALUES="${CHALLENGE_DIR}/values.yaml"
 
   if [[ ! -d "${CHALLENGE_DIR}" ]]; then
@@ -139,17 +138,6 @@ else
   fi
 
   info "using challenges dir: ${CHALLENGES_DIR}"
-
-  # Build --set-file flags from the fixtures directory.
-  SET_FILE_ARGS=()
-  if [[ -d "${FIXTURES_DIR}" ]]; then
-    while IFS= read -r f; do
-      rel="$(basename "${f}")"
-      # Helm expects '.' in keys to be escaped.
-      key="$(printf '%s' "${rel}" | sed 's/\./\\./g')"
-      SET_FILE_ARGS+=(--set-file "challenge.fixtures.${key}=${f}")
-    done < <(find "${FIXTURES_DIR}" -maxdepth 1 -type f)
-  fi
 
   # Optional per-challenge values overlay (e.g. evade challenges' postStart + flag env).
   VALUES_ARGS=()
@@ -175,7 +163,6 @@ helm upgrade --install "${RELEASE}" "${CHART_DIR}" \
   --set "username=${USERNAME}" \
   --set "challengeId=${CHALLENGE_ID}" \
   ${VALUES_ARGS:+"${VALUES_ARGS[@]}"} \
-  ${SET_FILE_ARGS:+"${SET_FILE_ARGS[@]}"} \
   ${FLAG_ARGS:+"${FLAG_ARGS[@]}"} \
   --wait --timeout 2m
 

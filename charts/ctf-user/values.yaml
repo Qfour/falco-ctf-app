@@ -33,8 +33,9 @@ challenge:
   resources:
     requests: { cpu: 50m, memory: 64Mi }
     limits:   { cpu: 500m, memory: 256Mi }
-  # fixtures: filename -> content. Mounted as ConfigMap at /opt/ctf/fixtures
-  fixtures: {}
+  # Mission briefs / fixtures are baked into the challenge image at
+  # /opt/ctf/missions/<id>/ (challenge Dockerfile COPY challenges/) — no
+  # per-deploy ConfigMap injection.
   # extraEnv: list of {name, value} injected into the challenge container.
   extraEnv: []
   # postStart: optional argv that runs once after container start. Used by

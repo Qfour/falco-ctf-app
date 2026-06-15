@@ -94,12 +94,6 @@ spec:
             command:
               {{- toYaml . | nindent 14 }}
       {{- end }}
-      {{- if .Values.challenge.fixtures }}
-      volumeMounts:
-        - name: fixtures
-          mountPath: /opt/ctf/fixtures
-          readOnly: true
-      {{- end }}
 
   volumes:
     - name: ttyd-home
@@ -108,8 +102,3 @@ spec:
     - name: ttyd-tmp
       emptyDir:
         sizeLimit: 32Mi
-    {{- if .Values.challenge.fixtures }}
-    - name: fixtures
-      configMap:
-        name: challenge-fixtures
-    {{- end }}
