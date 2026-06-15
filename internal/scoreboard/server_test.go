@@ -222,6 +222,42 @@ func TestAdminSetDisplayName(t *testing.T) {
 	}
 }
 
+// /api/state exposes per-challenge solver_details ranked by solve time with
+// display names — the data behind the per-challenge leaderboard view.
+func TestState_SolverDetailsRankedWithNames(t *testing.T) {
+	f := newFixture(t, nil)
+	if _, err := f.st.MarkSolved("alice", "01-read-shadow", "2026-01-01T00:00:01Z"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.st.MarkSolved("bob", "01-read-shadow", "2026-01-01T00:00:02Z"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.st.SetDisplayName("alice", "Alice ★", "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	d := decode(t, f.do("GET", "/api/state", nil))
+	for _, ci := range d["challenges"].([]any) {
+		c := ci.(map[string]any)
+		if c["id"] != "01-read-shadow" {
+			continue
+		}
+		det := c["solver_details"].([]any)
+		if len(det) != 2 {
+			t.Fatalf("want 2 solver_details, got %d", len(det))
+		}
+		first := det[0].(map[string]any)
+		if first["user"] != "alice" || first["display_name"] != "Alice ★" {
+			t.Fatalf("first (earliest) solver wrong: %v", first)
+		}
+		second := det[1].(map[string]any)
+		if second["user"] != "bob" || second["display_name"] != "bob" {
+			t.Fatalf("second solver should fall back to username: %v", second)
+		}
+		return
+	}
+	t.Fatal("01-read-shadow not found in /api/state challenges")
+}
+
 func TestHealthz(t *testing.T) {
 	f := newFixture(t, nil)
 	w := f.do("GET", "/healthz", nil)

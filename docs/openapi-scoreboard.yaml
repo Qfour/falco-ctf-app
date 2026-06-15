@@ -323,6 +323,16 @@ components:
               solvers:
                 type: array
                 items: { type: string }
+                description: solver usernames, ranked by solve time
+              solver_details:
+                type: array
+                description: solvers ranked by solve time — powers the per-challenge leaderboard
+                items:
+                  type: object
+                  properties:
+                    user: { type: string }
+                    display_name: { type: string }
+                    at: { type: string, format: date-time }
               first_solver:
                 type: string
                 nullable: true

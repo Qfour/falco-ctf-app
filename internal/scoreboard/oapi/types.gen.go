@@ -52,13 +52,22 @@ type FalcoEvent_OutputFields struct {
 // State defines model for State.
 type State struct {
 	Challenges []struct {
-		ExpectedRules  *[]string            `json:"expectedRules,omitempty"`
-		FirstSolver    *string              `json:"first_solver"`
-		ForbiddenRules *[]string            `json:"forbiddenRules,omitempty"`
-		Id             *string              `json:"id,omitempty"`
-		SolvedCount    *int                 `json:"solved_count,omitempty"`
-		Solvers        *[]string            `json:"solvers,omitempty"`
-		Type           *StateChallengesType `json:"type,omitempty"`
+		ExpectedRules  *[]string `json:"expectedRules,omitempty"`
+		FirstSolver    *string   `json:"first_solver"`
+		ForbiddenRules *[]string `json:"forbiddenRules,omitempty"`
+		Id             *string   `json:"id,omitempty"`
+		SolvedCount    *int      `json:"solved_count,omitempty"`
+
+		// SolverDetails solvers ranked by solve time — powers the per-challenge leaderboard
+		SolverDetails *[]struct {
+			At          *time.Time `json:"at,omitempty"`
+			DisplayName *string    `json:"display_name,omitempty"`
+			User        *string    `json:"user,omitempty"`
+		} `json:"solver_details,omitempty"`
+
+		// Solvers solver usernames, ranked by solve time
+		Solvers *[]string            `json:"solvers,omitempty"`
+		Type    *StateChallengesType `json:"type,omitempty"`
 	} `json:"challenges"`
 	EventsPerUser *map[string]int `json:"events_per_user,omitempty"`
 	Leaderboard   []struct {

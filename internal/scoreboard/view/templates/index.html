@@ -105,6 +105,11 @@
   .challenge { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 0.5rem; padding: 1rem; transition: all 0.2s; position: relative; }
   .challenge:hover { border-color: var(--border-strong); transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3); }
   .challenge.full { border-color: var(--success); background: linear-gradient(135deg, var(--bg-elev) 0%, rgba(189, 247, 139, 0.05) 100%); }
+  .challenge.clickable { cursor: pointer; }
+  .challenge.clickable:hover { border-color: var(--accent); }
+  .detail-head { justify-content: flex-start; gap: 0.85rem; }
+  .detail-head h2 .badge { margin-left: 0.4rem; }
+  .back-btn { margin-top: 0; }
   .challenge .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
   .challenge .num { font-family: 'JetBrains Mono', monospace; color: var(--text-mute); font-size: 0.75rem; font-weight: 600; letter-spacing: 0.05em; }
   .badge { padding: 3px 9px; border-radius: 4px; font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 700; }
@@ -160,9 +165,9 @@
     </div>
   </header>
 
-  <section class="stats" id="stats"></section>
+  <section class="stats home-section" id="stats"></section>
 
-  <section class="panel">
+  <section class="panel home-section">
     <div class="panel-header">
       <h2>Leaderboard</h2>
       <span class="panel-aux" id="lb-meta"></span>
@@ -179,7 +184,7 @@
     </table>
   </section>
 
-  <section class="grid">
+  <section class="grid home-section">
     <div class="panel">
       <div class="panel-header"><h2>Challenges</h2><span class="panel-aux" id="ch-meta"></span></div>
       <div class="challenges" id="challenges"></div>
@@ -188,6 +193,24 @@
       <div class="panel-header"><h2>Recent activity</h2><span class="panel-aux" id="act-meta"></span></div>
       <div class="activity" id="activity"></div>
     </div>
+  </section>
+
+  <!-- Per-challenge leaderboard (shown when a Challenge card is clicked) -->
+  <section class="panel detail-view" id="detail-view" hidden>
+    <div class="panel-header detail-head">
+      <button id="detail-back" class="reset-btn back-btn">← Home</button>
+      <h2 id="detail-title">Challenge</h2>
+      <span class="panel-aux" id="detail-meta"></span>
+    </div>
+    <table>
+      <thead><tr>
+        <th style="width:60px">Rank</th>
+        <th>Participant</th>
+        <th>Solved</th>
+        <th style="text-align:right">After 1st</th>
+      </tr></thead>
+      <tbody id="detail-body"></tbody>
+    </table>
   </section>
 
 <script>
@@ -205,6 +228,16 @@
   }
   function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   function avatarChar(u) { return (u || '?').slice(-1).toUpperCase(); }
+  function fmtDelta(ms) {
+    const s = Math.max(0, Math.round(ms / 1000));
+    if (s < 60) return s + 's';
+    const m = Math.floor(s / 60);
+    if (m < 60) return m + 'm' + (s % 60) + 's';
+    return Math.floor(m / 60) + 'h' + (m % 60) + 'm';
+  }
+
+  let lastState = null;   // latest /api/state, for the detail view
+  let currentCid = null;  // null = home; otherwise the open challenge id
 
   // ---------------- fetch loop ----------------
   async function refresh() {
@@ -219,6 +252,8 @@
   }
 
   function render(d) {
+    lastState = d;
+    if (currentCid) renderDetail();   // keep the open challenge view live
     const totalChal = d.stats.challenges;
     const totalUsers = d.stats.users;
     const maxPossible = totalChal * totalUsers;
@@ -265,7 +300,7 @@
         const rule = c.expectedRules[0] || c.forbiddenRules[0] || '';
         const full = totalUsers > 0 && c.solved_count >= totalUsers ? ' full' : '';
         const prefix = c.type === 'evade' ? '✗ ' : '✓ ';
-        return `<div class="challenge${full}">
+        return `<div class="challenge clickable${full}" data-cid="${esc(c.id)}" role="button" tabindex="0" title="View this challenge's leaderboard">
           <div class="head">
             <span class="num">${esc(num)}</span>
             <span class="badge badge-${c.type}">${c.type}</span>
@@ -303,6 +338,59 @@
     }
     firstRender = false;
   }
+
+  // ---------------- per-challenge leaderboard ----------------
+  function openChallenge(cid) {
+    currentCid = cid;
+    document.querySelectorAll('.home-section').forEach(s => { s.hidden = true; });
+    document.getElementById('detail-view').hidden = false;
+    renderDetail();
+    window.scrollTo(0, 0);
+  }
+  function goHome() {
+    currentCid = null;
+    document.getElementById('detail-view').hidden = true;
+    document.querySelectorAll('.home-section').forEach(s => { s.hidden = false; });
+  }
+  function renderDetail() {
+    if (!lastState || !currentCid) return;
+    const c = (lastState.challenges || []).find(x => x.id === currentCid);
+    if (!c) { goHome(); return; }
+    const rule = c.expectedRules[0] || c.forbiddenRules[0] || '';
+    document.getElementById('detail-title').innerHTML =
+      esc(c.id) + ' <span class="badge badge-' + c.type + '">' + c.type + '</span>';
+    document.getElementById('detail-meta').textContent =
+      c.solver_details.length + ' solved' + (rule ? ' · ' + rule : '');
+    const body = document.getElementById('detail-body');
+    if (!c.solver_details.length) {
+      body.innerHTML = '<tr><td colspan="4" class="empty"><span class="icon">∅</span>Nobody has solved this yet</td></tr>';
+      return;
+    }
+    const firstAt = new Date(c.solver_details[0].at).getTime();
+    body.innerHTML = c.solver_details.map((s, i) => {
+      const rank = i + 1;
+      const rankCls = rank <= 3 ? 'rank-' + rank : '';
+      const delta = rank === 1 ? '🏆 first' : '+' + fmtDelta(new Date(s.at).getTime() - firstAt);
+      return `<tr>
+        <td><span class="rank ${rankCls}">#${rank}</span></td>
+        <td><span class="user-cell"><span class="avatar">${avatarChar(s.display_name || s.user)}</span>${esc(s.display_name || s.user)}</span></td>
+        <td><span class="when" title="${esc(s.at)}">${fmtAgo(s.at)}</span></td>
+        <td style="text-align:right" class="mono">${delta}</td>
+      </tr>`;
+    }).join('');
+  }
+  // Click (or Enter/Space) a challenge card → its leaderboard. Delegated on the
+  // persistent container since cards re-render every poll.
+  document.getElementById('challenges').addEventListener('click', (e) => {
+    const card = e.target.closest('.challenge[data-cid]');
+    if (card) openChallenge(card.dataset.cid);
+  });
+  document.getElementById('challenges').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const card = e.target.closest('.challenge[data-cid]');
+    if (card) { e.preventDefault(); openChallenge(card.dataset.cid); }
+  });
+  document.getElementById('detail-back').addEventListener('click', goHome);
 
   // Admin rename: delegated on the (persistent) tbody since rows re-render.
   document.getElementById('lb-body').addEventListener('click', async (e) => {

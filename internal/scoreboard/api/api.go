@@ -476,14 +476,20 @@ func (h *Handler) buildState() map[string]any {
 		leaderboard[i].Rank = i + 1
 	}
 
+	type chSolver struct {
+		User        string `json:"user"`
+		DisplayName string `json:"display_name"`
+		At          string `json:"at"`
+	}
 	type chStat struct {
-		ID             string   `json:"id"`
-		Type           string   `json:"type"`
-		ExpectedRules  []string `json:"expectedRules"`
-		ForbiddenRules []string `json:"forbiddenRules"`
-		SolvedCount    int      `json:"solved_count"`
-		Solvers        []string `json:"solvers"`
-		FirstSolver    *string  `json:"first_solver"`
+		ID             string     `json:"id"`
+		Type           string     `json:"type"`
+		ExpectedRules  []string   `json:"expectedRules"`
+		ForbiddenRules []string   `json:"forbiddenRules"`
+		SolvedCount    int        `json:"solved_count"`
+		Solvers        []string   `json:"solvers"`
+		SolverDetails  []chSolver `json:"solver_details"` // ranked by solve time; powers the per-challenge leaderboard
+		FirstSolver    *string    `json:"first_solver"`
 	}
 	perChalSolvers := map[string][][2]string{}
 	for k, at := range snap.Solved {
@@ -498,8 +504,10 @@ func (h *Handler) buildState() map[string]any {
 		solvers := perChalSolvers[cid]
 		sort.SliceStable(solvers, func(i, j int) bool { return solvers[i][1] < solvers[j][1] })
 		names := make([]string, 0, len(solvers))
+		details := make([]chSolver, 0, len(solvers))
 		for _, s := range solvers {
 			names = append(names, s[0])
+			details = append(details, chSolver{User: s[0], DisplayName: displayOf(s[0]), At: s[1]})
 		}
 		var first *string
 		if len(solvers) > 0 {
@@ -523,6 +531,7 @@ func (h *Handler) buildState() map[string]any {
 			ForbiddenRules: forbiddenRules,
 			SolvedCount:    len(solvers),
 			Solvers:        names,
+			SolverDetails:  details,
 			FirstSolver:    first,
 		})
 	}
