@@ -282,11 +282,12 @@
   // ---------------- helpers ----------------
   const seen = new Set();
   let firstRender = true;
-  // Solve time as a 24-hour local clock (HH:MM:SS).
+  // Solve time as YYYY/MM/DD hh:mm:ss (24-hour local).
   function fmtTime(iso) {
     const d = new Date(iso);
     const p = n => String(n).padStart(2, '0');
-    return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+    return d.getFullYear() + '/' + p(d.getMonth() + 1) + '/' + p(d.getDate()) + ' ' +
+           p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
   }
   function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   // Progress as one segment per mission; `done` of `total` lit.
