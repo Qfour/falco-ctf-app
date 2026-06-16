@@ -80,5 +80,3 @@ HINT 3 (解答): /dev/tcp + リダイレクト
 
 `<>` / `>&` が socket fd を標準入出力に dup する瞬間に発火する。
 (Mission 10 では逆に、dup を使わず curl 等で済ませて回避する)
-
-参考: REFERENCE.md §3.6

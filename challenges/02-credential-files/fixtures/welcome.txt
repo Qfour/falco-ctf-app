@@ -53,5 +53,3 @@ Falco が見るのは fd.name (開いたパス) なので、`cat` / `less` / `he
 どのコマンドで開いても発火する。
 
 (次の Mission 03 では「同じ中身に別 path で到達して発火を避ける」)
-
-参考: REFERENCE.md §3.1

@@ -79,5 +79,3 @@ HINT 3 (解答): 具体的なコマンド
 
 `-k` / `--no-check-certificate` は self-signed CA 用。応答が
 401/403 でも connect の時点で発火する。
-
-参考: REFERENCE.md §3.4

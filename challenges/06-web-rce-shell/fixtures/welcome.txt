@@ -82,5 +82,3 @@ HINT 3 (解答): httpd 偽装で shell を起こす
 
 (逆に `cp /tmp/httpd /tmp/myscript && /tmp/myscript` のように **別名**
 で動かすと親 comm が変わり発火しない — Mission 10 で使う回避の種)
-
-参考: REFERENCE.md §3.3

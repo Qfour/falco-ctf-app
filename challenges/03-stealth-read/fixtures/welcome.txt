@@ -70,5 +70,3 @@ HINT 3 (解答): /proc/self/root 経由で読む
 `/proc/<pid>/root` はそのプロセスの mount namespace の root を指す
 symlink。fd.name = "/proc/self/root/etc/shadow" は /etc 始まりでない
 → 発火しない。`cat /proc/$$/root/etc/shadow` などでも可。
-
-参考: REFERENCE.md §3.1 / §4

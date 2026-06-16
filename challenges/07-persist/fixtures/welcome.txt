@@ -72,5 +72,3 @@ HINT 3 (解答): 既存 binary をコピーして別 path から実行
 中身は何でもよい (`/bin/sleep` の copy で可)。配置先は image に元々
 無い場所なら `/tmp/x` でも `/root/.cache/sshd` でも可。busybox 系は
 argv[0] チェックがあるので `/bin/sleep` が最も素直に動く。
-
-参考: REFERENCE.md §3.5

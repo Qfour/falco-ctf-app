@@ -73,5 +73,3 @@ HINT 2 (解答): hardlink を張る
 `-s` 無しの `ln` が hardlink。symlink (`ln -s`) は別ルール
 (Create Symlink Over Sensitive Files) なので 09 では発火しない —
 必ず `-s` 無しで。
-
-参考: REFERENCE.md §3.7

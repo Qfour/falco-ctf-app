@@ -54,5 +54,3 @@ HINT 2 (解答): キーワードをコマンドラインに出す
 `id_rsa` / `id_dsa` / `BEGIN ... PRIVATE KEY` 等が cmdline に乗れば発火。
 
 (次の Mission 05 では「cmdline にキーワードを出さずに読む」回避を学ぶ)
-
-参考: REFERENCE.md §3.2
