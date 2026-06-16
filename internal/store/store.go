@@ -42,6 +42,7 @@ type Store struct {
 	db *sql.DB
 
 	solved        map[SolveKey]string // value = ISO-8601 timestamp
+	exfil         map[SolveKey]string // value = exfiltrated flag (collector receipt)
 	eventsPerUser map[string]int
 	ruleFires     map[string][]ruleFire // user -> bounded list (RetentionSeconds)
 	displayNames  map[string]string     // user -> participant-chosen display name
@@ -89,6 +90,13 @@ func Open(path string) (*Store, error) {
           at      TEXT NOT NULL,
           PRIMARY KEY (mission, hint)
         );
+        CREATE TABLE IF NOT EXISTS exfil (
+          user      TEXT NOT NULL,
+          challenge TEXT NOT NULL,
+          flag      TEXT NOT NULL,
+          at        TEXT NOT NULL,
+          PRIMARY KEY (user, challenge)
+        );
         DROP TABLE IF EXISTS events_per_user;
     `); err != nil {
 		db.Close()
@@ -98,6 +106,7 @@ func Open(path string) (*Store, error) {
 	s := &Store{
 		db:            db,
 		solved:        make(map[SolveKey]string),
+		exfil:         make(map[SolveKey]string),
 		eventsPerUser: make(map[string]int),
 		ruleFires:     make(map[string][]ruleFire),
 		displayNames:  make(map[string]string),
@@ -151,15 +160,33 @@ func (s *Store) loadFromDB() error {
 	if err != nil {
 		return err
 	}
-	defer hr.Close()
 	for hr.Next() {
 		var k hintKey
 		if err := hr.Scan(&k.Mission, &k.Hint); err != nil {
+			hr.Close()
 			return err
 		}
 		s.hintReleased[k] = true
 	}
-	return hr.Err()
+	hr.Close()
+	if err := hr.Err(); err != nil {
+		return err
+	}
+
+	ex, err := s.db.Query("SELECT user, challenge, flag FROM exfil")
+	if err != nil {
+		return err
+	}
+	defer ex.Close()
+	for ex.Next() {
+		var k SolveKey
+		var flag string
+		if err := ex.Scan(&k.User, &k.Challenge, &flag); err != nil {
+			return err
+		}
+		s.exfil[k] = flag
+	}
+	return ex.Err()
 }
 
 // ReleaseHint marks (mission, hint) as released to participants, or revokes it
@@ -272,6 +299,33 @@ func (s *Store) MarkSolved(user, challenge, at string) (newly bool, err error) {
 	return true, nil
 }
 
+// RecordExfil records that `user` exfiltrated `flag` for `challenge` at `at`
+// (the collector receipt). Last-write-wins per (user, challenge). Used by the
+// boss capstone: the participant must deliver the flag to the in-cluster
+// collector over HTTP before a submit will be accepted (RequireExfil).
+func (s *Store) RecordExfil(user, challenge, flag, at string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := s.db.Exec(
+		`INSERT INTO exfil (user, challenge, flag, at) VALUES (?, ?, ?, ?)
+		 ON CONFLICT(user, challenge) DO UPDATE SET flag = excluded.flag, at = excluded.at`,
+		user, challenge, flag, at,
+	); err != nil {
+		return err
+	}
+	s.exfil[SolveKey{User: user, Challenge: challenge}] = flag
+	return nil
+}
+
+// HasExfil reports whether `user` has exfiltrated exactly `flag` for
+// `challenge` to the collector.
+func (s *Store) HasExfil(user, challenge, flag string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	got, ok := s.exfil[SolveKey{User: user, Challenge: challenge}]
+	return ok && got == flag
+}
+
 // RuleFire is the public projection of a recorded Falco rule fire.
 // Returned by RecentRuleFires for participant self-service displays.
 type RuleFire struct {
@@ -372,8 +426,12 @@ func (s *Store) Reset() (clearedSolves int, err error) {
 	if _, err := s.db.Exec("DELETE FROM solved"); err != nil {
 		return 0, fmt.Errorf("reset solved: %w", err)
 	}
+	if _, err := s.db.Exec("DELETE FROM exfil"); err != nil {
+		return 0, fmt.Errorf("reset exfil: %w", err)
+	}
 	clearedSolves = len(s.solved)
 	s.solved = make(map[SolveKey]string)
+	s.exfil = make(map[SolveKey]string)
 	s.eventsPerUser = make(map[string]int)
 	s.ruleFires = make(map[string][]ruleFire)
 	return clearedSolves, nil
