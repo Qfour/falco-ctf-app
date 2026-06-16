@@ -68,39 +68,36 @@ file すべてに適用するのが本筋:
   /opt/ctf/submit.sh
 
 ────────────────────────────────────────────────────────────────────
-HINT 1 (易): 断片は 3 つ、場所は判っている
+HINT 1 (気付き): 1 つのトリックでは届かない
 ────────────────────────────────────────────────────────────────────
 
-  /etc/shadow                → # CTF_FRAGMENT_1:
-  /etc/sudoers               → # CTF_FRAGMENT_2:
-  /root/.ssh/authorized_keys → # CTF_FRAGMENT_3:
-
-どれも sensitive file。普通に cat すれば 1 つ目の断片で即 fail。
+断片は 3 つ、いずれも sensitive file の中。普通に読めば 1 つ目で
+即 fail。Mission 03 で学んだ「パスを変えれば Read ルールをすり抜け
+られる」発想を、3 ファイルすべてに使えないか?
 
 ────────────────────────────────────────────────────────────────────
-HINT 2 (中): Mission 03 のテクニックを 3 回
+HINT 2 (概要): Mission 03 を 3 回 + 近道は封鎖されている
 ────────────────────────────────────────────────────────────────────
 
-Read sensitive file untrusted は fd.name (open に渡した path) で判定。
-/proc/self/root を噛ませれば /etc 始まりにならず発火しない:
+Read sensitive file untrusted は fd.name で判定 → /proc/self/root を
+噛ませて 3 ファイルを静かに読む。hardlink で /tmp に逃がす近道
+(Mission 09) は今回 **禁止ルール** なので使えない。入力リダイレクト
+(Mission 05) は open path が /etc のままなので Read には無力。
+
+────────────────────────────────────────────────────────────────────
+HINT 3 (解答): 回収 → 連結 → 30 秒待つ → submit
+────────────────────────────────────────────────────────────────────
 
   for f in etc/shadow etc/sudoers root/.ssh/authorized_keys; do
     cat /proc/self/root/$f
   done | grep CTF_FRAGMENT
 
-hardlink (Mission 09) で /tmp に逃がす手は今回 **禁止ルール** なので使えない。
-入力リダイレクト (Mission 05) は cmdline は隠せるが open path は
-/etc のままなので Read ルールには無力 — 必ず /proc/self/root を使う。
+表示された FRAGMENT_1 / _2 / _3 を順に連結し `FALCO{...}` で囲む。
+**30 秒** 何もせず待ってから (過去の発火を window から抜く):
 
-────────────────────────────────────────────────────────────────────
-HINT 3 (難): 組み立てて、静かに待って、出す
-────────────────────────────────────────────────────────────────────
+  source /opt/ctf/submit.sh
+  submit 10-final-exfil 'FALCO{...}'
 
-  1. 上記 1 行で 3 断片を回収
-  2. 表示された FRAGMENT_1 / _2 / _3 を順に連結し FALCO{...} で囲む
-  3. **30 秒** 何もせず待つ (過去の rule fire を window から抜く)
-  4. submit 10-final-exfil 'FALCO{...}'
-
-断片を 1 つでも取りこぼすと flag mismatch。3 つ揃えてから組み立てること。
+断片を 1 つでも取りこぼすと flag mismatch。3 つ揃えてから組み立てる。
 
 参考: REFERENCE.md §3 全般 / §6
