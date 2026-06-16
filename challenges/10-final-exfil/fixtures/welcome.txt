@@ -96,5 +96,3 @@ HINT 3 (解答): 読む → curl で exfil → 30 秒 → submit
   # 3) 30 秒何もせず待ってから提出
   source /opt/ctf/submit.sh
   submit 10-final-exfil "${FLAG}"
-
-参考: REFERENCE.md §3 全般 / §6

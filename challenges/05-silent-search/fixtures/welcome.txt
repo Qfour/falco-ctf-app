@@ -58,5 +58,3 @@ HINT 3 (解答): 入力リダイレクト
 
 shell が `<` でファイルを開き stdin に渡すので、子プロセス `cat` の
 cmdline は **"cat" のみ**。引数に "id_rsa" が現れない。
-
-参考: REFERENCE.md §3.2
