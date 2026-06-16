@@ -8,6 +8,9 @@
 //	forbiddenRules:[]string  — submission rejected if any fired in the last windowSeconds
 //	expectedFlag:  string (required for "evade"; must match FALCO{...})
 //	windowSeconds: int (default 10)
+//	requireExfil:  bool — evade only; solve also requires the user to have
+//	               exfiltrated the correct flag to the collector
+//	               (POST /api/challenges/{cid}/exfil) before submitting.
 package catalog
 
 import (
@@ -29,6 +32,7 @@ type Challenge struct {
 	ForbiddenRules []string `yaml:"forbiddenRules"`
 	ExpectedFlag   string   `yaml:"expectedFlag"`
 	WindowSeconds  int      `yaml:"windowSeconds"`
+	RequireExfil   bool     `yaml:"requireExfil"`
 }
 
 type Catalog map[string]Challenge
