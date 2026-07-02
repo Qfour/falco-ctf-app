@@ -64,6 +64,15 @@ jobs:
   # Image pipeline (build → scan → push) per service
   # Branch protection checks: "build (scoreboard)", "build (auth-policy)", etc.
   # Push: main branch and v* tags only. PRs run build+scan only.
+  #
+  # Publish gating (CI-free prod, 2026-06-15 決定): image push / chart publish
+  # は vars.ECR_REGISTRY が実値のときのみ実行 (未設定 or PLACEHOLDER = skip)。
+  # prod は charts=local clone / images=手動 build+push で運用中。
+  # publish を復活させる手順:
+  #   1. GitHub repo vars: ECR_REGISTRY=<account>.dkr.ecr.<region>.amazonaws.com,
+  #      AWS_REGION=<region>
+  #   2. GitHub repo secret: AWS_ROLE_ARN (GitHub OIDC trust を持つ IAM role)
+  #   3. AWS 側: OIDC identity provider + ECR push 権限の role を作成
   # ------------------------------------------------------------------
   build:
     name: build (${{ matrix.name }})
@@ -91,12 +100,16 @@ jobs:
             context: .
             dockerfile: images/challenge/Dockerfile
             scan-continue-on-error: false
+          - name: docs
+            context: .
+            dockerfile: images/docs/Dockerfile
+            scan-continue-on-error: false
     uses: Qfour/homelab-workflows/.github/workflows/image-pipeline.yaml@main
     with:
       name: ${{ matrix.name }}
       context: ${{ matrix.context }}
       dockerfile: ${{ matrix.dockerfile }}
-      push: ${{ github.event_name == 'push' }}
+      push: ${{ github.event_name == 'push' && vars.ECR_REGISTRY != '' && !contains(vars.ECR_REGISTRY, 'PLACEHOLDER') }}
       registry: ${{ vars.ECR_REGISTRY }}
       aws-region: ${{ vars.AWS_REGION }}
       scan-continue-on-error: ${{ matrix.scan-continue-on-error }}
@@ -110,8 +123,10 @@ jobs:
   # (Invariant I5). Push only on main / v* tags. Chart version is a SemVer
   # prerelease pinned to the SHA so prod can pin an immutable artifact.
   # ------------------------------------------------------------------
+  # Skipped while vars.ECR_REGISTRY is unset/placeholder (CI-free prod) —
+  # 復活手順は build job のコメント参照。
   publish-charts:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && vars.ECR_REGISTRY != '' && !contains(vars.ECR_REGISTRY, 'PLACEHOLDER')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -133,7 +148,7 @@ jobs:
           SHA="$(git rev-parse --short HEAD)"
           VERSION="0.1.0-${SHA}"
           REG="${{ vars.ECR_REGISTRY }}"
-          for c in scoreboard auth-policy ctf-user; do
+          for c in scoreboard auth-policy ctf-user docs; do
             # ECR repositories are not auto-created; ensure charts/<c> exists.
             aws ecr describe-repositories --repository-names "charts/${c}" --region "${{ vars.AWS_REGION }}" >/dev/null 2>&1 \
               || aws ecr create-repository --repository-name "charts/${c}" --region "${{ vars.AWS_REGION }}" >/dev/null
