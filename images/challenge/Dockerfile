@@ -5,7 +5,7 @@
 # the Helm chart's ConfigMap for legacy single-mission deploys, but
 # all-missions mode reads from the image-baked /opt/ctf/missions/
 # directory below.
-FROM alpine:3.20
+FROM alpine:3.22
 
 # Tools commonly required by Falco-detection-style CTF challenges.
 RUN apk add --no-cache \
