@@ -6,8 +6,9 @@
 # 来ないままイベント準備に入りかけた。イベント前チェックリスト
 # (platform 側 preflight-event.sh) と定期実行から呼ぶ。
 #
-# Requires network access to endoflife.date. SKIP_FRESHNESS=1 で bypass 可
-# (オフライン開発用)。イベント前チェックでは skip しないこと。
+# Requires network access to endoflife.date.
+# Exit codes: 0 = all OK, 1 = EOL/unknown cycle detected, 2 = network/data error.
+# SKIP_FRESHNESS=1 は offline 開発時のみ使用可。イベント前チェックでは不可。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -16,10 +17,9 @@ if [ "${SKIP_FRESHNESS:-0}" = "1" ]; then
   exit 0
 fi
 
-# heredoc が stdin を占有するため、FROM 行は env 変数で渡す
-FROM_LINES="$(grep -h '^FROM ' \
-    scoreboard/Dockerfile auth-policy/Dockerfile images/*/Dockerfile \
-    Dockerfile.test Dockerfile.tidy Dockerfile.gen)"
+# 対象 Dockerfile は git 管理下の全 Dockerfile を自動発見 (新規追加のすり抜け防止)。
+# heredoc が stdin を占有するため、FROM 行は env 変数で渡す。
+FROM_LINES="$(git ls-files '*Dockerfile*' | xargs grep -h '^FROM ')"
 export FROM_LINES
 
 python3 - <<'PY'
@@ -44,8 +44,15 @@ def eol_of(product, cycle):
             with urllib.request.urlopen(url, timeout=15) as r:
                 cache[product] = {row['cycle']: row.get('eol') for row in json.load(r)}
         except OSError as e:
-            sys.exit(f'check-freshness: cannot reach {url} ({e}); '
-                     'set SKIP_FRESHNESS=1 to bypass offline')
+            print(f'check-freshness: cannot reach {url} ({e}); '
+                  'SKIP_FRESHNESS=1 は offline 開発時のみ。'
+                  'イベント前チェックでは不可', file=sys.stderr)
+            sys.exit(2)
+        except json.JSONDecodeError as e:
+            print(f'check-freshness: invalid JSON from {url} ({e}); '
+                  'SKIP_FRESHNESS=1 は offline 開発時のみ。'
+                  'イベント前チェックでは不可', file=sys.stderr)
+            sys.exit(2)
     return cache[product].get(cycle)
 
 seen, failed = set(), False
@@ -60,7 +67,12 @@ for line in os.environ['FROM_LINES'].splitlines():
         if eol is False:
             print(f'OK    {product} {cycle} (supported, no EOL date yet)')
         elif eol is None:
-            print(f'WARN  {product} {cycle}: cycle not found on endoflife.date')
+            # fail-closed: 未知の cycle は typo か EOL 済みで一覧から消えた可能性
+            print(f'FAIL  {product} {cycle}: cycle not found on endoflife.date')
+            failed = True
+        elif eol is True:
+            print(f'FAIL  {product} {cycle}: already EOL (no date)')
+            failed = True
         else:
             d = date.fromisoformat(eol)
             if d <= date.today():

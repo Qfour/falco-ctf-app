@@ -159,7 +159,7 @@ pipeline-only 環境では SysQL の findings API が空。
 | helm lint + template | Stop hook 自動 | PR blocking (chart-lint) |
 | flag/values hygiene | pre-commit hook | PR blocking (flag-guard) |
 | image build | `make build` (scan に内包) | 全 PR |
-| CVE scan | `make scan` — 主チェック | PR blocking (ttyd は暫定除外) |
+| CVE scan | `make scan` — 主チェック | PR blocking |
 | image push | なし | main マージ・tag push のみ |
 
 ローカルの `make scan` が事実上の最終ゲート。CI scan は安全網。

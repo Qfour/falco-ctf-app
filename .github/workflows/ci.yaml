@@ -73,6 +73,8 @@ jobs:
   #      AWS_REGION=<region>
   #   2. GitHub repo secret: AWS_ROLE_ARN (GitHub OIDC trust を持つ IAM role)
   #   3. AWS 側: OIDC identity provider + ECR push 権限の role を作成
+  # 注意: 再利用 workflow は `falco-ctf-<name>` (ハイフン) に push するが、platform
+  # helmfile は `falco-ctf/<name>` (スラッシュ) を期待。復活時は naming を両リポ同時 PR で整合させること。
   # ------------------------------------------------------------------
   build:
     name: build (${{ matrix.name }})
@@ -155,4 +157,4 @@ jobs:
             helm package "charts/${c}" --version "${VERSION}" --app-version "${SHA}"
             helm push "${c}-${VERSION}.tgz" "oci://${REG}/charts"
           done
-          echo "published charts at version ${VERSION} → oci://${REG}/charts/{scoreboard,auth-policy,ctf-user}"
+          echo "published charts at version ${VERSION} → oci://${REG}/charts/{scoreboard,auth-policy,ctf-user,docs}"
