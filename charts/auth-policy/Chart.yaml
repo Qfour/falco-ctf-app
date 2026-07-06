@@ -3,4 +3,5 @@ name: auth-policy
 description: Falco CTF auth-policy — host↔email binding gate on the auth hot path
 type: application
 version: 0.1.0
+# appVersion is set at publish time to the falco-ctf-app git SHA (Invariant I4/I5).
 appVersion: "0.0.0"
