@@ -1,5 +1,5 @@
 ┌──────────────────────────────────────────────────────────────────┐
-│ Operation NimbusBreach · Mission 04 — Key Search                 │
+│ CTF Company · Mission 04 — Key Search                            │
 │ Type: TRIGGER · 難易度: ★★☆☆☆                                    │
 │ 目標 Falco ルール: "Search Private Keys or Passwords"             │
 └──────────────────────────────────────────────────────────────────┘
@@ -37,25 +37,20 @@ movement には SSH 鍵 / AWS credential のほうが便利。
   /opt/ctf/missions/04-key-search/fixtures/welcome.txt  ← このファイル
 
 ────────────────────────────────────────────────────────────────────
-HINT 1 (易): キーワード
+HINT 1 (気付き): 「探す行為」そのものが見られている
 ────────────────────────────────────────────────────────────────────
 
-`id_rsa` / `id_dsa` / `BEGIN.*PRIVATE KEY` 等のキーワードを
-**コマンドラインに含めれば** 発火する。
+攻撃者は shadow の次に SSH 秘密鍵や API キーを探す。Falco は
+`find` / `grep` で「鍵っぽい名前」を探すコマンドラインを見ている —
+**そのファイルが実在するか・結果が空かは無関係**。
 
 ────────────────────────────────────────────────────────────────────
-HINT 2 (中): いろいろ試す
+HINT 2 (解答): キーワードをコマンドラインに出す
 ────────────────────────────────────────────────────────────────────
 
-  find /tmp -iname id_rsa                              # 発火
-  grep -rE 'BEGIN.*PRIVATE KEY' /etc 2>/dev/null        # 発火
-  find / -name id_rsa 2>/dev/null                      # 発火
+  find / -name id_rsa 2>/dev/null
+  grep -rE 'BEGIN.*PRIVATE KEY' /etc 2>/dev/null
 
-────────────────────────────────────────────────────────────────────
-HINT 3 (Mission 05 への伏線)
-────────────────────────────────────────────────────────────────────
+`id_rsa` / `id_dsa` / `BEGIN ... PRIVATE KEY` 等が cmdline に乗れば発火。
 
-「cmdline に id_rsa を出さない」方法は何種類ある? — 次の Mission 05
-の核心。今は雑に find を投げて検知を体験するだけで OK。
-
-参考: REFERENCE.md §3.2
+(次の Mission 05 では「cmdline にキーワードを出さずに読む」回避を学ぶ)

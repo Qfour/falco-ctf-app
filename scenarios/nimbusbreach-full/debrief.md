@@ -1,4 +1,4 @@
-# NimbusBreach — 解説 (全 10 ミッション)
+# CTF Company — 解説 (全 10 ミッション)
 
 正準 01→10 の順に「実際の攻撃キャンペーン → Falco がどう捕まえたか → 本番防御」
 で振り返る。`REFERENCE.md §3` に各ルールの実 condition。

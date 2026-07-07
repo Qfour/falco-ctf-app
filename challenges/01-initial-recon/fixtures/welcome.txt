@@ -1,5 +1,5 @@
 ┌──────────────────────────────────────────────────────────────────┐
-│ Operation NimbusBreach · Mission 01 — Initial Recon              │
+│ CTF Company · Mission 01 — Initial Recon                         │
 │ Type: TRIGGER · 難易度: ★☆☆☆☆ (入門)                              │
 │ 目標 Falco ルール: "Contact K8S API Server From Container"        │
 └──────────────────────────────────────────────────────────────────┘
@@ -16,10 +16,10 @@ display name に置き換わる。1〜32 文字、`< > & " '` と制御文字は
 
 # シナリオ
 
-NimbusCorp の Web フロントエンドの SSRF 脆弱性を突き、ようやく Pod
+CTF Company の Web フロントエンドの SSRF 脆弱性を突き、ようやく Pod
 内部に侵入した。最初の一手は環境把握 — Kubernetes クラスタの
 **API server に話しかけて何が動いているかを探る**。
-だが NimbusCorp のクラスタには Falco がいる。**ServiceAccount を
+だが CTF Company のクラスタには Falco がいる。**ServiceAccount を
 持たない pod からの API access は即検知される** ことを身をもって
 学べ。
 
@@ -52,29 +52,30 @@ curl が SA token を持たないので response は 401 / 403 になるが、
   /opt/ctf/missions/01-initial-recon/fixtures/welcome.txt  ← このファイル
 
 ────────────────────────────────────────────────────────────────────
-HINT 1 (易): API host
+HINT 1 (気付き): どこに「問い合わせ窓口」があるか
 ────────────────────────────────────────────────────────────────────
 
-cluster 内部からは `kubernetes.default.svc` で API server に到達
-できる (in-cluster DNS)。HTTPS で 443 番。
+侵入直後の攻撃者がまず知りたいのは「ここはどんなクラスタか」。
+Kubernetes には全 Pod から見える「問い合わせ窓口」が必ず 1 つある。
+その窓口に話しかける行為そのものを Falco は見ている — まずは
+その窓口が何で、どう到達するのかを考えてみよう。
 
 ────────────────────────────────────────────────────────────────────
-HINT 2 (中): 試すコマンド例
+HINT 2 (概要): SA トークンが無くても connect は通る
+────────────────────────────────────────────────────────────────────
+
+クラスタ内の Pod は in-cluster DNS で API server に到達できる。
+ServiceAccount トークンが無ければ応答は 401/403 になるが、
+**TCP connect 自体は成立** し、その connect syscall をルールが捕まえる。
+HTTPS (443) で話しかけてみよう。
+
+────────────────────────────────────────────────────────────────────
+HINT 3 (解答): 具体的なコマンド
 ────────────────────────────────────────────────────────────────────
 
   curl -sk https://kubernetes.default.svc/api          # JSON 一覧
   curl -sk https://kubernetes.default.svc/version       # version 確認
   wget -q -O- --no-check-certificate https://kubernetes.default.svc/
 
-`-k` / `--no-check-certificate` は self-signed CA 用。
-
-────────────────────────────────────────────────────────────────────
-HINT 3 (発展): なぜ正規 workload は発火しないのか
-────────────────────────────────────────────────────────────────────
-
-Falco は `k8s_containers` macro でシステム pod (kube-proxy, coredns,
-等) を除外している。さらに `user_known_contact_k8s_api_server_
-activities` で組織側の例外を足せる。**未知の pod からの API
-connect** だけが残る。
-
-参考: REFERENCE.md §3.4
+`-k` / `--no-check-certificate` は self-signed CA 用。応答が
+401/403 でも connect の時点で発火する。

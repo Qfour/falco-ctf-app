@@ -40,6 +40,14 @@ func newFixture(t *testing.T, now func() time.Time) *fixture {
 			ExpectedFlag:   "FALCO{ok}",
 			WindowSeconds:  10,
 		},
+		"03-exfil": catalog.Challenge{
+			ID:             "03-exfil",
+			Type:           "evade",
+			ForbiddenRules: []string{"Read sensitive file untrusted"},
+			ExpectedFlag:   "FALCO{boss}",
+			WindowSeconds:  10,
+			RequireExfil:   true,
+		},
 	}
 	st, err := store.Open(filepath.Join(t.TempDir(), "scoreboard.db"))
 	if err != nil {
@@ -380,6 +388,55 @@ func TestSubmit_CorrectFlag_NoForbiddenFires_Solves(t *testing.T) {
 	}
 }
 
+func TestSubmit_RequireExfil_WithoutExfil_NotSolved(t *testing.T) {
+	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+	f := newFixture(t, func() time.Time { return now })
+	// Correct flag, clean window, but the user never exfiltrated to the collector.
+	w := f.do("POST", "/api/challenges/03-exfil/submit", map[string]any{"user": "alice", "flag": "FALCO{boss}"})
+	m := decode(t, w)
+	if m["correct"] != true || m["evaded"] != true {
+		t.Fatalf("flag correct + window clean expected: %v", m)
+	}
+	if m["exfiltrated"] != false || m["solved"] == true {
+		t.Fatalf("expected exfiltrated=false and not solved: %v", m)
+	}
+}
+
+func TestSubmit_RequireExfil_AfterExfil_Solves(t *testing.T) {
+	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+	f := newFixture(t, func() time.Time { return now })
+	// Deliver to the collector first, then submit.
+	we := f.do("POST", "/api/challenges/03-exfil/exfil", map[string]any{"user": "alice", "flag": "FALCO{boss}"})
+	if me := decode(t, we); me["received"] != true {
+		t.Fatalf("expected exfil received: %v", me)
+	}
+	w := f.do("POST", "/api/challenges/03-exfil/submit", map[string]any{"user": "alice", "flag": "FALCO{boss}"})
+	m := decode(t, w)
+	if m["correct"] != true || m["evaded"] != true || m["solved"] != true {
+		t.Fatalf("expected solved after exfil: %v", m)
+	}
+}
+
+func TestExfil_WrongFlagRecorded_SubmitStillBlocked(t *testing.T) {
+	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+	f := newFixture(t, func() time.Time { return now })
+	// Exfiltrate a value that does not match the real flag.
+	f.do("POST", "/api/challenges/03-exfil/exfil", map[string]any{"user": "alice", "flag": "FALCO{wrong}"})
+	w := f.do("POST", "/api/challenges/03-exfil/submit", map[string]any{"user": "alice", "flag": "FALCO{boss}"})
+	m := decode(t, w)
+	if m["exfiltrated"] != false || m["solved"] == true {
+		t.Fatalf("mismatched exfil must not satisfy the gate: %v", m)
+	}
+}
+
+func TestExfil_NotRequired_Rejected(t *testing.T) {
+	f := newFixture(t, nil)
+	w := f.do("POST", "/api/challenges/02-evade/exfil", map[string]any{"user": "alice", "flag": "FALCO{ok}"})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("exfil on a non-exfil challenge should be 400, got %d", w.Code)
+	}
+}
+
 func TestSubmit_CorrectFlag_WithRecentForbiddenFire_NotSolved(t *testing.T) {
 	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
 	f := newFixture(t, func() time.Time { return now })
@@ -510,7 +567,7 @@ func TestUserMe_NoActivity_ReturnsEmptyShape(t *testing.T) {
 	if m["solved_count"].(float64) != 0 {
 		t.Errorf("solved_count: %v", m["solved_count"])
 	}
-	if m["total_challenges"].(float64) != 2 {
+	if m["total_challenges"].(float64) != 3 {
 		t.Errorf("total_challenges: %v", m["total_challenges"])
 	}
 	// next_unsolved should be the first catalog id ("01-read-shadow" or

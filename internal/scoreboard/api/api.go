@@ -78,6 +78,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/admin/hints", h.releaseHint)
 	submitMW := h.submitLimiter.Middleware(ratelimit.ClientIP)
 	mux.Handle("POST /api/challenges/{cid}/submit", submitMW(http.HandlerFunc(h.submit)))
+	mux.Handle("POST /api/challenges/{cid}/exfil", submitMW(http.HandlerFunc(h.exfil)))
 	dnMW := h.displayNameLimiter.Middleware(ratelimit.ClientIP)
 	mux.Handle("POST /api/users/{user}/display-name", dnMW(http.HandlerFunc(h.setDisplayName)))
 }
@@ -287,6 +288,21 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	if ch.RequireExfil && !h.store.HasExfil(user, cid, flag) {
+		metrics.SubmissionsTotal.WithLabelValues(cid, "not_exfiltrated").Inc()
+		auditLog("not_exfiltrated", "user", user)
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"correct":     true,
+			"evaded":      true,
+			"exfiltrated": false,
+			"reason": fmt.Sprintf(
+				"flag is correct and the window is clean, but %q has not exfiltrated it to the collector yet. "+
+					"Deliver the flag over HTTP first: POST /api/challenges/%s/exfil — then submit.",
+				user, cid,
+			),
+		})
+		return
+	}
 	at := h.now().UTC().Format(time.RFC3339Nano)
 	newly, err := h.store.MarkSolved(user, cid, at)
 	if err != nil {
@@ -303,6 +319,67 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 		"solved":       true,
 		"user":         user,
 		"display_name": h.store.DisplayName(user),
+	})
+}
+
+// --- exfil collector --------------------------------------------------------
+
+// exfil is the drop-server endpoint for the boss capstone. The participant
+// must deliver the flag here over HTTP (curl) before submitting; this is what
+// forces the quiet-exfil lesson — a reverse shell (Run/C2 rules) can't reach an
+// HTTP collector, and dropping a custom exfil tool trips Drop-and-execute. The
+// receipt is keyed to the claimed user (same trust model as /submit: identity
+// is claimed, never proven — logged for traceability). The flag is matched at
+// submit time (RequireExfil), so a wrong value recorded here simply fails there.
+func (h *Handler) exfil(w http.ResponseWriter, r *http.Request) {
+	cid := r.PathValue("cid")
+	auditLog := func(outcome string, extra ...any) {
+		fields := []any{"cid", cid, "remote_addr", r.RemoteAddr, "outcome", outcome}
+		fields = append(fields, extra...)
+		h.logger.Info("exfil", fields...)
+	}
+
+	ch, ok := h.cat[cid]
+	if !ok {
+		auditLog("unknown_challenge")
+		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"error": "unknown challenge: " + cid})
+		return
+	}
+	if !ch.RequireExfil {
+		auditLog("exfil_not_required")
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": cid + " does not accept exfil"})
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
+	var req struct {
+		User string `json:"user"`
+		Flag string `json:"flag"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		auditLog("bad_request", "err", err.Error())
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	user := strings.TrimSpace(req.User)
+	flag := strings.TrimSpace(req.Flag)
+	if user == "" || flag == "" {
+		auditLog("bad_request", "reason", "missing user or flag")
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "user and flag required"})
+		return
+	}
+
+	at := h.now().UTC().Format(time.RFC3339Nano)
+	if err := h.store.RecordExfil(user, cid, flag, at); err != nil {
+		h.logger.Error("record exfil", "err", err, "user", user, "cid", cid)
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "could not record exfil"})
+		return
+	}
+	auditLog("received", "user", user)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"received": true,
+		"user":     user,
+		"note":     "collector received the data. Now submit the flag (a clean 30s window is still required).",
 	})
 }
 
@@ -456,7 +533,7 @@ func (h *Handler) buildState() map[string]any {
 
 	// Catalog membership — filters out stale solves whose challenge id was
 	// renamed or removed (e.g. early-prototype `01-read-shadow` still in the
-	// SQLite after the NimbusBreach rewrite). Without this the leaderboard
+	// SQLite after the 10-mission rewrite). Without this the leaderboard
 	// can credit users for retired challenges and report SOLVED 15/10.
 	idSet := make(map[string]struct{}, len(ids))
 	for _, cid := range ids {
