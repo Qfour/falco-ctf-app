@@ -16,17 +16,17 @@
       "enabled": true
     },
     {
-      "techniqueID": "T1003",
+      "techniqueID": "T1003.008",
       "score": 100,
       "color": "#e60d0d",
-      "comment": "02-credential-files Credential Files — OS Credential Dumping",
+      "comment": "02-credential-files Credential Files — OS Credential Dumping: /etc/passwd and /etc/shadow",
       "enabled": true
     },
     {
-      "techniqueID": "T1622",
+      "techniqueID": "T1006",
       "score": 100,
       "color": "#e60d0d",
-      "comment": "03-stealth-read Stealth Read — Debugger Evasion",
+      "comment": "03-stealth-read Stealth Read — Direct Volume Access",
       "enabled": true
     },
     {
@@ -37,31 +37,31 @@
       "enabled": true
     },
     {
-      "techniqueID": "T1027",
+      "techniqueID": "T1202",
       "score": 100,
       "color": "#e60d0d",
-      "comment": "05-silent-search Silent Search — Obfuscated Files or Information",
+      "comment": "05-silent-search Silent Search — Indirect Command Execution",
       "enabled": true
     },
     {
-      "techniqueID": "T1059",
+      "techniqueID": "T1059.004",
       "score": 100,
       "color": "#e60d0d",
-      "comment": "06-web-rce-shell Web RCE Shell — Command and Scripting Interpreter",
+      "comment": "06-web-rce-shell Web RCE Shell — Command and Scripting Interpreter: Unix Shell",
       "enabled": true
     },
     {
-      "techniqueID": "T1546",
+      "techniqueID": "T1204.002",
       "score": 100,
       "color": "#e60d0d",
-      "comment": "07-persist Persist — Event Triggered Execution",
+      "comment": "07-persist Persist — User Execution: Malicious File",
       "enabled": true
     },
     {
-      "techniqueID": "T1071",
+      "techniqueID": "T1095",
       "score": 100,
       "color": "#e60d0d",
-      "comment": "08-c2-beacon C2 Beacon — Application Layer Protocol",
+      "comment": "08-c2-beacon C2 Beacon — Non-Application Layer Protocol",
       "enabled": true
     },
     {

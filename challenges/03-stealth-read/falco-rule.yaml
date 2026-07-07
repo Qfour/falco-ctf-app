@@ -8,7 +8,11 @@ forbiddenRules:
 expectedFlag: FALCO{dev-stealth-read}
 windowSeconds: 10
 # ATT&CK mapping — canonical source for docs/Navigator layer (make gen-attack).
+# T1006: evade twin of 02. Reaching /etc/shadow via /proc/self/root/... bypasses
+# the path-string file monitor — accessing the same data through an alternate path
+# to defeat file-access monitoring is Direct Volume Access. (T1622 Debugger Evasion
+# is unrelated: this evades a Falco file rule, not a debugger.)
 attack:
   tactic: "Defense Evasion"
-  techniqueId: "T1622"
-  techniqueName: "Debugger Evasion"
+  techniqueId: "T1006"
+  techniqueName: "Direct Volume Access"

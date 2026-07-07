@@ -3,7 +3,9 @@ type: trigger
 expectedRules:
   - Read sensitive file untrusted
 # ATT&CK mapping — canonical source for docs/Navigator layer (make gen-attack).
+# T1003.008: rule fires on reading /etc/shadow (& /etc/passwd) specifically —
+# narrower than parent T1003, which spans LSASS/proc-based dumping we don't cover.
 attack:
   tactic: "Credential Access"
-  techniqueId: "T1003"
-  techniqueName: "OS Credential Dumping"
+  techniqueId: "T1003.008"
+  techniqueName: "OS Credential Dumping: /etc/passwd and /etc/shadow"
