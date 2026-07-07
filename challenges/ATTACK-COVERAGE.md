@@ -10,13 +10,13 @@ MITRE ATT&CK Enterprise (v15) 対応表。Navigator レイヤは `attack-navigat
 | # | Mission | Tactic | Technique | Technique 名 |
 |---|---|---|---|---|
 | 01 | Initial Recon | Discovery | `T1082` | System Information Discovery |
-| 02 | Credential Files | Credential Access | `T1003` | OS Credential Dumping |
-| 03 | Stealth Read | Defense Evasion | `T1622` | Debugger Evasion |
+| 02 | Credential Files | Credential Access | `T1003.008` | OS Credential Dumping: /etc/passwd and /etc/shadow |
+| 03 | Stealth Read | Defense Evasion | `T1006` | Direct Volume Access |
 | 04 | Key Search | Credential Access | `T1552.001` | Unsecured Credentials: Credentials In Files |
-| 05 | Silent Search | Defense Evasion | `T1027` | Obfuscated Files or Information |
-| 06 | Web RCE Shell | Execution | `T1059` | Command and Scripting Interpreter |
-| 07 | Persist | Persistence | `T1546` | Event Triggered Execution |
-| 08 | C2 Beacon | Command and Control | `T1071` | Application Layer Protocol |
+| 05 | Silent Search | Defense Evasion | `T1202` | Indirect Command Execution |
+| 06 | Web RCE Shell | Execution | `T1059.004` | Command and Scripting Interpreter: Unix Shell |
+| 07 | Persist | Execution | `T1204.002` | User Execution: Malicious File |
+| 08 | C2 Beacon | Command and Control | `T1095` | Non-Application Layer Protocol |
 | 09 | Hidden Cache | Defense Evasion | `T1564` | Hide Artifacts |
 | 10 | The Final Exfil (Boss) | Exfiltration | `T1041` | Exfiltration Over C2 Channel |
 

@@ -136,18 +136,22 @@ submit <mission-id> 'FALCO{...}'
 trigger でルールを理解 → evade で同じルールを回避 のサイクルを
 5 回繰り返して、最後に **複合回避の Boss (Mission 10)** が待つ。
 
-| # | Mission | 種類 | 難易度 | ATT&CK | Falco ルール |
-|---|---|---|---|---|---|
-| **01** | Initial Recon | trigger | ★☆☆☆☆ | T1082 Discovery | `Contact K8S API Server From Container` |
-| **02** | Credential Files | trigger | ★☆☆☆☆ | T1003 Credential Dumping | `Read sensitive file untrusted` |
-| **03** | Stealth Read | evade | ★★☆☆☆ | T1622 Debugger Evasion | (02 の回避) |
-| **04** | Key Search | trigger | ★★☆☆☆ | T1552.001 Credentials In Files | `Search Private Keys or Passwords` |
-| **05** | Silent Search | evade | ★★★☆☆ | T1027 Obfuscation | (04 の回避) |
-| **06** | Web RCE Shell | trigger | ★★★☆☆ | T1059 Execution | `Run shell untrusted` |
-| **07** | Persist | trigger | ★★★☆☆ | T1546 Persistence | `Drop and execute new binary in container` |
-| **08** | C2 Beacon | trigger | ★★★★☆ | T1071 Command and Control | `Redirect STDOUT/STDIN to Network Connection` |
-| **09** | Hidden Cache | trigger | ★★★★☆ | T1564 Hide Artifacts | `Create Hardlink Over Sensitive Files` |
-| **10** | The Final Exfil ★ BOSS ★ | evade | ★★★★★ | T1041 Exfiltration | **上記 7 ルールを同時回避** |
+| # | Mission | 種類 | 難易度 | Falco ルール |
+|---|---|---|---|---|
+| **01** | Initial Recon | trigger | ★☆☆☆☆ | `Contact K8S API Server From Container` |
+| **02** | Credential Files | trigger | ★☆☆☆☆ | `Read sensitive file untrusted` |
+| **03** | Stealth Read | evade | ★★☆☆☆ | (02 の回避) |
+| **04** | Key Search | trigger | ★★☆☆☆ | `Search Private Keys or Passwords` |
+| **05** | Silent Search | evade | ★★★☆☆ | (04 の回避) |
+| **06** | Web RCE Shell | trigger | ★★★☆☆ | `Run shell untrusted` |
+| **07** | Persist | trigger | ★★★☆☆ | `Drop and execute new binary in container` |
+| **08** | C2 Beacon | trigger | ★★★★☆ | `Redirect STDOUT/STDIN to Network Connection` |
+| **09** | Hidden Cache | trigger | ★★★★☆ | `Create Hardlink Over Sensitive Files` |
+| **10** | The Final Exfil ★ BOSS ★ | evade | ★★★★★ | **上記 7 ルールを同時回避** |
+
+> **ATT&CK マッピング**: 各ミッションの MITRE ATT&CK Tactic / Technique 対応は
+> `challenges/ATTACK-COVERAGE.md` が正典 (各 `falco-rule.yaml` の `attack:` ブロック
+> から `make gen-attack` で生成)。drift を避けるため本表からは ATT&CK 列を外した。
 
 各 Mission の welcome.txt に詳しいシナリオ・HINT・提出方法が書いてある。
 順番通りに進めるのを強く推奨 (後半は前半で学んだ技を前提とする)。

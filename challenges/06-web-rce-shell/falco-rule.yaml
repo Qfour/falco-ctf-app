@@ -3,7 +3,9 @@ type: trigger
 expectedRules:
   - Run shell untrusted
 # ATT&CK mapping — canonical source for docs/Navigator layer (make gen-attack).
+# T1059.004: rule fires on an untrusted Unix shell (sh/bash) spawn in-container —
+# the Unix Shell sub-technique is more precise than parent T1059.
 attack:
   tactic: "Execution"
-  techniqueId: "T1059"
-  techniqueName: "Command and Scripting Interpreter"
+  techniqueId: "T1059.004"
+  techniqueName: "Command and Scripting Interpreter: Unix Shell"

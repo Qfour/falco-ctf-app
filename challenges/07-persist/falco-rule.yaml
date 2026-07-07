@@ -3,7 +3,11 @@ type: trigger
 expectedRules:
   - Drop and execute new binary in container
 # ATT&CK mapping — canonical source for docs/Navigator layer (make gen-attack).
+# T1204.002: rule fires on proc.is_exe_upper_layer — executing a binary dropped into
+# the container's writable layer, i.e. running a non-base-image (malicious) file. The
+# mission is narratively named "persist", but the detected behavior is file execution,
+# not a persistence trigger — T1546 Event Triggered Execution does not apply here.
 attack:
-  tactic: "Persistence"
-  techniqueId: "T1546"
-  techniqueName: "Event Triggered Execution"
+  tactic: "Execution"
+  techniqueId: "T1204.002"
+  techniqueName: "User Execution: Malicious File"
