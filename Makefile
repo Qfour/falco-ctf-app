@@ -15,27 +15,28 @@ SYSDIG_URL   ?= https://app.au1.sysdig.com
 # Go toolchain runs inside Docker (no local Go required). `test` uses
 # `docker build` so it works under Colima too, where bind mounts of the
 # host repo are not shared into the VM.
-GO_IMAGE ?= golang:1.25-alpine
+GO_IMAGE ?= golang:1.26-alpine
 
-.PHONY: help dev dev-down build push load-colima deploy-local lint test tidy gen gen-values check-flags check-rules clean scan
+.PHONY: help dev dev-down build push load-colima deploy-local lint test tidy gen gen-values check-flags check-rules check-freshness clean scan
 
 help:
 	@echo "Targets:"
-	@echo "  dev           — docker compose up (scoreboard hot-reload on http://localhost:8000)"
-	@echo "  dev-down      — docker compose down"
-	@echo "  build         — docker build all images ($(REGISTRY)/<name>:$(TAG))"
-	@echo "  push          — docker push all images"
-	@echo "  load-colima   — load images into colima k3s containerd (local only)"
-	@echo "  deploy-local  — helm upgrade --install scoreboard + auth-policy charts (local)"
-	@echo "  lint          — helm lint all charts/"
-	@echo "  test          — go test ./... (runs in $(GO_IMAGE) container)"
-	@echo "  tidy          — go mod tidy (runs in $(GO_IMAGE) container)"
-	@echo "  gen           — regenerate Go types from OpenAPI specs (docs/openapi-*.yaml)"
-	@echo "  gen-values    — regenerate challenge values.yaml / values-all.yaml from plant.sh"
-	@echo "  check-flags   — fail if real flags leak into tracked files or values are stale"
-	@echo "  check-rules   — fail if a challenge references a non-existent Falco rule"
-	@echo "  scan          — sysdig-cli-scanner on all built images (SYSDIG_SECURE_API_TOKEN required)"
-	@echo "  clean         — remove built images locally"
+	@echo "  dev             — docker compose up (scoreboard hot-reload on http://localhost:8000)"
+	@echo "  dev-down        — docker compose down"
+	@echo "  build           — docker build all images ($(REGISTRY)/<name>:$(TAG))"
+	@echo "  push            — docker push all images"
+	@echo "  load-colima     — load images into colima k3s containerd (local only)"
+	@echo "  deploy-local    — helm upgrade --install scoreboard + auth-policy charts (local)"
+	@echo "  lint            — helm lint all charts/"
+	@echo "  test            — go test ./... (runs in $(GO_IMAGE) container)"
+	@echo "  tidy            — go mod tidy (runs in $(GO_IMAGE) container)"
+	@echo "  gen             — regenerate Go types from OpenAPI specs (docs/openapi-*.yaml)"
+	@echo "  gen-values      — regenerate challenge values.yaml / values-all.yaml from plant.sh"
+	@echo "  check-flags     — fail if real flags leak into tracked files or values are stale"
+	@echo "  check-rules     — fail if a challenge references a non-existent Falco rule"
+	@echo "  check-freshness — fail if a Dockerfile base image cycle is past EOL (needs network)"
+	@echo "  scan            — sysdig-cli-scanner on all built images (SYSDIG_SECURE_API_TOKEN required)"
+	@echo "  clean           — remove built images locally"
 
 dev:
 	docker compose up --build
@@ -94,6 +95,9 @@ check-flags:
 
 check-rules:
 	./scripts/check-challenge-rules.sh
+
+check-freshness:
+	./scripts/check-freshness.sh
 
 scan: build
 	@command -v sysdig-cli-scanner >/dev/null 2>&1 || \

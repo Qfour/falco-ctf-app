@@ -26,7 +26,7 @@ RUN for mode in participant admin; do \
 # ── serve ───────────────────────────────────────────────────────────
 # nginx-unprivileged listens on 8080 as a non-root user (uid 101) — fits
 # runAsNonRoot without extra config.
-FROM nginxinc/nginx-unprivileged:1.27-alpine
+FROM nginxinc/nginx-unprivileged:1.30-alpine
 # --chmod: the non-root nginx user (uid 101) must read the config regardless of
 # the host file mode (Write may create it 0640). The site tree from the build
 # stage is already world-readable (dirs 0755 / files 0644) so it needs no chmod

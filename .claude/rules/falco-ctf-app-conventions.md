@@ -7,8 +7,8 @@
 
 | サービス | UID | 根拠 |
 |---|---|---|
-| scoreboard | **65532** | distroless/static-debian12:nonroot |
-| auth-policy | **65532** | distroless/static-debian12:nonroot |
+| scoreboard | **65532** | distroless/static-debian13:nonroot |
+| auth-policy | **65532** | distroless/static-debian13:nonroot |
 | ttyd | **1000** | alpine adduser -D -u 1000 ttyd |
 | challenge | **root (0)** | CTF realism — ユーザが体験するシェル環境 |
 | docs | **101** | nginxinc/nginx-unprivileged (静的サイト配信) |
@@ -32,11 +32,15 @@
 
 | サービス | builder | final |
 |---|---|---|
-| scoreboard | `golang:1.25-alpine` | `gcr.io/distroless/static-debian12:nonroot` |
-| auth-policy | `golang:1.25-alpine` | `gcr.io/distroless/static-debian12:nonroot` |
-| ttyd | (single-stage) | `alpine:3.20` |
-| challenge | (single-stage) | `alpine:3.20` |
-| docs | `python:3.12-slim` (mkdocs-material + pandoc + weasyprint) | `nginxinc/nginx-unprivileged:1.27-alpine` |
+| scoreboard | `golang:1.26-alpine` | `gcr.io/distroless/static-debian13:nonroot` |
+| auth-policy | `golang:1.26-alpine` | `gcr.io/distroless/static-debian13:nonroot` |
+| ttyd | (single-stage) | `alpine:3.22` |
+| challenge | (single-stage) | `alpine:3.22` |
+| docs | `python:3.12-slim` (mkdocs-material + pandoc + weasyprint) | `nginxinc/nginx-unprivileged:1.30-alpine` |
+
+- alpine は最新 cycle ではなく「リリース後 ~1 年経過した supported cycle」を選ぶ
+  (apk pin の安定性と EOL 余裕のバランス。2026-07 時点: 3.22)。
+  cycle 鮮度は `make check-freshness`、パッケージ鮮度は CVE scan (PR CI) の二層でカバー。
 
 - docs イメージの build context = repo root (`challenges/` を読んで gen-pages.sh が
   ミッションページを生成。`README.md` の H1 をタイトル、`fixtures/welcome.txt` を

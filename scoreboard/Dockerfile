@@ -4,7 +4,7 @@
 # The challenges/ catalog + scenarios/ manifests are baked into the image
 # (read at startup; scenarios/ selects an event composition via SCENARIO_FILE).
 # Local dev overlays challenges/ via a volume mount in docker-compose.yml.
-FROM golang:1.25-alpine AS build
+FROM golang:1.26-alpine AS build
 WORKDIR /src
 
 COPY go.mod go.sum ./
@@ -18,7 +18,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
       -o /out/scoreboard ./cmd/scoreboard \
  && mkdir -p /out/var/lib/scoreboard
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian13:nonroot
 COPY --from=build --chown=65532:65532 /out/scoreboard /app/scoreboard
 COPY --from=build --chown=65532:65532 /out/var/lib/scoreboard /var/lib/scoreboard
 COPY --chown=65532:65532 challenges /app/challenges
