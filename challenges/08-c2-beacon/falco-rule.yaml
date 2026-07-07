@@ -2,3 +2,8 @@ challengeId: 08-c2-beacon
 type: trigger
 expectedRules:
   - Redirect STDOUT/STDIN to Network Connection in Container
+# ATT&CK mapping — canonical source for docs/Navigator layer (make gen-attack).
+attack:
+  tactic: "Command and Control"
+  techniqueId: "T1071"
+  techniqueName: "Application Layer Protocol"

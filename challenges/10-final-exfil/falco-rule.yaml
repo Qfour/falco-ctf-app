@@ -16,3 +16,8 @@ windowSeconds: 30
 # (Run/C2 rules) can't reach an HTTP collector and dropping a custom exfil tool
 # trips Drop-and-execute — so the only clean path is the pre-installed curl.
 requireExfil: true
+# ATT&CK mapping — canonical source for docs/Navigator layer (make gen-attack).
+attack:
+  tactic: "Exfiltration"
+  techniqueId: "T1041"
+  techniqueName: "Exfiltration Over C2 Channel"

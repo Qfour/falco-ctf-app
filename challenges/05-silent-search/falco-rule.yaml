@@ -5,3 +5,8 @@ forbiddenRules:
 # Placeholder for local dev/tests. Real flag injected at deploy via FLAGS_FILE.
 expectedFlag: FALCO{dev-silent-search}
 windowSeconds: 10
+# ATT&CK mapping — canonical source for docs/Navigator layer (make gen-attack).
+attack:
+  tactic: "Defense Evasion"
+  techniqueId: "T1027"
+  techniqueName: "Obfuscated Files or Information"

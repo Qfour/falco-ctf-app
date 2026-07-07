@@ -2,3 +2,8 @@ challengeId: 06-web-rce-shell
 type: trigger
 expectedRules:
   - Run shell untrusted
+# ATT&CK mapping — canonical source for docs/Navigator layer (make gen-attack).
+attack:
+  tactic: "Execution"
+  techniqueId: "T1059"
+  techniqueName: "Command and Scripting Interpreter"

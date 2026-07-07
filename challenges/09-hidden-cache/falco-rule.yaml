@@ -2,3 +2,8 @@ challengeId: 09-hidden-cache
 type: trigger
 expectedRules:
   - Create Hardlink Over Sensitive Files
+# ATT&CK mapping — canonical source for docs/Navigator layer (make gen-attack).
+attack:
+  tactic: "Defense Evasion"
+  techniqueId: "T1564"
+  techniqueName: "Hide Artifacts"
