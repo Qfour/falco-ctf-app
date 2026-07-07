@@ -2,3 +2,8 @@ challengeId: 07-persist
 type: trigger
 expectedRules:
   - Drop and execute new binary in container
+# ATT&CK mapping — canonical source for docs/Navigator layer (make gen-attack).
+attack:
+  tactic: "Persistence"
+  techniqueId: "T1546"
+  techniqueName: "Event Triggered Execution"

@@ -2,3 +2,8 @@ challengeId: 02-credential-files
 type: trigger
 expectedRules:
   - Read sensitive file untrusted
+# ATT&CK mapping — canonical source for docs/Navigator layer (make gen-attack).
+attack:
+  tactic: "Credential Access"
+  techniqueId: "T1003"
+  techniqueName: "OS Credential Dumping"

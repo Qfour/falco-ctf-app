@@ -7,3 +7,8 @@ forbiddenRules:
 # the ctf-user chart's dev default so local end-to-end submit passes.
 expectedFlag: FALCO{dev-stealth-read}
 windowSeconds: 10
+# ATT&CK mapping — canonical source for docs/Navigator layer (make gen-attack).
+attack:
+  tactic: "Defense Evasion"
+  techniqueId: "T1622"
+  techniqueName: "Debugger Evasion"
