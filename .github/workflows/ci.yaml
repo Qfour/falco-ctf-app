@@ -94,18 +94,22 @@ jobs:
             context: .
             dockerfile: auth-policy/Dockerfile
             scan-continue-on-error: false
+          # TEMP scan exception (#18): base は最新 upstream (alpine 3.22 / kubectl v1.36.2 /
+          # nginx-unprivileged 1.30) だが sysdig DB 更新で新規 CVE が顕在化 = 自力修正不可。
+          # scan は報告を続けるが merge をブロックしない。upstream 修正 → base bump で
+          # false に戻すこと (解除条件は #18)。distroless の scoreboard/auth-policy は strict 維持。
           - name: ttyd
             context: images/ttyd
             dockerfile: images/ttyd/Dockerfile
-            scan-continue-on-error: false
+            scan-continue-on-error: true   # TEMP (#18): kubectl 同梱 Go CVE / alpine 新規 CVE
           - name: challenge
             context: .
             dockerfile: images/challenge/Dockerfile
-            scan-continue-on-error: false
+            scan-continue-on-error: true   # TEMP (#18): alpine 新規 CVE
           - name: docs
             context: .
             dockerfile: images/docs/Dockerfile
-            scan-continue-on-error: false
+            scan-continue-on-error: true   # TEMP (#18): nginx-unprivileged 新規 CVE
     uses: Qfour/homelab-workflows/.github/workflows/image-pipeline.yaml@main
     with:
       name: ${{ matrix.name }}
