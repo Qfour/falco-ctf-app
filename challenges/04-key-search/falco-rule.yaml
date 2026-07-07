@@ -2,3 +2,8 @@ challengeId: 04-key-search
 type: trigger
 expectedRules:
   - Search Private Keys or Passwords
+# ATT&CK mapping — canonical source for docs/Navigator layer (make gen-attack).
+attack:
+  tactic: "Credential Access"
+  techniqueId: "T1552.001"
+  techniqueName: "Unsecured Credentials: Credentials In Files"

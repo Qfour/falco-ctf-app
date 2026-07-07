@@ -2,3 +2,9 @@ challengeId: 01-initial-recon
 type: trigger
 expectedRules:
   - Contact K8S API Server From Container
+# ATT&CK mapping — canonical source for docs/Navigator layer (make gen-attack).
+# Consumed only by scripts/gen-attack-layer.py; catalog.go ignores unknown keys.
+attack:
+  tactic: "Discovery"
+  techniqueId: "T1082"
+  techniqueName: "System Information Discovery"

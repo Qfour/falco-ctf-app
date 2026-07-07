@@ -2,3 +2,11 @@ challengeId: 08-c2-beacon
 type: trigger
 expectedRules:
   - Redirect STDOUT/STDIN to Network Connection in Container
+# ATT&CK mapping — canonical source for docs/Navigator layer (make gen-attack).
+# T1095: rule fires on dup of a raw TCP socket fd to stdio (reverse shell via
+# /dev/tcp). The channel is a raw transport-layer socket, not an application-layer
+# protocol — Non-Application Layer Protocol fits better than T1071.
+attack:
+  tactic: "Command and Control"
+  techniqueId: "T1095"
+  techniqueName: "Non-Application Layer Protocol"
