@@ -16,12 +16,14 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/api"
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/ingest"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/metrics"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/view"
@@ -70,6 +72,19 @@ func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts .
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Reject an empty {user} path segment under /api/users/ explicitly, before
+	// ServeMux gets to it. ServeMux would otherwise issue an unclean-path
+	// redirect ("/api/users//me" -> "/api/users/me"), whose status is both
+	// ambiguous and Go-version-dependent (301 on go1.25, 307 on go1.26). We
+	// prefer an explicit 400 over relying on that implicit redirect — the user
+	// segment carries identity, so a blank one is a bad request, not something
+	// to silently rewrite. Scoped to the /api/users/ display+display-name paths;
+	// does not touch ingest scoring or auth-policy.
+	if strings.HasPrefix(r.URL.Path, "/api/users//") {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "user required"})
+		return
+	}
+
 	_, route := h.mux.Handler(r)
 	sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 	start := time.Now()
