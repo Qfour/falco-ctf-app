@@ -7,6 +7,7 @@
 //	GET  /metrics                          Prometheus exposition
 //	POST /falco/events                     (ingest)
 //	POST /api/challenges/{cid}/submit      (api)
+//	POST /internal/exfil/{cid}             (api: collector-only exfil sink)
 //	GET  /api/state                        (api)
 //	GET  /                                 (view: embedded HTML dashboard)
 package scoreboard

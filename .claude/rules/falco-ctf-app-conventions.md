@@ -9,6 +9,7 @@
 |---|---|---|
 | scoreboard | **65532** | distroless/static-debian13:nonroot |
 | auth-policy | **65532** | distroless/static-debian13:nonroot |
+| collector | **65532** | distroless/static-debian13:nonroot |
 | ttyd | **1000** | alpine adduser -D -u 1000 ttyd |
 | challenge | **root (0)** | CTF realism — ユーザが体験するシェル環境 |
 | docs | **101** | nginxinc/nginx-unprivileged (静的サイト配信) |
@@ -18,10 +19,10 @@
 | # | ルール |
 |---|---|
 | I1 | scoreboard は `replicas: 1` + `strategy: Recreate` 固定 (SQLite 並行書込不可) |
-| I2 | scoreboard / auth-policy のコンテナ `runAsUser: 65532` |
+| I2 | scoreboard / auth-policy / collector のコンテナ `runAsUser: 65532` |
 | I3 | scoreboard PVC `fsGroup: 65532` |
 | I4 | image tag は **git SHA** で push。`latest` で本番 deploy 禁止 |
-| I5 | 全 5 イメージ (scoreboard / auth-policy / ttyd / challenge / docs) を **同一 git SHA** でビルド・push |
+| I5 | 全 6 イメージ (scoreboard / auth-policy / collector / ttyd / challenge / docs) を **同一 git SHA** でビルド・push |
 | I6 | challenges/ は scoreboard と同一 repo に置く (falco-rule.yaml が scoreboard の一次消費) |
 | I7 | chart の `values.yaml` default は環境非依存。host/domain/registry は placeholder (`example.invalid` / `docker.io/falco-ctf`)。環境値は platform helmfile が供給 |
 | I8 | auth-policy `/check` は `X-Auth-Request-Email` を **prefix-exact** (`<username>@`) で照合。**唯一の例外**: email が `ADMIN_EMAILS` に含まれる場合は任意の workspace を許可 (運営の全 workspace アクセス)。それ以外で prefix 一致を緩めない |
@@ -34,6 +35,7 @@
 |---|---|---|
 | scoreboard | `golang:1.26-alpine` | `gcr.io/distroless/static-debian13:nonroot` |
 | auth-policy | `golang:1.26-alpine` | `gcr.io/distroless/static-debian13:nonroot` |
+| collector | `golang:1.26-alpine` | `gcr.io/distroless/static-debian13:nonroot` |
 | ttyd | (single-stage) | `alpine:3.22` |
 | challenge | (single-stage) | `alpine:3.22` |
 | docs | `python:3.12-slim` (mkdocs-material + pandoc + weasyprint) | `nginxinc/nginx-unprivileged:1.30-alpine` |

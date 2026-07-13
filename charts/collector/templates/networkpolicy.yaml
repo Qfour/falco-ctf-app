@@ -1,0 +1,69 @@
+{{- if .Values.networkPolicy.enabled }}
+# collector NetworkPolicies — default-deny + scoped ingress/egress (P11.5).
+#
+# The collector is the *only* front a locked-down workspace can reach, so its
+# reachability is a security boundary:
+#   Ingress: ctf-user workspaces only (the participant HTTP surface).
+#   Egress : kube-dns (name resolution) + scoreboard:8000 (forwarding target).
+# It must NOT reach falco, oauth2-proxy, the API server, or the internet.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: collector-default-deny
+  namespace: collector
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: collector-allow
+  namespace: collector
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: collector
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # ctf-user workspaces → submit / me / display-name / exfil. NP can't restrict
+    # by path; the collector's default-deny router + scoreboard's internal-only
+    # exfil sink keep the workspace from reaching ingest/admin/internal surfaces.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              app.kubernetes.io/name: ctf-user
+      ports:
+        - protocol: TCP
+          port: 8000
+  egress:
+    # kube-dns only for name resolution.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # scoreboard container port 8000 only (the single forwarding target).
+    # Egress NP filters post-DNAT, so target the scoreboard Pod's container port.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.scoreboardNamespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: scoreboard
+      ports:
+        - protocol: TCP
+          port: 8000
+{{- end }}

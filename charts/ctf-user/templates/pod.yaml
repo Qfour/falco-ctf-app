@@ -45,6 +45,10 @@ spec:
           value: "{{ .Values.ttyd.port }}"
         - name: TTYD_TARGET_CONTAINER
           value: "challenge"
+        # Participant-facing front (P11.5). ttyd carries it so any helper run in
+        # the ttyd container (or copied into the shell) resolves the same target.
+        - name: FALCO_CTF_COLLECTOR
+          value: "{{ .Values.collector.url }}"
       resources:
         {{- toYaml .Values.ttyd.resources | nindent 8 }}
       readinessProbe:
@@ -70,8 +74,15 @@ spec:
           value: "{{ .Values.username }}"
         - name: FALCO_CTF_CHALLENGE
           value: "{{ .Values.challengeId }}"
+        # P11.5 full one-pipe: the workspace reaches the scoreboard ONLY via the
+        # collector. FALCO_CTF_COLLECTOR is the canonical target for submit / me /
+        # display-name / exfil. FALCO_CTF_SCOREBOARD is kept for backward compat
+        # with older helper scripts, but now points at the collector too — the
+        # scoreboard Service is unreachable once egress lockdown is on.
+        - name: FALCO_CTF_COLLECTOR
+          value: "{{ .Values.collector.url }}"
         - name: FALCO_CTF_SCOREBOARD
-          value: "http://scoreboard.scoreboard.svc:80"
+          value: "{{ .Values.collector.url }}"
         - name: FALCO_CTF_DNS_SUFFIX
           value: "{{ .Values.dnsSuffix }}"
         {{- /* Inject CTF_FLAG_<ID> for this workspace's mission(s) only. */}}

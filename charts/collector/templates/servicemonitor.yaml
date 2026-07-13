@@ -1,0 +1,23 @@
+{{- if .Values.monitoring.enabled }}
+# Requires Prometheus Operator CRDs (kube-prometheus-stack). Inert until present.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: collector
+  namespace: collector
+  labels:
+    app.kubernetes.io/name: collector
+    release: {{ .Values.monitoring.prometheusReleaseLabel }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: collector
+  namespaceSelector:
+    matchNames:
+      - collector
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+{{- end }}

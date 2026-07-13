@@ -13,7 +13,8 @@ setname() {
     return 1
   fi
   name="$1"
-  sb="${FALCO_CTF_SCOREBOARD:-http://scoreboard.scoreboard.svc:80}"
+  # P11.5: reach the scoreboard only through the collector front.
+  sb="${FALCO_CTF_COLLECTOR:-${FALCO_CTF_SCOREBOARD:-http://collector.collector.svc:80}}"
   user="${FALCO_CTF_USER:?FALCO_CTF_USER not set}"
   curl -s -X POST "${sb}/api/users/${user}/display-name" \
     -H 'Content-Type: application/json' \
