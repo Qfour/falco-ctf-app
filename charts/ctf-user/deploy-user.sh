@@ -166,7 +166,14 @@ else
 
   if [[ ! -d "${CHALLENGE_DIR}" ]]; then
     echo "challenge not found: ${CHALLENGE_DIR}" >&2
-    echo "  available: $(ls -1 "${CHALLENGES_DIR}" | grep -v '\.\(md\|yaml\|sh\)$' | tr '\n' ' ')all" >&2
+    # List challenge sub-directories (each mission is a dir NN-slug); a glob loop
+    # avoids parsing `ls` output (SC2010) and copes with odd filenames.
+    avail=""
+    for d in "${CHALLENGES_DIR}"/*/; do
+      [[ -d "${d}" ]] || continue
+      avail+="$(basename "${d}") "
+    done
+    echo "  available: ${avail}all" >&2
     exit 1
   fi
 

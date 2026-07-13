@@ -64,13 +64,10 @@ resources:
 podDisruptionBudget:
   enabled: false   # maxUnavailable: 0 (replicas=1; block voluntary drains)
 
-backup:
-  enabled: false
-  schedule: "5 * * * *"            # hourly at HH:05
-  image: amazon/aws-cli:2.18.5
-  s3Bucket: ""                     # required when enabled
-  clusterName: falco-ctf
-  serviceAccountRoleArn: ""        # IRSA role with s3:PutObject (Terraform)
+# NOTE: The scoreboard S3 SQLite backup CronJob was removed (P11, CEO decision
+# 2026-07-13). Backup is now handled exclusively by EBS volume snapshots at the
+# infrastructure layer (see falco-ctf-platform operations.md), so the chart no
+# longer carries an S3 backup path, its IRSA ServiceAccount, or egress policy.
 
 monitoring:
   enabled: false                   # needs Prometheus Operator CRDs

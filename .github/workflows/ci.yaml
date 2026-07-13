@@ -49,6 +49,36 @@ jobs:
         run: ./scripts/check-flags.sh
 
   # ------------------------------------------------------------------
+  # Shell hygiene: shellcheck (-S warning) over every shell script in the repo.
+  # Branch protection check: "shellcheck"
+  #
+  # Two passes because challenges/<id>/plant.sh are deliberately shebang-less
+  # fragments — they are inlined verbatim into a `sh -c` postStart body by
+  # gen-values.sh, so a shebang/directive line would pollute the generated
+  # values*.yaml. They are lint-checked as `sh` (-s sh) instead; everything
+  # else is checked honouring its own shebang.
+  # ------------------------------------------------------------------
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install shellcheck
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          shellcheck --version
+      - name: shellcheck all shell scripts
+        run: |
+          set -euo pipefail
+          # plant.sh fragments: no shebang by design → check as POSIX sh.
+          find challenges -name plant.sh -print0 \
+            | sort -z | xargs -0 -r shellcheck -S warning -s sh
+          # everything else: honour each script's own shebang.
+          find . -path ./.git -prune -o -name '*.sh' ! -name plant.sh -print0 \
+            | sort -z | xargs -0 -r shellcheck -S warning
+
+  # ------------------------------------------------------------------
   # Challenge rule eval: every expected/forbidden rule exists in the Falco
   # ruleset (typo'd names silently never fire).
   # Branch protection check: "challenge-rules"
