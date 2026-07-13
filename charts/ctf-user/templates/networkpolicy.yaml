@@ -5,9 +5,11 @@
 # exposes nothing externally; its only entry is in-Pod `kubectl exec` from
 # the ttyd container.
 #
-# Egress (opt-in via networkPolicy.egress.enabled): kube-dns + the
-# Kubernetes API server only. Locks down the challenge container so it
-# cannot reach scoreboard/falco/oauth2-proxy and forge webhook events.
+# Egress (opt-in via networkPolicy.egress.enabled): kube-dns + the collector
+# Service + the Kubernetes API server only (P11.5). The workspace reaches the
+# scoreboard ONLY through the collector; scoreboard(:8000) is deliberately not
+# allowed anywhere here, so a compromised challenge container cannot forge
+# /falco/events or hit the scoreboard's internal endpoints directly.
 # `apiServerCidr` must be set to the real apiserver endpoint CIDR or ttyd's
 # `kubectl exec` to challenge will be blocked.
 apiVersion: networking.k8s.io/v1
@@ -49,6 +51,20 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
+    # collector Service (the ONLY path to the scoreboard). Selected by
+    # namespace+pod label — no ipBlock (P11.5): the workspace fronts submit /
+    # me / display-name / exfil here; scoreboard(:8000) is never reachable.
+    # Egress NP filters post-DNAT, so target the collector Pod's container port.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              app.kubernetes.io/name: collector
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: collector
+      ports:
+        - protocol: TCP
+          port: 8000
     {{- with .Values.networkPolicy.egress.apiServerCidr }}
     # Kubernetes API server (required for ttyd's `kubectl exec`).
     - to:

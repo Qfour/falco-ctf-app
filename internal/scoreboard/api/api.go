@@ -3,6 +3,7 @@
 //
 //	GET  /api/state
 //	POST /api/challenges/{cid}/submit
+//	POST /internal/exfil/{cid}   (collector-only sink; see exfilInternal)
 package api
 
 import (
@@ -78,7 +79,14 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/admin/hints", h.releaseHint)
 	submitMW := h.submitLimiter.Middleware(ratelimit.ClientIP)
 	mux.Handle("POST /api/challenges/{cid}/submit", submitMW(http.HandlerFunc(h.submit)))
-	mux.Handle("POST /api/challenges/{cid}/exfil", submitMW(http.HandlerFunc(h.exfil)))
+	// Exfil is an internal-only endpoint reached solely by the collector
+	// (full one-pipe, P11.5). Workspaces cannot reach the scoreboard directly
+	// once egress lockdown is on — they POST /api/challenges/{cid}/exfil to the
+	// collector, which forwards to /internal/exfil here. Isolation is enforced
+	// by NetworkPolicy (scoreboard ingress admits only collector); the handler
+	// itself adds no auth (see recordExfil doc). Rate limiting lives on the
+	// collector front, so /internal/exfil is unthrottled here.
+	mux.HandleFunc("POST /internal/exfil/{cid}", h.exfilInternal)
 	dnMW := h.displayNameLimiter.Middleware(ratelimit.ClientIP)
 	mux.Handle("POST /api/users/{user}/display-name", dnMW(http.HandlerFunc(h.setDisplayName)))
 }
@@ -322,21 +330,27 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// --- exfil collector --------------------------------------------------------
+// --- internal exfil sink ----------------------------------------------------
 
-// exfil is the drop-server endpoint for the boss capstone. The participant
-// must deliver the flag here over HTTP (curl) before submitting; this is what
-// forces the quiet-exfil lesson — a reverse shell (Run/C2 rules) can't reach an
-// HTTP collector, and dropping a custom exfil tool trips Drop-and-execute. The
-// receipt is keyed to the claimed user (same trust model as /submit: identity
-// is claimed, never proven — logged for traceability). The flag is matched at
-// submit time (RequireExfil), so a wrong value recorded here simply fails there.
-func (h *Handler) exfil(w http.ResponseWriter, r *http.Request) {
+// exfilInternal records an exfil receipt for the boss capstone. It is the
+// internal-only sink behind the collector (P11.5 full one-pipe): the
+// participant curls the flag to the collector's public
+// POST /api/challenges/{cid}/exfil, and the collector forwards it here as
+// POST /internal/exfil/{cid}. This is what forces the quiet-exfil lesson — a
+// reverse shell (Run/C2 rules) can't reach an HTTP collector, and dropping a
+// custom exfil tool trips Drop-and-execute.
+//
+// Trust model: identity (`user`) is claimed, never proven — same as /submit,
+// logged for traceability. The endpoint adds no auth of its own; it is reached
+// only from the collector (scoreboard NetworkPolicy admits collector, not
+// ctf-user). The flag is matched at submit time (RequireExfil via HasExfil), so
+// a wrong value recorded here simply fails the eventual submit.
+func (h *Handler) exfilInternal(w http.ResponseWriter, r *http.Request) {
 	cid := r.PathValue("cid")
 	auditLog := func(outcome string, extra ...any) {
 		fields := []any{"cid", cid, "remote_addr", r.RemoteAddr, "outcome", outcome}
 		fields = append(fields, extra...)
-		h.logger.Info("exfil", fields...)
+		h.logger.Info("exfil_internal", fields...)
 	}
 
 	ch, ok := h.cat[cid]

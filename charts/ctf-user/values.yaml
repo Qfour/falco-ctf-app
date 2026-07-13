@@ -4,6 +4,15 @@
 username: user1
 challengeId: "01-read-shadow"
 
+# collector — the participant-facing front (P11.5 full one-pipe). The workspace
+# reaches the scoreboard ONLY through this URL: submit / me / display-name are
+# forwarded, the boss exfil drop is rewritten to the scoreboard's internal sink.
+# Injected as FALCO_CTF_COLLECTOR into both workspace containers. Base URL of the
+# collector Service (default = in-cluster ClusterIP:80). Platform helmfile
+# overrides per environment if the Service name/namespace differs.
+collector:
+  url: "http://collector.collector.svc:80"
+
 # DNS suffix used for the workspace host. Override per-environment via
 # deploy-user.sh --dns-suffix (default falls back to colima nip.io label).
 dnsSuffix: "ctf-event.dev"

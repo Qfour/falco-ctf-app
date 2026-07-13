@@ -405,8 +405,8 @@ func TestSubmit_RequireExfil_WithoutExfil_NotSolved(t *testing.T) {
 func TestSubmit_RequireExfil_AfterExfil_Solves(t *testing.T) {
 	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
 	f := newFixture(t, func() time.Time { return now })
-	// Deliver to the collector first, then submit.
-	we := f.do("POST", "/api/challenges/03-exfil/exfil", map[string]any{"user": "alice", "flag": "FALCO{boss}"})
+	// Deliver to the internal collector sink first, then submit.
+	we := f.do("POST", "/internal/exfil/03-exfil", map[string]any{"user": "alice", "flag": "FALCO{boss}"})
 	if me := decode(t, we); me["received"] != true {
 		t.Fatalf("expected exfil received: %v", me)
 	}
@@ -421,7 +421,7 @@ func TestExfil_WrongFlagRecorded_SubmitStillBlocked(t *testing.T) {
 	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
 	f := newFixture(t, func() time.Time { return now })
 	// Exfiltrate a value that does not match the real flag.
-	f.do("POST", "/api/challenges/03-exfil/exfil", map[string]any{"user": "alice", "flag": "FALCO{wrong}"})
+	f.do("POST", "/internal/exfil/03-exfil", map[string]any{"user": "alice", "flag": "FALCO{wrong}"})
 	w := f.do("POST", "/api/challenges/03-exfil/submit", map[string]any{"user": "alice", "flag": "FALCO{boss}"})
 	m := decode(t, w)
 	if m["exfiltrated"] != false || m["solved"] == true {
@@ -431,7 +431,7 @@ func TestExfil_WrongFlagRecorded_SubmitStillBlocked(t *testing.T) {
 
 func TestExfil_NotRequired_Rejected(t *testing.T) {
 	f := newFixture(t, nil)
-	w := f.do("POST", "/api/challenges/02-evade/exfil", map[string]any{"user": "alice", "flag": "FALCO{ok}"})
+	w := f.do("POST", "/internal/exfil/02-evade", map[string]any{"user": "alice", "flag": "FALCO{ok}"})
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("exfil on a non-exfil challenge should be 400, got %d", w.Code)
 	}

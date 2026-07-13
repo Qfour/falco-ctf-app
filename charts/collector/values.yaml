@@ -1,0 +1,40 @@
+# collector chart values. Env-specific values (image tag) are supplied by
+# falco-ctf-platform's helmfile per environment.
+#
+# The collector is stateless (no catalog/flags/DB): it fronts the participant
+# HTTP surface and forwards to the scoreboard. Unlike the scoreboard (I1
+# single-writer), replicas are unconstrained.
+
+replicas: 1
+
+image:
+  # Registry placeholder (public repo). Real registry (ECR) + git-SHA tag are
+  # supplied at deploy time via helmfile (Invariant I4/I7).
+  repository: docker.io/falco-ctf/collector
+  # tag MUST be a git SHA in real deploys (Invariant I4). Empty → Chart.appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+env:
+  # In-cluster base URL of the scoreboard Service the collector forwards to.
+  # Must resolve to the scoreboard ClusterIP:port (default Service port 80).
+  scoreboardUrl: "http://scoreboard.scoreboard.svc:80"
+
+resources:
+  requests: { cpu: 25m, memory: 32Mi }
+  limits:   { cpu: 200m, memory: 128Mi }
+
+# NetworkPolicy: default-deny + ingress from ctf-user only, egress to kube-dns +
+# scoreboard:8000 only. Off by default (local convenience); helmfile enables it
+# per environment. The scoreboardNamespace is used to scope the egress allow.
+networkPolicy:
+  enabled: true
+  scoreboardNamespace: scoreboard
+
+# Prod hardening — off by default (local), enabled via helmfile prod env.
+podDisruptionBudget:
+  enabled: false   # minAvailable: 1
+
+monitoring:
+  enabled: false   # needs Prometheus Operator CRDs
+  prometheusReleaseLabel: kube-prometheus-stack

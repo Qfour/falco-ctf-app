@@ -20,7 +20,10 @@ submit() {
   fi
   local cid="$1"
   local flag="$2"
-  local sb="${FALCO_CTF_SCOREBOARD:-http://scoreboard.scoreboard.svc:80}"
+  # P11.5: the workspace reaches the scoreboard only through the collector.
+  # Prefer $FALCO_CTF_COLLECTOR; fall back to the legacy $FALCO_CTF_SCOREBOARD
+  # (now also points at the collector) for older environments.
+  local sb="${FALCO_CTF_COLLECTOR:-${FALCO_CTF_SCOREBOARD:-http://collector.collector.svc:80}}"
   local user="${FALCO_CTF_USER:?FALCO_CTF_USER not set}"
   curl -s -X POST "${sb}/api/challenges/${cid}/submit" \
     -H 'Content-Type: application/json' \

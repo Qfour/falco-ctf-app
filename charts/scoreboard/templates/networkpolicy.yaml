@@ -41,12 +41,16 @@ spec:
       ports:
         - protocol: TCP
           port: 8000
-    # ctf-user workspaces → /api/users/{user}/me + submit. NP can't restrict by
-    # path; the scoreboard ingest filter prevents the workspace forging events.
+    # collector → participant surface (submit / me / display-name) + the
+    # internal exfil sink /internal/exfil/{cid} (P11.5 full one-pipe). Workspaces
+    # NEVER reach the scoreboard directly: with egress lockdown on, ctf-user can
+    # only talk to the collector, which fronts and forwards here. The old
+    # `from: ctf-user` allow is intentionally removed — allowing it back would
+    # let a workspace forge /falco/events or hit /internal/exfil directly.
     - from:
         - namespaceSelector:
             matchLabels:
-              app.kubernetes.io/name: ctf-user
+              app.kubernetes.io/name: collector
       ports:
         - protocol: TCP
           port: 8000

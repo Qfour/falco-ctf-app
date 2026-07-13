@@ -1,0 +1,17 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+# The collector is the only front locked-down workspaces can reach. With prod
+# replicas>=2, keep at least one available so voluntary node drains stay
+# non-disruptive to submit/exfil.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: collector
+  namespace: collector
+  labels:
+    {{- include "collector.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: collector
+{{- end }}
