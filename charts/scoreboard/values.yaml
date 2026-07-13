@@ -21,6 +21,12 @@ env:
   # against the auth-policy-propagated X-Auth-Request-Email). Empty = nobody.
   # Use the same list as auth-policy's ADMIN_EMAILS.
   adminEmails: ""
+  # Origin of the participant docs site (a separate host). When set, the
+  # /journey API rewrites each mission's relative docsUrl into an absolute URL
+  # so the "詳細ブリーフィング (docs)" link resolves off-origin. Format:
+  # https://docs.<suffix> (no trailing slash required — normalised either way).
+  # Empty = keep the relative path (local dev). Supplied by platform helmfile.
+  docsBaseUrl: ""
 
 persistence:
   size: 1Gi

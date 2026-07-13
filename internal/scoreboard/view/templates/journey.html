@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Falco CTF · journey</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --falco: #00CBE2; --falco-2: #0090A8;
+    --bg: #070B10; --bg-elev: #0D141B; --surface: #0F1820; --surface-2: #17222C;
+    --border: #1C2A35; --border-strong: #2B3F4D;
+    --text: #EAF7FA; --text-dim: #9DB4BF; --text-mute: #5C7480;
+    --accent: var(--falco); --accent-2: var(--falco-2);
+    --accent-glow: rgba(0, 203, 226, 0.35);
+    --success: #00CBE2; --success-glow: rgba(0, 203, 226, 0.5);
+    --warn: #FFB020;
+    --evade: #B78CFF; --evade-glow: rgba(183, 140, 255, 0.35);
+    --gold: #FFD24A; --danger: #ff5c6a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { font-size: 16px; }
+  body {
+    background:
+      radial-gradient(at 15% -10%, rgba(0, 203, 226, 0.10) 0px, transparent 45%),
+      radial-gradient(at 90% 0%, rgba(183, 140, 255, 0.06) 0px, transparent 40%),
+      var(--bg);
+    background-attachment: fixed; color: var(--text);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    min-height: 100vh; padding: 2.25rem 3rem 4rem; line-height: 1.5;
+    -webkit-font-smoothing: antialiased; position: relative;
+  }
+  body::before {
+    content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background-image:
+      linear-gradient(rgba(0, 203, 226, 0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0, 203, 226, 0.035) 1px, transparent 1px);
+    background-size: 44px 44px;
+    mask-image: radial-gradient(ellipse at 50% 0%, #000 30%, transparent 80%);
+  }
+  body > * { position: relative; z-index: 1; }
+  .mono { font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace; }
+  .display { font-family: 'Chakra Petch', sans-serif; letter-spacing: 0.02em; }
+  code { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.875em; background: var(--surface-2); padding: 1px 6px; border-radius: 3px; color: var(--accent); }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 1.75rem; padding-bottom: 1.25rem; border-bottom: 1px solid var(--border); position: relative; }
+  header::after { content: ''; position: absolute; left: 0; bottom: -1px; width: 160px; height: 2px; background: linear-gradient(90deg, var(--accent), transparent); box-shadow: 0 0 12px var(--accent-glow); }
+  .brand h1 { font-family: 'Chakra Petch', sans-serif; font-size: 2.4rem; font-weight: 700; letter-spacing: 0.01em; text-transform: uppercase; line-height: 1; }
+  .brand h1 .accent { color: var(--accent); text-shadow: 0 0 18px var(--accent-glow), 0 0 40px rgba(0,203,226,0.25); }
+  .brand h1 .light { color: var(--text-mute); font-weight: 500; font-size: 0.85rem; letter-spacing: 0.35em; margin-left: 0.6rem; text-transform: uppercase; }
+  .brand .subtitle { color: var(--text-dim); font-size: 0.85rem; margin-top: 0.4rem; }
+  .live { display: flex; align-items: center; gap: 0.5rem; color: var(--success); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.2em; font-weight: 700; justify-content: flex-end; }
+  .live::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--success); box-shadow: 0 0 12px var(--success-glow); animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.45; transform: scale(1.25); } }
+  .updated { color: var(--text-mute); font-size: 0.7rem; margin-top: 0.3rem; text-align: right; font-family: 'JetBrains Mono', monospace; }
+  .hdr-links { margin-top: 0.4rem; font-size: 0.72rem; }
+
+  /* progress */
+  .prog-wrap { margin-bottom: 1.5rem; }
+  .prog-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.5rem; }
+  .prog-head .label { font-family: 'Chakra Petch', sans-serif; text-transform: uppercase; letter-spacing: 0.18em; font-size: 0.75rem; color: var(--text-dim); }
+  .prog-head .count { font-family: 'JetBrains Mono', monospace; font-size: 1rem; }
+  .prog-head .count .total { color: var(--text-mute); }
+  .bar { width: 100%; height: 10px; background: var(--bg-elev); border-radius: 5px; overflow: hidden; box-shadow: inset 0 0 0 1px var(--border); }
+  .fill { height: 100%; background: linear-gradient(90deg, var(--accent-2), var(--accent)); box-shadow: 0 0 12px var(--accent-glow); transition: width 0.6s ease; }
+
+  .layout { display: grid; grid-template-columns: 320px 1fr; gap: 1.5rem; align-items: start; }
+  @media (max-width: 900px) { body { padding: 1.25rem; } .layout { grid-template-columns: 1fr; } }
+
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 0.85rem; overflow: hidden; }
+  .panel-header { padding: 0.9rem 1.25rem; border-bottom: 1px solid var(--border); }
+  .panel-header h2 { font-family: 'Chakra Petch', sans-serif; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.18em; color: var(--text); font-weight: 600; display: flex; align-items: center; gap: 0.6rem; }
+  .panel-header h2::before { content: ''; width: 3px; height: 15px; background: var(--accent); border-radius: 2px; box-shadow: 0 0 10px var(--accent-glow); }
+
+  /* mission map */
+  .map { list-style: none; padding: 0.35rem 0; }
+  .map li { display: flex; align-items: center; gap: 0.7rem; padding: 0.6rem 1.25rem; border-left: 2px solid transparent; cursor: default; }
+  .map li .ico { width: 22px; text-align: center; font-size: 0.95rem; }
+  .map li .mtitle { font-size: 0.9rem; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .map li .num { font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; color: var(--text-mute); }
+  .map li.solved .ico { color: var(--success); }
+  .map li.solved .mtitle { color: var(--text); }
+  .map li.current { border-left-color: var(--accent); background: rgba(0,203,226,0.06); }
+  .map li.current .ico { color: var(--accent); text-shadow: 0 0 10px var(--accent-glow); }
+  .map li.current .mtitle { color: var(--accent); font-weight: 600; }
+  .map li.locked { opacity: 0.5; }
+  .map li.locked .ico { color: var(--text-mute); }
+  .map li.just-unlocked { animation: unlock 1.2s ease; }
+  @keyframes unlock {
+    0% { background: rgba(0,203,226,0.25); transform: translateX(-6px); box-shadow: inset 0 0 24px var(--accent-glow); }
+    100% { background: transparent; transform: none; box-shadow: none; }
+  }
+
+  /* mission detail */
+  .mission { background: var(--surface); border: 1px solid var(--border); border-radius: 0.85rem; overflow: hidden; }
+  .mission-head { padding: 1.4rem 1.6rem 1.1rem; border-bottom: 1px solid var(--border); background: linear-gradient(180deg, var(--bg-elev), var(--surface)); }
+  .mission-head .kicker { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; letter-spacing: 0.12em; color: var(--text-mute); text-transform: uppercase; }
+  .mission-head h2 { font-family: 'Chakra Petch', sans-serif; font-size: 1.6rem; margin: 0.25rem 0; }
+  .mission-head .tagline { color: var(--accent); font-size: 0.95rem; }
+  .badge { padding: 3px 9px; border-radius: 4px; font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.12em; font-weight: 700; margin-left: 0.5rem; vertical-align: middle; }
+  .badge-trigger { background: rgba(0, 203, 226, 0.12); color: var(--falco); border: 1px solid rgba(0, 203, 226, 0.35); }
+  .badge-evade { background: rgba(183, 140, 255, 0.12); color: var(--evade); border: 1px solid rgba(183, 140, 255, 0.35); }
+  .mission-body { padding: 1.4rem 1.6rem; }
+  .briefing { color: var(--text-dim); font-size: 0.98rem; line-height: 1.7; margin-bottom: 1.5rem; border-left: 2px solid var(--border-strong); padding-left: 1rem; }
+  .sec-title { font-family: 'Chakra Petch', sans-serif; text-transform: uppercase; letter-spacing: 0.16em; font-size: 0.72rem; color: var(--text-mute); margin: 1.4rem 0 0.7rem; }
+
+  .steps { list-style: none; }
+  .steps li { display: flex; gap: 0.8rem; padding: 0.7rem 0; border-bottom: 1px solid var(--border); align-items: flex-start; }
+  .steps li:last-child { border-bottom: none; }
+  .steps .box { flex-shrink: 0; width: 22px; height: 22px; border-radius: 6px; border: 1.5px solid var(--border-strong); background: var(--bg-elev); cursor: pointer; display: grid; place-items: center; color: transparent; font-size: 0.8rem; transition: all 0.15s; margin-top: 2px; }
+  .steps .box:hover { border-color: var(--accent); }
+  .steps li.done .box { background: linear-gradient(135deg, var(--accent), var(--accent-2)); border-color: var(--accent); color: var(--bg); box-shadow: 0 0 10px var(--accent-glow); }
+  .steps .step-label { font-weight: 600; font-size: 0.95rem; }
+  .steps li.done .step-label { color: var(--text-mute); text-decoration: line-through; }
+  .steps .step-detail { color: var(--text-dim); font-size: 0.85rem; margin-top: 0.2rem; white-space: pre-wrap; }
+
+  .hints { display: flex; flex-direction: column; gap: 0.6rem; }
+  .hint-open { background: var(--bg-elev); border: 1px solid var(--border); border-left: 2px solid var(--warn); border-radius: 0.5rem; padding: 0.7rem 1rem; }
+  .hint-open .hn { font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; color: var(--warn); text-transform: uppercase; letter-spacing: 0.1em; }
+  .hint-open .ht { color: var(--text-dim); font-size: 0.9rem; margin-top: 0.25rem; white-space: pre-wrap; }
+  .hint-locked { display: flex; justify-content: space-between; align-items: center; background: var(--bg-elev); border: 1px dashed var(--border-strong); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--text-mute); font-size: 0.85rem; }
+  .btn { font-family: 'Chakra Petch', sans-serif; text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.72rem; font-weight: 700; padding: 0.45rem 0.9rem; border-radius: 6px; border: 1px solid var(--border-strong); background: transparent; color: var(--text-dim); cursor: pointer; transition: all 0.15s; }
+  .btn:hover { color: var(--accent); border-color: var(--accent); box-shadow: 0 0 12px var(--accent-glow); }
+  .btn-accent { color: var(--bg); background: linear-gradient(135deg, var(--accent), var(--accent-2)); border-color: var(--accent); }
+  .btn-accent:hover { color: var(--bg); filter: brightness(1.08); }
+
+  .docs-link { display: inline-block; margin-top: 1.2rem; font-size: 0.85rem; }
+
+  /* evade submit */
+  .submit-form { margin-top: 0.6rem; display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }
+  .submit-form input { flex: 1 1 260px; background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: 6px; color: var(--text); font-family: 'JetBrains Mono', monospace; padding: 0.55rem 0.8rem; font-size: 0.9rem; }
+  .submit-form input:focus { outline: none; border-color: var(--evade); box-shadow: 0 0 10px var(--evade-glow); }
+  .submit-msg { margin-top: 0.6rem; font-size: 0.85rem; font-family: 'JetBrains Mono', monospace; min-height: 1.2em; }
+  .submit-msg.ok { color: var(--success); }
+  .submit-msg.err { color: var(--danger); }
+  .submit-msg.warn { color: var(--warn); }
+
+  .empty { text-align: center; padding: 2.5rem 1rem; color: var(--text-mute); font-size: 0.9rem; }
+  .empty .icon { font-size: 2rem; opacity: 0.4; display: block; margin-bottom: 0.5rem; }
+  .help { background: var(--surface); border: 1px solid var(--border); border-radius: 0.85rem; padding: 2rem; text-align: center; max-width: 620px; margin: 3rem auto; }
+  .help h2 { font-family: 'Chakra Petch', sans-serif; font-size: 1.2rem; margin-bottom: 0.6rem; }
+  .help p { color: var(--text-dim); font-size: 0.95rem; }
+
+  /* CLEARED overlay */
+  #clear-fx { position: fixed; inset: 0; z-index: 50; display: none; place-items: center; background: radial-gradient(ellipse at center, rgba(0,203,226,0.18), rgba(7,11,16,0.86)); backdrop-filter: blur(2px); }
+  #clear-fx.show { display: grid; animation: fxin 0.3s ease; }
+  #clear-fx .card { text-align: center; }
+  #clear-fx .stamp { font-family: 'Chakra Petch', sans-serif; font-size: 4rem; font-weight: 700; letter-spacing: 0.08em; color: var(--success); text-shadow: 0 0 40px var(--success-glow); animation: stamp 0.5s cubic-bezier(.2,1.4,.4,1); }
+  #clear-fx .sub { color: var(--text-dim); letter-spacing: 0.25em; text-transform: uppercase; margin-top: 0.6rem; font-size: 0.9rem; }
+  @keyframes fxin { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes stamp { 0% { transform: scale(2.2); opacity: 0; } 60% { transform: scale(0.92); opacity: 1; } 100% { transform: scale(1); } }
+</style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <h1><span class="accent">Falco</span> CTF <span class="light mono">journey</span></h1>
+      <div class="subtitle">作戦を順に攻略せよ — ミッションマップ・ブリーフィング・段階ヒント</div>
+    </div>
+    <div>
+      <div class="live">● LIVE</div>
+      <div class="updated mono" id="updated">connecting…</div>
+      <div class="hdr-links"><a id="board-link" href="/">← scoreboard</a></div>
+    </div>
+  </header>
+
+  <div id="page"></div>
+
+  <div id="clear-fx"><div class="card">
+    <div class="stamp" id="clear-title">✔ CLEARED</div>
+    <div class="sub" id="clear-sub"></div>
+  </div></div>
+
+<script>
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  const params = new URLSearchParams(location.search);
+  const user = params.get('user') || '';
+
+  // Track prior solved set so we can detect a fresh CLEARED transition.
+  let prevSolved = null;        // Set of solved ids from last poll
+  let prevCurrent = undefined;  // last current id
+  let firstRender = true;
+  let busy = false;             // suppress re-render while a write is in flight
+
+  if (!user) {
+    document.getElementById('page').innerHTML = `
+      <div class="help">
+        <h2>?user=&lt;your-username&gt; を URL に付けてください</h2>
+        <p>例: <code>${esc(location.origin)}/journey?user=alice</code></p>
+        <p style="margin-top:0.8rem">ワークスペースから来た場合は運営にユーザ名を確認してください。</p>
+      </div>`;
+  } else {
+    document.getElementById('board-link').href = '/';
+    refresh();
+    setInterval(() => { if (!busy) refresh(); }, 2000);
+  }
+
+  async function refresh() {
+    try {
+      const r = await fetch('/api/users/' + encodeURIComponent(user) + '/journey');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      render(await r.json());
+      document.getElementById('updated').textContent = 'updated ' + new Date().toLocaleTimeString();
+    } catch (e) {
+      document.getElementById('updated').textContent = 'connection error';
+    }
+  }
+
+  function render(d) {
+    const missions = d.missions || [];
+    const total = d.total || missions.length || 0;
+    const solvedCount = d.solved_count || 0;
+    const pct = total ? Math.round(100 * solvedCount / total) : 0;
+
+    const solvedNow = new Set(missions.filter(m => m.status === 'solved').map(m => m.id));
+
+    // Detect a just-cleared mission (was current/not-solved last poll, now solved).
+    if (!firstRender && prevSolved) {
+      for (const m of missions) {
+        if (m.status === 'solved' && !prevSolved.has(m.id)) {
+          playCleared(m);
+          break;
+        }
+      }
+    }
+
+    // ---- mission map ----
+    const justUnlockedId = (!firstRender && prevCurrent && d.current && prevCurrent !== d.current) ? d.current : null;
+    const mapHTML = missions.map(m => {
+      let ico = '🔒', cls = m.status;
+      if (m.status === 'solved') ico = '✔';
+      else if (m.status === 'current') ico = '▶';
+      const num = (m.id.split('-')[0] || '');
+      const unlockCls = (m.id === justUnlockedId) ? ' just-unlocked' : '';
+      return `<li class="${cls}${unlockCls}">
+        <span class="ico">${ico}</span>
+        <span style="min-width:0">
+          <span class="mtitle">${esc(m.title || m.id)}</span><br>
+          <span class="num">MISSION ${esc(num)} · ${esc(m.status.toUpperCase())}</span>
+        </span>
+      </li>`;
+    }).join('');
+
+    // ---- detail ----
+    const detailHTML = d.detail ? renderDetail(d.detail) : renderAllDone(solvedCount, total);
+
+    document.getElementById('page').innerHTML = `
+      <div class="prog-wrap">
+        <div class="prog-head">
+          <span class="label">Mission progress</span>
+          <span class="count">${solvedCount}<span class="total">/${total}</span> · ${pct}%</span>
+        </div>
+        <div class="bar"><div class="fill" style="width:${pct}%"></div></div>
+      </div>
+      <div class="layout">
+        <section class="panel">
+          <div class="panel-header"><h2>Mission map</h2></div>
+          <ul class="map">${mapHTML || '<div class="empty"><span class="icon">∅</span>ミッション未ロード</div>'}</ul>
+        </section>
+        <section>${detailHTML}</section>
+      </div>`;
+
+    wireDetail(d.detail);
+    prevSolved = solvedNow;
+    prevCurrent = d.current;
+    firstRender = false;
+  }
+
+  function renderAllDone(done, total) {
+    return `<div class="mission"><div class="empty">
+      <span class="icon">🏁</span>
+      全 ${total} ミッション攻略完了 — お見事。<br>
+      <a class="docs-link" href="/">スコアボードを見る →</a>
+    </div></div>`;
+  }
+
+  function renderDetail(det) {
+    const typeBadge = det.type ? `<span class="badge badge-${esc(det.type)}">${esc(det.type)}</span>` : '';
+    if (!det.hasJourney) {
+      return `<div class="mission">
+        <div class="mission-head">
+          <div class="kicker">CURRENT MISSION</div>
+          <h2>${esc(det.title || det.id)} ${typeBadge}</h2>
+        </div>
+        <div class="mission-body">
+          <div class="empty"><span class="icon">📡</span>ブリーフィング準備中<br>
+          このミッションの作戦資料はまだ用意されていません。</div>
+          ${det.type === 'evade' ? evadeForm(det.id) : ''}
+        </div>
+      </div>`;
+    }
+
+    const steps = (det.steps || []).map(s => `
+      <li class="${s.checked ? 'done' : ''}" data-step="${s.idx}">
+        <div class="box" data-step="${s.idx}" data-checked="${s.checked ? '1' : '0'}" role="checkbox" aria-checked="${s.checked}">✓</div>
+        <div>
+          <div class="step-label">${esc(s.label)}</div>
+          ${s.detail ? `<div class="step-detail">${esc(s.detail)}</div>` : ''}
+        </div>
+      </li>`).join('');
+
+    const hints = det.hints || { total: 0, opened: [], lockedCount: 0, nextIndex: 0 };
+    const openedHTML = (hints.opened || []).map(h => `
+      <div class="hint-open"><div class="hn">HINT ${h.idx}</div><div class="ht">${esc(h.text)}</div></div>`).join('');
+    let lockedHTML = '';
+    if (hints.lockedCount > 0 && hints.nextIndex > 0) {
+      lockedHTML = `<div class="hint-locked">
+        <span>🔒 ヒント ${hints.nextIndex} / ${hints.total}（未開封 ${hints.lockedCount}）</span>
+        <button class="btn" id="open-hint" data-next="${hints.nextIndex}" data-cid="${esc(det.id)}">ヒントを開く</button>
+      </div>`;
+    }
+    const hintsBlock = (hints.total > 0)
+      ? `<div class="sec-title">Hints（段階開放）</div><div class="hints">${openedHTML}${lockedHTML || (hints.lockedCount === 0 ? '<div class="hint-locked">全ヒント開封済み</div>' : '')}</div>`
+      : '';
+
+    const docs = det.docsUrl ? `<a class="docs-link" href="${esc(det.docsUrl)}" target="_blank" rel="noopener">📖 詳細ブリーフィング (docs) →</a>` : '';
+
+    return `<div class="mission">
+      <div class="mission-head">
+        <div class="kicker">CURRENT MISSION</div>
+        <h2>${esc(det.title)} ${typeBadge}</h2>
+        ${det.tagline ? `<div class="tagline">${esc(det.tagline)}</div>` : ''}
+      </div>
+      <div class="mission-body">
+        ${det.briefing ? `<div class="briefing">${esc(det.briefing)}</div>` : ''}
+        ${steps ? `<div class="sec-title">Steps（自己チェック）</div><ul class="steps">${steps}</ul>` : ''}
+        ${hintsBlock}
+        ${det.type === 'evade' ? evadeForm(det.id) : ''}
+        ${docs}
+      </div>
+    </div>`;
+  }
+
+  function evadeForm(cid) {
+    return `<div class="sec-title">Flag 提出（evade）</div>
+      <form class="submit-form" id="submit-form" data-cid="${esc(cid)}">
+        <input type="text" id="flag-input" placeholder="FALCO{...}" autocomplete="off" spellcheck="false">
+        <button type="submit" class="btn btn-accent">Submit</button>
+      </form>
+      <div class="submit-msg" id="submit-msg"></div>`;
+  }
+
+  function wireDetail(det) {
+    // step self-check toggles
+    document.querySelectorAll('.steps .box').forEach(box => {
+      box.addEventListener('click', async () => {
+        const idx = box.dataset.step;
+        const checked = box.dataset.checked !== '1';
+        busy = true;
+        try {
+          const r = await fetch('/api/users/' + encodeURIComponent(user) + '/challenges/' + encodeURIComponent(det.id) + '/steps/' + idx + '/check',
+            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ checked }) });
+          if (r.ok) {
+            box.dataset.checked = checked ? '1' : '0';
+            box.closest('li').classList.toggle('done', checked);
+          }
+        } catch (e) { /* ignore; next poll reconciles */ }
+        busy = false;
+      });
+    });
+
+    // progressive hint reveal
+    const openBtn = document.getElementById('open-hint');
+    if (openBtn) {
+      openBtn.addEventListener('click', async () => {
+        const idx = openBtn.dataset.next;
+        busy = true;
+        try {
+          const r = await fetch('/api/users/' + encodeURIComponent(user) + '/challenges/' + encodeURIComponent(openBtn.dataset.cid) + '/hints/' + idx,
+            { method: 'POST' });
+          if (r.ok) { await refresh(); }
+        } catch (e) { /* ignore */ }
+        busy = false;
+      });
+    }
+
+    // evade flag submit
+    const form = document.getElementById('submit-form');
+    if (form) {
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const cid = form.dataset.cid;
+        const flag = document.getElementById('flag-input').value.trim();
+        const msg = document.getElementById('submit-msg');
+        if (!flag) { msg.className = 'submit-msg err'; msg.textContent = 'flag を入力してください'; return; }
+        busy = true;
+        msg.className = 'submit-msg'; msg.textContent = '提出中…';
+        try {
+          const r = await fetch('/api/challenges/' + encodeURIComponent(cid) + '/submit',
+            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user, flag }) });
+          const d = await r.json();
+          if (d.solved) { msg.className = 'submit-msg ok'; msg.textContent = '✔ 正解 — ミッションクリア！'; }
+          else if (d.correct === false) { msg.className = 'submit-msg err'; msg.textContent = '✗ flag が違います'; }
+          else if (d.evaded === false) { msg.className = 'submit-msg warn'; msg.textContent = '検知されました: ' + (d.reason || 'forbidden rule fired'); }
+          else if (d.exfiltrated === false) { msg.className = 'submit-msg warn'; msg.textContent = (d.reason || 'まず collector に exfil してください'); }
+          else { msg.className = 'submit-msg'; msg.textContent = JSON.stringify(d); }
+        } catch (err) { msg.className = 'submit-msg err'; msg.textContent = '提出エラー: ' + err; }
+        busy = false;
+        refresh();
+      });
+    }
+  }
+
+  function playCleared(m) {
+    const fx = document.getElementById('clear-fx');
+    document.getElementById('clear-title').textContent = '✔ CLEARED';
+    document.getElementById('clear-sub').textContent = (m.title || m.id) + ' 攻略';
+    fx.classList.add('show');
+    setTimeout(() => fx.classList.remove('show'), 1900);
+  }
+</script>
+</body>
+</html>

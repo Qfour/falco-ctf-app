@@ -53,6 +53,10 @@ spec:
             - name: ADMIN_EMAILS
               value: {{ . | quote }}
             {{- end }}
+            {{- with .Values.env.docsBaseUrl }}
+            - name: DOCS_BASE_URL
+              value: {{ . | quote }}
+            {{- end }}
             {{- if .Values.flagsSecret.enabled }}
             - name: FLAGS_FILE
               value: /etc/ctf-flags/{{ .Values.flagsSecret.key }}

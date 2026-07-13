@@ -1,0 +1,27 @@
+# Journey content for the /journey UI. Schema: internal/catalog/journey.go.
+# Participant-facing narrative only — never influences scoring.
+# NOTE: evade mission — never write the flag value here (public repo).
+challengeId: 03-stealth-read
+title: 静かな読み取り — path 迂回
+tagline: 検知を発火させずに /etc/shadow を読み直し、flag を回収せよ
+briefing: >-
+  Mission 02 で正面から /etc/shadow を読んだら盛大に検知された。CTF Company の SOC は
+  もうアラートを見ている可能性が高い。だが同じ情報を Falco に気づかれず取り直せれば、
+  SOC は単発の false positive と判断するはずだ。Read sensitive file untrusted を
+  一度も発火させずに /etc/shadow 末尾の flag を抜き出し、提出せよ。
+steps:
+  - label: ルールが何で判定しているか見抜く
+    detail: このルールは open に渡した path (fd.name) が /etc で始まるかで判定している。
+  - label: /etc で始まらない path から同じ inode を読む
+    detail: |
+      NG: cat /etc/shadow                        (path が /etc 始まりで発火)
+      OK: cat /proc/self/root/etc/shadow | grep FALCO
+      /proc/<pid>/root は mount namespace の root を指す symlink。fd.name が /etc 始まりに
+      ならないので発火しない。cat /proc/$$/root/etc/shadow でも可。
+  - label: flag を提出
+    detail: 末尾に埋め込まれた FALCO{...} を下のフォームから提出する。直前 10 秒に発火があると弾かれる。
+hints:
+  - 同じファイル本体に、違う名前 (path) でたどり着く方法は Linux にいくつもある。ルールが見ているのは本体ではなく path 文字列だ。
+  - ルールは「path が /etc で始まる」かで判定している。同じ inode に /etc 以外の path で到達すればすり抜けられる。man proc を読むか /proc/self/ を覗こう。
+  - "想定解: cat /proc/self/root/etc/shadow | grep FALCO — /proc/self/root 経由なら fd.name が /etc 始まりにならず発火しない。"
+docsUrl: /missions/03-stealth-read/

@@ -1,0 +1,29 @@
+# Sample journey content authored by app-lead to validate the /journey engine.
+# Content-lead owns the final copy for all 10 missions — this file will be
+# replaced by their version. Schema: internal/catalog/journey.go.
+# NOTE: evade/boss mission — never write the flag value here (public repo).
+challengeId: 10-final-exfil
+title: 最終持ち出し — ボス戦
+tagline: master key を発火させず読み、箱の外へ静かに持ち出し、提出せよ
+briefing: >-
+  集大成。これまで学んだ「やってはいけないこと」を全て避けながら、master key を
+  読み・箱の外の collector へ静かに持ち出し (exfil)・提出する。3 つすべてを満たして
+  はじめて CLEARED。単に読んで提出するだけでは通らない (requireExfil)。禁止ルールは
+  7 つ — 直前 30 秒に 1 つでも発火していると提出は弾かれる。
+steps:
+  - label: 発火させずに master key を読む
+    detail: |
+      直接 cat せず、Mission 03 で学んだ手口でセンシティブファイルを読む。
+      例: /proc/self/root 経由で読むと Read-sensitive 系ルールを回避できる。
+  - label: 既存の curl で collector へ静かに送る
+    detail: |
+      reverse shell (C2) や自前バイナリの drop+実行は禁止ルールに触れる。
+      箱に元からある curl で collector へ HTTP POST するのが唯一の現実解。
+      POST /api/challenges/10-final-exfil/exfil に {"user","flag"} を送る。
+  - label: 30 秒静かに待って提出
+    detail: 禁止ルールが 1 つも発火していない状態で提出フォームから flag を送る。
+hints:
+  - 3 条件がある — 発火させず読む / collector へ exfil 済み / 提出。順番に片付けよう。
+  - 送信手段が鍵。reverse shell は collector (HTTP 受信のみ) に届かず、自前ツールの投下は Drop-and-execute を踏む。箱にある道具だけで完結させる。
+  - "想定解の骨子: /proc/self/root 経由で読み、既存の curl で /exfil に POST し、30 秒待ってから submit。禁止ルール 7 つを 1 つも踏まないこと。"
+docsUrl: /missions/10-final-exfil/

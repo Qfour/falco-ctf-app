@@ -1,8 +1,10 @@
-// Package view serves the embedded HTML dashboards at GET / and GET /me.
+// Package view serves the embedded HTML dashboards at GET /, GET /me, and
+// GET /journey.
 //
-// Both pages are static — they fetch live state via /api/state and
-// /api/users/{user}/me respectively. The HTML / CSS / JS is shipped via
-// go:embed so the binary needs no filesystem assets at runtime.
+// All pages are static — they fetch live state via /api/state,
+// /api/users/{user}/me, and /api/users/{user}/journey respectively. The
+// HTML / CSS / JS is shipped via go:embed so the binary needs no filesystem
+// assets at runtime.
 package view
 
 import (
@@ -16,6 +18,9 @@ var indexHTML string
 //go:embed templates/me.html
 var meHTML string
 
+//go:embed templates/journey.html
+var journeyHTML string
+
 type Handler struct{}
 
 func New() *Handler { return &Handler{} }
@@ -23,6 +28,7 @@ func New() *Handler { return &Handler{} }
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /", h.index)
 	mux.HandleFunc("GET /me", h.me)
+	mux.HandleFunc("GET /journey", h.journey)
 }
 
 func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
@@ -42,4 +48,12 @@ func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) me(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(meHTML))
+}
+
+// journey serves the guided Journey UI. Like /me it is static: it reads
+// `?user=<name>` client-side and polls /api/users/<name>/journey. A missing
+// user renders an instructional landing screen.
+func (h *Handler) journey(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(journeyHTML))
 }

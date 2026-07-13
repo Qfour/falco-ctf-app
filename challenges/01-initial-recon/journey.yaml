@@ -1,0 +1,24 @@
+# Journey content for the /journey UI. Schema: internal/catalog/journey.go.
+# Participant-facing narrative only — never influences scoring.
+challengeId: 01-initial-recon
+title: 潜入 — 初動偵察
+tagline: 侵入した Pod から環境を探り、最初の一歩を踏み出せ
+briefing: >-
+  CTF Company のネットワークに足がかりを得た。まず攻撃者が真っ先にやること —
+  Kubernetes API Server に直接話しかけ、この環境で何ができるかを探る。
+  無 ServiceAccount の Pod からの匿名 connect は Falco が即座に検知する。
+  検知させること自体がこのミッションのゴールだ。
+steps:
+  - label: ワークスペース端末を開く
+    detail: 画面のターミナル (ttyd) で以下を実行できる状態にする。
+  - label: K8s API Server へ接触する
+    detail: |
+      curl -sk https://kubernetes.default.svc/api
+      認証は 401 で失敗するが TCP connect は成立し、その瞬間にルールが発火する。
+  - label: スコアボードで CLEARED を確認
+    detail: 発火が scoreboard に届くと、このミッションが自動で CLEARED になる。
+hints:
+  - K8s API Server の in-cluster アドレスは kubernetes.default.svc。まずそこへ HTTP で触ってみよう。
+  - curl か wget で十分。TLS 検証は無視 (-k / --no-check-certificate) してよい。認証成功は不要。
+  - "想定解: curl -sk https://kubernetes.default.svc/api — connect した瞬間に Contact K8S API Server From Container が発火する。"
+docsUrl: /missions/01-initial-recon/
