@@ -234,7 +234,6 @@
       let ico = '🔒', cls = m.status;
       if (m.status === 'solved') ico = '✔';
       else if (m.status === 'current') ico = '▶';
-      else if (m.status === 'open') { ico = '○'; }
       const num = (m.id.split('-')[0] || '');
       const unlockCls = (m.id === justUnlockedId) ? ' just-unlocked' : '';
       return `<li class="${cls}${unlockCls}">

@@ -46,7 +46,7 @@ type Handler struct {
 	adminEmails []string
 	journeys    catalog.Journeys
 	order       []string
-	journeyMode string
+	docsBaseURL string
 }
 
 type Option func(*Handler)
@@ -69,10 +69,10 @@ func WithJourneys(j catalog.Journeys) Option {
 // else catalog sorted ids). Drives sequential unlock in the Journey UI.
 func WithOrder(order []string) Option { return func(h *Handler) { h.order = order } }
 
-// WithJourneyMode sets the progression display mode: "guided" (default; lock
-// missions after the current one) or "open" (all unlocked). Display-only —
-// scoring is never gated by this.
-func WithJourneyMode(mode string) Option { return func(h *Handler) { h.journeyMode = mode } }
+// WithDocsBaseURL sets the participant docs-site origin used to absolutise each
+// mission's relative docsUrl (see api.JourneyConfig.DocsBaseURL). Empty = keep
+// the relative path.
+func WithDocsBaseURL(u string) Option { return func(h *Handler) { h.docsBaseURL = u } }
 
 func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts ...Option) *Handler {
 	h := &Handler{
@@ -91,9 +91,9 @@ func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts .
 
 	ingest.New(cat, s, logger, h.now).Register(h.mux)
 	api.New(cat, s, logger, h.now, h.adminEmails, api.JourneyConfig{
-		Journeys: h.journeys,
-		Order:    h.order,
-		Mode:     h.journeyMode,
+		Journeys:    h.journeys,
+		Order:       h.order,
+		DocsBaseURL: h.docsBaseURL,
 	}).Register(h.mux)
 	view.New().Register(h.mux)
 

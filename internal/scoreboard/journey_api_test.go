@@ -25,7 +25,7 @@ type journeyFixture struct {
 	st  *store.Store
 }
 
-func newJourneyFixture(t *testing.T, mode string) *journeyFixture {
+func newJourneyFixture(t *testing.T, extra ...scoreboard.Option) *journeyFixture {
 	t.Helper()
 	cat := catalog.Catalog{
 		"01-recon": {ID: "01-recon", Type: "trigger", ExpectedRules: []string{"Recon Rule"}, WindowSeconds: 10},
@@ -51,11 +51,11 @@ func newJourneyFixture(t *testing.T, mode string) *journeyFixture {
 	}
 	t.Cleanup(func() { st.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := scoreboard.NewHandler(cat, st, logger,
+	opts := append([]scoreboard.Option{
 		scoreboard.WithJourneys(journeys),
 		scoreboard.WithOrder([]string{"01-recon", "02-evade", "03-late"}),
-		scoreboard.WithJourneyMode(mode),
-	)
+	}, extra...)
+	srv := scoreboard.NewHandler(cat, st, logger, opts...)
 	return &journeyFixture{t: t, srv: srv, st: st}
 }
 
@@ -98,7 +98,7 @@ func statusOf(m map[string]any, id string) string {
 }
 
 func TestJourney_InitialStatesGuided(t *testing.T) {
-	f := newJourneyFixture(t, "guided")
+	f := newJourneyFixture(t)
 	m := f.journey("alice")
 	if m["current"] != "01-recon" {
 		t.Fatalf("current should be 01-recon, got %v", m["current"])
@@ -129,20 +129,9 @@ func TestJourney_InitialStatesGuided(t *testing.T) {
 	}
 }
 
-func TestJourney_OpenModeUnlocksAll(t *testing.T) {
-	f := newJourneyFixture(t, "open")
-	m := f.journey("alice")
-	if s := statusOf(m, "02-evade"); s != "open" {
-		t.Fatalf("open mode: 02 status=%q want open", s)
-	}
-	if s := statusOf(m, "03-late"); s != "open" {
-		t.Fatalf("open mode: 03 status=%q want open", s)
-	}
-}
-
 func TestJourney_AdvancesOnSolve(t *testing.T) {
 	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
-	f := newJourneyFixture(t, "guided")
+	f := newJourneyFixture(t)
 	// Solve 01 directly via the store (equivalent to a trigger auto-solve).
 	if _, err := f.st.MarkSolved("alice", "01-recon", now.Format(time.RFC3339Nano)); err != nil {
 		t.Fatal(err)
@@ -164,7 +153,7 @@ func TestJourney_AdvancesOnSolve(t *testing.T) {
 }
 
 func TestJourney_GracefulDegradeNoJourneyYaml(t *testing.T) {
-	f := newJourneyFixture(t, "guided")
+	f := newJourneyFixture(t)
 	// Solve 01 and 02 so 03-late (no journey.yaml) becomes current.
 	_, _ = f.st.MarkSolved("alice", "01-recon", "2026-01-01T00:00:00Z")
 	_, _ = f.st.MarkSolved("alice", "02-evade", "2026-01-01T00:00:01Z")
@@ -179,7 +168,7 @@ func TestJourney_GracefulDegradeNoJourneyYaml(t *testing.T) {
 }
 
 func TestJourney_AllSolvedNoCurrent(t *testing.T) {
-	f := newJourneyFixture(t, "guided")
+	f := newJourneyFixture(t)
 	_, _ = f.st.MarkSolved("alice", "01-recon", "2026-01-01T00:00:00Z")
 	_, _ = f.st.MarkSolved("alice", "02-evade", "2026-01-01T00:00:01Z")
 	_, _ = f.st.MarkSolved("alice", "03-late", "2026-01-01T00:00:02Z")
@@ -193,7 +182,7 @@ func TestJourney_AllSolvedNoCurrent(t *testing.T) {
 }
 
 func TestJourney_StepCheckReflectedInProjection(t *testing.T) {
-	f := newJourneyFixture(t, "guided")
+	f := newJourneyFixture(t)
 	w := f.req("POST", "/api/users/alice/challenges/01-recon/steps/0/check", map[string]any{"checked": true})
 	if w.Code != http.StatusOK {
 		t.Fatalf("step check status: %d body=%s", w.Code, w.Body)
@@ -209,7 +198,7 @@ func TestJourney_StepCheckReflectedInProjection(t *testing.T) {
 }
 
 func TestJourney_StepCheck_InvalidIndex(t *testing.T) {
-	f := newJourneyFixture(t, "guided")
+	f := newJourneyFixture(t)
 	w := f.req("POST", "/api/users/alice/challenges/01-recon/steps/9/check", map[string]any{"checked": true})
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("out-of-range step must 400, got %d", w.Code)
@@ -217,7 +206,7 @@ func TestJourney_StepCheck_InvalidIndex(t *testing.T) {
 }
 
 func TestJourney_HintInOrderReveal(t *testing.T) {
-	f := newJourneyFixture(t, "guided")
+	f := newJourneyFixture(t)
 	// Opening hint 2 before hint 1 must be rejected (409).
 	if w := f.req("POST", "/api/users/alice/challenges/01-recon/hints/2", nil); w.Code != http.StatusConflict {
 		t.Fatalf("out-of-order hint must 409, got %d body=%s", w.Code, w.Body)
@@ -247,22 +236,70 @@ func TestJourney_HintInOrderReveal(t *testing.T) {
 }
 
 func TestJourney_HintOutOfRange(t *testing.T) {
-	f := newJourneyFixture(t, "guided")
+	f := newJourneyFixture(t)
 	if w := f.req("POST", "/api/users/alice/challenges/01-recon/hints/99", nil); w.Code != http.StatusBadRequest {
 		t.Fatalf("out-of-range hint must 400, got %d", w.Code)
 	}
 }
 
 func TestJourney_NoHintsForMissionWithoutJourney(t *testing.T) {
-	f := newJourneyFixture(t, "guided")
+	f := newJourneyFixture(t)
 	// 03-late has no journey content -> no hints -> 404.
 	if w := f.req("POST", "/api/users/alice/challenges/03-late/hints/1", nil); w.Code != http.StatusNotFound {
 		t.Fatalf("hint on journeyless mission must 404, got %d", w.Code)
 	}
 }
 
+func docsURLOf(m map[string]any, id string) string {
+	for _, mi := range m["missions"].([]any) {
+		mm := mi.(map[string]any)
+		if mm["id"] == id {
+			s, _ := mm["docsUrl"].(string)
+			return s
+		}
+	}
+	return ""
+}
+
+// With no DOCS_BASE_URL configured (local dev), docsUrl stays relative so the
+// existing behaviour is unchanged.
+func TestJourney_DocsURL_RelativeWhenUnset(t *testing.T) {
+	f := newJourneyFixture(t)
+	m := f.journey("alice")
+	if got := docsURLOf(m, "01-recon"); got != "/missions/01-recon/" {
+		t.Fatalf("map docsUrl=%q want relative /missions/01-recon/", got)
+	}
+	det := m["detail"].(map[string]any)
+	if got, _ := det["docsUrl"].(string); got != "/missions/01-recon/" {
+		t.Fatalf("detail docsUrl=%q want relative /missions/01-recon/", got)
+	}
+}
+
+// With DOCS_BASE_URL set, docsUrl is rewritten to an absolute URL on the docs
+// host in both the mission map and the current-mission detail. A trailing slash
+// on the base is normalised away so the join never doubles it.
+func TestJourney_DocsURL_AbsoluteWhenSet(t *testing.T) {
+	f := newJourneyFixture(t, scoreboard.WithDocsBaseURL("https://docs.example.test/"))
+	m := f.journey("alice")
+	const want = "https://docs.example.test/missions/01-recon/"
+	if got := docsURLOf(m, "01-recon"); got != want {
+		t.Fatalf("map docsUrl=%q want %q", got, want)
+	}
+	det := m["detail"].(map[string]any)
+	if got, _ := det["docsUrl"].(string); got != want {
+		t.Fatalf("detail docsUrl=%q want %q", got, want)
+	}
+	// A mission whose journey.yaml omits docsUrl stays empty (no phantom link).
+	// Advance so 02-evade (no docsUrl) becomes current.
+	_, _ = f.st.MarkSolved("alice", "01-recon", "2026-01-01T00:00:00Z")
+	m2 := f.journey("alice")
+	if got := docsURLOf(m2, "02-evade"); got != "" {
+		t.Fatalf("02-evade has no docsUrl; want empty, got %q", got)
+	}
+}
+
 func TestJourneyHTML_ServedAtJourney(t *testing.T) {
-	f := newJourneyFixture(t, "guided")
+	f := newJourneyFixture(t)
 	w := f.req("GET", "/journey?user=alice", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("/journey status: %d", w.Code)

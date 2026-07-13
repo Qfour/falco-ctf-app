@@ -29,10 +29,12 @@ func main() {
 	// ADMIN_EMAILS gates POST /api/admin/reset (verified against the
 	// auth-policy-propagated X-Auth-Request-Email). Empty = nobody.
 	adminEmails := serverutil.SplitCSV(serverutil.Env("ADMIN_EMAILS", ""))
-	// JOURNEY_MODE controls the /journey progression display: "guided"
-	// (default) locks missions after the current one; "open" shows them all
-	// unlocked. Progression is display-only — scoring is never blocked.
-	journeyMode := serverutil.Env("JOURNEY_MODE", "guided")
+	// DOCS_BASE_URL is the origin of the participant docs site (a separate host,
+	// e.g. https://docs.<suffix>). When set, the /journey API rewrites each
+	// mission's relative docsUrl (/missions/<NN>-<slug>/) into an absolute URL so
+	// the link resolves off-origin. Empty = keep the relative path (local dev,
+	// where docs are served under the same host or not at all).
+	docsBaseURL := serverutil.Env("DOCS_BASE_URL", "")
 
 	cat, err := catalog.Load(challengesDir)
 	if err != nil {
@@ -72,7 +74,7 @@ func main() {
 		logger.Error("journey load failed", "dir", challengesDir, "err", err)
 		os.Exit(1)
 	}
-	logger.Info("catalog loaded", "dir", challengesDir, "challenges", cat.IDs(), "journeys", len(journeys), "journey_mode", journeyMode, "flag_overrides", flagsFile != "", "scenario", scenarioID)
+	logger.Info("catalog loaded", "dir", challengesDir, "challenges", cat.IDs(), "journeys", len(journeys), "docs_base_url", docsBaseURL, "flag_overrides", flagsFile != "", "scenario", scenarioID)
 
 	st, err := store.Open(dbPath)
 	if err != nil {
@@ -87,7 +89,7 @@ func main() {
 		scoreboard.WithAdminEmails(adminEmails),
 		scoreboard.WithJourneys(journeys),
 		scoreboard.WithOrder(order),
-		scoreboard.WithJourneyMode(journeyMode),
+		scoreboard.WithDocsBaseURL(docsBaseURL),
 	)
 
 	err = serverutil.Serve(addr, handler, logger, func() {

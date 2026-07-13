@@ -50,12 +50,15 @@ var validMission = regexp.MustCompile(`^[0-9]{2}-[a-z0-9-]{1,60}$`)
 var invalidDisplayName = regexp.MustCompile(`[<>&"'\x00-\x1f\x7f]`)
 
 // JourneyConfig carries the /journey UI inputs into the api handler:
-// narrative content, the mission progression order, and the display mode.
+// narrative content, the mission progression order, and the docs-site origin.
 // All are optional — the handler applies safe defaults (see New).
 type JourneyConfig struct {
 	Journeys catalog.Journeys // challengeId -> narrative content (may be nil)
 	Order    []string         // mission sequence (scenario order or catalog ids)
-	Mode     string           // "guided" (default) | "open"
+	// DocsBaseURL is the participant docs-site origin (e.g. https://docs.<suffix>).
+	// When non-empty, each mission's relative docsUrl is rewritten to an absolute
+	// URL under this origin. Empty = keep the relative path.
+	DocsBaseURL string
 }
 
 type Handler struct {
@@ -69,7 +72,7 @@ type Handler struct {
 
 	journeys    catalog.Journeys
 	order       []string
-	journeyMode string // "guided" | "open"
+	docsBaseURL string // docs-site origin for absolutising docsUrl; "" = relative
 }
 
 func New(cat catalog.Catalog, s *store.Store, logger *slog.Logger, now func() time.Time, adminEmails []string, jc JourneyConfig) *Handler {
@@ -91,10 +94,9 @@ func New(cat catalog.Catalog, s *store.Store, logger *slog.Logger, now func() ti
 	if order == nil {
 		order = cat.IDs()
 	}
-	mode := jc.Mode
-	if mode != "open" {
-		mode = "guided"
-	}
+	// Normalise the docs origin to have no trailing slash so we can join with the
+	// mission's relative docsUrl (which starts with "/") without doubling it.
+	docsBaseURL := strings.TrimRight(strings.TrimSpace(jc.DocsBaseURL), "/")
 	return &Handler{
 		cat:                cat,
 		store:              s,
@@ -105,7 +107,7 @@ func New(cat catalog.Catalog, s *store.Store, logger *slog.Logger, now func() ti
 		adminSet:           adminSet,
 		journeys:           journeys,
 		order:              order,
-		journeyMode:        mode,
+		docsBaseURL:        docsBaseURL,
 	}
 }
 
@@ -703,8 +705,9 @@ func (h *Handler) userMe(w http.ResponseWriter, r *http.Request) {
 // briefing + steps (with per-step self-check state) + progressive hints
 // (opened text vs locked count), and the docs link. Progression order comes
 // from the scenario (or catalog ids); "current" is the first unsolved mission
-// and, in guided mode, later missions render as locked. This is display-only —
-// solves are never blocked here (trigger challenges still auto-solve via Falco).
+// and later missions render as locked (guided progression is the only mode).
+// This is display-only — solves are never blocked here (trigger challenges
+// still auto-solve via Falco).
 //
 // Auth: same public model as /me (per-user progress is public information).
 func (h *Handler) journey(w http.ResponseWriter, r *http.Request) {
@@ -751,7 +754,7 @@ func (h *Handler) journey(w http.ResponseWriter, r *http.Request) {
 		Title      string `json:"title"`
 		Tagline    string `json:"tagline"`
 		Type       string `json:"type"`
-		Status     string `json:"status"` // solved | current | locked | open
+		Status     string `json:"status"` // solved | current | locked
 		HasJourney bool   `json:"hasJourney"`
 		DocsURL    string `json:"docsUrl"`
 	}
@@ -768,9 +771,8 @@ func (h *Handler) journey(w http.ResponseWriter, r *http.Request) {
 			status = "solved"
 		case id == current:
 			status = "current"
-		case h.journeyMode == "open":
-			status = "open"
 		default:
+			// Guided progression: everything after the current mission is locked.
 			status = "locked"
 		}
 		missions = append(missions, missionView{
@@ -780,7 +782,7 @@ func (h *Handler) journey(w http.ResponseWriter, r *http.Request) {
 			Type:       h.cat[id].Type,
 			Status:     status,
 			HasJourney: hasJourney,
-			DocsURL:    j.DocsURL,
+			DocsURL:    h.docsURL(j.DocsURL),
 		})
 	}
 
@@ -802,7 +804,6 @@ func (h *Handler) journey(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"user":         user,
 		"display_name": displayName,
-		"mode":         h.journeyMode,
 		"solved_count": len(solvedSet),
 		"total":        len(order),
 		"current":      currentJSON,
@@ -810,6 +811,24 @@ func (h *Handler) journey(w http.ResponseWriter, r *http.Request) {
 		"detail":       detail,
 		"now":          h.now().UTC().Format(time.RFC3339Nano),
 	})
+}
+
+// docsURL absolutises a mission's relative docsUrl (e.g. "/missions/01-x/")
+// against the configured docs-site origin. When no origin is set (local dev) or
+// the value is empty / already absolute, it is returned unchanged. The docs live
+// on a separate host (docs.<suffix>), so serving the relative path from the
+// scoreboard origin would 404 — this is the fix for that (P15).
+func (h *Handler) docsURL(rel string) string {
+	if rel == "" || h.docsBaseURL == "" {
+		return rel
+	}
+	if strings.HasPrefix(rel, "http://") || strings.HasPrefix(rel, "https://") {
+		return rel
+	}
+	if !strings.HasPrefix(rel, "/") {
+		rel = "/" + rel
+	}
+	return h.docsBaseURL + rel
 }
 
 // missionDetail builds the current-mission detail block: briefing, per-step
@@ -865,7 +884,7 @@ func (h *Handler) missionDetail(cid string, checkedSteps, openedHints []int) map
 		"tagline":    j.Tagline,
 		"briefing":   j.Briefing,
 		"type":       ch.Type,
-		"docsUrl":    j.DocsURL,
+		"docsUrl":    h.docsURL(j.DocsURL),
 		"hasJourney": hasJourney,
 		"steps":      steps,
 		"hints": map[string]any{

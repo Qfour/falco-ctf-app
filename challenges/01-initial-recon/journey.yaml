@@ -1,6 +1,5 @@
-# Sample journey content authored by app-lead to validate the /journey engine.
-# Content-lead owns the final copy for all 10 missions — this file will be
-# replaced by their version. Schema: internal/catalog/journey.go.
+# Journey content for the /journey UI. Schema: internal/catalog/journey.go.
+# Participant-facing narrative only — never influences scoring.
 challengeId: 01-initial-recon
 title: 潜入 — 初動偵察
 tagline: 侵入した Pod から環境を探り、最初の一歩を踏み出せ
