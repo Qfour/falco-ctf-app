@@ -122,17 +122,28 @@ func TestSubmit_ForwardedTransparently(t *testing.T) {
 	}
 }
 
-func TestMeAndDisplayName_Forwarded(t *testing.T) {
+func TestDisplayName_ForwardedTransparently(t *testing.T) {
 	c, up := newTestCollector(t)
-	r1 := do(t, "GET", c.URL+"/api/users/alice/me", "")
-	r1.Body.Close()
-	if got := up.last(); got != "GET /api/users/alice/me" {
-		t.Fatalf("me forward = %q", got)
-	}
-	r2 := do(t, "POST", c.URL+"/api/users/alice/display-name", `{"name":"Alice"}`)
-	r2.Body.Close()
+	r := do(t, "POST", c.URL+"/api/users/alice/display-name", `{"name":"Alice"}`)
+	r.Body.Close()
 	if got := up.last(); got != "POST /api/users/alice/display-name" {
 		t.Fatalf("display-name forward = %q", got)
+	}
+}
+
+// TestMeRead_NotForwarded proves the progress READ route is default-denied at
+// the collector (P18): GET /api/users/{user}/me is anonymous + self-claimed, so
+// it must NOT be fronted here. It 404s at the mux and never reaches the upstream.
+// Progress is viewed only on the browser journey host (self-scope gated).
+func TestMeRead_NotForwarded(t *testing.T) {
+	c, up := newTestCollector(t)
+	resp := do(t, "GET", c.URL+"/api/users/alice/me", "")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("GET /me status = %d, want 404/405 (route removed, default-deny)", resp.StatusCode)
+	}
+	if up.last() != "" {
+		t.Fatalf("GET /me must not reach upstream, got %q", up.last())
 	}
 }
 
@@ -150,6 +161,7 @@ func TestDefaultDeny_BlockedRoutes(t *testing.T) {
 		{"GET", "/api/state"},
 		{"GET", "/api/hints"},
 		{"GET", "/"},
+		{"GET", "/api/users/alice/me"}, // progress read is not fronted (P18)
 	}
 	for _, b := range blocked {
 		resp := do(t, b.method, c.URL+b.path, "")
