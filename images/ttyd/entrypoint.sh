@@ -2,6 +2,7 @@
 set -eu
 
 # Pod name — k8s sets HOSTNAME to the pod name by default.
+# shellcheck disable=SC3028  # HOSTNAME is a k8s-injected env var, not the shell builtin.
 POD="${HOSTNAME:?HOSTNAME not set}"
 CONTAINER="${TTYD_TARGET_CONTAINER:-challenge}"
 PORT="${TTYD_PORT:-7681}"

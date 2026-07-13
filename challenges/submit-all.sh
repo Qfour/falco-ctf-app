@@ -1,4 +1,9 @@
 #!/bin/sh
+# shellcheck shell=bash
+# `local` (below) is not POSIX, but this file is only ever *sourced* into an
+# interactive shell — bash via ttyd (`/bin/bash -l`) or busybox ash — both of
+# which provide `local`. Keeping `local` scopes the helper's vars so it does not
+# leak cid/flag/user into the participant's shell. Lint as bash to reflect that.
 # Shared submit helper for all-missions mode.
 #
 # Usage:
