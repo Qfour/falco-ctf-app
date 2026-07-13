@@ -1,12 +1,16 @@
 package scoring_test
 
 import (
+	"context"
 	"errors"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/scoring"
+	"github.com/Qfour/falco-ctf-app/internal/store"
 )
 
 // fakeStore is an in-memory ScoreStore with a scriptable forbidden-fire and
@@ -82,6 +86,27 @@ func (f *fakeStore) RecordExfil(user, challenge, flag, _ string) error {
 	}
 	f.exfil[key(user, challenge)] = flag
 	return nil
+}
+
+// PendingExfilSolves mirrors the real store: every recorded receipt whose
+// (user, challenge) pair is not yet in the solved set, sorted by (user,
+// challenge) for deterministic assertions.
+func (f *fakeStore) PendingExfilSolves() []store.ExfilReceipt {
+	var out []store.ExfilReceipt
+	for k, flag := range f.exfil {
+		if _, solved := f.solved[k]; solved {
+			continue
+		}
+		user, challenge, _ := strings.Cut(k, "|")
+		out = append(out, store.ExfilReceipt{User: user, Challenge: challenge, Flag: flag})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].User != out[j].User {
+			return out[i].User < out[j].User
+		}
+		return out[i].Challenge < out[j].Challenge
+	})
+	return out
 }
 
 // testCatalog mirrors the fixture used by the HTTP tests: one trigger, one
@@ -371,5 +396,244 @@ func TestEvaluateTrigger_ContinueOnError(t *testing.T) {
 	}
 	if _, ok := fs.solved[key("alice", "01b-trigger")]; !ok {
 		t.Fatal("01b-trigger solve must be persisted")
+	}
+}
+
+// --- P16 auto-solve sweeper --------------------------------------------------
+
+// TestSweep_ManualAndSweeperShareVerdict proves the two entry points reach the
+// identical solve through the shared evaluateClean gate. Given the same store
+// state (exfil delivered, clean window), a manual SubmitEvade and a Sweep both
+// solve 03-exfil, and the manual path is a no-op newly=false after the sweep
+// already solved it (single-writer, first-wins).
+func TestSweep_ManualAndSweeperShareVerdict(t *testing.T) {
+	// Sweeper solves first.
+	fsA := newFakeStore()
+	gA := scoring.New(testCatalog(), fsA, fixedClock(time.Now()))
+	if _, err := gA.RecordExfil("alice", "03-exfil", "FALCO{boss}"); err != nil {
+		t.Fatal(err)
+	}
+	solved, err := gA.Sweep()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(solved) != 1 || solved[0] != (scoring.SweepResult{User: "alice", Challenge: "03-exfil"}) {
+		t.Fatalf("sweep must solve exactly (alice,03-exfil), got %+v", solved)
+	}
+	// A manual submit after the sweep must agree: solved, but not newly.
+	out, err := gA.SubmitEvade("alice", "03-exfil", "FALCO{boss}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != scoring.EvadeSolved || out.Newly {
+		t.Fatalf("manual submit after sweep must be EvadeSolved & not newly, got %+v", out)
+	}
+
+	// Manual solves first — sweeper must then find nothing pending.
+	fsB := newFakeStore()
+	gB := scoring.New(testCatalog(), fsB, fixedClock(time.Now()))
+	if _, err := gB.RecordExfil("bob", "03-exfil", "FALCO{boss}"); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := gB.SubmitEvade("bob", "03-exfil", "FALCO{boss}"); err != nil || out.Status != scoring.EvadeSolved || !out.Newly {
+		t.Fatalf("manual submit must solve newly, got %+v err=%v", out, err)
+	}
+	solved, err = gB.Sweep()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(solved) != 0 {
+		t.Fatalf("sweep must find nothing after manual solve, got %+v", solved)
+	}
+}
+
+// (a) clean window → sweeper solves.
+func TestSweep_CleanWindow_Solves(t *testing.T) {
+	fs := newFakeStore()
+	at := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+	g := scoring.New(testCatalog(), fs, fixedClock(at))
+	if _, err := g.RecordExfil("alice", "03-exfil", "FALCO{boss}"); err != nil {
+		t.Fatal(err)
+	}
+	solved, err := g.Sweep()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(solved) != 1 {
+		t.Fatalf("clean window must auto-solve, got %+v", solved)
+	}
+	if got := fs.solved[key("alice", "03-exfil")]; got != at.Format(time.RFC3339Nano) {
+		t.Fatalf("solve timestamp must be the injected clock, got %q", got)
+	}
+	if fs.markSolvedCalls != 1 {
+		t.Fatalf("Grader must be the single MarkSolved writer; calls=%d", fs.markSolvedCalls)
+	}
+}
+
+// (b) forbidden fired within the window → sweeper must NOT solve (fail-closed).
+func TestSweep_ForbiddenFired_NotSolved(t *testing.T) {
+	fs := newFakeStore()
+	fs.forbidden["alice"] = []string{"Read sensitive file untrusted"}
+	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
+	if _, err := g.RecordExfil("alice", "03-exfil", "FALCO{boss}"); err != nil {
+		t.Fatal(err)
+	}
+	solved, err := g.Sweep()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(solved) != 0 {
+		t.Fatalf("forbidden fire in window must block auto-solve, got %+v", solved)
+	}
+	if fs.markSolvedCalls != 0 {
+		t.Fatal("forbidden fire must not reach MarkSolved")
+	}
+	// The pair stays pending so a later clean window still solves it.
+	fs.forbidden["alice"] = nil
+	solved, err = g.Sweep()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(solved) != 1 {
+		t.Fatalf("pair must still be pending and solve once clean, got %+v", solved)
+	}
+}
+
+// (c) exfil not received → nothing pending, sweeper solves nothing.
+func TestSweep_NoExfil_SolvesNothing(t *testing.T) {
+	fs := newFakeStore()
+	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
+	// No RecordExfil call → PendingExfilSolves is empty.
+	solved, err := g.Sweep()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(solved) != 0 {
+		t.Fatalf("no exfil receipt must yield no auto-solve, got %+v", solved)
+	}
+	if fs.markSolvedCalls != 0 {
+		t.Fatal("no exfil must not reach MarkSolved")
+	}
+}
+
+// (c') wrong exfil value → never satisfies the exact-flag gate.
+func TestSweep_WrongExfilValue_NeverSolves(t *testing.T) {
+	fs := newFakeStore()
+	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
+	if _, err := g.RecordExfil("alice", "03-exfil", "FALCO{wrong}"); err != nil {
+		t.Fatal(err)
+	}
+	solved, err := g.Sweep()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(solved) != 0 {
+		t.Fatalf("wrong exfil value must never auto-solve, got %+v", solved)
+	}
+	if fs.markSolvedCalls != 0 {
+		t.Fatal("wrong exfil value must not reach MarkSolved")
+	}
+}
+
+// (d) already solved → idempotent; PendingExfilSolves excludes it and no second
+// MarkSolved fires.
+func TestSweep_AlreadySolved_Idempotent(t *testing.T) {
+	fs := newFakeStore()
+	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
+	if _, err := g.RecordExfil("alice", "03-exfil", "FALCO{boss}"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.Sweep(); err != nil { // first sweep solves
+		t.Fatal(err)
+	}
+	callsAfterFirst := fs.markSolvedCalls
+	solved, err := g.Sweep() // second sweep must be a no-op
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(solved) != 0 {
+		t.Fatalf("second sweep must report no new solves, got %+v", solved)
+	}
+	if fs.markSolvedCalls != callsAfterFirst {
+		t.Fatalf("solved pair must be excluded from the queue; extra MarkSolved calls: %d", fs.markSolvedCalls-callsAfterFirst)
+	}
+}
+
+// Non-exfil evade / trigger receipts are never auto-solved even if a receipt
+// somehow exists for them (catalog is the RequireExfil authority).
+func TestSweep_OnlyExfilRequiredEvade(t *testing.T) {
+	fs := newFakeStore()
+	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
+	// Inject receipts directly for a plain evade and a trigger challenge.
+	fs.exfil[key("alice", "02-evade")] = "FALCO{ok}"
+	fs.exfil[key("alice", "01-trigger")] = "whatever"
+	solved, err := g.Sweep()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(solved) != 0 {
+		t.Fatalf("only exfil-required evade challenges auto-solve, got %+v", solved)
+	}
+}
+
+// Store error on one pair is collected and the pass continues.
+func TestSweep_StoreErrorPropagatesAndContinues(t *testing.T) {
+	fs := newFakeStore()
+	fs.markSolvedErr = errors.New("boom")
+	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
+	if _, err := g.RecordExfil("alice", "03-exfil", "FALCO{boss}"); err != nil {
+		t.Fatal(err)
+	}
+	solved, err := g.Sweep()
+	if err == nil {
+		t.Fatal("a MarkSolved store error must be returned from Sweep")
+	}
+	if len(solved) != 0 {
+		t.Fatalf("a failed MarkSolved must not report a solve, got %+v", solved)
+	}
+}
+
+// Sweeper lifecycle: Run must return promptly on context cancel (no goroutine
+// leak). Uses a fast cadence and a done channel.
+func TestSweeper_StopsOnContextCancel(t *testing.T) {
+	fs := newFakeStore()
+	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
+	sw := scoring.NewSweeper(g, time.Millisecond, nil, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { sw.Run(ctx); close(done) }()
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Sweeper.Run did not return after context cancel (goroutine leak)")
+	}
+}
+
+// Sweeper metric hook fires once per newly auto-solved pair.
+func TestSweeper_OnSolvedHookFiresOncePerSolve(t *testing.T) {
+	fs := newFakeStore()
+	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
+	if _, err := g.RecordExfil("alice", "03-exfil", "FALCO{boss}"); err != nil {
+		t.Fatal(err)
+	}
+	var hookCalls []scoring.SweepResult
+	sw := scoring.NewSweeper(g, time.Hour, nil, func(r scoring.SweepResult) {
+		hookCalls = append(hookCalls, r)
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	// Run does one immediate sweep on entry; cancel right after so we exercise
+	// exactly that first sweep (cadence is 1h so no tick races in).
+	go func() { sw.Run(ctx); close(done) }()
+	// Give the immediate sweep a moment, then stop.
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	<-done
+	if len(hookCalls) != 1 || hookCalls[0].Challenge != "03-exfil" {
+		t.Fatalf("onSolved hook must fire once for the auto-solve, got %+v", hookCalls)
 	}
 }

@@ -32,6 +32,7 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/ingest"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/metrics"
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/scoring"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/view"
 	"github.com/Qfour/falco-ctf-app/internal/store"
 )
@@ -47,6 +48,7 @@ type Handler struct {
 	journeys    catalog.Journeys
 	order       []string
 	docsBaseURL string
+	sweeper     *scoring.Sweeper
 }
 
 type Option func(*Handler)
@@ -89,8 +91,19 @@ func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts .
 	h.mux.HandleFunc("GET /healthz", h.healthz)
 	h.mux.Handle("GET /metrics", promhttp.Handler())
 
-	ingest.New(cat, s, logger, h.now).Register(h.mux)
-	api.New(cat, s, logger, h.now, h.adminEmails, api.JourneyConfig{
+	// Single Grader shared by the ingest handler, the api handler, AND the
+	// auto-solve sweeper. One instance = one clock and one MarkSolved caller,
+	// preserving the single-writer discipline (conventions I1) across all three
+	// entry points (this also resolves the prior double-instantiation, R4).
+	grader := scoring.New(cat, s, h.now)
+	// The sweeper bumps the same evade solve metric a manual submit would, so an
+	// auto-solve is indistinguishable from a manual one on the dashboard.
+	h.sweeper = scoring.NewSweeper(grader, scoring.DefaultSweepCadence, logger, func(r scoring.SweepResult) {
+		metrics.SolvesTotal.WithLabelValues(r.Challenge, "evade").Inc()
+	})
+
+	ingest.New(grader, s, logger, h.now).Register(h.mux)
+	api.New(cat, grader, s, logger, h.now, h.adminEmails, api.JourneyConfig{
 		Journeys:    h.journeys,
 		Order:       h.order,
 		DocsBaseURL: h.docsBaseURL,
@@ -99,6 +112,12 @@ func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts .
 
 	return h
 }
+
+// Sweeper returns the auto-solve sweeper wired to this handler's shared Grader.
+// The command layer runs it (Sweeper.Run) in its own goroutine bound to the
+// server's lifecycle context, so it stops on shutdown. Always non-nil after
+// NewHandler.
+func (h *Handler) Sweeper() *scoring.Sweeper { return h.sweeper }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Reject an empty {user} path segment under /api/users/ explicitly, before

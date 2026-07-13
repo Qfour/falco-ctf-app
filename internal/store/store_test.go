@@ -268,3 +268,59 @@ func TestReset_ClearsHintViewsAndStepChecks(t *testing.T) {
 		t.Fatal("step checks must be cleared by Reset")
 	}
 }
+
+func TestHasExfilAny(t *testing.T) {
+	s := newStore(t)
+	if s.HasExfilAny("alice", "03-boss") {
+		t.Fatal("no receipt yet")
+	}
+	if err := s.RecordExfil("alice", "03-boss", "FALCO{boss}", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if !s.HasExfilAny("alice", "03-boss") {
+		t.Fatal("receipt recorded → HasExfilAny must be true")
+	}
+	// HasExfilAny is flag-agnostic; even a wrong-value receipt counts as
+	// "received here" while HasExfil (exact match) stays false.
+	if err := s.RecordExfil("bob", "03-boss", "FALCO{wrong}", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if !s.HasExfilAny("bob", "03-boss") {
+		t.Fatal("wrong-value receipt still counts for HasExfilAny")
+	}
+	if s.HasExfil("bob", "03-boss", "FALCO{boss}") {
+		t.Fatal("HasExfil must still require the exact flag")
+	}
+}
+
+// PendingExfilSolves returns only received-but-unsolved receipts; solved pairs
+// drop out of the queue.
+func TestPendingExfilSolves(t *testing.T) {
+	s := newStore(t)
+	if got := s.PendingExfilSolves(); len(got) != 0 {
+		t.Fatalf("empty store must yield no pending solves, got %+v", got)
+	}
+	if err := s.RecordExfil("alice", "03-boss", "FALCO{boss}", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordExfil("bob", "03-boss", "FALCO{boss}", "t"); err != nil {
+		t.Fatal(err)
+	}
+	pending := s.PendingExfilSolves()
+	if len(pending) != 2 {
+		t.Fatalf("two receipts, none solved → two pending, got %+v", pending)
+	}
+	// Sorted by (user, challenge): alice before bob.
+	if pending[0].User != "alice" || pending[0].Challenge != "03-boss" || pending[0].Flag != "FALCO{boss}" {
+		t.Fatalf("first pending receipt wrong: %+v", pending[0])
+	}
+
+	// Solve alice's pair — it must leave the pending queue; bob's remains.
+	if _, err := s.MarkSolved("alice", "03-boss", "t"); err != nil {
+		t.Fatal(err)
+	}
+	pending = s.PendingExfilSolves()
+	if len(pending) != 1 || pending[0].User != "bob" {
+		t.Fatalf("solved pair must drop out; got %+v", pending)
+	}
+}
