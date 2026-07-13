@@ -1,0 +1,25 @@
+# Sample journey content authored by app-lead to validate the /journey engine.
+# Content-lead owns the final copy for all 10 missions — this file will be
+# replaced by their version. Schema: internal/catalog/journey.go.
+challengeId: 05-silent-search
+title: 静かな探索 — cmdline 回避
+tagline: 検知ルールを発火させずに秘密鍵を読み出し、flag を回収せよ
+briefing: >-
+  防御側は cmdline のキーワードで危険な操作を検知している。
+  だが cmdline 判定には穴がある。攻撃者はコマンドラインに痕跡を残さず
+  /root/.ssh/id_rsa を読む方法を知っている。Search Private Keys or Passwords を
+  一度も発火させずに鍵の中身から flag を抜き出し、提出せよ。
+steps:
+  - label: 鍵ファイルの場所を把握
+    detail: /root/.ssh/id_rsa に postStart で秘密鍵が配置されている。
+  - label: cmdline に痕跡を残さず読む
+    detail: |
+      NG: cat /root/.ssh/id_rsa           (cmdline に id_rsa が残り発火)
+      OK: cat < /root/.ssh/id_rsa | grep FALCO   (入力リダイレクト)
+  - label: flag を提出
+    detail: 鍵の中身に埋め込まれた FALCO{...} を下のフォームから提出する。
+hints:
+  - コマンドライン引数にファイル名を出さずにファイルを読む方法を考えよう。
+  - シェルの入力リダイレクト `<` を使うと、exec される cmdline は引数を含まない。
+  - "想定解: cat < /root/.ssh/id_rsa | grep FALCO / xxd < /root/.ssh/id_rsa。fork-exec された cat の /proc/<pid>/cmdline は \"cat\" のみになる。"
+docsUrl: /missions/05-silent-search/

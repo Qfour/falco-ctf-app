@@ -3,13 +3,18 @@
 //
 // Routes:
 //
-//	GET  /healthz                          liveness/readiness
-//	GET  /metrics                          Prometheus exposition
-//	POST /falco/events                     (ingest)
-//	POST /api/challenges/{cid}/submit      (api)
-//	POST /internal/exfil/{cid}             (api: collector-only exfil sink)
-//	GET  /api/state                        (api)
-//	GET  /                                 (view: embedded HTML dashboard)
+//	GET  /healthz                                                 liveness/readiness
+//	GET  /metrics                                                 Prometheus exposition
+//	POST /falco/events                                            (ingest)
+//	POST /api/challenges/{cid}/submit                             (api)
+//	POST /internal/exfil/{cid}                                    (api: collector-only exfil sink)
+//	GET  /api/state                                               (api)
+//	GET  /api/users/{user}/me                                     (api)
+//	GET  /api/users/{user}/journey                                (api: Journey projection)
+//	POST /api/users/{user}/challenges/{cid}/steps/{idx}/check     (api: Journey step self-check)
+//	POST /api/users/{user}/challenges/{cid}/hints/{idx}           (api: Journey progressive hint reveal)
+//	GET  /                                                        (view: embedded HTML dashboard)
+//	GET  /journey                                                 (view: guided Journey UI)
 package scoreboard
 
 import (
@@ -39,6 +44,9 @@ type Handler struct {
 	dbPath      string
 	now         func() time.Time
 	adminEmails []string
+	journeys    catalog.Journeys
+	order       []string
+	journeyMode string
 }
 
 type Option func(*Handler)
@@ -49,6 +57,22 @@ func WithDBPath(p string) Option        { return func(h *Handler) { h.dbPath = p
 // WithAdminEmails sets the allowlist for admin-only endpoints (POST
 // /api/admin/reset). Empty = nobody (fail-closed).
 func WithAdminEmails(e []string) Option { return func(h *Handler) { h.adminEmails = e } }
+
+// WithJourneys supplies the /journey UI narrative content (challengeId ->
+// Journey). Optional; a missing entry means "no briefing authored yet" and the
+// UI degrades gracefully.
+func WithJourneys(j catalog.Journeys) Option {
+	return func(h *Handler) { h.journeys = j }
+}
+
+// WithOrder sets the mission progression order (scenario order when pinned,
+// else catalog sorted ids). Drives sequential unlock in the Journey UI.
+func WithOrder(order []string) Option { return func(h *Handler) { h.order = order } }
+
+// WithJourneyMode sets the progression display mode: "guided" (default; lock
+// missions after the current one) or "open" (all unlocked). Display-only —
+// scoring is never gated by this.
+func WithJourneyMode(mode string) Option { return func(h *Handler) { h.journeyMode = mode } }
 
 func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts ...Option) *Handler {
 	h := &Handler{
@@ -66,7 +90,11 @@ func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts .
 	h.mux.Handle("GET /metrics", promhttp.Handler())
 
 	ingest.New(cat, s, logger, h.now).Register(h.mux)
-	api.New(cat, s, logger, h.now, h.adminEmails).Register(h.mux)
+	api.New(cat, s, logger, h.now, h.adminEmails, api.JourneyConfig{
+		Journeys: h.journeys,
+		Order:    h.order,
+		Mode:     h.journeyMode,
+	}).Register(h.mux)
 	view.New().Register(h.mux)
 
 	return h

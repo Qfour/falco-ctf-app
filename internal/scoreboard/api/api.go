@@ -1,9 +1,19 @@
-// Package api serves the read-side JSON state view and the flag-submission
-// endpoint for evade-type challenges.
+// Package api serves the read-side JSON state view, the flag-submission
+// endpoint for evade-type challenges, the collector-only exfil sink, and the
+// participant-facing Journey UI projection + progression writes.
 //
 //	GET  /api/state
 //	POST /api/challenges/{cid}/submit
 //	POST /internal/exfil/{cid}   (collector-only sink; see exfilInternal)
+//	GET  /api/users/{user}/me
+//	GET  /api/users/{user}/journey
+//	POST /api/users/{user}/challenges/{cid}/steps/{idx}/check
+//	POST /api/users/{user}/challenges/{cid}/hints/{idx}
+//	POST /api/users/{user}/display-name
+//	GET  /api/hints
+//	POST /api/admin/hints
+//	POST /api/admin/reset
+//	POST /api/admin/users/{user}/display-name
 package api
 
 import (
@@ -13,6 +23,7 @@ import (
 	"net/http"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -38,6 +49,15 @@ var validMission = regexp.MustCompile(`^[0-9]{2}-[a-z0-9-]{1,60}$`)
 // max keeps leaderboard columns predictable.
 var invalidDisplayName = regexp.MustCompile(`[<>&"'\x00-\x1f\x7f]`)
 
+// JourneyConfig carries the /journey UI inputs into the api handler:
+// narrative content, the mission progression order, and the display mode.
+// All are optional — the handler applies safe defaults (see New).
+type JourneyConfig struct {
+	Journeys catalog.Journeys // challengeId -> narrative content (may be nil)
+	Order    []string         // mission sequence (scenario order or catalog ids)
+	Mode     string           // "guided" (default) | "open"
+}
+
 type Handler struct {
 	cat                catalog.Catalog
 	store              *store.Store
@@ -46,9 +66,13 @@ type Handler struct {
 	submitLimiter      *ratelimit.Limiter
 	displayNameLimiter *ratelimit.Limiter
 	adminSet           map[string]struct{}
+
+	journeys    catalog.Journeys
+	order       []string
+	journeyMode string // "guided" | "open"
 }
 
-func New(cat catalog.Catalog, s *store.Store, logger *slog.Logger, now func() time.Time, adminEmails []string) *Handler {
+func New(cat catalog.Catalog, s *store.Store, logger *slog.Logger, now func() time.Time, adminEmails []string, jc JourneyConfig) *Handler {
 	// /submit accepts a claimed user identity. Without per-IP throttling a
 	// participant who scraped someone else's flag could brute-force submits.
 	// 1 req/s with burst 10 lets legitimate typing through but blocks
@@ -59,6 +83,18 @@ func New(cat catalog.Catalog, s *store.Store, logger *slog.Logger, now func() ti
 			adminSet[e] = struct{}{}
 		}
 	}
+	journeys := jc.Journeys
+	if journeys == nil {
+		journeys = catalog.Journeys{}
+	}
+	order := jc.Order
+	if order == nil {
+		order = cat.IDs()
+	}
+	mode := jc.Mode
+	if mode != "open" {
+		mode = "guided"
+	}
 	return &Handler{
 		cat:                cat,
 		store:              s,
@@ -67,12 +103,16 @@ func New(cat catalog.Catalog, s *store.Store, logger *slog.Logger, now func() ti
 		submitLimiter:      ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now),
 		displayNameLimiter: ratelimit.New(0.2 /* one every 5s */, 5 /* burst */).WithNow(now),
 		adminSet:           adminSet,
+		journeys:           journeys,
+		order:              order,
+		journeyMode:        mode,
 	}
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/state", h.state)
 	mux.HandleFunc("GET /api/users/{user}/me", h.userMe)
+	mux.HandleFunc("GET /api/users/{user}/journey", h.journey)
 	mux.HandleFunc("POST /api/admin/reset", h.reset)
 	mux.HandleFunc("POST /api/admin/users/{user}/display-name", h.adminSetDisplayName)
 	mux.HandleFunc("GET /api/hints", h.hints)
@@ -87,6 +127,10 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	// itself adds no auth (see recordExfil doc). Rate limiting lives on the
 	// collector front, so /internal/exfil is unthrottled here.
 	mux.HandleFunc("POST /internal/exfil/{cid}", h.exfilInternal)
+	// Journey progression writes (self-check ticks + progressive hint reveal).
+	// Rate-limited on the same bucket as /submit — participant-facing writes.
+	mux.Handle("POST /api/users/{user}/challenges/{cid}/steps/{idx}/check", submitMW(http.HandlerFunc(h.stepCheck)))
+	mux.Handle("POST /api/users/{user}/challenges/{cid}/hints/{idx}", submitMW(http.HandlerFunc(h.openHint)))
 	dnMW := h.displayNameLimiter.Middleware(ratelimit.ClientIP)
 	mux.Handle("POST /api/users/{user}/display-name", dnMW(http.HandlerFunc(h.setDisplayName)))
 }
@@ -397,6 +441,123 @@ func (h *Handler) exfilInternal(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// --- Journey step self-check ------------------------------------------------
+
+// stepCheck ticks (checked=true) or clears (checked=false) step {idx} (0-based)
+// of {cid} for {user}. Purely presentational: journey `steps` are an info-only
+// checklist with no auto-detection, so a tick never affects the solve verdict —
+// it just lets a participant track their own progress across page reloads. Same
+// claimed-identity trust model as /submit (logged, never proven).
+//
+// Body:  {"checked": true}
+// Route: POST /api/users/{user}/challenges/{cid}/steps/{idx}/check
+func (h *Handler) stepCheck(w http.ResponseWriter, r *http.Request) {
+	user := strings.TrimSpace(r.PathValue("user"))
+	cid := r.PathValue("cid")
+	if !validUser.MatchString(user) {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
+		return
+	}
+	if _, ok := h.cat[cid]; !ok {
+		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"error": "unknown challenge: " + cid})
+		return
+	}
+	j, ok := h.journeys[cid]
+	if !ok {
+		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"error": "no journey content for " + cid})
+		return
+	}
+	idx, err := strconv.Atoi(r.PathValue("idx"))
+	if err != nil || idx < 0 || idx >= len(j.Steps) {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid step index"})
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
+	var req struct {
+		Checked bool `json:"checked"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+
+	at := h.now().UTC().Format(time.RFC3339Nano)
+	if err := h.store.SetStepCheck(user, cid, idx, req.Checked, at); err != nil {
+		h.logger.Error("set step check", "err", err, "user", user, "cid", cid, "idx", idx)
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "could not record step check"})
+		return
+	}
+	h.logger.Info("step_check", "user", user, "cid", cid, "idx", idx, "checked", req.Checked, "remote_addr", r.RemoteAddr)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "user": user, "cid": cid, "idx": idx, "checked": req.Checked})
+}
+
+// --- Journey progressive hint reveal ----------------------------------------
+
+// openHint reveals hint {idx} (1-based) of {cid} for {user}. Hints must be
+// opened in order: idx 1 first, then 2, etc. — opening idx N requires idx N-1
+// already opened (so participants approach the answer progressively rather than
+// jumping to the last hint). Idempotent: re-opening an already-open hint returns
+// its text again. The response only ever contains journey.yaml hint copy, which
+// by convention carries no flag values (public repo; conventions I10).
+//
+// Body:  none required
+// Route: POST /api/users/{user}/challenges/{cid}/hints/{idx}
+func (h *Handler) openHint(w http.ResponseWriter, r *http.Request) {
+	user := strings.TrimSpace(r.PathValue("user"))
+	cid := r.PathValue("cid")
+	if !validUser.MatchString(user) {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
+		return
+	}
+	if _, ok := h.cat[cid]; !ok {
+		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"error": "unknown challenge: " + cid})
+		return
+	}
+	j, ok := h.journeys[cid]
+	if !ok || len(j.Hints) == 0 {
+		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"error": "no hints for " + cid})
+		return
+	}
+	idx, err := strconv.Atoi(r.PathValue("idx"))
+	if err != nil || idx < 1 || idx > len(j.Hints) {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid hint index"})
+		return
+	}
+
+	// Enforce in-order reveal: opening idx N requires N-1 already open.
+	if idx > 1 {
+		opened := make(map[int]struct{})
+		for _, o := range h.store.HintViews(user)[cid] {
+			opened[o] = struct{}{}
+		}
+		if _, prevOpen := opened[idx-1]; !prevOpen {
+			httpx.WriteJSON(w, http.StatusConflict, map[string]any{
+				"error": fmt.Sprintf("open hint %d before hint %d", idx-1, idx),
+			})
+			return
+		}
+	}
+
+	at := h.now().UTC().Format(time.RFC3339Nano)
+	newly, err := h.store.RecordHintView(user, cid, idx, at)
+	if err != nil {
+		h.logger.Error("record hint view", "err", err, "user", user, "cid", cid, "idx", idx)
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "could not record hint view"})
+		return
+	}
+	h.logger.Info("hint_view", "user", user, "cid", cid, "idx", idx, "newly", newly, "remote_addr", r.RemoteAddr)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"ok":    true,
+		"user":  user,
+		"cid":   cid,
+		"idx":   idx,
+		"hint":  j.Hints[idx-1],
+		"total": len(j.Hints),
+		"newly": newly,
+	})
+}
+
 // --- /api/users/{user}/display-name ----------------------------------------
 
 // setDisplayName lets a participant pick a cosmetic name shown on the
@@ -533,6 +694,192 @@ func (h *Handler) userMe(w http.ResponseWriter, r *http.Request) {
 		"events":            snap.EventsPerUser[user],
 		"now":               now.UTC().Format(time.RFC3339Nano),
 	})
+}
+
+// --- /api/users/{user}/journey ----------------------------------------------
+
+// journey serves the game-style progression projection for one participant:
+// the ordered mission map (solved / current / locked), the current mission's
+// briefing + steps (with per-step self-check state) + progressive hints
+// (opened text vs locked count), and the docs link. Progression order comes
+// from the scenario (or catalog ids); "current" is the first unsolved mission
+// and, in guided mode, later missions render as locked. This is display-only —
+// solves are never blocked here (trigger challenges still auto-solve via Falco).
+//
+// Auth: same public model as /me (per-user progress is public information).
+func (h *Handler) journey(w http.ResponseWriter, r *http.Request) {
+	user := strings.TrimSpace(r.PathValue("user"))
+	if !validUser.MatchString(user) {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
+		return
+	}
+
+	snap := h.store.Snapshot()
+	stepChecks := h.store.StepChecks(user)
+	hintViews := h.store.HintViews(user)
+
+	// Order filtered to catalog membership (a scenario id could reference a
+	// challenge that isn't loaded; skip rather than emit a phantom mission).
+	order := make([]string, 0, len(h.order))
+	for _, id := range h.order {
+		if _, ok := h.cat[id]; ok {
+			order = append(order, id)
+		}
+	}
+
+	solvedSet := make(map[string]struct{})
+	for k := range snap.Solved {
+		if k.User != user {
+			continue
+		}
+		if _, ok := h.cat[k.Challenge]; ok {
+			solvedSet[k.Challenge] = struct{}{}
+		}
+	}
+
+	// current = first unsolved mission in order; "" if all solved.
+	current := ""
+	for _, id := range order {
+		if _, done := solvedSet[id]; !done {
+			current = id
+			break
+		}
+	}
+
+	type missionView struct {
+		ID         string `json:"id"`
+		Title      string `json:"title"`
+		Tagline    string `json:"tagline"`
+		Type       string `json:"type"`
+		Status     string `json:"status"` // solved | current | locked | open
+		HasJourney bool   `json:"hasJourney"`
+		DocsURL    string `json:"docsUrl"`
+	}
+	missions := make([]missionView, 0, len(order))
+	for _, id := range order {
+		j, hasJourney := h.journeys[id]
+		title := id
+		if hasJourney && j.Title != "" {
+			title = j.Title
+		}
+		var status string
+		switch {
+		case containsKey(solvedSet, id):
+			status = "solved"
+		case id == current:
+			status = "current"
+		case h.journeyMode == "open":
+			status = "open"
+		default:
+			status = "locked"
+		}
+		missions = append(missions, missionView{
+			ID:         id,
+			Title:      title,
+			Tagline:    j.Tagline,
+			Type:       h.cat[id].Type,
+			Status:     status,
+			HasJourney: hasJourney,
+			DocsURL:    j.DocsURL,
+		})
+	}
+
+	// Detail projection for the current mission (nil when everything solved).
+	var detail any
+	if current != "" {
+		detail = h.missionDetail(current, stepChecks[current], hintViews[current])
+	}
+
+	displayName := user
+	if n, ok := snap.DisplayNames[user]; ok && n != "" {
+		displayName = n
+	}
+	var currentJSON any
+	if current != "" {
+		currentJSON = current
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"user":         user,
+		"display_name": displayName,
+		"mode":         h.journeyMode,
+		"solved_count": len(solvedSet),
+		"total":        len(order),
+		"current":      currentJSON,
+		"missions":     missions,
+		"detail":       detail,
+		"now":          h.now().UTC().Format(time.RFC3339Nano),
+	})
+}
+
+// missionDetail builds the current-mission detail block: briefing, per-step
+// self-check state, and progressive hints (opened text + locked count). When no
+// journey.yaml exists for the mission, hasJourney is false and the copy fields
+// are empty so the UI can render "ブリーフィング準備中" (graceful degrade).
+func (h *Handler) missionDetail(cid string, checkedSteps, openedHints []int) map[string]any {
+	ch := h.cat[cid]
+	j, hasJourney := h.journeys[cid]
+
+	checked := make(map[int]struct{}, len(checkedSteps))
+	for _, i := range checkedSteps {
+		checked[i] = struct{}{}
+	}
+	type stepView struct {
+		Idx     int    `json:"idx"`
+		Label   string `json:"label"`
+		Detail  string `json:"detail"`
+		Checked bool   `json:"checked"`
+	}
+	steps := make([]stepView, 0, len(j.Steps))
+	for i, s := range j.Steps {
+		_, isChecked := checked[i]
+		steps = append(steps, stepView{Idx: i, Label: s.Label, Detail: s.Detail, Checked: isChecked})
+	}
+
+	opened := make(map[int]struct{}, len(openedHints))
+	for _, i := range openedHints {
+		opened[i] = struct{}{}
+	}
+	type hintView struct {
+		Idx  int    `json:"idx"`
+		Text string `json:"text"`
+	}
+	openedList := make([]hintView, 0, len(opened))
+	nextHint := 0 // 1-based index of the next unopened hint; 0 = all opened
+	for i := 1; i <= len(j.Hints); i++ {
+		if _, ok := opened[i]; ok {
+			openedList = append(openedList, hintView{Idx: i, Text: j.Hints[i-1]})
+		} else if nextHint == 0 {
+			nextHint = i
+		}
+	}
+	sort.SliceStable(openedList, func(a, b int) bool { return openedList[a].Idx < openedList[b].Idx })
+
+	title := cid
+	if hasJourney && j.Title != "" {
+		title = j.Title
+	}
+	return map[string]any{
+		"id":         cid,
+		"title":      title,
+		"tagline":    j.Tagline,
+		"briefing":   j.Briefing,
+		"type":       ch.Type,
+		"docsUrl":    j.DocsURL,
+		"hasJourney": hasJourney,
+		"steps":      steps,
+		"hints": map[string]any{
+			"total":       len(j.Hints),
+			"opened":      openedList,
+			"lockedCount": len(j.Hints) - len(openedList),
+			"nextIndex":   nextHint,
+		},
+	}
+}
+
+func containsKey(m map[string]struct{}, k string) bool {
+	_, ok := m[k]
+	return ok
 }
 
 // --- state ------------------------------------------------------------------
@@ -729,4 +1076,3 @@ func (h *Handler) buildState() map[string]any {
 		"now":             h.now().UTC().Format(time.RFC3339Nano),
 	}
 }
-

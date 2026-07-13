@@ -166,3 +166,105 @@ func TestSolvedCount(t *testing.T) {
 		t.Fatalf("after 2 solves: got %d", got)
 	}
 }
+
+// --- Journey: hint_views + step_checks --------------------------------------
+
+func TestHintViews_RecordAndQuery(t *testing.T) {
+	s := newStore(t)
+	newly, err := s.RecordHintView("alice", "01-recon", 1, "2026-07-13T00:00:00Z")
+	if err != nil || !newly {
+		t.Fatalf("first RecordHintView: newly=%v err=%v", newly, err)
+	}
+	// idempotent: re-revealing the same hint is not newly.
+	newly, err = s.RecordHintView("alice", "01-recon", 1, "2026-07-13T01:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newly {
+		t.Fatal("second RecordHintView of same hint must not be newly")
+	}
+	if _, err := s.RecordHintView("alice", "01-recon", 2, "2026-07-13T00:00:01Z"); err != nil {
+		t.Fatal(err)
+	}
+	// a different user's views must not leak.
+	if _, err := s.RecordHintView("bob", "01-recon", 1, "2026-07-13T00:00:02Z"); err != nil {
+		t.Fatal(err)
+	}
+	got := s.HintViews("alice")
+	if idxs := got["01-recon"]; len(idxs) != 2 || idxs[0] != 1 || idxs[1] != 2 {
+		t.Fatalf("alice hint views: got %v, want [1 2]", idxs)
+	}
+	if len(s.HintViews("carol")) != 0 {
+		t.Fatal("carol should have no hint views")
+	}
+}
+
+func TestStepChecks_TickAndClear(t *testing.T) {
+	s := newStore(t)
+	if err := s.SetStepCheck("alice", "01-recon", 0, true, "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetStepCheck("alice", "01-recon", 2, true, "t"); err != nil {
+		t.Fatal(err)
+	}
+	got := s.StepChecks("alice")["01-recon"]
+	if len(got) != 2 || got[0] != 0 || got[1] != 2 {
+		t.Fatalf("checked steps: got %v, want [0 2]", got)
+	}
+	// clearing a step removes it.
+	if err := s.SetStepCheck("alice", "01-recon", 0, false, "t"); err != nil {
+		t.Fatal(err)
+	}
+	got = s.StepChecks("alice")["01-recon"]
+	if len(got) != 1 || got[0] != 2 {
+		t.Fatalf("after clear: got %v, want [2]", got)
+	}
+}
+
+// hint_views and step_checks must survive a store reopen (SQLite persistence).
+func TestHintViewsAndStepChecks_PersistAcrossReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "scoreboard.db")
+	s1, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s1.RecordHintView("alice", "05-evade", 3, "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s1.SetStepCheck("alice", "05-evade", 1, true, "t"); err != nil {
+		t.Fatal(err)
+	}
+	_ = s1.Close()
+
+	s2, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
+	if idxs := s2.HintViews("alice")["05-evade"]; len(idxs) != 1 || idxs[0] != 3 {
+		t.Fatalf("hint views not persisted: got %v", idxs)
+	}
+	if idxs := s2.StepChecks("alice")["05-evade"]; len(idxs) != 1 || idxs[0] != 1 {
+		t.Fatalf("step checks not persisted: got %v", idxs)
+	}
+}
+
+// Reset must clear per-participant Journey progress alongside solves.
+func TestReset_ClearsHintViewsAndStepChecks(t *testing.T) {
+	s := newStore(t)
+	if _, err := s.RecordHintView("alice", "01-recon", 1, "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetStepCheck("alice", "01-recon", 0, true, "t"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.HintViews("alice")) != 0 {
+		t.Fatal("hint views must be cleared by Reset")
+	}
+	if len(s.StepChecks("alice")) != 0 {
+		t.Fatal("step checks must be cleared by Reset")
+	}
+}

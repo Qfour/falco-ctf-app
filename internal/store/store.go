@@ -1,7 +1,14 @@
 // Package store owns scoreboard persistence and in-memory state.
 //
 // Persistence (SQLite, WAL):
-//   - solved (user, challenge, at)  PRIMARY KEY (user, challenge)
+//   - solved      (user, challenge, at)            PRIMARY KEY (user, challenge)
+//   - display_names (user, name, set_at)           PRIMARY KEY (user)
+//   - hint_release  (mission, hint, at)            PRIMARY KEY (mission, hint)
+//   - exfil       (user, challenge, flag, at)      PRIMARY KEY (user, challenge)
+//   - hint_views  (user, challenge, hint_idx, at)  PRIMARY KEY (user, challenge, hint_idx)
+//     Journey UI: per-participant hint reveals (progressive hint gating).
+//     Mission `steps` are info-only (no per-step auto-detect / persistence) —
+//     the CLEARED verdict stays with solve (trigger fire / evade flag).
 //
 // In-memory only (reset on pod restart):
 //   - eventsPerUser: dashboard counter. Not used for scoring.
@@ -47,6 +54,27 @@ type Store struct {
 	ruleFires     map[string][]ruleFire // user -> bounded list (RetentionSeconds)
 	displayNames  map[string]string     // user -> participant-chosen display name
 	hintReleased  map[hintKey]bool      // (mission,hint) operator-released to participants
+	hintViews     map[hintViewKey]bool  // (user,challenge,hintIdx) participant-revealed
+	stepChecks    map[stepCheckKey]bool // (user,challenge,stepIdx) participant self-checked
+}
+
+// stepCheckKey identifies one step of one challenge that a specific participant
+// has ticked in the Journey UI checklist. Presentational only — a checked step
+// never contributes to the solve verdict.
+type stepCheckKey struct {
+	User      string
+	Challenge string
+	StepIdx   int
+}
+
+// hintViewKey identifies one hint of one challenge that a specific participant
+// has revealed in the Journey UI. Distinct from hintKey (operator release):
+// this records *individual* consumption, so the UI can keep a hint open across
+// polls and post-event triage can see how much help each agent pulled.
+type hintViewKey struct {
+	User      string
+	Challenge string
+	HintIdx   int
 }
 
 // hintKey identifies one hint of one mission for operator-controlled release.
@@ -97,6 +125,20 @@ func Open(path string) (*Store, error) {
           at        TEXT NOT NULL,
           PRIMARY KEY (user, challenge)
         );
+        CREATE TABLE IF NOT EXISTS hint_views (
+          user      TEXT NOT NULL,
+          challenge TEXT NOT NULL,
+          hint_idx  INTEGER NOT NULL,
+          at        TEXT NOT NULL,
+          PRIMARY KEY (user, challenge, hint_idx)
+        );
+        CREATE TABLE IF NOT EXISTS step_checks (
+          user      TEXT NOT NULL,
+          challenge TEXT NOT NULL,
+          step_idx  INTEGER NOT NULL,
+          at        TEXT NOT NULL,
+          PRIMARY KEY (user, challenge, step_idx)
+        );
         DROP TABLE IF EXISTS events_per_user;
     `); err != nil {
 		db.Close()
@@ -111,6 +153,8 @@ func Open(path string) (*Store, error) {
 		ruleFires:     make(map[string][]ruleFire),
 		displayNames:  make(map[string]string),
 		hintReleased:  make(map[hintKey]bool),
+		hintViews:     make(map[hintViewKey]bool),
+		stepChecks:    make(map[stepCheckKey]bool),
 	}
 	if err := s.loadFromDB(); err != nil {
 		db.Close()
@@ -177,16 +221,50 @@ func (s *Store) loadFromDB() error {
 	if err != nil {
 		return err
 	}
-	defer ex.Close()
 	for ex.Next() {
 		var k SolveKey
 		var flag string
 		if err := ex.Scan(&k.User, &k.Challenge, &flag); err != nil {
+			ex.Close()
 			return err
 		}
 		s.exfil[k] = flag
 	}
-	return ex.Err()
+	ex.Close()
+	if err := ex.Err(); err != nil {
+		return err
+	}
+
+	hv, err := s.db.Query("SELECT user, challenge, hint_idx FROM hint_views")
+	if err != nil {
+		return err
+	}
+	for hv.Next() {
+		var k hintViewKey
+		if err := hv.Scan(&k.User, &k.Challenge, &k.HintIdx); err != nil {
+			hv.Close()
+			return err
+		}
+		s.hintViews[k] = true
+	}
+	hv.Close()
+	if err := hv.Err(); err != nil {
+		return err
+	}
+
+	sc, err := s.db.Query("SELECT user, challenge, step_idx FROM step_checks")
+	if err != nil {
+		return err
+	}
+	defer sc.Close()
+	for sc.Next() {
+		var k stepCheckKey
+		if err := sc.Scan(&k.User, &k.Challenge, &k.StepIdx); err != nil {
+			return err
+		}
+		s.stepChecks[k] = true
+	}
+	return sc.Err()
 }
 
 // ReleaseHint marks (mission, hint) as released to participants, or revokes it
@@ -223,6 +301,94 @@ func (s *Store) ReleasedHints() map[string][]int {
 	}
 	for _, hs := range out {
 		sort.Ints(hs)
+	}
+	return out
+}
+
+// RecordHintView records that `user` revealed hint `hintIdx` (1-based) of
+// `challenge` in the Journey UI. Idempotent per (user, challenge, hintIdx):
+// re-revealing the same hint keeps the first-view timestamp. Returns whether
+// this was the first time the participant opened that hint (newly), so the API
+// can distinguish a first reveal from a repeat poll in the audit log.
+func (s *Store) RecordHintView(user, challenge string, hintIdx int, at string) (newly bool, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := hintViewKey{User: user, Challenge: challenge, HintIdx: hintIdx}
+	if s.hintViews[key] {
+		return false, nil
+	}
+	if _, err := s.db.Exec(
+		`INSERT OR IGNORE INTO hint_views (user, challenge, hint_idx, at) VALUES (?, ?, ?, ?)`,
+		user, challenge, hintIdx, at,
+	); err != nil {
+		return false, err
+	}
+	s.hintViews[key] = true
+	return true, nil
+}
+
+// HintViews returns, for `user`, the set of hint indices revealed per challenge
+// (challenge -> sorted 1-based indices). Used by the Journey /me projection so
+// a revealed hint stays open across polls.
+func (s *Store) HintViews(user string) map[string][]int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string][]int)
+	for k := range s.hintViews {
+		if k.User != user {
+			continue
+		}
+		out[k.Challenge] = append(out[k.Challenge], k.HintIdx)
+	}
+	for _, idxs := range out {
+		sort.Ints(idxs)
+	}
+	return out
+}
+
+// SetStepCheck ticks (checked=true) or clears (checked=false) step `stepIdx`
+// (0-based) of `challenge` for `user` in the Journey checklist. Idempotent.
+// Purely presentational — a checked step never affects the solve verdict.
+func (s *Store) SetStepCheck(user, challenge string, stepIdx int, checked bool, at string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := stepCheckKey{User: user, Challenge: challenge, StepIdx: stepIdx}
+	if checked {
+		if _, err := s.db.Exec(
+			`INSERT INTO step_checks (user, challenge, step_idx, at) VALUES (?, ?, ?, ?)
+			 ON CONFLICT(user, challenge, step_idx) DO UPDATE SET at = excluded.at`,
+			user, challenge, stepIdx, at,
+		); err != nil {
+			return err
+		}
+		s.stepChecks[key] = true
+		return nil
+	}
+	if _, err := s.db.Exec(
+		`DELETE FROM step_checks WHERE user = ? AND challenge = ? AND step_idx = ?`,
+		user, challenge, stepIdx,
+	); err != nil {
+		return err
+	}
+	delete(s.stepChecks, key)
+	return nil
+}
+
+// StepChecks returns, for `user`, the set of checked step indices per challenge
+// (challenge -> sorted 0-based indices). Used by the Journey /me projection so
+// a ticked step stays ticked across polls.
+func (s *Store) StepChecks(user string) map[string][]int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string][]int)
+	for k := range s.stepChecks {
+		if k.User != user {
+			continue
+		}
+		out[k.Challenge] = append(out[k.Challenge], k.StepIdx)
+	}
+	for _, idxs := range out {
+		sort.Ints(idxs)
 	}
 	return out
 }
@@ -429,10 +595,18 @@ func (s *Store) Reset() (clearedSolves int, err error) {
 	if _, err := s.db.Exec("DELETE FROM exfil"); err != nil {
 		return 0, fmt.Errorf("reset exfil: %w", err)
 	}
+	if _, err := s.db.Exec("DELETE FROM hint_views"); err != nil {
+		return 0, fmt.Errorf("reset hint_views: %w", err)
+	}
+	if _, err := s.db.Exec("DELETE FROM step_checks"); err != nil {
+		return 0, fmt.Errorf("reset step_checks: %w", err)
+	}
 	clearedSolves = len(s.solved)
 	s.solved = make(map[SolveKey]string)
 	s.exfil = make(map[SolveKey]string)
 	s.eventsPerUser = make(map[string]int)
 	s.ruleFires = make(map[string][]ruleFire)
+	s.hintViews = make(map[hintViewKey]bool)
+	s.stepChecks = make(map[stepCheckKey]bool)
 	return clearedSolves, nil
 }

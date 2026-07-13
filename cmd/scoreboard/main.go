@@ -29,6 +29,10 @@ func main() {
 	// ADMIN_EMAILS gates POST /api/admin/reset (verified against the
 	// auth-policy-propagated X-Auth-Request-Email). Empty = nobody.
 	adminEmails := serverutil.SplitCSV(serverutil.Env("ADMIN_EMAILS", ""))
+	// JOURNEY_MODE controls the /journey progression display: "guided"
+	// (default) locks missions after the current one; "open" shows them all
+	// unlocked. Progression is display-only — scoring is never blocked.
+	journeyMode := serverutil.Env("JOURNEY_MODE", "guided")
 
 	cat, err := catalog.Load(challengesDir)
 	if err != nil {
@@ -40,6 +44,11 @@ func main() {
 		os.Exit(1)
 	}
 	scenarioID := ""
+	// order is the mission sequence the Journey UI walks. When a scenario is
+	// pinned we honour its explicit challenge order (Restrict returns a map,
+	// which loses ordering); otherwise fall back to the catalog's sorted ids
+	// (NN- prefixes sort into 01..10 sequence).
+	var order []string
 	if scenarioFile != "" {
 		sc, err := catalog.LoadScenario(scenarioFile)
 		if err != nil {
@@ -51,8 +60,19 @@ func main() {
 			os.Exit(1)
 		}
 		scenarioID = sc.ID
+		order = sc.Challenges
+	} else {
+		order = cat.IDs()
 	}
-	logger.Info("catalog loaded", "dir", challengesDir, "challenges", cat.IDs(), "flag_overrides", flagsFile != "", "scenario", scenarioID)
+	// Journey UI content (title/tagline/briefing/steps/hints/docsUrl). Optional
+	// per challenge; a missing journey.yaml just yields no briefing for that
+	// mission and the UI degrades gracefully ("ブリーフィング準備中").
+	journeys, err := catalog.LoadJourneys(challengesDir, cat)
+	if err != nil {
+		logger.Error("journey load failed", "dir", challengesDir, "err", err)
+		os.Exit(1)
+	}
+	logger.Info("catalog loaded", "dir", challengesDir, "challenges", cat.IDs(), "journeys", len(journeys), "journey_mode", journeyMode, "flag_overrides", flagsFile != "", "scenario", scenarioID)
 
 	st, err := store.Open(dbPath)
 	if err != nil {
@@ -65,6 +85,9 @@ func main() {
 	handler := scoreboard.NewHandler(cat, st, logger,
 		scoreboard.WithDBPath(dbPath),
 		scoreboard.WithAdminEmails(adminEmails),
+		scoreboard.WithJourneys(journeys),
+		scoreboard.WithOrder(order),
+		scoreboard.WithJourneyMode(journeyMode),
 	)
 
 	err = serverutil.Serve(addr, handler, logger, func() {
