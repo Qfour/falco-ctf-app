@@ -333,7 +333,17 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 	// the Grader (App-H3) — the handler never passes attacker-supplied time.
 	outcome, err := h.grader.SubmitEvade(user, cid, flag)
 	if err != nil {
+		// Fail closed: a store error must never surface as a silent empty 200.
+		// EvadeUnknownChallenge (=0) has no switch case, so returning the
+		// zero-value outcome below would drop the solve without a body or a
+		// distinguishable audit line — a correctly-evaded solve would vanish on
+		// a transient DB error. Mirror exfilInternal's store-error path: log,
+		// audit, and return a 500 (no new metric label; exfilInternal adds none
+		// either, keeping cardinality bounded).
 		h.logger.Error("mark solved", "err", err)
+		auditLog("error", "user", user, "err", err.Error())
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "could not record solve"})
+		return
 	}
 	ch := h.cat[cid]
 	switch outcome.Status {

@@ -14,13 +14,13 @@
 // become thin inbound adapters (drivers) that only translate the returned
 // outcome into a response + metrics.
 //
-// Dependency direction (conventions I6): scoring depends on catalog (challenge
-// metadata) and on the ScoreStore port; it never imports the handlers. The
-// concrete *store.Store satisfies ScoreStore, so the store is a repository
-// adapter behind the port.
+// Dependency direction: scoring depends on catalog (challenge metadata) and on
+// the ScoreStore port; it never imports the handlers. The concrete *store.Store
+// satisfies ScoreStore, so the store is a repository adapter behind the port.
 package scoring
 
 import (
+	"errors"
 	"slices"
 	"time"
 
@@ -78,11 +78,14 @@ type TriggerResult struct {
 // the old ingest loop exactly: iterate catalog ids in order, skip non-trigger
 // challenges and non-matching rules, MarkSolved for the rest.
 //
-// Store errors on an individual MarkSolved are returned alongside the results
-// gathered so far (the old loop logged and continued; the adapter preserves
-// that by logging err and still using the returned results).
+// Store errors are continue-on-error, exactly as the old ingest loop was: a
+// failing MarkSolved skips only that challenge (the others still get marked)
+// and the failures are collected and returned joined via errors.Join. The
+// adapter logs the joined error and still uses the successful results — so one
+// challenge's transient DB error never suppresses solves for the others.
 func (g *Grader) EvaluateTrigger(user, rule string) ([]TriggerResult, error) {
 	var results []TriggerResult
+	var errs []error
 	recvAt := g.now().UTC().Format(time.RFC3339Nano)
 	for _, cid := range g.cat.IDs() {
 		ch := g.cat[cid]
@@ -94,11 +97,12 @@ func (g *Grader) EvaluateTrigger(user, rule string) ([]TriggerResult, error) {
 		}
 		newly, err := g.store.MarkSolved(user, cid, recvAt)
 		if err != nil {
-			return results, err
+			errs = append(errs, err)
+			continue
 		}
 		results = append(results, TriggerResult{Challenge: cid, Newly: newly})
 	}
-	return results, nil
+	return results, errors.Join(errs...)
 }
 
 // EvadeStatus enumerates the outcome of an evade-challenge submission. The
@@ -141,8 +145,9 @@ type EvadeOutcome struct {
 //  2. challenge is evade type (else EvadeNotEvadeType)
 //  3. flag matches expectedFlag (else EvadeWrongFlag)
 //  4. no forbidden rule fired within windowSeconds of server now (else
-//     EvadeForbiddenFired) — evaluated against server time, never attacker
-//     time (App-H3): now derives from g.now(), not any event field.
+//     EvadeForbiddenFired) — the window is evaluated against server time and
+//     never references attacker-supplied time: now derives from g.now(), not
+//     from any event field.
 //  5. if RequireExfil, the collector has the matching flag (else
 //     EvadeExfilRequired)
 //  6. record the solve → EvadeSolved.
@@ -200,6 +205,12 @@ const (
 //
 // `user` and `flag` are expected pre-trimmed / pre-validated (non-empty) by the
 // adapter, matching prior handler behaviour.
+//
+// The returned ExfilStatus is only meaningful when err == nil (standard Go
+// convention: when err != nil the other return values are undefined). On a
+// store error the status is reported as ExfilRecorded but the receipt was NOT
+// persisted — callers must branch on err first and never trust the status
+// when err is non-nil.
 func (g *Grader) RecordExfil(user, cid, flag string) (ExfilStatus, error) {
 	ch, ok := g.cat[cid]
 	if !ok {

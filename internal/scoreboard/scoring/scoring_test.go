@@ -21,8 +21,12 @@ type fakeStore struct {
 	// exfil["user|challenge"] is the flag the collector received for that pair.
 	exfil map[string]string
 
-	markSolvedErr  error // if set, MarkSolved returns it
+	markSolvedErr  error // if set, MarkSolved returns it for every challenge
 	recordExfilErr error // if set, RecordExfil returns it
+
+	// markSolvedErrFor[challenge], if set, makes MarkSolved fail only for that
+	// challenge (used to prove continue-on-error skips just the failing one).
+	markSolvedErrFor map[string]error
 
 	markSolvedCalls int
 }
@@ -41,6 +45,9 @@ func (f *fakeStore) MarkSolved(user, challenge, at string) (bool, error) {
 	f.markSolvedCalls++
 	if f.markSolvedErr != nil {
 		return false, f.markSolvedErr
+	}
+	if err := f.markSolvedErrFor[challenge]; err != nil {
+		return false, err
 	}
 	k := key(user, challenge)
 	if _, ok := f.solved[k]; ok {
@@ -324,5 +331,45 @@ func TestEvaluateTrigger_StoreErrorPropagates(t *testing.T) {
 	_, err := g.EvaluateTrigger("alice", "Read sensitive file untrusted")
 	if err == nil {
 		t.Fatal("MarkSolved error must propagate from EvaluateTrigger")
+	}
+}
+
+// TestEvaluateTrigger_ContinueOnError proves the loop mirrors the old ingest
+// behaviour: when two trigger challenges share a rule and the first's
+// MarkSolved errors, the failing challenge is skipped (continue-on-error) but
+// the second is still solved, and the joined error is returned non-nil. A
+// regression to early-return-on-error would drop the second challenge's solve.
+func TestEvaluateTrigger_ContinueOnError(t *testing.T) {
+	const rule = "Read sensitive file untrusted"
+	cat := catalog.Catalog{
+		"01a-trigger": catalog.Challenge{
+			ID:            "01a-trigger",
+			Type:          "trigger",
+			ExpectedRules: []string{rule},
+		},
+		"01b-trigger": catalog.Challenge{
+			ID:            "01b-trigger",
+			Type:          "trigger",
+			ExpectedRules: []string{rule},
+		},
+	}
+	fs := newFakeStore()
+	fs.markSolvedErrFor = map[string]error{"01a-trigger": errors.New("boom")}
+	g := scoring.New(cat, fs, fixedClock(time.Now()))
+
+	res, err := g.EvaluateTrigger("alice", rule)
+	if err == nil {
+		t.Fatal("the joined store error must be returned non-nil")
+	}
+	// The failing challenge must not appear; the second must be solved.
+	if len(res) != 1 || res[0].Challenge != "01b-trigger" || !res[0].Newly {
+		t.Fatalf("second challenge must still solve despite the first's error, got %+v", res)
+	}
+	// Both were attempted (proves it did not early-return after the failure).
+	if fs.markSolvedCalls != 2 {
+		t.Fatalf("both challenges must be attempted (continue-on-error); calls=%d", fs.markSolvedCalls)
+	}
+	if _, ok := fs.solved[key("alice", "01b-trigger")]; !ok {
+		t.Fatal("01b-trigger solve must be persisted")
 	}
 }
