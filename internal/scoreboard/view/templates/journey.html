@@ -185,6 +185,11 @@
   let prevCurrent = undefined;  // last current id
   let firstRender = true;
   let busy = false;             // suppress re-render while a write is in flight
+  // Sticky evade-submit feedback. Holds {cid, cls, text} for a *failure-mode*
+  // result so it survives the 2s polling re-render (render() rebuilds #page and
+  // would otherwise wipe #submit-msg). Cleared on success or when the user moves
+  // to a different mission. See restoreSubmitMsg / the submit handler below.
+  let lastSubmit = null;
 
   if (!user) {
     document.getElementById('page').innerHTML = `
@@ -265,9 +270,23 @@
       </div>`;
 
     wireDetail(d.detail);
+    // Re-inject any sticky failure-mode submit result the polling re-render just
+    // wiped. Drop it if the user has moved on to a different mission.
+    if (lastSubmit && d.detail && lastSubmit.cid !== d.detail.id) lastSubmit = null;
+    restoreSubmitMsg();
     prevSolved = solvedNow;
     prevCurrent = d.current;
     firstRender = false;
+  }
+
+  // Repaint the sticky evade-submit failure message onto the freshly rendered
+  // #submit-msg (if the current mission still shows the evade form).
+  function restoreSubmitMsg() {
+    if (!lastSubmit) return;
+    const msg = document.getElementById('submit-msg');
+    if (!msg) return;
+    msg.className = lastSubmit.cls;
+    msg.textContent = lastSubmit.text;
   }
 
   function renderAllDone(done, total) {
@@ -386,21 +405,33 @@
         const cid = form.dataset.cid;
         const flag = document.getElementById('flag-input').value.trim();
         const msg = document.getElementById('submit-msg');
-        if (!flag) { msg.className = 'submit-msg err'; msg.textContent = 'flag を入力してください'; return; }
+        // setMsg paints the message now AND stores it so the polling re-render
+        // restores it (see restoreSubmitMsg). success=true means the message is
+        // transient (a refresh() + CLEARED transition will replace the view).
+        const setMsg = (cls, text, success) => {
+          msg.className = cls; msg.textContent = text;
+          lastSubmit = success ? null : { cid, cls, text };
+        };
+        if (!flag) { setMsg('submit-msg err', 'flag を入力してください', false); return; }
         busy = true;
+        lastSubmit = null;
         msg.className = 'submit-msg'; msg.textContent = '提出中…';
+        let solved = false;
         try {
           const r = await fetch('/api/challenges/' + encodeURIComponent(cid) + '/submit',
             { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user, flag }) });
           const d = await r.json();
-          if (d.solved) { msg.className = 'submit-msg ok'; msg.textContent = '✔ 正解 — ミッションクリア！'; }
-          else if (d.correct === false) { msg.className = 'submit-msg err'; msg.textContent = '✗ flag が違います'; }
-          else if (d.evaded === false) { msg.className = 'submit-msg warn'; msg.textContent = '検知されました: ' + (d.reason || 'forbidden rule fired'); }
-          else if (d.exfiltrated === false) { msg.className = 'submit-msg warn'; msg.textContent = (d.reason || 'まず collector に exfil してください'); }
-          else { msg.className = 'submit-msg'; msg.textContent = JSON.stringify(d); }
-        } catch (err) { msg.className = 'submit-msg err'; msg.textContent = '提出エラー: ' + err; }
+          if (d.solved) { setMsg('submit-msg ok', '✔ 正解 — ミッションクリア！', true); solved = true; }
+          else if (d.correct === false) { setMsg('submit-msg err', '✗ flag が違います', false); }
+          else if (d.evaded === false) { setMsg('submit-msg warn', '検知されました: ' + (d.reason || 'forbidden rule fired'), false); }
+          else if (d.exfiltrated === false) { setMsg('submit-msg warn', (d.reason || 'まず collector に exfil してください'), false); }
+          else { setMsg('submit-msg', JSON.stringify(d), false); }
+        } catch (err) { setMsg('submit-msg err', '提出エラー: ' + err, false); }
         busy = false;
-        refresh();
+        // Only re-render on success (drives the CLEARED transition + next
+        // mission). On failure we keep the message on screen; the sticky
+        // lastSubmit state carries it through subsequent polling re-renders.
+        if (solved) refresh();
       });
     }
   }
