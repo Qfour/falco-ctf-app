@@ -94,31 +94,18 @@ jobs:
             context: .
             dockerfile: auth-policy/Dockerfile
             scan-continue-on-error: false
-          # ----------------------------------------------------------------
-          # TEMP scan exception (P13 merge train unblock, CEO 承認 2026-07-13)。
-          # docs / ttyd / challenge の base image (alpine 3.22 / kubectl 同梱 /
-          # nginx-unprivileged) が上流 CVE ドリフトで scan FAIL し 8 PR の merge を
-          # ブロックしている。scan job は継続実行し SARIF 可視性は残す (ブロックしない
-          # だけ)。distroless の scoreboard / auth-policy は strict 維持 (PASS 中、緩めない)。
-          #   解除期限 = 2026-07-27
-          #   解除条件 = docs/ttyd/challenge の base image bump / apk upgrade で scan が
-          #              strict (scan-continue-on-error: false) でも緑になること (別 PR)。
-          #   追跡: #18
-          # 注: challenge の wget Critical (CVE-2025-69194) は例外で握り潰さず
-          #     Dockerfile 側で GNU wget 除去により実解消済み (busybox wget 代替)。
-          # ----------------------------------------------------------------
           - name: ttyd
             context: images/ttyd
             dockerfile: images/ttyd/Dockerfile
-            scan-continue-on-error: true   # TEMP (#18, ~2026-07-27): kubectl 同梱 Go CVE / alpine 新規 CVE
+            scan-continue-on-error: false
           - name: challenge
             context: .
             dockerfile: images/challenge/Dockerfile
-            scan-continue-on-error: true   # TEMP (#18, ~2026-07-27): alpine 新規 CVE (wget Critical は実解消済)
+            scan-continue-on-error: false
           - name: docs
             context: .
             dockerfile: images/docs/Dockerfile
-            scan-continue-on-error: true   # TEMP (#18, ~2026-07-27): nginx-unprivileged / alpine 新規 CVE
+            scan-continue-on-error: false
     uses: Qfour/homelab-workflows/.github/workflows/image-pipeline.yaml@main
     with:
       name: ${{ matrix.name }}
