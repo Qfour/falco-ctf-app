@@ -1,7 +1,7 @@
 # ttyd container — serves a Web terminal that kubectl-exec's into the challenge
 # container of the same Pod. Intended to run as a non-root user with a SA that
 # has only `pods/exec` on this Pod's name.
-FROM alpine:3.22
+FROM alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce
 
 ARG KUBECTL_VERSION=v1.36.2
 # sha256 は https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/<arch>/kubectl.sha256

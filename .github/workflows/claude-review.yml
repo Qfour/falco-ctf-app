@@ -1,5 +1,9 @@
 name: Claude Code Review
 
+# サプライチェーン pin ポリシー (P12) — 正典: .claude/rules/falco-ctf-app-conventions.md
+#   actions/checkout@v4 と anthropics/claude-code-action@v1 は @vN メジャータグの
+#   許容例外 (信頼済み提供元 + Dependabot 運用)。conventions の例外表を参照。
+
 on:
   pull_request:
     types: [opened, synchronize]

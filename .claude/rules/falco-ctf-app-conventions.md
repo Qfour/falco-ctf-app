@@ -51,6 +51,78 @@
 - Go ビルドは `CGO_ENABLED=0 -ldflags="-s -w" -trimpath` で static binary
 - scoreboard / auth-policy の build context = repo root
 
+## サプライチェーン: base image の digest pin (P12)
+
+全 Dockerfile の外部 base image は **digest pin** する
+(`image:tag@sha256:...`)。tag も可読性のため残す (`golang:1.26-alpine@sha256:...`)。
+`scratch` は digest を持たないので対象外。
+
+- **なぜ**: mutable tag は再取得で中身が変わりうる。digest 固定で「同一 SHA build =
+  bit-identical な base」を保証し、供給元置換 (tag 乗っ取り) を封じる。
+- **check-freshness (P8) との併用**: `scripts/check-freshness.sh` は FROM 行を
+  `re.search` で cycle 抽出するため `@sha256:...` 付きでも動く (tag 部分を先に拾う)。
+  digest pin しても EOL/鮮度検知は壊れない (script 変更不要)。cycle 鮮度 =
+  check-freshness、パッケージ/base の CVE = PR CI scan の二層は従来どおり。
+- **I5 (全イメージ同一 SHA build)** は不変。digest は base の pin であって app の
+  build SHA とは独立。
+
+### digest の bump 手順
+
+新しい base digest に更新するとき (cycle 据え置きで CVE 修正版へ、または cycle bump 時):
+
+```sh
+# 1. 対象 image の現行 tag が指す manifest digest を実解決する
+#    (multi-platform の index digest を取る。buildx が build 時に platform を選ぶ)
+docker buildx imagetools inspect golang:1.26-alpine --format '{{.Manifest.Digest}}'
+#    確認: index であること (単一 arch を掴まないため)
+docker buildx imagetools inspect golang:1.26-alpine --format '{{.Manifest.MediaType}}'
+#    → application/vnd.oci.image.index.v1+json (または docker manifest.list) であること
+
+# 2. 該当 Dockerfile の FROM を `image:tag@sha256:<新digest>` に差し替える
+#    (同一 image を使う複数 Dockerfile は同じ digest に揃える。現状:
+#     golang:1.26-alpine              = scoreboard/auth-policy/Dockerfile.{test,gen,tidy}、
+#     distroless static-debian13:nonroot = scoreboard/auth-policy、
+#     alpine:3.22                     = images/{ttyd,challenge}、
+#     python:3.12-slim                = images/docs (build stage)、
+#     nginx-unprivileged:1.30-alpine  = images/docs (serve stage))
+
+# 3. 検証: 実ビルド + 鮮度 + テスト
+make build TAG=local      # digest が pull でき build が通ること
+make check-freshness      # cycle が EOL でないこと
+make test                 # Go build/test (Dockerfile.test) が通ること
+```
+
+cycle 自体を上げる場合 (例: alpine 3.22→3.23) は tag も一緒に変え、apk pin と
+`## Dockerfile 規約` 表・UID 表も見直す (P8 の bump 手順と同じ)。
+
+## サプライチェーン: CI workflow / action 参照の pin (P12)
+
+- **reusable workflow の `@main` 参照は禁止**。commit SHA に pin する
+  (`...@<40-hex> # main as of <date>`)。mutable ブランチ参照は上流の任意 commit を
+  そのまま実行してしまうため。現状 `Qfour/homelab-workflows` の go-test /
+  image-pipeline を `10583360...` (main as of 2026-05-12) に pin。
+  bump 時は `gh api repos/Qfour/homelab-workflows/commits/main --jq .sha` で
+  新 SHA を取り、動作確認の上で差し替える。
+- **サードパーティ action の `@vN` メジャータグは許容例外**。SHA pin しない。
+  根拠: (1) いずれも広く使われる信頼済み提供元 (GitHub 公式 `actions/*`・
+  `azure/*`・`aws-actions/*`・`anthropics/*)、(2) メジャータグは提供元が
+  セキュリティ修正を配る移動先で、SHA pin すると修正が届かず手動 bump 負債になる、
+  (3) **バージョン追随は手動レビューで行う (Dependabot 未導入 — 両リポとも
+  `dependabot.yml` を持たず、CI-free 恒久方針と整合)**。platform `SUPPLY-CHAIN.md`
+  と同一方針。**例外リスト (mutable で許容する参照)**:
+  | action | 用途 |
+  |---|---|
+  | `actions/checkout@v4` | repo チェックアウト (GitHub 公式) |
+  | `azure/setup-helm@v4` | helm セットアップ (chart-lint / publish) |
+  | `aws-actions/configure-aws-credentials@v4` | OIDC creds (publish-charts、publish gate 時のみ) |
+  | `anthropics/claude-code-action@v1` | PR コードレビュー (claude-review.yml) |
+
+  この 4 つ以外の action / `@main` reusable workflow を追加する場合は SHA pin するか、
+  上記例外表に根拠付きで追記すること (完了条件: mutable 参照ゼロ or 例外表に記載)。
+- **この例外表は各リポの実 workflow に固有** (共通なのは pin ポリシーであって
+  action 集合ではない。集合は各リポの `uses:` に従属する)。platform 表と件数/内容が
+  一致する必要はない。
+
 ## SecurityContext (コンテナレベル)
 
 scoreboard / auth-policy に必須:
@@ -107,7 +179,7 @@ securityContext:
 
 | 接点 | 詳細 |
 |---|---|
-| Image tag | `${REGISTRY}/falco-ctf-{scoreboard,auth-policy,ttyd,challenge,docs}:<git-sha>` (registry の repo 名は `falco-ctf/X` slash 推奨; `falco-ctf-X` dash も ingest 受理) |
+| Image naming (**正典**) | `${REGISTRY}/falco-ctf-{scoreboard,auth-policy,ttyd,challenge,docs}:<git-sha>`。registry の repo 名は **`falco-ctf/X` slash が正式**、`falco-ctf-X` dash も ingest 受理。tag は git SHA (I4/I5)。**この行が slash/dash 命名契約の単一定義** — 他所 (ingest フィルタ節・platform docs) はここを参照する |
 | Charts | `charts/{scoreboard,auth-policy,ctf-user,docs}` を platform helmfile が local=path / prod=OCI で参照 (CI publish は現状停止 → prod も local clone path。`project_ci_free_prod` 参照) |
 | Challenges path | `deploy-user.sh --challenges-dir` (ctf-user chart 同梱、当 repo `challenges/` を default 参照) |
 | Webhook payload | `POST /falco/events` は falcosidekick 標準形。フィールドキー変更は両 repo 同時 PR |
@@ -116,14 +188,17 @@ securityContext:
 
 ## scoreboard ingest フィルタ (defense-in-depth)
 
+> slash/dash 命名契約の**正典は上記「Cross-repo 契約」表の Image naming 行**。
+> この節はその契約を ingest が **なぜ両形受理するか** を説明する (二重定義しない)。
+
 `internal/scoreboard/ingest/ingest.go` の image substring check は
 `falco-ctf/challenge` **または** `falco-ctf-challenge` を受理する。
-ECR が repo 名で `/` を許すので slash 命名が正式だが、containerd の
-image dedup で push 名と Falco 報告名が乖離するケース (同一 digest を
-別 repo にも push したケース) に対応するため dash 形も許容。
+slash が正式命名 (契約表参照) だが、containerd の image dedup で push 名と
+Falco 報告名が乖離するケース (同一 digest を別 repo にも push したケース) に
+対応するため dash 形も許容している。
 
 新しい registry を追加する場合は image string が `falco-ctf/challenge` /
-`falco-ctf-challenge` のどちらかを含むよう repo 命名する。
+`falco-ctf-challenge` のどちらかを含むよう repo 命名する (契約表の命名に従う)。
 
 ## Prod 値の供給 (chart には焼き込まない)
 

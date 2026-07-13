@@ -1,6 +1,6 @@
 # auth-policy — Go service. Build context = repo root.
 #   docker build -f auth-policy/Dockerfile -t <registry>/auth-policy:<tag> .
-FROM golang:1.26-alpine AS build
+FROM golang:1.26-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS build
 WORKDIR /src
 
 # Copy module files first for layer caching. `go.su[m]` is a glob that
@@ -18,7 +18,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
       -ldflags="-s -w" -trimpath \
       -o /out/auth-policy ./cmd/auth-policy
 
-FROM gcr.io/distroless/static-debian13:nonroot
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:d29e660cc75a5b6b1334e03c5c81ccf9bc0884a002c6000dbf0fb96034814478
 COPY --from=build --chown=65532:65532 /out/auth-policy /app/auth-policy
 EXPOSE 8000
 ENTRYPOINT ["/app/auth-policy"]
