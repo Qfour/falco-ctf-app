@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"slices"
 	"strings"
 	"time"
 
@@ -20,12 +19,13 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/metrics"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/oapi"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/ratelimit"
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/scoring"
 	"github.com/Qfour/falco-ctf-app/internal/store"
 )
 
 type Handler struct {
-	cat     catalog.Catalog
 	store   *store.Store
+	grader  *scoring.Grader
 	logger  *slog.Logger
 	now     func() time.Time
 	limiter *ratelimit.Limiter
@@ -36,10 +36,10 @@ func New(cat catalog.Catalog, s *store.Store, logger *slog.Logger, now func() ti
 	// endpoint (falcosidekick batches events); rate is generous so a busy
 	// CTF doesn't get throttled while still capping pathological bursts.
 	return &Handler{
-		cat:     cat,
-		store:   s,
-		logger:  logger,
-		now:     now,
+		store:  s,
+		grader: scoring.New(cat, s, now),
+		logger: logger,
+		now:    now,
 		// Intentionally fixed: sized for a single-cluster CTF (a few hundred
 		// participants × low syscall-event rate). falcosidekick is the only
 		// legitimate caller; this caps a misconfigured/looping sender, not a
@@ -125,24 +125,18 @@ func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 	}
 	metrics.FalcoEventsReceived.WithLabelValues("accepted").Inc()
 
-	recvAt := recvNow.UTC().Format(time.RFC3339Nano)
-
-	// Trigger-type challenges: solve when expectedRules fires.
-	for _, cid := range h.cat.IDs() {
-		ch := h.cat[cid]
-		if ch.Type != "trigger" {
-			continue
-		}
-		if !slices.Contains(ch.ExpectedRules, ev.Rule) {
-			continue
-		}
-		newly, err := h.store.MarkSolved(user, cid, recvAt)
-		if err != nil {
-			h.logger.Error("mark solved", "err", err)
-			continue
-		}
-		if newly {
-			metrics.SolvesTotal.WithLabelValues(cid, "trigger").Inc()
+	// Trigger-type solve decision is the Grader's job; this handler is a thin
+	// driver that just bumps the solve metric for each newly-recorded solve.
+	// (The Grader stamps its own receipt time from the same injected clock.)
+	results, err := h.grader.EvaluateTrigger(user, ev.Rule)
+	if err != nil {
+		// Mirror the old per-iteration behaviour: log and carry on. Any solves
+		// gathered before the error are still counted below.
+		h.logger.Error("mark solved", "err", err)
+	}
+	for _, res := range results {
+		if res.Newly {
+			metrics.SolvesTotal.WithLabelValues(res.Challenge, "trigger").Inc()
 		}
 	}
 

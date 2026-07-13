@@ -33,6 +33,7 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/metrics"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/oapi"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/ratelimit"
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/scoring"
 	"github.com/Qfour/falco-ctf-app/internal/store"
 )
 
@@ -64,6 +65,7 @@ type JourneyConfig struct {
 type Handler struct {
 	cat                catalog.Catalog
 	store              *store.Store
+	grader             *scoring.Grader
 	logger             *slog.Logger
 	now                func() time.Time
 	submitLimiter      *ratelimit.Limiter
@@ -100,6 +102,7 @@ func New(cat catalog.Catalog, s *store.Store, logger *slog.Logger, now func() ti
 	return &Handler{
 		cat:                cat,
 		store:              s,
+		grader:             scoring.New(cat, s, now),
 		logger:             logger,
 		now:                now,
 		submitLimiter:      ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now),
@@ -288,14 +291,18 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 		h.logger.Info("submit", fields...)
 	}
 
-	ch, ok := h.cat[cid]
-	if !ok {
+	// The two pre-body guards (unknown challenge / not an evade challenge) stay
+	// here because they gate whether we even read the request body — but their
+	// verdict is the Grader's (SubmitEvade returns the same statuses). We peek
+	// the catalog for the pre-body guards, then hand the full decision to the
+	// Grader once we have user+flag.
+	if _, ok := h.cat[cid]; !ok {
 		metrics.SubmissionsTotal.WithLabelValues(cid, "unknown_challenge").Inc()
 		auditLog("unknown_challenge")
 		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"error": "unknown challenge: " + cid})
 		return
 	}
-	if ch.Type != "evade" {
+	if h.cat[cid].Type != "evade" {
 		metrics.SubmissionsTotal.WithLabelValues(cid, "not_evade").Inc()
 		auditLog("not_evade")
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": cid + " is not an evade challenge"})
@@ -319,30 +326,44 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "user required"})
 		return
 	}
-	if flag != ch.ExpectedFlag {
+
+	// Solve decision (flag match → evade window → exfil gate → record) is the
+	// Grader's. This handler only translates the outcome into a response +
+	// metric + audit line. The window is evaluated against server time inside
+	// the Grader (App-H3) — the handler never passes attacker-supplied time.
+	outcome, err := h.grader.SubmitEvade(user, cid, flag)
+	if err != nil {
+		// Fail closed: a store error must never surface as a silent empty 200.
+		// EvadeUnknownChallenge (=0) has no switch case, so returning the
+		// zero-value outcome below would drop the solve without a body or a
+		// distinguishable audit line — a correctly-evaded solve would vanish on
+		// a transient DB error. Mirror exfilInternal's store-error path: log,
+		// audit, and return a 500 (no new metric label; exfilInternal adds none
+		// either, keeping cardinality bounded).
+		h.logger.Error("mark solved", "err", err)
+		auditLog("error", "user", user, "err", err.Error())
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "could not record solve"})
+		return
+	}
+	ch := h.cat[cid]
+	switch outcome.Status {
+	case scoring.EvadeWrongFlag:
 		metrics.SubmissionsTotal.WithLabelValues(cid, "wrong_flag").Inc()
 		auditLog("wrong_flag", "user", user)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"correct": false, "reason": "flag mismatch"})
-		return
-	}
-
-	now := float64(h.now().Unix())
-	offending := h.store.RecentForbiddenFires(user, ch.ForbiddenRules, now, ch.WindowSeconds)
-	if len(offending) > 0 {
+	case scoring.EvadeForbiddenFired:
 		metrics.SubmissionsTotal.WithLabelValues(cid, "not_evaded").Inc()
-		auditLog("not_evaded", "user", user, "offending_rules", offending)
+		auditLog("not_evaded", "user", user, "offending_rules", outcome.Offending)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"correct": true,
 			"evaded":  false,
 			"reason": fmt.Sprintf(
 				"flag is correct, but the forbidden rule(s) %v fired in the last %ds for user %q. "+
 					"Try again — wait %ds, then submit.",
-				offending, ch.WindowSeconds, user, ch.WindowSeconds,
+				outcome.Offending, ch.WindowSeconds, user, ch.WindowSeconds,
 			),
 		})
-		return
-	}
-	if ch.RequireExfil && !h.store.HasExfil(user, cid, flag) {
+	case scoring.EvadeExfilRequired:
 		metrics.SubmissionsTotal.WithLabelValues(cid, "not_exfiltrated").Inc()
 		auditLog("not_exfiltrated", "user", user)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -355,25 +376,20 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 				user, cid,
 			),
 		})
-		return
+	case scoring.EvadeSolved:
+		if outcome.Newly {
+			metrics.SolvesTotal.WithLabelValues(cid, "evade").Inc()
+		}
+		metrics.SubmissionsTotal.WithLabelValues(cid, "solved").Inc()
+		auditLog("solved", "user", user, "newly", outcome.Newly, "display_name", h.store.DisplayName(user))
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"correct":      true,
+			"evaded":       true,
+			"solved":       true,
+			"user":         user,
+			"display_name": h.store.DisplayName(user),
+		})
 	}
-	at := h.now().UTC().Format(time.RFC3339Nano)
-	newly, err := h.store.MarkSolved(user, cid, at)
-	if err != nil {
-		h.logger.Error("mark solved", "err", err)
-	}
-	if newly {
-		metrics.SolvesTotal.WithLabelValues(cid, "evade").Inc()
-	}
-	metrics.SubmissionsTotal.WithLabelValues(cid, "solved").Inc()
-	auditLog("solved", "user", user, "newly", newly, "display_name", h.store.DisplayName(user))
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"correct":      true,
-		"evaded":       true,
-		"solved":       true,
-		"user":         user,
-		"display_name": h.store.DisplayName(user),
-	})
 }
 
 // --- internal exfil sink ----------------------------------------------------
@@ -399,13 +415,15 @@ func (h *Handler) exfilInternal(w http.ResponseWriter, r *http.Request) {
 		h.logger.Info("exfil_internal", fields...)
 	}
 
-	ch, ok := h.cat[cid]
-	if !ok {
+	// Pre-body guards (unknown challenge / exfil not accepted) gate whether we
+	// read the body at all, matching the prior order. Their verdict is the
+	// Grader's — RecordExfil re-applies the same guards before recording.
+	if _, ok := h.cat[cid]; !ok {
 		auditLog("unknown_challenge")
 		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"error": "unknown challenge: " + cid})
 		return
 	}
-	if !ch.RequireExfil {
+	if !h.cat[cid].RequireExfil {
 		auditLog("exfil_not_required")
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": cid + " does not accept exfil"})
 		return
@@ -429,8 +447,11 @@ func (h *Handler) exfilInternal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	at := h.now().UTC().Format(time.RFC3339Nano)
-	if err := h.store.RecordExfil(user, cid, flag, at); err != nil {
+	// Recording the collector receipt (with its catalog/RequireExfil guards and
+	// receipt timestamp) is the Grader's job; the guards above have already
+	// short-circuited the unknown / not-required cases, so here the Grader
+	// returns ExfilRecorded (or a store error).
+	if _, err := h.grader.RecordExfil(user, cid, flag); err != nil {
 		h.logger.Error("record exfil", "err", err, "user", user, "cid", cid)
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "could not record exfil"})
 		return
