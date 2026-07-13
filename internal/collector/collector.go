@@ -15,6 +15,13 @@
 //   - Default-deny routing: only the explicitly-listed participant routes are
 //     forwarded. /internal/*, /api/admin/*, /metrics, /falco/events are never
 //     reachable through the collector.
+//   - XFF-spoof resistance. Unlike the scoreboard (which sits behind
+//     ingress-nginx and can trust an injected X-Forwarded-For), the collector
+//     is hit directly by workspace pods over the ClusterIP. A workspace could
+//     therefore send an arbitrary X-Forwarded-For to dodge a per-IP limit. So
+//     the collector keys its own limiter on r.RemoteAddr (the real workspace
+//     pod IP) and STRIPS inbound X-Forwarded-For / X-Real-IP before forwarding,
+//     so the downstream scoreboard limiter also sees only the real connection.
 //
 // Routes fronted (method + path → upstream):
 //
@@ -28,6 +35,7 @@ package collector
 
 import (
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -76,6 +84,19 @@ func New(upstream string, logger *slog.Logger, opts ...Option) (*Handler, error)
 	h.limiter = ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(h.now)
 
 	h.proxy = httputil.NewSingleHostReverseProxy(u)
+	// Strip participant-controlled forwarding headers before forwarding. The
+	// workspace connects directly (no trusted ingress-nginx in front), so any
+	// inbound X-Forwarded-For / X-Real-IP is attacker-chosen and must not reach
+	// the scoreboard, whose limiter trusts XFF's leftmost entry. We delete them
+	// after NewSingleHostReverseProxy's Director runs; ReverseProxy then appends
+	// its own X-Forwarded-For = the real RemoteAddr, so downstream sees the
+	// genuine connection IP. (X-Real-IP is not re-added by ReverseProxy.)
+	baseDirector := h.proxy.Director
+	h.proxy.Director = func(req *http.Request) {
+		baseDirector(req)
+		req.Header.Del("X-Forwarded-For")
+		req.Header.Del("X-Real-IP")
+	}
 	// Fail closed on upstream errors: a proxy dial failure must not leak a
 	// Go default 502 body or the upstream address into the participant shell.
 	h.proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
@@ -83,7 +104,11 @@ func New(upstream string, logger *slog.Logger, opts ...Option) (*Handler, error)
 		httpx.WriteJSON(w, http.StatusBadGateway, map[string]any{"error": "scoreboard unavailable"})
 	}
 
-	rl := h.limiter.Middleware(ratelimit.ClientIP)
+	// Key the limiter on the real connection IP (r.RemoteAddr), never on the
+	// participant-supplied X-Forwarded-For — otherwise a workspace could rotate
+	// XFF values to bypass the per-IP budget. Deliberately NOT ratelimit.ClientIP
+	// (which trusts XFF; correct only behind ingress-nginx, i.e. the scoreboard).
+	rl := h.limiter.Middleware(remoteIP)
 
 	// Transparent participant routes — forwarded verbatim to the scoreboard.
 	h.mux.Handle("POST /api/challenges/{cid}/submit", rl(h.proxy))
@@ -135,6 +160,20 @@ func (h *Handler) exfil(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) healthz(w http.ResponseWriter, _ *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// remoteIP is the collector's rate-limit key: the real connection IP from
+// r.RemoteAddr with the port stripped. It intentionally ignores any inbound
+// X-Forwarded-For / X-Real-IP — the collector is reached directly by workspace
+// pods, so those headers are participant-controlled and would let a caller
+// forge a fresh key per request to escape the per-IP budget. Falls back to the
+// raw RemoteAddr if it has no host:port shape.
+func remoteIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 type statusWriter struct {

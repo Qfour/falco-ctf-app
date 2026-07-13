@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -14,14 +15,18 @@ import (
 // was called with and returns a canned body, so tests can assert exactly what
 // the collector forwarded.
 type upstreamRecorder struct {
-	mu    sync.Mutex
-	calls []string // "METHOD PATH"
+	mu       sync.Mutex
+	calls    []string // "METHOD PATH"
+	lastXFF  string   // X-Forwarded-For as seen by the upstream on the last call
+	lastReal string   // X-Real-IP as seen by the upstream on the last call
 }
 
 func (u *upstreamRecorder) handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u.mu.Lock()
 		u.calls = append(u.calls, r.Method+" "+r.URL.Path)
+		u.lastXFF = r.Header.Get("X-Forwarded-For")
+		u.lastReal = r.Header.Get("X-Real-IP")
 		u.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -36,6 +41,12 @@ func (u *upstreamRecorder) last() string {
 		return ""
 	}
 	return u.calls[len(u.calls)-1]
+}
+
+func (u *upstreamRecorder) forwardedHeaders() (xff, real string) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.lastXFF, u.lastReal
 }
 
 // newTestCollector wires a collector at a fixed clock (rate-limit burst never
@@ -195,6 +206,73 @@ func TestRateLimit_PerIP(t *testing.T) {
 	}
 	if !got429 {
 		t.Fatal("expected a 429 after exceeding burst 10")
+	}
+}
+
+// TestRateLimit_XFFSpoofDoesNotBypass proves the [MED] finding is fixed: a
+// caller rotating X-Forwarded-For on every request (a fresh forged IP each time)
+// must NOT escape the per-IP budget, because the collector keys on r.RemoteAddr
+// (the real connection), not the participant-supplied XFF. All 12 requests come
+// from the same loopback connection, so the 11th+ still 429s.
+func TestRateLimit_XFFSpoofDoesNotBypass(t *testing.T) {
+	up := &upstreamRecorder{}
+	upSrv := httptest.NewServer(up.handler())
+	defer upSrv.Close()
+
+	now := time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC)
+	h, err := New(upSrv.URL, testLogger(), WithNow(func() time.Time { return now }))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	c := httptest.NewServer(h)
+	defer c.Close()
+
+	var got429 bool
+	for i := 0; i < 12; i++ {
+		req, _ := http.NewRequest("POST", c.URL+"/api/challenges/10-final-exfil/submit", strings.NewReader(`{}`))
+		// A different forged source IP on each request — if the limiter trusted
+		// XFF this would mint a fresh bucket every time and never throttle.
+		req.Header.Set("X-Forwarded-For", "203.0.113."+strconv.Itoa(i))
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("req %d: %v", i, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusTooManyRequests {
+			got429 = true
+		}
+	}
+	if !got429 {
+		t.Fatal("XFF rotation bypassed the per-IP limit — limiter must key on RemoteAddr, not XFF")
+	}
+}
+
+// TestForward_StripsInboundForwardingHeaders proves the collector removes
+// participant-controlled X-Forwarded-For / X-Real-IP before forwarding, so the
+// downstream scoreboard limiter can't be fooled either. The upstream must NOT
+// see the spoofed values; ReverseProxy re-adds XFF = the real RemoteAddr.
+func TestForward_StripsInboundForwardingHeaders(t *testing.T) {
+	c, up := newTestCollector(t)
+	req, _ := http.NewRequest("POST", c.URL+"/api/challenges/10-final-exfil/submit", strings.NewReader(`{}`))
+	req.Header.Set("X-Forwarded-For", "203.0.113.7")
+	req.Header.Set("X-Real-IP", "203.0.113.7")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	resp.Body.Close()
+
+	xff, real := up.forwardedHeaders()
+	if strings.Contains(xff, "203.0.113.7") {
+		t.Errorf("spoofed X-Forwarded-For leaked to upstream: %q", xff)
+	}
+	if real != "" {
+		t.Errorf("X-Real-IP must be stripped, upstream saw %q", real)
+	}
+	// ReverseProxy appends the genuine connection IP (loopback in the test).
+	if xff == "" {
+		t.Error("expected ReverseProxy to set X-Forwarded-For to the real RemoteAddr")
 	}
 }
 
