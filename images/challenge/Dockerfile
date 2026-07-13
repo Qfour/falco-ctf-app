@@ -8,12 +8,18 @@
 FROM alpine:3.22
 
 # Tools commonly required by Falco-detection-style CTF challenges.
+#
+# wget: GNU wget パッケージは入れない。alpine 3.22-main の wget-1.25.0-r1 は
+# Critical CVE (CVE-2025-69194 ほか) 未修正で、3.22 サイクルに fix apk が無い
+# (apk upgrade/pin で解消不可)。base busybox が /usr/bin/wget を提供し、
+# `wget -q -O- --no-check-certificate https://...` (課題 01 の自己署名 k8s API 叩き)
+# を含む課題用途は busybox wget で動作確認済み (--no-check-certificate も honor)。
+# → 脆弱バイナリを除去 = Critical を実解消 (例外で握り潰さない、P13/#18 の CEO 条件)。
 RUN apk add --no-cache \
         bash \
         coreutils \
         busybox-extras \
         curl \
-        wget \
         netcat-openbsd \
         bind-tools \
         jq \
