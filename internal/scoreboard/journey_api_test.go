@@ -61,6 +61,14 @@ func newJourneyFixture(t *testing.T, extra ...scoreboard.Option) *journeyFixture
 
 func (f *journeyFixture) req(method, target string, body any) *httptest.ResponseRecorder {
 	f.t.Helper()
+	return f.reqAs(method, target, "", body)
+}
+
+// reqAs issues a request carrying X-Auth-Request-Email = email (omitted when
+// blank), so journey-read tests can authenticate as self / admin against the
+// P18 self-scope gate. Write paths (step/hint) are ungated and use req().
+func (f *journeyFixture) reqAs(method, target, email string, body any) *httptest.ResponseRecorder {
+	f.t.Helper()
 	var r *http.Request
 	if body != nil {
 		b, _ := json.Marshal(body)
@@ -69,6 +77,9 @@ func (f *journeyFixture) req(method, target string, body any) *httptest.Response
 	} else {
 		r = httptest.NewRequest(method, target, nil)
 	}
+	if email != "" {
+		r.Header.Set("X-Auth-Request-Email", email)
+	}
 	w := httptest.NewRecorder()
 	f.srv.ServeHTTP(w, r)
 	return w
@@ -76,7 +87,8 @@ func (f *journeyFixture) req(method, target string, body any) *httptest.Response
 
 func (f *journeyFixture) journey(user string) map[string]any {
 	f.t.Helper()
-	w := f.req("GET", "/api/users/"+user+"/journey", nil)
+	// Self-scoped read (P18): authenticate as the participant themselves.
+	w := f.reqAs("GET", "/api/users/"+user+"/journey", user+"@ctf.local", nil)
 	if w.Code != http.StatusOK {
 		f.t.Fatalf("journey status: %d body=%s", w.Code, w.Body)
 	}

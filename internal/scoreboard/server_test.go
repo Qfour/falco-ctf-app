@@ -58,9 +58,16 @@ func newFixture(t *testing.T, now func() time.Time) *fixture {
 	if now == nil {
 		now = time.Now
 	}
-	srv := scoreboard.NewHandler(cat, st, logger, scoreboard.WithNow(now))
+	// P18: /api/state and GET / are admin-gated; wire a known admin so the
+	// existing full-view tests can authenticate as the operator via doAdmin.
+	srv := scoreboard.NewHandler(cat, st, logger, scoreboard.WithNow(now),
+		scoreboard.WithAdminEmails([]string{fixtureAdminEmail}))
 	return &fixture{t: t, cat: cat, st: st, srv: srv}
 }
+
+// fixtureAdminEmail is the operator identity the default fixture recognises as
+// admin (ADMIN_EMAILS). doAdmin authenticates as this address.
+const fixtureAdminEmail = "admin@ctf.local"
 
 // falcoEventBody builds a minimal valid /falco/events payload. Tests pass
 // option funcs to override defaults; image repo + workspace pod are baked in
@@ -117,6 +124,13 @@ func withTime(s string) func(map[string]any) {
 
 func (f *fixture) do(method, target string, body any) *httptest.ResponseRecorder {
 	f.t.Helper()
+	return f.doAs(method, target, "", body)
+}
+
+// doAs issues a request carrying X-Auth-Request-Email = email (omitted when
+// blank). Used to exercise the P18 self-scope / admin read gates.
+func (f *fixture) doAs(method, target, email string, body any) *httptest.ResponseRecorder {
+	f.t.Helper()
 	var r *http.Request
 	if body != nil {
 		b, _ := json.Marshal(body)
@@ -125,9 +139,25 @@ func (f *fixture) do(method, target string, body any) *httptest.ResponseRecorder
 	} else {
 		r = httptest.NewRequest(method, target, nil)
 	}
+	if email != "" {
+		r.Header.Set("X-Auth-Request-Email", email)
+	}
 	w := httptest.NewRecorder()
 	f.srv.ServeHTTP(w, r)
 	return w
+}
+
+// doAdmin issues a request authenticated as the fixture operator (admin).
+func (f *fixture) doAdmin(method, target string, body any) *httptest.ResponseRecorder {
+	f.t.Helper()
+	return f.doAs(method, target, fixtureAdminEmail, body)
+}
+
+// doUser issues a request authenticated as participant "<user>@ctf.local"
+// (self). Mirrors what oauth2-proxy injects on the participant journey host.
+func (f *fixture) doUser(method, target, user string, body any) *httptest.ResponseRecorder {
+	f.t.Helper()
+	return f.doAs(method, target, user+"@ctf.local", body)
 }
 
 func decode(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
@@ -243,7 +273,7 @@ func TestState_SolverDetailsRankedWithNames(t *testing.T) {
 	if err := f.st.SetDisplayName("alice", "Alice ★", "2026-01-01T00:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
-	d := decode(t, f.do("GET", "/api/state", nil))
+	d := decode(t, f.doAdmin("GET", "/api/state", nil))
 	for _, ci := range d["challenges"].([]any) {
 		c := ci.(map[string]any)
 		if c["id"] != "01-read-shadow" {
@@ -334,7 +364,7 @@ func TestFalcoEvents_TriggerSolves(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatal(w.Code)
 	}
-	state := decode(t, f.do("GET", "/api/state", nil))
+	state := decode(t, f.doAdmin("GET", "/api/state", nil))
 	stats := state["stats"].(map[string]any)
 	if stats["solves"].(float64) != 1 {
 		t.Fatalf("expected 1 solve, got %v", stats["solves"])
@@ -348,7 +378,7 @@ func TestFalcoEvents_TriggerSolves(t *testing.T) {
 func TestFalcoEvents_NonMatchingRuleDoesNotSolve(t *testing.T) {
 	f := newFixture(t, nil)
 	f.do("POST", "/falco/events", falcoEventBody("Unrelated rule", "alice"))
-	if got := decode(t, f.do("GET", "/api/state", nil))["stats"].(map[string]any)["solves"]; got.(float64) != 0 {
+	if got := decode(t, f.doAdmin("GET", "/api/state", nil))["stats"].(map[string]any)["solves"]; got.(float64) != 0 {
 		t.Fatalf("expected 0 solves, got %v", got)
 	}
 }
@@ -508,7 +538,7 @@ func TestLeaderboard_TieBreakByEarliest(t *testing.T) {
 	clock = time.Date(2026, 5, 11, 10, 30, 0, 0, time.UTC)
 	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "bob"))
 
-	lb := decode(t, f.do("GET", "/api/state", nil))["leaderboard"].([]any)
+	lb := decode(t, f.doAdmin("GET", "/api/state", nil))["leaderboard"].([]any)
 	if lb[0].(map[string]any)["user"] != "alice" {
 		t.Fatalf("earlier solver must win tie; got %v", lb)
 	}
@@ -527,7 +557,7 @@ func TestFalcoEvents_SolveTimestampUsesReceiptTime(t *testing.T) {
 		withTime("2026-05-11T10:00:00Z"), // 1.5h before "now" — simulates Falco lag
 	))
 
-	solved := decode(t, f.do("GET", "/api/state", nil))["solved"].([]any)
+	solved := decode(t, f.doAdmin("GET", "/api/state", nil))["solved"].([]any)
 	if len(solved) != 1 {
 		t.Fatalf("expected 1 solve, got %d", len(solved))
 	}
@@ -556,7 +586,7 @@ func TestUserMe_MissingUser_Rejected(t *testing.T) {
 
 func TestUserMe_NoActivity_ReturnsEmptyShape(t *testing.T) {
 	f := newFixture(t, nil)
-	w := f.do("GET", "/api/users/alice/me", nil)
+	w := f.doUser("GET", "/api/users/alice/me", "alice", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status: %d", w.Code)
 	}
@@ -585,7 +615,7 @@ func TestUserMe_AfterSolve_SurfacesProgress(t *testing.T) {
 	f := newFixture(t, nil)
 	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "alice"))
 
-	w := f.do("GET", "/api/users/alice/me", nil)
+	w := f.doUser("GET", "/api/users/alice/me", "alice", nil)
 	if w.Code != http.StatusOK {
 		t.Fatal(w.Code)
 	}
@@ -610,7 +640,7 @@ func TestUserMe_RecentRuleFires(t *testing.T) {
 	// Fire a rule but not a trigger rule — just records to the user's window.
 	f.do("POST", "/falco/events", falcoEventBody("Generic file access", "alice"))
 
-	m := decode(t, f.do("GET", "/api/users/alice/me", nil))
+	m := decode(t, f.doUser("GET", "/api/users/alice/me", "alice", nil))
 	fires := m["recent_rule_fires"].([]any)
 	if len(fires) != 1 {
 		t.Fatalf("expected 1 rule fire, got %d (%v)", len(fires), fires)
@@ -634,7 +664,7 @@ func TestDisplayName_SetThenReadInState(t *testing.T) {
 	}
 
 	// /api/users/{user}/me reflects it
-	got := decode(t, f.do("GET", "/api/users/alice/me", nil))
+	got := decode(t, f.doUser("GET", "/api/users/alice/me", "alice", nil))
 	if got["display_name"] != "Alice ★" {
 		t.Errorf("/me display_name: %v", got["display_name"])
 	}
@@ -642,7 +672,7 @@ func TestDisplayName_SetThenReadInState(t *testing.T) {
 	// /api/state leaderboard entries get it too (need at least one solve to
 	// surface alice in the leaderboard — fire a trigger).
 	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "alice"))
-	state := decode(t, f.do("GET", "/api/state", nil))
+	state := decode(t, f.doAdmin("GET", "/api/state", nil))
 	lb := state["leaderboard"].([]any)
 	first := lb[0].(map[string]any)
 	if first["display_name"] != "Alice ★" {
@@ -653,7 +683,7 @@ func TestDisplayName_SetThenReadInState(t *testing.T) {
 func TestDisplayName_DefaultsToIdentity(t *testing.T) {
 	f := newFixture(t, nil)
 	// Never set; me should fall back to identity.
-	got := decode(t, f.do("GET", "/api/users/bob/me", nil))
+	got := decode(t, f.doUser("GET", "/api/users/bob/me", "bob", nil))
 	if got["display_name"] != "bob" {
 		t.Fatalf("expected fallback to identity, got %v", got["display_name"])
 	}
@@ -689,7 +719,7 @@ func TestDisplayName_ParticipantCanChange(t *testing.T) {
 		t.Fatalf("second set (change) should succeed, got %d", w2.Code)
 	}
 	// /me reflects the latest name
-	got := decode(t, f.do("GET", "/api/users/alice/me", nil))
+	got := decode(t, f.doUser("GET", "/api/users/alice/me", "alice", nil))
 	if got["display_name"] != "Second" {
 		t.Fatalf("latest name should win, got %v", got["display_name"])
 	}
@@ -708,7 +738,8 @@ func TestMeHTML_ServedAtMe(t *testing.T) {
 
 func TestIndexHTML_ServedAtRoot(t *testing.T) {
 	f := newFixture(t, nil)
-	w := f.do("GET", "/", nil)
+	// P18-1: GET / is admin-gated at the app layer; authenticate as operator.
+	w := f.doAdmin("GET", "/", nil)
 	if w.Code != 200 {
 		t.Fatalf("status: %d", w.Code)
 	}
@@ -746,5 +777,133 @@ func TestMetricsEndpoint_ExposesScoreboardCounters(t *testing.T) {
 		if !bytes.Contains([]byte(body), []byte(want)) {
 			t.Errorf("/metrics missing expected series %q", want)
 		}
+	}
+}
+
+// ---------------- P18: participant-facing read self-scope gate ----------------
+//
+// The read endpoints exposed on the participant journey host derive the caller
+// identity from X-Auth-Request-Email and enforce self-or-admin (I8 mirrored to
+// the read path). {user} in the path is self-claimed and never trusted on its
+// own. Fail-closed: a missing/blank header is denied.
+
+// readEndpoints are the three participant-facing per-user reads guarded by the
+// self-scope gate. Table-driven so every case (self/other/admin/missing/
+// prefix-mismatch) is proven identically across all of them.
+func readEndpoints(user string) []string {
+	return []string{
+		"/api/users/" + user + "/me",
+		"/api/users/" + user + "/journey",
+	}
+}
+
+func TestReadGate_SelfAllowed(t *testing.T) {
+	f := newFixture(t, nil)
+	for _, ep := range readEndpoints("alice") {
+		if w := f.doUser("GET", ep, "alice", nil); w.Code != http.StatusOK {
+			t.Errorf("self read %s must 200, got %d body=%s", ep, w.Code, w.Body)
+		}
+	}
+}
+
+func TestReadGate_OtherUserForbidden(t *testing.T) {
+	f := newFixture(t, nil)
+	// bob authenticated, requests alice's data → 403.
+	for _, ep := range readEndpoints("alice") {
+		if w := f.doUser("GET", ep, "bob", nil); w.Code != http.StatusForbidden {
+			t.Errorf("cross-user read %s must 403, got %d body=%s", ep, w.Code, w.Body)
+		}
+	}
+}
+
+func TestReadGate_AdminAnyUser(t *testing.T) {
+	f := newFixture(t, nil)
+	// Operator (ADMIN_EMAILS) may read any participant.
+	for _, ep := range readEndpoints("alice") {
+		if w := f.doAdmin("GET", ep, nil); w.Code != http.StatusOK {
+			t.Errorf("admin read %s must 200, got %d body=%s", ep, w.Code, w.Body)
+		}
+	}
+}
+
+func TestReadGate_MissingHeaderFailClosed(t *testing.T) {
+	f := newFixture(t, nil)
+	// No X-Auth-Request-Email at all → 403 (never fall back to {user}).
+	for _, ep := range readEndpoints("alice") {
+		if w := f.do("GET", ep, nil); w.Code != http.StatusForbidden {
+			t.Errorf("no-identity read %s must 403 (fail-closed), got %d body=%s", ep, w.Code, w.Body)
+		}
+	}
+}
+
+func TestReadGate_EmptyHeaderFailClosed(t *testing.T) {
+	f := newFixture(t, nil)
+	// Explicit blank / whitespace-only header → 403 (trimmed to empty).
+	for _, ep := range readEndpoints("alice") {
+		if w := f.doAs("GET", ep, "   ", nil); w.Code != http.StatusForbidden {
+			t.Errorf("blank-identity read %s must 403 (fail-closed), got %d body=%s", ep, w.Code, w.Body)
+		}
+	}
+}
+
+// TestReadGate_PrefixExactNoMismatch is the core I8-mirror property: user1's
+// identity must NOT satisfy a request for user10 / user1x. The match is
+// prefix-exact ("user1@…"), not a substring/front-match, so the character after
+// the username is pinned to '@'.
+func TestReadGate_PrefixExactNoMismatch(t *testing.T) {
+	f := newFixture(t, nil)
+	// Caller user1@ requests user10's data → 403 (user10@ ≠ user1@ prefix).
+	for _, ep := range readEndpoints("user10") {
+		if w := f.doUser("GET", ep, "user1", nil); w.Code != http.StatusForbidden {
+			t.Errorf("user1 must not match user10 on %s; want 403, got %d body=%s", ep, w.Code, w.Body)
+		}
+	}
+	// And the exact self user still passes (user10@ == user10@ prefix).
+	for _, ep := range readEndpoints("user10") {
+		if w := f.doUser("GET", ep, "user10", nil); w.Code != http.StatusOK {
+			t.Errorf("user10 self on %s must 200, got %d body=%s", ep, w.Code, w.Body)
+		}
+	}
+	// Reverse direction: user10 must not match user1.
+	for _, ep := range readEndpoints("user1") {
+		if w := f.doUser("GET", ep, "user10", nil); w.Code != http.StatusForbidden {
+			t.Errorf("user10 must not match user1 on %s; want 403, got %d body=%s", ep, w.Code, w.Body)
+		}
+	}
+}
+
+// TestReadGate_StateAdminOnly proves the /api/state defense-in-depth gate
+// (P18-1): a self-authenticated participant (non-admin) cannot read the whole
+// field; missing identity is likewise denied; an admin passes.
+func TestReadGate_StateAdminOnly(t *testing.T) {
+	f := newFixture(t, nil)
+	if w := f.doUser("GET", "/api/state", "alice", nil); w.Code != http.StatusForbidden {
+		t.Errorf("participant /api/state must 403, got %d body=%s", w.Code, w.Body)
+	}
+	if w := f.do("GET", "/api/state", nil); w.Code != http.StatusForbidden {
+		t.Errorf("anonymous /api/state must 403 (fail-closed), got %d", w.Code)
+	}
+	if w := f.doAdmin("GET", "/api/state", nil); w.Code != http.StatusOK {
+		t.Errorf("admin /api/state must 200, got %d body=%s", w.Code, w.Body)
+	}
+}
+
+// TestReadGate_IndexAdminOnly proves the operator dashboard index (GET /)
+// defense-in-depth gate (P18-1): non-admin / anonymous get 403; admin gets the
+// HTML.
+func TestReadGate_IndexAdminOnly(t *testing.T) {
+	f := newFixture(t, nil)
+	if w := f.doUser("GET", "/", "alice", nil); w.Code != http.StatusForbidden {
+		t.Errorf("participant GET / must 403, got %d", w.Code)
+	}
+	if w := f.do("GET", "/", nil); w.Code != http.StatusForbidden {
+		t.Errorf("anonymous GET / must 403 (fail-closed), got %d", w.Code)
+	}
+	w := f.doAdmin("GET", "/", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("admin GET / must 200, got %d", w.Code)
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte("<title>Falco CTF")) {
+		t.Fatalf("admin index missing expected title")
 	}
 }
