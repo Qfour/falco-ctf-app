@@ -492,6 +492,67 @@ func (s *Store) HasExfil(user, challenge, flag string) bool {
 	return ok && got == flag
 }
 
+// HasExfilAny reports whether the collector has received *any* exfil receipt
+// for (user, challenge), regardless of the flag value. Used by the Journey
+// projection to surface a "collector received your flag" live status without
+// leaking the flag itself. Distinct from HasExfil (which matches an exact flag
+// for the solve gate) — a wrong-value receipt still counts as "received here"
+// for UX, while the solve gate keeps matching the exact expected flag.
+func (s *Store) HasExfilAny(user, challenge string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.exfil[SolveKey{User: user, Challenge: challenge}]
+	return ok
+}
+
+// ExfilReceipt is the public projection of one stored collector receipt.
+// Returned by PendingExfilSolves for the auto-solve sweeper. Receipt time is
+// deliberately omitted: the sweeper's clean-window gate is evaluated against
+// server now(), never against the (attacker-influenced) delivery time, so the
+// receipt timestamp plays no part in the solve decision.
+type ExfilReceipt struct {
+	User      string
+	Challenge string
+	Flag      string
+}
+
+// PendingExfilSolves returns every recorded exfil receipt whose (user,
+// challenge) pair has NOT been solved yet. It is the sweeper's work queue: the
+// scoring layer re-applies the RequireExfil / evade-type filter (catalog is the
+// authority for those) and the clean-window + exact-flag gate before solving,
+// so this method deliberately returns *all* unsolved receipts and does not
+// itself decide eligibility. Snapshot semantics: the returned slice is a copy
+// taken under the lock, safe to iterate without holding it.
+//
+// "Unsolved" is evaluated against the in-memory solved set (the same set
+// MarkSolved maintains), so a receipt whose pair was solved by either the
+// manual /submit path or a prior sweep is excluded — keeping the sweeper's
+// queue idempotent and bounded to genuinely-pending work.
+func (s *Store) PendingExfilSolves() []ExfilReceipt {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]ExfilReceipt, 0, len(s.exfil))
+	for k, flag := range s.exfil {
+		if _, solved := s.solved[k]; solved {
+			continue
+		}
+		out = append(out, ExfilReceipt{
+			User:      k.User,
+			Challenge: k.Challenge,
+			Flag:      flag,
+		})
+	}
+	// Sort by a stable key (user, challenge) for deterministic iteration in
+	// tests and logs.
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].User != out[j].User {
+			return out[i].User < out[j].User
+		}
+		return out[i].Challenge < out[j].Challenge
+	})
+	return out
+}
+
 // RuleFire is the public projection of a recorded Falco rule fire.
 // Returned by RecentRuleFires for participant self-service displays.
 type RuleFire struct {

@@ -77,7 +77,7 @@ type Handler struct {
 	docsBaseURL string // docs-site origin for absolutising docsUrl; "" = relative
 }
 
-func New(cat catalog.Catalog, s *store.Store, logger *slog.Logger, now func() time.Time, adminEmails []string, jc JourneyConfig) *Handler {
+func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *slog.Logger, now func() time.Time, adminEmails []string, jc JourneyConfig) *Handler {
 	// /submit accepts a claimed user identity. Without per-IP throttling a
 	// participant who scraped someone else's flag could brute-force submits.
 	// 1 req/s with burst 10 lets legitimate typing through but blocks
@@ -102,7 +102,7 @@ func New(cat catalog.Catalog, s *store.Store, logger *slog.Logger, now func() ti
 	return &Handler{
 		cat:                cat,
 		store:              s,
-		grader:             scoring.New(cat, s, now),
+		grader:             grader,
 		logger:             logger,
 		now:                now,
 		submitLimiter:      ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now),
@@ -810,7 +810,7 @@ func (h *Handler) journey(w http.ResponseWriter, r *http.Request) {
 	// Detail projection for the current mission (nil when everything solved).
 	var detail any
 	if current != "" {
-		detail = h.missionDetail(current, stepChecks[current], hintViews[current])
+		detail = h.missionDetail(user, current, stepChecks[current], hintViews[current])
 	}
 
 	displayName := user
@@ -856,7 +856,7 @@ func (h *Handler) docsURL(rel string) string {
 // self-check state, and progressive hints (opened text + locked count). When no
 // journey.yaml exists for the mission, hasJourney is false and the copy fields
 // are empty so the UI can render "ブリーフィング準備中" (graceful degrade).
-func (h *Handler) missionDetail(cid string, checkedSteps, openedHints []int) map[string]any {
+func (h *Handler) missionDetail(user, cid string, checkedSteps, openedHints []int) map[string]any {
 	ch := h.cat[cid]
 	j, hasJourney := h.journeys[cid]
 
@@ -899,15 +899,26 @@ func (h *Handler) missionDetail(cid string, checkedSteps, openedHints []int) map
 	if hasJourney && j.Title != "" {
 		title = j.Title
 	}
+	// exfilReceived drives the auto-solve live status in the Journey UI: once the
+	// collector has *any* receipt for this (user, challenge), the UI shows
+	// "collector received → waiting for a clean window → auto-clear" instead of
+	// leading with the manual submit form. Read-only projection with no bearing
+	// on the solve verdict (the sweeper / manual submit still gate on the exact
+	// flag + clean window), so it is safe to expose without the flag value.
+	requireExfil := ch.Type == "evade" && ch.RequireExfil
+	exfilReceived := requireExfil && h.store.HasExfilAny(user, cid)
 	return map[string]any{
-		"id":         cid,
-		"title":      title,
-		"tagline":    j.Tagline,
-		"briefing":   j.Briefing,
-		"type":       ch.Type,
-		"docsUrl":    h.docsURL(j.DocsURL),
-		"hasJourney": hasJourney,
-		"steps":      steps,
+		"id":            cid,
+		"title":         title,
+		"tagline":       j.Tagline,
+		"briefing":      j.Briefing,
+		"type":          ch.Type,
+		"docsUrl":       h.docsURL(j.DocsURL),
+		"hasJourney":    hasJourney,
+		"requireExfil":  requireExfil,
+		"exfilReceived": exfilReceived,
+		"windowSeconds": ch.WindowSeconds,
+		"steps":         steps,
 		"hints": map[string]any{
 			"total":       len(j.Hints),
 			"opened":      openedList,

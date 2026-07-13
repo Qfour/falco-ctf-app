@@ -17,14 +17,27 @@
 // Dependency direction: scoring depends on catalog (challenge metadata) and on
 // the ScoreStore port; it never imports the handlers. The concrete *store.Store
 // satisfies ScoreStore, so the store is a repository adapter behind the port.
+// It also imports the store package for the plain ExfilReceipt value type the
+// PendingExfilSolves port method returns — a data type, not a handler, so the
+// "never import the handlers" rule is preserved.
+//
+// Auto-solve (P16): a store-backed Sweeper periodically re-derives the set of
+// exfil-delivered-but-unsolved (user, challenge) pairs and runs each through the
+// exact same clean-window + exfil gate the manual /submit path uses (the shared
+// evaluateClean helper). Because the verdict is re-derived from the store on
+// every tick, it survives a scoreboard restart (conventions I1: single replica,
+// no in-memory pending timers to lose).
 package scoring
 
 import (
+	"context"
 	"errors"
+	"log/slog"
 	"slices"
 	"time"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
+	"github.com/Qfour/falco-ctf-app/internal/store"
 )
 
 // ScoreStore is the repository port the Grader depends on. It is the minimal
@@ -45,6 +58,12 @@ type ScoreStore interface {
 	RecentForbiddenFires(user string, forbidden []string, now float64, windowSeconds int) []string
 	HasExfil(user, challenge, flag string) bool
 	RecordExfil(user, challenge, flag, at string) error
+	// PendingExfilSolves enumerates every recorded collector receipt whose
+	// (user, challenge) pair is not yet solved. It is the sweeper's work queue;
+	// the Grader re-applies the RequireExfil / evade-type / clean-window / exact
+	// -flag gates before solving (see Sweep). Kept on the same port so the
+	// concrete *store.Store satisfies it and tests can drive a fake queue.
+	PendingExfilSolves() []store.ExfilReceipt
 }
 
 // Grader is the scoring domain service. It owns the catalog (challenge rules)
@@ -166,19 +185,40 @@ func (g *Grader) SubmitEvade(user, cid, flag string) (EvadeOutcome, error) {
 	if flag != ch.ExpectedFlag {
 		return EvadeOutcome{Status: EvadeWrongFlag}, nil
 	}
+	// Gates 4-6 (forbidden window → exfil gate → MarkSolved) are the *single
+	// source of truth* shared with the auto-solve sweeper (evaluateClean). Any
+	// change to the clean-window / exfil / record logic must be made there so
+	// manual submit and sweeper stay bit-for-bit identical.
+	return g.evaluateClean(user, ch, flag)
+}
 
-	// Forbidden-rule window: server now(), never attacker-supplied time.
+// evaluateClean applies the evade challenge's clean-window + exfil gate and
+// records the solve. It is the ONE place gates 4-6 live, shared verbatim by the
+// manual /submit path (SubmitEvade) and the auto-solve Sweeper (Sweep). Callers
+// must have already established (per SubmitEvade's gates 1-3): the challenge
+// exists, is evade type, and `flag` equals ch.ExpectedFlag.
+//
+//  4. no forbidden rule fired within windowSeconds of server now() — the window
+//     is evaluated against g.now(), NEVER attacker-supplied event time.
+//  5. if RequireExfil, the collector holds the matching flag (HasExfil).
+//  6. record the solve → EvadeSolved (Newly = first-time).
+//
+// Fail-closed: any store error from MarkSolved is returned unrecorded; a
+// non-clean window or unmet exfil returns the corresponding non-solved status,
+// so a caller that mis-drives this (e.g. the sweeper enqueuing a not-yet-clean
+// pair) simply does not solve — it never records a solve it should not.
+func (g *Grader) evaluateClean(user string, ch catalog.Challenge, flag string) (EvadeOutcome, error) {
 	now := float64(g.now().Unix())
 	offending := g.store.RecentForbiddenFires(user, ch.ForbiddenRules, now, ch.WindowSeconds)
 	if len(offending) > 0 {
 		return EvadeOutcome{Status: EvadeForbiddenFired, Offending: offending}, nil
 	}
-	if ch.RequireExfil && !g.store.HasExfil(user, cid, flag) {
+	if ch.RequireExfil && !g.store.HasExfil(user, ch.ID, flag) {
 		return EvadeOutcome{Status: EvadeExfilRequired}, nil
 	}
 
 	at := g.now().UTC().Format(time.RFC3339Nano)
-	newly, err := g.store.MarkSolved(user, cid, at)
+	newly, err := g.store.MarkSolved(user, ch.ID, at)
 	if err != nil {
 		return EvadeOutcome{}, err
 	}
@@ -224,4 +264,123 @@ func (g *Grader) RecordExfil(user, cid, flag string) (ExfilStatus, error) {
 		return ExfilRecorded, err
 	}
 	return ExfilRecorded, nil
+}
+
+// SweepResult reports one auto-solve the sweeper performed on a tick. Only
+// (user, challenge) pairs newly solved on this tick are returned, so the caller
+// (the Sweeper loop) can bump the solve metric exactly once per solve — never
+// on the idempotent re-visit of an already-solved pair.
+type SweepResult struct {
+	User      string
+	Challenge string
+}
+
+// Sweep runs one auto-solve pass over the store's pending exfil receipts. For
+// each exfil-delivered-but-unsolved (user, challenge) pair it re-applies the
+// SAME gates as manual submit: the challenge must still be evade type with
+// RequireExfil set (catalog is the authority — a receipt for a since-changed
+// challenge is skipped), the delivered flag must equal ch.ExpectedFlag, and
+// then the shared evaluateClean gate (clean window → HasExfil → MarkSolved)
+// must pass. Only pairs that clear every gate are solved this tick.
+//
+// Fail-closed by construction:
+//   - a not-yet-clean window returns EvadeForbiddenFired → not solved (retried
+//     next tick, since the pair stays pending);
+//   - an exfil value that does not match the expected flag returns
+//     EvadeWrongFlag / EvadeExfilRequired → never solved (the wrong receipt can
+//     never satisfy HasExfil for the real flag);
+//   - a store error on one pair is collected and the pass continues to the next
+//     (one transient DB error must not stall every other pending solve), and the
+//     joined error is returned so the caller can log it.
+//
+// Idempotent: PendingExfilSolves already excludes solved pairs, and MarkSolved
+// is first-wins, so a pair solved by the manual path (or a prior sweep) is never
+// double-counted even under a manual/sweeper race.
+func (g *Grader) Sweep() ([]SweepResult, error) {
+	var solved []SweepResult
+	var errs []error
+	for _, r := range g.store.PendingExfilSolves() {
+		ch, ok := g.cat[r.Challenge]
+		if !ok {
+			continue // challenge left the catalog since the receipt was recorded
+		}
+		if ch.Type != "evade" || !ch.RequireExfil {
+			continue // only exfil-required evade challenges auto-solve
+		}
+		if r.Flag != ch.ExpectedFlag {
+			continue // wrong exfil value can never satisfy the exact-flag gate
+		}
+		out, err := g.evaluateClean(r.User, ch, r.Flag)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if out.Status == EvadeSolved && out.Newly {
+			solved = append(solved, SweepResult{User: r.User, Challenge: r.Challenge})
+		}
+	}
+	return solved, errors.Join(errs...)
+}
+
+// Sweeper drives Grader.Sweep on a fixed cadence until its context is
+// cancelled. It holds no state of its own beyond the ticker — the pending work
+// is re-derived from the store every tick, so a scoreboard restart resumes
+// auto-solving without any handoff (conventions I1: single replica, so a single
+// sweeper is the whole population; no leader election needed).
+type Sweeper struct {
+	grader   *Grader
+	cadence  time.Duration
+	logger   *slog.Logger
+	onSolved func(SweepResult) // optional metric hook; nil = no-op
+}
+
+// NewSweeper builds a Sweeper. cadence <= 0 falls back to DefaultSweepCadence.
+// onSolved (may be nil) is invoked once per newly auto-solved pair so the caller
+// can bump the solve metric outside the scoring package (keeping scoring free of
+// a metrics dependency, matching the ingest/api driver split).
+func NewSweeper(g *Grader, cadence time.Duration, logger *slog.Logger, onSolved func(SweepResult)) *Sweeper {
+	if cadence <= 0 {
+		cadence = DefaultSweepCadence
+	}
+	return &Sweeper{grader: g, cadence: cadence, logger: logger, onSolved: onSolved}
+}
+
+// DefaultSweepCadence is how often the auto-solve sweeper re-derives pending
+// solves. 5s keeps the "flag received → auto-clear" latency low enough to feel
+// live in the Journey UI (which polls every 2s) while the per-tick work is a
+// single mutex-guarded map scan over the exfil set (tiny at CTF scale).
+const DefaultSweepCadence = 5 * time.Second
+
+// Run blocks, sweeping every cadence until ctx is cancelled, then returns. It
+// does one immediate sweep on entry so a pair that became clean while the
+// process was starting up is not delayed a full tick. Safe to run in its own
+// goroutine; cancelling ctx (e.g. on SIGTERM) stops the ticker and returns —
+// no goroutine leak.
+func (s *Sweeper) Run(ctx context.Context) {
+	ticker := time.NewTicker(s.cadence)
+	defer ticker.Stop()
+	s.sweepOnce()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.sweepOnce()
+		}
+	}
+}
+
+func (s *Sweeper) sweepOnce() {
+	solved, err := s.grader.Sweep()
+	if err != nil && s.logger != nil {
+		s.logger.Error("auto-solve sweep", "err", err)
+	}
+	for _, r := range solved {
+		if s.logger != nil {
+			s.logger.Info("auto_solve", "user", r.User, "cid", r.Challenge)
+		}
+		if s.onSolved != nil {
+			s.onSolved(r)
+		}
+	}
 }

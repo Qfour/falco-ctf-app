@@ -139,6 +139,23 @@
   .submit-msg.err { color: var(--danger); }
   .submit-msg.warn { color: var(--warn); }
 
+  /* auto-solve live status (exfil-required evade) */
+  .autosolve { margin-top: 0.6rem; background: var(--bg-elev); border: 1px solid var(--border); border-left: 2px solid var(--evade); border-radius: 0.5rem; padding: 0.9rem 1.1rem; }
+  .autosolve .steps-flow { list-style: none; display: flex; flex-direction: column; gap: 0.55rem; }
+  .autosolve .steps-flow li { display: flex; align-items: center; gap: 0.6rem; font-size: 0.9rem; color: var(--text-mute); }
+  .autosolve .steps-flow li .dot { flex-shrink: 0; width: 20px; text-align: center; }
+  .autosolve .steps-flow li.active { color: var(--text); font-weight: 600; }
+  .autosolve .steps-flow li.done { color: var(--success); }
+  .autosolve .steps-flow li.waiting .dot { animation: pulse 1.6s ease-in-out infinite; }
+  .autosolve .hint { color: var(--text-mute); font-size: 0.8rem; margin-top: 0.7rem; }
+  /* collapsible manual fallback */
+  details.manual { margin-top: 0.8rem; }
+  details.manual > summary { cursor: pointer; color: var(--text-mute); font-size: 0.82rem; list-style: none; user-select: none; }
+  details.manual > summary::-webkit-details-marker { display: none; }
+  details.manual > summary::before { content: '▸ '; color: var(--text-mute); }
+  details.manual[open] > summary::before { content: '▾ '; }
+  details.manual > summary:hover { color: var(--accent); }
+
   .empty { text-align: center; padding: 2.5rem 1rem; color: var(--text-mute); font-size: 0.9rem; }
   .empty .icon { font-size: 2rem; opacity: 0.4; display: block; margin-bottom: 0.5rem; }
   .help { background: var(--surface); border: 1px solid var(--border); border-radius: 0.85rem; padding: 2rem; text-align: center; max-width: 620px; margin: 3rem auto; }
@@ -308,7 +325,7 @@
         <div class="mission-body">
           <div class="empty"><span class="icon">📡</span>ブリーフィング準備中<br>
           このミッションの作戦資料はまだ用意されていません。</div>
-          ${det.type === 'evade' ? evadeForm(det.id) : ''}
+          ${det.type === 'evade' ? evadeSection(det) : ''}
         </div>
       </div>`;
     }
@@ -348,15 +365,56 @@
         ${det.briefing ? `<div class="briefing">${esc(det.briefing)}</div>` : ''}
         ${steps ? `<div class="sec-title">Steps（自己チェック）</div><ul class="steps">${steps}</ul>` : ''}
         ${hintsBlock}
-        ${det.type === 'evade' ? evadeForm(det.id) : ''}
+        ${det.type === 'evade' ? evadeSection(det) : ''}
         ${docs}
       </div>
     </div>`;
   }
 
-  function evadeForm(cid) {
-    return `<div class="sec-title">Flag 提出（evade）</div>
-      <form class="submit-form" id="submit-form" data-cid="${esc(cid)}">
+  // evadeSection chooses the primary UX for an evade mission:
+  //   - RequireExfil challenges lead with the auto-solve live status (the flag
+  //     is delivered by exfil; the scoreboard auto-clears once the window is
+  //     clean), demoting the manual submit form to a collapsed fallback.
+  //   - plain evade challenges keep the manual submit form as the primary path.
+  function evadeSection(det) {
+    if (det.requireExfil) {
+      return autoSolveStatus(det) + `
+        <details class="manual">
+          <summary>うまくいかない? 手動でフラグを提出</summary>
+          ${submitForm(det.id)}
+        </details>`;
+    }
+    return `<div class="sec-title">Flag 提出（evade）</div>${submitForm(det.id)}`;
+  }
+
+  // autoSolveStatus renders the three-stage live flow for an exfil-required
+  // evade mission. Stage state is derived from det.exfilReceived (collector has
+  // a receipt). The mission map flips this section to "solved" via the normal
+  // poll once the sweeper clears it, so we only model received / waiting here.
+  function autoSolveStatus(det) {
+    const received = !!det.exfilReceived;
+    // Build each row via textContent-safe interpolation: only static copy and
+    // booleans feed in here (no user-controlled strings), matching #26's XSS
+    // discipline — the dynamic bits are class names, not injected content.
+    const rows = [
+      { cls: received ? 'done' : 'active',
+        dot: received ? '✅' : '⏳',
+        text: received ? 'collector が flag を受信しました' : 'collector への flag 配送を待機中…' },
+      { cls: received ? 'active waiting' : '',
+        dot: received ? '⏳' : '·',
+        text: received ? 'クリーンな窓を待機中… (禁止ルールが ' + esc(String(det.windowSeconds || 30)) + '秒 静かになれば自動クリア)' : 'クリーンな窓の確保' },
+      { cls: '', dot: '🎉', text: '自動クリア' },
+    ];
+    const items = rows.map(r => `<li class="${r.cls}"><span class="dot">${r.dot}</span><span>${esc(r.text)}</span></li>`).join('');
+    return `<div class="sec-title">自動クリア（exfil）</div>
+      <div class="autosolve">
+        <ul class="steps-flow">${items}</ul>
+        <div class="hint">flag を collector に配送すれば、禁止ルールが静かな窓で自動的にクリアされます。手動提出は不要です。</div>
+      </div>`;
+  }
+
+  function submitForm(cid) {
+    return `<form class="submit-form" id="submit-form" data-cid="${esc(cid)}">
         <input type="text" id="flag-input" placeholder="FALCO{...}" autocomplete="off" spellcheck="false">
         <button type="submit" class="btn btn-accent">Submit</button>
       </form>

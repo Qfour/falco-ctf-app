@@ -197,6 +197,52 @@ func TestJourney_StepCheckReflectedInProjection(t *testing.T) {
 	}
 }
 
+// TestJourney_ExfilReceivedProjection proves the P16 read-only auto-solve
+// fields: requireExfil is true for an exfil-required evade mission and
+// exfilReceived flips to true once the store has any collector receipt for
+// (user, challenge). These drive the Journey UI live status; they are purely
+// projected and never affect the solve verdict (the sweeper / manual submit
+// still gate on the exact flag + clean window).
+func TestJourney_ExfilReceivedProjection(t *testing.T) {
+	cat := catalog.Catalog{
+		"01-boss": {ID: "01-boss", Type: "evade", ForbiddenRules: []string{"Reverse shell"}, ExpectedFlag: "FALCO{boss}", WindowSeconds: 30, RequireExfil: true},
+	}
+	journeys := catalog.Journeys{
+		"01-boss": {ChallengeID: "01-boss", Title: "boss", Briefing: "b"},
+	}
+	st, err := store.Open(filepath.Join(t.TempDir(), "j.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := scoreboard.NewHandler(cat, st, logger,
+		scoreboard.WithJourneys(journeys),
+		scoreboard.WithOrder([]string{"01-boss"}),
+	)
+	f := &journeyFixture{t: t, srv: srv, st: st}
+
+	det := f.journey("alice")["detail"].(map[string]any)
+	if det["requireExfil"] != true {
+		t.Fatalf("requireExfil must be true for exfil-required evade, got %v", det["requireExfil"])
+	}
+	if det["exfilReceived"] != false {
+		t.Fatalf("exfilReceived must be false before any receipt, got %v", det["exfilReceived"])
+	}
+	if det["windowSeconds"].(float64) != 30 {
+		t.Fatalf("windowSeconds must be surfaced, got %v", det["windowSeconds"])
+	}
+
+	// Record a collector receipt (any value) → exfilReceived flips true.
+	if err := st.RecordExfil("alice", "01-boss", "FALCO{whatever}", "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	det = f.journey("alice")["detail"].(map[string]any)
+	if det["exfilReceived"] != true {
+		t.Fatalf("exfilReceived must be true after a receipt, got %v", det["exfilReceived"])
+	}
+}
+
 func TestJourney_StepCheck_InvalidIndex(t *testing.T) {
 	f := newJourneyFixture(t)
 	w := f.req("POST", "/api/users/alice/challenges/01-recon/steps/9/check", map[string]any{"checked": true})

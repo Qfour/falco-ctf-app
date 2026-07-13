@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/metrics"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/oapi"
@@ -31,13 +30,13 @@ type Handler struct {
 	limiter *ratelimit.Limiter
 }
 
-func New(cat catalog.Catalog, s *store.Store, logger *slog.Logger, now func() time.Time) *Handler {
+func New(grader *scoring.Grader, s *store.Store, logger *slog.Logger, now func() time.Time) *Handler {
 	// Per-source-IP token bucket. /falco/events is a high-volume internal
 	// endpoint (falcosidekick batches events); rate is generous so a busy
 	// CTF doesn't get throttled while still capping pathological bursts.
 	return &Handler{
 		store:  s,
-		grader: scoring.New(cat, s, now),
+		grader: grader,
 		logger: logger,
 		now:    now,
 		// Intentionally fixed: sized for a single-cluster CTF (a few hundred

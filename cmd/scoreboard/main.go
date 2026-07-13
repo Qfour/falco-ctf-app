@@ -5,8 +5,10 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"os"
+	"sync"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard"
@@ -92,9 +94,27 @@ func main() {
 		scoreboard.WithDocsBaseURL(docsBaseURL),
 	)
 
+	// Auto-solve sweeper (P16): re-derives exfil-delivered-but-unsolved evade
+	// pairs from the store every tick and auto-solves any whose clean window is
+	// met, so participants need not manually submit. Runs in its own goroutine
+	// bound to sweepCtx; cancelled after Serve returns (SIGINT/SIGTERM) so the
+	// ticker stops and the goroutine exits before we close the store.
+	sweepCtx, cancelSweep := context.WithCancel(context.Background())
+	var sweepWG sync.WaitGroup
+	sweepWG.Add(1)
+	go func() {
+		defer sweepWG.Done()
+		handler.Sweeper().Run(sweepCtx)
+	}()
+
 	err = serverutil.Serve(addr, handler, logger, func() {
 		logger.Info("listening", "addr", addr)
 	})
+	// Serve has returned (shutdown or listen error): stop the sweeper and wait
+	// for its goroutine before the deferred st.Close() runs, so no sweep is
+	// mid-MarkSolved against a closing DB.
+	cancelSweep()
+	sweepWG.Wait()
 	if err != nil {
 		logger.Error("listen failed", "err", err)
 		os.Exit(1)
