@@ -3,7 +3,7 @@
 # Build context: **repo root** (so the canonical `challenges/` tree is reachable;
 # gen-pages.py renders one page per challenge from it — no committed duplication).
 #   docker build --platform linux/amd64 -t <reg>/docs:<tag> -f images/docs/Dockerfile .
-FROM python:3.12-slim AS build
+FROM python:3.12-slim@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc852199fbf AS build
 
 RUN pip install --no-cache-dir "mkdocs-material==9.5.39"
 
@@ -26,7 +26,7 @@ RUN for mode in participant admin; do \
 # ── serve ───────────────────────────────────────────────────────────
 # nginx-unprivileged listens on 8080 as a non-root user (uid 101) — fits
 # runAsNonRoot without extra config.
-FROM nginxinc/nginx-unprivileged:1.30-alpine
+FROM nginxinc/nginx-unprivileged:1.30-alpine@sha256:b3f2436575bd5be7386518084d842dac414ab4962712afa31e99e0942a56e3b2
 # --chmod: the non-root nginx user (uid 101) must read the config regardless of
 # the host file mode (Write may create it 0640). The site tree from the build
 # stage is already world-readable (dirs 0755 / files 0644) so it needs no chmod

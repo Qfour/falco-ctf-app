@@ -1,5 +1,12 @@
 name: CI
 
+# サプライチェーン pin ポリシー (P12) — 正典: .claude/rules/falco-ctf-app-conventions.md
+#   - reusable workflow `@main` は禁止 → commit SHA pin (下記 uses: の @<sha> # main as of ...)
+#   - サードパーティ action の `@vN` メジャータグは許容例外 (信頼済み提供元 + Dependabot 運用)。
+#     例外リスト: actions/checkout@v4 / azure/setup-helm@v4 /
+#     aws-actions/configure-aws-credentials@v4 / anthropics/claude-code-action@v1
+#     (claude-review.yml)。これ以外を足すときは SHA pin するか conventions の例外表に追記。
+
 on:
   push:
     branches: [main]
@@ -13,7 +20,7 @@ jobs:
   # Branch protection check: "test"
   # ------------------------------------------------------------------
   test:
-    uses: Qfour/homelab-workflows/.github/workflows/go-test.yaml@main
+    uses: Qfour/homelab-workflows/.github/workflows/go-test.yaml@10583360d619601e225803d236a00d0fa014b1f8 # main as of 2026-05-12
     with:
       dockerfile: Dockerfile.test
 
@@ -140,7 +147,7 @@ jobs:
             context: .
             dockerfile: images/docs/Dockerfile
             scan-continue-on-error: false
-    uses: Qfour/homelab-workflows/.github/workflows/image-pipeline.yaml@main
+    uses: Qfour/homelab-workflows/.github/workflows/image-pipeline.yaml@10583360d619601e225803d236a00d0fa014b1f8 # main as of 2026-05-12
     with:
       name: ${{ matrix.name }}
       context: ${{ matrix.context }}
