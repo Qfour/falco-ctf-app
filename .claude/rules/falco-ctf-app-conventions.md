@@ -80,9 +80,11 @@ docker buildx imagetools inspect golang:1.26-alpine --format '{{.Manifest.MediaT
 
 # 2. 該当 Dockerfile の FROM を `image:tag@sha256:<新digest>` に差し替える
 #    (同一 image を使う複数 Dockerfile は同じ digest に揃える。現状:
-#     golang:1.26-alpine = scoreboard/auth-policy/Dockerfile.{test,gen,tidy}、
+#     golang:1.26-alpine              = scoreboard/auth-policy/Dockerfile.{test,gen,tidy}、
 #     distroless static-debian13:nonroot = scoreboard/auth-policy、
-#     alpine:3.22 = images/{ttyd,challenge})
+#     alpine:3.22                     = images/{ttyd,challenge}、
+#     python:3.12-slim                = images/docs (build stage)、
+#     nginx-unprivileged:1.30-alpine  = images/docs (serve stage))
 
 # 3. 検証: 実ビルド + 鮮度 + テスト
 make build TAG=local      # digest が pull でき build が通ること
@@ -105,8 +107,9 @@ cycle 自体を上げる場合 (例: alpine 3.22→3.23) は tag も一緒に変
   根拠: (1) いずれも広く使われる信頼済み提供元 (GitHub 公式 `actions/*`・
   `azure/*`・`aws-actions/*`・`anthropics/*)、(2) メジャータグは提供元が
   セキュリティ修正を配る移動先で、SHA pin すると修正が届かず手動 bump 負債になる、
-  (3) 本 repo は Dependabot 運用 (メジャータグの追随) 前提。**例外リスト (mutable
-  で許容する参照)**:
+  (3) **バージョン追随は手動レビューで行う (Dependabot 未導入 — 両リポとも
+  `dependabot.yml` を持たず、CI-free 恒久方針と整合)**。platform `SUPPLY-CHAIN.md`
+  と同一方針。**例外リスト (mutable で許容する参照)**:
   | action | 用途 |
   |---|---|
   | `actions/checkout@v4` | repo チェックアウト (GitHub 公式) |
@@ -116,6 +119,9 @@ cycle 自体を上げる場合 (例: alpine 3.22→3.23) は tag も一緒に変
 
   この 4 つ以外の action / `@main` reusable workflow を追加する場合は SHA pin するか、
   上記例外表に根拠付きで追記すること (完了条件: mutable 参照ゼロ or 例外表に記載)。
+- **この例外表は各リポの実 workflow に固有** (共通なのは pin ポリシーであって
+  action 集合ではない。集合は各リポの `uses:` に従属する)。platform 表と件数/内容が
+  一致する必要はない。
 
 ## SecurityContext (コンテナレベル)
 
@@ -173,7 +179,7 @@ securityContext:
 
 | 接点 | 詳細 |
 |---|---|
-| Image tag | `${REGISTRY}/falco-ctf-{scoreboard,auth-policy,ttyd,challenge,docs}:<git-sha>` (registry の repo 名は `falco-ctf/X` slash 推奨; `falco-ctf-X` dash も ingest 受理) |
+| Image naming (**正典**) | `${REGISTRY}/falco-ctf-{scoreboard,auth-policy,ttyd,challenge,docs}:<git-sha>`。registry の repo 名は **`falco-ctf/X` slash が正式**、`falco-ctf-X` dash も ingest 受理。tag は git SHA (I4/I5)。**この行が slash/dash 命名契約の単一定義** — 他所 (ingest フィルタ節・platform docs) はここを参照する |
 | Charts | `charts/{scoreboard,auth-policy,ctf-user,docs}` を platform helmfile が local=path / prod=OCI で参照 (CI publish は現状停止 → prod も local clone path。`project_ci_free_prod` 参照) |
 | Challenges path | `deploy-user.sh --challenges-dir` (ctf-user chart 同梱、当 repo `challenges/` を default 参照) |
 | Webhook payload | `POST /falco/events` は falcosidekick 標準形。フィールドキー変更は両 repo 同時 PR |
@@ -182,14 +188,17 @@ securityContext:
 
 ## scoreboard ingest フィルタ (defense-in-depth)
 
+> slash/dash 命名契約の**正典は上記「Cross-repo 契約」表の Image naming 行**。
+> この節はその契約を ingest が **なぜ両形受理するか** を説明する (二重定義しない)。
+
 `internal/scoreboard/ingest/ingest.go` の image substring check は
 `falco-ctf/challenge` **または** `falco-ctf-challenge` を受理する。
-ECR が repo 名で `/` を許すので slash 命名が正式だが、containerd の
-image dedup で push 名と Falco 報告名が乖離するケース (同一 digest を
-別 repo にも push したケース) に対応するため dash 形も許容。
+slash が正式命名 (契約表参照) だが、containerd の image dedup で push 名と
+Falco 報告名が乖離するケース (同一 digest を別 repo にも push したケース) に
+対応するため dash 形も許容している。
 
 新しい registry を追加する場合は image string が `falco-ctf/challenge` /
-`falco-ctf-challenge` のどちらかを含むよう repo 命名する。
+`falco-ctf-challenge` のどちらかを含むよう repo 命名する (契約表の命名に従う)。
 
 ## Prod 値の供給 (chart には焼き込まない)
 
