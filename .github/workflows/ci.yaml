@@ -85,27 +85,48 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # severity-at-least: scan の policy 評価が gate する最小 severity
+        # (reusable image-pipeline の default は high = High+Critical を block)。
+        # scan-continue-on-error は全 image false (strict) のまま — job 側の
+        # continue-on-error は check run を緑化できず branch protection を通せない
+        # (#25 で実証) ため、緩和は severity 閾値で行う。
         include:
           - name: scoreboard
             context: .
             dockerfile: scoreboard/Dockerfile
             scan-continue-on-error: false
+            severity-at-least: high
           - name: auth-policy
             context: .
             dockerfile: auth-policy/Dockerfile
             scan-continue-on-error: false
+            severity-at-least: high
           - name: ttyd
             context: images/ttyd
             dockerfile: images/ttyd/Dockerfile
             scan-continue-on-error: false
+            severity-at-least: high
           - name: challenge
             context: .
             dockerfile: images/challenge/Dockerfile
             scan-continue-on-error: false
+            severity-at-least: high
+          # TEMP: docs のみ severity-at-least=critical に一時緩和
+          # (P13 merge train unblock, CEO risk-accept 2026-07-13)。
+          # docs の High (curl 8.19.0-r0 / libxml2 2.13.9-r1 ほか) は alpine 3.23
+          # stable に fix apk が無く (fix は edge のみ)、tag bump / apk upgrade で
+          # 潰せない = code fix 不能。Critical は 0 なので critical 閾値で正当に PASS し、
+          # Critical が出れば従来どおり block する。scan job は strict (continue-on-error:
+          # false) のままで、SARIF に High は引き続き上がる (可視性維持)。
+          #   解除期限 = 2026-07-27
+          #   解除条件 = docs base の High 解消 (alpine backport or serve base 差替え) 時に
+          #              severity-at-least を high に戻す
+          #   追跡: #18
           - name: docs
             context: .
             dockerfile: images/docs/Dockerfile
             scan-continue-on-error: false
+            severity-at-least: critical   # TEMP (#18, ~2026-07-27): docs High は 3.23 stable で fix 不能
     uses: Qfour/homelab-workflows/.github/workflows/image-pipeline.yaml@main
     with:
       name: ${{ matrix.name }}
@@ -115,6 +136,7 @@ jobs:
       registry: ${{ vars.ECR_REGISTRY }}
       aws-region: ${{ vars.AWS_REGION }}
       scan-continue-on-error: ${{ matrix.scan-continue-on-error }}
+      severity-at-least: ${{ matrix.severity-at-least }}
       sysdig-secure-url: https://app.au1.sysdig.com
     secrets:
       sysdig-token: ${{ secrets.SYSDIG_SECURE_TOKEN }}
