@@ -32,8 +32,51 @@ spec:
   rules:
     - host: {{ .Values.ingress.journeyHost | quote }}
       http:
+        # Participant allow-list (P18 5x fix). The journey host is reachable by
+        # ANY authenticated login, so it must NOT re-expose the whole scoreboard
+        # like the admin host's `path: /` does. Only the paths the Journey UI
+        # (journey.html / me.html) actually needs are routed here; everything
+        # else (GET /, /api/state, /api/admin/*, /api/hints, /falco/events,
+        # /internal/exfil/*) has no matching rule and falls through to the
+        # ingress-nginx default backend (404) on this host. Server-side gates
+        # still apply on top of this (selfOrAdmin on /api/users/*, admin gates
+        # on /api/state|admin) — this is the ingress-layer half of the fix.
+        #
+        # Why each entry:
+        #   /journey, /me   — the two participant view shells (Exact: GET only;
+        #                      keeps `GET /` operator dashboard off this host).
+        #   /api/users/     — self-scoped reads (me/journey) + per-user progress
+        #                      writes (step-check / hint reveal / display-name);
+        #                      all server-side self-or-admin gated.
+        #   /api/challenges/ — the evade flag-submit form the Journey UI posts to
+        #                      (plain-evade missions submit manually here); the
+        #                      Grader enforces flag+window+exfil, and a claimed
+        #                      user cannot forge a solve without the real flag.
+        # NOTE: /falco/events (Falco ingest, no app-layer auth) is deliberately
+        # absent — routing it here would let any login forge trigger solves.
         paths:
-          - path: /
+          - path: /journey
+            pathType: Exact
+            backend:
+              service:
+                name: scoreboard
+                port:
+                  number: 80
+          - path: /me
+            pathType: Exact
+            backend:
+              service:
+                name: scoreboard
+                port:
+                  number: 80
+          - path: /api/users/
+            pathType: Prefix
+            backend:
+              service:
+                name: scoreboard
+                port:
+                  number: 80
+          - path: /api/challenges/
             pathType: Prefix
             backend:
               service:

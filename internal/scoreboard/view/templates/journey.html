@@ -181,7 +181,7 @@
     <div>
       <div class="live">● LIVE</div>
       <div class="updated mono" id="updated">connecting…</div>
-      <div class="hdr-links"><a id="board-link" href="/">← scoreboard</a></div>
+      <div class="hdr-links"><a id="board-link" href="/journey">↻ my journey</a></div>
     </div>
   </header>
 
@@ -216,7 +216,10 @@
         <p style="margin-top:0.8rem">ワークスペースから来た場合は運営にユーザ名を確認してください。</p>
       </div>`;
   } else {
-    document.getElementById('board-link').href = '/';
+    // Keep participants on the journey host: the full operator scoreboard (GET /)
+    // is admin-gated and not routed here (P18 5x). Link back to the user's own
+    // journey, preserving ?user so the reload lands on their progress.
+    document.getElementById('board-link').href = '/journey?user=' + encodeURIComponent(user);
     refresh();
     setInterval(() => { if (!busy) refresh(); }, 2000);
   }
@@ -307,10 +310,13 @@
   }
 
   function renderAllDone(done, total) {
+    // No "→ scoreboard" link here: the operator board (GET /) is admin-gated and
+    // not routed on the journey host (P18 5x). Participants stay on their own
+    // journey; final standings are announced by the operators.
     return `<div class="mission"><div class="empty">
       <span class="icon">🏁</span>
       全 ${total} ミッション攻略完了 — お見事。<br>
-      <a class="docs-link" href="/">スコアボードを見る →</a>
+      <span class="mono" style="opacity:.7">最終順位は運営が発表します。</span>
     </div></div>`;
   }
 

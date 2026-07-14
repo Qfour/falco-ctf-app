@@ -187,7 +187,17 @@ func (h *Handler) isAdmin(r *http.Request) (string, bool) {
 // enforces (conventions I8): the email must begin with "<user>@". This is a
 // mirror — not a shared import — because auth-policy is a separate service /
 // binary (see CLAUDE.md); the semantics ("email == username+"@"+domain",
-// domain-agnostic) are reproduced verbatim so the two auth boundaries agree.
+// domain-agnostic) are reproduced here so the two auth boundaries agree.
+//
+// Not a verbatim mirror: this is a LOWERCASE-NORMALISED prefix-exact match. The
+// callers (selfOrAdmin / selfOrAdminWrite) lower-case the header before calling
+// in, whereas auth-policy /check (internal/authpolicy/server.go, the raw
+// strings.HasPrefix on X-Auth-Request-Email) compares the email verbatim. The
+// normalisation only ever makes THIS side STRICTER-or-equal (case-folding can
+// grant no match the raw check would deny), so it cannot open a hole the auth
+// boundary closes. Signpost: on an IdP swap (email casing / claim shape change),
+// auth-policy /check and emailMatchesUser must be revisited together — they are
+// the two halves of the same cross-user isolation invariant (I8).
 //
 // Prefix-exact is deliberate and NOT a substring match: "user1@…" is required,
 // so a caller "user10@…" or "user1x@…" does NOT satisfy user="user1" — the
@@ -238,6 +248,51 @@ func (h *Handler) selfOrAdmin(w http.ResponseWriter, r *http.Request, user strin
 		return true
 	}
 	h.logger.Warn("read gate denied: identity mismatch", "remote_addr", r.RemoteAddr, "user", user, "email", email)
+	httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
+	return false
+}
+
+// selfOrAdminWrite is the participant-facing WRITE gate for /api/users/{user}/*
+// mutations (step-check, hint reveal, display-name). It differs from the read
+// gate (selfOrAdmin) by being conditional on the PRESENCE of an auth header:
+//
+//   - Header present (request arrived over an auth-proxied ingress host — the
+//     participant journey host or the admin host): apply the full self-or-admin
+//     rule. A logged-in participant may only mutate their OWN {user}; a mismatch
+//     or a non-admin third party is denied (403). Admins may write any {user}.
+//     This closes the P18 HIGH: on the journey host, oauth2-proxy injects
+//     X-Auth-Request-Email for ANY login, so without this a participant could
+//     tick another participant's steps, drive the openHint 409/200 cross-user
+//     oracle, or overwrite another player's display name.
+//
+//   - Header absent (request arrived over the cluster-internal Service — the
+//     collector's display-name forward, or a workspace pod): fall back to the
+//     legacy claimed-identity trust model (allow). This path carries no proven
+//     identity and never has; NetworkPolicy is the isolation control there. Not
+//     loosening it keeps the collector-fronted display-name flow working
+//     (accepted LOW) and the write collector path unchanged.
+//
+// Rationale for keying off header presence (not hostname): identical to
+// selfOrAdmin's design note — both auth-proxied hosts inject the header and the
+// internal Service path never does; ingress overwrites any client-supplied copy
+// (auth-response-headers), so the header cannot be forged from inside the
+// cluster. Returns true when the request may proceed; writes a 403 and returns
+// false otherwise.
+func (h *Handler) selfOrAdminWrite(w http.ResponseWriter, r *http.Request, user string) bool {
+	email := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Auth-Request-Email")))
+	if email == "" {
+		// Cluster-internal (collector / workspace): no auth header ever set here.
+		// Preserve the claimed-identity model — isolation is NetworkPolicy's job.
+		return true
+	}
+	// Auth-proxied host (journey/admin): enforce self-or-admin on the proven id.
+	if _, ok := h.adminSet[email]; ok {
+		return true
+	}
+	if emailMatchesUser(email, user) {
+		return true
+	}
+	h.logger.Warn("write gate denied: identity mismatch", "remote_addr", r.RemoteAddr, "user", user, "email", email)
 	httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
 	return false
 }
@@ -567,6 +622,9 @@ func (h *Handler) stepCheck(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
 		return
 	}
+	if !h.selfOrAdminWrite(w, r, user) {
+		return
+	}
 	if _, ok := h.cat[cid]; !ok {
 		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"error": "unknown challenge: " + cid})
 		return
@@ -617,6 +675,9 @@ func (h *Handler) openHint(w http.ResponseWriter, r *http.Request) {
 	cid := r.PathValue("cid")
 	if !validUser.MatchString(user) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
+		return
+	}
+	if !h.selfOrAdminWrite(w, r, user) {
 		return
 	}
 	if _, ok := h.cat[cid]; !ok {
@@ -676,16 +737,24 @@ func (h *Handler) openHint(w http.ResponseWriter, r *http.Request) {
 // Body shape:  {"name": "Alice"}
 // Constraints: 1..32 runes, no <>&"' or control chars (UI / shell safety).
 //
-// Auth: this endpoint is reached from the participant's own workspace pod
-// via the cluster-internal Service. The scoreboard NetworkPolicy admits
-// ctf-* namespaces for /api/users/* and /api/challenges/*; participants
-// can only set their *own* display name in practice because the workspace
-// shell only knows its own $FALCO_CTF_USER. Lacking cryptographic proof
-// of identity is intentional — see audit log entries for traceability.
+// Auth (P18 5x): dual-path, keyed off the presence of X-Auth-Request-Email
+// (selfOrAdminWrite):
+//   - Over an auth-proxied ingress host (participant journey host / admin host)
+//     the header is present, so the write is gated self-or-admin — a login can
+//     only rename their OWN {user}, and cannot overwrite another player's name.
+//   - Over the cluster-internal Service (the collector's display-name forward,
+//     or a workspace pod) no header is set, so the legacy claimed-identity model
+//     is preserved (isolation is NetworkPolicy's job). This keeps the
+//     collector-fronted display-name flow (accepted LOW) working unchanged.
+// Lacking cryptographic proof of identity on the internal path is intentional —
+// see audit log entries for traceability.
 func (h *Handler) setDisplayName(w http.ResponseWriter, r *http.Request) {
 	user := strings.TrimSpace(r.PathValue("user"))
 	if !validUser.MatchString(user) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
+		return
+	}
+	if !h.selfOrAdminWrite(w, r, user) {
 		return
 	}
 
