@@ -61,6 +61,14 @@ func newJourneyFixture(t *testing.T, extra ...scoreboard.Option) *journeyFixture
 
 func (f *journeyFixture) req(method, target string, body any) *httptest.ResponseRecorder {
 	f.t.Helper()
+	return f.reqAs(method, target, "", body)
+}
+
+// reqAs issues a request carrying X-Auth-Request-Email = email (omitted when
+// blank), so journey-read tests can authenticate as self / admin against the
+// P18 self-scope gate. Write paths (step/hint) are ungated and use req().
+func (f *journeyFixture) reqAs(method, target, email string, body any) *httptest.ResponseRecorder {
+	f.t.Helper()
 	var r *http.Request
 	if body != nil {
 		b, _ := json.Marshal(body)
@@ -69,6 +77,9 @@ func (f *journeyFixture) req(method, target string, body any) *httptest.Response
 	} else {
 		r = httptest.NewRequest(method, target, nil)
 	}
+	if email != "" {
+		r.Header.Set("X-Auth-Request-Email", email)
+	}
 	w := httptest.NewRecorder()
 	f.srv.ServeHTTP(w, r)
 	return w
@@ -76,7 +87,8 @@ func (f *journeyFixture) req(method, target string, body any) *httptest.Response
 
 func (f *journeyFixture) journey(user string) map[string]any {
 	f.t.Helper()
-	w := f.req("GET", "/api/users/"+user+"/journey", nil)
+	// Self-scoped read (P18): authenticate as the participant themselves.
+	w := f.reqAs("GET", "/api/users/"+user+"/journey", user+"@ctf.local", nil)
 	if w.Code != http.StatusOK {
 		f.t.Fatalf("journey status: %d body=%s", w.Code, w.Body)
 	}
@@ -341,6 +353,91 @@ func TestJourney_DocsURL_AbsoluteWhenSet(t *testing.T) {
 	m2 := f.journey("alice")
 	if got := docsURLOf(m2, "02-evade"); got != "" {
 		t.Fatalf("02-evade has no docsUrl; want empty, got %q", got)
+	}
+}
+
+// --- P18 5x: /api/users/{user}/* write gate ---------------------------------
+//
+// The write gate (selfOrAdminWrite) is conditional on the presence of the
+// X-Auth-Request-Email header. Over an auth-proxied host (journey/admin) the
+// header is set, so writes are self-or-admin gated. Over the cluster-internal
+// Service (collector / workspace) no header is set, so the legacy
+// claimed-identity model is preserved (collector display-name path unchanged).
+
+// TestJourneyWriteGate_StepCheck_HeaderPresent proves the journey-host case:
+// self may tick, a third party is 403, and admin may tick anyone.
+func TestJourneyWriteGate_StepCheck_HeaderPresent(t *testing.T) {
+	f := newJourneyFixture(t, scoreboard.WithAdminEmails([]string{"root@ctf.local"}))
+	const target = "/api/users/alice/challenges/01-recon/steps/0/check"
+	body := map[string]any{"checked": true}
+
+	// self → allowed
+	if w := f.reqAs("POST", target, "alice@ctf.local", body); w.Code != http.StatusOK {
+		t.Fatalf("self step-check must 200, got %d body=%s", w.Code, w.Body)
+	}
+	// other participant → 403 (cross-user write blocked)
+	if w := f.reqAs("POST", target, "mallory@ctf.local", body); w.Code != http.StatusForbidden {
+		t.Fatalf("cross-user step-check must 403, got %d body=%s", w.Code, w.Body)
+	}
+	// prefix-adjacent (alice2) must NOT satisfy alice (I8 anti-mismatch)
+	if w := f.reqAs("POST", target, "alice2@ctf.local", body); w.Code != http.StatusForbidden {
+		t.Fatalf("alice2 writing alice must 403, got %d body=%s", w.Code, w.Body)
+	}
+	// admin → allowed for any user
+	if w := f.reqAs("POST", target, "root@ctf.local", body); w.Code != http.StatusOK {
+		t.Fatalf("admin step-check must 200, got %d body=%s", w.Code, w.Body)
+	}
+}
+
+// TestJourneyWriteGate_StepCheck_NoHeader proves the collector / workspace
+// case: with no auth header the claimed-identity model still applies (allow).
+func TestJourneyWriteGate_StepCheck_NoHeader(t *testing.T) {
+	f := newJourneyFixture(t)
+	// req() sends no X-Auth-Request-Email — cluster-internal path.
+	if w := f.req("POST", "/api/users/alice/challenges/01-recon/steps/0/check", map[string]any{"checked": true}); w.Code != http.StatusOK {
+		t.Fatalf("header-less step-check must 200 (collector path), got %d body=%s", w.Code, w.Body)
+	}
+}
+
+// TestJourneyWriteGate_OpenHint_CrossUserOracleBlocked proves the openHint
+// 409/200 cross-user oracle is closed: a third party cannot probe another
+// participant's hint order (403 before any 409/200 leak).
+func TestJourneyWriteGate_OpenHint_CrossUserOracleBlocked(t *testing.T) {
+	f := newJourneyFixture(t)
+	if w := f.reqAs("POST", "/api/users/alice/challenges/01-recon/hints/1", "mallory@ctf.local", nil); w.Code != http.StatusForbidden {
+		t.Fatalf("cross-user hint open must 403 (no oracle), got %d body=%s", w.Code, w.Body)
+	}
+	// self may open normally
+	if w := f.reqAs("POST", "/api/users/alice/challenges/01-recon/hints/1", "alice@ctf.local", nil); w.Code != http.StatusOK {
+		t.Fatalf("self hint open must 200, got %d body=%s", w.Code, w.Body)
+	}
+	// header-less (collector/workspace) still allowed
+	if w := f.req("POST", "/api/users/alice/challenges/01-recon/hints/1", nil); w.Code != http.StatusOK {
+		t.Fatalf("header-less hint open must 200, got %d body=%s", w.Code, w.Body)
+	}
+}
+
+// TestJourneyWriteGate_DisplayName proves display-name is self-or-admin gated
+// on the auth-proxied host but stays claimed-identity over the collector path.
+func TestJourneyWriteGate_DisplayName(t *testing.T) {
+	f := newJourneyFixture(t, scoreboard.WithAdminEmails([]string{"root@ctf.local"}))
+	body := map[string]any{"name": "Nickname"}
+
+	// self → allowed
+	if w := f.reqAs("POST", "/api/users/alice/display-name", "alice@ctf.local", body); w.Code != http.StatusOK {
+		t.Fatalf("self display-name must 200, got %d body=%s", w.Code, w.Body)
+	}
+	// other → 403 (cannot overwrite another player's name)
+	if w := f.reqAs("POST", "/api/users/alice/display-name", "mallory@ctf.local", body); w.Code != http.StatusForbidden {
+		t.Fatalf("cross-user display-name must 403, got %d body=%s", w.Code, w.Body)
+	}
+	// admin → allowed for any user
+	if w := f.reqAs("POST", "/api/users/alice/display-name", "root@ctf.local", body); w.Code != http.StatusOK {
+		t.Fatalf("admin display-name must 200, got %d body=%s", w.Code, w.Body)
+	}
+	// header-less (collector-fronted display-name, accepted LOW) → allowed
+	if w := f.req("POST", "/api/users/alice/display-name", body); w.Code != http.StatusOK {
+		t.Fatalf("header-less display-name must 200 (collector path), got %d body=%s", w.Code, w.Body)
 	}
 }
 

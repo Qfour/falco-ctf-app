@@ -82,12 +82,7 @@ func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *sl
 	// participant who scraped someone else's flag could brute-force submits.
 	// 1 req/s with burst 10 lets legitimate typing through but blocks
 	// automated flooding.
-	adminSet := make(map[string]struct{}, len(adminEmails))
-	for _, e := range adminEmails {
-		if e = strings.TrimSpace(strings.ToLower(e)); e != "" {
-			adminSet[e] = struct{}{}
-		}
-	}
+	adminSet := newAdminSet(adminEmails)
 	journeys := jc.Journeys
 	if journeys == nil {
 		journeys = catalog.Journeys{}
@@ -111,6 +106,37 @@ func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *sl
 		journeys:           journeys,
 		order:              order,
 		docsBaseURL:        docsBaseURL,
+	}
+}
+
+// newAdminSet normalises the ADMIN_EMAILS allowlist into a lookup set
+// (trimmed, lower-cased, blanks dropped). Single definition shared by the api
+// handler and the exported NewAdminGate so the admin-identity rule is not
+// duplicated across the read gate and the view (index) gate.
+func newAdminSet(adminEmails []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(adminEmails))
+	for _, e := range adminEmails {
+		if e = strings.TrimSpace(strings.ToLower(e)); e != "" {
+			set[e] = struct{}{}
+		}
+	}
+	return set
+}
+
+// NewAdminGate returns a predicate reporting whether a request carries an admin
+// identity (X-Auth-Request-Email ∈ ADMIN_EMAILS, case-insensitive). It is the
+// exact rule isAdmin uses, exported so the view package can gate the operator
+// index page (P18-1) without re-implementing the check. Empty allowlist =
+// nobody (fail-closed); a missing/blank header is not admin.
+func NewAdminGate(adminEmails []string) func(*http.Request) bool {
+	set := newAdminSet(adminEmails)
+	return func(r *http.Request) bool {
+		email := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Auth-Request-Email")))
+		if email == "" {
+			return false
+		}
+		_, ok := set[email]
+		return ok
 	}
 }
 
@@ -154,6 +180,121 @@ func (h *Handler) isAdmin(r *http.Request) (string, bool) {
 	}
 	_, ok := h.adminSet[email]
 	return email, ok
+}
+
+// emailMatchesUser reports whether the auth-derived caller email belongs to the
+// given username slug, using the SAME prefix-exact rule auth-policy /check
+// enforces (conventions I8): the email must begin with "<user>@". This is a
+// mirror — not a shared import — because auth-policy is a separate service /
+// binary (see CLAUDE.md); the semantics ("email == username+"@"+domain",
+// domain-agnostic) are reproduced here so the two auth boundaries agree.
+//
+// Not a verbatim mirror: this is a LOWERCASE-NORMALISED prefix-exact match. The
+// callers (selfOrAdmin / selfOrAdminWrite) lower-case the header before calling
+// in, whereas auth-policy /check (internal/authpolicy/server.go, the raw
+// strings.HasPrefix on X-Auth-Request-Email) compares the email verbatim. The
+// normalisation only ever makes THIS side STRICTER-or-equal (case-folding can
+// grant no match the raw check would deny), so it cannot open a hole the auth
+// boundary closes. Signpost: on an IdP swap (email casing / claim shape change),
+// auth-policy /check and emailMatchesUser must be revisited together — they are
+// the two halves of the same cross-user isolation invariant (I8).
+//
+// Prefix-exact is deliberate and NOT a substring match: "user1@…" is required,
+// so a caller "user10@…" or "user1x@…" does NOT satisfy user="user1" — the
+// character after "user1" is the literal '@', and "user10@" has '0' there, so
+// HasPrefix("user10@…", "user1@") is false. This is the exact anti-mismatch
+// property auth-policy relies on for cross-user workspace isolation.
+func emailMatchesUser(email, user string) bool {
+	if email == "" || user == "" {
+		return false
+	}
+	return strings.HasPrefix(email, user+"@")
+}
+
+// selfOrAdmin is the participant-facing read gate (P18). It derives the caller
+// identity from X-Auth-Request-Email — the header oauth2-proxy injects on the
+// participant journey host (journey.<dnsSuffix>) and that auth-policy also
+// propagates on the admin host — and authorizes the request for {user} iff:
+//
+//   - the caller email prefix-exact matches "<user>@" (self, I8-mirrored), OR
+//   - the caller email is in ADMIN_EMAILS (operator override — the one
+//     intentional exception, identical to auth-policy /check).
+//
+// A missing or blank header is denied (fail-closed): the self-claimed {user}
+// path param is never trusted on its own. This is what keeps a participant from
+// reading another participant's journey/progress over the participant host.
+//
+// Design note (host distinction): the gate keys off the PRESENCE + VALUE of the
+// auth header rather than which ingress host was used. Both participant and
+// admin hosts are auth-proxied and inject X-Auth-Request-Email; the
+// cluster-internal Service path (workspace pods, collector, Falco) injects no
+// such header and is therefore denied here. This is the minimal safe signal —
+// the scoreboard need not know the hostname, and the header cannot be forged
+// from inside the cluster because the internal Service path never sets it and
+// ingress strips/overwrites any client-supplied copy (auth-request headers are
+// set by oauth2-proxy, not passed through from the client).
+func (h *Handler) selfOrAdmin(w http.ResponseWriter, r *http.Request, user string) bool {
+	email := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Auth-Request-Email")))
+	if email == "" {
+		// fail-closed: no proven identity → deny (do not fall back to {user}).
+		h.logger.Warn("read gate denied: missing identity", "remote_addr", r.RemoteAddr, "user", user)
+		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
+		return false
+	}
+	if _, ok := h.adminSet[email]; ok {
+		return true
+	}
+	if emailMatchesUser(email, user) {
+		return true
+	}
+	h.logger.Warn("read gate denied: identity mismatch", "remote_addr", r.RemoteAddr, "user", user, "email", email)
+	httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
+	return false
+}
+
+// selfOrAdminWrite is the participant-facing WRITE gate for /api/users/{user}/*
+// mutations (step-check, hint reveal, display-name). It differs from the read
+// gate (selfOrAdmin) by being conditional on the PRESENCE of an auth header:
+//
+//   - Header present (request arrived over an auth-proxied ingress host — the
+//     participant journey host or the admin host): apply the full self-or-admin
+//     rule. A logged-in participant may only mutate their OWN {user}; a mismatch
+//     or a non-admin third party is denied (403). Admins may write any {user}.
+//     This closes the P18 HIGH: on the journey host, oauth2-proxy injects
+//     X-Auth-Request-Email for ANY login, so without this a participant could
+//     tick another participant's steps, drive the openHint 409/200 cross-user
+//     oracle, or overwrite another player's display name.
+//
+//   - Header absent (request arrived over the cluster-internal Service — the
+//     collector's display-name forward, or a workspace pod): fall back to the
+//     legacy claimed-identity trust model (allow). This path carries no proven
+//     identity and never has; NetworkPolicy is the isolation control there. Not
+//     loosening it keeps the collector-fronted display-name flow working
+//     (accepted LOW) and the write collector path unchanged.
+//
+// Rationale for keying off header presence (not hostname): identical to
+// selfOrAdmin's design note — both auth-proxied hosts inject the header and the
+// internal Service path never does; ingress overwrites any client-supplied copy
+// (auth-response-headers), so the header cannot be forged from inside the
+// cluster. Returns true when the request may proceed; writes a 403 and returns
+// false otherwise.
+func (h *Handler) selfOrAdminWrite(w http.ResponseWriter, r *http.Request, user string) bool {
+	email := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Auth-Request-Email")))
+	if email == "" {
+		// Cluster-internal (collector / workspace): no auth header ever set here.
+		// Preserve the claimed-identity model — isolation is NetworkPolicy's job.
+		return true
+	}
+	// Auth-proxied host (journey/admin): enforce self-or-admin on the proven id.
+	if _, ok := h.adminSet[email]; ok {
+		return true
+	}
+	if emailMatchesUser(email, user) {
+		return true
+	}
+	h.logger.Warn("write gate denied: identity mismatch", "remote_addr", r.RemoteAddr, "user", user, "email", email)
+	httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
+	return false
 }
 
 // reset wipes the scoreboard results (solves + event counters), e.g. after a
@@ -481,6 +622,9 @@ func (h *Handler) stepCheck(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
 		return
 	}
+	if !h.selfOrAdminWrite(w, r, user) {
+		return
+	}
 	if _, ok := h.cat[cid]; !ok {
 		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"error": "unknown challenge: " + cid})
 		return
@@ -531,6 +675,9 @@ func (h *Handler) openHint(w http.ResponseWriter, r *http.Request) {
 	cid := r.PathValue("cid")
 	if !validUser.MatchString(user) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
+		return
+	}
+	if !h.selfOrAdminWrite(w, r, user) {
 		return
 	}
 	if _, ok := h.cat[cid]; !ok {
@@ -590,16 +737,24 @@ func (h *Handler) openHint(w http.ResponseWriter, r *http.Request) {
 // Body shape:  {"name": "Alice"}
 // Constraints: 1..32 runes, no <>&"' or control chars (UI / shell safety).
 //
-// Auth: this endpoint is reached from the participant's own workspace pod
-// via the cluster-internal Service. The scoreboard NetworkPolicy admits
-// ctf-* namespaces for /api/users/* and /api/challenges/*; participants
-// can only set their *own* display name in practice because the workspace
-// shell only knows its own $FALCO_CTF_USER. Lacking cryptographic proof
-// of identity is intentional — see audit log entries for traceability.
+// Auth (P18 5x): dual-path, keyed off the presence of X-Auth-Request-Email
+// (selfOrAdminWrite):
+//   - Over an auth-proxied ingress host (participant journey host / admin host)
+//     the header is present, so the write is gated self-or-admin — a login can
+//     only rename their OWN {user}, and cannot overwrite another player's name.
+//   - Over the cluster-internal Service (the collector's display-name forward,
+//     or a workspace pod) no header is set, so the legacy claimed-identity model
+//     is preserved (isolation is NetworkPolicy's job). This keeps the
+//     collector-fronted display-name flow (accepted LOW) working unchanged.
+// Lacking cryptographic proof of identity on the internal path is intentional —
+// see audit log entries for traceability.
 func (h *Handler) setDisplayName(w http.ResponseWriter, r *http.Request) {
 	user := strings.TrimSpace(r.PathValue("user"))
 	if !validUser.MatchString(user) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
+		return
+	}
+	if !h.selfOrAdminWrite(w, r, user) {
 		return
 	}
 
@@ -646,14 +801,19 @@ func (h *Handler) setDisplayName(w http.ResponseWriter, r *http.Request) {
 //     participant immediate feedback on which Falco rule they just triggered
 //     without needing operator help (cuts the most common support question)
 //
-// Auth: the endpoint is unauthenticated by design. The CTF event treats
-// per-user progress as public information (the scoreboard is also public).
-// If hosted behind the per-user ttyd ingress (auth-policy gated) the chart
-// can rewrite /me to add the X-Auth-Request-Email check; that's an opt-in.
+// Auth (P18): self-scoped participant read on the journey host. The caller may
+// only read their OWN progress; selfOrAdmin derives identity from
+// X-Auth-Request-Email and denies (403) mismatches and missing headers
+// (fail-closed). Admins (ADMIN_EMAILS) may read any user. This replaces the
+// previous "per-user progress is public" model — competition fairness (P18)
+// requires that participants cannot enumerate each other's progress.
 func (h *Handler) userMe(w http.ResponseWriter, r *http.Request) {
 	user := strings.TrimSpace(r.PathValue("user"))
-	if user == "" {
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "user required"})
+	if !validUser.MatchString(user) {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
+		return
+	}
+	if !h.selfOrAdmin(w, r, user) {
 		return
 	}
 
@@ -730,11 +890,17 @@ func (h *Handler) userMe(w http.ResponseWriter, r *http.Request) {
 // This is display-only — solves are never blocked here (trigger challenges
 // still auto-solve via Falco).
 //
-// Auth: same public model as /me (per-user progress is public information).
+// Auth (P18): this is a participant-facing read exposed on the journey host, so
+// it is self-scoped — the caller may only read their OWN journey. selfOrAdmin
+// derives identity from X-Auth-Request-Email and denies (403) any mismatch or a
+// missing header (fail-closed). Admins (ADMIN_EMAILS) may read any user.
 func (h *Handler) journey(w http.ResponseWriter, r *http.Request) {
 	user := strings.TrimSpace(r.PathValue("user"))
 	if !validUser.MatchString(user) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
+		return
+	}
+	if !h.selfOrAdmin(w, r, user) {
 		return
 	}
 
@@ -935,7 +1101,23 @@ func containsKey(m map[string]struct{}, k string) bool {
 
 // --- state ------------------------------------------------------------------
 
-func (h *Handler) state(w http.ResponseWriter, _ *http.Request) {
+// state serves the full-event leaderboard/progress view. This is the operator
+// dashboard's data source and is admin-only.
+//
+// Defense-in-depth (P18-1): the admin scoreboard host is already gated at
+// ingress by auth-policy /check-admin, but we ALSO gate here at the app layer so
+// that if the ingress host gate is ever bypassed or misrouted (e.g. the
+// journey host is misconfigured to reach /api/state), a non-admin still cannot
+// read the whole field's progress. Empty ADMIN_EMAILS = nobody (fail-closed),
+// consistent with isAdmin. Note this does not weaken the participant journey
+// host: participants use the self-scoped /api/users/{user}/{me,journey} reads,
+// not /api/state.
+func (h *Handler) state(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.isAdmin(r); !ok {
+		h.logger.Warn("state denied: not admin", "remote_addr", r.RemoteAddr)
+		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "admin only"})
+		return
+	}
 	httpx.WriteJSON(w, http.StatusOK, h.buildState())
 }
 

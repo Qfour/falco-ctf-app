@@ -1,0 +1,96 @@
+{{- if and .Values.ingress.enabled .Values.ingress.journeyHost }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: scoreboard-journey
+  namespace: scoreboard
+  labels:
+    {{- include "scoreboard.labels" . | nindent 4 }}
+  annotations:
+    # P18 participant gate: ANY authenticated login (oauth2-proxy /oauth2/auth
+    # directly — no host<->email binding, no admin allowlist). The scoreboard
+    # self-scopes reads off the forwarded X-Auth-Request-Email. Mirrors the docs
+    # participant host; inverse of the admin host's /check-admin gate (I8: this
+    # does NOT loosen the auth boundary — admin ingress.yaml + its /check-admin
+    # stay untouched; self-scope enforcement lives server-side in the scoreboard).
+    nginx.ingress.kubernetes.io/auth-url: {{ .Values.ingress.journeyAuthUrl | quote }}
+    {{- with .Values.ingress.authSignin }}
+    nginx.ingress.kubernetes.io/auth-signin: {{ . | quote }}
+    {{- end }}
+    # Header-forgery guard: auth-response-headers makes ingress-nginx OVERWRITE
+    # these headers on the upstream request with the values returned by the auth
+    # subrequest (oauth2-proxy /oauth2/auth). A client-supplied X-Auth-Request-*
+    # is discarded and replaced — so the scoreboard's self-scope key
+    # (X-Auth-Request-Email) is always auth-subrequest-derived, never spoofable
+    # by the participant. (security-lead cross-repo 5x focus.)
+    nginx.ingress.kubernetes.io/auth-response-headers: "X-Auth-Request-User,X-Auth-Request-Email,X-Auth-Request-Preferred-Username"
+    {{- with .Values.ingress.journeyAnnotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ .Values.ingress.journeyHost | quote }}
+      http:
+        # Participant allow-list (P18 5x fix). The journey host is reachable by
+        # ANY authenticated login, so it must NOT re-expose the whole scoreboard
+        # like the admin host's `path: /` does. Only the paths the Journey UI
+        # (journey.html / me.html) actually needs are routed here; everything
+        # else (GET /, /api/state, /api/admin/*, /api/hints, /falco/events,
+        # /internal/exfil/*) has no matching rule and falls through to the
+        # ingress-nginx default backend (404) on this host. Server-side gates
+        # still apply on top of this (selfOrAdmin on /api/users/*, admin gates
+        # on /api/state|admin) — this is the ingress-layer half of the fix.
+        #
+        # Why each entry:
+        #   /journey, /me   — the two participant view shells (Exact: GET only;
+        #                      keeps `GET /` operator dashboard off this host).
+        #   /api/users/     — self-scoped reads (me/journey) + per-user progress
+        #                      writes (step-check / hint reveal / display-name);
+        #                      all server-side self-or-admin gated.
+        #   /api/challenges/ — the evade flag-submit form the Journey UI posts to
+        #                      (plain-evade missions submit manually here); the
+        #                      Grader enforces flag+window+exfil, and a claimed
+        #                      user cannot forge a solve without the real flag.
+        # NOTE: /falco/events (Falco ingest, no app-layer auth) is deliberately
+        # absent — routing it here would let any login forge trigger solves.
+        paths:
+          - path: /journey
+            pathType: Exact
+            backend:
+              service:
+                name: scoreboard
+                port:
+                  number: 80
+          - path: /me
+            pathType: Exact
+            backend:
+              service:
+                name: scoreboard
+                port:
+                  number: 80
+          - path: /api/users/
+            pathType: Prefix
+            backend:
+              service:
+                name: scoreboard
+                port:
+                  number: 80
+          - path: /api/challenges/
+            pathType: Prefix
+            backend:
+              service:
+                name: scoreboard
+                port:
+                  number: 80
+  {{- if .Values.ingress.tls }}
+  tls:
+    # Journey host rides the ingress-nginx wildcard default-ssl-certificate
+    # (*.<suffix>) — NO per-host secretName and NO cert-manager issuer (those
+    # live in .Values.ingress.annotations, deliberately NOT merged here via
+    # journeyAnnotations). The admin host's scoreboard-tls SAN does not cover
+    # journey.<suffix>, so it must not be reused here.
+    - hosts:
+        - {{ .Values.ingress.journeyHost | quote }}
+  {{- end }}
+{{- end }}

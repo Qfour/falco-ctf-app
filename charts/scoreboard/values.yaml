@@ -56,6 +56,22 @@ ingress:
   # Extra annotations merged in (e.g. cert-manager issuer, ssl-redirect in prod).
   annotations: {}
 
+  # P18 participant journey host (a SECOND ingress off the same scoreboard
+  # Service), gated by ANY authenticated login (not /check-admin). The
+  # scoreboard self-scopes reads off the forwarded X-Auth-Request-Email.
+  # Empty journeyHost = the journey ingress is not rendered (local dev / any env
+  # that does not stand up a participant host). Real values are supplied by the
+  # platform helmfile (key names MUST match platform feat/p18-journey-host:
+  # journeyHost / journeyAuthUrl / journeyAnnotations).
+  journeyHost: ""
+  # oauth2-proxy any-login auth subrequest (e.g. https://<suffix>/oauth2/auth).
+  journeyAuthUrl: "http://oauth2-proxy.example.invalid/oauth2/auth"
+  # Extra annotations for the journey ingress ONLY. Kept separate from
+  # `annotations` on purpose: the shared block may carry a cert-manager issuer /
+  # per-host secretName which would make the journey host issue a redundant
+  # Let's Encrypt cert instead of riding the wildcard default-ssl-certificate.
+  journeyAnnotations: {}
+
 resources:
   requests: { cpu: 25m, memory: 64Mi }
   limits:   { cpu: 200m, memory: 256Mi }

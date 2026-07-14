@@ -28,8 +28,13 @@ func main() {
 	// SCENARIO_FILE restricts scoring + /api/state to one event composition
 	// (e.g. the 2-hour killchain subset). Empty = all challenges.
 	scenarioFile := serverutil.Env("SCENARIO_FILE", "")
-	// ADMIN_EMAILS gates POST /api/admin/reset (verified against the
-	// auth-policy-propagated X-Auth-Request-Email). Empty = nobody.
+	// ADMIN_EMAILS is the operator allowlist verified against the
+	// auth-policy-propagated X-Auth-Request-Email. It gates the admin writes
+	// (POST /api/admin/*), the full-event views (GET /api/state and the operator
+	// index GET /), and is the self-or-admin exception on the participant
+	// self-scope read gate (P18: GET /api/users/{user}/{me,journey} — an admin
+	// may read any user, a participant only their own). Empty = nobody
+	// (fail-closed everywhere).
 	adminEmails := serverutil.SplitCSV(serverutil.Env("ADMIN_EMAILS", ""))
 	// DOCS_BASE_URL is the origin of the participant docs site (a separate host,
 	// e.g. https://docs.<suffix>). When set, the /journey API rewrites each

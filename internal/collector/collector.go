@@ -1,9 +1,12 @@
 // Package collector is the participant-facing front for the CTF workspace
 // (P11.5 full one-pipe). Once ctf-user egress lockdown is on, a workspace pod
 // can reach *only* the collector — never the scoreboard directly. The collector
-// therefore fronts every participant route (submit / me / display-name) and,
+// therefore fronts the participant WRITE routes (submit / display-name) and,
 // for the boss capstone, receives the exfil drop and forwards it to the
-// scoreboard's internal-only sink.
+// scoreboard's internal-only sink. Progress READ (GET /me) is NOT fronted here:
+// participant progress is viewed on the browser journey host (authenticated,
+// self-scoped), so exposing an anonymous, self-claimed /me read through the
+// collector would be a self-scope bypass (P18).
 //
 // Design constraints (see REFACTORING.md P11.5):
 //   - No catalog, no flags, no persistence. The collector holds no CTF state;
@@ -27,10 +30,13 @@
 //
 //	POST /api/challenges/{cid}/exfil       → scoreboard POST /internal/exfil/{cid}
 //	POST /api/challenges/{cid}/submit      → scoreboard (transparent)
-//	GET  /api/users/{user}/me              → scoreboard (transparent)
 //	POST /api/users/{user}/display-name    → scoreboard (transparent)
 //	GET  /healthz                          collector liveness (local)
 //	GET  /metrics                          collector Prometheus exposition
+//
+// Progress read (GET /api/users/{user}/me) is intentionally NOT fronted — see
+// the package comment above. It is served only on the browser journey host,
+// which reaches the scoreboard directly (self-scope gated by X-Auth-Request-Email).
 package collector
 
 import (
@@ -110,9 +116,13 @@ func New(upstream string, logger *slog.Logger, opts ...Option) (*Handler, error)
 	// (which trusts XFF; correct only behind ingress-nginx, i.e. the scoreboard).
 	rl := h.limiter.Middleware(remoteIP)
 
-	// Transparent participant routes — forwarded verbatim to the scoreboard.
+	// Transparent participant WRITE routes — forwarded verbatim to the scoreboard.
+	// NOTE: the progress READ route (GET /api/users/{user}/me) is deliberately
+	// NOT registered. An anonymous, client-chosen {user} read through the
+	// collector is a self-scope bypass; progress is viewed only on the browser
+	// journey host (authenticated + self-scope gated). With this route absent the
+	// mux default-denies it → 404 (see ServeHTTP below), which is the intent.
 	h.mux.Handle("POST /api/challenges/{cid}/submit", rl(h.proxy))
-	h.mux.Handle("GET /api/users/{user}/me", rl(h.proxy))
 	h.mux.Handle("POST /api/users/{user}/display-name", rl(h.proxy))
 
 	// Exfil drop → rewrite to the scoreboard's internal-only sink. The public
@@ -128,9 +138,10 @@ func New(upstream string, logger *slog.Logger, opts ...Option) (*Handler, error)
 }
 
 // ServeHTTP records request duration then dispatches. Any path not registered
-// above (e.g. /falco/events, /internal/*, /api/admin/*, /api/state) 404s at the
-// mux — default-deny, so the collector can never be used to reach the ingest,
-// admin, or internal surface of the scoreboard.
+// above (e.g. /falco/events, /internal/*, /api/admin/*, /api/state, and the
+// deliberately-unfronted GET /api/users/{user}/me) 404s at the mux —
+// default-deny, so the collector can never be used to reach the ingest, admin,
+// internal, or progress-read surface of the scoreboard.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_, route := h.mux.Handler(r)
 	sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}

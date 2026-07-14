@@ -108,7 +108,11 @@ func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts .
 		Order:       h.order,
 		DocsBaseURL: h.docsBaseURL,
 	}).Register(h.mux)
-	view.New().Register(h.mux)
+	// The operator index page (GET /) is admin-gated in the app layer too
+	// (P18-1 defense-in-depth) using the same ADMIN_EMAILS rule the api handler
+	// enforces. The participant journey/me pages are served ungated as static
+	// shells (they carry no data; their per-user API is self-scoped).
+	view.New(api.NewAdminGate(h.adminEmails)).Register(h.mux)
 
 	return h
 }
