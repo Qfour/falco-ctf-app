@@ -1,0 +1,53 @@
+{{- if and .Values.ingress.enabled .Values.ingress.journeyHost }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: scoreboard-journey
+  namespace: scoreboard
+  labels:
+    {{- include "scoreboard.labels" . | nindent 4 }}
+  annotations:
+    # P18 participant gate: ANY authenticated login (oauth2-proxy /oauth2/auth
+    # directly — no host<->email binding, no admin allowlist). The scoreboard
+    # self-scopes reads off the forwarded X-Auth-Request-Email. Mirrors the docs
+    # participant host; inverse of the admin host's /check-admin gate (I8: this
+    # does NOT loosen the auth boundary — admin ingress.yaml + its /check-admin
+    # stay untouched; self-scope enforcement lives server-side in the scoreboard).
+    nginx.ingress.kubernetes.io/auth-url: {{ .Values.ingress.journeyAuthUrl | quote }}
+    {{- with .Values.ingress.authSignin }}
+    nginx.ingress.kubernetes.io/auth-signin: {{ . | quote }}
+    {{- end }}
+    # Header-forgery guard: auth-response-headers makes ingress-nginx OVERWRITE
+    # these headers on the upstream request with the values returned by the auth
+    # subrequest (oauth2-proxy /oauth2/auth). A client-supplied X-Auth-Request-*
+    # is discarded and replaced — so the scoreboard's self-scope key
+    # (X-Auth-Request-Email) is always auth-subrequest-derived, never spoofable
+    # by the participant. (security-lead cross-repo 5x focus.)
+    nginx.ingress.kubernetes.io/auth-response-headers: "X-Auth-Request-User,X-Auth-Request-Email,X-Auth-Request-Preferred-Username"
+    {{- with .Values.ingress.journeyAnnotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ .Values.ingress.journeyHost | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: scoreboard
+                port:
+                  number: 80
+  {{- if .Values.ingress.tls }}
+  tls:
+    # Journey host rides the ingress-nginx wildcard default-ssl-certificate
+    # (*.<suffix>) — NO per-host secretName and NO cert-manager issuer (those
+    # live in .Values.ingress.annotations, deliberately NOT merged here via
+    # journeyAnnotations). The admin host's scoreboard-tls SAN does not cover
+    # journey.<suffix>, so it must not be reused here.
+    - hosts:
+        - {{ .Values.ingress.journeyHost | quote }}
+  {{- end }}
+{{- end }}
