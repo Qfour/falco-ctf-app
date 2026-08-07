@@ -1,0 +1,32 @@
+name: Add issues to project
+
+# 新規 Issue を org/user Projects v2 ボードへ確実に追加する
+# (UI の Projects Auto-add が不安定・API 非公開で検証不能だったため、
+#  CEO 決定でバージョン管理下の Actions に切替。ボード = 両リポ共通の
+#  https://github.com/users/Qfour/projects/1)
+#
+# サプライチェーン pin ポリシー (P12) — 正典: .claude/rules/falco-ctf-app-conventions.md
+#   actions/add-to-project は例外表 (actions/* / azure/* / aws-actions/* /
+#   anthropics/*) に含まれないため commit SHA pin する。
+#   bump 時は `gh api repos/actions/add-to-project/releases/latest` で新 tag →
+#   `gh api repos/actions/add-to-project/git/ref/tags/<tag>` で commit SHA を解決し、
+#   コメントの版表記も更新すること。
+#
+# secret ADD_TO_PROJECT_PAT は project スコープ付き classic/fine-grained PAT を
+# repo secret に登録して供給する (別作業・CEO)。このジョブは GITHUB_TOKEN を
+# 使わないため permissions は空。
+
+on:
+  issues:
+    types: [opened, reopened, transferred]
+
+permissions: {}
+
+jobs:
+  add-to-project:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/add-to-project@5afcf98fcd03f1c2f92c3c83f58ae24323cc57fd # v2.0.0
+        with:
+          project-url: https://github.com/users/Qfour/projects/1
+          github-token: ${{ secrets.ADD_TO_PROJECT_PAT }}
