@@ -13,7 +13,8 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    tags:
+      - 'v*'
 
 # Release 作成に必要な最小権限。
 permissions:
@@ -34,9 +35,10 @@ jobs:
       - name: Validate SemVer tag
         run: |
           set -euo pipefail
-          semver='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'
+          # 厳格 SemVer: leading zero 不可。逸脱タグは fail。
+          semver='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'
           if [[ ! "$GITHUB_REF_NAME" =~ $semver ]]; then
-            echo "::error::tag '$GITHUB_REF_NAME' is not a valid SemVer tag (expected vX.Y.Z[-pre][+build])"
+            echo "::error::tag '$GITHUB_REF_NAME' is not a valid SemVer tag (vX.Y.Z[-pre][+build])"
             exit 1
           fi
           echo "SemVer tag OK: $GITHUB_REF_NAME"
@@ -44,17 +46,19 @@ jobs:
       # ----------------------------------------------------------------
       # Release 自動生成。--generate-notes が .github/release.yml の
       # カテゴリ分類でマージ済み PR をグルーピングする。
-      # プレリリース (タグに `-` を含む) は --prerelease を付与。
+      # プレリリースは build metadata (+...) を除いた core の '-' で判定し --prerelease を付与。
       # ----------------------------------------------------------------
       - name: Create GitHub Release
         run: |
           set -euo pipefail
+          # プレリリース判定は build metadata (+...) を除いた core の '-' で行う (SemVer 準拠)。
+          core="${GITHUB_REF_NAME%%+*}"
           args=(release create "$GITHUB_REF_NAME"
             --repo "$GITHUB_REPOSITORY"
             --title "$GITHUB_REF_NAME"
             --generate-notes
             --verify-tag)
-          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
-            args+=(--prerelease)
-          fi
+          case "$core" in
+            *-*) args+=(--prerelease) ;;
+          esac
           gh "${args[@]}"

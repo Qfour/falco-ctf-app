@@ -13,6 +13,11 @@
 platform の `events/<回>/versions.yaml` の `app.ref` と一致させる。外部クライアント
 (将来 Roblox 等) は SemVer タグを見て対応する contract 版を判断する。
 
+> ⚠️ **unenforced な断絶点**: SemVer タグ ↔ platform `versions.yaml` の `app.ref` (SHA) の
+> 対応は **現状 機械照合されず、CEO のタグ運用に依存する** (タグの指す SHA と `app.ref` の
+> SHA が一致していることを誰も自動検証していない)。両者がずれると platform が古い contract
+> の app をデプロイしうる。将来 CI-free 方針と両立する範囲で自動照合の余地がある。
+
 CI は非稼働 (CI-free 恒久方針) だが、**リリース時には必ずタグを打つ**。タグ = contract 版の
 公開点であり、CI の有無とは独立に運用する (image ビルド/push は別途 platform 側の手動手順)。
 
@@ -27,21 +32,26 @@ CI は非稼働 (CI-free 恒久方針) だが、**リリース時には必ずタ
 1. **`## [Unreleased]` を新バージョン節に確定する**
    `CHANGELOG.md` の `## [Unreleased]` を `## [X.Y.Z] - YYYY-MM-DD` に変え、
    空の Added/Changed/Fixed/Security を持つ新しい `## [Unreleased]` を上に足す。
-   併せて末尾の compare リンクを新バージョンへ更新する
-   (`[Unreleased]: .../compare/vX.Y.Z...HEAD` の `vX.Y.Z` を今回打つタグに)。
-2. **タグを打って push する (CEO)**
+2. **compare リンクを更新する**
+   `CHANGELOG.md` 末尾の compare リンクを新バージョンへ更新する
+   (`[Unreleased]: .../compare/vX.Y.Z...HEAD` の `vX.Y.Z` を今回打つタグに差し替え、
+   併せて新バージョン節の compare リンク `[X.Y.Z]: .../compare/<前タグ>...vX.Y.Z` を足す)。
+   step 1 と分けて独立に確認する (リンク更新漏れは Release ノートには現れず気付きにくいため)。
+3. **タグを打って push する (CEO)**
    ```sh
    git tag vX.Y.Z
    git push origin vX.Y.Z
    ```
    > ⚠️ **タグ push は CEO のみ。** G1 の tag ruleset (`v*`) で非 CEO の作成/更新は拒否される。
-3. **Release は自動生成される (`.github/workflows/release.yml`)**
+4. **Release は自動生成される (`.github/workflows/release.yml`)**
    `vX.Y.Z` タグを push すると `release.yml` ワークフローが発火し、Release を **自動生成する**。
    手動の `gh release create` は不要になった。ワークフローの動作:
    - **SemVer 検証**: タグが `vX.Y.Z[-pre][+build]` (SemVer) に一致しないと fail する
      (不正タグ `1.0` / `foo` などは弾かれ、Release は作られない)。
    - **Release 生成**: `gh release create "$TAG" --generate-notes --verify-tag` 相当を実行。
-     プレリリース (タグに `-` を含む。例 `v1.2.0-rc1`) は自動で `--prerelease` が付く。
+     プレリリース判定は build metadata (`+...`) を除いた **core の最初の `-`** で行う (SemVer 準拠)。
+     例: `v1.2.0-rc1` は prerelease、`v1.0.0+build-9` は build metadata の `-` を無視して
+     **通常リリース**扱いになる。
    - **カテゴリ分類**: `--generate-notes` が `.github/release.yml` の分類に従い、マージ済み PR を
      ラベル別 (Features / Fixes / UX / Security / Docs / Infra) にグルーピングする。PR には
      **必ず `.github/labels.yml` の `type:*` ラベルを付けてからマージすること** (未付与は Other に入る)。
