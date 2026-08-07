@@ -42,6 +42,58 @@ CI は非稼働 (CI-free 恒久方針) だが、**リリース時には必ずタ
    UX / Security / Docs / Infra) にグルーピングされる。PR には **必ず `.github/labels.yml` の
    `type:*` ラベルを付けてからマージすること** (未付与は Other に入る)。
 
+## Projects ボード自動追加 (add-to-project)
+
+新規 Issue を user プロジェクト <https://github.com/users/Qfour/projects/1> に自動追加する
+`.github/workflows/add-to-project.yml` の運用手順。要望 (Issue) の入口をボードに集約し、
+上記のリリース鎖 (Issue → PR → Release → CHANGELOG) の起点を取りこぼさないための自動化。
+
+### PAT 登録
+
+このジョブは `GITHUB_TOKEN` では Projects v2 に書けないため、repo secret
+`ADD_TO_PROJECT_PAT` を供給する。
+
+- **fine-grained PAT で `Projects` の Read and write のみ**に絞る。classic PAT は
+  `repo` 等の広いスコープを巻き込むため非推奨。
+- 所有者は **CEO** (発行・登録・失効管理は CEO 操作)。
+
+### 失効時の症状
+
+PAT 未登録 / 失効 / スコープ剥落のいずれでも、**Issue はボードに乗らず、Actions は
+silent に失敗する** (Issue 作成者にも通知は飛ばない)。
+
+- 「新規 Issue がボードに現れない」ときは、まず **Actions タブの add-to-project run**
+  (Issue 発火分) の成否と、**PAT の有効性 / スコープ** を確認する。
+
+### PAT ローテ手順
+
+1. CEO が fine-grained PAT を再発行 (`Projects` Read and write のみ)。
+2. **両リポ (app / platform) の repo secret `ADD_TO_PROJECT_PAT` を両方更新する。**
+   同一 PAT を 2 リポで二重管理している (どちらか片方だけ更新すると、更新漏れ側の
+   Issue がボードに乗らなくなる)。
+
+### action の bump 手順
+
+`actions/add-to-project` はサプライチェーン pin ポリシー (P12) の例外表に含まれないため
+**commit SHA pin** している。bump は次の手順で行う (現行: `v2.0.0`
+`5afcf98fcd03f1c2f92c3c83f58ae24323cc57fd`)。
+
+```sh
+# 1. 新しい tag を確認
+gh api repos/actions/add-to-project/releases/latest --jq .tag_name
+# 2. その tag が指す commit SHA を解決
+gh api repos/actions/add-to-project/git/ref/tags/<tag> --jq .object.sha
+```
+
+解決した SHA を**両リポの `add-to-project.yml`** の `uses:` pin に反映し、末尾の
+`# vX.Y.Z` バージョンコメントも新 tag に揃える (pin SHA とコメントの版表記を一致させる)。
+
+### `transferred` トリガの注記
+
+トリガは `[opened, reopened, transferred]`。`transferred` は **転送元リポで発火する**
+仕様のため、他リポから転送されてきた Issue を当リポのボードへ取り込む用途には使えない。
+add-to-project 自体は冪等なので、同一 Issue が複数回発火しても二重追加は無害。
+
 ## 補足
 
 - contract に触れる変更は platform 側と同時 PR。CHANGELOG の該当節にも contract 影響を明記する。
