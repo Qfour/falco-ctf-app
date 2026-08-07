@@ -4,31 +4,31 @@
 #
 # 分類軸:
 #   type:*     — 変更の種別。release.yml のリリースノート分類キーと一致させること。
-#   area:*     — 影響領域。Issue Forms の「影響エリア」dropdown と対応。
+#   area:*     — 影響領域。triage で手動付与する参照軸 (Issue Form の dropdown はラベルを自動付与しない)。
 #   priority:* — トリアージ優先度。
 #   status:*   — ワークフロー状態。Issue Forms は起票時に status:triage を付与。
 
 # ---- type: 変更種別 (release.yml のカテゴリと 1:1) --------------------------
 - name: "type:feature"
-  color: "0e8a16"
-  description: "新機能 / 改善要望"
+  color: "1d76db"
+  description: "新機能・機能追加"
 - name: "type:bug"
   color: "d73a4a"
-  description: "バグ修正"
+  description: "バグ・想定外挙動の修正"
 - name: "type:ux"
   color: "fbca04"
-  description: "UX / 見た目・操作性の改善"
+  description: "体験・操作性・見た目の改善"
 - name: "type:security"
   color: "b60205"
-  description: "セキュリティ修正・ハードニング"
+  description: "セキュリティ修正・強化"
 - name: "type:docs"
   color: "0075ca"
-  description: "ドキュメントのみの変更"
+  description: "ドキュメント・runbook のみの変更"
 - name: "type:infra"
   color: "5319e7"
-  description: "CI / ビルド / デプロイ基盤"
+  description: "基盤・CI・ビルドの変更"
 
-# ---- area: 影響領域 (Issue Forms の影響エリア dropdown と対応) ---------------
+# ---- area: 影響領域 (triage で手動付与する参照軸; Issue Form の dropdown はラベルを自動付与しない) ----
 - name: "area:scoreboard"
   color: "1d76db"
   description: "scoreboard サービス / 採点ロジック"
@@ -51,27 +51,35 @@
 # ---- priority: トリアージ優先度 --------------------------------------------
 - name: "priority:P0"
   color: "b60205"
-  description: "P0 — イベント進行が止まる / 即対応"
+  description: "P0 — 即対応 (イベント阻害)"
 - name: "priority:P1"
   color: "d93f0b"
-  description: "P1 — 次リリースに入れたい"
+  description: "P1 — 次リリースで対応"
 - name: "priority:P2"
   color: "fbca04"
-  description: "P2 — あると良い"
+  description: "P2 — 計画的に対応"
 - name: "priority:P3"
   color: "c2e0c6"
-  description: "P3 — いつか"
+  description: "P3 — nice to have / いつか"
 
 # ---- status: ワークフロー状態 ----------------------------------------------
 - name: "status:triage"
   color: "ededed"
-  description: "未トリアージ (起票時の初期状態)"
+  description: "未仕分け (受付直後)"
 - name: "status:accepted"
   color: "0e8a16"
-  description: "対応方針が承認された"
+  description: "採用・対応予定"
 - name: "status:in-progress"
   color: "fbca04"
   description: "対応中"
 - name: "status:blocked"
   color: "d73a4a"
-  description: "他タスク / 判断待ちでブロック中"
+  description: "ブロック中"
+
+# ---- release.yml exclude 用 (両リポ共通) -----------------------------------
+- name: "skip-changelog"
+  color: "ededed"
+  description: "リリースノート/CHANGELOG から除外"
+- name: "dependencies"
+  color: "0366d6"
+  description: "依存更新 (Dependabot 等)"

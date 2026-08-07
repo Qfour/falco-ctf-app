@@ -3,6 +3,10 @@
 # マージ済み PR をこのラベル分類でグルーピングする。
 # ラベル定義は .github/labels.yml を参照。
 changelog:
+  exclude:
+    labels:
+      - skip-changelog
+      - dependencies
   categories:
     - title: 🚀 Features
       labels:
