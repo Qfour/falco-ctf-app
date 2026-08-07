@@ -1,0 +1,60 @@
+name: Release
+
+# SemVer タグ (`v*`) の push で GitHub Release を自動生成する (G2)。
+# 正典: workspace GITHUB-OPS.md「G2」/ docs/RELEASING.md。
+#
+# 設計 (両リポ共通):
+#   - サードパーティ action は使わず `gh` CLI で Release 作成 (SHA pin 不要・P12 面最小)。
+#   - `GITHUB_TOKEN` の contents: write のみ使用 (新 secret 不要)。
+#   - リリースノートのカテゴリ分類は .github/release.yml を `--generate-notes` で反映。
+#
+# injection 対策: run 内で `${{ github.ref_name }}` 等をインライン展開せず、
+#   env 経由 (GITHUB_REF_NAME / GH_TOKEN) + シェル変数 "$..." で参照する。
+
+on:
+  push:
+    tags: ["v*"]
+
+# Release 作成に必要な最小権限。
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      # injection 対策: タグ名・token・repo は env 経由でのみ受け渡す。
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_REF_NAME: ${{ github.ref_name }}
+      GITHUB_REPOSITORY: ${{ github.repository }}
+    steps:
+      # ----------------------------------------------------------------
+      # SemVer タグ検証。逸脱タグ (`1.0`, `foo` 等) は fail させる。
+      # ----------------------------------------------------------------
+      - name: Validate SemVer tag
+        run: |
+          set -euo pipefail
+          semver='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'
+          if [[ ! "$GITHUB_REF_NAME" =~ $semver ]]; then
+            echo "::error::tag '$GITHUB_REF_NAME' is not a valid SemVer tag (expected vX.Y.Z[-pre][+build])"
+            exit 1
+          fi
+          echo "SemVer tag OK: $GITHUB_REF_NAME"
+
+      # ----------------------------------------------------------------
+      # Release 自動生成。--generate-notes が .github/release.yml の
+      # カテゴリ分類でマージ済み PR をグルーピングする。
+      # プレリリース (タグに `-` を含む) は --prerelease を付与。
+      # ----------------------------------------------------------------
+      - name: Create GitHub Release
+        run: |
+          set -euo pipefail
+          args=(release create "$GITHUB_REF_NAME"
+            --repo "$GITHUB_REPOSITORY"
+            --title "$GITHUB_REF_NAME"
+            --generate-notes
+            --verify-tag)
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            args+=(--prerelease)
+          fi
+          gh "${args[@]}"

@@ -34,13 +34,21 @@ CI は非稼働 (CI-free 恒久方針) だが、**リリース時には必ずタ
    git tag vX.Y.Z
    git push origin vX.Y.Z
    ```
-3. **Release を作成し PR を自動列挙する (CEO)**
-   ```sh
-   gh release create vX.Y.Z --generate-notes
-   ```
-   `.github/release.yml` の分類に従い、マージ済み PR がラベル別 (Features / Fixes /
-   UX / Security / Docs / Infra) にグルーピングされる。PR には **必ず `.github/labels.yml` の
-   `type:*` ラベルを付けてからマージすること** (未付与は Other に入る)。
+   > ⚠️ **タグ push は CEO のみ。** G1 の tag ruleset (`v*`) で非 CEO の作成/更新は拒否される。
+3. **Release は自動生成される (`.github/workflows/release.yml`)**
+   `vX.Y.Z` タグを push すると `release.yml` ワークフローが発火し、Release を **自動生成する**。
+   手動の `gh release create` は不要になった。ワークフローの動作:
+   - **SemVer 検証**: タグが `vX.Y.Z[-pre][+build]` (SemVer) に一致しないと fail する
+     (不正タグ `1.0` / `foo` などは弾かれ、Release は作られない)。
+   - **Release 生成**: `gh release create "$TAG" --generate-notes --verify-tag` 相当を実行。
+     プレリリース (タグに `-` を含む。例 `v1.2.0-rc1`) は自動で `--prerelease` が付く。
+   - **カテゴリ分類**: `--generate-notes` が `.github/release.yml` の分類に従い、マージ済み PR を
+     ラベル別 (Features / Fixes / UX / Security / Docs / Infra) にグルーピングする。PR には
+     **必ず `.github/labels.yml` の `type:*` ラベルを付けてからマージすること** (未付与は Other に入る)。
+
+   ワークフローは `GITHUB_TOKEN` の `contents: write` のみ使用 (新 secret 不要)。実行結果 (Release リンク) は
+   Actions タブの release run で確認する。生成に失敗した場合は SemVer 検証 fail か、`--verify-tag`
+   でタグ未 push が疑われる (Actions ログを確認)。
 
 ## Projects ボード自動追加 (add-to-project)
 
