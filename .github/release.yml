@@ -1,0 +1,31 @@
+# 自動リリースノートのカテゴリ分類。
+# `gh release create <tag> --generate-notes` / GitHub UI の "Generate release notes" が
+# マージ済み PR をこのラベル分類でグルーピングする。
+# ラベル定義は .github/labels.yml を参照。
+changelog:
+  exclude:
+    labels:
+      - skip-changelog
+      - dependencies
+  categories:
+    - title: 🚀 Features
+      labels:
+        - "type:feature"
+    - title: 🐛 Fixes
+      labels:
+        - "type:bug"
+    - title: 💅 UX
+      labels:
+        - "type:ux"
+    - title: 🔒 Security
+      labels:
+        - "type:security"
+    - title: 📚 Docs
+      labels:
+        - "type:docs"
+    - title: 🏗 Infra
+      labels:
+        - "type:infra"
+    - title: Other
+      labels:
+        - "*"

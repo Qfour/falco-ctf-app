@@ -1,0 +1,69 @@
+name: 💡 改善要望 / Feature request
+description: 新機能・改善のアイデアを提案する
+title: "[feat] "
+labels: ["type:feature", "status:triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > ⚠️ **公開リポです。** シークレット・参加者情報・本番フラグ (`FALCO{...}` 実値)・
+        > AWS アカウント ID・kubeconfig・トークンを本文やログに **書かないでください**。
+        > 該当情報が必要な議論は非公開チャネルで行ってください。
+        >
+        > セキュリティ上の問題は Issue にせず、下の「セキュリティ報告」導線を使ってください。
+  - type: textarea
+    id: background
+    attributes:
+      label: 背景 / 解きたい課題
+      description: なぜこの改善が必要か。どんな状況・痛みから来た要望か。
+      placeholder: "例: 参加者が scoreboard の Journey を自分の workspace 単位で見られず…"
+    validations:
+      required: true
+  - type: textarea
+    id: current
+    attributes:
+      label: 現状の挙動
+      description: いま実際にどう動いているか。
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待する挙動
+      description: どう変わってほしいか。可能なら受け入れ条件も。
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: 影響エリア
+      description: 主に関係する領域を1つ選択。
+      options:
+        - scoreboard
+        - auth-policy
+        - journey-ui
+        - challenges
+        - deploy
+        - docs-site
+        - その他
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: 優先度
+      description: 起票者の体感優先度 (triage で見直されます)。
+      options:
+        - P0 — イベント進行が止まる / 即対応
+        - P1 — 次リリースに入れたい
+        - P2 — あると良い
+        - P3 — いつか
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: 補足
+      description: 参考リンク・代替案・スクリーンショットなど (任意)。
+    validations:
+      required: false

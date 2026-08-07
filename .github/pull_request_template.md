@@ -2,14 +2,19 @@
 
 <!-- 何を変えたか、なぜ変えたかを1〜3行で -->
 
+関連 Issue: Closes #___
+
 ## 変更種別
 
-- [ ] feat — 新機能
-- [ ] fix — バグ修正
-- [ ] chal — challenge 追加 / 修正
-- [ ] deploy — Kustomize / manifest
-- [ ] ci — GitHub Actions
-- [ ] chore / refactor
+`.github/labels.yml` の `type:*` ラベル体系に対応。マージ前に該当する
+`type:*` ラベルを PR に付与すること (未付与は Release ノートで Other に落ちる)。
+
+- [ ] type:feature — 新機能・機能追加
+- [ ] type:bug — バグ・想定外挙動の修正
+- [ ] type:ux — 体験・操作性・見た目の改善
+- [ ] type:security — セキュリティ修正・強化
+- [ ] type:docs — ドキュメント・runbook のみの変更
+- [ ] type:infra — 基盤・CI・ビルドの変更
 
 ## ゲートチェックリスト
 

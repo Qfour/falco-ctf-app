@@ -1,0 +1,59 @@
+name: 🐛 バグ報告 / Bug report
+description: 想定外の挙動を報告する
+title: "[bug] "
+labels: ["type:bug", "status:triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > ⚠️ **公開リポです。** シークレット・参加者情報・本番フラグ (`FALCO{...}` 実値)・
+        > AWS アカウント ID・kubeconfig・トークンを本文やログに **書かないでください**。
+        > ログ/スクショを貼る前にマスクしてください。
+        >
+        > セキュリティ脆弱性は Issue にせず、下の「セキュリティ報告」導線を使ってください。
+  - type: textarea
+    id: summary
+    attributes:
+      label: 概要
+      description: 何がおかしいか1〜2行で。
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: 再現手順
+      description: 番号付きで、他人が再現できる粒度で。
+      placeholder: |
+        1. `make dev` で起動
+        2. Journey UI で flag を submit
+        3. …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待する結果
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 実際の結果
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: バージョン / 環境
+      description: どの version tag (例 `v2026.07.01`) / image SHA / 環境 (local colima / prod EKS) で起きたか。
+      placeholder: "例: v2026.07.01 / prod EKS / helm 3.21"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: ログ / スクショ
+      description: 関連ログやスクショ (任意)。**シークレット・フラグ実値・アカウント ID をマスクしてから貼ること。**
+      render: shell
+    validations:
+      required: false
