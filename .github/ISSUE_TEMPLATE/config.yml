@@ -1,0 +1,10 @@
+# GitHub Issue Forms 設定。空 Issue を禁止し、テンプレ経由の起票のみ許可する。
+# 公開リポのため、セキュリティ問題は公開 Issue にせず非公開報告へ誘導する。
+blank_issues_enabled: false
+contact_links:
+  - name: 🔒 セキュリティ報告 (非公開)
+    url: https://github.com/Qfour/falco-ctf-app/security/advisories/new
+    about: >-
+      脆弱性・認証境界の欠陥・フラグ漏えい等は公開 Issue にせず、
+      GitHub Security Advisory (非公開) で報告してください。
+      本番フラグ・シークレット・AWS アカウント ID を公開しないための導線です。

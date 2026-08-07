@@ -1,0 +1,77 @@
+# 両リポ共通のラベル分類 (falco-ctf-app / falco-ctf-platform)。
+# これは「定義ファイル」であり、この YAML を置くだけでは GitHub 側にラベルは作られない。
+# 実作成 (label sync) は CEO 承認のうえ別途行う (例: gh label create / github-label-sync)。
+#
+# 分類軸:
+#   type:*     — 変更の種別。release.yml のリリースノート分類キーと一致させること。
+#   area:*     — 影響領域。Issue Forms の「影響エリア」dropdown と対応。
+#   priority:* — トリアージ優先度。
+#   status:*   — ワークフロー状態。Issue Forms は起票時に status:triage を付与。
+
+# ---- type: 変更種別 (release.yml のカテゴリと 1:1) --------------------------
+- name: "type:feature"
+  color: "0e8a16"
+  description: "新機能 / 改善要望"
+- name: "type:bug"
+  color: "d73a4a"
+  description: "バグ修正"
+- name: "type:ux"
+  color: "fbca04"
+  description: "UX / 見た目・操作性の改善"
+- name: "type:security"
+  color: "b60205"
+  description: "セキュリティ修正・ハードニング"
+- name: "type:docs"
+  color: "0075ca"
+  description: "ドキュメントのみの変更"
+- name: "type:infra"
+  color: "5319e7"
+  description: "CI / ビルド / デプロイ基盤"
+
+# ---- area: 影響領域 (Issue Forms の影響エリア dropdown と対応) ---------------
+- name: "area:scoreboard"
+  color: "1d76db"
+  description: "scoreboard サービス / 採点ロジック"
+- name: "area:auth-policy"
+  color: "1d76db"
+  description: "auth-policy サービス / 認証境界"
+- name: "area:journey-ui"
+  color: "1d76db"
+  description: "Journey 進行 UI"
+- name: "area:challenges"
+  color: "1d76db"
+  description: "challenges/ コンテンツ・falco-rule"
+- name: "area:deploy"
+  color: "1d76db"
+  description: "charts / helm / デプロイ"
+- name: "area:docs-site"
+  color: "1d76db"
+  description: "docs-site / MkDocs ミッションページ"
+
+# ---- priority: トリアージ優先度 --------------------------------------------
+- name: "priority:P0"
+  color: "b60205"
+  description: "P0 — イベント進行が止まる / 即対応"
+- name: "priority:P1"
+  color: "d93f0b"
+  description: "P1 — 次リリースに入れたい"
+- name: "priority:P2"
+  color: "fbca04"
+  description: "P2 — あると良い"
+- name: "priority:P3"
+  color: "c2e0c6"
+  description: "P3 — いつか"
+
+# ---- status: ワークフロー状態 ----------------------------------------------
+- name: "status:triage"
+  color: "ededed"
+  description: "未トリアージ (起票時の初期状態)"
+- name: "status:accepted"
+  color: "0e8a16"
+  description: "対応方針が承認された"
+- name: "status:in-progress"
+  color: "fbca04"
+  description: "対応中"
+- name: "status:blocked"
+  color: "d73a4a"
+  description: "他タスク / 判断待ちでブロック中"
