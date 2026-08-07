@@ -18,8 +18,8 @@ on:
     # 週次 (毎週月曜 06:17 UTC)。新 CVE ルール適用のため既存コードも定期再走査する
     - cron: "17 6 * * 1"
 
-# 最小権限: code scanning 結果のアップロードに security-events: write が必須。
-# checkout に contents: read、CodeQL の内部 API 参照に actions: read。
+# 最小権限: top-level は checkout 相当の contents: read のみ。
+# 昇格は analyze job だけに閉じる (下記 job permissions 参照)。
 permissions:
   contents: read
 
@@ -27,6 +27,8 @@ jobs:
   analyze:
     name: Analyze (go)
     runs-on: ubuntu-latest
+    # analyze job のみ昇格: code scanning 結果アップロードに security-events: write、
+    # CodeQL の内部 API 参照に actions: read (contents: read は checkout 用)。
     permissions:
       security-events: write
       contents: read

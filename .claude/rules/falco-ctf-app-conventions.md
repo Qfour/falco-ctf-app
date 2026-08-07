@@ -107,8 +107,10 @@ cycle 自体を上げる場合 (例: alpine 3.22→3.23) は tag も一緒に変
   根拠: (1) いずれも広く使われる信頼済み提供元 (GitHub 公式 `actions/*`・
   `azure/*`・`aws-actions/*`・`anthropics/*)、(2) メジャータグは提供元が
   セキュリティ修正を配る移動先で、SHA pin すると修正が届かず手動 bump 負債になる、
-  (3) **バージョン追随は手動レビューで行う (Dependabot 未導入 — 両リポとも
-  `dependabot.yml` を持たず、CI-free 恒久方針と整合)**。platform `SUPPLY-CHAIN.md`
+  (3) **バージョン追随は Dependabot 自動 PR (weekly・`dependencies` ラベル・grouping) +
+  人間レビュー → CEO merge で行う (G3 で導入)。CI-free prod 方針 (image 手動 build/push)
+  とは直交** — Dependabot は依存更新 PR を開くだけで、prod deploy 経路には触れない。
+  auto-merge は使わない (更新は必ず人間レビュー → CEO merge を経る)。platform `SUPPLY-CHAIN.md`
   と同一方針。**例外リスト (mutable で許容する参照)**:
   | action | 用途 |
   |---|---|
@@ -122,6 +124,8 @@ cycle 自体を上げる場合 (例: alpine 3.22→3.23) は tag も一緒に変
 - **この例外表は各リポの実 workflow に固有** (共通なのは pin ポリシーであって
   action 集合ではない。集合は各リポの `uses:` に従属する)。platform 表と件数/内容が
   一致する必要はない。
+- **`github/codeql-action/*` は SHA pin (例外表に載せない)。bump は Dependabot
+  github-actions group が担う** (codeql.yml の init/autobuild/analyze を同一 SHA に揃える)。
 
 ## SecurityContext (コンテナレベル)
 
