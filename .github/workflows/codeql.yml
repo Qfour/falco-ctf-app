@@ -1,0 +1,55 @@
+name: CodeQL
+
+# G3 (依存 & セキュリティ衛生): Go を対象にした CodeQL code scanning。
+# 公開リポでは無料。結果は Security タブ (code scanning alerts) に出る。
+#
+# pin ポリシー (P12):
+#   - github/codeql-action/* は conventions の例外表に無い → commit SHA pin
+#     (pin: v4.37.6 = 5595ccaf912efad79be6eef63a5619ff05969be3、
+#      bump 時は `gh api repos/github/codeql-action/git/refs/tags/vX.Y.Z` で解決)
+#   - actions/checkout@v4 は例外表 (GitHub 公式・信頼済み) → mutable 許容
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  schedule:
+    # 週次 (毎週月曜 06:17 UTC)。新 CVE ルール適用のため既存コードも定期再走査する
+    - cron: "17 6 * * 1"
+
+# 最小権限: code scanning 結果のアップロードに security-events: write が必須。
+# checkout に contents: read、CodeQL の内部 API 参照に actions: read。
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (go)
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ["go"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
+        with:
+          languages: ${{ matrix.language }}
+
+      # go.mod が repo root にあるため autobuild で概ね通る。
+      # 通らなくなった場合はこのステップを手動 build (go build ./...) に差し替える。
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
+        with:
+          category: "/language:${{ matrix.language }}"
