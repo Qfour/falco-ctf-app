@@ -75,6 +75,12 @@
 - name: "status:blocked"
   color: "d73a4a"
   description: "ブロック中"
+- name: "status:deferred"
+  color: "c5def5"
+  description: "採用だが今サイクルでは対応しない (Target Version に載せ open 維持)"
+- name: "status:wontfix"
+  color: "e6e6e6"
+  description: "対応しないと決定 (close as 'not planned' + 理由コメント必須)"
 
 # ---- release.yml exclude 用 (両リポ共通) -----------------------------------
 - name: "skip-changelog"
