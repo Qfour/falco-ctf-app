@@ -1,0 +1,33 @@
+#!/bin/sh
+# Fake `aws` CLI — flavor prop for the 11-cloud-cred-hunt mission ONLY.
+#
+# There is NO real AWS in this CTF (MVP pseudo-mode, Issue #46). This stub makes
+# the workspace *feel* like a cloud-connected box: it accepts a couple of common
+# subcommands and prints canned, obviously-fake output. It makes ZERO network
+# calls and holds NO credentials — the mission is solved by the on-disk
+# credential *search* (grep/find) that Falco's "Find AWS Credentials" rule sees,
+# not by anything this script does.
+case "$1 $2" in
+  "sts get-caller-identity")
+    echo '{'
+    echo '  "UserId": "AIDAEXAMPLE0NIMBUSBREACH",'
+    echo '  "Account": "000000000000",'
+    echo '  "Arn": "arn:aws:iam::000000000000:user/nimbus-deploy"'
+    echo '}'
+    echo '# (fake output — this CTF has no real AWS. See welcome.txt.)' >&2
+    ;;
+  "configure list")
+    echo '      Name                    Value             Type    Location'
+    echo '      ----                    -----             ----    --------'
+    echo '   profile                <not set>             None    None'
+    echo 'access_key     ****************MPLE shared-credentials-file'
+    echo 'secret_key     ****************EKEY shared-credentials-file'
+    echo '# (fake output — this CTF has no real AWS. See welcome.txt.)' >&2
+    ;;
+  *)
+    echo "aws: this is a CTF stub. Real cloud calls are disabled." >&2
+    echo "The point of this mission is on-disk credential discovery — try" >&2
+    echo "grep/find against ~/.aws (see hints)." >&2
+    exit 2
+    ;;
+esac
