@@ -251,16 +251,25 @@ func TestLoad_Detect_MissingDetectBlock(t *testing.T) {
 }
 
 // TestLoad_RealChallenges verifies the production challenges/ tree parses
-// cleanly. Pins the CTF Company mission set (10 attack missions). The
-// detect-authoring twin (03-stealth-read-detect) lands in Phase 44.2 with its
-// captures; the detect engine ships here (44.0) without a live challenge, so the
-// tree stays at 10.
+// cleanly. Pins the CTF Company 10-mission set (recon → cred access → evade →
+// harvest → RCE → persist → C2 → hide → exfil boss) plus the 00-tutorial
+// 0問目. The detect-authoring twin (03-stealth-read-detect) lands in Phase
+// 44.2 with its captures; the detect engine ships here (44.0) without a live
+// challenge, so the attack-mission count stays at 10.
+//
+// The tutorial is a real trigger challenge so it exercises the normal solve
+// path, but it is deliberately EXCLUDED from the scored scenario
+// (nimbusbreach-full) so it never affects the scoring denominator. That
+// contract is asserted in TestScoredScenario_ExcludesTutorial below — keep the
+// two in sync: adding a challenge here that should be scored must also be added
+// to scenarios/nimbusbreach-full/scenario.yaml.
 func TestLoad_RealChallenges(t *testing.T) {
 	cat, err := catalog.Load("../../challenges")
 	if err != nil {
 		t.Fatalf("failed to load real challenges: %v", err)
 	}
 	want := []string{
+		"00-tutorial",
 		"01-initial-recon",
 		"02-credential-files",
 		"03-stealth-read",
@@ -280,5 +289,32 @@ func TestLoad_RealChallenges(t *testing.T) {
 		if id != want[i] {
 			t.Errorf("IDs[%d]: got %q, want %q", i, id, want[i])
 		}
+	}
+}
+
+// TestScoredScenario_ExcludesTutorial pins the scoring-non-impact contract for
+// the 00-tutorial 0問目: the production scored scenario (nimbusbreach-full) must
+// select exactly the 10 scored missions and must NOT include 00-tutorial. The
+// scoreboard runs with SCENARIO_FILE pinned to this scenario, so Restrict
+// (fail-closed) drops the tutorial from scoring, /api/state, totals and the
+// leaderboard. If this fails the tutorial has leaked into the scored set.
+func TestScoredScenario_ExcludesTutorial(t *testing.T) {
+	cat, err := catalog.Load("../../challenges")
+	if err != nil {
+		t.Fatalf("load catalog: %v", err)
+	}
+	sc, err := catalog.LoadScenario("../../scenarios/nimbusbreach-full/scenario.yaml")
+	if err != nil {
+		t.Fatalf("load scored scenario: %v", err)
+	}
+	scored, err := cat.Restrict(sc.Challenges)
+	if err != nil {
+		t.Fatalf("restrict to scored scenario: %v", err)
+	}
+	if _, leaked := scored["00-tutorial"]; leaked {
+		t.Fatal("scoring leak: 00-tutorial is present in the scored scenario nimbusbreach-full")
+	}
+	if len(scored) != 10 {
+		t.Fatalf("scored scenario must stay at 10 challenges, got %d: %v", len(scored), scored.IDs())
 	}
 }

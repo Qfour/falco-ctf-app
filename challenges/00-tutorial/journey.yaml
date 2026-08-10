@@ -1,0 +1,32 @@
+# Journey content for the /journey UI. Schema: internal/catalog/journey.go.
+# Participant-facing narrative only — never influences scoring.
+# NOTE: 0問目 / チュートリアル。採点対象外 (本番採点シナリオには含めない)。
+challengeId: 00-tutorial
+title: 00 — チュートリアル (遊び方)
+tagline: 提出・ヒント・進行の流れを、採点に影響しない 1 問で体験する
+briefing: >-
+  ようこそ。これは採点に影響しない 0問目 — CTF の「遊び方」を掴むための練習だ。
+  この CTF には 2 種類の課題がある。trigger 課題は「あなたの操作で Falco ルールを
+  発火させる」と自動でクリア (提出フォーム不要)。evade 課題は「ルールを発火させずに
+  flag を取り、フォームから提出」する。このチュートリアルは trigger 課題。安全な
+  1 コマンドを実行するだけで、初回発火のフィードバックと自動クリアの流れを体験できる。
+  各ミッションには「気付き → 概要 → 解答」の段階ヒントがある。詰まったら順に開こう。
+steps:
+  - label: ワークスペース端末を開く
+    detail: 画面のターミナル (ttyd) で以下を実行できる状態にする。表示名は setname で変えられる。
+  - label: /dev/shm からスクリプトを実行して発火させる
+    detail: |
+      echo 'echo hello from the tutorial' > /dev/shm/hello.sh
+      sh /dev/shm/hello.sh
+      /dev/shm 上のスクリプトを sh で実行した瞬間に "Execution from /dev/shm" が発火する。
+      これは安全な練習操作 (実害なし)。trigger 課題なので提出フォームは不要。
+  - label: 自動クリアとヒントの見方を確認
+    detail: |
+      発火が scoreboard に届くと、この 0問目が自動で CLEARED になる。
+      evade 課題ではここで flag を提出する — 本番の 03/05/10 で実際に体験する。
+      ヒントは「気付き→概要→解答」の 3 段。焦らず 1 つずつ開くのが攻略のコツ。
+hints:
+  - trigger 課題は「あなたの操作でルールが鳴る」と自動クリア。まずはターミナルで何か 1 コマンド動かしてみよう。何が「怪しい実行」と見なされるかを考える。
+  - Falco は「どこから実行したか」も見ている。/dev/shm (共有メモリ上の書込可能領域) からのプログラム実行は攻撃者が好む隠し場所として監視されている。そこに置いて実行してみよう。
+  - "想定解: echo 'echo hi' > /dev/shm/hello.sh && sh /dev/shm/hello.sh — /dev/shm 上のスクリプト実行で Execution from /dev/shm が発火し、自動で CLEARED になる。"
+docsUrl: /missions/00-tutorial/

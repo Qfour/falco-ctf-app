@@ -88,15 +88,32 @@ func TestLoadJourneys_MissingDirNoError(t *testing.T) {
 	}
 }
 
-func TestLoadJourneys_ChallengeIDMismatchIsError(t *testing.T) {
+func TestLoadJourneys_ChallengeIDNotInCatalogIsSkipped(t *testing.T) {
 	dir := t.TempDir()
-	// journey.yaml declares a challengeId with no matching catalog challenge.
+	// journey.yaml declares a challengeId with no matching catalog challenge
+	// (e.g. the challenge was restricted out of the active scenario). It must
+	// be silently skipped, not treated as an error, and a valid in-catalog
+	// journey alongside it must still load.
 	writeJourney(t, dir, "99-ghost", `
 challengeId: 99-ghost
 title: ghost
 `)
-	if _, err := catalog.LoadJourneys(dir, journeyCatalog()); err == nil {
-		t.Fatal("expected error for challengeId with no matching challenge")
+	writeJourney(t, dir, "01-initial-recon", `
+challengeId: 01-initial-recon
+title: 潜入
+`)
+	js, err := catalog.LoadJourneys(dir, journeyCatalog())
+	if err != nil {
+		t.Fatalf("non-matching challengeId must be skipped, not error: %v", err)
+	}
+	if _, ok := js["99-ghost"]; ok {
+		t.Fatalf("99-ghost is not in the catalog; it must be skipped, got %v", js)
+	}
+	if _, ok := js["01-initial-recon"]; !ok {
+		t.Fatalf("in-catalog journey must still load; got %v", js)
+	}
+	if len(js) != 1 {
+		t.Fatalf("expected exactly 1 journey loaded, got %d: %v", len(js), js)
 	}
 }
 

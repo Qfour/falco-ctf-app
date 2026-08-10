@@ -61,12 +61,18 @@ type Journeys map[string]Journey
 // journey.yaml against `cat`:
 //
 //   - the declared challengeId must be non-empty (defaults to the directory
-//     name when omitted, mirroring catalog.Load), and
-//   - it must correspond to a real challenge in `cat`.
+//     name when omitted, mirroring catalog.Load).
 //
-// A missing journey.yaml is not an error (graceful degrade). A malformed one,
-// or one whose challengeId does not match a catalog challenge, IS an error so a
-// content typo is loud rather than silently dropping the mission's briefing.
+// A missing journey.yaml is not an error (graceful degrade). A malformed one
+// (parse error, or empty title) IS an error so a content typo is loud rather
+// than silently dropping the mission's briefing.
+//
+// A journey whose challengeId does not correspond to a challenge in `cat` is
+// SKIPPED (not an error): `cat` may be a scenario-restricted catalog, in which
+// case journeys for challenges outside the active scenario are simply not part
+// of this run. Journeys already "graceful degrade when absent"; they degrade
+// equally gracefully when the challenge is restricted out of the scenario.
+// The full (unrestricted) catalog still maps every on-disk journey.
 func LoadJourneys(dir string, cat Catalog) (Journeys, error) {
 	out := make(Journeys)
 	entries, err := os.ReadDir(dir)
@@ -93,10 +99,9 @@ func LoadJourneys(dir string, cat Catalog) (Journeys, error) {
 			return nil, fmt.Errorf("parse %s: %w", path, err)
 		}
 		if _, ok := cat[j.ChallengeID]; !ok {
-			return nil, fmt.Errorf(
-				"journey %s: challengeId %q has no matching challenge in the catalog",
-				path, j.ChallengeID,
-			)
+			// Challenge is not in the (possibly scenario-restricted) catalog:
+			// this journey is not part of the active scenario. Skip it.
+			continue
 		}
 		out[j.ChallengeID] = j
 	}
