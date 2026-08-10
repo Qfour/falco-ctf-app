@@ -105,6 +105,9 @@
   .badge-trigger { background: rgba(0, 203, 226, 0.12); color: var(--falco); border: 1px solid rgba(0, 203, 226, 0.35); }
   .badge-evade { background: rgba(183, 140, 255, 0.12); color: var(--evade); border: 1px solid rgba(183, 140, 255, 0.35); }
   .mission-body { padding: 1.4rem 1.6rem; }
+  /* lead-in: previous mission's narrative bridge (#47), persisted above the briefing */
+  .lead-in { position: relative; background: linear-gradient(90deg, rgba(0,203,226,0.07), transparent); border: 1px solid var(--border); border-left: 2px solid var(--accent); border-radius: 0.5rem; padding: 0.7rem 1rem 0.75rem; margin-bottom: 1.2rem; color: var(--text-dim); font-size: 0.92rem; line-height: 1.6; font-style: italic; }
+  .lead-in .li-kicker { display: block; font-family: 'JetBrains Mono', monospace; font-size: 0.62rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); font-style: normal; margin-bottom: 0.35rem; opacity: 0.85; }
   .briefing { color: var(--text-dim); font-size: 0.98rem; line-height: 1.7; margin-bottom: 1.5rem; border-left: 2px solid var(--border-strong); padding-left: 1rem; }
   .sec-title { font-family: 'Chakra Petch', sans-serif; text-transform: uppercase; letter-spacing: 0.16em; font-size: 0.72rem; color: var(--text-mute); margin: 1.4rem 0 0.7rem; }
 
@@ -170,6 +173,8 @@
   #clear-fx .card { text-align: center; }
   #clear-fx .stamp { font-family: 'Chakra Petch', sans-serif; font-size: 4rem; font-weight: 700; letter-spacing: 0.08em; color: var(--success); text-shadow: 0 0 40px var(--success-glow); animation: stamp 0.5s cubic-bezier(.2,1.4,.4,1); }
   #clear-fx .sub { color: var(--text-dim); letter-spacing: 0.25em; text-transform: uppercase; margin-top: 0.6rem; font-size: 0.9rem; }
+  #clear-fx .bridge-fx { display: none; max-width: 32rem; margin: 1.1rem auto 0; color: var(--text); font-size: 1.02rem; line-height: 1.65; font-style: italic; text-shadow: 0 0 24px rgba(0,203,226,0.15); animation: bridgein 0.6s ease 0.35s both; }
+  @keyframes bridgein { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
   @keyframes fxin { from { opacity: 0; } to { opacity: 1; } }
   @keyframes stamp { 0% { transform: scale(2.2); opacity: 0; } 60% { transform: scale(0.92); opacity: 1; } 100% { transform: scale(1); } }
 </style>
@@ -192,6 +197,7 @@
   <div id="clear-fx"><div class="card">
     <div class="stamp" id="clear-title">✔ CLEARED</div>
     <div class="sub" id="clear-sub"></div>
+    <div class="bridge-fx" id="clear-bridge"></div>
   </div></div>
 
 <script>
@@ -378,6 +384,7 @@
         ${det.tagline ? `<div class="tagline">${esc(det.tagline)}</div>` : ''}
       </div>
       <div class="mission-body">
+        ${det.leadIn ? `<div class="lead-in"><span class="li-kicker">前回からの引き</span>${esc(det.leadIn)}</div>` : ''}
         ${det.briefing ? `<div class="briefing">${esc(det.briefing)}</div>` : ''}
         ${det.type === 'trigger' ? triggerSection(det) : ''}
         ${steps ? `<div class="sec-title">Steps（自己チェック）</div><ul class="steps">${steps}</ul>` : ''}
@@ -562,8 +569,14 @@
     const fx = document.getElementById('clear-fx');
     document.getElementById('clear-title').textContent = '✔ CLEARED';
     document.getElementById('clear-sub').textContent = (m.title || m.id) + ' 攻略';
+    // Narrative bridge toward the next mission (#47). textContent-safe; empty
+    // bridge (or final mission with no bridge) simply shows nothing. The lead-in
+    // block on the next mission carries the same beat once the overlay fades.
+    const bridge = document.getElementById('clear-bridge');
+    bridge.textContent = m && m.bridge ? m.bridge : '';
+    bridge.style.display = m && m.bridge ? 'block' : 'none';
     fx.classList.add('show');
-    setTimeout(() => fx.classList.remove('show'), 1900);
+    setTimeout(() => fx.classList.remove('show'), m && m.bridge ? 3200 : 1900);
   }
 </script>
 </body>

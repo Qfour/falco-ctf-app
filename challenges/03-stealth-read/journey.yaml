@@ -24,4 +24,8 @@ hints:
   - 同じファイル本体に、違う名前 (path) でたどり着く方法は Linux にいくつもある。ルールが見ているのは本体ではなく path 文字列だ。
   - ルールは「path が /etc で始まる」かで判定している。同じ inode に /etc 以外の path で到達すればすり抜けられる。man proc を読むか /proc/self/ を覗こう。
   - "想定解: cat /proc/self/root/etc/shadow | grep FALCO — /proc/self/root 経由なら fd.name が /etc 始まりにならず発火しない。"
+bridge: >-
+  ハッシュは静かに抜いた。SOC は単発の false positive で片付けただろう。
+  だが本番の横展開に効くのは shadow じゃない — SSH 鍵や AWS クレデンシャルだ。
+  箱の中を漁りにいく。まずは正面から find でどうなるか見てみよう。
 docsUrl: /missions/03-stealth-read/

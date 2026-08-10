@@ -22,4 +22,7 @@ hints:
   - コマンドライン引数にファイル名を出さずにファイルを読む方法を考えよう。
   - シェルの入力リダイレクト `<` を使うと、exec される cmdline は引数を含まない。
   - "想定解: cat < /root/.ssh/id_rsa | grep FALCO / xxd < /root/.ssh/id_rsa。fork-exec された cat の /proc/<pid>/cmdline は \"cat\" のみになる。"
+bridge: >-
+  鍵を静かに手に入れた。ここからが本題 — 盗んだ資格情報で別のサービスへ横展開する。
+  CTF Company の Web サーバには RCE がある。Web プロセスに化けてシェルを起こしにいく。
 docsUrl: /missions/05-silent-search/

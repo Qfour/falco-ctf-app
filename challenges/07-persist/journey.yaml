@@ -23,4 +23,7 @@ hints:
   - runtime に書いた binary を実行すると、Falco は「base image に無かった場所からの実行」として捕捉する。永続化したい攻撃者の典型挙動だ。
   - 「書いてから実行」の両方が要る。元から在る /bin/ls の実行では発火しない。busybox 系は argv[0] チェックがあるので /bin/sleep が最も素直に動く。
   - "想定解: cp /bin/sleep /usr/local/bin/backdoor && /usr/local/bin/backdoor 1 — 自前ツールの drop+実行は必ず発火する、という教訓が Mission 10 で効く。"
+bridge: >-
+  backdoor は据えた。あとは「好きな時に戻ってくる」ための通り道が要る。
+  古典の reverse shell を貼って、こちらの C2 サーバへビーコンを飛ばす。
 docsUrl: /missions/07-persist/
