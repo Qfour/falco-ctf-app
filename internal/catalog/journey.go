@@ -57,22 +57,31 @@ type Journey struct {
 type Journeys map[string]Journey
 
 // LoadJourneys scans <dir>/<NN>-<slug>/journey.yaml for every subdirectory and
-// returns the parsed journeys keyed by challengeId. It validates each
-// journey.yaml against `cat`:
+// returns the parsed journeys keyed by challengeId. Validation separates two
+// distinct conditions that a single "is the id in cat?" check used to conflate:
 //
-//   - the declared challengeId must be non-empty (defaults to the directory
-//     name when omitted, mirroring catalog.Load).
+//   - TYPO (loud error): a journey.yaml declares a non-empty challengeId that
+//     does not equal its directory name. The directory IS the challenge; a
+//     mismatching id is a content mistake that would silently drop the mission
+//     from the /journey UI. This is an ERROR regardless of whether `cat` is the
+//     full or a scenario-restricted catalog. An empty challengeId defaults to
+//     the directory name (mirroring catalog.Load) and is not a typo.
+//
+//   - RESTRICT-OUT (silent skip): the directory name is not present in `cat`.
+//     `cat` may be a scenario-restricted catalog, so a challenge outside the
+//     active scenario is simply not part of this run and its journey is skipped.
+//     Journeys "graceful degrade when absent"; they degrade equally gracefully
+//     when the challenge is restricted out of the scenario.
 //
 // A missing journey.yaml is not an error (graceful degrade). A malformed one
 // (parse error, or empty title) IS an error so a content typo is loud rather
 // than silently dropping the mission's briefing.
 //
-// A journey whose challengeId does not correspond to a challenge in `cat` is
-// SKIPPED (not an error): `cat` may be a scenario-restricted catalog, in which
-// case journeys for challenges outside the active scenario are simply not part
-// of this run. Journeys already "graceful degrade when absent"; they degrade
-// equally gracefully when the challenge is restricted out of the scenario.
-// The full (unrestricted) catalog still maps every on-disk journey.
+// Note on the skip predicate: skip keys off the DIRECTORY name (e.Name()), not
+// the declared challengeId. A declared id that disagrees with the directory is
+// caught as a typo above; the directory name is the authoritative identity used
+// to decide scenario membership. This is why a full catalog and a subset both
+// surface typos as errors while only genuinely restricted-out challenges skip.
 func LoadJourneys(dir string, cat Catalog) (Journeys, error) {
 	out := make(Journeys)
 	entries, err := os.ReadDir(dir)
@@ -98,9 +107,18 @@ func LoadJourneys(dir string, cat Catalog) (Journeys, error) {
 		if err != nil {
 			return nil, fmt.Errorf("parse %s: %w", path, err)
 		}
-		if _, ok := cat[j.ChallengeID]; !ok {
-			// Challenge is not in the (possibly scenario-restricted) catalog:
-			// this journey is not part of the active scenario. Skip it.
+		// TYPO: a declared id that disagrees with the directory name is a
+		// content mistake. parseJourney already defaulted an empty id to the
+		// directory name, so at this point j.ChallengeID != e.Name() means the
+		// author wrote a non-empty id that does not match the directory.
+		if j.ChallengeID != e.Name() {
+			return nil, fmt.Errorf(
+				"journey %s: challengeId %q does not match directory name %q (typo?)",
+				path, j.ChallengeID, e.Name())
+		}
+		// RESTRICT-OUT: the directory (= this challenge) is not in the active,
+		// possibly scenario-restricted catalog. Skip it, not part of this run.
+		if _, ok := cat[e.Name()]; !ok {
 			continue
 		}
 		out[j.ChallengeID] = j
