@@ -48,6 +48,7 @@ type Handler struct {
 	journeys    catalog.Journeys
 	order       []string
 	docsBaseURL string
+	points      *scoring.PointsPolicy // nil = placeholder DefaultPointsPolicy
 	sweeper     *scoring.Sweeper
 	detect      api.DetectConfig
 }
@@ -86,6 +87,14 @@ func WithDetect(dc api.DetectConfig) Option {
 	return func(h *Handler) { h.detect = dc }
 }
 
+// WithPoints sets the scoring points policy (base award per solve + per-hint
+// reveal penalty, #40). Unset = the placeholder DefaultPointsPolicy. The same
+// policy feeds the shared Grader (score computation) and the api handler (which
+// surfaces the per-hint penalty to the UI), so both agree on the values.
+func WithPoints(p scoring.PointsPolicy) Option {
+	return func(h *Handler) { h.points = &p }
+}
+
 func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts ...Option) *Handler {
 	h := &Handler{
 		cat:    cat,
@@ -106,6 +115,9 @@ func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts .
 	// preserving the single-writer discipline (conventions I1) across all three
 	// entry points (this also resolves the prior double-instantiation, R4).
 	grader := scoring.New(cat, s, h.now)
+	if h.points != nil {
+		grader.WithPoints(*h.points)
+	}
 	// The sweeper bumps the same evade solve metric a manual submit would, so an
 	// auto-solve is indistinguishable from a manual one on the dashboard.
 	h.sweeper = scoring.NewSweeper(grader, scoring.DefaultSweepCadence, logger, func(r scoring.SweepResult) {

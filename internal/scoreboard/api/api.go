@@ -1081,6 +1081,11 @@ func (h *Handler) userMe(w http.ResponseWriter, r *http.Request) {
 		displayName = n
 	}
 
+	// Score (#40) is the Grader's arithmetic — the handler only projects it. We
+	// pass the catalog-filtered solved count (the same value shown as
+	// solved_count) so score and solved_count are derived from one number; the
+	// Grader adds the per-hint reveal penalty from the store.
+	score := h.grader.UserScore(user, len(solved))
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"user":              user,
 		"display_name":      displayName,
@@ -1090,6 +1095,8 @@ func (h *Handler) userMe(w http.ResponseWriter, r *http.Request) {
 		"next_unsolved":     nextUnsolved,
 		"recent_rule_fires": fires,
 		"events":            snap.EventsPerUser[user],
+		"score":             score,
+		"hint_penalty":      h.grader.Points().HintPenalty,
 		"now":               now.UTC().Format(time.RFC3339Nano),
 	})
 }
@@ -1203,6 +1210,9 @@ func (h *Handler) journey(w http.ResponseWriter, r *http.Request) {
 		currentJSON = current
 	}
 
+	// Score (#40): the Grader's arithmetic; the handler only projects it. Uses
+	// the catalog-filtered solved count so score and solved_count agree.
+	score := h.grader.UserScore(user, len(solvedSet))
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"user":         user,
 		"display_name": displayName,
@@ -1211,6 +1221,8 @@ func (h *Handler) journey(w http.ResponseWriter, r *http.Request) {
 		"current":      currentJSON,
 		"missions":     missions,
 		"detail":       detail,
+		"score":        score,
+		"hint_penalty": h.grader.Points().HintPenalty,
 		"now":          h.now().UTC().Format(time.RFC3339Nano),
 	})
 }
@@ -1305,6 +1317,11 @@ func (h *Handler) missionDetail(user, cid string, checkedSteps, openedHints []in
 			"opened":      openedList,
 			"lockedCount": len(j.Hints) - len(openedList),
 			"nextIndex":   nextHint,
+			// penalty: points forfeited per hint reveal (#40). The Grader owns the
+			// value; the UI shows it on the "open hint" button so a participant
+			// makes an informed reveal ("opening costs N points"). Projection only —
+			// the score arithmetic stays in the scoring layer.
+			"penalty": h.grader.Points().HintPenalty,
 		},
 	}
 }

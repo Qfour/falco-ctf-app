@@ -24,6 +24,8 @@ type fakeStore struct {
 	forbidden map[string][]string
 	// exfil["user|challenge"] is the flag the collector received for that pair.
 	exfil map[string]string
+	// hintViews[user] maps challenge -> revealed 1-based hint indices (#40).
+	hintViews map[string]map[string][]int
 
 	markSolvedErr  error // if set, MarkSolved returns it for every challenge
 	recordExfilErr error // if set, RecordExfil returns it
@@ -107,6 +109,16 @@ func (f *fakeStore) PendingExfilSolves() []store.ExfilReceipt {
 		return out[i].Challenge < out[j].Challenge
 	})
 	return out
+}
+
+// hintViews["user"] maps challenge -> revealed 1-based hint indices. Satisfies
+// the ScoreStore.HintViews port so UserScore (#40) can sum the per-user reveal
+// count for the penalty. Defaults to empty (no reveals) unless a test seeds it.
+func (f *fakeStore) HintViews(user string) map[string][]int {
+	if f.hintViews == nil {
+		return nil
+	}
+	return f.hintViews[user]
 }
 
 // testCatalog mirrors the fixture used by the HTTP tests: one trigger, one

@@ -19,6 +19,32 @@ func TestEnv(t *testing.T) {
 	}
 }
 
+func TestEnvInt(t *testing.T) {
+	if got := EnvInt("SU_INT_MISSING", 7); got != 7 {
+		t.Fatalf("unset → fallback: got %d", got)
+	}
+	t.Setenv("SU_INT_KEY", "42")
+	if got := EnvInt("SU_INT_KEY", 7); got != 42 {
+		t.Fatalf("valid: got %d", got)
+	}
+	t.Setenv("SU_INT_KEY", " 13 ")
+	if got := EnvInt("SU_INT_KEY", 7); got != 13 {
+		t.Fatalf("trimmed valid: got %d", got)
+	}
+	t.Setenv("SU_INT_KEY", "")
+	if got := EnvInt("SU_INT_KEY", 7); got != 7 {
+		t.Fatalf("empty → fallback: got %d", got)
+	}
+	t.Setenv("SU_INT_KEY", "notanumber")
+	if got := EnvInt("SU_INT_KEY", 7); got != 7 {
+		t.Fatalf("malformed → fallback: got %d", got)
+	}
+	t.Setenv("SU_INT_KEY", "-5")
+	if got := EnvInt("SU_INT_KEY", 7); got != -5 {
+		t.Fatalf("negative allowed (normalised later in scoring): got %d", got)
+	}
+}
+
 func TestSplitCSV(t *testing.T) {
 	cases := []struct {
 		in   string

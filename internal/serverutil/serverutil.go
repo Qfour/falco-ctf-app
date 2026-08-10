@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -22,6 +23,22 @@ func Env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// EnvInt returns the integer value of key, or fallback when key is unset,
+// empty, or not a valid base-10 integer. A malformed value falls back rather
+// than erroring so a fat-fingered env var degrades to the safe default instead
+// of failing startup — the score knobs (#40) are tuning, not correctness.
+func EnvInt(key string, fallback int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil {
+		return fallback
+	}
+	return n
 }
 
 // SplitCSV parses a comma-separated value: trims whitespace, drops empties.

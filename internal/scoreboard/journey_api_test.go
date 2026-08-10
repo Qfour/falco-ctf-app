@@ -13,6 +13,7 @@ import (
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard"
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/scoring"
 	"github.com/Qfour/falco-ctf-app/internal/store"
 )
 
@@ -290,6 +291,75 @@ func TestJourney_HintInOrderReveal(t *testing.T) {
 	}
 	if hints["lockedCount"].(float64) != 1 || hints["nextIndex"].(float64) != 3 {
 		t.Fatalf("hint meta wrong: %v", hints)
+	}
+}
+
+// TestJourney_ScorePenaltyOnHintReveal proves the #40 end-to-end behaviour:
+// the journey projection surfaces a score, the per-hint penalty is exposed on
+// the hints block, and self-revealing hints deducts points (clamped at 0). Uses
+// the fixture's default policy (100/solve, 10/hint) unless overridden.
+func TestJourney_ScorePenaltyOnHintReveal(t *testing.T) {
+	f := newJourneyFixture(t)
+
+	// Baseline: no solves, no reveals → score 0, penalty surfaced.
+	m := f.journey("alice")
+	if m["score"].(float64) != 0 {
+		t.Fatalf("initial score should be 0, got %v", m["score"])
+	}
+	if m["hint_penalty"].(float64) != 10 {
+		t.Fatalf("hint_penalty should be 10 (default), got %v", m["hint_penalty"])
+	}
+	det := m["detail"].(map[string]any)
+	hints := det["hints"].(map[string]any)
+	if hints["penalty"].(float64) != 10 {
+		t.Fatalf("hints.penalty should be 10, got %v", hints["penalty"])
+	}
+
+	// Solve 01-recon → +100. Then it advances; solve gives score 100.
+	if _, err := f.st.MarkSolved("alice", "01-recon", "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	if s := f.journey("alice")["score"].(float64); s != 100 {
+		t.Fatalf("score after 1 solve should be 100, got %v", s)
+	}
+
+	// Reveal 2 hints on the now-current 02-evade mission → -20 → score 80.
+	if w := f.req("POST", "/api/users/alice/challenges/02-evade/hints/1", nil); w.Code != http.StatusOK {
+		t.Fatalf("hint 1 reveal: %d body=%s", w.Code, w.Body)
+	}
+	if w := f.req("POST", "/api/users/alice/challenges/02-evade/hints/2", nil); w.Code != http.StatusOK {
+		t.Fatalf("hint 2 reveal: %d body=%s", w.Code, w.Body)
+	}
+	if s := f.journey("alice")["score"].(float64); s != 80 {
+		t.Fatalf("score after 1 solve - 2 hints should be 80, got %v", s)
+	}
+
+	// /me projection must agree on score + penalty.
+	me := f.reqAs("GET", "/api/users/alice/me", "alice@ctf.local", nil)
+	if me.Code != http.StatusOK {
+		t.Fatalf("me status: %d", me.Code)
+	}
+	var mm map[string]any
+	_ = json.Unmarshal(me.Body.Bytes(), &mm)
+	if mm["score"].(float64) != 80 || mm["hint_penalty"].(float64) != 10 {
+		t.Fatalf("me score/penalty disagree: score=%v penalty=%v", mm["score"], mm["hint_penalty"])
+	}
+}
+
+// TestJourney_ScoreClampsAtZeroWithHighPenalty proves the fail-closed clamp:
+// with a penalty high enough to exceed the earned award, the score floors at 0
+// (never negative). Overrides the policy via WithPoints.
+func TestJourney_ScoreClampsAtZeroWithHighPenalty(t *testing.T) {
+	f := newJourneyFixture(t, scoreboard.WithPoints(scoring.PointsPolicy{PerSolve: 10, HintPenalty: 50}))
+	if _, err := f.st.MarkSolved("alice", "01-recon", "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	// Earned 10 for the solve; one 50-point hint reveal would give -40 → clamp 0.
+	if w := f.req("POST", "/api/users/alice/challenges/02-evade/hints/1", nil); w.Code != http.StatusOK {
+		t.Fatalf("hint reveal: %d", w.Code)
+	}
+	if s := f.journey("alice")["score"].(float64); s != 0 {
+		t.Fatalf("score must clamp at 0, got %v", s)
 	}
 }
 

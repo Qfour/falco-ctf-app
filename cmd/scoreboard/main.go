@@ -14,6 +14,7 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/api"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/detect"
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/scoring"
 	"github.com/Qfour/falco-ctf-app/internal/serverutil"
 	"github.com/Qfour/falco-ctf-app/internal/store"
 )
@@ -44,6 +45,16 @@ func main() {
 	// the link resolves off-origin. Empty = keep the relative path (local dev,
 	// where docs are served under the same host or not at all).
 	docsBaseURL := serverutil.Env("DOCS_BASE_URL", "")
+	// Points policy (#40 self-service hints with a score penalty). PLACEHOLDER
+	// defaults — the real per-solve award and per-hint penalty are an event-tuning
+	// decision (content-lead / CEO confirm). SCORE_POINTS_PER_SOLVE /
+	// SCORE_HINT_PENALTY override at deploy time; a negative penalty is floored to
+	// 0 inside the scoring layer (fail-closed: a hint reveal can never raise a
+	// score). Empty/unset = the placeholder DefaultPointsPolicy.
+	points := scoring.PointsPolicy{
+		PerSolve:    serverutil.EnvInt("SCORE_POINTS_PER_SOLVE", scoring.DefaultPointsPerSolve),
+		HintPenalty: serverutil.EnvInt("SCORE_HINT_PENALTY", scoring.DefaultHintPenalty),
+	}
 
 	cat, err := catalog.Load(challengesDir)
 	if err != nil {
@@ -122,6 +133,7 @@ func main() {
 		scoreboard.WithOrder(order),
 		scoreboard.WithDocsBaseURL(docsBaseURL),
 		scoreboard.WithDetect(detectCfg),
+		scoreboard.WithPoints(points),
 	)
 
 	// Auto-solve sweeper (P16): re-derives exfil-delivered-but-unsolved evade
