@@ -300,6 +300,25 @@ func TestJourney_TriggerDetectionProjection(t *testing.T) {
 	}
 }
 
+// TestJourney_TriggerDetectionOutsideWindow proves the detectedRules projection
+// respects the UI lookback (triggerDetectWindowSeconds): an expected-rule fire
+// that is older than the window is inside the store's 300s retention but must
+// NOT surface as "detected" — the on-screen cue only reflects recent activity.
+func TestJourney_TriggerDetectionOutsideWindow(t *testing.T) {
+	f := newJourneyFixture(t) // 01-recon trigger, ExpectedRules ["Recon Rule"]
+
+	// Fire the expected rule 120s ago: within the 300s ruleFires retention but
+	// well outside the 60s detect window the projection uses.
+	stale := float64(time.Now().Unix()) - 120
+	if _, err := f.st.RecordRuleFire("alice", "Recon Rule", stale); err != nil {
+		t.Fatal(err)
+	}
+	det := f.journey("alice")["detail"].(map[string]any)
+	if got := det["detectedRules"].([]any); len(got) != 0 {
+		t.Fatalf("fire older than the detect window must not surface, got %v", got)
+	}
+}
+
 // TestJourney_EvadeHasNoTriggerFields proves the detection fields stay
 // trigger-scoped: an evade mission surfaces expectedRules as [] and
 // detectedRules as [] (the evade UX uses the flag-submit / exfil flow, not the

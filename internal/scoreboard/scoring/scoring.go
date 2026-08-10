@@ -49,13 +49,14 @@ import (
 // behaviour-preserving:
 //   - MarkSolved is idempotent (first solve wins) and reports whether the solve
 //     was newly recorded.
-//   - RecentForbiddenFires returns the set of forbidden rules that fired for the
-//     user within windowSeconds of now (unix seconds); empty = clean window.
+//   - RecentFiresMatching returns the subset of the given rules that fired for
+//     the user within windowSeconds of now (unix seconds). The Grader passes
+//     the challenge's forbiddenRules, so empty = clean window.
 //   - HasExfil reports whether the user delivered exactly this flag to the
 //     collector for this challenge.
 type ScoreStore interface {
 	MarkSolved(user, challenge, at string) (newly bool, err error)
-	RecentForbiddenFires(user string, forbidden []string, now float64, windowSeconds int) []string
+	RecentFiresMatching(user string, rules []string, now float64, windowSeconds int) []string
 	HasExfil(user, challenge, flag string) bool
 	RecordExfil(user, challenge, flag, at string) error
 	// PendingExfilSolves enumerates every recorded collector receipt whose
@@ -268,7 +269,7 @@ func (g *Grader) SubmitEvade(user, cid, flag string) (EvadeOutcome, error) {
 // pair) simply does not solve — it never records a solve it should not.
 func (g *Grader) evaluateClean(user string, ch catalog.Challenge, flag string) (EvadeOutcome, error) {
 	now := float64(g.now().Unix())
-	offending := g.store.RecentForbiddenFires(user, ch.ForbiddenRules, now, ch.WindowSeconds)
+	offending := g.store.RecentFiresMatching(user, ch.ForbiddenRules, now, ch.WindowSeconds)
 	if len(offending) > 0 {
 		return EvadeOutcome{Status: EvadeForbiddenFired, Offending: offending}, nil
 	}

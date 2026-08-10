@@ -52,6 +52,17 @@ var validMission = regexp.MustCompile(`^[0-9]{2}-[a-z0-9-]{1,60}$`)
 // max keeps leaderboard columns predictable.
 var invalidDisplayName = regexp.MustCompile(`[<>&"'\x00-\x1f\x7f]`)
 
+// triggerDetectWindowSeconds is the lookback the Journey UI uses to surface
+// which of a trigger mission's expectedRules the participant has already fired
+// (detectedRules). It is a UI-DISPLAY-ONLY lookback: the actual solve verdict
+// is owned entirely by the ingest → Grader.EvaluateTrigger path and is
+// independent of this window (a rule fire records the solve the instant it
+// arrives, regardless of what this projection shows). It is deliberately the
+// same 60s window /me uses for its rule-fire feed so the two agree on screen.
+// Signpost: if a future grader ever gains a windowed trigger verdict, this
+// value and the grader's window should be sourced from one place.
+const triggerDetectWindowSeconds = 60
+
 // JourneyConfig carries the /journey UI inputs into the api handler:
 // narrative content, the mission progression order, and the docs-site origin.
 // All are optional — the handler applies safe defaults (see New).
@@ -1319,31 +1330,22 @@ func (h *Handler) missionDetail(user, cid string, checkedSteps, openedHints []in
 	var detectedRules []string
 	if ch.Type == "trigger" {
 		expectedRules = ch.ExpectedRules
-		if expectedRules == nil {
-			expectedRules = []string{}
-		}
-		// detectedRules = expectedRules ∩ (rule fires for this user in a recent
-		// window). We reuse the same 60s lookback me.html surfaces so the "you
-		// triggered it" cue and the /me rule-fire feed agree. This is presentational
+		// detectedRules = expectedRules ∩ (rule fires for this user in the recent
+		// window). Delegated to the store's RecentFiresMatching so the set-intersect
+		// lives in one place — the same method the evade Grader uses for its
+		// forbidden-rule window (scoring.evaluateClean). This is presentational
 		// only: the actual solve is recorded by ingest the instant the rule fires,
 		// so a detected rule here means the mission is already (or about to be, on
-		// the next 2s poll) solved.
-		want := make(map[string]struct{}, len(expectedRules))
-		for _, r := range expectedRules {
-			want[r] = struct{}{}
-		}
-		seen := make(map[string]struct{})
-		for _, f := range h.store.RecentRuleFires(user, float64(h.now().Unix()), 60) {
-			if _, ok := want[f.Rule]; ok {
-				if _, dup := seen[f.Rule]; !dup {
-					seen[f.Rule] = struct{}{}
-					detectedRules = append(detectedRules, f.Rule)
-				}
-			}
-		}
+		// the next 2s poll) solved. RecentFiresMatching returns a sorted set, which
+		// is fine for UI display.
+		detectedRules = h.store.RecentFiresMatching(
+			user, expectedRules, float64(h.now().Unix()), triggerDetectWindowSeconds,
+		)
 	}
 	// Normalise both to non-nil so they always marshal as JSON [] (never null) —
 	// the Journey UI iterates them unconditionally, and the tests assert []any.
+	// (evade missions leave both nil; a trigger with no expectedRules yields an
+	// empty detectedRules set from RecentFiresMatching.)
 	if expectedRules == nil {
 		expectedRules = []string{}
 	}

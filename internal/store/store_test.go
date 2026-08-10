@@ -51,7 +51,7 @@ func TestRecordRuleFire_BumpsCount(t *testing.T) {
 	}
 }
 
-func TestRecentForbiddenFires_WithinWindow(t *testing.T) {
+func TestRecentFiresMatching_WithinWindow(t *testing.T) {
 	s := newStore(t)
 	if _, err := s.RecordRuleFire("alice", "forbidden-A", 100.0); err != nil {
 		t.Fatal(err)
@@ -59,43 +59,43 @@ func TestRecentForbiddenFires_WithinWindow(t *testing.T) {
 	if _, err := s.RecordRuleFire("alice", "ok-rule", 100.5); err != nil {
 		t.Fatal(err)
 	}
-	got := s.RecentForbiddenFires("alice", []string{"forbidden-A", "forbidden-B"}, 105.0, 10)
+	got := s.RecentFiresMatching("alice", []string{"forbidden-A", "forbidden-B"}, 105.0, 10)
 	if len(got) != 1 || got[0] != "forbidden-A" {
 		t.Fatalf("expected [forbidden-A], got %v", got)
 	}
 }
 
-func TestRecentForbiddenFires_OutsideWindow(t *testing.T) {
+func TestRecentFiresMatching_OutsideWindow(t *testing.T) {
 	s := newStore(t)
 	if _, err := s.RecordRuleFire("alice", "forbidden-A", 100.0); err != nil {
 		t.Fatal(err)
 	}
 	// now=200, window=10s -> cutoff=190, fire at 100 is outside
-	got := s.RecentForbiddenFires("alice", []string{"forbidden-A"}, 200.0, 10)
+	got := s.RecentFiresMatching("alice", []string{"forbidden-A"}, 200.0, 10)
 	if len(got) != 0 {
 		t.Fatalf("fire outside window must not count; got %v", got)
 	}
 }
 
-func TestRecentForbiddenFires_OnlyForbiddenRulesReturned(t *testing.T) {
+func TestRecentFiresMatching_OnlyMatchingRulesReturned(t *testing.T) {
 	s := newStore(t)
 	if _, err := s.RecordRuleFire("alice", "allowed-rule", 100.0); err != nil {
 		t.Fatal(err)
 	}
-	got := s.RecentForbiddenFires("alice", []string{"forbidden-A"}, 105.0, 10)
+	got := s.RecentFiresMatching("alice", []string{"forbidden-A"}, 105.0, 10)
 	if len(got) != 0 {
 		t.Fatalf("non-forbidden rules must not appear; got %v", got)
 	}
 }
 
-func TestRecentForbiddenFires_DeduplicatesAndSorts(t *testing.T) {
+func TestRecentFiresMatching_DeduplicatesAndSorts(t *testing.T) {
 	s := newStore(t)
 	for _, r := range []string{"B", "A", "B", "A"} {
 		if _, err := s.RecordRuleFire("alice", r, 100.0); err != nil {
 			t.Fatal(err)
 		}
 	}
-	got := s.RecentForbiddenFires("alice", []string{"A", "B"}, 105.0, 10)
+	got := s.RecentFiresMatching("alice", []string{"A", "B"}, 105.0, 10)
 	if len(got) != 2 || got[0] != "A" || got[1] != "B" {
 		t.Fatalf("expected sorted dedup [A B], got %v", got)
 	}
@@ -115,7 +115,7 @@ func TestRuleFires_BoundedByRetention(t *testing.T) {
 	// if RetentionSeconds didn't drop the first. The first was dropped
 	// because the retention prune (~700s) kicked in. The second one at 1000
 	// is in window.
-	got := s.RecentForbiddenFires("alice", []string{"forbidden-A"}, 1000.0, 10)
+	got := s.RecentFiresMatching("alice", []string{"forbidden-A"}, 1000.0, 10)
 	if len(got) != 1 {
 		t.Fatalf("expected one rule after retention pruning, got %v", got)
 	}

@@ -561,7 +561,7 @@ type RuleFire struct {
 }
 
 // RecentRuleFires returns all rule fires for `user` within the last
-// `windowSeconds`, in arrival order. Unlike RecentForbiddenFires (which
+// `windowSeconds`, in arrival order. Unlike RecentFiresMatching (which
 // returns a *set* of rule names for evade-window checks), this returns the
 // raw stream so the participant /me page can show what they just triggered.
 func (s *Store) RecentRuleFires(user string, now float64, windowSeconds int) []RuleFire {
@@ -578,15 +578,25 @@ func (s *Store) RecentRuleFires(user string, now float64, windowSeconds int) []R
 	return out
 }
 
-// RecentForbiddenFires returns the *set* of forbidden rules (sorted) that
-// fired for `user` within the last `windowSeconds` from `now`. Empty slice
-// means the evade window is clean.
-func (s *Store) RecentForbiddenFires(user string, forbidden []string, now float64, windowSeconds int) []string {
+// RecentFiresMatching returns the *set* (sorted, deduplicated) of the rule
+// names in `rules` that fired for `user` within the last `windowSeconds` from
+// `now`. Empty slice means none of the given rules fired in the window.
+//
+// Generic by design: it answers "of these rule names, which fired recently".
+// Two callers use it with different rule sets:
+//   - the evade Grader passes the challenge's forbiddenRules to detect a
+//     dirty window (any match → not evaded);
+//   - the Journey UI projection passes a trigger challenge's expectedRules to
+//     show which success signals the participant has already fired.
+//
+// The method is a pure read-only projection over the bounded ruleFires window
+// and never mutates state, so neither use can affect a solve verdict.
+func (s *Store) RecentFiresMatching(user string, rules []string, now float64, windowSeconds int) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cutoff := now - float64(windowSeconds)
-	want := make(map[string]struct{}, len(forbidden))
-	for _, r := range forbidden {
+	want := make(map[string]struct{}, len(rules))
+	for _, r := range rules {
 		want[r] = struct{}{}
 	}
 	seen := make(map[string]struct{})
