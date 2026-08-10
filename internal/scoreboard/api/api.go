@@ -1300,6 +1300,57 @@ func (h *Handler) missionDetail(user, cid string, checkedSteps, openedHints []in
 	// flag + clean window), so it is safe to expose without the flag value.
 	requireExfil := ch.Type == "evade" && ch.RequireExfil
 	exfilReceived := requireExfil && h.store.HasExfilAny(user, cid)
+
+	// Trigger-solve live feedback (#39): a trigger challenge auto-solves when the
+	// participant's action makes Falco emit one of expectedRules. Before this the
+	// Journey UI gave the participant no on-screen cue for what "success" looks
+	// like — they ran a syscall in their terminal and had to guess whether it was
+	// seen. Expose the success signal (expectedRules) and which of those the user
+	// has ALREADY fired in a recent window (detectedRules) so the UI can render a
+	// live "run the action → Falco detected it → cleared" status, mirroring the
+	// exfil auto-solve flow.
+	//
+	// Safe to expose: expectedRules is Falco rule *names* (already public in the
+	// operator /api/state challenge stats and the docs-site rule excerpts) — never
+	// a flag value (conventions I10). This is a read-only projection with zero
+	// bearing on the solve verdict, which stays entirely in the ingest → Grader
+	// path (EvaluateTrigger); the UI only observes it.
+	var expectedRules []string
+	var detectedRules []string
+	if ch.Type == "trigger" {
+		expectedRules = ch.ExpectedRules
+		if expectedRules == nil {
+			expectedRules = []string{}
+		}
+		// detectedRules = expectedRules ∩ (rule fires for this user in a recent
+		// window). We reuse the same 60s lookback me.html surfaces so the "you
+		// triggered it" cue and the /me rule-fire feed agree. This is presentational
+		// only: the actual solve is recorded by ingest the instant the rule fires,
+		// so a detected rule here means the mission is already (or about to be, on
+		// the next 2s poll) solved.
+		want := make(map[string]struct{}, len(expectedRules))
+		for _, r := range expectedRules {
+			want[r] = struct{}{}
+		}
+		seen := make(map[string]struct{})
+		for _, f := range h.store.RecentRuleFires(user, float64(h.now().Unix()), 60) {
+			if _, ok := want[f.Rule]; ok {
+				if _, dup := seen[f.Rule]; !dup {
+					seen[f.Rule] = struct{}{}
+					detectedRules = append(detectedRules, f.Rule)
+				}
+			}
+		}
+	}
+	// Normalise both to non-nil so they always marshal as JSON [] (never null) —
+	// the Journey UI iterates them unconditionally, and the tests assert []any.
+	if expectedRules == nil {
+		expectedRules = []string{}
+	}
+	if detectedRules == nil {
+		detectedRules = []string{}
+	}
+
 	return map[string]any{
 		"id":            cid,
 		"title":         title,
@@ -1310,6 +1361,8 @@ func (h *Handler) missionDetail(user, cid string, checkedSteps, openedHints []in
 		"hasJourney":    hasJourney,
 		"requireExfil":  requireExfil,
 		"exfilReceived": exfilReceived,
+		"expectedRules": expectedRules,
+		"detectedRules": detectedRules,
 		"windowSeconds": ch.WindowSeconds,
 		"steps":         steps,
 		"hints": map[string]any{

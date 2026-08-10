@@ -336,6 +336,7 @@
         <div class="mission-body">
           <div class="empty"><span class="icon">📡</span>ブリーフィング準備中<br>
           このミッションの作戦資料はまだ用意されていません。</div>
+          ${det.type === 'trigger' ? triggerSection(det) : ''}
           ${det.type === 'evade' ? evadeSection(det) : ''}
         </div>
       </div>`;
@@ -378,12 +379,56 @@
       </div>
       <div class="mission-body">
         ${det.briefing ? `<div class="briefing">${esc(det.briefing)}</div>` : ''}
+        ${det.type === 'trigger' ? triggerSection(det) : ''}
         ${steps ? `<div class="sec-title">Steps（自己チェック）</div><ul class="steps">${steps}</ul>` : ''}
         ${hintsBlock}
         ${det.type === 'evade' ? evadeSection(det) : ''}
         ${docs}
       </div>
     </div>`;
+  }
+
+  // triggerSection renders the live "how do I know I succeeded?" status for a
+  // trigger mission (#39). A trigger challenge has no flag to submit — it
+  // auto-solves the instant the participant's action makes Falco emit one of the
+  // expected rules. Before this the participant had no on-screen cue for what
+  // success looks like; now we show, live:
+  //   - the success signal (which Falco rule(s) clear the mission), and
+  //   - whether the scoreboard has already SEEN that rule fire for this user
+  //     (det.detectedRules, a recent-window intersection from the API).
+  // Once detected, the normal 2s poll flips the mission to solved and triggers
+  // the CLEARED overlay — so a green "detected" row here is the immediate
+  // feedback that bridges "I ran the command" and "the map updated".
+  //
+  // XSS: only static copy + Falco rule NAMES flow in, all through esc(); rule
+  // names are public metadata, never a flag (matches #26 discipline).
+  function triggerSection(det) {
+    const expected = det.expectedRules || [];
+    const detected = new Set(det.detectedRules || []);
+    // No expected rules declared (shouldn't happen for a trigger challenge, but
+    // fail soft): show a generic "watching your workspace" cue.
+    if (!expected.length) {
+      return `<div class="sec-title">クリア条件（自動判定）</div>
+        <div class="autosolve">
+          <div class="hint">このミッションは、ワークスペースでの操作を Falco が検知すると自動的にクリアされます。ターミナルで課題の操作を実行してください。</div>
+        </div>`;
+    }
+    const anyDetected = expected.some(r => detected.has(r));
+    const rows = expected.map(r => {
+      const hit = detected.has(r);
+      return `<li class="${hit ? 'done' : 'waiting'}">
+        <span class="dot">${hit ? '✅' : '⏳'}</span>
+        <span>${esc(r)}${hit ? ' — 検知しました' : ''}</span>
+      </li>`;
+    }).join('');
+    return `<div class="sec-title">クリア条件（自動判定）</div>
+      <div class="autosolve">
+        <div class="hint" style="margin-top:0">ターミナルで操作を実行し、下の Falco ルールを発火させればミッションは自動でクリアされます（手動提出は不要）。</div>
+        <ul class="steps-flow" style="margin-top:0.7rem">${rows}</ul>
+        <div class="hint">${anyDetected
+          ? '✔ 検知されました — まもなくクリア表示に切り替わります。'
+          : 'まだ検知されていません。直近 60 秒の発火をここに表示します。'}</div>
+      </div>`;
   }
 
   // evadeSection chooses the primary UX for an evade mission:
