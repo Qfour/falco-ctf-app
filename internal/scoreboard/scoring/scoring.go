@@ -106,7 +106,12 @@ func (g *Grader) WithPoints(p PointsPolicy) *Grader {
 // Points returns the Grader's active points policy so an adapter can surface
 // the per-hint penalty to the UI (e.g. "opening this hint costs N points")
 // without re-deriving or hard-coding the value on the handler side.
-func (g *Grader) Points() PointsPolicy { return g.points }
+//
+// The policy is returned NORMALISED (R1): a misconfigured negative penalty /
+// award is floored to 0, so the UI can never show a negative "costs -N points"
+// figure — the same normalisation ComputeScore applies before the arithmetic,
+// so what the UI advertises and what the score subtracts always agree.
+func (g *Grader) Points() PointsPolicy { return g.points.normalise() }
 
 // UserScore computes `user`'s current score: the base award per solved
 // challenge minus the flat per-hint penalty for every hint the user

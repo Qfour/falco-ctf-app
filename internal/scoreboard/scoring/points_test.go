@@ -94,3 +94,21 @@ func TestUserScore_DefaultPolicyWhenUnset(t *testing.T) {
 		t.Fatalf("Points() = %+v, want defaults", p)
 	}
 }
+
+// TestPoints_ReturnsNormalised proves the adapter-facing Points() never surfaces
+// a negative penalty/award to the UI (R1): a misconfigured negative policy is
+// floored to 0, matching the normalisation ComputeScore applies — so what the
+// UI advertises ("costs N points") and what the score subtracts always agree.
+func TestPoints_ReturnsNormalised(t *testing.T) {
+	f := newFakeStore()
+	g := scoring.New(testCatalog(), f, nil).
+		WithPoints(scoring.PointsPolicy{PerSolve: -100, HintPenalty: -10})
+
+	p := g.Points()
+	if p.HintPenalty != 0 {
+		t.Errorf("Points().HintPenalty = %d, want 0 (negative floored — UI must not show a negative cost)", p.HintPenalty)
+	}
+	if p.PerSolve != 0 {
+		t.Errorf("Points().PerSolve = %d, want 0 (negative floored)", p.PerSolve)
+	}
+}

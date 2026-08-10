@@ -48,9 +48,15 @@ type Handler struct {
 	journeys    catalog.Journeys
 	order       []string
 	docsBaseURL string
-	points      *scoring.PointsPolicy // nil = placeholder DefaultPointsPolicy
-	sweeper     *scoring.Sweeper
-	detect      api.DetectConfig
+	// points is a WIRING-TIME TRANSFER ONLY: WithPoints stashes the operator's
+	// policy here so NewHandler can pass it into the single Grader (below). It is
+	// never read at request time — the runtime score/penalty are always sourced
+	// via grader.Points() (the api handler asks the Grader), so the Grader stays
+	// the single owner of the points arithmetic (R4-F8 / #39). nil = the Grader
+	// keeps its placeholder DefaultPointsPolicy.
+	points  *scoring.PointsPolicy
+	sweeper *scoring.Sweeper
+	detect  api.DetectConfig
 }
 
 type Option func(*Handler)

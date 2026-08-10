@@ -1394,9 +1394,16 @@ func (h *Handler) buildState() map[string]any {
 		User        string `json:"user"`
 		DisplayName string `json:"display_name"`
 		Solved      int    `json:"solved"`
-		Earliest    string `json:"earliest"`
-		Events      int    `json:"events"`
-		Rank        int    `json:"rank"`
+		// Score is the ranking metric (#40, CEO decision): the Grader's points
+		// arithmetic (base award per solve − per-hint reveal penalty, clamped at
+		// 0). Additive alongside Solved/Earliest so per-challenge progress bars
+		// still read solved counts; ranking keys off Score with Earliest as the
+		// tiebreak. Derived via grader.UserScore (ComputeScore single source) — no
+		// inline points math here (#39 direction).
+		Score    int    `json:"score"`
+		Earliest string `json:"earliest"`
+		Events   int    `json:"events"`
+		Rank     int    `json:"rank"`
 	}
 	displayOf := func(u string) string {
 		if n, ok := snap.DisplayNames[u]; ok && n != "" {
@@ -1412,23 +1419,36 @@ func (h *Handler) buildState() map[string]any {
 				earliest = p[1]
 			}
 		}
+		solved := len(perUserSolves[u])
 		leaderboard = append(leaderboard, lbEntry{
 			User:        u,
 			DisplayName: displayOf(u),
-			Solved:      len(perUserSolves[u]),
-			Earliest:    earliest,
-			Events:      snap.EventsPerUser[u],
+			Solved:      solved,
+			// Score is the Grader's arithmetic; the handler only projects it. Pass
+			// the same catalog-filtered solved count used for the Solved column so
+			// the two agree, and the Grader adds the per-hint reveal penalty.
+			Score:    h.grader.UserScore(u, solved),
+			Earliest: earliest,
+			Events:   snap.EventsPerUser[u],
 		})
 	}
+	// Rank by Score desc (#40, CEO decision — the leaderboard order now reflects
+	// the hint-penalty score, so a player who solved the same set with fewer
+	// hints outranks one who leaned on hints), with Earliest solve time as the
+	// tiebreak (the existing first-blood ordering, preserved for equal scores).
 	sort.SliceStable(leaderboard, func(i, j int) bool {
-		if leaderboard[i].Solved != leaderboard[j].Solved {
-			return leaderboard[i].Solved > leaderboard[j].Solved
+		if leaderboard[i].Score != leaderboard[j].Score {
+			return leaderboard[i].Score > leaderboard[j].Score
 		}
 		return leaderboard[i].Earliest < leaderboard[j].Earliest
 	})
-	// Rank only participants who have solved something; the board is already
-	// sorted by Solved desc, so solvers occupy the top contiguously and get
-	// ranks 1..M. Zero-solve participants keep Rank 0 → the UI renders "-".
+	// Rank only participants who have solved something (Solved > 0). Ranking off
+	// Score would also rank a 0-solve player whose score is 0 the same as a
+	// solver whose hints dragged their score to 0, so we keep the "has a solve"
+	// gate: it is the has-participated signal, and a clamped-to-0 solver still
+	// sorts above a 0-solve player by the Solved>0 rank assignment order (the
+	// board is Score-desc then Earliest-asc, and a real solver's pre-clamp
+	// standing is preserved by Earliest). Zero-solve keep Rank 0 → UI renders "-".
 	rank := 0
 	for i := range leaderboard {
 		if leaderboard[i].Solved > 0 {

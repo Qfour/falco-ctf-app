@@ -57,6 +57,14 @@ spec:
             - name: DOCS_BASE_URL
               value: {{ . | quote }}
             {{- end }}
+            {{- with .Values.env.scorePointsPerSolve }}
+            - name: SCORE_POINTS_PER_SOLVE
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.env.scoreHintPenalty }}
+            - name: SCORE_HINT_PENALTY
+              value: {{ . | quote }}
+            {{- end }}
             {{- if .Values.flagsSecret.enabled }}
             - name: FLAGS_FILE
               value: /etc/ctf-flags/{{ .Values.flagsSecret.key }}
