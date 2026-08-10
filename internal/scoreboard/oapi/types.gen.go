@@ -74,9 +74,14 @@ type State struct {
 		// Earliest RFC3339 timestamp of the user's first solve; "9999" sentinel if solved == 0.
 		Earliest *string `json:"earliest,omitempty"`
 		Events   *int    `json:"events,omitempty"`
-		Rank     *int    `json:"rank,omitempty"`
-		Solved   *int    `json:"solved,omitempty"`
-		User     *string `json:"user,omitempty"`
+
+		// Rank 1-based position, ranked by score descending with the earliest first-solve time as the tiebreak for equal scores.
+		Rank *int `json:"rank,omitempty"`
+
+		// Score Ranking metric (#40): base award per solve minus the per-hint reveal penalty, clamped at 0. Never negative.
+		Score  *int    `json:"score,omitempty"`
+		Solved *int    `json:"solved,omitempty"`
+		User   *string `json:"user,omitempty"`
 	} `json:"leaderboard"`
 	Now          time.Time `json:"now"`
 	RecentSolves []struct {

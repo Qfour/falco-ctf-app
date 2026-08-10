@@ -57,13 +57,17 @@ spec:
             - name: DOCS_BASE_URL
               value: {{ . | quote }}
             {{- end }}
-            {{- with .Values.env.scorePointsPerSolve }}
+            {{- /* Use `ne (toString ...) ""` not `with`: `with` treats the
+                   integer 0 as falsy and would drop the env, silently reverting
+                   to the code default. Only an empty string (unset) is skipped;
+                   0 / "0" / any integer is emitted so an operator can pin 0. */}}
+            {{- if ne (toString .Values.env.scorePointsPerSolve) "" }}
             - name: SCORE_POINTS_PER_SOLVE
-              value: {{ . | quote }}
+              value: {{ .Values.env.scorePointsPerSolve | quote }}
             {{- end }}
-            {{- with .Values.env.scoreHintPenalty }}
+            {{- if ne (toString .Values.env.scoreHintPenalty) "" }}
             - name: SCORE_HINT_PENALTY
-              value: {{ . | quote }}
+              value: {{ .Values.env.scoreHintPenalty | quote }}
             {{- end }}
             {{- if .Values.flagsSecret.enabled }}
             - name: FLAGS_FILE

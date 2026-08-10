@@ -119,15 +119,24 @@ func (g *Grader) Points() PointsPolicy { return g.points.normalise() }
 // the caller — the api projections already filter solves to catalog membership
 // (excluding solves for since-removed challenges), so passing that same count
 // keeps score consistent with the displayed solved_count without duplicating
-// the catalog-membership filter here. Reveal counts are summed across all
-// challenges directly from the store (each hint counted once; RecordHintView is
+// the catalog-membership filter here.
+//
+// Reveal counts are summed ONLY over challenges that are still in the active
+// catalog (g.cat), symmetric with how the caller filters solvedCount. Without
+// this filter a stale hint_views row for a since-removed challenge (e.g. a
+// scenario reshuffle) would keep deducting the penalty forever, over-penalising
+// a user for a challenge they can no longer even see — an unfair asymmetry with
+// the catalog-filtered solve side. Each hint is counted once (RecordHintView is
 // idempotent per (user, challenge, hintIdx)).
 //
 // Pure over the store's persisted state: the score is fully reconstructible
 // after a restart from `solved` + `hint_views`, with no running total to lose.
 func (g *Grader) UserScore(user string, solvedCount int) int {
 	revealed := 0
-	for _, idxs := range g.store.HintViews(user) {
+	for cid, idxs := range g.store.HintViews(user) {
+		if _, ok := g.cat[cid]; !ok {
+			continue // stale reveal for a challenge no longer in the catalog
+		}
 		revealed += len(idxs)
 	}
 	return ComputeScore(g.points, solvedCount, revealed)

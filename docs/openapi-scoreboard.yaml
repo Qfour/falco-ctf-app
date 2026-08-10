@@ -355,11 +355,20 @@ components:
             properties:
               user: { type: string }
               solved: { type: integer }
+              score:
+                type: integer
+                description: >-
+                  Ranking metric (#40): base award per solve minus the per-hint
+                  reveal penalty, clamped at 0. Never negative.
               earliest:
                 type: string
                 description: RFC3339 timestamp of the user's first solve; "9999" sentinel if solved == 0.
               events: { type: integer }
-              rank: { type: integer }
+              rank:
+                type: integer
+                description: >-
+                  1-based position, ranked by score descending with the earliest
+                  first-solve time as the tiebreak for equal scores.
         challenges:
           type: array
           items:

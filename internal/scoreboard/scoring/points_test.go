@@ -95,6 +95,38 @@ func TestUserScore_DefaultPolicyWhenUnset(t *testing.T) {
 	}
 }
 
+// TestUserScore_IgnoresStaleHintViewsOutsideCatalog is the #40 R2 regression:
+// UserScore must sum hint reveals ONLY over challenges still in the active
+// catalog, symmetric with the caller's catalog-filtered solvedCount. A stale
+// hint_views row for a since-removed challenge (e.g. a scenario reshuffle) must
+// NOT keep deducting the penalty — otherwise a user is over-penalised for a
+// challenge they can no longer see. Verified at the score-value level.
+func TestUserScore_IgnoresStaleHintViewsOutsideCatalog(t *testing.T) {
+	f := newFakeStore()
+	f.hintViews = map[string]map[string][]int{
+		"alice": {
+			"01-trigger":  {1, 2}, // 2 reveals — IN catalog (counted)
+			"99-removed":  {1, 2}, // 2 reveals — NOT in catalog (must be ignored)
+			"88-scenario": {1},    // 1 reveal  — NOT in catalog (must be ignored)
+		},
+	}
+	g := scoring.New(testCatalog(), f, nil).
+		WithPoints(scoring.PointsPolicy{PerSolve: 100, HintPenalty: 10})
+
+	// Only the 2 in-catalog reveals count: 2 solves*100 - 2 hints*10 = 180.
+	// If the stale rows leaked in it would be 200 - 5*10 = 150 (over-penalised).
+	if got := g.UserScore("alice", 2); got != 180 {
+		t.Fatalf("alice score = %d, want 180 (stale out-of-catalog hint_views must not deduct)", got)
+	}
+
+	// Fail-closed sanity: a user whose ONLY reveals are for removed challenges
+	// loses nothing — the penalty side is fully catalog-gated.
+	f.hintViews["bob"] = map[string][]int{"99-removed": {1, 2, 3}}
+	if got := g.UserScore("bob", 1); got != 100 {
+		t.Fatalf("bob score = %d, want 100 (all reveals out-of-catalog → no penalty)", got)
+	}
+}
+
 // TestPoints_ReturnsNormalised proves the adapter-facing Points() never surfaces
 // a negative penalty/award to the UI (R1): a misconfigured negative policy is
 // floored to 0, matching the normalisation ComputeScore applies — so what the
