@@ -18,9 +18,17 @@ spec:
         app.kubernetes.io/name: scoreboard
         app.kubernetes.io/part-of: falco-ctf
     spec:
-      # scoreboard never calls the Kubernetes API. Disable token automount so a
-      # pod compromise cannot use the in-pod token to enumerate the cluster.
-      automountServiceAccountToken: false
+      serviceAccountName: scoreboard
+      # Token projection is conditional on the detect runner (minimal privilege):
+      #   * DETECT_RUNNER=k8s → the scoreboard drives the Batch API in-cluster
+      #     (rest.InClusterConfig) to create per-submission grader Jobs, so it
+      #     needs its SA token mounted. The platform binds a grader-namespace
+      #     scoped Role to this SA, so the token's blast radius is limited to
+      #     creating/watching/deleting Jobs+Secrets in the dedicated grader ns.
+      #   * off / local (default) → the scoreboard never calls the K8s API, so
+      #     the token is NOT mounted. A pod compromise gains no API identity —
+      #     the pre-#44 hardening (no automount) is preserved unchanged.
+      automountServiceAccountToken: {{ eq (toString .Values.env.detectRunner) "k8s" }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -68,6 +76,23 @@ spec:
             {{- if ne (toString .Values.env.scoreHintPenalty) "" }}
             - name: SCORE_HINT_PENALTY
               value: {{ .Values.env.scoreHintPenalty | quote }}
+            {{- end }}
+            {{- /* #44.1 detect-challenge grader wiring (cross-repo contract with
+                   platform detect-grader release). Surfaced only when set so the
+                   default (off) prod image renders identically to pre-#44. Key
+                   names MUST match platform helmfile releases/scoreboard values
+                   (detectRunner/detectGraderNamespace/detectGraderImage). */}}
+            {{- if ne (toString .Values.env.detectRunner) "" }}
+            - name: DETECT_RUNNER
+              value: {{ .Values.env.detectRunner | quote }}
+            {{- end }}
+            {{- if ne (toString .Values.env.detectGraderNamespace) "" }}
+            - name: DETECT_GRADER_NAMESPACE
+              value: {{ .Values.env.detectGraderNamespace | quote }}
+            {{- end }}
+            {{- if ne (toString .Values.env.detectGraderImage) "" }}
+            - name: DETECT_GRADER_IMAGE
+              value: {{ .Values.env.detectGraderImage | quote }}
             {{- end }}
             {{- if .Values.flagsSecret.enabled }}
             - name: FLAGS_FILE
