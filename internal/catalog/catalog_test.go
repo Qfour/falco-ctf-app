@@ -168,7 +168,8 @@ expectedRules: ["a"]`)
 }
 
 // TestLoad_RealChallenges verifies the production challenges/ tree parses
-// cleanly. Pins the CTF Company 10-mission set.
+// cleanly. Pins the CTF Company mission set (10 attack missions + the
+// 03-stealth-read-detect defender twin).
 func TestLoad_RealChallenges(t *testing.T) {
 	cat, err := catalog.Load("../../challenges")
 	if err != nil {
@@ -178,6 +179,7 @@ func TestLoad_RealChallenges(t *testing.T) {
 		"01-initial-recon",
 		"02-credential-files",
 		"03-stealth-read",
+		"03-stealth-read-detect",
 		"04-key-search",
 		"05-silent-search",
 		"06-web-rce-shell",

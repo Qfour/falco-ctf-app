@@ -49,6 +49,7 @@ type Handler struct {
 	order       []string
 	docsBaseURL string
 	sweeper     *scoring.Sweeper
+	detect      api.DetectConfig
 }
 
 type Option func(*Handler)
@@ -75,6 +76,15 @@ func WithOrder(order []string) Option { return func(h *Handler) { h.order = orde
 // mission's relative docsUrl (see api.JourneyConfig.DocsBaseURL). Empty = keep
 // the relative path.
 func WithDocsBaseURL(u string) Option { return func(h *Handler) { h.docsBaseURL = u } }
+
+// WithDetect supplies the detect-challenge grading config (runner + in-flight
+// cap). Omitted / nil runner = /submit-detect returns 503 (feature off, e.g.
+// local dev without falco). The runner is the port that shells out to Falco (a
+// local-exec docker runner for dev/colima, a K8s-Job runner for prod), so the
+// scoreboard image itself stays distroless and falco-free.
+func WithDetect(dc api.DetectConfig) Option {
+	return func(h *Handler) { h.detect = dc }
+}
 
 func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts ...Option) *Handler {
 	h := &Handler{
@@ -107,7 +117,7 @@ func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts .
 		Journeys:    h.journeys,
 		Order:       h.order,
 		DocsBaseURL: h.docsBaseURL,
-	}).Register(h.mux)
+	}, h.detect).Register(h.mux)
 	// The operator index page (GET /) is admin-gated in the app layer too
 	// (P18-1 defense-in-depth) using the same ADMIN_EMAILS rule the api handler
 	// enforces. The participant journey/me pages are served ungated as static
