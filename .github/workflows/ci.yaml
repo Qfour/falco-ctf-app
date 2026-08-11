@@ -7,10 +7,15 @@ name: CI
 #     aws-actions/configure-aws-credentials@v4 / anthropics/claude-code-action@v1
 #     (claude-review.yml)。これ以外を足すときは SHA pin するか conventions の例外表に追記。
 
+# Trigger は main への push と PR のみ (Issue #37)。
+#   v* タグ push は「GitHub Release 生成」だけが反応すべき事象で、image build/publish
+#   を伴わない (CI-free prod 恒久方針: images=手動 build/push, charts=local clone)。
+#   タグに CI を発火させると 6-image build+scan matrix + lint 群が無駄に走り、publish は
+#   どのみち ECR_REGISTRY placeholder で skip される。build/scan の網羅は main push + PR で維持。
+#   Release ノートの分類は .github/release.yml (gh release create --generate-notes が消費) が担う。
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
     branches: [main]
 
@@ -100,7 +105,7 @@ jobs:
   # ------------------------------------------------------------------
   # Image pipeline (build → scan → push) per service
   # Branch protection checks: "build (scoreboard)", "build (auth-policy)", etc.
-  # Push: main branch and v* tags only. PRs run build+scan only.
+  # Push: main branch only (v* タグは CI 非トリガ — Issue #37)。PRs run build+scan only.
   #
   # Publish gating (CI-free prod, 2026-06-15 決定): image push / chart publish
   # は vars.ECR_REGISTRY が実値のときのみ実行 (未設定 or PLACEHOLDER = skip)。
@@ -163,7 +168,7 @@ jobs:
 
   # ------------------------------------------------------------------
   # Publish Helm charts to ECR (OCI). Same git SHA as the images
-  # (Invariant I5). Push only on main / v* tags. Chart version is a SemVer
+  # (Invariant I5). Push only on main branch (v* タグは CI 非トリガ — Issue #37). Chart version is a SemVer
   # prerelease pinned to the SHA so prod can pin an immutable artifact.
   # ------------------------------------------------------------------
   # Skipped while vars.ECR_REGISTRY is unset/placeholder (CI-free prod) —
