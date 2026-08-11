@@ -10,6 +10,7 @@
 | scoreboard | **65532** | distroless/static-debian13:nonroot |
 | auth-policy | **65532** | distroless/static-debian13:nonroot |
 | collector | **65532** | distroless/static-debian13:nonroot |
+| detect-grader | **65532** | falco base に足した非 root grader ユーザ (I2 と揃える。replay は driverless で無権限) |
 | ttyd | **1000** | alpine adduser -D -u 1000 ttyd |
 | challenge | **root (0)** | CTF realism — ユーザが体験するシェル環境 |
 | docs | **101** | nginxinc/nginx-unprivileged (静的サイト配信) |
@@ -22,7 +23,7 @@
 | I2 | scoreboard / auth-policy / collector のコンテナ `runAsUser: 65532` |
 | I3 | scoreboard PVC `fsGroup: 65532` |
 | I4 | image tag は **git SHA** で push。`latest` で本番 deploy 禁止 |
-| I5 | 全 6 イメージ (scoreboard / auth-policy / collector / ttyd / challenge / docs) を **同一 git SHA** でビルド・push |
+| I5 | 全 7 イメージ (scoreboard / auth-policy / collector / ttyd / challenge / docs / detect-grader) を **同一 git SHA** でビルド・push。detect-grader は `type: detect` 課題の capture-replay 採点 (falco base + grade.sh)。#44 で CEO 批准済 (6→7) |
 | I6 | challenges/ は scoreboard と同一 repo に置く (falco-rule.yaml が scoreboard の一次消費) |
 | I7 | chart の `values.yaml` default は環境非依存。host/domain/registry は placeholder (`example.invalid` / `docker.io/falco-ctf`)。環境値は platform helmfile が供給 |
 | I8 | auth-policy `/check` は `X-Auth-Request-Email` を **prefix-exact** (`<username>@`) で照合。**唯一の例外**: email が `ADMIN_EMAILS` に含まれる場合は任意の workspace を許可 (運営の全 workspace アクセス)。それ以外で prefix 一致を緩めない |
@@ -39,6 +40,7 @@
 | ttyd | (single-stage) | `alpine:3.22` |
 | challenge | (single-stage) | `alpine:3.22` |
 | docs | `python:3.12-slim` (mkdocs-material + pandoc + weasyprint) | `nginxinc/nginx-unprivileged:1.30-alpine` |
+| detect-grader | (single-stage) | `falcosecurity/falco:0.43.1` (wolfi/apko base; digest pin。非 root 65532 ユーザを build 時に追加) |
 
 - alpine は最新 cycle ではなく「リリース後 ~1 年経過した supported cycle」を選ぶ
   (apk pin の安定性と EOL 余裕のバランス。2026-07 時点: 3.22)。
@@ -84,7 +86,9 @@ docker buildx imagetools inspect golang:1.26-alpine --format '{{.Manifest.MediaT
 #     distroless static-debian13:nonroot = scoreboard/auth-policy、
 #     alpine:3.22                     = images/{ttyd,challenge}、
 #     python:3.12-slim                = images/docs (build stage)、
-#     nginx-unprivileged:1.30-alpine  = images/docs (serve stage))
+#     nginx-unprivileged:1.30-alpine  = images/docs (serve stage)、
+#     falcosecurity/falco:0.43.1      = images/detect-grader (Falco 版 bump 時は
+#                                       digest 再解決 + capture 再録画をセットで。§5))
 
 # 3. 検証: 実ビルド + 鮮度 + テスト
 make build TAG=local      # digest が pull でき build が通ること
@@ -193,7 +197,8 @@ securityContext:
 
 | 接点 | 詳細 |
 |---|---|
-| Image naming (**正典**) | `${REGISTRY}/falco-ctf-{scoreboard,auth-policy,ttyd,challenge,docs}:<git-sha>`。registry の repo 名は **`falco-ctf/X` slash が正式**、`falco-ctf-X` dash も ingest 受理。tag は git SHA (I4/I5)。**この行が slash/dash 命名契約の単一定義** — 他所 (ingest フィルタ節・platform docs) はここを参照する |
+| Image naming (**正典**) | `${REGISTRY}/falco-ctf-{scoreboard,auth-policy,collector,ttyd,challenge,docs,detect-grader}:<git-sha>`。registry の repo 名は **`falco-ctf/X` slash が正式**、`falco-ctf-X` dash も ingest 受理。tag は git SHA (I4/I5, 全 7 イメージ同一 SHA)。**この行が slash/dash 命名契約の単一定義** — 他所 (ingest フィルタ節・platform docs) はここを参照する |
+| detect-grader Job (**正典**) | scoreboard は `DETECT_RUNNER=k8s` のとき per-submission Job を作る。**app が確定し platform が一致させる契約**: (1) namespace = `DETECT_GRADER_NAMESPACE` env (専用 grader ns。platform が作成)、(2) grader image = `DETECT_GRADER_IMAGE` env (digest-pinned `.../detect-grader@sha256:...`。platform helmfile が供給、chart に焼かない I7)、(3) scoreboard SA に **Job + Secret + Pod の RBAC** (下記動詞)、(4) grader ns に **deny-all NetworkPolicy** (replay は無ネットワーク)。Job/Secret/Pod は label `app.kubernetes.io/name=detect-grader`・`app.kubernetes.io/component=grader-job`・`falco-ctf/challenge=<id>` を持つ。Job/Secret 名 = `detect-<challengeId>-<nonce>` / `<jobname>-cond`。契約変更は両 repo 同時 PR |
 | Charts | `charts/{scoreboard,auth-policy,ctf-user,docs}` を platform helmfile が local=path / prod=OCI で参照 (CI publish は現状停止 → prod も local clone path。`project_ci_free_prod` 参照) |
 | Challenges path | `deploy-user.sh --challenges-dir` (ctf-user chart 同梱、当 repo `challenges/` を default 参照) |
 | Webhook payload | `POST /falco/events` は falcosidekick 標準形。フィールドキー変更は両 repo 同時 PR |
