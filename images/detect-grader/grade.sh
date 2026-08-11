@@ -108,7 +108,13 @@ replay() {
   # Count matching alert lines. `grep -c` exits 1 on zero matches (prints "0"),
   # which is a valid "0 fires" — capture the printed count and ignore grep's
   # exit so it does not clobber falco's exit code ($_rc, the infra signal).
-  _n="$(grep -c "\"rule\":\"${RULE_NAME}\"" "$_out" 2>/dev/null)" || true
+  # Tolerate an optional space after the colon (`"rule":"X"` and `"rule": "X"`)
+  # so this count stays IDENTICAL to internal/scoreboard/detect countFires
+  # regardless of how Falco's JSON encoder spaces the field — otherwise a
+  # space-emitting encoder would under-count benign FPs and mis-SOLVE
+  # (fail-closed correctness of the k8s grader). ERE `?` is a metacharacter but
+  # RULE_NAME is the fixed literal `participant_detect` (no regex metachars).
+  _n="$(grep -Ec '"rule": ?"'"${RULE_NAME}"'"' "$_out" 2>/dev/null)" || true
   printf '%s' "${_n:-0}"
   return "$_rc"
 }
