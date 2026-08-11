@@ -17,6 +17,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -101,6 +102,15 @@ type DetectConfig struct {
 // hard cap (rejected past it with 429, never queued) plus the per-IP submit
 // limiter keeps a flood from spawning unbounded work (design §3.3).
 const DefaultDetectInflightCap = 5
+
+// DetectGradeTimeout bounds a single detect grade end-to-end (compile gate +
+// both replays). It is the deadline the handler puts on the context handed to
+// SubmitDetect → DetectRunner, so a hung Falco invocation cannot occupy an
+// in-flight slot forever (design §3.3). 30s sits just above the K8s-Job's
+// activeDeadlineSeconds (~20s) so the Job's own deadline usually fires first;
+// this is the app-side backstop for the local/docker path and for a stuck
+// wait. On expiry the runner returns an infra error → 500 (fail-closed).
+const DetectGradeTimeout = 30 * time.Second
 
 func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *slog.Logger, now func() time.Time, adminEmails []string, jc JourneyConfig, dc DetectConfig) *Handler {
 	// /submit accepts a claimed user identity. Without per-IP throttling a
@@ -676,7 +686,15 @@ func (h *Handler) submitDetect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	outcome, err := h.grader.SubmitDetect(r.Context(), h.detectRunner, user, cid, condition)
+	// Bound the grade: a hung Falco invocation (docker/Job) must not hold an
+	// in-flight slot indefinitely (design §3.3 — the in-flight cap is the DoS
+	// control, and a wedged grade would leak a slot until the client disconnects).
+	// The deadline is derived from the server clock and propagated to the runner's
+	// every falco call via ctx; it sits just above the Job's activeDeadlineSeconds
+	// (~20s) so an infra timeout surfaces as a 500 (fail-closed), never a solve.
+	ctx, cancel := context.WithTimeout(r.Context(), DetectGradeTimeout)
+	defer cancel()
+	outcome, err := h.grader.SubmitDetect(ctx, h.detectRunner, user, cid, condition)
 	if err != nil {
 		// Fail closed: a runner infra error is a 500, never a silent solve.
 		h.logger.Error("grade detect", "err", err, "cid", cid, "user", user)
