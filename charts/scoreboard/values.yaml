@@ -28,6 +28,24 @@ env:
   # Empty = keep the relative path (local dev). Supplied by platform helmfile.
   docsBaseUrl: ""
 
+  # #44.1 detect-challenge grading (type: detect). The scoreboard image is
+  # distroless + falco-free, so grading is delegated to a runner:
+  #   * detectRunner=off (default) → detect submissions return 503 (the prod
+  #     image cannot run Falco in-process). Local dev may set "local".
+  #   * detectRunner=k8s → the scoreboard creates a per-submission Kubernetes
+  #     Job in the grader namespace (needs its SA token; the deployment mounts
+  #     the token only in this case). Requires the two keys below to be set.
+  # detectGraderNamespace = the dedicated grader ns the platform creates (Job +
+  # condition Secret live only there). MUST equal the platform detect-grader
+  # release namespace or the runner's strict authenticity check silently no-solves.
+  # detectGraderImage = digest-pinned grader image ref. Left EMPTY here (I7:
+  # env-specific registry/digest); the platform helmfile supplies the real
+  # ..../falco-ctf/detect-grader@sha256:<digest>. Key names match the platform
+  # helmfile keys (detectRunner/detectGraderNamespace/detectGraderImage).
+  detectRunner: ""
+  detectGraderNamespace: ""
+  detectGraderImage: ""
+
 persistence:
   size: 1Gi
   # local: local-path, prod (EKS): gp3. Unset → cluster default.
