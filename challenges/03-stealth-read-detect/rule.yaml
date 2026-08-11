@@ -1,0 +1,37 @@
+# 表示用ルール抜粋 (Falco 3.0.1 由来)。docs サイトが「背景」の後に描画する。
+# falco-rule.yaml (scoreboard metadata) とは別物。Falco を上げたら再抽出。
+#
+# この detect 課題で「改善対象」となる、Mission 03 で回避された既存ルール。
+# 参加者は下の判定 (fd.name startswith /etc = sensitive_files) がなぜ
+# /proc/self/root/etc/shadow に抜けられたかを踏まえ、取り逃さない condition を書く。
+- rule: Read sensitive file untrusted
+  desc: >
+    An attempt to read any sensitive file (e.g. files containing user/password/authentication
+    information). In modern containerized cloud infrastructures, accessing traditional Linux
+    sensitive files might be less relevant, yet it remains valuable for baseline detections.
+  condition: >
+    open_read
+    and sensitive_files
+    and proc_name_exists
+    and not proc.name in (user_mgmt_binaries, userexec_binaries, package_mgmt_binaries, ...)
+    and not user_known_read_sensitive_files_activities
+  output: Sensitive file opened for reading by non-trusted program | file=%fd.name process=%proc.name command=%proc.cmdline
+  priority: WARNING
+  tags: [maturity_stable, host, container, filesystem, mitre_credential_access, T1555]
+
+# 参考: sensitive_files マクロ (Falco 3.0.1) — path 文字列の「先頭」で判定する。
+# ここが /proc/self/root/etc/shadow に抜けられた穴。
+- macro: sensitive_files
+  condition: >
+    ((fd.name startswith /etc and fd.name in (sensitive_file_names)) or
+      fd.directory in (/etc/sudoers.d, /etc/pam.d))
+
+# あなたが書くのは condition: だけ。運営が下の skeleton に埋め込んで採点する
+# (rule 名 = participant_detect 固定・output/priority も固定)。使える語彙は
+# allowedMacros = [open_read] のみ。
+- rule: participant_detect
+  desc: participant-authored detection (03-stealth-read-detect)
+  condition: >
+    <あなたの condition — 例: open_read で読み取りを捕まえ、path の先頭ではなく実体で判定>
+  output: participant detect fired | file=%fd.name
+  priority: WARNING

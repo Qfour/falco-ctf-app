@@ -1,0 +1,41 @@
+challengeId: 03-stealth-read-detect
+type: detect
+# Detection-authoring twin of 03-stealth-read: the participant is the DEFENDER.
+# Mission 03 (evade) taught that Falco's "Read sensitive file untrusted" keys on
+# a path STRING (fd.name startswith /etc), so reaching /etc/shadow via
+# /proc/self/root/etc/shadow slips past it. Here the participant writes the
+# Falco condition: that WOULD have caught that evasion.
+#
+# Grading = capture replay (no live Falco, no flag). The submitted condition is
+# wrapped into the fixed rule below and replayed against two pre-recorded
+# captures: it MUST fire on the evasion capture and MUST NOT fire on the benign
+# capture. pass = (evasionFires > 0) AND (benignFires == 0).
+# See docs/detect-challenge-design.md and docs/detect-capture-recording.md.
+detect:
+  # Paths are RELATIVE to this challenge dir; resolved + validated once at load
+  # time (catalog.resolveCapture — the single source). Runners join them under a
+  # trusted base only. The .scap fixtures are produced by an operator per
+  # docs/detect-capture-recording.md and are NOT committed by this branch (see
+  # PR note: draft until captures + resolveCapture existence check land).
+  evasionCapture: detect/evasion.scap
+  benignCapture: detect/benign.scap
+  # Fixed rule the participant condition is wrapped into; grading counts fires of
+  # this rule name across the two captures.
+  ruleName: participant_detect
+  # Curated, minimal macro/list vocabulary the condition may reference (allow
+  # -list). falco -V fails closed on any name not in this set → invalid.
+  #
+  # Deliberately ONLY open_read: this is the syscall class (open/openat for read)
+  # the lesson is about. We intentionally do NOT expose `sensitive_files` — that
+  # stock macro is itself path-string based (fd.name startswith /etc) and is
+  # exactly what the /proc/self/root evasion defeats, so exposing it would let the
+  # participant reproduce the broken rule. Forcing them to reach past the path
+  # prefix (e.g. a basename / inode discriminator) IS the learning objective.
+  allowedMacros:
+    - open_read
+# ATT&CK mapping — canonical source for docs/Navigator layer (make gen-attack).
+# The detect twin teaches the DEFENSE of the same T1006 evasion 03 attacks.
+attack:
+  tactic: "Defense Evasion"
+  techniqueId: "T1006"
+  techniqueName: "Direct Volume Access"

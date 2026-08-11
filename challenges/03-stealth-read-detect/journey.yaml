@@ -1,0 +1,44 @@
+# Journey content for the /journey UI. Schema: internal/catalog/journey.go.
+# Participant-facing narrative only — never influences scoring.
+# NOTE: detect mission — the grader NEVER returns the reference condition, so
+# this file must not spell out the solution condition either (public repo, and
+# it would defeat the challenge). Hints stage: 気付き → 概要 → 解答は出さない.
+challengeId: 03-stealth-read-detect
+title: 検知を書く — path 迂回を捕まえる
+tagline: Mission 03 の /proc/self/root 回避を取り逃さない Falco condition を書け
+briefing: >-
+  今度はあなたが守る側だ。Mission 03 で攻撃者は "Read sensitive file untrusted" を
+  すり抜けて /etc/shadow を読んだ。SOC のあなたは、あの回避を取り逃さない検知を
+  書かなければならない。提出するのは Falco ルールの condition だけ (rule 名・output・
+  priority は運営が用意する)。あなたの condition は 2 本の録画に対して再生採点される:
+  攻撃 (回避) の録画では必ず発火し、正常業務の録画では一度も発火してはならない。
+  誤検知ゼロで回避だけを捕まえられたら solve だ。
+steps:
+  - label: すり抜けた検知が何を見ていたか思い出す
+    detail: >-
+      Mission 03 の "Read sensitive file untrusted" は fd.name (open に渡した path)
+      が /etc で始まるかで判定していた。攻撃者は /proc/self/root/etc/shadow という
+      /etc 始まりでない path で同じファイルに到達して抜けた。判定軸が path の
+      「先頭」だったことが穴だ。
+  - label: path の先頭に依存しない判別軸を選ぶ
+    detail: >-
+      同じ inode (同じファイル本体) に別 path で来ても捕まえられる条件を考える。
+      使える語彙は open_read だけ (sensitive_files はあえて渡していない — それ自体が
+      /etc 先頭マッチで、まさに今回抜けられた側だから)。open に渡された path 全体の
+      どこを見れば /etc 始まりでも /proc 経由でも同じ判定になるか。
+  - label: 誤検知ゼロを確認して提出
+    detail: >-
+      正常業務の録画 (benign) で 1 回でも発火したら false positive で不合格。
+      攻撃録画では発火し、benign では黙る condition に絞り込む。下の condition
+      入力欄に貼って Grade を押すと、攻撃/benign それぞれの発火回数が返る。
+  - label: 本番ではこれを自分で書かなくてよい (Sysdig)
+    detail: >-
+      あなたが今書いた「path 先頭に依存しない機密ファイル読取検知」と同等のカバレッジを、
+      Sysdig のマネージドルールは書かずに提供する。inode 迂回や /proc 経由の派生も
+      上流でメンテされ、Falco バージョンが上がっても追随する。OSS Falco では自分で
+      condition を保守する — その保守コストを肩代わりするのがマネージドルールだ。
+hints:
+  - "気付き: 抜けられた検知は path 文字列の『先頭』(/etc で始まるか) を見ていた。同じファイル本体には別の path でも到達できる — 先頭マッチはそこが穴だった。"
+  - "概要: open_read で読み取り syscall を捕まえたうえで、path の『先頭』ではなく『末尾/実体』を手掛かりにすれば、/etc 経由でも /proc 経由でも同じファイルを同じように判定できる。fd.name のどの部分文字列を見るか、あるいは path に依存しないフィールドがないかを考える。"
+  - "解答は出さない: grader は正解 condition を返さない。攻撃録画で発火・benign 録画で無発火になるまで、発火回数のフィードバックを見て自分で絞り込むこと。広く取りすぎると benign で誤検知して不合格になる。"
+docsUrl: /missions/03-stealth-read-detect/
