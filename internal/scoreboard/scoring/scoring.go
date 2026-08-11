@@ -266,6 +266,128 @@ func (g *Grader) RecordExfil(user, cid, flag string) (ExfilStatus, error) {
 	return ExfilRecorded, nil
 }
 
+// --- detect challenges ------------------------------------------------------
+
+// DetectRunner is the port through which the Grader replays a participant's
+// submitted Falco condition against a detect challenge's capture pair. The
+// scoring package NEVER shells out to Falco itself — an injected runner (local
+// -exec for dev/colima/CI, or a k8s-Job for prod) does, keeping scoring
+// falco-free and unit-testable with a fake runner (see scoring_test.go).
+//
+// Grade wraps `condition` into the challenge's fixed rule skeleton, runs the
+// `falco -V` compile gate, and — only if it compiles — replays the evasion and
+// benign captures, returning the fire counts. Contract:
+//
+//   - invalid=true  → the condition failed `falco -V` (compile error / undefined
+//     macro). The runner MUST NOT run any replay when invalid; the counts are
+//     meaningless and ignored by the Grader.
+//   - invalid=false → both replays ran; evasionFires/benignFires are the counts
+//     of the participant rule firing on each capture.
+//   - err != nil     → an infrastructure failure (Job/exec could not run,
+//     timeout, result-authenticity mismatch). The Grader surfaces it as a 500;
+//     it is NOT a grading verdict and never solves.
+//
+// cid identifies the detect challenge so the runner can locate its captures via
+// the catalog-resolved relative paths (the single-source paths from
+// catalog.Detect); the runner is the only component that turns those into a
+// concrete filesystem/mount location, and only ever by joining under a base it
+// controls.
+type DetectRunner interface {
+	Grade(ctx context.Context, cid, condition string) (evasionFires, benignFires int, invalid bool, err error)
+}
+
+// DetectStatus enumerates the outcome of a detect-challenge condition
+// submission. The handler maps each value to an HTTP response shape.
+type DetectStatus int
+
+const (
+	// DetectUnknownChallenge: cid is not in the catalog.
+	DetectUnknownChallenge DetectStatus = iota
+	// DetectNotDetectType: the challenge exists but is not a detect challenge.
+	DetectNotDetectType
+	// DetectInvalidCondition: `falco -V` rejected the condition (compile error /
+	// undefined macro). No replay ran.
+	DetectInvalidCondition
+	// DetectMissedEvasion: the condition compiled but did not fire on the evasion
+	// capture (evasionFires == 0).
+	DetectMissedEvasion
+	// DetectFalsePositive: the condition fired on the evasion capture but ALSO
+	// fired on the benign capture (benignFires > 0).
+	DetectFalsePositive
+	// DetectSolved: fired on the evasion capture and NOT on the benign capture;
+	// the solve was recorded (Newly reports whether it was the first time).
+	DetectSolved
+)
+
+// DetectOutcome is the full result of SubmitDetect. EvasionFires / BenignFires
+// are populated whenever a replay ran (every status except
+// DetectUnknownChallenge / DetectNotDetectType / DetectInvalidCondition, where
+// no replay produced counts) so the handler can surface pedagogic feedback
+// ("your rule fired 0× on the attack"). Newly is meaningful only for
+// DetectSolved.
+type DetectOutcome struct {
+	Status       DetectStatus
+	EvasionFires int
+	BenignFires  int
+	Newly        bool
+}
+
+// SubmitDetect evaluates a detect-challenge condition submission. Gates 1-2
+// (challenge exists / is detect type) are Grader-owned, mirroring SubmitEvade.
+// The compile gate + replay are delegated to the injected DetectRunner; the
+// Grader interprets the returned counts into a DetectStatus:
+//
+//  1. challenge exists (else DetectUnknownChallenge)
+//  2. challenge is detect type (else DetectNotDetectType)
+//  3. runner.Grade: `falco -V` compile gate runs FIRST — if invalid, no replay
+//     runs and the status is DetectInvalidCondition
+//  4. evasionFires == 0 → DetectMissedEvasion
+//  5. benignFires  > 0 → DetectFalsePositive
+//  6. else (evasionFires > 0 && benignFires == 0) → record the solve via the
+//     EXISTING store.MarkSolved (I1 single writer) → DetectSolved
+//
+// A runner infrastructure error (err != nil) is returned unrecorded so the
+// handler fails closed (500) and never solves. The verdict is a pure function
+// of (static capture pair, submitted condition) — deterministic and replay
+// -stable across scoreboard restarts, and it references no attacker-supplied
+// time (I1).
+func (g *Grader) SubmitDetect(ctx context.Context, runner DetectRunner, user, cid, condition string) (DetectOutcome, error) {
+	ch, ok := g.cat[cid]
+	if !ok {
+		return DetectOutcome{Status: DetectUnknownChallenge}, nil
+	}
+	if ch.Type != "detect" {
+		return DetectOutcome{Status: DetectNotDetectType}, nil
+	}
+
+	evasionFires, benignFires, invalid, err := runner.Grade(ctx, cid, condition)
+	if err != nil {
+		return DetectOutcome{}, err
+	}
+	if invalid {
+		// Compile gate rejected it: no replay ran, counts are meaningless.
+		return DetectOutcome{Status: DetectInvalidCondition}, nil
+	}
+	if evasionFires == 0 {
+		return DetectOutcome{Status: DetectMissedEvasion, EvasionFires: 0, BenignFires: benignFires}, nil
+	}
+	if benignFires > 0 {
+		return DetectOutcome{Status: DetectFalsePositive, EvasionFires: evasionFires, BenignFires: benignFires}, nil
+	}
+
+	at := g.now().UTC().Format(time.RFC3339Nano)
+	newly, err := g.store.MarkSolved(user, ch.ID, at)
+	if err != nil {
+		return DetectOutcome{}, err
+	}
+	return DetectOutcome{
+		Status:       DetectSolved,
+		EvasionFires: evasionFires,
+		BenignFires:  benignFires,
+		Newly:        newly,
+	}, nil
+}
+
 // SweepResult reports one auto-solve the sweeper performed on a tick. Only
 // (user, challenge) pairs newly solved on this tick are returned, so the caller
 // (the Sweeper loop) can bump the solve metric exactly once per solve — never

@@ -12,6 +12,8 @@ import (
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard"
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/api"
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/detect"
 	"github.com/Qfour/falco-ctf-app/internal/serverutil"
 	"github.com/Qfour/falco-ctf-app/internal/store"
 )
@@ -91,12 +93,35 @@ func main() {
 	defer st.Close()
 	logger.Info("store opened", "path", dbPath, "solved_loaded", st.SolvedCount())
 
+	// Detect-challenge grading (type: detect). The scoreboard image is distroless
+	// and falco-free (conventions), so grading is delegated to a DetectRunner that
+	// shells out to Falco elsewhere:
+	//   - DETECT_RUNNER=local  → LocalExec: `docker run <DETECT_FALCO_IMAGE>` against
+	//     captures on the CHALLENGES_DIR filesystem. For dev / colima / CI only
+	//     (needs a docker socket + the challenges dir mounted). NEVER prod.
+	//   - DETECT_RUNNER unset/off → feature off (POST /api/challenges/{cid}/submit
+	//     -detect returns 503). This is the default so the prod distroless image
+	//     does not attempt to shell out (no docker there).
+	// The prod K8s-Job runner (per-submission Job in a grader namespace) is wired
+	// separately once its client-go dependency + platform RBAC are ratified
+	// (design §3.4) — not enabled from here yet.
+	detectCfg := api.DetectConfig{}
+	switch serverutil.Env("DETECT_RUNNER", "off") {
+	case "local":
+		falcoImage := serverutil.Env("DETECT_FALCO_IMAGE", "falcosecurity/falco:0.43.1")
+		detectCfg.Runner = detect.NewLocalExec(cat, challengesDir, falcoImage)
+		logger.Info("detect runner enabled", "runner", "local", "falco_image", falcoImage)
+	default:
+		logger.Info("detect runner disabled", "hint", "set DETECT_RUNNER=local for dev/colima grading")
+	}
+
 	handler := scoreboard.NewHandler(cat, st, logger,
 		scoreboard.WithDBPath(dbPath),
 		scoreboard.WithAdminEmails(adminEmails),
 		scoreboard.WithJourneys(journeys),
 		scoreboard.WithOrder(order),
 		scoreboard.WithDocsBaseURL(docsBaseURL),
+		scoreboard.WithDetect(detectCfg),
 	)
 
 	// Auto-solve sweeper (P16): re-derives exfil-delivered-but-unsolved evade
