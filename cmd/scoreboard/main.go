@@ -95,24 +95,43 @@ func main() {
 
 	// Detect-challenge grading (type: detect). The scoreboard image is distroless
 	// and falco-free (conventions), so grading is delegated to a DetectRunner that
-	// shells out to Falco elsewhere:
+	// runs Falco elsewhere:
+	//   - DETECT_RUNNER=k8s    → K8sJob: a per-submission Kubernetes Job in a
+	//     dedicated grader namespace (prod). Uses the in-cluster ServiceAccount to
+	//     create/watch/delete Jobs; the result is accepted ONLY on a strict
+	//     namespace+name(nonce)+labels+succeeded match (never a pod-produced count).
+	//     Requires DETECT_GRADER_NAMESPACE + DETECT_GRADER_IMAGE (digest-pinned,
+	//     platform-supplied) and the grader RBAC/NetworkPolicy platform provisions
+	//     (design §3.1/§3.3/§3.4). Fails closed at boot if in-cluster config or
+	//     the required env is missing.
 	//   - DETECT_RUNNER=local  → LocalExec: `docker run <DETECT_FALCO_IMAGE>` against
 	//     captures on the CHALLENGES_DIR filesystem. For dev / colima / CI only
 	//     (needs a docker socket + the challenges dir mounted). NEVER prod.
 	//   - DETECT_RUNNER unset/off → feature off (POST /api/challenges/{cid}/submit
 	//     -detect returns 503). This is the default so the prod distroless image
-	//     does not attempt to shell out (no docker there).
-	// The prod K8s-Job runner (per-submission Job in a grader namespace) is wired
-	// separately once its client-go dependency + platform RBAC are ratified
-	// (design §3.4) — not enabled from here yet.
+	//     does not attempt to grade unless explicitly enabled.
 	detectCfg := api.DetectConfig{}
 	switch serverutil.Env("DETECT_RUNNER", "off") {
+	case "k8s":
+		ns := serverutil.Env("DETECT_GRADER_NAMESPACE", "")
+		image := serverutil.Env("DETECT_GRADER_IMAGE", "")
+		if ns == "" || image == "" {
+			logger.Error("detect runner k8s requires DETECT_GRADER_NAMESPACE and DETECT_GRADER_IMAGE", "namespace", ns, "image_set", image != "")
+			os.Exit(1)
+		}
+		jc, err := detect.NewInClusterJobClient()
+		if err != nil {
+			logger.Error("detect k8s job client init failed (in-cluster config required)", "err", err)
+			os.Exit(1)
+		}
+		detectCfg.Runner = detect.NewK8sJob(cat, ns, image, jc)
+		logger.Info("detect runner enabled", "runner", "k8s", "grader_namespace", ns, "grader_image", image)
 	case "local":
 		falcoImage := serverutil.Env("DETECT_FALCO_IMAGE", "falcosecurity/falco:0.43.1")
 		detectCfg.Runner = detect.NewLocalExec(cat, challengesDir, falcoImage)
 		logger.Info("detect runner enabled", "runner", "local", "falco_image", falcoImage)
 	default:
-		logger.Info("detect runner disabled", "hint", "set DETECT_RUNNER=local for dev/colima grading")
+		logger.Info("detect runner disabled", "hint", "set DETECT_RUNNER=k8s (prod) or =local (dev/colima)")
 	}
 
 	handler := scoreboard.NewHandler(cat, st, logger,

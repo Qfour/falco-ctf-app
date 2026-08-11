@@ -75,7 +75,8 @@ type JobSpec struct {
 	Labels                       map[string]string // expected label set (authenticity)
 	Image                        string            // digest-pinned grader image
 	ChallengeID                  string            // arg to the entrypoint
-	ConditionMountPath           string            // condition delivered via a file, never argv/env
+	ConditionText                string            // the UNTRUSTED participant condition; the adapter delivers it via a file mount, NEVER argv/env
+	ConditionMountPath           string            // path the condition file is mounted at, e.g. /input/condition
 	ActiveDeadlineSeconds        int64             // ~20s hard cap
 	BackoffLimit                 int32             // 0 — never retry a graded submission
 	TTLSecondsAfterFinished      int32             // GC the pod shortly after finish
@@ -142,6 +143,7 @@ func (k *K8sJob) Grade(ctx context.Context, cid, condition string) (evasionFires
 		Labels:                       labels,
 		Image:                        k.image,
 		ChallengeID:                  cid,
+		ConditionText:                condition,          // UNTRUSTED; adapter delivers via file mount, never argv/env
 		ConditionMountPath:           "/input/condition", // file, never argv/env
 		ActiveDeadlineSeconds:        20,
 		BackoffLimit:                 0,

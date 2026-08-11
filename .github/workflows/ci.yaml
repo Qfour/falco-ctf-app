@@ -147,6 +147,12 @@ jobs:
             context: .
             dockerfile: images/docs/Dockerfile
             scan-continue-on-error: false
+          # 7th image (I5): falco + capture-replay grader for `type: detect`.
+          # Adds a required check "build (detect-grader)" → branch-protection change.
+          - name: detect-grader
+            context: images/detect-grader
+            dockerfile: images/detect-grader/Dockerfile
+            scan-continue-on-error: false
     uses: Qfour/homelab-workflows/.github/workflows/image-pipeline.yaml@10583360d619601e225803d236a00d0fa014b1f8 # main as of 2026-05-12
     with:
       name: ${{ matrix.name }}

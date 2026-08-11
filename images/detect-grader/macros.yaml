@@ -1,0 +1,19 @@
+# Curated macro/list vocabulary for `type: detect` grading.
+#
+# SINGLE SOURCE ALIGNMENT: this file MUST stay identical to
+# detect.curatedMacros in internal/scoreboard/detect/detect.go. The LocalExec
+# runner emits only the macros a mission's detect.allowedMacros lists (from the
+# Go map); the k8s grader image bakes the full curated set here and the
+# entrypoint prepends it wholesale. `falco -V` fails closed on any reference to a
+# macro not defined, so an over-broad set here only widens the compile surface —
+# keep it minimal and in lockstep with the Go definitions. If you change a macro
+# here, change it there (and vice-versa), and re-record captures if semantics
+# shift.
+- macro: open_read
+  condition: (evt.type in (open,openat,openat2) and evt.is_open_read=true)
+- macro: spawned_process
+  condition: (evt.type in (execve,execveat) and evt.dir=<)
+- macro: sensitive_files
+  condition: (fd.name startswith /etc/shadow or fd.name startswith /etc/pam.d or fd.name startswith /etc/sudoers or fd.name in (/etc/passwd, /etc/gshadow) or fd.name startswith /root/.ssh or fd.name contains /.aws/credentials)
+- macro: private_key_or_password
+  condition: (fd.name endswith .pem or fd.name endswith .key or fd.name contains id_rsa or fd.name contains id_dsa or fd.name endswith /shadow)
