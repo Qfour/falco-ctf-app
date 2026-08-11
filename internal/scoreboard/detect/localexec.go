@@ -123,12 +123,23 @@ func (l *LocalExec) replay(ctx context.Context, rulesDir, capturesDir, captureRe
 	if err := os.WriteFile(filepath.Join(rulesDir, cfgName), []byte(cfg), 0o600); err != nil {
 		return 0, fmt.Errorf("detect: write replay cfg: %w", err)
 	}
-	stdout, _, err := l.runFalco(ctx, rulesDir, capturesDir,
+	stdout, code, err := l.runFalco(ctx, rulesDir, capturesDir,
 		"-c", "/rules/"+cfgName,
 		"-r", "/rules/participant.yaml",
 	)
 	if err != nil {
 		return 0, fmt.Errorf("detect: replay %s: %w", captureRel, err)
+	}
+	// Fail-closed: the compile gate (`falco -V`) has already passed, so a non-zero
+	// exit HERE is not an invalid condition — it is a replay infrastructure failure
+	// (corrupt/unreadable capture, OOM, driverless-replay error). We must NOT treat
+	// its (possibly 0) fire count as a verdict: a benign replay that crashes with 0
+	// fires would otherwise look like "no false positive" and could mis-solve an
+	// evasion-firing condition. Surface it as an infra error so the Grader returns
+	// a 500 and never credits a solve (design §3.3 fail-closed; regression-pinned
+	// in localexec_test.go).
+	if code != 0 {
+		return 0, fmt.Errorf("detect: replay %s: falco exited %d (post-compile replay failure)", captureRel, code)
 	}
 	return countFires(stdout, ruleName), nil
 }
@@ -160,11 +171,22 @@ func sanitize(s string) string {
 	return r.Replace(s)
 }
 
+// defaultGraderUID is the non-root UID the local grader container runs as.
+// 65532 = distroless nonroot, matching the scoreboard/auth-policy runtime user
+// (conventions I2) so the defense-in-depth posture is consistent across the app.
+// Driverless replay reads only the read-only /rules and /captures mounts and
+// writes nothing, so it needs no specific uid — any non-root uid suffices. If a
+// future grader image cannot run `falco -V`/replay as this uid, override it
+// rather than dropping back to root (see design note; keep it non-root).
+const defaultGraderUID = "65532:65532"
+
 // dockerFalcoRunner returns a falcoRunner that invokes the falcoImage via
 // `docker run`, mounting the rules dir at /rules and the captures dir at
-// /captures (both read-only). No network (--network none), no privilege — replay
-// is driverless. The container exit code is returned as exitCode so a `-V`
-// compile failure is distinguishable from an infra failure.
+// /captures (both read-only). Hardened defense-in-depth: no network
+// (--network none), read-only rootfs, all caps dropped, no-new-privileges, and
+// non-root --user (defaultGraderUID) — replay is driverless so it needs neither
+// root nor a kernel driver. The container exit code is returned as exitCode so a
+// `-V` compile failure is distinguishable from an infra failure.
 func dockerFalcoRunner(falcoImage string) falcoRunner {
 	return func(ctx context.Context, rulesDir, capturesDir string, args ...string) (string, int, error) {
 		dockerArgs := []string{
@@ -173,6 +195,7 @@ func dockerFalcoRunner(falcoImage string) falcoRunner {
 			"--read-only",
 			"--cap-drop", "ALL",
 			"--security-opt", "no-new-privileges",
+			"--user", defaultGraderUID,
 			"-v", rulesDir + ":/rules:ro",
 			"-v", capturesDir + ":/captures:ro",
 			falcoImage, "falco",

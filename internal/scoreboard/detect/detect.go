@@ -16,7 +16,11 @@
 //
 // Neither implementation lives in the scoring package: scoring depends only on
 // the scoring.DetectRunner interface, so the solve rules stay falco-free and
-// unit-testable (a fake runner drives scoring_test.go).
+// unit-testable with a fake runner (scoring/scoring_test.go), while this
+// package's own falco-adjacent logic is covered by localexec_test.go (Grade via
+// a fake falcoRunner: compile-fail → invalid, replay fire combinations →
+// status, and the post-compile replay fail-closed) and k8sjob_test.go
+// (acceptResult / jobName / sanitizeLabel).
 //
 // Safety model (see docs/detect-challenge-design.md §3-4 and the security-lead
 // threat model): the condition is UNTRUSTED. It is delivered to Falco via a

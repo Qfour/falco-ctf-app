@@ -14,12 +14,16 @@ import (
 // a dedicated grader namespace, waits for completion, and accepts the result
 // ONLY on a strict authenticity match (design §3.1/§3.3).
 //
-// This file owns the SECURITY-CRITICAL, client-go-free logic so it is unit
-// -testable today without pulling the (large) client-go dependency tree into
-// this public repo before the dep is ratified (VP/security-lead — see the report
-// and design §3.4). The actual apimachinery calls are behind the JobClient port;
-// a thin client-go adapter implements it once the dependency is approved. Nothing
-// here trusts a value produced INSIDE the grader pod:
+// STATUS (Phase 44.0): this is an UN-WIRED skeleton. It is NOT constructed
+// anywhere in production (main.go wires only LocalExec; NewK8sJob has no caller)
+// and there is no JobClient implementation yet — the client-go adapter and the
+// platform RBAC/NetworkPolicy land in Phase 44.1 (design §3.4, crosses the
+// app/platform boundary → routed through VP). What ships here is the client-go
+// -free authenticity/spec logic (jobName / sanitizeLabel / acceptResult /
+// expectedLabels / the JobSpec DoS-control fields), factored out so it is
+// review-able and unit-testable (see k8sjob_test.go) before the large client-go
+// dependency is pulled into this public repo. Nothing here trusts a value
+// produced INSIDE the grader pod:
 //
 //   - the Job NAME carries a random nonce (jobName) so a stale/forged Job cannot
 //     be mistaken for this submission's;
