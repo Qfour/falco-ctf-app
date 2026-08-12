@@ -1,6 +1,12 @@
 name: Checks
 
-# G5-2: 検査カバレッジ拡充 (advisory — 新規 required にしない)。
+# G5-2: 検査カバレッジ拡充 (advisory)。
+#
+# advisory の定義 (GITHUB-OPS.md G5 共通): branch protection の required 集合に
+# **意図的に登録しない**ことで非ブロック化する。`continue-on-error` は使わない —
+# 常時緑は finding を隠し「observed green が N 週続くまで required に足さない」という
+# 昇格の観測基準を壊すため。ここでは真の赤/緑をそのまま出す (advisory = non-required で
+# 実現し、常時 pass では実現しない)。
 #
 # ここに集約する PR トリガの静的検査 (既存 ci.yaml の required job には足さない):
 #   - actionlint     : workflow YAML の静的検査 + mutable action ref (P12 違反) 検出
@@ -29,6 +35,8 @@ jobs:
   # ------------------------------------------------------------------
   # actionlint — workflow YAML の静的検査。
   # mutable action ref (P12 違反) の混入も -shellcheck 併用の run ブロック検査で拾う。
+  # G5-3 で shellcheck と共に reusable workflow に factor 予定 → その際 context 名が
+  # 変わるため required 昇格は G5-3 後。actionlint version は platform と揃える (v1.7.12)。
   # ------------------------------------------------------------------
   actionlint:
     runs-on: ubuntu-latest
@@ -37,7 +45,7 @@ jobs:
       - name: install actionlint + shellcheck
         run: |
           set -euo pipefail
-          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
           sudo apt-get update
           sudo apt-get install -y shellcheck
           actionlint --version
@@ -59,8 +67,9 @@ jobs:
     container:
       image: golang:1.26-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2
     steps:
-      - name: install git (checkout 前提)
-        run: apk add --no-cache git
+      # govulncheck は go.mod 起点で module graph / source を解析するだけで git を要さない
+      # (gen-diff-check は git diff を使うため git 必須で対照的)。checkout は git 非在時に
+      # GitHub REST tarball へ fallback するので apk add git は不要。git 前提はこの job から落とす。
       - uses: actions/checkout@v4
       - name: install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
