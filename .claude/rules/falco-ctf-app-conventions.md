@@ -122,6 +122,13 @@ cycle 自体を上げる場合 (例: alpine 3.22→3.23) は tag も一緒に変
 - **この例外表は各リポの実 workflow に固有** (共通なのは pin ポリシーであって
   action 集合ではない。集合は各リポの `uses:` に従属する)。platform 表と件数/内容が
   一致する必要はない。
+- **G5-2 検査 job (`checks.yaml` / `freshness.yaml`) の方針**: 新規サードパーティ
+  action を増やさないため、静的検査ツールは action ではなく golang container 内で
+  `go install <module>@<version>` する (module version pin = reproducible。mutable な
+  git ref ではない)。現状 install するツール: `rhysd/actionlint@v1.7.7`・
+  `golang.org/x/vuln/cmd/govulncheck@v1.1.4`・`oapi-codegen/v2@v2.3.0`
+  (oapi は Dockerfile.gen と同 version)。使う `uses:` は上記例外表の
+  `actions/checkout@v4` のみ (新規 action ゼロ)。bump は手動レビューで実施。
 
 ## SecurityContext (コンテナレベル)
 

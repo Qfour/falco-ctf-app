@@ -1,0 +1,32 @@
+name: Freshness
+
+# G5-2: base image cycle の EOL 検知 (advisory)。
+# `make check-freshness` (scripts/check-freshness.sh) は endoflife.date への
+# network アクセスが必須ゆえ、PR 毎ではなく scheduled cron (weekly) で回す。
+# workflow_dispatch で手動 (イベント準備前など) にも起動できる。
+#
+# 意図: alpine / go / debian / nginx / python の cycle が EOL / EOL 90日前に
+# 入ったら CI で気づく (P8 の起因: alpine 3.20 EOL 見逃し)。
+# required にはしない — network 依存の外部データソースを merge ブロックに置かない。
+
+on:
+  schedule:
+    # 毎週月曜 06:00 UTC。
+    - cron: "0 6 * * 1"
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  # ------------------------------------------------------------------
+  # check-freshness — Dockerfile base image cycle の EOL チェック。
+  # python3 / git は ubuntu-latest に同梱。network (endoflife.date) 必須。
+  # ------------------------------------------------------------------
+  check-freshness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: check base image freshness
+        run: ./scripts/check-freshness.sh
