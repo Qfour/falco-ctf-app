@@ -14,6 +14,13 @@ on:
   pull_request:
     branches: [main]
 
+# G5-1: PR 連打での重複起動を止める (6-image build のコスト削減)。
+# cancel-in-progress は PR run のみ true。main push / v* タグの run は
+# release/build (image push・chart publish) を守るため途中キャンセルしない。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # ------------------------------------------------------------------
   # Go test (go vet + go test ./...)
