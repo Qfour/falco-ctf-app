@@ -103,6 +103,17 @@ ingress:
   # Let's Encrypt cert instead of riding the wildcard default-ssl-certificate.
   journeyAnnotations: {}
 
+# P20 node-tier pinning. Empty = no scheduling constraint (EKS / local render
+# unchanged). On the VM k3s substrate the platform vm-prod overlay supplies:
+#   nodeSelector: { ctf.falco/tier: server }
+#   tolerations:  [ { key: ctf.falco/fixed-only, operator: Exists, effect: NoSchedule } ]
+# so the (I1 state-pinned) scoreboard tolerates the server taint and lands on
+# the server tier. Key names MUST match platform's vm-prod values (nodeSelector
+# / tolerations). Scheduling only — does not touch securityContext (I2/I3) or
+# replicas/strategy (I1).
+nodeSelector: {}
+tolerations: []
+
 resources:
   requests: { cpu: 25m, memory: 64Mi }
   limits:   { cpu: 200m, memory: 256Mi }

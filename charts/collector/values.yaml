@@ -20,6 +20,13 @@ env:
   # Must resolve to the scoreboard ClusterIP:port (default Service port 80).
   scoreboardUrl: "http://scoreboard.scoreboard.svc:80"
 
+# P20 node-tier pinning (fixed service). Empty = no scheduling constraint.
+# vm-prod overlay supplies nodeSelector { ctf.falco/tier: server } + tolerations
+# [ { key: ctf.falco/fixed-only, operator: Exists, effect: NoSchedule } ].
+# Key names MUST match platform's vm-prod values. Scheduling only.
+nodeSelector: {}
+tolerations: []
+
 resources:
   requests: { cpu: 25m, memory: 32Mi }
   limits:   { cpu: 200m, memory: 128Mi }

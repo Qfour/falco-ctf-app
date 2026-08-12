@@ -13,6 +13,13 @@ resources:
   requests: { cpu: 10m, memory: 24Mi }
   limits:   { cpu: 200m, memory: 128Mi }
 
+# P20 node-tier pinning (fixed service). Empty = no scheduling constraint.
+# vm-prod overlay supplies nodeSelector { ctf.falco/tier: server } + tolerations
+# [ { key: ctf.falco/fixed-only, operator: Exists, effect: NoSchedule } ].
+# Key names MUST match platform's vm-prod values. Scheduling only.
+nodeSelector: {}
+tolerations: []
+
 ingress:
   enabled: true
   className: nginx

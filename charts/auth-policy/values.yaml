@@ -18,6 +18,14 @@ env:
 # Prod runs 2 replicas with zone spread (auth hot path). Local leaves false.
 highAvailability: false
 
+# P20 node-tier pinning (fixed service). Empty = no scheduling constraint.
+# vm-prod overlay supplies nodeSelector { ctf.falco/tier: server } + tolerations
+# [ { key: ctf.falco/fixed-only, operator: Exists, effect: NoSchedule } ].
+# Key names MUST match platform's vm-prod values. Scheduling only — orthogonal
+# to highAvailability's topologySpreadConstraints above.
+nodeSelector: {}
+tolerations: []
+
 resources:
   requests: { cpu: 25m, memory: 32Mi }
   limits:   { cpu: 200m, memory: 128Mi }

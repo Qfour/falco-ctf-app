@@ -22,6 +22,16 @@ spec:
         runAsGroup: 101
         seccompProfile:
           type: RuntimeDefault
+      {{- /* P20 node-tier pinning (fixed service). Empty defaults render nothing —
+             unset = identical to prior render. See values.yaml for the vm-prod keys. */}}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: docs
           image: {{ include "docs.image" . | quote }}

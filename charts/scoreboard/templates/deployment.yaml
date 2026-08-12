@@ -36,6 +36,22 @@ spec:
         fsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
+      {{- /*
+        P20 substrate generalisation: pin fixed services to a node tier. On the
+        VM k3s substrate the platform taints server nodes ctf.falco/fixed-only
+        :NoSchedule and labels them ctf.falco/tier=server; the vm-prod overlay
+        supplies nodeSelector + tolerations here so the (I1 state-pinned)
+        scoreboard lands on the server tier. Empty defaults render nothing —
+        unset = identical to prior render (no regression on EKS / local).
+      */}}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: scoreboard
           image: {{ include "scoreboard.image" . | quote }}
