@@ -1,0 +1,51 @@
+name: actionlint
+
+# G5-3: 再利用可能ワークフロー (reusable / workflow_call) — actionlint の単一ソース。
+#
+# 両リポで重複していた actionlint (workflow YAML lint + mutable action ref = P12 違反の
+# 機械検出) を公開 app リポの local reusable workflow に factor する。
+#   - app 自身は `uses: ./.github/workflows/actionlint.yaml` で呼ぶ (同一リポ相対パス)。
+#   - platform は `uses: Qfour/falco-ctf-app/.github/workflows/actionlint.yaml@<SHA>` で consume。
+#
+# install 方式の統一 (P12): actionlint は `go install ...@v1.7.12` (module version pin =
+# reproducible)。理由:
+#   1. 新規サードパーティ action を増やさない (G5-2 checks.yaml で確定した方針)。version 追随は
+#      module 版指定で手動レビュー下に置く。
+#   2. release バイナリ pin だと sha256 検証を別途足す必要がある (GITHUB-OPS.md G5 の
+#      platform 昇格条件)。module pin は go module proxy の checksum で再現性が担保される。
+# shellcheck を同梱する: actionlint は `run:` ブロックを PATH 上の shellcheck に流すため
+# (両リポで同一挙動。shellcheck は apt 配布 = shellcheck.yaml reusable と同一)。
+
+on:
+  workflow_call:
+    inputs:
+      actionlint-version:
+        description: "actionlint module version (go install ...@<version>)."
+        type: string
+        required: false
+        default: v1.7.12
+
+jobs:
+  # このジョブ名 (actionlint) が呼び出し側の check context 後半になる:
+  #   context 名 = "<caller job id> / actionlint"
+  actionlint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: install actionlint + shellcheck
+        env:
+          ACTIONLINT_VERSION: ${{ inputs.actionlint-version }}
+        run: |
+          set -euo pipefail
+          go install "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}"
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          "$(go env GOPATH)/bin/actionlint" --version
+          shellcheck --version
+      - name: actionlint (all workflows)
+        run: |
+          set -euo pipefail
+          # actionlint は run: ブロックを shellcheck に流す (PATH 上の shellcheck を使用)。
+          "$(go env GOPATH)/bin/actionlint" -color
