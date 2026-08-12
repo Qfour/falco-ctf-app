@@ -1,0 +1,110 @@
+name: Checks
+
+# G5-2: 検査カバレッジ拡充 (advisory — 新規 required にしない)。
+#
+# ここに集約する PR トリガの静的検査 (既存 ci.yaml の required job には足さない):
+#   - actionlint     : workflow YAML の静的検査 + mutable action ref (P12 違反) 検出
+#   - go-vulncheck   : go.sum 依存 / stdlib の既知脆弱性 (image CVE scan がカバーしない層)
+#   - gen-diff-check : make gen (oapi) / make tidy 後の git diff (spec↔code / 依存 drift)
+#
+# base image EOL 検知 (check-freshness) は network 必須ゆえ freshness.yaml の
+# scheduled cron に分離した (PR 毎には回さない)。
+#
+# サプライチェーン (P12): 新規サードパーティ action は増やさない。ツールは
+# golang container 内で `go install <module>@<version>` する (module version pin =
+# reproducible)。使う action は既存例外表の actions/checkout@v4 のみ。
+# 正典: .claude/rules/falco-ctf-app-conventions.md「CI workflow / action 参照の pin」。
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # ------------------------------------------------------------------
+  # actionlint — workflow YAML の静的検査。
+  # mutable action ref (P12 違反) の混入も -shellcheck 併用の run ブロック検査で拾う。
+  # ------------------------------------------------------------------
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install actionlint + shellcheck
+        run: |
+          set -euo pipefail
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          actionlint --version
+          shellcheck --version
+      - name: actionlint (all workflows)
+        run: |
+          set -euo pipefail
+          # actionlint は run: ブロックを shellcheck に流す (PATH 上の shellcheck を使用)。
+          "$(go env GOPATH)/bin/actionlint" -color
+
+  # ------------------------------------------------------------------
+  # go-vulncheck — go.sum 依存 / Go stdlib の既知脆弱性 (govulncheck)。
+  # image CVE scan (PR CI build job) がカバーしないソース依存レイヤ。
+  # CodeQL (G3) とは別レイヤ (CodeQL=コードパターン、govulncheck=既知 CVE の到達性)。
+  # golang container 内で実行 (Colima 同様 host repo は checkout でコンテナに入る)。
+  # ------------------------------------------------------------------
+  go-vulncheck:
+    runs-on: ubuntu-latest
+    container:
+      image: golang:1.26-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2
+    steps:
+      - name: install git (checkout 前提)
+        run: apk add --no-cache git
+      - uses: actions/checkout@v4
+      - name: install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+      - name: govulncheck ./...
+        run: |
+          set -eu
+          GOBIN="$(go env GOPATH)/bin"
+          export PATH="$PATH:$GOBIN"
+          govulncheck ./...
+
+  # ------------------------------------------------------------------
+  # gen-diff-check — 生成物 drift 検知。
+  #   1. oapi 生成 (make gen 相当) 後の内部 oapi types が spec と一致するか
+  #   2. go mod tidy (make tidy 相当) 後の go.mod / go.sum が最新か
+  # どちらも `git diff --exit-code` で drift を検出する (手書き/更新漏れを block)。
+  # golang container 内で完結させ、生成コマンドは Dockerfile.gen / Dockerfile.tidy と
+  # 同じツール version に揃える (oapi-codegen@v2.3.0)。
+  # ------------------------------------------------------------------
+  gen-diff-check:
+    runs-on: ubuntu-latest
+    container:
+      image: golang:1.26-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2
+    steps:
+      - name: install git (checkout / diff 前提)
+        run: apk add --no-cache git
+      - uses: actions/checkout@v4
+      - name: mark workspace safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: install oapi-codegen
+        run: go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.3.0
+      - name: regenerate oapi types (make gen)
+        run: |
+          set -eu
+          GOBIN="$(go env GOPATH)/bin"
+          export PATH="$PATH:$GOBIN"
+          mkdir -p internal/scoreboard/oapi internal/authpolicy/oapi
+          oapi-codegen --config api/cfg-scoreboard.yaml  docs/openapi-scoreboard.yaml
+          oapi-codegen --config api/cfg-auth-policy.yaml docs/openapi-auth-policy.yaml
+      - name: go mod tidy (make tidy)
+        run: go mod tidy
+      - name: fail on drift
+        run: |
+          set -eu
+          if ! git diff --exit-code -- internal/ go.mod go.sum; then
+            echo "::error::generated artifacts are stale. Run 'make gen' and 'make tidy', then commit." >&2
+            exit 1
+          fi
