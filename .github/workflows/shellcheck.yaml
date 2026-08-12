@@ -1,0 +1,117 @@
+name: shellcheck
+
+# G5-3: 再利用可能ワークフロー (reusable / workflow_call) — shellcheck の単一ソース。
+#
+# 両リポで重複していた shellcheck を公開 app リポの local reusable workflow に factor する。
+#   - app 自身は `uses: ./.github/workflows/shellcheck.yaml` で呼ぶ (同一リポは相対パス可・SHA pin 不要)。
+#   - platform は `uses: Qfour/falco-ctf-app/.github/workflows/shellcheck.yaml@<SHA>` で consume する
+#     (他リポ参照は P12 で SHA pin 必須)。
+#
+# 両リポの需要を 2 モードで吸収する (排他):
+#   - app 固有の 2-pass (plant-sh-mode: true):
+#       challenges/<id>/plant.sh を `-s sh` (shebang-less な postStart 断片)、
+#       それ以外は shebang 準拠でチェック。paths は使わない。
+#   - recursive + paths (plant-sh-mode: false, recursive: true, paths 非空):
+#       指定 path 配下の *.sh を find で再帰収集してチェック
+#       (例: platform "scripts .claude/hooks")。
+#   (削除した旧 direct モード = recursive:false + paths の直渡しは、どの consumer も
+#    使っていなかった死にコードなので G5-3 review-5x [R4-A1] で除去した。)
+#
+# 閾値 (-S warning) と、app の 2-pass の `sort -z | xargs -0 -r` (null 区切り安定ソート・
+# 空集合 no-op) は保存する。install は apt (shellcheck の apt 配布は両リポの既存方式・
+# `-S warning` 閾値挙動は version 間で安定。actionlint reusable も同一の apt shellcheck を使う)。
+
+on:
+  workflow_call:
+    inputs:
+      # true: app 2-pass モード (challenges/<id>/plant.sh を -s sh、他は shebang 準拠)。
+      #       このモードでは paths を渡してはならない (無効な組合せは弾く)。
+      # false (default): recursive+paths モード (recursive=true かつ paths 非空が必須)。
+      plant-sh-mode:
+        description: "app-specific 2-pass (plant.sh as -s sh, rest by shebang). Set false for recursive+paths mode."
+        type: boolean
+        required: false
+        default: false
+      # plant-sh-mode=false のとき使う。指定 path 配下の *.sh を find で再帰収集する
+      # (例: platform "scripts .claude/hooks")。空白区切り。plant-sh-mode=false では必須。
+      paths:
+        description: "Space-separated paths to recurse for *.sh (required when plant-sh-mode=false)."
+        type: string
+        required: false
+        default: ""
+      # plant-sh-mode=false のときの唯一の探索方式。paths 配下を find で *.sh 再帰収集
+      # (null 区切り安定ソート)。plant-sh-mode=false では true 必須 (旧 direct モードは廃止)。
+      recursive:
+        description: "Recurse into paths with find (required true when plant-sh-mode=false)."
+        type: boolean
+        required: false
+        default: false
+      # shellcheck の重大度閾値 (-S)。既定 warning は両リポの現行 gate。
+      severity:
+        description: "shellcheck -S severity threshold."
+        type: string
+        required: false
+        default: warning
+
+jobs:
+  # このジョブ名 (shellcheck) が呼び出し側で表示される check context の後半になる:
+  #   context 名 = "<caller job id> / shellcheck"
+  shellcheck:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      # 無効な入力組合せを silent-ignore せず即 fail させる ([R4-A2])。
+      # 有効: plant-sh-mode=true かつ paths 空  /  plant-sh-mode=false かつ recursive=true かつ paths 非空。
+      - name: validate inputs
+        env:
+          PLANT_SH_MODE: ${{ inputs.plant-sh-mode }}
+          RECURSIVE: ${{ inputs.recursive }}
+          PATHS: ${{ inputs.paths }}
+        run: |
+          set -euo pipefail
+          if [ "$PLANT_SH_MODE" = "true" ]; then
+            if [ -n "$PATHS" ]; then
+              echo "::error::plant-sh-mode=true does not accept 'paths' (2-pass discovers scripts itself)" >&2
+              exit 1
+            fi
+          else
+            if [ "$RECURSIVE" != "true" ]; then
+              echo "::error::plant-sh-mode=false requires recursive=true (direct mode was removed)" >&2
+              exit 1
+            fi
+            if [ -z "$PATHS" ]; then
+              echo "::error::plant-sh-mode=false requires non-empty 'paths'" >&2
+              exit 1
+            fi
+          fi
+      - name: install shellcheck
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          shellcheck --version
+      - name: shellcheck (2-pass / plant.sh aware)
+        if: ${{ inputs.plant-sh-mode }}
+        env:
+          SEV: ${{ inputs.severity }}
+        run: |
+          set -euo pipefail
+          # plant.sh fragments: no shebang by design → check as POSIX sh.
+          find challenges -name plant.sh -print0 \
+            | sort -z | xargs -0 -r shellcheck -S "$SEV" -s sh
+          # everything else: honour each script's own shebang.
+          find . -path ./.git -prune -o -name '*.sh' ! -name plant.sh -print0 \
+            | sort -z | xargs -0 -r shellcheck -S "$SEV"
+      - name: shellcheck (paths, recursive)
+        if: ${{ !inputs.plant-sh-mode && inputs.recursive }}
+        env:
+          PATHS: ${{ inputs.paths }}
+          SEV: ${{ inputs.severity }}
+        run: |
+          set -euo pipefail
+          # each path: recurse into *.sh (null-delimited stable sort; -r = no-op on empty).
+          # shellcheck disable=SC2086  # $PATHS は複数 path を意図的に word-split する
+          find $PATHS -name '*.sh' -print0 \
+            | sort -z | xargs -0 -r shellcheck -S "$SEV"

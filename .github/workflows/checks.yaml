@@ -33,28 +33,19 @@ concurrency:
 
 jobs:
   # ------------------------------------------------------------------
-  # actionlint — workflow YAML の静的検査。
-  # mutable action ref (P12 違反) の混入も -shellcheck 併用の run ブロック検査で拾う。
-  # G5-3 で shellcheck と共に reusable workflow に factor 予定 → その際 context 名が
-  # 変わるため required 昇格は G5-3 後。actionlint version は platform と揃える (v1.7.12)。
+  # actionlint — workflow YAML の静的検査 (mutable action ref = P12 違反も -shellcheck
+  # 併用の run ブロック検査で拾う)。
+  #
+  # G5-3: local reusable workflow (./.github/workflows/actionlint.yaml) を呼ぶ caller。
+  # 同一リポ参照ゆえ相対パス (SHA pin 不要)。platform は同 reusable を SHA pin で consume。
+  # install (go install ...@v1.7.12) と shellcheck 同梱は reusable 側で統一。
+  #
+  # actionlint は現状 非 required (G5-2)。reusable 化で context 名は
+  # "actionlint / actionlint" (caller job id / reusable job id) になる。
+  # required 昇格 (N 週 green 後) 時は setup-rulesets.sh の CHECKS にこの新名を足す。
   # ------------------------------------------------------------------
   actionlint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: install actionlint + shellcheck
-        run: |
-          set -euo pipefail
-          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
-          sudo apt-get update
-          sudo apt-get install -y shellcheck
-          actionlint --version
-          shellcheck --version
-      - name: actionlint (all workflows)
-        run: |
-          set -euo pipefail
-          # actionlint は run: ブロックを shellcheck に流す (PATH 上の shellcheck を使用)。
-          "$(go env GOPATH)/bin/actionlint" -color
+    uses: ./.github/workflows/actionlint.yaml
 
   # ------------------------------------------------------------------
   # go-vulncheck — go.sum 依存 / Go stdlib の既知脆弱性 (govulncheck)。

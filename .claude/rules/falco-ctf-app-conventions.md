@@ -103,6 +103,9 @@ cycle 自体を上げる場合 (例: alpine 3.22→3.23) は tag も一緒に変
   image-pipeline を `10583360...` (main as of 2026-05-12) に pin。
   bump 時は `gh api repos/Qfour/homelab-workflows/commits/main --jq .sha` で
   新 SHA を取り、動作確認の上で差し替える。
+- **platform が本リポの reusable workflow (`shellcheck.yaml` / `actionlint.yaml`) を
+  consume する際も同 SHA-pin ポリシーを適用する** (app が reusable の一次配布元。
+  `Qfour/falco-ctf-app/.github/workflows/<name>.yaml@<40-hex>` で pin し `@main` 禁止)。
 - **サードパーティ action の `@vN` メジャータグは許容例外**。SHA pin しない。
   根拠: (1) いずれも広く使われる信頼済み提供元 (GitHub 公式 `actions/*`・
   `azure/*`・`aws-actions/*`・`anthropics/*)、(2) メジャータグは提供元が
