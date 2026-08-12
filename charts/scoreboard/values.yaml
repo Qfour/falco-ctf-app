@@ -105,12 +105,19 @@ ingress:
 
 # P20 node-tier pinning. Empty = no scheduling constraint (EKS / local render
 # unchanged). On the VM k3s substrate the platform vm-prod overlay supplies:
-#   nodeSelector: { ctf.falco/tier: server }
-#   tolerations:  [ { key: ctf.falco/fixed-only, operator: Exists, effect: NoSchedule } ]
+#   nodeSelector:
+#     node-role.kubernetes.io/control-plane: "true"   # label k3s server auto-applies
+#   tolerations:
+#     - key: "ctf.falco/fixed-only"
+#       operator: "Equal"
+#       value: "true"
+#       effect: "NoSchedule"
 # so the (I1 state-pinned) scoreboard tolerates the server taint and lands on
-# the server tier. Key names MUST match platform's vm-prod values (nodeSelector
-# / tolerations). Scheduling only — does not touch securityContext (I2/I3) or
-# replicas/strategy (I1).
+# the k3s server node. Key names MUST match platform's vm-prod values
+# (nodeSelector / tolerations). NOTE: there is NO ctf.falco/tier label — the
+# platform cloud-init only taints the server; it selects via the built-in
+# control-plane label. Scheduling only — does not touch securityContext (I2/I3)
+# or replicas/strategy (I1).
 nodeSelector: {}
 tolerations: []
 
