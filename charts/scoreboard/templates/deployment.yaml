@@ -38,11 +38,21 @@ spec:
           type: RuntimeDefault
       {{- /*
         P20 substrate generalisation: pin fixed services to a node tier. On the
-        VM k3s substrate the platform taints server nodes ctf.falco/fixed-only
-        :NoSchedule and labels them ctf.falco/tier=server; the vm-prod overlay
-        supplies nodeSelector + tolerations here so the (I1 state-pinned)
-        scoreboard lands on the server tier. Empty defaults render nothing —
-        unset = identical to prior render (no regression on EKS / local).
+        VM k3s substrate the platform taints the server node
+        ctf.falco/fixed-only=true:NoSchedule (cloud-init taint only — there is
+        NO ctf.falco/tier label); scheduling selects via the built-in
+        node-role.kubernetes.io/control-plane label that k3s auto-applies. The
+        vm-prod overlay supplies nodeSelector + tolerations here, e.g.:
+          nodeSelector:
+            node-role.kubernetes.io/control-plane: "true"
+          tolerations:
+            - key: "ctf.falco/fixed-only"
+              operator: "Equal"
+              value: "true"
+              effect: "NoSchedule"
+        so the (I1 state-pinned) scoreboard tolerates the server taint and lands
+        on the k3s server node. Empty defaults render nothing — unset =
+        identical to prior render (no regression on EKS / local).
       */}}
       {{- with .Values.nodeSelector }}
       nodeSelector:
