@@ -1,7 +1,9 @@
 ---
 name: reviewer
 description: Pre-PR code review of the working branch's changes against main. Use before pushing or opening a PR. Different from the built-in /ultrareview — this one is local, focused, and project-aware (reads CLAUDE.md, AGENTS.md, .claude/rules/).
-model: opus
+# model tiering (ORGANIZATION.md): 非セキュリティの一般コードレビューは Sonnet 既定。
+# 深いセキュリティ観点は security-reviewer (opus) を使う。設計判断は architect (opus)。
+model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
 
