@@ -1,32 +1,22 @@
 name: Add issues to project
 
-# 新規 Issue を org/user Projects v2 ボードへ確実に追加する
-# (UI の Projects Auto-add が不安定・API 非公開で検証不能だったため、
-#  CEO 決定でバージョン管理下の Actions に切替。ボード = 両リポ共通の
-#  https://github.com/users/Qfour/projects/1)
+# 新規 Issue を org/user Projects v2 ボードへ確実に追加する caller。
+# 実体 (SHA pin + project-url + step ロジック) は reusable workflow に集約済み:
+#   .github/workflows/add-to-project-reusable.yml   (Issue #33 — 二重管理の解消)
+# platform 側 caller もこの reusable を Qfour/falco-ctf-app/...@<SHA> で参照する。
 #
-# サプライチェーン pin ポリシー (P12) — 正典: .claude/rules/falco-ctf-app-conventions.md
-#   actions/add-to-project は例外表 (actions/* / azure/* / aws-actions/* /
-#   anthropics/*) に含まれないため commit SHA pin する。
-#   bump 時は `gh api repos/actions/add-to-project/releases/latest` で新 tag →
-#   `gh api repos/actions/add-to-project/git/ref/tags/<tag>` で commit SHA を解決し、
-#   コメントの版表記も更新すること。
-#
-# secret ADD_TO_PROJECT_PAT は project スコープ付き classic/fine-grained PAT を
-# repo secret に登録して供給する (別作業・CEO)。このジョブは GITHUB_TOKEN を
-# 使わないため permissions は空。
+# 【重要】ADD_TO_PROJECT_PAT は依然この repo の repo-secret のまま。
+#   Qfour は user アカウントで org secret を持てないため、reusable 化しても
+#   PAT の二重登録は解消しない (単一ソース化は SHA/URL/ロジックのみ)。
+#   PAT の登録は別作業・CEO。
 
 on:
   issues:
     types: [opened, reopened, transferred]
 
-permissions: {}
-
 jobs:
   add-to-project:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/add-to-project@5afcf98fcd03f1c2f92c3c83f58ae24323cc57fd # v2.0.0
-        with:
-          project-url: https://github.com/users/Qfour/projects/1
-          github-token: ${{ secrets.ADD_TO_PROJECT_PAT }}
+    permissions: {}
+    uses: ./.github/workflows/add-to-project-reusable.yml
+    secrets:
+      ADD_TO_PROJECT_PAT: ${{ secrets.ADD_TO_PROJECT_PAT }}

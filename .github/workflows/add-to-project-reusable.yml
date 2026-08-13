@@ -1,0 +1,54 @@
+name: Add issues to project (reusable)
+
+# 新規 Issue を org/user Projects v2 ボードへ確実に追加する reusable workflow。
+# app / platform 両リポの caller (add-to-project.yml) から `workflow_call` で呼ぶ。
+#
+# 単一ソース化の狙い (Issue #33) — 二重管理の解消:
+#   ここに集約されるのは (1) actions/add-to-project の SHA pin、
+#   (2) ボード project-url、(3) step ロジックの 3 点。これらを両リポで
+#   別々に管理していた drift リスク (SHA bump / URL 変更で片方追随漏れ) を除去する。
+#
+# ボード = 両リポ共通の https://github.com/users/Qfour/projects/1
+#   (input のデフォルト値で単一ソース化。特殊な事情がなければ caller は上書きしない)
+#
+# 【重要】PAT は依然として各リポの repo-secret のまま:
+#   Qfour は user アカウント (org ではない) のため org secret を持てない。
+#   よって ADD_TO_PROJECT_PAT は app / platform それぞれの repo-secret に
+#   個別登録し、caller から `secrets:` 経由で渡す必要がある。
+#   → reusable 化しても PAT の二重登録は解消しない。
+#     単一ソース化されるのは SHA pin + project-url + step ロジックのみ。
+#
+# サプライチェーン pin ポリシー (P12) — 正典: .claude/rules/falco-ctf-app-conventions.md
+#   actions/add-to-project は例外表 (actions/* / azure/* / aws-actions/* /
+#   anthropics/*) に含まれないため commit SHA pin する。
+#   bump 時は `gh api repos/actions/add-to-project/releases/latest` で新 tag →
+#   `gh api repos/actions/add-to-project/git/ref/tags/<tag>` で commit SHA を解決し、
+#   コメントの版表記も更新すること。
+#   platform 側 caller はこの reusable を Qfour/falco-ctf-app/...@<commit-SHA>
+#   で参照する (`@main` mutable 参照は P12 で禁止 → commit SHA pin)。
+
+on:
+  workflow_call:
+    inputs:
+      project-url:
+        description: 追加先の Projects v2 ボード URL (既定 = 両リポ共通ボード)
+        required: false
+        type: string
+        default: https://github.com/users/Qfour/projects/1
+    secrets:
+      ADD_TO_PROJECT_PAT:
+        description: >-
+          project スコープ付き classic/fine-grained PAT。
+          各リポの repo-secret に登録し caller から渡す (org secret 不可のため)。
+        required: true
+
+jobs:
+  add-to-project:
+    runs-on: ubuntu-latest
+    # このジョブは GITHUB_TOKEN を使わない (PAT で認証) ため permissions は空。
+    permissions: {}
+    steps:
+      - uses: actions/add-to-project@5afcf98fcd03f1c2f92c3c83f58ae24323cc57fd # v2.0.0
+        with:
+          project-url: ${{ inputs.project-url }}
+          github-token: ${{ secrets.ADD_TO_PROJECT_PAT }}
