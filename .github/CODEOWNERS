@@ -1,0 +1,48 @@
+# CODEOWNERS — falco-ctf-app (public)
+#
+# 目的: パス → 責任 Lead の「文書化」+ 将来の人間協力者向け布石。
+#
+# ⚠️ 本組織は CEO 1 名 + AI エージェント (Lead) 運用のため、GitHub の CODEOWNERS
+#    自動レビュー request は **現状不活性** (機能させていない)。ブランチ ruleset 側で
+#    「require code owner review」は有効化しない (CEO の自 PR がロックされるため)。
+#    レビューの実体は `/review-5x` + VP 査定 (ORGANIZATION.md / GITHUB-OPS.md 参照)。
+#
+# owner に置く `@Qfour` は repo に write 権を持つ実アカウント。各ブロックのコメントで
+# 担当 Lead を明示する (担当境界の正典は workspace ORGANIZATION.md の Lead 表)。
+
+# ── 既定 ───────────────────────────────────────────────────────────────
+*                               @Qfour
+
+# ── app-lead 担当: Go サービス / charts / images / build / CI ──────────
+# (auth / ingest / Dockerfile / secrets 系は下の security-lead ブロックで上書き)
+/cmd/                           @Qfour
+/internal/                      @Qfour
+/charts/                        @Qfour
+/images/                        @Qfour
+/Dockerfile.gen                 @Qfour
+/Dockerfile.test                @Qfour
+/Dockerfile.tidy                @Qfour
+/Makefile                       @Qfour
+/go.mod                         @Qfour
+/go.sum                         @Qfour
+/api/                           @Qfour
+/scripts/                       @Qfour
+/.github/workflows/             @Qfour
+
+# ── security-lead 担当: auth 境界 / ingest / Dockerfile / secrets ───────
+# 認証・照合ロジック・イベント取り込み・コンテナビルドはセキュリティ境界。
+# app-lead が実装し、security-lead レビューを必ず通す (最後にマッチした行が勝つ)。
+/auth-policy/                   @Qfour
+/internal/authpolicy/           @Qfour
+/internal/scoreboard/ingest/    @Qfour
+/scoreboard/Dockerfile          @Qfour
+/auth-policy/Dockerfile         @Qfour
+/collector/Dockerfile           @Qfour
+/images/challenge/Dockerfile    @Qfour
+/images/docs/Dockerfile         @Qfour
+/images/ttyd/Dockerfile         @Qfour
+
+# ── content-lead 担当: 課題 / シナリオ / 参加者ドキュメントサイト ───────
+/challenges/                    @Qfour
+/scenarios/                     @Qfour
+/docs-site/                     @Qfour
