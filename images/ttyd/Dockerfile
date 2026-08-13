@@ -13,7 +13,7 @@ RUN apk add --no-cache \
         "ttyd=1.7.7-r0" \
         "bash=5.2.37-r0" \
         "ca-certificates=20260611-r0" \
-        "curl=8.14.1-r2" \
+        "curl=8.14.1-r3" \
         "tini=0.19.0-r3" \
  && ARCH="$(uname -m)" \
  && case "${ARCH}" in \
