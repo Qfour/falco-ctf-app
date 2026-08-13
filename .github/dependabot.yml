@@ -1,0 +1,36 @@
+# Dependabot — G3 (依存 & セキュリティ衛生)
+# 依存更新を自動 PR 化する。すべての PR に "dependencies" ラベル (labels.yml で定義済) を付与し、
+# minor+patch をグループ化して PR ノイズを削減する (major は個別 PR で人間レビューに乗せる)。
+# secret scanning / push protection は GitHub 側設定であり、ここでは扱わない。
+version: 2
+updates:
+  # GitHub Actions (.github/workflows/ 配下 (.yml/.yaml 両方) の action を追随)
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+    open-pull-requests-limit: 5
+    groups:
+      # minor+patch をまとめる。major は個別 PR で人間レビューに乗せる
+      # (gomod グループおよび platform 側と対称化)
+      github-actions-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Go modules (go.mod は repo root のみ = directory "/")
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+    open-pull-requests-limit: 5
+    groups:
+      # minor+patch をまとめる。major は個別 PR で人間レビューに乗せる
+      gomod-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
