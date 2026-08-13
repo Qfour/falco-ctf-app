@@ -1,0 +1,75 @@
+name: 🧪 リハーサル改善点 / Rehearsal finding
+description: リハーサル (または運用) で観測した改善点を起票する
+title: "[rehearsal] "
+labels: ["status:triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > ⚠️ **公開リポです。** シークレット・参加者情報・本番フラグ (`FALCO{...}` 実値)・
+        > AWS アカウント ID・kubeconfig・トークンを本文やログに **書かないでください**。
+        > 該当情報が必要な議論は非公開チャネルで行ってください。
+        >
+        > セキュリティ上の問題は Issue にせず、下の「セキュリティ報告」導線を使ってください。
+        >
+        > **triage で type / priority / area / Milestone を手動付与します。** disposition:
+        > 修正したら **close as "completed"** (`Closes #`)、見送りは open + `status:deferred`
+        > (Target Version=将来版)、対応しないと決めたら **close as "not planned"** +
+        > `status:wontfix` + **理由コメント必須**。
+  - type: textarea
+    id: observed
+    attributes:
+      label: 現象 (リハーサルで観測したこと)
+      description: リハーサル中に実際に起きたこと・気づいたことを具体的に。
+      placeholder: "例: スコアボードの Journey 画面で submit 後にフィードバックが消える…"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待した挙動
+      description: どう動く・どうなるべきだったか。
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: 影響エリア
+      description: 主に関係する領域を1つ選択。
+      options:
+        - scoreboard
+        - auth-policy
+        - journey-ui
+        - challenges
+        - deploy
+        - docs-site
+        - その他
+    validations:
+      required: true
+  - type: input
+    id: rehearsal
+    attributes:
+      label: どのリハーサル
+      description: 観測したリハーサルの回を記入。
+      placeholder: "例: 2026-08 rehearsal"
+    validations:
+      required: true
+  - type: textarea
+    id: recommendation
+    attributes:
+      label: 推奨対応
+      description: 直すならどう直すか・代替案など (任意・triage で見直されます)。
+    validations:
+      required: false
+  - type: dropdown
+    id: priority
+    attributes:
+      label: 優先度
+      description: 起票者の体感優先度 (triage で見直されます)。
+      options:
+        - P0 — イベント進行が止まる / 即対応
+        - P1 — 次リリースに入れたい
+        - P2 — あると良い
+        - P3 — いつか
+    validations:
+      required: true
