@@ -64,23 +64,82 @@ type ScoreStore interface {
 	// -flag gates before solving (see Sweep). Kept on the same port so the
 	// concrete *store.Store satisfies it and tests can drive a fake queue.
 	PendingExfilSolves() []store.ExfilReceipt
+	// HintViews returns, for `user`, the set of self-revealed hint indices per
+	// challenge (challenge -> 1-based indices). The Grader sums the reveal count
+	// across challenges to apply the per-hint score penalty (#40). Kept on the
+	// same port so *store.Store satisfies it and tests drive a fake reveal set.
+	HintViews(user string) map[string][]int
 }
 
-// Grader is the scoring domain service. It owns the catalog (challenge rules)
-// and the clock, and is the only component that calls MarkSolved.
+// Grader is the scoring domain service. It owns the catalog (challenge rules),
+// the clock, and the points policy, and is the only component that calls
+// MarkSolved. It is also the single owner of the points arithmetic (#40): the
+// api handler asks it for a user's score rather than computing it inline (#39
+// direction — no domain calculation in the handlers).
 type Grader struct {
-	cat   catalog.Catalog
-	store ScoreStore
-	now   func() time.Time
+	cat    catalog.Catalog
+	store  ScoreStore
+	now    func() time.Time
+	points PointsPolicy
 }
 
 // New builds a Grader. `now` is injected (WithNow pattern) so tests drive a
-// deterministic clock; production wires time.Now.
+// deterministic clock; production wires time.Now. The points policy defaults to
+// the placeholder DefaultPointsPolicy; production overrides it via WithPoints
+// from env (cmd/scoreboard).
 func New(cat catalog.Catalog, store ScoreStore, now func() time.Time) *Grader {
 	if now == nil {
 		now = time.Now
 	}
-	return &Grader{cat: cat, store: store, now: now}
+	return &Grader{cat: cat, store: store, now: now, points: DefaultPointsPolicy()}
+}
+
+// WithPoints overrides the Grader's points policy (base award per solve +
+// per-hint penalty). Returns the same *Grader for chaining at wiring time.
+// Passing the zero policy is honoured verbatim (0 award / 0 penalty) — callers
+// that want the placeholder defaults simply do not call WithPoints.
+func (g *Grader) WithPoints(p PointsPolicy) *Grader {
+	g.points = p
+	return g
+}
+
+// Points returns the Grader's active points policy so an adapter can surface
+// the per-hint penalty to the UI (e.g. "opening this hint costs N points")
+// without re-deriving or hard-coding the value on the handler side.
+//
+// The policy is returned NORMALISED (R1): a misconfigured negative penalty /
+// award is floored to 0, so the UI can never show a negative "costs -N points"
+// figure — the same normalisation ComputeScore applies before the arithmetic,
+// so what the UI advertises and what the score subtracts always agree.
+func (g *Grader) Points() PointsPolicy { return g.points.normalise() }
+
+// UserScore computes `user`'s current score: the base award per solved
+// challenge minus the flat per-hint penalty for every hint the user
+// self-revealed, clamped at 0 (see ComputeScore). `solvedCount` is supplied by
+// the caller — the api projections already filter solves to catalog membership
+// (excluding solves for since-removed challenges), so passing that same count
+// keeps score consistent with the displayed solved_count without duplicating
+// the catalog-membership filter here.
+//
+// Reveal counts are summed ONLY over challenges that are still in the active
+// catalog (g.cat), symmetric with how the caller filters solvedCount. Without
+// this filter a stale hint_views row for a since-removed challenge (e.g. a
+// scenario reshuffle) would keep deducting the penalty forever, over-penalising
+// a user for a challenge they can no longer even see — an unfair asymmetry with
+// the catalog-filtered solve side. Each hint is counted once (RecordHintView is
+// idempotent per (user, challenge, hintIdx)).
+//
+// Pure over the store's persisted state: the score is fully reconstructible
+// after a restart from `solved` + `hint_views`, with no running total to lose.
+func (g *Grader) UserScore(user string, solvedCount int) int {
+	revealed := 0
+	for cid, idxs := range g.store.HintViews(user) {
+		if _, ok := g.cat[cid]; !ok {
+			continue // stale reveal for a challenge no longer in the catalog
+		}
+		revealed += len(idxs)
+	}
+	return ComputeScore(g.points, solvedCount, revealed)
 }
 
 // TriggerResult reports, per challenge, whether a Falco rule fire solved it.

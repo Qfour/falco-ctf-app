@@ -27,6 +27,19 @@ env:
   # https://docs.<suffix> (no trailing slash required — normalised either way).
   # Empty = keep the relative path (local dev). Supplied by platform helmfile.
   docsBaseUrl: ""
+  # Points policy (#40 self-service hints with a leaderboard-affecting score).
+  # SCORE_POINTS_PER_SOLVE = base award per solved challenge;
+  # SCORE_HINT_PENALTY = points forfeited per self-revealed Journey hint.
+  # Both are event-tuning knobs (content-lead / CEO decision).
+  #   Empty string ("") = env omitted → the code placeholder defaults (100 / 10).
+  #   0 (or "0")        = env emitted as "0" → the value is honoured verbatim
+  #                       (e.g. scoreHintPenalty: 0 for a hints-free event).
+  # The template gates on `ne (toString ...) ""` precisely so an integer 0 is NOT
+  # dropped as falsy (a `with` block would). A negative penalty is floored to 0
+  # inside the scoring layer (fail-closed: a hint reveal can never raise a score).
+  # Real per-event values are supplied by the platform helmfile.
+  scorePointsPerSolve: ""
+  scoreHintPenalty: ""
 
 persistence:
   size: 1Gi

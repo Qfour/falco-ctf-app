@@ -221,8 +221,9 @@
       <thead><tr>
         <th style="width:60px">Rank</th>
         <th>Participant</th>
+        <th style="text-align:right">Score</th>
         <th>Solved</th>
-        <th style="width:34%">Progress</th>
+        <th style="width:30%">Progress</th>
       </tr></thead>
       <tbody id="lb-body"></tbody>
     </table>
@@ -271,8 +272,9 @@
         <thead><tr>
           <th style="width:60px">Rank</th>
           <th>Participant</th>
+          <th style="text-align:right">Score</th>
           <th>Solved</th>
-          <th style="width:34%">Progress</th>
+          <th style="width:30%">Progress</th>
         </tr></thead>
         <tbody id="result-body"></tbody>
       </table>
@@ -336,14 +338,17 @@
     document.getElementById('lb-meta').textContent = totalUsers + ' participants';
     const lb = document.getElementById('lb-body');
     if (d.leaderboard.length === 0) {
-      lb.innerHTML = '<tr><td colspan="4" class="empty"><span class="icon">∅</span>No participants yet — deploy a workspace to begin</td></tr>';
+      lb.innerHTML = '<tr><td colspan="5" class="empty"><span class="icon">∅</span>No participants yet — deploy a workspace to begin</td></tr>';
     } else {
       lb.innerHTML = d.leaderboard.map(p => {
         const ranked = p.solved > 0;
         const rankCls = ranked && p.rank <= 3 ? 'rank-' + p.rank : '';
+        // Score is the ranking metric (#40); Solved stays as the progress count.
+        const score = (p.score ?? 0);
         return `<tr>
           <td><span class="rank ${rankCls}">${ranked ? '#' + p.rank : '-'}</span></td>
           <td><span class="user-cell">${esc(p.display_name || p.user)}<button class="name-edit" data-user="${esc(p.user)}" title="Rename on scoreboard (admin)">✎</button></span></td>
+          <td style="text-align:right"><span class="score-cell"><b>${score}</b></span></td>
           <td><span class="score-cell">${p.solved}<span class="total">/${totalChal}</span></span></td>
           <td><div class="progress">${segs(p.solved, totalChal)}</div></td>
         </tr>`;
@@ -448,20 +453,21 @@
         return `<div class="pod pod-${p.rank}"><div class="crown"></div>
           <div class="medal display">${medal}</div>
           <div class="pod-name">${esc(p.display_name || p.user)}</div>
-          <div class="pod-score"><b>${p.solved}</b> / ${totalChal} missions</div>
+          <div class="pod-score"><b>${p.score ?? 0}</b> pts · ${p.solved} / ${totalChal} missions</div>
         </div>`;
       }).join('');
     }
     document.getElementById('result-meta').textContent = lb.length + ' participants';
     const body = document.getElementById('result-body');
     body.innerHTML = lb.length === 0
-      ? '<tr><td colspan="4" class="empty"><span class="icon">∅</span>No participants</td></tr>'
+      ? '<tr><td colspan="5" class="empty"><span class="icon">∅</span>No participants</td></tr>'
       : lb.map(p => {
           const ranked = p.solved > 0;
           const rankCls = ranked && p.rank <= 3 ? 'rank-' + p.rank : '';
           return `<tr>
             <td><span class="rank ${rankCls}">${ranked ? '#' + p.rank : '-'}</span></td>
             <td><span class="user-cell">${esc(p.display_name || p.user)}</span></td>
+            <td style="text-align:right"><span class="score-cell"><b>${p.score ?? 0}</b></span></td>
             <td><span class="score-cell">${p.solved}<span class="total">/${totalChal}</span></span></td>
             <td><div class="progress">${segs(p.solved, totalChal)}</div></td>
           </tr>`;
@@ -551,11 +557,11 @@
   const DEMO = {
     stats: { users: 5, challenges: 10, solves: 17, events: 1240 },
     leaderboard: [
-      { rank: 1, user: 'user3', display_name: 'shadowfox', solved: 7, events: 412 },
-      { rank: 2, user: 'user1', display_name: 'n0va', solved: 5, events: 318 },
-      { rank: 3, user: 'user7', display_name: 'kernelpanic', solved: 3, events: 196 },
-      { rank: 0, user: 'user2', display_name: 'user2', solved: 0, events: 22 },
-      { rank: 0, user: 'user5', display_name: 'rookie', solved: 0, events: 4 },
+      { rank: 1, user: 'user3', display_name: 'shadowfox', score: 680, solved: 7, events: 412 },
+      { rank: 2, user: 'user1', display_name: 'n0va', score: 470, solved: 5, events: 318 },
+      { rank: 3, user: 'user7', display_name: 'kernelpanic', score: 270, solved: 3, events: 196 },
+      { rank: 0, user: 'user2', display_name: 'user2', score: 0, solved: 0, events: 22 },
+      { rank: 0, user: 'user5', display_name: 'rookie', score: 0, solved: 0, events: 4 },
     ],
     challenges: [
       { id: '01-initial-recon', type: 'trigger', expectedRules: ['Contact K8S API Server From Container'], forbiddenRules: [], solved_count: 5, first_solver: 'shadowfox', solver_details: [] },

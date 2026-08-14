@@ -1081,6 +1081,11 @@ func (h *Handler) userMe(w http.ResponseWriter, r *http.Request) {
 		displayName = n
 	}
 
+	// Score (#40) is the Grader's arithmetic — the handler only projects it. We
+	// pass the catalog-filtered solved count (the same value shown as
+	// solved_count) so score and solved_count are derived from one number; the
+	// Grader adds the per-hint reveal penalty from the store.
+	score := h.grader.UserScore(user, len(solved))
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"user":              user,
 		"display_name":      displayName,
@@ -1090,6 +1095,8 @@ func (h *Handler) userMe(w http.ResponseWriter, r *http.Request) {
 		"next_unsolved":     nextUnsolved,
 		"recent_rule_fires": fires,
 		"events":            snap.EventsPerUser[user],
+		"score":             score,
+		"hint_penalty":      h.grader.Points().HintPenalty,
 		"now":               now.UTC().Format(time.RFC3339Nano),
 	})
 }
@@ -1203,6 +1210,9 @@ func (h *Handler) journey(w http.ResponseWriter, r *http.Request) {
 		currentJSON = current
 	}
 
+	// Score (#40): the Grader's arithmetic; the handler only projects it. Uses
+	// the catalog-filtered solved count so score and solved_count agree.
+	score := h.grader.UserScore(user, len(solvedSet))
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"user":         user,
 		"display_name": displayName,
@@ -1211,6 +1221,8 @@ func (h *Handler) journey(w http.ResponseWriter, r *http.Request) {
 		"current":      currentJSON,
 		"missions":     missions,
 		"detail":       detail,
+		"score":        score,
+		"hint_penalty": h.grader.Points().HintPenalty,
 		"now":          h.now().UTC().Format(time.RFC3339Nano),
 	})
 }
@@ -1305,6 +1317,11 @@ func (h *Handler) missionDetail(user, cid string, checkedSteps, openedHints []in
 			"opened":      openedList,
 			"lockedCount": len(j.Hints) - len(openedList),
 			"nextIndex":   nextHint,
+			// penalty: points forfeited per hint reveal (#40). The Grader owns the
+			// value; the UI shows it on the "open hint" button so a participant
+			// makes an informed reveal ("opening costs N points"). Projection only —
+			// the score arithmetic stays in the scoring layer.
+			"penalty": h.grader.Points().HintPenalty,
 		},
 	}
 }
@@ -1377,9 +1394,16 @@ func (h *Handler) buildState() map[string]any {
 		User        string `json:"user"`
 		DisplayName string `json:"display_name"`
 		Solved      int    `json:"solved"`
-		Earliest    string `json:"earliest"`
-		Events      int    `json:"events"`
-		Rank        int    `json:"rank"`
+		// Score is the ranking metric (#40, CEO decision): the Grader's points
+		// arithmetic (base award per solve − per-hint reveal penalty, clamped at
+		// 0). Additive alongside Solved/Earliest so per-challenge progress bars
+		// still read solved counts; ranking keys off Score with Earliest as the
+		// tiebreak. Derived via grader.UserScore (ComputeScore single source) — no
+		// inline points math here (#39 direction).
+		Score    int    `json:"score"`
+		Earliest string `json:"earliest"`
+		Events   int    `json:"events"`
+		Rank     int    `json:"rank"`
 	}
 	displayOf := func(u string) string {
 		if n, ok := snap.DisplayNames[u]; ok && n != "" {
@@ -1395,23 +1419,36 @@ func (h *Handler) buildState() map[string]any {
 				earliest = p[1]
 			}
 		}
+		solved := len(perUserSolves[u])
 		leaderboard = append(leaderboard, lbEntry{
 			User:        u,
 			DisplayName: displayOf(u),
-			Solved:      len(perUserSolves[u]),
-			Earliest:    earliest,
-			Events:      snap.EventsPerUser[u],
+			Solved:      solved,
+			// Score is the Grader's arithmetic; the handler only projects it. Pass
+			// the same catalog-filtered solved count used for the Solved column so
+			// the two agree, and the Grader adds the per-hint reveal penalty.
+			Score:    h.grader.UserScore(u, solved),
+			Earliest: earliest,
+			Events:   snap.EventsPerUser[u],
 		})
 	}
+	// Rank by Score desc (#40, CEO decision — the leaderboard order now reflects
+	// the hint-penalty score, so a player who solved the same set with fewer
+	// hints outranks one who leaned on hints), with Earliest solve time as the
+	// tiebreak (the existing first-blood ordering, preserved for equal scores).
 	sort.SliceStable(leaderboard, func(i, j int) bool {
-		if leaderboard[i].Solved != leaderboard[j].Solved {
-			return leaderboard[i].Solved > leaderboard[j].Solved
+		if leaderboard[i].Score != leaderboard[j].Score {
+			return leaderboard[i].Score > leaderboard[j].Score
 		}
 		return leaderboard[i].Earliest < leaderboard[j].Earliest
 	})
-	// Rank only participants who have solved something; the board is already
-	// sorted by Solved desc, so solvers occupy the top contiguously and get
-	// ranks 1..M. Zero-solve participants keep Rank 0 → the UI renders "-".
+	// Rank only participants who have solved something (Solved > 0). Ranking off
+	// Score would also rank a 0-solve player whose score is 0 the same as a
+	// solver whose hints dragged their score to 0, so we keep the "has a solve"
+	// gate: it is the has-participated signal, and a clamped-to-0 solver still
+	// sorts above a 0-solve player by the Solved>0 rank assignment order (the
+	// board is Score-desc then Earliest-asc, and a real solver's pre-clamp
+	// standing is preserved by Earliest). Zero-solve keep Rank 0 → UI renders "-".
 	rank := 0
 	for i := range leaderboard {
 		if leaderboard[i].Solved > 0 {

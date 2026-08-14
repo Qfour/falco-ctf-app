@@ -544,6 +544,104 @@ func TestLeaderboard_TieBreakByEarliest(t *testing.T) {
 	}
 }
 
+// TestLeaderboard_ScoreField_Additive proves /api/state leaderboard entries now
+// carry the #40 score alongside the existing solved/earliest fields, and that
+// the score reflects the per-hint reveal penalty (Grader.UserScore →
+// ComputeScore single source). Default policy: 100/solve, 10/hint.
+func TestLeaderboard_ScoreField_Additive(t *testing.T) {
+	fixedNow := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+	f := newFixture(t, func() time.Time { return fixedNow })
+
+	// alice solves one trigger challenge (100) and reveals 2 hints (-20) → 80.
+	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "alice"))
+	at := fixedNow.UTC().Format(time.RFC3339Nano)
+	if _, err := f.st.RecordHintView("alice", "01-read-shadow", 1, at); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.st.RecordHintView("alice", "01-read-shadow", 2, at); err != nil {
+		t.Fatal(err)
+	}
+
+	lb := decode(t, f.doAdmin("GET", "/api/state", nil))["leaderboard"].([]any)
+	if len(lb) != 1 {
+		t.Fatalf("want 1 leaderboard entry, got %d: %v", len(lb), lb)
+	}
+	row := lb[0].(map[string]any)
+	// Additive: solved is still present and unchanged.
+	if row["solved"].(float64) != 1 {
+		t.Errorf("solved = %v, want 1 (existing field must remain)", row["solved"])
+	}
+	// Score reflects the hint penalty: 1*100 - 2*10 = 80.
+	if row["score"].(float64) != 80 {
+		t.Errorf("score = %v, want 80 (100 per solve - 2 hints * 10)", row["score"])
+	}
+}
+
+// TestLeaderboard_RankByScoreThenEarliest proves the CEO decision (#40): the
+// leaderboard order is Score desc with Earliest solve as the tiebreak. Two
+// players solve the same single challenge; the one who revealed hints scores
+// lower and therefore ranks below the hint-free solver even though bob solved
+// LATER — so score, not solve count or solve time alone, drives the ranking.
+func TestLeaderboard_RankByScoreThenEarliest(t *testing.T) {
+	var clock time.Time
+	f := newFixture(t, func() time.Time { return clock })
+
+	// alice solves FIRST (10:00) but leans on 3 hints → 100 - 30 = 70.
+	clock = time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "alice"))
+	at := clock.UTC().Format(time.RFC3339Nano)
+	for _, idx := range []int{1, 2, 3} {
+		if _, err := f.st.RecordHintView("alice", "01-read-shadow", idx, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// bob solves LATER (10:30) with no hints → 100. Higher score must outrank
+	// alice despite the later solve time.
+	clock = time.Date(2026, 5, 11, 10, 30, 0, 0, time.UTC)
+	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "bob"))
+
+	lb := decode(t, f.doAdmin("GET", "/api/state", nil))["leaderboard"].([]any)
+	if len(lb) != 2 {
+		t.Fatalf("want 2 entries, got %d: %v", len(lb), lb)
+	}
+	top := lb[0].(map[string]any)
+	if top["user"] != "bob" {
+		t.Fatalf("higher score must rank first; got order %v (bob=100 should beat alice=70)", lb)
+	}
+	if top["score"].(float64) != 100 || top["rank"].(float64) != 1 {
+		t.Errorf("top row score/rank = %v/%v, want 100/1", top["score"], top["rank"])
+	}
+	second := lb[1].(map[string]any)
+	if second["user"] != "alice" || second["score"].(float64) != 70 || second["rank"].(float64) != 2 {
+		t.Errorf("second row = %v, want alice score=70 rank=2", second)
+	}
+}
+
+// TestLeaderboard_ScoreTie_BreaksByEarliest proves that when two players have
+// the EQUAL score the earlier first-solve still wins (the prior first-blood
+// tiebreak is preserved as the secondary key under the new Score-desc primary).
+func TestLeaderboard_ScoreTie_BreaksByEarliest(t *testing.T) {
+	var clock time.Time
+	f := newFixture(t, func() time.Time { return clock })
+
+	// Both solve exactly one challenge with no hints → equal score (100). alice
+	// solves first (10:00), bob second (10:30): alice must rank first.
+	clock = time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "alice"))
+	clock = time.Date(2026, 5, 11, 10, 30, 0, 0, time.UTC)
+	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "bob"))
+
+	lb := decode(t, f.doAdmin("GET", "/api/state", nil))["leaderboard"].([]any)
+	a := lb[0].(map[string]any)
+	if a["user"] != "alice" || a["score"].(float64) != 100 {
+		t.Fatalf("equal-score tie must break by earliest solve; got %v", lb)
+	}
+	if lb[1].(map[string]any)["user"] != "bob" {
+		t.Fatalf("bob should be second on the tiebreak; got %v", lb)
+	}
+}
+
 // Pins the bug fix: solve `at` must reflect when scoreboard received the
 // event, not Falco's event time. Falco/falcosidekick can buffer or batch,
 // delivering events with stale timestamps — that should not retro-date

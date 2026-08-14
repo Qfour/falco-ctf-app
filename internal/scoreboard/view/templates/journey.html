@@ -118,6 +118,8 @@
   .steps li.done .step-label { color: var(--text-mute); text-decoration: line-through; }
   .steps .step-detail { color: var(--text-dim); font-size: 0.85rem; margin-top: 0.2rem; white-space: pre-wrap; }
 
+  .score { color: var(--accent); font-weight: 700; }
+  .hint-locked .pen { color: var(--warn); font-weight: 700; }
   .hints { display: flex; flex-direction: column; gap: 0.6rem; }
   .hint-open { background: var(--bg-elev); border: 1px solid var(--border); border-left: 2px solid var(--warn); border-radius: 0.5rem; padding: 0.7rem 1rem; }
   .hint-open .hn { font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; color: var(--warn); text-transform: uppercase; letter-spacing: 0.1em; }
@@ -240,6 +242,9 @@
     const total = d.total || missions.length || 0;
     const solvedCount = d.solved_count || 0;
     const pct = total ? Math.round(100 * solvedCount / total) : 0;
+    // Score (#40): server-computed (base award per solve minus per-hint reveal
+    // penalty, clamped at 0). Display-only — the number is the Grader's verdict.
+    const score = Number.isFinite(d.score) ? d.score : 0;
 
     const solvedNow = new Set(missions.filter(m => m.status === 'solved').map(m => m.id));
 
@@ -277,7 +282,7 @@
       <div class="prog-wrap">
         <div class="prog-head">
           <span class="label">Mission progress</span>
-          <span class="count">${solvedCount}<span class="total">/${total}</span> · ${pct}%</span>
+          <span class="count">${solvedCount}<span class="total">/${total}</span> · ${pct}% · <span class="score">SCORE ${score}</span></span>
         </div>
         <div class="bar"><div class="fill" style="width:${pct}%"></div></div>
       </div>
@@ -345,14 +350,18 @@
         </div>
       </li>`).join('');
 
-    const hints = det.hints || { total: 0, opened: [], lockedCount: 0, nextIndex: 0 };
+    const hints = det.hints || { total: 0, opened: [], lockedCount: 0, nextIndex: 0, penalty: 0 };
+    // penalty (#40): points forfeited per hint reveal. Server-supplied; shown on
+    // the open button + confirmed on click so the deduction is a deliberate act.
+    const penalty = Number.isFinite(hints.penalty) ? hints.penalty : 0;
     const openedHTML = (hints.opened || []).map(h => `
       <div class="hint-open"><div class="hn">HINT ${h.idx}</div><div class="ht">${esc(h.text)}</div></div>`).join('');
     let lockedHTML = '';
     if (hints.lockedCount > 0 && hints.nextIndex > 0) {
+      const costLabel = penalty > 0 ? `（-${penalty}点）` : '';
       lockedHTML = `<div class="hint-locked">
-        <span>🔒 ヒント ${hints.nextIndex} / ${hints.total}（未開封 ${hints.lockedCount}）</span>
-        <button class="btn" id="open-hint" data-next="${hints.nextIndex}" data-cid="${esc(det.id)}">ヒントを開く</button>
+        <span>🔒 ヒント ${hints.nextIndex} / ${hints.total}（未開封 ${hints.lockedCount}）${penalty > 0 ? ` · 開封で <span class="pen">-${penalty}点</span>` : ''}</span>
+        <button class="btn" id="open-hint" data-next="${hints.nextIndex}" data-cid="${esc(det.id)}" data-penalty="${penalty}">ヒントを開く${costLabel}</button>
       </div>`;
     }
     const hintsBlock = (hints.total > 0)
@@ -451,6 +460,10 @@
     if (openBtn) {
       openBtn.addEventListener('click', async () => {
         const idx = openBtn.dataset.next;
+        // Confirm the score cost before revealing (#40): a hint deducts points,
+        // so make the reveal a deliberate choice rather than an accidental click.
+        const pen = parseInt(openBtn.dataset.penalty || '0', 10);
+        if (pen > 0 && !confirm(`ヒント ${idx} を開くとスコアが ${pen} 点減点されます。開きますか?`)) return;
         busy = true;
         try {
           const r = await fetch('/api/users/' + encodeURIComponent(user) + '/challenges/' + encodeURIComponent(openBtn.dataset.cid) + '/hints/' + idx,
