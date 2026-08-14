@@ -2,31 +2,41 @@
 
 ## プロジェクト概要
 
-Falco CTF のアプリケーション層。scoreboard / auth-policy / ttyd / challenge image
-と、出題コンテンツ (challenges/) を持つ。基盤(Falco, ingress, Dex, oauth2-proxy)
-と ctf-user chart は別リポジトリ **`falco-ctf-platform`** にある。
+Falco CTF のアプリケーション層。scoreboard / auth-policy / collector / ttyd /
+challenge image と、出題コンテンツ (challenges/)、課題ドキュメントサイト (docs)、
+`type: detect` 課題の capture-replay 採点イメージ (detect-grader) を持つ。
+基盤(Falco, ingress, Dex, oauth2-proxy)と ctf-user chart は別リポジトリ
+**`falco-ctf-platform`** にある。
 
 ## アーキテクチャ
 
 ```
 falco-ctf-app/
-├── cmd/                Go entry points (scoreboard / auth-policy)。起動と wiring のみ
-├── internal/           catalog (yaml ローダ) / store (SQLite + state) /
-│                       scoreboard (handlers + HTML embed) / authpolicy (handlers)
+├── cmd/                Go entry points (scoreboard / auth-policy / collector)。起動と wiring のみ
+├── internal/           catalog (yaml ローダ、trigger/evade/detect) / store (SQLite + state) /
+│                       scoreboard (api・detect(local-exec/k8s Job)・scoring・ingest・
+│                       ratelimit・metrics・httpx・view) / authpolicy (handlers) /
+│                       collector (参加者向け forward proxy) / serverutil (共通 HTTP util)
 ├── scoreboard/         Dockerfile のみ (Go multi-stage, challenges/ 焼込)
 ├── auth-policy/        Dockerfile のみ (Go multi-stage, stdlib のみ)
-├── images/{ttyd,challenge,docs}/  Dockerfile のみ (docs = MkDocs+PDF サイト)
+├── collector/          Dockerfile のみ (Go multi-stage。参加者向け単一入口。
+│                       submit/me/display-name/exfil を scoreboard へ forward。CTF 状態は持たない)
+├── images/{ttyd,challenge,docs,detect-grader}/  Dockerfile のみ
+│                       (docs = MkDocs+PDF サイト、detect-grader = falco base + grade.sh
+│                       による capture-replay 採点)
 ├── challenges/<NN>-<slug>/    README + falco-rule.yaml + rule.yaml + fixtures + values.yaml
-│                       (rule.yaml = 表示用 Falco ルール抜粋。docs サイトが背景の後に描画)
-├── docs-site/          MkDocs Material プロジェクト (gen-pages.sh が challenges/ から
+│                       (rule.yaml = 表示用 Falco ルール抜粋。docs サイトが背景の後に描画。
+│                       detect 型は falco-rule.yaml に evasion/benign capture パスを持つ)
+├── docs-site/          MkDocs Material プロジェクト (gen-pages.py が challenges/ から
 │                       ミッションページ生成 → images/docs が site+PDF を焼く)
-├── charts/             Helm charts: scoreboard / auth-policy / ctf-user / docs
+├── charts/             Helm charts: scoreboard / auth-policy / collector / ctf-user / docs
 │                       (platform helmfile が OCI/path で参照; k8s マニフェストの正典)
 ├── scripts/            build-and-load.sh (colima 用), mock-oauth2.conf
 ├── docker-compose.yml  ローカル dev (scoreboard + auth-policy + mock-oauth2)
-├── Dockerfile.{test,tidy}  bind mount 不要の `go test` / `go mod tidy` (colima 用)
+├── Dockerfile.{test,tidy,gen}  bind mount 不要の `go test` / `go mod tidy` /
+│                       oapi-codegen (colima 用)
 ├── go.mod / go.sum
-└── Makefile            dev / build / test / tidy / push / load-colima / deploy-local
+└── Makefile            dev / build / test / tidy / gen / push / load-colima / deploy-local / scan
 ```
 
 ## 設計判断 (why, not what)
@@ -52,22 +62,42 @@ falco-ctf-app/
 - **ttyd / challenge イメージはここに置く** — ユーザの体験面はアプリ層の責務。
   platform 側の ctf-user chart は image tag を values で pin するだけ。
 
-- **Kustomize は base = 環境非依存** — `host` や `EXPECTED_EMAIL_DOMAIN` は
-  overlay でパッチ。base には placeholder (`example.invalid`) を入れる。
+- **chart `values.yaml` default は環境非依存** (Hard Invariant I7) — `host` や
+  `EXPECTED_EMAIL_DOMAIN` の実値は platform helmfile が供給する。chart 側には
+  placeholder (`example.invalid` / `docker.io/falco-ctf`) のみ入れる。
+  (旧 Kustomize base/overlay 構成は P2 で廃止。k8s マニフェストの正典は `charts/`)
+
+- **collector を参加者向け単一入口にする (P11.5)** — ctf-user の egress lockdown
+  後、workspace が到達できる先を collector 1 つに絞る。collector は submit / me /
+  display-name / exfil を scoreboard へ verbatim forward するだけで CTF 状態
+  (catalog / flags / DB) を持たない。scoreboard 自体を直接晒さないことで
+  ingest 経路以外の攻撃面を減らす。
+
+- **detect-grader を per-submission K8s Job にする** — `type: detect` 課題は
+  参加者が書いた Falco `condition` を、事前録画した evasion/benign 2 capture に対して
+  replay して採点する。参加者コードを実行するため、専用 grader namespace +
+  deny-all NetworkPolicy + 非 root (65532) の使い捨て Job に隔離する
+  (scoreboard 本体プロセスでは実行しない)。
 
 - **docker-compose に mock-oauth2 を含める** — auth-policy 単体テストのため。
   本物の Dex を立てるコストを払わずに /check 経路が動く。
 
-- **`Dockerfile.test` / `Dockerfile.tidy` を分離** — Colima は host repo path を VM に
-  共有しないため `docker run -v` が効かない。代わりに build context 経由で `go test` /
-  `go mod tidy` を実行し、後者は `--target export -o .` で go.mod/go.sum を host に
+- **`Dockerfile.test` / `Dockerfile.tidy` / `Dockerfile.gen` を分離** — Colima は
+  host repo path を VM に共有しないため `docker run -v` が効かない。代わりに
+  build context 経由で `go test` / `go mod tidy` / oapi-codegen を実行し、
+  tidy/gen は `--target export -o .` で go.mod/go.sum や生成コードを host に
   書き戻す。ローカル Go インストール不要で済む。
 
 ## クロスリポ契約 (falco-ctf-platform 側との接点)
 
+**詳細・正典は `.claude/rules/falco-ctf-app-conventions.md` の「Cross-repo 契約」表**
+(image naming の slash/dash 定義、detect-grader Job の RBAC/NetworkPolicy 契約を含む)。
+概要のみ再掲:
+
 | 接点 | 契約 |
 |---|---|
-| Image | `${REGISTRY}/falco-ctf-{ttyd,challenge,scoreboard,auth-policy,docs}:<tag>`。tag は git SHA。platform 側 chart/manifest が values で pin |
+| Image | `${REGISTRY}/falco-ctf-{scoreboard,auth-policy,collector,ttyd,challenge,docs,detect-grader}:<tag>`。tag は git SHA (全 7 イメージ同一 SHA、I5)。platform 側 chart/manifest が values で pin |
+| detect-grader Job | scoreboard が `type: detect` 採点で per-submission K8s Job を起動。namespace/image/RBAC/NetworkPolicy の契約は conventions.md 参照 |
 | Challenges path | platform の `deploy-user.sh --challenges-dir <path>` が当 repo の `challenges/` を指す。CI では sparse checkout |
 | Webhook payload | `POST /falco/events` の JSON は falcosidekick 標準形。フィールドキー変更は両 repo 同時 PR |
 | Cookie domain | `.<ctf-domain>` は platform が決定。app 側は前提とする |
@@ -87,10 +117,17 @@ gitGraph
 ```
 
 - **feature ブランチ命名**: `feature/<topic>` / `fix/<topic>` / `chal/<NN>-<slug>`
-- **PR**: main への squash merge。CI (test / build / chart-lint / flag-guard) が必須 gate
+- **PR**: main への squash merge。CI (`test` / `chart-lint` / `flag-guard` /
+  `build (<image>)` × 7 / `shellcheck` / `challenge-rules`) が必須 gate
 - **リリース**: `git tag -a v<YYYY.MM.DD>[-<suffix>] -m "<message>"` → push
-  - tag push で CI が再ビルドし `v*` タグの image が push される
-  - tag = 本番 deploy に使う image tag (Hard Invariant I4)
+  - **`v*` タグ push は CI を発火させない** (Issue #37。CI trigger は main push /
+    PR のみ)。タグは GitHub Release ノート生成 (`gh release create --generate-notes`
+    が `.github/release.yml` のラベル分類を消費) のためだけに使う
+  - image publish / chart publish は現状 CI-free prod 方針で `vars.ECR_REGISTRY`
+    未設定時は main push でも skip。prod は images=手動 build/push、
+    charts=local clone で運用中 (`project_ci_free_prod` 決定)
+  - tag = 本番 deploy に使う image tag の記録用途 (Hard Invariant I4 は
+    「git SHA を tag として使う」ことが本体で、release tag そのものではない)
 - **hotfix**: `fix/<topic>` ブランチ → PR → squash → 新 tag を打ち直す
 
 ## Claude Code Workflow
