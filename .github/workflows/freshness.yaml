@@ -27,6 +27,6 @@ jobs:
   check-freshness:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: check base image freshness
         run: ./scripts/check-freshness.sh

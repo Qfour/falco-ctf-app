@@ -7,7 +7,7 @@ name: CodeQL
 #   - github/codeql-action/* は conventions の例外表に無い → commit SHA pin
 #     (pin: v4.37.6 = 5595ccaf912efad79be6eef63a5619ff05969be3、
 #      bump 時は `gh api repos/github/codeql-action/git/refs/tags/vX.Y.Z` で解決)
-#   - actions/checkout@v4 は例外表 (GitHub 公式・信頼済み) → mutable 許容
+#   - actions/checkout@v7 は例外表 (GitHub 公式・信頼済み) → mutable 許容
 
 on:
   push:
@@ -39,7 +39,7 @@ jobs:
         language: ["go"]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
