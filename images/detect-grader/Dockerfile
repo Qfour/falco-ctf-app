@@ -17,9 +17,14 @@
 # Supply chain (P12): the falco base is DIGEST-PINNED. Re-record captures and
 # re-resolve this digest together when the Falco version bumps (capture format &
 # field semantics can change — design §5).
-#   digest resolved 2026-08-11 for falcosecurity/falco:0.43.1 (manifest list):
-#   docker buildx imagetools inspect falcosecurity/falco:0.43.1 --format '{{.Manifest.Digest}}'
-FROM falcosecurity/falco:0.43.1@sha256:b4166a61f41e2fa638c041cac881d8bb32c284e3aaf282fdfed80f15f6eb55e3
+#   digest resolved 2026-08-14 for falcosecurity/falco:0.44.1 (manifest list;
+#   bumped from 0.43.1 to pick up base-image alpine package fixes — libcrypto3/
+#   libssl3/busybox/jq CVEs; 0.43.1 has no patch tag (0.43.2/0.43.3 do not
+#   exist) so this bumps to the next stable minor. `engine.kind: replay`
+#   (driverless capture replay, used by grade.sh) is unaffected — verified the
+#   config parses and falco starts under 0.44.1 before pinning):
+#   docker buildx imagetools inspect falcosecurity/falco:0.44.1 --format '{{.Manifest.Digest}}'
+FROM falcosecurity/falco:0.44.1@sha256:d0cfe422d6ac0e0f20857798f46c7d7273210e1b064b22821e4e6e7f843cde6b
 
 # Create the non-root grader user (the wolfi/apko base ships no 65532 user).
 # Done at build time as root; the container then runs as 65532 (USER below and
