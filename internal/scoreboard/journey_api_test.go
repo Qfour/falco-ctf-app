@@ -256,6 +256,92 @@ func TestJourney_ExfilReceivedProjection(t *testing.T) {
 	}
 }
 
+// TestJourney_TriggerDetectionProjection proves the #39 trigger-solve live
+// feedback fields: a trigger mission surfaces its success signal
+// (expectedRules) and the subset of those rules the user has fired in the
+// recent window (detectedRules). These are read-only projections that drive the
+// Journey UI's "run the action → Falco detected it → cleared" status; they never
+// affect the solve verdict (ingest → Grader.EvaluateTrigger owns that).
+func TestJourney_TriggerDetectionProjection(t *testing.T) {
+	f := newJourneyFixture(t) // 01-recon is a trigger with ExpectedRules ["Recon Rule"]
+
+	det := f.journey("alice")["detail"].(map[string]any)
+	if det["type"] != "trigger" {
+		t.Fatalf("01-recon must be a trigger mission, got %v", det["type"])
+	}
+	expected := det["expectedRules"].([]any)
+	if len(expected) != 1 || expected[0] != "Recon Rule" {
+		t.Fatalf("expectedRules must surface the success signal, got %v", det["expectedRules"])
+	}
+	// No fire yet → detectedRules empty (present as [] so the UI can iterate).
+	if got := det["detectedRules"].([]any); len(got) != 0 {
+		t.Fatalf("detectedRules must be empty before any fire, got %v", got)
+	}
+
+	// The user's action makes Falco emit the expected rule within the recent
+	// lookback window → detectedRules picks it up.
+	if _, err := f.st.RecordRuleFire("alice", "Recon Rule", float64(time.Now().Unix())); err != nil {
+		t.Fatal(err)
+	}
+	det = f.journey("alice")["detail"].(map[string]any)
+	detected := det["detectedRules"].([]any)
+	if len(detected) != 1 || detected[0] != "Recon Rule" {
+		t.Fatalf("detectedRules must include the fired expected rule, got %v", det["detectedRules"])
+	}
+
+	// A non-expected rule fire must NOT appear in detectedRules (only the
+	// mission's own success signal is surfaced).
+	if _, err := f.st.RecordRuleFire("alice", "Some Other Rule", float64(time.Now().Unix())); err != nil {
+		t.Fatal(err)
+	}
+	det = f.journey("alice")["detail"].(map[string]any)
+	if got := det["detectedRules"].([]any); len(got) != 1 {
+		t.Fatalf("detectedRules must ignore non-expected rules, got %v", got)
+	}
+}
+
+// TestJourney_TriggerDetectionOutsideWindow proves the detectedRules projection
+// respects the UI lookback (triggerDetectWindowSeconds): an expected-rule fire
+// that is older than the window is inside the store's 300s retention but must
+// NOT surface as "detected" — the on-screen cue only reflects recent activity.
+func TestJourney_TriggerDetectionOutsideWindow(t *testing.T) {
+	f := newJourneyFixture(t) // 01-recon trigger, ExpectedRules ["Recon Rule"]
+
+	// Fire the expected rule 120s ago: within the 300s ruleFires retention but
+	// well outside the 60s detect window the projection uses.
+	stale := float64(time.Now().Unix()) - 120
+	if _, err := f.st.RecordRuleFire("alice", "Recon Rule", stale); err != nil {
+		t.Fatal(err)
+	}
+	det := f.journey("alice")["detail"].(map[string]any)
+	if got := det["detectedRules"].([]any); len(got) != 0 {
+		t.Fatalf("fire older than the detect window must not surface, got %v", got)
+	}
+}
+
+// TestJourney_EvadeHasNoTriggerFields proves the detection fields stay
+// trigger-scoped: an evade mission surfaces expectedRules as [] and
+// detectedRules as [] (the evade UX uses the flag-submit / exfil flow, not the
+// trigger detection status), so the UI's `det.type === 'trigger'` gate is the
+// only thing that renders the triggerSection.
+func TestJourney_EvadeHasNoTriggerFields(t *testing.T) {
+	f := newJourneyFixture(t)
+	// Solve 01-recon so the current mission advances to the evade 02-evade.
+	if _, err := f.st.MarkSolved("alice", "01-recon", "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	det := f.journey("alice")["detail"].(map[string]any)
+	if det["type"] != "evade" {
+		t.Fatalf("current should be the evade mission, got %v", det["type"])
+	}
+	if got := det["expectedRules"].([]any); len(got) != 0 {
+		t.Fatalf("evade mission must not surface expectedRules, got %v", got)
+	}
+	if got := det["detectedRules"].([]any); len(got) != 0 {
+		t.Fatalf("evade mission must not surface detectedRules, got %v", got)
+	}
+}
+
 func TestJourney_StepCheck_InvalidIndex(t *testing.T) {
 	f := newJourneyFixture(t)
 	w := f.req("POST", "/api/users/alice/challenges/01-recon/steps/9/check", map[string]any{"checked": true})

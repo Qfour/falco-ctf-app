@@ -19,7 +19,7 @@ import (
 type fakeStore struct {
 	solved map[string]string // "user|challenge" -> at (first-write-wins)
 	// forbidden[user] is the set of forbidden rules the store should report as
-	// having fired within any window. RecentForbiddenFires intersects it with
+	// having fired within any window. RecentFiresMatching intersects it with
 	// the challenge's forbidden list, mirroring the real store's filtering.
 	forbidden map[string][]string
 	// exfil["user|challenge"] is the flag the collector received for that pair.
@@ -63,9 +63,9 @@ func (f *fakeStore) MarkSolved(user, challenge, at string) (bool, error) {
 	return true, nil
 }
 
-func (f *fakeStore) RecentForbiddenFires(user string, forbidden []string, _ float64, _ int) []string {
+func (f *fakeStore) RecentFiresMatching(user string, rules []string, _ float64, _ int) []string {
 	want := map[string]struct{}{}
-	for _, r := range forbidden {
+	for _, r := range rules {
 		want[r] = struct{}{}
 	}
 	var out []string

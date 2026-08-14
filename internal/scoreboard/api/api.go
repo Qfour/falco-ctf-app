@@ -52,6 +52,17 @@ var validMission = regexp.MustCompile(`^[0-9]{2}-[a-z0-9-]{1,60}$`)
 // max keeps leaderboard columns predictable.
 var invalidDisplayName = regexp.MustCompile(`[<>&"'\x00-\x1f\x7f]`)
 
+// triggerDetectWindowSeconds is the lookback the Journey UI uses to surface
+// which of a trigger mission's expectedRules the participant has already fired
+// (detectedRules). It is a UI-DISPLAY-ONLY lookback: the actual solve verdict
+// is owned entirely by the ingest → Grader.EvaluateTrigger path and is
+// independent of this window (a rule fire records the solve the instant it
+// arrives, regardless of what this projection shows). It is deliberately the
+// same 60s window /me uses for its rule-fire feed so the two agree on screen.
+// Signpost: if a future grader ever gains a windowed trigger verdict, this
+// value and the grader's window should be sourced from one place.
+const triggerDetectWindowSeconds = 60
+
 // JourneyConfig carries the /journey UI inputs into the api handler:
 // narrative content, the mission progression order, and the docs-site origin.
 // All are optional — the handler applies safe defaults (see New).
@@ -1300,6 +1311,48 @@ func (h *Handler) missionDetail(user, cid string, checkedSteps, openedHints []in
 	// flag + clean window), so it is safe to expose without the flag value.
 	requireExfil := ch.Type == "evade" && ch.RequireExfil
 	exfilReceived := requireExfil && h.store.HasExfilAny(user, cid)
+
+	// Trigger-solve live feedback (#39): a trigger challenge auto-solves when the
+	// participant's action makes Falco emit one of expectedRules. Before this the
+	// Journey UI gave the participant no on-screen cue for what "success" looks
+	// like — they ran a syscall in their terminal and had to guess whether it was
+	// seen. Expose the success signal (expectedRules) and which of those the user
+	// has ALREADY fired in a recent window (detectedRules) so the UI can render a
+	// live "run the action → Falco detected it → cleared" status, mirroring the
+	// exfil auto-solve flow.
+	//
+	// Safe to expose: expectedRules is Falco rule *names* (already public in the
+	// operator /api/state challenge stats and the docs-site rule excerpts) — never
+	// a flag value (conventions I10). This is a read-only projection with zero
+	// bearing on the solve verdict, which stays entirely in the ingest → Grader
+	// path (EvaluateTrigger); the UI only observes it.
+	var expectedRules []string
+	var detectedRules []string
+	if ch.Type == "trigger" {
+		expectedRules = ch.ExpectedRules
+		// detectedRules = expectedRules ∩ (rule fires for this user in the recent
+		// window). Delegated to the store's RecentFiresMatching so the set-intersect
+		// lives in one place — the same method the evade Grader uses for its
+		// forbidden-rule window (scoring.evaluateClean). This is presentational
+		// only: the actual solve is recorded by ingest the instant the rule fires,
+		// so a detected rule here means the mission is already (or about to be, on
+		// the next 2s poll) solved. RecentFiresMatching returns a sorted set, which
+		// is fine for UI display.
+		detectedRules = h.store.RecentFiresMatching(
+			user, expectedRules, float64(h.now().Unix()), triggerDetectWindowSeconds,
+		)
+	}
+	// Normalise both to non-nil so they always marshal as JSON [] (never null) —
+	// the Journey UI iterates them unconditionally, and the tests assert []any.
+	// (evade missions leave both nil; a trigger with no expectedRules yields an
+	// empty detectedRules set from RecentFiresMatching.)
+	if expectedRules == nil {
+		expectedRules = []string{}
+	}
+	if detectedRules == nil {
+		detectedRules = []string{}
+	}
+
 	return map[string]any{
 		"id":            cid,
 		"title":         title,
@@ -1310,6 +1363,8 @@ func (h *Handler) missionDetail(user, cid string, checkedSteps, openedHints []in
 		"hasJourney":    hasJourney,
 		"requireExfil":  requireExfil,
 		"exfilReceived": exfilReceived,
+		"expectedRules": expectedRules,
+		"detectedRules": detectedRules,
 		"windowSeconds": ch.WindowSeconds,
 		"steps":         steps,
 		"hints": map[string]any{
