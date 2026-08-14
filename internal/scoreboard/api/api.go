@@ -1176,7 +1176,11 @@ func (h *Handler) journey(w http.ResponseWriter, r *http.Request) {
 		Type       string `json:"type"`
 		Status     string `json:"status"` // solved | current | locked
 		HasJourney bool   `json:"hasJourney"`
-		DocsURL    string `json:"docsUrl"`
+		// Bridge is the mission's narrative teaser toward the next one (#47).
+		// The UI shows it in the CLEARED overlay when this mission flips to
+		// solved. Empty for missions without a bridge (fail-soft, display-only).
+		Bridge  string `json:"bridge"`
+		DocsURL string `json:"docsUrl"`
 	}
 	missions := make([]missionView, 0, len(order))
 	for _, id := range order {
@@ -1202,14 +1206,30 @@ func (h *Handler) journey(w http.ResponseWriter, r *http.Request) {
 			Type:       h.cat[id].Type,
 			Status:     status,
 			HasJourney: hasJourney,
+			Bridge:     j.Bridge,
 			DocsURL:    h.docsURL(j.DocsURL),
 		})
+	}
+
+	// leadIn (#47): the narrative bridge left by the mission immediately before
+	// `current` in the progression order. It persists on the current-mission
+	// detail so the "next mission" pull survives the (transient) CLEARED overlay
+	// and a page reload. Empty when current is the first mission or the previous
+	// mission has no bridge (fail-soft, display-only).
+	leadIn := ""
+	if current != "" {
+		for i, id := range order {
+			if id == current && i > 0 {
+				leadIn = h.journeys[order[i-1]].Bridge
+				break
+			}
+		}
 	}
 
 	// Detail projection for the current mission (nil when everything solved).
 	var detail any
 	if current != "" {
-		detail = h.missionDetail(user, current, stepChecks[current], hintViews[current])
+		detail = h.missionDetail(user, current, leadIn, stepChecks[current], hintViews[current])
 	}
 
 	displayName := user
@@ -1260,7 +1280,10 @@ func (h *Handler) docsURL(rel string) string {
 // self-check state, and progressive hints (opened text + locked count). When no
 // journey.yaml exists for the mission, hasJourney is false and the copy fields
 // are empty so the UI can render "ブリーフィング準備中" (graceful degrade).
-func (h *Handler) missionDetail(user, cid string, checkedSteps, openedHints []int) map[string]any {
+// leadIn (#47) is the previous mission's narrative bridge, surfaced above the
+// briefing so the "next mission" pull persists past the CLEARED overlay; it is
+// empty for the first mission (display-only, never affects scoring).
+func (h *Handler) missionDetail(user, cid, leadIn string, checkedSteps, openedHints []int) map[string]any {
 	ch := h.cat[cid]
 	j, hasJourney := h.journeys[cid]
 
@@ -1358,6 +1381,7 @@ func (h *Handler) missionDetail(user, cid string, checkedSteps, openedHints []in
 		"title":         title,
 		"tagline":       j.Tagline,
 		"briefing":      j.Briefing,
+		"leadIn":        leadIn,
 		"type":          ch.Type,
 		"docsUrl":       h.docsURL(j.DocsURL),
 		"hasJourney":    hasJourney,

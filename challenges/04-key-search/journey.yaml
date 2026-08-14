@@ -22,4 +22,8 @@ hints:
   - Falco は find / grep で「鍵っぽい名前」を探すコマンドラインを見ている。そのファイルが実在するか・結果が空かは無関係だ。
   - 判定対象は各プロセスの /proc/<pid>/cmdline。引数に鍵のキーワードが出れば発火する。
   - "想定解: find / -name id_rsa 2>/dev/null — cmdline に id_rsa が乗った瞬間に Search Private Keys or Passwords が発火する。Mission 05 では逆にキーワードを消して回避する。"
+bridge: >-
+  また鳴らしてしまった。Falco は「探す行為そのもの」= コマンドラインを見ていた。
+  なら答えは単純だ — コマンドラインにキーワードを残さず鍵を読めばいい。
+  今度は cmdline に痕跡を残さず、同じ id_rsa を静かに抜く。
 docsUrl: /missions/04-key-search/

@@ -38,6 +38,7 @@ func newJourneyFixture(t *testing.T, extra ...scoreboard.Option) *journeyFixture
 			ChallengeID: "01-recon", Title: "偵察", Tagline: "obj-1", Briefing: "brief-1",
 			Steps:   []catalog.JourneyStep{{Label: "s0", Detail: "d0"}, {Label: "s1", Detail: "d1"}},
 			Hints:   []string{"h1", "h2", "h3"},
+			Bridge:  "bridge-1",
 			DocsURL: "/missions/01-recon/",
 		},
 		"02-evade": {
@@ -162,6 +163,53 @@ func TestJourney_AdvancesOnSolve(t *testing.T) {
 	det := m["detail"].(map[string]any)
 	if det["id"] != "02-evade" || det["type"] != "evade" {
 		t.Fatalf("detail should be the evade mission: %v", det)
+	}
+}
+
+func bridgeOf(m map[string]any, id string) string {
+	for _, mi := range m["missions"].([]any) {
+		mm := mi.(map[string]any)
+		if mm["id"] == id {
+			s, _ := mm["bridge"].(string)
+			return s
+		}
+	}
+	return ""
+}
+
+// TestJourney_BridgeAndLeadIn proves the #47 narrative-bridge wiring:
+//   - each mission carries its own `bridge` teaser in the mission map (drives
+//     the CLEARED overlay when the mission flips to solved);
+//   - the first mission's detail has an empty `leadIn` (no previous mission);
+//   - after solving 01, the now-current mission (02) detail exposes the PREVIOUS
+//     mission's bridge as `leadIn`, so the pull persists past the overlay.
+// All fields are display-only and never gate a solve.
+func TestJourney_BridgeAndLeadIn(t *testing.T) {
+	f := newJourneyFixture(t)
+
+	// Mission map carries 01's bridge; 02 has none (fixture leaves it empty).
+	m := f.journey("alice")
+	if got := bridgeOf(m, "01-recon"); got != "bridge-1" {
+		t.Fatalf("01 bridge=%q want %q", got, "bridge-1")
+	}
+	if got := bridgeOf(m, "02-evade"); got != "" {
+		t.Fatalf("02 bridge=%q want empty (fail-soft)", got)
+	}
+	// First mission's detail has no lead-in (nothing precedes it).
+	if li, _ := m["detail"].(map[string]any)["leadIn"].(string); li != "" {
+		t.Fatalf("first mission leadIn=%q want empty", li)
+	}
+
+	// Solve 01 → 02 becomes current and inherits 01's bridge as its leadIn.
+	if _, err := f.st.MarkSolved("alice", "01-recon", "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	det := f.journey("alice")["detail"].(map[string]any)
+	if det["id"] != "02-evade" {
+		t.Fatalf("current should be 02-evade, got %v", det["id"])
+	}
+	if li, _ := det["leadIn"].(string); li != "bridge-1" {
+		t.Fatalf("02 leadIn=%q want %q (previous mission bridge)", li, "bridge-1")
 	}
 }
 

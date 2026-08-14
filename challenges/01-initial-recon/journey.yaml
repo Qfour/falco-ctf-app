@@ -21,4 +21,7 @@ hints:
   - K8s API Server の in-cluster アドレスは kubernetes.default.svc。まずそこへ HTTP で触ってみよう。
   - curl か wget で十分。TLS 検証は無視 (-k / --no-check-certificate) してよい。認証成功は不要。
   - "想定解: curl -sk https://kubernetes.default.svc/api — connect した瞬間に Contact K8S API Server From Container が発火する。"
+bridge: >-
+  環境は掴んだ。API は締められているが、この箱の中には人間が置き忘れた鍵が必ずある。
+  侵入の定石どおり、まずは認証情報から回収しにいく。
 docsUrl: /missions/01-initial-recon/

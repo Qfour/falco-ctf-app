@@ -26,4 +26,8 @@ hints:
   - 3 条件がある — 発火させず読む / collector へ exfil 済み / 提出。順番に片付けよう。
   - 送信手段が鍵。reverse shell は collector (HTTP 受信のみ) に届かず、自前ツールの投下は Drop-and-execute を踏む。箱にある道具だけで完結させる。
   - "想定解の骨子: /proc/self/root 経由で読み、既存の curl で /exfil に POST し、30 秒待ってから submit。禁止ルール 7 つを 1 つも踏まないこと。"
+bridge: >-
+  master key は、Falco に一度も気づかれることなく箱の外へ抜けた。CTF Company の
+  キルチェーンは踏破 — だが本当の学びは攻撃側ではない。あなたが避けた検知の一つ一つが、
+  守る側が仕掛けるべき網だ。攻撃者の手口を知る者だけが、それを塞げる。作戦完了。
 docsUrl: /missions/10-final-exfil/

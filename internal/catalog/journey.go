@@ -16,6 +16,10 @@ package catalog
 //	    detail:  <guidance; may include commands>
 //	hints:
 //	  - <staged hint; 1 -> N approaches the answer>
+//	bridge:      <optional 1-2 sentence attacker-voice pull toward the *next*
+//	              mission, shown when THIS mission clears (#47). The final
+//	              mission's bridge is the closing beat. Purely narrative; omit
+//	              it and the UI simply shows no teaser (fail-soft).>
 //	docsUrl:     </missions/<NN>-<slug>/>
 
 import (
@@ -42,7 +46,10 @@ type Journey struct {
 	Briefing    string        `yaml:"briefing" json:"briefing"`
 	Steps       []JourneyStep `yaml:"steps" json:"steps"`
 	Hints       []string      `yaml:"hints" json:"hints"`
-	DocsURL     string        `yaml:"docsUrl" json:"docsUrl"`
+	// Bridge is the narrative pull toward the next mission, surfaced when this
+	// mission clears (#47). Optional and display-only — empty means "no teaser".
+	Bridge  string `yaml:"bridge" json:"bridge"`
+	DocsURL string `yaml:"docsUrl" json:"docsUrl"`
 }
 
 // Journeys maps challengeId -> Journey. Missing entries mean "no journey
