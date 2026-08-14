@@ -94,7 +94,7 @@ def split_after_background(brief):
     return before, after
 
 
-def page(nn, title, welcome_path, readme_path, rule_path):
+def page(nn, title, welcome_path, readme_path, rule_path, explain_path=None):
     out = [f"# {title}\n"]
     if mode == "admin":
         out.append('!!! warning "運営専用 — 想定解・解説を含む"\n')
@@ -113,19 +113,30 @@ def page(nn, title, welcome_path, readme_path, rule_path):
     rule = ""
     if rule_path and os.path.isfile(rule_path):
         rule = open(rule_path, encoding="utf-8").read().strip("\n")
+    # rule-explain.md — participant-safe prose that explains how to read the
+    # Falco rule (condition/output/fields), why an evade slips past it, and how a
+    # managed Sysdig ruleset would still cover the scenario. Rendered right after
+    # the rule block in both modes (no solution commands — concept level only).
+    explain = ""
+    if explain_path and os.path.isfile(explain_path):
+        explain = open(explain_path, encoding="utf-8").read().strip("\n")
+
+    def rule_block():
+        out.append("## 検知ルール (Falco Rule)\n")
+        out.append("```yaml\n" + rule + "\n```\n")
+        if explain:
+            out.append(explain + "\n")
 
     if brief:
         out.append("## ミッションブリーフ\n")
         before, after = split_after_background(brief)
         out.append("```text\n" + before + "\n```\n")
         if rule:
-            out.append("## 検知ルール (Falco Rule)\n")
-            out.append("```yaml\n" + rule + "\n```\n")
+            rule_block()
         if after:
             out.append("```text\n" + after + "\n```\n")
     elif rule:
-        out.append("## 検知ルール (Falco Rule)\n")
-        out.append("```yaml\n" + rule + "\n```\n")
+        rule_block()
 
     if hints:
         out.append("## ヒント\n")
@@ -171,6 +182,7 @@ for nn in challenges:
             title = first
     welcome = os.path.join(cdir, "fixtures", "welcome.txt")
     rule = os.path.join(cdir, "rule.yaml")
+    explain = os.path.join(cdir, "rule-explain.md")
     open(os.path.join(MISS, f"{nn}.md"), "w", encoding="utf-8").write(
-        page(nn, title, welcome, readme, rule))
+        page(nn, title, welcome, readme, rule, explain))
     print(f"[{mode}] {nn}")
