@@ -1,3 +1,15 @@
+{{- /*
+  Invariant I1 (scoreboard is SQLite single-writer): replicas must be 1.
+  Unlike the UID/fsGroup invariants (I2/I3), which are hardcoded literals in
+  the templates and therefore cannot be weakened via values, `replicas` here
+  is values-driven for legitimate reasons (helmfile renders it per
+  environment). That makes it overridable by mistake, so guard it with a hard
+  `fail` — any `--set replicas=N` with N>1 must abort the render, not
+  silently deploy a second SQLite writer.
+*/}}
+{{- if gt (int .Values.replicas) 1 }}
+{{- fail "I1 違反: scoreboard は SQLite 単一 writer。replicas は 1 のみ (values.yaml のコメント参照)" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

@@ -11,7 +11,8 @@ name: Checks
 # ここに集約する PR トリガの静的検査 (既存 ci.yaml の required job には足さない):
 #   - actionlint     : workflow YAML の静的検査 + mutable action ref (P12 違反) 検出
 #   - go-vulncheck   : go.sum 依存 / stdlib の既知脆弱性 (image CVE scan がカバーしない層)
-#   - gen-diff-check : make gen (oapi) / make tidy 後の git diff (spec↔code / 依存 drift)
+#   - gen-diff-check : make gen (oapi) / make tidy / make gen-attack 後の git diff
+#                      (spec↔code / 依存 / ATT&CK 生成物 drift)
 #
 # base image EOL 検知 (check-freshness) は network 必須ゆえ freshness.yaml の
 # scheduled cron に分離した (PR 毎には回さない)。
@@ -75,17 +76,20 @@ jobs:
   # gen-diff-check — 生成物 drift 検知。
   #   1. oapi 生成 (make gen 相当) 後の内部 oapi types が spec と一致するか
   #   2. go mod tidy (make tidy 相当) 後の go.mod / go.sum が最新か
-  # どちらも `git diff --exit-code` で drift を検出する (手書き/更新漏れを block)。
+  #   3. ATT&CK Navigator layer / coverage table (make gen-attack 相当) が
+  #      challenges/*/falco-rule.yaml の attack: ブロックと一致するか
+  # どれも `git diff --exit-code` で drift を検出する (手書き/更新漏れを block)。
   # golang container 内で完結させ、生成コマンドは Dockerfile.gen / Dockerfile.tidy と
-  # 同じツール version に揃える (oapi-codegen@v2.3.0)。
+  # 同じツール version に揃える (oapi-codegen@v2.3.0)。gen-attack は python3 script
+  # (stdlib のみ) なので同一 container に apk add python3 して倣う。
   # ------------------------------------------------------------------
   gen-diff-check:
     runs-on: ubuntu-latest
     container:
       image: golang:1.26-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2
     steps:
-      - name: install git (checkout / diff 前提)
-        run: apk add --no-cache git
+      - name: install git + python3 (checkout / diff / gen-attack 前提)
+        run: apk add --no-cache git python3
       - uses: actions/checkout@v4
       - name: mark workspace safe for git
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -101,10 +105,12 @@ jobs:
           oapi-codegen --config api/cfg-auth-policy.yaml docs/openapi-auth-policy.yaml
       - name: go mod tidy (make tidy)
         run: go mod tidy
+      - name: regenerate attack coverage (make gen-attack)
+        run: python3 scripts/gen-attack-layer.py
       - name: fail on drift
         run: |
           set -eu
-          if ! git diff --exit-code -- internal/ go.mod go.sum; then
-            echo "::error::generated artifacts are stale. Run 'make gen' and 'make tidy', then commit." >&2
+          if ! git diff --exit-code -- internal/ go.mod go.sum challenges/attack-navigator-layer.json challenges/ATTACK-COVERAGE.md; then
+            echo "::error::generated artifacts are stale. Run 'make gen', 'make tidy', and 'make gen-attack', then commit." >&2
             exit 1
           fi
