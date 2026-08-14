@@ -13,7 +13,7 @@ challenge image と、出題コンテンツ (challenges/)、課題ドキュメ�
 ```
 falco-ctf-app/
 ├── cmd/                Go entry points (scoreboard / auth-policy / collector)。起動と wiring のみ
-├── internal/           catalog (yaml ローダ、trigger/evade/detect) / store (SQLite + state) /
+├── internal/           catalog (yaml ローダ、trigger/evade/detect、journey) / store (SQLite + state) /
 │                       scoreboard (api・detect(local-exec/k8s Job)・scoring・ingest・
 │                       ratelimit・metrics・httpx・view) / authpolicy (handlers) /
 │                       collector (参加者向け forward proxy) / serverutil (共通 HTTP util)
@@ -78,6 +78,17 @@ falco-ctf-app/
   replay して採点する。参加者コードを実行するため、専用 grader namespace +
   deny-all NetworkPolicy + 非 root (65532) の使い捨て Job に隔離する
   (scoreboard 本体プロセスでは実行しない)。
+
+- **`/journey` はゲーム形式進行 UI (P15)** — `internal/catalog/journey.go` が
+  `challenges/<NN>-<slug>/journey.yaml` を読み、ブリーフィング/ステップ/段階ヒント/
+  次ミッションへの誘導文をロードする。参加者向け *content* 専用で採点ロジックには
+  一切影響しない (challenge の正典は `falco-rule.yaml`/catalog のまま)。journey.yaml
+  が無い challenge は単に「ブリーフィング準備中」に degrade する (fail-soft)。
+  scoreboard 側は `internal/scoreboard/view` が静的シェル (`GET /journey`) を返し、
+  `internal/scoreboard/api` の `GET /api/users/{user}/journey` (projection)・
+  `POST .../steps/{idx}/check` (self-check)・`POST .../hints/{idx}` (progressive
+  hint reveal) をクライアントがポーリング/呼び出す。journey/me ページは
+  admin-gate の対象外 (per-user API が self-scoped なため無害)。
 
 - **docker-compose に mock-oauth2 を含める** — auth-policy 単体テストのため。
   本物の Dex を立てるコストを払わずに /check 経路が動く。
