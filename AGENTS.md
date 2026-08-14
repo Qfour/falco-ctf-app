@@ -4,9 +4,11 @@
 
 ## Project Overview
 
-- **Stack**: Go 1.23 (net/http + log/slog + embed) + distroless/Alpine Dockerfile + Kustomize
+- **Stack**: Go 1.26 (net/http + log/slog + embed) + distroless/Alpine Dockerfile。
+  k8s マニフェストの正典は Helm chart (`charts/`) — Kustomize は P2 で廃止済み
 - **Direct Go deps**: `gopkg.in/yaml.v3` (catalog YAML), `modernc.org/sqlite` (pure-Go, CGO 不要)
-- **Purpose**: Falco CTF のアプリ層(scoreboard / auth-policy / user-facing images / challenges)
+- **Purpose**: Falco CTF のアプリ層(scoreboard / auth-policy / collector /
+  user-facing images / docs サイト / detect-grader / challenges)
 - **Project label**: `falco-ctf`
 - **Cross-repo**: 基盤は `falco-ctf-platform`
 
@@ -31,7 +33,7 @@ make test
 # 依存更新 (go.mod 編集後 go.sum を host に export)
 make tidy
 
-# Kustomize 整合性チェック
+# Helm chart lint (charts/* に helm lint)
 make lint
 
 # scoreboard 動作確認
@@ -82,16 +84,28 @@ type: evade
 forbiddenRules: ["Read sensitive file untrusted"]
 expectedFlag: "FALCO{...}"
 windowSeconds: 10
+
+# detect 型 (参加者が Falco condition を書き、evasion/benign の2 capture に対して
+# capture-replay で採点。evasion capture で発火 かつ benign capture で非発火なら solved)
+challengeId: "03-stealth-read-detect"
+type: detect
+detect:
+  evasionCapture: "evasion.scap.gz"
+  benignCapture: "benign.scap.gz"
 ```
 
 ### Dockerfile 規約
 
-- scoreboard / auth-policy は multi-stage: builder = `golang:1.23-alpine`、最終 = `gcr.io/distroless/static-debian12:nonroot`
-- ttyd / challenge は `alpine:3.20` 単段
+- scoreboard / auth-policy / collector は multi-stage: builder = `golang:1.26-alpine`、最終 = `gcr.io/distroless/static-debian13:nonroot`
+- ttyd / challenge は `alpine:3.22` 単段
+- docs は `python:3.12-slim` (mkdocs-material + pandoc + weasyprint) builder → `nginxinc/nginx-unprivileged:1.30-alpine`
+- detect-grader は `falcosecurity/falco:0.43.1` 単段 (capture-replay 採点。非 root 65532 ユーザを build 時に追加)
+- 全 base image は digest pin (`image:tag@sha256:...`)
 - Go ビルドは `CGO_ENABLED=0 -ldflags="-s -w" -trimpath` で static binary
-- runtime UID: scoreboard / auth-policy = **65532** (distroless nonroot)、ttyd = **1000**、challenge = **root** (CTF realism)
-- scoreboard / auth-policy は build context = repo root (`COPY cmd/<app> ./cmd/<app>` + `COPY internal ./internal`)
-- ttyd / challenge は build context = `images/<name>/`
+- runtime UID: scoreboard / auth-policy / collector / detect-grader = **65532** (distroless / falco base nonroot)、
+  ttyd = **1000**、challenge = **root** (CTF realism)、docs = **101** (nginx-unprivileged)
+- scoreboard / auth-policy / collector は build context = repo root (`COPY cmd/<app> ./cmd/<app>` + `COPY internal ./internal`)
+- ttyd / challenge / detect-grader は build context = `images/<name>/`、docs は build context = repo root
 - 詳細・SecurityContext は `.claude/rules/falco-ctf-app-conventions.md` 参照
 
 ### Helm chart 規約
@@ -100,7 +114,9 @@ windowSeconds: 10
   (`example.invalid` / `docker.io/falco-ctf`)
 - 環境値 (host / tag / storageClass / admin / HA) は platform helmfile が供給
 - image tag は空 default (→ Chart.appVersion) か git SHA。`latest` 不可
-- CI が `oci://<ECR>/charts` へ `0.1.0-<sha>` で publish
+- CI (`publish-charts` job) は `vars.ECR_REGISTRY` が実値のときのみ OCI chart を
+  push (main push 限定)。現状 CI-free prod 方針で未設定 = skip。prod は charts=local
+  clone で運用中 (`.claude/rules/falco-ctf-app-conventions.md` 参照)
 
 ## Boundaries
 
@@ -115,9 +131,10 @@ windowSeconds: 10
 
 ## Always
 
-- ✅ scoreboard / auth-policy / ttyd / challenge の image tag は **同一 git SHA**
-  (CI で一括 push)
-- ✅ Go コード変更後は `make test` で全パッケージ(catalog / store / scoreboard / authpolicy)
+- ✅ 全 7 イメージ (scoreboard / auth-policy / collector / ttyd / challenge / docs /
+  detect-grader) の image tag は **同一 git SHA** (Hard Invariant I5)
+- ✅ Go コード変更後は `make test` で全パッケージ(catalog / store / collector /
+  scoreboard 傘下の api・detect・scoring・ingest・ratelimit / authpolicy)
   の単体テスト通過確認
 - ✅ `go.mod` 編集後は `make tidy` で go.sum を更新してコミット
 - ✅ challenge 追加時は scoreboard に動作確認(`POST /falco/events` で expected
