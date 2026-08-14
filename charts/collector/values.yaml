@@ -20,6 +20,23 @@ env:
   # Must resolve to the scoreboard ClusterIP:port (default Service port 80).
   scoreboardUrl: "http://scoreboard.scoreboard.svc:80"
 
+# P20 node-tier pinning (fixed service). Empty = no scheduling constraint.
+# When populated the values match the scoreboard's vm-prod pin (see
+# charts/scoreboard/values.yaml for the canonical block):
+#   nodeSelector:
+#     node-role.kubernetes.io/control-plane: "true"   # label k3s server auto-applies
+#   tolerations:
+#     - key: "ctf.falco/fixed-only"
+#       operator: "Equal"
+#       value: "true"
+#       effect: "NoSchedule"
+# Key names MUST match platform's vm-prod values. Scheduling only.
+# NOTE: in the current PoC the platform overlay pins ONLY scoreboard + ingress;
+# it does NOT yet pass values here. This is a receiver kept ready for P20-2,
+# which collapses all fixed services onto the server tier.
+nodeSelector: {}
+tolerations: []
+
 resources:
   requests: { cpu: 25m, memory: 32Mi }
   limits:   { cpu: 200m, memory: 128Mi }
