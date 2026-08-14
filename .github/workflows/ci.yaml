@@ -3,7 +3,7 @@ name: CI
 # サプライチェーン pin ポリシー (P12) — 正典: .claude/rules/falco-ctf-app-conventions.md
 #   - reusable workflow `@main` は禁止 → commit SHA pin (下記 uses: の @<sha> # main as of ...)
 #   - サードパーティ action の `@vN` メジャータグは許容例外 (信頼済み提供元 + Dependabot 運用)。
-#     例外リスト: actions/checkout@v4 / azure/setup-helm@v4 /
+#     例外リスト: actions/checkout@v4 / azure/setup-helm@v5 /
 #     aws-actions/configure-aws-credentials@v4 / anthropics/claude-code-action@v1
 #     (claude-review.yml)。これ以外を足すときは SHA pin するか conventions の例外表に追記。
 
@@ -46,7 +46,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
       - name: helm lint + template all charts
         run: |
           set -euo pipefail
@@ -184,7 +184,7 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
