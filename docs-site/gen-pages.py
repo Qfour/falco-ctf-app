@@ -98,6 +98,13 @@ def page(nn, title, welcome_path, readme_path, rule_path, explain_path=None):
     out = [f"# {title}\n"]
     if mode == "admin":
         out.append('!!! warning "運営専用 — 想定解・解説を含む"\n')
+    # 導線: 解くときに使う基本コマンドは全課題共通のチートシートへ (missions/ 配下から
+    # 見た相対リンク)。参加者・運営どちらの build にも出す。
+    out.append(
+        '!!! tip "コマンドに迷ったら"\n'
+        "    基本コマンド(偵察・ファイル探索・ネットワーク・flag 提出)は"
+        " [チートシート / TIPS](../cheatsheet.md) にまとめてあります。\n"
+    )
     imgdir = os.path.join("docs/assets/missions", nn)
     if os.path.isdir(imgdir):
         for img in sorted(os.listdir(imgdir)):

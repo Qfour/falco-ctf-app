@@ -9,6 +9,7 @@ use_directory_urls: true
 nav:
   - はじめに: index.md
   - ストーリー: story.md
+  - チートシート: cheatsheet.md
   - 参考資料: references.md
   - ミッション:
       - missions/index.md
