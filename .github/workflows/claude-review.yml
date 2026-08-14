@@ -8,6 +8,12 @@ on:
   pull_request:
     types: [opened, synchronize]
 
+# G5-1: PR 連打で古いレビュー run を止める。この workflow は PR 専用のため
+# cancel-in-progress を無条件 true にできる (release/build を守る必要がない)。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   pull-requests: write

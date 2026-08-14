@@ -1,6 +1,6 @@
 module github.com/Qfour/falco-ctf-app
 
-go 1.25
+go 1.26
 
 require (
 	github.com/prometheus/client_golang v1.20.5
