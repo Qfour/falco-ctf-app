@@ -10,7 +10,7 @@ name: CI
 # Trigger は main への push と PR のみ (Issue #37)。
 #   v* タグ push は「GitHub Release 生成」だけが反応すべき事象で、image build/publish
 #   を伴わない (CI-free prod 恒久方針: images=手動 build/push, charts=local clone)。
-#   タグに CI を発火させると 6-image build+scan matrix + lint 群が無駄に走り、publish は
+#   タグに CI を発火させると 7-image build+scan matrix + lint 群が無駄に走り、publish は
 #   どのみち ECR_REGISTRY placeholder で skip される。build/scan の網羅は main push + PR で維持。
 #   Release ノートの分類は .github/release.yml (gh release create --generate-notes が消費) が担う。
 on:
@@ -19,7 +19,7 @@ on:
   pull_request:
     branches: [main]
 
-# G5-1: PR 連打での重複起動を止める (6-image build のコスト削減)。
+# G5-1: PR 連打での重複起動を止める (7-image build のコスト削減)。
 # cancel-in-progress は PR run のみ true。main push / v* タグの run は
 # release/build (image push・chart publish) を守るため途中キャンセルしない。
 concurrency:
