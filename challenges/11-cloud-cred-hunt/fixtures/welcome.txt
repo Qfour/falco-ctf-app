@@ -71,32 +71,3 @@ CloudTrail を取り込み、"漏れた鍵での不審な API 呼び出し"・"�
   /opt/ctf/missions/11-cloud-cred-hunt/fixtures/welcome.txt           ← このファイル
   /opt/ctf/missions/11-cloud-cred-hunt/fixtures/aws-credentials.sample ← ダミー資格情報
   /opt/ctf/missions/11-cloud-cred-hunt/fixtures/aws                    ← 疑似 aws CLI (flavor)
-
-────────────────────────────────────────────────────────────────────
-HINT 1 (気付き): 攻撃者は「鍵の置き場所」を知っている
-────────────────────────────────────────────────────────────────────
-
-クラウド侵害の初動は「この箱からクラウドへ行ける鍵はないか」。
-AWS CLI の長期資格情報は慣習的に決まった場所 (ホームの .aws 配下) に
-平文で置かれる。攻撃者はそこを狙って漁る。その「漁る」コマンド自体を
-Falco が見ている — まずどこを、どう探すかを考えてみよう。
-
-────────────────────────────────────────────────────────────────────
-HINT 2 (概要): grep か find で AWS キーを探す
-────────────────────────────────────────────────────────────────────
-
-ルールは 2 通りで発火する。(1) grep 系コマンドの引数に AWS キーの語
-(aws_secret_access_key など) が含まれる、または (2) find の引数が
-".aws/credentials" で終わる。実ファイルの有無に関わらず、コマンドの
-形が一致すれば発火する。
-
-────────────────────────────────────────────────────────────────────
-HINT 3 (解答): 具体的なコマンド
-────────────────────────────────────────────────────────────────────
-
-  grep -r aws_secret_access_key ~/.aws/
-  grep aws_access_key_id /opt/ctf/missions/11-cloud-cred-hunt/fixtures/aws-credentials.sample
-  find ~ -path '*.aws/credentials'
-
-いずれも発火する。grep パスは引数に AWS キーの語が入っていること、
-find パスは最後の引数が ".aws/credentials" で終わっていることが肝。

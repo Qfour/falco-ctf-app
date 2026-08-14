@@ -6,9 +6,11 @@
 
 !!! tip "使い方"
     ワークスペース(Web ターミナル)と、この 1 ページを並べて開いておくと快適です。
-    各ミッションの詳しい背景・ヒントは [ミッション](missions/index.md) の各ページに、
+    各ミッションの詳しい背景は [ミッション](missions/index.md) の各ページに、
     そのミッション専用の提出方法は `welcome.txt`
     (`/opt/ctf/missions/<NN>-<slug>/fixtures/welcome.txt`)にあります。
+    段階的なヒント(気付き → 概要 → 解答)は `/journey` の各ミッションページで
+    開けます(開くと減点)。
 
 ---
 
@@ -90,8 +92,8 @@ hexdump -C /path/to/blob | head      # 16 進ダンプ(util-linux)
     Mission 02 のような **trigger** 課題では `cat /etc/shadow` のように
     素直に読むと狙いどおり検知されます。
     Mission 03 / 05 のような **evade** 課題では「同じ中身を、検知されない
-    読み方で取り出す」のがテーマです。ヒントは各ミッションの `welcome.txt`
-    と [Falco の観測ポイント](#7-falco) を参照。
+    読み方で取り出す」のがテーマです。段階的なヒントは `/journey` の
+    各ミッションページ、判定ロジックは [Falco の観測ポイント](#7-falco) を参照。
 
 ---
 

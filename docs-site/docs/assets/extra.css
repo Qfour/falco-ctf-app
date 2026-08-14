@@ -92,13 +92,3 @@ body::before {
 
 /* Mission brief code blocks (welcome.txt ASCII art) — preserve layout. */
 .md-typeset pre > code { white-space: pre; }
-
-/* ===== Time-gated / operator-released hints (assets/hints.js) ===== */
-.ctf-hint {
-  border: 1px solid #1C2A35; border-radius: 8px; padding: 0.5rem 1rem; margin: 1rem 0;
-  background: #0F1820;
-}
-.ctf-hint--unlocked,
-.ctf-hint--released { border-color: var(--falco); box-shadow: 0 0 16px rgba(0, 203, 226, 0.2); }
-.ctf-hint-ctl { color: #5C7480; padding: 0.2rem 0; }
-.ctf-hint-release { cursor: pointer; }
