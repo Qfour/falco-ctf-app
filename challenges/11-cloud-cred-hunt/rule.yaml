@@ -1,0 +1,17 @@
+# Display-only excerpt for the docs site (rendered after 背景).
+# Extracted from the Falco ruleset the event deploys (falco-rules-3.0.1 —
+# same pin as scripts/check-challenge-rules.sh). Re-extract from the live
+# cluster ruleset if the Falco version is bumped (conventions §課題ドキュメント用 rule.yaml).
+- rule: Find AWS Credentials
+  desc: >
+    Detect attempts to search for private keys or passwords using the grep or find command, particularly targeting standard
+    AWS credential locations. This is often seen with unsophisticated attackers, as there are many ways to access files
+    using bash built-ins that could go unnoticed. Regardless, this serves as a solid baseline detection that can be tailored
+    to cover these gaps while maintaining an acceptable noise level. This rule complements the rule "Search Private Keys or Passwords".
+  condition: >
+    spawned_process
+    and ((grep_commands and private_aws_credentials) or
+         (proc.name = "find" and proc.args endswith ".aws/credentials"))
+  output: Detected AWS credentials search activity (proc_pcmdline=%proc.pcmdline proc_cwd=%proc.cwd group_gid=%group.gid group_name=%group.name user_loginname=%user.loginname evt_type=%evt.type user=%user.name user_uid=%user.uid user_loginuid=%user.loginuid process=%proc.name proc_exepath=%proc.exepath parent=%proc.pname command=%proc.cmdline terminal=%proc.tty exe_flags=%evt.arg.flags %container.info)
+  priority: WARNING
+  tags: [maturity_stable, host, container, process, aws, mitre_credential_access, T1552]

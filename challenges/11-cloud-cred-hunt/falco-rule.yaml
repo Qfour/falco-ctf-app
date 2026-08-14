@@ -1,0 +1,16 @@
+challengeId: 11-cloud-cred-hunt
+type: trigger
+expectedRules:
+  - Find AWS Credentials
+# ATT&CK mapping — canonical source for docs/Navigator layer (make gen-attack).
+# T1552.001: the rule fires on a spawned_process whose cmdline searches for AWS
+# credential material — grep-ing an aws_secret_access_key/aws_access_key_id token,
+# or a `find` whose args end with ".aws/credentials". Both are on-disk credential
+# discovery (Unsecured Credentials: Credentials In Files), so T1552.001 is the
+# honest technique. It is NOT T1552.005 (Cloud Instance Metadata API): this MVP is
+# a self-contained syscall/cmdline signature — no 169.254.169.254 metadata call is
+# involved. The real IMDS/CloudTrail plane is Sysdig's job (see README 締め).
+attack:
+  tactic: "Credential Access"
+  techniqueId: "T1552.001"
+  techniqueName: "Unsecured Credentials: Credentials In Files"

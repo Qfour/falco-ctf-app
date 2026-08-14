@@ -1,0 +1,102 @@
+┌──────────────────────────────────────────────────────────────────┐
+│ CTF Company · Mission 11 — Cloud Cred Hunt (bonus)               │
+│ Type: TRIGGER · 難易度: ★★☆☆☆                                    │
+│ 目標 Falco ルール: "Find AWS Credentials"                         │
+└──────────────────────────────────────────────────────────────────┘
+
+# このミッションについて (クラウド脅威検知・疑似版)
+
+本編 01–10 とは独立した **ボーナス課題**。テーマは「クラウド脅威検知」。
+ただし本 CTF に **実 AWS 接続は無い** — このミッションは、クラウド侵害の
+典型的な初動 = **ディスク上に残されたクラウド認証情報を漁る** 動作を、
+既存の syscall ベース Falco で疑似再現する。実クレデンシャル・実 API
+呼び出しは一切登場しない (本番のクラウド脅威検知は「本番ではどう守るか」節を参照)。
+
+# シナリオ
+
+ワークロードに足がかりを得た attacker の次の一手 — この箱から
+**クラウドへ手を広げる鍵** を探す。実運用では開発者が
+`~/.aws/credentials` に長期アクセスキーを置きっぱなしにしていることが
+多く、攻撃者はまずそれを grep/find で漁る。CTF Company の Falco は、
+まさにこの **AWS 認証情報探索コマンド** を見張っている。
+
+# ゴール
+
+このコンテナで Falco ルール「Find AWS Credentials」を発火させる。
+発火 = solve (提出操作は不要)。
+
+# 背景 (ルールが見ているもの)
+
+"Find AWS Credentials" は **プロセス起動 (spawned_process) の cmdline** を
+見る。次のどちらかで発火する:
+
+  1. grep 系 (grep/egrep/fgrep) のコマンドラインに AWS キーの語が含まれる:
+       aws_access_key_id / aws_secret_access_key / aws_session_token /
+       accesskeyid / secretaccesskey
+  2. find のコマンドラインが ".aws/credentials" で終わる
+
+つまり **実ファイルが存在しなくても、探索コマンドそのもの** で発火する
+(cmdline シグネチャ検知)。この箱には練習用のダミー資格情報も置いてある:
+
+  ~/.aws/credentials
+  /opt/ctf/missions/11-cloud-cred-hunt/fixtures/aws-credentials.sample
+
+いずれも AWS 公式ドキュメントの EXAMPLE キー = 非シークレットのダミー。
+
+# 本番ではどう守るか (Sysdig)
+
+この疑似課題は「ディスク上の鍵漁り」という 1 動作を syscall で捉えた
+にすぎない。本物のクラウド脅威検知は、この箱の外 — クラウドの
+コントロールプレーン (CloudTrail / API 監査ログ) と実行環境を横断して
+面で見る必要がある。Sysdig Secure のクラウドコネクタ (CDR) は
+CloudTrail を取り込み、"漏れた鍵での不審な API 呼び出し"・"権限昇格"・
+"公開設定への変更" をクラウド側で検知し、CSPM が「そもそも鍵を平文で
+置かない / 露出させない」姿勢を継続評価する。ホスト内 Falco と
+クラウド面 CDR/CSPM の二層が本番の守り方。
+
+# 試すこと
+
+  grep -r aws_secret_access_key ~/.aws/           # grep パス
+  find ~ -path '*.aws/credentials'                # find パス
+
+どちらも「攻撃者がクラウド鍵を漁る」動作で、cmdline が条件に一致した
+瞬間にルールが発火する。
+
+# クリア条件
+
+`Find AWS Credentials` が発火する。
+
+# 環境にあるもの
+
+  /opt/ctf/missions/11-cloud-cred-hunt/fixtures/welcome.txt           ← このファイル
+  /opt/ctf/missions/11-cloud-cred-hunt/fixtures/aws-credentials.sample ← ダミー資格情報
+  /opt/ctf/missions/11-cloud-cred-hunt/fixtures/aws                    ← 疑似 aws CLI (flavor)
+
+────────────────────────────────────────────────────────────────────
+HINT 1 (気付き): 攻撃者は「鍵の置き場所」を知っている
+────────────────────────────────────────────────────────────────────
+
+クラウド侵害の初動は「この箱からクラウドへ行ける鍵はないか」。
+AWS CLI の長期資格情報は慣習的に決まった場所 (ホームの .aws 配下) に
+平文で置かれる。攻撃者はそこを狙って漁る。その「漁る」コマンド自体を
+Falco が見ている — まずどこを、どう探すかを考えてみよう。
+
+────────────────────────────────────────────────────────────────────
+HINT 2 (概要): grep か find で AWS キーを探す
+────────────────────────────────────────────────────────────────────
+
+ルールは 2 通りで発火する。(1) grep 系コマンドの引数に AWS キーの語
+(aws_secret_access_key など) が含まれる、または (2) find の引数が
+".aws/credentials" で終わる。実ファイルの有無に関わらず、コマンドの
+形が一致すれば発火する。
+
+────────────────────────────────────────────────────────────────────
+HINT 3 (解答): 具体的なコマンド
+────────────────────────────────────────────────────────────────────
+
+  grep -r aws_secret_access_key ~/.aws/
+  grep aws_access_key_id /opt/ctf/missions/11-cloud-cred-hunt/fixtures/aws-credentials.sample
+  find ~ -path '*.aws/credentials'
+
+いずれも発火する。grep パスは引数に AWS キーの語が入っていること、
+find パスは最後の引数が ".aws/credentials" で終わっていることが肝。

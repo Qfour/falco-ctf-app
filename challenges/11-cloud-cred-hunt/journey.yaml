@@ -1,0 +1,27 @@
+# Journey content for the /journey UI. Schema: internal/catalog/journey.go.
+# Participant-facing narrative only — never influences scoring.
+challengeId: 11-cloud-cred-hunt
+title: クラウド鍵漁り — 疑似クラウド脅威検知 (bonus)
+tagline: ディスクに残されたクラウド資格情報を漁り、検知を発火させろ
+briefing: >-
+  本編 01–10 とは独立したボーナス課題。テーマは「クラウド脅威検知」。ただし本 CTF に
+  実 AWS 接続は無く、クラウド侵害の典型的な初動 — ディスク上に残されたクラウド認証情報を
+  漁る動作 — を既存の syscall ベース Falco で疑似再現する。開発者が ~/.aws/credentials に
+  置きっぱなしにした長期キーを、攻撃者は grep/find で探す。CTF Company の Falco は、
+  その AWS 認証情報探索コマンド (Find AWS Credentials) を見張っている。発火させれば CLEARED。
+steps:
+  - label: クラウド鍵の置き場所を知る
+    detail: AWS CLI の長期資格情報は慣習的にホームの .aws 配下に平文で置かれる。攻撃者はそこを狙う。
+  - label: grep か find で AWS キーを探索する
+    detail: |
+      grep -r aws_secret_access_key ~/.aws/
+      find ~ -path '*.aws/credentials'
+      grep 系の引数に AWS キーの語が入るか、find の引数が .aws/credentials で終わると発火する。
+      練習用のダミー資格情報が ~/.aws/credentials と fixtures/aws-credentials.sample にある。
+  - label: スコアボードで CLEARED を確認
+    detail: 発火が scoreboard に届くと、このミッションが自動で CLEARED になる。
+hints:
+  - クラウド侵害の初動は「この箱からクラウドへ行ける鍵はないか」。AWS の長期資格情報は決まった場所 (.aws 配下) に平文で置かれる。その「漁る」コマンド自体を Falco が見ている。
+  - grep 系コマンドの引数に AWS キーの語 (aws_secret_access_key など) を含めるか、find の引数を .aws/credentials で終わらせる。実ファイルの有無に関わらずコマンドの形で発火する。
+  - "想定解: grep -r aws_secret_access_key ~/.aws/  もしくは  find ~ -path '*.aws/credentials' — cmdline が Find AWS Credentials の条件に一致した瞬間に発火。実クラウド脅威検知は Sysdig のクラウドコネクタ (CDR/CSPM) が面で担う。"
+docsUrl: /missions/11-cloud-cred-hunt/
