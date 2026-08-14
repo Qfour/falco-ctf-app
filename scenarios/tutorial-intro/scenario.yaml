@@ -1,0 +1,13 @@
+# Tutorial / onboarding edition — 「遊び方」を掴むための導入コース。
+# 00 (採点対象外の 0問目) + 例題で trigger / evade 両方の流れを体験させる。
+# これは本番採点シナリオ (nimbusbreach-full) とは別枠。本番の scoreboard は
+# 引き続き nimbusbreach-full (01-10 の 10 課題) を採点する — この tutorial-intro
+# を SCENARIO_FILE に使うのは「遊び方を見せる」導入セッション / セルフ練習用。
+#
+# 順序は正準 00→01→03 (ascending)。既存 01-10 の並びは一切変えていない。
+id: tutorial-intro
+title: "遊び方チュートリアル — 導入コース (0問目 + 例題)"
+challenges:
+  - 00-tutorial     # 0問目: trigger の自動クリア + ヒント + 進行を体験
+  - 01-initial-recon # 例題1 (trigger ★1): 実ミッションの trigger の相場観
+  - 03-stealth-read  # 例題2 (evade ★2): flag 提出フォームの流れを体験

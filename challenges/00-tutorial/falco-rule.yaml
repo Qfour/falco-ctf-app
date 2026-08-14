@@ -1,0 +1,20 @@
+challengeId: 00-tutorial
+type: trigger
+# Tutorial / 0問目 — 遊び方を体験させる導入課題。
+# "Execution from /dev/shm" は Falco 3.0.1 に実在するルールで、01-10 の
+# どの課題も使っていない (auto-solve 衝突なし)。deterministic に発火する
+# 安全な 1 コマンドで解けるため、初回発火のフィードバックを体験できる。
+#
+# 採点非影響の担保: 本番の採点シナリオ nimbusbreach-full/scenario.yaml は
+# この 00-tutorial を含まない。scoreboard は SCENARIO_FILE で Restrict
+# (fail-closed) するため、本番採点・/api/state・leaderboard・total には
+# 出てこない。参加者にはチュートリアル専用シナリオ tutorial-intro を使う。
+expectedRules:
+  - Execution from /dev/shm
+# ATT&CK mapping — canonical source for docs/Navigator layer (make gen-attack).
+# Tutorial mirrors the killchain's "drop & execute" theme (cf. mission 07) at
+# an intro difficulty so 相場観 が掴める。
+attack:
+  tactic: "Execution"
+  techniqueId: "T1059.004"
+  techniqueName: "Command and Scripting Interpreter: Unix Shell"
