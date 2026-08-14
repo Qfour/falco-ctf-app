@@ -19,7 +19,7 @@ name: Checks
 #
 # サプライチェーン (P12): 新規サードパーティ action は増やさない。ツールは
 # golang container 内で `go install <module>@<version>` する (module version pin =
-# reproducible)。使う action は既存例外表の actions/checkout@v4 のみ。
+# reproducible)。使う action は既存例外表の actions/checkout@v7 のみ。
 # 正典: .claude/rules/falco-ctf-app-conventions.md「CI workflow / action 参照の pin」。
 
 on:
@@ -62,7 +62,7 @@ jobs:
       # govulncheck は go.mod 起点で module graph / source を解析するだけで git を要さない
       # (gen-diff-check は git diff を使うため git 必須で対照的)。checkout は git 非在時に
       # GitHub REST tarball へ fallback するので apk add git は不要。git 前提はこの job から落とす。
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
       - name: govulncheck ./...
@@ -90,7 +90,7 @@ jobs:
     steps:
       - name: install git + python3 (checkout / diff / gen-attack 前提)
         run: apk add --no-cache git python3
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: mark workspace safe for git
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: install oapi-codegen

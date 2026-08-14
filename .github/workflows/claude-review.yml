@@ -1,7 +1,7 @@
 name: Claude Code Review
 
 # サプライチェーン pin ポリシー (P12) — 正典: .claude/rules/falco-ctf-app-conventions.md
-#   actions/checkout@v4 と anthropics/claude-code-action@v1 は @vN メジャータグの
+#   actions/checkout@v7 と anthropics/claude-code-action@v1 は @vN メジャータグの
 #   許容例外 (信頼済み提供元 + Dependabot 運用)。conventions の例外表を参照。
 
 on:
@@ -22,7 +22,7 @@ jobs:
   claude-review:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}

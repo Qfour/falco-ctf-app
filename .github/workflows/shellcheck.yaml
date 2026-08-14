@@ -61,7 +61,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # 無効な入力組合せを silent-ignore せず即 fail させる ([R4-A2])。
       # 有効: plant-sh-mode=true かつ paths 空  /  plant-sh-mode=false かつ recursive=true かつ paths 非空。
       - name: validate inputs
