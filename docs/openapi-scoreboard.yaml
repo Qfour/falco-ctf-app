@@ -152,6 +152,62 @@ paths:
         "404":
           description: unknown challenge id
 
+  /api/challenges/{cid}/submit-detect:
+    post:
+      summary: Submit a Falco condition for a detect-type challenge
+      operationId: submitDetect
+      description: |
+        Grade a participant-authored Falco `condition:` for a detect challenge.
+        The condition is wrapped into a fixed rule and replayed against the
+        mission's evasion + benign captures. `pass = fires on evasion AND no
+        fire on benign`. The reference condition is NEVER returned.
+
+        Trust model mirrors POST /api/challenges/{cid}/submit: identity is
+        claimed in the body, rate-limited on the same per-IP bucket, and (on an
+        auth-proxied host) self-scoped — a login may only grade as its OWN user.
+        A global in-flight grader cap returns 429 when exceeded (no queueing).
+      parameters:
+        - in: path
+          name: cid
+          required: true
+          schema: { type: string }
+          description: detect challenge id (e.g. `03-stealth-read-detect`)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user, condition]
+              properties:
+                user: { type: string }
+                condition:
+                  type: string
+                  description: the Falco condition to grade (≤4 KiB)
+      responses:
+        "200":
+          description: |
+            Submission graded. Inspect `status` (invalid | missed |
+            false-positive | solved) and the `evasion_fires` / `benign_fires`
+            feedback counts.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [invalid, missed, false-positive, solved] }
+                  solved: { type: boolean }
+                  evasion_fires: { type: integer }
+                  benign_fires: { type: integer }
+                  user: { type: string }
+                  reason: { type: string }
+        "400":
+          description: not a detect challenge, missing `user`/`condition`, or condition too large
+        "404":
+          description: unknown challenge id
+        "429":
+          description: too many in-flight grader jobs; retry shortly (no queueing)
+
   /api/admin/reset:
     post:
       summary: Reset the scoreboard (clear solves + event counters)

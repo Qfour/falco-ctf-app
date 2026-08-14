@@ -17,6 +17,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -29,6 +30,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/detect"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/metrics"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/oapi"
@@ -75,9 +77,42 @@ type Handler struct {
 	journeys    catalog.Journeys
 	order       []string
 	docsBaseURL string // docs-site origin for absolutising docsUrl; "" = relative
+
+	// detect challenge grading (nil when no runner is configured — then
+	// /submit-detect returns 503). detectInflight is a buffered channel used as a
+	// counting semaphore: a slot is acquired non-blockingly before a grade and
+	// released after, so a flood of submissions is REJECTED with 429 past the cap
+	// rather than queued (design §3.3 — the net-new DoS lever). Its capacity is
+	// the hard global in-flight grader cap.
+	detectRunner   scoring.DetectRunner
+	detectInflight chan struct{}
 }
 
-func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *slog.Logger, now func() time.Time, adminEmails []string, jc JourneyConfig) *Handler {
+// DetectConfig carries the detect-challenge grading inputs. Both fields are
+// optional: when Runner is nil the /submit-detect endpoint returns 503 (feature
+// off — e.g. local dev with no falco). InflightCap <= 0 falls back to
+// DefaultDetectInflightCap.
+type DetectConfig struct {
+	Runner      scoring.DetectRunner
+	InflightCap int
+}
+
+// DefaultDetectInflightCap bounds concurrent grader executions globally. A
+// per-submission grader (docker/Job) is the net-new amplification vector; this
+// hard cap (rejected past it with 429, never queued) plus the per-IP submit
+// limiter keeps a flood from spawning unbounded work (design §3.3).
+const DefaultDetectInflightCap = 5
+
+// DetectGradeTimeout bounds a single detect grade end-to-end (compile gate +
+// both replays). It is the deadline the handler puts on the context handed to
+// SubmitDetect → DetectRunner, so a hung Falco invocation cannot occupy an
+// in-flight slot forever (design §3.3). 30s sits just above the K8s-Job's
+// activeDeadlineSeconds (~20s) so the Job's own deadline usually fires first;
+// this is the app-side backstop for the local/docker path and for a stuck
+// wait. On expiry the runner returns an infra error → 500 (fail-closed).
+const DetectGradeTimeout = 30 * time.Second
+
+func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *slog.Logger, now func() time.Time, adminEmails []string, jc JourneyConfig, dc DetectConfig) *Handler {
 	// /submit accepts a claimed user identity. Without per-IP throttling a
 	// participant who scraped someone else's flag could brute-force submits.
 	// 1 req/s with burst 10 lets legitimate typing through but blocks
@@ -94,6 +129,14 @@ func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *sl
 	// Normalise the docs origin to have no trailing slash so we can join with the
 	// mission's relative docsUrl (which starts with "/") without doubling it.
 	docsBaseURL := strings.TrimRight(strings.TrimSpace(jc.DocsBaseURL), "/")
+	cap := dc.InflightCap
+	if cap <= 0 {
+		cap = DefaultDetectInflightCap
+	}
+	var inflight chan struct{}
+	if dc.Runner != nil {
+		inflight = make(chan struct{}, cap)
+	}
 	return &Handler{
 		cat:                cat,
 		store:              s,
@@ -106,6 +149,8 @@ func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *sl
 		journeys:           journeys,
 		order:              order,
 		docsBaseURL:        docsBaseURL,
+		detectRunner:       dc.Runner,
+		detectInflight:     inflight,
 	}
 }
 
@@ -150,6 +195,10 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/admin/hints", h.releaseHint)
 	submitMW := h.submitLimiter.Middleware(ratelimit.ClientIP)
 	mux.Handle("POST /api/challenges/{cid}/submit", submitMW(http.HandlerFunc(h.submit)))
+	// Detect grading reuses the SAME per-IP submit limiter (same trust model as
+	// /submit) plus a global in-flight cap enforced inside the handler (429 past
+	// it, never queued).
+	mux.Handle("POST /api/challenges/{cid}/submit-detect", submitMW(http.HandlerFunc(h.submitDetect)))
 	// Exfil is an internal-only endpoint reached solely by the collector
 	// (full one-pipe, P11.5). Workspaces cannot reach the scoreboard directly
 	// once egress lockdown is on — they POST /api/challenges/{cid}/exfil to the
@@ -529,6 +578,172 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 			"solved":       true,
 			"user":         user,
 			"display_name": h.store.DisplayName(user),
+		})
+	}
+}
+
+// --- submit-detect ----------------------------------------------------------
+
+// submitDetect grades a participant-authored Falco condition for a detect-type
+// challenge. It reuses the /submit trust model (claimed identity, per-IP rate
+// limiter middleware) and adds two detect-specific controls:
+//
+//   - self-scope: on an auth-proxied host the caller may only grade as its OWN
+//     {user} (selfOrAdminWrite, the same gate step-check / display-name use). The
+//     claimed body user must match the proven identity; an admin may grade for
+//     any user. Over the cluster-internal path (no auth header) the legacy
+//     claimed-identity model holds (NetworkPolicy is the isolation control there).
+//   - global in-flight cap: a per-submission grader (docker/Job) is the net-new
+//     DoS lever, so past detectInflight's capacity the request is REJECTED with
+//     429 (never queued) — a flood cannot spawn unbounded grader work.
+//
+// The solve decision (compile gate → replay → pass) is the Grader's
+// (SubmitDetect); this handler only translates the outcome. The reference
+// condition / capture contents are NEVER returned — only the fire counts (safe
+// pedagogic feedback).
+func (h *Handler) submitDetect(w http.ResponseWriter, r *http.Request) {
+	cid := r.PathValue("cid")
+	auditLog := func(outcome string, extra ...any) {
+		fields := []any{"cid", cid, "remote_addr", r.RemoteAddr, "outcome", outcome}
+		fields = append(fields, extra...)
+		h.logger.Info("submit_detect", fields...)
+	}
+
+	// Feature-off: no runner wired (local dev without falco). 503, not 404/500.
+	if h.detectRunner == nil {
+		auditLog("detect_disabled")
+		httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "detect grading is not enabled"})
+		return
+	}
+
+	// Pre-body guards (unknown challenge / not detect type) gate whether we read
+	// the body — verdict is still the Grader's (SubmitDetect returns the same
+	// statuses).
+	ch, ok := h.cat[cid]
+	if !ok {
+		metrics.SubmissionsTotal.WithLabelValues(cid, "unknown_challenge").Inc()
+		auditLog("unknown_challenge")
+		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"error": "unknown challenge: " + cid})
+		return
+	}
+	if ch.Type != "detect" {
+		metrics.SubmissionsTotal.WithLabelValues(cid, "not_detect").Inc()
+		auditLog("not_detect")
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": cid + " is not a detect challenge"})
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, detect.MaxConditionBytes+1<<10)
+	var req oapi.SubmitDetectJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		metrics.SubmissionsTotal.WithLabelValues(cid, "bad_request").Inc()
+		auditLog("bad_request", "err", err.Error())
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	user := strings.TrimSpace(req.User)
+	condition := strings.TrimSpace(req.Condition)
+	if user == "" {
+		metrics.SubmissionsTotal.WithLabelValues(cid, "bad_request").Inc()
+		auditLog("bad_request", "reason", "missing user")
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "user required"})
+		return
+	}
+	if !validUser.MatchString(user) {
+		metrics.SubmissionsTotal.WithLabelValues(cid, "bad_request").Inc()
+		auditLog("bad_request", "reason", "invalid user")
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
+		return
+	}
+	// Self-scope: on an auth-proxied host the claimed user must be the proven
+	// identity (or admin). Uses validated `user` for the prefix-exact match.
+	if !h.selfOrAdminWrite(w, r, user) {
+		auditLog("forbidden", "user", user)
+		return
+	}
+	if condition == "" {
+		metrics.SubmissionsTotal.WithLabelValues(cid, "bad_request").Inc()
+		auditLog("bad_request", "user", user, "reason", "missing condition")
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "condition required"})
+		return
+	}
+	if len(condition) > detect.MaxConditionBytes {
+		metrics.SubmissionsTotal.WithLabelValues(cid, "bad_request").Inc()
+		auditLog("bad_request", "user", user, "reason", "condition too large")
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "condition too large"})
+		return
+	}
+
+	// Global in-flight cap: acquire a slot NON-blockingly. Past the cap, reject
+	// with 429 (no queueing) so a flood cannot spawn unbounded grader work.
+	select {
+	case h.detectInflight <- struct{}{}:
+		defer func() { <-h.detectInflight }()
+	default:
+		metrics.SubmissionsTotal.WithLabelValues(cid, "rate_limited").Inc()
+		auditLog("inflight_cap", "user", user)
+		httpx.WriteJSON(w, http.StatusTooManyRequests, map[string]any{"error": "too many in-flight grader jobs; retry shortly"})
+		return
+	}
+
+	// Bound the grade: a hung Falco invocation (docker/Job) must not hold an
+	// in-flight slot indefinitely (design §3.3 — the in-flight cap is the DoS
+	// control, and a wedged grade would leak a slot until the client disconnects).
+	// The deadline is derived from the server clock and propagated to the runner's
+	// every falco call via ctx; it sits just above the Job's activeDeadlineSeconds
+	// (~20s) so an infra timeout surfaces as a 500 (fail-closed), never a solve.
+	ctx, cancel := context.WithTimeout(r.Context(), DetectGradeTimeout)
+	defer cancel()
+	outcome, err := h.grader.SubmitDetect(ctx, h.detectRunner, user, cid, condition)
+	if err != nil {
+		// Fail closed: a runner infra error is a 500, never a silent solve.
+		h.logger.Error("grade detect", "err", err, "cid", cid, "user", user)
+		auditLog("error", "user", user, "err", err.Error())
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "could not grade condition"})
+		return
+	}
+	switch outcome.Status {
+	case scoring.DetectInvalidCondition:
+		metrics.SubmissionsTotal.WithLabelValues(cid, "detect_invalid").Inc()
+		auditLog("invalid", "user", user)
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"status": "invalid",
+			"solved": false,
+			"reason": "the condition did not compile (falco -V rejected it). Check the syntax and the macros you referenced.",
+		})
+	case scoring.DetectMissedEvasion:
+		metrics.SubmissionsTotal.WithLabelValues(cid, "detect_missed").Inc()
+		auditLog("missed", "user", user, "evasion_fires", outcome.EvasionFires, "benign_fires", outcome.BenignFires)
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"status":        "missed",
+			"solved":        false,
+			"evasion_fires": outcome.EvasionFires,
+			"benign_fires":  outcome.BenignFires,
+			"reason":        "your rule did not fire on the attack capture. It fired 0× on the evasion — it is not detecting the behaviour.",
+		})
+	case scoring.DetectFalsePositive:
+		metrics.SubmissionsTotal.WithLabelValues(cid, "detect_false_positive").Inc()
+		auditLog("false_positive", "user", user, "evasion_fires", outcome.EvasionFires, "benign_fires", outcome.BenignFires)
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"status":        "false-positive",
+			"solved":        false,
+			"evasion_fires": outcome.EvasionFires,
+			"benign_fires":  outcome.BenignFires,
+			"reason":        "your rule caught the attack but also fired on benign traffic — too broad. Tighten it so it fires 0× on the benign capture.",
+		})
+	case scoring.DetectSolved:
+		if outcome.Newly {
+			metrics.SolvesTotal.WithLabelValues(cid, "detect").Inc()
+		}
+		metrics.SubmissionsTotal.WithLabelValues(cid, "solved").Inc()
+		auditLog("solved", "user", user, "newly", outcome.Newly, "evasion_fires", outcome.EvasionFires, "display_name", h.store.DisplayName(user))
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"status":        "solved",
+			"solved":        true,
+			"evasion_fires": outcome.EvasionFires,
+			"benign_fires":  outcome.BenignFires,
+			"user":          user,
+			"display_name":  h.store.DisplayName(user),
 		})
 	}
 }

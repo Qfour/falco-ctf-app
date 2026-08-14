@@ -114,11 +114,21 @@ type SubmitFlagJSONBody struct {
 	User string `json:"user"`
 }
 
+// SubmitDetectJSONBody defines parameters for SubmitDetect.
+type SubmitDetectJSONBody struct {
+	// Condition the Falco condition to grade (≤4 KiB)
+	Condition string `json:"condition"`
+	User      string `json:"user"`
+}
+
 // AdminSetDisplayNameJSONRequestBody defines body for AdminSetDisplayName for application/json ContentType.
 type AdminSetDisplayNameJSONRequestBody AdminSetDisplayNameJSONBody
 
 // SubmitFlagJSONRequestBody defines body for SubmitFlag for application/json ContentType.
 type SubmitFlagJSONRequestBody SubmitFlagJSONBody
+
+// SubmitDetectJSONRequestBody defines body for SubmitDetect for application/json ContentType.
+type SubmitDetectJSONRequestBody SubmitDetectJSONBody
 
 // ReceiveFalcoEventJSONRequestBody defines body for ReceiveFalcoEvent for application/json ContentType.
 type ReceiveFalcoEventJSONRequestBody = FalcoEvent

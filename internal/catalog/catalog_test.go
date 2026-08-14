@@ -167,8 +167,94 @@ expectedRules: ["a"]`)
 	}
 }
 
+// --- detect challenges: capture-path resolution (resolveCapture) ------------
+//
+// resolveCapture is unexported; it is exercised through Load → validateDetect,
+// which is exactly how it runs in production (fail-fast at boot on a bad
+// catalog). detectYAML builds a detect challenge with the given capture paths.
+func detectYAML(evasion, benign string) string {
+	return `challengeId: 04-detect
+type: detect
+detect:
+  evasionCapture: ` + evasion + `
+  benignCapture: ` + benign + `
+  ruleName: participant_detect
+  allowedMacros:
+    - open_read
+`
+}
+
+func TestLoad_Detect_ValidRelativePaths(t *testing.T) {
+	dir := t.TempDir()
+	writeChallenge(t, dir, "04-detect", detectYAML("detect/evasion.scap", "./detect/benign.scap"))
+	cat, err := catalog.Load(dir)
+	if err != nil {
+		t.Fatalf("valid detect challenge must load: %v", err)
+	}
+	ch := cat["04-detect"]
+	if ch.Type != "detect" || ch.Detect == nil {
+		t.Fatalf("detect challenge not loaded: %+v", ch)
+	}
+	// Cleaned relative, forward-slash, no leading "./".
+	if ch.Detect.EvasionCapturePath != "detect/evasion.scap" {
+		t.Errorf("evasion path: got %q, want detect/evasion.scap", ch.Detect.EvasionCapturePath)
+	}
+	if ch.Detect.BenignCapturePath != "detect/benign.scap" {
+		t.Errorf("benign path (leading ./ must be cleaned): got %q, want detect/benign.scap", ch.Detect.BenignCapturePath)
+	}
+}
+
+func TestLoad_Detect_RejectsBadCapturePaths(t *testing.T) {
+	// Each case is a single offending path (paired with a valid other path) that
+	// resolveCapture must reject at load time.
+	cases := map[string]struct{ evasion, benign string }{
+		"empty":       {"", "detect/benign.scap"},
+		"absolute":    {"/etc/shadow", "detect/benign.scap"},
+		"dotdot":      {"../../../etc/shadow", "detect/benign.scap"},
+		"dotdot-mid":  {"detect/../../secret.scap", "detect/benign.scap"},
+		"dot-only":    {".", "detect/benign.scap"},
+		"benign-bad":  {"detect/evasion.scap", "../escape.scap"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeChallenge(t, dir, "04-detect", detectYAML(c.evasion, c.benign))
+			if _, err := catalog.Load(dir); err == nil {
+				t.Fatalf("case %q: expected load error for bad capture path, got nil", name)
+			}
+		})
+	}
+}
+
+func TestLoad_Detect_RejectsFlagAndRules(t *testing.T) {
+	dir := t.TempDir()
+	// A detect challenge is not flag/live-Falco based; expectedFlag or
+	// expected/forbiddenRules must be rejected.
+	writeChallenge(t, dir, "04-detect", `challengeId: 04-detect
+type: detect
+expectedFlag: "FALCO{x}"
+detect:
+  evasionCapture: detect/evasion.scap
+  benignCapture: detect/benign.scap
+`)
+	if _, err := catalog.Load(dir); err == nil {
+		t.Fatal("detect challenge with expectedFlag must be rejected")
+	}
+}
+
+func TestLoad_Detect_MissingDetectBlock(t *testing.T) {
+	dir := t.TempDir()
+	writeChallenge(t, dir, "04-detect", "challengeId: 04-detect\ntype: detect\n")
+	if _, err := catalog.Load(dir); err == nil {
+		t.Fatal("detect challenge without a detect block must be rejected")
+	}
+}
+
 // TestLoad_RealChallenges verifies the production challenges/ tree parses
-// cleanly. Pins the CTF Company 10-mission set.
+// cleanly. Pins the CTF Company mission set (10 attack missions). The
+// detect-authoring twin (03-stealth-read-detect) lands in Phase 44.2 with its
+// captures; the detect engine ships here (44.0) without a live challenge, so the
+// tree stays at 10.
 func TestLoad_RealChallenges(t *testing.T) {
 	cat, err := catalog.Load("../../challenges")
 	if err != nil {
