@@ -54,22 +54,3 @@ Falco rule は **sensitive_files macro に該当するファイル** に対す�
 # 環境にあるもの
 
   /opt/ctf/missions/09-hidden-cache/fixtures/welcome.txt  ← このファイル
-
-────────────────────────────────────────────────────────────────────
-HINT 1 (気付き): inode を直接指す「別名」
-────────────────────────────────────────────────────────────────────
-
-credential を rotate されても困らないよう、攻撃者は「元ファイルが
-消えても中身が残る」別名を作る。ショートカット (symlink) ではなく
-**inode を直接指すリンク**。それを sensitive file に対して作ると?
-
-────────────────────────────────────────────────────────────────────
-HINT 2 (解答): hardlink を張る
-────────────────────────────────────────────────────────────────────
-
-  ln /etc/shadow /tmp/.cache.bak
-  # /etc/sudoers, /etc/pam.d/* などの sensitive file でも可
-
-`-s` 無しの `ln` が hardlink。symlink (`ln -s`) は別ルール
-(Create Symlink Over Sensitive Files) なので 09 では発火しない —
-必ず `-s` 無しで。

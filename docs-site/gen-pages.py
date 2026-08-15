@@ -4,12 +4,16 @@
   python3 gen-pages.py <repo-root> <mode>     # mode: participant | admin
 
 Output (relative to docs-site/, gitignored):
-  docs/missions/<NN>.md   — participant: brief + operator-released hints (HTML+JS).
-                            admin: brief + 攻略と解説 + hints.
+  docs/missions/<NN>.md   — participant: brief only.
+                            admin: brief + 攻略と解説 (README.md).
 
 Per challenge the brief comes from fixtures/welcome.txt; the "# 表示名について"
-section is stripped (it lives on the はじめに page) and trailing HINT blocks are
-split out so they can be released by the operator on the site.
+section is stripped (it lives on the はじめに page).
+
+Hints are NOT rendered here. The single source of truth for hints is the
+progressive reveal in journey.yaml (`/journey` UI, penalty-gated). welcome.txt
+no longer carries a HINT block (P22-1) — this avoids a fairness gap where
+docs-site hints could be unlocked without the journey penalty.
 """
 import os, re, shutil, sys
 
@@ -21,8 +25,6 @@ if mode not in ("participant", "admin"):
 MISS = "docs/missions"
 shutil.rmtree(MISS, ignore_errors=True)
 os.makedirs(MISS)
-
-BAR = re.compile(r"^[─\-]{3,}\s*$")
 
 
 def parse_welcome(text):
@@ -38,30 +40,9 @@ def parse_welcome(text):
         if not skip:
             kept.append(ln)
     lines = kept
-    # split brief vs trailing HINT region
-    hstart = None
-    for i, ln in enumerate(lines):
-        if ln.startswith("HINT "):
-            hstart = i - 1 if i > 0 and BAR.match(lines[i - 1]) else i
-            break
-    brief = lines if hstart is None else lines[:hstart]
-    hlines = [] if hstart is None else lines[hstart:]
-    while brief and not brief[-1].strip():
-        brief.pop()
-    # parse individual hints (skip the ─ separators)
-    hints, cur = [], None
-    for ln in hlines:
-        if BAR.match(ln):
-            continue
-        if ln.startswith("HINT "):
-            cur = {"title": ln.strip(), "body": []}
-            hints.append(cur)
-        elif cur is not None:
-            cur["body"].append(ln)
-    for h in hints:
-        while h["body"] and not h["body"][-1].strip():
-            h["body"].pop()
-    return "\n".join(brief), hints
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return "\n".join(lines)
 
 
 def strip_sections(text, headers):
@@ -111,9 +92,9 @@ def page(nn, title, welcome_path, readme_path, rule_path, explain_path=None):
             if not img.endswith(".md"):
                 out.append(f"![{nn}](../assets/missions/{nn}/{img})\n")
 
-    brief, hints = ("", [])
+    brief = ""
     if welcome_path and os.path.isfile(welcome_path):
-        brief, hints = parse_welcome(open(welcome_path, encoding="utf-8").read())
+        brief = parse_welcome(open(welcome_path, encoding="utf-8").read())
     # 試すこと / クリア条件 / 環境にあるもの are direct answers — operator (admin) only.
     if brief and mode != "admin":
         brief = strip_sections(brief, ["試すこと", "クリア条件", "環境にあるもの"])
@@ -144,18 +125,6 @@ def page(nn, title, welcome_path, readme_path, rule_path, explain_path=None):
             out.append("```text\n" + after + "\n```\n")
     elif rule:
         rule_block()
-
-    if hints:
-        out.append("## ヒント\n")
-        # Operator-controlled reveal (assets/hints.js): participants see a hint
-        # only after an admin releases it; admin pages get a release button.
-        # State lives in the scoreboard (GET/POST /api/hints).
-        admin_cls = " ctf-hint--admin" if mode == "admin" else ""
-        for idx, h in enumerate(hints, 1):
-            out.append(f'<div class="ctf-hint{admin_cls}" data-mission="{nn}" data-hint="{idx}" markdown="1">')
-            out.append(f"**{h['title']}**\n")
-            out.append("```text\n" + "\n".join(h["body"]) + "\n```")
-            out.append("</div>\n")
 
     if mode == "admin" and readme_path and os.path.isfile(readme_path):
         body = open(readme_path, encoding="utf-8").read().splitlines()[1:]  # drop H1

@@ -47,38 +47,3 @@ fixtures に用意されたラッパーをそのまま実行:
 
   /opt/ctf/missions/06-web-rce-shell/fixtures/welcome.txt    ← このファイル
   /opt/ctf/missions/06-web-rce-shell/fixtures/fake-httpd.sh  ← Web RCE シナリオ
-
-────────────────────────────────────────────────────────────────────
-HINT 1 (気付き): Falco は shell の「親」を見ている
-────────────────────────────────────────────────────────────────────
-
-shell 起動が怪しいかどうかは **親プロセスが何か** で決まる。
-bash から sh を呼ぶのは正常。では `httpd` や `nginx` のような
-Web サーバが shell を起こしたら? Falco はそれを異常と見なす。
-
-────────────────────────────────────────────────────────────────────
-HINT 2 (概要): proc.pname は実行ファイル名で決まる
-────────────────────────────────────────────────────────────────────
-
-カーネルは proc.pname を **実行ファイルの basename** から決める。
-`httpd` という名前の実行ファイルを置き、その中から shell を起こせば
-「Web サーバが shell を起こした」ように見えて発火する。
-
-────────────────────────────────────────────────────────────────────
-HINT 3 (解答): httpd 偽装で shell を起こす
-────────────────────────────────────────────────────────────────────
-
-用意済みラッパーを実行:
-
-  sh /opt/ctf/missions/06-web-rce-shell/fixtures/fake-httpd.sh
-
-自分で組むなら:
-
-  cat > /tmp/httpd <<'EOF'
-  #!/bin/sh
-  /bin/sh -c "ls > /dev/null"
-  EOF
-  chmod +x /tmp/httpd && /tmp/httpd
-
-(逆に `cp /tmp/httpd /tmp/myscript && /tmp/myscript` のように **別名**
-で動かすと親 comm が変わり発火しない — Mission 10 で使う回避の種)
