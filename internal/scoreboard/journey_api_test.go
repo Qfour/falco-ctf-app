@@ -53,13 +53,23 @@ func newJourneyFixture(t *testing.T, extra ...scoreboard.Option) *journeyFixture
 	}
 	t.Cleanup(func() { st.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	// P23-2: wire journeyFixtureOrigin into the allowlist; req/reqAs send it as
+	// Origin on every request. This fixture exercises the OTHER gates (P18,
+	// journey progression, scoring) so it must not be collaterally denied by
+	// the origin guard's fail-closed default (see origin_guard_test.go for the
+	// guard's own dedicated coverage).
 	opts := append([]scoreboard.Option{
 		scoreboard.WithJourneys(journeys),
 		scoreboard.WithOrder([]string{"01-recon", "02-evade", "03-late"}),
+		scoreboard.WithAllowedOrigins([]string{journeyFixtureOrigin}),
 	}, extra...)
 	srv := scoreboard.NewHandler(cat, st, logger, opts...)
 	return &journeyFixture{t: t, srv: srv, st: st}
 }
+
+// journeyFixtureOrigin is the sole entry in journeyFixture's ALLOWED_ORIGINS
+// (P23-2). req/reqAs send it as Origin on every request.
+const journeyFixtureOrigin = "https://scoreboard.ctf.local"
 
 func (f *journeyFixture) req(method, target string, body any) *httptest.ResponseRecorder {
 	f.t.Helper()
@@ -82,6 +92,8 @@ func (f *journeyFixture) reqAs(method, target, email string, body any) *httptest
 	if email != "" {
 		r.Header.Set("X-Auth-Request-Email", email)
 	}
+	// P23-2: see journeyFixtureOrigin doc.
+	r.Header.Set("Origin", journeyFixtureOrigin)
 	w := httptest.NewRecorder()
 	f.srv.ServeHTTP(w, r)
 	return w

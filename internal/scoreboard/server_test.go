@@ -60,14 +60,27 @@ func newFixture(t *testing.T, now func() time.Time) *fixture {
 	}
 	// P18: /api/state and GET / are admin-gated; wire a known admin so the
 	// existing full-view tests can authenticate as the operator via doAdmin.
+	// P23-2: wire fixtureOrigin into the allowlist too, and doAs/do send it as
+	// Origin on every request (mirroring what a real browser sends on a
+	// state-changing fetch/form submit) — this fixture exercises the OTHER
+	// gates (P18 self/admin, rate limits, scoring), not the origin guard
+	// itself (see origin_guard_test.go for that), so it must not be
+	// collaterally denied by the fail-closed default.
 	srv := scoreboard.NewHandler(cat, st, logger, scoreboard.WithNow(now),
-		scoreboard.WithAdminEmails([]string{fixtureAdminEmail}))
+		scoreboard.WithAdminEmails([]string{fixtureAdminEmail}),
+		scoreboard.WithAllowedOrigins([]string{fixtureOrigin}))
 	return &fixture{t: t, cat: cat, st: st, srv: srv}
 }
 
 // fixtureAdminEmail is the operator identity the default fixture recognises as
 // admin (ADMIN_EMAILS). doAdmin authenticates as this address.
 const fixtureAdminEmail = "admin@ctf.local"
+
+// fixtureOrigin is the sole entry in the default fixture's ALLOWED_ORIGINS
+// (P23-2). do/doAs/doAdmin/doUser all send it as the request's Origin header
+// so pre-existing tests (which predate the origin guard and exercise
+// unrelated gates) keep passing without per-test changes.
+const fixtureOrigin = "https://scoreboard.ctf.local"
 
 // falcoEventBody builds a minimal valid /falco/events payload. Tests pass
 // option funcs to override defaults; image repo + workspace pod are baked in
@@ -142,6 +155,10 @@ func (f *fixture) doAs(method, target, email string, body any) *httptest.Respons
 	if email != "" {
 		r.Header.Set("X-Auth-Request-Email", email)
 	}
+	// P23-2: send the allowed fixture Origin so the origin guard (independently
+	// covered by origin_guard_test.go) does not collaterally 403 these
+	// auth/scoring-focused tests.
+	r.Header.Set("Origin", fixtureOrigin)
 	w := httptest.NewRecorder()
 	f.srv.ServeHTTP(w, r)
 	return w
@@ -182,13 +199,18 @@ func TestAdminReset(t *testing.T) {
 		t.Fatal(err)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := scoreboard.NewHandler(cat, st, logger, scoreboard.WithAdminEmails([]string{"admin@ctf.local"}))
+	srv := scoreboard.NewHandler(cat, st, logger,
+		scoreboard.WithAdminEmails([]string{"admin@ctf.local"}),
+		scoreboard.WithAllowedOrigins([]string{fixtureOrigin}))
 
 	post := func(email string) int {
 		r := httptest.NewRequest("POST", "/api/admin/reset", nil)
 		if email != "" {
 			r.Header.Set("X-Auth-Request-Email", email)
 		}
+		// P23-2: this test targets the admin-identity gate, not the origin
+		// guard (see origin_guard_test.go), so send the allowed Origin.
+		r.Header.Set("Origin", fixtureOrigin)
 		w := httptest.NewRecorder()
 		srv.ServeHTTP(w, r)
 		return w.Code
@@ -223,7 +245,9 @@ func TestAdminSetDisplayName(t *testing.T) {
 	}
 	defer st.Close()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := scoreboard.NewHandler(cat, st, logger, scoreboard.WithAdminEmails([]string{"admin@ctf.local"}))
+	srv := scoreboard.NewHandler(cat, st, logger,
+		scoreboard.WithAdminEmails([]string{"admin@ctf.local"}),
+		scoreboard.WithAllowedOrigins([]string{fixtureOrigin}))
 
 	post := func(email, user, name string) int {
 		body, _ := json.Marshal(map[string]string{"name": name})
@@ -232,6 +256,9 @@ func TestAdminSetDisplayName(t *testing.T) {
 		if email != "" {
 			r.Header.Set("X-Auth-Request-Email", email)
 		}
+		// P23-2: this test targets the admin-identity gate, not the origin
+		// guard (see origin_guard_test.go), so send the allowed Origin.
+		r.Header.Set("Origin", fixtureOrigin)
 		w := httptest.NewRecorder()
 		srv.ServeHTTP(w, r)
 		return w.Code

@@ -17,6 +17,10 @@ services:
     environment:
       CHALLENGES_DIR: /app/challenges
       SCOREBOARD_DB: /var/lib/scoreboard/scoreboard.db
+      # P23-2 origin guard: allow the bundled dashboard's own admin buttons
+      # (fetch()'d from http://localhost:8000 itself) to keep working locally.
+      # Prod sets this to the real scoreboard/journey host(s) via helmfile.
+      ALLOWED_ORIGINS: http://localhost:8000
     volumes:
       - scoreboard-data:/var/lib/scoreboard
       # Mount challenges/ live so falco-rule.yaml edits reload on container restart.
