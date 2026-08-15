@@ -68,6 +68,13 @@ func New(isAdmin func(*http.Request) bool, deriveUser func(*http.Request) string
 	return &Handler{isAdmin: isAdmin, deriveUser: deriveUser, logger: logger}
 }
 
+// Register wires all view routes. P23-1 is additive: legacy GET /, /me, and
+// /journey stay registered as-is alongside the new /portal shell. Portal only
+// becomes the sole participant/operator entrypoint once P23-4/-5/-6 (cookie
+// SameSite, iframe embedding, docs/cybercore integration) land — that cutover
+// is a separate, cross-repo change that will remove the legacy routes, repoint
+// the ingress paths (see charts/scoreboard/templates/ingress*.yaml), and
+// update operations.md. Do not remove the legacy routes before then.
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /", h.index)
 	mux.HandleFunc("GET /me", h.me)

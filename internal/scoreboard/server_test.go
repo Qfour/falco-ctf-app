@@ -918,10 +918,14 @@ func TestPortalHTML_ServedToAdmin(t *testing.T) {
 	if !strings.Contains(body, `window.__PORTAL_ROLE__ = "admin"`) {
 		t.Errorf("expected admin role injection, body=%s", body)
 	}
-	// fixtureAdminEmail has no "@"-prefix that matches a participant slug in
-	// this fixture; DeriveUsername still runs the same code path for admin,
-	// asserting only that no admin/participant DATA (leaderboard, solves,
-	// etc.) is present in the HTML — see the no-admin-data assertions below.
+	// DeriveUsername runs the same code path for admin as for a participant:
+	// fixtureAdminEmail ("admin@ctf.local") has an "@"-prefix that IS a valid
+	// username slug, so the shell still gets a derived-user hint for the
+	// admin viewer (display-only — see the no-admin-data assertions below for
+	// the actual security invariant).
+	if !strings.Contains(body, `window.__PORTAL_USER__ = "admin"`) {
+		t.Errorf("expected derived username injection for admin, body=%s", body)
+	}
 }
 
 func TestPortalHTML_ServedToUnauthenticated(t *testing.T) {

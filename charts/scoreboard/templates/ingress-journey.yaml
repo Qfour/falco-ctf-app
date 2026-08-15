@@ -45,6 +45,10 @@ spec:
         # Why each entry:
         #   /journey, /me   — the two participant view shells (Exact: GET only;
         #                      keeps `GET /` operator dashboard off this host).
+        #   /portal         — unified portal shell (P23-1), hash-tab router over
+        #                      journey/me/terminal panes; same Exact/GET shape.
+        #                      Admin-only data stays gated server-side (isAdmin),
+        #                      so opening this to any authenticated login is safe.
         #   /api/users/     — self-scoped reads (me/journey) + per-user progress
         #                      writes (step-check / hint reveal / display-name);
         #                      all server-side self-or-admin gated.
@@ -63,6 +67,13 @@ spec:
                 port:
                   number: 80
           - path: /me
+            pathType: Exact
+            backend:
+              service:
+                name: scoreboard
+                port:
+                  number: 80
+          - path: /portal
             pathType: Exact
             backend:
               service:

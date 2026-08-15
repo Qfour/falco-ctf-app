@@ -80,7 +80,7 @@ func TestRenderPortal_RoleAndUserInjection(t *testing.T) {
 
 // TestRenderPortal_UserValueIsJSONEscaped proves a maliciously-shaped derived
 // username (e.g. containing quotes / script-closing sequences — should never
-// happen in practice since DeriveUsername validates against ValidUser, but
+// happen in practice since DeriveUsername validates against validUser, but
 // this function must not assume its caller always will) cannot break out of
 // the JS string context and inject a script. html/template's escaping of a
 // template.JS value is what's under test here, not the *content* of a real
