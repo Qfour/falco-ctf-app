@@ -26,7 +26,33 @@ ttyd:
     repository: docker.io/falco-ctf/ttyd
     tag: dev
     pullPolicy: IfNotPresent
+  # port = the Ingress/Service-reachable port. Since P23-3, this is where
+  # ttyd-proxy listens (not ttyd itself — see upstreamPort below). Kept the
+  # same name/value (7681) so Service.targetPort / NetworkPolicy wiring below
+  # needs no change.
   port: 7681
+  # upstreamPort = ttyd's own loopback-only port (P23-3 clickjacking
+  # mitigation). ttyd binds 127.0.0.1:<upstreamPort> and is unreachable except
+  # via the ttyd-proxy sidecar on .Values.ttyd.port.
+  upstreamPort: 7682
+  # frameAncestors = the CSP `frame-ancestors` source list ttyd-proxy stamps
+  # on every ttyd response. Fail-safe default "'none'" (I7: env-agnostic
+  # default). The platform helmfile supplies the real portal origin once
+  # P23-4 (portal iframe embedding) lands.
+  frameAncestors: "'none'"
+  proxy:
+    image:
+      # Registry placeholder (public repo), same convention as ttyd/challenge
+      # above. Real registry + git-SHA tag supplied at deploy time (I4/I7).
+      repository: docker.io/falco-ctf/ttyd-proxy
+      tag: dev
+      pullPolicy: IfNotPresent
+    # Minimal footprint — this sidecar runs once per participant workspace
+    # (10+ pods resident during an event) and only proxies HTTP/WebSocket
+    # bytes through, no CTF logic.
+    resources:
+      requests: { cpu: 10m, memory: 16Mi }
+      limits:   { cpu: 100m, memory: 64Mi }
   resources:
     requests: { cpu: 25m, memory: 32Mi }
     limits:   { cpu: 200m, memory: 128Mi }

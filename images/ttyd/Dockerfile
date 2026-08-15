@@ -29,6 +29,11 @@ RUN apk add --no-cache \
 
 USER 1000:1000
 
+# EXPOSE stays the historical port for backward compat (image default
+# TTYD_PORT/TTYD_INTERFACE are unchanged — see entrypoint.sh). The ctf-user
+# chart opts in to the P23-3 topology by setting TTYD_PORT to
+# .Values.ttyd.upstreamPort (7682) + TTYD_INTERFACE=127.0.0.1, then fronts
+# ttyd with the ttyd-proxy sidecar on this historical Ingress port (7681).
 EXPOSE 7681
 
 COPY --chmod=0755 entrypoint.sh /entrypoint.sh
