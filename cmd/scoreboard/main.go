@@ -39,6 +39,24 @@ func main() {
 	// may read any user, a participant only their own). Empty = nobody
 	// (fail-closed everywhere).
 	adminEmails := serverutil.SplitCSV(serverutil.Env("ADMIN_EMAILS", ""))
+	// ALLOWED_ORIGINS (P23-2) is the CSRF-mitigation allowlist the api
+	// handler's origin guard checks every browser-facing state-changing
+	// request against (POST /api/admin/*, /api/challenges/{cid}/submit[-detect],
+	// /api/users/{user}/... writes — see internal/scoreboard/originguard).
+	// Server-to-server routes (POST /internal/exfil/{cid}) are never gated by
+	// this, so scoring/ingest is unaffected.
+	//
+	// Each entry is an exact scheme://host[:port] (no path, no trailing
+	// slash), e.g. "https://scoreboard.example.com,https://journey.example.com".
+	// Empty = every guarded request is DENIED (fail-closed, same posture as
+	// ADMIN_EMAILS above): this is a brand-new control, so an operator who has
+	// not yet configured it sees loud 403s on every submit/admin POST rather
+	// than silently accepting an unvalidated Origin. The platform helmfile MUST
+	// set this at deploy time to the real scoreboard/journey host(s) (I7: no
+	// real domain is hardcoded in this repo). Local dev (docker-compose) sets
+	// it to http://localhost:8000 so the bundled dashboard's own admin buttons
+	// keep working.
+	allowedOrigins := serverutil.SplitCSV(serverutil.Env("ALLOWED_ORIGINS", ""))
 	// DOCS_BASE_URL is the origin of the participant docs site (a separate host,
 	// e.g. https://docs.<suffix>). When set, the /journey API rewrites each
 	// mission's relative docsUrl (/missions/<NN>-<slug>/) into an absolute URL so
@@ -148,6 +166,7 @@ func main() {
 	handler := scoreboard.NewHandler(cat, st, logger,
 		scoreboard.WithDBPath(dbPath),
 		scoreboard.WithAdminEmails(adminEmails),
+		scoreboard.WithAllowedOrigins(allowedOrigins),
 		scoreboard.WithJourneys(journeys),
 		scoreboard.WithOrder(order),
 		scoreboard.WithDocsBaseURL(docsBaseURL),

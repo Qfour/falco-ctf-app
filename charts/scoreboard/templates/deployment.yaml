@@ -99,6 +99,14 @@ spec:
             - name: ADMIN_EMAILS
               value: {{ . | quote }}
             {{- end }}
+            {{- /* P23-2 origin guard allowlist. `with` (not the ne/toString
+                   form) is correct here: an empty string IS the fail-closed
+                   default (deny every guarded POST) and there is no falsy-0
+                   ambiguity for a CSV string, unlike scorePointsPerSolve. */}}
+            {{- with .Values.env.allowedOrigins }}
+            - name: ALLOWED_ORIGINS
+              value: {{ . | quote }}
+            {{- end }}
             {{- with .Values.env.docsBaseUrl }}
             - name: DOCS_BASE_URL
               value: {{ . | quote }}

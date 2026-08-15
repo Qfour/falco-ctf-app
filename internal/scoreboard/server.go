@@ -54,9 +54,10 @@ type Handler struct {
 	// via grader.Points() (the api handler asks the Grader), so the Grader stays
 	// the single owner of the points arithmetic (R4-F8 / #39). nil = the Grader
 	// keeps its placeholder DefaultPointsPolicy.
-	points  *scoring.PointsPolicy
-	sweeper *scoring.Sweeper
-	detect  api.DetectConfig
+	points         *scoring.PointsPolicy
+	sweeper        *scoring.Sweeper
+	detect         api.DetectConfig
+	allowedOrigins []string
 }
 
 type Option func(*Handler)
@@ -101,6 +102,15 @@ func WithPoints(p scoring.PointsPolicy) Option {
 	return func(h *Handler) { h.points = &p }
 }
 
+// WithAllowedOrigins sets the ALLOWED_ORIGINS allowlist (P23-2) the api
+// handler's origin guard checks browser-facing state-changing requests
+// against (Origin, falling back to Referer's origin). Empty = every guarded
+// request is denied (fail-closed) — see cmd/scoreboard/main.go for the
+// deploy-time default and rationale.
+func WithAllowedOrigins(origins []string) Option {
+	return func(h *Handler) { h.allowedOrigins = origins }
+}
+
 func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts ...Option) *Handler {
 	h := &Handler{
 		cat:    cat,
@@ -131,7 +141,7 @@ func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts .
 	})
 
 	ingest.New(grader, s, logger, h.now).Register(h.mux)
-	api.New(cat, grader, s, logger, h.now, h.adminEmails, api.JourneyConfig{
+	api.New(cat, grader, s, logger, h.now, h.adminEmails, h.allowedOrigins, api.JourneyConfig{
 		Journeys:    h.journeys,
 		Order:       h.order,
 		DocsBaseURL: h.docsBaseURL,

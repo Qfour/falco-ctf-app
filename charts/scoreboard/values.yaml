@@ -21,6 +21,23 @@ env:
   # against the auth-policy-propagated X-Auth-Request-Email). Empty = nobody.
   # Use the same list as auth-policy's ADMIN_EMAILS.
   adminEmails: ""
+  # P23-2 CSRF mitigation: comma-separated allowlist of browser origins
+  # (exact scheme://host[:port], no path/trailing slash — e.g.
+  # "https://scoreboard.ctf.example.com,https://journey.ctf.example.com")
+  # permitted to call the browser-facing state-changing routes (POST
+  # /api/admin/*, /api/challenges/{cid}/submit[-detect], /api/users/{user}/...
+  # writes). Checked against the request's Origin (falling back to Referer's
+  # origin); Host/X-Forwarded-Host are never trusted. See
+  # internal/scoreboard/originguard.
+  #   EMPTY (default here) = every guarded POST is DENIED (fail-closed). This
+  #   is a brand-new control with no safe environment-agnostic default (I7 —
+  #   a real domain cannot be hardcoded in this chart), so the placeholder
+  #   deliberately fails closed rather than guessing a permissive default that
+  #   could silently under-protect a real deployment. The platform helmfile
+  #   MUST set this to the real scoreboard/journey host(s) before go-live;
+  #   local dev (docker-compose, not this chart) sets it to
+  #   http://localhost:8000 so the bundled dashboard keeps working.
+  allowedOrigins: ""
   # Origin of the participant docs site (a separate host). When set, the
   # /journey API rewrites each mission's relative docsUrl into an absolute URL
   # so the "詳細ブリーフィング (docs)" link resolves off-origin. Format:

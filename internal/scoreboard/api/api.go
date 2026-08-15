@@ -34,6 +34,7 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/metrics"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/oapi"
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/originguard"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/ratelimit"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/scoring"
 	"github.com/Qfour/falco-ctf-app/internal/store"
@@ -84,6 +85,7 @@ type Handler struct {
 	submitLimiter      *ratelimit.Limiter
 	displayNameLimiter *ratelimit.Limiter
 	adminSet           map[string]struct{}
+	originGuard        *originguard.Guard
 
 	journeys    catalog.Journeys
 	order       []string
@@ -123,7 +125,11 @@ const DefaultDetectInflightCap = 5
 // wait. On expiry the runner returns an infra error → 500 (fail-closed).
 const DetectGradeTimeout = 30 * time.Second
 
-func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *slog.Logger, now func() time.Time, adminEmails []string, jc JourneyConfig, dc DetectConfig) *Handler {
+// allowedOrigins is the ALLOWED_ORIGINS allowlist (P23-2) consumed by
+// originguard to protect the browser-facing state-changing routes (see
+// Register). Empty = every guarded request is denied (fail-closed) — see
+// cmd/scoreboard/main.go for the deploy-time default and rationale.
+func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *slog.Logger, now func() time.Time, adminEmails []string, allowedOrigins []string, jc JourneyConfig, dc DetectConfig) *Handler {
 	// /submit accepts a claimed user identity. Without per-IP throttling a
 	// participant who scraped someone else's flag could brute-force submits.
 	// 1 req/s with burst 10 lets legitimate typing through but blocks
@@ -157,6 +163,7 @@ func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *sl
 		submitLimiter:      ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now),
 		displayNameLimiter: ratelimit.New(0.2 /* one every 5s */, 5 /* burst */).WithNow(now),
 		adminSet:           adminSet,
+		originGuard:        originguard.New(allowedOrigins, logger),
 		journeys:           journeys,
 		order:              order,
 		docsBaseURL:        docsBaseURL,
@@ -196,34 +203,47 @@ func NewAdminGate(adminEmails []string) func(*http.Request) bool {
 	}
 }
 
+// og wraps a handler with the origin guard (P23-2). Applied to every
+// browser-facing state-changing route below EXCEPT POST /internal/exfil/{cid}
+// (collector-only server-to-server sink — it carries no Origin/Referer and
+// gating it would silently break scoring; see the route's own comment and
+// the package doc on originguard).
+func (h *Handler) og(next http.Handler) http.Handler {
+	return h.originGuard.Middleware(next)
+}
+
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/state", h.state)
 	mux.HandleFunc("GET /api/users/{user}/me", h.userMe)
 	mux.HandleFunc("GET /api/users/{user}/journey", h.journey)
-	mux.HandleFunc("POST /api/admin/reset", h.reset)
-	mux.HandleFunc("POST /api/admin/users/{user}/display-name", h.adminSetDisplayName)
+	mux.Handle("POST /api/admin/reset", h.og(http.HandlerFunc(h.reset)))
+	mux.Handle("POST /api/admin/users/{user}/display-name", h.og(http.HandlerFunc(h.adminSetDisplayName)))
 	mux.HandleFunc("GET /api/hints", h.hints)
-	mux.HandleFunc("POST /api/admin/hints", h.releaseHint)
+	mux.Handle("POST /api/admin/hints", h.og(http.HandlerFunc(h.releaseHint)))
 	submitMW := h.submitLimiter.Middleware(ratelimit.ClientIP)
-	mux.Handle("POST /api/challenges/{cid}/submit", submitMW(http.HandlerFunc(h.submit)))
+	mux.Handle("POST /api/challenges/{cid}/submit", h.og(submitMW(http.HandlerFunc(h.submit))))
 	// Detect grading reuses the SAME per-IP submit limiter (same trust model as
 	// /submit) plus a global in-flight cap enforced inside the handler (429 past
 	// it, never queued).
-	mux.Handle("POST /api/challenges/{cid}/submit-detect", submitMW(http.HandlerFunc(h.submitDetect)))
+	mux.Handle("POST /api/challenges/{cid}/submit-detect", h.og(submitMW(http.HandlerFunc(h.submitDetect))))
 	// Exfil is an internal-only endpoint reached solely by the collector
 	// (full one-pipe, P11.5). Workspaces cannot reach the scoreboard directly
 	// once egress lockdown is on — they POST /api/challenges/{cid}/exfil to the
 	// collector, which forwards to /internal/exfil here. Isolation is enforced
 	// by NetworkPolicy (scoreboard ingress admits only collector); the handler
 	// itself adds no auth (see recordExfil doc). Rate limiting lives on the
-	// collector front, so /internal/exfil is unthrottled here.
+	// collector front, so /internal/exfil is unthrottled here. It is also
+	// DELIBERATELY NOT wrapped by the origin guard (P23-2): this is a
+	// server-to-server request with no browser Origin/Referer, so gating it
+	// would 403 every legitimate exfil receipt and silently break the boss
+	// capstone's scoring path.
 	mux.HandleFunc("POST /internal/exfil/{cid}", h.exfilInternal)
 	// Journey progression writes (self-check ticks + progressive hint reveal).
 	// Rate-limited on the same bucket as /submit — participant-facing writes.
-	mux.Handle("POST /api/users/{user}/challenges/{cid}/steps/{idx}/check", submitMW(http.HandlerFunc(h.stepCheck)))
-	mux.Handle("POST /api/users/{user}/challenges/{cid}/hints/{idx}", submitMW(http.HandlerFunc(h.openHint)))
+	mux.Handle("POST /api/users/{user}/challenges/{cid}/steps/{idx}/check", h.og(submitMW(http.HandlerFunc(h.stepCheck))))
+	mux.Handle("POST /api/users/{user}/challenges/{cid}/hints/{idx}", h.og(submitMW(http.HandlerFunc(h.openHint))))
 	dnMW := h.displayNameLimiter.Middleware(ratelimit.ClientIP)
-	mux.Handle("POST /api/users/{user}/display-name", dnMW(http.HandlerFunc(h.setDisplayName)))
+	mux.Handle("POST /api/users/{user}/display-name", h.og(dnMW(http.HandlerFunc(h.setDisplayName))))
 }
 
 // --- admin reset ------------------------------------------------------------
