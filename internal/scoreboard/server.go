@@ -149,8 +149,12 @@ func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts .
 	// The operator index page (GET /) is admin-gated in the app layer too
 	// (P18-1 defense-in-depth) using the same ADMIN_EMAILS rule the api handler
 	// enforces. The participant journey/me pages are served ungated as static
-	// shells (they carry no data; their per-user API is self-scoped).
-	view.New(api.NewAdminGate(h.adminEmails)).Register(h.mux)
+	// shells (they carry no data; their per-user API is self-scoped). GET
+	// /portal (P23-1) is served to any authenticated caller — see
+	// view.renderPortal's doc for why that is safe (no admin data is ever
+	// embedded; the api.NewAdminGate/api.DeriveUsername results feed only
+	// display hints, and every pane's actual data fetch stays gated in api.Handler).
+	view.New(api.NewAdminGate(h.adminEmails), api.DeriveUsername, logger).Register(h.mux)
 
 	return h
 }
