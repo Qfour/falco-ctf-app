@@ -203,6 +203,37 @@ func NewAdminGate(adminEmails []string) func(*http.Request) bool {
 	}
 }
 
+// DeriveUsername extracts the display-only username slug from a request's
+// X-Auth-Request-Email header, for the SOLE purpose of pre-filling the portal
+// shell's Journey/Me pane identity (P23-1) — it is a UI convenience, never an
+// authorization decision. Returns "" when the header is absent or the prefix
+// before "@" is not a valid username slug (ValidUser) — the portal simply
+// falls back to its existing "append ?user=" / manual-entry affordance in
+// that case, exactly as it already does when no identity is known.
+//
+// This is deliberately NOT the authorization boundary: whatever username this
+// returns, every read/write the Journey/Me panes make is independently
+// re-checked by selfOrAdmin / selfOrAdminWrite against the SAME
+// X-Auth-Request-Email header server-side (I8-mirrored prefix-exact). A caller
+// cannot use this function to see another user's data — it can only ever
+// return the caller's OWN derived slug (or admin's own, which is not a
+// participant identity and typically has no journey/me data of its own).
+func DeriveUsername(r *http.Request) string {
+	email := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Auth-Request-Email")))
+	if email == "" {
+		return ""
+	}
+	at := strings.IndexByte(email, '@')
+	if at <= 0 {
+		return ""
+	}
+	user := email[:at]
+	if !validUser.MatchString(user) {
+		return ""
+	}
+	return user
+}
+
 // og wraps a handler with the origin guard (P23-2). Applied to browser-only
 // state-changing routes. NOT applied to routes that are also (or solely)
 // reached via the collector's server-to-server forward — see each route's

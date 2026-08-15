@@ -876,6 +876,118 @@ func TestIndexHTML_ServedAtRoot(t *testing.T) {
 	}
 }
 
+// ---------------- P23-1: unified portal shell ----------------
+//
+// GET /portal is served to ANY authenticated caller (unlike GET /, which
+// stays admin-only) — it carries no admin/participant DATA, only two
+// display-only hints (role label, derived username). Authorization for the
+// actual data stays entirely in the API layer (isAdmin / selfOrAdmin), which
+// these tests independently prove still 403s a non-admin's /api/state call
+// regardless of what the portal HTML says about their role.
+
+func TestPortalHTML_ServedToParticipant(t *testing.T) {
+	f := newFixture(t, nil)
+	w := f.doUser("GET", "/portal", "alice", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: %d body=%s", w.Code, w.Body)
+	}
+	if ct := w.Header().Get("Content-Type"); ct == "" {
+		t.Fatalf("missing Content-Type")
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `window.__PORTAL_ROLE__ = "participant"`) {
+		t.Errorf("expected participant role injection, body=%s", body)
+	}
+	if !strings.Contains(body, `window.__PORTAL_USER__ = "alice"`) {
+		t.Errorf("expected derived username injection for alice, body=%s", body)
+	}
+	// The admin-only Scoreboard tab must not be shown to a participant
+	// (defense-in-depth; the API-side gate is proven separately below).
+	if !strings.Contains(body, `id="tab-scoreboard" hidden`) {
+		t.Errorf("expected the scoreboard tab to render hidden by default (participant), body=%s", body)
+	}
+}
+
+func TestPortalHTML_ServedToAdmin(t *testing.T) {
+	f := newFixture(t, nil)
+	w := f.doAdmin("GET", "/portal", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: %d body=%s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `window.__PORTAL_ROLE__ = "admin"`) {
+		t.Errorf("expected admin role injection, body=%s", body)
+	}
+	// fixtureAdminEmail has no "@"-prefix that matches a participant slug in
+	// this fixture; DeriveUsername still runs the same code path for admin,
+	// asserting only that no admin/participant DATA (leaderboard, solves,
+	// etc.) is present in the HTML — see the no-admin-data assertions below.
+}
+
+func TestPortalHTML_ServedToUnauthenticated(t *testing.T) {
+	// No X-Auth-Request-Email at all (e.g. a misrouted cluster-internal
+	// request). The portal still renders (it carries no data to protect) —
+	// it degrades to the participant role with no username hint, exactly as
+	// GET /journey and GET /me already do today for an unknown identity.
+	f := newFixture(t, nil)
+	w := f.do("GET", "/portal", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: %d body=%s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `window.__PORTAL_ROLE__ = "participant"`) {
+		t.Errorf("expected participant (non-admin) role injection for an unauthenticated request, body=%s", body)
+	}
+	if !strings.Contains(body, `window.__PORTAL_USER__ = ""`) {
+		t.Errorf("expected empty username injection for an unauthenticated request, body=%s", body)
+	}
+}
+
+// TestPortalHTML_NoAdminDataEmbedded is the P23-1 security invariant proof:
+// the portal HTML — even when rendered for an admin viewer — must never
+// contain the actual leaderboard/solve/event DATA that /api/state serves.
+// Only the API route may hand that data out (and only to admins). This
+// guards against a future edit accidentally SSR-ing admin data into the
+// shared shell (which participants also receive).
+func TestPortalHTML_NoAdminDataEmbedded(t *testing.T) {
+	f := newFixture(t, nil)
+	// Generate some admin-visible state so there is something to leak if the
+	// invariant were violated.
+	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "alice"))
+
+	adminBody := f.doAdmin("GET", "/portal", nil).Body.String()
+	participantBody := f.doUser("GET", "/portal", "alice", nil).Body.String()
+
+	// buildState()'s JSON keys are a reliable fingerprint of the admin-only
+	// payload (see api.go's buildState / state handler) — none of them
+	// should appear as literal data in the static shell HTML.
+	for _, marker := range []string{`"leaderboard"`, `"recent_solves"`, `"solver_details"`} {
+		if strings.Contains(adminBody, marker) {
+			t.Errorf("admin-rendered /portal HTML must not embed state data, found %q", marker)
+		}
+		if strings.Contains(participantBody, marker) {
+			t.Errorf("participant-rendered /portal HTML must not embed state data, found %q", marker)
+		}
+	}
+}
+
+// TestPortalAPIGate_StillEnforcedRegardlessOfPortalRole proves the actual
+// authorization boundary (api.Handler.state / isAdmin) is untouched by
+// P23-1: a participant fetching /api/state directly (as the Scoreboard
+// pane's own JS would) still 403s, even though they were served a /portal
+// page moments ago. The portal's role hint is display-only and cannot
+// widen this.
+func TestPortalAPIGate_StillEnforcedRegardlessOfPortalRole(t *testing.T) {
+	f := newFixture(t, nil)
+	_ = f.doUser("GET", "/portal", "alice", nil) // participant opens the shell
+	if w := f.doUser("GET", "/api/state", "alice", nil); w.Code != http.StatusForbidden {
+		t.Fatalf("participant /api/state must stay 403 after opening /portal, got %d body=%s", w.Code, w.Body)
+	}
+	if w := f.doAdmin("GET", "/api/state", nil); w.Code != http.StatusOK {
+		t.Fatalf("admin /api/state must still 200, got %d body=%s", w.Code, w.Body)
+	}
+}
+
 func TestUnknownPath_404(t *testing.T) {
 	f := newFixture(t, nil)
 	w := f.do("GET", "/nope", nil)

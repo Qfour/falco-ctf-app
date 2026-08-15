@@ -1,0 +1,1573 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Falco CTF · portal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* ===== Portal shell chrome (tabs + layout) — new for P23-1 ===== */
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; min-height: 100vh;
+    background: #070B10;
+    color: #EAF7FA;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  #portal-tabs {
+    display: flex; gap: 0.25rem; padding: 0.75rem 1.5rem 0;
+    background: #0D141B; border-bottom: 1px solid #1C2A35;
+    position: sticky; top: 0; z-index: 100; flex-wrap: wrap;
+  }
+  #portal-tabs .tab {
+    font-family: 'Chakra Petch', sans-serif; font-size: 0.8rem; font-weight: 600;
+    letter-spacing: 0.08em; text-transform: uppercase; color: #9DB4BF;
+    background: transparent; border: none; border-bottom: 2px solid transparent;
+    padding: 0.65rem 1rem; cursor: pointer; text-decoration: none;
+  }
+  #portal-tabs .tab:hover { color: #EAF7FA; }
+  #portal-tabs .tab.active { color: #00CBE2; border-bottom-color: #00CBE2; }
+  #portal-tabs .tab[hidden] { display: none; }
+  #portal-role-badge {
+    margin-left: auto; align-self: center; font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem; color: #5C7480; letter-spacing: 0.1em; text-transform: uppercase;
+    padding-bottom: 0.65rem;
+  }
+  .pane { display: none; }
+  .pane.active { display: block; }
+
+  /* ===== Scoped pane styles (mechanically namespaced from the legacy
+     index/journey/me templates) ===== */
+
+  #pane-scoreboard {
+    /* Falco Blue neon on cyber-dark. */
+    --falco: #00CBE2;
+    --falco-2: #0090A8;
+    --bg: #070B10;            /* deep space */
+    --bg-elev: #0D141B;
+    --surface: #0F1820;
+    --surface-2: #17222C;
+    --border: #1C2A35;
+    --border-strong: #2B3F4D;
+    --text: #EAF7FA;
+    --text-dim: #9DB4BF;
+    --text-mute: #5C7480;
+    --accent: var(--falco);
+    --accent-2: var(--falco-2);
+    --accent-glow: rgba(0, 203, 226, 0.35);
+    --success: #00CBE2;
+    --success-glow: rgba(0, 203, 226, 0.5);
+    --warn: #FFB020;
+    --evade: #B78CFF;        /* evade = violet, for game-y type contrast */
+    --evade-glow: rgba(183, 140, 255, 0.35);
+    --trigger: #00CBE2;
+    --gold: #FFD24A; --gold-glow: rgba(255, 210, 74, 0.55);
+    --silver: #CFE0E8;
+    --bronze: #E0925A;
+    --danger: #ff5c6a;
+  }
+
+  #pane-scoreboard * { box-sizing: border-box; margin: 0; padding: 0; }
+  #pane-scoreboard { font-size: 16px; }
+  #pane-scoreboard {
+    background:
+      radial-gradient(at 15% -10%, rgba(0, 203, 226, 0.10) 0px, transparent 45%),
+      radial-gradient(at 90% 0%, rgba(183, 140, 255, 0.06) 0px, transparent 40%),
+      var(--bg);
+    background-attachment: fixed;
+    color: var(--text);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    min-height: 100vh;
+    padding: 2.25rem 3rem 4rem;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    position: relative;
+  }
+  /* faint cyber grid overlay */
+  #pane-scoreboard::before {
+    content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background-image:
+      linear-gradient(rgba(0, 203, 226, 0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0, 203, 226, 0.035) 1px, transparent 1px);
+    background-size: 44px 44px;
+    mask-image: radial-gradient(ellipse at 50% 0%, #000 30%, transparent 80%);
+  }
+  #pane-scoreboard > * { position: relative; z-index: 1; }
+  #pane-scoreboard .mono { font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace; }
+  #pane-scoreboard .display { font-family: 'Chakra Petch', sans-serif; letter-spacing: 0.02em; }
+  #pane-scoreboard code { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.875em; background: var(--surface-2); padding: 1px 6px; border-radius: 3px; color: var(--accent); }
+  #pane-scoreboard a { color: var(--accent); text-decoration: none; }
+
+  /* ===== Header ===== */
+  #pane-scoreboard header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 1.75rem; padding-bottom: 1.25rem; border-bottom: 1px solid var(--border); position: relative; }
+  #pane-scoreboard header::after { content: ''; position: absolute; left: 0; bottom: -1px; width: 160px; height: 2px; background: linear-gradient(90deg, var(--accent), transparent); box-shadow: 0 0 12px var(--accent-glow); }
+  #pane-scoreboard .brand h1 { font-family: 'Chakra Petch', sans-serif; font-size: 2.4rem; font-weight: 700; letter-spacing: 0.01em; text-transform: uppercase; line-height: 1; }
+  #pane-scoreboard .brand h1 .accent { color: var(--accent); text-shadow: 0 0 18px var(--accent-glow), 0 0 40px rgba(0,203,226,0.25); }
+  #pane-scoreboard .brand h1 .light { color: var(--text-mute); font-weight: 500; font-size: 0.85rem; letter-spacing: 0.35em; margin-left: 0.6rem; text-transform: uppercase; }
+  #pane-scoreboard .live { display: flex; align-items: center; gap: 0.5rem; color: var(--success); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.2em; font-weight: 700; justify-content: flex-end; }
+  #pane-scoreboard .live::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--success); box-shadow: 0 0 12px var(--success-glow); animation: sb-pulse 1.6s ease-in-out infinite; }
+  @keyframes sb-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.45; transform: scale(1.25); } }
+  #pane-scoreboard .updated { color: var(--text-mute); font-size: 0.7rem; margin-top: 0.3rem; text-align: right; font-family: 'JetBrains Mono', monospace; }
+  #pane-scoreboard .reset-btn { margin-top: 0.5rem; padding: 0.32rem 0.75rem; font-size: 0.65rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-mute); background: transparent; border: 1px solid var(--border-strong); border-radius: 6px; cursor: pointer; opacity: 0.7; transition: all 0.15s; }
+  #pane-scoreboard .reset-btn:hover { opacity: 1; color: var(--danger); border-color: var(--danger); box-shadow: 0 0 12px rgba(255,92,106,0.25); }
+  #pane-scoreboard .name-edit { margin-left: 0.4rem; padding: 0 0.25rem; font-size: 0.75rem; line-height: 1; color: var(--text-mute); background: transparent; border: none; cursor: pointer; opacity: 0; transition: opacity 0.15s; }
+  #pane-scoreboard tr:hover .name-edit { opacity: 0.55; }
+  #pane-scoreboard .name-edit:hover { opacity: 1; color: var(--accent); }
+
+  #pane-scoreboard .hdr-right { display: flex; flex-direction: column; align-items: flex-end; gap: 0.35rem; }
+  #pane-scoreboard .hdr-btns { display: flex; gap: 0.4rem; margin-top: 0.4rem; }
+  #pane-scoreboard .hdr-btns .reset-btn { margin-top: 0; }
+  #pane-scoreboard .result-btn { color: var(--accent); border-color: var(--border-strong); }
+  #pane-scoreboard .result-btn:hover { color: var(--accent); border-color: var(--accent); box-shadow: 0 0 12px var(--accent-glow); opacity: 1; }
+
+  /* ===== Podium (top 3) ===== */
+  #pane-scoreboard .podium { display: grid; grid-template-columns: 1fr 1.25fr 1fr; gap: 1rem; align-items: end; margin-bottom: 1.5rem; }
+  #pane-scoreboard .podium:empty { display: none; }
+  #pane-scoreboard .pod { background: linear-gradient(180deg, var(--surface) 0%, var(--bg-elev) 100%); border: 1px solid var(--border-strong); border-radius: 0.9rem; padding: 1.1rem 1rem 1.25rem; text-align: center; position: relative; overflow: hidden; }
+  #pane-scoreboard .pod .medal { font-family: 'Chakra Petch', sans-serif; font-size: 1.5rem; font-weight: 700; line-height: 1; }
+  #pane-scoreboard .pod .pod-name { font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 1rem; margin: 0.5rem 0 0.15rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #pane-scoreboard .pod .pod-score { font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--text-dim); }
+  #pane-scoreboard .pod .pod-score b { color: var(--accent); font-size: 1.05rem; }
+  #pane-scoreboard .pod .crown { position: absolute; inset: 0 0 auto 0; height: 3px; }
+  #pane-scoreboard .pod-1 { transform: translateY(-10px); border-color: var(--gold); box-shadow: 0 0 28px var(--gold-glow), inset 0 0 24px rgba(255,210,74,0.06); }
+  #pane-scoreboard .pod-1 .medal { color: var(--gold); text-shadow: 0 0 16px var(--gold-glow); }
+  #pane-scoreboard .pod-1 .crown { background: linear-gradient(90deg, transparent, var(--gold), transparent); box-shadow: 0 0 14px var(--gold-glow); }
+  #pane-scoreboard .pod-2 { border-color: var(--silver); }
+  #pane-scoreboard .pod-2 .medal { color: var(--silver); }
+  #pane-scoreboard .pod-2 .crown { background: linear-gradient(90deg, transparent, var(--silver), transparent); }
+  #pane-scoreboard .pod-3 { border-color: var(--bronze); }
+  #pane-scoreboard .pod-3 .medal { color: var(--bronze); }
+  #pane-scoreboard .pod-3 .crown { background: linear-gradient(90deg, transparent, var(--bronze), transparent); }
+  @media (max-width: 720px) { #pane-scoreboard .podium { grid-template-columns: 1fr; } #pane-scoreboard .pod-1 { transform: none; } }
+
+  /* ===== Panel ===== */
+  #pane-scoreboard .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 0.85rem; margin-bottom: 1.5rem; overflow: hidden; }
+  #pane-scoreboard .panel-header { padding: 0.9rem 1.5rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+  #pane-scoreboard .panel-header h2 { font-family: 'Chakra Petch', sans-serif; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.18em; color: var(--text); font-weight: 600; display: flex; align-items: center; gap: 0.6rem; }
+  #pane-scoreboard .panel-header h2::before { content: ''; width: 3px; height: 15px; background: var(--accent); border-radius: 2px; box-shadow: 0 0 10px var(--accent-glow); }
+  #pane-scoreboard .panel-aux { color: var(--text-mute); font-size: 0.75rem; font-family: 'JetBrains Mono', monospace; }
+
+  /* ===== Leaderboard ===== */
+  #pane-scoreboard table { width: 100%; border-collapse: collapse; }
+  #pane-scoreboard thead th { color: var(--text-mute); font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.15em; font-weight: 700; padding: 0.6rem 1.5rem; text-align: left; background: var(--bg-elev); }
+  #pane-scoreboard tbody tr { transition: background 0.2s; }
+  #pane-scoreboard tbody tr:hover { background: var(--surface-2); }
+  #pane-scoreboard tbody td { padding: 0.8rem 1.5rem; border-top: 1px solid var(--border); vertical-align: middle; }
+  #pane-scoreboard .rank { font-family: 'Chakra Petch', monospace; font-size: 1.15rem; font-weight: 700; width: 60px; color: var(--text-dim); }
+  #pane-scoreboard .rank-1 { color: var(--gold); text-shadow: 0 0 12px var(--gold-glow); }
+  #pane-scoreboard .rank-2 { color: var(--silver); }
+  #pane-scoreboard .rank-3 { color: var(--bronze); }
+  #pane-scoreboard .user-cell { font-family: 'JetBrains Mono', monospace; font-weight: 600; font-size: 0.95rem; }
+  #pane-scoreboard .score-cell { font-family: 'JetBrains Mono', monospace; font-size: 1rem; }
+  #pane-scoreboard .score-cell .total { color: var(--text-mute); }
+  #pane-scoreboard .progress { display: flex; gap: 3px; width: 100%; min-width: 140px; }
+  #pane-scoreboard .seg { flex: 1 1 0; height: 10px; border-radius: 2px; background: var(--surface-2); border: 1px solid var(--border); transition: all 0.3s; }
+  #pane-scoreboard .seg.filled { background: linear-gradient(180deg, var(--accent), var(--accent-2)); border-color: var(--accent); box-shadow: 0 0 7px var(--accent-glow); }
+
+  /* ===== Missions (challenges) ===== */
+  #pane-scoreboard .challenges { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem; padding: 1.25rem 1.5rem; }
+  #pane-scoreboard .challenge { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 0.6rem; padding: 1rem; transition: all 0.2s; position: relative; overflow: hidden; }
+  #pane-scoreboard .challenge::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--border-strong); transition: all 0.2s; }
+  #pane-scoreboard .challenge:hover { border-color: var(--accent); transform: translateY(-3px); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4), 0 0 20px rgba(0,203,226,0.12); }
+  #pane-scoreboard .challenge.clickable { cursor: pointer; }
+  #pane-scoreboard .challenge.full { border-color: var(--success); background: linear-gradient(135deg, var(--bg-elev) 0%, rgba(0, 203, 226, 0.07) 100%); }
+  #pane-scoreboard .challenge.full::before { background: var(--success); box-shadow: 0 0 12px var(--success-glow); }
+  #pane-scoreboard .detail-head { justify-content: flex-start; gap: 0.85rem; }
+  #pane-scoreboard .detail-head h2 .badge { margin-left: 0.4rem; }
+  #pane-scoreboard .back-btn { margin-top: 0; }
+  #pane-scoreboard .challenge .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
+  #pane-scoreboard .challenge .num { font-family: 'Chakra Petch', monospace; color: var(--text-mute); font-size: 0.7rem; font-weight: 700; letter-spacing: 0.12em; }
+  #pane-scoreboard .challenge .status { font-family: 'Chakra Petch', sans-serif; font-size: 0.6rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-mute); }
+  #pane-scoreboard .challenge.full .status { color: var(--success); }
+  #pane-scoreboard .badge { padding: 3px 9px; border-radius: 4px; font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.12em; font-weight: 700; }
+  #pane-scoreboard .badge-trigger { background: rgba(0, 203, 226, 0.12); color: var(--trigger); border: 1px solid rgba(0, 203, 226, 0.35); }
+  #pane-scoreboard .badge-evade { background: rgba(183, 140, 255, 0.12); color: var(--evade); border: 1px solid rgba(183, 140, 255, 0.35); }
+  #pane-scoreboard .challenge .name { font-family: 'Chakra Petch', sans-serif; font-weight: 600; margin-bottom: 0.45rem; color: var(--text); font-size: 0.98rem; }
+  #pane-scoreboard .challenge .rule { color: var(--text-dim); font-size: 0.7rem; font-family: 'JetBrains Mono', monospace; margin-bottom: 0.75rem; line-height: 1.4; word-break: break-word; }
+  #pane-scoreboard .challenge .dots { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 0.6rem; }
+  #pane-scoreboard .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--border-strong); transition: all 0.3s; }
+  #pane-scoreboard .dot.filled { background: var(--success); box-shadow: 0 0 7px var(--success-glow); }
+  #pane-scoreboard .challenge .footer { display: flex; justify-content: space-between; font-size: 0.7rem; color: var(--text-mute); font-family: 'JetBrains Mono', monospace; }
+  #pane-scoreboard .challenge .footer .solved-count { color: var(--success); font-weight: 700; }
+
+  /* ===== Activity ===== */
+  #pane-scoreboard .activity { padding: 0.5rem 0; max-height: 480px; overflow-y: auto; }
+  #pane-scoreboard .activity::-webkit-scrollbar { width: 6px; }
+  #pane-scoreboard .activity::-webkit-scrollbar-track { background: transparent; }
+  #pane-scoreboard .activity::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+  #pane-scoreboard .activity-item { display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 1.5rem; gap: 1rem; border-left: 2px solid transparent; transition: all 0.2s; }
+  #pane-scoreboard .activity-item:hover { background: var(--surface-2); border-left-color: var(--accent); }
+  #pane-scoreboard .activity-item.fresh { animation: sb-flash 1.4s ease; }
+  @keyframes sb-flash {
+    0% { background: var(--accent-glow); border-left-color: var(--accent); box-shadow: inset 0 0 28px var(--accent-glow); }
+    100% { background: transparent; border-left-color: transparent; box-shadow: none; }
+  }
+  #pane-scoreboard .activity-item .who { font-family: 'JetBrains Mono', monospace; font-weight: 600; color: var(--text); }
+  #pane-scoreboard .activity-item .verb { color: var(--text-mute); font-size: 0.8rem; margin: 0 0.4rem; }
+  #pane-scoreboard .activity-item .what { color: var(--accent); font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; }
+  #pane-scoreboard .activity-item .when { color: var(--text-mute); font-size: 0.7rem; font-family: 'JetBrains Mono', monospace; flex-shrink: 0; }
+
+  /* ===== Grid ===== */
+  #pane-scoreboard .grid { display: grid; grid-template-columns: 1.7fr 1fr; gap: 1.5rem; }
+  @media (max-width: 980px) {
+    #pane-scoreboard { padding: 1.25rem; }
+    #pane-scoreboard .grid { grid-template-columns: 1fr; }
+    #pane-scoreboard .brand h1 { font-size: 1.9rem; }
+  }
+
+  /* ===== Result screen ===== */
+  #pane-scoreboard .result-hero { text-align: center; padding: 0.5rem 0 2rem; position: relative; }
+  #pane-scoreboard .result-hero h1 { font-size: 3rem; font-weight: 700; letter-spacing: 0.06em; color: var(--accent); text-shadow: 0 0 32px var(--accent-glow), 0 0 60px rgba(0,203,226,0.25); }
+  #pane-scoreboard .result-sub { color: var(--text-dim); letter-spacing: 0.22em; text-transform: uppercase; font-size: 0.8rem; margin-top: 0.5rem; }
+  #pane-scoreboard .result-hero .back-btn { position: absolute; left: 0; top: 0.25rem; }
+  #pane-scoreboard .result-view .podium { margin-bottom: 2rem; }
+
+  #pane-scoreboard .empty { text-align: center; padding: 2.5rem 1rem; color: var(--text-mute); font-size: 0.875rem; }
+  #pane-scoreboard .empty .icon { font-size: 2rem; opacity: 0.4; display: block; margin-bottom: 0.5rem; }
+  #pane-scoreboard .demo-tag { display: none; font-size: 0.6rem; letter-spacing: 0.15em; color: var(--warn); border: 1px solid var(--warn); border-radius: 4px; padding: 1px 6px; text-transform: uppercase; }
+
+
+  #pane-journey {
+    --falco: #00CBE2; --falco-2: #0090A8;
+    --bg: #070B10; --bg-elev: #0D141B; --surface: #0F1820; --surface-2: #17222C;
+    --border: #1C2A35; --border-strong: #2B3F4D;
+    --text: #EAF7FA; --text-dim: #9DB4BF; --text-mute: #5C7480;
+    --accent: var(--falco); --accent-2: var(--falco-2);
+    --accent-glow: rgba(0, 203, 226, 0.35);
+    --success: #00CBE2; --success-glow: rgba(0, 203, 226, 0.5);
+    --warn: #FFB020;
+    --evade: #B78CFF; --evade-glow: rgba(183, 140, 255, 0.35);
+    --gold: #FFD24A; --danger: #ff5c6a;
+  }
+  #pane-journey * { box-sizing: border-box; margin: 0; padding: 0; }
+  #pane-journey { font-size: 16px; }
+  #pane-journey {
+    background:
+      radial-gradient(at 15% -10%, rgba(0, 203, 226, 0.10) 0px, transparent 45%),
+      radial-gradient(at 90% 0%, rgba(183, 140, 255, 0.06) 0px, transparent 40%),
+      var(--bg);
+    background-attachment: fixed; color: var(--text);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    min-height: 100vh; padding: 2.25rem 3rem 4rem; line-height: 1.5;
+    -webkit-font-smoothing: antialiased; position: relative;
+  }
+  #pane-journey::before {
+    content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background-image:
+      linear-gradient(rgba(0, 203, 226, 0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0, 203, 226, 0.035) 1px, transparent 1px);
+    background-size: 44px 44px;
+    mask-image: radial-gradient(ellipse at 50% 0%, #000 30%, transparent 80%);
+  }
+  #pane-journey > * { position: relative; z-index: 1; }
+  #pane-journey .mono { font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace; }
+  #pane-journey .display { font-family: 'Chakra Petch', sans-serif; letter-spacing: 0.02em; }
+  #pane-journey code { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.875em; background: var(--surface-2); padding: 1px 6px; border-radius: 3px; color: var(--accent); }
+  #pane-journey a { color: var(--accent); text-decoration: none; }
+  #pane-journey a:hover { text-decoration: underline; }
+
+  #pane-journey header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 1.75rem; padding-bottom: 1.25rem; border-bottom: 1px solid var(--border); position: relative; }
+  #pane-journey header::after { content: ''; position: absolute; left: 0; bottom: -1px; width: 160px; height: 2px; background: linear-gradient(90deg, var(--accent), transparent); box-shadow: 0 0 12px var(--accent-glow); }
+  #pane-journey .brand h1 { font-family: 'Chakra Petch', sans-serif; font-size: 2.4rem; font-weight: 700; letter-spacing: 0.01em; text-transform: uppercase; line-height: 1; }
+  #pane-journey .brand h1 .accent { color: var(--accent); text-shadow: 0 0 18px var(--accent-glow), 0 0 40px rgba(0,203,226,0.25); }
+  #pane-journey .brand h1 .light { color: var(--text-mute); font-weight: 500; font-size: 0.85rem; letter-spacing: 0.35em; margin-left: 0.6rem; text-transform: uppercase; }
+  #pane-journey .brand .subtitle { color: var(--text-dim); font-size: 0.85rem; margin-top: 0.4rem; }
+  #pane-journey .live { display: flex; align-items: center; gap: 0.5rem; color: var(--success); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.2em; font-weight: 700; justify-content: flex-end; }
+  #pane-journey .live::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--success); box-shadow: 0 0 12px var(--success-glow); animation: jn-pulse 1.6s ease-in-out infinite; }
+  @keyframes jn-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.45; transform: scale(1.25); } }
+  #pane-journey .updated { color: var(--text-mute); font-size: 0.7rem; margin-top: 0.3rem; text-align: right; font-family: 'JetBrains Mono', monospace; }
+  #pane-journey .hdr-links { margin-top: 0.4rem; font-size: 0.72rem; }
+
+  /* progress */
+  #pane-journey .prog-wrap { margin-bottom: 1.5rem; }
+  #pane-journey .prog-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.5rem; }
+  #pane-journey .prog-head .label { font-family: 'Chakra Petch', sans-serif; text-transform: uppercase; letter-spacing: 0.18em; font-size: 0.75rem; color: var(--text-dim); }
+  #pane-journey .prog-head .count { font-family: 'JetBrains Mono', monospace; font-size: 1rem; }
+  #pane-journey .prog-head .count .total { color: var(--text-mute); }
+  #pane-journey .bar { width: 100%; height: 10px; background: var(--bg-elev); border-radius: 5px; overflow: hidden; box-shadow: inset 0 0 0 1px var(--border); }
+  #pane-journey .fill { height: 100%; background: linear-gradient(90deg, var(--accent-2), var(--accent)); box-shadow: 0 0 12px var(--accent-glow); transition: width 0.6s ease; }
+
+  #pane-journey .layout { display: grid; grid-template-columns: 320px 1fr; gap: 1.5rem; align-items: start; }
+  @media (max-width: 900px) { #pane-journey { padding: 1.25rem; } #pane-journey .layout { grid-template-columns: 1fr; } }
+
+  #pane-journey .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 0.85rem; overflow: hidden; }
+  #pane-journey .panel-header { padding: 0.9rem 1.25rem; border-bottom: 1px solid var(--border); }
+  #pane-journey .panel-header h2 { font-family: 'Chakra Petch', sans-serif; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.18em; color: var(--text); font-weight: 600; display: flex; align-items: center; gap: 0.6rem; }
+  #pane-journey .panel-header h2::before { content: ''; width: 3px; height: 15px; background: var(--accent); border-radius: 2px; box-shadow: 0 0 10px var(--accent-glow); }
+
+  /* mission map */
+  #pane-journey .map { list-style: none; padding: 0.35rem 0; }
+  #pane-journey .map li { display: flex; align-items: center; gap: 0.7rem; padding: 0.6rem 1.25rem; border-left: 2px solid transparent; cursor: default; }
+  #pane-journey .map li .ico { width: 22px; text-align: center; font-size: 0.95rem; }
+  #pane-journey .map li .mtitle { font-size: 0.9rem; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #pane-journey .map li .num { font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; color: var(--text-mute); }
+  #pane-journey .map li.solved .ico { color: var(--success); }
+  #pane-journey .map li.solved .mtitle { color: var(--text); }
+  #pane-journey .map li.current { border-left-color: var(--accent); background: rgba(0,203,226,0.06); }
+  #pane-journey .map li.current .ico { color: var(--accent); text-shadow: 0 0 10px var(--accent-glow); }
+  #pane-journey .map li.current .mtitle { color: var(--accent); font-weight: 600; }
+  #pane-journey .map li.locked { opacity: 0.5; }
+  #pane-journey .map li.locked .ico { color: var(--text-mute); }
+  #pane-journey .map li.just-unlocked { animation: jn-unlock 1.2s ease; }
+  @keyframes jn-unlock {
+    0% { background: rgba(0,203,226,0.25); transform: translateX(-6px); box-shadow: inset 0 0 24px var(--accent-glow); }
+    100% { background: transparent; transform: none; box-shadow: none; }
+  }
+
+  /* mission detail */
+  #pane-journey .mission { background: var(--surface); border: 1px solid var(--border); border-radius: 0.85rem; overflow: hidden; }
+  #pane-journey .mission-head { padding: 1.4rem 1.6rem 1.1rem; border-bottom: 1px solid var(--border); background: linear-gradient(180deg, var(--bg-elev), var(--surface)); }
+  #pane-journey .mission-head .kicker { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; letter-spacing: 0.12em; color: var(--text-mute); text-transform: uppercase; }
+  #pane-journey .mission-head h2 { font-family: 'Chakra Petch', sans-serif; font-size: 1.6rem; margin: 0.25rem 0; }
+  #pane-journey .mission-head .tagline { color: var(--accent); font-size: 0.95rem; }
+  #pane-journey .badge { padding: 3px 9px; border-radius: 4px; font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.12em; font-weight: 700; margin-left: 0.5rem; vertical-align: middle; }
+  #pane-journey .badge-trigger { background: rgba(0, 203, 226, 0.12); color: var(--falco); border: 1px solid rgba(0, 203, 226, 0.35); }
+  #pane-journey .badge-evade { background: rgba(183, 140, 255, 0.12); color: var(--evade); border: 1px solid rgba(183, 140, 255, 0.35); }
+  #pane-journey .mission-body { padding: 1.4rem 1.6rem; }
+  /* lead-in: previous mission's narrative bridge (#47), persisted above the briefing */
+  #pane-journey .lead-in { position: relative; background: linear-gradient(90deg, rgba(0,203,226,0.07), transparent); border: 1px solid var(--border); border-left: 2px solid var(--accent); border-radius: 0.5rem; padding: 0.7rem 1rem 0.75rem; margin-bottom: 1.2rem; color: var(--text-dim); font-size: 0.92rem; line-height: 1.6; font-style: italic; }
+  #pane-journey .lead-in .li-kicker { display: block; font-family: 'JetBrains Mono', monospace; font-size: 0.62rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); font-style: normal; margin-bottom: 0.35rem; opacity: 0.85; }
+  #pane-journey .briefing { color: var(--text-dim); font-size: 0.98rem; line-height: 1.7; margin-bottom: 1.5rem; border-left: 2px solid var(--border-strong); padding-left: 1rem; }
+  #pane-journey .sec-title { font-family: 'Chakra Petch', sans-serif; text-transform: uppercase; letter-spacing: 0.16em; font-size: 0.72rem; color: var(--text-mute); margin: 1.4rem 0 0.7rem; }
+
+  #pane-journey .steps { list-style: none; }
+  #pane-journey .steps li { display: flex; gap: 0.8rem; padding: 0.7rem 0; border-bottom: 1px solid var(--border); align-items: flex-start; }
+  #pane-journey .steps li:last-child { border-bottom: none; }
+  #pane-journey .steps .box { flex-shrink: 0; width: 22px; height: 22px; border-radius: 6px; border: 1.5px solid var(--border-strong); background: var(--bg-elev); cursor: pointer; display: grid; place-items: center; color: transparent; font-size: 0.8rem; transition: all 0.15s; margin-top: 2px; }
+  #pane-journey .steps .box:hover { border-color: var(--accent); }
+  #pane-journey .steps li.done .box { background: linear-gradient(135deg, var(--accent), var(--accent-2)); border-color: var(--accent); color: var(--bg); box-shadow: 0 0 10px var(--accent-glow); }
+  #pane-journey .steps .step-label { font-weight: 600; font-size: 0.95rem; }
+  #pane-journey .steps li.done .step-label { color: var(--text-mute); text-decoration: line-through; }
+  #pane-journey .steps .step-detail { color: var(--text-dim); font-size: 0.85rem; margin-top: 0.2rem; white-space: pre-wrap; }
+
+  #pane-journey .score { color: var(--accent); font-weight: 700; }
+  #pane-journey .hint-locked .pen { color: var(--warn); font-weight: 700; }
+  #pane-journey .hints { display: flex; flex-direction: column; gap: 0.6rem; }
+  #pane-journey .hint-open { background: var(--bg-elev); border: 1px solid var(--border); border-left: 2px solid var(--warn); border-radius: 0.5rem; padding: 0.7rem 1rem; }
+  #pane-journey .hint-open .hn { font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; color: var(--warn); text-transform: uppercase; letter-spacing: 0.1em; }
+  #pane-journey .hint-open .ht { color: var(--text-dim); font-size: 0.9rem; margin-top: 0.25rem; white-space: pre-wrap; }
+  #pane-journey .hint-locked { display: flex; justify-content: space-between; align-items: center; background: var(--bg-elev); border: 1px dashed var(--border-strong); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--text-mute); font-size: 0.85rem; }
+  #pane-journey .btn { font-family: 'Chakra Petch', sans-serif; text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.72rem; font-weight: 700; padding: 0.45rem 0.9rem; border-radius: 6px; border: 1px solid var(--border-strong); background: transparent; color: var(--text-dim); cursor: pointer; transition: all 0.15s; }
+  #pane-journey .btn:hover { color: var(--accent); border-color: var(--accent); box-shadow: 0 0 12px var(--accent-glow); }
+  #pane-journey .btn-accent { color: var(--bg); background: linear-gradient(135deg, var(--accent), var(--accent-2)); border-color: var(--accent); }
+  #pane-journey .btn-accent:hover { color: var(--bg); filter: brightness(1.08); }
+
+  #pane-journey .docs-link { display: inline-block; margin-top: 1.2rem; font-size: 0.85rem; }
+
+  /* evade submit */
+  #pane-journey .submit-form { margin-top: 0.6rem; display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }
+  #pane-journey .submit-form input { flex: 1 1 260px; background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: 6px; color: var(--text); font-family: 'JetBrains Mono', monospace; padding: 0.55rem 0.8rem; font-size: 0.9rem; }
+  #pane-journey .submit-form input:focus { outline: none; border-color: var(--evade); box-shadow: 0 0 10px var(--evade-glow); }
+  #pane-journey .submit-msg { margin-top: 0.6rem; font-size: 0.85rem; font-family: 'JetBrains Mono', monospace; min-height: 1.2em; }
+  #pane-journey .submit-msg.ok { color: var(--success); }
+  #pane-journey .submit-msg.err { color: var(--danger); }
+  #pane-journey .submit-msg.warn { color: var(--warn); }
+
+  /* auto-solve live status (exfil-required evade) */
+  #pane-journey .autosolve { margin-top: 0.6rem; background: var(--bg-elev); border: 1px solid var(--border); border-left: 2px solid var(--evade); border-radius: 0.5rem; padding: 0.9rem 1.1rem; }
+  #pane-journey .autosolve .steps-flow { list-style: none; display: flex; flex-direction: column; gap: 0.55rem; }
+  #pane-journey .autosolve .steps-flow li { display: flex; align-items: center; gap: 0.6rem; font-size: 0.9rem; color: var(--text-mute); }
+  #pane-journey .autosolve .steps-flow li .dot { flex-shrink: 0; width: 20px; text-align: center; }
+  #pane-journey .autosolve .steps-flow li.active { color: var(--text); font-weight: 600; }
+  #pane-journey .autosolve .steps-flow li.done { color: var(--success); }
+  #pane-journey .autosolve .steps-flow li.waiting .dot { animation: jn-pulse 1.6s ease-in-out infinite; }
+  #pane-journey .autosolve .hint { color: var(--text-mute); font-size: 0.8rem; margin-top: 0.7rem; }
+  /* collapsible manual fallback */
+  #pane-journey details.manual { margin-top: 0.8rem; }
+  #pane-journey details.manual > summary { cursor: pointer; color: var(--text-mute); font-size: 0.82rem; list-style: none; user-select: none; }
+  #pane-journey details.manual > summary::-webkit-details-marker { display: none; }
+  #pane-journey details.manual > summary::before { content: '▸ '; color: var(--text-mute); }
+  #pane-journey details.manual[open] > summary::before { content: '▾ '; }
+  #pane-journey details.manual > summary:hover { color: var(--accent); }
+
+  #pane-journey .empty { text-align: center; padding: 2.5rem 1rem; color: var(--text-mute); font-size: 0.9rem; }
+  #pane-journey .empty .icon { font-size: 2rem; opacity: 0.4; display: block; margin-bottom: 0.5rem; }
+  #pane-journey .help { background: var(--surface); border: 1px solid var(--border); border-radius: 0.85rem; padding: 2rem; text-align: center; max-width: 620px; margin: 3rem auto; }
+  #pane-journey .help h2 { font-family: 'Chakra Petch', sans-serif; font-size: 1.2rem; margin-bottom: 0.6rem; }
+  #pane-journey .help p { color: var(--text-dim); font-size: 0.95rem; }
+
+  /* CLEARED overlay */
+  #pane-journey #pane-journey-clear-fx { position: fixed; inset: 0; z-index: 50; display: none; place-items: center; background: radial-gradient(ellipse at center, rgba(0,203,226,0.18), rgba(7,11,16,0.86)); backdrop-filter: blur(2px); }
+  #pane-journey #pane-journey-clear-fx.show { display: grid; animation: jn-fxin 0.3s ease; }
+  #pane-journey #pane-journey-clear-fx .card { text-align: center; }
+  #pane-journey #pane-journey-clear-fx .stamp { font-family: 'Chakra Petch', sans-serif; font-size: 4rem; font-weight: 700; letter-spacing: 0.08em; color: var(--success); text-shadow: 0 0 40px var(--success-glow); animation: jn-stamp 0.5s cubic-bezier(.2,1.4,.4,1); }
+  #pane-journey #pane-journey-clear-fx .sub { color: var(--text-dim); letter-spacing: 0.25em; text-transform: uppercase; margin-top: 0.6rem; font-size: 0.9rem; }
+  #pane-journey #pane-journey-clear-fx .bridge-fx { display: none; max-width: 32rem; margin: 1.1rem auto 0; color: var(--text); font-size: 1.02rem; line-height: 1.65; font-style: italic; text-shadow: 0 0 24px rgba(0,203,226,0.15); animation: jn-bridgein 0.6s ease 0.35s both; }
+  @keyframes jn-bridgein { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  @keyframes jn-fxin { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes jn-stamp { 0% { transform: scale(2.2); opacity: 0; } 60% { transform: scale(0.92); opacity: 1; } 100% { transform: scale(1); } }
+
+
+  #pane-me {
+    --bg: #1E1E22;
+    --bg-elev: #2B2D30;
+    --surface: #2B2D30;
+    --surface-2: #3E4042;
+    --border: #3E4042;
+    --border-strong: #535557;
+    --text: #FFFFFF;
+    --text-dim: #BBBDBF;
+    --text-mute: #8A8C8E;
+    --accent: #BDF78B;
+    --accent-2: #A8E975;
+    --accent-glow: rgba(189, 247, 139, 0.22);
+    --success: #BDF78B;
+    --success-glow: rgba(189, 247, 139, 0.35);
+    --rule-bg: rgba(189, 247, 139, 0.10);
+  }
+
+  #pane-me * { box-sizing: border-box; margin: 0; padding: 0; }
+  #pane-me { font-size: 16px; }
+  #pane-me {
+    background: var(--bg);
+    background-image:
+      radial-gradient(at 20% -10%, rgba(189, 247, 139, 0.08) 0px, transparent 50%),
+      radial-gradient(at 85% 5%, rgba(189, 247, 139, 0.04) 0px, transparent 50%);
+    background-attachment: fixed;
+    color: var(--text);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    min-height: 100vh;
+    padding: 2.5rem 3rem;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  #pane-me .mono { font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace; }
+  #pane-me a { color: var(--accent); text-decoration: none; }
+  #pane-me a:hover { text-decoration: underline; }
+
+  #pane-me header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 2rem; padding-bottom: 1.5rem; border-bottom: 1px solid var(--border); }
+  #pane-me .brand h1 { font-size: 2rem; font-weight: 700; letter-spacing: -0.025em; }
+  #pane-me .brand h1 .accent { color: var(--accent); }
+  #pane-me .brand h1 .light { color: var(--text-mute); font-weight: 400; font-size: 1rem; margin-left: 0.5rem; }
+  #pane-me .brand .subtitle { color: var(--text-dim); font-size: 0.875rem; margin-top: 0.25rem; }
+  #pane-me .live { display: flex; align-items: center; gap: 0.5rem; color: var(--accent); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.18em; font-weight: 600; }
+  #pane-me .live::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--success-glow); animation: me-pulse 1.6s ease-in-out infinite; }
+  @keyframes me-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(1.2); } }
+  #pane-me .updated { color: var(--text-mute); font-size: 0.7rem; margin-top: 0.25rem; text-align: right; }
+
+  /* Identity hero */
+  #pane-me .ident { display: flex; align-items: center; gap: 1.25rem; margin-bottom: 2rem; padding: 1.5rem; background: var(--surface); border: 1px solid var(--border); border-radius: 0.75rem; }
+  #pane-me .ident .avatar { width: 56px; height: 56px; border-radius: 50%; background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: var(--bg); display: grid; place-items: center; font-family: 'JetBrains Mono', monospace; font-size: 1.4rem; font-weight: 700; }
+  #pane-me .ident .who-name { font-family: 'JetBrains Mono', monospace; font-size: 1.4rem; font-weight: 600; color: var(--text); }
+  #pane-me .ident .who-status { color: var(--text-dim); font-size: 0.875rem; margin-top: 0.15rem; }
+  #pane-me .ident .progress-mini { margin-left: auto; min-width: 200px; }
+  #pane-me .ident .progress-mini .label { color: var(--text-mute); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.12em; margin-bottom: 0.4rem; }
+  #pane-me .ident .progress-mini .bar { width: 100%; height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; box-shadow: inset 0 0 0 1px var(--border); }
+  #pane-me .ident .progress-mini .fill { height: 100%; background: linear-gradient(90deg, var(--accent-2), var(--accent)); box-shadow: 0 0 10px var(--accent-glow); transition: width 0.5s ease; }
+  #pane-me .ident .progress-mini .count { color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 1rem; margin-top: 0.4rem; }
+  #pane-me .ident .progress-mini .count .total { color: var(--text-mute); }
+
+  /* Grid: left = next + solved, right = recent rule fires */
+  #pane-me .grid { display: grid; grid-template-columns: 1fr 1.3fr; gap: 1.5rem; }
+  @media (max-width: 980px) { #pane-me { padding: 1.25rem; } #pane-me .grid { grid-template-columns: 1fr; } }
+
+  #pane-me .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 0.75rem; margin-bottom: 1.5rem; overflow: hidden; }
+  #pane-me .panel-header { padding: 1rem 1.5rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+  #pane-me .panel-header h2 { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.18em; color: var(--text-dim); font-weight: 600; display: flex; align-items: center; gap: 0.5rem; }
+  #pane-me .panel-header h2::before { content: ''; width: 3px; height: 14px; background: var(--accent); border-radius: 2px; }
+  #pane-me .panel-aux { color: var(--text-mute); font-size: 0.75rem; font-family: 'JetBrains Mono', monospace; }
+
+  /* Next challenge */
+  #pane-me .next { padding: 1.25rem 1.5rem; }
+  #pane-me .next .hint { color: var(--text-dim); font-size: 0.8rem; margin-bottom: 0.6rem; }
+  #pane-me .next .target { display: inline-block; padding: 0.75rem 1.25rem; background: var(--bg); border: 1px solid var(--accent); border-radius: 0.5rem; font-family: 'JetBrains Mono', monospace; font-size: 1.05rem; color: var(--accent); box-shadow: 0 0 16px var(--accent-glow); }
+  #pane-me .next .target.done { color: var(--text-mute); border-color: var(--border-strong); box-shadow: none; }
+
+  /* Solved list */
+  #pane-me .solved-list { list-style: none; padding: 0.5rem 0; }
+  #pane-me .solved-list li { display: flex; justify-content: space-between; align-items: center; padding: 0.65rem 1.5rem; border-left: 2px solid var(--accent); transition: background 0.15s; }
+  #pane-me .solved-list li:hover { background: var(--surface-2); }
+  #pane-me .solved-list li .chal { font-family: 'JetBrains Mono', monospace; font-weight: 600; color: var(--text); }
+  #pane-me .solved-list li .at { color: var(--text-mute); font-size: 0.75rem; font-family: 'JetBrains Mono', monospace; }
+  #pane-me .solved-list li .check { color: var(--accent); margin-right: 0.6rem; font-weight: 700; }
+
+  /* Rule fire feed */
+  #pane-me .fires { padding: 0.5rem 0; max-height: 520px; overflow-y: auto; }
+  #pane-me .fires::-webkit-scrollbar { width: 6px; }
+  #pane-me .fires::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+  #pane-me .fire-item { padding: 0.75rem 1.5rem; border-left: 2px solid transparent; transition: background 0.15s; }
+  #pane-me .fire-item:hover { background: var(--surface-2); border-left-color: var(--accent); }
+  #pane-me .fire-item.fresh { animation: me-flash 1.4s ease; }
+  @keyframes me-flash {
+    0%   { background: var(--rule-bg); border-left-color: var(--accent); box-shadow: inset 0 0 24px var(--accent-glow); }
+    100% { background: transparent; border-left-color: transparent; box-shadow: none; }
+  }
+  #pane-me .fire-item .rule { color: var(--accent); font-family: 'JetBrains Mono', monospace; font-size: 0.9rem; font-weight: 500; word-break: break-word; }
+  #pane-me .fire-item .when { color: var(--text-mute); font-size: 0.7rem; font-family: 'JetBrains Mono', monospace; margin-top: 0.2rem; }
+
+  #pane-me .empty { text-align: center; padding: 2.5rem 1rem; color: var(--text-mute); font-size: 0.875rem; }
+  #pane-me .empty .icon { font-size: 2rem; opacity: 0.4; display: block; margin-bottom: 0.5rem; }
+
+  #pane-me .help { background: var(--surface); border: 1px solid var(--border); border-radius: 0.75rem; padding: 1.5rem; text-align: center; }
+  #pane-me .help h2 { font-size: 1rem; font-weight: 600; color: var(--text); margin-bottom: 0.4rem; }
+  #pane-me .help p { color: var(--text-dim); font-size: 0.9rem; }
+  #pane-me .help code { background: var(--surface-2); padding: 2px 8px; border-radius: 3px; color: var(--accent); font-family: 'JetBrains Mono', monospace; font-size: 0.85em; }
+
+
+</style>
+</head>
+<body>
+<nav id="portal-tabs">
+  <a class="tab" data-tab="home" href="#home">Home</a>
+  <a class="tab" data-tab="journey" href="#journey">Journey</a>
+  <a class="tab" data-tab="scoreboard" href="#scoreboard" id="tab-scoreboard" hidden>Scoreboard</a>
+  <a class="tab" data-tab="me" href="#me">Me</a>
+  <a class="tab" data-tab="terminal" href="#terminal">Terminal</a>
+  <span id="portal-role-badge"></span>
+</nav>
+<script>
+  // Server-injected identity (P23-1). This is a DISPLAY-ONLY convenience for
+  // the shell (which tab to default to / show, which link to pre-fill) — it
+  // is NEVER the authorization boundary. Every API call the panes below make
+  // re-derives + re-checks identity server-side from the SAME
+  // X-Auth-Request-Email header (selfOrAdmin / selfOrAdminWrite / isAdmin in
+  // internal/scoreboard/api), so a participant cannot widen access by editing
+  // these globals in devtools — at most they can make the shell mis-render for
+  // themselves; the API still 403s anything they are not entitled to.
+  window.__PORTAL_ROLE__ = {{.RoleJSON}};
+  window.__PORTAL_USER__ = {{.UserJSON}};
+</script>
+<!-- ===== Journey pane (moved from templates/journey.html, namespaced) ===== -->
+<div class="pane" id="pane-journey">
+
+  <header>
+    <div class="brand">
+      <h1><span class="accent">Falco</span> CTF <span class="light mono">journey</span></h1>
+      <div class="subtitle">作戦を順に攻略せよ — ミッションマップ・ブリーフィング・段階ヒント</div>
+    </div>
+    <div>
+      <div class="live">● LIVE</div>
+      <div class="updated mono" id="pane-journey-updated">connecting…</div>
+      <div class="hdr-links"><a id="pane-journey-board-link" href="/journey">↻ my journey</a></div>
+    </div>
+  </header>
+
+  <div id="pane-journey-page"></div>
+
+  <div id="pane-journey-clear-fx"><div class="card">
+    <div class="stamp" id="pane-journey-clear-title">✔ CLEARED</div>
+    <div class="sub" id="pane-journey-clear-sub"></div>
+    <div class="bridge-fx" id="pane-journey-clear-bridge"></div>
+  </div></div>
+
+<script>
+(function () {
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  // Portal shell (P23-1): identity comes from the server-injected role/user
+  // globals (derived from X-Auth-Request-Email, api.DeriveUsername), not a
+  // ?user= query param — the portal is one page per session, not one page
+  // per URL. This is a UI convenience only; every read/write below is
+  // independently re-checked server-side (selfOrAdmin / selfOrAdminWrite).
+  const user = window.__PORTAL_USER__ || '';
+
+  // Track prior solved set so we can detect a fresh CLEARED transition.
+  let prevSolved = null;        // Set of solved ids from last poll
+  let prevCurrent = undefined;  // last current id
+  let firstRender = true;
+  let busy = false;             // suppress re-render while a write is in flight
+  // Sticky evade-submit feedback. Holds {cid, cls, text} for a *failure-mode*
+  // result so it survives the 2s polling re-render (render() rebuilds #page and
+  // would otherwise wipe #submit-msg). Cleared on success or when the user moves
+  // to a different mission. See restoreSubmitMsg / the submit handler below.
+  let lastSubmit = null;
+
+  if (!user) {
+    document.getElementById('pane-journey-page').innerHTML = `
+      <div class="help">
+        <h2>Your username could not be determined</h2>
+        <p style="margin-top:0.8rem">Ask the operator for your username, or reload the portal after logging in again.</p>
+      </div>`;
+  } else {
+    refresh();
+    setInterval(() => { if (!busy) refresh(); }, 2000);
+  }
+
+  async function refresh() {
+    try {
+      const r = await fetch('/api/users/' + encodeURIComponent(user) + '/journey');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      render(await r.json());
+      document.getElementById('pane-journey-updated').textContent = 'updated ' + new Date().toLocaleTimeString();
+    } catch (e) {
+      document.getElementById('pane-journey-updated').textContent = 'connection error';
+    }
+  }
+
+  function render(d) {
+    const missions = d.missions || [];
+    const total = d.total || missions.length || 0;
+    const solvedCount = d.solved_count || 0;
+    const pct = total ? Math.round(100 * solvedCount / total) : 0;
+    // Score (#40): server-computed (base award per solve minus per-hint reveal
+    // penalty, clamped at 0). Display-only — the number is the Grader's verdict.
+    const score = Number.isFinite(d.score) ? d.score : 0;
+
+    const solvedNow = new Set(missions.filter(m => m.status === 'solved').map(m => m.id));
+
+    // Detect a just-cleared mission (was current/not-solved last poll, now solved).
+    if (!firstRender && prevSolved) {
+      for (const m of missions) {
+        if (m.status === 'solved' && !prevSolved.has(m.id)) {
+          playCleared(m);
+          break;
+        }
+      }
+    }
+
+    // ---- mission map ----
+    const justUnlockedId = (!firstRender && prevCurrent && d.current && prevCurrent !== d.current) ? d.current : null;
+    const mapHTML = missions.map(m => {
+      let ico = '🔒', cls = m.status;
+      if (m.status === 'solved') ico = '✔';
+      else if (m.status === 'current') ico = '▶';
+      const num = (m.id.split('-')[0] || '');
+      const unlockCls = (m.id === justUnlockedId) ? ' just-unlocked' : '';
+      return `<li class="${cls}${unlockCls}">
+        <span class="ico">${ico}</span>
+        <span style="min-width:0">
+          <span class="mtitle">${esc(m.title || m.id)}</span><br>
+          <span class="num">MISSION ${esc(num)} · ${esc(m.status.toUpperCase())}</span>
+        </span>
+      </li>`;
+    }).join('');
+
+    // ---- detail ----
+    const detailHTML = d.detail ? renderDetail(d.detail) : renderAllDone(solvedCount, total);
+
+    document.getElementById('pane-journey-page').innerHTML = `
+      <div class="prog-wrap">
+        <div class="prog-head">
+          <span class="label">Mission progress</span>
+          <span class="count">${solvedCount}<span class="total">/${total}</span> · ${pct}% · <span class="score">SCORE ${score}</span></span>
+        </div>
+        <div class="bar"><div class="fill" style="width:${pct}%"></div></div>
+      </div>
+      <div class="layout">
+        <section class="panel">
+          <div class="panel-header"><h2>Mission map</h2></div>
+          <ul class="map">${mapHTML || '<div class="empty"><span class="icon">∅</span>ミッション未ロード</div>'}</ul>
+        </section>
+        <section>${detailHTML}</section>
+      </div>`;
+
+    wireDetail(d.detail);
+    // Re-inject any sticky failure-mode submit result the polling re-render just
+    // wiped. Drop it if the user has moved on to a different mission.
+    if (lastSubmit && d.detail && lastSubmit.cid !== d.detail.id) lastSubmit = null;
+    restoreSubmitMsg();
+    prevSolved = solvedNow;
+    prevCurrent = d.current;
+    firstRender = false;
+  }
+
+  // Repaint the sticky evade-submit failure message onto the freshly rendered
+  // #submit-msg (if the current mission still shows the evade form).
+  function restoreSubmitMsg() {
+    if (!lastSubmit) return;
+    const msg = document.getElementById('pane-journey-submit-msg');
+    if (!msg) return;
+    msg.className = lastSubmit.cls;
+    msg.textContent = lastSubmit.text;
+  }
+
+  function renderAllDone(done, total) {
+    // No "→ scoreboard" link here: the operator board (GET /) is admin-gated and
+    // not routed on the journey host (P18 5x). Participants stay on their own
+    // journey; final standings are announced by the operators.
+    return `<div class="mission"><div class="empty">
+      <span class="icon">🏁</span>
+      全 ${total} ミッション攻略完了 — お見事。<br>
+      <span class="mono" style="opacity:.7">最終順位は運営が発表します。</span>
+    </div></div>`;
+  }
+
+  function renderDetail(det) {
+    const typeBadge = det.type ? `<span class="badge badge-${esc(det.type)}">${esc(det.type)}</span>` : '';
+    if (!det.hasJourney) {
+      return `<div class="mission">
+        <div class="mission-head">
+          <div class="kicker">CURRENT MISSION</div>
+          <h2>${esc(det.title || det.id)} ${typeBadge}</h2>
+        </div>
+        <div class="mission-body">
+          <div class="empty"><span class="icon">📡</span>ブリーフィング準備中<br>
+          このミッションの作戦資料はまだ用意されていません。</div>
+          ${det.type === 'trigger' ? triggerSection(det) : ''}
+          ${det.type === 'evade' ? evadeSection(det) : ''}
+        </div>
+      </div>`;
+    }
+
+    const steps = (det.steps || []).map(s => `
+      <li class="${s.checked ? 'done' : ''}" data-step="${s.idx}">
+        <div class="box" data-step="${s.idx}" data-checked="${s.checked ? '1' : '0'}" role="checkbox" aria-checked="${s.checked}">✓</div>
+        <div>
+          <div class="step-label">${esc(s.label)}</div>
+          ${s.detail ? `<div class="step-detail">${esc(s.detail)}</div>` : ''}
+        </div>
+      </li>`).join('');
+
+    const hints = det.hints || { total: 0, opened: [], lockedCount: 0, nextIndex: 0, penalty: 0 };
+    // penalty (#40): points forfeited per hint reveal. Server-supplied; shown on
+    // the open button + confirmed on click so the deduction is a deliberate act.
+    const penalty = Number.isFinite(hints.penalty) ? hints.penalty : 0;
+    const openedHTML = (hints.opened || []).map(h => `
+      <div class="hint-open"><div class="hn">HINT ${h.idx}</div><div class="ht">${esc(h.text)}</div></div>`).join('');
+    let lockedHTML = '';
+    if (hints.lockedCount > 0 && hints.nextIndex > 0) {
+      const costLabel = penalty > 0 ? `（-${penalty}点）` : '';
+      lockedHTML = `<div class="hint-locked">
+        <span>🔒 ヒント ${hints.nextIndex} / ${hints.total}（未開封 ${hints.lockedCount}）${penalty > 0 ? ` · 開封で <span class="pen">-${penalty}点</span>` : ''}</span>
+        <button class="btn" id="pane-journey-open-hint" data-next="${hints.nextIndex}" data-cid="${esc(det.id)}" data-penalty="${penalty}">ヒントを開く${costLabel}</button>
+      </div>`;
+    }
+    const hintsBlock = (hints.total > 0)
+      ? `<div class="sec-title">Hints（段階開放）</div><div class="hints">${openedHTML}${lockedHTML || (hints.lockedCount === 0 ? '<div class="hint-locked">全ヒント開封済み</div>' : '')}</div>`
+      : '';
+
+    const docs = det.docsUrl ? `<a class="docs-link" href="${esc(det.docsUrl)}" target="_blank" rel="noopener">📖 詳細ブリーフィング (docs) →</a>` : '';
+
+    return `<div class="mission">
+      <div class="mission-head">
+        <div class="kicker">CURRENT MISSION</div>
+        <h2>${esc(det.title)} ${typeBadge}</h2>
+        ${det.tagline ? `<div class="tagline">${esc(det.tagline)}</div>` : ''}
+      </div>
+      <div class="mission-body">
+        ${det.leadIn ? `<div class="lead-in"><span class="li-kicker">前回からの引き</span>${esc(det.leadIn)}</div>` : ''}
+        ${det.briefing ? `<div class="briefing">${esc(det.briefing)}</div>` : ''}
+        ${det.type === 'trigger' ? triggerSection(det) : ''}
+        ${steps ? `<div class="sec-title">Steps（自己チェック）</div><ul class="steps">${steps}</ul>` : ''}
+        ${hintsBlock}
+        ${det.type === 'evade' ? evadeSection(det) : ''}
+        ${docs}
+      </div>
+    </div>`;
+  }
+
+  // triggerSection renders the live "how do I know I succeeded?" status for a
+  // trigger mission (#39). A trigger challenge has no flag to submit — it
+  // auto-solves the instant the participant's action makes Falco emit one of the
+  // expected rules. Before this the participant had no on-screen cue for what
+  // success looks like; now we show, live:
+  //   - the success signal (which Falco rule(s) clear the mission), and
+  //   - whether the scoreboard has already SEEN that rule fire for this user
+  //     (det.detectedRules, a recent-window intersection from the API).
+  // Once detected, the normal 2s poll flips the mission to solved and triggers
+  // the CLEARED overlay — so a green "detected" row here is the immediate
+  // feedback that bridges "I ran the command" and "the map updated".
+  //
+  // XSS: only static copy + Falco rule NAMES flow in, all through esc(); rule
+  // names are public metadata, never a flag (matches #26 discipline).
+  function triggerSection(det) {
+    const expected = det.expectedRules || [];
+    const detected = new Set(det.detectedRules || []);
+    // No expected rules declared (shouldn't happen for a trigger challenge, but
+    // fail soft): show a generic "watching your workspace" cue.
+    if (!expected.length) {
+      return `<div class="sec-title">クリア条件（自動判定）</div>
+        <div class="autosolve">
+          <div class="hint">このミッションは、ワークスペースでの操作を Falco が検知すると自動的にクリアされます。ターミナルで課題の操作を実行してください。</div>
+        </div>`;
+    }
+    const anyDetected = expected.some(r => detected.has(r));
+    const rows = expected.map(r => {
+      const hit = detected.has(r);
+      return `<li class="${hit ? 'done' : 'waiting'}">
+        <span class="dot">${hit ? '✅' : '⏳'}</span>
+        <span>${esc(r)}${hit ? ' — 検知しました' : ''}</span>
+      </li>`;
+    }).join('');
+    return `<div class="sec-title">クリア条件（自動判定）</div>
+      <div class="autosolve">
+        <div class="hint" style="margin-top:0">ターミナルで操作を実行し、下の Falco ルールを発火させればミッションは自動でクリアされます（手動提出は不要）。</div>
+        <ul class="steps-flow" style="margin-top:0.7rem">${rows}</ul>
+        <div class="hint">${anyDetected
+          ? '✔ 検知されました — まもなくクリア表示に切り替わります。'
+          : 'まだ検知されていません。直近 60 秒の発火をここに表示します。'}</div>
+      </div>`;
+  }
+
+  // evadeSection chooses the primary UX for an evade mission:
+  //   - RequireExfil challenges lead with the auto-solve live status (the flag
+  //     is delivered by exfil; the scoreboard auto-clears once the window is
+  //     clean), demoting the manual submit form to a collapsed fallback.
+  //   - plain evade challenges keep the manual submit form as the primary path.
+  function evadeSection(det) {
+    if (det.requireExfil) {
+      return autoSolveStatus(det) + `
+        <details class="manual">
+          <summary>うまくいかない? 手動でフラグを提出</summary>
+          ${submitForm(det.id)}
+        </details>`;
+    }
+    return `<div class="sec-title">Flag 提出（evade）</div>${submitForm(det.id)}`;
+  }
+
+  // autoSolveStatus renders the three-stage live flow for an exfil-required
+  // evade mission. Stage state is derived from det.exfilReceived (collector has
+  // a receipt). The mission map flips this section to "solved" via the normal
+  // poll once the sweeper clears it, so we only model received / waiting here.
+  function autoSolveStatus(det) {
+    const received = !!det.exfilReceived;
+    // Build each row via textContent-safe interpolation: only static copy and
+    // booleans feed in here (no user-controlled strings), matching #26's XSS
+    // discipline — the dynamic bits are class names, not injected content.
+    const rows = [
+      { cls: received ? 'done' : 'active',
+        dot: received ? '✅' : '⏳',
+        text: received ? 'collector が flag を受信しました' : 'collector への flag 配送を待機中…' },
+      { cls: received ? 'active waiting' : '',
+        dot: received ? '⏳' : '·',
+        text: received ? 'クリーンな窓を待機中… (禁止ルールが ' + esc(String(det.windowSeconds || 30)) + '秒 静かになれば自動クリア)' : 'クリーンな窓の確保' },
+      { cls: '', dot: '🎉', text: '自動クリア' },
+    ];
+    const items = rows.map(r => `<li class="${r.cls}"><span class="dot">${r.dot}</span><span>${esc(r.text)}</span></li>`).join('');
+    return `<div class="sec-title">自動クリア（exfil）</div>
+      <div class="autosolve">
+        <ul class="steps-flow">${items}</ul>
+        <div class="hint">flag を collector に配送すれば、禁止ルールが静かな窓で自動的にクリアされます。手動提出は不要です。</div>
+      </div>`;
+  }
+
+  function submitForm(cid) {
+    return `<form class="submit-form" id="pane-journey-submit-form" data-cid="${esc(cid)}">
+        <input type="text" id="pane-journey-flag-input" placeholder="FALCO{...}" autocomplete="off" spellcheck="false">
+        <button type="submit" class="btn btn-accent">Submit</button>
+      </form>
+      <div class="submit-msg" id="pane-journey-submit-msg"></div>`;
+  }
+
+  function wireDetail(det) {
+    // step self-check toggles
+    document.getElementById('pane-journey').querySelectorAll('.steps .box').forEach(box => {
+      box.addEventListener('click', async () => {
+        const idx = box.dataset.step;
+        const checked = box.dataset.checked !== '1';
+        busy = true;
+        try {
+          const r = await fetch('/api/users/' + encodeURIComponent(user) + '/challenges/' + encodeURIComponent(det.id) + '/steps/' + idx + '/check',
+            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ checked }) });
+          if (r.ok) {
+            box.dataset.checked = checked ? '1' : '0';
+            box.closest('li').classList.toggle('done', checked);
+          }
+        } catch (e) { /* ignore; next poll reconciles */ }
+        busy = false;
+      });
+    });
+
+    // progressive hint reveal
+    const openBtn = document.getElementById('pane-journey-open-hint');
+    if (openBtn) {
+      openBtn.addEventListener('click', async () => {
+        const idx = openBtn.dataset.next;
+        // Confirm the score cost before revealing (#40): a hint deducts points,
+        // so make the reveal a deliberate choice rather than an accidental click.
+        const pen = parseInt(openBtn.dataset.penalty || '0', 10);
+        if (pen > 0 && !confirm(`ヒント ${idx} を開くとスコアが ${pen} 点減点されます。開きますか?`)) return;
+        busy = true;
+        try {
+          const r = await fetch('/api/users/' + encodeURIComponent(user) + '/challenges/' + encodeURIComponent(openBtn.dataset.cid) + '/hints/' + idx,
+            { method: 'POST' });
+          if (r.ok) { await refresh(); }
+        } catch (e) { /* ignore */ }
+        busy = false;
+      });
+    }
+
+    // evade flag submit
+    const form = document.getElementById('pane-journey-submit-form');
+    if (form) {
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const cid = form.dataset.cid;
+        const flag = document.getElementById('pane-journey-flag-input').value.trim();
+        const msg = document.getElementById('pane-journey-submit-msg');
+        // setMsg paints the message now AND stores it so the polling re-render
+        // restores it (see restoreSubmitMsg). success=true means the message is
+        // transient (a refresh() + CLEARED transition will replace the view).
+        const setMsg = (cls, text, success) => {
+          msg.className = cls; msg.textContent = text;
+          lastSubmit = success ? null : { cid, cls, text };
+        };
+        if (!flag) { setMsg('submit-msg err', 'flag を入力してください', false); return; }
+        busy = true;
+        lastSubmit = null;
+        msg.className = 'submit-msg'; msg.textContent = '提出中…';
+        let solved = false;
+        try {
+          const r = await fetch('/api/challenges/' + encodeURIComponent(cid) + '/submit',
+            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user, flag }) });
+          const d = await r.json();
+          if (d.solved) { setMsg('submit-msg ok', '✔ 正解 — ミッションクリア！', true); solved = true; }
+          else if (d.correct === false) { setMsg('submit-msg err', '✗ flag が違います', false); }
+          else if (d.evaded === false) { setMsg('submit-msg warn', '検知されました: ' + (d.reason || 'forbidden rule fired'), false); }
+          else if (d.exfiltrated === false) { setMsg('submit-msg warn', (d.reason || 'まず collector に exfil してください'), false); }
+          else { setMsg('submit-msg', JSON.stringify(d), false); }
+        } catch (err) { setMsg('submit-msg err', '提出エラー: ' + err, false); }
+        busy = false;
+        // Only re-render on success (drives the CLEARED transition + next
+        // mission). On failure we keep the message on screen; the sticky
+        // lastSubmit state carries it through subsequent polling re-renders.
+        if (solved) refresh();
+      });
+    }
+  }
+
+  function playCleared(m) {
+    const fx = document.getElementById('pane-journey-clear-fx');
+    document.getElementById('pane-journey-clear-title').textContent = '✔ CLEARED';
+    document.getElementById('pane-journey-clear-sub').textContent = (m.title || m.id) + ' 攻略';
+    // Narrative bridge toward the next mission (#47). textContent-safe; empty
+    // bridge (or final mission with no bridge) simply shows nothing. The lead-in
+    // block on the next mission carries the same beat once the overlay fades.
+    const bridge = document.getElementById('pane-journey-clear-bridge');
+    bridge.textContent = m && m.bridge ? m.bridge : '';
+    bridge.style.display = m && m.bridge ? 'block' : 'none';
+    fx.classList.add('show');
+    setTimeout(() => fx.classList.remove('show'), m && m.bridge ? 3200 : 1900);
+  }
+})();
+</script>
+
+</div>
+<!-- ===== Scoreboard pane (moved from templates/index.html, namespaced;
+     admin-only content — see security note in view.go) ===== -->
+<div class="pane" id="pane-scoreboard">
+
+  <header>
+    <div class="brand">
+      <h1><span class="accent">Falco</span> CTF <span class="light mono">scoreboard</span></h1>
+    </div>
+    <div class="hdr-right">
+      <div class="live">● LIVE <span class="demo-tag" id="pane-scoreboard-demo-tag">demo</span></div>
+      <div class="updated mono" id="pane-scoreboard-updated">connecting…</div>
+      <div class="hdr-btns">
+        <a id="pane-scoreboard-journey-link" class="reset-btn result-btn" href="#journey" title="Open your guided mission journey">▶ Journey</a>
+        <button id="pane-scoreboard-result-btn" class="reset-btn result-btn" title="Open the results screen">🏆 Result</button>
+        <button id="pane-scoreboard-reset-btn" class="reset-btn" title="Clear all solves (admin only)">Reset board</button>
+      </div>
+    </div>
+  </header>
+
+  <section class="panel home-section">
+    <div class="panel-header">
+      <h2>Leaderboard</h2>
+      <span class="panel-aux" id="pane-scoreboard-lb-meta"></span>
+    </div>
+    <table>
+      <thead><tr>
+        <th style="width:60px">Rank</th>
+        <th>Participant</th>
+        <th style="text-align:right">Score</th>
+        <th>Solved</th>
+        <th style="width:30%">Progress</th>
+      </tr></thead>
+      <tbody id="pane-scoreboard-lb-body"></tbody>
+    </table>
+  </section>
+
+  <section class="grid home-section">
+    <div class="panel">
+      <div class="panel-header"><h2>Missions</h2><span class="panel-aux" id="pane-scoreboard-ch-meta"></span></div>
+      <div class="challenges" id="pane-scoreboard-challenges"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-header"><h2>Live feed</h2><span class="panel-aux" id="pane-scoreboard-act-meta"></span></div>
+      <div class="activity" id="pane-scoreboard-activity"></div>
+    </div>
+  </section>
+
+  <!-- Per-challenge leaderboard (shown when a Mission card is clicked) -->
+  <section class="panel detail-view" id="pane-scoreboard-detail-view" hidden>
+    <div class="panel-header detail-head">
+      <button id="pane-scoreboard-detail-back" class="reset-btn back-btn">← Home</button>
+      <h2 id="pane-scoreboard-detail-title">Challenge</h2>
+      <span class="panel-aux" id="pane-scoreboard-detail-meta"></span>
+    </div>
+    <table>
+      <thead><tr>
+        <th style="width:60px">Rank</th>
+        <th>Participant</th>
+        <th>Solved</th>
+        <th style="text-align:right">After 1st</th>
+      </tr></thead>
+      <tbody id="pane-scoreboard-detail-body"></tbody>
+    </table>
+  </section>
+
+  <!-- Result / award screen (opened by the Result button) -->
+  <section class="result-view" id="pane-scoreboard-result-view" hidden>
+    <div class="result-hero">
+      <button id="pane-scoreboard-result-back" class="reset-btn back-btn">← Back</button>
+      <h1 class="display">🏆 RESULTS</h1>
+      <div class="result-sub">CTF Company · Final Standings</div>
+    </div>
+    <div class="podium" id="pane-scoreboard-result-podium"></div>
+    <section class="panel">
+      <div class="panel-header"><h2>Final standings</h2><span class="panel-aux" id="pane-scoreboard-result-meta"></span></div>
+      <table>
+        <thead><tr>
+          <th style="width:60px">Rank</th>
+          <th>Participant</th>
+          <th style="text-align:right">Score</th>
+          <th>Solved</th>
+          <th style="width:30%">Progress</th>
+        </tr></thead>
+        <tbody id="pane-scoreboard-result-body"></tbody>
+      </table>
+    </section>
+  </section>
+
+<script>
+(function () {
+  // ---------------- helpers ----------------
+  const seen = new Set();
+  let firstRender = true;
+  // Solve time as YYYY/MM/DD hh:mm:ss (24-hour local).
+  function fmtTime(iso) {
+    const d = new Date(iso);
+    const p = n => String(n).padStart(2, '0');
+    return d.getFullYear() + '/' + p(d.getMonth() + 1) + '/' + p(d.getDate()) + ' ' +
+           p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  }
+  function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  // Progress as one segment per mission; `done` of `total` lit.
+  function segs(done, total) {
+    let h = '';
+    for (let i = 0; i < total; i++) h += '<span class="seg' + (i < done ? ' filled' : '') + '"></span>';
+    return h || '<span class="seg"></span>';
+  }
+  function fmtDelta(ms) {
+    const s = Math.max(0, Math.round(ms / 1000));
+    if (s < 60) return s + 's';
+    const m = Math.floor(s / 60);
+    if (m < 60) return m + 'm' + (s % 60) + 's';
+    return Math.floor(m / 60) + 'h' + (m % 60) + 'm';
+  }
+
+  let lastState = null;   // latest /api/state, for the detail view
+  let currentCid = null;  // null = home; otherwise the open challenge id
+  let resultOpen = false; // results screen toggle
+
+  // ---------------- fetch loop ----------------
+  async function refresh() {
+    try {
+      const r = await fetch('/api/state');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      render(await r.json());
+      document.getElementById('pane-scoreboard-demo-tag').style.display = 'none';
+      document.getElementById('pane-scoreboard-updated').textContent = 'updated ' + new Date().toLocaleTimeString();
+    } catch (e) {
+      // No backend (e.g. design preview) → show the layout with demo data.
+      render(DEMO);
+      document.getElementById('pane-scoreboard-demo-tag').style.display = 'inline-block';
+      document.getElementById('pane-scoreboard-updated').textContent = 'preview · demo data';
+    }
+  }
+
+  function render(d) {
+    lastState = d;
+    if (currentCid) renderDetail();   // keep the open challenge view live
+    if (resultOpen) renderResult();   // keep the results screen live
+    const totalChal = d.stats.challenges;
+    const totalUsers = d.stats.users;
+
+    // ---- leaderboard ----
+    document.getElementById('pane-scoreboard-lb-meta').textContent = totalUsers + ' participants';
+    const lb = document.getElementById('pane-scoreboard-lb-body');
+    if (d.leaderboard.length === 0) {
+      lb.innerHTML = '<tr><td colspan="5" class="empty"><span class="icon">∅</span>No participants yet — deploy a workspace to begin</td></tr>';
+    } else {
+      lb.innerHTML = d.leaderboard.map(p => {
+        const ranked = p.solved > 0;
+        const rankCls = ranked && p.rank <= 3 ? 'rank-' + p.rank : '';
+        // Score is the ranking metric (#40); Solved stays as the progress count.
+        const score = (p.score ?? 0);
+        return `<tr>
+          <td><span class="rank ${rankCls}">${ranked ? '#' + p.rank : '-'}</span></td>
+          <td><span class="user-cell">${esc(p.display_name || p.user)}<button class="name-edit" data-user="${esc(p.user)}" title="Rename on scoreboard (admin)">✎</button></span></td>
+          <td style="text-align:right"><span class="score-cell"><b>${score}</b></span></td>
+          <td><span class="score-cell">${p.solved}<span class="total">/${totalChal}</span></span></td>
+          <td><div class="progress">${segs(p.solved, totalChal)}</div></td>
+        </tr>`;
+      }).join('');
+    }
+
+    // ---- missions ----
+    document.getElementById('pane-scoreboard-ch-meta').textContent = d.challenges.length + ' total';
+    const ch = document.getElementById('pane-scoreboard-challenges');
+    if (d.challenges.length === 0) {
+      ch.innerHTML = '<div class="empty"><span class="icon">∅</span>No missions loaded</div>';
+    } else {
+      ch.innerHTML = d.challenges.map(c => {
+        const parts = c.id.split('-');
+        const num = parts[0];
+        const slug = parts.slice(1).join('-');
+        const dots = Array.from({length: Math.max(totalUsers, 1)}, (_, i) =>
+          `<span class="dot${i < c.solved_count ? ' filled' : ''}"></span>`).join('');
+        const rule = c.expectedRules[0] || c.forbiddenRules[0] || '';
+        const full = totalUsers > 0 && c.solved_count >= totalUsers ? ' full' : '';
+        const status = full ? 'CLEARED' : (c.solved_count > 0 ? 'IN PROGRESS' : 'OPEN');
+        const prefix = c.type === 'evade' ? '✗ ' : '✓ ';
+        return `<div class="challenge clickable${full}" data-cid="${esc(c.id)}" role="button" tabindex="0" title="View this mission's leaderboard">
+          <div class="head">
+            <span class="num">MISSION ${esc(num)}</span>
+            <span class="badge badge-${c.type}">${c.type}</span>
+          </div>
+          <div class="name">${esc(slug)}</div>
+          <div class="rule">${esc(prefix + rule)}</div>
+          <div class="dots">${dots}</div>
+          <div class="footer">
+            <span class="status">${status}</span>
+            <span><span class="solved-count">${c.solved_count}</span> / ${totalUsers || '?'} · ${c.first_solver ? '🏆 ' + esc(c.first_solver) : '—'}</span>
+          </div>
+        </div>`;
+      }).join('');
+    }
+
+    // ---- live feed ----
+    document.getElementById('pane-scoreboard-act-meta').textContent = d.recent_solves.length + ' shown';
+    const act = document.getElementById('pane-scoreboard-activity');
+    if (d.recent_solves.length === 0) {
+      act.innerHTML = '<div class="empty"><span class="icon">∅</span>No solves yet</div>';
+    } else {
+      act.innerHTML = d.recent_solves.map(s => {
+        const key = s.user + ':' + s.challenge;
+        const fresh = !firstRender && !seen.has(key);
+        seen.add(key);
+        return `<div class="activity-item${fresh ? ' fresh' : ''}">
+          <div style="min-width:0">
+            <span class="who">${esc(s.display_name || s.user)}</span>
+            <span class="verb">cleared</span>
+            <span class="what">${esc(s.challenge)}</span>
+          </div>
+          <span class="when" title="${esc(s.at)}">${fmtTime(s.at)}</span>
+        </div>`;
+      }).join('');
+    }
+    firstRender = false;
+  }
+
+  // ---------------- per-mission leaderboard ----------------
+  function openChallenge(cid) {
+    currentCid = cid;
+    resultOpen = false;
+    document.getElementById('pane-scoreboard-result-view').hidden = true;
+    document.getElementById('pane-scoreboard').querySelectorAll('.home-section').forEach(s => { s.hidden = true; });
+    document.getElementById('pane-scoreboard-detail-view').hidden = false;
+    renderDetail();
+    window.scrollTo(0, 0);
+  }
+  function goHome() {
+    currentCid = null;
+    resultOpen = false;
+    document.getElementById('pane-scoreboard-detail-view').hidden = true;
+    document.getElementById('pane-scoreboard-result-view').hidden = true;
+    document.getElementById('pane-scoreboard').querySelectorAll('.home-section').forEach(s => { s.hidden = false; });
+  }
+
+  // ---------------- results screen ----------------
+  function openResult() {
+    resultOpen = true;
+    currentCid = null;
+    document.getElementById('pane-scoreboard-detail-view').hidden = true;
+    document.getElementById('pane-scoreboard').querySelectorAll('.home-section').forEach(s => { s.hidden = true; });
+    document.getElementById('pane-scoreboard-result-view').hidden = false;
+    renderResult();
+    window.scrollTo(0, 0);
+  }
+  function renderResult() {
+    if (!lastState) return;
+    const lb = lastState.leaderboard || [];
+    const totalChal = lastState.stats.challenges;
+    const top = lb.filter(p => p.solved > 0).slice(0, 3);
+    const podium = document.getElementById('pane-scoreboard-result-podium');
+    if (top.length === 0) {
+      podium.innerHTML = '<div class="empty"><span class="icon">🏁</span>まだ solve がありません — 結果はイベント終了後に</div>';
+    } else {
+      const order = top.length >= 3 ? [top[1], top[0], top[2]] : (top.length === 2 ? [top[1], top[0]] : [top[0]]);
+      podium.innerHTML = order.map(p => {
+        const medal = p.rank === 1 ? '① CHAMPION' : (p.rank === 2 ? '② 2nd' : '③ 3rd');
+        return `<div class="pod pod-${p.rank}"><div class="crown"></div>
+          <div class="medal display">${medal}</div>
+          <div class="pod-name">${esc(p.display_name || p.user)}</div>
+          <div class="pod-score"><b>${p.score ?? 0}</b> pts · ${p.solved} / ${totalChal} missions</div>
+        </div>`;
+      }).join('');
+    }
+    document.getElementById('pane-scoreboard-result-meta').textContent = lb.length + ' participants';
+    const body = document.getElementById('pane-scoreboard-result-body');
+    body.innerHTML = lb.length === 0
+      ? '<tr><td colspan="5" class="empty"><span class="icon">∅</span>No participants</td></tr>'
+      : lb.map(p => {
+          const ranked = p.solved > 0;
+          const rankCls = ranked && p.rank <= 3 ? 'rank-' + p.rank : '';
+          return `<tr>
+            <td><span class="rank ${rankCls}">${ranked ? '#' + p.rank : '-'}</span></td>
+            <td><span class="user-cell">${esc(p.display_name || p.user)}</span></td>
+            <td style="text-align:right"><span class="score-cell"><b>${p.score ?? 0}</b></span></td>
+            <td><span class="score-cell">${p.solved}<span class="total">/${totalChal}</span></span></td>
+            <td><div class="progress">${segs(p.solved, totalChal)}</div></td>
+          </tr>`;
+        }).join('');
+  }
+  function renderDetail() {
+    if (!lastState || !currentCid) return;
+    const c = (lastState.challenges || []).find(x => x.id === currentCid);
+    if (!c) { goHome(); return; }
+    const rule = c.expectedRules[0] || c.forbiddenRules[0] || '';
+    document.getElementById('pane-scoreboard-detail-title').innerHTML =
+      esc(c.id) + ' <span class="badge badge-' + c.type + '">' + c.type + '</span>';
+    document.getElementById('pane-scoreboard-detail-meta').textContent =
+      c.solver_details.length + ' solved' + (rule ? ' · ' + rule : '');
+    const body = document.getElementById('pane-scoreboard-detail-body');
+    if (!c.solver_details.length) {
+      body.innerHTML = '<tr><td colspan="4" class="empty"><span class="icon">∅</span>Nobody has cleared this yet</td></tr>';
+      return;
+    }
+    const firstAt = new Date(c.solver_details[0].at).getTime();
+    body.innerHTML = c.solver_details.map((s, i) => {
+      const rank = i + 1;
+      const rankCls = rank <= 3 ? 'rank-' + rank : '';
+      const delta = rank === 1 ? '🏆 first' : '+' + fmtDelta(new Date(s.at).getTime() - firstAt);
+      return `<tr>
+        <td><span class="rank ${rankCls}">#${rank}</span></td>
+        <td><span class="user-cell">${esc(s.display_name || s.user)}</span></td>
+        <td><span class="when" title="${esc(s.at)}">${fmtTime(s.at)}</span></td>
+        <td style="text-align:right" class="mono">${delta}</td>
+      </tr>`;
+    }).join('');
+  }
+  // Click (or Enter/Space) a mission card → its leaderboard. Delegated on the
+  // persistent container since cards re-render every poll.
+  document.getElementById('pane-scoreboard-challenges').addEventListener('click', (e) => {
+    const card = e.target.closest('.challenge[data-cid]');
+    if (card) openChallenge(card.dataset.cid);
+  });
+  document.getElementById('pane-scoreboard-challenges').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const card = e.target.closest('.challenge[data-cid]');
+    if (card) { e.preventDefault(); openChallenge(card.dataset.cid); }
+  });
+  document.getElementById('pane-scoreboard-detail-back').addEventListener('click', goHome);
+  document.getElementById('pane-scoreboard-result-btn').addEventListener('click', openResult);
+  document.getElementById('pane-scoreboard-result-back').addEventListener('click', goHome);
+
+  // Admin rename: delegated on the (persistent) tbody since rows re-render.
+  document.getElementById('pane-scoreboard-lb-body').addEventListener('click', async (e) => {
+    const btn = e.target.closest('.name-edit');
+    if (!btn) return;
+    const user = btn.dataset.user;
+    const name = prompt('Scoreboard name for ' + user + ' (blank cancels):');
+    if (name === null) return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    try {
+      const r = await fetch('/api/admin/users/' + encodeURIComponent(user) + '/display-name', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: trimmed }),
+      });
+      if (r.ok) { await refresh(); }
+      else { alert('Rename failed (HTTP ' + r.status + '). Admin only / invalid name (1-32 chars, no <>&"\').'); }
+    } catch (err) { alert('Rename request error: ' + err); }
+  });
+
+  const resetBtn = document.getElementById('pane-scoreboard-reset-btn');
+  if (resetBtn) {
+    resetBtn.addEventListener('click', async () => {
+      if (!confirm('Reset the scoreboard? This clears all solves and event counts (display names are kept).')) return;
+      try {
+        const r = await fetch('/api/admin/reset', { method: 'POST' });
+        if (r.ok) {
+          const d = await r.json();
+          await refresh();
+          alert('Scoreboard reset — cleared ' + (d.cleared_solves ?? 0) + ' solve(s).');
+        } else {
+          alert('Reset failed (HTTP ' + r.status + '). Admin only.');
+        }
+      } catch (e) {
+        alert('Reset request error: ' + e);
+      }
+    });
+  }
+
+  // Demo data — only rendered when /api/state is unreachable (design preview).
+  const DEMO = {
+    stats: { users: 5, challenges: 10, solves: 17, events: 1240 },
+    leaderboard: [
+      { rank: 1, user: 'user3', display_name: 'shadowfox', score: 680, solved: 7, events: 412 },
+      { rank: 2, user: 'user1', display_name: 'n0va', score: 470, solved: 5, events: 318 },
+      { rank: 3, user: 'user7', display_name: 'kernelpanic', score: 270, solved: 3, events: 196 },
+      { rank: 0, user: 'user2', display_name: 'user2', score: 0, solved: 0, events: 22 },
+      { rank: 0, user: 'user5', display_name: 'rookie', score: 0, solved: 0, events: 4 },
+    ],
+    challenges: [
+      { id: '01-initial-recon', type: 'trigger', expectedRules: ['Contact K8S API Server From Container'], forbiddenRules: [], solved_count: 5, first_solver: 'shadowfox', solver_details: [] },
+      { id: '02-credential-files', type: 'trigger', expectedRules: ['Read sensitive file untrusted'], forbiddenRules: [], solved_count: 4, first_solver: 'n0va', solver_details: [] },
+      { id: '03-stealth-read', type: 'evade', expectedRules: [], forbiddenRules: ['Read sensitive file untrusted'], solved_count: 2, first_solver: 'shadowfox', solver_details: [] },
+      { id: '06-web-rce-shell', type: 'trigger', expectedRules: ['Run shell untrusted'], forbiddenRules: [], solved_count: 3, first_solver: 'shadowfox', solver_details: [] },
+      { id: '10-final-exfil', type: 'evade', expectedRules: [], forbiddenRules: ['Contact K8S API Server From Container'], solved_count: 0, first_solver: null, solver_details: [] },
+    ],
+    recent_solves: [
+      { user: 'user3', display_name: 'shadowfox', challenge: '06-web-rce-shell', at: new Date(Date.now() - 9000).toISOString() },
+      { user: 'user1', display_name: 'n0va', challenge: '02-credential-files', at: new Date(Date.now() - 64000).toISOString() },
+      { user: 'user7', display_name: 'kernelpanic', challenge: '01-initial-recon', at: new Date(Date.now() - 200000).toISOString() },
+    ],
+  };
+
+  // Scoreboard data (/api/state) is admin-gated server-side (unchanged).
+  // Only poll it when the portal shell told us the viewer is admin — a
+  // participant would otherwise just loop on 403s for a tab they cannot see
+  // (P23-1: display-only optimisation, NOT the authorization boundary).
+  if (window.__PORTAL_ROLE__ === 'admin') {
+    refresh();
+    setInterval(refresh, 2000);
+  }
+})();
+</script>
+
+</div>
+<!-- ===== Me pane (moved from templates/me.html, namespaced) ===== -->
+<div class="pane" id="pane-me">
+
+  <header>
+    <div class="brand">
+      <h1>falco<span class="accent">-ctf</span> <span class="light mono">me</span></h1>
+      <div class="subtitle">your live progress + Falco rule activity</div>
+    </div>
+    <div>
+      <div class="live">● LIVE</div>
+      <div class="updated mono" id="pane-me-updated">connecting…</div>
+    </div>
+  </header>
+
+  <div id="pane-me-page"></div>
+
+<script>
+(function () {
+  function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function avatarChar(u) { return (u || '?').slice(-1).toUpperCase(); }
+  function fmtAgo(unixSec) {
+    const ms = Date.now() - unixSec * 1000;
+    const s = Math.max(0, Math.floor(ms / 1000));
+    if (s < 5)    return 'just now';
+    if (s < 60)   return s + 's ago';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    return Math.floor(s / 3600) + 'h ago';
+  }
+  function fmtAgoISO(iso) {
+    const ms = Date.now() - new Date(iso).getTime();
+    const s = Math.max(0, Math.floor(ms / 1000));
+    if (s < 5)    return 'just now';
+    if (s < 60)   return s + 's ago';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+    return Math.floor(s / 86400) + 'd ago';
+  }
+
+  // Portal shell (P23-1): identity comes from the server-injected
+  // __PORTAL_USER__ global (derived from X-Auth-Request-Email,
+  // api.DeriveUsername) rather than a ?user= query param. UI convenience
+  // only — /api/users/{user}/me is independently gated server-side
+  // (selfOrAdmin).
+  const user = window.__PORTAL_USER__ || '';
+  const fireSeen = new Set();
+  let firstRender = true;
+
+  if (!user) {
+    document.getElementById('pane-me-page').innerHTML = `
+      <div class="help">
+        <h2>Your username could not be determined</h2>
+        <p style="margin-top:0.75rem">Ask the operator for your username, or reload the portal after logging in again.</p>
+      </div>`;
+  } else {
+    refresh();
+    setInterval(refresh, 2000);
+  }
+
+  async function refresh() {
+    try {
+      const r = await fetch('/api/users/' + encodeURIComponent(user) + '/me');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      render(await r.json());
+      document.getElementById('pane-me-updated').textContent = 'updated ' + new Date().toLocaleTimeString();
+    } catch (e) {
+      document.getElementById('pane-me-updated').textContent = 'connection error';
+    }
+  }
+
+  function render(d) {
+    const total = d.total_challenges || 0;
+    const solvedCount = d.solved_count || 0;
+    const pct = total ? Math.round(100 * solvedCount / total) : 0;
+    const fires = d.recent_rule_fires || [];
+    const solved = d.solved || [];
+    const events = d.events || 0;
+
+    let nextHTML;
+    if (d.next_unsolved) {
+      nextHTML = `<span class="target">→ ${esc(d.next_unsolved)}</span>`;
+    } else if (solvedCount > 0) {
+      nextHTML = `<span class="target done">All ${total} challenges solved — nice work.</span>`;
+    } else {
+      nextHTML = `<span class="target">No challenges loaded yet</span>`;
+    }
+
+    const displayName = d.display_name || user;
+    const identitySuffix = (displayName !== user) ? ` <span style="color:var(--text-mute); font-weight:400; font-size:0.85rem">(${esc(user)})</span>` : '';
+    document.getElementById('pane-me-page').innerHTML = `
+      <section class="ident">
+        <div class="avatar">${avatarChar(displayName)}</div>
+        <div>
+          <div class="who-name">${esc(displayName)}${identitySuffix}</div>
+          <div class="who-status">${solvedCount > 0 ? solvedCount + ' challenge' + (solvedCount === 1 ? '' : 's') + ' solved · ' + events.toLocaleString() + ' Falco events triggered' : 'Just getting started · ' + events.toLocaleString() + ' Falco events seen'}</div>
+        </div>
+        <div class="progress-mini">
+          <div class="label">Progress</div>
+          <div class="bar"><div class="fill" style="width:${pct}%"></div></div>
+          <div class="count">${solvedCount}<span class="total">/${total}</span> · ${pct}%</div>
+        </div>
+      </section>
+
+      <div class="grid">
+        <div>
+          <section class="panel">
+            <div class="panel-header"><h2>Next challenge</h2></div>
+            <div class="next">
+              <div class="hint">Pick this up in your terminal:</div>
+              ${nextHTML}
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h2>Solved</h2>
+              <span class="panel-aux">${solvedCount} done</span>
+            </div>
+            ${solved.length === 0
+              ? '<div class="empty"><span class="icon">∅</span>No solves yet — your first one will appear here.</div>'
+              : '<ul class="solved-list">' + solved.map(s => `
+                  <li>
+                    <span><span class="check">✓</span><span class="chal">${esc(s.challenge)}</span></span>
+                    <span class="at" title="${esc(s.at)}">${fmtAgoISO(s.at)}</span>
+                  </li>`).join('') + '</ul>'}
+          </section>
+        </div>
+
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Falco rules you triggered (last 60s)</h2>
+            <span class="panel-aux">${fires.length} fire${fires.length === 1 ? '' : 's'}</span>
+          </div>
+          <div class="fires">
+            ${fires.length === 0
+              ? '<div class="empty"><span class="icon">∅</span>Nothing in the last 60s.<br>Run a syscall in your workspace and watch this fill in.</div>'
+              : fires.slice().reverse().map(f => {
+                  const key = f.rule + ':' + f.at;
+                  const fresh = !firstRender && !fireSeen.has(key);
+                  fireSeen.add(key);
+                  return `<div class="fire-item${fresh ? ' fresh' : ''}">
+                    <div class="rule">${esc(f.rule)}</div>
+                    <div class="when">${fmtAgo(f.at)}</div>
+                  </div>`;
+                }).join('')}
+          </div>
+        </section>
+      </div>
+    `;
+    firstRender = false;
+  }
+})();
+</script>
+
+</div>
+<!-- ===== Home pane (P23-1: minimal — content aggregation is P23-5, not here) ===== -->
+<div class="pane" id="pane-home" style="padding:2.5rem 3rem;max-width:52rem">
+  <h1 style="font-family:'Chakra Petch',sans-serif;font-size:2rem;margin:0 0 0.5rem;">
+    <span style="color:#00CBE2">Falco</span> CTF
+  </h1>
+  <p style="color:#9DB4BF;line-height:1.6;margin:0 0 1rem;">
+    Welcome to the unified portal. Use the tabs above to open your mission
+    <strong>Journey</strong>, check <strong>Me</strong> for your live progress,
+    and (once wired) drop into your <strong>Terminal</strong>.
+  </p>
+  <p style="color:#5C7480;font-size:0.85rem;line-height:1.6;">
+    This Home tab is intentionally minimal for now — richer briefing content
+    lives in the docs site and will be folded in here in a later phase.
+  </p>
+</div>
+
+<!-- ===== Terminal pane (placeholder only — P23-1 scope. The real embed
+     (iframe + SameSite=None cookie wiring) is P23-4; this tab must NOT grow
+     an iframe or touch cookies until that phase). ===== -->
+<div class="pane" id="pane-terminal" style="padding:2.5rem 3rem;max-width:52rem">
+  <h2 style="font-family:'Chakra Petch',sans-serif;font-size:1.3rem;margin:0 0 0.75rem;">Terminal</h2>
+  <p style="color:#9DB4BF;line-height:1.6;margin:0 0 1rem;">
+    In-portal terminal embedding is coming in a later phase (P23-4). For now,
+    open your workspace terminal in its own tab:
+  </p>
+  <p id="terminal-link-wrap" style="color:#5C7480;font-size:0.85rem;">
+    <span id="terminal-no-user" hidden>Your username could not be determined — ask the operator for your workspace URL.</span>
+    <a id="terminal-link" href="#" target="_blank" rel="noopener" style="color:#00CBE2;font-family:'JetBrains Mono',monospace;" hidden></a>
+  </p>
+</div>
+
+<script>
+  // ===================== Portal shell: hash-tab router + role gate =====================
+  // P23-1 scope: this router only shows/hides <div class="pane"> — it is NOT an
+  // authorization boundary (see security note in view.go / portal.go). The
+  // admin-only Scoreboard tab is hidden here as defense-in-depth ONLY; its data
+  // source (/api/state) independently 403s a non-admin caller server-side.
+  const PORTAL_TABS = ['home', 'journey', 'scoreboard', 'me', 'terminal'];
+
+  function currentTab() {
+    const h = (location.hash || '').replace(/^#/, '');
+    if (PORTAL_TABS.includes(h)) return h;
+    return 'home';
+  }
+
+  function showTab(tab) {
+    if (tab === 'scoreboard' && window.__PORTAL_ROLE__ !== 'admin') tab = 'home';
+    for (const t of PORTAL_TABS) {
+      const pane = document.getElementById('pane-' + t);
+      if (pane) pane.classList.toggle('active', t === tab);
+      const link = document.querySelector('#portal-tabs .tab[data-tab="' + t + '"]');
+      if (link) link.classList.toggle('active', t === tab);
+    }
+  }
+
+  function applyRole() {
+    const role = window.__PORTAL_ROLE__ || 'participant';
+    document.getElementById('portal-role-badge').textContent = role;
+    // Defense-in-depth ONLY (see comment above): hides the tab so a
+    // participant is not invited to click into a 403. The actual gate is
+    // server-side on GET /api/state (api.Handler.state → isAdmin).
+    document.getElementById('tab-scoreboard').hidden = (role !== 'admin');
+  }
+
+  function applyUser() {
+    const user = window.__PORTAL_USER__ || '';
+    const link = document.getElementById('terminal-link');
+    const noUser = document.getElementById('terminal-no-user');
+    if (user && window.__PORTAL_DNS_SUFFIX__) {
+      link.href = 'https://' + user + '.' + window.__PORTAL_DNS_SUFFIX__;
+      link.textContent = link.href;
+      link.hidden = false;
+      noUser.hidden = true;
+    } else {
+      link.hidden = true;
+      noUser.hidden = false;
+    }
+  }
+
+  window.addEventListener('hashchange', () => showTab(currentTab()));
+  applyRole();
+  applyUser();
+  showTab(currentTab());
+</script>
+</body>
+</html>

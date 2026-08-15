@@ -1,14 +1,23 @@
-// Package view serves the embedded HTML dashboards at GET /, GET /me, and
-// GET /journey.
+// Package view serves the embedded HTML dashboards at GET /, GET /me,
+// GET /journey, and GET /portal.
 //
-// All pages are static — they fetch live state via /api/state,
-// /api/users/{user}/me, and /api/users/{user}/journey respectively. The
-// HTML / CSS / JS is shipped via go:embed so the binary needs no filesystem
-// assets at runtime.
+// The legacy pages (/, /me, /journey) are static — they fetch live state via
+// /api/state, /api/users/{user}/me, and /api/users/{user}/journey
+// respectively. The HTML / CSS / JS is shipped via go:embed so the binary
+// needs no filesystem assets at runtime.
+//
+// /portal (P23-1) is the unified admin/participant shell: one page, a
+// client-side hash-tab router, and a small amount of SERVER-INJECTED
+// DISPLAY STATE (role + derived username — see portal.go). It is still not
+// server-rendering any admin/participant DATA: every pane fetches its own
+// data from the same already-gated APIs the legacy pages use. See portal.go
+// for the security rationale in full.
 package view
 
 import (
 	_ "embed"
+	"html/template"
+	"log/slog"
 	"net/http"
 )
 
@@ -21,23 +30,49 @@ var meHTML string
 //go:embed templates/journey.html
 var journeyHTML string
 
+//go:embed templates/portal.html
+var portalHTMLSrc string
+
+// portalTmpl is parsed once at init from the embedded source. html/template
+// (not text/template) is load-bearing here: it auto-escapes {{.RoleJSON}} /
+// {{.UserJSON}} for their JS-string context, so even though portal.go feeds
+// them pre-marshalled template.JS (already-safe JSON), a future edit that
+// forgets to use template.JS still can't reopen an XSS hole — html/template
+// would HTML/JS-escape a plain string instead of trusting it verbatim.
+var portalTmpl = template.Must(template.New("portal").Parse(portalHTMLSrc))
+
 type Handler struct {
 	// isAdmin gates the operator dashboard index page (GET /). It mirrors the
 	// api handler's identity check (X-Auth-Request-Email ∈ ADMIN_EMAILS). Nil =
 	// no gate (kept for tests / callers that don't supply an allowlist); the
 	// production wiring always supplies it.
 	isAdmin func(*http.Request) bool
+	// deriveUser derives the DISPLAY-ONLY username the portal shell pre-fills
+	// into the Journey/Me panes (api.DeriveUsername — see that function's doc
+	// for why this is never an authorization decision). Nil = "" always (the
+	// portal falls back to its "could not determine" empty state, same as a
+	// blank ?user= does today on /journey and /me).
+	deriveUser func(*http.Request) string
+	logger     *slog.Logger
 }
 
 // New builds the view handler. isAdmin, when non-nil, gates GET / (the
 // full-event operator dashboard) to admins only — defense-in-depth (P18-1)
-// behind the already-admin-gated ingress host. Pass nil to leave / ungated.
-func New(isAdmin func(*http.Request) bool) *Handler { return &Handler{isAdmin: isAdmin} }
+// behind the already-admin-gated ingress host — and also drives the GET
+// /portal role injection (P23-1: which tab/pane the shell shows by default).
+// Pass nil to leave / ungated (tests). deriveUser supplies the /portal
+// username hint (api.DeriveUsername); nil = no hint. logger may be nil
+// (tests); production wiring always supplies one so a template-render
+// failure on GET /portal is observable.
+func New(isAdmin func(*http.Request) bool, deriveUser func(*http.Request) string, logger *slog.Logger) *Handler {
+	return &Handler{isAdmin: isAdmin, deriveUser: deriveUser, logger: logger}
+}
 
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /", h.index)
 	mux.HandleFunc("GET /me", h.me)
 	mux.HandleFunc("GET /journey", h.journey)
+	mux.HandleFunc("GET /portal", h.portal)
 }
 
 func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
@@ -79,4 +114,16 @@ func (h *Handler) me(w http.ResponseWriter, _ *http.Request) {
 func (h *Handler) journey(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(journeyHTML))
+}
+
+// portal serves the unified admin/participant shell (P23-1). See portal.go
+// for renderPortal / the security rationale of the role+user injection.
+func (h *Handler) portal(w http.ResponseWriter, r *http.Request) {
+	if err := renderPortal(w, r, h.isAdmin, h.deriveUser); err != nil {
+		if h.logger != nil {
+			h.logger.Error("portal render failed", "err", err)
+		}
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 }
