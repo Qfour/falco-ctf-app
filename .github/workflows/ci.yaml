@@ -141,6 +141,15 @@ jobs:
             context: images/ttyd
             dockerfile: images/ttyd/Dockerfile
             scan-continue-on-error: false
+          # 8th image (I5, extended for P23-3): CSP frame-ancestors reverse
+          # proxy in front of ttyd (clickjacking mitigation for the P23
+          # unified portal). Go build, context = repo root (shares
+          # internal/serverutil like collector). Adds a required check
+          # "build (ttyd-proxy)" → branch-protection change.
+          - name: ttyd-proxy
+            context: .
+            dockerfile: images/ttyd-proxy/Dockerfile
+            scan-continue-on-error: false
           - name: challenge
             context: .
             dockerfile: images/challenge/Dockerfile
