@@ -240,9 +240,14 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("POST /api/challenges/{cid}/submit", submitMW(http.HandlerFunc(h.submit)))
 	// Detect grading reuses the SAME per-IP submit limiter (same trust model as
 	// /submit) plus a global in-flight cap enforced inside the handler (429 past
-	// it, never queued). Same collector dual-caller reasoning as /submit above —
-	// NOT origin-guarded for the same reason.
-	mux.Handle("POST /api/challenges/{cid}/submit-detect", submitMW(http.HandlerFunc(h.submitDetect)))
+	// it, never queued). Unlike /submit above, this route has only ONE caller:
+	// the journey UI's browser fetch (the "Grade" button on a detect mission's
+	// condition textarea — docs/detect-challenge-design.md §6). The collector's
+	// forward allowlist (internal/collector/collector.go — "Routes fronted")
+	// does NOT include submit-detect, so there is no server-to-server curl
+	// caller to protect against a fail-closed gate here — same reasoning as
+	// steps/{idx}/check and hints/{idx} below. Origin-guarded.
+	mux.Handle("POST /api/challenges/{cid}/submit-detect", h.og(submitMW(http.HandlerFunc(h.submitDetect))))
 	// Exfil is an internal-only endpoint reached solely by the collector
 	// (full one-pipe, P11.5). Workspaces cannot reach the scoreboard directly
 	// once egress lockdown is on — they POST /api/challenges/{cid}/exfil to the

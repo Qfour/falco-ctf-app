@@ -172,14 +172,17 @@ func TestOriginGuard_MultipleAllowedOrigins(t *testing.T) {
 // POST is rejected on each — this is the regression fence against a future
 // route being added to Register without being wrapped in the guard.
 //
-// Deliberately EXCLUDES POST /api/challenges/{cid}/submit[-detect] and
+// Deliberately EXCLUDES POST /api/challenges/{cid}/submit and
 // POST /api/users/{user}/display-name: those routes are also reached by the
 // collector's verbatim server-to-server forward of a curl submission (no
 // Origin/Referer ever present), so wrapping them in a fail-closed origin
 // gate would 403 that legitimate path and break scoring — see api.Register's
 // comments on those routes and TestOriginGuard_SubmitAndDisplayNameBypassGuard
 // / TestOriginGuard_SubmitStillBlocksCrossOriginBrowserPOST below for the
-// coverage that replaces this table entry for them.
+// coverage that replaces this table entry for them. submit-detect has no such
+// collector caller (internal/collector/collector.go's forward allowlist does
+// not include it — its only caller is the journey UI's browser fetch, same as
+// step_check/open_hint below), so it IS covered here.
 func TestOriginGuard_AllProtectedRoutesEnforced(t *testing.T) {
 	srv := newOriginFixture(t, []string{allowedOrigin})
 	const evilOrigin = "https://evil.example.com"
@@ -195,6 +198,7 @@ func TestOriginGuard_AllProtectedRoutesEnforced(t *testing.T) {
 		{"admin_hints", "POST", "/api/admin/hints", `{"mission":"02-evade","hint":1,"released":true}`},
 		{"step_check", "POST", "/api/users/alice/challenges/02-evade/steps/0/check", `{"checked":true}`},
 		{"open_hint", "POST", "/api/users/alice/challenges/02-evade/hints/1", ""},
+		{"submit_detect", "POST", "/api/challenges/02-evade/submit-detect", `{"user":"alice","condition":"x"}`},
 	}
 
 	for _, tc := range cases {
@@ -213,17 +217,22 @@ func TestOriginGuard_AllProtectedRoutesEnforced(t *testing.T) {
 
 // TestOriginGuard_SubmitAndDisplayNameBypassGuard is the collector-forward
 // regression fence for the P23-2 follow-up fix: POST
-// /api/challenges/{cid}/submit, POST /api/challenges/{cid}/submit-detect, and
-// POST /api/users/{user}/display-name must all succeed with NEITHER
-// Origin NOR Referer present — the exact shape of the collector's verbatim
-// forward of a participant's curl request (internal/collector/collector.go
-// "Routes fronted"; curl never sends either header). Before this fix these
-// routes were wrapped in h.og(...), so a fail-closed empty-both-headers
-// request 403'd unconditionally — which is exactly the "ingest/collector
-// path gets Origin-gated and scoring breaks" failure mode the guard must
-// never cause. Uses an empty allowlist too, mirroring
-// TestOriginGuard_ExfilBypassesGuard, to prove these paths work even before
-// ALLOWED_ORIGINS is configured at all.
+// /api/challenges/{cid}/submit and POST /api/users/{user}/display-name must
+// both succeed with NEITHER Origin NOR Referer present — the exact shape of
+// the collector's verbatim forward of a participant's curl request
+// (internal/collector/collector.go "Routes fronted"; curl never sends either
+// header). Before this fix these routes were wrapped in h.og(...), so a
+// fail-closed empty-both-headers request 403'd unconditionally — which is
+// exactly the "ingest/collector path gets Origin-gated and scoring breaks"
+// failure mode the guard must never cause. Uses an empty allowlist too,
+// mirroring TestOriginGuard_ExfilBypassesGuard, to prove these paths work
+// even before ALLOWED_ORIGINS is configured at all.
+//
+// submit-detect is NOT covered here: unlike submit/display-name, the
+// collector's forward allowlist does not include it (its only caller is the
+// journey UI's browser fetch), so it IS origin-guarded — see
+// TestOriginGuard_AllProtectedRoutesEnforced's submit_detect case and
+// TestOriginGuard_SubmitDetectRequiresOrigin below.
 func TestOriginGuard_SubmitAndDisplayNameBypassGuard(t *testing.T) {
 	for _, allowlist := range [][]string{{allowedOrigin}, nil} {
 		srv := newOriginFixture(t, allowlist)
@@ -234,20 +243,38 @@ func TestOriginGuard_SubmitAndDisplayNameBypassGuard(t *testing.T) {
 			t.Fatalf("submit without Origin/Referer (allowlist=%v): status=%d body=%s, want 200", allowlist, w.Code, w.Body)
 		}
 
-		w = ogReq(t, srv, "POST", "/api/challenges/02-evade/submit-detect", "", "", "",
-			strings.NewReader(`{"user":"alice","condition":"x"}`))
-		// submit-detect has no detect runner wired in this fixture, so the
-		// handler itself returns 503 (feature off) — the point here is only
-		// that it is NOT 403'd by the origin guard before reaching the handler.
-		if w.Code == http.StatusForbidden {
-			t.Fatalf("submit-detect without Origin/Referer (allowlist=%v): status=%d body=%s, must not be 403 (origin-gated)", allowlist, w.Code, w.Body)
-		}
-
 		w = ogReq(t, srv, "POST", "/api/users/alice/display-name", "", "", "",
 			strings.NewReader(`{"name":"Alice"}`))
 		if w.Code != http.StatusOK {
 			t.Fatalf("display-name without Origin/Referer (allowlist=%v): status=%d body=%s, want 200", allowlist, w.Code, w.Body)
 		}
+	}
+}
+
+// TestOriginGuard_SubmitDetectRequiresOrigin is the positive-path counterpart
+// to the submit_detect case in TestOriginGuard_AllProtectedRoutesEnforced: a
+// same-origin request must reach the handler (and get evaluated on its own
+// terms — here a 503 because no DetectRunner is wired in this fixture) rather
+// than being 403'd, proving the guard is allowlist-driven and not a blanket
+// deny. A request with neither Origin nor Referer must be 403'd fail-closed,
+// unlike submit/display-name above — submit-detect has no collector caller to
+// protect.
+func TestOriginGuard_SubmitDetectRequiresOrigin(t *testing.T) {
+	srv := newOriginFixture(t, []string{allowedOrigin})
+
+	w := ogReq(t, srv, "POST", "/api/challenges/02-evade/submit-detect", "", "", "",
+		strings.NewReader(`{"user":"alice","condition":"x"}`))
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("submit-detect without Origin/Referer: status=%d body=%s, want 403 (no collector caller to protect, must be origin-gated)", w.Code, w.Body)
+	}
+
+	w = ogReq(t, srv, "POST", "/api/challenges/02-evade/submit-detect", allowedOrigin, "", "",
+		strings.NewReader(`{"user":"alice","condition":"x"}`))
+	// No DetectRunner is wired in this fixture, so the handler itself returns
+	// 503 (feature off) — the point here is only that a same-origin request
+	// reaches the handler instead of being 403'd by the guard.
+	if w.Code == http.StatusForbidden {
+		t.Fatalf("submit-detect with allowed Origin: status=%d body=%s, must not be 403 (allowlisted origin must pass the guard)", w.Code, w.Body)
 	}
 }
 
