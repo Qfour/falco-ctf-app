@@ -517,16 +517,24 @@
   <span id="portal-role-badge"></span>
 </nav>
 <script>
-  // Server-injected identity (P23-1). This is a DISPLAY-ONLY convenience for
-  // the shell (which tab to default to / show, which link to pre-fill) — it
-  // is NEVER the authorization boundary. Every API call the panes below make
-  // re-derives + re-checks identity server-side from the SAME
-  // X-Auth-Request-Email header (selfOrAdmin / selfOrAdminWrite / isAdmin in
+  // Server-injected identity (P23-1) + own-ttyd URL (P23-4). This is a
+  // DISPLAY-ONLY convenience for the shell (which tab to default to / show,
+  // which link to pre-fill, which iframe src to render) — it is NEVER the
+  // authorization boundary. Every API call the panes below make re-derives
+  // + re-checks identity server-side from the SAME X-Auth-Request-Email
+  // header (selfOrAdmin / selfOrAdminWrite / isAdmin in
   // internal/scoreboard/api), so a participant cannot widen access by editing
   // these globals in devtools — at most they can make the shell mis-render for
   // themselves; the API still 403s anything they are not entitled to.
+  // __PORTAL_TTYD_URL__ is built server-side from that SAME identity plus a
+  // deploy-time suffix (never a client-supplied header/param — see
+  // view.renderPortal / portal.ttydURLFor); the Terminal pane below still
+  // relies on auth-policy's per-host `/check` (I8) to independently enforce
+  // that the iframe can only ever reach the caller's own workspace even if
+  // this value were hand-edited in devtools.
   window.__PORTAL_ROLE__ = {{.RoleJSON}};
   window.__PORTAL_USER__ = {{.UserJSON}};
+  window.__PORTAL_TTYD_URL__ = {{.TtydURLJSON}};
 </script>
 <!-- ===== Journey pane (moved from templates/journey.html, namespaced) ===== -->
 <div class="pane" id="pane-journey">
@@ -1499,16 +1507,81 @@
   </p>
 </div>
 
-<!-- ===== Terminal pane (placeholder only — P23-1 scope. The real embed
-     (iframe + SameSite=None cookie wiring) is P23-4; this tab must NOT grow
-     an iframe or touch cookies until that phase). ===== -->
-<div class="pane" id="pane-terminal" style="padding:2.5rem 3rem;max-width:52rem">
-  <h2 style="font-family:'Chakra Petch',sans-serif;font-size:1.3rem;margin:0 0 0.75rem;">Terminal</h2>
-  <p style="color:#9DB4BF;line-height:1.6;margin:0;">
-    In-portal terminal embedding is coming in a later phase (P23-4). Until then,
-    use your workspace terminal at its usual address (ask the operator if unsure).
-  </p>
+<!-- ===== Terminal pane (P23-4): iframe embed of the caller's own ttyd.
+     src comes ONLY from the server-injected window.__PORTAL_TTYD_URL__ (see
+     view.renderPortal / portal.ttydURLFor) — this pane never reads a
+     header/query/param to pick the host. Cross-origin cookie delivery into
+     the iframe additionally requires the platform's oauth2-proxy cookie to
+     be SameSite=None+Secure (P23-4 platform half, implemented in
+     falco-ctf-platform in parallel — see that repo's PR for status); until
+     both halves are live the iframe may render an in-ttyd login prompt
+     instead of a live shell, which is expected and not a regression here.
+     Per-user isolation (I8) is enforced independently by auth-policy's
+     `/check?host=<user>` on the ttyd Ingress itself, regardless of what src
+     ends up in this iframe. ===== -->
+<div class="pane" id="pane-terminal" style="padding:2.5rem 3rem;max-width:64rem">
+  <div id="pane-terminal-page"></div>
 </div>
+
+<script>
+(function () {
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+  // P23-4: window.__PORTAL_TTYD_URL__ is server-injected (view.renderPortal /
+  // portal.ttydURLFor), built ENTIRELY from the caller's own derived identity
+  // + a deploy-time suffix — never from anything this script reads off the
+  // page URL / query / headers. "" means the server could not compute it
+  // (no derived username, or PORTAL_TTYD_SUFFIX unset — see
+  // cmd/scoreboard/main.go), in which case we render the fail-safe
+  // "not configured" placeholder instead of an iframe.
+  const ttydURL = window.__PORTAL_TTYD_URL__ || '';
+
+  function render() {
+    const page = document.getElementById('pane-terminal-page');
+    if (!page) return;
+    if (!ttydURL) {
+      page.innerHTML = `
+        <h2 style="font-family:'Chakra Petch',sans-serif;font-size:1.3rem;margin:0 0 0.75rem;color:#EAF7FA;">Terminal</h2>
+        <p style="color:#9DB4BF;line-height:1.6;margin:0;">
+          Your in-portal terminal is not configured for this deployment yet
+          (PORTAL_TTYD_SUFFIX unset, or your username could not be
+          determined). Use your workspace terminal at its usual address
+          instead (ask the operator if unsure).
+        </p>`;
+      return;
+    }
+    // ttydURL is server-generated and already validated (json-escaped by
+    // html/template on the way in); esc() here is defense-in-depth so a
+    // future change to how this value is produced can't reopen an
+    // attribute-breakout XSS.
+    const safeURL = esc(ttydURL);
+    page.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:0.75rem;">
+        <h2 style="font-family:'Chakra Petch',sans-serif;font-size:1.3rem;margin:0;color:#EAF7FA;">Terminal</h2>
+        <button type="button" id="pane-terminal-popout" style="font-family:'Chakra Petch',sans-serif;text-transform:uppercase;letter-spacing:0.08em;font-size:0.72rem;font-weight:700;padding:0.4rem 0.85rem;border-radius:6px;border:1px solid #2B3F4D;background:transparent;color:#9DB4BF;cursor:pointer;">⤢ Pop out</button>
+      </div>
+      <div style="border:1px solid #1C2A35;border-radius:0.6rem;overflow:hidden;background:#000;">
+        <iframe id="pane-terminal-iframe" src="${safeURL}" title="Terminal"
+          style="width:100%;height:70vh;border:0;display:block;background:#000;"
+          allow="clipboard-read; clipboard-write"></iframe>
+      </div>
+      <p style="color:#5C7480;font-size:0.75rem;line-height:1.5;margin-top:0.6rem;">
+        Copy/paste and resize work the same as in a standalone tab. If the
+        terminal does not load, use "Pop out" to open it directly.
+      </p>`;
+    const popout = document.getElementById('pane-terminal-popout');
+    if (popout) {
+      // Full-screen pop-out (CEO decision ④): opens the SAME server-generated
+      // URL in a new tab/window rather than a synthetic full-viewport overlay,
+      // so paste/resize/focus behave exactly like visiting ttyd directly (no
+      // iframe quirks to work around).
+      popout.addEventListener('click', () => { window.open(ttydURL, '_blank', 'noopener'); });
+    }
+  }
+
+  render();
+})();
+</script>
 
 <script>
   // ===================== Portal shell: hash-tab router + role gate =====================

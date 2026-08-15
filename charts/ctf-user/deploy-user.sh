@@ -20,10 +20,12 @@
 #   Omit for local dev (dev placeholders are used).
 #
 # --frame-ancestors <value>: CSP `frame-ancestors` source list the ttyd-proxy
-#   sidecar (P23-3) stamps on every ttyd response, e.g.
-#   "https://ctf-event.example.com" once the P23-4 portal embeds ttyd in an
-#   iframe. Omit to keep the chart's fail-safe default ('none' — nobody may
-#   frame ttyd), which is correct until the portal exists.
+#   sidecar (P23-3) stamps on every ttyd response. Set this to the portal's
+#   OWN origin (P23-4 embeds ttyd in the portal's Terminal tab via iframe),
+#   e.g. "https://journey.<dns-suffix>" locally (the participant host serving
+#   /portal); prod's real value collapses to a single origin once P19 lands.
+#   Omit to keep the chart's fail-safe default ('none' — nobody may frame
+#   ttyd), which is correct if the portal is not deployed/reachable yet.
 #
 # --egress-lockdown: turn on the ctf-user egress NetworkPolicy (P11.5). The
 #   workspace can then only reach the collector + kube-dns + the API server;

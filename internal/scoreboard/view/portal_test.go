@@ -61,7 +61,7 @@ func TestRenderPortal_RoleAndUserInjection(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			r := httptest.NewRequest("GET", "/portal", nil)
 			w := httptest.NewRecorder()
-			if err := renderPortal(w, r, tc.isAdmin, tc.deriveUser); err != nil {
+			if err := renderPortal(w, r, tc.isAdmin, tc.deriveUser, ""); err != nil {
 				t.Fatalf("renderPortal: %v", err)
 			}
 			if w.Code != http.StatusOK {
@@ -90,7 +90,7 @@ func TestRenderPortal_UserValueIsJSONEscaped(t *testing.T) {
 	r := httptest.NewRequest("GET", "/portal", nil)
 	w := httptest.NewRecorder()
 	deriveUser := func(*http.Request) string { return malicious }
-	if err := renderPortal(w, r, nil, deriveUser); err != nil {
+	if err := renderPortal(w, r, nil, deriveUser, ""); err != nil {
 		t.Fatalf("renderPortal: %v", err)
 	}
 	body := w.Body.String()
@@ -118,7 +118,7 @@ func TestRenderPortal_MissingIdentityDegradesGracefully(t *testing.T) {
 		}
 		return strings.SplitN(email, "@", 2)[0]
 	}
-	if err := renderPortal(w, r, isAdmin, deriveUser); err != nil {
+	if err := renderPortal(w, r, isAdmin, deriveUser, "ctf-event.dev"); err != nil {
 		t.Fatalf("renderPortal: %v", err)
 	}
 	body := w.Body.String()
@@ -127,5 +127,104 @@ func TestRenderPortal_MissingIdentityDegradesGracefully(t *testing.T) {
 	}
 	if !strings.Contains(body, `window.__PORTAL_USER__ = ""`) {
 		t.Errorf("expected empty user default, body=%s", body)
+	}
+	// No derived username → ttyd URL is also "" even though a suffix IS
+	// configured (ttydURLFor needs BOTH inputs) — fail-safe placeholder, not
+	// a guessed host.
+	if !strings.Contains(body, `window.__PORTAL_TTYD_URL__ = ""`) {
+		t.Errorf("expected empty ttyd URL default when identity is missing, body=%s", body)
+	}
+}
+
+// TestTtydURLFor proves the iframe src builder (P23-4) only ever produces
+// the CALLER's OWN host (`https://<user>.<suffix>`, matching
+// charts/ctf-user's `<username>.<dnsSuffix>` Ingress host pattern exactly)
+// and fails safe (returns "", so the Terminal pane shows its "not
+// configured" placeholder instead of an iframe) whenever either input is
+// missing — there is no code path here that can be steered by a caller into
+// naming a DIFFERENT user's host, because the function never takes a
+// caller-supplied hostname as input at all.
+func TestTtydURLFor(t *testing.T) {
+	cases := []struct {
+		name   string
+		user   string
+		suffix string
+		want   string
+	}{
+		{name: "both set", user: "user1", suffix: "ctf-event.dev", want: "https://user1.ctf-event.dev"},
+		{name: "colima nip.io suffix", user: "user2", suffix: "10.0.0.5.nip.io", want: "https://user2.10.0.0.5.nip.io"},
+		{name: "no user", user: "", suffix: "ctf-event.dev", want: ""},
+		{name: "no suffix (PORTAL_TTYD_SUFFIX unset)", user: "user1", suffix: "", want: ""},
+		{name: "neither set", user: "", suffix: "", want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ttydURLFor(tc.user, tc.suffix); got != tc.want {
+				t.Errorf("ttydURLFor(%q, %q) = %q, want %q", tc.user, tc.suffix, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRenderPortal_TtydURLInjection proves the /portal HTML embeds the
+// EXACT ttyd URL ttydURLFor computes for the caller's OWN derived username —
+// never a different user's host — and that an empty suffix (the default,
+// pre-P19 deploys) yields the fail-safe "" rather than a guessed value.
+func TestRenderPortal_TtydURLInjection(t *testing.T) {
+	cases := []struct {
+		name       string
+		deriveUser func(*http.Request) string
+		suffix     string
+		wantURL    string
+	}{
+		{
+			name:       "user1 with suffix configured",
+			deriveUser: func(*http.Request) string { return "user1" },
+			suffix:     "ctf-event.dev",
+			wantURL:    `"https://user1.ctf-event.dev"`,
+		},
+		{
+			name:       "user2 gets ONLY their own host, never user1's",
+			deriveUser: func(*http.Request) string { return "user2" },
+			suffix:     "ctf-event.dev",
+			wantURL:    `"https://user2.ctf-event.dev"`,
+		},
+		{
+			name:       "suffix unset (pre-P19 / not configured) degrades to empty",
+			deriveUser: func(*http.Request) string { return "user1" },
+			suffix:     "",
+			wantURL:    `""`,
+		},
+		{
+			name:       "no derived user degrades to empty even with suffix set",
+			deriveUser: nil,
+			suffix:     "ctf-event.dev",
+			wantURL:    `""`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest("GET", "/portal", nil)
+			w := httptest.NewRecorder()
+			if err := renderPortal(w, r, nil, tc.deriveUser, tc.suffix); err != nil {
+				t.Fatalf("renderPortal: %v", err)
+			}
+			body := w.Body.String()
+			if !strings.Contains(body, "window.__PORTAL_TTYD_URL__ = "+tc.wantURL) {
+				t.Errorf("ttyd URL injection: want %s in body, body=%s", tc.wantURL, body)
+			}
+			// Cross-check: whenever a non-empty URL is expected, it must name
+			// the SAME username DeriveUser returned — a regression that
+			// swapped inputs (e.g. always using some fixed/admin identity)
+			// would still produce a syntactically valid but WRONG host, which
+			// the exact-string check above already catches, but assert the
+			// substring explicitly too for a readable failure message.
+			if tc.wantURL != `""` && tc.deriveUser != nil {
+				user := tc.deriveUser(r)
+				if !strings.Contains(body, "https://"+user+"."+tc.suffix) {
+					t.Errorf("expected ttyd URL to embed the caller's own derived user %q, body=%s", user, body)
+				}
+			}
+		})
 	}
 }

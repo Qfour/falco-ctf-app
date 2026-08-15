@@ -35,10 +35,11 @@ var portalHTMLSrc string
 
 // portalTmpl is parsed once at init from the embedded source. html/template
 // (not text/template) is load-bearing here: it auto-escapes {{.RoleJSON}} /
-// {{.UserJSON}} for their JS-string context, so even though portal.go feeds
-// them pre-marshalled template.JS (already-safe JSON), a future edit that
-// forgets to use template.JS still can't reopen an XSS hole — html/template
-// would HTML/JS-escape a plain string instead of trusting it verbatim.
+// {{.UserJSON}} / {{.TtydURLJSON}} for their JS-string context, so even
+// though portal.go feeds them pre-marshalled template.JS (already-safe
+// JSON), a future edit that forgets to use template.JS still can't reopen an
+// XSS hole — html/template would HTML/JS-escape a plain string instead of
+// trusting it verbatim.
 var portalTmpl = template.Must(template.New("portal").Parse(portalHTMLSrc))
 
 type Handler struct {
@@ -53,6 +54,14 @@ type Handler struct {
 	// portal falls back to its "could not determine" empty state, same as a
 	// blank ?user= does today on /journey and /me).
 	deriveUser func(*http.Request) string
+	// ttydSuffix (P23-4) is the PORTAL_TTYD_SUFFIX deploy-time value used to
+	// build the Terminal pane's own-ttyd iframe src
+	// (`https://<deriveUser(r)>.<ttydSuffix>`, see portal.go's ttydURLFor).
+	// "" (default) = the Terminal pane renders its fail-safe "not
+	// configured" placeholder instead of an iframe. The real value is
+	// P19-dependent (single participant-facing origin) — see
+	// cmd/scoreboard/main.go's PORTAL_TTYD_SUFFIX doc.
+	ttydSuffix string
 	logger     *slog.Logger
 }
 
@@ -61,11 +70,12 @@ type Handler struct {
 // behind the already-admin-gated ingress host — and also drives the GET
 // /portal role injection (P23-1: which tab/pane the shell shows by default).
 // Pass nil to leave / ungated (tests). deriveUser supplies the /portal
-// username hint (api.DeriveUsername); nil = no hint. logger may be nil
-// (tests); production wiring always supplies one so a template-render
-// failure on GET /portal is observable.
-func New(isAdmin func(*http.Request) bool, deriveUser func(*http.Request) string, logger *slog.Logger) *Handler {
-	return &Handler{isAdmin: isAdmin, deriveUser: deriveUser, logger: logger}
+// username hint (api.DeriveUsername); nil = no hint. ttydSuffix (P23-4)
+// supplies the Terminal pane's iframe host suffix; "" = no iframe (fail-safe
+// placeholder). logger may be nil (tests); production wiring always
+// supplies one so a template-render failure on GET /portal is observable.
+func New(isAdmin func(*http.Request) bool, deriveUser func(*http.Request) string, ttydSuffix string, logger *slog.Logger) *Handler {
+	return &Handler{isAdmin: isAdmin, deriveUser: deriveUser, ttydSuffix: ttydSuffix, logger: logger}
 }
 
 // Register wires all view routes. P23-1 is additive: legacy GET /, /me, and
@@ -126,7 +136,7 @@ func (h *Handler) journey(w http.ResponseWriter, _ *http.Request) {
 // portal serves the unified admin/participant shell (P23-1). See portal.go
 // for renderPortal / the security rationale of the role+user injection.
 func (h *Handler) portal(w http.ResponseWriter, r *http.Request) {
-	if err := renderPortal(w, r, h.isAdmin, h.deriveUser); err != nil {
+	if err := renderPortal(w, r, h.isAdmin, h.deriveUser, h.ttydSuffix); err != nil {
 		if h.logger != nil {
 			h.logger.Error("portal render failed", "err", err)
 		}

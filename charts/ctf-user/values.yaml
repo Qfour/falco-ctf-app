@@ -40,9 +40,13 @@ ttyd:
   # default). ctf-user is NOT a platform helmfile release (it's deployed via
   # deploy-user.sh, not helmfile), so there is no helmfile values layer to
   # supply the real portal origin. Override today via
-  # `deploy-user.sh --frame-ancestors <value>`; P23-4 plans to add a
-  # passthrough from the platform's deploy-event-workspaces.sh (not yet
-  # implemented) so operators don't have to pass it by hand per user.
+  # `deploy-user.sh --frame-ancestors <value>`, set to the portal's OWN
+  # origin (P23-4: the portal now iframes ttyd from its Terminal tab, so this
+  # must be the origin the participant's browser sees /portal served from —
+  # e.g. "https://journey.<dnsSuffix>" locally; once P19 lands a single
+  # origin this collapses to that one host). A passthrough from the
+  # platform's deploy-event-workspaces.sh (so operators don't have to pass it
+  # by hand per user) is a platform-side follow-up, not yet implemented.
   frameAncestors: "'none'"
   proxy:
     image:
