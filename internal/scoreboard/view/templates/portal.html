@@ -1506,13 +1506,9 @@
      an iframe or touch cookies until that phase). ===== -->
 <div class="pane" id="pane-terminal" style="padding:2.5rem 3rem;max-width:52rem">
   <h2 style="font-family:'Chakra Petch',sans-serif;font-size:1.3rem;margin:0 0 0.75rem;">Terminal</h2>
-  <p style="color:#9DB4BF;line-height:1.6;margin:0 0 1rem;">
-    In-portal terminal embedding is coming in a later phase (P23-4). For now,
-    open your workspace terminal in its own tab:
-  </p>
-  <p id="terminal-link-wrap" style="color:#5C7480;font-size:0.85rem;">
-    <span id="terminal-no-user" hidden>Your username could not be determined — ask the operator for your workspace URL.</span>
-    <a id="terminal-link" href="#" target="_blank" rel="noopener" style="color:#00CBE2;font-family:'JetBrains Mono',monospace;" hidden></a>
+  <p style="color:#9DB4BF;line-height:1.6;margin:0;">
+    In-portal terminal embedding is coming in a later phase (P23-4). Until then,
+    use your workspace terminal at its usual address (ask the operator if unsure).
   </p>
 </div>
 
@@ -1549,24 +1545,8 @@
     document.getElementById('tab-scoreboard').hidden = (role !== 'admin');
   }
 
-  function applyUser() {
-    const user = window.__PORTAL_USER__ || '';
-    const link = document.getElementById('terminal-link');
-    const noUser = document.getElementById('terminal-no-user');
-    if (user && window.__PORTAL_DNS_SUFFIX__) {
-      link.href = 'https://' + user + '.' + window.__PORTAL_DNS_SUFFIX__;
-      link.textContent = link.href;
-      link.hidden = false;
-      noUser.hidden = true;
-    } else {
-      link.hidden = true;
-      noUser.hidden = false;
-    }
-  }
-
   window.addEventListener('hashchange', () => showTab(currentTab()));
   applyRole();
-  applyUser();
   showTab(currentTab());
 </script>
 </body>
