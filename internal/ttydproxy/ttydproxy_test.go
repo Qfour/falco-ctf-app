@@ -133,6 +133,37 @@ func TestInvalidUpstreamURLErrors(t *testing.T) {
 	}
 }
 
+// TestFrameAncestorsControlCharRejected proves New fails closed (refuses to
+// start) rather than passing a CR/LF/control-character-laden FRAME_ANCESTORS
+// value through to a response header — see validateFrameAncestors's doc for
+// why this is checked explicitly instead of relying solely on net/http's own
+// header-writer guard against CR/LF.
+func TestFrameAncestorsControlCharRejected(t *testing.T) {
+	up := htmlUpstream(t)
+	cases := []string{
+		"https://ctf-event.example.com\r\nX-Injected: evil",
+		"https://ctf-event.example.com\nSet-Cookie: pwned=1",
+		"https://ctf-event.example.com\x00",
+		"https://ctf-event.example.com\x07", // bell — any control char, not just CR/LF
+	}
+	for _, v := range cases {
+		if _, err := New(up.URL, v, testLogger()); err == nil {
+			t.Errorf("New(%q): want error (fail-closed on control char), got nil", v)
+		}
+	}
+}
+
+// TestFrameAncestorsPlainValueAccepted is the control for the case above —
+// ordinary source-expression values (no control characters) must still work.
+func TestFrameAncestorsPlainValueAccepted(t *testing.T) {
+	up := htmlUpstream(t)
+	for _, v := range []string{"'none'", "'self'", "https://ctf-event.example.com"} {
+		if _, err := New(up.URL, v, testLogger()); err != nil {
+			t.Errorf("New(%q): unexpected error: %v", v, err)
+		}
+	}
+}
+
 // TestWebSocketUpgradeTunnelled proves the proxy transparently tunnels a
 // WebSocket Upgrade handshake through to the upstream (ttyd's terminal runs
 // entirely over WS) and still stamps the CSP header on the 101 response —

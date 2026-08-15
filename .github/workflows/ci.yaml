@@ -144,8 +144,15 @@ jobs:
           # 8th image (I5, extended for P23-3): CSP frame-ancestors reverse
           # proxy in front of ttyd (clickjacking mitigation for the P23
           # unified portal). Go build, context = repo root (shares
-          # internal/serverutil like collector). Adds a required check
-          # "build (ttyd-proxy)" → branch-protection change.
+          # internal/serverutil like collector). build (ttyd-proxy)/scan
+          # run in CI like every other per-image job, but — per the live
+          # branch-protection required-check set (chart-lint, flag-guard,
+          # test/go-test, challenge-rules, build (scoreboard)/scan, build
+          # (auth-policy)/scan) — per-image builds other than
+          # scoreboard/auth-policy are NOT required (ttyd/collector/
+          # challenge/docs/detect-grader aren't either). Making it required
+          # is optional hardening the CEO could add later via a ruleset
+          # update; it is not needed for this PR to merge.
           - name: ttyd-proxy
             context: .
             dockerfile: images/ttyd-proxy/Dockerfile
@@ -159,7 +166,10 @@ jobs:
             dockerfile: images/docs/Dockerfile
             scan-continue-on-error: false
           # 7th image (I5): falco + capture-replay grader for `type: detect`.
-          # Adds a required check "build (detect-grader)" → branch-protection change.
+          # build (detect-grader)/scan runs in CI but, like the other
+          # non-scoreboard/auth-policy per-image jobs, is not in the live
+          # branch-protection required-check set (see the ttyd-proxy job's
+          # comment above for the actual required-check set).
           - name: detect-grader
             context: images/detect-grader
             dockerfile: images/detect-grader/Dockerfile

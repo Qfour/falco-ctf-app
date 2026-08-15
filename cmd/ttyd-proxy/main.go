@@ -31,10 +31,15 @@ func main() {
 	addr := serverutil.Env("LISTEN_ADDR", ":7681")
 	// FRAME_ANCESTORS is the raw CSP frame-ancestors source list (e.g.
 	// "https://ctf-event.example.com"). Fail-safe default "'none'" — see
-	// ttydproxy package doc. The platform chart injects the real portal
-	// origin once P23-4 (portal iframe embedding) lands.
+	// ttydproxy package doc. Set today via `deploy-user.sh --frame-ancestors`
+	// (ctf-user is not a platform helmfile release); P23-4 plans a
+	// passthrough from the platform's deploy-event-workspaces.sh once the
+	// portal exists and needs to inject its real origin here.
 	frameAncestors := serverutil.Env("FRAME_ANCESTORS", "'none'")
 
+	// New fails closed (returns an error, so this exits rather than starts)
+	// if frameAncestors contains a CR/LF/control character — see
+	// ttydproxy.validateFrameAncestors's doc.
 	handler, err := ttydproxy.New(upstream, frameAncestors, logger)
 	if err != nil {
 		logger.Error("ttyd-proxy init failed", "upstream", upstream, "err", err)

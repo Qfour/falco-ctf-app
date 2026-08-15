@@ -1,5 +1,5 @@
 # ctf-user — per-user CTF workspace
-# Namespace = ctf-<username>; Pod = workspace (containers: ttyd + challenge)
+# Namespace = ctf-<username>; Pod = workspace (containers: ttyd + ttyd-proxy + challenge)
 
 username: user1
 challengeId: "01-read-shadow"
@@ -37,8 +37,12 @@ ttyd:
   upstreamPort: 7682
   # frameAncestors = the CSP `frame-ancestors` source list ttyd-proxy stamps
   # on every ttyd response. Fail-safe default "'none'" (I7: env-agnostic
-  # default). The platform helmfile supplies the real portal origin once
-  # P23-4 (portal iframe embedding) lands.
+  # default). ctf-user is NOT a platform helmfile release (it's deployed via
+  # deploy-user.sh, not helmfile), so there is no helmfile values layer to
+  # supply the real portal origin. Override today via
+  # `deploy-user.sh --frame-ancestors <value>`; P23-4 plans to add a
+  # passthrough from the platform's deploy-event-workspaces.sh (not yet
+  # implemented) so operators don't have to pass it by hand per user.
   frameAncestors: "'none'"
   proxy:
     image:

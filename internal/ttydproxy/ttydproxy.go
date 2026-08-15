@@ -52,15 +52,19 @@
 // internal/scoreboard/originguard. Before the portal exists, nothing embeds
 // ttyd in an iframe, so a restrictive default changes no legitimate
 // behaviour (direct navigation to the ttyd URL is a top-level load, which
-// frame-ancestors does not affect). Once P23-4 lands, the platform chart
-// injects the real portal origin as FRAME_ANCESTORS.
+// frame-ancestors does not affect). Set today via
+// `deploy-user.sh --frame-ancestors` (ctf-user is not a platform helmfile
+// release); once P23-4 lands, the platform's deploy-event-workspaces.sh is
+// expected to pass the real portal origin through to that same flag.
 package ttydproxy
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"unicode"
 )
 
 // noneAncestors is the fail-safe default: no origin (including same-origin)
@@ -81,6 +85,17 @@ type Handler struct {
 // CSP source-list value to place after "frame-ancestors " (e.g. "'none'" or
 // "https://ctf-event.example.com"); an empty string is normalised to the
 // fail-safe "'none'" default rather than emitting an empty/absent directive.
+//
+// frameAncestors is operator-supplied (env var, ultimately a chart value)
+// rather than participant-controlled, but it still ends up concatenated
+// directly into an HTTP response header value, so New rejects it outright if
+// it contains CR, LF, or any other control character (validateFrameAncestors)
+// — fail-closed on a malformed operator input rather than attempting to
+// sanitise it. net/http's header writer already refuses to write a header
+// value containing CR/LF (it would otherwise enable response-splitting), so
+// this check does not change what ever reaches the wire; it turns a
+// same-class mistake into an explicit startup error instead of a silent
+// per-request net/http failure discovered only once traffic arrives.
 func New(upstream string, frameAncestors string, logger *slog.Logger) (*Handler, error) {
 	u, err := url.Parse(upstream)
 	if err != nil {
@@ -88,6 +103,9 @@ func New(upstream string, frameAncestors string, logger *slog.Logger) (*Handler,
 	}
 	if frameAncestors == "" {
 		frameAncestors = noneAncestors
+	}
+	if err := validateFrameAncestors(frameAncestors); err != nil {
+		return nil, err
 	}
 	if logger == nil {
 		logger = slog.Default()
@@ -132,4 +150,21 @@ func New(upstream string, frameAncestors string, logger *slog.Logger) (*Handler,
 // Upgrade transparently, so no special handling is needed here.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.proxy.ServeHTTP(w, r)
+}
+
+// validateFrameAncestors rejects a CSP frame-ancestors value containing CR,
+// LF, or any other Unicode control character. It is deliberately strict
+// (reject-on-any-control-char rather than trying to enumerate "safe"
+// control characters) because the only legitimate values are ASCII source
+// expressions (`'none'`, `'self'`, `https://host[:port]`) — none of which
+// ever need a control character, so any that appear indicate a
+// misconfiguration (or a copy-paste/env-injection accident) rather than a
+// legitimate value New should try to accommodate.
+func validateFrameAncestors(v string) error {
+	for _, r := range v {
+		if unicode.IsControl(r) {
+			return fmt.Errorf("ttydproxy: FRAME_ANCESTORS contains a control character (%q); refusing to start", v)
+		}
+	}
+	return nil
 }
