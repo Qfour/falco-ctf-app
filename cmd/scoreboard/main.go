@@ -63,6 +63,29 @@ func main() {
 	// the link resolves off-origin. Empty = keep the relative path (local dev,
 	// where docs are served under the same host or not at all).
 	docsBaseURL := serverutil.Env("DOCS_BASE_URL", "")
+	// PORTAL_TTYD_SUFFIX (P23-4) is the DNS suffix the portal's Terminal pane
+	// uses to build each caller's OWN ttyd iframe src:
+	// `https://<derived-username>.<PORTAL_TTYD_SUFFIX>` (see
+	// view.renderPortal / portal.ttydURLFor, and api.DeriveUsername for the
+	// username derivation). This MUST equal charts/ctf-user's `dnsSuffix`
+	// value (the per-user ttyd Ingress host is `<username>.<dnsSuffix>`
+	// there too) or the iframe will 404 / point at the wrong host. Empty
+	// (default, and every env before P19 lands) = the Terminal pane renders
+	// its fail-safe "not configured" placeholder instead of an iframe —
+	// there is no environment-agnostic default to guess (I7), same posture
+	// as ALLOWED_ORIGINS/DOCS_BASE_URL above.
+	//
+	// The REAL value is P19-dependent (design for a single participant-facing
+	// origin is not finalised yet):
+	//   - local/PoC (colima): the same "<ip>.nip.io"-style suffix passed to
+	//     `deploy-user.sh --dns-suffix` (see charts/ctf-user/deploy-user.sh).
+	//   - prod: once P19 lands a single origin, this becomes that origin's
+	//     wildcard suffix (e.g. "ctf-event.<domain>"). Until then, operators
+	//     wire this by hand alongside `deploy-user.sh --dns-suffix` /
+	//     `--frame-ancestors` (that script's flag doc covers the companion
+	//     ttyd-proxy CSP knob P23-3 added, which the portal origin must also
+	//     be passed to — see charts/ctf-user/values.yaml ttyd.frameAncestors).
+	portalTtydSuffix := serverutil.Env("PORTAL_TTYD_SUFFIX", "")
 	// Points policy (#40 self-service hints with a score penalty). PLACEHOLDER
 	// defaults — the real per-solve award and per-hint penalty are an event-tuning
 	// decision (content-lead / CEO confirm). SCORE_POINTS_PER_SOLVE /
@@ -112,7 +135,7 @@ func main() {
 		logger.Error("journey load failed", "dir", challengesDir, "err", err)
 		os.Exit(1)
 	}
-	logger.Info("catalog loaded", "dir", challengesDir, "challenges", cat.IDs(), "journeys", len(journeys), "docs_base_url", docsBaseURL, "flag_overrides", flagsFile != "", "scenario", scenarioID)
+	logger.Info("catalog loaded", "dir", challengesDir, "challenges", cat.IDs(), "journeys", len(journeys), "docs_base_url", docsBaseURL, "portal_ttyd_suffix", portalTtydSuffix, "flag_overrides", flagsFile != "", "scenario", scenarioID)
 
 	st, err := store.Open(dbPath)
 	if err != nil {
@@ -172,6 +195,7 @@ func main() {
 		scoreboard.WithDocsBaseURL(docsBaseURL),
 		scoreboard.WithDetect(detectCfg),
 		scoreboard.WithPoints(points),
+		scoreboard.WithTtydSuffix(portalTtydSuffix),
 	)
 
 	// Auto-solve sweeper (P16): re-derives exfil-delivered-but-unsolved evade

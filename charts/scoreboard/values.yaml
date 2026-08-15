@@ -44,6 +44,23 @@ env:
   # https://docs.<suffix> (no trailing slash required — normalised either way).
   # Empty = keep the relative path (local dev). Supplied by platform helmfile.
   docsBaseUrl: ""
+  # P23-4: DNS suffix the portal's Terminal pane uses to build each caller's
+  # OWN ttyd iframe src (`https://<derived-username>.<portalTtydSuffix>` —
+  # see internal/scoreboard/view/portal.go's ttydURLFor). MUST equal
+  # charts/ctf-user's `dnsSuffix` value (that chart's per-user ttyd Ingress
+  # host is `<username>.<dnsSuffix>` too) or the iframe points at the wrong
+  # host. Empty (default) = the Terminal pane renders its fail-safe "not
+  # configured" placeholder instead of an iframe (I7: no environment-agnostic
+  # default to guess). Real value is P19-dependent:
+  #   - local/PoC (colima): the same "<ip>.nip.io"-style suffix passed to
+  #     `charts/ctf-user/deploy-user.sh --dns-suffix`.
+  #   - prod: once P19 lands a single participant-facing origin, this becomes
+  #     that origin's wildcard suffix. Until then, operators wire this by
+  #     hand alongside `deploy-user.sh --dns-suffix` / `--frame-ancestors`
+  #     (see charts/ctf-user/values.yaml's ttyd.frameAncestors — the portal's
+  #     OWN origin must also be passed there so the ttyd-proxy CSP allows the
+  #     iframe).
+  portalTtydSuffix: ""
   # Points policy (#40 self-service hints with a leaderboard-affecting score).
   # SCORE_POINTS_PER_SOLVE = base award per solved challenge;
   # SCORE_HINT_PENALTY = points forfeited per self-revealed Journey hint.

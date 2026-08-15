@@ -111,6 +111,14 @@ spec:
             - name: DOCS_BASE_URL
               value: {{ . | quote }}
             {{- end }}
+            {{- /* P23-4 portal Terminal iframe. `with` is correct here: an
+                   empty string IS the fail-safe default (no iframe, "not
+                   configured" placeholder), same posture as docsBaseUrl
+                   above. */}}
+            {{- with .Values.env.portalTtydSuffix }}
+            - name: PORTAL_TTYD_SUFFIX
+              value: {{ . | quote }}
+            {{- end }}
             {{- /* Use `ne (toString ...) ""` not `with`: `with` treats the
                    integer 0 as falsy and would drop the env, silently reverting
                    to the code default. Only an empty string (unset) is skipped;

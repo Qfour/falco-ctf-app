@@ -58,6 +58,9 @@ type Handler struct {
 	sweeper        *scoring.Sweeper
 	detect         api.DetectConfig
 	allowedOrigins []string
+	// ttydSuffix (P23-4) feeds the portal Terminal pane's iframe src builder
+	// (view.New / portal.ttydURLFor) — see WithTtydSuffix.
+	ttydSuffix string
 }
 
 type Option func(*Handler)
@@ -111,6 +114,20 @@ func WithAllowedOrigins(origins []string) Option {
 	return func(h *Handler) { h.allowedOrigins = origins }
 }
 
+// WithTtydSuffix sets the DNS suffix (PORTAL_TTYD_SUFFIX) the portal
+// Terminal pane uses to build each caller's OWN ttyd iframe src:
+// `https://<derived-username>.<suffix>` — matching charts/ctf-user's
+// `<username>.<dnsSuffix>` per-user Ingress host pattern exactly, so the
+// portal's guess always resolves to the SAME workspace `deploy-user.sh`
+// already stood up. Empty (default) = the Terminal pane renders its
+// fail-safe "not configured" placeholder instead of an iframe (see
+// view.renderPortal / portal.ttydURLFor). The real value is P19-dependent
+// (single participant-facing origin design) — see cmd/scoreboard/main.go's
+// PORTAL_TTYD_SUFFIX doc for the local-vs-prod distinction.
+func WithTtydSuffix(suffix string) Option {
+	return func(h *Handler) { h.ttydSuffix = suffix }
+}
+
 func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts ...Option) *Handler {
 	h := &Handler{
 		cat:    cat,
@@ -154,7 +171,7 @@ func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts .
 	// view.renderPortal's doc for why that is safe (no admin data is ever
 	// embedded; the api.NewAdminGate/api.DeriveUsername results feed only
 	// display hints, and every pane's actual data fetch stays gated in api.Handler).
-	view.New(api.NewAdminGate(h.adminEmails), api.DeriveUsername, logger).Register(h.mux)
+	view.New(api.NewAdminGate(h.adminEmails), api.DeriveUsername, h.ttydSuffix, logger).Register(h.mux)
 
 	return h
 }
