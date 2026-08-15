@@ -75,13 +75,17 @@ func New(allowedOrigins []string, logger *slog.Logger) *Guard {
 //     outright rather than being combined with Referer).
 //   - Origin absent, Referer present: the Referer URL's scheme://host[:port]
 //     is derived and must exactly match an allowed origin.
-//   - Both absent: denied. Modern browsers always send Origin on
-//     state-changing (POST/PUT/PATCH/DELETE) fetches/form-submits; a
-//     same-site navigation also carries Referer. Only legacy/non-browser
-//     clients omit both, and this middleware is mounted solely on
-//     browser-facing routes (server-to-server paths like
-//     POST /internal/exfil/{cid} are never wrapped with it), so failing
-//     closed here does not break any known legitimate caller.
+//   - Both absent: denied. A classic same-origin <form method="POST">
+//     submission does not itself send an Origin header, and its Referer can
+//     be stripped by a Referrer-Policy — so "both absent" is reachable even
+//     from a legitimate browser navigation in principle. In practice every
+//     route this middleware guards is called exclusively via fetch/XHR from
+//     first-party JS (the journey UI / admin dashboard), which does send
+//     Origin, and never via a plain <form> submit; server-to-server paths
+//     like POST /internal/exfil/{cid} are never wrapped with it either. So
+//     failing closed here does not break any known legitimate caller, but
+//     the fail-closed choice is deliberate defense-in-depth, not reliance on
+//     browsers always sending one of the two headers.
 //
 // A denial writes 403 via httpx.WriteJSON and logs the rejected value (never
 // trusts Host/X-Forwarded-Host — see package doc).
@@ -120,8 +124,8 @@ func (g *Guard) Middleware(next http.Handler) http.Handler {
 }
 
 // originOf extracts scheme://host[:port] from an Origin or Referer value,
-// with the host lower-cased so comparisons against the (also lower-cased,
-// see New/normalizeOrigin) allowlist are case-insensitive on the host
+// with the host lower-cased so comparisons against the (also lower-cased via
+// this same originOf, see New) allowlist are case-insensitive on the host
 // component. url.Parse does not itself lower-case Host, and real browsers
 // normally send lower-case Origin/Referer already, but this closes the gap
 // for the rare mixed-case case rather than fail-closed-rejecting a

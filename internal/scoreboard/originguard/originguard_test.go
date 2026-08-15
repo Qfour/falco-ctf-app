@@ -121,3 +121,58 @@ func TestOriginOf(t *testing.T) {
 		}
 	}
 }
+
+// TestOriginOf_CaseNormalization pins the case-folding behavior documented
+// on originOf: scheme and host are lower-cased so a mixed-case Origin/Referer
+// still compares equal against a lower-cased allowlist entry.
+func TestOriginOf_CaseNormalization(t *testing.T) {
+	got, ok := originOf("HTTPS://A.Example.COM")
+	if !ok {
+		t.Fatalf("originOf: ok=false, want true")
+	}
+	if got != "https://a.example.com" {
+		t.Fatalf("originOf(%q) = %q, want %q", "HTTPS://A.Example.COM", got, "https://a.example.com")
+	}
+}
+
+// TestMiddleware_CaseInsensitiveAllowlistMatch exercises the same
+// case-normalization end to end: an allowlist entry supplied in mixed case
+// must still match a lower-case request Origin, because both sides go
+// through originOf's lower-casing.
+func TestMiddleware_CaseInsensitiveAllowlistMatch(t *testing.T) {
+	g := newTestGuard("HTTPS://Foo.Example.COM")
+	w := serve(g, "POST", "/x", "https://foo.example.com", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d want 200 (case-insensitive allowlist match)", w.Code)
+	}
+}
+
+// TestNew_AllowlistEntryWithTrailingSlashAndPath verifies that an allowlist
+// entry supplied with a trailing slash (or a path) is normalised down to
+// scheme://host by the same originOf parser New uses, so it still matches a
+// bare-origin request.
+func TestNew_AllowlistEntryWithTrailingSlashAndPath(t *testing.T) {
+	g := newTestGuard("https://foo.example.com/")
+	w := serve(g, "POST", "/x", "https://foo.example.com", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d want 200 (trailing-slash allowlist entry should still match)", w.Code)
+	}
+
+	g2 := newTestGuard("https://foo.example.com/some/path")
+	w2 := serve(g2, "POST", "/x", "https://foo.example.com", "")
+	if w2.Code != http.StatusOK {
+		t.Fatalf("code=%d want 200 (allowlist entry with a path should still match on origin only)", w2.Code)
+	}
+}
+
+// TestMiddleware_PortMismatchDenied is a regression guard: an allowed origin
+// and a request Origin that differ only by port must NOT be treated as
+// equal. scheme://host[:port] is compared as a whole string, so a missing
+// vs. present (or differing) port must deny.
+func TestMiddleware_PortMismatchDenied(t *testing.T) {
+	g := newTestGuard("https://a.example.com")
+	w := serve(g, "POST", "/x", "https://a.example.com:8443", "")
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("code=%d want 403 (port-only mismatch must not be allowed)", w.Code)
+	}
+}

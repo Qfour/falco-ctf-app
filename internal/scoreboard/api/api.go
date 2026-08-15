@@ -207,7 +207,7 @@ func NewAdminGate(adminEmails []string) func(*http.Request) bool {
 // state-changing routes. NOT applied to routes that are also (or solely)
 // reached via the collector's server-to-server forward — see each route's
 // own comment below for why it is excluded (POST /internal/exfil/{cid},
-// POST /api/challenges/{cid}/submit[-detect], POST
+// POST /api/challenges/{cid}/submit, POST
 // /api/users/{user}/display-name).
 func (h *Handler) og(next http.Handler) http.Handler {
 	return h.originGuard.Middleware(next)
