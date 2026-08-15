@@ -203,11 +203,12 @@ func NewAdminGate(adminEmails []string) func(*http.Request) bool {
 	}
 }
 
-// og wraps a handler with the origin guard (P23-2). Applied to every
-// browser-facing state-changing route below EXCEPT POST /internal/exfil/{cid}
-// (collector-only server-to-server sink — it carries no Origin/Referer and
-// gating it would silently break scoring; see the route's own comment and
-// the package doc on originguard).
+// og wraps a handler with the origin guard (P23-2). Applied to browser-only
+// state-changing routes. NOT applied to routes that are also (or solely)
+// reached via the collector's server-to-server forward — see each route's
+// own comment below for why it is excluded (POST /internal/exfil/{cid},
+// POST /api/challenges/{cid}/submit[-detect], POST
+// /api/users/{user}/display-name).
 func (h *Handler) og(next http.Handler) http.Handler {
 	return h.originGuard.Middleware(next)
 }
@@ -221,11 +222,27 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/hints", h.hints)
 	mux.Handle("POST /api/admin/hints", h.og(http.HandlerFunc(h.releaseHint)))
 	submitMW := h.submitLimiter.Middleware(ratelimit.ClientIP)
-	mux.Handle("POST /api/challenges/{cid}/submit", h.og(submitMW(http.HandlerFunc(h.submit))))
+	// NOT wrapped by the origin guard (P23-2 follow-up). This route has TWO
+	// callers: the journey UI (browser fetch, carries Origin) AND the
+	// collector's verbatim forward of the participant's curl submission
+	// (internal/collector/collector.go — "Routes fronted"; curl sends no
+	// Origin/Referer at all). Egress lockdown makes the collector-forwarded
+	// curl path the PRIMARY flag-submission route once a workspace can no
+	// longer reach the scoreboard directly, so a fail-closed Origin gate here
+	// would 403 every legitimate submission via that path and break scoring —
+	// exactly the class of regression this middleware must never cause. The
+	// CSRF this would otherwise mitigate (an attacker riding a victim's
+	// session to submit — and thereby credit — a flag the attacker chose) has
+	// no destructive blast radius comparable to /api/admin/reset (the
+	// mitigation's actual target): at most it credits a solve, it does not
+	// delete state or read another user's data. Accepted residual risk;
+	// revisit only if submit ever gains a destructive side effect.
+	mux.Handle("POST /api/challenges/{cid}/submit", submitMW(http.HandlerFunc(h.submit)))
 	// Detect grading reuses the SAME per-IP submit limiter (same trust model as
 	// /submit) plus a global in-flight cap enforced inside the handler (429 past
-	// it, never queued).
-	mux.Handle("POST /api/challenges/{cid}/submit-detect", h.og(submitMW(http.HandlerFunc(h.submitDetect))))
+	// it, never queued). Same collector dual-caller reasoning as /submit above —
+	// NOT origin-guarded for the same reason.
+	mux.Handle("POST /api/challenges/{cid}/submit-detect", submitMW(http.HandlerFunc(h.submitDetect)))
 	// Exfil is an internal-only endpoint reached solely by the collector
 	// (full one-pipe, P11.5). Workspaces cannot reach the scoreboard directly
 	// once egress lockdown is on — they POST /api/challenges/{cid}/exfil to the
@@ -240,10 +257,25 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /internal/exfil/{cid}", h.exfilInternal)
 	// Journey progression writes (self-check ticks + progressive hint reveal).
 	// Rate-limited on the same bucket as /submit — participant-facing writes.
+	// These two ARE origin-guarded: unlike submit/display-name below, they are
+	// reached ONLY from the journey UI browser fetch (journey.html) — the
+	// collector's forward allowlist (internal/collector/collector.go) does not
+	// include steps/{idx}/check or hints/{idx} — so there is no server-to-server
+	// caller to protect against a fail-closed gate here.
 	mux.Handle("POST /api/users/{user}/challenges/{cid}/steps/{idx}/check", h.og(submitMW(http.HandlerFunc(h.stepCheck))))
 	mux.Handle("POST /api/users/{user}/challenges/{cid}/hints/{idx}", h.og(submitMW(http.HandlerFunc(h.openHint))))
 	dnMW := h.displayNameLimiter.Middleware(ratelimit.ClientIP)
-	mux.Handle("POST /api/users/{user}/display-name", h.og(dnMW(http.HandlerFunc(h.setDisplayName))))
+	// NOT wrapped by the origin guard (P23-2 follow-up). Unlike submit above,
+	// this route has only ONE caller: the collector's verbatim forward
+	// (internal/collector/collector.go — "Routes fronted") of the
+	// participant's curl-issued display-name update. No browser template in
+	// this repo fetches this participant-facing path directly (the journey UI
+	// has no such call; the only browser caller of a display-name endpoint is
+	// index.html's ADMIN /api/admin/users/{user}/display-name, a distinct
+	// route that stays origin-guarded above). A fail-closed gate here would
+	// therefore 403 every legitimate call with no browser-CSRF surface to
+	// protect in exchange.
+	mux.Handle("POST /api/users/{user}/display-name", dnMW(http.HandlerFunc(h.setDisplayName)))
 }
 
 // --- admin reset ------------------------------------------------------------

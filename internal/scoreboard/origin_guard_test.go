@@ -167,10 +167,19 @@ func TestOriginGuard_MultipleAllowedOrigins(t *testing.T) {
 	}
 }
 
-// TestOriginGuard_AllProtectedRoutesEnforced walks every browser-facing
+// TestOriginGuard_AllProtectedRoutesEnforced walks every browser-ONLY
 // state-changing route the api handler registers and asserts a cross-origin
 // POST is rejected on each — this is the regression fence against a future
 // route being added to Register without being wrapped in the guard.
+//
+// Deliberately EXCLUDES POST /api/challenges/{cid}/submit[-detect] and
+// POST /api/users/{user}/display-name: those routes are also reached by the
+// collector's verbatim server-to-server forward of a curl submission (no
+// Origin/Referer ever present), so wrapping them in a fail-closed origin
+// gate would 403 that legitimate path and break scoring — see api.Register's
+// comments on those routes and TestOriginGuard_SubmitAndDisplayNameBypassGuard
+// / TestOriginGuard_SubmitStillBlocksCrossOriginBrowserPOST below for the
+// coverage that replaces this table entry for them.
 func TestOriginGuard_AllProtectedRoutesEnforced(t *testing.T) {
 	srv := newOriginFixture(t, []string{allowedOrigin})
 	const evilOrigin = "https://evil.example.com"
@@ -184,11 +193,8 @@ func TestOriginGuard_AllProtectedRoutesEnforced(t *testing.T) {
 		{"admin_reset", "POST", "/api/admin/reset", ""},
 		{"admin_display_name", "POST", "/api/admin/users/alice/display-name", `{"name":"Alice"}`},
 		{"admin_hints", "POST", "/api/admin/hints", `{"mission":"02-evade","hint":1,"released":true}`},
-		{"submit", "POST", "/api/challenges/02-evade/submit", `{"user":"alice","flag":"FALCO{ok}"}`},
-		{"submit_detect", "POST", "/api/challenges/02-evade/submit-detect", `{"user":"alice","condition":"x"}`},
 		{"step_check", "POST", "/api/users/alice/challenges/02-evade/steps/0/check", `{"checked":true}`},
 		{"open_hint", "POST", "/api/users/alice/challenges/02-evade/hints/1", ""},
-		{"display_name", "POST", "/api/users/alice/display-name", `{"name":"Alice"}`},
 	}
 
 	for _, tc := range cases {
@@ -202,6 +208,74 @@ func TestOriginGuard_AllProtectedRoutesEnforced(t *testing.T) {
 				t.Fatalf("%s: status=%d body=%s, want 403 (cross-origin must be denied)", tc.name, w.Code, w.Body)
 			}
 		})
+	}
+}
+
+// TestOriginGuard_SubmitAndDisplayNameBypassGuard is the collector-forward
+// regression fence for the P23-2 follow-up fix: POST
+// /api/challenges/{cid}/submit, POST /api/challenges/{cid}/submit-detect, and
+// POST /api/users/{user}/display-name must all succeed with NEITHER
+// Origin NOR Referer present — the exact shape of the collector's verbatim
+// forward of a participant's curl request (internal/collector/collector.go
+// "Routes fronted"; curl never sends either header). Before this fix these
+// routes were wrapped in h.og(...), so a fail-closed empty-both-headers
+// request 403'd unconditionally — which is exactly the "ingest/collector
+// path gets Origin-gated and scoring breaks" failure mode the guard must
+// never cause. Uses an empty allowlist too, mirroring
+// TestOriginGuard_ExfilBypassesGuard, to prove these paths work even before
+// ALLOWED_ORIGINS is configured at all.
+func TestOriginGuard_SubmitAndDisplayNameBypassGuard(t *testing.T) {
+	for _, allowlist := range [][]string{{allowedOrigin}, nil} {
+		srv := newOriginFixture(t, allowlist)
+
+		w := ogReq(t, srv, "POST", "/api/challenges/02-evade/submit", "", "", "",
+			strings.NewReader(`{"user":"alice","flag":"FALCO{ok}"}`))
+		if w.Code != http.StatusOK {
+			t.Fatalf("submit without Origin/Referer (allowlist=%v): status=%d body=%s, want 200", allowlist, w.Code, w.Body)
+		}
+
+		w = ogReq(t, srv, "POST", "/api/challenges/02-evade/submit-detect", "", "", "",
+			strings.NewReader(`{"user":"alice","condition":"x"}`))
+		// submit-detect has no detect runner wired in this fixture, so the
+		// handler itself returns 503 (feature off) — the point here is only
+		// that it is NOT 403'd by the origin guard before reaching the handler.
+		if w.Code == http.StatusForbidden {
+			t.Fatalf("submit-detect without Origin/Referer (allowlist=%v): status=%d body=%s, must not be 403 (origin-gated)", allowlist, w.Code, w.Body)
+		}
+
+		w = ogReq(t, srv, "POST", "/api/users/alice/display-name", "", "", "",
+			strings.NewReader(`{"name":"Alice"}`))
+		if w.Code != http.StatusOK {
+			t.Fatalf("display-name without Origin/Referer (allowlist=%v): status=%d body=%s, want 200", allowlist, w.Code, w.Body)
+		}
+	}
+}
+
+// TestOriginGuard_SubmitStillBlocksCrossOriginBrowserPOST is the other half
+// of the dual-path story: the journey UI's browser fetch DOES carry an
+// Origin header (journey.html's fetch('/api/challenges/'+cid+'/submit',
+// {method:'POST',...})). Even though /submit is no longer wrapped by
+// h.og(...), removing that wrapper must not silently make it accept an
+// attacker's cross-origin state-changing request when a real Origin header
+// IS present — the route's own handler-side trust model (claimed identity,
+// per-IP rate limit) is unchanged and unaffected by the guard's absence
+// either way, but this test pins the actual observed behaviour: a
+// browser-shaped cross-origin POST reaches the handler and is evaluated on
+// its own terms (flag correctness), not blocked or specially allowed by
+// Origin. This documents that the residual CSRF exposure accepted in
+// api.Register's comment is real (a forged cross-origin submit DOES reach
+// the grader) — it is not silently mitigated by some other layer.
+func TestOriginGuard_SubmitStillBlocksCrossOriginBrowserPOST(t *testing.T) {
+	srv := newOriginFixture(t, []string{allowedOrigin})
+	const evilOrigin = "https://evil.example.com"
+
+	// Wrong flag from a cross-origin browser POST: rejected on flag mismatch
+	// (200 + correct:false), not by the origin guard (confirms /submit is no
+	// longer origin-gated — a pre-fix 403 here would indicate a regression).
+	w := ogReq(t, srv, "POST", "/api/challenges/02-evade/submit", evilOrigin, "", "",
+		strings.NewReader(`{"user":"alice","flag":"FALCO{wrong}"}`))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"correct":false`) {
+		t.Fatalf("cross-origin submit: status=%d body=%s, want 200 with correct:false (evaluated by the grader, not origin-gated)", w.Code, w.Body)
 	}
 }
 

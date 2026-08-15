@@ -40,8 +40,14 @@ type Guard struct {
 
 // New builds a Guard from a list of allowed origins (e.g.
 // "https://ctf.example.com", "https://portal.ctf.example.com:8443"). Entries
-// are trimmed and matched verbatim (case-sensitive host is fine — browsers
-// lower-case Origin/Referer host already; scheme is always lower-case).
+// are trimmed and normalised through the SAME originOf parser the middleware
+// applies to the request's Origin/Referer (lower-cased scheme://host), so an
+// allowlist entry and a request-derived origin compare equal regardless of
+// host casing. An entry that fails to parse as an origin (empty after trim,
+// or missing scheme/host) is dropped rather than stored verbatim — fail
+// closed: a malformed operator-supplied entry must never accidentally widen
+// the allowlist by being compared against with a different normalisation
+// than the request side would get.
 // A nil logger falls back to slog.Default().
 func New(allowedOrigins []string, logger *slog.Logger) *Guard {
 	if logger == nil {
@@ -49,8 +55,11 @@ func New(allowedOrigins []string, logger *slog.Logger) *Guard {
 	}
 	set := make(map[string]struct{}, len(allowedOrigins))
 	for _, o := range allowedOrigins {
-		if o = strings.TrimSpace(o); o != "" {
-			set[o] = struct{}{}
+		if o = strings.TrimSpace(o); o == "" {
+			continue
+		}
+		if norm, ok := originOf(o); ok {
+			set[norm] = struct{}{}
 		}
 	}
 	return &Guard{allowed: set, logger: logger}
@@ -79,9 +88,15 @@ func New(allowedOrigins []string, logger *slog.Logger) *Guard {
 func (g *Guard) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if origin := r.Header.Get("Origin"); origin != "" {
-			if _, ok := g.allowed[origin]; ok {
-				next.ServeHTTP(w, r)
-				return
+			// Origin has no path, but parse it through the same originOf logic
+			// as Referer (rather than a raw map lookup) so host casing is
+			// normalised identically on both paths — see originOf's doc.
+			reqOrigin, ok := originOf(origin)
+			if ok {
+				if _, allowedOK := g.allowed[reqOrigin]; allowedOK {
+					next.ServeHTTP(w, r)
+					return
+				}
 			}
 			g.deny(w, r, "origin", origin)
 			return
@@ -104,14 +119,20 @@ func (g *Guard) Middleware(next http.Handler) http.Handler {
 	})
 }
 
-// originOf extracts scheme://host[:port] from a Referer URL. Returns ok=false
-// for a malformed or relative (no scheme/host) value.
+// originOf extracts scheme://host[:port] from an Origin or Referer value,
+// with the host lower-cased so comparisons against the (also lower-cased,
+// see New/normalizeOrigin) allowlist are case-insensitive on the host
+// component. url.Parse does not itself lower-case Host, and real browsers
+// normally send lower-case Origin/Referer already, but this closes the gap
+// for the rare mixed-case case rather than fail-closed-rejecting a
+// legitimate same-origin request over a cosmetic casing difference. Returns
+// ok=false for a malformed or relative (no scheme/host) value.
 func originOf(referer string) (string, bool) {
 	u, err := url.Parse(referer)
 	if err != nil || u.Scheme == "" || u.Host == "" {
 		return "", false
 	}
-	return u.Scheme + "://" + u.Host, true
+	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host), true
 }
 
 func (g *Guard) deny(w http.ResponseWriter, r *http.Request, field, value string) {
