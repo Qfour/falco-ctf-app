@@ -6,12 +6,18 @@ set -eu
 POD="${HOSTNAME:?HOSTNAME not set}"
 CONTAINER="${TTYD_TARGET_CONTAINER:-challenge}"
 PORT="${TTYD_PORT:-7681}"
+# P23-3: TTYD_INTERFACE lets the ctf-user chart opt in to loopback-only
+# binding once ttyd sits behind the ttyd-proxy sidecar (CSP frame-ancestors
+# clickjacking mitigation). Image default stays 0.0.0.0 for backward compat
+# with any caller that doesn't set it; the chart explicitly sets
+# TTYD_INTERFACE=127.0.0.1 to adopt the new topology.
+IFACE="${TTYD_INTERFACE:-0.0.0.0}"
 
 # kubectl auto-detects in-cluster config from /var/run/secrets/kubernetes.io/serviceaccount/.
 # The SA mounted there must have `pods/exec` on this Pod (granted by the chart).
 exec ttyd \
   --port "${PORT}" \
-  --interface 0.0.0.0 \
+  --interface "${IFACE}" \
   --writable \
   -t titleFixed="falco-ctf: ${POD}" \
   -- kubectl exec -i -t -c "${CONTAINER}" "${POD}" -- /bin/bash -l

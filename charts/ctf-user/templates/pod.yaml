@@ -37,12 +37,21 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       ports:
-        - name: http
-          containerPort: {{ .Values.ttyd.port }}
+        # P23-3: ttyd itself is loopback-only (TTYD_INTERFACE=127.0.0.1 below)
+        # and no longer Ingress-reachable — the ttyd-proxy sidecar owns the
+        # published port (see below). containerPort is declarative-only here
+        # (no Service binds to it directly) but kept for documentation. Named
+        # distinctly from the proxy's "http" port below — duplicate port
+        # names across containers in one Pod trigger a k8s admission warning
+        # and make name-based Service/probe port resolution ambiguous.
+        - name: ttyd-upstream
+          containerPort: {{ .Values.ttyd.upstreamPort }}
           protocol: TCP
       env:
         - name: TTYD_PORT
-          value: "{{ .Values.ttyd.port }}"
+          value: "{{ .Values.ttyd.upstreamPort }}"
+        - name: TTYD_INTERFACE
+          value: "127.0.0.1"
         - name: TTYD_TARGET_CONTAINER
           value: "challenge"
         # Participant-facing front (P11.5). ttyd carries it so any helper run in
@@ -51,9 +60,23 @@ spec:
           value: "{{ .Values.collector.url }}"
       resources:
         {{- toYaml .Values.ttyd.resources | nindent 8 }}
+      # P23-3: readinessProbe.tcpSocket/httpGet always dial the Pod IP, never
+      # the container's own loopback — so a tcpSocket probe against
+      # 127.0.0.1-bound ttyd would connect from outside the netns and fail
+      # (kubelet's probe is not itself inside the container's network
+      # namespace the way an exec probe is). Use an exec probe instead: curl
+      # runs inside the ttyd container's netns, so 127.0.0.1 resolves to
+      # ttyd's own loopback correctly. curl is already installed (see the
+      # Dockerfile's apk add list).
       readinessProbe:
-        tcpSocket:
-          port: http
+        exec:
+          command:
+            - curl
+            - --fail
+            - --silent
+            - --output
+            - /dev/null
+            - http://127.0.0.1:{{ .Values.ttyd.upstreamPort }}/
         initialDelaySeconds: 2
         periodSeconds: 5
       # With readOnlyRootFilesystem above, kubectl can't write its discovery
@@ -64,6 +87,43 @@ spec:
           mountPath: /home/ttyd
         - name: ttyd-tmp
           mountPath: /tmp
+
+    - name: ttyd-proxy
+      # P23-3: CSP frame-ancestors reverse proxy in front of ttyd. This is the
+      # container the Ingress/Service actually reach (port .Values.ttyd.port);
+      # ttyd itself moved to a loopback-only port above. See
+      # cmd/ttyd-proxy, internal/ttydproxy, and the cross-repo wiring contract
+      # in .claude/rules/falco-ctf-app-conventions.md.
+      image: "{{ .Values.ttyd.proxy.image.repository }}:{{ .Values.ttyd.proxy.image.tag }}"
+      imagePullPolicy: {{ .Values.ttyd.proxy.image.pullPolicy }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        readOnlyRootFilesystem: true
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: RuntimeDefault
+      ports:
+        - name: http
+          containerPort: {{ .Values.ttyd.port }}
+          protocol: TCP
+      env:
+        - name: LISTEN_ADDR
+          value: ":{{ .Values.ttyd.port }}"
+        - name: UPSTREAM_ADDR
+          value: "http://127.0.0.1:{{ .Values.ttyd.upstreamPort }}"
+        - name: FRAME_ANCESTORS
+          value: "{{ .Values.ttyd.frameAncestors }}"
+      resources:
+        {{- toYaml .Values.ttyd.proxy.resources | nindent 8 }}
+      readinessProbe:
+        tcpSocket:
+          port: http
+        initialDelaySeconds: 2
+        periodSeconds: 5
 
     - name: challenge
       image: "{{ .Values.challenge.image.repository }}:{{ .Values.challenge.image.tag }}"

@@ -11,12 +11,19 @@
 # Usage:
 #   deploy-user.sh [--challenges-dir <path>] [--display-name <name>] \
 #                  [--flags-file <path>] [--dns-suffix <suffix>] \
+#                  [--frame-ancestors <csp-value>] \
 #                  [--egress-lockdown --api-server-cidr <cidr>] \
 #                  <username> <challenge-id>
 #
 # --flags-file <path>: decrypted events flags.yaml ({flags: {id: FALCO{...}}}).
 #   Overrides the chart's FALCO{dev-...} defaults with real per-event flags.
 #   Omit for local dev (dev placeholders are used).
+#
+# --frame-ancestors <value>: CSP `frame-ancestors` source list the ttyd-proxy
+#   sidecar (P23-3) stamps on every ttyd response, e.g.
+#   "https://ctf-event.example.com" once the P23-4 portal embeds ttyd in an
+#   iframe. Omit to keep the chart's fail-safe default ('none' — nobody may
+#   frame ttyd), which is correct until the portal exists.
 #
 # --egress-lockdown: turn on the ctf-user egress NetworkPolicy (P11.5). The
 #   workspace can then only reach the collector + kube-dns + the API server;
@@ -49,6 +56,7 @@ CHALLENGES_DIR=""
 DISPLAY_NAME=""
 FLAGS_FILE=""
 DNS_SUFFIX=""
+FRAME_ANCESTORS=""
 EGRESS_LOCKDOWN=0
 API_SERVER_CIDR=""
 POSITIONAL=()
@@ -62,6 +70,10 @@ while [[ $# -gt 0 ]]; do
       DNS_SUFFIX="${2:?--dns-suffix requires a value}"; shift 2 ;;
     --dns-suffix=*)
       DNS_SUFFIX="${1#--dns-suffix=}"; shift ;;
+    --frame-ancestors)
+      FRAME_ANCESTORS="${2:?--frame-ancestors requires a value}"; shift 2 ;;
+    --frame-ancestors=*)
+      FRAME_ANCESTORS="${1#--frame-ancestors=}"; shift ;;
     --display-name)
       DISPLAY_NAME="${2:?--display-name requires a value}"; shift 2 ;;
     --display-name=*)
@@ -77,7 +89,7 @@ while [[ $# -gt 0 ]]; do
     --api-server-cidr=*)
       API_SERVER_CIDR="${1#--api-server-cidr=}"; shift ;;
     -h|--help)
-      sed -n '2,38p' "$0"; exit 0 ;;
+      sed -n '2,45p' "$0"; exit 0 ;;
     --)
       shift; POSITIONAL+=("$@"); break ;;
     -*)
@@ -200,16 +212,27 @@ kubectl -n "${NS}" delete pod workspace --ignore-not-found --wait=true >/dev/nul
 # Prod image override (chart default is docker.io/falco-ctf/*:dev for local). Set
 #   FALCO_CTF_REGISTRY  = <acct>.dkr.ecr.<region>.amazonaws.com/falco-ctf
 #   FALCO_CTF_IMAGE_TAG = <git SHA>
-# to pull ttyd/challenge from ECR. The challenge repo must keep the
-# `falco-ctf/challenge` substring (scoreboard ingest filter).
+# to pull ttyd/ttyd-proxy/challenge from ECR (I5: same SHA tag across all
+# images). The challenge repo must keep the `falco-ctf/challenge` substring
+# (scoreboard ingest filter).
 IMAGE_ARGS=()
 if [[ -n "${FALCO_CTF_REGISTRY:-}" ]]; then
   IMAGE_ARGS+=(--set "ttyd.image.repository=${FALCO_CTF_REGISTRY}/ttyd")
+  IMAGE_ARGS+=(--set "ttyd.proxy.image.repository=${FALCO_CTF_REGISTRY}/ttyd-proxy")
   IMAGE_ARGS+=(--set "challenge.image.repository=${FALCO_CTF_REGISTRY}/challenge")
 fi
 if [[ -n "${FALCO_CTF_IMAGE_TAG:-}" ]]; then
   IMAGE_ARGS+=(--set "ttyd.image.tag=${FALCO_CTF_IMAGE_TAG}")
+  IMAGE_ARGS+=(--set "ttyd.proxy.image.tag=${FALCO_CTF_IMAGE_TAG}")
   IMAGE_ARGS+=(--set "challenge.image.tag=${FALCO_CTF_IMAGE_TAG}")
+fi
+
+# P23-3: CSP frame-ancestors for the ttyd-proxy sidecar. Omit to keep the
+# chart's fail-safe default ('none'). Uses --set-string so a bare value like
+# 'none' (no quotes) isn't coerced to a YAML boolean/null by helm's --set.
+FRAME_ANCESTORS_ARGS=()
+if [[ -n "${FRAME_ANCESTORS}" ]]; then
+  FRAME_ANCESTORS_ARGS+=(--set-string "ttyd.frameAncestors=${FRAME_ANCESTORS}")
 fi
 
 # Egress lockdown (P11.5). Off unless --egress-lockdown is passed, so the local
@@ -228,6 +251,7 @@ helm upgrade --install "${RELEASE}" "${CHART_DIR}" \
   --set "challengeId=${CHALLENGE_ID}" \
   ${DNS_SUFFIX:+--set dnsSuffix="${DNS_SUFFIX}"} \
   ${IMAGE_ARGS:+"${IMAGE_ARGS[@]}"} \
+  ${FRAME_ANCESTORS_ARGS:+"${FRAME_ANCESTORS_ARGS[@]}"} \
   ${EGRESS_ARGS:+"${EGRESS_ARGS[@]}"} \
   ${VALUES_ARGS:+"${VALUES_ARGS[@]}"} \
   ${FLAG_ARGS:+"${FLAG_ARGS[@]}"} \

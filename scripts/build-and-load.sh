@@ -14,6 +14,7 @@ TAG="${TAG:-$(git rev-parse --short HEAD)}"
 # from cwd by modern Docker / BuildKit, not from context)
 declare -a IMAGES=(
   "ttyd|images/ttyd|images/ttyd/Dockerfile"
+  "ttyd-proxy|.|images/ttyd-proxy/Dockerfile"
   "challenge|.|images/challenge/Dockerfile"
   "scoreboard|.|scoreboard/Dockerfile"
   "auth-policy|.|auth-policy/Dockerfile"
@@ -53,4 +54,4 @@ done
 
 info "[verify] images visible to k3s"
 ( cd / && colima ssh -- sudo ctr -n k8s.io images ls -q ) \
-  | grep -E "${REGISTRY}/(ttyd|challenge|scoreboard|auth-policy|collector|docs|detect-grader):" || true
+  | grep -E "${REGISTRY}/(ttyd|ttyd-proxy|challenge|scoreboard|auth-policy|collector|docs|detect-grader):" || true
