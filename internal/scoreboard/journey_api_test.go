@@ -657,13 +657,8 @@ func TestJourneyWriteGate_DisplayName(t *testing.T) {
 	}
 }
 
-func TestJourneyHTML_ServedAtJourney(t *testing.T) {
-	f := newJourneyFixture(t)
-	w := f.req("GET", "/journey?user=alice", nil)
-	if w.Code != http.StatusOK {
-		t.Fatalf("/journey status: %d", w.Code)
-	}
-	if !bytes.Contains(w.Body.Bytes(), []byte("<title>Falco CTF · journey")) {
-		t.Fatal("/journey html missing expected title")
-	}
-}
+// NOTE: TestJourneyHTML_ServedAtJourney (asserted GET /journey served the
+// legacy journey.html shell) was REMOVED in P19-2b — that route no longer
+// exists (see internal/scoreboard/view/view.go's package doc). The
+// equivalent HTML-serving coverage for the unified portal shell lives in
+// internal/scoreboard/view/portal_test.go (TestRenderPortal_*).

@@ -22,9 +22,17 @@ env:
   # Use the same list as auth-policy's ADMIN_EMAILS.
   adminEmails: ""
   # P23-2 CSRF mitigation: comma-separated allowlist of browser origins
-  # (exact scheme://host[:port], no path/trailing slash — e.g.
-  # "https://scoreboard.ctf.example.com,https://journey.ctf.example.com")
-  # permitted to call the browser-facing state-changing routes (POST
+  # (exact scheme://host[:port], no path/trailing slash). Pre-P19-2b (host-
+  # split topology) this held two entries, e.g.
+  # "https://scoreboard.ctf.example.com,https://journey.ctf.example.com".
+  # P19-2b (single origin): `host` and `journeyHost` above collapse onto the
+  # SAME host, so this becomes a SINGLE value, e.g.
+  # "https://app.ctf-event.dev" — see REFACTORING.md P19-1's confirmed design
+  # ("ALLOWED_ORIGINS = single value"). NEVER add a `userN.<suffix>` ttyd
+  # origin here — that would let a participant's own root-shelled workspace
+  # forge a same-listed Origin header and CSRF the scoring API (security
+  # HIGH; see REFACTORING.md P19-1's explicit warning). Permitted to call the
+  # browser-facing state-changing routes (POST
   # /api/admin/*, /api/challenges/{cid}/submit[-detect], /api/users/{user}/...
   # writes). Checked against the request's Origin (falling back to Referer's
   # origin); Host/X-Forwarded-Host are never trusted. See
@@ -128,6 +136,16 @@ ingress:
   # that does not stand up a participant host). Real values are supplied by the
   # platform helmfile (key names MUST match platform feat/p18-journey-host:
   # journeyHost / journeyAuthUrl / journeyAnnotations).
+  #
+  # P19-2b (single origin): set this to the SAME value as `host` above (e.g.
+  # both = app.<suffix>) — ingress.yaml (this admin Ingress) and
+  # ingress-journey.yaml (this journey Ingress) then render as two
+  # path-scoped Ingress objects on ONE host instead of two separate hosts.
+  # The two key names stay distinct in this chart (host / journeyHost) even
+  # though a single-origin deploy sets them equal, so a future env that still
+  # wants host-split topology (e.g. local dev without P19) keeps working
+  # unchanged. ttyd stays on its OWN per-user subdomain regardless
+  # (`userN.<dnsSuffix>` — see charts/ctf-user, unrelated to this host).
   journeyHost: ""
   # oauth2-proxy any-login auth subrequest (e.g. https://<suffix>/oauth2/auth).
   journeyAuthUrl: "http://oauth2-proxy.example.invalid/oauth2/auth"

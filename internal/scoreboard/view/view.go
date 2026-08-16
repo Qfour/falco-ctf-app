@@ -1,17 +1,29 @@
-// Package view serves the embedded HTML dashboards at GET /, GET /me,
-// GET /journey, and GET /portal.
+// Package view serves the embedded HTML dashboards at GET / and GET /portal.
 //
-// The legacy pages (/, /me, /journey) are static — they fetch live state via
-// /api/state, /api/users/{user}/me, and /api/users/{user}/journey
-// respectively. The HTML / CSS / JS is shipped via go:embed so the binary
-// needs no filesystem assets at runtime.
+// GET / (the legacy operator dashboard) is static — it fetches live state via
+// /api/state. The HTML / CSS / JS is shipped via go:embed so the binary needs
+// no filesystem assets at runtime.
 //
-// /portal (P23-1) is the unified admin/participant shell: one page, a
+// GET /portal (P23-1) is the unified admin/participant shell: one page, a
 // client-side hash-tab router, and a small amount of SERVER-INJECTED
 // DISPLAY STATE (role + derived username — see portal.go). It is still not
 // server-rendering any admin/participant DATA: every pane fetches its own
-// data from the same already-gated APIs the legacy pages use. See portal.go
-// for the security rationale in full.
+// data from the same already-gated APIs GET / uses. See portal.go for the
+// security rationale in full.
+//
+// P19-2b cutover: the legacy GET /me and GET /journey routes (and their
+// templates/{me,journey}.html) have been REMOVED. The portal's Journey (#journey)
+// and Me (#me) tabs already fetched the exact same /api/users/{user}/{journey,me}
+// endpoints these pages used, so no participant-facing capability is lost —
+// see the portal.html pane-journey / pane-me sections for the equivalent
+// client-side logic. GET / (the admin-gated operator dashboard) is
+// DELIBERATELY KEPT (P19-1 design: "/" stays admin dashboard-only to avoid
+// colliding authorization profiles with /portal, which is open to any
+// authenticated login). Do not resurrect /me or /journey as aliases for
+// /portal#me / /portal#journey — redirect via a link (see index.html's
+// journey-link), not a server route, to keep the route surface matching the
+// two Ingress objects' path allow-lists exactly (charts/scoreboard/templates/
+// ingress*.yaml).
 package view
 
 import (
@@ -23,12 +35,6 @@ import (
 
 //go:embed templates/index.html
 var indexHTML string
-
-//go:embed templates/me.html
-var meHTML string
-
-//go:embed templates/journey.html
-var journeyHTML string
 
 //go:embed templates/portal.html
 var portalHTMLSrc string
@@ -51,8 +57,9 @@ type Handler struct {
 	// deriveUser derives the DISPLAY-ONLY username the portal shell pre-fills
 	// into the Journey/Me panes (api.DeriveUsername — see that function's doc
 	// for why this is never an authorization decision). Nil = "" always (the
-	// portal falls back to its "could not determine" empty state, same as a
-	// blank ?user= does today on /journey and /me).
+	// portal falls back to its "could not determine" empty state — the same
+	// empty state the removed legacy /journey and /me pages used to show for
+	// a blank ?user=).
 	deriveUser func(*http.Request) string
 	// ttydSuffix (P23-4) is the PORTAL_TTYD_SUFFIX deploy-time value used to
 	// build the Terminal pane's own-ttyd iframe src
@@ -78,17 +85,11 @@ func New(isAdmin func(*http.Request) bool, deriveUser func(*http.Request) string
 	return &Handler{isAdmin: isAdmin, deriveUser: deriveUser, ttydSuffix: ttydSuffix, logger: logger}
 }
 
-// Register wires all view routes. P23-1 is additive: legacy GET /, /me, and
-// /journey stay registered as-is alongside the new /portal shell. Portal only
-// becomes the sole participant/operator entrypoint once P23-4/-5/-6 (cookie
-// SameSite, iframe embedding, docs/cybercore integration) land — that cutover
-// is a separate, cross-repo change that will remove the legacy routes, repoint
-// the ingress paths (see charts/scoreboard/templates/ingress*.yaml), and
-// update operations.md. Do not remove the legacy routes before then.
+// Register wires all view routes. GET / (admin dashboard) and GET /portal
+// (P23-1 unified shell) are the only two page routes left after the P19-2b
+// cutover removed GET /me and GET /journey (see the package doc above).
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /", h.index)
-	mux.HandleFunc("GET /me", h.me)
-	mux.HandleFunc("GET /journey", h.journey)
 	mux.HandleFunc("GET /portal", h.portal)
 	// P23-6: the vendored, self-hosted cybercore-css stylesheet the portal
 	// shell links to (see vendorassets.go's cybercoreCSSPath / PROVENANCE.md
@@ -120,22 +121,6 @@ func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(indexHTML))
-}
-
-// me serves the participant self-service page. The HTML reads `?user=<name>`
-// client-side and calls /api/users/<name>/me; the route itself is permissive
-// so an empty / missing user just renders an instructional landing screen.
-func (h *Handler) me(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(meHTML))
-}
-
-// journey serves the guided Journey UI. Like /me it is static: it reads
-// `?user=<name>` client-side and polls /api/users/<name>/journey. A missing
-// user renders an instructional landing screen.
-func (h *Handler) journey(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(journeyHTML))
 }
 
 // portal serves the unified admin/participant shell (P23-1). See portal.go
