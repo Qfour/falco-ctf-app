@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/http"
+	"unicode"
 )
 
 // newNonce returns a fresh, per-request base64-encoded 128-bit random value
@@ -29,7 +30,15 @@ func newNonce() (string, error) {
 // /portal. nonce must be a freshly generated newNonce() value for this exact
 // response (never reused across requests/responses) and must be the SAME
 // value stamped onto every inline <script> tag portal.html emits via
-// {{.Nonce}}.
+// {{.Nonce}}. ttydSuffix is the SAME PORTAL_TTYD_SUFFIX deploy-time value
+// renderPortal already threads into ttydURLFor for the Terminal pane's
+// iframe src (see portal.go) — it drives frame-src below (fixup R5,
+// 2026-08-16 /review-5x: the initial P23-6 cut omitted frame-src, which
+// left it falling back to default-src 'self' and CSP-blocking the
+// Terminal pane's cross-origin `https://<user>.<ttydSuffix>` iframe on
+// every real deploy that sets PORTAL_TTYD_SUFFIX — local/colima's smoke
+// test did not catch this because that env defaults to "" there, which
+// degrades to no-iframe-at-all rather than exercising the blocked path).
 //
 // Directive-by-directive rationale (P23-6 design decision, security-lead
 // reviewed via /review-5x):
@@ -89,6 +98,34 @@ func newNonce() (string, error) {
 //     every relative URL on the page (script src, fetch(), form action) to
 //     an attacker-controlled origin — cheap, no legitimate use of <base>
 //     exists here.
+//   - frame-src (R5 fixup): the DIRECTIVE THIS PAGE NEEDS for its OWN
+//     <iframe>, as opposed to frame-ancestors below (who may frame US) —
+//     the two are opposite directions and easy to conflate. The Terminal
+//     pane embeds `<iframe src="https://<derived-username>.<ttydSuffix>">`
+//     (see portal.go's ttydURLFor / templates/portal.html), a CROSS-ORIGIN
+//     subdomain of the SAME ttydSuffix wired in at deploy time. Without an
+//     explicit frame-src, CSP falls back to default-src 'self', which
+//     blocks that cross-origin iframe outright — every real deploy that
+//     sets PORTAL_TTYD_SUFFIX would 100% CSP-block the Terminal tab. When
+//     ttydSuffix is non-empty, this allows `https://*.<ttydSuffix>` — the
+//     wildcard covers every participant's own subdomain (not just the
+//     current caller's), which is intentionally broader than "this one
+//     user's host" because CSP has no per-request/per-viewer templating
+//     mechanism and per-user isolation is NOT this directive's job anyway:
+//     the iframe SRC itself is always server-generated from the caller's
+//     OWN derived identity (never client-supplied — see ttydURLFor's
+//     security doc), and even a manually-edited src pointed at a
+//     DIFFERENT user's subdomain still independently 403s at
+//     auth-policy's per-host `/check` (I8) — CSP frame-src here is only
+//     ever a "may this ORIGIN be framed at all by this page" allowlist,
+//     not an authorization boundary (matches TtydURLJSON's own doc: "this
+//     field only ever narrows a caller to their OWN workspace"). When
+//     ttydSuffix is empty (local/most non-P19 deploys today — see
+//     cmd/scoreboard/main.go's PORTAL_TTYD_SUFFIX doc), ttydURLFor already
+//     yields "" and the Terminal pane renders its fail-safe placeholder
+//     instead of an iframe, so frame-src 'none' costs nothing (there is no
+//     legitimate frame to allow) and is fail-closed if a future bug ever
+//     tried to frame something anyway.
 //   - frame-ancestors is DELIBERATELY OMITTED here — that directive is
 //     owned by internal/ttydproxy (P23-3), one layer down (protecting the
 //     ttyd iframe target FROM being framed), not by the page that DOES the
@@ -99,29 +136,61 @@ func newNonce() (string, error) {
 //     env exists). Do not conflate the two: ttyd-proxy's CSP protects ttyd
 //     from being framed by anything other than the portal; this CSP
 //     protects the portal's OWN script/style/resource loading.
-func portalCSP(nonce string) string {
+func portalCSP(nonce, ttydSuffix string) string {
+	frameSrc := "frame-src 'none'"
+	if ttydSuffix != "" {
+		frameSrc = "frame-src https://*." + ttydSuffix
+	}
 	return "default-src 'self'; " +
 		"script-src 'self' 'nonce-" + nonce + "'; " +
 		"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
 		"font-src 'self' https://fonts.gstatic.com; " +
 		"img-src 'self' data:; " +
 		"connect-src 'self'; " +
+		frameSrc + "; " +
 		"object-src 'none'; " +
 		"base-uri 'self'; " +
 		"form-action 'self'"
 }
 
-// writeSecurityHeaders stamps the CSP (built from a freshly generated nonce)
-// plus a couple of standard, low-risk hardening headers onto w, and returns
-// the nonce so the caller can pass it into the template ({{.Nonce}}) for the
-// SAME response. Must be called before any write to w (headers cannot follow
-// a WriteHeader/Write).
-func writeSecurityHeaders(w http.ResponseWriter) (string, error) {
+// validateTtydSuffix rejects a PORTAL_TTYD_SUFFIX value containing CR, LF,
+// or any other control character before it is concatenated into the CSP
+// header (mirrors internal/ttydproxy.validateFrameAncestors's rationale:
+// this is an operator-supplied deploy-time value, not participant input,
+// but it still ends up directly inside an HTTP header value, so a
+// misconfiguration must fail loudly at first-use rather than silently
+// producing a malformed header net/http would otherwise just refuse to
+// write). Called from writeSecurityHeaders on every request rather than
+// once at startup because view.Handler has no explicit "boot" hook to wire
+// a one-time check into today — the cost of re-checking a short, static
+// string per-request is negligible.
+func validateTtydSuffix(v string) error {
+	for _, r := range v {
+		if unicode.IsControl(r) {
+			return fmt.Errorf("csp: PORTAL_TTYD_SUFFIX contains a control character (%q); refusing to render", v)
+		}
+	}
+	return nil
+}
+
+// writeSecurityHeaders stamps the CSP (built from a freshly generated nonce
+// and the deploy-time ttydSuffix — see portalCSP's frame-src doc for why
+// the Terminal pane's cross-origin iframe needs this) plus a couple of
+// standard, low-risk hardening headers onto w, and returns the nonce so the
+// caller can pass it into the template ({{.Nonce}}) for the SAME response.
+// Must be called before any write to w (headers cannot follow a
+// WriteHeader/Write). ttydSuffix is the SAME PORTAL_TTYD_SUFFIX value
+// renderPortal already has in hand for ttydURLFor — pass it straight
+// through rather than re-deriving anything.
+func writeSecurityHeaders(w http.ResponseWriter, ttydSuffix string) (string, error) {
+	if err := validateTtydSuffix(ttydSuffix); err != nil {
+		return "", err
+	}
 	nonce, err := newNonce()
 	if err != nil {
 		return "", fmt.Errorf("csp: generate nonce: %w", err)
 	}
-	w.Header().Set("Content-Security-Policy", portalCSP(nonce))
+	w.Header().Set("Content-Security-Policy", portalCSP(nonce, ttydSuffix))
 	// X-Content-Type-Options: nosniff — stops a browser from MIME-sniffing a
 	// response into an executable context (e.g. treating a JSON error body
 	// returned with the wrong Content-Type as HTML/script). Cheap,

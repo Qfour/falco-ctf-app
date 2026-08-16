@@ -9,11 +9,22 @@
 | npm package | `cybercore-css` |
 | npm version (pinned) | `0.3.0` |
 | npm dist-tag at fetch time | `latest` (== `0.3.0`) |
-| npm tarball shasum (registry-reported) | `b28e21ad8bab73bb72a06524fa487b6e20debb0f` |
+| **npm tarball integrity (registry `dist.integrity`, SHA-512 — PRIMARY check)** | `sha512-ZvNFKcTKB86ehnHBzzcTO7SnOT6P0BTFr/szGYdz4G6qhylkRoL58dvk7yfL2O+Y7I/1dmHeIDykrZnS6C8wcg==` |
+| local re-verify (`openssl dgst -sha512 -binary cybercore-css-0.3.0.tgz \| base64`) | `ZvNFKcTKB86ehnHBzzcTO7SnOT6P0BTFr/szGYdz4G6qhylkRoL58dvk7yfL2O+Y7I/1dmHeIDykrZnS6C8wcg==` (match) |
+| npm tarball shasum (registry `dist.shasum`, SHA-1 — secondary/legacy check) | `b28e21ad8bab73bb72a06524fa487b6e20debb0f` |
 | local re-verify (`shasum -a 1 cybercore-css-0.3.0.tgz`) | `b28e21ad8bab73bb72a06524fa487b6e20debb0f` (match) |
 | upstream git tag | `v0.3.0` (`repos/sebyx07/cybercore-css/tags`) |
 | upstream commit (npm `gitHead` field, `0.3.0`) | `ce1e55ec01c3fd3f780999e62851747012af7f6b` |
 | license | MIT (`LICENSE`, copied verbatim alongside this file) |
+
+SHA-512 `integrity` is the PRIMARY provenance check (2026-08-16 /review-5x
+R3 nit fixup — matches P12's digest-pin discipline elsewhere in this repo,
+e.g. base-image `@sha256:...` pins: prefer the stronger, collision-resistant
+hash as the check that actually gates a pin bump). The npm registry's
+`dist.shasum` (SHA-1) is kept as a secondary/legacy cross-check only — SHA-1
+is not itself relied upon to detect a tampered tarball here, npm just still
+publishes it alongside `integrity` for backward compatibility with older
+tooling.
 
 `dist/cybercore.min.css` from the `0.3.0` npm tarball is copied verbatim into
 `cybercore.min.css` in this directory (byte-for-byte; not re-built from SCSS —
@@ -49,15 +60,18 @@ browser never dereferences it, and every `url(...)` in the file is a
 
 1. Pick a new npm version (or re-verify `latest` is still what's expected).
 2. `curl -sL -o cybercore-css-<ver>.tgz https://registry.npmjs.org/cybercore-css/-/cybercore-css-<ver>.tgz`
-3. Compare `shasum -a 1` against the registry's `dist.shasum` for that version
-   (`curl -s https://registry.npmjs.org/cybercore-css/<ver> | jq .dist`).
+3. **Primary check**: compare `openssl dgst -sha512 -binary cybercore-css-<ver>.tgz | base64`
+   against the registry's `dist.integrity` (strip the `sha512-` prefix) for
+   that version (`curl -s https://registry.npmjs.org/cybercore-css/<ver> | jq -r .dist.integrity`).
+   Secondary/legacy cross-check: `shasum -a 1` against `dist.shasum` from the
+   same response.
 4. `tar xzf ... package/dist/cybercore.min.css package/LICENSE` and overwrite
    the two files in this directory.
 5. Re-run the external-reference audit above (`grep -oE 'https?://[^"'\'')]+'`
    and `grep -c '@import'`) before committing — a future upstream release
    could introduce an external font/CDN reference that must not land here.
-6. Update this file's pin table (npm version / shasum / gitHead / git tag)
-   and re-measure gzip size in the PR description.
+6. Update this file's pin table (npm version / integrity / shasum / gitHead /
+   git tag) and re-measure gzip size in the PR description.
 7. `make test` (embed + CSP tests) and a colima smoke check
    (`make dev` / `make load-colima` → open `/portal`, confirm no console
    errors and the visual theme still resolves — a component/variable rename

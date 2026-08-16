@@ -175,8 +175,12 @@ func renderPortal(w http.ResponseWriter, r *http.Request, isAdmin func(*http.Req
 	// advertised, which we thread into the template so every inline
 	// <script> tag ends up carrying the matching nonce="" attribute (see
 	// csp.go's portalCSP doc and portalData.Nonce's doc for the full
-	// rationale).
-	nonce, err := writeSecurityHeaders(w)
+	// rationale). ttydSuffix is passed straight through (the SAME value
+	// ttydURLFor above already used) so the CSP's frame-src allows the
+	// Terminal pane's own cross-origin iframe (R5 fixup — see portalCSP's
+	// frame-src doc for why omitting this blocked the Terminal tab on every
+	// deploy that sets PORTAL_TTYD_SUFFIX).
+	nonce, err := writeSecurityHeaders(w, ttydSuffix)
 	if err != nil {
 		return err
 	}

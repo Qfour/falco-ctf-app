@@ -56,10 +56,12 @@ func TestNewNonce_Base64Encoded(t *testing.T) {
 // style-src deliberately DOES carry 'unsafe-inline' (documented tradeoff —
 // see portalCSP's doc for why), and the Google Fonts origins this page's
 // pre-existing <link> tags depend on are present so CSP does not regress
-// font loading.
+// font loading. Exercised with an EMPTY ttydSuffix (the local/most-deploys
+// case, see PORTAL_TTYD_SUFFIX's doc) — TestPortalCSP_FrameSrc below covers
+// the non-empty-suffix case R5 added.
 func TestPortalCSP_ContainsExpectedDirectives(t *testing.T) {
 	nonce := "abc123=="
-	csp := portalCSP(nonce)
+	csp := portalCSP(nonce, "")
 
 	mustContain := []string{
 		"default-src 'self'",
@@ -67,6 +69,7 @@ func TestPortalCSP_ContainsExpectedDirectives(t *testing.T) {
 		"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
 		"font-src 'self' https://fonts.gstatic.com",
 		"img-src 'self' data:",
+		"frame-src 'none'",
 		"object-src 'none'",
 		"base-uri 'self'",
 		"form-action 'self'",
@@ -97,14 +100,59 @@ func TestPortalCSP_ContainsExpectedDirectives(t *testing.T) {
 	}
 }
 
+// TestPortalCSP_FrameSrc is the R5 (2026-08-16 /review-5x) regression test:
+// it proves (1) an EMPTY ttydSuffix yields "frame-src 'none'" (fail-closed —
+// no legitimate iframe exists when the Terminal pane has nothing to point
+// at, see ttydURLFor), and (2) a CONFIGURED ttydSuffix yields a frame-src
+// that actually allows the Terminal pane's cross-origin iframe origin
+// (`https://<user>.<ttydSuffix>` — a wildcard subdomain of ttydSuffix, since
+// CSP cannot template in the per-request username). The initial P23-6 cut
+// had no frame-src at all, which fell back to default-src 'self' and would
+// have CSP-blocked the Terminal tab on every real deploy that sets
+// PORTAL_TTYD_SUFFIX; this test pins the fix so it cannot silently regress.
+func TestPortalCSP_FrameSrc(t *testing.T) {
+	cases := []struct {
+		name       string
+		ttydSuffix string
+		want       string
+		wantNone   bool
+	}{
+		{name: "empty suffix (local / most deploys today) fails closed", ttydSuffix: "", wantNone: true},
+		{name: "configured suffix allows the ttyd wildcard origin", ttydSuffix: "ctf-event.dev", want: "frame-src https://*.ctf-event.dev"},
+		{name: "colima nip.io-style suffix", ttydSuffix: "10.0.0.5.nip.io", want: "frame-src https://*.10.0.0.5.nip.io"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			csp := portalCSP("nonceX", tc.ttydSuffix)
+			if tc.wantNone {
+				if !strings.Contains(csp, "frame-src 'none'") {
+					t.Errorf("expected frame-src 'none' for empty ttydSuffix; got: %s", csp)
+				}
+				return
+			}
+			if !strings.Contains(csp, tc.want) {
+				t.Errorf("expected %q in CSP for ttydSuffix=%q; got: %s", tc.want, tc.ttydSuffix, csp)
+			}
+			// The wildcard must cover ANY participant's own subdomain, not
+			// just a specific username — CSP has no per-viewer templating,
+			// and per-user isolation is enforced elsewhere (auth-policy's
+			// /check, I8), not by this directive. Assert the wildcard form
+			// specifically (not e.g. a single hardcoded hostname).
+			if !strings.Contains(csp, "https://*."+tc.ttydSuffix) {
+				t.Errorf("expected a wildcard subdomain allowance for ttydSuffix=%q; got: %s", tc.ttydSuffix, csp)
+			}
+		})
+	}
+}
+
 // TestPortalCSP_NonceIsPerInvocation proves two calls with different nonce
 // inputs produce different header values embedding EXACTLY that nonce (not
 // a stale/cached one) — a regression here (e.g. a package-level cached CSP
 // string) would silently make every response share one nonce, defeating the
 // per-response guarantee writeSecurityHeaders/newNonce rely on.
 func TestPortalCSP_NonceIsPerInvocation(t *testing.T) {
-	a := portalCSP("nonceA")
-	b := portalCSP("nonceB")
+	a := portalCSP("nonceA", "")
+	b := portalCSP("nonceB", "")
 	if !strings.Contains(a, "'nonce-nonceA'") {
 		t.Errorf("expected nonceA embedded in %q", a)
 	}
@@ -123,7 +171,7 @@ func TestPortalCSP_NonceIsPerInvocation(t *testing.T) {
 // (2) sets the auxiliary hardening headers.
 func TestWriteSecurityHeaders_SetsHeadersAndReturnsMatchingNonce(t *testing.T) {
 	w := httptest.NewRecorder()
-	nonce, err := writeSecurityHeaders(w)
+	nonce, err := writeSecurityHeaders(w, "")
 	if err != nil {
 		t.Fatalf("writeSecurityHeaders: %v", err)
 	}
@@ -147,16 +195,44 @@ func TestWriteSecurityHeaders_SetsHeadersAndReturnsMatchingNonce(t *testing.T) {
 	}
 }
 
+// TestWriteSecurityHeaders_ThreadsTtydSuffixIntoFrameSrc is the
+// writeSecurityHeaders-level companion to TestPortalCSP_FrameSrc: proves the
+// suffix argument actually reaches the emitted header (not silently dropped
+// somewhere between renderPortal and portalCSP).
+func TestWriteSecurityHeaders_ThreadsTtydSuffixIntoFrameSrc(t *testing.T) {
+	w := httptest.NewRecorder()
+	if _, err := writeSecurityHeaders(w, "ctf-event.dev"); err != nil {
+		t.Fatalf("writeSecurityHeaders: %v", err)
+	}
+	csp := w.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "frame-src https://*.ctf-event.dev") {
+		t.Errorf("expected frame-src to allow the ttyd wildcard origin; got: %s", csp)
+	}
+}
+
+// TestWriteSecurityHeaders_RejectsControlCharInSuffix proves a malformed
+// PORTAL_TTYD_SUFFIX (containing CR/LF, which could otherwise attempt a
+// header-injection-shaped value) is rejected outright rather than silently
+// producing whatever net/http's header writer would do with it — mirrors
+// internal/ttydproxy.validateFrameAncestors's same fail-closed posture for
+// the analogous operator-supplied CSP value there.
+func TestWriteSecurityHeaders_RejectsControlCharInSuffix(t *testing.T) {
+	_, err := writeSecurityHeaders(httptest.NewRecorder(), "ctf-event.dev\r\nX-Injected: 1")
+	if err == nil {
+		t.Fatal("expected an error for a ttydSuffix containing CR/LF, got nil")
+	}
+}
+
 // TestWriteSecurityHeaders_DistinctNoncePerCall proves consecutive calls
 // (modelling consecutive GET /portal requests) never reuse a nonce — this is
 // the end-to-end version of TestNewNonce_UniquePerCall, exercised through
 // the exact function renderPortal calls per-request.
 func TestWriteSecurityHeaders_DistinctNoncePerCall(t *testing.T) {
-	n1, err := writeSecurityHeaders(httptest.NewRecorder())
+	n1, err := writeSecurityHeaders(httptest.NewRecorder(), "")
 	if err != nil {
 		t.Fatalf("writeSecurityHeaders (1st): %v", err)
 	}
-	n2, err := writeSecurityHeaders(httptest.NewRecorder())
+	n2, err := writeSecurityHeaders(httptest.NewRecorder(), "")
 	if err != nil {
 		t.Fatalf("writeSecurityHeaders (2nd): %v", err)
 	}
@@ -229,6 +305,55 @@ func TestRenderPortal_CSPHeaderAndNonceInBody(t *testing.T) {
 	}
 	if m2[1] == nonce1 {
 		t.Fatalf("two independent GET /portal renders reused the same nonce %q", nonce1)
+	}
+}
+
+// TestRenderPortal_TtydIframeAllowedByCSP is the R5 (2026-08-16 /review-5x)
+// end-to-end regression test: with a REAL PORTAL_TTYD_SUFFIX configured
+// (the case the initial P23-6 cut's colima smoke test never exercised,
+// since local envs default this to "" — see cmd/scoreboard/main.go's
+// PORTAL_TTYD_SUFFIX doc), the response's CSP frame-src must actually cover
+// the origin the Terminal pane's OWN rendered iframe src uses. Without this
+// test, a future edit could re-break frame-src while every OTHER test still
+// passes (they all default ttydSuffix to ""), exactly how the original gap
+// slipped through.
+func TestRenderPortal_TtydIframeAllowedByCSP(t *testing.T) {
+	r := httptest.NewRequest("GET", "/portal", nil)
+	w := httptest.NewRecorder()
+	deriveUser := func(*http.Request) string { return "user1" }
+	const suffix = "ctf-event.dev"
+	if err := renderPortal(w, r, nil, deriveUser, suffix); err != nil {
+		t.Fatalf("renderPortal: %v", err)
+	}
+
+	csp := w.Header().Get("Content-Security-Policy")
+	frameSrcRe := regexp.MustCompile(`frame-src ([^;]*)`)
+	m := frameSrcRe.FindStringSubmatch(csp)
+	if m == nil {
+		t.Fatalf("no frame-src directive in CSP: %s", csp)
+	}
+	frameSrcValue := m[1]
+
+	// The exact iframe src this same response embeds (ttydURLFor's output —
+	// see portalData.TtydURLJSON) must be a URL whose origin the CSP
+	// frame-src actually allows. Extract it from the body the same way a
+	// browser's own script would read window.__PORTAL_TTYD_URL__.
+	body := w.Body.String()
+	ttydURLRe := regexp.MustCompile(`window\.__PORTAL_TTYD_URL__ = "([^"]*)"`)
+	um := ttydURLRe.FindStringSubmatch(body)
+	if um == nil {
+		t.Fatalf("could not find window.__PORTAL_TTYD_URL__ in body")
+	}
+	wantOrigin := "https://user1." + suffix
+	if um[1] != wantOrigin {
+		t.Fatalf("embedded ttyd URL = %q, want %q", um[1], wantOrigin)
+	}
+
+	if frameSrcValue == "'none'" {
+		t.Fatalf("frame-src is 'none' even though a real ttyd iframe URL (%q) was embedded — the Terminal tab would be CSP-blocked", wantOrigin)
+	}
+	if !strings.Contains(frameSrcValue, "https://*."+suffix) {
+		t.Errorf("frame-src %q does not allow the embedded iframe's origin %q", frameSrcValue, wantOrigin)
 	}
 }
 

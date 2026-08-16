@@ -13,10 +13,15 @@
      path. Loaded from OUR OWN origin only, never a CDN (P12: egress-zero for
      this asset). Applied PARTIALLY — see the "cybercore Falco-brand override"
      block below: only the shell chrome (tab nav / role badge) adopts
-     cybercore component classes; the journey/scoreboard/me panes keep their
-     own bespoke game-fx CSS untouched (P23-6 task scope: "部分採用...journey
-     game fx は自前維持"). Placed BEFORE this file's own <style> block so the
-     hand-authored rules below can override any cybercore declaration by
+     cybercore COMPONENT CLASSES (.cyber-badge etc); the journey/scoreboard/me
+     panes keep their own bespoke game-fx CSS and their own LOCAL --falco/
+     --accent variables untouched, and do NOT reference any --cyber-* custom
+     property from the override block below (P23-6 task scope: "部分採用...
+     journey game fx は自前維持" — no pane was rewired onto the cybercore
+     variable layer; see the override block's own comment below for the
+     2026-08-16 /review-5x R4 F1 correction of an earlier, overclaiming
+     version of this note). Placed BEFORE this file's own <style> block so
+     the hand-authored rules below can override any cybercore declaration by
      source-order (both have equal specificity on shared selectors; later
      wins). -->
 <link rel="stylesheet" href="/vendor/cybercore.min.css">
@@ -24,12 +29,31 @@
   /* ===== cybercore Falco-brand override (P23-6) =====
      cybercore-css themes itself entirely off CSS custom properties (see
      PROVENANCE.md's variable dump) — overriding them here re-themes every
-     cybercore component class this page uses WITHOUT touching cybercore's
-     own rules (no forking, no !important). Mapped to the SAME Falco palette
-     values already used throughout this file's per-pane --accent/--falco
-     variables (#00CBE2 / #0090A8 / etc — see #pane-scoreboard / #pane-journey
-     var blocks below) so the shell chrome and the panes read as one
-     consistent brand rather than two different neon palettes competing. */
+     cybercore COMPONENT CLASS this page actually uses (currently: the
+     #portal-role-badge's .cyber-badge classes — see the nav below) WITHOUT
+     touching cybercore's own rules (no forking, no !important). The values
+     chosen here happen to equal the SAME hex codes this file's per-pane
+     --accent/--falco variables already use (#00CBE2 / #0090A8 / etc — see
+     #pane-scoreboard / #pane-journey var blocks below), so the ONE cybercore
+     component currently in use (the role badge) reads as the same Falco
+     brand as the rest of the page.
+     SCOPE CORRECTION (2026-08-16 /review-5x R4 F1): an earlier version of
+     this comment claimed this override made "the shell chrome AND THE
+     PANES read as one consistent brand" via this variable layer — that
+     overstated what actually happens. The panes do NOT read var(--cyber-*)
+     anywhere; #pane-scoreboard/#pane-journey/#pane-me each define and use
+     their OWN separate --falco/--accent custom properties (see those
+     blocks below), so the "unified look" across all 3 faces today comes
+     from those pre-existing per-pane variables independently hardcoding
+     the same palette, NOT from this cybercore variable override cascading
+     into them — there is no cascade relationship between this :root block
+     and the pane-scoped blocks below. This block's actual, current effect
+     is narrower: it pins the ONE cybercore component class this page
+     currently uses (the role badge) to the Falco palette. Wiring the panes
+     onto this SAME variable layer (so a future palette change only needs
+     one edit) is tracked as residual scope in REFACTORING.md, not done
+     here — deliberately avoiding a larger CSS-variable-plumbing refactor
+     beyond this task's stated scope. */
   :root {
     --cyber-cyan-300: #6FE3F0; --cyber-cyan-400: #33D9EC;
     --cyber-cyan-500: #00CBE2; /* Falco Blue — cybercore's primary accent */
