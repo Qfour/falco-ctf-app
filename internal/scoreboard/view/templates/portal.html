@@ -140,11 +140,23 @@
     color: #EAF7FA;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   }
+  /* ===== Unified header bar (portal-header-refine) =====
+     Single top-of-page bar: brand logo (left) + tab nav (immediately right
+     of the logo) + user identity (right-aligned). Replaces the old
+     per-pane "FALCO CTF" <h1> brand headings — those now show just the tab
+     name (see each pane's header markup below) since the brand lives here,
+     once. */
   #portal-tabs {
-    display: flex; gap: 0.25rem; padding: 0.75rem 1.5rem 0;
+    display: flex; align-items: center; gap: 0.25rem; padding: 0.75rem 1.5rem 0;
     background: #0D141B; border-bottom: 1px solid #1C2A35;
     position: sticky; top: 0; z-index: 100; flex-wrap: wrap;
   }
+  #portal-brand {
+    font-family: 'Chakra Petch', sans-serif; font-size: 1rem; font-weight: 700;
+    letter-spacing: 0.04em; text-transform: uppercase; color: #EAF7FA;
+    margin: 0 1.25rem 0.5rem 0; align-self: center; white-space: nowrap;
+  }
+  #portal-brand .accent { color: #00CBE2; text-shadow: 0 0 14px rgba(0,203,226,0.35); }
   #portal-tabs .tab {
     font-family: 'Chakra Petch', sans-serif; font-size: 0.8rem; font-weight: 600;
     letter-spacing: 0.08em; text-transform: uppercase; color: #9DB4BF;
@@ -154,15 +166,18 @@
   #portal-tabs .tab:hover { color: #EAF7FA; }
   #portal-tabs .tab.active { color: #00CBE2; border-bottom-color: #00CBE2; }
   #portal-tabs .tab[hidden] { display: none; }
-  /* P23-6: visual chrome (border/pill/color/font) now comes from cybercore's
-     .cyber-badge component classes on the element itself (see the <span> in
-     the nav below) — this rule only keeps the SHELL-LAYOUT positioning
-     cybercore's badge has no opinion on (pinning it to the right end of the
-     sticky tab bar and lining its baseline up with the tab labels). Emptied
-     of color intentionally: overriding it here would fight the cybercore
-     class instead of composing with it. */
-  #portal-role-badge {
+  /* Right-aligned identity cluster: username (primary) + role badge (small,
+     secondary). visual chrome (border/pill/color/font) for the role badge
+     comes from cybercore's .cyber-badge component classes on the element
+     itself (see the <span> in the nav below) — this rule only keeps the
+     SHELL-LAYOUT positioning cybercore's badge has no opinion on. */
+  #portal-identity {
     margin-left: auto; align-self: center; margin-bottom: 0.5rem;
+    display: flex; align-items: center; gap: 0.55rem;
+  }
+  #portal-username {
+    font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.8rem;
+    font-weight: 600; color: #EAF7FA; letter-spacing: 0.02em;
   }
   .pane { display: none; }
   .pane.active { display: block; }
@@ -407,6 +422,19 @@
   #pane-story .mono { font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace; }
   #pane-story .display { font-family: 'Chakra Petch', sans-serif; letter-spacing: 0.02em; }
   #pane-story code { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.875em; background: var(--surface-2); padding: 1px 6px; border-radius: 3px; color: var(--accent); }
+  /* Falco Rule condition/output overflow fix (portal-header-refine item
+     10) — a raw <pre><code> (see renderFalcoRule's .fr-body markup below)
+     previously had NO overflow handling here at all (unlike .rich-content
+     pre, which already sets overflow-x: auto for the gen-time Home/Story
+     fragment content — a DIFFERENT code path, hand-authored template
+     literals in renderFalcoRule, not that shared class). A long, unbroken
+     Falco `condition` expression therefore forced the box (and, pre-fix,
+     the whole .layout grid track — see the min-width: 0 rule above) wider
+     than the pane, clipping at the viewport's right edge. Matches
+     .rich-content pre's own treatment for consistency across the two code
+     paths. */
+  #pane-story pre { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 0.5rem; padding: 0.85rem 1rem; overflow-x: auto; margin: 0.6rem 0; max-width: 100%; }
+  #pane-story pre code { background: none; padding: 0; color: var(--text-dim); white-space: pre; }
   #pane-story a { color: var(--accent); text-decoration: none; }
   #pane-story a:hover { text-decoration: underline; }
 
@@ -426,7 +454,17 @@
   #pane-story .bar { width: 100%; height: 10px; background: var(--bg-elev); border-radius: 5px; overflow: hidden; box-shadow: inset 0 0 0 1px var(--border); }
   #pane-story .fill { height: 100%; background: linear-gradient(90deg, var(--accent-2), var(--accent)); box-shadow: 0 0 12px var(--accent-glow); transition: width 0.6s ease; }
 
-  #pane-story .layout { display: grid; grid-template-columns: 320px 1fr; gap: 1.5rem; align-items: start; }
+  /* min-width: 0 on both grid items (portal-header-refine item 10) — CSS
+     grid items default to `min-width: auto`, which lets an intrinsically
+     wide descendant (e.g. a long, unwrapped Falco rule `condition` line
+     inside a <pre>, see the .fr-item/.mission-body rules below) grow the
+     1fr detail column — and therefore the whole .layout / .p-shell page —
+     wider than the viewport, clipping content at the right edge instead of
+     wrapping/scrolling inside its own box. Without this, fixing the pre/
+     code overflow rules alone is not sufficient: the grid track itself
+     still expands to fit them. */
+  #pane-story .layout { display: grid; grid-template-columns: 320px 1fr; gap: 1.5rem; align-items: start; min-width: 0; }
+  #pane-story .layout > * { min-width: 0; }
   @media (max-width: 900px) { #pane-story { padding: 1.25rem; } #pane-story .layout { grid-template-columns: 1fr; } }
 
   #pane-story .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 0.85rem; overflow: hidden; }
@@ -465,11 +503,21 @@
      reflows responsively without needing an SVG viewBox. Purely decorative
      progress visualization — click delegates to the same free-browse handler
      as the mission map list (one source of truth for "which mission is this"). */
-  #pane-story .killchain { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0; padding: 1.1rem 1.25rem 1.3rem; background: var(--surface); border: 1px solid var(--border); border-radius: 0.85rem; margin-bottom: 1.5rem; }
-  #pane-story .kc-node { position: relative; display: flex; flex-direction: column; align-items: center; gap: 0.4rem; padding: 0 0.9rem; cursor: pointer; flex: 1 1 auto; min-width: 64px; }
+  /* Single-row layout (portal-header-refine item 9): 10 nodes (post mission-11
+     exclusion, item 8) must fit on one line at typical desktop widths without
+     wrapping to a second row or visibly overflowing. Changed from
+     `flex-wrap: wrap` + `flex: 1 1 auto` + unbounded nowrap labels (which
+     let long titles push nodes wide enough to wrap) to `flex-wrap: nowrap`
+     + `flex: 1 1 0` (every node shares the row equally, shrinking together)
+     + a `max-width` + ellipsis on the label (long titles truncate instead of
+     forcing width). `overflow-x: auto` stays as the fallback for viewports
+     too narrow to fit 10 shrunk nodes at all (mobile) — see the media query
+     below — rather than the primary mechanism. */
+  #pane-story .killchain { display: flex; flex-wrap: nowrap; align-items: flex-start; gap: 0; padding: 1.1rem 1.25rem 1.3rem; background: var(--surface); border: 1px solid var(--border); border-radius: 0.85rem; margin-bottom: 1.5rem; overflow-x: auto; }
+  #pane-story .kc-node { position: relative; display: flex; flex-direction: column; align-items: center; gap: 0.4rem; padding: 0 0.4rem; cursor: pointer; flex: 1 1 0; min-width: 0; }
   #pane-story .kc-node:not(:first-child)::before { content: ''; position: absolute; top: 15px; left: -50%; width: 100%; height: 2px; background: var(--border-strong); z-index: 0; }
   #pane-story .kc-node.solved:not(:first-child)::before { background: var(--success); opacity: 0.6; }
-  #pane-story .kc-dot { position: relative; z-index: 1; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-size: 0.85rem; font-weight: 700; background: var(--bg-elev); border: 2px solid var(--border-strong); color: var(--text-mute); transition: all 0.15s; }
+  #pane-story .kc-dot { position: relative; z-index: 1; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-size: 0.85rem; font-weight: 700; background: var(--bg-elev); border: 2px solid var(--border-strong); color: var(--text-mute); transition: all 0.15s; flex-shrink: 0; }
   #pane-story .kc-node:hover .kc-dot { border-color: var(--accent); }
   #pane-story .kc-node.type-trigger .kc-dot { border-color: var(--accent-2); }
   #pane-story .kc-node.type-evade .kc-dot { border-color: var(--evade); }
@@ -478,13 +526,18 @@
   #pane-story .kc-node.current .kc-dot { background: rgba(0,203,226,0.15); border-color: var(--accent); color: var(--accent); box-shadow: 0 0 14px var(--accent-glow); animation: p-pulse 1.8s ease-in-out infinite; }
   #pane-story .kc-node.locked .kc-dot { opacity: 0.45; }
   #pane-story .kc-node.viewed .kc-dot { outline: 2px solid var(--accent-2); outline-offset: 2px; }
-  #pane-story .kc-label { font-family: 'JetBrains Mono', monospace; font-size: 0.62rem; letter-spacing: 0.04em; color: var(--text-mute); text-align: center; white-space: nowrap; }
+  #pane-story .kc-label { font-family: 'JetBrains Mono', monospace; font-size: 0.62rem; letter-spacing: 0.04em; color: var(--text-mute); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
   #pane-story .kc-node.current .kc-label, #pane-story .kc-node.solved .kc-label { color: var(--text-dim); }
   #pane-story .kc-node.locked .kc-label { opacity: 0.5; }
   #pane-story .kc-type { font-size: 0.55rem; text-transform: uppercase; letter-spacing: 0.1em; }
   #pane-story .kc-node.type-trigger .kc-type { color: var(--accent-2); }
   #pane-story .kc-node.type-evade .kc-type { color: var(--evade); }
-  @media (max-width: 900px) { #pane-story .killchain { overflow-x: auto; } #pane-story .kc-node { min-width: 56px; } }
+  /* Below this width, 10 shrunk nodes would compress the dots/labels past
+     legibility — switch to a horizontally scrollable strip instead of
+     forcing further shrink (mobile fallback, unchanged mechanism from
+     before this task, just re-tuned min-width now that nodes flex-shrink
+     rather than flex-grow-from-auto). */
+  @media (max-width: 900px) { #pane-story .kc-node { flex: 0 0 auto; min-width: 64px; } }
 
   /* Falco rule excerpt accordion (P23 Story-as-docs) — List / Macro / Rule
      sections. Reuses .rich-content's code/pre typography for condition/
@@ -500,18 +553,18 @@
   #pane-story .fr-item summary::before { content: '▸ '; color: var(--text-mute); }
   #pane-story .fr-item[open] summary::before { content: '▾ '; }
   #pane-story .fr-item .fr-body { margin-top: 0.6rem; }
-  #pane-story .fr-item .fr-desc { color: var(--text-dim); font-size: 0.85rem; line-height: 1.6; margin-bottom: 0.5rem; }
+  #pane-story .fr-item .fr-desc { color: var(--text-dim); font-size: 0.85rem; line-height: 1.6; margin-bottom: 0.5rem; overflow-wrap: anywhere; }
   #pane-story .fr-item .fr-priority { display: inline-block; font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.08em; padding: 2px 7px; border-radius: 4px; background: rgba(255,176,32,0.12); color: var(--warn); border: 1px solid rgba(255,176,32,0.35); margin-left: 0.5rem; vertical-align: middle; }
   #pane-story .fr-item .fr-tags { margin-top: 0.5rem; font-size: 0.65rem; color: var(--text-mute); font-family: 'JetBrains Mono', monospace; }
   #pane-story .fr-list-items { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.4rem; }
   #pane-story .fr-list-items span { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 4px; padding: 1px 7px; font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; color: var(--text-dim); }
 
   /* mission detail */
-  #pane-story .mission { background: var(--surface); border: 1px solid var(--border); border-radius: 0.85rem; overflow: hidden; }
+  #pane-story .mission { background: var(--surface); border: 1px solid var(--border); border-radius: 0.85rem; overflow: hidden; max-width: 100%; }
   #pane-story .mission-head { padding: 1.4rem 1.6rem 1.1rem; border-bottom: 1px solid var(--border); background: linear-gradient(180deg, var(--bg-elev), var(--surface)); }
   #pane-story .mission-head .kicker { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; letter-spacing: 0.12em; color: var(--text-mute); text-transform: uppercase; }
-  #pane-story .mission-head h2 { font-family: 'Chakra Petch', sans-serif; font-size: 1.6rem; margin: 0.25rem 0; }
-  #pane-story .mission-head .tagline { color: var(--accent); font-size: 0.95rem; }
+  #pane-story .mission-head h2 { font-family: 'Chakra Petch', sans-serif; font-size: 1.6rem; margin: 0.25rem 0; overflow-wrap: anywhere; }
+  #pane-story .mission-head .tagline { color: var(--accent); font-size: 0.95rem; overflow-wrap: anywhere; }
   /* C1 fixup: explicit "return to current mission" affordance, shown only
      when the detail panel is browsing a solved/locked mission. */
   #pane-story .back-to-current { margin-top: 0.7rem; }
@@ -522,7 +575,7 @@
   /* lead-in: previous mission's narrative bridge (#47), persisted above the briefing */
   #pane-story .lead-in { position: relative; background: linear-gradient(90deg, rgba(0,203,226,0.07), transparent); border: 1px solid var(--border); border-left: 2px solid var(--accent); border-radius: 0.5rem; padding: 0.7rem 1rem 0.75rem; margin-bottom: 1.2rem; color: var(--text-dim); font-size: 0.92rem; line-height: 1.6; font-style: italic; }
   #pane-story .lead-in .li-kicker { display: block; font-family: 'JetBrains Mono', monospace; font-size: 0.62rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); font-style: normal; margin-bottom: 0.35rem; opacity: 0.85; }
-  #pane-story .briefing { color: var(--text-dim); font-size: 0.98rem; line-height: 1.7; margin-bottom: 1.5rem; border-left: 2px solid var(--border-strong); padding-left: 1rem; }
+  #pane-story .briefing { color: var(--text-dim); font-size: 0.98rem; line-height: 1.7; margin-bottom: 1.5rem; border-left: 2px solid var(--border-strong); padding-left: 1rem; overflow-wrap: anywhere; }
   #pane-story .sec-title { font-family: 'Chakra Petch', sans-serif; text-transform: uppercase; letter-spacing: 0.16em; font-size: 0.72rem; color: var(--text-mute); margin: 1.4rem 0 0.7rem; }
 
   #pane-story .steps { list-style: none; }
@@ -533,14 +586,14 @@
   #pane-story .steps li.done .box { background: linear-gradient(135deg, var(--accent), var(--accent-2)); border-color: var(--accent); color: var(--bg); box-shadow: 0 0 10px var(--accent-glow); }
   #pane-story .steps .step-label { font-weight: 600; font-size: 0.95rem; }
   #pane-story .steps li.done .step-label { color: var(--text-mute); text-decoration: line-through; }
-  #pane-story .steps .step-detail { color: var(--text-dim); font-size: 0.85rem; margin-top: 0.2rem; white-space: pre-wrap; }
+  #pane-story .steps .step-detail { color: var(--text-dim); font-size: 0.85rem; margin-top: 0.2rem; white-space: pre-wrap; overflow-wrap: anywhere; }
 
   #pane-story .score { color: var(--accent); font-weight: 700; }
   #pane-story .hint-locked .pen { color: var(--warn); font-weight: 700; }
   #pane-story .hints { display: flex; flex-direction: column; gap: 0.6rem; }
   #pane-story .hint-open { background: var(--bg-elev); border: 1px solid var(--border); border-left: 2px solid var(--warn); border-radius: 0.5rem; padding: 0.7rem 1rem; }
   #pane-story .hint-open .hn { font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; color: var(--warn); text-transform: uppercase; letter-spacing: 0.1em; }
-  #pane-story .hint-open .ht { color: var(--text-dim); font-size: 0.9rem; margin-top: 0.25rem; white-space: pre-wrap; }
+  #pane-story .hint-open .ht { color: var(--text-dim); font-size: 0.9rem; margin-top: 0.25rem; white-space: pre-wrap; overflow-wrap: anywhere; }
   #pane-story .hint-locked { display: flex; justify-content: space-between; align-items: center; background: var(--bg-elev); border: 1px dashed var(--border-strong); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--text-mute); font-size: 0.85rem; }
   #pane-story .btn { font-family: 'Chakra Petch', sans-serif; text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.72rem; font-weight: 700; padding: 0.45rem 0.9rem; border-radius: 6px; border: 1px solid var(--border-strong); background: transparent; color: var(--text-dim); cursor: pointer; transition: all 0.15s; }
   #pane-story .btn:hover { color: var(--accent); border-color: var(--accent); box-shadow: 0 0 12px var(--accent-glow); }
@@ -717,13 +770,13 @@
   /* ===== Shared rich-content styling (P23 portal-redesign) =====
      Markdown-derived typography for gen-time-sanitized fragment HTML
      (home.go / homefragments_gen.go) — extracted from what was previously
-     a #pane-home-panels-only ".home-panel-body" block so the Story tab's
-     overview (#pane-story .story-overview, injected from the SAME
-     HomeFragments source — see home.go's storyPanelHTML) can reuse it
-     without duplicating ~20 rules. Unscoped by pane id on purpose: this
-     class only ever wraps server-generated, already-sanitized fragment
-     HTML (never client-rendered JS template-literal output), so applying
-     it in more than one place carries no new risk. */
+     a #pane-home-panels-only ".home-panel-body" block. Unscoped by pane id
+     on purpose: this class only ever wraps server-generated, already-
+     sanitized fragment HTML (never client-rendered JS template-literal
+     output), so applying it in more than one place carries no new risk.
+     (Formerly ALSO reused by #pane-story .story-overview — that block was
+     removed in portal-header-refine item 7; see the Home panels' .home-panel
+     rules below, still the class's other consumer.) */
   .rich-content { color: #9DB4BF; font-size: 0.92rem; line-height: 1.75; }
   .rich-content h2 { font-family: 'Chakra Petch', sans-serif; font-size: 1.1rem; color: #EAF7FA; margin: 1.1rem 0 0.5rem; }
   .rich-content h3 { font-family: 'Chakra Petch', sans-serif; font-size: 0.95rem; color: #EAF7FA; margin: 1rem 0 0.4rem; }
@@ -758,18 +811,6 @@
   #pane-home-panels .home-rule-explain-item:first-child { border-top: none; padding-top: 0; }
   #pane-home-panels .home-rule-explain-chal { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase; color: #00CBE2; margin: 0 0 0.5rem; }
 
-  /* ===== Story overview (P23 portal-redesign): the "story" HomeFragment,
-     surfaced at the top of the Story pane instead of buried in a Home
-     <details> panel — see home.go's storyPanelHTML doc. Structural
-     spacing only; typography comes from .rich-content (applied alongside
-     this class in the markup below). ===== */
-  #pane-story .story-overview { background: var(--surface); border: 1px solid var(--border); border-radius: var(--p-panel-radius); padding: 1.25rem 1.5rem; margin-bottom: 1.5rem; }
-  /* fail-soft (R2 F1): buildStoryPanelHTML/StoryPanelHTML degrade to "" when
-     no "story" HomeFragment exists (see home.go's doc) — hide the bordered
-     box entirely rather than showing an empty panel, matching the existing
-     #pane-scoreboard .podium:empty precedent above. */
-  #pane-story .story-overview:empty { display: none; }
-
   /* ===== Terminal pane (P23 portal-redesign restyle) =====
      Previously entirely inline style="" attributes in the JS-generated
      markup below (P23-4's original cut) — now the shared design tokens
@@ -801,12 +842,16 @@
      one id; the label↔id mismatch (pane "me" shows "Scoreboard") is deliberate
      per the CEO naming decision. -->
 <nav id="portal-tabs">
+  <span id="portal-brand"><span class="accent">Falco</span> CTF</span>
   <a class="tab" data-tab="home" href="#home">Home</a>
   <a class="tab" data-tab="story" href="#story">Story</a>
   <a class="tab" data-tab="scoreboard" href="#scoreboard" id="tab-scoreboard" hidden>Leaderboard</a>
   <a class="tab" data-tab="me" href="#me">Scoreboard</a>
   <a class="tab" data-tab="terminal" href="#terminal">Terminal</a>
-  <span id="portal-role-badge" class="cyber-badge cyber-badge--ghost cyber-badge--sm"></span>
+  <span id="portal-identity">
+    <span id="portal-username"></span>
+    <span id="portal-role-badge" class="cyber-badge cyber-badge--ghost cyber-badge--sm"></span>
+  </span>
 </nav>
 <script nonce="{{.Nonce}}">
   // Server-injected identity (P23-1) + own-ttyd URL (P23-4). This is a
@@ -839,7 +884,7 @@
 
   <header>
     <div class="brand">
-      <h1 class="p-h1"><span class="accent">Falco</span> CTF <span class="light mono">story</span></h1>
+      <h1 class="p-h1"><span class="accent">Story</span></h1>
       <div class="subtitle">作戦を順に攻略せよ — ミッションマップ・ブリーフィング・段階ヒント</div>
     </div>
     <div>
@@ -848,16 +893,19 @@
     </div>
   </header>
 
-  <!-- Story overview (P23 portal-redesign): the "story" HomeFragment,
-       gen-time-sanitized like the Home tab's panels — see home.go's
-       storyPanelHTML/buildStoryPanelHTML doc and portal.go's
-       StoryPanelHTML field doc for why this is safe to inject unescaped.
-       Empty (renders nothing visible) when no story fragment exists,
-       matching the fail-soft convention documented there. Placed BEFORE
-       the mission map/progress bar so a participant sees the campaign
-       framing first, then drops into the current mission's game UI
-       below (untouched by this addition). -->
-  <div class="story-overview rich-content">{{.StoryPanelHTML}}</div>
+  <!-- Story overview panel REMOVED (portal-header-refine item 7): the
+       "このイベントは…" lead-in text + table previously injected here via
+       {{.StoryPanelHTML}} (portal.go / home.go's storyPanelHTML) is no
+       longer rendered — the kill-chain diagram below now carries the
+       campaign-overview role on its own. portal.go's StoryPanelHTML field /
+       home.go's storyPanelHTML var / buildStoryPanelHTML are intentionally
+       LEFT IN PLACE (not deleted) pending content-lead's parallel removal
+       of the underlying "story" HomeFragment source
+       (docs-site/home-fragments.yaml) — ceasing to reference the field here
+       is the app-side half of that coordinated cleanup; see
+       TestRenderPortal_StoryPanelInjected in portal_test.go (updated
+       alongside this change) for the test that used to assert this markup
+       existed. -->
 
   <div id="pane-journey-page"></div>
 
@@ -992,11 +1040,26 @@
     // browsing lets these differ; see the .viewed CSS rule).
     const viewedId = (d.detail && d.detail.id) || d.current || null;
 
+    // Hidden bonus mission (portal-header-refine item 8, CEO decision):
+    // "11-cloud-cred-hunt" is excluded from the Story tab's VISUAL kill-chain
+    // + mission map ONLY — a display/projection filter, nothing else. total /
+    // solvedCount / pct / score above are NOT recomputed from this filtered
+    // list (they stay the server's real numbers, matching the Leaderboard/Me
+    // tabs) — this is display-only non-disclosure of the bonus mission's
+    // existence, not a scoring change. If mission 11 happens to be `current`
+    // or `viewedId` (e.g. a participant navigates straight to its detail via
+    // a direct API call), it is still excluded from THESE two lists but the
+    // detail pane below (which renders d.detail, not this filtered array)
+    // is untouched — this mission simply never appears as a clickable node.
+    const HIDDEN_MISSION_IDS = ['11-cloud-cred-hunt'];
+    const visibleMissions = missions.filter(m => !HIDDEN_MISSION_IDS.includes(m.id));
+
     // ---- kill-chain overview (P23 Story-as-docs) ----
-    // Data-driven from the SAME missions[] the map below uses — one source of
-    // truth for status/type/order. Purely a visual overview; clicking a node
-    // free-browses exactly like clicking the map row for the same mission.
-    const killchainHTML = missions.map(m => {
+    // Data-driven from the SAME visibleMissions[] the map below uses — one
+    // source of truth for status/type/order (bonus mission already excluded
+    // above). Purely a visual overview; clicking a node free-browses exactly
+    // like clicking the map row for the same mission.
+    const killchainHTML = visibleMissions.map(m => {
       const typeCls = m.type ? ' type-' + esc(m.type) : '';
       const viewedCls = (m.id === viewedId) ? ' viewed' : '';
       let dot = String(m.id).split('-')[0] || '?';
@@ -1011,7 +1074,7 @@
 
     // ---- mission map ----
     const justUnlockedId = (!firstRender && prevCurrent && d.current && prevCurrent !== d.current) ? d.current : null;
-    const mapHTML = missions.map(m => {
+    const mapHTML = visibleMissions.map(m => {
       let ico = '🔒', cls = m.status;
       if (m.status === 'solved') ico = '✔';
       else if (m.status === 'current') ico = '▶';
@@ -1444,7 +1507,7 @@
 
   <header>
     <div class="brand">
-      <h1 class="p-h1"><span class="accent">Falco</span> CTF <span class="light mono">scoreboard</span></h1>
+      <h1 class="p-h1"><span class="accent">Leaderboard</span></h1>
     </div>
     <div class="hdr-right">
       <div class="live p-live">● LIVE <span class="demo-tag" id="pane-scoreboard-demo-tag">demo</span></div>
@@ -1840,7 +1903,7 @@
 
   <header>
     <div class="brand">
-      <h1 class="p-h1">falco<span class="accent">-ctf</span> <span class="light mono">me</span></h1>
+      <h1 class="p-h1"><span class="accent">Scoreboard</span></h1>
       <div class="subtitle">your live progress + Falco rule activity</div>
     </div>
     <div>
@@ -2010,34 +2073,46 @@
 <!-- ===== Home pane (P23-5: gen-time-sanitized content panels folded in from
      docs-site — see docs-site/home-fragments.yaml for the content contract
      and internal/scoreboard/view/home.go / portal.go for the security
-     rationale of injecting {{.HomePanelsHTML}} unescaped. This and the
-     Story pane's {{.StoryPanelHTML}} (P23 portal-redesign) are the ONLY
-     two places in this template that intentionally bypass
+     rationale of injecting {{.HomePanelsHTML}} unescaped. This is now the
+     ONLY place in this template that intentionally bypasses
      esc()/html/template auto-escaping — every other dynamic value in this
-     file keeps going through esc() or template.JS exactly as before P23-5;
-     see portal.go's StoryPanelHTML field doc for why splitting into a
-     second field shares the exact same trust boundary rather than opening
-     a new one. ===== -->
+     file keeps going through esc() or template.JS exactly as before P23-5.
+     (The Story pane's {{.StoryPanelHTML}} injection, the second such site
+     as of P23 portal-redesign, was REMOVED in portal-header-refine item 7
+     — see portal.go's StoryPanelHTML field doc for why the field itself is
+     still left in place, just unreferenced here.) ===== -->
 <div class="pane" id="pane-home" style="padding:2.5rem 3rem;max-width:52rem">
   <h1 style="font-family:'Chakra Petch',sans-serif;font-size:2rem;margin:0 0 0.5rem;">
-    <span style="color:#00CBE2">Falco</span> CTF
+    <span style="color:#00CBE2">Home</span>
   </h1>
   <p style="color:#9DB4BF;line-height:1.6;margin:0 0 1rem;">
     Welcome to the unified portal. Use the tabs above to open your mission
     <strong>Story</strong>, check <strong>Scoreboard</strong> for your live progress,
     and drop into your <strong>Terminal</strong>.
   </p>
-  <!-- Static links (P23 portal-redesign) — plain hand-authored HTML, not
-       routed through docs-site/home-fragments.yaml's sanitizer allowlist
-       (deliberately: this is the ONE bit of Home content that is NOT
-       gen-time fragment content, so it does not need that pipeline, and
-       broadening the fragment sanitizer's allowlist just for two static
-       links would be a needless scope increase). -->
-  <p style="color:#9DB4BF;line-height:1.6;margin:0 0 1rem;">
-    Falco 本体: <a href="https://falco.org" target="_blank" rel="noopener noreferrer">falco.org</a> ·
-    このイベントのソース: <a href="https://github.com/Qfour/falco-ctf-app" target="_blank" rel="noopener noreferrer">github.com/Qfour/falco-ctf-app</a>
-  </p>
-  <div id="pane-home-panels">{{.HomePanelsHTML}}</div>
+  <div id="pane-home-panels">{{.HomePanelsHTML}}
+    <!-- 参考サイト (portal-header-refine, item 6): plain hand-authored static
+         links, NOT routed through docs-site/home-fragments.yaml's sanitizer
+         allowlist (deliberately: this is the ONE bit of Home content that is
+         NOT gen-time fragment content, so it does not need that pipeline,
+         and broadening the fragment sanitizer's allowlist just for two
+         static links would be a needless scope increase — same rationale
+         the falco.org/github links this replaces previously carried).
+         Placed as a sibling INSIDE #pane-home-panels (after the
+         gen-time-rendered {{.HomePanelsHTML}} fragments above) purely so it
+         inherits the SAME #pane-home-panels .home-panel/.home-panel-body
+         CSS scoping already defined above — this <details> element itself
+         is still hand-authored markup, not fragment content. -->
+    <details class="home-panel">
+      <summary>参考サイト</summary>
+      <div class="home-panel-body rich-content">
+        <ul>
+          <li><a href="https://falco.org/docs/reference/rules/" target="_blank" rel="noopener noreferrer">Falco Docs</a></li>
+          <li><a href="https://github.com/falcosecurity/rules/blob/72945ab934b4449a2bc4befe9e9fcdfe6e106090/rules/falco_rules.yaml" target="_blank" rel="noopener noreferrer">Falco Rules</a></li>
+        </ul>
+      </div>
+    </details>
+  </div>
 </div>
 
 <!-- ===== Terminal pane (P23-4): iframe embed of the caller's own ttyd.
@@ -2157,6 +2232,23 @@
 
   function applyRole() {
     const role = window.__PORTAL_ROLE__ || 'participant';
+    // Primary identity display (portal-header-refine): the LOGGED-IN
+    // username (server-derived via api.DeriveUsername from
+    // X-Auth-Request-Email — see window.__PORTAL_USER__'s doc up in the nav
+    // script above), not the role label. __PORTAL_USER__ is "" whenever
+    // DeriveUsername could not derive a slug (e.g. an operator whose email
+    // prefix does not match the participant username shape, or no header at
+    // all) — fall back to the role string itself ("admin"/"participant") so
+    // the identity slot is never left blank. Uses textContent throughout
+    // (never innerHTML), so no separate esc() helper is needed here even
+    // though window.__PORTAL_USER__ is caller-influenced (it can only ever
+    // equal the caller's OWN X-Auth-Request-Email prefix — see
+    // api.DeriveUsername's doc — and textContent never interprets its input
+    // as markup regardless).
+    const user = window.__PORTAL_USER__ || '';
+    document.getElementById('portal-username').textContent = user || role;
+    // Role badge: kept as a small secondary indicator alongside the
+    // username (was the PRIMARY identity display pre-portal-header-refine).
     document.getElementById('portal-role-badge').textContent = role;
     // Defense-in-depth ONLY (see comment above): hides the tab so a
     // participant is not invited to click into a 403. The actual gate is
