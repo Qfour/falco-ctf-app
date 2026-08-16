@@ -90,6 +90,11 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /me", h.me)
 	mux.HandleFunc("GET /journey", h.journey)
 	mux.HandleFunc("GET /portal", h.portal)
+	// P23-6: the vendored, self-hosted cybercore-css stylesheet the portal
+	// shell links to (see vendorassets.go's cybercoreCSSPath / PROVENANCE.md
+	// for the pin). Served same-origin — never a CDN — so this asset never
+	// leaves the deploy's own origin (P12).
+	mux.HandleFunc("GET "+cybercoreCSSPath, serveCybercoreCSS)
 }
 
 func (h *Handler) index(w http.ResponseWriter, r *http.Request) {

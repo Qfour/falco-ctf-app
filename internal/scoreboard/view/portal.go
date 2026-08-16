@@ -61,6 +61,19 @@ type portalData struct {
 	// no per-user data). This is the ONLY portalData field that is
 	// template.HTML rather than a JSON-marshalled display hint.
 	HomePanelsHTML template.HTML
+	// Nonce (P23-6) is the CSP script-src nonce generated fresh for THIS
+	// response by writeSecurityHeaders (csp.go) and simultaneously stamped
+	// onto the Content-Security-Policy response header. It is plain
+	// template.HTML-safe as-is (base64 output — no HTML metacharacters), but
+	// is typed as a plain string here (not template.JS/template.HTML) since
+	// it is only ever used as the value of a nonce="" HTML attribute, which
+	// html/template already escapes correctly for a plain string in an
+	// attribute-value context. Every <script> tag in templates/portal.html
+	// MUST carry nonce="{{.Nonce}}" — a script tag without it is silently
+	// blocked by the CSP (fail-closed: a future inline <script> added
+	// without the nonce simply does not run, rather than reopening an XSS
+	// hole).
+	Nonce string
 }
 
 // ttydURLFor builds the caller's own ttyd origin from their derived username
@@ -156,11 +169,28 @@ func renderPortal(w http.ResponseWriter, r *http.Request, isAdmin func(*http.Req
 		return err
 	}
 
+	// writeSecurityHeaders (P23-6) MUST run before Content-Type / the
+	// template Execute below — headers cannot be added after the first
+	// Write. It returns the nonce this SAME response's CSP header just
+	// advertised, which we thread into the template so every inline
+	// <script> tag ends up carrying the matching nonce="" attribute (see
+	// csp.go's portalCSP doc and portalData.Nonce's doc for the full
+	// rationale). ttydSuffix is passed straight through (the SAME value
+	// ttydURLFor above already used) so the CSP's frame-src allows the
+	// Terminal pane's own cross-origin iframe (R5 fixup — see portalCSP's
+	// frame-src doc for why omitting this blocked the Terminal tab on every
+	// deploy that sets PORTAL_TTYD_SUFFIX).
+	nonce, err := writeSecurityHeaders(w, ttydSuffix)
+	if err != nil {
+		return err
+	}
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	return portalTmpl.Execute(w, portalData{
 		RoleJSON:       template.JS(roleJSON),
 		UserJSON:       template.JS(userJSON),
 		TtydURLJSON:    template.JS(ttydURLJSON),
 		HomePanelsHTML: homePanelsHTML,
+		Nonce:          nonce,
 	})
 }
