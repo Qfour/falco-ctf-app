@@ -109,6 +109,16 @@ func renderStaticPanel(root string, sp homefragments.StaticPanel) (panel, bool, 
 			return panel{}, false, nil // fail-soft: heading not found
 		}
 		md = section
+	} else {
+		// whole_file panel (story.md, cheatsheet.md): strip the source's
+		// leading "# title" line BEFORE rendering, so it never becomes an
+		// <h1> node for the sanitizer to drop-wrapper-but-keep-text (which
+		// would otherwise leak the bare title text ahead of the first real
+		// <p>, duplicating the <summary> label the Home panel already
+		// shows — merge-review fixup R2 F1). A heading-selected panel
+		// (intro) never includes the source's h1 in its selected section in
+		// the first place, so this only applies in the whole_file branch.
+		md = homefragments.StripLeadingH1(md)
 	}
 	html, err := homefragments.RenderMarkdown(md)
 	if err != nil {
@@ -116,10 +126,6 @@ func renderStaticPanel(root string, sp homefragments.StaticPanel) (panel, bool, 
 	}
 	return panel{ID: goIdent(sp.ID), Label: sp.Label, HTML: html}, true, nil
 }
-
-// challengeDirRe matches the canonical <NN>-<slug> challenge directory name
-// shape (internal/catalog.Load / LoadJourneys scan the same way).
-var challengeDirRe = regexp.MustCompile(`^(\d\d)-[a-z0-9-]+$`)
 
 func renderRuleExplainPanels(root string) ([]panel, error) {
 	chalDir := filepath.Join(root, "challenges")
@@ -134,7 +140,10 @@ func renderRuleExplainPanels(root string) ([]panel, error) {
 		if !e.IsDir() {
 			continue
 		}
-		m := challengeDirRe.FindStringSubmatch(e.Name())
+		// homefragments.ChallengeDirRe is shared with
+		// internal/homefragments/manifest_verified_test.go so the directory-
+		// scan shape has one definition, not two that could drift.
+		m := homefragments.ChallengeDirRe.FindStringSubmatch(e.Name())
 		if m == nil {
 			continue
 		}

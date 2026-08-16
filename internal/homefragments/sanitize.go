@@ -13,15 +13,26 @@ import (
 // input/button), whose children (and text, e.g. inline JS inside <script>)
 // are dropped entirely, never re-parented as loose text.
 //
-// h1 is intentionally absent even though the manifest's elements comment
-// mentions h1 in passing ("never render source h1 — H1 is the docs-site
-// page title, redundant with the panel label the portal chrome already
-// shows"). Every source file's sole `# title` line is its page heading; the
-// generic "disallowed, not forbidden -> drop wrapper, keep children" rule
-// below already does the right thing for it (the title TEXT survives as an
-// unwrapped text node — harmless, and select.go's heading-section extractor
-// only ever looks at h2/h3 lines anyway so the dropped h1 never affects
-// panel boundaries).
+// h1 is intentionally absent. home-fragments.yaml: "never render source h1
+// — H1 is the docs-site page title, redundant with the panel label the
+// portal chrome already shows". This is enforced at the markdown-SOURCE
+// stage, not here: cmd/gen-home-fragments strips a whole_file panel's
+// leading "# title" line (select.go's StripLeadingH1) before RenderMarkdown
+// ever runs, and a heading-selected panel (intro) never includes the
+// source's h1 in its selected section to begin with — so no <h1> node is
+// ever produced for this sanitizer to see.
+//
+// 2026-08-16 merge-review fixup (R2 F1): an earlier revision of this
+// function relied on the generic "disallowed, not forbidden -> drop
+// wrapper, keep children" rule below to handle a literal <h1> if goldmark
+// ever emitted one, on the theory that the re-parented title TEXT surviving
+// as an unwrapped text node was "harmless". It was not: that text rendered
+// as a bare, unstyled line ahead of the first real <p> in the story/
+// cheatsheet panels, duplicating the <summary> label the Home panel already
+// shows. The fix is the source-stage strip described above (an <h1> must
+// never be PRODUCED, not merely handled gracefully once produced) — this
+// sanitizer intentionally still has no h1-specific branch, because after
+// the fix there is nothing left for one to do.
 var allowedElements = map[string]bool{
 	"p":          true,
 	"h2":         true,
@@ -35,19 +46,15 @@ var allowedElements = map[string]bool{
 	"pre":        true,
 	"blockquote": true,
 	"hr":         true,
-	// table/thead/tbody/tr/th/td: NOT in home-fragments.yaml's literal
-	// elements list, but story.md (mandated whole-file, no section
-	// selection available) and all 4 existing rule-explain.md files use a
-	// markdown table as their only structured-data device, and the
-	// manifest's own notes call story.md "safe to render whole" — which
-	// only holds if its table renders as a table, not as dropped noise.
-	// Extending the allowlist here (no attributes on any of these six
-	// elements either, same as every other allowed element) is the
-	// app-lead implementation call the manifest defers ("md→HTML
-	// implementation... is judgment call for app-lead") applied to a gap
-	// the manifest didn't anticate; flagged explicitly in the P23-5 report
-	// for content-lead/security-lead sign-off rather than silently
-	// expanding scope.
+	// table/thead/tbody/tr/th/td: added to home-fragments.yaml's
+	// sanitize_allowlist.elements (2026-08-16 merge-review fixup, R1 HIGH —
+	// manifest now matches this implementation) because story.md's mandated
+	// whole_file panel and all 4 existing rule-explain.md files use a
+	// markdown table as their only structured-data device; the manifest's
+	// own note calls story.md "safe to render whole", which only holds if
+	// its table renders as a table, not as dropped noise. No attributes on
+	// any of these six elements either, same as every other allowed
+	// element — security-reviewed and approved (P23-5 5x review).
 	"table": true,
 	"thead": true,
 	"tbody": true,

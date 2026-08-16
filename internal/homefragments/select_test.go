@@ -56,6 +56,50 @@ func TestSelectHeadingSection_DoesNotStopAtNestedSubheading(t *testing.T) {
 	}
 }
 
+// TestStripLeadingH1 proves the leading "# title" line (and any blank line
+// right after it) is removed, while the rest of the document — including a
+// LATER "# " line, which must never happen in practice but must not be
+// mistaken for the leading title either — is untouched. This is the
+// merge-review fixup (R2 F1): whole_file panels (story.md, cheatsheet.md)
+// must not carry their source h1 as bare leaked text ahead of the first
+// real element.
+func TestStripLeadingH1(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{
+			name: "leading h1 with blank line removed",
+			src:  "# ストーリー：CTF Company のキルチェーン\n\nbody line 1\nbody line 2\n",
+			want: "body line 1\nbody line 2\n",
+		},
+		{
+			name: "leading h1 with no blank line removed",
+			src:  "# Title\nbody\n",
+			want: "body\n",
+		},
+		{
+			name: "no leading h1 -> unchanged (fail-soft)",
+			src:  "## Section\n\nbody\n",
+			want: "## Section\n\nbody\n",
+		},
+		{
+			name: "empty input -> unchanged",
+			src:  "",
+			want: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := StripLeadingH1(tc.src)
+			if got != tc.want {
+				t.Errorf("StripLeadingH1(%q) = %q, want %q", tc.src, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestValidateHeadingMarker(t *testing.T) {
 	if err := ValidateHeadingMarker("## Falco とは"); err != nil {
 		t.Errorf("unexpected error: %v", err)

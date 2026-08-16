@@ -1,5 +1,15 @@
 package homefragments
 
+import "regexp"
+
+// ChallengeDirRe matches the canonical <NN>-<slug> challenge directory name
+// shape (mirrors internal/catalog.Load / LoadJourneys' own discovery
+// pattern). Exported so both cmd/gen-home-fragments (directory scan) and
+// this package's own tests (manifest_verified_test.go, re-scanning the same
+// challenges/ tree to verify real rule-explain.md content) use a single
+// definition instead of two copies that could drift.
+var ChallengeDirRe = regexp.MustCompile(`^(\d\d)-[a-z0-9-]+$`)
+
 // StaticPanel is one non-per-challenge Home panel (intro/story/cheatsheet in
 // docs-site/home-fragments.yaml). Source is a repo-root-relative path;
 // Heading is "" for whole_file panels or a "## ..." selector for the intro

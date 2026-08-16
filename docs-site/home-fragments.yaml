@@ -93,9 +93,24 @@ panels:
 sanitize_allowlist:
   elements:
     - p
-    - h1, h2, h3      # markdown ## / ### only — never render source h1 (H1 is
+    - h2, h3           # markdown ## / ### only. Source h1 (the docs-site page
+                       # title) is NEVER a rendered element — the app-lead
+                       # implementation (internal/homefragments) strips a
+                       # whole_file panel's leading "# title" line at the
+                       # markdown-SOURCE stage, before markdown parsing, for
+                       # exactly the reason this comment used to state ("H1 is
                        # the docs-site page title, redundant with the panel
-                       # label the portal chrome already shows)
+                       # label the portal chrome already shows") — so no <h1>
+                       # node is ever produced for the sanitizer to see in the
+                       # first place. (2026-08-16 merge-review fixup: an
+                       # earlier revision of this manifest listed h1 alongside
+                       # h2/h3 as if it were a rendered-but-just-unstyled
+                       # element; the sanitizer's actual rule for a disallowed
+                       # tag is "drop the wrapper, re-parent the text", which
+                       # for a literal <h1> would leak the bare title text
+                       # ahead of the first real paragraph — the source-stage
+                       # strip is what prevents that, not a sanitizer allow/
+                       # deny distinction between h1 and h2/h3.)
     - ul, ol, li
     - strong, em
     - code             # inline code span
@@ -103,6 +118,20 @@ sanitize_allowlist:
     - blockquote       # MkDocs admonitions (!!! tip/note/warning) render here,
                        # title as a leading <strong>; see admonition note below
     - hr
+    - table, thead, tbody, tr, th, td
+                       # 2026-08-16 merge-review fixup (R1 HIGH): added to
+                       # match the shipped implementation (internal/
+                       # homefragments/sanitize.go) — story.md's mandated
+                       # whole_file panel and all 4 existing rule-explain.md
+                       # files use a markdown table as their only structured-
+                       # data device (see coverage_2026-08-16 above), so
+                       # without table support "safe to render whole" (the
+                       # story panel's own note, above) would not have held:
+                       # the table content would have collapsed into
+                       # unstructured prose instead of dropping cleanly.
+                       # security-reviewed and approved (P23-5 5x review) —
+                       # same "no attributes" rule as every other element
+                       # below applies to these six too.
   attributes: {}       # no attributes on any element — not even class/id.
                         # this also means no anchor targets ({#7-falco}-style
                         # ids are dropped; internal anchor links degrade to

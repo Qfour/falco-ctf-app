@@ -34,6 +34,21 @@ var homePanelsHTML = template.HTML(buildHomePanelsHTML(HomeFragments))
 // "🔍 なぜ発火するか" panel, one <details> per challenge number, so the Home
 // tab shows one top-level entry for the whole rule-explain set rather than
 // up to 11 top-level entries that would dwarf the three static panels.
+//
+// INVARIANT (merge-review fixup R4): this grouping assumes every rule-explain
+// HomeFragment shares the SAME Label — cmd/gen-home-fragments' generator
+// always sets every one of them to the single
+// internal/homefragments.RuleExplainLabel constant (see manifest.go), so
+// there is currently only ever one distinct label among them. This function
+// takes the LAST rule-explain fragment's Label for the combined panel's
+// <summary> (see ruleExplainLabel below) rather than the first / a
+// deduplicated set, on the assumption that reading any one of them is
+// equivalent to reading all of them. If a future generator change ever made
+// rule-explain Labels vary per challenge, this function would silently show
+// only the last one and swallow the others — see
+// TestBuildHomePanelsHTML_RuleExplainLabelInvariant in home_test.go, which
+// pins this exact behavior so a change that breaks the single-label
+// assumption fails loudly instead of silently mis-rendering.
 func buildHomePanelsHTML(fragments []HomeFragment) string {
 	var b strings.Builder
 	var ruleExplain []HomeFragment
@@ -42,8 +57,9 @@ func buildHomePanelsHTML(fragments []HomeFragment) string {
 	// — this package intentionally does not import internal/homefragments,
 	// per homefragments_gen.go's doc: only the generator does, so goldmark +
 	// the sanitizer stay out of this binary's dependency graph). Read off
-	// the first rule-explain fragment rather than hardcoding the string a
-	// second time.
+	// the LAST rule-explain fragment seen rather than hardcoding the string
+	// a second time — see the single-label INVARIANT note above this
+	// function for what "the last one" relies on.
 	var ruleExplainLabel string
 	for _, f := range fragments {
 		if f.ChalNN != "" {

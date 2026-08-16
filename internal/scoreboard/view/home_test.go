@@ -53,6 +53,30 @@ func TestBuildHomePanelsHTML_RuleExplainGroupedIntoOnePanel(t *testing.T) {
 	}
 }
 
+// TestBuildHomePanelsHTML_RuleExplainLabelInvariant pins the documented
+// single-label INVARIANT on home.go's buildHomePanelsHTML (merge-review
+// fixup R4): the combined rule-explain panel's <summary> uses whichever
+// rule-explain fragment's Label was seen LAST, on the assumption that every
+// rule-explain fragment shares the same Label (true today — the generator
+// always sets internal/homefragments.RuleExplainLabel uniformly). This test
+// deliberately feeds DIFFERING labels to make that behavior visible and
+// pinned: if a future change to buildHomePanelsHTML's grouping logic
+// altered which label wins (first vs last vs some merge), this test fails
+// and forces an explicit decision instead of a silent behavior change.
+func TestBuildHomePanelsHTML_RuleExplainLabelInvariant(t *testing.T) {
+	frags := []HomeFragment{
+		{ID: "rule_explain_01", Label: "LABEL-A", HTML: "<p>r1</p>", ChalNN: "01"},
+		{ID: "rule_explain_03", Label: "LABEL-B", HTML: "<p>r3</p>", ChalNN: "03"},
+	}
+	got := buildHomePanelsHTML(frags)
+	if !strings.Contains(got, "<summary>LABEL-B</summary>") {
+		t.Fatalf("expected the combined panel's <summary> to be the LAST rule-explain fragment's label (LABEL-B), got: %s", got)
+	}
+	if strings.Contains(got, "<summary>LABEL-A</summary>") {
+		t.Fatalf("did not expect a separate <summary>LABEL-A</summary> — only one combined panel should exist, got: %s", got)
+	}
+}
+
 // TestBuildHomePanelsHTML_NoRuleExplainOmitsThatPanelEntirely proves that
 // when NO challenge has a rule-explain.md (empty input, or an input with
 // only static panels), no rule-explain <details> is emitted at all — not an
