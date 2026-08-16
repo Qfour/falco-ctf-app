@@ -17,7 +17,7 @@ SYSDIG_URL   ?= https://app.au1.sysdig.com
 # host repo are not shared into the VM.
 GO_IMAGE ?= golang:1.26-alpine
 
-.PHONY: help dev dev-down build push load-colima deploy-local lint test tidy gen gen-values gen-attack check-flags check-rules check-freshness clean scan
+.PHONY: help dev dev-down build push load-colima deploy-local lint test tidy gen gen-home-fragments gen-values gen-attack check-flags check-rules check-freshness clean scan
 
 help:
 	@echo "Targets:"
@@ -31,6 +31,7 @@ help:
 	@echo "  test            — go test ./... (runs in $(GO_IMAGE) container)"
 	@echo "  tidy            — go mod tidy (runs in $(GO_IMAGE) container)"
 	@echo "  gen             — regenerate Go types from OpenAPI specs (docs/openapi-*.yaml)"
+	@echo "  gen-home-fragments — regenerate Portal Home tab HTML fragments (docs-site/home-fragments.yaml)"
 	@echo "  gen-values      — regenerate challenge values.yaml / values-all.yaml from plant.sh"
 	@echo "  gen-attack      — regenerate ATT&CK Navigator layer + coverage table from falco-rule.yaml attack: blocks"
 	@echo "  check-flags     — fail if real flags leak into tracked files or values are stale"
@@ -90,6 +91,12 @@ tidy:
 # Commit the result; CI diff-check will catch spec/code drift.
 gen:
 	docker build -f Dockerfile.gen --target export -o . .
+
+# Regenerates internal/scoreboard/view/homefragments_gen.go from docs-site/docs/*.md
+# + challenges/<NN>-<slug>/rule-explain.md, per docs-site/home-fragments.yaml
+# (content-lead's contract). Commit the result.
+gen-home-fragments:
+	docker build -f Dockerfile.gen-home-fragments --target export -o . .
 
 gen-values:
 	./challenges/gen-values.sh

@@ -31,6 +31,18 @@ nodeSelector: {}
 tolerations: []
 
 ingress:
+  # P23-5: the participant-facing docs Ingress (brief-only root, ANY
+  # authenticated participant, no host binding) was REMOVED —
+  # templates/ingress.yaml no longer exists. That content (はじめに/ストーリー/
+  # コマンド集/なぜ発火するか) is now folded into the unified portal's Home tab
+  # (internal/scoreboard/view/home.go, docs-site/home-fragments.yaml). `enabled`
+  # is kept here for now (harmless if platform's helmfile still sets it — an
+  # unused values key does not error) but no longer gates anything in this
+  # chart's templates; templates/ingress-admin.yaml now gates on `adminHost`
+  # alone. Removing this key outright, and the now-unused authUrl below, is a
+  # platform-coordinated follow-up (P19-2b) — see that ingress-admin.yaml
+  # comment and the P23-5 task's platform-follow-up note; not done in this PR
+  # to avoid an uncoordinated cross-repo values-shape change.
   enabled: true
   className: nginx
   host: docs.example.invalid
@@ -38,15 +50,18 @@ ingress:
   # secretName for the TLS cert. Empty = rely on ingress-nginx's wildcard
   # default-ssl-certificate (local). Prod can set a name.
   tlsSecretName: ""
-  # auth-url: ANY authenticated participant (oauth2-proxy directly, no host
-  # binding). The participant host serves the brief-only root (no 想定解/解説).
+  # UNUSED as of P23-5 (was the removed participant Ingress's auth-url).
+  # Kept only so platform's helmfile.gotmpl doesn't need an immediate edit;
+  # see the `enabled` comment above for the coordinated-removal follow-up.
   authUrl: "http://oauth2-proxy.oauth2-proxy.svc.cluster.local:80/oauth2/auth"
   authSignin: ""
-  # Extra annotations merged in (e.g. ssl-redirect in prod).
+  # Extra annotations merged in (e.g. ssl-redirect in prod). Still used by
+  # ingress-admin.yaml.
   annotations: {}
-  # 運営用ビュー: a second host serving the full root (brief + 想定解 + 解説).
-  # nginx selects the admin root by the `docs-admin.` host prefix; the ingress
+  # 運営用ビュー: the docs chart's ONLY remaining Ingress (P23-5). nginx
+  # selects the admin root by the `docs-admin.` host prefix; the ingress
   # gates it with auth-policy /check-admin (same ADMIN_EMAILS allowlist as the
-  # scoreboard reset). Empty adminHost disables the admin ingress.
+  # scoreboard reset). Empty adminHost disables this ingress entirely (no
+  # ingress at all is then rendered by this chart).
   adminHost: ""
   adminAuthUrl: "http://auth-policy.auth-policy.svc.cluster.local:80/check-admin"

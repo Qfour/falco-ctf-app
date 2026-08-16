@@ -62,6 +62,20 @@ func main() {
 	// mission's relative docsUrl (/missions/<NN>-<slug>/) into an absolute URL so
 	// the link resolves off-origin. Empty = keep the relative path (local dev,
 	// where docs are served under the same host or not at all).
+	//
+	// P23-5: the participant docs Ingress this absolutised URL used to point
+	// at has been removed (charts/docs/templates/ingress.yaml) — that
+	// content is now in the portal's Home tab (internal/scoreboard/view/
+	// home.go). The /journey and /portal UIs no longer render docsUrl's
+	// VALUE into a clickable href (they render a fixed in-page Home-tab link
+	// instead — see templates/journey.html and templates/portal.html's
+	// `docs` var), so DOCS_BASE_URL's absolutisation is currently dead for
+	// UI purposes; it is left wired (env, JourneyConfig.DocsBaseURL,
+	// api.Handler.docsURL) since docsUrl is still a documented field in the
+	// /journey API response (docs/openapi-scoreboard.yaml) and removing it
+	// is an API-contract change outside this task's scope. docs-admin
+	// (charts/docs/templates/ingress-admin.yaml) is UNAFFECTED — this env
+	// only ever fed the participant link, never the admin one.
 	docsBaseURL := serverutil.Env("DOCS_BASE_URL", "")
 	// PORTAL_TTYD_SUFFIX (P23-4) is the DNS suffix the portal's Terminal pane
 	// uses to build each caller's OWN ttyd iframe src:

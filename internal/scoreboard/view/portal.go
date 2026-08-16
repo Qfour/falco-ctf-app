@@ -50,6 +50,17 @@ type portalData struct {
 	// src pointed at another user's host still 403s. This field only ever
 	// narrows a caller to their OWN workspace; it cannot widen anything.
 	TtydURLJSON template.JS
+	// HomePanelsHTML (P23-5) is the Home tab's gen-time-sanitized content
+	// panels (Falco とは / ストーリー / コマンド集 / 課題ごとの「なぜ発火するか」),
+	// pre-rendered to trusted template.HTML — see home.go's homePanelsHTML
+	// doc for why this is safe to inject unescaped: it is built ONCE from
+	// HomeFragments (committed, gen-time-sanitized output of
+	// cmd/gen-home-fragments), never from anything request-derived, and
+	// carries no per-viewer variation (same content for admin and
+	// participant, same content for every participant — no hints, no flags,
+	// no per-user data). This is the ONLY portalData field that is
+	// template.HTML rather than a JSON-marshalled display hint.
+	HomePanelsHTML template.HTML
 }
 
 // ttydURLFor builds the caller's own ttyd origin from their derived username
@@ -104,7 +115,19 @@ func ttydURLFor(user, suffix string) string {
 //     dashboard), which stays admin-only. This is intentional: the portal
 //     shell carries no admin data, so there is nothing to protect by gating
 //     the page itself; gating stays where the data is (the API).
-//  4. All dynamic values pass through html/template with template.JS on
+//  4. (P23-5) HomePanelsHTML is the one field here that is template.HTML
+//     (unescaped) rather than a JSON-marshalled display hint, and the one
+//     value here that is NOT derived from the request at all — it is a
+//     package-level constant computed once from the committed,
+//     gen-time-sanitized HomeFragments (see home.go / homefragments_gen.go).
+//     It is identical for every caller (admin or participant), carries no
+//     per-user data, no hints, no flags — see docs-site/home-fragments.yaml
+//     for the content contract this implements. Do not repurpose
+//     HomePanelsHTML's template.HTML trust for any OTHER value in this
+//     struct; every other field must keep going through
+//     json.Marshal+template.JS (or plain esc() client-side) exactly as
+//     before.
+//  5. All other dynamic values pass through html/template with template.JS on
 //     pre-marshalled JSON (never raw string interpolation), so even a
 //     future edit that feeds a weirder value through RoleJSON/UserJSON/
 //     TtydURLJSON gets template auto-escaping as a safety net, not just
@@ -135,8 +158,9 @@ func renderPortal(w http.ResponseWriter, r *http.Request, isAdmin func(*http.Req
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	return portalTmpl.Execute(w, portalData{
-		RoleJSON:    template.JS(roleJSON),
-		UserJSON:    template.JS(userJSON),
-		TtydURLJSON: template.JS(ttydURLJSON),
+		RoleJSON:       template.JS(roleJSON),
+		UserJSON:       template.JS(userJSON),
+		TtydURLJSON:    template.JS(ttydURLJSON),
+		HomePanelsHTML: homePanelsHTML,
 	})
 }

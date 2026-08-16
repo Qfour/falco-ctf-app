@@ -375,7 +375,13 @@
       ? `<div class="sec-title">Hints（段階開放）</div><div class="hints">${openedHTML}${lockedHTML || (hints.lockedCount === 0 ? '<div class="hint-locked">全ヒント開封済み</div>' : '')}</div>`
       : '';
 
-    const docs = det.docsUrl ? `<a class="docs-link" href="${esc(det.docsUrl)}" target="_blank" rel="noopener">📖 詳細ブリーフィング (docs) →</a>` : '';
+    // P23-5: the old docs-link pointed at a separate participant docs
+    // Ingress that has been removed (charts/docs/templates/ingress.yaml —
+    // see internal/scoreboard/view/home.go / docs-site/home-fragments.yaml).
+    // That content now lives in the unified portal's Home tab; this legacy
+    // standalone /journey page has no Home tab of its own, so the link
+    // repoints to the portal's Home instead of a now-dead docs host.
+    const docs = det.docsUrl ? `<a class="docs-link" href="/portal#home" target="_blank" rel="noopener">📖 詳細ブリーフィング (Home) →</a>` : '';
 
     return `<div class="mission">
       <div class="mission-head">

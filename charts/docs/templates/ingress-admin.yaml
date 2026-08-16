@@ -1,4 +1,16 @@
-{{- if and .Values.ingress.enabled .Values.ingress.adminHost }}
+{{/*
+P23-5: the participant-facing docs Ingress (templates/ingress.yaml, gated on
+.Values.ingress.enabled) was REMOVED — the participant content it served
+(はじめに/ストーリー/コマンド集/なぜ発火するか) is now folded into the unified
+portal's Home tab (see internal/scoreboard/view/home.go +
+docs-site/home-fragments.yaml). This admin Ingress is now gated on adminHost
+alone (no longer AND'd with the removed participant flag) since it is the
+docs chart's only remaining Ingress. .Values.ingress.enabled is kept in
+values.yaml for now (harmless if platform's helmfile still sets it — Helm
+does not error on an unused value key) but no longer gates anything here;
+see values.yaml's comment for the platform-side follow-up this implies.
+*/}}
+{{- if .Values.ingress.adminHost }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
