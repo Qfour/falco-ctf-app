@@ -11,49 +11,44 @@
      internal/scoreboard/view/vendor/cybercore/PROVENANCE.md for the pinned
      npm version/commit/shasum and vendorassets.go for the go:embed serving
      path. Loaded from OUR OWN origin only, never a CDN (P12: egress-zero for
-     this asset). Applied PARTIALLY — see the "cybercore Falco-brand override"
-     block below: only the shell chrome (tab nav / role badge) adopts
-     cybercore COMPONENT CLASSES (.cyber-badge etc); the journey/scoreboard/me
-     panes keep their own bespoke game-fx CSS and their own LOCAL --falco/
-     --accent variables untouched, and do NOT reference any --cyber-* custom
-     property from the override block below (P23-6 task scope: "部分採用...
-     journey game fx は自前維持" — no pane was rewired onto the cybercore
-     variable layer; see the override block's own comment below for the
-     2026-08-16 /review-5x R4 F1 correction of an earlier, overclaiming
-     version of this note). Placed BEFORE this file's own <style> block so
-     the hand-authored rules below can override any cybercore declaration by
-     source-order (both have equal specificity on shared selectors; later
-     wins). -->
+     this asset).
+     NOTE (portal-ui-polish): the ONE cybercore COMPONENT CLASS this page
+     used to consume (.cyber-badge, on the now-removed #portal-role-badge
+     role indicator) is gone — see the "cybercore Falco-brand override"
+     block below, which is consequently unused CSS right now (left in place;
+     removing the stylesheet link/override entirely is a bigger call than
+     this batch's stated scope of DOM/text changes — tracked as residual
+     cleanup, not done here). The journey/scoreboard/me panes never adopted
+     cybercore COMPONENT CLASSES to begin with — they keep their own bespoke
+     game-fx CSS and their own LOCAL --falco/--accent variables, and do NOT
+     reference any --cyber-* custom property from the override block below.
+     Placed BEFORE this file's own <style> block so the hand-authored rules
+     below can override any cybercore declaration by source-order (both
+     have equal specificity on shared selectors; later wins). -->
 <link rel="stylesheet" href="/vendor/cybercore.min.css">
 <style>
   /* ===== cybercore Falco-brand override (P23-6) =====
      cybercore-css themes itself entirely off CSS custom properties (see
      PROVENANCE.md's variable dump) — overriding them here re-themes every
-     cybercore COMPONENT CLASS this page actually uses (currently: the
-     #portal-role-badge's .cyber-badge classes — see the nav below) WITHOUT
-     touching cybercore's own rules (no forking, no !important). The values
-     chosen here happen to equal the SAME hex codes this file's per-pane
-     --accent/--falco variables already use (#00CBE2 / #0090A8 / etc — see
-     #pane-scoreboard / #pane-story var blocks below), so the ONE cybercore
-     component currently in use (the role badge) reads as the same Falco
-     brand as the rest of the page.
-     SCOPE CORRECTION (2026-08-16 /review-5x R4 F1): an earlier version of
-     this comment claimed this override made "the shell chrome AND THE
-     PANES read as one consistent brand" via this variable layer — that
-     overstated what actually happens. The panes do NOT read var(--cyber-*)
-     anywhere; #pane-scoreboard/#pane-story/#pane-me each define and use
-     their OWN separate --falco/--accent custom properties (see those
-     blocks below), so the "unified look" across all 3 faces today comes
-     from those pre-existing per-pane variables independently hardcoding
-     the same palette, NOT from this cybercore variable override cascading
-     into them — there is no cascade relationship between this :root block
-     and the pane-scoped blocks below. This block's actual, current effect
-     is narrower: it pins the ONE cybercore component class this page
-     currently uses (the role badge) to the Falco palette. Wiring the panes
-     onto this SAME variable layer (so a future palette change only needs
-     one edit) is tracked as residual scope in REFACTORING.md, not done
-     here — deliberately avoiding a larger CSS-variable-plumbing refactor
-     beyond this task's stated scope. */
+     cybercore COMPONENT CLASS this page actually uses WITHOUT touching
+     cybercore's own rules (no forking, no !important).
+     NOTE (portal-ui-polish): as of this change, no element on the page
+     carries a cybercore component class any more (the role badge that used
+     to be the one consumer — #portal-role-badge's .cyber-badge classes —
+     was removed; see the identity cluster note above the nav). This
+     override block is therefore currently a no-op in practice; left in
+     place rather than deleted (see the stylesheet-link comment above for
+     why removing the cybercore layer outright is out of this batch's
+     scope). The values chosen here still equal the SAME hex codes this
+     file's per-pane --accent/--falco variables use (#00CBE2 / #0090A8 /
+     etc — see #pane-scoreboard / #pane-story var blocks below), so IF a
+     future component class is adopted from cybercore, it will read as the
+     same Falco brand as the rest of the page without further edits here.
+     The panes do NOT read var(--cyber-*) anywhere; #pane-scoreboard/
+     #pane-story/#pane-me each define and use their OWN separate --falco/
+     --accent custom properties (see those blocks below) — there is no
+     cascade relationship between this :root block and the pane-scoped
+     blocks below. */
   :root {
     --cyber-cyan-300: #6FE3F0; --cyber-cyan-400: #33D9EC;
     --cyber-cyan-500: #00CBE2; /* Falco Blue — cybercore's primary accent */
@@ -166,11 +161,10 @@
   #portal-tabs .tab:hover { color: #EAF7FA; }
   #portal-tabs .tab.active { color: #00CBE2; border-bottom-color: #00CBE2; }
   #portal-tabs .tab[hidden] { display: none; }
-  /* Right-aligned identity cluster: username (primary) + role badge (small,
-     secondary). visual chrome (border/pill/color/font) for the role badge
-     comes from cybercore's .cyber-badge component classes on the element
-     itself (see the <span> in the nav below) — this rule only keeps the
-     SHELL-LAYOUT positioning cybercore's badge has no opinion on. */
+  /* Right-aligned identity cluster: username only (portal-ui-polish:
+     removed the secondary role badge — see applyRole()'s doc in the
+     router script below for why the role STRING itself is still read,
+     just no longer rendered as a visible badge). */
   #portal-identity {
     margin-left: auto; align-self: center; margin-bottom: 0.5rem;
     display: flex; align-items: center; gap: 0.55rem;
@@ -441,8 +435,9 @@
   #pane-story header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 1.75rem; padding-bottom: 1.25rem; border-bottom: 1px solid var(--border); position: relative; }
   #pane-story header::after { content: ''; position: absolute; left: 0; bottom: -1px; width: 160px; height: 2px; background: linear-gradient(90deg, var(--accent), transparent); box-shadow: 0 0 12px var(--accent-glow); }
   /* .brand h1 / .live now come from the shared .p-h1 / .p-live classes
-     (P23 portal-redesign) on the markup below — see those rules above. */
-  #pane-story .brand .subtitle { color: var(--text-dim); font-size: 0.85rem; margin-top: 0.4rem; }
+     (P23 portal-redesign) on the markup below — see those rules above.
+     (portal-ui-polish: the .brand .subtitle tagline under this h1 was
+     removed from the markup, so its CSS rule is removed too.) */
   #pane-story .updated { color: var(--text-mute); font-size: 0.7rem; margin-top: 0.3rem; text-align: right; font-family: 'JetBrains Mono', monospace; }
 
   /* progress */
@@ -686,8 +681,9 @@
      (P23 portal-redesign) on the markup below — see those rules above.
      (This also unifies #pane-me's H1 size/tracking with the other panes'
      2.4rem display heading, and its LIVE badge color from the old green
-     --accent onto the shared cyan --p-success.) */
-  #pane-me .brand .subtitle { color: var(--text-dim); font-size: 0.875rem; margin-top: 0.25rem; }
+     --accent onto the shared cyan --p-success.)
+     (portal-ui-polish: the .brand .subtitle tagline under this h1 was
+     removed from the markup, so its CSS rule is removed too.) */
   #pane-me .updated { color: var(--text-mute); font-size: 0.7rem; margin-top: 0.25rem; text-align: right; }
 
   /* Identity hero */
@@ -767,6 +763,22 @@
   #pane-me .help p { color: var(--text-dim); font-size: 0.9rem; }
   #pane-me .help code { background: var(--surface-2); padding: 2px 8px; border-radius: 3px; color: var(--accent); font-family: 'JetBrains Mono', monospace; font-size: 0.85em; }
 
+  /* ===== Home pane chassis (portal-ui-polish) =====
+     #pane-home has no leaderboard/mission-map/terminal-frame content of its
+     own — just a heading + intro paragraph + the #pane-home-panels
+     disclosure list (rules further below, unchanged). It has no --falco/
+     --accent LOCAL custom properties like #pane-scoreboard/#pane-story/
+     #pane-me do (it never needed pane-local aliases — .p-h1 already reads
+     var(--p-accent) directly), so this header rule references the shared
+     --p-* tokens straight, not a local --border/--accent alias. Narrower
+     than #pane-story/#pane-scoreboard's header rule on purpose: Home's
+     header has no right-hand .live/.updated cluster, so the glowing
+     ::after underline + space-between layout those panes need is skipped
+     here — just the bottom border. */
+  #pane-home header { margin-bottom: 1.5rem; padding-bottom: 1.25rem; border-bottom: 1px solid var(--p-border); }
+  #pane-home .home-intro { color: var(--p-text-dim); line-height: 1.6; margin: 0 0 1rem; font-size: 0.95rem; }
+  #pane-home .home-intro strong { color: var(--p-text); }
+
   /* ===== Shared rich-content styling (P23 portal-redesign) =====
      Markdown-derived typography for gen-time-sanitized fragment HTML
      (home.go / homefragments_gen.go) — extracted from what was previously
@@ -817,7 +829,14 @@
      via a few small, pane-scoped classes, matching the other 3 panes'
      look. iframe src/CSP/frame-src/fail-safe-placeholder LOGIC is
      unchanged; only the surrounding chrome (heading/button/frame border)
-     is restyled. */
+     is restyled.
+     (portal-ui-polish: the pane's own outer style="max-width:64rem" inline
+     attribute — the last inline style left on this pane's <div> — moves
+     into this same pane-scoped block below, for the same reason #pane-home
+     lost its inline style="" wrapper in this change: keep the "chassis"
+     (the outer <div class="pane p-shell">) free of one-off inline styles
+     so every pane's container markup looks the same.) */
+  #pane-terminal { max-width: 64rem; }
   #pane-terminal .term-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.75rem; }
   #pane-terminal .term-head h2 { font-family: var(--p-font-display); font-size: var(--p-h2); margin: 0; color: var(--p-text); }
   #pane-terminal .term-frame { border: 1px solid var(--p-border); border-radius: var(--p-panel-radius); overflow: hidden; background: #000; }
@@ -850,7 +869,6 @@
   <a class="tab" data-tab="terminal" href="#terminal">Terminal</a>
   <span id="portal-identity">
     <span id="portal-username"></span>
-    <span id="portal-role-badge" class="cyber-badge cyber-badge--ghost cyber-badge--sm"></span>
   </span>
 </nav>
 <script nonce="{{.Nonce}}">
@@ -885,7 +903,6 @@
   <header>
     <div class="brand">
       <h1 class="p-h1"><span class="accent">Story</span></h1>
-      <div class="subtitle">作戦を順に攻略せよ — ミッションマップ・ブリーフィング・段階ヒント</div>
     </div>
     <div>
       <div class="live p-live">● LIVE</div>
@@ -1904,7 +1921,6 @@
   <header>
     <div class="brand">
       <h1 class="p-h1"><span class="accent">Scoreboard</span></h1>
-      <div class="subtitle">your live progress + Falco rule activity</div>
     </div>
     <div>
       <div class="live p-live">● LIVE</div>
@@ -2080,12 +2096,24 @@
      (The Story pane's {{.StoryPanelHTML}} injection, the second such site
      as of P23 portal-redesign, was REMOVED in portal-header-refine item 7
      — see portal.go's StoryPanelHTML field doc for why the field itself is
-     still left in place, just unreferenced here.) ===== -->
-<div class="pane" id="pane-home" style="padding:2.5rem 3rem;max-width:52rem">
-  <h1 style="font-family:'Chakra Petch',sans-serif;font-size:2rem;margin:0 0 0.5rem;">
-    <span style="color:#00CBE2">Home</span>
-  </h1>
-  <p style="color:#9DB4BF;line-height:1.6;margin:0 0 1rem;">
+     still left in place, just unreferenced here.)
+     (portal-ui-polish: this pane's outer "chassis" — the bespoke inline
+     style="padding:...;max-width:..." wrapper + inline-styled <h1>/<p> —
+     is replaced with the SAME .p-shell / .p-h1 / header/.brand primitives
+     #pane-story / #pane-scoreboard / #pane-me / #pane-terminal already
+     share (see the "Shared pane component classes" block above), so all
+     five panes now sit in one visually consistent shell. Content INSIDE
+     #pane-home-panels — the {{.HomePanelsHTML}} fragments and the static
+     参考サイト links below — is unchanged.) ===== -->
+<div class="pane p-shell" id="pane-home">
+
+  <header>
+    <div class="brand">
+      <h1 class="p-h1"><span class="accent">Home</span></h1>
+    </div>
+  </header>
+
+  <p class="home-intro">
     統合ポータルへようこそ。上部のタブから、ミッションの流れを追う <strong>Story</strong>、
     自分のリアルタイムな進捗を確認する <strong>Scoreboard</strong>、実際に手を動かす
     <strong>Terminal</strong> を開いて進めてください。
@@ -2127,7 +2155,7 @@
      Per-user isolation (I8) is enforced independently by auth-policy's
      `/check?host=<user>` on the ttyd Ingress itself, regardless of what src
      ends up in this iframe. ===== -->
-<div class="pane p-shell" id="pane-terminal" style="max-width:64rem">
+<div class="pane p-shell" id="pane-terminal">
   <div id="pane-terminal-page"></div>
 </div>
 
@@ -2247,12 +2275,14 @@
     // as markup regardless).
     const user = window.__PORTAL_USER__ || '';
     document.getElementById('portal-username').textContent = user || role;
-    // Role badge: kept as a small secondary indicator alongside the
-    // username (was the PRIMARY identity display pre-portal-header-refine).
-    document.getElementById('portal-role-badge').textContent = role;
     // Defense-in-depth ONLY (see comment above): hides the tab so a
     // participant is not invited to click into a 403. The actual gate is
     // server-side on GET /api/state (api.Handler.state → isAdmin).
+    // NOTE (portal-ui-polish): `role` is still read here purely to drive
+    // this admin-tab visibility gate — the visible role-badge <span> that
+    // used to render this string next to the username was removed; the
+    // underlying admin/participant determination (window.__PORTAL_ROLE__,
+    // server-side isAdmin) is UNCHANGED.
     document.getElementById('tab-scoreboard').hidden = (role !== 'admin');
   }
 
