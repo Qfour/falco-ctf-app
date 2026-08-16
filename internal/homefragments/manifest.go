@@ -10,8 +10,9 @@ import "regexp"
 // definition instead of two copies that could drift.
 var ChallengeDirRe = regexp.MustCompile(`^(\d\d)-[a-z0-9-]+$`)
 
-// StaticPanel is one non-per-challenge Home panel (intro/story/cheatsheet in
-// docs-site/home-fragments.yaml). Source is a repo-root-relative path;
+// StaticPanel is one non-per-challenge Home panel (intro/cheatsheet in
+// docs-site/home-fragments.yaml — the `story` panel was removed 2026-08-17,
+// see that file's header note). Source is a repo-root-relative path;
 // Heading is "" for whole_file panels or a "## ..." selector for the intro
 // panel. See home-fragments.yaml for the authoritative per-panel notes —
 // this struct is a hand-synced Go mirror of that YAML (content-lead's
@@ -27,18 +28,17 @@ type StaticPanel struct {
 }
 
 // StaticPanels mirrors home-fragments.yaml's `panels:` static entries
-// (intro, story, cheatsheet), in manifest order.
+// (intro, cheatsheet), in manifest order. The `story` panel that used to be
+// listed here was removed 2026-08-17 (see home-fragments.yaml's header
+// note) — app-lead is dropping the corresponding Story-tab overview render
+// from templates/portal.html in a parallel change, so this generator no
+// longer needs to produce a "story" HomeFragment entry.
 var StaticPanels = []StaticPanel{
 	{
 		ID:      "intro",
 		Label:   "Falco CTF とは",
 		Source:  "docs-site/docs/index.md",
 		Heading: "## Falco とは",
-	},
-	{
-		ID:     "story",
-		Label:  "ストーリー",
-		Source: "docs-site/docs/story.md",
 	},
 	{
 		ID:     "cheatsheet",
