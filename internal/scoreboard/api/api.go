@@ -1583,6 +1583,7 @@ func (h *Handler) missionDetail(user, cid, status, leadIn string, checkedSteps, 
 
 	return map[string]any{
 		"id":            cid,
+		"status":        status,
 		"title":         title,
 		"tagline":       j.Tagline,
 		"briefing":      j.Briefing,

@@ -434,9 +434,10 @@
   #pane-story .panel-header h2 { font-family: 'Chakra Petch', sans-serif; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.18em; color: var(--text); font-weight: 600; display: flex; align-items: center; gap: 0.6rem; }
   #pane-story .panel-header h2::before { content: ''; width: 3px; height: 15px; background: var(--accent); border-radius: 2px; box-shadow: 0 0 10px var(--accent-glow); }
 
-  /* mission map */
+  /* mission map (now clickable — free browsing, P23 Story-as-docs) */
   #pane-story .map { list-style: none; padding: 0.35rem 0; }
-  #pane-story .map li { display: flex; align-items: center; gap: 0.7rem; padding: 0.6rem 1.25rem; border-left: 2px solid transparent; cursor: default; }
+  #pane-story .map li { display: flex; align-items: center; gap: 0.7rem; padding: 0.6rem 1.25rem; border-left: 2px solid transparent; cursor: pointer; transition: background 0.12s; }
+  #pane-story .map li:hover { background: rgba(255,255,255,0.03); }
   #pane-story .map li .ico { width: 22px; text-align: center; font-size: 0.95rem; }
   #pane-story .map li .mtitle { font-size: 0.9rem; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #pane-story .map li .num { font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; color: var(--text-mute); }
@@ -447,11 +448,63 @@
   #pane-story .map li.current .mtitle { color: var(--accent); font-weight: 600; }
   #pane-story .map li.locked { opacity: 0.5; }
   #pane-story .map li.locked .ico { color: var(--text-mute); }
+  /* viewed: the mission whose detail is currently shown via free browsing
+     (?mission=), which may differ from .current — a thin accent outline
+     marks it distinctly from the "you are here" current-mission styling. */
+  #pane-story .map li.viewed { box-shadow: inset 3px 0 0 var(--accent-2); }
   #pane-story .map li.just-unlocked { animation: jn-unlock 1.2s ease; }
   @keyframes jn-unlock {
     0% { background: rgba(0,203,226,0.25); transform: translateX(-6px); box-shadow: inset 0 0 24px var(--accent-glow); }
     100% { background: transparent; transform: none; box-shadow: none; }
   }
+
+  /* kill-chain overview (P23 Story-as-docs): data-driven node strip built from
+     missions[] (id/type/status) — trigger=--accent(blue), evade=--evade
+     (violet), solved=filled+check, current=glow, locked=dim. Connector line
+     drawn via a pseudo-element on every node except the first, so the strip
+     reflows responsively without needing an SVG viewBox. Purely decorative
+     progress visualization — click delegates to the same free-browse handler
+     as the mission map list (one source of truth for "which mission is this"). */
+  #pane-story .killchain { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0; padding: 1.1rem 1.25rem 1.3rem; background: var(--surface); border: 1px solid var(--border); border-radius: 0.85rem; margin-bottom: 1.5rem; }
+  #pane-story .kc-node { position: relative; display: flex; flex-direction: column; align-items: center; gap: 0.4rem; padding: 0 0.9rem; cursor: pointer; flex: 1 1 auto; min-width: 64px; }
+  #pane-story .kc-node:not(:first-child)::before { content: ''; position: absolute; top: 15px; left: -50%; width: 100%; height: 2px; background: var(--border-strong); z-index: 0; }
+  #pane-story .kc-node.solved:not(:first-child)::before { background: var(--success); opacity: 0.6; }
+  #pane-story .kc-dot { position: relative; z-index: 1; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-size: 0.85rem; font-weight: 700; background: var(--bg-elev); border: 2px solid var(--border-strong); color: var(--text-mute); transition: all 0.15s; }
+  #pane-story .kc-node:hover .kc-dot { border-color: var(--accent); }
+  #pane-story .kc-node.type-trigger .kc-dot { border-color: var(--accent-2); }
+  #pane-story .kc-node.type-evade .kc-dot { border-color: var(--evade); }
+  #pane-story .kc-node.solved .kc-dot { background: var(--success); border-color: var(--success); color: var(--bg); box-shadow: 0 0 10px var(--success-glow); }
+  #pane-story .kc-node.type-evade.solved .kc-dot { background: var(--evade); border-color: var(--evade); box-shadow: 0 0 10px var(--evade-glow); }
+  #pane-story .kc-node.current .kc-dot { background: rgba(0,203,226,0.15); border-color: var(--accent); color: var(--accent); box-shadow: 0 0 14px var(--accent-glow); animation: p-pulse 1.8s ease-in-out infinite; }
+  #pane-story .kc-node.locked .kc-dot { opacity: 0.45; }
+  #pane-story .kc-node.viewed .kc-dot { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+  #pane-story .kc-label { font-family: 'JetBrains Mono', monospace; font-size: 0.62rem; letter-spacing: 0.04em; color: var(--text-mute); text-align: center; white-space: nowrap; }
+  #pane-story .kc-node.current .kc-label, #pane-story .kc-node.solved .kc-label { color: var(--text-dim); }
+  #pane-story .kc-node.locked .kc-label { opacity: 0.5; }
+  #pane-story .kc-type { font-size: 0.55rem; text-transform: uppercase; letter-spacing: 0.1em; }
+  #pane-story .kc-node.type-trigger .kc-type { color: var(--accent-2); }
+  #pane-story .kc-node.type-evade .kc-type { color: var(--evade); }
+  @media (max-width: 900px) { #pane-story .killchain { overflow-x: auto; } #pane-story .kc-node { min-width: 56px; } }
+
+  /* Falco rule excerpt accordion (P23 Story-as-docs) — List / Macro / Rule
+     sections. Reuses .rich-content's code/pre typography for condition/
+     output text so it visually matches the Home tab's rule-explain code
+     blocks. Absent List/Macro sections are simply not rendered (see
+     renderFalcoRule) rather than shown as empty boxes. */
+  #pane-story .falco-rule { margin-top: 1.4rem; }
+  #pane-story .fr-group { margin-bottom: 0.9rem; }
+  #pane-story .fr-group-title { font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-mute); margin-bottom: 0.5rem; }
+  #pane-story .fr-item { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 0.5rem; padding: 0.75rem 1rem; margin-bottom: 0.6rem; }
+  #pane-story .fr-item summary { cursor: pointer; font-weight: 600; font-size: 0.9rem; color: var(--text); list-style: none; user-select: none; }
+  #pane-story .fr-item summary::-webkit-details-marker { display: none; }
+  #pane-story .fr-item summary::before { content: '▸ '; color: var(--text-mute); }
+  #pane-story .fr-item[open] summary::before { content: '▾ '; }
+  #pane-story .fr-item .fr-body { margin-top: 0.6rem; }
+  #pane-story .fr-item .fr-desc { color: var(--text-dim); font-size: 0.85rem; line-height: 1.6; margin-bottom: 0.5rem; }
+  #pane-story .fr-item .fr-priority { display: inline-block; font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.08em; padding: 2px 7px; border-radius: 4px; background: rgba(255,176,32,0.12); color: var(--warn); border: 1px solid rgba(255,176,32,0.35); margin-left: 0.5rem; vertical-align: middle; }
+  #pane-story .fr-item .fr-tags { margin-top: 0.5rem; font-size: 0.65rem; color: var(--text-mute); font-family: 'JetBrains Mono', monospace; }
+  #pane-story .fr-list-items { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.4rem; }
+  #pane-story .fr-list-items span { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 4px; padding: 1px 7px; font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; color: var(--text-dim); }
 
   /* mission detail */
   #pane-story .mission { background: var(--surface); border: 1px solid var(--border); border-radius: 0.85rem; overflow: hidden; }
@@ -831,6 +884,14 @@
   // would otherwise wipe #submit-msg). Cleared on success or when the user moves
   // to a different mission. See restoreSubmitMsg / the submit handler below.
   let lastSubmit = null;
+  // viewedMission (P23 Story-as-docs, CEO decision: free mission browsing):
+  // when set, the next refresh() requests ?mission=<id> instead of the
+  // default "current" detail. null = follow current (the pre-existing
+  // behaviour). Set by clicking a mission map / kill-chain node; the server
+  // is the actual authority on which mission ids are valid (an unknown value
+  // silently falls back to current — see api.go's journey doc), this is only
+  // a display selection.
+  let viewedMission = null;
 
   if (!user) {
     document.getElementById('pane-journey-page').innerHTML = `
@@ -845,13 +906,25 @@
 
   async function refresh() {
     try {
-      const r = await fetch('/api/users/' + encodeURIComponent(user) + '/journey');
+      let url = '/api/users/' + encodeURIComponent(user) + '/journey';
+      if (viewedMission) url += '?mission=' + encodeURIComponent(viewedMission);
+      const r = await fetch(url);
       if (!r.ok) throw new Error('HTTP ' + r.status);
       render(await r.json());
       document.getElementById('pane-journey-updated').textContent = 'updated ' + new Date().toLocaleTimeString();
     } catch (e) {
       document.getElementById('pane-journey-updated').textContent = 'connection error';
     }
+  }
+
+  // viewMission switches the free-browsed mission and re-fetches immediately
+  // (rather than waiting for the next 2s poll) so a click feels responsive.
+  // Wired onto both the kill-chain nodes and the mission map <li> items —
+  // one handler, one source of truth for "which mission was clicked".
+  function viewMission(id) {
+    if (busy) return;
+    viewedMission = id;
+    refresh();
   }
 
   function render(d) {
@@ -875,6 +948,31 @@
       }
     }
 
+    // viewedId is the mission actually being SHOWN in the detail pane right
+    // now — d.detail.id when the server returned one (it always does unless
+    // every mission is solved AND viewedMission was never set), falling back
+    // to d.current. Used to mark BOTH the kill-chain node and the map <li>
+    // for the currently-viewed mission (independent of "current" — free
+    // browsing lets these differ; see the .viewed CSS rule).
+    const viewedId = (d.detail && d.detail.id) || d.current || null;
+
+    // ---- kill-chain overview (P23 Story-as-docs) ----
+    // Data-driven from the SAME missions[] the map below uses — one source of
+    // truth for status/type/order. Purely a visual overview; clicking a node
+    // free-browses exactly like clicking the map row for the same mission.
+    const killchainHTML = missions.map(m => {
+      const typeCls = m.type ? ' type-' + esc(m.type) : '';
+      const viewedCls = (m.id === viewedId) ? ' viewed' : '';
+      let dot = String(m.id).split('-')[0] || '?';
+      if (m.status === 'solved') dot = '✔';
+      else if (m.status === 'locked') dot = '🔒';
+      return `<div class="kc-node ${esc(m.status)}${typeCls}${viewedCls}" data-mission="${esc(m.id)}" title="${esc(m.title || m.id)}">
+        <div class="kc-dot">${dot}</div>
+        <div class="kc-label">${esc(m.title || m.id)}</div>
+        ${m.type ? `<div class="kc-type">${esc(m.type)}</div>` : ''}
+      </div>`;
+    }).join('');
+
     // ---- mission map ----
     const justUnlockedId = (!firstRender && prevCurrent && d.current && prevCurrent !== d.current) ? d.current : null;
     const mapHTML = missions.map(m => {
@@ -883,7 +981,8 @@
       else if (m.status === 'current') ico = '▶';
       const num = (m.id.split('-')[0] || '');
       const unlockCls = (m.id === justUnlockedId) ? ' just-unlocked' : '';
-      return `<li class="${cls}${unlockCls}">
+      const viewedCls = (m.id === viewedId) ? ' viewed' : '';
+      return `<li class="${cls}${unlockCls}${viewedCls}" data-mission="${esc(m.id)}">
         <span class="ico">${ico}</span>
         <span style="min-width:0">
           <span class="mtitle">${esc(m.title || m.id)}</span><br>
@@ -903,6 +1002,7 @@
         </div>
         <div class="bar"><div class="fill" style="width:${pct}%"></div></div>
       </div>
+      <div class="killchain">${killchainHTML || '<div class="empty"><span class="icon">∅</span>ミッション未ロード</div>'}</div>
       <div class="layout">
         <section class="panel">
           <div class="panel-header"><h2>Mission map</h2></div>
@@ -910,6 +1010,14 @@
         </section>
         <section>${detailHTML}</section>
       </div>`;
+
+    // Free-browsing click wiring (P23 Story-as-docs): delegate from both the
+    // kill-chain strip and the mission map — a click anywhere on a
+    // data-mission node re-fetches that mission's detail via viewMission().
+    // Re-wired every render since innerHTML above just replaced these nodes.
+    document.getElementById('pane-story').querySelectorAll('.kc-node[data-mission], .map li[data-mission]').forEach(el => {
+      el.addEventListener('click', () => viewMission(el.dataset.mission));
+    });
 
     wireDetail(d.detail);
     // Re-inject any sticky failure-mode submit result the polling re-render just
@@ -942,12 +1050,25 @@
     </div></div>`;
   }
 
+  // kickerFor labels the detail panel by the mission's ACTUAL status rather
+  // than a hardcoded "CURRENT MISSION" — free browsing (P23 Story-as-docs)
+  // means the panel may be showing a solved or locked mission, and a
+  // solved/locked mission mislabeled "current" would be confusing (the
+  // kill-chain / map already carry the real status, but the detail panel's
+  // own heading should agree with them at a glance).
+  function kickerFor(det) {
+    if (det.status === 'solved') return 'MISSION CLEARED';
+    if (det.status === 'locked') return 'PREVIEW · LOCKED';
+    return 'CURRENT MISSION';
+  }
+
   function renderDetail(det) {
     const typeBadge = det.type ? `<span class="badge badge-${esc(det.type)}">${esc(det.type)}</span>` : '';
+    const kicker = kickerFor(det);
     if (!det.hasJourney) {
       return `<div class="mission">
         <div class="mission-head">
-          <div class="kicker">CURRENT MISSION</div>
+          <div class="kicker">${esc(kicker)}</div>
           <h2>${esc(det.title || det.id)} ${typeBadge}</h2>
         </div>
         <div class="mission-body">
@@ -955,6 +1076,7 @@
           このミッションの作戦資料はまだ用意されていません。</div>
           ${det.type === 'trigger' ? triggerSection(det) : ''}
           ${det.type === 'evade' ? evadeSection(det) : ''}
+          ${renderFalcoRule(det)}
         </div>
       </div>`;
     }
@@ -999,7 +1121,7 @@
 
     return `<div class="mission">
       <div class="mission-head">
-        <div class="kicker">CURRENT MISSION</div>
+        <div class="kicker">${esc(kicker)}</div>
         <h2>${esc(det.title)} ${typeBadge}</h2>
         ${det.tagline ? `<div class="tagline">${esc(det.tagline)}</div>` : ''}
       </div>
@@ -1010,9 +1132,68 @@
         ${steps ? `<div class="sec-title">Steps（自己チェック）</div><ul class="steps">${steps}</ul>` : ''}
         ${hintsBlock}
         ${det.type === 'evade' ? evadeSection(det) : ''}
+        ${renderFalcoRule(det)}
         ${docs}
       </div>
     </div>`;
+  }
+
+  // renderFalcoRule (P23 Story-as-docs) renders the mission's display-only
+  // Falco rule excerpt (List / Macro / Rule) — see api.go's missionDetail
+  // falcoRule doc and catalog/rules.go's LoadRuleExcerpts. Visible for ANY
+  // mission status (solved/current/locked, CEO decision): this content is
+  // static and identical for every viewer, unlike hints, so free-browsing to
+  // a locked mission still shows its rule excerpt.
+  //
+  // XSS: every value (list item, macro condition, rule desc/condition/output/
+  // priority/tag) flows through esc() — this is the SAME trust boundary as
+  // triggerSection's Falco rule NAMES above: rule.yaml is operator-authored
+  // display content (not participant input), but it is still escaped here
+  // rather than trusted, matching the portal's "esc() everywhere except the
+  // two committed, gen-time-sanitized template.HTML fragments" invariant (see
+  // portal.go / home.go's docs) — this is neither of those two fragments, so
+  // it goes through esc() like every other det.* field on this page.
+  //
+  // Fail-soft: hasFalcoRule false, or an excerpt with all three sections
+  // empty (e.g. a rule.yaml with only list:/macro: and no rule: yet — should
+  // not happen per catalog validation, but defensive), renders nothing.
+  function renderFalcoRule(det) {
+    if (!det.hasFalcoRule) return '';
+    const fr = det.falcoRule || { lists: [], macros: [], rules: [] };
+    const lists = fr.lists || [], macros = fr.macros || [], rules = fr.rules || [];
+    if (!lists.length && !macros.length && !rules.length) return '';
+
+    const listsHTML = lists.length ? `<div class="fr-group">
+      <div class="fr-group-title">Lists</div>
+      ${lists.map(l => `<div class="fr-item" style="cursor:default">
+        <div style="font-weight:600;font-size:0.9rem">${esc(l.name)}</div>
+        <div class="fr-list-items">${(l.items || []).map(i => `<span>${esc(i)}</span>`).join('')}</div>
+      </div>`).join('')}
+    </div>` : '';
+
+    const macrosHTML = macros.length ? `<div class="fr-group">
+      <div class="fr-group-title">Macros</div>
+      ${macros.map(m => `<details class="fr-item">
+        <summary>${esc(m.name)}</summary>
+        <div class="fr-body"><pre><code>${esc(m.condition)}</code></pre></div>
+      </details>`).join('')}
+    </div>` : '';
+
+    const rulesHTML = rules.length ? `<div class="fr-group">
+      <div class="fr-group-title">Rules</div>
+      ${rules.map(r => `<details class="fr-item" open>
+        <summary>${esc(r.name)}${r.priority ? `<span class="fr-priority">${esc(r.priority)}</span>` : ''}</summary>
+        <div class="fr-body">
+          ${r.desc ? `<div class="fr-desc">${esc(r.desc)}</div>` : ''}
+          ${r.condition ? `<pre><code>${esc(r.condition)}</code></pre>` : ''}
+          ${r.output ? `<pre><code>${esc(r.output)}</code></pre>` : ''}
+          ${(r.tags || []).length ? `<div class="fr-tags">${(r.tags || []).map(esc).join(' · ')}</div>` : ''}
+        </div>
+      </details>`).join('')}
+    </div>` : '';
+
+    return `<div class="sec-title">Falco Rule（このミッションの検知ルール）</div>
+      <div class="falco-rule">${listsHTML}${macrosHTML}${rulesHTML}</div>`;
   }
 
   // triggerSection renders the live "how do I know I succeeded?" status for a
