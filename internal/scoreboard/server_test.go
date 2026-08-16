@@ -775,6 +775,107 @@ func TestUserMe_RecentRuleFires(t *testing.T) {
 	}
 }
 
+// TestUserMe_NoActivity_RankIsZero proves a 0-solve participant's own /me
+// response reports rank 0 (the UI renders this as "-", same convention
+// /api/state already uses for an unranked participant — see
+// computeLeaderboard's "Rank only participants who have solved something"
+// comment in api.go).
+func TestUserMe_NoActivity_RankIsZero(t *testing.T) {
+	f := newFixture(t, nil)
+	m := decode(t, f.doUser("GET", "/api/users/alice/me", "alice", nil))
+	if m["rank"].(float64) != 0 {
+		t.Errorf("expected rank 0 for a 0-solve participant, got %v", m["rank"])
+	}
+	if m["score"].(float64) != 0 {
+		t.Errorf("expected score 0 for a 0-solve participant, got %v", m["score"])
+	}
+}
+
+// TestUserMe_AfterSolve_SurfacesOwnRank proves /me now surfaces the caller's
+// OWN rank (P23-ME-1, CEO decision 案① 完全プライベート), sourced from the same
+// computeLeaderboard the admin dashboard uses — extracted for DRY (#40/#39
+// continuity), no ranking semantics changed.
+func TestUserMe_AfterSolve_SurfacesOwnRank(t *testing.T) {
+	var clock time.Time
+	f := newFixture(t, func() time.Time { return clock })
+
+	// alice solves first (10:00) → rank 1 while sole participant.
+	clock = time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "alice"))
+
+	m := decode(t, f.doUser("GET", "/api/users/alice/me", "alice", nil))
+	if m["rank"].(float64) != 1 {
+		t.Fatalf("expected alice rank 1 as sole solver, got %v", m["rank"])
+	}
+	if m["score"].(float64) != 100 {
+		t.Fatalf("expected alice score 100 (no hints used), got %v", m["score"])
+	}
+
+	// bob solves later (10:30) with no hints → ties alice's score (100) but
+	// loses the earliest-solve tiebreak, so alice keeps rank 1 and bob is 2.
+	clock = time.Date(2026, 5, 11, 10, 30, 0, 0, time.UTC)
+	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "bob"))
+
+	mAlice := decode(t, f.doUser("GET", "/api/users/alice/me", "alice", nil))
+	if mAlice["rank"].(float64) != 1 {
+		t.Errorf("alice should keep rank 1 (earliest tiebreak), got %v", mAlice["rank"])
+	}
+	mBob := decode(t, f.doUser("GET", "/api/users/bob/me", "bob", nil))
+	if mBob["rank"].(float64) != 2 {
+		t.Errorf("bob should be rank 2, got %v", mBob["rank"])
+	}
+}
+
+// TestUserMe_NoOtherParticipantDataLeaks is the P23-ME-1 security invariant
+// proof (CEO decision 案① 完全プライベート): a participant's own /me response
+// must NEVER contain any OTHER participant's identifiers, display name, or
+// leaderboard-shaped data — computeLeaderboard is shared with buildState
+// (admin /api/state) and computes the FULL field, so a future edit that
+// forgot to narrow the result to the caller's own row would leak the whole
+// leaderboard here. This guards specifically against that regression: it
+// seeds TWO other participants (bob, carol) with distinct solves/display
+// names/scores, then asserts alice's own /me response contains no trace of
+// either "bob"/"carol" (as a bare user id) or a "leaderboard"-shaped key.
+func TestUserMe_NoOtherParticipantDataLeaks(t *testing.T) {
+	var clock time.Time
+	f := newFixture(t, func() time.Time { return clock })
+
+	clock = time.Date(2026, 5, 11, 9, 0, 0, 0, time.UTC)
+	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "alice"))
+	clock = time.Date(2026, 5, 11, 9, 30, 0, 0, time.UTC)
+	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "bob"))
+	clock = time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "carol"))
+	if w := f.doAdmin("POST", "/api/admin/users/bob/display-name", map[string]string{"name": "bob-the-hacker"}); w.Code != http.StatusOK {
+		t.Fatalf("admin display-name set for bob failed: %d body=%s", w.Code, w.Body)
+	}
+
+	w := f.doUser("GET", "/api/users/alice/me", "alice", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: %d body=%s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+
+	m := decode(t, w)
+	if m["rank"].(float64) != 1 {
+		t.Fatalf("alice should be rank 1 (earliest solve), got %v", m["rank"])
+	}
+
+	// No leaderboard-shaped key at all — /me must not carry the admin
+	// dashboard's field-wide payload shape under any key name.
+	for _, marker := range []string{`"leaderboard"`, `"solver_details"`, `"recent_solves"`, `"events_per_user"`} {
+		if strings.Contains(body, marker) {
+			t.Errorf("participant /me response must not embed admin-shaped state, found %q in body=%s", marker, body)
+		}
+	}
+	// No other participant's identifier/display name anywhere in the body.
+	for _, other := range []string{"bob", "carol", "bob-the-hacker"} {
+		if strings.Contains(body, other) {
+			t.Errorf("participant /me response must not mention other participant %q, body=%s", other, body)
+		}
+	}
+}
+
 // ---------------- /api/users/{user}/display-name ----------------
 
 func TestDisplayName_SetThenReadInState(t *testing.T) {

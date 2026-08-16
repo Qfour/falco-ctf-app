@@ -1184,11 +1184,28 @@ func (h *Handler) userMe(w http.ResponseWriter, r *http.Request) {
 		displayName = n
 	}
 
-	// Score (#40) is the Grader's arithmetic — the handler only projects it. We
-	// pass the catalog-filtered solved count (the same value shown as
-	// solved_count) so score and solved_count are derived from one number; the
-	// Grader adds the per-hint reveal penalty from the store.
+	// Rank + score (P23-ME-1, CEO decision 案① 完全プライベート): computeLeaderboard
+	// is the SAME full-field computation buildState (admin /api/state) uses, but
+	// here we look up ONLY the caller's own row by User and read its Rank/Score —
+	// every OTHER row computeLeaderboard returns is discarded right here and never
+	// serialized into this response. This keeps userMe's self-scope property
+	// (selfOrAdmin above already denied any {user} that is not the caller's own or
+	// an admin) intact even though rank is inherently a field-relative value: the
+	// computation sees everyone, but the RESPONSE never does. A user with zero
+	// solves has no lbEntry in the slice (computeLeaderboard's userSet is built
+	// from EventsPerUser ∪ solvers — see its doc), so rank/score naturally fall
+	// back to 0 — the same "no rank yet" semantics /api/state already renders as
+	// "-" for a 0-solve participant.
+	rank := 0
 	score := h.grader.UserScore(user, len(solved))
+	for _, e := range h.computeLeaderboard(snap, ids) {
+		if e.User == user {
+			rank = e.Rank
+			score = e.Score
+			break
+		}
+	}
+
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"user":              user,
 		"display_name":      displayName,
@@ -1199,6 +1216,7 @@ func (h *Handler) userMe(w http.ResponseWriter, r *http.Request) {
 		"recent_rule_fires": fires,
 		"events":            snap.EventsPerUser[user],
 		"score":             score,
+		"rank":              rank,
 		"hint_penalty":      h.grader.Points().HintPenalty,
 		"now":               now.UTC().Format(time.RFC3339Nano),
 	})
@@ -1524,10 +1542,48 @@ func (h *Handler) state(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, h.buildState())
 }
 
-func (h *Handler) buildState() map[string]any {
-	snap := h.store.Snapshot()
-	ids := h.cat.IDs()
+// lbEntry is one row of the full-event leaderboard computed by
+// computeLeaderboard. It is intentionally package-private: buildState
+// (admin-only /api/state) marshals a slice of these directly, while userMe
+// (participant self-scope /api/users/{user}/me, P23-ME-1) looks up ONLY the
+// caller's own entry by User and discards the rest of the slice — it never
+// serializes or returns any OTHER entry. See computeLeaderboard's doc for the
+// self-scope rationale.
+type lbEntry struct {
+	User        string `json:"user"`
+	DisplayName string `json:"display_name"`
+	Solved      int    `json:"solved"`
+	// Score is the ranking metric (#40, CEO decision): the Grader's points
+	// arithmetic (base award per solve − per-hint reveal penalty, clamped at
+	// 0). Additive alongside Solved/Earliest so per-challenge progress bars
+	// still read solved counts; ranking keys off Score with Earliest as the
+	// tiebreak. Derived via grader.UserScore (ComputeScore single source) — no
+	// inline points math here (#39 direction).
+	Score    int    `json:"score"`
+	Earliest string `json:"earliest"`
+	Events   int    `json:"events"`
+	Rank     int    `json:"rank"`
+}
 
+// computeLeaderboard is the single source of the event-wide rank/score
+// ordering, shared by:
+//
+//   - buildState (admin-only GET /api/state — the operator dashboard's full
+//     leaderboard), and
+//   - userMe (participant self-scope GET /api/users/{user}/me, P23-ME-1 — the
+//     portal's per-participant "Scoreboard" tab), which looks up ONLY the
+//     caller's own lbEntry by User from the returned slice and discards every
+//     other entry before responding. This function itself computes the FULL
+//     field's standings (it has no notion of "for one caller") — the
+//     self-scope narrowing happens entirely in userMe, one layer up. Do not
+//     add a caller-scoped variant of this function; keep the one shared
+//     computation and let each caller decide what subset of the result it is
+//     allowed to expose (buildState: all of it, to admins only via isAdmin;
+//     userMe: one row, to that row's own owner or an admin via selfOrAdmin).
+//
+// Extracted from the former buildState body verbatim (DRY, #40/#39
+// continuity) — no ranking/scoring semantics changed by this refactor.
+func (h *Handler) computeLeaderboard(snap store.Snapshot, ids []string) []lbEntry {
 	// Catalog membership — filters out stale solves whose challenge id was
 	// renamed or removed (e.g. early-prototype `01-read-shadow` still in the
 	// SQLite after the 10-mission rewrite). Without this the leaderboard
@@ -1561,21 +1617,6 @@ func (h *Handler) buildState() map[string]any {
 		perUserSolves[k.User] = append(perUserSolves[k.User], [2]string{k.Challenge, at})
 	}
 
-	type lbEntry struct {
-		User        string `json:"user"`
-		DisplayName string `json:"display_name"`
-		Solved      int    `json:"solved"`
-		// Score is the ranking metric (#40, CEO decision): the Grader's points
-		// arithmetic (base award per solve − per-hint reveal penalty, clamped at
-		// 0). Additive alongside Solved/Earliest so per-challenge progress bars
-		// still read solved counts; ranking keys off Score with Earliest as the
-		// tiebreak. Derived via grader.UserScore (ComputeScore single source) — no
-		// inline points math here (#39 direction).
-		Score    int    `json:"score"`
-		Earliest string `json:"earliest"`
-		Events   int    `json:"events"`
-		Rank     int    `json:"rank"`
-	}
 	displayOf := func(u string) string {
 		if n, ok := snap.DisplayNames[u]; ok && n != "" {
 			return n
@@ -1626,6 +1667,29 @@ func (h *Handler) buildState() map[string]any {
 			rank++
 			leaderboard[i].Rank = rank
 		}
+	}
+	return leaderboard
+}
+
+func (h *Handler) buildState() map[string]any {
+	snap := h.store.Snapshot()
+	ids := h.cat.IDs()
+
+	// Catalog membership — filters out stale solves whose challenge id was
+	// renamed or removed (e.g. early-prototype `01-read-shadow` still in the
+	// SQLite after the 10-mission rewrite). Without this the leaderboard
+	// can credit users for retired challenges and report SOLVED 15/10.
+	idSet := make(map[string]struct{}, len(ids))
+	for _, cid := range ids {
+		idSet[cid] = struct{}{}
+	}
+
+	leaderboard := h.computeLeaderboard(snap, ids)
+	displayOf := func(u string) string {
+		if n, ok := snap.DisplayNames[u]; ok && n != "" {
+			return n
+		}
+		return u
 	}
 
 	type chSolver struct {
@@ -1719,7 +1783,10 @@ func (h *Handler) buildState() map[string]any {
 
 	return map[string]any{
 		"stats": map[string]any{
-			"users":      len(users),
+			// len(leaderboard) == the old len(users) (computeLeaderboard emits
+			// exactly one lbEntry per participant in the field, same userSet
+			// construction as before extraction — see computeLeaderboard).
+			"users":      len(leaderboard),
 			"challenges": len(ids),
 			"solves":     len(snap.Solved),
 			"events":     totalEvents,
