@@ -623,21 +623,24 @@
 </style>
 </head>
 <body>
-<!-- NOTE (P23-ME-1, CEO decision 案① 完全プライベート): the label below reads
-     "Scoreboard" but the tab/pane INTERNAL id stays data-tab="me" / #pane-me —
-     do not rename these to "scoreboard": that id/data-tab pair is already
-     taken by the ADMIN-only full-field tab one line up (id="tab-scoreboard",
-     data-tab="scoreboard", #pane-scoreboard, gated server-side by GET
-     /api/state + isAdmin). Two tabs both labelled "Scoreboard" is intentional:
+<!-- NOTE (P23-ME-1, CEO decision 案① 完全プライベート): the participant tab
+     below is LABELLED "Scoreboard" but its tab/pane INTERNAL id stays
+     data-tab="me" / #pane-me — do not rename these to "scoreboard": that
+     id/data-tab pair is already taken by the ADMIN-only full-field tab one line
+     up (id="tab-scoreboard", data-tab="scoreboard", #pane-scoreboard, gated
+     server-side by GET /api/state + isAdmin), which is LABELLED "Leaderboard"
+     to disambiguate for operators (who see both tabs). The two are distinct:
      this one is the participant's PERSONAL, self-scoped view (own
      rank/score/progress ONLY, via GET /api/users/{user}/me + selfOrAdmin — see
-     #pane-me's script below); the other is the operator's full-field
-     dashboard. Keeping the internal names distinct (me vs scoreboard) avoids
-     colliding two different data sources / auth gates under one id. -->
+     #pane-me's script below); the "Leaderboard" tab is the operator's
+     full-field dashboard. Keeping the internal names distinct (me vs
+     scoreboard) avoids colliding two different data sources / auth gates under
+     one id; the label↔id mismatch (pane "me" shows "Scoreboard") is deliberate
+     per the CEO naming decision. -->
 <nav id="portal-tabs">
   <a class="tab" data-tab="home" href="#home">Home</a>
   <a class="tab" data-tab="journey" href="#journey">Journey</a>
-  <a class="tab" data-tab="scoreboard" href="#scoreboard" id="tab-scoreboard" hidden>Scoreboard</a>
+  <a class="tab" data-tab="scoreboard" href="#scoreboard" id="tab-scoreboard" hidden>Leaderboard</a>
   <a class="tab" data-tab="me" href="#me">Scoreboard</a>
   <a class="tab" data-tab="terminal" href="#terminal">Terminal</a>
   <span id="portal-role-badge" class="cyber-badge cyber-badge--ghost cyber-badge--sm"></span>
