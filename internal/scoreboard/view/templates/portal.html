@@ -34,14 +34,14 @@
      touching cybercore's own rules (no forking, no !important). The values
      chosen here happen to equal the SAME hex codes this file's per-pane
      --accent/--falco variables already use (#00CBE2 / #0090A8 / etc — see
-     #pane-scoreboard / #pane-journey var blocks below), so the ONE cybercore
+     #pane-scoreboard / #pane-story var blocks below), so the ONE cybercore
      component currently in use (the role badge) reads as the same Falco
      brand as the rest of the page.
      SCOPE CORRECTION (2026-08-16 /review-5x R4 F1): an earlier version of
      this comment claimed this override made "the shell chrome AND THE
      PANES read as one consistent brand" via this variable layer — that
      overstated what actually happens. The panes do NOT read var(--cyber-*)
-     anywhere; #pane-scoreboard/#pane-journey/#pane-me each define and use
+     anywhere; #pane-scoreboard/#pane-story/#pane-me each define and use
      their OWN separate --falco/--accent custom properties (see those
      blocks below), so the "unified look" across all 3 faces today comes
      from those pre-existing per-pane variables independently hardcoding
@@ -73,6 +73,62 @@
     --font-display: 'Chakra Petch', sans-serif;
     --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  }
+</style>
+<style>
+  /* ===== Unified portal design tokens (P23 portal-redesign) =====
+     Single source of truth for the palette/typography/spacing every pane
+     (#pane-scoreboard / #pane-story / #pane-me / #pane-terminal) now shares.
+     Values below are lifted VERBATIM from #pane-scoreboard's former
+     pane-local --falco/--accent/etc block (the "reference design" per the
+     P23 portal-redesign design spike) — this is a rename/hoist, not a
+     re-theme: every hex code here already existed pane-locally before this
+     block, just duplicated 3 times with #pane-me alone diverging onto a
+     green palette. Namespaced --p-* so these tokens never collide with the
+     --cyber-* custom properties above (deliberately separate layer — see
+     that block's own comment for why the two layers don't cascade into
+     each other). Pane-scoped blocks below now reference these tokens
+     instead of redefining their own copy. */
+  :root {
+    /* --- color: surfaces --- */
+    --p-bg: #070B10;
+    --p-bg-elev: #0D141B;
+    --p-surface: #0F1820;
+    --p-surface-2: #17222C;
+    --p-border: #1C2A35;
+    --p-border-strong: #2B3F4D;
+    /* --- color: text --- */
+    --p-text: #EAF7FA;
+    --p-text-dim: #9DB4BF;
+    --p-text-mute: #5C7480;
+    /* --- color: accent (Falco Blue) --- */
+    --p-accent: #00CBE2;
+    --p-accent-2: #0090A8;
+    --p-accent-glow: rgba(0, 203, 226, 0.35);
+    /* --- color: semantic --- */
+    --p-success: #00CBE2;
+    --p-success-glow: rgba(0, 203, 226, 0.5);
+    --p-warn: #FFB020;
+    --p-evade: #B78CFF;
+    --p-evade-glow: rgba(183, 140, 255, 0.35);
+    --p-danger: #ff5c6a;
+    /* --- color: podium ranks --- */
+    --p-gold: #FFD24A;
+    --p-gold-glow: rgba(255, 210, 74, 0.55);
+    --p-silver: #CFE0E8;
+    --p-bronze: #E0925A;
+    /* --- typography --- */
+    --p-font-display: 'Chakra Petch', sans-serif;
+    --p-font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --p-h1: 2.4rem;
+    --p-h2: 1.3rem;
+    --p-h3: 0.8rem;
+    --p-micro: 0.7rem;
+    --p-tracking-wide: 0.18em;
+    --p-tracking-wider: 0.35em;
+    /* --- spacing --- */
+    --p-page-padding: 2.25rem 3rem 4rem;
+    --p-panel-radius: 0.85rem;
   }
 </style>
 <style>
@@ -111,55 +167,34 @@
   .pane { display: none; }
   .pane.active { display: block; }
 
-  /* ===== Scoped pane styles (mechanically namespaced from the legacy
-     index/journey/me templates) ===== */
-
-  #pane-scoreboard {
-    /* Falco Blue neon on cyber-dark. */
-    --falco: #00CBE2;
-    --falco-2: #0090A8;
-    --bg: #070B10;            /* deep space */
-    --bg-elev: #0D141B;
-    --surface: #0F1820;
-    --surface-2: #17222C;
-    --border: #1C2A35;
-    --border-strong: #2B3F4D;
-    --text: #EAF7FA;
-    --text-dim: #9DB4BF;
-    --text-mute: #5C7480;
-    --accent: var(--falco);
-    --accent-2: var(--falco-2);
-    --accent-glow: rgba(0, 203, 226, 0.35);
-    --success: #00CBE2;
-    --success-glow: rgba(0, 203, 226, 0.5);
-    --warn: #FFB020;
-    --evade: #B78CFF;        /* evade = violet, for game-y type contrast */
-    --evade-glow: rgba(183, 140, 255, 0.35);
-    --trigger: #00CBE2;
-    --gold: #FFD24A; --gold-glow: rgba(255, 210, 74, 0.55);
-    --silver: #CFE0E8;
-    --bronze: #E0925A;
-    --danger: #ff5c6a;
-  }
-
-  #pane-scoreboard * { box-sizing: border-box; margin: 0; padding: 0; }
-  #pane-scoreboard { font-size: 16px; }
-  #pane-scoreboard {
+  /* ===== Shared pane component classes (P23 portal-redesign) =====
+     Extracted from the near-identical rules #pane-scoreboard / #pane-story /
+     #pane-me / #pane-terminal each used to define locally (values taken
+     from #pane-scoreboard, the reference design — see the --p-* token
+     block above). Each pane's OWN CSS (below) now carries only its
+     pane-specific delta, if any, on top of these; the HTML for each pane
+     was NOT rewritten to reference these classes explicitly (pane markup
+     keeps its existing .panel/.panel-header/.btn/.badge/etc class names —
+     see the "Scoped pane styles" section below, which now targets these
+     SAME class names but scoped per-pane only for the deltas that remain).
+     Pane-specific complex structures (podium, leaderboard table, mission
+     map, terminal iframe frame) are intentionally left pane-scoped below —
+     only the small, truly-repeated primitives are hoisted here. */
+  .p-shell {
     background:
       radial-gradient(at 15% -10%, rgba(0, 203, 226, 0.10) 0px, transparent 45%),
       radial-gradient(at 90% 0%, rgba(183, 140, 255, 0.06) 0px, transparent 40%),
-      var(--bg);
+      var(--p-bg);
     background-attachment: fixed;
-    color: var(--text);
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    color: var(--p-text);
+    font-family: var(--p-font-body);
     min-height: 100vh;
-    padding: 2.25rem 3rem 4rem;
+    padding: var(--p-page-padding);
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
     position: relative;
   }
-  /* faint cyber grid overlay */
-  #pane-scoreboard::before {
+  .p-shell::before {
     content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
     background-image:
       linear-gradient(rgba(0, 203, 226, 0.035) 1px, transparent 1px),
@@ -167,7 +202,58 @@
     background-size: 44px 44px;
     mask-image: radial-gradient(ellipse at 50% 0%, #000 30%, transparent 80%);
   }
-  #pane-scoreboard > * { position: relative; z-index: 1; }
+  .p-shell > * { position: relative; z-index: 1; }
+
+  .p-h1 { font-family: var(--p-font-display); font-size: var(--p-h1); font-weight: 700; letter-spacing: 0.01em; text-transform: uppercase; line-height: 1; }
+  .p-h1 .accent { color: var(--p-accent); text-shadow: 0 0 18px var(--p-accent-glow), 0 0 40px rgba(0,203,226,0.25); }
+  .p-h1 .light { color: var(--p-text-mute); font-weight: 500; font-size: 0.85rem; letter-spacing: var(--p-tracking-wider); margin-left: 0.6rem; text-transform: uppercase; }
+
+  .p-btn { font-family: var(--p-font-display); text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.72rem; font-weight: 700; padding: 0.45rem 0.9rem; border-radius: 6px; border: 1px solid var(--p-border-strong); background: transparent; color: var(--p-text-dim); cursor: pointer; transition: all 0.15s; }
+  .p-btn:hover { color: var(--p-accent); border-color: var(--p-accent); box-shadow: 0 0 12px var(--p-accent-glow); }
+
+  .p-live { display: flex; align-items: center; gap: 0.5rem; color: var(--p-success); font-size: var(--p-micro); text-transform: uppercase; letter-spacing: 0.2em; font-weight: 700; justify-content: flex-end; }
+  .p-live::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--p-success); box-shadow: 0 0 12px var(--p-success-glow); animation: p-pulse 1.6s ease-in-out infinite; }
+  @keyframes p-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.45; transform: scale(1.25); } }
+
+  /* ===== Scoped pane styles (mechanically namespaced from the legacy
+     index/journey/me templates) ===== */
+
+  #pane-scoreboard {
+    /* Unified design tokens (P23 portal-redesign) — see the root --p-*
+       block above. Pane-local aliases kept so the ~120 rules below (which
+       reference --falco/--accent/--bg/etc extensively) don't all need
+       renaming; only the DEFINITIONS moved to the shared :root layer. */
+    --falco: var(--p-accent);
+    --falco-2: var(--p-accent-2);
+    --bg: var(--p-bg);
+    --bg-elev: var(--p-bg-elev);
+    --surface: var(--p-surface);
+    --surface-2: var(--p-surface-2);
+    --border: var(--p-border);
+    --border-strong: var(--p-border-strong);
+    --text: var(--p-text);
+    --text-dim: var(--p-text-dim);
+    --text-mute: var(--p-text-mute);
+    --accent: var(--falco);
+    --accent-2: var(--falco-2);
+    --accent-glow: var(--p-accent-glow);
+    --success: var(--p-success);
+    --success-glow: var(--p-success-glow);
+    --warn: var(--p-warn);
+    --evade: var(--p-evade);        /* evade = violet, for game-y type contrast */
+    --evade-glow: var(--p-evade-glow);
+    --trigger: var(--p-accent);
+    --gold: var(--p-gold); --gold-glow: var(--p-gold-glow);
+    --silver: var(--p-silver);
+    --bronze: var(--p-bronze);
+    --danger: var(--p-danger);
+  }
+
+  #pane-scoreboard * { box-sizing: border-box; margin: 0; padding: 0; }
+  #pane-scoreboard { font-size: 16px; }
+  /* background/padding/grid-overlay/position now come from the shared
+     .p-shell class on this pane's outer <div> (P23 portal-redesign) — see
+     the .p-shell rule above. */
   #pane-scoreboard .mono { font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace; }
   #pane-scoreboard .display { font-family: 'Chakra Petch', sans-serif; letter-spacing: 0.02em; }
   #pane-scoreboard code { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.875em; background: var(--surface-2); padding: 1px 6px; border-radius: 3px; color: var(--accent); }
@@ -176,12 +262,8 @@
   /* ===== Header ===== */
   #pane-scoreboard header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 1.75rem; padding-bottom: 1.25rem; border-bottom: 1px solid var(--border); position: relative; }
   #pane-scoreboard header::after { content: ''; position: absolute; left: 0; bottom: -1px; width: 160px; height: 2px; background: linear-gradient(90deg, var(--accent), transparent); box-shadow: 0 0 12px var(--accent-glow); }
-  #pane-scoreboard .brand h1 { font-family: 'Chakra Petch', sans-serif; font-size: 2.4rem; font-weight: 700; letter-spacing: 0.01em; text-transform: uppercase; line-height: 1; }
-  #pane-scoreboard .brand h1 .accent { color: var(--accent); text-shadow: 0 0 18px var(--accent-glow), 0 0 40px rgba(0,203,226,0.25); }
-  #pane-scoreboard .brand h1 .light { color: var(--text-mute); font-weight: 500; font-size: 0.85rem; letter-spacing: 0.35em; margin-left: 0.6rem; text-transform: uppercase; }
-  #pane-scoreboard .live { display: flex; align-items: center; gap: 0.5rem; color: var(--success); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.2em; font-weight: 700; justify-content: flex-end; }
-  #pane-scoreboard .live::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--success); box-shadow: 0 0 12px var(--success-glow); animation: sb-pulse 1.6s ease-in-out infinite; }
-  @keyframes sb-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.45; transform: scale(1.25); } }
+  /* .brand h1 / .live now come from the shared .p-h1 / .p-live classes
+     (P23 portal-redesign) on the markup below — see those rules above. */
   #pane-scoreboard .updated { color: var(--text-mute); font-size: 0.7rem; margin-top: 0.3rem; text-align: right; font-family: 'JetBrains Mono', monospace; }
   #pane-scoreboard .reset-btn { margin-top: 0.5rem; padding: 0.32rem 0.75rem; font-size: 0.65rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-mute); background: transparent; border: 1px solid var(--border-strong); border-radius: 6px; cursor: pointer; opacity: 0.7; transition: all 0.15s; }
   #pane-scoreboard .reset-btn:hover { opacity: 1; color: var(--danger); border-color: var(--danger); box-shadow: 0 0 12px rgba(255,92,106,0.25); }
@@ -302,221 +384,201 @@
   #pane-scoreboard .demo-tag { display: none; font-size: 0.6rem; letter-spacing: 0.15em; color: var(--warn); border: 1px solid var(--warn); border-radius: 4px; padding: 1px 6px; text-transform: uppercase; }
 
 
-  #pane-journey {
-    --falco: #00CBE2; --falco-2: #0090A8;
-    --bg: #070B10; --bg-elev: #0D141B; --surface: #0F1820; --surface-2: #17222C;
-    --border: #1C2A35; --border-strong: #2B3F4D;
-    --text: #EAF7FA; --text-dim: #9DB4BF; --text-mute: #5C7480;
+  #pane-story {
+    /* Unified design tokens (P23 portal-redesign) — see the root --p-*
+       block above. Pane-local aliases kept so existing rules below don't
+       all need renaming; only the DEFINITIONS moved to :root. */
+    --falco: var(--p-accent); --falco-2: var(--p-accent-2);
+    --bg: var(--p-bg); --bg-elev: var(--p-bg-elev); --surface: var(--p-surface); --surface-2: var(--p-surface-2);
+    --border: var(--p-border); --border-strong: var(--p-border-strong);
+    --text: var(--p-text); --text-dim: var(--p-text-dim); --text-mute: var(--p-text-mute);
     --accent: var(--falco); --accent-2: var(--falco-2);
-    --accent-glow: rgba(0, 203, 226, 0.35);
-    --success: #00CBE2; --success-glow: rgba(0, 203, 226, 0.5);
-    --warn: #FFB020;
-    --evade: #B78CFF; --evade-glow: rgba(183, 140, 255, 0.35);
-    --gold: #FFD24A; --danger: #ff5c6a;
+    --accent-glow: var(--p-accent-glow);
+    --success: var(--p-success); --success-glow: var(--p-success-glow);
+    --warn: var(--p-warn);
+    --evade: var(--p-evade); --evade-glow: var(--p-evade-glow);
+    --gold: var(--p-gold); --danger: var(--p-danger);
   }
-  #pane-journey * { box-sizing: border-box; margin: 0; padding: 0; }
-  #pane-journey { font-size: 16px; }
-  #pane-journey {
-    background:
-      radial-gradient(at 15% -10%, rgba(0, 203, 226, 0.10) 0px, transparent 45%),
-      radial-gradient(at 90% 0%, rgba(183, 140, 255, 0.06) 0px, transparent 40%),
-      var(--bg);
-    background-attachment: fixed; color: var(--text);
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    min-height: 100vh; padding: 2.25rem 3rem 4rem; line-height: 1.5;
-    -webkit-font-smoothing: antialiased; position: relative;
-  }
-  #pane-journey::before {
-    content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
-    background-image:
-      linear-gradient(rgba(0, 203, 226, 0.035) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(0, 203, 226, 0.035) 1px, transparent 1px);
-    background-size: 44px 44px;
-    mask-image: radial-gradient(ellipse at 50% 0%, #000 30%, transparent 80%);
-  }
-  #pane-journey > * { position: relative; z-index: 1; }
-  #pane-journey .mono { font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace; }
-  #pane-journey .display { font-family: 'Chakra Petch', sans-serif; letter-spacing: 0.02em; }
-  #pane-journey code { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.875em; background: var(--surface-2); padding: 1px 6px; border-radius: 3px; color: var(--accent); }
-  #pane-journey a { color: var(--accent); text-decoration: none; }
-  #pane-journey a:hover { text-decoration: underline; }
+  #pane-story * { box-sizing: border-box; margin: 0; padding: 0; }
+  #pane-story { font-size: 16px; }
+  /* background/padding/grid-overlay/position now come from the shared
+     .p-shell class on this pane's outer <div> (P23 portal-redesign) — see
+     the .p-shell rule above. */
+  #pane-story .mono { font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace; }
+  #pane-story .display { font-family: 'Chakra Petch', sans-serif; letter-spacing: 0.02em; }
+  #pane-story code { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.875em; background: var(--surface-2); padding: 1px 6px; border-radius: 3px; color: var(--accent); }
+  #pane-story a { color: var(--accent); text-decoration: none; }
+  #pane-story a:hover { text-decoration: underline; }
 
-  #pane-journey header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 1.75rem; padding-bottom: 1.25rem; border-bottom: 1px solid var(--border); position: relative; }
-  #pane-journey header::after { content: ''; position: absolute; left: 0; bottom: -1px; width: 160px; height: 2px; background: linear-gradient(90deg, var(--accent), transparent); box-shadow: 0 0 12px var(--accent-glow); }
-  #pane-journey .brand h1 { font-family: 'Chakra Petch', sans-serif; font-size: 2.4rem; font-weight: 700; letter-spacing: 0.01em; text-transform: uppercase; line-height: 1; }
-  #pane-journey .brand h1 .accent { color: var(--accent); text-shadow: 0 0 18px var(--accent-glow), 0 0 40px rgba(0,203,226,0.25); }
-  #pane-journey .brand h1 .light { color: var(--text-mute); font-weight: 500; font-size: 0.85rem; letter-spacing: 0.35em; margin-left: 0.6rem; text-transform: uppercase; }
-  #pane-journey .brand .subtitle { color: var(--text-dim); font-size: 0.85rem; margin-top: 0.4rem; }
-  #pane-journey .live { display: flex; align-items: center; gap: 0.5rem; color: var(--success); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.2em; font-weight: 700; justify-content: flex-end; }
-  #pane-journey .live::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--success); box-shadow: 0 0 12px var(--success-glow); animation: jn-pulse 1.6s ease-in-out infinite; }
-  @keyframes jn-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.45; transform: scale(1.25); } }
-  #pane-journey .updated { color: var(--text-mute); font-size: 0.7rem; margin-top: 0.3rem; text-align: right; font-family: 'JetBrains Mono', monospace; }
+  #pane-story header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 1.75rem; padding-bottom: 1.25rem; border-bottom: 1px solid var(--border); position: relative; }
+  #pane-story header::after { content: ''; position: absolute; left: 0; bottom: -1px; width: 160px; height: 2px; background: linear-gradient(90deg, var(--accent), transparent); box-shadow: 0 0 12px var(--accent-glow); }
+  /* .brand h1 / .live now come from the shared .p-h1 / .p-live classes
+     (P23 portal-redesign) on the markup below — see those rules above. */
+  #pane-story .brand .subtitle { color: var(--text-dim); font-size: 0.85rem; margin-top: 0.4rem; }
+  #pane-story .updated { color: var(--text-mute); font-size: 0.7rem; margin-top: 0.3rem; text-align: right; font-family: 'JetBrains Mono', monospace; }
 
   /* progress */
-  #pane-journey .prog-wrap { margin-bottom: 1.5rem; }
-  #pane-journey .prog-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.5rem; }
-  #pane-journey .prog-head .label { font-family: 'Chakra Petch', sans-serif; text-transform: uppercase; letter-spacing: 0.18em; font-size: 0.75rem; color: var(--text-dim); }
-  #pane-journey .prog-head .count { font-family: 'JetBrains Mono', monospace; font-size: 1rem; }
-  #pane-journey .prog-head .count .total { color: var(--text-mute); }
-  #pane-journey .bar { width: 100%; height: 10px; background: var(--bg-elev); border-radius: 5px; overflow: hidden; box-shadow: inset 0 0 0 1px var(--border); }
-  #pane-journey .fill { height: 100%; background: linear-gradient(90deg, var(--accent-2), var(--accent)); box-shadow: 0 0 12px var(--accent-glow); transition: width 0.6s ease; }
+  #pane-story .prog-wrap { margin-bottom: 1.5rem; }
+  #pane-story .prog-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.5rem; }
+  #pane-story .prog-head .label { font-family: 'Chakra Petch', sans-serif; text-transform: uppercase; letter-spacing: 0.18em; font-size: 0.75rem; color: var(--text-dim); }
+  #pane-story .prog-head .count { font-family: 'JetBrains Mono', monospace; font-size: 1rem; }
+  #pane-story .prog-head .count .total { color: var(--text-mute); }
+  #pane-story .bar { width: 100%; height: 10px; background: var(--bg-elev); border-radius: 5px; overflow: hidden; box-shadow: inset 0 0 0 1px var(--border); }
+  #pane-story .fill { height: 100%; background: linear-gradient(90deg, var(--accent-2), var(--accent)); box-shadow: 0 0 12px var(--accent-glow); transition: width 0.6s ease; }
 
-  #pane-journey .layout { display: grid; grid-template-columns: 320px 1fr; gap: 1.5rem; align-items: start; }
-  @media (max-width: 900px) { #pane-journey { padding: 1.25rem; } #pane-journey .layout { grid-template-columns: 1fr; } }
+  #pane-story .layout { display: grid; grid-template-columns: 320px 1fr; gap: 1.5rem; align-items: start; }
+  @media (max-width: 900px) { #pane-story { padding: 1.25rem; } #pane-story .layout { grid-template-columns: 1fr; } }
 
-  #pane-journey .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 0.85rem; overflow: hidden; }
-  #pane-journey .panel-header { padding: 0.9rem 1.25rem; border-bottom: 1px solid var(--border); }
-  #pane-journey .panel-header h2 { font-family: 'Chakra Petch', sans-serif; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.18em; color: var(--text); font-weight: 600; display: flex; align-items: center; gap: 0.6rem; }
-  #pane-journey .panel-header h2::before { content: ''; width: 3px; height: 15px; background: var(--accent); border-radius: 2px; box-shadow: 0 0 10px var(--accent-glow); }
+  #pane-story .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 0.85rem; overflow: hidden; }
+  #pane-story .panel-header { padding: 0.9rem 1.25rem; border-bottom: 1px solid var(--border); }
+  #pane-story .panel-header h2 { font-family: 'Chakra Petch', sans-serif; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.18em; color: var(--text); font-weight: 600; display: flex; align-items: center; gap: 0.6rem; }
+  #pane-story .panel-header h2::before { content: ''; width: 3px; height: 15px; background: var(--accent); border-radius: 2px; box-shadow: 0 0 10px var(--accent-glow); }
 
   /* mission map */
-  #pane-journey .map { list-style: none; padding: 0.35rem 0; }
-  #pane-journey .map li { display: flex; align-items: center; gap: 0.7rem; padding: 0.6rem 1.25rem; border-left: 2px solid transparent; cursor: default; }
-  #pane-journey .map li .ico { width: 22px; text-align: center; font-size: 0.95rem; }
-  #pane-journey .map li .mtitle { font-size: 0.9rem; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  #pane-journey .map li .num { font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; color: var(--text-mute); }
-  #pane-journey .map li.solved .ico { color: var(--success); }
-  #pane-journey .map li.solved .mtitle { color: var(--text); }
-  #pane-journey .map li.current { border-left-color: var(--accent); background: rgba(0,203,226,0.06); }
-  #pane-journey .map li.current .ico { color: var(--accent); text-shadow: 0 0 10px var(--accent-glow); }
-  #pane-journey .map li.current .mtitle { color: var(--accent); font-weight: 600; }
-  #pane-journey .map li.locked { opacity: 0.5; }
-  #pane-journey .map li.locked .ico { color: var(--text-mute); }
-  #pane-journey .map li.just-unlocked { animation: jn-unlock 1.2s ease; }
+  #pane-story .map { list-style: none; padding: 0.35rem 0; }
+  #pane-story .map li { display: flex; align-items: center; gap: 0.7rem; padding: 0.6rem 1.25rem; border-left: 2px solid transparent; cursor: default; }
+  #pane-story .map li .ico { width: 22px; text-align: center; font-size: 0.95rem; }
+  #pane-story .map li .mtitle { font-size: 0.9rem; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #pane-story .map li .num { font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; color: var(--text-mute); }
+  #pane-story .map li.solved .ico { color: var(--success); }
+  #pane-story .map li.solved .mtitle { color: var(--text); }
+  #pane-story .map li.current { border-left-color: var(--accent); background: rgba(0,203,226,0.06); }
+  #pane-story .map li.current .ico { color: var(--accent); text-shadow: 0 0 10px var(--accent-glow); }
+  #pane-story .map li.current .mtitle { color: var(--accent); font-weight: 600; }
+  #pane-story .map li.locked { opacity: 0.5; }
+  #pane-story .map li.locked .ico { color: var(--text-mute); }
+  #pane-story .map li.just-unlocked { animation: jn-unlock 1.2s ease; }
   @keyframes jn-unlock {
     0% { background: rgba(0,203,226,0.25); transform: translateX(-6px); box-shadow: inset 0 0 24px var(--accent-glow); }
     100% { background: transparent; transform: none; box-shadow: none; }
   }
 
   /* mission detail */
-  #pane-journey .mission { background: var(--surface); border: 1px solid var(--border); border-radius: 0.85rem; overflow: hidden; }
-  #pane-journey .mission-head { padding: 1.4rem 1.6rem 1.1rem; border-bottom: 1px solid var(--border); background: linear-gradient(180deg, var(--bg-elev), var(--surface)); }
-  #pane-journey .mission-head .kicker { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; letter-spacing: 0.12em; color: var(--text-mute); text-transform: uppercase; }
-  #pane-journey .mission-head h2 { font-family: 'Chakra Petch', sans-serif; font-size: 1.6rem; margin: 0.25rem 0; }
-  #pane-journey .mission-head .tagline { color: var(--accent); font-size: 0.95rem; }
-  #pane-journey .badge { padding: 3px 9px; border-radius: 4px; font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.12em; font-weight: 700; margin-left: 0.5rem; vertical-align: middle; }
-  #pane-journey .badge-trigger { background: rgba(0, 203, 226, 0.12); color: var(--falco); border: 1px solid rgba(0, 203, 226, 0.35); }
-  #pane-journey .badge-evade { background: rgba(183, 140, 255, 0.12); color: var(--evade); border: 1px solid rgba(183, 140, 255, 0.35); }
-  #pane-journey .mission-body { padding: 1.4rem 1.6rem; }
+  #pane-story .mission { background: var(--surface); border: 1px solid var(--border); border-radius: 0.85rem; overflow: hidden; }
+  #pane-story .mission-head { padding: 1.4rem 1.6rem 1.1rem; border-bottom: 1px solid var(--border); background: linear-gradient(180deg, var(--bg-elev), var(--surface)); }
+  #pane-story .mission-head .kicker { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; letter-spacing: 0.12em; color: var(--text-mute); text-transform: uppercase; }
+  #pane-story .mission-head h2 { font-family: 'Chakra Petch', sans-serif; font-size: 1.6rem; margin: 0.25rem 0; }
+  #pane-story .mission-head .tagline { color: var(--accent); font-size: 0.95rem; }
+  #pane-story .badge { padding: 3px 9px; border-radius: 4px; font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.12em; font-weight: 700; margin-left: 0.5rem; vertical-align: middle; }
+  #pane-story .badge-trigger { background: rgba(0, 203, 226, 0.12); color: var(--falco); border: 1px solid rgba(0, 203, 226, 0.35); }
+  #pane-story .badge-evade { background: rgba(183, 140, 255, 0.12); color: var(--evade); border: 1px solid rgba(183, 140, 255, 0.35); }
+  #pane-story .mission-body { padding: 1.4rem 1.6rem; }
   /* lead-in: previous mission's narrative bridge (#47), persisted above the briefing */
-  #pane-journey .lead-in { position: relative; background: linear-gradient(90deg, rgba(0,203,226,0.07), transparent); border: 1px solid var(--border); border-left: 2px solid var(--accent); border-radius: 0.5rem; padding: 0.7rem 1rem 0.75rem; margin-bottom: 1.2rem; color: var(--text-dim); font-size: 0.92rem; line-height: 1.6; font-style: italic; }
-  #pane-journey .lead-in .li-kicker { display: block; font-family: 'JetBrains Mono', monospace; font-size: 0.62rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); font-style: normal; margin-bottom: 0.35rem; opacity: 0.85; }
-  #pane-journey .briefing { color: var(--text-dim); font-size: 0.98rem; line-height: 1.7; margin-bottom: 1.5rem; border-left: 2px solid var(--border-strong); padding-left: 1rem; }
-  #pane-journey .sec-title { font-family: 'Chakra Petch', sans-serif; text-transform: uppercase; letter-spacing: 0.16em; font-size: 0.72rem; color: var(--text-mute); margin: 1.4rem 0 0.7rem; }
+  #pane-story .lead-in { position: relative; background: linear-gradient(90deg, rgba(0,203,226,0.07), transparent); border: 1px solid var(--border); border-left: 2px solid var(--accent); border-radius: 0.5rem; padding: 0.7rem 1rem 0.75rem; margin-bottom: 1.2rem; color: var(--text-dim); font-size: 0.92rem; line-height: 1.6; font-style: italic; }
+  #pane-story .lead-in .li-kicker { display: block; font-family: 'JetBrains Mono', monospace; font-size: 0.62rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); font-style: normal; margin-bottom: 0.35rem; opacity: 0.85; }
+  #pane-story .briefing { color: var(--text-dim); font-size: 0.98rem; line-height: 1.7; margin-bottom: 1.5rem; border-left: 2px solid var(--border-strong); padding-left: 1rem; }
+  #pane-story .sec-title { font-family: 'Chakra Petch', sans-serif; text-transform: uppercase; letter-spacing: 0.16em; font-size: 0.72rem; color: var(--text-mute); margin: 1.4rem 0 0.7rem; }
 
-  #pane-journey .steps { list-style: none; }
-  #pane-journey .steps li { display: flex; gap: 0.8rem; padding: 0.7rem 0; border-bottom: 1px solid var(--border); align-items: flex-start; }
-  #pane-journey .steps li:last-child { border-bottom: none; }
-  #pane-journey .steps .box { flex-shrink: 0; width: 22px; height: 22px; border-radius: 6px; border: 1.5px solid var(--border-strong); background: var(--bg-elev); cursor: pointer; display: grid; place-items: center; color: transparent; font-size: 0.8rem; transition: all 0.15s; margin-top: 2px; }
-  #pane-journey .steps .box:hover { border-color: var(--accent); }
-  #pane-journey .steps li.done .box { background: linear-gradient(135deg, var(--accent), var(--accent-2)); border-color: var(--accent); color: var(--bg); box-shadow: 0 0 10px var(--accent-glow); }
-  #pane-journey .steps .step-label { font-weight: 600; font-size: 0.95rem; }
-  #pane-journey .steps li.done .step-label { color: var(--text-mute); text-decoration: line-through; }
-  #pane-journey .steps .step-detail { color: var(--text-dim); font-size: 0.85rem; margin-top: 0.2rem; white-space: pre-wrap; }
+  #pane-story .steps { list-style: none; }
+  #pane-story .steps li { display: flex; gap: 0.8rem; padding: 0.7rem 0; border-bottom: 1px solid var(--border); align-items: flex-start; }
+  #pane-story .steps li:last-child { border-bottom: none; }
+  #pane-story .steps .box { flex-shrink: 0; width: 22px; height: 22px; border-radius: 6px; border: 1.5px solid var(--border-strong); background: var(--bg-elev); cursor: pointer; display: grid; place-items: center; color: transparent; font-size: 0.8rem; transition: all 0.15s; margin-top: 2px; }
+  #pane-story .steps .box:hover { border-color: var(--accent); }
+  #pane-story .steps li.done .box { background: linear-gradient(135deg, var(--accent), var(--accent-2)); border-color: var(--accent); color: var(--bg); box-shadow: 0 0 10px var(--accent-glow); }
+  #pane-story .steps .step-label { font-weight: 600; font-size: 0.95rem; }
+  #pane-story .steps li.done .step-label { color: var(--text-mute); text-decoration: line-through; }
+  #pane-story .steps .step-detail { color: var(--text-dim); font-size: 0.85rem; margin-top: 0.2rem; white-space: pre-wrap; }
 
-  #pane-journey .score { color: var(--accent); font-weight: 700; }
-  #pane-journey .hint-locked .pen { color: var(--warn); font-weight: 700; }
-  #pane-journey .hints { display: flex; flex-direction: column; gap: 0.6rem; }
-  #pane-journey .hint-open { background: var(--bg-elev); border: 1px solid var(--border); border-left: 2px solid var(--warn); border-radius: 0.5rem; padding: 0.7rem 1rem; }
-  #pane-journey .hint-open .hn { font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; color: var(--warn); text-transform: uppercase; letter-spacing: 0.1em; }
-  #pane-journey .hint-open .ht { color: var(--text-dim); font-size: 0.9rem; margin-top: 0.25rem; white-space: pre-wrap; }
-  #pane-journey .hint-locked { display: flex; justify-content: space-between; align-items: center; background: var(--bg-elev); border: 1px dashed var(--border-strong); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--text-mute); font-size: 0.85rem; }
-  #pane-journey .btn { font-family: 'Chakra Petch', sans-serif; text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.72rem; font-weight: 700; padding: 0.45rem 0.9rem; border-radius: 6px; border: 1px solid var(--border-strong); background: transparent; color: var(--text-dim); cursor: pointer; transition: all 0.15s; }
-  #pane-journey .btn:hover { color: var(--accent); border-color: var(--accent); box-shadow: 0 0 12px var(--accent-glow); }
-  #pane-journey .btn-accent { color: var(--bg); background: linear-gradient(135deg, var(--accent), var(--accent-2)); border-color: var(--accent); }
-  #pane-journey .btn-accent:hover { color: var(--bg); filter: brightness(1.08); }
+  #pane-story .score { color: var(--accent); font-weight: 700; }
+  #pane-story .hint-locked .pen { color: var(--warn); font-weight: 700; }
+  #pane-story .hints { display: flex; flex-direction: column; gap: 0.6rem; }
+  #pane-story .hint-open { background: var(--bg-elev); border: 1px solid var(--border); border-left: 2px solid var(--warn); border-radius: 0.5rem; padding: 0.7rem 1rem; }
+  #pane-story .hint-open .hn { font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; color: var(--warn); text-transform: uppercase; letter-spacing: 0.1em; }
+  #pane-story .hint-open .ht { color: var(--text-dim); font-size: 0.9rem; margin-top: 0.25rem; white-space: pre-wrap; }
+  #pane-story .hint-locked { display: flex; justify-content: space-between; align-items: center; background: var(--bg-elev); border: 1px dashed var(--border-strong); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--text-mute); font-size: 0.85rem; }
+  #pane-story .btn { font-family: 'Chakra Petch', sans-serif; text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.72rem; font-weight: 700; padding: 0.45rem 0.9rem; border-radius: 6px; border: 1px solid var(--border-strong); background: transparent; color: var(--text-dim); cursor: pointer; transition: all 0.15s; }
+  #pane-story .btn:hover { color: var(--accent); border-color: var(--accent); box-shadow: 0 0 12px var(--accent-glow); }
+  #pane-story .btn-accent { color: var(--bg); background: linear-gradient(135deg, var(--accent), var(--accent-2)); border-color: var(--accent); }
+  #pane-story .btn-accent:hover { color: var(--bg); filter: brightness(1.08); }
 
-  #pane-journey .docs-link { display: inline-block; margin-top: 1.2rem; font-size: 0.85rem; }
+  #pane-story .docs-link { display: inline-block; margin-top: 1.2rem; font-size: 0.85rem; }
 
   /* evade submit */
-  #pane-journey .submit-form { margin-top: 0.6rem; display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }
-  #pane-journey .submit-form input { flex: 1 1 260px; background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: 6px; color: var(--text); font-family: 'JetBrains Mono', monospace; padding: 0.55rem 0.8rem; font-size: 0.9rem; }
-  #pane-journey .submit-form input:focus { outline: none; border-color: var(--evade); box-shadow: 0 0 10px var(--evade-glow); }
-  #pane-journey .submit-msg { margin-top: 0.6rem; font-size: 0.85rem; font-family: 'JetBrains Mono', monospace; min-height: 1.2em; }
-  #pane-journey .submit-msg.ok { color: var(--success); }
-  #pane-journey .submit-msg.err { color: var(--danger); }
-  #pane-journey .submit-msg.warn { color: var(--warn); }
+  #pane-story .submit-form { margin-top: 0.6rem; display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }
+  #pane-story .submit-form input { flex: 1 1 260px; background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: 6px; color: var(--text); font-family: 'JetBrains Mono', monospace; padding: 0.55rem 0.8rem; font-size: 0.9rem; }
+  #pane-story .submit-form input:focus { outline: none; border-color: var(--evade); box-shadow: 0 0 10px var(--evade-glow); }
+  #pane-story .submit-msg { margin-top: 0.6rem; font-size: 0.85rem; font-family: 'JetBrains Mono', monospace; min-height: 1.2em; }
+  #pane-story .submit-msg.ok { color: var(--success); }
+  #pane-story .submit-msg.err { color: var(--danger); }
+  #pane-story .submit-msg.warn { color: var(--warn); }
 
   /* auto-solve live status (exfil-required evade) */
-  #pane-journey .autosolve { margin-top: 0.6rem; background: var(--bg-elev); border: 1px solid var(--border); border-left: 2px solid var(--evade); border-radius: 0.5rem; padding: 0.9rem 1.1rem; }
-  #pane-journey .autosolve .steps-flow { list-style: none; display: flex; flex-direction: column; gap: 0.55rem; }
-  #pane-journey .autosolve .steps-flow li { display: flex; align-items: center; gap: 0.6rem; font-size: 0.9rem; color: var(--text-mute); }
-  #pane-journey .autosolve .steps-flow li .dot { flex-shrink: 0; width: 20px; text-align: center; }
-  #pane-journey .autosolve .steps-flow li.active { color: var(--text); font-weight: 600; }
-  #pane-journey .autosolve .steps-flow li.done { color: var(--success); }
-  #pane-journey .autosolve .steps-flow li.waiting .dot { animation: jn-pulse 1.6s ease-in-out infinite; }
-  #pane-journey .autosolve .hint { color: var(--text-mute); font-size: 0.8rem; margin-top: 0.7rem; }
+  #pane-story .autosolve { margin-top: 0.6rem; background: var(--bg-elev); border: 1px solid var(--border); border-left: 2px solid var(--evade); border-radius: 0.5rem; padding: 0.9rem 1.1rem; }
+  #pane-story .autosolve .steps-flow { list-style: none; display: flex; flex-direction: column; gap: 0.55rem; }
+  #pane-story .autosolve .steps-flow li { display: flex; align-items: center; gap: 0.6rem; font-size: 0.9rem; color: var(--text-mute); }
+  #pane-story .autosolve .steps-flow li .dot { flex-shrink: 0; width: 20px; text-align: center; }
+  #pane-story .autosolve .steps-flow li.active { color: var(--text); font-weight: 600; }
+  #pane-story .autosolve .steps-flow li.done { color: var(--success); }
+  #pane-story .autosolve .steps-flow li.waiting .dot { animation: p-pulse 1.6s ease-in-out infinite; }
+  #pane-story .autosolve .hint { color: var(--text-mute); font-size: 0.8rem; margin-top: 0.7rem; }
   /* collapsible manual fallback */
-  #pane-journey details.manual { margin-top: 0.8rem; }
-  #pane-journey details.manual > summary { cursor: pointer; color: var(--text-mute); font-size: 0.82rem; list-style: none; user-select: none; }
-  #pane-journey details.manual > summary::-webkit-details-marker { display: none; }
-  #pane-journey details.manual > summary::before { content: '▸ '; color: var(--text-mute); }
-  #pane-journey details.manual[open] > summary::before { content: '▾ '; }
-  #pane-journey details.manual > summary:hover { color: var(--accent); }
+  #pane-story details.manual { margin-top: 0.8rem; }
+  #pane-story details.manual > summary { cursor: pointer; color: var(--text-mute); font-size: 0.82rem; list-style: none; user-select: none; }
+  #pane-story details.manual > summary::-webkit-details-marker { display: none; }
+  #pane-story details.manual > summary::before { content: '▸ '; color: var(--text-mute); }
+  #pane-story details.manual[open] > summary::before { content: '▾ '; }
+  #pane-story details.manual > summary:hover { color: var(--accent); }
 
-  #pane-journey .empty { text-align: center; padding: 2.5rem 1rem; color: var(--text-mute); font-size: 0.9rem; }
-  #pane-journey .empty .icon { font-size: 2rem; opacity: 0.4; display: block; margin-bottom: 0.5rem; }
-  #pane-journey .help { background: var(--surface); border: 1px solid var(--border); border-radius: 0.85rem; padding: 2rem; text-align: center; max-width: 620px; margin: 3rem auto; }
-  #pane-journey .help h2 { font-family: 'Chakra Petch', sans-serif; font-size: 1.2rem; margin-bottom: 0.6rem; }
-  #pane-journey .help p { color: var(--text-dim); font-size: 0.95rem; }
+  #pane-story .empty { text-align: center; padding: 2.5rem 1rem; color: var(--text-mute); font-size: 0.9rem; }
+  #pane-story .empty .icon { font-size: 2rem; opacity: 0.4; display: block; margin-bottom: 0.5rem; }
+  #pane-story .help { background: var(--surface); border: 1px solid var(--border); border-radius: 0.85rem; padding: 2rem; text-align: center; max-width: 620px; margin: 3rem auto; }
+  #pane-story .help h2 { font-family: 'Chakra Petch', sans-serif; font-size: 1.2rem; margin-bottom: 0.6rem; }
+  #pane-story .help p { color: var(--text-dim); font-size: 0.95rem; }
 
   /* CLEARED overlay */
-  #pane-journey #pane-journey-clear-fx { position: fixed; inset: 0; z-index: 50; display: none; place-items: center; background: radial-gradient(ellipse at center, rgba(0,203,226,0.18), rgba(7,11,16,0.86)); backdrop-filter: blur(2px); }
-  #pane-journey #pane-journey-clear-fx.show { display: grid; animation: jn-fxin 0.3s ease; }
-  #pane-journey #pane-journey-clear-fx .card { text-align: center; }
-  #pane-journey #pane-journey-clear-fx .stamp { font-family: 'Chakra Petch', sans-serif; font-size: 4rem; font-weight: 700; letter-spacing: 0.08em; color: var(--success); text-shadow: 0 0 40px var(--success-glow); animation: jn-stamp 0.5s cubic-bezier(.2,1.4,.4,1); }
-  #pane-journey #pane-journey-clear-fx .sub { color: var(--text-dim); letter-spacing: 0.25em; text-transform: uppercase; margin-top: 0.6rem; font-size: 0.9rem; }
-  #pane-journey #pane-journey-clear-fx .bridge-fx { display: none; max-width: 32rem; margin: 1.1rem auto 0; color: var(--text); font-size: 1.02rem; line-height: 1.65; font-style: italic; text-shadow: 0 0 24px rgba(0,203,226,0.15); animation: jn-bridgein 0.6s ease 0.35s both; }
+  #pane-story #pane-journey-clear-fx { position: fixed; inset: 0; z-index: 50; display: none; place-items: center; background: radial-gradient(ellipse at center, rgba(0,203,226,0.18), rgba(7,11,16,0.86)); backdrop-filter: blur(2px); }
+  #pane-story #pane-journey-clear-fx.show { display: grid; animation: jn-fxin 0.3s ease; }
+  #pane-story #pane-journey-clear-fx .card { text-align: center; }
+  #pane-story #pane-journey-clear-fx .stamp { font-family: 'Chakra Petch', sans-serif; font-size: 4rem; font-weight: 700; letter-spacing: 0.08em; color: var(--success); text-shadow: 0 0 40px var(--success-glow); animation: jn-stamp 0.5s cubic-bezier(.2,1.4,.4,1); }
+  #pane-story #pane-journey-clear-fx .sub { color: var(--text-dim); letter-spacing: 0.25em; text-transform: uppercase; margin-top: 0.6rem; font-size: 0.9rem; }
+  #pane-story #pane-journey-clear-fx .bridge-fx { display: none; max-width: 32rem; margin: 1.1rem auto 0; color: var(--text); font-size: 1.02rem; line-height: 1.65; font-style: italic; text-shadow: 0 0 24px rgba(0,203,226,0.15); animation: jn-bridgein 0.6s ease 0.35s both; }
   @keyframes jn-bridgein { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
   @keyframes jn-fxin { from { opacity: 0; } to { opacity: 1; } }
   @keyframes jn-stamp { 0% { transform: scale(2.2); opacity: 0; } 60% { transform: scale(0.92); opacity: 1; } 100% { transform: scale(1); } }
 
 
   #pane-me {
-    --bg: #1E1E22;
-    --bg-elev: #2B2D30;
-    --surface: #2B2D30;
-    --surface-2: #3E4042;
-    --border: #3E4042;
-    --border-strong: #535557;
-    --text: #FFFFFF;
-    --text-dim: #BBBDBF;
-    --text-mute: #8A8C8E;
-    --accent: #BDF78B;
-    --accent-2: #A8E975;
-    --accent-glow: rgba(189, 247, 139, 0.22);
-    --success: #BDF78B;
-    --success-glow: rgba(189, 247, 139, 0.35);
-    --rule-bg: rgba(189, 247, 139, 0.10);
+    /* Unified design tokens (P23 portal-redesign): switched from the old
+       standalone green palette (--accent:#BDF78B) onto the SAME shared
+       cyan tokens #pane-scoreboard/#pane-story use — this is the core
+       visual-unification fix (the 3 faces of the portal no longer look
+       like 3 different apps). */
+    --bg: var(--p-bg);
+    --bg-elev: var(--p-bg-elev);
+    --surface: var(--p-surface);
+    --surface-2: var(--p-surface-2);
+    --border: var(--p-border);
+    --border-strong: var(--p-border-strong);
+    --text: var(--p-text);
+    --text-dim: var(--p-text-dim);
+    --text-mute: var(--p-text-mute);
+    --accent: var(--p-accent);
+    --accent-2: var(--p-accent-2);
+    --accent-glow: var(--p-accent-glow);
+    --success: var(--p-success);
+    --success-glow: var(--p-success-glow);
+    --rule-bg: var(--p-accent-glow);
   }
 
   #pane-me * { box-sizing: border-box; margin: 0; padding: 0; }
   #pane-me { font-size: 16px; }
-  #pane-me {
-    background: var(--bg);
-    background-image:
-      radial-gradient(at 20% -10%, rgba(189, 247, 139, 0.08) 0px, transparent 50%),
-      radial-gradient(at 85% 5%, rgba(189, 247, 139, 0.04) 0px, transparent 50%);
-    background-attachment: fixed;
-    color: var(--text);
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    min-height: 100vh;
-    padding: 2.5rem 3rem;
-    line-height: 1.5;
-    -webkit-font-smoothing: antialiased;
-  }
+  /* background/padding/grid-overlay/position now come from the shared
+     .p-shell class on this pane's outer <div> (P23 portal-redesign) — see
+     the .p-shell rule above. This also GAINS the faint cyber grid overlay
+     #pane-scoreboard/#pane-story already had and #pane-me previously
+     lacked, as a side effect of unifying onto one shell rule rather than
+     3 near-duplicates. */
   #pane-me .mono { font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace; }
   #pane-me a { color: var(--accent); text-decoration: none; }
   #pane-me a:hover { text-decoration: underline; }
 
   #pane-me header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 2rem; padding-bottom: 1.5rem; border-bottom: 1px solid var(--border); }
-  #pane-me .brand h1 { font-size: 2rem; font-weight: 700; letter-spacing: -0.025em; }
-  #pane-me .brand h1 .accent { color: var(--accent); }
-  #pane-me .brand h1 .light { color: var(--text-mute); font-weight: 400; font-size: 1rem; margin-left: 0.5rem; }
+  /* .brand h1 / .live now come from the shared .p-h1 / .p-live classes
+     (P23 portal-redesign) on the markup below — see those rules above.
+     (This also unifies #pane-me's H1 size/tracking with the other panes'
+     2.4rem display heading, and its LIVE badge color from the old green
+     --accent onto the shared cyan --p-success.) */
   #pane-me .brand .subtitle { color: var(--text-dim); font-size: 0.875rem; margin-top: 0.25rem; }
-  #pane-me .live { display: flex; align-items: center; gap: 0.5rem; color: var(--accent); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.18em; font-weight: 600; }
-  #pane-me .live::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--success-glow); animation: me-pulse 1.6s ease-in-out infinite; }
-  @keyframes me-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(1.2); } }
   #pane-me .updated { color: var(--text-mute); font-size: 0.7rem; margin-top: 0.25rem; text-align: right; }
 
   /* Identity hero */
@@ -547,10 +609,17 @@
   #pane-me .grid { display: grid; grid-template-columns: 1fr 1.3fr; gap: 1.5rem; }
   @media (max-width: 980px) { #pane-me { padding: 1.25rem; } #pane-me .grid { grid-template-columns: 1fr; } }
 
-  #pane-me .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 0.75rem; margin-bottom: 1.5rem; overflow: hidden; }
-  #pane-me .panel-header { padding: 1rem 1.5rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
-  #pane-me .panel-header h2 { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.18em; color: var(--text-dim); font-weight: 600; display: flex; align-items: center; gap: 0.5rem; }
-  #pane-me .panel-header h2::before { content: ''; width: 3px; height: 14px; background: var(--accent); border-radius: 2px; }
+  /* .panel/.panel-header/.panel-aux: now IDENTICAL to #pane-scoreboard's
+     (P23 portal-redesign unification — was radius 0.75rem/padding
+     1rem/h2 color var(--text-dim)/no h2::before glow, all now matched to
+     the reference design's 0.85rem/0.9rem/var(--text)/glow via the shared
+     --p-* tokens). See #pane-scoreboard's .panel rules above (same
+     selector VALUES, kept pane-scoped rather than de-scoped to avoid a
+     wider HTML class-attribute rewrite across 3 script blocks). */
+  #pane-me .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--p-panel-radius); margin-bottom: 1.5rem; overflow: hidden; }
+  #pane-me .panel-header { padding: 0.9rem 1.5rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+  #pane-me .panel-header h2 { font-family: var(--p-font-display); font-size: var(--p-h3); text-transform: uppercase; letter-spacing: var(--p-tracking-wide); color: var(--text); font-weight: 600; display: flex; align-items: center; gap: 0.6rem; }
+  #pane-me .panel-header h2::before { content: ''; width: 3px; height: 15px; background: var(--accent); border-radius: 2px; box-shadow: 0 0 10px var(--accent-glow); }
   #pane-me .panel-aux { color: var(--text-mute); font-size: 0.75rem; font-family: 'JetBrains Mono', monospace; }
 
   /* Next challenge */
@@ -589,10 +658,38 @@
   #pane-me .help p { color: var(--text-dim); font-size: 0.9rem; }
   #pane-me .help code { background: var(--surface-2); padding: 2px 8px; border-radius: 3px; color: var(--accent); font-family: 'JetBrains Mono', monospace; font-size: 0.85em; }
 
+  /* ===== Shared rich-content styling (P23 portal-redesign) =====
+     Markdown-derived typography for gen-time-sanitized fragment HTML
+     (home.go / homefragments_gen.go) — extracted from what was previously
+     a #pane-home-panels-only ".home-panel-body" block so the Story tab's
+     overview (#pane-story .story-overview, injected from the SAME
+     HomeFragments source — see home.go's storyPanelHTML) can reuse it
+     without duplicating ~20 rules. Unscoped by pane id on purpose: this
+     class only ever wraps server-generated, already-sanitized fragment
+     HTML (never client-rendered JS template-literal output), so applying
+     it in more than one place carries no new risk. */
+  .rich-content { color: #9DB4BF; font-size: 0.92rem; line-height: 1.75; }
+  .rich-content h2 { font-family: 'Chakra Petch', sans-serif; font-size: 1.1rem; color: #EAF7FA; margin: 1.1rem 0 0.5rem; }
+  .rich-content h3 { font-family: 'Chakra Petch', sans-serif; font-size: 0.95rem; color: #EAF7FA; margin: 1rem 0 0.4rem; }
+  .rich-content p { margin: 0.6rem 0; }
+  .rich-content ul, .rich-content ol { margin: 0.6rem 0; padding-left: 1.4rem; }
+  .rich-content li { margin: 0.3rem 0; }
+  .rich-content strong { color: #EAF7FA; }
+  .rich-content code { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.85em; background: #17222C; padding: 1px 6px; border-radius: 3px; color: #00CBE2; }
+  .rich-content pre { background: #0D141B; border: 1px solid #1C2A35; border-radius: 0.5rem; padding: 0.85rem 1rem; overflow-x: auto; margin: 0.75rem 0; }
+  .rich-content pre code { background: none; padding: 0; color: #9DB4BF; }
+  .rich-content blockquote { border-left: 2px solid #FFB020; background: rgba(255,176,32,0.06); border-radius: 0 0.4rem 0.4rem 0; padding: 0.6rem 1rem; margin: 0.75rem 0; }
+  .rich-content hr { border: none; border-top: 1px solid #1C2A35; margin: 1.1rem 0; }
+  .rich-content table { width: 100%; border-collapse: collapse; margin: 0.75rem 0; font-size: 0.88rem; }
+  .rich-content th, .rich-content td { border: 1px solid #1C2A35; padding: 0.5rem 0.7rem; text-align: left; vertical-align: top; }
+  .rich-content th { background: #0D141B; color: #EAF7FA; font-family: 'Chakra Petch', sans-serif; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; }
+
   /* ===== Home panels (P23-5): <details> disclosure panels rendered from
-     gen-time-sanitized fragments (home.go / homefragments_gen.go). Scoped
-     under #pane-home-panels so these rules only ever affect that
-     server-generated subtree, never the client-rendered panes above. ===== */
+     gen-time-sanitized fragments. Scoped under #pane-home-panels so these
+     structural rules only ever affect that server-generated subtree,
+     never the client-rendered panes above. The markdown typography INSIDE
+     each panel body now comes from the shared .rich-content class (see
+     above) rather than a #pane-home-panels-scoped copy. ===== */
   #pane-home-panels { margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.9rem; }
   #pane-home-panels .home-panel { background: #0F1820; border: 1px solid #1C2A35; border-radius: 0.75rem; overflow: hidden; }
   #pane-home-panels .home-panel > summary { cursor: pointer; list-style: none; padding: 0.9rem 1.25rem; font-family: 'Chakra Petch', sans-serif; font-size: 0.85rem; font-weight: 600; letter-spacing: 0.06em; color: #EAF7FA; user-select: none; }
@@ -600,25 +697,35 @@
   #pane-home-panels .home-panel > summary::before { content: '▸ '; color: #5C7480; }
   #pane-home-panels .home-panel[open] > summary::before { content: '▾ '; }
   #pane-home-panels .home-panel > summary:hover { color: #00CBE2; }
-  #pane-home-panels .home-panel-body { padding: 0 1.25rem 1.25rem; color: #9DB4BF; font-size: 0.92rem; line-height: 1.75; border-top: 1px solid #1C2A35; }
-  #pane-home-panels .home-panel-body h2 { font-family: 'Chakra Petch', sans-serif; font-size: 1.1rem; color: #EAF7FA; margin: 1.1rem 0 0.5rem; }
-  #pane-home-panels .home-panel-body h3 { font-family: 'Chakra Petch', sans-serif; font-size: 0.95rem; color: #EAF7FA; margin: 1rem 0 0.4rem; }
-  #pane-home-panels .home-panel-body p { margin: 0.6rem 0; }
-  #pane-home-panels .home-panel-body ul, #pane-home-panels .home-panel-body ol { margin: 0.6rem 0; padding-left: 1.4rem; }
-  #pane-home-panels .home-panel-body li { margin: 0.3rem 0; }
-  #pane-home-panels .home-panel-body strong { color: #EAF7FA; }
-  #pane-home-panels .home-panel-body code { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.85em; background: #17222C; padding: 1px 6px; border-radius: 3px; color: #00CBE2; }
-  #pane-home-panels .home-panel-body pre { background: #0D141B; border: 1px solid #1C2A35; border-radius: 0.5rem; padding: 0.85rem 1rem; overflow-x: auto; margin: 0.75rem 0; }
-  #pane-home-panels .home-panel-body pre code { background: none; padding: 0; color: #9DB4BF; }
-  #pane-home-panels .home-panel-body blockquote { border-left: 2px solid #FFB020; background: rgba(255,176,32,0.06); border-radius: 0 0.4rem 0.4rem 0; padding: 0.6rem 1rem; margin: 0.75rem 0; }
-  #pane-home-panels .home-panel-body hr { border: none; border-top: 1px solid #1C2A35; margin: 1.1rem 0; }
-  #pane-home-panels .home-panel-body table { width: 100%; border-collapse: collapse; margin: 0.75rem 0; font-size: 0.88rem; }
-  #pane-home-panels .home-panel-body th, #pane-home-panels .home-panel-body td { border: 1px solid #1C2A35; padding: 0.5rem 0.7rem; text-align: left; vertical-align: top; }
-  #pane-home-panels .home-panel-body th { background: #0D141B; color: #EAF7FA; font-family: 'Chakra Petch', sans-serif; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; }
+  #pane-home-panels .home-panel-body { padding: 0 1.25rem 1.25rem; border-top: 1px solid #1C2A35; }
   #pane-home-panels .home-rule-explain-item { padding: 0.9rem 0; border-top: 1px solid #1C2A35; }
   #pane-home-panels .home-rule-explain-item:first-child { border-top: none; padding-top: 0; }
   #pane-home-panels .home-rule-explain-chal { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase; color: #00CBE2; margin: 0 0 0.5rem; }
 
+  /* ===== Story overview (P23 portal-redesign): the "story" HomeFragment,
+     surfaced at the top of the Story pane instead of buried in a Home
+     <details> panel — see home.go's storyPanelHTML doc. Structural
+     spacing only; typography comes from .rich-content (applied alongside
+     this class in the markup below). ===== */
+  #pane-story .story-overview { background: var(--surface); border: 1px solid var(--border); border-radius: var(--p-panel-radius); padding: 1.25rem 1.5rem; margin-bottom: 1.5rem; }
+  /* fail-soft (R2 F1): buildStoryPanelHTML/StoryPanelHTML degrade to "" when
+     no "story" HomeFragment exists (see home.go's doc) — hide the bordered
+     box entirely rather than showing an empty panel, matching the existing
+     #pane-scoreboard .podium:empty precedent above. */
+  #pane-story .story-overview:empty { display: none; }
+
+  /* ===== Terminal pane (P23 portal-redesign restyle) =====
+     Previously entirely inline style="" attributes in the JS-generated
+     markup below (P23-4's original cut) — now the shared design tokens
+     via a few small, pane-scoped classes, matching the other 3 panes'
+     look. iframe src/CSP/frame-src/fail-safe-placeholder LOGIC is
+     unchanged; only the surrounding chrome (heading/button/frame border)
+     is restyled. */
+  #pane-terminal .term-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.75rem; }
+  #pane-terminal .term-head h2 { font-family: var(--p-font-display); font-size: var(--p-h2); margin: 0; color: var(--p-text); }
+  #pane-terminal .term-frame { border: 1px solid var(--p-border); border-radius: var(--p-panel-radius); overflow: hidden; background: #000; }
+  #pane-terminal .term-note { color: var(--p-text-mute); font-size: 0.75rem; line-height: 1.5; margin-top: 0.6rem; }
+  #pane-terminal .term-placeholder p { color: var(--p-text-dim); line-height: 1.6; margin: 0; }
 
 </style>
 </head>
@@ -639,7 +746,7 @@
      per the CEO naming decision. -->
 <nav id="portal-tabs">
   <a class="tab" data-tab="home" href="#home">Home</a>
-  <a class="tab" data-tab="journey" href="#journey">Journey</a>
+  <a class="tab" data-tab="story" href="#story">Story</a>
   <a class="tab" data-tab="scoreboard" href="#scoreboard" id="tab-scoreboard" hidden>Leaderboard</a>
   <a class="tab" data-tab="me" href="#me">Scoreboard</a>
   <a class="tab" data-tab="terminal" href="#terminal">Terminal</a>
@@ -665,19 +772,36 @@
   window.__PORTAL_USER__ = {{.UserJSON}};
   window.__PORTAL_TTYD_URL__ = {{.TtydURLJSON}};
 </script>
-<!-- ===== Journey pane (moved from templates/journey.html, namespaced) ===== -->
-<div class="pane" id="pane-journey">
+<!-- ===== Story pane (P23 portal-redesign IA rename: was "Journey" — moved
+     from templates/journey.html, namespaced; internal element ids below
+     (pane-journey-page, pane-journey-updated, etc.) are UNCHANGED by this
+     rename — only the pane's OWN id (#pane-journey -> #pane-story), the tab
+     label/data-tab/hash, and CSS selectors prefixed with the pane id move.
+     See PR-3 for the Story tab's new lead-in content; this pane's game UI
+     (mission map / briefing / steps / hints) is untouched here.) ===== -->
+<div class="pane p-shell" id="pane-story">
 
   <header>
     <div class="brand">
-      <h1><span class="accent">Falco</span> CTF <span class="light mono">journey</span></h1>
+      <h1 class="p-h1"><span class="accent">Falco</span> CTF <span class="light mono">story</span></h1>
       <div class="subtitle">作戦を順に攻略せよ — ミッションマップ・ブリーフィング・段階ヒント</div>
     </div>
     <div>
-      <div class="live">● LIVE</div>
+      <div class="live p-live">● LIVE</div>
       <div class="updated mono" id="pane-journey-updated">connecting…</div>
     </div>
   </header>
+
+  <!-- Story overview (P23 portal-redesign): the "story" HomeFragment,
+       gen-time-sanitized like the Home tab's panels — see home.go's
+       storyPanelHTML/buildStoryPanelHTML doc and portal.go's
+       StoryPanelHTML field doc for why this is safe to inject unescaped.
+       Empty (renders nothing visible) when no story fragment exists,
+       matching the fail-soft convention documented there. Placed BEFORE
+       the mission map/progress bar so a participant sees the campaign
+       framing first, then drops into the current mission's game UI
+       below (untouched by this addition). -->
+  <div class="story-overview rich-content">{{.StoryPanelHTML}}</div>
 
   <div id="pane-journey-page"></div>
 
@@ -986,7 +1110,7 @@
 
   function wireDetail(det) {
     // step self-check toggles
-    document.getElementById('pane-journey').querySelectorAll('.steps .box').forEach(box => {
+    document.getElementById('pane-story').querySelectorAll('.steps .box').forEach(box => {
       box.addEventListener('click', async () => {
         const idx = box.dataset.step;
         const checked = box.dataset.checked !== '1';
@@ -1080,17 +1204,17 @@
 </div>
 <!-- ===== Scoreboard pane (moved from templates/index.html, namespaced;
      admin-only content — see security note in view.go) ===== -->
-<div class="pane" id="pane-scoreboard">
+<div class="pane p-shell" id="pane-scoreboard">
 
   <header>
     <div class="brand">
-      <h1><span class="accent">Falco</span> CTF <span class="light mono">scoreboard</span></h1>
+      <h1 class="p-h1"><span class="accent">Falco</span> CTF <span class="light mono">scoreboard</span></h1>
     </div>
     <div class="hdr-right">
-      <div class="live">● LIVE <span class="demo-tag" id="pane-scoreboard-demo-tag">demo</span></div>
+      <div class="live p-live">● LIVE <span class="demo-tag" id="pane-scoreboard-demo-tag">demo</span></div>
       <div class="updated mono" id="pane-scoreboard-updated">connecting…</div>
       <div class="hdr-btns">
-        <a id="pane-scoreboard-journey-link" class="reset-btn result-btn" href="#journey" title="Open your guided mission journey">▶ Journey</a>
+        <a id="pane-scoreboard-journey-link" class="reset-btn result-btn" href="#story" title="Open your guided mission story">▶ Story</a>
         <button id="pane-scoreboard-result-btn" class="reset-btn result-btn" title="Open the results screen">🏆 Result</button>
         <button id="pane-scoreboard-reset-btn" class="reset-btn" title="Clear all solves (admin only)">Reset board</button>
       </div>
@@ -1476,15 +1600,15 @@
 
 </div>
 <!-- ===== Me pane (moved from templates/me.html, namespaced) ===== -->
-<div class="pane" id="pane-me">
+<div class="pane p-shell" id="pane-me">
 
   <header>
     <div class="brand">
-      <h1>falco<span class="accent">-ctf</span> <span class="light mono">me</span></h1>
+      <h1 class="p-h1">falco<span class="accent">-ctf</span> <span class="light mono">me</span></h1>
       <div class="subtitle">your live progress + Falco rule activity</div>
     </div>
     <div>
-      <div class="live">● LIVE</div>
+      <div class="live p-live">● LIVE</div>
       <div class="updated mono" id="pane-me-updated">connecting…</div>
     </div>
   </header>
@@ -1650,18 +1774,32 @@
 <!-- ===== Home pane (P23-5: gen-time-sanitized content panels folded in from
      docs-site — see docs-site/home-fragments.yaml for the content contract
      and internal/scoreboard/view/home.go / portal.go for the security
-     rationale of injecting {{.HomePanelsHTML}} unescaped. This is the ONLY
-     place in this template that intentionally bypasses esc()/html/template
-     auto-escaping — every other dynamic value in this file keeps going
-     through esc() or template.JS exactly as before P23-5. ===== -->
+     rationale of injecting {{.HomePanelsHTML}} unescaped. This and the
+     Story pane's {{.StoryPanelHTML}} (P23 portal-redesign) are the ONLY
+     two places in this template that intentionally bypass
+     esc()/html/template auto-escaping — every other dynamic value in this
+     file keeps going through esc() or template.JS exactly as before P23-5;
+     see portal.go's StoryPanelHTML field doc for why splitting into a
+     second field shares the exact same trust boundary rather than opening
+     a new one. ===== -->
 <div class="pane" id="pane-home" style="padding:2.5rem 3rem;max-width:52rem">
   <h1 style="font-family:'Chakra Petch',sans-serif;font-size:2rem;margin:0 0 0.5rem;">
     <span style="color:#00CBE2">Falco</span> CTF
   </h1>
   <p style="color:#9DB4BF;line-height:1.6;margin:0 0 1rem;">
     Welcome to the unified portal. Use the tabs above to open your mission
-    <strong>Journey</strong>, check <strong>Me</strong> for your live progress,
+    <strong>Story</strong>, check <strong>Scoreboard</strong> for your live progress,
     and drop into your <strong>Terminal</strong>.
+  </p>
+  <!-- Static links (P23 portal-redesign) — plain hand-authored HTML, not
+       routed through docs-site/home-fragments.yaml's sanitizer allowlist
+       (deliberately: this is the ONE bit of Home content that is NOT
+       gen-time fragment content, so it does not need that pipeline, and
+       broadening the fragment sanitizer's allowlist just for two static
+       links would be a needless scope increase). -->
+  <p style="color:#9DB4BF;line-height:1.6;margin:0 0 1rem;">
+    Falco 本体: <a href="https://falco.org" target="_blank" rel="noopener noreferrer">falco.org</a> ·
+    このイベントのソース: <a href="https://github.com/Qfour/falco-ctf-app" target="_blank" rel="noopener noreferrer">github.com/Qfour/falco-ctf-app</a>
   </p>
   <div id="pane-home-panels">{{.HomePanelsHTML}}</div>
 </div>
@@ -1678,7 +1816,7 @@
      Per-user isolation (I8) is enforced independently by auth-policy's
      `/check?host=<user>` on the ttyd Ingress itself, regardless of what src
      ends up in this iframe. ===== -->
-<div class="pane" id="pane-terminal" style="padding:2.5rem 3rem;max-width:64rem">
+<div class="pane p-shell" id="pane-terminal" style="max-width:64rem">
   <div id="pane-terminal-page"></div>
 </div>
 
@@ -1699,14 +1837,21 @@
     const page = document.getElementById('pane-terminal-page');
     if (!page) return;
     if (!ttydURL) {
+      // P23 portal-redesign: shared .term-head/.term-placeholder classes
+      // replace this pane's former one-off inline style="" attributes —
+      // see the #pane-terminal CSS block above (same h2 sizing as the
+      // configured-terminal branch below, via .term-head h2). Logic (the
+      // fail-safe placeholder itself) is unchanged.
       page.innerHTML = `
-        <h2 style="font-family:'Chakra Petch',sans-serif;font-size:1.3rem;margin:0 0 0.75rem;color:#EAF7FA;">Terminal</h2>
-        <p style="color:#9DB4BF;line-height:1.6;margin:0;">
-          Your in-portal terminal is not configured for this deployment yet
-          (PORTAL_TTYD_SUFFIX unset, or your username could not be
-          determined). Use your workspace terminal at its usual address
-          instead (ask the operator if unsure).
-        </p>`;
+        <div class="term-head"><h2>Terminal</h2></div>
+        <div class="term-placeholder">
+          <p>
+            Your in-portal terminal is not configured for this deployment yet
+            (PORTAL_TTYD_SUFFIX unset, or your username could not be
+            determined). Use your workspace terminal at its usual address
+            instead (ask the operator if unsure).
+          </p>
+        </div>`;
       return;
     }
     // ttydURL is server-generated and already validated (json-escaped by
@@ -1715,16 +1860,16 @@
     // attribute-breakout XSS.
     const safeURL = esc(ttydURL);
     page.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:0.75rem;">
-        <h2 style="font-family:'Chakra Petch',sans-serif;font-size:1.3rem;margin:0;color:#EAF7FA;">Terminal</h2>
-        <button type="button" id="pane-terminal-popout" style="font-family:'Chakra Petch',sans-serif;text-transform:uppercase;letter-spacing:0.08em;font-size:0.72rem;font-weight:700;padding:0.4rem 0.85rem;border-radius:6px;border:1px solid #2B3F4D;background:transparent;color:#9DB4BF;cursor:pointer;">⤢ Pop out</button>
+      <div class="term-head">
+        <h2>Terminal</h2>
+        <button type="button" id="pane-terminal-popout" class="p-btn">⤢ Pop out</button>
       </div>
-      <div style="border:1px solid #1C2A35;border-radius:0.6rem;overflow:hidden;background:#000;">
+      <div class="term-frame">
         <iframe id="pane-terminal-iframe" src="${safeURL}" title="Terminal"
           style="width:100%;height:70vh;border:0;display:block;background:#000;"
           allow="clipboard-read; clipboard-write"></iframe>
       </div>
-      <p style="color:#5C7480;font-size:0.75rem;line-height:1.5;margin-top:0.6rem;">
+      <p class="term-note">
         Copy/paste and resize work the same as in a standalone tab. If the
         terminal does not load, use "Pop out" to open it directly.
       </p>`;
@@ -1748,10 +1893,18 @@
   // authorization boundary (see security note in view.go / portal.go). The
   // admin-only Scoreboard tab is hidden here as defense-in-depth ONLY; its data
   // source (/api/state) independently 403s a non-admin caller server-side.
-  const PORTAL_TABS = ['home', 'journey', 'scoreboard', 'me', 'terminal'];
+  const PORTAL_TABS = ['home', 'story', 'scoreboard', 'me', 'terminal'];
 
   function currentTab() {
     const h = (location.hash || '').replace(/^#/, '');
+    // P23 portal-redesign fixup (R5 F1): #journey is the PRE-rename hash
+    // (old bookmarks / deep-links from before Journey became Story — e.g.
+    // the admin dashboard's own former "▶ Journey" link, now "▶ Story" ->
+    // #story, see templates/index.html). Redirect it to the current tab id
+    // rather than silently falling through to 'home' below. The underlying
+    // API route (GET /api/users/{user}/journey) is UNCHANGED — this is a UI
+    // hash alias only.
+    if (h === 'journey') return 'story';
     if (PORTAL_TABS.includes(h)) return h;
     return 'home';
   }

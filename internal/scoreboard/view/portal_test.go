@@ -156,13 +156,59 @@ func TestRenderPortal_HomePanelsInjected(t *testing.T) {
 		if !strings.Contains(body, `id="pane-home-panels"`) {
 			t.Fatalf("expected the Home panels container in the response, isAdmin=%v", isAdmin)
 		}
-		// Every top-level panel label must appear somewhere in the body.
+		// Every top-level Home panel label must appear somewhere in the body
+		// EXCEPT "story" (P23 portal-redesign): that fragment moved to the
+		// Story tab's own overview block (see home.go's buildStoryPanelHTML),
+		// which renders its HTML directly with no <summary>Label</summary>
+		// wrapper — so its Label is not expected to appear anywhere in a
+		// fresh /portal response. See TestRenderPortal_StoryPanelInjected
+		// below for the corresponding assertion on StoryPanelHTML's content.
 		for _, f := range HomeFragments {
+			if f.ID == "story" {
+				continue
+			}
 			if f.ChalNN == "" {
 				if !strings.Contains(body, f.Label) {
 					t.Errorf("expected static panel label %q in body, isAdmin=%v", f.Label, isAdmin)
 				}
 			}
+		}
+	}
+}
+
+// TestRenderPortal_StoryPanelInjected proves GET /portal's response body
+// contains the real, gen-time-rendered Story overview (the SAME
+// storyPanelHTML package var every request serves — see portal.go's
+// StoryPanelHTML field doc and home.go's buildStoryPanelHTML), for BOTH
+// admin and participant callers identically, and that it is NOT duplicated
+// into the Home panels list (see TestRenderPortal_HomePanelsInjected's
+// story-exclusion note above).
+func TestRenderPortal_StoryPanelInjected(t *testing.T) {
+	if len(HomeFragments) == 0 {
+		t.Fatal("HomeFragments is empty — run `make gen-home-fragments` before running this test")
+	}
+	var storyHTML string
+	for _, f := range HomeFragments {
+		if f.ID == "story" {
+			storyHTML = f.HTML
+		}
+	}
+	if storyHTML == "" {
+		t.Skip("no story HomeFragment present in this build (fail-soft; nothing to assert)")
+	}
+	for _, isAdmin := range []bool{true, false} {
+		r := httptest.NewRequest("GET", "/portal", nil)
+		w := httptest.NewRecorder()
+		fn := func(*http.Request) bool { return isAdmin }
+		if err := renderPortal(w, r, fn, nil, ""); err != nil {
+			t.Fatalf("renderPortal: %v", err)
+		}
+		body := w.Body.String()
+		if !strings.Contains(body, `class="story-overview`) {
+			t.Fatalf("expected the Story overview container in the response, isAdmin=%v", isAdmin)
+		}
+		if !strings.Contains(body, storyHTML) {
+			t.Errorf("expected the story fragment's HTML in the Story overview, isAdmin=%v", isAdmin)
 		}
 	}
 }

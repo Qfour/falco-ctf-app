@@ -16,11 +16,25 @@ import (
 // function does no sanitization itself, does not touch anything
 // request-derived, and every other dynamic value in the portal (role,
 // username, ttyd URL, and everything the client-side JS renders from API
-// responses) keeps going through esc()/template.JS exactly as before. If a
-// future edit adds a SECOND template.HTML injection site anywhere in this
-// package, that is a new exception requiring the same gen-time-sanitization
-// guarantee — this doc comment does not grandfather it in.
+// responses) keeps going through esc()/template.JS exactly as before.
+//
+// P23 portal-redesign: storyPanelHTML (below) is now a SECOND template.HTML
+// injection site sharing this EXACT SAME gen-time-sanitization guarantee —
+// both are built once, from the same committed HomeFragments, never from
+// anything request-derived. See storyPanelHTML's own doc for why splitting
+// the "story" fragment OUT of this value and into that one is safe under
+// the same invariant, not a new one.
 var homePanelsHTML = template.HTML(buildHomePanelsHTML(HomeFragments))
+
+// storyPanelHTML (P23 portal-redesign) is the Story tab's overview content —
+// the SAME "story" HomeFragment previously folded into the Home tab's
+// generic panel list, now surfaced directly at the top of the Story pane
+// instead (see templates/portal.html's #pane-story .story-overview block
+// and portal.go's StoryPanelHTML field doc for the full security note).
+// Computed ONCE at package init, exactly like homePanelsHTML, from the same
+// gen-time-sanitized, committed HomeFragments — never anything
+// request-derived, never per-viewer.
+var storyPanelHTML = template.HTML(buildStoryPanelHTML(HomeFragments))
 
 // buildHomePanelsHTML renders each HomeFragment as a <details> disclosure
 // panel. Fail-soft (home-fragments.yaml): a challenge with no
@@ -30,10 +44,16 @@ var homePanelsHTML = template.HTML(buildHomePanelsHTML(HomeFragments))
 // filler content for absent panels, matching the manifest's explicit "do
 // not synthesize generic filler text" instruction.
 //
+// P23 portal-redesign: the "story" fragment (ID=="story") is EXCLUDED here —
+// it moved to the Story tab's own lead-in (see buildStoryPanelHTML /
+// storyPanelHTML above) so it is not shown twice. This is the one ID this
+// function special-cases; every other fragment (intro, cheatsheet,
+// rule-explain, and anything future) still flows through unchanged.
+//
 // Grouping: rule-explain panels (ChalNN != "") are rendered inside a single
 // "🔍 なぜ発火するか" panel, one <details> per challenge number, so the Home
 // tab shows one top-level entry for the whole rule-explain set rather than
-// up to 11 top-level entries that would dwarf the three static panels.
+// up to 11 top-level entries that would dwarf the remaining static panels.
 //
 // INVARIANT (merge-review fixup R4): this grouping assumes every rule-explain
 // HomeFragment shares the SAME Label — cmd/gen-home-fragments' generator
@@ -62,6 +82,11 @@ func buildHomePanelsHTML(fragments []HomeFragment) string {
 	// function for what "the last one" relies on.
 	var ruleExplainLabel string
 	for _, f := range fragments {
+		if f.ID == "story" {
+			// P23 portal-redesign: moved to the Story tab's own overview
+			// (buildStoryPanelHTML) — do not also render it as a Home panel.
+			continue
+		}
 		if f.ChalNN != "" {
 			ruleExplain = append(ruleExplain, f)
 			ruleExplainLabel = f.Label
@@ -86,10 +111,35 @@ func buildHomePanelsHTML(fragments []HomeFragment) string {
 	return b.String()
 }
 
+// buildStoryPanelHTML returns the "story" HomeFragment's already
+// gen-time-sanitized HTML verbatim (no <details>/<summary> wrapper — the
+// Story tab renders it as an always-visible overview at the top of the
+// pane, not a collapsed disclosure like the Home tab's panels), or ""
+// if no fragment has ID=="story".
+//
+// Fail-soft (matches homePanelsHTML's degrade behavior): a deployment
+// missing docs-site's story.md source (see docs-site/home-fragments.yaml)
+// simply has no "story" HomeFragment entry, and this function returns "" —
+// the Story tab's overview block then renders empty rather than erroring,
+// so a future content change that drops the story fragment cannot break
+// the Story tab's game UI (mission map / briefing / steps / hints, all
+// independent of this value).
+func buildStoryPanelHTML(fragments []HomeFragment) string {
+	for _, f := range fragments {
+		if f.ID == "story" {
+			return f.HTML
+		}
+	}
+	return ""
+}
+
 func writeDetailsPanel(b *strings.Builder, label, innerHTML string) {
 	b.WriteString(`<details class="home-panel"><summary>`)
 	b.WriteString(template.HTMLEscapeString(label))
-	b.WriteString(`</summary><div class="home-panel-body">`)
+	// rich-content (P23 portal-redesign): shared markdown typography class
+	// also used by the Story tab's overview block — see
+	// templates/portal.html's ".rich-content" rule doc.
+	b.WriteString(`</summary><div class="home-panel-body rich-content">`)
 	b.WriteString(innerHTML)
 	b.WriteString(`</div></details>`)
 }
