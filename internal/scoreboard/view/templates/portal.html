@@ -120,12 +120,9 @@
     /* --- typography --- */
     --p-font-display: 'Chakra Petch', sans-serif;
     --p-font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    --p-font-mono: 'JetBrains Mono', ui-monospace, monospace;
     --p-h1: 2.4rem;
     --p-h2: 1.3rem;
     --p-h3: 0.8rem;
-    --p-body: 0.95rem;
-    --p-small: 0.8rem;
     --p-micro: 0.7rem;
     --p-tracking-wide: 0.18em;
     --p-tracking-wider: 0.35em;
@@ -207,26 +204,12 @@
   }
   .p-shell > * { position: relative; z-index: 1; }
 
-  .p-panel { background: var(--p-surface); border: 1px solid var(--p-border); border-radius: var(--p-panel-radius); margin-bottom: 1.5rem; overflow: hidden; }
-  .p-panel-header { padding: 0.9rem 1.5rem; border-bottom: 1px solid var(--p-border); display: flex; justify-content: space-between; align-items: center; }
-  .p-panel-header h2 { font-family: var(--p-font-display); font-size: var(--p-h3); text-transform: uppercase; letter-spacing: var(--p-tracking-wide); color: var(--p-text); font-weight: 600; display: flex; align-items: center; gap: 0.6rem; }
-  .p-panel-header h2::before { content: ''; width: 3px; height: 15px; background: var(--p-accent); border-radius: 2px; box-shadow: 0 0 10px var(--p-accent-glow); }
-
   .p-h1 { font-family: var(--p-font-display); font-size: var(--p-h1); font-weight: 700; letter-spacing: 0.01em; text-transform: uppercase; line-height: 1; }
   .p-h1 .accent { color: var(--p-accent); text-shadow: 0 0 18px var(--p-accent-glow), 0 0 40px rgba(0,203,226,0.25); }
   .p-h1 .light { color: var(--p-text-mute); font-weight: 500; font-size: 0.85rem; letter-spacing: var(--p-tracking-wider); margin-left: 0.6rem; text-transform: uppercase; }
 
   .p-btn { font-family: var(--p-font-display); text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.72rem; font-weight: 700; padding: 0.45rem 0.9rem; border-radius: 6px; border: 1px solid var(--p-border-strong); background: transparent; color: var(--p-text-dim); cursor: pointer; transition: all 0.15s; }
   .p-btn:hover { color: var(--p-accent); border-color: var(--p-accent); box-shadow: 0 0 12px var(--p-accent-glow); }
-  .p-btn-accent { color: var(--p-bg); background: linear-gradient(135deg, var(--p-accent), var(--p-accent-2)); border-color: var(--p-accent); }
-  .p-btn-accent:hover { color: var(--p-bg); filter: brightness(1.08); }
-
-  .p-badge { padding: 3px 9px; border-radius: 4px; font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.12em; font-weight: 700; }
-  .p-badge-trigger { background: rgba(0, 203, 226, 0.12); color: var(--p-accent); border: 1px solid rgba(0, 203, 226, 0.35); }
-  .p-badge-evade { background: rgba(183, 140, 255, 0.12); color: var(--p-evade); border: 1px solid rgba(183, 140, 255, 0.35); }
-
-  .p-empty { text-align: center; padding: 2.5rem 1rem; color: var(--p-text-mute); font-size: 0.875rem; }
-  .p-empty .icon { font-size: 2rem; opacity: 0.4; display: block; margin-bottom: 0.5rem; }
 
   .p-live { display: flex; align-items: center; gap: 0.5rem; color: var(--p-success); font-size: var(--p-micro); text-transform: uppercase; letter-spacing: 0.2em; font-weight: 700; justify-content: flex-end; }
   .p-live::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--p-success); box-shadow: 0 0 12px var(--p-success-glow); animation: p-pulse 1.6s ease-in-out infinite; }
@@ -725,6 +708,11 @@
      spacing only; typography comes from .rich-content (applied alongside
      this class in the markup below). ===== */
   #pane-story .story-overview { background: var(--surface); border: 1px solid var(--border); border-radius: var(--p-panel-radius); padding: 1.25rem 1.5rem; margin-bottom: 1.5rem; }
+  /* fail-soft (R2 F1): buildStoryPanelHTML/StoryPanelHTML degrade to "" when
+     no "story" HomeFragment exists (see home.go's doc) — hide the bordered
+     box entirely rather than showing an empty panel, matching the existing
+     #pane-scoreboard .podium:empty precedent above. */
+  #pane-story .story-overview:empty { display: none; }
 
   /* ===== Terminal pane (P23 portal-redesign restyle) =====
      Previously entirely inline style="" attributes in the JS-generated
@@ -1909,6 +1897,14 @@
 
   function currentTab() {
     const h = (location.hash || '').replace(/^#/, '');
+    // P23 portal-redesign fixup (R5 F1): #journey is the PRE-rename hash
+    // (old bookmarks / deep-links from before Journey became Story — e.g.
+    // the admin dashboard's own former "▶ Journey" link, now "▶ Story" ->
+    // #story, see templates/index.html). Redirect it to the current tab id
+    // rather than silently falling through to 'home' below. The underlying
+    // API route (GET /api/users/{user}/journey) is UNCHANGED — this is a UI
+    // hash alias only.
+    if (h === 'journey') return 'story';
     if (PORTAL_TABS.includes(h)) return h;
     return 'home';
   }
