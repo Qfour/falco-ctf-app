@@ -1,3 +1,48 @@
+- list: falco_containers
+  items:
+    - falcosecurity/falco
+    - docker.io/falcosecurity/falco
+    - public.ecr.aws/falcosecurity/falco
+
+- list: falco_no_driver_containers
+  items:
+    - falcosecurity/falco-no-driver
+    - docker.io/falcosecurity/falco-no-driver
+    - public.ecr.aws/falcosecurity/falco-no-driver
+
+- list: ibm_cloud_containers
+  items:
+    - icr.io/ext/sysdig/agent
+    - registry.ng.bluemix.net/armada-master/metrics-server-amd64
+    - registry.ng.bluemix.net/armada-master/olm
+
+- macro: k8s_api_server
+  condition: (fd.sip.name="kubernetes.default.svc.cluster.local")
+
+- macro: k8s_containers
+  condition: >
+    (container.image.repository in (gcr.io/google_containers/hyperkube-amd64,
+     gcr.io/google_containers/kube2sky,
+     docker.io/sysdig/sysdig, sysdig/sysdig,
+     fluent/fluentd-kubernetes-daemonset, prom/prometheus,
+     falco_containers,
+     falco_no_driver_containers,
+     ibm_cloud_containers,
+     velero/velero,
+     quay.io/jetstack/cert-manager-cainjector, weaveworks/kured,
+     quay.io/prometheus-operator/prometheus-operator, k8s.gcr.io/ingress-nginx/kube-webhook-certgen,
+     registry.k8s.io/ingress-nginx/kube-webhook-certgen, quay.io/spotahome/redis-operator,
+     registry.opensource.zalan.do/acid/postgres-operator, registry.opensource.zalan.do/acid/postgres-operator-ui,
+     rabbitmqoperator/cluster-operator, quay.io/kubecost1/kubecost-cost-model,
+     docker.io/bitnami/prometheus, docker.io/bitnami/kube-state-metrics, mcr.microsoft.com/oss/azure/aad-pod-identity/nmi)
+     or (k8s.ns.name = "kube-system"))
+
+- macro: never_true
+  condition: (evt.num=0)
+
+- macro: user_known_contact_k8s_api_server_activities
+  condition: (never_true)
+
 - rule: Contact K8S API Server From Container
   desc: >
     Detect attempts to communicate with the K8S API Server from a container by non-profiled users. Kubernetes APIs play a

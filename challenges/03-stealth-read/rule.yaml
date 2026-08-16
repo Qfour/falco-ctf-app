@@ -1,3 +1,168 @@
+- list: sensitive_file_names
+  items: [/etc/shadow, /etc/sudoers, /etc/pam.conf, /etc/security/pwquality.conf]
+
+- list: login_binaries
+  items: [
+    login, systemd, '"(systemd)"', systemd-logind, su,
+    nologin, faillog, lastlog, newgrp, sg
+    ]
+
+- list: passwd_binaries
+  items: [
+    shadowconfig, grpck, pwunconv, grpconv, pwck,
+    groupmod, vipw, pwconv, useradd, newusers, cppw, chpasswd, usermod,
+    groupadd, groupdel, grpunconv, chgpasswd, userdel, chage, chsh,
+    gpasswd, chfn, expiry, passwd, vigr, cpgr, adduser, addgroup, deluser, delgroup
+    ]
+
+- list: shadowutils_binaries
+  items: [
+    chage, gpasswd, lastlog, newgrp, sg, adduser, deluser, chpasswd,
+    groupadd, groupdel, addgroup, delgroup, groupmems, groupmod, grpck, grpconv, grpunconv,
+    newusers, pwck, pwconv, pwunconv, useradd, userdel, usermod, vigr, vipw, unix_chkpwd
+    ]
+
+- list: user_mgmt_binaries
+  items: [login_binaries, passwd_binaries, shadowutils_binaries]
+
+- list: userexec_binaries
+  items: [sudo, su, suexec, critical-stack, dzdo]
+
+- list: rpm_binaries
+  items: [dnf, dnf-automatic, rpm, rpmkey, yum, '"75-system-updat"', rhsmcertd-worke, rhsmcertd, subscription-ma,
+          repoquery, rpmkeys, rpmq, yum-cron, yum-config-mana, yum-debug-dump,
+          abrt-action-sav, rpmdb_stat, microdnf, rhn_check, yumdb]
+
+- list: deb_binaries
+  items: [dpkg, dpkg-preconfigu, dpkg-reconfigur, dpkg-divert, apt, apt-get, aptitude,
+    frontend, preinst, add-apt-reposit, apt-auto-remova, apt-key,
+    apt-listchanges, unattended-upgr, apt-add-reposit, apt-cache, apt.systemd.dai
+    ]
+
+- list: python_package_managers
+  items: [pip, pip3, conda]
+
+- list: package_mgmt_binaries
+  items: [rpm_binaries, deb_binaries, update-alternat, gem, npm, python_package_managers, sane-utils.post, alternatives, chef-client, apk, snapd]
+
+- list: cron_binaries
+  items: [anacron, cron, crond, crontab]
+
+- list: read_sensitive_file_binaries
+  items: [
+    iptables, ps, lsb_release, check-new-relea, dumpe2fs, accounts-daemon, sshd,
+    vsftpd, systemd, mysql_install_d, psql, screen, debconf-show, sa-update,
+    pam-auth-update, pam-config, /usr/sbin/spamd, polkit-agent-he, lsattr, file, sosreport,
+    scxcimservera, adclient, rtvscand, cockpit-session, userhelper, ossec-syscheckd
+    ]
+
+- list: shell_binaries
+  items: [ash, bash, csh, ksh, sh, tcsh, zsh, dash]
+
+- list: hids_binaries
+  items: [aide, aide.wrapper, update-aide.con, logcheck, syslog-summary, osqueryd, ossec-syscheckd]
+
+- list: vpn_binaries
+  items: [openvpn]
+
+- list: mail_config_binaries
+  items: [
+    update_conf, parse_mc, makemap_hash, newaliases, update_mk, update_tlsm4,
+    update_db, update_mc, ssmtp.postinst, mailq, postalias, postfix.config.,
+    postfix.config, postfix-script, postconf
+    ]
+
+- list: nomachine_binaries
+  items: [nxexec, nxnode.bin, nxserver.bin, nxclient.bin]
+
+- list: sshkit_script_binaries
+  items: [10_etc_sudoers., 10_passwd_group]
+
+- list: postgres_mgmt_binaries
+  items: [pg_dumpall, pg_ctl, pg_lsclusters, pg_ctlcluster]
+
+- list: read_sensitive_file_images
+  items: []
+
+- macro: open_read
+  condition: (evt.type in (open,openat,openat2) and evt.is_open_read=true and fd.typechar='f' and fd.num>=0)
+
+- macro: sensitive_files
+  condition: >
+    ((fd.name startswith /etc and fd.name in (sensitive_file_names)) or
+      fd.directory in (/etc/sudoers.d, /etc/pam.d))
+
+- macro: proc_name_exists
+  condition: (proc.name!="<NA>")
+
+- macro: cmp_cp_by_passwd
+  condition: (proc.name in (cmp, cp) and proc.pname in (passwd, run-parts))
+
+- macro: ansible_running_python
+  condition: (proc.name in (python, pypy, python3) and proc.cmdline contains ansible)
+
+- macro: run_by_qualys
+  condition: >
+    (proc.pname=qualys-cloud-ag or
+     proc.aname[2]=qualys-cloud-ag or
+     proc.aname[3]=qualys-cloud-ag or
+     proc.aname[4]=qualys-cloud-ag)
+
+- macro: run_by_chef
+  condition: (proc.aname[2]=chef_command_wr or proc.aname[3]=chef_command_wr or
+              proc.aname[2]=chef-client or proc.aname[3]=chef-client or
+              proc.name=chef-client)
+
+- macro: run_by_google_accounts_daemon
+  condition: >
+    (proc.aname[1] startswith google_accounts or
+     proc.aname[2] startswith google_accounts or
+     proc.aname[3] startswith google_accounts)
+
+- macro: user_read_sensitive_file_conditions
+  condition: cmp_cp_by_passwd
+
+- macro: mandb_postinst
+  condition: >
+    (proc.name=perl and proc.args startswith "-e" and
+    proc.args contains "@pwd = getpwnam(" and
+    proc.args contains "exec " and
+    proc.args contains "/usr/bin/mandb")
+
+- macro: perl_running_plesk
+  condition: (proc.cmdline startswith "perl /opt/psa/admin/bin/plesk_agent_manager" or
+              proc.pcmdline startswith "perl /opt/psa/admin/bin/plesk_agent_manager")
+
+- macro: perl_running_updmap
+  condition: (proc.cmdline startswith "perl /usr/bin/updmap")
+
+- macro: veritas_driver_script
+  condition: (proc.cmdline startswith "perl /opt/VRTSsfmh/bin/mh_driver.pl")
+
+- macro: perl_running_centrifydc
+  condition: (proc.cmdline startswith "perl /usr/share/centrifydc")
+
+- macro: runuser_reading_pam
+  condition: (proc.name=runuser and fd.directory=/etc/pam.d)
+
+- macro: linux_bench_reading_etc_shadow
+  condition: ((proc.aname[2]=linux-bench and
+               proc.name in (awk,cut,grep)) and
+              (fd.name=/etc/shadow or
+               fd.directory=/etc/pam.d))
+
+- macro: never_true
+  condition: (evt.num=0)
+
+- macro: user_known_read_sensitive_files_activities
+  condition: (never_true)
+
+- macro: container
+  condition: (container.id != host)
+
+- macro: user_read_sensitive_file_containers
+  condition: (container and container.image.repository in (read_sensitive_file_images))
+
 - rule: Read sensitive file untrusted
   desc: >
     An attempt to read any sensitive file (e.g. files containing user/password/authentication

@@ -1,3 +1,9 @@
+- list: known_drop_and_execute_containers
+  items: []
+
+- macro: spawned_process
+  condition: (evt.type in (execve, execveat) and evt.dir=<)
+
 - rule: Drop and execute new binary in container
   desc: >
     Detect if an executable not belonging to the base image of a container is being executed.

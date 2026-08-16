@@ -1,3 +1,419 @@
+- list: falco_containers
+  items:
+    - falcosecurity/falco
+    - docker.io/falcosecurity/falco
+    - public.ecr.aws/falcosecurity/falco
+
+- list: falco_no_driver_containers
+  items:
+    - falcosecurity/falco-no-driver
+    - docker.io/falcosecurity/falco-no-driver
+    - public.ecr.aws/falcosecurity/falco-no-driver
+
+- list: ibm_cloud_containers
+  items:
+    - icr.io/ext/sysdig/agent
+    - registry.ng.bluemix.net/armada-master/metrics-server-amd64
+    - registry.ng.bluemix.net/armada-master/olm
+
+- list: sensitive_file_names
+  items: [/etc/shadow, /etc/sudoers, /etc/pam.conf, /etc/security/pwquality.conf]
+
+- list: login_binaries
+  items: [
+    login, systemd, '"(systemd)"', systemd-logind, su,
+    nologin, faillog, lastlog, newgrp, sg
+    ]
+
+- list: passwd_binaries
+  items: [
+    shadowconfig, grpck, pwunconv, grpconv, pwck,
+    groupmod, vipw, pwconv, useradd, newusers, cppw, chpasswd, usermod,
+    groupadd, groupdel, grpunconv, chgpasswd, userdel, chage, chsh,
+    gpasswd, chfn, expiry, passwd, vigr, cpgr, adduser, addgroup, deluser, delgroup
+    ]
+
+- list: shadowutils_binaries
+  items: [
+    chage, gpasswd, lastlog, newgrp, sg, adduser, deluser, chpasswd,
+    groupadd, groupdel, addgroup, delgroup, groupmems, groupmod, grpck, grpconv, grpunconv,
+    newusers, pwck, pwconv, pwunconv, useradd, userdel, usermod, vigr, vipw, unix_chkpwd
+    ]
+
+- list: user_mgmt_binaries
+  items: [login_binaries, passwd_binaries, shadowutils_binaries]
+
+- list: userexec_binaries
+  items: [sudo, su, suexec, critical-stack, dzdo]
+
+- list: rpm_binaries
+  items: [dnf, dnf-automatic, rpm, rpmkey, yum, '"75-system-updat"', rhsmcertd-worke, rhsmcertd, subscription-ma,
+          repoquery, rpmkeys, rpmq, yum-cron, yum-config-mana, yum-debug-dump,
+          abrt-action-sav, rpmdb_stat, microdnf, rhn_check, yumdb]
+
+- list: deb_binaries
+  items: [dpkg, dpkg-preconfigu, dpkg-reconfigur, dpkg-divert, apt, apt-get, aptitude,
+    frontend, preinst, add-apt-reposit, apt-auto-remova, apt-key,
+    apt-listchanges, unattended-upgr, apt-add-reposit, apt-cache, apt.systemd.dai
+    ]
+
+- list: python_package_managers
+  items: [pip, pip3, conda]
+
+- list: package_mgmt_binaries
+  items: [rpm_binaries, deb_binaries, update-alternat, gem, npm, python_package_managers, sane-utils.post, alternatives, chef-client, apk, snapd]
+
+- list: cron_binaries
+  items: [anacron, cron, crond, crontab]
+
+- list: read_sensitive_file_binaries
+  items: [
+    iptables, ps, lsb_release, check-new-relea, dumpe2fs, accounts-daemon, sshd,
+    vsftpd, systemd, mysql_install_d, psql, screen, debconf-show, sa-update,
+    pam-auth-update, pam-config, /usr/sbin/spamd, polkit-agent-he, lsattr, file, sosreport,
+    scxcimservera, adclient, rtvscand, cockpit-session, userhelper, ossec-syscheckd
+    ]
+
+- list: shell_binaries
+  items: [ash, bash, csh, ksh, sh, tcsh, zsh, dash]
+
+- list: hids_binaries
+  items: [aide, aide.wrapper, update-aide.con, logcheck, syslog-summary, osqueryd, ossec-syscheckd]
+
+- list: vpn_binaries
+  items: [openvpn]
+
+- list: mail_config_binaries
+  items: [
+    update_conf, parse_mc, makemap_hash, newaliases, update_mk, update_tlsm4,
+    update_db, update_mc, ssmtp.postinst, mailq, postalias, postfix.config.,
+    postfix.config, postfix-script, postconf
+    ]
+
+- list: nomachine_binaries
+  items: [nxexec, nxnode.bin, nxserver.bin, nxclient.bin]
+
+- list: sshkit_script_binaries
+  items: [10_etc_sudoers., 10_passwd_group]
+
+- list: postgres_mgmt_binaries
+  items: [pg_dumpall, pg_ctl, pg_lsclusters, pg_ctlcluster]
+
+- list: read_sensitive_file_images
+  items: []
+
+- list: grep_binaries
+  items: [grep, egrep, fgrep]
+
+- list: http_server_binaries
+  items: [nginx, httpd, httpd-foregroun, lighttpd, apache, apache2]
+
+- list: db_server_binaries
+  items: [mysqld, postgres, sqlplus]
+
+- list: nosql_server_binaries
+  items: [couchdb, memcached, redis-server, rabbitmq-server, mongod]
+
+- list: mail_binaries
+  items: [
+    sendmail, sendmail-msp, postfix, procmail, exim4,
+    pickup, showq, mailq, dovecot, imap-login, imap,
+    mailmng-core, pop3-login, dovecot-lda, pop3
+    ]
+
+- list: protected_shell_spawning_binaries
+  items: [
+    http_server_binaries, db_server_binaries, nosql_server_binaries, mail_binaries,
+    fluentd, flanneld, splunkd, consul, smbd, runsv, PM2
+    ]
+
+- list: gitlab_binaries
+  items: [gitlab-shell, gitlab-mon, gitlab-runner-b, git]
+
+- list: user_known_shell_spawn_binaries
+  items: []
+
+- list: needrestart_binaries
+  items: [needrestart, 10-dpkg, 20-rpm, 30-pacman]
+
+- list: mesos_shell_binaries
+  items: [mesos-docker-ex, mesos-slave, mesos-health-ch]
+
+- list: known_shell_spawn_cmdlines
+  items: [
+    '"sh -c uname -p 2> /dev/null"',
+    '"sh -c uname -s 2>&1"',
+    '"sh -c uname -r 2>&1"',
+    '"sh -c uname -v 2>&1"',
+    '"sh -c uname -a 2>&1"',
+    '"sh -c ruby -v 2>&1"',
+    '"sh -c getconf CLK_TCK"',
+    '"sh -c getconf PAGESIZE"',
+    '"sh -c LC_ALL=C LANG=C /sbin/ldconfig -p 2>/dev/null"',
+    '"sh -c LANG=C /sbin/ldconfig -p 2>/dev/null"',
+    '"sh -c /sbin/ldconfig -p 2>/dev/null"',
+    '"sh -c stty -a 2>/dev/null"',
+    '"sh -c stty -a < /dev/tty"',
+    '"sh -c stty -g < /dev/tty"',
+    '"sh -c node index.js"',
+    '"sh -c node index"',
+    '"sh -c node ./src/start.js"',
+    '"sh -c node app.js"',
+    '"sh -c node -e \"require(''nan'')\""',
+    '"sh -c node -e \"require(''nan'')\")"',
+    '"sh -c node $NODE_DEBUG_OPTION index.js "',
+    '"sh -c crontab -l 2"',
+    '"sh -c lsb_release -a"',
+    '"sh -c lsb_release -is 2>/dev/null"',
+    '"sh -c whoami"',
+    '"sh -c node_modules/.bin/bower-installer"',
+    '"sh -c /bin/hostname -f 2> /dev/null"',
+    '"sh -c locale -a"',
+    '"sh -c  -t -i"',
+    '"sh -c openssl version"',
+    '"bash -c id -Gn kafadmin"',
+    '"sh -c /bin/sh -c ''date +%%s''"',
+    '"sh -c /usr/share/lighttpd/create-mime.conf.pl"'
+    ]
+
+- list: known_drop_and_execute_containers
+  items: []
+
+- macro: k8s_api_server
+  condition: (fd.sip.name="kubernetes.default.svc.cluster.local")
+
+- macro: k8s_containers
+  condition: >
+    (container.image.repository in (gcr.io/google_containers/hyperkube-amd64,
+     gcr.io/google_containers/kube2sky,
+     docker.io/sysdig/sysdig, sysdig/sysdig,
+     fluent/fluentd-kubernetes-daemonset, prom/prometheus,
+     falco_containers,
+     falco_no_driver_containers,
+     ibm_cloud_containers,
+     velero/velero,
+     quay.io/jetstack/cert-manager-cainjector, weaveworks/kured,
+     quay.io/prometheus-operator/prometheus-operator, k8s.gcr.io/ingress-nginx/kube-webhook-certgen,
+     registry.k8s.io/ingress-nginx/kube-webhook-certgen, quay.io/spotahome/redis-operator,
+     registry.opensource.zalan.do/acid/postgres-operator, registry.opensource.zalan.do/acid/postgres-operator-ui,
+     rabbitmqoperator/cluster-operator, quay.io/kubecost1/kubecost-cost-model,
+     docker.io/bitnami/prometheus, docker.io/bitnami/kube-state-metrics, mcr.microsoft.com/oss/azure/aad-pod-identity/nmi)
+     or (k8s.ns.name = "kube-system"))
+
+- macro: never_true
+  condition: (evt.num=0)
+
+- macro: user_known_contact_k8s_api_server_activities
+  condition: (never_true)
+
+- macro: open_read
+  condition: (evt.type in (open,openat,openat2) and evt.is_open_read=true and fd.typechar='f' and fd.num>=0)
+
+- macro: sensitive_files
+  condition: >
+    ((fd.name startswith /etc and fd.name in (sensitive_file_names)) or
+      fd.directory in (/etc/sudoers.d, /etc/pam.d))
+
+- macro: proc_name_exists
+  condition: (proc.name!="<NA>")
+
+- macro: cmp_cp_by_passwd
+  condition: (proc.name in (cmp, cp) and proc.pname in (passwd, run-parts))
+
+- macro: ansible_running_python
+  condition: (proc.name in (python, pypy, python3) and proc.cmdline contains ansible)
+
+- macro: run_by_qualys
+  condition: >
+    (proc.pname=qualys-cloud-ag or
+     proc.aname[2]=qualys-cloud-ag or
+     proc.aname[3]=qualys-cloud-ag or
+     proc.aname[4]=qualys-cloud-ag)
+
+- macro: run_by_chef
+  condition: (proc.aname[2]=chef_command_wr or proc.aname[3]=chef_command_wr or
+              proc.aname[2]=chef-client or proc.aname[3]=chef-client or
+              proc.name=chef-client)
+
+- macro: run_by_google_accounts_daemon
+  condition: >
+    (proc.aname[1] startswith google_accounts or
+     proc.aname[2] startswith google_accounts or
+     proc.aname[3] startswith google_accounts)
+
+- macro: user_read_sensitive_file_conditions
+  condition: cmp_cp_by_passwd
+
+- macro: mandb_postinst
+  condition: >
+    (proc.name=perl and proc.args startswith "-e" and
+    proc.args contains "@pwd = getpwnam(" and
+    proc.args contains "exec " and
+    proc.args contains "/usr/bin/mandb")
+
+- macro: perl_running_plesk
+  condition: (proc.cmdline startswith "perl /opt/psa/admin/bin/plesk_agent_manager" or
+              proc.pcmdline startswith "perl /opt/psa/admin/bin/plesk_agent_manager")
+
+- macro: perl_running_updmap
+  condition: (proc.cmdline startswith "perl /usr/bin/updmap")
+
+- macro: veritas_driver_script
+  condition: (proc.cmdline startswith "perl /opt/VRTSsfmh/bin/mh_driver.pl")
+
+- macro: perl_running_centrifydc
+  condition: (proc.cmdline startswith "perl /usr/share/centrifydc")
+
+- macro: runuser_reading_pam
+  condition: (proc.name=runuser and fd.directory=/etc/pam.d)
+
+- macro: linux_bench_reading_etc_shadow
+  condition: ((proc.aname[2]=linux-bench and
+               proc.name in (awk,cut,grep)) and
+              (fd.name=/etc/shadow or
+               fd.directory=/etc/pam.d))
+
+- macro: user_known_read_sensitive_files_activities
+  condition: (never_true)
+
+- macro: container
+  condition: (container.id != host)
+
+- macro: user_read_sensitive_file_containers
+  condition: (container and container.image.repository in (read_sensitive_file_images))
+
+- macro: spawned_process
+  condition: (evt.type in (execve, execveat) and evt.dir=<)
+
+- macro: grep_commands
+  condition: (proc.name in (grep_binaries))
+
+- macro: grep_more
+  condition: (never_true)
+
+- macro: private_key_or_password
+  condition: >
+    (proc.args icontains "BEGIN PRIVATE" or
+     proc.args icontains "BEGIN OPENSSH PRIVATE" or
+     proc.args icontains "BEGIN RSA PRIVATE" or
+     proc.args icontains "BEGIN DSA PRIVATE" or
+     proc.args icontains "BEGIN EC PRIVATE" or
+     (grep_more and
+      (proc.args icontains " pass " or
+       proc.args icontains " ssh " or
+       proc.args icontains " user "))
+    )
+
+- macro: shell_procs
+  condition: (proc.name in (shell_binaries))
+
+- macro: parent_java_running_zookeeper
+  condition: (proc.pexe endswith java and proc.pcmdline contains org.apache.zookeeper.server)
+
+- macro: parent_java_running_kafka
+  condition: (proc.pexe endswith java and proc.pcmdline contains kafka.Kafka)
+
+- macro: parent_java_running_elasticsearch
+  condition: (proc.pexe endswith java and proc.pcmdline contains org.elasticsearch.bootstrap.Elasticsearch)
+
+- macro: parent_java_running_activemq
+  condition: (proc.pexe endswith java and proc.pcmdline contains activemq.jar)
+
+- macro: parent_java_running_cassandra
+  condition: (proc.pexe endswith java and (proc.pcmdline contains "-Dcassandra.config.loader" or proc.pcmdline contains org.apache.cassandra.service.CassandraDaemon))
+
+- macro: parent_java_running_jboss_wildfly
+  condition: (proc.pexe endswith java and proc.pcmdline contains org.jboss)
+
+- macro: parent_java_running_glassfish
+  condition: (proc.pexe endswith java and proc.pcmdline contains com.sun.enterprise.glassfish)
+
+- macro: parent_java_running_hadoop
+  condition: (proc.pexe endswith java and proc.pcmdline contains org.apache.hadoop)
+
+- macro: parent_java_running_datastax
+  condition: (proc.pexe endswith java and proc.pcmdline contains com.datastax)
+
+- macro: possibly_parent_java_running_tomcat
+  condition: (never_true and proc.pexe endswith java and proc.pcmdline contains org.apache.catalina.startup.Bootstrap)
+
+- macro: possibly_node_in_container
+  condition: (never_true and (proc.pname=node and proc.aname[3]=docker-containe))
+
+- macro: protected_shell_spawner
+  condition: >
+    (proc.aname in (protected_shell_spawning_binaries)
+    or parent_java_running_zookeeper
+    or parent_java_running_kafka
+    or parent_java_running_elasticsearch
+    or parent_java_running_activemq
+    or parent_java_running_cassandra
+    or parent_java_running_jboss_wildfly
+    or parent_java_running_glassfish
+    or parent_java_running_hadoop
+    or parent_java_running_datastax
+    or possibly_parent_java_running_tomcat
+    or possibly_node_in_container)
+
+- macro: consul_running_net_scripts
+  condition: (proc.pname=consul and (proc.cmdline startswith "sh -c curl" or proc.cmdline startswith "sh -c nc"))
+
+- macro: consul_running_alert_checks
+  condition: (proc.pname=consul and proc.cmdline startswith "sh -c /bin/consul-alerts")
+
+- macro: nginx_starting_nginx
+  condition: (proc.pname=nginx and proc.cmdline contains "/usr/sbin/nginx -c /etc/nginx/nginx.conf")
+
+- macro: nginx_running_aws_s3_cp
+  condition: (proc.pname=nginx and proc.cmdline startswith "sh -c /usr/local/bin/aws s3 cp")
+
+- macro: run_by_package_mgmt_binaries
+  condition: (proc.aname in (package_mgmt_binaries, needrestart))
+
+- macro: serf_script
+  condition: (proc.cmdline startswith "sh -c serf")
+
+- macro: check_process_status
+  condition: (proc.cmdline startswith "sh -c kill -0 ")
+
+- macro: run_by_foreman
+  condition: >
+    (user.name=foreman and
+     ((proc.pname in (rake, ruby, scl) and proc.aname[5] in (tfm-rake,tfm-ruby)) or
+     (proc.pname=scl and proc.aname[2] in (tfm-rake,tfm-ruby))))
+
+- macro: python_mesos_marathon_scripting
+  condition: (proc.pcmdline startswith "python3 /marathon-lb/marathon_lb.py")
+
+- macro: splunk_running_forwarder
+  condition: (proc.pname=splunkd and proc.cmdline startswith "sh -c /opt/splunkforwarder")
+
+- macro: postgres_running_wal_e
+  condition: (proc.pname=postgres and (proc.cmdline startswith "sh -c envdir /etc/wal-e.d/env /usr/local/bin/wal-e" or proc.cmdline startswith "sh -c envdir \"/run/etc/wal-e.d/env\" wal-g wal-push"))
+
+- macro: redis_running_prepost_scripts
+  condition: (proc.aname[2]=redis-server and (proc.cmdline contains "redis-server.post-up.d" or proc.cmdline contains "redis-server.pre-up.d"))
+
+- macro: rabbitmq_running_scripts
+  condition: >
+    (proc.pname=beam.smp and
+    (proc.cmdline startswith "sh -c exec ps" or
+     proc.cmdline startswith "sh -c exec inet_gethost" or
+     proc.cmdline= "sh -s unix:cmd" or
+     proc.cmdline= "sh -c exec /bin/sh -s unix:cmd 2>&1"))
+
+- macro: rabbitmqctl_running_scripts
+  condition: (proc.aname[2]=rabbitmqctl and proc.cmdline startswith "sh -c ")
+
+- macro: run_by_appdynamics
+  condition: (proc.pexe endswith java and proc.pcmdline contains " -jar -Dappdynamics")
+
+- macro: user_shell_container_exclusions
+  condition: (never_true)
+
+- macro: user_known_stand_streams_redirect_activities
+  condition: (never_true)
+
 - rule: Contact K8S API Server From Container
   desc: >
     Detect attempts to communicate with the K8S API Server from a container by non-profiled users. Kubernetes APIs play a

@@ -2,6 +2,64 @@
 # briefing). Not consumed by scoring — the scoring metadata is falco-rule.yaml.
 # Extracted from the Falco ruleset the event deploys (falco-rules-3.0.1); re-extract
 # from the live ruleset if the Falco version bumps (conventions: rule.yaml 節).
+#
+# List/macro definitions below are the condition dependencies of the rule,
+# extracted verbatim from the same upstream falco-rules-3.0.1 tag
+# (falcosecurity/rules rules/falco_rules.yaml) so this excerpt is
+# self-contained (list -> macro -> rule).
+- list: shell_binaries
+  items: [ash, bash, csh, ksh, sh, tcsh, zsh, dash]
+
+- list: falco_containers
+  items:
+    - falcosecurity/falco
+    - docker.io/falcosecurity/falco
+    - public.ecr.aws/falcosecurity/falco
+
+- list: sematext_images
+  items: [docker.io/sematext/sematext-agent-docker, docker.io/sematext/agent, docker.io/sematext/logagent,
+          registry.access.redhat.com/sematext/sematext-agent-docker,
+          registry.access.redhat.com/sematext/agent,
+          registry.access.redhat.com/sematext/logagent]
+
+- list: falco_privileged_images
+  items: [
+    falco_containers,
+    docker.io/calico/node,
+    calico/node,
+    docker.io/cloudnativelabs/kube-router,
+    docker.io/docker/ucp-agent,
+    docker.io/mesosphere/mesos-slave,
+    docker.io/rook/toolbox,
+    docker.io/sysdig/sysdig,
+    gcr.io/google_containers/kube-proxy,
+    gcr.io/google-containers/startup-script,
+    gcr.io/projectcalico-org/node,
+    gke.gcr.io/kube-proxy,
+    gke.gcr.io/gke-metadata-server,
+    gke.gcr.io/netd-amd64,
+    gke.gcr.io/watcher-daemonset,
+    gcr.io/google-containers/prometheus-to-sd,
+    k8s.gcr.io/ip-masq-agent-amd64,
+    k8s.gcr.io/kube-proxy,
+    k8s.gcr.io/prometheus-to-sd,
+    registry.k8s.io/ip-masq-agent-amd64,
+    registry.k8s.io/kube-proxy,
+    registry.k8s.io/prometheus-to-sd,
+    quay.io/calico/node,
+    sysdig/sysdig,
+    sematext_images,
+    k8s.gcr.io/dns/k8s-dns-node-cache,
+    registry.k8s.io/dns/k8s-dns-node-cache,
+    mcr.microsoft.com/oss/kubernetes/kube-proxy
+  ]
+
+- list: trusted_images
+  items: []
+
+- macro: shell_procs
+  condition: (proc.name in (shell_binaries))
+
 - rule: Execution from /dev/shm
   desc: >
     This rule detects file execution in the /dev/shm directory, a tactic often used by threat actors to store their readable, writable, and
