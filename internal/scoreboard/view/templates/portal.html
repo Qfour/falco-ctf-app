@@ -512,6 +512,9 @@
   #pane-story .mission-head .kicker { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; letter-spacing: 0.12em; color: var(--text-mute); text-transform: uppercase; }
   #pane-story .mission-head h2 { font-family: 'Chakra Petch', sans-serif; font-size: 1.6rem; margin: 0.25rem 0; }
   #pane-story .mission-head .tagline { color: var(--accent); font-size: 0.95rem; }
+  /* C1 fixup: explicit "return to current mission" affordance, shown only
+     when the detail panel is browsing a solved/locked mission. */
+  #pane-story .back-to-current { margin-top: 0.7rem; }
   #pane-story .badge { padding: 3px 9px; border-radius: 4px; font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.12em; font-weight: 700; margin-left: 0.5rem; vertical-align: middle; }
   #pane-story .badge-trigger { background: rgba(0, 203, 226, 0.12); color: var(--falco); border: 1px solid rgba(0, 203, 226, 0.35); }
   #pane-story .badge-evade { background: rgba(183, 140, 255, 0.12); color: var(--evade); border: 1px solid rgba(183, 140, 255, 0.35); }
@@ -921,11 +924,36 @@
   // (rather than waiting for the next 2s poll) so a click feels responsive.
   // Wired onto both the kill-chain nodes and the mission map <li> items —
   // one handler, one source of truth for "which mission was clicked".
+  //
+  // /review-5x C1 fixup: clicking the CURRENT mission's own node returns to
+  // auto-follow mode (viewedMission = null) rather than pinning ?mission=
+  // to an id that happens to equal current today — if the participant later
+  // solves it and current advances, a pinned id would freeze the detail pane
+  // on the now-stale mission instead of following. See followCurrent() for
+  // the explicit "back to current" affordance and the new-solve auto-clear
+  // in render() below, which cover the two other ways this could stick.
   function viewMission(id) {
     if (busy) return;
-    viewedMission = id;
+    viewedMission = (id === lastCurrent) ? null : id;
     refresh();
   }
+
+  // followCurrent is the explicit "return to current mission" action (C1
+  // fixup) — resets free browsing unconditionally, independent of whichever
+  // mission is currently viewed. Wired onto the detail panel's "戻る" button
+  // (backToCurrentHTML, shown whenever det.status !== 'current') so a
+  // participant who browsed away is never stuck without an obvious way back,
+  // even before the next auto-solve.
+  function followCurrent() {
+    if (busy) return;
+    viewedMission = null;
+    refresh();
+  }
+
+  // lastCurrent tracks the server's `current` from the most recent render,
+  // so viewMission() above can tell "the node just clicked IS current" apart
+  // from "it's some other mission" without waiting for a render closure.
+  let lastCurrent = null;
 
   function render(d) {
     const missions = d.missions || [];
@@ -943,6 +971,14 @@
       for (const m of missions) {
         if (m.status === 'solved' && !prevSolved.has(m.id)) {
           playCleared(m);
+          // C1 fixup: a fresh solve auto-clears free browsing and snaps the
+          // detail pane back to the new current mission. Without this, a
+          // participant who was browsing mission 03 while solving 01 (their
+          // actual current) would stay pinned to 03's detail forever (only a
+          // page reload recovered) — the whole point of "current" advancing
+          // is to guide them to what's next, and free browsing must not
+          // fight that guidance once it has actually moved.
+          viewedMission = null;
           break;
         }
       }
@@ -967,7 +1003,7 @@
       if (m.status === 'solved') dot = '✔';
       else if (m.status === 'locked') dot = '🔒';
       return `<div class="kc-node ${esc(m.status)}${typeCls}${viewedCls}" data-mission="${esc(m.id)}" title="${esc(m.title || m.id)}">
-        <div class="kc-dot">${dot}</div>
+        <div class="kc-dot">${esc(dot)}</div>
         <div class="kc-label">${esc(m.title || m.id)}</div>
         ${m.type ? `<div class="kc-type">${esc(m.type)}</div>` : ''}
       </div>`;
@@ -1026,6 +1062,7 @@
     restoreSubmitMsg();
     prevSolved = solvedNow;
     prevCurrent = d.current;
+    lastCurrent = d.current || null;
     firstRender = false;
   }
 
@@ -1062,14 +1099,26 @@
     return 'CURRENT MISSION';
   }
 
+  // backToCurrentHTML (C1 fixup) is the explicit "戻る" affordance shown in
+  // the mission-head whenever the detail panel is NOT showing the current
+  // mission (free-browsing a solved or locked one). Calls followCurrent(),
+  // the unconditional reset — a participant is never stuck without a
+  // one-click way back, even before the next auto-solve clears it for them.
+  function backToCurrentHTML(det) {
+    if (det.status === 'current') return '';
+    return `<button type="button" class="btn back-to-current" id="pane-journey-back-current">← 現在のミッションへ戻る</button>`;
+  }
+
   function renderDetail(det) {
     const typeBadge = det.type ? `<span class="badge badge-${esc(det.type)}">${esc(det.type)}</span>` : '';
     const kicker = kickerFor(det);
+    const backLink = backToCurrentHTML(det);
     if (!det.hasJourney) {
       return `<div class="mission">
         <div class="mission-head">
           <div class="kicker">${esc(kicker)}</div>
           <h2>${esc(det.title || det.id)} ${typeBadge}</h2>
+          ${backLink}
         </div>
         <div class="mission-body">
           <div class="empty"><span class="icon">📡</span>ブリーフィング準備中<br>
@@ -1124,6 +1173,7 @@
         <div class="kicker">${esc(kicker)}</div>
         <h2>${esc(det.title)} ${typeBadge}</h2>
         ${det.tagline ? `<div class="tagline">${esc(det.tagline)}</div>` : ''}
+        ${backLink}
       </div>
       <div class="mission-body">
         ${det.leadIn ? `<div class="lead-in"><span class="li-kicker">前回からの引き</span>${esc(det.leadIn)}</div>` : ''}
@@ -1290,6 +1340,11 @@
   }
 
   function wireDetail(det) {
+    // C1 fixup: explicit "戻る" button, shown only when browsing away from
+    // current (backToCurrentHTML). Absent element = current-mission view, no-op.
+    const backBtn = document.getElementById('pane-journey-back-current');
+    if (backBtn) backBtn.addEventListener('click', followCurrent);
+
     // step self-check toggles
     document.getElementById('pane-story').querySelectorAll('.steps .box').forEach(box => {
       box.addEventListener('click', async () => {

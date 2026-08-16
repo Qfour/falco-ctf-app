@@ -650,6 +650,53 @@ func TestJourney_FreeBrowsing_LockedMissionHintsAlwaysHidden(t *testing.T) {
 	}
 }
 
+// TestJourney_FreeBrowsing_LockedMissionStepsAlwaysUnchecked is the /review-5x
+// C2 fixup pin: a locked mission's steps must render as a plain read-only
+// preview (checked: false for every step), never leaking store-recorded tick
+// state — mirrors the hints gate's "locked is static display only" posture
+// (see TestJourney_FreeBrowsing_LockedMissionHintsAlwaysHidden immediately
+// above) even though a step tick, unlike a hint reveal, has no scoring
+// consequence of its own.
+func TestJourney_FreeBrowsing_LockedMissionStepsAlwaysUnchecked(t *testing.T) {
+	f := newJourneyFixture(t)
+
+	// Directly poke the store as if alice had ticked 02-evade's one step
+	// (e.g. while it was briefly current under a since-changed order), then
+	// browse to it while it is CURRENTLY locked (current is 01-recon). The
+	// gate must hide the tick regardless of what the store has on file.
+	if err := f.st.SetStepCheck("alice", "02-evade", 0, true, "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	m := f.journeyAt("alice", "02-evade")
+	if s := statusOf(m, "02-evade"); s != "locked" {
+		t.Fatalf("precondition: 02-evade should be locked, got %q", s)
+	}
+	det := m["detail"].(map[string]any)
+	steps := det["steps"].([]any)
+	if len(steps) != 1 {
+		t.Fatalf("02-evade should have 1 authored step, got %d", len(steps))
+	}
+	if steps[0].(map[string]any)["checked"] != false {
+		t.Fatalf("locked mission must never expose checked step state, got %v", steps[0])
+	}
+
+	// Sanity: the SAME store-recorded tick DOES surface once 02-evade becomes
+	// current (solve 01-recon), proving the gate is status-keyed, not a
+	// blanket "steps never reflect the store" regression.
+	if _, err := f.st.MarkSolved("alice", "01-recon", "2026-01-01T00:00:01Z"); err != nil {
+		t.Fatal(err)
+	}
+	m2 := f.journey("alice")
+	if s := statusOf(m2, "02-evade"); s != "current" {
+		t.Fatalf("precondition: 02-evade should now be current, got %q", s)
+	}
+	det2 := m2["detail"].(map[string]any)
+	steps2 := det2["steps"].([]any)
+	if steps2[0].(map[string]any)["checked"] != true {
+		t.Fatalf("current mission's step tick should surface once unlocked, got %v", steps2[0])
+	}
+}
+
 // TestJourney_FalcoRuleExcerpt_PresentAndAbsent proves the falcoRule /
 // hasFalcoRule projection: a challenge with a loaded excerpt gets its
 // lists/macros/rules verbatim (structured, not a text blob) and

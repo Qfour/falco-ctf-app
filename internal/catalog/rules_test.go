@@ -118,6 +118,44 @@ func TestLoadRuleExcerpts_RuleOnlyFixtureYieldsEmptyListsAndMacros(t *testing.T)
 	}
 }
 
+// TestLoadRuleExcerpts_ListMacroOnlyFixtureYieldsEmptyRules is the /review-5x
+// C3 fixup pin: the inverse of the rule-only fixture above. A rule.yaml with
+// ONLY list:/macro: entries and no rule: at all (a plausible transitional
+// state while content-lead backfills list:/macro: definitions per-challenge,
+// before adding the rule: block that references them, or a challenge whose
+// operator-authored excerpt is scoped to just the supporting
+// definitions) must still load: Rules comes back non-nil empty (not nil, not
+// an error), while Lists/Macros are populated. This pins the sniff-then-decode
+// branch for list:/macro: independent of whether any rule: entry is present.
+func TestLoadRuleExcerpts_ListMacroOnlyFixtureYieldsEmptyRules(t *testing.T) {
+	dir := t.TempDir()
+	writeRuleYAML(t, dir, "01-initial-recon", `
+- list: grep_commands
+  items: [grep, egrep, fgrep]
+
+- macro: protected_shell_spawner
+  condition: >
+    proc.pname exists
+`)
+	out, err := catalog.LoadRuleExcerpts(dir, ruleCatalog())
+	if err != nil {
+		t.Fatalf("LoadRuleExcerpts: %v", err)
+	}
+	ex := out["01-initial-recon"]
+	if len(ex.Lists) != 1 || ex.Lists[0].Name != "grep_commands" {
+		t.Fatalf("lists wrong: %+v", ex.Lists)
+	}
+	if len(ex.Lists[0].Items) != 3 || ex.Lists[0].Items[2] != "fgrep" {
+		t.Fatalf("list items wrong: %+v", ex.Lists[0].Items)
+	}
+	if len(ex.Macros) != 1 || ex.Macros[0].Name != "protected_shell_spawner" {
+		t.Fatalf("macros wrong: %+v", ex.Macros)
+	}
+	if ex.Rules == nil || len(ex.Rules) != 0 {
+		t.Fatalf("expected non-nil empty Rules, got %#v", ex.Rules)
+	}
+}
+
 func TestLoadRuleExcerpts_MultiRuleFixture(t *testing.T) {
 	dir := t.TempDir()
 	writeRuleYAML(t, dir, "01-initial-recon", `

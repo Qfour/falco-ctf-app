@@ -1464,9 +1464,19 @@ func (h *Handler) missionDetail(user, cid, status, leadIn string, checkedSteps, 
 	j, hasJourney := h.journeys[cid]
 	locked := status == "locked"
 
+	// checkedSteps is IGNORED for a locked mission (/review-5x C2 fixup,
+	// mirrors the hints gate immediately below): a locked mission's steps
+	// render as a plain read-only preview, never showing tick state from the
+	// store. This is the participant's own data (unlike hints there is no
+	// scoring lever here — a step tick never affects the solve verdict), but
+	// "locked is static display only" is the stated invariant for free
+	// browsing (CEO decision), so it applies uniformly rather than carving
+	// out an exception just because steps happen to be lower-stakes than hints.
 	checked := make(map[int]struct{}, len(checkedSteps))
-	for _, i := range checkedSteps {
-		checked[i] = struct{}{}
+	if !locked {
+		for _, i := range checkedSteps {
+			checked[i] = struct{}{}
+		}
 	}
 	type stepView struct {
 		Idx     int    `json:"idx"`
