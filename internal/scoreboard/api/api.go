@@ -363,8 +363,10 @@ func emailMatchesUser(email, user string) bool {
 
 // selfOrAdmin is the participant-facing read gate (P18). It derives the caller
 // identity from X-Auth-Request-Email — the header oauth2-proxy injects on the
-// participant journey host (journey.<dnsSuffix>) and that auth-policy also
-// propagates on the admin host — and authorizes the request for {user} iff:
+// single-origin portal host (P19-2b: `app.<dnsSuffix>/portal`, journey being
+// one of the portal's tabs rather than its own host) and that auth-policy
+// also propagates on the admin host — and authorizes the request for {user}
+// iff:
 //
 //   - the caller email prefix-exact matches "<user>@" (self, I8-mirrored), OR
 //   - the caller email is in ADMIN_EMAILS (operator override — the one

@@ -43,10 +43,9 @@ ttyd:
   # `deploy-user.sh --frame-ancestors <value>`, set to the portal's OWN
   # origin (P23-4: the portal now iframes ttyd from its Terminal tab, so this
   # must be the origin the participant's browser sees /portal served from —
-  # e.g. "https://journey.<dnsSuffix>" locally; once P19 lands a single
-  # origin this collapses to that one host). A passthrough from the
-  # platform's deploy-event-workspaces.sh (so operators don't have to pass it
-  # by hand per user) is a platform-side follow-up, not yet implemented.
+  # P19-2b: single origin, e.g. "https://app.<dnsSuffix>"). Platform's
+  # deploy-event-workspaces.sh passes this through to deploy-user.sh
+  # (P19-2a) so operators don't have to set it by hand per user.
   frameAncestors: "'none'"
   proxy:
     image:
