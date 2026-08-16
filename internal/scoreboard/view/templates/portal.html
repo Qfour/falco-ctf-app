@@ -726,6 +726,19 @@
      this class in the markup below). ===== */
   #pane-story .story-overview { background: var(--surface); border: 1px solid var(--border); border-radius: var(--p-panel-radius); padding: 1.25rem 1.5rem; margin-bottom: 1.5rem; }
 
+  /* ===== Terminal pane (P23 portal-redesign restyle) =====
+     Previously entirely inline style="" attributes in the JS-generated
+     markup below (P23-4's original cut) — now the shared design tokens
+     via a few small, pane-scoped classes, matching the other 3 panes'
+     look. iframe src/CSP/frame-src/fail-safe-placeholder LOGIC is
+     unchanged; only the surrounding chrome (heading/button/frame border)
+     is restyled. */
+  #pane-terminal .term-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.75rem; }
+  #pane-terminal .term-head h2 { font-family: var(--p-font-display); font-size: var(--p-h2); margin: 0; color: var(--p-text); }
+  #pane-terminal .term-frame { border: 1px solid var(--p-border); border-radius: var(--p-panel-radius); overflow: hidden; background: #000; }
+  #pane-terminal .term-note { color: var(--p-text-mute); font-size: 0.75rem; line-height: 1.5; margin-top: 0.6rem; }
+  #pane-terminal .term-placeholder p { color: var(--p-text-dim); line-height: 1.6; margin: 0; }
+
 </style>
 </head>
 <body>
@@ -1815,7 +1828,7 @@
      Per-user isolation (I8) is enforced independently by auth-policy's
      `/check?host=<user>` on the ttyd Ingress itself, regardless of what src
      ends up in this iframe. ===== -->
-<div class="pane" id="pane-terminal" style="padding:2.5rem 3rem;max-width:64rem">
+<div class="pane p-shell" id="pane-terminal" style="max-width:64rem">
   <div id="pane-terminal-page"></div>
 </div>
 
@@ -1836,14 +1849,21 @@
     const page = document.getElementById('pane-terminal-page');
     if (!page) return;
     if (!ttydURL) {
+      // P23 portal-redesign: shared .term-head/.term-placeholder classes
+      // replace this pane's former one-off inline style="" attributes —
+      // see the #pane-terminal CSS block above (same h2 sizing as the
+      // configured-terminal branch below, via .term-head h2). Logic (the
+      // fail-safe placeholder itself) is unchanged.
       page.innerHTML = `
-        <h2 style="font-family:'Chakra Petch',sans-serif;font-size:1.3rem;margin:0 0 0.75rem;color:#EAF7FA;">Terminal</h2>
-        <p style="color:#9DB4BF;line-height:1.6;margin:0;">
-          Your in-portal terminal is not configured for this deployment yet
-          (PORTAL_TTYD_SUFFIX unset, or your username could not be
-          determined). Use your workspace terminal at its usual address
-          instead (ask the operator if unsure).
-        </p>`;
+        <div class="term-head"><h2>Terminal</h2></div>
+        <div class="term-placeholder">
+          <p>
+            Your in-portal terminal is not configured for this deployment yet
+            (PORTAL_TTYD_SUFFIX unset, or your username could not be
+            determined). Use your workspace terminal at its usual address
+            instead (ask the operator if unsure).
+          </p>
+        </div>`;
       return;
     }
     // ttydURL is server-generated and already validated (json-escaped by
@@ -1852,16 +1872,16 @@
     // attribute-breakout XSS.
     const safeURL = esc(ttydURL);
     page.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:0.75rem;">
-        <h2 style="font-family:'Chakra Petch',sans-serif;font-size:1.3rem;margin:0;color:#EAF7FA;">Terminal</h2>
-        <button type="button" id="pane-terminal-popout" style="font-family:'Chakra Petch',sans-serif;text-transform:uppercase;letter-spacing:0.08em;font-size:0.72rem;font-weight:700;padding:0.4rem 0.85rem;border-radius:6px;border:1px solid #2B3F4D;background:transparent;color:#9DB4BF;cursor:pointer;">⤢ Pop out</button>
+      <div class="term-head">
+        <h2>Terminal</h2>
+        <button type="button" id="pane-terminal-popout" class="p-btn">⤢ Pop out</button>
       </div>
-      <div style="border:1px solid #1C2A35;border-radius:0.6rem;overflow:hidden;background:#000;">
+      <div class="term-frame">
         <iframe id="pane-terminal-iframe" src="${safeURL}" title="Terminal"
           style="width:100%;height:70vh;border:0;display:block;background:#000;"
           allow="clipboard-read; clipboard-write"></iframe>
       </div>
-      <p style="color:#5C7480;font-size:0.75rem;line-height:1.5;margin-top:0.6rem;">
+      <p class="term-note">
         Copy/paste and resize work the same as in a standalone tab. If the
         terminal does not load, use "Pop out" to open it directly.
       </p>`;
