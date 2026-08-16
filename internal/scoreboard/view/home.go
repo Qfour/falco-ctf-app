@@ -46,41 +46,18 @@ var storyPanelHTML = template.HTML(buildStoryPanelHTML(HomeFragments))
 //
 // P23 portal-redesign: the "story" fragment (ID=="story") is EXCLUDED here —
 // it moved to the Story tab's own lead-in (see buildStoryPanelHTML /
-// storyPanelHTML above) so it is not shown twice. This is the one ID this
-// function special-cases; every other fragment (intro, cheatsheet,
-// rule-explain, and anything future) still flows through unchanged.
+// storyPanelHTML above) so it is not shown twice.
 //
-// Grouping: rule-explain panels (ChalNN != "") are rendered inside a single
-// "🔍 なぜ発火するか" panel, one <details> per challenge number, so the Home
-// tab shows one top-level entry for the whole rule-explain set rather than
-// up to 11 top-level entries that would dwarf the remaining static panels.
-//
-// INVARIANT (merge-review fixup R4): this grouping assumes every rule-explain
-// HomeFragment shares the SAME Label — cmd/gen-home-fragments' generator
-// always sets every one of them to the single
-// internal/homefragments.RuleExplainLabel constant (see manifest.go), so
-// there is currently only ever one distinct label among them. This function
-// takes the LAST rule-explain fragment's Label for the combined panel's
-// <summary> (see ruleExplainLabel below) rather than the first / a
-// deduplicated set, on the assumption that reading any one of them is
-// equivalent to reading all of them. If a future generator change ever made
-// rule-explain Labels vary per challenge, this function would silently show
-// only the last one and swallow the others — see
-// TestBuildHomePanelsHTML_RuleExplainLabelInvariant in home_test.go, which
-// pins this exact behavior so a change that breaks the single-label
-// assumption fails loudly instead of silently mis-rendering.
+// P23 UI polish (CEO item ⑥): the per-challenge rule-explain panels
+// (ChalNN != "", "🔍 なぜ発火するか") are ALSO excluded here — that content is
+// surfaced per-mission in the Story tab's Falco Rule accordion
+// (List/Macro/Rule) instead, so showing it again on Home is redundant. Home
+// now renders only the top-level static panels (intro, cheatsheet, and any
+// future ChalNN=="" fragment). Both exclusions are display-side; the source
+// fragments still exist in docs-site (their removal from home-fragments.yaml
+// is a content follow-up).
 func buildHomePanelsHTML(fragments []HomeFragment) string {
 	var b strings.Builder
-	var ruleExplain []HomeFragment
-	// ruleExplainLabel is every rule-explain HomeFragment's shared Label
-	// (set by cmd/gen-home-fragments from internal/homefragments.RuleExplainLabel
-	// — this package intentionally does not import internal/homefragments,
-	// per homefragments_gen.go's doc: only the generator does, so goldmark +
-	// the sanitizer stay out of this binary's dependency graph). Read off
-	// the LAST rule-explain fragment seen rather than hardcoding the string
-	// a second time — see the single-label INVARIANT note above this
-	// function for what "the last one" relies on.
-	var ruleExplainLabel string
 	for _, f := range fragments {
 		if f.ID == "story" {
 			// P23 portal-redesign: moved to the Story tab's own overview
@@ -88,25 +65,15 @@ func buildHomePanelsHTML(fragments []HomeFragment) string {
 			continue
 		}
 		if f.ChalNN != "" {
-			ruleExplain = append(ruleExplain, f)
-			ruleExplainLabel = f.Label
+			// P23 UI polish (CEO item ⑥): the per-challenge rule-explain
+			// ("なぜ発火するか") fragments are surfaced per-mission in the
+			// Story tab's Falco Rule accordion (List/Macro/Rule) now — do NOT
+			// also render them on Home. Display-side exclusion (mirrors the
+			// "story" skip above); the source fragments remain in docs-site,
+			// their removal from home-fragments.yaml is a content follow-up.
 			continue
 		}
 		writeDetailsPanel(&b, f.Label, f.HTML)
-	}
-	if len(ruleExplain) > 0 {
-		var inner strings.Builder
-		for _, f := range ruleExplain {
-			// f.ChalNN is generator-produced from challengeDirRe (`\d\d`,
-			// see cmd/gen-home-fragments), never request-derived — escaped
-			// here anyway as defense-in-depth, matching the label escaping
-			// below, rather than relying solely on the generator's regex.
-			inner.WriteString(`<div class="home-rule-explain-item">`)
-			inner.WriteString(`<h4 class="home-rule-explain-chal">Mission ` + template.HTMLEscapeString(f.ChalNN) + `</h4>`)
-			inner.WriteString(f.HTML)
-			inner.WriteString(`</div>`)
-		}
-		writeDetailsPanel(&b, ruleExplainLabel, inner.String())
 	}
 	return b.String()
 }
