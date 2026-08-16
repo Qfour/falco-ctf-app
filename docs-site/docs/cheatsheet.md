@@ -6,11 +6,8 @@
 
 !!! tip "使い方"
     ワークスペース(Web ターミナル)と、この 1 ページを並べて開いておくと快適です。
-    各ミッションの詳しい背景は [ミッション](missions/index.md) の各ページに、
-    そのミッション専用の提出方法は `welcome.txt`
-    (`/opt/ctf/missions/<NN>-<slug>/fixtures/welcome.txt`)にあります。
-    段階的なヒント(気付き → 概要 → 解答)は `/journey` の各ミッションページで
-    開けます(開くと減点)。
+    各ミッションのブリーフィング・段階的なヒント(気付き → 概要 → 解答、
+    開くと減点)は STORY タブ(ミッションページ)で確認できます。
 
 ---
 
@@ -20,16 +17,8 @@
 
 ```bash
 echo "$FALCO_CTF_USER"          # 自分の識別子(提出・採点のキー)
-cat /opt/ctf/INDEX.txt          # 全 10 ミッションの一覧
-ls /opt/ctf/missions/           # 各ミッションのディレクトリ
 cat /etc/os-release             # 動いている OS(Alpine ベース)
 hostname                        # Pod 名 = 自分のワークスペース
-```
-
-各ミッションの「ブリーフ」は `welcome.txt` にあります:
-
-```bash
-cat /opt/ctf/missions/03-stealth-read/fixtures/welcome.txt
 ```
 
 !!! note "trigger と evade"

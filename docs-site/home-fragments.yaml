@@ -15,6 +15,14 @@
 #     that challenge, not an error. Never block gen or render.
 #   - Sanitize at gen time (fixed HTML baked in) — no runtime markdown or HTML
 #     sanitizer dependency. See allowlist below.
+#
+# 2026-08-17: the `story` panel (docs-site/docs/story.md, killchain table)
+# was removed from this manifest. Reason: app-lead is removing the
+# corresponding Story-tab overview render from templates/portal.html in a
+# parallel change — the kill-chain diagram (rendered by a separate mechanism)
+# now carries the overview role, so a prose duplicate is redundant. story.md
+# itself is untouched (still a docs-admin nav page, see mkdocs.yml) — only
+# its portal-fragment wiring is removed here.
 
 panels:
   # -- static, single-fragment panels (not per-challenge) -------------------
@@ -33,18 +41,6 @@ panels:
       if their content is wanted later, rewrite as portal-relative copy in a
       follow-up, not by dumping the docs-site markdown as-is.
     fail_soft: "omit panel entirely if file or heading missing"
-
-  - id: story
-    label: "ストーリー"
-    source: docs-site/docs/story.md
-    select: { whole_file: true }
-    notes: >
-      Self-contained killchain table (01→10) + trigger/evade admonition, zero
-      cross-links, zero solution content. Safe to render whole. Does not
-      cover 11-cloud-cred-hunt (explicitly an independent bonus challenge,
-      out of the canonical scenario — see scenarios/README.md "Ordering
-      principle"); that is intentional, not a gap to fix here.
-    fail_soft: "omit panel if file missing (should not happen — static asset)"
 
   - id: cheatsheet
     label: "コマンド集"
@@ -121,14 +117,15 @@ sanitize_allowlist:
     - table, thead, tbody, tr, th, td
                        # 2026-08-16 merge-review fixup (R1 HIGH): added to
                        # match the shipped implementation (internal/
-                       # homefragments/sanitize.go) — story.md's mandated
-                       # whole_file panel and all 4 existing rule-explain.md
-                       # files use a markdown table as their only structured-
-                       # data device (see coverage_2026-08-16 above), so
-                       # without table support "safe to render whole" (the
-                       # story panel's own note, above) would not have held:
-                       # the table content would have collapsed into
-                       # unstructured prose instead of dropping cleanly.
+                       # homefragments/sanitize.go) — all 4 existing
+                       # rule-explain.md files use a markdown table as their
+                       # only structured-data device (see coverage_2026-08-16
+                       # above), so without table support their content would
+                       # collapse into unstructured prose instead of dropping
+                       # cleanly. (2026-08-17: the `story` panel that
+                       # originally motivated this — the killchain table —
+                       # was removed from this manifest; table support stays
+                       # because rule-explain.md still needs it.)
                        # security-reviewed and approved (P23-5 5x review) —
                        # same "no attributes" rule as every other element
                        # below applies to these six too.
@@ -150,7 +147,8 @@ sanitize_allowlist:
     pre-approved here. Default assumption for v1: links become plain text.
   admonition_handling: >
     MkDocs Material `!!! tip "title"` / `!!! note "title"` / `!!! warning
-    "title"` blocks appear in index.md, story.md, cheatsheet.md. There is no
+    "title"` blocks appear in index.md and cheatsheet.md (the manifest's
+    fragment sources). There is no
     markdown library in go.mod today (checked 2026-08-16) — app-lead must
     either (a) add a minimal goldmark-based renderer with a custom admonition
     extension, or (b) pre-flatten `!!! x "title"` blocks to a plain
