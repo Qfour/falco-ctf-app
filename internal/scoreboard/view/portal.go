@@ -51,16 +51,36 @@ type portalData struct {
 	// narrows a caller to their OWN workspace; it cannot widen anything.
 	TtydURLJSON template.JS
 	// HomePanelsHTML (P23-5) is the Home tab's gen-time-sanitized content
-	// panels (Falco とは / ストーリー / コマンド集 / 課題ごとの「なぜ発火するか」),
-	// pre-rendered to trusted template.HTML — see home.go's homePanelsHTML
-	// doc for why this is safe to inject unescaped: it is built ONCE from
+	// panels (Falco とは / コマンド集 / 課題ごとの「なぜ発火するか」 — the
+	// "story" fragment is EXCLUDED as of P23 portal-redesign; see
+	// StoryPanelHTML below), pre-rendered to trusted template.HTML — see
+	// home.go's homePanelsHTML doc for why this is safe to inject unescaped:
+	// it is built ONCE from HomeFragments (committed, gen-time-sanitized
+	// output of cmd/gen-home-fragments), never from anything
+	// request-derived, and carries no per-viewer variation (same content
+	// for admin and participant, same content for every participant — no
+	// hints, no flags, no per-user data). See StoryPanelHTML below for the
+	// second (and only other) portalData field sharing this same
+	// template.HTML trust boundary.
+	HomePanelsHTML template.HTML
+	// StoryPanelHTML (P23 portal-redesign) is the Story tab's overview
+	// content — the SAME "story" HomeFragment previously folded into
+	// HomePanelsHTML's generic panel list, now surfaced directly at the top
+	// of the Story pane instead (see templates/portal.html's #pane-story
+	// .story-overview block and home.go's storyPanelHTML/buildStoryPanelHTML
+	// doc). Safe to inject as trusted template.HTML for EXACTLY the same
+	// reason HomePanelsHTML is (see that field's doc above): built ONCE from
 	// HomeFragments (committed, gen-time-sanitized output of
 	// cmd/gen-home-fragments), never from anything request-derived, and
-	// carries no per-viewer variation (same content for admin and
-	// participant, same content for every participant — no hints, no flags,
-	// no per-user data). This is the ONLY portalData field that is
-	// template.HTML rather than a JSON-marshalled display hint.
-	HomePanelsHTML template.HTML
+	// carries no per-viewer variation — same content for admin and
+	// participant, same content for every participant. This is the second
+	// (and, per HomePanelsHTML's doc, ONLY other) portalData field that is
+	// template.HTML rather than a JSON-marshalled display hint; both share
+	// the identical trust boundary (gen-time sanitization), so this is not a
+	// new exception, just a second consumer of the same one. Do not
+	// repurpose either field's template.HTML trust for any OTHER value in
+	// this struct.
+	StoryPanelHTML template.HTML
 	// Nonce (P23-6) is the CSP script-src nonce generated fresh for THIS
 	// response by writeSecurityHeaders (csp.go) and simultaneously stamped
 	// onto the Content-Security-Policy response header. It is plain
@@ -128,18 +148,18 @@ func ttydURLFor(user, suffix string) string {
 //     dashboard), which stays admin-only. This is intentional: the portal
 //     shell carries no admin data, so there is nothing to protect by gating
 //     the page itself; gating stays where the data is (the API).
-//  4. (P23-5) HomePanelsHTML is the one field here that is template.HTML
-//     (unescaped) rather than a JSON-marshalled display hint, and the one
-//     value here that is NOT derived from the request at all — it is a
-//     package-level constant computed once from the committed,
+//  4. (P23-5, extended P23 portal-redesign) HomePanelsHTML and
+//     StoryPanelHTML are the two fields here that are template.HTML
+//     (unescaped) rather than a JSON-marshalled display hint, and the only
+//     values here that are NOT derived from the request at all — both are
+//     package-level constants computed once from the committed,
 //     gen-time-sanitized HomeFragments (see home.go / homefragments_gen.go).
-//     It is identical for every caller (admin or participant), carries no
+//     Both are identical for every caller (admin or participant), carry no
 //     per-user data, no hints, no flags — see docs-site/home-fragments.yaml
-//     for the content contract this implements. Do not repurpose
-//     HomePanelsHTML's template.HTML trust for any OTHER value in this
-//     struct; every other field must keep going through
-//     json.Marshal+template.JS (or plain esc() client-side) exactly as
-//     before.
+//     for the content contract this implements. Do not repurpose either
+//     field's template.HTML trust for any OTHER value in this struct; every
+//     other field must keep going through json.Marshal+template.JS (or
+//     plain esc() client-side) exactly as before.
 //  5. All other dynamic values pass through html/template with template.JS on
 //     pre-marshalled JSON (never raw string interpolation), so even a
 //     future edit that feeds a weirder value through RoleJSON/UserJSON/
@@ -191,6 +211,7 @@ func renderPortal(w http.ResponseWriter, r *http.Request, isAdmin func(*http.Req
 		UserJSON:       template.JS(userJSON),
 		TtydURLJSON:    template.JS(ttydURLJSON),
 		HomePanelsHTML: homePanelsHTML,
+		StoryPanelHTML: storyPanelHTML,
 		Nonce:          nonce,
 	})
 }

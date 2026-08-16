@@ -6,24 +6,83 @@ import (
 )
 
 // TestBuildHomePanelsHTML_StaticPanelsRenderAsDetails proves each static
-// (non-rule-explain) HomeFragment becomes its own <details class="home-panel">
-// with the fragment's Label in <summary> and its already-sanitized HTML
-// inside .home-panel-body, verbatim (no re-escaping — it is already-trusted
-// gen-time output, see home.go's doc).
+// (non-rule-explain, non-"story") HomeFragment becomes its own
+// <details class="home-panel"> with the fragment's Label in <summary> and
+// its already-sanitized HTML inside .home-panel-body, verbatim (no
+// re-escaping — it is already-trusted gen-time output, see home.go's doc).
+// Uses "cheatsheet" rather than "story" for the second fragment because
+// ID=="story" is special-cased OUT of this function as of P23
+// portal-redesign — see TestBuildHomePanelsHTML_ExcludesStoryFragment below,
+// which pins that behavior explicitly.
 func TestBuildHomePanelsHTML_StaticPanelsRenderAsDetails(t *testing.T) {
 	frags := []HomeFragment{
 		{ID: "intro", Label: "Falco CTF とは", HTML: "<p>hello</p>"},
-		{ID: "story", Label: "ストーリー", HTML: "<p>world</p>"},
+		{ID: "cheatsheet", Label: "コマンド集", HTML: "<p>world</p>"},
 	}
 	got := buildHomePanelsHTML(frags)
 	if strings.Count(got, `class="home-panel"`) != 2 {
 		t.Fatalf("expected 2 home-panel details, got: %s", got)
 	}
-	if !strings.Contains(got, "Falco CTF とは") || !strings.Contains(got, "ストーリー") {
+	if !strings.Contains(got, "Falco CTF とは") || !strings.Contains(got, "コマンド集") {
 		t.Errorf("expected both labels present, got: %s", got)
 	}
 	if !strings.Contains(got, "<p>hello</p>") || !strings.Contains(got, "<p>world</p>") {
 		t.Errorf("expected fragment HTML injected verbatim, got: %s", got)
+	}
+}
+
+// TestBuildHomePanelsHTML_ExcludesStoryFragment proves the P23
+// portal-redesign special-case: a HomeFragment with ID=="story" is skipped
+// entirely by buildHomePanelsHTML (it moved to the Story tab's own overview
+// — see buildStoryPanelHTML below), while every other fragment still
+// renders as usual. Not shown twice: the story content must not also
+// appear as a Home <details> panel.
+func TestBuildHomePanelsHTML_ExcludesStoryFragment(t *testing.T) {
+	frags := []HomeFragment{
+		{ID: "intro", Label: "Falco CTF とは", HTML: "<p>hello</p>"},
+		{ID: "story", Label: "ストーリー", HTML: "<p>the story</p>"},
+	}
+	got := buildHomePanelsHTML(frags)
+	if strings.Count(got, `class="home-panel"`) != 1 {
+		t.Fatalf("expected exactly 1 home-panel (intro only, story excluded), got: %s", got)
+	}
+	if strings.Contains(got, "ストーリー") || strings.Contains(got, "<p>the story</p>") {
+		t.Errorf("expected the story fragment NOT to appear in Home panels, got: %s", got)
+	}
+	if !strings.Contains(got, "Falco CTF とは") || !strings.Contains(got, "<p>hello</p>") {
+		t.Errorf("expected the intro fragment to still render, got: %s", got)
+	}
+}
+
+// TestBuildStoryPanelHTML_ReturnsStoryFragmentVerbatim proves the Story
+// tab's overview builder pulls the "story" HomeFragment's HTML out
+// verbatim (no <details>/<summary> wrapper, unlike buildHomePanelsHTML)
+// and ignores every other fragment.
+func TestBuildStoryPanelHTML_ReturnsStoryFragmentVerbatim(t *testing.T) {
+	frags := []HomeFragment{
+		{ID: "intro", Label: "Falco CTF とは", HTML: "<p>hello</p>"},
+		{ID: "story", Label: "ストーリー", HTML: "<p>the story</p>"},
+	}
+	got := buildStoryPanelHTML(frags)
+	if got != "<p>the story</p>" {
+		t.Errorf("expected the story fragment's HTML verbatim, got: %q", got)
+	}
+}
+
+// TestBuildStoryPanelHTML_FailSoftWhenMissing proves a deployment missing
+// the "story" HomeFragment (e.g. docs-site/home-fragments.yaml's story.md
+// source absent) degrades to "" rather than erroring — the Story tab's
+// overview block then simply renders empty, matching homePanelsHTML's own
+// fail-soft convention.
+func TestBuildStoryPanelHTML_FailSoftWhenMissing(t *testing.T) {
+	frags := []HomeFragment{
+		{ID: "intro", Label: "Falco CTF とは", HTML: "<p>hello</p>"},
+	}
+	if got := buildStoryPanelHTML(frags); got != "" {
+		t.Errorf("expected empty string when no story fragment present, got: %q", got)
+	}
+	if got := buildStoryPanelHTML(nil); got != "" {
+		t.Errorf("expected empty string for nil fragments, got: %q", got)
 	}
 }
 
