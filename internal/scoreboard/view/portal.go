@@ -63,23 +63,20 @@ type portalData struct {
 	// second (and only other) portalData field sharing this same
 	// template.HTML trust boundary.
 	HomePanelsHTML template.HTML
-	// StoryPanelHTML (P23 portal-redesign) is the Story tab's overview
+	// StoryPanelHTML (P23 portal-redesign) was the Story tab's overview
 	// content — the SAME "story" HomeFragment previously folded into
-	// HomePanelsHTML's generic panel list, now surfaced directly at the top
-	// of the Story pane instead (see templates/portal.html's #pane-story
-	// .story-overview block and home.go's storyPanelHTML/buildStoryPanelHTML
-	// doc). Safe to inject as trusted template.HTML for EXACTLY the same
-	// reason HomePanelsHTML is (see that field's doc above): built ONCE from
-	// HomeFragments (committed, gen-time-sanitized output of
-	// cmd/gen-home-fragments), never from anything request-derived, and
-	// carries no per-viewer variation — same content for admin and
-	// participant, same content for every participant. This is the second
-	// (and, per HomePanelsHTML's doc, ONLY other) portalData field that is
-	// template.HTML rather than a JSON-marshalled display hint; both share
-	// the identical trust boundary (gen-time sanitization), so this is not a
-	// new exception, just a second consumer of the same one. Do not
-	// repurpose either field's template.HTML trust for any OTHER value in
-	// this struct.
+	// HomePanelsHTML's generic panel list, briefly surfaced directly at the
+	// top of the Story pane instead. As of portal-header-refine (item 7),
+	// templates/portal.html no longer references {{.StoryPanelHTML}} — the
+	// kill-chain diagram now carries the campaign-overview role on its own,
+	// per CEO decision. This field (and home.go's storyPanelHTML/
+	// buildStoryPanelHTML) are intentionally LEFT IN PLACE, unused by the
+	// template, pending content-lead's coordinated removal of the
+	// underlying "story" HomeFragment source (docs-site/home-fragments.yaml)
+	// — do not repurpose this field's template.HTML trust for any OTHER
+	// value in this struct in the meantime; it shares the exact same
+	// gen-time-sanitization trust boundary HomePanelsHTML does (see that
+	// field's doc above), it is just not wired into the template right now.
 	StoryPanelHTML template.HTML
 	// Nonce (P23-6) is the CSP script-src nonce generated fresh for THIS
 	// response by writeSecurityHeaders (csp.go) and simultaneously stamped

@@ -176,26 +176,17 @@ func TestRenderPortal_HomePanelsInjected(t *testing.T) {
 	}
 }
 
-// TestRenderPortal_StoryPanelInjected proves GET /portal's response body
-// contains the real, gen-time-rendered Story overview (the SAME
-// storyPanelHTML package var every request serves — see portal.go's
-// StoryPanelHTML field doc and home.go's buildStoryPanelHTML), for BOTH
-// admin and participant callers identically, and that it is NOT duplicated
-// into the Home panels list (see TestRenderPortal_HomePanelsInjected's
-// story-exclusion note above).
-func TestRenderPortal_StoryPanelInjected(t *testing.T) {
-	if len(HomeFragments) == 0 {
-		t.Fatal("HomeFragments is empty — run `make gen-home-fragments` before running this test")
-	}
-	var storyHTML string
-	for _, f := range HomeFragments {
-		if f.ID == "story" {
-			storyHTML = f.HTML
-		}
-	}
-	if storyHTML == "" {
-		t.Skip("no story HomeFragment present in this build (fail-soft; nothing to assert)")
-	}
+// TestRenderPortal_StoryPanelNotInjected proves GET /portal's response body
+// no longer renders a Story overview block (portal-header-refine item 7,
+// CEO decision: the kill-chain diagram now carries the campaign-overview
+// role on its own) — templates/portal.html dropped its
+// {{.StoryPanelHTML}} reference and the `.story-overview` container
+// entirely, even though portal.go's StoryPanelHTML field / home.go's
+// storyPanelHTML var are still populated (left in place, unused by the
+// template, pending content-lead's coordinated fragment removal — see
+// portal.go's StoryPanelHTML field doc). This replaces the former
+// TestRenderPortal_StoryPanelInjected, which asserted the opposite.
+func TestRenderPortal_StoryPanelNotInjected(t *testing.T) {
 	for _, isAdmin := range []bool{true, false} {
 		r := httptest.NewRequest("GET", "/portal", nil)
 		w := httptest.NewRecorder()
@@ -204,11 +195,8 @@ func TestRenderPortal_StoryPanelInjected(t *testing.T) {
 			t.Fatalf("renderPortal: %v", err)
 		}
 		body := w.Body.String()
-		if !strings.Contains(body, `class="story-overview`) {
-			t.Fatalf("expected the Story overview container in the response, isAdmin=%v", isAdmin)
-		}
-		if !strings.Contains(body, storyHTML) {
-			t.Errorf("expected the story fragment's HTML in the Story overview, isAdmin=%v", isAdmin)
+		if strings.Contains(body, `class="story-overview`) {
+			t.Errorf("expected NO Story overview container in the response, isAdmin=%v", isAdmin)
 		}
 	}
 }
