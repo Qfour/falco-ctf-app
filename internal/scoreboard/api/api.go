@@ -69,7 +69,16 @@ const triggerDetectWindowSeconds = 60
 // All are optional — the handler applies safe defaults (see New).
 type JourneyConfig struct {
 	Journeys catalog.Journeys // challengeId -> narrative content (may be nil)
-	Order    []string         // mission sequence (scenario order or catalog ids)
+	// FalcoRules is the Story tab's display-only Falco rule excerpt
+	// (challengeId -> List/Macro/Rule, from challenges/<NN>-<slug>/rule.yaml —
+	// P23 Story-as-docs). May be nil; a missing entry means "no rule.yaml
+	// authored for this challenge" and the UI omits the Falco Rule panel.
+	// Content is identical for every viewer (no per-user secret), so exposing
+	// it for ANY mission — solved, current, or locked — carries no fairness
+	// risk (unlike hints, which stay gated to the unlocked prefix; see
+	// missionDetail's lockedHints note).
+	FalcoRules catalog.FalcoRuleExcerpts
+	Order      []string // mission sequence (scenario order or catalog ids)
 	// DocsBaseURL is the participant docs-site origin (e.g. https://docs.<suffix>).
 	// When non-empty, each mission's relative docsUrl is rewritten to an absolute
 	// URL under this origin. Empty = keep the relative path.
@@ -88,6 +97,7 @@ type Handler struct {
 	originGuard        *originguard.Guard
 
 	journeys    catalog.Journeys
+	falcoRules  catalog.FalcoRuleExcerpts
 	order       []string
 	docsBaseURL string // docs-site origin for absolutising docsUrl; "" = relative
 
@@ -139,6 +149,10 @@ func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *sl
 	if journeys == nil {
 		journeys = catalog.Journeys{}
 	}
+	falcoRules := jc.FalcoRules
+	if falcoRules == nil {
+		falcoRules = catalog.FalcoRuleExcerpts{}
+	}
 	order := jc.Order
 	if order == nil {
 		order = cat.IDs()
@@ -165,6 +179,7 @@ func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *sl
 		adminSet:           adminSet,
 		originGuard:        originguard.New(allowedOrigins, logger),
 		journeys:           journeys,
+		falcoRules:         falcoRules,
 		order:              order,
 		docsBaseURL:        docsBaseURL,
 		detectRunner:       dc.Runner,
@@ -1237,6 +1252,24 @@ func (h *Handler) userMe(w http.ResponseWriter, r *http.Request) {
 // it is self-scoped — the caller may only read their OWN journey. selfOrAdmin
 // derives identity from X-Auth-Request-Email and denies (403) any mismatch or a
 // missing header (fail-closed). Admins (ADMIN_EMAILS) may read any user.
+//
+// Free mission browsing (CEO decision, P23 Story-as-docs): an optional
+// `?mission=<id>` query selects which mission's `detail` block is returned,
+// in place of the default "current" mission. ANY mission id present in
+// `missions[]` — solved, current, OR locked — is a valid selection: brief /
+// steps / Falco rule excerpt are static content, identical for every viewer,
+// so letting a participant read ahead (e.g. to plan) is not a scoring
+// advantage. The ONE thing that stays gated to the unlocked prefix
+// (solved ∪ current) is progressive hints — see missionDetail's `hints` doc:
+// a hint is a scoring lever (reveal costs points AND could let a participant
+// solve a mission out of order by reading its answer-adjacent guidance before
+// reaching it), so a locked mission's hints object always reports
+// lockedCount == total and an empty opened list, regardless of what the
+// store has recorded (defensive: the UI never offers a reveal button for a
+// locked mission, but the handler does not trust the UI for this).
+// An invalid/unknown `?mission=` value is ignored (falls back to `current`)
+// rather than erroring — this is a display convenience, not an API contract
+// participants depend on for scoring.
 func (h *Handler) journey(w http.ResponseWriter, r *http.Request) {
 	user := strings.TrimSpace(r.PathValue("user"))
 	if !validUser.MatchString(user) {
@@ -1246,6 +1279,7 @@ func (h *Handler) journey(w http.ResponseWriter, r *http.Request) {
 	if !h.selfOrAdmin(w, r, user) {
 		return
 	}
+	selectedMission := strings.TrimSpace(r.URL.Query().Get("mission"))
 
 	snap := h.store.Snapshot()
 	stepChecks := h.store.StepChecks(user)
@@ -1293,6 +1327,11 @@ func (h *Handler) journey(w http.ResponseWriter, r *http.Request) {
 		DocsURL string `json:"docsUrl"`
 	}
 	missions := make([]missionView, 0, len(order))
+	// statusOf mirrors the missionView.Status computation below, keyed by id —
+	// needed again after the loop to resolve the free-browsing `?mission=`
+	// selection's own status (to gate its hints) without re-deriving the
+	// solved/current/locked rule a second time inline.
+	statusOf := make(map[string]string, len(order))
 	for _, id := range order {
 		j, hasJourney := h.journeys[id]
 		title := id
@@ -1309,6 +1348,7 @@ func (h *Handler) journey(w http.ResponseWriter, r *http.Request) {
 			// Guided progression: everything after the current mission is locked.
 			status = "locked"
 		}
+		statusOf[id] = status
 		missions = append(missions, missionView{
 			ID:         id,
 			Title:      title,
@@ -1321,25 +1361,38 @@ func (h *Handler) journey(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// leadIn (#47): the narrative bridge left by the mission immediately before
-	// `current` in the progression order. It persists on the current-mission
-	// detail so the "next mission" pull survives the (transient) CLEARED overlay
-	// and a page reload. Empty when current is the first mission or the previous
-	// mission has no bridge (fail-soft, display-only).
-	leadIn := ""
-	if current != "" {
-		for i, id := range order {
-			if id == current && i > 0 {
-				leadIn = h.journeys[order[i-1]].Bridge
-				break
-			}
+	// viewMission is the mission whose detail is returned: `?mission=<id>` when
+	// it names a mission actually in this run's order, else `current` (default,
+	// and the fallback for an invalid/unknown query value — display
+	// convenience, not an error).
+	viewMission := current
+	if selectedMission != "" {
+		if _, ok := statusOf[selectedMission]; ok {
+			viewMission = selectedMission
 		}
 	}
 
-	// Detail projection for the current mission (nil when everything solved).
+	// leadIn (#47): the narrative bridge left by the mission immediately before
+	// viewMission in the progression order. Originally computed only for
+	// `current` (so the "next mission" pull survives the CLEARED overlay and a
+	// page reload); free mission browsing (P23) generalises this to whichever
+	// mission is being viewed, so reading ahead shows the right "how did we get
+	// here" narrative rather than always current's. Empty when viewMission is
+	// the first mission or the previous mission has no bridge (fail-soft,
+	// display-only).
+	leadIn := ""
+	for i, id := range order {
+		if id == viewMission && i > 0 {
+			leadIn = h.journeys[order[i-1]].Bridge
+			break
+		}
+	}
+
+	// Detail projection for the selected mission (nil when there is no mission
+	// to show at all — every mission solved AND no valid ?mission= override).
 	var detail any
-	if current != "" {
-		detail = h.missionDetail(user, current, leadIn, stepChecks[current], hintViews[current])
+	if viewMission != "" {
+		detail = h.missionDetail(user, viewMission, statusOf[viewMission], leadIn, stepChecks[viewMission], hintViews[viewMission])
 	}
 
 	displayName := user
@@ -1386,20 +1439,44 @@ func (h *Handler) docsURL(rel string) string {
 	return h.docsBaseURL + rel
 }
 
-// missionDetail builds the current-mission detail block: briefing, per-step
-// self-check state, and progressive hints (opened text + locked count). When no
-// journey.yaml exists for the mission, hasJourney is false and the copy fields
-// are empty so the UI can render "ブリーフィング準備中" (graceful degrade).
-// leadIn (#47) is the previous mission's narrative bridge, surfaced above the
-// briefing so the "next mission" pull persists past the CLEARED overlay; it is
-// empty for the first mission (display-only, never affects scoring).
-func (h *Handler) missionDetail(user, cid, leadIn string, checkedSteps, openedHints []int) map[string]any {
+// missionDetail builds a mission's detail block: briefing, per-step self-check
+// state, progressive hints (opened text + locked count), and the Falco rule
+// excerpt (P23 Story-as-docs). When no journey.yaml exists for the mission,
+// hasJourney is false and the copy fields are empty so the UI can render
+// "ブリーフィング準備中" (graceful degrade). leadIn (#47) is the previous
+// mission's narrative bridge, surfaced above the briefing so the "next
+// mission" pull persists past the CLEARED overlay; it is empty for the first
+// mission (display-only, never affects scoring).
+//
+// status is the mission's projected status (solved | current | locked) —
+// see journey's free-browsing doc. It gates ONLY the hints block: brief,
+// steps, and the Falco rule excerpt are static content identical for every
+// viewer, so they are always returned regardless of status (free browsing,
+// CEO decision). Hints stay fairness-sensitive (a reveal costs points, and
+// reading a locked mission's hints could let a participant skip ahead) — for
+// status=="locked" this function computes the hints block WITHOUT consulting
+// the store's opened set at all, always reporting the full hint count as
+// locked and an empty opened list. This is enforced HERE, not left to the
+// caller, so a future caller of missionDetail cannot forget the gate and leak
+// hint text for a mission the participant has not reached yet.
+func (h *Handler) missionDetail(user, cid, status, leadIn string, checkedSteps, openedHints []int) map[string]any {
 	ch := h.cat[cid]
 	j, hasJourney := h.journeys[cid]
+	locked := status == "locked"
 
+	// checkedSteps is IGNORED for a locked mission (/review-5x C2 fixup,
+	// mirrors the hints gate immediately below): a locked mission's steps
+	// render as a plain read-only preview, never showing tick state from the
+	// store. This is the participant's own data (unlike hints there is no
+	// scoring lever here — a step tick never affects the solve verdict), but
+	// "locked is static display only" is the stated invariant for free
+	// browsing (CEO decision), so it applies uniformly rather than carving
+	// out an exception just because steps happen to be lower-stakes than hints.
 	checked := make(map[int]struct{}, len(checkedSteps))
-	for _, i := range checkedSteps {
-		checked[i] = struct{}{}
+	if !locked {
+		for _, i := range checkedSteps {
+			checked[i] = struct{}{}
+		}
 	}
 	type stepView struct {
 		Idx     int    `json:"idx"`
@@ -1413,23 +1490,35 @@ func (h *Handler) missionDetail(user, cid, leadIn string, checkedSteps, openedHi
 		steps = append(steps, stepView{Idx: i, Label: s.Label, Detail: s.Detail, Checked: isChecked})
 	}
 
-	opened := make(map[int]struct{}, len(openedHints))
-	for _, i := range openedHints {
-		opened[i] = struct{}{}
+	// openedHints is IGNORED for a locked mission (see doc above) — every hint
+	// reports as locked, opened is always empty, regardless of what the store
+	// has on file (defensive fail-closed; the UI never offers a reveal button
+	// for a locked mission, but this holds even if it somehow did).
+	opened := make(map[int]struct{})
+	if !locked {
+		for _, i := range openedHints {
+			opened[i] = struct{}{}
+		}
 	}
 	type hintView struct {
 		Idx  int    `json:"idx"`
 		Text string `json:"text"`
 	}
 	openedList := make([]hintView, 0, len(opened))
-	nextHint := 0 // 1-based index of the next unopened hint; 0 = all opened
-	for i := 1; i <= len(j.Hints); i++ {
-		if _, ok := opened[i]; ok {
-			openedList = append(openedList, hintView{Idx: i, Text: j.Hints[i-1]})
-		} else if nextHint == 0 {
-			nextHint = i
+	nextHint := 0 // 1-based index of the next unopened hint; 0 = all opened OR locked
+	if !locked {
+		for i := 1; i <= len(j.Hints); i++ {
+			if _, ok := opened[i]; ok {
+				openedList = append(openedList, hintView{Idx: i, Text: j.Hints[i-1]})
+			} else if nextHint == 0 {
+				nextHint = i
+			}
 		}
 	}
+	// nextHint stays 0 for a locked mission (see doc above) — the UI must never
+	// offer a "reveal hint N" affordance for a mission the participant has not
+	// reached yet, and 0 is this projection's existing "nothing to reveal"
+	// signal (the same value an all-hints-opened current mission reports).
 	sort.SliceStable(openedList, func(a, b int) bool { return openedList[a].Idx < openedList[b].Idx })
 
 	title := cid
@@ -1486,8 +1575,25 @@ func (h *Handler) missionDetail(user, cid, leadIn string, checkedSteps, openedHi
 		detectedRules = []string{}
 	}
 
+	// falcoRule (P23 Story-as-docs): the display-only List/Macro/Rule excerpt
+	// from challenges/<NN>-<slug>/rule.yaml (catalog.LoadRuleExcerpts). Static
+	// content identical for every viewer — safe to return for ANY status
+	// (solved/current/locked; see this function's doc), unlike hints. A
+	// challenge with no rule.yaml simply yields the zero-value excerpt (three
+	// non-nil empty slices), and hasFalcoRule is false so the UI can omit the
+	// panel entirely rather than render three empty sections.
+	falcoRule, hasFalcoRule := h.falcoRules[cid]
+	if !hasFalcoRule {
+		falcoRule = catalog.FalcoRuleExcerpt{
+			Lists:  []catalog.FalcoListItem{},
+			Macros: []catalog.FalcoMacroItem{},
+			Rules:  []catalog.FalcoRuleItem{},
+		}
+	}
+
 	return map[string]any{
 		"id":            cid,
+		"status":        status,
 		"title":         title,
 		"tagline":       j.Tagline,
 		"briefing":      j.Briefing,
@@ -1501,6 +1607,8 @@ func (h *Handler) missionDetail(user, cid, leadIn string, checkedSteps, openedHi
 		"detectedRules": detectedRules,
 		"windowSeconds": ch.WindowSeconds,
 		"steps":         steps,
+		"falcoRule":     falcoRule,
+		"hasFalcoRule":  hasFalcoRule,
 		"hints": map[string]any{
 			"total":       len(j.Hints),
 			"opened":      openedList,
