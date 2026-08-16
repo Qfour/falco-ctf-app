@@ -675,10 +675,38 @@
   #pane-me .help p { color: var(--text-dim); font-size: 0.9rem; }
   #pane-me .help code { background: var(--surface-2); padding: 2px 8px; border-radius: 3px; color: var(--accent); font-family: 'JetBrains Mono', monospace; font-size: 0.85em; }
 
+  /* ===== Shared rich-content styling (P23 portal-redesign) =====
+     Markdown-derived typography for gen-time-sanitized fragment HTML
+     (home.go / homefragments_gen.go) — extracted from what was previously
+     a #pane-home-panels-only ".home-panel-body" block so the Story tab's
+     overview (#pane-story .story-overview, injected from the SAME
+     HomeFragments source — see home.go's storyPanelHTML) can reuse it
+     without duplicating ~20 rules. Unscoped by pane id on purpose: this
+     class only ever wraps server-generated, already-sanitized fragment
+     HTML (never client-rendered JS template-literal output), so applying
+     it in more than one place carries no new risk. */
+  .rich-content { color: #9DB4BF; font-size: 0.92rem; line-height: 1.75; }
+  .rich-content h2 { font-family: 'Chakra Petch', sans-serif; font-size: 1.1rem; color: #EAF7FA; margin: 1.1rem 0 0.5rem; }
+  .rich-content h3 { font-family: 'Chakra Petch', sans-serif; font-size: 0.95rem; color: #EAF7FA; margin: 1rem 0 0.4rem; }
+  .rich-content p { margin: 0.6rem 0; }
+  .rich-content ul, .rich-content ol { margin: 0.6rem 0; padding-left: 1.4rem; }
+  .rich-content li { margin: 0.3rem 0; }
+  .rich-content strong { color: #EAF7FA; }
+  .rich-content code { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.85em; background: #17222C; padding: 1px 6px; border-radius: 3px; color: #00CBE2; }
+  .rich-content pre { background: #0D141B; border: 1px solid #1C2A35; border-radius: 0.5rem; padding: 0.85rem 1rem; overflow-x: auto; margin: 0.75rem 0; }
+  .rich-content pre code { background: none; padding: 0; color: #9DB4BF; }
+  .rich-content blockquote { border-left: 2px solid #FFB020; background: rgba(255,176,32,0.06); border-radius: 0 0.4rem 0.4rem 0; padding: 0.6rem 1rem; margin: 0.75rem 0; }
+  .rich-content hr { border: none; border-top: 1px solid #1C2A35; margin: 1.1rem 0; }
+  .rich-content table { width: 100%; border-collapse: collapse; margin: 0.75rem 0; font-size: 0.88rem; }
+  .rich-content th, .rich-content td { border: 1px solid #1C2A35; padding: 0.5rem 0.7rem; text-align: left; vertical-align: top; }
+  .rich-content th { background: #0D141B; color: #EAF7FA; font-family: 'Chakra Petch', sans-serif; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; }
+
   /* ===== Home panels (P23-5): <details> disclosure panels rendered from
-     gen-time-sanitized fragments (home.go / homefragments_gen.go). Scoped
-     under #pane-home-panels so these rules only ever affect that
-     server-generated subtree, never the client-rendered panes above. ===== */
+     gen-time-sanitized fragments. Scoped under #pane-home-panels so these
+     structural rules only ever affect that server-generated subtree,
+     never the client-rendered panes above. The markdown typography INSIDE
+     each panel body now comes from the shared .rich-content class (see
+     above) rather than a #pane-home-panels-scoped copy. ===== */
   #pane-home-panels { margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.9rem; }
   #pane-home-panels .home-panel { background: #0F1820; border: 1px solid #1C2A35; border-radius: 0.75rem; overflow: hidden; }
   #pane-home-panels .home-panel > summary { cursor: pointer; list-style: none; padding: 0.9rem 1.25rem; font-family: 'Chakra Petch', sans-serif; font-size: 0.85rem; font-weight: 600; letter-spacing: 0.06em; color: #EAF7FA; user-select: none; }
@@ -686,25 +714,17 @@
   #pane-home-panels .home-panel > summary::before { content: '▸ '; color: #5C7480; }
   #pane-home-panels .home-panel[open] > summary::before { content: '▾ '; }
   #pane-home-panels .home-panel > summary:hover { color: #00CBE2; }
-  #pane-home-panels .home-panel-body { padding: 0 1.25rem 1.25rem; color: #9DB4BF; font-size: 0.92rem; line-height: 1.75; border-top: 1px solid #1C2A35; }
-  #pane-home-panels .home-panel-body h2 { font-family: 'Chakra Petch', sans-serif; font-size: 1.1rem; color: #EAF7FA; margin: 1.1rem 0 0.5rem; }
-  #pane-home-panels .home-panel-body h3 { font-family: 'Chakra Petch', sans-serif; font-size: 0.95rem; color: #EAF7FA; margin: 1rem 0 0.4rem; }
-  #pane-home-panels .home-panel-body p { margin: 0.6rem 0; }
-  #pane-home-panels .home-panel-body ul, #pane-home-panels .home-panel-body ol { margin: 0.6rem 0; padding-left: 1.4rem; }
-  #pane-home-panels .home-panel-body li { margin: 0.3rem 0; }
-  #pane-home-panels .home-panel-body strong { color: #EAF7FA; }
-  #pane-home-panels .home-panel-body code { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.85em; background: #17222C; padding: 1px 6px; border-radius: 3px; color: #00CBE2; }
-  #pane-home-panels .home-panel-body pre { background: #0D141B; border: 1px solid #1C2A35; border-radius: 0.5rem; padding: 0.85rem 1rem; overflow-x: auto; margin: 0.75rem 0; }
-  #pane-home-panels .home-panel-body pre code { background: none; padding: 0; color: #9DB4BF; }
-  #pane-home-panels .home-panel-body blockquote { border-left: 2px solid #FFB020; background: rgba(255,176,32,0.06); border-radius: 0 0.4rem 0.4rem 0; padding: 0.6rem 1rem; margin: 0.75rem 0; }
-  #pane-home-panels .home-panel-body hr { border: none; border-top: 1px solid #1C2A35; margin: 1.1rem 0; }
-  #pane-home-panels .home-panel-body table { width: 100%; border-collapse: collapse; margin: 0.75rem 0; font-size: 0.88rem; }
-  #pane-home-panels .home-panel-body th, #pane-home-panels .home-panel-body td { border: 1px solid #1C2A35; padding: 0.5rem 0.7rem; text-align: left; vertical-align: top; }
-  #pane-home-panels .home-panel-body th { background: #0D141B; color: #EAF7FA; font-family: 'Chakra Petch', sans-serif; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; }
+  #pane-home-panels .home-panel-body { padding: 0 1.25rem 1.25rem; border-top: 1px solid #1C2A35; }
   #pane-home-panels .home-rule-explain-item { padding: 0.9rem 0; border-top: 1px solid #1C2A35; }
   #pane-home-panels .home-rule-explain-item:first-child { border-top: none; padding-top: 0; }
   #pane-home-panels .home-rule-explain-chal { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase; color: #00CBE2; margin: 0 0 0.5rem; }
 
+  /* ===== Story overview (P23 portal-redesign): the "story" HomeFragment,
+     surfaced at the top of the Story pane instead of buried in a Home
+     <details> panel — see home.go's storyPanelHTML doc. Structural
+     spacing only; typography comes from .rich-content (applied alongside
+     this class in the markup below). ===== */
+  #pane-story .story-overview { background: var(--surface); border: 1px solid var(--border); border-radius: var(--p-panel-radius); padding: 1.25rem 1.5rem; margin-bottom: 1.5rem; }
 
 </style>
 </head>
@@ -770,6 +790,17 @@
       <div class="updated mono" id="pane-journey-updated">connecting…</div>
     </div>
   </header>
+
+  <!-- Story overview (P23 portal-redesign): the "story" HomeFragment,
+       gen-time-sanitized like the Home tab's panels — see home.go's
+       storyPanelHTML/buildStoryPanelHTML doc and portal.go's
+       StoryPanelHTML field doc for why this is safe to inject unescaped.
+       Empty (renders nothing visible) when no story fragment exists,
+       matching the fail-soft convention documented there. Placed BEFORE
+       the mission map/progress bar so a participant sees the campaign
+       framing first, then drops into the current mission's game UI
+       below (untouched by this addition). -->
+  <div class="story-overview rich-content">{{.StoryPanelHTML}}</div>
 
   <div id="pane-journey-page"></div>
 
@@ -1742,18 +1773,32 @@
 <!-- ===== Home pane (P23-5: gen-time-sanitized content panels folded in from
      docs-site — see docs-site/home-fragments.yaml for the content contract
      and internal/scoreboard/view/home.go / portal.go for the security
-     rationale of injecting {{.HomePanelsHTML}} unescaped. This is the ONLY
-     place in this template that intentionally bypasses esc()/html/template
-     auto-escaping — every other dynamic value in this file keeps going
-     through esc() or template.JS exactly as before P23-5. ===== -->
+     rationale of injecting {{.HomePanelsHTML}} unescaped. This and the
+     Story pane's {{.StoryPanelHTML}} (P23 portal-redesign) are the ONLY
+     two places in this template that intentionally bypass
+     esc()/html/template auto-escaping — every other dynamic value in this
+     file keeps going through esc() or template.JS exactly as before P23-5;
+     see portal.go's StoryPanelHTML field doc for why splitting into a
+     second field shares the exact same trust boundary rather than opening
+     a new one. ===== -->
 <div class="pane" id="pane-home" style="padding:2.5rem 3rem;max-width:52rem">
   <h1 style="font-family:'Chakra Petch',sans-serif;font-size:2rem;margin:0 0 0.5rem;">
     <span style="color:#00CBE2">Falco</span> CTF
   </h1>
   <p style="color:#9DB4BF;line-height:1.6;margin:0 0 1rem;">
     Welcome to the unified portal. Use the tabs above to open your mission
-    <strong>Journey</strong>, check <strong>Me</strong> for your live progress,
+    <strong>Story</strong>, check <strong>Scoreboard</strong> for your live progress,
     and drop into your <strong>Terminal</strong>.
+  </p>
+  <!-- Static links (P23 portal-redesign) — plain hand-authored HTML, not
+       routed through docs-site/home-fragments.yaml's sanitizer allowlist
+       (deliberately: this is the ONE bit of Home content that is NOT
+       gen-time fragment content, so it does not need that pipeline, and
+       broadening the fragment sanitizer's allowlist just for two static
+       links would be a needless scope increase). -->
+  <p style="color:#9DB4BF;line-height:1.6;margin:0 0 1rem;">
+    Falco 本体: <a href="https://falco.org" target="_blank" rel="noopener noreferrer">falco.org</a> ·
+    このイベントのソース: <a href="https://github.com/Qfour/falco-ctf-app" target="_blank" rel="noopener noreferrer">github.com/Qfour/falco-ctf-app</a>
   </p>
   <div id="pane-home-panels">{{.HomePanelsHTML}}</div>
 </div>
