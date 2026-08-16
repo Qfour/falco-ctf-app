@@ -7,6 +7,50 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<!-- ===== cybercore-css (P23-6): vendored, self-hosted, MIT — see
+     internal/scoreboard/view/vendor/cybercore/PROVENANCE.md for the pinned
+     npm version/commit/shasum and vendorassets.go for the go:embed serving
+     path. Loaded from OUR OWN origin only, never a CDN (P12: egress-zero for
+     this asset). Applied PARTIALLY — see the "cybercore Falco-brand override"
+     block below: only the shell chrome (tab nav / role badge) adopts
+     cybercore component classes; the journey/scoreboard/me panes keep their
+     own bespoke game-fx CSS untouched (P23-6 task scope: "部分採用...journey
+     game fx は自前維持"). Placed BEFORE this file's own <style> block so the
+     hand-authored rules below can override any cybercore declaration by
+     source-order (both have equal specificity on shared selectors; later
+     wins). -->
+<link rel="stylesheet" href="/vendor/cybercore.min.css">
+<style>
+  /* ===== cybercore Falco-brand override (P23-6) =====
+     cybercore-css themes itself entirely off CSS custom properties (see
+     PROVENANCE.md's variable dump) — overriding them here re-themes every
+     cybercore component class this page uses WITHOUT touching cybercore's
+     own rules (no forking, no !important). Mapped to the SAME Falco palette
+     values already used throughout this file's per-pane --accent/--falco
+     variables (#00CBE2 / #0090A8 / etc — see #pane-scoreboard / #pane-journey
+     var blocks below) so the shell chrome and the panes read as one
+     consistent brand rather than two different neon palettes competing. */
+  :root {
+    --cyber-cyan-300: #6FE3F0; --cyber-cyan-400: #33D9EC;
+    --cyber-cyan-500: #00CBE2; /* Falco Blue — cybercore's primary accent */
+    --cyber-cyan-600: #00A8BD; --cyber-cyan-700: #0090A8; --cyber-cyan-900: #005463;
+    --cyber-magenta-500: #B78CFF; /* evade violet, reused for cybercore's 2nd accent */
+    --cyber-magenta-700: #7F5AD1;
+    --cyber-yellow-500: #FFD24A; /* gold, matches leaderboard rank-1 */
+    --cyber-yellow-700: #C9A030;
+    --cyber-green-400: #33E0EE; --cyber-green-500: #00CBE2; --cyber-green-700: #0090A8;
+    --cyber-void-300: #0F1820; --cyber-void-400: #0D141B; --cyber-void-500: #070B10;
+    --cyber-void-700: #05080B; --cyber-void-800: #030507; --cyber-void-900: #010203;
+    --cyber-chrome-100: #EAF7FA; --cyber-chrome-300: #9DB4BF; --cyber-chrome-500: #5C7480;
+    --color-bg-primary: #070B10; --color-bg-secondary: #0D141B;
+    --color-bg-tertiary: #0F1820; --color-bg-elevated: #17222C;
+    --color-text-primary: #EAF7FA; --color-text-secondary: #9DB4BF;
+    --color-text-muted: #5C7480; --color-border-default: #1C2A35;
+    --font-display: 'Chakra Petch', sans-serif;
+    --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  }
+</style>
 <style>
   /* ===== Portal shell chrome (tabs + layout) — new for P23-1 ===== */
   * { box-sizing: border-box; }
@@ -30,10 +74,15 @@
   #portal-tabs .tab:hover { color: #EAF7FA; }
   #portal-tabs .tab.active { color: #00CBE2; border-bottom-color: #00CBE2; }
   #portal-tabs .tab[hidden] { display: none; }
+  /* P23-6: visual chrome (border/pill/color/font) now comes from cybercore's
+     .cyber-badge component classes on the element itself (see the <span> in
+     the nav below) — this rule only keeps the SHELL-LAYOUT positioning
+     cybercore's badge has no opinion on (pinning it to the right end of the
+     sticky tab bar and lining its baseline up with the tab labels). Emptied
+     of color intentionally: overriding it here would fight the cybercore
+     class instead of composing with it. */
   #portal-role-badge {
-    margin-left: auto; align-self: center; font-family: 'JetBrains Mono', monospace;
-    font-size: 0.65rem; color: #5C7480; letter-spacing: 0.1em; text-transform: uppercase;
-    padding-bottom: 0.65rem;
+    margin-left: auto; align-self: center; margin-bottom: 0.5rem;
   }
   .pane { display: none; }
   .pane.active { display: block; }
@@ -544,9 +593,9 @@
   <a class="tab" data-tab="scoreboard" href="#scoreboard" id="tab-scoreboard" hidden>Scoreboard</a>
   <a class="tab" data-tab="me" href="#me">Me</a>
   <a class="tab" data-tab="terminal" href="#terminal">Terminal</a>
-  <span id="portal-role-badge"></span>
+  <span id="portal-role-badge" class="cyber-badge cyber-badge--ghost cyber-badge--sm"></span>
 </nav>
-<script>
+<script nonce="{{.Nonce}}">
   // Server-injected identity (P23-1) + own-ttyd URL (P23-4). This is a
   // DISPLAY-ONLY convenience for the shell (which tab to default to / show,
   // which link to pre-fill, which iframe src to render) — it is NEVER the
@@ -588,7 +637,7 @@
     <div class="bridge-fx" id="pane-journey-clear-bridge"></div>
   </div></div>
 
-<script>
+<script nonce="{{.Nonce}}">
 (function () {
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   // Portal shell (P23-1): identity comes from the server-injected role/user
@@ -1067,7 +1116,7 @@
     </section>
   </section>
 
-<script>
+<script nonce="{{.Nonce}}">
 (function () {
   // ---------------- helpers ----------------
   const seen = new Set();
@@ -1392,7 +1441,7 @@
 
   <div id="pane-me-page"></div>
 
-<script>
+<script nonce="{{.Nonce}}">
 (function () {
   function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   function avatarChar(u) { return (u || '?').slice(-1).toUpperCase(); }
@@ -1565,7 +1614,7 @@
   <div id="pane-terminal-page"></div>
 </div>
 
-<script>
+<script nonce="{{.Nonce}}">
 (function () {
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
@@ -1625,7 +1674,7 @@
 })();
 </script>
 
-<script>
+<script nonce="{{.Nonce}}">
   // ===================== Portal shell: hash-tab router + role gate =====================
   // P23-1 scope: this router only shows/hides <div class="pane"> — it is NOT an
   // authorization boundary (see security note in view.go / portal.go). The
