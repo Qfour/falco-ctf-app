@@ -279,9 +279,10 @@ func TestOriginGuard_SubmitDetectRequiresOrigin(t *testing.T) {
 }
 
 // TestOriginGuard_SubmitStillBlocksCrossOriginBrowserPOST is the other half
-// of the dual-path story: the journey UI's browser fetch DOES carry an
-// Origin header (journey.html's fetch('/api/challenges/'+cid+'/submit',
-// {method:'POST',...})). Even though /submit is no longer wrapped by
+// of the dual-path story: the portal's Journey pane's browser fetch DOES
+// carry an Origin header (templates/portal.html's fetch(
+// '/api/challenges/'+cid+'/submit', {method:'POST',...})). Even though
+// /submit is no longer wrapped by
 // h.og(...), removing that wrapper must not silently make it accept an
 // attacker's cross-origin state-changing request when a real Origin header
 // IS present — the route's own handler-side trust model (claimed identity,

@@ -47,15 +47,20 @@ func main() {
 	// this, so scoring/ingest is unaffected.
 	//
 	// Each entry is an exact scheme://host[:port] (no path, no trailing
-	// slash), e.g. "https://scoreboard.example.com,https://journey.example.com".
+	// slash). Pre-P19-2b (host-split topology) this held two entries, e.g.
+	// "https://scoreboard.example.com,https://journey.example.com". P19-2b
+	// (single origin): the admin and journey Ingress objects now share ONE
+	// host, so this becomes a SINGLE value, e.g. "https://app.ctf-event.dev"
+	// (REFACTORING.md P19-1's confirmed design). NEVER include a
+	// `userN.<suffix>` ttyd origin here (security HIGH — see that doc).
 	// Empty = every guarded request is DENIED (fail-closed, same posture as
 	// ADMIN_EMAILS above): this is a brand-new control, so an operator who has
 	// not yet configured it sees loud 403s on every submit/admin POST rather
 	// than silently accepting an unvalidated Origin. The platform helmfile MUST
-	// set this at deploy time to the real scoreboard/journey host(s) (I7: no
-	// real domain is hardcoded in this repo). Local dev (docker-compose) sets
-	// it to http://localhost:8000 so the bundled dashboard's own admin buttons
-	// keep working.
+	// set this at deploy time to the real origin (I7: no real domain is
+	// hardcoded in this repo). Local dev (docker-compose) sets it to
+	// http://localhost:8000 so the bundled dashboard's own admin buttons keep
+	// working.
 	allowedOrigins := serverutil.SplitCSV(serverutil.Env("ALLOWED_ORIGINS", ""))
 	// DOCS_BASE_URL is the origin of the participant docs site (a separate host,
 	// e.g. https://docs.<suffix>). When set, the /journey API rewrites each
@@ -66,15 +71,16 @@ func main() {
 	// P23-5: the participant docs Ingress this absolutised URL used to point
 	// at has been removed (charts/docs/templates/ingress.yaml) — that
 	// content is now in the portal's Home tab (internal/scoreboard/view/
-	// home.go). The /journey and /portal UIs no longer render docsUrl's
-	// VALUE into a clickable href (they render a fixed in-page Home-tab link
-	// instead — see templates/journey.html and templates/portal.html's
-	// `docs` var), so DOCS_BASE_URL's absolutisation is currently dead for
-	// UI purposes; it is left wired (env, JourneyConfig.DocsBaseURL,
-	// api.Handler.docsURL) since docsUrl is still a documented field in the
-	// /journey API response (docs/openapi-scoreboard.yaml) and removing it
-	// is an API-contract change outside this task's scope. docs-admin
-	// (charts/docs/templates/ingress-admin.yaml) is UNAFFECTED — this env
+	// home.go). The portal UI no longer renders docsUrl's VALUE into a
+	// clickable href (it renders a fixed in-page Home-tab link instead — see
+	// templates/portal.html's `docs` var), so DOCS_BASE_URL's absolutisation
+	// is currently dead for UI purposes; it is left wired (env,
+	// JourneyConfig.DocsBaseURL, api.Handler.docsURL) since docsUrl is still
+	// a documented field in the /journey API response
+	// (docs/openapi-scoreboard.yaml) and removing it is an API-contract
+	// change outside this task's scope. docs-admin (P19-2b: now
+	// charts/docs/templates/ingress-admin.yaml at path `/docs-admin` on the
+	// single-origin host, not its own subdomain) is UNAFFECTED — this env
 	// only ever fed the participant link, never the admin one.
 	docsBaseURL := serverutil.Env("DOCS_BASE_URL", "")
 	// PORTAL_TTYD_SUFFIX (P23-4) is the DNS suffix the portal's Terminal pane
@@ -89,16 +95,19 @@ func main() {
 	// there is no environment-agnostic default to guess (I7), same posture
 	// as ALLOWED_ORIGINS/DOCS_BASE_URL above.
 	//
-	// The REAL value is P19-dependent (design for a single participant-facing
-	// origin is not finalised yet):
+	// P19-2b (single origin, confirmed value — REFACTORING.md P19-1): this
+	// stays equal to dnsSuffix UNCHANGED (e.g. "ctf-event.dev") — ttyd keeps
+	// its OWN per-user subdomain topology (`userN.ctf-event.dev`) even after
+	// the portal/dashboard/docs-admin collapse onto a single origin
+	// (`app.ctf-event.dev`). Only the FIXED-service host changed; this env's
+	// meaning and value are untouched by P19-2b.
 	//   - local/PoC (colima): the same "<ip>.nip.io"-style suffix passed to
 	//     `deploy-user.sh --dns-suffix` (see charts/ctf-user/deploy-user.sh).
-	//   - prod: once P19 lands a single origin, this becomes that origin's
-	//     wildcard suffix (e.g. "ctf-event.<domain>"). Until then, operators
-	//     wire this by hand alongside `deploy-user.sh --dns-suffix` /
-	//     `--frame-ancestors` (that script's flag doc covers the companion
-	//     ttyd-proxy CSP knob P23-3 added, which the portal origin must also
-	//     be passed to — see charts/ctf-user/values.yaml ttyd.frameAncestors).
+	//   - prod: dnsSuffix (e.g. "ctf-event.dev"). Operators wire this by hand
+	//     alongside `deploy-user.sh --dns-suffix` / `--frame-ancestors` (that
+	//     script's flag doc covers the companion ttyd-proxy CSP knob P23-3
+	//     added, which the single-origin portal host must also be passed to
+	//     — see charts/ctf-user/values.yaml ttyd.frameAncestors).
 	portalTtydSuffix := serverutil.Env("PORTAL_TTYD_SUFFIX", "")
 	// Points policy (#40 self-service hints with a score penalty). PLACEHOLDER
 	// defaults — the real per-solve award and per-hint penalty are an event-tuning

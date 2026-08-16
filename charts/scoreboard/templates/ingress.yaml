@@ -9,7 +9,22 @@ metadata:
   annotations:
     # Operator-only gate. auth-policy /check-admin returns 200 only when the
     # logged-in oauth2-proxy email is in the ADMIN_EMAILS allowlist. Without
-    # this any logged-in user could reach the scoreboard / /me dashboards.
+    # this any logged-in user could reach the operator dashboard (GET /) and
+    # its admin-only APIs.
+    #
+    # P19-2b: this Ingress and ingress-journey.yaml's are designed to render
+    # on the SAME host (single origin, e.g. app.<suffix>) with NON-OVERLAPPING
+    # effective paths — this object's `path: /` below is a catch-all Prefix,
+    # but ingress-nginx merges same-host Ingress objects and dispatches by
+    # path specificity, so the journey Ingress's more specific paths
+    # (/portal Exact, /api/users/ and /api/challenges/ Prefix) win over this
+    # `/` rule for those exact routes and keep their own (any-login)
+    # auth-url/auth-response-headers — this `/check-admin` gate only ever
+    # applies to paths NEITHER Ingress object claims more specifically
+    # (i.e. GET /, /api/state, /api/admin/*, /falco/events,
+    # /internal/exfil/*). See ingress-journey.yaml's path list for the full
+    # participant allow-list and the invariant that admin paths must never
+    # appear there.
     nginx.ingress.kubernetes.io/auth-url: "http://auth-policy.auth-policy.svc.cluster.local:80/check-admin"
     nginx.ingress.kubernetes.io/auth-response-headers: "X-Auth-Request-User,X-Auth-Request-Email,X-Auth-Request-Preferred-Username"
     {{- with .Values.ingress.authSignin }}

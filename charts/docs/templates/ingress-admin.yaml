@@ -1,14 +1,21 @@
 {{/*
-P23-5: the participant-facing docs Ingress (templates/ingress.yaml, gated on
-.Values.ingress.enabled) was REMOVED — the participant content it served
-(はじめに/ストーリー/コマンド集/なぜ発火するか) is now folded into the unified
-portal's Home tab (see internal/scoreboard/view/home.go +
-docs-site/home-fragments.yaml). This admin Ingress is now gated on adminHost
-alone (no longer AND'd with the removed participant flag) since it is the
-docs chart's only remaining Ingress. .Values.ingress.enabled is kept in
-values.yaml for now (harmless if platform's helmfile still sets it — Helm
-does not error on an unused value key) but no longer gates anything here;
-see values.yaml's comment for the platform-side follow-up this implies.
+P23-5 removed the participant-facing docs Ingress (templates/ingress.yaml,
+gated on the now-deleted .Values.ingress.enabled) — the participant content
+it served (はじめに/ストーリー/コマンド集/なぜ発火するか) is now folded into the
+unified portal's Home tab (see internal/scoreboard/view/home.go +
+docs-site/home-fragments.yaml). This admin Ingress is the docs chart's ONLY
+remaining Ingress, gated on adminHost alone.
+
+P19-2b (single origin): adminHost is now expected to be the SAME value as
+the scoreboard chart's `ingress.host` (e.g. both = app.<suffix>) — this
+Ingress moves docs-admin from its own docs-admin.<suffix> subdomain onto a
+PATH (`/docs-admin`) on that shared host, alongside the scoreboard's admin
+(`/`) and participant (`/portal` etc.) Ingress objects. The fixed
+`/docs-admin` path below MUST match docs-site/nginx.conf's `location
+/docs-admin/` rewrite (that file's `alias` strips the prefix before hitting
+the built admin site's filesystem root) — a mismatch here 404s the whole
+admin docs site. pathType Prefix (not Exact) because mkdocs emits sub-pages
+(missions/, assets/, etc.) that must all fall under this one path.
 */}}
 {{- if .Values.ingress.adminHost }}
 apiVersion: networking.k8s.io/v1
@@ -20,7 +27,7 @@ metadata:
     {{- include "docs.labels" . | nindent 4 }}
   annotations:
     # 運営ゲート: auth-policy /check-admin (ADMIN_EMAILS のみ通過)。未ログインは
-    # auth-signin へ。nginx 側は docs-admin. host prefix で想定解・解説ルートを返す。
+    # auth-signin へ。nginx 側は /docs-admin path prefix で想定解・解説ルートを返す。
     nginx.ingress.kubernetes.io/auth-url: {{ .Values.ingress.adminAuthUrl | quote }}
     {{- with .Values.ingress.authSignin }}
     nginx.ingress.kubernetes.io/auth-signin: {{ . | quote }}
@@ -35,7 +42,7 @@ spec:
     - host: {{ .Values.ingress.adminHost | quote }}
       http:
         paths:
-          - path: /
+          - path: /docs-admin
             pathType: Prefix
             backend:
               service:

@@ -850,14 +850,26 @@ func TestDisplayName_ParticipantCanChange(t *testing.T) {
 	}
 }
 
-func TestMeHTML_ServedAtMe(t *testing.T) {
+// NOTE: TestMeHTML_ServedAtMe (asserted GET /me served the legacy me.html
+// shell) was REMOVED in P19-2b — that route no longer exists (see
+// internal/scoreboard/view/view.go's package doc). The equivalent
+// HTML-serving coverage for the unified portal shell lives in
+// internal/scoreboard/view/portal_test.go (TestRenderPortal_*), and
+// TestDisplayName_ParticipantCanChange above already covers the underlying
+// /api/users/{user}/me data path the portal's Me pane fetches from.
+
+// TestLegacyMeJourneyRoutes_Removed pins the P19-2b cutover: GET /me and
+// GET /journey must be gone from the mux entirely (not merely empty), so a
+// future accidental re-registration is caught immediately rather than
+// silently reopening the removed route. The portal (/portal#me,
+// /portal#journey) is the sole replacement — see view.go's package doc.
+func TestLegacyMeJourneyRoutes_Removed(t *testing.T) {
 	f := newFixture(t, nil)
-	w := f.do("GET", "/me?user=alice", nil)
-	if w.Code != 200 {
-		t.Fatalf("status: %d", w.Code)
-	}
-	if !bytes.Contains(w.Body.Bytes(), []byte("<title>falco-ctf · me")) {
-		t.Fatalf("/me html missing expected title")
+	for _, path := range []string{"/me", "/me?user=alice", "/journey", "/journey?user=alice"} {
+		w := f.do("GET", path, nil)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("GET %s: status = %d, want 404 (route removed)", path, w.Code)
+		}
 	}
 }
 

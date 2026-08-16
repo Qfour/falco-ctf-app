@@ -79,16 +79,18 @@ falco-ctf-app/
   deny-all NetworkPolicy + 非 root (65532) の使い捨て Job に隔離する
   (scoreboard 本体プロセスでは実行しない)。
 
-- **`/journey` はゲーム形式進行 UI (P15)** — `internal/catalog/journey.go` が
-  `challenges/<NN>-<slug>/journey.yaml` を読み、ブリーフィング/ステップ/段階ヒント/
+- **Journey (ゲーム形式進行 UI, P15) は `/portal#journey` タブに統合済み
+  (P19-2b で legacy `GET /journey`・`GET /me` を撤去)** — `internal/catalog/journey.go`
+  が `challenges/<NN>-<slug>/journey.yaml` を読み、ブリーフィング/ステップ/段階ヒント/
   次ミッションへの誘導文をロードする。参加者向け *content* 専用で採点ロジックには
   一切影響しない (challenge の正典は `falco-rule.yaml`/catalog のまま)。journey.yaml
   が無い challenge は単に「ブリーフィング準備中」に degrade する (fail-soft)。
-  scoreboard 側は `internal/scoreboard/view` が静的シェル (`GET /journey`) を返し、
+  `internal/scoreboard/view` が静的シェル (`GET /portal`) を返し、Journey/Me タブが
   `internal/scoreboard/api` の `GET /api/users/{user}/journey` (projection)・
   `POST .../steps/{idx}/check` (self-check)・`POST .../hints/{idx}` (progressive
-  hint reveal) をクライアントがポーリング/呼び出す。journey/me ページは
-  admin-gate の対象外 (per-user API が self-scoped なため無害)。
+  hint reveal)・`GET /api/users/{user}/me` をクライアントがポーリング/呼び出す。
+  portal は admin-gate の対象外 (per-user API が self-scoped なため無害、`GET /` の
+  admin dashboard のみ admin-gate 対象)。
 
 - **docker-compose に mock-oauth2 を含める** — auth-policy 単体テストのため。
   本物の Dex を立てるコストを払わずに /check 経路が動く。

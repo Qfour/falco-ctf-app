@@ -295,8 +295,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	// Journey progression writes (self-check ticks + progressive hint reveal).
 	// Rate-limited on the same bucket as /submit — participant-facing writes.
 	// These two ARE origin-guarded: unlike submit/display-name below, they are
-	// reached ONLY from the journey UI browser fetch (journey.html) — the
-	// collector's forward allowlist (internal/collector/collector.go) does not
+	// reached ONLY from the portal's Journey pane browser fetch
+	// (templates/portal.html) — the collector's forward allowlist
+	// (internal/collector/collector.go) does not
 	// include steps/{idx}/check or hints/{idx} — so there is no server-to-server
 	// caller to protect against a fail-closed gate here.
 	mux.Handle("POST /api/users/{user}/challenges/{cid}/steps/{idx}/check", h.og(submitMW(http.HandlerFunc(h.stepCheck))))
@@ -362,8 +363,10 @@ func emailMatchesUser(email, user string) bool {
 
 // selfOrAdmin is the participant-facing read gate (P18). It derives the caller
 // identity from X-Auth-Request-Email — the header oauth2-proxy injects on the
-// participant journey host (journey.<dnsSuffix>) and that auth-policy also
-// propagates on the admin host — and authorizes the request for {user} iff:
+// single-origin portal host (P19-2b: `app.<dnsSuffix>/portal`, journey being
+// one of the portal's tabs rather than its own host) and that auth-policy
+// also propagates on the admin host — and authorizes the request for {user}
+// iff:
 //
 //   - the caller email prefix-exact matches "<user>@" (self, I8-mirrored), OR
 //   - the caller email is in ADMIN_EMAILS (operator override — the one
