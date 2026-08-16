@@ -1,3 +1,6 @@
+- list: sensitive_file_names
+  items: [/etc/shadow, /etc/sudoers, /etc/pam.conf, /etc/security/pwquality.conf]
+
 - rule: Create Hardlink Over Sensitive Files
   desc: >
     Detect hardlink created over a curated list of sensitive files or subdirectories under /etc/ or

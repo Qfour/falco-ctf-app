@@ -1,3 +1,9 @@
+- macro: never_true
+  condition: (evt.num=0)
+
+- macro: user_known_stand_streams_redirect_activities
+  condition: (never_true)
+
 - rule: Redirect STDOUT/STDIN to Network Connection in Container
   desc: >
     Detect redirection of stdout/stdin to a network connection within a container, achieved by utilizing a

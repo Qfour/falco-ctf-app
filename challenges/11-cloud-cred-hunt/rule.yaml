@@ -2,6 +2,23 @@
 # Extracted from the Falco ruleset the event deploys (falco-rules-3.0.1 —
 # same pin as scripts/check-challenge-rules.sh). Re-extract from the live
 # cluster ruleset if the Falco version is bumped (conventions §課題ドキュメント用 rule.yaml).
+- list: grep_binaries
+  items: [grep, egrep, fgrep]
+
+- macro: spawned_process
+  condition: (evt.type in (execve, execveat) and evt.dir=<)
+
+- macro: grep_commands
+  condition: (proc.name in (grep_binaries))
+
+- macro: private_aws_credentials
+  condition: >
+    (proc.args icontains "aws_access_key_id" or
+    proc.args icontains "aws_secret_access_key" or
+    proc.args icontains "aws_session_token" or
+    proc.args icontains "accesskeyid" or
+    proc.args icontains "secretaccesskey")
+
 - rule: Find AWS Credentials
   desc: >
     Detect attempts to search for private keys or passwords using the grep or find command, particularly targeting standard
