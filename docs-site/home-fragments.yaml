@@ -1,0 +1,176 @@
+# P23-5: Portal Home fragment manifest — content-lead owned contract.
+#
+# Defines WHICH source .md sections become gen-time sanitized HTML fragments
+# for the unified portal's Home tab (charts/portal, internal/scoreboard/view).
+# app-lead implements the generator (gen-pages.py or a sibling script) and the
+# render/chart wiring against this manifest; content-lead keeps it in sync
+# when challenges/scenarios/docs-site content changes.
+#
+# Non-negotiables (see .claude/rules/falco-ctf-app-conventions.md, ORGANIZATION.md):
+#   - Home is PARTICIPANT-FACING and NON-HINT. Never include journey.yaml
+#     `hints:`, README.md `試すこと`/`クリア条件`/`環境にあるもの` sections, or
+#     any flag/answer text. docs-admin (missions/*.md admin build) is untouched
+#     and keeps carrying 攻略と解説 — this manifest does not touch that path.
+#   - Fail-soft: a missing source file/section means the panel is omitted for
+#     that challenge, not an error. Never block gen or render.
+#   - Sanitize at gen time (fixed HTML baked in) — no runtime markdown or HTML
+#     sanitizer dependency. See allowlist below.
+
+panels:
+  # -- static, single-fragment panels (not per-challenge) -------------------
+
+  - id: intro
+    label: "Falco CTF とは"
+    source: docs-site/docs/index.md
+    select: { heading: "## Falco とは" }   # only this section — see notes
+    notes: >
+      index.md has 4 sections; only "Falco とは" is Home-appropriate as-is.
+      "表示名について" duplicates future Me-tab identity content, "推奨スキル
+      レベルと前提知識" and "困ったときは" contain docs-site-relative links
+      ([ストーリー](story.md), [チートシート](cheatsheet.md)) that do not
+      resolve inside the portal Home pane and reference /journey hints
+      tangentially. Do not include those three sections verbatim in Home;
+      if their content is wanted later, rewrite as portal-relative copy in a
+      follow-up, not by dumping the docs-site markdown as-is.
+    fail_soft: "omit panel entirely if file or heading missing"
+
+  - id: story
+    label: "ストーリー"
+    source: docs-site/docs/story.md
+    select: { whole_file: true }
+    notes: >
+      Self-contained killchain table (01→10) + trigger/evade admonition, zero
+      cross-links, zero solution content. Safe to render whole. Does not
+      cover 11-cloud-cred-hunt (explicitly an independent bonus challenge,
+      out of the canonical scenario — see scenarios/README.md "Ordering
+      principle"); that is intentional, not a gap to fix here.
+    fail_soft: "omit panel if file missing (should not happen — static asset)"
+
+  - id: cheatsheet
+    label: "コマンド集"
+    source: docs-site/docs/cheatsheet.md
+    select: { whole_file: true }
+    notes: >
+      Self-contained; internal anchor #7-falco resolves fine when the whole
+      file is one fragment. Contains only generic commands + a FALCO{...}
+      placeholder in the exfil example (not a real flag). Safe whole-file
+      include. If a future edit splits this into a per-topic panel, re-anchor
+      links first (they assume single-page context).
+    fail_soft: "omit panel if file missing"
+
+  # -- per-challenge panel (11 candidates: 00 + 01-10 + 11-bonus) -----------
+
+  - id: rule-explain
+    label: "🔍 なぜ発火するか"
+    source_pattern: "challenges/<NN>-<slug>/rule-explain.md"
+    select: { whole_file: true }
+    per_challenge: true
+    coverage_2026-08-16: [01-initial-recon, 03-stealth-read, 04-key-search, 05-silent-search]
+    missing: [00-tutorial, 02-credential-files, 06-web-rce-shell, 07-persist,
+              08-c2-beacon, 09-hidden-cache, 10-final-exfil, 11-cloud-cred-hunt]
+    fail_soft: >
+      8 of 11 challenges have no rule-explain.md. Per-challenge panel MUST be
+      omitted (not rendered as an empty box, not a broken link) when the file
+      is absent for that challenge id — this is normal steady-state, not an
+      error, and is expected to persist (rule-explain.md is optional
+      supplementary content, same fail-soft posture as journey.yaml itself;
+      see internal/catalog/journey.go's own "no journey entry" degrade).
+      Do NOT synthesize generic filler text as a substitute for a real
+      per-rule explanation — a missing panel is more honest than a vague one.
+      Content-lead may add rule-explain.md for the remaining 8 later
+      (separate PR); this manifest does not gate on completing that backlog.
+    verified_clean: >
+      All 4 existing rule-explain.md files checked 2026-08-16: no
+      試すこと/クリア条件/環境にあるもの leakage, no FALCO{...} flags, no
+      raw HTML tags (only markdown code-spans containing placeholder angle
+      brackets like `<pid>`, `<NN>` — see sanitizer note below).
+
+# ---------------------------------------------------------------------------
+# Sanitize allowlist (gen-time, fixed HTML baked in — the esc() invariant's
+# first sanctioned exception; internal/scoreboard/view escapes everything
+# else via esc() and must keep doing so for all non-fragment strings).
+# ---------------------------------------------------------------------------
+sanitize_allowlist:
+  elements:
+    - p
+    - h2, h3           # markdown ## / ### only. Source h1 (the docs-site page
+                       # title) is NEVER a rendered element — the app-lead
+                       # implementation (internal/homefragments) strips a
+                       # whole_file panel's leading "# title" line at the
+                       # markdown-SOURCE stage, before markdown parsing, for
+                       # exactly the reason this comment used to state ("H1 is
+                       # the docs-site page title, redundant with the panel
+                       # label the portal chrome already shows") — so no <h1>
+                       # node is ever produced for the sanitizer to see in the
+                       # first place. (2026-08-16 merge-review fixup: an
+                       # earlier revision of this manifest listed h1 alongside
+                       # h2/h3 as if it were a rendered-but-just-unstyled
+                       # element; the sanitizer's actual rule for a disallowed
+                       # tag is "drop the wrapper, re-parent the text", which
+                       # for a literal <h1> would leak the bare title text
+                       # ahead of the first real paragraph — the source-stage
+                       # strip is what prevents that, not a sanitizer allow/
+                       # deny distinction between h1 and h2/h3.)
+    - ul, ol, li
+    - strong, em
+    - code             # inline code span
+    - pre              # fenced code block container
+    - blockquote       # MkDocs admonitions (!!! tip/note/warning) render here,
+                       # title as a leading <strong>; see admonition note below
+    - hr
+    - table, thead, tbody, tr, th, td
+                       # 2026-08-16 merge-review fixup (R1 HIGH): added to
+                       # match the shipped implementation (internal/
+                       # homefragments/sanitize.go) — story.md's mandated
+                       # whole_file panel and all 4 existing rule-explain.md
+                       # files use a markdown table as their only structured-
+                       # data device (see coverage_2026-08-16 above), so
+                       # without table support "safe to render whole" (the
+                       # story panel's own note, above) would not have held:
+                       # the table content would have collapsed into
+                       # unstructured prose instead of dropping cleanly.
+                       # security-reviewed and approved (P23-5 5x review) —
+                       # same "no attributes" rule as every other element
+                       # below applies to these six too.
+  attributes: {}       # no attributes on any element — not even class/id.
+                        # this also means no anchor targets ({#7-falco}-style
+                        # ids are dropped; internal anchor links degrade to
+                        # plain text or must be pre-resolved at gen time)
+  explicitly_forbidden:
+    - script, style, iframe, object, embed, form, input, button
+    - "on* event attributes (onclick, onerror, ...)"
+    - "style= attribute (no inline CSS)"
+    - "href/src on any element (a, img) — see link policy below"
+  link_policy: >
+    No <a> in the allowlist. Markdown [text](url) in source fragments must be
+    rendered as plain text (drop the link, keep the label) UNLESS app-lead
+    decides to allowlist <a> with href restricted to same-origin portal paths
+    only (e.g. rewriting docs-site-relative links to /journey or /missions
+    equivalents) — that is an implementation decision for app-lead, not
+    pre-approved here. Default assumption for v1: links become plain text.
+  admonition_handling: >
+    MkDocs Material `!!! tip "title"` / `!!! note "title"` / `!!! warning
+    "title"` blocks appear in index.md, story.md, cheatsheet.md. There is no
+    markdown library in go.mod today (checked 2026-08-16) — app-lead must
+    either (a) add a minimal goldmark-based renderer with a custom admonition
+    extension, or (b) pre-flatten `!!! x "title"` blocks to a plain
+    `**title**` + indented-paragraph shape at gen time before generic markdown
+    rendering. Either way the four-space-indented body under `!!! ...` must
+    stay associated with its title — do not let a naive line-based stripper
+    silently drop the indentation and merge it into the prior paragraph.
+  code_span_gotcha: >
+    Placeholder angle brackets inside inline code (`<pid>`, `<NN>-<slug>`,
+    `<mission-id>`) must render as literal text inside <code>, not be
+    interpreted as HTML tags by a pre-markdown HTML-stripping pass. Sanitize
+    AFTER markdown-to-HTML conversion (so code spans are already escaped by
+    the markdown renderer), not via a naive regex over raw markdown source.
+
+# ---------------------------------------------------------------------------
+# docs-admin boundary (unchanged by this manifest — recorded for clarity)
+# ---------------------------------------------------------------------------
+docs_admin_untouched: >
+  docs-site/gen-pages.py `mode=admin` build (missions/*.md with 攻略と解説,
+  README.md bodies, 試すこと/クリア条件/環境にあるもの) is NOT a fragment
+  source and is NOT consumed by portal Home. It keeps existing behavior and
+  keeps requiring the operator-only docs host/auth. This manifest only feeds
+  the `mode=participant`-equivalent, non-hint slice into the portal.

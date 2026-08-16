@@ -136,6 +136,37 @@ func TestRenderPortal_MissingIdentityDegradesGracefully(t *testing.T) {
 	}
 }
 
+// TestRenderPortal_HomePanelsInjected proves GET /portal's response body
+// contains the real, gen-time-rendered Home panels (the SAME homePanelsHTML
+// package var every request serves — see portal.go's HomePanelsHTML field
+// doc), for BOTH admin and participant callers identically (P23-5: no
+// per-viewer variation, no hints, no admin-only content in this pane).
+func TestRenderPortal_HomePanelsInjected(t *testing.T) {
+	if len(HomeFragments) == 0 {
+		t.Fatal("HomeFragments is empty — run `make gen-home-fragments` before running this test")
+	}
+	for _, isAdmin := range []bool{true, false} {
+		r := httptest.NewRequest("GET", "/portal", nil)
+		w := httptest.NewRecorder()
+		fn := func(*http.Request) bool { return isAdmin }
+		if err := renderPortal(w, r, fn, nil, ""); err != nil {
+			t.Fatalf("renderPortal: %v", err)
+		}
+		body := w.Body.String()
+		if !strings.Contains(body, `id="pane-home-panels"`) {
+			t.Fatalf("expected the Home panels container in the response, isAdmin=%v", isAdmin)
+		}
+		// Every top-level panel label must appear somewhere in the body.
+		for _, f := range HomeFragments {
+			if f.ChalNN == "" {
+				if !strings.Contains(body, f.Label) {
+					t.Errorf("expected static panel label %q in body, isAdmin=%v", f.Label, isAdmin)
+				}
+			}
+		}
+	}
+}
+
 // TestTtydURLFor proves the iframe src builder (P23-4) only ever produces
 // the CALLER's OWN host (`https://<user>.<suffix>`, matching
 // charts/ctf-user's `<username>.<dnsSuffix>` Ingress host pattern exactly)
