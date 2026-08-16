@@ -160,6 +160,10 @@ securityContext:
 - **実フラグをコミットしない (public repo)**。`falco-rule.yaml` は `FALCO{dev-<slug>}`
   placeholder のみ。実フラグは platform `events/<date>/flags.sops.yaml`。
   `make check-flags` (CI: `flag-guard`、PreCommit hook) が混入を block。
+- **scratch/PoC を誤ってコミットしない (P23-2b)**。作業中の一時ファイルには
+  `DO` + `NOT` + `COMMIT` マーカー (大小文字・`-`/`_` variant 可) を付ける運用。
+  `make check-flags` がこのマーカーを含む tracked file を検出し fail-closed で block
+  (このスクリプト自身と本ファイルは自己言及のため除外)。
 - 課題用ダミー値 (`P@ssw0rd`) は LOW 扱い、明確にダミーと示す
 - `git add .` / `git add -A` 禁止 (明示パス指定のみ)
 
