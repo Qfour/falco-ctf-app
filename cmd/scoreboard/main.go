@@ -158,7 +158,17 @@ func main() {
 		logger.Error("journey load failed", "dir", challengesDir, "err", err)
 		os.Exit(1)
 	}
-	logger.Info("catalog loaded", "dir", challengesDir, "challenges", cat.IDs(), "journeys", len(journeys), "docs_base_url", docsBaseURL, "portal_ttyd_suffix", portalTtydSuffix, "flag_overrides", flagsFile != "", "scenario", scenarioID)
+	// Falco rule excerpts (display-only, Story tab's "Falco Rule" panel — P23
+	// Story-as-docs). Same source challenges/<NN>-<slug>/rule.yaml the old
+	// docs-site has always rendered; fail-soft per challenge (missing file =
+	// no panel), loud error on malformed YAML (content mistake, see
+	// catalog.LoadRuleExcerpts doc).
+	falcoRules, err := catalog.LoadRuleExcerpts(challengesDir, cat)
+	if err != nil {
+		logger.Error("falco rule excerpt load failed", "dir", challengesDir, "err", err)
+		os.Exit(1)
+	}
+	logger.Info("catalog loaded", "dir", challengesDir, "challenges", cat.IDs(), "journeys", len(journeys), "falco_rule_excerpts", len(falcoRules), "docs_base_url", docsBaseURL, "portal_ttyd_suffix", portalTtydSuffix, "flag_overrides", flagsFile != "", "scenario", scenarioID)
 
 	st, err := store.Open(dbPath)
 	if err != nil {
@@ -214,6 +224,7 @@ func main() {
 		scoreboard.WithAdminEmails(adminEmails),
 		scoreboard.WithAllowedOrigins(allowedOrigins),
 		scoreboard.WithJourneys(journeys),
+		scoreboard.WithFalcoRules(falcoRules),
 		scoreboard.WithOrder(order),
 		scoreboard.WithDocsBaseURL(docsBaseURL),
 		scoreboard.WithDetect(detectCfg),

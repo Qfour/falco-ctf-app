@@ -46,6 +46,7 @@ type Handler struct {
 	now         func() time.Time
 	adminEmails []string
 	journeys    catalog.Journeys
+	falcoRules  catalog.FalcoRuleExcerpts
 	order       []string
 	docsBaseURL string
 	// points is a WIRING-TIME TRANSFER ONLY: WithPoints stashes the operator's
@@ -77,6 +78,15 @@ func WithAdminEmails(e []string) Option { return func(h *Handler) { h.adminEmail
 // UI degrades gracefully.
 func WithJourneys(j catalog.Journeys) Option {
 	return func(h *Handler) { h.journeys = j }
+}
+
+// WithFalcoRules supplies the Story tab's display-only Falco rule excerpt
+// (challengeId -> List/Macro/Rule, from challenges/<NN>-<slug>/rule.yaml —
+// P23 Story-as-docs). Optional; a missing entry means "no rule.yaml authored
+// for this challenge" and the UI omits the Falco Rule panel for that mission
+// (same fail-soft posture as WithJourneys).
+func WithFalcoRules(r catalog.FalcoRuleExcerpts) Option {
+	return func(h *Handler) { h.falcoRules = r }
 }
 
 // WithOrder sets the mission progression order (scenario order when pinned,
@@ -160,6 +170,7 @@ func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts .
 	ingest.New(grader, s, logger, h.now).Register(h.mux)
 	api.New(cat, grader, s, logger, h.now, h.adminEmails, h.allowedOrigins, api.JourneyConfig{
 		Journeys:    h.journeys,
+		FalcoRules:  h.falcoRules,
 		Order:       h.order,
 		DocsBaseURL: h.docsBaseURL,
 	}, h.detect).Register(h.mux)
