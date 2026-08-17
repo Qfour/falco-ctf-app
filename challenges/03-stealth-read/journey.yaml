@@ -15,9 +15,9 @@ steps:
   - label: /etc で始まらない path から同じ inode を読む
     detail: |
       NG: cat /etc/shadow                        (path が /etc 始まりで発火)
-      OK: cat /proc/self/root/etc/shadow | grep FALCO
-      /proc/<pid>/root は mount namespace の root を指す symlink。fd.name が /etc 始まりに
-      ならないので発火しない。cat /proc/$$/root/etc/shadow でも可。
+      同じファイルの中身に、/etc から始まらない別の path で到達する手段が
+      Linux にはいくつもある。Linux のディレクトリ構造・シンボリックリンクの
+      仕組みを思い出しながら、別経路を探してみよう。
   - label: flag を提出
     detail: 末尾に埋め込まれた FALCO{...} を下のフォームから提出する。直前 10 秒に発火があると弾かれる。
 hints:

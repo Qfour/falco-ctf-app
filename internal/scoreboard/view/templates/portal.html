@@ -776,8 +776,13 @@
      ::after underline + space-between layout those panes need is skipped
      here — just the bottom border. */
   #pane-home header { margin-bottom: 1.5rem; padding-bottom: 1.25rem; border-bottom: 1px solid var(--p-border); }
-  #pane-home .home-intro { color: var(--p-text-dim); line-height: 1.6; margin: 0 0 1rem; font-size: 0.95rem; }
+  #pane-home .home-intro { color: var(--p-text-dim); line-height: 1.6; margin: 0 0 0.75rem; font-size: 0.95rem; }
   #pane-home .home-intro strong { color: var(--p-text); }
+  /* #3 fix: one line per tab (Story/Scoreboard/Terminal) instead of a single
+     hard-to-scan paragraph — same copy, list layout only. */
+  #pane-home .home-intro-list { color: var(--p-text-dim); line-height: 1.6; margin: 0 0 1rem; padding-left: 1.3rem; font-size: 0.95rem; }
+  #pane-home .home-intro-list li { margin-bottom: 0.3rem; }
+  #pane-home .home-intro-list strong { color: var(--p-text); }
 
   /* ===== Shared rich-content styling (P23 portal-redesign) =====
      Markdown-derived typography for gen-time-sanitized fragment HTML
@@ -823,25 +828,38 @@
   #pane-home-panels .home-rule-explain-item:first-child { border-top: none; padding-top: 0; }
   #pane-home-panels .home-rule-explain-chal { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase; color: #00CBE2; margin: 0 0 0.5rem; }
 
-  /* ===== Terminal pane (P23 portal-redesign restyle) =====
-     Previously entirely inline style="" attributes in the JS-generated
-     markup below (P23-4's original cut) — now the shared design tokens
-     via a few small, pane-scoped classes, matching the other 3 panes'
-     look. iframe src/CSP/frame-src/fail-safe-placeholder LOGIC is
-     unchanged; only the surrounding chrome (heading/button/frame border)
-     is restyled.
+  /* ===== Terminal pane (item 9: restyled to match Story's card language) =====
+     Previously a bespoke .term-head/.term-frame/.term-placeholder trio with
+     its own one-off look. Now reuses #pane-story's SAME .mission/
+     .mission-head/.mission-body card chrome (background/border/radius +
+     kicker line) — see #pane-story's ".mission detail" block above, which
+     this aliases token-for-token so the two panes render identically.
+     iframe src/CSP/frame-src/fail-safe-placeholder LOGIC is unchanged; only
+     the surrounding chrome (card/heading/button/frame border) is restyled.
+     header/h1 chrome now comes from the SAME <header><h1 class="p-h1">
+     markup as #pane-home (added alongside this change) — plain
+     border-bottom, no Story-specific "● LIVE" glow (this pane doesn't poll).
      (portal-ui-polish: the pane's own outer style="max-width:64rem" inline
-     attribute — the last inline style left on this pane's <div> — moves
-     into this same pane-scoped block below, for the same reason #pane-home
-     lost its inline style="" wrapper in this change: keep the "chassis"
-     (the outer <div class="pane p-shell">) free of one-off inline styles
-     so every pane's container markup looks the same.) */
-  #pane-terminal { max-width: 64rem; }
-  #pane-terminal .term-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.75rem; }
-  #pane-terminal .term-head h2 { font-family: var(--p-font-display); font-size: var(--p-h2); margin: 0; color: var(--p-text); }
-  #pane-terminal .term-frame { border: 1px solid var(--p-border); border-radius: var(--p-panel-radius); overflow: hidden; background: #000; }
-  #pane-terminal .term-note { color: var(--p-text-mute); font-size: 0.75rem; line-height: 1.5; margin-top: 0.6rem; }
-  #pane-terminal .term-placeholder p { color: var(--p-text-dim); line-height: 1.6; margin: 0; }
+     attribute — the last inline style left on this pane's <div> — stays
+     pane-scoped here, for the same reason #pane-home lost its inline
+     style="" wrapper: keep the "chassis" free of one-off inline styles.) */
+  #pane-terminal {
+    max-width: 64rem;
+    /* Same pane-local token aliases as #pane-story, so the reused
+       .mission/.mission-head/.mission-body/.badge rules below resolve
+       identically in both panes. */
+    --bg-elev: var(--p-bg-elev); --surface: var(--p-surface);
+    --border: var(--p-border); --border-strong: var(--p-border-strong);
+    --text: var(--p-text); --text-dim: var(--p-text-dim); --text-mute: var(--p-text-mute);
+    --accent: var(--p-accent);
+  }
+  #pane-terminal header { margin-bottom: 1.5rem; padding-bottom: 1.25rem; border-bottom: 1px solid var(--p-border); }
+  #pane-terminal .mission { background: var(--surface); border: 1px solid var(--border); border-radius: 0.85rem; overflow: hidden; max-width: 100%; }
+  #pane-terminal .mission-head { padding: 1.1rem 1.6rem; border-bottom: 1px solid var(--border); background: linear-gradient(180deg, var(--bg-elev), var(--surface)); display: flex; justify-content: space-between; align-items: center; }
+  #pane-terminal .mission-head .kicker { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; letter-spacing: 0.12em; color: var(--text-mute); text-transform: uppercase; }
+  #pane-terminal .mission-body { padding: 1.4rem 1.6rem; }
+  #pane-terminal .term-frame { border: 1px solid var(--border); border-radius: var(--p-panel-radius); overflow: hidden; background: #000; }
+  #pane-terminal .term-placeholder p { color: var(--text-dim); line-height: 1.6; margin: 0; }
 
 </style>
 </head>
@@ -1108,6 +1126,22 @@
     }).join('');
 
     // ---- detail ----
+    // #4 fix: while the participant is actively typing into the evade flag
+    // input, skip rebuilding the detail <section> on this poll tick. Every
+    // render() call used to innerHTML-replace the WHOLE #pane-journey-page
+    // (killchain + map + detail) every 2s, which tore out and recreated
+    // #pane-journey-flag-input mid-keystroke — the input lost both focus and
+    // whatever the participant had typed, so typing into it looked broken
+    // ("入力ができない"). The detail pane's content for the currently-viewed
+    // mission does not need a mid-typing refresh (hints/steps changes while
+    // the user is composing a submission are rare and will land on the next
+    // untouched poll); everything else (progress bar, killchain, map) still
+    // updates live every tick.
+    const detailEl = document.getElementById('pane-journey-detail');
+    const flagInput = document.getElementById('pane-journey-flag-input');
+    const viewedSameMission = detailEl && detailEl.dataset.mission === String(viewedId || '');
+    const skipDetailRerender = !!(flagInput && document.activeElement === flagInput && viewedSameMission);
+
     const detailHTML = d.detail ? renderDetail(d.detail) : renderAllDone(solvedCount, total);
 
     document.getElementById('pane-journey-page').innerHTML = `
@@ -1124,7 +1158,7 @@
           <div class="panel-header"><h2>Mission map</h2></div>
           <ul class="map">${mapHTML || '<div class="empty"><span class="icon">∅</span>ミッション未ロード</div>'}</ul>
         </section>
-        <section>${detailHTML}</section>
+        <section id="pane-journey-detail" data-mission="${esc(viewedId || '')}">${skipDetailRerender ? detailEl.innerHTML : detailHTML}</section>
       </div>`;
 
     // Free-browsing click wiring (P23 Story-as-docs): delegate from both the
@@ -1135,11 +1169,17 @@
       el.addEventListener('click', () => viewMission(el.dataset.mission));
     });
 
-    wireDetail(d.detail);
-    // Re-inject any sticky failure-mode submit result the polling re-render just
-    // wiped. Drop it if the user has moved on to a different mission.
-    if (lastSubmit && d.detail && lastSubmit.cid !== d.detail.id) lastSubmit = null;
-    restoreSubmitMsg();
+    if (skipDetailRerender) {
+      // The detail markup above was carried over verbatim (same innerHTML
+      // string reused), so the live <input>/<form> nodes the participant is
+      // typing into were NOT recreated — do not re-wire or touch focus.
+    } else {
+      wireDetail(d.detail);
+      // Re-inject any sticky failure-mode submit result the polling re-render
+      // just wiped. Drop it if the user has moved on to a different mission.
+      if (lastSubmit && d.detail && lastSubmit.cid !== d.detail.id) lastSubmit = null;
+      restoreSubmitMsg();
+    }
     prevSolved = solvedNow;
     prevCurrent = d.current;
     lastCurrent = d.current || null;
@@ -2113,11 +2153,12 @@
     </div>
   </header>
 
-  <p class="home-intro">
-    統合ポータルへようこそ。上部のタブから、ミッションの流れを追う <strong>Story</strong>、
-    自分のリアルタイムな進捗を確認する <strong>Scoreboard</strong>、実際に手を動かす
-    <strong>Terminal</strong> を開いて進めてください。
-  </p>
+  <p class="home-intro">統合ポータルへようこそ。上部のタブから進めてください。</p>
+  <ul class="home-intro-list">
+    <li><strong>Story</strong> — ミッションの流れを追う</li>
+    <li><strong>Scoreboard</strong> — 自分のリアルタイムな進捗を確認する</li>
+    <li><strong>Terminal</strong> — 実際に手を動かす</li>
+  </ul>
   <div id="pane-home-panels">{{.HomePanelsHTML}}
     <!-- 参考サイト (portal-header-refine, item 6): plain hand-authored static
          links, NOT routed through docs-site/home-fragments.yaml's sanitizer
@@ -2156,6 +2197,13 @@
      `/check?host=<user>` on the ttyd Ingress itself, regardless of what src
      ends up in this iframe. ===== -->
 <div class="pane p-shell" id="pane-terminal">
+
+  <header>
+    <div class="brand">
+      <h1 class="p-h1"><span class="accent">Terminal</span></h1>
+    </div>
+  </header>
+
   <div id="pane-terminal-page"></div>
 </div>
 
@@ -2176,20 +2224,24 @@
     const page = document.getElementById('pane-terminal-page');
     if (!page) return;
     if (!ttydURL) {
-      // P23 portal-redesign: shared .term-head/.term-placeholder classes
-      // replace this pane's former one-off inline style="" attributes —
-      // see the #pane-terminal CSS block above (same h2 sizing as the
-      // configured-terminal branch below, via .term-head h2). Logic (the
-      // fail-safe placeholder itself) is unchanged.
+      // #9: the outer pane already carries the shared <header><h1 class="p-h1">
+      // chrome (added alongside #pane-story/#pane-home above), so this inner
+      // card only needs Story's OWN card language — .mission/.mission-head/
+      // .mission-body (background/border/radius + kicker line), reusing
+      // #pane-story's classes verbatim rather than the old bespoke
+      // .term-head/.term-placeholder pair. Logic (the fail-safe placeholder
+      // itself) is unchanged.
       page.innerHTML = `
-        <div class="term-head"><h2>Terminal</h2></div>
-        <div class="term-placeholder">
-          <p>
-            Your in-portal terminal is not configured for this deployment yet
-            (PORTAL_TTYD_SUFFIX unset, or your username could not be
-            determined). Use your workspace terminal at its usual address
-            instead (ask the operator if unsure).
-          </p>
+        <div class="mission">
+          <div class="mission-head"><div class="kicker">SESSION</div></div>
+          <div class="mission-body term-placeholder">
+            <p>
+              Your in-portal terminal is not configured for this deployment yet
+              (PORTAL_TTYD_SUFFIX unset, or your username could not be
+              determined). Use your workspace terminal at its usual address
+              instead (ask the operator if unsure).
+            </p>
+          </div>
         </div>`;
       return;
     }
@@ -2198,20 +2250,23 @@
     // future change to how this value is produced can't reopen an
     // attribute-breakout XSS.
     const safeURL = esc(ttydURL);
+    // #9: same .mission/.mission-head/.mission-body card chrome as the
+    // placeholder branch above (and as #pane-story's mission detail cards) —
+    // only the iframe/Pop-out FUNCTIONALITY inside is terminal-specific.
     page.innerHTML = `
-      <div class="term-head">
-        <h2>Terminal</h2>
-        <button type="button" id="pane-terminal-popout" class="p-btn">⤢ Pop out</button>
-      </div>
-      <div class="term-frame">
-        <iframe id="pane-terminal-iframe" src="${safeURL}" title="Terminal"
-          style="width:100%;height:70vh;border:0;display:block;background:#000;"
-          allow="clipboard-read; clipboard-write"></iframe>
-      </div>
-      <p class="term-note">
-        Copy/paste and resize work the same as in a standalone tab. If the
-        terminal does not load, use "Pop out" to open it directly.
-      </p>`;
+      <div class="mission">
+        <div class="mission-head">
+          <div class="kicker">SESSION</div>
+          <button type="button" id="pane-terminal-popout" class="p-btn">⤢ Pop out</button>
+        </div>
+        <div class="mission-body">
+          <div class="term-frame">
+            <iframe id="pane-terminal-iframe" src="${safeURL}" title="Terminal"
+              style="width:100%;height:70vh;border:0;display:block;background:#000;"
+              allow="clipboard-read; clipboard-write"></iframe>
+          </div>
+        </div>
+      </div>`;
     const popout = document.getElementById('pane-terminal-popout');
     if (popout) {
       // Full-screen pop-out (CEO decision ④): opens the SAME server-generated
