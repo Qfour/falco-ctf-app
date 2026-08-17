@@ -3,7 +3,9 @@
 //	POST /falco/events
 //
 // Filters events to the `ctf-<username>/workspace` namespace+pod pair,
-// records rule fires for evade windowing, and marks trigger-type
+// records the rule fire (presentational feed only), permanently taints any
+// evade challenge whose forbiddenRules match (App-H2's persistent dirty
+// flag — see scoring.Grader.MarkDirtyOnRuleFire), and marks trigger-type
 // challenges solved.
 package ingest
 
@@ -123,6 +125,17 @@ func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	metrics.FalcoEventsReceived.WithLabelValues("accepted").Inc()
+
+	// App-H2: persist the dirty taint for every evade challenge this rule is
+	// forbidden for, BEFORE evaluating any trigger solve below. This is a
+	// store write, not a scoring decision (the Grader owns which challenges a
+	// rule taints via catalog.ForbiddenRules) — unlike the old windowed
+	// RecentFiresMatching check, this taint never expires and survives a
+	// scoreboard restart. Continue-on-error mirrors EvaluateTrigger: one
+	// challenge's transient DB error must not block the others below.
+	if err := h.grader.MarkDirtyOnRuleFire(user, ev.Rule); err != nil {
+		h.logger.Error("mark dirty", "err", err)
+	}
 
 	// Trigger-type solve decision is the Grader's job; this handler is a thin
 	// driver that just bumps the solve metric for each newly-recorded solve.

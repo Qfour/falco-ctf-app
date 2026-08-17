@@ -498,9 +498,9 @@ func TestSubmit_CorrectFlag_WithRecentForbiddenFire_NotSolved(t *testing.T) {
 	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
 	f := newFixture(t, func() time.Time { return now })
 
-	// Fire forbidden rule at the same server `now` as the submit — inside the
-	// 10s window. Note: rule-fire timestamps now derive from server time, not
-	// the (attacker-controlled) ev.Time. See App-H3.
+	// Fire the forbidden rule, then submit immediately — the pair is dirty
+	// (App-H2 persistent taint, not a time window). Rule-fire timestamps
+	// derive from server time, not the (attacker-controlled) ev.Time (App-H3).
 	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "alice"))
 
 	w := f.do("POST", "/api/challenges/02-evade/submit", map[string]any{"user": "alice", "flag": "FALCO{ok}"})
@@ -513,28 +513,96 @@ func TestSubmit_CorrectFlag_WithRecentForbiddenFire_NotSolved(t *testing.T) {
 	}
 }
 
-func TestSubmit_CorrectFlag_AfterWindow_Solves(t *testing.T) {
-	// Mutable clock: forbidden fire is recorded at t=10:00:00, the submit
-	// happens at t=10:00:30 — 30s later, well past the 10s evade window.
-	// Since App-H3 the recorded fire time is server-side now(), so advancing
-	// the test clock between the fire and the submit is required.
+// TestSubmit_CorrectFlag_AfterWaiting_StaysDirty_NotSolved is the App-H2
+// exploit-#1 regression (this test USED TO be named
+// TestSubmit_CorrectFlag_AfterWindow_Solves and asserted the opposite — that
+// waiting past the 10s window cleared the forbidden fire and let the
+// participant solve. That was exploit #1: fire the forbidden rule once, wait
+// out the window, submit — solved every time, no clean re-run required. The
+// dirty flag is now permanent: even advancing the clock a full day past the
+// old window must not clear it. Only the explicit reset endpoint
+// (POST /api/users/{user}/challenges/{cid}/reset-dirty) may.
+func TestSubmit_CorrectFlag_AfterWaiting_StaysDirty_NotSolved(t *testing.T) {
 	var clock time.Time
 	f := newFixture(t, func() time.Time { return clock })
 
 	clock = time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
 	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "alice"))
 
-	clock = clock.Add(30 * time.Second)
+	clock = clock.Add(30 * time.Second) // well past the old 10s window
 	w := f.do("POST", "/api/challenges/02-evade/submit", map[string]any{"user": "alice", "flag": "FALCO{ok}"})
 	m := decode(t, w)
-	if m["solved"] != true {
-		t.Fatalf("expected solved (fire outside 10s window): %v", m)
+	if m["solved"] == true {
+		t.Fatalf("App-H2 regression: waiting past the old window must not clear the dirty taint: %v", m)
+	}
+	if m["evaded"] != false {
+		t.Fatalf("expected evaded=false (still dirty): %v", m)
+	}
+
+	clock = clock.Add(24 * time.Hour) // even a full day later must not clear it
+	w = f.do("POST", "/api/challenges/02-evade/submit", map[string]any{"user": "alice", "flag": "FALCO{ok}"})
+	m = decode(t, w)
+	if m["solved"] == true {
+		t.Fatalf("App-H2 regression: time must never clear the dirty taint: %v", m)
 	}
 }
 
-// App-H3: a forged event with ev.Time set far in the past must NOT escape
-// the evade window. Rule-fire timestamps are taken from server time, so the
-// attacker cannot pre-age their own forbidden fire.
+// TestResetDirty_ClearsTaint_ThenCleanSubmitSolves proves the ONLY documented
+// way back to clean: the participant's explicit reset endpoint. After it, a
+// submit with no NEW forbidden fire since the reset solves normally.
+func TestResetDirty_ClearsTaint_ThenCleanSubmitSolves(t *testing.T) {
+	var clock time.Time
+	f := newFixture(t, func() time.Time { return clock })
+	clock = time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+
+	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "alice"))
+	w := f.do("POST", "/api/challenges/02-evade/submit", map[string]any{"user": "alice", "flag": "FALCO{ok}"})
+	if decode(t, w)["solved"] == true {
+		t.Fatal("must still be dirty before reset")
+	}
+
+	rw := f.doUser("POST", "/api/users/alice/challenges/02-evade/reset-dirty", "alice", nil)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("reset-dirty: want 200, got %d body=%s", rw.Code, rw.Body.String())
+	}
+
+	w = f.do("POST", "/api/challenges/02-evade/submit", map[string]any{"user": "alice", "flag": "FALCO{ok}"})
+	m := decode(t, w)
+	if m["solved"] != true {
+		t.Fatalf("clean submit after an explicit reset must solve, got %v", m)
+	}
+}
+
+// TestResetDirty_SelfScope proves the reset endpoint is gated exactly like the
+// other /api/users/{user}/* writes (selfOrAdminWrite, I8): a third party
+// cannot clear another participant's taint, and admin may reset anyone's.
+func TestResetDirty_SelfScope(t *testing.T) {
+	f := newFixture(t, nil)
+	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "alice"))
+
+	if w := f.doUser("POST", "/api/users/alice/challenges/02-evade/reset-dirty", "bob", nil); w.Code != http.StatusForbidden {
+		t.Fatalf("cross-user reset-dirty must be forbidden, got %d body=%s", w.Code, w.Body.String())
+	}
+	// Still dirty — the denied cross-user attempt must not have cleared it.
+	w := f.do("POST", "/api/challenges/02-evade/submit", map[string]any{"user": "alice", "flag": "FALCO{ok}"})
+	if decode(t, w)["solved"] == true {
+		t.Fatal("a denied cross-user reset must not clear the taint")
+	}
+
+	if w := f.doAdmin("POST", "/api/users/alice/challenges/02-evade/reset-dirty", nil); w.Code != http.StatusOK {
+		t.Fatalf("admin reset-dirty must be allowed, got %d body=%s", w.Code, w.Body.String())
+	}
+	w = f.do("POST", "/api/challenges/02-evade/submit", map[string]any{"user": "alice", "flag": "FALCO{ok}"})
+	if decode(t, w)["solved"] != true {
+		t.Fatal("admin reset must clear the taint and let a clean submit solve")
+	}
+}
+
+// App-H3 (and, since App-H2, doubly so): a forged event with ev.Time set far
+// in the past must NOT escape the dirty gate. The dirty-taint timestamp is
+// stamped from server time (never ev.Time) and, since App-H2, the gate does
+// not even consult a time window at all — so pre-aging the event buys the
+// attacker nothing either way.
 func TestFalcoEvents_EvadeWindow_IgnoresAttackerTime(t *testing.T) {
 	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
 	f := newFixture(t, func() time.Time { return now })

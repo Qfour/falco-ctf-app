@@ -5,9 +5,16 @@
 //	challengeId:   string (defaults to directory name)
 //	type:          "trigger" | "evade" | "detect" (required)
 //	expectedRules: []string  — solve when one of these rules fires
-//	forbiddenRules:[]string  — submission rejected if any fired in the last windowSeconds
+//	forbiddenRules:[]string  — submission rejected once any of these has EVER
+//	               fired for the participant, until they explicitly reset the
+//	               taint (App-H2 persistent dirty flag —
+//	               internal/store.MarkDirty/DirtyRules/ResetDirty via
+//	               scoring.Grader.MarkDirtyOnRuleFire/evaluateClean). This is
+//	               NOT a recent-window check: no amount of waiting clears it.
 //	expectedFlag:  string (required for "evade"; must match FALCO{...})
-//	windowSeconds: int (default 10)
+//	windowSeconds: int (default 10) — informational only as of App-H2 (kept
+//	               for UI display / historical config); it no longer gates any
+//	               solve decision for either evade or trigger challenges.
 //	requireExfil:  bool — evade only; solve also requires the user to have
 //	               exfiltrated the correct flag to the collector
 //	               (POST /api/challenges/{cid}/exfil) before submitting.

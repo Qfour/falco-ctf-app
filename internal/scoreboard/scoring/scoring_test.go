@@ -3,6 +3,7 @@ package scoring_test
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -13,15 +14,18 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/store"
 )
 
-// fakeStore is an in-memory ScoreStore with a scriptable forbidden-fire and
-// exfil surface — no SQLite, no HTTP. It records MarkSolved calls so tests can
+// fakeStore is an in-memory ScoreStore with a scriptable dirty-flag and exfil
+// surface — no SQLite, no HTTP. It records MarkSolved calls so tests can
 // assert the Grader is the single writer.
 type fakeStore struct {
 	solved map[string]string // "user|challenge" -> at (first-write-wins)
-	// forbidden[user] is the set of forbidden rules the store should report as
-	// having fired within any window. RecentFiresMatching intersects it with
-	// the challenge's forbidden list, mirroring the real store's filtering.
-	forbidden map[string][]string
+	// dirty["user|challenge"] is the sorted set of forbidden rules App-H2's
+	// persistent taint has recorded for that pair — the fake's mirror of the
+	// real store's evade_dirty table. Tests normally seed this indirectly via
+	// (*Grader).MarkDirtyOnRuleFire (the real write path); a few whitebox
+	// tests poke it directly to simulate "the taint was already there",
+	// mirroring what store.ResetDirty's absence would look like.
+	dirty map[string][]string
 	// exfil["user|challenge"] is the flag the collector received for that pair.
 	exfil map[string]string
 	// hintViews[user] maps challenge -> revealed 1-based hint indices (#40).
@@ -29,19 +33,24 @@ type fakeStore struct {
 
 	markSolvedErr  error // if set, MarkSolved returns it for every challenge
 	recordExfilErr error // if set, RecordExfil returns it
+	markDirtyErr   error // if set, MarkDirty returns it for every call
 
 	// markSolvedErrFor[challenge], if set, makes MarkSolved fail only for that
 	// challenge (used to prove continue-on-error skips just the failing one).
 	markSolvedErrFor map[string]error
+	// markDirtyErrFor[challenge], if set, makes MarkDirty fail only for that
+	// challenge (mirrors markSolvedErrFor for MarkDirtyOnRuleFire's
+	// continue-on-error fan-out).
+	markDirtyErrFor map[string]error
 
 	markSolvedCalls int
 }
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		solved:    map[string]string{},
-		forbidden: map[string][]string{},
-		exfil:     map[string]string{},
+		solved: map[string]string{},
+		dirty:  map[string][]string{},
+		exfil:  map[string]string{},
 	}
 }
 
@@ -63,18 +72,36 @@ func (f *fakeStore) MarkSolved(user, challenge, at string) (bool, error) {
 	return true, nil
 }
 
-func (f *fakeStore) RecentFiresMatching(user string, rules []string, _ float64, _ int) []string {
-	want := map[string]struct{}{}
-	for _, r := range rules {
-		want[r] = struct{}{}
+// DirtyRules mirrors the real store's persistent-taint read: whatever has
+// been recorded via MarkDirty (or seeded directly by a whitebox test) for
+// (user, challenge), with no time filtering whatsoever — the point of App-H2.
+func (f *fakeStore) DirtyRules(user, challenge string) []string {
+	got := f.dirty[key(user, challenge)]
+	if len(got) == 0 {
+		return nil
 	}
-	var out []string
-	for _, r := range f.forbidden[user] {
-		if _, ok := want[r]; ok {
-			out = append(out, r)
+	out := append([]string(nil), got...)
+	sort.Strings(out)
+	return out
+}
+
+// MarkDirty mirrors the real store's write: additive, idempotent per
+// (user, challenge, rule), no expiry.
+func (f *fakeStore) MarkDirty(user, challenge, rule, _ string) error {
+	if f.markDirtyErr != nil {
+		return f.markDirtyErr
+	}
+	if err := f.markDirtyErrFor[challenge]; err != nil {
+		return err
+	}
+	k := key(user, challenge)
+	for _, r := range f.dirty[k] {
+		if r == rule {
+			return nil // already recorded — idempotent
 		}
 	}
-	return out
+	f.dirty[k] = append(f.dirty[k], rule)
+	return nil
 }
 
 func (f *fakeStore) HasExfil(user, challenge, flag string) bool {
@@ -285,21 +312,209 @@ func TestSubmitEvade_UnknownAndNonEvade(t *testing.T) {
 
 func TestSubmitEvade_ForbiddenFired_NotSolved(t *testing.T) {
 	fs := newFakeStore()
-	fs.forbidden["alice"] = []string{"Read sensitive file untrusted"}
 	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
+	// Drive the taint through the real write path (MarkDirtyOnRuleFire), not a
+	// direct fake seed — this also exercises the catalog-driven fan-out.
+	if err := g.MarkDirtyOnRuleFire("alice", "Read sensitive file untrusted"); err != nil {
+		t.Fatal(err)
+	}
 
 	out, err := g.SubmitEvade("alice", "02-evade", "FALCO{ok}")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if out.Status != scoring.EvadeForbiddenFired {
-		t.Fatalf("forbidden fire must block, got %+v", out)
+		t.Fatalf("dirty pair must block, got %+v", out)
 	}
 	if len(out.Offending) != 1 || out.Offending[0] != "Read sensitive file untrusted" {
 		t.Fatalf("offending rules not surfaced: %+v", out.Offending)
 	}
 	if fs.markSolvedCalls != 0 {
-		t.Fatal("forbidden fire must not reach MarkSolved")
+		t.Fatal("dirty pair must not reach MarkSolved")
+	}
+}
+
+// TestSubmitEvade_DirtyStaysDirtyRegardlessOfClockAdvance is the App-H2
+// exploit-#1 regression at the Grader level (the HTTP-level twin lives in
+// server_test.go's TestSubmit_CorrectFlag_AfterWaiting_StaysDirty_NotSolved):
+// before the fix, evaluateClean re-derived "clean" from a windowSeconds
+// lookback against g.now(), so advancing the clock past the window always
+// cleared it. The dirty flag involves no clock at all — advancing the
+// Grader's injected clock by a full day must not budge the verdict.
+func TestSubmitEvade_DirtyStaysDirtyRegardlessOfClockAdvance(t *testing.T) {
+	fs := newFakeStore()
+	clock := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+	g := scoring.New(testCatalog(), fs, func() time.Time { return clock })
+	if err := g.MarkDirtyOnRuleFire("alice", "Read sensitive file untrusted"); err != nil {
+		t.Fatal(err)
+	}
+
+	clock = clock.Add(24 * time.Hour)
+	out, err := g.SubmitEvade("alice", "02-evade", "FALCO{ok}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != scoring.EvadeForbiddenFired {
+		t.Fatalf("App-H2 regression: waiting must never clear the dirty taint, got %+v", out)
+	}
+	if fs.markSolvedCalls != 0 {
+		t.Fatal("a still-dirty pair must never reach MarkSolved no matter how long it waited")
+	}
+}
+
+// --- App-H2: MarkDirtyOnRuleFire ---------------------------------------------
+
+// TestMarkDirtyOnRuleFire_TaintsOnlyMatchingEvadeChallenges proves the
+// catalog-driven fan-out mirrors EvaluateTrigger's: only evade-type
+// challenges whose forbiddenRules contain the fired rule are tainted. A
+// trigger challenge that EXPECTS the same rule name must be unaffected (it
+// has no dirty concept at all), and an unrelated rule must taint nothing.
+func TestMarkDirtyOnRuleFire_TaintsOnlyMatchingEvadeChallenges(t *testing.T) {
+	fs := newFakeStore()
+	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
+
+	if err := g.MarkDirtyOnRuleFire("alice", "Read sensitive file untrusted"); err != nil {
+		t.Fatal(err)
+	}
+	// 02-evade and 03-exfil both forbid this rule (testCatalog).
+	if len(fs.DirtyRules("alice", "02-evade")) == 0 {
+		t.Fatal("02-evade must be tainted")
+	}
+	if len(fs.DirtyRules("alice", "03-exfil")) == 0 {
+		t.Fatal("03-exfil must be tainted")
+	}
+	// 01-trigger EXPECTS this rule (not forbidden) — never tainted.
+	if got := fs.DirtyRules("alice", "01-trigger"); len(got) != 0 {
+		t.Fatalf("trigger challenge must never be tainted, got %v", got)
+	}
+
+	// An unrelated rule taints nothing, for anyone.
+	if err := g.MarkDirtyOnRuleFire("bob", "Some unrelated rule"); err != nil {
+		t.Fatal(err)
+	}
+	if got := fs.DirtyRules("bob", "02-evade"); len(got) != 0 {
+		t.Fatalf("non-matching rule must taint nothing, got %v", got)
+	}
+}
+
+// TestMarkDirtyOnRuleFire_IsIdempotent proves a repeat fire of the same rule
+// against the same (user, challenge) does not error and leaves the offending
+// set unchanged (the real store's PRIMARY KEY(user,challenge,rule) enforces
+// the same property — see store_test.go's TestMarkDirty_SetsAndAccumulatesRules).
+func TestMarkDirtyOnRuleFire_IsIdempotent(t *testing.T) {
+	fs := newFakeStore()
+	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
+
+	for i := 0; i < 3; i++ {
+		if err := g.MarkDirtyOnRuleFire("alice", "Read sensitive file untrusted"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := fs.DirtyRules("alice", "02-evade")
+	if len(got) != 1 || got[0] != "Read sensitive file untrusted" {
+		t.Fatalf("repeat fires of the same rule must not duplicate, got %v", got)
+	}
+}
+
+// TestMarkDirtyOnRuleFire_ContinueOnError mirrors
+// TestEvaluateTrigger_ContinueOnError: two evade challenges share a forbidden
+// rule; the first's MarkDirty errors but the second must still be tainted,
+// and the joined error must be non-nil (the ingest handler logs it — a
+// silently-swallowed error here would leave a false "clean" gap).
+func TestMarkDirtyOnRuleFire_ContinueOnError(t *testing.T) {
+	const rule = "Read sensitive file untrusted"
+	cat := catalog.Catalog{
+		"02a-evade": catalog.Challenge{ID: "02a-evade", Type: "evade", ForbiddenRules: []string{rule}, ExpectedFlag: "FALCO{a}"},
+		"02b-evade": catalog.Challenge{ID: "02b-evade", Type: "evade", ForbiddenRules: []string{rule}, ExpectedFlag: "FALCO{b}"},
+	}
+	fs := newFakeStore()
+	fs.markDirtyErrFor = map[string]error{"02a-evade": errors.New("boom")}
+	g := scoring.New(cat, fs, fixedClock(time.Now()))
+
+	err := g.MarkDirtyOnRuleFire("alice", rule)
+	if err == nil {
+		t.Fatal("the joined store error must be returned non-nil")
+	}
+	if got := fs.DirtyRules("alice", "02a-evade"); len(got) != 0 {
+		t.Fatalf("the failing challenge must not appear tainted, got %v", got)
+	}
+	if got := fs.DirtyRules("alice", "02b-evade"); len(got) != 1 {
+		t.Fatalf("the second challenge must still be tainted despite the first's error, got %v", got)
+	}
+}
+
+// TestDirtyFlag_SurvivesStoreRestart is the App-H2 exploit-#2 regression: the
+// most important negative test in this PR. It proves the persistent dirty
+// flag — unlike the old in-memory ruleFires window — survives a scoreboard
+// restart, using a REAL on-disk SQLite store (not fakeStore) rebuilt from
+// scratch exactly like store.Open does on every process boot (conventions I1:
+// single replica + Recreate strategy means this happens on every image bump /
+// node drain / OOM kill).
+//
+// Before the fix: a forbidden rule fire only lived in the in-memory
+// ruleFires map (store.RecentFiresMatching). A restart wiped that map to
+// empty, so the Sweeper's very next tick would see "no forbidden fire in the
+// window" and auto-solve every exfil-delivered pair — regardless of how noisy
+// the original attack was, and with ZERO participant action after the
+// restart. This test fails on the pre-fix gate (RecentFiresMatching) and
+// passes on the fix (DirtyRules), which is exactly the point.
+func TestDirtyFlag_SurvivesStoreRestart(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "scoreboard.db")
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cat := testCatalog()
+	at := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+	g := scoring.New(cat, st, fixedClock(at))
+
+	// The forbidden rule fires (dirties 02-evade AND 03-exfil, both of which
+	// forbid it in testCatalog), and the collector delivers the boss flag —
+	// exactly the state a real attacker-then-caught-then-restarted scoreboard
+	// would be in.
+	if err := g.MarkDirtyOnRuleFire("alice", "Read sensitive file untrusted"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.RecordExfil("alice", "03-exfil", "FALCO{boss}"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Sanity check while the process is still "up": dirty blocks the sweep.
+	if solved, err := g.Sweep(); err != nil || len(solved) != 0 {
+		t.Fatalf("dirty pair must not auto-solve pre-restart, got solved=%+v err=%v", solved, err)
+	}
+
+	// Simulate a scoreboard restart: close the store, reopen the SAME file
+	// (re-running loadFromDB, exactly like cmd/scoreboard/main.go on boot), and
+	// build a brand new Grader/clock — nothing carries over from the old
+	// process except what is on disk.
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	st2, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st2.Close()
+	g2 := scoring.New(cat, st2, fixedClock(at.Add(48*time.Hour))) // time also moved on; must not matter
+
+	solved, err := g2.Sweep()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(solved) != 0 {
+		t.Fatalf("App-H2 regression: the dirty flag did not survive a store restart — "+
+			"the sweeper auto-solved a still-tainted receipt: %+v", solved)
+	}
+
+	// And the manual submit path agrees (SAME shared evaluateClean gate).
+	out, err := g2.SubmitEvade("alice", "03-exfil", "FALCO{boss}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != scoring.EvadeForbiddenFired {
+		t.Fatalf("App-H2 regression: manual submit after restart must also see the pair as dirty, got %+v", out)
 	}
 }
 
@@ -508,11 +723,15 @@ func TestSweep_CleanWindow_Solves(t *testing.T) {
 	}
 }
 
-// (b) forbidden fired within the window → sweeper must NOT solve (fail-closed).
+// (b) dirty pair → sweeper must NOT solve (fail-closed), and — App-H2 — stays
+// blocked no matter how long it stays pending; only an explicit reset (never
+// the mere passage of time) clears it and lets a later sweep solve.
 func TestSweep_ForbiddenFired_NotSolved(t *testing.T) {
 	fs := newFakeStore()
-	fs.forbidden["alice"] = []string{"Read sensitive file untrusted"}
 	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
+	if err := g.MarkDirtyOnRuleFire("alice", "Read sensitive file untrusted"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := g.RecordExfil("alice", "03-exfil", "FALCO{boss}"); err != nil {
 		t.Fatal(err)
 	}
@@ -521,19 +740,30 @@ func TestSweep_ForbiddenFired_NotSolved(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(solved) != 0 {
-		t.Fatalf("forbidden fire in window must block auto-solve, got %+v", solved)
+		t.Fatalf("dirty pair must block auto-solve, got %+v", solved)
 	}
 	if fs.markSolvedCalls != 0 {
-		t.Fatal("forbidden fire must not reach MarkSolved")
+		t.Fatal("dirty pair must not reach MarkSolved")
 	}
-	// The pair stays pending so a later clean window still solves it.
-	fs.forbidden["alice"] = nil
+	// Merely re-sweeping (time passing, no reset) must NOT clear it — this is
+	// exactly the exploit App-H2 closes.
+	solved, err = g.Sweep()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(solved) != 0 {
+		t.Fatalf("App-H2 regression: re-sweeping without an explicit reset must not solve, got %+v", solved)
+	}
+	// Only an explicit reset (the store-level operation the participant's
+	// reset-dirty endpoint performs) clears the taint; the pair then solves on
+	// the next sweep.
+	delete(fs.dirty, key("alice", "03-exfil"))
 	solved, err = g.Sweep()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(solved) != 1 {
-		t.Fatalf("pair must still be pending and solve once clean, got %+v", solved)
+		t.Fatalf("pair must solve once explicitly reset and swept again, got %+v", solved)
 	}
 }
 

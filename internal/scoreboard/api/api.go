@@ -9,6 +9,7 @@
 //	GET  /api/users/{user}/journey
 //	POST /api/users/{user}/challenges/{cid}/steps/{idx}/check
 //	POST /api/users/{user}/challenges/{cid}/hints/{idx}
+//	POST /api/users/{user}/challenges/{cid}/reset-dirty
 //	POST /api/users/{user}/display-name
 //	GET  /api/hints
 //	POST /api/admin/hints
@@ -317,6 +318,12 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	// caller to protect against a fail-closed gate here.
 	mux.Handle("POST /api/users/{user}/challenges/{cid}/steps/{idx}/check", h.og(submitMW(http.HandlerFunc(h.stepCheck))))
 	mux.Handle("POST /api/users/{user}/challenges/{cid}/hints/{idx}", h.og(submitMW(http.HandlerFunc(h.openHint))))
+	// App-H2: the explicit, self-scoped escape hatch from the persistent evade
+	// dirty flag (internal/store MarkDirty/DirtyRules). Same trust model and
+	// route family as steps/check and hints/{idx} above — reached ONLY from the
+	// portal's Journey pane browser fetch, never from the collector's forward
+	// allowlist — so it is origin-guarded and self/admin-write gated the same way.
+	mux.Handle("POST /api/users/{user}/challenges/{cid}/reset-dirty", h.og(submitMW(http.HandlerFunc(h.resetDirty))))
 	dnMW := h.displayNameLimiter.Middleware(ratelimit.ClientIP)
 	// NOT wrapped by the origin guard (P23-2 follow-up). Unlike submit above,
 	// this route has only ONE caller: the collector's verbatim forward
@@ -653,7 +660,6 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "could not record solve"})
 		return
 	}
-	ch := h.cat[cid]
 	switch outcome.Status {
 	case scoring.EvadeWrongFlag:
 		metrics.SubmissionsTotal.WithLabelValues(cid, "wrong_flag").Inc()
@@ -665,10 +671,13 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"correct": true,
 			"evaded":  false,
+			// App-H2: this is now a PERSISTENT taint, not a recent-window
+			// warning — waiting does not help, unlike the old "wait Nds" copy.
 			"reason": fmt.Sprintf(
-				"flag is correct, but the forbidden rule(s) %v fired in the last %ds for user %q. "+
-					"Try again — wait %ds, then submit.",
-				outcome.Offending, ch.WindowSeconds, user, ch.WindowSeconds,
+				"flag is correct, but the forbidden rule(s) %v fired for user %q and this attempt "+
+					"is now marked dirty. Waiting will not clear it — redo the attack cleanly, then "+
+					"POST /api/users/%s/challenges/%s/reset-dirty before submitting again.",
+				outcome.Offending, user, user, cid,
 			),
 		})
 	case scoring.EvadeExfilRequired:
@@ -934,7 +943,10 @@ func (h *Handler) exfilInternal(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"received": true,
 		"user":     user,
-		"note":     "collector received the data. Now submit the flag (a clean 30s window is still required).",
+		// App-H2: no time window anymore — "clean" means no forbidden rule has
+		// EVER fired for this pair since the last explicit reset.
+		"note": "collector received the data. Now submit the flag (the run must still be clean — " +
+			"no forbidden rule may have fired since your last reset).",
 	})
 }
 
@@ -1059,6 +1071,57 @@ func (h *Handler) openHint(w http.ResponseWriter, r *http.Request) {
 		"total": len(j.Hints),
 		"newly": newly,
 	})
+}
+
+// --- App-H2 evade dirty-flag reset ------------------------------------------
+
+// resetDirty is the ONLY way to clear the persistent evade dirty flag
+// (store.ResetDirty) for {cid} — there is no time-based path (App-H2: waiting
+// never clears it, see scoring.evaluateClean). A participant calls this after
+// noticing a forbidden Falco rule fired on a run (submit will report
+// EvadeForbiddenFired with the offending rule names) and redoing the attack
+// cleanly.
+//
+// Idempotent: resetting an already-clean pair is a harmless no-op (200, no
+// prior dirty rules). Validates the challenge exists and is evade-type (a
+// dirty flag can only ever exist for an evade challenge — MarkDirtyOnRuleFire
+// only writes for ch.Type=="evade" — so rejecting other types here is a
+// guard against a confusing 200-that-does-nothing, matching /submit's own
+// pre-body type guard).
+//
+// Auth: self-or-admin WRITE gate (selfOrAdminWrite, same as stepCheck /
+// openHint / setDisplayName) — over the auth-proxied journey/admin host a
+// participant may only reset their OWN {user}'s taint; an admin may reset
+// any. Over the cluster-internal path (no auth header) the legacy
+// claimed-identity model applies, matching the other /api/users/{user}/*
+// writes.
+func (h *Handler) resetDirty(w http.ResponseWriter, r *http.Request) {
+	user := strings.TrimSpace(r.PathValue("user"))
+	cid := r.PathValue("cid")
+	if !validUser.MatchString(user) {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
+		return
+	}
+	if !h.selfOrAdminWrite(w, r, user) {
+		return
+	}
+	ch, ok := h.cat[cid]
+	if !ok {
+		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"error": "unknown challenge: " + cid})
+		return
+	}
+	if ch.Type != "evade" {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": cid + " is not an evade challenge"})
+		return
+	}
+
+	if err := h.store.ResetDirty(user, cid); err != nil {
+		h.logger.Error("reset dirty", "err", err, "user", user, "cid", cid)
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "could not reset"})
+		return
+	}
+	h.logger.Info("dirty_reset", "user", user, "cid", cid, "remote_addr", r.RemoteAddr)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "user": user, "cid": cid, "dirty": false})
 }
 
 // --- /api/users/{user}/display-name ----------------------------------------

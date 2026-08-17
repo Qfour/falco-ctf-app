@@ -324,3 +324,133 @@ func TestPendingExfilSolves(t *testing.T) {
 		t.Fatalf("solved pair must drop out; got %+v", pending)
 	}
 }
+
+// --- App-H2: persistent evade dirty flag ------------------------------------
+
+// TestDirtyRules_EmptyByDefault proves a never-touched (user, challenge) pair
+// reports clean (nil/empty), matching the "false" initial value the accept
+// criteria requires.
+func TestDirtyRules_EmptyByDefault(t *testing.T) {
+	s := newStore(t)
+	if got := s.DirtyRules("alice", "02-evade"); len(got) != 0 {
+		t.Fatalf("untouched pair must report clean, got %v", got)
+	}
+}
+
+// TestMarkDirty_SetsAndAccumulatesRules proves MarkDirty is additive: a second
+// distinct forbidden rule adds to the offending set rather than replacing it,
+// and re-marking the SAME rule is a no-op (idempotent per (user, challenge,
+// rule) — the DB's PRIMARY KEY enforces this).
+func TestMarkDirty_SetsAndAccumulatesRules(t *testing.T) {
+	s := newStore(t)
+	if err := s.MarkDirty("alice", "02-evade", "Rule A", "2026-05-11T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.DirtyRules("alice", "02-evade"); len(got) != 1 || got[0] != "Rule A" {
+		t.Fatalf("want [Rule A], got %v", got)
+	}
+	if err := s.MarkDirty("alice", "02-evade", "Rule B", "2026-05-11T00:00:01Z"); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.DirtyRules("alice", "02-evade"); len(got) != 2 || got[0] != "Rule A" || got[1] != "Rule B" {
+		t.Fatalf("want sorted [Rule A, Rule B], got %v", got)
+	}
+	// Re-marking the same rule must not duplicate or error.
+	if err := s.MarkDirty("alice", "02-evade", "Rule A", "2026-05-11T00:00:02Z"); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.DirtyRules("alice", "02-evade"); len(got) != 2 {
+		t.Fatalf("re-marking an existing rule must not duplicate, got %v", got)
+	}
+}
+
+// TestMarkDirty_ScopedPerUserAndChallenge proves the taint does not leak
+// across users or across challenges for the same user — a fairness property
+// as important as the taint itself (a bystander must never be blocked by
+// another participant's forbidden fire, and one challenge's taint must not
+// bleed into a sibling challenge that happens to share the same rule name in
+// its own forbiddenRules).
+func TestMarkDirty_ScopedPerUserAndChallenge(t *testing.T) {
+	s := newStore(t)
+	if err := s.MarkDirty("alice", "02-evade", "Rule A", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.DirtyRules("bob", "02-evade"); len(got) != 0 {
+		t.Fatalf("bob must not inherit alice's taint, got %v", got)
+	}
+	if got := s.DirtyRules("alice", "03-boss"); len(got) != 0 {
+		t.Fatalf("a different challenge for the same user must stay clean, got %v", got)
+	}
+}
+
+// TestResetDirty_ClearsAndIsIdempotent proves ResetDirty is the ONLY way back
+// to clean, and that resetting twice (or resetting an already-clean pair) is
+// a harmless no-op rather than an error.
+func TestResetDirty_ClearsAndIsIdempotent(t *testing.T) {
+	s := newStore(t)
+	if err := s.MarkDirty("alice", "02-evade", "Rule A", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ResetDirty("alice", "02-evade"); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.DirtyRules("alice", "02-evade"); len(got) != 0 {
+		t.Fatalf("reset must clear the taint, got %v", got)
+	}
+	// Idempotent: resetting an already-clean pair is a no-op, not an error.
+	if err := s.ResetDirty("alice", "02-evade"); err != nil {
+		t.Fatalf("reset of an already-clean pair must not error: %v", err)
+	}
+}
+
+// TestDirtyFlag_SurvivesReopen is the store-level half of the App-H2
+// restart regression (the scoring-level half, which also exercises the
+// Sweeper, lives in scoring_test.go's TestDirtyFlag_SurvivesStoreRestart).
+// Before this fix the equivalent fact (RecentFiresMatching's in-memory
+// ruleFires) was wiped on every scoreboard restart (I1: single replica +
+// Recreate strategy). This proves the persisted dirty flag survives a
+// Close+re-Open on the SAME file — the exact sequence store.Open runs on
+// every process boot.
+func TestDirtyFlag_SurvivesReopen(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "scoreboard.db")
+
+	s1, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s1.MarkDirty("alice", "02-evade", "Read sensitive file untrusted", "2026-05-11T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s1.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s2, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer s2.Close()
+	got := s2.DirtyRules("alice", "02-evade")
+	if len(got) != 1 || got[0] != "Read sensitive file untrusted" {
+		t.Fatalf("App-H2 regression: dirty flag did not survive a store restart, got %v", got)
+	}
+}
+
+// TestReset_ClearsDirtyFlags proves the admin bulk Reset() (fresh-start /
+// demo-run wipe) also clears evade_dirty — consistent with it already
+// clearing solved/exfil/hint_views/step_checks. A leftover dirty row after an
+// admin reset would otherwise permanently lock a challenge for a user who
+// never got a chance to redo it in the new run.
+func TestReset_ClearsDirtyFlags(t *testing.T) {
+	s := newStore(t)
+	if err := s.MarkDirty("alice", "02-evade", "Rule A", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.DirtyRules("alice", "02-evade"); len(got) != 0 {
+		t.Fatalf("admin Reset must clear dirty flags too, got %v", got)
+	}
+}

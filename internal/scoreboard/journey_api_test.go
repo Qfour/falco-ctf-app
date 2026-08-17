@@ -913,6 +913,82 @@ func TestJourneyWriteGate_DisplayName(t *testing.T) {
 	}
 }
 
+// TestJourneyWriteGate_ResetDirty_HeaderPresent mirrors StepCheck (App-H2):
+// self may reset own dirty taint, a third party is 403 and does NOT clear it,
+// and admin may reset anyone's. 02-evade is this fixture's evade-type
+// challenge (ForbiddenRules: ["Recon Rule"]).
+func TestJourneyWriteGate_ResetDirty_HeaderPresent(t *testing.T) {
+	f := newJourneyFixture(t, scoreboard.WithAdminEmails([]string{"root@ctf.local"}))
+	const target = "/api/users/alice/challenges/02-evade/reset-dirty"
+
+	// Seed a taint directly (as MarkDirtyOnRuleFire would on a forbidden Falco
+	// fire), so the writes below have a real taint to (fail to) clear.
+	if err := f.st.MarkDirty("alice", "02-evade", "Recon Rule", "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+
+	// other participant → 403, and the denied write must not clear the taint.
+	if w := f.reqAs("POST", target, "mallory@ctf.local", nil); w.Code != http.StatusForbidden {
+		t.Fatalf("cross-user reset-dirty must 403, got %d body=%s", w.Code, w.Body)
+	}
+	if got := f.st.DirtyRules("alice", "02-evade"); len(got) == 0 {
+		t.Fatalf("a denied cross-user reset must not have cleared the taint: %v", got)
+	}
+
+	// self → allowed, clears the taint.
+	if w := f.reqAs("POST", target, "alice@ctf.local", nil); w.Code != http.StatusOK {
+		t.Fatalf("self reset-dirty must 200, got %d body=%s", w.Code, w.Body)
+	}
+	if got := f.st.DirtyRules("alice", "02-evade"); len(got) != 0 {
+		t.Fatalf("self reset-dirty must clear the taint, still dirty: %v", got)
+	}
+
+	// re-dirty, then prove admin may reset anyone's.
+	if err := f.st.MarkDirty("alice", "02-evade", "Recon Rule", "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	if w := f.reqAs("POST", target, "root@ctf.local", nil); w.Code != http.StatusOK {
+		t.Fatalf("admin reset-dirty must 200, got %d body=%s", w.Code, w.Body)
+	}
+	if got := f.st.DirtyRules("alice", "02-evade"); len(got) != 0 {
+		t.Fatalf("admin reset-dirty must clear the taint, still dirty: %v", got)
+	}
+}
+
+// TestJourneyWriteGate_ResetDirty_NoHeader proves the collector/workspace
+// case: with no auth header the claimed-identity model still applies (allow).
+func TestJourneyWriteGate_ResetDirty_NoHeader(t *testing.T) {
+	f := newJourneyFixture(t)
+	if err := f.st.MarkDirty("alice", "02-evade", "Recon Rule", "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	if w := f.req("POST", "/api/users/alice/challenges/02-evade/reset-dirty", nil); w.Code != http.StatusOK {
+		t.Fatalf("header-less reset-dirty must 200 (collector path), got %d body=%s", w.Code, w.Body)
+	}
+	if got := f.st.DirtyRules("alice", "02-evade"); len(got) != 0 {
+		t.Fatalf("header-less reset-dirty must still clear the taint, still dirty: %v", got)
+	}
+}
+
+// TestResetDirty_NonEvadeChallenge_Rejected proves the type guard: a dirty
+// flag can only ever exist for an evade challenge (MarkDirtyOnRuleFire only
+// writes ch.Type=="evade" pairs), so resetting a trigger challenge is
+// rejected rather than silently no-op'd.
+func TestResetDirty_NonEvadeChallenge_Rejected(t *testing.T) {
+	f := newJourneyFixture(t)
+	if w := f.req("POST", "/api/users/alice/challenges/01-recon/reset-dirty", nil); w.Code != http.StatusBadRequest {
+		t.Fatalf("reset-dirty on a non-evade challenge must 400, got %d body=%s", w.Code, w.Body)
+	}
+}
+
+// TestResetDirty_UnknownChallenge_404 proves the pre-write catalog guard.
+func TestResetDirty_UnknownChallenge_404(t *testing.T) {
+	f := newJourneyFixture(t)
+	if w := f.req("POST", "/api/users/alice/challenges/nope/reset-dirty", nil); w.Code != http.StatusNotFound {
+		t.Fatalf("reset-dirty on an unknown challenge must 404, got %d body=%s", w.Code, w.Body)
+	}
+}
+
 // NOTE: TestJourneyHTML_ServedAtJourney (asserted GET /journey served the
 // legacy journey.html shell) was REMOVED in P19-2b — that route no longer
 // exists (see internal/scoreboard/view/view.go's package doc). The

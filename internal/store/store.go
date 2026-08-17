@@ -9,12 +9,29 @@
 //     Journey UI: per-participant hint reveals (progressive hint gating).
 //     Mission `steps` are info-only (no per-step auto-detect / persistence) —
 //     the CLEARED verdict stays with solve (trigger fire / evade flag).
+//   - evade_dirty (user, challenge, rule, at)      PRIMARY KEY (user, challenge, rule)
+//     App-H2: the evade solve gate's forbidden-rule taint. A row's mere
+//     EXISTENCE means (user, challenge) is dirty — there is no expiry, no
+//     windowSeconds lookback, and no "clean again after N seconds". Once any
+//     of a challenge's forbiddenRules fires for a user (MarkDirty), the pair
+//     stays dirty FOREVER until the participant calls the explicit reset
+//     endpoint (ResetDirty). This is deliberately persisted (not in-memory
+//     like ruleFires below): the old in-memory-only windowing was the root
+//     cause of two exploits — (1) fire-then-wait-past-the-window always
+//     solves, and (2) a scoreboard restart (I1: single replica, Recreate
+//     strategy — happens on every image bump / node drain / OOM) wipes the
+//     in-memory fire history and auto-solves every exfil-delivered-but-dirty
+//     pair within one Sweeper tick. Persisting the taint (not just the raw
+//     fire) closes both: waiting can never clear a persisted row, and a
+//     restart reloads it from disk exactly like `solved` and `exfil` do.
 //
 // In-memory only (reset on pod restart):
 //   - eventsPerUser: dashboard counter. Not used for scoring.
-//   - ruleFires per user: bounded to the last 5 minutes per user.
-//     Evade windowing is briefly less strict after a restart until
-//     events flow again.
+//   - ruleFires per user: bounded to the last 5 minutes per user. Presentational
+//     only (Journey UI "you just triggered X" feed / trigger-challenge live
+//     status) — it never gates a solve. The evade forbidden-rule gate reads
+//     evade_dirty (above), not this map, so a restart cannot resurrect the old
+//     wait-it-out or restart-auto-solve exploits via this map going empty.
 //
 // All state mutations go through methods on Store and are guarded by a
 // single mutex. Concurrent reads use the same mutex — fine for the
@@ -56,6 +73,10 @@ type Store struct {
 	hintReleased  map[hintKey]bool      // (mission,hint) operator-released to participants
 	hintViews     map[hintViewKey]bool  // (user,challenge,hintIdx) participant-revealed
 	stepChecks    map[stepCheckKey]bool // (user,challenge,stepIdx) participant self-checked
+	// dirtyRules mirrors the evade_dirty table: (user,challenge) -> set of
+	// forbidden rule names that have fired (App-H2). Non-empty set == dirty.
+	// Never cleared by time; only ResetDirty removes an entry.
+	dirtyRules map[SolveKey]map[string]struct{}
 }
 
 // stepCheckKey identifies one step of one challenge that a specific participant
@@ -139,6 +160,13 @@ func Open(path string) (*Store, error) {
           at        TEXT NOT NULL,
           PRIMARY KEY (user, challenge, step_idx)
         );
+        CREATE TABLE IF NOT EXISTS evade_dirty (
+          user      TEXT NOT NULL,
+          challenge TEXT NOT NULL,
+          rule      TEXT NOT NULL,
+          at        TEXT NOT NULL,
+          PRIMARY KEY (user, challenge, rule)
+        );
         DROP TABLE IF EXISTS events_per_user;
     `); err != nil {
 		db.Close()
@@ -155,6 +183,7 @@ func Open(path string) (*Store, error) {
 		hintReleased:  make(map[hintKey]bool),
 		hintViews:     make(map[hintViewKey]bool),
 		stepChecks:    make(map[stepCheckKey]bool),
+		dirtyRules:    make(map[SolveKey]map[string]struct{}),
 	}
 	if err := s.loadFromDB(); err != nil {
 		db.Close()
@@ -256,15 +285,36 @@ func (s *Store) loadFromDB() error {
 	if err != nil {
 		return err
 	}
-	defer sc.Close()
 	for sc.Next() {
 		var k stepCheckKey
 		if err := sc.Scan(&k.User, &k.Challenge, &k.StepIdx); err != nil {
+			sc.Close()
 			return err
 		}
 		s.stepChecks[k] = true
 	}
-	return sc.Err()
+	sc.Close()
+	if err := sc.Err(); err != nil {
+		return err
+	}
+
+	dr, err := s.db.Query("SELECT user, challenge, rule FROM evade_dirty")
+	if err != nil {
+		return err
+	}
+	defer dr.Close()
+	for dr.Next() {
+		var k SolveKey
+		var rule string
+		if err := dr.Scan(&k.User, &k.Challenge, &rule); err != nil {
+			return err
+		}
+		if s.dirtyRules[k] == nil {
+			s.dirtyRules[k] = make(map[string]struct{})
+		}
+		s.dirtyRules[k][rule] = struct{}{}
+	}
+	return dr.Err()
 }
 
 // ReleaseHint marks (mission, hint) as released to participants, or revokes it
@@ -617,6 +667,77 @@ func (s *Store) RecentFiresMatching(user string, rules []string, now float64, wi
 	return out
 }
 
+// MarkDirty records that `rule` (one of a challenge's forbiddenRules) fired
+// for `user` against `challenge` (App-H2). Persists immediately to SQLite —
+// NOT a windowed/in-memory fact — so the taint survives a scoreboard restart
+// (conventions I1: single replica, Recreate strategy) exactly like `solved`
+// and `exfil` do. Idempotent per (user, challenge, rule): a repeat fire of the
+// same rule is a no-op (INSERT OR IGNORE), so `at` only ever reflects the
+// FIRST time this specific rule dirtied this pair.
+//
+// There is deliberately no time parameter driving expiry and no companion
+// "clear after N seconds" — DirtyRules below reports this pair dirty until
+// ResetDirty explicitly deletes the row(s). Called by
+// scoring.Grader.MarkDirtyOnRuleFire, which is the only place that decides
+// WHICH challenges a given rule taints (catalog.ForbiddenRules is the
+// authority); this method has no catalog awareness and simply records what
+// it is told.
+func (s *Store) MarkDirty(user, challenge, rule, at string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := s.db.Exec(
+		`INSERT OR IGNORE INTO evade_dirty (user, challenge, rule, at) VALUES (?, ?, ?, ?)`,
+		user, challenge, rule, at,
+	); err != nil {
+		return err
+	}
+	key := SolveKey{User: user, Challenge: challenge}
+	if s.dirtyRules[key] == nil {
+		s.dirtyRules[key] = make(map[string]struct{})
+	}
+	s.dirtyRules[key][rule] = struct{}{}
+	return nil
+}
+
+// DirtyRules returns the sorted, deduplicated set of forbidden rule names that
+// have ever fired for (user, challenge) since the last ResetDirty. An empty
+// (nil) slice means clean. This is a pure read-only projection over persisted
+// state — never derived from a time window — so it gives the identical answer
+// immediately after a restart as it did right before one (the App-H2 fix: see
+// the package doc's evade_dirty note for why that property matters).
+func (s *Store) DirtyRules(user, challenge string) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	set := s.dirtyRules[SolveKey{User: user, Challenge: challenge}]
+	if len(set) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(set))
+	for r := range set {
+		out = append(out, r)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ResetDirty is the ONLY way (user, challenge) returns to clean — there is no
+// time-based path. Called from the participant self-service reset endpoint
+// (self-or-admin gated at the API layer, conventions I8) after the
+// participant redoes the attack cleanly. Idempotent: resetting an
+// already-clean pair is a harmless no-op.
+func (s *Store) ResetDirty(user, challenge string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := s.db.Exec(
+		"DELETE FROM evade_dirty WHERE user = ? AND challenge = ?",
+		user, challenge,
+	); err != nil {
+		return err
+	}
+	delete(s.dirtyRules, SolveKey{User: user, Challenge: challenge})
+	return nil
+}
+
 // Snapshot returns a deep-copied view of persisted state. Used by /api/state
 // to build the dashboard JSON without holding the lock during serialization.
 type Snapshot struct {
@@ -672,6 +793,9 @@ func (s *Store) Reset() (clearedSolves int, err error) {
 	if _, err := s.db.Exec("DELETE FROM step_checks"); err != nil {
 		return 0, fmt.Errorf("reset step_checks: %w", err)
 	}
+	if _, err := s.db.Exec("DELETE FROM evade_dirty"); err != nil {
+		return 0, fmt.Errorf("reset evade_dirty: %w", err)
+	}
 	clearedSolves = len(s.solved)
 	s.solved = make(map[SolveKey]string)
 	s.exfil = make(map[SolveKey]string)
@@ -679,5 +803,6 @@ func (s *Store) Reset() (clearedSolves int, err error) {
 	s.ruleFires = make(map[string][]ruleFire)
 	s.hintViews = make(map[hintViewKey]bool)
 	s.stepChecks = make(map[stepCheckKey]bool)
+	s.dirtyRules = make(map[SolveKey]map[string]struct{})
 	return clearedSolves, nil
 }

@@ -23,10 +23,24 @@
 //
 // Auto-solve (P16): a store-backed Sweeper periodically re-derives the set of
 // exfil-delivered-but-unsolved (user, challenge) pairs and runs each through the
-// exact same clean-window + exfil gate the manual /submit path uses (the shared
+// exact same clean-taint + exfil gate the manual /submit path uses (the shared
 // evaluateClean helper). Because the verdict is re-derived from the store on
 // every tick, it survives a scoreboard restart (conventions I1: single replica,
 // no in-memory pending timers to lose).
+//
+// App-H2 (persistent dirty flag): the evade "clean" gate used to be a
+// windowSeconds lookback over an in-memory rule-fire history
+// (store.RecentFiresMatching). That had two exploitable holes: (1) firing a
+// forbidden rule once and then simply waiting past the window always solved —
+// the window measured recency, not "ever fired since last reset" — and (2)
+// the in-memory history reset to empty on every scoreboard restart (I1:
+// single replica + Recreate strategy — image bumps, node drains, OOM kills),
+// which auto-solved every exfil-delivered pair within one Sweeper tick
+// regardless of how noisy the attack had been. The gate now reads a
+// persistent per-(user,challenge) dirty flag (store.DirtyRules /
+// MarkDirtyOnRuleFire / ResetDirty): once ANY forbidden rule fires it stays
+// dirty across any amount of waiting AND across restarts, and only the
+// participant's explicit reset endpoint clears it.
 package scoring
 
 import (
@@ -49,19 +63,23 @@ import (
 // behaviour-preserving:
 //   - MarkSolved is idempotent (first solve wins) and reports whether the solve
 //     was newly recorded.
-//   - RecentFiresMatching returns the subset of the given rules that fired for
-//     the user within windowSeconds of now (unix seconds). The Grader passes
-//     the challenge's forbiddenRules, so empty = clean window.
+//   - DirtyRules / MarkDirty are the App-H2 persistent taint: DirtyRules
+//     returns the (possibly empty) set of forbidden rules that have fired for
+//     (user, challenge) since the last reset — empty means clean, non-empty
+//     blocks the solve regardless of how long ago the fire was. MarkDirty
+//     records one forbidden-rule fire against one (user, challenge) pair;
+//     idempotent per (user, challenge, rule).
 //   - HasExfil reports whether the user delivered exactly this flag to the
 //     collector for this challenge.
 type ScoreStore interface {
 	MarkSolved(user, challenge, at string) (newly bool, err error)
-	RecentFiresMatching(user string, rules []string, now float64, windowSeconds int) []string
+	DirtyRules(user, challenge string) []string
+	MarkDirty(user, challenge, rule, at string) error
 	HasExfil(user, challenge, flag string) bool
 	RecordExfil(user, challenge, flag, at string) error
 	// PendingExfilSolves enumerates every recorded collector receipt whose
 	// (user, challenge) pair is not yet solved. It is the sweeper's work queue;
-	// the Grader re-applies the RequireExfil / evade-type / clean-window / exact
+	// the Grader re-applies the RequireExfil / evade-type / dirty-flag / exact
 	// -flag gates before solving (see Sweep). Kept on the same port so the
 	// concrete *store.Store satisfies it and tests can drive a fake queue.
 	PendingExfilSolves() []store.ExfilReceipt
@@ -194,6 +212,41 @@ func (g *Grader) EvaluateTrigger(user, rule string) ([]TriggerResult, error) {
 	return results, errors.Join(errs...)
 }
 
+// MarkDirtyOnRuleFire applies a single Falco rule fire to every evade-type
+// challenge whose forbiddenRules contain `rule`, persisting a dirty taint for
+// each (App-H2). It is the evade-side mirror of EvaluateTrigger: same
+// iterate-catalog-in-order structure, but instead of solving a challenge it
+// permanently taints one — the counterpart write that makes evaluateClean's
+// gate 4 (store.DirtyRules) mean something. Called once per Falco event by the
+// ingest handler, alongside (not instead of) EvaluateTrigger, since a single
+// rule name can be simultaneously a trigger challenge's expectedRule and an
+// evade challenge's forbiddenRule (independent catalog entries).
+//
+// Store errors are continue-on-error, exactly like EvaluateTrigger: one
+// challenge's transient DB error must not suppress the dirty mark for the
+// others. `rule` fired in the real world regardless of whether the write
+// succeeds, so a caller that swallowed the joined error here would leave a
+// FALSE "clean" gap for the failing challenge — the ingest handler logs the
+// joined error precisely so that gap is visible operationally rather than
+// silent.
+func (g *Grader) MarkDirtyOnRuleFire(user, rule string) error {
+	var errs []error
+	at := g.now().UTC().Format(time.RFC3339Nano)
+	for _, cid := range g.cat.IDs() {
+		ch := g.cat[cid]
+		if ch.Type != "evade" {
+			continue
+		}
+		if !slices.Contains(ch.ForbiddenRules, rule) {
+			continue
+		}
+		if err := g.store.MarkDirty(user, cid, rule, at); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // EvadeStatus enumerates the outcome of an evade-challenge submission. The
 // handler maps each value to the same HTTP response shape it produced inline
 // before the extraction.
@@ -206,11 +259,13 @@ const (
 	EvadeNotEvadeType
 	// EvadeWrongFlag: the submitted flag does not match expectedFlag.
 	EvadeWrongFlag
-	// EvadeForbiddenFired: flag correct, but a forbidden rule fired inside the
-	// window (offending rules populated).
+	// EvadeForbiddenFired: flag correct, but the challenge is dirty — one or
+	// more forbidden rules have fired since the last reset (offending rules
+	// populated). Persistent (App-H2): no amount of waiting clears this: only
+	// the explicit reset endpoint does.
 	EvadeForbiddenFired
-	// EvadeExfilRequired: flag correct + window clean, but the challenge
-	// requires exfil and the collector has not received the matching flag.
+	// EvadeExfilRequired: flag correct + not dirty, but the challenge requires
+	// exfil and the collector has not received the matching flag.
 	EvadeExfilRequired
 	// EvadeSolved: all gates passed; the solve was recorded (Newly reports
 	// whether it was the first time).
@@ -219,11 +274,13 @@ const (
 
 // EvadeOutcome is the full result of SubmitEvade. Only the fields relevant to
 // Status are populated:
-//   - EvadeForbiddenFired: Offending holds the sorted forbidden rules.
+//   - EvadeForbiddenFired: Offending holds the sorted set of forbidden rules
+//     that have EVER fired for this (user, challenge) since the last reset
+//     (App-H2's persistent dirty flag — not a recent-window snapshot).
 //   - EvadeSolved: Newly reports whether this was the first solve.
 type EvadeOutcome struct {
 	Status    EvadeStatus
-	Offending []string // forbidden rules that fired (EvadeForbiddenFired only)
+	Offending []string // dirtying forbidden rules (EvadeForbiddenFired only)
 	Newly     bool     // first-time solve (EvadeSolved only)
 }
 
@@ -233,10 +290,12 @@ type EvadeOutcome struct {
 //  1. challenge exists (else EvadeUnknownChallenge)
 //  2. challenge is evade type (else EvadeNotEvadeType)
 //  3. flag matches expectedFlag (else EvadeWrongFlag)
-//  4. no forbidden rule fired within windowSeconds of server now (else
-//     EvadeForbiddenFired) — the window is evaluated against server time and
-//     never references attacker-supplied time: now derives from g.now(), not
-//     from any event field.
+//  4. the challenge is not dirty — no forbidden rule has EVER fired for this
+//     (user, challenge) since the last explicit reset (else
+//     EvadeForbiddenFired). App-H2: this is a persistent taint, not a
+//     recent-window check — there is no server time involved in the decision
+//     at all (contrast the pre-fix version, which read RecentFiresMatching
+//     against g.now()).
 //  5. if RequireExfil, the collector has the matching flag (else
 //     EvadeExfilRequired)
 //  6. record the solve → EvadeSolved.
@@ -255,31 +314,32 @@ func (g *Grader) SubmitEvade(user, cid, flag string) (EvadeOutcome, error) {
 	if flag != ch.ExpectedFlag {
 		return EvadeOutcome{Status: EvadeWrongFlag}, nil
 	}
-	// Gates 4-6 (forbidden window → exfil gate → MarkSolved) are the *single
-	// source of truth* shared with the auto-solve sweeper (evaluateClean). Any
-	// change to the clean-window / exfil / record logic must be made there so
-	// manual submit and sweeper stay bit-for-bit identical.
+	// Gates 4-6 (dirty-flag → exfil gate → MarkSolved) are the *single source
+	// of truth* shared with the auto-solve sweeper (evaluateClean). Any change
+	// to the taint / exfil / record logic must be made there so manual submit
+	// and sweeper stay bit-for-bit identical.
 	return g.evaluateClean(user, ch, flag)
 }
 
-// evaluateClean applies the evade challenge's clean-window + exfil gate and
+// evaluateClean applies the evade challenge's dirty-flag + exfil gate and
 // records the solve. It is the ONE place gates 4-6 live, shared verbatim by the
 // manual /submit path (SubmitEvade) and the auto-solve Sweeper (Sweep). Callers
 // must have already established (per SubmitEvade's gates 1-3): the challenge
 // exists, is evade type, and `flag` equals ch.ExpectedFlag.
 //
-//  4. no forbidden rule fired within windowSeconds of server now() — the window
-//     is evaluated against g.now(), NEVER attacker-supplied event time.
+//  4. the pair is not dirty (store.DirtyRules empty) — App-H2: a PERSISTENT
+//     taint, not a time window. g.now() plays no part in this decision at
+//     all, so there is nothing here for an attacker-supplied or
+//     server-advancing clock to influence.
 //  5. if RequireExfil, the collector holds the matching flag (HasExfil).
 //  6. record the solve → EvadeSolved (Newly = first-time).
 //
 // Fail-closed: any store error from MarkSolved is returned unrecorded; a
-// non-clean window or unmet exfil returns the corresponding non-solved status,
-// so a caller that mis-drives this (e.g. the sweeper enqueuing a not-yet-clean
-// pair) simply does not solve — it never records a solve it should not.
+// dirty pair or unmet exfil returns the corresponding non-solved status, so a
+// caller that mis-drives this (e.g. the sweeper enqueuing a still-dirty pair)
+// simply does not solve — it never records a solve it should not.
 func (g *Grader) evaluateClean(user string, ch catalog.Challenge, flag string) (EvadeOutcome, error) {
-	now := float64(g.now().Unix())
-	offending := g.store.RecentFiresMatching(user, ch.ForbiddenRules, now, ch.WindowSeconds)
+	offending := g.store.DirtyRules(user, ch.ID)
 	if len(offending) > 0 {
 		return EvadeOutcome{Status: EvadeForbiddenFired, Offending: offending}, nil
 	}
@@ -472,12 +532,13 @@ type SweepResult struct {
 // SAME gates as manual submit: the challenge must still be evade type with
 // RequireExfil set (catalog is the authority — a receipt for a since-changed
 // challenge is skipped), the delivered flag must equal ch.ExpectedFlag, and
-// then the shared evaluateClean gate (clean window → HasExfil → MarkSolved)
+// then the shared evaluateClean gate (dirty-flag check → HasExfil → MarkSolved)
 // must pass. Only pairs that clear every gate are solved this tick.
 //
 // Fail-closed by construction:
-//   - a not-yet-clean window returns EvadeForbiddenFired → not solved (retried
-//     next tick, since the pair stays pending);
+//   - a dirty pair returns EvadeForbiddenFired → not solved (retried next
+//     tick — and stays not-solved forever unless the participant explicitly
+//     resets the taint, App-H2);
 //   - an exfil value that does not match the expected flag returns
 //     EvadeWrongFlag / EvadeExfilRequired → never solved (the wrong receipt can
 //     never satisfy HasExfil for the real flag);
