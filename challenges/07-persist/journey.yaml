@@ -23,13 +23,11 @@ hints:
   - 「書いてから実行」の両方が要る。元から在る /bin/ls の実行では発火しない。/tmp のような書込可能な場所に自分のファイルを作って動かしてみよう。
   - |
     想定解:
-    cat > /tmp/httpd <<'EOF'
-    #!/bin/sh
-    /bin/sh -c "echo 'WEB RCE Test'"
-    EOF
+    cp /bin/busybox /tmp/httpd    # image に無い ELF を upper layer に drop
     chmod +x /tmp/httpd
-    exec /tmp/httpd
+    exec /tmp/httpd --help        # 新規バイナリの実行 → is_exe_upper_layer=true で発火
     drop+実行の両方が揃うと Drop and execute new binary in container が発火する、という教訓が Mission 10 で効く。
+    （シェルスクリプトを exec すると判定対象が interpreter=base image になり発火しないので、実 ELF を置くのがコツ）
 bridge: >-
   backdoor は据えた。あとは「好きな時に戻ってくる」ための通り道が要る。
   古典の reverse shell を貼って、こちらの C2 サーバへビーコンを飛ばす。
