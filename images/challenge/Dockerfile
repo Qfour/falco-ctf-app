@@ -62,9 +62,9 @@ RUN { echo '# EVADE 課題で読み取ったフラグを記入し、submit-yaml 
         fi; \
       done; } > /opt/ctf/answers.yaml
 
-# Greet on login. banner.sh builds the docs/scoreboard URLs from
-# $FALCO_CTF_DNS_SUFFIX (set by the ctf-user chart) so the same image serves
-# local + prod. Docs (briefs/hints/PDF) live on the docs site, not in-terminal.
+# Greet on login. Briefing/hints/flag submission all happen in the Story tab
+# (portal), not in-terminal, so banner.sh is intentionally minimal
+# (display-name change only).
 RUN echo 'sh /opt/ctf/banner.sh 2>/dev/null' >> /etc/profile
 
 # Default sleep keeps the container alive; ttyd reaches it via kubectl exec.

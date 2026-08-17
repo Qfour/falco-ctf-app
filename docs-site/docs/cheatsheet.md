@@ -21,6 +21,17 @@ cat /etc/os-release             # 動いている OS(Alpine ベース)
 hostname                        # Pod 名 = 自分のワークスペース
 ```
 
+### スコアボードの表示名を変える
+
+識別子(`user1` など)はそのまま、**表示名だけ**を好きな名前にできます。
+
+```bash
+source /opt/ctf/setname.sh
+setname 'あなたの名前'
+```
+
+制約: 1〜32 文字、`< > & " '` と制御文字は使えません。何回でも変更可能です。
+
 !!! note "trigger と evade"
     **trigger** 課題は対象 Falco ルールを **発火させる** ことが solve
     (提出不要 — 発火が自動的に solve)。
@@ -158,63 +169,7 @@ dig +short example.invalid
 
 ---
 
-## 6. flag の提出・表示名の変更
-
-**evade 課題** で flag を取り出したら scoreboard に提出します。
-**trigger 課題** は提出不要(Falco が発火した時点で solve)。
-
-### 1 つずつ提出する
-
-```bash
-source /opt/ctf/submit.sh
-submit <mission-id> '<flag>'
-# 例:
-submit 03-stealth-read 'FALCO{...}'
-```
-
-レスポンスの読み方:
-
-```text
-{"correct":true,"evaded":true,"solved":true,"user":"alice"}   ← 成功
-{"correct":true,"evaded":false,"reason":"forbidden rule..."}  ← 直近に発火していた
-{"correct":false,"reason":"flag mismatch"}                    ← flag 違い
-```
-
-!!! tip "evaded:false が出たら"
-    直近 **10 秒**(Mission 10 は 30 秒)以内に対象ルールが発火していると
-    `evaded:false` になります。**その秒数だけ待ってから** もう一度 `submit`
-    してください(ローリングウィンドウなので時間が経てばクリアされます)。
-
-### まとめて提出する
-
-```bash
-# /opt/ctf/answers.yaml を編集してから:
-sh /opt/ctf/submit-yaml.sh
-# 別のファイルを使う場合:
-sh /opt/ctf/submit-yaml.sh /path/to/answers.yaml
-```
-
-`answers.yaml` の書式(1 行 1 ミッション。埋めた行だけ提出されます):
-
-```yaml
-03-stealth-read: FALCO{...}
-05-silent-search: FALCO{...}
-```
-
-### スコアボードの表示名を変える
-
-識別子(`user1` など)はそのまま、**表示名だけ**を好きな名前にできます。
-
-```bash
-source /opt/ctf/setname.sh
-setname 'あなたの名前'
-```
-
-制約: 1〜32 文字、`< > & " '` と制御文字は使えません。何回でも変更可能です。
-
----
-
-## 7. Falco の観測ポイント {#7-falco}
+## 6. Falco の観測ポイント {#7-falco}
 
 evade 課題を解く鍵は「Falco が **何を見て** 判定しているか」を知ることです。
 多くのルールは以下のフィールドを条件にしています。
@@ -230,16 +185,3 @@ evade 課題を解く鍵は「Falco が **何を見て** 判定しているか�
 各ミッションが対象にしている **実際の Falco ルール** は、ミッションページの
 「検知ルール (Falco Rule)」節に掲載しています([ミッション一覧](missions/index.md))。
 ルール構文そのものを深掘りしたい場合は [参考資料](references.md) の公式ドキュメントへ。
-
----
-
-## 付録: このワークスペースで使えるツール
-
-challenge コンテナ(Alpine ベース)には主に次のコマンドが入っています。
-無いものは busybox が代替を提供している場合があります。
-
-```text
-bash  coreutils(cat/head/tail/od/ln/stat/readlink…)  grep  findutils(find/xargs)
-curl  netcat-openbsd(nc)  bind-tools(dig/nslookup/host)  jq  less  vim
-util-linux(hexdump/nsenter…)  procps(ps/top)  file  shadow  busybox(wget ほか)
-```
