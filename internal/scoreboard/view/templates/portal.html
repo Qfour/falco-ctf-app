@@ -587,8 +587,12 @@
   #pane-story .hint-locked .pen { color: var(--warn); font-weight: 700; }
   #pane-story .hints { display: flex; flex-direction: column; gap: 0.6rem; }
   #pane-story .hint-open { background: var(--bg-elev); border: 1px solid var(--border); border-left: 2px solid var(--warn); border-radius: 0.5rem; padding: 0.7rem 1rem; }
+  #pane-story .hint-open .hn-row { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; }
   #pane-story .hint-open .hn { font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; color: var(--warn); text-transform: uppercase; letter-spacing: 0.1em; }
-  #pane-story .hint-open .ht { color: var(--text-dim); font-size: 0.9rem; margin-top: 0.25rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+  #pane-story .hint-open .ht { color: var(--text-dim); font-size: 0.9rem; margin-top: 0.25rem; white-space: pre-wrap; overflow-wrap: anywhere; font-family: 'JetBrains Mono', monospace; }
+  #pane-story .hint-open .hint-copy-btn { font-family: 'Chakra Petch', sans-serif; text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.62rem; font-weight: 700; padding: 0.25rem 0.6rem; border-radius: 5px; border: 1px solid var(--border-strong); background: transparent; color: var(--text-dim); cursor: pointer; transition: all 0.15s; flex-shrink: 0; }
+  #pane-story .hint-open .hint-copy-btn:hover { color: var(--accent); border-color: var(--accent); box-shadow: 0 0 10px var(--accent-glow); }
+  #pane-story .hint-open .hint-copy-btn.copied { color: var(--success); border-color: var(--success); }
   #pane-story .hint-locked { display: flex; justify-content: space-between; align-items: center; background: var(--bg-elev); border: 1px dashed var(--border-strong); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--text-mute); font-size: 0.85rem; }
   #pane-story .btn { font-family: 'Chakra Petch', sans-serif; text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.72rem; font-weight: 700; padding: 0.45rem 0.9rem; border-radius: 6px; border: 1px solid var(--border-strong); background: transparent; color: var(--text-dim); cursor: pointer; transition: all 0.15s; }
   #pane-story .btn:hover { color: var(--accent); border-color: var(--accent); box-shadow: 0 0 12px var(--accent-glow); }
@@ -1263,8 +1267,20 @@
     // penalty (#40): points forfeited per hint reveal. Server-supplied; shown on
     // the open button + confirmed on click so the deduction is a deliberate act.
     const penalty = Number.isFinite(hints.penalty) ? hints.penalty : 0;
+    // Each opened hint gets a copy button (STORY hint copy, HINT 3's multi-line
+    // solution command needs one-click paste-ability). The button carries only
+    // data-hint-idx — wireDetail() below looks up the raw h.text via closure
+    // over det.hints.opened and passes it straight to navigator.clipboard, so
+    // the un-escaped text never round-trips through the DOM/HTML (the display
+    // copy in .ht above still goes through esc() as always).
     const openedHTML = (hints.opened || []).map(h => `
-      <div class="hint-open"><div class="hn">HINT ${h.idx}</div><div class="ht">${esc(h.text)}</div></div>`).join('');
+      <div class="hint-open">
+        <div class="hn-row">
+          <div class="hn">HINT ${h.idx}</div>
+          <button type="button" class="hint-copy-btn" data-hint-idx="${esc(String(h.idx))}">Copy</button>
+        </div>
+        <div class="ht">${esc(h.text)}</div>
+      </div>`).join('');
     let lockedHTML = '';
     if (hints.lockedCount > 0 && hints.nextIndex > 0) {
       const costLabel = penalty > 0 ? `（-${penalty}点）` : '';
@@ -1465,6 +1481,21 @@
     const backBtn = document.getElementById('pane-journey-back-current');
     if (backBtn) backBtn.addEventListener('click', followCurrent);
 
+    // Hint copy buttons: rendered fresh on every renderDetail() and rewired
+    // here every time wireDetail() runs afterward (same pattern as the rest of
+    // this function — no delegation needed since the whole panel innerHTML is
+    // replaced each render). Each button's raw text comes straight from
+    // det.hints.opened via closure (matched by idx), never from the DOM/HTML —
+    // this is the one path that must carry the UN-escaped h.text, since the
+    // displayed .ht span uses esc(h.text) and copying that would hand
+    // participants a mangled command (&amp; etc.) for HINT 3's copy-paste flow.
+    const openedHints = (det.hints && det.hints.opened) || [];
+    document.querySelectorAll('#pane-story .hint-copy-btn').forEach(btn => {
+      const hint = openedHints.find(h => String(h.idx) === btn.dataset.hintIdx);
+      if (!hint) return;
+      btn.addEventListener('click', () => copyHintText(btn, hint.text));
+    });
+
     // step self-check toggles
     document.getElementById('pane-story').querySelectorAll('.steps .box').forEach(box => {
       box.addEventListener('click', async () => {
@@ -1538,6 +1569,42 @@
         // lastSubmit state carries it through subsequent polling re-renders.
         if (solved) refresh();
       });
+    }
+  }
+
+  // copyHintText copies a hint's RAW text (not the escaped .ht innerHTML) to
+  // the clipboard so HINT 3's multi-line "想定解" command pastes verbatim
+  // (heredocs etc. would break if the copy path ever picked up esc()'d
+  // &amp;/&lt; entities instead of the real characters). Prefers the async
+  // Clipboard API (requires a secure context); falls back to a hidden
+  // textarea + execCommand('copy') for older/non-secure contexts, and
+  // silently no-ops (button just doesn't flip to "Copied!") if neither works
+  // rather than throwing into the click handler.
+  function copyHintText(btn, text) {
+    const flash = () => {
+      const prev = btn.textContent;
+      btn.textContent = 'Copied!';
+      btn.classList.add('copied');
+      setTimeout(() => { btn.textContent = prev; btn.classList.remove('copied'); }, 1500);
+    };
+    const fallbackCopy = () => {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        if (ok) flash();
+      } catch (e) { /* clipboard unavailable; silently ignore */ }
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(flash, fallbackCopy);
+    } else {
+      fallbackCopy();
     }
   }
 
