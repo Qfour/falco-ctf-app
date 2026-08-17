@@ -10,38 +10,66 @@ Falco CTF のアプリケーション層。scoreboard / auth-policy / collector 
 
 ## System Architecture
 
+参加者は Web ターミナル(ttyd)で配布された同一環境の課題を操作し、その syscall を
+Falco が検知 → scoreboard がユーザ別に集計する。本番は AWS EKS(Graviton arm64,
+Terraform 管理)、エッジは Cloudflare(DNS + Geo/WAF/DDoS)、認証は oauth2-proxy + Dex。
+固定サービス(admin ダッシュボード / 参加者ポータル / docs-admin)は**単一 origin**
+`app.<host>` を path で分岐し、ttyd だけは per-user サブドメイン `userN.<host>` に残す。
+
 ```mermaid
-flowchart LR
-    subgraph platform["falco-ctf-platform"]
-        ingress["ingress-nginx"]
-        oauth["oauth2-proxy / Dex"]
-        falco["Falco"]
-        fsidekick["falcosidekick"]
+flowchart TB
+  pUser(["参加者ブラウザ"])
+  aUser(["運営ブラウザ (admin)"])
+
+  subgraph edge["エッジ / DNS — Cloudflare"]
+    cf["Cloudflare<br/>DNS + Geo(JP限定) + WAF / DDoS"]
+  end
+
+  pUser --> cf
+  aUser --> cf
+
+  subgraph eks["AWS EKS — Graviton arm64 (Terraform: VPC / cluster / IRSA)"]
+    nlb["NLB<br/>(origin を Cloudflare IP に限定)"]
+
+    subgraph gate["ingress-nginx + 認証層 (platform)"]
+      ing["ingress-nginx<br/>単一origin app.host を path 分岐 + userN.host"]
+      authp["auth-policy<br/>email↔host 照合 / admin 判定 (app)"]
+      o2p["oauth2-proxy"]
+      dex["Dex (OIDC 静的ユーザ)"]
     end
 
-    subgraph app["falco-ctf-app (this repo)"]
-        authpolicy["auth-policy\n(email↔host check)"]
-        scoreboard["scoreboard\n(POST /falco/events)"]
-        collector["collector\n(参加者向け単一入口:\nsubmit/me/exfil forward)"]
-        ttyd["ttyd\n(Web terminal)"]
-        challenge["challenge\n(container)"]
-        detectgrader["detect-grader\n(K8s Job: capture-replay 採点)"]
-        docs["docs\n(MkDocs+PDF ミッションサイト)"]
+    subgraph appsvc["アプリ層 — falco-ctf-app charts"]
+      sb["scoreboard<br/>portal(STORY / HOME / SCOREBOARD / TERMINAL)<br/>+ 採点(/falco/events) + SQLite(1 replica, EBS)"]
+      col["collector<br/>workspace の唯一の egress 先<br/>submit / exfil を forward"]
+      docs["docs<br/>課題サイト / docs-admin"]
+      dg["detect-grader<br/>K8s Job (capture-replay 採点)"]
     end
 
-    User -->|"HTTPS /<username>/*"| ingress
-    ingress -->|"auth_request"| oauth
-    oauth -->|"X-Auth-Request-Email"| authpolicy
-    authpolicy -->|"200 / 403"| oauth
-    oauth -->|"proxy_pass"| ttyd
-    ttyd -->|"kubectl exec"| challenge
-    challenge -->|"submit/me/exfil\n(egress lockdown 後の唯一到達先)"| collector
-    collector -->|"forward"| scoreboard
+    subgraph wsns["per-user workspace — ns: ctf-userN (egress lockdown)"]
+      ttp["ttyd-proxy<br/>CSP frame-ancestors=portal (P23)"]
+      ttyd["ttyd (loopback)"]
+      chal["challenge container"]
+    end
 
-    falco -->|"event"| fsidekick
-    fsidekick -->|"POST /falco/events"| scoreboard
-    scoreboard -->|"type: detect 採点\nK8s Job 起動"| detectgrader
-    docs -.->|"課題メタデータから\nミッションページ生成"| User
+    subgraph det["ランタイム検知 (platform)"]
+      falco["Falco DaemonSet<br/>modern eBPF"]
+      fsk["falcosidekick"]
+    end
+  end
+
+  cf --> nlb --> ing
+  ing -->|"auth_request (subrequest)"| authp
+  authp <-->|"/oauth2/auth"| o2p
+  o2p <-->|"OIDC"| dex
+  ing -->|"/ , /api/state (admin)"| sb
+  ing -->|"/portal , /api/users , /api/challenges (any-login)"| sb
+  ing -->|"/docs-admin (admin)"| docs
+  ing -->|"userN.host"| ttp --> ttyd -->|"kubectl exec (同一 Pod)"| chal
+  sb -.->|"TERMINAL タブで iframe 埋め込み"| ttp
+
+  chal -->|"submit / exfil"| col --> sb
+  chal -. "syscall 観測" .-> falco --> fsk -->|"POST /falco/events"| sb
+  sb -->|"type:detect"| dg
 ```
 
 ## 構成
