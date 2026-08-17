@@ -17,7 +17,7 @@ SYSDIG_URL   ?= https://app.au1.sysdig.com
 # host repo are not shared into the VM.
 GO_IMAGE ?= golang:1.26-alpine
 
-.PHONY: help dev dev-down build push load-colima deploy-local lint test tidy gen gen-home-fragments gen-values gen-attack check-flags check-rules check-freshness clean scan
+.PHONY: help dev dev-down build push load-colima deploy-local lint check-seccomp test tidy gen gen-home-fragments gen-values gen-attack check-flags check-rules check-freshness clean scan
 
 help:
 	@echo "Targets:"
@@ -27,7 +27,8 @@ help:
 	@echo "  push            — docker push all images"
 	@echo "  load-colima     — load images into colima k3s containerd (local only)"
 	@echo "  deploy-local    — helm upgrade --install scoreboard + auth-policy charts (local)"
-	@echo "  lint            — helm lint all charts/"
+	@echo "  lint            — helm lint all charts/ + check-seccomp"
+	@echo "  check-seccomp   — fail if any rendered chart container's effective seccompProfile != RuntimeDefault"
 	@echo "  test            — go test ./... (runs in $(GO_IMAGE) container)"
 	@echo "  tidy            — go mod tidy (runs in $(GO_IMAGE) container)"
 	@echo "  gen             — regenerate Go types from OpenAPI specs (docs/openapi-*.yaml)"
@@ -76,8 +77,16 @@ deploy-local:
 	  --set image.tag=dev \
 	  --set env.expectedEmailDomain=ctf.local --set env.adminEmails=user1@ctf.local
 
-lint:
+lint: check-seccomp
 	@for c in charts/*; do echo "== $$c =="; helm lint "$$c"; done
+
+# Hard Invariant guard (see .claude/rules/falco-ctf-app-conventions.md
+# "SecurityContext"): every rendered chart's containers must have an
+# effective seccompProfile.type of RuntimeDefault. helm lint/template alone
+# don't inspect content, so without this a Pod-level seccompProfile
+# regression (e.g. charts/ctf-user/templates/pod.yaml) would go undetected.
+check-seccomp:
+	python3 scripts/check-seccomp.py
 
 test:
 	docker build -f Dockerfile.test --progress=plain -t falco-ctf/gotest:local .

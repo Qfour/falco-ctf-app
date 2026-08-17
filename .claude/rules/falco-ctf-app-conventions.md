@@ -143,7 +143,7 @@ cycle 自体を上げる場合 (例: alpine 3.22→3.23) は tag も一緒に変
   (oapi は Dockerfile.gen と同 version)。使う `uses:` は上記例外表の
   `actions/checkout@v4` のみ (新規 action ゼロ)。bump は手動レビューで実施。
 
-## SecurityContext (コンテナレベル)
+## SecurityContext
 
 scoreboard / auth-policy に必須:
 ```yaml
@@ -162,9 +162,26 @@ challenge コンテナは UID 表のとおり **root (0) が意図的** (CTF rea
 `seccompProfile: {type: RuntimeDefault}` は root/non-root と独立に必須。
 
 - `charts/ctf-user/templates/pod.yaml` は **Pod レベル** `securityContext` に
-  `seccompProfile: {type: RuntimeDefault}` を置く (3 コンテナ全てへ継承させる
-  ため。ttyd / ttyd-proxy はコンテナレベルで既に明示済みなので無影響、
-  challenge はこれが唯一の適用経路になる)。
+  `seccompProfile: {type: RuntimeDefault}` を置く。**k8s の継承はブロック単位
+  ではなくフィールド単位** — container 側が `seccompProfile` を明示的に
+  set しない限り Pod レベルの値が effective になる。ttyd / ttyd-proxy は
+  コンテナレベルで既に明示済みなので無影響、challenge はコンテナレベルの
+  `securityContext` を一切持たないため、これが唯一の適用経路になる。
+- **実際に unconfined 化しうる経路は次の 3 つだけ**。フィールド単位継承のため
+  「container-level `securityContext` を追加するだけ」では起きない
+  (追加したコンテナが `seccompProfile` を明示しない限り Pod レベルの値を
+  素通しで受け継ぐ):
+  1. container-level で **`seccompProfile: Unconfined` を明示**する
+  2. **`privileged: true`** を付ける (seccomp そのものを無効化する)
+  3. **Pod レベルの `seccompProfile` 2 行を削除**する
+     (機械強制: `make check-seccomp` / `scripts/check-seccomp.py`、
+     CI `chart-lint` job から呼ばれる)
+- **Pod レベルに置くのが最も堅牢な理由**: フィールド単位継承なので、現行
+  3 コンテナだけでなく **将来の initContainer / ephemeralContainer
+  (`kubectl debug` が追加するものを含む) にも自動適用され fail-closed**
+  になる。逆にコンテナごとに `seccompProfile` を列挙する方式は、新しい
+  コンテナを追加したときに書き忘れると unconfined のまま通ってしまう
+  (= 厳密に弱い方式)。
 - 新しい chart / コンテナを書くときも同じ穴を空けない: **root 許可
   (`runAsNonRoot: false`) は seccompProfile 免除の理由にならない**。
   root が必要な場合でも `seccompProfile: RuntimeDefault` は付ける

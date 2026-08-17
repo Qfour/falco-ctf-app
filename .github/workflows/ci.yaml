@@ -55,6 +55,8 @@ jobs:
             helm lint "$c"
             helm template "$c" >/dev/null
           done
+      - name: seccomp Hard Invariant (fail-closed)
+        run: python3 scripts/check-seccomp.py
 
   # ------------------------------------------------------------------
   # Flag hygiene: no real flags in the public repo + generated values in sync.
