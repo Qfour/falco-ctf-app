@@ -19,7 +19,15 @@ spec:
   restartPolicy: Always
   enableServiceLinks: false
   securityContext:
+    # root is intentional (CTF realism for the challenge container, see below)
+    # but seccomp unconfined is NOT part of that intent — RuntimeDefault still
+    # blocks the syscalls that would let a compromised workspace escape the
+    # Pod (this is inherited by all 3 containers; ttyd/ttyd-proxy already set
+    # it explicitly below, so this is a no-op for them and closes the gap
+    # only for challenge).
     runAsNonRoot: false   # challenge intentionally runs as root for CTF realism
+    seccompProfile:
+      type: RuntimeDefault
   containers:
     - name: ttyd
       image: "{{ .Values.ttyd.image.repository }}:{{ .Values.ttyd.image.tag }}"

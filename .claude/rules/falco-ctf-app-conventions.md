@@ -154,6 +154,22 @@ securityContext:
     drop: ["ALL"]
 ```
 
+### challenge コンテナ (`charts/ctf-user`) — root だが seccompProfile は必須
+
+challenge コンテナは UID 表のとおり **root (0) が意図的** (CTF realism)。
+但し **`runAsNonRoot: false` は seccomp を含まない** — root 化は「Pod 内で
+何ができるか」の話であって、「Pod の外に出られるか」の境界とは別物。
+`seccompProfile: {type: RuntimeDefault}` は root/non-root と独立に必須。
+
+- `charts/ctf-user/templates/pod.yaml` は **Pod レベル** `securityContext` に
+  `seccompProfile: {type: RuntimeDefault}` を置く (3 コンテナ全てへ継承させる
+  ため。ttyd / ttyd-proxy はコンテナレベルで既に明示済みなので無影響、
+  challenge はこれが唯一の適用経路になる)。
+- 新しい chart / コンテナを書くときも同じ穴を空けない: **root 許可
+  (`runAsNonRoot: false`) は seccompProfile 免除の理由にならない**。
+  root が必要な場合でも `seccompProfile: RuntimeDefault` は付ける
+  (unconfined は個別に明示的な理由と ADR が無い限り不可)。
+
 ## Security
 
 - `.env` / kubeconfig / `*.key` / `*.pem` / `*.db` はコミットしない
