@@ -14,9 +14,9 @@ steps:
     detail: symlink (ln -s) は path への参照。hardlink (ln) は inode への直接参照で、元が消えても中身が残る。
   - label: sensitive file に hardlink を張る
     detail: |
-      ln /etc/shadow /tmp/.cache.bak
-      確認: ls -la /tmp/.cache.bak  → リンク数 2 = hardlink 成立
-      /etc/sudoers, /etc/pam.d/* などの sensitive file でも可。必ず -s 無しで (ln -s は別ルール)。
+      sensitive file (shadow, sudoers, pam.d/* など) に対して、inode を直接指す
+      リンクを張るコマンドを打ってみよう。必ず -s 無しで (ln -s は別ルールなので発火しない)。
+      成立確認: ls -la <張った先> でリンク数が 2 になっていれば hardlink 成立。
   - label: スコアボードで CLEARED を確認
     detail: 発火が scoreboard に届くと、このミッションが自動で CLEARED になる。
 hints:

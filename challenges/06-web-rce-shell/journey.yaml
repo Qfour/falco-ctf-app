@@ -14,10 +14,9 @@ steps:
     detail: 親が bash/sh なら正常。httpd/nginx のような Web サーバがシェルを起こすと発火する。
   - label: proc.pname を偽装して shell を起こす
     detail: |
-      用意済みラッパーを実行:
-        sh /opt/ctf/missions/06-web-rce-shell/fixtures/fake-httpd.sh
-      自分で組むなら /tmp/httpd という名前の実行ファイルを作り、その中から /bin/sh を起こす。
-      カーネルは proc.pname を実行ファイルの basename から決めるので comm が "httpd" になる。
+      この課題の fixtures/ にヒントになるラッパーが置かれている。中身を覗いてみよう。
+      カーネルは proc.pname を実行ファイルの basename から決める。Web サーバっぽい名前の
+      実行ファイルを用意し、その中から /bin/sh を起こせば親 comm が偽装できる。
   - label: スコアボードで CLEARED を確認
     detail: 発火が scoreboard に届くと、このミッションが自動で CLEARED になる。
 hints:

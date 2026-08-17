@@ -13,7 +13,7 @@ steps:
     detail: 攻撃者が真っ先に狙うのは root しか読まないパスワードハッシュの実体ファイル。
   - label: 機密ファイルを読む
     detail: |
-      cat /etc/shadow
+      パスワードハッシュの実体ファイルを普通に開いてみよう (cat/less/head 等どれでも可)。
       /etc/sudoers や /etc/pam.d/su など sensitive_files に含まれる path でも発火する。
   - label: スコアボードで CLEARED を確認
     detail: 読み取りが scoreboard に届くと、このミッションが自動で CLEARED になる。

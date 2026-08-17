@@ -13,9 +13,8 @@ steps:
     detail: 攻撃者は shadow の次に SSH 秘密鍵や API キーを探す。ルールはその検索コマンドを見ている。
   - label: 鍵っぽいキーワードをコマンドラインに出す
     detail: |
-      find / -name id_rsa 2>/dev/null
-      grep -rE 'BEGIN.*PRIVATE KEY' /etc 2>/dev/null
-      id_rsa / id_dsa / "BEGIN ... PRIVATE KEY" 等が cmdline に乗れば発火する。実在しない path でも可。
+      find や grep で鍵っぽい名前 (id_rsa 等) や PRIVATE KEY 文字列を検索してみよう。
+      それらが cmdline に乗れば発火する。実在しない path でも、結果が空でも構わない。
   - label: スコアボードで CLEARED を確認
     detail: 発火が scoreboard に届くと、このミッションが自動で CLEARED になる。
 hints:

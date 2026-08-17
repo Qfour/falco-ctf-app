@@ -1,6 +1,6 @@
-# Sample journey content authored by app-lead to validate the /journey engine.
-# Content-lead owns the final copy for all 10 missions — this file will be
-# replaced by their version. Schema: internal/catalog/journey.go.
+# Journey content for the /journey UI. Schema: internal/catalog/journey.go.
+# Participant-facing narrative only — never influences scoring.
+# NOTE: evade mission — never write the flag value here (public repo).
 challengeId: 05-silent-search
 title: 静かな探索 — cmdline 回避
 tagline: 検知ルールを発火させずに秘密鍵を読み出し、flag を回収せよ
@@ -15,7 +15,8 @@ steps:
   - label: cmdline に痕跡を残さず読む
     detail: |
       NG: cat /root/.ssh/id_rsa           (cmdline に id_rsa が残り発火)
-      OK: cat < /root/.ssh/id_rsa | grep FALCO   (入力リダイレクト)
+      コマンドライン引数にファイル名を出さずに、同じファイルの中身をシェルへ渡す
+      仕組みがある。シェルの入出力の繋ぎ方を思い出そう。
   - label: flag を提出
     detail: 鍵の中身に埋め込まれた FALCO{...} を下のフォームから提出する。
 hints:

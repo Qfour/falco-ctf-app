@@ -14,9 +14,8 @@ steps:
     detail: AWS CLI の長期資格情報は慣習的にホームの .aws 配下に平文で置かれる。攻撃者はそこを狙う。
   - label: grep か find で AWS キーを探索する
     detail: |
-      grep -r aws_secret_access_key ~/.aws/
-      find ~ -path '*.aws/credentials'
-      grep 系の引数に AWS キーの語が入るか、find の引数が .aws/credentials で終わると発火する。
+      grep か find で AWS の長期資格情報を漁ってみよう。キーの語 (aws_secret_access_key 等)
+      を引数に含めるか、find の探索先を .aws/credentials に向けると発火する。
       練習用のダミー資格情報が ~/.aws/credentials と fixtures/aws-credentials.sample にある。
   - label: スコアボードで CLEARED を確認
     detail: 発火が scoreboard に届くと、このミッションが自動で CLEARED になる。

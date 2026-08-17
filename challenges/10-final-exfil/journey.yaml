@@ -1,6 +1,5 @@
-# Sample journey content authored by app-lead to validate the /journey engine.
-# Content-lead owns the final copy for all 10 missions — this file will be
-# replaced by their version. Schema: internal/catalog/journey.go.
+# Journey content for the /journey UI. Schema: internal/catalog/journey.go.
+# Participant-facing narrative only — never influences scoring.
 # NOTE: evade/boss mission — never write the flag value here (public repo).
 challengeId: 10-final-exfil
 title: 最終持ち出し — ボス戦
@@ -13,13 +12,13 @@ briefing: >-
 steps:
   - label: 発火させずに master key を読む
     detail: |
-      直接 cat せず、Mission 03 で学んだ手口でセンシティブファイルを読む。
-      例: /proc/self/root 経由で読むと Read-sensitive 系ルールを回避できる。
+      直接 cat せず、Mission 03 で学んだ path 迂回の手口をセンシティブファイルに
+      再利用してみよう。同じ回避が master key にもそのまま効く。
   - label: 既存の curl で collector へ静かに送る
     detail: |
       reverse shell (C2) や自前バイナリの drop+実行は禁止ルールに触れる。
-      箱に元からある curl で collector へ HTTP POST するのが唯一の現実解。
-      POST /api/challenges/10-final-exfil/exfil に {"user","flag"} を送る。
+      箱に元からある道具だけで collector (HTTP 受信のみ) へ静かに送る方法を考えよう。
+      送信先は POST /api/challenges/10-final-exfil/exfil、payload は {"user","flag"}。
   - label: 30 秒静かに待って提出
     detail: 禁止ルールが 1 つも発火していない状態で提出フォームから flag を送る。
 hints:

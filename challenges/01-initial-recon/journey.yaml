@@ -13,8 +13,8 @@ steps:
     detail: 画面のターミナル (ttyd) で以下を実行できる状態にする。
   - label: K8s API Server へ接触する
     detail: |
-      curl -sk https://kubernetes.default.svc/api
-      認証は 401 で失敗するが TCP connect は成立し、その瞬間にルールが発火する。
+      in-cluster の K8s API Server アドレスへ HTTP で触れてみよう。
+      認証が失敗しても TCP connect が成立した瞬間にルールが発火する。
   - label: スコアボードで CLEARED を確認
     detail: 発火が scoreboard に届くと、このミッションが自動で CLEARED になる。
 hints:

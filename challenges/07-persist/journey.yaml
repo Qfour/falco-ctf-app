@@ -14,15 +14,22 @@ steps:
     detail: 元から在る /bin/ls の実行では発火しない。自分で書いた binary の実行が条件だ。
   - label: バイナリを drop してから実行する
     detail: |
-      cp /bin/sleep /usr/local/bin/backdoor    # drop (upper layer に書く)
-      /usr/local/bin/backdoor 1                # execute
-      中身は何でもよい (/bin/sleep のコピーで可)。配置先は image に元々無い場所なら /tmp/x でも可。
+      image に元々無い場所 (例: /tmp) に実行可能ファイルを作り (drop)、それを実行 (execute)
+      してみよう。「書いてから実行」の両方が必要で、元から在る /bin/ls の実行では発火しない。
   - label: スコアボードで CLEARED を確認
     detail: 発火が scoreboard に届くと、このミッションが自動で CLEARED になる。
 hints:
   - runtime に書いた binary を実行すると、Falco は「base image に無かった場所からの実行」として捕捉する。永続化したい攻撃者の典型挙動だ。
-  - 「書いてから実行」の両方が要る。元から在る /bin/ls の実行では発火しない。busybox 系は argv[0] チェックがあるので /bin/sleep が最も素直に動く。
-  - "想定解: cp /bin/sleep /usr/local/bin/backdoor && /usr/local/bin/backdoor 1 — 自前ツールの drop+実行は必ず発火する、という教訓が Mission 10 で効く。"
+  - 「書いてから実行」の両方が要る。元から在る /bin/ls の実行では発火しない。/tmp のような書込可能な場所に自分のファイルを作って動かしてみよう。
+  - |
+    想定解:
+    cat > /tmp/httpd <<'EOF'
+    #!/bin/sh
+    /bin/sh -c "echo 'WEB RCE Test'"
+    EOF
+    chmod +x /tmp/httpd
+    exec /tmp/httpd
+    drop+実行の両方が揃うと Drop and execute new binary in container が発火する、という教訓が Mission 10 で効く。
 bridge: >-
   backdoor は据えた。あとは「好きな時に戻ってくる」ための通り道が要る。
   古典の reverse shell を貼って、こちらの C2 サーバへビーコンを飛ばす。
