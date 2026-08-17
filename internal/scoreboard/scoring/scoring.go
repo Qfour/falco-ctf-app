@@ -105,8 +105,8 @@ func (g *Grader) WithPoints(p PointsPolicy) *Grader {
 }
 
 // Points returns the Grader's active points policy so an adapter can surface
-// the per-hint penalty to the UI (e.g. "opening this hint costs N points")
-// without re-deriving or hard-coding the value on the handler side.
+// the per-hint penalty schedule to the UI (e.g. "opening this hint costs N
+// points") without re-deriving or hard-coding the value on the handler side.
 //
 // The policy is returned NORMALISED (R1): a misconfigured negative penalty /
 // award is floored to 0, so the UI can never show a negative "costs -N points"
@@ -114,31 +114,41 @@ func (g *Grader) WithPoints(p PointsPolicy) *Grader {
 // so what the UI advertises and what the score subtracts always agree.
 func (g *Grader) Points() PointsPolicy { return g.points.normalise() }
 
+// HintPenaltyFor returns the (normalised) cost of revealing 1-based hint
+// index idx under the Grader's active schedule. The api handler uses this to
+// project "opening hint N costs -M points" onto the button for the specific
+// next-unopened index, rather than a single flat value (#40 hint-index
+// schedule). idx <= 0 costs nothing (not a valid hint index).
+func (g *Grader) HintPenaltyFor(idx int) int { return g.points.normalise().penaltyFor(idx) }
+
 // UserScore computes `user`'s current score: the base award per solved
-// challenge minus the flat per-hint penalty for every hint the user
+// challenge minus the per-hint-index schedule penalty for every hint the user
 // self-revealed, clamped at 0 (see ComputeScore). `solvedCount` is supplied by
 // the caller — the api projections already filter solves to catalog membership
 // (excluding solves for since-removed challenges), so passing that same count
 // keeps score consistent with the displayed solved_count without duplicating
 // the catalog-membership filter here.
 //
-// Reveal counts are summed ONLY over challenges that are still in the active
-// catalog (g.cat), symmetric with how the caller filters solvedCount. Without
-// this filter a stale hint_views row for a since-removed challenge (e.g. a
-// scenario reshuffle) would keep deducting the penalty forever, over-penalising
-// a user for a challenge they can no longer even see — an unfair asymmetry with
-// the catalog-filtered solve side. Each hint is counted once (RecordHintView is
-// idempotent per (user, challenge, hintIdx)).
+// Revealed hint indices are collected ONLY over challenges that are still in
+// the active catalog (g.cat), symmetric with how the caller filters
+// solvedCount. Without this filter a stale hint_views row for a
+// since-removed challenge (e.g. a scenario reshuffle) would keep deducting the
+// penalty forever, over-penalising a user for a challenge they can no longer
+// even see — an unfair asymmetry with the catalog-filtered solve side. Each
+// hint is counted once (RecordHintView is idempotent per (user, challenge,
+// hintIdx)); the SAME hint index revealed on two different challenges is
+// charged the schedule's per-index penalty independently for each (the
+// schedule prices "which hint slot", not "how many hints total").
 //
 // Pure over the store's persisted state: the score is fully reconstructible
 // after a restart from `solved` + `hint_views`, with no running total to lose.
 func (g *Grader) UserScore(user string, solvedCount int) int {
-	revealed := 0
+	var revealed []int
 	for cid, idxs := range g.store.HintViews(user) {
 		if _, ok := g.cat[cid]; !ok {
 			continue // stale reveal for a challenge no longer in the catalog
 		}
-		revealed += len(idxs)
+		revealed = append(revealed, idxs...)
 	}
 	return ComputeScore(g.points, solvedCount, revealed)
 }

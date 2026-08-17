@@ -127,9 +127,16 @@ spec:
             - name: SCORE_POINTS_PER_SOLVE
               value: {{ .Values.env.scorePointsPerSolve | quote }}
             {{- end }}
-            {{- if ne (toString .Values.env.scoreHintPenalty) "" }}
-            - name: SCORE_HINT_PENALTY
-              value: {{ .Values.env.scoreHintPenalty | quote }}
+            {{- /* CSV schedule string: `with` is correct here (unlike the
+                   scorePointsPerSolve int above) — an empty string is the
+                   "omit env, let cmd/scoreboard's fail-soft default apply"
+                   case with no falsy-0 ambiguity, matching allowedOrigins /
+                   docsBaseUrl above. The chart's own default value is
+                   "10,30,50" (CEO-confirmed schedule) so this normally
+                   renders. */}}
+            {{- with .Values.env.scoreHintPenalties }}
+            - name: SCORE_HINT_PENALTIES
+              value: {{ . | quote }}
             {{- end }}
             {{- /* #44.1 detect-challenge grader wiring (cross-repo contract with
                    platform detect-grader release). Surfaced only when set so the

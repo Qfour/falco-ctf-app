@@ -456,24 +456,27 @@ func TestJourney_HintInOrderReveal(t *testing.T) {
 }
 
 // TestJourney_ScorePenaltyOnHintReveal proves the #40 end-to-end behaviour:
-// the journey projection surfaces a score, the per-hint penalty is exposed on
-// the hints block, and self-revealing hints deducts points (clamped at 0). Uses
-// the fixture's default policy (100/solve, 10/hint) unless overridden.
+// the journey projection surfaces a score, the per-hint-index penalty is
+// exposed on the hints block, and self-revealing hints deducts the SCHEDULED
+// amount (clamped at 0). Uses the fixture's default policy (100/solve,
+// [10,30,50] HINT1/HINT2/HINT3 schedule) unless overridden.
 func TestJourney_ScorePenaltyOnHintReveal(t *testing.T) {
 	f := newJourneyFixture(t)
 
-	// Baseline: no solves, no reveals → score 0, penalty surfaced.
+	// Baseline: no solves, no reveals → score 0. The top-level hint_penalty is
+	// the representative HINT1 cost (10); the mission-specific hints.penalty
+	// prices the NEXT unopened hint, also HINT1 (10) since none is opened yet.
 	m := f.journey("alice")
 	if m["score"].(float64) != 0 {
 		t.Fatalf("initial score should be 0, got %v", m["score"])
 	}
 	if m["hint_penalty"].(float64) != 10 {
-		t.Fatalf("hint_penalty should be 10 (default), got %v", m["hint_penalty"])
+		t.Fatalf("hint_penalty should be 10 (HINT1, default schedule), got %v", m["hint_penalty"])
 	}
 	det := m["detail"].(map[string]any)
 	hints := det["hints"].(map[string]any)
 	if hints["penalty"].(float64) != 10 {
-		t.Fatalf("hints.penalty should be 10, got %v", hints["penalty"])
+		t.Fatalf("hints.penalty (next=HINT1) should be 10, got %v", hints["penalty"])
 	}
 
 	// Solve 01-recon → +100. Then it advances; solve gives score 100.
@@ -484,34 +487,38 @@ func TestJourney_ScorePenaltyOnHintReveal(t *testing.T) {
 		t.Fatalf("score after 1 solve should be 100, got %v", s)
 	}
 
-	// Reveal 2 hints on the now-current 02-evade mission → -20 → score 80.
+	// Reveal HINT1+HINT2 on the now-current 02-evade mission → -(10+30)=-40 →
+	// score 60 (steeper schedule: HINT2 costs more than HINT1).
 	if w := f.req("POST", "/api/users/alice/challenges/02-evade/hints/1", nil); w.Code != http.StatusOK {
 		t.Fatalf("hint 1 reveal: %d body=%s", w.Code, w.Body)
 	}
 	if w := f.req("POST", "/api/users/alice/challenges/02-evade/hints/2", nil); w.Code != http.StatusOK {
 		t.Fatalf("hint 2 reveal: %d body=%s", w.Code, w.Body)
 	}
-	if s := f.journey("alice")["score"].(float64); s != 80 {
-		t.Fatalf("score after 1 solve - 2 hints should be 80, got %v", s)
+	if s := f.journey("alice")["score"].(float64); s != 60 {
+		t.Fatalf("score after 1 solve - HINT1 - HINT2 should be 60, got %v", s)
 	}
 
-	// /me projection must agree on score + penalty.
+	// /me projection must agree on score; hint_penalty stays the HINT1
+	// representative figure (unaffected by which hints were revealed).
 	me := f.reqAs("GET", "/api/users/alice/me", "alice@ctf.local", nil)
 	if me.Code != http.StatusOK {
 		t.Fatalf("me status: %d", me.Code)
 	}
 	var mm map[string]any
 	_ = json.Unmarshal(me.Body.Bytes(), &mm)
-	if mm["score"].(float64) != 80 || mm["hint_penalty"].(float64) != 10 {
+	if mm["score"].(float64) != 60 || mm["hint_penalty"].(float64) != 10 {
 		t.Fatalf("me score/penalty disagree: score=%v penalty=%v", mm["score"], mm["hint_penalty"])
 	}
 }
 
 // TestJourney_ScoreClampsAtZeroWithHighPenalty proves the fail-closed clamp:
 // with a penalty high enough to exceed the earned award, the score floors at 0
-// (never negative). Overrides the policy via WithPoints.
+// (never negative). Overrides the policy via WithPoints with a length-1
+// schedule (every hint index reuses that single entry, matching the pre-#40
+// schedule flat-penalty behaviour under the "reuse last entry" rule).
 func TestJourney_ScoreClampsAtZeroWithHighPenalty(t *testing.T) {
-	f := newJourneyFixture(t, scoreboard.WithPoints(scoring.PointsPolicy{PerSolve: 10, HintPenalty: 50}))
+	f := newJourneyFixture(t, scoreboard.WithPoints(scoring.PointsPolicy{PerSolve: 10, HintPenalties: []int{50}}))
 	if _, err := f.st.MarkSolved("alice", "01-recon", "2026-01-01T00:00:00Z"); err != nil {
 		t.Fatal(err)
 	}

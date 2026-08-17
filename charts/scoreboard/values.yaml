@@ -70,18 +70,35 @@ env:
   #     iframe).
   portalTtydSuffix: ""
   # Points policy (#40 self-service hints with a leaderboard-affecting score).
-  # SCORE_POINTS_PER_SOLVE = base award per solved challenge;
-  # SCORE_HINT_PENALTY = points forfeited per self-revealed Journey hint.
-  # Both are event-tuning knobs (content-lead / CEO decision).
-  #   Empty string ("") = env omitted → the code placeholder defaults (100 / 10).
-  #   0 (or "0")        = env emitted as "0" → the value is honoured verbatim
-  #                       (e.g. scoreHintPenalty: 0 for a hints-free event).
-  # The template gates on `ne (toString ...) ""` precisely so an integer 0 is NOT
-  # dropped as falsy (a `with` block would). A negative penalty is floored to 0
-  # inside the scoring layer (fail-closed: a hint reveal can never raise a score).
-  # Real per-event values are supplied by the platform helmfile.
+  # SCORE_POINTS_PER_SOLVE = base award per solved challenge (single int).
+  # SCORE_HINT_PENALTIES   = per-hint-index penalty SCHEDULE forfeited per
+  #                          self-revealed Journey hint, comma-separated
+  #                          (index i (1-based) = i-th CSV entry, e.g. HINT1
+  #                          costs the 1st entry, HINT2 the 2nd, ...). An index
+  #                          beyond the schedule's length reuses the LAST
+  #                          entry (never free past the configured tail).
+  # Both are event-tuning knobs; the CEO-confirmed default schedule is
+  # HINT1=10 / HINT2=30 / HINT3=50 (steeper hints cost more) — this is an
+  # event-tuning VALUE, not a host/registry/domain identity, so baking the
+  # confirmed default in here (rather than leaving it env-agnostic-empty) does
+  # not violate I7 (I7 is about environment identity, not gameplay tuning).
+  #   Empty string ("") = env omitted → the code placeholder default schedule
+  #                       ([10,30,50]) applies identically, so leaving this
+  #                       empty and setting it explicitly are equivalent for
+  #                       the CURRENT default; the explicit value here exists
+  #                       so operators SEE the schedule without reading Go.
+  #   "0" or "0,0,0"    = env emitted verbatim → hints free at every listed
+  #                       index (a valid operator choice for a hints-free
+  #                       event).
+  # A negative entry is floored to 0 inside the scoring layer (fail-closed: a
+  # hint reveal can never raise a score). Back-compat: the scoreboard also
+  # accepts the legacy single-value SCORE_HINT_PENALTY env (applies the SAME
+  # cost to every hint index) when SCORE_HINT_PENALTIES is unset — this chart
+  # only ever emits the plural form. Real per-event overrides (if the CTF
+  # wants different values) are supplied by the platform helmfile; no platform
+  # change is required to KEEP these CEO-confirmed defaults.
   scorePointsPerSolve: ""
-  scoreHintPenalty: ""
+  scoreHintPenalties: "10,30,50"
 
   # #44.1 detect-challenge grading (type: detect). The scoreboard image is
   # distroless + falco-free, so grading is delegated to a runner:

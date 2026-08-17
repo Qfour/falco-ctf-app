@@ -551,6 +551,16 @@
   #pane-story .fr-item .fr-desc { color: var(--text-dim); font-size: 0.85rem; line-height: 1.6; margin-bottom: 0.5rem; overflow-wrap: anywhere; }
   #pane-story .fr-item .fr-priority { display: inline-block; font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.08em; padding: 2px 7px; border-radius: 4px; background: rgba(255,176,32,0.12); color: var(--warn); border: 1px solid rgba(255,176,32,0.35); margin-left: 0.5rem; vertical-align: middle; }
   #pane-story .fr-item .fr-tags { margin-top: 0.5rem; font-size: 0.65rem; color: var(--text-mute); font-family: 'JetBrains Mono', monospace; }
+  /* fr-field-label: the Rule/Desc/Condition/Output section labels (#40 rule
+     display split). font-weight:400 explicitly overrides the bold `summary`
+     it sits inline in (for the "Rule" label) so the label itself stays
+     visually secondary to the rule NAME that follows it. The block-level
+     Desc/Condition/Output labels sit on their own line above each section. */
+  #pane-story .fr-field-label { font-family: 'JetBrains Mono', monospace; font-size: 0.62rem; font-weight: 400; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-mute); }
+  #pane-story .fr-item summary .fr-field-label { margin-right: 0.35rem; }
+  #pane-story .fr-body > .fr-field-label { margin-bottom: 0.25rem; }
+  #pane-story .fr-body > .fr-field-label:not(:first-child) { margin-top: 0.6rem; }
+  #pane-story .fr-field-label-aux { opacity: 0.7; }
   #pane-story .fr-list-items { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.4rem; }
   #pane-story .fr-list-items span { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 4px; padding: 1px 7px; font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; color: var(--text-dim); }
 
@@ -1365,14 +1375,23 @@
       </details>`).join('')}
     </div>` : '';
 
+    // Rule / Desc / Condition are labelled sections so a participant can tell
+    // "the rule's NAME" from "what it means" from "the actual match logic"
+    // at a glance, instead of three unlabelled blocks stacked together.
+    // desc is fail-soft (omitted entirely when empty, per rule.yaml content —
+    // some rule.yaml excerpts predate the desc: field). Output/Priority/Tags
+    // stay as secondary/auxiliary info: priority inline on the summary line
+    // (unchanged), output and tags labelled but visually de-emphasised below
+    // Condition, since they are supporting detail rather than one of the
+    // three primary sections asked for.
     const rulesHTML = rules.length ? `<div class="fr-group">
       <div class="fr-group-title">Rules</div>
       ${rules.map(r => `<details class="fr-item" open>
-        <summary>${esc(r.name)}${r.priority ? `<span class="fr-priority">${esc(r.priority)}</span>` : ''}</summary>
+        <summary><span class="fr-field-label">Rule</span> ${esc(r.name)}${r.priority ? `<span class="fr-priority">${esc(r.priority)}</span>` : ''}</summary>
         <div class="fr-body">
-          ${r.desc ? `<div class="fr-desc">${esc(r.desc)}</div>` : ''}
-          ${r.condition ? `<pre><code>${esc(r.condition)}</code></pre>` : ''}
-          ${r.output ? `<pre><code>${esc(r.output)}</code></pre>` : ''}
+          ${r.desc ? `<div class="fr-field-label">Desc</div><div class="fr-desc">${esc(r.desc)}</div>` : ''}
+          ${r.condition ? `<div class="fr-field-label">Condition</div><pre><code>${esc(r.condition)}</code></pre>` : ''}
+          ${r.output ? `<div class="fr-field-label fr-field-label-aux">Output</div><pre><code>${esc(r.output)}</code></pre>` : ''}
           ${(r.tags || []).length ? `<div class="fr-tags">${(r.tags || []).map(esc).join(' · ')}</div>` : ''}
         </div>
       </details>`).join('')}

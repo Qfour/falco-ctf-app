@@ -8,6 +8,8 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
@@ -110,14 +112,15 @@ func main() {
 	//     — see charts/ctf-user/values.yaml ttyd.frameAncestors).
 	portalTtydSuffix := serverutil.Env("PORTAL_TTYD_SUFFIX", "")
 	// Points policy (#40 self-service hints with a score penalty). PLACEHOLDER
-	// defaults — the real per-solve award and per-hint penalty are an event-tuning
-	// decision (content-lead / CEO confirm). SCORE_POINTS_PER_SOLVE /
-	// SCORE_HINT_PENALTY override at deploy time; a negative penalty is floored to
-	// 0 inside the scoring layer (fail-closed: a hint reveal can never raise a
-	// score). Empty/unset = the placeholder DefaultPointsPolicy.
+	// defaults — the real per-solve award and per-hint-index penalty schedule are
+	// CEO-confirmed event-tuning values (see scoring.DefaultHintPenalties:
+	// HINT1=10/HINT2=30/HINT3=50). SCORE_POINTS_PER_SOLVE / SCORE_HINT_PENALTIES
+	// override at deploy time; a negative entry is floored to 0 inside the
+	// scoring layer (fail-closed: a hint reveal can never raise a score).
+	// Empty/unset = the placeholder DefaultPointsPolicy.
 	points := scoring.PointsPolicy{
-		PerSolve:    serverutil.EnvInt("SCORE_POINTS_PER_SOLVE", scoring.DefaultPointsPerSolve),
-		HintPenalty: serverutil.EnvInt("SCORE_HINT_PENALTY", scoring.DefaultHintPenalty),
+		PerSolve:      serverutil.EnvInt("SCORE_POINTS_PER_SOLVE", scoring.DefaultPointsPerSolve),
+		HintPenalties: hintPenaltySchedule(logger),
 	}
 
 	cat, err := catalog.Load(challengesDir)
@@ -257,4 +260,52 @@ func main() {
 		logger.Error("listen failed", "err", err)
 		os.Exit(1)
 	}
+}
+
+// hintPenaltySchedule resolves the #40 per-hint-index penalty schedule from
+// env, fail-soft to scoring.DefaultHintPenalties ([10, 30, 50] — CEO-confirmed
+// HINT1/HINT2/HINT3 values) on any empty/unset/unparsable input:
+//
+//   - SCORE_HINT_PENALTIES (preferred): a comma-separated schedule, e.g.
+//     "10,30,50" -> HintPenalties[0]=10 (HINT1), [1]=30 (HINT2), [2]=50
+//     (HINT3). Every entry must parse as a base-10 integer; if ANY entry is
+//     malformed the whole value is rejected (fail-soft to the default schedule
+//     rather than partially applying a mistyped list — a half-parsed schedule
+//     is a worse failure mode than the safe default).
+//   - SCORE_HINT_PENALTY (legacy, back-compat with the pre-#40-schedule flat
+//     env): a single integer applied to EVERY hint index. Only consulted when
+//     SCORE_HINT_PENALTIES is unset/empty, so an operator who sets the new
+//     plural var always wins. A challenge with more hints than this
+//     single-value "schedule" still costs the same flat amount at every index
+//     (penaltyFor's "reuse last entry" rule makes a length-1 schedule behave
+//     exactly like the old flat penalty).
+//   - Neither set, or the resolved value fails to parse: scoring.
+//     DefaultHintPenalties.
+func hintPenaltySchedule(logger *slog.Logger) []int {
+	if raw := serverutil.Env("SCORE_HINT_PENALTIES", ""); raw != "" {
+		parts := serverutil.SplitCSV(raw)
+		sched := make([]int, 0, len(parts))
+		for _, p := range parts {
+			n, err := strconv.Atoi(p)
+			if err != nil {
+				logger.Warn("SCORE_HINT_PENALTIES malformed, falling back to default schedule",
+					"value", raw, "err", err)
+				return scoring.DefaultHintPenalties
+			}
+			sched = append(sched, n)
+		}
+		if len(sched) > 0 {
+			return sched
+		}
+	}
+	if raw := serverutil.Env("SCORE_HINT_PENALTY", ""); raw != "" {
+		n, err := strconv.Atoi(strings.TrimSpace(raw))
+		if err != nil {
+			logger.Warn("SCORE_HINT_PENALTY (legacy) malformed, falling back to default schedule",
+				"value", raw, "err", err)
+			return scoring.DefaultHintPenalties
+		}
+		return []int{n}
+	}
+	return scoring.DefaultHintPenalties
 }

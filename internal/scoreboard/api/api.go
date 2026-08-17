@@ -1232,8 +1232,14 @@ func (h *Handler) userMe(w http.ResponseWriter, r *http.Request) {
 		"events":            snap.EventsPerUser[user],
 		"score":             score,
 		"rank":              rank,
-		"hint_penalty":      h.grader.Points().HintPenalty,
-		"now":               now.UTC().Format(time.RFC3339Nano),
+		// hint_penalty (#40): this projection has no single "current mission" in
+		// view (unlike missionDetail's hints.penalty, which prices the specific
+		// next-unopened hint for ONE mission), so it surfaces the schedule's
+		// HINT1 (first-reveal) cost as a representative figure. Not used by the
+		// current portal.html (which reads hints.penalty per mission instead);
+		// kept for API back-compat / any external consumer of this projection.
+		"hint_penalty": h.grader.HintPenaltyFor(1),
+		"now":          now.UTC().Format(time.RFC3339Nano),
 	})
 }
 
@@ -1416,7 +1422,11 @@ func (h *Handler) journey(w http.ResponseWriter, r *http.Request) {
 		"missions":     missions,
 		"detail":       detail,
 		"score":        score,
-		"hint_penalty": h.grader.Points().HintPenalty,
+		// hint_penalty (#40): top-level representative figure (HINT1 cost) — see
+		// userMe's identical field doc. The mission-specific "cost of the NEXT
+		// hint" lives in detail.hints.penalty (missionDetail), which portal.html
+		// actually renders.
+		"hint_penalty": h.grader.HintPenaltyFor(1),
 		"now":          h.now().UTC().Format(time.RFC3339Nano),
 	})
 }
@@ -1614,11 +1624,16 @@ func (h *Handler) missionDetail(user, cid, status, leadIn string, checkedSteps, 
 			"opened":      openedList,
 			"lockedCount": len(j.Hints) - len(openedList),
 			"nextIndex":   nextHint,
-			// penalty: points forfeited per hint reveal (#40). The Grader owns the
-			// value; the UI shows it on the "open hint" button so a participant
-			// makes an informed reveal ("opening costs N points"). Projection only —
-			// the score arithmetic stays in the scoring layer.
-			"penalty": h.grader.Points().HintPenalty,
+			// penalty: points forfeited for revealing the NEXT unopened hint
+			// (nextHint, 1-based) — #40's per-hint-index schedule (HINT1/HINT2/
+			// HINT3 cost different amounts). The Grader owns the schedule; the UI
+			// shows this value on the "open hint" button so a participant makes an
+			// informed reveal ("opening costs N points") for the SPECIFIC hint
+			// they are about to open, not a flat figure. HintPenaltyFor(0) (when
+			// nextHint is 0 — all opened, or locked per this function's doc) costs
+			// nothing, matching "there is nothing left to reveal". Projection
+			// only — the score arithmetic stays in the scoring layer.
+			"penalty": h.grader.HintPenaltyFor(nextHint),
 		},
 	}
 }
