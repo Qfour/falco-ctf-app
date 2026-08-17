@@ -1052,7 +1052,40 @@
   // from "it's some other mission" without waiting for a render closure.
   let lastCurrent = null;
 
+  // lastDetailSig is the JSON signature of the most recently PAINTED detail
+  // pane (see render() below) — never DOM content, purely a data fingerprint
+  // used to decide whether this poll tick needs to touch
+  // #pane-journey-detail at all. Starts null so the very first render always
+  // paints once.
+  let lastDetailSig = null;
+
+  // ensureShell builds the static #pane-journey-page skeleton exactly ONCE
+  // (on the very first render). Before this fix, EVERY render() call
+  // innerHTML-replaced the whole page (progress bar + killchain + map +
+  // detail) — which tore out and recreated every live node inside the detail
+  // pane (copy buttons, the submit <form>/<input>, open <details>, hint-open
+  // buttons, step checkboxes, focus, the "Copied!" flash) on every 2s poll,
+  // even when nothing about the detail had actually changed. Now the outer
+  // containers (#pj-progress / #pj-killchain / #pj-map / #pane-journey-detail)
+  // are created once and updated independently — #pane-journey-detail is
+  // handled entirely separately (see the signature check in render()) so a
+  // no-op poll tick never touches it.
+  function ensureShell() {
+    if (document.getElementById('pj-progress')) return;
+    document.getElementById('pane-journey-page').innerHTML = `
+      <div class="prog-wrap" id="pj-progress"></div>
+      <div class="killchain" id="pj-killchain"></div>
+      <div class="layout">
+        <section class="panel">
+          <div class="panel-header"><h2>Mission map</h2></div>
+          <ul class="map" id="pj-map"></ul>
+        </section>
+        <section id="pane-journey-detail" data-mission=""></section>
+      </div>`;
+  }
+
   function render(d) {
+    ensureShell();
     const missions = d.missions || [];
     const total = d.total || missions.length || 0;
     const solvedCount = d.solved_count || 0;
@@ -1139,61 +1172,75 @@
       </li>`;
     }).join('');
 
-    // ---- detail ----
-    // #4 fix: while the participant is actively typing into the evade flag
-    // input, skip rebuilding the detail <section> on this poll tick. Every
-    // render() call used to innerHTML-replace the WHOLE #pane-journey-page
-    // (killchain + map + detail) every 2s, which tore out and recreated
-    // #pane-journey-flag-input mid-keystroke — the input lost both focus and
-    // whatever the participant had typed, so typing into it looked broken
-    // ("入力ができない"). The detail pane's content for the currently-viewed
-    // mission does not need a mid-typing refresh (hints/steps changes while
-    // the user is composing a submission are rare and will land on the next
-    // untouched poll); everything else (progress bar, killchain, map) still
-    // updates live every tick.
-    const detailEl = document.getElementById('pane-journey-detail');
-    const flagInput = document.getElementById('pane-journey-flag-input');
-    const viewedSameMission = detailEl && detailEl.dataset.mission === String(viewedId || '');
-    const skipDetailRerender = !!(flagInput && document.activeElement === flagInput && viewedSameMission);
-
-    const detailHTML = d.detail ? renderDetail(d.detail) : renderAllDone(solvedCount, total);
-
-    document.getElementById('pane-journey-page').innerHTML = `
-      <div class="prog-wrap">
-        <div class="prog-head">
-          <span class="label">Mission progress</span>
-          <span class="count">${solvedCount}<span class="total">/${total}</span> · ${pct}% · <span class="score">SCORE ${score}</span></span>
-        </div>
-        <div class="bar"><div class="fill" style="width:${pct}%"></div></div>
+    // ---- progress / killchain / map ----
+    // These three hold no interactive state of their own (no focus, no
+    // in-progress typing, no open <details>/copy-flash) — only their own
+    // click delegation, which is cheap to re-wire every tick since the click
+    // handler is stateless (viewMission(id) always does the same thing).
+    // Updating them independently (instead of one big innerHTML replace of
+    // the whole page) is what lets #pane-journey-detail below stay untouched
+    // when only progress/killchain/map actually changed.
+    document.getElementById('pj-progress').innerHTML = `
+      <div class="prog-head">
+        <span class="label">Mission progress</span>
+        <span class="count">${solvedCount}<span class="total">/${total}</span> · ${pct}% · <span class="score">SCORE ${score}</span></span>
       </div>
-      <div class="killchain">${killchainHTML || '<div class="empty"><span class="icon">∅</span>ミッション未ロード</div>'}</div>
-      <div class="layout">
-        <section class="panel">
-          <div class="panel-header"><h2>Mission map</h2></div>
-          <ul class="map">${mapHTML || '<div class="empty"><span class="icon">∅</span>ミッション未ロード</div>'}</ul>
-        </section>
-        <section id="pane-journey-detail" data-mission="${esc(viewedId || '')}">${skipDetailRerender ? detailEl.innerHTML : detailHTML}</section>
-      </div>`;
+      <div class="bar"><div class="fill" style="width:${pct}%"></div></div>`;
+    document.getElementById('pj-killchain').innerHTML =
+      killchainHTML || '<div class="empty"><span class="icon">∅</span>ミッション未ロード</div>';
+    document.getElementById('pj-map').innerHTML =
+      mapHTML || '<div class="empty"><span class="icon">∅</span>ミッション未ロード</div>';
 
     // Free-browsing click wiring (P23 Story-as-docs): delegate from both the
     // kill-chain strip and the mission map — a click anywhere on a
     // data-mission node re-fetches that mission's detail via viewMission().
-    // Re-wired every render since innerHTML above just replaced these nodes.
+    // Re-wired every render since the innerHTML assignments above just
+    // replaced these nodes (the handler itself is stateless, so re-wiring is
+    // harmless — unlike the detail pane below, nothing here needs to survive
+    // across a tick).
     document.getElementById('pane-story').querySelectorAll('.kc-node[data-mission], .map li[data-mission]').forEach(el => {
       el.addEventListener('click', () => viewMission(el.dataset.mission));
     });
 
-    if (skipDetailRerender) {
-      // The detail markup above was carried over verbatim (same innerHTML
-      // string reused), so the live <input>/<form> nodes the participant is
-      // typing into were NOT recreated — do not re-wire or touch focus.
-    } else {
+    // ---- detail ----
+    // Signature-based skip: #pane-journey-detail is the ONLY subtree that can
+    // hold live participant interaction state (an in-progress flag-input
+    // keystroke, the "Copied!" flash on a hint-copy button, an opened
+    // <details>, focus itself, a sticky submit-msg). Every prior version of
+    // this function rebuilt it on every 2s poll regardless of whether
+    // anything in it had actually changed, which is what tore all of that
+    // state out from under the participant. Now: compute a signature of the
+    // detail DATA (never DOM — see the JSON.stringify below), and only touch
+    // the DOM when that signature differs from the last one actually
+    // painted. This is a strict generalization of the old
+    // "skipDetailRerender" (which only protected an in-progress flagInput
+    // keystroke): a stable signature also naturally covers "focused on the
+    // flag input" (nothing in d.detail changes while the participant is
+    // just typing), so no separate focus-tracking special case is needed
+    // here. Any real change — a hint reveal (hints.opened grows), a solve
+    // (status flips), a mission switch (id/free-browse changes), an exfil
+    // receipt (exfilReceived flips) — changes the signature and repaints as
+    // before.
+    const sig = JSON.stringify(d.detail || null);
+    const detailChanged = sig !== lastDetailSig;
+
+    if (detailChanged) {
+      const detailHTML = d.detail ? renderDetail(d.detail) : renderAllDone(solvedCount, total);
+      const detailEl = document.getElementById('pane-journey-detail');
+      detailEl.dataset.mission = viewedId || '';
+      detailEl.innerHTML = detailHTML;
       wireDetail(d.detail);
-      // Re-inject any sticky failure-mode submit result the polling re-render
-      // just wiped. Drop it if the user has moved on to a different mission.
+      // Re-inject any sticky failure-mode submit result the polling
+      // re-render just wiped. Drop it if the user has moved on to a
+      // different mission.
       if (lastSubmit && d.detail && lastSubmit.cid !== d.detail.id) lastSubmit = null;
       restoreSubmitMsg();
+      lastDetailSig = sig;
     }
+    // else: detail data is byte-for-byte identical to what's already
+    // painted — leave the DOM (and therefore focus, typed text, open
+    // <details>, copy-flash timers, etc.) completely alone.
+
     prevSolved = solvedNow;
     prevCurrent = d.current;
     lastCurrent = d.current || null;
