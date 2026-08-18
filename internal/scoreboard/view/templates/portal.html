@@ -608,6 +608,10 @@
   #pane-story .btn:hover { color: var(--accent); border-color: var(--accent); box-shadow: 0 0 12px var(--accent-glow); }
   #pane-story .btn-accent { color: var(--bg); background: linear-gradient(135deg, var(--accent), var(--accent-2)); border-color: var(--accent); }
   #pane-story .btn-accent:hover { color: var(--bg); filter: brightness(1.08); }
+  /* app#125: dirty-flag "redo this mission" action — reuses the danger token
+     already defined for .submit-msg.err / .reset-btn:hover, no new colors. */
+  #pane-story .btn-danger { color: var(--danger); border-color: var(--danger); }
+  #pane-story .btn-danger:hover { color: var(--bg); background: var(--danger); border-color: var(--danger); box-shadow: 0 0 12px rgba(255,92,106,0.35); }
 
   #pane-story .docs-link { display: inline-block; margin-top: 1.2rem; font-size: 0.85rem; }
 
@@ -629,6 +633,11 @@
   #pane-story .autosolve .steps-flow li.done { color: var(--success); }
   #pane-story .autosolve .steps-flow li.waiting .dot { animation: p-pulse 1.6s ease-in-out infinite; }
   #pane-story .autosolve .hint { color: var(--text-mute); font-size: 0.8rem; margin-top: 0.7rem; }
+  /* app#125: always-on dirty-flag status (ADR-0003). Same .autosolve card,
+     left-border swapped from --evade to --danger when tainted; dirty rule
+     rows reuse --danger like .submit-msg.err. */
+  #pane-story .autosolve.dirty { border-left-color: var(--danger); }
+  #pane-story .autosolve .steps-flow li.dirty-rule { color: var(--danger); font-weight: 600; }
   /* collapsible manual fallback */
   #pane-story details.manual { margin-top: 0.8rem; }
   #pane-story details.manual > summary { cursor: pointer; color: var(--text-mute); font-size: 0.82rem; list-style: none; user-select: none; }
@@ -1496,15 +1505,60 @@
   //     is delivered by exfil; the scoreboard auto-clears once the window is
   //     clean), demoting the manual submit form to a collapsed fallback.
   //   - plain evade challenges keep the manual submit form as the primary path.
+  // app#125 (prod gate, ADR-0003 §A2/A3): dirtySection() is prepended to
+  // BOTH branches so the persistent taint state + the only working "undo"
+  // (POST .../reset-dirty) is always visible in the mission panel a
+  // participant is actually looking at — not just inside the requireExfil
+  // auto-solve flow (03/05 have no requireExfil, so before this change they
+  // showed NO dirty state at all here), and not only in the Me tab's 2s-poll
+  // fire feed (product-engineer's cross-cutting finding: Journey work and
+  // Me-tab feedback were on separate panes with no way back).
   function evadeSection(det) {
+    const dirty = dirtySection(det);
     if (det.requireExfil) {
-      return autoSolveStatus(det) + `
+      return dirty + autoSolveStatus(det) + `
         <details class="manual">
           <summary>うまくいかない? 手動でフラグを提出</summary>
           ${submitForm(det.id)}
         </details>`;
     }
-    return `<div class="sec-title">Flag 提出（evade）</div>${submitForm(det.id)}`;
+    return dirty + `<div class="sec-title">Flag 提出（evade）</div>${submitForm(det.id)}`;
+  }
+
+  // dirtySection (app#125, ADR-0003 §A2/A3 — prod gate for #124's persistent
+  // dirty flag): always-visible "検知状態" card for every evade mission,
+  // mirroring the always-on style of triggerSection / autoSolveStatus rather
+  // than only surfacing on a failed submit. Two states:
+  //   - clean: reassurance that the current attempt is untainted.
+  //   - dirty: which forbidden rule(s) fired (det.dirtyRules — Falco rule
+  //     NAMES only, never a flag value per I10, but still routed through
+  //     esc() like every other catalog-derived string on this page — #26)
+  //     plus the ONLY working recovery action: the reset-dirty button.
+  // Before this, the only on-screen text about recovering from dirty was
+  // autoSolveStatus's "reset-dirty でやり直すまで自動クリアされません" (a
+  // command name with no button behind it — origin-guard 403s the bare
+  // curl the old text implied, and the collector allowlist deliberately
+  // does NOT carry this route, see api.go's resetDirty doc). That line is
+  // now just a pointer to this section instead of a dead-end instruction.
+  function dirtySection(det) {
+    if (!det.dirty) {
+      return `<div class="sec-title">検知状態</div>
+        <div class="autosolve">
+          <div class="hint" style="margin-top:0">✅ この attempt はクリーンです（禁止ルールの発火なし）。このまま提出できます。</div>
+        </div>`;
+    }
+    const rows = (det.dirtyRules || []).map(r =>
+      `<li class="dirty-rule"><span class="dot">🔴</span><span>${esc(r)}</span></li>`).join('');
+    return `<div class="sec-title">検知状態</div>
+      <div class="autosolve dirty">
+        <div class="hint" style="margin-top:0;color:var(--danger)">🔴 検知されています — 以下の禁止ルールが発火し、この attempt は汚染されています。このまま提出しても通りません。</div>
+        <ul class="steps-flow" style="margin-top:0.6rem">${rows}</ul>
+        <div class="hint">回避技法をやり直すか、下のボタンでこの attempt をリセットしてください。</div>
+        <button type="button" class="btn btn-danger" id="pane-journey-reset-dirty"
+          data-cid="${esc(det.id)}" data-require-exfil="${det.requireExfil ? '1' : '0'}"
+          style="margin-top:0.6rem">このミッションをやり直す</button>
+        <div class="submit-msg" id="pane-journey-reset-msg"></div>
+      </div>`;
   }
 
   // autoSolveStatus renders the three-stage live flow for an exfil-required
@@ -1521,12 +1575,15 @@
         dot: received ? '✅' : '⏳',
         text: received ? 'collector が flag を受信しました' : 'collector への flag 配送を待機中…' },
       // ADR-0003: there is no time window any more — `dirty` is a persistent
-      // per-attempt taint that only an explicit reset-dirty call clears.
+      // per-attempt taint. The only clear action is the "検知状態" card's
+      // reset button (dirtySection(), rendered above this status), so this
+      // row now just points there instead of naming the API route — see
+      // dirtySection's doc for why the old copy was a dead-end instruction.
       { cls: received ? (det.dirty ? 'active waiting' : 'done') : '',
         dot: received ? (det.dirty ? '⏳' : '✅') : '·',
         text: received
           ? (det.dirty
-              ? '禁止ルールが発火済み — reset-dirty でやり直すまで自動クリアされません'
+              ? '禁止ルールが発火済み — 上の「検知状態」でやり直すまで自動クリアされません'
               : 'クリーンな attempt を確認 — 自動クリア待ち')
           : 'クリーンな attempt の確保' },
       { cls: '', dot: '🎉', text: '自動クリア' },
@@ -1601,6 +1658,54 @@
             { method: 'POST' });
           if (r.ok) { await refresh(); }
         } catch (e) { /* ignore */ }
+        busy = false;
+      });
+    }
+
+    // app#125 (prod gate, ADR-0003 §A2): reset-dirty — the ONLY way to clear
+    // the persistent taint. Mirrors the hint-reveal button's confirm+busy+
+    // fetch+refresh shape immediately above. A2-2 (CEO enforce decision)
+    // means this ALSO deletes the same (user, cid) collector exfil receipt,
+    // so a requireExfil mission (currently only 10-final-exfil) gets an
+    // extra confirm line — silently dropping a delivered receipt would turn
+    // "why did my exfil disappear" into a support ticket.
+    //
+    // Auth/origin: this fetch is a same-origin browser POST with no custom
+    // headers, so it naturally carries Origin/Referer — the shape the
+    // resetDirty route's origin-guard (api.go) requires and a header-less
+    // workspace curl cannot produce. Do not add a Content-Type/body here
+    // (the endpoint takes none) and do not route this through the collector
+    // (see resetDirty's doc: the collector's claimed-identity trust model
+    // would let any workspace erase another participant's taint AND exfil
+    // receipt — an attribution-forgery path this button must not reopen).
+    const resetBtn = document.getElementById('pane-journey-reset-dirty');
+    if (resetBtn) {
+      resetBtn.addEventListener('click', async () => {
+        const cid = resetBtn.dataset.cid;
+        const requireExfil = resetBtn.dataset.requireExfil === '1';
+        let confirmMsg = 'このミッションをやり直します。検知履歴（禁止ルールの発火記録）を削除し、クリーンな attempt から再挑戦できるようにします。';
+        if (requireExfil) {
+          confirmMsg += '\n\n⚠️ このミッションは exfil が必要です。やり直すと送信済みの exfil 証跡も削除されるため、再度 exfil で flag を配送する必要があります。';
+        }
+        confirmMsg += '\n\nやり直しますか？';
+        if (!confirm(confirmMsg)) return;
+        const msgEl = document.getElementById('pane-journey-reset-msg');
+        busy = true;
+        try {
+          const r = await fetch('/api/users/' + encodeURIComponent(user) + '/challenges/' + encodeURIComponent(cid) + '/reset-dirty',
+            { method: 'POST' });
+          if (r.ok) {
+            // Repaint immediately (don't make the participant wait up to 2s
+            // for the next poll) — same pattern as viewMission()/hint-reveal.
+            // The refreshed detail's dirtySection() will show the clean
+            // state, so no separate success flash is needed here.
+            await refresh();
+          } else {
+            if (msgEl) { msgEl.className = 'submit-msg err'; msgEl.textContent = 'リセットに失敗しました。しばらくしてから再試行してください。'; }
+          }
+        } catch (e) {
+          if (msgEl) { msgEl.className = 'submit-msg err'; msgEl.textContent = 'リセットに失敗しました（通信エラー）。'; }
+        }
         busy = false;
       });
     }
