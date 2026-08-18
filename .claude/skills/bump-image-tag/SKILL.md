@@ -1,7 +1,6 @@
 ---
 name: bump-image-tag
 description: Procedure for pinning a new app version (git SHA) for a CTF event — updates falco-ctf-platform events/<date>/versions.yaml and the prod helmfile values.
-type: skill
 ---
 
 # App version pin 更新手順（platform 側）

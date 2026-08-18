@@ -1,7 +1,6 @@
 ---
 name: regen-openapi
 description: Procedure for regenerating OpenAPI types (make gen) and keeping docs/ in sync after handler changes.
-type: skill
 ---
 
 # OpenAPI 再生成手順
