@@ -202,10 +202,11 @@ else
   fi
 fi
 
-# Determine total step count (3 normally, 4 when display-name is set).
-LAST_STEP=3
+# Determine total step count (4 normally — rotate/upgrade/verify/assert —,
+# 5 when display-name is set).
+LAST_STEP=4
 if [[ -n "${DISPLAY_NAME}" ]]; then
-  LAST_STEP=4
+  LAST_STEP=5
 fi
 
 info "[1/${LAST_STEP}] rotate workspace Pod (Pod fields are immutable across helm upgrade)"
@@ -266,12 +267,21 @@ kubectl -n "${NS}" wait pod/workspace --for=condition=Ready --timeout=60s
 HOST=$(kubectl -n "${NS}" get ingress ttyd -o jsonpath='{.spec.rules[0].host}')
 green "  ✓ ready — http://${HOST}/"
 
+# ADR-0001 Verification 3 (F2): fail-closed flag-isolation assert, run right
+# after the workspace is up. No `if`/`||` wrapper around this call — `set -e`
+# above must propagate a non-zero exit from the assert straight out of this
+# script (Cross-repo 契約: deploy-user.sh's non-zero exit is a fail-closed
+# contract the caller must not swallow; deploy-event-workspaces.sh collects
+# per-user exit status on the platform side).
+info "[4/${LAST_STEP}] assert flag isolation (ADR-0001 Verification 3)"
+"${CHART_DIR}/assert-flag-isolation.sh" "${NS}" "${CHALLENGES_DIR}" "${CHALLENGE_ID}"
+
 # Register the display name on the scoreboard (first-set-only).
 # We can't reach scoreboard.scoreboard.svc directly from the operator's
 # machine, so we exec into an ingress-nginx pod (which the scoreboard
 # NetworkPolicy already admits) and curl from there.
 if [[ -n "${DISPLAY_NAME}" ]]; then
-  info "[4/${LAST_STEP}] register display name on scoreboard"
+  info "[5/${LAST_STEP}] register display name on scoreboard"
   INGRESS_POD=$(kubectl -n ingress-nginx get pod \
     -l app.kubernetes.io/name=ingress-nginx \
     -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
