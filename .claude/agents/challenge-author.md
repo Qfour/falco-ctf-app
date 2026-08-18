@@ -47,20 +47,61 @@ the participant's explicit reset-dirty endpoint clears it. Do not add a
 
 ## plant.sh + generated values (evade challenges)
 
-Flags are injected, never written into the repo. Author a `plant.sh` that seeds
-the flag using the `CTF_FLAG_<ID>` env var (`<ID>` = challengeId upper-cased,
-`-`→`_`); the ctf-user chart supplies the value (dev default locally, real flag
-from the platform events secret in prod):
+**ADR-0001 (Option B, Accepted) model** — `plant.sh` runs in a `plant`
+initContainer, never in the challenge container, and never touches the real
+sensitive path. It writes into a seed emptyDir at `$PLANT_SEED_ROOT`
+(`gen-values.sh` sets this var); the chart then bind-mounts
+`$PLANT_SEED_ROOT/<rel-path>` back onto the real path in the challenge
+container (read-only, `subPath`). Flags are injected, never written into the
+repo: reference the `CTF_FLAG_<ID>` env var (`<ID>` = challengeId
+upper-cased, `-`→`_`), which reaches only the `plant` initContainer via the
+`ctf-flags` Secret.
+
+Every `plant.sh` MUST start with a machine-readable header:
 
 ```sh
 # challenges/<NN>-<slug>/plant.sh
-echo "# ${CTF_FLAG_<NN>_<SLUG>:?flag env not set by ctf-user chart}" >> /etc/shadow
+# plant-target: /etc/shadow
+# plant-seed-source: /opt/ctf/plant-seed/etc/shadow   # only if the target needs base data restored first — omit otherwise (see below)
+#
+# <prose explaining the mission>
+echo "# ${CTF_FLAG_<NN>_<SLUG>:?flag env not set by ctf-user chart}" >> "${PLANT_SEED_ROOT}/etc/shadow"
 ```
+
+- `# plant-target: <abs-path>` (required, ≥1): the real path the chart will
+  bind-mount this seed content onto. Must be a **bind-mountable path** (see
+  Constraints below).
+- `# plant-seed-source: <path under /opt/ctf/plant-seed/>` (optional): only
+  needed if the plant-target already has base data in the real filesystem
+  that participants expect to see (e.g. `/etc/shadow` — mission 02's brief
+  assumes a real-looking shadow file, not just 2 flag lines). `gen-values.sh`
+  copies this build-time snapshot (baked by `images/challenge/Dockerfile`,
+  ADR-0001 S-a) into the seed dir once, before any mission's body runs.
+  **Never point this at the real sensitive path** — it must be a
+  `/opt/ctf/plant-seed/...` path baked at image build time, or
+  `gen-values.sh --check` fails (Verification 2-3). If your plant-target is
+  freshly created by your own script (like mission 05's `/root/.ssh`), omit
+  this header entirely.
+- Everything else in the body must write under `"${PLANT_SEED_ROOT}"` —
+  never the bare real path (`gen-values.sh --check` heuristically flags
+  bare-path writes, Verification 2-5).
+- Two or more missions may declare the **same** plant-target (03 and 10 both
+  append to `/etc/shadow`) — `gen-values.sh` dedupes the mount and runs the
+  seed-source copy exactly once, then appends each mission's body in
+  mission-id sort order (Verification 2-2/2-4).
+- The generated seed script must never read a sensitive path, `cp` from
+  anywhere but `/opt/ctf/plant-seed/`, invoke `grep`/`egrep`/`fgrep`/`find`/
+  `ln`, or exec anything under the seed dir (Verification 2-7 — this is the
+  machine enforcement of I13b, the "deploy path never triggers a Falco
+  event" invariant). `mkdir -p` / `cp -a <snapshot>` / `echo >>` / `cat >
+  <<EOF` / `chmod` are fine.
 
 Then regenerate the Helm overlays (never hand-edit values.yaml / values-all.yaml):
 ```bash
 make gen-values
 ```
+`make check-flags` runs `gen-values.sh --check`, which also re-runs the 2-1
+through 2-7 checks above — treat any failure as a real defect, not noise.
 
 ## Authoring process
 
@@ -85,8 +126,11 @@ When asked to REVIEW a challenge:
 - Verify falco-rule.yaml schema completeness and rule name accuracy
 - For evade: verify no `windowSeconds` key was added (removed, ADR-0003 — the
   gate is a persistent attempt-scoped taint, not a time window)
-- For evade: verify `plant.sh` seeds the flag via `CTF_FLAG_<ID>` and that
-  `values.yaml` / `values-all.yaml` are regenerated (`make gen-values` clean)
+- For evade: verify `plant.sh` seeds the flag via `CTF_FLAG_<ID>`, has a
+  `# plant-target:` header (and a `# plant-seed-source:` header only if the
+  target needs base data restored), writes only under
+  `"${PLANT_SEED_ROOT}"`, and that `values.yaml` / `values-all.yaml` are
+  regenerated (`make gen-values` clean, `gen-values.sh --check` green)
 - Check README has: 出題文, クリア条件, 想定解, 仕組みの解説, ヒント (難易度別)
 - Verify `fixtures/welcome.txt` gives enough context without spoiling
 - For evade: verify `fixtures/submit.sh` posts to scoreboard endpoint correctly
@@ -145,7 +189,14 @@ When asked to REVIEW a challenge:
   planted file** (ADR-0001): a `subPath` bind mount puts the file on a different filesystem, so
   `link()` fails with `EXDEV` and `rename()` across the mount boundary fails too. Mission 09 had
   to be retargeted for exactly this reason.
-- The `plant.sh` example above still shows the pre-ADR-0001 model (writing straight to
-  `/etc/shadow` from an env var in the challenge container). **It will change when Option B
-  lands** — plant runs in the initContainer and writes into the seed dir. Check the chart before
-  copying the snippet.
+- **Never write to a bare real path in `plant.sh`** — always
+  `"${PLANT_SEED_ROOT}/..."`. `make check-flags` (`gen-values.sh --check`)
+  heuristically flags bare-path writes, but the flag lands wrong (or hits a
+  real sensitive path) before the check catches it if you get this wrong
+  locally and forget to run it.
+- **A planted file is a read-only bind mount** (ADR-0001, security-engineer
+  A9): the chart mounts each plant-target `readOnly: true`. A mission cannot
+  require *writing* to a planted path at runtime — e.g. `passwd`/`chpasswd`/
+  `useradd` against a planted `/etc/shadow` fails with `EROFS`. Design the
+  solve path (and any "make it persist" flourish) around reading/exfiltrating
+  the planted content, not modifying it.

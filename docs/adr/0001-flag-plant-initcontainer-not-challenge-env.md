@@ -1040,10 +1040,16 @@ in-memory カウンタを回す (`internal/store/store.go:492-509`)。
 
 対象レンダリング (**すべての分岐を検査する**):
 
-- `--set challenge.allMissions=true` (本番既定、`pod.yaml:165` 側)
-- `--set challenge.allMissions=false --set challengeId=<id>` を **03/05/10 それぞれ** で
-  (`pod.yaml:170` の `else if` 側。監査 F1: この分岐も assert 対象)
+- **【Option B 実装で更新】`-f challenges/values-all.yaml --set challengeId=all`** (本番既定 = 全ミッション)
+- **`-f challenges/<id>/values.yaml --set challengeId=<id>`** を **03/05/10 それぞれ** で
+  (単一ミッション分岐。監査 F1: この分岐も assert 対象)
 - いずれも `--set-string challenge.flags.03-stealth-read='FALCO{dev-probe}'` 等を与える
+
+> **`challenge.allMissions` は Option B で削除された**（フラグ env が challenge から撤去された結果、
+> このフィールドの消費者が無くなった。両リポで残存参照ゼロを確認済み）。
+> rev.4 までの本節は `--set challenge.allMissions=true/false` で 2 分岐を作る前提で書かれていたが、
+> **分岐は values ファイルの選択 (`values-all.yaml` / `<id>/values.yaml`) に置き換わっている。**
+> DoD 項目 1 の実装者はこの読み替えを使うこと（古い記述に従うと存在しないフィールドを set することになる）。
 
 `kind: Pod` の container `challenge` に対する assert:
 

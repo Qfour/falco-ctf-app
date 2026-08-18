@@ -1,11 +1,33 @@
 # GENERATED from 03-stealth-read/plant.sh by gen-values.sh — DO NOT EDIT.
 # Run `make gen-values` after editing plant.sh.
-challenge:
-  postStart:
+plant:
+  seedScript:
     - sh
     - -c
     - |
+      set -eu
+      PLANT_SEED_ROOT=/plant-seed
+
+      # ---- 03-stealth-read ----
+      # seed /etc/shadow from the build-time snapshot (ADR-0001 S-a) — runs once
+      mkdir -p "${PLANT_SEED_ROOT}/etc"
+      cp -a "/opt/ctf/plant-seed/etc/shadow" "${PLANT_SEED_ROOT}/etc/shadow"
+      #
       # Mission 03 (Stealth Read) — plant the flag at the end of /etc/shadow.
-      # CTF_FLAG_03_STEALTH_READ is injected by the ctf-user chart from the event
-      # flags secret (the chart supplies a FALCO{dev-...} default for local runs).
-      echo "# ${CTF_FLAG_03_STEALTH_READ:?flag env not set by ctf-user chart}" >> /etc/shadow
+      #
+      # ADR-0001 Option B: this script runs in the `plant` initContainer, never in
+      # the challenge container. It never touches the real /etc/shadow — it writes
+      # into the seed emptyDir at $PLANT_SEED_ROOT (gen-values.sh sets this var and,
+      # because `plant-seed-source` above is declared, copies the build-time
+      # snapshot from /opt/ctf/plant-seed/etc/shadow into
+      # $PLANT_SEED_ROOT/etc/shadow *before* this line runs). The chart then binds
+      # $PLANT_SEED_ROOT/etc/shadow onto /etc/shadow in the challenge container via
+      # a subPath mount (read-only) — the participant sees the same path they
+      # always did.
+      #
+      # CTF_FLAG_03_STEALTH_READ is injected into the `plant` initContainer from the
+      # ctf-flags Secret (the chart supplies a FALCO{dev-...} default for local
+      # runs).
+      echo "# ${CTF_FLAG_03_STEALTH_READ:?flag env not set by ctf-user chart}" >> "${PLANT_SEED_ROOT}/etc/shadow"
+  mounts:
+    - /etc/shadow
