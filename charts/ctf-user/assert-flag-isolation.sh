@@ -178,6 +178,11 @@ then
 fi
 
 # ---------------------------------------------------------------------------
+# NOTE (flag-guard): diagnostic messages below say "flag-marker line(s)" and never
+# spell the literal FALCO + { on a line that also contains a ${...} expansion.
+# scripts/check-flags.sh matches FALCO\{[^}]*\} per line, so such a line reads as
+# a real flag literal and fails the flag-guard CI job. Reword the message — do NOT
+# loosen check-flags.sh, which is deliberately fail-closed.
 # Dynamic expectations: how many `FALCO{` lines /etc/shadow should carry,
 # and whether /root/.ssh/id_rsa should exist, for the missions actually in
 # scope for THIS deploy. Derived from each in-scope plant.sh's own
@@ -358,7 +363,7 @@ fi
 
 if [ "${OBS_SHADOW_FALCO_LINES}" != "${EXPECTED_SHADOW_FALCO_LINES}" ]
 then
-  VIOLATIONS+=("3-5: /etc/shadow has ${OBS_SHADOW_FALCO_LINES} FALCO{ line(s), expected ${EXPECTED_SHADOW_FALCO_LINES} for challenge-id=${CHALLENGE_ID}")
+  VIOLATIONS+=("3-5: /etc/shadow has ${OBS_SHADOW_FALCO_LINES} planted flag-marker line(s), expected ${EXPECTED_SHADOW_FALCO_LINES} for challenge-id=${CHALLENGE_ID}")
 fi
 
 if [ "${OBS_SSH_KEY_EXISTS}" != "${EXPECTED_SSH_KEY_EXISTS}" ]
