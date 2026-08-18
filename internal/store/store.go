@@ -776,24 +776,57 @@ func (s *Store) DirtyRules(user, challenge string) []string {
 // clean taint. (The "honor" alternative — leaving the receipt and documenting
 // the auto-solve as intentional — was considered and explicitly rejected by
 // the CEO; see ADR-0003 §A2 point 3.)
+//
+// app#124 5x review (R1/R2/R4, independently): the original two-Exec version
+// deleted evade_dirty FIRST — including the in-memory delete(s.dirtyRules,
+// key) — and only then deleted exfil. If the second DELETE failed, the
+// handler surfaced a 500, but the taint was ALREADY gone (both on disk and
+// in memory) while the stale exfil receipt was NOT: exactly the "dirty
+// cleared, receipt still present" state the Sweeper (current-independent,
+// 5s tick) auto-solves on its very next pass. A 500 response gave the
+// caller no reason to believe anything had actually changed, so the
+// A2-2 exploit this function exists to close reopened through its own
+// error path. Both DELETEs (and their in-memory mirrors) now run inside a
+// single SQLite transaction, committed only if both succeed, with the
+// in-memory maps updated only AFTER Commit returns nil — so a mid-way
+// failure leaves BOTH the taint and the receipt exactly as they were
+// (fail-closed: still dirty, still un-resettable, submit stays blocked)
+// instead of a partially-cleared state a background sweep can exploit.
+//
+// This is the first use of db.Begin/*sql.Tx anywhere in this package.
+// Safe under I1 (scoreboard is single-replica, and all Store methods —
+// including this one — already serialize through s.mu, so there is no
+// concurrent writer to interleave with these two statements).
 func (s *Store) ResetDirty(user, challenge string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := SolveKey{User: user, Challenge: challenge}
-	if _, err := s.db.Exec(
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op once Commit succeeds
+
+	if _, err := tx.Exec(
 		"DELETE FROM evade_dirty WHERE user = ? AND challenge = ?",
 		user, challenge,
 	); err != nil {
 		return err
 	}
-	delete(s.dirtyRules, key)
-
-	if _, err := s.db.Exec(
+	if _, err := tx.Exec(
 		"DELETE FROM exfil WHERE user = ? AND challenge = ?",
 		user, challenge,
 	); err != nil {
 		return err
 	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	// In-memory mirrors are only mutated after the transaction is durably
+	// committed — see the fail-closed rationale above.
+	delete(s.dirtyRules, key)
 	delete(s.exfil, key)
 	return nil
 }

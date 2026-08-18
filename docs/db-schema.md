@@ -317,6 +317,33 @@ Test: `TestFalcoEvents_SolveTimestampUsesReceiptTime`.
 | v2      | 2026-08-18 | App-H2 (PR #124): `evade_dirty` added (persistent evade forbidden-rule taint), replacing the old in-memory `ruleFires`-windowed evade gate |
 | v2.1    | 2026-08-18 | ADR-0003 (attempt scope, same-day follow-up after PR #124 was found to block every regular participant — see the ADR): no schema change. `evade_dirty` writes are now scoped to the participant's CURRENT mission (was: unconditional fan-out to every evade challenge sharing the fired rule name — #124's regression). `ResetDirty` now also deletes the pair's `exfil` row (A2-2 enforce decision) |
 
+**Upgrade note (app#124 5x review, R1 LOW):** the `d24fe02` build (App-H2
+before ADR-0003's attempt scope landed) wrote `evade_dirty` rows with NO
+scope check — any evade challenge sharing a fired rule name got tainted,
+including 03/05/10 the instant a participant legitimately cleared the
+earlier twin trigger mission (02/04) that requires firing the exact same
+rule. Those rows are still on disk after upgrading to v2.1: attempt scope
+only changes how NEW rows get written, it does not retroactively clean up
+rows the old unscoped code already wrote. Left in place, they permanently
+block 03/05/10 for every participant who reached them while `d24fe02` was
+running — indistinguishable from a live participant who genuinely fired a
+forbidden rule (the reset endpoint still works, but nobody would think to
+call it for something that isn't their fault).
+
+Prod has never run `d24fe02` (no prod deployment happened during that
+narrow window — this only matters for a dev/test PVC that was live while
+`d24fe02` was running and gets reused rather than recreated). Run this once
+against any such PVC before relying on the attempt-scoped gate:
+
+```sql
+DELETE FROM evade_dirty;
+```
+
+This is safe: it is exactly what the per-participant `ResetDirty` endpoint
+does one row at a time, just applied to every row at once, and does NOT
+touch `exfil` (a `requireExfil` challenge's already-delivered receipt is
+unaffected — only stale taints are being cleared, not receipts).
+
 ## Migration paths (when scale demands)
 
 | Trigger                                | Move to                                    |

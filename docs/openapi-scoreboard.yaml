@@ -234,9 +234,21 @@ paths:
 
         Authorization: self-or-admin over the auth-proxied participant host
         (`X-Auth-Request-Email` must match `{user}` by prefix, or be in
-        `ADMIN_EMAILS`); over the cluster-internal path (no auth header,
-        e.g. the collector) the legacy claimed-identity model applies,
-        matching the other `/api/users/{user}/*` writes.
+        `ADMIN_EMAILS`). This route is mounted behind the origin-guard
+        middleware (`internal/scoreboard/originguard`), which 403s any
+        request carrying neither an Origin nor a Referer header — exactly
+        the shape a header-less cluster-internal caller (e.g. the collector,
+        or a workspace pod) would send — BEFORE the self-or-admin check ever
+        runs. In practice this means the legacy claimed-identity model that
+        some other `/api/users/{user}/*` writes fall back to for header-less
+        callers is unreachable here. This is deliberate, not an oversight:
+        A2-2 (CEO enforce decision, 2026-08-18) turned this endpoint into one
+        that can delete ANOTHER participant's collector exfil receipt, and
+        the claimed-identity model carries no proof {user} in the path
+        matches the caller. Removing origin-guard from this route, or adding
+        it to the collector's forwarding allowlist
+        (`internal/collector/collector.go`), would open an unauthenticated
+        cross-user destructive-action path. Do not do either.
       parameters:
         - in: path
           name: user

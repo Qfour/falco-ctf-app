@@ -1100,11 +1100,22 @@ func (h *Handler) openHint(w http.ResponseWriter, r *http.Request) {
 // pre-body type guard).
 //
 // Auth: self-or-admin WRITE gate (selfOrAdminWrite, same as stepCheck /
-// openHint / setDisplayName) — over the auth-proxied journey/admin host a
-// participant may only reset their OWN {user}'s taint; an admin may reset
-// any. Over the cluster-internal path (no auth header) the legacy
-// claimed-identity model applies, matching the other /api/users/{user}/*
-// writes.
+// openHint) — over the auth-proxied journey/admin host a participant may
+// only reset their OWN {user}'s taint; an admin may reset any.
+// selfOrAdminWrite itself has a claimed-identity fallback for a header-less
+// caller (see its own doc), but that fallback is UNREACHABLE for this route
+// in practice: Register mounts resetDirty behind h.og (originguard.Guard),
+// which 403s any request carrying neither an Origin nor a Referer header —
+// exactly the shape a header-less cluster-internal caller sends — before
+// selfOrAdminWrite ever runs. That is deliberate (app#124 5x review, R1
+// finding C3), not an oversight: A2-2 made this endpoint able to delete
+// ANOTHER participant's collector exfil receipt, and the claimed-identity
+// model carries no proof the caller IS that participant, so leaving this
+// route reachable without a browser-supplied Origin/Referer would turn
+// A2-2's destructive reset into an unauthenticated cross-user action. Do not
+// remove h.og from this route's registration, and do not add this path to
+// the collector's forwarding allowlist (internal/collector/collector.go) —
+// either would reopen exactly that path.
 func (h *Handler) resetDirty(w http.ResponseWriter, r *http.Request) {
 	user := strings.TrimSpace(r.PathValue("user"))
 	cid := r.PathValue("cid")

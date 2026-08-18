@@ -80,6 +80,60 @@
 // and the next successful one, the in-memory-only taint for that write is
 // lost on restart (mitigated only by the taint_error metric + a runbook
 // check, not eliminated).
+//
+// A SECOND, larger-blast-radius consequence of the same 03/05 honor gap
+// (app#124 5x review, R1 finding C2 — do not read the paragraph above as
+// scoped to "03/05 alone can be honor-gapped"; it also lets a participant
+// neuter the forbiddenRules gate on 10-final-exfil, the RequireExfil
+// capstone that DOES matter for scoring):
+//
+//   - CurrentMission (see below) is "the first id in `order` that is not yet
+//     solved." 03/05 solve ONLY via a manual, correctly-flagged /submit —
+//     there is no auto-solve path for them — so a participant can leave 03
+//     (or 05) permanently unsolved on purpose. Doing so pins current() at 03
+//     for as long as they like: nothing about markDirtyOnRuleFire or
+//     evaluateTrigger ever forces current to advance.
+//   - While current is pinned at 03, markDirtyOnRuleFire only ever taints
+//     WHATEVER current() returns — 03, and only 03. 10-final-exfil's own
+//     seven forbiddenRules (10 is a distinct catalog id from 03, with its
+//     own list) are never current while 03 is unsolved, so firing ANY of
+//     them — including "Read sensitive file untrusted", which happens to
+//     be both 03's and 10's forbidden rule — taints 03 at most, never 10.
+//     The other six have no such collision and simply taint nothing at
+//     all. This is not "some of 10's rules slip through"; it is "none of
+//     10's rules CAN taint 10" for as long as something earlier in `order`
+//     stays deliberately unsolved, no matter how many times any of them
+//     fire, because the gate has exactly one target — current — and it is
+//     never 10 in this state. evaluateTrigger runs unconditionally
+//     regardless of current (deliberately, see its own doc), so 04/06/07/
+//     08/09 still solve normally throughout; only the attempt-scoped taint
+//     gate is starved of a target that is ever 10.
+//   - Sweep (below) re-derives the pending-solve set from the store on every
+//     tick and evaluates the SAME evaluateClean gate the manual /submit path
+//     uses — DirtyRules(user, cid), not current(). It has no opinion on
+//     which mission is "current" today; it only asks "is this receipt's
+//     (user, challenge) pair clean and does it have a matching exfil
+//     receipt." So once 10's exfil receipt is delivered, a 10 that was
+//     never once current while any of its forbiddenRules fired — because 03
+//     was pinned as current the whole time — is clean by construction and
+//     auto-solves on the Sweeper's next tick.
+//   - This is not even an edge case a careful attacker has to engineer:
+//     challenges/submit-yaml.sh gives every participant a one-shot "solve
+//     everything you have flags for, then submit the whole batch at the
+//     end" workflow, which is exactly "leave the earlier evade missions
+//     unsubmitted until last, exfiltrate 10 along the way, submit
+//     everything at once" — the natural, unremarkable way to use the
+//     provided tooling, not a crafted exploit path.
+//   - This is NOT a regression this ADR introduces: main's PRE-App-H2
+//     windowSeconds lookback gate had the identical property (fire, then
+//     stop firing before the window elapses, then submit) with an even
+//     shorter fuse (30s) — so ADR-0003 does not make 10's gate any weaker
+//     than it already was; it just does not make it any STRONGER either.
+//     Do not describe this ADR as having closed 10's gate — it has not.
+//     Only Issue #121's positive proof-of-technique work (submitting
+//     EVIDENCE that the evasion was actually exercised, rather than only
+//     the ABSENCE of a forbidden-rule taint) can close this, and per the
+//     ordering note above it must land strictly after this ADR.
 package scoring
 
 import (
