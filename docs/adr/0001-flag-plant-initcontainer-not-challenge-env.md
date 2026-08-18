@@ -1,9 +1,10 @@
 # ADR-0001: フラグの仕込みを initContainer に移し、challenge コンテナにフラグ実値の到達経路を一切設けない
 
 - Status: Proposed
-- Date / Deciders: 2026-08-18 (rev.2 同日改訂) / VP (承認) + architect (設計) + security-engineer (独立監査) + CEO (merge)
+- Date / Deciders: 2026-08-18 (rev.2 / rev.3 同日改訂) / VP (承認) + architect (設計) + security-engineer (独立監査) + CEO (merge)
 - 関連: CEO 決定「本番経路のフラグ env 注入を次イベント前に閉じる」(2026-08-18)、
   **security-engineer 独立監査 (2026-08-18): 判定 PASS with conditions / findings F1-F6 + 限界指摘**、
+  **ADR-0003 (evade attempt スコープ, Accepted)** — deploy 経路と採点の相互作用の正典 (rev.3 で追加)、
   P11.5 (egress lockdown)、P23-3 (ttyd-proxy)、Hard Invariants I5/I7/I9/I10、
   `.claude/rules/falco-ctf-app-conventions.md` §フラグ注入 (単一ソース)、
   CEO 決定「`falco-ctf-app-prodlocal/` 削除 + LIVE hotfix を `origin/archive/live-hotfix-2026-08-16` へ退避」(2026-08-18)
@@ -14,7 +15,27 @@
 > **mission 09 の EXDEV 破壊**を Options と完了条件に前倒し (F4)、**seed root mount 禁止**を明文化 (F5)、
 > **重複 plant-target の dedupe と seed 初期化**を gen-drift に追加 (F6)、
 > **本 ADR の限界 (mission 05 で「技法の証明」前提が成立しない)** を明記。
-> I11 は **F1 + F2 の実装をもって発効** (ADR merge と同時発効にしない)。
+> I12 は **F1 + F2 の実装をもって発効** (ADR merge と同時発効にしない)。
+
+> **rev.3 (2026-08-18) の改訂点**: **本 ADR 内部の矛盾を解消した** (VP 指摘 + architect の実コード検証)。
+> rev.2 の Verification 2-3 が必須化した seed 初期化 (「image rootfs から `cp -a /etc/shadow` する」) は、
+> **同じ rev.2 の §F3 が禁止した行為そのもの**であり、しかも assert (検証時に 1 回) ではなく
+> **本番 deploy 経路 (全 workspace・毎 deploy)** で起きる —— rev.2 のままでは
+> **mission 02 が全参加者・全 deploy で submit 無しに auto-solve する**。改訂点:
+> 1. **§F3 を「assert について」から「deploy 経路と assert の両方について」に一般化** (§F3′)。
+>    要件は **「Falco イベントを 1 件も出さない」**、手段は文脈依存 (assert = builtin-only /
+>    deploy = 禁じ手集合を踏まない) と書き分けた
+> 2. **派生決定 (3)「seed 初期化の供給元」を新設**し、層ごとに 5 案 (S-a〜S-e) を評価して
+>    **S-a (image build 時に非 sensitive path へ素データを snapshot し、実行時は sensitive path を
+>    一切 read しない)** を採用。**Verification 2-3 の「image rootfs から実行時コピー」要件は撤回**
+> 3. **plant-target × mission の全網羅表**と **deploy 経路の禁じ手表**を追加 (rev.2 は 02 のみ暗示していた)
+> 4. **ADR-0003 との非対称**を明記 —— trigger 側は汚染される / evade 側は初回 deploy では汚染されないが
+>    **再 deploy では恒久 taint される** (rev.2 はどちらも扱っていない)
+> 5. **Verification layer 4 (E2E) を新設**。残る prod gate である **ADR-0003 Verification (d) と同一 run 内**で
+>    deploy 経路の無汚染を観測する (現状の (d) はこの欠陥に対して盲目である)
+> 6. 本 ADR が提案する不変条件を **I11 → I12 に改番** (ADR-0003 が Accepted として I11 候補を先に
+>    主張しているため。下記「不変条件の番号」節)。**新たに I13 (deploy 経路の無汚染) を提案**
+> 7. DoD を **11 → 14 項目**に (差し替え内容は「実装 PR の完了条件」冒頭に明記)
 
 ## Context
 
@@ -147,6 +168,85 @@ H1 を閉じても、05 について参加者の手数は `env | grep` から `c
 H1 を閉じる価値は 05 の穴があっても失われない —— 03/10 では planted file の読み取りが
 実際に検知され、かつ H1 は「全課題を 1 コマンドで無効化する」唯一の経路だからである。
 
+### 【rev.3・最重要】rev.2 の Verification 自身が deploy 経路で採点を汚す (内部矛盾)
+
+> **rev.2 は「assert がイベントを出さないこと」(F3) を厳格に規定した一方で、
+> 同じ rev.2 が本番 deploy 経路に「イベントを出す行為」を必須検査項目として書いていた。
+> 前者は検証時に 1 回、後者は全 workspace・毎 deploy で必ず起きる。後者の方が重い。**
+
+矛盾の実体 (すべて実ファイル / 実バイナリで確認):
+
+| # | 事実 | 根拠 |
+|---|---|---|
+| 1 | rev.2 の Verification 2-3 は seed 初期化として「各 plant-target について append の *前* に image rootfs から素データをコピーする (`cp -a /etc/shadow /seed/etc/shadow` 等)」を **必須検査項目**にしていた | 本 ADR rev.2 §Verification 2 の 2-3 (rev.3 で撤回) |
+| 2 | rev.2 の §F3 は「assert 自身が採点を汚してはならない」として `grep` / `cat` / `head` / `tail` / `awk` を禁止した。根拠は `proc.name` がどの除外リストにも無いこと | `challenges/03-stealth-read/rule.yaml:51,59,178-183` |
+| 3 | **`cp` の除外は条件付きで、plant の文脈では成立しない。** `cp` は除外マクロ `cmp_cp_by_passwd` に現れるが条件は `proc.name in (cmp, cp) and proc.pname in (passwd, run-parts)` である。plant script から起動される `cp` の親は `sh` なので、`not cmp_cp_by_passwd` と `not user_read_sensitive_file_conditions` の両方を**通過する** = 発火する | `challenges/03-stealth-read/rule.yaml:98-99,122-123,184,189` |
+| 4 | plant initContainer の image は **challenge と同一 image** (Option B の 1) なので、その syscall は ingest の image repo フィルタを通過する | 本 ADR §Options B-1、`internal/scoreboard/ingest/ingest.go:88-99` |
+| 5 | **ingest は container 名で絞り込まない。** フィルタは (i) ns が `ctf-` 始まり、(ii) `k8s.pod.name == "workspace"`、(iii) image repo substring の 3 つだけ。initContainer は同一 Pod (`workspace`) の中で走るので 3 つすべてを満たす | `internal/scoreboard/ingest/ingest.go:77-99`。`grep -rn "container.name" internal/` と `grep -rn "ContainerName" internal/` はいずれも該当 0 件 (architect 実測) |
+| 6 | user は namespace から導出される → initContainer のイベントは **その参加者に帰属する** | `internal/scoreboard/ingest/ingest.go:112` |
+| 7 | `sensitive_files` は **`fd.name` ベース**の判定である (`fd.name startswith /etc and fd.name in (sensitive_file_names)`、または `fd.directory in (/etc/sudoers.d, /etc/pam.d)`)。**中身ではなくパスが効く** | `challenges/03-stealth-read/rule.yaml:1-2,90-93` |
+
+→ **帰結: `plant` が `cp -a /etc/shadow ...` を実行した瞬間に
+`Read sensitive file untrusted` が発火 → ingest 通過 →
+mission 02 (`type: trigger`, `expectedRules: [Read sensitive file untrusted]`,
+`challenges/02-credential-files/falco-rule.yaml:2-4`) が
+**全参加者・全 deploy で submit 無しに auto-solve する。**
+
+副作用 (どれも単独で重い):
+
+- **02 の学習が消える。** 02 は「ルールが中身ではなく path 文字列を見ている」ことを体験させる課題で
+  (`challenges/02-credential-files/README.md:22`)、それが 03 の核心の前提になっている
+  (同 :23、`challenges/02-credential-files/journey.yaml:24-27` の bridge)。
+  deploy 時点で CLEARED になっていると、参加者はこのミッションを一度も実行しない
+- **配点が全員に無条件で入る**ので leaderboard が t=0 で歪む
+- **`eventsPerUser` が全参加者で汚れる** → 本 ADR §Signposts 2
+  (「evade solve が workspace 作成から 60 秒未満 かつ rule fire 0 件」) が機能しなくなる
+- **ADR-0003 §Signpost 5 も機能しなくなる。** 同 signpost は「10 を auto-solve した参加者のうち
+  solve 時刻より前に 10 の禁止ルールを発火させていた者の割合」で capstone gate の inert 化を測る設計だが
+  (`docs/adr/0003-evade-clean-gate-attempt-scope.md:535-541`)、deploy 時の 1 発が
+  **全参加者の全 solve より前に必ず入る**ので、この指標は常に 100% を返す
+
+#### ADR-0003 との相互作用 —— 「trigger は汚染される / evade は初回 deploy では汚染されない」という非対称
+
+VP の読み (「evade 側の taint は起きないが trigger 側の auto-solve は起きる」) は
+**初回 deploy については正しい**。architect が実コードで検証した:
+
+- `evaluateTrigger` は **attempt スコープ外**で、`current` に関係なく expectedRules 一致で solve する
+  (doc「Deliberately NOT attempt-scoped」= `internal/scoreboard/scoring/scoring.go:347-352`、実装 `:360-380`)
+- `markDirtyOnRuleFire` は **`current` が evade 型のときだけ** taint を書く
+  (`internal/scoreboard/scoring/scoring.go:415-429`: `cur := g.currentMission(user)` の直後に
+  `if !ok || ch.Type != "evade" { return nil }`)
+- deploy 時点の participant は solve ゼロなので `current` = 進行順の先頭 = `01-initial-recon`
+  (`scenarios/nimbusbreach-full/scenario.yaml:8-9`)。これは **trigger 型**
+  (`challenges/01-initial-recon/falco-rule.yaml:2`) → **taint されない**
+- 02 が auto-solve されても `current` は 01 のまま (`CurrentMission` = order 中の最初の未 solve、
+  `internal/scoreboard/scoring/scoring.go:275-285`) なので、この時点で evade 側は無傷
+
+**この非対称は直感に反する** (「イベントは出たのに evade は無傷」) ので rev.3 は明記する。
+**ただし「evade は無害」は初回 deploy に限る。**
+
+**再 deploy では evade も汚染される (rev.3 の新規指摘)**:
+
+- 参加者が 01 を solve 済のまま workspace を再作成・再 deploy すると
+  (LIVE hotfix の再デプロイ、scale-to-0 復帰で bare Pod の workspace が失われた後の再デプロイなど、
+  いずれも 2026-08-16/17 に実在した運用)、その時点の `current` は **03-stealth-read (evade)** になりうる
+- 03 の forbiddenRules は `Read sensitive file untrusted` (`challenges/03-stealth-read/falco-rule.yaml:3-4`)
+  = seed 初期化が出すイベントそのもの → **`current` = 03 に恒久 taint が付く**
+- ADR-0003 の taint は**永続**で、解除は reset のみである。
+  **reset の参加者導線は main に landing 済み** (`3843d23` = app#125 / PR #128、
+  `internal/scoreboard/view/templates/portal.html:1557` の reset ボタン →
+  `internal/scoreboard/api/api.go:332` の `POST /api/users/{user}/challenges/{cid}/reset-dirty`)
+  なので **「永久に詰む」ではない**。しかし残る害は小さくない:
+  - 参加者は **自分の操作でない taint** を見せられる → 原因を説明できない (最悪の摩擦源)
+  - **`requireExfil` の 10 では reset が exfil receipt も削除する** (ADR-0003 §A2-2、
+    実装 `internal/store/store.go:800-832` が単一トランザクションで両方削除) →
+    **flag の再配送が必要**になる
+  - 運用者が問い合わせ対応コストを負う (16 名規模なら全員分)
+- 同様に再 deploy 時の `current` が 10 なら capstone が taint される
+  (10 の forbiddenRules に同ルールが含まれる: `challenges/10-final-exfil/falco-rule.yaml:5`)
+
+→ **「trigger だけの問題」として扱ってはならない。deploy 経路の無汚染は trigger / evade 両方の前提である。**
+
 ### 制約 (壊してはいけないもの)
 
 - C1: 「1 workspace = 全ミッションセット」の参加者体験を維持する
@@ -198,8 +298,10 @@ H1 を閉じる価値は 05 の穴があっても失われない —— 03/10 �
    mount リストの両方を生成する (C4 の生成物規律をそのまま拡張)。**同一 plant-target を
    複数の plant.sh が共有する** (03 と 10 はいずれも `/etc/shadow` へ append:
    `challenges/03-stealth-read/plant.sh:4`・`challenges/10-final-exfil/plant.sh:6`) ため、
-   mount リスト生成は **dedupe が必須**、seed 側は **イメージ rootfs の素データを先にコピーしてから
-   sort 順に append する初期化ステップ**が必須 (F6、下記 Verification 2)。
+   mount リスト生成は **dedupe が必須**、seed 側は **素データを先に置いてから sort 順に append する
+   初期化ステップ**が必須 (F6、下記 Verification 2)。
+   **【rev.3】その素データの供給元は「image build 時に非 sensitive path へ焼いた snapshot」でなければならない
+   (派生決定 (3) = S-a)。実行時に実 `/etc/shadow` を読む形 (rev.2 の書き方) は採点を汚すので採らない。**
 7. **seed root を challenge に mount しない** (F5)。challenge の seed 参照は宣言済み
    plant-target に対応する mount のみ。
 
@@ -213,7 +315,7 @@ H1 を閉じる価値は 05 の穴があっても失われない —— 03/10 �
 | 4 `kubectl describe` (運用者画面) | ✅ | secret 名のみ表示 |
 | 5 Helm release Secret | ✅ (現状維持) | 参加者からは到達不可のまま |
 | 6 planted file 自体 | ❌ (設計上意図) | それがミッション。残る近道は H1 ではなく H2 (05 は「限界」節参照) |
-| 7 seed volume の代替 path | ✅ (**要 assert**) | I11 + Verification 1 が seed root mount と未宣言 mountPath を機械的に禁止する。**assert が無ければ閉じない** |
+| 7 seed volume の代替 path | ✅ (**要 assert**) | I12 + Verification 1 が seed root mount と未宣言 mountPath を機械的に禁止する。**assert が無ければ閉じない** |
 
 - コスト: chart +40 行程度 / plant.sh 3 本の書き換え (seed dir 前提へ) / `gen-values.sh` 拡張
   (dedupe + seed 初期化 + `--check`) / README・docs-site の env 変数名記述の削除
@@ -259,9 +361,12 @@ H1 を閉じる価値は 05 の穴があっても失われない —— 03/10 �
     `/tmp` を target にする限り解消しない**。
   - 可逆性: 高 (mount 定義の差し替えのみ)。
   - 効き始める閾値: mission 09 を出題する全イベント (= 現行の全イベント)。
-- **B2 — plant-target のディレクトリ全体を emptyDir にし、`plant` が image rootfs から `cp -a` する**
-  (`/etc` 全体を emptyDir で覆い、`plant` が `cp -a /etc/. /seed/etc/` した後に append)。
-  - 変更点: mount 単位がファイルからディレクトリへ。`plant` に rootfs コピー段が入る。
+- **B2 — plant-target のディレクトリ全体を emptyDir にし、`plant` が build 時 snapshot から `cp -a` する**
+  (`/etc` 全体を emptyDir で覆い、`plant` が `cp -a /opt/ctf/plant-seed/etc/. /seed/etc/` した後に append。
+  **rev.3 訂正: rev.2 は `cp -a /etc/. /seed/etc/` と書いていたが、これは実 `/etc/shadow` を読むので
+  §F3′ 違反 = 採点を汚す。build 時 snapshot 経由 (S-a) に置き換える。**)
+  - 変更点: mount 単位がファイルからディレクトリへ。`plant` に snapshot コピー段が入る。
+    image 側に `RUN cp -a /etc /opt/ctf/plant-seed/etc` 相当が入る (S-a)。
   - コスト: 中。`/etc` を覆うため image の `/etc` 変更が seed 初期化に暗黙依存する。
   - F5: **安全** (mount point = `/etc` = 実パス。代替 path なし)。
   - **利点**: `/etc` 内が単一 mount になるので **`/etc` 内での `link()` が成立する** ——
@@ -277,7 +382,7 @@ H1 を閉じる価値は 05 の穴があっても失われない —— 03/10 �
 - **B3 — seed root (`/plant-seed`) を challenge に mount し、challenge 側でコピーする**
   - **選択肢ではない (提案しない)。** 経路 7 をそのまま開き、mission 03 の forbidden rule を
     完全に回避する代替 path (`/plant-seed/etc/shadow`) を作る = 03 が無条件 solve になる。
-    I11 に正面から違反する。**記録のためだけに列挙する。**
+    I12 に正面から違反する。**記録のためだけに列挙する。**
 
 #### Option B の派生決定 (2): mission 09 の救済 — 09-i / 09-ii / 09-iii
 
@@ -300,6 +405,123 @@ H1 を閉じる価値は 05 の穴があっても失われない —— 03/10 �
 - **09-iii — 09 の破壊を受容する** —— **却下。** 09 は trigger 型 (`falco-rule.yaml:2-4`) なので
   参加者は発火しない原因を診断できず「壊れている」としか見えない。C8 違反。
 
+#### Option B の派生決定 (3): seed 初期化の供給元 —— S-a / S-b / S-c / S-d / S-e 【rev.3 で新設】
+
+**問題**: seed は emptyDir なので空で始まる。現行 plant.sh は `>>` 前提で
+「素の `/etc/shadow` が既に存在する」ことを暗黙に仮定している
+(`challenges/03-stealth-read/plant.sh:4`・`challenges/10-final-exfil/plant.sh:6`、
+生成物 `challenges/values-all.yaml:16,37`)。初期化なしでは `/etc/shadow` が
+**フラグ 2 行だけのファイル**になり、mission 02 のブリーフ
+(「パスワードハッシュの実体ファイル」= `challenges/02-credential-files/journey.yaml:8,13`) と噛み合わない。
+一方で **実行時に実 `/etc/shadow` を読むと採点が汚れる** (上記 Context の内部矛盾)。
+この 2 つを同時に満たす層はどこか。
+
+**rev.2 の根拠の再評価 (VP 指示)**: 2-3 の根拠は「realism と `sensitive_files` 判定の文脈」だった。
+このうち **`sensitive_files` 判定は `fd.name` ベース**なので
+(`challenges/03-stealth-read/rule.yaml:1-2,90-93`) **中身に一切依存しない** ——
+`/etc/shadow` という path に bind mount されていれば、中身が何であれ 02/03/10 の判定は成立する。
+残るのは **realism だけ**であり、realism は「素データが *存在すること*」を要求するが
+**「実行時に実ファイルから読むこと」は要求しない**。
+→ **2-3 の要件のうち「初期化が存在すること」は維持し、「image rootfs から実行時コピーすること」は撤回する。**
+
+**実測 (architect, 2026-08-18)**: challenge image のパッケージ集合
+(`images/challenge/Dockerfile:18-34`) を alpine:3.22 (digest pin 同一) に適用した状態で
+`/etc/shadow` は **0640 root:shadow / 260 bytes / 17 行、すべて locked (`*` または `!`)、
+crypt ハッシュ形の文字列は 0 件**。`/root/.ssh` は **存在しない** (`/root` は 0700 で空) ため、
+**素データを要するのは `/etc/shadow` ただ 1 つ**である
+(05 の plant は `mkdir -p` + `cat >` で新規作成する: `challenges/05-silent-search/plant.sh:4-11`)。
+
+- **S-a — image build 時に素データを非 sensitive path へ snapshot する 【推奨】**
+  - 変更点: `images/challenge/Dockerfile` に `RUN mkdir -p /opt/ctf/plant-seed/etc && cp -a /etc/shadow /opt/ctf/plant-seed/etc/shadow`
+    (B2 に切替える場合は `/etc` 全体)。生成 seed script は **`/opt/ctf/plant-seed/...` からのみ**コピーする。
+  - 犠牲にするもの: image に 1 ステップ増える。plant-target は「build 時に snapshot 可能なもの」に限られる
+    (プロセス状態や実行時にしか存在しないファイルは対象にできない → Signpost 8)。
+  - コスト: Dockerfile 2 行 + `gen-values.sh` の生成テンプレ 1 箇所。イメージサイズ +260 bytes。
+    依存増加ゼロ。イメージ数不変 (I5 に触れない)。認知コスト: 「seed の素データは image に焼いてある」1 文。
+  - **イベント数: 構造的にゼロ。** 実行時に読むのは `/opt/ctf/plant-seed/...` であり、
+    `sensitive_files` の **2 つの選択肢のどちらにも当たらない** ——
+    (i) `fd.name startswith /etc and fd.name in (sensitive_file_names)` は path prefix で外れ、
+    (ii) `fd.directory in (/etc/sudoers.d, /etc/pam.d)` も外れる
+    (`challenges/03-stealth-read/rule.yaml:90-93`)。
+    **「除外されるから発火しない」ではなく「ルールの条件に到達しない」**のが S-a の性質である。
+  - **I10 に触れないか (VP 指示による明示的検討)**: **触れない。**
+    (i) 焼くのは **フラグ実値ではなく素の `/etc/shadow`** であり、
+    (ii) それは **同一イメージ内に既に存在するビットの複製**である (build 時に image 自身から derive する) ので
+    **新規のマテリアルを一切導入しない** —— I10 が禁じる「トークン・実シークレットの焼き込み」に当たらない。
+    (iii) 実測どおり中身は locked エントリのみで crypt ハッシュを含まない。
+    (iv) それでも「将来 image に本物のハッシュが入る」ことを紙で保証しないため、
+    **機械検査を付ける** (Verification 2-8: snapshot と `/etc/shadow` の双方に crypt ハッシュ形と `FALCO{` が
+    現れないことを image build job で確認する) —— この検査は S-a が無くても価値がある I10 の実強制である。
+  - **経路 7 (F5) を新設しないか**: しない。snapshot は **flag を含まない** (flag は実行時に seed 側へ append される)。
+    したがって `/opt/ctf/plant-seed/etc/shadow` を読んでも **フラグは得られず**、
+    mission 03 の代替 path にならない。participant は root なのでこの path を読めるが、
+    読めても得るものが無い (guided-event 方針として `challenges/` 丸ごと焼いているのと同じ性質)。
+  - リスクと可逆性: 可逆 (Dockerfile 2 行 + 生成テンプレの revert)。
+    リスクは **snapshot と image の実 `/etc` の drift** —— ただし build 時に derive するので
+    パッケージ追加でユーザが増えれば snapshot も追随する (drift は原理的に起きない)。
+    B2 に切替えても手法が変わらない (派生決定 (1) と直交)。
+  - 効き始める閾値: **最初の 1 deploy から**。deploy 経路は毎回走るので猶予が無い。
+- **S-b — builtin-only コピー (実行時に shell builtin で読む)**
+  - 変更点: 生成 seed script が `while read -r l; do ...; done </etc/shadow > /seed/etc/shadow` 形で複製する。
+  - **成立はする**: `proc.name=sh` は `shell_binaries` に含まれ (`challenges/03-stealth-read/rule.yaml:59`)
+    ルールの除外節 (同 :178-183) に該当するため `Read sensitive file untrusted` は発火しない。
+    §F3 の assert 側と同じ理屈である。
+  - 犠牲にするもの: **メタデータとバイト忠実性**。`while read` は行志向なので
+    (i) permission / ownership を保存しない (実測どおり `/etc/shadow` は **0640 root:shadow** であり、
+    本 ADR の B2 節が要求する 0640 維持のために `chmod` + `chgrp` を別途書く必要がある)、
+    (ii) 末尾改行の有無・バックスラッシュ・NUL を保存しない、
+    (iii) 将来 plant-target がバイナリ / symlink / sparse になった瞬間に壊れる。
+  - コスト: 生成テンプレが per-target の metadata 復元コードを持つ = 生成物の複雑度が上がる。
+    さらに **静的検査が難しい** —— builtin での read は「何を読んだか」が script の構文解析でしか分からず、
+    Verification 2-7 (禁じ手の静的走査) の精度が落ちる。
+  - リスクと可逆性: 可逆。リスクは「除外リストに依存している」こと ——
+    `shell_binaries` からの除外は **Falco 側の ruleset に依存する外部前提**であり、
+    Falco 版 bump で除外節が変われば無言で発火側に倒れる (S-a の「条件に到達しない」より弱い)。
+  - 効き始める閾値: plant-target が 2 種類目のメタデータ (ownership / mode / symlink) を要求した時点で破綻する。
+- **S-c — plant initContainer の image を challenge と分ける**
+  - 変更点: `falco-ctf/plant` を新設し、ingest の image repo フィルタ
+    (`internal/scoreboard/ingest/ingest.go:95`) に一致しないことでイベントを落とす。
+  - 犠牲にするもの: **I5 のイメージ数 8 → 9 (CEO 批准が必要)**、および
+    **plant image と challenge image の `/etc` 一致**という新しい暗黙依存
+    (素データは challenge image のものでなければ realism が崩れる)。
+  - コスト: 新 Dockerfile + build/push/scan/digest-pin の 1 系統追加。CI の `build (<image>)` matrix +1。
+    S-a を併用しないなら「plant image の `/etc/shadow` を読む」ので **イベントは Falco 側では発火し続ける**
+    (落とすのは ingest だけ) → Falco / Sysdig 側の event stream は汚れたままになる。
+  - リスクと可逆性: 中程度に不可逆 (イメージ契約 = Cross-repo 契約表と platform 側 pin に波及)。
+    さらに **命名で壊れる** —— 例えば `falco-ctf/challenge-plant` と命名すると substring `falco-ctf/challenge` に
+    一致してフィルタが効かなくなる。**採点の正しさを image 名の綴りに依存させる**のは境界として悪い。
+  - 効き始める閾値: 「plant が challenge image のツール群を必要としなくなった」場合のみ検討に値する。
+  - → **採らない。** S-a はイメージ数も ingest も触らずに同じ結果 (イベント 0) を得る。
+- **S-d — ingest 側で initContainer を除外する**
+  - 変更点: webhook payload に container 名 (`k8s.container.name` / `container.name`) を持たせ、
+    ingest が `challenge` 以外を捨てる。
+  - 犠牲にするもの: **採点の入口を緩める** (security-engineer 同意権の領域)。加えて
+    **クロスリポ契約の変更** (`docs/openapi-scoreboard.yaml` の FalcoEvent output_fields と
+    platform 側 falcosidekick 設定 → 両リポ同時 PR)。
+  - コスト: spec + 実装 + platform 側の field 供給確認。
+  - リスクと可逆性: 可逆。偽陰性の評価: フィールド欠落時に「除外しない」側へ倒せば
+    **fail-closed (採点する側)** に保てるので偽陰性は作らない。participant は challenge コンテナにいるため
+    自分のイベントの `container.name` を偽装できない (Falco が runtime から取る)。
+    しかし **構造的な問題は「deploy 経路が騒がしくてよい」ことを許す**点にある ——
+    今回の欠陥は「ingest が拾ってしまった」ことではなく「deploy 経路がイベントを出した」ことなので、
+    S-d は症状を隠す。将来 plant が別の禁じ手を踏んでも観測されなくなる。
+  - 効き始める閾値: **「workspace Pod 内で challenge 以外のコンテナが定常的に syscall を出す」構成に
+    なったとき** (例: sidecar が増える)。そのときは S-a と併せて **defense-in-depth として採る価値がある**。
+  - → **本 ADR では採らない (推奨に含めない)。** ただし follow-up として起票する価値はあり、
+    採るなら **security-engineer 同意 + fail-closed 既定 + spec 追記**が条件 (下記 Consequences)。
+- **S-e — Falco ルール側の除外を足す**
+  - 変更点: `Read sensitive file untrusted` の除外に plant の文脈を追加する。
+  - 犠牲にするもの: **採点そのもの。** 除外は participant にも等しく効くので、
+    **同じ条件を満たせば participant も 02/03 の判定を回避できる**。しかも `rule.yaml` は
+    docs サイトが参加者に描画する表示用抜粋である (`.claude/rules/falco-ctf-app-conventions.md` §課題ドキュメント用 rule.yaml)
+    ので、除外条件は**参加者に開示された近道**になる。
+  - リスクと可逆性: 可逆だが、入れた版で走ったイベントの採点結果は取り返せない。
+  - → **却下。採点の穴を作る案は選択肢ではない。**
+
+**推奨: S-a。** 「実行時に sensitive path を読まない」ので **除外リストにも ingest フィルタにも依存せず、
+条件そのものに到達しない**。イメージ数 (I5)・ingest・Falco ルール・`deploy-user.sh` の契約 (C6) を
+いずれも触らず、静的検査 (Verification 2-7) で機械強制できる。
+
 ## Decision
 
 **Option B を採用する** — H1 を完全に閉じる方法は「フラグを challenge コンテナに一度も入れない」
@@ -309,6 +531,9 @@ H1 を閉じる価値は 05 の穴があっても失われない —— 03/10 �
 
 - seed delivery = **B1 (`subPath` bind) を既定**とする。F5 に対して最小面であり、
   image の `/etc` に暗黙依存しないため。
+- **seed 初期化の供給元 = S-a (image build 時に `/opt/ctf/plant-seed/` へ焼いた snapshot) を採る (rev.3)。**
+  実行時に sensitive path を read しないことで **deploy 経路のイベントを構造的にゼロにする**。
+  B1 / B2 のどちらに切り替えても手法は変わらない (派生決定 (1) と直交)。
 - mission 09 = **09-ii (`/etc/sudoers` fixture へ retarget) を既定**とする。B1 を維持でき、
   変更が image 1 行 + README 1 行で済み、Falco ルール側の変更が不要だから。
 - **実測が既定を否定した場合の切替先**: (a) `/etc/sudoers` retarget で発火しない、または
@@ -328,10 +553,15 @@ H1 を閉じる価値は 05 の穴があっても失われない —— 03/10 �
   書くときの明示的な制約として `challenge-author` に伝える。**
 - `postStart` によるフラグ仕込み。`.claude/agents/challenge-author.md:48-54` の
   challenge 作者向け手順も更新が必要。
+- **【rev.3】deploy 経路の記述自由度。** plant / seed 初期化は
+  **「Falco イベントを 1 件も出さない」制約下でしか書けない** (§F3′)。具体的には
+  素データは build 時 snapshot からのみ供給し (S-a)、plant-target は
+  **build 時に snapshot 可能なもの**に限られる (プロセス状態・実行時生成物は乗らない → Signpost 8)。
+  **これも `challenge-author` に伝える明示的な制約である** (DoD 10)。
 
-### 新たに守る不変条件 (提案: I11) —— 性質ベース
+### 新たに守る不変条件 (提案: I12) —— 性質ベース
 
-> **I11**: workspace Pod の `challenge` コンテナには、**フラグ実値を到達させる経路を一切設けない**。
+> **I12**: workspace Pod の `challenge` コンテナには、**フラグ実値を到達させる経路を一切設けない**。
 > 「経路」には env / `envFrom` / volume (`volumeMount`) / **seed root の mount** /
 > ServiceAccount token を **含むが、これらに限らない**。
 > evade フラグの仕込みは `plant` initContainer + emptyDir seed 経由のみ。
@@ -347,9 +577,9 @@ H1 を閉じる価値は 05 の穴があっても失われない —— 03/10 �
 一切現れないまま全フラグが注入され、`^CTF_FLAG_` を探す assert を素通りする。
 したがって assert は **allowlist 型** (既知集合以外を全部落とす) でなければならない (Verification 1)。
 
-#### I11 の発効条件 (VP 裁定 2026-08-18)
+#### I12 の発効条件 (VP 裁定 2026-08-18)
 
-**I11 は「F1 (allowlist 型 static assert) + F2 (deploy 時 fail-closed 実機 assert) の
+**I12 は「F1 (allowlist 型 static assert) + F2 (deploy 時 fail-closed 実機 assert) の
 実装をもって発効」する。ADR merge と同時発効にはしない。**
 根拠: ORGANIZATION.md:326 「`Verification` が「無し」の ADR は Hard Invariant に昇格させない」
 の趣旨 —— 検証機構より先にルールだけ表に載せると、「閉じたつもりで閉じていない」を
@@ -357,7 +587,48 @@ Hard Invariants 表そのものが再生産する。
 
 Hard Invariants 表 (`.claude/rules/falco-ctf-app-conventions.md` §Hard Invariants) への追記は
 実装 PR で行い、**`seccompProfile` 節が `make check-seccomp` を明記しているのと同じ粒度で
-上記 2 スクリプト名を併記**する。I11 の新設は architect 合意 + VP 承認事項 (意思決定マトリクス)。
+上記 2 スクリプト名を併記**する。I12 の新設は architect 合意 + VP 承認事項 (意思決定マトリクス)。
+
+#### 不変条件の番号 (rev.3 で改番) —— ADR-0003 との衝突解消
+
+rev.2 は本 ADR の不変条件を **I11** と呼んでいたが、**ADR-0003 (Status: Accepted) も
+別の性質を I11 候補として主張している** (attempt スコープ =
+`docs/adr/0003-evade-clean-gate-attempt-scope.md:475-483`)。現行の
+`.claude/rules/falco-ctf-app-conventions.md` §Hard Invariants は **I1-I10 まで**しか無いので、
+両方が先着順に I11 を取ると **同じ番号で違うルールが 2 つ**表に載る。
+
+**architect 判定: 本 ADR の番号を I12 に譲る。**
+
+| 番号 | 性質 | 出典 ADR | 状態 |
+|---|---|---|---|
+| I11 | evade の clean 判定は attempt スコープで評価する | ADR-0003 | **Accepted**。昇格条件 = Verification (a)+(b)+(e) の landing |
+| **I12** | challenge コンテナにフラグ実値の到達経路を設けない | 本 ADR | Proposed。昇格条件 = F1 + F2 の実装 |
+| **I13** | deploy 経路 (plant / seed 初期化) は Falco イベントを 1 件も出さない | 本 ADR (rev.3) | Proposed。昇格条件 = 下記 |
+
+根拠: ADR-0003 は既に Accepted かつ実装 PR が main に merge済 (`6701f3b` / `3843d23` / `c06e7ff`) で
+**昇格条件が本 ADR より先に揃う**ため。**この割り当ては VP 批准を要する** (どちらに I11 を割るかは
+本 ADR 単独では決められない。ただし「両方 I11」は選択肢ではない)。
+
+### 新たに守る不変条件 (提案: I13) —— deploy 経路の無汚染 【rev.3 で新設】
+
+> **I13**: **workspace の deploy 経路 (`plant` initContainer / seed 初期化 / 運用 assert) は、
+> Falco イベントを 1 件も発生させてはならない。**
+> 「window の外だから安全」は根拠にならない —— `eventsPerUser` と rule fire 履歴は永続し、
+> trigger 課題の auto-solve は attempt スコープ外である
+> (`internal/scoreboard/scoring/scoring.go:347-352`)。
+> 要件は**イベント数ゼロ**であり、手段は文脈で異なる (assert = builtin-only /
+> deploy = §F3′ の禁じ手表を踏まない)。
+> **機械強制**: `challenges/gen-values.sh --check` の静的走査 (Verification 2-7) +
+> `charts/ctf-user/assert-flag-isolation.sh` の自己 grep (Verification 3) +
+> **E2E の deploy 直後観測 (Verification layer 4)**。
+
+**I13 の発効条件**: Verification 2-7 と layer 4 の両方が landing すること
+(I12 と同じ理由: 検証機構より先に紙のルールを増やさない)。
+
+**なぜ I12 と分けるのか**: I12 は「フラグ実値の到達経路」、I13 は「deploy 経路のイベント数」で
+**別の性質・別の検証手段**である。1 つの不変条件に束ねると、どちらかが破れたときに
+「I12 は満たしている」と言えてしまう (rev.2 が実際にそうなっていた —— フラグ隔離は満たすが
+採点は汚す設計が「I12 準拠」として書かれていた)。
 
 ### 新たなクロスリポ契約の明文化 (F2)
 
@@ -382,9 +653,22 @@ Hard Invariants 表 (`.claude/rules/falco-ctf-app-conventions.md` §Hard Invaria
   1 名が planted file を読んで得たフラグを共有すれば全員が submit できる。
   per-user フラグ化は独立の改善であり本 ADR のスコープ外。
 - `ctf-flags` Secret と Helm release Secret は ns 内 `secrets get` を持つ主体には読める
-  (現状 cluster-admin のみ)。ctf-user の Role を今後広げる際は I11 と衝突しないか確認する。
+  (現状 cluster-admin のみ)。ctf-user の Role を今後広げる際は I12 と衝突しないか確認する。
 - 運用者マシン上では `--set-string challenge.flags.*` が helm の argv に載る (現状も同じ)。
   shell history / `ps` 経由の露出は本 ADR では変えない。
+- **【rev.3】再 deploy 時の taint リスクは S-a で消えるが、経路自体は残る。**
+  deploy 経路が将来また禁じ手を踏んだ場合、進行中の participant の `current` が evade なら
+  **恒久 taint** になる。reset 導線は main に landing 済み (`3843d23`) なので復旧は可能だが、
+  **参加者は自分の操作でない taint の原因を説明できず**、`requireExfil` の 10 では
+  **flag の再配送**まで要求される (ADR-0003 §A2-2)。
+  I13 + Verification 2-7 / layer 4 がその再発を機械で止める唯一の層である。
+- **【rev.3】S-d (ingest 側で initContainer を除外) を採用しない残余。**
+  workspace Pod 内に challenge 以外のコンテナが増える構成 (sidecar 追加など) では、
+  deploy 経路以外からも「参加者に帰属するが参加者の操作でないイベント」が入りうる。
+  現状 workspace Pod は ttyd / ttyd-proxy / challenge の 3 コンテナで、
+  前 2 者は challenge image ではないため ingest の image フィルタで落ちる
+  (`internal/scoreboard/ingest/ingest.go:95`)。**この防御は image 名の綴りに依存している**ので、
+  Signpost 7 を観測したら S-d (container 名フィルタ + spec 追記 + security-engineer 同意) を起票する。
 - **CI assert は「本番に適用される manifest」を保証しない** (F2 の構造的残余)。CI-free prod 方針
   (charts = local clone、`project_ci_free_prod`) では chart の main が本番に届く保証は無い。
   監査が指摘した乖離 checkout (`falco-ctf-app-prodlocal/`) は CEO 決定で削除済み・LIVE hotfix は
@@ -399,9 +683,15 @@ Hard Invariants 表 (`.claude/rules/falco-ctf-app-conventions.md` §Hard Invaria
     (fail-closed。1 件でも violation があれば roster deploy を abort)。owner = sre-engineer。
   - **人手の preflight ステップは追加しない** (F2)。人手手順は「やらなかった」が観測できないため
     layer にならない。機械 assert が唯一の layer 3 とする。
-- **assert は「Falco イベントを 1 件も発生させない」ことが要件** (F3、下記 Verification 3)。
-  runbook には「検証コマンドを思いつきで足さない。追加は `assert-flag-isolation.sh` の
-  builtin-only 規約に従う」旨を明記する。
+- **assert *と deploy 経路の両方* が「Falco イベントを 1 件も発生させない」ことが要件**
+  (§F3′、下記 Verification 3 / 2-7 / layer 4)。runbook には
+  「検証コマンドも plant/seed script も思いつきで足さない。追加は §F3′ の禁じ手表と
+  `assert-flag-isolation.sh` の builtin-only 規約に従う」旨を明記する。
+- **【rev.3】再 deploy の扱い**: 進行中の participant の workspace を再 deploy する運用
+  (LIVE hotfix / scale-to-0 復帰) は、deploy 経路がイベントを出す実装では
+  **その participant の `current` evade を恒久 taint する**。S-a 採用後はイベント 0 なので安全だが、
+  **runbook の再 deploy 手順に「deploy 後に当該 user の rule fire が増えていないことを確認する」を
+  1 行入れる** (owner = sre-engineer)。
 - リハーサル手順に mission **02/03/05/09/10** の再走を追加する (Signpost 1)。
 
 ## Signposts
@@ -428,11 +718,33 @@ Hard Invariants 表 (`.claude/rules/falco-ctf-app-conventions.md` §Hard Invaria
    (2 件以上出たら。09 を 1 件目として数える) —— initContainer + seed volume モデルの一般性が
    尽きた。→ challenge の rootfs 全体を initContainer が生成するモデル、または
    「フラグを workspace に置かない」方向 (技法の積極的証明で採点する) へ再設計。
+5. **【rev.3】deploy 直後の `eventsPerUser` が 0 でない participant が 1 人でもいる** ——
+   deploy 経路が禁じ手を踏んでいる直接の証拠。観測は scoreboard の admin state を読むだけで済み、
+   **観測自体はイベントを出さない** (Verification layer 4)。→ 該当 script を §F3′ に照らして修正するまで
+   本番投入しない。
+6. **【rev.3】participant が着手していないミッションが deploy 直後に solve 済**
+   (とくに 02-credential-files) —— trigger の auto-solve 汚染。5 より弱い信号だが
+   参加者から「もう終わってる」と申告される形で先に届くことがある。
+7. **【rev.3】workspace Pod に challenge image を使うコンテナが 2 つ以上になる、または
+   challenge 以外のコンテナが定常的に syscall を出す構成になる** ——
+   ingest の image repo フィルタ (`internal/scoreboard/ingest/ingest.go:95`) が
+   「参加者の操作かどうか」の代理として機能しなくなる。
+   → **S-d (container 名フィルタ)** を security-engineer 同意付きで起票する。
+8. **【rev.3】新しい plant-target が build 時 snapshot で表現できない**
+   (実行時にしか存在しないファイル / プロセス状態 / 動的生成物)。1 件出たら S-a の一般性が尽きたので、
+   Signpost 4 と併せて initContainer + seed volume モデル自体の再設計を検討する。
 
 ## Verification
 
-機械で確認する方法 (3 層)。**layer 1 と layer 3 は独立の必要条件であり、互いの代替ではない**
+機械で確認する方法 (**rev.3 で 4 層**)。**layer 1 と layer 3 は独立の必要条件であり、互いの代替ではない**
 (layer 1 = chart の main が正しいこと、layer 3 = 本番に適用された実物が正しいこと)。
+**layer 4 (rev.3 新設) は「deploy 経路が採点を汚していないこと」を実機で観測する層**であり、
+残る prod gate = ADR-0003 Verification (d) の同一 run 内で実行する。
+
+> **rev.3 の自己保証**: 本 Verification の全項目は **それ自身が Falco イベントを 1 件も出さない**
+> (layer 1/2 = 静的、layer 3 = builtin-only、layer 4 = 運用者マシンから scoreboard 状態を読むだけ)。
+> 唯一の例外は layer 4 の 4-7 (未実測項目の実測) で、これは **`test1` workspace 限定**
+> (§F3′ の (B)) とし、既定経路では走らせない。
 
 ### 1. CI: レンダリング済み manifest への **allowlist 型** 静的 assert (F1)
 
@@ -476,7 +788,7 @@ Hard Invariants 表 (`.claude/rules/falco-ctf-app-conventions.md` §Hard Invaria
 | # | assert |
 |---|---|
 | 1-12 | `--set challenge.extraEnv[0].name=CTF_FLAG_03_STEALTH_READ --set challenge.extraEnv[0].value=x` を与えた `helm template` が **非ゼロ終了する**。実装は `pod.yaml:174-176` の `with .Values.challenge.extraEnv` 内で `CTF_FLAG_` prefix を検出したら Helm の `fail` を呼ぶ (監査 F1: `extraEnv` は allowlist assert の後段で値が展開されるため、テンプレート側で落とすのが唯一の fail-closed) |
-| 1-13 | 同様に `challenge.extraEnvFrom` 相当の口を新設しない (存在しないことを assert)。将来追加するなら I11 の改訂 = architect 合意 + VP 承認 |
+| 1-13 | 同様に `challenge.extraEnvFrom` 相当の口を新設しない (存在しないことを assert)。将来追加するなら I12 の改訂 = architect 合意 + VP 承認 |
 
 `platform` 側の conftest/OPA Key Guards (G5-2b) にもこの assert 集合を移植できる (任意)。
 
@@ -489,10 +801,12 @@ Hard Invariants 表 (`.claude/rules/falco-ctf-app-conventions.md` §Hard Invaria
 |---|---|---|
 | 2-1 | 各 `plant.sh` が `# plant-target:` 宣言を 1 行以上持つ | 宣言なしは mount リストに乗らない = plant が捨てられる |
 | 2-2 | **同一 plant-target を宣言する plant.sh が複数あるとき、生成される mount リストで 1 エントリに畳まれている (dedupe)** | 03 と 10 はいずれも `/etc/shadow` へ append (`03-stealth-read/plant.sh:4`, `10-final-exfil/plant.sh:6`)。dedupe しないと volumeMount の mountPath 重複で Pod が作れない / kubelet が非決定的に振る舞う |
-| 2-3 | **seed 初期化ステップが存在し、イメージ rootfs 由来であること** —— 生成された seed script が、各 plant-target について append の *前* に image rootfs から素データをコピーする (`cp -a /etc/shadow /seed/etc/shadow` 等) | 現行 plant.sh は `>>` 前提で「素の `/etc/shadow` が既に存在する」ことを暗黙に仮定している (`values-all.yaml:16,37`)。emptyDir seed は空で始まるので、初期化なしでは `/etc/shadow` がフラグ 2 行だけのファイルになり mission 02 の realism と `sensitive_files` 判定の文脈が壊れる |
+| 2-3 | **【rev.3 で差し替え】seed 初期化ステップが存在し、その供給元が *image build 時に焼いた非 sensitive snapshot* であること** —— 生成された seed script が、素データを要する plant-target について append の *前* に **`/opt/ctf/plant-seed/` 配下からのみ**コピーする (S-a)。**rev.2 の「image rootfs から実行時コピー (`cp -a /etc/shadow ...`)」は撤回** | 現行 plant.sh は `>>` 前提で「素の `/etc/shadow` が既に存在する」ことを暗黙に仮定している (`values-all.yaml:16,37`)。emptyDir seed は空で始まるので、初期化なしでは `/etc/shadow` がフラグ 2 行だけのファイルになり mission 02 のブリーフ (`challenges/02-credential-files/journey.yaml:8,13`) と噛み合わない。一方 **実行時に実 `/etc/shadow` を読むと mission 02 が auto-solve する** (§F3′)。`sensitive_files` は `fd.name` ベースなので (`challenges/03-stealth-read/rule.yaml:90-93`) **判定の文脈は path で決まり中身に依存しない** → snapshot で足りる |
 | 2-4 | append の順序が `gen-values.sh:19-21` の `sort` 順 (03 → 05 → 10) と一致し、生成が決定的であること | 順序が揺れると `--check` が false drift を出す |
 | 2-5 | 各 plant.sh の書き込み先が宣言済み plant-target 配下に収まっている (`>` / `>>` / `cat >` / `mkdir -p` の宛先を静的走査。**best-effort ヒューリスティック**であることを script 内に明記) | 未宣言の書き込みは mount されず silently 消える |
 | 2-6 | 既存の values.yaml / values-all.yaml の drift 検査 (現行 `gen-values.sh:62-76` を維持) | C4 |
+| **2-7** | **【rev.3 新設・I13 の機械強制】生成された seed script が §F3′ の禁じ手集合に触れないこと** (静的走査): (a) 入力リダイレクト / コピー元が **`/opt/ctf/plant-seed/` 配下の allowlist のみ**、(b) `sensitive_file_names` の 4 path と `/etc/sudoers.d` `/etc/pam.d` が **read 位置に現れない**、(c) `grep` / `egrep` / `fgrep` / `find` / `ln` を呼ばない、(d) seed (emptyDir) 上に書いたファイルを exec しない。**2-5 と同じ best-effort ヒューリスティックである旨を script 内に明記する** | §F3′ の禁じ手表。deploy 経路は全 workspace・毎 deploy で走るので、assert 側より厳しく扱う |
+| **2-8** | **【rev.3 新設・I10 の機械強制】challenge image の `/etc/shadow` と `/opt/ctf/plant-seed/etc/shadow` の双方に、crypt ハッシュ形の文字列 (`:$<n>$...`) と `FALCO{` が現れないこと** (image build job 内で確認)。実測 (2026-08-18): 現行パッケージ集合では 0640 root:shadow / 17 行すべて locked (`*` / `!`) / ハッシュ 0 件 | S-a は「同一イメージ内のビットの複製」なので I10 の面を増やさないが、**将来 image に本物のハッシュが入ったら 2 箇所に増える**。紙で保証せず検査で止める |
 
 ### 3. **deploy 時の実機 assert (fail-closed)** —— 人手 runbook ではない (F2)
 
@@ -514,7 +828,55 @@ background job の status を破棄しているので、この収集自体が実
 | 3-6 | planted 済み: `/root/.ssh/id_rsa` が存在する (`test -f` のみ。**読まない**) | exists |
 | 3-7 | ttyd の `kubectl exec` が成功する (Signpost 3 の裏返し) | exit 0 |
 
-#### 【必須】assert 自身が採点を汚してはならない (F3)
+#### 【必須】§F3′ —— **deploy 経路と assert の両方**が採点を汚してはならない (rev.3 で F3 を一般化)
+
+> **要件は「Falco イベントを 1 件も出さない」ことである** —— rev.2 が assert について
+> 「`window` 安全ではなく **『イベントを 1 件も出さない』を要件とする**」と書いた言い回しを、
+> **そのまま deploy 経路にも適用する**。**手段は文脈で異なる**:
+> **assert = builtin-only 規約** (下記 (A))、**deploy 経路 (plant / seed 初期化) = 禁じ手表を踏まない**
+> (S-a + Verification 2-7)。**「window の外だから安全」は根拠にならない** ——
+> `eventsPerUser` は永続し、trigger の auto-solve は attempt スコープ外である
+> (`internal/scoreboard/scoring/scoring.go:347-352`)。
+> **これが I13 の本体である。**
+
+**なぜ deploy 経路の方が重いか**: assert は「検証時に 1 回」だが、deploy 経路は
+**全 workspace・毎 deploy で必ず**走る。rev.2 は前者だけを守っていた (上記 Context の内部矛盾)。
+
+##### plant-target × mission の網羅表 (rev.3。VP 指示により全 plant-target を列挙)
+
+現行の plant-target は 2 つだけである (`# plant-target:` 宣言は Option B の 6 で新設するが、
+実体は現行 plant.sh の書き込み先と同じ):
+
+| plant-target | 宣言する plant.sh | 素データを要するか | **実行時に read すると発火するルール** | **当たる mission** | S-a 採用後 |
+|---|---|---|---|---|---|
+| `/etc/shadow` | 03 (`plant.sh:4`) / 10 (`plant.sh:6`) —— **重複 (F6)** | **要** (両者 `>>` 前提) | `Read sensitive file untrusted` (`challenges/03-stealth-read/rule.yaml:166-198`。`sensitive_files` = 同 :90-93 で `/etc/shadow` に一致) | **02 expectedRules → 全員 auto-solve** (`challenges/02-credential-files/falco-rule.yaml:3-4`) / **03 forbiddenRules → `current`=03 のとき恒久 taint** (`challenges/03-stealth-read/falco-rule.yaml:3-4`) / **10 forbiddenRules → `current`=10 のとき恒久 taint** (`challenges/10-final-exfil/falco-rule.yaml:5`) | **0 件** —— 読むのは `/opt/ctf/plant-seed/etc/shadow` で `fd.name startswith /etc` が不成立 |
+| `/root/.ssh/id_rsa` (dir `/root/.ssh`) | 05 (`plant.sh:4-11`) | **不要** —— image に `/root/.ssh` が存在しない (実測: `/root` は 0700 で空)。plant が `mkdir -p` + `cat >` で新規作成する | (仮に read しても) **どのルールにも当たらない** —— `/root/.ssh/id_rsa` は `sensitive_file_names` に無く (`challenges/03-stealth-read/rule.yaml:1-2`)、`Search Private Keys or Passwords` は `proc.name in (grep,egrep,fgrep)` + args に `BEGIN * PRIVATE`、または `proc.name=find` + args に `id_rsa` 等を要求する (`challenges/04-key-search/rule.yaml:16-43`) ので `cp` / `sh` では成立しない | 無し (04 / 05 は当たらない) | 変化なし (もともと 0 件) |
+
+→ **rev.2 の 2-3 が実際に危険なのは `/etc/shadow` の 1 件だけ**だが、
+その 1 件が **catalog 中で最も観測されるルール** (02 の expected / 03 と 10 の forbidden の三重) に当たる。
+
+##### deploy 経路の禁じ手表 (全 mission 網羅。rev.3)
+
+**覚え方: 「mission 10 の forbiddenRules 7 本 + 00 と 11 の expectedRules 2 本 = 計 9 本のうち
+1 本も発火させない」** —— 10 の 7 本は 01/02/04/06/07/08/09 の expectedRules 全部と一致する
+(`challenges/10-final-exfil/falco-rule.yaml:4-10`) ので、これで catalog 12 課題を網羅する。
+
+| mission (type) | ルール | deploy 経路の禁じ手 | S-a + B1 で該当するか |
+|---|---|---|---|
+| 00-tutorial (trigger) | Execution from /dev/shm | `/dev/shm` 配下から exec しない | しない (本番 scenario 非含: `challenges/00-tutorial/falco-rule.yaml:8-11`) |
+| 01-initial-recon (trigger) | Contact K8S API Server From Container | **workspace 内から** apiserver へ connect しない (運用者マシンからの `kubectl exec` は対象外) | しない |
+| **02-credential-files (trigger)** | **Read sensitive file untrusted** | `sensitive_file_names` の 4 path と `/etc/sudoers.d` / `/etc/pam.d` 配下を **open-for-read しない**。実測: この image に実在するのは `/etc/shadow` と `/etc/pam.d/*` (6 ファイル) のみ (`/etc/sudoers` / `/etc/pam.conf` / `/etc/security/pwquality.conf` は不在) | **rev.2 は該当した。S-a で該当しなくなる** |
+| 03-stealth-read (evade) | 同上 (forbidden) | 同上 | 同上 |
+| 04-key-search (trigger) | Search Private Keys or Passwords | `grep`/`egrep`/`fgrep` を `BEGIN * PRIVATE` を含む args で起動しない。`find` を `id_rsa`/`id_dsa`/`id_ed25519`/`id_ecdsa` を含む args で起動しない | しない (2-7 (c) が静的に禁止) |
+| 05-silent-search (evade) | 同上 (forbidden) | 同上 | しない |
+| 06-web-rce-shell (trigger) | Run shell untrusted | **禁じ手ではない** —— ルールは `protected_shell_spawner` (nginx/httpd/mysqld 等が祖先) を要求する (`challenges/06-web-rce-shell/rule.yaml:20-24,137-150,219-223`)。containerd 直下の `sh` は該当しない。**これは builtin-only 方式 (A) が成立する前提でもある** | しない |
+| 07-persist (trigger) | Drop and execute new binary in container | `proc.is_exe_upper_layer=true` の実行体を起動しない = **image 由来のバイナリだけを exec する** (seed / emptyDir に書いたファイルを exec しない) | しない見込み。**emptyDir 上の実行体が upper layer 判定になるかは未実測** → layer 4 の 4-7 |
+| 08-c2-beacon (trigger) | Redirect STDOUT/STDIN to Network Connection in Container | socket fd を stdio に dup しない | しない |
+| 09-hidden-cache (trigger) | Create Hardlink Over Sensitive Files | `evt.arg.oldpath in (sensitive_file_names)` の hardlink を作らない = sensitive path に対して `ln` / `cp -l` / `cp --preserve=links` を使わない。**`cp -a` は `--preserve=links` を含む**点に注意 (source 側に hardlink 対があれば `link()` を発行しうる) | しない。実測: `/etc/shadow` の link 数は 1。**B2 (`/etc` 全体) は面が広いので layer 4 の 4-7 で確認** |
+| 10-final-exfil (evade) | 上記 7 本 (forbidden) | 上記すべて | しない |
+| 11-cloud-cred-hunt (trigger) | Find AWS Credentials | aws credential 文字列を `grep` / `find` で探さない (`challenges/11-cloud-cred-hunt/falco-rule.yaml:3-4`) | しない |
+
+##### assert 側 (rev.2 の F3 をそのまま維持)
 
 監査が実コードで確認したとおり、**素朴な検証コマンドが採点を壊す**:
 
@@ -531,6 +893,15 @@ background job の status を破棄しているので、この収集自体が実
 - さらに `eventsPerUser` が汚れ、**Signpost 2 の前提が崩れる**。
 - 同じ理由で **`cat` / `head` / `tail` / `awk` も使用禁止** (いずれも除外リストに無い)。
   `cat /etc/shadow` は mission 02 の想定解そのものである。
+- **【rev.3】`cp` も使用禁止。** `cp` は除外マクロ `cmp_cp_by_passwd`
+  (`challenges/03-stealth-read/rule.yaml:98-99`) に現れるが、その条件は
+  `proc.name in (cmp, cp) and proc.pname in (passwd, run-parts)` であり、
+  **plant / assert から起動する `cp` の親は `sh` なので除外に該当しない**
+  (`not cmp_cp_by_passwd` = 同 :184 と `not user_read_sensitive_file_conditions` = 同 :122-123,189 の
+  両方を通過する = 発火する)。**「除外リストに `cp` の文字がある」ことを免除の根拠にしてはならない。**
+  なお **除外条件を満たすように親プロセス名を仕立てる派生案は採らない** ——
+  `rule.yaml` は docs サイトが参加者に描画する表示用抜粋なので、それは
+  **参加者に開示された回避手段**になり採点の穴を作る (派生決定 (3) の S-e と同じ理由で却下)。
 
 **採用する方式 (runbook レベルで確定)**:
 
@@ -563,19 +934,59 @@ background job の status を破棄しているので、この収集自体が実
   **ただし `eventsPerUser` は永続する**ので、「window 安全」ではなく
   **「イベントを 1 件も出さない」を要件**とする (これが builtin-only 規約の理由)。
 
+### 4. **E2E: deploy 経路の無汚染** —— ADR-0003 Verification (d) と同一 run 内 【rev.3 で新設】
+
+**前提**: 残る prod gate は **ADR-0003 Verification (d) = cluster 実機 E2E** だけである
+(`docs/adr/0003-evade-clean-gate-attempt-scope.md:610-619`)。
+そして **現状の (d) は本 ADR の欠陥に対して盲目である** —— (d) の受け入れ条件は
+「正規順に 01, 02, 04, 06, 07, 08, 09 をクリアした後、手動 reset なしで 03 / 05 / 10 が
+submit / auto-solve 可能であること」であり、**02 が deploy 時に auto-solve されていても (d) は green になる**
+(02 は「クリア済」に見える)。よって rev.3 は (d) に観測を追加する。
+
+**自己汚染しない設計**: 4-1〜4-4 は **workspace 内でコマンドを実行しない** ——
+運用者マシンから scoreboard の状態を読むだけなので、**検査自体が Falco イベントを出さない**。
+これは layer 3 に置けない理由でもある (`deploy-user.sh` は scoreboard の admin 面に到達しない前提)。
+
+| # | assert | 期待値 | 取得元 |
+|---|---|---|---|
+| 4-1 | deploy 完了直後、対象 user の rule fire が **0 件** | 0 | admin state の `eventsPerUser` |
+| 4-2 | deploy 完了直後、対象 user の solved が **0 件** (とくに `02-credential-files`) | 0 | 同 |
+| 4-3 | deploy 完了直後、対象 user の全 evade 課題の `dirtyRules` が **空** | 空 | journey detail の `dirtyRules` (ADR-0003 §A3) |
+| 4-4 | **進行中の再 deploy を模す**: 01 を solve させて `current` を進めた後に同一 user を再 deploy し、4-1 の増分ゼロ・4-3 の空を再確認 | 変化なし | 同 (**Context の「再 deploy では evade も汚染される」経路の回帰**) |
+| 4-5 | mission 02 が **参加者の操作で** solve すること (`cat /etc/shadow` → CLEARED) | solve | (d) の通常手順に含まれる |
+| 4-6 | **B2 を採る場合のみ**: `/etc` ディレクトリ mount 下で kubelet の `/etc/hosts` / `/etc/resolv.conf` 重ねが壊れていないこと | 名前解決成功 | workspace 内 (この 1 件だけ workspace 内実行。`sh` builtin と `getent` は §F3′ の禁じ手に当たらない) |
+| 4-7 | **未実測項目の実測 (`test1` workspace 限定 = §F3 の (B))**: (i) **`cp -a /etc/shadow ...` が実際に `Read sensitive file untrusted` を発火させること** (架空の前提で設計しないため。故意違反 patch で 1 回だけ)、(ii) emptyDir 上の実行体が `proc.is_exe_upper_layer` と判定されるか、(iii) B2 の `cp -a` が `link()` を発行しないこと、(iv) `proc.name` が `cp` / `sh` として観測されること (alpine の `/bin/cp` は coreutils multicall への symlink、`/bin/sh` は busybox への symlink である) | (i) 発火する (ii)(iii)(iv) 記録 | `test1` workspace (`deploy-event-workspaces.sh:157`)。**既定経路では走らせない** |
+
+> **4-7 の位置づけ**: 「`cp` が発火する」は本 rev.3 では **除外条件の構造 (`proc.pname` gate) からの
+> 推論**であって実測ではない。**推論のまま Hard Invariant に昇格させない** ため、
+> 4-7 (i) を実測項目として明示する。ただし **推論が外れていても S-a は無駄にならない**
+> (S-a は「発火しない」ではなく「条件に到達しない」ので、`cp` の発火有無に依存しない)。
+
 ### 実装 PR の完了条件 (Definition of Done)
+
+> **rev.3 の差分 (11 → 14 項目)**: **項目 2 と 3 を差し替え**、**項目 12 / 13 / 14 を追加**した。
+> 項目 1 / 4 / 5 / 6 / 7 / 8 / 9 / 10 / 11 は rev.2 のまま (番号も変えない)。
+> 差し替えた 2 つはいずれも **rev.2 の内部矛盾に由来する** ——
+> 旧 2 は「seed 初期化が image rootfs 由来であること」を要求していたが、これが欠陥の本体だった。
+> 旧 3 は builtin-only 規約を **assert についてのみ**要求していた。
 
 1. `scripts/check-flag-isolation.sh` が Verification 1 の 1-1〜1-13 を実装し、
    `chart-lint` job から呼ばれ、**allowlist を 1 つ外した / `envFrom` を足した /
    seed root を mount した / `extraEnv` に `CTF_FLAG_*` を渡した 4 つの故意違反 patch で
    実際に fail することを PR 本文に貼る** (assert が assert していることの証明)。
-2. `challenges/gen-values.sh --check` が Verification 2 の 2-1〜2-6 を実装し、
-   **重複 plant-target (03/10 = `/etc/shadow`) が mount リストで 1 エントリに畳まれること**と
-   **seed 初期化が image rootfs 由来であること**を検査する。
-3. `charts/ctf-user/assert-flag-isolation.sh` が Verification 3 の 3-1〜3-7 を **builtin-only** で
-   実装し、`deploy-user.sh` から呼ばれて violation で非ゼロ終了する。
-   **script 内に外部バイナリ (`grep`/`cat`/`head`/`tail`/`awk`/`find`) を使わない旨と理由を明記**し、
+2. **【rev.3 で差し替え】** `challenges/gen-values.sh --check` が Verification 2 の **2-1〜2-8** を実装し、
+   **重複 plant-target (03/10 = `/etc/shadow`) が mount リストで 1 エントリに畳まれること**と、
+   **seed 初期化の供給元が `/opt/ctf/plant-seed/` 配下の build 時 snapshot であること (2-3)**、
+   **生成 seed script が §F3′ の禁じ手集合に触れないこと (2-7)** を検査する。
+   併せて image 側に snapshot の焼き込み (`images/challenge/Dockerfile`) と
+   **I10 guard (2-8)** を入れる。
+   **旧 2 の「seed 初期化が image rootfs 由来であること」は撤回** (それが汚染の原因だった)。
+3. **【rev.3 で差し替え】** `charts/ctf-user/assert-flag-isolation.sh` が Verification 3 の 3-1〜3-7 を
+   **builtin-only** で実装し、`deploy-user.sh` から呼ばれて violation で非ゼロ終了する。
+   **script 内に外部バイナリ (`grep`/`cat`/`head`/`tail`/`awk`/`find`/**`cp`**) を使わない旨と理由を明記**し、
    静的に検査する (自己 grep で足りる)。
+   **加えて、同じ「イベント 0」要件を deploy 経路 (plant / seed script) にも適用する** (§F3′) ——
+   deploy 側の手段は builtin-only ではなく **禁じ手表 + S-a** であり、機械強制は 2-7 である。
 4. `deploy-event-workspaces.sh` が per-user deploy の exit status を収集し、
    **1 件でも失敗したら `✓ done` を出さず非ゼロ終了する** (platform 側 PR、両リポ相互リンク)。
 5. **mission 09 の EXDEV 実測** (VP 裁定): 実クラスタで `ln` を実行し、
@@ -584,8 +995,8 @@ background job の status を破棄しているので、この収集自体が実
    切替結果を本 ADR に追記する。
 6. **Signpost 1 の全 4 mission (02 / 03 / 09 / 05) を実機で再走**し、結果を PR 本文に貼る
    (+ 10 は requireExfil 経路まで)。
-7. Hard Invariants 表に I11 を追記 (機械強制スクリプト名 2 本を併記)。
-   **1〜4 が揃うまで追記しない** (I11 の発効条件)。
+7. Hard Invariants 表に I12 を追記 (機械強制スクリプト名 2 本を併記)。
+   **1〜4 が揃うまで追記しない** (I12 の発効条件)。
 8. Cross-repo 契約表に「`deploy-user.sh` の非ゼロ exit は fail-closed 契約。呼び出し側は伝播する」を追記。
 9. README / journey.yaml / docs-site から `CTF_FLAG_*` env 変数名の記述を削除
    (`challenges/03-stealth-read/README.md:12-15` 他)、09 の想定解を retarget に合わせて更新。
@@ -593,6 +1004,17 @@ background job の status を破棄しているので、この収集自体が実
     「planted file に同一 fs 操作 (hardlink/rename) を要求する mission は書けない」を追記。
 11. **mission 05 の実効ゲート不在**を別 Issue として起票し、本 ADR の「限界」節をリンクする
     (実装は本 PR のスコープ外)。
+12. **【rev.3 追加】Verification layer 4 (4-1〜4-5、B2 採用時は 4-6) を ADR-0003 Verification (d) の
+    E2E に組み込み**、結果を PR 本文に貼る。**4-4 (進行中の再 deploy) を必ず含める** ——
+    これが「再 deploy で evade が恒久 taint される」経路の唯一の回帰である。
+    owner = qa-engineer (未取得の助言、下記 Advice)。
+13. **【rev.3 追加】4-7 の未実測項目を `test1` workspace で実測し、結果を PR 本文に貼る**
+    ((i) `cp` の発火有無 (ii) emptyDir 実行体の upper-layer 判定 (iii) `cp -a` の `link()`
+    (iv) `proc.name` の観測値)。**既定経路 (全 workspace) では走らせない。**
+14. **【rev.3 追加】Hard Invariants 表に I13 を追記**し、**I11 / I12 / I13 の番号割り当てを
+    VP が批准する** (Consequences の「不変条件の番号」表)。
+    I13 の追記は **2-7 と layer 4 が揃うまで行わない** (I12 と同じ発効条件の考え方)。
+    ADR-0003 側の I11 候補との衝突を残したまま `.claude/rules/` に書かない。
 
 ## Advice
 
@@ -610,7 +1032,7 @@ background job の status を破棄しているので、この収集自体が実
     Signpost 1 を 02/03/09 + 05 に拡張、B1/B2 と 09-i/ii/iii を Options に前倒し、
     EXDEV 実測を完了条件化。
   - **F5 [MEDIUM]** seed root の mount は mission 03 の forbidden rule を回避する代替 path に
-    なる → I11 と Verification 1-4 に明文化。
+    なる → I12 と Verification 1-4 に明文化。
   - **F6 [MEDIUM]** 03 と 10 が同一 `/etc/shadow` に append するため gen-drift に dedupe と
     seed 初期化の検査が必要 → Verification 2-2 / 2-3 に反映。
   - **限界指摘 [最重要]** mission 05 の forbidden rule は `grep`/`find` の args しか見ておらず
@@ -621,12 +1043,54 @@ background job の status を破棄しているので、この収集自体が実
     本 ADR はこの評価を前提に、CVE 対応より優先する順序を採る。
 - **VP (2026-08-18)**: 制約 C1-C7 の提示。Option A の実現可能性を実コードで判定せよという指示に対し、
   「原理的に閉じない」ことを Pod env の不変性と exec タイミングから示した (上記「定理」)。
-- **VP 裁定 (2026-08-18, 監査後)**: (i) I11 は F1 + F2 の実装をもって発効 (ADR merge と同時発効に
+- **VP 裁定 (2026-08-18, 監査後)**: (i) I12 は F1 + F2 の実装をもって発効 (ADR merge と同時発効に
   しない)、(ii) mission 09 の EXDEV 実測を実装 PR の完了条件とする、(iii) Signpost 1 を
   02/03 → 02/03/09 + 05 に拡張する、(iv) `falco-ctf-app-prodlocal/` は削除済み・
   LIVE hotfix 5 commit は `origin/archive/live-hotfix-2026-08-16` に退避し内容は main の
   後続作業 (P19-2b portal 統合 / P22-1 hint 集約) で置換済みであることを確認 (CEO 決定)。
 - **software-engineer (2026-08-18, VP 経由)**: `apk policy` による cycle 実測 (ADR-0002 側)。
+- **VP (2026-08-18, rev.3 発注)**: **rev.2 の内部矛盾を現物で指摘**した ——
+  (i) Verification 2-3 が必須化した seed 初期化は §F3 が禁止した行為そのもの、
+  (ii) plant initContainer の image は challenge と同一、
+  (iii) **ingest は container 名で絞り込まない** (`grep -n "container.name|ContainerName" ingest.go` → 0 hits)、
+  (iv) したがって **§F3 が守っているのは deploy 時 assert だけで、本番 deploy 経路が素通し**。
+  併せて **「`cp` が発火する」は除外リストに無いことからの推論であり実測ではない**と自己申告があり、
+  rev.3 はこれを **Verification 4-7 (i) の実測項目**として落とした
+  (推論のまま Hard Invariant に昇格させないため)。
+  また **S-c (イメージ追加) を安易に選ばないこと**、**S-d (ingest 緩和) は
+  security-engineer 同意権の領域であること**を制約として提示。
+- **architect (2026-08-18, rev.3 起草 + 自己レビュー)**: VP の 4 点をすべて実コードで再検証し、
+  **2 点を訂正 / 1 点を追加**した:
+  - **訂正 1**: 「`cp` もどの除外リストにも無い」は不正確。`cp` は除外マクロ `cmp_cp_by_passwd`
+    (`challenges/03-stealth-read/rule.yaml:98-99`) に**現れる**が、条件が
+    `proc.pname in (passwd, run-parts)` で **親プロセス名に gate されている**ため plant では成立しない。
+    **結論 (発火する) は変わらないが、根拠は「無い」ではなく「条件を満たさない」である** ——
+    この違いは重要で、「除外リストに文字がある」ことを免除の根拠にする誤りを塞ぐ (§F3′)。
+  - **訂正 2**: rev.2 の 2-3 の根拠のうち **`sensitive_files` 判定の文脈は中身に依存しない**
+    (`fd.name` ベース = `challenges/03-stealth-read/rule.yaml:90-93`)。
+    したがって 2-3 は **realism だけを根拠に「初期化の存在」を要求できる**が
+    **「実行時に実ファイルを読むこと」は要求できない** → S-a が成立する。
+  - **追加 1 (新規指摘)**: ADR-0003 との非対称について、VP の読み
+    (「trigger は汚染 / evade は無害」) は **初回 deploy に限って正しい**。
+    **進行中の再 deploy では `current` が evade になりうるため恒久 taint が起きる**
+    (`markDirtyOnRuleFire` = `internal/scoreboard/scoring/scoring.go:415-429`)。
+    reset の参加者導線が ADR-0003 F3 として未閉止であるため、**復旧手段が無い**。
+    → Context に明記し、Verification 4-4 で回帰を張った。
+  - **実測した項目 (`docker run`、challenge image のパッケージ集合を適用した状態)**:
+    `/etc/shadow` = 0640 root:shadow / 260 bytes / 17 行すべて locked (`*` / `!`) / crypt ハッシュ 0 件 /
+    link 数 1、`/root` = 0700 で空 (`/root/.ssh` 不在)、`/etc/pam.d` は **存在する** (6 ファイル) ため
+    `sensitive_files` の `fd.directory` 節に当たる、`/etc/sudoers` / `/etc/pam.conf` /
+    `/etc/security/pwquality.conf` は **不在** (= 09-ii の fixture 追加要求は正しい)、
+    `cp` = GNU coreutils 9.7 (`/bin/cp` は multicall への symlink)。
+  - **実測できていない項目** (→ 4-7): `cp` の実発火、emptyDir 上実行体の `proc.is_exe_upper_layer`、
+    `cp -a` が `link()` を発行しないこと、Falco が観測する `proc.name` の実値。
 - **未取得の助言**: sre-engineer (roster script の exit status 収集と abort 挙動 —— 実装項目 4 の
-  owner)、qa-engineer (mission 02/03/09/05 の発火テストと EXDEV 実測の手順化 —— 実装項目 5/6)。
+  owner。**rev.3 で追加: 再 deploy 手順への rule-fire 確認 1 行**)、
+  qa-engineer (mission 02/03/09/05 の発火テストと EXDEV 実測の手順化 —— 実装項目 5/6。
+  **rev.3 で追加: layer 4 を ADR-0003 (d) の E2E に組み込む = 実装項目 12/13**)、
+  **security-engineer (rev.3 で追加: (a) S-d を採らない判断と Signpost 7 の起票条件、
+  (b) I13 の文言、(c) 4-7 の実測手順が `test1` 1 workspace 以外を汚さないことの独立確認)**。
   **実装 PR までに取得すること。**
+- **CEO 批准が不要になった事項 (rev.3)**: S-c (plant 用の新イメージ = I5 の 8 → 9) を**採らない**ので、
+  本 ADR はイメージ数を変更しない。**I11 / I12 / I13 の番号割り当ては VP 批准事項**
+  (Consequences の表)。
