@@ -223,6 +223,19 @@ spec:
         {{- /* ADR-0001: no CTF_FLAG_* here — flags never reach this
                container (I12). Only the `plant` initContainer above sees
                them, via the ctf-flags Secret. */}}
+        {{- /* Verification 1-12 (negative test): extraEnv is the one
+               challenge-container field .Values controls directly, so it's
+               also the one place a future values change could reintroduce
+               a flag env var without touching this template. The allowlist
+               static assert (scripts/check-flag-isolation.sh) catches this
+               post-render, but failing at template time here is strictly
+               fail-closed — `helm template`/`helm upgrade` itself refuses
+               to produce the manifest at all. */}}
+        {{- range .Values.challenge.extraEnv }}
+        {{- if hasPrefix "CTF_FLAG_" (.name | default "") }}
+        {{- fail (printf "ADR-0001 I12 violation: challenge.extraEnv[].name=%q starts with CTF_FLAG_ — flags must never reach the challenge container (Verification 1-12)" .name) }}
+        {{- end }}
+        {{- end }}
         {{- with .Values.challenge.extraEnv }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

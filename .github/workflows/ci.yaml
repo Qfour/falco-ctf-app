@@ -57,6 +57,8 @@ jobs:
           done
       - name: seccomp Hard Invariant (fail-closed)
         run: python3 scripts/check-seccomp.py
+      - name: flag isolation Hard Invariant (ADR-0001 Verification 1, fail-closed)
+        run: ./scripts/check-flag-isolation.sh
 
   # ------------------------------------------------------------------
   # Flag hygiene: no real flags in the public repo + generated values in sync.
@@ -189,6 +191,31 @@ jobs:
     secrets:
       sysdig-token: ${{ secrets.SYSDIG_SECURE_TOKEN }}
       aws-role-arn: ${{ secrets.AWS_ROLE_ARN }}
+
+  # ------------------------------------------------------------------
+  # ADR-0001 Verification 2-8 / DoD 15: re-verify the challenge image's
+  # /opt/ctf/plant-seed/ build-time snapshot (no hash/flag material, mode
+  # +owner+content match, no hardlinked files under /etc). This is a CI
+  # safety net alongside `make check-image-hygiene`'s fail-closed call from
+  # `make build` (F2-shaped gap: prod is CI-free, an operator runs
+  # `make build` by hand, so the *primary* gate has to live there — see
+  # scripts/check-image-hygiene.sh's header comment). Builds the challenge
+  # image itself (not via the `build` matrix's reusable image-pipeline
+  # workflow, which we don't own/can't easily hook a post-build step into)
+  # so this job is self-contained and independent of publish gating.
+  # Branch protection check: not required (see the `build` job's ttyd-proxy
+  # comment for the same "adding it is optional CEO hardening" note).
+  # ------------------------------------------------------------------
+  image-hygiene:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: build challenge image (local — for hygiene inspection only, not published)
+        run: docker build -t falco-ctf/challenge:ci-hygiene-check -f images/challenge/Dockerfile .
+      - name: check image hygiene (fail-closed)
+        run: ./scripts/check-image-hygiene.sh falco-ctf/challenge:ci-hygiene-check
 
   # ------------------------------------------------------------------
   # Publish Helm charts to ECR (OCI). Same git SHA as the images

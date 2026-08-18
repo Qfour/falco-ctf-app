@@ -17,7 +17,7 @@ SYSDIG_URL   ?= https://app.au1.sysdig.com
 # host repo are not shared into the VM.
 GO_IMAGE ?= golang:1.26-alpine
 
-.PHONY: help dev dev-down build push load-colima deploy-local lint check-seccomp test tidy gen gen-home-fragments gen-values gen-attack check-flags check-rules check-freshness clean scan
+.PHONY: help dev dev-down build push load-colima deploy-local lint check-seccomp check-flag-isolation check-image-hygiene test tidy gen gen-home-fragments gen-values gen-attack check-flags check-rules check-freshness clean scan
 
 help:
 	@echo "Targets:"
@@ -27,8 +27,10 @@ help:
 	@echo "  push            — docker push all images"
 	@echo "  load-colima     — load images into colima k3s containerd (local only)"
 	@echo "  deploy-local    — helm upgrade --install scoreboard + auth-policy charts (local)"
-	@echo "  lint            — helm lint all charts/ + check-seccomp"
-	@echo "  check-seccomp   — fail if any rendered chart container's effective seccompProfile != RuntimeDefault"
+	@echo "  lint                — helm lint all charts/ + check-seccomp + check-flag-isolation"
+	@echo "  check-seccomp       — fail if any rendered chart container's effective seccompProfile != RuntimeDefault"
+	@echo "  check-flag-isolation — fail if the ctf-user chart lets a flag reach the challenge container (ADR-0001 Verification 1)"
+	@echo "  check-image-hygiene — fail if the built challenge image's /opt/ctf/plant-seed/ snapshot carries flag/hash material or drifts from its real counterpart (ADR-0001 Verification 2-8)"
 	@echo "  test            — go test ./... (runs in $(GO_IMAGE) container)"
 	@echo "  tidy            — go mod tidy (runs in $(GO_IMAGE) container)"
 	@echo "  gen             — regenerate Go types from OpenAPI specs (docs/openapi-*.yaml)"
@@ -56,6 +58,7 @@ build:
 	docker build -t $(REGISTRY)/challenge:$(TAG)   -f images/challenge/Dockerfile .
 	docker build -t $(REGISTRY)/docs:$(TAG)        -f images/docs/Dockerfile        .
 	docker build -t $(REGISTRY)/detect-grader:$(TAG) -f images/detect-grader/Dockerfile images/detect-grader
+	$(MAKE) check-image-hygiene
 
 push:
 	@for img in $(IMAGES); do docker push $(REGISTRY)/$$img:$(TAG); done
@@ -77,7 +80,7 @@ deploy-local:
 	  --set image.tag=dev \
 	  --set env.expectedEmailDomain=ctf.local --set env.adminEmails=user1@ctf.local
 
-lint: check-seccomp
+lint: check-seccomp check-flag-isolation
 	@for c in charts/*; do echo "== $$c =="; helm lint "$$c"; done
 
 # Hard Invariant guard (see .claude/rules/falco-ctf-app-conventions.md
@@ -87,6 +90,19 @@ lint: check-seccomp
 # regression (e.g. charts/ctf-user/templates/pod.yaml) would go undetected.
 check-seccomp:
 	python3 scripts/check-seccomp.py
+
+# ADR-0001 (Option B) Verification 1: allowlist-type static assert that no
+# flag ever reaches the `challenge` container (env/envFrom/volumeMount/Role)
+# across every render-matrix scope. See scripts/check-flag-isolation.sh.
+check-flag-isolation:
+	./scripts/check-flag-isolation.sh
+
+# ADR-0001 Verification 2-8 / DoD 15: re-verify the challenge image's
+# /opt/ctf/plant-seed/ build-time snapshot at every build (fail-closed —
+# prod is CI-free, so `build` is the only gate that always runs; see
+# scripts/check-image-hygiene.sh for why this can't live in CI alone).
+check-image-hygiene:
+	./scripts/check-image-hygiene.sh $(REGISTRY)/challenge:$(TAG)
 
 test:
 	docker build -f Dockerfile.test --progress=plain -t falco-ctf/gotest:local .
