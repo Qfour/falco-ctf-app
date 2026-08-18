@@ -135,6 +135,24 @@
 >   `docs/prod-deploy.md` Step 9 / §関連 から参照)。**片方だけ merge すると情報が失われる**ので
 >   PR 本文で相互リンクする。
 
+> **rev.7 (2026-08-19) の改訂点 — 実装 PR (#135 後続) の security-engineer 実装監査を反映**。
+> Option B 本体は #135 で main に merged (`f4915d9`)。その実装を security-engineer が独立監査し、
+> VP が app#135 のコメントに記録した追加 finding を本 ADR に接地する (ADR が正典なので、
+> 実装だけして本文に無いと次の人が同じ穴を見落とす)。
+> 1. **render matrix に第 5 パターンを追加**: `-f`/`--set` によるオーバーレイを一切与えない render
+>    (security-engineer A4)。`plant.sh` を持たないミッション (例 `02-credential-files`) は
+>    `charts/ctf-user/deploy-user.sh` の `[[ -f "${CHALLENGE_VALUES}" ]]` ガードにより
+>    per-challenge values ファイルが存在せず overlay が付かない → chart 自身の default
+>    (`plant.seedScript: ["sh","-c","true"]` / `plant.mounts: []`、challenge に
+>    `volumeMounts` キー自体が無い) がそのままレンダリングされる。**1-20 (下記) がこのパターンの検証**。
+> 2. **Verification 1 に 1-16〜1-21 を追加**した。Option B 後、フラグ機密性を最終的に支えているのは
+>    「ttyd SA が secrets/configmaps に触れない」という RBAC の 1 点であり (1-16)、また
+>    B1 の `readOnly: true` + `subPath` 完全一致 (1-18)、`ctf-flags` の単一到達点性 (1-19) は
+>    rev.4 の M2/L2 で本文に書いたものの表に個別 assert 番号を割っていなかった。
+>    1-17 (ttyd argv 注入口が chart に無いこと)・1-21 (plant に privileged/capability/hostPath が
+>    無いこと) は将来の緩和に対する網として追加。
+> 3. **実装 PR の完了条件 (項目 1) を更新**: 故意違反 patch を 6 → 1-16〜1-21 分を加えた集合に拡張。
+
 ## Context
 
 ### 現状の経路 (実コードで確認)
@@ -1044,6 +1062,13 @@ in-memory カウンタを回す (`internal/store/store.go:492-509`)。
 - **`-f challenges/<id>/values.yaml --set challengeId=<id>`** を **03/05/10 それぞれ** で
   (単一ミッション分岐。監査 F1: この分岐も assert 対象)
 - いずれも `--set-string challenge.flags.03-stealth-read='FALCO{dev-probe}'` 等を与える
+- **【rev.7 = 第 5 パターン、security-engineer A4】overlay 無し render**:
+  `--set challengeId=<trigger-only-id>` のみ (`-f` を渡さない)。`plant.sh` を持たないミッション
+  (例 `02-credential-files`) は `charts/ctf-user/deploy-user.sh` の
+  `[[ -f "${CHALLENGE_VALUES}" ]]` ガードにより per-challenge values ファイルが存在せず
+  overlay が付かない → chart の default 値がそのままレンダリングされる
+  (`plant.seedScript: ["sh","-c","true"]` / `plant.mounts: []`、challenge に
+  `volumeMounts` キー自体が現れない)。1-20 (下記) がこの render の検証
 
 > **`challenge.allMissions` は Option B で削除された**（フラグ env が challenge から撤去された結果、
 > このフィールドの消費者が無くなった。両リポで残存参照ゼロを確認済み）。
@@ -1062,6 +1087,8 @@ in-memory カウンタを回す (`internal/store/store.go:492-509`)。
 | 1-5 | `/var/run/secrets/kubernetes.io/serviceaccount` への volumeMount が無い | 経路 3 |
 | 1-6 | challenge コンテナ block 内に文字列 `CTF_FLAG` が現れない (plant initContainer は除外) | 見落とし全般の網 |
 | 1-7 | `lifecycle.postStart` がフラグを参照しない (1-6 に含まれる) | postStart 経由の再導入 |
+| **1-18** | **【rev.7・security-engineer 実装監査】必須。** `plant` の `volumeMounts` が **`plant-seed` の root 1 件のみ (`subPath` 無し)**。かつ challenge 側の seed mount は **すべて** `subPath` 付き + **`readOnly: true`** + `mountPath` が 1-4 の allowlist と完全一致し、`subPath` が `mountPath` の先頭 `/` を除いた値と**完全一致** | 1-4 は「宣言済み allowlist 以下」までで `readOnly` / `subPath` の値そのものは見ない。B1 実装 (`pod.yaml` の `range .Values.plant.mounts`) は subPath/readOnly を常に自動導出するので通常は割れないが、chart 側に手が入って割れたときに検知する |
+| **1-20** | **【rev.7・security-engineer 実装監査】推奨。** overlay 無し render (上記第 5 パターン) で challenge に `volumeMounts` キーが**無く**、`plant` の `command` (seedScript) が **`["sh","-c","true"]` の no-op** であること | render matrix の網羅性。plant-target を持たないミッションで plant が実質何もしないことの確認 |
 
 `kind: Pod` 全体に対する assert:
 
@@ -1073,6 +1100,9 @@ in-memory カウンタを回す (`internal/store/store.go:492-509`)。
 | 1-11 | ttyd の SA token は projected volume で、`plant` / `challenge` には mount されていない |
 | **1-14** | **【rev.4 = M3】initContainer `plant` に `restartPolicy` キーが存在しない。** `restartPolicy: Always` を付けると native sidecar になり、**`plant` が challenge と併走し続ける** = フラグ env を持つプロセスが session 中生存する |
 | **1-15** | **【rev.4 = M3】`spec.shareProcessNamespace` と `spec.hostPID` が未設定または `false`。** 1-14 と揃うと経路 2 (`/proc/<pid>/environ`) が **別コンテナのプロセス経由で復活する** (I12 の「これらに限らない」の具体化) |
+| **1-17** | **【rev.7・security-engineer 実装監査】推奨。** ttyd の `TTYD_TARGET_CONTAINER` が固定文字列 `challenge` にレンダリングされ、chart 側に ttyd の argv (`command`/`args`) を組み立てるフィールドが存在しない (= `--url-arg` / `-a` 相当の引数注入口が chart レベルに無い) | 「participant は plant / ttyd コンテナを選べない」の根拠を chart assert でも機械化する (image entrypoint 側の保証と二重化) |
+| **1-19** | **【rev.7・security-engineer 実装監査】必須。** Pod 全体 (Secret を除く) で文字列 `ctf-flags` の**構造的出現** (コメント行を除く) が **`plant` の `envFrom.secretRef.name` 1 箇所のみ**。かつ `plant` の envFrom に **`optional: true` が付いていない** | fail-closed の維持。`optional: true` が付くと Secret 欠落時にフラグ無し workspace が Ready になり、二重化 (Secret 1 箇所到達点) も崩れる |
+| **1-21** | **【rev.7・security-engineer 実装監査】推奨。** `plant` に `securityContext.privileged: true` / 追加 capability が無く、Pod に `hostPath` volume が無い | 将来の緩和 (デバッグ目的の privileged 付与や hostPath mount) に対する網 |
 
 > **1-14 / 1-15 の番号について**: 1-12 / 1-13 は既に negative test (下表) に割り当て済のため、
 > rev.4 の追加分は 1-14 から採番する (項番は追加順であり、表の並び順ではない)。
@@ -1083,6 +1113,12 @@ in-memory カウンタを回す (`internal/store/store.go:492-509`)。
 |---|---|
 | 1-12 | `--set challenge.extraEnv[0].name=CTF_FLAG_03_STEALTH_READ --set challenge.extraEnv[0].value=x` を与えた `helm template` が **非ゼロ終了する**。実装は `pod.yaml:174-176` の `with .Values.challenge.extraEnv` 内で `CTF_FLAG_` prefix を検出したら Helm の `fail` を呼ぶ (監査 F1: `extraEnv` は allowlist assert の後段で値が展開されるため、テンプレート側で落とすのが唯一の fail-closed) |
 | 1-13 | 同様に `challenge.extraEnvFrom` 相当の口を新設しない (存在しないことを assert)。将来追加するなら I12 の改訂 = architect 合意 + VP 承認 |
+
+`charts/ctf-user/templates/role.yaml` (ttyd の SA に bind される Role) に対する assert:
+
+| # | assert | 理由 |
+|---|---|---|
+| **1-16** | **【rev.7・security-engineer 実装監査】必須。** ns `ctf-<user>` の Role / RoleBinding に **`secrets` および `configmaps` に対するいかなる verb も無い**こと。加えて **`pods/ephemeralcontainers` に対する `patch`** と **`pods` に対する `create`/`patch`** も無いこと | **Option B 後、フラグ機密性はこの 1 点に載荷している。** `challenge`/`plant` に到達経路が無い以上、ttyd の SA が `secrets get` を持たない限り Secret 内容は参加者から到達不能 (rev.4 Signpost 9 の機械化と同一趣旨) |
 
 `platform` 側の conftest/OPA Key Guards (G5-2b) にもこの assert 集合を移植できる (任意)。
 
@@ -1412,16 +1448,28 @@ falcosidekick → scoreboard は非同期なので、`helm upgrade --wait` 直�
 > - **17 (新)**: `Store.ResetUser` (per-user reset) —— **4-7 を本番開始後に実行する必要が生じた場合の前提**
 >   (N1、owner = software-engineer)。**本 ADR の merge 前の実装は不要** (VP 裁定)
 
-1. **【rev.4 で更新】** `scripts/check-flag-isolation.sh` が Verification 1 の
-   **1-1〜1-15** を実装し (rev.4 で **1-8 を平文 + base64 の 2 本立て**に、
-   **1-14 = `plant` の `restartPolicy` 不在**、**1-15 = `shareProcessNamespace` / `hostPID`** を追加)、
-   `chart-lint` job から呼ばれ、**次の 6 つの故意違反 patch で実際に fail することを PR 本文に貼る**:
+1. **【rev.4 で更新 / rev.7 で拡張】** `scripts/check-flag-isolation.sh` が Verification 1 の
+   **1-1〜1-21** を実装し (rev.4 で **1-8 を平文 + base64 の 2 本立て**に、
+   **1-14 = `plant` の `restartPolicy` 不在**、**1-15 = `shareProcessNamespace` / `hostPID`** を追加、
+   **rev.7 で 1-16 (Role の secrets/configmaps 不許可) / 1-17 (ttyd argv 注入口不在) /
+   1-18 (seed mount の subPath/readOnly 完全一致) / 1-19 (`ctf-flags` 単一到達点・`optional` 不許可) /
+   1-20 (overlay 無し render の no-op 確認) / 1-21 (plant privileged/capability/hostPath 不許可) を追加**)、
+   `chart-lint` job から呼ばれ、**次の故意違反 patch で実際に fail することを PR 本文に貼る**
+   (rev.4 の 6 つ + rev.7 で 1-16〜1-21 分を追加):
    allowlist を 1 つ外した / `envFrom` を足した / seed root を mount した /
    `extraEnv` に `CTF_FLAG_*` を渡した / **`plant` に `restartPolicy: Always` を付けた** /
-   **フラグの b64 形を Secret 以外に置いた** (assert が assert していることの証明)。
+   **フラグの b64 形を Secret 以外に置いた** / **Role に `secrets` verb を足した** /
+   **ttyd に `command`/`args` を足した (または `TTYD_TARGET_CONTAINER` を値化した)** /
+   **seed mount の `subPath` を mountPath と不一致にした (または `readOnly` を落とした)** /
+   **`plant` の envFrom に `optional: true` を付けた** /
+   **overlay 無し render で `plant.seedScript` を no-op でなくした** /
+   **`plant` に `privileged: true` または `hostPath` volume を足した**
+   (assert が assert していることの証明)。
    **これらは `helm template` 出力に対する CI 内の静的検査であり、
    共有アーティファクト (`challenges/values-all.yaml`) にも実クラスタにも触れない**
-   ので H1 (下記 13) の対象ではない。
+   ので H1 (下記 13) の対象ではない。**故意違反 patch は `helm template` の入力
+   (`--set` / `--set-json` / 一時 chart コピーへの template patch) で作り、
+   repo の生成物 (`challenges/*`) や実チャートは書き換えない。**
 2. **【rev.3 で差し替え / rev.4 で範囲を縮小】** `challenges/gen-values.sh --check` が
    Verification 2 の **2-1〜2-7** を実装し、
    **重複 plant-target (03/10 = `/etc/shadow`) が mount リストで 1 エントリに畳まれること**と、
