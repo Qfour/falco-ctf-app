@@ -47,8 +47,12 @@ expectedFlag: "FALCO{dev-${SLUG}}"
 
 > **フラグは外部注入**。`falco-rule.yaml` には `FALCO{dev-<slug>}` の placeholder
 > だけを書く。実フラグは `falco-ctf-platform` の `events/<date>/flags.sops.yaml`
-> に置き、デプロイ時に scoreboard へ `FLAGS_FILE`、challenge コンテナへ
-> `CTF_FLAG_<ID>` env として注入される。`make check-flags` が実フラグ混入を block。
+> に置き、デプロイ時に scoreboard へ `FLAGS_FILE` として渡る。仕込み側は
+> **ADR-0001 (Option B, Accepted)**: `ctf-flags` Secret の `CTF_FLAG_<ID>` キー →
+> `plant` initContainer にのみ `envFrom`/`secretKeyRef` で到達する。
+> **`challenge` コンテナの env には CTF_FLAG_* は一切出現しない** (I12)。
+> `make check-flags` が実フラグ混入 + 生成物同期 + 禁じ手検査 (ADR-0001
+> Verification 2-1〜2-7) を block。
 
 ID 重複確認:
 ```bash
@@ -57,14 +61,29 @@ grep -r "challengeId" challenges/    # ID 重複がないこと
 
 ## 4. `plant.sh` を書く（evade 型のみ）
 
-フラグを container に仕込むシェルを `plant.sh` に書く。**フラグ実値は書かず**、
-env var `CTF_FLAG_<ID>` を参照する (`<ID>` = challengeId の `-` を `_`、大文字。
-例: `03-stealth-read` → `CTF_FLAG_03_STEALTH_READ`)。
+**ADR-0001 (Option B, Accepted)**: `plant.sh` は `plant` initContainer の中で
+動く（challenge コンテナの中ではない）。書き込み先は実パスではなく seed
+emptyDir (`$PLANT_SEED_ROOT`) — chart がそこから実パスへ subPath mount で
+橋渡しする。**フラグ実値は書かず**、env var `CTF_FLAG_<ID>` を参照する
+(`<ID>` = challengeId の `-` を `_`、大文字。例: `03-stealth-read` →
+`CTF_FLAG_03_STEALTH_READ`)。先頭に機械可読ヘッダ行が必須:
 
 ```sh
 # challenges/${NN}-${SLUG}/plant.sh
-echo "# ${CTF_FLAG_${NN}_${SLUG_UPPER}:?flag env not set by ctf-user chart}" >> /etc/shadow
+# plant-target: /etc/shadow
+# plant-seed-source: /opt/ctf/plant-seed/etc/shadow   # 対象に元データが要る場合のみ。無ければ省略
+echo "# ${CTF_FLAG_${NN}_${SLUG_UPPER}:?flag env not set by ctf-user chart}" >> "${PLANT_SEED_ROOT}/etc/shadow"
 ```
+
+- `# plant-target:` (必須): chart が subPath mount する実パス。bind mount
+  可能なパスであること（プロセス状態や実行時生成物は不可）。
+- `# plant-seed-source:` (対象に元データが要る場合のみ): `/opt/ctf/plant-seed/`
+  配下の build-time snapshot パス（`images/challenge/Dockerfile` が焼く）。
+  **実センシティブパスを直接指してはならない** — `gen-values.sh --check` が
+  fail する (Verification 2-3)。対象を自分で新規作成するだけなら省略する。
+- 本文はすべて `"${PLANT_SEED_ROOT}"` 配下に書く。`grep`/`egrep`/`fgrep`/
+  `find`/`ln` を呼ばない、seed 上のファイルを exec しない（Verification 2-7、
+  「deploy 経路は Falco イベントを 1 件も出さない」の機械強制）。
 
 `values.yaml` / `values-all.yaml` は **plant.sh から生成**する。手書きしない:
 ```bash

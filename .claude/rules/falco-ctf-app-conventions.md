@@ -207,8 +207,20 @@ challenge コンテナは UID 表のとおり **root (0) が意図的** (CTF rea
   fail-closed)。空なら placeholder のまま (local/test)。
 - 仕込み側: `challenges/<NN>/plant.sh` が唯一の正典。フラグ実値は書かず
   `${CTF_FLAG_<ID>}` env を参照 (`<ID>` = challengeId 大文字・`-`→`_`)。
-- `values.yaml` / `values-all.yaml` は `make gen-values` で plant.sh から生成。
-  **手書き禁止**。CI `flag-guard` が同期を検証。
+  **ADR-0001 (Option B, Accepted)**: `plant.sh` は `challenge` コンテナでは
+  実行されない。`plant` initContainer (image は challenge と同一、I5 に触れない)
+  が `ctf-flags` Secret から `CTF_FLAG_<ID>` を受け取り、seed emptyDir
+  (`$PLANT_SEED_ROOT`) に書く。`challenge` は宣言済み `# plant-target:` に
+  対応する subPath mount だけを見る (seed root は mount しない — I12)。
+  `challenge` の env には `CTF_FLAG_*` は一切出現しない。
+- `values.yaml` / `values-all.yaml` は `make gen-values`
+  (`challenges/gen-values.sh`) で plant.sh から生成。**手書き禁止**。
+  生成物は `plant.seedScript` (initContainer が実行する `sh -c` script。
+  同一 plant-target を複数の plant.sh が共有する場合は 1 回だけ
+  build-time snapshot (`/opt/ctf/plant-seed/`, ADR-0001 S-a) から復元して
+  dedupe する) と `plant.mounts` (宣言済み plant-target の重複無しリスト)。
+  CI `flag-guard` (`gen-values.sh --check`) が同期 + ADR-0001 Verification
+  2-1〜2-7 (禁じ手集合の静的検査含む) を検証する。
 - 採点フラグ (FLAGS_FILE) と仕込みフラグ (CTF_FLAG_*) は platform の
   同一 `flags.sops.yaml` から render され、必ず一致する。
 
@@ -244,7 +256,7 @@ challenge コンテナは UID 表のとおり **root (0) が意図的** (CTF rea
 | Challenges path | `deploy-user.sh --challenges-dir` (ctf-user chart 同梱、当 repo `challenges/` を default 参照) |
 | Webhook payload | `POST /falco/events` は falcosidekick 標準形。フィールドキー変更は両 repo 同時 PR |
 | Cookie domain | `.<ctf-domain>` は platform が決定。app 側は前提とする |
-| Flags | platform `events/<date>/flags.sops.yaml` が正典。scoreboard へ `FLAGS_FILE`、challenge コンテナへ `CTF_FLAG_<ID>` env として注入。app は `FALCO{dev-<slug>}` placeholder のみ保持。dev default 値は両 repo で一致させる |
+| Flags (**ADR-0001 Option B で更新**) | platform `events/<date>/flags.sops.yaml` が正典。scoreboard へは変わらず `FLAGS_FILE`。仕込み側は **`ctf-flags` Secret (`CTF_FLAG_<ID>` キー) → `plant` initContainer にのみ `envFrom`/`secretKeyRef` で到達** — `challenge` コンテナの env には CTF_FLAG_* は一切出現しない (I12)。`deploy-user.sh --flags-file` の `--set-string challenge.flags.<id>=...` という *引数* 面は不変 (C6)、到達経路だけが変わった。app は `FALCO{dev-<slug>}` placeholder のみ保持。dev default 値は両 repo で一致させる |
 | `ALLOWED_ORIGINS` (P23-2, **platform 側 P19-2a で landing 済**) | scoreboard の origin-guard middleware (`internal/scoreboard/originguard`) が読む CSRF 対策アローリスト env。chart 側は `charts/scoreboard/values.yaml` の `env.allowedOrigins` (default `""` = fail-closed = 全ガード対象ルートが拒否) と `templates/deployment.yaml` で受け皿を用意済み。**platform helmfile (`releases/scoreboard/values*.gotmpl` 等) が P19-2a (platform#54) でこの値の供給を landing 済み**。P19-2b の単一 origin 化後は値がさらに単一化: `https://app.<dnsSuffix>` の一値 (旧・host分離時代の `https://journey.<dnsSuffix>` 等の複数値は不要になった)。`userN.<dnsSuffix>` の ttyd origin は含めない (CSRF 踏み台化を防ぐため意図的に対象外)。値の実供給・検証は platform-lead 側 |
 
 ## scoreboard ingest フィルタ (defense-in-depth)

@@ -127,7 +127,9 @@ CHALLENGES_DIR="$(cd "${CHALLENGES_DIR}" && pwd)"
 
 # Real per-event flags (from events/<ev>/flags.dec.yaml, shape `{flags: {id: FALCO{...}}}`).
 # Each pair becomes --set-string challenge.flags.<id>=<flag>, overriding the
-# chart's FALCO{dev-...} defaults. The chart injects only the relevant CTF_FLAG_<ID>.
+# chart's FALCO{dev-...} defaults. ADR-0001 Option B: these values render into
+# the `ctf-flags` Secret and reach only the `plant` initContainer
+# (envFrom/secretKeyRef) — the `challenge` container never sees them (I12).
 FLAG_ARGS=()
 if [[ -n "${FLAGS_FILE}" ]]; then
   [[ -f "${FLAGS_FILE}" ]] || { echo "flags file not found: ${FLAGS_FILE}" >&2; exit 1; }
@@ -155,10 +157,12 @@ green()  { printf '\033[32m%s\033[0m\n' "$*"; }
 yellow() { printf '\033[33m%s\033[0m\n' "$*"; }
 info()   { printf '\033[36m%s\033[0m\n' "$*"; }
 
-# All-missions mode: challenge-id == "all". Apply the combined postStart from
-# challenges/values-all.yaml. Fixtures/briefs are image-baked at
-# /opt/ctf/missions/ (challenge Dockerfile COPY challenges/) for every mode —
-# no per-challenge file injection.
+# All-missions mode: challenge-id == "all". Apply the combined plant
+# initContainer seed script + mount list from challenges/values-all.yaml
+# (ADR-0001 Option B; ran through `plant`, never injected as challenge env —
+# see charts/ctf-user/templates/pod.yaml + ctf-flags-secret.yaml). Fixtures/
+# briefs are image-baked at /opt/ctf/missions/ (challenge Dockerfile COPY
+# challenges/) for every mode — no per-challenge file injection.
 ALL_MODE=0
 if [[ "${CHALLENGE_ID}" == "all" ]]; then
   ALL_MODE=1
@@ -172,8 +176,6 @@ if [[ "${ALL_MODE}" -eq 1 ]]; then
   fi
   info "using challenges dir: ${CHALLENGES_DIR} (all-missions mode)"
   VALUES_ARGS=(-f "${ALL_VALUES}")
-  # all-missions: inject every mission's CTF_FLAG_<ID> into the one workspace.
-  FLAG_ARGS+=(--set "challenge.allMissions=true")
 else
   CHALLENGE_DIR="${CHALLENGES_DIR}/${CHALLENGE_ID}"
   CHALLENGE_VALUES="${CHALLENGE_DIR}/values.yaml"
