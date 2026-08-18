@@ -13,8 +13,11 @@ Mission 04 で雑に `find` を投げて即バレた。**cmdline に id_rsa を�
 # ゴール
 
 `/root/.ssh/id_rsa` の中身に**この Mission 用の flag**が埋め込まれて
-いる。flag を抜き取り、scoreboard に提出。**ただし**直前 10 秒間に
-「Search Private Keys or Passwords」を発火させてはならない。
+いる。flag を抜き取り、scoreboard に提出。**ただし**「Search Private
+Keys or Passwords」を一度でも発火させると検知されたと判定され、
+**やり直すまで提出できない**（時間が経っても自動的には解除されない）。
+発火してしまったら、Journey 画面の「このミッションをやり直す」ボタン
+でやり直してから再挑戦すること。
 
 # 背景
 

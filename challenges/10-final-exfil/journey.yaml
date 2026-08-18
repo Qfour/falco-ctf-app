@@ -8,7 +8,8 @@ briefing: >-
   集大成。これまで学んだ「やってはいけないこと」を全て避けながら、master key を
   読み・箱の外の collector へ静かに持ち出し (exfil)・提出する。3 つすべてを満たして
   はじめて CLEARED。単に読んで提出するだけでは通らない (requireExfil)。禁止ルールは
-  7 つ — 直前 30 秒に 1 つでも発火していると提出は弾かれる。
+  7 つ — この attempt で 1 つでも発火すると、やり直すまで提出できない
+  (時間が経っても自動的には解除されない)。
 steps:
   - label: 発火させずに master key を読む
     detail: |
@@ -19,12 +20,16 @@ steps:
       reverse shell (C2) や自前バイナリの drop+実行は禁止ルールに触れる。
       箱に元からある道具だけで collector (HTTP 受信のみ) へ静かに送る方法を考えよう。
       送信先は POST /api/challenges/10-final-exfil/exfil、payload は {"user","flag"}。
-  - label: 30 秒静かに待って提出
-    detail: 禁止ルールが 1 つも発火していない状態で提出フォームから flag を送る。
+  - label: 静かに提出する
+    detail: |
+      禁止ルールを 1 つも発火させていない状態で提出フォームから flag を送る。
+      一度でも発火させると検知されたと判定され、やり直すまで提出できない
+      (時間が経っても自動的には解除されない)。やり直すと exfil の記録も
+      消えるので、その場合はもう一度 (2) の持ち出しからやり直すこと。
 hints:
   - 3 条件がある — 発火させず読む / collector へ exfil 済み / 提出。順番に片付けよう。
   - 送信手段が鍵。reverse shell は collector (HTTP 受信のみ) に届かず、自前ツールの投下は Drop-and-execute を踏む。箱にある道具だけで完結させる。
-  - "想定解の骨子: /proc/self/root 経由で読み、既存の curl で /exfil に POST し、30 秒待ってから submit。禁止ルール 7 つを 1 つも踏まないこと。"
+  - "想定解の骨子: /proc/self/root 経由で読み、既存の curl で /exfil に POST し、そのまま submit。禁止ルール 7 つを 1 つも踏まないこと(踏んだらやり直すまで提出できない)。"
 bridge: >-
   master key は、Falco に一度も気づかれることなく箱の外へ抜けた。CTF Company の
   キルチェーンは踏破 — だが本当の学びは攻撃側ではない。あなたが避けた検知の一つ一つが、
