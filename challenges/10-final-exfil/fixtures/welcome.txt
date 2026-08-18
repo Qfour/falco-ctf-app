@@ -26,8 +26,12 @@ CTF Company の **master key** にようやく手が届いた。だが「読む�
   (1) master key を **発火させずに読む**
       /etc/shadow 末尾の `# CTF_MASTER_KEY:` 行 (Read-sensitive = 禁止)
   (2) 読んだ flag を **drop server (collector) へ HTTP で持ち出す**
-  (3) `submit` で完了 — 直前 30 秒に 7 つの禁止ルールが 1 つも発火して
-      おらず、かつ (2) の exfil が記録済みであること
+  (3) `submit` で完了 — このミッションに取り組んでいる間、7 つの禁止
+      ルールを 1 つも発火させておらず、かつ (2) の exfil が記録済みで
+      あること。**一度でも発火させると、待っても解除されない** —
+      Journey 画面の「このミッションをやり直す」ボタンでやり直す必要
+      がある。**やり直すと exfil の記録も消えるので、(2) をもう一度
+      行う必要がある。**
 
 # 持ち出しの作法 (ここが本番)
 
@@ -53,7 +57,7 @@ CTF Company の **master key** にようやく手が届いた。だが「読む�
 
 レスポンス:
   {"correct":true,"evaded":true,"solved":true,...}      ← Operation 完遂
-  {"correct":true,"evaded":false,"reason":"...30s..."}   ← window 内で発火
+  {"correct":true,"evaded":false,"reason":"..."}         ← この attempt で発火済み(待っても解除されない。やり直しボタンでやり直す)
   {"correct":true,"exfiltrated":false,"reason":"..."}    ← exfil 未完了(先に collector へ)
   {"correct":false,"reason":"flag mismatch"}             ← flag 違い
 

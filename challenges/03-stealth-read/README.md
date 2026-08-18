@@ -9,7 +9,8 @@
 `Read sensitive file untrusted` を**発火させずに** `/etc/shadow` 末尾の
 flag を取得し、scoreboard に提出する。一度でも発火させると、この attempt
 (このミッションが現在の課題になって以降) はずっと dirty のまま
-(`/api/users/{user}/challenges/{cid}/reset-dirty` でやり直すまで解除されない)。
+(Journey 画面の「このミッションをやり直す」ボタンでやり直すまで解除
+されない。時間では解除されない)。
 
 ## Flag
 
