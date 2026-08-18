@@ -1,7 +1,7 @@
 # ADR-0001: フラグの仕込みを initContainer に移し、challenge コンテナにフラグ実値の到達経路を一切設けない
 
-- Status: Proposed
-- Date / Deciders: 2026-08-18 (rev.2 / rev.3 同日改訂) / VP (承認) + architect (設計) + security-engineer (独立監査) + CEO (merge)
+- Status: **Accepted** (app#131 merge = CEO 批准, 2026-08-18)
+- Date / Deciders: 2026-08-18 (rev.2〜rev.6 同日改訂) / VP (承認) + architect (設計) + security-engineer (独立監査) + CEO (merge)
 - 関連: CEO 決定「本番経路のフラグ env 注入を次イベント前に閉じる」(2026-08-18)、
   **security-engineer 独立監査 (2026-08-18): 判定 PASS with conditions / findings F1-F6 + 限界指摘**、
   **ADR-0003 (evade attempt スコープ, Accepted)** — deploy 経路と採点の相互作用の正典 (rev.3 で追加)、
