@@ -9,9 +9,16 @@
   - **`04c217a` (実装 commit) 基準** = **Accepted 化で追記・訂正した箇所** —
     A1 の強制手段表 / A2 の F1 要件 / A4 の signature / A5 の metric label と struct 理由 /
     Verification (e) / Advice の R4 再レビュー表と R1・R2 閉止状況表
-- **Accepted 化 (2026-08-18)**: Proposed 段階の A1-A8 のうち、実装で確定した **signature (A4) / metric label (A5) / 強制手段の内訳 (A1)** を本文に反映し、
-  **R4 再レビューで見つけた fail-open (F1) を A2 の要件と Verification (e) に追記**した (詳細は `## Advice` の R4 再レビュー F1-F7)。
+- **Accepted 化 (2026-08-18)**: 次の 3 つを本文に確定させた (詳細は `## Advice`)。
   **以後の変更は本 ADR を書き換えず、supersede する新 ADR で行う。**
+  1. **実装との食い違いの訂正 (C-1〜C-4。実装が正)** — A4 の signature / A5 の「単一 error では区別不能」/
+     A1 の強制手段の書き分け / metric label
+  2. **R4 再レビュー findings (F1-F7)** — **F1 = merge gate** (§A2 + Verification (e))、
+     **F2 / F3 = prod 前必須** (Consequences)、F4 → §A5 要件 6、F5 → Signpost 6、F6 / F7 → §A8-3/4
+  3. **R1 の追加 findings C2** — `current` を進ませないことで **capstone gate が実質 inert** になる経路
+     (§A1 の **W2** / Signpost 5 / Consequences)。**R1 の緩和案は architect 判定で却下**し、
+     **受容 + Issue #121 (mission 10 を scope に含める) で閉じる**方針を記録した
+     (**残存リスクの受容そのものは CEO 未承認**)
 
 ---
 
@@ -204,10 +211,37 @@ clean(u,c) := DirtyRules(u,c) が空
 - `c` が `current` である**間**の発火は taint する (= 騒がしい再試行は捕まる)
 - `c` が solve 済になった後の発火は無関係 (solve は first-write-wins = `store.go:505-516`)
 
-**既知の弱点を明記する (隠さない)**: 参加者が意図的に先行ミッションを未 solve のまま後続 evade を
-騒がしく実施すると、その発火は taint されない。ただし C2 の双子構造では**騒がしい実施が
-先行 trigger を即 solve させる**ため、2 回目以降の発火は必ず taint される。
-「1 発だけで済ませる」経路は C5 の残存リスクと同一の穴であり、**閉じるのは Issue #121 の積極証明のみ**。
+**既知の弱点を明記する (隠さない)。attempt スコープは負の条件だけの gate を健全にはしない** —
+`current` を進ませないことが taint を回避する手段になる。弱点は 2 つあり、**強度が違う**:
+
+**W1 (03 / 05 — 限定的)**: `c` が `current` になる前の発火は exempt なので、
+参加者は「1 発で抜ける」ことができる。ただし C2 の双子構造では**騒がしい実施が先行 trigger を即 solve させ、
+`current` が `c` に進む**ため、**2 回目以降の発火は必ず taint される** (この緩和は 03 / 05 に限る)。
+
+**W2 (10-final-exfil — capstone gate が実質 inert になる。緩和は効かない)**:
+**`current` は「進行順で最初の未 solve」であり、03 / 05 は evade = 手動 submit しか solve 経路が無い**
+(`CurrentMission` = `scoring.go:221-231`)。よって参加者が **03 を submit しないだけで `current` は 03 に固定される**。
+その状態では:
+
+- **10 の禁止 7 本 (`challenges/10-final-exfil/falco-rule.yaml:4-10`) のうち、03 が禁止する 1 本
+  (`Read sensitive file untrusted` = `challenges/03-stealth-read/falco-rule.yaml:4`) 以外は一切 taint されない**
+  (taint 先は `current` = 03 のみ)
+- **trigger 側は attempt スコープ外**なので、04 / 06 / 07 / 08 / 09 は**騒がしく発火させても solve が進む**
+  (`evaluateTrigger` の doc が「Deliberately NOT attempt-scoped」と明記 = `scoring.go:293-297`)
+- **`Sweep` は `current` を参照しない** (`scoring.go:729-752` → `PendingExfilSolves` → `evaluateClean`)。
+  したがって騒がしく取得した flag の receipt が残っていれば **capstone は auto-solve される**
+- しかも `challenges/submit-yaml.sh` は **evade flag の一括提出フロー** (「one line per mission you've cleared」
+  = `submit-yaml.sh:2-16`) であり、**「全部やってから最後にまとめて提出」が自然な進め方**になる。
+  → **W2 は意図的な悪用に限らず、既定経路で成立する**
+
+**W2 は退行ではない (merge を阻害しない)**: `main` の窓ベース gate でも同じことができた —
+`evaluateClean` は `RecentFiresMatching(..., ch.WindowSeconds)` で判定し
+(`origin/main:internal/scoreboard/scoring/scoring.go:282`)、10 の窓は 30 秒
+(`origin/main:challenges/10-final-exfil/falco-rule.yaml:13`) なので **「全部騒がしくやって 31 秒待って exfil」** で
+同じ結果になる。本 ADR は W2 を**新たに作っていないし、閉じてもいない**。
+
+**W1 / W2 を閉じるのは attempt ごとの積極証明のみ (Issue #121)。** C5 の結論の系であり、
+**`#121` の scope に mission 10 を含めなければ capstone gate は inert のまま**である (Consequences 参照)。
 
 ### A2. reset の意味論
 
@@ -355,6 +389,14 @@ falcosidekick customWebhook は再送しないため、**取りこぼした tain
    (「再送されないので 5xx に意味が無い」という理由は成立するが、**書かずに残すのは認めない**)
 5. **残存リスクとして明記**: 永続化失敗直後に pod が再起動すると in-memory taint は失われる。
    緩和は (2) のメトリクスと runbook の確認手順のみ。これを `scoring.go` の package doc に書く
+6. **【F4・LOW】5xx を返す前に、その event で既に確定した観測量を計上する。** 実装は
+   `TaintErr` で即 `return` するため (`internal/scoreboard/ingest/ingest.go:143-147`)、
+   **同一イベントで永続化に成功した trigger solve の `SolvesTotal` (`:160-162`) が計上されない**。
+   さらに `accepted` (`:128`) と `taint_error` (`:145`) の**二重計上**により
+   `FalcoEventsReceived` の label 合計が受信総数と一致しなくなる (label 集合を「排他的な結果」として
+   読む前提が壊れる = `metrics.go:3-6` の cardinality 規律の意図に反する)。
+   → 要件: **metric の bump と `SolvesTotal` の計上を 5xx 応答より前に行い、
+   `accepted` と `taint_error` を排他にする** (どちらを排他の代表にするかは実装者判断)
 
 ### A6. `scoring.go` package doc の是正
 
@@ -365,6 +407,12 @@ C5 (負の条件だけの gate は不健全) が抜けている。要件:
 - **03 / 05 は `requireExfil` を持たないため技法の証跡が無く honor system が残る**ことを明記し、
   Issue #121 を参照する
 - A5 (5) の残存リスクを明記する
+- **A1 の W2 (capstone gate の inert 化) を明記する。** `04c217a` の package doc
+  (`internal/scoreboard/scoring/scoring.go:69-82`) は残存リスクを **03 / 05 の honor system に限って**書いており、
+  **`requireExfil` を持つ 10 についても `current` を進めなければ taint されない**ことに触れていない。
+  → **「`requireExfil` があるから 10 は守られている」と読める状態を作らない**
+  (`Sweep` が `current` を参照しないことを `Sweep` の doc にも書く)。**LOW / merge gate ではない**が、
+  A6 の趣旨 (「穴を閉じた」と読める記述を残さない) の対象である
 
 ### A7. Issue #121 との依存関係
 
@@ -373,6 +421,12 @@ C5 (負の条件だけの gate は不健全) が抜けている。要件:
 (04 の必須発火 = 05 の禁止ルール) 上に、receipt が永続するため
 **A2-2 を満たさない reset は capstone と同じ auto-solve 経路を 05 にも作る**。
 → **#121 の実装は本 ADR の実装 PR が merge された後に着手する** (逆順は禁止)。
+
+**#121 の scope に mission 10 を含めることを本 ADR から要求する** (R1 の追加 findings C2 = A1 の W2)。
+理由: 10 は `requireExfil` を**既に持っている**が、receipt は「flag を届けた」ことの証跡であって
+**「回避技法を使った」ことの証跡ではない**。`current` を 03 に固定したまま騒がしく取得しても
+receipt は同じ形で届くので、**10 の gate は負の条件 (`forbiddenRules`) だけで守られている状態のまま**である。
+→ **03 / 05 だけを積極証明化しても capstone は inert のまま。最高配点のミッションが実質 honor system で残る。**
 
 ### A8. spec / schema doc の追随 (architect 所管)
 
@@ -386,6 +440,15 @@ C5 (負の条件だけの gate は不健全) が抜けている。要件:
    **`:127-129` は「Evade-windowing still keys off Falco's time」と記述しているが、
    実装は `ingest.go:112-119` で server 側 `now()` を使っており事実誤り** (#124 以前から誤り)。
    Migration history (`:147-151`) に本変更の行を追加する
+3. **【F6・LOW — 本 ADR の完了条件には含めない。follow-up issue とする】**
+   `docs/openapi-scoreboard.yaml` は **`/api/users/{user}/journey` 自体を未記載**である
+   (`04c217a` 時点の path は `:27,52,74,120,160,216,269,296,335,347` の 10 本のみ)。
+   したがって A3 が新設した参加者向けフィールド (`dirty` / `dirtyRules`) の**契約はコードにしか存在しない**。
+   これは本 ADR が作ったギャップではなく既存ギャップなので A8 の必須要件にはしないが、
+   **「採点権威の参加者向け読み取り契約が spec 外」という A8-1 と同じ問題**であり、issue 化して閉じる
+4. **【F7・NIT — 運用メモ】** `docs/db-schema.md:317-318` は **未 merge の PR #124 / 本 ADR を
+   v2 / v2.1 として日付付きで確定形で記載**している。**merge 時に日付と状態を実際の merge 日に確定させる**
+   (未 merge の変更を「済」と読める台帳は MERGE-DRAIN の趣旨に反する)
 
 ---
 
@@ -395,8 +458,14 @@ C5 (負の条件だけの gate は不健全) が抜けている。要件:
 
 - **完全な attempt 分離を諦めた** (Option 1)。`current` は進行順の関数なので、
   「同一課題の複数 attempt を区別する」ことはできない。reset は「現在の attempt をやり直す」意味しか持たない
-- **A1 の既知の弱点** (先行ミッションを未 solve のまま後続を騒がしく実施する 1 発経路) を残した。
-  これは C5 の honor system と同根であり、閉じるのは #121 のみ
+- **A1 の既知の弱点 W1 / W2 を残した。** W1 (03 / 05 の「1 発で抜ける」経路) は双子構造で部分的に緩和されるが、
+  **W2 (`current` を 03 に固定して 10 の禁止 7 本を騒がしく踏んでも capstone が auto-solve される) は緩和が効かない**
+  — `Sweep` が `current` を見ないため。**`main` の 30 秒窓でも同じことができたので退行ではないが、
+  「capstone gate が実効的に存在する」と読める記述を本 ADR / コード / 参加者向け文書に書いてはならない**
+- **閉じるのは attempt ごとの積極証明 (Issue #121) のみである。**
+  → **要求: #121 の scope に mission 10 を含める。** 03 / 05 だけを積極証明化しても
+  **capstone gate は inert のまま**であり、最高配点のミッションが実質 honor system で残る
+  (A7 の依存関係はそのまま: #121 は本 ADR の実装 merge 後に着手する)
 - **C5 の残存リスクを受容した**: 03 / 05 は「回避技法を使ったこと」の証跡を持たない。
   02 の必須発火が 03 の flag を露出する構造 (`03-stealth-read/README.md:13-16`) はカタログ設計の問題であり、
   採点機構では閉じられない
@@ -415,16 +484,35 @@ ORGANIZATION.md:347 の歯止め (「`Verification` が無い ADR は Hard Invar
 
 ### runbook / 運用への影響
 
-- **reset エンドポイントが参加者から到達可能でなければならない** (R1 の HIGH)。現状は
-  origin-guard により workspace からの `curl` が 403 になり、portal に導線が無い
-  → **portal に dirty 表示 + やり直しボタン**が必要 (application-engineer)。
+- **【F3・HIGH・prod 前必須 / application-engineer】reset エンドポイントが参加者から到達可能でなければならない**
+  (R1 の HIGH)。現状は origin-guard により workspace からの `curl` が 403 になり、portal に導線が無い。
+  さらに **`04c217a` は「reset-dirty でやり直すまで自動クリアされません」という表示を新たに追加した**
+  (`internal/scoreboard/view/templates/portal.html:1529`) ため、
+  **手段の無い指示を参加者に見せている状態**になっている (実装前より悪い)
+  → **portal に dirty 表示 + やり直しボタン**が必要。
+  **ボタンの文言は A2-2 を反映しなければならない** — `requireExfil` 課題では
+  **reset すると exfil receipt も消える = flag の再配送が必要**である旨を明示する
+  (黙って receipt を消すと「reset したら capstone が solve されなくなった」という問い合わせになる)。
   ⚠️ **collector allowlist への追加で解決してはならない** — collector 経路はヘッダ無し =
   claimed identity を許すため、**任意の workspace が他人の taint を消し他人に capstone solve を付与できる
   帰属改竄経路**になる (R1)
 - **リハ前に E2E (Verification (d)) を実行しない限り本番投入しない。** #124 の欠陥は
   ユニットテスト全 green で通過している = 単体テストではこのクラスの回帰を検出できない
-- 参加者向け記述の更新が必要: `challenges/{03,10}/README.md`・`10-final-exfil/journey.yaml`・
-  `PARTICIPANT-HANDBOOK.md`・`AGENTS.md` (content-engineer)
+- **【F2・MEDIUM・prod 前必須 / content-engineer】参加者向け記述が撤去済みモデル (`windowSeconds`) を
+  教え続けている。** `04c217a` 時点の実測インベントリ:
+
+  | path:line | 内容 | 危険度 |
+  |---|---|---|
+  | `challenges/PARTICIPANT-HANDBOOK.md:171-173` | 「**10 秒待つ か、Pod を再起動 (運営に依頼) でリセット**」 | **最悪** — taint は永続化済みなので**再起動では消えない**。**運営工数を誤誘導する** (当日「再起動してください」の列ができる) |
+  | `challenges/PARTICIPANT-HANDBOOK.md:84` | 「提出直前 10 秒に該当ルールが発火していないこと」 | 採点条件の虚偽 |
+  | `challenges/PARTICIPANT-HANDBOOK.md:119` | 「`evaded:false` が出たら 10 秒待ってから もう一度 submit」 | 存在しない回復手段の案内 |
+  | `challenges/10-final-exfil/journey.yaml:11,22,27` | 「直前 30 秒に 1 つでも発火していると弾かれる」「**30 秒静かに待って提出**」(step label) / 想定解の骨子 | **portal に描画される最高露出面** |
+  | `challenges/10-final-exfil/README.md:50,63-64` | 「30 秒静かに待ってから提出」「その後 30 秒は弾かれる」 | 採点条件の虚偽 |
+  | `challenges/{03-stealth-read,05-silent-search,10-final-exfil}/fixtures/welcome.txt` (`:17,41` / `:16` / `:29`) | 同種の「直前 10/30 秒」記述 | **workspace 内で最初に読まれる面** (architect が F2 のインベントリに追加) |
+
+  → **これらは A3 の撤去対象表 (項目 7) の未完了分である。** 参加者に見える面の虚偽は
+  「採点条件が分からない」という当日の最大の摩擦源になる
+- 参加者向け記述の更新が必要 (上記に加えて): `challenges/03-stealth-read/README.md`・`AGENTS.md` (content-engineer)
 
 ---
 
@@ -444,6 +532,18 @@ ORGANIZATION.md:347 の歯止め (「`Verification` が無い ADR は Hard Invar
 4. **リハ / 本番で「03 / 05 / 10 を submit できない」申告、または 1 参加者あたり reset 呼び出しが 3 回を超える** —
    attempt スコープの定義が参加者の実際の作業単位と合っていない証拠。
    → attempt を明示操作 (「この課題を開始する」ボタン) に変更 = Option 1
+5. **capstone gate の inert 化が観測される (A1 の W2)** — 具体的な観測形:
+   **10 を auto-solve した参加者のうち、solve 時刻より前に 10 の禁止ルールを発火させていた者の割合**
+   (`store.RecentFiresMatching` の表示用履歴 / Falco イベントログで事後に測れる)、
+   または **03 / 05 が未 solve のまま 04-09 が solve 済**という状態が参加者の多数で観測される
+   (= `current` が 03 に固定されたまま進行している = W2 の前提が成立している)。
+   → **負の条件だけの gate では capstone を守れないことの実証**。#121 の積極証明を 10 まで広げる
+   (mission 10 に `expectedRules` 相当の「回避技法を使った証跡」を導入する) 以外に手が無くなる
+6. **`scoreboard_ingest_falco_events_received_total` が持続的に高い (A5 の F5 = OnRuleFire の直列化欠如)** —
+   `OnRuleFire` は user 単位の直列化を持たないので、trigger solve 確定の直後に到着した発火が
+   **古い `current` で評価される窓 (ms)** がある。判定は**寛容側 (taint しない側) に倒れる**ので A1 と矛盾しないが、
+   イベント率が上がるとこの窓に入る確率が上がる。→ **per-user mutex を `OnRuleFire` に入れる**
+   (ロック粒度が上がるので、必要になるまで入れない)
 
 ---
 
@@ -614,23 +714,76 @@ R1 判定 = **BLOCK**。architect (R4) と**独立に同じ BLOCKING に到達**
 
 ### architect (R4) — 再レビュー 2026-08-18 (対象 `04c217a` = attempt スコープ実装)
 
-本 ADR を `Accepted` 化するにあたり、実装 commit を実ファイルで再検証した結果 (F1-F7)。
-**F1 のみが merge blocker**で、残りは ADR 本文の正確化 (F2-F4) と充足確認 (F5-F7) である。
-本文への反映先を各項に記す。
+実装 commit に対する findings。**F1 が merge blocker、F2 / F3 が prod 前必須**、F4-F7 は LOW / NIT。
+`file:line` は architect が `04c217a` で再検証済。
 
-| # | findings | 出典 (`04c217a`) | 反映先 |
+| # | 重大度 | findings | 出典 | 反映先 |
+|---|---|---|---|---|
+| **F1** | **MEDIUM・merge 前修正要求** | `ResetDirty` が**非トランザクション**かつ **`evade_dirty` 先削除**。`DELETE FROM evade_dirty` 成功 + `delete(s.dirtyRules)` の後に `DELETE FROM exfil` が失敗すると **「taint 無し + 古い receipt」**が残り、**A2-2 が閉じたはずの「発火 → reset → Sweeper が 5 秒で auto-solve」がエラー経路から再生する fail-open** | `internal/store/store.go:779-798` (`:783-789` evade_dirty / `:791-797` exfil)、auto-solve 経路 = `scoring.go:729-732,782` + `internal/store/store.go:606` | **§A2 の追加要件** (`exfil` 先 / 理想は 1 Tx) + **Verification (e)** |
+| **F2** | **MEDIUM・prod 前必須 (content-engineer)** | 参加者向け記述が撤去済みモデルを教え続けている。特に **`PARTICIPANT-HANDBOOK.md:171-173` の「10 秒待つ か、Pod を再起動 (運営に依頼) でリセット」は、taint が永続化済みで再起動では消えないため運営工数を誤誘導する** | `challenges/PARTICIPANT-HANDBOOK.md:84,119,171-173`、`challenges/10-final-exfil/journey.yaml:11,22,27` (portal 描画 = 最高露出)、`challenges/10-final-exfil/README.md:50,63-64`、+ architect 追加分 `challenges/{03-stealth-read,05-silent-search,10-final-exfil}/fixtures/welcome.txt:17,41 / :16 / :29` | **Consequences の runbook 節にインベントリ表として明記** (A3 項目 7 の未完了分) |
+| **F3** | **HIGH・prod 前必須 (application-engineer)** | 参加者から reset が到達不能なまま (portal に導線なし / workspace `curl` は origin-guard で 403)。**`portal.html:1529` が「reset-dirty でやり直すまで自動クリアされません」と手段のない指示を新たに表示**している。A2-2 によりボタンには**「再 exfil が必要」の明示**が要る。⚠️ **collector allowlist 追加で解決してはならない** (R1: 帰属改竄経路) | `internal/scoreboard/view/templates/portal.html:1523-1531` | **Consequences の runbook 節** (文言要件を含む) |
+| **F4** | LOW | `TaintErr` で即 500 `return` するため、**同一イベントで永続化に成功した trigger solve の `SolvesTotal` が計上されない**。また `accepted` と `taint_error` の**二重計上**で `FalcoEventsReceived` の label 合計が受信総数と一致しない | `internal/scoreboard/ingest/ingest.go:143-147` (return) / `:160-162` (`SolvesTotal`) / `:128` (`accepted`) / `:145` (`taint_error`) | **§A5 要件 6** (metric bump と solve 計上を 5xx の前へ、label を排他に) |
+| **F5** | LOW | `OnRuleFire` に **user 単位の直列化が無い**。trigger solve 確定直後に到着した発火が**古い `current` で評価される窓 (ms)** がある。**寛容側 (taint しない側) に倒れる**ので A1 と矛盾しないが、イベント率が上がると窓に入る確率が上がる | `scoring.go:421-425` (mutex 無し)、`currentMission` = `:237-245` | **Signpost 6** (per-user mutex は必要になるまで入れない) |
+| **F6** | LOW | `docs/openapi-scoreboard.yaml` は **`/api/users/{user}/journey` 自体を未記載**なので、A3 が新設した `dirty` / `dirtyRules` の**参加者向け契約がコードにしか存在しない**。A8 が要求していない**既存**ギャップ | `04c217a` の path 一覧 = `:27,52,74,120,160,216,269,296,335,347` (journey が無い) | **§A8-3 に follow-up issue として記録** (本 ADR の完了条件には含めない) |
+| **F7** | NIT | `docs/db-schema.md` が **未 merge の PR #124 / 本 ADR を v2 / v2.1 として日付付き確定形で記載** | `docs/db-schema.md:317-318` | **§A8-4 に運用メモ** (merge 時に日付と状態を確定) |
+
+### Accepted 化に伴う ADR 側の訂正 (C-1〜C-4。実装は正、ADR が誤っていた分)
+
+R4 再レビューで判明した **「ADR 本文 vs 実装」の食い違い**。いずれも**実装が正しい**ので ADR を訂正した
+(findings F1-F7 とは別枠。実装への要求ではない):
+
+| # | 訂正内容 | 実装 (`04c217a`) | 訂正先 |
 |---|---|---|---|
-| **F1** | **`ResetDirty` の削除順が fail-open** — `evade_dirty` を先に消して in-memory taint も落とし、その後 `exfil` の `DELETE` が失敗すると `return err` で receipt が残る。**「taint 無し + 古い receipt」= A2-2 が閉じたはずの「発火 → reset → Sweeper が 5 秒で auto-solve」がエラー経路から再生する** (VP が実コードで確認し merge blocker と認定) | `internal/store/store.go:779-798` (`:783-789` が evade_dirty、`:791-797` が exfil)、auto-solve 経路 = `scoring.go:729-732` (`Sweep` が `PendingExfilSolves` を回す) + `scoring.go:782` (`DefaultSweepCadence = 5 * time.Second`) + `internal/store/store.go:606` (`PendingExfilSolves`) | **A2 の追加要件** (`exfil` 先 / 理想は 1 トランザクション) + **Verification (e)** |
-| **F2** | **A4 の signature が実装と不一致** — ADR は `([]TriggerResult, error)` と書いていたが実装は `RuleFireOutcome{Results, TaintErr, TriggerErr}`。**実装が正しい** — 理由は **A5 の criticality 非対称**: 単一 `error` (`errors.Join`) では handler が文字列照合か区別放棄しか選べない | `internal/scoreboard/scoring/scoring.go:394-398`、handler 分岐 `internal/scoreboard/ingest/ingest.go:143-158` | **A4 を実装に合わせて改訂** + **A5 に「単一 error では区別不能」を明記** |
-| **F3** | **A4 の「型システムが保証する事実」は過大な主張** — 「全ての rule fire が taint 評価を受ける」は export 規則でコンパイル時に強制されるが、**taint → trigger の順序そのものは `OnRuleFire` 本体の 2 行でパッケージ内編集で反転可能**。反転を捕まえるのは**テスト**である。結論 (機械強制されている) は変えず、強制の実体を層ごとに書き分けるべき | 順序 = `scoring.go:422-423`、unexported = `scoring.go:306,361`、反転検出 = `scoring_test.go:401` 第 1 段 / `internal/scoreboard/server_test.go:543` | **A1 に強制手段の表を追加**、A4 の文言を修正 |
-| **F4** | **metric label 名が ADR と不一致** — ADR は `FalcoEventsReceived{result="taint_error"}` と書いていたが、既存 CounterVec の label は `outcome`。**実装が正しい** (ADR が誤り) | `internal/scoreboard/metrics/metrics.go:16-17,26-34`、`ingest.go:145` | **A5 要件 2 と Signpost 3 を `outcome=` に訂正** |
-| **F5** | **A1 の「journey 投影と単一ソース」要件は充足しているが、機械強制は無い** — `server.go` が同一の `h.order` を Grader と api.Handler の両方に渡す形で満たしている。ただし両者は**それぞれ自分の copy を保持**するので、drift を止めているのは doc コメントだけである (実装者自身がその旨を明記している) | `internal/scoreboard/server.go:166` (`WithOrder(h.order)`) と `:180` (`Order: h.order`)、注意書き = `scoring.go:191-206` | **追加要件にはしない** (昇格条件に含めない)。order の配線を将来 1 本化する場合は本 ADR を supersede する |
-| **F6** | **A5 の要件 1-3 と (5) は充足** — `MarkDirty` は in-memory を `db.Exec` の**前**に立てて fail-closed、ingest は taint 失敗を 5xx + `taint_error` metric に昇格、package doc に残存リスク (永続化失敗直後の再起動で in-memory taint が失われる) を記載済 | `internal/store/store.go:721-728`、`ingest.go:143-146`、`scoring.go:69-82`、`internal/store/store_test.go:456-476` | 追加要件なし (A5 は達成と認定) |
-| **F7** | **A8 (spec / schema doc) は充足** — openapi に reset-dirty path が追記され、`docs/db-schema.md` は `evade_dirty` / `exfil` を含む現行スキーマに更新された (A2-2 の「独立に reset できない」注記まで入っている)。**一方 (d) E2E は未実施**、および **R1 HIGH (portal の reset 導線) は未閉止** — portal は dirty 表示のみでボタンが無い | `docs/openapi-scoreboard.yaml:216`、`docs/db-schema.md:218-234,301-309`、portal = `internal/scoreboard/view/templates/portal.html:1523-1531` | **(d) を prod gate として維持**、portal 導線は Consequences の runbook 項として残置 |
+| **C-1** | A4 の signature を `([]TriggerResult, error)` → **`RuleFireOutcome{Results, TaintErr, TriggerErr}`** | `scoring.go:394-398`、handler 分岐 `ingest.go:143-158` | **§A4** (struct にする理由も明記) |
+| **C-2** | 「なぜ struct なのか」= **A5 が taint 失敗と trigger 失敗に異なる反応を要求する**ため。`errors.Join` した単一 `error` では handler は文字列照合か区別放棄しか選べない | 同上 | **§A5** (要件側にも明記して将来失われないようにした) |
+| **C-3** | A4 の「**型システムが保証する事実**」は過大。**export 規則 = コンパイル時**に強制されるのは「両方を必ず通る」であり、**順序そのものは `OnRuleFire` 本体の 2 行でパッケージ内編集で反転可能** = 強制はテスト | 順序 `scoring.go:422-423`、反転検出 `scoring_test.go:401` 第 1 段 / `internal/scoreboard/server_test.go:543` | **§A1 に強制手段の表を追加**、§A4 の文言修正 |
+| **C-4** | metric label は `result` ではなく **`outcome`** | `metrics.go:16-17,26-34`、`ingest.go:145` | **§A5 要件 2 / Signpost 3** |
 
-**Accepted 化の判定**: 上記のうち **F1 の修正が実装 PR の完了条件**であり、
-F2-F4 は本 ADR 側の訂正で解消済。**I11 の `.claude/rules/` 追記は「yes, if — 実装 PR #124 と
-本 ADR ブランチの両方が main に merge されること」**(Verification 末尾を見よ)。
+**Accepted 化の判定**: **F1 の修正が実装 PR #124 の完了条件** (merge gate)、**F2 / F3 が prod 投入前の必須条件**。
+C-1〜C-4 は本 ADR 側の訂正で解消済。
+**I11 の `.claude/rules/` 追記は「yes, if — 実装 PR #124 と本 ADR ブランチの両方が main に merge されること」**
+(Verification 末尾を見よ)。
+
+### security-engineer (R1) — 追加 findings C2 (2026-08-18。VP が実コードで確認)
+
+**`current` を進ませないことが taint 回避手段になる**。特に **10-final-exfil では capstone gate が実質 inert** になる
+(→ **§A1 の W2**、**Signpost 5**、**Consequences**)。VP の実コード確認:
+`CurrentMission` = 最初の未 solve (`scoring.go:221-231`) / `evaluateTrigger` は
+「Deliberately NOT attempt-scoped」(`scoring.go:293-297`) / `Sweep` は `PendingExfilSolves` → `evaluateClean` で
+`current` 非参照 (`scoring.go:729-752`) / 10 の禁止 7 本 ∩ 03 の禁止 1 本 = 1
+(`challenges/10-final-exfil/falco-rule.yaml:4-10` ∩ `challenges/03-stealth-read/falco-rule.yaml:4`)。
+architect 追加検証: `challenges/submit-yaml.sh:2-16` の一括提出フローにより **W2 は既定経路で成立する**。
+
+#### R1 の非拘束緩和案に対する architect 判定 — **却下 (2026-08-18)**
+
+R1 案: **「receipt が存在する `requireExfil` 課題は attempt 開始済とみなし、`current` でなくても taint 対象に含める」**
+(taint 錨 = `current(u) ∪ { c : c.RequireExfil ∧ receipt(u,c) ∧ ¬solved(u,c) }`)。
+
+**却下する。規模を理由にしない、3 つの構造的な理由:**
+
+1. **W2 の記述された経路を閉じない (効果が非対称に誤っている)。** 錨は **receipt が存在してから**効き始めるので、
+   **「先に全部騒がしくやってから最後に exfil する」順序では taint がゼロのまま**である。
+   閉じるのは「exfil を先に届けてから騒がしくする」順序だけで、これは**悪用として自然な順序ではない**
+2. **正規参加者にだけコストが出る。** flag を早めに届けて 07-09 を続ける進め方 (推奨手順に沿う)は
+   **必須発火で再 taint** され、**reset + 再 exfil (A2-2 により receipt も消える) を強いられる**。
+   = **偽陽性は honest path に、偽陰性は exploit path に**という最悪の非対称
+3. **A1 の錨を二重化し、境界を曖昧にする。** 本 ADR の全体は
+   **「attempt スコープ = `current` 1 本」**という単一定義に乗っている (A1 / F5 / Signpost 1 がこれに依存)。
+   2 本目の錨 (receipt) を足すと、**「receipt はどの attempt の証跡か」という Option 1 (epoch) の問いを
+   スキーマ無しで答えることになり**、Signpost 2 が予告した破綻を先取りして引き受ける
+
+**代替案として検討し、これも却下**: **`Sweep` に `current` 参照を入れる**
+(auto-solve を `c == current(u)` のときだけ許す)。理由: **これも W2 を閉じない** —
+参加者が 03 / 05 を submit して `current` を 10 まで進めれば、**それ以前の騒がしい発火は依然 exempt** なので
+receipt はそのまま通る。得られるのは「10 まで歩かせる」だけで、代償として
+**`current` の消費者が `Sweep` にも増える** (単一ソース原則の希薄化)。
+
+**採る道 = 受容 + Issue #121 の積極証明で閉じる (VP 推奨と同じ)。** 本 ADR は W2 を
+**受容した残存リスクとして明記**し (A1 の W2 / Consequences / Signpost 5)、
+**#121 の scope に mission 10 を含めることを要求する**。
+これを覆す信号は **Signpost 5**。**残存リスクの受容そのもの (採点公平性の受容) は CEO 判断事項であり、
+本 ADR 時点では未承認** — CEO が受容しない場合の唯一の実行可能な選択肢は
+**#121 (mission 10 の積極証明) をリハ前に前倒しすること**であり、緩和案 1 / 2 ではない。
 
 ### R1 / R2 findings の閉止状況 (2026-08-18 再レビュー時点、`04c217a` 基準)
 
@@ -640,9 +793,10 @@ F2-F4 は本 ADR 側の訂正で解消済。**I11 の `.claude/rules/` 追記は
 |---|---|---|
 | R1 BLOCKING-1 (正規進行で 03/05/10 が恒久 dirty) | **閉止** | attempt スコープ = `scoring.go:361-375`。回帰 = `scoring_test.go:401`、`scoring_test.go:1191` (実カタログ)、`internal/catalog/catalog_test.go:343` (交差 pin)、`server_test.go:543` (HTTP) |
 | R1 BLOCKING-2 (reset 1 回で capstone auto-solve) | **成功経路は閉止 / エラー経路は F1 で未閉止** | `store.go:766-799` が exfil も削除。ただし削除順が fail-open = **F1** |
-| R1 HIGH (reset API が参加者から到達不能) | **未閉止** | portal は dirty 表示のみで reset 導線が無い (`portal.html:1523-1531`)。⚠️ collector allowlist で解決してはならない (帰属改竄経路) |
-| R1 HIGH (criticality 逆転 / fail-open) | **閉止** | **F6** のとおり (`store.go:721-728`、`ingest.go:143-146`) |
+| R1 HIGH (reset API が参加者から到達不能) | **未閉止 = F3 (prod 前必須)** | portal は dirty 表示のみで reset 導線が無い。`portal.html:1529` は手段の無い指示を新たに表示 (実装前より悪化)。⚠️ collector allowlist で解決してはならない (帰属改竄経路) |
+| R1 HIGH (criticality 逆転 / fail-open) | **閉止** (fail-closed 化 + 5xx + `taint_error` metric)。**metric / solve 計上の順序に F4 が残る** | `internal/store/store.go:721-728`、`ingest.go:143-146`、`internal/store/store_test.go:456-476` |
 | R1 #121 (05 は素の `cat` で無検知 solve 可) | **受容 (別 Issue)** | package doc に honor system として明記 (`scoring.go:69-82`)。閉じるのは #121 = A7 (本 ADR merge 後) |
+| R1 C2 (`current` 固定で capstone gate が inert) | **受容 (緩和案は却下)** | A1 の W2 / Signpost 5 / Consequences。`main` の 30 秒窓でも成立したので退行ではない。閉じるのは #121 に mission 10 を含めること |
 | R2-1 (複数 forbiddenRules + requireExfil の fixture 不在) | **充足** | `TestSubmitEvade_SevenForbiddenRules_ResetRequiresFreshExfil` (`scoring_test.go:1261`) = Verification (c) |
 | R2-2 (`TestDirtyFlag_SurvivesStoreRestart` は本物の回帰テスト) | **維持** | `scoring_test.go:543`、store 側は `internal/store/store_test.go:486` |
 | R2-3 (旧テスト名が exploit を期待動作として assert していた) | **反転で維持** | `TestSubmit_CorrectFlag_AfterWaiting_StaysDirty_NotSolved` (`server_test.go:577`) = Verification (b) |
