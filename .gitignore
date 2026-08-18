@@ -36,3 +36,6 @@ scan-logs
 # Event production materials moved to falco-ctf-platform events/<date>/decks/
 # (they embed real flags). Guard against re-creating them in this public repo.
 challenges/decks/
+
+# Claude Code agent worktrees (nested checkouts; never commit)
+.claude/worktrees/

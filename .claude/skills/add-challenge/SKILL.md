@@ -1,7 +1,6 @@
 ---
 name: add-challenge
 description: Step-by-step procedure for adding a new CTF challenge to challenges/<NN>-<slug>/
-type: skill
 ---
 
 # Challenge 追加手順
