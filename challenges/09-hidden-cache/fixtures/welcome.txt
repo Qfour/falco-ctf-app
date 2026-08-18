@@ -39,13 +39,16 @@ Falco rule は **sensitive_files macro に該当するファイル** に対す�
 
 # 試すこと
 
-  ln /etc/shadow /tmp/.cache.bak
+  ln /etc/sudoers /tmp/.cache.bak
 
 確認:
 
   ls -la /tmp/.cache.bak
-  # → -rw-r----- 2 root shadow ... /tmp/.cache.bak
-  #     ↑ リンク数 2 (= /etc/shadow とどちらか) — hardlink 成立
+  # → -r--r----- 2 root root ... /tmp/.cache.bak
+  #     ↑ リンク数 2 (= /etc/sudoers とどちらか) — hardlink 成立
+
+この環境では /etc/shadow は別ファイルシステム上にあるため hardlink が作れない
+(`ln` は `EXDEV` で失敗する)。/etc/sudoers など他の sensitive file には成立する。
 
 # クリア条件
 

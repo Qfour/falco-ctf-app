@@ -33,8 +33,8 @@ collector は **HTTP のみ受信**するので、reverse shell では物理的�
 ## Flag
 
 postStart (`plant.sh`) が `/etc/shadow` 末尾に `# CTF_MASTER_KEY: FALCO{...}`
-を追記。実値はイベント毎に注入 (`CTF_FLAG_10_FINAL_EXFIL`)、ローカルは
-dev default `FALCO{dev-final-exfil}`。
+を追記。実値はイベント毎に注入される。ローカルは dev default
+`FALCO{dev-final-exfil}`。
 
 ## 想定解
 
