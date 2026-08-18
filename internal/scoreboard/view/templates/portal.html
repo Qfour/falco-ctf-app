@@ -1520,16 +1520,22 @@
       { cls: received ? 'done' : 'active',
         dot: received ? '✅' : '⏳',
         text: received ? 'collector が flag を受信しました' : 'collector への flag 配送を待機中…' },
-      { cls: received ? 'active waiting' : '',
-        dot: received ? '⏳' : '·',
-        text: received ? 'クリーンな窓を待機中… (禁止ルールが ' + esc(String(det.windowSeconds || 30)) + '秒 静かになれば自動クリア)' : 'クリーンな窓の確保' },
+      // ADR-0003: there is no time window any more — `dirty` is a persistent
+      // per-attempt taint that only an explicit reset-dirty call clears.
+      { cls: received ? (det.dirty ? 'active waiting' : 'done') : '',
+        dot: received ? (det.dirty ? '⏳' : '✅') : '·',
+        text: received
+          ? (det.dirty
+              ? '禁止ルールが発火済み — reset-dirty でやり直すまで自動クリアされません'
+              : 'クリーンな attempt を確認 — 自動クリア待ち')
+          : 'クリーンな attempt の確保' },
       { cls: '', dot: '🎉', text: '自動クリア' },
     ];
     const items = rows.map(r => `<li class="${r.cls}"><span class="dot">${r.dot}</span><span>${esc(r.text)}</span></li>`).join('');
     return `<div class="sec-title">自動クリア（exfil）</div>
       <div class="autosolve">
         <ul class="steps-flow">${items}</ul>
-        <div class="hint">flag を collector に配送すれば、禁止ルールが静かな窓で自動的にクリアされます。手動提出は不要です。</div>
+        <div class="hint">flag を collector に配送し、この attempt 中に禁止ルールが一度も発火していなければ自動的にクリアされます。手動提出は不要です。</div>
       </div>`;
   }
 

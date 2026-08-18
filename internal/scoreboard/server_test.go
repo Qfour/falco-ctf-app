@@ -31,21 +31,18 @@ func newFixture(t *testing.T, now func() time.Time) *fixture {
 			ID:            "01-read-shadow",
 			Type:          "trigger",
 			ExpectedRules: []string{"Read sensitive file untrusted"},
-			WindowSeconds: 10,
 		},
 		"02-evade": catalog.Challenge{
 			ID:             "02-evade",
 			Type:           "evade",
 			ForbiddenRules: []string{"Read sensitive file untrusted"},
 			ExpectedFlag:   "FALCO{ok}",
-			WindowSeconds:  10,
 		},
 		"03-exfil": catalog.Challenge{
 			ID:             "03-exfil",
 			Type:           "evade",
 			ForbiddenRules: []string{"Read sensitive file untrusted"},
 			ExpectedFlag:   "FALCO{boss}",
-			WindowSeconds:  10,
 			RequireExfil:   true,
 		},
 	}
@@ -188,7 +185,7 @@ func decode(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
 
 func TestAdminReset(t *testing.T) {
 	cat := catalog.Catalog{
-		"02-evade": catalog.Challenge{ID: "02-evade", Type: "evade", ExpectedFlag: "FALCO{ok}", WindowSeconds: 10},
+		"02-evade": catalog.Challenge{ID: "02-evade", Type: "evade", ExpectedFlag: "FALCO{ok}"},
 	}
 	st, err := store.Open(filepath.Join(t.TempDir(), "s.db"))
 	if err != nil {
@@ -238,7 +235,7 @@ func TestAdminReset(t *testing.T) {
 }
 
 func TestAdminSetDisplayName(t *testing.T) {
-	cat := catalog.Catalog{"01-x": catalog.Challenge{ID: "01-x", Type: "trigger", ExpectedRules: []string{"r"}, WindowSeconds: 10}}
+	cat := catalog.Catalog{"01-x": catalog.Challenge{ID: "01-x", Type: "trigger", ExpectedRules: []string{"r"}}}
 	st, err := store.Open(filepath.Join(t.TempDir(), "s.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -494,14 +491,38 @@ func TestExfil_NotRequired_Rejected(t *testing.T) {
 	}
 }
 
+// dirtyEvade02 taints 02-evade for `user` through the REAL ingest path, using
+// exactly two fires of the rule 02-evade forbids (ADR-0003 attempt scope):
+//
+//  1. The first fire is 01-read-shadow's REQUIRED expectedRule — it solves
+//     01-read-shadow and advances `user`'s current mission to 02-evade. This
+//     fire must NOT taint 02-evade (it was not yet current when it fired) —
+//     that exemption is the whole point of attempt scope (ADR-0003 §A1); PR
+//     #124 shipped without it and permanently blocked this exact mission for
+//     every regular participant.
+//  2. The second, identical fire happens AFTER 02-evade has become current,
+//     so THIS one taints it.
+//
+// Every test below that needs 02-evade dirty via the real write path (rather
+// than one single "just fire it" call, which is no longer sufficient under
+// attempt scope) uses this helper so the two-fire requirement is documented
+// once instead of re-derived at each call site.
+func (f *fixture) dirtyEvade02(user string) {
+	f.t.Helper()
+	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", user))
+	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", user))
+}
+
+// TestSubmit_CorrectFlag_WithRecentForbiddenFire_NotSolved proves the dirty
+// gate blocks a correct-flag submit once 02-evade has actually been tainted
+// WHILE it was the participant's current mission (see dirtyEvade02's doc for
+// why a single fire — the one that solves 01-read-shadow — is not enough
+// under ADR-0003 attempt scope).
 func TestSubmit_CorrectFlag_WithRecentForbiddenFire_NotSolved(t *testing.T) {
 	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
 	f := newFixture(t, func() time.Time { return now })
 
-	// Fire the forbidden rule, then submit immediately — the pair is dirty
-	// (App-H2 persistent taint, not a time window). Rule-fire timestamps
-	// derive from server time, not the (attacker-controlled) ev.Time (App-H3).
-	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "alice"))
+	f.dirtyEvade02("alice")
 
 	w := f.do("POST", "/api/challenges/02-evade/submit", map[string]any{"user": "alice", "flag": "FALCO{ok}"})
 	m := decode(t, w)
@@ -509,7 +530,30 @@ func TestSubmit_CorrectFlag_WithRecentForbiddenFire_NotSolved(t *testing.T) {
 		t.Fatalf("flag should be considered correct: %v", m)
 	}
 	if m["evaded"] != false {
-		t.Fatalf("expected evaded=false (forbidden rule fired): %v", m)
+		t.Fatalf("expected evaded=false (forbidden rule fired while 02-evade was current): %v", m)
+	}
+}
+
+// TestSubmit_RequiredTriggerFire_DoesNotDirtyFollowingEvade is ADR-0003's
+// core HTTP-level regression pin (the BLOCKING-1 finding that sent PR #124
+// back): the SINGLE fire that legitimately solves 01-read-shadow must NOT
+// taint its evade twin 02-evade, even though 02-evade forbids the exact same
+// rule name. Before attempt scope, this fire alone permanently blocked
+// 02-evade for every regular participant who played the game straight.
+func TestSubmit_RequiredTriggerFire_DoesNotDirtyFollowingEvade(t *testing.T) {
+	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+	f := newFixture(t, func() time.Time { return now })
+
+	// The ONE fire needed to clear 01-read-shadow.
+	w := f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "alice"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("falco event: status %d", w.Code)
+	}
+
+	sw := f.do("POST", "/api/challenges/02-evade/submit", map[string]any{"user": "alice", "flag": "FALCO{ok}"})
+	m := decode(t, sw)
+	if m["evaded"] != true || m["solved"] != true {
+		t.Fatalf("ADR-0003 regression: 01-read-shadow's required fire must not taint its evade twin, got %v", m)
 	}
 }
 
@@ -522,12 +566,20 @@ func TestSubmit_CorrectFlag_WithRecentForbiddenFire_NotSolved(t *testing.T) {
 // dirty flag is now permanent: even advancing the clock a full day past the
 // old window must not clear it. Only the explicit reset endpoint
 // (POST /api/users/{user}/challenges/{cid}/reset-dirty) may.
+//
+// ADR-0003 update to this test's SETUP (name and assertions unchanged — see
+// Verification (b), which requires this exact test name to keep passing): a
+// single fire of the shared rule is no longer sufficient to dirty 02-evade
+// under attempt scope (see dirtyEvade02's doc) — it now takes the documented
+// two-fire sequence (solve 01-read-shadow, THEN fire again while 02-evade is
+// current) to reach the dirty state this test's clock-independence assertion
+// is actually about.
 func TestSubmit_CorrectFlag_AfterWaiting_StaysDirty_NotSolved(t *testing.T) {
 	var clock time.Time
 	f := newFixture(t, func() time.Time { return clock })
 
 	clock = time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
-	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "alice"))
+	f.dirtyEvade02("alice")
 
 	clock = clock.Add(30 * time.Second) // well past the old 10s window
 	w := f.do("POST", "/api/challenges/02-evade/submit", map[string]any{"user": "alice", "flag": "FALCO{ok}"})
@@ -547,6 +599,57 @@ func TestSubmit_CorrectFlag_AfterWaiting_StaysDirty_NotSolved(t *testing.T) {
 	}
 }
 
+// TestResetDirty_A2_2_ClearsExfilReceipt_StaleReceiptCannotSolve is the
+// HTTP-level end-to-end proof of ADR-0003 A2-2 (CEO enforce decision,
+// 2026-08-18): dirtying 03-exfil (which is RequireExfil), delivering the
+// collector receipt, then calling reset-dirty must NOT leave the pair
+// solvable off the STALE receipt — a manual submit right after the reset
+// must still report not-solved/not-exfiltrated, and only a FRESH exfil
+// delivery clears the gate. Before A2-2, ResetDirty cleared only the taint
+// and left the exfil row in place, so this exact sequence ("fire → reset →
+// solve off the stale receipt") reopened the App-H2 exploit through a
+// different door — and the Sweeper (scoring.Grader.Sweep, run every 5s in
+// production) would have auto-solved it with zero further participant
+// action, which this test's final manual-submit check also rules out.
+func TestResetDirty_A2_2_ClearsExfilReceipt_StaleReceiptCannotSolve(t *testing.T) {
+	f := newFixture(t, nil)
+
+	// Advance alice to 03-exfil being current: 01-read-shadow's required
+	// fire, then a clean submit of 02-evade.
+	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "alice"))
+	if w := f.do("POST", "/api/challenges/02-evade/submit", map[string]any{"user": "alice", "flag": "FALCO{ok}"}); decode(t, w)["solved"] != true {
+		t.Fatalf("02-evade must solve cleanly to advance current, body=%s", w.Body)
+	}
+
+	// 03-exfil is now current: fire the shared rule again to taint it, then
+	// deliver the (soon-to-be-stale) exfil receipt.
+	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "alice"))
+	if w := f.do("POST", "/internal/exfil/03-exfil", map[string]any{"user": "alice", "flag": "FALCO{boss}"}); decode(t, w)["received"] != true {
+		t.Fatalf("exfil receipt not recorded, body=%s", w.Body)
+	}
+
+	if w := f.doUser("POST", "/api/users/alice/challenges/03-exfil/reset-dirty", "alice", nil); w.Code != http.StatusOK {
+		t.Fatalf("reset-dirty: want 200, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	// A2-2: the stale receipt must NOT satisfy the gate.
+	w := f.do("POST", "/api/challenges/03-exfil/submit", map[string]any{"user": "alice", "flag": "FALCO{boss}"})
+	m := decode(t, w)
+	if m["exfiltrated"] == true || m["solved"] == true {
+		t.Fatalf("A2-2 regression: reset must not leave a stale exfil receipt able to solve, got %v", m)
+	}
+
+	// A fresh delivery after the reset finally satisfies the gate.
+	if w := f.do("POST", "/internal/exfil/03-exfil", map[string]any{"user": "alice", "flag": "FALCO{boss}"}); decode(t, w)["received"] != true {
+		t.Fatalf("fresh exfil receipt not recorded, body=%s", w.Body)
+	}
+	w = f.do("POST", "/api/challenges/03-exfil/submit", map[string]any{"user": "alice", "flag": "FALCO{boss}"})
+	m = decode(t, w)
+	if m["solved"] != true {
+		t.Fatalf("fresh exfil after reset must solve, got %v", m)
+	}
+}
+
 // TestResetDirty_ClearsTaint_ThenCleanSubmitSolves proves the ONLY documented
 // way back to clean: the participant's explicit reset endpoint. After it, a
 // submit with no NEW forbidden fire since the reset solves normally.
@@ -555,7 +658,7 @@ func TestResetDirty_ClearsTaint_ThenCleanSubmitSolves(t *testing.T) {
 	f := newFixture(t, func() time.Time { return clock })
 	clock = time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
 
-	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "alice"))
+	f.dirtyEvade02("alice")
 	w := f.do("POST", "/api/challenges/02-evade/submit", map[string]any{"user": "alice", "flag": "FALCO{ok}"})
 	if decode(t, w)["solved"] == true {
 		t.Fatal("must still be dirty before reset")
@@ -578,7 +681,7 @@ func TestResetDirty_ClearsTaint_ThenCleanSubmitSolves(t *testing.T) {
 // cannot clear another participant's taint, and admin may reset anyone's.
 func TestResetDirty_SelfScope(t *testing.T) {
 	f := newFixture(t, nil)
-	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "alice"))
+	f.dirtyEvade02("alice")
 
 	if w := f.doUser("POST", "/api/users/alice/challenges/02-evade/reset-dirty", "bob", nil); w.Code != http.StatusForbidden {
 		t.Fatalf("cross-user reset-dirty must be forbidden, got %d body=%s", w.Code, w.Body.String())
@@ -607,7 +710,13 @@ func TestFalcoEvents_EvadeWindow_IgnoresAttackerTime(t *testing.T) {
 	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
 	f := newFixture(t, func() time.Time { return now })
 
-	// Attacker tries to bury the forbidden fire 1 hour ago.
+	// First: the REQUIRED fire that solves 01-read-shadow and advances
+	// current to 02-evade (ADR-0003 attempt scope — this fire must not taint
+	// 02-evade itself; see dirtyEvade02's doc).
+	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "alice"))
+
+	// Second: NOW 02-evade is current, so this fire taints it. The attacker
+	// tries to bury it 1 hour in the past via the forged `time` field.
 	f.do("POST", "/falco/events", falcoEventBody(
 		"Read sensitive file untrusted", "alice",
 		withTime(now.Add(-1*time.Hour).Format(time.RFC3339)),

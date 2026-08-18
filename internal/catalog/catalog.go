@@ -5,16 +5,17 @@
 //	challengeId:   string (defaults to directory name)
 //	type:          "trigger" | "evade" | "detect" (required)
 //	expectedRules: []string  — solve when one of these rules fires
-//	forbiddenRules:[]string  — submission rejected once any of these has EVER
-//	               fired for the participant, until they explicitly reset the
-//	               taint (App-H2 persistent dirty flag —
-//	               internal/store.MarkDirty/DirtyRules/ResetDirty via
-//	               scoring.Grader.MarkDirtyOnRuleFire/evaluateClean). This is
-//	               NOT a recent-window check: no amount of waiting clears it.
+//	forbiddenRules:[]string  — submission rejected once any of these has fired
+//	               for the participant DURING THIS CHALLENGE'S ATTEMPT (ADR-0003
+//	               attempt scope: the challenge became the participant's
+//	               "current" mission — internal/store.MarkDirty/DirtyRules/
+//	               ResetDirty via scoring.Grader.OnRuleFire/evaluateClean), until
+//	               they explicitly reset the taint. A required rule fire that
+//	               solves an EARLIER trigger challenge is exempt even if it is
+//	               also THIS challenge's forbiddenRule (the twin-mission case —
+//	               see ADR-0003 §A1). This is NOT a recent-window check: no
+//	               amount of waiting clears an established taint.
 //	expectedFlag:  string (required for "evade"; must match FALCO{...})
-//	windowSeconds: int (default 10) — informational only as of App-H2 (kept
-//	               for UI display / historical config); it no longer gates any
-//	               solve decision for either evade or trigger challenges.
 //	requireExfil:  bool — evade only; solve also requires the user to have
 //	               exfiltrated the correct flag to the collector
 //	               (POST /api/challenges/{cid}/exfil) before submitting.
@@ -74,7 +75,6 @@ type Challenge struct {
 	ExpectedRules  []string `yaml:"expectedRules"`
 	ForbiddenRules []string `yaml:"forbiddenRules"`
 	ExpectedFlag   string   `yaml:"expectedFlag"`
-	WindowSeconds  int      `yaml:"windowSeconds"`
 	RequireExfil   bool     `yaml:"requireExfil"`
 	Detect         *Detect  `yaml:"detect"`
 	// dir is the challenge's directory name (e.g. "03-stealth-read-detect"),
@@ -149,9 +149,6 @@ func parseFile(path, dirName string) (Challenge, error) {
 	ch.dir = dirName
 	if ch.Type == "" {
 		return Challenge{}, fmt.Errorf("challenge %q: type must be \"trigger\", \"evade\" or \"detect\"", ch.ID)
-	}
-	if ch.WindowSeconds <= 0 {
-		ch.WindowSeconds = 10
 	}
 	switch ch.Type {
 	case "evade":

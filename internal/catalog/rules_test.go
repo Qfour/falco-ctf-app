@@ -21,8 +21,8 @@ func writeRuleYAML(t *testing.T, dir, name, yaml string) {
 
 func ruleCatalog() catalog.Catalog {
 	return catalog.Catalog{
-		"01-initial-recon": {ID: "01-initial-recon", Type: "trigger", ExpectedRules: []string{"r"}, WindowSeconds: 10},
-		"05-silent-search": {ID: "05-silent-search", Type: "evade", ExpectedFlag: "FALCO{x}", WindowSeconds: 10},
+		"01-initial-recon": {ID: "01-initial-recon", Type: "trigger", ExpectedRules: []string{"r"}},
+		"05-silent-search": {ID: "05-silent-search", Type: "evade", ExpectedFlag: "FALCO{x}"},
 	}
 }
 

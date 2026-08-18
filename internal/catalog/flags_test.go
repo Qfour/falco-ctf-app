@@ -8,8 +8,8 @@ import (
 
 func newEvadeCatalog() Catalog {
 	return Catalog{
-		"03-stealth-read": {ID: "03-stealth-read", Type: "evade", ExpectedFlag: "FALCO{dev-stealth-read}", WindowSeconds: 10},
-		"01-initial-recon": {ID: "01-initial-recon", Type: "trigger", ExpectedRules: []string{"r"}, WindowSeconds: 10},
+		"03-stealth-read": {ID: "03-stealth-read", Type: "evade", ExpectedFlag: "FALCO{dev-stealth-read}"},
+		"01-initial-recon": {ID: "01-initial-recon", Type: "trigger", ExpectedRules: []string{"r"}},
 	}
 }
 

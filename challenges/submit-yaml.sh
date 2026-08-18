@@ -10,9 +10,10 @@
 #   05-silent-search: FALCO{...}
 #
 # Each non-empty line is submitted via the same scoreboard endpoint as
-# `submit` (flag must match AND the forbidden rule must not have fired in the
-# last windowSeconds). trigger challenges need no submission — Falco firing is
-# the solve. Comments (#) and empty flags are skipped.
+# `submit` (flag must match AND the forbidden rule must not have fired at all
+# during this attempt — no time window, only an explicit reset-dirty clears
+# it). trigger challenges need no submission — Falco firing is the solve.
+# Comments (#) and empty flags are skipped.
 set -u
 
 FILE="${1:-/opt/ctf/answers.yaml}"

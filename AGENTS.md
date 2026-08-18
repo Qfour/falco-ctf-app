@@ -78,12 +78,13 @@ challengeId: "01-read-shadow"
 type: trigger
 expectedRules: ["Read sensitive file untrusted"]
 
-# evade 型 (flag submit + 直近 windowSeconds 秒に forbidden 発火なしで solved)
+# evade 型 (flag submit + この attempt 中に forbidden が 1 度も発火していなければ
+# solved。時間では解除されない永続 dirty フラグ — ADR-0003 attempt スコープ。
+# reset-dirty で明示的にやり直すまで解除されない)
 challengeId: "02-evade-shadow-read"
 type: evade
 forbiddenRules: ["Read sensitive file untrusted"]
 expectedFlag: "FALCO{...}"
-windowSeconds: 10
 
 # detect 型 (参加者が Falco condition を書き、evasion/benign の2 capture に対して
 # capture-replay で採点。evasion capture で発火 かつ benign capture で非発火なら solved)
@@ -161,7 +162,6 @@ flowchart TD
     E -->|"output_fields[container.image.repository]\nmust contain falco-ctf/challenge"| F{"CTF event?"}
     E -->|"priority ≥ Notice"| PF{"priority pass?"}
     E -->|"rule"| R["match expectedRules\n/ forbiddenRules"]
-    E -->|"time (Falco clock)"| W["evade window\nrolling buffer"]
 
     F -->|no| DROP["drop event"]
     PF -->|no| DROP
@@ -171,8 +171,8 @@ flowchart TD
     PF -->|yes| INC
 
     R -->|"trigger: expectedRule matched"| SOLVED["INSERT INTO solved"]
-    R -->|"evade: forbiddenRule matched"| W
-    W --> BLOCK["block submit\nfor windowSeconds"]
+    R -->|"evade: forbiddenRule matched\nAND challenge == current mission\n(ADR-0003 attempt scope)"| DIRTY["persist evade_dirty\n(no expiry)"]
+    DIRTY --> BLOCK["block submit\nuntil reset-dirty"]
 ```
 
 ## 関連リポジトリ

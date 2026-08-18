@@ -10,7 +10,7 @@ func sampleCatalog() Catalog {
 	return Catalog{
 		"01-a": {ID: "01-a", Type: "trigger", ExpectedRules: []string{"r"}},
 		"02-b": {ID: "02-b", Type: "trigger", ExpectedRules: []string{"r"}},
-		"03-c": {ID: "03-c", Type: "evade", ExpectedFlag: "FALCO{x}", WindowSeconds: 10},
+		"03-c": {ID: "03-c", Type: "evade", ExpectedFlag: "FALCO{x}"},
 	}
 }
 

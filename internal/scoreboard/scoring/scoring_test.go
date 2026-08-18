@@ -21,10 +21,13 @@ type fakeStore struct {
 	solved map[string]string // "user|challenge" -> at (first-write-wins)
 	// dirty["user|challenge"] is the sorted set of forbidden rules App-H2's
 	// persistent taint has recorded for that pair — the fake's mirror of the
-	// real store's evade_dirty table. Tests normally seed this indirectly via
-	// (*Grader).MarkDirtyOnRuleFire (the real write path); a few whitebox
-	// tests poke it directly to simulate "the taint was already there",
-	// mirroring what store.ResetDirty's absence would look like.
+	// real store's evade_dirty table. Tests that are about the taint's
+	// EFFECT (blocks submit, survives clock advance, blocks the sweeper) poke
+	// this directly (a few whitebox tests below), mirroring what
+	// store.ResetDirty's absence would look like — the mechanics of WHICH
+	// challenge gets tainted (ADR-0003 attempt scope) is the concern of the
+	// dedicated OnRuleFire attempt-scope tests, which DO drive the real write
+	// path ((*Grader).OnRuleFire) instead of seeding this map directly.
 	dirty map[string][]string
 	// exfil["user|challenge"] is the flag the collector received for that pair.
 	exfil map[string]string
@@ -70,6 +73,14 @@ func (f *fakeStore) MarkSolved(user, challenge, at string) (bool, error) {
 	}
 	f.solved[k] = at
 	return true, nil
+}
+
+// IsSolved mirrors the real store's per-pair read: scoring.CurrentMission
+// (via Grader.currentMission) calls this once per id while walking the
+// progression order to resolve "current" (ADR-0003 A1).
+func (f *fakeStore) IsSolved(user, challenge string) bool {
+	_, ok := f.solved[key(user, challenge)]
+	return ok
 }
 
 // DirtyRules mirrors the real store's persistent-taint read: whatever has
@@ -156,21 +167,18 @@ func testCatalog() catalog.Catalog {
 			ID:            "01-trigger",
 			Type:          "trigger",
 			ExpectedRules: []string{"Read sensitive file untrusted"},
-			WindowSeconds: 10,
 		},
 		"02-evade": catalog.Challenge{
 			ID:             "02-evade",
 			Type:           "evade",
 			ForbiddenRules: []string{"Read sensitive file untrusted"},
 			ExpectedFlag:   "FALCO{ok}",
-			WindowSeconds:  10,
 		},
 		"03-exfil": catalog.Challenge{
 			ID:             "03-exfil",
 			Type:           "evade",
 			ForbiddenRules: []string{"Read sensitive file untrusted"},
 			ExpectedFlag:   "FALCO{boss}",
-			WindowSeconds:  10,
 			RequireExfil:   true,
 		},
 		"04-detect": catalog.Challenge{
@@ -206,59 +214,63 @@ func fixedClock(t time.Time) func() time.Time { return func() time.Time { return
 
 // --- Quadrant 1: trigger fire ------------------------------------------------
 
-func TestEvaluateTrigger_SolvesMatchingChallenge(t *testing.T) {
+func TestOnRuleFire_SolvesMatchingTriggerChallenge(t *testing.T) {
 	fs := newFakeStore()
 	g := scoring.New(testCatalog(), fs, fixedClock(time.Unix(1000, 0).UTC()))
 
-	res, err := g.EvaluateTrigger("alice", "Read sensitive file untrusted")
-	if err != nil {
-		t.Fatal(err)
+	res := g.OnRuleFire("alice", "Read sensitive file untrusted")
+	if res.TaintErr != nil || res.TriggerErr != nil {
+		t.Fatalf("taintErr=%v triggerErr=%v", res.TaintErr, res.TriggerErr)
 	}
-	if len(res) != 1 || res[0].Challenge != "01-trigger" || !res[0].Newly {
-		t.Fatalf("want one newly solve of 01-trigger, got %+v", res)
+	if len(res.Results) != 1 || res.Results[0].Challenge != "01-trigger" || !res.Results[0].Newly {
+		t.Fatalf("want one newly solve of 01-trigger, got %+v", res.Results)
 	}
 	if fs.markSolvedCalls != 1 {
 		t.Fatalf("Grader must be the single MarkSolved writer; calls=%d", fs.markSolvedCalls)
 	}
-	// Idempotent: a second identical fire records nothing new.
-	res, err = g.EvaluateTrigger("alice", "Read sensitive file untrusted")
-	if err != nil {
-		t.Fatal(err)
+	// Idempotent: a second identical fire records nothing new (01-trigger is
+	// solved now, so current has advanced to 02-evade — this second fire
+	// taints 02-evade instead, per attempt scope; the TRIGGER side stays
+	// idempotent regardless).
+	res = g.OnRuleFire("alice", "Read sensitive file untrusted")
+	if res.TaintErr != nil {
+		t.Fatal(res.TaintErr)
 	}
-	if len(res) != 1 || res[0].Newly {
-		t.Fatalf("second fire must not be newly, got %+v", res)
+	if len(res.Results) != 1 || res.Results[0].Newly {
+		t.Fatalf("second fire must not be newly, got %+v", res.Results)
 	}
 }
 
-func TestEvaluateTrigger_NonMatchingRuleSolvesNothing(t *testing.T) {
+func TestOnRuleFire_NonMatchingRuleSolvesNothing(t *testing.T) {
 	fs := newFakeStore()
 	g := scoring.New(testCatalog(), fs, fixedClock(time.Unix(1000, 0).UTC()))
 
-	res, err := g.EvaluateTrigger("alice", "Unrelated rule")
-	if err != nil {
-		t.Fatal(err)
+	res := g.OnRuleFire("alice", "Unrelated rule")
+	if res.TaintErr != nil || res.TriggerErr != nil {
+		t.Fatalf("taintErr=%v triggerErr=%v", res.TaintErr, res.TriggerErr)
 	}
-	if len(res) != 0 {
-		t.Fatalf("non-matching rule must solve nothing, got %+v", res)
+	if len(res.Results) != 0 {
+		t.Fatalf("non-matching rule must solve nothing, got %+v", res.Results)
 	}
 	if fs.markSolvedCalls != 0 {
 		t.Fatalf("no MarkSolved expected; calls=%d", fs.markSolvedCalls)
 	}
 }
 
-func TestEvaluateTrigger_EvadeRuleDoesNotAutoSolve(t *testing.T) {
+func TestOnRuleFire_EvadeRuleDoesNotAutoSolve(t *testing.T) {
 	fs := newFakeStore()
 	g := scoring.New(testCatalog(), fs, fixedClock(time.Unix(1000, 0).UTC()))
 
 	// 02-evade lists this rule as *forbidden*, not expected; a fire must not
-	// auto-solve an evade challenge.
-	res, err := g.EvaluateTrigger("alice", "Read sensitive file untrusted")
-	if err != nil {
-		t.Fatal(err)
+	// auto-solve an evade challenge (it may TAINT it — irrelevant here since
+	// current is 01-trigger, not 02-evade, so this fire is exempt either way).
+	res := g.OnRuleFire("alice", "Read sensitive file untrusted")
+	if res.TaintErr != nil || res.TriggerErr != nil {
+		t.Fatalf("taintErr=%v triggerErr=%v", res.TaintErr, res.TriggerErr)
 	}
-	for _, r := range res {
+	for _, r := range res.Results {
 		if r.Challenge == "02-evade" {
-			t.Fatalf("evade challenge must never auto-solve via trigger path: %+v", res)
+			t.Fatalf("evade challenge must never auto-solve via trigger path: %+v", res.Results)
 		}
 	}
 }
@@ -313,11 +325,11 @@ func TestSubmitEvade_UnknownAndNonEvade(t *testing.T) {
 func TestSubmitEvade_ForbiddenFired_NotSolved(t *testing.T) {
 	fs := newFakeStore()
 	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
-	// Drive the taint through the real write path (MarkDirtyOnRuleFire), not a
-	// direct fake seed — this also exercises the catalog-driven fan-out.
-	if err := g.MarkDirtyOnRuleFire("alice", "Read sensitive file untrusted"); err != nil {
-		t.Fatal(err)
-	}
+	// Seed the taint directly (this test is about evaluateClean's gate 4
+	// GIVEN a dirty pair, not about WHICH challenge gets tainted — that
+	// catalog-driven, attempt-scoped fan-out has its own dedicated test suite
+	// below, "--- ADR-0003: attempt-scoped taint (OnRuleFire) ---").
+	fs.dirty[key("alice", "02-evade")] = []string{"Read sensitive file untrusted"}
 
 	out, err := g.SubmitEvade("alice", "02-evade", "FALCO{ok}")
 	if err != nil {
@@ -345,9 +357,10 @@ func TestSubmitEvade_DirtyStaysDirtyRegardlessOfClockAdvance(t *testing.T) {
 	fs := newFakeStore()
 	clock := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
 	g := scoring.New(testCatalog(), fs, func() time.Time { return clock })
-	if err := g.MarkDirtyOnRuleFire("alice", "Read sensitive file untrusted"); err != nil {
-		t.Fatal(err)
-	}
+	// Seed directly — this test is about clock independence GIVEN a dirty
+	// pair, not about the attempt-scoped fan-out that decides which
+	// challenge gets tainted (see the dedicated OnRuleFire tests below).
+	fs.dirty[key("alice", "02-evade")] = []string{"Read sensitive file untrusted"}
 
 	clock = clock.Add(24 * time.Hour)
 	out, err := g.SubmitEvade("alice", "02-evade", "FALCO{ok}")
@@ -362,84 +375,153 @@ func TestSubmitEvade_DirtyStaysDirtyRegardlessOfClockAdvance(t *testing.T) {
 	}
 }
 
-// --- App-H2: MarkDirtyOnRuleFire ---------------------------------------------
+// --- ADR-0003: attempt-scoped taint (OnRuleFire) -----------------------------
+//
+// This section REPLACES the pre-ADR-0003 "TestMarkDirtyOnRuleFire_*" suite.
+// The old TestMarkDirtyOnRuleFire_TaintsOnlyMatchingEvadeChallenges asserted
+// that a SINGLE fire of "Read sensitive file untrusted" tainted BOTH
+// 02-evade AND 03-exfil (testCatalog's two evade challenges that forbid it) —
+// i.e. it positively asserted the unconditional fan-out that IS PR #124's
+// BLOCKING-1 regression (a persistent taint with no attempt scope taints
+// every sibling challenge that forbids a rule, the instant it fires for ANY
+// reason — including the required fire that clears an earlier, unrelated
+// trigger mission). That assertion was wrong as a matter of product
+// correctness, not merely as an implementation detail: keeping it "green" by
+// construction hides the exact regression this ADR exists to fix. It is
+// removed rather than "fixed to pass" — see TestOnRuleFire_AttemptScope_*
+// below for what replaces it.
 
-// TestMarkDirtyOnRuleFire_TaintsOnlyMatchingEvadeChallenges proves the
-// catalog-driven fan-out mirrors EvaluateTrigger's: only evade-type
-// challenges whose forbiddenRules contain the fired rule are tainted. A
-// trigger challenge that EXPECTS the same rule name must be unaffected (it
-// has no dirty concept at all), and an unrelated rule must taint nothing.
-func TestMarkDirtyOnRuleFire_TaintsOnlyMatchingEvadeChallenges(t *testing.T) {
+// TestOnRuleFire_AttemptScope_OnlyTaintsCurrentChallenge is the core
+// attempt-scope regression test (ADR-0003 §A1) at the Grader level. Walks the
+// exact twin-mission shape testCatalog() has always had (01-trigger's
+// required rule IS 02-evade's AND 03-exfil's forbidden rule) through a full,
+// legitimate progression and proves at each step that ONLY the participant's
+// CURRENT mission gets tainted — the fire that clears an earlier mission
+// never taints a later sibling that has not been reached yet.
+func TestOnRuleFire_AttemptScope_OnlyTaintsCurrentChallenge(t *testing.T) {
+	const rule = "Read sensitive file untrusted"
 	fs := newFakeStore()
 	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
 
-	if err := g.MarkDirtyOnRuleFire("alice", "Read sensitive file untrusted"); err != nil {
-		t.Fatal(err)
+	// current(alice) = 01-trigger (nothing solved yet). This fire is
+	// 01-trigger's REQUIRED expectedRule: it must solve 01-trigger and taint
+	// NEITHER 02-evade NOR 03-exfil, even though both forbid this exact rule
+	// name — they have not been reached yet.
+	res := g.OnRuleFire("alice", rule)
+	if res.TaintErr != nil {
+		t.Fatal(res.TaintErr)
 	}
-	// 02-evade and 03-exfil both forbid this rule (testCatalog).
-	if len(fs.DirtyRules("alice", "02-evade")) == 0 {
-		t.Fatal("02-evade must be tainted")
+	if len(res.Results) != 1 || res.Results[0].Challenge != "01-trigger" || !res.Results[0].Newly {
+		t.Fatalf("want a newly solve of 01-trigger, got %+v", res.Results)
 	}
-	if len(fs.DirtyRules("alice", "03-exfil")) == 0 {
-		t.Fatal("03-exfil must be tainted")
+	if got := fs.DirtyRules("alice", "02-evade"); len(got) != 0 {
+		t.Fatalf("ADR-0003 regression: 01-trigger's required fire must not taint 02-evade (not yet current), got %v", got)
 	}
-	// 01-trigger EXPECTS this rule (not forbidden) — never tainted.
-	if got := fs.DirtyRules("alice", "01-trigger"); len(got) != 0 {
-		t.Fatalf("trigger challenge must never be tainted, got %v", got)
+	if got := fs.DirtyRules("alice", "03-exfil"); len(got) != 0 {
+		t.Fatalf("ADR-0003 regression: 01-trigger's required fire must not taint 03-exfil (not yet current), got %v", got)
 	}
 
-	// An unrelated rule taints nothing, for anyone.
-	if err := g.MarkDirtyOnRuleFire("bob", "Some unrelated rule"); err != nil {
+	// current(alice) is now 02-evade. The SAME rule fired again now taints
+	// it (it IS current, and it forbids this rule) — but NOT its sibling
+	// 03-exfil, which is still not current.
+	res = g.OnRuleFire("alice", rule)
+	if res.TaintErr != nil {
+		t.Fatal(res.TaintErr)
+	}
+	if got := fs.DirtyRules("alice", "02-evade"); len(got) != 1 || got[0] != rule {
+		t.Fatalf("02-evade must be tainted now that it is current, got %v", got)
+	}
+	if got := fs.DirtyRules("alice", "03-exfil"); len(got) != 0 {
+		t.Fatalf("03-exfil must still be clean (not yet current), got %v", got)
+	}
+
+	// Advance current to 03-exfil by directly marking 02-evade solved (its
+	// own dirty taint would otherwise block a real SubmitEvade — irrelevant
+	// to what this test is proving, so bypass it at the fake-store level).
+	if _, err := fs.MarkSolved("alice", "02-evade", "t"); err != nil {
 		t.Fatal(err)
 	}
-	if got := fs.DirtyRules("bob", "02-evade"); len(got) != 0 {
+
+	// current(alice) is now 03-exfil. The same rule fired a third time taints
+	// IT — proving the fan-out follows current as it advances, rather than
+	// being pinned to whichever challenge happened to be first.
+	res = g.OnRuleFire("alice", rule)
+	if res.TaintErr != nil {
+		t.Fatal(res.TaintErr)
+	}
+	if got := fs.DirtyRules("alice", "03-exfil"); len(got) != 1 || got[0] != rule {
+		t.Fatalf("03-exfil must be tainted now that IT is current, got %v", got)
+	}
+
+	// An unrelated rule taints nothing, for anyone, regardless of current.
+	res = g.OnRuleFire("bob", "Some unrelated rule")
+	if res.TaintErr != nil {
+		t.Fatal(res.TaintErr)
+	}
+	if got := fs.DirtyRules("bob", "01-trigger"); len(got) != 0 {
 		t.Fatalf("non-matching rule must taint nothing, got %v", got)
 	}
 }
 
-// TestMarkDirtyOnRuleFire_IsIdempotent proves a repeat fire of the same rule
-// against the same (user, challenge) does not error and leaves the offending
-// set unchanged (the real store's PRIMARY KEY(user,challenge,rule) enforces
-// the same property — see store_test.go's TestMarkDirty_SetsAndAccumulatesRules).
-func TestMarkDirtyOnRuleFire_IsIdempotent(t *testing.T) {
+// TestOnRuleFire_AttemptScope_IsIdempotent proves a repeat fire of the same
+// rule against the same (user, challenge) does not error and leaves the
+// offending set unchanged, once that challenge IS current (the real store's
+// PRIMARY KEY(user,challenge,rule) enforces the same property — see
+// store_test.go's TestMarkDirty_SetsAndAccumulatesRules). The FIRST of the
+// three fires below is 01-trigger's required fire (current at that point) —
+// exempt by attempt scope — after which 02-evade becomes current for the
+// remaining two, which must accumulate to exactly one dirty rule, not two.
+func TestOnRuleFire_AttemptScope_IsIdempotent(t *testing.T) {
+	const rule = "Read sensitive file untrusted"
 	fs := newFakeStore()
 	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
 
 	for i := 0; i < 3; i++ {
-		if err := g.MarkDirtyOnRuleFire("alice", "Read sensitive file untrusted"); err != nil {
-			t.Fatal(err)
+		if res := g.OnRuleFire("alice", rule); res.TaintErr != nil {
+			t.Fatal(res.TaintErr)
 		}
 	}
 	got := fs.DirtyRules("alice", "02-evade")
-	if len(got) != 1 || got[0] != "Read sensitive file untrusted" {
-		t.Fatalf("repeat fires of the same rule must not duplicate, got %v", got)
+	if len(got) != 1 || got[0] != rule {
+		t.Fatalf("repeat fires of the same rule against the same current challenge must not duplicate, got %v", got)
 	}
 }
 
-// TestMarkDirtyOnRuleFire_ContinueOnError mirrors
-// TestEvaluateTrigger_ContinueOnError: two evade challenges share a forbidden
-// rule; the first's MarkDirty errors but the second must still be tainted,
-// and the joined error must be non-nil (the ingest handler logs it — a
-// silently-swallowed error here would leave a false "clean" gap).
-func TestMarkDirtyOnRuleFire_ContinueOnError(t *testing.T) {
+// TestOnRuleFire_TaintErrorDoesNotBlockTriggerSolve proves ADR-0003 A5's
+// cross-stage continue-on-error contract: a failed taint PERSISTENCE write
+// for the current evade challenge must not suppress the SAME event's trigger
+// solves. Catalog is built so 02-evade is current from the start (sorts
+// before both triggers) and its MarkDirty is rigged to fail; both trigger
+// challenges sharing the same rule name must still solve.
+func TestOnRuleFire_TaintErrorDoesNotBlockTriggerSolve(t *testing.T) {
 	const rule = "Read sensitive file untrusted"
 	cat := catalog.Catalog{
-		"02a-evade": catalog.Challenge{ID: "02a-evade", Type: "evade", ForbiddenRules: []string{rule}, ExpectedFlag: "FALCO{a}"},
-		"02b-evade": catalog.Challenge{ID: "02b-evade", Type: "evade", ForbiddenRules: []string{rule}, ExpectedFlag: "FALCO{b}"},
+		"02-evade":    catalog.Challenge{ID: "02-evade", Type: "evade", ForbiddenRules: []string{rule}, ExpectedFlag: "FALCO{a}"},
+		"03a-trigger": catalog.Challenge{ID: "03a-trigger", Type: "trigger", ExpectedRules: []string{rule}},
+		"03b-trigger": catalog.Challenge{ID: "03b-trigger", Type: "trigger", ExpectedRules: []string{rule}},
 	}
 	fs := newFakeStore()
-	fs.markDirtyErrFor = map[string]error{"02a-evade": errors.New("boom")}
+	fs.markDirtyErrFor = map[string]error{"02-evade": errors.New("boom")}
 	g := scoring.New(cat, fs, fixedClock(time.Now()))
 
-	err := g.MarkDirtyOnRuleFire("alice", rule)
-	if err == nil {
-		t.Fatal("the joined store error must be returned non-nil")
+	res := g.OnRuleFire("alice", rule)
+	if res.TaintErr == nil {
+		t.Fatal("the current evade challenge's MarkDirty error must propagate as TaintErr")
 	}
-	if got := fs.DirtyRules("alice", "02a-evade"); len(got) != 0 {
-		t.Fatalf("the failing challenge must not appear tainted, got %v", got)
+	if got := fs.DirtyRules("alice", "02-evade"); len(got) != 0 {
+		t.Fatalf("a failed MarkDirty must not appear tainted in the fake, got %v", got)
 	}
-	if got := fs.DirtyRules("alice", "02b-evade"); len(got) != 1 {
-		t.Fatalf("the second challenge must still be tainted despite the first's error, got %v", got)
+	if res.TriggerErr != nil {
+		t.Fatalf("the trigger stage must not be affected by the taint stage's error, got %v", res.TriggerErr)
+	}
+	if len(res.Results) != 2 {
+		t.Fatalf("both trigger challenges must still solve despite the taint error, got %+v", res.Results)
+	}
+	if _, ok := fs.solved[key("alice", "03a-trigger")]; !ok {
+		t.Fatal("03a-trigger solve must be persisted")
+	}
+	if _, ok := fs.solved[key("alice", "03b-trigger")]; !ok {
+		t.Fatal("03b-trigger solve must be persisted")
 	}
 }
 
@@ -468,13 +550,27 @@ func TestDirtyFlag_SurvivesStoreRestart(t *testing.T) {
 	cat := testCatalog()
 	at := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
 	g := scoring.New(cat, st, fixedClock(at))
+	const rule = "Read sensitive file untrusted"
 
-	// The forbidden rule fires (dirties 02-evade AND 03-exfil, both of which
-	// forbid it in testCatalog), and the collector delivers the boss flag —
-	// exactly the state a real attacker-then-caught-then-restarted scoreboard
-	// would be in.
-	if err := g.MarkDirtyOnRuleFire("alice", "Read sensitive file untrusted"); err != nil {
-		t.Fatal(err)
+	// Advance alice legitimately to 03-exfil being current (ADR-0003 attempt
+	// scope): the first fire of `rule` is 01-trigger's REQUIRED expectedRule
+	// and must not taint anything (01-trigger becomes current's predecessor,
+	// not yet 02-evade/03-exfil); then a clean submit of 02-evade (still
+	// current's predecessor at that point) solves it and advances current to
+	// 03-exfil.
+	if res := g.OnRuleFire("alice", rule); res.TaintErr != nil {
+		t.Fatal(res.TaintErr)
+	}
+	if out, err := g.SubmitEvade("alice", "02-evade", "FALCO{ok}"); err != nil || out.Status != scoring.EvadeSolved {
+		t.Fatalf("02-evade must solve cleanly to advance current to 03-exfil, got %+v err=%v", out, err)
+	}
+
+	// NOW 03-exfil is current: the SAME rule fired again taints IT (it is
+	// evade-type and forbids this rule), and the collector delivers the boss
+	// flag — exactly the state a real attacker-then-caught-then-restarted
+	// scoreboard would be in.
+	if res := g.OnRuleFire("alice", rule); res.TaintErr != nil {
+		t.Fatal(res.TaintErr)
 	}
 	if _, err := g.RecordExfil("alice", "03-exfil", "FALCO{boss}"); err != nil {
 		t.Fatal(err)
@@ -601,23 +697,26 @@ func TestSubmitEvade_StoreErrorPropagates(t *testing.T) {
 	}
 }
 
-func TestEvaluateTrigger_StoreErrorPropagates(t *testing.T) {
+func TestOnRuleFire_TriggerStoreErrorPropagates(t *testing.T) {
 	fs := newFakeStore()
 	fs.markSolvedErr = errors.New("boom")
 	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
 
-	_, err := g.EvaluateTrigger("alice", "Read sensitive file untrusted")
-	if err == nil {
-		t.Fatal("MarkSolved error must propagate from EvaluateTrigger")
+	res := g.OnRuleFire("alice", "Read sensitive file untrusted")
+	if res.TriggerErr == nil {
+		t.Fatal("MarkSolved error must propagate as TriggerErr from OnRuleFire")
 	}
 }
 
-// TestEvaluateTrigger_ContinueOnError proves the loop mirrors the old ingest
-// behaviour: when two trigger challenges share a rule and the first's
-// MarkSolved errors, the failing challenge is skipped (continue-on-error) but
-// the second is still solved, and the joined error is returned non-nil. A
-// regression to early-return-on-error would drop the second challenge's solve.
-func TestEvaluateTrigger_ContinueOnError(t *testing.T) {
+// TestOnRuleFire_TriggerContinueOnError proves the trigger stage's loop
+// mirrors the old ingest behaviour: when two trigger challenges share a rule
+// and the first's MarkSolved errors, the failing challenge is skipped
+// (continue-on-error) but the second is still solved, and TriggerErr is
+// returned non-nil. A regression to early-return-on-error would drop the
+// second challenge's solve. Catalog has no evade challenge at all, so
+// current is always a trigger mission and TaintErr stays nil throughout —
+// this test is purely about the trigger stage.
+func TestOnRuleFire_TriggerContinueOnError(t *testing.T) {
 	const rule = "Read sensitive file untrusted"
 	cat := catalog.Catalog{
 		"01a-trigger": catalog.Challenge{
@@ -635,13 +734,16 @@ func TestEvaluateTrigger_ContinueOnError(t *testing.T) {
 	fs.markSolvedErrFor = map[string]error{"01a-trigger": errors.New("boom")}
 	g := scoring.New(cat, fs, fixedClock(time.Now()))
 
-	res, err := g.EvaluateTrigger("alice", rule)
-	if err == nil {
-		t.Fatal("the joined store error must be returned non-nil")
+	res := g.OnRuleFire("alice", rule)
+	if res.TaintErr != nil {
+		t.Fatalf("no evade challenge exists; TaintErr must stay nil, got %v", res.TaintErr)
+	}
+	if res.TriggerErr == nil {
+		t.Fatal("the joined trigger store error must be returned non-nil as TriggerErr")
 	}
 	// The failing challenge must not appear; the second must be solved.
-	if len(res) != 1 || res[0].Challenge != "01b-trigger" || !res[0].Newly {
-		t.Fatalf("second challenge must still solve despite the first's error, got %+v", res)
+	if len(res.Results) != 1 || res.Results[0].Challenge != "01b-trigger" || !res.Results[0].Newly {
+		t.Fatalf("second challenge must still solve despite the first's error, got %+v", res.Results)
 	}
 	// Both were attempted (proves it did not early-return after the failure).
 	if fs.markSolvedCalls != 2 {
@@ -729,9 +831,10 @@ func TestSweep_CleanWindow_Solves(t *testing.T) {
 func TestSweep_ForbiddenFired_NotSolved(t *testing.T) {
 	fs := newFakeStore()
 	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
-	if err := g.MarkDirtyOnRuleFire("alice", "Read sensitive file untrusted"); err != nil {
-		t.Fatal(err)
-	}
+	// Seed directly — this test is about the sweeper's behaviour GIVEN a
+	// dirty pair, not about the attempt-scoped fan-out that decides which
+	// challenge gets tainted (see the dedicated OnRuleFire tests above).
+	fs.dirty[key("alice", "03-exfil")] = []string{"Read sensitive file untrusted"}
 	if _, err := g.RecordExfil("alice", "03-exfil", "FALCO{boss}"); err != nil {
 		t.Fatal(err)
 	}
@@ -1066,5 +1169,155 @@ func TestSubmitDetect_MarkSolvedError(t *testing.T) {
 
 	if _, err := g.SubmitDetect(context.Background(), r, "alice", "04-detect", "cond"); err == nil {
 		t.Fatal("a MarkSolved store error must propagate from SubmitDetect")
+	}
+}
+
+// --- ADR-0003 Verification (a): real catalog + real scenario order ----------
+
+// TestOnRuleFire_RealCatalog_AttemptScope_TwinMissionsStayClean is ADR-0003
+// Verification (a)'s scoring-side half. It reads the REAL challenges/ tree
+// and the REAL nimbusbreach-full scenario order (not testCatalog()'s
+// synthetic fixture) and walks a full, legitimate 01→10 progression:
+//   - every trigger mission is cleared by firing its own required rule(s);
+//   - every evade mission is checked for cleanliness BEFORE being submitted
+//     (with a fresh exfil delivery first when RequireExfil), and must solve.
+//
+// This is deliberately run against the PRODUCTION catalog, not a hand-built
+// one: catalog_test.go's TestEvadeForbiddenRules_IntersectPriorTriggerExpectedRules
+// already proves the synthetic testCatalog() fixture had the same
+// intersecting-rule-names shape BEFORE PR #124 shipped and still missed the
+// regression — what was missing was this exact progression-property
+// assertion, run against real data, not a better fixture.
+func TestOnRuleFire_RealCatalog_AttemptScope_TwinMissionsStayClean(t *testing.T) {
+	cat, err := catalog.Load("../../../challenges")
+	if err != nil {
+		t.Fatalf("load real challenges: %v", err)
+	}
+	sc, err := catalog.LoadScenario("../../../scenarios/nimbusbreach-full/scenario.yaml")
+	if err != nil {
+		t.Fatalf("load scenario: %v", err)
+	}
+	scored, err := cat.Restrict(sc.Challenges)
+	if err != nil {
+		t.Fatalf("restrict to scored scenario: %v", err)
+	}
+
+	fs := newFakeStore()
+	g := scoring.New(scored, fs, fixedClock(time.Now())).WithOrder(sc.Challenges)
+
+	for _, cid := range sc.Challenges {
+		ch := scored[cid]
+		switch ch.Type {
+		case "trigger":
+			for _, rule := range ch.ExpectedRules {
+				res := g.OnRuleFire("alice", rule)
+				if res.TaintErr != nil || res.TriggerErr != nil {
+					t.Fatalf("%s: fire %q: taintErr=%v triggerErr=%v", cid, rule, res.TaintErr, res.TriggerErr)
+				}
+			}
+			if _, ok := fs.solved[key("alice", cid)]; !ok {
+				t.Fatalf("%s must be solved by its own required rule fire(s)", cid)
+			}
+		case "evade":
+			// The core regression check: this mission's forbiddenRules very
+			// likely intersect an EARLIER trigger's expectedRules (the "twin"
+			// structure pinned by catalog_test.go's
+			// TestEvadeForbiddenRules_IntersectPriorTriggerExpectedRules).
+			// Every one of those required fires happened above; attempt
+			// scope must have exempted all of them.
+			if got := fs.DirtyRules("alice", cid); len(got) != 0 {
+				t.Fatalf("%s: ADR-0003 regression — dirty from a predecessor's required fire: %v", cid, got)
+			}
+			if ch.RequireExfil {
+				if _, err := g.RecordExfil("alice", cid, ch.ExpectedFlag); err != nil {
+					t.Fatalf("%s: RecordExfil: %v", cid, err)
+				}
+			}
+			out, err := g.SubmitEvade("alice", cid, ch.ExpectedFlag)
+			if err != nil {
+				t.Fatalf("%s: SubmitEvade: %v", cid, err)
+			}
+			if out.Status != scoring.EvadeSolved || !out.Newly {
+				t.Fatalf("%s: must solve on a clean, exfil-satisfied submit, got %+v", cid, out)
+			}
+		default:
+			t.Fatalf("unexpected challenge type %q for %s in the scored scenario", ch.Type, cid)
+		}
+	}
+}
+
+// --- ADR-0003 Verification (c): highest-risk real shape (7 forbiddenRules +
+// requireExfil, matching 10-final-exfil) ------------------------------------
+
+// TestSubmitEvade_SevenForbiddenRules_ResetRequiresFreshExfil exercises the
+// production capstone's exact shape (7 forbiddenRules + requireExfil is the
+// riskiest combination in the real catalog — see catalog_test.go's real-data
+// table) and proves the two properties that must hold TOGETHER:
+//  1. ANY ONE of the seven forbidden rules firing while the pair is current
+//     dirties it (attempt-scoped fan-out still works with >1 forbidden rule);
+//  2. a reset does NOT let a stale exfil receipt auto-solve it (ADR-0003
+//     A2-2, CEO enforce decision) — the pair needs a BRAND NEW exfil
+//     delivery after the reset, not just a clean taint.
+func TestSubmitEvade_SevenForbiddenRules_ResetRequiresFreshExfil(t *testing.T) {
+	forbidden := []string{"r1", "r2", "r3", "r4", "r5", "r6", "r7"}
+	cat := catalog.Catalog{
+		"10-boss": catalog.Challenge{
+			ID: "10-boss", Type: "evade", ForbiddenRules: forbidden,
+			ExpectedFlag: "FALCO{boss}", RequireExfil: true,
+		},
+	}
+	fs := newFakeStore()
+	g := scoring.New(cat, fs, fixedClock(time.Now()))
+
+	// 10-boss is the sole (hence always-current) mission: any one of the
+	// seven forbidden rules firing must dirty it.
+	res := g.OnRuleFire("alice", "r4")
+	if res.TaintErr != nil {
+		t.Fatal(res.TaintErr)
+	}
+	if got := fs.DirtyRules("alice", "10-boss"); len(got) != 1 || got[0] != "r4" {
+		t.Fatalf("one of seven forbidden rules must dirty the pair, got %v", got)
+	}
+
+	// Deliver the exfil receipt anyway (as an unaware participant might) —
+	// must not solve while dirty.
+	if _, err := g.RecordExfil("alice", "10-boss", "FALCO{boss}"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := g.SubmitEvade("alice", "10-boss", "FALCO{boss}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != scoring.EvadeForbiddenFired {
+		t.Fatalf("dirty pair must block even with exfil delivered, got %+v", out)
+	}
+
+	// Reset (mirrors what store.ResetDirty does under the reset-dirty
+	// endpoint, ADR-0003 A2-2's enforce contract: the SAME call clears BOTH
+	// the taint AND the exfil receipt).
+	delete(fs.dirty, key("alice", "10-boss"))
+	delete(fs.exfil, key("alice", "10-boss"))
+
+	// Submitting again WITHOUT a fresh exfil delivery must NOT solve — this
+	// is A2-2's whole point (closing "fire → reset → auto-solve off the
+	// stale receipt").
+	out, err = g.SubmitEvade("alice", "10-boss", "FALCO{boss}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != scoring.EvadeExfilRequired {
+		t.Fatalf("A2-2: reset must require a FRESH exfil delivery, not resurrect the stale one, got %+v", out)
+	}
+
+	// A fresh delivery after the reset finally solves.
+	if _, err := g.RecordExfil("alice", "10-boss", "FALCO{boss}"); err != nil {
+		t.Fatal(err)
+	}
+	out, err = g.SubmitEvade("alice", "10-boss", "FALCO{boss}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != scoring.EvadeSolved || !out.Newly {
+		t.Fatalf("fresh exfil after reset must solve, got %+v", out)
 	}
 }

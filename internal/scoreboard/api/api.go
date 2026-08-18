@@ -57,12 +57,18 @@ var invalidDisplayName = regexp.MustCompile(`[<>&"'\x00-\x1f\x7f]`)
 // triggerDetectWindowSeconds is the lookback the Journey UI uses to surface
 // which of a trigger mission's expectedRules the participant has already fired
 // (detectedRules). It is a UI-DISPLAY-ONLY lookback: the actual solve verdict
-// is owned entirely by the ingest → Grader.EvaluateTrigger path and is
-// independent of this window (a rule fire records the solve the instant it
-// arrives, regardless of what this projection shows). It is deliberately the
-// same 60s window /me uses for its rule-fire feed so the two agree on screen.
+// is owned entirely by the ingest → Grader.OnRuleFire path and is independent
+// of this window (a rule fire records the solve the instant it arrives,
+// regardless of what this projection shows). It is deliberately the same 60s
+// window /me uses for its rule-fire feed so the two agree on screen.
 // Signpost: if a future grader ever gains a windowed trigger verdict, this
 // value and the grader's window should be sourced from one place.
+//
+// Distinct from the evade forbiddenRules taint gate (ADR-0003 attempt scope):
+// that gate has NO time window at all (persistent, cleared only by an
+// explicit reset) — see catalog.go's forbiddenRules doc and
+// scoring.Grader.markDirtyOnRuleFire. Do not conflate the two "window"
+// concepts; this one purely feeds a UI live-status cue.
 const triggerDetectWindowSeconds = 60
 
 // JourneyConfig carries the /journey UI inputs into the api handler:
@@ -1080,11 +1086,15 @@ func (h *Handler) openHint(w http.ResponseWriter, r *http.Request) {
 // never clears it, see scoring.evaluateClean). A participant calls this after
 // noticing a forbidden Falco rule fired on a run (submit will report
 // EvadeForbiddenFired with the offending rule names) and redoing the attack
-// cleanly.
+// cleanly. This RESTARTS the whole attempt (ADR-0003 §A2): store.ResetDirty
+// also deletes the SAME (user, cid) pair's collector exfil receipt (A2-2, CEO
+// enforce decision) — a RequireExfil challenge needs a brand-new exfil
+// delivery after a reset, not just a clean taint, so "fire a forbidden rule →
+// reset → auto-solve off the stale receipt" is not a shortcut back to solved.
 //
 // Idempotent: resetting an already-clean pair is a harmless no-op (200, no
 // prior dirty rules). Validates the challenge exists and is evade-type (a
-// dirty flag can only ever exist for an evade challenge — MarkDirtyOnRuleFire
+// dirty flag can only ever exist for an evade challenge — markDirtyOnRuleFire
 // only writes for ch.Type=="evade" — so rejecting other types here is a
 // guard against a confusing 200-that-does-nothing, matching /submit's own
 // pre-body type guard).
@@ -1373,14 +1383,15 @@ func (h *Handler) journey(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// current = first unsolved mission in order; "" if all solved.
-	current := ""
-	for _, id := range order {
-		if _, done := solvedSet[id]; !done {
-			current = id
-			break
-		}
-	}
+	// current = first unsolved mission in order; "" if all solved. Delegated
+	// to scoring.CurrentMission — the SAME function scoring.Grader's
+	// attempt-scope taint gate calls (ADR-0003 A1: single source of truth).
+	// Reimplementing this scan independently here would let the two drift
+	// apart, which is exactly the failure mode the ADR calls out.
+	current := scoring.CurrentMission(order, h.cat, func(id string) bool {
+		_, done := solvedSet[id]
+		return done
+	})
 
 	type missionView struct {
 		ID         string `json:"id"`
@@ -1620,7 +1631,7 @@ func (h *Handler) missionDetail(user, cid, status, leadIn string, checkedSteps, 
 	// operator /api/state challenge stats and the docs-site rule excerpts) — never
 	// a flag value (conventions I10). This is a read-only projection with zero
 	// bearing on the solve verdict, which stays entirely in the ingest → Grader
-	// path (EvaluateTrigger); the UI only observes it.
+	// path (Grader.OnRuleFire); the UI only observes it.
 	var expectedRules []string
 	var detectedRules []string
 	if ch.Type == "trigger" {
@@ -1664,6 +1675,21 @@ func (h *Handler) missionDetail(user, cid, status, leadIn string, checkedSteps, 
 		}
 	}
 
+	// dirty / dirtyRules (ADR-0003 A3) REPLACE the removed windowSeconds
+	// field. Only ever non-empty for an evade challenge — MarkDirty only ever
+	// writes ch.Type=="evade" pairs — so a trigger/detect mission simply
+	// projects dirty=false / dirtyRules=[], exactly like exfilReceived does
+	// for requireExfil on a non-exfil mission. Safe to expose for ANY status
+	// (solved/current/locked, unlike hints): these are Falco rule NAMES only,
+	// never a flag value (conventions I10), and under the attempt-scope
+	// invariant (ADR-0003 A1) a not-yet-current evade mission can never be
+	// dirty, so there is nothing here a participant could read ahead of time
+	// to game a later mission.
+	dirtyRules := h.store.DirtyRules(user, cid)
+	if dirtyRules == nil {
+		dirtyRules = []string{}
+	}
+
 	return map[string]any{
 		"id":            cid,
 		"status":        status,
@@ -1678,7 +1704,8 @@ func (h *Handler) missionDetail(user, cid, status, leadIn string, checkedSteps, 
 		"exfilReceived": exfilReceived,
 		"expectedRules": expectedRules,
 		"detectedRules": detectedRules,
-		"windowSeconds": ch.WindowSeconds,
+		"dirty":         len(dirtyRules) > 0,
+		"dirtyRules":    dirtyRules,
 		"steps":         steps,
 		"falcoRule":     falcoRule,
 		"hasFalcoRule":  hasFalcoRule,

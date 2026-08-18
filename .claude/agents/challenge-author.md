@@ -39,8 +39,11 @@ forbiddenRules:
   - "Exact Falco rule name"
 # placeholder only — real flag injected at deploy via FLAGS_FILE (public repo).
 expectedFlag: "FALCO{dev-<slug>}"
-windowSeconds: 10
 ```
+Note: there is no `windowSeconds` field (removed, ADR-0003). The forbidden-rule
+gate is a persistent, attempt-scoped taint — it never expires on its own; only
+the participant's explicit reset-dirty endpoint clears it. Do not add a
+`windowSeconds` key to new challenges.
 
 ## plant.sh + generated values (evade challenges)
 
@@ -80,7 +83,8 @@ When asked to CREATE a challenge:
 When asked to REVIEW a challenge:
 
 - Verify falco-rule.yaml schema completeness and rule name accuracy
-- For evade: verify `windowSeconds` is realistic (>= 5, typically 10)
+- For evade: verify no `windowSeconds` key was added (removed, ADR-0003 — the
+  gate is a persistent attempt-scoped taint, not a time window)
 - For evade: verify `plant.sh` seeds the flag via `CTF_FLAG_<ID>` and that
   `values.yaml` / `values-all.yaml` are regenerated (`make gen-values` clean)
 - Check README has: 出題文, クリア条件, 想定解, 仕組みの解説, ヒント (難易度別)

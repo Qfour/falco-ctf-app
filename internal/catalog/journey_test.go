@@ -22,8 +22,8 @@ func writeJourney(t *testing.T, dir, name, yaml string) {
 
 func journeyCatalog() catalog.Catalog {
 	return catalog.Catalog{
-		"01-initial-recon": {ID: "01-initial-recon", Type: "trigger", ExpectedRules: []string{"r"}, WindowSeconds: 10},
-		"05-silent-search": {ID: "05-silent-search", Type: "evade", ExpectedFlag: "FALCO{x}", WindowSeconds: 10},
+		"01-initial-recon": {ID: "01-initial-recon", Type: "trigger", ExpectedRules: []string{"r"}},
+		"05-silent-search": {ID: "05-silent-search", Type: "evade", ExpectedFlag: "FALCO{x}"},
 	}
 }
 
@@ -148,8 +148,8 @@ func TestLoadJourneys_TypoErrorsEvenInFullCatalog(t *testing.T) {
 	// full (unrestricted) catalog: skip keys off the directory name, so a full
 	// catalog does not launder a mismatching challengeId into a silent load.
 	full := catalog.Catalog{
-		"01-initial-recon": {ID: "01-initial-recon", Type: "trigger", ExpectedRules: []string{"r"}, WindowSeconds: 10},
-		"01-initial-recom": {ID: "01-initial-recom", Type: "trigger", ExpectedRules: []string{"r"}, WindowSeconds: 10},
+		"01-initial-recon": {ID: "01-initial-recon", Type: "trigger", ExpectedRules: []string{"r"}},
+		"01-initial-recom": {ID: "01-initial-recom", Type: "trigger", ExpectedRules: []string{"r"}},
 	}
 	writeJourney(t, dir, "01-initial-recon", `
 challengeId: 01-initial-recom

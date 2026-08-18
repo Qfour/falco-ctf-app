@@ -29,9 +29,9 @@ type journeyFixture struct {
 func newJourneyFixture(t *testing.T, extra ...scoreboard.Option) *journeyFixture {
 	t.Helper()
 	cat := catalog.Catalog{
-		"01-recon": {ID: "01-recon", Type: "trigger", ExpectedRules: []string{"Recon Rule"}, WindowSeconds: 10},
-		"02-evade": {ID: "02-evade", Type: "evade", ForbiddenRules: []string{"Recon Rule"}, ExpectedFlag: "FALCO{ok}", WindowSeconds: 10},
-		"03-late":  {ID: "03-late", Type: "trigger", ExpectedRules: []string{"Late Rule"}, WindowSeconds: 10},
+		"01-recon": {ID: "01-recon", Type: "trigger", ExpectedRules: []string{"Recon Rule"}},
+		"02-evade": {ID: "02-evade", Type: "evade", ForbiddenRules: []string{"Recon Rule"}, ExpectedFlag: "FALCO{ok}"},
+		"03-late":  {ID: "03-late", Type: "trigger", ExpectedRules: []string{"Late Rule"}},
 	}
 	journeys := catalog.Journeys{
 		"01-recon": {
@@ -293,7 +293,7 @@ func TestJourney_StepCheckReflectedInProjection(t *testing.T) {
 // still gate on the exact flag + clean window).
 func TestJourney_ExfilReceivedProjection(t *testing.T) {
 	cat := catalog.Catalog{
-		"01-boss": {ID: "01-boss", Type: "evade", ForbiddenRules: []string{"Reverse shell"}, ExpectedFlag: "FALCO{boss}", WindowSeconds: 30, RequireExfil: true},
+		"01-boss": {ID: "01-boss", Type: "evade", ForbiddenRules: []string{"Reverse shell"}, ExpectedFlag: "FALCO{boss}", RequireExfil: true},
 	}
 	journeys := catalog.Journeys{
 		"01-boss": {ChallengeID: "01-boss", Title: "boss", Briefing: "b"},
@@ -317,8 +317,12 @@ func TestJourney_ExfilReceivedProjection(t *testing.T) {
 	if det["exfilReceived"] != false {
 		t.Fatalf("exfilReceived must be false before any receipt, got %v", det["exfilReceived"])
 	}
-	if det["windowSeconds"].(float64) != 30 {
-		t.Fatalf("windowSeconds must be surfaced, got %v", det["windowSeconds"])
+	// ADR-0003 A3: windowSeconds is gone; dirty/dirtyRules replace it.
+	if det["dirty"] != false {
+		t.Fatalf("dirty must be false before any forbidden fire, got %v", det["dirty"])
+	}
+	if got := det["dirtyRules"].([]any); len(got) != 0 {
+		t.Fatalf("dirtyRules must be empty before any forbidden fire, got %v", got)
 	}
 
 	// Record a collector receipt (any value) → exfilReceived flips true.
@@ -328,6 +332,23 @@ func TestJourney_ExfilReceivedProjection(t *testing.T) {
 	det = f.journey("alice")["detail"].(map[string]any)
 	if det["exfilReceived"] != true {
 		t.Fatalf("exfilReceived must be true after a receipt, got %v", det["exfilReceived"])
+	}
+
+	// 01-boss is the sole (hence always-current) mission, so a direct
+	// MarkDirty (mirroring what a real forbidden Falco fire would do via
+	// Grader.OnRuleFire) flips dirty/dirtyRules true — proving the
+	// replacement fields actually reflect store.DirtyRules, not a static
+	// placeholder.
+	if err := st.MarkDirty("alice", "01-boss", "Reverse shell", "2026-01-01T00:00:01Z"); err != nil {
+		t.Fatal(err)
+	}
+	det = f.journey("alice")["detail"].(map[string]any)
+	if det["dirty"] != true {
+		t.Fatalf("dirty must be true once a forbidden rule has fired, got %v", det["dirty"])
+	}
+	dirtyRules := det["dirtyRules"].([]any)
+	if len(dirtyRules) != 1 || dirtyRules[0] != "Reverse shell" {
+		t.Fatalf("dirtyRules must surface the offending rule name (never a flag value, I10), got %v", dirtyRules)
 	}
 }
 

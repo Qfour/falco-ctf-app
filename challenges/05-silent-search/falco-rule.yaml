@@ -4,7 +4,6 @@ forbiddenRules:
   - Search Private Keys or Passwords
 # Placeholder for local dev/tests. Real flag injected at deploy via FLAGS_FILE.
 expectedFlag: FALCO{dev-silent-search}
-windowSeconds: 10
 # ATT&CK mapping — canonical source for docs/Navigator layer (make gen-attack).
 # T1202: evade twin of 04. Reading the key via shell input redirection (cat < file)
 # keeps the sensitive arg out of the exec'd cmdline, defeating the cmdline-signature

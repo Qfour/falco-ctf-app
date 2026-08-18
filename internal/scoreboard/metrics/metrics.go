@@ -13,7 +13,16 @@ import (
 
 // FalcoEventsReceived counts /falco/events POST receipts.
 //
-//	outcome: "accepted" | "ignored" | "decode_error" | "store_error"
+//	outcome: "accepted" | "ignored" | "decode_error" | "store_error" |
+//	         "taint_error"
+//
+// taint_error (ADR-0003 A5) is distinct from store_error: it fires when the
+// event was otherwise accepted but the persistent evade-dirty taint write
+// (scoring.Grader.OnRuleFire's TaintErr) failed. The in-memory taint is still
+// set (store.MarkDirty is fail-closed), but this metric being non-zero during
+// an event means the on-disk record may be missing — see the ingest handler
+// and scoring package doc for the residual risk if the pod restarts before a
+// later successful write.
 var FalcoEventsReceived = promauto.NewCounterVec(
 	prometheus.CounterOpts{
 		Namespace: "scoreboard",

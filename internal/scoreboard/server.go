@@ -157,7 +157,13 @@ func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts .
 	// auto-solve sweeper. One instance = one clock and one MarkSolved caller,
 	// preserving the single-writer discipline (conventions I1) across all three
 	// entry points (this also resolves the prior double-instantiation, R4).
-	grader := scoring.New(cat, s, h.now)
+	//
+	// WithOrder(h.order) wires the SAME progression order into the Grader
+	// that api.New below receives via JourneyConfig.Order (ADR-0003 A1): the
+	// Grader's attempt-scope taint gate and the Journey projection MUST agree
+	// on "current" — two different orders would silently reintroduce the "two
+	// definitions of current" drift the ADR warns against.
+	grader := scoring.New(cat, s, h.now).WithOrder(h.order)
 	if h.points != nil {
 		grader.WithPoints(*h.points)
 	}

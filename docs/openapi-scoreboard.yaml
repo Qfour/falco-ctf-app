@@ -85,8 +85,13 @@ paths:
         events with stale timestamps and we don't want that to
         retro-date the dashboard.
 
-        The Falco-side `time` field still drives the rule-fire window
-        used by evade challenge submissions.
+        For evade-type challenges, a matching rule fire taints the
+        participant's CURRENT mission ONLY (ADR-0003 attempt scope) if it
+        forbids this rule — a persistent flag with no time window at all
+        (not a lookback; see `POST /api/users/{user}/challenges/{cid}/reset-dirty`
+        below, the only way back to clean). The Falco-side `time` field
+        never drives any solve or taint decision — only server receipt
+        time does.
       requestBody:
         required: true
         content:
@@ -207,6 +212,59 @@ paths:
           description: unknown challenge id
         "429":
           description: too many in-flight grader jobs; retry shortly (no queueing)
+
+  /api/users/{user}/challenges/{cid}/reset-dirty:
+    post:
+      summary: Clear the persistent evade forbidden-rule taint for one (user, challenge) pair
+      operationId: resetDirty
+      description: |
+        The ONLY way an evade challenge returns to clean once a forbidden
+        Falco rule has fired while it was the participant's current mission
+        (ADR-0003 attempt scope) — there is no time-based path; waiting never
+        clears it. Restarts the WHOLE attempt: also deletes the SAME pair's
+        collector exfil receipt if any (ADR-0003 A2-2, CEO enforce decision,
+        2026-08-18) — a `requireExfil` challenge needs a brand-new exfil
+        delivery after a reset, not just a clean taint, so this closes the
+        "fire a forbidden rule → reset → the sweeper auto-solves off the
+        stale receipt" exploit path.
+
+        Idempotent: resetting an already-clean pair (no taint, no exfil
+        receipt) is a harmless no-op. Rejects a challenge that is not
+        evade-type (a taint can only ever exist for one).
+
+        Authorization: self-or-admin over the auth-proxied participant host
+        (`X-Auth-Request-Email` must match `{user}` by prefix, or be in
+        `ADMIN_EMAILS`); over the cluster-internal path (no auth header,
+        e.g. the collector) the legacy claimed-identity model applies,
+        matching the other `/api/users/{user}/*` writes.
+      parameters:
+        - in: path
+          name: user
+          required: true
+          schema: { type: string }
+        - in: path
+          name: cid
+          required: true
+          schema: { type: string }
+          description: evade challenge id (e.g. `03-stealth-read`)
+      responses:
+        "200":
+          description: taint (and exfil receipt, if any) cleared
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  user: { type: string }
+                  cid: { type: string }
+                  dirty: { type: boolean, const: false }
+        "400":
+          description: invalid user, or `{cid}` is not an evade challenge
+        "403":
+          description: caller is neither `{user}` nor an admin (auth-proxied host only)
+        "404":
+          description: unknown challenge id
 
   /api/admin/reset:
     post:

@@ -6,7 +6,6 @@ forbiddenRules:
 # (rendered from falco-ctf-platform events/<date>/flags.sops.yaml). Must equal
 # the ctf-user chart's dev default so local end-to-end submit passes.
 expectedFlag: FALCO{dev-stealth-read}
-windowSeconds: 10
 # ATT&CK mapping — canonical source for docs/Navigator layer (make gen-attack).
 # T1006: evade twin of 02. Reaching /etc/shadow via /proc/self/root/... bypasses
 # the path-string file monitor — accessing the same data through an alternate path
