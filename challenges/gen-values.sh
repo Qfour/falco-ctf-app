@@ -55,7 +55,22 @@ sensitive_paths() {
     | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' \
     | grep -v '^$'
 }
-SENSITIVE_DIR_PREFIXES="/etc/sudoers.d /etc/pam.d"
+
+# security-engineer A6: this used to be a hardcoded literal
+# ("/etc/sudoers.d /etc/pam.d"). Derived instead from the same
+# `sensitive_files` macro's `fd.directory in (...)` clause in
+# SENSITIVE_RULE_FILE, so it can't silently drift from N6's "derive from
+# catalog, don't hardcode" requirement either.
+sensitive_dir_prefixes() {
+  awk '
+    /^- macro: sensitive_files$/ { f=1 }
+    f && /fd\.directory in \(/ { print; exit }
+  ' "${SENSITIVE_RULE_FILE}" \
+    | sed -E 's/.*fd\.directory in \(([^)]*)\).*/\1/' \
+    | tr ',' '\n' \
+    | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' \
+    | grep -v '^$'
+}
 
 # Evade challenges = directories that carry a plant.sh, in NN order.
 # (portable to bash 3.2 / macOS — no mapfile / no associative arrays)
@@ -84,8 +99,8 @@ relpath() { printf '%s' "${1#/}"; }               # "/etc/shadow" -> "etc/shadow
 indent()  { awk '{ if ($0 == "") print ""; else print "      " $0 }'; }  # reads stdin
 
 # ---------------------------------------------------------------------------
-# Verification 2-1 / 2-3: header validation (both modes — generation itself
-# depends on these being true, not just --check).
+# Verification 2-1 / 2-3 / 2-3b: header validation (both modes — generation
+# itself depends on these being true, not just --check).
 # ---------------------------------------------------------------------------
 
 HEADER_ERRORS=""
@@ -107,6 +122,20 @@ for id in "${MISSIONS[@]}"; do
         HEADER_ERRORS="${HEADER_ERRORS}2-3 VIOLATION: ${id}/plant.sh declares plant-seed-source '${source}' outside ${SNAPSHOT_ROOT}/ (must be a build-time snapshot path, never the real sensitive path)\n"
         ;;
     esac
+  else
+    # 2-3b (security-engineer A3): `>>` presupposes the destination already
+    # has content. Without a plant-seed-source, the seed file starts empty
+    # (emptyDir), so an append-only plant.sh would silently produce a
+    # flag-only file instead of the pre-existing content the mission brief
+    # assumes — exactly the bug 2-3 was written to close, just reached via
+    # "forgot the header" instead of "pointed it at the real path".
+    while IFS= read -r target; do
+      [ -z "${target}" ] && continue
+      rel="$(relpath "${target}")"
+      if plant_body "${id}/plant.sh" | grep -qE '>>[[:space:]]*"?\$\{PLANT_SEED_ROOT\}/'"${rel}"'"?'; then
+        HEADER_ERRORS="${HEADER_ERRORS}2-3b VIOLATION: ${id}/plant.sh appends (>>) to plant-target ${target} without declaring plant-seed-source — the seed file starts empty (emptyDir), so this would silently replace any pre-existing content the mission brief assumes instead of appending to it\n"
+      fi
+    done < <(printf '%s\n' "${targets}")
   fi
 done
 if [ -n "${HEADER_ERRORS}" ]; then
@@ -270,19 +299,43 @@ check_2_5() {
 
 # ---------------------------------------------------------------------------
 # Verification 2-7 (I13b machine enforcement, on the *generated* seed
-# script): the deploy path must never read a sensitive path at runtime.
-# Best-effort static heuristic, documented as such.
+# script): the deploy path must never read a sensitive path, and must never
+# talk to anything, at runtime. Best-effort static heuristic, documented as
+# such — see the (f) comment below for the one sub-check that is closer to
+# a real allowlist and the limits of the rest.
 #   (a) every `cp` copy-source is anchored under ${SNAPSHOT_ROOT}
 #   (b) none of catalog's sensitive_file_names / sensitive dirs appear
 #       outside of a ${PLANT_SEED_ROOT}... or ${SNAPSHOT_ROOT}... token
-#   (c) grep / egrep / fgrep / find / ln are never invoked
+#   (c) grep / egrep / fgrep / find / ln are never invoked (enumerated —
+#       see (f))
 #   (d) nothing under ${PLANT_SEED_ROOT} is executed
+#   (e) no network tool is invoked, and the k8s apiserver's in-cluster DNS
+#       name never appears (enumerated — see (f); security-engineer C2)
+#   (f) every command actually invoked is in a fixed allowlist — this is
+#       the general-purpose backstop for (c)/(e): those two are enumerated
+#       (list a name, catch that name) and were exactly how `curl` and
+#       `install` slipped through in the security-engineer's audit (C2).
+#       (f) instead declares the small, fixed set of commands the
+#       initContainer's seed script is allowed to run at all
+#       (mkdir/cp/echo/cat/chmod/set/printf/true/:/sh) and fails on
+#       anything else — including binaries with no name-based check yet,
+#       and bare-path "exec a file we just wrote" forms like
+#       `/dev/shm/x` that (c)/(e) don't parse for. It is still a
+#       heuristic: it tokenizes each `;`/`&&`/`||`/`|`-separated segment by
+#       whitespace and treats the first token as "the command", skipping
+#       heredoc bodies and `NAME=value` assignments — it does not parse
+#       shell quoting/substitution, so a sufficiently adversarial one-liner
+#       (e.g. hiding a command inside `$(...)` or a quoted string that
+#       *becomes* a command some other way) could still evade it. Extend
+#       the allowlist deliberately when a new plant.sh legitimately needs
+#       another command — don't work around a (f) failure by rewording the
+#       line.
 # ---------------------------------------------------------------------------
 
 check_2_7() { # $1 = generated seed script text (unindented), $2 = label
-  local script="$1" label="$2" rc=0 hits p residue code
+  local script="$1" label="$2" rc=0 hits p residue code offending ln
 
-  # All 4 sub-checks below look at CODE only — full-comment lines (this
+  # All sub-checks below look at CODE only — full-comment lines (this
   # script's own documentation, and the prose plant.sh authors write above
   # their commands) are excluded, since they legitimately mention sensitive
   # paths / tool names in prose without ever reading/execing anything.
@@ -300,23 +353,26 @@ check_2_7() { # $1 = generated seed script text (unindented), $2 = label
   fi
 
   # (b) sensitive paths must not appear outside a safe (seed-relative)
-  # prefix. Strip every safe occurrence, then check whether the bare
-  # sensitive literal still remains anywhere in the residue.
-  residue="${code}"
-  while IFS= read -r p; do
+  # prefix. Strip every safe occurrence from a copy of the text, then
+  # report only the ORIGINAL lines whose stripped counterpart still
+  # contains the bare sensitive literal (not every line that merely
+  # mentions it safely — security-engineer A7).
+  for p in $(sensitive_paths) $(sensitive_dir_prefixes); do
     [ -z "${p}" ] && continue
-    residue="$(printf '%s' "${residue}" \
+    residue="$(printf '%s\n' "${code}" \
       | sed -E "s#\\\$\\{PLANT_SEED_ROOT\\}${p}##g; s#${SNAPSHOT_ROOT}${p}##g")"
-  done < <(sensitive_paths)
-  for p in $(sensitive_paths) ${SENSITIVE_DIR_PREFIXES}; do
-    if printf '%s' "${residue}" | grep -qF "${p}"; then
-      echo "2-7(b) VIOLATION [${label}]: sensitive path '${p}' appears outside a \${PLANT_SEED_ROOT}/${SNAPSHOT_ROOT} prefix:" >&2
-      printf '%s\n' "${code}" | grep -F "${p}" | sed 's/^/    /' >&2
+    offending="$(printf '%s\n' "${residue}" | grep -nF "${p}" | cut -d: -f1 || true)"
+    if [ -n "${offending}" ]; then
+      echo "2-7(b) VIOLATION [${label}]: sensitive path '${p}' appears outside \${PLANT_SEED_ROOT}/... or ${SNAPSHOT_ROOT}/... in the generated script:" >&2
+      while IFS= read -r ln; do
+        [ -z "${ln}" ] && continue
+        printf '%s\n' "${code}" | sed -n "${ln}p" | sed 's/^/    /' >&2
+      done <<< "${offending}"
       rc=1
     fi
   done
 
-  # (c) forbidden binaries (word-boundary match).
+  # (c) forbidden binaries (word-boundary match). Enumerated — see (f).
   hits="$(printf '%s\n' "${code}" \
     | grep -nE '(^|[^A-Za-z0-9_])(grep|egrep|fgrep|find|ln)([^A-Za-z0-9_]|$)' || true)"
   if [ -n "${hits}" ]; then
@@ -332,6 +388,64 @@ check_2_7() { # $1 = generated seed script text (unindented), $2 = label
   if [ -n "${hits}" ]; then
     echo "2-7(d) VIOLATION [${label}]: \${PLANT_SEED_ROOT} path used as a command (exec of seed-written content):" >&2
     printf '%s\n' "${hits}" | sed 's/^/    /' >&2
+    rc=1
+  fi
+
+  # (e) network tools + the in-cluster apiserver DNS name (security-engineer
+  # C2: mission 01's expectedRule is "Contact K8S API Server From
+  # Container" — a deploy-path `curl`/`wget` to it would auto-solve 01 for
+  # every participant on every deploy, the same class of bug S-a closed for
+  # mission 02). Enumerated — see (f).
+  hits="$(printf '%s\n' "${code}" \
+    | grep -nE '(^|[^A-Za-z0-9_])(curl|wget|nc|ncat|netcat|nslookup|dig|getent)([^A-Za-z0-9_]|$)' || true)"
+  if [ -n "${hits}" ]; then
+    echo "2-7(e) VIOLATION [${label}]: forbidden network tool in generated seed script:" >&2
+    printf '%s\n' "${hits}" | sed 's/^/    /' >&2
+    rc=1
+  fi
+  hits="$(printf '%s\n' "${code}" | grep -nF 'kubernetes.default' || true)"
+  if [ -n "${hits}" ]; then
+    echo "2-7(e) VIOLATION [${label}]: in-cluster apiserver DNS name in generated seed script:" >&2
+    printf '%s\n' "${hits}" | sed 's/^/    /' >&2
+    rc=1
+  fi
+
+  # (f) allowlist backstop — see the block comment above this function.
+  hits="$(printf '%s\n' "${code}" | awk '
+    BEGIN {
+      n = split("sh set mkdir cp echo cat chmod printf true :", allowed, " ")
+      for (i = 1; i <= n; i++) allow[allowed[i]] = 1
+      heredoc = 0
+    }
+    {
+      line = $0
+      if (heredoc) {
+        chk = line; sub(/^[ \t]+/, "", chk)
+        if (chk == delim) heredoc = 0
+        next
+      }
+      t = line
+      sub(/^[ \t]+/, "", t); sub(/[ \t]+$/, "", t)
+      if (t == "") next
+      if (match(t, /<<-?[ \t]*['\''"]?[A-Za-z_][A-Za-z0-9_]*['\''"]?[ \t]*$/)) {
+        d = substr(t, RSTART, RLENGTH)
+        gsub(/^<<-?[ \t]*['\''"]?/, "", d); gsub(/['\''"]?[ \t]*$/, "", d)
+        delim = d; heredoc = 1
+      }
+      nseg = split(t, segs, /(;|&&|\|\||\|)/)
+      for (i = 1; i <= nseg; i++) {
+        seg = segs[i]
+        gsub(/^[ \t]+/, "", seg); gsub(/[ \t]+$/, "", seg)
+        if (seg == "") continue
+        if (seg ~ /^[A-Za-z_][A-Za-z0-9_]*=/) continue
+        split(seg, w, /[ \t]+/)
+        if (w[1] != "" && !(w[1] in allow)) printf "%d:%s\n", NR, line
+      }
+    }
+  ' || true)"
+  if [ -n "${hits}" ]; then
+    echo "2-7(f) VIOLATION [${label}]: command not in the seed-script allowlist (mkdir/cp/echo/cat/chmod/set/printf/true/:/sh):" >&2
+    printf '%s\n' "${hits}" | sort -t: -k1,1 -u | sed 's/^/    /' >&2
     rc=1
   fi
 
