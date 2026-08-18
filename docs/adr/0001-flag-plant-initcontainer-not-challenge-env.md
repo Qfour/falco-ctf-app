@@ -37,6 +37,44 @@
 >    主張しているため。下記「不変条件の番号」節)。**新たに I13 (deploy 経路の無汚染) を提案**
 > 7. DoD を **11 → 14 項目**に (差し替え内容は「実装 PR の完了条件」冒頭に明記)
 
+> **rev.4 (2026-08-18) の改訂点**: **security-engineer の rev.3 独立監査**を反映
+> (判定 **PASS with conditions**。**H1 は「現行文言のままなら BLOCK」と明示された条件**)。
+> 主要な改訂:
+> 1. **【H1】4-7 (i) の「故意違反 patch」を廃止**し、**`test1` への単発 `kubectl exec` + admin reset** に置換。
+>    patch は共有アーティファクト (`challenges/values-all.yaml` → `deploy-user.sh:168`) を通るため
+>    **次の roster deploy で全 user に波及する** (VP + architect 独立確認)。§F3 の (B) も
+>    「test1 を犠牲にする」→「**reset 前提**」に書き直した
+> 2. **【H2】I13 の根拠が事実に反していたので接地し直した。** rev.3 は「`eventsPerUser` と
+>    rule fire 履歴は永続する」と書いたが**両方誤り** (実測: `internal/store/store.go:82` は
+>    in-memory map、同 `:38` に "dashboard counter. **Not used for scoring**"、`ruleFires` は
+>    `RetentionSeconds = 300` で prune (同 `:69,492-509`)、`Reset()` で消える (同 `:874-901`)、
+>    SQLite の table は 7 本で eventsPerUser 相当は無い (同 `:137-181`))。
+>    → **I13 の根拠を `solved` (trigger auto-solve) と `evade_dirty` (evade taint) に接地**
+> 3. **【H3】I13 を I13a / I13b に 2 段化**した。ruleset 全体 (platform は Falco default ruleset を
+>    そのまま稼働させている: `helmfile/releases/falco/values.yaml.gotmpl` に `rules_file` /
+>    `customRules` の上書きが無く `priority: notice` のみ) に対する「イベント 0」は
+>    **実機以外で確認できない**ため、字義通りの主張を避けた。**採点状態を変えないこと (I13a) を強い不変条件、
+>    catalog 9 ルールを踏まないこと (I13b) を手段側の不変条件**とし、非 catalog ルールの発火は
+>    **構造的に I13a を破れない**ことを明記した (`RecordRuleFire` はルール名を見ないが、
+>    solve / taint は catalog のルール名一致を要求する)
+> 4. **【H4】2-8 を CI 限定から `make check-image-hygiene` (build から fail-closed 呼び出し) に**。
+>    prod image は CI-free 運用で運用者が `make build` する (`Makefile:50-58` は素の
+>    `docker build` の羅列で post-build フック無し) ため、CI だけでは F2 と同じ穴になる
+> 5. **【M1-M7】** Signpost 7 を性質ベースに (Option B 自身が day-one で満たしてしまう) /
+>    layer 4 に **settle window と Falco・scoreboard の Running 事前確認** / Verification 1 に
+>    **1-14 (initContainer の `restartPolicy` 不在) と 1-15 (`shareProcessNamespace` / `hostPID`)** /
+>    1-8 を平文 + base64 の 2 本立てに / 2-8 を `/opt/ctf/plant-seed/` **ツリー全体 + mode/owner 一致**に /
+>    **I13 の外延 5 経路を明記** (image build は対象外・運用者の `kubectl exec` / `kubectl cp` は
+>    機械強制不能) / S-d のコスト記述を **未検証と明記**し却下根拠を **RBAC とカバー範囲**へ差し替え
+> 6. **【I10】論法の順序を訂正**: 「同一イメージ内のビットの複製」を第一根拠にせず、
+>    **実測 (資格情報 0 件) と 2-8 の機械検査を主根拠**に格上げ
+> 7. **【L2-L5】** B1 の `readOnly: true` / S-c の命名リスクの正確化 / 4-7 (iii) を
+>    **build 時 assert に降格** (security-engineer が独立再現) / **「初回 deploy は evade 無傷」は
+>    条件付き**であることを明記
+> 8. **不変条件の番号 (I11 = ADR-0003 / I12 = フラグ隔離 / I13 = deploy 無汚染) は VP 承認済**
+>    (security-engineer 同意) —— rev.3 の「VP 批准を要する」は解消
+> 9. DoD を **14 → 16 項目**に (12/13/14 を差し替え、15/16 を追加)
+
 ## Context
 
 ### 現状の経路 (実コードで確認)
@@ -223,7 +261,19 @@ VP の読み (「evade 側の taint は起きないが trigger 側の auto-solve
   `internal/scoreboard/scoring/scoring.go:275-285`) なので、この時点で evade 側は無傷
 
 **この非対称は直感に反する** (「イベントは出たのに evade は無傷」) ので rev.3 は明記する。
-**ただし「evade は無害」は初回 deploy に限る。**
+
+**【rev.4 = L5】ただし「初回 deploy では evade 無傷」は *構造的保証ではなく偶然* である。**
+これは **scenario の先頭 (`01-initial-recon`) が trigger 型であること**に依存している。
+deploy 経路が **01 の expectedRule (`Contact K8S API Server From Container`) と
+02 の expectedRule を続けて出す**と、同一 deploy 内で 01 → 02 が auto-solve されて
+`current` が **03 (evade)** へ進み、**その後の `Read sensitive file untrusted` 1 発で初回 deploy でも taint する**
+(必要なのは「01 と 02 を solve させる発火 + もう 1 発」= 計 3 発。`OnRuleFire` は 1 event ごとに
+taint → trigger の順で評価するので、同一 event 内で進んで即 taint されることはない:
+`internal/scoreboard/scoring/scoring.go:415-429`)。
+→ **「初回は無傷」に依存した設計判断をしてはならない。** 依存しているのは I13a の受理条件
+(4-2 / 4-3 = 0) だけである。
+
+**さらに「evade は無害」は初回 deploy に限る。**
 
 **再 deploy では evade も汚染される (rev.3 の新規指摘)**:
 
@@ -347,6 +397,11 @@ VP の読み (「evade 側の taint は起きないが trigger 側の auto-solve
 - **B1 — plant-target 単位の `subPath` bind** (`/etc/shadow` は単一ファイル bind、
   `/root/.ssh` はディレクトリ mount)。
   - 変更点: `volumeMounts` に plant-target ごとに 1 エントリ (`subPath` 付き)。
+    **【rev.4 = L2】`readOnly: true` にできる箇所は付ける。** `subPath` bind は既定 read-write だが、
+    09-ii (`/etc/sudoers` へ retarget) を採る限り **`/etc/shadow` 側に runtime write は不要**であり、
+    read-only なら **Verification 3-5 (planted 行数 = 2) の assert も安定する**
+    (参加者が append して行数を変えられなくなる)。`/root/.ssh` は 05 の想定解が読み取りのみなので
+    同様に検討する (ただし participant が `~/.ssh` を書く操作を将来課題に入れるなら不可)。
   - コスト: 最小 (chart 数行)。blast radius も最小 (image の `/etc` は素のまま)。
   - F5: **安全** —— mount point が実パスと一致するので代替 path が生まれない。
   - リスク: **mission 09 が壊れる見込み**。`/etc/shadow` が emptyDir 由来の bind mount、
@@ -444,14 +499,18 @@ crypt ハッシュ形の文字列は 0 件**。`/root/.ssh` は **存在しな�
     (ii) `fd.directory in (/etc/sudoers.d, /etc/pam.d)` も外れる
     (`challenges/03-stealth-read/rule.yaml:90-93`)。
     **「除外されるから発火しない」ではなく「ルールの条件に到達しない」**のが S-a の性質である。
-  - **I10 に触れないか (VP 指示による明示的検討)**: **触れない。**
-    (i) 焼くのは **フラグ実値ではなく素の `/etc/shadow`** であり、
-    (ii) それは **同一イメージ内に既に存在するビットの複製**である (build 時に image 自身から derive する) ので
-    **新規のマテリアルを一切導入しない** —— I10 が禁じる「トークン・実シークレットの焼き込み」に当たらない。
-    (iii) 実測どおり中身は locked エントリのみで crypt ハッシュを含まない。
-    (iv) それでも「将来 image に本物のハッシュが入る」ことを紙で保証しないため、
-    **機械検査を付ける** (Verification 2-8: snapshot と `/etc/shadow` の双方に crypt ハッシュ形と `FALCO{` が
-    現れないことを image build job で確認する) —— この検査は S-a が無くても価値がある I10 の実強制である。
+  - **I10 に触れないか (VP 指示による明示的検討。【rev.4】論法の順序を訂正)**: **触れない。**
+    根拠は次の順に載荷する:
+    1. **【主根拠 1・実測】焼く中身に資格情報が 1 つも無い。**
+       crypt ハッシュ 0 件 / 全 17 行が locked (`*` または `!`) ——
+       architect が実測し、**security-engineer が独立に再現**した (2026-08-18)。
+    2. **【主根拠 2・機械強制】それを恒久化する Verification 2-8。**
+       `make check-image-hygiene` が build から fail-closed で呼ばれる (H4) ので、
+       将来 image に本物のハッシュが入った時点で **build が落ちる**。
+       焼くのは **フラグ実値ではなく素の `/etc/shadow`** である (C3 / I10 が禁じるのは前者)。
+    3. (補助) 同一イメージ内に既に存在するビットの複製なので新規マテリアルを導入しない。
+       **これを第一根拠にしてはならない** —— image 内に本物の secret があった場合でも
+       「複製だから」で正当化してしまうため (security-engineer 指摘、rev.4 で訂正)。
   - **経路 7 (F5) を新設しないか**: しない。snapshot は **flag を含まない** (flag は実行時に seed 側へ append される)。
     したがって `/opt/ctf/plant-seed/etc/shadow` を読んでも **フラグは得られず**、
     mission 03 の代替 path にならない。participant は root なのでこの path を読めるが、
@@ -488,27 +547,46 @@ crypt ハッシュ形の文字列は 0 件**。`/root/.ssh` は **存在しな�
     S-a を併用しないなら「plant image の `/etc/shadow` を読む」ので **イベントは Falco 側では発火し続ける**
     (落とすのは ingest だけ) → Falco / Sysdig 側の event stream は汚れたままになる。
   - リスクと可逆性: 中程度に不可逆 (イメージ契約 = Cross-repo 契約表と platform 側 pin に波及)。
-    さらに **命名で壊れる** —— 例えば `falco-ctf/challenge-plant` と命名すると substring `falco-ctf/challenge` に
-    一致してフィルタが効かなくなる。**採点の正しさを image 名の綴りに依存させる**のは境界として悪い。
+    さらに **命名で壊れる** —— ingest は **`falco-ctf/challenge` と `falco-ctf-challenge` の
+    両方**を substring 一致で受理する (`internal/scoreboard/ingest/ingest.go:95`) ので、
+    `falco-ctf/challenge-plant` **だけでなく `falco-ctf-challenge-plant` も一致する**
+    (rev.4 = L3 で正確化。S-c を却下するので実害は無いが、将来 S-c が復活する際のために記録)。
+    **採点の正しさを image 名の綴りに依存させる**のは境界として悪い。
   - 効き始める閾値: 「plant が challenge image のツール群を必要としなくなった」場合のみ検討に値する。
   - → **採らない。** S-a はイメージ数も ingest も触らずに同じ結果 (イベント 0) を得る。
-- **S-d — ingest 側で initContainer を除外する**
-  - 変更点: webhook payload に container 名 (`k8s.container.name` / `container.name`) を持たせ、
-    ingest が `challenge` 以外を捨てる。
-  - 犠牲にするもの: **採点の入口を緩める** (security-engineer 同意権の領域)。加えて
-    **クロスリポ契約の変更** (`docs/openapi-scoreboard.yaml` の FalcoEvent output_fields と
-    platform 側 falcosidekick 設定 → 両リポ同時 PR)。
-  - コスト: spec + 実装 + platform 側の field 供給確認。
-  - リスクと可逆性: 可逆。偽陰性の評価: フィールド欠落時に「除外しない」側へ倒せば
-    **fail-closed (採点する側)** に保てるので偽陰性は作らない。participant は challenge コンテナにいるため
-    自分のイベントの `container.name` を偽装できない (Falco が runtime から取る)。
-    しかし **構造的な問題は「deploy 経路が騒がしくてよい」ことを許す**点にある ——
-    今回の欠陥は「ingest が拾ってしまった」ことではなく「deploy 経路がイベントを出した」ことなので、
-    S-d は症状を隠す。将来 plant が別の禁じ手を踏んでも観測されなくなる。
-  - 効き始める閾値: **「workspace Pod 内で challenge 以外のコンテナが定常的に syscall を出す」構成に
-    なったとき** (例: sidecar が増える)。そのときは S-a と併せて **defense-in-depth として採る価値がある**。
-  - → **本 ADR では採らない (推奨に含めない)。** ただし follow-up として起票する価値はあり、
-    採るなら **security-engineer 同意 + fail-closed 既定 + spec 追記**が条件 (下記 Consequences)。
+- **S-d — ingest 側で initContainer を除外する** 【rev.4 で却下根拠を差し替え】
+  - 変更点: ingest が Falco event の container 名 (`container.name` / `k8s.container.name`) を見て
+    `challenge` 以外を捨てる。
+  - 犠牲にするもの: **採点の入口を緩める** (security-engineer 同意権の領域)。
+  - コスト: **rev.3 は「クロスリポ契約変更 = 両リポ同時 PR」と書いたが、これは未検証だった (M7)。**
+    実際には `docs/openapi-scoreboard.yaml:401` の `output_fields` は
+    **`additionalProperties: {}`** で任意フィールドを許容し (typed なのは `k8s.ns.name` /
+    `k8s.pod.name` / `container.image.repository` の 3 つ = 同 `:402-408`)、falcosidekick は
+    output_fields を丸ごと転送するため **`container.name` は既に届いている可能性が高い**
+    (= platform 変更は不要かもしれない)。**これは実機 1 サンプルで確認できるが、
+    本 ADR では未検証である。** → **却下理由にコストを使わない。**
+  - **却下の主根拠 1 (RBAC。= 「今日 S-d が要らない本当の理由」)**:
+    `charts/ctf-user/templates/role.yaml:11-19` は `pods` **get** と `pods/exec` **create** を
+    `resourceNames: ["workspace"]` で与えるだけで、`pods/ephemeralcontainers` (patch) も
+    `pods` の create / patch も**無い** → **参加者は `kubectl debug` で ephemeral container を挿せない**。
+    加えて workspace の egress は collector のみで、`internal/collector/collector.go:125-135` が
+    公開するのは **submit / display-name / exfil の 3 本** (+ 自分の healthz / metrics) だけ ——
+    **`/falco/events` への中継口が無い** ので **イベント偽造投函経路も無い**。
+    → 現状 **container 名を作り分けられる主体が参加者側に存在しない**。
+  - **却下の主根拠 2 (カバー範囲が狭い)**: 運用者の `kubectl exec -c challenge` /
+    `kubectl cp` (`tar`) / 退役予定の `postStart` は **すべて container 名 `challenge` で走る**ので、
+    container 名フィルタは **1 つも除外しない**。I13 の外延 (b)(c)(e) に無効である。
+  - **却下の主根拠 3 (fail-closed と両立させると無言に no-op 化する)**:
+    フィールド欠落時に「除外しない」側へ倒す (= 採点する) 設計にしないと偽陰性を作るが、
+    そうすると **platform 側の config drift でフィールドが来なくなった瞬間に検査が無言で no-op になる**
+    = F2 の「閉じたつもりで閉じていない」の再生産。
+  - リスクと可逆性: 可逆。
+  - 効き始める閾値: **Signpost 7 または Signpost 9** (participant 操作に起因しないイベントの観測、
+    長命な challenge image コンテナの追加、ctf-user Role への `pods` create/patch 系 verb 追加)。
+  - → **本 ADR では採らない (not yet)。** 採るなら **security-engineer 同意 + fail-closed 既定 +
+    (必要なら) spec 追記 + 実機での field 到達確認**が条件。
+    **今回の欠陥は「ingest が拾った」ことではなく「deploy 経路がイベントを出した」ことなので、
+    S-d は症状を隠す**という評価は rev.3 から変わらない。
 - **S-e — Falco ルール側の除外を足す**
   - 変更点: `Read sensitive file untrusted` の除外に plant の文脈を追加する。
   - 犠牲にするもの: **採点そのもの。** 除外は participant にも等しく効くので、
@@ -569,6 +647,11 @@ crypt ハッシュ形の文字列は 0 件**。`/root/.ssh` は **存在しな�
 > **seed volume の root mount を禁止**する (禁止理由: `fd.name` が `/etc` 始まりでなくなり
 > mission 03 の forbidden rule を回避する代替 path になる)。
 > SA token は ttyd コンテナ限定の projected volume で供給する。
+> **【rev.4 追加】`/opt/ctf/plant-seed/` (S-a の snapshot) は、フラグ実値および資格情報を
+> 一切含まないこと。** 理由: snapshot は image の中にあり challenge はその image で走り
+> 参加者は root なので、**mount とは無関係に最初から可視**である。
+> F5 / Verification 1-4 は volumeMount の面しか塞がないので **1-4 ではカバーされない** ——
+> したがって I12 の明文条件として置き、機械強制は **Verification 2-8** で行う。
 > **機械強制**: `make check-flag-isolation` / `scripts/check-flag-isolation.sh` (静的、CI `chart-lint`)
 > \+ `charts/ctf-user/assert-flag-isolation.sh` (実機、`deploy-user.sh` から fail-closed 呼び出し)。
 
@@ -605,30 +688,78 @@ rev.2 は本 ADR の不変条件を **I11** と呼んでいたが、**ADR-0003 (
 | **I12** | challenge コンテナにフラグ実値の到達経路を設けない | 本 ADR | Proposed。昇格条件 = F1 + F2 の実装 |
 | **I13** | deploy 経路 (plant / seed 初期化) は Falco イベントを 1 件も出さない | 本 ADR (rev.3) | Proposed。昇格条件 = 下記 |
 
-根拠: ADR-0003 は既に Accepted かつ実装 PR が main に merge済 (`6701f3b` / `3843d23` / `c06e7ff`) で
-**昇格条件が本 ADR より先に揃う**ため。**この割り当ては VP 批准を要する** (どちらに I11 を割るかは
-本 ADR 単独では決められない。ただし「両方 I11」は選択肢ではない)。
+根拠: ADR-0003 は既に Accepted かつ実装 PR が main に merge 済 (`6701f3b` / `3843d23` / `c06e7ff`) で
+**昇格条件が本 ADR より先に揃う**ため。
+**【rev.4】この割り当ては VP 承認済 (2026-08-18)、security-engineer も同意。** 以後この番号で確定する。
 
-### 新たに守る不変条件 (提案: I13) —— deploy 経路の無汚染 【rev.3 で新設】
+### 新たに守る不変条件 (提案: I13a / I13b) —— deploy 経路の無汚染 【rev.3 新設 / rev.4 で 2 段化】
 
-> **I13**: **workspace の deploy 経路 (`plant` initContainer / seed 初期化 / 運用 assert) は、
-> Falco イベントを 1 件も発生させてはならない。**
-> 「window の外だから安全」は根拠にならない —— `eventsPerUser` と rule fire 履歴は永続し、
-> trigger 課題の auto-solve は attempt スコープ外である
-> (`internal/scoreboard/scoring/scoring.go:347-352`)。
-> 要件は**イベント数ゼロ**であり、手段は文脈で異なる (assert = builtin-only /
-> deploy = §F3′ の禁じ手表を踏まない)。
-> **機械強制**: `challenges/gen-values.sh --check` の静的走査 (Verification 2-7) +
-> `charts/ctf-user/assert-flag-isolation.sh` の自己 grep (Verification 3) +
-> **E2E の deploy 直後観測 (Verification layer 4)**。
+**rev.3 の I13 は 1 本で「deploy 経路は Falco イベントを 1 件も発生させてはならない」と書いていたが、
+これは (i) 根拠が事実に反し (H2)、(ii) 字義どおりには検証不能だった (H3)。rev.4 で 2 段に分ける。**
 
-**I13 の発効条件**: Verification 2-7 と layer 4 の両方が landing すること
-(I12 と同じ理由: 検証機構より先に紙のルールを増やさない)。
+> **I13a (強い不変条件・採点状態)**: **workspace の deploy 経路
+> (`plant` initContainer / seed 初期化 / 運用 assert / 運用者の workspace 操作) は、
+> 採点状態を 1 バイトも変えてはならない。**
+> 具体的には deploy 直後に、その user の **`solved` が空・`evade_dirty` が空・`exfil` が空**であること
+> (SQLite の永続 3 テーブル: `internal/store/store.go:137,154,175`)。
+> **機械強制**: Verification 2-7 (静的走査) + **layer 4 の 4-2 / 4-3 / 4-4** (実機観測)。
+>
+> **I13b (手段側の不変条件・発火)**: **deploy 経路は catalog のミッションルール
+> (下記「禁じ手表」の 9 本 = mission 10 の forbiddenRules 7 本 + 00 / 11 の expectedRules 2 本) を
+> 1 本も発火させてはならない。**
+> 手段は文脈で異なる (assert = builtin-only / deploy = §F3′ の禁じ手表を踏まない + S-a)。
+> **機械強制**: Verification 2-7 + `assert-flag-isolation.sh` の自己 grep (layer 3) + layer 4 の 4-1。
 
-**なぜ I12 と分けるのか**: I12 は「フラグ実値の到達経路」、I13 は「deploy 経路のイベント数」で
-**別の性質・別の検証手段**である。1 つの不変条件に束ねると、どちらかが破れたときに
+**根拠を `solved` / `evade_dirty` に接地する (rev.4 の訂正 = H2)**:
+rev.3 は「`eventsPerUser` と rule fire 履歴は永続する」と書いたが、**実コードでは両方とも誤り**である:
+
+| 対象 | 実態 | 根拠 |
+|---|---|---|
+| `eventsPerUser` | **in-memory map のみ。**「dashboard counter. **Not used for scoring**」と doc されており、`Reset()` で消える | `internal/store/store.go:82` (struct field)、同 `:38` (doc)、同 `:874-901` (`Reset`) |
+| `ruleFires` | **in-memory + `RetentionSeconds = 300` で prune** (表示専用) | 同 `:69`、`RecordRuleFire` = 同 `:492-509` |
+| 永続テーブル | **7 本** (`solved` / `display_names` / `hint_release` / `exfil` / `hint_views` / `step_checks` / `evade_dirty`)。**eventsPerUser 相当は存在しない** | 同 `:137,143,148,154,161,168,175` |
+
+→ **非永続なカウンタに不変条件の根拠を置くと「scoreboard を再起動すれば消えるので問題ない」という
+*成立してしまう反論* を許す。** I13a は永続する採点状態に接地しているのでこの反論を受けない。
+**Signpost 2 と Verification 4-1 の観測対象 (`eventsPerUser` / rule fire) は非永続である** ——
+scoreboard の再起動を挟むと観測値が失われるので、**測るなら再起動前に測る**。
+
+**非 catalog ルールの発火が I13a を破れない理由 (構造的。rev.4 = H3 への回答)**:
+platform は **Falco default ruleset をそのまま稼働**させており
+(`falco-ctf-platform/helmfile/releases/falco/values.yaml.gotmpl` に `rules_file` / `customRules` の
+上書きが無く `priority: notice` のみ = 同 `:28`)、`RecordRuleFire` は **ルール名を一切見ずに**
+in-memory カウンタを回す (`internal/store/store.go:492-509`)。
+したがって **plant が実行する `echo >>` / `mkdir -p` / `cat >` / `chmod` / (S-a) `cp` が
+ミッション外の default rule を発火させるかは実機でしか分からない**。
+しかし **solve は `slices.Contains(ch.ExpectedRules, rule)`、taint は
+`slices.Contains(ch.ForbiddenRules, rule)` を要求する** (`internal/scoreboard/scoring/scoring.go:369` / `:424`) ので、**catalog に無いルール名の発火は `solved` / `evade_dirty` を変えられない**。
+→ **非 catalog ルールの発火は I13b の対象外とし、I13a を破らない**。ただし
+**表示用フィード (`eventsPerUser` / `ruleFires`) は汚れる**ので、Signpost 2 と 4-1 は
+「絶対 0」ではなく「**catalog ルール由来が 0 かつ増分が説明可能**」で読む。
+
+**I13a / I13b の発効条件 (rev.4)**:
+
+1. Verification 2-7 (静的走査) と layer 4 (4-1〜4-4) の両方が landing すること
+2. **【H3】新 chart で 1 workspace を実際に deploy し、deploy 直後の状態を実測すること** ——
+   4-2 / 4-3 が 0 であること (I13a の受理条件) と、4-1 の実測値。
+   **4-1 が 0 でない場合は発火したルール名を列挙し、(a) いずれも catalog の 9 本でないことを確認し
+   (b) 禁じ手表に「default ruleset 由来として観測された既知ノイズ」節を追記する。**
+   **推論のまま Hard Invariant に昇格させない** (4-7 に適用したのと同じ規律を I13 自身にも適用する)
+
+**なぜ I12 と分けるのか**: I12 は「フラグ実値の到達経路」、I13 は「deploy 経路が採点に触れないこと」で
+**別の性質・別の検証手段**である。1 つに束ねると、どちらかが破れたときに
 「I12 は満たしている」と言えてしまう (rev.2 が実際にそうなっていた —— フラグ隔離は満たすが
 採点は汚す設計が「I12 準拠」として書かれていた)。
+
+#### I13 の外延 —— どこまでが「deploy 経路」か (rev.4 = M6)
+
+| # | 経路 | I13 の対象か | 根拠 / 扱い |
+|---|---|---|---|
+| a | **image build 時** (S-a の snapshot 作成 = `RUN cp -a /etc/shadow ...`) | **対象外** | build 時には k8s の ns / pod が存在せず、ingest の受理条件 (ns が `ctf-` 始まり + `pod == "workspace"` + image repo) を**満たしえない** (`internal/scoreboard/ingest/ingest.go:77-99`)。**明記しないと「S-a 自身が I13 違反」と読める**ので書く |
+| b | **challenge コンテナへの exec probe** (`livenessProbe` / `readinessProbe` の `exec`) | **対象** | 付ければ probe 周期ごとに違反する。現状 exec probe は **ttyd 側のみ** (`charts/ctf-user/templates/pod.yaml:88`)。challenge に追加しない |
+| c | **`lifecycle` hook** | **対象** | フラグ仕込み用途の `postStart` は退役するが、**口 (`pod.yaml:179-185`) は残る**。ここに何を書いても deploy 経路である |
+| d | **helm hook / Job / CronJob** | **対象 (現状は落ちる)** | pod 名が `workspace` でないため ingest で落ちる (`ingest.go:77`)。**その安全性が pod 名フィルタ依存である**ことを明記する (workspace 内で走らせるなら対象) |
+| e | **運用者の ad-hoc `kubectl exec` / `kubectl cp`** | **対象。ただし機械強制は不能** | **最大の穴。** `kubectl cp` はコンテナ内で `tar` を起動し、`tar` は `Read sensitive file untrusted` のどの除外リストにも無い (`challenges/03-stealth-read/rule.yaml:174-198`、`proc.name` 除外は同 `:178-183`。architect 実測: `tar` トークンは rule.yaml に存在しない) → **`/etc` 配下を含めれば発火し、participant に帰属する**。2026-08-16 の LIVE hotfix で `kubectl exec` は実在した経路。**統制は検知的のみ** = 下記 runbook の 1 行 (rule fire 増分確認) を **participant workspace に対するあらゆる `kubectl exec` / `kubectl cp` に拡張**する |
 
 ### 新たなクロスリポ契約の明文化 (F2)
 
@@ -662,6 +793,12 @@ rev.2 は本 ADR の不変条件を **I11** と呼んでいたが、**ADR-0003 (
   **参加者は自分の操作でない taint の原因を説明できず**、`requireExfil` の 10 では
   **flag の再配送**まで要求される (ADR-0003 §A2-2)。
   I13 + Verification 2-7 / layer 4 がその再発を機械で止める唯一の層である。
+- **【rev.4 = L1】§F3′ の禁じ手表は「どのコマンドがどのルールを踏むか / 踏まないか」を
+  公開リポに書いている。** security-engineer は **public → private への移設**を提案した。
+  評価: `rule.yaml` は既に docs サイトが参加者に描画する表示用抜粋であり除外リストも開示済なので
+  **限界的な追加開示**にとどまるが、「`sh` builtin なら発火しない」等は
+  **mission 03 / 05 の想定解に近い記述**である。**CEO 判断待ち** (公開境界の判断は CEO 専権)。
+  本 ADR 側では判断を先取りしない。
 - **【rev.3】S-d (ingest 側で initContainer を除外) を採用しない残余。**
   workspace Pod 内に challenge 以外のコンテナが増える構成 (sidecar 追加など) では、
   deploy 経路以外からも「参加者に帰属するが参加者の操作でないイベント」が入りうる。
@@ -692,6 +829,14 @@ rev.2 は本 ADR の不変条件を **I11** と呼んでいたが、**ADR-0003 (
   **その participant の `current` evade を恒久 taint する**。S-a 採用後はイベント 0 なので安全だが、
   **runbook の再 deploy 手順に「deploy 後に当該 user の rule fire が増えていないことを確認する」を
   1 行入れる** (owner = sre-engineer)。
+  **【rev.4 = M6 (e)】この 1 行の適用範囲を「再 deploy」から
+  「participant workspace に対するあらゆる `kubectl exec` / `kubectl cp`」へ拡張する。**
+  理由: `kubectl cp` はコンテナ内で `tar` を起動し、`tar` は `Read sensitive file untrusted` の
+  どの除外リストにも無い (`challenges/03-stealth-read/rule.yaml:178-183`) ので、
+  `/etc` 配下を含めれば **発火して participant に帰属する**。
+  2026-08-16 の LIVE hotfix で `kubectl exec` は実在した経路である。
+  **これは機械強制できない (検知的統制のみ)** ことを runbook に明記する ——
+  ADR で「閉じた」と読める書き方をしない。
 - リハーサル手順に mission **02/03/05/09/10** の再走を追加する (Signpost 1)。
 
 ## Signposts
@@ -710,8 +855,14 @@ rev.2 は本 ADR の不変条件を **I11** と呼んでいたが、**ADR-0003 (
 2. **evade 課題の solve が「workspace 作成から 60 秒未満 かつ その参加者の rule fire 0 件」で発生**
    (scoreboard は solve 時刻と `eventsPerUser` を保持している) —— 隔離が漏れているか H2 が使われている。
    イベント中に検出したい信号なので admin dashboard に出す価値がある。
-   **前提**: 検証・運用コマンドが Falco イベントを汚さないこと (F3)。`eventsPerUser` が
-   assert 由来で汚れるとこの Signpost は機能しない。
+   **前提**: 検証・運用コマンドが Falco イベントを汚さないこと (§F3′)。`eventsPerUser` が
+   assert / deploy 経路由来で汚れるとこの Signpost は機能しない。
+   **【rev.4 = H2 の注記】この Signpost の観測対象 (`eventsPerUser` と rule fire 履歴) は
+   *非永続*である** —— `eventsPerUser` は in-memory map で「Not used for scoring」と doc され
+   (`internal/store/store.go:38,82`)、`ruleFires` は `RetentionSeconds = 300` で prune され
+   (同 `:69,492-509`)、どちらも `Reset()` と pod 再起動で消える (同 `:874-901`)。
+   → **イベント中にリアルタイムで見る信号であり、事後監査には使えない。**
+   事後に残るのは `solved` / `evade_dirty` / `exfil` の 3 テーブルだけである。
 3. **ttyd の `kubectl exec` 失敗が発生する** (ttyd コンテナログの 403/401、workspace が
    ready なのにターミナルが繋がらない) —— projected token 化の回帰。→ 即 revert 対象。
 4. **新ミッションの仕込み先が bind mount で表現できない、または planted file に同一 fs 操作が必要**
@@ -725,14 +876,24 @@ rev.2 は本 ADR の不変条件を **I11** と呼んでいたが、**ADR-0003 (
 6. **【rev.3】participant が着手していないミッションが deploy 直後に solve 済**
    (とくに 02-credential-files) —— trigger の auto-solve 汚染。5 より弱い信号だが
    参加者から「もう終わってる」と申告される形で先に届くことがある。
-7. **【rev.3】workspace Pod に challenge image を使うコンテナが 2 つ以上になる、または
-   challenge 以外のコンテナが定常的に syscall を出す構成になる** ——
+7. **【rev.4 で書き換え = M1】layer 4 の 4-1 観測で participant の操作に起因しないイベントが
+   1 件でも記録される** (deploy 直後 / participant 未着手の時点 / challenge 以外の主体)、**または
+   challenge image を使う *長命* コンテナ (initContainer ではない) が workspace Pod に追加される** ——
    ingest の image repo フィルタ (`internal/scoreboard/ingest/ingest.go:95`) が
    「参加者の操作かどうか」の代理として機能しなくなる。
    → **S-d (container 名フィルタ)** を security-engineer 同意付きで起票する。
+   ※ rev.3 の文言 (「challenge image を使うコンテナが 2 つ以上になる」) は
+   **Option B 自身が day-one で満たしてしまう** (plant initContainer + challenge = 2 つ) ため
+   信号として機能しなかった。**性質ベース + layer 4 連動に置き換えた。**
 8. **【rev.3】新しい plant-target が build 時 snapshot で表現できない**
    (実行時にしか存在しないファイル / プロセス状態 / 動的生成物)。1 件出たら S-a の一般性が尽きたので、
    Signpost 4 と併せて initContainer + seed volume モデル自体の再設計を検討する。
+9. **【rev.4 新設 = R1】`charts/ctf-user/templates/role.yaml` に `pods` の create / patch 系 verb、
+   または `pods/ephemeralcontainers` (patch) が追加される** —— 現状は `pods` get と `pods/exec` create を
+   `resourceNames: ["workspace"]` で与えるだけ (`charts/ctf-user/templates/role.yaml:11-19`) なので、
+   **参加者は `kubectl debug` で ephemeral container を挿せない** = 自分のイベントの container 名を
+   作り分けられない。**これが「今日 S-d が要らない本当の理由」**なので、前提が崩れた時点で
+   **S-d を起票し再監査する** (Consequences の残存リスク参照)。
 
 ## Verification
 
@@ -778,10 +939,15 @@ rev.2 は本 ADR の不変条件を **I11** と呼んでいたが、**ADR-0003 (
 
 | # | assert |
 |---|---|
-| 1-8 | 出力全体のどこにも `FALCO{dev-probe}` という文字列が現れない (値は Secret に `b64enc` される) |
+| 1-8 | **【rev.4 = M4】2 本立てにする**: (i) 出力全体のどこにも `FALCO{dev-probe}` (平文) が現れない。(ii) **その base64 形 (`helm` の `b64enc` 相当) が `kind: Secret` かつ `metadata.name: ctf-flags` の `data:` 配下以外に現れない**。rev.3 は (i) だけで、`b64enc` された値が別の場所 (ConfigMap / annotation / initContainer の `value:`) に現れても素通りした |
 | 1-9 | `spec.automountServiceAccountToken == false` |
 | 1-10 | initContainer `plant` が存在し、その env は `secretKeyRef` / `envFrom.secretRef` のみ (平文 `value:` を持たない) |
 | 1-11 | ttyd の SA token は projected volume で、`plant` / `challenge` には mount されていない |
+| **1-14** | **【rev.4 = M3】initContainer `plant` に `restartPolicy` キーが存在しない。** `restartPolicy: Always` を付けると native sidecar になり、**`plant` が challenge と併走し続ける** = フラグ env を持つプロセスが session 中生存する |
+| **1-15** | **【rev.4 = M3】`spec.shareProcessNamespace` と `spec.hostPID` が未設定または `false`。** 1-14 と揃うと経路 2 (`/proc/<pid>/environ`) が **別コンテナのプロセス経由で復活する** (I12 の「これらに限らない」の具体化) |
+
+> **1-14 / 1-15 の番号について**: 1-12 / 1-13 は既に negative test (下表) に割り当て済のため、
+> rev.4 の追加分は 1-14 から採番する (項番は追加順であり、表の並び順ではない)。
 
 **negative test (テンプレートを落とす検査)**:
 
@@ -806,7 +972,13 @@ rev.2 は本 ADR の不変条件を **I11** と呼んでいたが、**ADR-0003 (
 | 2-5 | 各 plant.sh の書き込み先が宣言済み plant-target 配下に収まっている (`>` / `>>` / `cat >` / `mkdir -p` の宛先を静的走査。**best-effort ヒューリスティック**であることを script 内に明記) | 未宣言の書き込みは mount されず silently 消える |
 | 2-6 | 既存の values.yaml / values-all.yaml の drift 検査 (現行 `gen-values.sh:62-76` を維持) | C4 |
 | **2-7** | **【rev.3 新設・I13 の機械強制】生成された seed script が §F3′ の禁じ手集合に触れないこと** (静的走査): (a) 入力リダイレクト / コピー元が **`/opt/ctf/plant-seed/` 配下の allowlist のみ**、(b) `sensitive_file_names` の 4 path と `/etc/sudoers.d` `/etc/pam.d` が **read 位置に現れない**、(c) `grep` / `egrep` / `fgrep` / `find` / `ln` を呼ばない、(d) seed (emptyDir) 上に書いたファイルを exec しない。**2-5 と同じ best-effort ヒューリスティックである旨を script 内に明記する** | §F3′ の禁じ手表。deploy 経路は全 workspace・毎 deploy で走るので、assert 側より厳しく扱う |
-| **2-8** | **【rev.3 新設・I10 の機械強制】challenge image の `/etc/shadow` と `/opt/ctf/plant-seed/etc/shadow` の双方に、crypt ハッシュ形の文字列 (`:$<n>$...`) と `FALCO{` が現れないこと** (image build job 内で確認)。実測 (2026-08-18): 現行パッケージ集合では 0640 root:shadow / 17 行すべて locked (`*` / `!`) / ハッシュ 0 件 | S-a は「同一イメージ内のビットの複製」なので I10 の面を増やさないが、**将来 image に本物のハッシュが入ったら 2 箇所に増える**。紙で保証せず検査で止める |
+| **2-8** | **【rev.3 新設 / rev.4 で強化・I10 と I12 の機械強制】image hygiene 検査。** 対象は **`/opt/ctf/plant-seed/` ツリー全体**と、そこに対応する image 側の原本 (現状は `/etc/shadow` の 1 ファイル): (i) crypt ハッシュ形の文字列 (`:$<n>$...`) が現れない、(ii) `FALCO{` が現れない、(iii) **snapshot の mode / owner が原本と一致する** (実測: 0640 root:shadow)、(iv) **`find /etc -type f -links +1` が空** (= `cp -a` の `--preserve=links` が `link()` を発行しない条件。旧 4-7 (iii) を build 時 assert に降格 = L4)。**【rev.4 = H4】CI 限定にせず `make check-image-hygiene` として独立 target にし、`build` から fail-closed で呼ぶ** (CI にも入れる) | prod image は CI-free 運用で運用者が `make build` する (`Makefile:50-58` は素の `docker build` の羅列で **post-build フックが無い**) ため、**CI だけに置くと F2 と構造的に同一の穴**になる。実測 (architect + security-engineer が独立再現、2026-08-18): 現行パッケージ集合で 0640 root:shadow / 17 行すべて locked (`*` / `!`) / crypt ハッシュ 0 件 / `/etc` 配下に link 数 > 1 のファイル 0 件 / `cp -a /etc` 後も 0 件。**B2 を採ると I10 の面が 1 ファイル → `/etc` 全体に広がる** (下記) |
+
+> **【rev.4 = M5】B2 を採ると I10 の面が広がる。** B1 では snapshot は
+> **260 バイト 1 ファイル (`/etc/shadow`)** に固定されるが、B2 では `/etc` 全体になり
+> **将来どのパッケージが `/etc` に何を置くかに I10 の面が依存する**。
+> security-engineer もセキュリティ観点で **B1 を既定として支持**している (rev.4 の Advice 参照)。
+> B2 に切り替える場合は 2-8 をツリー全体に対して回すことが必須条件である。
 
 ### 3. **deploy 時の実機 assert (fail-closed)** —— 人手 runbook ではない (F2)
 
@@ -917,11 +1089,15 @@ background job の status を破棄しているので、この収集自体が実
   (`challenges/04-key-search/rule.yaml:16-27`) を満たさない)、**規約を単純に保つため
   assert script 全体を builtin-only とする**。
 - 3-6 は `test -f` のみ (open しない)。**`/root/.ssh/id_rsa` の内容は読まない。**
-- **(B) は補助的に併用する**: roster に含まれる `test1` workspace
-  (`deploy-event-workspaces.sh:157`) を、builtin 以外の破壊的検証が必要になったときの
-  専用ターゲットとする。ただし **既定経路では使わない** ——
-  (B) は「1 workspace 分の `eventsPerUser` を犠牲にする」ことでしか成立せず、
-  (A) は犠牲ゼロで全 workspace を検査できるため、(A) が既定である。
+- **(B) は補助的に併用する【rev.4 で書き直し】**: roster に含まれる `test1` workspace
+  (`falco-ctf-platform/scripts/deploy-event-workspaces.sh:158`) を、builtin 以外の検証が
+  必要になったときの専用ターゲットとする。ただし **既定経路では使わない**。
+  **rev.3 は (B) を「1 workspace 分の `eventsPerUser` を犠牲にする」と書いていたが、これは不要な前提だった**
+  —— `POST /api/admin/reset` が採点状態を全消去できるので (`internal/scoreboard/api/api.go:274` →
+  `internal/store/store.go:874-901`)、(B) は **「犠牲」ではなく「reset 前提」**である。
+  条件は 2 つ: **(i) 本番開始前にのみ実行する** (reset は全 user 一括 = WHERE 句無し)、
+  **(ii) 実行後に必ず reset して全 user のゼロを確認する** (4-7 の手順)。
+  それでも (A) が既定である理由は変わらない —— (A) は **reset も本番前という制約も要らない**。
 - **(C) 「Falco / scoreboard 起動前に実行」は採らない**: roster deploy は helmfile sync 後に
   走る (platform runbook Step 3) ため順序を作れず、順序に依存する検証は運用者が
   再現できない = layer にならない。
@@ -947,20 +1123,63 @@ submit / auto-solve 可能であること」であり、**02 が deploy 時に a
 運用者マシンから scoreboard の状態を読むだけなので、**検査自体が Falco イベントを出さない**。
 これは layer 3 に置けない理由でもある (`deploy-user.sh` は scoreboard の admin 面に到達しない前提)。
 
+**【rev.4 = M2】観測は settle window 付きで行う (これが無いと fail-open 観測になる)**:
+falcosidekick → scoreboard は非同期なので、`helm upgrade --wait` 直後に読むと
+**「まだ届いていない」だけで 0 が返り green になる**。要件:
+
+1. **事前確認**: **Falco と scoreboard の Pod が Running であること** (起動前に測ると常に 0 になる)。
+   `deploy-event-workspaces.sh` は helmfile sync 後に走る想定だが、**順序を暗黙の前提にしない**。
+2. **T+N 秒で読む**: N は **falcosidekick → scoreboard の送信遅延の実測値以上**
+   (実測値は 4-7 の probe で同時に取れる: exec 実行から `eventsPerUser` 増分が見えるまでの時間)。
+3. **2 回連続で同値**であることを確認する (1 回だけ 0 を見て green にしない)。
+4. 非永続な観測対象 (`eventsPerUser` / `ruleFires`) は **scoreboard を再起動する前に**測る
+   (`internal/store/store.go:82,69`)。
+
 | # | assert | 期待値 | 取得元 |
 |---|---|---|---|
-| 4-1 | deploy 完了直後、対象 user の rule fire が **0 件** | 0 | admin state の `eventsPerUser` |
+| 4-1 | **【rev.4 で書き換え】** deploy 完了直後 (settle window 後)、対象 user の **catalog ルール由来の rule fire が 0 件**。非 catalog (Falco default ruleset) 由来の発火が観測された場合は **ルール名を列挙し、禁じ手表の 9 本のいずれでもないことを確認**する (I13b の対象外・I13a は破れない) | catalog 由来 **0** / 非 catalog は **列挙して記録** | 件数 = admin state の `eventsPerUser`、ルール名 = `/api/users/{user}/me` / journey の recent-fires 投影 (**表示用ルックバックは 60 秒** = `internal/scoreboard/api/api.go:57-72`) または falcosidekick / Falco 側のログ。**いずれも非永続**なので再起動前に測る |
 | 4-2 | deploy 完了直後、対象 user の solved が **0 件** (とくに `02-credential-files`) | 0 | 同 |
 | 4-3 | deploy 完了直後、対象 user の全 evade 課題の `dirtyRules` が **空** | 空 | journey detail の `dirtyRules` (ADR-0003 §A3) |
 | 4-4 | **進行中の再 deploy を模す**: 01 を solve させて `current` を進めた後に同一 user を再 deploy し、4-1 の増分ゼロ・4-3 の空を再確認 | 変化なし | 同 (**Context の「再 deploy では evade も汚染される」経路の回帰**) |
 | 4-5 | mission 02 が **参加者の操作で** solve すること (`cat /etc/shadow` → CLEARED) | solve | (d) の通常手順に含まれる |
 | 4-6 | **B2 を採る場合のみ**: `/etc` ディレクトリ mount 下で kubelet の `/etc/hosts` / `/etc/resolv.conf` 重ねが壊れていないこと | 名前解決成功 | workspace 内 (この 1 件だけ workspace 内実行。`sh` builtin と `getent` は §F3′ の禁じ手に当たらない) |
-| 4-7 | **未実測項目の実測 (`test1` workspace 限定 = §F3 の (B))**: (i) **`cp -a /etc/shadow ...` が実際に `Read sensitive file untrusted` を発火させること** (架空の前提で設計しないため。故意違反 patch で 1 回だけ)、(ii) emptyDir 上の実行体が `proc.is_exe_upper_layer` と判定されるか、(iii) B2 の `cp -a` が `link()` を発行しないこと、(iv) `proc.name` が `cp` / `sh` として観測されること (alpine の `/bin/cp` は coreutils multicall への symlink、`/bin/sh` は busybox への symlink である) | (i) 発火する (ii)(iii)(iv) 記録 | `test1` workspace (`deploy-event-workspaces.sh:157`)。**既定経路では走らせない** |
+| 4-7 | **【rev.4 で手法変更 = H1】未実測項目の実測。`test1` への単発 `kubectl exec` で行い、故意違反 patch は使わない**: (i) `kubectl -n ctf-test1 exec workspace -c challenge -- sh -c 'cp -a /etc/shadow /tmp/probe'` を **1 回だけ**実行し、`Read sensitive file untrusted` の発火と mission 02 の auto-solve を観測する。(ii) emptyDir 上の実行体が `proc.is_exe_upper_layer` と判定されるか。(iii) → **2-8 (iv) の build 時 assert に降格 (L4。security-engineer が独立に実測済)**。(iv) Falco が観測する `proc.name` の実値 (`/bin/cp` は coreutils multicall、`/bin/sh` は busybox への symlink なので `comm` が何になるかは実測事項)。**あわせて M2 の N (送信遅延) を測る** | (i) 発火する (ii)(iv) 記録 | `test1` workspace (`falco-ctf-platform/scripts/deploy-event-workspaces.sh:158`)。**実行後に必ず後始末 (下記)** |
 
-> **4-7 の位置づけ**: 「`cp` が発火する」は本 rev.3 では **除外条件の構造 (`proc.pname` gate) からの
-> 推論**であって実測ではない。**推論のまま Hard Invariant に昇格させない** ため、
-> 4-7 (i) を実測項目として明示する。ただし **推論が外れていても S-a は無駄にならない**
-> (S-a は「発火しない」ではなく「条件に到達しない」ので、`cp` の発火有無に依存しない)。
+> **【rev.4 = H1】4-7 の手順と後始末 (DoD 13)**
+>
+> 1. **本番開始前にのみ実行する。**
+> 2. `kubectl -n ctf-test1 exec workspace -c challenge -- sh -c 'cp -a /etc/shadow /tmp/probe'` を 1 回。
+>    親が `sh` なので `cmp_cp_by_passwd` の `proc.pname` gate が **plant 文脈と同一に再現**され、
+>    ingest の ns / pod / image も initContainer と同一である
+>    (`internal/scoreboard/ingest/ingest.go:77-99`) → **plant と等価な観測になる**。
+> 3. 発火と 02 の solve、および送信遅延 N を記録。
+> 4. **`POST /api/admin/reset` を叩く** (`internal/scoreboard/api/api.go:274` → `Store.Reset()` =
+>    `internal/store/store.go:874-901`。`solved` / `exfil` / `hint_views` / `step_checks` /
+>    `evade_dirty` を DELETE し、in-memory の `eventsPerUser` / `ruleFires` / `dirtyRules` も 0 に戻す)。
+> 5. **全 user の状態がゼロであることを確認**してから本番を開始する。
+>
+> ⚠️ **admin reset は全 user 一括である** —— `DELETE FROM solved` 等に **WHERE 句が無い**
+> (`internal/store/store.go:877-891`)。**参加者の進行が始まった後には使えない。**
+>
+> **なぜ rev.3 の「故意違反 patch」を廃止したか (H1 = PASS の条件)**: patch は
+> **全 workspace に波及する運搬体**を通る。
+> `falco-ctf-platform/scripts/deploy-event-workspaces.sh:156-172` は
+> `users=(user1..$COUNT test1)` を回して **同じ `$DEPLOY` を同じ引数で**呼ぶだけで、
+> plant / seed の実体は生成物 `challenges/values-all.yaml` = **全 user に同一ファイル**であり、
+> `charts/ctf-user/deploy-user.sh:168` が **作業ツリーから読む**
+> (`ALL_VALUES="${CHALLENGES_DIR}/values-all.yaml"`、探索既定は `:55,119`)。
+> → **patch した作業ツリーで次に roster deploy を打つと、16 名全員の mission 02 が solved に入る。**
+> rev.3 の防御は「既定経路では走らせない」という **散文 1 文だけ**だった (VP + architect 独立確認)。
+> **単発 exec は共有アーティファクトを 1 バイトも変更しない**ので、この運搬体を構造的に持たない。
+>
+> **Verification 1 の「故意違反 patch」は廃止しない**: あちらは `helm template` 出力に対する
+> **CI 内の静的検査**であり、`values-all.yaml` にも実クラスタにも触れないので H1 の対象外である。
+>
+> **4-7 (i) の位置づけは変わらない**: 「`cp` が発火する」は除外条件の構造 (`proc.pname` gate) からの
+> **推論**であって実測ではない。**推論のまま Hard Invariant に昇格させない**ため実測項目に置く。
+> ただし **推論が外れていても S-a は無駄にならない** ——
+> S-a は「除外されるから発火しない」ではなく「**ルールの条件に到達しない**」なので、
+> `cp` の発火有無に依存しない。
 
 ### 実装 PR の完了条件 (Definition of Done)
 
@@ -969,18 +1188,36 @@ submit / auto-solve 可能であること」であり、**02 が deploy 時に a
 > 差し替えた 2 つはいずれも **rev.2 の内部矛盾に由来する** ——
 > 旧 2 は「seed 初期化が image rootfs 由来であること」を要求していたが、これが欠陥の本体だった。
 > 旧 3 は builtin-only 規約を **assert についてのみ**要求していた。
+>
+> **rev.4 の差分 (14 → 16 項目)**: **項目 1 / 2 / 12 / 13 / 14 を差し替え**、
+> **項目 15 / 16 を追加**した。項目 3〜11 は変更なし。
+> - **1**: 1-14 / 1-15 (M3) と 1-8 の 2 本立て (M4) を追加 → 故意違反 patch は 4 → **6 ケース**
+> - **2**: 2-8 を **項目 15 に分離** (H4)。項目 2 は 2-1〜2-7 と snapshot の焼き込みに限定
+> - **12**: layer 4 に **settle window と Running 事前確認** (M2)、4-1 の判定基準変更 (H2 / H3)
+> - **13**: 4-7 を **故意違反 patch → `test1` への単発 exec + admin reset** に変更 (**H1 = PASS の条件**)
+> - **14**: I13 → **I13a / I13b**、**deploy 直後の実測を昇格条件に追加** (H3)。番号は VP 承認済
+> - **15 (新)**: `make check-image-hygiene` を `build` から fail-closed で呼ぶ (H4)
+> - **16 (新)**: runbook の rule-fire 確認を **あらゆる `kubectl exec` / `kubectl cp`** に拡張 (M6 (e))
 
-1. `scripts/check-flag-isolation.sh` が Verification 1 の 1-1〜1-13 を実装し、
-   `chart-lint` job から呼ばれ、**allowlist を 1 つ外した / `envFrom` を足した /
-   seed root を mount した / `extraEnv` に `CTF_FLAG_*` を渡した 4 つの故意違反 patch で
-   実際に fail することを PR 本文に貼る** (assert が assert していることの証明)。
-2. **【rev.3 で差し替え】** `challenges/gen-values.sh --check` が Verification 2 の **2-1〜2-8** を実装し、
+1. **【rev.4 で更新】** `scripts/check-flag-isolation.sh` が Verification 1 の
+   **1-1〜1-15** を実装し (rev.4 で **1-8 を平文 + base64 の 2 本立て**に、
+   **1-14 = `plant` の `restartPolicy` 不在**、**1-15 = `shareProcessNamespace` / `hostPID`** を追加)、
+   `chart-lint` job から呼ばれ、**次の 6 つの故意違反 patch で実際に fail することを PR 本文に貼る**:
+   allowlist を 1 つ外した / `envFrom` を足した / seed root を mount した /
+   `extraEnv` に `CTF_FLAG_*` を渡した / **`plant` に `restartPolicy: Always` を付けた** /
+   **フラグの b64 形を Secret 以外に置いた** (assert が assert していることの証明)。
+   **これらは `helm template` 出力に対する CI 内の静的検査であり、
+   共有アーティファクト (`challenges/values-all.yaml`) にも実クラスタにも触れない**
+   ので H1 (下記 13) の対象ではない。
+2. **【rev.3 で差し替え / rev.4 で範囲を縮小】** `challenges/gen-values.sh --check` が
+   Verification 2 の **2-1〜2-7** を実装し、
    **重複 plant-target (03/10 = `/etc/shadow`) が mount リストで 1 エントリに畳まれること**と、
    **seed 初期化の供給元が `/opt/ctf/plant-seed/` 配下の build 時 snapshot であること (2-3)**、
    **生成 seed script が §F3′ の禁じ手集合に触れないこと (2-7)** を検査する。
-   併せて image 側に snapshot の焼き込み (`images/challenge/Dockerfile`) と
-   **I10 guard (2-8)** を入れる。
+   併せて image 側に snapshot の焼き込み (`images/challenge/Dockerfile`) を入れる。
    **旧 2 の「seed 初期化が image rootfs 由来であること」は撤回** (それが汚染の原因だった)。
+   **2-8 (image hygiene) は項目 15 に分離した (rev.4 = H4)** —— `gen-values.sh` は
+   リポジトリの静的検査であり、**ビルド済み image の中身を見られない**ため。
 3. **【rev.3 で差し替え】** `charts/ctf-user/assert-flag-isolation.sh` が Verification 3 の 3-1〜3-7 を
    **builtin-only** で実装し、`deploy-user.sh` から呼ばれて violation で非ゼロ終了する。
    **script 内に外部バイナリ (`grep`/`cat`/`head`/`tail`/`awk`/`find`/**`cp`**) を使わない旨と理由を明記**し、
@@ -1004,17 +1241,42 @@ submit / auto-solve 可能であること」であり、**02 が deploy 時に a
     「planted file に同一 fs 操作 (hardlink/rename) を要求する mission は書けない」を追記。
 11. **mission 05 の実効ゲート不在**を別 Issue として起票し、本 ADR の「限界」節をリンクする
     (実装は本 PR のスコープ外)。
-12. **【rev.3 追加】Verification layer 4 (4-1〜4-5、B2 採用時は 4-6) を ADR-0003 Verification (d) の
-    E2E に組み込み**、結果を PR 本文に貼る。**4-4 (進行中の再 deploy) を必ず含める** ——
-    これが「再 deploy で evade が恒久 taint される」経路の唯一の回帰である。
+12. **【rev.3 追加 / rev.4 で更新】Verification layer 4 (4-1〜4-5、B2 採用時は 4-6) を
+    ADR-0003 Verification (d) の E2E に組み込み**、結果を PR 本文に貼る。
+    **4-4 (進行中の再 deploy) を必ず含める** —— これが「再 deploy で evade が恒久 taint される」
+    経路の唯一の回帰である。**rev.4 追加要件**: (a) **Falco と scoreboard が Running であることの
+    事前確認**、(b) **T+N 秒 (N = 4-7 で実測した送信遅延以上) で読み 2 回連続同値**、
+    (c) **4-1 は「catalog ルール由来 0」で判定**し、非 catalog 由来はルール名を列挙して記録する。
     owner = qa-engineer (未取得の助言、下記 Advice)。
-13. **【rev.3 追加】4-7 の未実測項目を `test1` workspace で実測し、結果を PR 本文に貼る**
-    ((i) `cp` の発火有無 (ii) emptyDir 実行体の upper-layer 判定 (iii) `cp -a` の `link()`
-    (iv) `proc.name` の観測値)。**既定経路 (全 workspace) では走らせない。**
-14. **【rev.3 追加】Hard Invariants 表に I13 を追記**し、**I11 / I12 / I13 の番号割り当てを
-    VP が批准する** (Consequences の「不変条件の番号」表)。
-    I13 の追記は **2-7 と layer 4 が揃うまで行わない** (I12 と同じ発効条件の考え方)。
-    ADR-0003 側の I11 候補との衝突を残したまま `.claude/rules/` に書かない。
+13. **【rev.3 追加 / rev.4 で手法変更 = H1】4-7 の未実測項目を `test1` workspace への
+    *単発 `kubectl exec`* で実測し、結果を PR 本文に貼る** —— (i) `cp` の発火有無
+    (ii) emptyDir 実行体の upper-layer 判定 (iv) `proc.name` の観測値 (+ 送信遅延 N)。
+    **(iii) は項目 15 の build 時 assert に移動 (L4)。**
+    **故意違反 patch は使わない** (共有アーティファクト `challenges/values-all.yaml` を通じて
+    全 workspace に波及するため)。**後始末を必須手順とする**: 本番開始前に実行 →
+    `POST /api/admin/reset` → **全 user の状態ゼロを確認** → 本番開始
+    (reset は全 user 一括なので参加者の進行開始後には使えない)。
+14. **【rev.3 追加 / rev.4 で更新】Hard Invariants 表に I13a / I13b を追記**する。
+    **番号割り当て (I11 = ADR-0003 / I12 = フラグ隔離 / I13 = deploy 無汚染) は VP 承認済**
+    (rev.4)。追記は次の 2 つが揃うまで行わない:
+    (a) **2-7 と layer 4 (4-1〜4-4) が landing していること**、
+    (b) **【H3】新 chart で 1 workspace を実際に deploy し、deploy 直後の状態を実測していること**
+    —— 4-2 / 4-3 が 0 であること (I13a の受理条件) を確認し、4-1 が 0 でなければ
+    **発火したルール名を列挙して禁じ手表に「default ruleset 由来の既知ノイズ」節を追記**する。
+    **推論のまま Hard Invariant に昇格させない。**
+15. **【rev.4 追加 = H4】`make check-image-hygiene` (Verification 2-8) を独立 target として実装し、
+    `make build` から fail-closed で呼ぶ** (CI の image build job にも入れる)。
+    検査対象は `/opt/ctf/plant-seed/` **ツリー全体**と対応する原本:
+    crypt ハッシュ形 / `FALCO{` の不在、**mode / owner の一致**、
+    **`find /etc -type f -links +1` が空**であること。
+    根拠: prod image は CI-free 運用で運用者が `make build` する
+    (`Makefile:50-58` に post-build フックが無い) ため、**CI だけでは本番 image を gate できない**
+    (F2 と構造的に同一の穴)。owner = platform-engineer / release-engineer。
+16. **【rev.4 追加 = M6 (e)】runbook の「deploy 後に当該 user の rule fire 増分を確認する」1 行を、
+    participant workspace に対する *あらゆる* `kubectl exec` / `kubectl cp` に拡張**し、
+    **機械強制できない (検知的統制のみ) 旨を明記**する。
+    根拠: `kubectl cp` はコンテナ内で `tar` を起動し、`tar` はどの除外リストにも無い。
+    owner = sre-engineer。
 
 ## Advice
 
@@ -1084,12 +1346,86 @@ submit / auto-solve 可能であること」であり、**02 が deploy 時に a
     `cp` = GNU coreutils 9.7 (`/bin/cp` は multicall への symlink)。
   - **実測できていない項目** (→ 4-7): `cp` の実発火、emptyDir 上実行体の `proc.is_exe_upper_layer`、
     `cp -a` が `link()` を発行しないこと、Falco が観測する `proc.name` の実値。
+- **security-engineer (2026-08-18, rev.3 に対する独立監査)**: 判定 **PASS with conditions**。
+  **H1 は「現行文言のままなら BLOCK に切り替える」と明示された条件**であり、rev.4 はこれを満たすために
+  4-7 の手法を変更した。findings (severity 順):
+  - **H1 [HIGH・BLOCK 転換条件]** 4-7 の「故意違反 patch」は **全 workspace に波及する運搬体**を通る
+    (`deploy-event-workspaces.sh:156-172` が全 user に同じ `$DEPLOY` を同じ引数で呼び、
+    plant/seed の実体は共有の `challenges/values-all.yaml` = `deploy-user.sh:168` が作業ツリーから読む)。
+    ADR の防御は散文 1 文だけだった → **`test1` への単発 `kubectl exec` + admin reset に置換**
+    (Verification 4-7、DoD 13)。**§F3 (B) の「test1 を犠牲にする」前提も不要になった**ので書き直した。
+  - **H2 [HIGH]** I13 の根拠「`eventsPerUser` と rule fire 履歴は永続する」が**両方誤り**
+    (`store.go:38,69,82,492-509,874-901`、永続テーブルは 7 本で該当なし)。
+    → **`solved` / `evade_dirty` に接地し直した** (I13a)。非永続なカウンタに根拠を置くと
+    「再起動すれば消えるので問題ない」という *成立してしまう反論* を許す。
+  - **H3 [HIGH]** 禁じ手表はミッション由来 9 本なのに I13 / 4-1 は **ruleset 全体**を主張していた。
+    platform は Falco default ruleset をそのまま稼働させ (`values.yaml.gotmpl:28` に
+    `rules_file` / `customRules` 無し)、`RecordRuleFire` はルール名を見ない
+    (`store.go:492-509`) → **plant の `echo` / `mkdir` / `chmod` / `cp` が default rule を
+    踏むかは実機でのみ確認可**。→ **I13a / I13b に 2 段化 + 昇格条件に deploy 直後の実測を追加**。
+  - **H4 [HIGH]** 2-8 が CI 限定では本番 image を gate しない (`Makefile:50-58` に post-build フック無し、
+    prod は CI-free で運用者が `make build`) → **`make check-image-hygiene` を build から fail-closed 呼び出し**
+    (DoD 15)。
+  - **M1 [MEDIUM]** Signpost 7 は **Option B 自身が day-one で満たす** → 性質ベース + layer 4 連動へ。
+  - **M2 [MEDIUM]** layer 4 に settle window が無く **fail-open 観測**だった → Running 事前確認 +
+    T+N + 2 回連続同値。
+  - **M3 [MEDIUM]** initContainer に `restartPolicy: Always` を付けると native sidecar 化して
+    **plant が session 中生存**し、`shareProcessNamespace` / `hostPID` と揃うと経路 2 が復活 →
+    **1-14 / 1-15**。
+  - **M4 [MEDIUM]** 1-8 が **base64 形**を見ていない → 平文 + b64 の 2 本立て。
+  - **M5 [MEDIUM]** 2-8 が 2 path 固定で mode/owner 未検査 → **`/opt/ctf/plant-seed/` ツリー全体 +
+    mode/owner 一致**。あわせて **B2 は I10 の面を `/etc` 全体に広げる**ことを明記
+    (security-engineer は **セキュリティ観点でも B1 既定を支持**)。
+  - **M6 [MEDIUM]** I13 の外延に 5 経路が未記載 → **(a) image build = 対象外と明記**
+    (ns/pod/image が ingest の受理条件を満たしえない。書かないと「S-a 自身が I13 違反」と読める) /
+    (b) exec probe / (c) lifecycle hook / (d) helm hook・CronJob (pod 名フィルタ依存) /
+    **(e) 運用者の ad-hoc `kubectl exec` / `kubectl cp` = 最大の穴 (`tar` は除外リストに無い)。
+    機械強制不能・検知的統制のみと正直に書き、runbook の 1 行を全 exec/cp に拡張** (DoD 16)。
+  - **M7 [MEDIUM]** S-d のコスト記述 (「両リポ同時 PR が必要」) が**未検証**だった ——
+    `docs/openapi-scoreboard.yaml:401` の `output_fields` は `additionalProperties: {}` で
+    任意フィールドを許容するので **`container.name` は既に届いている可能性が高い** →
+    **却下理由からコストを外し、「未検証」と明記**。
+  - **R1 (S-d 非採用には同意。ただし根拠の差し替えを要求)**: 「今日 S-d が不要な本当の理由」は
+    S-a ではなく **RBAC** —— `charts/ctf-user/templates/role.yaml:11-19` は `pods` get と
+    `pods/exec` create のみで `pods/ephemeralcontainers` も `pods` create/patch も無いため
+    **参加者は `kubectl debug` で container 名を作り分けられない**。加えて workspace の egress は
+    collector のみで公開口は submit / display-name / exfil の 3 本
+    (`internal/collector/collector.go:125-135`) = **イベント偽造投函経路も無い**。
+    さらに **S-d のカバー範囲は狭い** (運用者の exec / `kubectl cp` / `postStart` はすべて
+    container 名 `challenge` で走るので 1 つも除外しない) → **却下根拠を差し替え + Signpost 9 新設**。
+  - **I10 の論法の順序 [同意済]**: 「同一イメージ内のビットの複製だから」を第一根拠にしてはならない
+    (image 内に本物の secret があった場合でも複製を正当化してしまう) →
+    **実測 (資格情報 0 件) と 2-8 の機械検査を主根拠に格上げ**。
+  - **`/opt/ctf/plant-seed/` の攻撃面 [LOW・明文化要求]**: snapshot は image 内にあり参加者は root なので
+    **mount とは無関係に最初から可視**で、F5 / 1-4 ではカバーされない →
+    **I12 の禁止列挙に「plant-seed はフラグ実値・資格情報を一切含まない」を明文の条件として追加**。
+  - **L1 [LOW・CEO 判断]** 禁じ手レシピの public → private 移設 → 残存リスクに「CEO 判断待ち」として記録。
+  - **L2 [LOW]** B1 の subPath bind は既定 read-write → **`readOnly: true` にできる箇所を明記**。
+  - **L3 [LOW]** ingest は `falco-ctf/challenge` と `falco-ctf-challenge` の**両方**を受理するので
+    S-c の命名リスクはより広い (`falco-ctf-challenge-plant` も一致) → 正確化。
+  - **L4 [LOW・独立再現]** architect の実測を**全項目再現**し、さらに
+    **`/etc` 配下で link 数 > 1 のファイルは 0 件、`cp -a /etc /tmp/etccopy` 後も 0 件**
+    (= `cp -a` は `link()` を発行しない) を実証 → **4-7 (iii) を build 時 assert (2-8 (iv)) に降格**。
+    architect も独立に同じ結果を確認した (`find /etc -type f -links +1` = 0 件、コピー後も 0 件)。
+  - **L5 [LOW]** 「初回 deploy では evade 無傷」は **scenario 先頭が trigger であることに依存した偶然** →
+    条件付きであることを明記 (Context)。
+- **architect (2026-08-18, rev.4 起草)**: 上記 findings を全件反映した。**反対しなかったが形を変えた 1 件**:
+  H3 について、「4-1 の期待値 0 も誤りになる」という指摘は受け入れるが、**I13a を弱めない形**で解いた ——
+  **非 catalog ルールの発火は構造的に `solved` / `evade_dirty` を変えられない**
+  (solve / taint は `slices.Contains` でルール名一致を要求する = `scoring.go:369` / `:424`) ので、
+  **昇格 gate は 4-2 / 4-3 (絶対 0) に置き、4-1 は「catalog 由来 0 + 非 catalog は列挙」に変更**した。
+  **訂正 1 件**: security-engineer が `Read sensitive file untrusted` の除外集合を
+  `rule.yaml:169-176` と引用したが、実ファイルでは **`:174-198` (`proc.name` 除外リストは `:178-183`)**
+  である (`:169-176` は `desc`)。`tar` がどの除外リストにも無いという結論は変わらない
+  (architect 実測: `rule.yaml` に `tar` トークンは存在しない)。
 - **未取得の助言**: sre-engineer (roster script の exit status 収集と abort 挙動 —— 実装項目 4 の
-  owner。**rev.3 で追加: 再 deploy 手順への rule-fire 確認 1 行**)、
+  owner。**rev.3 で追加: 再 deploy 手順への rule-fire 確認 1 行 / rev.4 で拡張: 全 `kubectl exec` /
+  `kubectl cp` = 実装項目 16**)、
   qa-engineer (mission 02/03/09/05 の発火テストと EXDEV 実測の手順化 —— 実装項目 5/6。
   **rev.3 で追加: layer 4 を ADR-0003 (d) の E2E に組み込む = 実装項目 12/13**)、
-  **security-engineer (rev.3 で追加: (a) S-d を採らない判断と Signpost 7 の起票条件、
-  (b) I13 の文言、(c) 4-7 の実測手順が `test1` 1 workspace 以外を汚さないことの独立確認)**。
+  **security-engineer は rev.3 監査で取得済 (上記)。rev.4 に対して残る依頼は
+  (a) 4-7 の *新* 手順 (単発 exec + admin reset) が `test1` 以外を汚さないことの独立確認、
+  (b) I13a / I13b の文言、(c) H3 の deploy 直後実測の立会い**。
   **実装 PR までに取得すること。**
 - **CEO 批准が不要になった事項 (rev.3)**: S-c (plant 用の新イメージ = I5 の 8 → 9) を**採らない**ので、
   本 ADR はイメージ数を変更しない。**I11 / I12 / I13 の番号割り当ては VP 批准事項**
