@@ -1,6 +1,6 @@
 # ADR-0004: capstone (mission 10) の両経路は「auto-solve を観測してから手動 submit」の順で E2E 検証する
 
-- Status: Proposed
+- Status: **Accepted** (app#140 merge = CEO 批准, 2026-08-19)
 - Date / Deciders: 2026-08-19 / architect (起草・解釈判定) + VP (承認) + qa-engineer (E2E 計画側) + CEO (merge)
 - 関連: **ADR-0003 (Accepted) の `## Verification (d)` を部分 supersede する** (下記「supersede の範囲」)、
   ADR-0001 (Accepted。`## Verification` layer 4 が (d) と同一 E2E run に相乗りする)、
