@@ -194,3 +194,9 @@ When asked to REVIEW a challenge:
   heuristically flags bare-path writes, but the flag lands wrong (or hits a
   real sensitive path) before the check catches it if you get this wrong
   locally and forget to run it.
+- **A planted file is a read-only bind mount** (ADR-0001, security-engineer
+  A9): the chart mounts each plant-target `readOnly: true`. A mission cannot
+  require *writing* to a planted path at runtime — e.g. `passwd`/`chpasswd`/
+  `useradd` against a planted `/etc/shadow` fails with `EROFS`. Design the
+  solve path (and any "make it persist" flourish) around reading/exfiltrating
+  the planted content, not modifying it.

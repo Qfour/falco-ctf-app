@@ -211,7 +211,7 @@ challenge コンテナは UID 表のとおり **root (0) が意図的** (CTF rea
   実行されない。`plant` initContainer (image は challenge と同一、I5 に触れない)
   が `ctf-flags` Secret から `CTF_FLAG_<ID>` を受け取り、seed emptyDir
   (`$PLANT_SEED_ROOT`) に書く。`challenge` は宣言済み `# plant-target:` に
-  対応する subPath mount だけを見る (seed root は mount しない — I12)。
+  対応する subPath mount だけを見る (seed root は mount しない — ADR-0001 提案 I12)。
   `challenge` の env には `CTF_FLAG_*` は一切出現しない。
 - `values.yaml` / `values-all.yaml` は `make gen-values`
   (`challenges/gen-values.sh`) で plant.sh から生成。**手書き禁止**。
@@ -256,7 +256,7 @@ challenge コンテナは UID 表のとおり **root (0) が意図的** (CTF rea
 | Challenges path | `deploy-user.sh --challenges-dir` (ctf-user chart 同梱、当 repo `challenges/` を default 参照) |
 | Webhook payload | `POST /falco/events` は falcosidekick 標準形。フィールドキー変更は両 repo 同時 PR |
 | Cookie domain | `.<ctf-domain>` は platform が決定。app 側は前提とする |
-| Flags (**ADR-0001 Option B で更新**) | platform `events/<date>/flags.sops.yaml` が正典。scoreboard へは変わらず `FLAGS_FILE`。仕込み側は **`ctf-flags` Secret (`CTF_FLAG_<ID>` キー) → `plant` initContainer にのみ `envFrom`/`secretKeyRef` で到達** — `challenge` コンテナの env には CTF_FLAG_* は一切出現しない (I12)。`deploy-user.sh --flags-file` の `--set-string challenge.flags.<id>=...` という *引数* 面は不変 (C6)、到達経路だけが変わった。app は `FALCO{dev-<slug>}` placeholder のみ保持。dev default 値は両 repo で一致させる |
+| Flags (**ADR-0001 Option B で更新**) | platform `events/<date>/flags.sops.yaml` が正典。scoreboard へは変わらず `FLAGS_FILE`。仕込み側は **`ctf-flags` Secret (`CTF_FLAG_<ID>` キー) → `plant` initContainer にのみ `envFrom`/`secretKeyRef` で到達** — `challenge` コンテナの env には CTF_FLAG_* は一切出現しない (ADR-0001 提案 I12)。`deploy-user.sh --flags-file` の `--set-string challenge.flags.<id>=...` という *引数* 面は不変 (C6)、到達経路だけが変わった。app は `FALCO{dev-<slug>}` placeholder のみ保持。dev default 値は両 repo で一致させる |
 | `ALLOWED_ORIGINS` (P23-2, **platform 側 P19-2a で landing 済**) | scoreboard の origin-guard middleware (`internal/scoreboard/originguard`) が読む CSRF 対策アローリスト env。chart 側は `charts/scoreboard/values.yaml` の `env.allowedOrigins` (default `""` = fail-closed = 全ガード対象ルートが拒否) と `templates/deployment.yaml` で受け皿を用意済み。**platform helmfile (`releases/scoreboard/values*.gotmpl` 等) が P19-2a (platform#54) でこの値の供給を landing 済み**。P19-2b の単一 origin 化後は値がさらに単一化: `https://app.<dnsSuffix>` の一値 (旧・host分離時代の `https://journey.<dnsSuffix>` 等の複数値は不要になった)。`userN.<dnsSuffix>` の ttyd origin は含めない (CSRF 踏み台化を防ぐため意図的に対象外)。値の実供給・検証は platform-lead 側 |
 
 ## scoreboard ingest フィルタ (defense-in-depth)
