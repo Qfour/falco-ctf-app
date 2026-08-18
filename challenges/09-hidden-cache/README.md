@@ -7,16 +7,19 @@ hardlink 作成を直接検知。
 
 ## ゴール
 
-`/etc/shadow` 等の sensitive file に対する hardlink を作成して
+sensitive file (`/etc/sudoers` 等) に対する hardlink を作成して
 `Create Hardlink Over Sensitive Files` を発火させる。
 
 ## 想定解
 
 ```bash
-ln /etc/shadow /tmp/.cache.bak
+ln /etc/sudoers /tmp/.cache.bak
 # 確認:
-ls -la /tmp/.cache.bak   # → リンク数 2 / 内容は /etc/shadow と同一
+ls -la /tmp/.cache.bak   # → リンク数 2 / 内容は /etc/sudoers と同一
 ```
+
+この環境では `/etc/shadow` は別ファイルシステム上にあるため hardlink が作れない
+(`ln` は `EXDEV` で失敗する)。`/etc/sudoers` など他の sensitive file には成立する。
 
 ## 解説
 
