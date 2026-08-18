@@ -1,7 +1,7 @@
 # ADR-0003: evade の clean 判定は「その課題の attempt が始まって以降の禁止ルール発火」で評価する (attempt スコープ)
 
 - Status: **Proposed**
-- Date / Deciders: 2026-08-18 / VP (承認) + CEO (§2 enforce/honor の価値判断) + security-engineer (境界認定)
+- Date / Deciders: 2026-08-18 / VP (承認) + **CEO (§A2 = enforce を決定、2026-08-18)** + security-engineer (境界認定)
 - 関連: Issue #120 (App-H2 sliding window)、Issue #121 (mission 05 の実効ゲート不在)、PR #124 (`fix/evade-persistent-dirty-flag`, draft・差し戻し)、ADR-0001 (flag isolation)。フェーズ: リハ後 hygiene (P## 非該当)
 - 参照コミット: 本 ADR の `file:line` は特記なき限り **`d24fe02` (`origin/fix/evade-persistent-dirty-flag`)** 基準。`main` と異なる箇所は明記する
 
@@ -192,7 +192,7 @@ clean(u,c) := DirtyRules(u,c) が空
 
 1. **reset は attempt の再開始である。** `(u,c)` の taint を全削除する
    (`store.ResetDirty` = `internal/store/store.go:728-739`、既存実装で足りる)
-2. **【enforce を採る場合 — 推奨】** reset は **同 `(u,c)` の exfil receipt も削除**しなければならない。
+2. **【enforce — CEO 決定 2026-08-18・確定】** reset は **同 `(u,c)` の exfil receipt も削除**しなければならない。
    根拠: 現状 `ResetDirty` は `evade_dirty` のみ削除し `exfil` 行を残す
    (`store.go:732-733`)。`PendingExfilSolves` (`store.go:581`) は未 solve の receipt を列挙し、
    Sweeper (`scoring.go:552`, `:626`) が 5 秒周期で `evaluateClean` に通すため、
@@ -200,7 +200,8 @@ clean(u,c) := DirtyRules(u,c) が空
    exploit が「発火 → 待つ → solve」から「発火 → reset → solve」に**別の扉から再生産**されている。
    → 要件: **「reset 後の solve は必ず新しい証跡を伴う」**。`requireExfil` 課題では
    reset 後に **再度 exfil を届けなければ solve しない**こと
-3. **【honor を採る場合 — 代替】** receipt を残すなら、
+3. **【honor — 却下 (2026-08-18 CEO 判断により不採用)】** 以下は採らない。記録として残す。
+   receipt を残すなら、
    (a) `challenges/10-final-exfil/README.md` と journey に **「reset しても exfil 証跡は再取得不要」** を明記し、
    (b) `scoring.go` の package doc と `store.ResetDirty` の doc に
    **「reset は capstone の auto-solve を誘発しうる = 意図的な honor system」** を明記し、
