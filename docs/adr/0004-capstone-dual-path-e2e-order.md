@@ -258,6 +258,24 @@ Sweeper 経路に入らず、二重 gate 3 の `Sweep` 側も通らない)。
 (`scoring.go:843-`) ので、正常系は **最悪 1 tick (5 秒) + 配送遅延**。3 tick を上限に置けば
 「遅い」と「動いていない」を区別できる。**15 秒を超えたら V2 は no-go** (Sweeper 未稼働の疑い)。
 
+### V2 が失敗したときの切り分け (false no-go を作らないため)
+
+**V2 (auto-solve が来ない) には Sweeper 未稼働以外の原因が 2 つあり、混同すると誤診する。**
+計画は **切り分け順**を書くこと:
+
+1. **10 が dirty になっていないか** を先に見る (journey detail の `dirtyRules` / `evade_dirty`)。
+   10 の flag は `/etc/shadow` にあり、それを素朴に読むと
+   `Read sensitive file untrusted` = **10 の forbiddenRules の 1 本**
+   (`challenges/10-final-exfil/falco-rule.yaml:5`) が発火する。
+   attempt スコープ (ADR-0003 §A1) により、**その発火が `current`=10 の間に起きていれば恒久 taint**
+   になり、**auto-solve は永久に来ない**。これは **Sweeper の障害ではない**。
+   → dirty なら「flag 取得の手順が mission 03 の技法を使っていない」= **参加者側の失敗**として扱い、
+   reset (portal のやり直しボタン) 後に再試行する。**no-go にしない。**
+2. **receipt が届いているか** (V1)。届いていなければ collector → 内部 sink の配線
+   (egress lockdown / collector の route / NetworkPolicy) の問題であり、これも Sweeper ではない。
+3. **1 と 2 が両方 clean なのに 15 秒を超える** → **ここで初めて Sweeper 未稼働の no-go** とする
+   (C3 の iii)。
+
 **unit 側 (本 ADR の前提。消すと (d′) の理由が崩れる)**:
 
 - `TestSweep_ManualAndSweeperShareVerdict` (`internal/scoreboard/scoring/scoring_test.go:764-803`)
