@@ -11,7 +11,7 @@ Passwords` を発火させずに読み出し、中身に埋め込まれた flag 
 ## Flag
 
 fake openssh-key (`plant.sh` が配置) 中に `FALCO{...}` を埋め込み。
-実値はイベント毎に注入 (`CTF_FLAG_05_SILENT_SEARCH`)。ローカルは dev default。
+実値はイベント毎に注入される。ローカルは dev default。
 
 ## 想定解
 

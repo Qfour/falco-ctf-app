@@ -15,8 +15,8 @@ flag を取得し、scoreboard に提出する。一度でも発火させると�
 ## Flag
 
 postStart (`plant.sh`) で `/etc/shadow` 末尾に `# FALCO{...}` として追記。
-実値はイベント毎に注入される (`CTF_FLAG_03_STEALTH_READ`)。ローカルでは
-chart の dev default `FALCO{dev-stealth-read}`。
+実値はイベント毎に注入される。ローカルでは chart の dev default
+`FALCO{dev-stealth-read}`。
 
 ## 想定解
 

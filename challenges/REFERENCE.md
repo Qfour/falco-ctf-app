@@ -162,7 +162,7 @@ curl https://example.com -o /tmp/x       # ← 普通の HTTP — 発火しな�
 
 例:
 ```bash
-ln /etc/shadow /tmp/h                # ← 発火 (hardlink)
+ln /etc/sudoers /tmp/h                # ← 発火 (hardlink)
 ln -s /etc/shadow /tmp/s              # ← 発火 (symlink、別 rule)
 cp /etc/shadow /tmp/c                 # ← Create Hardlink は発火しない
                                       #    (が Read sensitive file untrusted は発火)
@@ -176,7 +176,7 @@ cp /etc/shadow /tmp/c                 # ← Create Hardlink は発火しない
 |---|---|---|
 | `/proc/<pid>/root` | `/proc/self/root/etc/shadow` | プロセスの mount namespace の root を指す symlink。**最も汎用** |
 | Symbolic link | `ln -s /etc/shadow /tmp/x` | 多くの Falco ルールは fd.name に **解決後** の path を入れるので無効な場合あり |
-| Hard link | `ln /etc/shadow /tmp/x` | `/etc/shadow` への write 権が要る (このコンテナでは root だが他環境では NG) |
+| Hard link | `ln /etc/sudoers /tmp/x` | この環境では `/etc/shadow` は別ファイルシステム上にあるため hardlink できない。同一 fs 上の sensitive file (`/etc/sudoers` など) なら成立する |
 | Bind mount | `mount --bind /etc/shadow /tmp/x; cat /tmp/x` | `mount` 権限が要る (このコンテナでは可能なはず) |
 | Tool 経由 | `busybox cat /etc/shadow` | `proc.name` が変わるが `fd.name` は変わらず — 検知に影響しないことが多い |
 
