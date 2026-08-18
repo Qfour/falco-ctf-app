@@ -113,6 +113,28 @@
 > 10. §Advice に **rev.4 監査結果**(閉じ確認・撤回された要求・N1-N9・問題なしと確認された経路) を追記。
 >    DoD は **16 → 17 項目**
 
+> **rev.6 (2026-08-18) の改訂点 — L1 の CEO 決定を実行**: **CEO 決定 (2026-08-18): 禁じ手レシピを
+> private へ移設。** `main` は公開リポなので **merge 後の移設では公開 git 履歴から消えない**ため、
+> **移設 → merge の順**で実行する (VP 指示)。
+> - **移設したもの**: 「どのコマンドがどのルールを *踏まないか*」の**具体的な成立条件**
+>   —— rev.3 以降で新たに追加した集約 (禁じ手表の 04 / 11 行の args 条件、
+>   plant-target 表の `/root/.ssh/id_rsa` 行の不成立理由、`cp` の `proc.pname` gate の値、
+>   `grep` が除外を外れる理由の内訳、**builtin-only 方式 (A) の実装例コマンド**、
+>   `env | grep` が発火しない理由)。移設先は 上記 private 正典。
+> - **公開のまま残したもの**: **禁じ手の列そのもの** (`grep` / `cat` / `head` / `tail` / `awk` /
+>   `cp` / `find` / `ln` を使わない) と、**catalog / rule.yaml の `file:line` 参照**。
+>   前者は「何をするな」であって回避手順ではなく、後者は読者が参照先を読めば同じ判定ができるので
+>   **レビュー可能性は落ちない**。
+> - **rev.2 で既に公開された判定条件** (例: `sensitive_files` の path 条件 = 経路 7 / F5 の説明) は
+>   **取り消せないので本文に残す**。L1 の実質は rev.3 以降の集約であり、そこを閉じる。
+> - **機械強制は落ちない** —— 詳細は §Verification の「L1 移設と機械強制」注記。
+> - 削除箇所には **「意図的にここには書かない」+ private 側の所在**を明記した
+>   (将来「説明不足だ」と書き戻されないための歯止め)。
+> - **両リポ同時 PR** (CLAUDE.md の鉄則): platform 側は
+>   `falco-ctf-platform` branch `docs/falco-detection-conditions` (`docs/falco-detection-conditions.md` 新設 +
+>   `docs/prod-deploy.md` Step 9 / §関連 から参照)。**片方だけ merge すると情報が失われる**ので
+>   PR 本文で相互リンクする。
+
 ## Context
 
 ### 現状の経路 (実コードで確認)
@@ -265,7 +287,7 @@ H1 を閉じる価値は 05 の穴があっても失われない —— 03/10 �
 |---|---|---|
 | 1 | rev.2 の Verification 2-3 は seed 初期化として「各 plant-target について append の *前* に image rootfs から素データをコピーする (`cp -a /etc/shadow /seed/etc/shadow` 等)」を **必須検査項目**にしていた | 本 ADR rev.2 §Verification 2 の 2-3 (rev.3 で撤回) |
 | 2 | rev.2 の §F3 は「assert 自身が採点を汚してはならない」として `grep` / `cat` / `head` / `tail` / `awk` を禁止した。根拠は `proc.name` がどの除外リストにも無いこと | `challenges/03-stealth-read/rule.yaml:51,59,178-183` |
-| 3 | **`cp` の除外は条件付きで、plant の文脈では成立しない。** `cp` は除外マクロ `cmp_cp_by_passwd` に現れるが条件は `proc.name in (cmp, cp) and proc.pname in (passwd, run-parts)` である。plant script から起動される `cp` の親は `sh` なので、`not cmp_cp_by_passwd` と `not user_read_sensitive_file_conditions` の両方を**通過する** = 発火する | `challenges/03-stealth-read/rule.yaml:98-99,122-123,184,189` |
+| 3 | **`cp` の除外は条件付きで、plant の文脈では成立しない。** `cp` は除外マクロ `cmp_cp_by_passwd` に現れるが、その条件は **親プロセス名に gate されている**ため plant script から起動する `cp` (親は `sh`) は除外に該当せず、**除外節を通過して発火する**。**成立条件の値は意図的にここには書かない (L1)** —— `falco-ctf-platform/docs/falco-detection-conditions.md` (private) を見よ | `challenges/03-stealth-read/rule.yaml:98-99,122-123,184,189` |
 | 4 | plant initContainer の image は **challenge と同一 image** (Option B の 1) なので、その syscall は ingest の image repo フィルタを通過する | 本 ADR §Options B-1、`internal/scoreboard/ingest/ingest.go:88-99` |
 | 5 | **ingest は container 名で絞り込まない。** フィルタは (i) ns が `ctf-` 始まり、(ii) `k8s.pod.name == "workspace"`、(iii) image repo substring の 3 つだけ。initContainer は同一 Pod (`workspace`) の中で走るので 3 つすべてを満たす | `internal/scoreboard/ingest/ingest.go:77-99`。`grep -rn "container.name" internal/` と `grep -rn "ContainerName" internal/` はいずれも該当 0 件 (architect 実測) |
 | 6 | user は namespace から導出される → initContainer のイベントは **その参加者に帰属する** | `internal/scoreboard/ingest/ingest.go:112` |
@@ -568,11 +590,12 @@ crypt ハッシュ形の文字列は 0 件**。`/root/.ssh` は **存在しな�
     B2 に切替えても手法が変わらない (派生決定 (1) と直交)。
   - 効き始める閾値: **最初の 1 deploy から**。deploy 経路は毎回走るので猶予が無い。
 - **S-b — builtin-only コピー (実行時に shell builtin で読む)**
-  - 変更点: 生成 seed script が `while read -r l; do ...; done </etc/shadow > /seed/etc/shadow` 形で複製する。
-  - **成立はする**: `proc.name=sh` は `shell_binaries` に含まれ (`challenges/03-stealth-read/rule.yaml:59`)
-    ルールの除外節 (同 :178-183) に該当するため `Read sensitive file untrusted` は発火しない。
-    §F3 の assert 側と同じ理屈である。
-  - 犠牲にするもの: **メタデータとバイト忠実性**。`while read` は行志向なので
+  - 変更点: 生成 seed script が **shell builtin と入力リダイレクトだけ**で `/etc/shadow` を複製する
+    (**【rev.6 = L1】具体形は書かない** —— `falco-ctf-platform/docs/falco-detection-conditions.md` (private)）。
+  - **成立はする**: `Read sensitive file untrusted` の除外節に該当するため発火しない
+    (根拠行は `challenges/03-stealth-read/rule.yaml:59,178-183`。**成立理由の内訳は private 側**)。
+    §F3′ の assert 側 (A) と同じ理屈である。
+  - 犠牲にするもの: **メタデータとバイト忠実性**。builtin での読み出しは行志向なので
     (i) permission / ownership を保存しない (実測どおり `/etc/shadow` は **0640 root:shadow** であり、
     本 ADR の B2 節が要求する 0640 維持のために `chmod` + `chgrp` を別途書く必要がある)、
     (ii) 末尾改行の有無・バックスラッシュ・NUL を保存しない、
@@ -581,7 +604,7 @@ crypt ハッシュ形の文字列は 0 件**。`/root/.ssh` は **存在しな�
     さらに **静的検査が難しい** —— builtin での read は「何を読んだか」が script の構文解析でしか分からず、
     Verification 2-7 (禁じ手の静的走査) の精度が落ちる。
   - リスクと可逆性: 可逆。リスクは「除外リストに依存している」こと ——
-    `shell_binaries` からの除外は **Falco 側の ruleset に依存する外部前提**であり、
+    除外リストへの依存は **Falco 側の ruleset に依存する外部前提**であり、
     Falco 版 bump で除外節が変われば無言で発火側に倒れる (S-a の「条件に到達しない」より弱い)。
   - 効き始める閾値: plant-target が 2 種類目のメタデータ (ownership / mode / symlink) を要求した時点で破綻する。
 - **S-c — plant initContainer の image を challenge と分ける**
@@ -865,12 +888,18 @@ in-memory カウンタを回す (`internal/store/store.go:492-509`)。
   **参加者は自分の操作でない taint の原因を説明できず**、`requireExfil` の 10 では
   **flag の再配送**まで要求される (ADR-0003 §A2-2)。
   I13 + Verification 2-7 / layer 4 がその再発を機械で止める唯一の層である。
-- **【rev.4 = L1】§F3′ の禁じ手表は「どのコマンドがどのルールを踏むか / 踏まないか」を
-  公開リポに書いている。** security-engineer は **public → private への移設**を提案した。
-  評価: `rule.yaml` は既に docs サイトが参加者に描画する表示用抜粋であり除外リストも開示済なので
-  **限界的な追加開示**にとどまるが、「`sh` builtin なら発火しない」等は
-  **mission 03 / 05 の想定解に近い記述**である。**CEO 判断待ち** (公開境界の判断は CEO 専権)。
-  本 ADR 側では判断を先取りしない。
+- **【rev.4 = L1 / rev.6 で決定】§F3′ の禁じ手表は「どのコマンドがどのルールを踏むか / 踏まないか」を
+  公開リポに書いていた。** security-engineer が **public → private への移設**を提案し、
+  **CEO 決定 (2026-08-18): private へ移設**。
+  - **実行順序**: `main` は公開リポなので **merge 後の移設では公開 git 履歴から消えない** ——
+    よって **移設 → merge** の順で実行した (rev.6)。
+  - **受け入れた残余**: **rev.2 で既に公開された判定条件は取り消せない**
+    (例: 経路 7 / F5 の `sensitive_files` path 条件)。L1 で閉じられるのは
+    **rev.3 以降に新規追加した集約**であり、そこが L1 の実質である。
+  - **移設先**: `falco-ctf-platform/docs/falco-detection-conditions.md` (private)。app 側は `file:line` 参照に置き換えたので
+    **レビュー可能性は落ちない**。**機械強制も落ちない** (§Verification の注記)。
+  - **歯止め**: 削除箇所には「意図的にここには書かない」+ private 側の所在を明記した。
+    将来「説明不足だ」と判断して**書き戻さないこと**。
 - **【rev.3】S-d (ingest 側で initContainer を除外) を採用しない残余。**
   workspace Pod 内に challenge 以外のコンテナが増える構成 (sidecar 追加など) では、
   deploy 経路以外からも「参加者に帰属するが参加者の操作でないイベント」が入りうる。
@@ -981,6 +1010,19 @@ in-memory カウンタを回す (`internal/store/store.go:492-509`)。
 (layer 1 = chart の main が正しいこと、layer 3 = 本番に適用された実物が正しいこと)。
 **layer 4 (rev.3 新設) は「deploy 経路が採点を汚していないこと」を実機で観測する層**であり、
 残る prod gate = ADR-0003 Verification (d) の同一 run 内で実行する。
+
+> **【rev.6 = L1】移設と機械強制の関係 (VP 指示 4 への回答)**: 判定条件を private へ移しても
+> **機械強制は 1 つも落ちない**。理由:
+> (i) **Verification 2-7 の禁じ手集合は catalog (`challenges/*/falco-rule.yaml`) から導出する設計**
+> であり (N6)、ADR 本文の表をソースにしていない ——
+> 表は**導出結果の人間向けスナップショット**にすぎない。
+> (ii) 2-7 の具体検査 (`grep` / `egrep` / `fgrep` / `find` / `ln` を呼ばない、
+> sensitive path を read しない、seed 上の実行体を exec しない) は
+> **禁止コマンド名と path の列**だけで書けるので、**その列は公開のまま残した**。
+> (iii) DoD 3 の「assert script に外部バイナリを使わない旨を自己 grep で静的検査」も
+> バイナリ名の列だけで成立する。
+> (iv) layer 4 (4-1〜4-7) は実機観測であり本文の記述に依存しない。
+> **落ちる機械強制があれば移設しない方針** (機械強制 > 公開範囲) だったが、該当は無かった。
 
 > **rev.3 の自己保証**: 本 Verification の全項目は **それ自身が Falco イベントを 1 件も出さない**
 > (layer 1/2 = 静的、layer 3 = builtin-only、layer 4 = 運用者マシンから scoreboard 状態を読むだけ)。
@@ -1111,7 +1153,7 @@ background job の status を破棄しているので、この収集自体が実
 | plant-target | 宣言する plant.sh | 素データを要するか | **実行時に read すると発火するルール** | **当たる mission** | S-a 採用後 |
 |---|---|---|---|---|---|
 | `/etc/shadow` | 03 (`plant.sh:4`) / 10 (`plant.sh:6`) —— **重複 (F6)** | **要** (両者 `>>` 前提) | `Read sensitive file untrusted` (`challenges/03-stealth-read/rule.yaml:166-198`。`sensitive_files` = 同 :90-93 で `/etc/shadow` に一致) | **02 expectedRules → 全員 auto-solve** (`challenges/02-credential-files/falco-rule.yaml:3-4`) / **03 forbiddenRules → `current`=03 のとき恒久 taint** (`challenges/03-stealth-read/falco-rule.yaml:3-4`) / **10 forbiddenRules → `current`=10 のとき恒久 taint** (`challenges/10-final-exfil/falco-rule.yaml:5`) | **0 件** —— 読むのは `/opt/ctf/plant-seed/etc/shadow` で `fd.name startswith /etc` が不成立 |
-| `/root/.ssh/id_rsa` (dir `/root/.ssh`) | 05 (`plant.sh:4-11`) | **不要** —— image に `/root/.ssh` が存在しない (実測: `/root` は 0700 で空)。plant が `mkdir -p` + `cat >` で新規作成する | (仮に read しても) **どのルールにも当たらない** —— `/root/.ssh/id_rsa` は `sensitive_file_names` に無く (`challenges/03-stealth-read/rule.yaml:1-2`)、`Search Private Keys or Passwords` は `proc.name in (grep,egrep,fgrep)` + args に `BEGIN * PRIVATE`、または `proc.name=find` + args に `id_rsa` 等を要求する (`challenges/04-key-search/rule.yaml:16-43`) ので `cp` / `sh` では成立しない | 無し (04 / 05 は当たらない) | 変化なし (もともと 0 件) |
+| `/root/.ssh/id_rsa` (dir `/root/.ssh`) | 05 (`plant.sh:4-11`) | **不要** —— image に `/root/.ssh` が存在しない (実測: `/root` は 0700 で空)。plant が `mkdir -p` + `cat >` で新規作成する | (仮に read しても) **どのルールにも当たらない** —— `/root/.ssh/id_rsa` は `sensitive_file_names` に無く (`challenges/03-stealth-read/rule.yaml:1-2`)、`Search Private Keys or Passwords` の成立条件も `cp` / `sh` では満たされない (条件は `challenges/04-key-search/rule.yaml:16-43`。**不成立の理由はここには書かない = L1**、`falco-ctf-platform/docs/falco-detection-conditions.md` (private) を見よ) | 無し (04 / 05 は当たらない) | 変化なし (もともと 0 件) |
 
 → **rev.2 の 2-3 が実際に危険なのは `/etc/shadow` の 1 件だけ**だが、
 その 1 件が **catalog 中で最も観測されるルール** (02 の expected / 03 と 10 の forbidden の三重) に当たる。
@@ -1128,25 +1170,23 @@ background job の status を破棄しているので、この収集自体が実
 | 01-initial-recon (trigger) | Contact K8S API Server From Container | **workspace 内から** apiserver へ connect しない (運用者マシンからの `kubectl exec` は対象外) | しない |
 | **02-credential-files (trigger)** | **Read sensitive file untrusted** | `sensitive_file_names` の 4 path と `/etc/sudoers.d` / `/etc/pam.d` 配下を **open-for-read しない**。実測: この image に実在するのは `/etc/shadow` と `/etc/pam.d/*` (6 ファイル) のみ (`/etc/sudoers` / `/etc/pam.conf` / `/etc/security/pwquality.conf` は不在) | **rev.2 は該当した。S-a で該当しなくなる** |
 | 03-stealth-read (evade) | 同上 (forbidden) | 同上 | 同上 |
-| 04-key-search (trigger) | Search Private Keys or Passwords | `grep`/`egrep`/`fgrep` を `BEGIN * PRIVATE` を含む args で起動しない。`find` を `id_rsa`/`id_dsa`/`id_ed25519`/`id_ecdsa` を含む args で起動しない | しない (2-7 (c) が静的に禁止) |
+| 04-key-search (trigger) | Search Private Keys or Passwords | **`grep` / `egrep` / `fgrep` / `find` を deploy 経路から一切起動しない** (どの args が条件を満たすかは `challenges/04-key-search/rule.yaml:16-43` と `falco-ctf-platform/docs/falco-detection-conditions.md` (private) を見よ。**args 条件はここには書かない = L1**) | しない (2-7 (c) が静的に禁止) |
 | 05-silent-search (evade) | 同上 (forbidden) | 同上 | しない |
-| 06-web-rce-shell (trigger) | Run shell untrusted | **禁じ手ではない** —— ルールは `protected_shell_spawner` (nginx/httpd/mysqld 等が祖先) を要求する (`challenges/06-web-rce-shell/rule.yaml:20-24,137-150,219-223`)。containerd 直下の `sh` は該当しない。**これは builtin-only 方式 (A) が成立する前提でもある** | しない |
+| 06-web-rce-shell (trigger) | Run shell untrusted | **禁じ手ではない** —— ルールは特定の祖先プロセス条件 (`protected_shell_spawner`) を要求するため、containerd 直下の `sh` は該当しない (条件は `challenges/06-web-rce-shell/rule.yaml:20-24,137-150,219-223` + `falco-ctf-platform/docs/falco-detection-conditions.md` (private))。**これは builtin-only 方式 (A) が成立する前提でもある** | しない |
 | 07-persist (trigger) | Drop and execute new binary in container | `proc.is_exe_upper_layer=true` の実行体を起動しない = **image 由来のバイナリだけを exec する** (seed / emptyDir に書いたファイルを exec しない) | しない見込み。**emptyDir 上の実行体が upper layer 判定になるかは未実測** → layer 4 の 4-7 |
 | 08-c2-beacon (trigger) | Redirect STDOUT/STDIN to Network Connection in Container | socket fd を stdio に dup しない | しない |
 | 09-hidden-cache (trigger) | Create Hardlink Over Sensitive Files | `evt.arg.oldpath in (sensitive_file_names)` の hardlink を作らない = sensitive path に対して `ln` / `cp -l` / `cp --preserve=links` を使わない。**`cp -a` は `--preserve=links` を含む**点に注意 (source 側に hardlink 対があれば `link()` を発行しうる) | しない。実測: `/etc/shadow` の link 数は 1。**B2 (`/etc` 全体) は面が広いので layer 4 の 4-7 で確認** |
 | 10-final-exfil (evade) | 上記 7 本 (forbidden) | 上記すべて | しない |
-| 11-cloud-cred-hunt (trigger) | Find AWS Credentials | aws credential 文字列を `grep` / `find` で探さない (`challenges/11-cloud-cred-hunt/falco-rule.yaml:3-4`) | しない |
+| 11-cloud-cred-hunt (trigger) | Find AWS Credentials | **`grep` / `find` を deploy 経路から一切起動しない** (04 と同じ理由。条件は `challenges/11-cloud-cred-hunt/falco-rule.yaml:3-4` + `falco-ctf-platform/docs/falco-detection-conditions.md` (private)。**ここには書かない = L1**) | しない |
 
 ##### assert 側 (rev.2 の F3 をそのまま維持)
 
 監査が実コードで確認したとおり、**素朴な検証コマンドが採点を壊す**:
 
 - 旧案の `grep -cE 'FALCO\{' /etc/shadow` は `proc.name=grep` で
-  **`Read sensitive file untrusted` を発火させる**。`grep` は除外リストに含まれない ——
-  `shell_binaries` (`challenges/03-stealth-read/rule.yaml:59`) にも
-  `read_sensitive_file_binaries` (同 :51) にも無く、ルールの除外節 (同 :179) を通らない
-  (`grep` が現れるのは `linux_bench_reading_etc_shadow` マクロだけで、そちらは
-  `proc.aname[2]=linux-bench` を要求する)。
+  **`Read sensitive file untrusted` を発火させる**。`grep` は**どの除外にも該当しない**
+  (根拠となる list / 除外節は `challenges/03-stealth-read/rule.yaml:51,59,178-183`。
+  **どの条件なら該当しうるかは意図的にここには書かない = L1**、`falco-ctf-platform/docs/falco-detection-conditions.md` (private) を見よ)。
 - 発火すると ingest フィルタを通過し (`internal/scoreboard/ingest/ingest.go:130`
   → `EvaluateTrigger`)、**mission 02 (`type: trigger`,
   `expectedRules: [Read sensitive file untrusted]`,
@@ -1156,27 +1196,28 @@ background job の status を破棄しているので、この収集自体が実
   `cat /etc/shadow` は mission 02 の想定解そのものである。
 - **【rev.3】`cp` も使用禁止。** `cp` は除外マクロ `cmp_cp_by_passwd`
   (`challenges/03-stealth-read/rule.yaml:98-99`) に現れるが、その条件は
-  `proc.name in (cmp, cp) and proc.pname in (passwd, run-parts)` であり、
-  **plant / assert から起動する `cp` の親は `sh` なので除外に該当しない**
-  (`not cmp_cp_by_passwd` = 同 :184 と `not user_read_sensitive_file_conditions` = 同 :122-123,189 の
-  両方を通過する = 発火する)。**「除外リストに `cp` の文字がある」ことを免除の根拠にしてはならない。**
+  **親プロセス名に gate されている**ため、**plant / assert から起動する `cp` (親は `sh`) は
+  除外に該当せず発火する** (`not cmp_cp_by_passwd` = 同 :184 と
+  `not user_read_sensitive_file_conditions` = 同 :122-123,189 の両方を通過する)。
+  **「除外リストに `cp` の文字がある」ことを免除の根拠にしてはならない。**
+  **gate の具体的な値は意図的にここには書かない (L1)** —— `falco-ctf-platform/docs/falco-detection-conditions.md` (private) を見よ。
   なお **除外条件を満たすように親プロセス名を仕立てる派生案は採らない** ——
   `rule.yaml` は docs サイトが参加者に描画する表示用抜粋なので、それは
   **参加者に開示された回避手段**になり採点の穴を作る (派生決定 (3) の S-e と同じ理由で却下)。
 
 **採用する方式 (runbook レベルで確定)**:
 
-> **(A) shell builtin だけで読む。** `sh -c` の中で入力リダイレクトと `while read` /
-> `case` のみを使い、外部バイナリを一切 spawn しない。
-> 例 (形のみ): `sh -c 'n=0; while read -r l; do case $l in *FALCO\{*) n=$((n+1));; esac; done </etc/shadow; test "$n" -eq 2'`
-> `proc.name=sh` は `shell_binaries` (`challenges/03-stealth-read/rule.yaml:59`) に含まれ、
-> ルール除外節 (同 :179) に該当するため **発火しない**。
+> **(A) shell builtin だけで読む。** `sh -c` の中で入力リダイレクトと shell の制御構文のみを使い、
+> **外部バイナリを一切 spawn しない**。
+> **【rev.6 = L1】実装例のコマンドと「なぜ発火しないか」の判定条件は意図的にここには書かない** ——
+> `falco-ctf-platform/docs/falco-detection-conditions.md` (private) に全文を置く。**公開リポに回避手順を集約しない** (CEO 決定 2026-08-18)。
+> 根拠となる rule の該当行は `challenges/03-stealth-read/rule.yaml:59,178-183`
+> (読者は参照先を読めば同じ判定ができる = レビュー可能性は落ちない)。
 
-- 3-1 / 3-2 は `/etc/shadow` を読まないので `env | grep` / `tr </proc/1/environ | grep` でも
-  発火しないが (`/proc/1/environ` は `sensitive_file_names` に無い。`grep CTF_FLAG` は
-  `Search Private Keys or Passwords` の `private_key_or_password` 条件
-  (`challenges/04-key-search/rule.yaml:16-27`) を満たさない)、**規約を単純に保つため
-  assert script 全体を builtin-only とする**。
+- 3-1 / 3-2 は `/etc/shadow` を読まないので外部バイナリでも発火しないが
+  (**その理由 = 判定条件はここには書かない = L1**。根拠行は
+  `challenges/03-stealth-read/rule.yaml:1-2` と `challenges/04-key-search/rule.yaml:16-27`、
+  全文は `falco-ctf-platform/docs/falco-detection-conditions.md` (private))、**規約を単純に保つため assert script 全体を builtin-only とする**。
 - 3-6 は `test -f` のみ (open しない)。**`/root/.ssh/id_rsa` の内容は読まない。**
 - **(B) は補助的に併用する【rev.4 で書き直し】**: roster に含まれる `test1` workspace
   (`falco-ctf-platform/scripts/deploy-event-workspaces.sh:158`) を、builtin 以外の検証が
@@ -1192,9 +1233,10 @@ background job の status を破棄しているので、この収集自体が実
   再現できない = layer にならない。
 - assert が spawn しうる `sh` について: `Run shell untrusted` は mission 10 の forbiddenRules に
   含まれる (`challenges/10-final-exfil/falco-rule.yaml:3-10`) が、**構造的に発火しない** ——
-  ルールは `protected_shell_spawner` (祖先が nginx / httpd / mysqld 等) を要求し
-  (`challenges/06-web-rce-shell/rule.yaml:20-24,137-150,219-223`)、
-  `kubectl exec` / initContainer から起動される `sh` の祖先は containerd / runc なので**該当しない**。
+  ルールは特定の祖先プロセス条件 (`protected_shell_spawner`) を要求し
+  (`challenges/06-web-rce-shell/rule.yaml:20-24,137-150,219-223`。**条件の内訳は書かない = L1**、
+  `falco-ctf-platform/docs/falco-detection-conditions.md` (private))、`kubectl exec` / initContainer から起動される `sh` の祖先は
+  containerd / runc なので**該当しない**。
   傍証として ttyd 自身が全参加者のターミナルで `/bin/bash -l` を exec しており
   (`images/ttyd/entrypoint.sh:18-23`) 実運用で発火していない。
   **【rev.5 = N9・architect 発見】rev.4 までここには「仮に発火しても 10 の window は 30 秒なので
@@ -1513,7 +1555,7 @@ falcosidekick → scoreboard は非同期なので、`helm upgrade --wait` 直�
   **2 点を訂正 / 1 点を追加**した:
   - **訂正 1**: 「`cp` もどの除外リストにも無い」は不正確。`cp` は除外マクロ `cmp_cp_by_passwd`
     (`challenges/03-stealth-read/rule.yaml:98-99`) に**現れる**が、条件が
-    `proc.pname in (passwd, run-parts)` で **親プロセス名に gate されている**ため plant では成立しない。
+    **親プロセス名に gate されている**ため plant では成立しない (**gate の値は private 側** = L1)。
     **結論 (発火する) は変わらないが、根拠は「無い」ではなく「条件を満たさない」である** ——
     この違いは重要で、「除外リストに文字がある」ことを免除の根拠にする誤りを塞ぐ (§F3′)。
   - **訂正 2**: rev.2 の 2-3 の根拠のうち **`sensitive_files` 判定の文脈は中身に依存しない**
@@ -1663,9 +1705,8 @@ falcosidekick → scoreboard は非同期なので、`helm upgrade --wait` 直�
     `internal/scoreboard/` / `internal/store/` に無い (architect 実測: `http.Post` /
     `http.NewRequest` / `Slack` / `webhook` の該当は `internal/scoreboard/metrics/metrics.go:31` の
     Help 文字列 1 件のみ = **inbound webhook の説明**)。→ **4-7 の probe に不可逆な外部副作用は無い。**
-  - **`sh -c` は `Run shell untrusted` を発火させない** —— `protected_shell_spawner`
-    (祖先が nginx / httpd / mysqld 等) を満たさないため
-    (`challenges/06-web-rce-shell/rule.yaml:137-150,219-223`)。
+  - **`sh -c` は `Run shell untrusted` を発火させない** —— `protected_shell_spawner` を
+    満たさないため (`challenges/06-web-rce-shell/rule.yaml:137-150,219-223`。**内訳は private 側** = L1)。
   - **apiserver 接続は運用者マシン側**なので mission 01 の
     `Contact K8S API Server From Container` にも当たらない。
   - **ただし probe の実発火本数 (default ruleset 由来を含む) は実機でのみ確認可** ——
