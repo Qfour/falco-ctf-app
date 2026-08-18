@@ -28,11 +28,11 @@ func newOriginFixture(t *testing.T, allowedOrigins []string) *scoreboard.Handler
 	cat := catalog.Catalog{
 		"02-evade": {
 			ID: "02-evade", Type: "evade", ForbiddenRules: []string{"r"},
-			ExpectedFlag: "FALCO{ok}", WindowSeconds: 10,
+			ExpectedFlag: "FALCO{ok}",
 		},
 		"03-exfil": {
 			ID: "03-exfil", Type: "evade", ForbiddenRules: []string{"r"},
-			ExpectedFlag: "FALCO{boss}", WindowSeconds: 10, RequireExfil: true,
+			ExpectedFlag: "FALCO{boss}", RequireExfil: true,
 		},
 	}
 	st, err := store.Open(filepath.Join(t.TempDir(), "og.db"))

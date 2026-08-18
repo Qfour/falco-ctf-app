@@ -40,8 +40,10 @@ forbiddenRules:
   - "Exact Falco Rule Name Here"
 # placeholder のみ。実フラグはコミットしない (public repo)。
 expectedFlag: "FALCO{dev-${SLUG}}"
-windowSeconds: 10
 ```
+> `windowSeconds` フィールドは無い (ADR-0003 で撤去済)。forbiddenRules の
+> 発火判定は「この attempt 中に 1 度でも発火したら永続 dirty」(reset-dirty
+> で明示的にやり直すまで解除されない) — 新規課題に `windowSeconds` を追加しない。
 
 > **フラグは外部注入**。`falco-rule.yaml` には `FALCO{dev-<slug>}` の placeholder
 > だけを書く。実フラグは `falco-ctf-platform` の `events/<date>/flags.sops.yaml`

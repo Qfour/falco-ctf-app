@@ -7,7 +7,9 @@ submit するだけでは通らない(`requireExfil`)。
 ## 採点条件 (3 つすべて)
 
 1. `submit` の flag が `expectedFlag` と一致
-2. 直前 `windowSeconds`(30s)に `forbiddenRules`(7 つ)が 1 つも発火していない
+2. この attempt (このミッションが現在の課題になって以降) に `forbiddenRules`
+   (7 つ) が 1 つも発火していない (時間では解除されない。発火した場合は
+   `reset-dirty` でやり直す — その際 exfil 済みの証跡も無効化される)
 3. その user が collector に正しい flag を exfil 済み
    (`POST /api/challenges/10-final-exfil/exfil`、`requireExfil: true`)
 

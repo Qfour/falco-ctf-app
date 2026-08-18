@@ -3,6 +3,7 @@ package catalog_test
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
@@ -62,9 +63,6 @@ expectedRules:
 	if len(ch.ExpectedRules) != 1 || ch.ExpectedRules[0] != "Read sensitive file untrusted" {
 		t.Errorf("expectedRules: %v", ch.ExpectedRules)
 	}
-	if ch.WindowSeconds != 10 {
-		t.Errorf("windowSeconds default: got %d, want 10", ch.WindowSeconds)
-	}
 }
 
 func TestLoad_EvadeChallenge(t *testing.T) {
@@ -75,14 +73,13 @@ type: evade
 forbiddenRules:
   - "Read sensitive file untrusted"
 expectedFlag: "FALCO{abc}"
-windowSeconds: 15
 `)
 	cat, err := catalog.Load(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ch := cat["02-evade"]
-	if ch.Type != "evade" || ch.ExpectedFlag != "FALCO{abc}" || ch.WindowSeconds != 15 {
+	if ch.Type != "evade" || ch.ExpectedFlag != "FALCO{abc}" {
 		t.Errorf("got %+v", ch)
 	}
 }
@@ -321,4 +318,100 @@ func TestScoredScenario_ExcludesTutorial(t *testing.T) {
 	if len(scored) != 10 {
 		t.Fatalf("scored scenario must stay at 10 challenges, got %d: %v", len(scored), scored.IDs())
 	}
+}
+
+// TestEvadeForbiddenRules_IntersectPriorTriggerExpectedRules is ADR-0003
+// Verification (a)'s catalog-side contract test — "the required condition for
+// I11's candidate promotion". It reads the REAL challenges/ tree and the REAL
+// nimbusbreach-full scenario order (not a synthetic fixture) and, for every
+// evade challenge in the scored progression, computes:
+//
+//	forbiddenRules ∩ (expectedRules of every trigger challenge EARLIER in the
+//	                   progression order)
+//
+// A NON-EMPTY intersection is normal and expected (ADR-0003 C2's "twin
+// mission" structure: 02's required rule fire IS 03's forbidden rule; same
+// for 04/05, and 10 forbids all seven of 01/02/04/06/07/08/09's expected
+// rules). The test's job is not to assert emptiness — it is to PIN the exact
+// pairs so a future PR cannot silently reintroduce PR #124's regression (a
+// persistent taint gate with no attempt scope permanently blocks every one of
+// these evade missions for every regular participant, because clearing the
+// preceding trigger REQUIRES firing the very rule the evade forbids). Adding
+// a new challenge that changes this intersection must fail here until the
+// author confirms attempt scope (ADR-0003 §A1) still exempts the shared fire
+// and updates `want` below.
+func TestEvadeForbiddenRules_IntersectPriorTriggerExpectedRules(t *testing.T) {
+	cat, err := catalog.Load("../../challenges")
+	if err != nil {
+		t.Fatalf("load catalog: %v", err)
+	}
+	sc, err := catalog.LoadScenario("../../scenarios/nimbusbreach-full/scenario.yaml")
+	if err != nil {
+		t.Fatalf("load scenario: %v", err)
+	}
+	order := sc.Challenges
+
+	want := map[string][]string{
+		"03-stealth-read":  {"Read sensitive file untrusted"},
+		"05-silent-search": {"Search Private Keys or Passwords"},
+		"10-final-exfil": {
+			"Contact K8S API Server From Container",
+			"Create Hardlink Over Sensitive Files",
+			"Drop and execute new binary in container",
+			"Read sensitive file untrusted",
+			"Redirect STDOUT/STDIN to Network Connection in Container",
+			"Run shell untrusted",
+			"Search Private Keys or Passwords",
+		},
+	}
+
+	checked := 0
+	for i, cid := range order {
+		ch, ok := cat[cid]
+		if !ok || ch.Type != "evade" {
+			continue
+		}
+		priorExpected := make(map[string]struct{})
+		for _, priorID := range order[:i] {
+			if p, ok := cat[priorID]; ok && p.Type == "trigger" {
+				for _, r := range p.ExpectedRules {
+					priorExpected[r] = struct{}{}
+				}
+			}
+		}
+		var got []string
+		for _, r := range ch.ForbiddenRules {
+			if _, ok := priorExpected[r]; ok {
+				got = append(got, r)
+			}
+		}
+		sort.Strings(got)
+		w := append([]string(nil), want[cid]...)
+		sort.Strings(w)
+		if !equalStrings(got, w) {
+			t.Errorf("%s: forbiddenRules ∩ prior expectedRules = %v, want %v "+
+				"(ADR-0003 attempt scope must keep this pair exempt — update this pin only "+
+				"after confirming attempt scope still exempts the shared required fire)", cid, got, w)
+		}
+		checked++
+	}
+	if checked != len(want) {
+		t.Fatalf("expected to check exactly %d evade challenges (%v), checked %d — a scenario reorder "+
+			"or challenge removal may have dropped one of the pinned pairs", len(want), want, checked)
+	}
+}
+
+// equalStrings compares two possibly-nil string slices for equal contents in
+// order (both inputs are pre-sorted by the caller). A tiny local helper so
+// this file does not need to pull in "slices" solely for this one test.
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

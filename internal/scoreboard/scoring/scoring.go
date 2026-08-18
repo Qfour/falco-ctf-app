@@ -9,7 +9,7 @@
 //   - api /submit (evade flag + forbidden-window + exfil gate),
 //   - api /internal/exfil (recording the collector receipt that the gate reads).
 //
-// The Grader collects those into EvaluateTrigger / SubmitEvade / RecordExfil so
+// The Grader collects those into OnRuleFire / SubmitEvade / RecordExfil so
 // the rules can be unit-tested without HTTP, and so the ingest / api handlers
 // become thin inbound adapters (drivers) that only translate the returned
 // outcome into a response + metrics.
@@ -23,10 +23,117 @@
 //
 // Auto-solve (P16): a store-backed Sweeper periodically re-derives the set of
 // exfil-delivered-but-unsolved (user, challenge) pairs and runs each through the
-// exact same clean-window + exfil gate the manual /submit path uses (the shared
+// exact same clean-taint + exfil gate the manual /submit path uses (the shared
 // evaluateClean helper). Because the verdict is re-derived from the store on
 // every tick, it survives a scoreboard restart (conventions I1: single replica,
 // no in-memory pending timers to lose).
+//
+// App-H2 (persistent dirty flag): the evade "clean" gate used to be a
+// windowSeconds lookback over an in-memory rule-fire history
+// (store.RecentFiresMatching). That had two exploitable holes: (1) firing a
+// forbidden rule once and then simply waiting past the window always solved —
+// the window measured recency, not "ever fired since last reset" — and (2)
+// the in-memory history reset to empty on every scoreboard restart (I1:
+// single replica + Recreate strategy — image bumps, node drains, OOM kills),
+// which auto-solved every exfil-delivered pair within one Sweeper tick
+// regardless of how noisy the attack had been. The gate now reads a
+// persistent per-(user,challenge) dirty flag (store.DirtyRules / MarkDirty /
+// ResetDirty): once fired for a pair it stays dirty across any amount of
+// waiting AND across restarts, and only the participant's explicit reset
+// endpoint clears it.
+//
+// ADR-0003 (attempt scope) — THE unresolved half of App-H2, shipped as a
+// follow-up after PR #124 shipped the persistent flag WITHOUT it and broke
+// every regular participant: a persistent taint with no scope taints a
+// challenge FOREVER the instant any of its forbiddenRules fires anywhere,
+// for any reason. Several real missions (03/05/10) forbid the exact same
+// Falco rule an EARLIER trigger mission REQUIRES firing to solve (e.g.
+// 02-credential-files's required "Read sensitive file untrusted" is
+// 03-stealth-read's forbidden rule) — so a persistent, unscoped taint makes
+// the normal, honest progression permanently taint the very mission a
+// participant is about to reach, before they ever attempt it.
+//
+// The fix: a rule fire only taints the evade challenge that is the
+// participant's CURRENT mission (the first unsolved id in the progression
+// order — see CurrentMission, the single source of truth this package shares
+// with the Journey projection, api.Handler.journey). A required fire that
+// clears an earlier trigger mission is exempt because, at the moment it
+// fires, the trigger mission — not the sibling evade mission — is current.
+// "Time-independent" (the App-H2 property above) was NEVER the whole
+// invariant; "attempt-scoped" is. OnRuleFire is the single public entry point
+// that enforces the regnorm evaluation order this depends on: it resolves
+// current() BEFORE applying this event's trigger solve, then taints, then
+// applies the trigger solve (see OnRuleFire's doc). Reversing that order
+// reopens the exact regression #124 shipped (see markDirtyOnRuleFire's doc).
+//
+// Residual risk this ADR explicitly accepts rather than hides (do not read
+// this package as "the hole is fully closed"): 03-stealth-read and
+// 05-silent-search have no RequireExfil / no positive proof-of-technique —
+// they are pure negative gates (forbiddenRules absence), so a participant who
+// solves the twin trigger mission's REQUIRED rule and then submits the evade
+// mission WITHOUT ever separately exercising the evasion technique still
+// solves it (an honor-system gap; closing it is Issue #121's positive-proof
+// work, which must land AFTER this ADR — doing it first would re-taint these
+// missions the same way #124 did). See also A5's residual risk note on
+// markDirtyOnRuleFire's fail-closed in-memory update: if the scoreboard
+// process is killed in the narrow window between a failed persistence write
+// and the next successful one, the in-memory-only taint for that write is
+// lost on restart (mitigated only by the taint_error metric + a runbook
+// check, not eliminated).
+//
+// A SECOND, larger-blast-radius consequence of the same 03/05 honor gap
+// (app#124 5x review, R1 finding C2 — do not read the paragraph above as
+// scoped to "03/05 alone can be honor-gapped"; it also lets a participant
+// neuter the forbiddenRules gate on 10-final-exfil, the RequireExfil
+// capstone that DOES matter for scoring):
+//
+//   - CurrentMission (see below) is "the first id in `order` that is not yet
+//     solved." 03/05 solve ONLY via a manual, correctly-flagged /submit —
+//     there is no auto-solve path for them — so a participant can leave 03
+//     (or 05) permanently unsolved on purpose. Doing so pins current() at 03
+//     for as long as they like: nothing about markDirtyOnRuleFire or
+//     evaluateTrigger ever forces current to advance.
+//   - While current is pinned at 03, markDirtyOnRuleFire only ever taints
+//     WHATEVER current() returns — 03, and only 03. 10-final-exfil's own
+//     seven forbiddenRules (10 is a distinct catalog id from 03, with its
+//     own list) are never current while 03 is unsolved, so firing ANY of
+//     them — including "Read sensitive file untrusted", which happens to
+//     be both 03's and 10's forbidden rule — taints 03 at most, never 10.
+//     The other six have no such collision and simply taint nothing at
+//     all. This is not "some of 10's rules slip through"; it is "none of
+//     10's rules CAN taint 10" for as long as something earlier in `order`
+//     stays deliberately unsolved, no matter how many times any of them
+//     fire, because the gate has exactly one target — current — and it is
+//     never 10 in this state. evaluateTrigger runs unconditionally
+//     regardless of current (deliberately, see its own doc), so 04/06/07/
+//     08/09 still solve normally throughout; only the attempt-scoped taint
+//     gate is starved of a target that is ever 10.
+//   - Sweep (below) re-derives the pending-solve set from the store on every
+//     tick and evaluates the SAME evaluateClean gate the manual /submit path
+//     uses — DirtyRules(user, cid), not current(). It has no opinion on
+//     which mission is "current" today; it only asks "is this receipt's
+//     (user, challenge) pair clean and does it have a matching exfil
+//     receipt." So once 10's exfil receipt is delivered, a 10 that was
+//     never once current while any of its forbiddenRules fired — because 03
+//     was pinned as current the whole time — is clean by construction and
+//     auto-solves on the Sweeper's next tick.
+//   - This is not even an edge case a careful attacker has to engineer:
+//     challenges/submit-yaml.sh gives every participant a one-shot "solve
+//     everything you have flags for, then submit the whole batch at the
+//     end" workflow, which is exactly "leave the earlier evade missions
+//     unsubmitted until last, exfiltrate 10 along the way, submit
+//     everything at once" — the natural, unremarkable way to use the
+//     provided tooling, not a crafted exploit path.
+//   - This is NOT a regression this ADR introduces: main's PRE-App-H2
+//     windowSeconds lookback gate had the identical property (fire, then
+//     stop firing before the window elapses, then submit) with an even
+//     shorter fuse (30s) — so ADR-0003 does not make 10's gate any weaker
+//     than it already was; it just does not make it any STRONGER either.
+//     Do not describe this ADR as having closed 10's gate — it has not.
+//     Only Issue #121's positive proof-of-technique work (submitting
+//     EVIDENCE that the evasion was actually exercised, rather than only
+//     the ABSENCE of a forbidden-rule taint) can close this, and per the
+//     ordering note above it must land strictly after this ADR.
 package scoring
 
 import (
@@ -49,19 +156,28 @@ import (
 // behaviour-preserving:
 //   - MarkSolved is idempotent (first solve wins) and reports whether the solve
 //     was newly recorded.
-//   - RecentFiresMatching returns the subset of the given rules that fired for
-//     the user within windowSeconds of now (unix seconds). The Grader passes
-//     the challenge's forbiddenRules, so empty = clean window.
+//   - DirtyRules / MarkDirty are the App-H2 persistent taint: DirtyRules
+//     returns the (possibly empty) set of forbidden rules that have fired for
+//     (user, challenge) since the last reset — empty means clean, non-empty
+//     blocks the solve regardless of how long ago the fire was. MarkDirty
+//     records one forbidden-rule fire against one (user, challenge) pair;
+//     idempotent per (user, challenge, rule).
 //   - HasExfil reports whether the user delivered exactly this flag to the
 //     collector for this challenge.
 type ScoreStore interface {
 	MarkSolved(user, challenge, at string) (newly bool, err error)
-	RecentFiresMatching(user string, rules []string, now float64, windowSeconds int) []string
+	// IsSolved reports whether `user` has already solved `challenge`. It is
+	// the read CurrentMission needs, one (user, challenge) pair at a time —
+	// the Grader's attempt-scope current() derivation (ADR-0003 A1) calls
+	// this once per id while walking the progression order.
+	IsSolved(user, challenge string) bool
+	DirtyRules(user, challenge string) []string
+	MarkDirty(user, challenge, rule, at string) error
 	HasExfil(user, challenge, flag string) bool
 	RecordExfil(user, challenge, flag, at string) error
 	// PendingExfilSolves enumerates every recorded collector receipt whose
 	// (user, challenge) pair is not yet solved. It is the sweeper's work queue;
-	// the Grader re-applies the RequireExfil / evade-type / clean-window / exact
+	// the Grader re-applies the RequireExfil / evade-type / dirty-flag / exact
 	// -flag gates before solving (see Sweep). Kept on the same port so the
 	// concrete *store.Store satisfies it and tests can drive a fake queue.
 	PendingExfilSolves() []store.ExfilReceipt
@@ -82,6 +198,11 @@ type Grader struct {
 	store  ScoreStore
 	now    func() time.Time
 	points PointsPolicy
+	// order is the mission progression order (ADR-0003 A1: attempt scope).
+	// nil/empty falls back to g.cat.IDs() (sorted catalog order), mirroring
+	// api.New's identical default so a Grader built without WithOrder still
+	// behaves consistently with the Journey projection's default.
+	order []string
 }
 
 // New builds a Grader. `now` is injected (WithNow pattern) so tests drive a
@@ -120,6 +241,62 @@ func (g *Grader) Points() PointsPolicy { return g.points.normalise() }
 // next-unopened index, rather than a single flat value (#40 hint-index
 // schedule). idx <= 0 costs nothing (not a valid hint index).
 func (g *Grader) HintPenaltyFor(idx int) int { return g.points.normalise().penaltyFor(idx) }
+
+// WithOrder sets the mission progression order (ADR-0003 A1: attempt scope) —
+// the SAME order the Journey UI walks (scenario order when SCENARIO_FILE is
+// pinned, else sorted catalog ids; see cmd/scoreboard/main.go and
+// api.JourneyConfig.Order). Returns the same *Grader for chaining at wiring
+// time, matching WithPoints.
+//
+// This must be wired to the identical slice the api.Handler receives via
+// WithOrder(order) (internal/scoreboard/server.go) — CurrentMission is the
+// single source of truth both the Grader's attempt-scope taint gate and the
+// Journey projection call, but they call it with their OWN copy of `order`,
+// so a caller that wires them to two different orders reintroduces exactly
+// the "two definitions of current" drift ADR-0003 §A1 warns against.
+func (g *Grader) WithOrder(order []string) *Grader {
+	g.order = order
+	return g
+}
+
+// CurrentMission returns the first id in `order` that is present in `cat` and
+// for which `solved(id)` is false — "current" as ADR-0003 §A1 defines it: the
+// participant's attempt-in-progress mission. Empty order, or every id solved,
+// returns "".
+//
+// This is the SINGLE SOURCE both the Grader's attempt-scope taint gate
+// (currentMission) and the Journey projection (api.Handler.journey) must
+// call — do not reimplement this filter+scan at either call site. `solved` is
+// a predicate rather than a fixed set so each caller can back it with
+// whatever it already has on hand: the Journey handler already built an
+// in-memory set from one Snapshot() call (a map lookup), while the Grader
+// asks the store one id at a time via ScoreStore.IsSolved — same contract,
+// different but equally valid backing reads.
+func CurrentMission(order []string, cat catalog.Catalog, solved func(id string) bool) string {
+	for _, id := range order {
+		if _, ok := cat[id]; !ok {
+			continue // order references an id no longer in the catalog
+		}
+		if !solved(id) {
+			return id
+		}
+	}
+	return ""
+}
+
+// currentMission is the Grader's own call to CurrentMission: it supplies the
+// Grader's configured order (falling back to sorted catalog ids, mirroring
+// api.New's identical default) and backs `solved` with the store's per-pair
+// ScoreStore.IsSolved read.
+func (g *Grader) currentMission(user string) string {
+	order := g.order
+	if len(order) == 0 {
+		order = g.cat.IDs()
+	}
+	return CurrentMission(order, g.cat, func(id string) bool {
+		return g.store.IsSolved(user, id)
+	})
+}
 
 // UserScore computes `user`'s current score: the base award per solved
 // challenge minus the per-hint-index schedule penalty for every hint the user
@@ -162,17 +339,25 @@ type TriggerResult struct {
 	Newly     bool
 }
 
-// EvaluateTrigger applies a single Falco rule fire to every trigger-type
+// evaluateTrigger applies a single Falco rule fire to every trigger-type
 // challenge whose expectedRules contain `rule`, marking each solved. It mirrors
 // the old ingest loop exactly: iterate catalog ids in order, skip non-trigger
 // challenges and non-matching rules, MarkSolved for the rest.
 //
+// Deliberately NOT attempt-scoped (unlike markDirtyOnRuleFire below): a
+// trigger challenge auto-solves as soon as its own expectedRule fires,
+// regardless of progression order — ADR-0003 only scopes the evade taint
+// gate. A participant who fires a later mission's rule out of order still
+// gets that solve recorded (this predates ADR-0003 and is unchanged by it).
+//
 // Store errors are continue-on-error, exactly as the old ingest loop was: a
 // failing MarkSolved skips only that challenge (the others still get marked)
-// and the failures are collected and returned joined via errors.Join. The
-// adapter logs the joined error and still uses the successful results — so one
-// challenge's transient DB error never suppresses solves for the others.
-func (g *Grader) EvaluateTrigger(user, rule string) ([]TriggerResult, error) {
+// and the failures are collected and returned joined via errors.Join.
+//
+// unexported (ADR-0003 A4): OnRuleFire is the only public entry point that
+// may call this — see its doc for why the two stages must never be reachable
+// independently.
+func (g *Grader) evaluateTrigger(user, rule string) ([]TriggerResult, error) {
 	var results []TriggerResult
 	var errs []error
 	recvAt := g.now().UTC().Format(time.RFC3339Nano)
@@ -194,6 +379,105 @@ func (g *Grader) EvaluateTrigger(user, rule string) ([]TriggerResult, error) {
 	return results, errors.Join(errs...)
 }
 
+// markDirtyOnRuleFire applies a single Falco rule fire to the participant's
+// CURRENT mission ONLY (ADR-0003 §A1: attempt scope), persisting a dirty
+// taint if — and only if — that mission is evade-type and lists `rule` among
+// its forbiddenRules.
+//
+// Before ADR-0003 (App-H2 alone) this fanned out to EVERY evade challenge
+// whose forbiddenRules matched `rule`, unconditionally. That is PR #124's
+// regression: several real missions (03/05/10) forbid the exact rule an
+// EARLIER trigger mission REQUIRES firing to solve, so the unconditional
+// fan-out permanently taints missions the participant has not attempted yet,
+// the instant they legitimately clear the mission before it. Scoping the
+// write to "only if this challenge is current right now" is what makes the
+// twin-mission pairs work: while the earlier trigger mission is current, its
+// own evade twin is never current, so the required fire cannot taint it.
+//
+// current() is resolved via currentMission → CurrentMission, the SAME
+// function api.Handler.journey's projection calls (single source, §A1), and
+// — this is the load-bearing ordering fact, not an implementation detail —
+// MUST be resolved BEFORE this event's trigger solve is applied. OnRuleFire
+// (the sole public entry point) enforces exactly that order: taint first,
+// trigger solve second. Reversing it would let the SAME event that clears
+// the earlier trigger mission also advance current to the evade twin before
+// the taint check runs, re-tainting it in the same breath #124's bug did.
+//
+// A5 residual note: `rule` fired in the real world regardless of whether the
+// store write below succeeds; store.MarkDirty is itself fail-closed (sets its
+// in-memory taint even if the SQLite write errors — see store.go), so a
+// returned error here means "the in-memory taint IS set, but persistence may
+// not have happened" — see OnRuleFire's TaintErr doc for how the caller must
+// react.
+//
+// unexported (ADR-0003 A4): OnRuleFire is the only public entry point that
+// may call this.
+func (g *Grader) markDirtyOnRuleFire(user, rule string) error {
+	cur := g.currentMission(user)
+	if cur == "" {
+		return nil // every mission solved; nothing can be "current"
+	}
+	ch, ok := g.cat[cur]
+	if !ok || ch.Type != "evade" {
+		return nil
+	}
+	if !slices.Contains(ch.ForbiddenRules, rule) {
+		return nil
+	}
+	at := g.now().UTC().Format(time.RFC3339Nano)
+	return g.store.MarkDirty(user, cur, rule, at)
+}
+
+// RuleFireOutcome is the result of Grader.OnRuleFire: the trigger solves the
+// event produced, plus the taint and trigger errors kept SEPARATE (not
+// errors.Join'd into one) because the ingest handler must react to them
+// differently (ADR-0003 A5):
+//
+//   - TaintErr non-nil means the scoring authority may have failed to
+//     PERSIST a taint for the participant's current mission (the in-memory
+//     side of it is still set — store.MarkDirty is fail-closed). The caller
+//     must surface this loudly: a 5xx response and the
+//     FalcoEventsReceived{outcome="taint_error"} metric, never a silent 200 —
+//     an unpersisted taint that also never got counted is a false-clean gap
+//     that survives the next restart undetected.
+//   - TriggerErr non-nil mirrors the pre-ADR-0003 continue-on-error posture:
+//     log and still serve 200. A failed trigger solve just delays that
+//     mission's auto-solve to the next matching Falco fire; it never creates
+//     a false-clean gap the way a lost taint does, so it does not warrant the
+//     same escalation.
+type RuleFireOutcome struct {
+	Results    []TriggerResult
+	TaintErr   error
+	TriggerErr error
+}
+
+// OnRuleFire is the Grader's single public entry point for a Falco rule fire
+// event (ADR-0003 A4). The ingest handler calls this ONCE per event and
+// nothing else in this package's rule-fire path — markDirtyOnRuleFire and
+// evaluateTrigger are unexported specifically so no other call site can
+// invoke one half without the other, or invoke them out of order.
+//
+// Both reasons this matters:
+//
+//   - Before A4, ingest called MarkDirtyOnRuleFire and EvaluateTrigger as two
+//     separate exported methods. A future caller (a replay tool, a test, an
+//     alternate ingest source) that only wired up EvaluateTrigger would
+//     silently reopen #120's original hole: rule fires would solve triggers
+//     but never taint evade challenges, with no compile-time or code-review
+//     signal that anything was missing.
+//   - A1's attempt-scope regnorm requires current() to be resolved BEFORE
+//     this event's trigger solve is applied (see markDirtyOnRuleFire's doc
+//     for why — the 02→03 / 04→05 twin-mission structure depends on this
+//     exact ordering). Two independently-callable methods make that ordering
+//     a call-site convention instead of a structural guarantee; OnRuleFire
+//     makes it a fact the type system enforces: taint first, trigger second,
+//     every time, with no way to call them the other way around.
+func (g *Grader) OnRuleFire(user, rule string) RuleFireOutcome {
+	taintErr := g.markDirtyOnRuleFire(user, rule)
+	results, triggerErr := g.evaluateTrigger(user, rule)
+	return RuleFireOutcome{Results: results, TaintErr: taintErr, TriggerErr: triggerErr}
+}
+
 // EvadeStatus enumerates the outcome of an evade-challenge submission. The
 // handler maps each value to the same HTTP response shape it produced inline
 // before the extraction.
@@ -206,11 +490,13 @@ const (
 	EvadeNotEvadeType
 	// EvadeWrongFlag: the submitted flag does not match expectedFlag.
 	EvadeWrongFlag
-	// EvadeForbiddenFired: flag correct, but a forbidden rule fired inside the
-	// window (offending rules populated).
+	// EvadeForbiddenFired: flag correct, but the challenge is dirty — one or
+	// more forbidden rules have fired since the last reset (offending rules
+	// populated). Persistent (App-H2): no amount of waiting clears this: only
+	// the explicit reset endpoint does.
 	EvadeForbiddenFired
-	// EvadeExfilRequired: flag correct + window clean, but the challenge
-	// requires exfil and the collector has not received the matching flag.
+	// EvadeExfilRequired: flag correct + not dirty, but the challenge requires
+	// exfil and the collector has not received the matching flag.
 	EvadeExfilRequired
 	// EvadeSolved: all gates passed; the solve was recorded (Newly reports
 	// whether it was the first time).
@@ -219,11 +505,13 @@ const (
 
 // EvadeOutcome is the full result of SubmitEvade. Only the fields relevant to
 // Status are populated:
-//   - EvadeForbiddenFired: Offending holds the sorted forbidden rules.
+//   - EvadeForbiddenFired: Offending holds the sorted set of forbidden rules
+//     that have EVER fired for this (user, challenge) since the last reset
+//     (App-H2's persistent dirty flag — not a recent-window snapshot).
 //   - EvadeSolved: Newly reports whether this was the first solve.
 type EvadeOutcome struct {
 	Status    EvadeStatus
-	Offending []string // forbidden rules that fired (EvadeForbiddenFired only)
+	Offending []string // dirtying forbidden rules (EvadeForbiddenFired only)
 	Newly     bool     // first-time solve (EvadeSolved only)
 }
 
@@ -233,10 +521,12 @@ type EvadeOutcome struct {
 //  1. challenge exists (else EvadeUnknownChallenge)
 //  2. challenge is evade type (else EvadeNotEvadeType)
 //  3. flag matches expectedFlag (else EvadeWrongFlag)
-//  4. no forbidden rule fired within windowSeconds of server now (else
-//     EvadeForbiddenFired) — the window is evaluated against server time and
-//     never references attacker-supplied time: now derives from g.now(), not
-//     from any event field.
+//  4. the challenge is not dirty — no forbidden rule has EVER fired for this
+//     (user, challenge) since the last explicit reset (else
+//     EvadeForbiddenFired). App-H2: this is a persistent taint, not a
+//     recent-window check — there is no server time involved in the decision
+//     at all (contrast the pre-fix version, which read RecentFiresMatching
+//     against g.now()).
 //  5. if RequireExfil, the collector has the matching flag (else
 //     EvadeExfilRequired)
 //  6. record the solve → EvadeSolved.
@@ -255,31 +545,32 @@ func (g *Grader) SubmitEvade(user, cid, flag string) (EvadeOutcome, error) {
 	if flag != ch.ExpectedFlag {
 		return EvadeOutcome{Status: EvadeWrongFlag}, nil
 	}
-	// Gates 4-6 (forbidden window → exfil gate → MarkSolved) are the *single
-	// source of truth* shared with the auto-solve sweeper (evaluateClean). Any
-	// change to the clean-window / exfil / record logic must be made there so
-	// manual submit and sweeper stay bit-for-bit identical.
+	// Gates 4-6 (dirty-flag → exfil gate → MarkSolved) are the *single source
+	// of truth* shared with the auto-solve sweeper (evaluateClean). Any change
+	// to the taint / exfil / record logic must be made there so manual submit
+	// and sweeper stay bit-for-bit identical.
 	return g.evaluateClean(user, ch, flag)
 }
 
-// evaluateClean applies the evade challenge's clean-window + exfil gate and
+// evaluateClean applies the evade challenge's dirty-flag + exfil gate and
 // records the solve. It is the ONE place gates 4-6 live, shared verbatim by the
 // manual /submit path (SubmitEvade) and the auto-solve Sweeper (Sweep). Callers
 // must have already established (per SubmitEvade's gates 1-3): the challenge
 // exists, is evade type, and `flag` equals ch.ExpectedFlag.
 //
-//  4. no forbidden rule fired within windowSeconds of server now() — the window
-//     is evaluated against g.now(), NEVER attacker-supplied event time.
+//  4. the pair is not dirty (store.DirtyRules empty) — App-H2: a PERSISTENT
+//     taint, not a time window. g.now() plays no part in this decision at
+//     all, so there is nothing here for an attacker-supplied or
+//     server-advancing clock to influence.
 //  5. if RequireExfil, the collector holds the matching flag (HasExfil).
 //  6. record the solve → EvadeSolved (Newly = first-time).
 //
 // Fail-closed: any store error from MarkSolved is returned unrecorded; a
-// non-clean window or unmet exfil returns the corresponding non-solved status,
-// so a caller that mis-drives this (e.g. the sweeper enqueuing a not-yet-clean
-// pair) simply does not solve — it never records a solve it should not.
+// dirty pair or unmet exfil returns the corresponding non-solved status, so a
+// caller that mis-drives this (e.g. the sweeper enqueuing a still-dirty pair)
+// simply does not solve — it never records a solve it should not.
 func (g *Grader) evaluateClean(user string, ch catalog.Challenge, flag string) (EvadeOutcome, error) {
-	now := float64(g.now().Unix())
-	offending := g.store.RecentFiresMatching(user, ch.ForbiddenRules, now, ch.WindowSeconds)
+	offending := g.store.DirtyRules(user, ch.ID)
 	if len(offending) > 0 {
 		return EvadeOutcome{Status: EvadeForbiddenFired, Offending: offending}, nil
 	}
@@ -472,12 +763,13 @@ type SweepResult struct {
 // SAME gates as manual submit: the challenge must still be evade type with
 // RequireExfil set (catalog is the authority — a receipt for a since-changed
 // challenge is skipped), the delivered flag must equal ch.ExpectedFlag, and
-// then the shared evaluateClean gate (clean window → HasExfil → MarkSolved)
+// then the shared evaluateClean gate (dirty-flag check → HasExfil → MarkSolved)
 // must pass. Only pairs that clear every gate are solved this tick.
 //
 // Fail-closed by construction:
-//   - a not-yet-clean window returns EvadeForbiddenFired → not solved (retried
-//     next tick, since the pair stays pending);
+//   - a dirty pair returns EvadeForbiddenFired → not solved (retried next
+//     tick — and stays not-solved forever unless the participant explicitly
+//     resets the taint, App-H2);
 //   - an exfil value that does not match the expected flag returns
 //     EvadeWrongFlag / EvadeExfilRequired → never solved (the wrong receipt can
 //     never satisfy HasExfil for the real flag);

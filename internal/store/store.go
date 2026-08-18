@@ -9,12 +9,38 @@
 //     Journey UI: per-participant hint reveals (progressive hint gating).
 //     Mission `steps` are info-only (no per-step auto-detect / persistence) —
 //     the CLEARED verdict stays with solve (trigger fire / evade flag).
+//   - evade_dirty (user, challenge, rule, at)      PRIMARY KEY (user, challenge, rule)
+//     App-H2 + ADR-0003: the evade solve gate's forbidden-rule taint. A row's
+//     mere EXISTENCE means (user, challenge) is dirty — there is no expiry, no
+//     windowSeconds lookback, and no "clean again after N seconds". A row is
+//     only ever written for the participant's CURRENT mission (ADR-0003 A1:
+//     attempt scope — scoring.Grader.markDirtyOnRuleFire decides WHICH
+//     challenge, this table has no such awareness), and once written the pair
+//     stays dirty FOREVER until the participant calls the explicit reset
+//     endpoint (ResetDirty, which ALSO clears that pair's `exfil` row — A2-2).
+//     This is deliberately persisted (not in-memory like ruleFires below): the
+//     old in-memory-only windowing was the root cause of two exploits — (1)
+//     fire-then-wait-past-the-window always solves, and (2) a scoreboard
+//     restart (I1: single replica, Recreate strategy — happens on every image
+//     bump / node drain / OOM) wipes the in-memory fire history and
+//     auto-solves every exfil-delivered-but-dirty pair within one Sweeper
+//     tick. Persisting the taint (not just the raw fire) closes both: waiting
+//     can never clear a persisted row, and a restart reloads it from disk
+//     exactly like `solved` and `exfil` do. Attempt scope (ADR-0003) closes a
+//     THIRD, later-discovered hole App-H2 alone introduced: an unscoped
+//     persistent taint permanently blocks any evade mission whose
+//     forbiddenRules happen to be an EARLIER trigger mission's REQUIRED
+//     expectedRule (the catalog's 02→03 / 04→05 twin-mission pairs) for every
+//     regular participant, the instant they legitimately clear the earlier
+//     mission.
 //
 // In-memory only (reset on pod restart):
 //   - eventsPerUser: dashboard counter. Not used for scoring.
-//   - ruleFires per user: bounded to the last 5 minutes per user.
-//     Evade windowing is briefly less strict after a restart until
-//     events flow again.
+//   - ruleFires per user: bounded to the last 5 minutes per user. Presentational
+//     only (Journey UI "you just triggered X" feed / trigger-challenge live
+//     status) — it never gates a solve. The evade forbidden-rule gate reads
+//     evade_dirty (above), not this map, so a restart cannot resurrect the old
+//     wait-it-out or restart-auto-solve exploits via this map going empty.
 //
 // All state mutations go through methods on Store and are guarded by a
 // single mutex. Concurrent reads use the same mutex — fine for the
@@ -32,11 +58,14 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// RetentionSeconds is how long recent Falco rule-fires are kept for the evade
-// forbidden-rule lookback. Intentionally fixed at 5 min: comfortably covers the
-// largest challenge windowSeconds (30s today) plus operator margin, while
-// bounding the in-memory/table growth. Not an operator tuning knob — raising it
-// only matters if a challenge ever needs a >5min evade window.
+// RetentionSeconds bounds the in-memory ruleFires window (presentational
+// only — the Journey UI's trigger "detected" live-status feed and the
+// participant /me recent-fires display; see triggerDetectWindowSeconds in
+// api.go). It no longer backs any solve decision: the evade forbidden-rule
+// gate is the persisted, attempt-scoped evade_dirty taint (ADR-0003), not a
+// lookback over this map. Intentionally fixed at 5 min: comfortably covers
+// the UI's own lookback (60s today) plus operator margin, while bounding the
+// in-memory/table growth. Not an operator tuning knob.
 const RetentionSeconds = 300
 
 type SolveKey struct {
@@ -56,6 +85,10 @@ type Store struct {
 	hintReleased  map[hintKey]bool      // (mission,hint) operator-released to participants
 	hintViews     map[hintViewKey]bool  // (user,challenge,hintIdx) participant-revealed
 	stepChecks    map[stepCheckKey]bool // (user,challenge,stepIdx) participant self-checked
+	// dirtyRules mirrors the evade_dirty table: (user,challenge) -> set of
+	// forbidden rule names that have fired (App-H2). Non-empty set == dirty.
+	// Never cleared by time; only ResetDirty removes an entry.
+	dirtyRules map[SolveKey]map[string]struct{}
 }
 
 // stepCheckKey identifies one step of one challenge that a specific participant
@@ -139,6 +172,13 @@ func Open(path string) (*Store, error) {
           at        TEXT NOT NULL,
           PRIMARY KEY (user, challenge, step_idx)
         );
+        CREATE TABLE IF NOT EXISTS evade_dirty (
+          user      TEXT NOT NULL,
+          challenge TEXT NOT NULL,
+          rule      TEXT NOT NULL,
+          at        TEXT NOT NULL,
+          PRIMARY KEY (user, challenge, rule)
+        );
         DROP TABLE IF EXISTS events_per_user;
     `); err != nil {
 		db.Close()
@@ -155,6 +195,7 @@ func Open(path string) (*Store, error) {
 		hintReleased:  make(map[hintKey]bool),
 		hintViews:     make(map[hintViewKey]bool),
 		stepChecks:    make(map[stepCheckKey]bool),
+		dirtyRules:    make(map[SolveKey]map[string]struct{}),
 	}
 	if err := s.loadFromDB(); err != nil {
 		db.Close()
@@ -256,15 +297,36 @@ func (s *Store) loadFromDB() error {
 	if err != nil {
 		return err
 	}
-	defer sc.Close()
 	for sc.Next() {
 		var k stepCheckKey
 		if err := sc.Scan(&k.User, &k.Challenge, &k.StepIdx); err != nil {
+			sc.Close()
 			return err
 		}
 		s.stepChecks[k] = true
 	}
-	return sc.Err()
+	sc.Close()
+	if err := sc.Err(); err != nil {
+		return err
+	}
+
+	dr, err := s.db.Query("SELECT user, challenge, rule FROM evade_dirty")
+	if err != nil {
+		return err
+	}
+	defer dr.Close()
+	for dr.Next() {
+		var k SolveKey
+		var rule string
+		if err := dr.Scan(&k.User, &k.Challenge, &rule); err != nil {
+			return err
+		}
+		if s.dirtyRules[k] == nil {
+			s.dirtyRules[k] = make(map[string]struct{})
+		}
+		s.dirtyRules[k][rule] = struct{}{}
+	}
+	return dr.Err()
 }
 
 // ReleaseHint marks (mission, hint) as released to participants, or revokes it
@@ -465,6 +527,19 @@ func (s *Store) MarkSolved(user, challenge, at string) (newly bool, err error) {
 	return true, nil
 }
 
+// IsSolved reports whether (user, challenge) has already been solved. Used by
+// scoring.Grader's attempt-scope current() derivation (ADR-0003 A1) to walk
+// the progression order one id at a time; the api journey handler instead
+// builds its own set from a single Snapshot() call (cheaper for a whole-order
+// scan) and shares the SAME CurrentMission scan function against a different
+// backing predicate — see scoring.CurrentMission's doc.
+func (s *Store) IsSolved(user, challenge string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.solved[SolveKey{User: user, Challenge: challenge}]
+	return ok
+}
+
 // RecordExfil records that `user` exfiltrated `flag` for `challenge` at `at`
 // (the collector receipt). Last-write-wins per (user, challenge). Used by the
 // boss capstone: the participant must deliver the flag to the in-cluster
@@ -617,6 +692,145 @@ func (s *Store) RecentFiresMatching(user string, rules []string, now float64, wi
 	return out
 }
 
+// MarkDirty records that `rule` (one of a challenge's forbiddenRules) fired
+// for `user` against `challenge` (App-H2 persistent taint; ADR-0003 A1 scopes
+// WHICH challenge this is called for — see scoring.Grader.markDirtyOnRuleFire
+// — this method has no catalog or attempt-scope awareness and simply records
+// what it is told). Persists to SQLite — NOT a windowed/in-memory fact — so
+// the taint survives a scoreboard restart (conventions I1: single replica,
+// Recreate strategy) exactly like `solved` and `exfil` do. Idempotent per
+// (user, challenge, rule): a repeat fire of the same rule is a no-op (INSERT
+// OR IGNORE), so `at` only ever reflects the FIRST time this specific rule
+// dirtied this pair.
+//
+// There is deliberately no time parameter driving expiry and no companion
+// "clear after N seconds" — DirtyRules below reports this pair dirty until
+// ResetDirty explicitly deletes the row(s).
+//
+// Fail-closed (ADR-0003 A5): the in-memory dirtyRules map is updated FIRST,
+// before the SQLite write is attempted, and unconditionally on the return
+// path — a persistence failure below is reported to the caller (who must
+// react per RuleFireOutcome.TaintErr's doc) but does NOT unset the in-memory
+// taint that was just set. This is a deliberate asymmetry: an over-taint that
+// outlives a failed persistence write is recoverable (the participant's
+// reset endpoint clears it); a taint that is silently NOT set in memory
+// because the DB write failed is NOT recoverable — it is a permanent
+// false-clean gap for that rule fire. (Before ADR-0003 this method returned
+// on the db.Exec error BEFORE touching the in-memory map at all, so a
+// transient SQLite error dropped the taint outright — see A5.)
+func (s *Store) MarkDirty(user, challenge, rule, at string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := SolveKey{User: user, Challenge: challenge}
+	if s.dirtyRules[key] == nil {
+		s.dirtyRules[key] = make(map[string]struct{})
+	}
+	s.dirtyRules[key][rule] = struct{}{}
+
+	if _, err := s.db.Exec(
+		`INSERT OR IGNORE INTO evade_dirty (user, challenge, rule, at) VALUES (?, ?, ?, ?)`,
+		user, challenge, rule, at,
+	); err != nil {
+		return err
+	}
+	return nil
+}
+
+// DirtyRules returns the sorted, deduplicated set of forbidden rule names that
+// have ever fired for (user, challenge) since the last ResetDirty. An empty
+// (nil) slice means clean. This is a pure read-only projection over persisted
+// state — never derived from a time window — so it gives the identical answer
+// immediately after a restart as it did right before one (the App-H2 fix: see
+// the package doc's evade_dirty note for why that property matters).
+func (s *Store) DirtyRules(user, challenge string) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	set := s.dirtyRules[SolveKey{User: user, Challenge: challenge}]
+	if len(set) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(set))
+	for r := range set {
+		out = append(out, r)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ResetDirty is the ONLY way (user, challenge) returns to clean — there is no
+// time-based path. Called from the participant self-service reset endpoint
+// (self-or-admin gated at the API layer, conventions I8) after the
+// participant redoes the attack cleanly. Idempotent: resetting an
+// already-clean pair (with no exfil receipt either) is a harmless no-op.
+//
+// ADR-0003 A2-2 (CEO enforce decision, 2026-08-18): ALSO deletes the same
+// (user, challenge) pair's exfil receipt, if any. Before this, ResetDirty
+// cleared only evade_dirty and left the `exfil` row in place — for a
+// RequireExfil challenge (the boss capstone, 10-final-exfil) that reopened
+// the App-H2 exploit through a different door: fire a forbidden rule (dirty),
+// call reset-dirty, and the Sweeper's very next tick auto-solves the capstone
+// off the STALE receipt with no fresh exfil delivery at all ("fire → reset →
+// solve" replacing #124's "fire → wait → solve"). Deleting both rows in the
+// same call means a reset truly restarts the attempt: a RequireExfil
+// challenge needs a BRAND NEW exfil delivery after every reset, not just a
+// clean taint. (The "honor" alternative — leaving the receipt and documenting
+// the auto-solve as intentional — was considered and explicitly rejected by
+// the CEO; see ADR-0003 §A2 point 3.)
+//
+// app#124 5x review (R1/R2/R4, independently): the original two-Exec version
+// deleted evade_dirty FIRST — including the in-memory delete(s.dirtyRules,
+// key) — and only then deleted exfil. If the second DELETE failed, the
+// handler surfaced a 500, but the taint was ALREADY gone (both on disk and
+// in memory) while the stale exfil receipt was NOT: exactly the "dirty
+// cleared, receipt still present" state the Sweeper (current-independent,
+// 5s tick) auto-solves on its very next pass. A 500 response gave the
+// caller no reason to believe anything had actually changed, so the
+// A2-2 exploit this function exists to close reopened through its own
+// error path. Both DELETEs (and their in-memory mirrors) now run inside a
+// single SQLite transaction, committed only if both succeed, with the
+// in-memory maps updated only AFTER Commit returns nil — so a mid-way
+// failure leaves BOTH the taint and the receipt exactly as they were
+// (fail-closed: still dirty, still un-resettable, submit stays blocked)
+// instead of a partially-cleared state a background sweep can exploit.
+//
+// This is the first use of db.Begin/*sql.Tx anywhere in this package.
+// Safe under I1 (scoreboard is single-replica, and all Store methods —
+// including this one — already serialize through s.mu, so there is no
+// concurrent writer to interleave with these two statements).
+func (s *Store) ResetDirty(user, challenge string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := SolveKey{User: user, Challenge: challenge}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op once Commit succeeds
+
+	if _, err := tx.Exec(
+		"DELETE FROM evade_dirty WHERE user = ? AND challenge = ?",
+		user, challenge,
+	); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		"DELETE FROM exfil WHERE user = ? AND challenge = ?",
+		user, challenge,
+	); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	// In-memory mirrors are only mutated after the transaction is durably
+	// committed — see the fail-closed rationale above.
+	delete(s.dirtyRules, key)
+	delete(s.exfil, key)
+	return nil
+}
+
 // Snapshot returns a deep-copied view of persisted state. Used by /api/state
 // to build the dashboard JSON without holding the lock during serialization.
 type Snapshot struct {
@@ -672,6 +886,9 @@ func (s *Store) Reset() (clearedSolves int, err error) {
 	if _, err := s.db.Exec("DELETE FROM step_checks"); err != nil {
 		return 0, fmt.Errorf("reset step_checks: %w", err)
 	}
+	if _, err := s.db.Exec("DELETE FROM evade_dirty"); err != nil {
+		return 0, fmt.Errorf("reset evade_dirty: %w", err)
+	}
 	clearedSolves = len(s.solved)
 	s.solved = make(map[SolveKey]string)
 	s.exfil = make(map[SolveKey]string)
@@ -679,5 +896,6 @@ func (s *Store) Reset() (clearedSolves int, err error) {
 	s.ruleFires = make(map[string][]ruleFire)
 	s.hintViews = make(map[hintViewKey]bool)
 	s.stepChecks = make(map[stepCheckKey]bool)
+	s.dirtyRules = make(map[SolveKey]map[string]struct{})
 	return clearedSolves, nil
 }

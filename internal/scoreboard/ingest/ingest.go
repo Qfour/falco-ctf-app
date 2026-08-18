@@ -3,8 +3,11 @@
 //	POST /falco/events
 //
 // Filters events to the `ctf-<username>/workspace` namespace+pod pair,
-// records rule fires for evade windowing, and marks trigger-type
-// challenges solved.
+// records the rule fire (presentational feed only), then hands the rule off
+// to scoring.Grader.OnRuleFire — the SOLE entry point (ADR-0003 A4) that
+// taints the participant's current evade mission if it forbids this rule
+// (App-H2 + ADR-0003 attempt-scope persistent dirty flag) and marks any
+// matching trigger-type challenge solved, in that order.
 package ingest
 
 import (
@@ -122,22 +125,68 @@ func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	metrics.FalcoEventsReceived.WithLabelValues("accepted").Inc()
+
+	// OnRuleFire is the Grader's single public entry point (ADR-0003 A4): it
+	// resolves the participant's current mission, taints it if this rule is
+	// forbidden for it (App-H2 + attempt-scope persistent dirty flag), and
+	// THEN evaluates any trigger solve — that exact order is what makes the
+	// twin-mission pairs (02→03, 04→05) work; see scoring package doc.
+	res := h.grader.OnRuleFire(user, ev.Rule)
+
+	// app#124 5x review (R1 + R2 converged, R4 finding F4): bump the
+	// per-newly-solved trigger metric BEFORE the TaintErr check below, not
+	// after. OnRuleFire already ran evaluateTrigger unconditionally (taint
+	// first, trigger second — see its own doc), so a trigger solve may have
+	// been durably persisted to the store even when the taint write failed.
+	// The old ordering returned 500 before this loop ran whenever TaintErr
+	// was set, so a solve that WAS recorded in the store never got counted
+	// in SolvesTotal — no scoring impact (the store already has it), but a
+	// metrics undercount that would mislead anyone debugging via Prometheus
+	// rather than the DB.
+	for _, r := range res.Results {
+		if r.Newly {
+			metrics.SolvesTotal.WithLabelValues(r.Challenge, "trigger").Inc()
+		}
+	}
+
+	// ADR-0003 A5 (fail-closed criticality): a failed taint PERSISTENCE write
+	// is NOT a "log and carry on" situation like a trigger-solve error below —
+	// MarkDirty already set the in-memory taint (store.MarkDirty is
+	// fail-closed), but the on-disk record may be missing, and falcosidekick
+	// does not retry a failed webhook. Surface it loudly: bump a dedicated
+	// metric and fail the request 5xx rather than hide it behind a 200.
+	//
+	// Only ONE FalcoEventsReceived outcome label is incremented per request
+	// (app#124 5x review, R4 finding F4): "accepted" is bumped at the very
+	// end, on the success path only, so a taint-error request contributes
+	// solely to "taint_error" — the old code bumped "accepted" unconditionally
+	// right after RecordRuleFire and then ALSO bumped "taint_error" here on
+	// this path, so the label total exceeded FalcoEventsReceived's actual
+	// request count.
+	//
+	// The response body carries a generic message, not res.TaintErr.Error()
+	// (app#124 5x review, R1 finding — the same err.Error()-in-response-body
+	// pattern app#113 catalogued elsewhere; internal store/driver error text
+	// must not reach an HTTP client). Full detail still goes to the log line
+	// above.
+	if res.TaintErr != nil {
+		h.logger.Error("mark dirty", "err", res.TaintErr)
+		metrics.FalcoEventsReceived.WithLabelValues("taint_error").Inc()
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "could not persist taint"})
+		return
+	}
 
 	// Trigger-type solve decision is the Grader's job; this handler is a thin
 	// driver that just bumps the solve metric for each newly-recorded solve.
 	// (The Grader stamps its own receipt time from the same injected clock.)
-	results, err := h.grader.EvaluateTrigger(user, ev.Rule)
-	if err != nil {
-		// Mirror the old per-iteration behaviour: log and carry on. Any solves
-		// gathered before the error are still counted below.
-		h.logger.Error("mark solved", "err", err)
-	}
-	for _, res := range results {
-		if res.Newly {
-			metrics.SolvesTotal.WithLabelValues(res.Challenge, "trigger").Inc()
-		}
+	// A trigger-solve store error is continue-on-error, same as before A4:
+	// log and carry on — it delays that mission's auto-solve to the next
+	// matching fire rather than creating a false-clean gap, so it does not
+	// warrant the same 5xx escalation as a taint failure.
+	if res.TriggerErr != nil {
+		h.logger.Error("mark solved", "err", res.TriggerErr)
 	}
 
+	metrics.FalcoEventsReceived.WithLabelValues("accepted").Inc()
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"accepted": true, "user": user, "rule": ev.Rule})
 }
