@@ -137,3 +137,15 @@ When asked to REVIEW a challenge:
 - `challengeId` must match the directory name exactly
 - For evade challenges, ensure the "forbidden" action is actually detectable by default Falco rules
 - Match the user's language for README prose (Japanese expected)
+- **plant-target must be a bind-mountable path** (ADR-0001, Accepted): flags are planted by a
+  `plant` initContainer into a seed volume, and the challenge container receives only the
+  declared plant-targets as `subPath` mounts. A target that cannot be expressed as a bind mount
+  (process state, a path created at runtime, many scattered rootfs locations) cannot be planted.
+- **Do not author a mission that requires a same-filesystem operation (hardlink / rename) on a
+  planted file** (ADR-0001): a `subPath` bind mount puts the file on a different filesystem, so
+  `link()` fails with `EXDEV` and `rename()` across the mount boundary fails too. Mission 09 had
+  to be retargeted for exactly this reason.
+- The `plant.sh` example above still shows the pre-ADR-0001 model (writing straight to
+  `/etc/shadow` from an env var in the challenge container). **It will change when Option B
+  lands** — plant runs in the initContainer and writes into the seed dir. Check the chart before
+  copying the snippet.
