@@ -677,13 +677,22 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"correct": true,
 			"evaded":  false,
-			// App-H2: this is now a PERSISTENT taint, not a recent-window
-			// warning — waiting does not help, unlike the old "wait Nds" copy.
+			// App-H2 / ADR-0003 §A2: this is now a PERSISTENT taint, not a
+			// recent-window warning — waiting does not help. This text must
+			// NOT tell a participant to curl reset-dirty directly: that route
+			// sits behind an origin-guard that 403s any request without a
+			// browser-supplied Origin/Referer (see resetDirty's doc in this
+			// file), so a workspace curl of the path below is unreachable —
+			// it would be a dead-end instruction (app#125, prod gate). The
+			// only participant-reachable path is the "このミッションをやり直す"
+			// button the Journey UI renders on this mission's panel
+			// (portal.html dirtySection); fall back to staff if it's missing.
 			"reason": fmt.Sprintf(
 				"flag is correct, but the forbidden rule(s) %v fired for user %q and this attempt "+
-					"is now marked dirty. Waiting will not clear it — redo the attack cleanly, then "+
-					"POST /api/users/%s/challenges/%s/reset-dirty before submitting again.",
-				outcome.Offending, user, user, cid,
+					"is now marked dirty. Waiting will not clear it — use the mission panel's "+
+					"\"このミッションをやり直す\" (redo this mission) button in the portal to reset, "+
+					"redo the attack cleanly, then submit again. If that button is unavailable, ask a staff member.",
+				outcome.Offending, user,
 			),
 		})
 	case scoring.EvadeExfilRequired:
