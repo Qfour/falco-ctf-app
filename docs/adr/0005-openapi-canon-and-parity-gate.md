@@ -1,24 +1,35 @@
 # ADR-0005: OpenAPI spec の対象を「サービスの HTTP 面すべて」と定め、実装との parity を fail-closed で機械検査する
 
 - Status: **Accepted** (2026-08-19 VP 承認。4 つのスコープ判断を批准した)
-  - **実装されたのは V1-V6 / V8**。`make test` (required check) に載る。VP の独立検証は
-    **`registrationTargets` に列挙された 6 ファイルの範囲内**でのみ green→fail を確認した
-    (`view.go` へ直接登録を注入 → `TestNoDirectMuxRegistrationOutsideTable` が file:line 付きで
-    fail、復元で green)。**この範囲限定が下記の欠陥 (3) である**
-  - **V7 は未実施** — `gen-diff-check` は依然 advisory (非 required)。required 昇格は
-    `scripts/change-mgmt/setup-rulesets.sh` の変更を伴うため VP / release-engineer に残る
-  - ⚠ **本 ADR には 2 つの設計欠陥が 5x レビューで判明している** (R4/R2 が独立に指摘):
-    (1) **V3 は「宣言と spec の一致」しか要求しておらず、宣言と実際の middleware 適用の
-    一致を要求していない** — `OriginGuarded: true` を残して `h.og(` を外すと全テストが green
-    になることを VP が変異テストで実証した。(2) **Decision 2(b) が必須とした `x-ctf-audience` /
-    `x-ctf-authz` / `x-ctf-rate-limit` に Verification が無い** (Decision と Verification の不整合)。
-    (3) **V2 の走査範囲が手書きのファイル allowlist (6 本) で、同一パッケージの別ファイルからは
-    素通しできる** — security-engineer が `internal/scoreboard/view/portal.go` (走査対象外) に
-    `mux.HandleFunc("POST /api/sneaky-admin-reset", ...)` を書き `server.go` から配線した変異で
-    **全テスト green** を実証した。つまり **spec 未記載・origin-guard 無しの state-changing ルートを
-    本番 mux に生やせる**。これは Decision 1 が却下した「除外リスト」パターンが検査側に入った形。
-    → **後継 ADR-0006 で partial supersede する**
-  - **以降この ADR の本文は編集しない** — 変更は後継 ADR で行う
+  - **Decision / Verification 節は以後編集しない** — 変更は後継 ADR で行う。
+    **一方この Status ブロックは状態記述なので、実態に追随させる** (凍結対象は決定であって状態ではない)
+  - **実装されたのは V1-V6 / V8**。`make test` (required check) に載る
+  - **V7 は未実施** — `gen-diff-check` は依然 advisory (非 required)。昇格は
+    `setup-rulesets.sh` (workspace-local・本リポには無い) の変更を伴うため release-engineer に残る
+  - **★VP 裁定 (2026-08-19): V7 は I14 の前提条件ではない。** 上記「昇格の条件」は
+    「V1-V8 が landing」と書いているが、**V7 が守るのは生成物の鮮度**であって、I14 が主張する
+    「ルート集合 / origin-guard / forward の一致」とは**直交する別の不変条件**である。
+    依存関係が無いため前提条件から外す。V7 の実体 (required 昇格) は独立の作業として残す。
+    **口伝で運ぶと落ちるので裁定をここに残す** (ADR-0003 の教訓)
+  - **5x レビュー 2 巡で判明し、本 PR で閉じた欠陥 3 件** (いずれも変異テストで閉止を独立確認済):
+    1. **V3 が「宣言 ↔ spec」しか要求せず、宣言と実際の middleware 適用の一致を要求していなかった** →
+       `TestOriginGuard_AllProtectedRoutesEnforced` を `Routes()` から導出。security-engineer が
+       `og()` を恒等関数に変異させ **guarded 7 本すべて FAIL・生存 0** を確認 = 403 は origin-guard に
+       排他的に帰属する
+    2. **Decision 2(b) が必須とした `x-ctf-audience` / `x-ctf-authz` / `x-ctf-rate-limit` に
+       Verification が無かった** → `specparity.StringExtParity` を 3 サービスに配線
+    3. **V2 の走査範囲が手書きのファイル allowlist (6 本) だった** → `cmdOwnsServeMux` の
+       import BFS から機械導出 (**実測 34 ファイル**)。除外は `internal/apispec/route.go` 1 本のみ =
+       検査自身の登録箇所。走査集合が空なら fail する非空ガード付き
+  - **本 PR で閉じていない残余** (→ 後継 **ADR-0006 / Issue #144** で条文化・#146 で構造化):
+    - **宣言 ↔ 強制の非結合が `x-ctf-authz` に残る** — spec と宣言が一致していても
+      **handler が認可ゲートを呼ばない**ルートを作れる (security-engineer が実証: 匿名 GET が 200 で
+      store 内容を返した)。**origin-guard と同じ欠陥クラスの残存分**
+    - **`apispec.Register` の 2 回目呼び出し** (戻り値破棄) で mux ⊋ `Routes()` を作れる (#146 で
+      `NewMux` により構文的に不可能にする。本 PR は静的 assert で検出)
+    - **V5 のカバレッジ** — 3 spec 合計 18 operation のうち 4 のみ。`CompareResponse` は
+      `properties` を持たない節点を無言 return する
+    - **`specparity` が test-only であることの Go レベルの強制**
 - Date / Deciders: 2026-08-19 / architect (起案) + VP (承認) + software-engineer (実装) + qa-engineer (parity test) + security-engineer (origin-guard 契約のレビュー)
 - 関連: Issue **#115** (spec が実ルートの 43-47% しか覆っていない — 本 ADR はその設計決定部分)、
   Issue **#113** (`err.Error()` 漏出 + エラー契約の不在。本 ADR は §Decision 5 で**形の契約だけ**を決め、
@@ -82,7 +93,7 @@ JSON API だけを分母にすると `api.go` の 14 本中 6 本 = **43%** (VP 
   spec に**書かれていないルート**は生成型にも現れないので、この job は永久に緑のままになる。
   しかも `gen-diff-check` は **required check ではない**
   (required は `test` / `chart-lint` / `flag-guard` / `shellcheck / shellcheck` / `challenge-rules` / `build`
-   = `scripts/change-mgmt/setup-rulesets.sh:54`)。
+   = `setup-rulesets.sh` (workspace-local・本リポには無い))。
 - 生成型が**実質使われていない**: レスポンスは全て手書き `map[string]any`
   (`api.go:1713-1748` の missionDetail 等)。**レスポンス契約はコンパイル時に何も保証されていない。**
   だから `dirty` / `dirtyRules` / `exfilReceived` のフィールド名を知る手段が
@@ -243,7 +254,7 @@ C4 の 4 論点に対する結論:
   software-engineer の 1 PR で閉じる。
 - **application-engineer**: portal が読むフィールドは今後 spec が正典。実装 grep をやめられる。
 - **release-engineer / VP**: `gen-diff-check` を **required check へ昇格**する判断が必要
-  (ruleset 変更 = `scripts/change-mgmt/setup-rulesets.sh:54` の `CHECKS` に追加)。
+  (ruleset 変更 = `setup-rulesets.sh` (workspace-local・本リポには無い) の `CHECKS` に追加)。
   現状 advisory なので、生成物 drift は merge を止めない。
 - **platform-engineer**: 契約表に変更なし。ただし collector spec が新設されたので、
   参加者向け exfil URL の正典が文書化された (以後の rename は両リポ同時 PR)。
@@ -274,7 +285,7 @@ C4 の 4 論点に対する結論:
 
 > **走る場所**: すべて Go テスト (`internal/scoreboard/api` / 新規 `internal/apispec` 等) として
 > `make test` に載せる。**理由**: `test` は **required check** であり
-> (`scripts/change-mgmt/setup-rulesets.sh:54`)、`go test` の exit status がそのまま
+> (`setup-rulesets.sh` (workspace-local・本リポには無い))、`go test` の exit status がそのまま
 > パイプラインの成否になるので「出力の有無で成否を判定する」事故 (feedback memory の
 > fail-open を 3 回踏んだ教訓) を構造的に避けられる。新しい CI job も新規依存も足さない
 > (`gopkg.in/yaml.v3` は既に直接依存)。
@@ -332,7 +343,7 @@ schema 無しの箇所は見ない)。配列は先頭要素で判定する。
 **V7. 生成物の鮮度 (blocking へ昇格を要求)**
 `make gen` の出力が commit 済み `internal/{scoreboard,authpolicy}/oapi/types.gen.go` と一致すること。
 機構は既に `gen-diff-check` (`.github/workflows/checks.yaml:86`) にあるが **required ではない**。
-**required 集合への追加を VP に要求する** (`setup-rulesets.sh:54`)。
+**required 集合への追加を VP に要求する** (`setup-rulesets.sh` — workspace-local・本リポには無い)。
 これが無いと「spec を直して生成し忘れた」PR が緑で通る。
 
 **V8. 検査自身の fail-closed 証明 (blocking / PR 提出物)**

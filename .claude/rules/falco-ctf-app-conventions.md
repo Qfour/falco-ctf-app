@@ -30,7 +30,7 @@
 | I8 | auth-policy `/check` は `X-Auth-Request-Email` を **prefix-exact** (`<username>@`) で照合。**唯一の例外**: email が `ADMIN_EMAILS` に含まれる場合は任意の workspace を許可 (運営の全 workspace アクセス)。それ以外で prefix 一致を緩めない |
 | I9 | challenge コンテナ Dockerfile に Service / Ingress を追加しない |
 | I10 | Dockerfile / yaml にトークン・実シークレットを焼き込まない |
-| I14 | `http.ServeMux` を組み立てる全バイナリ (scoreboard/collector/auth-policy) について、mux に登録されたルート集合 = 対応する `docs/openapi-*.yaml` の operation 集合であり、origin-guard の有無と collector forward の集合も spec の宣言と一致する。**例外・除外リストを持たない** (ADR-0005)。機構: `internal/apispec` + 各サービスの `apispec_parity_test.go` (`make test` = required check) |
+| I14 | `http.ServeMux` を組み立てる全バイナリ (scoreboard/collector/auth-policy) について、mux に登録されたルート集合 = 対応する `docs/openapi-*.yaml` の operation 集合であり、origin-guard の有無と collector forward の集合も spec の宣言と一致する。**例外・除外リストを持たない** (ADR-0005)。機構: `internal/apispec` (ルートテーブルと `Register`) + 各サービスの `apispec_parity_test.go` (宣言 ↔ spec) + **`internal/scoreboard/origin_guard_test.go` の `TestOriginGuard_AllProtectedRoutesEnforced`** (宣言 ↔ **強制**。`Routes()` から導出。これを削ると I14 は宣言の一致しか保証しなくなる) — すべて `make test` = required check。対象バイナリは**列挙ではなく機械判定** (`http.ServeMux` を組み立てるものすべて。現在は scoreboard / collector / auth-policy の 3 本) |
 
 > **I11-I13 は欠番ではなく予約済み (未昇格)。** 番号は 2026-08-18 に VP が批准済で再利用しない。
 > **未昇格の理由は 2 つに分かれる** (2026-08-19 に 5x R3 が実測して判明):
