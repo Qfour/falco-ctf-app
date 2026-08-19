@@ -13,6 +13,17 @@ COPY internal/serverutil ./internal/serverutil
 # The collector reuses the scoreboard's httpx + ratelimit helpers (no fork).
 COPY internal/scoreboard/httpx ./internal/scoreboard/httpx
 COPY internal/scoreboard/ratelimit ./internal/scoreboard/ratelimit
+# Only route.go (Route/Register, stdlib-only) — NOT the whole internal/apispec
+# directory, which also holds internal/apispec/specparity (yaml.v3-dependent
+# spec-loading/parity-comparison code, imported ONLY from *_test.go files).
+# BLOCKING 1 (5x review): this service failed to build at all before this
+# line existed (internal/collector/collector.go imports internal/apispec for
+# Route/Register), and the fix is this single-file COPY, not the whole
+# directory — copying the directory would still build (extra unimported
+# files on disk are harmless to `go build ./cmd/collector`), but copying only
+# the thin file keeps the build context itself honest about what this
+# distroless binary actually needs.
+COPY internal/apispec/route.go ./internal/apispec/route.go
 
 RUN CGO_ENABLED=0 GOOS=linux go build \
       -ldflags="-s -w" -trimpath \

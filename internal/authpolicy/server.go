@@ -85,10 +85,11 @@ func NewHandler(cfg Config, logger *slog.Logger) *Handler {
 		}
 		h.adminSet[e] = struct{}{}
 	}
-	// Declarative route table (ADR-0005 V2) — the single artifact Routes()
-	// hands back to the parity test, and the only thing apispec.Register
-	// loops over to build the mux.
-	h.routes = []apispec.Route{
+	// declared is the DESIRED table; h.routes below becomes apispec.Register's
+	// RETURN value, not this slice itself (MEDIUM 1, 5x review — see
+	// route.go's Register doc): that is what makes Routes() report exactly
+	// what the mux serves, never a route a future edit left Handler: nil on.
+	declared := []apispec.Route{
 		{
 			Method: "GET", Pattern: "/healthz",
 			Audience: apispec.AudienceInfra, Authz: apispec.AuthzNone,
@@ -114,14 +115,19 @@ func NewHandler(cfg Config, logger *slog.Logger) *Handler {
 			Handler: http.HandlerFunc(h.checkAdmin),
 		},
 	}
-	apispec.Register(h.mux, h.routes)
+	h.routes = apispec.Register(h.mux, declared)
 	return h
 }
 
-// Routes returns the declarative route table this Handler registered onto
-// its mux (ADR-0005 V2) — exactly what NewHandler installed, for the parity
-// test (server_test.go) to compare against docs/openapi-auth-policy.yaml.
-func (h *Handler) Routes() []apispec.Route { return h.routes }
+// Routes returns the route set this Handler ACTUALLY registered onto its
+// mux (ADR-0005 V2) — exactly apispec.Register's return value from
+// NewHandler, for the parity test (server_test.go) to compare against
+// docs/openapi-auth-policy.yaml. Returns a copy (MEDIUM 5, 5x review):
+// callers must not be able to mutate this Handler's live route table by
+// mutating an element of the returned slice in place.
+func (h *Handler) Routes() []apispec.Route {
+	return append([]apispec.Route(nil), h.routes...)
+}
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mux.ServeHTTP(w, r)

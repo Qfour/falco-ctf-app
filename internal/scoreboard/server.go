@@ -192,33 +192,50 @@ func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts .
 	// every sub-handler's (ADR-0005 V2) so the static "no direct
 	// mux.Handle outside the table" check (internal/apispec) covers this
 	// file too, not just the sub-packages.
-	h.routes = append(h.routes, apispec.Route{
-		Method: "GET", Pattern: "/healthz",
-		Audience: apispec.AudienceInfra, Authz: apispec.AuthzNone,
-		OriginGuarded: false, CollectorForward: false, RateLimit: "none",
-		Handler: http.HandlerFunc(h.healthz),
-	})
-	h.routes = append(h.routes, apispec.Route{
-		Method: "GET", Pattern: "/metrics",
-		Audience: apispec.AudienceInfra, Authz: apispec.AuthzNone,
-		OriginGuarded: false, CollectorForward: false, RateLimit: "none",
-		Handler: promhttp.Handler(),
-	})
-	h.routes = append(h.routes, ih.Routes()...)
-	h.routes = append(h.routes, ah.Routes()...)
-	h.routes = append(h.routes, vh.Routes()...)
-	apispec.Register(h.mux, h.routes)
+	//
+	// declared is the DESIRED table; apispec.Register's return value (not
+	// declared itself) becomes h.routes below — MEDIUM 1 (5x review): a
+	// Route with Handler == nil is silently skipped by Register (never
+	// panics, never reaches the mux), so storing `declared` verbatim here
+	// would let such a route pass every ADR-0005 V1-V4 check while actually
+	// 404ing at runtime. Storing Register's installed-subset return value
+	// instead means Routes() can only ever report what the mux truly serves.
+	declared := []apispec.Route{
+		{
+			Method: "GET", Pattern: "/healthz",
+			Audience: apispec.AudienceInfra, Authz: apispec.AuthzNone,
+			OriginGuarded: false, CollectorForward: false, RateLimit: "none",
+			Handler: http.HandlerFunc(h.healthz),
+		},
+		{
+			Method: "GET", Pattern: "/metrics",
+			Audience: apispec.AudienceInfra, Authz: apispec.AuthzNone,
+			OriginGuarded: false, CollectorForward: false, RateLimit: "none",
+			Handler: promhttp.Handler(),
+		},
+	}
+	declared = append(declared, ih.Routes()...)
+	declared = append(declared, ah.Routes()...)
+	declared = append(declared, vh.Routes()...)
+	h.routes = apispec.Register(h.mux, declared)
 
 	return h
 }
 
-// Routes returns this binary's FULL, flattened declarative route table
+// Routes returns this binary's FULL, flattened, ACTUALLY-INSTALLED route set
 // (this package's own healthz/metrics rows plus ingest's, api's and view's —
-// ADR-0005 V2/V1). It is exactly what was installed onto the mux in
-// NewHandler, via the same apispec.Register call, so a parity test reading
-// this back sees the actual registered set, not a second hand-maintained
-// copy of it.
-func (h *Handler) Routes() []apispec.Route { return h.routes }
+// ADR-0005 V2/V1) — exactly apispec.Register's return value from NewHandler,
+// not the input table Register was given, so a parity test reading this
+// back sees what the mux truly serves (MEDIUM 1) rather than a second,
+// independently-maintained "what we meant to install" list. Returns a copy
+// (MEDIUM 5, 5x review): the ORIGINAL slice header pointed at this Handler's
+// own h.routes backing array, so a caller mutating an element in place
+// (rather than appending to a fresh slice, as every ADR-0005 mutation test
+// already does) would have corrupted this Handler's live route table, not a
+// disposable snapshot.
+func (h *Handler) Routes() []apispec.Route {
+	return append([]apispec.Route(nil), h.routes...)
+}
 
 // Sweeper returns the auto-solve sweeper wired to this handler's shared Grader.
 // The command layer runs it (Sweeper.Run) in its own goroutine bound to the

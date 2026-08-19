@@ -1,19 +1,23 @@
-package apispec
+package specparity
 
 // This file is ADR-0005 V8's generic, algorithm-level "prove the detector
 // itself is fail-closed" evidence: table-driven mutation tests against the
-// comparison primitives (RouteSetDiff, BoolExtParity,
+// comparison primitives (RouteSetDiff, BoolExtParity, StringExtParity,
 // CollectorForwardBijection, ResetDirty*, CompareResponse) using small
 // synthetic fixtures — NOT the real docs/openapi-*.yaml files (those are
 // exercised for real by internal/scoreboard, internal/collector and
 // internal/authpolicy's own parity tests). Keeping the mutation proof here,
 // against hand-built inputs, means it stays fast, has no service-fixture
 // dependency, and — most importantly — proves the ALGORITHM catches each of
-// the three ADR-0005 V8 mutation classes (route removed, origin-guard flag
-// flipped, field renamed) in isolation, before ever trusting it against a
-// 1,600-line real spec.
+// the ADR-0005 V8 mutation classes (route removed, origin-guard flag
+// flipped, field renamed, x-ctf-authz reversed) in isolation, before ever
+// trusting it against a 1,600-line real spec.
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/Qfour/falco-ctf-app/internal/apispec"
+)
 
 func baseSpecOps() map[string]map[string]any {
 	return map[string]map[string]any{
@@ -32,8 +36,8 @@ func baseSpecOps() map[string]map[string]any {
 	}
 }
 
-func baseRoutes() []Route {
-	return []Route{
+func baseRoutes() []apispec.Route {
+	return []apispec.Route{
 		{Method: "GET", Pattern: "/api/state", OriginGuarded: false, CollectorForward: false},
 		{Method: "POST", Pattern: "/api/admin/reset", OriginGuarded: true, CollectorForward: false},
 		{Method: "POST", Pattern: "/api/challenges/{cid}/submit", OriginGuarded: false, CollectorForward: true},
@@ -93,7 +97,7 @@ func TestBoolExtParity_CatchesFlippedFlag(t *testing.T) {
 			routes[i].OriginGuarded = false // was true — flip it
 		}
 	}
-	missingKey, onlyImpl, onlySpec := BoolExtParity(baseSpecOps(), routes, "x-ctf-origin-guard", func(rt Route) bool { return rt.OriginGuarded })
+	missingKey, onlyImpl, onlySpec := BoolExtParity(baseSpecOps(), routes, "x-ctf-origin-guard", func(rt apispec.Route) bool { return rt.OriginGuarded })
 	if len(missingKey) != 0 {
 		t.Fatalf("no key should be reported missing here, got %v", missingKey)
 	}
@@ -111,9 +115,105 @@ func TestBoolExtParity_CatchesFlippedFlag(t *testing.T) {
 func TestBoolExtParity_CatchesMissingKey(t *testing.T) {
 	specOps := baseSpecOps()
 	delete(specOps["POST /api/admin/reset"], "x-ctf-origin-guard")
-	missingKey, _, _ := BoolExtParity(specOps, baseRoutes(), "x-ctf-origin-guard", func(rt Route) bool { return rt.OriginGuarded })
+	missingKey, _, _ := BoolExtParity(specOps, baseRoutes(), "x-ctf-origin-guard", func(rt apispec.Route) bool { return rt.OriginGuarded })
 	if len(missingKey) != 1 || missingKey[0] != "POST /api/admin/reset" {
 		t.Fatalf("expected missingKey=[POST /api/admin/reset], got %v", missingKey)
+	}
+}
+
+// --- StringExtParity (HIGH 4) mutation proof ---------------------------
+
+func baseSpecOpsWithAuthz() map[string]map[string]any {
+	ops := baseSpecOps()
+	ops["GET /api/state"]["x-ctf-authz"] = "admin"
+	ops["POST /api/admin/reset"]["x-ctf-authz"] = "admin"
+	ops["POST /api/challenges/{cid}/submit"]["x-ctf-authz"] = "claimed-identity"
+	return ops
+}
+
+func baseRoutesWithAuthz() []apispec.Route {
+	routes := baseRoutes()
+	for i := range routes {
+		switch routes[i].MuxPattern() {
+		case "GET /api/state":
+			routes[i].Authz = apispec.AuthzAdmin
+		case "POST /api/admin/reset":
+			routes[i].Authz = apispec.AuthzAdmin
+		case "POST /api/challenges/{cid}/submit":
+			routes[i].Authz = apispec.AuthzClaimedIdentity
+		}
+	}
+	return routes
+}
+
+func authzTableValue(rt apispec.Route) string { return string(rt.Authz) }
+
+// TestStringExtParity_CleanIsEmpty pins the non-mutated baseline for the
+// string-valued twin of BoolExtParity.
+func TestStringExtParity_CleanIsEmpty(t *testing.T) {
+	missingKey, mismatched := StringExtParity(baseSpecOpsWithAuthz(), baseRoutesWithAuthz(), "x-ctf-authz", authzTableValue)
+	if len(missingKey) != 0 || len(mismatched) != 0 {
+		t.Fatalf("clean fixture must have no diff, got missingKey=%v mismatched=%v", missingKey, mismatched)
+	}
+}
+
+// TestStringExtParity_CatchesReversedAuthz is HIGH 4's own motivating
+// mutation: the spec's x-ctf-authz for a route is reversed from "admin" to
+// "none" (or vice versa) WITHOUT touching the route table — exactly the
+// "documented but a lie" drift ADR-0005 calls out as worst, and exactly what
+// GET /api/hints' x-ctf-authz would have looked like reversed with no
+// detector wired (5x review, R2/R3: StringExt had zero callers before this
+// function existed).
+func TestStringExtParity_CatchesReversedAuthz(t *testing.T) {
+	specOps := baseSpecOpsWithAuthz()
+	specOps["POST /api/admin/reset"]["x-ctf-authz"] = "none" // real Route.Authz stays admin
+
+	_, mismatched := StringExtParity(specOps, baseRoutesWithAuthz(), "x-ctf-authz", authzTableValue)
+	found := false
+	for _, m := range mismatched {
+		if m == `POST /api/admin/reset: impl="admin" spec="none"` {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected a mismatch entry for POST /api/admin/reset, got %v", mismatched)
+	}
+}
+
+// TestStringExtParity_CatchesMissingKey mirrors BoolExtParity's fail-closed
+// rule for the string case: an ABSENT x-ctf-authz key is a parity failure,
+// never an implicit "no requirement".
+func TestStringExtParity_CatchesMissingKey(t *testing.T) {
+	specOps := baseSpecOpsWithAuthz()
+	delete(specOps["POST /api/admin/reset"], "x-ctf-authz")
+	missingKey, _ := StringExtParity(specOps, baseRoutesWithAuthz(), "x-ctf-authz", authzTableValue)
+	if len(missingKey) != 1 || missingKey[0] != "POST /api/admin/reset" {
+		t.Fatalf("expected missingKey=[POST /api/admin/reset], got %v", missingKey)
+	}
+}
+
+// TestStringExtParity_CatchesUnsetRouteField proves the OTHER direction: a
+// Route that never sets the field at all (zero-value "") against a spec that
+// DOES declare a value must be flagged as a mismatch, not silently skipped —
+// an unset field is exactly the kind of drift (a new route added without its
+// x-ctf-authz counterpart wired into the table) this check must catch.
+func TestStringExtParity_CatchesUnsetRouteField(t *testing.T) {
+	specOps := baseSpecOpsWithAuthz()
+	routes := baseRoutesWithAuthz()
+	for i := range routes {
+		if routes[i].MuxPattern() == "POST /api/admin/reset" {
+			routes[i].Authz = "" // simulate a route that forgot to set Authz
+		}
+	}
+	_, mismatched := StringExtParity(specOps, routes, "x-ctf-authz", authzTableValue)
+	found := false
+	for _, m := range mismatched {
+		if m == `POST /api/admin/reset: impl="" spec="admin"` {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected a mismatch entry for the unset Authz field, got %v", mismatched)
 	}
 }
 
@@ -161,11 +261,11 @@ func TestCollectorForwardBijection_CatchesResetDirtyAddedToForward(t *testing.T)
 // implementation-side twin: mutating the ACTUAL route table (not the spec)
 // must be caught the same way.
 func TestResetDirtyRouteViolation_CatchesTableMutation(t *testing.T) {
-	routes := []Route{{Method: "POST", Pattern: "/api/users/{user}/challenges/{cid}/reset-dirty", CollectorForward: true}}
+	routes := []apispec.Route{{Method: "POST", Pattern: "/api/users/{user}/challenges/{cid}/reset-dirty", CollectorForward: true}}
 	if got := ResetDirtyRouteViolation(routes); got == "" {
 		t.Fatal("expected ResetDirtyRouteViolation to flag a reset-dirty Route with CollectorForward=true")
 	}
-	clean := []Route{{Method: "POST", Pattern: "/api/users/{user}/challenges/{cid}/reset-dirty", CollectorForward: false}}
+	clean := []apispec.Route{{Method: "POST", Pattern: "/api/users/{user}/challenges/{cid}/reset-dirty", CollectorForward: false}}
 	if got := ResetDirtyRouteViolation(clean); got != "" {
 		t.Fatalf("expected no violation for CollectorForward=false, got %q", got)
 	}

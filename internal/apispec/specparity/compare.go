@@ -1,4 +1,4 @@
-package apispec
+package specparity
 
 import "sort"
 
@@ -48,6 +48,15 @@ func compareInto(s *Spec, schema map[string]any, actual any, path string, out *[
 	case map[string]any:
 		props, hasProps := resolved["properties"].(map[string]any)
 		if !hasProps {
+			// Known limitation (ADR-0005 "見ないもの", intentionally NOT
+			// scheduled for this PR — see ADR-0006 for the F3 discussion of
+			// strengthening V5): a schema node with no `properties` at all
+			// (additionalProperties-only maps, free-form objects, or a
+			// schema bug that dropped `properties` entirely) is silently
+			// treated as a leaf and never compared, even though `actual`
+			// here IS a map. This means a `properties`-less object node can
+			// never surface a mismatch here, by construction — not because
+			// none exists.
 			return
 		}
 		want := make(map[string]bool, len(props))

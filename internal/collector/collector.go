@@ -132,7 +132,11 @@ func New(upstream string, logger *slog.Logger, opts ...Option) (*Handler, error)
 	// intent — and it is also why docs/openapi-collector.yaml does not
 	// document this route at all (no exclusion list; see that spec's info
 	// description).
-	h.routes = []apispec.Route{
+	// declared is the DESIRED table; h.routes below becomes apispec.Register's
+	// RETURN value, not this slice itself (MEDIUM 1, 5x review — see
+	// route.go's Register doc): that is what makes Routes() report exactly
+	// what the mux serves, never a route a future edit left Handler: nil on.
+	declared := []apispec.Route{
 		{
 			Method: "POST", Pattern: "/api/challenges/{cid}/submit",
 			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzClaimedIdentity,
@@ -173,15 +177,20 @@ func New(upstream string, logger *slog.Logger, opts ...Option) (*Handler, error)
 			Handler: promhttp.Handler(),
 		},
 	}
-	apispec.Register(h.mux, h.routes)
+	h.routes = apispec.Register(h.mux, declared)
 
 	return h, nil
 }
 
-// Routes returns the declarative route table this Handler registered onto
-// its mux (ADR-0005 V2) — exactly what New() installed, for the parity
-// tests (collector_test.go) to compare against docs/openapi-collector.yaml.
-func (h *Handler) Routes() []apispec.Route { return h.routes }
+// Routes returns the route set this Handler ACTUALLY registered onto its mux
+// (ADR-0005 V2) — exactly apispec.Register's return value from New(), for
+// the parity tests (collector_test.go) to compare against
+// docs/openapi-collector.yaml. Returns a copy (MEDIUM 5, 5x review): callers
+// must not be able to mutate this Handler's live route table by mutating an
+// element of the returned slice in place.
+func (h *Handler) Routes() []apispec.Route {
+	return append([]apispec.Route(nil), h.routes...)
+}
 
 // ServeHTTP records request duration then dispatches. Any path not registered
 // above (e.g. /falco/events, /internal/*, /api/admin/*, /api/state, and the

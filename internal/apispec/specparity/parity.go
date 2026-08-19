@@ -1,9 +1,11 @@
-package apispec
+package specparity
 
 import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/Qfour/falco-ctf-app/internal/apispec"
 )
 
 // RouteSetDiff is ADR-0005 V1: the bidirectional route-set comparison.
@@ -12,7 +14,7 @@ import (
 // parity failure. There is deliberately no allowlist/exclusion parameter —
 // ADR-0005 Decision 1 rejects exclusion lists outright (they are how the
 // pre-ADR-0005 spec decayed to 50% coverage).
-func RouteSetDiff(specOps map[string]map[string]any, routes []Route) (specOnly, implOnly []string) {
+func RouteSetDiff(specOps map[string]map[string]any, routes []apispec.Route) (specOnly, implOnly []string) {
 	implSet := make(map[string]bool, len(routes))
 	for _, rt := range routes {
 		implSet[rt.MuxPattern()] = true
@@ -53,8 +55,8 @@ func RouteSetDiff(specOps map[string]map[string]any, routes []Route) (specOnly, 
 // route (or a route with no corresponding operation) is silently skipped
 // here — that class of drift is RouteSetDiff's job (V1), not this
 // function's, to keep each check's failure message about exactly one thing.
-func BoolExtParity(specOps map[string]map[string]any, routes []Route, extKey string, tableValue func(Route) bool) (missingKey, onlyImpl, onlySpec []string) {
-	routeByPattern := make(map[string]Route, len(routes))
+func BoolExtParity(specOps map[string]map[string]any, routes []apispec.Route, extKey string, tableValue func(apispec.Route) bool) (missingKey, onlyImpl, onlySpec []string) {
+	routeByPattern := make(map[string]apispec.Route, len(routes))
 	for _, rt := range routes {
 		routeByPattern[rt.MuxPattern()] = rt
 	}
@@ -84,6 +86,49 @@ func BoolExtParity(specOps map[string]map[string]any, routes []Route, extKey str
 	sort.Strings(missingKey)
 	sort.Strings(onlyImpl)
 	sort.Strings(onlySpec)
+	return
+}
+
+// StringExtParity is BoolExtParity's string-valued twin (HIGH 4, 5x review):
+// it checks a single string x-ctf-* extension (extKey, e.g. "x-ctf-authz" /
+// "x-ctf-audience" / "x-ctf-rate-limit") between a spec's operations and a
+// route table, using tableValue to read the corresponding field off each
+// Route (string(rt.Authz), string(rt.Audience), rt.RateLimit).
+//
+// Before this function existed, x-ctf-authz / x-ctf-audience /
+// x-ctf-rate-limit were declared mandatory by ADR-0005 Decision 2(b) but had
+// ZERO callers (StringExt itself was dead code) — reversing GET /api/hints'
+// x-ctf-authz from "none" to "admin" in the spec (a lie in exactly the
+// direction ADR-0005 calls out as worst: "記載されているが嘘") passed `make
+// test` unchanged. This closes that hole using the SAME fail-closed rule as
+// BoolExtParity: an ABSENT spec key is a parity failure (missingKey), never
+// an implicit default silently treated as a match. Unlike a bool, a string
+// mismatch has no natural "which side is true" direction, so mismatched
+// (not onlyImpl/onlySpec) reports both values together — an empty
+// tableValue() (a Route that never set the field) is a real mismatch too,
+// not a skip: a route silently missing its authz/audience/rate-limit
+// declaration is exactly the drift this check exists to catch.
+func StringExtParity(specOps map[string]map[string]any, routes []apispec.Route, extKey string, tableValue func(apispec.Route) string) (missingKey, mismatched []string) {
+	routeByPattern := make(map[string]apispec.Route, len(routes))
+	for _, rt := range routes {
+		routeByPattern[rt.MuxPattern()] = rt
+	}
+	for key, op := range specOps {
+		specVal, ok := StringExt(op, extKey)
+		if !ok {
+			missingKey = append(missingKey, key)
+			continue
+		}
+		rt, matched := routeByPattern[key]
+		if !matched {
+			continue // V1's job
+		}
+		if implVal := tableValue(rt); implVal != specVal {
+			mismatched = append(mismatched, fmt.Sprintf("%s: impl=%q spec=%q", key, implVal, specVal))
+		}
+	}
+	sort.Strings(missingKey)
+	sort.Strings(mismatched)
 	return
 }
 
@@ -161,7 +206,7 @@ func ResetDirtySpecViolation(scoreboardOps map[string]map[string]any) string {
 // ResetDirtyRouteViolation is ResetDirtySpecViolation's implementation-side
 // twin: reports whether the ACTUAL scoreboard route table marks
 // reset-dirty's Route.CollectorForward true.
-func ResetDirtyRouteViolation(routes []Route) string {
+func ResetDirtyRouteViolation(routes []apispec.Route) string {
 	for _, rt := range routes {
 		if rt.MuxPattern() == ResetDirtyPattern && rt.CollectorForward {
 			return ResetDirtyPattern + ": Route.CollectorForward=true — forbidden (ADR-0003 A2-2)"

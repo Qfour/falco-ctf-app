@@ -25,14 +25,15 @@ import (
 	"testing"
 
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
+	"github.com/Qfour/falco-ctf-app/internal/apispec/specparity"
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard"
 	"github.com/Qfour/falco-ctf-app/internal/store"
 )
 
-func loadScoreboardSpec(t *testing.T) *apispec.Spec {
+func loadScoreboardSpec(t *testing.T) *specparity.Spec {
 	t.Helper()
-	spec, err := apispec.LoadSpec(filepath.Join("..", "..", "docs", "openapi-scoreboard.yaml"))
+	spec, err := specparity.LoadSpec(filepath.Join("..", "..", "docs", "openapi-scoreboard.yaml"))
 	if err != nil {
 		t.Fatalf("load docs/openapi-scoreboard.yaml: %v", err)
 	}
@@ -157,19 +158,24 @@ func TestAPISpec_V1_RouteSetMatchesSpec(t *testing.T) {
 		t.Fatal("docs/openapi-scoreboard.yaml parsed to zero operations — spec loading is broken, not clean")
 	}
 
-	specOnly, implOnly := apispec.RouteSetDiff(specOps, routes)
+	specOnly, implOnly := specparity.RouteSetDiff(specOps, routes)
 	if len(specOnly) > 0 {
 		t.Errorf("documented but not implemented: %v", specOnly)
 	}
 	if len(implOnly) > 0 {
 		t.Errorf("implemented but undocumented: %v", implOnly)
 	}
-	// Pinning the known-good count guards against a same-size swap (one
-	// route removed, a different one added) that RouteSetDiff alone,
-	// summed over set difference, could theoretically mask if both diffs
-	// happened to cancel out in length only — they can't cancel in
-	// CONTENT (set diff is exact), but this extra count assert costs
-	// nothing and matches ADR-0005 C1's real-world count (20 routes).
+	// Pinning the known-good count is NOT about a same-size swap defeating
+	// RouteSetDiff — a route removed + a different one added would still
+	// show up as one specOnly + one implOnly entry there; set diff is exact
+	// CONTENT comparison, it cannot "cancel out" (LOW, 5x review: an earlier
+	// version of this comment claimed otherwise, which is not a real
+	// detection gap and isn't why this assert exists). The actual value is
+	// PROCESS, not detection: this literal `20` forces every PR that adds or
+	// removes a route to touch this line, so the route-count CHANGE itself
+	// shows up in the diff and gets reviewed, instead of silently sliding
+	// through as "RouteSetDiff was still empty, so nothing to see here" —
+	// matches ADR-0005 C1's real-world count.
 	if len(routes) != 20 {
 		t.Errorf("expected 20 registered routes (ADR-0005 C1), got %d: %v", len(routes), routes)
 	}
@@ -190,7 +196,7 @@ func TestAPISpec_V3_OriginGuardParity(t *testing.T) {
 	routes := f.srv.Routes()
 	specOps := spec.Operations()
 
-	missingKey, onlyImpl, onlySpec := apispec.BoolExtParity(specOps, routes, "x-ctf-origin-guard", func(rt apispec.Route) bool { return rt.OriginGuarded })
+	missingKey, onlyImpl, onlySpec := specparity.BoolExtParity(specOps, routes, "x-ctf-origin-guard", func(rt apispec.Route) bool { return rt.OriginGuarded })
 	if len(missingKey) > 0 {
 		t.Errorf("x-ctf-origin-guard key missing on spec operations: %v", missingKey)
 	}
@@ -212,7 +218,7 @@ func TestAPISpec_V3_OriginGuardParity(t *testing.T) {
 		t.Errorf("expected 7 origin-guarded routes (ADR-0005 Decision 4), got %d: %v", len(guarded), guarded)
 	}
 
-	missingKey, onlyImpl, onlySpec = apispec.BoolExtParity(specOps, routes, "x-ctf-collector-forward", func(rt apispec.Route) bool { return rt.CollectorForward })
+	missingKey, onlyImpl, onlySpec = specparity.BoolExtParity(specOps, routes, "x-ctf-collector-forward", func(rt apispec.Route) bool { return rt.CollectorForward })
 	if len(missingKey) > 0 {
 		t.Errorf("x-ctf-collector-forward key missing on spec operations: %v", missingKey)
 	}
@@ -233,6 +239,41 @@ func TestAPISpec_V3_OriginGuardParity(t *testing.T) {
 	}
 }
 
+// TestAPISpec_V3b_StringExtParity is HIGH 4 (5x review): x-ctf-audience /
+// x-ctf-authz / x-ctf-rate-limit were declared mandatory (ADR-0005 Decision
+// 2(b)) but had zero real value-comparison coverage — R2/R3 independently
+// demonstrated that reversing GET /api/hints' x-ctf-authz from "none" to
+// "admin" in docs/openapi-scoreboard.yaml (a false "this needs admin"
+// declaration on an intentionally-unauthenticated route — the exact
+// "documented but a lie" shape ADR-0005 calls out as worst) passed `make
+// test` unchanged, because apispec.StringExt had no caller anywhere. This
+// wires specparity.StringExtParity in for real, against the actual spec and
+// route table.
+func TestAPISpec_V3b_StringExtParity(t *testing.T) {
+	spec := loadScoreboardSpec(t)
+	f := newSpecFixture(t)
+	routes := f.srv.Routes()
+	specOps := spec.Operations()
+
+	cases := []struct {
+		key   string
+		value func(apispec.Route) string
+	}{
+		{"x-ctf-audience", func(rt apispec.Route) string { return string(rt.Audience) }},
+		{"x-ctf-authz", func(rt apispec.Route) string { return string(rt.Authz) }},
+		{"x-ctf-rate-limit", func(rt apispec.Route) string { return rt.RateLimit }},
+	}
+	for _, c := range cases {
+		missingKey, mismatched := specparity.StringExtParity(specOps, routes, c.key, c.value)
+		if len(missingKey) > 0 {
+			t.Errorf("%s: missing on spec operations: %v", c.key, missingKey)
+		}
+		if len(mismatched) > 0 {
+			t.Errorf("%s parity failed: %v", c.key, mismatched)
+		}
+	}
+}
+
 // --- V4's dedicated ADR-0003 A2-2 assert (scoreboard side) --------------
 
 func TestAPISpec_V4_ResetDirtyNeverForwarded(t *testing.T) {
@@ -241,10 +282,10 @@ func TestAPISpec_V4_ResetDirtyNeverForwarded(t *testing.T) {
 	specOps := spec.Operations()
 	routes := f.srv.Routes()
 
-	if got := apispec.ResetDirtySpecViolation(specOps); got != "" {
+	if got := specparity.ResetDirtySpecViolation(specOps); got != "" {
 		t.Error(got)
 	}
-	if got := apispec.ResetDirtyRouteViolation(routes); got != "" {
+	if got := specparity.ResetDirtyRouteViolation(routes); got != "" {
 		t.Error(got)
 	}
 	// Sanity: the route must actually exist and be reachable at the pattern
@@ -252,12 +293,12 @@ func TestAPISpec_V4_ResetDirtyNeverForwarded(t *testing.T) {
 	// vacuously "" because ResetDirtyPattern never matched anything.
 	found := false
 	for _, rt := range routes {
-		if rt.MuxPattern() == apispec.ResetDirtyPattern {
+		if rt.MuxPattern() == specparity.ResetDirtyPattern {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("apispec.ResetDirtyPattern %q matched no registered route — the dedicated A2-2 assert is vacuous", apispec.ResetDirtyPattern)
+		t.Fatalf("specparity.ResetDirtyPattern %q matched no registered route — the dedicated A2-2 assert is vacuous", specparity.ResetDirtyPattern)
 	}
 }
 
@@ -286,7 +327,7 @@ func TestAPISpec_V5_JourneyFieldsMatchSpec(t *testing.T) {
 	if schema == nil {
 		t.Fatal("spec has no components.schemas.Journey")
 	}
-	mismatches := apispec.CompareResponse(spec, schema, actual, "Journey")
+	mismatches := specparity.CompareResponse(spec, schema, actual, "Journey")
 	for _, m := range mismatches {
 		t.Errorf("%s: extra=%v missing=%v", m.Path, m.Extra, m.Missing)
 	}
@@ -326,7 +367,7 @@ func TestAPISpec_V5_MeFieldsMatchSpec(t *testing.T) {
 	if schema == nil {
 		t.Fatal("spec has no components.schemas.Me")
 	}
-	for _, m := range apispec.CompareResponse(spec, schema, actual, "Me") {
+	for _, m := range specparity.CompareResponse(spec, schema, actual, "Me") {
 		t.Errorf("%s: extra=%v missing=%v", m.Path, m.Extra, m.Missing)
 	}
 	if solved, _ := actual["solved"].([]any); len(solved) == 0 {
@@ -349,7 +390,7 @@ func TestAPISpec_V5_StateFieldsMatchSpec(t *testing.T) {
 	if schema == nil {
 		t.Fatal("spec has no components.schemas.State")
 	}
-	for _, m := range apispec.CompareResponse(spec, schema, actual, "State") {
+	for _, m := range specparity.CompareResponse(spec, schema, actual, "State") {
 		t.Errorf("%s: extra=%v missing=%v", m.Path, m.Extra, m.Missing)
 	}
 	leaderboard, _ := actual["leaderboard"].([]any)
@@ -457,7 +498,7 @@ func TestAPISpec_V8_MutationsFailAgainstRealData(t *testing.T) {
 			}
 			mutated = append(mutated, rt)
 		}
-		specOnly, _ := apispec.RouteSetDiff(specOps, mutated)
+		specOnly, _ := specparity.RouteSetDiff(specOps, mutated)
 		if len(specOnly) != 1 || specOnly[0] != "GET /api/state" {
 			t.Fatalf("expected the removed route to be flagged as specOnly=[GET /api/state], got %v", specOnly)
 		}
@@ -475,7 +516,7 @@ func TestAPISpec_V8_MutationsFailAgainstRealData(t *testing.T) {
 		if !flippedAny {
 			t.Fatal("test bug: POST /api/admin/reset not found in the real route table")
 		}
-		_, _, onlySpec := apispec.BoolExtParity(specOps, mutated, "x-ctf-origin-guard", func(rt apispec.Route) bool { return rt.OriginGuarded })
+		_, _, onlySpec := specparity.BoolExtParity(specOps, mutated, "x-ctf-origin-guard", func(rt apispec.Route) bool { return rt.OriginGuarded })
 		found := false
 		for _, k := range onlySpec {
 			if k == "POST /api/admin/reset" {
@@ -484,6 +525,34 @@ func TestAPISpec_V8_MutationsFailAgainstRealData(t *testing.T) {
 		}
 		if !found {
 			t.Fatalf("expected onlySpec to flag POST /api/admin/reset, got %v", onlySpec)
+		}
+	})
+
+	// HIGH 4 (5x review), reproduced against the real spec + real route
+	// table: reversing GET /api/hints' x-ctf-authz from "none" to "admin" —
+	// a false "this needs admin" declaration on a deliberately
+	// unauthenticated route (api.go's hints handler comment: "Deliberately
+	// unauthenticated ... carries no per-user data or hint TEXT") — WITHOUT
+	// touching Route.Authz must be caught.
+	t.Run("authz_reversed_in_spec", func(t *testing.T) {
+		mutatedOps := map[string]map[string]any{}
+		for k, v := range specOps {
+			cp := map[string]any{}
+			for kk, vv := range v {
+				cp[kk] = vv
+			}
+			mutatedOps[k] = cp
+		}
+		mutatedOps["GET /api/hints"]["x-ctf-authz"] = "admin" // real Route.Authz stays "none"
+		_, mismatched := specparity.StringExtParity(mutatedOps, routes, "x-ctf-authz", func(rt apispec.Route) string { return string(rt.Authz) })
+		found := false
+		for _, m := range mismatched {
+			if m == `GET /api/hints: impl="none" spec="admin"` {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("expected a mismatch entry for GET /api/hints, got %v", mismatched)
 		}
 	})
 
@@ -497,7 +566,7 @@ func TestAPISpec_V8_MutationsFailAgainstRealData(t *testing.T) {
 		delete(actual, "score")
 
 		schema := spec.SchemaByName("Me")
-		mismatches := apispec.CompareResponse(spec, schema, actual, "Me")
+		mismatches := specparity.CompareResponse(spec, schema, actual, "Me")
 		if len(mismatches) != 1 {
 			t.Fatalf("expected exactly one mismatch, got %d: %+v", len(mismatches), mismatches)
 		}

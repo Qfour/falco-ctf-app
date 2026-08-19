@@ -1,4 +1,33 @@
-package apispec
+// Package specparity holds the ADR-0005 spec-loading / spec-vs-implementation
+// comparison logic (YAML parsing, route-set diffing, x-ctf-* extension
+// parity, and JSON-response field-set comparison) — everything a parity
+// TEST needs, and nothing a production binary does.
+//
+// This is deliberately its OWN package, separate from internal/apispec
+// (which stays down to Route/Register + stdlib only). Before this split,
+// spec.go's "gopkg.in/yaml.v3" import lived in the SAME package as Route and
+// Register — and Go compiles every non-test .go file in a directory as one
+// unit regardless of which files a given importer actually uses. Every
+// production binary that imports internal/apispec for Route/Register alone
+// (cmd/auth-policy, cmd/collector — see internal/authpolicy/server.go and
+// internal/collector/collector.go) therefore pulled yaml.v3 into ITS
+// dependency graph too, even though auth-policy and collector never load or
+// compare an OpenAPI spec at runtime — only their _test.go files do (5x
+// review, R3: `go list -deps ./cmd/auth-policy | grep yaml` was non-empty).
+// That widens the SBOM / govulncheck / CVE surface of both distroless
+// services for zero runtime benefit, and moves them further from
+// CLAUDE.md's "auth-policy = stdlib only".
+//
+// The fix is the package boundary, not an import trick: everything in this
+// package is imported ONLY from *_test.go files (internal/apispec/parity_test.go
+// and each service's apispec_parity_test.go) — never from a cmd/* binary's
+// build, so `go build ./cmd/...` / `go list -deps` (without `-test`) never
+// sees this package or its yaml.v3 dependency at all. internal/apispec's
+// Route/Register stay usable from production code exactly as before; this
+// package imports internal/apispec (for the Route type RouteSetDiff/
+// BoolExtParity/etc. compare against), never the other way around, so there
+// is no cycle.
+package specparity
 
 import (
 	"fmt"
@@ -47,9 +76,9 @@ func LoadSpec(path string) (*Spec, error) {
 
 // Operations returns every operation in the document keyed by "METHOD
 // /path" (method upper-cased), e.g. "GET /api/state". This key shape is
-// exactly Route.MuxPattern()'s shape, so a spec's operation-key set compares
-// directly against a route table's MuxPattern() set with no translation
-// (ADR-0005 V1).
+// exactly apispec.Route.MuxPattern()'s shape, so a spec's operation-key set
+// compares directly against a route table's MuxPattern() set with no
+// translation (ADR-0005 V1).
 func (s *Spec) Operations() map[string]map[string]any {
 	out := map[string]map[string]any{}
 	paths, _ := s.raw["paths"].(map[string]any)

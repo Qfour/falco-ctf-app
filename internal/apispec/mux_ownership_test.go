@@ -2,10 +2,13 @@ package apispec
 
 // ADR-0005 V6: every http.ServeMux-owning binary must have a
 // docs/openapi-*.yaml. "Owns a ServeMux" is determined MECHANICALLY here
-// (a source-level BFS for http.NewServeMux(), starting at cmd/<name> and
-// following this module's own import graph) rather than by a hand-authored
-// allow/deny list — ttyd-proxy's exclusion is a computed fact, not a
-// judgment call baked into the test (ADR-0005 Decision 2).
+// (a source-level BFS starting at cmd/<name> and following this module's own
+// import graph, checking every visited package for a qualified reference to
+// net/http's ServeMux type — see declaresServeMux's doc for the full set of
+// syntactic forms this recognises, broadened past the original
+// http.NewServeMux()-call-only check by MEDIUM 2, 5x review) rather than by
+// a hand-authored allow/deny list — ttyd-proxy's exclusion is a computed
+// fact, not a judgment call baked into the test (ADR-0005 Decision 2).
 
 import (
 	"go/ast"
@@ -81,8 +84,51 @@ func importsOf(t *testing.T, dir string) []string {
 	return out
 }
 
-// declaresServeMux reports whether dir's non-test .go files contain a
-// direct http.NewServeMux() call expression.
+// httpLocalNames returns the set of local identifiers file's import block
+// binds to the "net/http" package — normally just "http", but an aliased
+// import (`nethttp "net/http"`) binds a different name, and MEDIUM 2 (5x
+// review) requires that alias to be recognised too: a hand-written
+// "identifier must be literally http" check is itself a hidden allowlist
+// that silently stops mattering the moment someone renames the import.
+func httpLocalNames(f *ast.File) map[string]bool {
+	out := map[string]bool{}
+	for _, imp := range f.Imports {
+		path := strings.Trim(imp.Path.Value, `"`)
+		if path != "net/http" {
+			continue
+		}
+		switch {
+		case imp.Name != nil && imp.Name.Name != "_" && imp.Name.Name != ".":
+			out[imp.Name.Name] = true
+		case imp.Name == nil:
+			out["http"] = true
+		}
+	}
+	return out
+}
+
+// declaresServeMux reports whether dir's non-test .go files reference
+// net/http's ServeMux type in ANY of the shapes Go allows a mux-owning
+// binary to hold one, not just the http.NewServeMux() call form:
+//
+//   - http.NewServeMux() (the call form V6 originally checked)
+//   - &http.ServeMux{} / http.ServeMux{} (composite literal)
+//   - new(http.ServeMux) (new() with the type as its argument)
+//   - var mux http.ServeMux / a struct field of type http.ServeMux
+//     (bare type reference, no construction call at all)
+//   - any of the above through an ALIASED import (nethttp "net/http")
+//
+// MEDIUM 2 (5x review): the original call-only check made V6's ownership
+// determination narrower than ADR-0005 intends — a binary holding its mux
+// via `&http.ServeMux{}` (or through a renamed import) would be
+// (mis)classified as NOT mux-owning and silently exempted from needing a
+// docs/openapi-*.yaml at all (TestSpecExistsForEveryMuxOwningBinary would
+// skip it). Matching on the qualified TYPE reference itself (SelectorExpr
+// with Sel.Name "ServeMux" or "NewServeMux", X resolved through
+// httpLocalNames rather than a hardcoded "http" identifier) covers every
+// syntactic form uniformly and is the fail-closed direction: a new
+// construction idiom Go might add later still matches because it still has
+// to name the type "ServeMux" off the net/http import.
 func declaresServeMux(t *testing.T, dir string) bool {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -91,17 +137,21 @@ func declaresServeMux(t *testing.T, dir string) bool {
 		if err != nil {
 			t.Fatalf("parse %s: %v", path, err)
 		}
+		httpNames := httpLocalNames(f)
+		if len(httpNames) == 0 {
+			continue // this file doesn't even import net/http
+		}
 		found := false
 		ast.Inspect(f, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
+			sel, ok := n.(*ast.SelectorExpr)
 			if !ok {
 				return true
 			}
-			sel, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok {
+			ident, ok := sel.X.(*ast.Ident)
+			if !ok || !httpNames[ident.Name] {
 				return true
 			}
-			if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "http" && sel.Sel.Name == "NewServeMux" {
+			if sel.Sel.Name == "NewServeMux" || sel.Sel.Name == "ServeMux" {
 				found = true
 			}
 			return true

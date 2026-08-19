@@ -134,12 +134,14 @@ func (h *Handler) Routes() []apispec.Route {
 	}
 }
 
-// Register wires every route in Routes() onto mux via apispec.Register —
-// see route.go's doc for why this indirection (rather than calling
-// mux.HandleFunc here) is load-bearing, not decorative.
-func (h *Handler) Register(mux *http.ServeMux) {
-	apispec.Register(mux, h.Routes())
-}
+// This package deliberately has no Register(mux) method of its own (LOW,
+// 5x review: one used to exist here, calling apispec.Register(mux,
+// h.Routes()) directly, but nothing — production or test — ever called it;
+// scoreboard.Handler's NewHandler always collects every sub-package's
+// Routes() into one table and calls apispec.Register exactly once). Keeping
+// an unused second registration entry point around contradicted I14's
+// "single registration path" claim on its face; removed rather than
+// documented as test-only, since it had no test either.
 
 func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
 	// `GET /` in Go 1.22+ mux matches everything under /, so we reject

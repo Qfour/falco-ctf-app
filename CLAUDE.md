@@ -72,9 +72,11 @@ falco-ctf-app/
   後、workspace が到達できる先を collector 1 つに絞る。collector は submit /
   display-name / exfil の3本を scoreboard へ verbatim forward するだけで CTF 状態
   (catalog / flags / DB) を持たない。**`GET /api/users/{user}/me` は意図的に
-  非転送** (`internal/collector/collector.go` — 匿名で client 任意の `{user}` を
-  読めると self-scope bypass になるため、進捗の読み取りは認証済みの journey host
-  経由に限定する、ADR-0005)。scoreboard 自体を直接晒さないことで
+  非転送** (匿名で client 任意の `{user}` を読めると self-scope bypass になるため、
+  進捗の読み取りは認証済みの journey host 経由に限定する — 出所は
+  `docs/openapi-collector.yaml` の info description と `internal/collector/collector.go`
+  のコメント。ADR-0005 はこの事実を parity gate の対象として扱うだけで、この
+  決定自体は下していない — MEDIUM, 5x review)。scoreboard 自体を直接晒さないことで
   ingest 経路以外の攻撃面を減らす。
 
 - **detect-grader を per-submission K8s Job にする** — `type: detect` 課題は
