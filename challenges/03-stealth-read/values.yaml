@@ -9,9 +9,9 @@ plant:
       PLANT_SEED_ROOT=/plant-seed
 
       # ---- 03-stealth-read ----
-      # seed /etc/shadow from the build-time snapshot (ADR-0001 S-a) — runs once
+      # restore /etc from the build-time snapshot (ADR-0001 S-a / ADR-0007 Option 1) — runs once
       mkdir -p "${PLANT_SEED_ROOT}/etc"
-      cp -a "/opt/ctf/plant-seed/etc/shadow" "${PLANT_SEED_ROOT}/etc/shadow"
+      cp -a "/opt/ctf/plant-seed/etc/." "${PLANT_SEED_ROOT}/etc/"
       #
       # Mission 03 (Stealth Read) — plant the flag at the end of /etc/shadow.
       #
@@ -30,4 +30,4 @@ plant:
       # runs).
       echo "# ${CTF_FLAG_03_STEALTH_READ:?flag env not set by ctf-user chart}" >> "${PLANT_SEED_ROOT}/etc/shadow"
   mounts:
-    - /etc/shadow
+    - /etc

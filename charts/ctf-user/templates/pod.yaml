@@ -19,11 +19,14 @@
 # A `plant` initContainer (same image as `challenge` — no new image, I5)
 # receives the flags via the `ctf-flags` Secret (envFrom, secretRef) and
 # writes them into the `plant-seed` emptyDir. `challenge` only ever sees the
-# individual declared plant-targets, bind-mounted (subPath, read-only) back
-# onto their real paths — never the seed volume root (F5: that would be an
-# undeclared path outside the `sensitive_files` Falco macro's `fd.name`
-# prefix match, i.e. a free win for mission 03). See
-# docs/adr/0001-flag-plant-initcontainer-not-challenge-env.md.
+# minimal ENCLOSING DIRECTORY of each declared plant-target, bind-mounted
+# (subPath) back onto its real path — never the seed volume root (F5: that
+# would be an undeclared path outside the `sensitive_files` Falco macro's
+# `fd.name` exact-list match, i.e. a free win for mission 03). Directory
+# (not file) granularity is ADR-0007 (Option 1), which supersedes ADR-0001's
+# original file-granularity mount (B1) — see
+# docs/adr/0001-flag-plant-initcontainer-not-challenge-env.md and
+# docs/adr/0007-plant-mount-directory-granularity.md.
 apiVersion: v1
 kind: Pod
 metadata:
@@ -253,20 +256,34 @@ spec:
             command:
               {{- toYaml . | nindent 14 }}
       {{- end }}
-      # ADR-0001: only the declared plant-targets are mounted, each pinned to
-      # its own subPath on the shared `plant-seed` volume — never the seed
-      # volume root (F5). readOnly because no mission needs runtime writes to
-      # a planted path (09 was retargeted off /etc/shadow precisely to avoid
-      # needing one — see challenges/09-hidden-cache). Omitted entirely
-      # (no `volumeMounts:` key) when .Values.plant.mounts is empty, e.g. a
-      # values file for a trigger-only challenge that plants nothing.
+      # ADR-0007 (Option 1, supersedes ADR-0001's B1 mount granularity):
+      # .Values.plant.mounts holds the minimal ENCLOSING DIRECTORY of every
+      # declared plant-target (challenges/gen-values.sh's mount_dir_for()) —
+      # never the raw plant-target file path, and never the seed volume
+      # root (F5, unchanged). A file-granularity bind mount onto a
+      # destination Falco's `sensitive_files` macro matches made runc's own
+      # rootfs setup generate a `Read sensitive file untrusted` event on
+      # every deploy (docs/adr/0007 §C2); a directory mount structurally
+      # cannot, because the deployed `open_read` macro requires
+      # `fd.typechar='f'`.
+      #
+      # NOT readOnly: missions 07/09 write under these directories at
+      # runtime (e.g. /etc), which a directory-granularity mount must allow
+      # — ADR-0001 rev.4 L2's "planted line count stays exactly 2" guarantee
+      # from readOnly:true is given up here (see ADR-0007 §Consequences);
+      # what's still guaranteed is the DEPLOY-time content (asserted before
+      # any participant exec, by ADR-0007 Verification 1 + `make
+      # check-image-hygiene`), not a runtime immutability of the mount.
+      #
+      # Omitted entirely (no `volumeMounts:` key) when .Values.plant.mounts
+      # is empty, e.g. a values file for a trigger-only challenge that
+      # plants nothing.
       {{- if .Values.plant.mounts }}
       volumeMounts:
         {{- range .Values.plant.mounts }}
         - name: plant-seed
           mountPath: {{ . | quote }}
           subPath: {{ trimPrefix "/" . | quote }}
-          readOnly: true
         {{- end }}
       {{- end }}
 

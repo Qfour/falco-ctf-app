@@ -9,9 +9,9 @@ plant:
       PLANT_SEED_ROOT=/plant-seed
 
       # ---- 10-final-exfil ----
-      # seed /etc/shadow from the build-time snapshot (ADR-0001 S-a) — runs once
+      # restore /etc from the build-time snapshot (ADR-0001 S-a / ADR-0007 Option 1) — runs once
       mkdir -p "${PLANT_SEED_ROOT}/etc"
-      cp -a "/opt/ctf/plant-seed/etc/shadow" "${PLANT_SEED_ROOT}/etc/shadow"
+      cp -a "/opt/ctf/plant-seed/etc/." "${PLANT_SEED_ROOT}/etc/"
       #
       # Mission 10 (Final Exfil) — plant the master key as a CTF_MASTER_KEY line at
       # the end of /etc/shadow. Reading it naively fires Read-sensitive (evade with
@@ -27,4 +27,4 @@ plant:
       # ctf-flags Secret.
       echo "# CTF_MASTER_KEY: ${CTF_FLAG_10_FINAL_EXFIL:?flag env not set by ctf-user chart}" >> "${PLANT_SEED_ROOT}/etc/shadow"
   mounts:
-    - /etc/shadow
+    - /etc

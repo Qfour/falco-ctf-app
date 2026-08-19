@@ -54,24 +54,6 @@ RUN printf '%s\n' \
  && chown root:root /etc/sudoers \
  && chmod 0440 /etc/sudoers
 
-# ADR-0001 (Option B, S-a): bake a build-time snapshot of this image's own
-# /etc/shadow into a non-sensitive path. At deploy time, the `plant`
-# initContainer (charts/ctf-user/templates/pod.yaml, generated seed script
-# from challenges/gen-values.sh) copies FROM here — never from the real
-# /etc/shadow — so the deploy path never reads a path matching the
-# `sensitive_files` Falco macro (fd.name startswith /etc and in
-# sensitive_file_names; challenges/03-stealth-read/rule.yaml:90-93). This
-# snapshot introduces ZERO new material (I10): it's a byte-for-byte copy of
-# the shadow file this same image already ships — measured (2026-08-18,
-# architect + security-engineer, independently reproduced) to be 0640
-# root:shadow, 17 lines, all locked (`*` / `!`), 0 crypt-hash-shaped strings.
-# `make check-image-hygiene` (ADR-0001 DoD 15, not yet landed) is meant to
-# re-verify this at every build so a future package addition that puts a
-# real hash into /etc/shadow fails the build instead of silently baking it
-# into the snapshot; until that lands, this comment is the only guard.
-RUN mkdir -p /opt/ctf/plant-seed/etc \
- && cp -a /etc/shadow /opt/ctf/plant-seed/etc/shadow
-
 # Bake the 10 missions + cross-mission helpers into the image. This is
 # the source-of-truth for all-missions mode (deploy-user.sh <user> all):
 # the workspace pod has every welcome.txt + fixture available from
@@ -104,6 +86,39 @@ RUN { echo '# EVADE 課題で読み取ったフラグを記入し、submit-yaml 
 # (portal), not in-terminal, so banner.sh is intentionally minimal
 # (display-name change only).
 RUN echo 'sh /opt/ctf/banner.sh 2>/dev/null' >> /etc/profile
+
+# ADR-0001 (Option B, S-a) / ADR-0007 (Option 1): bake a build-time snapshot
+# of this image's OWN /etc into a non-sensitive path. At deploy time, the
+# `plant` initContainer (charts/ctf-user/templates/pod.yaml, generated seed
+# script from challenges/gen-values.sh) restores the whole directory FROM
+# here — never from the real /etc — before bind-mounting the seed's copy of
+# /etc back onto /etc in this same container at runtime. This is what makes
+# the runtime mount destination a DIRECTORY rather than a single sensitive
+# file: a directory open can never satisfy the deployed `open_read` macro's
+# `fd.typechar='f'` requirement, so the deploy path itself no longer
+# generates a `Read sensitive file untrusted` event on every workspace
+# stand-up (docs/adr/0007 §C2 — the file-granularity `subPath` mount this
+# supersedes did, on every single deploy, auto-solving mission 02 for free).
+#
+# THIS MUST BE THE LAST INSTRUCTION IN THIS DOCKERFILE THAT TOUCHES /etc.
+# The snapshot has to reflect the image's FINAL /etc — e.g. /etc/profile is
+# written to twice above (the PS1 line near the top, the banner.sh line just
+# above this comment); if the snapshot ran between those two writes (as the
+# single-file /etc/shadow snapshot used to, positioned right after the
+# /etc/sudoers RUN), the banner.sh line would silently be missing from the
+# seeded /etc/profile every deploy sees. `make check-image-hygiene`
+# (ADR-0001 Verification 2-8, broadened by ADR-0007 to the whole snapshot
+# tree + entry-set completeness) re-verifies this at every build so a future
+# RUN that touches /etc after this line — or is inserted after this line by
+# mistake — fails the build instead of silently baking a stale snapshot.
+#
+# Introduces ZERO new material (I10): a byte-for-byte copy of the /etc tree
+# this same image already ships (measured 2026-08-19, architect + VP,
+# independently reproduced against a live probe: 49 entries, no
+# crypt-hash-shaped string, no FALCO{ literal — flags are appended to the
+# seed at runtime from the ctf-flags Secret, never present here).
+RUN mkdir -p /opt/ctf/plant-seed/etc \
+ && cp -a /etc/. /opt/ctf/plant-seed/etc/
 
 # Default sleep keeps the container alive; ttyd reaches it via kubectl exec.
 CMD ["sleep", "infinity"]

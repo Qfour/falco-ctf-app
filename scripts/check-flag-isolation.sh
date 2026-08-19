@@ -64,12 +64,19 @@ ok() { # $1=assert-id $2=message
 # 1-1: the only env names the challenge container may ever carry.
 CHALLENGE_ENV_ALLOWLIST=(FALCO_CTF_USER FALCO_CTF_CHALLENGE FALCO_CTF_COLLECTOR FALCO_CTF_SCOREBOARD FALCO_CTF_DNS_SUFFIX)
 
-# 1-4 / 1-18: the universe of declared plant-target absolute paths, derived
-# from every plant.sh's `# plant-target:` header (the same source
-# challenges/gen-values.sh reads). A challenge container may only ever
-# bind-mount one of these off the plant-seed volume.
+# 1-4 / 1-18: the universe of directory-granularity mount destinations
+# (ADR-0007 Option 1 — the minimal enclosing directory of every declared
+# plant-target, never the raw file path). Derived from
+# `challenges/gen-values.sh --print-mounts` — the SAME derivation
+# gen-values.sh uses to render plant.mounts — rather than re-deriving
+# mount_dir_for()'s file-vs-directory heuristic a second time here (which
+# would be exactly the kind of independent-and-driftable duplicate this
+# repo's "derive from catalog, don't hardcode a second time" discipline
+# exists to avoid; see gen-values.sh's sensitive_paths()/
+# sensitive_dir_prefixes() for the same pattern). A challenge container may
+# only ever bind-mount one of these off the plant-seed volume.
 plant_target_allowlist() {
-  grep -hE '^# plant-target: ' challenges/*/plant.sh 2>/dev/null | sed -E 's/^# plant-target: *//' | sort -u
+  ./challenges/gen-values.sh --print-mounts
 }
 
 is_in_allowlist() { # $1=needle  $2...=haystack array elements
@@ -224,17 +231,23 @@ assert_challenge_mounts() { # 1-4, 1-5, 1-18 (challenge side)
       else
         local mp_bare="${mountpath%\"}"; mp_bare="${mp_bare#\"}"
         if ! is_in_allowlist "$mp_bare" "${allowlist[@]}"; then
-          violation 1-4 "challenge volumeMount mountPath '${mp_bare}' is not a declared plant-target (${allowlist[*]})"
+          violation 1-4 "challenge volumeMount mountPath '${mp_bare}' is not a declared plant-target's enclosing directory (${allowlist[*]})"
           bad4=1
         fi
         local sp_bare="${subpath%\"}"; sp_bare="${sp_bare#\"}"
         local want_sp="${mp_bare#/}"
         if [ "$sp_bare" != "$want_sp" ]; then
-          violation 1-18 "challenge volumeMount mountPath=${mp_bare} has subPath='${sp_bare}', want '${want_sp}' (subPath must exactly trace the declared plant-target)"
+          violation 1-18 "challenge volumeMount mountPath=${mp_bare} has subPath='${sp_bare}', want '${want_sp}' (subPath must exactly trace the mount directory)"
           bad18=1
         fi
-        if [ "$readonly_val" != "true" ]; then
-          violation 1-18 "challenge volumeMount mountPath=${mp_bare} is not readOnly: true"
+        # ADR-0007 Option 1 deliberately DROPS readOnly:true (missions
+        # 07/09 write under the mounted directory at runtime, e.g. /etc) —
+        # so 1-18 no longer requires it. It still rejects the regression in
+        # the other direction: readOnly:true reappearing here would break
+        # those missions again just as silently as its absence would have
+        # broken the pre-ADR-0007 immutability guarantee.
+        if [ "$readonly_val" = "true" ]; then
+          violation 1-18 "challenge volumeMount mountPath=${mp_bare} is readOnly: true (ADR-0007 Option 1 requires directory mounts stay writable — missions 07/09 write under them at runtime)"
           bad18=1
         fi
       fi
@@ -250,8 +263,8 @@ assert_challenge_mounts() { # 1-4, 1-5, 1-18 (challenge side)
     esac
   done <<<"$vm_block"
   flush_entry
-  [ "$bad4" -eq 0 ] && ok 1-4 "every challenge volumeMount mountPath is a declared plant-target"
-  [ "$bad18" -eq 0 ] && ok 1-18 "every challenge seed volumeMount has subPath + readOnly:true matching its plant-target"
+  [ "$bad4" -eq 0 ] && ok 1-4 "every challenge volumeMount mountPath is a declared plant-target's enclosing directory"
+  [ "$bad18" -eq 0 ] && ok 1-18 "every challenge seed volumeMount has subPath matching its mount directory and is not readOnly:true"
 }
 
 assert_challenge_no_flag_string() { # 1-6, 1-7 (1-7 is a subset of 1-6 — postStart lives in the same block)
