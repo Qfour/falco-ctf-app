@@ -214,3 +214,27 @@ func ResetDirtyRouteViolation(routes []apispec.Route) string {
 	}
 	return ""
 }
+
+// ResetDirtyOriginGuardViolation is the two functions above's origin-guard
+// twin (Requirement 6.2, final review round): reset-dirty's contract has TWO
+// halves — "never collector-forwarded" (the two functions above) AND "never
+// reachable without the origin guard" (api.go's resetDirty doc: "Do NOT
+// remove the origin guard from this route" — app#124 5x review R1 finding
+// C3, the guard is what stops a header-less claimed-identity caller from
+// deleting another participant's exfil receipt). Before this function
+// existed, that second half was pinned ONLY by
+// origin_guard_test.go's `guarded != wantOriginGuardedRouteCount` COUNT
+// assert — a failure there names a NUMBER, not reset-dirty by MuxPattern, so
+// a reviewer seeing "expected 7, got 6" has to do the subtraction themselves
+// to learn WHICH route lost its guard, rather than reading a named
+// violation the way ResetDirtyRouteViolation already gives them for the
+// collector-forward half. Reports whether the ACTUAL scoreboard route table
+// marks reset-dirty's Route.OriginGuarded false.
+func ResetDirtyOriginGuardViolation(routes []apispec.Route) string {
+	for _, rt := range routes {
+		if rt.MuxPattern() == ResetDirtyPattern && !rt.OriginGuarded {
+			return ResetDirtyPattern + ": Route.OriginGuarded=false — forbidden (ADR-0003 A2-2, app#124 5x review R1 finding C3)"
+		}
+	}
+	return ""
+}

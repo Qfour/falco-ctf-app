@@ -75,14 +75,30 @@ func scanTargets(t *testing.T, root string) []string {
 }
 
 // TestNoDirectMuxRegistrationOutsideTable is the static half of ADR-0005 V2:
-// it parses every file scanTargets returns and fails if it finds a call
-// expression whose selector is "Handle" or "HandleFunc" on ANY receiver
-// (mux.Handle(...), h.mux.Handle(...), ...). After the ADR-0005 refactor the
-// only such call in the whole tree is apispec.Register's own mux.Handle
+// it parses every file scanTargets returns and fails if it finds a
+// SELECTOR EXPRESSION whose name is "Handle" or "HandleFunc" on ANY receiver
+// (mux.Handle(...), h.mux.Handle(...), a bare `reg := h.mux.HandleFunc`
+// reference later called elsewhere, ...). After the ADR-0005 refactor the
+// only such reference in the whole tree is apispec.Register's own mux.Handle
 // (route.go, scanTargets' one named exclusion), so a passing result means
 // every owning package's route set equals exactly what its
 // Routes()/Register() table contains — the precondition the V1
 // bidirectional set-equality check depends on.
+//
+// Requirement 4 (R1#2, final review round): this used to gate on
+// `n.(*ast.CallExpr)` FIRST and only then inspect call.Fun — so a selector
+// reference that is not ITSELF the direct callee of a CallExpr node (e.g.
+// `reg := h.mux.HandleFunc` followed by `reg("POST /api/backdoor", ...)`
+// somewhere else) was never visited as a violation candidate at all: the
+// bare assignment's RHS is a *ast.SelectorExpr under an *ast.AssignStmt, not
+// a *ast.CallExpr, and by the time `reg(...)` executes, call.Fun is an
+// *ast.Ident ("reg"), not a *ast.SelectorExpr — so neither node shape ever
+// matched. R1 demonstrated this passes `make test` fully green today while
+// installing a live, undocumented route neither Routes() nor
+// docs/openapi-*.yaml ever mentions. Inspecting every *ast.SelectorExpr
+// directly, independent of whether it sits inside a CallExpr, closes this:
+// the reference itself is the thing that must not exist outside route.go,
+// not the specific call-site shape of that one reference.
 //
 // This is a MUTATION-PROVEN check, not just a "currently zero" snapshot: see
 // TestNoDirectMuxRegistration_CatchesReintroducedDirectCall below, which
@@ -118,11 +134,21 @@ func TestNoDirectMuxRegistrationOutsideTable(t *testing.T) {
 }
 
 // findDirectMuxCalls parses a Go source file and returns a description
-// ("line:col selector") for every call expression `<expr>.Handle(...)` or
-// `<expr>.HandleFunc(...)` it finds, regardless of what <expr> is (mux, h.mux,
-// a package-qualified value, ...). It is deliberately receiver-agnostic: the
-// point is "is there ANY direct registration call left in this file", not
-// "is it specifically named mux".
+// ("line:col selector") for every SELECTOR EXPRESSION `<expr>.Handle` or
+// `<expr>.HandleFunc` it finds — a bare reference, not just one that is
+// itself the immediate callee of a call expression — regardless of what
+// <expr> is (mux, h.mux, a package-qualified value, ...). It is deliberately
+// receiver-agnostic: the point is "is there ANY reference to this method
+// left in this file", not "is it specifically named mux", and (Requirement
+// 4, final review round) not "is it called directly at the point where it is
+// referenced" either — `reg := h.mux.HandleFunc` is flagged here even though
+// `reg` itself is never named "mux"/"HandleFunc" again.
+//
+// This does NOT flag `h.mux.Handler(r)` / `promhttp.Handler()` /
+// `http.HandlerFunc(...)` — their Sel.Name is "Handler"/"HandlerFunc", a
+// different string from "Handle"/"HandleFunc", so broadening from
+// call-expressions to all selector expressions adds no false positive here
+// (R1 confirmed zero FPs across this scan's 34 files).
 func findDirectMuxCalls(t *testing.T, path string) []string {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -132,18 +158,14 @@ func findDirectMuxCalls(t *testing.T, path string) []string {
 	}
 	var violations []string
 	ast.Inspect(file, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
+		sel, ok := n.(*ast.SelectorExpr)
 		if !ok {
 			return true
 		}
 		if sel.Sel.Name != "Handle" && sel.Sel.Name != "HandleFunc" {
 			return true
 		}
-		pos := fset.Position(call.Pos())
+		pos := fset.Position(sel.Pos())
 		violations = append(violations, pos.String()+" "+exprString(sel))
 		return true
 	})
@@ -196,5 +218,94 @@ func (h *Handler) sneaky(w http.ResponseWriter, r *http.Request) {}
 	if len(violations) == 0 {
 		t.Fatal("expected findDirectMuxCalls to flag the injected h.mux.HandleFunc call, found none — " +
 			"the detector would be a permanent no-op (ADR-0005 V8)")
+	}
+}
+
+// TestNoDirectMuxRegistration_CatchesAliasedHandleFuncReference is
+// Requirement 4's own V8 proof (final review round, R1#2): R1 demonstrated
+// that BEFORE this file's CallExpr-gated check was replaced with a bare
+// *ast.SelectorExpr inspection, a route registered via
+//
+//	reg := h.mux.HandleFunc
+//	reg("POST /api/backdoor", h.backdoor)
+//
+// passed `make test` fully green — the assignment's RHS is a SelectorExpr
+// under an AssignStmt (not a CallExpr), and the later call's Fun is a bare
+// Ident ("reg"), so the old `n.(*ast.CallExpr)` gate never even looked at
+// call.Fun for either node. This fixture reproduces exactly that shape (not
+// the direct h.mux.HandleFunc(...) call the OLD detector already caught —
+// see TestNoDirectMuxRegistration_CatchesReintroducedDirectCall above) and
+// fails if findDirectMuxCalls ever regresses back to missing it.
+func TestNoDirectMuxRegistration_CatchesAliasedHandleFuncReference(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "aliased.go")
+	src := `package fixture
+
+import "net/http"
+
+type Handler struct{ mux *http.ServeMux }
+
+func (h *Handler) Register() {
+	// Simulates a route registered through a locally-bound method value,
+	// bypassing both the declarative table AND the direct-call shape the
+	// pre-Requirement-4 detector already caught.
+	reg := h.mux.HandleFunc
+	reg("POST /api/backdoor", h.backdoor)
+}
+
+func (h *Handler) backdoor(w http.ResponseWriter, r *http.Request) {}
+`
+	if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	violations := findDirectMuxCalls(t, path)
+	if len(violations) == 0 {
+		t.Fatal("expected findDirectMuxCalls to flag the aliased `reg := h.mux.HandleFunc` reference, found none — " +
+			"this is exactly the shape a CallExpr-only check misses (Requirement 4, R1#2)")
+	}
+}
+
+// TestNoDirectMuxRegistration_NoFalsePositiveOnHandlerLookalikes pins
+// Requirement 4's other half: broadening from CallExpr-only to every
+// *ast.SelectorExpr must not start flagging the THREE real, legitimate
+// "Handler"/"HandlerFunc" (not "Handle"/"HandleFunc") shapes R1 found across
+// this scan's 34 files — h.mux.Handler(r) (server.go's own
+// route-label-for-metrics lookup), promhttp.Handler() (the /metrics route's
+// own handler value), and http.HandlerFunc(...) (used throughout every
+// Routes() table in this codebase to adapt a plain func into an
+// http.Handler). All three share a prefix with "Handle"/"HandleFunc" but are
+// a DIFFERENT string, so the exact-match check must reject them.
+func TestNoDirectMuxRegistration_NoFalsePositiveOnHandlerLookalikes(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "lookalikes.go")
+	src := `package fixture
+
+import (
+	"net/http"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+)
+
+type Handler struct{ mux *http.ServeMux }
+
+func (h *Handler) route(r *http.Request) string {
+	_, pattern := h.mux.Handler(r)
+	return pattern
+}
+
+func (h *Handler) metricsHandler() http.Handler {
+	return promhttp.Handler()
+}
+
+func (h *Handler) wrapped() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
+}
+`
+	if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	violations := findDirectMuxCalls(t, path)
+	if len(violations) != 0 {
+		t.Fatalf("expected zero violations for Handler()/HandlerFunc()-only source, got %v", violations)
 	}
 }

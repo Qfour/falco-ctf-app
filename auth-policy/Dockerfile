@@ -23,6 +23,35 @@ COPY internal/serverutil ./internal/serverutil
 # files on disk are harmless to `go build ./cmd/auth-policy`), but copying
 # only the thin file keeps the build context itself honest about what this
 # distroless binary actually needs.
+#
+# DO NOT widen this COPY to the whole internal/apispec directory to "fix" a
+# build error (Requirement 5, final review round). The two build errors this
+# line's absence/narrowing can produce both LOOK like they want a wider
+# COPY, but do not want one:
+#   - if a non-test file in internal/apispec starts importing specparity (or
+#     specparity's own code moves into a file this COPY doesn't reach), the
+#     build fails with:
+#       no required module provides package
+#       github.com/Qfour/falco-ctf-app/internal/apispec/specparity; to add
+#       it: go get github.com/Qfour/falco-ctf-app/internal/apispec/specparity
+#     — a nonsensical suggestion for a package that already lives in this
+#     SAME module; `go get` cannot fix a missing COPY.
+#   - if route.go itself is split so part of what it needs lives in another
+#     internal/apispec file this COPY doesn't reach, the build fails with a
+#     PHANTOM compile error shaped like `undefined: apispec.<Name>` — green
+#     on the host (where the whole directory exists) and red ONLY inside
+#     this image build.
+# Either error's "obvious" fix is `COPY internal/apispec ./internal/apispec`
+# — which "works" by silently pulling specparity's yaml.v3 dependency (and
+# any future non-stdlib dependency specparity picks up) into this distroless
+# binary's build, reopening BLOCKING 1 above. The correct fix is to move
+# whatever code triggered the error into internal/apispec/specparity (or a
+# *_test.go file) instead of widening this line.
+# internal/apispec/dependency_boundary_test.go's TestNoProductionBinaryImportsSpecparity
+# / TestInternalApispecIsStdlibOnly assert this invariant at `make test` —
+# not image-build — time, which is the actually-required check
+# (`gen-diff-check` and `build (collector) / scan` are not required checks;
+# falco-api skill / scripts/change-mgmt/setup-rulesets.sh).
 COPY internal/apispec/route.go ./internal/apispec/route.go
 
 RUN CGO_ENABLED=0 GOOS=linux go build \

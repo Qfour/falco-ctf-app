@@ -213,9 +213,13 @@ func TestAPISpec_V3_OriginGuardParity(t *testing.T) {
 			guarded = append(guarded, rt.MuxPattern())
 		}
 	}
-	// ADR-0005 Decision 4's documented current-truth count.
-	if len(guarded) != 7 {
-		t.Errorf("expected 7 origin-guarded routes (ADR-0005 Decision 4), got %d: %v", len(guarded), guarded)
+	// ADR-0005 Decision 4's documented current-truth count. Requirement 6.4
+	// (final review round): shares wantOriginGuardedRouteCount with
+	// origin_guard_test.go's own count assert instead of duplicating the
+	// literal `7` in a second file (same package — scoreboard_test — so the
+	// constant is visible here with no import).
+	if len(guarded) != wantOriginGuardedRouteCount {
+		t.Errorf("expected %d origin-guarded routes (ADR-0005 Decision 4), got %d: %v", wantOriginGuardedRouteCount, len(guarded), guarded)
 	}
 
 	missingKey, onlyImpl, onlySpec = specparity.BoolExtParity(specOps, routes, "x-ctf-collector-forward", func(rt apispec.Route) bool { return rt.CollectorForward })
@@ -286,6 +290,12 @@ func TestAPISpec_V4_ResetDirtyNeverForwarded(t *testing.T) {
 		t.Error(got)
 	}
 	if got := specparity.ResetDirtyRouteViolation(routes); got != "" {
+		t.Error(got)
+	}
+	// Requirement 6.2 (final review round): the origin-guard half of
+	// reset-dirty's contract, named — not just implied by
+	// origin_guard_test.go's `guarded != wantOriginGuardedRouteCount` count.
+	if got := specparity.ResetDirtyOriginGuardViolation(routes); got != "" {
 		t.Error(got)
 	}
 	// Sanity: the route must actually exist and be reachable at the pattern
@@ -553,6 +563,29 @@ func TestAPISpec_V8_MutationsFailAgainstRealData(t *testing.T) {
 		}
 		if !found {
 			t.Fatalf("expected a mismatch entry for GET /api/hints, got %v", mismatched)
+		}
+	})
+
+	t.Run("reset_dirty_origin_guard_flipped", func(t *testing.T) {
+		// Requirement 6.2's own V8 proof: flip reset-dirty's OriginGuarded to
+		// false (simulating the exact mutation app#124 5x review R1 finding
+		// C3 warns against) and confirm ResetDirtyOriginGuardViolation names
+		// it, rather than relying solely on origin_guard_test.go's numeric
+		// `guarded != wantOriginGuardedRouteCount` assert to notice.
+		mutated := append([]apispec.Route(nil), routes...)
+		flippedAny := false
+		for i := range mutated {
+			if mutated[i].MuxPattern() == specparity.ResetDirtyPattern {
+				mutated[i].OriginGuarded = false // real value is true (ADR-0003 A2-2 / app#124 5x R1 C3).
+				flippedAny = true
+			}
+		}
+		if !flippedAny {
+			t.Fatal("test bug: reset-dirty's route not found in the real route table")
+		}
+		got := specparity.ResetDirtyOriginGuardViolation(mutated)
+		if got == "" {
+			t.Fatal("expected ResetDirtyOriginGuardViolation to flag the flipped OriginGuarded, got no violation")
 		}
 	})
 

@@ -65,6 +65,63 @@ const (
 // "for documentation only" list) would reopen the exact drift ADR-0005
 // closes, so there is deliberately no second representation anywhere in this
 // codebase — see each owning package's Routes() method.
+//
+// A field on this struct is a DECLARATION, not a guarantee, unless something
+// in make test's suite actually EXERCISES the behaviour it claims — the same
+// gap closed twice for OriginGuarded (5x mutation proof) and Authz
+// (Requirement 1, final review round: a fake `x-ctf-authz: admin` route whose
+// handler never called an authorization gate at all passed every ADR-0005
+// V1-V4 check, because StringExtParity only compares the DECLARED string
+// against the spec's declared string — neither side ever calls the gate
+// function). This table records, per field, whether "declared" and
+// "enforced" are the SAME claim in this codebase today, so a future field
+// doesn't quietly repeat the pattern with nobody noticing the gap exists:
+//
+//	field             | enforced by a BEHAVIOURAL test?
+//	------------------|----------------------------------------------------
+//	Method / Pattern  | yes — IS the http.ServeMux registration itself; a
+//	                  | wrong value 404s at the mux, there is no separate
+//	                  | "declared vs installed" gap to have.
+//	OriginGuarded     | yes — TestOriginGuard_AllProtectedRoutesEnforced
+//	                  | (internal/scoreboard/origin_guard_test.go) derives
+//	                  | its case table from Routes() and asserts the actual
+//	                  | HTTP status a cross-origin request gets, not just
+//	                  | that the field's value matches the spec's.
+//	Authz             | yes — TestAuthz_AllDeclaredGatesEnforced
+//	                  | (internal/scoreboard/authz_test.go) is OriginGuarded's
+//	                  | direct counterpart, added specifically because the
+//	                  | field existed and was spec-compared for a full
+//	                  | review round before anything called the gate.
+//	CollectorForward  | partially — StringExtParity/BoolExtParity check the
+//	                  | DECLARATION against the spec (bijection across
+//	                  | collector+scoreboard specs, V4), and the dedicated
+//	                  | ResetDirtyRouteViolation/ResetDirtySpecViolation/
+//	                  | ResetDirtyOriginGuardViolation asserts pin the ONE
+//	                  | security-critical case by name. There is no generic
+//	                  | behavioural test that drives every CollectorForward
+//	                  | route through collector.go's actual forward allowlist
+//	                  | and checks it lands on exactly the marked routes —
+//	                  | internal/collector/apispec_parity_test.go checks the
+//	                  | collector's OWN forward table against ITS spec, not
+//	                  | against scoreboard's live mux.
+//	Audience          | no — declaration only (StringExtParity checks it
+//	                  | matches the spec string; nothing in this codebase
+//	                  | reads Audience at request time to change behaviour).
+//	                  | Documentation value for whoever is reading the spec
+//	                  | to know who a route is for.
+//	RateLimit         | no (implementation, not declaration) — StringExtParity
+//	                  | DOES check this field's exact string against the
+//	                  | spec's x-ctf-rate-limit (apispec_parity_test.go's
+//	                  | TestAPISpec_V3b_StringExtParity; this field was
+//	                  | PREVIOUSLY documented here as unchecked, which was
+//	                  | itself wrong — Requirement 6.3, final review round).
+//	                  | What is NOT checked is whether the STRING correctly
+//	                  | describes the actual ratelimit.Limiter wired into the
+//	                  | handler (e.g. "per-IP 1 req/s burst 10" could drift
+//	                  | from the real ratelimit.New(...) call and nothing
+//	                  | would notice) — a third, so-far-unclosed instance of
+//	                  | exactly this struct's "declared vs enforced" gap.
+//	                  | Signposted, not fixed, by ADR-0005.
 type Route struct {
 	// Method is the HTTP method ("GET", "POST", ...).
 	Method string
@@ -74,22 +131,27 @@ type Route struct {
 	// parameter, so Pattern compares directly against a spec path key with
 	// no translation.
 	Pattern string
-	// Audience mirrors x-ctf-audience.
+	// Audience mirrors x-ctf-audience. Declaration only — see the table
+	// above.
 	Audience Audience
-	// Authz mirrors x-ctf-authz.
+	// Authz mirrors x-ctf-authz. Enforced by a behavioural test — see the
+	// table above (internal/scoreboard/authz_test.go).
 	Authz Authz
 	// OriginGuarded mirrors x-ctf-origin-guard: whether this route is
 	// wrapped by the browser-CSRF origin-guard middleware (ADR-0005
 	// Decision 4 — the asymmetry is a security contract, not a default).
+	// Enforced by a behavioural test — see the table above
+	// (internal/scoreboard/origin_guard_test.go).
 	OriginGuarded bool
 	// CollectorForward mirrors x-ctf-collector-forward: whether the
 	// collector's allowlisted forward can reach this route on a
-	// participant's behalf.
+	// participant's behalf. Partially enforced — see the table above.
 	CollectorForward bool
 	// RateLimit is a free-text description of the bucket applied (or
-	// "none"). Not parity-checked against the spec's prose by ADR-0005 V1-V8
-	// (only Origin/CollectorForward parity are); carried for completeness
-	// and for any future strengthening (ADR-0005 Signposts).
+	// "none"). Parity-checked as a STRING against the spec's x-ctf-rate-limit
+	// by ADR-0005 V3b (specparity.StringExtParity) — do not describe this
+	// field as unchecked; see the table above for the actual, narrower gap
+	// (the string vs. the real limiter behind it) that IS still unchecked.
 	RateLimit string
 	// Handler is the actual handler Register installs. Left nil in a table
 	// built purely for metadata inspection (e.g. a parity test that never

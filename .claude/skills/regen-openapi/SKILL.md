@@ -86,10 +86,22 @@ origin-guard・collector forward・self-or-admin の関係性 — を正確に�
 
 ## 5. コミット
 
-生成物とソースの変更を **同一コミット** に含める（分離すると CI で型不一致になる）:
+生成物とソースの変更を **同一コミット** に含める（分離すると CI で型不一致になる）。
+`git add internal/ docs/` のような広いパス指定はしない —
+`falco-ctf-app-conventions.md` は **明示パス指定のみ**を許可しており
+（`git add .` / `git add -A` 禁止と同じ理由: 意図しないファイルの巻き込み防止）、
+ディレクトリ全体を渡すのも同じ穴を開ける。実際に変更した具体的なファイルを
+列挙する:
 
 ```bash
-git add internal/ docs/
+# 例（実際に変更したファイルだけを列挙する — 下記は一例）:
+git add internal/scoreboard/oapi/types.gen.go \
+        internal/authpolicy/oapi/types.gen.go \
+        docs/openapi-scoreboard.yaml \
+        docs/openapi-auth-policy.yaml \
+        docs/openapi-collector.yaml
+# ルート/ハンドラも変えた場合はそのファイルも明示的に加える
+# （例: internal/scoreboard/api/api.go）。
 # /commit で Haiku に委譲
 ```
 

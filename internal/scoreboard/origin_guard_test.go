@@ -73,6 +73,16 @@ func ogReq(t *testing.T, srv *scoreboard.Handler, method, target string, origin,
 
 const allowedOrigin = "https://scoreboard.ctf.example.com"
 
+// wantOriginGuardedRouteCount is ADR-0005 Decision 4's current-truth count
+// of OriginGuarded routes. Requirement 6.4 (final review round): this used
+// to be the literal `7` duplicated independently in THIS file's
+// TestOriginGuard_AllProtectedRoutesEnforced AND in apispec_parity_test.go's
+// TestAPISpec_V3_OriginGuardParity — two copies of the same canon, one of
+// which could be bumped on a route-count change while the other was missed
+// (they are in different files, so a diff review of one does not surface
+// the other going stale). Both now pin against this single constant.
+const wantOriginGuardedRouteCount = 7
+
 // TestOriginGuard_ResetFormCSRF is the mitigation's headline case: a
 // body-less POST /api/admin/reset (the route a CSRF <form> auto-submit can
 // hit without any CORS preflight) must be rejected when the request carries
@@ -281,8 +291,8 @@ func TestOriginGuard_AllProtectedRoutesEnforced(t *testing.T) {
 	// route silently losing OriginGuarded: true — or the derivation itself
 	// breaking (e.g. Routes() returning nil) — shows up as a numeric
 	// assertion failure, not a shrinking, easy-to-miss subtest count.
-	if guarded != 7 {
-		t.Fatalf("expected exactly 7 OriginGuarded routes (ADR-0005 canon: api.go's admin/reset, admin/display-name, admin/hints, submit-detect, steps/check, hints/{idx}, reset-dirty), got %d", guarded)
+	if guarded != wantOriginGuardedRouteCount {
+		t.Fatalf("expected exactly %d OriginGuarded routes (ADR-0005 canon: api.go's admin/reset, admin/display-name, admin/hints, submit-detect, steps/check, hints/{idx}, reset-dirty), got %d", wantOriginGuardedRouteCount, guarded)
 	}
 	if unguardedWrites == 0 {
 		t.Fatal("expected at least one unguarded POST route to exercise the negative branch — the derivation might be broken")
