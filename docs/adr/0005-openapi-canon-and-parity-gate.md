@@ -1,6 +1,9 @@
 # ADR-0005: OpenAPI spec の対象を「サービスの HTTP 面すべて」と定め、実装との parity を fail-closed で機械検査する
 
-- Status: **Proposed**
+- Status: **Accepted** (2026-08-19 VP 承認。4 つのスコープ判断を批准し、`## Verification` の
+  V1-V8 が実装され `make test` = required check に載ったことを VP が独立検証した:
+  ルートテーブル外の直接登録を注入 → `TestNoDirectMuxRegistrationOutsideTable` が
+  file:line 付きで fail、復元で green。**以降この ADR の本文は編集しない** — 変更は後継 ADR で行う)
 - Date / Deciders: 2026-08-19 / architect (起案) + VP (承認) + software-engineer (実装) + qa-engineer (parity test) + security-engineer (origin-guard 契約のレビュー)
 - 関連: Issue **#115** (spec が実ルートの 43-47% しか覆っていない — 本 ADR はその設計決定部分)、
   Issue **#113** (`err.Error()` 漏出 + エラー契約の不在。本 ADR は §Decision 5 で**形の契約だけ**を決め、

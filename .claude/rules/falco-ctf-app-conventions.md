@@ -32,6 +32,12 @@
 | I10 | Dockerfile / yaml にトークン・実シークレットを焼き込まない |
 | I14 | `http.ServeMux` を組み立てる全バイナリ (scoreboard/collector/auth-policy) について、mux に登録されたルート集合 = 対応する `docs/openapi-*.yaml` の operation 集合であり、origin-guard の有無と collector forward の集合も spec の宣言と一致する。**例外・除外リストを持たない** (ADR-0005)。機構: `internal/apispec` + 各サービスの `apispec_parity_test.go` (`make test` = required check) |
 
+> **I11-I13 は欠番ではなく予約済み (未昇格)。** I11 = evade の clean 判定を attempt スコープで評価
+> (ADR-0003) / I12 = challenge コンテナにフラグ実値の到達経路を設けない (ADR-0001) /
+> I13a・I13b = deploy 経路は Falco イベントを 1 件も出さない (ADR-0001)。**いずれも機械検証が
+> 揃うまでこの表に載せない**方針 (番号は 2026-08-18 に VP 批准済なので再利用しない)。
+> I14 がここに居るのは、検査 (`internal/apispec`) が同じ PR で landing しているため。
+
 ## Dockerfile 規約
 
 | サービス | builder | final |
