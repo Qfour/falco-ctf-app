@@ -30,6 +30,7 @@
 | I8 | auth-policy `/check` は `X-Auth-Request-Email` を **prefix-exact** (`<username>@`) で照合。**唯一の例外**: email が `ADMIN_EMAILS` に含まれる場合は任意の workspace を許可 (運営の全 workspace アクセス)。それ以外で prefix 一致を緩めない |
 | I9 | challenge コンテナ Dockerfile に Service / Ingress を追加しない |
 | I10 | Dockerfile / yaml にトークン・実シークレットを焼き込まない |
+| I14 | `http.ServeMux` を組み立てる全バイナリ (scoreboard/collector/auth-policy) について、mux に登録されたルート集合 = 対応する `docs/openapi-*.yaml` の operation 集合であり、origin-guard の有無と collector forward の集合も spec の宣言と一致する。**例外・除外リストを持たない** (ADR-0005)。機構: `internal/apispec` + 各サービスの `apispec_parity_test.go` (`make test` = required check) |
 
 ## Dockerfile 規約
 
