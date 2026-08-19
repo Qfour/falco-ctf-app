@@ -9,39 +9,153 @@ import (
 	"time"
 )
 
-// Defines values for StateChallengesType.
+// Defines values for ChallengeStatType.
 const (
-	Evade   StateChallengesType = "evade"
-	Trigger StateChallengesType = "trigger"
+	ChallengeStatTypeDetect  ChallengeStatType = "detect"
+	ChallengeStatTypeEvade   ChallengeStatType = "evade"
+	ChallengeStatTypeTrigger ChallengeStatType = "trigger"
 )
 
-// FalcoEvent falcosidekick customWebhook payload (subset we consume)
+// Defines values for IngestIgnoredReason.
+const (
+	BelowMinimumPriority   IngestIgnoredReason = "below minimum priority"
+	NotAChallengeContainer IngestIgnoredReason = "not a challenge container"
+	NotACtfWorkspaceEvent  IngestIgnoredReason = "not a ctf workspace event"
+)
+
+// Defines values for MissionDetailStatus.
+const (
+	MissionDetailStatusCurrent MissionDetailStatus = "current"
+	MissionDetailStatusLocked  MissionDetailStatus = "locked"
+	MissionDetailStatusSolved  MissionDetailStatus = "solved"
+)
+
+// Defines values for MissionDetailType.
+const (
+	MissionDetailTypeDetect  MissionDetailType = "detect"
+	MissionDetailTypeEvade   MissionDetailType = "evade"
+	MissionDetailTypeTrigger MissionDetailType = "trigger"
+)
+
+// Defines values for MissionSummaryStatus.
+const (
+	MissionSummaryStatusCurrent MissionSummaryStatus = "current"
+	MissionSummaryStatusLocked  MissionSummaryStatus = "locked"
+	MissionSummaryStatusSolved  MissionSummaryStatus = "solved"
+)
+
+// Defines values for MissionSummaryType.
+const (
+	Detect  MissionSummaryType = "detect"
+	Evade   MissionSummaryType = "evade"
+	Trigger MissionSummaryType = "trigger"
+)
+
+// Defines values for SubmitDetectVerdictStatus.
+const (
+	FalsePositive SubmitDetectVerdictStatus = "false-positive"
+	Invalid       SubmitDetectVerdictStatus = "invalid"
+	Missed        SubmitDetectVerdictStatus = "missed"
+	Solved        SubmitDetectVerdictStatus = "solved"
+)
+
+// AdminResetResult defines model for AdminResetResult.
+type AdminResetResult struct {
+	ClearedSolves int  `json:"cleared_solves"`
+	Ok            bool `json:"ok"`
+}
+
+// ChallengeSolver defines model for ChallengeSolver.
+type ChallengeSolver struct {
+	At          time.Time `json:"at"`
+	DisplayName string    `json:"display_name"`
+	User        string    `json:"user"`
+}
+
+// ChallengeStat defines model for ChallengeStat.
+type ChallengeStat struct {
+	ExpectedRules []string `json:"expectedRules"`
+
+	// FirstSolver first solver's username; **null** when nobody solved it (key always present)
+	FirstSolver    *string  `json:"first_solver,omitempty"`
+	ForbiddenRules []string `json:"forbiddenRules"`
+	Id             string   `json:"id"`
+	SolvedCount    int      `json:"solved_count"`
+
+	// SolverDetails solvers ranked by solve time — powers the per-challenge leaderboard
+	SolverDetails []ChallengeSolver `json:"solver_details"`
+
+	// Solvers solver usernames ranked by solve time
+	Solvers []string          `json:"solvers"`
+	Type    ChallengeStatType `json:"type"`
+}
+
+// ChallengeStatType defines model for ChallengeStat.Type.
+type ChallengeStatType string
+
+// DisplayNameRequest defines model for DisplayNameRequest.
+type DisplayNameRequest struct {
+	// Name 1..32 runes after trimming; no <>&"' and no control characters (UI / shell safety)
+	Name string `json:"name"`
+}
+
+// DisplayNameResult defines model for DisplayNameResult.
+type DisplayNameResult struct {
+	DisplayName string `json:"display_name"`
+	Ok          bool   `json:"ok"`
+	User        string `json:"user"`
+}
+
+// Error The ONLY body shape for a non-2xx JSON response. `error` is meant to be
+// a stable, operator-facing message; the implementation still leaks
+// decoder / SQLite driver text on some paths (Issue #113) — that is a
+// defect against this schema, not an alternative contract.
+type Error struct {
+	Error string `json:"error"`
+}
+
+// ExfilReceipt defines model for ExfilReceipt.
+type ExfilReceipt struct {
+	// Note display prose — do not parse
+	Note     string `json:"note"`
+	Received bool   `json:"received"`
+	User     string `json:"user"`
+}
+
+// ExfilRequest defines model for ExfilRequest.
+type ExfilRequest struct {
+	Flag string `json:"flag"`
+	User string `json:"user"`
+}
+
+// FalcoEvent falcosidekick customWebhook payload (the subset we consume)
 type FalcoEvent struct {
-	// OutputFields Arbitrary Falco output fields map. The values at
-	// `k8s.ns.name` (must be `ctf-<username>`) and
-	// `k8s.pod.name` (must be `workspace`) drive the routing filter;
-	// `container.image.repository` must contain the challenge image
-	// substring. Missing or non-matching events are silently ignored.
+	// OutputFields Arbitrary Falco output fields map. `k8s.ns.name` (must be
+	// `ctf-<username>`), `k8s.pod.name` (must be `workspace`) and
+	// `container.image.repository` (must contain `falco-ctf/challenge` or
+	// `falco-ctf-challenge`) drive the routing filter. Non-matching events
+	// are answered 200 ignored.
 	OutputFields FalcoEvent_OutputFields `json:"output_fields"`
 
-	// Priority Falco priority (e.g. Notice, Warning, Critical). Optional.
-	// Events explicitly at Debug/Informational/Info are ignored;
+	// Priority Falco priority (e.g. Notice, Warning, Critical). Optional. Events
+	// explicitly at Debug/Informational/Info are ignored; a
 	// missing/unknown priority passes through for compatibility.
 	Priority *string `json:"priority,omitempty"`
 
 	// Rule Falco rule name (matched against catalog `expectedRules` / `forbiddenRules`)
 	Rule string `json:"rule"`
 
-	// Time Falco-side detection time. Optional; retained as a log field
-	// only — the rule-fire window uses server receipt time, not this.
+	// Time Falco-side detection time. Optional; retained as a LOG FIELD only —
+	// no solve, taint or window decision ever reads it (a forged value
+	// must not be able to bury a forbidden rule fire).
 	Time *time.Time `json:"time,omitempty"`
 }
 
-// FalcoEvent_OutputFields Arbitrary Falco output fields map. The values at
-// `k8s.ns.name` (must be `ctf-<username>`) and
-// `k8s.pod.name` (must be `workspace`) drive the routing filter;
-// `container.image.repository` must contain the challenge image
-// substring. Missing or non-matching events are silently ignored.
+// FalcoEvent_OutputFields Arbitrary Falco output fields map. `k8s.ns.name` (must be
+// `ctf-<username>`), `k8s.pod.name` (must be `workspace`) and
+// `container.image.repository` (must contain `falco-ctf/challenge` or
+// `falco-ctf-challenge`) drive the routing filter. Non-matching events
+// are answered 200 ignored.
 type FalcoEvent_OutputFields struct {
 	ContainerImageRepository *string                `json:"container.image.repository,omitempty"`
 	K8sNsName                *string                `json:"k8s.ns.name,omitempty"`
@@ -49,94 +163,474 @@ type FalcoEvent_OutputFields struct {
 	AdditionalProperties     map[string]interface{} `json:"-"`
 }
 
-// State defines model for State.
-type State struct {
-	Challenges []struct {
-		ExpectedRules  *[]string `json:"expectedRules,omitempty"`
-		FirstSolver    *string   `json:"first_solver"`
-		ForbiddenRules *[]string `json:"forbiddenRules,omitempty"`
-		Id             *string   `json:"id,omitempty"`
-		SolvedCount    *int      `json:"solved_count,omitempty"`
+// FalcoListItem defines model for FalcoListItem.
+type FalcoListItem struct {
+	Items []string `json:"items"`
+	Name  string   `json:"name"`
+}
 
-		// SolverDetails solvers ranked by solve time — powers the per-challenge leaderboard
-		SolverDetails *[]struct {
-			At          *time.Time `json:"at,omitempty"`
-			DisplayName *string    `json:"display_name,omitempty"`
-			User        *string    `json:"user,omitempty"`
-		} `json:"solver_details,omitempty"`
+// FalcoMacroItem defines model for FalcoMacroItem.
+type FalcoMacroItem struct {
+	Condition string `json:"condition"`
+	Name      string `json:"name"`
+}
 
-		// Solvers solver usernames, ranked by solve time
-		Solvers *[]string            `json:"solvers,omitempty"`
-		Type    *StateChallengesType `json:"type,omitempty"`
-	} `json:"challenges"`
-	EventsPerUser *map[string]int `json:"events_per_user,omitempty"`
-	Leaderboard   []struct {
-		// Earliest RFC3339 timestamp of the user's first solve; "9999" sentinel if solved == 0.
-		Earliest *string `json:"earliest,omitempty"`
-		Events   *int    `json:"events,omitempty"`
+// FalcoRuleExcerpt Display-only List/Macro/Rule excerpt from
+// `challenges/<NN>-<slug>/rule.yaml` (P23 Story-as-docs). Identical for
+// every viewer, so it is returned for ANY status. A mission without a
+// rule.yaml yields three empty arrays and `hasFalcoRule: false`.
+type FalcoRuleExcerpt struct {
+	Lists  []FalcoListItem  `json:"lists"`
+	Macros []FalcoMacroItem `json:"macros"`
+	Rules  []FalcoRuleItem  `json:"rules"`
+}
 
-		// Rank 1-based position, ranked by score descending with the earliest first-solve time as the tiebreak for equal scores.
-		Rank *int `json:"rank,omitempty"`
+// FalcoRuleItem defines model for FalcoRuleItem.
+type FalcoRuleItem struct {
+	Condition string   `json:"condition"`
+	Desc      string   `json:"desc"`
+	Name      string   `json:"name"`
+	Output    string   `json:"output"`
+	Priority  string   `json:"priority"`
+	Tags      []string `json:"tags"`
+}
 
-		// Score Ranking metric (#40): base award per solve minus the per-hint reveal penalty, clamped at 0. Never negative.
-		Score  *int    `json:"score,omitempty"`
-		Solved *int    `json:"solved,omitempty"`
-		User   *string `json:"user,omitempty"`
-	} `json:"leaderboard"`
+// Health defines model for Health.
+type Health struct {
+	// Challenges catalog ids (sorted)
+	Challenges []string `json:"challenges"`
+
+	// Db path to the SQLite file inside the pod
+	Db string `json:"db"`
+	Ok bool   `json:"ok"`
+
+	// SolvedLoaded solves loaded from disk at startup
+	SolvedLoaded int `json:"solved_loaded"`
+}
+
+// HintsBlock The ONE fairness-gated part of a mission detail. For a locked mission
+// this block reports `lockedCount == total`, `opened == []` and
+// `nextIndex == 0` regardless of what the store holds (defensive
+// fail-closed — the handler does not trust the UI to hide the reveal
+// button).
+type HintsBlock struct {
+	LockedCount int `json:"lockedCount"`
+
+	// NextIndex 1-based index of the next unopened hint; 0 = nothing left to reveal (or locked)
+	NextIndex int          `json:"nextIndex"`
+	Opened    []OpenedHint `json:"opened"`
+
+	// Penalty points forfeited by revealing hint `nextIndex` (0 when nextIndex is 0)
+	Penalty int `json:"penalty"`
+	Total   int `json:"total"`
+}
+
+// IngestAccepted defines model for IngestAccepted.
+type IngestAccepted struct {
+	Accepted bool   `json:"accepted"`
+	Rule     string `json:"rule"`
+	User     string `json:"user"`
+}
+
+// IngestIgnored defines model for IngestIgnored.
+type IngestIgnored struct {
+	Ignored bool                `json:"ignored"`
+	Reason  IngestIgnoredReason `json:"reason"`
+}
+
+// IngestIgnoredReason defines model for IngestIgnored.Reason.
+type IngestIgnoredReason string
+
+// Journey `GET /api/users/{user}/journey` — the participant portal's main
+// projection (polled every 2s). Display-only.
+type Journey struct {
+	// Current first unsolved mission id. **null** when every mission is solved
+	// (the key is always present).
+	Current *string `json:"current,omitempty"`
+
+	// Detail detail for `?mission=` when valid, else for `current`. **null** when
+	// there is no mission to show at all (everything solved and no valid
+	// override) — the key is always present.
+	Detail      *MissionDetail `json:"detail,omitempty"`
+	DisplayName string         `json:"display_name"`
+
+	// HintPenalty representative HINT1 cost; the per-mission figure is `detail.hints.penalty`
+	HintPenalty int              `json:"hint_penalty"`
+	Missions    []MissionSummary `json:"missions"`
+	Now         time.Time        `json:"now"`
+	Score       int              `json:"score"`
+	SolvedCount int              `json:"solved_count"`
+
+	// Total missions in this run's order (catalog-filtered)
+	Total int    `json:"total"`
+	User  string `json:"user"`
+}
+
+// LeaderboardEntry defines model for LeaderboardEntry.
+type LeaderboardEntry struct {
+	DisplayName string `json:"display_name"`
+
+	// Earliest RFC3339 first-solve time; the sentinel `"9999"` when solved == 0
+	Earliest string `json:"earliest"`
+	Events   int    `json:"events"`
+
+	// Rank 1-based, ranked by score desc with earliest first-solve as the
+	// tiebreak. 0 for participants with no solves (renders "-").
+	Rank int `json:"rank"`
+
+	// Score base award per solve minus hint penalties, clamped at 0
+	Score  int    `json:"score"`
+	Solved int    `json:"solved"`
+	User   string `json:"user"`
+}
+
+// Me `GET /api/users/{user}/me`. Self-scoped: `rank`/`score` are the caller's
+// OWN row out of a field-wide computation — no other participant's data is
+// serialized (P23-ME-1).
+type Me struct {
+	// DisplayName falls back to `user` when unset
+	DisplayName string `json:"display_name"`
+
+	// Events total Falco events attributed to this user
+	Events int `json:"events"`
+
+	// HintPenalty representative figure = the cost of revealing HINT1. The portal uses
+	// the per-mission `Journey.detail.hints.penalty` instead; this field is
+	// kept for API back-compat.
+	HintPenalty int `json:"hint_penalty"`
+
+	// NextUnsolved next unsolved challenge id by catalog order. **null** when
+	// everything is solved (the key is always present).
+	NextUnsolved *string   `json:"next_unsolved,omitempty"`
 	Now          time.Time `json:"now"`
-	RecentSolves []struct {
-		At        *time.Time `json:"at,omitempty"`
-		Challenge *string    `json:"challenge,omitempty"`
-		User      *string    `json:"user,omitempty"`
-	} `json:"recent_solves"`
+
+	// Rank 1-based; 0 means "no rank yet" (zero solves) and renders as "-"
+	Rank int `json:"rank"`
+
+	// RecentRuleFires rule fires for this user in the last 60s, in arrival order
+	RecentRuleFires []RuleFire `json:"recent_rule_fires"`
+
+	// Score Grader arithmetic (base award per solve minus hint penalties, clamped at 0)
+	Score int `json:"score"`
+
+	// Solved this user's solves in solve order, filtered to catalog membership
+	Solved          []SolveEntry `json:"solved"`
+	SolvedCount     int          `json:"solved_count"`
+	TotalChallenges int          `json:"total_challenges"`
+	User            string       `json:"user"`
+}
+
+// MissionDetail The selected mission's detail block (`Journey.detail`). Static content
+// (brief / steps / Falco rule excerpt) is returned for any status; only
+// `hints` — and step tick state — are gated to the unlocked prefix.
+type MissionDetail struct {
+	Briefing string `json:"briefing"`
+
+	// DetectedRules expectedRules intersected with this user's rule fires in the last
+	// 60s. UI-display-only live cue; the solve itself is recorded by
+	// ingest the instant the rule fires, independent of this window.
+	DetectedRules []string `json:"detectedRules"`
+
+	// Dirty `len(dirtyRules) > 0` (ADR-0003 A3). PERSISTENT — no time window;
+	// only reset-dirty clears it. Always false for trigger/detect.
+	Dirty bool `json:"dirty"`
+
+	// DirtyRules forbidden Falco rule names that tainted this attempt (names only, never a flag)
+	DirtyRules []string `json:"dirtyRules"`
+	DocsUrl    string   `json:"docsUrl"`
+
+	// ExfilReceived the collector holds ANY receipt for this (user, challenge). Drives
+	// the auto-solve status card. Never exposes the flag value and has no
+	// bearing on the verdict (submit re-checks the exact flag).
+	ExfilReceived bool `json:"exfilReceived"`
+
+	// ExpectedRules trigger missions only (empty array otherwise) — the Falco rules
+	// whose fire auto-solves this mission. Rule NAMES only, already public
+	// in the operator view and the docs excerpts.
+	ExpectedRules []string `json:"expectedRules"`
+
+	// FalcoRule Display-only List/Macro/Rule excerpt from
+	// `challenges/<NN>-<slug>/rule.yaml` (P23 Story-as-docs). Identical for
+	// every viewer, so it is returned for ANY status. A mission without a
+	// rule.yaml yields three empty arrays and `hasFalcoRule: false`.
+	FalcoRule FalcoRuleExcerpt `json:"falcoRule"`
+
+	// HasFalcoRule false = no rule.yaml authored; the UI omits the panel
+	HasFalcoRule bool `json:"hasFalcoRule"`
+	HasJourney   bool `json:"hasJourney"`
+
+	// Hints The ONE fairness-gated part of a mission detail. For a locked mission
+	// this block reports `lockedCount == total`, `opened == []` and
+	// `nextIndex == 0` regardless of what the store holds (defensive
+	// fail-closed — the handler does not trust the UI to hide the reveal
+	// button).
+	Hints HintsBlock `json:"hints"`
+	Id    string     `json:"id"`
+
+	// LeadIn previous mission's `bridge`; empty for the first mission (#47)
+	LeadIn string `json:"leadIn"`
+
+	// RequireExfil evade challenge that also requires a collector exfil receipt
+	RequireExfil bool                `json:"requireExfil"`
+	Status       MissionDetailStatus `json:"status"`
+	Steps        []Step              `json:"steps"`
+	Tagline      string              `json:"tagline"`
+	Title        string              `json:"title"`
+	Type         MissionDetailType   `json:"type"`
+}
+
+// MissionDetailStatus defines model for MissionDetail.Status.
+type MissionDetailStatus string
+
+// MissionDetailType defines model for MissionDetail.Type.
+type MissionDetailType string
+
+// MissionSummary one row of the journey mission map
+type MissionSummary struct {
+	// Bridge narrative teaser toward the next mission, shown in the CLEARED overlay (#47)
+	Bridge string `json:"bridge"`
+
+	// DocsUrl absolutised against the docs origin when one is configured
+	DocsUrl string `json:"docsUrl"`
+
+	// HasJourney false = no journey.yaml; the UI shows "ブリーフィング準備中" (fail-soft)
+	HasJourney bool   `json:"hasJourney"`
+	Id         string `json:"id"`
+
+	// Status guided progression: everything after `current` is locked. Locked
+	// missions are still readable (free browsing) but their hints and step
+	// ticks are suppressed.
+	Status  MissionSummaryStatus `json:"status"`
+	Tagline string               `json:"tagline"`
+
+	// Title journey.yaml title, falling back to the challenge id
+	Title string             `json:"title"`
+	Type  MissionSummaryType `json:"type"`
+}
+
+// MissionSummaryStatus guided progression: everything after `current` is locked. Locked
+// missions are still readable (free browsing) but their hints and step
+// ticks are suppressed.
+type MissionSummaryStatus string
+
+// MissionSummaryType defines model for MissionSummary.Type.
+type MissionSummaryType string
+
+// OpenHintResult defines model for OpenHintResult.
+type OpenHintResult struct {
+	Cid string `json:"cid"`
+
+	// Hint hint copy from journey.yaml
+	Hint string `json:"hint"`
+
+	// Idx 1-based
+	Idx int `json:"idx"`
+
+	// Newly false when the hint was already open (idempotent re-open)
+	Newly bool `json:"newly"`
+	Ok    bool `json:"ok"`
+
+	// Total hint count for this mission
+	Total int    `json:"total"`
+	User  string `json:"user"`
+}
+
+// OpenedHint defines model for OpenedHint.
+type OpenedHint struct {
+	// Idx 1-based
+	Idx  int    `json:"idx"`
+	Text string `json:"text"`
+}
+
+// ReleaseHintRequest defines model for ReleaseHintRequest.
+type ReleaseHintRequest struct {
+	Hint int `json:"hint"`
+
+	// Mission mission directory slug (e.g. `01-initial-recon`)
+	Mission  string `json:"mission"`
+	Released bool   `json:"released"`
+}
+
+// ReleaseHintResult defines model for ReleaseHintResult.
+type ReleaseHintResult struct {
+	Hint     int    `json:"hint"`
+	Mission  string `json:"mission"`
+	Ok       bool   `json:"ok"`
+	Released bool   `json:"released"`
+}
+
+// ReleasedHints defines model for ReleasedHints.
+type ReleasedHints struct {
+	// Released mission slug -> released hint indices (1-based, ascending)
+	Released map[string][]int `json:"released"`
+}
+
+// ResetDirtyResult defines model for ResetDirtyResult.
+type ResetDirtyResult struct {
+	Cid   string `json:"cid"`
+	Dirty bool   `json:"dirty"`
+	Ok    bool   `json:"ok"`
+	User  string `json:"user"`
+}
+
+// RuleFire defines model for RuleFire.
+type RuleFire struct {
+	// At unix seconds as a FLOAT (not RFC3339 — this feed differs from every other `at`)
+	At   float32 `json:"at"`
+	Rule string  `json:"rule"`
+}
+
+// SolveEntry defines model for SolveEntry.
+type SolveEntry struct {
+	At        time.Time `json:"at"`
+	Challenge string    `json:"challenge"`
+}
+
+// SolveRecord defines model for SolveRecord.
+type SolveRecord struct {
+	At          time.Time `json:"at"`
+	Challenge   string    `json:"challenge"`
+	DisplayName string    `json:"display_name"`
+	User        string    `json:"user"`
+}
+
+// State `GET /api/state` — admin-only, whole-field snapshot. Every solve list is
+// filtered to catalog membership so a retired challenge id cannot inflate
+// counts ("SOLVED 15/10").
+type State struct {
+	Challenges    []ChallengeStat    `json:"challenges"`
+	EventsPerUser map[string]int     `json:"events_per_user"`
+	Leaderboard   []LeaderboardEntry `json:"leaderboard"`
+	Now           time.Time          `json:"now"`
+
+	// RecentSolves newest first
+	RecentSolves []SolveRecord `json:"recent_solves"`
 
 	// Solved back-compat — same shape as recent_solves but unbounded
-	Solved *[]struct {
-		At        *time.Time `json:"at,omitempty"`
-		Challenge *string    `json:"challenge,omitempty"`
-		User      *string    `json:"user,omitempty"`
-	} `json:"solved,omitempty"`
-	Stats struct {
-		Challenges *int `json:"challenges,omitempty"`
-		Events     *int `json:"events,omitempty"`
-		Solves     *int `json:"solves,omitempty"`
-		Users      *int `json:"users,omitempty"`
+	Solved []SolveRecord `json:"solved"`
+	Stats  struct {
+		Challenges int `json:"challenges"`
+		Events     int `json:"events"`
+		Solves     int `json:"solves"`
+		Users      int `json:"users"`
 	} `json:"stats"`
 }
 
-// StateChallengesType defines model for State.Challenges.Type.
-type StateChallengesType string
+// Step defines model for Step.
+type Step struct {
+	// Checked always false for a locked mission (store state is ignored there)
+	Checked bool   `json:"checked"`
+	Detail  string `json:"detail"`
 
-// AdminSetDisplayNameJSONBody defines parameters for AdminSetDisplayName.
-type AdminSetDisplayNameJSONBody struct {
-	// Name 1..32 runes, no <>&"' or control chars
-	Name string `json:"name"`
+	// Idx 0-based
+	Idx   int    `json:"idx"`
+	Label string `json:"label"`
 }
 
-// SubmitFlagJSONBody defines parameters for SubmitFlag.
-type SubmitFlagJSONBody struct {
-	Flag string `json:"flag"`
-	User string `json:"user"`
+// StepCheckRequest defines model for StepCheckRequest.
+type StepCheckRequest struct {
+	Checked bool `json:"checked"`
 }
 
-// SubmitDetectJSONBody defines parameters for SubmitDetect.
-type SubmitDetectJSONBody struct {
-	// Condition the Falco condition to grade (≤4 KiB)
+// StepCheckResult defines model for StepCheckResult.
+type StepCheckResult struct {
+	Checked bool   `json:"checked"`
+	Cid     string `json:"cid"`
+	Idx     int    `json:"idx"`
+	Ok      bool   `json:"ok"`
+	User    string `json:"user"`
+}
+
+// SubmitDetectRequest defines model for SubmitDetectRequest.
+type SubmitDetectRequest struct {
+	// Condition the Falco condition to grade (<= 4 KiB)
 	Condition string `json:"condition"`
 	User      string `json:"user"`
 }
 
+// SubmitDetectVerdict 200 verdict for `POST /api/challenges/{cid}/submit-detect`. `status` is
+// the branch key; `user` / `display_name` appear only on `solved`, and the
+// fire counts are absent on `invalid` (the condition never compiled).
+type SubmitDetectVerdict struct {
+	BenignFires  *int                      `json:"benign_fires,omitempty"`
+	DisplayName  *string                   `json:"display_name,omitempty"`
+	EvasionFires *int                      `json:"evasion_fires,omitempty"`
+	Reason       string                    `json:"reason"`
+	Solved       bool                      `json:"solved"`
+	Status       SubmitDetectVerdictStatus `json:"status"`
+	User         *string                   `json:"user,omitempty"`
+}
+
+// SubmitDetectVerdictStatus defines model for SubmitDetectVerdict.Status.
+type SubmitDetectVerdictStatus string
+
+// SubmitFlagRequest defines model for SubmitFlagRequest.
+type SubmitFlagRequest struct {
+	Flag string `json:"flag"`
+
+	// User CLAIMED identity — never proven on this route
+	User string `json:"user"`
+}
+
+// SubmitFlagVerdict 200 verdict for `POST /api/challenges/{cid}/submit`. Which keys appear
+// depends on how far the submission got, so only `correct` is always
+// present:
+//
+//	wrong flag       -> correct=false, reason
+//	forbidden fired  -> correct=true, evaded=false, reason
+//	exfil required   -> correct=true, evaded=true, exfiltrated=false, reason
+//	solved           -> correct=true, evaded=true, solved=true, user,
+//	                    display_name
+//
+// `reason` is display prose (currently server-side Japanese copy; the
+// ownership of that copy is an open question — Issue #113). Clients MUST
+// branch on the booleans only.
+type SubmitFlagVerdict struct {
+	Correct     bool    `json:"correct"`
+	DisplayName *string `json:"display_name,omitempty"`
+	Evaded      *bool   `json:"evaded,omitempty"`
+	Exfiltrated *bool   `json:"exfiltrated,omitempty"`
+	Reason      *string `json:"reason,omitempty"`
+	Solved      *bool   `json:"solved,omitempty"`
+	User        *string `json:"user,omitempty"`
+}
+
+// Cid defines model for Cid.
+type Cid = string
+
+// User defines model for User.
+type User = string
+
+// GetUserJourneyParams defines parameters for GetUserJourney.
+type GetUserJourneyParams struct {
+	// Mission mission id whose `detail` to return instead of `current`. Any id in
+	// `missions[]` is valid; unknown/blank values fall back to `current`.
+	Mission *string `form:"mission,omitempty" json:"mission,omitempty"`
+}
+
+// ReleaseHintJSONRequestBody defines body for ReleaseHint for application/json ContentType.
+type ReleaseHintJSONRequestBody = ReleaseHintRequest
+
 // AdminSetDisplayNameJSONRequestBody defines body for AdminSetDisplayName for application/json ContentType.
-type AdminSetDisplayNameJSONRequestBody AdminSetDisplayNameJSONBody
+type AdminSetDisplayNameJSONRequestBody = DisplayNameRequest
 
 // SubmitFlagJSONRequestBody defines body for SubmitFlag for application/json ContentType.
-type SubmitFlagJSONRequestBody SubmitFlagJSONBody
+type SubmitFlagJSONRequestBody = SubmitFlagRequest
 
 // SubmitDetectJSONRequestBody defines body for SubmitDetect for application/json ContentType.
-type SubmitDetectJSONRequestBody SubmitDetectJSONBody
+type SubmitDetectJSONRequestBody = SubmitDetectRequest
+
+// SetStepCheckJSONRequestBody defines body for SetStepCheck for application/json ContentType.
+type SetStepCheckJSONRequestBody = StepCheckRequest
+
+// SetDisplayNameJSONRequestBody defines body for SetDisplayName for application/json ContentType.
+type SetDisplayNameJSONRequestBody = DisplayNameRequest
 
 // ReceiveFalcoEventJSONRequestBody defines body for ReceiveFalcoEvent for application/json ContentType.
 type ReceiveFalcoEventJSONRequestBody = FalcoEvent
+
+// RecordExfilJSONRequestBody defines body for RecordExfil for application/json ContentType.
+type RecordExfilJSONRequestBody = ExfilRequest
 
 // Getter for additional properties for FalcoEvent_OutputFields. Returns the specified
 // element and whether it was found

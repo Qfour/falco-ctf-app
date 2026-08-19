@@ -1,20 +1,15 @@
 // Package scoreboard wires the ingest / api / view sub-handlers + /healthz
 // + /metrics into a single http.Handler.
 //
-// Routes:
-//
-//	GET  /healthz                                                 liveness/readiness
-//	GET  /metrics                                                 Prometheus exposition
-//	POST /falco/events                                            (ingest)
-//	POST /api/challenges/{cid}/submit                             (api)
-//	POST /internal/exfil/{cid}                                    (api: collector-only exfil sink)
-//	GET  /api/state                                               (api)
-//	GET  /api/users/{user}/me                                     (api)
-//	GET  /api/users/{user}/journey                                (api: Journey projection)
-//	POST /api/users/{user}/challenges/{cid}/steps/{idx}/check     (api: Journey step self-check)
-//	POST /api/users/{user}/challenges/{cid}/hints/{idx}           (api: Journey progressive hint reveal)
-//	GET  /                                                        (view: embedded HTML dashboard)
-//	GET  /journey                                                 (view: guided Journey UI)
+// The complete, current route set is docs/openapi-scoreboard.yaml (ADR-0005
+// canon) — NOT the list that used to live in this comment. That list had
+// already drifted (it still named the P19-2b-removed GET /journey page
+// route, confusing it with the still-live GET /api/users/{user}/journey API
+// route) by the time ADR-0005 audited it, which is exactly the kind of
+// hand-maintained-comment drift ADR-0005's machine-checked parity gate
+// (internal/apispec, this package's Routes()) exists to replace: a doc
+// comment cannot go stale in a way that fails `make test`, but the route
+// table can.
 package scoreboard
 
 import (
@@ -27,6 +22,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/Qfour/falco-ctf-app/internal/apispec"
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/api"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
@@ -62,6 +58,11 @@ type Handler struct {
 	// ttydSuffix (P23-4) feeds the portal Terminal pane's iframe src builder
 	// (view.New / portal.ttydURLFor) — see WithTtydSuffix.
 	ttydSuffix string
+	// routes is the FULL, flattened route table this binary registers —
+	// this package's own /healthz + /metrics rows, plus ingest's, api's and
+	// view's Routes() (ADR-0005 V2). Stored so Routes() can return it to the
+	// parity tests without re-deriving it or re-wiring a second handler.
+	routes []apispec.Route
 }
 
 type Option func(*Handler)
@@ -150,9 +151,6 @@ func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts .
 		opt(h)
 	}
 
-	h.mux.HandleFunc("GET /healthz", h.healthz)
-	h.mux.Handle("GET /metrics", promhttp.Handler())
-
 	// Single Grader shared by the ingest handler, the api handler, AND the
 	// auto-solve sweeper. One instance = one clock and one MarkSolved caller,
 	// preserving the single-writer discipline (conventions I1) across all three
@@ -173,13 +171,13 @@ func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts .
 		metrics.SolvesTotal.WithLabelValues(r.Challenge, "evade").Inc()
 	})
 
-	ingest.New(grader, s, logger, h.now).Register(h.mux)
-	api.New(cat, grader, s, logger, h.now, h.adminEmails, h.allowedOrigins, api.JourneyConfig{
+	ih := ingest.New(grader, s, logger, h.now)
+	ah := api.New(cat, grader, s, logger, h.now, h.adminEmails, h.allowedOrigins, api.JourneyConfig{
 		Journeys:    h.journeys,
 		FalcoRules:  h.falcoRules,
 		Order:       h.order,
 		DocsBaseURL: h.docsBaseURL,
-	}, h.detect).Register(h.mux)
+	}, h.detect)
 	// The operator index page (GET /) is admin-gated in the app layer too
 	// (P18-1 defense-in-depth) using the same ADMIN_EMAILS rule the api handler
 	// enforces. The participant journey/me pages are served ungated as static
@@ -188,10 +186,39 @@ func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts .
 	// view.renderPortal's doc for why that is safe (no admin data is ever
 	// embedded; the api.NewAdminGate/api.DeriveUsername results feed only
 	// display hints, and every pane's actual data fetch stays gated in api.Handler).
-	view.New(api.NewAdminGate(h.adminEmails), api.DeriveUsername, h.ttydSuffix, logger).Register(h.mux)
+	vh := view.New(api.NewAdminGate(h.adminEmails), api.DeriveUsername, h.ttydSuffix, logger)
+
+	// This binary's OWN two routes (liveness + metrics), table-driven like
+	// every sub-handler's (ADR-0005 V2) so the static "no direct
+	// mux.Handle outside the table" check (internal/apispec) covers this
+	// file too, not just the sub-packages.
+	h.routes = append(h.routes, apispec.Route{
+		Method: "GET", Pattern: "/healthz",
+		Audience: apispec.AudienceInfra, Authz: apispec.AuthzNone,
+		OriginGuarded: false, CollectorForward: false, RateLimit: "none",
+		Handler: http.HandlerFunc(h.healthz),
+	})
+	h.routes = append(h.routes, apispec.Route{
+		Method: "GET", Pattern: "/metrics",
+		Audience: apispec.AudienceInfra, Authz: apispec.AuthzNone,
+		OriginGuarded: false, CollectorForward: false, RateLimit: "none",
+		Handler: promhttp.Handler(),
+	})
+	h.routes = append(h.routes, ih.Routes()...)
+	h.routes = append(h.routes, ah.Routes()...)
+	h.routes = append(h.routes, vh.Routes()...)
+	apispec.Register(h.mux, h.routes)
 
 	return h
 }
+
+// Routes returns this binary's FULL, flattened declarative route table
+// (this package's own healthz/metrics rows plus ingest's, api's and view's —
+// ADR-0005 V2/V1). It is exactly what was installed onto the mux in
+// NewHandler, via the same apispec.Register call, so a parity test reading
+// this back sees the actual registered set, not a second hand-maintained
+// copy of it.
+func (h *Handler) Routes() []apispec.Route { return h.routes }
 
 // Sweeper returns the auto-solve sweeper wired to this handler's shared Grader.
 // The command layer runs it (Sweeper.Run) in its own goroutine bound to the

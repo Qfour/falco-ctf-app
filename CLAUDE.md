@@ -20,7 +20,8 @@ falco-ctf-app/
 ├── scoreboard/         Dockerfile のみ (Go multi-stage, challenges/ 焼込)
 ├── auth-policy/        Dockerfile のみ (Go multi-stage, stdlib のみ)
 ├── collector/          Dockerfile のみ (Go multi-stage。参加者向け単一入口。
-│                       submit/me/display-name/exfil を scoreboard へ forward。CTF 状態は持たない)
+│                       submit/display-name/exfil の3本のみ scoreboard へ forward。
+│                       me は非転送 (self-scope bypass を避ける設計判断)。CTF 状態は持たない)
 ├── images/{ttyd,challenge,docs,detect-grader}/  Dockerfile のみ
 │                       (docs = MkDocs+PDF サイト、detect-grader = falco base + grade.sh
 │                       による capture-replay 採点)
@@ -68,9 +69,12 @@ falco-ctf-app/
   (旧 Kustomize base/overlay 構成は P2 で廃止。k8s マニフェストの正典は `charts/`)
 
 - **collector を参加者向け単一入口にする (P11.5)** — ctf-user の egress lockdown
-  後、workspace が到達できる先を collector 1 つに絞る。collector は submit / me /
-  display-name / exfil を scoreboard へ verbatim forward するだけで CTF 状態
-  (catalog / flags / DB) を持たない。scoreboard 自体を直接晒さないことで
+  後、workspace が到達できる先を collector 1 つに絞る。collector は submit /
+  display-name / exfil の3本を scoreboard へ verbatim forward するだけで CTF 状態
+  (catalog / flags / DB) を持たない。**`GET /api/users/{user}/me` は意図的に
+  非転送** (`internal/collector/collector.go` — 匿名で client 任意の `{user}` を
+  読めると self-scope bypass になるため、進捗の読み取りは認証済みの journey host
+  経由に限定する、ADR-0005)。scoreboard 自体を直接晒さないことで
   ingest 経路以外の攻撃面を減らす。
 
 - **detect-grader を per-submission K8s Job にする** — `type: detect` 課題は

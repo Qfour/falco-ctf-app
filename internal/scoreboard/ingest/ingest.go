@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Qfour/falco-ctf-app/internal/apispec"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/metrics"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/oapi"
@@ -50,9 +51,28 @@ func New(grader *scoring.Grader, s *store.Store, logger *slog.Logger, now func()
 	}
 }
 
-func (h *Handler) Register(mux *http.ServeMux) {
+// Routes returns the ingest package's declarative route table (ADR-0005
+// V2) — the single artifact Register loops over AND what the parity tests
+// (internal/scoreboard's *_test.go) compare against
+// docs/openapi-scoreboard.yaml.
+func (h *Handler) Routes() []apispec.Route {
 	mw := h.limiter.Middleware(ratelimit.ClientIP)
-	mux.Handle("POST /falco/events", mw(http.HandlerFunc(h.receive)))
+	return []apispec.Route{
+		{
+			Method:           "POST",
+			Pattern:          "/falco/events",
+			Audience:         apispec.AudienceInternal,
+			Authz:            apispec.AuthzNone,
+			OriginGuarded:    false,
+			CollectorForward: false,
+			RateLimit:        "per-IP 100 req/s burst 200 (falcosidekick batches)",
+			Handler:          mw(http.HandlerFunc(h.receive)),
+		},
+	}
+}
+
+func (h *Handler) Register(mux *http.ServeMux) {
+	apispec.Register(mux, h.Routes())
 }
 
 func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
