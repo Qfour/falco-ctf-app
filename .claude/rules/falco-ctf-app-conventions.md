@@ -32,11 +32,20 @@
 | I10 | Dockerfile / yaml にトークン・実シークレットを焼き込まない |
 | I14 | `http.ServeMux` を組み立てる全バイナリ (scoreboard/collector/auth-policy) について、mux に登録されたルート集合 = 対応する `docs/openapi-*.yaml` の operation 集合であり、origin-guard の有無と collector forward の集合も spec の宣言と一致する。**例外・除外リストを持たない** (ADR-0005)。機構: `internal/apispec` + 各サービスの `apispec_parity_test.go` (`make test` = required check) |
 
-> **I11-I13 は欠番ではなく予約済み (未昇格)。** I11 = evade の clean 判定を attempt スコープで評価
-> (ADR-0003) / I12 = challenge コンテナにフラグ実値の到達経路を設けない (ADR-0001) /
-> I13a・I13b = deploy 経路は Falco イベントを 1 件も出さない (ADR-0001)。**いずれも機械検証が
-> 揃うまでこの表に載せない**方針 (番号は 2026-08-18 に VP 批准済なので再利用しない)。
-> I14 がここに居るのは、検査 (`internal/apispec`) が同じ PR で landing しているため。
+> **I11-I13 は欠番ではなく予約済み (未昇格)。** 番号は 2026-08-18 に VP が批准済で再利用しない。
+> **未昇格の理由は 2 つに分かれる** (2026-08-19 に 5x R3 が実測して判明):
+>
+> | # | 主張 | 出所 | 状態 |
+> |---|---|---|---|
+> | I11 | evade の clean 判定は attempt スコープで評価する | ADR-0003 | **機構は main に landing 済** (`internal/catalog/catalog_test.go` の forbiddenRules 交差テスト・`scoring_test.go` の attempt スコープテスト・`store_internal_test.go` の Tx ロールバックテスト)。**残るのは昇格作業のみ** |
+> | I12 | challenge コンテナにフラグ実値の到達経路を設けない | ADR-0001 | **機構は main に landing 済** (`scripts/check-flag-isolation.sh` = F1 + `charts/ctf-user/assert-flag-isolation.sh` = F2)。**残るのは昇格作業のみ** |
+> | I13a | deploy の前後で当該 user の `solved` / `evade_dirty` / `exfil` に**差分が生じない** (delta 表現) | ADR-0001 rev.5 | **実機 cluster 実測が残 gate** |
+> | I13b | deploy 経路は catalog の `expectedRules` ∪ `forbiddenRules` に現れるルール名を**1 本も発火させない** (性質表現・現在 9 本) | ADR-0001 rev.5 | **実機 cluster 実測が残 gate** |
+>
+> ⚠ **I13 を「Falco イベントを 1 件も出さない」と要約してはいけない。** それは rev.3 の文言で、
+> ADR-0001 が「根拠が事実に反し、字義どおりには検証不能」として **rev.4 で撤回**している
+> (非 catalog ルールの発火は I13b の対象外)。I14 がこの表に居るのは、検査 (`internal/apispec`) が
+> 同じ PR で landing しているため。
 
 ## Dockerfile 規約
 

@@ -1,9 +1,24 @@
 # ADR-0005: OpenAPI spec の対象を「サービスの HTTP 面すべて」と定め、実装との parity を fail-closed で機械検査する
 
-- Status: **Accepted** (2026-08-19 VP 承認。4 つのスコープ判断を批准し、`## Verification` の
-  V1-V8 が実装され `make test` = required check に載ったことを VP が独立検証した:
-  ルートテーブル外の直接登録を注入 → `TestNoDirectMuxRegistrationOutsideTable` が
-  file:line 付きで fail、復元で green。**以降この ADR の本文は編集しない** — 変更は後継 ADR で行う)
+- Status: **Accepted** (2026-08-19 VP 承認。4 つのスコープ判断を批准した)
+  - **実装されたのは V1-V6 / V8**。`make test` (required check) に載る。VP の独立検証は
+    **`registrationTargets` に列挙された 6 ファイルの範囲内**でのみ green→fail を確認した
+    (`view.go` へ直接登録を注入 → `TestNoDirectMuxRegistrationOutsideTable` が file:line 付きで
+    fail、復元で green)。**この範囲限定が下記の欠陥 (3) である**
+  - **V7 は未実施** — `gen-diff-check` は依然 advisory (非 required)。required 昇格は
+    `scripts/change-mgmt/setup-rulesets.sh` の変更を伴うため VP / release-engineer に残る
+  - ⚠ **本 ADR には 2 つの設計欠陥が 5x レビューで判明している** (R4/R2 が独立に指摘):
+    (1) **V3 は「宣言と spec の一致」しか要求しておらず、宣言と実際の middleware 適用の
+    一致を要求していない** — `OriginGuarded: true` を残して `h.og(` を外すと全テストが green
+    になることを VP が変異テストで実証した。(2) **Decision 2(b) が必須とした `x-ctf-audience` /
+    `x-ctf-authz` / `x-ctf-rate-limit` に Verification が無い** (Decision と Verification の不整合)。
+    (3) **V2 の走査範囲が手書きのファイル allowlist (6 本) で、同一パッケージの別ファイルからは
+    素通しできる** — security-engineer が `internal/scoreboard/view/portal.go` (走査対象外) に
+    `mux.HandleFunc("POST /api/sneaky-admin-reset", ...)` を書き `server.go` から配線した変異で
+    **全テスト green** を実証した。つまり **spec 未記載・origin-guard 無しの state-changing ルートを
+    本番 mux に生やせる**。これは Decision 1 が却下した「除外リスト」パターンが検査側に入った形。
+    → **後継 ADR-0006 で partial supersede する**
+  - **以降この ADR の本文は編集しない** — 変更は後継 ADR で行う
 - Date / Deciders: 2026-08-19 / architect (起案) + VP (承認) + software-engineer (実装) + qa-engineer (parity test) + security-engineer (origin-guard 契約のレビュー)
 - 関連: Issue **#115** (spec が実ルートの 43-47% しか覆っていない — 本 ADR はその設計決定部分)、
   Issue **#113** (`err.Error()` 漏出 + エラー契約の不在。本 ADR は §Decision 5 で**形の契約だけ**を決め、
