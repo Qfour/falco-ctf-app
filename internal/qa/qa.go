@@ -80,12 +80,38 @@ type Message struct {
 
 // Thread is a full ticket: the question row plus every message, oldest
 // first (ADR-0006 Decision 1's QuestionThread response shape).
+//
+// Answered (Issue #167) is DERIVED from Messages the SAME way Summary's own
+// Answered field is (at least one message has AuthorRole RoleAdmin) — never
+// a stored column, so it cannot drift out of sync with the messages that
+// justify it. Before #167 the portal re-derived this exact predicate
+// independently in TWO places client-side
+// (`(th.messages || []).some(m => m.author_role === 'admin')` in both the
+// Support and Queue panes); computing it once here, alongside Messages,
+// removes that duplication at the source.
 type Thread struct {
 	ID        string    `json:"id"`
 	User      string    `json:"user"`
 	Subject   string    `json:"subject"`
 	CreatedAt string    `json:"created_at"`
 	Messages  []Message `json:"messages"`
+	Answered  bool      `json:"answered"`
+}
+
+// answeredFromMessages computes Thread.Answered: a ticket is answered iff
+// at least one of its messages was written by an admin — the SAME rule
+// listLocked applies to Summary.Answered via its own SQL aggregate
+// (`SUM(CASE WHEN author_role = 'admin' ...)`); the two are independent
+// implementations of one rule (a Go loop here, SQL there) because Thread
+// and Summary are loaded through different queries, not because the rule
+// itself differs.
+func answeredFromMessages(msgs []Message) bool {
+	for _, m := range msgs {
+		if m.AuthorRole == RoleAdmin {
+			return true
+		}
+	}
+	return false
 }
 
 // Summary is one row of a ticket LISTING — never the message bodies
@@ -206,14 +232,22 @@ func (s *Store) CreateQuestion(user, subject, body, at string) (Thread, error) {
 		return Thread{}, err
 	}
 
+	msgs := []Message{
+		{AuthorRole: RoleParticipant, Author: user, Body: body, CreatedAt: at},
+	}
 	return Thread{
 		ID:        id,
 		User:      user,
 		Subject:   subject,
 		CreatedAt: at,
-		Messages: []Message{
-			{AuthorRole: RoleParticipant, Author: user, Body: body, CreatedAt: at},
-		},
+		Messages:  msgs,
+		// Always false here (the opening message is always RoleParticipant),
+		// but routed through answeredFromMessages anyway rather than a bare
+		// `false` literal — a brand-new ticket having an admin-authored
+		// opening message is a "should never happen" shape today, not a
+		// principle this constructor should hardcode independently of the
+		// one rule that decides it everywhere else.
+		Answered: answeredFromMessages(msgs),
 	}, nil
 }
 
@@ -311,6 +345,7 @@ func (s *Store) loadThreadLocked(where string, args []any) (Thread, error) {
 		return Thread{}, err
 	}
 	th.Messages = msgs
+	th.Answered = answeredFromMessages(msgs)
 	return th, nil
 }
 

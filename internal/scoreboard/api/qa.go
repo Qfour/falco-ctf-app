@@ -80,7 +80,13 @@ func (h *Handler) listQuestions(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "could not list questions"})
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"questions": summaries})
+	resp, err := toOapiList(summaries)
+	if err != nil {
+		h.logger.Error("qa list convert", "err", err, "user", user)
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "could not list questions"})
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
 // createQuestion serves POST /api/users/{user}/questions: opens a new P25
@@ -120,8 +126,14 @@ func (h *Handler) createQuestion(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "could not create question"})
 		return
 	}
+	resp, err := toOapiThread(th)
+	if err != nil {
+		h.logger.Error("qa create convert", "err", err, "user", user, "qid", th.ID)
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "could not create question"})
+		return
+	}
 	h.logger.Info("qa_created", "user", user, "qid", th.ID, "remote_addr", r.RemoteAddr)
-	httpx.WriteJSON(w, http.StatusOK, th)
+	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
 // --- participant: thread / follow-up ---------------------------------------
@@ -150,7 +162,13 @@ func (h *Handler) getQuestion(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "could not load question"})
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, th)
+	resp, err := toOapiThread(th)
+	if err != nil {
+		h.logger.Error("qa get convert", "err", err, "user", user, "qid", qid)
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "could not load question"})
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
 // postMessage serves POST /api/users/{user}/questions/{qid}/messages: a
@@ -191,8 +209,14 @@ func (h *Handler) postMessage(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "could not append message"})
 		return
 	}
+	resp, err := toOapiThread(th)
+	if err != nil {
+		h.logger.Error("qa append convert", "err", err, "user", user, "qid", qid)
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "could not append message"})
+		return
+	}
 	h.logger.Info("qa_message", "user", user, "qid", qid, "remote_addr", r.RemoteAddr)
-	httpx.WriteJSON(w, http.StatusOK, th)
+	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
 // --- operator ---------------------------------------------------------------
@@ -210,7 +234,13 @@ func (h *Handler) adminListQuestions(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "could not list questions"})
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"questions": summaries})
+	resp, err := toOapiList(summaries)
+	if err != nil {
+		h.logger.Error("qa admin list convert", "err", err)
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "could not list questions"})
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
 // adminGetQuestion serves GET /api/admin/questions/{qid}: any ticket, by id
@@ -233,7 +263,13 @@ func (h *Handler) adminGetQuestion(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "could not load question"})
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, th)
+	resp, err := toOapiThread(th)
+	if err != nil {
+		h.logger.Error("qa admin get convert", "err", err, "qid", qid)
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "could not load question"})
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
 // adminReply serves POST /api/admin/questions/{qid}/reply — THE only
@@ -278,6 +314,12 @@ func (h *Handler) adminReply(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "could not reply"})
 		return
 	}
+	resp, err := toOapiThread(th)
+	if err != nil {
+		h.logger.Error("qa admin reply convert", "err", err, "qid", qid)
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "could not reply"})
+		return
+	}
 	h.logger.Info("qa_admin_reply", "by", email, "qid", qid, "remote_addr", r.RemoteAddr)
-	httpx.WriteJSON(w, http.StatusOK, th)
+	httpx.WriteJSON(w, http.StatusOK, resp)
 }

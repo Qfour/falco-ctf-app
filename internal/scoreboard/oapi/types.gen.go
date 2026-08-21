@@ -516,6 +516,13 @@ type QuestionSummary struct {
 // and adminReplyQuestion alike, so a client can use ONE shape for
 // "here is the ticket after my action" everywhere.
 type QuestionThread struct {
+	// Answered Same DERIVATION rule as QuestionSummary.answered (at least one
+	// message has `author_role: admin`) — added (Issue #167) so the
+	// portal's Support/Queue panes can read `thread.answered` directly
+	// instead of each independently re-deriving the same predicate
+	// from `messages` client-side (`(th.messages || []).some(m =>
+	// m.author_role === 'admin')`, duplicated in two places pre-#167).
+	Answered  bool              `json:"answered"`
 	CreatedAt time.Time         `json:"created_at"`
 	Id        string            `json:"id"`
 	Messages  []QuestionMessage `json:"messages"`

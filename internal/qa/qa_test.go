@@ -134,6 +134,65 @@ func TestAnswered_DerivedFromAdminMessagePresence(t *testing.T) {
 	}
 }
 
+// TestThreadAnswered_DerivedFromAdminMessagePresence is Issue #167's
+// Thread-level counterpart to TestAnswered_DerivedFromAdminMessagePresence
+// above (which only exercises Summary.Answered via ListForUser). Checks the
+// SAME derivation through every Thread-returning path: CreateQuestion's
+// in-memory literal, GetThreadForUser after a participant follow-up (must
+// stay false), and GetThreadForUser after an admin reply (must flip true) —
+// and that a second participant's ticket is unaffected.
+func TestThreadAnswered_DerivedFromAdminMessagePresence(t *testing.T) {
+	st := openStore(t)
+
+	th, err := st.CreateQuestion("alice", "s", "b", "2026-01-01T00:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if th.Answered {
+		t.Fatal("a brand-new ticket (opening message is always participant) must not be answered")
+	}
+
+	other, err := st.CreateQuestion("bob", "s2", "b2", "2026-01-01T00:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	th, err = st.AppendMessageForUser(th.ID, "alice", "follow-up", "2026-01-01T00:00:30Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if th.Answered {
+		t.Fatal("a participant-only follow-up must not flip Answered")
+	}
+
+	th, err = st.AppendAdminReply(th.ID, "admin@ctf.local", "reply", "2026-01-01T00:01:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !th.Answered {
+		t.Fatal("Thread.Answered must be true after an admin reply")
+	}
+
+	// GetThreadForUser (a fresh load, not the mutation's own return value)
+	// must agree.
+	reloaded, err := st.GetThreadForUser(th.ID, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reloaded.Answered {
+		t.Fatal("GetThreadForUser must report Answered=true after reload, not just the mutation's own return value")
+	}
+
+	// bob's unrelated ticket must be untouched.
+	bobThread, err := st.GetThreadForUser(other.ID, "bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bobThread.Answered {
+		t.Fatal("an admin reply on alice's ticket must not leak Answered=true onto bob's unrelated ticket")
+	}
+}
+
 func TestGetThreadForUser_IDOR_CrossUserIsNotFound(t *testing.T) {
 	st := openStore(t)
 	th, err := st.CreateQuestion("alice", "s", "b", "2026-01-01T00:00:00Z")
