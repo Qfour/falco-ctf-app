@@ -20,7 +20,12 @@
   参加者間チャットは対象外 (`REFACTORING.md` P25 product brief)
 - 認可は I8 self-scope パターン (`selfOrAdmin` / `ADMIN_EMAILS`) を流用
 - 永続化は新規 SQLite。`store`/`scoring` の採点正典テーブルとは分離
-- 通信は既存 2 秒ポーリングを継続 (新規 WebSocket/SSE は導入しない)
+- 通信は既存ポーリング方式を継続 (新規 WebSocket/SSE は導入しない)。**間隔は 5 秒**
+  (2026-08-21 VP amendment、review-5x R3 指摘を受けて記録。実装 (`feature/p25-qa-frontend`)
+  が「QA は Journey/Me の 2 秒ポーリングと違い高頻度更新を要求しない」+「`questionLimiter`
+  レート制限バケットへの負荷を抑える」を理由に 5 秒を採用したことを、この「再議論しない」前提
+  ブロックに対する明示的な amendment として承認する。他の前提 [1チケット=1スレッド・self-scope
+  認可・新規SQLite分離・rate limit再利用・admin UI配置] は無変更のまま)
 - レート制限は既存 `internal/scoreboard/ratelimit` を再利用
 - 運営 UI 配置は architect (このADR) が最終判断する
 
