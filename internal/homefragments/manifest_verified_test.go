@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/Qfour/falco-ctf-app/internal/catalog"
 )
 
 // flagRe matches any FALCO{...} literal, mirroring
@@ -110,6 +112,37 @@ func TestManifestVerifiedClean_StaticPanels(t *testing.T) {
 	}
 }
 
+// TestManifestVerifiedClean_TutorialChapters is TestManifestVerifiedClean_
+// StaticPanels' equivalent for the Tutorial tab's chapters (P24). It exists
+// because the `intro`/`cheatsheet` entries this test used to cover moved
+// OUT of StaticPanels (now empty, see manifest.go's doc) and INTO
+// TutorialChapters (REFACTORING.md P24 §2) — without this test, the
+// "verified_clean" coverage those two panels had would silently regress to
+// zero rather than following the content to its new home. Uses the shared
+// RenderStaticPanel (the same function cmd/gen-tutorial-fragments calls)
+// instead of re-deriving the heading/whole_file branch inline, so this test
+// exercises the EXACT gen pipeline, not a parallel reimplementation of it.
+func TestManifestVerifiedClean_TutorialChapters(t *testing.T) {
+	root := repoRoot(t)
+	checked := 0
+	for _, sp := range TutorialChapters {
+		t.Run(sp.ID, func(t *testing.T) {
+			html, ok, err := RenderStaticPanel(root, sp)
+			if err != nil {
+				t.Fatalf("RenderStaticPanel(%s): %v", sp.ID, err)
+			}
+			if !ok {
+				t.Fatalf("chapter %s: source/heading not found (tutorial-chapters.yaml's sources are expected to exist in this repo)", sp.ID)
+			}
+			checked++
+			assertNoForbiddenLeaks(t, sp.ID, html)
+		})
+	}
+	if checked == 0 {
+		t.Fatal("expected at least one TutorialChapters entry to render and be checked — 0 found, TutorialChapters may be empty or every source missing")
+	}
+}
+
 // TestManifestVerifiedClean_RuleExplainPanels runs every REAL
 // challenges/<NN>-<slug>/rule-explain.md that exists today through
 // RenderMarkdown (rule-explain.md sources have no leading h1 — they open
@@ -150,5 +183,76 @@ func TestManifestVerifiedClean_RuleExplainPanels(t *testing.T) {
 	}
 	if checked == 0 {
 		t.Fatal("expected at least one challenges/*/rule-explain.md to exist and be checked — 0 found, manifest's coverage_2026-08-16 list may be stale or the repo layout changed")
+	}
+}
+
+// TestTutorialChaptersVerifiedClean_NoHintOverlap is the machine check
+// REFACTORING.md P24 §4 specifies in place of a shell/grep gate: hints[] is
+// a YAML block scalar (multi-line), which scripts/check-flags.sh's simple
+// one-line-regex `git grep` cannot safely parse — so this test reuses
+// internal/catalog.LoadJourneys, the ONE authoritative parser of
+// journey.yaml's hints[] field, instead of writing a second regex-based
+// parser that could drift from it.
+//
+// It renders every REAL TutorialChapters entry through the exact same
+// pipeline cmd/gen-tutorial-fragments uses (homefragments.RenderStaticPanel)
+// and fails if the rendered HTML contains ANY challenge's hint text as an
+// exact literal substring — the same "exact literal substring, not a
+// paraphrase/semantic check" posture assertNoForbiddenLeaks already uses
+// above. A chapter whose source is fail-soft-omitted (missing file/heading)
+// is simply not checked, matching every other test in this file's fail-soft
+// posture — that absence is exercised by the *_gen.go generator step
+// instead, not here.
+//
+// This is the PERMANENT CI enforcement of tutorial-chapters.yaml's
+// "Machine check (content-engineer's authoring-time gate)" note: it runs on
+// every `make test`, which is already a required CI check (`test`), so no
+// new CI job or branch-protection required-check change is needed.
+func TestTutorialChaptersVerifiedClean_NoHintOverlap(t *testing.T) {
+	root := repoRoot(t)
+	chalDir := filepath.Join(root, "challenges")
+
+	cat, err := catalog.Load(chalDir)
+	if err != nil {
+		t.Fatalf("catalog.Load(%s): %v", chalDir, err)
+	}
+	journeys, err := catalog.LoadJourneys(chalDir, cat)
+	if err != nil {
+		t.Fatalf("catalog.LoadJourneys(%s): %v", chalDir, err)
+	}
+
+	var hints []string
+	for _, j := range journeys {
+		for _, h := range j.Hints {
+			if strings.TrimSpace(h) == "" {
+				continue
+			}
+			hints = append(hints, h)
+		}
+	}
+	if len(hints) == 0 {
+		t.Fatal("expected at least one journey.yaml hints[] entry across challenges/ — 0 found, LoadJourneys may be broken or the repo layout changed")
+	}
+
+	checked := 0
+	for _, sp := range TutorialChapters {
+		t.Run(sp.ID, func(t *testing.T) {
+			html, ok, err := RenderStaticPanel(root, sp)
+			if err != nil {
+				t.Fatalf("RenderStaticPanel(%s): %v", sp.ID, err)
+			}
+			if !ok {
+				t.Skipf("chapter %s omitted (fail-soft: source/heading not found) — nothing to check", sp.ID)
+			}
+			checked++
+			for _, h := range hints {
+				if strings.Contains(html, h) {
+					t.Errorf("chapter %q: journey.yaml hints[] text leaked verbatim into rendered HTML:\n  hint: %q\n  html: %s", sp.ID, h, html)
+				}
+			}
+		})
+	}
+	if checked == 0 {
+		t.Fatal("expected at least one TutorialChapters entry to render and be checked — 0 found, TutorialChapters may be empty or every source missing")
 	}
 }
