@@ -129,18 +129,25 @@ jobs:
   #   `build (auth-policy)/scan` (必須チェック) を Dependabot PR が構造的に pass
   #   できない。
   #
-  #   対処: reusable workflow (image-pipeline.yaml) が既に持つ
-  #   `scan-continue-on-error` input を、actor が `dependabot[bot]` のときだけ
-  #   true に強制する (下記 `with:` 参照)。これはジョブ単位の continue-on-error
-  #   なので、scan ステップ自体は変わらず実行を試みる (token が無い run では
-  #   相変わらず落ちるが non-blocking になる) — required check を required 集合
-  #   から外す・常時 pass にする、のどちらでもない。他 actor (通常の human PR) の
-  #   挙動はビット単位で不変 (matrix の `scan-continue-on-error: false` のまま)。
-  #   secrets 抑止は job 単位ではなく actor 単位で GitHub が行うため、この一律
-  #   適用は scoreboard/auth-policy (必須チェック) だけでなく matrix の全 8 image
-  #   (ttyd/collector/challenge/docs/detect-grader/ttyd-proxy 含む) に及ぶ —
-  #   これらも元々同じ理由で token 無しで落ちるはずだった対象であり、範囲の
-  #   拡大ではない。
+  #   初回対処 (2026-08-21): `scan-continue-on-error: true` を actor が
+  #   `dependabot[bot]` のときだけ強制する案を実装したが、**実 PR (#151) で
+  #   実証した結果、required check を unblock しないことが判明**した ——
+  #   `continue-on-error` はワークフロー run の総合結果のみを変え、個別 job の
+  #   check-run conclusion は `failure` のまま (`gh api .../check-runs` で実測)。
+  #   branch protection の required status checks は job の check-run
+  #   conclusion を見るため、continue-on-error では解決にならない。
+  #
+  #   採用した対処: `Qfour/homelab-workflows` の `image-pipeline.yaml` に
+  #   `scan-skip` input を追加してもらい (PR homelab-workflows#16、CEO承認済み
+  #   admin権限で実施)、actor が `dependabot[bot]` のときだけ true にする
+  #   (下記 `with:` 参照)。`scan-skip: true` は scan job 自体を `if:` で
+  #   実行しない — job conclusion が `skipped` になり、これは required status
+  #   check を実際に満たす (実 PR #151 で実証確認済み)。他 actor (通常の human
+  #   PR) は `false` のまま — 挙動は不変。secrets 抑止は job 単位ではなく
+  #   actor 単位で GitHub が行うため、この一律適用は scoreboard/auth-policy
+  #   (必須チェック) だけでなく matrix の全 8 image (ttyd/collector/challenge/
+  #   docs/detect-grader/ttyd-proxy 含む) に及ぶ — これらも元々同じ理由で
+  #   token 無しで落ちるはずだった対象であり、範囲の拡大ではない。
   #
   #   実効的な CVE ゲートは 2 段: (1) は **detective** (post-merge alert)、
   #   (2) が唯一の **preventive** ゲート:
@@ -222,7 +229,7 @@ jobs:
             context: images/detect-grader
             dockerfile: images/detect-grader/Dockerfile
             scan-continue-on-error: false
-    uses: Qfour/homelab-workflows/.github/workflows/image-pipeline.yaml@10583360d619601e225803d236a00d0fa014b1f8 # main as of 2026-05-12
+    uses: Qfour/homelab-workflows/.github/workflows/image-pipeline.yaml@bb4dc742b2cd87f6932f34d6c4107b8c7f5e16bf # main as of 2026-08-21 (adds scan-skip, homelab-workflows#16)
     with:
       name: ${{ matrix.name }}
       context: ${{ matrix.context }}
@@ -230,11 +237,13 @@ jobs:
       push: ${{ github.event_name == 'push' && vars.ECR_REGISTRY != '' && !contains(vars.ECR_REGISTRY, 'PLACEHOLDER') }}
       registry: ${{ vars.ECR_REGISTRY }}
       aws-region: ${{ vars.AWS_REGION }}
-      # dependabot[bot] は secrets を受け取れない run なので scan は non-blocking
-      # (advisory) にする。github.actor は GitHub 側が確定する値で PR 作者が
-      # 詐称できない (Dependabot service account のみがこの actor になれる)。
-      # 他 actor は matrix 値 (現状すべて false) のまま — 挙動は不変。
-      scan-continue-on-error: ${{ github.actor == 'dependabot[bot]' || matrix.scan-continue-on-error }}
+      # dependabot[bot] は secrets を受け取れない run なので scan job 自体を
+      # skip する (continue-on-error では required check が unblock されない
+      # ことを実証済み — 上記コメント参照)。github.actor は GitHub 側が確定する
+      # 値で PR 作者が詐称できない (Dependabot service account のみがこの
+      # actor になれる)。他 actor は false のまま — 挙動は不変。
+      scan-skip: ${{ github.actor == 'dependabot[bot]' }}
+      scan-continue-on-error: ${{ matrix.scan-continue-on-error }}
       sysdig-secure-url: https://app.au1.sysdig.com
     secrets:
       sysdig-token: ${{ secrets.SYSDIG_SECURE_TOKEN }}
@@ -254,7 +263,7 @@ jobs:
     steps:
       - name: annotate
         run: |
-          echo "::notice::This PR is authored by dependabot[bot], which does not receive repository secrets (SYSDIG_SECURE_TOKEN). build (scoreboard)/scan and build (auth-policy)/scan ran with scan-continue-on-error=true (advisory) for this run only — see Issue #168. The real CVE scan for the resulting merge commit runs automatically on push to main (with secrets); make scan TAG=local remains the authoritative pre-deploy gate per dev-flow.md."
+          echo "::notice::This PR is authored by dependabot[bot], which does not receive repository secrets (SYSDIG_SECURE_TOKEN). build (scoreboard)/scan and build (auth-policy)/scan were skipped (scan-skip=true) for this run only — see Issue #168. The real CVE scan for the resulting merge commit runs automatically on push to main (with secrets, detective only); make scan TAG=local remains the sole preventive pre-deploy gate per dev-flow.md."
 
   # ------------------------------------------------------------------
   # ADR-0001 Verification 2-8 / DoD 15: re-verify the challenge image's
