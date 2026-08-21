@@ -2852,7 +2852,11 @@
     const sig = 'thread-content:' + JSON.stringify(th);
     if (sig === lastThreadSig) return;
     lastThreadSig = sig;
-    const answered = (th.messages || []).some(m => m.author_role === 'admin');
+    // Issue #167: th.answered is server-derived (internal/qa.Thread,
+    // ADR-0006's same "answered iff any message has author_role admin"
+    // rule QuestionSummary already used) — reading it directly here
+    // retires this pane's own independent re-derivation of that predicate.
+    const answered = th.answered;
     document.getElementById('support-thread-subject').innerHTML = esc(th.subject);
     const badge = document.getElementById('support-thread-badge');
     badge.className = 'badge ' + (answered ? 'answered' : 'pending');
@@ -3123,7 +3127,10 @@
     const sig = 'thread-content:' + JSON.stringify(th);
     if (sig === lastThreadSig) return;
     lastThreadSig = sig;
-    const answered = (th.messages || []).some(m => m.author_role === 'admin');
+    // Issue #167: th.answered is server-derived — see the Support pane's
+    // renderThreadContent for the same note (this pane had its own,
+    // independent copy of the identical predicate before #167).
+    const answered = th.answered;
     document.getElementById('queue-thread-subject').innerHTML = esc(th.subject) + ' <span class="who">— ' + esc(th.user) + '</span>';
     const badge = document.getElementById('queue-thread-badge');
     badge.className = 'badge ' + (answered ? 'answered' : 'pending');

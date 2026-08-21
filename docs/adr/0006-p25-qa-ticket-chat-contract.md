@@ -304,6 +304,20 @@ security-engineer が横断的リスクと判断すれば、後継 ADR で昇格
   指摘) の温床になっている。P25 は新規サーフェスなので、既存負債を追加せず生成型を使う
   機会がある。ただし他ルートとの一貫性を優先するなら手書きでも良く、**これは architect の
   同意権が及ぶ「契約」の範囲外の実装判断として software-engineer に委ねる**)
+  **(2026-08-21 決着, Issue #164)**: `internal/qa.Thread`/`Summary` 自体は生成型に
+  置き換えなかった (`internal/qa` は package doc の物理分離方針
+  — `internal/store`/`internal/scoreboard/scoring` を import しない — の精神を
+  `internal/scoreboard/oapi` にも一貫させる判断: `qa.Thread.CreatedAt` を文字列から
+  `time.Time` に変えると SQLite に書いた文字列の再パース経路が qa パッケージ内部に
+  生まれ、ADR-0006 Verification 1 が守る「qa はサービス固有の関心事から独立」という
+  境界と衝突する)。代わりに `internal/scoreboard/api/qa_oapi.go` が HTTP 境界で
+  `qa.Thread`/`Summary` → `oapi.QuestionThread`/`QuestionList` へ変換する
+  `toOapiThread`/`toOapiList` を追加し、5 つのハンドラ全てがこの生成型を
+  `httpx.WriteJSON` に渡す。これにより spec の該当 schema にフィールド追加/rename が
+  入れば `go build` が壊れる (response もコンパイル時に spec と結合される) — request
+  body 側が既に持っていた性質を response 側にも広げつつ、`internal/qa` 自体は
+  変更しない。この境界変換パターンは Issue #115 項目 4 (`buildState()` → `oapi.State`)
+  の実装でも再利用できる。
 - `make gen` を同一 commit に含める (`falco-api` skill のチェックリスト item 3)
 
 ## Consequences
@@ -349,7 +363,15 @@ security-engineer が横断的リスクと判断すれば、後継 ADR で昇格
    `qa.db` を独立サービスに切り出す、または非同期化を検討する signpost
 4. **`answered` の導出コストが一覧 API のレイテンシで問題になる** (メッセージ数が多いチケットの
    JOIN/集計が遅い) → 導出をトリガー/カラムキャッシュに変える signpost。ただし
-   Decision の「二重管理を避ける」判断はこの signpost が実現するまで維持する
+   Decision の「二重管理を避ける」判断はこの signpost が実現するまで維持する。
+   **(2026-08-21, Issue #167)**: この signpost が予見した「3 箇所を同時に揃える必要」は
+   レイテンシではなく **導出ロジックの複製箇所の数**という形で先に実現した —
+   `Summary.Answered` の SQL 集計に加え、`QuestionThread` にも同じ `answered` を
+   Go 側 (`qa.go` の `answeredFromMessages`) で追加し、portal.html の Support/Queue
+   両 pane が独立に持っていた同一 predicate の JS 実装 2 箇所を `th.answered` の読み取りに
+   統一した。signpost 自体 (SQL 集計が遅くなったらキャッシュ化を検討する) はまだ発生
+   していない — 今回解消したのは「同じ導出ロジックを 3 箇所 (SQL・Go・JS×2)」のうち
+   JS 側の重複であり、「二重管理を避ける」という Decision の判断そのものは維持している。
 
 ## Verification
 

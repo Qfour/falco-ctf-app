@@ -242,9 +242,12 @@ C4 の 4 論点に対する結論:
 3. **採点結果は 200 + 業務フィールド** (`correct` / `evaded` / `exfiltrated` / `solved` / `status`)。
    フラグ不一致は HTTP エラーではない。`reason` は**表示用の散文で、安定性を保証しない** —
    クライアントは boolean / `status` のみで分岐する。
-4. 現状の 2 つの逸脱 (rate limit の 429 と `GET /portal` の 500 が `http.Error` で `text/plain`) は
-   **spec に `text/plain` としてそのまま書く**。**spec は願望ではなく実装を記述する。**
-   JSON 統一は follow-up (下記 Consequences)。
+4. **(2026-08-21 更新, Issue #159)** 当初 2 つの逸脱があった (rate limit の 429 と
+   `GET /portal` の 500 が `http.Error` で `text/plain`)。**両方とも
+   `httpx.WriteJSON` に統一済み** (`internal/scoreboard/ratelimit.Middleware` /
+   `internal/scoreboard/view.Handler.portal`)。「spec は願望ではなく実装を記述する」
+   の原則自体は不変 — 当時は逸脱の**存在**を正直に書くことが正しい選択だった。
+   実装が追随した今、spec も追随して逸脱ゼロを記述する。
 5. `err.Error()` の body 漏出 (#113) は **この schema に対する違反**として扱う。
    spec 側は「安定した運用者向け文言」と定義し、実装を寄せる作業を #113 に残す。
 
@@ -294,8 +297,9 @@ C4 の 4 論点に対する結論:
 - **platform-engineer**: 契約表に変更なし。ただし collector spec が新設されたので、
   参加者向け exfil URL の正典が文書化された (以後の rename は両リポ同時 PR)。
 - **follow-up (Issue 起票を VP に依頼)**:
-  (F1) `ratelimit.Middleware` の 429 と `view.portal` の 500 を `httpx.WriteJSON` に寄せて
-  「非 2xx は JSON」を例外ゼロにする。(F2) `buildState()` の戻りを `oapi.State` にし、
+  **(F1) 完了 (Issue #159, 2026-08-21)**: `ratelimit.Middleware` の 429 と
+  `view.portal` の 500 を `httpx.WriteJSON` に寄せ、「非 2xx は JSON」の例外を
+  ゼロにした (spec 側も本 PR で同時更新)。(F2) `buildState()` の戻りを `oapi.State` にし、
   レスポンス契約をコンパイラに守らせる (#115 項目 4)。(F3) #113 のエラー契約 ADR
   (RFC 9457 additive 移行)。
 

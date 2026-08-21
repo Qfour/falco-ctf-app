@@ -59,11 +59,11 @@ info:
         wrong flag is NOT an HTTP error. `reason` is human-facing prose, is not
         stable, and MUST NOT be parsed by clients — branch on the booleans /
         `status` only.
-      * Two documented deviations from "non-2xx is JSON" exist TODAY because
-        the middleware writes with `http.Error`: the rate limiter's 429 and
-        `GET /portal`'s 500 return `text/plain`. They are specified as
-        `text/plain` rather than misdescribed as JSON. Unifying them is a
-        follow-up (ADR-0005 Consequences).
+      * Two former deviations from "non-2xx is JSON" — the rate limiter's 429
+        and `GET /portal`'s 500, both previously `http.Error`'s `text/plain`
+        — were unified onto `httpx.WriteJSON` (Issue #159 / ADR-0005
+        Consequences follow-up F1). Every non-2xx response is now JSON with
+        no exceptions.
       * Several 4xx/5xx bodies currently carry `err.Error()` text (decoder /
         SQLite driver strings). That leak is Issue #113, not a contract:
         `Error.error` is specified as a stable operator-facing message and
@@ -216,11 +216,10 @@ paths:
           content:
             text/html: {}
         "500":
-          description: |
-            template render failure. `text/plain` (`http.Error`), NOT the JSON
-            Error schema — see the error-contract note in `info.description`.
+          description: template render failure (JSON Error schema, Issue #159)
           content:
-            text/plain: {}
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /vendor/cybercore.min.css:
     get:
@@ -294,11 +293,10 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "429":
-          description: |
-            rate limited. `text/plain` (`http.Error` in
-            internal/scoreboard/ratelimit), NOT the JSON Error schema.
+          description: rate limited (internal/scoreboard/ratelimit)
           content:
-            text/plain: {}
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "500":
           description: rule-fire persistence failed, or the evade taint write failed (fail-closed)
           content:
@@ -356,9 +354,10 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "429":
-          description: rate limited (`text/plain`)
+          description: rate limited
           content:
-            text/plain: {}
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "500":
           description: could not record the solve (fail-closed — never a silent empty 200)
           content:
@@ -419,12 +418,13 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "429":
           description: |
-            per-IP rate limit (`text/plain`) OR the global in-flight grader cap
-            (JSON Error) — two different writers, two different media types.
+            per-IP rate limit OR the global in-flight grader cap — two
+            different writers (internal/scoreboard/ratelimit and this
+            handler), both JSON since Issue #159 unified ratelimit onto
+            httpx.WriteJSON.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-            text/plain: {}
         "500":
           description: grader infra error (fail-closed — never a silent solve)
           content:
@@ -648,9 +648,10 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "429":
-          description: rate limited (`text/plain`)
+          description: rate limited
           content:
-            text/plain: {}
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "500":
           description: could not record the step check
           content:
@@ -716,9 +717,10 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "429":
-          description: rate limited (`text/plain`)
+          description: rate limited
           content:
-            text/plain: {}
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "500":
           description: could not record the hint view
           content:
@@ -784,9 +786,10 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "429":
-          description: rate limited (`text/plain`)
+          description: rate limited
           content:
-            text/plain: {}
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "500":
           description: could not reset
           content:
@@ -841,9 +844,10 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "429":
-          description: rate limited (`text/plain`)
+          description: rate limited
           content:
-            text/plain: {}
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "500":
           description: could not store the name
           content:
@@ -935,9 +939,10 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "429":
-          description: rate limited (`text/plain`)
+          description: rate limited
           content:
-            text/plain: {}
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "500":
           description: could not create the ticket
           content:
@@ -1043,9 +1048,10 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "429":
-          description: rate limited (`text/plain`)
+          description: rate limited
           content:
-            text/plain: {}
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "500":
           description: could not append the message
           content:
@@ -2062,7 +2068,7 @@ components:
         createQuestion, getQuestion, postQuestionMessage, adminGetQuestion
         and adminReplyQuestion alike, so a client can use ONE shape for
         "here is the ticket after my action" everywhere.
-      required: [id, user, subject, created_at, messages]
+      required: [id, user, subject, created_at, messages, answered]
       properties:
         id: { type: string }
         user: { type: string }
@@ -2071,6 +2077,15 @@ components:
         messages:
           type: array
           items: { $ref: "#/components/schemas/QuestionMessage" }
+        answered:
+          type: boolean
+          description: |
+            Same DERIVATION rule as QuestionSummary.answered (at least one
+            message has `author_role: admin`) — added (Issue #167) so the
+            portal's Support/Queue panes can read `thread.answered` directly
+            instead of each independently re-deriving the same predicate
+            from `messages` client-side (`(th.messages || []).some(m =>
+            m.author_role === 'admin')`, duplicated in two places pre-#167).
 
     QuestionSummary:
       type: object
