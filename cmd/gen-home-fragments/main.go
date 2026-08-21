@@ -90,39 +90,16 @@ func main() {
 	fmt.Printf("gen-home-fragments: wrote %s (%d panels)\n", dest, len(panels))
 }
 
+// renderStaticPanel wraps the shared homefragments.RenderStaticPanel
+// (REFACTORING.md P24 architect decision §1 — extracted so
+// cmd/gen-tutorial-fragments can reuse the exact same markdown->HTML
+// pipeline instead of a second copy) and shapes its result into this
+// command's own panel struct (ID/Label/HTML, ChalNN left "" — static panels
+// are never per-challenge).
 func renderStaticPanel(root string, sp homefragments.StaticPanel) (panel, bool, error) {
-	srcPath := filepath.Join(root, sp.Source)
-	raw, err := os.ReadFile(srcPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return panel{}, false, nil // fail-soft: missing source file
-		}
-		return panel{}, false, err
-	}
-	md := string(raw)
-	if sp.Heading != "" {
-		if err := homefragments.ValidateHeadingMarker(sp.Heading); err != nil {
-			return panel{}, false, err // manifest authoring bug: gen-time fatal
-		}
-		section, ok := homefragments.SelectHeadingSection(md, sp.Heading)
-		if !ok {
-			return panel{}, false, nil // fail-soft: heading not found
-		}
-		md = section
-	} else {
-		// whole_file panel (story.md, cheatsheet.md): strip the source's
-		// leading "# title" line BEFORE rendering, so it never becomes an
-		// <h1> node for the sanitizer to drop-wrapper-but-keep-text (which
-		// would otherwise leak the bare title text ahead of the first real
-		// <p>, duplicating the <summary> label the Home panel already
-		// shows — merge-review fixup R2 F1). A heading-selected panel
-		// (intro) never includes the source's h1 in its selected section in
-		// the first place, so this only applies in the whole_file branch.
-		md = homefragments.StripLeadingH1(md)
-	}
-	html, err := homefragments.RenderMarkdown(md)
-	if err != nil {
-		return panel{}, false, err
+	html, ok, err := homefragments.RenderStaticPanel(root, sp)
+	if err != nil || !ok {
+		return panel{}, ok, err
 	}
 	return panel{ID: goIdent(sp.ID), Label: sp.Label, HTML: html}, true, nil
 }
@@ -194,10 +171,14 @@ func generateGoSource(panels []panel) (string, error) {
 package view
 
 // HomeFragment is one sanitized content panel for the Portal Home tab.
-// ChalNN is "" for the three static panels (intro/story/cheatsheet) and the
+// ChalNN is "" for any static (non-per-challenge) panel and the
 // zero-padded challenge number ("01".."11") for a per-challenge
 // rule-explain panel, so the Home pane renderer can group/order
 // rule-explain panels by challenge without re-parsing the ID string.
+// StaticPanels is empty as of P24 (REFACTORING.md P24 §2: intro/cheatsheet
+// moved to internal/homefragments.TutorialChapters / the Tutorial tab), so
+// today every HomeFragment in practice has ChalNN != "" — but the ChalNN==""
+// shape stays supported for any future Home-only static panel.
 type HomeFragment struct {
 	ID     string
 	Label  string

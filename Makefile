@@ -17,7 +17,7 @@ SYSDIG_URL   ?= https://app.au1.sysdig.com
 # host repo are not shared into the VM.
 GO_IMAGE ?= golang:1.26-alpine
 
-.PHONY: help dev dev-down build push load-colima deploy-local lint check-seccomp check-flag-isolation check-image-hygiene test tidy gen gen-home-fragments gen-values gen-attack check-flags check-rules check-freshness clean scan
+.PHONY: help dev dev-down build push load-colima deploy-local lint check-seccomp check-flag-isolation check-image-hygiene test tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-rules check-freshness clean scan
 
 help:
 	@echo "Targets:"
@@ -35,6 +35,7 @@ help:
 	@echo "  tidy            — go mod tidy (runs in $(GO_IMAGE) container)"
 	@echo "  gen             — regenerate Go types from OpenAPI specs (docs/openapi-*.yaml)"
 	@echo "  gen-home-fragments — regenerate Portal Home tab HTML fragments (docs-site/home-fragments.yaml)"
+	@echo "  gen-tutorial-fragments — regenerate Portal Tutorial tab HTML fragments (docs-site/tutorial-chapters.yaml)"
 	@echo "  gen-values      — regenerate challenge values.yaml / values-all.yaml from plant.sh"
 	@echo "  gen-attack      — regenerate ATT&CK Navigator layer + coverage table from falco-rule.yaml attack: blocks"
 	@echo "  check-flags     — fail if real flags leak into tracked files or values are stale"
@@ -122,6 +123,13 @@ gen:
 # (content-lead's contract). Commit the result.
 gen-home-fragments:
 	docker build -f Dockerfile.gen-home-fragments --target export -o . .
+
+# Regenerates internal/scoreboard/view/tutorialfragments_gen.go from
+# docs-site/docs/{index,cheatsheet}.md + docs-site/tutorial/*.md, per
+# docs-site/tutorial-chapters.yaml (content-lead's contract, P24). Commit
+# the result.
+gen-tutorial-fragments:
+	docker build -f Dockerfile.gen-tutorial-fragments --target export -o . .
 
 gen-values:
 	./challenges/gen-values.sh
