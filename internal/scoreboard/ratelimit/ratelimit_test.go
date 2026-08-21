@@ -1,6 +1,7 @@
 package ratelimit_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -79,6 +80,37 @@ func TestMiddleware_Returns429OnExceeded(t *testing.T) {
 	}
 	if w.Header().Get("Retry-After") != "1" {
 		t.Fatal("Retry-After must be set")
+	}
+}
+
+// TestMiddleware_Returns429JSON proves the 429 body is JSON-encoded via
+// httpx.WriteJSON (Issue #159 / ADR-0005 Decision 5 point 4 — this used to
+// be http.Error's text/plain, the only other non-2xx deviation from the
+// scoreboard's "{"error": string}" contract besides view.portal's 500,
+// which view_test.go's TestHandlerPortal_RenderFailureIsJSON now covers).
+func TestMiddleware_Returns429JSON(t *testing.T) {
+	var now time.Time
+	l := ratelimit.New(0.1, 1).WithNow(func() time.Time { return now })
+	now = time.Unix(0, 0)
+	keyFn := func(*http.Request) string { return "single-ip" }
+	h := l.Middleware(keyFn)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/", nil)) // consume the burst
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("POST", "/", nil))
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("status: got %d, want 429", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+		t.Fatalf("Content-Type: got %q, want application/json", ct)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("body is not valid JSON: %v (body=%s)", err, w.Body.String())
+	}
+	if _, ok := body["error"]; !ok {
+		t.Fatalf(`expected an "error" key in the body, got %v`, body)
 	}
 }
 

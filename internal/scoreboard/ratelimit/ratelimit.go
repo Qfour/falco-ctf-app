@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
 )
 
 // Limiter implements per-key token-bucket rate limiting. Buckets evict
@@ -87,7 +89,11 @@ func (l *Limiter) Allow(key string) bool {
 }
 
 // Middleware wraps `next` and rejects requests whose `keyFn(r)` exceeds
-// the rate. Rejected requests get 429 Too Many Requests.
+// the rate. Rejected requests get 429 Too Many Requests, JSON-encoded via
+// httpx.WriteJSON (Issue #159 / ADR-0005 follow-up F1 — this used to be
+// http.Error's text/plain, the only non-2xx deviation from the "{"error":
+// string}" contract besides view.portal's 500; see that package for the
+// other half).
 func (l *Limiter) Middleware(keyFn func(*http.Request) string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -97,7 +103,7 @@ func (l *Limiter) Middleware(keyFn func(*http.Request) string) func(http.Handler
 				return
 			}
 			w.Header().Set("Retry-After", "1")
-			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			httpx.WriteJSON(w, http.StatusTooManyRequests, map[string]any{"error": "rate limit exceeded"})
 		})
 	}
 }
