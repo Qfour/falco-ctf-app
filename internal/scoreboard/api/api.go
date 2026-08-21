@@ -30,6 +30,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Qfour/falco-ctf-app/internal/apispec"
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/detect"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
@@ -267,81 +268,206 @@ func (h *Handler) og(next http.Handler) http.Handler {
 	return h.originGuard.Middleware(next)
 }
 
-func (h *Handler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/state", h.state)
-	mux.HandleFunc("GET /api/users/{user}/me", h.userMe)
-	mux.HandleFunc("GET /api/users/{user}/journey", h.journey)
-	mux.Handle("POST /api/admin/reset", h.og(http.HandlerFunc(h.reset)))
-	mux.Handle("POST /api/admin/users/{user}/display-name", h.og(http.HandlerFunc(h.adminSetDisplayName)))
-	mux.HandleFunc("GET /api/hints", h.hints)
-	mux.Handle("POST /api/admin/hints", h.og(http.HandlerFunc(h.releaseHint)))
+// Routes returns the api package's declarative route table (ADR-0005 V2) —
+// the single artifact scoreboard.Handler's NewHandler feeds into
+// apispec.Register, and (via that same call's return value) what the parity
+// tests (internal/scoreboard's *_test.go) compare against
+// docs/openapi-scoreboard.yaml. Every route's OriginGuarded /
+// CollectorForward value below is repeated, unchanged, from the per-route
+// comments that used to live only beside the old mux.Handle calls; see
+// og's doc for the general shape of the asymmetry and each entry below for
+// the route-specific reasoning.
+//
+// This package deliberately has no Register(mux) method of its own (LOW, 5x
+// review: one used to exist here, calling apispec.Register(mux, h.Routes())
+// directly, but nothing in this codebase — production or test — ever called
+// it; scoreboard.Handler's NewHandler always collects every sub-package's
+// Routes() into one table and calls apispec.Register exactly once). A
+// second, unused registration entry point contradicted I14's "single
+// registration path" claim on its face, even though it happened to be dead;
+// it was removed rather than documented as test-only, since it had no test
+// either.
+func (h *Handler) Routes() []apispec.Route {
 	submitMW := h.submitLimiter.Middleware(ratelimit.ClientIP)
-	// NOT wrapped by the origin guard (P23-2 follow-up). This route has TWO
-	// callers: the journey UI (browser fetch, carries Origin) AND the
-	// collector's verbatim forward of the participant's curl submission
-	// (internal/collector/collector.go — "Routes fronted"; curl sends no
-	// Origin/Referer at all). Egress lockdown makes the collector-forwarded
-	// curl path the PRIMARY flag-submission route once a workspace can no
-	// longer reach the scoreboard directly, so a fail-closed Origin gate here
-	// would 403 every legitimate submission via that path and break scoring —
-	// exactly the class of regression this middleware must never cause. The
-	// CSRF this would otherwise mitigate (an attacker riding a victim's
-	// session to submit — and thereby credit — a flag the attacker chose) has
-	// no destructive blast radius comparable to /api/admin/reset (the
-	// mitigation's actual target): at most it credits a solve, it does not
-	// delete state or read another user's data. Accepted residual risk;
-	// revisit only if submit ever gains a destructive side effect.
-	mux.Handle("POST /api/challenges/{cid}/submit", submitMW(http.HandlerFunc(h.submit)))
-	// Detect grading reuses the SAME per-IP submit limiter (same trust model as
-	// /submit) plus a global in-flight cap enforced inside the handler (429 past
-	// it, never queued). Unlike /submit above, this route has only ONE caller:
-	// the journey UI's browser fetch (the "Grade" button on a detect mission's
-	// condition textarea — docs/detect-challenge-design.md §6). The collector's
-	// forward allowlist (internal/collector/collector.go — "Routes fronted")
-	// does NOT include submit-detect, so there is no server-to-server curl
-	// caller to protect against a fail-closed gate here — same reasoning as
-	// steps/{idx}/check and hints/{idx} below. Origin-guarded.
-	mux.Handle("POST /api/challenges/{cid}/submit-detect", h.og(submitMW(http.HandlerFunc(h.submitDetect))))
-	// Exfil is an internal-only endpoint reached solely by the collector
-	// (full one-pipe, P11.5). Workspaces cannot reach the scoreboard directly
-	// once egress lockdown is on — they POST /api/challenges/{cid}/exfil to the
-	// collector, which forwards to /internal/exfil here. Isolation is enforced
-	// by NetworkPolicy (scoreboard ingress admits only collector); the handler
-	// itself adds no auth (see recordExfil doc). Rate limiting lives on the
-	// collector front, so /internal/exfil is unthrottled here. It is also
-	// DELIBERATELY NOT wrapped by the origin guard (P23-2): this is a
-	// server-to-server request with no browser Origin/Referer, so gating it
-	// would 403 every legitimate exfil receipt and silently break the boss
-	// capstone's scoring path.
-	mux.HandleFunc("POST /internal/exfil/{cid}", h.exfilInternal)
-	// Journey progression writes (self-check ticks + progressive hint reveal).
-	// Rate-limited on the same bucket as /submit — participant-facing writes.
-	// These two ARE origin-guarded: unlike submit/display-name below, they are
-	// reached ONLY from the portal's Journey pane browser fetch
-	// (templates/portal.html) — the collector's forward allowlist
-	// (internal/collector/collector.go) does not
-	// include steps/{idx}/check or hints/{idx} — so there is no server-to-server
-	// caller to protect against a fail-closed gate here.
-	mux.Handle("POST /api/users/{user}/challenges/{cid}/steps/{idx}/check", h.og(submitMW(http.HandlerFunc(h.stepCheck))))
-	mux.Handle("POST /api/users/{user}/challenges/{cid}/hints/{idx}", h.og(submitMW(http.HandlerFunc(h.openHint))))
-	// App-H2: the explicit, self-scoped escape hatch from the persistent evade
-	// dirty flag (internal/store MarkDirty/DirtyRules). Same trust model and
-	// route family as steps/check and hints/{idx} above — reached ONLY from the
-	// portal's Journey pane browser fetch, never from the collector's forward
-	// allowlist — so it is origin-guarded and self/admin-write gated the same way.
-	mux.Handle("POST /api/users/{user}/challenges/{cid}/reset-dirty", h.og(submitMW(http.HandlerFunc(h.resetDirty))))
 	dnMW := h.displayNameLimiter.Middleware(ratelimit.ClientIP)
-	// NOT wrapped by the origin guard (P23-2 follow-up). Unlike submit above,
-	// this route has only ONE caller: the collector's verbatim forward
-	// (internal/collector/collector.go — "Routes fronted") of the
-	// participant's curl-issued display-name update. No browser template in
-	// this repo fetches this participant-facing path directly (the journey UI
-	// has no such call; the only browser caller of a display-name endpoint is
-	// index.html's ADMIN /api/admin/users/{user}/display-name, a distinct
-	// route that stays origin-guarded above). A fail-closed gate here would
-	// therefore 403 every legitimate call with no browser-CSRF surface to
-	// protect in exchange.
-	mux.Handle("POST /api/users/{user}/display-name", dnMW(http.HandlerFunc(h.setDisplayName)))
+	return []apispec.Route{
+		{
+			Method: "GET", Pattern: "/api/state",
+			Audience: apispec.AudienceOperator, Authz: apispec.AuthzAdmin,
+			OriginGuarded: false, CollectorForward: false, RateLimit: "none",
+			Handler: http.HandlerFunc(h.state),
+		},
+		{
+			Method: "GET", Pattern: "/api/users/{user}/me",
+			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdmin,
+			OriginGuarded: false, CollectorForward: false, RateLimit: "none",
+			Handler: http.HandlerFunc(h.userMe),
+		},
+		{
+			Method: "GET", Pattern: "/api/users/{user}/journey",
+			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdmin,
+			OriginGuarded: false, CollectorForward: false, RateLimit: "none",
+			Handler: http.HandlerFunc(h.journey),
+		},
+		{
+			// The most destructive route in this service — the origin guard's
+			// actual target (ADR-0005 Decision 4).
+			Method: "POST", Pattern: "/api/admin/reset",
+			Audience: apispec.AudienceOperator, Authz: apispec.AuthzAdmin,
+			OriginGuarded: true, CollectorForward: false, RateLimit: "none",
+			Handler: h.og(http.HandlerFunc(h.reset)),
+		},
+		{
+			// The operator dashboard's rename button calls this route, which is
+			// why it stays origin-guarded (unlike the participant-facing
+			// display-name route below, whose only caller is the collector).
+			Method: "POST", Pattern: "/api/admin/users/{user}/display-name",
+			Audience: apispec.AudienceOperator, Authz: apispec.AuthzAdmin,
+			OriginGuarded: true, CollectorForward: false, RateLimit: "none",
+			Handler: h.og(http.HandlerFunc(h.adminSetDisplayName)),
+		},
+		{
+			// Deliberately unauthenticated (Decision 5 does not apply): carries
+			// no per-user data or hint TEXT, only released indices.
+			Method: "GET", Pattern: "/api/hints",
+			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzNone,
+			OriginGuarded: false, CollectorForward: false, RateLimit: "none",
+			Handler: http.HandlerFunc(h.hints),
+		},
+		{
+			Method: "POST", Pattern: "/api/admin/hints",
+			Audience: apispec.AudienceOperator, Authz: apispec.AuthzAdmin,
+			OriginGuarded: true, CollectorForward: false, RateLimit: "none",
+			Handler: h.og(http.HandlerFunc(h.releaseHint)),
+		},
+		{
+			// NOT wrapped by the origin guard (P23-2 follow-up). This route has
+			// TWO callers: the journey UI (browser fetch, carries Origin) AND the
+			// collector's verbatim forward of the participant's curl submission
+			// (internal/collector/collector.go — "Routes fronted"; curl sends no
+			// Origin/Referer at all). Egress lockdown makes the collector-forwarded
+			// curl path the PRIMARY flag-submission route once a workspace can no
+			// longer reach the scoreboard directly, so a fail-closed Origin gate
+			// here would 403 every legitimate submission via that path and break
+			// scoring — exactly the class of regression this middleware must never
+			// cause. The CSRF this would otherwise mitigate (an attacker riding a
+			// victim's session to submit — and thereby credit — a flag the
+			// attacker chose) has no destructive blast radius comparable to
+			// /api/admin/reset (the mitigation's actual target): at most it
+			// credits a solve, it does not delete state or read another user's
+			// data. Accepted residual risk; revisit only if submit ever gains a
+			// destructive side effect.
+			Method: "POST", Pattern: "/api/challenges/{cid}/submit",
+			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzClaimedIdentity,
+			OriginGuarded: false, CollectorForward: true,
+			RateLimit: "per-IP 1 req/s burst 10 (shared with submit-detect)",
+			Handler:   submitMW(http.HandlerFunc(h.submit)),
+		},
+		{
+			// Detect grading reuses the SAME per-IP submit limiter (same trust
+			// model as /submit) plus a global in-flight cap enforced inside the
+			// handler (429 past it, never queued). Unlike /submit above, this
+			// route has only ONE caller: the journey UI's browser fetch (the
+			// "Grade" button on a detect mission's condition textarea —
+			// docs/detect-challenge-design.md §6). The collector's forward
+			// allowlist (internal/collector/collector.go — "Routes fronted") does
+			// NOT include submit-detect, so there is no server-to-server curl
+			// caller to protect against a fail-closed gate here — same reasoning
+			// as steps/{idx}/check and hints/{idx} below. Origin-guarded.
+			Method: "POST", Pattern: "/api/challenges/{cid}/submit-detect",
+			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdminWrite,
+			OriginGuarded: true, CollectorForward: false,
+			RateLimit: "per-IP 1 req/s burst 10 + global in-flight grader cap (5)",
+			Handler:   h.og(submitMW(http.HandlerFunc(h.submitDetect))),
+		},
+		{
+			// Exfil is an internal-only endpoint reached solely by the collector
+			// (full one-pipe, P11.5). Workspaces cannot reach the scoreboard
+			// directly once egress lockdown is on — they POST
+			// /api/challenges/{cid}/exfil to the collector, which forwards to
+			// /internal/exfil here. Isolation is enforced by NetworkPolicy
+			// (scoreboard ingress admits only collector); the handler itself adds
+			// no auth (see recordExfil doc). Rate limiting lives on the collector
+			// front, so /internal/exfil is unthrottled here. It is also
+			// DELIBERATELY NOT wrapped by the origin guard (P23-2): this is a
+			// server-to-server request with no browser Origin/Referer, so gating
+			// it would 403 every legitimate exfil receipt and silently break the
+			// boss capstone's scoring path.
+			Method: "POST", Pattern: "/internal/exfil/{cid}",
+			Audience: apispec.AudienceInternal, Authz: apispec.AuthzClaimedIdentity,
+			OriginGuarded: false, CollectorForward: true,
+			RateLimit: "none (the limit lives on the collector front)",
+			Handler:   http.HandlerFunc(h.exfilInternal),
+		},
+		{
+			// Journey progression writes (self-check ticks). Rate-limited on the
+			// same bucket as /submit — participant-facing writes. This IS
+			// origin-guarded: unlike submit/display-name below, it is reached
+			// ONLY from the portal's Journey pane browser fetch
+			// (templates/portal.html) — the collector's forward allowlist
+			// (internal/collector/collector.go) does not include
+			// steps/{idx}/check — so there is no server-to-server caller to
+			// protect against a fail-closed gate here.
+			Method: "POST", Pattern: "/api/users/{user}/challenges/{cid}/steps/{idx}/check",
+			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdminWrite,
+			OriginGuarded: true, CollectorForward: false,
+			RateLimit: "per-IP 1 req/s burst 10",
+			Handler:   h.og(submitMW(http.HandlerFunc(h.stepCheck))),
+		},
+		{
+			// Progressive hint reveal — same reasoning as steps/check above, plus
+			// a second one: the 409/200 distinction is a cross-user oracle if an
+			// unauthenticated caller can drive it.
+			Method: "POST", Pattern: "/api/users/{user}/challenges/{cid}/hints/{idx}",
+			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdminWrite,
+			OriginGuarded: true, CollectorForward: false,
+			RateLimit: "per-IP 1 req/s burst 10",
+			Handler:   h.og(submitMW(http.HandlerFunc(h.openHint))),
+		},
+		{
+			// App-H2: the explicit, self-scoped escape hatch from the persistent
+			// evade dirty flag (internal/store MarkDirty/DirtyRules). Same trust
+			// model and route family as steps/check and hints/{idx} above —
+			// reached ONLY from the portal's Journey pane browser fetch, never
+			// from the collector's forward allowlist — so it is origin-guarded
+			// and self/admin-write gated the same way.
+			//
+			// Do NOT remove the origin guard from this route and do NOT add it
+			// to the collector's forward allowlist: ADR-0003 A2-2 made this
+			// endpoint able to delete another participant's exfil receipt, and
+			// the header-less claimed-identity fallback in selfOrAdminWrite
+			// carries no proof the caller IS {user}. The guard 403s exactly the
+			// shape a header-less cluster-internal caller sends, BEFORE the
+			// self-or-admin check runs — that is what keeps A2-2's destructive
+			// reset from becoming an unauthenticated cross-user action (app#124
+			// 5x, R1 C3). This is also why ADR-0005 V4 asserts, as a dedicated
+			// check (not just a bijection count), that reset-dirty never appears
+			// in the collector-forward set.
+			Method: "POST", Pattern: "/api/users/{user}/challenges/{cid}/reset-dirty",
+			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdminWrite,
+			OriginGuarded: true, CollectorForward: false,
+			RateLimit: "per-IP 1 req/s burst 10",
+			Handler:   h.og(submitMW(http.HandlerFunc(h.resetDirty))),
+		},
+		{
+			// NOT wrapped by the origin guard (P23-2 follow-up). Unlike submit
+			// above, this route has only ONE caller: the collector's verbatim
+			// forward (internal/collector/collector.go — "Routes fronted") of the
+			// participant's curl-issued display-name update. No browser template
+			// in this repo fetches this participant-facing path directly (the
+			// journey UI has no such call; the only browser caller of a
+			// display-name endpoint is index.html's ADMIN
+			// /api/admin/users/{user}/display-name, a distinct route that stays
+			// origin-guarded above). A fail-closed gate here would therefore 403
+			// every legitimate call with no browser-CSRF surface to protect in
+			// exchange.
+			Method: "POST", Pattern: "/api/users/{user}/display-name",
+			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdminWrite,
+			OriginGuarded: false, CollectorForward: true,
+			RateLimit: "per-IP 1 req / 5s burst 5",
+			Handler:   dnMW(http.HandlerFunc(h.setDisplayName)),
+		},
+	}
 }
 
 // --- admin reset ------------------------------------------------------------
@@ -1172,6 +1298,7 @@ func (h *Handler) resetDirty(w http.ResponseWriter, r *http.Request) {
 //     or a workspace pod) no header is set, so the legacy claimed-identity model
 //     is preserved (isolation is NetworkPolicy's job). This keeps the
 //     collector-fronted display-name flow (accepted LOW) working unchanged.
+//
 // Lacking cryptographic proof of identity on the internal path is intentional —
 // see audit log entries for traceability.
 func (h *Handler) setDisplayName(w http.ResponseWriter, r *http.Request) {

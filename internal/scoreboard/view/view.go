@@ -31,6 +31,8 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+
+	"github.com/Qfour/falco-ctf-app/internal/apispec"
 )
 
 //go:embed templates/index.html
@@ -85,18 +87,61 @@ func New(isAdmin func(*http.Request) bool, deriveUser func(*http.Request) string
 	return &Handler{isAdmin: isAdmin, deriveUser: deriveUser, ttydSuffix: ttydSuffix, logger: logger}
 }
 
-// Register wires all view routes. GET / (admin dashboard) and GET /portal
-// (P23-1 unified shell) are the only two page routes left after the P19-2b
+// Routes returns the view package's declarative route table (ADR-0005 V2).
+// GET / (admin dashboard), GET /portal (P23-1 unified shell) and the
+// vendored stylesheet are the only three routes left after the P19-2b
 // cutover removed GET /me and GET /journey (see the package doc above).
-func (h *Handler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /", h.index)
-	mux.HandleFunc("GET /portal", h.portal)
-	// P23-6: the vendored, self-hosted cybercore-css stylesheet the portal
-	// shell links to (see vendorassets.go's cybercoreCSSPath / PROVENANCE.md
-	// for the pin). Served same-origin — never a CDN — so this asset never
-	// leaves the deploy's own origin (P12).
-	mux.HandleFunc("GET "+cybercoreCSSPath, serveCybercoreCSS)
+//
+// The cybercore-css route's Pattern is the cybercoreCSSPath CONSTANT
+// (vendorassets.go), not a string built by concatenating "GET "+path at the
+// mux.HandleFunc call site the way the pre-ADR-0005 code did — that
+// concatenation is exactly what defeated a literal-grep route extraction
+// (ADR-0005 V2's motivating example). Reading Pattern back through this
+// method gives the parity test the actual runtime string, however it was
+// computed.
+func (h *Handler) Routes() []apispec.Route {
+	return []apispec.Route{
+		{
+			Method:           "GET",
+			Pattern:          "/",
+			Audience:         apispec.AudienceOperator,
+			Authz:            apispec.AuthzAdmin,
+			OriginGuarded:    false,
+			CollectorForward: false,
+			RateLimit:        "none",
+			Handler:          http.HandlerFunc(h.index),
+		},
+		{
+			Method:           "GET",
+			Pattern:          "/portal",
+			Audience:         apispec.AudienceParticipant,
+			Authz:            apispec.AuthzNone,
+			OriginGuarded:    false,
+			CollectorForward: false,
+			RateLimit:        "none",
+			Handler:          http.HandlerFunc(h.portal),
+		},
+		{
+			Method:           "GET",
+			Pattern:          cybercoreCSSPath,
+			Audience:         apispec.AudienceParticipant,
+			Authz:            apispec.AuthzNone,
+			OriginGuarded:    false,
+			CollectorForward: false,
+			RateLimit:        "none",
+			Handler:          http.HandlerFunc(serveCybercoreCSS),
+		},
+	}
 }
+
+// This package deliberately has no Register(mux) method of its own (LOW,
+// 5x review: one used to exist here, calling apispec.Register(mux,
+// h.Routes()) directly, but nothing — production or test — ever called it;
+// scoreboard.Handler's NewHandler always collects every sub-package's
+// Routes() into one table and calls apispec.Register exactly once). Keeping
+// an unused second registration entry point around contradicted I14's
+// "single registration path" claim on its face; removed rather than
+// documented as test-only, since it had no test either.
 
 func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
 	// `GET /` in Go 1.22+ mux matches everything under /, so we reject
