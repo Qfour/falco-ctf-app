@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -234,6 +235,74 @@ func TestQA_ValidationCaps(t *testing.T) {
 			w := f.do("POST", "/api/users/alice/questions", "alice@ctf.local", map[string]any{"subject": c.subject, "body": c.body})
 			if w.Code != http.StatusBadRequest {
 				t.Fatalf("status=%d body=%s, want 400", w.Code, w.Body)
+			}
+		})
+	}
+}
+
+// TestQA_ValidationCaps_BoundaryExactSucceeds is app#163 (P25 /review-5x R2
+// finding 1): TestQA_ValidationCaps above only proves the "one over the cap"
+// side of validQuestionSubject/validQuestionBody's boundary (121 runes /
+// 4097 bytes both reject). It never proves the caps THEMSELVES are still
+// accepted — a subtly-wrong `>` vs `>=` in either validator would pass that
+// suite unnoticed. This exercises subject at EXACTLY 120 runes and body at
+// EXACTLY 4096 bytes (ADR-0006 Decision 1's caps) through createQuestion,
+// which is the one route that validates both fields in a single call, and
+// asserts 200 with the subject round-tripped verbatim.
+func TestQA_ValidationCaps_BoundaryExactSucceeds(t *testing.T) {
+	subject := strings.Repeat("a", 120)
+	body := strings.Repeat("b", 4096)
+
+	f := newQAFixture(t)
+	w := f.do("POST", "/api/users/alice/questions", "alice@ctf.local", map[string]any{"subject": subject, "body": body})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s, want 200 (subject=120 runes / body=4096 bytes is the cap itself, not one over)", w.Code, w.Body)
+	}
+	th := f.decode(w)
+	if th["subject"] != subject {
+		t.Fatalf("subject not round-tripped verbatim: got %v", th["subject"])
+	}
+	msgs, _ := th["messages"].([]any)
+	if len(msgs) != 1 || msgs[0].(map[string]any)["body"] != body {
+		t.Fatalf("body not round-tripped verbatim: %+v", th)
+	}
+}
+
+// TestQA_AdminReply_ValidationCaps is app#163 (P25 /review-5x R2 finding 2):
+// adminReply calls validQuestionBody exactly like createQuestion/postMessage
+// do, but unlike those two handlers it had no direct test of the 400 side of
+// that validation — TestQA_UnknownQid404's admin-reply case only covers an
+// unknown qid with a VALID body, never a real qid with an invalid body. Each
+// subtest gets its own fixture/ticket (matching this file's established
+// convention for FourWay tests) even though adminReply itself is not behind
+// questionMW's rate limiter — the setup call to createAs is.
+func TestQA_AdminReply_ValidationCaps(t *testing.T) {
+	longBody := strings.Repeat("b", 4097)
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"empty body", ""},
+		{"body too long", longBody},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newQAFixture(t, scoreboard.WithAdminEmails([]string{qaFixtureAdmin}))
+			th := f.createAs("alice", "alice@ctf.local", "help", "b")
+			qid := th["id"].(string)
+
+			w := f.do("POST", "/api/admin/questions/"+qid+"/reply", qaFixtureAdmin, map[string]any{"body": c.body})
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status=%d body=%s, want 400", w.Code, w.Body)
+			}
+
+			// The rejected reply must leave the thread untouched (same
+			// no-partial-write posture TestQA_IDOR_CrossUserPostMessage404
+			// already asserts for the IDOR case).
+			got := f.decode(f.do("GET", "/api/admin/questions/"+qid, qaFixtureAdmin, nil))
+			msgs, _ := got["messages"].([]any)
+			if len(msgs) != 1 {
+				t.Fatalf("expected the rejected admin reply to leave the thread untouched, got %d messages: %+v", len(msgs), got)
 			}
 		})
 	}
