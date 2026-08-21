@@ -1342,7 +1342,8 @@ components:
         solved_count: { type: integer }
         total_challenges: { type: integer }
         next_unsolved:
-          type: [string, "null"]
+          type: string
+          nullable: true
           description: |
             next unsolved challenge id by catalog order. **null** when
             everything is solved (the key is always present).
@@ -1566,7 +1567,8 @@ components:
           type: integer
           description: missions in this run's order (catalog-filtered)
         current:
-          type: [string, "null"]
+          type: string
+          nullable: true
           description: |
             first unsolved mission id. **null** when every mission is solved
             (the key is always present).
@@ -1578,9 +1580,9 @@ components:
             detail for `?mission=` when valid, else for `current`. **null** when
             there is no mission to show at all (everything solved and no valid
             override) — the key is always present.
-          anyOf:
+          nullable: true
+          allOf:
             - $ref: "#/components/schemas/MissionDetail"
-            - type: "null"
         score: { type: integer }
         hint_penalty:
           type: integer
@@ -1639,7 +1641,8 @@ components:
           description: solvers ranked by solve time — powers the per-challenge leaderboard
           items: { $ref: "#/components/schemas/ChallengeSolver" }
         first_solver:
-          type: [string, "null"]
+          type: string
+          nullable: true
           description: first solver's username; **null** when nobody solved it (key always present)
 
     SolveRecord:
