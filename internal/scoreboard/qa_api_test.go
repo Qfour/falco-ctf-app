@@ -501,10 +501,14 @@ func TestQA_AdminListAndReply_FlipsAnswered(t *testing.T) {
 		}
 	}
 
-	// Not yet answered.
+	// Not yet answered. Issue #167: the THREAD response (not just the list's
+	// Summary rows checked below) now carries its own top-level `answered`.
 	got := f.decode(f.do("GET", "/api/admin/questions/"+qid, qaFixtureAdmin, nil))
 	if got["user"] != "alice" {
 		t.Fatalf("expected alice's thread, got %+v", got)
+	}
+	if got["answered"] != false {
+		t.Fatalf("thread-level answered must be false before any admin reply, got %+v", got)
 	}
 
 	// Reply flips answered for alice's ticket only.
@@ -519,6 +523,9 @@ func TestQA_AdminListAndReply_FlipsAnswered(t *testing.T) {
 	// finding 1: author/author_role in the body are ignored even here.
 	if reply["author_role"] != "admin" || reply["author"] != qaFixtureAdmin {
 		t.Fatalf("expected server-hardcoded admin/%s, got %+v", qaFixtureAdmin, reply)
+	}
+	if replied["answered"] != true {
+		t.Fatalf("thread-level answered must flip true in the SAME response that recorded the reply, got %+v", replied)
 	}
 
 	list = f.decode(f.do("GET", "/api/admin/questions", qaFixtureAdmin, nil))
