@@ -1,20 +1,31 @@
 openapi: 3.1.0
 info:
   title: falco-ctf auth-policy
-  version: "1"
+  version: "2"
   description: |
-    Combines oauth2-proxy authentication with a host↔email binding
-    check, exposed as an ingress-nginx `auth-url` subrequest target.
+    The auth-policy binary's COMPLETE HTTP surface (ADR-0005).
+
+    Combines oauth2-proxy authentication with a host<->email binding check,
+    exposed as an ingress-nginx `auth-url` subrequest target.
 
       ingress ── /check?host=<expected-username> ──►  authpolicy
                                                          │
                                                          └─► oauth2-proxy /oauth2/auth
                                                                 (cookie forwarded)
 
-    Plain `auth-url: oauth2-proxy/oauth2/auth` would let any logged-in
-    user reach any user's workspace. This service closes that gap
-    without requiring ingress-nginx snippet annotations (which the
-    admission webhook blocks).
+    Plain `auth-url: oauth2-proxy/oauth2/auth` would let any logged-in user
+    reach any user's workspace. This service closes that gap without requiring
+    ingress-nginx snippet annotations (which the admission webhook blocks).
+
+    Error bodies here are `text/plain` (`http.Error`), NOT the scoreboard's JSON
+    `Error` schema. That is deliberate and not a drift: these responses are
+    consumed by ingress-nginx as a subrequest status, never rendered to a user.
+
+    Per-operation extensions carry the same meaning as in
+    docs/openapi-scoreboard.yaml.
+
+    Generated code: `internal/authpolicy/oapi/types.gen.go` (`make gen`,
+    api/cfg-auth-policy.yaml). Never hand-edit the generated file.
 
 servers:
   - url: http://localhost:8001
@@ -22,11 +33,23 @@ servers:
   - url: http://auth-policy.auth-policy.svc.cluster.local
     description: in-cluster service
 
+tags:
+  - name: infra
+    description: probes and metrics
+  - name: internal
+    description: ingress subrequest targets — never called by a browser directly
+
 paths:
   /healthz:
     get:
       summary: Liveness + readiness
       operationId: healthz
+      tags: [infra]
+      x-ctf-audience: infra
+      x-ctf-authz: none
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
       responses:
         "200":
           description: alive
@@ -34,19 +57,44 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [ok, oauth2_proxy, domain, admin_count]
                 properties:
                   ok: { type: boolean, const: true }
                   oauth2_proxy: { type: string }
-                  domain: { type: string }
+                  domain:
+                    type: string
+                    description: EXPECTED_EMAIL_DOMAIN
+                  admin_count:
+                    type: integer
+                    description: |
+                      size of the ADMIN_EMAILS allowlist. 0 means the admin
+                      override and /check-admin deny everyone (fail-closed) —
+                      the value operators check first when admin access appears
+                      broken. Deliberately a COUNT, not the addresses.
 
   /metrics:
     get:
       summary: Prometheus metrics
       operationId: metrics
+      tags: [infra]
+      x-ctf-audience: infra
+      x-ctf-authz: none
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
       description: |
-        Metric series:
+        Series (internal/authpolicy/metrics.go owns the label sets):
           - `auth_policy_checks_total{result}`
-              result ∈ {ok, unauthenticated, forbidden, bad_request, upstream_error}
+              result in {ok, ok_admin, unauthenticated, forbidden, bad_request,
+                         upstream_error}
+              `ok_admin` = the ADMIN_EMAILS override matched (I8's one
+              intentional exception) rather than the `<host>@` prefix. A rising
+              `ok_admin` during an event means operators are reaching
+              participant workspaces — expected during support, worth noticing
+              otherwise.
+          - `auth_policy_admin_checks_total{result}`
+              /check-admin decisions; result in {ok, unauthenticated, forbidden,
+              upstream_error}
           - `auth_policy_upstream_duration_seconds` (histogram)
         Plus the default Go runtime metrics.
       responses:
@@ -57,45 +105,63 @@ paths:
 
   /check:
     get:
-      summary: Authorize a workspace request
+      summary: Authorize a workspace request (per-user binding)
       operationId: check
+      tags: [internal]
+      x-ctf-audience: internal
+      x-ctf-authz: self-or-admin
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
       description: |
-        Called by ingress-nginx as an `auth-url` subrequest before
-        proxying to a user's `workspace` Service.
+        Called by ingress-nginx as an `auth-url` subrequest before proxying to a
+        user's `workspace` Service.
 
         Decision tree:
 
-        | upstream oauth2-proxy returns | email prefix matches `host` | response |
+        | upstream oauth2-proxy | email | response |
         |---|---|---|
         | 401 | n/a | **401** — ingress redirects to /oauth2/start |
-        | 202 | yes | **200** — identity headers propagated upstream |
-        | 202 | no  | **403** — cross-user, no redirect |
-        | 5xx | n/a | **5xx** — surface upstream error |
+        | 202 | in `ADMIN_EMAILS` | **200** — operator override (any host) |
+        | 202 | starts with `<host>@` | **200** — identity headers propagated |
+        | 202 | anything else | **403** — cross-user, no redirect |
+        | any other status | n/a | **502** — masked, upstream status NOT surfaced |
         | unreachable | n/a | **502** |
 
-        The match is **prefix-exact**: email must start with `<host>@`.
-        `alice2@…` does NOT satisfy `host=alice`.
+        The match is **prefix-exact**: the email must start with `<host>@`, so
+        `alice2@...` does NOT satisfy `host=alice` (conventions I8). The
+        ADMIN_EMAILS override is I8's ONE intentional exception, and it is the
+        same allowlist /check-admin uses; an empty allowlist grants nobody
+        (fail-closed).
+
+        Note the masking row: an unexpected oauth2-proxy status becomes a
+        generic 502 on purpose — the upstream status and body must not leak
+        outward. (The previous version of this spec claimed 5xx was surfaced
+        verbatim. It never was.)
       parameters:
         - in: query
           name: host
           required: true
-          schema: { type: string }
-          description: Expected username (== first label of the workspace ingress host)
+          schema:
+            type: string
+            pattern: "^[a-z0-9][a-z0-9-]{0,62}$"
+          description: |
+            expected username (== the first label of the workspace ingress
+            host). Same slug shape the scoreboard enforces on
+            `/api/users/{user}/...`, so the two boundaries agree.
         - in: header
           name: Cookie
           schema: { type: string }
-          description: Forwarded to oauth2-proxy
+          description: forwarded to oauth2-proxy
         - in: header
           name: Authorization
           schema: { type: string }
-          description: Forwarded to oauth2-proxy (if present)
+          description: forwarded to oauth2-proxy (if present)
       responses:
         "200":
           description: |
-            Authorized. Response headers include identity for the upstream:
-              - `X-Auth-Request-Email`
-              - `X-Auth-Request-User`
-              - `X-Auth-Request-Preferred-Username`
+            authorized (own workspace, or an admin override). Response headers
+            carry identity for the upstream backend.
           headers:
             X-Auth-Request-Email:
               schema: { type: string }
@@ -104,10 +170,82 @@ paths:
             X-Auth-Request-Preferred-Username:
               schema: { type: string }
         "400":
-          description: missing `host` query parameter
+          description: missing or malformed `host` query parameter
+          content:
+            text/plain: {}
         "401":
           description: unauthenticated — ingress should redirect to /oauth2/start
+          content:
+            text/plain: {}
         "403":
-          description: authenticated, but the user's email doesn't match `host`
+          description: |
+            authenticated, but the email neither matches `<host>@` nor is in
+            ADMIN_EMAILS. The body echoes the caller's own email and the
+            requested host (operator debugging aid on an internal subrequest
+            path; it is never rendered to a browser).
+          content:
+            text/plain: {}
+        "500":
+          description: could not build the upstream request
+          content:
+            text/plain: {}
         "502":
-          description: oauth2-proxy unreachable
+          description: oauth2-proxy unreachable, or returned an unexpected status (masked)
+          content:
+            text/plain: {}
+
+  /check-admin:
+    get:
+      summary: Authorize an operator-only host (ADMIN_EMAILS)
+      operationId: checkAdmin
+      tags: [internal]
+      x-ctf-audience: operator
+      x-ctf-authz: admin
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
+      description: |
+        The `auth-url` subrequest for operator hosts (the scoreboard dashboard
+        and any admin view). Returns 200 only when the authenticated email is in
+        `ADMIN_EMAILS` (case-insensitive). **An empty allowlist denies everyone
+        — fail-closed.** Takes no `host` parameter: there is no per-user binding
+        to check, only membership.
+
+        The scoreboard ALSO re-checks admin identity in the app layer (P18-1
+        defense-in-depth), so a misrouted request cannot render the full-field
+        view even if this gate is bypassed at ingress.
+      parameters:
+        - in: header
+          name: Cookie
+          schema: { type: string }
+          description: forwarded to oauth2-proxy
+        - in: header
+          name: Authorization
+          schema: { type: string }
+          description: forwarded to oauth2-proxy (if present)
+      responses:
+        "200":
+          description: caller is an admin; identity headers propagated
+          headers:
+            X-Auth-Request-Email:
+              schema: { type: string }
+            X-Auth-Request-User:
+              schema: { type: string }
+            X-Auth-Request-Preferred-Username:
+              schema: { type: string }
+        "401":
+          description: unauthenticated — ingress should redirect to /oauth2/start
+          content:
+            text/plain: {}
+        "403":
+          description: authenticated but not in the admin allowlist (or the allowlist is empty)
+          content:
+            text/plain: {}
+        "500":
+          description: could not build the upstream request
+          content:
+            text/plain: {}
+        "502":
+          description: oauth2-proxy unreachable, or returned an unexpected status (masked)
+          content:
+            text/plain: {}

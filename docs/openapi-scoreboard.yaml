@@ -1,378 +1,1084 @@
 openapi: 3.1.0
 info:
   title: falco-ctf scoreboard
-  version: "1"
+  version: "2"
   description: |
-    Ingests falcosidekick customWebhook events, attributes them to CTF
-    users via the `ctf-<username>/workspace` namespace+pod convention,
-    and serves the live dashboard.
+    The scoreboard binary's COMPLETE HTTP surface (ADR-0005).
 
-    The contract here is **load-bearing across the falco-ctf-platform
-    repo** (falcosidekick output config, deploy manifests). Changing
-    URLs, query semantics, or JSON shapes requires a coordinated PR
-    on both sides.
+    Subject of this document
+    ------------------------
+    **Every route `cmd/scoreboard`'s mux registers — not "the JSON API".**
+    That includes the HTML shells (`GET /`, `GET /portal`), the vendored
+    stylesheet, `/healthz` and `/metrics`. Non-JSON routes get a thin entry
+    (summary + statuses + audience, no schema); they are here so the
+    documented route set can be compared to the registered route set as an
+    EXACT SET (ADR-0005 Verification). A spec whose scope is "the API only"
+    needs a maintained exclusion list, and the exclusion list is exactly how
+    this document decayed to 50% coverage before ADR-0005.
+
+    One spec per service, audience per operation
+    --------------------------------------------
+    Participant and operator routes live in ONE document because they are
+    served by ONE binary off ONE mux, and OpenAPI expresses authorization
+    per-operation. Splitting by audience would spread one route set over two
+    files, where a route can go missing from both. Read the audience off
+    `x-ctf-audience` / `x-ctf-authz` on each operation, never off the URL
+    prefix.
+
+    Per-operation extensions (ALL are mandatory on every operation)
+    --------------------------------------------------------------
+      x-ctf-audience          participant | operator | internal | infra
+      x-ctf-authz             none | admin | self-or-admin |
+                              self-or-admin-write | claimed-identity
+      x-ctf-origin-guard      true | false — whether the route is wrapped by
+                              api.Handler.og (internal/scoreboard/originguard,
+                              ALLOWED_ORIGINS, P23-2). MUST be stated
+                              explicitly; an absent key is a parity failure,
+                              not a default of false.
+      x-ctf-collector-forward true | false — whether the collector
+                              (internal/collector) can reach this route on a
+                              participant's behalf. Exactly three routes are
+                              true; see docs/openapi-collector.yaml.
+      x-ctf-rate-limit        the bucket applied, or "none".
+
+    Why origin-guard is a spec field and not a comment: the guard's presence is
+    ASYMMETRIC on purpose (submit / display-name / internal-exfil are excluded
+    because the collector forwards them with no browser Origin), and that
+    asymmetry is security-relevant in BOTH directions — adding a guard breaks
+    flag submission, removing the one on reset-dirty opens an unauthenticated
+    cross-user destructive action. OpenAPI has no standard field for CSRF
+    middleware, so it is declared here and machine-compared to the code's
+    route table (ADR-0005).
+
+    Error contract (ADR-0005 Decision 5)
+    ------------------------------------
+      * non-2xx  -> `{"error": "<message>"}` (`#/components/schemas/Error`).
+        The `error` key NEVER appears in a 2xx body.
+      * 200 with a graded verdict (`submit`, `submit-detect`) -> domain outcome
+        fields (`correct` / `evaded` / `solved` / `status`) plus `reason`. A
+        wrong flag is NOT an HTTP error. `reason` is human-facing prose, is not
+        stable, and MUST NOT be parsed by clients — branch on the booleans /
+        `status` only.
+      * Two documented deviations from "non-2xx is JSON" exist TODAY because
+        the middleware writes with `http.Error`: the rate limiter's 429 and
+        `GET /portal`'s 500 return `text/plain`. They are specified as
+        `text/plain` rather than misdescribed as JSON. Unifying them is a
+        follow-up (ADR-0005 Consequences).
+      * Several 4xx/5xx bodies currently carry `err.Error()` text (decoder /
+        SQLite driver strings). That leak is Issue #113, not a contract:
+        `Error.error` is specified as a stable operator-facing message and
+        #113 is the work to make the implementation match.
+
+    Cross-repo
+    ----------
+    This contract is load-bearing across **falco-ctf-platform** (falcosidekick
+    customWebhook output, helmfile-supplied `ALLOWED_ORIGINS` / `ADMIN_EMAILS`
+    / `DETECT_GRADER_*`). Changing a URL, a path parameter, the webhook payload
+    keys, or an origin-guard flag requires coordinated PRs on both sides (app
+    conventions "Cross-repo 契約" table).
+
+    Generated code
+    --------------
+    `internal/scoreboard/oapi/types.gen.go` is generated from this file
+    (`make gen`, api/cfg-scoreboard.yaml). **Never hand-edit the generated
+    file; edit this spec and regenerate.**
 
 servers:
   - url: http://localhost:8000
     description: local dev (docker compose)
   - url: http://scoreboard.scoreboard.svc.cluster.local
-    description: in-cluster service
-  - url: https://scoreboard.{ingressHost}
-    description: ingress
+    description: in-cluster Service (no auth headers are injected on this path)
+  - url: https://app.{dnsSuffix}
+    description: |
+      single participant+operator origin (P19-2b). oauth2-proxy / auth-policy
+      inject `X-Auth-Request-Email` here.
     variables:
-      ingressHost:
+      dnsSuffix:
         default: example.invalid
+
+tags:
+  - name: participant
+    description: reached by the portal shell's browser fetches, or by the collector
+  - name: operator
+    description: admin-only (ADMIN_EMAILS)
+  - name: internal
+    description: server-to-server; unreachable from a participant network path
+  - name: infra
+    description: probes, metrics, static assets, HTML shells
 
 paths:
   /healthz:
     get:
       summary: Liveness + readiness probe
       operationId: healthz
+      tags: [infra]
+      x-ctf-audience: infra
+      x-ctf-authz: none
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
       responses:
         "200":
           description: process alive, store opened, catalog loaded
           content:
             application/json:
-              schema:
-                type: object
-                required: [ok, challenges, db, solved_loaded]
-                properties:
-                  ok: { type: boolean, const: true }
-                  challenges:
-                    type: array
-                    items: { type: string }
-                    description: catalog ids (sorted)
-                  db:
-                    type: string
-                    description: path to SQLite file inside the pod
-                  solved_loaded:
-                    type: integer
-                    description: count of solves loaded from disk at startup
+              schema: { $ref: "#/components/schemas/Health" }
 
   /metrics:
     get:
       summary: Prometheus metrics exposition
       operationId: metrics
+      tags: [infra]
+      x-ctf-audience: infra
+      x-ctf-authz: none
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
       description: |
-        Standard Prometheus text format. Exposes scoreboard counters
-        (see below) plus the default Go runtime metrics.
+        Standard Prometheus text format, plus the default Go runtime metrics.
+        Series (internal/scoreboard/metrics/metrics.go owns the label sets):
 
-        Metric series:
           - `scoreboard_ingest_falco_events_received_total{outcome}`
-              outcome ∈ {accepted, ignored, decode_error, store_error}
+              outcome in {accepted, ignored, decode_error, store_error,
+                          taint_error}
+              `taint_error` (ADR-0003 A5) = event otherwise accepted but the
+              persistent evade-taint write failed; the request 500s.
           - `scoreboard_solves_total{challenge_id, kind}`
-              kind ∈ {trigger, evade}
+              kind in {trigger, evade, detect}
           - `scoreboard_api_submissions_total{challenge_id, outcome}`
-              outcome ∈ {solved, wrong_flag, not_evaded, unknown_challenge,
-                         not_evade, bad_request}
+              outcome in {solved, wrong_flag, not_evaded, not_exfiltrated,
+                          unknown_challenge, not_evade, not_detect,
+                          detect_invalid, detect_missed,
+                          detect_false_positive, bad_request, rate_limited}
+          - `scoreboard_http_request_duration_seconds{route, method, status}`
+              route = the Go 1.22 ServeMux pattern that matched.
       responses:
         "200":
           description: Prometheus exposition
           content:
             text/plain: {}
 
+  /:
+    get:
+      summary: Operator dashboard HTML shell (polls /api/state)
+      operationId: dashboard
+      tags: [infra, operator]
+      x-ctf-audience: operator
+      x-ctf-authz: admin
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
+      description: |
+        Admin-gated at the app layer as well as at ingress (P18-1
+        defense-in-depth): a non-admin identity — including a blank
+        `X-Auth-Request-Email`, or any identity when `ADMIN_EMAILS` is empty —
+        gets a 403 HTML stub instead of the shell.
+
+        `GET /` in Go 1.22+ matches every unrouted path, so this operation is
+        also the 404 for unknown paths.
+      responses:
+        "200":
+          description: dashboard HTML (admin)
+          content:
+            text/html: {}
+        "403":
+          description: caller is not an admin (HTML stub, not JSON)
+          content:
+            text/html: {}
+        "404":
+          description: served for any path other than "/" (catch-all)
+          content:
+            text/plain: {}
+
+  /portal:
+    get:
+      summary: Participant portal shell (Home / Story / Terminal / Me tabs)
+      operationId: portal
+      tags: [infra, participant]
+      x-ctf-audience: participant
+      x-ctf-authz: none
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
+      description: |
+        Static single-template shell (P23-1). Served to ANY authenticated
+        caller and deliberately NOT admin-gated: it embeds no per-user data.
+        The admin flag and the derived username are display hints only
+        (api.NewAdminGate / api.DeriveUsername); every pane's actual data fetch
+        is independently gated in the API handlers, so the shell cannot leak
+        another participant's state.
+
+        The Terminal tab's iframe src is built from `PORTAL_TTYD_SUFFIX`;
+        empty = a "not configured" placeholder instead of an iframe.
+      responses:
+        "200":
+          description: portal HTML
+          content:
+            text/html: {}
+        "500":
+          description: |
+            template render failure. `text/plain` (`http.Error`), NOT the JSON
+            Error schema — see the error-contract note in `info.description`.
+          content:
+            text/plain: {}
+
+  /vendor/cybercore.min.css:
+    get:
+      summary: Vendored cybercore-css stylesheet (self-hosted, never a CDN)
+      operationId: vendorCybercoreCSS
+      tags: [infra]
+      x-ctf-audience: participant
+      x-ctf-authz: none
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
+      description: |
+        P23-6. Embedded in the binary and served same-origin so the portal
+        never fetches a third-party asset (supply chain, P12). Immutable +
+        ETag. The path is pinned by internal/scoreboard/view/vendorassets.go
+        and linked from the portal template, so renaming it is a template +
+        spec change.
+      responses:
+        "200":
+          description: stylesheet
+          content:
+            text/css: {}
+        "304":
+          description: If-None-Match matched the embedded ETag
+
   /falco/events:
     post:
       summary: Receive a falcosidekick event
       operationId: receiveFalcoEvent
+      tags: [internal]
+      x-ctf-audience: internal
+      x-ctf-authz: none
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: per-IP 100 req/s burst 200 (falcosidekick batches)
       description: |
-        Idempotent ingest endpoint. Events outside the
-        `ctf-<username>/workspace` ns+pod pair are silently ignored.
+        Ingest endpoint. Isolation is NetworkPolicy's job (only falcosidekick
+        reaches it); the handler adds no auth but re-checks the event shape.
 
-        For trigger-type challenges, a matching rule fire records a
-        solve. The visible `at` timestamp uses the scoreboard receipt
-        time (not Falco's event time) — Falco can deliver buffered
-        events with stale timestamps and we don't want that to
-        retro-date the dashboard.
+        Events outside the `ctf-<username>` / `workspace` ns+pod pair, events
+        whose `container.image.repository` does not contain the challenge image
+        substring, and events explicitly at Debug/Informational/Info are
+        answered 200 `{"ignored": true, ...}`.
 
-        For evade-type challenges, a matching rule fire taints the
-        participant's CURRENT mission ONLY (ADR-0003 attempt scope) if it
-        forbids this rule — a persistent flag with no time window at all
-        (not a lookback; see `POST /api/users/{user}/challenges/{cid}/reset-dirty`
-        below, the only way back to clean). The Falco-side `time` field
-        never drives any solve or taint decision — only server receipt
-        time does.
+        For trigger-type challenges a matching rule fire records a solve. The
+        visible `at` uses the scoreboard's RECEIPT time, never Falco's `time`
+        (buffered events would retro-date the board, and a forged `time` must
+        not be able to bury a fire).
+
+        For evade-type challenges a forbidden rule taints the participant's
+        CURRENT mission only (ADR-0003 attempt scope) — a persistent flag with
+        no time window; `POST /api/users/{user}/challenges/{cid}/reset-dirty`
+        is the only way back to clean.
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: "#/components/schemas/FalcoEvent"
+            schema: { $ref: "#/components/schemas/FalcoEvent" }
       responses:
         "200":
-          description: Event accepted or ignored
+          description: event accepted, or ignored by the routing filter
           content:
             application/json:
               schema:
                 oneOf:
-                  - type: object
-                    properties:
-                      accepted: { type: boolean, const: true }
-                      user: { type: string }
-                      rule: { type: string }
-                  - type: object
-                    properties:
-                      ignored: { type: boolean, const: true }
-                      reason: { type: string }
+                  - $ref: "#/components/schemas/IngestAccepted"
+                  - $ref: "#/components/schemas/IngestIgnored"
         "400":
           description: malformed JSON body
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: |
+            rate limited. `text/plain` (`http.Error` in
+            internal/scoreboard/ratelimit), NOT the JSON Error schema.
+          content:
+            text/plain: {}
+        "500":
+          description: rule-fire persistence failed, or the evade taint write failed (fail-closed)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/challenges/{cid}/submit:
     post:
       summary: Submit a flag for an evade-type challenge
       operationId: submitFlag
+      tags: [participant]
+      x-ctf-audience: participant
+      x-ctf-authz: claimed-identity
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: true
+      x-ctf-rate-limit: per-IP 1 req/s burst 10 (shared with submit-detect)
+      description: |
+        TWO callers: the portal's browser fetch AND the collector's verbatim
+        forward of the participant's `curl` (internal/collector). Identity is
+        CLAIMED in the body and never proven — the collector path carries no
+        auth header at all.
+
+        NOT origin-guarded, deliberately (`x-ctf-origin-guard: false`): under
+        egress lockdown the collector-forwarded curl is the PRIMARY submission
+        path and sends no Origin/Referer, so a fail-closed gate here would 403
+        every legitimate submission. The CSRF this would mitigate (riding a
+        session to credit a flag the attacker chose) has no destructive blast
+        radius comparable to `/api/admin/reset`. Accepted residual risk —
+        revisit only if submit gains a destructive side effect.
       parameters:
-        - in: path
-          name: cid
-          required: true
-          schema: { type: string }
-          description: challenge id (e.g. `02-evade-shadow-read`)
+        - $ref: "#/components/parameters/Cid"
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              required: [user, flag]
-              properties:
-                user: { type: string }
-                flag: { type: string }
+            schema: { $ref: "#/components/schemas/SubmitFlagRequest" }
       responses:
         "200":
           description: |
-            Submission processed. Inspect `correct` / `evaded` / `solved`
-            to determine the outcome.
+            Submission graded. Branch on `correct` / `evaded` / `exfiltrated` /
+            `solved`; `reason` is display prose. Four distinguishable outcomes:
+            wrong flag, forbidden rule fired (persistently dirty), exfil still
+            required, solved.
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  correct: { type: boolean }
-                  evaded: { type: boolean }
-                  solved: { type: boolean }
-                  user: { type: string }
-                  reason: { type: string }
+              schema: { $ref: "#/components/schemas/SubmitFlagVerdict" }
         "400":
-          description: not an evade challenge, or missing `user`
+          description: "`{cid}` is not an evade challenge, malformed body, or missing `user`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "404":
           description: unknown challenge id
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: rate limited (`text/plain`)
+          content:
+            text/plain: {}
+        "500":
+          description: could not record the solve (fail-closed — never a silent empty 200)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/challenges/{cid}/submit-detect:
     post:
       summary: Submit a Falco condition for a detect-type challenge
       operationId: submitDetect
+      tags: [participant]
+      x-ctf-audience: participant
+      x-ctf-authz: self-or-admin-write
+      x-ctf-origin-guard: true
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: per-IP 1 req/s burst 10 + global in-flight grader cap (5)
       description: |
-        Grade a participant-authored Falco `condition:` for a detect challenge.
-        The condition is wrapped into a fixed rule and replayed against the
-        mission's evasion + benign captures. `pass = fires on evasion AND no
-        fire on benign`. The reference condition is NEVER returned.
+        Grade a participant-authored Falco `condition:`. It is wrapped into a
+        fixed rule and replayed against the mission's evasion + benign
+        captures; `pass = fires on evasion AND no fire on benign`. The reference
+        condition and the capture contents are NEVER returned — only fire
+        counts.
 
-        Trust model mirrors POST /api/challenges/{cid}/submit: identity is
-        claimed in the body, rate-limited on the same per-IP bucket, and (on an
-        auth-proxied host) self-scoped — a login may only grade as its OWN user.
-        A global in-flight grader cap returns 429 when exceeded (no queueing).
+        ONE caller (the portal's Grade button), so the origin guard is safe to
+        apply here: the collector does not forward this route. On an
+        auth-proxied host the claimed body `user` must be the proven identity
+        (or an admin). Past the global in-flight cap the request is REJECTED
+        with 429, never queued (a per-submission grader Job is the net-new DoS
+        lever). With no runner configured the route answers 503 (feature off),
+        not 404/500.
       parameters:
-        - in: path
-          name: cid
-          required: true
-          schema: { type: string }
-          description: detect challenge id (e.g. `03-stealth-read-detect`)
+        - $ref: "#/components/parameters/Cid"
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              required: [user, condition]
-              properties:
-                user: { type: string }
-                condition:
-                  type: string
-                  description: the Falco condition to grade (≤4 KiB)
+            schema: { $ref: "#/components/schemas/SubmitDetectRequest" }
       responses:
         "200":
-          description: |
-            Submission graded. Inspect `status` (invalid | missed |
-            false-positive | solved) and the `evasion_fires` / `benign_fires`
-            feedback counts.
+          description: graded — branch on `status`, use the fire counts as feedback
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  status: { type: string, enum: [invalid, missed, false-positive, solved] }
-                  solved: { type: boolean }
-                  evasion_fires: { type: integer }
-                  benign_fires: { type: integer }
-                  user: { type: string }
-                  reason: { type: string }
+              schema: { $ref: "#/components/schemas/SubmitDetectVerdict" }
         "400":
-          description: not a detect challenge, missing `user`/`condition`, or condition too large
+          description: not a detect challenge, missing/invalid `user`, missing `condition`, or condition too large
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: origin guard denied, or caller is neither `{user}` nor an admin
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "404":
           description: unknown challenge id
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "429":
-          description: too many in-flight grader jobs; retry shortly (no queueing)
+          description: |
+            per-IP rate limit (`text/plain`) OR the global in-flight grader cap
+            (JSON Error) — two different writers, two different media types.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+            text/plain: {}
+        "500":
+          description: grader infra error (fail-closed — never a silent solve)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: detect grading is not enabled (no runner wired)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /internal/exfil/{cid}:
+    post:
+      summary: Record a collector exfil receipt (collector-only sink)
+      operationId: recordExfil
+      tags: [internal]
+      x-ctf-audience: internal
+      x-ctf-authz: claimed-identity
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: true
+      x-ctf-rate-limit: none (the limit lives on the collector front)
+      description: |
+        **Not participant-reachable.** The participant-facing contract is
+        `POST /api/challenges/{cid}/exfil` on the COLLECTOR
+        (docs/openapi-collector.yaml), which rewrites the path to this sink and
+        forwards the body unchanged. Isolation is NetworkPolicy (scoreboard
+        ingress admits the collector, not ctf-user); this handler adds no auth
+        of its own and identity is claimed.
+
+        Documented here — rather than omitted to avoid being mistaken for a
+        participant entry point — because it is a two-service contract, and
+        because an undocumented route forces the parity gate to carry an
+        exclusion list (ADR-0005 rejects exclusion lists: they are how this
+        document decayed). Audience is carried by `x-ctf-audience: internal`,
+        not by hoping readers infer it from the path.
+
+        Recording a wrong value is harmless: the flag is matched at submit time
+        (`RequireExfil` via `HasExfil`), so a bad receipt simply fails the
+        eventual submit.
+      parameters:
+        - $ref: "#/components/parameters/Cid"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExfilRequest" }
+      responses:
+        "200":
+          description: receipt recorded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExfilReceipt" }
+        "400":
+          description: "`{cid}` does not accept exfil, malformed body, or missing `user`/`flag`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: unknown challenge id
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: could not record the receipt
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/users/{user}/me:
+    get:
+      summary: Participant self-service progress projection
+      operationId: getUserMe
+      tags: [participant]
+      x-ctf-audience: participant
+      x-ctf-authz: self-or-admin
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
+      description: |
+        Self-scoped read (P18): the caller may only read their OWN progress.
+        Identity comes from `X-Auth-Request-Email`; a missing or blank header is
+        DENIED (403, fail-closed) — the `{user}` path parameter is never trusted
+        on its own. Admins (`ADMIN_EMAILS`) may read any user.
+
+        `rank` / `score` are computed over the WHOLE field
+        (`computeLeaderboard`) but only the caller's own row is serialized
+        (P23-ME-1, CEO decision 案① 完全プライベート). No other participant's
+        rank, score or name appears in this response.
+
+        Not fronted by the collector (an anonymous client-chosen `{user}` read
+        through the collector would be a self-scope bypass), which is why the
+        collector's mux default-denies it -> 404 there.
+      parameters:
+        - $ref: "#/components/parameters/User"
+      responses:
+        "200":
+          description: the caller's own progress
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Me" }
+        "400":
+          description: invalid `{user}` slug (or a blank segment — `/api/users//me`)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: no proven identity, or caller is neither `{user}` nor an admin
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/users/{user}/journey:
+    get:
+      summary: Participant mission-progression projection (the portal's main view)
+      operationId: getUserJourney
+      tags: [participant]
+      x-ctf-audience: participant
+      x-ctf-authz: self-or-admin
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
+      description: |
+        The portal's Story pane polls this every 2s. Returns the ordered mission
+        map (solved / current / locked) plus ONE mission's `detail` block.
+        Display-only: nothing here decides a solve (trigger challenges
+        auto-solve via Falco ingest; evade solves come from submit).
+
+        `current` = the first unsolved mission in the progression order,
+        resolved by `scoring.CurrentMission` — the SAME function the Grader's
+        attempt-scope taint gate uses (ADR-0003 A1: one definition of
+        "current").
+
+        Free mission browsing (CEO decision, P23 Story-as-docs): `?mission=`
+        selects ANY mission present in `missions[]` — solved, current or
+        locked — because brief / steps / Falco rule excerpt are static content
+        identical for every viewer. An unknown value falls back to `current`
+        rather than erroring (display convenience, not a contract clients may
+        depend on). The ONE thing gated to the unlocked prefix is hints: for a
+        locked mission the handler reports `lockedCount == total`, an empty
+        `opened`, `nextIndex == 0` and ignores the store's opened set entirely;
+        step tick state is likewise suppressed.
+
+        Authorization is identical to `/api/users/{user}/me` (self-or-admin,
+        fail-closed on a missing header).
+      parameters:
+        - $ref: "#/components/parameters/User"
+        - in: query
+          name: mission
+          required: false
+          schema: { type: string }
+          description: |
+            mission id whose `detail` to return instead of `current`. Any id in
+            `missions[]` is valid; unknown/blank values fall back to `current`.
+      responses:
+        "200":
+          description: the caller's own journey projection
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Journey" }
+        "400":
+          description: invalid `{user}` slug
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: no proven identity, or caller is neither `{user}` nor an admin
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/users/{user}/challenges/{cid}/steps/{idx}/check:
+    post:
+      summary: Tick or clear one journey step (self-check)
+      operationId: setStepCheck
+      tags: [participant]
+      x-ctf-audience: participant
+      x-ctf-authz: self-or-admin-write
+      x-ctf-origin-guard: true
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: per-IP 1 req/s burst 10
+      description: |
+        Purely presentational: journey `steps` are an info-only checklist with
+        no auto-detection, so a tick never affects a solve verdict — it lets a
+        participant track progress across reloads.
+
+        Origin-guarded: reached ONLY from the portal's browser fetch and NOT in
+        the collector's forward allowlist, so there is no server-to-server
+        caller a fail-closed gate would break.
+      parameters:
+        - $ref: "#/components/parameters/User"
+        - $ref: "#/components/parameters/Cid"
+        - in: path
+          name: idx
+          required: true
+          schema: { type: integer, minimum: 0 }
+          description: 0-based step index, bounded by the mission's step count
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StepCheckRequest" }
+      responses:
+        "200":
+          description: state recorded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StepCheckResult" }
+        "400":
+          description: invalid user, malformed body, or step index out of range
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: origin guard denied, or caller is neither `{user}` nor an admin
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: unknown challenge id, or no journey content for it
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: rate limited (`text/plain`)
+          content:
+            text/plain: {}
+        "500":
+          description: could not record the step check
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/users/{user}/challenges/{cid}/hints/{idx}:
+    post:
+      summary: Reveal one progressive hint (in order, idempotent)
+      operationId: openHint
+      tags: [participant]
+      x-ctf-audience: participant
+      x-ctf-authz: self-or-admin-write
+      x-ctf-origin-guard: true
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: per-IP 1 req/s burst 10
+      description: |
+        Hints open in order: opening `idx` N requires N-1 already open (409
+        otherwise), so participants approach the answer progressively instead of
+        jumping to the last hint. Idempotent — re-opening returns the text again
+        with `newly: false`.
+
+        Revealing costs points (the per-index schedule lives in the scoring
+        layer; `Journey.detail.hints.penalty` prices the NEXT reveal). Hint copy
+        comes from `journey.yaml` and by convention carries no flag values
+        (conventions I10).
+
+        Origin-guarded for the same reason as steps/check, plus a second one:
+        the 409/200 distinction is a cross-user oracle if an unauthenticated
+        caller can drive it.
+      parameters:
+        - $ref: "#/components/parameters/User"
+        - $ref: "#/components/parameters/Cid"
+        - in: path
+          name: idx
+          required: true
+          schema: { type: integer, minimum: 1 }
+          description: 1-based hint index, bounded by the mission's hint count
+      responses:
+        "200":
+          description: hint revealed (or already open)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OpenHintResult" }
+        "400":
+          description: invalid user or hint index out of range
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: origin guard denied, or caller is neither `{user}` nor an admin
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: unknown challenge id, or the mission has no hints
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: previous hint not open yet (in-order reveal)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: rate limited (`text/plain`)
+          content:
+            text/plain: {}
+        "500":
+          description: could not record the hint view
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/users/{user}/challenges/{cid}/reset-dirty:
     post:
       summary: Clear the persistent evade forbidden-rule taint for one (user, challenge) pair
       operationId: resetDirty
+      tags: [participant]
+      x-ctf-audience: participant
+      x-ctf-authz: self-or-admin-write
+      x-ctf-origin-guard: true
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: per-IP 1 req/s burst 10
       description: |
-        The ONLY way an evade challenge returns to clean once a forbidden
-        Falco rule has fired while it was the participant's current mission
-        (ADR-0003 attempt scope) — there is no time-based path; waiting never
-        clears it. Restarts the WHOLE attempt: also deletes the SAME pair's
-        collector exfil receipt if any (ADR-0003 A2-2, CEO enforce decision,
-        2026-08-18) — a `requireExfil` challenge needs a brand-new exfil
-        delivery after a reset, not just a clean taint, so this closes the
-        "fire a forbidden rule → reset → the sweeper auto-solves off the
-        stale receipt" exploit path.
+        The ONLY way an evade challenge returns to clean once a forbidden Falco
+        rule fired while it was the participant's current mission (ADR-0003
+        attempt scope) — there is no time-based path; waiting never clears it.
+        Restarts the WHOLE attempt: also deletes the SAME pair's collector exfil
+        receipt (ADR-0003 A2-2, CEO enforce decision 2026-08-18), so "fire a
+        forbidden rule -> reset -> auto-solve off the stale receipt" is not a
+        shortcut back to solved.
 
-        Idempotent: resetting an already-clean pair (no taint, no exfil
-        receipt) is a harmless no-op. Rejects a challenge that is not
-        evade-type (a taint can only ever exist for one).
+        Idempotent (resetting a clean pair is a no-op). Rejects a non-evade
+        challenge, because a taint can only ever exist for an evade one.
 
-        Authorization: self-or-admin over the auth-proxied participant host
-        (`X-Auth-Request-Email` must match `{user}` by prefix, or be in
-        `ADMIN_EMAILS`). This route is mounted behind the origin-guard
-        middleware (`internal/scoreboard/originguard`), which 403s any
-        request carrying neither an Origin nor a Referer header — exactly
-        the shape a header-less cluster-internal caller (e.g. the collector,
-        or a workspace pod) would send — BEFORE the self-or-admin check ever
-        runs. In practice this means the legacy claimed-identity model that
-        some other `/api/users/{user}/*` writes fall back to for header-less
-        callers is unreachable here. This is deliberate, not an oversight:
-        A2-2 (CEO enforce decision, 2026-08-18) turned this endpoint into one
-        that can delete ANOTHER participant's collector exfil receipt, and
-        the claimed-identity model carries no proof {user} in the path
-        matches the caller. Removing origin-guard from this route, or adding
-        it to the collector's forwarding allowlist
-        (`internal/collector/collector.go`), would open an unauthenticated
-        cross-user destructive-action path. Do not do either.
+        **Do not remove the origin guard from this route and do not add it to
+        the collector's forward allowlist.** A2-2 made this endpoint able to
+        delete another participant's exfil receipt, and the header-less
+        claimed-identity fallback in the write gate carries no proof the caller
+        IS `{user}`. The guard 403s exactly the shape a header-less
+        cluster-internal caller sends, BEFORE the self-or-admin check runs —
+        that is what keeps A2-2's destructive reset from becoming an
+        unauthenticated cross-user action (app#124 5x, R1 C3).
+
+        Reachability consequence for participant copy: a workspace `curl` of
+        this path CANNOT work. Participant-facing text must point at the
+        portal's "このミッションをやり直す" button, never at this URL (app#125).
       parameters:
-        - in: path
-          name: user
-          required: true
-          schema: { type: string }
-        - in: path
-          name: cid
-          required: true
-          schema: { type: string }
-          description: evade challenge id (e.g. `03-stealth-read`)
+        - $ref: "#/components/parameters/User"
+        - $ref: "#/components/parameters/Cid"
       responses:
         "200":
           description: taint (and exfil receipt, if any) cleared
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  ok: { type: boolean, const: true }
-                  user: { type: string }
-                  cid: { type: string }
-                  dirty: { type: boolean, const: false }
+              schema: { $ref: "#/components/schemas/ResetDirtyResult" }
         "400":
           description: invalid user, or `{cid}` is not an evade challenge
-        "403":
-          description: caller is neither `{user}` nor an admin (auth-proxied host only)
-        "404":
-          description: unknown challenge id
-
-  /api/admin/reset:
-    post:
-      summary: Reset the scoreboard (clear solves + event counters)
-      operationId: adminReset
-      description: |
-        Admin-only. Wipes all solves and in-memory event/rule-fire counters,
-        returning the board to empty. Display names are preserved. Used to clear
-        a demo/test run before the real event.
-
-        Authorization: the caller's `X-Auth-Request-Email` (propagated by
-        auth-policy on the admin-gated scoreboard host) must be in the
-        scoreboard's `ADMIN_EMAILS`. Requests without that header — i.e. over the
-        cluster-internal Service from a workspace/falco pod — are rejected. Empty
-        allowlist denies everyone (fail-closed).
-      responses:
-        "200":
-          description: reset done
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  ok: { type: boolean, const: true }
-                  cleared_solves: { type: integer }
+              schema: { $ref: "#/components/schemas/Error" }
         "403":
-          description: caller is not an admin (or no auth header present)
+          description: origin guard denied, or caller is neither `{user}` nor an admin
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: unknown challenge id
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: rate limited (`text/plain`)
+          content:
+            text/plain: {}
+        "500":
+          description: could not reset
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
-  /api/admin/users/{user}/display-name:
+  /api/users/{user}/display-name:
     post:
-      summary: Set or overwrite a user's scoreboard display name (admin)
-      operationId: adminSetDisplayName
+      summary: Set the caller's own scoreboard display name
+      operationId: setDisplayName
+      tags: [participant]
+      x-ctf-audience: participant
+      x-ctf-authz: self-or-admin-write
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: true
+      x-ctf-rate-limit: per-IP 1 req / 5s burst 5
       description: |
-        Operator path to set/correct ANY user's leaderboard name (admin-gated,
-        same auth as /api/admin/reset). Last-write-wins. Participants set/change
-        their OWN name via the (open, workspace-reachable) POST
-        /api/users/{user}/display-name. Both upsert; default is the username.
+        Cosmetic only — identity stays anchored to the auth-derived slug.
+        Upsert; re-runnable.
+
+        NOT origin-guarded (`x-ctf-origin-guard: false`) because its ONLY caller
+        is the collector's verbatim forward of the participant's `curl` (no
+        browser template in this repo fetches this path; the portal's rename
+        button uses the ADMIN route). A fail-closed gate here would 403 every
+        legitimate call while protecting no browser-CSRF surface.
+
+        Dual-path authorization keyed off the PRESENCE of
+        `X-Auth-Request-Email`: header present (auth-proxied host) -> full
+        self-or-admin; header absent (cluster-internal / collector) -> legacy
+        claimed-identity model, where NetworkPolicy is the isolation control.
       parameters:
-        - in: path
-          name: user
-          required: true
-          schema: { type: string }
+        - $ref: "#/components/parameters/User"
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              required: [name]
-              properties:
-                name: { type: string, description: "1..32 runes, no <>&\"' or control chars" }
+            schema: { $ref: "#/components/schemas/DisplayNameRequest" }
       responses:
         "200":
           description: name set
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  ok: { type: boolean, const: true }
-                  user: { type: string }
-                  display_name: { type: string }
+              schema: { $ref: "#/components/schemas/DisplayNameResult" }
         "400":
-          description: invalid user or name
+          description: invalid user, or invalid name (empty, >32 runes, or forbidden characters)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "403":
-          description: caller is not an admin
+          description: caller is neither `{user}` nor an admin (auth-proxied host only)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: rate limited (`text/plain`)
+          content:
+            text/plain: {}
+        "500":
+          description: could not store the name
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/hints:
+    get:
+      summary: Operator-released hint index (public read)
+      operationId: getReleasedHints
+      tags: [participant]
+      x-ctf-audience: participant
+      x-ctf-authz: none
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
+      description: |
+        Which mission hints the operator has released, as
+        `{mission: [hintIdx, ...]}`. Deliberately unauthenticated: it carries no
+        per-user data and no hint TEXT — only indices — and it replaced a
+        client-side timer that could not be coordinated fairly. Distinct
+        mechanism from the per-user progressive reveal
+        (`POST /api/users/{user}/challenges/{cid}/hints/{idx}`), which is what
+        returns text and costs points.
+      responses:
+        "200":
+          description: released hint indices per mission
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReleasedHints" }
 
   /api/state:
     get:
-      summary: Full dashboard JSON
+      summary: Full-event dashboard JSON (admin only)
       operationId: getState
+      tags: [operator]
+      x-ctf-audience: operator
+      x-ctf-authz: admin
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
+      description: |
+        The operator dashboard's data source: the whole field's leaderboard,
+        per-challenge solver lists and event counters.
+
+        Admin-only at the app layer as well as at ingress (P18-1): a participant
+        must use the self-scoped `/api/users/{user}/{me,journey}` reads. Empty
+        `ADMIN_EMAILS` denies everyone (fail-closed). Never fetch this from a
+        participant pane.
       responses:
         "200":
-          description: Full state snapshot
+          description: full state snapshot
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/State"
+              schema: { $ref: "#/components/schemas/State" }
+        "403":
+          description: caller is not an admin (or no auth header present)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
-  /:
-    get:
-      summary: HTML dashboard (live-updated via polling /api/state)
-      operationId: dashboard
+  /api/admin/reset:
+    post:
+      summary: Reset the scoreboard (clear solves + event counters)
+      operationId: adminReset
+      tags: [operator]
+      x-ctf-audience: operator
+      x-ctf-authz: admin
+      x-ctf-origin-guard: true
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
+      description: |
+        Wipes all solves and the in-memory event / rule-fire counters. Display
+        names are preserved. Used to clear a demo run before the real event.
+
+        The most destructive route in this service — it is the origin guard's
+        actual target. Admin only (`ADMIN_EMAILS`, propagated by auth-policy on
+        the admin-gated host); requests over the cluster-internal Service carry
+        no such header and are rejected. Empty allowlist denies everyone.
       responses:
         "200":
-          description: dashboard HTML
+          description: reset done
           content:
-            text/html: {}
-        "404":
-          description: served when path != "/"
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminResetResult" }
+        "403":
+          description: origin guard denied, or caller is not an admin
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: reset failed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/admin/users/{user}/display-name:
+    post:
+      summary: Set or overwrite ANY user's scoreboard display name (admin)
+      operationId: adminSetDisplayName
+      tags: [operator]
+      x-ctf-audience: operator
+      x-ctf-authz: admin
+      x-ctf-origin-guard: true
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
+      description: |
+        Operator path to set/correct any user's leaderboard name
+        (last-write-wins). Participants use the collector-fronted
+        `POST /api/users/{user}/display-name`. Both upsert; the default name is
+        the username. This is the route the operator dashboard's rename button
+        calls, which is why it stays origin-guarded while the participant one
+        does not.
+      parameters:
+        - $ref: "#/components/parameters/User"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DisplayNameRequest" }
+      responses:
+        "200":
+          description: name set
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DisplayNameResult" }
+        "400":
+          description: invalid user or invalid name
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: origin guard denied, or caller is not an admin
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: could not store the name
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/admin/hints:
+    post:
+      summary: Release (or revoke) one mission hint to all participants
+      operationId: releaseHint
+      tags: [operator]
+      x-ctf-audience: operator
+      x-ctf-authz: admin
+      x-ctf-origin-guard: true
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
+      description: |
+        Flips a mission hint's released state for the whole field; participants
+        read the result from `GET /api/hints`. Admin-only, origin-guarded (the
+        operator dashboard is its only caller).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReleaseHintRequest" }
+      responses:
+        "200":
+          description: release state updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReleaseHintResult" }
+        "400":
+          description: malformed body, invalid mission slug, or hint index outside 1..20
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: origin guard denied, or caller is not an admin
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: could not persist the release state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
 components:
+  parameters:
+    User:
+      in: path
+      name: user
+      required: true
+      schema:
+        type: string
+        pattern: "^[a-z0-9][a-z0-9-]{0,62}$"
+      description: |
+        auth-derived username slug — the same shape auth-policy enforces on
+        `/check?host=`, so the two boundaries agree (conventions I8). A blank
+        segment (`/api/users//...`) is answered 400 before routing, never
+        silently redirected.
+    Cid:
+      in: path
+      name: cid
+      required: true
+      schema: { type: string }
+      description: challenge id / catalog key (e.g. `03-stealth-read`)
+
   schemas:
+    Error:
+      type: object
+      description: |
+        The ONLY body shape for a non-2xx JSON response. `error` is meant to be
+        a stable, operator-facing message; the implementation still leaks
+        decoder / SQLite driver text on some paths (Issue #113) — that is a
+        defect against this schema, not an alternative contract.
+      required: [error]
+      properties:
+        error: { type: string }
+
+    Health:
+      type: object
+      required: [ok, challenges, db, solved_loaded]
+      properties:
+        ok: { type: boolean, const: true }
+        challenges:
+          type: array
+          items: { type: string }
+          description: catalog ids (sorted)
+        db:
+          type: string
+          description: path to the SQLite file inside the pod
+        solved_loaded:
+          type: integer
+          description: solves loaded from disk at startup
+
     FalcoEvent:
       type: object
-      description: falcosidekick customWebhook payload (subset we consume)
+      description: falcosidekick customWebhook payload (the subset we consume)
       required: [rule, output_fields]
       properties:
         rule:
@@ -381,38 +1087,584 @@ components:
         priority:
           type: string
           description: |
-            Falco priority (e.g. Notice, Warning, Critical). Optional.
-            Events explicitly at Debug/Informational/Info are ignored;
+            Falco priority (e.g. Notice, Warning, Critical). Optional. Events
+            explicitly at Debug/Informational/Info are ignored; a
             missing/unknown priority passes through for compatibility.
         time:
           type: string
           format: date-time
           description: |
-            Falco-side detection time. Optional; retained as a log field
-            only — the rule-fire window uses server receipt time, not this.
+            Falco-side detection time. Optional; retained as a LOG FIELD only —
+            no solve, taint or window decision ever reads it (a forged value
+            must not be able to bury a forbidden rule fire).
         output_fields:
           type: object
           description: |
-            Arbitrary Falco output fields map. The values at
-            `k8s.ns.name` (must be `ctf-<username>`) and
-            `k8s.pod.name` (must be `workspace`) drive the routing filter;
-            `container.image.repository` must contain the challenge image
-            substring. Missing or non-matching events are silently ignored.
+            Arbitrary Falco output fields map. `k8s.ns.name` (must be
+            `ctf-<username>`), `k8s.pod.name` (must be `workspace`) and
+            `container.image.repository` (must contain `falco-ctf/challenge` or
+            `falco-ctf-challenge`) drive the routing filter. Non-matching events
+            are answered 200 ignored.
           additionalProperties: {}
           properties:
-            k8s.ns.name:
-              type: string
-            k8s.pod.name:
-              type: string
-            container.image.repository:
-              type: string
+            k8s.ns.name: { type: string }
+            k8s.pod.name: { type: string }
+            container.image.repository: { type: string }
+
+    IngestAccepted:
+      type: object
+      required: [accepted, user, rule]
+      properties:
+        accepted: { type: boolean, const: true }
+        user: { type: string }
+        rule: { type: string }
+
+    IngestIgnored:
+      type: object
+      required: [ignored, reason]
+      properties:
+        ignored: { type: boolean, const: true }
+        reason:
+          type: string
+          enum:
+            - not a ctf workspace event
+            - not a challenge container
+            - below minimum priority
+
+    SubmitFlagRequest:
+      type: object
+      required: [user, flag]
+      properties:
+        user:
+          type: string
+          description: CLAIMED identity — never proven on this route
+        flag: { type: string }
+
+    SubmitFlagVerdict:
+      type: object
+      description: |
+        200 verdict for `POST /api/challenges/{cid}/submit`. Which keys appear
+        depends on how far the submission got, so only `correct` is always
+        present:
+
+          wrong flag       -> correct=false, reason
+          forbidden fired  -> correct=true, evaded=false, reason
+          exfil required   -> correct=true, evaded=true, exfiltrated=false, reason
+          solved           -> correct=true, evaded=true, solved=true, user,
+                              display_name
+
+        `reason` is display prose (currently server-side Japanese copy; the
+        ownership of that copy is an open question — Issue #113). Clients MUST
+        branch on the booleans only.
+      required: [correct]
+      properties:
+        correct: { type: boolean }
+        evaded: { type: boolean }
+        exfiltrated: { type: boolean }
+        solved: { type: boolean, const: true }
+        user: { type: string }
+        display_name: { type: string }
+        reason: { type: string }
+
+    SubmitDetectRequest:
+      type: object
+      required: [user, condition]
+      properties:
+        user: { type: string }
+        condition:
+          type: string
+          description: the Falco condition to grade (<= 4 KiB)
+
+    SubmitDetectVerdict:
+      type: object
+      description: |
+        200 verdict for `POST /api/challenges/{cid}/submit-detect`. `status` is
+        the branch key; `user` / `display_name` appear only on `solved`, and the
+        fire counts are absent on `invalid` (the condition never compiled).
+        `reason` appears on `invalid`/`missed`/`false-positive` but NOT on
+        `solved` (the solved branch has nothing to explain).
+      required: [status, solved]
+      properties:
+        status:
+          type: string
+          enum: [invalid, missed, false-positive, solved]
+        solved: { type: boolean }
+        evasion_fires: { type: integer }
+        benign_fires: { type: integer }
+        user: { type: string }
+        display_name: { type: string }
+        reason: { type: string }
+
+    ExfilRequest:
+      type: object
+      required: [user, flag]
+      properties:
+        user: { type: string }
+        flag: { type: string }
+
+    ExfilReceipt:
+      type: object
+      required: [received, user, note]
+      properties:
+        received: { type: boolean, const: true }
+        user: { type: string }
+        note:
+          type: string
+          description: display prose — do not parse
+
+    StepCheckRequest:
+      type: object
+      required: [checked]
+      properties:
+        checked: { type: boolean }
+
+    StepCheckResult:
+      type: object
+      required: [ok, user, cid, idx, checked]
+      properties:
+        ok: { type: boolean, const: true }
+        user: { type: string }
+        cid: { type: string }
+        idx: { type: integer }
+        checked: { type: boolean }
+
+    OpenHintResult:
+      type: object
+      required: [ok, user, cid, idx, hint, total, newly]
+      properties:
+        ok: { type: boolean, const: true }
+        user: { type: string }
+        cid: { type: string }
+        idx: { type: integer, description: 1-based }
+        hint: { type: string, description: hint copy from journey.yaml }
+        total: { type: integer, description: hint count for this mission }
+        newly:
+          type: boolean
+          description: false when the hint was already open (idempotent re-open)
+
+    ResetDirtyResult:
+      type: object
+      required: [ok, user, cid, dirty]
+      properties:
+        ok: { type: boolean, const: true }
+        user: { type: string }
+        cid: { type: string }
+        dirty: { type: boolean, const: false }
+
+    DisplayNameRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: "1..32 runes after trimming; no <>&\"' and no control characters (UI / shell safety)"
+
+    DisplayNameResult:
+      type: object
+      required: [ok, user, display_name]
+      properties:
+        ok: { type: boolean, const: true }
+        user: { type: string }
+        display_name: { type: string }
+
+    ReleasedHints:
+      type: object
+      required: [released]
+      properties:
+        released:
+          type: object
+          description: mission slug -> released hint indices (1-based, ascending)
+          additionalProperties:
+            type: array
+            items: { type: integer }
+
+    ReleaseHintRequest:
+      type: object
+      required: [mission, hint, released]
+      properties:
+        mission:
+          type: string
+          pattern: "^[0-9]{2}-[a-z0-9-]{1,60}$"
+          description: mission directory slug (e.g. `01-initial-recon`)
+        hint: { type: integer, minimum: 1, maximum: 20 }
+        released: { type: boolean }
+
+    ReleaseHintResult:
+      type: object
+      required: [ok, mission, hint, released]
+      properties:
+        ok: { type: boolean, const: true }
+        mission: { type: string }
+        hint: { type: integer }
+        released: { type: boolean }
+
+    AdminResetResult:
+      type: object
+      required: [ok, cleared_solves]
+      properties:
+        ok: { type: boolean, const: true }
+        cleared_solves: { type: integer }
+
+    RuleFire:
+      type: object
+      required: [rule, at]
+      properties:
+        rule: { type: string }
+        at:
+          type: number
+          description: unix seconds as a FLOAT (not RFC3339 — this feed differs from every other `at`)
+
+    SolveEntry:
+      type: object
+      required: [challenge, at]
+      properties:
+        challenge: { type: string }
+        at: { type: string, format: date-time }
+
+    Me:
+      type: object
+      description: |
+        `GET /api/users/{user}/me`. Self-scoped: `rank`/`score` are the caller's
+        OWN row out of a field-wide computation — no other participant's data is
+        serialized (P23-ME-1).
+      required:
+        [user, display_name, solved, solved_count, total_challenges,
+         next_unsolved, recent_rule_fires, events, score, rank, hint_penalty, now]
+      properties:
+        user: { type: string }
+        display_name:
+          type: string
+          description: falls back to `user` when unset
+        solved:
+          type: array
+          description: this user's solves in solve order, filtered to catalog membership
+          items: { $ref: "#/components/schemas/SolveEntry" }
+        solved_count: { type: integer }
+        total_challenges: { type: integer }
+        next_unsolved:
+          type: string
+          nullable: true
+          description: |
+            next unsolved challenge id by catalog order. **null** when
+            everything is solved (the key is always present).
+        recent_rule_fires:
+          type: array
+          description: rule fires for this user in the last 60s, in arrival order
+          items: { $ref: "#/components/schemas/RuleFire" }
+        events:
+          type: integer
+          description: total Falco events attributed to this user
+        score:
+          type: integer
+          description: Grader arithmetic (base award per solve minus hint penalties, clamped at 0)
+        rank:
+          type: integer
+          description: 1-based; 0 means "no rank yet" (zero solves) and renders as "-"
+        hint_penalty:
+          type: integer
+          description: |
+            representative figure = the cost of revealing HINT1. The portal uses
+            the per-mission `Journey.detail.hints.penalty` instead; this field is
+            kept for API back-compat.
+        now: { type: string, format: date-time }
+
+    MissionSummary:
+      type: object
+      description: one row of the journey mission map
+      required: [id, title, tagline, type, status, hasJourney, bridge, docsUrl]
+      properties:
+        id: { type: string }
+        title:
+          type: string
+          description: journey.yaml title, falling back to the challenge id
+        tagline: { type: string }
+        type:
+          type: string
+          enum: [trigger, evade, detect]
+        status:
+          type: string
+          enum: [solved, current, locked]
+          description: |
+            guided progression: everything after `current` is locked. Locked
+            missions are still readable (free browsing) but their hints and step
+            ticks are suppressed.
+        hasJourney:
+          type: boolean
+          description: false = no journey.yaml; the UI shows "ブリーフィング準備中" (fail-soft)
+        bridge:
+          type: string
+          description: narrative teaser toward the next mission, shown in the CLEARED overlay (#47)
+        docsUrl:
+          type: string
+          description: absolutised against the docs origin when one is configured
+
+    Step:
+      type: object
+      required: [idx, label, detail, checked]
+      properties:
+        idx: { type: integer, description: 0-based }
+        label: { type: string }
+        detail: { type: string }
+        checked:
+          type: boolean
+          description: always false for a locked mission (store state is ignored there)
+
+    OpenedHint:
+      type: object
+      required: [idx, text]
+      properties:
+        idx: { type: integer, description: 1-based }
+        text: { type: string }
+
+    HintsBlock:
+      type: object
+      description: |
+        The ONE fairness-gated part of a mission detail. For a locked mission
+        this block reports `lockedCount == total`, `opened == []` and
+        `nextIndex == 0` regardless of what the store holds (defensive
+        fail-closed — the handler does not trust the UI to hide the reveal
+        button).
+      required: [total, opened, lockedCount, nextIndex, penalty]
+      properties:
+        total: { type: integer }
+        opened:
+          type: array
+          items: { $ref: "#/components/schemas/OpenedHint" }
+        lockedCount: { type: integer }
+        nextIndex:
+          type: integer
+          description: 1-based index of the next unopened hint; 0 = nothing left to reveal (or locked)
+        penalty:
+          type: integer
+          description: points forfeited by revealing hint `nextIndex` (0 when nextIndex is 0)
+
+    FalcoListItem:
+      type: object
+      required: [name, items]
+      properties:
+        name: { type: string }
+        items:
+          type: array
+          items: { type: string }
+
+    FalcoMacroItem:
+      type: object
+      required: [name, condition]
+      properties:
+        name: { type: string }
+        condition: { type: string }
+
+    FalcoRuleItem:
+      type: object
+      required: [name, desc, condition, output, priority, tags]
+      properties:
+        name: { type: string }
+        desc: { type: string }
+        condition: { type: string }
+        output: { type: string }
+        priority: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+
+    FalcoRuleExcerpt:
+      type: object
+      description: |
+        Display-only List/Macro/Rule excerpt from
+        `challenges/<NN>-<slug>/rule.yaml` (P23 Story-as-docs). Identical for
+        every viewer, so it is returned for ANY status. A mission without a
+        rule.yaml yields three empty arrays and `hasFalcoRule: false`.
+      required: [lists, macros, rules]
+      properties:
+        lists:
+          type: array
+          items: { $ref: "#/components/schemas/FalcoListItem" }
+        macros:
+          type: array
+          items: { $ref: "#/components/schemas/FalcoMacroItem" }
+        rules:
+          type: array
+          items: { $ref: "#/components/schemas/FalcoRuleItem" }
+
+    MissionDetail:
+      type: object
+      description: |
+        The selected mission's detail block (`Journey.detail`). Static content
+        (brief / steps / Falco rule excerpt) is returned for any status; only
+        `hints` — and step tick state — are gated to the unlocked prefix.
+      required:
+        [id, status, title, tagline, briefing, leadIn, type, docsUrl,
+         hasJourney, requireExfil, exfilReceived, expectedRules, detectedRules,
+         dirty, dirtyRules, steps, falcoRule, hasFalcoRule, hints]
+      properties:
+        id: { type: string }
+        status:
+          type: string
+          enum: [solved, current, locked]
+        title: { type: string }
+        tagline: { type: string }
+        briefing: { type: string }
+        leadIn:
+          type: string
+          description: previous mission's `bridge`; empty for the first mission (#47)
+        type:
+          type: string
+          enum: [trigger, evade, detect]
+        docsUrl: { type: string }
+        hasJourney: { type: boolean }
+        requireExfil:
+          type: boolean
+          description: evade challenge that also requires a collector exfil receipt
+        exfilReceived:
+          type: boolean
+          description: |
+            the collector holds ANY receipt for this (user, challenge). Drives
+            the auto-solve status card. Never exposes the flag value and has no
+            bearing on the verdict (submit re-checks the exact flag).
+        expectedRules:
+          type: array
+          description: |
+            trigger missions only (empty array otherwise) — the Falco rules
+            whose fire auto-solves this mission. Rule NAMES only, already public
+            in the operator view and the docs excerpts.
+          items: { type: string }
+        detectedRules:
+          type: array
+          description: |
+            expectedRules intersected with this user's rule fires in the last
+            60s. UI-display-only live cue; the solve itself is recorded by
+            ingest the instant the rule fires, independent of this window.
+          items: { type: string }
+        dirty:
+          type: boolean
+          description: |
+            `len(dirtyRules) > 0` (ADR-0003 A3). PERSISTENT — no time window;
+            only reset-dirty clears it. Always false for trigger/detect.
+        dirtyRules:
+          type: array
+          description: forbidden Falco rule names that tainted this attempt (names only, never a flag)
+          items: { type: string }
+        steps:
+          type: array
+          items: { $ref: "#/components/schemas/Step" }
+        falcoRule: { $ref: "#/components/schemas/FalcoRuleExcerpt" }
+        hasFalcoRule:
+          type: boolean
+          description: false = no rule.yaml authored; the UI omits the panel
+        hints: { $ref: "#/components/schemas/HintsBlock" }
+
+    Journey:
+      type: object
+      description: |
+        `GET /api/users/{user}/journey` — the participant portal's main
+        projection (polled every 2s). Display-only.
+      required: [user, display_name, solved_count, total, current, missions, detail, score, hint_penalty, now]
+      properties:
+        user: { type: string }
+        display_name: { type: string }
+        solved_count: { type: integer }
+        total:
+          type: integer
+          description: missions in this run's order (catalog-filtered)
+        current:
+          type: string
+          nullable: true
+          description: |
+            first unsolved mission id. **null** when every mission is solved
+            (the key is always present).
+        missions:
+          type: array
+          items: { $ref: "#/components/schemas/MissionSummary" }
+        detail:
+          description: |
+            detail for `?mission=` when valid, else for `current`. **null** when
+            there is no mission to show at all (everything solved and no valid
+            override) — the key is always present.
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/MissionDetail"
+        score: { type: integer }
+        hint_penalty:
+          type: integer
+          description: representative HINT1 cost; the per-mission figure is `detail.hints.penalty`
+        now: { type: string, format: date-time }
+
+    LeaderboardEntry:
+      type: object
+      required: [user, display_name, solved, score, earliest, events, rank]
+      properties:
+        user: { type: string }
+        display_name: { type: string }
+        solved: { type: integer }
+        score:
+          type: integer
+          description: base award per solve minus hint penalties, clamped at 0
+        earliest:
+          type: string
+          description: RFC3339 first-solve time; the sentinel `"9999"` when solved == 0
+        events: { type: integer }
+        rank:
+          type: integer
+          description: |
+            1-based, ranked by score desc with earliest first-solve as the
+            tiebreak. 0 for participants with no solves (renders "-").
+
+    ChallengeSolver:
+      type: object
+      required: [user, display_name, at]
+      properties:
+        user: { type: string }
+        display_name: { type: string }
+        at: { type: string, format: date-time }
+
+    ChallengeStat:
+      type: object
+      required: [id, type, expectedRules, forbiddenRules, solved_count, solvers, solver_details, first_solver]
+      properties:
+        id: { type: string }
+        type:
+          type: string
+          enum: [trigger, evade, detect]
+        expectedRules:
+          type: array
+          items: { type: string }
+        forbiddenRules:
+          type: array
+          items: { type: string }
+        solved_count: { type: integer }
+        solvers:
+          type: array
+          description: solver usernames ranked by solve time
+          items: { type: string }
+        solver_details:
+          type: array
+          description: solvers ranked by solve time — powers the per-challenge leaderboard
+          items: { $ref: "#/components/schemas/ChallengeSolver" }
+        first_solver:
+          type: string
+          nullable: true
+          description: first solver's username; **null** when nobody solved it (key always present)
+
+    SolveRecord:
+      type: object
+      required: [user, display_name, challenge, at]
+      properties:
+        user: { type: string }
+        display_name: { type: string }
+        challenge: { type: string }
+        at: { type: string, format: date-time }
 
     State:
       type: object
-      required: [stats, leaderboard, challenges, recent_solves, now]
+      description: |
+        `GET /api/state` — admin-only, whole-field snapshot. Every solve list is
+        filtered to catalog membership so a retired challenge id cannot inflate
+        counts ("SOLVED 15/10").
+      required: [stats, leaderboard, challenges, recent_solves, solved, events_per_user, now]
       properties:
         stats:
           type: object
+          required: [users, challenges, solves, events]
           properties:
             users: { type: integer }
             challenges: { type: integer }
@@ -420,78 +1672,20 @@ components:
             events: { type: integer }
         leaderboard:
           type: array
-          items:
-            type: object
-            properties:
-              user: { type: string }
-              solved: { type: integer }
-              score:
-                type: integer
-                description: >-
-                  Ranking metric (#40): base award per solve minus the per-hint
-                  reveal penalty, clamped at 0. Never negative.
-              earliest:
-                type: string
-                description: RFC3339 timestamp of the user's first solve; "9999" sentinel if solved == 0.
-              events: { type: integer }
-              rank:
-                type: integer
-                description: >-
-                  1-based position, ranked by score descending with the earliest
-                  first-solve time as the tiebreak for equal scores.
+          items: { $ref: "#/components/schemas/LeaderboardEntry" }
         challenges:
           type: array
-          items:
-            type: object
-            properties:
-              id: { type: string }
-              type:
-                type: string
-                enum: [trigger, evade]
-              expectedRules:
-                type: array
-                items: { type: string }
-              forbiddenRules:
-                type: array
-                items: { type: string }
-              solved_count: { type: integer }
-              solvers:
-                type: array
-                items: { type: string }
-                description: solver usernames, ranked by solve time
-              solver_details:
-                type: array
-                description: solvers ranked by solve time — powers the per-challenge leaderboard
-                items:
-                  type: object
-                  properties:
-                    user: { type: string }
-                    display_name: { type: string }
-                    at: { type: string, format: date-time }
-              first_solver:
-                type: string
-                nullable: true
+          items: { $ref: "#/components/schemas/ChallengeStat" }
         recent_solves:
           type: array
           maxItems: 15
-          items:
-            type: object
-            properties:
-              user: { type: string }
-              challenge: { type: string }
-              at: { type: string, format: date-time }
+          description: newest first
+          items: { $ref: "#/components/schemas/SolveRecord" }
         solved:
-          description: back-compat — same shape as recent_solves but unbounded
           type: array
-          items:
-            type: object
-            properties:
-              user: { type: string }
-              challenge: { type: string }
-              at: { type: string, format: date-time }
+          description: back-compat — same shape as recent_solves but unbounded
+          items: { $ref: "#/components/schemas/SolveRecord" }
         events_per_user:
           type: object
           additionalProperties: { type: integer }
-        now:
-          type: string
-          format: date-time
+        now: { type: string, format: date-time }

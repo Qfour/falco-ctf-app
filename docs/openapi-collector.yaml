@@ -1,0 +1,288 @@
+openapi: 3.1.0
+info:
+  title: falco-ctf collector
+  version: "1"
+  description: |
+    The collector binary's COMPLETE HTTP surface (ADR-0005). New document —
+    before ADR-0005 this service had NO spec at all, which meant the ONE
+    participant-facing contract a workspace can actually reach
+    (`POST /api/challenges/{cid}/exfil`) was written down nowhere but the
+    mission brief.
+
+    What this service is
+    --------------------
+    The participant-facing front for a CTF workspace (P11.5 "full one-pipe").
+    Once ctf-user egress lockdown is on, a workspace pod can reach ONLY the
+    collector — never the scoreboard directly. The collector holds NO CTF state
+    (no catalog, no flags, no DB): it is a thin, allowlisted forwarder. Solve
+    truth stays in the scoreboard.
+
+    Default-deny routing is part of the contract
+    --------------------------------------------
+    Only the three participant routes below are forwarded. Everything else
+    (`/falco/events`, `/internal/*`, `/api/admin/*`, `/api/state`, and
+    deliberately `GET /api/users/{user}/me`) 404s at the mux. `me` is excluded
+    on purpose: an anonymous, client-chosen `{user}` read through the collector
+    would be a self-scope bypass (P18) — progress is read only on the
+    authenticated portal origin. **Adding a route here widens the participant
+    attack surface; it requires an ADR (see ADR-0005 Consequences) and, for a
+    destructive route, is forbidden — `reset-dirty` must never be fronted.**
+
+    Header hygiene
+    --------------
+    Inbound `X-Forwarded-For` / `X-Real-IP` are STRIPPED before forwarding: the
+    workspace connects directly (no trusted ingress in front), so those headers
+    are attacker-chosen, and the scoreboard's limiter trusts XFF's leftmost
+    entry. The collector's own limiter therefore keys on `r.RemoteAddr`.
+
+    Per-operation extensions carry the same meaning as in
+    docs/openapi-scoreboard.yaml, plus one that is specific to this document:
+
+      x-ctf-forward-target  the scoreboard operation this route forwards to,
+                            as "<METHOD> <path>". Set on exactly the operations
+                            with `x-ctf-collector-forward: true`. The parity gate
+                            asserts a bijection: every target must name a real
+                            scoreboard operation carrying
+                            `x-ctf-collector-forward: true`, and every such
+                            scoreboard operation must be named by exactly one
+                            collector operation. That is what turns "the
+                            collector fronts exactly three routes" from prose
+                            repeated in four files into a checked contract.
+
+servers:
+  - url: http://collector.collector.svc.cluster.local
+    description: in-cluster Service — the only endpoint a locked-down workspace can reach
+  - url: http://localhost:8000
+    description: local dev (LISTEN_ADDR default)
+
+tags:
+  - name: participant
+    description: reachable from a ctf-user workspace pod
+  - name: infra
+    description: probes and metrics (never forwarded)
+
+paths:
+  /api/challenges/{cid}/exfil:
+    post:
+      summary: Exfil drop — deliver a flag over HTTP to the collector
+      operationId: exfilDrop
+      tags: [participant]
+      x-ctf-audience: participant
+      x-ctf-authz: claimed-identity
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: true
+      x-ctf-forward-target: "POST /internal/exfil/{cid}"
+      x-ctf-rate-limit: per-IP (RemoteAddr) 1 req/s burst 10
+      description: |
+        The boss capstone's participant contract (the `curl` target in the
+        Mission 10 brief) and the ONLY public face of the exfil path. The
+        collector rewrites the path to the scoreboard's
+        `POST /internal/exfil/{cid}` and forwards the body UNCHANGED — it never
+        parses or validates the payload; the scoreboard owns the receipt.
+
+        This URL is what forces the quiet-exfil lesson: a reverse shell cannot
+        reach an HTTP collector, and dropping a custom exfil tool trips
+        Drop-and-execute. **The path is participant-visible content — renaming
+        it is a coordinated change across this spec, the mission brief and the
+        docs site.**
+
+        `{cid}` is validated as a `NN-slug` here (not just downstream) so a
+        crafted path cannot be reflected into the upstream URL.
+      parameters:
+        - $ref: "#/components/parameters/Cid"
+      requestBody:
+        required: true
+        description: forwarded verbatim — see the scoreboard spec's `ExfilRequest`
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user, flag]
+              properties:
+                user: { type: string }
+                flag: { type: string }
+      responses:
+        "200":
+          description: |
+            the scoreboard's response, relayed unchanged (see
+            docs/openapi-scoreboard.yaml `POST /internal/exfil/{cid}`).
+          content:
+            application/json: {}
+        "400":
+          description: "`{cid}` is not a valid challenge slug (rejected by the collector itself)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: rate limited (`text/plain`)
+          content:
+            text/plain: {}
+        "502":
+          description: |
+            upstream forward failed. Fail-closed body — never the Go default 502
+            page and never the upstream address.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/challenges/{cid}/submit:
+    post:
+      summary: Flag submission (transparent forward to the scoreboard)
+      operationId: forwardSubmit
+      tags: [participant]
+      x-ctf-audience: participant
+      x-ctf-authz: claimed-identity
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: true
+      x-ctf-forward-target: "POST /api/challenges/{cid}/submit"
+      x-ctf-rate-limit: per-IP (RemoteAddr) 1 req/s burst 10
+      description: |
+        Verbatim reverse-proxy of the scoreboard's identically-named route
+        (docs/openapi-scoreboard.yaml owns the request/response contract). Under
+        egress lockdown this is the PRIMARY flag-submission path, which is
+        exactly why the scoreboard's copy of this route must stay
+        `x-ctf-origin-guard: false`: a workspace `curl` sends no Origin.
+      parameters:
+        - $ref: "#/components/parameters/Cid"
+      requestBody:
+        required: true
+        content:
+          application/json: {}
+      responses:
+        "200":
+          description: relayed scoreboard response (`SubmitFlagVerdict`)
+          content:
+            application/json: {}
+        "400":
+          description: relayed scoreboard error
+          content:
+            application/json: {}
+        "404":
+          description: relayed scoreboard error (unknown challenge)
+          content:
+            application/json: {}
+        "429":
+          description: rate limited by the collector, or relayed from the scoreboard (`text/plain`)
+          content:
+            text/plain: {}
+        "500":
+          description: relayed scoreboard error
+          content:
+            application/json: {}
+        "502":
+          description: upstream forward failed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/users/{user}/display-name:
+    post:
+      summary: Set the participant's display name (transparent forward)
+      operationId: forwardDisplayName
+      tags: [participant]
+      x-ctf-audience: participant
+      x-ctf-authz: claimed-identity
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: true
+      x-ctf-forward-target: "POST /api/users/{user}/display-name"
+      x-ctf-rate-limit: per-IP (RemoteAddr) 1 req/s burst 10
+      description: |
+        Verbatim reverse-proxy. This is the ONLY caller of the scoreboard's
+        participant display-name route, which is why that route is not
+        origin-guarded (no browser fetches it). Note the collector's bucket here
+        is 1 req/s burst 10, while the scoreboard's own display-name limiter is
+        stricter (1 per 5s, burst 5) — the tighter one wins in practice.
+      parameters:
+        - in: path
+          name: user
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json: {}
+      responses:
+        "200":
+          description: relayed scoreboard response (`DisplayNameResult`)
+          content:
+            application/json: {}
+        "400":
+          description: relayed scoreboard error
+          content:
+            application/json: {}
+        "429":
+          description: rate limited by the collector or the scoreboard (`text/plain`)
+          content:
+            text/plain: {}
+        "500":
+          description: relayed scoreboard error
+          content:
+            application/json: {}
+        "502":
+          description: upstream forward failed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /healthz:
+    get:
+      summary: Collector liveness (local — never forwarded)
+      operationId: collectorHealthz
+      tags: [infra]
+      x-ctf-audience: infra
+      x-ctf-authz: none
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
+      responses:
+        "200":
+          description: alive
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean, const: true }
+
+  /metrics:
+    get:
+      summary: Collector Prometheus exposition (local — never forwarded)
+      operationId: collectorMetrics
+      tags: [infra]
+      x-ctf-audience: infra
+      x-ctf-authz: none
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
+      description: |
+        Series:
+          - `collector_request_duration_seconds{route, method, status}`
+              route = the matched ServeMux pattern; an unrouted request records
+              the empty pattern, so a spike there means somebody is probing the
+              default-deny surface.
+        Plus the default Go runtime metrics.
+      responses:
+        "200":
+          description: Prometheus exposition
+          content:
+            text/plain: {}
+
+components:
+  parameters:
+    Cid:
+      in: path
+      name: cid
+      required: true
+      schema:
+        type: string
+        pattern: "^[0-9]{2}-[a-z0-9-]{1,60}$"
+      description: challenge id slug, validated by the collector before any upstream rewrite
+
+  schemas:
+    Error:
+      type: object
+      description: same contract as the scoreboard's `Error` — non-2xx JSON is always this shape
+      required: [error]
+      properties:
+        error: { type: string }

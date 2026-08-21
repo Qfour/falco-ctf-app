@@ -5,12 +5,23 @@ package oapi
 
 // CheckParams defines parameters for Check.
 type CheckParams struct {
-	// Host Expected username (== first label of the workspace ingress host)
+	// Host expected username (== the first label of the workspace ingress
+	// host). Same slug shape the scoreboard enforces on
+	// `/api/users/{user}/...`, so the two boundaries agree.
 	Host string `form:"host" json:"host"`
 
-	// Cookie Forwarded to oauth2-proxy
+	// Cookie forwarded to oauth2-proxy
 	Cookie *string `json:"Cookie,omitempty"`
 
-	// Authorization Forwarded to oauth2-proxy (if present)
+	// Authorization forwarded to oauth2-proxy (if present)
+	Authorization *string `json:"Authorization,omitempty"`
+}
+
+// CheckAdminParams defines parameters for CheckAdmin.
+type CheckAdminParams struct {
+	// Cookie forwarded to oauth2-proxy
+	Cookie *string `json:"Cookie,omitempty"`
+
+	// Authorization forwarded to oauth2-proxy (if present)
 	Authorization *string `json:"Authorization,omitempty"`
 }
