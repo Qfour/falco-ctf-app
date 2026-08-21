@@ -1181,7 +1181,9 @@ components:
         200 verdict for `POST /api/challenges/{cid}/submit-detect`. `status` is
         the branch key; `user` / `display_name` appear only on `solved`, and the
         fire counts are absent on `invalid` (the condition never compiled).
-      required: [status, solved, reason]
+        `reason` appears on `invalid`/`missed`/`false-positive` but NOT on
+        `solved` (the solved branch has nothing to explain).
+      required: [status, solved]
       properties:
         status:
           type: string
@@ -1327,7 +1329,7 @@ components:
         serialized (P23-ME-1).
       required:
         [user, display_name, solved, solved_count, total_challenges,
-         recent_rule_fires, events, score, rank, hint_penalty, now]
+         next_unsolved, recent_rule_fires, events, score, rank, hint_penalty, now]
       properties:
         user: { type: string }
         display_name:
@@ -1340,7 +1342,7 @@ components:
         solved_count: { type: integer }
         total_challenges: { type: integer }
         next_unsolved:
-          type: string
+          type: [string, "null"]
           description: |
             next unsolved challenge id by catalog order. **null** when
             everything is solved (the key is always present).
@@ -1555,7 +1557,7 @@ components:
       description: |
         `GET /api/users/{user}/journey` — the participant portal's main
         projection (polled every 2s). Display-only.
-      required: [user, display_name, solved_count, total, missions, score, hint_penalty, now]
+      required: [user, display_name, solved_count, total, current, missions, detail, score, hint_penalty, now]
       properties:
         user: { type: string }
         display_name: { type: string }
@@ -1564,7 +1566,7 @@ components:
           type: integer
           description: missions in this run's order (catalog-filtered)
         current:
-          type: string
+          type: [string, "null"]
           description: |
             first unsolved mission id. **null** when every mission is solved
             (the key is always present).
@@ -1576,8 +1578,9 @@ components:
             detail for `?mission=` when valid, else for `current`. **null** when
             there is no mission to show at all (everything solved and no valid
             override) — the key is always present.
-          allOf:
+          anyOf:
             - $ref: "#/components/schemas/MissionDetail"
+            - type: "null"
         score: { type: integer }
         hint_penalty:
           type: integer
@@ -1614,7 +1617,7 @@ components:
 
     ChallengeStat:
       type: object
-      required: [id, type, expectedRules, forbiddenRules, solved_count, solvers, solver_details]
+      required: [id, type, expectedRules, forbiddenRules, solved_count, solvers, solver_details, first_solver]
       properties:
         id: { type: string }
         type:
@@ -1636,7 +1639,7 @@ components:
           description: solvers ranked by solve time — powers the per-challenge leaderboard
           items: { $ref: "#/components/schemas/ChallengeSolver" }
         first_solver:
-          type: string
+          type: [string, "null"]
           description: first solver's username; **null** when nobody solved it (key always present)
 
     SolveRecord:

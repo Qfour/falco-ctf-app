@@ -63,8 +63,12 @@ JSON API だけを分母にすると `api.go` の 14 本中 6 本 = **43%** (VP 
 - 既存の `gen-diff-check` (`.github/workflows/checks.yaml:86`) は **spec → 生成型**の一方向しか見ない。
   spec に**書かれていないルート**は生成型にも現れないので、この job は永久に緑のままになる。
   しかも `gen-diff-check` は **required check ではない**
-  (required は `test` / `chart-lint` / `flag-guard` / `shellcheck / shellcheck` / `challenge-rules` / `build`
-   = `scripts/change-mgmt/setup-rulesets.sh:54`)。
+  (2026-08-21 実測の live required 集合 = `chart-lint` / `flag-guard` / `test / go-test` /
+   `challenge-rules` / `build (scoreboard) / scan` / `build (auth-policy) / scan`。
+   `gh api repos/Qfour/falco-ctf-app/branches/main/protection --jq '.required_status_checks.contexts'`
+   で確認。`setup-rulesets.sh:54` の `CHECKS` 配列はこの実測と食い違っており
+   (`shellcheck / shellcheck` を含み `build` を個別 context に分けていない)、
+   V7 着手前に script 側を live 設定に追従させる一手間が要る)。
 - 生成型が**実質使われていない**: レスポンスは全て手書き `map[string]any`
   (`api.go:1713-1748` の missionDetail 等)。**レスポンス契約はコンパイル時に何も保証されていない。**
   だから `dirty` / `dirtyRules` / `exfilReceived` のフィールド名を知る手段が
@@ -305,6 +309,14 @@ schema 無しの箇所は見ない)。配列は先頭要素で判定する。
 `Me`・`State`・`SubmitFlagVerdict`。
 **architect が本 PR で dry-run 済み** (`Me` 12/12・`Journey` 10/10・`MissionDetail` 19/19・
 `State` 7/7 で一致) なので、実装時に既存の食い違いを直す作業は発生しない見込み。
+
+**variant 形スキーマ (`SubmitFlagVerdict`/`SubmitDetectVerdict` 等) の比較単位**: これらは
+分岐 (`status`/`correct` の値) ごとに返すキー集合が異なり、`properties` に列挙された
+全キーが同時に 1 レスポンスに出現することはない。V5 は **分岐ごとに、その分岐が実際に
+返すキー集合を spec 側の同分岐の期待集合と比較する** (spec 全体の `properties` 和集合と
+1 レスポンスを比較しない)。分岐の期待集合は spec の `description` が列挙する条件文
+(「`user`/`display_name` は `solved` のみ」等) から機械的に読み取れる形で書く。
+実装 PR (#149) はテストケースの分岐網羅でこれを満たす (2026-08-21, VP 査定 R2 反映)。
 
 **V6. spec ファイルの網羅 (blocking)**
 `cmd/*` を列挙し、**`http.ServeMux` を組み立てるバイナリに対応する spec が存在すること**。
