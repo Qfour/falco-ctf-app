@@ -23,17 +23,31 @@
     2. **Decision 2(b) が必須とした `x-ctf-audience` / `x-ctf-authz` / `x-ctf-rate-limit` に
        Verification が無かった** → `specparity.StringExtParity` を 3 サービスに配線
     3. **V2 の走査範囲が手書きのファイル allowlist (6 本) だった** → `cmdOwnsServeMux` の
-       import BFS から機械導出 (**実測 34 ファイル**)。除外は `internal/apispec/route.go` 1 本のみ =
-       検査自身の登録箇所。走査集合が空なら fail する非空ガード付き
-  - **#149 で閉じていない残余** (→ 後継 **ADR-0006 / Issue #144** で条文化・#146 で構造化):
-    - **宣言 ↔ 強制の非結合が `x-ctf-authz` に残る** — spec と宣言が一致していても
-      **handler が認可ゲートを呼ばない**ルートを作れる (security-engineer が実証: 匿名 GET が 200 で
-      store 内容を返した)。**origin-guard と同じ欠陥クラスの残存分**
+       import BFS から機械導出 (走査集合はファイル追加に応じて増える。除外は `internal/apispec/route.go`
+       1 本のみ = 検査自身の登録箇所。走査集合が空なら fail する非空ガード付き)
+    4. **`x-ctf-authz` の宣言 ↔ 強制の非結合 (scoreboard)** — security-engineer が実証した
+       「匿名 GET が 200 で store 内容を返す」欠陥 (origin-guard と同じ欠陥クラス) →
+       `TestAuthz_AllDeclaredGatesEnforced` / `TestAuthz_CatchesUnenforcedGate`
+       (`internal/scoreboard/authz_test.go`) で **scoreboard は closed** (mutation test で
+       独立検証済み、2026-08-21 review-5x R1/R2/R4)
+    5. **`specparity` が test-only であることの Go レベルの強制** →
+       `internal/apispec/dependency_boundary_test.go` (`TestNoProductionBinaryImportsSpecparity` /
+       `TestInternalApispecIsStdlibOnly`、mutation-proof) で **closed**
+  - **#149 で閉じていない残余** (→ 後継 **ADR-0007 / Issue #144** で条文化・#146 で構造化。
+    2026-08-21 review-5x で番号を訂正: ADR-0006 は P25 QA チケットチャットで既に使用済み):
+    - **`x-ctf-authz` の宣言 ↔ 強制の非結合 (auth-policy / collector)** — 上記4で scoreboard は
+      closed だが、`TestAuthz_AllDeclaredGatesEnforced` 相当の behavioral test は
+      **auth-policy (`/check-admin` 等) と collector には未展開**。現状の両サービスの認可ルートは
+      少数・手書きで目視レビュー済みだが、将来ルート追加時に「宣言だけしてゲート呼び出しを忘れる」を
+      機械検出できない (2026-08-21 review-5x R1 指摘)
     - **`apispec.Register` の 2 回目呼び出し** (戻り値破棄) で mux ⊋ `Routes()` を作れる (#146 で
       `NewMux` により構文的に不可能にする。本 PR は静的 assert で検出)
-    - **V5 のカバレッジ** — 3 spec 合計 18 operation のうち 4 のみ。`CompareResponse` は
-      `properties` を持たない節点を無言 return する
-    - **`specparity` が test-only であることの Go レベルの強制**
+    - **V5 のカバレッジ** — 3 spec 合計 18 operation のうち 4 のみ (`Journey`/`Me`/`State`/
+      `SubmitFlagVerdict`)。`CompareResponse` は `properties` を持たない節点を無言 return する
+    - **`specparity` の test-only 強制は scoreboard を対象としない** — `dependency_boundary_test.go`
+      は `cmd/auth-policy`/`cmd/collector` のみを検査 (scoreboard の Dockerfile が `internal/` を
+      全体 COPY するため narrow-COPY によるトリップワイヤが無い。import BFS も対象外。
+      2026-08-21 review-5x R1 指摘)
 - Date / Deciders: 2026-08-19 / architect (起案) + VP (承認) + software-engineer (実装) + qa-engineer (parity test) + security-engineer (origin-guard 契約のレビュー)
 - 関連: Issue **#115** (spec が実ルートの 43-47% しか覆っていない — 本 ADR はその設計決定部分)、
   Issue **#113** (`err.Error()` 漏出 + エラー契約の不在。本 ADR は §Decision 5 で**形の契約だけ**を決め、

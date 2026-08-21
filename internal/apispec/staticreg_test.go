@@ -148,7 +148,8 @@ func TestNoDirectMuxRegistrationOutsideTable(t *testing.T) {
 // `http.HandlerFunc(...)` — their Sel.Name is "Handler"/"HandlerFunc", a
 // different string from "Handle"/"HandleFunc", so broadening from
 // call-expressions to all selector expressions adds no false positive here
-// (R1 confirmed zero FPs across this scan's 34 files).
+// (R1 confirmed zero FPs across this scan's files — the file count grows as
+// mux-owning source files are added, so it is not pinned to a specific number here).
 func findDirectMuxCalls(t *testing.T, path string) []string {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -269,7 +270,8 @@ func (h *Handler) backdoor(w http.ResponseWriter, r *http.Request) {}
 // Requirement 4's other half: broadening from CallExpr-only to every
 // *ast.SelectorExpr must not start flagging the THREE real, legitimate
 // "Handler"/"HandlerFunc" (not "Handle"/"HandleFunc") shapes R1 found across
-// this scan's 34 files — h.mux.Handler(r) (server.go's own
+// this scan's files (count grows as mux-owning source files are added) —
+// h.mux.Handler(r) (server.go's own
 // route-label-for-metrics lookup), promhttp.Handler() (the /metrics route's
 // own handler value), and http.HandlerFunc(...) (used throughout every
 // Routes() table in this codebase to adapt a plain func into an
