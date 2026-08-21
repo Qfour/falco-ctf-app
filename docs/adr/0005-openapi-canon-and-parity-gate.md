@@ -1,6 +1,9 @@
 # ADR-0005: OpenAPI spec の対象を「サービスの HTTP 面すべて」と定め、実装との parity を fail-closed で機械検査する
 
-- Status: **Proposed**
+- Status: **Accepted** (2026-08-21, VP。review-5x T3・5観点 APPROVE系・BLOCKING/HIGHゼロ
+  [HIGH1件はADR本文更新で解消済み]。**V1-V8 の機械検査本体・I14 の Hard Invariants 表への昇格は
+  未実施** — `feat/api-spec-parity-gate` (#149) の landing 後に別途完了する。本PR (#143) が
+  Acceptedにするのは「spec を正典としV1-V8で検査する」という設計方針そのもの)
 - Date / Deciders: 2026-08-19 / architect (起案) + VP (承認) + software-engineer (実装) + qa-engineer (parity test) + security-engineer (origin-guard 契約のレビュー)
 - 関連: Issue **#115** (spec が実ルートの 43-47% しか覆っていない — 本 ADR はその設計決定部分)、
   Issue **#113** (`err.Error()` 漏出 + エラー契約の不在。本 ADR は §Decision 5 で**形の契約だけ**を決め、
@@ -69,10 +72,16 @@ JSON API だけを分母にすると `api.go` の 14 本中 6 本 = **43%** (VP 
    で確認。`setup-rulesets.sh:54` の `CHECKS` 配列はこの実測と食い違っており
    (`shellcheck / shellcheck` を含み `build` を個別 context に分けていない)、
    V7 着手前に script 側を live 設定に追従させる一手間が要る)。
-- 生成型が**実質使われていない**: レスポンスは全て手書き `map[string]any`
+- 生成型が**レスポンス側は実質使われていない**: レスポンスは全て手書き `map[string]any`
   (`api.go:1713-1748` の missionDetail 等)。**レスポンス契約はコンパイル時に何も保証されていない。**
   だから `dirty` / `dirtyRules` / `exfilReceived` のフィールド名を知る手段が
   「実装を grep する」しか無かった (VP の実害報告)。
+  **例外 (security-engineer 2026-08-21 指摘)**: `oapi.FalcoEvent`
+  (`internal/scoreboard/ingest/ingest.go:62`, webhook 受信)・
+  `oapi.SubmitFlagJSONRequestBody`(`api.go:634`)・
+  `oapi.SubmitDetectJSONRequestBody`(`api.go:779`) の3型は**request decode に現に使われている
+  生きた型**。これらへの spec 変更 (フィールド追加/型変更) は他の (未使用の) 生成型より高い注意で
+  レビューすること — webhook 受信・フラグ提出の decode 挙動に直結する。
 
 ### C4. 決めるべき論点 (VP から明示的に委任された 4 つ)
 
@@ -223,10 +232,15 @@ C4 の 4 論点に対する結論:
 
 ### runbook / 他ロールへの影響
 
-- **software-engineer**: `make gen` の実行が必要 (本 ADR の spec 変更で `types.gen.go` が動く)。
-  **本 ADR の PR は `gen-diff-check` を意図的に赤で出す** — architect は生成物を再生成しない
-  規律なので、赤は「未実施」の正しい表示である。V1-V8 の実装と `make gen` は
-  software-engineer の 1 PR で閉じる。
+- **software-engineer**: 当初は「本 ADR の PR は `gen-diff-check` を意図的に赤で出す
+  (architect は生成物を再生成しない規律なので、赤は『未実施』の正しい表示)」という前提だった。
+  **2026-08-21、review-5x R2/R5 findings 対応 (`abc03d4`) で入った OpenAPI 3.1 の
+  `type: [string, "null"]` / `anyOf: [..., {type: "null"}]` が oapi-codegen v2.3.0
+  (3.0 系のみ対応) を破壊することが判明したため、`nullable: true` (3.0互換) に修正した上で
+  `make gen` を実行し `internal/{scoreboard,authpolicy}/oapi/types.gen.go` を本 PR 内で
+  同期済み (`32ec735`)。`gen-diff-check` は green。** V1-V8 のテスト実装 (parity gate 本体)
+  は別途 `feat/api-spec-parity-gate` (#149) で software-engineer が閉じる — 本 PR で前倒しした
+  のは型生成の同期のみで、検査ロジックの実装ではない。
 - **application-engineer**: portal が読むフィールドは今後 spec が正典。実装 grep をやめられる。
 - **release-engineer / VP**: `gen-diff-check` を **required check へ昇格**する判断が必要
   (ruleset 変更 = `scripts/change-mgmt/setup-rulesets.sh:54` の `CHECKS` に追加)。
@@ -301,8 +315,13 @@ scoreboard spec に実在し、かつ `x-ctf-collector-forward: true` を持つ�
 **V5. レスポンスのフィールド集合一致 (blocking、深さ限定)**
 200 レスポンスが `application/json` の object schema を宣言している operation について、
 既存/追加のハンドラテストが生成した実 JSON と **top-level のキー集合が厳密一致**すること
-(spec の `properties` と比較する。`required` ではない — `required` は
-「null になり得ない常在フィールド」に限って付け、生成型がポインタになる余地を残すため)。
+(spec の `properties` と比較する。`properties` の全キーを分母にする — `required` の有無では
+分母を決めない。**`required` は「key が常に存在するか」だけを表し、null になり得るかとは独立**
+(`nullable: true` と併用可)。「key は常在するが値が null になり得る」フィールド
+(`next_unsolved`/`current`/`detail`/`first_solver` 等) は `required` + `nullable: true` の
+組み合わせで表す — oapi-codegen はこの組み合わせを「必ず存在するポインタ型」として正しく
+生成する (`internal/scoreboard/oapi/types.gen.go` で確認済み)。「key 自体が省略されうる」
+フィールドのみ `required` から外す。
 **ネストは spec が `properties` を宣言している箇所だけ再帰する** (`additionalProperties` や
 schema 無しの箇所は見ない)。配列は先頭要素で判定する。
 最低限カバーすべき 4 つ: `Journey` (`detail` / `detail.hints` / `missions[]` / `steps[]` を含む)・
