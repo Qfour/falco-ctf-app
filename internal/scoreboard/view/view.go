@@ -33,6 +33,7 @@ import (
 	"net/http"
 
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
 )
 
 //go:embed templates/index.html
@@ -175,7 +176,15 @@ func (h *Handler) portal(w http.ResponseWriter, r *http.Request) {
 		if h.logger != nil {
 			h.logger.Error("portal render failed", "err", err)
 		}
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		// Issue #159 / ADR-0005 follow-up F1: JSON-encoded via httpx.WriteJSON,
+		// not http.Error's text/plain — this was the second of the two
+		// documented non-2xx deviations (the other was ratelimit.Middleware's
+		// 429, now also unified). renderPortal has already written a partial
+		// text/html body up to the point of failure in the common case
+		// (html/template streams as it executes), so this WriteHeader is best-
+		// effort like the http.Error it replaces — it is not reachable once
+		// bytes have actually flushed, same as before.
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal error"})
 		return
 	}
 }
