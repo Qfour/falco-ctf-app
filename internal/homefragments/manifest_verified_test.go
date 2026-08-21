@@ -206,11 +206,17 @@ func TestManifestVerifiedClean_RuleExplainPanels(t *testing.T) {
 //
 // It renders every REAL TutorialChapters entry through the exact same
 // pipeline cmd/gen-tutorial-fragments uses (homefragments.RenderStaticPanel)
-// and fails if the rendered HTML contains ANY challenge's hint text as an
-// exact literal substring — the same "exact literal substring, not a
-// paraphrase/semantic check" posture assertNoForbiddenLeaks already uses
-// above. A chapter whose source is fail-soft-omitted (missing file/heading)
-// is simply not checked, matching every other test in this file's fail-soft
+// and fails if the rendered HTML contains ANY challenge's hint text OR any
+// journey step's `detail` text as an exact literal substring — the same
+// "exact literal substring, not a paraphrase/semantic check" posture
+// assertNoForbiddenLeaks already uses above. `steps[].detail` was added to
+// the check scope by app#154 (P24 follow-up, security-engineer /review-5x
+// R1 finding on PR #153): a tutorial chapter (e.g. trigger-vs-evade.md) can
+// be a verbatim/near-verbatim paraphrase of a step's guidance text just as
+// easily as of a hint, and the original test only ever looked at hints[],
+// leaving that overlap shape as a blind spot for future chapter edits. A
+// chapter whose source is fail-soft-omitted (missing file/heading) is
+// simply not checked, matching every other test in this file's fail-soft
 // posture — that absence is exercised by the *_gen.go generator step
 // instead, not here.
 //
@@ -231,17 +237,30 @@ func TestTutorialChaptersVerifiedClean_NoHintOverlap(t *testing.T) {
 		t.Fatalf("catalog.LoadJourneys(%s): %v", chalDir, err)
 	}
 
-	var hints []string
+	// overlapText pairs a journey.yaml text fragment (hint or step detail)
+	// with a human-readable label identifying its field, so a failure
+	// message can say exactly which field leaked, not just "some hint".
+	type overlapText struct {
+		field string // "hints[]" or "steps[].detail"
+		text  string
+	}
+	var overlaps []overlapText
 	for _, j := range journeys {
 		for _, h := range j.Hints {
 			if strings.TrimSpace(h) == "" {
 				continue
 			}
-			hints = append(hints, h)
+			overlaps = append(overlaps, overlapText{field: "hints[]", text: h})
+		}
+		for _, s := range j.Steps {
+			if strings.TrimSpace(s.Detail) == "" {
+				continue
+			}
+			overlaps = append(overlaps, overlapText{field: "steps[].detail", text: s.Detail})
 		}
 	}
-	if len(hints) == 0 {
-		t.Fatal("expected at least one journey.yaml hints[] entry across challenges/ — 0 found, LoadJourneys may be broken or the repo layout changed")
+	if len(overlaps) == 0 {
+		t.Fatal("expected at least one journey.yaml hints[]/steps[].detail entry across challenges/ — 0 found, LoadJourneys may be broken or the repo layout changed")
 	}
 
 	checked := 0
@@ -255,9 +274,9 @@ func TestTutorialChaptersVerifiedClean_NoHintOverlap(t *testing.T) {
 				t.Skipf("chapter %s omitted (fail-soft: source/heading not found) — nothing to check", sp.ID)
 			}
 			checked++
-			for _, h := range hints {
-				if strings.Contains(html, h) {
-					t.Errorf("chapter %q: journey.yaml hints[] text leaked verbatim into rendered HTML:\n  hint: %q\n  html: %s", sp.ID, h, html)
+			for _, o := range overlaps {
+				if strings.Contains(html, o.text) {
+					t.Errorf("chapter %q: journey.yaml %s text leaked verbatim into rendered HTML:\n  text: %q\n  html: %s", sp.ID, o.field, o.text, html)
 				}
 			}
 		})
