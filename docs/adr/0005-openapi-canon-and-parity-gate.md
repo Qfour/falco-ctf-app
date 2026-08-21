@@ -1,17 +1,21 @@
 # ADR-0005: OpenAPI spec の対象を「サービスの HTTP 面すべて」と定め、実装との parity を fail-closed で機械検査する
 
-- Status: **Accepted** (2026-08-19 VP 承認。4 つのスコープ判断を批准した)
+- Status: **Accepted** (2026-08-21, VP。review-5x T3・5観点 APPROVE系・BLOCKING/HIGHゼロ
+  [HIGH1件はADR本文更新で解消済み]。本 ADR (#143) が Accepted にしたのは「spec を正典とし
+  V1-V8 で検査する」という設計方針そのもの。**V1-V6/V8 の機械検査本体・I14 の Hard Invariants
+  表への昇格は `feat/api-spec-parity-gate` (#149) で実装・landing 済み** — 以下は #149 の結果)
   - **Decision / Verification 節は以後編集しない** — 変更は後継 ADR で行う。
     **一方この Status ブロックは状態記述なので、実態に追随させる** (凍結対象は決定であって状態ではない)
   - **実装されたのは V1-V6 / V8**。`make test` (required check) に載る
   - **V7 は未実施** — `gen-diff-check` は依然 advisory (非 required)。昇格は
-    `setup-rulesets.sh` (workspace-local・本リポには無い) の変更を伴うため release-engineer に残る
+    `scripts/change-mgmt/setup-rulesets.sh:54` (workspace-local・本リポには無い) の変更を伴うため
+    release-engineer に残る
   - **★VP 裁定 (2026-08-19): V7 は I14 の前提条件ではない。** 上記「昇格の条件」は
     「V1-V8 が landing」と書いているが、**V7 が守るのは生成物の鮮度**であって、I14 が主張する
     「ルート集合 / origin-guard / forward の一致」とは**直交する別の不変条件**である。
     依存関係が無いため前提条件から外す。V7 の実体 (required 昇格) は独立の作業として残す。
     **口伝で運ぶと落ちるので裁定をここに残す** (ADR-0003 の教訓)
-  - **5x レビュー 2 巡で判明し、本 PR で閉じた欠陥 3 件** (いずれも変異テストで閉止を独立確認済):
+  - **5x レビュー 2 巡で判明し、#149 で閉じた欠陥 3 件** (いずれも変異テストで閉止を独立確認済):
     1. **V3 が「宣言 ↔ spec」しか要求せず、宣言と実際の middleware 適用の一致を要求していなかった** →
        `TestOriginGuard_AllProtectedRoutesEnforced` を `Routes()` から導出。security-engineer が
        `og()` を恒等関数に変異させ **guarded 7 本すべて FAIL・生存 0** を確認 = 403 は origin-guard に
@@ -21,7 +25,7 @@
     3. **V2 の走査範囲が手書きのファイル allowlist (6 本) だった** → `cmdOwnsServeMux` の
        import BFS から機械導出 (**実測 34 ファイル**)。除外は `internal/apispec/route.go` 1 本のみ =
        検査自身の登録箇所。走査集合が空なら fail する非空ガード付き
-  - **本 PR で閉じていない残余** (→ 後継 **ADR-0006 / Issue #144** で条文化・#146 で構造化):
+  - **#149 で閉じていない残余** (→ 後継 **ADR-0006 / Issue #144** で条文化・#146 で構造化):
     - **宣言 ↔ 強制の非結合が `x-ctf-authz` に残る** — spec と宣言が一致していても
       **handler が認可ゲートを呼ばない**ルートを作れる (security-engineer が実証: 匿名 GET が 200 で
       store 内容を返した)。**origin-guard と同じ欠陥クラスの残存分**
@@ -92,12 +96,23 @@ JSON API だけを分母にすると `api.go` の 14 本中 6 本 = **43%** (VP 
 - 既存の `gen-diff-check` (`.github/workflows/checks.yaml:86`) は **spec → 生成型**の一方向しか見ない。
   spec に**書かれていないルート**は生成型にも現れないので、この job は永久に緑のままになる。
   しかも `gen-diff-check` は **required check ではない**
-  (required は `test` / `chart-lint` / `flag-guard` / `shellcheck / shellcheck` / `challenge-rules` / `build`
-   = `setup-rulesets.sh` (workspace-local・本リポには無い))。
-- 生成型が**実質使われていない**: レスポンスは全て手書き `map[string]any`
+  (2026-08-21 実測の live required 集合 = `chart-lint` / `flag-guard` / `test / go-test` /
+   `challenge-rules` / `build (scoreboard) / scan` / `build (auth-policy) / scan`。
+   `gh api repos/Qfour/falco-ctf-app/branches/main/protection --jq '.required_status_checks.contexts'`
+   で確認。`scripts/change-mgmt/setup-rulesets.sh:54` (workspace-local・本リポには無い) の
+   `CHECKS` 配列はこの実測と食い違っており
+   (`shellcheck / shellcheck` を含み `build` を個別 context に分けていない)、
+   V7 着手前に script 側を live 設定に追従させる一手間が要る)。
+- 生成型が**レスポンス側は実質使われていない**: レスポンスは全て手書き `map[string]any`
   (`api.go:1713-1748` の missionDetail 等)。**レスポンス契約はコンパイル時に何も保証されていない。**
   だから `dirty` / `dirtyRules` / `exfilReceived` のフィールド名を知る手段が
   「実装を grep する」しか無かった (VP の実害報告)。
+  **例外 (security-engineer 2026-08-21 指摘)**: `oapi.FalcoEvent`
+  (`internal/scoreboard/ingest/ingest.go:62`, webhook 受信)・
+  `oapi.SubmitFlagJSONRequestBody`(`api.go:634`)・
+  `oapi.SubmitDetectJSONRequestBody`(`api.go:779`) の3型は**request decode に現に使われている
+  生きた型**。これらへの spec 変更 (フィールド追加/型変更) は他の (未使用の) 生成型より高い注意で
+  レビューすること — webhook 受信・フラグ提出の decode 挙動に直結する。
 
 ### C4. 決めるべき論点 (VP から明示的に委任された 4 つ)
 
@@ -248,13 +263,19 @@ C4 の 4 論点に対する結論:
 
 ### runbook / 他ロールへの影響
 
-- **software-engineer**: `make gen` の実行が必要 (本 ADR の spec 変更で `types.gen.go` が動く)。
-  **本 ADR の PR は `gen-diff-check` を意図的に赤で出す** — architect は生成物を再生成しない
-  規律なので、赤は「未実施」の正しい表示である。V1-V8 の実装と `make gen` は
-  software-engineer の 1 PR で閉じる。
+- **software-engineer**: 当初は「本 ADR の PR は `gen-diff-check` を意図的に赤で出す
+  (architect は生成物を再生成しない規律なので、赤は『未実施』の正しい表示)」という前提だった。
+  **2026-08-21、review-5x R2/R5 findings 対応 (`abc03d4`) で入った OpenAPI 3.1 の
+  `type: [string, "null"]` / `anyOf: [..., {type: "null"}]` が oapi-codegen v2.3.0
+  (3.0 系のみ対応) を破壊することが判明したため、`nullable: true` (3.0互換) に修正した上で
+  `make gen` を実行し `internal/{scoreboard,authpolicy}/oapi/types.gen.go` を本 PR (#143) 内で
+  同期済み (`32ec735`)。`gen-diff-check` は green。** V1-V8 のテスト実装 (parity gate 本体) は
+  `feat/api-spec-parity-gate` (#149) で software-engineer が実装・landing 済み
+  (`internal/apispec/*` + 各サービスの `apispec_parity_test.go` + `origin_guard_test.go`)。
 - **application-engineer**: portal が読むフィールドは今後 spec が正典。実装 grep をやめられる。
 - **release-engineer / VP**: `gen-diff-check` を **required check へ昇格**する判断が必要
-  (ruleset 変更 = `setup-rulesets.sh` (workspace-local・本リポには無い) の `CHECKS` に追加)。
+  (ruleset 変更 = `scripts/change-mgmt/setup-rulesets.sh:54` (workspace-local・本リポには無い) の
+  `CHECKS` に追加)。
   現状 advisory なので、生成物 drift は merge を止めない。
 - **platform-engineer**: 契約表に変更なし。ただし collector spec が新設されたので、
   参加者向け exfil URL の正典が文書化された (以後の rename は両リポ同時 PR)。
@@ -285,7 +306,8 @@ C4 の 4 論点に対する結論:
 
 > **走る場所**: すべて Go テスト (`internal/scoreboard/api` / 新規 `internal/apispec` 等) として
 > `make test` に載せる。**理由**: `test` は **required check** であり
-> (`setup-rulesets.sh` (workspace-local・本リポには無い))、`go test` の exit status がそのまま
+> (`scripts/change-mgmt/setup-rulesets.sh:54`。workspace-local・本リポには無い)、
+> `go test` の exit status がそのまま
 > パイプラインの成否になるので「出力の有無で成否を判定する」事故 (feedback memory の
 > fail-open を 3 回踏んだ教訓) を構造的に避けられる。新しい CI job も新規依存も足さない
 > (`gopkg.in/yaml.v3` は既に直接依存)。
@@ -326,14 +348,27 @@ scoreboard spec に実在し、かつ `x-ctf-collector-forward: true` を持つ�
 **V5. レスポンスのフィールド集合一致 (blocking、深さ限定)**
 200 レスポンスが `application/json` の object schema を宣言している operation について、
 既存/追加のハンドラテストが生成した実 JSON と **top-level のキー集合が厳密一致**すること
-(spec の `properties` と比較する。`required` ではない — `required` は
-「null になり得ない常在フィールド」に限って付け、生成型がポインタになる余地を残すため)。
+(spec の `properties` と比較する。`properties` の全キーを分母にする — `required` の有無では
+分母を決めない。**`required` は「key が常に存在するか」だけを表し、null になり得るかとは独立**
+(`nullable: true` と併用可)。「key は常在するが値が null になり得る」フィールド
+(`next_unsolved`/`current`/`detail`/`first_solver` 等) は `required` + `nullable: true` の
+組み合わせで表す — oapi-codegen はこの組み合わせを「必ず存在するポインタ型」として正しく
+生成する (`internal/scoreboard/oapi/types.gen.go` で確認済み)。「key 自体が省略されうる」
+フィールドのみ `required` から外す。
 **ネストは spec が `properties` を宣言している箇所だけ再帰する** (`additionalProperties` や
 schema 無しの箇所は見ない)。配列は先頭要素で判定する。
 最低限カバーすべき 4 つ: `Journey` (`detail` / `detail.hints` / `missions[]` / `steps[]` を含む)・
 `Me`・`State`・`SubmitFlagVerdict`。
 **architect が本 PR で dry-run 済み** (`Me` 12/12・`Journey` 10/10・`MissionDetail` 19/19・
 `State` 7/7 で一致) なので、実装時に既存の食い違いを直す作業は発生しない見込み。
+
+**variant 形スキーマ (`SubmitFlagVerdict`/`SubmitDetectVerdict` 等) の比較単位**: これらは
+分岐 (`status`/`correct` の値) ごとに返すキー集合が異なり、`properties` に列挙された
+全キーが同時に 1 レスポンスに出現することはない。V5 は **分岐ごとに、その分岐が実際に
+返すキー集合を spec 側の同分岐の期待集合と比較する** (spec 全体の `properties` 和集合と
+1 レスポンスを比較しない)。分岐の期待集合は spec の `description` が列挙する条件文
+(「`user`/`display_name` は `solved` のみ」等) から機械的に読み取れる形で書く。
+実装 PR (#149) はテストケースの分岐網羅でこれを満たす (2026-08-21, VP 査定 R2 反映)。
 
 **V6. spec ファイルの網羅 (blocking)**
 `cmd/*` を列挙し、**`http.ServeMux` を組み立てるバイナリに対応する spec が存在すること**。
@@ -343,7 +378,8 @@ schema 無しの箇所は見ない)。配列は先頭要素で判定する。
 **V7. 生成物の鮮度 (blocking へ昇格を要求)**
 `make gen` の出力が commit 済み `internal/{scoreboard,authpolicy}/oapi/types.gen.go` と一致すること。
 機構は既に `gen-diff-check` (`.github/workflows/checks.yaml:86`) にあるが **required ではない**。
-**required 集合への追加を VP に要求する** (`setup-rulesets.sh` — workspace-local・本リポには無い)。
+**required 集合への追加を VP に要求する**
+(`scripts/change-mgmt/setup-rulesets.sh:54` — workspace-local・本リポには無い)。
 これが無いと「spec を直して生成し忘れた」PR が緑で通る。
 
 **V8. 検査自身の fail-closed 証明 (blocking / PR 提出物)**

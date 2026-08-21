@@ -23,37 +23,21 @@
 # now carries the overview role, so a prose duplicate is redundant. story.md
 # itself is untouched (still a docs-admin nav page, see mkdocs.yml) — only
 # its portal-fragment wiring is removed here.
+#
+# 2026-08-21 (REFACTORING.md P24 §2, "Home パネル移設"): the `intro` and
+# `cheatsheet` static panels that used to be listed below were MOVED to
+# docs-site/tutorial-chapters.yaml (the new Tutorial tab's manifest) — same
+# source files (docs-site/docs/index.md / docs-site/docs/cheatsheet.md),
+# same select/notes/fail_soft, just consumed by internal/homefragments.
+# TutorialChapters instead of StaticPanels now. This avoids showing the
+# exact same content in both the Home and Tutorial tabs. Home's static
+# panels list is intentionally empty as of this change (only the per-
+# challenge rule-explain panel below remains, and that is already excluded
+# from Home's actual render — see internal/scoreboard/view/home.go's
+# buildHomePanelsHTML doc, "P23 UI polish (CEO item ⑥)"). See
+# tutorial-chapters.yaml for the current intro/cheatsheet panel definitions.
 
 panels:
-  # -- static, single-fragment panels (not per-challenge) -------------------
-
-  - id: intro
-    label: "Falco CTF とは"
-    source: docs-site/docs/index.md
-    select: { heading: "## Falco とは" }   # only this section — see notes
-    notes: >
-      index.md has 4 sections; only "Falco とは" is Home-appropriate as-is.
-      "表示名について" duplicates future Me-tab identity content, "推奨スキル
-      レベルと前提知識" and "困ったときは" contain docs-site-relative links
-      ([ストーリー](story.md), [チートシート](cheatsheet.md)) that do not
-      resolve inside the portal Home pane and reference /journey hints
-      tangentially. Do not include those three sections verbatim in Home;
-      if their content is wanted later, rewrite as portal-relative copy in a
-      follow-up, not by dumping the docs-site markdown as-is.
-    fail_soft: "omit panel entirely if file or heading missing"
-
-  - id: cheatsheet
-    label: "コマンド集"
-    source: docs-site/docs/cheatsheet.md
-    select: { whole_file: true }
-    notes: >
-      Self-contained; internal anchor #7-falco resolves fine when the whole
-      file is one fragment. Contains only generic commands + a FALCO{...}
-      placeholder in the exfil example (not a real flag). Safe whole-file
-      include. If a future edit splits this into a per-topic panel, re-anchor
-      links first (they assume single-page context).
-    fail_soft: "omit panel if file missing"
-
   # -- per-challenge panel (11 candidates: 00 + 01-10 + 11-bonus) -----------
 
   - id: rule-explain

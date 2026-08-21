@@ -838,18 +838,23 @@
      structural rules only ever affect that server-generated subtree,
      never the client-rendered panes above. The markdown typography INSIDE
      each panel body now comes from the shared .rich-content class (see
-     above) rather than a #pane-home-panels-scoped copy. ===== */
-  #pane-home-panels { margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.9rem; }
-  #pane-home-panels .home-panel { background: #0F1820; border: 1px solid #1C2A35; border-radius: 0.75rem; overflow: hidden; }
-  #pane-home-panels .home-panel > summary { cursor: pointer; list-style: none; padding: 0.9rem 1.25rem; font-family: 'Chakra Petch', sans-serif; font-size: 0.85rem; font-weight: 600; letter-spacing: 0.06em; color: #EAF7FA; user-select: none; }
-  #pane-home-panels .home-panel > summary::-webkit-details-marker { display: none; }
-  #pane-home-panels .home-panel > summary::before { content: '▸ '; color: #5C7480; }
-  #pane-home-panels .home-panel[open] > summary::before { content: '▾ '; }
-  #pane-home-panels .home-panel > summary:hover { color: #00CBE2; }
-  #pane-home-panels .home-panel-body { padding: 0 1.25rem 1.25rem; border-top: 1px solid #1C2A35; }
-  #pane-home-panels .home-rule-explain-item { padding: 0.9rem 0; border-top: 1px solid #1C2A35; }
-  #pane-home-panels .home-rule-explain-item:first-child { border-top: none; padding-top: 0; }
-  #pane-home-panels .home-rule-explain-chal { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase; color: #00CBE2; margin: 0 0 0.5rem; }
+     above) rather than a #pane-home-panels-scoped copy.
+     P24: #pane-tutorial-panels (the Tutorial tab's equivalent container,
+     see tutorial.go/buildTutorialPanelsHTML) is added to every selector
+     below rather than getting its own CSS block — design-engineer decision
+     (REFACTORING.md P24 §4): the Tutorial pane reuses the SAME
+     .home-panel/.home-panel-body markup verbatim, no new design tokens. ===== */
+  #pane-home-panels, #pane-tutorial-panels { margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.9rem; }
+  #pane-home-panels .home-panel, #pane-tutorial-panels .home-panel { background: #0F1820; border: 1px solid #1C2A35; border-radius: 0.75rem; overflow: hidden; }
+  #pane-home-panels .home-panel > summary, #pane-tutorial-panels .home-panel > summary { cursor: pointer; list-style: none; padding: 0.9rem 1.25rem; font-family: 'Chakra Petch', sans-serif; font-size: 0.85rem; font-weight: 600; letter-spacing: 0.06em; color: #EAF7FA; user-select: none; }
+  #pane-home-panels .home-panel > summary::-webkit-details-marker, #pane-tutorial-panels .home-panel > summary::-webkit-details-marker { display: none; }
+  #pane-home-panels .home-panel > summary::before, #pane-tutorial-panels .home-panel > summary::before { content: '▸ '; color: #5C7480; }
+  #pane-home-panels .home-panel[open] > summary::before, #pane-tutorial-panels .home-panel[open] > summary::before { content: '▾ '; }
+  #pane-home-panels .home-panel > summary:hover, #pane-tutorial-panels .home-panel > summary:hover { color: #00CBE2; }
+  #pane-home-panels .home-panel-body, #pane-tutorial-panels .home-panel-body { padding: 0 1.25rem 1.25rem; border-top: 1px solid #1C2A35; }
+  #pane-home-panels .home-rule-explain-item, #pane-tutorial-panels .home-rule-explain-item { padding: 0.9rem 0; border-top: 1px solid #1C2A35; }
+  #pane-home-panels .home-rule-explain-item:first-child, #pane-tutorial-panels .home-rule-explain-item:first-child { border-top: none; padding-top: 0; }
+  #pane-home-panels .home-rule-explain-chal, #pane-tutorial-panels .home-rule-explain-chal { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase; color: #00CBE2; margin: 0 0 0.5rem; }
 
   /* ===== Terminal pane (item 9: restyled to match Story's card language) =====
      Previously a bespoke .term-head/.term-frame/.term-placeholder trio with
@@ -904,6 +909,7 @@
 <nav id="portal-tabs">
   <span id="portal-brand"><span class="accent">Falco</span> CTF</span>
   <a class="tab" data-tab="home" href="#home">Home</a>
+  <a class="tab" data-tab="tutorial" href="#tutorial">Tutorial</a>
   <a class="tab" data-tab="story" href="#story">Story</a>
   <a class="tab" data-tab="scoreboard" href="#scoreboard" id="tab-scoreboard" hidden>Leaderboard</a>
   <a class="tab" data-tab="me" href="#me">Scoreboard</a>
@@ -2428,6 +2434,36 @@
   </div>
 </div>
 
+<!-- ===== Tutorial pane (P24): Falco 学習チュートリアル (座学、採点とは
+     完全に独立 — journey/scoreboard の状態には一切触れない). Same content
+     mechanism as #pane-home's {{.HomePanelsHTML}} above: gen-time
+     sanitized chapter fragments from cmd/gen-tutorial-fragments, go:embed'd
+     via tutorialfragments_gen.go (see tutorial.go's tutorialPanelsHTML doc
+     for the shared template.HTML trust boundary). No admin gate, no
+     self-scope check, no per-viewer branching — every caller sees the
+     exact SAME content (design-engineer decision, REFACTORING.md P24: same
+     trust boundary as Home's static panels). Placed between Home and Story
+     in both PORTAL_TABS and this nav (design-engineer decision, P24 §2):
+     a participant reads these concept chapters before entering Story
+     (=mission start), not after. Reuses the SAME .home-panel/
+     .home-panel-body CSS class as #pane-home-panels (see the
+     #pane-tutorial-panels scoping rule added alongside #pane-home-panels's
+     own rules above) — no new design tokens (design-engineer decision §4).
+     MVP has NO server-side read-tracking (architect decision, P24 §3): a
+     "chapter read" UX, if ever added, is client-side localStorage only and
+     must never be sent to the server — Tutorial does not write to
+     internal/store or internal/scoreboard/scoring, ever. ===== -->
+<div class="pane p-shell" id="pane-tutorial">
+
+  <header>
+    <div class="brand">
+      <h1 class="p-h1"><span class="accent">Tutorial</span></h1>
+    </div>
+  </header>
+
+  <div id="pane-tutorial-panels">{{.TutorialPanelsHTML}}</div>
+</div>
+
 <!-- ===== Terminal pane (P23-4): iframe embed of the caller's own ttyd.
      src comes ONLY from the server-injected window.__PORTAL_TTYD_URL__ (see
      view.renderPortal / portal.ttydURLFor) — this pane never reads a
@@ -2531,7 +2567,11 @@
   // authorization boundary (see security note in view.go / portal.go). The
   // admin-only Scoreboard tab is hidden here as defense-in-depth ONLY; its data
   // source (/api/state) independently 403s a non-admin caller server-side.
-  const PORTAL_TABS = ['home', 'story', 'scoreboard', 'me', 'terminal'];
+  // P24: 'tutorial' inserted between 'home' and 'story' — design-engineer
+  // decision (REFACTORING.md P24): the Tutorial tab must sit AFTER the Home
+  // landing page but BEFORE Story (=mission entry), so a participant reads
+  // concept-level Falco chapters before starting a mission, not after.
+  const PORTAL_TABS = ['home', 'tutorial', 'story', 'scoreboard', 'me', 'terminal'];
 
   function currentTab() {
     const h = (location.hash || '').replace(/^#/, '');

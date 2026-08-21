@@ -78,6 +78,19 @@ type portalData struct {
 	// gen-time-sanitization trust boundary HomePanelsHTML does (see that
 	// field's doc above), it is just not wired into the template right now.
 	StoryPanelHTML template.HTML
+	// TutorialPanelsHTML (P24) is the Tutorial tab's gen-time-sanitized
+	// chapter content (Falco のしくみ / condition の読み方 / ルール推測 /
+	// trigger と evade の違い, plus the intro/cheatsheet panels moved here
+	// from Home — see REFACTORING.md P24 §2), pre-rendered to trusted
+	// template.HTML. This is the THIRD (and, as of P24, last) field sharing
+	// HomePanelsHTML/StoryPanelHTML's exact trust boundary: built ONCE from
+	// the committed, gen-time-sanitized TutorialFragments (see tutorial.go's
+	// tutorialPanelsHTML doc), never from anything request-derived, no
+	// per-viewer variation, no hints, no flags, no admin/participant
+	// branching (P24 receive-conditions item 2 — same content for every
+	// caller). Do not repurpose this field's template.HTML trust for any
+	// OTHER value in this struct.
+	TutorialPanelsHTML template.HTML
 	// Nonce (P23-6) is the CSP script-src nonce generated fresh for THIS
 	// response by writeSecurityHeaders (csp.go) and simultaneously stamped
 	// onto the Content-Security-Policy response header. It is plain
@@ -145,18 +158,20 @@ func ttydURLFor(user, suffix string) string {
 //     dashboard), which stays admin-only. This is intentional: the portal
 //     shell carries no admin data, so there is nothing to protect by gating
 //     the page itself; gating stays where the data is (the API).
-//  4. (P23-5, extended P23 portal-redesign) HomePanelsHTML and
-//     StoryPanelHTML are the two fields here that are template.HTML
-//     (unescaped) rather than a JSON-marshalled display hint, and the only
-//     values here that are NOT derived from the request at all — both are
-//     package-level constants computed once from the committed,
-//     gen-time-sanitized HomeFragments (see home.go / homefragments_gen.go).
-//     Both are identical for every caller (admin or participant), carry no
+//  4. (P23-5, extended P23 portal-redesign, extended P24) HomePanelsHTML,
+//     StoryPanelHTML, and TutorialPanelsHTML are the three fields here that
+//     are template.HTML (unescaped) rather than a JSON-marshalled display
+//     hint, and the only values here that are NOT derived from the request
+//     at all — all three are package-level constants computed once from
+//     committed, gen-time-sanitized fragment sets (see home.go/
+//     homefragments_gen.go and tutorial.go/tutorialfragments_gen.go). All
+//     three are identical for every caller (admin or participant), carry no
 //     per-user data, no hints, no flags — see docs-site/home-fragments.yaml
-//     for the content contract this implements. Do not repurpose either
-//     field's template.HTML trust for any OTHER value in this struct; every
-//     other field must keep going through json.Marshal+template.JS (or
-//     plain esc() client-side) exactly as before.
+//     and docs-site/tutorial-chapters.yaml for the content contracts this
+//     implements. Do not repurpose any of these fields' template.HTML trust
+//     for any OTHER value in this struct; every other field must keep going
+//     through json.Marshal+template.JS (or plain esc() client-side) exactly
+//     as before.
 //  5. All other dynamic values pass through html/template with template.JS on
 //     pre-marshalled JSON (never raw string interpolation), so even a
 //     future edit that feeds a weirder value through RoleJSON/UserJSON/
@@ -204,11 +219,12 @@ func renderPortal(w http.ResponseWriter, r *http.Request, isAdmin func(*http.Req
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	return portalTmpl.Execute(w, portalData{
-		RoleJSON:       template.JS(roleJSON),
-		UserJSON:       template.JS(userJSON),
-		TtydURLJSON:    template.JS(ttydURLJSON),
-		HomePanelsHTML: homePanelsHTML,
-		StoryPanelHTML: storyPanelHTML,
-		Nonce:          nonce,
+		RoleJSON:           template.JS(roleJSON),
+		UserJSON:           template.JS(userJSON),
+		TtydURLJSON:        template.JS(ttydURLJSON),
+		HomePanelsHTML:     homePanelsHTML,
+		StoryPanelHTML:     storyPanelHTML,
+		TutorialPanelsHTML: tutorialPanelsHTML,
+		Nonce:              nonce,
 	})
 }

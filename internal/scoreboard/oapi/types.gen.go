@@ -77,7 +77,7 @@ type ChallengeStat struct {
 	ExpectedRules []string `json:"expectedRules"`
 
 	// FirstSolver first solver's username; **null** when nobody solved it (key always present)
-	FirstSolver    *string  `json:"first_solver,omitempty"`
+	FirstSolver    *string  `json:"first_solver"`
 	ForbiddenRules []string `json:"forbiddenRules"`
 	Id             string   `json:"id"`
 	SolvedCount    int      `json:"solved_count"`
@@ -246,12 +246,12 @@ type IngestIgnoredReason string
 type Journey struct {
 	// Current first unsolved mission id. **null** when every mission is solved
 	// (the key is always present).
-	Current *string `json:"current,omitempty"`
+	Current *string `json:"current"`
 
 	// Detail detail for `?mission=` when valid, else for `current`. **null** when
 	// there is no mission to show at all (everything solved and no valid
 	// override) — the key is always present.
-	Detail      *MissionDetail `json:"detail,omitempty"`
+	Detail      *MissionDetail `json:"detail"`
 	DisplayName string         `json:"display_name"`
 
 	// HintPenalty representative HINT1 cost; the per-mission figure is `detail.hints.penalty`
@@ -301,7 +301,7 @@ type Me struct {
 
 	// NextUnsolved next unsolved challenge id by catalog order. **null** when
 	// everything is solved (the key is always present).
-	NextUnsolved *string   `json:"next_unsolved,omitempty"`
+	NextUnsolved *string   `json:"next_unsolved"`
 	Now          time.Time `json:"now"`
 
 	// Rank 1-based; 0 means "no rank yet" (zero solves) and renders as "-"
@@ -551,11 +551,13 @@ type SubmitDetectRequest struct {
 // SubmitDetectVerdict 200 verdict for `POST /api/challenges/{cid}/submit-detect`. `status` is
 // the branch key; `user` / `display_name` appear only on `solved`, and the
 // fire counts are absent on `invalid` (the condition never compiled).
+// `reason` appears on `invalid`/`missed`/`false-positive` but NOT on
+// `solved` (the solved branch has nothing to explain).
 type SubmitDetectVerdict struct {
 	BenignFires  *int                      `json:"benign_fires,omitempty"`
 	DisplayName  *string                   `json:"display_name,omitempty"`
 	EvasionFires *int                      `json:"evasion_fires,omitempty"`
-	Reason       string                    `json:"reason"`
+	Reason       *string                   `json:"reason,omitempty"`
 	Solved       bool                      `json:"solved"`
 	Status       SubmitDetectVerdictStatus `json:"status"`
 	User         *string                   `json:"user,omitempty"`
