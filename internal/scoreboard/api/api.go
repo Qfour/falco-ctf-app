@@ -15,6 +15,13 @@
 //	POST /api/admin/hints
 //	POST /api/admin/reset
 //	POST /api/admin/users/{user}/display-name
+//	GET  /api/users/{user}/questions
+//	POST /api/users/{user}/questions
+//	GET  /api/users/{user}/questions/{qid}
+//	POST /api/users/{user}/questions/{qid}/messages
+//	GET  /api/admin/questions
+//	GET  /api/admin/questions/{qid}
+//	POST /api/admin/questions/{qid}/reply
 package api
 
 import (
@@ -32,6 +39,7 @@ import (
 
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
+	"github.com/Qfour/falco-ctf-app/internal/qa"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/detect"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/metrics"
@@ -117,6 +125,26 @@ type Handler struct {
 	// the hard global in-flight grader cap.
 	detectRunner   scoring.DetectRunner
 	detectInflight chan struct{}
+
+	// qa is the P25 QA ticket-chat store (ADR-0006). nil is possible only in
+	// tests that never wire QAConfig — cmd/scoreboard/main.go always opens
+	// one, unconditionally (there is no "QA disabled" feature flag, unlike
+	// DetectConfig's Runner). Every qa route handler is reached only after a
+	// gate (selfOrAdmin/selfOrAdminWrite/isAdmin) has already run, so a nil
+	// qa here would only ever be dereferenced by a legitimately-authorized
+	// caller in a misconfigured deployment — acceptable because that is
+	// exactly the shape of every other required-but-unwired dependency in
+	// this Handler (e.g. a nil store would panic just as readily).
+	qa              *qa.Store
+	questionLimiter *ratelimit.Limiter
+}
+
+// QAConfig carries the P25 QA ticket-chat store (ADR-0006) into the api
+// handler. A separate config struct (matching JourneyConfig/DetectConfig's
+// shape) rather than a bare *qa.Store parameter, so New's signature reads
+// the same way for every optional subsystem this Handler wires.
+type QAConfig struct {
+	Store *qa.Store
 }
 
 // DetectConfig carries the detect-challenge grading inputs. Both fields are
@@ -147,7 +175,7 @@ const DetectGradeTimeout = 30 * time.Second
 // originguard to protect the browser-facing state-changing routes (see
 // Register). Empty = every guarded request is denied (fail-closed) — see
 // cmd/scoreboard/main.go for the deploy-time default and rationale.
-func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *slog.Logger, now func() time.Time, adminEmails []string, allowedOrigins []string, jc JourneyConfig, dc DetectConfig) *Handler {
+func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *slog.Logger, now func() time.Time, adminEmails []string, allowedOrigins []string, jc JourneyConfig, dc DetectConfig, qc QAConfig) *Handler {
 	// /submit accepts a claimed user identity. Without per-IP throttling a
 	// participant who scraped someone else's flag could brute-force submits.
 	// 1 req/s with burst 10 lets legitimate typing through but blocks
@@ -192,6 +220,12 @@ func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *sl
 		docsBaseURL:        docsBaseURL,
 		detectRunner:       dc.Runner,
 		detectInflight:     inflight,
+		qa:                 qc.Store,
+		// ADR-0006 Decision 1: 10s/1 refill, burst 3 — shared by ticket
+		// creation and follow-up messages (ratelimit.ClientIP-keyed), so a
+		// spammer cannot dodge the bucket by spreading posts across many
+		// ticket ids.
+		questionLimiter: ratelimit.New(0.1 /* one every 10s */, 3 /* burst */).WithNow(now),
 	}
 }
 
@@ -290,6 +324,7 @@ func (h *Handler) og(next http.Handler) http.Handler {
 func (h *Handler) Routes() []apispec.Route {
 	submitMW := h.submitLimiter.Middleware(ratelimit.ClientIP)
 	dnMW := h.displayNameLimiter.Middleware(ratelimit.ClientIP)
+	questionMW := h.questionLimiter.Middleware(ratelimit.ClientIP)
 	return []apispec.Route{
 		{
 			Method: "GET", Pattern: "/api/state",
@@ -466,6 +501,82 @@ func (h *Handler) Routes() []apispec.Route {
 			OriginGuarded: false, CollectorForward: true,
 			RateLimit: "per-IP 1 req / 5s burst 5",
 			Handler:   dnMW(http.HandlerFunc(h.setDisplayName)),
+		},
+		{
+			// P25 (ADR-0006): the caller's own QA ticket summaries. Reads are
+			// never origin-guarded or rate-limited (same posture as the other
+			// self-scoped reads above — /me, /journey).
+			Method: "GET", Pattern: "/api/users/{user}/questions",
+			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdmin,
+			OriginGuarded: false, CollectorForward: false, RateLimit: "none",
+			Handler: http.HandlerFunc(h.listQuestions),
+		},
+		{
+			// Opens a new ticket. Origin-guarded + selfOrAdminWrite (the same
+			// two-gate stack steps/check and hints/{idx} use above): reached
+			// ONLY from the portal's browser fetch, never from the collector's
+			// forward allowlist (ADR-0006 explicitly declines to add QA there
+			// — a participant's QA send has no legitimate workspace/curl
+			// caller, so adding it would only widen the attack surface).
+			// Shares questionLimiter's bucket with postMessage below.
+			Method: "POST", Pattern: "/api/users/{user}/questions",
+			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdminWrite,
+			OriginGuarded: true, CollectorForward: false,
+			RateLimit: "per-IP 1 req/10s burst 3 (shared with postQuestionMessage)",
+			Handler:   h.og(questionMW(http.HandlerFunc(h.createQuestion))),
+		},
+		{
+			// One ticket's full thread. The composite (id,user) ownership
+			// check lives inside qa.Store.GetThreadForUser (ADR-0006 Decision
+			// 2) — selfOrAdmin only proves the caller MAY act as {user}, it
+			// says nothing about whether {qid} belongs to {user}.
+			Method: "GET", Pattern: "/api/users/{user}/questions/{qid}",
+			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdmin,
+			OriginGuarded: false, CollectorForward: false, RateLimit: "none",
+			Handler: http.HandlerFunc(h.getQuestion),
+		},
+		{
+			// Follow-up message on the caller's own ticket. Same origin-guard
+			// + selfOrAdminWrite + shared rate-limit bucket as createQuestion
+			// above; the composite-key ownership check + insert happen inside
+			// ONE qa.Store call (AppendMessageForUser), never two round trips
+			// (ADR-0006 Decision 2 / security-engineer finding 4).
+			Method: "POST", Pattern: "/api/users/{user}/questions/{qid}/messages",
+			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdminWrite,
+			OriginGuarded: true, CollectorForward: false,
+			RateLimit: "per-IP 1 req/10s burst 3 (shared with createQuestion)",
+			Handler:   h.og(questionMW(http.HandlerFunc(h.postMessage))),
+		},
+		{
+			// Operator's full ticket list, every participant. No {user} in
+			// this route — it is a standalone admin route, not a self-scoped
+			// one (ADR-0006 Decision 1).
+			Method: "GET", Pattern: "/api/admin/questions",
+			Audience: apispec.AudienceOperator, Authz: apispec.AuthzAdmin,
+			OriginGuarded: false, CollectorForward: false, RateLimit: "none",
+			Handler: http.HandlerFunc(h.adminListQuestions),
+		},
+		{
+			// One ticket, any participant, by id alone — admin routes do not
+			// go through {user}, so there is no composite key to check
+			// (ADR-0006 Decision 2: isAdmin alone is the intended gate here).
+			Method: "GET", Pattern: "/api/admin/questions/{qid}",
+			Audience: apispec.AudienceOperator, Authz: apispec.AuthzAdmin,
+			OriginGuarded: false, CollectorForward: false, RateLimit: "none",
+			Handler: http.HandlerFunc(h.adminGetQuestion),
+		},
+		{
+			// THE only legitimate operator reply path (ADR-0006 Decision 1 /
+			// security-engineer finding 5 — see adminReply's own doc for why
+			// this matters even though selfOrAdminWrite's admin branch would
+			// technically also let an admin post through the participant
+			// route). Origin-guarded like the operator dashboard's other
+			// admin writes (reset / hints / display-name above); never
+			// rate-limited, matching that same trusted-actor precedent.
+			Method: "POST", Pattern: "/api/admin/questions/{qid}/reply",
+			Audience: apispec.AudienceOperator, Authz: apispec.AuthzAdmin,
+			OriginGuarded: true, CollectorForward: false, RateLimit: "none",
+			Handler: h.og(http.HandlerFunc(h.adminReply)),
 		},
 	}
 }

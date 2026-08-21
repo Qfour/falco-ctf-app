@@ -8,11 +8,13 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
+	"github.com/Qfour/falco-ctf-app/internal/qa"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/api"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/detect"
@@ -181,6 +183,20 @@ func main() {
 	defer st.Close()
 	logger.Info("store opened", "path", dbPath, "solved_loaded", st.SolvedCount())
 
+	// P25 QA ticket-chat store (ADR-0006): a second SQLite file in the SAME
+	// PVC directory as SCOREBOARD_DB — no new env var, no new chart value
+	// (ADR-0006 Decision 3). Physically separate from the scoring/solve store
+	// above (internal/qa never imports internal/store or
+	// internal/scoreboard/scoring — internal/apispec's qa_boundary_test.go
+	// machine-checks that).
+	qaSt, err := qa.Open(filepath.Join(filepath.Dir(dbPath), "qa.db"))
+	if err != nil {
+		logger.Error("qa store open failed", "path", dbPath, "err", err)
+		os.Exit(1)
+	}
+	defer qaSt.Close()
+	logger.Info("qa store opened")
+
 	// Detect-challenge grading (type: detect). The scoreboard image is distroless
 	// and falco-free (conventions), so grading is delegated to a DetectRunner that
 	// runs Falco elsewhere:
@@ -233,6 +249,7 @@ func main() {
 		scoreboard.WithDetect(detectCfg),
 		scoreboard.WithPoints(points),
 		scoreboard.WithTtydSuffix(portalTtydSuffix),
+		scoreboard.WithQA(qaSt),
 	)
 
 	// Auto-solve sweeper (P16): re-derives exfil-delivered-but-unsolved evade

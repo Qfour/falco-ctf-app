@@ -850,6 +850,208 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /api/users/{user}/questions:
+    get:
+      summary: List the caller's own P25 QA tickets (summary)
+      operationId: listQuestions
+      tags: [participant]
+      x-ctf-audience: participant
+      x-ctf-authz: self-or-admin
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
+      description: |
+        ADR-0006 (P25): one-way participant -> operator QA ticket chat. "1
+        ticket = 1 thread" — a participant may open several tickets; each is
+        listed here as a summary (never the message bodies). Self-scoped
+        read, same posture as `/me` / `/journey`; an admin may read any
+        user's list.
+      parameters:
+        - $ref: "#/components/parameters/User"
+      responses:
+        "200":
+          description: ticket summaries, most-recently-active first
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QuestionList" }
+        "400":
+          description: invalid user
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: caller is neither `{user}` nor an admin
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: could not list questions
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    post:
+      summary: Open a new P25 QA ticket
+      operationId: createQuestion
+      tags: [participant]
+      x-ctf-audience: participant
+      x-ctf-authz: self-or-admin-write
+      x-ctf-origin-guard: true
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: per-IP 1 req/10s burst 3 (shared with postQuestionMessage)
+      description: |
+        ADR-0006 (P25). `author` / `author_role` are ALWAYS server-set
+        (`participant` / `{user}`) — the request schema below has no such
+        fields at all, so there is nothing for a participant to smuggle a
+        role claim through; any such keys in a raw request body are
+        silently ignored (security-engineer finding 1, HIGH).
+
+        Origin-guarded + self-or-admin-write, the SAME two-gate stack
+        `steps/{idx}/check` and `hints/{idx}` use above: reached ONLY from
+        the portal's browser fetch. NOT added to the collector's forward
+        allowlist (`docs/openapi-collector.yaml`) — a participant's QA send
+        has no legitimate workspace/curl caller, so adding one would only
+        widen the attack surface (ADR-0006 explicitly declines this).
+      parameters:
+        - $ref: "#/components/parameters/User"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateQuestionRequest" }
+      responses:
+        "200":
+          description: ticket created (its one message is the participant's own opening body)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QuestionThread" }
+        "400":
+          description: invalid user, malformed body, or subject/body empty or over the length cap
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: origin guard denied, or caller is neither `{user}` nor an admin
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: rate limited (`text/plain`)
+          content:
+            text/plain: {}
+        "500":
+          description: could not create the ticket
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/users/{user}/questions/{qid}:
+    get:
+      summary: Read one of the caller's own P25 QA tickets (full thread)
+      operationId: getQuestion
+      tags: [participant]
+      x-ctf-audience: participant
+      x-ctf-authz: self-or-admin
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
+      description: |
+        ADR-0006 Decision 2: the composite (id,user) ownership check happens
+        inside the store call this handler makes, under one lock hold —
+        `self-or-admin` only proves the caller MAY act as `{user}`, it says
+        nothing about whether `{qid}` belongs to `{user}`. An unknown id and
+        a cross-user id both produce the SAME 404 (no existence oracle for
+        another participant's ticket).
+      parameters:
+        - $ref: "#/components/parameters/User"
+        - $ref: "#/components/parameters/Qid"
+      responses:
+        "200":
+          description: the ticket's full thread
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QuestionThread" }
+        "400":
+          description: invalid user
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: caller is neither `{user}` nor an admin
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: unknown ticket id, or it does not belong to `{user}`
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: could not load the ticket
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/users/{user}/questions/{qid}/messages:
+    post:
+      summary: Post a follow-up message on the caller's own P25 QA ticket
+      operationId: postQuestionMessage
+      tags: [participant]
+      x-ctf-audience: participant
+      x-ctf-authz: self-or-admin-write
+      x-ctf-origin-guard: true
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: per-IP 1 req/10s burst 3 (shared with createQuestion)
+      description: |
+        Same origin-guard + self-or-admin-write + shared rate-limit bucket as
+        `POST /api/users/{user}/questions`. `author` / `author_role` are
+        ALWAYS server-set (`participant` / `{user}`) — never read from the
+        request body.
+
+        IDOR discipline (ADR-0006 Decision 2 / security-engineer finding 4):
+        the composite-key ownership check and the message insert happen
+        inside ONE store call, under one lock hold — never a separate
+        "check ownership" round trip followed by a separate "now write"
+        round trip. A cross-user `{qid}` (one that exists but belongs to a
+        DIFFERENT participant) 404s exactly like an unknown one.
+      parameters:
+        - $ref: "#/components/parameters/User"
+        - $ref: "#/components/parameters/Qid"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PostQuestionMessageRequest" }
+      responses:
+        "200":
+          description: message appended; the full, updated thread
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QuestionThread" }
+        "400":
+          description: invalid user, malformed body, or body empty or over the length cap
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: origin guard denied, or caller is neither `{user}` nor an admin
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: unknown ticket id, or it does not belong to `{user}`
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: rate limited (`text/plain`)
+          content:
+            text/plain: {}
+        "500":
+          description: could not append the message
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /api/hints:
     get:
       summary: Operator-released hint index (public read)
@@ -1027,6 +1229,140 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /api/admin/questions:
+    get:
+      summary: List every P25 QA ticket, every participant (summary)
+      operationId: adminListQuestions
+      tags: [operator]
+      x-ctf-audience: operator
+      x-ctf-authz: admin
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
+      description: |
+        ADR-0006 (P25). No `{user}` in this route — it is a standalone admin
+        route, not a self-scoped one (Decision 1). Each summary carries
+        `user` (unlike the participant listing's summaries, which omit it —
+        the caller already knows it is their own).
+      responses:
+        "200":
+          description: ticket summaries across every participant, most-recently-active first
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QuestionList" }
+        "403":
+          description: caller is not an admin
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: could not list questions
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/admin/questions/{qid}:
+    get:
+      summary: Read any P25 QA ticket by id (full thread)
+      operationId: adminGetQuestion
+      tags: [operator]
+      x-ctf-audience: operator
+      x-ctf-authz: admin
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
+      description: |
+        No `{user}` path segment, so no composite-key ownership check
+        applies — `admin` alone is the intended gate for this route
+        (ADR-0006 Decision 2).
+      parameters:
+        - $ref: "#/components/parameters/Qid"
+      responses:
+        "200":
+          description: the ticket's full thread
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QuestionThread" }
+        "403":
+          description: caller is not an admin
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: unknown ticket id
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: could not load the ticket
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/admin/questions/{qid}/reply:
+    post:
+      summary: Reply to a P25 QA ticket as the operator
+      operationId: adminReplyQuestion
+      tags: [operator]
+      x-ctf-audience: operator
+      x-ctf-authz: admin
+      x-ctf-origin-guard: true
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
+      description: |
+        THE only legitimate operator reply path (ADR-0006 Decision 1,
+        security-engineer finding 5, LOW). `author_role` is always `admin`
+        and `author` is always the caller's OWN proven identity
+        (`X-Auth-Request-Email`) — never request-body input. A ticket's
+        derived `answered` flips to true only via a message this route
+        writes.
+
+        `self-or-admin-write`'s admin branch would technically also let an
+        admin identity through the PARTICIPANT follow-up route
+        (`POST /api/users/{user}/questions/{qid}/messages`) — this codebase
+        does not add a technical block against that misuse (no new gate
+        primitive); it is self-detecting instead, since that route
+        hardcodes `author_role: participant` unconditionally, so a reply
+        posted through it would never contribute to `answered`. Operator
+        UI/runbook guidance points exclusively at this route.
+
+        Origin-guarded like the operator dashboard's other admin writes
+        (reset / hints / display-name); never rate-limited, matching that
+        same trusted-actor precedent.
+      parameters:
+        - $ref: "#/components/parameters/Qid"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdminReplyRequest" }
+      responses:
+        "200":
+          description: reply appended; the full, updated thread
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QuestionThread" }
+        "400":
+          description: malformed body, or body empty or over the length cap
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: origin guard denied, or caller is not an admin
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: unknown ticket id
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: could not append the reply
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
 components:
   parameters:
     User:
@@ -1047,6 +1383,17 @@ components:
       required: true
       schema: { type: string }
       description: challenge id / catalog key (e.g. `03-stealth-read`)
+    Qid:
+      in: path
+      name: qid
+      required: true
+      schema: { type: string }
+      description: |
+        P25 QA ticket id (ADR-0006) — a 32-hex-char, server-generated,
+        non-enumerable value (`internal/qa.Store`'s newID). Not a
+        capability token: participant routes still enforce the composite
+        (id, user) ownership check server-side; this value's randomness is
+        defense-in-depth on top of that check, not a substitute for it.
 
   schemas:
     Error:
@@ -1689,3 +2036,102 @@ components:
           type: object
           additionalProperties: { type: integer }
         now: { type: string, format: date-time }
+
+    QuestionMessage:
+      type: object
+      description: |
+        One message in a P25 QA ticket thread (ADR-0006). `author_role` /
+        `author` are always server-set per the ROUTE the message was
+        written through (`participant`+`{user}` on the participant write
+        routes, `admin`+the caller's own proven email on the operator reply
+        route) — never accepted from request-body input on any write route.
+      required: [author_role, author, body, created_at]
+      properties:
+        author_role:
+          type: string
+          enum: [participant, admin]
+        author: { type: string }
+        body: { type: string }
+        created_at: { type: string, format: date-time }
+
+    QuestionThread:
+      type: object
+      description: |
+        A full P25 QA ticket ("1 ticket = 1 thread", ADR-0006): the opening
+        subject plus every message, oldest first. Returned by
+        createQuestion, getQuestion, postQuestionMessage, adminGetQuestion
+        and adminReplyQuestion alike, so a client can use ONE shape for
+        "here is the ticket after my action" everywhere.
+      required: [id, user, subject, created_at, messages]
+      properties:
+        id: { type: string }
+        user: { type: string }
+        subject: { type: string }
+        created_at: { type: string, format: date-time }
+        messages:
+          type: array
+          items: { $ref: "#/components/schemas/QuestionMessage" }
+
+    QuestionSummary:
+      type: object
+      description: |
+        One row of a P25 QA ticket LISTING — never the message bodies.
+        `answered` is DERIVED (at least one message has `author_role:
+        admin`), not a stored status column (ADR-0006 Decision 1) — it can
+        never drift out of sync with the messages that justify it.
+      required: [id, subject, created_at, updated_at, answered, message_count]
+      properties:
+        id: { type: string }
+        subject: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at:
+          type: string
+          format: date-time
+          description: the latest message's created_at (or created_at itself, for a ticket with only its opening message)
+        answered: { type: boolean }
+        message_count: { type: integer }
+        user:
+          type: string
+          description: only present in the ADMIN listing (`GET /api/admin/questions`) — the participant's own listing omits it (the caller already knows it is their own)
+
+    QuestionList:
+      type: object
+      required: [questions]
+      properties:
+        questions:
+          type: array
+          items: { $ref: "#/components/schemas/QuestionSummary" }
+
+    CreateQuestionRequest:
+      type: object
+      description: |
+        Deliberately has NO `author` / `author_role` property — there is
+        nothing here for a participant to smuggle a role claim through
+        (security-engineer finding 1, HIGH). Any such keys present in a raw
+        request body are silently ignored.
+      required: [subject, body]
+      properties:
+        subject:
+          type: string
+          description: "1..120 runes after trimming"
+        body:
+          type: string
+          description: "1..4096 bytes after trimming"
+
+    PostQuestionMessageRequest:
+      type: object
+      description: same "no author/author_role" discipline as CreateQuestionRequest.
+      required: [body]
+      properties:
+        body:
+          type: string
+          description: "1..4096 bytes after trimming"
+
+    AdminReplyRequest:
+      type: object
+      description: same "no author/author_role" discipline as CreateQuestionRequest — the operator's own identity comes from X-Auth-Request-Email, never the body.
+      required: [body]
+      properties:
+        body:
+          type: string
+          description: "1..4096 bytes after trimming"

@@ -38,6 +38,7 @@ import (
 
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
+	"github.com/Qfour/falco-ctf-app/internal/qa"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/api"
 	"github.com/Qfour/falco-ctf-app/internal/store"
@@ -109,6 +110,7 @@ func authzConcretePath(rt apispec.Route) string {
 		"user": authzSelfUser,
 		"cid":  authzCID(rt),
 		"idx":  "0",
+		"qid":  "deadbeef",
 	}
 	return pathParamPattern.ReplaceAllStringFunc(rt.Pattern, func(seg string) string {
 		name := seg[1 : len(seg)-1]
@@ -144,11 +146,17 @@ func newAuthzFixture(t *testing.T) *scoreboard.Handler {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
+	qaSt, err := qa.Open(filepath.Join(t.TempDir(), "authz-qa.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { qaSt.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	return scoreboard.NewHandler(cat, st, logger,
 		scoreboard.WithAdminEmails([]string{authzAdminEmail}),
 		scoreboard.WithAllowedOrigins([]string{allowedOrigin}),
 		scoreboard.WithDetect(api.DetectConfig{Runner: noopDetectRunner{}}),
+		scoreboard.WithQA(qaSt),
 	)
 }
 
@@ -231,14 +239,14 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 	// class rather than one combined total — a single combined count could
 	// hide, e.g., every AuthzAdmin route losing its classification to
 	// AuthzNone by mistake behind AuthzNone's count silently absorbing the
-	// difference. 5 admin + 7 self(-write) + 8 none/claimed-identity = 20,
-	// matching ADR-0005 C1's real-world route-count canon
+	// difference. 8 admin + 11 self(-write) + 8 none/claimed-identity = 27,
+	// matching ADR-0005/ADR-0006's real-world route-count canon
 	// (apispec_parity_test.go's TestAPISpec_V1_RouteSetMatchesSpec).
-	if adminGated != 5 {
-		t.Fatalf("expected exactly 5 Authz: admin routes (ADR-0005 canon: GET /, GET /api/state, POST /api/admin/reset, POST /api/admin/hints, POST /api/admin/users/{user}/display-name), got %d", adminGated)
+	if adminGated != 8 {
+		t.Fatalf("expected exactly 8 Authz: admin routes (ADR-0005 canon: GET /, GET /api/state, POST /api/admin/reset, POST /api/admin/hints, POST /api/admin/users/{user}/display-name; ADR-0006 P25: GET /api/admin/questions, GET /api/admin/questions/{qid}, POST /api/admin/questions/{qid}/reply), got %d", adminGated)
 	}
-	if selfGated != 7 {
-		t.Fatalf("expected exactly 7 Authz: self-or-admin(-write) routes (GET /api/users/{user}/me, GET /api/users/{user}/journey, POST /api/challenges/{cid}/submit-detect, POST /api/users/{user}/challenges/{cid}/steps/{idx}/check, POST /api/users/{user}/challenges/{cid}/hints/{idx}, POST /api/users/{user}/challenges/{cid}/reset-dirty, POST /api/users/{user}/display-name), got %d", selfGated)
+	if selfGated != 11 {
+		t.Fatalf("expected exactly 11 Authz: self-or-admin(-write) routes (GET /api/users/{user}/me, GET /api/users/{user}/journey, POST /api/challenges/{cid}/submit-detect, POST /api/users/{user}/challenges/{cid}/steps/{idx}/check, POST /api/users/{user}/challenges/{cid}/hints/{idx}, POST /api/users/{user}/challenges/{cid}/reset-dirty, POST /api/users/{user}/display-name; ADR-0006 P25: GET /api/users/{user}/questions, POST /api/users/{user}/questions, GET /api/users/{user}/questions/{qid}, POST /api/users/{user}/questions/{qid}/messages), got %d", selfGated)
 	}
 	if openGated != 8 {
 		t.Fatalf("expected exactly 8 Authz: none/claimed-identity routes (GET /api/hints, GET /portal, GET the cybercore css asset, POST /falco/events, GET /healthz, GET /metrics, POST /api/challenges/{cid}/submit, POST /internal/exfil/{cid}), got %d", openGated)
