@@ -136,15 +136,32 @@ jobs:
   #   相変わらず落ちるが non-blocking になる) — required check を required 集合
   #   から外す・常時 pass にする、のどちらでもない。他 actor (通常の human PR) の
   #   挙動はビット単位で不変 (matrix の `scan-continue-on-error: false` のまま)。
+  #   secrets 抑止は job 単位ではなく actor 単位で GitHub が行うため、この一律
+  #   適用は scoreboard/auth-policy (必須チェック) だけでなく matrix の全 8 image
+  #   (ttyd/collector/challenge/docs/detect-grader/ttyd-proxy 含む) に及ぶ —
+  #   これらも元々同じ理由で token 無しで落ちるはずだった対象であり、範囲の
+  #   拡大ではない。
   #
-  #   実効的な CVE ゲートは 2 経路で維持される:
+  #   実効的な CVE ゲートは 2 段: (1) は **detective** (post-merge alert)、
+  #   (2) が唯一の **preventive** ゲート:
   #     1. merge 後の `push: branches: [main]` トリガで同じ build job が
   #        secrets 付きで再実行され、実スキャンが走る (このワークフロー内で
-  #        既に成立している経路 — 新設ではない)
+  #        既に成立している経路 — 新設ではない)。ただしこの時点で merge は
+  #        既に完了しているため、ここでの scan 失敗は当該 commit が main に
+  #        載ることを止められない (detective のみ)
   #     2. dev-flow.md の既定どおり `make scan TAG=local` が prod deploy 前の
-  #        実質的な最終ゲート (CI scan は「安全網」と明記済み、CI-free prod)
+  #        **唯一の preventive ゲート** (CI-free prod 方針。CI scan は「安全網」
+  #        と明記済み)
   #   残余リスク: merge 直後〜(1) 完了までの短い窓で、未スキャンの commit が
-  #   main に載る。security-engineer レビュー要 (auth 境界ではないが CI ゲート変更)。
+  #   main に載る。security-engineer レビュー済み (2026-08-21, PASS with
+  #   conditions)。
+  #
+  #   **恒久対応として承認 (VP, 2026-08-21)**: この緩和は Dependabot secrets
+  #   抑止という GitHub 側の構造的仕様への対処であり、期限付きの暫定バイパスでは
+  #   ない。解除条件: (a) GitHub が Dependabot secrets 供給の仕様を変更した場合、
+  #   または (b) "Allow GitHub Actions to request secrets from Dependabot" の
+  #   有効化判断が別途下された場合 (却下済み、再検討する場合は新規 ADR/Issue で)。
+  #   いずれかが発生したら本ブロックを見直すこと。
   # ------------------------------------------------------------------
   build:
     name: build (${{ matrix.name }})
