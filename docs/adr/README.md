@@ -19,8 +19,14 @@
 ## 規律（ADR-0003 / ADR-0001 で確立したもの）
 
 - **Accepted な ADR の決定は編集しない。** 変更は **supersede する新 ADR** で行う
-  （ADR-0003 が自ら定めている）。**navigational なポインタの追記は例外**
-  （読者導線の確保。決定内容を変えない）
+  （ADR-0003 が自ら定めている）。例外は 2 つ:
+  - **navigational なポインタの追記**（読者導線の確保。決定内容を変えない）
+  - **非決定的な事実訂正**（例: 参照先スクリプトの所在・ファイルパスなど、
+    Decision/Verification が主張する結論そのものを変えない記述の訂正。
+    ADR-0005 の Status ブロックが「Decision/Verification 節は以後編集しない一方、
+    Status ブロックは状態記述なので実態に追随させる」と自己宣言しながら
+    Verification 節本文の事実訂正を行った先例を明文化するもの。決定を覆す
+    編集ではないことが自明な場合のみ適用し、迷ったら supersede する新 ADR を書く）
 - **Verification が無い ADR を Hard Invariant に昇格させない。**
   昇格条件は ADR 本文に書き、**機械強制が landing するまで
   `.claude/rules/falco-ctf-app-conventions.md` の表には追記しない**
