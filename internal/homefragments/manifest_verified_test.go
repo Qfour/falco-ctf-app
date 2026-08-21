@@ -85,6 +85,16 @@ func assertNoForbiddenLeaks(t *testing.T, panelID, html string) {
 // test that fails the next time content-lead edits these files in a way
 // that reintroduces hint/answer/flag content, rather than relying on a
 // point-in-time manual check.
+//
+// P24 follow-up (app#156): StaticPanels is now []StaticPanel{} (see
+// manifest.go) — the intro/cheatsheet entries this test used to iterate
+// over moved to TutorialChapters (see TestManifestVerifiedClean_
+// TutorialChapters below), so as written today this test's body executes
+// zero iterations and asserts nothing. That is the correct, intended state
+// post-P24 (StaticPanels stays as the seam for any *future* Home-tab static
+// panel, at which point this loop starts exercising it again) — it is kept
+// rather than deleted so a future StaticPanels entry is covered without
+// anyone having to remember to re-add this test.
 func TestManifestVerifiedClean_StaticPanels(t *testing.T) {
 	root := repoRoot(t)
 	for _, sp := range StaticPanels {

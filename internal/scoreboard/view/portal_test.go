@@ -141,6 +141,14 @@ func TestRenderPortal_MissingIdentityDegradesGracefully(t *testing.T) {
 // package var every request serves — see portal.go's HomePanelsHTML field
 // doc), for BOTH admin and participant callers identically (P23-5: no
 // per-viewer variation, no hints, no admin-only content in this pane).
+//
+// P24 follow-up (app#156): the `if f.ChalNN == ""` branch below is
+// permanently unreachable as of P24 — the intro/cheatsheet static panels
+// that used to have ChalNN=="" moved OUT of HomeFragments and into
+// TutorialChapters (see manifest.go's StaticPanels doc), so every remaining
+// HomeFragments entry today has a non-empty ChalNN. This is the correct,
+// intended state (not a bug): the branch is kept, unexercised, as the seam
+// for any future ChalNN=="" HomeFragments entry, rather than deleted.
 func TestRenderPortal_HomePanelsInjected(t *testing.T) {
 	if len(HomeFragments) == 0 {
 		t.Fatal("HomeFragments is empty — run `make gen-home-fragments` before running this test")
