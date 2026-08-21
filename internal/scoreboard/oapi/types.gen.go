@@ -51,6 +51,12 @@ const (
 	Trigger MissionSummaryType = "trigger"
 )
 
+// Defines values for QuestionMessageAuthorRole.
+const (
+	Admin       QuestionMessageAuthorRole = "admin"
+	Participant QuestionMessageAuthorRole = "participant"
+)
+
 // Defines values for SubmitDetectVerdictStatus.
 const (
 	FalsePositive SubmitDetectVerdictStatus = "false-positive"
@@ -58,6 +64,12 @@ const (
 	Missed        SubmitDetectVerdictStatus = "missed"
 	Solved        SubmitDetectVerdictStatus = "solved"
 )
+
+// AdminReplyRequest same "no author/author_role" discipline as CreateQuestionRequest — the operator's own identity comes from X-Auth-Request-Email, never the body.
+type AdminReplyRequest struct {
+	// Body 1..4096 bytes after trimming
+	Body string `json:"body"`
+}
 
 // AdminResetResult defines model for AdminResetResult.
 type AdminResetResult struct {
@@ -92,6 +104,18 @@ type ChallengeStat struct {
 
 // ChallengeStatType defines model for ChallengeStat.Type.
 type ChallengeStatType string
+
+// CreateQuestionRequest Deliberately has NO `author` / `author_role` property — there is
+// nothing here for a participant to smuggle a role claim through
+// (security-engineer finding 1, HIGH). Any such keys present in a raw
+// request body are silently ignored.
+type CreateQuestionRequest struct {
+	// Body 1..4096 bytes after trimming
+	Body string `json:"body"`
+
+	// Subject 1..120 runes after trimming
+	Subject string `json:"subject"`
+}
 
 // DisplayNameRequest defines model for DisplayNameRequest.
 type DisplayNameRequest struct {
@@ -442,6 +466,63 @@ type OpenedHint struct {
 	Text string `json:"text"`
 }
 
+// PostQuestionMessageRequest same "no author/author_role" discipline as CreateQuestionRequest.
+type PostQuestionMessageRequest struct {
+	// Body 1..4096 bytes after trimming
+	Body string `json:"body"`
+}
+
+// QuestionList defines model for QuestionList.
+type QuestionList struct {
+	Questions []QuestionSummary `json:"questions"`
+}
+
+// QuestionMessage One message in a P25 QA ticket thread (ADR-0006). `author_role` /
+// `author` are always server-set per the ROUTE the message was
+// written through (`participant`+`{user}` on the participant write
+// routes, `admin`+the caller's own proven email on the operator reply
+// route) — never accepted from request-body input on any write route.
+type QuestionMessage struct {
+	Author     string                    `json:"author"`
+	AuthorRole QuestionMessageAuthorRole `json:"author_role"`
+	Body       string                    `json:"body"`
+	CreatedAt  time.Time                 `json:"created_at"`
+}
+
+// QuestionMessageAuthorRole defines model for QuestionMessage.AuthorRole.
+type QuestionMessageAuthorRole string
+
+// QuestionSummary One row of a P25 QA ticket LISTING — never the message bodies.
+// `answered` is DERIVED (at least one message has `author_role:
+// admin`), not a stored status column (ADR-0006 Decision 1) — it can
+// never drift out of sync with the messages that justify it.
+type QuestionSummary struct {
+	Answered     bool      `json:"answered"`
+	CreatedAt    time.Time `json:"created_at"`
+	Id           string    `json:"id"`
+	MessageCount int       `json:"message_count"`
+	Subject      string    `json:"subject"`
+
+	// UpdatedAt the latest message's created_at (or created_at itself, for a ticket with only its opening message)
+	UpdatedAt time.Time `json:"updated_at"`
+
+	// User only present in the ADMIN listing (`GET /api/admin/questions`) — the participant's own listing omits it (the caller already knows it is their own)
+	User *string `json:"user,omitempty"`
+}
+
+// QuestionThread A full P25 QA ticket ("1 ticket = 1 thread", ADR-0006): the opening
+// subject plus every message, oldest first. Returned by
+// createQuestion, getQuestion, postQuestionMessage, adminGetQuestion
+// and adminReplyQuestion alike, so a client can use ONE shape for
+// "here is the ticket after my action" everywhere.
+type QuestionThread struct {
+	CreatedAt time.Time         `json:"created_at"`
+	Id        string            `json:"id"`
+	Messages  []QuestionMessage `json:"messages"`
+	Subject   string            `json:"subject"`
+	User      string            `json:"user"`
+}
+
 // ReleaseHintRequest defines model for ReleaseHintRequest.
 type ReleaseHintRequest struct {
 	Hint int `json:"hint"`
@@ -600,6 +681,9 @@ type SubmitFlagVerdict struct {
 // Cid defines model for Cid.
 type Cid = string
 
+// Qid defines model for Qid.
+type Qid = string
+
 // User defines model for User.
 type User = string
 
@@ -612,6 +696,9 @@ type GetUserJourneyParams struct {
 
 // ReleaseHintJSONRequestBody defines body for ReleaseHint for application/json ContentType.
 type ReleaseHintJSONRequestBody = ReleaseHintRequest
+
+// AdminReplyQuestionJSONRequestBody defines body for AdminReplyQuestion for application/json ContentType.
+type AdminReplyQuestionJSONRequestBody = AdminReplyRequest
 
 // AdminSetDisplayNameJSONRequestBody defines body for AdminSetDisplayName for application/json ContentType.
 type AdminSetDisplayNameJSONRequestBody = DisplayNameRequest
@@ -627,6 +714,12 @@ type SetStepCheckJSONRequestBody = StepCheckRequest
 
 // SetDisplayNameJSONRequestBody defines body for SetDisplayName for application/json ContentType.
 type SetDisplayNameJSONRequestBody = DisplayNameRequest
+
+// CreateQuestionJSONRequestBody defines body for CreateQuestion for application/json ContentType.
+type CreateQuestionJSONRequestBody = CreateQuestionRequest
+
+// PostQuestionMessageJSONRequestBody defines body for PostQuestionMessage for application/json ContentType.
+type PostQuestionMessageJSONRequestBody = PostQuestionMessageRequest
 
 // ReceiveFalcoEventJSONRequestBody defines body for ReceiveFalcoEvent for application/json ContentType.
 type ReceiveFalcoEventJSONRequestBody = FalcoEvent

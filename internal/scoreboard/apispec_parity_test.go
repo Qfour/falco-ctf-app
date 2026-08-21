@@ -27,6 +27,7 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
 	"github.com/Qfour/falco-ctf-app/internal/apispec/specparity"
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
+	"github.com/Qfour/falco-ctf-app/internal/qa"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard"
 	"github.com/Qfour/falco-ctf-app/internal/store"
 )
@@ -76,12 +77,18 @@ func newSpecFixture(t *testing.T) *specFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
+	qaSt, err := qa.Open(filepath.Join(t.TempDir(), "apispec-qa.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { qaSt.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := scoreboard.NewHandler(cat, st, logger,
 		scoreboard.WithJourneys(journeys),
 		scoreboard.WithOrder([]string{"01-recon", "02-evade", "03-boss"}),
 		scoreboard.WithAdminEmails([]string{specFixtureAdmin}),
 		scoreboard.WithAllowedOrigins([]string{specFixtureOrigin}),
+		scoreboard.WithQA(qaSt),
 	)
 	return &specFixture{t: t, srv: srv}
 }
@@ -171,13 +178,14 @@ func TestAPISpec_V1_RouteSetMatchesSpec(t *testing.T) {
 	// CONTENT comparison, it cannot "cancel out" (LOW, 5x review: an earlier
 	// version of this comment claimed otherwise, which is not a real
 	// detection gap and isn't why this assert exists). The actual value is
-	// PROCESS, not detection: this literal `20` forces every PR that adds or
+	// PROCESS, not detection: this literal `27` forces every PR that adds or
 	// removes a route to touch this line, so the route-count CHANGE itself
 	// shows up in the diff and gets reviewed, instead of silently sliding
 	// through as "RouteSetDiff was still empty, so nothing to see here" —
-	// matches ADR-0005 C1's real-world count.
-	if len(routes) != 20 {
-		t.Errorf("expected 20 registered routes (ADR-0005 C1), got %d: %v", len(routes), routes)
+	// matches ADR-0005 C1's real-world count (20) plus ADR-0006's P25 QA
+	// ticket-chat routes (7).
+	if len(routes) != 27 {
+		t.Errorf("expected 27 registered routes (ADR-0005 C1 + ADR-0006 P25), got %d: %v", len(routes), routes)
 	}
 }
 
