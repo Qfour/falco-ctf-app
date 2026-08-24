@@ -15,10 +15,13 @@
     因果の切り分けと却下根拠の実証: architect (§C2 / §C5 の実測表)
   - フェーズ: リハ後 hygiene / prod gate (P## 非該当)
 
-> **番号について**: `main` の ADR は 0001-0004。**0005** は `docs/api-spec-canon` (app#143, open PR) が
-> OpenAPI 正典化で確保済み、**0006** は **app#144 (Issue)** = OpenAPI parity gate の supersede 用に予約済み
-> (VP 確認: #144 は PR ではなく Issue なので `gh pr list` には出ない)。よって本 ADR は **0007 で確定**。
-> 索引の 0005 / 0006 行は各ブランチ / 各 ADR が持ち込む。
+> **番号について (2026-08-25 訂正)**: 本 ADR 起草時 (2026-08-19) は 0005/0006 が未確定だったため
+> 「0005 = app#143 の open PR」「0006 = app#144 (Issue) の予約」と記載していたが、これは stale。
+> 現状 (実測): **0005** (`docs/api-spec-canon`, app#143) と **0006** (P25 QA チケットチャットの
+> API 契約, app#144 とは無関係の別トピック) はいずれも **Accepted で main 入り済み**。
+> app#144 (OpenAPI parity gate の設計欠陥 supersede) は 0006 との衝突が判明したため
+> VP が **ADR-0008** に再割番済み。したがって **0005/0006/0008 は他で確定済み、0007 が空いていた
+> ため本 ADR に確定**という経緯になる (結論の番号自体は変わらず 0007)。
 
 ---
 
@@ -505,8 +508,9 @@ image の対応ディレクトリと entry 集合・mode・owner が一致する
 
 ### 番号と scope の裁定
 
-- **番号 = ADR-0007 で確定** (0005 = app#143 の open PR が確保 / 0006 = **app#144 (Issue)** が
-  OpenAPI parity gate の supersede 用に予約。VP 訂正: #144 は PR ではなく Issue)。
+- **番号 = ADR-0007 で確定** (2026-08-25 訂正: 0005/0006 は他ADRがAccepted済みで確保、
+  app#144 [OpenAPI parity gate の supersede] は 0006 との衝突判明後 ADR-0008 に再割番済み。
+  上記コールアウト参照)。
 - **scope = ADR-0001 の派生決定 (1) の B1 のみを supersede する。**
   ADR-0001 の Status は **Accepted のまま**で、本文は編集しない。索引 (`docs/adr/README.md`) の
   ADR-0001 行の「部分 supersede」欄に本 ADR へのポインタを 1 行足す
