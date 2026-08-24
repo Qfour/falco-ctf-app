@@ -48,7 +48,10 @@ ADR-0003 に時間経過での回復は無いので **この taint は永続**�
 
 ingest がこれを参加者に帰属させるのは、フィルタが ns prefix (`ctf-`) + pod 名 (`workspace`) +
 image repo 部分文字列の 3 条件だけで **container 名を見ていない**ため
-(`internal/scoreboard/ingest/ingest.go:70-99`, `:112`)。
+(`internal/scoreboard/ingest/ingest.go:109` [ns prefix + pod 名フィルタ], `:127`
+[image repo 部分文字列判定], `:144` [user 導出]。**2026-08-25 訂正**: 旧引用
+`:70-99, :112` は stale — ADR-0005 / I14 (spec parity gate) 導入後の追記でファイル内の
+行がずれていた。architect が現行 main で実測し差し替え、5x R4 F3 対応)。
 
 → **no-go #2 / #3 / #4 / #10 に該当。I13a と I13b がローカルで FAIL。**
 
@@ -124,6 +127,80 @@ ADR-0001 は「`/etc/shadow` が bind mount だと `link()` が EXDEV になる�
 → **B1 の下では「コマンドが失敗したのに trigger が solve する」状態が実在する。**
 09 は現在 `/etc/sudoers` に retarget して回避しているが、これは B1 が作った制約への迂回であり、
 本 ADR の Option 1 を採ると**不要になる** (`/etc/shadow` に戻せる)。
+
+### C4′. Option 1 が mission 09 に同型の EXDEV 欠陥を移すことを実クラスタで確認した (2026-08-25)
+
+**5x R2 (HIGH) 対応。architect が colima k3s `ctf-e2e` で再検証した。**
+
+mission 09 (`challenges/09-hidden-cache/`) には `plant.sh` が無く、`/etc/sudoers` は
+plant 機構の対象外・**素の container rootfs 上のファイル**である。想定解
+`ln /etc/sudoers /tmp/.cache.bak` は、現状 `/etc/sudoers` と `/tmp` が**同一ファイルシステム
+(rootfs)** にあるため成立している。Option 1 は `/etc/shadow` (03/10 の plant-target) の
+enclosing directory である **`/etc` 全体**をディレクトリ granularity で mount するため、
+`/etc/sudoers` もこの mount に**巻き込まれる**懸念があった。
+
+**probe 方法**: `arch-probe` ns (C2 と同じ隔離条件) に `falco-ctf/challenge:dev` で
+2 コンテナを立てた —— (i) `control`: mount なし (現行 B1 相当の rootfs 直)、(ii)
+`etcdirmount`: initContainer が `cp -a /etc/. /seed/etc/` で emptyDir に snapshot し、
+main container がその emptyDir を `/etc` に directory mount (**Option 1 の実装と同型**:
+build 時 snapshot → runtime に directory ごと復元)。
+
+**実測結果**:
+
+| 検証 | control (現行 B1) | etcdirmount (Option 1 相当) |
+|---|---|---|
+| `stat /etc/sudoers` の `Device` | `0,579` (rootfs と同一) | **`253,1`** (`/tmp`=`0,581` と別) |
+| `ln /etc/sudoers /tmp/.cache.bak` | **成功** (`exit=0`, `links=2`) | **`Cross-device link` で失敗 (`exit=1`, EXDEV)** |
+| `ln /etc/sudoers /etc/.cache.bak` (同一 fs 内) | (未検証・not applicable) | **成功** (`exit=0`, `links=2`) |
+
+→ **懸念は実証された。** `/etc` を directory mount すると `/etc/sudoers` は新規 emptyDir 側の
+device に乗り、`/tmp` (rootfs) とは別ファイルシステムになる。**現行 README の想定解は
+Option 1 の下で EXDEV になる。**
+
+**ただし「EXDEV で mission 09 が完全に詰む」わけではない**: deployed ruleset の
+`Create Hardlink Over Sensitive Files` の条件は
+
+```
+create_hardlink and (evt.arg.oldpath in (sensitive_file_names))
+```
+
+(`falco-ctf` ns で `kubectl exec` して実機取得。architect 確認 2026-08-25) —— **`oldpath`
+(source) だけを見ており `newpath` (destination) は条件に無い**。Falco ログで実際に確認した
+とおり、**EXDEV で失敗した `linkat` でも rule は発火する** (ADR-0001 C4 が `/etc/shadow` で
+見つけた「失敗した linkat でも検知される」パターンと同型。probe で `ln /etc/sudoers
+/tmp/.cache.bak` (失敗) と `ln /etc/sudoers /etc/.cache.bak` (成功) の両方が同じ rule を
+fire させることを確認した)。
+
+→ **これは「解決」ではなく「別の欠陥の再発」である。** mission 09 は `type: trigger` (採点は
+ルール発火の有無のみで判定・ingest 帰属は変わらない) なので、EXDEV になっても採点上は
+「解ける」。しかし **README の確認手順 (`ls -la /tmp/.cache.bak`) がそのまま失敗する**
+(ファイルが作られない) うえ、参加者が実行したコマンドがエラーで終わるのに裏側では
+「解けた」扱いになる —— **ADR-0001 C4 が問題視した「コマンドが失敗したのに trigger が
+solve する」状態を、03/10 (Option 1 が塞ぐ) から 09 (塞がれていない) へ移すだけ**になる。
+これは Option 1 が消すべき欠陥のクラスであり、看過しない。
+
+**対処 (candidate 選定)**: 3 candidate を比較した。
+
+- **(a) mission 09 専用の hardlink 先ディレクトリを新規 plant-target として追加する** ——
+  棄却。`/etc/sudoers` は既に 03/10 と共有する `/etc` enclosing directory の mount に含まれる
+  ため、新しい plant-target を作っても**それがどこにあるかに関わらず** `/etc` 配下なら (a) は
+  (b) と同じ結果になり、`/etc` 外なら `sensitive_file_names` に一致せずミッションの前提が
+  崩れる。追加の複雑さに対して得るものが無い。
+- **(b) mission 09 の hardlink 先を `/etc` 内部に変更する** —— **採用。** 上記実測のとおり
+  `ln /etc/sudoers /etc/.cache.bak` は `exit=0` で成功し、同じ `Create Hardlink Over
+  Sensitive Files` を正しく発火させる (`evt.arg.oldpath` のみが条件なので destination を
+  `/etc` 内に変えても検知ロジックは無傷)。**README の想定解を
+  `ln /etc/sudoers /tmp/.cache.bak` → `ln /etc/sudoers /etc/.cache.bak` に変更する**
+  (`challenges/09-hidden-cache/README.md` の想定解・確認コマンドの両方)。
+- **(c) その他 (`/tmp` も同じ emptyDir から供給する等)** —— 棄却。mission09 固有の問題に
+  対して chart 全体の `/tmp` の出自を変える必要はなく、Option 1 の「plant-target 単位で
+  enclosing directory を mount する」という最小変更の原則に反する。
+
+**scope への反映**: **mission 09 は本 ADR (Option 1) のスコープに含める。**
+`challenges/09-hidden-cache/README.md` の hardlink 先変更は、Option 1 の chart 実装と
+**同一 PR** で行う (上記 C4 の `/etc/shadow` retarget 記述修正と同じ DoD 適用範囲。
+content-engineer + product-engineer の判断を要する「`/etc/shadow` に戻すかどうか」とは別の、
+「`/etc/sudoers` の hardlink 先」という mechanics の話なので product 判断待ちにしない)。
 
 ### C5. 却下方向の実証 —— 「proc 系フィールドでの除外」は fail-open である
 
@@ -237,11 +314,31 @@ C8 = mission 02・03・05・09・10 の想定解)。
 3. **`gen-values.sh` の mount 生成規則を「plant-target → enclosing directory」に変え、
    dedupe を親ディレクトリ単位で行う** (03 と 10 はどちらも `/etc` に落ちるので 1 エントリ)。
 4. **`readOnly` を落とす** —— `/etc` は書き込み可能でなければならない
-   (mission 07 / 09 が `/etc` 配下に書く)。ADR-0001 rev.4 L2 が `readOnly: true` に期待していた
-   「planted 行数 = 2 の assert 安定化」は失う (下記 Consequences)。
+   (mission **09** が `ln /etc/sudoers /tmp/.cache.bak` で `/etc` ディレクトリへの書込
+   [新規ハードリンクエントリ] を要する。**2026-08-25 訂正: mission 07 は `/etc` に触れない**
+   [`challenges/07-persist` の想定解は `/tmp`・`/usr/local/bin` への drop+exec で `/etc` 無関係。
+   security-engineer review-5x で誤りを検出]。readOnlyを落とす決定自体は09だけで正当化できる)。
+   ADR-0001 rev.4 L2 が `readOnly: true` に期待していた「planted 行数 = 2 の assert 安定化」は
+   失う (下記 Consequences)。**readOnly の適用範囲は現行chart構造上 `plant.mounts` 全エントリ
+   共通のため、mission 05 (`/root/.ssh`) も意図せずwritableになる** — 実装PRで
+   per-mount readOnly (path単位で個別指定できるデータ構造) にするか、全体で落とす場合は
+   Consequencesに明記すること (security-engineer review-5x指摘)。
 5. **mission 09 を `/etc/shadow` に戻せる** (C4)。ただしこれは**別 PR / 別判断**にする
    (参加者向け記述と難易度に触れるので content-engineer + product-engineer の領域)。
-   本 ADR は「戻せる」ことだけを記録する。
+   本 ADR は「戻せる」ことだけを記録する。**2026-08-25 追記**: この「戻せる」は EXDEV とは
+   無関係の話である —— Option 1 の下では `/etc/shadow` も `/etc/sudoers` と同じ `/etc` mount
+   に含まれるため、戻したところで下記 C4′ の EXDEV 問題は解決しない (悪化もしない)。
+6. **`scripts/check-flag-isolation.sh` の assert 1-4 / 1-18 (`chart-lint` の必須 check) を
+   granularity 中立に書き直す —— これは任意ではなく、Option 1 実装 PR の DoD である。**
+   現行の assert は「`mountPath` が宣言済み plant-target と文字列完全一致」(1-4,
+   `scripts/check-flag-isolation.sh:227`) と「`subPath` が plant-target 完全一致 +
+   `readOnly: true`」(1-18, 同ファイル `:233,:237`) を検査する。Option 1 の mount
+   (`mountPath: /etc`, `subPath: etc`, `readOnly` 無し) をそのまま入れると **この 2 assert が
+   red になり、既存の required check `chart-lint` が壊れる**。実装 PR は chart 変更と
+   **同一 PR**でこの 2 assert を「`mountPath` は宣言済み plant-target を含む最小ディレクトリ
+   であること」「`readOnly` 要求は落とす (下記 Consequences)」に書き直す。下記 Advice の
+   I12 昇格条件 (任意・別判断) とは独立に、**Option 1 の実装そのものが要求する必須点**
+   (5x R5 Finding 4 指摘)。
 
 - **コスト**: chart は `subPath` の与え方が変わるだけ (数行) / `gen-values.sh` の生成規則 /
   `images/challenge/Dockerfile` に snapshot 行 1 本。
@@ -331,11 +428,24 @@ runbook に上記 2 制約を明記することを条件とする。
 - **image の `/etc` が「生成物の元データ」になった。** `/opt/ctf/plant-seed/etc/` が image `/etc` と
   一致していることが challenge コンテナの `/etc` の正しさの前提になる。**紙の規約にしない** ——
   `make check-image-hygiene` の機械検査で閉じる (下記 Verification 3)。
+- **ADR-0001 Verification 1-4 (`mountPath` が宣言済み plant-target と完全一致) と 1-18
+  (`subPath`/`readOnly: true` の完全一致。rev.7 で security-engineer が実装監査済み) は、
+  Option 1 landing 後は文字通りには成立しなくなる** (`mountPath` は「plant-target 自身」ではなく
+  「plant-target を含む enclosing directory」になり、`readOnly` は落ちる)。ADR-0001 は Accepted
+  のため本文は編集しない (既存規律)。**Option 1 landing 後に ADR-0001 Verification 1-4 / 1-18 を
+  読む者は、本 ADR (0007) の Verification 1 (`plant.mounts` ディレクトリ assert) と上記 Option 1
+  実装点 6 (`check-flag-isolation.sh` の書き直し) を参照すること** (5x R4 F2 指摘)。
 - **mission 09 の `/etc/sudoers` retarget を「今は」そのままにした。** `/etc/shadow` に戻せるが、
   参加者向け記述に触れるので本 ADR のスコープ外 (別 PR + content / product 判断)。
   **ただし `challenges/09-hidden-cache/README.md:21-22` の「この環境では `/etc/shadow` は
-  hardlink できない」は Option 1 後に *虚偽* になる**ので、同 PR か直後の follow-up で直す必要がある
-  (ADR-0003 F2 と同種の participant-visible drift)。
+  hardlink できない」は Option 1 後に *虚偽* になる**ので、**実装PRと同一PRで直すことをDoDとする
+  (「直後のfollow-up」は不可 — ADR-0003 F2で「参加者可視テキストの追随漏れは実証済みの失敗モード」
+  と既に一度学習済み、猶予を残すと再発する。security-engineer review-5x指摘)**。
+  **さらに §C4′ (2026-08-25 実クラスタ検証) で判明した通り、hardlink *先* (`/tmp/.cache.bak`)
+  も Option 1 の下では EXDEV になるため、README の想定解・確認コマンドの destination を
+  `/etc/.cache.bak` に変更することも同一 PR の DoD に含める** (これは「`/etc/shadow` に戻すか」
+  という content/product 判断とは独立な mechanics 修正であり、本 ADR のスコープに含める —
+  §C4′ 「scope への反映」参照)。
 
 ### 新たに守る不変条件 (候補)
 
@@ -343,7 +453,10 @@ runbook に上記 2 制約を明記することを条件とする。
 > **`plant.mounts` のすべてのエントリは *ディレクトリ* でなければならない。**
 > plant-target がファイルの場合、mount するのはそれを含む**最小のディレクトリ**であり、
 > そのディレクトリの素データは **image build 時の snapshot** から復元する。
-> **`plant-seed` の root は決して mount しない** (ADR-0001 F5 を継承)。
+> (`plant-seed` の root を mount しないことは **I12 が既に強制する** — 本条で重複定義せず
+> 参照する。**2026-08-25 訂正 (5x R4 F5)**: 旧文言は「seed root は決して mount しない」を
+> I12 と I13c の両方に書いていた。I13c は「`plant.mounts` の全エントリがディレクトリである」
+> という本条固有の新規事実のみを持つ。)
 > 理由: ファイル granularity の bind mount は、destination が Falco の一致対象であるとき
 > **container ランタイム自身が deploy ごとに検知イベントを生成する** (§C2 実測)。
 
@@ -415,8 +528,11 @@ ORGANIZATION.md の歯止め (「`Verification` が無い ADR を Hard Invariant
 ### 2. 故意違反の negative test 【昇格の必須条件】
 
 `plant.mounts` に **ファイル granularity のエントリを 1 つ持つ fixture values** を用意し、
-上記 assert が **非ゼロで落ちることをテストとして恒久化**する
-(`make test` に載せる = required check `test` に相乗り)。
+上記 assert が **非ゼロで落ちることをテストとして恒久化**する。
+**2026-08-25 訂正 (5x R4 F1)**: 「`make test` に載せる = required check `test` に相乗り」は
+誤り。`gen-values.sh --check` は `scripts/check-flags.sh:61` から呼ばれ、これは required check
+**`flag-guard`** の実体 (`.github/workflows/ci.yaml:67`)。この negative test も
+**`flag-guard`** gate に同一 PR で乗せる (`test` ではない)。
 **この negative test が無い assert は「永久に緑」になりうるので、assert 本体と同一 PR で入れる。**
 
 ### 3. snapshot drift の検査 (既存検査の拡張)
@@ -443,6 +559,14 @@ image の対応ディレクトリと entry 集合・mode・owner が一致する
 - 非 catalog ルールの発火は **構造的に I13a を破れない** (`RecordRuleFire` はルール名を見ないが、
   solve / taint は catalog のルール名一致を要求する = ADR-0001 rev.4 H3) ので、
   **絶対 0 ではなく「catalog 由来 0」で判定する**。
+- **mission 09 の hardlink destination 回帰 (§C4′, 2026-08-25 実証済み)**: `09-hidden-cache`
+  の想定解を実行し、(i) `exit=0` で成功すること (README 変更後の destination で。
+  `/tmp/.cache.bak` のままだと EXDEV で `exit=1` になるので、これが red なら README と
+  実装が食い違っている)、(ii) `Create Hardlink Over Sensitive Files` が `evt.arg.oldpath`
+  として宣言済みの hardlink source を持って発火すること、の両方を assert する。
+  **destination 変更を伴わずに Option 1 が landing した場合、このアサートが red になる
+  ことで検知する**(colima 実測は §C4′ 参照。cluster 個体差で結果が変わりうるため
+  layer-4 E2E での再確認を必須とする)。
 
 ### 5. 検査の自己検証 (規律)
 
@@ -483,6 +607,23 @@ image の対応ディレクトリと entry 集合・mode・owner が一致する
      除外案を却下する根拠として必要な範囲までを公開し、実行可能な手順は書かない。**
      ADR-0001 rev.6 の L1 と同じ線引き。詳細が必要なら
      `falco-ctf-platform/docs/falco-detection-conditions.md` (private) に置く
+- **review-5x T3 (5 観点並行, 2026-08-24, PR #177)**: HIGH 1 件 + MEDIUM 2 件 + LOW 2 件 +
+  follow-up 3 件を検出。**すべて反映・対応済み** (2026-08-25, architect):
+  1. **R2 (HIGH)**: mission 09 の EXDEV 回帰疑義 → colima 実クラスタで**実証** (§C4′)。
+     EXDEV は再現し、rule は失敗した linkat でも発火するため「解ける」が README の確認手順が
+     壊れる。candidate (b) (destination を `/etc` 内に変更) を採用、scope に追加。
+  2. **R4 F1 (MEDIUM)**: Verification 2 の必須 check 名の誤り (`test` ではなく `flag-guard`) → 修正。
+  3. **R4 F2 (MEDIUM)**: ADR-0001 Verification 1-4/1-18 への参照追記漏れ → Consequences に追記。
+  4. **R4 F3 (LOW)**: `ingest.go` の file:line 引用 stale → 現行 main の行番号 (`:109,:127,:144`) に更新。
+  5. **R4 F5 (LOW, nit)**: I13c と I12 の seed-root 非 mount 定義重複 → I13c 側を参照に変更。
+  6. **R5 Finding 2 (HIGH)**: `PROD-GATE-E2E-PLAN.md` が本 ADR/Issue #150 未参照 → **ADR 本文には
+     追記せず** falco-ctf-platform に follow-up issue を起票 (ADR 本文を計画文書の同期先にしない
+     という既存規律に従う)。
+  7. **R5 Finding 4 (HIGH)**: `check-flag-isolation.sh` assert 1-4/1-18 の書き直しが実装の
+     **必須要件**である旨が未記載 → Option 1 実装点 6 として追記 (任意ではないと明記)。
+  8. **R5 Finding 3 (MEDIUM)**: mission 09 README 修正の追跡 issue 未起票 → falco-ctf-app に起票。
+  9. **R5 Finding 5 (LOW-MEDIUM)**: C7 の rule.yaml drift が platform 側 private 正典にも
+     存在 → falco-ctf-app に follow-up issue (platform 側修正も本文に含めて依頼)。
 
 ### I12 について
 
