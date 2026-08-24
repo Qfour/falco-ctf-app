@@ -50,6 +50,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/Qfour/falco-ctf-app/internal/apispec"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/ratelimit"
 )
@@ -61,6 +62,10 @@ type Handler struct {
 	proxy   *httputil.ReverseProxy
 	limiter *ratelimit.Limiter
 	now     func() time.Time
+	// routes is the declarative route table (ADR-0005 V2) this Handler
+	// registers onto mux. Stored so Routes() can hand it back to the
+	// ADR-0005 parity tests unchanged from what New() actually installed.
+	routes []apispec.Route
 }
 
 // Option customizes a Handler.
@@ -116,25 +121,75 @@ func New(upstream string, logger *slog.Logger, opts ...Option) (*Handler, error)
 	// (which trusts XFF; correct only behind ingress-nginx, i.e. the scoreboard).
 	rl := h.limiter.Middleware(remoteIP)
 
-	// Transparent participant WRITE routes — forwarded verbatim to the scoreboard.
-	// NOTE: the progress READ route (GET /api/users/{user}/me) is deliberately
-	// NOT registered. An anonymous, client-chosen {user} read through the
+	// Transparent participant WRITE routes — forwarded verbatim to the
+	// scoreboard — plus the exfil-drop rewrite and this binary's own local
+	// liveness/metrics, as a declarative table (ADR-0005 V2). NOTE: the
+	// progress READ route (GET /api/users/{user}/me) is deliberately NOT in
+	// this table. An anonymous, client-chosen {user} read through the
 	// collector is a self-scope bypass; progress is viewed only on the browser
-	// journey host (authenticated + self-scope gated). With this route absent the
-	// mux default-denies it → 404 (see ServeHTTP below), which is the intent.
-	h.mux.Handle("POST /api/challenges/{cid}/submit", rl(h.proxy))
-	h.mux.Handle("POST /api/users/{user}/display-name", rl(h.proxy))
-
-	// Exfil drop → rewrite to the scoreboard's internal-only sink. The public
-	// /api/challenges/{cid}/exfil path stays the participant-facing contract
-	// (curl target in the Mission 10 brief); only the upstream path changes.
-	h.mux.Handle("POST /api/challenges/{cid}/exfil", rl(http.HandlerFunc(h.exfil)))
-
-	// Collector's own liveness + metrics. NOT forwarded — these are local.
-	h.mux.HandleFunc("GET /healthz", h.healthz)
-	h.mux.Handle("GET /metrics", promhttp.Handler())
+	// journey host (authenticated + self-scope gated). With this route absent
+	// the mux default-denies it → 404 (see ServeHTTP below), which is the
+	// intent — and it is also why docs/openapi-collector.yaml does not
+	// document this route at all (no exclusion list; see that spec's info
+	// description).
+	// declared is the DESIRED table; h.routes below becomes apispec.Register's
+	// RETURN value, not this slice itself (MEDIUM 1, 5x review — see
+	// route.go's Register doc): that is what makes Routes() report exactly
+	// what the mux serves, never a route a future edit left Handler: nil on.
+	declared := []apispec.Route{
+		{
+			Method: "POST", Pattern: "/api/challenges/{cid}/submit",
+			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzClaimedIdentity,
+			OriginGuarded: false, CollectorForward: true,
+			RateLimit: "per-IP (RemoteAddr) 1 req/s burst 10",
+			Handler:   rl(h.proxy),
+		},
+		{
+			Method: "POST", Pattern: "/api/users/{user}/display-name",
+			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzClaimedIdentity,
+			OriginGuarded: false, CollectorForward: true,
+			RateLimit: "per-IP (RemoteAddr) 1 req/s burst 10",
+			Handler:   rl(h.proxy),
+		},
+		{
+			// Exfil drop → rewrite to the scoreboard's internal-only sink (see
+			// h.exfil). The public /api/challenges/{cid}/exfil path stays the
+			// participant-facing contract (curl target in the Mission 10
+			// brief); only the upstream path changes.
+			Method: "POST", Pattern: "/api/challenges/{cid}/exfil",
+			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzClaimedIdentity,
+			OriginGuarded: false, CollectorForward: true,
+			RateLimit: "per-IP (RemoteAddr) 1 req/s burst 10",
+			Handler:   rl(http.HandlerFunc(h.exfil)),
+		},
+		{
+			// Collector's own liveness. NOT forwarded — this is local.
+			Method: "GET", Pattern: "/healthz",
+			Audience: apispec.AudienceInfra, Authz: apispec.AuthzNone,
+			OriginGuarded: false, CollectorForward: false, RateLimit: "none",
+			Handler: http.HandlerFunc(h.healthz),
+		},
+		{
+			// Collector's own Prometheus exposition. NOT forwarded — this is local.
+			Method: "GET", Pattern: "/metrics",
+			Audience: apispec.AudienceInfra, Authz: apispec.AuthzNone,
+			OriginGuarded: false, CollectorForward: false, RateLimit: "none",
+			Handler: promhttp.Handler(),
+		},
+	}
+	h.routes = apispec.Register(h.mux, declared)
 
 	return h, nil
+}
+
+// Routes returns the route set this Handler ACTUALLY registered onto its mux
+// (ADR-0005 V2) — exactly apispec.Register's return value from New(), for
+// the parity tests (collector_test.go) to compare against
+// docs/openapi-collector.yaml. Returns a copy (MEDIUM 5, 5x review): callers
+// must not be able to mutate this Handler's live route table by mutating an
+// element of the returned slice in place.
+func (h *Handler) Routes() []apispec.Route {
+	return append([]apispec.Route(nil), h.routes...)
 }
 
 // ServeHTTP records request duration then dispatches. Any path not registered

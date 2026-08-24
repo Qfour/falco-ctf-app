@@ -786,6 +786,155 @@
   #pane-me .help p { color: var(--text-dim); font-size: 0.9rem; }
   #pane-me .help code { background: var(--surface-2); padding: 2px 8px; border-radius: 3px; color: var(--accent); font-family: 'JetBrains Mono', monospace; font-size: 0.85em; }
 
+  /* ===== Support pane (P25 QA ticket chat, ADR-0006) =====
+     Participant's own tickets: create form + list + per-ticket thread +
+     follow-up form. Local --p-* alias block copied verbatim from #pane-me
+     (unified design tokens; no new token introduced — falco-web skill's
+     "reuse existing tokens, don't invent a new visual language" rule).
+     .panel/.panel-header/.panel-aux/.empty/.help/.submit-msg/.btn are the
+     SAME class names #pane-me/#pane-story/#pane-scoreboard already define
+     pane-scoped (this repo's existing convention: each pane re-declares its
+     own copy rather than sharing a global selector — see the "kept
+     pane-scoped rather than de-scoped" note on #pane-me's .panel rule
+     above). Only .badge/.ticket-list/.ticket-open/.thread-* are genuinely
+     new selectors this pane introduces. */
+  #pane-support {
+    --bg: var(--p-bg);
+    --bg-elev: var(--p-bg-elev);
+    --surface: var(--p-surface);
+    --surface-2: var(--p-surface-2);
+    --border: var(--p-border);
+    --border-strong: var(--p-border-strong);
+    --text: var(--p-text);
+    --text-dim: var(--p-text-dim);
+    --text-mute: var(--p-text-mute);
+    --accent: var(--p-accent);
+    --accent-2: var(--p-accent-2);
+    --accent-glow: var(--p-accent-glow);
+    --success: var(--p-success);
+    --success-glow: var(--p-success-glow);
+    --warn: var(--p-warn);
+    --danger: var(--p-danger);
+  }
+  #pane-support * { box-sizing: border-box; margin: 0; padding: 0; }
+  #pane-support { font-size: 16px; }
+  #pane-support .mono { font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace; }
+  #pane-support header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 2rem; padding-bottom: 1.5rem; border-bottom: 1px solid var(--border); }
+  #pane-support .updated { color: var(--text-mute); font-size: 0.7rem; margin-top: 0.25rem; text-align: right; }
+  #pane-support .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--p-panel-radius); margin-bottom: 1.5rem; overflow: hidden; }
+  #pane-support .panel-header { padding: 0.9rem 1.5rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+  #pane-support .panel-header h2 { font-family: var(--p-font-display); font-size: var(--p-h3); text-transform: uppercase; letter-spacing: var(--p-tracking-wide); color: var(--text); font-weight: 600; display: flex; align-items: center; gap: 0.6rem; }
+  #pane-support .panel-header h2::before { content: ''; width: 3px; height: 15px; background: var(--accent); border-radius: 2px; box-shadow: 0 0 10px var(--accent-glow); }
+  #pane-support .panel-aux { color: var(--text-mute); font-size: 0.75rem; font-family: 'JetBrains Mono', monospace; }
+  #pane-support .badge { padding: 3px 9px; border-radius: 4px; font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.12em; font-weight: 700; white-space: nowrap; }
+  #pane-support .badge.answered { background: rgba(0, 203, 226, 0.12); color: var(--success); border: 1px solid rgba(0, 203, 226, 0.35); }
+  #pane-support .badge.pending { background: rgba(255, 176, 32, 0.12); color: var(--warn); border: 1px solid rgba(255, 176, 32, 0.35); }
+  #pane-support .ticket-list { list-style: none; }
+  #pane-support .ticket-list li { border-bottom: 1px solid var(--border); }
+  #pane-support .ticket-list li:last-child { border-bottom: none; }
+  #pane-support .ticket-open { display: flex; justify-content: space-between; align-items: center; gap: 1rem; width: 100%; padding: 0.9rem 1.5rem; background: none; border: none; color: inherit; font: inherit; text-align: left; cursor: pointer; transition: background 0.15s; }
+  #pane-support .ticket-open:hover { background: var(--surface-2); }
+  #pane-support .ticket-open .subject { font-weight: 600; color: var(--text); }
+  #pane-support .ticket-open .meta { display: flex; align-items: center; gap: 0.6rem; color: var(--text-mute); font-size: 0.75rem; font-family: 'JetBrains Mono', monospace; white-space: nowrap; }
+  #pane-support .empty { text-align: center; padding: 2.5rem 1rem; color: var(--text-mute); font-size: 0.875rem; }
+  #pane-support .empty .icon { font-size: 2rem; opacity: 0.4; display: block; margin-bottom: 0.5rem; }
+  #pane-support form.qa-form { padding: 1.25rem 1.5rem; }
+  #pane-support form.qa-form input, #pane-support form.qa-form textarea { display: block; width: 100%; background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: 6px; color: var(--text); font-family: 'JetBrains Mono', monospace; padding: 0.6rem 0.8rem; font-size: 0.9rem; margin-bottom: 0.6rem; resize: vertical; }
+  #pane-support form.qa-form input:focus, #pane-support form.qa-form textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 10px var(--accent-glow); }
+  #pane-support .btn { font-family: 'Chakra Petch', sans-serif; text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.72rem; font-weight: 700; padding: 0.55rem 1.1rem; border-radius: 6px; border: 1px solid var(--accent); background: transparent; color: var(--accent); cursor: pointer; transition: all 0.15s; }
+  #pane-support .btn:hover { background: var(--accent); color: var(--bg); box-shadow: 0 0 12px var(--accent-glow); }
+  #pane-support .btn-back { border-color: var(--border-strong); color: var(--text-dim); margin: 1.25rem 1.5rem 0; }
+  #pane-support .btn-back:hover { background: var(--surface-2); color: var(--text); box-shadow: none; }
+  #pane-support .submit-msg { margin-top: 0.5rem; font-size: 0.85rem; font-family: 'JetBrains Mono', monospace; min-height: 1.2em; }
+  #pane-support .submit-msg.ok { color: var(--success); }
+  #pane-support .submit-msg.err { color: var(--danger); }
+  #pane-support .thread-messages { padding: 0.5rem 1.5rem; max-height: 420px; overflow-y: auto; }
+  #pane-support .thread-msg { padding: 0.75rem 0; border-top: 1px solid var(--border); }
+  #pane-support .thread-msg:first-child { border-top: none; }
+  #pane-support .thread-msg-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.3rem; gap: 0.6rem; }
+  #pane-support .thread-msg-author { font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; }
+  #pane-support .thread-msg.role-admin .thread-msg-author { color: var(--accent); }
+  #pane-support .thread-msg.role-participant .thread-msg-author { color: var(--text-dim); }
+  #pane-support .thread-msg-at { color: var(--text-mute); font-size: 0.7rem; font-family: 'JetBrains Mono', monospace; white-space: nowrap; }
+  #pane-support .thread-msg-body { color: var(--text); font-size: 0.9rem; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+  #pane-support .help { background: var(--surface); border: 1px solid var(--border); border-radius: 0.75rem; padding: 1.5rem; text-align: center; margin: 0 1.5rem 1.5rem; }
+  #pane-support .help h2 { font-size: 1rem; font-weight: 600; color: var(--text); margin-bottom: 0.4rem; }
+  #pane-support .help p { color: var(--text-dim); font-size: 0.9rem; }
+  @media (max-width: 980px) { #pane-support { padding: 1.25rem; } }
+
+  /* ===== Queue pane (P25 QA ticket chat, admin-only, ADR-0006 Decision "O2") =====
+     Same class names/structure as #pane-support (list + thread + reply
+     form) minus the create-ticket form (operators reply, they do not open
+     new tickets) plus a per-ticket "who" column (the admin listing/thread
+     alone carries `user`, per ADR-0006 Decision 1's QuestionSummary/
+     QuestionThread shapes). Kept pane-scoped and duplicated rather than
+     shared with #pane-support, matching this file's existing per-pane CSS
+     convention. */
+  #pane-queue {
+    --bg: var(--p-bg);
+    --bg-elev: var(--p-bg-elev);
+    --surface: var(--p-surface);
+    --surface-2: var(--p-surface-2);
+    --border: var(--p-border);
+    --border-strong: var(--p-border-strong);
+    --text: var(--p-text);
+    --text-dim: var(--p-text-dim);
+    --text-mute: var(--p-text-mute);
+    --accent: var(--p-accent);
+    --accent-2: var(--p-accent-2);
+    --accent-glow: var(--p-accent-glow);
+    --success: var(--p-success);
+    --success-glow: var(--p-success-glow);
+    --warn: var(--p-warn);
+    --danger: var(--p-danger);
+  }
+  #pane-queue * { box-sizing: border-box; margin: 0; padding: 0; }
+  #pane-queue { font-size: 16px; }
+  #pane-queue .mono { font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace; }
+  #pane-queue header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 2rem; padding-bottom: 1.5rem; border-bottom: 1px solid var(--border); }
+  #pane-queue .updated { color: var(--text-mute); font-size: 0.7rem; margin-top: 0.25rem; text-align: right; }
+  #pane-queue .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--p-panel-radius); margin-bottom: 1.5rem; overflow: hidden; }
+  #pane-queue .panel-header { padding: 0.9rem 1.5rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+  #pane-queue .panel-header h2 { font-family: var(--p-font-display); font-size: var(--p-h3); text-transform: uppercase; letter-spacing: var(--p-tracking-wide); color: var(--text); font-weight: 600; display: flex; align-items: center; gap: 0.6rem; }
+  #pane-queue .panel-header h2::before { content: ''; width: 3px; height: 15px; background: var(--accent); border-radius: 2px; box-shadow: 0 0 10px var(--accent-glow); }
+  #pane-queue .panel-aux { color: var(--text-mute); font-size: 0.75rem; font-family: 'JetBrains Mono', monospace; }
+  #pane-queue .badge { padding: 3px 9px; border-radius: 4px; font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.12em; font-weight: 700; white-space: nowrap; }
+  #pane-queue .badge.answered { background: rgba(0, 203, 226, 0.12); color: var(--success); border: 1px solid rgba(0, 203, 226, 0.35); }
+  #pane-queue .badge.pending { background: rgba(255, 176, 32, 0.12); color: var(--warn); border: 1px solid rgba(255, 176, 32, 0.35); }
+  #pane-queue .ticket-list { list-style: none; }
+  #pane-queue .ticket-list li { border-bottom: 1px solid var(--border); }
+  #pane-queue .ticket-list li:last-child { border-bottom: none; }
+  #pane-queue .ticket-open { display: flex; justify-content: space-between; align-items: center; gap: 1rem; width: 100%; padding: 0.9rem 1.5rem; background: none; border: none; color: inherit; font: inherit; text-align: left; cursor: pointer; transition: background 0.15s; }
+  #pane-queue .ticket-open:hover { background: var(--surface-2); }
+  #pane-queue .ticket-open .subject { font-weight: 600; color: var(--text); }
+  #pane-queue .ticket-open .who { color: var(--accent); font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; }
+  #pane-queue .ticket-open .meta { display: flex; align-items: center; gap: 0.6rem; color: var(--text-mute); font-size: 0.75rem; font-family: 'JetBrains Mono', monospace; white-space: nowrap; }
+  #pane-queue .empty { text-align: center; padding: 2.5rem 1rem; color: var(--text-mute); font-size: 0.875rem; }
+  #pane-queue .empty .icon { font-size: 2rem; opacity: 0.4; display: block; margin-bottom: 0.5rem; }
+  #pane-queue form.qa-form { padding: 1.25rem 1.5rem; }
+  #pane-queue form.qa-form input, #pane-queue form.qa-form textarea { display: block; width: 100%; background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: 6px; color: var(--text); font-family: 'JetBrains Mono', monospace; padding: 0.6rem 0.8rem; font-size: 0.9rem; margin-bottom: 0.6rem; resize: vertical; }
+  #pane-queue form.qa-form input:focus, #pane-queue form.qa-form textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 10px var(--accent-glow); }
+  #pane-queue .btn { font-family: 'Chakra Petch', sans-serif; text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.72rem; font-weight: 700; padding: 0.55rem 1.1rem; border-radius: 6px; border: 1px solid var(--accent); background: transparent; color: var(--accent); cursor: pointer; transition: all 0.15s; }
+  #pane-queue .btn:hover { background: var(--accent); color: var(--bg); box-shadow: 0 0 12px var(--accent-glow); }
+  #pane-queue .btn-back { border-color: var(--border-strong); color: var(--text-dim); margin: 1.25rem 1.5rem 0; }
+  #pane-queue .btn-back:hover { background: var(--surface-2); color: var(--text); box-shadow: none; }
+  #pane-queue .submit-msg { margin-top: 0.5rem; font-size: 0.85rem; font-family: 'JetBrains Mono', monospace; min-height: 1.2em; }
+  #pane-queue .submit-msg.ok { color: var(--success); }
+  #pane-queue .submit-msg.err { color: var(--danger); }
+  #pane-queue .thread-messages { padding: 0.5rem 1.5rem; max-height: 420px; overflow-y: auto; }
+  #pane-queue .thread-msg { padding: 0.75rem 0; border-top: 1px solid var(--border); }
+  #pane-queue .thread-msg:first-child { border-top: none; }
+  #pane-queue .thread-msg-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.3rem; gap: 0.6rem; }
+  #pane-queue .thread-msg-author { font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; }
+  #pane-queue .thread-msg.role-admin .thread-msg-author { color: var(--accent); }
+  #pane-queue .thread-msg.role-participant .thread-msg-author { color: var(--text-dim); }
+  #pane-queue .thread-msg-at { color: var(--text-mute); font-size: 0.7rem; font-family: 'JetBrains Mono', monospace; white-space: nowrap; }
+  #pane-queue .thread-msg-body { color: var(--text); font-size: 0.9rem; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+  #pane-queue .help { background: var(--surface); border: 1px solid var(--border); border-radius: 0.75rem; padding: 1.5rem; text-align: center; margin: 0 1.5rem 1.5rem; }
+  #pane-queue .help h2 { font-size: 1rem; font-weight: 600; color: var(--text); margin-bottom: 0.4rem; }
+  #pane-queue .help p { color: var(--text-dim); font-size: 0.9rem; }
+  @media (max-width: 980px) { #pane-queue { padding: 1.25rem; } }
+
   /* ===== Home pane chassis (portal-ui-polish) =====
      #pane-home has no leaderboard/mission-map/terminal-frame content of its
      own — just a heading + intro paragraph + the #pane-home-panels
@@ -838,18 +987,23 @@
      structural rules only ever affect that server-generated subtree,
      never the client-rendered panes above. The markdown typography INSIDE
      each panel body now comes from the shared .rich-content class (see
-     above) rather than a #pane-home-panels-scoped copy. ===== */
-  #pane-home-panels { margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.9rem; }
-  #pane-home-panels .home-panel { background: #0F1820; border: 1px solid #1C2A35; border-radius: 0.75rem; overflow: hidden; }
-  #pane-home-panels .home-panel > summary { cursor: pointer; list-style: none; padding: 0.9rem 1.25rem; font-family: 'Chakra Petch', sans-serif; font-size: 0.85rem; font-weight: 600; letter-spacing: 0.06em; color: #EAF7FA; user-select: none; }
-  #pane-home-panels .home-panel > summary::-webkit-details-marker { display: none; }
-  #pane-home-panels .home-panel > summary::before { content: '▸ '; color: #5C7480; }
-  #pane-home-panels .home-panel[open] > summary::before { content: '▾ '; }
-  #pane-home-panels .home-panel > summary:hover { color: #00CBE2; }
-  #pane-home-panels .home-panel-body { padding: 0 1.25rem 1.25rem; border-top: 1px solid #1C2A35; }
-  #pane-home-panels .home-rule-explain-item { padding: 0.9rem 0; border-top: 1px solid #1C2A35; }
-  #pane-home-panels .home-rule-explain-item:first-child { border-top: none; padding-top: 0; }
-  #pane-home-panels .home-rule-explain-chal { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase; color: #00CBE2; margin: 0 0 0.5rem; }
+     above) rather than a #pane-home-panels-scoped copy.
+     P24: #pane-tutorial-panels (the Tutorial tab's equivalent container,
+     see tutorial.go/buildTutorialPanelsHTML) is added to every selector
+     below rather than getting its own CSS block — design-engineer decision
+     (REFACTORING.md P24 §4): the Tutorial pane reuses the SAME
+     .home-panel/.home-panel-body markup verbatim, no new design tokens. ===== */
+  #pane-home-panels, #pane-tutorial-panels { margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.9rem; }
+  #pane-home-panels .home-panel, #pane-tutorial-panels .home-panel { background: #0F1820; border: 1px solid #1C2A35; border-radius: 0.75rem; overflow: hidden; }
+  #pane-home-panels .home-panel > summary, #pane-tutorial-panels .home-panel > summary { cursor: pointer; list-style: none; padding: 0.9rem 1.25rem; font-family: 'Chakra Petch', sans-serif; font-size: 0.85rem; font-weight: 600; letter-spacing: 0.06em; color: #EAF7FA; user-select: none; }
+  #pane-home-panels .home-panel > summary::-webkit-details-marker, #pane-tutorial-panels .home-panel > summary::-webkit-details-marker { display: none; }
+  #pane-home-panels .home-panel > summary::before, #pane-tutorial-panels .home-panel > summary::before { content: '▸ '; color: #5C7480; }
+  #pane-home-panels .home-panel[open] > summary::before, #pane-tutorial-panels .home-panel[open] > summary::before { content: '▾ '; }
+  #pane-home-panels .home-panel > summary:hover, #pane-tutorial-panels .home-panel > summary:hover { color: #00CBE2; }
+  #pane-home-panels .home-panel-body, #pane-tutorial-panels .home-panel-body { padding: 0 1.25rem 1.25rem; border-top: 1px solid #1C2A35; }
+  #pane-home-panels .home-rule-explain-item, #pane-tutorial-panels .home-rule-explain-item { padding: 0.9rem 0; border-top: 1px solid #1C2A35; }
+  #pane-home-panels .home-rule-explain-item:first-child, #pane-tutorial-panels .home-rule-explain-item:first-child { border-top: none; padding-top: 0; }
+  #pane-home-panels .home-rule-explain-chal, #pane-tutorial-panels .home-rule-explain-chal { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase; color: #00CBE2; margin: 0 0 0.5rem; }
 
   /* ===== Terminal pane (item 9: restyled to match Story's card language) =====
      Previously a bespoke .term-head/.term-frame/.term-placeholder trio with
@@ -904,10 +1058,19 @@
 <nav id="portal-tabs">
   <span id="portal-brand"><span class="accent">Falco</span> CTF</span>
   <a class="tab" data-tab="home" href="#home">Home</a>
+  <a class="tab" data-tab="tutorial" href="#tutorial">Tutorial</a>
   <a class="tab" data-tab="story" href="#story">Story</a>
   <a class="tab" data-tab="scoreboard" href="#scoreboard" id="tab-scoreboard" hidden>Leaderboard</a>
+  <!-- P25 (ADR-0006 Decision "O2"): admin-only QA queue tab, SAME
+       defense-in-depth `hidden` pattern as tab-scoreboard above — the real
+       gate is server-side isAdmin on GET /api/admin/questions, this is UX
+       only (see applyRole()/showTab() below). -->
+  <a class="tab" data-tab="queue" href="#queue" id="tab-queue" hidden>Queue</a>
   <a class="tab" data-tab="me" href="#me">Scoreboard</a>
   <a class="tab" data-tab="terminal" href="#terminal">Terminal</a>
+  <!-- P25: participant's own QA tickets. Always visible (self-scoped API,
+       same posture as Story/Scoreboard/Terminal — no admin gate needed). -->
+  <a class="tab" data-tab="support" href="#support">Support</a>
   <span id="portal-identity">
     <span id="portal-username"></span>
   </span>
@@ -2370,6 +2533,673 @@
 </script>
 
 </div>
+<!-- ===== Support pane (P25 QA ticket chat, ADR-0006): participant's own
+     tickets ("1 ticket = 1 thread") — create a new ticket, browse the
+     list, open one to read its full thread and send a follow-up. One-way
+     by construction: every fetch below hits ONLY
+     /api/users/{user}/questions[...] for OUR OWN window.__PORTAL_USER__ —
+     there is no participant-to-participant message API anywhere
+     (ADR-0006 Decision 1), so this pane could not reach another
+     participant's ticket even if it tried. The composite (id,user)
+     ownership check happens server-side in qa.Store.GetThreadForUser /
+     AppendMessageForUser (ADR-0006 Decision 2); this pane's job is only to
+     render whatever selfOrAdmin(Write) + that check let through, same
+     posture as #pane-me above.
+     Polls at 5s (vs the 2s Story/Scoreboard/Me use) — the P25 product
+     brief does not expect QA state to change quickly, and a slower poll
+     eases load on the shared questionLimiter bucket this pane's own
+     writes (create/follow-up) also draw from (ADR-0006 Decision 1: 1
+     req/10s burst 3, shared). ===== -->
+<div class="pane p-shell" id="pane-support">
+
+  <header>
+    <div class="brand">
+      <h1 class="p-h1"><span class="accent">Support</span></h1>
+    </div>
+    <div>
+      <div class="live p-live">● LIVE</div>
+      <div class="updated mono" id="pane-support-updated">connecting…</div>
+    </div>
+  </header>
+
+  <div id="pane-support-page"></div>
+
+<script nonce="{{.Nonce}}">
+(function () {
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function fmtAgoISO(iso) {
+    const ms = Date.now() - new Date(iso).getTime();
+    const s = Math.max(0, Math.floor(ms / 1000));
+    if (s < 5)    return 'just now';
+    if (s < 60)   return s + 's ago';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+    return Math.floor(s / 86400) + 'd ago';
+  }
+  // bodyByteLen / MAX_BODY_BYTES (R2 fixup, review-5x of #165): the
+  // server's maxQuestionBodyBytes (internal/scoreboard/api/qa.go) counts
+  // UTF-8 BYTES, but the textarea's `maxlength="4096"` attribute below
+  // counts UTF-16 code units (JS string length) — a participant typing in
+  // a multi-byte script (e.g. Japanese, ~3 bytes/char) can stay well
+  // under the 4096-CHAR maxlength yet still exceed 4096 BYTES server-side
+  // and only discover it after clicking Send (server 400). Client-side
+  // validation is therefore byte-based here, matching the server's own
+  // unit and error text, so the rejection happens before the round trip.
+  const MAX_BODY_BYTES = 4096;
+  function bodyByteLen(s) { return new TextEncoder().encode(s).length; }
+
+  // Portal shell (P23-1): identity from the server-injected
+  // __PORTAL_USER__ global, same convenience #pane-me uses — every fetch
+  // below is independently re-gated server-side (selfOrAdmin /
+  // selfOrAdminWrite), so this is UI convenience only.
+  const user = window.__PORTAL_USER__ || '';
+  const page = document.getElementById('pane-support-page');
+  const updatedEl = document.getElementById('pane-support-updated');
+
+  // selectedQid selects which of the two views (ticket list+create form,
+  // vs one open thread) is currently shown; null = list view.
+  let selectedQid = null;
+  // busy guards ONLY the setInterval poll below (falco-web skill: it must
+  // never gate a write's own post-submit refresh, or a just-sent
+  // ticket/follow-up would silently fail to appear).
+  let busy = false;
+  // builtView tracks which SHELL (static DOM structure) is currently
+  // mounted in #pane-support-page: 'list' for the ticket-list+new-ticket
+  // view, or 'thread:<qid>' for an open thread (R2 fixup, review-5x of
+  // #165). renderList()/renderThread() only replace page.innerHTML when
+  // the view actually changes — the "New ticket" form and the "Follow up"
+  // textarea are both LIVE input widgets, and unconditionally rebuilding
+  // the whole page on every 5s poll tick (the old behaviour, driven
+  // purely by a single whole-view `lastSig`) wiped an in-progress draft
+  // whenever the polled data changed even slightly, INCLUDING changes
+  // with nothing to do with the draft itself (another ticket's
+  // message_count ticking up in the list view; the operator's reply
+  // landing in the SAME thread while the participant was mid-follow-up).
+  // Once the shell is mounted, only the data-bearing subtree inside it
+  // (the ticket <ul>, the message list) is repainted, each gated by its
+  // OWN signature — see renderTicketListContent()/renderThreadContent()
+  // below. This mirrors the #pane-journey-detail ensureShell()+signature
+  // split above, applied to two views instead of one.
+  let builtView = null;
+  // lastListSig / lastThreadSig (falco-web skill: signature gate) are the
+  // JSON signatures of the most recently PAINTED ticket-list content /
+  // thread-message content — scoped to ONLY that subtree, not the whole
+  // page, so an unrelated change never has to touch (and therefore never
+  // wipes) a sibling form the participant may be mid-draft in.
+  let lastListSig = null;
+  let lastThreadSig = null;
+
+  if (!user) {
+    page.innerHTML = `
+      <div class="help">
+        <h2>Your username could not be determined</h2>
+        <p>Ask the operator for your username, or reload the portal after logging in again.</p>
+      </div>`;
+    return;
+  }
+
+  refresh();
+  setInterval(() => { if (!busy) refresh(); }, 5000);
+
+  async function refresh() {
+    try {
+      if (selectedQid) {
+        await loadThread(selectedQid);
+      } else {
+        await loadList();
+      }
+      updatedEl.textContent = 'updated ' + new Date().toLocaleTimeString();
+    } catch (e) {
+      updatedEl.textContent = 'connection error';
+    }
+  }
+
+  async function loadList() {
+    const r = await fetch('/api/users/' + encodeURIComponent(user) + '/questions');
+    // Stale-response guard: the user may have opened a thread while this
+    // GET was in flight — drop the result rather than clobber their new
+    // view (falco-web skill: don't let an in-flight async response
+    // overwrite a view the user has since navigated away from).
+    if (selectedQid) return;
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    if (selectedQid) return;
+    renderList(d.questions || []);
+  }
+
+  async function loadThread(qid) {
+    const r = await fetch('/api/users/' + encodeURIComponent(user) + '/questions/' + encodeURIComponent(qid));
+    if (selectedQid !== qid) return; // superseded by a newer navigation
+    if (r.status === 404) {
+      // Unknown id AND cross-user id produce the SAME 404 (ADR-0006
+      // Decision 2 — no existence oracle). Either way this ticket is not
+      // ours to view any more; bounce back to the list.
+      selectedQid = null;
+      builtView = null;
+      return loadList();
+    }
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const th = await r.json();
+    if (selectedQid !== qid) return;
+    renderThread(th);
+  }
+
+  // renderList mounts the list SHELL (New-ticket form + tickets panel) at
+  // most once per visit to the list view (builtView !== 'list') — the
+  // form's <input>/<textarea> and their submit listener are created
+  // exactly once and are never touched again by a poll tick. The ticket
+  // data itself is delegated to renderTicketListContent(), which has its
+  // own signature gate scoped to just that subtree.
+  function renderList(questions) {
+    if (builtView !== 'list') {
+      page.innerHTML = `
+        <section class="panel">
+          <div class="panel-header"><h2>New ticket</h2></div>
+          <form class="qa-form" id="support-new-form">
+            <input type="text" id="support-new-subject" placeholder="Subject" maxlength="120" autocomplete="off">
+            <textarea id="support-new-body" placeholder="Describe your question for the operators…" rows="4" maxlength="4096"></textarea>
+            <button type="submit" class="btn">Send</button>
+            <div class="submit-msg" id="support-new-msg"></div>
+          </form>
+        </section>
+        <section class="panel">
+          <div class="panel-header"><h2>Your tickets</h2><span class="panel-aux" id="support-ticket-count"></span></div>
+          <div id="support-ticket-list-wrap"></div>
+        </section>
+      `;
+      const form = document.getElementById('support-new-form');
+      if (form) form.addEventListener('submit', onCreateSubmit);
+      builtView = 'list';
+      lastListSig = null; // force the content paint below on this fresh mount
+    }
+    renderTicketListContent(questions);
+  }
+
+  // renderTicketListContent repaints ONLY the ticket <ul> (+ count), never
+  // the sibling New-ticket form — gated by a signature of just the
+  // tickets themselves, so an unrelated ticket's message_count/updated_at
+  // ticking up never has to touch (or re-wire) the form a participant may
+  // currently be drafting in.
+  function renderTicketListContent(questions) {
+    const sig = 'list:' + JSON.stringify(questions);
+    if (sig === lastListSig) return;
+    lastListSig = sig;
+    document.getElementById('support-ticket-count').textContent = questions.length;
+    const wrap = document.getElementById('support-ticket-list-wrap');
+    wrap.innerHTML = questions.length === 0
+      ? '<div class="empty"><span class="icon">∅</span>No tickets yet — ask a question above.</div>'
+      : '<ul class="ticket-list">' + questions.map(q => `
+          <li>
+            <button type="button" class="ticket-open" data-qid="${esc(q.id)}">
+              <span class="subject">${esc(q.subject)}</span>
+              <span class="meta">
+                <span class="badge ${q.answered ? 'answered' : 'pending'}">${q.answered ? 'Answered' : 'Awaiting reply'}</span>
+                <span>${q.message_count} msg${q.message_count === 1 ? '' : 's'} · ${fmtAgoISO(q.updated_at)}</span>
+              </span>
+            </button>
+          </li>`).join('') + '</ul>';
+    wrap.querySelectorAll('.ticket-open').forEach(btn => {
+      btn.addEventListener('click', () => {
+        selectedQid = btn.getAttribute('data-qid');
+        loadThread(selectedQid).catch(() => { updatedEl.textContent = 'connection error'; });
+      });
+    });
+  }
+
+  async function onCreateSubmit(ev) {
+    ev.preventDefault();
+    const subjectEl = document.getElementById('support-new-subject');
+    const bodyEl = document.getElementById('support-new-body');
+    const msgEl = document.getElementById('support-new-msg');
+    const subject = subjectEl.value.trim();
+    const body = bodyEl.value.trim();
+    if (!subject || !body) {
+      msgEl.textContent = 'Subject and question are both required.';
+      msgEl.className = 'submit-msg err';
+      return;
+    }
+    if (bodyByteLen(body) > MAX_BODY_BYTES) {
+      msgEl.textContent = 'Body too long (max ' + MAX_BODY_BYTES + ' bytes).';
+      msgEl.className = 'submit-msg err';
+      return;
+    }
+    busy = true;
+    try {
+      const r = await fetch('/api/users/' + encodeURIComponent(user) + '/questions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subject, body }),
+      });
+      if (r.status === 429) {
+        msgEl.textContent = 'Please wait a few seconds before sending another ticket.';
+        msgEl.className = 'submit-msg err';
+        return;
+      }
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        msgEl.textContent = d.error || ('Could not send (HTTP ' + r.status + ').');
+        msgEl.className = 'submit-msg err';
+        return;
+      }
+      // Reentrancy guard: only jump into the new thread if the user is
+      // still on the list view they submitted from — if they already
+      // clicked into a different ticket while this POST was in flight,
+      // don't yank them back out of it (falco-web skill: a write's
+      // completion must not clobber a view the user has since navigated
+      // away from). Either way the new ticket surfaces on the next list
+      // load (lastListSig reset forces that).
+      lastListSig = null;
+      if (selectedQid === null) {
+        selectedQid = d.id;
+        renderThread(d);
+      }
+    } catch (e) {
+      msgEl.textContent = 'Could not send — check your connection and try again.';
+      msgEl.className = 'submit-msg err';
+    } finally {
+      busy = false;
+    }
+  }
+
+  // renderThread mounts the thread SHELL (back button + message panel +
+  // follow-up form) at most once per qid (builtView !== 'thread:'+th.id).
+  // Navigating to a DIFFERENT ticket is a real navigation and is expected
+  // to reset the follow-up textarea; re-polling the SAME open ticket must
+  // not touch the form the participant may be mid-follow-up in. Message
+  // content is delegated to renderThreadContent(), which has its own
+  // signature gate scoped to just that subtree.
+  function renderThread(th) {
+    const shellKey = 'thread:' + th.id;
+    if (builtView !== shellKey) {
+      page.innerHTML = `
+        <button type="button" class="btn btn-back" id="support-back">← Back to tickets</button>
+        <section class="panel">
+          <div class="panel-header">
+            <h2 id="support-thread-subject"></h2>
+            <span class="badge" id="support-thread-badge"></span>
+          </div>
+          <div class="thread-messages" id="support-thread-messages"></div>
+        </section>
+        <section class="panel">
+          <div class="panel-header"><h2>Follow up</h2></div>
+          <form class="qa-form" id="support-followup-form">
+            <textarea id="support-followup-body" placeholder="Add a follow-up message…" rows="3" maxlength="4096"></textarea>
+            <button type="submit" class="btn">Send</button>
+            <div class="submit-msg" id="support-followup-msg"></div>
+          </form>
+        </section>
+      `;
+      const back = document.getElementById('support-back');
+      if (back) back.addEventListener('click', () => {
+        selectedQid = null;
+        builtView = null;
+        loadList().catch(() => { updatedEl.textContent = 'connection error'; });
+      });
+      const form = document.getElementById('support-followup-form');
+      if (form) form.addEventListener('submit', (ev) => onFollowupSubmit(ev, th.id));
+      builtView = shellKey;
+      lastThreadSig = null; // force the content paint below on this fresh mount
+    }
+    renderThreadContent(th);
+  }
+
+  // renderThreadContent repaints ONLY the subject/badge/message list,
+  // never the sibling follow-up form — gated by a signature of the
+  // thread data, so a new message on THIS SAME thread (e.g. the
+  // operator's reply landing while the participant is mid-follow-up)
+  // updates the messages without wiping the draft.
+  function renderThreadContent(th) {
+    const sig = 'thread-content:' + JSON.stringify(th);
+    if (sig === lastThreadSig) return;
+    lastThreadSig = sig;
+    // Issue #167: th.answered is server-derived (internal/qa.Thread,
+    // ADR-0006's same "answered iff any message has author_role admin"
+    // rule QuestionSummary already used) — reading it directly here
+    // retires this pane's own independent re-derivation of that predicate.
+    const answered = th.answered;
+    document.getElementById('support-thread-subject').innerHTML = esc(th.subject);
+    const badge = document.getElementById('support-thread-badge');
+    badge.className = 'badge ' + (answered ? 'answered' : 'pending');
+    badge.textContent = answered ? 'Answered' : 'Awaiting reply';
+    document.getElementById('support-thread-messages').innerHTML = (th.messages || []).map(m => `
+      <div class="thread-msg role-${m.author_role === 'admin' ? 'admin' : 'participant'}">
+        <div class="thread-msg-head">
+          <span class="thread-msg-author">${m.author_role === 'admin' ? 'Operator' : 'You'}</span>
+          <span class="thread-msg-at" title="${esc(m.created_at)}">${fmtAgoISO(m.created_at)}</span>
+        </div>
+        <div class="thread-msg-body">${esc(m.body)}</div>
+      </div>`).join('');
+  }
+
+  async function onFollowupSubmit(ev, qid) {
+    ev.preventDefault();
+    const bodyEl = document.getElementById('support-followup-body');
+    const msgEl = document.getElementById('support-followup-msg');
+    const body = bodyEl.value.trim();
+    if (!body) {
+      msgEl.textContent = 'Message required.';
+      msgEl.className = 'submit-msg err';
+      return;
+    }
+    if (bodyByteLen(body) > MAX_BODY_BYTES) {
+      msgEl.textContent = 'Body too long (max ' + MAX_BODY_BYTES + ' bytes).';
+      msgEl.className = 'submit-msg err';
+      return;
+    }
+    busy = true;
+    try {
+      const r = await fetch('/api/users/' + encodeURIComponent(user) + '/questions/' + encodeURIComponent(qid) + '/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body }),
+      });
+      if (r.status === 429) {
+        msgEl.textContent = 'Please wait a few seconds before sending another message.';
+        msgEl.className = 'submit-msg err';
+        return;
+      }
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        msgEl.textContent = d.error || ('Could not send (HTTP ' + r.status + ').');
+        msgEl.className = 'submit-msg err';
+        return;
+      }
+      // Same reentrancy guard as onCreateSubmit: only repaint the thread
+      // if the user is still looking at THIS qid — they may have hit
+      // "Back" or opened a different ticket while this POST was in
+      // flight. The shell (this SAME form) stays mounted either way now
+      // (see renderThread's builtView gate above), so the textarea is no
+      // longer cleared as a side effect of a full-page rebuild — clear it
+      // explicitly here instead.
+      bodyEl.value = '';
+      if (selectedQid === qid) renderThread(d);
+    } catch (e) {
+      msgEl.textContent = 'Could not send — check your connection and try again.';
+      msgEl.className = 'submit-msg err';
+    } finally {
+      busy = false;
+    }
+  }
+})();
+</script>
+
+</div>
+<!-- ===== Queue pane (P25 QA ticket chat, admin-only, ADR-0006 Decision
+     "O2"): every participant's tickets — list, open a thread, reply. The
+     nav link (`#tab-queue`) and this pane both stay `hidden`/unrendered
+     for a non-admin viewer via the SAME defense-in-depth pattern
+     #pane-scoreboard's Leaderboard tab already uses (applyRole() below);
+     the real gate is server-side `isAdmin` on every /api/admin/questions*
+     route (ADR-0006 Decision 1) — this pane renders whatever that gate let
+     through, nothing more.
+     `POST /api/admin/questions/{qid}/reply` below is THE only legitimate
+     operator reply path (ADR-0006 Decision 1 / security-engineer finding
+     5) — this pane deliberately never calls the participant follow-up
+     route (`/api/users/{user}/questions/{qid}/messages`), even though
+     selfOrAdminWrite's admin branch would technically also let an admin
+     through there (see adminReply's own doc in
+     internal/scoreboard/api/qa.go for why that path would silently record
+     the reply as `author_role: "participant"` and never flip `answered`).
+     No rate limit on the reply route (ADR-0006 Decision 1: same trusted-
+     actor precedent as admin/reset and admin/hints), so this pane omits
+     the 429-specific copy the Support pane's forms show. Polled only while
+     `window.__PORTAL_ROLE__ === 'admin'`, same guard #pane-scoreboard uses
+     for its own admin-only /api/state poll — a participant is never even
+     asked to fetch an endpoint that would just 403 them. ===== -->
+<div class="pane p-shell" id="pane-queue">
+
+  <header>
+    <div class="brand">
+      <h1 class="p-h1"><span class="accent">Queue</span></h1>
+    </div>
+    <div>
+      <div class="live p-live">● LIVE</div>
+      <div class="updated mono" id="pane-queue-updated">connecting…</div>
+    </div>
+  </header>
+
+  <div id="pane-queue-page"></div>
+
+<script nonce="{{.Nonce}}">
+(function () {
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function fmtAgoISO(iso) {
+    const ms = Date.now() - new Date(iso).getTime();
+    const s = Math.max(0, Math.floor(ms / 1000));
+    if (s < 5)    return 'just now';
+    if (s < 60)   return s + 's ago';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+    return Math.floor(s / 86400) + 'd ago';
+  }
+
+  // bodyByteLen / MAX_BODY_BYTES — same R2 fixup as the Support pane
+  // above (server counts UTF-8 bytes, textarea `maxlength` counts UTF-16
+  // code units).
+  const MAX_BODY_BYTES = 4096;
+  function bodyByteLen(s) { return new TextEncoder().encode(s).length; }
+
+  const page = document.getElementById('pane-queue-page');
+  const updatedEl = document.getElementById('pane-queue-updated');
+
+  let selectedQid = null;
+  let busy = false;
+  // builtView / lastListSig / lastThreadSig — same shell-vs-content split
+  // as the Support pane above (R2 fixup, review-5x of #165): the "Reply"
+  // textarea in the thread view is a live input widget, and rebuilding
+  // the whole page on every 5s poll tick (the old single whole-view
+  // `lastSig`) wiped an in-progress reply draft whenever the SAME
+  // thread's data changed for any reason — including the participant's
+  // own follow-up landing while the operator was mid-reply. See the
+  // Support pane's builtView doc above for the full rationale; mirrored
+  // here for the admin queue's own ticket-list/thread pair.
+  let builtView = null;
+  let lastListSig = null;
+  let lastThreadSig = null;
+
+  async function refresh() {
+    try {
+      if (selectedQid) {
+        await loadThread(selectedQid);
+      } else {
+        await loadList();
+      }
+      updatedEl.textContent = 'updated ' + new Date().toLocaleTimeString();
+    } catch (e) {
+      updatedEl.textContent = 'connection error';
+    }
+  }
+
+  async function loadList() {
+    const r = await fetch('/api/admin/questions');
+    if (selectedQid) return;
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    if (selectedQid) return;
+    renderList(d.questions || []);
+  }
+
+  async function loadThread(qid) {
+    const r = await fetch('/api/admin/questions/' + encodeURIComponent(qid));
+    if (selectedQid !== qid) return;
+    if (r.status === 404) {
+      selectedQid = null;
+      builtView = null;
+      return loadList();
+    }
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const th = await r.json();
+    if (selectedQid !== qid) return;
+    renderThread(th);
+  }
+
+  // renderList mounts the list SHELL (ticket panel) at most once per
+  // visit to the list view. There is no persistent input in this pane's
+  // list view (no create form — operators only reply inside a thread),
+  // so this split exists mainly for symmetry with renderTicketListContent
+  // below and to keep the ticket-open click handlers from being re-wired
+  // on every poll tick.
+  function renderList(questions) {
+    if (builtView !== 'list') {
+      page.innerHTML = `
+        <section class="panel">
+          <div class="panel-header"><h2>All tickets</h2><span class="panel-aux" id="queue-ticket-count"></span></div>
+          <div id="queue-ticket-list-wrap"></div>
+        </section>
+      `;
+      builtView = 'list';
+      lastListSig = null; // force the content paint below on this fresh mount
+    }
+    renderTicketListContent(questions);
+  }
+
+  function renderTicketListContent(questions) {
+    const sig = 'list:' + JSON.stringify(questions);
+    if (sig === lastListSig) return;
+    lastListSig = sig;
+    document.getElementById('queue-ticket-count').textContent = questions.length;
+    const wrap = document.getElementById('queue-ticket-list-wrap');
+    wrap.innerHTML = questions.length === 0
+      ? '<div class="empty"><span class="icon">∅</span>No QA tickets yet.</div>'
+      : '<ul class="ticket-list">' + questions.map(q => `
+          <li>
+            <button type="button" class="ticket-open" data-qid="${esc(q.id)}">
+              <span class="subject">${esc(q.subject)} <span class="who">— ${esc(q.user || '')}</span></span>
+              <span class="meta">
+                <span class="badge ${q.answered ? 'answered' : 'pending'}">${q.answered ? 'Answered' : 'Awaiting reply'}</span>
+                <span>${q.message_count} msg${q.message_count === 1 ? '' : 's'} · ${fmtAgoISO(q.updated_at)}</span>
+              </span>
+            </button>
+          </li>`).join('') + '</ul>';
+    wrap.querySelectorAll('.ticket-open').forEach(btn => {
+      btn.addEventListener('click', () => {
+        selectedQid = btn.getAttribute('data-qid');
+        loadThread(selectedQid).catch(() => { updatedEl.textContent = 'connection error'; });
+      });
+    });
+  }
+
+  // renderThread mounts the thread SHELL (back button + message panel +
+  // reply form) at most once per qid — re-polling the SAME open ticket
+  // (e.g. because the participant just sent a follow-up) must not touch
+  // the Reply textarea an operator may be mid-draft in. Message content
+  // is delegated to renderThreadContent(), which has its own signature
+  // gate scoped to just that subtree.
+  function renderThread(th) {
+    const shellKey = 'thread:' + th.id;
+    if (builtView !== shellKey) {
+      page.innerHTML = `
+        <button type="button" class="btn btn-back" id="queue-back">← Back to all tickets</button>
+        <section class="panel">
+          <div class="panel-header">
+            <h2 id="queue-thread-subject"></h2>
+            <span class="badge" id="queue-thread-badge"></span>
+          </div>
+          <div class="thread-messages" id="queue-thread-messages"></div>
+        </section>
+        <section class="panel">
+          <div class="panel-header"><h2>Reply</h2></div>
+          <form class="qa-form" id="queue-reply-form">
+            <textarea id="queue-reply-body" placeholder="Write a reply to this participant…" rows="3" maxlength="4096"></textarea>
+            <button type="submit" class="btn">Send reply</button>
+            <div class="submit-msg" id="queue-reply-msg"></div>
+          </form>
+        </section>
+      `;
+      const back = document.getElementById('queue-back');
+      if (back) back.addEventListener('click', () => {
+        selectedQid = null;
+        builtView = null;
+        loadList().catch(() => { updatedEl.textContent = 'connection error'; });
+      });
+      const form = document.getElementById('queue-reply-form');
+      if (form) form.addEventListener('submit', (ev) => onReplySubmit(ev, th.id));
+      builtView = shellKey;
+      lastThreadSig = null; // force the content paint below on this fresh mount
+    }
+    renderThreadContent(th);
+  }
+
+  // renderThreadContent repaints ONLY the subject/badge/message list,
+  // never the sibling Reply form — gated by a signature of the thread
+  // data.
+  function renderThreadContent(th) {
+    const sig = 'thread-content:' + JSON.stringify(th);
+    if (sig === lastThreadSig) return;
+    lastThreadSig = sig;
+    // Issue #167: th.answered is server-derived — see the Support pane's
+    // renderThreadContent for the same note (this pane had its own,
+    // independent copy of the identical predicate before #167).
+    const answered = th.answered;
+    document.getElementById('queue-thread-subject').innerHTML = esc(th.subject) + ' <span class="who">— ' + esc(th.user) + '</span>';
+    const badge = document.getElementById('queue-thread-badge');
+    badge.className = 'badge ' + (answered ? 'answered' : 'pending');
+    badge.textContent = answered ? 'Answered' : 'Awaiting reply';
+    document.getElementById('queue-thread-messages').innerHTML = (th.messages || []).map(m => `
+      <div class="thread-msg role-${m.author_role === 'admin' ? 'admin' : 'participant'}">
+        <div class="thread-msg-head">
+          <span class="thread-msg-author">${m.author_role === 'admin' ? 'Operator' : esc(th.user)}</span>
+          <span class="thread-msg-at" title="${esc(m.created_at)}">${fmtAgoISO(m.created_at)}</span>
+        </div>
+        <div class="thread-msg-body">${esc(m.body)}</div>
+      </div>`).join('');
+  }
+
+  async function onReplySubmit(ev, qid) {
+    ev.preventDefault();
+    const bodyEl = document.getElementById('queue-reply-body');
+    const msgEl = document.getElementById('queue-reply-msg');
+    const body = bodyEl.value.trim();
+    if (!body) {
+      msgEl.textContent = 'Reply text required.';
+      msgEl.className = 'submit-msg err';
+      return;
+    }
+    if (bodyByteLen(body) > MAX_BODY_BYTES) {
+      msgEl.textContent = 'Body too long (max ' + MAX_BODY_BYTES + ' bytes).';
+      msgEl.className = 'submit-msg err';
+      return;
+    }
+    busy = true;
+    try {
+      const r = await fetch('/api/admin/questions/' + encodeURIComponent(qid) + '/reply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        msgEl.textContent = d.error || ('Could not send (HTTP ' + r.status + ').');
+        msgEl.className = 'submit-msg err';
+        return;
+      }
+      // The shell (this SAME reply form) stays mounted across a same-qid
+      // repaint (see renderThread's builtView gate above), so — same as
+      // the Support pane's onFollowupSubmit — clear the textarea
+      // explicitly rather than relying on a full-page rebuild to do it.
+      bodyEl.value = '';
+      if (selectedQid === qid) renderThread(d);
+    } catch (e) {
+      msgEl.textContent = 'Could not send — check your connection and try again.';
+      msgEl.className = 'submit-msg err';
+    } finally {
+      busy = false;
+    }
+  }
+
+  // Admin-gated poll, same guard #pane-scoreboard's own /api/state poll
+  // above uses: a participant is never even asked to hit an endpoint that
+  // would just 403 them (P23-1: display-only optimisation, not the
+  // authorization boundary — GET/POST /api/admin/questions* independently
+  // re-check isAdmin server-side regardless of this check).
+  if (window.__PORTAL_ROLE__ === 'admin') {
+    refresh();
+    setInterval(() => { if (!busy) refresh(); }, 5000);
+  }
+})();
+</script>
+
+</div>
 <!-- ===== Home pane (P23-5: gen-time-sanitized content panels folded in from
      docs-site — see docs-site/home-fragments.yaml for the content contract
      and internal/scoreboard/view/home.go / portal.go for the security
@@ -2426,6 +3256,36 @@
       </div>
     </details>
   </div>
+</div>
+
+<!-- ===== Tutorial pane (P24): Falco 学習チュートリアル (座学、採点とは
+     完全に独立 — journey/scoreboard の状態には一切触れない). Same content
+     mechanism as #pane-home's {{.HomePanelsHTML}} above: gen-time
+     sanitized chapter fragments from cmd/gen-tutorial-fragments, go:embed'd
+     via tutorialfragments_gen.go (see tutorial.go's tutorialPanelsHTML doc
+     for the shared template.HTML trust boundary). No admin gate, no
+     self-scope check, no per-viewer branching — every caller sees the
+     exact SAME content (design-engineer decision, REFACTORING.md P24: same
+     trust boundary as Home's static panels). Placed between Home and Story
+     in both PORTAL_TABS and this nav (design-engineer decision, P24 §2):
+     a participant reads these concept chapters before entering Story
+     (=mission start), not after. Reuses the SAME .home-panel/
+     .home-panel-body CSS class as #pane-home-panels (see the
+     #pane-tutorial-panels scoping rule added alongside #pane-home-panels's
+     own rules above) — no new design tokens (design-engineer decision §4).
+     MVP has NO server-side read-tracking (architect decision, P24 §3): a
+     "chapter read" UX, if ever added, is client-side localStorage only and
+     must never be sent to the server — Tutorial does not write to
+     internal/store or internal/scoreboard/scoring, ever. ===== -->
+<div class="pane p-shell" id="pane-tutorial">
+
+  <header>
+    <div class="brand">
+      <h1 class="p-h1"><span class="accent">Tutorial</span></h1>
+    </div>
+  </header>
+
+  <div id="pane-tutorial-panels">{{.TutorialPanelsHTML}}</div>
 </div>
 
 <!-- ===== Terminal pane (P23-4): iframe embed of the caller's own ttyd.
@@ -2531,7 +3391,15 @@
   // authorization boundary (see security note in view.go / portal.go). The
   // admin-only Scoreboard tab is hidden here as defense-in-depth ONLY; its data
   // source (/api/state) independently 403s a non-admin caller server-side.
-  const PORTAL_TABS = ['home', 'story', 'scoreboard', 'me', 'terminal'];
+  // P24: 'tutorial' inserted between 'home' and 'story' — design-engineer
+  // decision (REFACTORING.md P24): the Tutorial tab must sit AFTER the Home
+  // landing page but BEFORE Story (=mission entry), so a participant reads
+  // concept-level Falco chapters before starting a mission, not after.
+  // P25 (ADR-0006): 'queue' (admin-only, gated like 'scoreboard' below)
+  // sits next to 'scoreboard' — both are operator-only tabs; 'support'
+  // (self-scoped, always visible) sits last alongside the other always-on
+  // participant tabs.
+  const PORTAL_TABS = ['home', 'tutorial', 'story', 'scoreboard', 'queue', 'me', 'terminal', 'support'];
 
   function currentTab() {
     const h = (location.hash || '').replace(/^#/, '');
@@ -2549,6 +3417,11 @@
 
   function showTab(tab) {
     if (tab === 'scoreboard' && window.__PORTAL_ROLE__ !== 'admin') tab = 'home';
+    // P25: same admin-only redirect as 'scoreboard' above — a non-admin
+    // deep-link to #queue falls back to Home rather than a blank/403'd
+    // pane (defense-in-depth only; GET/POST /api/admin/questions* 403 a
+    // non-admin caller server-side regardless).
+    if (tab === 'queue' && window.__PORTAL_ROLE__ !== 'admin') tab = 'home';
     for (const t of PORTAL_TABS) {
       const pane = document.getElementById('pane-' + t);
       if (pane) pane.classList.toggle('active', t === tab);
@@ -2583,6 +3456,10 @@
     // underlying admin/participant determination (window.__PORTAL_ROLE__,
     // server-side isAdmin) is UNCHANGED.
     document.getElementById('tab-scoreboard').hidden = (role !== 'admin');
+    // P25: same defense-in-depth hide for the admin-only Queue tab (real
+    // gate is server-side isAdmin on /api/admin/questions*, per the
+    // comment above).
+    document.getElementById('tab-queue').hidden = (role !== 'admin');
   }
 
   window.addEventListener('hashchange', () => showTab(currentTab()));

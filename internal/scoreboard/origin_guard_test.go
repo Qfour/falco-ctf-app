@@ -12,10 +12,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
+	"github.com/Qfour/falco-ctf-app/internal/qa"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard"
 	"github.com/Qfour/falco-ctf-app/internal/store"
 )
@@ -40,10 +42,16 @@ func newOriginFixture(t *testing.T, allowedOrigins []string) *scoreboard.Handler
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
+	qaSt, err := qa.Open(filepath.Join(t.TempDir(), "og-qa.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { qaSt.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	return scoreboard.NewHandler(cat, st, logger,
 		scoreboard.WithAdminEmails([]string{"admin@ctf.local"}),
 		scoreboard.WithAllowedOrigins(allowedOrigins),
+		scoreboard.WithQA(qaSt),
 	)
 }
 
@@ -71,6 +79,16 @@ func ogReq(t *testing.T, srv *scoreboard.Handler, method, target string, origin,
 }
 
 const allowedOrigin = "https://scoreboard.ctf.example.com"
+
+// wantOriginGuardedRouteCount is ADR-0005 Decision 4's current-truth count
+// of OriginGuarded routes. Requirement 6.4 (final review round): this used
+// to be the literal `7` duplicated independently in THIS file's
+// TestOriginGuard_AllProtectedRoutesEnforced AND in apispec_parity_test.go's
+// TestAPISpec_V3_OriginGuardParity — two copies of the same canon, one of
+// which could be bumped on a route-count change while the other was missed
+// (they are in different files, so a diff review of one does not surface
+// the other going stale). Both now pin against this single constant.
+const wantOriginGuardedRouteCount = 10
 
 // TestOriginGuard_ResetFormCSRF is the mitigation's headline case: a
 // body-less POST /api/admin/reset (the route a CSRF <form> auto-submit can
@@ -167,51 +185,125 @@ func TestOriginGuard_MultipleAllowedOrigins(t *testing.T) {
 	}
 }
 
-// TestOriginGuard_AllProtectedRoutesEnforced walks every browser-ONLY
-// state-changing route the api handler registers and asserts a cross-origin
-// POST is rejected on each — this is the regression fence against a future
-// route being added to Register without being wrapped in the guard.
+// pathParamValues maps the {name} path-param segments used across
+// scoreboard's route table to a fixed value good enough to satisfy
+// http.ServeMux's pattern match. The origin guard runs BEFORE any
+// handler-level use of the substituted value (it wraps the handler, and
+// http.ServeMux dispatches on the pattern shape, not the concrete value), so
+// these values only need to route — they do not need to be "real" in a
+// catalog sense. "02-evade" is nonetheless a real fixture catalog id (see
+// newOriginFixture) so the small number of UNGUARDED POST routes exercised
+// below (which DO reach handler code — see
+// TestOriginGuard_AllProtectedRoutesEnforced's negative branch) hit a normal
+// business-logic response (400/404/200) rather than an unrelated panic.
+var pathParamValues = map[string]string{
+	"user": "alice",
+	"cid":  "02-evade",
+	"idx":  "0",
+	"qid":  "deadbeef",
+}
+
+var pathParamPattern = regexp.MustCompile(`\{([^}]+)\}`)
+
+// concretePath substitutes every {name} segment in an apispec.Route.Pattern
+// with pathParamValues' fixed value (or "x" for a name not in that map, so a
+// future path-param name doesn't panic the test — it just gets a
+// less-meaningful substitution), producing a URL usable as an httptest
+// target.
+func concretePath(pattern string) string {
+	return pathParamPattern.ReplaceAllStringFunc(pattern, func(seg string) string {
+		name := seg[1 : len(seg)-1]
+		if v, ok := pathParamValues[name]; ok {
+			return v
+		}
+		return "x"
+	})
+}
+
+// TestOriginGuard_AllProtectedRoutesEnforced is the behavioural half of
+// ADR-0005's origin-guard contract, and DERIVES its case table from
+// srv.Routes() — the same declarative table api.Handler.Routes() (and
+// scoreboard.Handler.Routes(), which flattens it together with
+// ingest/view's) exposes to the ADR-0005 V1-V4 spec-parity tests — instead
+// of a hand-maintained list of route names.
 //
-// Deliberately EXCLUDES POST /api/challenges/{cid}/submit and
-// POST /api/users/{user}/display-name: those routes are also reached by the
-// collector's verbatim server-to-server forward of a curl submission (no
-// Origin/Referer ever present), so wrapping them in a fail-closed origin
-// gate would 403 that legitimate path and break scoring — see api.Register's
-// comments on those routes and TestOriginGuard_SubmitAndDisplayNameBypassGuard
-// / TestOriginGuard_SubmitStillBlocksCrossOriginBrowserPOST below for the
-// coverage that replaces this table entry for them. submit-detect has no such
-// collector caller (internal/collector/collector.go's forward allowlist does
-// not include it — its only caller is the journey UI's browser fetch, same as
-// step_check/open_hint below), so it IS covered here.
+// This closes a real gap the 5x review found: a hand-written 6-entry table
+// here had ZERO coverage of POST
+// /api/users/{user}/challenges/{cid}/reset-dirty, even though
+// api.Handler.Routes() declares it OriginGuarded: true (ADR-0003 A2-2's
+// destructive self-scoped taint reset). Because this test built its case
+// list independently of Routes(), a mutation that dropped reset-dirty's
+// h.og(...) wrapper WHILE LEAVING OriginGuarded: true in the table (exactly
+// what security-engineer's 5x mutation test did) made `make test` fully
+// green: nothing here ever exercised that route. Deriving the case table
+// from Routes() itself means any route currently — or in the future — marked
+// OriginGuarded: true is automatically walked here; there is no second,
+// independently-maintained list to silently drift out of sync with it again.
+//
+// For every route:
+//   - OriginGuarded: true → a cross-origin POST (Origin: evil, no matching
+//     entry in the allowlist) MUST be rejected 403. This is the guard's
+//     entire job.
+//   - OriginGuarded: false AND Method == "POST" → the SAME cross-origin
+//     request MUST NOT be rejected 403 by the guard (it may still fail for
+//     an unrelated business reason — wrong flag, bad body, unknown
+//     challenge — none of which is 403 in this codebase's routes; see the
+//     per-route handler doc comments in api.go). This is the negative branch
+//     that would catch the opposite mutation: a future route accidentally
+//     wrapped in h.og(...) despite being a collector-forwarded write (which
+//     would silently break scoring the same way P23-2's original bug did).
+//
+// Every request carries X-Auth-Request-Email: admin@ctf.local (the fixture's
+// admin) so a 403 from isAdmin/selfOrAdmin/selfOrAdminWrite — a DIFFERENT
+// mechanism that also returns 403, unrelated to the origin guard — can never
+// masquerade as "the guard worked": admin bypasses all three of those checks
+// regardless of the substituted {user} value, isolating the origin guard as
+// the only thing that can produce a 403 in this test.
+//
+// GET routes are not exercised here (the origin guard is a CSRF mitigation
+// for state-changing requests; ADR-0005's table has no GET route marked
+// OriginGuarded: true today, and a GET being added with the flag set would
+// still be caught by the positive branch above — the loop keys off
+// OriginGuarded, not Method).
 func TestOriginGuard_AllProtectedRoutesEnforced(t *testing.T) {
 	srv := newOriginFixture(t, []string{allowedOrigin})
 	const evilOrigin = "https://evil.example.com"
 
-	cases := []struct {
-		name   string
-		method string
-		target string
-		body   string
-	}{
-		{"admin_reset", "POST", "/api/admin/reset", ""},
-		{"admin_display_name", "POST", "/api/admin/users/alice/display-name", `{"name":"Alice"}`},
-		{"admin_hints", "POST", "/api/admin/hints", `{"mission":"02-evade","hint":1,"released":true}`},
-		{"step_check", "POST", "/api/users/alice/challenges/02-evade/steps/0/check", `{"checked":true}`},
-		{"open_hint", "POST", "/api/users/alice/challenges/02-evade/hints/1", ""},
-		{"submit_detect", "POST", "/api/challenges/02-evade/submit-detect", `{"user":"alice","condition":"x"}`},
+	var guarded, unguardedWrites int
+	for _, rt := range srv.Routes() {
+		rt := rt
+		target := concretePath(rt.Pattern)
+		switch {
+		case rt.OriginGuarded:
+			guarded++
+			t.Run("guarded/"+rt.MuxPattern(), func(t *testing.T) {
+				w := ogReq(t, srv, rt.Method, target, evilOrigin, "", "admin@ctf.local", strings.NewReader("{}"))
+				if w.Code != http.StatusForbidden {
+					t.Fatalf("%s: status=%d body=%s, want 403 (OriginGuarded: true — cross-origin must be denied)", rt.MuxPattern(), w.Code, w.Body)
+				}
+			})
+		case rt.Method == "POST":
+			unguardedWrites++
+			t.Run("unguarded/"+rt.MuxPattern(), func(t *testing.T) {
+				w := ogReq(t, srv, rt.Method, target, evilOrigin, "", "admin@ctf.local", strings.NewReader("{}"))
+				if w.Code == http.StatusForbidden {
+					t.Fatalf("%s: status=%d body=%s, must NOT be 403 (OriginGuarded: false — a deliberately unguarded write, e.g. collector-forwarded)", rt.MuxPattern(), w.Code, w.Body)
+				}
+			})
+		}
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			var body io.Reader
-			if tc.body != "" {
-				body = strings.NewReader(tc.body)
-			}
-			w := ogReq(t, srv, tc.method, tc.target, evilOrigin, "", "admin@ctf.local", body)
-			if w.Code != http.StatusForbidden {
-				t.Fatalf("%s: status=%d body=%s, want 403 (cross-origin must be denied)", tc.name, w.Code, w.Body)
-			}
-		})
+	// V8 exact-count guard (mirrors ADR-0005's own "prove the detector isn't
+	// vacuous" discipline): pin the number of OriginGuarded routes to the
+	// canon in falco-api's skill index / api.go's Routes() comment, so a
+	// route silently losing OriginGuarded: true — or the derivation itself
+	// breaking (e.g. Routes() returning nil) — shows up as a numeric
+	// assertion failure, not a shrinking, easy-to-miss subtest count.
+	if guarded != wantOriginGuardedRouteCount {
+		t.Fatalf("expected exactly %d OriginGuarded routes (ADR-0005/ADR-0006 canon: api.go's admin/reset, admin/display-name, admin/hints, submit-detect, steps/check, hints/{idx}, reset-dirty, questions (POST), questions/{qid}/messages (POST), admin/questions/{qid}/reply), got %d", wantOriginGuardedRouteCount, guarded)
+	}
+	if unguardedWrites == 0 {
+		t.Fatal("expected at least one unguarded POST route to exercise the negative branch — the derivation might be broken")
 	}
 }
 
@@ -231,7 +323,8 @@ func TestOriginGuard_AllProtectedRoutesEnforced(t *testing.T) {
 // submit-detect is NOT covered here: unlike submit/display-name, the
 // collector's forward allowlist does not include it (its only caller is the
 // journey UI's browser fetch), so it IS origin-guarded — see
-// TestOriginGuard_AllProtectedRoutesEnforced's submit_detect case and
+// TestOriginGuard_AllProtectedRoutesEnforced's derived
+// "guarded/POST /api/challenges/{cid}/submit-detect" case and
 // TestOriginGuard_SubmitDetectRequiresOrigin below.
 func TestOriginGuard_SubmitAndDisplayNameBypassGuard(t *testing.T) {
 	for _, allowlist := range [][]string{{allowedOrigin}, nil} {
@@ -252,7 +345,8 @@ func TestOriginGuard_SubmitAndDisplayNameBypassGuard(t *testing.T) {
 }
 
 // TestOriginGuard_SubmitDetectRequiresOrigin is the positive-path counterpart
-// to the submit_detect case in TestOriginGuard_AllProtectedRoutesEnforced: a
+// to the derived "guarded/POST /api/challenges/{cid}/submit-detect" case in
+// TestOriginGuard_AllProtectedRoutesEnforced: a
 // same-origin request must reach the handler (and get evaluated on its own
 // terms — here a 503 because no DetectRunner is wired in this fixture) rather
 // than being 403'd, proving the guard is allowlist-driven and not a blanket

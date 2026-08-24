@@ -118,6 +118,57 @@ jobs:
   #   3. AWS 側: OIDC identity provider + ECR push 権限の role を作成
   # 注意: 再利用 workflow は `falco-ctf-<name>` (ハイフン) に push するが、platform
   # helmfile は `falco-ctf/<name>` (スラッシュ) を期待。復活時は naming を両リポ同時 PR で整合させること。
+  #
+  # Dependabot PR と secrets (Issue #168):
+  #   GitHub の仕様上、actor が `dependabot[bot]` の workflow run には repository
+  #   secrets (`SYSDIG_SECURE_TOKEN` 含む) が渡らない (依存性 PR からの secrets 窃取を
+  #   防ぐ既定の保護。トグルでは解除しない — 空にした場合、compromised な依存の
+  #   `go build`/`docker build` から token を盗める経路になり、CVE ゲートより重い
+  #   supply-chain リスクを新設するため)。結果、scan ステップは
+  #   "Sysdig Secure Token is required..." で毎回落ち、`build (scoreboard)/scan` と
+  #   `build (auth-policy)/scan` (必須チェック) を Dependabot PR が構造的に pass
+  #   できない。
+  #
+  #   初回対処 (2026-08-21): `scan-continue-on-error: true` を actor が
+  #   `dependabot[bot]` のときだけ強制する案を実装したが、**実 PR (#151) で
+  #   実証した結果、required check を unblock しないことが判明**した ——
+  #   `continue-on-error` はワークフロー run の総合結果のみを変え、個別 job の
+  #   check-run conclusion は `failure` のまま (`gh api .../check-runs` で実測)。
+  #   branch protection の required status checks は job の check-run
+  #   conclusion を見るため、continue-on-error では解決にならない。
+  #
+  #   採用した対処: `Qfour/homelab-workflows` の `image-pipeline.yaml` に
+  #   `scan-skip` input を追加してもらい (PR homelab-workflows#16、CEO承認済み
+  #   admin権限で実施)、actor が `dependabot[bot]` のときだけ true にする
+  #   (下記 `with:` 参照)。`scan-skip: true` は scan job 自体を `if:` で
+  #   実行しない — job conclusion が `skipped` になり、これは required status
+  #   check を実際に満たす (実 PR #151 で実証確認済み)。他 actor (通常の human
+  #   PR) は `false` のまま — 挙動は不変。secrets 抑止は job 単位ではなく
+  #   actor 単位で GitHub が行うため、この一律適用は scoreboard/auth-policy
+  #   (必須チェック) だけでなく matrix の全 8 image (ttyd/collector/challenge/
+  #   docs/detect-grader/ttyd-proxy 含む) に及ぶ — これらも元々同じ理由で
+  #   token 無しで落ちるはずだった対象であり、範囲の拡大ではない。
+  #
+  #   実効的な CVE ゲートは 2 段: (1) は **detective** (post-merge alert)、
+  #   (2) が唯一の **preventive** ゲート:
+  #     1. merge 後の `push: branches: [main]` トリガで同じ build job が
+  #        secrets 付きで再実行され、実スキャンが走る (このワークフロー内で
+  #        既に成立している経路 — 新設ではない)。ただしこの時点で merge は
+  #        既に完了しているため、ここでの scan 失敗は当該 commit が main に
+  #        載ることを止められない (detective のみ)
+  #     2. dev-flow.md の既定どおり `make scan TAG=local` が prod deploy 前の
+  #        **唯一の preventive ゲート** (CI-free prod 方針。CI scan は「安全網」
+  #        と明記済み)
+  #   残余リスク: merge 直後〜(1) 完了までの短い窓で、未スキャンの commit が
+  #   main に載る。security-engineer レビュー済み (2026-08-21, PASS with
+  #   conditions)。
+  #
+  #   **恒久対応として承認 (VP, 2026-08-21)**: この緩和は Dependabot secrets
+  #   抑止という GitHub 側の構造的仕様への対処であり、期限付きの暫定バイパスでは
+  #   ない。解除条件: (a) GitHub が Dependabot secrets 供給の仕様を変更した場合、
+  #   または (b) "Allow GitHub Actions to request secrets from Dependabot" の
+  #   有効化判断が別途下された場合 (却下済み、再検討する場合は新規 ADR/Issue で)。
+  #   いずれかが発生したら本ブロックを見直すこと。
   # ------------------------------------------------------------------
   build:
     name: build (${{ matrix.name }})
@@ -178,7 +229,7 @@ jobs:
             context: images/detect-grader
             dockerfile: images/detect-grader/Dockerfile
             scan-continue-on-error: false
-    uses: Qfour/homelab-workflows/.github/workflows/image-pipeline.yaml@10583360d619601e225803d236a00d0fa014b1f8 # main as of 2026-05-12
+    uses: Qfour/homelab-workflows/.github/workflows/image-pipeline.yaml@bb4dc742b2cd87f6932f34d6c4107b8c7f5e16bf # main as of 2026-08-21 (adds scan-skip, homelab-workflows#16)
     with:
       name: ${{ matrix.name }}
       context: ${{ matrix.context }}
@@ -186,11 +237,33 @@ jobs:
       push: ${{ github.event_name == 'push' && vars.ECR_REGISTRY != '' && !contains(vars.ECR_REGISTRY, 'PLACEHOLDER') }}
       registry: ${{ vars.ECR_REGISTRY }}
       aws-region: ${{ vars.AWS_REGION }}
+      # dependabot[bot] は secrets を受け取れない run なので scan job 自体を
+      # skip する (continue-on-error では required check が unblock されない
+      # ことを実証済み — 上記コメント参照)。github.actor は GitHub 側が確定する
+      # 値で PR 作者が詐称できない (Dependabot service account のみがこの
+      # actor になれる)。他 actor は false のまま — 挙動は不変。
+      scan-skip: ${{ github.actor == 'dependabot[bot]' }}
       scan-continue-on-error: ${{ matrix.scan-continue-on-error }}
       sysdig-secure-url: https://app.au1.sysdig.com
     secrets:
       sysdig-token: ${{ secrets.SYSDIG_SECURE_TOKEN }}
       aws-role-arn: ${{ secrets.AWS_ROLE_ARN }}
+
+  # ------------------------------------------------------------------
+  # Issue #168: visible, auditable trail for the advisory-scan override
+  # above. Not required, never blocks — purely a job-summary annotation so
+  # a reviewer merging a Dependabot PR sees *why* build/scan is green
+  # without a real scan, and knows the post-merge push-to-main run is the
+  # real gate for that dependency bump.
+  # ------------------------------------------------------------------
+  dependabot-scan-notice:
+    if: github.event_name == 'pull_request' && github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: annotate
+        run: |
+          echo "::notice::This PR is authored by dependabot[bot], which does not receive repository secrets (SYSDIG_SECURE_TOKEN). build (scoreboard)/scan and build (auth-policy)/scan were skipped (scan-skip=true) for this run only — see Issue #168. The real CVE scan for the resulting merge commit runs automatically on push to main (with secrets, detective only); make scan TAG=local remains the sole preventive pre-deploy gate per dev-flow.md."
 
   # ------------------------------------------------------------------
   # ADR-0001 Verification 2-8 / DoD 15: re-verify the challenge image's

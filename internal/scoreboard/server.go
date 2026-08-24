@@ -1,20 +1,15 @@
 // Package scoreboard wires the ingest / api / view sub-handlers + /healthz
 // + /metrics into a single http.Handler.
 //
-// Routes:
-//
-//	GET  /healthz                                                 liveness/readiness
-//	GET  /metrics                                                 Prometheus exposition
-//	POST /falco/events                                            (ingest)
-//	POST /api/challenges/{cid}/submit                             (api)
-//	POST /internal/exfil/{cid}                                    (api: collector-only exfil sink)
-//	GET  /api/state                                               (api)
-//	GET  /api/users/{user}/me                                     (api)
-//	GET  /api/users/{user}/journey                                (api: Journey projection)
-//	POST /api/users/{user}/challenges/{cid}/steps/{idx}/check     (api: Journey step self-check)
-//	POST /api/users/{user}/challenges/{cid}/hints/{idx}           (api: Journey progressive hint reveal)
-//	GET  /                                                        (view: embedded HTML dashboard)
-//	GET  /journey                                                 (view: guided Journey UI)
+// The complete, current route set is docs/openapi-scoreboard.yaml (ADR-0005
+// canon) — NOT the list that used to live in this comment. That list had
+// already drifted (it still named the P19-2b-removed GET /journey page
+// route, confusing it with the still-live GET /api/users/{user}/journey API
+// route) by the time ADR-0005 audited it, which is exactly the kind of
+// hand-maintained-comment drift ADR-0005's machine-checked parity gate
+// (internal/apispec, this package's Routes()) exists to replace: a doc
+// comment cannot go stale in a way that fails `make test`, but the route
+// table can.
 package scoreboard
 
 import (
@@ -27,7 +22,9 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/Qfour/falco-ctf-app/internal/apispec"
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
+	"github.com/Qfour/falco-ctf-app/internal/qa"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/api"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/ingest"
@@ -59,9 +56,18 @@ type Handler struct {
 	sweeper        *scoring.Sweeper
 	detect         api.DetectConfig
 	allowedOrigins []string
+	// qaStore is the P25 QA ticket-chat store (ADR-0006), threaded through to
+	// the api handler unconditionally (see WithQA's doc — there is no "QA
+	// disabled" toggle, unlike detect's Runner).
+	qaStore *qa.Store
 	// ttydSuffix (P23-4) feeds the portal Terminal pane's iframe src builder
 	// (view.New / portal.ttydURLFor) — see WithTtydSuffix.
 	ttydSuffix string
+	// routes is the FULL, flattened route table this binary registers —
+	// this package's own /healthz + /metrics rows, plus ingest's, api's and
+	// view's Routes() (ADR-0005 V2). Stored so Routes() can return it to the
+	// parity tests without re-deriving it or re-wiring a second handler.
+	routes []apispec.Route
 }
 
 type Option func(*Handler)
@@ -124,6 +130,17 @@ func WithAllowedOrigins(origins []string) Option {
 	return func(h *Handler) { h.allowedOrigins = origins }
 }
 
+// WithQA sets the P25 QA ticket-chat store (ADR-0006) the api handler's
+// question/admin-questions routes read and write. Unlike WithDetect's
+// Runner, this has no "feature off" nil-safe path in production —
+// cmd/scoreboard/main.go always opens a *qa.Store (ADR-0006 Decision 3: a
+// second file in the same SCOREBOARD_DB PVC directory, no new env var). A
+// test fixture that never calls WithQA leaves this nil; that is only safe
+// as long as the fixture also never issues a request to a QA route.
+func WithQA(store *qa.Store) Option {
+	return func(h *Handler) { h.qaStore = store }
+}
+
 // WithTtydSuffix sets the DNS suffix (PORTAL_TTYD_SUFFIX) the portal
 // Terminal pane uses to build each caller's OWN ttyd iframe src:
 // `https://<derived-username>.<suffix>` — matching charts/ctf-user's
@@ -150,9 +167,6 @@ func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts .
 		opt(h)
 	}
 
-	h.mux.HandleFunc("GET /healthz", h.healthz)
-	h.mux.Handle("GET /metrics", promhttp.Handler())
-
 	// Single Grader shared by the ingest handler, the api handler, AND the
 	// auto-solve sweeper. One instance = one clock and one MarkSolved caller,
 	// preserving the single-writer discipline (conventions I1) across all three
@@ -173,13 +187,13 @@ func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts .
 		metrics.SolvesTotal.WithLabelValues(r.Challenge, "evade").Inc()
 	})
 
-	ingest.New(grader, s, logger, h.now).Register(h.mux)
-	api.New(cat, grader, s, logger, h.now, h.adminEmails, h.allowedOrigins, api.JourneyConfig{
+	ih := ingest.New(grader, s, logger, h.now)
+	ah := api.New(cat, grader, s, logger, h.now, h.adminEmails, h.allowedOrigins, api.JourneyConfig{
 		Journeys:    h.journeys,
 		FalcoRules:  h.falcoRules,
 		Order:       h.order,
 		DocsBaseURL: h.docsBaseURL,
-	}, h.detect).Register(h.mux)
+	}, h.detect, api.QAConfig{Store: h.qaStore})
 	// The operator index page (GET /) is admin-gated in the app layer too
 	// (P18-1 defense-in-depth) using the same ADMIN_EMAILS rule the api handler
 	// enforces. The participant journey/me pages are served ungated as static
@@ -188,9 +202,55 @@ func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts .
 	// view.renderPortal's doc for why that is safe (no admin data is ever
 	// embedded; the api.NewAdminGate/api.DeriveUsername results feed only
 	// display hints, and every pane's actual data fetch stays gated in api.Handler).
-	view.New(api.NewAdminGate(h.adminEmails), api.DeriveUsername, h.ttydSuffix, logger).Register(h.mux)
+	vh := view.New(api.NewAdminGate(h.adminEmails), api.DeriveUsername, h.ttydSuffix, logger)
+
+	// This binary's OWN two routes (liveness + metrics), table-driven like
+	// every sub-handler's (ADR-0005 V2) so the static "no direct
+	// mux.Handle outside the table" check (internal/apispec) covers this
+	// file too, not just the sub-packages.
+	//
+	// declared is the DESIRED table; apispec.Register's return value (not
+	// declared itself) becomes h.routes below — MEDIUM 1 (5x review): a
+	// Route with Handler == nil is silently skipped by Register (never
+	// panics, never reaches the mux), so storing `declared` verbatim here
+	// would let such a route pass every ADR-0005 V1-V4 check while actually
+	// 404ing at runtime. Storing Register's installed-subset return value
+	// instead means Routes() can only ever report what the mux truly serves.
+	declared := []apispec.Route{
+		{
+			Method: "GET", Pattern: "/healthz",
+			Audience: apispec.AudienceInfra, Authz: apispec.AuthzNone,
+			OriginGuarded: false, CollectorForward: false, RateLimit: "none",
+			Handler: http.HandlerFunc(h.healthz),
+		},
+		{
+			Method: "GET", Pattern: "/metrics",
+			Audience: apispec.AudienceInfra, Authz: apispec.AuthzNone,
+			OriginGuarded: false, CollectorForward: false, RateLimit: "none",
+			Handler: promhttp.Handler(),
+		},
+	}
+	declared = append(declared, ih.Routes()...)
+	declared = append(declared, ah.Routes()...)
+	declared = append(declared, vh.Routes()...)
+	h.routes = apispec.Register(h.mux, declared)
 
 	return h
+}
+
+// Routes returns this binary's FULL, flattened, ACTUALLY-INSTALLED route set
+// (this package's own healthz/metrics rows plus ingest's, api's and view's —
+// ADR-0005 V2/V1) — exactly apispec.Register's return value from NewHandler,
+// not the input table Register was given, so a parity test reading this
+// back sees what the mux truly serves (MEDIUM 1) rather than a second,
+// independently-maintained "what we meant to install" list. Returns a copy
+// (MEDIUM 5, 5x review): the ORIGINAL slice header pointed at this Handler's
+// own h.routes backing array, so a caller mutating an element in place
+// (rather than appending to a fresh slice, as every ADR-0005 mutation test
+// already does) would have corrupted this Handler's live route table, not a
+// disposable snapshot.
+func (h *Handler) Routes() []apispec.Route {
+	return append([]apispec.Route(nil), h.routes...)
 }
 
 // Sweeper returns the auto-solve sweeper wired to this handler's shared Grader.

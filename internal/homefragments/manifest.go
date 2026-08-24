@@ -27,18 +27,64 @@ type StaticPanel struct {
 	Heading string // "" = whole_file; else a "## heading" selector
 }
 
-// StaticPanels mirrors home-fragments.yaml's `panels:` static entries
-// (intro, cheatsheet), in manifest order. The `story` panel that used to be
-// listed here was removed 2026-08-17 (see home-fragments.yaml's header
-// note) — app-lead is dropping the corresponding Story-tab overview render
-// from templates/portal.html in a parallel change, so this generator no
-// longer needs to produce a "story" HomeFragment entry.
-var StaticPanels = []StaticPanel{
+// StaticPanels mirrors home-fragments.yaml's `panels:` static entries, in
+// manifest order. The `story` panel that used to be listed here was removed
+// 2026-08-17 (see home-fragments.yaml's header note) — app-lead is dropping
+// the corresponding Story-tab overview render from templates/portal.html in
+// a parallel change, so this generator no longer needs to produce a
+// "story" HomeFragment entry.
+//
+// The `intro`/`cheatsheet` entries that used to live here were REMOVED
+// 2026-08-21 (REFACTORING.md P24 §2, "Home パネル移設") — they now live
+// exclusively in TutorialChapters below, which points at the SAME source
+// files (docs-site/docs/index.md / docs-site/docs/cheatsheet.md), so the
+// content moved tabs rather than being duplicated. Home's static-panel list
+// is intentionally empty as of this change; a future Home-only static
+// panel would be added here again without affecting TutorialChapters.
+var StaticPanels = []StaticPanel{}
+
+// TutorialChapters mirrors docs-site/tutorial-chapters.yaml's `panels:`
+// entries, in curriculum order (REFACTORING.md P24 architect decision §1).
+// It reuses the SAME StaticPanel shape StaticPanels uses — a Tutorial
+// chapter is, structurally, "a non-per-challenge, single-source, optional
+// heading-selected" panel, which is exactly what StaticPanel already
+// represents; no new struct type is introduced.
+//
+// The first ("intro") and last ("cheatsheet") entries point at the SAME
+// source files StaticPanels' intro/cheatsheet entries used to point at
+// (docs-site/docs/index.md / docs-site/docs/cheatsheet.md) — those two
+// entries were REMOVED from StaticPanels as part of this same change (P24
+// §2, "Home パネル移設"), so the content now appears only here, not twice.
+// The middle four entries (architecture / condition-reading /
+// predicting-rules / trigger-vs-evade) point at new sources under
+// docs-site/tutorial/ (a sibling of docs-site/docs/, deliberately OUTSIDE
+// mkdocs' docs_dir — see tutorial-chapters.yaml's header note for why).
+var TutorialChapters = []StaticPanel{
 	{
 		ID:      "intro",
 		Label:   "Falco CTF とは",
 		Source:  "docs-site/docs/index.md",
 		Heading: "## Falco とは",
+	},
+	{
+		ID:     "architecture",
+		Label:  "Falco のしくみ",
+		Source: "docs-site/tutorial/architecture.md",
+	},
+	{
+		ID:     "condition-reading",
+		Label:  "ルール condition の読み方",
+		Source: "docs-site/tutorial/condition-reading.md",
+	},
+	{
+		ID:     "predicting-rules",
+		Label:  "操作から Falco ルールを推測する",
+		Source: "docs-site/tutorial/predicting-rules.md",
+	},
+	{
+		ID:     "trigger-vs-evade",
+		Label:  "trigger と evade の違い",
+		Source: "docs-site/tutorial/trigger-vs-evade.md",
 	},
 	{
 		ID:     "cheatsheet",

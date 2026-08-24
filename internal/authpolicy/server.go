@@ -30,6 +30,8 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"github.com/Qfour/falco-ctf-app/internal/apispec"
 )
 
 // validHost matches the username slugs Dex / oauth2-proxy emit. Restricting
@@ -54,6 +56,11 @@ type Handler struct {
 	client   *http.Client
 	mux      *http.ServeMux
 	adminSet map[string]struct{}
+	// routes is the declarative route table (ADR-0005 V2) this Handler
+	// registers onto mux, retained so Routes() can hand it back to the
+	// ADR-0005 parity test (server_test.go) unchanged from what NewHandler
+	// actually installed.
+	routes []apispec.Route
 }
 
 func NewHandler(cfg Config, logger *slog.Logger) *Handler {
@@ -78,11 +85,48 @@ func NewHandler(cfg Config, logger *slog.Logger) *Handler {
 		}
 		h.adminSet[e] = struct{}{}
 	}
-	h.mux.HandleFunc("GET /healthz", h.healthz)
-	h.mux.Handle("GET /metrics", promhttp.Handler())
-	h.mux.HandleFunc("GET /check", h.check)
-	h.mux.HandleFunc("GET /check-admin", h.checkAdmin)
+	// declared is the DESIRED table; h.routes below becomes apispec.Register's
+	// RETURN value, not this slice itself (MEDIUM 1, 5x review — see
+	// route.go's Register doc): that is what makes Routes() report exactly
+	// what the mux serves, never a route a future edit left Handler: nil on.
+	declared := []apispec.Route{
+		{
+			Method: "GET", Pattern: "/healthz",
+			Audience: apispec.AudienceInfra, Authz: apispec.AuthzNone,
+			OriginGuarded: false, CollectorForward: false, RateLimit: "none",
+			Handler: http.HandlerFunc(h.healthz),
+		},
+		{
+			Method: "GET", Pattern: "/metrics",
+			Audience: apispec.AudienceInfra, Authz: apispec.AuthzNone,
+			OriginGuarded: false, CollectorForward: false, RateLimit: "none",
+			Handler: promhttp.Handler(),
+		},
+		{
+			Method: "GET", Pattern: "/check",
+			Audience: apispec.AudienceInternal, Authz: apispec.AuthzSelfOrAdmin,
+			OriginGuarded: false, CollectorForward: false, RateLimit: "none",
+			Handler: http.HandlerFunc(h.check),
+		},
+		{
+			Method: "GET", Pattern: "/check-admin",
+			Audience: apispec.AudienceOperator, Authz: apispec.AuthzAdmin,
+			OriginGuarded: false, CollectorForward: false, RateLimit: "none",
+			Handler: http.HandlerFunc(h.checkAdmin),
+		},
+	}
+	h.routes = apispec.Register(h.mux, declared)
 	return h
+}
+
+// Routes returns the route set this Handler ACTUALLY registered onto its
+// mux (ADR-0005 V2) — exactly apispec.Register's return value from
+// NewHandler, for the parity test (server_test.go) to compare against
+// docs/openapi-auth-policy.yaml. Returns a copy (MEDIUM 5, 5x review):
+// callers must not be able to mutate this Handler's live route table by
+// mutating an element of the returned slice in place.
+func (h *Handler) Routes() []apispec.Route {
+	return append([]apispec.Route(nil), h.routes...)
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {

@@ -78,10 +78,16 @@ jobs:
   #   2. go mod tidy (make tidy 相当) 後の go.mod / go.sum が最新か
   #   3. ATT&CK Navigator layer / coverage table (make gen-attack 相当) が
   #      challenges/*/falco-rule.yaml の attack: ブロックと一致するか
+  #   4. Portal Home/Tutorial タブの embed fragment (make gen-home-fragments /
+  #      make gen-tutorial-fragments 相当) が docs-site の源泉と一致するか
+  #      (app#155 follow-up — P23-5/P24 で生成物 CI diff-check が無かったギャップ)
   # どれも `git diff --exit-code` で drift を検出する (手書き/更新漏れを block)。
   # golang container 内で完結させ、生成コマンドは Dockerfile.gen / Dockerfile.tidy と
   # 同じツール version に揃える (oapi-codegen@v2.3.0)。gen-attack は python3 script
-  # (stdlib のみ) なので同一 container に apk add python3 して倣う。
+  # (stdlib のみ) なので同一 container に apk add python3 して倣う。gen-home/tutorial-
+  # fragments は go run のみで追加ツール不要 (actions/checkout@v7 がフル checkout する
+  # ため Dockerfile.gen-{home,tutorial}-fragments の選択 COPY は不要、リポジトリ直下で
+  # `go run ./cmd/gen-...-fragments .` が直接動く)。
   # ------------------------------------------------------------------
   gen-diff-check:
     runs-on: ubuntu-latest
@@ -107,6 +113,11 @@ jobs:
         run: go mod tidy
       - name: regenerate attack coverage (make gen-attack)
         run: python3 scripts/gen-attack-layer.py
+      - name: regenerate portal Home/Tutorial fragments (make gen-home-fragments / gen-tutorial-fragments)
+        run: |
+          set -eu
+          go run ./cmd/gen-home-fragments .
+          go run ./cmd/gen-tutorial-fragments .
       - name: fail on drift
         run: |
           set -eu

@@ -141,6 +141,14 @@ func TestRenderPortal_MissingIdentityDegradesGracefully(t *testing.T) {
 // package var every request serves — see portal.go's HomePanelsHTML field
 // doc), for BOTH admin and participant callers identically (P23-5: no
 // per-viewer variation, no hints, no admin-only content in this pane).
+//
+// P24 follow-up (app#156): the `if f.ChalNN == ""` branch below is
+// permanently unreachable as of P24 — the intro/cheatsheet static panels
+// that used to have ChalNN=="" moved OUT of HomeFragments and into
+// TutorialChapters (see manifest.go's StaticPanels doc), so every remaining
+// HomeFragments entry today has a non-empty ChalNN. This is the correct,
+// intended state (not a bug): the branch is kept, unexercised, as the seam
+// for any future ChalNN=="" HomeFragments entry, rather than deleted.
 func TestRenderPortal_HomePanelsInjected(t *testing.T) {
 	if len(HomeFragments) == 0 {
 		t.Fatal("HomeFragments is empty — run `make gen-home-fragments` before running this test")
@@ -197,6 +205,35 @@ func TestRenderPortal_StoryPanelNotInjected(t *testing.T) {
 		body := w.Body.String()
 		if strings.Contains(body, `class="story-overview`) {
 			t.Errorf("expected NO Story overview container in the response, isAdmin=%v", isAdmin)
+		}
+	}
+}
+
+// TestRenderPortal_TutorialPanelsInjected proves GET /portal's response
+// body contains the real, gen-time-rendered Tutorial chapters (the SAME
+// tutorialPanelsHTML package var every request serves — see tutorial.go's
+// doc), for BOTH admin and participant callers identically (P24: no
+// per-viewer variation, no hints, no admin-only content in this pane —
+// mirrors TestRenderPortal_HomePanelsInjected above).
+func TestRenderPortal_TutorialPanelsInjected(t *testing.T) {
+	if len(TutorialFragments) == 0 {
+		t.Fatal("TutorialFragments is empty — run `make gen-tutorial-fragments` before running this test")
+	}
+	for _, isAdmin := range []bool{true, false} {
+		r := httptest.NewRequest("GET", "/portal", nil)
+		w := httptest.NewRecorder()
+		fn := func(*http.Request) bool { return isAdmin }
+		if err := renderPortal(w, r, fn, nil, ""); err != nil {
+			t.Fatalf("renderPortal: %v", err)
+		}
+		body := w.Body.String()
+		if !strings.Contains(body, `id="pane-tutorial-panels"`) {
+			t.Fatalf("expected the Tutorial panels container in the response, isAdmin=%v", isAdmin)
+		}
+		for _, f := range TutorialFragments {
+			if !strings.Contains(body, f.Label) {
+				t.Errorf("expected chapter label %q in body, isAdmin=%v", f.Label, isAdmin)
+			}
 		}
 	}
 }

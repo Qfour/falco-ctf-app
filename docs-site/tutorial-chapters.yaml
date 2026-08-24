@@ -1,0 +1,155 @@
+# P24: Portal Tutorial tab chapter manifest — content-engineer owned contract.
+#
+# Defines WHICH source .md sections become gen-time sanitized HTML fragments
+# for the unified portal's Tutorial tab (charts/scoreboard, internal/
+# scoreboard/view). Same generator pattern as docs-site/home-fragments.yaml
+# (architect decision, REFACTORING.md P24 "architect契約設計" §1): the Go
+# mirror is `internal/homefragments.TutorialChapters` (a `[]StaticPanel`,
+# the same struct as `StaticPanels`), rendered by the shared
+# `RenderStaticPanel` function and emitted by a new `cmd/gen-tutorial-
+# fragments` generator. This manifest file itself is not parsed at build
+# time — it is the content-engineer-authored design document that the Go
+# mirror is hand-synced against (same relationship home-fragments.yaml has
+# to `manifest.go`'s `StaticPanels`).
+#
+# Non-negotiables (see .claude/rules/falco-ctf-app-conventions.md,
+# ORGANIZATION.md, REFACTORING.md P24):
+#   - Tutorial is PARTICIPANT-FACING and NON-HINT. It teaches Falco concepts
+#     (architecture / condition reading / prediction heuristics / trigger vs
+#     evade) at the CONCEPT level only. It must never include journey.yaml
+#     `hints:` text (or close paraphrases of the specific solve/evasion
+#     technique described there), never a specific challenge id's solve
+#     path, and never a FALCO{...} flag pattern (real or `dev-` placeholder).
+#   - Fail-soft: a missing source file/section means the chapter panel is
+#     omitted for that entry, not an error. Never block gen or render.
+#   - Sanitize at gen time (fixed HTML baked in) — reuses the SAME
+#     sanitizer/allowlist as home-fragments.yaml (`internal/homefragments/
+#     sanitize.go`'s `allowedElements`, hardcoded in Go, not re-declared per
+#     manifest). This manifest does not repeat that allowlist; see
+#     home-fragments.yaml's `sanitize_allowlist` section for the reference
+#     copy of what is/is not allowed in rendered HTML.
+#   - Tutorial content does NOT copy docs-site admin content (missions/*.md
+#     攻略と解説, README.md 試すこと/クリア条件/環境にあるもの). It is
+#     written fresh, at concept level, independently of any single
+#     challenge's solve path.
+#   - Machine check (content-engineer's authoring-time gate, per
+#     REFACTORING.md P24 §4): every chapter source below MUST be re-checked
+#     against the full `hints[]` text of all `challenges/*/journey.yaml`
+#     (exact literal substring match, same posture as
+#     `manifest_verified_test.go`'s `assertNoForbiddenLeaks`) before adding
+#     or editing a chapter. The permanent CI enforcement of this check is
+#     `internal/homefragments/manifest_verified_test.go`'s
+#     `TestTutorialChaptersVerifiedClean_NoHintOverlap` (application-
+#     engineer implementation, not yet landed as of this manifest's
+#     authoring — see REFACTORING.md P24 §4 for the design).
+#
+# Curriculum ordering (this is a linear, story-agnostic curriculum, NOT tied
+# to the 00-10 killchain challenge order — the existing 10-challenge order
+# is unchanged per the standing "並び順は変えない" decision):
+#   1. intro        — orientation (moved from Home, unchanged content)
+#   2. architecture  — syscall capture -> condition -> output/priority
+#   3. condition-reading — macro/list composition, how to read a condition
+#   4. predicting-rules  — heuristic for "will my action trip a rule?"
+#   5. trigger-vs-evade  — the two challenge types, concept only
+#   6. cheatsheet    — reference commands (moved from Home, unchanged
+#                       content; kept last as a lookup companion once the
+#                       concepts above are established)
+#
+# Home-panel migration note (out of this manifest's scope to execute): the
+# `intro`/`cheatsheet` entries below point at the SAME source files
+# home-fragments.yaml currently uses (`docs-site/docs/index.md` /
+# `docs-site/docs/cheatsheet.md`) — per REFACTORING.md P24 §2, removing
+# those two entries from home-fragments.yaml / manifest.go's `StaticPanels`
+# is application-engineer's implementation step, not a content change owned
+# here. The markdown source files themselves do not need to move or change.
+#
+# New chapter sources (architecture/condition-reading/predicting-rules/
+# trigger-vs-evade) live OUTSIDE docs-site's mkdocs `docs_dir` (docs-site/
+# tutorial/, a sibling of docs-site/docs/), the same way challenges/<NN>-
+# <slug>/rule-explain.md sits outside docs_dir for the Home rule-explain
+# panel — mkdocs.yml runs with --strict and requires every page under
+# docs_dir to be listed in `nav:`; putting Tutorial-only sources under
+# docs_dir would force either an unwanted nav entry or a strict-mode CI
+# break. mkdocs.yml is unchanged (REFACTORING.md P24 §5 explicitly lists it
+# as untouched).
+
+panels:
+  - id: intro
+    label: "Falco CTF とは"
+    source: docs-site/docs/index.md
+    select: { heading: "## Falco とは" }
+    notes: >
+      Unchanged from home-fragments.yaml's `intro` entry — same source,
+      same heading selector, same content. Kept as the Tutorial tab's
+      orientation/landing panel (first thing a participant reads before the
+      concept chapters below).
+    fail_soft: "omit panel entirely if file or heading missing"
+
+  - id: architecture
+    label: "Falco のしくみ"
+    source: docs-site/tutorial/architecture.md
+    select: { whole_file: true }
+    notes: >
+      New content (P24 learning outcome 1). Covers the syscall capture ->
+      structured event -> condition evaluation -> output/priority pipeline
+      at the concept level. Does not reference any specific challenge,
+      rule name used by this CTF's expectedRules/forbiddenRules, or the
+      Falco DaemonSet/kubectl-logs operational facts (those are operator
+      knowledge, out of scope for a participant-facing chapter).
+    fail_soft: "omit panel if file missing"
+
+  - id: condition-reading
+    label: "ルール condition の読み方"
+    source: docs-site/tutorial/condition-reading.md
+    select: { whole_file: true }
+    notes: >
+      New content (P24 learning outcome 2 — a participant-facing excerpt of
+      falco-rules-expert skill knowledge on macro/list composition and how
+      exception gates compound with `and`). The worked example is an
+      explicitly-labeled SIMPLIFIED illustration (package-manager-in-
+      container) that deliberately does not reuse any of the rule names or
+      condition logic listed as `expectedRules`/`forbiddenRules` across
+      `challenges/*/falco-rule.yaml` (checked 2026-08-21, machine-verified
+      by the hint/rule-name overlap grep described above — see that file
+      for the authoritative current list rather than duplicating it here).
+    fail_soft: "omit panel if file missing"
+
+  - id: predicting-rules
+    label: "操作から Falco ルールを推測する"
+    source: docs-site/tutorial/predicting-rules.md
+    select: { whole_file: true }
+    notes: >
+      New content (P24 learning outcome 3). Teaches a 3-step estimation
+      heuristic (syscall category -> notable feature in that category ->
+      does an alternate path change that feature) rather than any concrete
+      challenge technique. Cross-references the cheatsheet's "Falco の
+      観測ポイント" field table by name instead of duplicating it, to keep
+      a single source of truth for the field glossary.
+    fail_soft: "omit panel if file missing"
+
+  - id: trigger-vs-evade
+    label: "trigger と evade の違い"
+    source: docs-site/tutorial/trigger-vs-evade.md
+    select: { whole_file: true }
+    notes: >
+      New content (P24 learning outcome 4). Explains the two challenge
+      types' pass conditions and the evade "one hit taints the attempt
+      until an explicit reset" mechanic in the author's own words (this
+      mechanic is already visible to every participant in several
+      missions' journey.yaml `steps[].detail` text, which is not in scope
+      of the hints[]-overlap check, but was independently paraphrased here
+      rather than copied). Does not name which technique avoids detection
+      for any specific mission.
+    fail_soft: "omit panel if file missing"
+
+  - id: cheatsheet
+    label: "コマンド集"
+    source: docs-site/docs/cheatsheet.md
+    select: { whole_file: true }
+    notes: >
+      Unchanged from home-fragments.yaml's `cheatsheet` entry — same
+      source, same whole-file selection, same content (already verified
+      participant-safe for the Home tab; moving tabs does not change its
+      content). Kept last in the Tutorial ordering as a reference lookup
+      companion once the concept chapters above are read.
+    fail_soft: "omit panel if file missing"
