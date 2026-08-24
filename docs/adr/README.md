@@ -15,7 +15,7 @@
 | [0004](0004-capstone-dual-path-e2e-order.md) | capstone の 2 経路 E2E の順序 | **Accepted** | mission 10 の auto-solve / 手動 submit を**この順で**通す (d′)。逆順禁止・reset 不要。(d) の**理由**を差し替え | — |
 | [0005](0005-openapi-canon-and-parity-gate.md) | OpenAPI の対象を HTTP 面すべてに定め parity を機械検査 | **Accepted** | 1 サービス = 1 spec で mux の全ルートを記載 / `x-ctf-*` で audience・authz・origin-guard・collector forward を宣言 / 双方向 parity を fail-closed 検査 (除外リストゼロ)。I14 (Hard Invariants 昇格済み、#149) | — |
 | [0006](0006-p25-qa-ticket-chat-contract.md) | P25 QA チケットチャットの API 契約・スキーマ・admin UI 配置 | **Accepted** | 新規 7 route (self-scope + admin)・`internal/qa` を `store`/`scoring` と物理分離・admin UI は portal 内タブ (index.html は不採用)。実装着手は WIP ドレイン後 かつ 0005 (#143/#149) merge 後 | — |
-| [0007](0007-plant-mount-directory-granularity.md) | plant-target の mount をディレクトリ granularity に限定 | **Proposed** | ファイル単位の bind mount は destination が Falco の一致対象のとき **container ランタイム自身が deploy ごとに検知イベントを出す** —— mount 粒度をディレクトリに上げて原因を消す。ADR-0001 の派生決定 (1) = B1 を supersede。提案 I13c | — |
+| [0007](0007-plant-mount-directory-granularity.md) | plant-target の mount をディレクトリ granularity に限定 | **Accepted** | ファイル単位の bind mount は destination が Falco の一致対象のとき **container ランタイム自身が deploy ごとに検知イベントを出す** —— mount 粒度をディレクトリに上げて原因を消す。ADR-0001 の派生決定 (1) = B1 を supersede。提案 I13c。**実装は別PR、本番投入はlandingまで不可** | — |
 
 ## 規律（ADR-0003 / ADR-0001 で確立したもの）
 

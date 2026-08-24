@@ -1,7 +1,10 @@
 # ADR-0007: plant-target の bind mount は **ディレクトリ granularity** に限定する (ADR-0001 の派生決定 (1) = B1 を supersede)
 
-- Status: **Proposed**
-- Date / Deciders: 2026-08-19 / architect (起草) + VP (承認 2026-08-19) + security-engineer (独立監査を要求) + CEO (merge / 本番投入)
+- Status: **Accepted** (2026-08-25, CEO merge。review-5x T3・5観点、BLOCKING/HIGHゼロ
+  [HIGH2件はmerge前に解消: R2=mission09 EXDEV回帰を実クラスタで実証・修正確定、R3=ADR番号根拠の
+  stale記述訂正]。security-engineer独立監査完了 [APPROVE with conditions、条件はfollow-up issue
+  app#178/#179・platform#88で追跡]。**実装 [Option 1] は別PR。本番投入はOption 1 landingまで不可**)
+- Date / Deciders: 2026-08-19 / architect (起草) + VP (承認 2026-08-19) + security-engineer (独立監査完了 2026-08-25) + CEO (merge 2026-08-25 / 本番投入は別途)
 - 関連:
   - **supersede 対象**: [ADR-0001](0001-flag-plant-initcontainer-not-challenge-env.md) の
     **派生決定 (1) 「seed delivery 方式」で採用された B1 (plant-target 単位の `subPath` bind)** のみ。
