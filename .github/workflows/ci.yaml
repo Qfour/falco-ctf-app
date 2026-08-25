@@ -59,6 +59,81 @@ jobs:
         run: python3 scripts/check-seccomp.py
       - name: flag isolation Hard Invariant (ADR-0001 Verification 1, fail-closed)
         run: ./scripts/check-flag-isolation.sh
+      - name: namespace ownership guard (ADR-0011, fail-closed)
+        run: ./scripts/check-namespace-ownership.sh
+
+  # ------------------------------------------------------------------
+  # namespace ownership guard NEGATIVE test (5x R3 follow-up to
+  # platform#111 / ADR-0011): prove scripts/check-namespace-ownership.sh
+  # actually FIRES on a chart that self-templates a Namespace, does NOT
+  # false-positive on an ordinary chart, and still honors the ctf-user
+  # exclusion — instead of relying on the "verified once by hand" note that
+  # 5x R3 flagged as unenforced (a future weakening of the grep logic would
+  # go undetected without this). Fixture mirrors
+  # falco-ctf-platform's namespace-guard-negative job pattern (fail-closed
+  # `set +e/-e` capture of an intentionally-failing command, mirrors
+  # tfstate-guard-negative there); this repo's counterpart to that pattern
+  # is check-flag-isolation.sh's own inline negative assertions
+  # (assert_1_12), but that script's violations are all --set overrides —
+  # a self-templated Namespace is structural chart content, so it needs an
+  # actual fixture chart tree (scripts/testdata/namespace-ownership-FIXTURE)
+  # rather than a --set override.
+  #
+  # Also covers 5x R2 (MEDIUM, mutation-tested): list-chart self-templates a
+  # Namespace INDENTED inside a `kind: List` items array. An exact full-line
+  # grep (no leading-whitespace tolerance) missed this — reverting the fix
+  # in scripts/check-namespace-ownership.sh reproduces a false PASS on this
+  # fixture alone. The `FAIL: list-chart` assertion below is the regression
+  # guard for that fix.
+  #
+  # Branch protection check: not required (informational tripwire on the
+  # guard itself, same non-required status as gen-diff-check).
+  # ------------------------------------------------------------------
+  namespace-ownership-guard-negative:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: azure/setup-helm@v5
+      - name: guard must FIRE on self-templated (incl. indented/List-wrapped) Namespaces, and NOT on an ordinary chart or the ctf-user exclusion
+        run: |
+          set -uo pipefail
+          FX=scripts/testdata/namespace-ownership-FIXTURE/charts
+          # check-namespace-ownership.sh is EXPECTED to exit non-zero here
+          # (the fixture's bad-chart/list-chart intentionally violate
+          # ADR-0011). Under GitHub Actions' default `bash -e`, a failing
+          # command inside out="$(...)" aborts the step immediately — before
+          # the rc==0 regression assertion below ever runs. Bracket the
+          # capture with set +e/-e (mirrors falco-ctf-platform's
+          # namespace-guard-negative and this repo's
+          # tfstate-guard-negative-shaped jobs) so the intentional failure
+          # doesn't kill the step.
+          set +e
+          out="$(./scripts/check-namespace-ownership.sh --charts-dir "$FX" 2>&1)"
+          rc=$?
+          set -e
+          echo "$out"
+          echo "---- exit code: $rc ----"
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::check-namespace-ownership.sh PASSED a fixture with self-templated Namespaces (bad-chart/list-chart) — guard regressed."
+            exit 1
+          fi
+          echo "$out" | grep -qF 'FAIL: bad-chart renders a document with kind: Namespace' \
+            || { echo "::error::guard fired but did not name the offending bad-chart."; exit 1; }
+          echo "$out" | grep -qF 'FAIL: list-chart renders a document with kind: Namespace' \
+            || { echo "::error::guard fired but did not name the offending list-chart (indented Namespace inside a List — 5x R2 regression)."; exit 1; }
+          if echo "$out" | grep -qF 'FAIL: good-chart'; then
+            echo "::error::guard flagged good-chart, which has no Namespace template — false positive."
+            exit 1
+          fi
+          echo "$out" | grep -qF 'ok: no kind: Namespace in rendered output' \
+            || { echo "::error::good-chart did not render/pass as expected — fixture or guard regressed."; exit 1; }
+          if echo "$out" | grep -qF 'FAIL: ctf-user'; then
+            echo "::error::guard flagged the ctf-user-named chart — ADR-0011 exclusion regressed (even though this fixture's ctf-user ALSO self-templates a Namespace, it must be skipped by name, same as the real charts/ctf-user)."
+            exit 1
+          fi
+          echo "$out" | grep -qF 'ctf-user (skipped' \
+            || { echo "::error::ctf-user-named chart was not skipped as expected — exclusion regressed."; exit 1; }
+          echo "OK — the namespace ownership guard fired on bad-chart and list-chart, passed good-chart, and correctly skipped the ctf-user exclusion."
 
   # ------------------------------------------------------------------
   # Flag hygiene: no real flags in the public repo + generated values in sync.

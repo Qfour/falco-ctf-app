@@ -1,0 +1,12 @@
+# Fixture (5x R3 follow-up to platform#111 / ADR-0011): a minimal,
+# otherwise-valid Helm chart that intentionally self-templates a
+# `kind: Namespace` object — exactly the violation
+# scripts/check-namespace-ownership.sh must detect. Used only by the
+# namespace-ownership-guard-negative CI job (via --charts-dir); never a real
+# chart, never referenced by any helmfile. Do not use as an example.
+apiVersion: v2
+name: bad-chart
+description: Fixture chart that violates ADR-0011 by self-templating a Namespace
+type: application
+version: 0.1.0
+appVersion: "0.0.0"

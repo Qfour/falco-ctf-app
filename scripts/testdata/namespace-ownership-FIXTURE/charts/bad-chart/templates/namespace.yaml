@@ -1,0 +1,6 @@
+# Fixture: this chart intentionally self-templates a Namespace object — the
+# ADR-0011 violation scripts/check-namespace-ownership.sh must fire on.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fixture-bad-chart-ns

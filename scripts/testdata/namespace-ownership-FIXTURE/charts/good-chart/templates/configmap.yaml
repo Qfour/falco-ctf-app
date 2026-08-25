@@ -1,0 +1,8 @@
+# Fixture: a harmless non-Namespace manifest, to prove the guard does not
+# false-positive on ordinary chart templates.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fixture-good-chart-cm
+data:
+  hello: world

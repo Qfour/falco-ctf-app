@@ -1,0 +1,9 @@
+# Fixture: this chart self-templates a Namespace, but its directory is named
+# "ctf-user" — ADR-0011's explicit exclusion — so
+# scripts/check-namespace-ownership.sh must SKIP it (not fire), proving the
+# exclusion is keyed on chart directory name and still applies under a
+# fixture tree.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fixture-ctf-user-ns

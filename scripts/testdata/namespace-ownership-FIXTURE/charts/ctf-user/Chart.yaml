@@ -1,0 +1,13 @@
+# Fixture (5x R3 follow-up to platform#111 / ADR-0011): a chart directory
+# named exactly "ctf-user" that ALSO self-templates a Namespace, to prove
+# scripts/check-namespace-ownership.sh's EXCLUDE_CHART skip still applies
+# under --charts-dir (i.e. the exclusion is keyed on chart directory name,
+# not hardcoded to the real charts/ctf-user path). Used only by the
+# namespace-ownership-guard-negative CI job. Not the real charts/ctf-user
+# chart — do not use as an example of that chart's structure.
+apiVersion: v2
+name: ctf-user
+description: Fixture chart named ctf-user (ADR-0011 exclusion) that also self-templates a Namespace
+type: application
+version: 0.1.0
+appVersion: "0.0.0"
