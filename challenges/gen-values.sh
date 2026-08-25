@@ -37,7 +37,8 @@
 #     from the seed volume onto the real path in `challenge`). `path` is the
 #     plant-target itself when `# plant-target-type: dir`, or its dirname
 #     when `# plant-target-type: file`. `readOnly` is `false` only for mount
-#     directories listed in WRITABLE_MOUNT_DIRS below (see that comment) —
+#     directories whose plant.sh declares `# plant-mount-readonly: false`
+#     (resolved by plant_mount_readonly_override()/is_mount_writable() below) —
 #     everything else defaults to `true` (fail-closed side).
 #
 # plant.sh references CTF_FLAG_* env vars only — no flag literals — so flags
@@ -652,9 +653,10 @@ run_verification_1_all_scopes() {
 # ---------------------------------------------------------------------------
 
 verify_negative_test() {
-  local fixture
+  local fixture out
   fixture="$(mktemp)"
-  trap 'rm -f "${fixture}"' RETURN
+  out="$(mktemp)"
+  trap 'rm -f "${fixture}" "${out}"' RETURN
   cat > "${fixture}" <<'FIXTURE'
 # ADR-0007 Verification 2 fixture — INTENTIONALLY violates Verification 1
 # (file-granularity plant.mounts entry). Never committed as a real
@@ -668,14 +670,12 @@ plant:
   mounts:
     - /etc/shadow
 FIXTURE
-  if check_mount_granularity "${fixture}" "ADR-0007-V2-fixture" >/tmp/adr0007-v2-negative.out 2>&1; then
+  if check_mount_granularity "${fixture}" "ADR-0007-V2-fixture" >"${out}" 2>&1; then
     echo "ADR-0007 V2 VIOLATION: the deliberately-bad fixture (plant.mounts: [/etc/shadow], file granularity) was ACCEPTED — Verification 1's assert is vacuous" >&2
-    cat /tmp/adr0007-v2-negative.out >&2
-    rm -f /tmp/adr0007-v2-negative.out
+    cat "${out}" >&2
     return 1
   fi
   echo "  ok: ADR-0007 Verification 2 — the file-granularity fixture is correctly rejected"
-  rm -f /tmp/adr0007-v2-negative.out
   return 0
 }
 
