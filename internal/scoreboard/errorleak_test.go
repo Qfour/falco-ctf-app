@@ -123,6 +123,26 @@ func TestErrorLeak_InvalidBody_SetDisplayName(t *testing.T) {
 	assertErrorBody(t, w, 400, "invalid request body")
 }
 
+// TestErrorLeak_InvalidBody_StepCheck pins the same decode-error contract for
+// stepCheck (api.go's third json.NewDecoder call site, one of the 13 fixed by
+// Issue #113). newFixture's catalog has no journey content wired, so it would
+// 404 ("no journey content for ...") before ever reaching the decoder — use
+// newJourneyFixture (journey_api_test.go) instead, whose "02-evade" mission
+// has journey content with 1 step (idx 0 is valid), and send a raw malformed
+// body the same way doRawAs does (bypassing json.Marshal so the decoder
+// actually fails). The route is origin-guarded (api.go:326), so the Origin
+// header must be set to the fixture's allowed origin or this would 403
+// before reaching the decoder instead.
+func TestErrorLeak_InvalidBody_StepCheck(t *testing.T) {
+	f := newJourneyFixture(t)
+	r := httptest.NewRequest("POST", "/api/users/alice/challenges/02-evade/steps/0/check", strings.NewReader("{"))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Origin", journeyFixtureOrigin)
+	w := httptest.NewRecorder()
+	f.srv.ServeHTTP(w, r)
+	assertErrorBody(t, w, 400, "invalid request body")
+}
+
 // --- store-error path (real SQLite failure via closed handle) --------------
 //
 // Closing f.st before the call is fault injection with a REAL driver, not a
