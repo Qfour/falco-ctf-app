@@ -2,7 +2,13 @@
 - Status: **Accepted** (設計。2026-08-25, VP 承認。review-5x [T3・5観点] 実施済み、
   BLOCKING 3件・MEDIUM 9件・LOW 7件を全反映。**実装は別PR、本番投入は Verification
   V1-V7 の実機確認が landing するまで不可** — 特にV7 [Helm v4.1.3のprune挙動] は
-  scoreboardのsqlite PVCデータ損失リスクの裏付けであり実装PR前に最優先で実施すること)
+  scoreboardのsqlite PVCデータ損失リスクの裏付けであり実装PR前に最優先で実施すること。
+  **2026-08-25 qa-engineer 追記**: V1 (2段記録)・V2・V3・V4・V7 は disposable
+  colima profile 上で実機確認済み・全て予定どおり [V1-V4 PASS、V7は破壊シナリオ(b)の
+  実在を確認] — 詳細は Verification 節。**V5/V6 は未実施のまま残っている**ので、
+  本ADRはこの追記だけでは「本番投入可」に上がらない。実装ブランチ (app
+  `feat/adr-0011-app-namespace-removal` / platform
+  `feat/adr-0011-namespaces-bootstrap`) 自体は本追記の時点でも未merge)
 - Date / Deciders: 2026-08-25 / architect (提案・5x レビュー反映) — VP (承認)
 - 関連: platform#83 (P1相当, 本ADRの発端issue) / platform#75 (`deploy-user.sh` の `-n` 不在。**別issue、本ADRのDecisionはこれを解決しない** — Consequences 節参照) / Issue #144 (**ADR-0009 は Issue #144 用に予約済み。本ADRは 0009 を使わない** — `docs/adr/0008-mission05-positive-proof-gate.md:569`) / platform#111 (follow-up: 自己 Namespace template 再導入を防ぐ静的検査、2026-08-25 起票)
 
@@ -490,6 +496,22 @@ Decision 対象外にしていたが、**platform#111 として follow-up issue 
   `deploy-user.sh` が `helmfile -e local apply` 実行後に限って動く前提を置く、等)。
   決めずに `-n`/`--create-namespace` だけ追加すると、ctf-user が本ADRと同じ両方向
   障害を新規に発生させる。
+- **「適用順序の制約」は hard requirement であり、単なる推奨ではない (Verification
+  V7 実測結果, qa-engineer, 2026-08-25 追記)**: `auth-policy` chart を使い、
+  disposable colima profile 上で「旧 self-template chart で install → `namespaces`
+  release/`needs` を介さず新チャート (Namespace template 削除済み) へ素の
+  `helm upgrade`」という破壊シナリオ (b) を実際に再現したところ、
+  `helm upgrade` 自体は正常終了 (`exit 0`) したにもかかわらず、対象 Namespace は
+  数秒で `Terminating` → 完全に `NotFound` になった (Helm v4.1.3 の upgrade が
+  旧revisionのmanifestにあり新revisionには無い Namespace オブジェクトを実際に
+  prune する)。**これは「app 側の chart 変更と platform 側の helmfile 変更を
+  同一 `helmfile sync` 適用単位で同時反映する」という Decision の適用順序の制約が、
+  単なる運用上の推奨ではなく、破ると Namespace ごと (= `scoreboard` release であれば
+  sqlite PVC ごと) 中身が消滅する、実際に起きる破壊的欠陥への唯一の防波堤である
+  ことを意味する。** 実装 PR のレビュー/CI では、この2つの変更 (app 側4chartの
+  `templates/namespace.yaml` 削除 と platform 側の `namespaces` release +
+  `needs` 追加) が同一コミット/同一 apply 単位に含まれることを確認すること
+  (release-engineer/VP のマージ順序チェック項目とする)。
 
 ## Signposts
 
@@ -516,13 +538,18 @@ Decision 対象外にしていたが、**platform#111 として follow-up issue 
 
 ## Verification
 
-**未実施。** 本ADRは Proposed であり、以下は実装 PR で実行し、結果 (pass/fail と
-実際の出力) をこの節に追記してから Accepted に上げること。「実機で確認するまで
-検証済みと書かない」規律 (dev-flow / falco-ctf-conventions.md) に従う。**各 V について、
-(a) fix適用前 (現行 main) の状態で実際にエラーが再現することを先に記録する →
-(b) Decision適用後に再実行してエラーが解消したことを記録する、の2段を残すこと**
+**部分実施 (2026-08-25, qa-engineer)。** V1 (2段記録)・V2・V3・V4・V7 は実クラスタで
+実施済み、結果は下記「実施記録」に記録 (全て予定どおりの結果 — V1/V2/V3/V4 は PASS、
+**V7 は「削除される」の実測、つまり Decision の破壊シナリオ (b) が実際に起きることを
+確認**)。**V5/V6 は本ラウンドのスコープ外・未実施のまま** (qa-engineer への発注時に
+優先順位 1-5 (V1前段・V1・V3・V4・V7) のみが指定されたため — 実装コード自体は今回
+変更していない)。「実機で確認するまで検証済みと書かない」規律
+(dev-flow / falco-ctf-conventions.md) に従い、V5/V6 は依然「未実施」と明記する。
+**各 V について、(a) fix適用前 (現行 main) の状態で実際にエラーが再現することを先に
+記録する → (b) Decision適用後に再実行してエラーが解消したことを記録する、の2段を残すこと**
 (R2 finding 1-b 対応, 2026-08-25 追記)。「fix後にgreenになった」だけでは、そもそも
 壊れていたことの証明にならない (的外れなfixでもgreenに見えるケースを排除できない)。
+V1 はこの2段を実施した (下記参照)。
 
 - **V1 (空クラスタからの sync)**: **既存の共有・長寿命プロファイル `ctf-e2e` を使わない
   /破壊しない** (`ctf-e2e` は ADR-0007/ADR-0010 で「以後の E2E はこれを使う運用」と
@@ -539,16 +566,87 @@ Decision 対象外にしていたが、**platform#111 として follow-up issue 
   → (b) Decision 適用後の状態で同じ新規 profile から再実行し、エラー無く完了することを
   確認する。検証後、新規 profile は `colima delete --profile <new-name>` で破棄してよい
   (`ctf-e2e` には触れない)。
+
+  **実施記録 (qa-engineer, 2026-08-25)。結果: PASS (2段とも)。**
+  - 新規 disposable profile `ctf-e2e-adr0011` を `colima start --profile ctf-e2e-adr0011
+    --cpu 4 --memory 8 --disk 60 --kubernetes` で作成 (§11.6 の推奨値どおり。既存
+    `ctf-e2e`/`default` は未使用・未変更)。
+  - **kubeContext の落とし穴 (未文書化だったので明記)**: `helmfile.yaml.gotmpl` の
+    `local` 環境は `kubeContext: colima` を**固定文字列で**参照しており、これは
+    colima の *default* profile のコンテキスト名と一致する (named profile は
+    `colima-<profile>` になる)。disposable profile を素朴に `helmfile -e local sync`
+    すると、**気付かずに `default` profile (132日稼働の共有インスタンス、
+    `docs/PROD-GATE-E2E-PLAN.md §11.0`) に向けて実行してしまう事故になる。**
+    回避策: `kubectl config view --minify --context=colima-ctf-e2e-adr0011 --flatten`
+    で disposable profile のコンテキストだけを抽出し、`kubectl config
+    rename-context colima-ctf-e2e-adr0011 colima` で **スコープを切った一時
+    kubeconfig ファイル内でのみ**コンテキスト名を `colima` に付け替え、
+    `KUBECONFIG=<一時ファイル>` を helmfile 実行時にだけ指定した (実 `~/.kube/config`
+    は無変更)。同様に `DOCKER_HOST` も disposable profile の docker socket に
+    明示指定 (`make load-colima` 相当の `docker build` + `colima ssh --profile
+    ctf-e2e-adr0011 -- sudo ctr -n k8s.io images import -` で `falco-ctf/{scoreboard,
+    auth-policy,collector,docs}:dev` を当該 profile の containerd に個別ロード —
+    `scripts/build-and-load.sh` は `colima ssh --` を素で呼ぶため active profile
+    依存であり、そのままでは同じ事故を起こす。今回は script を使わず同義のコマンドを
+    `--profile` 明示で手動実行した)。**この2点 (kubeContext 固定文字列/build-and-load.sh
+    の active-profile 依存) は本ADRの対象外の既存事実だが、次回同種の disposable
+    profile 検証をする者のために記録しておく。**
+  - **(a) fix適用前 (main, both repos)**: 空の `ctf-e2e-adr0011` に対し
+    `helmfile -e local sync` を実行 → **`auth-policy` release で
+    `Error: create: failed to create: namespaces "auth-policy" not found`
+    が実際に発生し FAILED (exit 1)** (Context 記載の障害モード1と完全一致)。
+    `cleanupOnFail` により auth-policy の部分状態は残らず、それ以前に成功していた
+    `detect-grader`/`ingress-nginx`/`falco`/`cert-manager`/`dex`/`oauth2-proxy` の
+    6 release は正常に deployed のまま helmfile 全体が停止した。
+  - **中間クリーンアップ**: (a) の結果クラスタは「一部 release だけ入った」半端な
+    状態になったため、(b) を「真に空のクラスタ」から行う目的を守るために
+    `helm uninstall` を6 releaseすべてに対して実行し (`detect-grader` の
+    `helm uninstall` は旧chartの自己template Namespaceを実際に消し去った —
+    ADR Consequences が予告する「個別 uninstall で Namespace が消える」旧挙動の
+    直接確認になった)、残った空 Namespace 5 つも `kubectl delete ns` で削除して
+    `kube-system`/`default`/`kube-*` だけの状態に戻した。
+  - **(b) Decision適用後 (両branch同時checkout)**: 同じ `ctf-e2e-adr0011` に対し
+    再度 `helmfile -e local sync` を実行 → **11 release (`namespaces`
+    含む) 全てが `EXIT_CODE=0` で完了、FAILED RELEASES なし**。
+    `namespaces` release (kube-system) が先に `auth-policy`/`collector`/`scoreboard`/
+    `docs`/`ctf-detect-grader` の5 Namespaceを作成し、その後 `detect-grader` を含む
+    5 release全てがその既存Namespaceへ問題なくdeployされた (`needs:
+    kube-system/namespaces` の順序制御が実際に機能していることを確認)。
+    全 pod (`auth-policy`/`cert-manager`×3/`collector`/`dex`/`docs`/`falco`関連×3/
+    `ingress-nginx`/`oauth2-proxy`/`scoreboard`) が `1/1 Running` (画像は事前に
+    `:dev` タグでロード済み)。**V1 は PASS。**
+  - 検証後、`ctf-e2e-adr0011` profile はこのタスクの最後 (V7実施後) に
+    `colima delete --profile ctf-e2e-adr0011` で破棄した (下記)。
 - **V2 (2 回目の sync が no-op に近いこと)**: V1 直後にもう一度
   `helmfile -e local sync` を実行し、`namespaces` release も含め **エラーが出ない**
   (idempotent) ことを確認する。
+
+  **実施記録 (qa-engineer, 2026-08-25)。結果: PASS。** V1(b) 完了直後に同じ
+  `helmfile -e local sync` を再実行 → `EXIT_CODE=0`、FAILED RELEASES なし。
+  11 release 全てが `UPDATED RELEASES` に上がり (差分無しの release は revision
+  番号のみ増加。`namespaces` は `0s` duration でno-op相当)、エラーは一切出なかった。
 - **V3 (Namespace の所有権)**: `kubectl get ns auth-policy -o yaml` で
   `meta.helm.sh/release-name: namespaces` (chart 側の release 名と一致) になっていること、
   `helm -n auth-policy list` で `auth-policy` release 自体は正常に見えることを確認する。
+
+  **実施記録 (qa-engineer, 2026-08-25)。結果: PASS。** V1(b) 完了直後の状態で
+  `kubectl get ns auth-policy -o yaml` を確認 → `annotations` に
+  `meta.helm.sh/release-name: namespaces` / `meta.helm.sh/release-namespace:
+  kube-system` (期待どおり)。`helm -n auth-policy list` は `auth-policy` release
+  (`REVISION 1`, `STATUS deployed`) を正常に表示 — 「Namespace は `namespaces`
+  release が所有し、`auth-policy` release 自体はその中で独立して健全に動く」という
+  Decision の狙いが実測で成立していることを確認した。
 - **V4 (docs の PSA restricted 化が pod 起動を壊さないこと)**: `docs` release の
   Pod が `restricted` PSA の下で `Running` になることを確認する (壊れる場合は
   `podSecurity.enforce: baseline` に後退させる判断が要る — この場合は本 ADR の
   Decision の該当行を訂正する追記 commit を同じ PR に含める)。
+
+  **実施記録 (qa-engineer, 2026-08-25)。結果: PASS。** `kubectl get ns docs -o
+  jsonpath='{.metadata.labels}'` で `pod-security.kubernetes.io/enforce: restricted`
+  (+ `audit: restricted`、両方 `-version: latest`) を確認。`kubectl -n docs get
+  pods` は `docs-<hash>` を `1/1 Running` で表示 (`nginxinc/nginx-unprivileged`
+  ベースの想定どおり、restricted PSA 下でも起動を妨げない)。**Decision の該当行
+  (podSecurity を baseline に後退させる分岐) は不要 — 後退は行わない。**
 - **V5 (detect-grader 再有効化時の非衝突)**: **`local` 環境は `detectGrader.enabled`
   の既定が `true`** (`helmfile/environments/default.yaml.gotmpl:24`、`local.yaml.gotmpl`
   に override 無し、2026-08-25 実測確認、Context 参照) なので、**V1 (空クラスタでの
@@ -585,6 +683,44 @@ Decision 対象外にしていたが、**platform#111 として follow-up issue 
   削除される場合は「適用順序の制約は hard requirement (単なる推奨ではない)」と
   Consequences に追記する。残る場合も「今回の Helm v4.1.3 では残ったが、将来の
   SSA 実装変更で挙動が変わりうる、これは保証ではない」と限定付きで記録する。
+
+  **実施記録 (qa-engineer, 2026-08-25)。結果: 削除される (PASS = 破壊シナリオ (b) の
+  実在を確認。「適用順序の制約は推奨ではなく hard requirement」— 下記の通り
+  Consequences に追記済み)。**
+  - V1(b)/V2/V3/V4 確認後の同クラスタ上で、まず現行 (fix適用済み) `auth-policy`
+    release を `helm -n auth-policy uninstall auth-policy` で削除し、続けて
+    `kubectl delete ns auth-policy --wait=true` で Namespace 自体も削除し、
+    「まだ何も存在しない」状態から実験を開始した。
+  - **(i)** `main` 時点の旧 `auth-policy` chart (`templates/namespace.yaml` あり、
+    `git archive main -- charts/auth-policy` で抽出) を
+    `helm install auth-policy <旧chart> -n auth-policy --create-namespace
+    --set image.tag=dev ...` で新規 install。`--create-namespace` は「(ADR Context
+    が説明する) 元々 namespace が既に存在していた世界」を再現するための手段に過ぎず、
+    Namespace オブジェクト自体の所有権は旧chart自身の自己templateが握った
+    (`kubectl get ns auth-policy` → `meta.helm.sh/release-name: auth-policy`、
+    `release-namespace: auth-policy` — `namespaces`/kube-system ではない)。
+  - **(ii)** `feat/adr-0011-app-namespace-removal` 側の新チャート
+    (`templates/namespace.yaml` 削除済み) に対して、`namespaces` release・
+    `needs` を一切介さない **素の `helm upgrade auth-policy <新chart> -n
+    auth-policy --set image.tag=dev ...`** を実行 (helmfileも経由しない、
+    最も直接的な「旧platform定義のまま」の再現)。
+  - **(iii) 結果**: `helm upgrade` 自体は `STATUS: deployed` / `exit 0` で
+    正常終了したにもかかわらず、コマンド返却直後の `kubectl get ns auth-policy`
+    は既に **`Terminating`**、約5秒後には **`Error from server (NotFound):
+    namespaces "auth-policy" not found`** — **Namespace オブジェクトが実際に
+    削除された。** `helm -n auth-policy list` / `helm status auth-policy -n
+    auth-policy` も `release: not found` (Namespace 削除に伴い release secret
+    も消滅)。**Helm v4.1.3 の upgrade は「旧revisionのmanifestにあり新revisionの
+    manifestに無いobjectをpruneする」という3-way-merge相当の挙動を実際に持ち、
+    かつその対象は Namespace オブジェクトそのものを含む** ことが実機で確認された。
+  - **結論・Decisionへの裏付け**: Decision が「未検証」としていた破壊シナリオ (b)
+    は**仮説ではなく実際に起きる**。「app側が先行し、platform側の
+    `namespaces`/`needs` 整備が伴わない中間状態」を経由すると、対象Namespaceは
+    (中に何が入っていようと) 丸ごと削除される。**`scoreboard` release で同じ
+    経路を辿れば sqlite PVC を含めて削除される、というデータ損失リスクの評価は
+    「想定される」から「実証済み」に格上げする。**「適用順序の制約」節
+    (Decision) は **hard requirement であり、単なる推奨ではない** — 本追記に伴い
+    Consequences にもその旨を明記する (下記)。
 
 ## Advice
 
