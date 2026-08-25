@@ -9,8 +9,14 @@
   本ADRはこの追記だけでは「本番投入可」に上がらない。実装ブランチ (app
   `feat/adr-0011-app-namespace-removal` / platform
   `feat/adr-0011-namespaces-bootstrap`) 自体は本追記の時点でも未merge)
+  **2026-08-25 qa-engineer 追記 (2回目)**: 実装は既に両リポ main へ merge済み
+  (app#190 `feat(charts): remove self-managed Namespace templates` / platform#113
+  `feat(helmfile): add namespaces bootstrap release`)。この状態で **V5/V6 も実施し、
+  両方 PASS** (詳細は Verification 節)。V1-V7 の全項目が実機確認済みになったので、
+  本 ADR は Verification の観点からは「本番投入可」に到達した (残る前提は Consequences /
+  Signposts に記載のもの、および platform#111 の follow-up 検査が未実装であること)。
 - Date / Deciders: 2026-08-25 / architect (提案・5x レビュー反映) — VP (承認)
-- 関連: platform#83 (P1相当, 本ADRの発端issue) / platform#75 (`deploy-user.sh` の `-n` 不在。**別issue、本ADRのDecisionはこれを解決しない** — Consequences 節参照) / Issue #144 (**ADR-0009 は Issue #144 用に予約済み。本ADRは 0009 を使わない** — `docs/adr/0008-mission05-positive-proof-gate.md:569`) / platform#111 (follow-up: 自己 Namespace template 再導入を防ぐ静的検査、2026-08-25 起票)
+- 関連: platform#83 (P1相当, 本ADRの発端issue) / platform#75 (`deploy-user.sh` の `-n` 不在。**別issue、本ADRのDecisionはこれを解決しない** — Consequences 節参照) / Issue #144 (**ADR-0009 は Issue #144 用に予約済み。本ADRは 0009 を使わない** — `docs/adr/0008-mission05-positive-proof-gate.md:569`) / platform#111 (follow-up: 自己 Namespace template 再導入を防ぐ静的検査、2026-08-25 起票) / app#189 (V5/V6 実施発注) / platform#114 (follow-up: §9.3 collector uninstall 欠落drift、V6実施中に発見・起票) / platform#112 (kubeContext固定文字列 + docker+k3s image load の落とし穴、V1/V5実施中に発見・起票・追記)
 
 ## Context
 
@@ -538,13 +544,19 @@ Decision 対象外にしていたが、**platform#111 として follow-up issue 
 
 ## Verification
 
-**部分実施 (2026-08-25, qa-engineer)。** V1 (2段記録)・V2・V3・V4・V7 は実クラスタで
-実施済み、結果は下記「実施記録」に記録 (全て予定どおりの結果 — V1/V2/V3/V4 は PASS、
-**V7 は「削除される」の実測、つまり Decision の破壊シナリオ (b) が実際に起きることを
-確認**)。**V5/V6 は本ラウンドのスコープ外・未実施のまま** (qa-engineer への発注時に
-優先順位 1-5 (V1前段・V1・V3・V4・V7) のみが指定されたため — 実装コード自体は今回
-変更していない)。「実機で確認するまで検証済みと書かない」規律
-(dev-flow / falco-ctf-conventions.md) に従い、V5/V6 は依然「未実施」と明記する。
+**全項目実施済み (2026-08-25, qa-engineer)。** V1 (2段記録)・V2・V3・V4・V7 は
+実装 merge 前の初回ラウンドで実クラスタ確認済み (結果は下記「実施記録」)。
+**V5・V6 は Issue app#189 で追加発注され、実装が両リポ main に merge 済みの状態
+(app#190 / platform#113) で新規 disposable colima profile 上で実施し、両方 PASS**
+(詳細は各項目の「実施記録」参照)。V1-V7 の全項目が実機確認済みになった。
+
+- V1/V2/V3/V4: PASS
+- V5: PASS (既存クラスタで `detectGrader.enabled` を false→true に切り替えても
+  `already exists` 系の衝突が発生しないことを実機確認)
+- V6: PASS ((i)(ii)(iii) の明示的合格基準すべて成立を実機確認。§9.3 の
+  `collector` uninstall 欠落drift も実機で再確認し、platform#114 として起票)
+- V7: 「削除される」の実測 (Decision の破壊シナリオ(b)が実際に起きることを確認—
+  適用順序の制約は推奨ではなく hard requirement)
 **各 V について、(a) fix適用前 (現行 main) の状態で実際にエラーが再現することを先に
 記録する → (b) Decision適用後に再実行してエラーが解消したことを記録する、の2段を残すこと**
 (R2 finding 1-b 対応, 2026-08-25 追記)。「fix後にgreenになった」だけでは、そもそも
@@ -657,6 +669,49 @@ V1 はこの2段を実施した (下記参照)。
   true` に一時的に切り替えて **`helmfile -e prod diff`** (apply はしない。prod への
   実 sync はスコープ外) で `already exists` 系のエラーが diff プランに出ないことを
   確認し、確認後は `false` に戻す。
+
+  **実施記録 (qa-engineer, 2026-08-25, Issue app#189)。結果: PASS。** V5 の本質は
+  「クラスタが既に他 release で稼働中の状態で `detectGrader.enabled` を
+  false→true に切り替えても衝突しないか」であり、これは V1 (最初から
+  `enabled: true` で空クラスタに sync する) では一度も踏んでいない遷移だった
+  (V1 は「常に true」を確認しただけ)。この遷移を実機で作った:
+  - 新規 disposable colima profile `ctf-e2e-v189-56` を `colima start --profile
+    ctf-e2e-v189-56 --cpu 4 --memory 8 --disk 60 --kubernetes` で作成
+    (`ctf-e2e`/`default` 未使用・未変更。V1 実施記録の kubeContext 固定文字列
+    ワークアラウンドを再利用)。app 側 (`db57d55`, #190) / platform 側 (`9a10b38`,
+    #113) は両方とも main に merge 済みの状態を使用。
+  - **新規に遭遇した落とし穴 (V1実施記録にも build-and-load.sh の gotcha を追記済み
+    だが、それとは別方向)**: `docker save <img> | colima ssh --profile <new> --
+    sudo ctr -n k8s.io images import -` で containerd に import しても、この
+    colima profile の k3s は `k3s server --docker` (cri-dockerd 経由) で動作しており
+    **kubelet は VM の Docker daemon 自身の image store しか見ない**
+    (`/run/k3s/containerd/containerd.sock` は listen していない — `connection
+    refused`)。images を `ctr -n k8s.io images ls` で確認できても kubelet 側は
+    `ErrImagePull: pull access denied for ..., repository does not exist` で
+    real pull を試み失敗する (`auth-policy` Pod で実際に発生・観測)。
+    正しい手順は `docker save <img> | colima ssh --profile <new> -- sudo docker
+    load` (VM の Docker daemon へ直接 load)。この profile 単位の docker daemon への
+    load を4イメージ (`auth-policy`/`scoreboard`/`collector`/`docs`, すべて `:dev`)
+    に対して行い、以後の sync はすべて成功した。platform#112 に追記コメント済み
+    (この issue の既存懸念 [build-and-load.sh の active-profile 依存] とは別方向の
+    同根の落とし穴として記録)。
+  - **(a) baseline**: `helmfile --state-values-set detectGrader.enabled=false
+    -e local sync` を実行 → **11 release中10 release (namespaces含む、
+    detect-grader除く) が `EXIT_CODE=0` で完了、FAILED RELEASES なし**。
+    全 Pod `1/1 Running` (`kubectl get pods -A` で確認)。
+  - **(b) 再有効化**: 同じ稼働中クラスタに対し
+    `helmfile --state-values-set detectGrader.enabled=true -e local diff` を実行
+    → **`already exists` も `Error` も出力ゼロ** (exit 0, 157行の diff plan)。
+    続けて同フラグで `sync` を実行 → **11 release全て (`detect-grader` 含む)
+    `EXIT_CODE=0`、FAILED RELEASES なし**。`kubectl get ns ctf-detect-grader
+    -o yaml` で `meta.helm.sh/release-name: namespaces` (namespaces release が
+    先に所有) を確認、`helm -n ctf-detect-grader list` で `detect-grader` release
+    (`REVISION 1`, `deployed`) も正常。`ctf-detect-grader` の RBAC
+    (`Role`/`RoleBinding: detect-grader-runner`) と `NetworkPolicy:
+    detect-grader-deny-all` も正常に作成された。**`needs: kube-system/namespaces`
+    が既存クラスタでの再有効化時にも機能し、V1 で確認した「最初から enabled:true」
+    経路と同じ非衝突が、より厳しい「稼働中クラスタでの false→true 遷移」経路でも
+    成立することを確認した。**
 - **V6 (teardown 後の再 sync)**: **`helmfile destroy` は使わない**
   (`docs/P13-RUNBOOK.md:207-208` / `docs/prod-deploy.md:932` が明記する project の既定:
   helm v4 + helm-secrets 不整合で `unknown command secrets` になる。R4 Finding 3
@@ -671,6 +726,44 @@ V1 はこの2段を実施した (下記参照)。
   auth-policy` 等が **NotFound になる**ことを確認する。(iii) 全て uninstall 後、
   再度 `helmfile -e local sync` を実行し、V1 と同じ手順でエラー無く完了することを
   確認する。
+
+  **実施記録 (qa-engineer, 2026-08-25, Issue app#189)。結果: PASS ((i)(ii)(iii)
+  すべて成立)。** V5 実施直後の同一クラスタ (`ctf-e2e-v189-56`, 11 release 全て
+  `deployed`) を使用。`helmfile destroy` は使用していない (project 既定どおり)。
+  - **§9.3 の `collector` uninstall 欠落drift を実機で再確認**: `docs/operations.md`
+    §9.3 の「1. app 層」ブロックは `scoreboard`/`auth-policy`/`docs` の3行のみで
+    `collector` の uninstall コマンドが実際に無いことをファイル読み込みで確認
+    (`operations.md:1211-1215`)。既存の follow-up issue は無かったため
+    **platform#114 として新規起票した** (2026-08-25)。
+  - **(i) 各 app release uninstall 直後の namespace 残存確認**: `helm -n
+    scoreboard uninstall scoreboard` → `kubectl get ns scoreboard` は
+    `STATUS Active` (succeed、残存)。同様に `auth-policy`/`docs`/
+    **`collector` (§9.3 drift の手動追加分)** の4releaseすべてについて、
+    uninstall 直後の `kubectl get ns <ns>` が succeed し `Active` であることを
+    確認した (期待どおり — Namespace のライフサイクルが `namespaces` release に
+    移っているため、個別 app release の uninstall では消えない)。続けて
+    `ingress-nginx`/`oauth2-proxy`/`dex`/`falco`/`cert-manager`/`detect-grader`
+    も uninstall (§9.3 の残りの手順 + platform-local chart の同型対応)。
+  - **(ii) `namespaces` release uninstall 後の NotFound 確認**: `helm -n
+    kube-system uninstall namespaces` を実行 → 実行直後は
+    `auth-policy`/`scoreboard`/`docs`/`collector`/`ctf-detect-grader` の5
+    namespace が `Terminating` に遷移し、数秒後に全て
+    **`Error from server (NotFound): namespaces "<ns>" not found`** になった
+    (5/5 確認)。`cert-manager`/`dex`/`falco`/`oauth2-proxy`/`ingress-nginx` の
+    5 namespace (各 release 自身が `createNamespace: true` で作成する、
+    ADR-0011 の対象外) は helm uninstall 後も `Active` のまま残存 — これは
+    ADR-0011 と無関係な既存の helm 標準挙動 (helm uninstall は
+    `--create-namespace` で作った namespace を自動削除しない) であり、
+    今回の検証範囲では問題ではない。
+  - **(iii) 再sync確認**: 全 uninstall 後、`helmfile -e local sync` (フラグ
+    override 無し = `local` の既定 `detectGrader.enabled: true` のまま) を再実行
+    → **11 release全て `EXIT_CODE=0` で完了、FAILED RELEASES なし** (`namespaces`
+    が5 namespace を再作成 → 4 app release + `detect-grader` が新規 install)。
+    `kubectl get pods -A` で全 Pod (`auth-policy`/`cert-manager`×3/`collector`/
+    `dex`/`docs`/`falco`関連×3/`ingress-nginx`/`oauth2-proxy`/`scoreboard`) が
+    `1/1 Running` を確認。**V6 は PASS。**
+  - 検証後、`ctf-e2e-v189-56` profile は `colima delete --profile
+    ctf-e2e-v189-56 --force` で破棄した (`ctf-e2e`/`default` は無変更)。
 - **V7 (Helm v4.1.3 の upgrade prune 挙動の実測 — R5 HIGH「適用順序の制約」の裏付け,
   2026-08-25 追加)**: Decision で述べた破壊シナリオ (b) (app 側が先行し、`namespaces`
   release/`needs` が未整備のまま sync してしまう中間状態) を実機で再現し、Namespace
