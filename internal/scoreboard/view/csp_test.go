@@ -2,6 +2,7 @@ package view
 
 import (
 	"html"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -354,6 +355,115 @@ func TestRenderPortal_TtydIframeAllowedByCSP(t *testing.T) {
 	}
 	if !strings.Contains(frameSrcValue, "https://*."+suffix) {
 		t.Errorf("frame-src %q does not allow the embedded iframe's origin %q", frameSrcValue, wantOrigin)
+	}
+}
+
+// TestIndexHandler_CSPHeaderAndNonceInBody is Issue #114's core regression
+// test: GET / (the admin dashboard — the single highest-privilege page in
+// this service) used to write templates/index.html verbatim via w.Write
+// with NO Content-Security-Policy header at all and NO nonce on its inline
+// <script> (line ~284) — writeSecurityHeaders was wired into GET /portal
+// only (portal.go's renderPortal), never into Handler.index. This mirrors
+// TestRenderPortal_CSPHeaderAndNonceInBody above almost line for line, but
+// drives it through Handler.index (the actual production handler) since
+// index has no bare renderIndex-style function to call directly the way
+// renderPortal is for /portal.
+func TestIndexHandler_CSPHeaderAndNonceInBody(t *testing.T) {
+	render := func() (int, string, string) {
+		h := New(nil, nil, "", slog.New(slog.DiscardHandler))
+		r := httptest.NewRequest("GET", "/", nil)
+		w := httptest.NewRecorder()
+		h.index(w, r)
+		return w.Code, w.Header().Get("Content-Security-Policy"), w.Body.String()
+	}
+
+	code1, csp1, body1 := render()
+	if code1 != http.StatusOK {
+		t.Fatalf("GET / status = %d, want %d", code1, http.StatusOK)
+	}
+	if csp1 == "" {
+		t.Fatal("expected Content-Security-Policy header on GET / response")
+	}
+	nonceRe := regexp.MustCompile(`'nonce-([^']+)'`)
+	m := nonceRe.FindStringSubmatch(csp1)
+	if m == nil {
+		t.Fatalf("could not find nonce-source in CSP header: %s", csp1)
+	}
+	nonce1 := m[1]
+
+	scriptNonceRe := regexp.MustCompile(`<script nonce="([^"]*)"`)
+	matches := scriptNonceRe.FindAllStringSubmatch(body1, -1)
+	if len(matches) == 0 {
+		t.Fatal("expected at least one <script nonce=\"...\"> tag in the index HTML")
+	}
+	for _, sm := range matches {
+		// html/template HTML-escapes attribute values for browser-safety;
+		// decode before comparing against the raw (unescaped) header value,
+		// same as TestRenderPortal_CSPHeaderAndNonceInBody does for /portal.
+		got := html.UnescapeString(sm[1])
+		if got != nonce1 {
+			t.Errorf("script tag nonce %q (escaped source %q) does not match CSP header nonce %q", got, sm[1], nonce1)
+		}
+	}
+
+	// Every <script> tag in the page must carry the nonce attribute — see
+	// TestRenderPortal_CSPHeaderAndNonceInBody's identical assertion for why
+	// this is checked by count rather than trusting the loop above alone.
+	allScriptTagsRe := regexp.MustCompile(`<script\b`)
+	allTags := allScriptTagsRe.FindAllString(body1, -1)
+	if len(allTags) != len(matches) {
+		t.Errorf("found %d <script> tags total but only %d carry nonce=\"...\" — every inline script must be nonced under this CSP", len(allTags), len(matches))
+	}
+
+	_, csp2, _ := render()
+	m2 := nonceRe.FindStringSubmatch(csp2)
+	if m2 == nil {
+		t.Fatalf("could not find nonce-source in second CSP header: %s", csp2)
+	}
+	if m2[1] == nonce1 {
+		t.Fatalf("two independent GET / renders reused the same nonce %q", nonce1)
+	}
+}
+
+// TestIndexHandler_FrameSrcIsAlwaysNone proves GET /'s CSP hardcodes an
+// empty ttydSuffix into portalCSP (frame-src 'none') REGARDLESS of what
+// PORTAL_TTYD_SUFFIX the Handler was constructed with — unlike /portal, the
+// admin dashboard embeds no ttyd iframe (see view.go's Handler.index doc),
+// so there is nothing legitimate for frame-src to allow. If a future edit
+// accidentally threaded h.ttydSuffix into the index handler's
+// writeSecurityHeaders call the way portal() does, this page would gain an
+// iframe-embedding allowance it has no use for and never had — this test
+// pins the deliberately narrower behavior.
+func TestIndexHandler_FrameSrcIsAlwaysNone(t *testing.T) {
+	h := New(nil, nil, "ctf-event.dev", slog.New(slog.DiscardHandler))
+	r := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	h.index(w, r)
+
+	csp := w.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "frame-src 'none'") {
+		t.Fatalf("GET / CSP = %q, want frame-src 'none' even though the Handler has a non-empty ttydSuffix", csp)
+	}
+}
+
+// TestIndexHandler_ForbiddenResponseStillCarriesCSP proves the admin-gate
+// 403 branch (Handler.index, when isAdmin(r) is false) still gets the CSP
+// header — writeSecurityHeaders now runs before the isAdmin check, so a
+// non-admin's 403 page is exactly as hardened as the 200 page. This guards
+// against a future refactor that moves the isAdmin check back above
+// writeSecurityHeaders (which would silently leave the 403 body
+// header-less again — a small page, but no reason for it to regress).
+func TestIndexHandler_ForbiddenResponseStillCarriesCSP(t *testing.T) {
+	h := New(func(*http.Request) bool { return false }, nil, "", slog.New(slog.DiscardHandler))
+	r := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	h.index(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusForbidden)
+	}
+	if csp := w.Header().Get("Content-Security-Policy"); csp == "" {
+		t.Fatal("expected Content-Security-Policy header on GET / 403 response too")
 	}
 }
 
