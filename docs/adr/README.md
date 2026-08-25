@@ -16,6 +16,7 @@
 | [0005](0005-openapi-canon-and-parity-gate.md) | OpenAPI の対象を HTTP 面すべてに定め parity を機械検査 | **Accepted** | 1 サービス = 1 spec で mux の全ルートを記載 / `x-ctf-*` で audience・authz・origin-guard・collector forward を宣言 / 双方向 parity を fail-closed 検査 (除外リストゼロ)。I14 (Hard Invariants 昇格済み、#149) | — |
 | [0006](0006-p25-qa-ticket-chat-contract.md) | P25 QA チケットチャットの API 契約・スキーマ・admin UI 配置 | **Accepted** | 新規 7 route (self-scope + admin)・`internal/qa` を `store`/`scoring` と物理分離・admin UI は portal 内タブ (index.html は不採用)。実装着手は WIP ドレイン後 かつ 0005 (#143/#149) merge 後 | — |
 | [0007](0007-plant-mount-directory-granularity.md) | plant-target の mount をディレクトリ granularity に限定 | **Accepted** | ファイル単位の bind mount は destination が Falco の一致対象のとき **container ランタイム自身が deploy ごとに検知イベントを出す** —— mount 粒度をディレクトリに上げて原因を消す。ADR-0001 の派生決定 (1) = B1 を supersede。提案 I13c。**実装は別PR、本番投入はlandingまで不可** | — |
+| [0008](0008-mission05-positive-proof-gate.md) | mission05 の forbidden rule 汎化 + evade 型への積極証明ゲート | **Accepted** | 04/05/10 共有ルール `Search Private Keys or Passwords` を proc 非依存の literal 一致へ汎化 (`shell_binaries` 除外。`container.name` には依存しない設計 — plant.sh の `chmod` を排除して deploy 経路の literal-bearing exec を `sh -c` 自身の1件に限定) + 新設 Falco rule `Shell Redirected Private Key Read` + `requireExpectedRuleFire` (evade 型の第2肯定ゲート、`RequireExfil` と対称) + `challenge-rules` CI ゲート対応のカスタムルール allowlist。ADR-0003 Signpost 2 を resolve (epoch 不要と判断)。提案候補 I13b 対象集合 +1 (未昇格)。**実装は別PR、本番投入は実機 Verification landing まで不可** | — |
 
 ## 規律（ADR-0003 / ADR-0001 で確立したもの）
 
