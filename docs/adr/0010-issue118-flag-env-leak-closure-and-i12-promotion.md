@@ -268,6 +268,48 @@ architect 合意 + VP 承認事項であり、architect (本 ADR) はこの手�
    1 回実施し、結果を本 ADR に追記することを推奨する (追記は「navigational な訂正」の範囲内。
    決定を変える追記ではない)。
 
+   **実施記録 (qa-engineer, 2026-08-25, Issue #185 対応)**: 上記の未実施項目を実クラスタで
+   単独実行し、**0 件 (PASS)** を確認した (branch `main` @ `8a7c86b`、ADR-0010 自身の merge commit)。
+
+   - colima **`ctf-e2e`** profile を使用 (`default` profile は 132 日稼働・disk 83%使用・
+     Falco pod 再起動が既知の問題のため使い捨てでない、と platform#81 レビューで指摘済み。
+     以後の E2E は `ctf-e2e` を使う運用)。`colima start --profile ctf-e2e` で起動
+     (既存 5-6 日運用の cluster を再利用。arm64, k3s v1.35.0+k3s1)。
+   - `ttyd` / `ttyd-proxy` / `challenge` の 3 image を本ブランチ (`main` HEAD) から再 build
+     (`docker --context colima-ctf-e2e build -t docker.io/falco-ctf/<name>:dev ...`)、
+     `docker save | colima ssh --profile ctf-e2e -- sudo ctr -n k8s.io images import -` で
+     `k8s.io` namespace へロード (`--profile` を明示し、誤って `default` profile の
+     containerd に読み込む事故を防止)。scoreboard/auth-policy/collector は本検証の対象外
+     (env leak は `charts/ctf-user` chart のみが決めるため) だが、既存 5 日稼働のものが
+     healthy に稼働していることを確認済み。
+   - `kubectl config use-context colima-ctf-e2e` で対象クラスタに切替え、新規 user
+     `qae2e185` (ns `ctf-qae2e185`) を production-default 相当の all-missions mode で deploy:
+     `charts/ctf-user/deploy-user.sh --challenges-dir <repo>/challenges --dns-suffix
+     192.168.5.3.nip.io qae2e185 all`。`[4/4] assert flag isolation` (`assert-flag-isolation.sh`,
+     ADR-0001 Verification 3) も deploy 中に green (`OK — 3-1..3-7 clean for namespace
+     ctf-qae2e185 (challenge-id=all)`)。
+   - **参加者視点の実行コマンドと結果**:
+     ```
+     $ kubectl -n ctf-qae2e185 exec workspace -c challenge -- env | grep CTF_FLAG
+     (出力なし、exit status 1 = マッチ 0 件)
+     ```
+     `challenge` container の env は `FALCO_CTF_{CHALLENGE,COLLECTOR,DNS_SUFFIX,SCOREBOARD,USER}`
+     の 5 つと `KUBERNETES_*` / `HOME` / `HOSTNAME` / `PATH` のみで、`CTF_FLAG_*` は
+     **1 件も存在しない**。
+   - 追加の確認 (ADR-0001 読み出し経路表の他項目もこの機会に実測): `cat /proc/1/environ`
+     (challenge container, PID 1) を `tr '\0' '\n' | grep CTF_FLAG` した結果も **0 件**。
+     `mount | grep -E 'plant|seed'` は空 (seed root — `/plant-seed` — が challenge
+     container に一切見えない。`plant` initContainer 側の `volumeMounts` にのみ
+     `/plant-seed` が存在し、`challenge` 側には無いことを `kubectl get pod -o json` で確認)。
+   - 事後処理: `helm uninstall qae2e185` + `kubectl delete ns ctf-qae2e185` で検証用
+     workspace を削除し、`kubectl config use-context colima` で元の context に戻し、
+     `colima stop --profile ctf-e2e` で停止した。
+
+   **結論: H1 (env 到達不能性) の qa-engineer 視点 E2E は実施済み、結果は PASS (0 件)。
+   本 ADR の Decision (H1 は main で「遮断」されている) を裏付ける。** この追記は
+   決定を変えるものではなく、Verification 4 の「未実施」を「実施済み・green」に更新する
+   navigational な訂正である。
+
 ## Advice
 
 ### 受けた助言
