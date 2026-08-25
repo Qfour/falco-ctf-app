@@ -30,7 +30,7 @@ Linux における 2 種類のリンク:
 hardlink が attacker に都合よい点:
   - 元ファイルが消えても **inode 自体は残る**
   - file system audit log で「open /etc/shadow」が見えなくても、
-    `/tmp/.cache.bak` を開いた記録だけ残せる (混乱要因)
+    `/etc/.cache.bak` を開いた記録だけ残せる (混乱要因)
   - cp と違って **「内容のコピーではなく参照」** なので、後の
     変更も追従できる
 
@@ -39,16 +39,16 @@ Falco rule は **sensitive_files macro に該当するファイル** に対す�
 
 # 試すこと
 
-  ln /etc/sudoers /tmp/.cache.bak
+  ln /etc/sudoers /etc/.cache.bak
 
 確認:
 
-  ls -la /tmp/.cache.bak
-  # → -r--r----- 2 root root ... /tmp/.cache.bak
+  ls -la /etc/.cache.bak
+  # → -r--r----- 2 root root ... /etc/.cache.bak
   #     ↑ リンク数 2 (= /etc/sudoers とどちらか) — hardlink 成立
 
-この環境では /etc/shadow は別ファイルシステム上にあるため hardlink が作れない
-(`ln` は `EXDEV` で失敗する)。/etc/sudoers など他の sensitive file には成立する。
+この環境では /tmp と /etc は別ファイルシステム上にあるため、/tmp への hardlink は作れない
+(`ln` は `EXDEV` で失敗する)。/etc 内 (`/etc/.cache.bak`) には成立する。
 
 # クリア条件
 

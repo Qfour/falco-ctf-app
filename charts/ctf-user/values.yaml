@@ -114,9 +114,14 @@ plant:
     - sh
     - -c
     - "true"
-  # mounts: declared plant-target absolute paths (deduped), bind-mounted
-  # (subPath, read-only) from the `plant-seed` emptyDir onto the challenge
-  # container's real paths. NEVER the seed volume root (F5).
+  # mounts: deduped list of {path, readOnly} — path is the ENCLOSING
+  # DIRECTORY of each declared plant-target (ADR-0007; the plant-target
+  # itself when it's already a directory, e.g. mission 05's /root/.ssh),
+  # bind-mounted (subPath) from the `plant-seed` emptyDir onto the challenge
+  # container's real path. NEVER the seed volume root (F5) and NEVER a bare
+  # file (ADR-0007). readOnly is per-mount (false only where a mission
+  # genuinely needs runtime writes, e.g. /etc for mission 09's hardlink
+  # target — see challenges/gen-values.sh).
   mounts: []
 
 ingress:

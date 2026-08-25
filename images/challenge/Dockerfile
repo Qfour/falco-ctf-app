@@ -54,24 +54,6 @@ RUN printf '%s\n' \
  && chown root:root /etc/sudoers \
  && chmod 0440 /etc/sudoers
 
-# ADR-0001 (Option B, S-a): bake a build-time snapshot of this image's own
-# /etc/shadow into a non-sensitive path. At deploy time, the `plant`
-# initContainer (charts/ctf-user/templates/pod.yaml, generated seed script
-# from challenges/gen-values.sh) copies FROM here — never from the real
-# /etc/shadow — so the deploy path never reads a path matching the
-# `sensitive_files` Falco macro (fd.name startswith /etc and in
-# sensitive_file_names; challenges/03-stealth-read/rule.yaml:90-93). This
-# snapshot introduces ZERO new material (I10): it's a byte-for-byte copy of
-# the shadow file this same image already ships — measured (2026-08-18,
-# architect + security-engineer, independently reproduced) to be 0640
-# root:shadow, 17 lines, all locked (`*` / `!`), 0 crypt-hash-shaped strings.
-# `make check-image-hygiene` (ADR-0001 DoD 15, not yet landed) is meant to
-# re-verify this at every build so a future package addition that puts a
-# real hash into /etc/shadow fails the build instead of silently baking it
-# into the snapshot; until that lands, this comment is the only guard.
-RUN mkdir -p /opt/ctf/plant-seed/etc \
- && cp -a /etc/shadow /opt/ctf/plant-seed/etc/shadow
-
 # Bake the 10 missions + cross-mission helpers into the image. This is
 # the source-of-truth for all-missions mode (deploy-user.sh <user> all):
 # the workspace pod has every welcome.txt + fixture available from
@@ -104,6 +86,34 @@ RUN { echo '# EVADE 課題で読み取ったフラグを記入し、submit-yaml 
 # (portal), not in-terminal, so banner.sh is intentionally minimal
 # (display-name change only).
 RUN echo 'sh /opt/ctf/banner.sh 2>/dev/null' >> /etc/profile
+
+# ADR-0007 (Option 1, supersedes the file-granularity snapshot from
+# ADR-0001 S-a): bake a build-time snapshot of this image's own /etc
+# DIRECTORY (not just /etc/shadow) into a non-sensitive path. At deploy
+# time, the `plant` initContainer (charts/ctf-user/templates/pod.yaml,
+# generated seed script from challenges/gen-values.sh) restores this whole
+# directory into the seed emptyDir with `cp -a .../etc/. $SEED/etc/` before
+# any mission's plant.sh appends to a file inside it — never reading the
+# real /etc at runtime — so the deploy path never reads a path matching the
+# `sensitive_files` Falco macro (fd.name in sensitive_file_names;
+# challenges/03-stealth-read/rule.yaml). Directory (not file) granularity is
+# required because `open_read`-family Falco rules only match
+# `fd.typechar='f'` (a directory open can never satisfy them) — see
+# docs/adr/0007-plant-mount-directory-granularity.md §C2 for the real-
+# cluster probe that found this. This snapshot introduces ZERO new material
+# (I10): it's a byte-for-byte copy of the whole /etc this same image already
+# ships (mode/owner preserved by `cp -a`) — verified at every build by
+# `make check-image-hygiene` (ADR-0001 DoD 15 / ADR-0007 Verification 3),
+# which fails the build if any file's hash/flag-shaped content or
+# mode/owner/entry-set diverges from the real /etc it shadows.
+#
+# THIS MUST BE THE LAST RUN THAT TOUCHES /etc IN THIS DOCKERFILE — anything
+# that modifies /etc after this line would silently drift the snapshot from
+# the real /etc the challenge container actually ships (check-image-hygiene
+# catches the drift at build time, but keeping this line last avoids
+# depending on that safety net in the first place).
+RUN mkdir -p /opt/ctf/plant-seed/etc \
+ && cp -a /etc/. /opt/ctf/plant-seed/etc/
 
 # Default sleep keeps the container alive; ttyd reaches it via kubectl exec.
 CMD ["sleep", "infinity"]

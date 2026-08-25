@@ -5,23 +5,41 @@
 #   ./gen-values.sh           regenerate the files in place
 #   ./gen-values.sh --check   fail if the committed files are out of sync (CI),
 #                             or if any plant.sh / generated seed script
-#                             violates ADR-0001 Verification 2 (2-1..2-7)
+#                             violates ADR-0001 Verification 2 (2-1..2-7) or
+#                             ADR-0007 Verification 1 (mount directory
+#                             granularity)
 #
 # ADR-0001 (Option B, Accepted): plant.sh no longer runs in the challenge
 # container and no longer writes to the real sensitive path. It runs in the
 # `plant` initContainer (charts/ctf-user/templates/pod.yaml) and writes into
-# a seed emptyDir. This script renders, per scope (a single challenge, or
-# all-missions):
+# a seed emptyDir.
+#
+# ADR-0007 (Option 1, Accepted, supersedes ADR-0001's derived decision (1) =
+# B1 mount granularity): a plant-target that is a FILE is never bind-mounted
+# by itself — only its **enclosing directory** is. Mounting a single
+# sensitive file (subPath or hostPath, doesn't matter) makes the container
+# runtime's own mount-setup machinery trigger the `open_read`-family Falco
+# rules on every deploy (docs/adr/0007-plant-mount-directory-granularity.md
+# §C2); a directory destination structurally cannot, because those rules
+# require `fd.typechar='f'`. This script now renders, per scope (a single
+# challenge, or all-missions):
 #   - plant.seedScript: the initContainer's `sh -c` script, built from the
-#     declared plant.sh bodies in mission-id sort order. For any plant-target
-#     that needs base data restored first (declared via
-#     `# plant-seed-source:`), the *first* mission (sort order) to touch that
-#     target gets a `cp -a` from the build-time snapshot baked into the
-#     challenge image at /opt/ctf/plant-seed/ (ADR-0001 S-a) — never from the
-#     real path. Every subsequent mission just appends (2-2/2-4).
-#   - plant.mounts: the deduped list of declared plant-target absolute paths
-#     (charts/ctf-user/templates/pod.yaml turns each into a read-only subPath
-#     mount from the seed volume onto the real path in `challenge`).
+#     declared plant.sh bodies in mission-id sort order. For any *mount
+#     directory* that needs base data restored first (declared via
+#     `# plant-seed-source:`, now a DIRECTORY path), the *first* mission
+#     (sort order) to touch that directory gets a directory-wide
+#     `cp -a SRC/. DST/` from the build-time snapshot baked into the
+#     challenge image at /opt/ctf/plant-seed/ (ADR-0001 S-a / ADR-0007) —
+#     never from the real path. Every subsequent mission just appends
+#     (2-2/2-4), same as before.
+#   - plant.mounts: the deduped list of {path, readOnly} mount directories
+#     (charts/ctf-user/templates/pod.yaml turns each into a subPath mount
+#     from the seed volume onto the real path in `challenge`). `path` is the
+#     plant-target itself when `# plant-target-type: dir`, or its dirname
+#     when `# plant-target-type: file`. `readOnly` is `false` only for mount
+#     directories whose plant.sh declares `# plant-mount-readonly: false`
+#     (resolved by plant_mount_readonly_override()/is_mount_writable() below) —
+#     everything else defaults to `true` (fail-closed side).
 #
 # plant.sh references CTF_FLAG_* env vars only — no flag literals — so flags
 # live in exactly one place at runtime (the ctf-flags Secret, seen only by
@@ -34,9 +52,21 @@ CHECK=0
 
 # The `plant` initContainer's own view of the seed volume (emptyDir mountPath
 # in charts/ctf-user/templates/pod.yaml) and the build-time snapshot root
-# baked into the challenge image (images/challenge/Dockerfile, ADR-0001 S-a).
+# baked into the challenge image (images/challenge/Dockerfile, ADR-0001 S-a /
+# ADR-0007).
 SEED_ROOT='/plant-seed'
 SNAPSHOT_ROOT='/opt/ctf/plant-seed'
+
+# ADR-0007 Consequences ("諦めたもの"): per-mount readOnly is derived from
+# each plant.sh's optional `# plant-mount-readonly: false` header (see
+# is_mount_writable() below, defined once the MOUNTDIR_* arrays exist).
+# Everything NOT explicitly declared `false` by some plant.sh defaults to
+# readOnly:true (fail-closed side). Today only 03-stealth-read declares
+# `plant-mount-readonly: false` for the /etc mount dir — required by
+# mission 09 (challenges/09-hidden-cache, which has NO plant.sh of its own;
+# its plant-target /etc/sudoers is baked directly into the image, not
+# planted) needing `ln /etc/sudoers /etc/.cache.bak` to succeed. Mission
+# 05's /root/.ssh mount declares no override and stays readOnly:true.
 
 # Sensitive path list the *generated* seed script must never read from
 # directly (Verification 2-7(b)). Derived from the same catalog file the
@@ -87,20 +117,36 @@ plant_targets() { # <plant.sh> -> one absolute path per line (may be empty — 2
   grep -E '^# plant-target: ' "$1" | sed -E 's/^# plant-target: *//' || true
 }
 
-plant_seed_source() { # <plant.sh> -> the snapshot source path, or nothing (declaration is optional)
+plant_target_type() { # <plant.sh> -> "file" or "dir" (may be empty — ADR-0007 header validation catches that)
+  { grep -E '^# plant-target-type: ' "$1" | sed -E 's/^# plant-target-type: *//' | head -1; } || true
+}
+
+plant_seed_source() { # <plant.sh> -> the snapshot DIRECTORY source path, or nothing (declaration is optional)
   { grep -E '^# plant-seed-source: ' "$1" | sed -E 's/^# plant-seed-source: *//' | head -1; } || true
 }
 
-plant_body() { # <plant.sh> -> the file with the two header directive lines stripped
-  grep -vE '^# plant-target: |^# plant-seed-source: ' "$1"
+plant_mount_readonly_override() { # <plant.sh> -> "true"/"false" if declared, else nothing
+  { grep -E '^# plant-mount-readonly: ' "$1" | sed -E 's/^# plant-mount-readonly: *//' | head -1; } || true
+}
+
+plant_body() { # <plant.sh> -> the file with the header directive lines stripped
+  grep -vE '^# plant-target: |^# plant-target-type: |^# plant-seed-source: |^# plant-mount-readonly: ' "$1"
 }
 
 relpath() { printf '%s' "${1#/}"; }               # "/etc/shadow" -> "etc/shadow"
 indent()  { awk '{ if ($0 == "") print ""; else print "      " $0 }'; }  # reads stdin
 
+mount_dir_for() { # $1=target $2=type -> the directory that must be bind-mounted (ADR-0007)
+  if [ "$2" = "dir" ]; then
+    printf '%s' "$1"
+  else
+    dirname "$1"
+  fi
+}
+
 # ---------------------------------------------------------------------------
-# Verification 2-1 / 2-3 / 2-3b: header validation (both modes — generation
-# itself depends on these being true, not just --check).
+# Verification 2-1 / 2-3 / 2-3b (ADR-0001) + ADR-0007 header validation (both
+# modes — generation itself depends on these being true, not just --check).
 # ---------------------------------------------------------------------------
 
 HEADER_ERRORS=""
@@ -111,17 +157,39 @@ for id in "${MISSIONS[@]}"; do
     continue
   fi
   ntargets="$(printf '%s\n' "${targets}" | grep -c .)"
+
+  type="$(plant_target_type "${id}/plant.sh")"
+  case "${type}" in
+    file|dir) : ;;
+    "")
+      HEADER_ERRORS="${HEADER_ERRORS}ADR-0007 VIOLATION: ${id}/plant.sh has no '# plant-target-type:' declaration (must be 'file' or 'dir')\n"
+      ;;
+    *)
+      HEADER_ERRORS="${HEADER_ERRORS}ADR-0007 VIOLATION: ${id}/plant.sh declares plant-target-type '${type}', want 'file' or 'dir'\n"
+      ;;
+  esac
+  if [ "${ntargets}" -ne 1 ] && [ -n "${type}" ]; then
+    HEADER_ERRORS="${HEADER_ERRORS}ADR-0007 VIOLATION: ${id}/plant.sh declares ${ntargets} plant-targets but exactly one plant-target-type (this script assumes a 1:1 mapping) — split into separate plant.sh-style declarations or extend this script before adding a second target\n"
+  fi
+
   source="$(plant_seed_source "${id}/plant.sh")"
   if [ -n "${source}" ]; then
     if [ "${ntargets}" -ne 1 ]; then
       HEADER_ERRORS="${HEADER_ERRORS}${id}/plant.sh: plant-seed-source requires exactly one plant-target (has ${ntargets})\n"
+    elif [ -n "${type}" ]; then
+      target="$(printf '%s\n' "${targets}" | head -1)"
+      mountdir="$(mount_dir_for "${target}" "${type}")"
+      expected="${SNAPSHOT_ROOT}/$(relpath "${mountdir}")"
+      case "${source}" in
+        "${SNAPSHOT_ROOT}"/*) : ;;
+        *)
+          HEADER_ERRORS="${HEADER_ERRORS}2-3 VIOLATION: ${id}/plant.sh declares plant-seed-source '${source}' outside ${SNAPSHOT_ROOT}/ (must be a build-time snapshot path, never the real sensitive path)\n"
+          ;;
+      esac
+      if [ "${source}" != "${expected}" ]; then
+        HEADER_ERRORS="${HEADER_ERRORS}ADR-0007 VIOLATION: ${id}/plant.sh declares plant-seed-source '${source}', want '${expected}' (must be the snapshot of the MOUNT DIRECTORY '${mountdir}', not the plant-target file itself — ADR-0007 restores the whole enclosing directory, not a single file)\n"
+      fi
     fi
-    case "${source}" in
-      "${SNAPSHOT_ROOT}"/*) : ;;
-      *)
-        HEADER_ERRORS="${HEADER_ERRORS}2-3 VIOLATION: ${id}/plant.sh declares plant-seed-source '${source}' outside ${SNAPSHOT_ROOT}/ (must be a build-time snapshot path, never the real sensitive path)\n"
-        ;;
-    esac
   else
     # 2-3b (security-engineer A3): `>>` presupposes the destination already
     # has content. Without a plant-seed-source, the seed file starts empty
@@ -144,19 +212,22 @@ if [ -n "${HEADER_ERRORS}" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Target -> seed-source resolution, with a consistency check across missions
-# that share a plant-target (03 and 10 both declare /etc/shadow — 2-2).
+# Mount-directory -> seed-source / readOnly resolution, with a consistency
+# check across missions that share a mount directory (03 and 10 both map
+# /etc/shadow to the /etc mount directory — 2-2, now keyed by mount dir
+# rather than raw plant-target).
 # ---------------------------------------------------------------------------
 
-TARGET_KEYS=()
-TARGET_VALS=()
+MOUNTDIR_KEYS=()
+MOUNTDIR_SOURCE_VALS=()
+MOUNTDIR_RO_VALS=()
 
-target_source_get() { # $1=target ; prints the recorded source (may be ""); rc 1 if unseen
+mountdir_index() { # $1=mountdir -> prints index; rc 1 if unseen
   local i
-  if [ "${#TARGET_KEYS[@]}" -gt 0 ]; then
-    for i in "${!TARGET_KEYS[@]}"; do
-      if [ "${TARGET_KEYS[$i]}" = "$1" ]; then
-        printf '%s' "${TARGET_VALS[$i]}"
+  if [ "${#MOUNTDIR_KEYS[@]}" -gt 0 ]; then
+    for i in "${!MOUNTDIR_KEYS[@]}"; do
+      if [ "${MOUNTDIR_KEYS[$i]}" = "$1" ]; then
+        printf '%s' "$i"
         return 0
       fi
     done
@@ -165,71 +236,93 @@ target_source_get() { # $1=target ; prints the recorded source (may be ""); rc 1
 }
 
 for id in "${MISSIONS[@]}"; do
-  s="$(plant_seed_source "${id}/plant.sh")"
+  type="$(plant_target_type "${id}/plant.sh")"
+  source="$(plant_seed_source "${id}/plant.sh")"
+  ro_override="$(plant_mount_readonly_override "${id}/plant.sh")"
   while IFS= read -r target; do
     [ -z "${target}" ] && continue
-    if existing="$(target_source_get "${target}")"; then
-      if [ "${existing}" != "${s}" ]; then
-        echo "gen-values: ${id}/plant.sh declares plant-target ${target} with seed-source '${s}', but an earlier mission recorded '${existing}' for the same target" >&2
+    mountdir="$(mount_dir_for "${target}" "${type}")"
+    if idx="$(mountdir_index "${mountdir}")"; then
+      if [ "${MOUNTDIR_SOURCE_VALS[$idx]}" != "${source}" ]; then
+        echo "gen-values: ${id}/plant.sh maps plant-target ${target} to mount dir ${mountdir} with seed-source '${source}', but an earlier mission recorded '${MOUNTDIR_SOURCE_VALS[$idx]}' for the same mount dir" >&2
         exit 1
       fi
+      if [ -n "${ro_override}" ] && [ -n "${MOUNTDIR_RO_VALS[$idx]}" ] && [ "${ro_override}" != "${MOUNTDIR_RO_VALS[$idx]}" ]; then
+        echo "gen-values: ${id}/plant.sh declares plant-mount-readonly '${ro_override}' for mount dir ${mountdir}, but an earlier mission recorded '${MOUNTDIR_RO_VALS[$idx]}' for the same mount dir" >&2
+        exit 1
+      fi
+      if [ -n "${ro_override}" ] && [ -z "${MOUNTDIR_RO_VALS[$idx]}" ]; then
+        MOUNTDIR_RO_VALS[$idx]="${ro_override}"
+      fi
     else
-      TARGET_KEYS+=("${target}")
-      TARGET_VALS+=("${s}")
+      MOUNTDIR_KEYS+=("${mountdir}")
+      MOUNTDIR_SOURCE_VALS+=("${source}")
+      MOUNTDIR_RO_VALS+=("${ro_override}")
     fi
   done < <(plant_targets "${id}/plant.sh")
 done
+
+is_mount_writable() { # $1=mount dir -> rc 0 iff some plant.sh declared plant-mount-readonly: false for it
+  local idx
+  if idx="$(mountdir_index "$1")"; then
+    [ "${MOUNTDIR_RO_VALS[$idx]}" = "false" ] && return 0
+  fi
+  return 1
+}
 
 # ---------------------------------------------------------------------------
 # Rendering (per scope = a list of mission ids, always MISSIONS sort order —
 # 2-4)
 # ---------------------------------------------------------------------------
 
-unique_targets_for() { # $@ = mission ids -> unique plant-target list, first-appearance order (2-2)
-  local seen=() id target found x
+unique_mount_dirs_for() { # $@ = mission ids -> unique mount-directory list, first-appearance order (2-2, ADR-0007)
+  local seen=() id type target mountdir found x
   for id in "$@"; do
+    type="$(plant_target_type "${id}/plant.sh")"
     while IFS= read -r target; do
       [ -z "${target}" ] && continue
+      mountdir="$(mount_dir_for "${target}" "${type}")"
       found=0
       if [ "${#seen[@]}" -gt 0 ]; then
         for x in "${seen[@]}"; do
-          [ "${x}" = "${target}" ] && found=1 && break
+          [ "${x}" = "${mountdir}" ] && found=1 && break
         done
       fi
       if [ "${found}" -eq 0 ]; then
-        seen+=("${target}")
-        printf '%s\n' "${target}"
+        seen+=("${mountdir}")
+        printf '%s\n' "${mountdir}"
       fi
     done < <(plant_targets "${id}/plant.sh")
   done
 }
 
 # render_seed_body <mission-id>... -> the *unindented* initContainer script
-# body (the ADR-0001 Option B seed script — this is exactly the text
+# body (the ADR-0001/ADR-0007 seed script — this is exactly the text
 # Verification 2-7 statically checks).
 render_seed_body() {
-  local seeded=() id target source found x rel dir
+  local seeded=() id type target mountdir source found x rel
   printf 'set -eu\n'
   printf 'PLANT_SEED_ROOT=%s\n' "${SEED_ROOT}"
   for id in "$@"; do
     printf '\n# ---- %s ----\n' "${id}"
+    type="$(plant_target_type "${id}/plant.sh")"
     source="$(plant_seed_source "${id}/plant.sh")"
     while IFS= read -r target; do
       [ -z "${target}" ] && continue
+      mountdir="$(mount_dir_for "${target}" "${type}")"
       found=0
       if [ "${#seeded[@]}" -gt 0 ]; then
         for x in "${seeded[@]}"; do
-          [ "${x}" = "${target}" ] && found=1 && break
+          [ "${x}" = "${mountdir}" ] && found=1 && break
         done
       fi
       if [ "${found}" -eq 0 ]; then
-        seeded+=("${target}")
+        seeded+=("${mountdir}")
         if [ -n "${source}" ]; then
-          rel="$(relpath "${target}")"
-          dir="$(dirname "${rel}")"
-          printf '# seed %s from the build-time snapshot (ADR-0001 S-a) — runs once\n' "${target}"
-          printf 'mkdir -p "${PLANT_SEED_ROOT}/%s"\n' "${dir}"
-          printf 'cp -a "%s" "${PLANT_SEED_ROOT}/%s"\n' "${source}" "${rel}"
+          rel="$(relpath "${mountdir}")"
+          printf '# seed %s from the build-time snapshot (ADR-0001 S-a / ADR-0007) — runs once, directory-wide\n' "${mountdir}"
+          printf 'mkdir -p "${PLANT_SEED_ROOT}/%s"\n' "${rel}"
+          printf 'cp -a "%s/." "${PLANT_SEED_ROOT}/%s/"\n' "${source}" "${rel}"
         fi
       fi
     done < <(plant_targets "${id}/plant.sh")
@@ -247,8 +340,12 @@ plant:
 HDR
   render_seed_body "$@" | indent
   echo '  mounts:'
-  unique_targets_for "$@" | while IFS= read -r t; do
-    printf '    - %s\n' "${t}"
+  unique_mount_dirs_for "$@" | while IFS= read -r d; do
+    if is_mount_writable "${d}"; then
+      printf '    - path: %s\n      readOnly: false\n' "${d}"
+    else
+      printf '    - path: %s\n      readOnly: true\n' "${d}"
+    fi
   done
 }
 
@@ -269,7 +366,8 @@ render_all() {
 # runs every evade mission's plant.sh in one seed script (ADR-0001 Option B).
 # Flag values come from the ctf-flags Secret (CTF_FLAG_* keys), injected into
 # `plant` only — never into the challenge container; no flag literals live
-# here.
+# here. Mount directories (ADR-0007) are the enclosing directory of each
+# plant-target, not the plant-target itself when it is a file.
 HEADER
   render_plant_block "${MISSIONS[@]}"
 }
@@ -462,6 +560,126 @@ run_2_7_all_scopes() {
 }
 
 # ---------------------------------------------------------------------------
+# ADR-0007 Verification 1: plant.mounts directory-granularity static assert.
+#
+#   - every plant.mounts entry must be a directory (structural check: it
+#     must never be literally one of the declared FILE-type plant-targets —
+#     a file-type target's mount is always its dirname, by construction, so
+#     if a mount ever equals the raw file target itself, generation
+#     regressed to file granularity)
+#   - plant.mounts must never contain "/" or the seed root itself (ADR-0001
+#     F5's "never mount the whole seed tree" continued into this dimension)
+#   - the extracted mount set must be non-empty in the all-missions scope
+#     (an empty result must never read as "no violations")
+#   - judged entirely by exit status (no string-matching on stdout)
+# ---------------------------------------------------------------------------
+
+file_type_mount_targets() { # -> every declared plant-target whose type is "file", one per line
+  local id target type
+  for id in "${MISSIONS[@]}"; do
+    type="$(plant_target_type "${id}/plant.sh")"
+    [ "${type}" = "file" ] || continue
+    while IFS= read -r target; do
+      [ -z "${target}" ] && continue
+      printf '%s\n' "${target}"
+    done < <(plant_targets "${id}/plant.sh")
+  done
+}
+
+# extract_mount_paths <file>: pull the bare path out of every `mounts:` list
+# entry, whichever shape it's in — the current {path, readOnly} map form
+# ("    - path: /etc") AND the pre-ADR-0007 bare-string form
+# ("    - /etc/shadow"), the latter INTENTIONALLY still recognized so a
+# fixture using the old shape (ADR-0007 Verification 2's negative test) is
+# actually seen by this extractor rather than silently skipped.
+extract_mount_paths() { # $1=file
+  awk '
+    /^  mounts:$/ { f=1; next }
+    f && /^    - / {
+      line = $0
+      sub(/^    - /, "", line)
+      sub(/^path: */, "", line)
+      gsub(/^"|"$/, "", line)
+      print line
+      next
+    }
+    f && /^[^ ]/ { f=0 }
+  ' "$1"
+}
+
+check_mount_granularity() { # $1=values file $2=label -> rc 0 iff every mount is a directory
+  local file="$1" label="$2" rc=0 mounts n m ft
+  mounts="$(extract_mount_paths "${file}")"
+  n="$(printf '%s\n' "${mounts}" | grep -c . || true)"
+  if [ "${n}" -eq 0 ]; then
+    echo "ADR-0007 V1 VIOLATION [${label}]: extracted 0 plant.mounts entries from ${file} (extraction is broken, or this scope genuinely plants nothing — the all-missions/per-mission scopes checked below must always have >=1)" >&2
+    return 1
+  fi
+  while IFS= read -r m; do
+    [ -z "${m}" ] && continue
+    case "${m}" in
+      /|"${SEED_ROOT}"|"${SEED_ROOT}"/*)
+        echo "ADR-0007 V1 VIOLATION [${label}]: plant.mounts entry '${m}' is '/' or the seed root itself" >&2
+        rc=1
+        ;;
+    esac
+    while IFS= read -r ft; do
+      [ -z "${ft}" ] && continue
+      if [ "${m}" = "${ft}" ]; then
+        echo "ADR-0007 V1 VIOLATION [${label}]: plant.mounts entry '${m}' is a FILE-granularity plant-target — it must be mounted at its enclosing directory instead (this is exactly the defect ADR-0007 closes: a file-destination bind mount makes the runtime's own mount-setup trigger open_read-family Falco rules on every deploy)" >&2
+        rc=1
+      fi
+    done < <(file_type_mount_targets)
+  done <<< "${mounts}"
+  return "${rc}"
+}
+
+run_verification_1_all_scopes() {
+  local rc=0 id
+  check_mount_granularity <(render_all) "values-all (generated)" || rc=1
+  for id in "${MISSIONS[@]}"; do
+    check_mount_granularity <(render_one "${id}") "${id} (generated)" || rc=1
+  done
+  return "${rc}"
+}
+
+# ---------------------------------------------------------------------------
+# ADR-0007 Verification 2: negative test (self-check that Verification 1 is
+# not vacuous). Feeds check_mount_granularity a fixture whose plant.mounts
+# lists a FILE-granularity entry (the real, catalog-declared /etc/shadow
+# plant-target, verbatim — not a synthetic path) and asserts it is REJECTED.
+# If this ever passes (i.e. the fixture is accepted), Verification 1's own
+# assert has regressed to a no-op and this function itself fails closed.
+# ---------------------------------------------------------------------------
+
+verify_negative_test() {
+  local fixture out
+  fixture="$(mktemp)"
+  out="$(mktemp)"
+  trap 'rm -f "${fixture}" "${out}"' RETURN
+  cat > "${fixture}" <<'FIXTURE'
+# ADR-0007 Verification 2 fixture — INTENTIONALLY violates Verification 1
+# (file-granularity plant.mounts entry). Never committed as a real
+# values.yaml; generated in a tempfile by gen-values.sh --check and deleted
+# immediately after use.
+plant:
+  seedScript:
+    - sh
+    - -c
+    - "true"
+  mounts:
+    - /etc/shadow
+FIXTURE
+  if check_mount_granularity "${fixture}" "ADR-0007-V2-fixture" >"${out}" 2>&1; then
+    echo "ADR-0007 V2 VIOLATION: the deliberately-bad fixture (plant.mounts: [/etc/shadow], file granularity) was ACCEPTED — Verification 1's assert is vacuous" >&2
+    cat "${out}" >&2
+    return 1
+  fi
+  echo "  ok: ADR-0007 Verification 2 — the file-granularity fixture is correctly rejected"
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -469,6 +687,8 @@ if [ "${CHECK}" -eq 1 ]; then
   rc=0
   check_2_5 || rc=1
   run_2_7_all_scopes || rc=1
+  run_verification_1_all_scopes || rc=1
+  verify_negative_test || rc=1
   for id in "${MISSIONS[@]}"; do
     if ! diff -u "${id}/values.yaml" <(render_one "${id}") >/dev/null 2>&1; then
       echo "DRIFT: ${id}/values.yaml is out of sync with ${id}/plant.sh" >&2
@@ -479,12 +699,14 @@ if [ "${CHECK}" -eq 1 ]; then
     echo "DRIFT: values-all.yaml is out of sync with plant.sh files" >&2
     rc=1
   fi
-  [ "${rc}" -eq 0 ] && echo "gen-values: in sync (2-1..2-7 clean)"
+  [ "${rc}" -eq 0 ] && echo "gen-values: in sync (ADR-0001 2-1..2-7 + ADR-0007 V1/V2 clean)"
   exit "${rc}"
 fi
 
 check_2_5
 run_2_7_all_scopes
+run_verification_1_all_scopes
+verify_negative_test
 
 for id in "${MISSIONS[@]}"; do
   render_one "${id}" > "${id}/values.yaml"

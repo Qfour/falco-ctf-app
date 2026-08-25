@@ -19,11 +19,17 @@
 # A `plant` initContainer (same image as `challenge` — no new image, I5)
 # receives the flags via the `ctf-flags` Secret (envFrom, secretRef) and
 # writes them into the `plant-seed` emptyDir. `challenge` only ever sees the
-# individual declared plant-targets, bind-mounted (subPath, read-only) back
-# onto their real paths — never the seed volume root (F5: that would be an
+# ENCLOSING DIRECTORY of each declared plant-target, bind-mounted (subPath)
+# back onto its real path — never the seed volume root (F5: that would be an
 # undeclared path outside the `sensitive_files` Falco macro's `fd.name`
-# prefix match, i.e. a free win for mission 03). See
-# docs/adr/0001-flag-plant-initcontainer-not-challenge-env.md.
+# match, i.e. a free win for mission 03) and never the plant-target FILE
+# itself (ADR-0007, supersedes ADR-0001's original per-file `subPath` mount —
+# a file-destination mount makes the container runtime's own mount-setup
+# trigger `open_read`-family Falco rules on every deploy; mounting the
+# enclosing directory instead is structurally immune, since those rules
+# require `fd.typechar='f'`). See
+# docs/adr/0001-flag-plant-initcontainer-not-challenge-env.md and
+# docs/adr/0007-plant-mount-directory-granularity.md.
 apiVersion: v1
 kind: Pod
 metadata:
@@ -253,20 +259,29 @@ spec:
             command:
               {{- toYaml . | nindent 14 }}
       {{- end }}
-      # ADR-0001: only the declared plant-targets are mounted, each pinned to
-      # its own subPath on the shared `plant-seed` volume — never the seed
-      # volume root (F5). readOnly because no mission needs runtime writes to
-      # a planted path (09 was retargeted off /etc/shadow precisely to avoid
-      # needing one — see challenges/09-hidden-cache). Omitted entirely
-      # (no `volumeMounts:` key) when .Values.plant.mounts is empty, e.g. a
-      # values file for a trigger-only challenge that plants nothing.
+      # ADR-0001 + ADR-0007 (Option 1): only the declared plant-target
+      # ENCLOSING DIRECTORIES are mounted (never a single file — a
+      # file-destination bind mount makes the container runtime's own
+      # mount-setup trigger open_read-family Falco rules on every deploy,
+      # see docs/adr/0007-plant-mount-directory-granularity.md §C2), each
+      # pinned to its own subPath on the shared `plant-seed` volume — never
+      # the seed volume root (F5). `.Values.plant.mounts` is now a list of
+      # {path, readOnly} objects (per-mount, not a single blanket flag) —
+      # readOnly is false ONLY for the mount(s) a mission genuinely needs to
+      # write into at runtime (currently /etc, for mission 09's
+      # `ln .../etc/sudoers /etc/.cache.bak`; see
+      # challenges/03-stealth-read/plant.sh's `plant-mount-readonly` header
+      # and challenges/gen-values.sh). Mission 05's /root/.ssh mount stays
+      # readOnly: true. Omitted entirely (no `volumeMounts:` key) when
+      # .Values.plant.mounts is empty, e.g. a values file for a
+      # trigger-only challenge that plants nothing.
       {{- if .Values.plant.mounts }}
       volumeMounts:
         {{- range .Values.plant.mounts }}
         - name: plant-seed
-          mountPath: {{ . | quote }}
-          subPath: {{ trimPrefix "/" . | quote }}
-          readOnly: true
+          mountPath: {{ .path | quote }}
+          subPath: {{ trimPrefix "/" .path | quote }}
+          readOnly: {{ .readOnly }}
         {{- end }}
       {{- end }}
 

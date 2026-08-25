@@ -64,12 +64,59 @@ ok() { # $1=assert-id $2=message
 # 1-1: the only env names the challenge container may ever carry.
 CHALLENGE_ENV_ALLOWLIST=(FALCO_CTF_USER FALCO_CTF_CHALLENGE FALCO_CTF_COLLECTOR FALCO_CTF_SCOREBOARD FALCO_CTF_DNS_SUFFIX)
 
-# 1-4 / 1-18: the universe of declared plant-target absolute paths, derived
-# from every plant.sh's `# plant-target:` header (the same source
-# challenges/gen-values.sh reads). A challenge container may only ever
-# bind-mount one of these off the plant-seed volume.
-plant_target_allowlist() {
-  grep -hE '^# plant-target: ' challenges/*/plant.sh 2>/dev/null | sed -E 's/^# plant-target: *//' | sort -u
+# 1-4 / 1-18 (ADR-0007 — granularity-neutral rewrite): the universe of
+# directories that may be bind-mounted, derived from every plant.sh's
+# `# plant-target:` + `# plant-target-type:` header pair (the same headers
+# challenges/gen-values.sh reads to build `plant.mounts`) — the mount
+# directory is the plant-target itself when `plant-target-type: dir`, or
+# its dirname when `plant-target-type: file`. A challenge container may
+# only ever bind-mount one of these off the plant-seed volume, and NEVER a
+# bare plant-target FILE path itself (that regression is exactly what
+# ADR-0007 closes — see docs/adr/0007-plant-mount-directory-granularity.md).
+plant_mount_dir_allowlist() {
+  local f target type
+  for f in challenges/*/plant.sh; do
+    [ -e "$f" ] || continue
+    target="$(grep -E '^# plant-target: ' "$f" | sed -E 's/^# plant-target: *//' | head -1)"
+    type="$(grep -E '^# plant-target-type: ' "$f" | sed -E 's/^# plant-target-type: *//' | head -1)"
+    [ -z "$target" ] && continue
+    if [ "$type" = "dir" ]; then
+      printf '%s\n' "$target"
+    else
+      dirname "$target"
+    fi
+  done | sort -u
+}
+
+# The set of raw plant-target FILE paths (never a valid mountPath under
+# ADR-0007 — a mountPath equal to one of these is exactly the file-
+# granularity regression Verification 1-4 must catch).
+plant_target_file_allowlist() {
+  local f target type
+  for f in challenges/*/plant.sh; do
+    [ -e "$f" ] || continue
+    target="$(grep -E '^# plant-target: ' "$f" | sed -E 's/^# plant-target: *//' | head -1)"
+    type="$(grep -E '^# plant-target-type: ' "$f" | sed -E 's/^# plant-target-type: *//' | head -1)"
+    [ -z "$target" ] && continue
+    [ "$type" = "file" ] && printf '%s\n' "$target"
+  done | sort -u
+}
+
+# ADR-0007: mount directories whose bind mount must NOT be readOnly:true.
+# Kept as an independently-maintained literal here (not sourced from
+# gen-values.sh / plant.sh headers) so this script can catch a drift
+# between the two rather than blindly inheriting gen-values.sh's own
+# reasoning — mirrors gen-values.sh's WRITABLE_MOUNT_DIRS derivation
+# (mission 09's `/etc/sudoers` hardlink target; see
+# challenges/03-stealth-read/plant.sh's `plant-mount-readonly` header).
+WRITABLE_MOUNT_DIR_ALLOWLIST=(/etc)
+
+mount_dir_is_writable() { # $1=mount dir -> rc 0 iff it is allowed readOnly:false
+  local d="$1" x
+  for x in "${WRITABLE_MOUNT_DIR_ALLOWLIST[@]}"; do
+    [ "$x" = "$d" ] && return 0
+  done
+  return 1
 }
 
 is_in_allowlist() { # $1=needle  $2...=haystack array elements
@@ -193,10 +240,11 @@ assert_challenge_env() { # 1-1, 1-2, 1-3
   fi
 }
 
-assert_challenge_mounts() { # 1-4, 1-5, 1-18 (challenge side)
+assert_challenge_mounts() { # 1-4, 1-5, 1-18 (challenge side) — ADR-0007 granularity-neutral rewrite
   local block="$1"
-  local -a allowlist=()
-  while IFS= read -r t; do [ -n "$t" ] && allowlist+=("$t"); done < <(plant_target_allowlist)
+  local -a allowlist=() file_targets=()
+  while IFS= read -r t; do [ -n "$t" ] && allowlist+=("$t"); done < <(plant_mount_dir_allowlist)
+  while IFS= read -r t; do [ -n "$t" ] && file_targets+=("$t"); done < <(plant_target_file_allowlist)
 
   if grep -qF '/var/run/secrets/kubernetes.io/serviceaccount' <<<"$block"; then
     violation 1-5 "challenge container mounts the serviceaccount token path"
@@ -223,19 +271,40 @@ assert_challenge_mounts() { # 1-4, 1-5, 1-18 (challenge side)
         bad4=1; bad18=1
       else
         local mp_bare="${mountpath%\"}"; mp_bare="${mp_bare#\"}"
-        if ! is_in_allowlist "$mp_bare" "${allowlist[@]}"; then
-          violation 1-4 "challenge volumeMount mountPath '${mp_bare}' is not a declared plant-target (${allowlist[*]})"
+        # ADR-0007 Verification 1 (mirrored here): mountPath must be a
+        # declared MOUNT DIRECTORY (plant-target's enclosing dir, or the
+        # plant-target itself when it's already a dir) — and must NEVER be
+        # a bare plant-target FILE path. The file-path check runs first and
+        # is the sharper of the two failure messages (it names exactly the
+        # regression class ADR-0007 exists to catch).
+        if is_in_allowlist "$mp_bare" "${file_targets[@]}"; then
+          violation 1-4 "challenge volumeMount mountPath '${mp_bare}' is a FILE-granularity plant-target, not its enclosing directory (ADR-0007 requires directory granularity — a file destination makes the runtime's own mount-setup trigger open_read-family Falco rules on every deploy)"
+          bad4=1
+        elif ! is_in_allowlist "$mp_bare" "${allowlist[@]}"; then
+          violation 1-4 "challenge volumeMount mountPath '${mp_bare}' is not a declared plant-target mount directory (${allowlist[*]})"
           bad4=1
         fi
         local sp_bare="${subpath%\"}"; sp_bare="${sp_bare#\"}"
         local want_sp="${mp_bare#/}"
         if [ "$sp_bare" != "$want_sp" ]; then
-          violation 1-18 "challenge volumeMount mountPath=${mp_bare} has subPath='${sp_bare}', want '${want_sp}' (subPath must exactly trace the declared plant-target)"
+          violation 1-18 "challenge volumeMount mountPath=${mp_bare} has subPath='${sp_bare}', want '${want_sp}' (subPath must exactly trace the declared mount directory)"
           bad18=1
         fi
-        if [ "$readonly_val" != "true" ]; then
-          violation 1-18 "challenge volumeMount mountPath=${mp_bare} is not readOnly: true"
-          bad18=1
+        # ADR-0007: readOnly is per-mount now. Exactly the mount dirs in
+        # WRITABLE_MOUNT_DIR_ALLOWLIST may render readOnly:false; every
+        # other mount must still be readOnly:true (fail-closed default —
+        # mission 05's /root/.ssh must never silently become writable just
+        # because /etc needed to be).
+        if mount_dir_is_writable "$mp_bare"; then
+          if [ "$readonly_val" != "false" ]; then
+            violation 1-18 "challenge volumeMount mountPath=${mp_bare} is in the writable-mount allowlist but is not readOnly: false"
+            bad18=1
+          fi
+        else
+          if [ "$readonly_val" != "true" ]; then
+            violation 1-18 "challenge volumeMount mountPath=${mp_bare} is not readOnly: true (only ${WRITABLE_MOUNT_DIR_ALLOWLIST[*]} may be readOnly: false)"
+            bad18=1
+          fi
         fi
       fi
     fi
@@ -250,8 +319,8 @@ assert_challenge_mounts() { # 1-4, 1-5, 1-18 (challenge side)
     esac
   done <<<"$vm_block"
   flush_entry
-  [ "$bad4" -eq 0 ] && ok 1-4 "every challenge volumeMount mountPath is a declared plant-target"
-  [ "$bad18" -eq 0 ] && ok 1-18 "every challenge seed volumeMount has subPath + readOnly:true matching its plant-target"
+  [ "$bad4" -eq 0 ] && ok 1-4 "every challenge volumeMount mountPath is a declared plant-target mount directory (never a bare file)"
+  [ "$bad18" -eq 0 ] && ok 1-18 "every challenge seed volumeMount has subPath tracing its mount directory, and readOnly matching the writable-mount allowlist (${WRITABLE_MOUNT_DIR_ALLOWLIST[*]})"
 }
 
 assert_challenge_no_flag_string() { # 1-6, 1-7 (1-7 is a subset of 1-6 — postStart lives in the same block)

@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
-# ADR-0001 (Option B, Accepted) Verification 2-8 / DoD 15: re-verify, at
-# every build, that the build-time flag-plant snapshot baked into the
-# challenge image (/opt/ctf/plant-seed/, images/challenge/Dockerfile, S-a)
-# introduces zero new material and is byte-identical (mode/owner included)
-# to the real path it shadows.
+# ADR-0001 (Option B, Accepted) Verification 2-8 / DoD 15 + ADR-0007
+# (Option 1) Verification 3: re-verify, at every build, that the build-time
+# flag-plant snapshot baked into the challenge image (/opt/ctf/plant-seed/,
+# images/challenge/Dockerfile, S-a) introduces zero new material and is
+# byte-identical (mode/owner included) to the real directory it shadows —
+# and, since ADR-0007 widened the snapshot from a single file
+# (/etc/shadow) to the whole enclosing directory (/etc), that the ENTRY SET
+# matches in both directions (not just "every snapshotted file has a real
+# counterpart" — also "every real file has a snapshotted counterpart",
+# which catches a `RUN` step landing AFTER the snapshot line and silently
+# drifting the two apart).
 #
 # WHY THIS IS ITS OWN MAKE TARGET CALLED FROM `make build`, NOT JUST A CI
 # STEP: prod is CI-free (operators run `make build` by hand — see
@@ -18,10 +24,14 @@
 #   (i)   no crypt-hash-shaped string (":$<n>$...") anywhere under the
 #         snapshot tree
 #   (ii)  no `FALCO{` literal anywhere under the snapshot tree
-#   (iii) every snapshotted file's mode+owner matches its real counterpart
-#         byte-for-byte
+#   (iii) every snapshotted file's mode+owner+content matches its real
+#         counterpart byte-for-byte
 #   (iv)  `find /etc -type f -links +1` is empty (a hardlinked file under
 #         /etc would mean a future `cp -a` variant stopped being link-safe)
+#   (v)   (ADR-0007 Verification 3) every REAL file under a snapshotted
+#         top-level directory has a snapshot counterpart too — the reverse
+#         of (iii), closing the entry-set gap a post-snapshot `RUN` could
+#         otherwise open silently
 #
 # Usage:
 #   ./scripts/check-image-hygiene.sh <image-ref>
@@ -43,6 +53,26 @@ fail_file=/tmp/hygiene-fail
 rm -f "$fail_file"
 
 SNAP=/opt/ctf/plant-seed
+
+# ADR-0007: these 3 paths are ALWAYS overwritten by the container runtime at
+# every container start (docker run bind-mounts a fresh /etc/hosts,
+# /etc/hostname, /etc/resolv.conf into every container regardless of image
+# content; Kubernetes does the same, then further overlays kubelet-managed
+# content on top when the directory itself is bind-mounted from an emptyDir
+# at deploy time -- confirmed at the real workspace-Pod layer in
+# docs/adr/0007-plant-mount-directory-granularity.md Section C3). Comparing
+# a build-time snapshot against a live container means comparing the
+# runtime-injected content from two DIFFERENT container instantiations, not
+# a drift introduced by this Dockerfile -- it will always mismatch, in
+# every image, forever, and carries no hash/flag material either way. Skip
+# them entirely (not just skip content comparison -- mode and owner can
+# differ too).
+is_runtime_managed_etc_file() { # $1=absolute real path -> rc0 iff excluded
+  case "$1" in
+    /etc/hosts|/etc/hostname|/etc/resolv.conf) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
 if [ ! -d "$SNAP" ]; then
   echo "HYGIENE VIOLATION: $SNAP does not exist in this image" >&2
@@ -72,6 +102,9 @@ fi
 if [ -d "$SNAP" ]; then
   for f in $(find "$SNAP" -type f); do
     orig="${f#"$SNAP"}"
+    if is_runtime_managed_etc_file "$orig"; then
+      continue
+    fi
     if [ ! -e "$orig" ]; then
       echo "HYGIENE VIOLATION (iii): snapshot file $f has no real counterpart at $orig" >&2
       touch "$fail_file"
@@ -99,15 +132,43 @@ if [ -n "$links" ]; then
   touch "$fail_file"
 fi
 
+# (v) ADR-0007 Verification 3: entry-set parity in the OTHER direction —
+# every REAL file under a directory this image snapshots must have a
+# snapshot counterpart too. (iii) above only walks $SNAP and checks the
+# real side exists; that alone cannot catch a `RUN` step added AFTER the
+# snapshot line in the Dockerfile that adds/changes a file under the real
+# directory without the snapshot ever seeing it. Scoped to the top-level
+# directory names actually present under $SNAP (currently just "etc") so
+# this generalizes to any future plant-target enclosing directory without
+# a hardcoded list.
+if [ -d "$SNAP" ]; then
+  for d in "$SNAP"/*/; do
+    [ -d "$d" ] || continue
+    realdir="/${d#"$SNAP"/}"
+    realdir="${realdir%/}"
+    [ -d "$realdir" ] || continue
+    for f in $(find "$realdir" -type f); do
+      if is_runtime_managed_etc_file "$f"; then
+        continue
+      fi
+      snap="$SNAP$f"
+      if [ ! -e "$snap" ]; then
+        echo "HYGIENE VIOLATION (v): real file $f has no snapshot counterpart at $snap (a RUN step after the snapshot line added/changed $realdir without updating the snapshot — entry-set drift)" >&2
+        touch "$fail_file"
+      fi
+    done
+  done
+fi
+
 [ -f "$fail_file" ] && rc=1
 exit "$rc"
 '
 
 echo "==> check-image-hygiene: ${IMAGE}"
 if docker run --rm --entrypoint sh "${IMAGE}" -c "${INSPECT}"; then
-  echo "OK: ${IMAGE} — /opt/ctf/plant-seed/ hygiene verified (no hash/flag material, mode/owner/content match, no hardlinks under /etc)."
+  echo "OK: ${IMAGE} — /opt/ctf/plant-seed/ hygiene verified (no hash/flag material, mode/owner/content/entry-set match in both directions, no hardlinks under /etc)."
   exit 0
 else
-  echo "FAIL: ${IMAGE} failed the image-hygiene check (ADR-0001 Verification 2-8) — see violations above." >&2
+  echo "FAIL: ${IMAGE} failed the image-hygiene check (ADR-0001 Verification 2-8 / ADR-0007 Verification 3) — see violations above." >&2
   exit 1
 fi

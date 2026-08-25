@@ -226,17 +226,32 @@ challenge コンテナは UID 表のとおり **root (0) が意図的** (CTF rea
   **ADR-0001 (Option B, Accepted)**: `plant.sh` は `challenge` コンテナでは
   実行されない。`plant` initContainer (image は challenge と同一、I5 に触れない)
   が `ctf-flags` Secret から `CTF_FLAG_<ID>` を受け取り、seed emptyDir
-  (`$PLANT_SEED_ROOT`) に書く。`challenge` は宣言済み `# plant-target:` に
-  対応する subPath mount だけを見る (seed root は mount しない — ADR-0001 提案 I12)。
-  `challenge` の env には `CTF_FLAG_*` は一切出現しない。
+  (`$PLANT_SEED_ROOT`) に書く。**`challenge` が見るのは plant-target の
+  ENCLOSING DIRECTORY だけ** (ADR-0007, Accepted, ADR-0001 の派生決定 (1)
+  = B1 を supersede) — plant-target が `dir` なら宣言そのもの
+  (mission 05 の `/root/.ssh`)、`file` ならその親ディレクトリ
+  (mission 03/10 の `/etc/shadow` → `/etc`)。plant-target ファイルそのものを
+  単独で bind mount することは never (ファイル destination の mount は
+  コンテナランタイム自身の mount-setup が `open_read` 系 Falco ルールを
+  deploy ごとに発火させるため — `open_read` は `fd.typechar='f'` を要求し、
+  ディレクトリ destination は構造的にこれを満たせない)。seed root は
+  mount しない (F5・ADR-0001 提案 I12 は不変)。`challenge` の env には
+  `CTF_FLAG_*` は一切出現しない。
 - `values.yaml` / `values-all.yaml` は `make gen-values`
   (`challenges/gen-values.sh`) で plant.sh から生成。**手書き禁止**。
   生成物は `plant.seedScript` (initContainer が実行する `sh -c` script。
-  同一 plant-target を複数の plant.sh が共有する場合は 1 回だけ
-  build-time snapshot (`/opt/ctf/plant-seed/`, ADR-0001 S-a) から復元して
-  dedupe する) と `plant.mounts` (宣言済み plant-target の重複無しリスト)。
+  同一マウントディレクトリを複数の plant.sh が共有する場合は 1 回だけ
+  build-time snapshot (`/opt/ctf/plant-seed/`, ADR-0001 S-a) から
+  ディレクトリごと復元して dedupe する) と `plant.mounts` (マウントディレクトリの
+  重複無しリスト。各要素は `{path, readOnly}` — `readOnly` は **per-mount**
+  で決まり (`plant.sh` の `# plant-mount-readonly: false` header 宣言、
+  `gen-values.sh` の `plant_mount_readonly_override()`)、宣言が無ければ
+  fail-closed 側の `true` になる。現状 `/etc` マウントのみ `readOnly: false`
+  (mission 09 の `ln /etc/sudoers /etc/.cache.bak` が `/etc` への書込を要する
+  ため)。mission 05 の `/root/.ssh` マウントは宣言なし = `readOnly: true` 維持)。
   CI `flag-guard` (`gen-values.sh --check`) が同期 + ADR-0001 Verification
-  2-1〜2-7 (禁じ手集合の静的検査含む) を検証する。
+  2-1〜2-7 + ADR-0007 Verification 1/2 (mount ディレクトリ granularity の
+  静的検査・故意違反の negative test) を検証する。
 - 採点フラグ (FLAGS_FILE) と仕込みフラグ (CTF_FLAG_*) は platform の
   同一 `flags.sops.yaml` から render され、必ず一致する。
 
