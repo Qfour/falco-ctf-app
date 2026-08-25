@@ -59,6 +59,8 @@ jobs:
         run: python3 scripts/check-seccomp.py
       - name: flag isolation Hard Invariant (ADR-0001 Verification 1, fail-closed)
         run: ./scripts/check-flag-isolation.sh
+      - name: namespace ownership guard (ADR-0011, fail-closed)
+        run: ./scripts/check-namespace-ownership.sh
 
   # ------------------------------------------------------------------
   # Flag hygiene: no real flags in the public repo + generated values in sync.

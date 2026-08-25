@@ -17,7 +17,7 @@ SYSDIG_URL   ?= https://app.au1.sysdig.com
 # host repo are not shared into the VM.
 GO_IMAGE ?= golang:1.26-alpine
 
-.PHONY: help dev dev-down build push load-colima deploy-local lint check-seccomp check-flag-isolation check-image-hygiene test tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-rules check-freshness clean scan
+.PHONY: help dev dev-down build push load-colima deploy-local lint check-seccomp check-flag-isolation check-namespace-ownership check-image-hygiene test tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-rules check-freshness clean scan
 
 help:
 	@echo "Targets:"
@@ -27,9 +27,10 @@ help:
 	@echo "  push            — docker push all images"
 	@echo "  load-colima     — load images into colima k3s containerd (local only)"
 	@echo "  deploy-local    — helm upgrade --install scoreboard + auth-policy charts (local)"
-	@echo "  lint                — helm lint all charts/ + check-seccomp + check-flag-isolation"
+	@echo "  lint                — helm lint all charts/ + check-seccomp + check-flag-isolation + check-namespace-ownership"
 	@echo "  check-seccomp       — fail if any rendered chart container's effective seccompProfile != RuntimeDefault"
 	@echo "  check-flag-isolation — fail if the ctf-user chart lets a flag reach the challenge container (ADR-0001 Verification 1)"
+	@echo "  check-namespace-ownership — fail if any chart (except ctf-user) renders its own kind: Namespace (ADR-0011)"
 	@echo "  check-image-hygiene — fail if the built challenge image's /opt/ctf/plant-seed/ snapshot carries flag/hash material or drifts from its real counterpart (ADR-0001 Verification 2-8)"
 	@echo "  test            — go test ./... (runs in $(GO_IMAGE) container)"
 	@echo "  tidy            — go mod tidy (runs in $(GO_IMAGE) container)"
@@ -81,7 +82,7 @@ deploy-local:
 	  --set image.tag=dev \
 	  --set env.expectedEmailDomain=ctf.local --set env.adminEmails=user1@ctf.local
 
-lint: check-seccomp check-flag-isolation
+lint: check-seccomp check-flag-isolation check-namespace-ownership
 	@for c in charts/*; do echo "== $$c =="; helm lint "$$c"; done
 
 # Hard Invariant guard (see .claude/rules/falco-ctf-app-conventions.md
@@ -97,6 +98,14 @@ check-seccomp:
 # across every render-matrix scope. See scripts/check-flag-isolation.sh.
 check-flag-isolation:
 	./scripts/check-flag-isolation.sh
+
+# ADR-0011 follow-up (platform#111): fail if any chart (except ctf-user,
+# which the ADR explicitly excludes) renders its own kind: Namespace object.
+# Namespace ownership for auth-policy/collector/scoreboard/docs is now the
+# sole responsibility of platform's `namespaces` bootstrap release — see
+# scripts/check-namespace-ownership.sh and docs/adr/0011-namespace-bootstrap-single-owner.md.
+check-namespace-ownership:
+	./scripts/check-namespace-ownership.sh
 
 # ADR-0001 Verification 2-8 / DoD 15: re-verify the challenge image's
 # /opt/ctf/plant-seed/ build-time snapshot at every build (fail-closed —
