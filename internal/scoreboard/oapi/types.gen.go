@@ -368,6 +368,14 @@ type MissionDetail struct {
 	// bearing on the verdict (submit re-checks the exact flag).
 	ExfilReceived bool `json:"exfilReceived"`
 
+	// ExpectedRuleFired ADR-0008. `= HasExpectedRuleFire(user, cid)`. PERSISTENT — no
+	// time window, and (unlike dirty/dirtyRules) NEVER cleared by
+	// reset-dirty; only the admin's full event Reset() clears it (the
+	// asymmetry is deliberate — see internal/store's expected_rule_fire
+	// table doc). Always false for a mission with
+	// requireExpectedRuleFire=false.
+	ExpectedRuleFired bool `json:"expectedRuleFired"`
+
 	// ExpectedRules trigger missions only (empty array otherwise) — the Falco rules
 	// whose fire auto-solves this mission. Rule NAMES only, already public
 	// in the operator view and the docs excerpts.
@@ -395,12 +403,17 @@ type MissionDetail struct {
 	LeadIn string `json:"leadIn"`
 
 	// RequireExfil evade challenge that also requires a collector exfil receipt
-	RequireExfil bool                `json:"requireExfil"`
-	Status       MissionDetailStatus `json:"status"`
-	Steps        []Step              `json:"steps"`
-	Tagline      string              `json:"tagline"`
-	Title        string              `json:"title"`
-	Type         MissionDetailType   `json:"type"`
+	RequireExfil bool `json:"requireExfil"`
+
+	// RequireExpectedRuleFire ADR-0008. evade challenge that also requires positive proof — at
+	// least one of expectedRules must have fired for this user before a
+	// correct flag can solve it.
+	RequireExpectedRuleFire bool                `json:"requireExpectedRuleFire"`
+	Status                  MissionDetailStatus `json:"status"`
+	Steps                   []Step              `json:"steps"`
+	Tagline                 string              `json:"tagline"`
+	Title                   string              `json:"title"`
+	Type                    MissionDetailType   `json:"type"`
 }
 
 // MissionDetailStatus defines model for MissionDetail.Status.
@@ -668,6 +681,9 @@ type SubmitFlagRequest struct {
 //
 //	wrong flag       -> correct=false, reason
 //	forbidden fired  -> correct=true, evaded=false, reason
+//	proof required   -> correct=true, evaded=true, proven=false, reason
+//	                    (ADR-0008; only for missions with
+//	                    requireExpectedRuleFire)
 //	exfil required   -> correct=true, evaded=true, exfiltrated=false, reason
 //	solved           -> correct=true, evaded=true, solved=true, user,
 //	                    display_name
@@ -680,9 +696,16 @@ type SubmitFlagVerdict struct {
 	DisplayName *string `json:"display_name,omitempty"`
 	Evaded      *bool   `json:"evaded,omitempty"`
 	Exfiltrated *bool   `json:"exfiltrated,omitempty"`
-	Reason      *string `json:"reason,omitempty"`
-	Solved      *bool   `json:"solved,omitempty"`
-	User        *string `json:"user,omitempty"`
+
+	// Proven ADR-0008 positive-proof gate: false when the mission requires
+	// requireExpectedRuleFire and none of its expectedRules has ever
+	// fired for this user yet. Only appears on that branch (never on
+	// `solved` — mirrors how `exfiltrated` never appears on `solved`
+	// either).
+	Proven *bool   `json:"proven,omitempty"`
+	Reason *string `json:"reason,omitempty"`
+	Solved *bool   `json:"solved,omitempty"`
+	User   *string `json:"user,omitempty"`
 }
 
 // Cid defines model for Cid.

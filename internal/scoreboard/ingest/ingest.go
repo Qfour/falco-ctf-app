@@ -201,18 +201,21 @@ func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 	// pattern app#113 catalogued elsewhere; internal store/driver error text
 	// must not reach an HTTP client). Full detail still goes to the log line
 	// above.
+	// ADR-0008 (R1 5x review finding): logged BEFORE the TaintErr branch's
+	// early return, not after — both writes land in the same SQLite file, so
+	// a real disk/DB failure is likely to hit both in the same event. Logging
+	// ExpectedFireErr only on the path that falls through past TaintErr would
+	// silently hide "the positive-proof write also failed" whenever the two
+	// happen together, undermining TaintErr's own "surface loudly" rationale.
+	if res.ExpectedFireErr != nil {
+		h.logger.Error("record expected rule fire", "err", res.ExpectedFireErr)
+	}
+
 	if res.TaintErr != nil {
 		h.logger.Error("mark dirty", "err", res.TaintErr)
 		metrics.FalcoEventsReceived.WithLabelValues("taint_error").Inc()
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "could not persist taint"})
 		return
-	}
-
-	// ADR-0008: a failed positive-proof write is continue-on-error, same
-	// posture as TriggerErr below (log and carry on) — see RuleFireOutcome's
-	// doc for why this does not warrant TaintErr's 5xx escalation.
-	if res.ExpectedFireErr != nil {
-		h.logger.Error("record expected rule fire", "err", res.ExpectedFireErr)
 	}
 
 	// Trigger-type solve decision is the Grader's job; this handler is a thin
