@@ -156,6 +156,7 @@ RELEASE="${USERNAME}"
 green()  { printf '\033[32m%s\033[0m\n' "$*"; }
 yellow() { printf '\033[33m%s\033[0m\n' "$*"; }
 info()   { printf '\033[36m%s\033[0m\n' "$*"; }
+red()    { printf '\033[31m%s\033[0m\n' "$*"; }
 
 # All-missions mode: challenge-id == "all". Apply the combined plant
 # initContainer seed script + mount list from challenges/values-all.yaml
@@ -248,12 +249,30 @@ fi
 # mechanism relied on.
 #
 # Stray releases from before this fix: past `deploy-user.sh` runs (pre-fix)
-# recorded their release metadata under the default namespace. If a future
-# stand-up finds pending-install/"already exists" errors for a user that
-# should be fresh, check `helm -n default list` for a same-named leftover
-# release and `helm -n default uninstall <username>` it before re-running
-# this script. (Not needed today — prod was fully torn down on 2026-08-17,
-# before this fix existed, so no such stray releases are known to exist.)
+# recorded their release metadata under the default namespace. This is not a
+# hypothetical — it is confirmed to exist right now on the local colima
+# cluster (`helm -n default list` shows user1..user5 recorded there, all
+# pre-fix). Do not assume a given cluster is clean; check before assuming
+# `helm upgrade --install -n "${NS}"` below will behave like a normal
+# first-time install for this user. The detection step immediately below
+# checks `helm -n default status "${RELEASE}"` and fails loudly (exit 1) if a
+# stray pre-fix release is found, rather than silently colliding with it or
+# uninstalling it automatically.
+# platform#75 stray-release detection (fail-loud, no automatic uninstall —
+# this script never runs a destructive `helm uninstall` on its own). Runs
+# before the namespace/pod steps below, not just before the `helm upgrade
+# --install` call: this is confirmed to actually exist on clusters today (not
+# a hypothetical — see the comment above), so it's cheaper to fail here than
+# to first touch the namespace/pod and only then discover `helm upgrade -n
+# "${NS}"` would collide with release metadata still recorded under
+# `default` from a pre-fix run.
+if helm -n default status "${RELEASE}" >/dev/null 2>&1; then
+  red "  ✗ stray pre-fix release '${RELEASE}' found in namespace 'default'"
+  red "    (platform#75: this release predates the -n/--create-namespace fix)"
+  red "    fix: helm -n default uninstall ${RELEASE}   # then re-run this script"
+  exit 1
+fi
+
 info "[1/${LAST_STEP}] ensure namespace ${NS} (single owner: this script)"
 kubectl create namespace "${NS}" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl label namespace "${NS}" --overwrite \
