@@ -202,14 +202,72 @@ else
   fi
 fi
 
-# Determine total step count (4 normally — rotate/upgrade/verify/assert —,
-# 5 when display-name is set).
-LAST_STEP=4
+# Determine total step count (5 normally — namespace/rotate/upgrade/verify/
+# assert —, 6 when display-name is set).
+LAST_STEP=5
 if [[ -n "${DISPLAY_NAME}" ]]; then
-  LAST_STEP=5
+  LAST_STEP=6
 fi
 
-info "[1/${LAST_STEP}] rotate workspace Pod (Pod fields are immutable across helm upgrade)"
+# Namespace ownership (platform#75 / ADR-0011-consistent single-owner pattern).
+#
+# platform#75: this call used to invoke `helm upgrade --install` without `-n`
+# or `--create-namespace`, so the RELEASE metadata was recorded under helm's
+# default namespace (usually `default`) while the rendered resources (every
+# template in this chart sets `namespace: {{ include "ctf-user.namespace" . }}`
+# explicitly) landed in the real `ctf-<user>` namespace. `helm -n ctf-<user>
+# list/uninstall` then found nothing (release: not found) — this is what broke
+# teardown silently.
+#
+# The naive fix ("just add -n \"${NS}\" --create-namespace" to the helm call
+# below") is NOT safe on its own: this chart used to template its own
+# Namespace object (`templates/namespace.yaml`, now removed). `--create-
+# namespace` creates a bare, un-annotated Namespace via the k8s API *before*
+# the chart's manifest is applied; if the chart's own Namespace template for
+# the *same name* were then applied as part of the very same install, Helm's
+# ownership-annotation check would see an already-existing object with no
+# `meta.helm.sh/release-name` annotation and refuse it ("invalid ownership
+# metadata"). That is exactly the two-owners conflict ADR-0011
+# (docs/adr/0011-namespace-bootstrap-single-owner.md) fixed for auth-policy/
+# collector/scoreboard/docs, and ADR-0011 explicitly requires that any fix to
+# this script decide the ctf-user namespace ownership question rather than
+# reintroducing the same conflict (see that ADR's Context/Consequences:
+# "platform#75 対応時の条件").
+#
+# ADR-0011's own pattern doesn't fit here as-is: its bootstrap `namespaces`
+# chart only `range`s a static list resolved at helmfile render time, but
+# ctf-user namespaces are created dynamically per participant outside
+# helmfile's management. So this script — the one and only thing that ever
+# creates a `ctf-<user>` namespace — takes on the single-owner role directly:
+# it creates/labels the Namespace itself with plain `kubectl` (idempotent, no
+# Helm involvement) *before* invoking Helm, and the chart no longer templates
+# a Namespace object at all. `helm upgrade --install` below then only ever
+# sees a namespace that already exists with the right labels, so its
+# `--create-namespace` flag is a harmless no-op safety net (it only fires if
+# this pre-step were ever skipped by calling helm directly), not the
+# mechanism relied on.
+#
+# Stray releases from before this fix: past `deploy-user.sh` runs (pre-fix)
+# recorded their release metadata under the default namespace. If a future
+# stand-up finds pending-install/"already exists" errors for a user that
+# should be fresh, check `helm -n default list` for a same-named leftover
+# release and `helm -n default uninstall <username>` it before re-running
+# this script. (Not needed today — prod was fully torn down on 2026-08-17,
+# before this fix existed, so no such stray releases are known to exist.)
+info "[1/${LAST_STEP}] ensure namespace ${NS} (single owner: this script)"
+kubectl create namespace "${NS}" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+kubectl label namespace "${NS}" --overwrite \
+  app.kubernetes.io/name=ctf-user \
+  app.kubernetes.io/instance="${USERNAME}" \
+  app.kubernetes.io/managed-by=deploy-user.sh \
+  app.kubernetes.io/part-of=falco-ctf \
+  falco-ctf/username="${USERNAME}" \
+  falco-ctf/challenge-id="${CHALLENGE_ID}" \
+  pod-security.kubernetes.io/enforce=baseline \
+  pod-security.kubernetes.io/audit=restricted \
+  pod-security.kubernetes.io/warn=restricted >/dev/null
+
+info "[2/${LAST_STEP}] rotate workspace Pod (Pod fields are immutable across helm upgrade)"
 # `--ignore-not-found` makes this safe for first-time installs.
 # Errors here would only mean the namespace doesn't exist yet, also fine.
 kubectl -n "${NS}" delete pod workspace --ignore-not-found --wait=true >/dev/null 2>&1 || true
@@ -249,9 +307,16 @@ if [[ "${EGRESS_LOCKDOWN}" -eq 1 ]]; then
   EGRESS_ARGS+=(--set "networkPolicy.egress.apiServerCidr=${API_SERVER_CIDR}")
 fi
 
-info "[2/${LAST_STEP}] helm upgrade --install ${RELEASE} (challenge=${CHALLENGE_ID})"
+info "[3/${LAST_STEP}] helm upgrade --install ${RELEASE} (challenge=${CHALLENGE_ID})"
 # `${arr:+"${arr[@]}"}` lets these expand to nothing when empty under `set -u`.
+# `-n "${NS}"` keeps the release metadata in the same namespace as the
+# rendered resources (platform#75). `--create-namespace` is a harmless no-op
+# here since the "ensure namespace" step above already guarantees ${NS}
+# exists before this call — see that step's comment for why relying on
+# `--create-namespace` alone (with the chart still templating its own
+# Namespace object) would NOT be safe.
 helm upgrade --install "${RELEASE}" "${CHART_DIR}" \
+  -n "${NS}" --create-namespace \
   --set "username=${USERNAME}" \
   --set "challengeId=${CHALLENGE_ID}" \
   ${DNS_SUFFIX:+--set dnsSuffix="${DNS_SUFFIX}"} \
@@ -262,7 +327,7 @@ helm upgrade --install "${RELEASE}" "${CHART_DIR}" \
   ${FLAG_ARGS:+"${FLAG_ARGS[@]}"} \
   --wait --timeout 2m
 
-info "[3/${LAST_STEP}] verify"
+info "[4/${LAST_STEP}] verify"
 kubectl -n "${NS}" wait pod/workspace --for=condition=Ready --timeout=60s
 HOST=$(kubectl -n "${NS}" get ingress ttyd -o jsonpath='{.spec.rules[0].host}')
 green "  ✓ ready — http://${HOST}/"
@@ -273,7 +338,7 @@ green "  ✓ ready — http://${HOST}/"
 # script (Cross-repo 契約: deploy-user.sh's non-zero exit is a fail-closed
 # contract the caller must not swallow; deploy-event-workspaces.sh collects
 # per-user exit status on the platform side).
-info "[4/${LAST_STEP}] assert flag isolation (ADR-0001 Verification 3)"
+info "[5/${LAST_STEP}] assert flag isolation (ADR-0001 Verification 3)"
 "${CHART_DIR}/assert-flag-isolation.sh" "${NS}" "${CHALLENGES_DIR}" "${CHALLENGE_ID}"
 
 # Register the display name on the scoreboard (first-set-only).
@@ -281,7 +346,7 @@ info "[4/${LAST_STEP}] assert flag isolation (ADR-0001 Verification 3)"
 # machine, so we exec into an ingress-nginx pod (which the scoreboard
 # NetworkPolicy already admits) and curl from there.
 if [[ -n "${DISPLAY_NAME}" ]]; then
-  info "[5/${LAST_STEP}] register display name on scoreboard"
+  info "[6/${LAST_STEP}] register display name on scoreboard"
   INGRESS_POD=$(kubectl -n ingress-nginx get pod \
     -l app.kubernetes.io/name=ingress-nginx \
     -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
