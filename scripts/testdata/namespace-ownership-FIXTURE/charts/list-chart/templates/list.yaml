@@ -1,0 +1,11 @@
+# Fixture: a Namespace object hiding inside a `kind: List` items array — the
+# `kind: Namespace` line here is indented (4 spaces), not flush-left. An
+# exact full-line-match grep (no leading-whitespace tolerance) misses this;
+# scripts/check-namespace-ownership.sh must still catch it.
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: v1
+    kind: Namespace
+    metadata:
+      name: fixture-list-chart-ns

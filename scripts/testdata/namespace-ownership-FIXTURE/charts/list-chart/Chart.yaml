@@ -1,0 +1,16 @@
+# Fixture (5x R2 follow-up, MEDIUM, mutation-tested): a minimal chart that
+# self-templates a Namespace INDIRECTLY — wrapped inside a `kind: List`
+# `items:` array, so the `kind: Namespace` line is indented rather than
+# flush-left. scripts/check-namespace-ownership.sh's header comment already
+# claims "renders the actual manifest, catches indirect assembly regardless
+# of template structure" — this fixture proves that claim by construction.
+# An exact-match `grep -qx 'kind: Namespace'` (no leading-whitespace
+# tolerance) misses this case (confirmed via mutation test: reverting the
+# fix reproduces a false PASS on this fixture). Used only by the
+# namespace-ownership-guard-negative CI job (via --charts-dir).
+apiVersion: v2
+name: list-chart
+description: Fixture chart that self-templates an indented Namespace inside a List
+type: application
+version: 0.1.0
+appVersion: "0.0.0"

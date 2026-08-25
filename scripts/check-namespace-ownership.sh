@@ -27,6 +27,23 @@
 # Rendering and inspecting the actual manifest catches that regardless of
 # how the chart's templates are structured.
 #
+# THE MATCH ITSELF MUST TOLERATE INDENTATION AND QUOTING (5x R2, MEDIUM,
+# mutation-tested 2026-08): an exact full-line match (`grep -qx 'kind:
+# Namespace'`, no leading-whitespace tolerance) misses a Namespace object
+# nested inside a `kind: List` `items:` array — YAML that `helm template`
+# happily renders, where the `kind: Namespace` line is indented, not
+# flush-left. That's a live way to (accidentally or not) reintroduce the
+# exact ADR-0011 violation this script exists to catch, and it slipped past
+# the "verified once by hand" check when this script was first written —
+# the fixture chart scripts/testdata/namespace-ownership-FIXTURE/charts/list-chart
+# reproduces it (mutation-tested: reverting to the exact-match grep
+# reproduces a false PASS on that fixture). The regex below
+# (`^[[:space:]]*kind:[[:space:]]*"?Namespace"?[[:space:]]*$`) matches
+# `kind: Namespace` at any indentation and tolerates an optional quoted
+# value (`kind: "Namespace"`), while still anchoring on the full value so it
+# does not false-positive on `kind: NamespaceList` or similar — same pattern
+# falco-ctf-platform's check-namespace-guard.sh already uses.
+#
 # SCOPE: charts/ctf-user is excluded. ADR-0011's Context section explains why
 # ("ctf-user は対象外") — deploy-user.sh doesn't pass -n/--create-namespace to
 # `helm upgrade --install`, so ctf-user doesn't hit the same failure modes
@@ -39,12 +56,25 @@
 # failure is itself a violation (fail-closed), and the chart-directory
 # extraction asserts non-empty before looping (an empty extraction must never
 # read as "nothing to check, so pass").
+#
+# Usage:
+#   ./scripts/check-namespace-ownership.sh                   # checks charts/ (repo-relative)
+#   ./scripts/check-namespace-ownership.sh --charts-dir DIR   # checks DIR instead
+#     (--charts-dir is used by the CI negative test (5x R3 follow-up) to point
+#      this same script at scripts/testdata/namespace-ownership-FIXTURE/charts,
+#      a tree with a deliberately-violating chart, without touching the real
+#      charts/ directory. Mirrors falco-ctf-platform's
+#      check-namespace-guard.sh --releases-dir.)
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
 CHARTS_DIR="charts"
 EXCLUDE_CHART="ctf-user"
 RC=0
+
+if [ "${1:-}" = "--charts-dir" ]; then
+  CHARTS_DIR="${2:?--charts-dir requires a directory}"
+fi
 
 shopt -s nullglob
 chart_dirs=("$CHARTS_DIR"/*/)
@@ -73,7 +103,7 @@ for chart_dir in "${chart_dirs[@]}"; do
     continue
   fi
 
-  if grep -qx 'kind: Namespace' <<<"$manifest"; then
+  if grep -qE '^[[:space:]]*kind:[[:space:]]*"?Namespace"?[[:space:]]*$' <<<"$manifest"; then
     echo "  FAIL: ${chart} renders a document with kind: Namespace" \
          "(ADR-0011: Namespace ownership belongs solely to the platform-side" \
          "'namespaces' bootstrap release — this chart must not template its own)" >&2

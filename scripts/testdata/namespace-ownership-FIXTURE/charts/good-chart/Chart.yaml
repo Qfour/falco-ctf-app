@@ -1,0 +1,10 @@
+# Fixture (5x R3 follow-up to platform#111 / ADR-0011): a minimal, valid Helm
+# chart that renders no Namespace object, used to prove the guard does NOT
+# false-positive on an ordinary chart. Used only by the
+# namespace-ownership-guard-negative CI job (via --charts-dir).
+apiVersion: v2
+name: good-chart
+description: Fixture chart with no Namespace template (negative-of-the-negative check)
+type: application
+version: 0.1.0
+appVersion: "0.0.0"
