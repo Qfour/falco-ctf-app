@@ -63,6 +63,21 @@ var validMission = regexp.MustCompile(`^[0-9]{2}-[a-z0-9-]{1,60}$`)
 // max keeps leaderboard columns predictable.
 var invalidDisplayName = regexp.MustCompile(`[<>&"'\x00-\x1f\x7f]`)
 
+// Stable, non-leaking response-body text (Issue #113). Never put err.Error()
+// from a JSON decode or a store/SQLite call into a response body — the
+// decoder can name internal struct fields and the store can surface driver
+// text, schema names, or file paths. Log the real err via h.logger next to
+// the WriteJSON call; the body always gets one of these constants instead.
+// Named (not inlined) so a future RFC 9457 problem+json contract (pending
+// ADR) can carry the same string into a machine-checked field without a
+// second wording change.
+const (
+	errMsgInvalidBody          = "invalid request body"
+	errMsgResetFailed          = "could not reset scoreboard"
+	errMsgHintReleaseFailed    = "could not release hint"
+	errMsgSetDisplayNameFailed = "could not set display name"
+)
+
 // triggerDetectWindowSeconds is the lookback the Journey UI uses to surface
 // which of a trigger mission's expectedRules the participant has already fired
 // (detectedRules). It is a UI-DISPLAY-ONLY lookback: the actual solve verdict
@@ -726,7 +741,7 @@ func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
 	n, err := h.store.Reset()
 	if err != nil {
 		h.logger.Error("reset failed", "err", err)
-		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgResetFailed})
 		return
 	}
 	h.logger.Info("scoreboard reset", "by", email, "cleared_solves", n)
@@ -758,7 +773,8 @@ func (h *Handler) releaseHint(w http.ResponseWriter, r *http.Request) {
 		Released bool   `json:"released"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		h.logger.Warn("release hint: invalid body", "err", err, "remote_addr", r.RemoteAddr)
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": errMsgInvalidBody})
 		return
 	}
 	if !validMission.MatchString(req.Mission) {
@@ -771,7 +787,7 @@ func (h *Handler) releaseHint(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.store.ReleaseHint(req.Mission, req.Hint, req.Released, h.now().UTC().Format(time.RFC3339)); err != nil {
 		h.logger.Error("hint release failed", "err", err)
-		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgHintReleaseFailed})
 		return
 	}
 	h.logger.Info("hint release", "by", email, "mission", req.Mission, "hint", req.Hint, "released", req.Released)
@@ -812,18 +828,21 @@ func (h *Handler) adminSetDisplayName(w http.ResponseWriter, r *http.Request) {
 		Name string `json:"name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		h.logger.Warn("admin set display name: invalid body", "err", err, "remote_addr", r.RemoteAddr)
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": errMsgInvalidBody})
 		return
 	}
 	name, err := validDisplayName(req.Name)
 	if err != nil {
+		// Self-crafted validation message (validDisplayName), not an
+		// internal/store error — safe to return verbatim.
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
 	at := h.now().UTC().Format(time.RFC3339Nano)
 	if err := h.store.SetDisplayName(user, name, at); err != nil {
 		h.logger.Error("admin set display name", "err", err, "user", user)
-		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgSetDisplayNameFailed})
 		return
 	}
 	h.logger.Info("admin display_name", "user", user, "display_name", name, "remote_addr", r.RemoteAddr)
@@ -872,7 +891,7 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		metrics.SubmissionsTotal.WithLabelValues(cid, "bad_request").Inc()
 		auditLog("bad_request", "err", err.Error())
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": errMsgInvalidBody})
 		return
 	}
 	user := strings.TrimSpace(req.User)
@@ -1036,7 +1055,7 @@ func (h *Handler) submitDetect(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		metrics.SubmissionsTotal.WithLabelValues(cid, "bad_request").Inc()
 		auditLog("bad_request", "err", err.Error())
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": errMsgInvalidBody})
 		return
 	}
 	user := strings.TrimSpace(req.User)
@@ -1190,7 +1209,7 @@ func (h *Handler) exfilInternal(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		auditLog("bad_request", "err", err.Error())
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": errMsgInvalidBody})
 		return
 	}
 	user := strings.TrimSpace(req.User)
@@ -1261,7 +1280,8 @@ func (h *Handler) stepCheck(w http.ResponseWriter, r *http.Request) {
 		Checked bool `json:"checked"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		h.logger.Warn("step check: invalid body", "err", err, "user", user, "cid", cid, "idx", idx)
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": errMsgInvalidBody})
 		return
 	}
 
@@ -1446,11 +1466,14 @@ func (h *Handler) setDisplayName(w http.ResponseWriter, r *http.Request) {
 		Name string `json:"name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		h.logger.Warn("set display name: invalid body", "err", err, "user", user, "remote_addr", r.RemoteAddr)
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": errMsgInvalidBody})
 		return
 	}
 	name, err := validDisplayName(req.Name)
 	if err != nil {
+		// Self-crafted validation message (validDisplayName), not an
+		// internal/store error — safe to return verbatim.
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
@@ -1458,7 +1481,7 @@ func (h *Handler) setDisplayName(w http.ResponseWriter, r *http.Request) {
 	at := h.now().UTC().Format(time.RFC3339Nano)
 	if err := h.store.SetDisplayName(user, name, at); err != nil {
 		h.logger.Error("set display name", "err", err, "user", user)
-		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgSetDisplayNameFailed})
 		return
 	}
 	h.logger.Info("display_name",
