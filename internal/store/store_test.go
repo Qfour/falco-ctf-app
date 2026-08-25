@@ -526,3 +526,124 @@ func TestReset_ClearsDirtyFlags(t *testing.T) {
 		t.Fatalf("admin Reset must clear dirty flags too, got %v", got)
 	}
 }
+
+// --- ADR-0008: expected_rule_fire (positive-proof gate) ---------------------
+
+func TestHasExpectedRuleFire_FalseByDefault(t *testing.T) {
+	s := newStore(t)
+	if s.HasExpectedRuleFire("alice", "05-silent-search") {
+		t.Fatal("untouched pair must report false")
+	}
+}
+
+// TestRecordExpectedRuleFire_SetsAndIsIdempotent mirrors
+// TestMarkDirty_SetsAndAccumulatesRules: recording the same rule twice must
+// not error (INSERT OR IGNORE, PRIMARY KEY (user, challenge, rule)), and the
+// pair must read back true after the first record.
+func TestRecordExpectedRuleFire_SetsAndIsIdempotent(t *testing.T) {
+	s := newStore(t)
+	if err := s.RecordExpectedRuleFire("alice", "05-silent-search", "Shell Redirected Private Key Read", "2026-08-25T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	if !s.HasExpectedRuleFire("alice", "05-silent-search") {
+		t.Fatal("must report true after recording a fire")
+	}
+	// Re-recording the same rule must not error or otherwise change the answer.
+	if err := s.RecordExpectedRuleFire("alice", "05-silent-search", "Shell Redirected Private Key Read", "2026-08-25T00:00:01Z"); err != nil {
+		t.Fatalf("re-recording an existing fire must not error: %v", err)
+	}
+	if !s.HasExpectedRuleFire("alice", "05-silent-search") {
+		t.Fatal("must still report true after re-recording")
+	}
+}
+
+// TestRecordExpectedRuleFire_ScopedPerUserAndChallenge mirrors
+// TestMarkDirty_ScopedPerUserAndChallenge — a bystander must never inherit
+// another participant's proof, and one challenge's proof must not bleed into
+// a sibling challenge for the same user.
+func TestRecordExpectedRuleFire_ScopedPerUserAndChallenge(t *testing.T) {
+	s := newStore(t)
+	if err := s.RecordExpectedRuleFire("alice", "05-silent-search", "Shell Redirected Private Key Read", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if s.HasExpectedRuleFire("bob", "05-silent-search") {
+		t.Fatal("bob must not inherit alice's proof")
+	}
+	if s.HasExpectedRuleFire("alice", "10-final-exfil") {
+		t.Fatal("a different challenge for the same user must stay unproven")
+	}
+}
+
+// TestResetDirty_NeverClearsExpectedRuleFire is ADR-0008 Decision (4)'s
+// dedicated negative test (Verification (b)(v)): unlike evade_dirty and
+// exfil, ResetDirty must NOT touch expected_rule_fire — the positive proof
+// is a context-free fact that a taint reset can never make untrue (see
+// internal/store's package doc for the full rationale). If this test ever
+// fails because ResetDirty starts clearing expected_rule_fire, that is
+// exactly the regression ADR-0008 Decision (4) warns against: a participant
+// would have to re-prove a technique they already legitimately proved, every
+// time they redo a dirtied attempt.
+func TestResetDirty_NeverClearsExpectedRuleFire(t *testing.T) {
+	s := newStore(t)
+	if err := s.RecordExpectedRuleFire("alice", "05-silent-search", "Shell Redirected Private Key Read", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkDirty("alice", "05-silent-search", "Search Private Keys or Passwords", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ResetDirty("alice", "05-silent-search"); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.DirtyRules("alice", "05-silent-search"); len(got) != 0 {
+		t.Fatalf("reset must still clear the taint, got %v", got)
+	}
+	if !s.HasExpectedRuleFire("alice", "05-silent-search") {
+		t.Fatal("ADR-0008 Decision (4): reset-dirty must NOT clear expected_rule_fire")
+	}
+}
+
+// TestReset_ClearsExpectedRuleFire is ADR-0008 Decision (4)'s dedicated
+// positive test (Verification (b)(vi)): the admin's full event-wide Reset()
+// DOES clear expected_rule_fire, symmetric with every other per-participant
+// table it already wipes (solved/exfil/hint_views/step_checks/evade_dirty).
+func TestReset_ClearsExpectedRuleFire(t *testing.T) {
+	s := newStore(t)
+	if err := s.RecordExpectedRuleFire("alice", "05-silent-search", "Shell Redirected Private Key Read", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	if s.HasExpectedRuleFire("alice", "05-silent-search") {
+		t.Fatal("admin Reset must clear expected_rule_fire too")
+	}
+}
+
+// TestExpectedRuleFire_SurvivesReopen is the store-level restart-survival
+// proof, mirroring TestDirtyFlag_SurvivesReopen — the positive-proof record
+// must persist across a scoreboard restart (I1: single replica, Recreate
+// strategy) exactly like evade_dirty does.
+func TestExpectedRuleFire_SurvivesReopen(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "scoreboard.db")
+
+	s1, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s1.RecordExpectedRuleFire("alice", "05-silent-search", "Shell Redirected Private Key Read", "2026-08-25T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s1.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s2, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer s2.Close()
+	if !s2.HasExpectedRuleFire("alice", "05-silent-search") {
+		t.Fatal("ADR-0008 regression: positive proof did not survive a store restart")
+	}
+}

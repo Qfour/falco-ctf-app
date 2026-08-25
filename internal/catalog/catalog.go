@@ -19,6 +19,16 @@
 //	requireExfil:  bool — evade only; solve also requires the user to have
 //	               exfiltrated the correct flag to the collector
 //	               (POST /api/challenges/{cid}/exfil) before submitting.
+//	requireExpectedRuleFire: bool — evade only (ADR-0008); solve also
+//	               requires that at least one of expectedRules has fired for
+//	               this (user, challenge) at some point (a POSITIVE proof the
+//	               participant actually exercised the evasion technique, not
+//	               just the ABSENCE of a forbiddenRules taint — ADR-0003 C5 /
+//	               ADR-0008 Context). Requires len(expectedRules) > 0 (see
+//	               parseFile). Unlike requireExfil, the recorded fire is
+//	               NEVER cleared by the participant's reset-dirty endpoint
+//	               (see internal/store's expected_rule_fire table doc for
+//	               why this asymmetry is safe).
 //	detect:        Detect — required for "detect"; the capture pair + rule
 //	               skeleton the participant's condition is graded against
 //	               (see Detect and the detect-challenge design doc).
@@ -76,7 +86,12 @@ type Challenge struct {
 	ForbiddenRules []string `yaml:"forbiddenRules"`
 	ExpectedFlag   string   `yaml:"expectedFlag"`
 	RequireExfil   bool     `yaml:"requireExfil"`
-	Detect         *Detect  `yaml:"detect"`
+	// RequireExpectedRuleFire (ADR-0008): evade only. When true, load-time
+	// validation (parseFile) requires len(ExpectedRules) > 0 — mirroring the
+	// trigger-type validation below — since a positive-proof gate with no
+	// rule to prove would be unsatisfiable by construction.
+	RequireExpectedRuleFire bool    `yaml:"requireExpectedRuleFire"`
+	Detect                  *Detect `yaml:"detect"`
 	// dir is the challenge's directory name (e.g. "03-stealth-read-detect"),
 	// captured at load time. Detect capture paths are relative to <catalogRoot>/<dir>.
 	// Not a yaml field.
@@ -157,6 +172,10 @@ func parseFile(path, dirName string) (Challenge, error) {
 		}
 		if !flagRE.MatchString(ch.ExpectedFlag) {
 			return Challenge{}, fmt.Errorf("evade challenge %q: expectedFlag must match FALCO{...}", ch.ID)
+		}
+		// ADR-0008 Decision (3): a positive-proof gate needs a rule to prove.
+		if ch.RequireExpectedRuleFire && len(ch.ExpectedRules) == 0 {
+			return Challenge{}, fmt.Errorf("evade challenge %q: requireExpectedRuleFire is true but expectedRules is empty", ch.ID)
 		}
 	case "trigger":
 		if len(ch.ExpectedRules) == 0 {

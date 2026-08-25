@@ -1,0 +1,15 @@
+# Project-specific Falco rule names that DO NOT exist in the upstream
+# falcosecurity/rules ruleset (see scripts/check-challenge-rules.sh's
+# FALCO_RULES_REF), but ARE deployed via platform's Falco `customRules`
+# override (falco-ctf-platform/helmfile/releases/falco/values.yaml.gotmpl).
+#
+# ADR-0008 Decision (5): scripts/check-challenge-rules.sh treats
+# "upstream ruleset ∪ this file" as the known-rule-name set when validating
+# challenges/*/falco-rule.yaml's expectedRules/forbiddenRules. Add a rule name
+# here ONLY when it is genuinely a new project-defined customRule landing in
+# the platform repo in the same change window (Decision (5)'s DoD) — this is
+# an allowlist, not an escape hatch for typos.
+#
+# One rule name per line. Blank lines and lines starting with # are ignored.
+
+Shell Redirected Private Key Read

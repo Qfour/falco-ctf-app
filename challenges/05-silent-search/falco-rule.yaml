@@ -2,6 +2,15 @@ challengeId: 05-silent-search
 type: evade
 forbiddenRules:
   - Search Private Keys or Passwords
+# ADR-0008 Decision (2)(3): positive proof-of-technique. "Shell Redirected
+# Private Key Read" is a NEW project-specific Falco rule (not upstream —
+# see challenges/custom-falco-rules.txt) that fires when a shell opens
+# /root/.ssh/id_rsa via input redirection BEFORE exec'ing its next command,
+# proving the participant actually used the redirection technique rather
+# than merely never having triggered the forbidden rule above.
+expectedRules:
+  - Shell Redirected Private Key Read
+requireExpectedRuleFire: true
 # Placeholder for local dev/tests. Real flag injected at deploy via FLAGS_FILE.
 expectedFlag: FALCO{dev-silent-search}
 # ATT&CK mapping — canonical source for docs/Navigator layer (make gen-attack).

@@ -932,6 +932,25 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 				outcome.Offending, user,
 			),
 		})
+	case scoring.EvadeExpectedRuleFireRequired:
+		// ADR-0008: positive-proof gate — flag correct + not dirty, but none of
+		// the mission's expectedRules has ever fired for this user. Declared
+		// between EvadeForbiddenFired and EvadeExfilRequired to mirror
+		// evaluateClean's gate order (dirty -> expectedRuleFire -> exfil ->
+		// solve).
+		metrics.SubmissionsTotal.WithLabelValues(cid, "not_proven").Inc()
+		auditLog("not_proven", "user", user)
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"correct": true,
+			"evaded":  true,
+			"proven":  false,
+			"reason": fmt.Sprintf(
+				"flag is correct and the window is clean, but %q has not yet demonstrated the "+
+					"evasion technique this mission requires — no matching Falco event has fired. "+
+					"Follow the mission brief's technique, then submit again.",
+				user,
+			),
+		})
 	case scoring.EvadeExfilRequired:
 		metrics.SubmissionsTotal.WithLabelValues(cid, "not_exfiltrated").Inc()
 		auditLog("not_exfiltrated", "user", user)
@@ -1876,6 +1895,15 @@ func (h *Handler) missionDetail(user, cid, status, leadIn string, checkedSteps, 
 	requireExfil := ch.Type == "evade" && ch.RequireExfil
 	exfilReceived := requireExfil && h.store.HasExfilAny(user, cid)
 
+	// requireExpectedRuleFire / expectedRuleFired (ADR-0008): the positive-proof
+	// gate's read-only projection, symmetric with requireExfil/exfilReceived
+	// above. expectedRuleFired never expires and is NOT cleared by
+	// reset-dirty (see internal/store's expected_rule_fire doc) — it stays
+	// true forever once the participant has demonstrated the technique once,
+	// across any number of subsequent resets of THIS mission's dirty taint.
+	requireExpectedRuleFire := ch.Type == "evade" && ch.RequireExpectedRuleFire
+	expectedRuleFired := requireExpectedRuleFire && h.store.HasExpectedRuleFire(user, cid)
+
 	// Trigger-solve live feedback (#39): a trigger challenge auto-solves when the
 	// participant's action makes Falco emit one of expectedRules. Before this the
 	// Journey UI gave the participant no on-screen cue for what "success" looks
@@ -1949,24 +1977,26 @@ func (h *Handler) missionDetail(user, cid, status, leadIn string, checkedSteps, 
 	}
 
 	return map[string]any{
-		"id":            cid,
-		"status":        status,
-		"title":         title,
-		"tagline":       j.Tagline,
-		"briefing":      j.Briefing,
-		"leadIn":        leadIn,
-		"type":          ch.Type,
-		"docsUrl":       h.docsURL(j.DocsURL),
-		"hasJourney":    hasJourney,
-		"requireExfil":  requireExfil,
-		"exfilReceived": exfilReceived,
-		"expectedRules": expectedRules,
-		"detectedRules": detectedRules,
-		"dirty":         len(dirtyRules) > 0,
-		"dirtyRules":    dirtyRules,
-		"steps":         steps,
-		"falcoRule":     falcoRule,
-		"hasFalcoRule":  hasFalcoRule,
+		"id":                      cid,
+		"status":                  status,
+		"title":                   title,
+		"tagline":                 j.Tagline,
+		"briefing":                j.Briefing,
+		"leadIn":                  leadIn,
+		"type":                    ch.Type,
+		"docsUrl":                 h.docsURL(j.DocsURL),
+		"hasJourney":              hasJourney,
+		"requireExfil":            requireExfil,
+		"exfilReceived":           exfilReceived,
+		"requireExpectedRuleFire": requireExpectedRuleFire,
+		"expectedRuleFired":       expectedRuleFired,
+		"expectedRules":           expectedRules,
+		"detectedRules":           detectedRules,
+		"dirty":                   len(dirtyRules) > 0,
+		"dirtyRules":              dirtyRules,
+		"steps":                   steps,
+		"falcoRule":               falcoRule,
+		"hasFalcoRule":            hasFalcoRule,
 		"hints": map[string]any{
 			"total":       len(j.Hints),
 			"opened":      openedList,

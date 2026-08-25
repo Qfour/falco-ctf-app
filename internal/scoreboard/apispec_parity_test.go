@@ -63,6 +63,14 @@ func newSpecFixture(t *testing.T) *specFixture {
 			ID: "03-boss", Type: "evade", ForbiddenRules: []string{"Forbidden Rule"},
 			ExpectedFlag: "FALCO{boss}", RequireExfil: true,
 		},
+		// 04-proof (ADR-0008): not in WithOrder below (free-browsing only, never
+		// "current" for any test user) — exists solely so
+		// TestAPISpec_V5_SubmitFlagVerdictFieldsMatchSpec can exercise the
+		// EvadeExpectedRuleFireRequired branch and its `proven` response key.
+		"04-proof": {
+			ID: "04-proof", Type: "evade", ExpectedRules: []string{"Proof Rule"},
+			ExpectedFlag: "FALCO{proof}", RequireExpectedRuleFire: true,
+		},
 	}
 	journeys := catalog.Journeys{
 		"01-recon": {
@@ -427,12 +435,13 @@ func TestAPISpec_V5_StateFieldsMatchSpec(t *testing.T) {
 
 // TestAPISpec_V5_SubmitFlagVerdictFieldsMatchSpec is V5 applied to a
 // VARIANT-shaped success schema: SubmitFlagVerdict declares only `correct`
-// as required, and its four documented outcomes (wrong flag / forbidden
-// fired / exfil required / solved) each surface a different subset of the
-// seven declared properties (api.go's submit handler — see its switch over
-// scoring.Evade*). No SINGLE call can ever satisfy a literal "actual keys ==
-// spec properties" comparison for this schema, so this test interprets
-// ADR-0005 V5's "exact match" at the aggregate level: the UNION of keys
+// as required, and its five documented outcomes (wrong flag / forbidden
+// fired / proof required (ADR-0008) / exfil required / solved) each surface
+// a different subset of the eight declared properties (api.go's submit
+// handler — see its switch over scoring.Evade*). No SINGLE call can ever
+// satisfy a literal "actual keys == spec properties" comparison for this
+// schema, so this test interprets ADR-0005 V5's "exact match" at the
+// aggregate level: the UNION of keys
 // observed across all four documented branches must equal the schema's
 // declared properties (no key the schema promises is unreachable by ANY
 // branch, and no branch ever emits a key the schema does not declare). This
@@ -452,6 +461,14 @@ func TestAPISpec_V5_SubmitFlagVerdictFieldsMatchSpec(t *testing.T) {
 	forbidden := f.submit("02-evade", "erin", "FALCO{ok}")
 	if evaded, ok := forbidden["evaded"].(bool); !ok || evaded {
 		t.Fatalf("expected forbidden-fired branch (evaded=false), got %+v", forbidden)
+	}
+
+	// ADR-0008: 04-proof requires a positive expectedRules fire that "heidi"
+	// has never produced — evaluateClean's gate 5 (expectedRuleFire) rejects
+	// before ever reaching the (absent, for this mission) exfil gate.
+	proofRequired := f.submit("04-proof", "heidi", "FALCO{proof}")
+	if proven, ok := proofRequired["proven"].(bool); !ok || proven {
+		t.Fatalf("expected proof-required branch (proven=false), got %+v", proofRequired)
 	}
 
 	f.falcoFire("Recon Rule", "frank")                     // solve 01-recon -> 02-evade current
@@ -477,7 +494,7 @@ func TestAPISpec_V5_SubmitFlagVerdictFieldsMatchSpec(t *testing.T) {
 	want := spec.PropertyNames(schema)
 
 	union := map[string]bool{}
-	branches := []map[string]any{wrong, forbidden, exfilRequired, solved}
+	branches := []map[string]any{wrong, forbidden, proofRequired, exfilRequired, solved}
 	for _, b := range branches {
 		for k := range b {
 			union[k] = true

@@ -173,6 +173,14 @@ type ScoreStore interface {
 	IsSolved(user, challenge string) bool
 	DirtyRules(user, challenge string) []string
 	MarkDirty(user, challenge, rule, at string) error
+	// HasExpectedRuleFire / RecordExpectedRuleFire are ADR-0008's
+	// positive-proof gate — the mirror of DirtyRules/MarkDirty above.
+	// HasExpectedRuleFire reports whether ANY of the challenge's
+	// expectedRules has ever fired for (user, challenge) (no time window,
+	// same as DirtyRules); RecordExpectedRuleFire records one such fire
+	// (idempotent per (user, challenge, rule), same as MarkDirty).
+	HasExpectedRuleFire(user, challenge string) bool
+	RecordExpectedRuleFire(user, challenge, rule, at string) error
 	HasExfil(user, challenge, flag string) bool
 	RecordExfil(user, challenge, flag, at string) error
 	// PendingExfilSolves enumerates every recorded collector receipt whose
@@ -428,10 +436,56 @@ func (g *Grader) markDirtyOnRuleFire(user, rule string) error {
 	return g.store.MarkDirty(user, cur, rule, at)
 }
 
+// recordExpectedRuleFire is ADR-0008's positive-proof write: for EVERY evade
+// challenge (regardless of which mission is current — see below) that has
+// RequireExpectedRuleFire set and lists `rule` among its ExpectedRules,
+// record that the fire happened.
+//
+// Deliberately NOT attempt-scoped (unlike markDirtyOnRuleFire above): the
+// challenge whose ExpectedRules this fire can satisfy is, by construction, a
+// single evade mission with a rule name unique to it (ADR-0008 Decision (3):
+// "Shell Redirected Private Key Read" is 05-only, never shared with another
+// challenge's forbiddenRules/expectedRules the way ADR-0003's twin-mission
+// pairs share a rule name). Attempt-scoping this write closes no exploit
+// (there is no twin-mission collision to guard against here) and would only
+// unfairly penalise a participant who happens to prove the technique before
+// the mission becomes their "current" one — see ADR-0008 Decision (3)'s
+// "write side" note for the full rationale.
+//
+// The `ch.Type == "evade"` guard below is NOT optional: ExpectedRules is a
+// field shared with type=="trigger" challenges (evaluateTrigger reads the
+// same slice, gated the opposite way — `ch.Type != "trigger"` continues).
+// Dropping this guard would let a trigger challenge's ExpectedRules leak
+// into expected_rule_fire, which would silently defeat Verification (c)'s
+// uniqueness check on this ADR's new rule name.
+//
+// unexported (mirrors ADR-0003 A4's markDirtyOnRuleFire/evaluateTrigger
+// split): OnRuleFire is the only public entry point that may call this.
+func (g *Grader) recordExpectedRuleFire(user, rule string) error {
+	var errs []error
+	at := g.now().UTC().Format(time.RFC3339Nano)
+	for _, cid := range g.cat.IDs() {
+		ch := g.cat[cid]
+		if ch.Type != "evade" {
+			continue
+		}
+		if !ch.RequireExpectedRuleFire {
+			continue
+		}
+		if !slices.Contains(ch.ExpectedRules, rule) {
+			continue
+		}
+		if err := g.store.RecordExpectedRuleFire(user, cid, rule, at); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // RuleFireOutcome is the result of Grader.OnRuleFire: the trigger solves the
-// event produced, plus the taint and trigger errors kept SEPARATE (not
-// errors.Join'd into one) because the ingest handler must react to them
-// differently (ADR-0003 A5):
+// event produced, plus the taint / expected-fire / trigger errors kept
+// SEPARATE (not errors.Join'd into one) because the ingest handler must
+// react to them differently (ADR-0003 A5, extended by ADR-0008):
 //
 //   - TaintErr non-nil means the scoring authority may have failed to
 //     PERSIST a taint for the participant's current mission (the in-memory
@@ -440,15 +494,26 @@ func (g *Grader) markDirtyOnRuleFire(user, rule string) error {
 //     FalcoEventsReceived{outcome="taint_error"} metric, never a silent 200 —
 //     an unpersisted taint that also never got counted is a false-clean gap
 //     that survives the next restart undetected.
+//   - ExpectedFireErr non-nil (ADR-0008) means a positive-proof write may
+//     have failed to persist (the in-memory side is still set —
+//     store.RecordExpectedRuleFire is fail-closed, same pattern as
+//     MarkDirty). Handled like TriggerErr below (log and still serve 200,
+//     not TaintErr's 5xx escalation): a lost write here just means the
+//     participant proves the technique again on a later fire of the same
+//     rule, which does not create the kind of false-clean gap a lost taint
+//     does. Kept as its own named field (not folded into TriggerErr) purely
+//     for independent observability — the ingest handler logs each under
+//     its own label.
 //   - TriggerErr non-nil mirrors the pre-ADR-0003 continue-on-error posture:
 //     log and still serve 200. A failed trigger solve just delays that
 //     mission's auto-solve to the next matching Falco fire; it never creates
 //     a false-clean gap the way a lost taint does, so it does not warrant the
 //     same escalation.
 type RuleFireOutcome struct {
-	Results    []TriggerResult
-	TaintErr   error
-	TriggerErr error
+	Results         []TriggerResult
+	TaintErr        error
+	ExpectedFireErr error
+	TriggerErr      error
 }
 
 // OnRuleFire is the Grader's single public entry point for a Falco rule fire
@@ -474,8 +539,20 @@ type RuleFireOutcome struct {
 //     every time, with no way to call them the other way around.
 func (g *Grader) OnRuleFire(user, rule string) RuleFireOutcome {
 	taintErr := g.markDirtyOnRuleFire(user, rule)
+	// ADR-0008's positive-proof write. Order relative to the taint write
+	// above is free (the two never interact — see recordExpectedRuleFire's
+	// doc); placed after it to keep the diff minimal against the pre-ADR-0008
+	// two-step. Must still run BEFORE evaluateTrigger for the same reason the
+	// taint write does: no functional dependency, just keeping this event's
+	// bookkeeping steps together before the (unrelated) trigger-solve step.
+	expectedFireErr := g.recordExpectedRuleFire(user, rule)
 	results, triggerErr := g.evaluateTrigger(user, rule)
-	return RuleFireOutcome{Results: results, TaintErr: taintErr, TriggerErr: triggerErr}
+	return RuleFireOutcome{
+		Results:         results,
+		TaintErr:        taintErr,
+		ExpectedFireErr: expectedFireErr,
+		TriggerErr:      triggerErr,
+	}
 }
 
 // EvadeStatus enumerates the outcome of an evade-challenge submission. The
@@ -495,8 +572,17 @@ const (
 	// populated). Persistent (App-H2): no amount of waiting clears this: only
 	// the explicit reset endpoint does.
 	EvadeForbiddenFired
-	// EvadeExfilRequired: flag correct + not dirty, but the challenge requires
-	// exfil and the collector has not received the matching flag.
+	// EvadeExpectedRuleFireRequired (ADR-0008): flag correct + not dirty, but
+	// the challenge requires positive proof-of-technique
+	// (RequireExpectedRuleFire) and none of its expectedRules has ever fired
+	// for this (user, challenge). Declared here — between EvadeForbiddenFired
+	// and EvadeExfilRequired — to match evaluateClean's gate execution order
+	// (dirty -> expectedRuleFire -> exfil -> solve): this package's existing
+	// self-documenting convention is "declaration order == gate order".
+	EvadeExpectedRuleFireRequired
+	// EvadeExfilRequired: flag correct + not dirty + proof satisfied, but the
+	// challenge requires exfil and the collector has not received the
+	// matching flag.
 	EvadeExfilRequired
 	// EvadeSolved: all gates passed; the solve was recorded (Newly reports
 	// whether it was the first time).
@@ -527,9 +613,13 @@ type EvadeOutcome struct {
 //     recent-window check — there is no server time involved in the decision
 //     at all (contrast the pre-fix version, which read RecentFiresMatching
 //     against g.now()).
-//  5. if RequireExfil, the collector has the matching flag (else
+//  5. if RequireExpectedRuleFire (ADR-0008), at least one expectedRule has
+//     EVER fired for this (user, challenge) (else
+//     EvadeExpectedRuleFireRequired) — the positive-proof counterpart to
+//     gate 4's negative-proof taint.
+//  6. if RequireExfil, the collector has the matching flag (else
 //     EvadeExfilRequired)
-//  6. record the solve → EvadeSolved.
+//  7. record the solve → EvadeSolved.
 //
 // `flag` is expected pre-trimmed by the adapter (the handler trims user input),
 // matching the prior behaviour where the comparison and the exfil lookup both
@@ -545,34 +635,43 @@ func (g *Grader) SubmitEvade(user, cid, flag string) (EvadeOutcome, error) {
 	if flag != ch.ExpectedFlag {
 		return EvadeOutcome{Status: EvadeWrongFlag}, nil
 	}
-	// Gates 4-6 (dirty-flag → exfil gate → MarkSolved) are the *single source
-	// of truth* shared with the auto-solve sweeper (evaluateClean). Any change
-	// to the taint / exfil / record logic must be made there so manual submit
-	// and sweeper stay bit-for-bit identical.
+	// Gates 4-7 (dirty-flag → expectedRuleFire gate → exfil gate → MarkSolved)
+	// are the *single source of truth* shared with the auto-solve sweeper
+	// (evaluateClean). Any change to the taint / proof / exfil / record logic
+	// must be made there so manual submit and sweeper stay bit-for-bit
+	// identical.
 	return g.evaluateClean(user, ch, flag)
 }
 
-// evaluateClean applies the evade challenge's dirty-flag + exfil gate and
-// records the solve. It is the ONE place gates 4-6 live, shared verbatim by the
-// manual /submit path (SubmitEvade) and the auto-solve Sweeper (Sweep). Callers
-// must have already established (per SubmitEvade's gates 1-3): the challenge
-// exists, is evade type, and `flag` equals ch.ExpectedFlag.
+// evaluateClean applies the evade challenge's dirty-flag + expectedRuleFire +
+// exfil gate and records the solve. It is the ONE place gates 4-7 live,
+// shared verbatim by the manual /submit path (SubmitEvade) and the
+// auto-solve Sweeper (Sweep). Callers must have already established (per
+// SubmitEvade's gates 1-3): the challenge exists, is evade type, and `flag`
+// equals ch.ExpectedFlag.
 //
 //  4. the pair is not dirty (store.DirtyRules empty) — App-H2: a PERSISTENT
 //     taint, not a time window. g.now() plays no part in this decision at
 //     all, so there is nothing here for an attacker-supplied or
 //     server-advancing clock to influence.
-//  5. if RequireExfil, the collector holds the matching flag (HasExfil).
-//  6. record the solve → EvadeSolved (Newly = first-time).
+//  5. if RequireExpectedRuleFire (ADR-0008), store.HasExpectedRuleFire holds
+//     for this (user, challenge) — the positive-proof counterpart to gate 4,
+//     same no-time-window property.
+//  6. if RequireExfil, the collector holds the matching flag (HasExfil).
+//  7. record the solve → EvadeSolved (Newly = first-time).
 //
 // Fail-closed: any store error from MarkSolved is returned unrecorded; a
-// dirty pair or unmet exfil returns the corresponding non-solved status, so a
-// caller that mis-drives this (e.g. the sweeper enqueuing a still-dirty pair)
-// simply does not solve — it never records a solve it should not.
+// dirty pair, unmet proof, or unmet exfil returns the corresponding
+// non-solved status, so a caller that mis-drives this (e.g. the sweeper
+// enqueuing a still-dirty pair) simply does not solve — it never records a
+// solve it should not.
 func (g *Grader) evaluateClean(user string, ch catalog.Challenge, flag string) (EvadeOutcome, error) {
 	offending := g.store.DirtyRules(user, ch.ID)
 	if len(offending) > 0 {
 		return EvadeOutcome{Status: EvadeForbiddenFired, Offending: offending}, nil
+	}
+	if ch.RequireExpectedRuleFire && !g.store.HasExpectedRuleFire(user, ch.ID) {
+		return EvadeOutcome{Status: EvadeExpectedRuleFireRequired}, nil
 	}
 	if ch.RequireExfil && !g.store.HasExfil(user, ch.ID, flag) {
 		return EvadeOutcome{Status: EvadeExfilRequired}, nil
