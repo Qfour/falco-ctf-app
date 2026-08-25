@@ -1,8 +1,11 @@
-# Fixture: this chart self-templates a Namespace, but its directory is named
-# "ctf-user" — ADR-0011's explicit exclusion — so
-# scripts/check-namespace-ownership.sh must SKIP it (not fire), proving the
-# exclusion is keyed on chart directory name and still applies under a
-# fixture tree.
+# Fixture (Issue #198, follow-up to platform#75 / ADR-0011): this chart
+# self-templates a Namespace and is named "ctf-user" — the name that used to
+# be excluded from scripts/check-namespace-ownership.sh before Issue #198
+# lifted that exclusion. It now proves the OPPOSITE of what it used to prove:
+# the guard must FIRE on it exactly like bad-chart/list-chart, with no
+# by-name exemption, so that a future PR that reintroduces
+# charts/ctf-user/templates/namespace.yaml in the real chart tree would be
+# caught rather than silently skipped.
 apiVersion: v1
 kind: Namespace
 metadata:

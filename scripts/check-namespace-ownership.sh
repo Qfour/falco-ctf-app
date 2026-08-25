@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # ADR-0011 (Accepted) follow-up (platform#111): fail-closed static guard that
-# no chart under charts/ (except charts/ctf-user, which ADR-0011 explicitly
-# excludes) renders a `kind: Namespace` object.
+# no chart under charts/ renders a `kind: Namespace` object.
 #
 # WHY THIS EXISTS
 # ----------------
@@ -44,21 +43,22 @@
 # does not false-positive on `kind: NamespaceList` or similar — same pattern
 # falco-ctf-platform's check-namespace-guard.sh already uses.
 #
-# SCOPE: charts/ctf-user is excluded (by name, unconditionally). ADR-0011's
-# Context section explains why folding it into the platform bootstrap release
-# isn't structurally straightforward (dynamic per-participant namespaces vs.
-# a static `.Values.namespaces` list). platform#75 (deploy-user.sh's missing
-# `-n`) has since been fixed by applying ADR-0011's single-owner *principle*
-# directly in deploy-user.sh instead: that script now creates/labels the
-# `ctf-<user>` Namespace itself with plain `kubectl` before ever calling helm,
-# and charts/ctf-user/templates/namespace.yaml has been removed — so the real
-# chart no longer renders a Namespace object at all and would pass this guard
-# even if the exclusion below were lifted. The exclusion is kept anyway
-# because lifting it would also require updating the CI negative-test fixture
-# (scripts/testdata/namespace-ownership-FIXTURE/charts/ctf-user, which
-# deliberately self-templates a Namespace to prove the exclusion works) and
-# its expectations in .github/workflows/ci.yaml — a separate, explicit
-# follow-up, not bundled into the platform#75 fix.
+# SCOPE: charts/ctf-user is no longer excluded (Issue #198, follow-up to
+# platform#75 / ADR-0011). ADR-0011's Context section explains why folding
+# ctf-user's namespace into the platform bootstrap release isn't structurally
+# straightforward (dynamic per-participant namespaces vs. a static
+# `.Values.namespaces` list). platform#75 (deploy-user.sh's missing `-n`) was
+# instead fixed by applying ADR-0011's single-owner *principle* directly in
+# deploy-user.sh: that script now creates/labels the `ctf-<user>` Namespace
+# itself with plain `kubectl` before ever calling helm, and
+# charts/ctf-user/templates/namespace.yaml has been removed — so the real
+# chart no longer renders a Namespace object at all and passes this guard
+# with no exclusion needed. An unconditional by-name exclusion left in place
+# after that fix would itself become the exact kind of unenforced regression
+# this guard exists to prevent: if a future PR reintroduced
+# charts/ctf-user/templates/namespace.yaml, an exclusion would let it pass
+# silently. So the exclusion has been lifted; ctf-user is checked exactly
+# like every other chart under charts/.
 #
 # Exit status: 0 iff no in-scope chart renders a Namespace object and every
 # in-scope chart renders successfully. Never fail-open: a `helm template`
@@ -78,7 +78,6 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
 CHARTS_DIR="charts"
-EXCLUDE_CHART="ctf-user"
 RC=0
 
 if [ "${1:-}" = "--charts-dir" ]; then
@@ -97,11 +96,6 @@ fi
 
 for chart_dir in "${chart_dirs[@]}"; do
   chart="$(basename "$chart_dir")"
-
-  if [ "$chart" = "$EXCLUDE_CHART" ]; then
-    echo "== ${chart} (skipped — ADR-0011 excludes ctf-user from this guard) =="
-    continue
-  fi
 
   echo "== ${chart} =="
   manifest=""
@@ -128,4 +122,4 @@ if [ "$RC" -ne 0 ]; then
   exit 1
 fi
 
-echo "OK: no chart under charts/ (excluding ${EXCLUDE_CHART}) renders a Namespace object."
+echo "OK: no chart under charts/ renders a Namespace object."
