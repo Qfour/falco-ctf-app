@@ -10,24 +10,44 @@
   + follow-up F3])
 - フェーズ: P## 非該当 (組織診断 2026-08-18 の「機構化されていない規約は 0% 遵守」系の
   security P2 対応)
+- **注記 (PR タイトル用、review-5x R4 F6 対応)**: 起票時の作業 branch 名は
+  `docs/adr-0012-error-contract-rfc9457` だが、本 ADR の Decision は **O2 (`code`
+  フィールドの additive 追加) を採用し、O3 (RFC 9457 への全面移行) は明示的に見送っている**
+  (Decision / Options 節参照)。branch 名の `rfc9457` は検討対象だった選択肢の名残であり、
+  実装 PR のタイトル・本文はこれを引かず「エラー body への `code` additive 追加」である
+  ことを明記すること (RFC 9457 全面移行だと誤解させない)。
 
 ## Context
 
 ### C1. 実測 (本 ADR 執筆時点、`origin/main` = `eec7500`)
 
+- **ADR 番号衝突確認 (`docs/adr/README.md` の規律)**: `git log --oneline --all -- 'docs/adr/*'`
+  を実行し、`0012-*.md` に触れているコミットが本 ADR 自身の起票コミット (`bd69648`) のみで
+  あることを確認した。加えて `gh api search/code -f q='ADR-0012 repo:Qfour/falco-ctf-app'`
+  が 0 件であること (リポジトリ内に先行する予約・テキスト言及が無い) を 2026-08-26 に実行し
+  確認済み。ADR-0009 で起きた番号衝突 (Issue #144 が先取り自称していた事例、
+  `docs/adr/0008-mission05-positive-proof-gate.md:562-568` 参照) はこの ADR には無い。
+
 `internal/scoreboard/api` パッケージ (`api.go` 2302 行 + `qa.go`) は非 2xx を
 `httpx.WriteJSON(w, status, map[string]any{"error": <string>})` の 1 形で返す
 (`internal/scoreboard/httpx/httpx.go:10` の薄い wrapper のみ、body の形を強制する型は無い)。
 
-- `"error"` キーの構築箇所: **api.go 60 箇所 + qa.go 29 箇所 = 89 箇所**
-  (`grep -n '"error"' internal/scoreboard/api/api.go internal/scoreboard/api/qa.go`)。
+- `"error"` キーの構築箇所: **api.go 60 箇所 + qa.go 32 箇所 = 92 箇所**
+  (`grep -c '"error"' internal/scoreboard/api/api.go internal/scoreboard/api/qa.go`、
+  `origin/main` = `eec7500` にて 2026-08-26 に再実測。review-5x R4 F1 が指摘した「89」との
+  不一致 [初稿時点の qa.go 側カウントが 29 だった] を本訂正で解消)。**この生の合計値は
+  api.go/qa.go に触れる PR ごとに変動する移動する数字であり、本 ADR の結論はこの絶対値に
+  依存しない** — 論拠として重みを持たせるのは次段の `err.Error()` 漏出数 (20 箇所、下記) の
+  方であり、この 20 という数字は独立に再実測して一致を確認済み (後述)。
   Issue #113 の「約 45 箇所」は api.go 単独かつ P25 QA チケット機能 (ADR-0006, qa.go 新設)
   landing 前の数字で、その後増えている。**契約自体は既に単一形に収束している** — spec
   (`docs/openapi-scoreboard.yaml:53-70`, `components/schemas/Error` at `:1405-1414`) が
   ADR-0005 Decision 5 で「非 2xx body は `{"error": string}` の 1 形のみ」と既に定めており、
   実装はこの契約に**形としては**従っている。欠けているのは形ではなく **機械可読性**。
 - `err.Error()` を body に直接入れている箇所: api.go 13 + qa.go 7 = **20 箇所**
-  (`grep -n '"error": err.Error()'`)。うち **api.go の 4 箇所 (729/774/826/1461) は 500
+  (`grep -n '"error": err.Error()'`。2026-08-26 に再実測しても一致 — この数字が本 ADR の
+  リスク評価の論拠であり、上記の生カウント総数の訂正はこの数字に影響しない)。うち
+  **api.go の 4 箇所 (729/774/826/1461) は 500
   (store 経由)** で、`internal/store/store.go` の `fmt.Errorf("reset solved: %w", err)`
   (`store.go:394` 等) のように SQL テーブル名を含む wrap がそのまま漏れる経路。
   qa.go の 7 箇所は全て 400 (JSON decode か `validQuestionSubject`/`validQuestionBody`
@@ -147,7 +167,8 @@
      reset button」) に置き換える。**これは `code` 導入を待たずに software-engineer が
      即応対応と同じ PR で直せる程度の変更**であり、2 箇所所有という具体的な defect を
      本 ADR の待機なしで解消できる。
-- **コスト**: spec 2 schema + 20〜89 箇所の Go 呼び出し変更 (段階的でよい。後述)。
+- **コスト**: spec 2 schema + 20〜92 箇所の Go 呼び出し変更 (段階的でよい。後述。
+  92 は C1 で訂正済みの実測値 — 2026-08-26 時点、api.go/qa.go への他 PR で今後も動く)。
   `httpx.WriteError` 新設は小さい。frontend 対応表は application-engineer 側の別工程。
 - **リスクと可逆性**: 完全 additive (フィールド追加・新規オプション引数不要な既存呼び出しは
   そのまま動く設計にできる — 後述のロールアウト)。既存クライアント (portal.html) は
@@ -226,7 +247,8 @@ additive 移行のリスクが構造的に低い。O3 (RFC 9457 全面移行) �
   application-engineer の専有物とし、backend は `code` 以外の形で言及しない。
 - **security-engineer**: `err.Error()` を `httpx.WriteError` の `message` 引数に
   渡す全箇所が「安全な定型文」であることの監査 (静的検査は「code を渡したか」しか
-  見ない — メッセージの内容が安全かどうかは人間のレビューが必要。Verification V3 参照)。
+  見ない — メッセージの内容が安全かどうかは人間のレビューが必要。Verification V3 参照。
+  **2026-08-26 VP 承認により、この監査 [V3] の approve は実装 PR の merge 必須条件**)。
 - **qa-engineer**: `code` 追加後、`SubmitFlagVerdict`/`Error` を ADR-0005 V5 の
   フィールド集合検査の対象に含めるかどうかを判断する (含める場合は
   `apispec_parity_test.go` 系に schema を追加する PR が別途要る)。
@@ -262,11 +284,13 @@ mux 登録パターンの話であり、ここは単一の固定リテラルな�
 **V2. `httpx.WriteError` が `code` を必須の位置引数として要求すること (blocking、型システムで自明)**
 Go のコンパイルが強制するので追加テスト不要 — 関数シグネチャそのものが Verification。
 
-**V3. `code` 値の安全性レビュー (blocking、人間レビュー)**
+**V3. `code` 値の安全性レビュー (blocking、人間レビュー — 実装 PR の merge 必須条件)**
 `httpx.WriteError` に渡される `message` 引数が `err.Error()` を直接含まないことを
 security-engineer が実装 PR でレビューする (静的検査は困難 — `err.Error()` を
 一度変数に代入してから渡すコードは grep で検出できない。ここは V1 のような機械検査
-ではなく人間レビューのゲートとして明記する)。
+ではなく人間レビューのゲートとして明記する)。**このレビューは advisory ではない —
+security-engineer の approve が付くまで実装 PR は merge しない**
+(2026-08-26、security-engineer 提案・VP 承認。Advice 節参照)。
 
 **V4. spec の `code` フィールドが `enum:` を使っていないこと (blocking)**
 `Error.code` / `SubmitFlagVerdict.code` の schema 定義に `enum:` キーが存在しないことを
@@ -281,9 +305,17 @@ security-engineer が実装 PR でレビューする (静的検査は困難 — 
 ## Advice
 
 本 ADR は architect が Issue #113 の委任を受けて単独起案した (VP からの直接タスク)。
-**執筆時点で security-engineer の助言は未取得。** `err.Error()` の 20 箇所は
-security P2 (auth/ingest ではないが internal error 漏出) に該当するため、
+**執筆時点 (2026-08-25) で security-engineer の助言は未取得だった。** `err.Error()` の
+20 箇所は security P2 (auth/ingest ではないが internal error 漏出) に該当するため、
 CLAUDE.md の「auth / ingest / Dockerfile / secrets / CSP・iframe に触れた変更は
-security-engineer レビューを必ず通す」の対象には厳密には該当しないが、**情報漏えいの
-性質上、実装 PR (V3 のレビュー含む) は security-engineer を通すことを本 ADR が推奨する**
-(義務ではなく助言 — 非拘束)。VP に判断を委ねる。
+security-engineer レビューを必ず通す」の対象には厳密には該当しなかった。
+
+**2026-08-26 追記 (review-5x 対応)**: security-engineer から「V3 (`message` に
+`err.Error()` を直接含まないことの人間レビュー) を実装 PR の merge 必須条件にすべき」
+との提案を受け、VP がこれを承認した。本追記により Verification V3 および Consequences
+「runbook / 他ロールへの影響」の security-engineer 項を advisory から **実装 PR の
+merge blocking 条件**へ明文化した (「推奨する」という表現を「approve が付くまで
+merge しない」に訂正)。これは CLAUDE.md 本文の必須レビュー対象リスト
+(auth / ingest / Dockerfile / secrets / CSP・iframe) そのものを拡張する決定ではなく、
+**本 ADR が発注する実装 PR に限定したローカルな merge 条件**である
+(CLAUDE.md 本文の改訂は本 ADR の scope 外 — 必要なら別途 architect/VP が起案する)。
