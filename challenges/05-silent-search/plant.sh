@@ -19,11 +19,28 @@
 #
 # CTF_FLAG_05_SILENT_SEARCH is injected into the `plant` initContainer from
 # the ctf-flags Secret.
+#
+# ADR-0008 Decision (1a): the key file is written via `cat > ... <<EOF` — a
+# shell redirection the shell itself performs, not a separate exec — under a
+# scoped `umask 077` instead of a trailing standalone `chmod 600 ...`. A
+# standalone chmod would be its own exec event with the "id_rsa" literal in
+# its own argv, and ADR-0008 generalizes "Search Private Keys or Passwords"
+# to fire on ANY proc (not just proc.name=find) that has an id_rsa-family
+# literal in its args — so that chmod would make the rule fire on every
+# participant's deploy (I13b violation). `umask 077` makes the shell's own
+# open() call produce the file at mode 0600 directly (0666 default minus
+# 0077), the same end state `chmod 600` would reach, with zero additional
+# exec: the `( ... )` subshell only fork()s, it never execve()s, so it can
+# never match `spawned_process`. Scoped to this subshell so the umask change
+# never leaks into a later plant.sh body appended after this one in
+# values-all.yaml's combined seed script (challenges/values-all.yaml).
 mkdir -p "${PLANT_SEED_ROOT}/root/.ssh"
-cat > "${PLANT_SEED_ROOT}/root/.ssh/id_rsa" <<EOF
+(
+  umask 077
+  cat > "${PLANT_SEED_ROOT}/root/.ssh/id_rsa" <<EOF
 -----BEGIN OPENSSH PRIVATE KEY-----
 b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAA
 tzc2gtZWQyNTUxOQAAACBm${CTF_FLAG_05_SILENT_SEARCH:?flag env not set by ctf-user chart}_FAKEKEY=
 -----END OPENSSH PRIVATE KEY-----
 EOF
-chmod 600 "${PLANT_SEED_ROOT}/root/.ssh/id_rsa"
+)

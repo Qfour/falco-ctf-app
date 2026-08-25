@@ -3,6 +3,7 @@ package catalog_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"testing"
 
@@ -113,6 +114,51 @@ expectedFlag: "invalid-flag-format"
 	_, err := catalog.Load(dir)
 	if err == nil {
 		t.Fatal("expected error for invalid expectedFlag format, got nil")
+	}
+}
+
+// TestLoad_RequireExpectedRuleFire_LoadsAndValidates is ADR-0008 Decision (3):
+// a positive-proof evade challenge loads with RequireExpectedRuleFire set and
+// its expectedRules populated.
+func TestLoad_RequireExpectedRuleFire_LoadsAndValidates(t *testing.T) {
+	dir := t.TempDir()
+	writeChallenge(t, dir, "05-silent-search", `
+challengeId: "05-silent-search"
+type: evade
+forbiddenRules:
+  - "Search Private Keys or Passwords"
+expectedRules:
+  - "Shell Redirected Private Key Read"
+requireExpectedRuleFire: true
+expectedFlag: "FALCO{abc}"
+`)
+	cat, err := catalog.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch := cat["05-silent-search"]
+	if !ch.RequireExpectedRuleFire {
+		t.Fatal("requireExpectedRuleFire must load as true")
+	}
+	if len(ch.ExpectedRules) != 1 || ch.ExpectedRules[0] != "Shell Redirected Private Key Read" {
+		t.Errorf("expectedRules: %v", ch.ExpectedRules)
+	}
+}
+
+// TestLoad_RequireExpectedRuleFire_RequiresExpectedRules is ADR-0008 Decision
+// (3)'s load-time validation: a positive-proof gate with nothing to prove
+// (empty expectedRules) would be unsatisfiable by construction, mirroring the
+// existing trigger-type validation (TestLoad_TypeRequired's sibling).
+func TestLoad_RequireExpectedRuleFire_RequiresExpectedRules(t *testing.T) {
+	dir := t.TempDir()
+	writeChallenge(t, dir, "bad", `
+type: evade
+requireExpectedRuleFire: true
+expectedFlag: "FALCO{abc}"
+`)
+	_, err := catalog.Load(dir)
+	if err == nil {
+		t.Fatal("expected error for requireExpectedRuleFire=true with empty expectedRules, got nil")
 	}
 }
 
@@ -398,6 +444,42 @@ func TestEvadeForbiddenRules_IntersectPriorTriggerExpectedRules(t *testing.T) {
 	if checked != len(want) {
 		t.Fatalf("expected to check exactly %d evade challenges (%v), checked %d — a scenario reorder "+
 			"or challenge removal may have dropped one of the pinned pairs", len(want), want, checked)
+	}
+}
+
+// TestExpectedRuleFire_NewRuleNameUniqueToMission05 is ADR-0008 Verification
+// (c): a NEW, independent test (not an extension of
+// TestEvadeForbiddenRules_IntersectPriorTriggerExpectedRules above) that
+// checks ONLY the newly-introduced rule name "Shell Redirected Private Key
+// Read" — never "Search Private Keys or Passwords", which is deliberately
+// shared across 04/05/10 and would make a blanket uniqueness assertion fail.
+// The point: this rule name is project-specific and mission-05-only by
+// design (ADR-0008 Decision (2)); if any OTHER challenge's expectedRules or
+// forbiddenRules ever comes to reference it, the "professional-only, single
+// gate" assumption Decision (3)'s NOT-attempt-scoped write depends on no
+// longer holds (see scoring.Grader.recordExpectedRuleFire's doc).
+func TestExpectedRuleFire_NewRuleNameUniqueToMission05(t *testing.T) {
+	cat, err := catalog.Load("../../challenges")
+	if err != nil {
+		t.Fatalf("load catalog: %v", err)
+	}
+	const ruleName = "Shell Redirected Private Key Read"
+	const owner = "05-silent-search"
+
+	owningIDs := []string{}
+	for _, cid := range cat.IDs() {
+		ch := cat[cid]
+		found := slices.Contains(ch.ExpectedRules, ruleName) || slices.Contains(ch.ForbiddenRules, ruleName)
+		if found {
+			owningIDs = append(owningIDs, cid)
+		}
+	}
+	if len(owningIDs) != 1 || owningIDs[0] != owner {
+		t.Fatalf("%q must appear in exactly one challenge's expectedRules/forbiddenRules (%s), found in %v",
+			ruleName, owner, owningIDs)
+	}
+	if !slices.Contains(cat[owner].ExpectedRules, ruleName) {
+		t.Fatalf("%s must list %q in expectedRules, got %v", owner, ruleName, cat[owner].ExpectedRules)
 	}
 }
 

@@ -33,6 +33,27 @@
 //     expectedRule (the catalog's 02→03 / 04→05 twin-mission pairs) for every
 //     regular participant, the instant they legitimately clear the earlier
 //     mission.
+//   - expected_rule_fire (user, challenge, rule, at) PRIMARY KEY (user, challenge, rule)
+//     ADR-0008: the evade solve gate's POSITIVE-proof record — the mirror
+//     image of evade_dirty above. A row's mere EXISTENCE means (user,
+//     challenge) has, at some point, fired one of the challenge's
+//     expectedRules (proof the participant actually exercised the evasion
+//     technique, not merely never triggered forbiddenRules — ADR-0003 C5's
+//     "negative gate alone is unsound" concern). Same shape as evade_dirty
+//     (persisted, `INSERT OR IGNORE`, no time/windowSeconds dimension), but
+//     with the OPPOSITE reset behavior: ResetDirty (the participant
+//     self-service endpoint) does NOT touch this table, while the admin's
+//     full-event Reset() does. This asymmetry is deliberate (ADR-0008
+//     Decision (4)) — evade_dirty's rows are a NEGATIVE fact tied to the
+//     participant's current attempt (resetting the attempt must also reset
+//     the taint, or the participant could never clear it), while a row here
+//     is a context-free POSITIVE fact ("this shell, at some point, opened
+//     this path for reading") that a forbidden-rule fire or a taint reset
+//     can never make untrue. Requiring the participant to re-prove the
+//     technique after every reset would add friction with no security
+//     benefit (the technique was already proven once), so a reset-dirty
+//     call leaves this table alone; only the admin's event-wide wipe clears
+//     it, symmetric with every other per-participant table Reset() clears.
 //
 // In-memory only (reset on pod restart):
 //   - eventsPerUser: dashboard counter. Not used for scoring.
@@ -89,6 +110,12 @@ type Store struct {
 	// forbidden rule names that have fired (App-H2). Non-empty set == dirty.
 	// Never cleared by time; only ResetDirty removes an entry.
 	dirtyRules map[SolveKey]map[string]struct{}
+	// expectedRuleFire mirrors the expected_rule_fire table (ADR-0008):
+	// (user,challenge) -> set of expectedRules that have fired. Non-empty set
+	// == positive proof recorded. Never cleared by ResetDirty (see this
+	// package's doc comment on the expected_rule_fire table for why); only
+	// the admin's full Reset() clears it.
+	expectedRuleFire map[SolveKey]map[string]struct{}
 }
 
 // stepCheckKey identifies one step of one challenge that a specific participant
@@ -179,6 +206,13 @@ func Open(path string) (*Store, error) {
           at        TEXT NOT NULL,
           PRIMARY KEY (user, challenge, rule)
         );
+        CREATE TABLE IF NOT EXISTS expected_rule_fire (
+          user      TEXT NOT NULL,
+          challenge TEXT NOT NULL,
+          rule      TEXT NOT NULL,
+          at        TEXT NOT NULL,
+          PRIMARY KEY (user, challenge, rule)
+        );
         DROP TABLE IF EXISTS events_per_user;
     `); err != nil {
 		db.Close()
@@ -186,16 +220,17 @@ func Open(path string) (*Store, error) {
 	}
 
 	s := &Store{
-		db:            db,
-		solved:        make(map[SolveKey]string),
-		exfil:         make(map[SolveKey]string),
-		eventsPerUser: make(map[string]int),
-		ruleFires:     make(map[string][]ruleFire),
-		displayNames:  make(map[string]string),
-		hintReleased:  make(map[hintKey]bool),
-		hintViews:     make(map[hintViewKey]bool),
-		stepChecks:    make(map[stepCheckKey]bool),
-		dirtyRules:    make(map[SolveKey]map[string]struct{}),
+		db:               db,
+		solved:           make(map[SolveKey]string),
+		exfil:            make(map[SolveKey]string),
+		eventsPerUser:    make(map[string]int),
+		ruleFires:        make(map[string][]ruleFire),
+		displayNames:     make(map[string]string),
+		hintReleased:     make(map[hintKey]bool),
+		hintViews:        make(map[hintViewKey]bool),
+		stepChecks:       make(map[stepCheckKey]bool),
+		dirtyRules:       make(map[SolveKey]map[string]struct{}),
+		expectedRuleFire: make(map[SolveKey]map[string]struct{}),
 	}
 	if err := s.loadFromDB(); err != nil {
 		db.Close()
@@ -326,7 +361,27 @@ func (s *Store) loadFromDB() error {
 		}
 		s.dirtyRules[k][rule] = struct{}{}
 	}
-	return dr.Err()
+	if err := dr.Err(); err != nil {
+		return err
+	}
+
+	efr, err := s.db.Query("SELECT user, challenge, rule FROM expected_rule_fire")
+	if err != nil {
+		return err
+	}
+	defer efr.Close()
+	for efr.Next() {
+		var k SolveKey
+		var rule string
+		if err := efr.Scan(&k.User, &k.Challenge, &rule); err != nil {
+			return err
+		}
+		if s.expectedRuleFire[k] == nil {
+			s.expectedRuleFire[k] = make(map[string]struct{})
+		}
+		s.expectedRuleFire[k][rule] = struct{}{}
+	}
+	return efr.Err()
 }
 
 // ReleaseHint marks (mission, hint) as released to participants, or revokes it
@@ -757,6 +812,58 @@ func (s *Store) DirtyRules(user, challenge string) []string {
 	return out
 }
 
+// RecordExpectedRuleFire records that `rule` (one of a challenge's
+// expectedRules) fired for `user` against `challenge` — ADR-0008's POSITIVE
+// proof-of-technique gate (the mirror image of MarkDirty above). Like
+// MarkDirty, this method has no catalog or attempt-scope awareness and
+// simply records what it is told; scoring.Grader.recordExpectedRuleFire
+// decides WHICH (user, challenge) pairs this is called for.
+//
+// Persists to SQLite exactly like evade_dirty (`INSERT OR IGNORE`,
+// idempotent per (user, challenge, rule): a repeat fire is a no-op, so `at`
+// only ever reflects the FIRST time this rule satisfied this pair's gate).
+//
+// Fail-closed (same rationale as MarkDirty, ADR-0003 A5): the in-memory
+// expectedRuleFire map is updated FIRST, before the SQLite write is
+// attempted, and unconditionally on the return path. Here the asymmetry cuts
+// the OTHER way from MarkDirty's: an in-memory-only "proven" fact that
+// outlives a failed persistence write is not a security hole (worst case,
+// the participant can just fire the rule again — the technique is genuinely
+// reproducible), but silently NOT recording a real proof event because of a
+// transient DB error would incorrectly re-block a participant who did
+// exactly what was asked of them. Setting the in-memory copy unconditionally
+// avoids that false negative even when persistence fails.
+func (s *Store) RecordExpectedRuleFire(user, challenge, rule, at string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := SolveKey{User: user, Challenge: challenge}
+	if s.expectedRuleFire[key] == nil {
+		s.expectedRuleFire[key] = make(map[string]struct{})
+	}
+	s.expectedRuleFire[key][rule] = struct{}{}
+
+	if _, err := s.db.Exec(
+		`INSERT OR IGNORE INTO expected_rule_fire (user, challenge, rule, at) VALUES (?, ?, ?, ?)`,
+		user, challenge, rule, at,
+	); err != nil {
+		return err
+	}
+	return nil
+}
+
+// HasExpectedRuleFire reports whether ANY of (user, challenge)'s expected
+// rules has ever fired — the read side of ADR-0008's positive-proof gate.
+// Pure read-only projection over persisted state, so it gives the identical
+// answer immediately after a restart as it did right before one, matching
+// DirtyRules' restart-survival property. Unlike DirtyRules there is no
+// ResetDirty counterpart that clears this — see the package doc's
+// expected_rule_fire note for why that asymmetry is deliberate and safe.
+func (s *Store) HasExpectedRuleFire(user, challenge string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.expectedRuleFire[SolveKey{User: user, Challenge: challenge}]) > 0
+}
+
 // ResetDirty is the ONLY way (user, challenge) returns to clean — there is no
 // time-based path. Called from the participant self-service reset endpoint
 // (self-or-admin gated at the API layer, conventions I8) after the
@@ -797,6 +904,14 @@ func (s *Store) DirtyRules(user, challenge string) []string {
 // Safe under I1 (scoreboard is single-replica, and all Store methods —
 // including this one — already serialize through s.mu, so there is no
 // concurrent writer to interleave with these two statements).
+//
+// ADR-0008 Decision (4): this function deliberately does NOT touch
+// expected_rule_fire. That table's rows are a context-free positive fact
+// ("this participant's shell fired this expectedRule at some point") which
+// a taint or its reset can never make untrue — unlike evade_dirty/exfil
+// above, whose whole point IS to be reset here. Only the admin's full-event
+// Reset() (below) clears expected_rule_fire, symmetric with every other
+// per-participant table it wipes.
 func (s *Store) ResetDirty(user, challenge string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -889,6 +1004,13 @@ func (s *Store) Reset() (clearedSolves int, err error) {
 	if _, err := s.db.Exec("DELETE FROM evade_dirty"); err != nil {
 		return 0, fmt.Errorf("reset evade_dirty: %w", err)
 	}
+	// ADR-0008 Decision (4): unlike ResetDirty (which deliberately leaves
+	// expected_rule_fire alone — see that function's doc), the admin's
+	// full-event wipe DOES clear it, symmetric with every other
+	// per-participant table above.
+	if _, err := s.db.Exec("DELETE FROM expected_rule_fire"); err != nil {
+		return 0, fmt.Errorf("reset expected_rule_fire: %w", err)
+	}
 	clearedSolves = len(s.solved)
 	s.solved = make(map[SolveKey]string)
 	s.exfil = make(map[SolveKey]string)
@@ -897,5 +1019,6 @@ func (s *Store) Reset() (clearedSolves int, err error) {
 	s.hintViews = make(map[hintViewKey]bool)
 	s.stepChecks = make(map[stepCheckKey]bool)
 	s.dirtyRules = make(map[SolveKey]map[string]struct{})
+	s.expectedRuleFire = make(map[SolveKey]map[string]struct{})
 	return clearedSolves, nil
 }

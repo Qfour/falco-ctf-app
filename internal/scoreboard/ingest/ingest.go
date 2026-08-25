@@ -208,6 +208,13 @@ func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ADR-0008: a failed positive-proof write is continue-on-error, same
+	// posture as TriggerErr below (log and carry on) — see RuleFireOutcome's
+	// doc for why this does not warrant TaintErr's 5xx escalation.
+	if res.ExpectedFireErr != nil {
+		h.logger.Error("record expected rule fire", "err", res.ExpectedFireErr)
+	}
+
 	// Trigger-type solve decision is the Grader's job; this handler is a thin
 	// driver that just bumps the solve metric for each newly-recorded solve.
 	// (The Grader stamps its own receipt time from the same injected clock.)

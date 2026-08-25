@@ -1502,6 +1502,9 @@ components:
 
           wrong flag       -> correct=false, reason
           forbidden fired  -> correct=true, evaded=false, reason
+          proof required   -> correct=true, evaded=true, proven=false, reason
+                              (ADR-0008; only for missions with
+                              requireExpectedRuleFire)
           exfil required   -> correct=true, evaded=true, exfiltrated=false, reason
           solved           -> correct=true, evaded=true, solved=true, user,
                               display_name
@@ -1513,6 +1516,14 @@ components:
       properties:
         correct: { type: boolean }
         evaded: { type: boolean }
+        proven:
+          type: boolean
+          description: |
+            ADR-0008 positive-proof gate: false when the mission requires
+            requireExpectedRuleFire and none of its expectedRules has ever
+            fired for this user yet. Only appears on that branch (never on
+            `solved` — mirrors how `exfiltrated` never appears on `solved`
+            either).
         exfiltrated: { type: boolean }
         solved: { type: boolean, const: true }
         user: { type: string }
@@ -1847,7 +1858,8 @@ components:
         `hints` — and step tick state — are gated to the unlocked prefix.
       required:
         [id, status, title, tagline, briefing, leadIn, type, docsUrl,
-         hasJourney, requireExfil, exfilReceived, expectedRules, detectedRules,
+         hasJourney, requireExfil, exfilReceived, requireExpectedRuleFire,
+         expectedRuleFired, expectedRules, detectedRules,
          dirty, dirtyRules, steps, falcoRule, hasFalcoRule, hints]
       properties:
         id: { type: string }
@@ -1874,6 +1886,21 @@ components:
             the collector holds ANY receipt for this (user, challenge). Drives
             the auto-solve status card. Never exposes the flag value and has no
             bearing on the verdict (submit re-checks the exact flag).
+        requireExpectedRuleFire:
+          type: boolean
+          description: |
+            ADR-0008. evade challenge that also requires positive proof — at
+            least one of expectedRules must have fired for this user before a
+            correct flag can solve it.
+        expectedRuleFired:
+          type: boolean
+          description: |
+            ADR-0008. `= HasExpectedRuleFire(user, cid)`. PERSISTENT — no
+            time window, and (unlike dirty/dirtyRules) NEVER cleared by
+            reset-dirty; only the admin's full event Reset() clears it (the
+            asymmetry is deliberate — see internal/store's expected_rule_fire
+            table doc). Always false for a mission with
+            requireExpectedRuleFire=false.
         expectedRules:
           type: array
           description: |

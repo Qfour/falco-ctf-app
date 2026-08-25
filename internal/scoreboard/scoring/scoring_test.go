@@ -29,6 +29,10 @@ type fakeStore struct {
 	// dedicated OnRuleFire attempt-scope tests, which DO drive the real write
 	// path ((*Grader).OnRuleFire) instead of seeding this map directly.
 	dirty map[string][]string
+	// expectedFire["user|challenge"] is the sorted set of expectedRules ADR-0008's
+	// positive-proof gate has recorded as fired for that pair — the fake's
+	// mirror of the real store's expected_rule_fire table.
+	expectedFire map[string][]string
 	// exfil["user|challenge"] is the flag the collector received for that pair.
 	exfil map[string]string
 	// hintViews[user] maps challenge -> revealed 1-based hint indices (#40).
@@ -47,13 +51,18 @@ type fakeStore struct {
 	markDirtyErrFor map[string]error
 
 	markSolvedCalls int
+
+	// recordExpectedRuleFireErr, if set, makes RecordExpectedRuleFire return it
+	// for every call (ADR-0008's fail-closed error-propagation test).
+	recordExpectedRuleFireErr error
 }
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		solved: map[string]string{},
-		dirty:  map[string][]string{},
-		exfil:  map[string]string{},
+		solved:       map[string]string{},
+		dirty:        map[string][]string{},
+		expectedFire: map[string][]string{},
+		exfil:        map[string]string{},
 	}
 }
 
@@ -115,6 +124,28 @@ func (f *fakeStore) MarkDirty(user, challenge, rule, _ string) error {
 	return nil
 }
 
+// HasExpectedRuleFire / RecordExpectedRuleFire mirror the real store's
+// ADR-0008 positive-proof read/write: additive, idempotent per
+// (user, challenge, rule), no expiry — the mirror image of
+// DirtyRules/MarkDirty above.
+func (f *fakeStore) HasExpectedRuleFire(user, challenge string) bool {
+	return len(f.expectedFire[key(user, challenge)]) > 0
+}
+
+func (f *fakeStore) RecordExpectedRuleFire(user, challenge, rule, _ string) error {
+	if f.recordExpectedRuleFireErr != nil {
+		return f.recordExpectedRuleFireErr
+	}
+	k := key(user, challenge)
+	for _, r := range f.expectedFire[k] {
+		if r == rule {
+			return nil // already recorded — idempotent
+		}
+	}
+	f.expectedFire[k] = append(f.expectedFire[k], rule)
+	return nil
+}
+
 func (f *fakeStore) HasExfil(user, challenge, flag string) bool {
 	got, ok := f.exfil[key(user, challenge)]
 	return ok && got == flag
@@ -160,7 +191,8 @@ func (f *fakeStore) HintViews(user string) map[string][]int {
 }
 
 // testCatalog mirrors the fixture used by the HTTP tests: one trigger, one
-// plain evade, one exfil-required evade.
+// plain evade, one exfil-required evade, one detect, and (ADR-0008) one
+// positive-proof-required evade.
 func testCatalog() catalog.Catalog {
 	return catalog.Catalog{
 		"01-trigger": catalog.Challenge{
@@ -180,6 +212,18 @@ func testCatalog() catalog.Catalog {
 			ForbiddenRules: []string{"Read sensitive file untrusted"},
 			ExpectedFlag:   "FALCO{boss}",
 			RequireExfil:   true,
+		},
+		// 05-proof (ADR-0008): a positive-proof-required evade mission, sorting
+		// AFTER 04-detect in the default (catalog-id) progression order so it
+		// never becomes "current" for any existing test that does not solve
+		// through 01-04 (none do — see the ADR-0008 test group below for the
+		// dedicated coverage that DOES walk it).
+		"05-proof": catalog.Challenge{
+			ID:                      "05-proof",
+			Type:                    "evade",
+			ExpectedRules:           []string{"Shell Redirected Private Key Read"},
+			RequireExpectedRuleFire: true,
+			ExpectedFlag:            "FALCO{proof}",
 		},
 		"04-detect": catalog.Challenge{
 			ID:   "04-detect",
@@ -667,6 +711,117 @@ func TestSubmitEvade_ExfilRequired_WrongExfilValue_StillBlocked(t *testing.T) {
 	}
 	if out.Status != scoring.EvadeExfilRequired {
 		t.Fatalf("mismatched exfil must not satisfy the gate, got %+v", out)
+	}
+}
+
+// --- ADR-0008: positive-proof gate (requireExpectedRuleFire) ---------------
+//
+// Note (ADR-0008 Verification (b), non-scope reminder): these tests drive
+// SIMULATED rule-fire events through Grader.OnRuleFire — they prove the Go
+// wiring only. Whether the underlying Falco condition ("Shell Redirected
+// Private Key Read") actually fires for the intended shell-redirection
+// technique, or fails to fire for a direct `cat /root/.ssh/id_rsa` argument,
+// is NOT something this package can verify; that is the cluster E2E's job
+// (ADR-0008 Verification (a)/(a-1)/(a-2), explicitly out of scope here).
+
+// TestSubmitEvade_ExpectedRuleFireRequired_NotDelivered is the ADR-0008
+// counterpart of TestSubmitEvade_ExfilRequired_NotDelivered: a correct flag
+// on a clean (never-dirtied) pair still does not solve a
+// RequireExpectedRuleFire mission until the positive proof has been recorded.
+func TestSubmitEvade_ExpectedRuleFireRequired_NotDelivered(t *testing.T) {
+	fs := newFakeStore()
+	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
+
+	out, err := g.SubmitEvade("alice", "05-proof", "FALCO{proof}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != scoring.EvadeExpectedRuleFireRequired {
+		t.Fatalf("missing positive proof must block, got %+v", out)
+	}
+	if fs.markSolvedCalls != 0 {
+		t.Fatal("proof-required must not solve before the technique is proven")
+	}
+}
+
+// TestSubmitEvade_ExpectedRuleFireRequired_AfterFire_Solves proves the
+// positive path: once OnRuleFire has recorded a fire of one of the
+// challenge's expectedRules for this user, SubmitEvade solves.
+func TestSubmitEvade_ExpectedRuleFireRequired_AfterFire_Solves(t *testing.T) {
+	fs := newFakeStore()
+	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
+
+	res := g.OnRuleFire("alice", "Shell Redirected Private Key Read")
+	if res.TaintErr != nil || res.ExpectedFireErr != nil || res.TriggerErr != nil {
+		t.Fatalf("taintErr=%v expectedFireErr=%v triggerErr=%v", res.TaintErr, res.ExpectedFireErr, res.TriggerErr)
+	}
+	if !fs.HasExpectedRuleFire("alice", "05-proof") {
+		t.Fatal("OnRuleFire must record the positive proof for 05-proof")
+	}
+
+	out, err := g.SubmitEvade("alice", "05-proof", "FALCO{proof}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != scoring.EvadeSolved || !out.Newly {
+		t.Fatalf("proof recorded + correct flag + clean window must solve, got %+v", out)
+	}
+}
+
+// TestOnRuleFire_ExpectedRuleFire_TypeGuard proves the `ch.Type == "evade"`
+// guard in recordExpectedRuleFire (ADR-0008 Decision (3)): a trigger
+// challenge's OWN expectedRules firing must NOT leak into
+// expected_rule_fire, even though ExpectedRules is a field shared by both
+// types. Dropping this guard would let 01-trigger's rule fire register as
+// "proof" for a hypothetical evade mission sharing the same rule name.
+func TestOnRuleFire_ExpectedRuleFire_TypeGuard(t *testing.T) {
+	fs := newFakeStore()
+	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
+
+	// "Read sensitive file untrusted" is 01-trigger's (type=trigger)
+	// expectedRule, not 05-proof's. Firing it must solve 01-trigger but must
+	// NOT register as proof for any RequireExpectedRuleFire mission.
+	res := g.OnRuleFire("alice", "Read sensitive file untrusted")
+	if res.ExpectedFireErr != nil {
+		t.Fatal(res.ExpectedFireErr)
+	}
+	if fs.HasExpectedRuleFire("alice", "05-proof") {
+		t.Fatal("a trigger challenge's expectedRules firing must never register as 05-proof's positive proof")
+	}
+}
+
+// TestOnRuleFire_ExpectedRuleFire_NotAttemptScoped proves ADR-0008 Decision
+// (3)'s explicit non-scoping: unlike markDirtyOnRuleFire, recordExpectedRuleFire
+// records the proof EVEN WHEN the RequireExpectedRuleFire mission is not yet
+// the participant's "current" mission (nothing else has been solved).
+func TestOnRuleFire_ExpectedRuleFire_NotAttemptScoped(t *testing.T) {
+	fs := newFakeStore()
+	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
+	// current(alice) is 01-trigger — 05-proof is nowhere close to current.
+	res := g.OnRuleFire("alice", "Shell Redirected Private Key Read")
+	if res.ExpectedFireErr != nil {
+		t.Fatal(res.ExpectedFireErr)
+	}
+	if !fs.HasExpectedRuleFire("alice", "05-proof") {
+		t.Fatal("ADR-0008 Decision (3): the positive-proof write must not be attempt-scoped")
+	}
+}
+
+// TestOnRuleFire_ExpectedRuleFireErrorPropagates proves a store error from
+// RecordExpectedRuleFire surfaces via RuleFireOutcome.ExpectedFireErr (and
+// only that field — not TaintErr/TriggerErr), matching the error-isolation
+// contract the doc comment on RuleFireOutcome describes.
+func TestOnRuleFire_ExpectedRuleFireErrorPropagates(t *testing.T) {
+	fs := newFakeStore()
+	fs.recordExpectedRuleFireErr = errors.New("boom")
+	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
+
+	res := g.OnRuleFire("alice", "Shell Redirected Private Key Read")
+	if res.ExpectedFireErr == nil {
+		t.Fatal("expected a non-nil ExpectedFireErr")
+	}
+	if res.TaintErr != nil || res.TriggerErr != nil {
+		t.Fatalf("a RecordExpectedRuleFire failure must not surface as TaintErr/TriggerErr, got taintErr=%v triggerErr=%v", res.TaintErr, res.TriggerErr)
 	}
 }
 
@@ -1227,6 +1382,25 @@ func TestOnRuleFire_RealCatalog_AttemptScope_TwinMissionsStayClean(t *testing.T)
 			// scope must have exempted all of them.
 			if got := fs.DirtyRules("alice", cid); len(got) != 0 {
 				t.Fatalf("%s: ADR-0003 regression — dirty from a predecessor's required fire: %v", cid, got)
+			}
+			// ADR-0008: a RequireExpectedRuleFire mission (05-silent-search)
+			// also needs its OWN expectedRules fired at least once — simulating
+			// the participant actually demonstrating the evasion technique —
+			// before SubmitEvade can reach EvadeSolved. This fire must be a
+			// no-op for every OTHER mission's gates (the new rule name is not
+			// shared with any forbiddenRules/trigger expectedRules — see
+			// catalog_test.go's TestExpectedRuleFire_NewRuleNameUniqueToMission05).
+			if ch.RequireExpectedRuleFire {
+				for _, rule := range ch.ExpectedRules {
+					res := g.OnRuleFire("alice", rule)
+					if res.TaintErr != nil || res.ExpectedFireErr != nil || res.TriggerErr != nil {
+						t.Fatalf("%s: prove-technique fire %q: taintErr=%v expectedFireErr=%v triggerErr=%v",
+							cid, rule, res.TaintErr, res.ExpectedFireErr, res.TriggerErr)
+					}
+				}
+				if !fs.HasExpectedRuleFire("alice", cid) {
+					t.Fatalf("%s: expected rule fire must be recorded after firing %v", cid, ch.ExpectedRules)
+				}
 			}
 			if ch.RequireExfil {
 				if _, err := g.RecordExfil("alice", cid, ch.ExpectedFlag); err != nil {

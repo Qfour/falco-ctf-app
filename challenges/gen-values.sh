@@ -415,7 +415,7 @@ check_2_5() {
 #       `install` slipped through in the security-engineer's audit (C2).
 #       (f) instead declares the small, fixed set of commands the
 #       initContainer's seed script is allowed to run at all
-#       (mkdir/cp/echo/cat/chmod/set/printf/true/:/sh) and fails on
+#       (mkdir/cp/echo/cat/chmod/umask/set/printf/true/:/sh) and fails on
 #       anything else — including binaries with no name-based check yet,
 #       and bare-path "exec a file we just wrote" forms like
 #       `/dev/shm/x` that (c)/(e) don't parse for. It is still a
@@ -424,10 +424,12 @@ check_2_5() {
 #       heredoc bodies and `NAME=value` assignments — it does not parse
 #       shell quoting/substitution, so a sufficiently adversarial one-liner
 #       (e.g. hiding a command inside `$(...)` or a quoted string that
-#       *becomes* a command some other way) could still evade it. Extend
-#       the allowlist deliberately when a new plant.sh legitimately needs
-#       another command — don't work around a (f) failure by rewording the
-#       line.
+#       *becomes* a command some other way) could still evade it. A bare
+#       `(` or `)` segment (subshell grouping — ADR-0008 Decision (1a)'s
+#       `( umask NNN; cat > ... <<EOF ... EOF )` pattern) is exempted, since
+#       grouping syntax is not itself a command. Extend the allowlist
+#       deliberately when a new plant.sh legitimately needs another
+#       command — don't work around a (f) failure by rewording the line.
 # ---------------------------------------------------------------------------
 
 check_2_7() { # $1 = generated seed script text (unindented), $2 = label
@@ -509,9 +511,22 @@ check_2_7() { # $1 = generated seed script text (unindented), $2 = label
   fi
 
   # (f) allowlist backstop — see the block comment above this function.
+  #
+  # ADR-0008 Decision (1a): `umask` was added to the allowlist and bare `(`
+  # / `)` grouping lines are explicitly skipped (not treated as an
+  # unrecognized "command") so a plant.sh can scope a `umask` override to a
+  # `( umask NNN; cat > ... <<EOF ... EOF )` subshell — the mechanism that
+  # replaced mission 05's standalone `chmod 600 ...` exec (removing that
+  # exec's "id_rsa" argv literal from the deploy path once "Search Private
+  # Keys or Passwords" was generalized to fire on ANY proc, not just
+  # proc.name=find). `(`/`)` are shell grouping syntax, never a command
+  # name, so skipping them exactly-matched (not stripped from a glued
+  # token) keeps this heuristic from silently accepting `(rm -rf /)` as
+  # "just grouping" — only a segment that IS `(` or `)` on its own is
+  # exempted.
   hits="$(printf '%s\n' "${code}" | awk '
     BEGIN {
-      n = split("sh set mkdir cp echo cat chmod printf true :", allowed, " ")
+      n = split("sh set mkdir cp echo cat chmod umask printf true :", allowed, " ")
       for (i = 1; i <= n; i++) allow[allowed[i]] = 1
       heredoc = 0
     }
@@ -535,6 +550,7 @@ check_2_7() { # $1 = generated seed script text (unindented), $2 = label
         seg = segs[i]
         gsub(/^[ \t]+/, "", seg); gsub(/[ \t]+$/, "", seg)
         if (seg == "") continue
+        if (seg == "(" || seg == ")") continue
         if (seg ~ /^[A-Za-z_][A-Za-z0-9_]*=/) continue
         split(seg, w, /[ \t]+/)
         if (w[1] != "" && !(w[1] in allow)) printf "%d:%s\n", NR, line
@@ -542,7 +558,7 @@ check_2_7() { # $1 = generated seed script text (unindented), $2 = label
     }
   ' || true)"
   if [ -n "${hits}" ]; then
-    echo "2-7(f) VIOLATION [${label}]: command not in the seed-script allowlist (mkdir/cp/echo/cat/chmod/set/printf/true/:/sh):" >&2
+    echo "2-7(f) VIOLATION [${label}]: command not in the seed-script allowlist (mkdir/cp/echo/cat/chmod/umask/set/printf/true/:/sh, or a bare '(' / ')' grouping line):" >&2
     printf '%s\n' "${hits}" | sort -t: -k1,1 -u | sed 's/^/    /' >&2
     rc=1
   fi

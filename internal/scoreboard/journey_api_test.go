@@ -352,6 +352,54 @@ func TestJourney_ExfilReceivedProjection(t *testing.T) {
 	}
 }
 
+// TestJourney_ExpectedRuleFiredProjection proves the ADR-0008 read-only
+// projection fields: requireExpectedRuleFire is true for a
+// positive-proof-required evade mission, and expectedRuleFired flips to true
+// once the store records ANY expectedRules fire for (user, challenge). Like
+// TestJourney_ExfilReceivedProjection, these are purely projected and never
+// affect the solve verdict directly (SubmitEvade re-derives the same gate via
+// evaluateClean).
+func TestJourney_ExpectedRuleFiredProjection(t *testing.T) {
+	cat := catalog.Catalog{
+		"01-proof": {
+			ID: "01-proof", Type: "evade", ExpectedRules: []string{"Shell Redirected Private Key Read"},
+			RequireExpectedRuleFire: true, ExpectedFlag: "FALCO{proof}",
+		},
+	}
+	journeys := catalog.Journeys{
+		"01-proof": {ChallengeID: "01-proof", Title: "proof", Briefing: "b"},
+	}
+	st, err := store.Open(filepath.Join(t.TempDir(), "j.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := scoreboard.NewHandler(cat, st, logger,
+		scoreboard.WithJourneys(journeys),
+		scoreboard.WithOrder([]string{"01-proof"}),
+	)
+	f := &journeyFixture{t: t, srv: srv, st: st}
+
+	det := f.journey("alice")["detail"].(map[string]any)
+	if det["requireExpectedRuleFire"] != true {
+		t.Fatalf("requireExpectedRuleFire must be true for a proof-required evade, got %v", det["requireExpectedRuleFire"])
+	}
+	if det["expectedRuleFired"] != false {
+		t.Fatalf("expectedRuleFired must be false before any fire, got %v", det["expectedRuleFired"])
+	}
+
+	// Record a positive-proof fire directly (mirroring what a real Falco fire
+	// would do via Grader.OnRuleFire) → expectedRuleFired flips true.
+	if err := st.RecordExpectedRuleFire("alice", "01-proof", "Shell Redirected Private Key Read", "2026-08-25T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	det = f.journey("alice")["detail"].(map[string]any)
+	if det["expectedRuleFired"] != true {
+		t.Fatalf("expectedRuleFired must be true after a fire, got %v", det["expectedRuleFired"])
+	}
+}
+
 // TestJourney_TriggerDetectionProjection proves the #39 trigger-solve live
 // feedback fields: a trigger mission surfaces its success signal
 // (expectedRules) and the subset of those rules the user has fired in the
