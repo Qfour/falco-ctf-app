@@ -518,6 +518,39 @@ Decision 対象外にしていたが、**platform#111 として follow-up issue 
   `templates/namespace.yaml` 削除 と platform 側の `namespaces` release +
   `needs` 追加) が同一コミット/同一 apply 単位に含まれることを確認すること
   (release-engineer/VP のマージ順序チェック項目とする)。
+- **platform#75 (`deploy-user.sh` の `-n` 不在) 対応の navigational addendum
+  (2026-08-26, architect)**: 上記「platform#75 対応時の条件」を満たす対応が進行中。
+  **まだ merge 前** (app リポ branch `fix/deploy-user-namespace`, commit
+  `b1b5eb2` — `main` から 1 commit ahead。PR 未起票)。
+
+  採用した所有権パターン: `charts/ctf-user/templates/namespace.yaml` を削除し、
+  `deploy-user.sh` が `helm upgrade --install` 実行前に `kubectl create
+  namespace` + `kubectl label` (元の `ctf-user.labels` helper + PSA label と
+  完全一致するラベル集合) で `ctf-<user>` Namespace を明示的に作成する
+  「script-level 単一所有」方式 (`charts/ctf-user/deploy-user.sh:257-268` 実測)。
+  **本ADRの Decision (Option 3, platform 側 `namespaces` bootstrap release への
+  集約所有) とは別の方式である。** これは後退ではなく、「1 release = 1
+  namespace」という bootstrap release の前提 (静的な `.Values.namespaces` list
+  を `range` するだけ) が、ctf-user のように **helmfile 管理外で参加者ごとに
+  動的生成される** namespace には構造的にそのまま適用できない (Context 既述)
+  ことに対応した選択であり、Context で予告されていた「単一所有パターンを
+  ctf-user 側に適用する」という条件は、bootstrap release への相乗りではなく
+  「namespace を作る唯一のスクリプト自身が単一所有者になる」という**同じ原則の
+  別実装**として満たされている (VP が実コードでラベル・PSA値が元の chart
+  template と完全一致することを検証済み。cluster 実機検証は qa-engineer が
+  並行実施中で、本追記の対象外)。
+
+  `scripts/check-namespace-ownership.sh` の `ctf-user` 除外は**まだ解除していない**
+  (実チャートは既に Namespace を自己 template しなくなり除外を外しても検査は
+  通るはずだが、CI negative-test fixture
+  (`scripts/testdata/namespace-ownership-FIXTURE/charts/ctf-user`) と
+  `.github/workflows/ci.yaml` の期待値更新が別途要るため、意図的に別 follow-up
+  としてスコープ外に置かれている — `scripts/check-namespace-ownership.sh:47-61`)。
+
+  本追記は Decision / Verification を書き換えない (navigational のみ)。本ADR
+  自身の Verification (V1-V7) は ctf-user を対象にしておらず、この追記時点でも
+  その対象範囲は変わらない。
+
 
 ## Signposts
 
