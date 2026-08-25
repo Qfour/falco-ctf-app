@@ -3,6 +3,18 @@
 // other route; this file holds only the handler bodies, following the same
 // "one Routes() table per package, handler bodies split across files"
 // pattern api.go itself already uses (see stepCheck / openHint / etc.).
+//
+// Issue #194 (api.go's Issue #113, same package, applied here): the three
+// json.NewDecoder(r.Body).Decode(&req) calls below (createQuestion /
+// postMessage / adminReply) must never put a raw decode err.Error() into the
+// response body — reuse api.go's errMsgInvalidBody constant (same package,
+// no import needed) and log the real err via h.logger next to the
+// WriteJSON call, matching every other decode-error site in this package.
+// The validQuestionSubject/validQuestionBody validation errors right below
+// each decode call are the SAME exception api.go's validDisplayName is:
+// self-crafted messages ("subject required", "body too long (max %d
+// bytes)") that name no internal struct field, driver, or schema, so they
+// are returned verbatim on purpose, not left over.
 package api
 
 import (
@@ -106,9 +118,14 @@ func (h *Handler) createQuestion(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxQuestionRequestBytes)
 	var req oapi.CreateQuestionJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		h.logger.Warn("qa create: invalid body", "err", err, "user", user, "remote_addr", r.RemoteAddr)
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": errMsgInvalidBody})
 		return
 	}
+	// Self-crafted validation messages (validQuestionSubject/
+	// validQuestionBody), not internal/store errors — safe to return
+	// verbatim (same reasoning as api.go's adminSetDisplayName +
+	// validDisplayName, Issue #113).
 	subject, err := validQuestionSubject(req.Subject)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
@@ -190,9 +207,12 @@ func (h *Handler) postMessage(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxQuestionRequestBytes)
 	var req oapi.PostQuestionMessageJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		h.logger.Warn("qa post message: invalid body", "err", err, "user", user, "qid", qid, "remote_addr", r.RemoteAddr)
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": errMsgInvalidBody})
 		return
 	}
+	// Self-crafted validation message, safe to return verbatim — see
+	// createQuestion's identical comment above.
 	body, err := validQuestionBody(req.Body)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
@@ -295,9 +315,12 @@ func (h *Handler) adminReply(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxQuestionRequestBytes)
 	var req oapi.AdminReplyQuestionJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		h.logger.Warn("qa admin reply: invalid body", "err", err, "qid", qid, "remote_addr", r.RemoteAddr)
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": errMsgInvalidBody})
 		return
 	}
+	// Self-crafted validation message, safe to return verbatim — see
+	// createQuestion's identical comment above.
 	body, err := validQuestionBody(req.Body)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})

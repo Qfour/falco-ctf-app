@@ -39,6 +39,12 @@ const (
 type qaFixture struct {
 	t   *testing.T
 	srv *scoreboard.Handler
+	// qa is the QA SQLite handle wired into srv via scoreboard.WithQA.
+	// Exposed (unlike newFixture's f.st, which IS exposed the same way in
+	// server_test.go) so qa_errorleak_test.go can fault-inject a REAL store
+	// error by closing it mid-test, the same "closed handle" technique
+	// errorleak_test.go already uses against the main store (Issue #113).
+	qa *qa.Store
 }
 
 func newQAFixture(t *testing.T, extra ...scoreboard.Option) *qaFixture {
@@ -55,7 +61,7 @@ func newQAFixture(t *testing.T, extra ...scoreboard.Option) *qaFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { qaSt.Close() })
+	t.Cleanup(func() { qaSt.Close() }) //nolint:errcheck // double-close after a test's own fault-injection Close is fine, error discarded either way
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	opts := append([]scoreboard.Option{
 		scoreboard.WithAdminEmails([]string{qaFixtureAdmin}),
@@ -63,7 +69,7 @@ func newQAFixture(t *testing.T, extra ...scoreboard.Option) *qaFixture {
 		scoreboard.WithQA(qaSt),
 	}, extra...)
 	srv := scoreboard.NewHandler(cat, st, logger, opts...)
-	return &qaFixture{t: t, srv: srv}
+	return &qaFixture{t: t, srv: srv, qa: qaSt}
 }
 
 // do issues a request carrying Origin (so origin-guarded write routes are
@@ -84,6 +90,23 @@ func (f *qaFixture) do(method, target, email string, body any) *httptest.Respons
 	} else {
 		r = httptest.NewRequest(method, target, nil)
 	}
+	if email != "" {
+		r.Header.Set("X-Auth-Request-Email", email)
+	}
+	r.Header.Set("Origin", qaFixtureOrigin)
+	w := httptest.NewRecorder()
+	f.srv.ServeHTTP(w, r)
+	return w
+}
+
+// doRaw sends a literal, possibly-malformed body (bypassing json.Marshal),
+// the same technique errorleak_test.go's doRawAs uses to actually trigger a
+// decode error — f.do above always marshals a valid Go value first, so it
+// can never exercise the decode-error path qa_errorleak_test.go needs.
+func (f *qaFixture) doRaw(method, target, email, rawBody string) *httptest.ResponseRecorder {
+	f.t.Helper()
+	r := httptest.NewRequest(method, target, strings.NewReader(rawBody))
+	r.Header.Set("Content-Type", "application/json")
 	if email != "" {
 		r.Header.Set("X-Auth-Request-Email", email)
 	}
