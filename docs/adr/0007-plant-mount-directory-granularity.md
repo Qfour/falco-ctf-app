@@ -571,6 +571,49 @@ image の対応ディレクトリと entry 集合・mode・owner が一致する
   ことで検知する**(colima 実測は §C4′ 参照。cluster 個体差で結果が変わりうるため
   layer-4 E2E での再確認を必須とする)。
 
+**実施記録 (qa-engineer, 2026-08-25, PR #180 review-5x T3 の R2/R3/R4 独立収束指摘への対応)**:
+上記「進行中の再 deploy の回帰」(欠陥の本体) を実クラスタで単独実行し、**PASS** を確認した
+(branch `feat/plant-mount-directory-granularity` @ `a5dc0da981c13a2447f1165525abac38579483b8`)。
+
+- colima `ctf-e2e` profile (arm64, k3s v1.35.0+k3s1, Falco 0.43.1 `modern_ebpf`, 既存 5 日運用の
+  cluster を再利用)。`challenge` image のみ本ブランチから再 build (`docker --context colima-ctf-e2e`
+  相当 — `DOCKER_HOST` env が `colima` [default profile] を指す shell profile 設定のため、
+  `--context` フラグではなく `DOCKER_HOST=unix://.../ctf-e2e/docker.sock` を明示指定して
+  build。`docker save | colima ssh --profile ctf-e2e -- sudo ctr -n k8s.io images import -`
+  で `k8s.io` namespace へロード — 前任者事故 [誤 namespace import] の再発防止として
+  namespace 明示を確認済み)。scoreboard/auth-policy/collector は本 PR で無変更のため再 build 不要
+  (`git diff main...HEAD --stat` で確認)。
+- 新規 user `qaverify1` (ns `ctf-qaverify1`) を all-missions mode で deploy
+  (`charts/ctf-user/deploy-user.sh --dns-suffix ctf-e2e.local qaverify1 all`)。
+  deploy 直後: `current=00-tutorial`, `solved_count=0`, `dirty=false` (I13a 新規 user 側は既知 green、参考)。
+  mount 実測: `/etc` (`rw`, dev=`fd01`) と `/root/.ssh` (`ro`) がディレクトリ mount。
+- 00/01/02 を実際に解いて `current=03-stealth-read` (evade) に進めた
+  (`echo ... > /dev/shm/hello.sh && sh /dev/shm/hello.sh`、`curl -sk https://kubernetes.default.svc/api`、
+  `cat /etc/shadow` を `kubectl exec workspace -c challenge` で実行)。solve 後: `solved_count=3`,
+  `dirty=false`, `dirtyRules=[]` (redeploy 前のベースライン)。
+- **同一 user (`qaverify1`, `current=03-stealth-read` のまま) を再 deploy**
+  (`deploy-user.sh ... qaverify1 all` を再実行 — `[1/4] rotate workspace Pod` が Pod を削除して
+  helm upgrade、`assert-flag-isolation.sh` も再度 green)。12:43:27 開始 → 12:43:58 helm upgrade 完了 →
+  12:44:02 Pod Ready (JST)。
+- **settle window 90 秒 (2 秒間隔 45 回ポーリング) の間、`dirty` は一度も `true` にならず
+  `false` のまま**(`dirtyRules=[]`, `solved_count=3` delta ゼロ, `current=03-stealth-read` 不変。
+  I13a の「進行中 user は delta で見る」を満たす)。
+- **Falco DaemonSet の stdout を一次ソースとして直接確認** (単一ノード/単一 falco pod なので
+  fan-out 不要): redeploy window (03:43:27–03:44:02 UTC) 前後を `container.name` の Pod UID で
+  区別して読むと、旧 Pod (`...c0162a80...`) 側に `00:` の `Execution from /dev/shm` (03:42:22) と
+  `02:` の `Read sensitive file untrusted` (`cat /etc/shadow`, 03:42:47) が記録されている一方、
+  **新 Pod (`...035e7747...`) 側には `Contact K8S API Server From Container` (ttyd の
+  readiness exec probe によるもの、01 は既に solve 済みなので無害) だけが記録され、
+  `Read sensitive file untrusted` は 1 件も出現しない**。scoreboard の `dirty=false` は
+  「発火していないから taint されない」という一次ログと整合する (二次ソースの投影値だけに
+  依拠していない)。
+- **結論: ADR-0007 Verification 4 の「進行中の再 deploy の回帰」— PASS。ブロッカーなし。**
+  Option 1 (ディレクトリ granularity mount) は、進行中 evade user の再 deploy に対しても
+  Issue #150 の欠陥 (03 の `dirty` 反転・永続 taint) を再発させないことを実クラスタで確認した。
+- 検証後、`helm uninstall qaverify1` + `kubectl delete ns ctf-qaverify1` で完全削除、
+  port-forward 終了、kubectl context を `falco-ctf` に、docker context を `colima` に復元、
+  `colima stop --profile ctf-e2e` で停止済み。
+
 ### 5. 検査の自己検証 (規律)
 
 上記 1-4 のいずれについても、**故意に違反させて赤くなることを実出力で示す**まで
