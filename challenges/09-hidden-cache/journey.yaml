@@ -22,7 +22,7 @@ steps:
 hints:
   - credential を rotate されても困らないよう、攻撃者は「元ファイルが消えても中身が残る」別名を作る。ショートカット (symlink) ではなく inode を直接指すリンクだ。
   - -s 無しの ln が hardlink。symlink (ln -s) は別ルール (Create Symlink Over Sensitive Files) なので 09 では発火しない。
-  - "想定解: ln /etc/sudoers /tmp/.cache.bak — sensitive file への link syscall で Create Hardlink Over Sensitive Files が発火する (この環境では /etc/shadow は別ファイルシステム上にあるため hardlink が作れない)。"
+  - "想定解: ln /etc/sudoers /etc/.cache.bak — sensitive file への link syscall で Create Hardlink Over Sensitive Files が発火する (この環境では /tmp と /etc は別ファイルシステム上にあるため /tmp への hardlink は作れない)。"
 bridge: >-
   持ち出しの準備は整った。ここまで trigger で「何が光るか」を、evade で「どう消すか」を
   体に叩き込んだ。いよいよ総仕上げ — master key を全検知を回避したまま箱の外へ運び出す。

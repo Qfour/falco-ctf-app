@@ -7,12 +7,6 @@
 #   make test
 FROM golang:1.26.6-alpine@sha256:af8d6740070b8906d12eae1c3e3ea0957fb63f492051ea05e354c38ef9fe88df
 
-# bash: challenges/gen_values_test.go (ADR-0007 Verification 2's negative
-# test) shells out to challenges/gen-values.sh, whose shebang is bash and
-# which uses bash arrays — alpine's default /bin/sh (busybox ash) can't run
-# it. Nothing else in the Go test suite needs a shell.
-RUN apk add --no-cache bash
-
 WORKDIR /src
 
 COPY go.mod go.sum ./

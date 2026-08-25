@@ -176,7 +176,7 @@ cp /etc/shadow /tmp/c                 # ← Create Hardlink は発火しない
 |---|---|---|
 | `/proc/<pid>/root` | `/proc/self/root/etc/shadow` | プロセスの mount namespace の root を指す symlink。**最も汎用** |
 | Symbolic link | `ln -s /etc/shadow /tmp/x` | 多くの Falco ルールは fd.name に **解決後** の path を入れるので無効な場合あり |
-| Hard link | `ln /etc/sudoers /tmp/x` | この環境では `/etc/shadow` は別ファイルシステム上にあるため hardlink できない。同一 fs 上の sensitive file (`/etc/sudoers` など) なら成立する |
+| Hard link | `ln /etc/sudoers /tmp/x` | この環境では `/etc` 全体が別ファイルシステム (emptyDir) 上にあるため、`/etc` 配下の sensitive file を `/tmp` へ hardlink できない (`EXDEV`)。`/etc` 内の別 path (`ln /etc/sudoers /etc/x`) なら同一 fs なので成立する。**ただし** `Create Hardlink Over Sensitive Files` は `evt.arg.oldpath` のみを条件にしており、この `EXDEV` で失敗した `link` syscall でも発火する (destination の成否は検知ロジックに影響しない) |
 | Bind mount | `mount --bind /etc/shadow /tmp/x; cat /tmp/x` | `mount` 権限が要る (このコンテナでは可能なはず) |
 | Tool 経由 | `busybox cat /etc/shadow` | `proc.name` が変わるが `fd.name` は変わらず — 検知に影響しないことが多い |
 
