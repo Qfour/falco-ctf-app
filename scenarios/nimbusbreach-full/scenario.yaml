@@ -16,3 +16,16 @@ challenges:
   - 08-c2-beacon
   - 09-hidden-cache
   - 10-final-exfil
+# Advisory only (P27-3): the MITRE ATT&CK tactics this scenario intends to
+# cover, derived from challenges/*/falco-rule.yaml `attack.tactic`. Not
+# consumed by Go (catalog.go ignores unknown fields) — `make gen-attack`
+# cross-checks this list against the actual challenges: above and prints a
+# non-blocking warning on mismatch. Order follows first-occurrence in the
+# challenges: list above.
+tactics:
+  - Discovery
+  - Credential Access
+  - Defense Evasion
+  - Execution
+  - Command and Control
+  - Exfiltration
