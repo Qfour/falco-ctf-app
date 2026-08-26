@@ -1,6 +1,6 @@
 # ADR-0014: journey narrative を課題ローカルからシナリオ所有のオーバーレイへ分離する
 
-- Status: **Proposed**
+- Status: **Accepted** (2026-08-26 — implementation landed, Verification items 1-3 satisfied; see below)
 - Date: 2026-08-26
 - Deciders: VP (起票), architect (技術提案), product-engineer (シナリオ単位定義との整合が前提)
 - 関連: REFACTORING.md P27 (challenge シナリオ体系の再構築)。新規 ADR — 他 ADR を supersede しない。
@@ -81,12 +81,50 @@ Option 2 と得られる自由度がほぼ同じ。
 
 ## Verification
 
-**未実装。実装 (P27-2) が別 PR で landing し、以下を満たすまで Accepted にしない**:
-1. `LoadJourneys` が override 適用時に課題ローカル版を完全に無視すること (単体テスト)。
-2. override 未指定の既存シナリオ (`nimbusbreach-full`) の挙動が変化しないこと (回帰)。
-3. `tutorial-intro` で 03 の briefing 矛盾が解消されること (実機/テストで確認)。
+**実測結果 (2026-08-26, feat/p27-2-journey-narrative-overlay, software-engineer)**:
+
+格納場所は `scenarios/<name>/narrative.yaml` (新設ファイル。`scenario.yaml` は
+無変更) を選択。実装は `internal/catalog/narrative.go`
+(`Narrative`/`NarrativeOverride`/`LoadNarrative`/`ApplyNarrativeOverrides`)。
+`cmd/scoreboard/main.go` が `LoadJourneys` の直後に
+`LoadNarrative(filepath.Dir(scenarioFile)+"/narrative.yaml")` →
+`ApplyNarrativeOverrides` を呼ぶ (scenario 未指定時は呼ばない)。
+
+1. **override 適用時に課題ローカル版を完全に無視すること (単体テスト)**: 満たした。
+   `internal/catalog/narrative_test.go` の
+   `TestApplyNarrativeOverrides_ReplacesLocalWholesale` が
+   briefing/bridge 両方が課題ローカルの文言 (Mission 02 / 04 への参照) を含まず
+   override 値に置き換わることを確認。`TestApplyNarrativeOverrides_OmittedBridgeIsClearedNotFallback`
+   が「フィールド単位の静かな部分マージ禁止」を反対側から証明: override が
+   `bridge` を省略すると `""` にクリアされ、課題ローカルの bridge へは
+   フォールバックしない。`go test ./internal/catalog/... -run Narrative -v`
+   で該当 8 テストすべて PASS (下記 make test ログに包含)。
+2. **override 未指定の既存シナリオ (`nimbusbreach-full`) の挙動が変化しないこと (回帰)**:
+   満たした。`TestApplyNarrativeOverrides_NoOverride_ExistingScenariosUnaffected`
+   (合成 journey で `reflect.DeepEqual` により無変化を確認) と、実物の
+   `challenges/`+`scenarios/` ツリーを読む
+   `TestTutorialIntroNarrative_ResolvesMission02Contradiction` の後半
+   (`nimbusbreach-full` は `narrative.yaml` を持たないため、override 適用後も
+   03 の briefing が元の "Mission 02" 文言を保持していることを assert) の
+   両方で確認。既存の `TestLoadJourneys_*` 8 件・`scenario_test.go` の既存テストも
+   無改変で green (回帰無し)。
+3. **`tutorial-intro` で 03 の briefing 矛盾が解消されること (実機/テストで確認)**:
+   満たした。`scenarios/tutorial-intro/narrative.yaml` を新設し
+   `03-stealth-read` の briefing/bridge を「Mission 02」に触れない文言へ置換
+   (9 課題全体の中立化は content-engineer の別 PR (P27-2 後半) に委ねる、
+   これは機構実証用の最小フィクスチャ)。
+   `TestTutorialIntroNarrative_ResolvesMission02Contradiction` が
+   `LoadScenario` → `Restrict` → `LoadJourneys` → `LoadNarrative` →
+   `ApplyNarrativeOverrides` を実際の main.go 配線と同じ順で再生し、
+   tutorial-intro 側の 03 briefing に "Mission 02" が含まれないことを確認
+   (テスト内の premise チェックが、課題ローカル版が依然 "Mission 02" を含む
+   ことも確認しているので、override が実際に効いていることを両側から証明)。
 4. Hard Invariant への昇格は行わない — 本 ADR は journey.yaml の schema 変更のみで、
-   `.claude/rules/falco-ctf-app-conventions.md` への追記対象ではない。
+   `.claude/rules/falco-ctf-app-conventions.md` への追記対象ではない (変更なし)。
+
+**`make test` (Dockerfile.test, `go vet ./...` + `go test ./... -count=1`)**:
+全パッケージ green (`internal/catalog` 含む、既存 `internal/scoreboard/apispec_parity_test.go`
+`cmd/scoreboard` テストも green — I14 の mux ⇔ spec 一致に影響なしを確認)。
 
 ## Advice
 

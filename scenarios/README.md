@@ -12,6 +12,10 @@ the facilitator demonstrates, always completing the full 01→10 arc.
 ```
 scenarios/<scenario>/
 ├── scenario.yaml     # id, title, ordered challenge ids (machine-read)
+├── narrative.yaml    # optional (ADR-0014): per-challengeId briefing/bridge
+│                     # override, replaces the challenge-local journey.yaml
+│                     # text wholesale where it would otherwise reference a
+│                     # mission this scenario doesn't include
 ├── playbook-<edition>.md   # facilitator run-of-show for a time budget
 └── debrief.md        # post-event walkthrough (all missions, reusable)
 ```

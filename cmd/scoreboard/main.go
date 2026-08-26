@@ -163,6 +163,22 @@ func main() {
 		logger.Error("journey load failed", "dir", challengesDir, "err", err)
 		os.Exit(1)
 	}
+	// ADR-0014: a scenario may additively override briefing/bridge per
+	// challengeId via scenarios/<name>/narrative.yaml, sitting alongside
+	// scenario.yaml. Optional; absent file (the common case) is a no-op so
+	// scenarios with no narrative.yaml (all of them today) are unaffected.
+	if scenarioFile != "" {
+		narrativeFile := filepath.Join(filepath.Dir(scenarioFile), "narrative.yaml")
+		narrative, err := catalog.LoadNarrative(narrativeFile)
+		if err != nil {
+			logger.Error("narrative load failed", "file", narrativeFile, "err", err)
+			os.Exit(1)
+		}
+		if err := catalog.ApplyNarrativeOverrides(journeys, narrative); err != nil {
+			logger.Error("narrative override failed", "file", narrativeFile, "err", err)
+			os.Exit(1)
+		}
+	}
 	// Falco rule excerpts (display-only, Story tab's "Falco Rule" panel — P23
 	// Story-as-docs). Same source challenges/<NN>-<slug>/rule.yaml the old
 	// docs-site has always rendered; fail-soft per challenge (missing file =
