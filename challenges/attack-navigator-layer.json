@@ -33,7 +33,7 @@
       "techniqueID": "T1006",
       "score": 100,
       "color": "#e60d0d",
-      "comment": "03-stealth-read Stealth Read — Direct Volume Access",
+      "comment": "03-stealth-read Stealth Read — Direct Volume Access; 03-stealth-read-detect Stealth Read (Detect) — Direct Volume Access",
       "enabled": true
     },
     {
