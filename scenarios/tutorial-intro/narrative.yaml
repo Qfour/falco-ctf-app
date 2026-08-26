@@ -1,20 +1,29 @@
 # ADR-0014 narrative overlay for scenario `tutorial-intro`
 # (docs/adr/0014-journey-narrative-scenario-overlay.md).
 #
-# `tutorial-intro` walks 00 -> 01 -> 03 (never runs 02). But
-# challenges/03-stealth-read/journey.yaml's briefing was authored assuming
-# the 01->10 nimbusbreach-full order and opens with "Mission 02 で正面から
-# /etc/shadow を読んだら盛大に検知された" — a contradiction in this scenario,
-# since its participants never see 02. This override replaces 03's
-# briefing/bridge for THIS scenario only; nimbusbreach-full ships no
-# narrative.yaml and keeps the original challenge-local text unchanged.
+# `tutorial-intro` walks 00 -> 01 -> 03 (never runs 02 or 04).
 #
-# Scope note: this is a minimal proof that the ADR-0014 override mechanism
-# resolves the contradiction end-to-end for one mission (see
-# internal/catalog/narrative_test.go). Neutralizing every challenge-local
-# briefing/bridge that references another mission by number (all 01-10) is
-# the remaining P27-2 content pass, owned by content-engineer in a follow-up
-# PR — not part of this fixture.
+# UPDATE (P27-2, content-engineer): the "Mission 02" contradiction this
+# override originally existed to fix has been resolved at the source —
+# challenges/03-stealth-read/journey.yaml's briefing is now neutralized
+# (no direct mission-number reference), so the briefing override below is
+# no longer strictly required (it is intentionally kept byte-identical to
+# the now-neutral challenge-local text, for parity with the docs generated
+# from journey.yaml directly).
+#
+# What THIS override still does that the neutralized local file cannot:
+# 03's local `bridge` field ("...箱の中を漁りにいく。まずは正面から find で
+# どうなるか見てみよう。") is a forward teaser toward 04-key-search — which
+# is not part of this scenario. Left unoverridden, tutorial-intro's closing
+# beat would dangle a reference to a mission its participants never see.
+# `bridge: ""` clears it (no teaser, since 03 is tutorial-intro's last
+# mission) without touching journey.yaml's own bridge (which nimbusbreach-
+# full still needs, unchanged, to flow into 04).
+#
+# See also scenarios/nimbusbreach-full/narrative.yaml, which uses the same
+# ADR-0014 mechanism in the opposite direction: restoring the "Mission NN"
+# callbacks that P27-2 neutralized out of the challenge-local fallback, for
+# the one scenario where the full 01->10 order makes them non-contradictory.
 overrides:
   03-stealth-read:
     briefing: >-

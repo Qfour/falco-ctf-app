@@ -5,10 +5,11 @@ challengeId: 03-stealth-read
 title: 静かな読み取り — path 迂回
 tagline: 検知を発火させずに /etc/shadow を読み直し、flag を回収せよ
 briefing: >-
-  Mission 02 で正面から /etc/shadow を読んだら盛大に検知された。CTF Company の SOC は
-  もうアラートを見ている可能性が高い。だが同じ情報を Falco に気づかれず取り直せれば、
-  SOC は単発の false positive と判断するはずだ。Read sensitive file untrusted を
-  一度も発火させずに /etc/shadow 末尾の flag を抜き出し、提出せよ。
+  正面から /etc/shadow を読むと Falco の Read sensitive file untrusted が
+  即座に発火する。CTF Company の SOC はこの手のアクセスを常時監視している —
+  同じ情報を Falco に気づかれず取り直せれば、SOC は単発の false positive と
+  判断するはずだ。Read sensitive file untrusted を一度も発火させずに
+  /etc/shadow 末尾の flag を抜き出し、提出せよ。
 steps:
   - label: ルールが何で判定しているか見抜く
     detail: このルールは open に渡した path (fd.name) が /etc で始まるかで判定している。

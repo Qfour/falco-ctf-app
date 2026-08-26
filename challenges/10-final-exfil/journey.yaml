@@ -13,7 +13,7 @@ briefing: >-
 steps:
   - label: 発火させずに master key を読む
     detail: |
-      直接 cat せず、Mission 03 で学んだ path 迂回の手口をセンシティブファイルに
+      直接 cat せず、path 迂回で検知を回避した手口をセンシティブファイルに
       再利用してみよう。同じ回避が master key にもそのまま効く。
   - label: 既存の curl で collector へ静かに送る
     detail: |

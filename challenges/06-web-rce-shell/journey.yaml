@@ -4,8 +4,8 @@ challengeId: 06-web-rce-shell
 title: Web RCE — シェル奪取
 tagline: Web プロセスを装ってシェルを起こし、検知を発火させろ
 briefing: >-
-  ここまで evade を 2 つ解いたあなたは「Falco は文字列で見ている、回避できる」と確信して
-  いる。だが CTF Company の Web サーバには別の脆弱性もある — Runtime.exec() 経由で OS
+  文字列ベースの判定には穴があると学んだあなたは「Falco は文字列で見ている、回避できる」
+  と確信している。だが CTF Company の Web サーバには別の脆弱性もある — Runtime.exec() 経由で OS
   シェルが起こせる典型的な Web RCE。Falco はシェルの親プロセス (proc.pname) を見ていて、
   親が httpd / nginx / apache2 等なら異常と判断する。Web プロセス偽装で shell を起こし
   Run shell untrusted を発火させれば CLEARED。
@@ -22,7 +22,7 @@ steps:
 hints:
   - シェル起動が怪しいかは親プロセスが何かで決まる。httpd や nginx がシェルを起こしたら Falco は異常と見なす。
   - カーネルは proc.pname を実行ファイルの basename から決める。"httpd" という名前の実行ファイルを置き、その中からシェルを起こせばよい。
-  - "想定解: sh /opt/ctf/missions/06-web-rce-shell/fixtures/fake-httpd.sh — /tmp/httpd (comm=httpd) から /bin/sh を起こし発火。別名で動かすと親 comm が変わり発火しない点は Mission 10 の回避の種。"
+  - "想定解: sh /opt/ctf/missions/06-web-rce-shell/fixtures/fake-httpd.sh — /tmp/httpd (comm=httpd) から /bin/sh を起こし発火。別名で動かすと親 comm が変わり発火しない点は、この先の回避ミッションでも使える種になる。"
 bridge: >-
   シェルは取れた。だがこの Pod がいつ再起動されるか分からない — この足場は揮発的だ。
   再起動を跨いで戻ってこられるよう、次は自前の backdoor を仕込んで永続化する。

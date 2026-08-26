@@ -1,0 +1,64 @@
+# ADR-0014 narrative overlay for scenario `nimbusbreach-full`
+# (docs/adr/0014-journey-narrative-scenario-overlay.md).
+#
+# P27-2 neutralized the challenge-local journey.yaml briefing/bridge text
+# (challenges/02,03,06,07,08,10) to remove direct "Mission NN" references,
+# because a scenario that skips a mission (e.g. tutorial-intro: 00,01,03 —
+# no 02) would otherwise inherit a contradiction. `nimbusbreach-full` runs
+# the full 01->10 arc in order, so none of those references are actually
+# contradictory for it — they are exactly the callback beats that made the
+# original story land. This override restores them for THIS scenario only,
+# using the ADR-0014 mechanism (wholesale briefing/bridge replacement, never
+# a field-by-field merge).
+#
+# Scope: only the missions where the neutralization visibly cost narrative
+# punch are restored here (content-engineer judgment call, P27-2) — not all
+# 9 neutralized files:
+#   - 02-credential-files: restores the "Mission 01" opening callback.
+#   - 03-stealth-read: restores the "Mission 02" SOC-is-watching callback —
+#     this is the same contradiction scenarios/tutorial-intro/narrative.yaml
+#     used to carry an override for; tutorial-intro's local fallback is now
+#     neutral by default, so that override was removed as redundant.
+#   - 06-web-rce-shell: restores the "two evades solved" confidence beat
+#     (03 stealth-read + 05 silent-search), which only makes sense as a
+#     literal premise when this scenario's fixed 01->10 order guarantees
+#     both were actually solved first.
+#
+# Not restored here (out of scope for this override — see
+# internal/catalog/narrative.go's schema comment): hint/step-detail
+# "Mission NN" teasers (02's hint -> 03, 04's hint -> 05, 06's hint -> 10,
+# 07's hint -> 10, 08's hint -> 10, 10's step -> 03). The ADR-0014 overlay
+# only replaces `briefing`/`bridge`; those fields stay neutralized for every
+# scenario, nimbusbreach-full included — a schema limitation, not an
+# oversight.
+overrides:
+  02-credential-files:
+    briefing: >-
+      Mission 01 で「書き込めば即バレる」と分かった。次は王道の credential 窃取だ。
+      Linux でパスワードハッシュが眠る場所と言えば古典中の古典、/etc/shadow。
+      Falco はコンテナ内であっても host kernel の syscall を観測しているので、
+      境界の中で読んでも逃れられない。Read sensitive file untrusted を発火させれば CLEARED。
+    bridge: >-
+      盛大にアラートを鳴らしてしまった — SOC はもうこちらを見ている。だが今のは「正面から
+      読んだ」から光った。Falco が path 文字列で見ているなら、同じ shadow を別の道から
+      読めば気づかれない。今度は静かにやり直す番だ。
+  03-stealth-read:
+    briefing: >-
+      Mission 02 で正面から /etc/shadow を読んだら盛大に検知された。CTF Company の SOC は
+      もうアラートを見ている可能性が高い。だが同じ情報を Falco に気づかれず取り直せれば、
+      SOC は単発の false positive と判断するはずだ。Read sensitive file untrusted を
+      一度も発火させずに /etc/shadow 末尾の flag を抜き出し、提出せよ。
+    bridge: >-
+      ハッシュは静かに抜いた。SOC は単発の false positive で片付けただろう。
+      だが本番の横展開に効くのは shadow じゃない — SSH 鍵や AWS クレデンシャルだ。
+      箱の中を漁りにいく。まずは正面から find でどうなるか見てみよう。
+  06-web-rce-shell:
+    briefing: >-
+      ここまで evade を 2 つ解いたあなたは「Falco は文字列で見ている、回避できる」と確信して
+      いる。だが CTF Company の Web サーバには別の脆弱性もある — Runtime.exec() 経由で OS
+      シェルが起こせる典型的な Web RCE。Falco はシェルの親プロセス (proc.pname) を見ていて、
+      親が httpd / nginx / apache2 等なら異常と判断する。Web プロセス偽装で shell を起こし
+      Run shell untrusted を発火させれば CLEARED。
+    bridge: >-
+      シェルは取れた。だがこの Pod がいつ再起動されるか分からない — この足場は揮発的だ。
+      再起動を跨いで戻ってこられるよう、次は自前の backdoor を仕込んで永続化する。

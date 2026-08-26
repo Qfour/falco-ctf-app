@@ -4,6 +4,9 @@
 持ち出し (exfil)**、**submit** する。3 つすべてを満たして solve。単に読んで
 submit するだけでは通らない(`requireExfil`)。
 
+他シナリオで単体運用可能(採点は `falco-rule.yaml` 独立)、ただし 01-09 相当の
+知識を前提とする教育設計である(下記「なぜ 4-9 の知識が要るか」参照)。
+
 ## 採点条件 (3 つすべて)
 
 1. `submit` の flag が `expectedFlag` と一致
