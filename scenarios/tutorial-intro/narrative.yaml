@@ -1,0 +1,26 @@
+# ADR-0014 narrative overlay for scenario `tutorial-intro`
+# (docs/adr/0014-journey-narrative-scenario-overlay.md).
+#
+# `tutorial-intro` walks 00 -> 01 -> 03 (never runs 02). But
+# challenges/03-stealth-read/journey.yaml's briefing was authored assuming
+# the 01->10 nimbusbreach-full order and opens with "Mission 02 で正面から
+# /etc/shadow を読んだら盛大に検知された" — a contradiction in this scenario,
+# since its participants never see 02. This override replaces 03's
+# briefing/bridge for THIS scenario only; nimbusbreach-full ships no
+# narrative.yaml and keeps the original challenge-local text unchanged.
+#
+# Scope note: this is a minimal proof that the ADR-0014 override mechanism
+# resolves the contradiction end-to-end for one mission (see
+# internal/catalog/narrative_test.go). Neutralizing every challenge-local
+# briefing/bridge that references another mission by number (all 01-10) is
+# the remaining P27-2 content pass, owned by content-engineer in a follow-up
+# PR — not part of this fixture.
+overrides:
+  03-stealth-read:
+    briefing: >-
+      正面から /etc/shadow を読むと Falco の Read sensitive file untrusted が
+      即座に発火する。CTF Company の SOC はこの手のアクセスを常時監視している —
+      同じ情報を Falco に気づかれず取り直せれば、SOC は単発の false positive と
+      判断するはずだ。Read sensitive file untrusted を一度も発火させずに
+      /etc/shadow 末尾の flag を抜き出し、提出せよ。
+    bridge: ""
