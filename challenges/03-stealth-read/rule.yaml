@@ -40,7 +40,7 @@
     ]
 
 - list: python_package_managers
-  items: [pip, pip3, conda]
+  items: [pip, pip3, conda, uv]
 
 - list: package_mgmt_binaries
   items: [rpm_binaries, deb_binaries, update-alternat, gem, npm, python_package_managers, sane-utils.post, alternatives, chef-client, apk, snapd]
@@ -53,7 +53,7 @@
     iptables, ps, lsb_release, check-new-relea, dumpe2fs, accounts-daemon, sshd,
     vsftpd, systemd, mysql_install_d, psql, screen, debconf-show, sa-update,
     pam-auth-update, pam-config, /usr/sbin/spamd, polkit-agent-he, lsattr, file, sosreport,
-    scxcimservera, adclient, rtvscand, cockpit-session, userhelper, ossec-syscheckd
+    scxcimservera, adclient, rtvscand, cockpit-session, userhelper, ossec-syscheckd, sshd-session, rkhunter
     ]
 
 - list: shell_binaries
@@ -89,11 +89,11 @@
 
 - macro: sensitive_files
   condition: >
-    ((fd.name startswith /etc and fd.name in (sensitive_file_names)) or
+    (fd.name in (sensitive_file_names) or
       fd.directory in (/etc/sudoers.d, /etc/pam.d))
 
 - macro: proc_name_exists
-  condition: (proc.name!="<NA>")
+  condition: (not proc.name in ("<NA>","N/A"))
 
 - macro: cmp_cp_by_passwd
   condition: (proc.name in (cmp, cp) and proc.pname in (passwd, run-parts))
