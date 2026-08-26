@@ -46,7 +46,13 @@
   実装はこの契約に**形としては**従っている。欠けているのは形ではなく **機械可読性**。
 - `err.Error()` を body に直接入れている箇所: api.go 13 + qa.go 7 = **20 箇所**
   (`grep -n '"error": err.Error()'`。2026-08-26 に再実測しても一致 — この数字が本 ADR の
-  リスク評価の論拠であり、上記の生カウント総数の訂正はこの数字に影響しない)。うち
+  リスク評価の論拠であり、上記の生カウント総数の訂正はこの数字に影響しない)。
+  **その後 Issue #194 (qa.go の decode-error 3箇所を `errMsgInvalidBody` へ置換) が
+  merge されたため、この時点の記録以降 qa.go 側は 7→4 箇所 (残り4箇所は
+  `validQuestionSubject`/`validQuestionBody` の自前検証エラーとして意図的に温存、
+  api.go の `validDisplayName` 例外と同一理由)、合計 20→17 箇所に減っている。上記の
+  「20」は ADR 執筆時点のスナップショットであり、本 ADR の実装フェーズで再実測すること。**
+  うち
   **api.go の 4 箇所 (729/774/826/1461) は 500
   (store 経由)** で、`internal/store/store.go` の `fmt.Errorf("reset solved: %w", err)`
   (`store.go:394` 等) のように SQL テーブル名を含む wrap がそのまま漏れる経路。
