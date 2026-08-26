@@ -1,8 +1,8 @@
 # ADR-0017: mission 13 (Collection, T1560.001) の custom Falco rule — trigger 型・syscall/fd 主軸の `Archive Collected Data`
 
-- Status: **Proposed**. **実装は別 PR。本番投入は Verification (a)/(a-1) が実機で landing するまで不可**
-  (ADR-0008 と同じ運用)
-- Date / Deciders: 2026-08-26 / architect (起草)、VP (承認待ち)
+- Status: **Accepted** (2026-08-26 — implementation landed on both repos, Verification
+  (a)/(a-1)/(a-2)/(a-3)/(b)/(c)/(d) satisfied; see below)
+- Date / Deciders: 2026-08-26 / architect (起草)、VP (承認)
 - 関連: REFACTORING.md P27-4 (Collection の実現性調査完了・次の空き課題番号 `13` を予約
   [`REFACTORING.md:1404-1407,1417`])、ADR-0008 (custom Falco rule 新設の project 初 precedent。
   本 ADR は project 史上 **2 件目**の `customRules` 利用)、ADR-0001/0007 (deploy 経路の
@@ -338,6 +338,38 @@ rule override (ADR-0008)」行に、実装 PR のタイミングで本 rule 名�
   「新課題追加のたびに spec を変える」という誤解を防ぐ。
 - **(e) 本 ADR は Hard Invariant を新設しない。** I13a/I13b の候補集合拡張は
   (a) が実機で landing するまで候補のままとする。
+
+**実測結果 (2026-08-26, platform-engineer + content-engineer + VP 独立確認)**:
+
+- **(a)/(a-1)**: platform-engineer が disposable colima profile `ctf-adr0017` で
+  `helmfile -e local -l name=falco sync` を実行。Falco DaemonSet は `Running`・
+  restart 0、起動ログにエラー無し、`falco -V` ドライランで
+  `{"errors":[],"successful":true,"warnings":[]}`。mission05 の既存ルールも
+  無変更で正常動作を継続 (diff は純追加、削除行 0 件)。list/macro/rule 名の衝突は
+  静的 (upstream タグ) と実機 (deploy 済み embedded ruleset) の両方で 0 件確認。
+- **(a-2)/(a-3)**: content-engineer が別の disposable colima profile
+  `ctf-adr0017-verify` で、platform ブランチの customRules と本課題の実 fixtures を
+  同時デプロイし、falcosidekick `/metrics` の event カウンタで4パターン実測:
+  絶対パス `tar czf .../loot/` → FIRE、`cd` 後の相対パス `tar czf .` → FIRE
+  (Option 3 が落とすはずだったケース)、`cat` での探索のみ → NO FIRE、無関係
+  ディレクトリへの `tar` → NO FIRE。実際の Falco JSON 出力
+  (`rule=Archive Collected Data`, `file=.../customer-roster.csv`, `tool=tar`) を
+  challenge README に転記済み。
+- **(b)**: `TestExpectedRuleFire_NewRuleNameUniqueToMission13`
+  (`internal/catalog/catalog_test.go`) を新設、ADR-0008 の
+  `...Mission05` 版と同型。`make test` (`docker build --no-cache`, VP 独立再実行)
+  で green。
+- **(c)**: `challenges/custom-falco-rules.txt` に追記、`make check-rules` green。
+  VP が実際に `falco-rule.yaml` の rule 名へ typo を注入する mutation test を実施し、
+  `check-rules` が `FAIL: a challenge references a Falco rule that does not
+  exist...` で red になることを確認 → revert して green 復帰を確認
+  (ADR-0008 Verification (e) と同型の red→green 実証)。
+- **(d)**: `make test` の API parity テスト群 (`internal/apispec` 含む) green。
+  新課題追加で spec のキー集合が変化しないことを確認 (回帰のみ、新規対応不要の
+  想定どおり)。
+- 両リポの実装 PR: falco-ctf-platform#129 (customRules 追加)・
+  falco-ctf-app#215 (challenge 13-archive-loot 本体)。デプロイ順序
+  (platform → app) を守って CEO merge 済み。
 
 ## Advice
 
