@@ -42,6 +42,11 @@ cd "$(git rev-parse --show-toplevel)"
 CHART_DIR="${CHECK_FLAG_ISOLATION_CHART_DIR:-charts/ctf-user}"
 PROBE_FLAG='FALCO{dev-probe}'
 RC=0
+# P27-1: set by the scenario-scope loop below, immediately before each
+# run_scope() call, to the scenario's own space-joined challenge-id list.
+# Read by assert_missions_scope() inside run_scope(); empty (the default)
+# in every non-scenario scope, which makes that assert a no-op there.
+EXPECTED_SCENARIO_MISSIONS=""
 
 # ---------------------------------------------------------------------------
 # output helpers — every violation is printed AND recorded (RC=1); nothing
@@ -489,6 +494,56 @@ assert_no_overlay_noop() { # 1-20 (recommended). Only "bites" when challenge
   fi
 }
 
+assert_missions_scope() { # P27-1, render-time equivalent of assert-flag-isolation.sh's
+  # cluster-side 3-8. Reads the global EXPECTED_SCENARIO_MISSIONS (set by the
+  # scenario-scope loop below, immediately before each run_scope() call that
+  # needs it) — a no-op in every scope where that's empty (the 5 fixed
+  # scopes above never set it). Found missing by 5x review R2: this script
+  # asserted flag isolation (1-1..1-21) for scenario scope but had NOTHING
+  # checking that the `missions-scope` initContainer / `missions-seed`
+  # mount charts/ctf-user/templates/pod.yaml renders for content isolation
+  # (see that file's P27-1 comments) actually exist — a `{{- if false }}`
+  # mutation over the challenge volumeMount rendered clean here while
+  # failing cluster-side 3-8. This closes that CI-visible gap.
+  local pod_doc="$1" challenge_block="$2"
+  [ -n "${EXPECTED_SCENARIO_MISSIONS}" ] || return 0
+
+  local scope_block
+  scope_block="$(extract_named_block "$pod_doc" "    - name: missions-scope")"
+  if [ -z "$scope_block" ]; then
+    violation P27-1a "scenario.missions is set but no 'missions-scope' initContainer is in the rendered Pod (content isolation is not applied — /opt/ctf/missions/ stays the full image-baked tree)"
+    return
+  fi
+  ok P27-1a "'missions-scope' initContainer is present"
+
+  local id missing=()
+  for id in ${EXPECTED_SCENARIO_MISSIONS}; do
+    if ! grep -qF "mkdir -p \"/missions-seed/${id}\"" <<<"$scope_block" \
+      || ! grep -qF "cp -a \"/opt/ctf/missions/${id}/.\"" <<<"$scope_block"
+    then
+      missing+=("$id")
+    fi
+  done
+  if [ "${#missing[@]}" -gt 0 ]; then
+    violation P27-1b "'missions-scope' initContainer command has no mkdir/cp for: ${missing[*]} (expected: ${EXPECTED_SCENARIO_MISSIONS})"
+  else
+    ok P27-1b "'missions-scope' initContainer command covers every expected mission id (${EXPECTED_SCENARIO_MISSIONS})"
+  fi
+
+  # The challenge container's volumeMounts entry that actually shadows
+  # /opt/ctf/missions/ — checked as an adjacent {name, mountPath} pair
+  # (mountPath must be the very next line after the name line, matching
+  # exactly how pod.yaml renders it), not just "both substrings appear
+  # somewhere in the block".
+  local vm_block
+  vm_block="$(block_of "$challenge_block" "      volumeMounts:")"
+  if grep -A1 -F -- '- name: missions-seed' <<<"$vm_block" | grep -qF -- 'mountPath: /opt/ctf/missions'; then
+    ok P27-1c "challenge container mounts missions-seed at /opt/ctf/missions"
+  else
+    violation P27-1c "challenge container has no missions-seed volumeMount at /opt/ctf/missions (scenario.missions is set but /opt/ctf/missions/ is not shadowed in the challenge container)"
+  fi
+}
+
 assert_role() { # 1-16 (required)
   local role_doc="$1"
   if [ -z "$role_doc" ]; then
@@ -604,6 +659,7 @@ run_scope() { # $1=label, remaining args = helm template args (after $CHART_DIR)
   assert_ttyd_argv "$ttyd_block"
   assert_no_overlay_noop "$plant_block" "$challenge_block"
   assert_role "${role_doc:-}"
+  assert_missions_scope "$pod_doc" "$challenge_block"
 }
 
 # ---------------------------------------------------------------------------
@@ -664,16 +720,14 @@ for sfile in scenarios/*/scenario.yaml; do
     violation RENDER "scenario '${sname}': ${svalues} not generated (run 'make gen-values')"
     continue
   fi
-  # PROBE_FLAG overrides only for evade ids THIS scenario actually lists
-  # (same "don't leak an unrelated mission's probe flag into this Secret"
-  # discipline the single-mission scopes above use) — parsed from the
-  # scenario's own `challenges:` list with the same restrained awk shape
-  # challenges/gen-values.sh's scenario_challenge_ids() uses.
-  flag_args=()
+  # Parse the scenario's own `challenges:` list once (same restrained awk
+  # shape challenges/gen-values.sh's scenario_challenge_ids() uses) — this
+  # feeds BOTH the PROBE_FLAG overrides below (evade ids only) AND
+  # EXPECTED_SCENARIO_MISSIONS (every id, read by assert_missions_scope()).
+  all_ids=()
   while IFS= read -r cid; do
     [ -z "$cid" ] && continue
-    [ -f "challenges/${cid}/plant.sh" ] || continue
-    flag_args+=(--set-string "challenge.flags.${cid}=${PROBE_FLAG}")
+    all_ids+=("$cid")
   done < <(awk '
     /^challenges:/ { inblock=1; next }
     inblock && /^[^[:space:]]/ { inblock=0 }
@@ -685,9 +739,25 @@ for sfile in scenarios/*/scenario.yaml; do
       if (line != "") print line
     }
   ' "$sfile")
+
+  # PROBE_FLAG overrides only for evade ids THIS scenario actually lists
+  # (same "don't leak an unrelated mission's probe flag into this Secret"
+  # discipline the single-mission scopes above use).
+  flag_args=()
+  for cid in "${all_ids[@]}"; do
+    [ -f "challenges/${cid}/plant.sh" ] || continue
+    flag_args+=(--set-string "challenge.flags.${cid}=${PROBE_FLAG}")
+  done
+
+  # EXPECTED_SCENARIO_MISSIONS (global, read by assert_missions_scope() via
+  # run_scope): every id this scenario lists, space-joined. A challenge id
+  # never contains whitespace (see assert-flag-isolation.sh's own probe),
+  # so this is a safe wire format.
+  EXPECTED_SCENARIO_MISSIONS="${all_ids[*]}"
   run_scope "scenario (challengeId=scenario:${sname})" \
     -f "$svalues" --set "challengeId=scenario:${sname}" \
     ${flag_args:+"${flag_args[@]}"}
+  EXPECTED_SCENARIO_MISSIONS=""
   echo
 done
 
