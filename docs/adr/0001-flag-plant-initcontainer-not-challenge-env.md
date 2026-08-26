@@ -92,8 +92,10 @@
 >    `exfil` が空」と書いていたが、**4-4 (進行中の再 deploy) では `solved` は空でないのが正常**なので
 >    字義どおりだと **再 deploy が必ず I13a 違反**になり、「守れないので無視される不変条件」になっていた
 > 3. **【N2】4-7 の probe が「フラグを含む `/etc/shadow` の完全な複製」を非 sensitive path に残す**
->    設計になっていた (`/tmp/probe` は `fd.name startswith /etc` を満たさないので **無発火で読める** =
->    mission 03 の代替 path)。→ **宛先を `/dev/null` に変更** ((iii) は 2-8 (iv) に降格済なので `-a` も不要)。
+>    設計になっていた (`/tmp/probe` は `sensitive_file_names` の完全一致リストに無いので
+>    **無発火で読める** = mission 03 の代替 path。**〔rev.8 訂正〕** 当時は `fd.name startswith
+>    /etc` を満たさないためと書いたが、deployed 条件にその節は無い — 完全一致リスト不一致が
+>    正しい理由。結論 (無発火で読める) は変わらない)。→ **宛先を `/dev/null` に変更** ((iii) は 2-8 (iv) に降格済なので `-a` も不要)。
 >    あわせて **`test1` に限る第 2 の理由 (汚染範囲と I8 の自己スコープ)** を明記
 > 4. **【N6】I13b を性質表現に**: 「catalog のいずれかの `expectedRules` ∪ `forbiddenRules` に現れる
 >    ルール名を 1 本も発火させない (現在は 9 本)」。**Verification 2-7 の禁じ手集合は catalog から導出し
@@ -152,6 +154,33 @@
 >    1-17 (ttyd argv 注入口が chart に無いこと)・1-21 (plant に privileged/capability/hostPath が
 >    無いこと) は将来の緩和に対する網として追加。
 > 3. **実装 PR の完了条件 (項目 1) を更新**: 故意違反 patch を 6 → 1-16〜1-21 分を加えた集合に拡張。
+
+> **rev.8 (2026-08-26) の改訂点 — 経路 7 / F5 の根拠文の訂正 (app#179, navigational only)**。
+> `challenges/03-stealth-read/rule.yaml` (課題ドキュメント用の表示抜粋) を deployed Falco 0.43.1
+> の実際の `sensitive_files` マクロから再抽出したところ、**rev.2 以降ずっと引用していた
+> `fd.name startswith /etc and fd.name in (sensitive_file_names)` という条件文が誤りだった**
+> (`startswith /etc` 節は実在せず、deployed ruleset は `fd.name in (sensitive_file_names)` の
+> **完全一致**照合のみ)。誤りの発生源は個々の抜粋ミスではなく、**この課題の `rule.yaml` が
+> 一度も「デプロイ中の実ルールセットから再抽出」されておらず、upstream の古い版から static に
+> 転記されていた**こと (`.claude/rules/falco-ctf-app-conventions.md` §課題ドキュメント用 rule.yaml
+> の規約が未実施のまま残っていた)。
+> - **経路 7 (F5) の結論は変わらない**: `/opt/ctf/plant-seed/etc/shadow` (または `/tmp/probe` の
+>   複製) は `sensitive_file_names` の完全一致リストにも `fd.directory in (/etc/sudoers.d,
+>   /etc/pam.d)` にも該当しないので、**exact-list mismatch により**(prefix mismatch ではなく)
+>   `sensitive_files` を外れる。「seed root を mount すると mission 03 の forbidden rule を
+>   完全に回避する代替 path になる」という判断 (I12 が禁じる理由) はそのまま成立する。
+> - **本文中でこの誤った条件文を直接引用していた箇所** (Context 表 経路 7 の根拠列、rev.3 の
+>   内部矛盾表 row 7、rev.5 changelog の N2 項、Option B S-a 節、Verification 4-7 手順の
+>   rev.5 changelog) を deployed 条件に合わせて訂正した。**decision (Option B / B1 / S-a の選択、
+>   I12 の禁止列挙) はいずれも変更しない** — 訂正は根拠文の言い回しのみ。
+> - `rule.yaml` の該当 4 箇所 (`sensitive_files` / `proc_name_exists` / `python_package_managers` /
+>   `read_sensitive_file_binaries`) を再抽出し直した際、**行数を変えない**編集
+>   (既存 item 行に追記する形で新規バイナリを収める) を選んだので、**本 ADR および
+>   `falco-ctf-platform/docs/falco-detection-conditions.md` の既存 `rule.yaml:N-M` 行番号参照は
+>   すべて無改修で有効**。
+> - 検証: colima の新規 disposable profile (既存 `ctf-e2e` は使わない) で Falco 0.43.1 を
+>   `kubectl -n falco exec <pod> -c falco -- cat /etc/falco/falco_rules.yaml` から実機確認
+>   (`falco-8.0.5` chart, app version `0.43.1`)。詳細は app#179 の VP 報告。
 
 ## Context
 
@@ -252,7 +281,7 @@ challenge コンテナ内 root として。**経路 7 は Option B が新設す�
 | 4 | **運用者の画面** | 到達可 (運用者経由) | `kubectl describe pod` / `get pod -o yaml` に平文フラグが出る。2026-08-16 リハで PW 露出事故の前例あり |
 | 5 | **Helm release Secret** (`sh.helm.release.v1.<user>.<n>`) | 到達不可 | values 経由でフラグが入るが `secrets get` を要し ttyd SA には無い (`role.yaml:12-19` は pods/pods-exec のみ) |
 | 6 | **planted file 自体** (`/etc/shadow`, `/root/.ssh/id_rsa`) | 到達可 (**設計上意図**) | それがミッション。読むと forbidden rule が発火する (ただし 05 は例外 — 後述「限界」) |
-| 7 | **seed volume の代替 path** (`/plant-seed/etc/shadow`) | **Option B が新設しうる面 (F5)** | seed root を challenge に mount すると `fd.name` が `/etc` 始まりでなくなり `sensitive_files` マクロ (`challenges/03-stealth-read/rule.yaml:1-2` の `fd.name startswith /etc and fd.name in (sensitive_file_names)`) を外れる。**mission 03 の forbidden rule を完全に回避する代替 path** ができ 03 が無条件 solve になる。現在 challenge コンテナは volumeMounts を 1 つも持たない (`pod.yaml:101-105` は ttyd のみ) ので、これは Option B が初めて開ける面である |
+| 7 | **seed volume の代替 path** (`/plant-seed/etc/shadow`) | **Option B が新設しうる面 (F5)** | seed root を challenge に mount すると `fd.name` が `sensitive_files` マクロの `sensitive_file_names` 完全一致リスト (`challenges/03-stealth-read/rule.yaml:1-2,90-93` の `fd.name in (sensitive_file_names)` — **〔rev.8 訂正〕** 旧稿は `fd.name startswith /etc and fd.name in (...)` と書いていたが `startswith /etc` 節は deployed 条件に存在しない。完全一致リスト不一致で外れる点は変わらない) に一致しなくなり、`sensitive_files` を外れる。**mission 03 の forbidden rule を完全に回避する代替 path** ができ 03 が無条件 solve になる。現在 challenge コンテナは volumeMounts を 1 つも持たない (`pod.yaml:101-105` は ttyd のみ) ので、これは Option B が初めて開ける面である |
 
 ### 定理 (設計判断の核)
 
@@ -309,7 +338,7 @@ H1 を閉じる価値は 05 の穴があっても失われない —— 03/10 �
 | 4 | plant initContainer の image は **challenge と同一 image** (Option B の 1) なので、その syscall は ingest の image repo フィルタを通過する | 本 ADR §Options B-1、`internal/scoreboard/ingest/ingest.go:88-99` |
 | 5 | **ingest は container 名で絞り込まない。** フィルタは (i) ns が `ctf-` 始まり、(ii) `k8s.pod.name == "workspace"`、(iii) image repo substring の 3 つだけ。initContainer は同一 Pod (`workspace`) の中で走るので 3 つすべてを満たす | `internal/scoreboard/ingest/ingest.go:77-99`。`grep -rn "container.name" internal/` と `grep -rn "ContainerName" internal/` はいずれも該当 0 件 (architect 実測) |
 | 6 | user は namespace から導出される → initContainer のイベントは **その参加者に帰属する** | `internal/scoreboard/ingest/ingest.go:112` |
-| 7 | `sensitive_files` は **`fd.name` ベース**の判定である (`fd.name startswith /etc and fd.name in (sensitive_file_names)`、または `fd.directory in (/etc/sudoers.d, /etc/pam.d)`)。**中身ではなくパスが効く** | `challenges/03-stealth-read/rule.yaml:1-2,90-93` |
+| 7 | `sensitive_files` は **`fd.name` ベース**の判定である (`fd.name in (sensitive_file_names)` の完全一致、または `fd.directory in (/etc/sudoers.d, /etc/pam.d)`。**〔rev.8 訂正〕** 旧稿は前者を `fd.name startswith /etc and fd.name in (...)` と書いていたが `startswith /etc` 節は deployed 条件に存在しない)。**中身ではなくパスが効く** | `challenges/03-stealth-read/rule.yaml:1-2,90-93` |
 
 → **帰結: `plant` が `cp -a /etc/shadow ...` を実行した瞬間に
 `Read sensitive file untrusted` が発火 → ingest 通過 →
@@ -582,7 +611,10 @@ crypt ハッシュ形の文字列は 0 件**。`/root/.ssh` は **存在しな�
     依存増加ゼロ。イメージ数不変 (I5 に触れない)。認知コスト: 「seed の素データは image に焼いてある」1 文。
   - **イベント数: 構造的にゼロ。** 実行時に読むのは `/opt/ctf/plant-seed/...` であり、
     `sensitive_files` の **2 つの選択肢のどちらにも当たらない** ——
-    (i) `fd.name startswith /etc and fd.name in (sensitive_file_names)` は path prefix で外れ、
+    (i) `fd.name in (sensitive_file_names)` は完全一致リストに `/opt/ctf/plant-seed/...` が
+    無いので外れ (**〔rev.8 訂正〕** 旧稿は「`fd.name startswith /etc and fd.name in (...)` は
+    path prefix で外れ」と書いていたが `startswith /etc` 節は deployed 条件に存在しない。
+    完全一致リスト不一致で外れる点は変わらない)、
     (ii) `fd.directory in (/etc/sudoers.d, /etc/pam.d)` も外れる
     (`challenges/03-stealth-read/rule.yaml:90-93`)。
     **「除外されるから発火しない」ではなく「ルールの条件に到達しない」**のが S-a の性質である。
@@ -1194,7 +1226,7 @@ background job の status を破棄しているので、この収集自体が実
 
 | plant-target | 宣言する plant.sh | 素データを要するか | **実行時に read すると発火するルール** | **当たる mission** | S-a 採用後 |
 |---|---|---|---|---|---|
-| `/etc/shadow` | 03 (`plant.sh:4`) / 10 (`plant.sh:6`) —— **重複 (F6)** | **要** (両者 `>>` 前提) | `Read sensitive file untrusted` (`challenges/03-stealth-read/rule.yaml:166-198`。`sensitive_files` = 同 :90-93 で `/etc/shadow` に一致) | **02 expectedRules → 全員 auto-solve** (`challenges/02-credential-files/falco-rule.yaml:3-4`) / **03 forbiddenRules → `current`=03 のとき恒久 taint** (`challenges/03-stealth-read/falco-rule.yaml:3-4`) / **10 forbiddenRules → `current`=10 のとき恒久 taint** (`challenges/10-final-exfil/falco-rule.yaml:5`) | **0 件** —— 読むのは `/opt/ctf/plant-seed/etc/shadow` で `fd.name startswith /etc` が不成立 |
+| `/etc/shadow` | 03 (`plant.sh:4`) / 10 (`plant.sh:6`) —— **重複 (F6)** | **要** (両者 `>>` 前提) | `Read sensitive file untrusted` (`challenges/03-stealth-read/rule.yaml:166-198`。`sensitive_files` = 同 :90-93 で `/etc/shadow` に一致) | **02 expectedRules → 全員 auto-solve** (`challenges/02-credential-files/falco-rule.yaml:3-4`) / **03 forbiddenRules → `current`=03 のとき恒久 taint** (`challenges/03-stealth-read/falco-rule.yaml:3-4`) / **10 forbiddenRules → `current`=10 のとき恒久 taint** (`challenges/10-final-exfil/falco-rule.yaml:5`) | **0 件** —— 読むのは `/opt/ctf/plant-seed/etc/shadow` で `sensitive_file_names` の完全一致リストに無く不成立 (**〔rev.8 訂正〕** 旧稿は `fd.name startswith /etc` の不成立としていたが、その節は deployed 条件に存在しない。完全一致リスト不一致という結論は変わらない) |
 | `/root/.ssh/id_rsa` (dir `/root/.ssh`) | 05 (`plant.sh:4-11`) | **不要** —— image に `/root/.ssh` が存在しない (実測: `/root` は 0700 で空)。plant が `mkdir -p` + `cat >` で新規作成する | (仮に read しても) **どのルールにも当たらない** —— `/root/.ssh/id_rsa` は `sensitive_file_names` に無く (`challenges/03-stealth-read/rule.yaml:1-2`)、`Search Private Keys or Passwords` の成立条件も `cp` / `sh` では満たされない (条件は `challenges/04-key-search/rule.yaml:16-43`。**不成立の理由はここには書かない = L1**、`falco-ctf-platform/docs/falco-detection-conditions.md` (private) を見よ) | 無し (04 / 05 は当たらない) | 変化なし (もともと 0 件) |
 
 → **rev.2 の 2-3 が実際に危険なのは `/etc/shadow` の 1 件だけ**だが、
@@ -1350,8 +1382,11 @@ falcosidekick → scoreboard は非同期なので、`helm upgrade --wait` 直�
 >    **【rev.5 = N2】宛先を `/dev/null` にする理由 (rev.4 は `/tmp/probe` に `cp -a` していた)**:
 >    その時点の `/etc/shadow` には **plant 済みのフラグ 2 行が入っている**ので、
 >    `/tmp/probe` は「**フラグを含む `/etc/shadow` の完全な複製**」になる。
->    `sensitive_files` は `(fd.name startswith /etc and fd.name in (sensitive_file_names)) or
->    fd.directory in (/etc/sudoers.d, /etc/pam.d)` (`challenges/03-stealth-read/rule.yaml:90-93`) なので
+>    `sensitive_files` は `fd.name in (sensitive_file_names) or
+>    fd.directory in (/etc/sudoers.d, /etc/pam.d)` (`challenges/03-stealth-read/rule.yaml:90-93`。
+>    **〔rev.8 訂正〕** 当時は前者を `fd.name startswith /etc and fd.name in (...)` と書いたが
+>    `startswith /etc` 節は deployed 条件に存在しない — 完全一致リスト不一致が正しい理由で、
+>    結論は変わらない) なので
 >    **その複製はどちらにも当たらない path に置かれるので、forbidden rule の判定を外れたまま読める**
 >    = **mission 03 の代替 path (F5 / 経路 7 と同じクラス)**。
 >    (**コマンド形では書かない** —— L1 = 禁じ手レシピの公開範囲は CEO 判断待ちなので、
