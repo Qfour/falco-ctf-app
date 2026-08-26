@@ -14,7 +14,14 @@ app.kubernetes.io/instance: {{ .Values.username }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 app.kubernetes.io/part-of: falco-ctf
 falco-ctf/username: {{ .Values.username }}
-falco-ctf/challenge-id: {{ .Values.challengeId }}
+{{- /* P27-1: challengeId is "scenario:<name>" in scenario mode — ':' is not
+       a valid k8s label-value character, so sanitize just for this label
+       (deploy-user.sh's own `kubectl label namespace` call does the same
+       ${CHALLENGE_ID//:/-} substitution; keep both in sync). Every other
+       consumer of .Values.challengeId (the challenge container's
+       FALCO_CTF_CHALLENGE env, the ctf-flags Secret's hasPrefix "scenario:"
+       branch) keeps the raw, un-sanitized value — only this label needs it. */}}
+falco-ctf/challenge-id: {{ .Values.challengeId | replace ":" "-" }}
 {{- end -}}
 
 {{/*

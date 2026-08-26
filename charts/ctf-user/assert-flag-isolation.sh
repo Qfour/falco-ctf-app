@@ -76,16 +76,25 @@
 # mechanism count?".
 #
 # Usage:
-#   assert-flag-isolation.sh <namespace> <challenges-dir> <challenge-id>
+#   assert-flag-isolation.sh <namespace> <challenges-dir> <challenge-id> [<scenarios-dir>]
 #
-# <challenge-id> is either the literal string `all` (roster / all-missions
-# deploys — the prod default) or a single mission id (e.g. `03-stealth-read`)
-# matching what was passed to deploy-user.sh. This determines how many
-# `FALCO{` lines /etc/shadow is expected to carry and whether
-# /root/.ssh/id_rsa is expected to exist at all (3-5 / 3-6 are computed
-# dynamically from the actual plant.sh headers in <challenges-dir>, not
-# hardcoded to the all-missions "2" — a single-mission dev deploy plants a
-# different subset).
+# <challenge-id> is one of three shapes, matching what was passed to
+# deploy-user.sh: the literal string `all` (roster / all-missions deploys —
+# the prod default), a single mission id (e.g. `03-stealth-read`), or (P27-1)
+# `scenario:<name>` — <scenarios-dir>/<name>/scenario.yaml's `challenges:`
+# list then becomes the scope for every check below, instead of every
+# challenges/*/plant.sh ("all") or just the one named id (single-mission).
+# <scenarios-dir> is REQUIRED (and must contain <name>/scenario.yaml) when
+# challenge-id is `scenario:<name>`; ignored otherwise.
+#
+# This determines how many `FALCO{` lines /etc/shadow is expected to carry,
+# whether /root/.ssh/id_rsa is expected to exist at all (3-5 / 3-6, computed
+# dynamically from the actual plant.sh headers in <challenges-dir> that are
+# in scope for this deploy — never hardcoded to the all-missions "2"), and
+# (P27-1, 3-8) exactly which challenge ids /opt/ctf/missions/ is expected to
+# contain — "every id under <challenges-dir>" for all/single mode (image-
+# baked, unchanged), or exactly the scenario's own `challenges:` list for
+# scenario mode.
 #
 # Exit status: 0 if every check passes, non-zero (with violations printed
 # to stderr) otherwise. Called from deploy-user.sh with no `||` / `if`
@@ -167,14 +176,103 @@ fi
 # Argument parsing
 # ---------------------------------------------------------------------------
 
-NS="${1:?usage: assert-flag-isolation.sh <namespace> <challenges-dir> <challenge-id>}"
-CHALLENGES_DIR="${2:?usage: assert-flag-isolation.sh <namespace> <challenges-dir> <challenge-id>}"
-CHALLENGE_ID="${3:?usage: assert-flag-isolation.sh <namespace> <challenges-dir> <challenge-id>}"
+USAGE_MSG='usage: assert-flag-isolation.sh <namespace> <challenges-dir> <challenge-id> [<scenarios-dir>]'
+NS="${1:?${USAGE_MSG}}"
+CHALLENGES_DIR="${2:?${USAGE_MSG}}"
+CHALLENGE_ID="${3:?${USAGE_MSG}}"
+SCENARIOS_DIR="${4:-}"
 
 if [ ! -d "${CHALLENGES_DIR}" ]
 then
   printf 'assert-flag-isolation.sh: challenges dir not found: %s\n' "${CHALLENGES_DIR}" >&2
   exit 1
+fi
+
+# P27-1 (REFACTORING.md): scenario-scope mode. challenge-id "scenario:<name>"
+# scopes every check below (3-5/3-6/3-8) to exactly
+# <scenarios-dir>/<name>/scenario.yaml's `challenges:` list, instead of
+# every challenges/*/plant.sh ("all") or just the one named id
+# (single-mission).
+SCENARIO_MODE=no
+SCENARIO_NAME=""
+case "${CHALLENGE_ID}" in
+  scenario:*)
+    SCENARIO_MODE=yes
+    SCENARIO_NAME="${CHALLENGE_ID#scenario:}"
+    ;;
+esac
+
+SCENARIO_FILE=""
+if [ "${SCENARIO_MODE}" = yes ]
+then
+  if [ -z "${SCENARIOS_DIR}" ]
+  then
+    printf 'assert-flag-isolation.sh: challenge-id is %s but no <scenarios-dir> (4th arg) was given\n' "${CHALLENGE_ID}" >&2
+    exit 1
+  fi
+  SCENARIO_FILE="${SCENARIOS_DIR}/${SCENARIO_NAME}/scenario.yaml"
+  if [ ! -f "${SCENARIO_FILE}" ]
+  then
+    printf 'assert-flag-isolation.sh: scenario file not found: %s\n' "${SCENARIO_FILE}" >&2
+    exit 1
+  fi
+fi
+
+# collect_scenario_challenge_ids <scenario.yaml> -> populates the global
+# SCENARIO_CHALLENGE_IDS array with that file's `challenges:` list, in
+# declared order. Builtin-only (see file header — this parses the same
+# `challenges:` / `  - <id>` shape challenges/gen-values.sh's
+# scenario_challenge_ids() reads with awk, just without awk: case statements
+# and parameter-expansion trims only).
+SCENARIO_CHALLENGE_IDS=()
+collect_scenario_challenge_ids() {
+  local f="$1" line trimmed inblock=0 rest
+  SCENARIO_CHALLENGE_IDS=()
+  [ -f "${f}" ] || return 0
+  while IFS= read -r line || [ -n "${line}" ]
+  do
+    case "${line}" in
+      'challenges:'*)
+        inblock=1
+        continue
+        ;;
+    esac
+    if [ "${inblock}" -eq 1 ]
+    then
+      case "${line}" in
+        '')
+          continue
+          ;;
+        ' '*|$'\t'*)
+          trimmed="${line#"${line%%[![:space:]]*}"}"
+          case "${trimmed}" in
+            '-'*)
+              rest="${trimmed#-}"
+              rest="${rest#"${rest%%[![:space:]]*}"}"
+              case "${rest}" in
+                *'#'*) rest="${rest%%#*}" ;;
+              esac
+              rest="${rest%"${rest##*[![:space:]]}"}"
+              [ -n "${rest}" ] && SCENARIO_CHALLENGE_IDS+=("${rest}")
+              ;;
+          esac
+          ;;
+        *)
+          inblock=0
+          ;;
+      esac
+    fi
+  done < "${f}"
+}
+
+if [ "${SCENARIO_MODE}" = yes ]
+then
+  collect_scenario_challenge_ids "${SCENARIO_FILE}"
+  if [ "${#SCENARIO_CHALLENGE_IDS[@]}" -eq 0 ]
+  then
+    printf 'assert-flag-isolation.sh: %s has no challenges: list (or gen-values.sh scenario parsing drifted from this script'"'"'s)\n' "${SCENARIO_FILE}" >&2
+    exit 1
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -223,6 +321,12 @@ then
   for d in "${CHALLENGES_DIR}"/*/
   do
     collect_plant_target_expectations "${d}plant.sh"
+  done
+elif [ "${SCENARIO_MODE}" = yes ]
+then
+  for cid in "${SCENARIO_CHALLENGE_IDS[@]}"
+  do
+    collect_plant_target_expectations "${CHALLENGES_DIR}/${cid}/plant.sh"
   done
 else
   collect_plant_target_expectations "${CHALLENGES_DIR}/${CHALLENGE_ID}/plant.sh"
@@ -287,12 +391,36 @@ then
   SSH_KEY_EXISTS=yes
 fi
 
+# P27-1 (3-8): the immediate subdirectory names under /opt/ctf/missions/ —
+# every challenge id whose fixtures/README/falco-rule.yaml this deploy
+# makes reachable from inside the participant's own shell. Glob only (shell
+# builtin, no external binary): a challenge id never contains whitespace, so
+# space-joining is a safe, unambiguous wire format for the single-line
+# KEY=VALUE contract the rest of this probe uses.
+MISSIONS_LIST=""
+if [ -d /opt/ctf/missions ]
+then
+  for _mdir in /opt/ctf/missions/*/
+  do
+    [ -d "${_mdir}" ] || continue
+    _mb="${_mdir%/}"
+    _mb="${_mb##*/}"
+    if [ -z "${MISSIONS_LIST}" ]
+    then
+      MISSIONS_LIST="${_mb}"
+    else
+      MISSIONS_LIST="${MISSIONS_LIST} ${_mb}"
+    fi
+  done
+fi
+
 printf 'PLANT_SEED_ROOT_EXISTS=%s\n' "${PLANT_SEED_ROOT_EXISTS}"
 printf 'SA_TOKEN_EXISTS=%s\n' "${SA_TOKEN_EXISTS}"
 printf 'ENV_HAS_CTF_FLAG=%s\n' "${ENV_HAS_CTF_FLAG}"
 printf 'PROC1_HAS_CTF_FLAG=%s\n' "${PROC1_HAS_CTF_FLAG}"
 printf 'SHADOW_FALCO_LINES=%s\n' "${SHADOW_FALCO_LINES}"
 printf 'SSH_KEY_EXISTS=%s\n' "${SSH_KEY_EXISTS}"
+printf 'MISSIONS_LIST=%s\n' "${MISSIONS_LIST}"
 PROBE_EOF
 
 run_probe() { # prints the probe's stdout, or aborts (set -e) on kubectl failure
@@ -326,6 +454,7 @@ OBS_ENV_HAS_CTF_FLAG=""
 OBS_PROC1_HAS_CTF_FLAG=""
 OBS_SHADOW_FALCO_LINES=""
 OBS_SSH_KEY_EXISTS=""
+OBS_MISSIONS_LIST=""
 
 while IFS='=' read -r key val
 do
@@ -336,6 +465,7 @@ do
     PROC1_HAS_CTF_FLAG)     OBS_PROC1_HAS_CTF_FLAG="${val}" ;;
     SHADOW_FALCO_LINES)     OBS_SHADOW_FALCO_LINES="${val}" ;;
     SSH_KEY_EXISTS)         OBS_SSH_KEY_EXISTS="${val}" ;;
+    MISSIONS_LIST)          OBS_MISSIONS_LIST="${val}" ;;
   esac
 done <<< "${OBSERVED}"
 
@@ -376,6 +506,47 @@ then
   VIOLATIONS+=("3-7: ttyd's own kubectl exec into challenge failed (participant terminal would be broken)")
 fi
 
+# 3-8 (P27-1, scenario-scope content isolation): scenario mode ONLY — the
+# observed /opt/ctf/missions/ directory set must be EXACTLY this scenario's
+# `challenges:` list, no more (an out-of-scenario id's fixtures/README/
+# falco-rule.yaml reachable — the P27-1 gap this whole feature closes) and
+# no less (a broken missions-scope copy would silently degrade a
+# participant's own in-scope mission). "all"/single-mission mode never runs
+# this check — they intentionally keep the full image-baked tree, unchanged
+# (images/challenge/Dockerfile's guided-event decision).
+if [ "${SCENARIO_MODE}" = yes ]
+then
+  # shellcheck disable=SC2206  # intentional word-splitting on unquoted var
+  OBS_MISSIONS_ARR=(${OBS_MISSIONS_LIST})
+  MISSIONS_OK=yes
+  if [ "${#OBS_MISSIONS_ARR[@]}" -ne "${#SCENARIO_CHALLENGE_IDS[@]}" ]
+  then
+    MISSIONS_OK=no
+  else
+    for sid in "${SCENARIO_CHALLENGE_IDS[@]}"
+    do
+      found=0
+      for x in "${OBS_MISSIONS_ARR[@]}"
+      do
+        if [ "${x}" = "${sid}" ]
+        then
+          found=1
+          break
+        fi
+      done
+      if [ "${found}" -eq 0 ]
+      then
+        MISSIONS_OK=no
+        break
+      fi
+    done
+  fi
+  if [ "${MISSIONS_OK}" != yes ]
+  then
+    VIOLATIONS+=("3-8: /opt/ctf/missions/ contains [${OBS_MISSIONS_LIST}], expected exactly [${SCENARIO_CHALLENGE_IDS[*]}] for challenge-id=${CHALLENGE_ID}")
+  fi
+fi
+
 if [ "${#VIOLATIONS[@]}" -gt 0 ]
 then
   printf 'assert-flag-isolation.sh: FAIL (%d violation(s)) for namespace %s (challenge-id=%s):\n' \
@@ -387,5 +558,7 @@ then
   exit 1
 fi
 
-printf 'assert-flag-isolation.sh: OK — 3-1..3-7 clean for namespace %s (challenge-id=%s)\n' \
-  "${NS}" "${CHALLENGE_ID}"
+CHECKS_RUN="3-1..3-7"
+[ "${SCENARIO_MODE}" = yes ] && CHECKS_RUN="3-1..3-8"
+printf 'assert-flag-isolation.sh: OK — %s clean for namespace %s (challenge-id=%s)\n' \
+  "${CHECKS_RUN}" "${NS}" "${CHALLENGE_ID}"
