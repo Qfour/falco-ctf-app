@@ -1,0 +1,62 @@
+┌──────────────────────────────────────────────────────────────────┐
+│ CTF Company · Mission 13 — Archive Loot (bonus)                  │
+│ Type: TRIGGER · 難易度: ★★☆☆☆                                    │
+│ 目標 Falco ルール: "Archive Collected Data"                       │
+└──────────────────────────────────────────────────────────────────┘
+
+# このミッションについて (独立ボーナス課題)
+
+本編とは独立した **ボーナス課題**。テーマは「収集したデータのアーカイブ化」
+(MITRE ATT&CK Collection / T1560.001) — 侵入者がホスト上のあちこちから
+漁り集めたファイルを、持ち出す前に1本のアーカイブへまとめる典型的な動作を、
+新規の custom Falco ルールで検知する。
+
+# シナリオ
+
+この箱には、すでに漁り集められた「戦利品」が1か所にまとまって置かれている。
+攻撃者の次の一手は、それを exfiltrate しやすい形 (1本の圧縮ファイル) に
+まとめることだ。CTF Company の Falco は、まさにこの「収集済みデータの
+アーカイブ化」動作を見張っている。
+
+# ゴール
+
+このコンテナで Falco ルール「Archive Collected Data」を発火させる。
+発火 = solve (提出操作は不要)。
+
+# 背景 (ルールが見ているもの)
+
+このルールは「ファイルの中身」ではなく「**どのプロセスが・どこにあるファイルを
+読み取り目的で open したか**」を見ている。次の両方が条件:
+
+  1. 対象ファイルが staged collection ディレクトリ
+     (`fixtures/loot/` 配下) にあること
+  2. それを open (読み取り) したプロセスが archive/圧縮ユーティリティ
+     (tar / gzip / gunzip / bzip2 / bunzip2 / xz / unxz / zip / unzip /
+     7z / 7za / cpio のいずれか) であること
+
+**コマンドライン引数の文字列一致には依存しない** — 絶対パス指定でも、
+`cd` してからの相対パス指定でも、kernel がファイルを絶対パスへ解決するため
+同じように発火する。
+
+# 試すこと
+
+  tar czf /tmp/loot.tar.gz /opt/ctf/missions/13-archive-loot/fixtures/loot/
+
+  # cd してからの相対パスでも同じ判定になる
+  cd /opt/ctf/missions/13-archive-loot/fixtures/loot && tar czf /tmp/loot.tar.gz .
+
+発火しない例 (探索のみ・対象ディレクトリ外):
+
+  cat /opt/ctf/missions/13-archive-loot/fixtures/loot/customer-roster.csv   # 覗くだけ — 不発火
+  tar czf /tmp/x.tar.gz /tmp/other                                          # 無関係な場所 — 不発火
+
+# クリア条件
+
+`Archive Collected Data` が発火する。
+
+# 環境にあるもの
+
+  /opt/ctf/missions/13-archive-loot/fixtures/welcome.txt          ← このファイル
+  /opt/ctf/missions/13-archive-loot/fixtures/loot/customer-roster.csv
+  /opt/ctf/missions/13-archive-loot/fixtures/loot/support-tickets.csv
+  /opt/ctf/missions/13-archive-loot/fixtures/loot/internal-memo.txt

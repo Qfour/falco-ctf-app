@@ -1,0 +1,38 @@
+# Display-only excerpt for the docs site (rendered after 背景).
+# Extracted from the Falco ruleset the event deploys via platform's
+# `customRules` override (helmfile/releases/falco/values.yaml.gotmpl,
+# ADR-0017 — this project's 2nd customRules entry, after mission05's
+# ADR-0008 rule). Verified against a disposable colima profile
+# (ctf-adr0017-verify, deleted after use) actually running this rule
+# (not a static copy) — see falco-rule.yaml comment / README for the
+# fire/no-fire mutation test results. Re-extract from the live cluster
+# ruleset if the Falco version is bumped (conventions §課題ドキュメント用
+# rule.yaml).
+- list: archive_binaries
+  items: [tar, gzip, gunzip, bzip2, bunzip2, xz, unxz, zip, unzip, 7z, 7za, cpio]
+
+- macro: archive_tool_procs
+  condition: (proc.name in (archive_binaries))
+
+- macro: collection_target_dir
+  condition: (fd.name startswith "/opt/ctf/missions/13-archive-loot/fixtures/loot/")
+
+- rule: Archive Collected Data
+  desc: >
+    An archive/compression utility opened a file for reading under the
+    staged "collected data" directory for mission 13 — the archive-before-
+    exfiltrate step of MITRE ATT&CK T1560.001 (Archive Collected Data:
+    Archive via Utility). Detection keys on the syscall fact (which file an
+    archive tool actually opened for read) rather than on the tool's
+    command-line arguments, so it fires the same way whether the invocation
+    uses an absolute path, a relative path after `cd`, or a glob.
+  condition: >
+    open_read
+    and collection_target_dir
+    and archive_tool_procs
+  output: >
+    Archive utility read file under staged collection target
+    file=%fd.name tool=%proc.name command=%proc.cmdline user=%user.name
+    k8s.ns=%k8s.ns.name k8s.pod=%k8s.pod.name
+  priority: NOTICE
+  tags: [maturity_stable, host, container, process, filesystem, mitre_collection, T1560.001, ctf_custom]

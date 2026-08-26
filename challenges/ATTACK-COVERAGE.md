@@ -22,6 +22,7 @@ MITRE ATT&CK Enterprise (v15) 対応表。Navigator レイヤは `attack-navigat
 | 10 | The Final Exfil (Boss) | Exfiltration | `T1041` | Exfiltration Over C2 Channel |
 | 11 | Cloud Cred Hunt (クラウド脅威検知・疑似版 / bonus) | Credential Access | `T1552.001` | Unsecured Credentials: Credentials In Files |
 | 12 | Cover Tracks (ログ消去検知 / bonus) | Defense Evasion | `T1070.002` | Indicator Removal: Clear Linux or Mac System Logs |
+| 13 | Archive Loot (収集データの圧縮検知 / bonus) | Collection | `T1560.001` | Archive Collected Data: Archive via Utility |
 
 ## 意図的に扱わない領域 (カバレッジの穴)
 

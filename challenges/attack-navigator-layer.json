@@ -84,6 +84,13 @@
       "color": "#e60d0d",
       "comment": "12-cover-tracks Cover Tracks (ログ消去検知 / bonus) — Indicator Removal: Clear Linux or Mac System Logs",
       "enabled": true
+    },
+    {
+      "techniqueID": "T1560.001",
+      "score": 100,
+      "color": "#e60d0d",
+      "comment": "13-archive-loot Archive Loot (収集データの圧縮検知 / bonus) — Archive Collected Data: Archive via Utility",
+      "enabled": true
     }
   ],
   "gradient": {

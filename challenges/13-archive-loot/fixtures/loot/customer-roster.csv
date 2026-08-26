@@ -1,0 +1,6 @@
+customer_id,name,email,plan,signup_date
+1001,Aiko Tanaka,aiko.tanaka@example.invalid,pro,2025-11-02
+1002,Ben Okafor,ben.okafor@example.invalid,starter,2025-11-14
+1003,Carla Nunez,carla.nunez@example.invalid,pro,2025-12-01
+1004,Daichi Sato,daichi.sato@example.invalid,enterprise,2026-01-09
+1005,Elin Bergstrom,elin.bergstrom@example.invalid,starter,2026-02-20

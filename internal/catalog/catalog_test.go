@@ -297,21 +297,23 @@ func TestLoad_Detect_MissingDetectBlock(t *testing.T) {
 // cleanly. Pins the CTF Company 10-mission core storyline (01–10, canonical
 // order: recon → cred access → evade → harvest → RCE → persist → C2 → hide →
 // exfil boss) plus the 00-tutorial 0問目, the 11-cloud-cred-hunt bonus
-// (#46 cloud-threat-detection MVP), and the 12-cover-tracks bonus (P27-4
+// (#46 cloud-threat-detection MVP), the 12-cover-tracks bonus (P27-4
 // ATT&CK expansion — Defense Evasion / T1070.002, upstream default rule
-// "Clear Log Activities", no custom rule). The detect-authoring twin
-// (03-stealth-read-detect) lands in Phase 44.2 with its captures; the detect
-// engine ships here (44.0) without a live challenge, so the attack-mission
-// count stays at 10.
+// "Clear Log Activities", no custom rule), and the 13-archive-loot bonus
+// (ADR-0017 — Collection / T1560.001, project's 2nd customRules addition
+// after mission05/ADR-0008: "Archive Collected Data"). The detect-authoring
+// twin (03-stealth-read-detect) lands in Phase 44.2 with its captures; the
+// detect engine ships here (44.0) without a live challenge, so the
+// attack-mission count stays at 10.
 //
 // The tutorial is a real trigger challenge so it exercises the normal solve
 // path, but it is deliberately EXCLUDED from the scored scenario
 // (nimbusbreach-full) so it never affects the scoring denominator. That
 // contract is asserted in TestScoredScenario_ExcludesTutorial below — keep the
 // two in sync: adding a challenge here that should be scored must also be added
-// to scenarios/nimbusbreach-full/scenario.yaml. The 11-cloud-cred-hunt and
-// 12-cover-tracks bonuses are likewise not part of the nimbusbreach-full
-// scenario (each launched standalone).
+// to scenarios/nimbusbreach-full/scenario.yaml. The 11-cloud-cred-hunt,
+// 12-cover-tracks, and 13-archive-loot bonuses are likewise not part of the
+// nimbusbreach-full scenario (each launched standalone).
 func TestLoad_RealChallenges(t *testing.T) {
 	cat, err := catalog.Load("../../challenges")
 	if err != nil {
@@ -331,6 +333,7 @@ func TestLoad_RealChallenges(t *testing.T) {
 		"10-final-exfil",
 		"11-cloud-cred-hunt",
 		"12-cover-tracks",
+		"13-archive-loot",
 	}
 	ids := cat.IDs()
 	if len(ids) != len(want) {
@@ -469,6 +472,44 @@ func TestExpectedRuleFire_NewRuleNameUniqueToMission05(t *testing.T) {
 	}
 	const ruleName = "Shell Redirected Private Key Read"
 	const owner = "05-silent-search"
+
+	owningIDs := []string{}
+	for _, cid := range cat.IDs() {
+		ch := cat[cid]
+		found := slices.Contains(ch.ExpectedRules, ruleName) || slices.Contains(ch.ForbiddenRules, ruleName)
+		if found {
+			owningIDs = append(owningIDs, cid)
+		}
+	}
+	if len(owningIDs) != 1 || owningIDs[0] != owner {
+		t.Fatalf("%q must appear in exactly one challenge's expectedRules/forbiddenRules (%s), found in %v",
+			ruleName, owner, owningIDs)
+	}
+	if !slices.Contains(cat[owner].ExpectedRules, ruleName) {
+		t.Fatalf("%s must list %q in expectedRules, got %v", owner, ruleName, cat[owner].ExpectedRules)
+	}
+}
+
+// TestExpectedRuleFire_NewRuleNameUniqueToMission13 is ADR-0017 Verification
+// (b): a NEW, independent test (same shape as
+// TestExpectedRuleFire_NewRuleNameUniqueToMission05 above, ADR-0008
+// Verification (c)) that checks ONLY the newly-introduced customRules name
+// "Archive Collected Data" (this project's 2nd customRules entry). Unlike
+// mission05's rule, mission13 is trigger-type — there is no "positive proof,
+// not-attempt-scoped write" mechanism riding on this uniqueness — but the
+// same bookkeeping invariant still matters: this rule name is
+// project-specific and mission-13-only by design (ADR-0017 Decision (1)); if
+// any OTHER challenge's expectedRules or forbiddenRules ever comes to
+// reference it, the customRules allowlist (challenges/custom-falco-rules.txt)
+// and the platform-side deploy-order-dependency note (ADR-0017 Decision (5))
+// both stop being about a single, unambiguous mission.
+func TestExpectedRuleFire_NewRuleNameUniqueToMission13(t *testing.T) {
+	cat, err := catalog.Load("../../challenges")
+	if err != nil {
+		t.Fatalf("load catalog: %v", err)
+	}
+	const ruleName = "Archive Collected Data"
+	const owner = "13-archive-loot"
 
 	owningIDs := []string{}
 	for _, cid := range cat.IDs() {
