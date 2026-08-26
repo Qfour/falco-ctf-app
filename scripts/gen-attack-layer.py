@@ -50,6 +50,21 @@ INTENTIONAL_GAPS = [
      "未カバー — 単一 Pod 侵入シナリオのため横展開は物語の範囲外。"),
     ("Impact", "T1485 / T1486 系 (Data Destruction / Encryption)",
      "意図的除外 — 破壊的操作は共有 CTF 環境の保護のため扱わない。"),
+    ("Initial Access", "TA0001 全般",
+     "意図的除外 (ADR-0015) — 参加者は最初から ttyd 経由でシェルを渡されており、"
+     "観測可能な「外」が構造的に存在しない。I9 (Service/Ingress 禁止) により "
+     "Falco はコンテナ内で完結する syscall しか観測できず、外部からの侵入イベント"
+     "自体が発生しない。"),
+    ("Privilege Escalation", "T1548 系 (Setuid/Setgid T1548.001 / Sudo and Sudo Caching T1548.003)",
+     "意図的除外 (ADR-0016) — challenge コンテナは常時 root (UID表・I9) で、参加者が"
+     "操作可能な non-root の起点が構造上存在しない (ttyd は kubectl exec で root の "
+     "challenge コンテナへ直接入る)。「低権限→root」の before/after を作れる場所が無い。"),
+    ("Privilege Escalation", "T1611 (Escape to Host)",
+     "意図的除外 (ADR-0016) — 単一 Pod 隔離という本プロジェクトの防御境界そのもの。"
+     "privileged 未使用・hostPath/docker.sock 非マウント・追加 capability 無し・"
+     "Pod レベル seccompProfile RuntimeDefault (mount/pivot_root/unshare 等を遮断)・"
+     "automountServiceAccountToken:false により構造的に阻止済み。Lateral Movement の"
+     "除外 (単一 Pod シナリオ) とも表裏一体。"),
 ]
 
 GENERATED_NOTE_JSON = (
