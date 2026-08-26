@@ -26,14 +26,42 @@ always completing the full 01→10 arc.
 
 ```
 scenarios/<scenario>/
-├── scenario.yaml     # id, title, ordered challenge ids (machine-read)
+├── scenario.yaml     # id, title, ordered challenge ids (machine-read);
+│                     # optional `tactics:` (P27-3, advisory — see below)
 ├── narrative.yaml    # optional (ADR-0014): per-challengeId briefing/bridge
 │                     # override, replaces the challenge-local journey.yaml
 │                     # text wholesale where it would otherwise reference a
 │                     # mission this scenario doesn't include
 ├── playbook-<edition>.md   # facilitator run-of-show for a time budget
-└── debrief.md        # post-event walkthrough (all missions, reusable)
+├── debrief.md        # post-event walkthrough (all missions, reusable)
+└── attack-coverage.md  # GENERATED (P27-3) — do not hand-edit, see below
 ```
+
+## `tactics:` and `attack-coverage.md` (P27-3, advisory)
+
+`scenario.yaml` may optionally declare `tactics:` — the MITRE ATT&CK tactics
+this scenario *intends* to cover, as a flat list of tactic names (matching the
+`attack.tactic` strings used in `challenges/*/falco-rule.yaml`, e.g.
+`Discovery`, `Credential Access`, `Defense Evasion`). This is **advisory
+only**: `catalog.go`'s `yaml.v3` unmarshal is non-strict, so an unknown field
+like `tactics:` is silently ignored — a scenario works identically with or
+without it.
+
+`make gen-attack` (`scripts/gen-attack-layer.py`) discovers every
+`scenarios/*/scenario.yaml` in addition to its existing global
+`challenges/attack-navigator-layer.json` / `challenges/ATTACK-COVERAGE.md`
+generation (unchanged — those two files still aggregate *every* challenge
+under `challenges/`, independent of scenario membership), and additionally:
+
+- writes `scenarios/<name>/attack-coverage.md` — the same Tactic/Technique
+  table, scoped to just that scenario's `challenges:` list
+- if `tactics:` is declared, compares it against the tactics the listed
+  challenges actually exercise and prints a **non-blocking warning to
+  stdout** on any mismatch (declared-but-uncovered, or covered-but-undeclared)
+  — this never changes the exit code, so it can't fail CI by itself
+
+Both `nimbusbreach-full` and `tutorial-intro` declare `tactics:`; regenerate
+with `make gen-attack` after adding/editing a `scenario.yaml`.
 
 ## Ordering principle (nimbusbreach-full specifically, not the mechanism)
 
