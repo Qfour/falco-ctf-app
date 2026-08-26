@@ -296,19 +296,19 @@ func TestLoad_Detect_MissingDetectBlock(t *testing.T) {
 // TestLoad_RealChallenges verifies the production challenges/ tree parses
 // cleanly. Pins the CTF Company 10-mission core storyline (01–10, canonical
 // order: recon → cred access → evade → harvest → RCE → persist → C2 → hide →
-// exfil boss) plus the 00-tutorial 0問目 and the 11-cloud-cred-hunt bonus
-// (#46 cloud-threat-detection MVP). The detect-authoring twin
-// (03-stealth-read-detect) lands in Phase 44.2 with its captures; the detect
-// engine ships here (44.0) without a live challenge, so the attack-mission
-// count stays at 10.
+// exfil boss) plus the 00-tutorial 0問目, the 11-cloud-cred-hunt bonus
+// (#46 cloud-threat-detection MVP), and the 03-stealth-read-detect
+// detection-authoring twin (Phase 44.2, landed on top of the 44.0 detect
+// engine).
 //
 // The tutorial is a real trigger challenge so it exercises the normal solve
 // path, but it is deliberately EXCLUDED from the scored scenario
 // (nimbusbreach-full) so it never affects the scoring denominator. That
 // contract is asserted in TestScoredScenario_ExcludesTutorial below — keep the
 // two in sync: adding a challenge here that should be scored must also be added
-// to scenarios/nimbusbreach-full/scenario.yaml. The 11-cloud-cred-hunt bonus is
-// likewise not part of the nimbusbreach-full scenario (launched standalone).
+// to scenarios/nimbusbreach-full/scenario.yaml. The 11-cloud-cred-hunt bonus
+// and the 03-stealth-read-detect twin are likewise not part of the
+// nimbusbreach-full scenario (both launched standalone).
 func TestLoad_RealChallenges(t *testing.T) {
 	cat, err := catalog.Load("../../challenges")
 	if err != nil {
@@ -319,6 +319,7 @@ func TestLoad_RealChallenges(t *testing.T) {
 		"01-initial-recon",
 		"02-credential-files",
 		"03-stealth-read",
+		"03-stealth-read-detect",
 		"04-key-search",
 		"05-silent-search",
 		"06-web-rce-shell",
