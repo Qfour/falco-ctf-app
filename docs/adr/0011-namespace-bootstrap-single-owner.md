@@ -519,9 +519,8 @@ Decision 対象外にしていたが、**platform#111 として follow-up issue 
   `needs` 追加) が同一コミット/同一 apply 単位に含まれることを確認すること
   (release-engineer/VP のマージ順序チェック項目とする)。
 - **platform#75 (`deploy-user.sh` の `-n` 不在) 対応の addendum (2026-08-26,
-  architect)**: 上記「platform#75 対応時の条件」を満たす対応が進行中。
-  **まだ merge 前** (app リポ branch `fix/deploy-user-namespace`, commit
-  `b1b5eb2` — `main` から 1 commit ahead。PR 未起票)。
+  architect)**: 上記「platform#75 対応時の条件」を満たす対応。**app#199として
+  main に merge済み** (platform#116と同時、Issue platform#75 close済み)。
 
   **この addendum は navigational ではない。** 元の追記時 (2026-08-26 当日)
   navigational (既存 Decision/Verification への誘導のみ) と自称していたが、
@@ -564,12 +563,10 @@ Decision 対象外にしていたが、**platform#111 として follow-up issue 
   正確に表す (R1/R2/R4 収束指摘、5x review)。cluster 実機検証は qa-engineer
   が並行実施中で、本追記の対象外。
 
-  `scripts/check-namespace-ownership.sh` の `ctf-user` 除外は**まだ解除していない**
-  (実チャートは既に Namespace を自己 template しなくなり除外を外しても検査は
-  通るはずだが、CI negative-test fixture
-  (`scripts/testdata/namespace-ownership-FIXTURE/charts/ctf-user`) と
-  `.github/workflows/ci.yaml` の期待値更新が別途要るため、意図的に別 follow-up
-  としてスコープ外に置かれている — `scripts/check-namespace-ownership.sh:47-61`)。
+  `scripts/check-namespace-ownership.sh` の `ctf-user` 除外は Issue #198
+  (follow-up, 上で予告した通り) で**解除済み** (`ctf-user` は他4chartと同列に
+  この検査対象になった。CI negative-test fixture と `.github/workflows/ci.yaml`
+  の期待値も合わせて更新済み)。
 
   本追記は本ADRの既存 Verification (V1-V7) を書き換えない (それらは元々
   ctf-user を対象にしておらず、この追記時点でもその対象範囲は変わらない)。
