@@ -102,9 +102,11 @@ bridge: "local bridge that must not survive"
 }
 
 // TestApplyNarrativeOverrides_NoOverride_ExistingScenariosUnaffected is the
-// regression test ADR-0014 Verification item 2 asks for: scenarios that ship
-// no narrative.yaml (nimbusbreach-full, tutorial-intro, as of this change)
-// must see zero behavior change. A zero-value Narrative (what LoadNarrative
+// regression test ADR-0014 Verification item 2 asks for: a scenario that
+// ships no narrative.yaml at all (the common case — this was true of every
+// scenario when ADR-0014 landed; as of P27-2 both nimbusbreach-full and
+// tutorial-intro ship one, but new scenarios still start with none) must
+// see zero behavior change. A zero-value Narrative (what LoadNarrative
 // returns for a missing file) must leave every journey byte-for-byte as
 // LoadJourneys produced it.
 func TestApplyNarrativeOverrides_NoOverride_ExistingScenariosUnaffected(t *testing.T) {
@@ -246,24 +248,30 @@ title: 潜入
 	}
 }
 
-// TestTutorialIntroNarrative_ResolvesMission02Contradiction is the ADR-0014
-// Verification item 3 proof: it reads the REAL challenges/ and scenarios/
-// trees (not fixtures) and confirms that
+// TestNimbusbreachFullNarrative_RestoresMission02Callback is the P27-2
+// successor to the original ADR-0014 Verification item 3 proof. It reads the
+// REAL challenges/ and scenarios/ trees (not fixtures) and confirms the
+// post-neutralization state:
 //
 //   - challenges/03-stealth-read/journey.yaml's challenge-local briefing
-//     still opens with the "Mission 02" reference (nothing was rewritten in
-//     place — the fallback stays exactly as content-engineer will later
-//     neutralize it in a separate P27-2 PR),
-//   - but scenario `tutorial-intro` (00, 01, 03 — no 02), which ships
-//     scenarios/tutorial-intro/narrative.yaml, sees the override text with
-//     no "Mission 02" reference once main.go's wiring (LoadScenario ->
-//     Restrict -> LoadJourneys -> LoadNarrative -> ApplyNarrativeOverrides)
-//     is replayed end-to-end, and
-//   - scenario `nimbusbreach-full`, which ships no narrative.yaml, is
-//     completely unaffected and keeps the original "Mission 02" briefing
-//     (the ADR-0014 Verification item 2 regression, exercised against real
-//     content rather than a synthetic fixture).
-func TestTutorialIntroNarrative_ResolvesMission02Contradiction(t *testing.T) {
+//     (the fallback every scenario without an override sees) no longer
+//     contains a "Mission 02" reference — content-engineer's P27-2
+//     neutralization pass rewrote it to a technique-name reference instead,
+//     so it no longer contradicts scenarios that skip mission 02,
+//   - scenario `tutorial-intro` (00, 01, 03 — no 02), which still ships
+//     scenarios/tutorial-intro/narrative.yaml (now kept for its `bridge: ""`
+//     clear rather than to fix a briefing contradiction — see that file's
+//     header comment), sees no "Mission 02" reference either, once main.go's
+//     wiring (LoadScenario -> Restrict -> LoadJourneys -> LoadNarrative ->
+//     ApplyNarrativeOverrides) is replayed end-to-end, and
+//   - scenario `nimbusbreach-full`, which as of P27-2 ships its own
+//     scenarios/nimbusbreach-full/narrative.yaml, uses the ADR-0014
+//     mechanism in the opposite direction from tutorial-intro: it restores
+//     the "Mission 02" callback into 03's briefing for this scenario only,
+//     because the full 01->10 order it runs makes that callback true rather
+//     than contradictory. This is what keeps nimbusbreach-full's narrative
+//     from losing punch to the neutralization (ADR-0014 Consequences).
+func TestNimbusbreachFullNarrative_RestoresMission02Callback(t *testing.T) {
 	const mission02Ref = "Mission 02"
 
 	loadScenarioJourneys := func(scenarioPath string) catalog.Journeys {
@@ -296,10 +304,13 @@ func TestTutorialIntroNarrative_ResolvesMission02Contradiction(t *testing.T) {
 	}
 
 	// Sanity check the premise: the challenge-local fallback (as loaded with
-	// no restriction/override at all) still contains the contradiction this
-	// fixture exists to fix. If content-engineer's later neutralization pass
-	// removes it, this assertion (not the override behavior) will need
-	// updating — that is the intended coupling.
+	// no restriction/override at all) must NOT contain the "Mission 02"
+	// reference — P27-2's neutralization pass removed it from
+	// challenges/03-stealth-read/journey.yaml directly. If a future change
+	// reintroduces a direct mission-number reference in the fallback, this
+	// assertion (not the override behavior below) is the one that should go
+	// red first, since it would reopen the contradiction ADR-0014/P27-2 both
+	// exist to prevent for scenarios that skip mission 02.
 	full, err := catalog.Load("../../challenges")
 	if err != nil {
 		t.Fatalf("Load real challenges: %v", err)
@@ -308,20 +319,21 @@ func TestTutorialIntroNarrative_ResolvesMission02Contradiction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadJourneys baseline: %v", err)
 	}
-	if !strings.Contains(baseline["03-stealth-read"].Briefing, mission02Ref) {
-		t.Fatalf("premise broken: challenges/03-stealth-read/journey.yaml no longer contains %q; "+
-			"this fixture's raison d'être (proving override resolves it) needs re-validating", mission02Ref)
+	if strings.Contains(baseline["03-stealth-read"].Briefing, mission02Ref) {
+		t.Fatalf("premise broken: challenges/03-stealth-read/journey.yaml still contains %q; "+
+			"P27-2 neutralization of the challenge-local fallback needs re-validating", mission02Ref)
 	}
 
 	tutorial := loadScenarioJourneys("../../scenarios/tutorial-intro/scenario.yaml")
 	if strings.Contains(tutorial["03-stealth-read"].Briefing, mission02Ref) {
-		t.Fatalf("tutorial-intro's narrative override must remove the Mission 02 reference; got briefing: %q",
+		t.Fatalf("tutorial-intro must not surface a Mission 02 reference (it never runs mission 02); got briefing: %q",
 			tutorial["03-stealth-read"].Briefing)
 	}
 
 	full1010 := loadScenarioJourneys("../../scenarios/nimbusbreach-full/scenario.yaml")
 	if !strings.Contains(full1010["03-stealth-read"].Briefing, mission02Ref) {
-		t.Fatalf("nimbusbreach-full ships no narrative.yaml and must keep the original briefing unchanged; got: %q",
+		t.Fatalf("nimbusbreach-full ships scenarios/nimbusbreach-full/narrative.yaml to restore the "+
+			"Mission 02 callback for its own full 01->10 order; got: %q",
 			full1010["03-stealth-read"].Briefing)
 	}
 }

