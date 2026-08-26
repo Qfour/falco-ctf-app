@@ -93,6 +93,38 @@ spec:
       # session, resurrecting read-path 2 via /proc/<pid>/environ from a
       # neighboring container. A plain (non-sidecar) initContainer runs to
       # completion and exits before `challenge` even starts.
+    {{- if .Values.scenario.missions }}
+    - name: missions-scope
+      # P27-1 (REFACTORING.md): scenario-scope content isolation, separate
+      # from `plant` above on purpose — this container carries NO secret
+      # (no envFrom/ctf-flags), only copies non-sensitive, already
+      # image-baked mission docs/fixtures, so it does not need to satisfy
+      # ADR-0001's flag-isolation allowlist (challenges/gen-values.sh's
+      # check_2_7) at all. Same image as `challenge` (I5, no new image) —
+      # it already has the FULL /opt/ctf/missions/ tree baked in
+      # (images/challenge/Dockerfile), so it can read the scenario's own
+      # mission directories out of its OWN filesystem and copy them into
+      # the missions-seed emptyDir the challenge container mounts below.
+      # Ids NOT in .Values.scenario.missions are simply never copied — no
+      # denylist to keep in sync, nothing to forget.
+      image: "{{ .Values.challenge.image.repository }}:{{ .Values.challenge.image.tag }}"
+      imagePullPolicy: {{ .Values.challenge.image.pullPolicy }}
+      command:
+        - sh
+        - -c
+        - |
+          set -eu
+          {{- range .Values.scenario.missions }}
+          mkdir -p "/missions-seed/{{ . }}"
+          cp -a "/opt/ctf/missions/{{ . }}/." "/missions-seed/{{ . }}/"
+          {{- end }}
+      volumeMounts:
+        - name: missions-seed
+          mountPath: /missions-seed
+      # No `restartPolicy` here either, same reasoning as `plant` (1-14) —
+      # this must run to completion and exit before `challenge` starts, not
+      # linger as a sidecar.
+    {{- end }}
   containers:
     - name: ttyd
       image: "{{ .Values.ttyd.image.repository }}:{{ .Values.ttyd.image.tag }}"
@@ -275,13 +307,25 @@ spec:
       # readOnly: true. Omitted entirely (no `volumeMounts:` key) when
       # .Values.plant.mounts is empty, e.g. a values file for a
       # trigger-only challenge that plants nothing.
-      {{- if .Values.plant.mounts }}
+      {{- if or .Values.plant.mounts .Values.scenario.missions }}
       volumeMounts:
         {{- range .Values.plant.mounts }}
         - name: plant-seed
           mountPath: {{ .path | quote }}
           subPath: {{ trimPrefix "/" .path | quote }}
           readOnly: {{ .readOnly }}
+        {{- end }}
+        {{- if .Values.scenario.missions }}
+        # P27-1: replaces the image-baked /opt/ctf/missions/ tree (which has
+        # ALL challenge ids, see images/challenge/Dockerfile) with the
+        # `missions-scope` initContainer's filtered copy — mounting the
+        # WHOLE directory (no subPath) intentionally shadows every id the
+        # image baked in, not just the ones missions-scope wrote, so an
+        # out-of-scenario id is absent, not merely overlaid. Writable
+        # (no readOnly key, matches the pre-P27-1 baked-in directory's own
+        # writability — participants could always edit fixtures in place).
+        - name: missions-seed
+          mountPath: /opt/ctf/missions
         {{- end }}
       {{- end }}
 
@@ -297,6 +341,16 @@ spec:
     - name: plant-seed
       emptyDir:
         sizeLimit: 4Mi
+    {{- if .Values.scenario.missions }}
+    # P27-1: scenario-scope copy target for `missions-scope` above — never
+    # mounted whole into anywhere else, only at /opt/ctf/missions in
+    # `challenge` (see that container's volumeMounts). Sized for a handful
+    # of mission dirs' fixtures+README+falco-rule.yaml (a few hundred KB
+    # each at most); bump if a future mission ships large fixtures.
+    - name: missions-seed
+      emptyDir:
+        sizeLimit: 64Mi
+    {{- end }}
     # ADR-0001: the SA token, scoped to ttyd only (see automountServiceAccountToken
     # above). Same 3 sources the API server would auto-project by default
     # (serviceAccountToken + the cluster's kube-root-ca.crt ConfigMap +

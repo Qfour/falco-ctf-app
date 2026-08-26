@@ -37,7 +37,7 @@ help:
 	@echo "  gen             — regenerate Go types from OpenAPI specs (docs/openapi-*.yaml)"
 	@echo "  gen-home-fragments — regenerate Portal Home tab HTML fragments (docs-site/home-fragments.yaml)"
 	@echo "  gen-tutorial-fragments — regenerate Portal Tutorial tab HTML fragments (docs-site/tutorial-chapters.yaml)"
-	@echo "  gen-values      — regenerate challenge values.yaml / values-all.yaml from plant.sh"
+	@echo "  gen-values      — regenerate challenge values.yaml / values-all.yaml / values-scenario-<name>.yaml from plant.sh + scenarios/"
 	@echo "  gen-attack      — regenerate ATT&CK Navigator layer + coverage table from falco-rule.yaml attack: blocks"
 	@echo "  check-flags     — fail if real flags leak into tracked files or values are stale"
 	@echo "  check-rules     — fail if a challenge references a non-existent Falco rule"

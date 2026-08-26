@@ -212,6 +212,82 @@ if [ -n "${HEADER_ERRORS}" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Scenario-scope mode (P27-1, REFACTORING.md): scenarios/<name>/scenario.yaml
+# (same shape as internal/catalog.Scenario — `id`, `title`, an ordered
+# `challenges:` list — parsed independently here since this script has no Go
+# runtime) selects an ordered subset of challenge ids for one event
+# composition. Until now that file only scoped scoring/display (SCENARIO_FILE
+# env, catalog.Restrict()) — the participant WORKSPACE still got every
+# challenge's fixtures/README/flag regardless (P27-1's gap). This section
+# renders, per scenario, values-scenario-<name>.yaml with:
+#   - plant.seedScript/plant.mounts restricted to the scenario's own evade
+#     missions (render_plant_block() below, same function values-all.yaml /
+#     per-challenge values.yaml use, just given a filtered id list) — a
+#     mission NOT in the scenario never has its flag planted here, regardless
+#     of what "all"-mode or another scenario plants.
+#   - scenario.missions: the scenario's full ordered challenge-id list
+#     (including trigger-only ids with no plant.sh) — consumed by
+#     charts/ctf-user/templates/pod.yaml's `missions-scope` initContainer to
+#     restrict the participant-visible /opt/ctf/missions/ tree to exactly
+#     this list (fixtures/README isolation, not just flags).
+# Fail-closed (same discipline as catalog.Restrict(), Go side): a scenario
+# manifest referencing an id with no matching challenges/ directory is a
+# hard error, not a silently-dropped mission.
+# ---------------------------------------------------------------------------
+
+SCENARIOS_DIR='../scenarios'   # this script cd'd into challenges/ above
+
+scenario_dirs() { # -> one scenario directory per line, sorted
+  [ -d "${SCENARIOS_DIR}" ] || return 0
+  find "${SCENARIOS_DIR}" -mindepth 1 -maxdepth 1 -type d | sort
+}
+
+# scenario_challenge_ids <scenario.yaml> -> one challenge id per line, in
+# declared order (mirrors internal/catalog.Scenario.Challenges' yaml shape:
+# a top-level `challenges:` key, then `  - <id>` list items — same
+# restrained awk style already used above for FLAGS_FILE / sensitive_paths()
+# rather than a second hardcoded copy of the Go struct's field names).
+scenario_challenge_ids() {
+  awk '
+    /^challenges:/ { inblock=1; next }
+    inblock && /^[^[:space:]]/ { inblock=0 }
+    inblock && /^[[:space:]]*-[[:space:]]*/ {
+      line=$0
+      sub(/^[[:space:]]*-[[:space:]]*/, "", line)
+      sub(/[[:space:]]*#.*$/, "", line)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+      if (line != "") print line
+    }
+  ' "$1"
+}
+
+SCENARIO_ERRORS=""
+while IFS= read -r sdir; do
+  [ -z "${sdir}" ] && continue
+  sid="$(basename "${sdir}")"
+  sfile="${sdir}/scenario.yaml"
+  if [ ! -f "${sfile}" ]; then
+    SCENARIO_ERRORS="${SCENARIO_ERRORS}scenario '${sid}' has no scenario.yaml at ${sfile}\n"
+    continue
+  fi
+  scount=0
+  while IFS= read -r cid; do
+    [ -z "${cid}" ] && continue
+    scount=$((scount + 1))
+    if [ ! -d "${cid}" ]; then
+      SCENARIO_ERRORS="${SCENARIO_ERRORS}scenario '${sid}' references unknown challenge '${cid}' (no such directory under challenges/)\n"
+    fi
+  done < <(scenario_challenge_ids "${sfile}")
+  if [ "${scount}" -eq 0 ]; then
+    SCENARIO_ERRORS="${SCENARIO_ERRORS}scenario '${sid}': no challenges listed in ${sfile}\n"
+  fi
+done < <(scenario_dirs)
+if [ -n "${SCENARIO_ERRORS}" ]; then
+  printf '%b' "${SCENARIO_ERRORS}" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
 # Mount-directory -> seed-source / readOnly resolution, with a consistency
 # check across missions that share a mount directory (03 and 10 both map
 # /etc/shadow to the /etc mount directory — 2-2, now keyed by mount dir
@@ -370,6 +446,63 @@ render_all() {
 # plant-target, not the plant-target itself when it is a file.
 HEADER
   render_plant_block "${MISSIONS[@]}"
+}
+
+# scenario_all_ids <scenario dir> -> that scenario's full ordered
+# challenge-id list (scenario.yaml already validated above).
+scenario_all_ids() { scenario_challenge_ids "$1/scenario.yaml"; }
+
+# scenario_plant_ids <scenario dir> -> the subset of MISSIONS (global,
+# sorted — same "always MISSIONS sort order" discipline as render_all()/
+# render_one(), 2-4) that this scenario's challenges: list also names. A
+# scenario listing ids out of MISSIONS order still renders a deterministic
+# seed script; an id with no plant.sh (trigger-only) simply never matches
+# and plants nothing, same as it would in "all" mode.
+scenario_plant_ids() {
+  local dir="$1" m x found ids=()
+  while IFS= read -r x; do
+    [ -z "${x}" ] && continue
+    ids+=("${x}")
+  done < <(scenario_all_ids "${dir}")
+  for m in "${MISSIONS[@]}"; do
+    found=0
+    for x in "${ids[@]}"; do
+      [ "${x}" = "${m}" ] && found=1 && break
+    done
+    [ "${found}" -eq 1 ] && printf '%s\n' "${m}"
+  done
+}
+
+render_scenario() { # $1 = scenario dir (e.g. ../scenarios/tutorial-intro)
+  local dir="$1" id m
+  id="$(basename "${dir}")"
+  local plant_ids=()
+  while IFS= read -r m; do
+    [ -z "${m}" ] && continue
+    plant_ids+=("${m}")
+  done < <(scenario_plant_ids "${dir}")
+
+  cat <<HEADER
+# GENERATED by gen-values.sh from scenarios/${id}/scenario.yaml — DO NOT EDIT.
+# Run \`make gen-values\`.
+#
+# Scenario-scope mode (deploy-user.sh <user> scenario:${id}, P27-1 /
+# REFACTORING.md): the \`plant\` initContainer below runs ONLY this
+# scenario's own evade missions' plant.sh — a challenge id outside
+# scenarios/${id}/scenario.yaml's \`challenges:\` list never has its flag
+# planted or its mount directory bound here, regardless of what "all" mode
+# or another scenario plants. \`scenario.missions\` additionally scopes
+# charts/ctf-user's \`missions-scope\` initContainer, which restricts the
+# participant-visible /opt/ctf/missions/ tree to exactly this list
+# (fixtures/README isolation, not just flags).
+HEADER
+  render_plant_block ${plant_ids:+"${plant_ids[@]}"}
+  echo 'scenario:'
+  echo '  missions:'
+  while IFS= read -r m; do
+    [ -z "${m}" ] && continue
+    printf '    - %s\n' "${m}"
+  done < <(scenario_all_ids "${dir}")
 }
 
 # ---------------------------------------------------------------------------
@@ -567,11 +700,24 @@ check_2_7() { # $1 = generated seed script text (unindented), $2 = label
 }
 
 run_2_7_all_scopes() {
-  local rc=0 id
+  local rc=0 id sdir sid m plant_ids
   check_2_7 "$(render_seed_body "${MISSIONS[@]}")" "values-all" || rc=1
   for id in "${MISSIONS[@]}"; do
     check_2_7 "$(render_seed_body "${id}")" "${id}" || rc=1
   done
+  # P27-1: scenario-scoped seed scripts get the exact same ADR-0001
+  # Verification 2-7 treatment as values-all / per-mission — a filtered
+  # mission-id list must still pass every allowlist/sensitive-path check.
+  while IFS= read -r sdir; do
+    [ -z "${sdir}" ] && continue
+    sid="$(basename "${sdir}")"
+    plant_ids=()
+    while IFS= read -r m; do
+      [ -z "${m}" ] && continue
+      plant_ids+=("${m}")
+    done < <(scenario_plant_ids "${sdir}")
+    check_2_7 "$(render_seed_body ${plant_ids:+"${plant_ids[@]}"})" "scenario:${sid}" || rc=1
+  done < <(scenario_dirs)
   return "${rc}"
 }
 
@@ -623,11 +769,15 @@ extract_mount_paths() { # $1=file
   ' "$1"
 }
 
-check_mount_granularity() { # $1=values file $2=label -> rc 0 iff every mount is a directory
-  local file="$1" label="$2" rc=0 mounts n m ft
+check_mount_granularity() { # $1=values file $2=label $3=allow_empty(0/1, default 0) -> rc 0 iff every mount is a directory
+  local file="$1" label="$2" allow_empty="${3:-0}" rc=0 mounts n m ft
   mounts="$(extract_mount_paths "${file}")"
   n="$(printf '%s\n' "${mounts}" | grep -c . || true)"
   if [ "${n}" -eq 0 ]; then
+    if [ "${allow_empty}" -eq 1 ]; then
+      echo "  ok: [${label}] 0 plant.mounts entries (scenario has no evade missions in scope)"
+      return 0
+    fi
     echo "ADR-0007 V1 VIOLATION [${label}]: extracted 0 plant.mounts entries from ${file} (extraction is broken, or this scope genuinely plants nothing — the all-missions/per-mission scopes checked below must always have >=1)" >&2
     return 1
   fi
@@ -651,11 +801,26 @@ check_mount_granularity() { # $1=values file $2=label -> rc 0 iff every mount is
 }
 
 run_verification_1_all_scopes() {
-  local rc=0 id
+  local rc=0 id sdir sid plant_ids m allow_empty
   check_mount_granularity <(render_all) "values-all (generated)" || rc=1
   for id in "${MISSIONS[@]}"; do
     check_mount_granularity <(render_one "${id}") "${id} (generated)" || rc=1
   done
+  # P27-1: scenario-scoped plant.mounts get the same directory-granularity
+  # assert. allow_empty=1 only when this scenario has zero evade missions in
+  # scope (a legitimately empty plant.mounts, not a broken extraction).
+  while IFS= read -r sdir; do
+    [ -z "${sdir}" ] && continue
+    sid="$(basename "${sdir}")"
+    plant_ids=()
+    while IFS= read -r m; do
+      [ -z "${m}" ] && continue
+      plant_ids+=("${m}")
+    done < <(scenario_plant_ids "${sdir}")
+    allow_empty=0
+    [ "${#plant_ids[@]}" -eq 0 ] && allow_empty=1
+    check_mount_granularity <(render_scenario "${sdir}") "scenario:${sid} (generated)" "${allow_empty}" || rc=1
+  done < <(scenario_dirs)
   return "${rc}"
 }
 
@@ -715,7 +880,15 @@ if [ "${CHECK}" -eq 1 ]; then
     echo "DRIFT: values-all.yaml is out of sync with plant.sh files" >&2
     rc=1
   fi
-  [ "${rc}" -eq 0 ] && echo "gen-values: in sync (ADR-0001 2-1..2-7 + ADR-0007 V1/V2 clean)"
+  while IFS= read -r sdir; do
+    [ -z "${sdir}" ] && continue
+    sid="$(basename "${sdir}")"
+    if ! diff -u "values-scenario-${sid}.yaml" <(render_scenario "${sdir}") >/dev/null 2>&1; then
+      echo "DRIFT: values-scenario-${sid}.yaml is out of sync with scenarios/${sid}/scenario.yaml or plant.sh files" >&2
+      rc=1
+    fi
+  done < <(scenario_dirs)
+  [ "${rc}" -eq 0 ] && echo "gen-values: in sync (ADR-0001 2-1..2-7 + ADR-0007 V1/V2 + P27-1 scenario scope clean)"
   exit "${rc}"
 fi
 
@@ -730,3 +903,10 @@ for id in "${MISSIONS[@]}"; do
 done
 render_all > values-all.yaml
 echo "wrote values-all.yaml"
+
+while IFS= read -r sdir; do
+  [ -z "${sdir}" ] && continue
+  sid="$(basename "${sdir}")"
+  render_scenario "${sdir}" > "values-scenario-${sid}.yaml"
+  echo "wrote values-scenario-${sid}.yaml"
+done < <(scenario_dirs)

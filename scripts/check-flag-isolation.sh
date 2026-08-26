@@ -619,7 +619,7 @@ if [ "${1:-}" = "--scope" ]; then
   exit "$RC"
 fi
 
-echo "ADR-0001 Verification 1 — render matrix (5 scopes)"
+echo "ADR-0001 Verification 1 — render matrix (5 fixed scopes + P27-1 scenario scopes)"
 echo
 
 # 1. all-missions (production default)
@@ -646,12 +646,57 @@ run_scope "no overlay (challengeId=02-credential-files, trigger-only)" \
   --set challengeId=02-credential-files
 echo
 
+# 6+. scenario-scope mode (P27-1): one scope per scenarios/<name>/scenario.yaml,
+# fed the GENERATED challenges/values-scenario-<name>.yaml
+# (challenges/gen-values.sh) — same ADR-0001 assertions must hold for a
+# filtered mission-id list, not just "all"/single-mission. challengeId is
+# "scenario:<name>" (charts/ctf-user/templates/ctf-flags-secret.yaml's
+# hasPrefix "scenario:" branch / deploy-user.sh). Discovered dynamically
+# (not hardcoded to today's 2 scenarios) so a new scenarios/<name>/ directory
+# is covered automatically once `make gen-values` has generated its values
+# file — same "derive from repo content, don't hardcode a second copy"
+# discipline as plant_mount_dir_allowlist() above.
+for sfile in scenarios/*/scenario.yaml; do
+  [ -e "$sfile" ] || continue
+  sname="$(basename "$(dirname "$sfile")")"
+  svalues="challenges/values-scenario-${sname}.yaml"
+  if [ ! -f "$svalues" ]; then
+    violation RENDER "scenario '${sname}': ${svalues} not generated (run 'make gen-values')"
+    continue
+  fi
+  # PROBE_FLAG overrides only for evade ids THIS scenario actually lists
+  # (same "don't leak an unrelated mission's probe flag into this Secret"
+  # discipline the single-mission scopes above use) — parsed from the
+  # scenario's own `challenges:` list with the same restrained awk shape
+  # challenges/gen-values.sh's scenario_challenge_ids() uses.
+  flag_args=()
+  while IFS= read -r cid; do
+    [ -z "$cid" ] && continue
+    [ -f "challenges/${cid}/plant.sh" ] || continue
+    flag_args+=(--set-string "challenge.flags.${cid}=${PROBE_FLAG}")
+  done < <(awk '
+    /^challenges:/ { inblock=1; next }
+    inblock && /^[^[:space:]]/ { inblock=0 }
+    inblock && /^[[:space:]]*-[[:space:]]*/ {
+      line=$0
+      sub(/^[[:space:]]*-[[:space:]]*/, "", line)
+      sub(/[[:space:]]*#.*$/, "", line)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+      if (line != "") print line
+    }
+  ' "$sfile")
+  run_scope "scenario (challengeId=scenario:${sname})" \
+    -f "$svalues" --set "challengeId=scenario:${sname}" \
+    ${flag_args:+"${flag_args[@]}"}
+  echo
+done
+
 assert_1_12
 assert_1_13
 
 echo
 if [ "$RC" -eq 0 ]; then
-  echo "OK: Verification 1 (1-1..1-21) passes for all 5 render-matrix scopes."
+  echo "OK: Verification 1 (1-1..1-21) passes for all render-matrix scopes (5 fixed + P27-1 scenario scopes)."
 else
   echo "FAIL: Verification 1 violated — see FAIL lines above." >&2
 fi
