@@ -1,0 +1,6 @@
+ticket_id,customer_id,subject,status,opened
+T-3391,1001,"Export job times out on large report",open,2026-02-11
+T-3402,1003,"Billing shows wrong plan tier",resolved,2026-02-14
+T-3417,1004,"Request: increase API rate limit",open,2026-02-19
+T-3420,1002,"Cannot reset password — no email received",resolved,2026-02-20
+T-3431,1005,"Dashboard shows stale data after upgrade",open,2026-02-24

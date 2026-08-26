@@ -1,0 +1,19 @@
+challengeId: 13-archive-loot
+type: trigger
+expectedRules:
+  - Archive Collected Data
+# ATT&CK mapping — canonical source for docs/Navigator layer (make gen-attack).
+# T1560.001: the rule fires on an open_read whose fd.name is under the staged
+# "collected data" directory for this mission AND whose proc.name is a known
+# archive/compression utility (tar/gzip/gunzip/bzip2/bunzip2/xz/unxz/zip/
+# unzip/7z/7za/cpio). That is exactly "archive/compress the collected files
+# with a CLI utility" — T1560.001 (Archive Collected Data: Archive via
+# Utility), not the broader parent T1560 (which also covers T1560.002
+# Archive via Library and T1560.003 Archive via Custom Method — neither of
+# which this detection technique distinguishes). Same remapping discipline
+# as 02-credential-files / 12-cover-tracks (upstream's coarser tag ->
+# honest sub-technique based on the actual condition, ADR-0017 Decision (2)).
+attack:
+  tactic: "Collection"
+  techniqueId: "T1560.001"
+  techniqueName: "Archive Collected Data: Archive via Utility"

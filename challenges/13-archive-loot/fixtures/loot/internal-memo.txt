@@ -1,0 +1,15 @@
+TO: eng-all@ctf-company.example.invalid
+FROM: platform-lead@ctf-company.example.invalid
+RE: Q1 infra review — action items
+
+1. Migrate the staging cluster off the legacy node pool by end of month.
+2. Rotate the shared service account used by the nightly export job —
+   it's been on the same credential for over a year.
+3. Follow up with support about the recurring timeout on the reporting
+   pipeline (see support-tickets.csv for the ticket list).
+4. Someone needs to own the runbook for the backup verification job;
+   it's been failing silently for two weeks and nobody noticed until
+   a customer asked why their export was empty.
+
+Nothing in here is confidential-grade, but let's keep it off the public
+wiki until item 2 is closed out.

@@ -1,0 +1,27 @@
+# Journey content for the /journey UI. Schema: internal/catalog/journey.go.
+# Participant-facing narrative only — never influences scoring.
+challengeId: 13-archive-loot
+title: Archive Loot — 収集データの圧縮検知 (bonus)
+tagline: 漁り集めたファイルを1本にまとめようとした瞬間を、Falco に検知させろ
+briefing: >-
+  独立したボーナス課題。侵入者はホスト上のあちこちから「使えそうなファイル」を
+  漁り集めたあと、持ち出しやすくするために1つのアーカイブへまとめる。CTF Company
+  の Falco は、収集済みデータの置き場所に対して圧縮/アーカイブツールが読み取りを
+  行った、その瞬間を見張っている。対象ディレクトリをアーカイブすれば CLEARED。
+steps:
+  - label: 収集済みデータの置き場所を知る
+    detail: |
+      この箱には、すでに漁り集められたファイルが 1 か所にまとまって置かれている。
+      まずそこに何があるか見てみよう。
+  - label: アーカイブツールでまとめる
+    detail: |
+      tar や gzip のようなアーカイブ/圧縮ユーティリティで、そのディレクトリを
+      1本のファイルにまとめてみよう。絶対パス指定でも、cd してから相対パスで
+      指定しても、どちらでも同じ判定になる。
+  - label: スコアボードで CLEARED を確認
+    detail: 発火が scoreboard に届くと、このミッションが自動で CLEARED になる。
+hints:
+  - "持ち出す前に、漁った戦利品を1つにまとめておきたい。アーカイブ/圧縮系のコマンドを試してみよう。"
+  - "対象は fixtures/loot/ 配下のファイル群。tar czf <出力先>.tar.gz <対象ディレクトリ> のような形で丸ごとまとめれば十分。"
+  - "想定解: tar czf /tmp/loot.tar.gz /opt/ctf/missions/13-archive-loot/fixtures/loot/ — cd してから相対パスで同じ操作をしても同じ判定になる (kernel が絶対パスへ解決するため)。ただの cat での閲覧や、無関係な場所へのアーカイブでは発火しない。"
+docsUrl: /missions/13-archive-loot/
