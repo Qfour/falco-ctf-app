@@ -1305,7 +1305,10 @@
     // a direct API call), it is still excluded from THESE two lists but the
     // detail pane below (which renders d.detail, not this filtered array)
     // is untouched — this mission simply never appears as a clickable node.
-    const HIDDEN_MISSION_IDS = ['11-cloud-cred-hunt'];
+    // "12-cover-tracks" (P27-4) is the same kind of independent bonus mission
+    // as 11 (not part of the nimbusbreach-full killchain) so it gets the same
+    // treatment for consistency with the CEO decision above.
+    const HIDDEN_MISSION_IDS = ['11-cloud-cred-hunt', '12-cover-tracks'];
     const visibleMissions = missions.filter(m => !HIDDEN_MISSION_IDS.includes(m.id));
 
     // ---- kill-chain overview (P23 Story-as-docs) ----

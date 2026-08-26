@@ -1,0 +1,44 @@
+# Display-only excerpt for the docs site (rendered after 背景).
+# Extracted from the Falco ruleset the event deploys (falco-rules-3.0.1 —
+# same pin as scripts/check-challenge-rules.sh), via a disposable colima
+# profile actually running the rule (not a static copy of the upstream repo).
+# Re-extract from the live cluster ruleset if the Falco version is bumped
+# (conventions §課題ドキュメント用 rule.yaml).
+- list: log_directories
+  items: [/var/log, /dev/log]
+
+- list: log_files
+  items:
+    [
+      syslog,
+      auth.log,
+      secure,
+      kern.log,
+      cron,
+      user.log,
+      dpkg.log,
+      last.log,
+      yum.log,
+      access_log,
+      mysql.log,
+      mysqld.log,
+    ]
+
+- macro: access_log_files
+  condition: (fd.directory in (log_directories) or fd.filename in (log_files))
+
+- rule: Clear Log Activities
+  desc: >
+    Detect clearing of critical access log files, typically done to erase evidence of an attack or unauthorized
+    activity, which is a critical event to any security monitoring program. This is a common anti-forensic technique
+    utilized to cover tracks and delay incident response.
+  condition: >
+    open_write
+    and access_log_files
+    and evt.arg.flags contains "O_TRUNC"
+    and not containerd_activities
+    and not trusted_logging_images
+    and not allowed_clear_log_files
+  output: Log files were tampered | file=%fd.name evt_type=%evt.type user=%user.name user_uid=%user.uid user_loginuid=%user.loginuid process=%proc.name proc_exepath=%proc.exepath parent=%proc.pname command=%proc.cmdline terminal=%proc.tty
+  priority: WARNING
+  tags: [maturity_stable, host, container, filesystem, mitre_defense_evasion, T1070, NIST_800-53_AU-10]

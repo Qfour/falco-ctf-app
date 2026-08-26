@@ -1,0 +1,18 @@
+challengeId: 12-cover-tracks
+type: trigger
+expectedRules:
+  - Clear Log Activities
+# ATT&CK mapping — canonical source for docs/Navigator layer (make gen-attack).
+# T1070.002: the rule fires on an open_write with O_TRUNC against a path under
+# a well-known log directory (/var/log, /dev/log) OR a well-known log filename
+# (syslog/auth.log/secure/kern.log/... — OR condition, either is sufficient).
+# That is exactly "truncate/clear a Linux system log to remove evidence" —
+# T1070.002 (Indicator Removal: Clear Linux or Mac System Logs) — not the
+# coarser upstream rule tag `T1070` (parent Indicator Removal category, which
+# also spans Windows Event Log clearing, timestomping, etc. we don't cover).
+# Same remapping discipline as 02-credential-files (upstream T1555 -> honest
+# T1003.008 based on actual condition).
+attack:
+  tactic: "Defense Evasion"
+  techniqueId: "T1070.002"
+  techniqueName: "Indicator Removal: Clear Linux or Mac System Logs"

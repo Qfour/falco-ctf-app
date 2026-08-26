@@ -1,0 +1,51 @@
+┌──────────────────────────────────────────────────────────────────┐
+│ CTF Company · Mission 12 — Cover Tracks (bonus)                  │
+│ Type: TRIGGER · 難易度: ★★☆☆☆                                    │
+│ 目標 Falco ルール: "Clear Log Activities"                         │
+└──────────────────────────────────────────────────────────────────┘
+
+# このミッションについて (独立ボーナス課題)
+
+本編とは独立した **ボーナス課題**。テーマは「証跡隠滅」— 攻撃はもう終わった、
+残る仕事は自分の足跡を消すこと。侵入者が定番のログファイルを上書き消去して
+証跡を消す典型的な後片付け動作を、Falco で検知する。
+
+# シナリオ
+
+このホストへの足がかりは既に得た。次にやるのは自分の痕跡を消すことだ。
+Linux の操作記録は `/var/log` 配下の決まったファイル (syslog, auth.log,
+secure, cron 等) に残る。攻撃者はまずここを truncate して消しにいく。
+
+# ゴール
+
+このコンテナで Falco ルール「Clear Log Activities」を発火させる。
+発火 = solve (提出操作は不要)。
+
+# 背景 (ルールが見ているもの)
+
+このルールは「ファイルの中身」ではなく「**どこに・どういう書き込みモードで
+open したか**」を見ている。次の両方が条件:
+
+  1. 対象パスが /var/log・/dev/log 配下、または
+     ファイル名が syslog / auth.log / secure / cron / access_log 等の定番名
+     (どちらか一方で十分 — OR 条件)
+  2. 書き込みが **上書きモード (O_TRUNC)** — `>` や truncate-open。
+     `>>` の追記だけでは発火しない
+
+# 試すこと
+
+  echo pwned > /var/log/whatever123.txt      # ファイル名は任意でよい
+  echo pwned > /tmp/evil/auth.log            # 定番ログ名なら /var/log 外でも発火
+
+発火しない例 (上書きモードでない/対象パスでない):
+
+  printf "hello\n" >> /var/log/pureappend.txt   # 追記のみ (O_APPEND) — 不発火
+  echo hello > /tmp/scratch/notes.txt           # 非ログ path・非ログ名 — 不発火
+
+# クリア条件
+
+`Clear Log Activities` が発火する。
+
+# 環境にあるもの
+
+  /opt/ctf/missions/12-cover-tracks/fixtures/welcome.txt  ← このファイル

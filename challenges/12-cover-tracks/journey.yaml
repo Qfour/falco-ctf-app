@@ -1,0 +1,29 @@
+# Journey content for the /journey UI. Schema: internal/catalog/journey.go.
+# Participant-facing narrative only — never influences scoring.
+challengeId: 12-cover-tracks
+title: Cover Tracks — ログ消去検知 (bonus)
+tagline: 侵入の証跡を消そうとした瞬間を、Falco に検知させろ
+briefing: >-
+  独立したボーナス課題。攻撃はもう終わった — 残る仕事は「跡を消すこと」。
+  侵入者はホストに残した自分の足跡 (認証試行やコマンド実行の記録) を、定番の
+  ログファイルを上書き消去することで消そうとする。CTF Company の Falco は、
+  この「証跡隠滅」の動作そのものを見張っている。ログファイルを truncate すれば
+  CLEARED。
+steps:
+  - label: ログはどこにあるか
+    detail: |
+      Linux の操作記録は /var/log 配下 (syslog, auth.log, secure, cron 等) の
+      決まったファイルに残る。侵入者はまずここを消しにいく。
+  - label: 「上書き消去」を実際にやってみる
+    detail: |
+      シェルの `>` (truncate open) でログらしきファイルへ書き込むと、ファイルの
+      中身がまるごと消える。/var/log 配下の任意のファイル名、または auth.log /
+      syslog のような定番ログ名であれば、パスの場所に関わらず対象になる。
+      `>>` (追記) では発火しない — 上書きモードであることが条件。
+  - label: スコアボードで CLEARED を確認
+    detail: 発火が scoreboard に届くと、このミッションが自動で CLEARED になる。
+hints:
+  - ログファイルを「消す」ときに使うシェル操作は何か。上書きリダイレクト (>) を試してみよう。
+  - パスが /var/log 配下でなくても、ファイル名が auth.log / syslog のような定番の名前なら検知対象になる (どちらか一方で十分)。
+  - "想定解: echo pwned > /var/log/whatever123.txt — O_TRUNC (上書きモード) での書き込みが条件。追記 (>>) だけでは発火しない。"
+docsUrl: /missions/12-cover-tracks/

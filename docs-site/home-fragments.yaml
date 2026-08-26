@@ -38,7 +38,7 @@
 # tutorial-chapters.yaml for the current intro/cheatsheet panel definitions.
 
 panels:
-  # -- per-challenge panel (11 candidates: 00 + 01-10 + 11-bonus) -----------
+  # -- per-challenge panel (12 candidates: 00 + 01-10 + 11-bonus + 12-bonus) ---
 
   - id: rule-explain
     label: "🔍 なぜ発火するか"
@@ -47,9 +47,10 @@ panels:
     per_challenge: true
     coverage_2026-08-16: [01-initial-recon, 03-stealth-read, 04-key-search, 05-silent-search]
     missing: [00-tutorial, 02-credential-files, 06-web-rce-shell, 07-persist,
-              08-c2-beacon, 09-hidden-cache, 10-final-exfil, 11-cloud-cred-hunt]
+              08-c2-beacon, 09-hidden-cache, 10-final-exfil, 11-cloud-cred-hunt,
+              12-cover-tracks]
     fail_soft: >
-      8 of 11 challenges have no rule-explain.md. Per-challenge panel MUST be
+      9 of 12 challenges have no rule-explain.md. Per-challenge panel MUST be
       omitted (not rendered as an empty box, not a broken link) when the file
       is absent for that challenge id — this is normal steady-state, not an
       error, and is expected to persist (rule-explain.md is optional

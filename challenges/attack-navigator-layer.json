@@ -77,6 +77,13 @@
       "color": "#e60d0d",
       "comment": "10-final-exfil The Final Exfil (Boss) — Exfiltration Over C2 Channel",
       "enabled": true
+    },
+    {
+      "techniqueID": "T1070.002",
+      "score": 100,
+      "color": "#e60d0d",
+      "comment": "12-cover-tracks Cover Tracks (ログ消去検知 / bonus) — Indicator Removal: Clear Linux or Mac System Logs",
+      "enabled": true
     }
   ],
   "gradient": {
