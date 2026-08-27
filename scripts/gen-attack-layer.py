@@ -47,7 +47,10 @@ COVERED_SCORE = 100
 # story's scope is explicit rather than accidental.
 INTENTIONAL_GAPS = [
     ("Lateral Movement", "T1021 系 (Remote Services)",
-     "未カバー — 単一 Pod 侵入シナリオのため横展開は物語の範囲外。"),
+     "意図的除外 (ADR-0018) — 単一 Pod 隔離・SA token 狭域スコープ・egress lockdown "
+     "(P11.5, Calico enforced) により、移動先となる第二の到達可能な Pod/ホストが"
+     "構造的に存在しない。ADR-0016 の T1611 除外 (単一 Pod 隔離という防御境界そのもの)"
+     "とも表裏一体。"),
     ("Impact", "T1485 / T1486 系 (Data Destruction / Encryption)",
      "意図的除外 — 破壊的操作は共有 CTF 環境の保護のため扱わない。"),
     ("Initial Access", "TA0001 全般",
