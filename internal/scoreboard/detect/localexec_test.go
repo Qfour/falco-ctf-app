@@ -250,6 +250,52 @@ func TestBuildRulesFile_EmbedsMacrosAndCondition(t *testing.T) {
 	}
 }
 
+// TestBuildRulesFile_OutputHasNoInvalidRuleToken is the regression test for
+// issue #77: the generated rule's `output:` field must never contain the
+// literal token `%rule` (or `%evt.rule`) — Falco has no such field in its
+// documented supported-fields reference, so any occurrence makes `falco -V`
+// fail to compile and `type: detect` grading permanently invalid. The rule
+// name is already known at generation time, so it must appear as a literal
+// substitution instead (mirrors the fix in images/detect-grader/grade.sh).
+func TestBuildRulesFile_OutputHasNoInvalidRuleToken(t *testing.T) {
+	d := &catalog.Detect{
+		RuleName:      "custom_rule_name",
+		AllowedMacros: nil,
+	}
+	out, err := buildRulesFile(d, "open_read")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "%rule") {
+		t.Fatalf("output must not contain the invalid falco field token %%rule:\n%s", out)
+	}
+	// The rule's own name must be substituted as a literal, using the
+	// mission's actual RuleName (not a hardcoded default).
+	wantOutput := "  output: custom_rule_name rule=custom_rule_name file=%fd.name proc=%proc.name\n"
+	if !strings.Contains(out, wantOutput) {
+		t.Fatalf("output line missing/wrong; want substring %q in:\n%s", wantOutput, out)
+	}
+	// %fd.name / %proc.name are documented valid fields and must be preserved.
+	if !strings.Contains(out, "file=%fd.name") || !strings.Contains(out, "proc=%proc.name") {
+		t.Fatalf("valid field tokens must be preserved:\n%s", out)
+	}
+}
+
+// TestBuildRulesFile_OutputUsesDefaultRuleName covers the empty-RuleName path
+// (falls back to catalog.DefaultDetectRuleName) so the literal substitution
+// is exercised for the common case too, not only a custom RuleName.
+func TestBuildRulesFile_OutputUsesDefaultRuleName(t *testing.T) {
+	d := &catalog.Detect{AllowedMacros: nil}
+	out, err := buildRulesFile(d, "open_read")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantOutput := "  output: " + catalog.DefaultDetectRuleName + " rule=" + catalog.DefaultDetectRuleName + " file=%fd.name proc=%proc.name\n"
+	if !strings.Contains(out, wantOutput) {
+		t.Fatalf("output line missing/wrong; want substring %q in:\n%s", wantOutput, out)
+	}
+}
+
 func TestBuildRulesFile_UndefinedMacroFails(t *testing.T) {
 	d := &catalog.Detect{RuleName: "r", AllowedMacros: []string{"no_such_macro"}}
 	if _, err := buildRulesFile(d, "x"); err == nil {
