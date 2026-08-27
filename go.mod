@@ -7,10 +7,10 @@ require (
 	github.com/yuin/goldmark v1.8.5
 	golang.org/x/net v0.58.0
 	gopkg.in/yaml.v3 v3.0.1
-	k8s.io/api v0.36.3
-	k8s.io/apimachinery v0.36.3
-	k8s.io/client-go v0.36.3
-	modernc.org/sqlite v1.56.0
+	k8s.io/api v0.36.4
+	k8s.io/apimachinery v0.36.4
+	k8s.io/client-go v0.36.4
+	modernc.org/sqlite v1.57.0
 )
 
 require (
