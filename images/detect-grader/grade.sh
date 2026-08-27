@@ -75,7 +75,14 @@ RULES="${WORK}/participant.yaml"
   # Falco condition; `falco -V` is the gate.
   sed 's/^/    /' "$CONDITION_FILE"
   printf '\n'
-  printf '  output: "%s rule=%%rule file=%%fd.name proc=%%proc.name"\n' "$RULE_NAME"
+  # NOTE: Falco's output template has no substitution token for "the firing
+  # rule's own name" (confirmed against the official supported-fields
+  # reference: no field named `rule` or `evt.rule` exists). RULE_NAME is
+  # already known at generation time as a shell variable, so it is emitted
+  # as a literal via printf %s (twice) rather than guessed at as a token —
+  # the invalid `%rule` token made every `falco -V` compile fail, which is
+  # why detect grading was always "invalid" (issue #77).
+  printf '  output: "%s rule=%s file=%%fd.name proc=%%proc.name"\n' "$RULE_NAME" "$RULE_NAME"
   printf '  priority: WARNING\n'
 } > "$RULES"
 
