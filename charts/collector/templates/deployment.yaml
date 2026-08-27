@@ -18,11 +18,7 @@ spec:
     spec:
       automountServiceAccountToken: false
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 65532
-        runAsGroup: 65532
-        seccompProfile:
-          type: RuntimeDefault
+        {{- include "falco-ctf-common.podSecurityContext" (dict) | nindent 8 }}
       {{- /* P20 node-tier pinning (fixed service). Empty defaults render nothing —
              unset = identical to prior render. See values.yaml for the vm-prod keys. */}}
       {{- with .Values.nodeSelector }}
@@ -38,10 +34,7 @@ spec:
           image: {{ include "collector.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
-            readOnlyRootFilesystem: true
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
+            {{- include "falco-ctf-common.containerSecurityContext" . | nindent 12 }}
           ports:
             - name: http
               containerPort: 8000

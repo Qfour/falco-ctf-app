@@ -302,6 +302,22 @@ def check_pod_spec(chart, label, pod_spec, errors):
                 print(f"    ok: {group}[{cname}] seccompProfile.type=RuntimeDefault (source: {source})")
 
 
+def is_library_chart(chart_dir: Path) -> bool:
+    """True iff chart_dir's Chart.yaml declares `type: library` (P21 item 5:
+    charts/falco-ctf-common). Library charts are not installable — `helm
+    template` on one always fails with "library charts are not installable",
+    regardless of content — so they carry no renderable Pod spec of their
+    own and are out of scope for this check the same way a Service or
+    ConfigMap-only chart would be. This is not a weakening of the invariant:
+    a library chart's named templates only ever take effect once `include`d
+    by a real (type: application) chart, and every such caller is still
+    checked here with the library's templates expanded inline."""
+    chart_yaml = chart_dir / "Chart.yaml"
+    if not chart_yaml.is_file():
+        return False
+    return bool(re.search(r"(?m)^type:\s*library\s*$", chart_yaml.read_text()))
+
+
 def main() -> int:
     if not CHARTS_DIR.is_dir():
         print(f"FAIL: charts dir not found: {CHARTS_DIR}", file=sys.stderr)
@@ -315,6 +331,9 @@ def main() -> int:
     errors = []
     for chart_dir in chart_dirs:
         chart = chart_dir.name
+        if is_library_chart(chart_dir):
+            print(f"== {chart} == (type: library — not installable, skipping)")
+            continue
         print(f"== {chart} ==")
         proc = subprocess.run(
             ["helm", "template", str(chart_dir)],

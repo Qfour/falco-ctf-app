@@ -39,3 +39,14 @@ challenges/decks/
 
 # Claude Code agent worktrees (nested checkouts; never commit)
 .claude/worktrees/
+
+# Helm dependency build output (P21 item 5: charts/{scoreboard,auth-policy,
+# collector} depend on charts/falco-ctf-common via a local file:// path dep).
+# `helm dependency build` (see `make helm-dep-build`) regenerates both of
+# these deterministically from the checked-in charts/falco-ctf-common
+# source + each chart's Chart.yaml `dependencies:` pin — neither carries
+# information that isn't already in git. Chart.lock's `generated:` field
+# is a fresh timestamp on every run, so committing it would just be diff
+# churn with no reproducibility benefit for a file:// (not registry) dep.
+charts/*/charts/
+charts/*/Chart.lock

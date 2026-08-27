@@ -97,6 +97,18 @@ fi
 for chart_dir in "${chart_dirs[@]}"; do
   chart="$(basename "$chart_dir")"
 
+  # P21 item 5 (falco-ctf-common): a `type: library` chart cannot be
+  # `helm template`-d on its own ("library charts are not installable",
+  # regardless of content). Its named templates only ever render once
+  # `include`d by a real chart, and every such caller
+  # (scoreboard/auth-policy/collector) is still checked below with the
+  # library's templates expanded inline — so skipping the library chart
+  # itself here is not a coverage gap.
+  if grep -qE '^type:[[:space:]]*library[[:space:]]*$' "${chart_dir}Chart.yaml" 2>/dev/null; then
+    echo "== ${chart} == (type: library — not installable, skipping)"
+    continue
+  fi
+
   echo "== ${chart} =="
   manifest=""
   if ! manifest="$(helm template "$chart_dir" 2>&1)"; then

@@ -6,16 +6,7 @@
 #   Ingress: ctf-user workspaces only (the participant HTTP surface).
 #   Egress : kube-dns (name resolution) + scoreboard:8000 (forwarding target).
 # It must NOT reach falco, oauth2-proxy, the API server, or the internet.
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: collector-default-deny
-  namespace: collector
-spec:
-  podSelector: {}
-  policyTypes:
-    - Ingress
-    - Egress
+{{ include "falco-ctf-common.networkPolicy.defaultDeny" (dict "name" "collector" "namespace" "collector") }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
