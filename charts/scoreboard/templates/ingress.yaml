@@ -5,7 +5,7 @@ metadata:
   name: scoreboard
   namespace: scoreboard
   labels:
-    {{- include "scoreboard.labels" . | nindent 4 }}
+    {{- include "falco-ctf-common.labels" (dict "name" "scoreboard" "managedBy" .Release.Service) | nindent 4 }}
   annotations:
     # Operator-only gate. auth-policy /check-admin returns 200 only when the
     # logged-in oauth2-proxy email is in the ADMIN_EMAILS allowlist. Without

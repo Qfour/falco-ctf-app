@@ -83,16 +83,19 @@ deploy-local: helm-dep-build
 	  --set image.tag=dev \
 	  --set env.expectedEmailDomain=ctf.local --set env.adminEmails=user1@ctf.local
 
-# P21 item 5 (REFACTORING.md): charts/{scoreboard,auth-policy,collector} pull in
-# the charts/falco-ctf-common library chart (securityContext / default-deny
-# NetworkPolicy named templates) via a local `file://../falco-ctf-common`
+# P21 item 5 (REFACTORING.md): charts/{scoreboard,auth-policy,collector,docs,
+# ctf-user} pull in the charts/falco-ctf-common library chart
+# (securityContext / default-deny NetworkPolicy / labels / image named
+# templates — step1 landed the first two, step2 added labels+image and
+# onboarded docs+ctf-user) via a local `file://../falco-ctf-common`
 # dependency in their Chart.yaml. Helm resolves file:// dependencies onto disk
 # (charts/<chart>/charts/falco-ctf-common-*.tgz + Chart.lock) — this is a NEW
 # step in the local dev loop: without it, `helm lint`/`helm template`/`helm
-# upgrade` on any of those three charts fails with "found in Chart.yaml, but
-# missing in charts/ directory". Charts with no `dependencies:` key (ctf-user,
-# docs, falco-ctf-common itself) are a harmless no-op. Safe to re-run; only
-# touches the gitignored charts/<chart>/charts/ vendor dirs + Chart.lock.
+# upgrade` on any of those five charts fails with "found in Chart.yaml, but
+# missing in charts/ directory". The only chart with no `dependencies:` key
+# is falco-ctf-common itself — the loop below is a harmless no-op for it.
+# Safe to re-run; only touches the gitignored charts/<chart>/charts/ vendor
+# dirs + Chart.lock.
 helm-dep-build:
 	@for c in charts/*; do \
 	  if grep -q '^dependencies:' "$$c/Chart.yaml" 2>/dev/null; then \

@@ -5,7 +5,7 @@ metadata:
   name: scoreboard-journey
   namespace: scoreboard
   labels:
-    {{- include "scoreboard.labels" . | nindent 4 }}
+    {{- include "falco-ctf-common.labels" (dict "name" "scoreboard" "managedBy" .Release.Service) | nindent 4 }}
   annotations:
     # P18 participant gate: ANY authenticated login (oauth2-proxy /oauth2/auth
     # directly — no host<->email binding, no admin allowlist). The scoreboard
