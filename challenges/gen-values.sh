@@ -261,6 +261,24 @@ scenario_challenge_ids() {
   ' "$1"
 }
 
+# app#207 (P27-1 review-5x R1 finding, MEDIUM): charts/ctf-user/templates/
+# pod.yaml's `missions-scope` initContainer interpolates each
+# .Values.scenario.missions element straight into a `sh -c` script
+# (`mkdir -p "/missions-seed/{{ . }}"` / `cp -a "/opt/ctf/missions/{{ . }}/."
+# ...`) with no escaping. scenario.missions is exactly the ordered id list
+# scenario_challenge_ids() below extracts from scenario.yaml's `challenges:`,
+# so a challenge id containing a `"` (or other shell metacharacter) reaching
+# that far would let an entry in a content-editor-authored scenario.yaml
+# break out of the generated script's quoting. The existing check below only
+# verifies "is this an id with a matching challenges/<id> directory" — it
+# does not constrain the id's character set. Reject anything outside the
+# allowed charset here, fail-closed, BEFORE the directory-existence check
+# (which would otherwise also need to double as a de-facto charset gate).
+# Mirrored, independently, by a Helm `regexMatch`+`fail` render-time guard in
+# charts/ctf-user/templates/pod.yaml (defense-in-depth for callers that
+# `helm template`/`helm upgrade` directly, bypassing this script).
+CHALLENGE_ID_CHARSET_RE='^[A-Za-z0-9._-]+$'
+
 SCENARIO_ERRORS=""
 while IFS= read -r sdir; do
   [ -z "${sdir}" ] && continue
@@ -274,6 +292,12 @@ while IFS= read -r sdir; do
   while IFS= read -r cid; do
     [ -z "${cid}" ] && continue
     scount=$((scount + 1))
+    case "${cid}" in
+      *[!A-Za-z0-9._-]*)
+        SCENARIO_ERRORS="${SCENARIO_ERRORS}scenario '${sid}' references challenge id '${cid}' with characters outside the allowed charset ${CHALLENGE_ID_CHARSET_RE} (app#207: rejected to close a shell-metacharacter injection vector in the generated missions-scope initContainer script — letters, digits, '.', '_', '-' only)\n"
+        continue
+        ;;
+    esac
     if [ ! -d "${cid}" ]; then
       SCENARIO_ERRORS="${SCENARIO_ERRORS}scenario '${sid}' references unknown challenge '${cid}' (no such directory under challenges/)\n"
     fi
