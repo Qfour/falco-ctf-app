@@ -113,7 +113,14 @@ func buildRulesFile(d *catalog.Detect, condition string) (string, error) {
 		b.WriteString(line)
 		b.WriteString("\n")
 	}
-	b.WriteString("  output: participant_detect rule=%rule file=%fd.name proc=%proc.name\n")
+	// Falco's output template has no substitution token for "the firing
+	// rule's own name" (no field named `rule` or `evt.rule` exists in the
+	// documented supported-fields reference). ruleName is already known
+	// here, so it is emitted as a literal (twice) rather than guessed at as
+	// a token — the invalid `%rule` token made every `falco -V` compile
+	// fail, so `type: detect` grading was permanently invalid (issue #77).
+	// This mirrors the identical fix in images/detect-grader/grade.sh.
+	fmt.Fprintf(&b, "  output: %s rule=%s file=%%fd.name proc=%%proc.name\n", ruleName, ruleName)
 	b.WriteString("  priority: WARNING\n")
 	return b.String(), nil
 }
