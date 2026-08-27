@@ -63,7 +63,18 @@ FROM nginxinc/nginx-unprivileged:1.30-alpine@sha256:93722936b82ec8a1178d48448e61
 # libxml2 finding (CVE-2026-11979 among the 3 has no upstream fix released at
 # all; the other two have a fix release but not yet an Alpine package build).
 # Tracked by the #227 re-check triggers already recorded in that Issue.
+#
+# security-engineer BLOCKING review (2026-08-28): this base's `Config.User` is
+# `101` (confirmed via `GET /v2/nginxinc/nginx-unprivileged/blobs/<config
+# digest>` on the registry — non-root already, no explicit USER line needed
+# it before this change). `apk` writes to /lib/apk/db (root-owned, 0755), so
+# running the upgrade as 101 fails with a permission error. Wrap it in
+# `USER root` / `USER 101` so the apk write happens as root but the final
+# image still executes as 101, preserving nginx-unprivileged's non-root
+# model (no regression vs. before this Dockerfile even touched apk).
+USER root
 RUN apk add --no-cache --upgrade libssl3=3.5.8-r0 libcrypto3=3.5.8-r0
+USER 101
 
 # --chmod: the non-root nginx user (uid 101) must read the config regardless of
 # the host file mode (Write may create it 0640). The site tree from the build
