@@ -17,7 +17,7 @@ SYSDIG_URL   ?= https://app.au1.sysdig.com
 # host repo are not shared into the VM.
 GO_IMAGE ?= golang:1.26-alpine
 
-.PHONY: help dev dev-down build push load-colima deploy-local lint check-seccomp check-flag-isolation check-namespace-ownership check-image-hygiene test tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-rules check-freshness clean scan
+.PHONY: help dev dev-down build push load-colima deploy-local helm-dep-build lint check-seccomp check-flag-isolation check-namespace-ownership check-image-hygiene test tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-rules check-freshness clean scan
 
 help:
 	@echo "Targets:"
@@ -27,7 +27,8 @@ help:
 	@echo "  push            — docker push all images"
 	@echo "  load-colima     — load images into colima k3s containerd (local only)"
 	@echo "  deploy-local    — helm upgrade --install scoreboard + auth-policy charts (local)"
-	@echo "  lint                — helm lint all charts/ + check-seccomp + check-flag-isolation + check-namespace-ownership"
+	@echo "  helm-dep-build      — helm dependency build for every chart that declares one (P21 item 5: falco-ctf-common)"
+	@echo "  lint                — helm-dep-build + helm lint all charts/ + check-seccomp + check-flag-isolation + check-namespace-ownership"
 	@echo "  check-seccomp       — fail if any rendered chart container's effective seccompProfile != RuntimeDefault"
 	@echo "  check-flag-isolation — fail if the ctf-user chart lets a flag reach the challenge container (ADR-0001 Verification 1)"
 	@echo "  check-namespace-ownership — fail if any chart (except ctf-user) renders its own kind: Namespace (ADR-0011)"
@@ -72,7 +73,7 @@ load-colima: build
 # / falco) comes from falco-ctf-platform `helmfile -e local apply`; this installs
 # just the two app charts with local-equivalent values (images tagged :dev via
 # make load-colima). Namespaces are created by the charts.
-deploy-local:
+deploy-local: helm-dep-build
 	helm upgrade --install scoreboard charts/scoreboard -n scoreboard \
 	  --set image.tag=dev \
 	  --set persistence.storageClassName=local-path \
@@ -82,7 +83,25 @@ deploy-local:
 	  --set image.tag=dev \
 	  --set env.expectedEmailDomain=ctf.local --set env.adminEmails=user1@ctf.local
 
-lint: check-seccomp check-flag-isolation check-namespace-ownership
+# P21 item 5 (REFACTORING.md): charts/{scoreboard,auth-policy,collector} pull in
+# the charts/falco-ctf-common library chart (securityContext / default-deny
+# NetworkPolicy named templates) via a local `file://../falco-ctf-common`
+# dependency in their Chart.yaml. Helm resolves file:// dependencies onto disk
+# (charts/<chart>/charts/falco-ctf-common-*.tgz + Chart.lock) — this is a NEW
+# step in the local dev loop: without it, `helm lint`/`helm template`/`helm
+# upgrade` on any of those three charts fails with "found in Chart.yaml, but
+# missing in charts/ directory". Charts with no `dependencies:` key (ctf-user,
+# docs, falco-ctf-common itself) are a harmless no-op. Safe to re-run; only
+# touches the gitignored charts/<chart>/charts/ vendor dirs + Chart.lock.
+helm-dep-build:
+	@for c in charts/*; do \
+	  if grep -q '^dependencies:' "$$c/Chart.yaml" 2>/dev/null; then \
+	    echo "== helm dependency build $$c =="; \
+	    helm dependency build "$$c"; \
+	  fi \
+	done
+
+lint: helm-dep-build check-seccomp check-flag-isolation check-namespace-ownership
 	@for c in charts/*; do echo "== $$c =="; helm lint "$$c"; done
 
 # Hard Invariant guard (see .claude/rules/falco-ctf-app-conventions.md

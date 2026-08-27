@@ -32,8 +32,23 @@ case "$FILE" in
       # chart dir = two levels up from templates/, or the dir of values/Chart.
       CHART_DIR=$(dirname "$FILE")
       [[ "$(basename "$CHART_DIR")" == "templates" ]] && CHART_DIR=$(dirname "$CHART_DIR")
+      # P21 item 5: charts/{scoreboard,auth-policy,collector} depend on
+      # charts/falco-ctf-common (a local file:// path dep) — helm lint/
+      # template fail without a built charts/<chart>/charts/ dir. Best-effort
+      # and silent: this hook is advisory (exit 0 regardless), and a bare
+      # `helm dependency build` also refreshes any OTHER Helm repos configured
+      # on this machine (unrelated global ~/.config/helm state), which must
+      # not leak noise into hook stderr.
+      if grep -q '^dependencies:' "$CHART_DIR/Chart.yaml" 2>/dev/null; then
+        helm dependency build "$CHART_DIR" >/dev/null 2>&1 || true
+      fi
       helm lint "$CHART_DIR" >/dev/null 2>&1 || echo "helm lint: failed for $CHART_DIR" >&2
-      helm template "$CHART_DIR" >/dev/null 2>&1 || echo "helm template: render failed for $CHART_DIR" >&2
+      # library charts (charts/falco-ctf-common) are not installable — `helm
+      # template` on one always fails regardless of content, so there is
+      # nothing to render-check here; its callers are checked instead.
+      if ! grep -qE '^type:[[:space:]]*library[[:space:]]*$' "$CHART_DIR/Chart.yaml" 2>/dev/null; then
+        helm template "$CHART_DIR" >/dev/null 2>&1 || echo "helm template: render failed for $CHART_DIR" >&2
+      fi
     fi
     ;;
   */challenges/*/falco-rule.yaml)

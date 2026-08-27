@@ -2,16 +2,7 @@
 # (auth-url subrequest) and egress only to kube-dns + oauth2-proxy. auth-policy
 # is the host↔email enforcement point; locking the network plane is part of the
 # defense.
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: auth-policy-default-deny
-  namespace: auth-policy
-spec:
-  podSelector: {}
-  policyTypes:
-    - Ingress
-    - Egress
+{{ include "falco-ctf-common.networkPolicy.defaultDeny" (dict "name" "auth-policy" "namespace" "auth-policy") }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

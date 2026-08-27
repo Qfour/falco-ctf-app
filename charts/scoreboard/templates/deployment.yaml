@@ -42,12 +42,7 @@ spec:
       #     the pre-#44 hardening (no automount) is preserved unchanged.
       automountServiceAccountToken: {{ eq (toString .Values.env.detectRunner) "k8s" }}
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 65532
-        runAsGroup: 65532
-        fsGroup: 65532
-        seccompProfile:
-          type: RuntimeDefault
+        {{- include "falco-ctf-common.podSecurityContext" (dict "fsGroup" 65532) | nindent 8 }}
       {{- /*
         P20 substrate generalisation: pin fixed services to a node tier. On the
         VM k3s substrate the platform taints the server node
@@ -79,10 +74,7 @@ spec:
           image: {{ include "scoreboard.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
-            readOnlyRootFilesystem: true
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
+            {{- include "falco-ctf-common.containerSecurityContext" . | nindent 12 }}
           ports:
             - name: http
               containerPort: 8000

@@ -1,0 +1,6 @@
+# falco-ctf-common is a Helm library chart (type: library in Chart.yaml) — it
+# has no resources of its own and is never installed directly. Its named
+# templates take explicit arguments (a dict, or the caller's root context)
+# rather than reading .Values, so there is nothing to configure here. This
+# file exists only to keep `helm lint` from emitting the "values.yaml: file
+# does not exist" INFO note.

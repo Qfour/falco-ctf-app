@@ -1,16 +1,7 @@
 # scoreboard NetworkPolicies — default-deny + scoped ingress for the audiences
 # that legitimately reach this Pod. See AGENTS.md threat model (Falco webhook
 # authenticity): without this, any cluster pod could POST forged events.
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: scoreboard-default-deny
-  namespace: scoreboard
-spec:
-  podSelector: {}
-  policyTypes:
-    - Ingress
-    - Egress
+{{ include "falco-ctf-common.networkPolicy.defaultDeny" (dict "name" "scoreboard" "namespace" "scoreboard") }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
