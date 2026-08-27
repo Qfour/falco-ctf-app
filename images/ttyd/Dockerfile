@@ -3,13 +3,30 @@
 # has only `pods/exec` on this Pod's name.
 FROM alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce
 
-ARG KUBECTL_VERSION=v1.36.2
+ARG KUBECTL_VERSION=v1.36.4
 # sha256 は https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/<arch>/kubectl.sha256
 # の実値を焼き込み。KUBECTL_VERSION を上げたら両方更新すること。
-ARG KUBECTL_SHA256_AMD64=1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82
-ARG KUBECTL_SHA256_ARM64=c957eb8c4bea27a3bb35b269edd9082e27f027f7b76b20b5bf4afebc726c6d3e
+# v1.36.2 -> v1.36.4 (2026-08-28, #227): CHANGELOG-1.36.md の "Update
+# golang.org/x/text and golang.org/x/net dependencies to include security
+# updates" (kubernetes/kubernetes#141226) が golang.org/x/net v0.49.0->v0.56.0
+# (CVE-2026-46600/-39821/-33814) と golang.org/x/text v0.33.0->v0.39.0
+# (CVE-2026-56852) を解消。.go-version も 1.26.4->1.26.5 に上がるが、Go 本体の
+# stdlib CVE (CVE-2026-56862 ほか、fix = go1.26.6) は v1.36.4 時点でも未解消
+# のまま残る (stable-1.36 の最新パッチが v1.36.4 — 2026-08-28 時点で確認)。
+ARG KUBECTL_SHA256_AMD64=8b8f088da2dab964f853b38464033b1be15ede2839eca751482357c45abdd05a
+ARG KUBECTL_SHA256_ARM64=0ecf44450ee6063bf19dd166a103ee6df4a9034455c2abce626e6eea657d73fb
 
-RUN apk add --no-cache \
+# apk upgrade (#227): alpine:3.22 のタグ自体は 2026-08-14 の pin 以降リビルドされて
+# おらず (index digest 不変・実測確認済み)、base に焼き込まれた libssl3/libcrypto3
+# は 3.5.7-r0 のまま (CVE-2026-63072..63076/-54874/-18798/-14456/-14457, High)。
+# だが v3.22/main の APKINDEX は既に 3.5.8-r0 (fix 版) を配布しているため、明示
+# upgrade で最新パッチを引ける (base image の再ビルド待ちにしない)。curl/libcurl
+# の High CVE (CVE-2026-5773/-6276/2025-14017/-13034, fix >= 8.18.0) は
+# v3.22 の apk リポジトリにまだバックポートされておらず (2026-08-28 時点で
+# curl=8.14.1-r3 のまま)、apk upgrade では解消しない — 残課題として Issue #227
+# に記録。
+RUN apk upgrade --no-cache libssl3 libcrypto3 \
+ && apk add --no-cache \
         "ttyd=1.7.7-r0" \
         "bash=5.2.37-r0" \
         "ca-certificates=20260611-r0" \

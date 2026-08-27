@@ -3,7 +3,14 @@
 # Build context: **repo root** (so the canonical `challenges/` tree is reachable;
 # gen-pages.py renders one page per challenge from it — no committed duplication).
 #   docker build --platform linux/amd64 -t <reg>/docs:<tag> -f images/docs/Dockerfile .
-FROM python:3.12-slim@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc852199fbf AS build
+#
+# Supply chain (P12/#227): both base digests below bumped 2026-08-28 (index
+# digest re-resolved via `docker buildx imagetools inspect <image>:<tag>` — the
+# tag itself did not move, but upstream re-published a new index digest under
+# it, which is the mechanism that actually carries package-level CVE fixes
+# such as libssl3/libcrypto3 3.5.7-r0 -> 3.5.8-r0, CVE-2026-63072..63076 /
+# 54874 / 18798 / 14456 / 14457 — see Issue #227).
+FROM python:3.12-slim@sha256:09f7da3bc104798d0afb40bc08d23ab2da20a76130cec1f2ef170848f5d85217 AS build
 
 RUN pip install --no-cache-dir "mkdocs-material==9.5.39"
 
@@ -26,7 +33,7 @@ RUN for mode in participant admin; do \
 # ── serve ───────────────────────────────────────────────────────────
 # nginx-unprivileged listens on 8080 as a non-root user (uid 101) — fits
 # runAsNonRoot without extra config.
-FROM nginxinc/nginx-unprivileged:1.30-alpine@sha256:b3f2436575bd5be7386518084d842dac414ab4962712afa31e99e0942a56e3b2
+FROM nginxinc/nginx-unprivileged:1.30-alpine@sha256:93722936b82ec8a1178d48448e619226680d2de3706a1640800e186cd5fa7fd3
 # --chmod: the non-root nginx user (uid 101) must read the config regardless of
 # the host file mode (Write may create it 0640). The site tree from the build
 # stage is already world-readable (dirs 0755 / files 0644) so it needs no chmod

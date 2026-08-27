@@ -26,6 +26,17 @@
 #   docker buildx imagetools inspect falcosecurity/falco:0.44.1 --format '{{.Manifest.Digest}}'
 FROM falcosecurity/falco:0.44.1@sha256:d0cfe422d6ac0e0f20857798f46c7d7273210e1b064b22821e4e6e7f843cde6b
 
+# apk upgrade (#227): no falcosecurity/falco tag newer than 0.44.1 exists yet
+# (checked 2026-08-28 against the Docker Hub tag list), so there is no base
+# digest to bump to. The wolfi/apko base still ships libssl3/libcrypto3
+# 3.6.3-r0 (CVE-2026-14456 fix=3.6.3-r5, CVE-2026-54876 fix=3.6.3-r4, both
+# High). packages.wolfi.dev already serves 3.6.4-r0 (past both fix
+# thresholds) and this base DOES ship a usable apk toolchain (verified by
+# inspecting the published image layers — usr/bin/apk + usr/lib/apk/db are
+# present), so an explicit upgrade here picks up the fix without waiting for
+# a new Falco release.
+RUN apk upgrade --no-cache libssl3 libcrypto3
+
 # Create the non-root grader user (the wolfi/apko base ships no 65532 user).
 # Done at build time as root; the container then runs as 65532 (USER below and
 # the Job securityContext both pin it).
