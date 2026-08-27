@@ -15,7 +15,27 @@ FROM alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc
 # `wget -q -O- --no-check-certificate https://...` (課題 01 の自己署名 k8s API 叩き)
 # を含む課題用途は busybox wget で動作確認済み (--no-check-certificate も honor)。
 # → 脆弱バイナリを除去 = Critical を実解消 (例外で握り潰さない、P13/#18 の CEO 条件)。
-RUN apk add --no-cache \
+#
+# apk upgrade (#227): alpine:3.22 タグは 2026-08-14 の pin 以降リビルドされて
+# おらず (index digest 不変・実測確認済み)、base に焼き込まれた libssl3/libcrypto3
+# は 3.5.7-r0 のまま (CVE-2026-63072..63076/-54874/-18798/-14456/-14457, High)。
+# v3.22/main の APKINDEX は既に 3.5.8-r0 (fix 版) を配布しているため明示 upgrade
+# で解消する。**厳密バージョン pin** (他パッケージと同じ規律。P12 の digest pin と
+# 同じ思想 — 未 pin の `apk upgrade` は build 時点の live APKINDEX に依存し
+# bit-identical を壊すため security-engineer レビューで指摘され是正、#227)。
+# 3.5.8-r0 は https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/APKINDEX.tar.gz
+# を実測して確認した版数 (2026-08-28)。
+# **この画像には残る High CVE がある** (v3.22 の apk リポジトリにバックポートが
+# まだ無いため apk upgrade では解消不可):
+#   curl/libcurl 8.14.1-r3 (fix >= 8.18.0, CVE-2026-5773/-6276/2025-14017/-13034)
+#   vim/vim-common/xxd 9.1.1566-r0 (fix は 9.2.x 系列 — マイナー系列を跨ぐ、23件)
+#   jq 1.8.1-r0 (fix 1.8.2, CVE-2026-49839)
+#   libxml2 2.13.9-r1 (fix 2.15.2, CVE-2026-0989/2025-8732; CVE-2026-11979 は
+#     upstream に fix 自体が存在しない)
+# 上記は Issue #227 に残課題として記録 (VP 判断待ち — apk pin ではなく alpine
+# サイクル bump か、パッケージ除去/代替が必要になる可能性がある)。
+RUN apk add --no-cache --upgrade libssl3=3.5.8-r0 libcrypto3=3.5.8-r0 \
+ && apk add --no-cache \
         bash \
         coreutils \
         busybox-extras \
