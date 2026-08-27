@@ -20,12 +20,16 @@ ARG KUBECTL_SHA256_ARM64=0ecf44450ee6063bf19dd166a103ee6df4a9034455c2abce626e6ee
 # おらず (index digest 不変・実測確認済み)、base に焼き込まれた libssl3/libcrypto3
 # は 3.5.7-r0 のまま (CVE-2026-63072..63076/-54874/-18798/-14456/-14457, High)。
 # だが v3.22/main の APKINDEX は既に 3.5.8-r0 (fix 版) を配布しているため、明示
-# upgrade で最新パッチを引ける (base image の再ビルド待ちにしない)。curl/libcurl
-# の High CVE (CVE-2026-5773/-6276/2025-14017/-13034, fix >= 8.18.0) は
-# v3.22 の apk リポジトリにまだバックポートされておらず (2026-08-28 時点で
-# curl=8.14.1-r3 のまま)、apk upgrade では解消しない — 残課題として Issue #227
-# に記録。
-RUN apk upgrade --no-cache libssl3 libcrypto3 \
+# upgrade で最新パッチを引ける (base image の再ビルド待ちにしない)。**厳密バージョン
+# pin** (他パッケージと同じ規律。P12 の digest pin と同じ思想 — 未 pin の
+# `apk upgrade` は build 時点の live APKINDEX に依存し bit-identical を壊すため
+# security-engineer レビューで指摘され是正、#227)。3.5.8-r0 は
+# https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/APKINDEX.tar.gz を
+# 実測して確認した版数 (2026-08-28)。curl/libcurl の High CVE
+# (CVE-2026-5773/-6276/2025-14017/-13034, fix >= 8.18.0) は v3.22 の apk
+# リポジトリにまだバックポートされておらず (2026-08-28 時点で curl=8.14.1-r3 の
+# まま)、apk upgrade では解消しない — 残課題として Issue #227 に記録。
+RUN apk add --no-cache --upgrade libssl3=3.5.8-r0 libcrypto3=3.5.8-r0 \
  && apk add --no-cache \
         "ttyd=1.7.7-r0" \
         "bash=5.2.37-r0" \
