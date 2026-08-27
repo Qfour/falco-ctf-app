@@ -1,5 +1,10 @@
 // Package store owns scoreboard persistence and in-memory state.
 //
+// Schema versioning: the on-disk schema is tracked with SQLite's built-in
+// `PRAGMA user_version` counter and evolved via the ordered migration list
+// in migrations.go (Issue #117) — see that file's package doc for the
+// bootstrap-vs-migration design and the fail-closed downgrade check.
+//
 // Persistence (SQLite, WAL):
 //   - solved      (user, challenge, at)            PRIMARY KEY (user, challenge)
 //   - display_names (user, name, set_at)           PRIMARY KEY (user)
@@ -148,6 +153,16 @@ type ruleFire struct {
 	At   float64 // unix seconds
 }
 
+// sqliteDSN builds the modernc.org/sqlite DSN this package always opens
+// with (WAL journal, NORMAL sync, a busy timeout so a lock contended for a
+// moment doesn't immediately surface SQLITE_BUSY to a caller — even though
+// I1 means there is only ever one writer, a reader mid-transaction can still
+// briefly hold the lock). Factored out so migration tests can open the exact
+// same DSN a real Store.Open would, without duplicating the pragma string.
+func sqliteDSN(path string) string {
+	return path + "?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(5000)"
+}
+
 func Open(path string) (*Store, error) {
 	if dir := filepath.Dir(path); dir != "" {
 		// Best-effort. If the directory already exists or is a mount point,
@@ -155,68 +170,20 @@ func Open(path string) (*Store, error) {
 		// the real error below.
 		_ = os.MkdirAll(dir, 0o755)
 	}
-	dsn := path + "?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(5000)"
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sql.Open("sqlite", sqliteDSN(path))
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
-	if _, err := db.Exec(`
-        CREATE TABLE IF NOT EXISTS solved (
-          user      TEXT NOT NULL,
-          challenge TEXT NOT NULL,
-          at        TEXT NOT NULL,
-          PRIMARY KEY (user, challenge)
-        );
-        CREATE TABLE IF NOT EXISTS display_names (
-          user   TEXT PRIMARY KEY,
-          name   TEXT NOT NULL,
-          set_at TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS hint_release (
-          mission TEXT NOT NULL,
-          hint    INTEGER NOT NULL,
-          at      TEXT NOT NULL,
-          PRIMARY KEY (mission, hint)
-        );
-        CREATE TABLE IF NOT EXISTS exfil (
-          user      TEXT NOT NULL,
-          challenge TEXT NOT NULL,
-          flag      TEXT NOT NULL,
-          at        TEXT NOT NULL,
-          PRIMARY KEY (user, challenge)
-        );
-        CREATE TABLE IF NOT EXISTS hint_views (
-          user      TEXT NOT NULL,
-          challenge TEXT NOT NULL,
-          hint_idx  INTEGER NOT NULL,
-          at        TEXT NOT NULL,
-          PRIMARY KEY (user, challenge, hint_idx)
-        );
-        CREATE TABLE IF NOT EXISTS step_checks (
-          user      TEXT NOT NULL,
-          challenge TEXT NOT NULL,
-          step_idx  INTEGER NOT NULL,
-          at        TEXT NOT NULL,
-          PRIMARY KEY (user, challenge, step_idx)
-        );
-        CREATE TABLE IF NOT EXISTS evade_dirty (
-          user      TEXT NOT NULL,
-          challenge TEXT NOT NULL,
-          rule      TEXT NOT NULL,
-          at        TEXT NOT NULL,
-          PRIMARY KEY (user, challenge, rule)
-        );
-        CREATE TABLE IF NOT EXISTS expected_rule_fire (
-          user      TEXT NOT NULL,
-          challenge TEXT NOT NULL,
-          rule      TEXT NOT NULL,
-          at        TEXT NOT NULL,
-          PRIMARY KEY (user, challenge, rule)
-        );
-        DROP TABLE IF EXISTS events_per_user;
-    `); err != nil {
+	// Schema is versioned via PRAGMA user_version (see migrations.go, Issue
+	// #117). migrate() bootstraps a brand-new file AND upgrades an existing
+	// one through the same migration list — see that file's package doc for
+	// why there is no separate bootstrap path, and it fails closed (refuses
+	// to open) if the DB's recorded version is newer than this binary knows
+	// about, e.g. an older binary pointed at a DB a newer one already
+	// migrated forward.
+	if err := migrate(db, migrations); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("schema init: %w", err)
+		return nil, fmt.Errorf("migrate: %w", err)
 	}
 
 	s := &Store{
