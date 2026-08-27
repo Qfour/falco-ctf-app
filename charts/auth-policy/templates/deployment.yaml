@@ -4,7 +4,7 @@ metadata:
   name: auth-policy
   namespace: auth-policy
   labels:
-    {{- include "auth-policy.labels" . | nindent 4 }}
+    {{- include "falco-ctf-common.labels" (dict "name" "auth-policy" "managedBy" .Release.Service) | nindent 4 }}
 spec:
   replicas: {{ .Values.replicas }}
   selector:
@@ -40,7 +40,7 @@ spec:
       {{- end }}
       containers:
         - name: auth-policy
-          image: {{ include "auth-policy.image" . | quote }}
+          image: {{ include "falco-ctf-common.image" (dict "repository" .Values.image.repository "tag" .Values.image.tag "appVersion" .Chart.AppVersion) | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
             {{- include "falco-ctf-common.containerSecurityContext" . | nindent 12 }}

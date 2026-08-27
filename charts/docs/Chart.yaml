@@ -5,3 +5,10 @@ type: application
 version: 0.1.0
 # appVersion is set at publish time to the falco-ctf-app git SHA (Invariant I4/I5).
 appVersion: "0.0.0"
+# P21 item 5 step2 (REFACTORING.md): shared labels / image named templates.
+# Local sibling path — run `helm dependency build` after any change to
+# charts/falco-ctf-common (see Makefile `lint`/`deploy-local`).
+dependencies:
+  - name: falco-ctf-common
+    version: "0.1.0"
+    repository: "file://../falco-ctf-common"

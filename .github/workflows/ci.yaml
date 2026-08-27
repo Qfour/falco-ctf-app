@@ -47,13 +47,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: azure/setup-helm@v5
-      # P21 item 5 (REFACTORING.md): charts/{scoreboard,auth-policy,collector}
-      # now declare a local `file://../falco-ctf-common` dependency (see those
-      # charts' Chart.yaml). `helm lint`/`helm template` on any of them fails
-      # with "found in Chart.yaml, but missing in charts/ directory" without
-      # this — `make helm-dep-build` is the single source of truth for which
-      # charts need it (mirrors Makefile so local `make lint` and CI can't
-      # drift apart).
+      # P21 item 5 (REFACTORING.md): charts/{scoreboard,auth-policy,collector,
+      # docs,ctf-user} now declare a local `file://../falco-ctf-common`
+      # dependency (see those charts' Chart.yaml — step1 landed the first
+      # three, step2 added docs+ctf-user). `helm lint`/`helm template` on any
+      # of them fails with "found in Chart.yaml, but missing in charts/
+      # directory" without this — `make helm-dep-build` is the single source
+      # of truth for which charts need it (mirrors Makefile so local `make
+      # lint` and CI can't drift apart).
       - name: helm dependency build (charts with a `dependencies:` pin)
         run: make helm-dep-build
       - name: helm lint + template all charts

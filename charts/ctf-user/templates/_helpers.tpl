@@ -7,6 +7,22 @@ ctf-{{ .Values.username }}
 
 {{/*
 Common labels for every resource.
+
+P21 item 5 step2 (REFACTORING.md): intentionally NOT migrated onto
+falco-ctf-common.labels (charts/falco-ctf-common/templates/_helpers.tpl).
+That shared template's fixed output shape is the
+name/part-of/managed-by triple used identically by
+charts/{scoreboard,auth-policy,collector,docs}; this define's actual
+output below carries extra fields (`instance`/`falco-ctf/username`/
+`falco-ctf/challenge-id`) in a different relative order
+(`instance` before `managed-by`, `part-of` after). Forcing this shape
+into the shared template would either reorder its output (a golden-diff
+regression) or require the shared template to branch its field order on
+which optional args are passed — at which point it stops being one
+shared pattern and starts being two patterns wearing one name. See the
+shared template's own comment for the same reasoning from the other
+side. ctf-user IS a falco-ctf-common consumer for `falco-ctf-common.image`
+(see pod.yaml) — just not for labels.
 */}}
 {{- define "ctf-user.labels" -}}
 app.kubernetes.io/name: ctf-user

@@ -4,7 +4,7 @@ metadata:
   name: scoreboard-data
   namespace: scoreboard
   labels:
-    {{- include "scoreboard.labels" . | nindent 4 }}
+    {{- include "falco-ctf-common.labels" (dict "name" "scoreboard" "managedBy" .Release.Service) | nindent 4 }}
 spec:
   accessModes: [ReadWriteOnce]
   {{- with .Values.persistence.storageClassName }}

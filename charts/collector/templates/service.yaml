@@ -4,7 +4,7 @@ metadata:
   name: collector
   namespace: collector
   labels:
-    {{- include "collector.labels" . | nindent 4 }}
+    {{- include "falco-ctf-common.labels" (dict "name" "collector" "managedBy" .Release.Service) | nindent 4 }}
 spec:
   type: ClusterIP
   selector:

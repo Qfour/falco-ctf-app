@@ -24,7 +24,7 @@ metadata:
   name: docs-admin
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "docs.labels" . | nindent 4 }}
+    {{- include "falco-ctf-common.labels" (dict "name" "docs" "managedBy" .Release.Service) | nindent 4 }}
   annotations:
     # 運営ゲート: auth-policy /check-admin (ADMIN_EMAILS のみ通過)。未ログインは
     # auth-signin へ。nginx 側は /docs-admin path prefix で想定解・解説ルートを返す。

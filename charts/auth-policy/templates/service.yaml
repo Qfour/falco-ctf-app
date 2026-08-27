@@ -4,7 +4,7 @@ metadata:
   name: auth-policy
   namespace: auth-policy
   labels:
-    {{- include "auth-policy.labels" . | nindent 4 }}
+    {{- include "falco-ctf-common.labels" (dict "name" "auth-policy" "managedBy" .Release.Service) | nindent 4 }}
 spec:
   type: ClusterIP
   selector:

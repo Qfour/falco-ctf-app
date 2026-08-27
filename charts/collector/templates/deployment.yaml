@@ -4,7 +4,7 @@ metadata:
   name: collector
   namespace: collector
   labels:
-    {{- include "collector.labels" . | nindent 4 }}
+    {{- include "falco-ctf-common.labels" (dict "name" "collector" "managedBy" .Release.Service) | nindent 4 }}
 spec:
   replicas: {{ .Values.replicas }}
   selector:
@@ -31,7 +31,7 @@ spec:
       {{- end }}
       containers:
         - name: collector
-          image: {{ include "collector.image" . | quote }}
+          image: {{ include "falco-ctf-common.image" (dict "repository" .Values.image.repository "tag" .Values.image.tag "appVersion" .Chart.AppVersion) | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
             {{- include "falco-ctf-common.containerSecurityContext" . | nindent 12 }}
