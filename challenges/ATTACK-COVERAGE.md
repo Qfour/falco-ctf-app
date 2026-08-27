@@ -28,7 +28,7 @@ MITRE ATT&CK Enterprise (v15) 対応表。Navigator レイヤは `attack-navigat
 
 | Tactic | Technique | 理由 |
 |---|---|---|
-| Lateral Movement | T1021 系 (Remote Services) | 未カバー — 単一 Pod 侵入シナリオのため横展開は物語の範囲外。 |
+| Lateral Movement | T1021 系 (Remote Services) | 意図的除外 (ADR-0018) — 単一 Pod 隔離・SA token 狭域スコープ・egress lockdown (P11.5, Calico enforced) により、移動先となる第二の到達可能な Pod/ホストが構造的に存在しない。ADR-0016 の T1611 除外 (単一 Pod 隔離という防御境界そのもの)とも表裏一体。 |
 | Impact | T1485 / T1486 系 (Data Destruction / Encryption) | 意図的除外 — 破壊的操作は共有 CTF 環境の保護のため扱わない。 |
 | Initial Access | TA0001 全般 | 意図的除外 (ADR-0015) — 参加者は最初から ttyd 経由でシェルを渡されており、観測可能な「外」が構造的に存在しない。I9 (Service/Ingress 禁止) により Falco はコンテナ内で完結する syscall しか観測できず、外部からの侵入イベント自体が発生しない。 |
 | Privilege Escalation | T1548 系 (Setuid/Setgid T1548.001 / Sudo and Sudo Caching T1548.003) | 意図的除外 (ADR-0016) — challenge コンテナは常時 root (UID表・I9) で、参加者が操作可能な non-root の起点が構造上存在しない (ttyd は kubectl exec で root の challenge コンテナへ直接入る)。「低権限→root」の before/after を作れる場所が無い。 |
