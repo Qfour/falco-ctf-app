@@ -44,7 +44,7 @@ flowchart TD
 | go vet | PostEdit 自動 | ✅ | `scripts/claude-hook-postedit.sh` |
 | make test | Stop 自動 | ✅ | `make test` |
 | make scan | build 後 (手動) | イメージ変更時 | `make scan TAG=local` |
-| /security-audit | PR 直前 | auth-policy/ingest 触れた時 | `/security-audit` |
+| /security-audit | PR 直前 | auth-policy/ingest 触れた時、または `internal/store` の `migrations` スライスに新規エントリを追加した時 (ADR-0020 — 採点真正性テーブルの防波堤) | `/security-audit` |
 | /review-code | PR 直前 | ✅ | `/review-code` |
 
 ---
