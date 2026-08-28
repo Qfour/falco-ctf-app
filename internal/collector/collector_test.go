@@ -157,9 +157,7 @@ func TestDefaultDeny_BlockedRoutes(t *testing.T) {
 		{"POST", "/falco/events"},
 		{"POST", "/internal/exfil/10-final-exfil"},
 		{"POST", "/api/admin/reset"},
-		{"POST", "/api/admin/hints"},
 		{"GET", "/api/state"},
-		{"GET", "/api/hints"},
 		{"GET", "/"},
 		{"GET", "/api/users/alice/me"}, // progress read is not fronted (P18)
 	}

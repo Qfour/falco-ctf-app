@@ -191,9 +191,12 @@ func TestAPISpec_V1_RouteSetMatchesSpec(t *testing.T) {
 	// shows up in the diff and gets reviewed, instead of silently sliding
 	// through as "RouteSetDiff was still empty, so nothing to see here" —
 	// matches ADR-0005 C1's real-world count (20) plus ADR-0006's P25 QA
-	// ticket-chat routes (7) plus app#116's /static/tokens.css route (1).
-	if len(routes) != 28 {
-		t.Errorf("expected 28 registered routes (ADR-0005 C1 + ADR-0006 P25 + app#116), got %d: %v", len(routes), routes)
+	// ticket-chat routes (7) plus app#116's /static/tokens.css route (1),
+	// minus app#84's removal of the orphaned operator-broadcast hint API
+	// (GET /api/hints, POST /api/admin/hints — P22-1 follow-up, dead code
+	// once the docs-site hint timer it served was retired).
+	if len(routes) != 26 {
+		t.Errorf("expected 26 registered routes (ADR-0005 C1 + ADR-0006 P25 + app#116 - app#84), got %d: %v", len(routes), routes)
 	}
 }
 
@@ -268,7 +271,9 @@ func TestAPISpec_V3_OriginGuardParity(t *testing.T) {
 // "documented but a lie" shape ADR-0005 calls out as worst) passed `make
 // test` unchanged, because apispec.StringExt had no caller anywhere. This
 // wires specparity.StringExtParity in for real, against the actual spec and
-// route table.
+// route table. (GET /api/hints itself was removed as dead code — app#84 —
+// but the mutation-detection proof below still needs SOME AuthzNone route,
+// so it now targets GET /healthz.)
 func TestAPISpec_V3b_StringExtParity(t *testing.T) {
 	spec := loadScoreboardSpec(t)
 	f := newSpecFixture(t)
@@ -564,11 +569,12 @@ func TestAPISpec_V8_MutationsFailAgainstRealData(t *testing.T) {
 	})
 
 	// HIGH 4 (5x review), reproduced against the real spec + real route
-	// table: reversing GET /api/hints' x-ctf-authz from "none" to "admin" —
-	// a false "this needs admin" declaration on a deliberately
-	// unauthenticated route (api.go's hints handler comment: "Deliberately
-	// unauthenticated ... carries no per-user data or hint TEXT") — WITHOUT
-	// touching Route.Authz must be caught.
+	// table: reversing an AuthzNone route's x-ctf-authz from "none" to
+	// "admin" — a false "this needs admin" declaration on a deliberately
+	// unauthenticated route — WITHOUT touching Route.Authz must be caught.
+	// Originally targeted GET /api/hints; that route was removed as dead
+	// code (app#84, P22-1 follow-up), so this now targets GET /healthz —
+	// any AuthzNone route proves the same detection path.
 	t.Run("authz_reversed_in_spec", func(t *testing.T) {
 		mutatedOps := map[string]map[string]any{}
 		for k, v := range specOps {
@@ -578,16 +584,16 @@ func TestAPISpec_V8_MutationsFailAgainstRealData(t *testing.T) {
 			}
 			mutatedOps[k] = cp
 		}
-		mutatedOps["GET /api/hints"]["x-ctf-authz"] = "admin" // real Route.Authz stays "none"
+		mutatedOps["GET /healthz"]["x-ctf-authz"] = "admin" // real Route.Authz stays "none"
 		_, mismatched := specparity.StringExtParity(mutatedOps, routes, "x-ctf-authz", func(rt apispec.Route) string { return string(rt.Authz) })
 		found := false
 		for _, m := range mismatched {
-			if m == `GET /api/hints: impl="none" spec="admin"` {
+			if m == `GET /healthz: impl="none" spec="admin"` {
 				found = true
 			}
 		}
 		if !found {
-			t.Fatalf("expected a mismatch entry for GET /api/hints, got %v", mismatched)
+			t.Fatalf("expected a mismatch entry for GET /healthz, got %v", mismatched)
 		}
 	})
 

@@ -77,12 +77,6 @@ func (f *fixture) doRawAs(method, target, email, rawBody string) *httptest.Respo
 
 // --- decode-error path (malformed JSON body) --------------------------------
 
-func TestErrorLeak_InvalidBody_AdminReleaseHint(t *testing.T) {
-	f := newFixture(t, nil)
-	w := f.doRawAs("POST", "/api/admin/hints", fixtureAdminEmail, "{")
-	assertErrorBody(t, w, 400, "invalid request body")
-}
-
 func TestErrorLeak_InvalidBody_AdminSetDisplayName(t *testing.T) {
 	f := newFixture(t, nil)
 	w := f.doRawAs("POST", "/api/admin/users/alice/display-name", fixtureAdminEmail, "{")
@@ -157,17 +151,6 @@ func TestErrorLeak_StoreError_AdminReset(t *testing.T) {
 	}
 	w := f.doAdmin("POST", "/api/admin/reset", nil)
 	assertErrorBody(t, w, 500, "could not reset scoreboard")
-}
-
-func TestErrorLeak_StoreError_AdminReleaseHint(t *testing.T) {
-	f := newFixture(t, nil)
-	if err := f.st.Close(); err != nil {
-		t.Fatal(err)
-	}
-	w := f.doAdmin("POST", "/api/admin/hints", map[string]any{
-		"mission": "01-initial-recon", "hint": 1, "released": true,
-	})
-	assertErrorBody(t, w, 500, "could not release hint")
 }
 
 func TestErrorLeak_StoreError_AdminSetDisplayName(t *testing.T) {

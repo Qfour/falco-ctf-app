@@ -1085,31 +1085,6 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
-  /api/hints:
-    get:
-      summary: Operator-released hint index (public read)
-      operationId: getReleasedHints
-      tags: [participant]
-      x-ctf-audience: participant
-      x-ctf-authz: none
-      x-ctf-origin-guard: false
-      x-ctf-collector-forward: false
-      x-ctf-rate-limit: none
-      description: |
-        Which mission hints the operator has released, as
-        `{mission: [hintIdx, ...]}`. Deliberately unauthenticated: it carries no
-        per-user data and no hint TEXT — only indices — and it replaced a
-        client-side timer that could not be coordinated fairly. Distinct
-        mechanism from the per-user progressive reveal
-        (`POST /api/users/{user}/challenges/{cid}/hints/{idx}`), which is what
-        returns text and costs points.
-      responses:
-        "200":
-          description: released hint indices per mission
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ReleasedHints" }
-
   /api/state:
     get:
       summary: Full-event dashboard JSON (admin only)
@@ -1217,47 +1192,6 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "500":
           description: could not store the name
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-
-  /api/admin/hints:
-    post:
-      summary: Release (or revoke) one mission hint to all participants
-      operationId: releaseHint
-      tags: [operator]
-      x-ctf-audience: operator
-      x-ctf-authz: admin
-      x-ctf-origin-guard: true
-      x-ctf-collector-forward: false
-      x-ctf-rate-limit: none
-      description: |
-        Flips a mission hint's released state for the whole field; participants
-        read the result from `GET /api/hints`. Admin-only, origin-guarded (the
-        operator dashboard is its only caller).
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/ReleaseHintRequest" }
-      responses:
-        "200":
-          description: release state updated
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ReleaseHintResult" }
-        "400":
-          description: malformed body, invalid mission slug, or hint index outside 1..20
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-        "403":
-          description: origin guard denied, or caller is not an admin
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-        "500":
-          description: could not persist the release state
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1657,37 +1591,6 @@ components:
         ok: { type: boolean, const: true }
         user: { type: string }
         display_name: { type: string }
-
-    ReleasedHints:
-      type: object
-      required: [released]
-      properties:
-        released:
-          type: object
-          description: mission slug -> released hint indices (1-based, ascending)
-          additionalProperties:
-            type: array
-            items: { type: integer }
-
-    ReleaseHintRequest:
-      type: object
-      required: [mission, hint, released]
-      properties:
-        mission:
-          type: string
-          pattern: "^[0-9]{2}-[a-z0-9-]{1,60}$"
-          description: mission directory slug (e.g. `01-initial-recon`)
-        hint: { type: integer, minimum: 1, maximum: 20 }
-        released: { type: boolean }
-
-    ReleaseHintResult:
-      type: object
-      required: [ok, mission, hint, released]
-      properties:
-        ok: { type: boolean, const: true }
-        mission: { type: string }
-        hint: { type: integer }
-        released: { type: boolean }
 
     AdminResetResult:
       type: object
