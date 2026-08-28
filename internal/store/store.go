@@ -9,6 +9,12 @@
 //   - solved      (user, challenge, at)            PRIMARY KEY (user, challenge)
 //   - display_names (user, name, set_at)           PRIMARY KEY (user)
 //   - hint_release  (mission, hint, at)            PRIMARY KEY (mission, hint)
+//     Orphaned (app#84, P22-1 follow-up): the operator-broadcast hint API
+//     (GET /api/hints, POST /api/admin/hints, ReleaseHint/ReleasedHints) that
+//     read/wrote this table was removed as dead code once the participant-side
+//     docs-site hint timer it served was retired. The table itself is kept
+//     per ADR-0020's additive-only migration discipline (no code path touches
+//     it anymore; any pre-existing rows are inert).
 //   - exfil       (user, challenge, flag, at)      PRIMARY KEY (user, challenge)
 //   - hint_views  (user, challenge, hint_idx, at)  PRIMARY KEY (user, challenge, hint_idx)
 //     Journey UI: per-participant hint reveals (progressive hint gating).
@@ -108,7 +114,6 @@ type Store struct {
 	eventsPerUser map[string]int
 	ruleFires     map[string][]ruleFire // user -> bounded list (RetentionSeconds)
 	displayNames  map[string]string     // user -> participant-chosen display name
-	hintReleased  map[hintKey]bool      // (mission,hint) operator-released to participants
 	hintViews     map[hintViewKey]bool  // (user,challenge,hintIdx) participant-revealed
 	stepChecks    map[stepCheckKey]bool // (user,challenge,stepIdx) participant self-checked
 	// dirtyRules mirrors the evade_dirty table: (user,challenge) -> set of
@@ -133,19 +138,13 @@ type stepCheckKey struct {
 }
 
 // hintViewKey identifies one hint of one challenge that a specific participant
-// has revealed in the Journey UI. Distinct from hintKey (operator release):
-// this records *individual* consumption, so the UI can keep a hint open across
-// polls and post-event triage can see how much help each agent pulled.
+// has revealed in the Journey UI. This records *individual* consumption, so
+// the UI can keep a hint open across polls and post-event triage can see how
+// much help each agent pulled.
 type hintViewKey struct {
 	User      string
 	Challenge string
 	HintIdx   int
-}
-
-// hintKey identifies one hint of one mission for operator-controlled release.
-type hintKey struct {
-	Mission string
-	Hint    int
 }
 
 type ruleFire struct {
@@ -193,7 +192,6 @@ func Open(path string) (*Store, error) {
 		eventsPerUser:    make(map[string]int),
 		ruleFires:        make(map[string][]ruleFire),
 		displayNames:     make(map[string]string),
-		hintReleased:     make(map[hintKey]bool),
 		hintViews:        make(map[hintViewKey]bool),
 		stepChecks:       make(map[stepCheckKey]bool),
 		dirtyRules:       make(map[SolveKey]map[string]struct{}),
@@ -240,23 +238,6 @@ func (s *Store) loadFromDB() error {
 		s.displayNames[user] = name
 	}
 	if err := dn.Err(); err != nil {
-		return err
-	}
-
-	hr, err := s.db.Query("SELECT mission, hint FROM hint_release")
-	if err != nil {
-		return err
-	}
-	for hr.Next() {
-		var k hintKey
-		if err := hr.Scan(&k.Mission, &k.Hint); err != nil {
-			hr.Close()
-			return err
-		}
-		s.hintReleased[k] = true
-	}
-	hr.Close()
-	if err := hr.Err(); err != nil {
 		return err
 	}
 
@@ -349,44 +330,6 @@ func (s *Store) loadFromDB() error {
 		s.expectedRuleFire[k][rule] = struct{}{}
 	}
 	return efr.Err()
-}
-
-// ReleaseHint marks (mission, hint) as released to participants, or revokes it
-// when released=false. Operator-controlled; the participant docs site polls
-// ReleasedHints and reveals only released hints. Idempotent.
-func (s *Store) ReleaseHint(mission string, hint int, released bool, at string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if released {
-		if _, err := s.db.Exec(
-			`INSERT INTO hint_release (mission, hint, at) VALUES (?, ?, ?)
-			 ON CONFLICT(mission, hint) DO UPDATE SET at = excluded.at`,
-			mission, hint, at,
-		); err != nil {
-			return err
-		}
-		s.hintReleased[hintKey{mission, hint}] = true
-		return nil
-	}
-	if _, err := s.db.Exec("DELETE FROM hint_release WHERE mission = ? AND hint = ?", mission, hint); err != nil {
-		return err
-	}
-	delete(s.hintReleased, hintKey{mission, hint})
-	return nil
-}
-
-// ReleasedHints returns the released hints as mission -> sorted hint indices.
-func (s *Store) ReleasedHints() map[string][]int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := make(map[string][]int, len(s.hintReleased))
-	for k := range s.hintReleased {
-		out[k.Mission] = append(out[k.Mission], k.Hint)
-	}
-	for _, hs := range out {
-		sort.Ints(hs)
-	}
-	return out
 }
 
 // RecordHintView records that `user` revealed hint `hintIdx` (1-based) of

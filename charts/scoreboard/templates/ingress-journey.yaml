@@ -49,8 +49,8 @@ spec:
         # re-expose the whole scoreboard like the admin host's `path: /`
         # does. Only the paths the unified portal shell actually needs are
         # routed here; everything else (GET /, /api/state, /api/admin/*,
-        # /api/hints, /falco/events, /internal/exfil/*) has no matching rule
-        # and falls through to the ingress-nginx default backend (404) on
+        # /falco/events, /internal/exfil/*) has no matching rule and falls
+        # through to the ingress-nginx default backend (404) on
         # this host. Server-side gates still apply on top of this
         # (selfOrAdmin on /api/users/*, admin gates on /api/state|admin) —
         # this is the ingress-layer half of the fix.

@@ -45,9 +45,13 @@ spec:
       ports:
         - protocol: TCP
           port: 8000
-    # docs site → /api/hints (participant read) + /api/admin/hints (operator
-    # release; gated by isAdmin via X-Auth-Request-Email). nginx in the docs
-    # pod proxies same-origin so the browser needs no CORS.
+    # docs site → historically /api/hints (participant read) + /api/admin/hints
+    # (operator release); both removed as dead code (app#84, P22-1 follow-up)
+    # once the docs-site hint timer that polled them was retired in P22-1 (app#83). No
+    # current code path in docs-site/nginx.conf proxies to the scoreboard, so
+    # this ingress-allow rule's original justification no longer holds —
+    # revisit separately whether it can be dropped — tracked in app#232 (out of scope for app#84,
+    # which touches only the orphaned hint API, not this NetworkPolicy).
     - from:
         - namespaceSelector:
             matchLabels:

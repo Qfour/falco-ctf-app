@@ -137,11 +137,18 @@ CREATE TABLE display_names (
 
 ### `hint_release`
 
-Operator-controlled per-mission hint release gate (a hint index is not
-even offerable to participants until the operator releases it). Distinct
-from `hint_views` below (which records a specific participant's own
-reveal). Not currently wired to a public API surface beyond the internal
-`ReleaseHint`/`ReleasedHints` store methods.
+**Orphaned (app#84, P22-1 follow-up).** Was an operator-controlled
+per-mission hint release gate (a hint index was not even offerable to
+participants until the operator released it), read/written via the
+`GET /api/hints` / `POST /api/admin/hints` routes and the store's
+`ReleaseHint`/`ReleasedHints` methods. All of that code was removed as
+dead code once the participant-side docs-site hint timer it served was
+retired (P22-1, app#83). The table itself is kept per ADR-0020's additive-only
+migration discipline — no code path reads or writes it anymore; any
+pre-existing rows are inert. Dropping it would require a new ADR that
+supersedes ADR-0020's additive-only rule; none is planned, so this is an
+accepted permanent leftover. Distinct from `hint_views` below (which
+records a specific participant's own reveal, and remains live).
 
 ```sql
 CREATE TABLE hint_release (

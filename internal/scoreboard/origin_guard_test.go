@@ -88,7 +88,7 @@ const allowedOrigin = "https://scoreboard.ctf.example.com"
 // which could be bumped on a route-count change while the other was missed
 // (they are in different files, so a diff review of one does not surface
 // the other going stale). Both now pin against this single constant.
-const wantOriginGuardedRouteCount = 10
+const wantOriginGuardedRouteCount = 9
 
 // TestOriginGuard_ResetFormCSRF is the mitigation's headline case: a
 // body-less POST /api/admin/reset (the route a CSRF <form> auto-submit can
@@ -300,7 +300,7 @@ func TestOriginGuard_AllProtectedRoutesEnforced(t *testing.T) {
 	// breaking (e.g. Routes() returning nil) — shows up as a numeric
 	// assertion failure, not a shrinking, easy-to-miss subtest count.
 	if guarded != wantOriginGuardedRouteCount {
-		t.Fatalf("expected exactly %d OriginGuarded routes (ADR-0005/ADR-0006 canon: api.go's admin/reset, admin/display-name, admin/hints, submit-detect, steps/check, hints/{idx}, reset-dirty, questions (POST), questions/{qid}/messages (POST), admin/questions/{qid}/reply), got %d", wantOriginGuardedRouteCount, guarded)
+		t.Fatalf("expected exactly %d OriginGuarded routes (ADR-0005/ADR-0006 canon: api.go's admin/reset, admin/display-name, submit-detect, steps/check, hints/{idx}, reset-dirty, questions (POST), questions/{qid}/messages (POST), admin/questions/{qid}/reply — admin/hints removed as dead code, app#84), got %d", wantOriginGuardedRouteCount, guarded)
 	}
 	if unguardedWrites == 0 {
 		t.Fatal("expected at least one unguarded POST route to exercise the negative branch — the derivation might be broken")

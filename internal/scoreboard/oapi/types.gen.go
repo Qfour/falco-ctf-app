@@ -543,29 +543,6 @@ type QuestionThread struct {
 	User      string            `json:"user"`
 }
 
-// ReleaseHintRequest defines model for ReleaseHintRequest.
-type ReleaseHintRequest struct {
-	Hint int `json:"hint"`
-
-	// Mission mission directory slug (e.g. `01-initial-recon`)
-	Mission  string `json:"mission"`
-	Released bool   `json:"released"`
-}
-
-// ReleaseHintResult defines model for ReleaseHintResult.
-type ReleaseHintResult struct {
-	Hint     int    `json:"hint"`
-	Mission  string `json:"mission"`
-	Ok       bool   `json:"ok"`
-	Released bool   `json:"released"`
-}
-
-// ReleasedHints defines model for ReleasedHints.
-type ReleasedHints struct {
-	// Released mission slug -> released hint indices (1-based, ascending)
-	Released map[string][]int `json:"released"`
-}
-
 // ResetDirtyResult defines model for ResetDirtyResult.
 type ResetDirtyResult struct {
 	Cid   string `json:"cid"`
@@ -723,9 +700,6 @@ type GetUserJourneyParams struct {
 	// `missions[]` is valid; unknown/blank values fall back to `current`.
 	Mission *string `form:"mission,omitempty" json:"mission,omitempty"`
 }
-
-// ReleaseHintJSONRequestBody defines body for ReleaseHint for application/json ContentType.
-type ReleaseHintJSONRequestBody = ReleaseHintRequest
 
 // AdminReplyQuestionJSONRequestBody defines body for AdminReplyQuestion for application/json ContentType.
 type AdminReplyQuestionJSONRequestBody = AdminReplyRequest
