@@ -165,6 +165,8 @@ jobs:
       - uses: actions/checkout@v7
       - name: check flags & generated values
         run: ./scripts/check-flags.sh
+      - name: design-token single-source (app#116 — no raw hex in view/templates/*.html)
+        run: ./scripts/check-template-hex.sh
 
   # ------------------------------------------------------------------
   # Shell hygiene: shellcheck (-S warning) over every shell script in the repo.

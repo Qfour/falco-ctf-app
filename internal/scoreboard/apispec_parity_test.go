@@ -191,9 +191,9 @@ func TestAPISpec_V1_RouteSetMatchesSpec(t *testing.T) {
 	// shows up in the diff and gets reviewed, instead of silently sliding
 	// through as "RouteSetDiff was still empty, so nothing to see here" —
 	// matches ADR-0005 C1's real-world count (20) plus ADR-0006's P25 QA
-	// ticket-chat routes (7).
-	if len(routes) != 27 {
-		t.Errorf("expected 27 registered routes (ADR-0005 C1 + ADR-0006 P25), got %d: %v", len(routes), routes)
+	// ticket-chat routes (7) plus app#116's /static/tokens.css route (1).
+	if len(routes) != 28 {
+		t.Errorf("expected 28 registered routes (ADR-0005 C1 + ADR-0006 P25 + app#116), got %d: %v", len(routes), routes)
 	}
 }
 

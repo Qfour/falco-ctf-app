@@ -61,3 +61,38 @@ func serveCybercoreCSS(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(cybercoreCSS)))
 	_, _ = w.Write(cybercoreCSS)
 }
+
+// tokensCSS is the design-token single source (app#116 — see
+// static/tokens.css's own doc for the full "why" of this file). Same
+// embed-and-serve pattern as cybercoreCSS above: baked into the binary at
+// build time, no filesystem access at runtime.
+//
+//go:embed static/tokens.css
+var tokensCSS []byte
+
+// tokensCSSPath is the same-origin path templates/index.html and
+// templates/portal.html's <link> tags point at. See cybercoreCSSPath's doc
+// above for why this is a named constant rather than a duplicated literal.
+const tokensCSSPath = "/static/tokens.css"
+
+// tokensCSSETag mirrors cybercoreCSSETag's rationale exactly: a stable,
+// content-addressed ETag from the embedded bytes so a re-deploy of the SAME
+// pinned version (I4/I5) still gets a cheap 304 on a conditional GET.
+var tokensCSSSum = sha256.Sum256(tokensCSS)
+var tokensCSSETag = `"` + hex.EncodeToString(tokensCSSSum[:8]) + `"`
+
+// serveTokensCSS mirrors serveCybercoreCSS exactly — see that function's
+// doc. tokens.css is far smaller than cybercore.min.css, but the same
+// same-origin/immutable/ETag treatment costs nothing extra and keeps both
+// vendored-asset handlers symmetric.
+func serveTokensCSS(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=86400, immutable")
+	w.Header().Set("ETag", tokensCSSETag)
+	if match := r.Header.Get("If-None-Match"); match != "" && match == tokensCSSETag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(tokensCSS)))
+	_, _ = w.Write(tokensCSS)
+}

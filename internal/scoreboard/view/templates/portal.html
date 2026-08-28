@@ -15,124 +15,40 @@
      NOTE (portal-ui-polish): the ONE cybercore COMPONENT CLASS this page
      used to consume (.cyber-badge, on the now-removed #portal-role-badge
      role indicator) is gone — see the "cybercore Falco-brand override"
-     block below, which is consequently unused CSS right now (left in place;
-     removing the stylesheet link/override entirely is a bigger call than
-     this batch's stated scope of DOM/text changes — tracked as residual
-     cleanup, not done here). The journey/scoreboard/me panes never adopted
-     cybercore COMPONENT CLASSES to begin with — they keep their own bespoke
-     game-fx CSS and their own LOCAL --falco/--accent variables, and do NOT
-     reference any --cyber-* custom property from the override block below.
-     Placed BEFORE this file's own <style> block so the hand-authored rules
-     below can override any cybercore declaration by source-order (both
-     have equal specificity on shared selectors; later wins). -->
+     tokens (--cyber-*/--color-*) in /static/tokens.css, which are
+     consequently unused CSS right now (left in place; removing the
+     cybercore layer outright is a bigger call than this batch's stated
+     scope of DOM/text changes — tracked as residual cleanup, not done
+     here). The journey/scoreboard/me panes never adopted cybercore
+     COMPONENT CLASSES to begin with — they keep their own bespoke game-fx
+     CSS and their own LOCAL --falco/--accent variables, and do NOT
+     reference any --cyber-* custom property.
+     Placed BEFORE the design-tokens link below so the hand-authored
+     --cyber-* overrides in tokens.css can win over cybercore.min.css's own
+     defaults by source-order (both have equal specificity on shared
+     selectors; later wins). -->
 <link rel="stylesheet" href="/vendor/cybercore.min.css">
-<style>
-  /* ===== cybercore Falco-brand override (P23-6) =====
-     cybercore-css themes itself entirely off CSS custom properties (see
-     PROVENANCE.md's variable dump) — overriding them here re-themes every
-     cybercore COMPONENT CLASS this page actually uses WITHOUT touching
-     cybercore's own rules (no forking, no !important).
-     NOTE (portal-ui-polish): as of this change, no element on the page
-     carries a cybercore component class any more (the role badge that used
-     to be the one consumer — #portal-role-badge's .cyber-badge classes —
-     was removed; see the identity cluster note above the nav). This
-     override block is therefore currently a no-op in practice; left in
-     place rather than deleted (see the stylesheet-link comment above for
-     why removing the cybercore layer outright is out of this batch's
-     scope). The values chosen here still equal the SAME hex codes this
-     file's per-pane --accent/--falco variables use (#00CBE2 / #0090A8 /
-     etc — see #pane-scoreboard / #pane-story var blocks below), so IF a
-     future component class is adopted from cybercore, it will read as the
-     same Falco brand as the rest of the page without further edits here.
-     The panes do NOT read var(--cyber-*) anywhere; #pane-scoreboard/
-     #pane-story/#pane-me each define and use their OWN separate --falco/
-     --accent custom properties (see those blocks below) — there is no
-     cascade relationship between this :root block and the pane-scoped
-     blocks below. */
-  :root {
-    --cyber-cyan-300: #6FE3F0; --cyber-cyan-400: #33D9EC;
-    --cyber-cyan-500: #00CBE2; /* Falco Blue — cybercore's primary accent */
-    --cyber-cyan-600: #00A8BD; --cyber-cyan-700: #0090A8; --cyber-cyan-900: #005463;
-    --cyber-magenta-500: #B78CFF; /* evade violet, reused for cybercore's 2nd accent */
-    --cyber-magenta-700: #7F5AD1;
-    --cyber-yellow-500: #FFD24A; /* gold, matches leaderboard rank-1 */
-    --cyber-yellow-700: #C9A030;
-    --cyber-green-400: #33E0EE; --cyber-green-500: #00CBE2; --cyber-green-700: #0090A8;
-    --cyber-void-300: #0F1820; --cyber-void-400: #0D141B; --cyber-void-500: #070B10;
-    --cyber-void-700: #05080B; --cyber-void-800: #030507; --cyber-void-900: #010203;
-    --cyber-chrome-100: #EAF7FA; --cyber-chrome-300: #9DB4BF; --cyber-chrome-500: #5C7480;
-    --color-bg-primary: #070B10; --color-bg-secondary: #0D141B;
-    --color-bg-tertiary: #0F1820; --color-bg-elevated: #17222C;
-    --color-text-primary: #EAF7FA; --color-text-secondary: #9DB4BF;
-    --color-text-muted: #5C7480; --color-border-default: #1C2A35;
-    --font-display: 'Chakra Petch', sans-serif;
-    --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
-  }
-</style>
-<style>
-  /* ===== Unified portal design tokens (P23 portal-redesign) =====
-     Single source of truth for the palette/typography/spacing every pane
-     (#pane-scoreboard / #pane-story / #pane-me / #pane-terminal) now shares.
-     Values below are lifted VERBATIM from #pane-scoreboard's former
-     pane-local --falco/--accent/etc block (the "reference design" per the
-     P23 portal-redesign design spike) — this is a rename/hoist, not a
-     re-theme: every hex code here already existed pane-locally before this
-     block, just duplicated 3 times with #pane-me alone diverging onto a
-     green palette. Namespaced --p-* so these tokens never collide with the
-     --cyber-* custom properties above (deliberately separate layer — see
-     that block's own comment for why the two layers don't cascade into
-     each other). Pane-scoped blocks below now reference these tokens
-     instead of redefining their own copy. */
-  :root {
-    /* --- color: surfaces --- */
-    --p-bg: #070B10;
-    --p-bg-elev: #0D141B;
-    --p-surface: #0F1820;
-    --p-surface-2: #17222C;
-    --p-border: #1C2A35;
-    --p-border-strong: #2B3F4D;
-    /* --- color: text --- */
-    --p-text: #EAF7FA;
-    --p-text-dim: #9DB4BF;
-    --p-text-mute: #5C7480;
-    /* --- color: accent (Falco Blue) --- */
-    --p-accent: #00CBE2;
-    --p-accent-2: #0090A8;
-    --p-accent-glow: rgba(0, 203, 226, 0.35);
-    /* --- color: semantic --- */
-    --p-success: #00CBE2;
-    --p-success-glow: rgba(0, 203, 226, 0.5);
-    --p-warn: #FFB020;
-    --p-evade: #B78CFF;
-    --p-evade-glow: rgba(183, 140, 255, 0.35);
-    --p-danger: #ff5c6a;
-    /* --- color: podium ranks --- */
-    --p-gold: #FFD24A;
-    --p-gold-glow: rgba(255, 210, 74, 0.55);
-    --p-silver: #CFE0E8;
-    --p-bronze: #E0925A;
-    /* --- typography --- */
-    --p-font-display: 'Chakra Petch', sans-serif;
-    --p-font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    --p-h1: 2.4rem;
-    --p-h2: 1.3rem;
-    --p-h3: 0.8rem;
-    --p-micro: 0.7rem;
-    --p-tracking-wide: 0.18em;
-    --p-tracking-wider: 0.35em;
-    /* --- spacing --- */
-    --p-page-padding: 2.25rem 3rem 4rem;
-    --p-panel-radius: 0.85rem;
-  }
-</style>
+<!-- ===== Design tokens (app#116): single hex source ===== Every custom
+     property this page's CSS below consumes via var(...) — the --falco/
+     --accent-style base palette, the --cyber-*/--color-*/--font-* cybercore
+     override block described above, and the --p-* unified portal tokens
+     (P23 portal-redesign; #pane-scoreboard/#pane-story/#pane-me/
+     #pane-terminal and the shared .p-* component classes all read these) —
+     now lives in ONE place: internal/scoreboard/view/static/tokens.css (see
+     that file's own doc for the full "why" and the exact value-for-value
+     provenance of every token). This page no longer defines any of these
+     properties itself; they cascade in from this stylesheet. Self-hosted,
+     same-origin (vendorassets.go), loaded AFTER cybercore.min.css above so
+     its --cyber-* overrides still win by source order (see that link's
+     comment). -->
+<link rel="stylesheet" href="/static/tokens.css">
 <style>
   /* ===== Portal shell chrome (tabs + layout) — new for P23-1 ===== */
   * { box-sizing: border-box; }
   html, body {
     margin: 0; padding: 0; min-height: 100vh;
-    background: #070B10;
-    color: #EAF7FA;
+    background: var(--p-bg);
+    color: var(--p-text);
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   }
   /* ===== Unified header bar (portal-header-refine) =====
@@ -143,23 +59,23 @@
      once. */
   #portal-tabs {
     display: flex; align-items: center; gap: 0.25rem; padding: 0.75rem 1.5rem 0;
-    background: #0D141B; border-bottom: 1px solid #1C2A35;
+    background: var(--p-bg-elev); border-bottom: 1px solid var(--p-border);
     position: sticky; top: 0; z-index: 100; flex-wrap: wrap;
   }
   #portal-brand {
     font-family: 'Chakra Petch', sans-serif; font-size: 1rem; font-weight: 700;
-    letter-spacing: 0.04em; text-transform: uppercase; color: #EAF7FA;
+    letter-spacing: 0.04em; text-transform: uppercase; color: var(--p-text);
     margin: 0 1.25rem 0.5rem 0; align-self: center; white-space: nowrap;
   }
-  #portal-brand .accent { color: #00CBE2; text-shadow: 0 0 14px rgba(0,203,226,0.35); }
+  #portal-brand .accent { color: var(--p-accent); text-shadow: 0 0 14px rgba(0,203,226,0.35); }
   #portal-tabs .tab {
     font-family: 'Chakra Petch', sans-serif; font-size: 0.8rem; font-weight: 600;
-    letter-spacing: 0.08em; text-transform: uppercase; color: #9DB4BF;
+    letter-spacing: 0.08em; text-transform: uppercase; color: var(--p-text-dim);
     background: transparent; border: none; border-bottom: 2px solid transparent;
     padding: 0.65rem 1rem; cursor: pointer; text-decoration: none;
   }
-  #portal-tabs .tab:hover { color: #EAF7FA; }
-  #portal-tabs .tab.active { color: #00CBE2; border-bottom-color: #00CBE2; }
+  #portal-tabs .tab:hover { color: var(--p-text); }
+  #portal-tabs .tab.active { color: var(--p-accent); border-bottom-color: var(--p-accent); }
   #portal-tabs .tab[hidden] { display: none; }
   /* Right-aligned identity cluster: username only (portal-ui-polish:
      removed the secondary role badge — see applyRole()'s doc in the
@@ -171,7 +87,7 @@
   }
   #portal-username {
     font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.8rem;
-    font-weight: 600; color: #EAF7FA; letter-spacing: 0.02em;
+    font-weight: 600; color: var(--p-text); letter-spacing: 0.02em;
   }
   .pane { display: none; }
   .pane.active { display: block; }
@@ -179,8 +95,8 @@
   /* ===== Shared pane component classes (P23 portal-redesign) =====
      Extracted from the near-identical rules #pane-scoreboard / #pane-story /
      #pane-me / #pane-terminal each used to define locally (values taken
-     from #pane-scoreboard, the reference design — see the --p-* token
-     block above). Each pane's OWN CSS (below) now carries only its
+     from #pane-scoreboard, the reference design — see the --p-* tokens in
+     /static/tokens.css, app#116). Each pane's OWN CSS (below) now carries only its
      pane-specific delta, if any, on top of these; the HTML for each pane
      was NOT rewritten to reference these classes explicitly (pane markup
      keeps its existing .panel/.panel-header/.btn/.badge/etc class names —
@@ -229,9 +145,10 @@
 
   #pane-scoreboard {
     /* Unified design tokens (P23 portal-redesign) — see the root --p-*
-       block above. Pane-local aliases kept so the ~120 rules below (which
-       reference --falco/--accent/--bg/etc extensively) don't all need
-       renaming; only the DEFINITIONS moved to the shared :root layer. */
+       tokens in /static/tokens.css (app#116). Pane-local aliases kept so
+       the ~120 rules below (which reference --falco/--accent/--bg/etc
+       extensively) don't all need renaming; only the DEFINITIONS moved to
+       the shared :root layer. */
     --falco: var(--p-accent);
     --falco-2: var(--p-accent-2);
     --bg: var(--p-bg);
@@ -395,8 +312,9 @@
 
   #pane-story {
     /* Unified design tokens (P23 portal-redesign) — see the root --p-*
-       block above. Pane-local aliases kept so existing rules below don't
-       all need renaming; only the DEFINITIONS moved to :root. */
+       tokens in /static/tokens.css (app#116). Pane-local aliases kept so
+       existing rules below don't all need renaming; only the DEFINITIONS
+       moved to :root. */
     --falco: var(--p-accent); --falco-2: var(--p-accent-2);
     --bg: var(--p-bg); --bg-elev: var(--p-bg-elev); --surface: var(--p-surface); --surface-2: var(--p-surface-2);
     --border: var(--p-border); --border-strong: var(--p-border-strong);
@@ -666,7 +584,7 @@
 
   #pane-me {
     /* Unified design tokens (P23 portal-redesign): switched from the old
-       standalone green palette (--accent:#BDF78B) onto the SAME shared
+       standalone green palette (--accent: hex BDF78B) onto the SAME shared
        cyan tokens #pane-scoreboard/#pane-story use — this is the core
        visual-unification fix (the 3 faces of the portal no longer look
        like 3 different apps). */
@@ -966,21 +884,21 @@
      (Formerly ALSO reused by #pane-story .story-overview — that block was
      removed in portal-header-refine item 7; see the Home panels' .home-panel
      rules below, still the class's other consumer.) */
-  .rich-content { color: #9DB4BF; font-size: 0.92rem; line-height: 1.75; }
-  .rich-content h2 { font-family: 'Chakra Petch', sans-serif; font-size: 1.1rem; color: #EAF7FA; margin: 1.1rem 0 0.5rem; }
-  .rich-content h3 { font-family: 'Chakra Petch', sans-serif; font-size: 0.95rem; color: #EAF7FA; margin: 1rem 0 0.4rem; }
+  .rich-content { color: var(--p-text-dim); font-size: 0.92rem; line-height: 1.75; }
+  .rich-content h2 { font-family: 'Chakra Petch', sans-serif; font-size: 1.1rem; color: var(--p-text); margin: 1.1rem 0 0.5rem; }
+  .rich-content h3 { font-family: 'Chakra Petch', sans-serif; font-size: 0.95rem; color: var(--p-text); margin: 1rem 0 0.4rem; }
   .rich-content p { margin: 0.6rem 0; }
   .rich-content ul, .rich-content ol { margin: 0.6rem 0; padding-left: 1.4rem; }
   .rich-content li { margin: 0.3rem 0; }
-  .rich-content strong { color: #EAF7FA; }
-  .rich-content code { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.85em; background: #17222C; padding: 1px 6px; border-radius: 3px; color: #00CBE2; }
-  .rich-content pre { background: #0D141B; border: 1px solid #1C2A35; border-radius: 0.5rem; padding: 0.85rem 1rem; overflow-x: auto; margin: 0.75rem 0; }
-  .rich-content pre code { background: none; padding: 0; color: #9DB4BF; }
-  .rich-content blockquote { border-left: 2px solid #FFB020; background: rgba(255,176,32,0.06); border-radius: 0 0.4rem 0.4rem 0; padding: 0.6rem 1rem; margin: 0.75rem 0; }
-  .rich-content hr { border: none; border-top: 1px solid #1C2A35; margin: 1.1rem 0; }
+  .rich-content strong { color: var(--p-text); }
+  .rich-content code { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.85em; background: var(--p-surface-2); padding: 1px 6px; border-radius: 3px; color: var(--p-accent); }
+  .rich-content pre { background: var(--p-bg-elev); border: 1px solid var(--p-border); border-radius: 0.5rem; padding: 0.85rem 1rem; overflow-x: auto; margin: 0.75rem 0; }
+  .rich-content pre code { background: none; padding: 0; color: var(--p-text-dim); }
+  .rich-content blockquote { border-left: 2px solid var(--p-warn); background: rgba(255,176,32,0.06); border-radius: 0 0.4rem 0.4rem 0; padding: 0.6rem 1rem; margin: 0.75rem 0; }
+  .rich-content hr { border: none; border-top: 1px solid var(--p-border); margin: 1.1rem 0; }
   .rich-content table { width: 100%; border-collapse: collapse; margin: 0.75rem 0; font-size: 0.88rem; }
-  .rich-content th, .rich-content td { border: 1px solid #1C2A35; padding: 0.5rem 0.7rem; text-align: left; vertical-align: top; }
-  .rich-content th { background: #0D141B; color: #EAF7FA; font-family: 'Chakra Petch', sans-serif; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; }
+  .rich-content th, .rich-content td { border: 1px solid var(--p-border); padding: 0.5rem 0.7rem; text-align: left; vertical-align: top; }
+  .rich-content th { background: var(--p-bg-elev); color: var(--p-text); font-family: 'Chakra Petch', sans-serif; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; }
 
   /* ===== Home panels (P23-5): <details> disclosure panels rendered from
      gen-time-sanitized fragments. Scoped under #pane-home-panels so these
@@ -994,16 +912,16 @@
      (REFACTORING.md P24 §4): the Tutorial pane reuses the SAME
      .home-panel/.home-panel-body markup verbatim, no new design tokens. ===== */
   #pane-home-panels, #pane-tutorial-panels { margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.9rem; }
-  #pane-home-panels .home-panel, #pane-tutorial-panels .home-panel { background: #0F1820; border: 1px solid #1C2A35; border-radius: 0.75rem; overflow: hidden; }
-  #pane-home-panels .home-panel > summary, #pane-tutorial-panels .home-panel > summary { cursor: pointer; list-style: none; padding: 0.9rem 1.25rem; font-family: 'Chakra Petch', sans-serif; font-size: 0.85rem; font-weight: 600; letter-spacing: 0.06em; color: #EAF7FA; user-select: none; }
+  #pane-home-panels .home-panel, #pane-tutorial-panels .home-panel { background: var(--p-surface); border: 1px solid var(--p-border); border-radius: 0.75rem; overflow: hidden; }
+  #pane-home-panels .home-panel > summary, #pane-tutorial-panels .home-panel > summary { cursor: pointer; list-style: none; padding: 0.9rem 1.25rem; font-family: 'Chakra Petch', sans-serif; font-size: 0.85rem; font-weight: 600; letter-spacing: 0.06em; color: var(--p-text); user-select: none; }
   #pane-home-panels .home-panel > summary::-webkit-details-marker, #pane-tutorial-panels .home-panel > summary::-webkit-details-marker { display: none; }
-  #pane-home-panels .home-panel > summary::before, #pane-tutorial-panels .home-panel > summary::before { content: '▸ '; color: #5C7480; }
+  #pane-home-panels .home-panel > summary::before, #pane-tutorial-panels .home-panel > summary::before { content: '▸ '; color: var(--p-text-mute); }
   #pane-home-panels .home-panel[open] > summary::before, #pane-tutorial-panels .home-panel[open] > summary::before { content: '▾ '; }
-  #pane-home-panels .home-panel > summary:hover, #pane-tutorial-panels .home-panel > summary:hover { color: #00CBE2; }
-  #pane-home-panels .home-panel-body, #pane-tutorial-panels .home-panel-body { padding: 0 1.25rem 1.25rem; border-top: 1px solid #1C2A35; }
-  #pane-home-panels .home-rule-explain-item, #pane-tutorial-panels .home-rule-explain-item { padding: 0.9rem 0; border-top: 1px solid #1C2A35; }
+  #pane-home-panels .home-panel > summary:hover, #pane-tutorial-panels .home-panel > summary:hover { color: var(--p-accent); }
+  #pane-home-panels .home-panel-body, #pane-tutorial-panels .home-panel-body { padding: 0 1.25rem 1.25rem; border-top: 1px solid var(--p-border); }
+  #pane-home-panels .home-rule-explain-item, #pane-tutorial-panels .home-rule-explain-item { padding: 0.9rem 0; border-top: 1px solid var(--p-border); }
   #pane-home-panels .home-rule-explain-item:first-child, #pane-tutorial-panels .home-rule-explain-item:first-child { border-top: none; padding-top: 0; }
-  #pane-home-panels .home-rule-explain-chal, #pane-tutorial-panels .home-rule-explain-chal { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase; color: #00CBE2; margin: 0 0 0.5rem; }
+  #pane-home-panels .home-rule-explain-chal, #pane-tutorial-panels .home-rule-explain-chal { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--p-accent); margin: 0 0 0.5rem; }
 
   /* ===== Terminal pane (item 9: restyled to match Story's card language) =====
      Previously a bespoke .term-head/.term-frame/.term-placeholder trio with

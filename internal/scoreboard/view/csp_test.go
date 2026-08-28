@@ -535,3 +535,74 @@ func TestServeCybercoreCSS_ConditionalGET(t *testing.T) {
 		t.Errorf("304 response must have an empty body, got %d bytes", w2.Body.Len())
 	}
 }
+
+// TestServeTokensCSS_ContentTypeAndBody mirrors
+// TestServeCybercoreCSS_ContentTypeAndNoExternalRefs above, for the
+// design-token single source (app#116) — see static/tokens.css's own doc
+// for the full "why".
+func TestServeTokensCSS_ContentTypeAndBody(t *testing.T) {
+	r := httptest.NewRequest("GET", tokensCSSPath, nil)
+	w := httptest.NewRecorder()
+	serveTokensCSS(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	ct := w.Header().Get("Content-Type")
+	if !strings.HasPrefix(ct, "text/css") {
+		t.Errorf("Content-Type = %q, want text/css prefix", ct)
+	}
+	body := w.Body.String()
+	if body == "" {
+		t.Fatal("served tokens.css body is empty")
+	}
+	if !strings.Contains(body, ":root") {
+		t.Error("tokens.css must define a :root block")
+	}
+}
+
+// TestServeTokensCSS_ConditionalGET mirrors
+// TestServeCybercoreCSS_ConditionalGET above — see that test's doc.
+func TestServeTokensCSS_ConditionalGET(t *testing.T) {
+	w1 := httptest.NewRecorder()
+	serveTokensCSS(w1, httptest.NewRequest("GET", tokensCSSPath, nil))
+	etag := w1.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("expected an ETag header on the first response")
+	}
+
+	r2 := httptest.NewRequest("GET", tokensCSSPath, nil)
+	r2.Header.Set("If-None-Match", etag)
+	w2 := httptest.NewRecorder()
+	serveTokensCSS(w2, r2)
+	if w2.Code != http.StatusNotModified {
+		t.Fatalf("status = %d, want 304 for a matching If-None-Match", w2.Code)
+	}
+	if w2.Body.Len() != 0 {
+		t.Errorf("304 response must have an empty body, got %d bytes", w2.Body.Len())
+	}
+}
+
+// TestTemplates_NoRawHexColorLiterals is a Go-level echo of
+// scripts/check-template-hex.sh (app#116) — see that script's doc for the
+// full rationale. Kept here too (not just in the shell script) so `go test`
+// alone — without running the shell script separately — catches a future PR
+// that reintroduces a hand-typed hex literal into either template instead of
+// adding a token to static/tokens.css and referencing it via var(...).
+func TestTemplates_NoRawHexColorLiterals(t *testing.T) {
+	hexRe := regexp.MustCompile(`#[0-9a-fA-F]{6}`)
+	for _, src := range []struct {
+		name string
+		body string
+	}{
+		{"templates/index.html", indexHTML},
+		{"templates/portal.html", portalHTMLSrc},
+	} {
+		if m := hexRe.FindAllString(src.body, -1); len(m) > 0 {
+			t.Errorf("%s contains raw hex color literal(s) %v — reference a token in static/tokens.css via var(...) instead (app#116)", src.name, m)
+		}
+		if !strings.Contains(src.body, tokensCSSPath) {
+			t.Errorf("%s does not link %s — it must consume design tokens via <link> (app#116)", src.name, tokensCSSPath)
+		}
+	}
+}

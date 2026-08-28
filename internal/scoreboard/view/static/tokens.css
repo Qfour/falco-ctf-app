@@ -1,0 +1,148 @@
+/* ===== Falco CTF design tokens — single hex source (app#116) =====
+ * Before this file existed, the SAME hex codes (#070B10 / #00CBE2 / #EAF7FA /
+ * #1C2A35 / ...) were hand-typed independently in THREE places across TWO
+ * templates: templates/index.html's `:root` block (--falco/--bg/--accent
+ * namespace), templates/portal.html's cybercore override block
+ * (--cyber-*/--color-* namespace, themes the vendored cybercore-css), and
+ * templates/portal.html's own `:root` block (--p-* namespace, the P23
+ * portal-redesign's own "single source of truth" — true only WITHIN
+ * portal.html, not across files). A 2026-08-18 org-design research pass
+ * (R-C) confirmed all THREE namespaces agree on every overlapping value (no
+ * drift) but flagged the 3-way duplication itself as the defect: any future
+ * palette tweak had to be applied in three places by hand, with nothing
+ * stopping them from silently drifting apart.
+ *
+ * This file is now the ONE place a hex literal for the Falco CTF palette is
+ * written down. Every property below is either (a) a literal hex value with
+ * no other name in this file already carrying it, or (b) a var(...) alias
+ * onto one of those literals — never a second hex literal for a color this
+ * file already defines. templates/index.html and templates/portal.html only
+ * `<link>` to this stylesheet (see vendorassets.go's serveTokensCSS) and
+ * reference these custom properties via var(--...); they carry no hex of
+ * their own (mechanically enforced — scripts/check-template-hex.sh).
+ *
+ * This is a pure extraction: every value below is copied verbatim from
+ * whichever of the three blocks first defined it. No color was changed.
+ *
+ * Three sections below, kept separate because each namespace's PROPERTY
+ * NAMES are still referenced verbatim from CSS elsewhere in the two
+ * templates (renaming them would be a much bigger, riskier change than this
+ * hex-dedup):
+ *   1. Base Falco palette (--falco/--bg/--accent/... — templates/index.html's
+ *      original namespace, kept as the canonical literal-hex definitions).
+ *   2. cybercore-css override (--cyber-*/--color-*/--font-* — themes the
+ *      vendored cybercore.min.css; see templates/portal.html's own comment
+ *      above where this block used to live for why it is a currently-unused
+ *      no-op today — that fact is unchanged by this file, see app#116).
+ *   3. Portal namespace (--p-* — templates/portal.html's unified pane
+ *      tokens, P23 portal-redesign).
+ */
+
+:root {
+  /* --- 1. Base Falco palette (templates/index.html's original namespace) --- */
+  --falco: #00CBE2;
+  --falco-2: #0090A8;
+  --bg: #070B10;            /* deep space */
+  --bg-elev: #0D141B;
+  --surface: #0F1820;
+  --surface-2: #17222C;
+  --border: #1C2A35;
+  --border-strong: #2B3F4D;
+  --text: #EAF7FA;
+  --text-dim: #9DB4BF;
+  --text-mute: #5C7480;
+  --accent: var(--falco);
+  --accent-2: var(--falco-2);
+  --accent-glow: rgba(0, 203, 226, 0.35);
+  --success: var(--falco);
+  --success-glow: rgba(0, 203, 226, 0.5);
+  --warn: #FFB020;
+  --evade: #B78CFF;        /* evade = violet, for game-y type contrast */
+  --evade-glow: rgba(183, 140, 255, 0.35);
+  --trigger: var(--falco);
+  --gold: #FFD24A;
+  --gold-glow: rgba(255, 210, 74, 0.55);
+  --silver: #CFE0E8;
+  --bronze: #E0925A;
+  --danger: #ff5c6a;
+
+  /* --- 2. cybercore-css override (templates/portal.html's former
+     --cyber-*/--color-* block; re-themes cybercore.min.css's own defaults —
+     see vendor/cybercore/PROVENANCE.md's variable dump). The tint/shade
+     steps (300/400/600/900 etc.) that have no counterpart in section 1 keep
+     their own literal hex; steps that land exactly on a section-1 color
+     alias to it instead of repeating the literal. --- */
+  --cyber-cyan-300: #6FE3F0;
+  --cyber-cyan-400: #33D9EC;
+  --cyber-cyan-500: var(--falco);      /* Falco Blue — cybercore's primary accent */
+  --cyber-cyan-600: #00A8BD;
+  --cyber-cyan-700: var(--falco-2);
+  --cyber-cyan-900: #005463;
+  --cyber-magenta-500: var(--evade);   /* evade violet, reused for cybercore's 2nd accent */
+  --cyber-magenta-700: #7F5AD1;
+  --cyber-yellow-500: var(--gold);     /* gold, matches leaderboard rank-1 */
+  --cyber-yellow-700: #C9A030;
+  --cyber-green-400: #33E0EE;
+  --cyber-green-500: var(--falco);
+  --cyber-green-700: var(--falco-2);
+  --cyber-void-300: var(--surface);
+  --cyber-void-400: var(--bg-elev);
+  --cyber-void-500: var(--bg);
+  --cyber-void-700: #05080B;
+  --cyber-void-800: #030507;
+  --cyber-void-900: #010203;
+  --cyber-chrome-100: var(--text);
+  --cyber-chrome-300: var(--text-dim);
+  --cyber-chrome-500: var(--text-mute);
+  --color-bg-primary: var(--bg);
+  --color-bg-secondary: var(--bg-elev);
+  --color-bg-tertiary: var(--surface);
+  --color-bg-elevated: var(--surface-2);
+  --color-text-primary: var(--text);
+  --color-text-secondary: var(--text-dim);
+  --color-text-muted: var(--text-mute);
+  --color-border-default: var(--border);
+  --font-display: 'Chakra Petch', sans-serif;
+  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  /* --- 3. Portal namespace (templates/portal.html's --p-* pane tokens,
+     P23 portal-redesign). Colors alias section 1 (every value here already
+     equalled a section-1 literal before this file existed — see app#116);
+     typography/spacing have no section-1 counterpart and keep their own
+     literal values (not hex, so outside this file's dedup scope, but kept
+     alongside the rest of this namespace's block rather than split across
+     files). --- */
+  --p-bg: var(--bg);
+  --p-bg-elev: var(--bg-elev);
+  --p-surface: var(--surface);
+  --p-surface-2: var(--surface-2);
+  --p-border: var(--border);
+  --p-border-strong: var(--border-strong);
+  --p-text: var(--text);
+  --p-text-dim: var(--text-dim);
+  --p-text-mute: var(--text-mute);
+  --p-accent: var(--falco);
+  --p-accent-2: var(--falco-2);
+  --p-accent-glow: var(--accent-glow);
+  --p-success: var(--success);
+  --p-success-glow: var(--success-glow);
+  --p-warn: var(--warn);
+  --p-evade: var(--evade);
+  --p-evade-glow: var(--evade-glow);
+  --p-danger: var(--danger);
+  --p-gold: var(--gold);
+  --p-gold-glow: var(--gold-glow);
+  --p-silver: var(--silver);
+  --p-bronze: var(--bronze);
+  --p-font-display: 'Chakra Petch', sans-serif;
+  --p-font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --p-h1: 2.4rem;
+  --p-h2: 1.3rem;
+  --p-h3: 0.8rem;
+  --p-micro: 0.7rem;
+  --p-tracking-wide: 0.18em;
+  --p-tracking-wider: 0.35em;
+  --p-page-padding: 2.25rem 3rem 4rem;
+  --p-panel-radius: 0.85rem;
+}

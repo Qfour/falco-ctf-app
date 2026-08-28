@@ -245,6 +245,33 @@ paths:
         "304":
           description: If-None-Match matched the embedded ETag
 
+  /static/tokens.css:
+    get:
+      summary: Design token single source (app#116)
+      operationId: tokensCSS
+      tags: [infra]
+      x-ctf-audience: participant
+      x-ctf-authz: none
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
+      description: |
+        The one place a hex color literal for the Falco CTF palette is
+        written down (app#116 — see internal/scoreboard/view/static/tokens.css's
+        own doc for the full history: before this route existed the same hex
+        codes were hand-duplicated across templates/index.html and
+        templates/portal.html in three separate `:root` namespaces).
+        Embedded in the binary and served same-origin (never a CDN, P12).
+        Immutable + ETag, same treatment as /vendor/cybercore.min.css. Linked
+        from both templates; renaming the path is a template + spec change.
+      responses:
+        "200":
+          description: stylesheet
+          content:
+            text/css: {}
+        "304":
+          description: If-None-Match matched the embedded ETag
+
   /falco/events:
     post:
       summary: Receive a falcosidekick event
