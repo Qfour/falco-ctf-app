@@ -1,4 +1,10 @@
-// Package view serves the embedded HTML dashboards at GET / and GET /portal.
+// Package view serves the embedded HTML dashboards at GET / and GET
+// /portal, PLUS the CSP violation-report intake (POST /csp-report, Issue
+// #95 / P23-6 follow-up) those two pages' own Content-Security-Policy
+// headers point browsers at — see csp.go's portalCSP doc for why the
+// report sink lives in the SAME package as the pages whose CSP names it
+// (P12 egress-zero rules out an external collector, so this binary is
+// its own collector) and csp_report.go for the intake handler itself.
 //
 // GET / (the legacy operator dashboard) is static — it fetches live state via
 // /api/state. The HTML / CSS / JS is shipped via go:embed so the binary needs
@@ -34,6 +40,7 @@ import (
 
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/ratelimit"
 )
 
 //go:embed templates/index.html
@@ -102,6 +109,11 @@ type Handler struct {
 	// cmd/scoreboard/main.go's PORTAL_TTYD_SUFFIX doc.
 	ttydSuffix string
 	logger     *slog.Logger
+	// cspReportLimiter (Issue #95) is the per-source-IP token bucket POST
+	// /csp-report is wrapped in — see csp_report.go's newCSPReportLimiter
+	// doc for why this route's rate limit is distinct from every other
+	// route this package serves.
+	cspReportLimiter *ratelimit.Limiter
 }
 
 // New builds the view handler. isAdmin, when non-nil, gates GET / (the
@@ -114,7 +126,13 @@ type Handler struct {
 // placeholder). logger may be nil (tests); production wiring always
 // supplies one so a template-render failure on GET /portal is observable.
 func New(isAdmin func(*http.Request) bool, deriveUser func(*http.Request) string, ttydSuffix string, logger *slog.Logger) *Handler {
-	return &Handler{isAdmin: isAdmin, deriveUser: deriveUser, ttydSuffix: ttydSuffix, logger: logger}
+	return &Handler{
+		isAdmin:          isAdmin,
+		deriveUser:       deriveUser,
+		ttydSuffix:       ttydSuffix,
+		logger:           logger,
+		cspReportLimiter: newCSPReportLimiter(),
+	}
 }
 
 // Routes returns the view package's declarative route table (ADR-0005 V2).
@@ -171,6 +189,35 @@ func (h *Handler) Routes() []apispec.Route {
 			CollectorForward: false,
 			RateLimit:        "none",
 			Handler:          http.HandlerFunc(serveTokensCSS),
+		},
+		{
+			// POST /csp-report (Issue #95 / P23-6 follow-up) — the sink
+			// csp.go's report-uri/report-to CSP directives point browsers
+			// at. OriginGuarded is deliberately false: origin-guard is a
+			// CSRF mitigation for STATE-CHANGING requests tied to a
+			// caller's own identity/resources (ADR-0005 Decision 4); this
+			// route changes no state a caller could CSRF another user
+			// into altering (it only logs + counts, keyed by nothing but
+			// source IP), and real CSP violation reports are sent by the
+			// browser itself as an automatic beacon following ANY page
+			// that carries this CSP — gating on Origin would risk
+			// dropping legitimate reports over browser-specific
+			// Origin/Referer quirks on this report-beacon request type,
+			// for no security benefit (see csp_report.go's threat-model
+			// doc: the defense here is size cap + Content-Type validation
+			// + rate limit + never-persisted, not origin checking).
+			// CollectorForward is false because the browser POSTs here
+			// directly (same-origin, same appHost the portal itself is
+			// served from) — there is no participant-workspace-to-scoreboard
+			// hop for the collector to sit on, unlike submit/exfil.
+			Method:           "POST",
+			Pattern:          cspReportPath,
+			Audience:         apispec.AudienceParticipant,
+			Authz:            apispec.AuthzNone,
+			OriginGuarded:    false,
+			CollectorForward: false,
+			RateLimit:        "per-IP 5 req/s burst 50 (browser-emitted, no app-layer identity check — see csp_report.go)",
+			Handler:          h.cspReportLimiter.Middleware(ratelimit.ClientIP)(http.HandlerFunc(h.cspReport)),
 		},
 	}
 }

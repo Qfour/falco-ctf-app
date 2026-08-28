@@ -308,6 +308,24 @@ type LeaderboardEntry struct {
 	User   string `json:"user"`
 }
 
+// LegacyCSPReport The `report-uri` (CSP2, deprecated but broadly implemented) wire
+// format `POST /csp-report` accepts under `application/csp-report`.
+// Every field is BROWSER-SUPPLIED and, at this endpoint, effectively
+// attacker-forgeable (see `POST /csp-report`'s description) — nothing
+// here is validated beyond "is it a string", it is logged and
+// counted only.
+type LegacyCSPReport struct {
+	CspReport *struct {
+		BlockedUri         *string `json:"blocked-uri,omitempty"`
+		Disposition        *string `json:"disposition,omitempty"`
+		DocumentUri        *string `json:"document-uri,omitempty"`
+		EffectiveDirective *string `json:"effective-directive,omitempty"`
+		ScriptSample       *string `json:"script-sample,omitempty"`
+		SourceFile         *string `json:"source-file,omitempty"`
+		ViolatedDirective  *string `json:"violated-directive,omitempty"`
+	} `json:"csp-report,omitempty"`
+}
+
 // Me `GET /api/users/{user}/me`. Self-scoped: `rank`/`score` are the caller's
 // OWN row out of a field-wide computation — no other participant's data is
 // serialized (P23-ME-1).
@@ -543,6 +561,27 @@ type QuestionThread struct {
 	User      string            `json:"user"`
 }
 
+// ReportsAPIEntry One element of the `report-to` (CSP3 Reporting API, current
+// mechanism) wire format `POST /csp-report` accepts under
+// `application/reports+json` — a JSON array of these. Same
+// attacker-forgeable caveat as LegacyCSPReport; camelCase field names
+// are NOT interchangeable with that schema's hyphenated ones (two
+// genuinely different wire shapes for the same underlying violation
+// data, per the CSP2 vs. CSP3 specs).
+type ReportsAPIEntry struct {
+	Body *struct {
+		BlockedURL         *string `json:"blockedURL,omitempty"`
+		Disposition        *string `json:"disposition,omitempty"`
+		DocumentURL        *string `json:"documentURL,omitempty"`
+		EffectiveDirective *string `json:"effectiveDirective,omitempty"`
+		Sample             *string `json:"sample,omitempty"`
+		SourceFile         *string `json:"sourceFile,omitempty"`
+	} `json:"body,omitempty"`
+
+	// Type entries whose type is present and not "csp-violation" are ignored
+	Type *string `json:"type,omitempty"`
+}
+
 // ResetDirtyResult defines model for ResetDirtyResult.
 type ResetDirtyResult struct {
 	Cid   string `json:"cid"`
@@ -701,6 +740,9 @@ type GetUserJourneyParams struct {
 	Mission *string `form:"mission,omitempty" json:"mission,omitempty"`
 }
 
+// CspReportApplicationReportsPlusJSONBody defines parameters for CspReport.
+type CspReportApplicationReportsPlusJSONBody = []ReportsAPIEntry
+
 // AdminReplyQuestionJSONRequestBody defines body for AdminReplyQuestion for application/json ContentType.
 type AdminReplyQuestionJSONRequestBody = AdminReplyRequest
 
@@ -724,6 +766,9 @@ type CreateQuestionJSONRequestBody = CreateQuestionRequest
 
 // PostQuestionMessageJSONRequestBody defines body for PostQuestionMessage for application/json ContentType.
 type PostQuestionMessageJSONRequestBody = PostQuestionMessageRequest
+
+// CspReportApplicationReportsPlusJSONRequestBody defines body for CspReport for application/reports+json ContentType.
+type CspReportApplicationReportsPlusJSONRequestBody = CspReportApplicationReportsPlusJSONBody
 
 // ReceiveFalcoEventJSONRequestBody defines body for ReceiveFalcoEvent for application/json ContentType.
 type ReceiveFalcoEventJSONRequestBody = FalcoEvent

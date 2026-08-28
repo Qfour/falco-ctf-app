@@ -75,6 +75,35 @@ spec:
         #                      the Grader enforces flag+window+exfil, and a
         #                      claimed user cannot forge a solve without the
         #                      real flag.
+        #   /csp-report      — CSP violation report intake (Issue #95). The
+        #                      portal's own CSP `report-uri`/`report-to`
+        #                      directives (internal/scoreboard/view/csp.go)
+        #                      point every participant's browser at this
+        #                      SAME-origin path, so it must be reachable by
+        #                      the SAME audience /portal itself is (any
+        #                      authenticated login) — Exact, like /portal,
+        #                      since it is one fixed path, not a prefix.
+        #                      MUST live here, not on the admin ingress.yaml
+        #                      catch-all: this was missed on the route's
+        #                      initial landing (R5=R1, /review-5x) and the
+        #                      symptom was total — auth-policy's
+        #                      /check-admin gate 403s any non-admin caller,
+        #                      so EVERY participant's browser-emitted
+        #                      violation report silently 403'd while the app
+        #                      layer (x-ctf-authz: none — no per-identity
+        #                      check in the Go handler itself) looked
+        #                      correctly configured. "any authenticated
+        #                      login" here is a real narrower-than-public
+        #                      gate, not decorative: a same-origin CSP
+        #                      report request carries the portal's own
+        #                      session cookie (Fetch/Reporting API spec:
+        #                      `credentials: same-origin`), so oauth2-proxy's
+        #                      auth subrequest resolves the SAME way it does
+        #                      for the page load that triggered the report —
+        #                      a fully anonymous client (never logged in)
+        #                      cannot reach this route through ingress at
+        #                      all, regardless of what the Go handler itself
+        #                      would do with the request.
         # NOTE: /falco/events (Falco ingest, no app-layer auth) is deliberately
         # absent — routing it here would let any login forge trigger solves.
         paths:
@@ -94,6 +123,13 @@ spec:
                   number: 80
           - path: /api/challenges/
             pathType: Prefix
+            backend:
+              service:
+                name: scoreboard
+                port:
+                  number: 80
+          - path: /csp-report
+            pathType: Exact
             backend:
               service:
                 name: scoreboard

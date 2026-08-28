@@ -60,6 +60,26 @@ var SubmissionsTotal = promauto.NewCounterVec(
 	[]string{"challenge_id", "outcome"},
 )
 
+// CSPViolationReports counts POST /csp-report intake (Issue #95 / P23-6
+// follow-up), labelled by outcome. Reports are UNAUTHENTICATED and their
+// content is attacker-forgeable (any client can POST here, not just a real
+// browser reacting to a real CSP violation) — this counter and the
+// accompanying log line (internal/scoreboard/view/csp_report.go) are the
+// full extent of what this endpoint does with a report: it is never
+// persisted to the store, so a flood of forged reports cannot touch
+// scoring-integrity tables.
+//
+//	outcome: "accepted" | "bad_content_type" | "too_large" | "decode_error"
+var CSPViolationReports = promauto.NewCounterVec(
+	prometheus.CounterOpts{
+		Namespace: "scoreboard",
+		Subsystem: "csp",
+		Name:      "violation_reports_total",
+		Help:      "CSP violation reports received via POST /csp-report, labelled by outcome.",
+	},
+	[]string{"outcome"},
+)
+
 // HTTPRequestDuration measures handler latency per route.
 //
 //	route:  Go 1.22 ServeMux pattern (e.g. "POST /falco/events")
