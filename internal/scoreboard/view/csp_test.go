@@ -535,3 +535,128 @@ func TestServeCybercoreCSS_ConditionalGET(t *testing.T) {
 		t.Errorf("304 response must have an empty body, got %d bytes", w2.Body.Len())
 	}
 }
+
+// TestServeTokensCSS_ContentTypeAndBody mirrors
+// TestServeCybercoreCSS_ContentTypeAndNoExternalRefs above, for the
+// design-token single source (app#116) — see static/tokens.css's own doc
+// for the full "why".
+func TestServeTokensCSS_ContentTypeAndBody(t *testing.T) {
+	r := httptest.NewRequest("GET", tokensCSSPath, nil)
+	w := httptest.NewRecorder()
+	serveTokensCSS(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	ct := w.Header().Get("Content-Type")
+	if !strings.HasPrefix(ct, "text/css") {
+		t.Errorf("Content-Type = %q, want text/css prefix", ct)
+	}
+	body := w.Body.String()
+	if body == "" {
+		t.Fatal("served tokens.css body is empty")
+	}
+	if !strings.Contains(body, ":root") {
+		t.Error("tokens.css must define a :root block")
+	}
+}
+
+// TestServeTokensCSS_ConditionalGET mirrors
+// TestServeCybercoreCSS_ConditionalGET above — see that test's doc.
+func TestServeTokensCSS_ConditionalGET(t *testing.T) {
+	w1 := httptest.NewRecorder()
+	serveTokensCSS(w1, httptest.NewRequest("GET", tokensCSSPath, nil))
+	etag := w1.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("expected an ETag header on the first response")
+	}
+
+	r2 := httptest.NewRequest("GET", tokensCSSPath, nil)
+	r2.Header.Set("If-None-Match", etag)
+	w2 := httptest.NewRecorder()
+	serveTokensCSS(w2, r2)
+	if w2.Code != http.StatusNotModified {
+		t.Fatalf("status = %d, want 304 for a matching If-None-Match", w2.Code)
+	}
+	if w2.Body.Len() != 0 {
+		t.Errorf("304 response must have an empty body, got %d bytes", w2.Body.Len())
+	}
+}
+
+// stripCommentsForHexScan mirrors scripts/check-template-hex.py's
+// strip_comments() exactly (same three passes, same "blank non-newline
+// characters so line numbers stay meaningful" trick) — see that script's
+// module doc for the full "why": a naive 3-or-6-digit hex regex over the
+// RAW template source would false-positive on this file's own
+// `app#125`/`Issue #167`-style GitHub issue-number comments (3-digit,
+// decimal digits are valid hex digits too), which a pure prefix allowlist
+// can't reliably cover (references appear in varied prose: "before #167).",
+// "for #124's persistent", not just after a fixed "app#"/"Issue #" prefix).
+// Blanking HTML `<!-- -->` and JS/CSS `//`/`/* */` comment bodies before
+// matching closes that hole structurally instead.
+func stripCommentsForHexScan(src string) string {
+	blank := func(s string) string {
+		b := []byte(s)
+		for i, c := range b {
+			if c != '\n' {
+				b[i] = ' '
+			}
+		}
+		return string(b)
+	}
+	htmlComment := regexp.MustCompile(`(?s)<!--.*?-->`)
+	blockComment := regexp.MustCompile(`(?s)/\*.*?\*/`)
+	lineComment := regexp.MustCompile(`//[^\n]*`)
+	src = htmlComment.ReplaceAllStringFunc(src, blank)
+	src = blockComment.ReplaceAllStringFunc(src, blank)
+	src = lineComment.ReplaceAllStringFunc(src, blank)
+	return src
+}
+
+// TestTemplates_NoRawHexColorLiterals is a Go-level echo of
+// scripts/check-template-hex.py (app#116, 3-digit extension: review-5x
+// follow-up) — see that script's doc for the full rationale. Kept here too
+// (not just in the Python script) so `go test` alone — without running the
+// script separately — catches a future PR that reintroduces a hand-typed
+// hex literal (6-digit #RRGGBB OR 3-digit #RGB shorthand) into either
+// template instead of adding a token to static/tokens.css and referencing
+// it via var(...).
+func TestTemplates_NoRawHexColorLiterals(t *testing.T) {
+	// Exactly 3 or 6 hex digits with a trailing word boundary — see
+	// check-template-hex.py's HEX_RE doc for why \b at the end (not the
+	// start) is what stops a longer hex-like run from partial-matching.
+	hexRe := regexp.MustCompile(`#(?:[0-9a-fA-F]{3}){1,2}\b`)
+	for _, src := range []struct {
+		name string
+		body string
+	}{
+		{"templates/index.html", indexHTML},
+		{"templates/portal.html", portalHTMLSrc},
+	} {
+		scannable := stripCommentsForHexScan(src.body)
+		if m := hexRe.FindAllString(scannable, -1); len(m) > 0 {
+			t.Errorf("%s contains raw hex color literal(s) %v (outside comments) — reference a token in static/tokens.css via var(...) instead (app#116)", src.name, m)
+		}
+		if !strings.Contains(src.body, tokensCSSPath) {
+			t.Errorf("%s does not link %s — it must consume design tokens via <link> (app#116)", src.name, tokensCSSPath)
+		}
+	}
+}
+
+// TestStripCommentsForHexScan_LeavesRealHexAlone proves the comment
+// stripper doesn't accidentally blank real (non-comment) content — a
+// stripper with an overly greedy regex could hide a genuine violation from
+// TestTemplates_NoRawHexColorLiterals above, silently defeating the gate.
+func TestStripCommentsForHexScan_LeavesRealHexAlone(t *testing.T) {
+	src := "<style>.x { color: #abc; /* app#125 */ background: #EAF7FA; }</style>\n<!-- app#116 -->\n// Issue #167: prose\nfoo();\n"
+	got := stripCommentsForHexScan(src)
+	if !strings.Contains(got, "#abc") {
+		t.Errorf("real hex #abc was blanked by comment-stripping (too aggressive): %q", got)
+	}
+	if !strings.Contains(got, "#EAF7FA") {
+		t.Errorf("real hex #EAF7FA was blanked by comment-stripping (too aggressive): %q", got)
+	}
+	if strings.Contains(got, "125") || strings.Contains(got, "116") || strings.Contains(got, "167") {
+		t.Errorf("issue-number comment text survived stripping (should be blanked): %q", got)
+	}
+}

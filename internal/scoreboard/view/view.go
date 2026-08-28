@@ -118,17 +118,18 @@ func New(isAdmin func(*http.Request) bool, deriveUser func(*http.Request) string
 }
 
 // Routes returns the view package's declarative route table (ADR-0005 V2).
-// GET / (admin dashboard), GET /portal (P23-1 unified shell) and the
-// vendored stylesheet are the only three routes left after the P19-2b
-// cutover removed GET /me and GET /journey (see the package doc above).
+// GET / (admin dashboard), GET /portal (P23-1 unified shell), the vendored
+// cybercore-css stylesheet, and the design-tokens stylesheet (app#116) are
+// the only four routes left after the P19-2b cutover removed GET /me and
+// GET /journey (see the package doc above).
 //
-// The cybercore-css route's Pattern is the cybercoreCSSPath CONSTANT
-// (vendorassets.go), not a string built by concatenating "GET "+path at the
-// mux.HandleFunc call site the way the pre-ADR-0005 code did — that
-// concatenation is exactly what defeated a literal-grep route extraction
-// (ADR-0005 V2's motivating example). Reading Pattern back through this
-// method gives the parity test the actual runtime string, however it was
-// computed.
+// The cybercore-css and tokens-css routes' Pattern fields are the
+// cybercoreCSSPath / tokensCSSPath CONSTANTS (vendorassets.go), not a string
+// built by concatenating "GET "+path at the mux.HandleFunc call site the way
+// the pre-ADR-0005 code did — that concatenation is exactly what defeated a
+// literal-grep route extraction (ADR-0005 V2's motivating example). Reading
+// Pattern back through this method gives the parity test the actual runtime
+// string, however it was computed.
 func (h *Handler) Routes() []apispec.Route {
 	return []apispec.Route{
 		{
@@ -160,6 +161,16 @@ func (h *Handler) Routes() []apispec.Route {
 			CollectorForward: false,
 			RateLimit:        "none",
 			Handler:          http.HandlerFunc(serveCybercoreCSS),
+		},
+		{
+			Method:           "GET",
+			Pattern:          tokensCSSPath,
+			Audience:         apispec.AudienceParticipant,
+			Authz:            apispec.AuthzNone,
+			OriginGuarded:    false,
+			CollectorForward: false,
+			RateLimit:        "none",
+			Handler:          http.HandlerFunc(serveTokensCSS),
 		},
 	}
 }

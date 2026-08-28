@@ -7,35 +7,14 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<!-- Design tokens (app#116): single hex source for the --falco/--bg/--accent
+     custom properties this page's CSS below consumes via var(...). Self-
+     hosted, same-origin (see internal/scoreboard/view/vendorassets.go /
+     static/tokens.css's own doc for the full "why"). This page no longer
+     defines these properties itself — they cascade in from this stylesheet,
+     loaded before the <style> block below so it can rely on them. -->
+<link rel="stylesheet" href="/static/tokens.css">
 <style>
-  :root {
-    /* Falco Blue neon on cyber-dark. */
-    --falco: #00CBE2;
-    --falco-2: #0090A8;
-    --bg: #070B10;            /* deep space */
-    --bg-elev: #0D141B;
-    --surface: #0F1820;
-    --surface-2: #17222C;
-    --border: #1C2A35;
-    --border-strong: #2B3F4D;
-    --text: #EAF7FA;
-    --text-dim: #9DB4BF;
-    --text-mute: #5C7480;
-    --accent: var(--falco);
-    --accent-2: var(--falco-2);
-    --accent-glow: rgba(0, 203, 226, 0.35);
-    --success: #00CBE2;
-    --success-glow: rgba(0, 203, 226, 0.5);
-    --warn: #FFB020;
-    --evade: #B78CFF;        /* evade = violet, for game-y type contrast */
-    --evade-glow: rgba(183, 140, 255, 0.35);
-    --trigger: #00CBE2;
-    --gold: #FFD24A; --gold-glow: rgba(255, 210, 74, 0.55);
-    --silver: #CFE0E8;
-    --bronze: #E0925A;
-    --danger: #ff5c6a;
-  }
-
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html { font-size: 16px; }
   body {
@@ -59,7 +38,7 @@
       linear-gradient(rgba(0, 203, 226, 0.035) 1px, transparent 1px),
       linear-gradient(90deg, rgba(0, 203, 226, 0.035) 1px, transparent 1px);
     background-size: 44px 44px;
-    mask-image: radial-gradient(ellipse at 50% 0%, #000 30%, transparent 80%);
+    mask-image: radial-gradient(ellipse at 50% 0%, var(--ink-black) 30%, transparent 80%);
   }
   body > * { position: relative; z-index: 1; }
   .mono { font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace; }
