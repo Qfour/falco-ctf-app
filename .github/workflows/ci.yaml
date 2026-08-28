@@ -156,7 +156,11 @@ jobs:
           echo "OK — the namespace ownership guard fired on bad-chart, ctf-user, and list-chart, and passed good-chart (no by-name exclusion remains, Issue #198)."
 
   # ------------------------------------------------------------------
-  # Flag hygiene: no real flags in the public repo + generated values in sync.
+  # Flag hygiene: no real flags in the public repo + generated values in sync
+  # + design-token single-source check (app#116 — no raw hex color literal
+  # in internal/scoreboard/view/templates/*.html; a red run here is a
+  # design-token hygiene failure, NOT a flag leak — the two checks share
+  # this job for CI-job-count economy, not because they're the same risk).
   # Branch protection check: "flag-guard"
   # ------------------------------------------------------------------
   flag-guard:

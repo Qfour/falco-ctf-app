@@ -125,7 +125,7 @@
       linear-gradient(rgba(0, 203, 226, 0.035) 1px, transparent 1px),
       linear-gradient(90deg, rgba(0, 203, 226, 0.035) 1px, transparent 1px);
     background-size: 44px 44px;
-    mask-image: radial-gradient(ellipse at 50% 0%, #000 30%, transparent 80%);
+    mask-image: radial-gradient(ellipse at 50% 0%, var(--ink-black) 30%, transparent 80%);
   }
   .p-shell > * { position: relative; z-index: 1; }
 
@@ -953,7 +953,7 @@
   #pane-terminal .mission-head { padding: 1.1rem 1.6rem; border-bottom: 1px solid var(--border); background: linear-gradient(180deg, var(--bg-elev), var(--surface)); display: flex; justify-content: space-between; align-items: center; }
   #pane-terminal .mission-head .kicker { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; letter-spacing: 0.12em; color: var(--text-mute); text-transform: uppercase; }
   #pane-terminal .mission-body { padding: 1.4rem 1.6rem; }
-  #pane-terminal .term-frame { border: 1px solid var(--border); border-radius: var(--p-panel-radius); overflow: hidden; background: #000; }
+  #pane-terminal .term-frame { border: 1px solid var(--border); border-radius: var(--p-panel-radius); overflow: hidden; background: var(--ink-black); }
   #pane-terminal .term-placeholder p { color: var(--text-dim); line-height: 1.6; margin: 0; }
 
 </style>
@@ -3287,7 +3287,7 @@
         <div class="mission-body">
           <div class="term-frame">
             <iframe id="pane-terminal-iframe" src="${safeURL}" title="Terminal"
-              style="width:100%;height:70vh;border:0;display:block;background:#000;"
+              style="width:100%;height:70vh;border:0;display:block;background:var(--ink-black);"
               allow="clipboard-read; clipboard-write"></iframe>
           </div>
         </div>

@@ -19,7 +19,10 @@
  * file already defines. templates/index.html and templates/portal.html only
  * `<link>` to this stylesheet (see vendorassets.go's serveTokensCSS) and
  * reference these custom properties via var(--...); they carry no hex of
- * their own (mechanically enforced — scripts/check-template-hex.sh).
+ * their own (mechanically enforced — scripts/check-template-hex.sh, which
+ * catches BOTH 6-digit (#RRGGBB) and 3-digit (#RGB) hex — a review-5x
+ * follow-up on the original app#116 PR found 4 pre-existing 3-digit `#000`
+ * literals the 6-digit-only regex had missed; see --ink-black below).
  *
  * This is a pure extraction: every value below is copied verbatim from
  * whichever of the three blocks first defined it. No color was changed.
@@ -65,6 +68,14 @@
   --silver: #CFE0E8;
   --bronze: #E0925A;
   --danger: #ff5c6a;
+  --ink-black: #000;        /* pure black — deliberately NOT --bg (#070B10):
+                                used for the mask-image gradient stops
+                                (index.html body::before / portal.html
+                                .p-shell::before) and the terminal iframe
+                                frame, which were literal `#000` (3-digit
+                                hex) before app#116 review-5x follow-up
+                                closed this gap. See scripts/check-template-hex.sh's
+                                doc for why 3-digit hex needed its own pass. */
 
   /* --- 2. cybercore-css override (templates/portal.html's former
      --cyber-*/--color-* block; re-themes cybercore.min.css's own defaults —

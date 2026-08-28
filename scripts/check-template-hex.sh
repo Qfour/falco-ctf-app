@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Design-token single-source gate (app#116).
 #
-# Fails (non-zero) if a raw hex color literal (`#RRGGBB`) appears anywhere in
+# Fails (non-zero) if a raw hex color literal — 6-digit (#RRGGBB) or 3-digit
+# shorthand (#RGB) — appears anywhere in
 # internal/scoreboard/view/templates/*.html. Before app#116, the SAME hex
 # codes were hand-duplicated across index.html and portal.html in three
 # separate `:root` namespaces with nothing stopping them from silently
@@ -14,17 +15,12 @@
 # single source is SUPPOSED to hold the literals) and NOT the vendored
 # cybercore.min.css (a pinned third-party file, not hand-authored here; see
 # vendor/cybercore/PROVENANCE.md).
+#
+# The actual match/exclude logic (including comment-stripping so
+# `app#125`-style GitHub issue references in HTML/JS/CSS comments don't
+# false-positive as 3-digit hex — see that script's module doc for why a
+# naive regex-only widening to 3-digit isn't safe) lives in
+# check-template-hex.py; this is a thin, `make`-friendly entry point.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
-
-echo "==> scanning templates/*.html for raw hex color literals"
-hits=$(grep -noE '#[0-9a-fA-F]{6}' internal/scoreboard/view/templates/*.html 2>/dev/null || true)
-if [ -n "$hits" ]; then
-  echo "FAIL: raw hex color literal(s) found in internal/scoreboard/view/templates/*.html:" >&2
-  echo "$hits" | sed 's/^/  /' >&2
-  echo "  → templates must reference design tokens via var(--...); add a new" >&2
-  echo "    token to internal/scoreboard/view/static/tokens.css (single hex" >&2
-  echo "    source, app#116) instead of hand-typing a hex literal here." >&2
-  exit 1
-fi
-echo "  ok: no raw hex literals in templates/*.html — tokens.css is the single source"
+exec python3 scripts/check-template-hex.py
