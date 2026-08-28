@@ -47,10 +47,10 @@ spec:
           port: 8000
     # docs site → historically /api/hints (participant read) + /api/admin/hints
     # (operator release); both removed as dead code (app#84, P22-1 follow-up)
-    # once the docs-site hint timer that polled them was retired in P23-5. No
+    # once the docs-site hint timer that polled them was retired in P22-1 (app#83). No
     # current code path in docs-site/nginx.conf proxies to the scoreboard, so
     # this ingress-allow rule's original justification no longer holds —
-    # revisit separately whether it can be dropped (out of scope for app#84,
+    # revisit separately whether it can be dropped — tracked in app#232 (out of scope for app#84,
     # which touches only the orphaned hint API, not this NetworkPolicy).
     - from:
         - namespaceSelector:
