@@ -1,4 +1,10 @@
-// Package view serves the embedded HTML dashboards at GET / and GET /portal.
+// Package view serves the embedded HTML dashboards at GET / and GET
+// /portal, PLUS the CSP violation-report intake (POST /csp-report, Issue
+// #95 / P23-6 follow-up) those two pages' own Content-Security-Policy
+// headers point browsers at — see csp.go's portalCSP doc for why the
+// report sink lives in the SAME package as the pages whose CSP names it
+// (P12 egress-zero rules out an external collector, so this binary is
+// its own collector) and csp_report.go for the intake handler itself.
 //
 // GET / (the legacy operator dashboard) is static — it fetches live state via
 // /api/state. The HTML / CSS / JS is shipped via go:embed so the binary needs
@@ -210,7 +216,7 @@ func (h *Handler) Routes() []apispec.Route {
 			Authz:            apispec.AuthzNone,
 			OriginGuarded:    false,
 			CollectorForward: false,
-			RateLimit:        "per-IP 5 req/s burst 50 (browser-emitted, unauthenticated intake — see csp_report.go)",
+			RateLimit:        "per-IP 5 req/s burst 50 (browser-emitted, no app-layer identity check — see csp_report.go)",
 			Handler:          h.cspReportLimiter.Middleware(ratelimit.ClientIP)(http.HandlerFunc(h.cspReport)),
 		},
 	}

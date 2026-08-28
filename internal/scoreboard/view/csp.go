@@ -153,7 +153,14 @@ func newNonce() (string, error) {
 //     wired report-to INTO CSP violation reporting specifically (it
 //     supports the Reporting API for some other report types) — a
 //     Firefox/Safari-heavy participant population would go dark under
-//     report-to alone. A browser that understands report-to uses it and
+//     report-to alone. SIGNPOST (re-visit trigger, R4 /review-5x): if
+//     Firefox ever DOES wire report-to into CSP violation reporting, that
+//     removes the reason report-uri is still carried here — reconsider
+//     dropping the legacy report-uri directive (and legacyCSPReport's
+//     application/csp-report decode path in csp_report.go) at that point,
+//     rather than carrying both indefinitely once a single mechanism
+//     covers every browser this project cares about. A browser that
+//     understands report-to uses it and
 //     ignores report-uri for the SAME violation (no double-reporting in
 //     practice); a browser that only understands report-uri still gets a
 //     report. Both directives name the same cspReportPath, and

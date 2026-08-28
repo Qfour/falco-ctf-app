@@ -25,6 +25,20 @@ metadata:
     # /internal/exfil/*). See ingress-journey.yaml's path list for the full
     # participant allow-list and the invariant that admin paths must never
     # appear there.
+    #
+    # ⚠ A route landing here by DEFAULT (i.e. not yet added to
+    # ingress-journey.yaml's allow-list) means it silently requires
+    # /check-admin — every non-admin caller gets 403 with no error anywhere
+    # in the app layer, since the app's own x-ctf-authz gate (if declared
+    # "none") never even runs. This exact gap shipped once (Issue #95's
+    # POST /csp-report: correctly declared x-ctf-authz: none in the Go
+    # handler/spec, but omitted from ingress-journey.yaml's paths — every
+    # participant's CSP violation report 403'd at the ingress layer while
+    # the app-layer contract looked fully correct). Any NEW same-origin
+    # route a participant's own BROWSER is expected to reach (not just a
+    # server-to-server caller) needs a deliberate decision recorded in
+    # ingress-journey.yaml's own "Why each entry" comment — silence here is
+    # not a safe default, it is admin-only.
     nginx.ingress.kubernetes.io/auth-url: "http://auth-policy.auth-policy.svc.cluster.local:80/check-admin"
     nginx.ingress.kubernetes.io/auth-response-headers: "X-Auth-Request-User,X-Auth-Request-Email,X-Auth-Request-Preferred-Username"
     {{- with .Values.ingress.authSignin }}

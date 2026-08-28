@@ -98,19 +98,37 @@ func truncateCSPReportField(s string) string {
 // instead of silently vanishing in the browser console (Issue #95 / P23-6
 // follow-up).
 //
-// Threat model: this is an UNAUTHENTICATED POST any client can hit, not
-// just a browser reporting a genuine violation — the request body is
-// attacker-forgeable content, exactly like a Falco webhook event
-// (internal/scoreboard/ingest) is attacker-influenced by whatever runs
-// inside a challenge pod. The response to that is the same shape ingest
-// uses: bound the body size (maxCSPReportBytes), validate Content-Type
-// before touching the body, rate-limit per source IP (h.cspReportLimiter,
-// wired in Routes()), and NEVER persist the content — it is logged (with
-// every field passed through slog as a structured attribute, so control
-// characters/newlines in a forged field are quoted/escaped by slog's
-// handler rather than able to forge additional log lines) and counted, and
-// that is the full extent of what this endpoint does. No scoring-integrity
-// table is anywhere near this code path.
+// Threat model: reachable by ANY authenticated CTF login, not just the
+// caller reporting a genuine violation of their OWN page load — mirrors
+// /portal's own ingress-layer gate (any login, no host<->email binding;
+// see charts/scoreboard/templates/ingress-journey.yaml's /csp-report entry,
+// added there specifically because this route's initial landing OMITTED it
+// and fell through to the admin-only catch-all, 403ing every non-admin
+// participant's browser-emitted report — R5=R1, /review-5x). This is
+// narrower than "the public internet" (a never-logged-in client cannot
+// reach it through ingress at all) but still NOT scoped to "the calling
+// user's own resources" the way selfOrAdmin routes are — x-ctf-authz: none
+// means the Go handler itself performs no per-identity check, so the
+// request body must be treated as attacker-forgeable content regardless of
+// WHICH authenticated account sent it (a malicious/compromised participant
+// account — or the participant's own browser under a real XSS attempt this
+// very CSP is meant to catch — can POST anything here), exactly like a
+// Falco webhook event (internal/scoreboard/ingest) is attacker-influenced
+// by whatever runs inside a challenge pod. The defenses below are listed in
+// ACTUAL EXECUTION ORDER (outermost middleware first), not by importance:
+//  1. rate-limit per source IP (h.cspReportLimiter.Middleware, wired in
+//     Routes() — runs BEFORE cspReport is even entered);
+//  2. Content-Type validation (the first thing cspReport itself does,
+//     before touching the body at all);
+//  3. body-size bound (maxCSPReportBytes, via http.MaxBytesReader — applied
+//     only once Content-Type has already passed);
+//  4. and, regardless of the above, the content is NEVER persisted — it is
+//     logged (with every field passed through slog as a structured
+//     attribute, so control characters/newlines in a forged field are
+//     quoted/escaped by slog's handler rather than able to forge additional
+//     log lines) and counted, and that is the full extent of what this
+//     endpoint does. No scoring-integrity table is anywhere near this code
+//     path.
 func (h *Handler) cspReport(w http.ResponseWriter, r *http.Request) {
 	ct, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || (ct != contentTypeCSPReport && ct != contentTypeReportsJSON) {
@@ -203,6 +221,17 @@ func (h *Handler) logCSPViolation(r *http.Request, format, documentURI, blockedU
 	}
 	h.logger.Warn("csp violation report",
 		"remote_addr", r.RemoteAddr,
+		// client_ip is the SAME ratelimit.ClientIP(r) value the token
+		// bucket above keys on (R1-F3, /review-5x) — r.RemoteAddr alone is
+		// ingress-nginx's own pod IP (scoreboard sits behind the Service,
+		// never sees the real peer on the TCP connection), so it is
+		// constant across every caller and useless for abuse tracking.
+		// ratelimit.ClientIP trusts X-Forwarded-For's leftmost entry
+		// (ingress-nginx populates it); logging BOTH values — rather than
+		// replacing remote_addr — keeps the raw TCP peer visible too, so a
+		// future investigation can see the gap between "who actually
+		// dialed us" and "who we CLAIM rate-limited this request as".
+		"client_ip", ratelimit.ClientIP(r),
 		"format", format,
 		"document_uri", truncateCSPReportField(documentURI),
 		"blocked_uri", truncateCSPReportField(blockedURI),
@@ -219,13 +248,37 @@ func (h *Handler) logCSPViolation(r *http.Request, format, documentURI, blockedU
 // (falcosidekick, one known caller) or api's submit limiter (one
 // participant's own browser), this endpoint is reachable by ANY browser
 // that loads the portal — every participant's own CSP violations
-// legitimately arrive here, plus this is the one route on this service an
-// anonymous internet client can always reach without any auth check at all
-// (x-ctf-authz: none is common, but every other `none` route is a GET; this
-// is the only unauthenticated POST). 5 req/s with a burst of 50 comfortably
-// absorbs one participant's browser reporting several violations from a
-// single bad page load (a page with N inline-script violates N times) while
-// still bounding a single source hammering this endpoint.
+// legitimately arrive here, plus this is the one route on this service
+// that performs no per-identity check at the app layer at all despite
+// being a POST (x-ctf-authz: none is common, but every other `none` route
+// is a GET; this is the only `none` POST). It is NOT reachable by a fully
+// anonymous internet client, though — ingress-journey.yaml gates it behind
+// the same any-authenticated-login check /portal itself requires, a never-
+// logged-in caller never even reaches this handler — but that still means
+// EVERY authenticated participant, not just the one whose page load
+// triggered a given report, can hit it, so this limiter must assume
+// forged/abusive content is possible from any of them. 5 req/s with a
+// burst of 50 comfortably absorbs one participant's browser reporting
+// several violations from a single bad page load (a page with N
+// inline-script violates N times) while still bounding a single source
+// hammering this endpoint.
+//
+// The KEY this bucket is keyed on (ratelimit.ClientIP — X-Forwarded-For's
+// leftmost entry, falling back to RemoteAddr) is itself spoofable: XFF is a
+// client-supplied header ingress-nginx forwards rather than rewrites, so a
+// caller can claim any IP it likes and get its own fresh bucket every time
+// (R1-F2, /review-5x). This is a pre-existing, cross-repo, Class-2 gap
+// shared by EVERY ratelimit-keyed route on this service, not something
+// introduced here — tracked separately as app#236 (ingress-nginx realip
+// behavior under investigation by platform-engineer) rather than fixed
+// per-route. Deliberately NOT blocking this endpoint's landing: unlike
+// /falco/events or /api/challenges/{cid}/submit, a spoofed key here can
+// only buy an attacker MORE of this endpoint's own log lines (log/metric
+// flooding) — it reaches no scoring or authorization decision, so the
+// residual risk is bounded to this package's own observability, not
+// scoring integrity. Once app#236 lands a stronger key, this limiter
+// inherits it for free (ratelimit.ClientIP is shared code, not
+// reimplemented here).
 func newCSPReportLimiter() *ratelimit.Limiter {
 	return ratelimit.New(5 /* req/s */, 50 /* burst */)
 }

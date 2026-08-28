@@ -77,10 +77,57 @@ func TestCSPReport_AcceptsLegacyFormat(t *testing.T) {
 		"blocked_uri=https://evil.example/x.js",
 		"violated_directive=script-src-elem",
 		"disposition=enforce",
+		// remote_addr AND client_ip both present (R1-F3, /review-5x):
+		// httptest.NewRequest defaults RemoteAddr to "192.0.2.1:1234", and
+		// with no X-Forwarded-For header ratelimit.ClientIP falls back to
+		// the SAME host (minus the port) — see
+		// TestCSPReport_LogsClientIPFromXFF below for the case where they
+		// diverge.
+		"remote_addr=192.0.2.1:1234",
+		"client_ip=192.0.2.1",
 	} {
 		if !strings.Contains(logLine, want) {
 			t.Errorf("log line missing %q; got: %s", want, logLine)
 		}
+	}
+}
+
+// TestCSPReport_LogsClientIPFromXFF is R1-F3's (/review-5x) dedicated
+// regression test: remote_addr and client_ip must be able to DIVERGE in the
+// log, proving client_ip is actually reading X-Forwarded-For (the same key
+// ratelimit.ClientIP — and therefore h.cspReportLimiter — uses) rather than
+// just echoing RemoteAddr under a second name. Without this, an abuse
+// investigation correlating rate-limit hits against log lines would have no
+// way to line them up (RemoteAddr alone is ingress-nginx's own pod IP,
+// constant across every caller — see newCSPReportLimiter's doc).
+func TestCSPReport_LogsClientIPFromXFF(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	h := cspReportHandler(t, logger)
+
+	r := httptest.NewRequest(http.MethodPost, cspReportPath, bytes.NewReader([]byte(`{"csp-report":{"blocked-uri":"https://evil.example"}}`)))
+	r.Header.Set("Content-Type", "application/csp-report")
+	r.Header.Set("X-Forwarded-For", "203.0.113.7, 10.0.0.1")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusNoContent, w.Body)
+	}
+	logLine := buf.String()
+	// remote_addr keeps httptest's synthetic TCP peer (the "ingress pod IP"
+	// stand-in) — it must NOT pick up the XFF value.
+	if !strings.Contains(logLine, "remote_addr=192.0.2.1:1234") {
+		t.Errorf("expected remote_addr to stay the raw TCP peer, unaffected by X-Forwarded-For; got: %s", logLine)
+	}
+	// client_ip must reflect XFF's LEFTMOST entry (ratelimit.ClientIP's
+	// documented behaviour) — the SAME value the rate limiter keyed this
+	// request's bucket on.
+	if !strings.Contains(logLine, "client_ip=203.0.113.7") {
+		t.Errorf("expected client_ip to reflect X-Forwarded-For's leftmost entry; got: %s", logLine)
+	}
+	if strings.Contains(logLine, "client_ip=192.0.2.1") {
+		t.Errorf("client_ip must not fall back to RemoteAddr when X-Forwarded-For is present; got: %s", logLine)
 	}
 }
 
@@ -140,7 +187,10 @@ func TestCSPReport_AcceptsReportsAPIFormat(t *testing.T) {
 // TestCSPReport_RejectsUnsupportedContentType proves a Content-Type outside
 // the two accepted shapes is rejected BEFORE the body is even parsed — the
 // route's threat-model doc says the Content-Type allowlist is one of the
-// defenses against this being an unauthenticated POST any client can hit.
+// defenses against this route performing no per-identity check at the app
+// layer (any authenticated CTF login can reach it — see
+// charts/scoreboard/templates/ingress-journey.yaml's /csp-report entry —
+// but none of them are trusted not to forge the body).
 func TestCSPReport_RejectsUnsupportedContentType(t *testing.T) {
 	h := cspReportHandler(t, slog.New(slog.DiscardHandler))
 
@@ -171,8 +221,9 @@ func TestCSPReport_RejectsUnsupportedContentType(t *testing.T) {
 
 // TestCSPReport_RejectsOversizedBody proves a body over maxCSPReportBytes is
 // rejected with 413 rather than being read into memory and logged in full —
-// an unauthenticated POST any client can hit must not be able to inflate
-// this service's memory/log volume via an arbitrarily large body.
+// a route with no per-identity check at the app layer must not let any
+// caller inflate this service's memory/log volume via an arbitrarily large
+// body.
 func TestCSPReport_RejectsOversizedBody(t *testing.T) {
 	h := cspReportHandler(t, slog.New(slog.DiscardHandler))
 
@@ -388,5 +439,92 @@ func TestCSPReport_RegisteredInRoutes(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("POST /csp-report is not in Routes()")
+	}
+}
+
+// TestCSPReport_AcceptsReportsAPIFormat_MultipleCSPViolationEntries is
+// TestCSPReport_AcceptsReportsAPIFormat's counterpart for the OTHER
+// direction of the type filter: a batch containing MULTIPLE genuine
+// csp-violation entries (not one csp-violation + one unrelated type) must
+// log AND count every one of them, not just the first — a loop bug that
+// only processed batch[0] would pass every other test in this file (they
+// all use single-entry-of-interest batches) while silently dropping
+// evidence for a real multi-violation page load (R2-F6, /review-5x).
+func TestCSPReport_AcceptsReportsAPIFormat_MultipleCSPViolationEntries(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	h := cspReportHandler(t, logger)
+
+	before := testutil.ToFloat64(metrics.CSPViolationReports.WithLabelValues("accepted"))
+
+	batch := []map[string]any{
+		{
+			"type": "csp-violation",
+			"body": map[string]any{
+				"documentURL":        "https://app.ctf.local/portal",
+				"blockedURL":         "https://evil.example/first.js",
+				"effectiveDirective": "script-src-elem",
+				"disposition":        "enforce",
+			},
+		},
+		{
+			"type": "csp-violation",
+			"body": map[string]any{
+				"documentURL":        "https://app.ctf.local/portal",
+				"blockedURL":         "https://evil.example/second.js",
+				"effectiveDirective": "connect-src",
+				"disposition":        "enforce",
+			},
+		},
+	}
+	raw, err := json.Marshal(batch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := doCSPReport(t, h, "application/reports+json", raw)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusNoContent, w.Body)
+	}
+
+	logLine := buf.String()
+	if !strings.Contains(logLine, "blocked_uri=https://evil.example/first.js") {
+		t.Errorf("log missing the FIRST batch entry's blocked_uri; got: %s", logLine)
+	}
+	if !strings.Contains(logLine, "blocked_uri=https://evil.example/second.js") {
+		t.Errorf("log missing the SECOND batch entry's blocked_uri; got: %s", logLine)
+	}
+	if n := strings.Count(logLine, "csp violation report"); n != 2 {
+		t.Errorf("expected exactly 2 logged violations (batch has 2 csp-violation entries), got %d; log: %s", n, logLine)
+	}
+	if after := testutil.ToFloat64(metrics.CSPViolationReports.WithLabelValues("accepted")); after != before+2 {
+		t.Errorf(`"accepted" metric = %v, want %v (both entries counted)`, after, before+2)
+	}
+}
+
+// TestCSPReport_ReportsAPIEmptyArray proves an empty application/reports+json
+// batch (`[]`) — a legal Reporting API payload a browser could in principle
+// send (e.g. a report queued then superseded before delivery) — decodes
+// cleanly and is accepted (204), logging nothing rather than erroring or
+// panicking on a zero-length range.
+func TestCSPReport_ReportsAPIEmptyArray(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	h := cspReportHandler(t, logger)
+
+	before := testutil.ToFloat64(metrics.CSPViolationReports.WithLabelValues("accepted"))
+
+	w := doCSPReport(t, h, "application/reports+json", []byte(`[]`))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusNoContent, w.Body)
+	}
+	if w.Body.Len() != 0 {
+		t.Errorf("204 response must have an empty body, got %d bytes", w.Body.Len())
+	}
+	if logLine := buf.String(); logLine != "" {
+		t.Errorf("expected no log line for an empty batch, got: %s", logLine)
+	}
+	if after := testutil.ToFloat64(metrics.CSPViolationReports.WithLabelValues("accepted")); after != before {
+		t.Errorf(`"accepted" metric = %v, want unchanged at %v (empty batch logs nothing)`, after, before)
 	}
 }
