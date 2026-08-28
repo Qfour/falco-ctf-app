@@ -152,6 +152,8 @@ paths:
                           detect_false_positive, bad_request, rate_limited}
           - `scoreboard_http_request_duration_seconds{route, method, status}`
               route = the Go 1.22 ServeMux pattern that matched.
+          - `scoreboard_csp_violation_reports_total{outcome}` (Issue #95)
+              outcome in {accepted, bad_content_type, too_large, decode_error}
       responses:
         "200":
           description: Prometheus exposition
@@ -271,6 +273,86 @@ paths:
             text/css: {}
         "304":
           description: If-None-Match matched the embedded ETag
+
+  /csp-report:
+    post:
+      summary: Content-Security-Policy violation report intake (Issue #95)
+      operationId: cspReport
+      tags: [infra, participant]
+      x-ctf-audience: participant
+      x-ctf-authz: none
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: per-IP 5 req/s burst 50 (browser-emitted, unauthenticated intake — see csp_report.go)
+      description: |
+        Same-origin sink `GET /` and `GET /portal`'s Content-Security-Policy
+        header points browsers at via BOTH the `report-uri` directive and
+        the `report-to`/`Reporting-Endpoints` mechanism (csp.go's
+        `portalCSP` doc has the browser-support rationale for wiring both).
+        P12's egress-zero posture rules out an external report collector —
+        this binary is the collector.
+
+        UNAUTHENTICATED by necessity: a browser sends this beacon with no
+        session context. The request body is therefore attacker-forgeable
+        content exactly like `POST /falco/events` is (any client can POST
+        here, not just a real browser reacting to a real violation), so the
+        defense is bounding + never persisting, not identity: a body-size
+        cap (16KiB), a Content-Type allowlist (the two shapes below), the
+        rate limit above, and every field logged (`internal/scoreboard/view/`
+        `csp_report.go`) rather than written to the store — no
+        scoring-integrity table is anywhere near this code path. `x-ctf-`
+        `origin-guard` is false deliberately: origin-guard is a CSRF
+        mitigation for state-changing requests, and this route changes no
+        state a forged cross-origin request could usefully alter (it only
+        logs + counts) — gating it would risk dropping legitimate
+        browser-emitted reports over Origin/Referer quirks on this specific
+        request type, for no security benefit.
+
+        Two REQUEST body shapes are accepted, selected by Content-Type
+        (a browser sends exactly one per violation, depending on which CSP
+        directive triggered the report):
+          - `application/csp-report` (report-uri, CSP2): `{"csp-report": {...}}`
+            with hyphenated keys (`document-uri`, `blocked-uri`, ...).
+          - `application/reports+json` (report-to, CSP3 Reporting API): a
+            JSON array of `{"type": "csp-violation", "body": {...}}` entries
+            with camelCase keys (`documentURL`, `blockedURL`, ...) — a
+            single POST can batch multiple violations from one page load.
+            Entries whose `type` is present and not `csp-violation` are
+            ignored (this endpoint is declared for CSP reporting only).
+        Any other Content-Type, or a body neither shape decodes as, is
+        rejected before being logged.
+      requestBody:
+        required: true
+        content:
+          application/csp-report:
+            schema: { $ref: "#/components/schemas/LegacyCSPReport" }
+          application/reports+json:
+            schema:
+              type: array
+              items: { $ref: "#/components/schemas/ReportsAPIEntry" }
+      responses:
+        "204":
+          description: report accepted (logged + counted; body intentionally empty)
+        "400":
+          description: Content-Type matched but the body did not decode as that shape's JSON
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "413":
+          description: body exceeded the 16KiB cap
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "415":
+          description: Content-Type is neither application/csp-report nor application/reports+json
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: rate limited (internal/scoreboard/ratelimit)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /falco/events:
     post:
@@ -1373,6 +1455,51 @@ components:
       required: [error]
       properties:
         error: { type: string }
+
+    LegacyCSPReport:
+      type: object
+      description: |
+        The `report-uri` (CSP2, deprecated but broadly implemented) wire
+        format `POST /csp-report` accepts under `application/csp-report`.
+        Every field is BROWSER-SUPPLIED and, at this endpoint, effectively
+        attacker-forgeable (see `POST /csp-report`'s description) — nothing
+        here is validated beyond "is it a string", it is logged and
+        counted only.
+      properties:
+        csp-report:
+          type: object
+          properties:
+            document-uri: { type: string }
+            violated-directive: { type: string }
+            effective-directive: { type: string }
+            disposition: { type: string }
+            blocked-uri: { type: string }
+            source-file: { type: string }
+            script-sample: { type: string }
+
+    ReportsAPIEntry:
+      type: object
+      description: |
+        One element of the `report-to` (CSP3 Reporting API, current
+        mechanism) wire format `POST /csp-report` accepts under
+        `application/reports+json` — a JSON array of these. Same
+        attacker-forgeable caveat as LegacyCSPReport; camelCase field names
+        are NOT interchangeable with that schema's hyphenated ones (two
+        genuinely different wire shapes for the same underlying violation
+        data, per the CSP2 vs. CSP3 specs).
+      properties:
+        type:
+          type: string
+          description: entries whose type is present and not "csp-violation" are ignored
+        body:
+          type: object
+          properties:
+            documentURL: { type: string }
+            effectiveDirective: { type: string }
+            disposition: { type: string }
+            blockedURL: { type: string }
+            sourceFile: { type: string }
+            sample: { type: string }
 
     Health:
       type: object

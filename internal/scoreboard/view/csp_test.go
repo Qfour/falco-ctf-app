@@ -74,6 +74,8 @@ func TestPortalCSP_ContainsExpectedDirectives(t *testing.T) {
 		"object-src 'none'",
 		"base-uri 'self'",
 		"form-action 'self'",
+		"report-uri /csp-report",
+		"report-to csp-endpoint",
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(csp, want) {
@@ -193,6 +195,30 @@ func TestWriteSecurityHeaders_SetsHeadersAndReturnsMatchingNonce(t *testing.T) {
 	}
 	if got := w.Header().Get("Referrer-Policy"); got != "strict-origin-when-cross-origin" {
 		t.Errorf("Referrer-Policy = %q, want strict-origin-when-cross-origin", got)
+	}
+}
+
+// TestWriteSecurityHeaders_ReportingEndpointsMatchesCSPReportTo proves the
+// Reporting-Endpoints header (Issue #95) declares the SAME group name
+// ("csp-endpoint") the CSP header's "report-to" directive names, and that
+// the URL it advertises is cspReportPath — the exact path POST /csp-report
+// registers under (view.go's Routes()). A mismatch here would make
+// report-to violations vanish silently in a compliant browser (it would
+// look for a group name the header never defined, or POST to a path
+// nothing serves) with no error visible anywhere in this codebase.
+func TestWriteSecurityHeaders_ReportingEndpointsMatchesCSPReportTo(t *testing.T) {
+	w := httptest.NewRecorder()
+	if _, err := writeSecurityHeaders(w, ""); err != nil {
+		t.Fatalf("writeSecurityHeaders: %v", err)
+	}
+	csp := w.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "report-to csp-endpoint") {
+		t.Fatalf("CSP header does not name the csp-endpoint report-to group: %s", csp)
+	}
+	re := w.Header().Get("Reporting-Endpoints")
+	want := `csp-endpoint="` + cspReportPath + `"`
+	if re != want {
+		t.Errorf("Reporting-Endpoints = %q, want %q", re, want)
 	}
 }
 

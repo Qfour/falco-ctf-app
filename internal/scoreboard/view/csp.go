@@ -136,6 +136,30 @@ func newNonce() (string, error) {
 //     env exists). Do not conflate the two: ttyd-proxy's CSP protects ttyd
 //     from being framed by anything other than the portal; this CSP
 //     protects the portal's OWN script/style/resource loading.
+//   - report-uri + report-to (Issue #95 / P23-6 follow-up — observability,
+//     not enforcement; adding these cannot make the policy MORE permissive,
+//     only makes an existing violation visible): P12's egress-zero posture
+//     rules out an external report collector, so both directives point at
+//     a same-origin sink this binary now serves itself
+//     (cspReportPath/cspReport, csp_report.go) rather than a third-party
+//     endpoint. Both are wired, deliberately, because current browser
+//     support is split and neither alone covers everyone: report-uri is
+//     formally deprecated but still the ONLY mechanism Safari implements
+//     for CSP reporting and is universally understood by every browser
+//     that has ever shipped CSP reporting; report-to (routed via the
+//     Reporting-Endpoints header below, see writeSecurityHeaders) is the
+//     current/future mechanism and the ONLY one of the two Chrome's own
+//     docs describe as being actively maintained, but Firefox has never
+//     wired report-to INTO CSP violation reporting specifically (it
+//     supports the Reporting API for some other report types) — a
+//     Firefox/Safari-heavy participant population would go dark under
+//     report-to alone. A browser that understands report-to uses it and
+//     ignores report-uri for the SAME violation (no double-reporting in
+//     practice); a browser that only understands report-uri still gets a
+//     report. Both directives name the same cspReportPath, and
+//     internal/scoreboard/view/csp_report.go's handler accepts EITHER wire
+//     format the two mechanisms produce (application/csp-report vs.
+//     application/reports+json) at that one route.
 func portalCSP(nonce, ttydSuffix string) string {
 	frameSrc := "frame-src 'none'"
 	if ttydSuffix != "" {
@@ -150,7 +174,9 @@ func portalCSP(nonce, ttydSuffix string) string {
 		frameSrc + "; " +
 		"object-src 'none'; " +
 		"base-uri 'self'; " +
-		"form-action 'self'"
+		"form-action 'self'; " +
+		"report-uri " + cspReportPath + "; " +
+		"report-to csp-endpoint"
 }
 
 // validateTtydSuffix rejects a PORTAL_TTYD_SUFFIX value containing CR, LF,
@@ -191,6 +217,14 @@ func writeSecurityHeaders(w http.ResponseWriter, ttydSuffix string) (string, err
 		return "", fmt.Errorf("csp: generate nonce: %w", err)
 	}
 	w.Header().Set("Content-Security-Policy", portalCSP(nonce, ttydSuffix))
+	// Reporting-Endpoints (Issue #95) declares the "csp-endpoint" group
+	// portalCSP's "report-to csp-endpoint" directive names, pointing it at
+	// this SAME response's own origin + cspReportPath — a relative URL is
+	// valid here per the Reporting spec (resolved against the response
+	// URL), so this never needs to know its own scheme/host. See
+	// portalCSP's doc for why both this header and the older report-uri
+	// directive are wired simultaneously.
+	w.Header().Set("Reporting-Endpoints", `csp-endpoint="`+cspReportPath+`"`)
 	// X-Content-Type-Options: nosniff — stops a browser from MIME-sniffing a
 	// response into an executable context (e.g. treating a JSON error body
 	// returned with the wrong Content-Type as HTML/script). Cheap,

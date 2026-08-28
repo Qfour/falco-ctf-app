@@ -194,9 +194,10 @@ func TestAPISpec_V1_RouteSetMatchesSpec(t *testing.T) {
 	// ticket-chat routes (7) plus app#116's /static/tokens.css route (1),
 	// minus app#84's removal of the orphaned operator-broadcast hint API
 	// (GET /api/hints, POST /api/admin/hints — P22-1 follow-up, dead code
-	// once the docs-site hint timer it served was retired).
-	if len(routes) != 26 {
-		t.Errorf("expected 26 registered routes (ADR-0005 C1 + ADR-0006 P25 + app#116 - app#84), got %d: %v", len(routes), routes)
+	// once the docs-site hint timer it served was retired), plus Issue #95's
+	// POST /csp-report (CSP violation report intake).
+	if len(routes) != 27 {
+		t.Errorf("expected 27 registered routes (ADR-0005 C1 + ADR-0006 P25 + app#116 - app#84 + app#95), got %d: %v", len(routes), routes)
 	}
 }
 
