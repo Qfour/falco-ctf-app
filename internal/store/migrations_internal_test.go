@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -44,7 +45,13 @@ func TestMigrate_LegacyDBWithoutUserVersion_UpgradesAndPreservesData(t *testing.
 	// Verbatim reproduction of the schema the pre-#117 code ran on every
 	// Open() call, deliberately NOT going through migrate() / PRAGMA
 	// user_version — this is what every already-deployed scoreboard.db
-	// looks like today.
+	// looks like today. Also seeds `events_per_user`: an older table this
+	// same unconditional-Exec block used to `DROP TABLE IF EXISTS` on every
+	// startup (a since-removed in-memory-only counter that got persisted by
+	// mistake at one point in this package's history) — migration #1
+	// carries that DROP forward verbatim, so a legacy DB that still has the
+	// table (with data in it) must lose it, exactly like the old code made
+	// happen on every single Open() before #117.
 	if _, err := legacy.Exec(`
 		CREATE TABLE IF NOT EXISTS solved (
 		  user      TEXT NOT NULL,
@@ -57,6 +64,10 @@ func TestMigrate_LegacyDBWithoutUserVersion_UpgradesAndPreservesData(t *testing.
 		  name   TEXT NOT NULL,
 		  set_at TEXT NOT NULL
 		);
+		CREATE TABLE IF NOT EXISTS events_per_user (
+		  user  TEXT PRIMARY KEY,
+		  count INTEGER NOT NULL
+		);
 	`); err != nil {
 		t.Fatalf("seed legacy schema: %v", err)
 	}
@@ -65,6 +76,12 @@ func TestMigrate_LegacyDBWithoutUserVersion_UpgradesAndPreservesData(t *testing.
 		"alice", "01-read-shadow", "2026-05-11T00:00:00Z",
 	); err != nil {
 		t.Fatalf("seed legacy row: %v", err)
+	}
+	if _, err := legacy.Exec(
+		"INSERT INTO events_per_user (user, count) VALUES (?, ?)",
+		"alice", 7,
+	); err != nil {
+		t.Fatalf("seed legacy events_per_user row: %v", err)
 	}
 	if got := userVersion(t, legacy); got != 0 {
 		t.Fatalf("precondition: legacy db user_version = %d, want 0 (never touched)", got)
@@ -94,6 +111,18 @@ func TestMigrate_LegacyDBWithoutUserVersion_UpgradesAndPreservesData(t *testing.
 	if at != "2026-05-11T00:00:00Z" {
 		t.Fatalf("preserved row's `at` = %q, want original timestamp unchanged", at)
 	}
+
+	// The DROP TABLE IF EXISTS events_per_user statement folded into
+	// migration #1 must still fire against a legacy DB that has the table
+	// (this exercises that path — a fresh DB never creates the table at
+	// all, so only a legacy-DB test can prove the DROP itself runs).
+	var name string
+	err = s.db.QueryRow(
+		`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'events_per_user'`,
+	).Scan(&name)
+	if err != sql.ErrNoRows {
+		t.Fatalf("events_per_user must be dropped by migration #1, got err=%v (name=%q)", err, name)
+	}
 }
 
 // TestMigrate_CanAddAColumn_AndPreservesExistingRows is the migration-path
@@ -106,7 +135,7 @@ func TestMigrate_LegacyDBWithoutUserVersion_UpgradesAndPreservesData(t *testing.
 // constraint). It seeds a v1 DB with a real row, applies a migration that
 // ALTERs the `solved` table, and asserts both that the new column exists
 // AND that the pre-existing row's data survived untouched.
-func TestMigrate_CanAddAColumnAndPreservesExistingRows(t *testing.T) {
+func TestMigrate_CanAddAColumn_AndPreservesExistingRows(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "scoreboard.db")
 	db, err := sql.Open("sqlite", sqliteDSN(path))
 	if err != nil {
@@ -161,6 +190,78 @@ func TestMigrate_CanAddAColumnAndPreservesExistingRows(t *testing.T) {
 	// duplicate ALTER TABLE.
 	if err := migrate(db, withNewColumn); err != nil {
 		t.Fatalf("re-applying an already-applied migration list must be a no-op: %v", err)
+	}
+}
+
+// TestMigrate_PartialFailure_RollsBackAndDoesNotAdvanceVersion is the
+// negative-path proof for applyOne's single-transaction design: a migration
+// that gets partway through its own schema change (one CREATE TABLE
+// succeeds inside the transaction) before failing later in the SAME
+// migration must leave the database exactly as it was — no advanced
+// user_version, and none of the partially-applied DDL visible. This is the
+// scenario the "schema change + user_version bump in one transaction"
+// design exists to make safe; a two-statement, non-transactional migrator
+// could leave the DB with the new table present but user_version still
+// pointing at the old version (or vice versa), silently corrupting the
+// version-to-schema correspondence every other test in this file relies on.
+//
+// This also targets a specific implementation detail: applyOne's
+// `defer tx.Rollback()`. Without it, a failed m.apply leaves the
+// transaction neither committed nor rolled back — the checked-out pooled
+// connection is never returned (a well-known database/sql gotcha), which
+// this test catches via db.Stats().InUse. The on-disk visibility checks
+// alone do NOT catch this: SQLite never makes an uncommitted write visible
+// to other connections regardless of whether Rollback was called, so a
+// mutation that only removes the defer would leave those checks green. The
+// InUse assertion is the one that actually depends on Rollback running.
+func TestMigrate_PartialFailure_RollsBackAndDoesNotAdvanceVersion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "scoreboard.db")
+	db, err := sql.Open("sqlite", sqliteDSN(path))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	if err := migrate(db, migrations); err != nil {
+		t.Fatalf("bootstrap migrate: %v", err)
+	}
+	baseline := userVersion(t, db)
+
+	failing := append(append([]migration{}, migrations...), migration{
+		version: baseline + 1,
+		name:    "test-only: partial DDL then fail",
+		apply: func(tx *sql.Tx) error {
+			// The part of this migration that "succeeds" before the
+			// migration as a whole fails — a single-transaction design
+			// must undo this too, not just skip the user_version bump.
+			if _, err := tx.Exec(`CREATE TABLE mutation_marker (id INTEGER)`); err != nil {
+				return err
+			}
+			return fmt.Errorf("intentional failure after partial DDL")
+		},
+	})
+
+	if err := migrate(db, failing); err == nil {
+		t.Fatal("expected migrate to fail")
+	}
+
+	if got := userVersion(t, db); got != baseline {
+		t.Fatalf("user_version advanced despite a failed migration: got %d, want unchanged %d", got, baseline)
+	}
+
+	var name string
+	err = db.QueryRow(
+		`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'mutation_marker'`,
+	).Scan(&name)
+	if err != sql.ErrNoRows {
+		t.Fatalf("partially-applied schema change (mutation_marker table) leaked out of the failed migration, err=%v", err)
+	}
+
+	// See the doc comment above: this is the assertion that actually
+	// depends on applyOne's defer tx.Rollback() running (not just on
+	// Commit never having been called).
+	if stats := db.Stats(); stats.InUse != 0 {
+		t.Fatalf("failed migration leaked a checked-out pooled connection (InUse=%d) — applyOne must roll back the transaction so it returns to the pool", stats.InUse)
 	}
 }
 
