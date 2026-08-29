@@ -151,14 +151,18 @@ func covers(pattern, path, pathType string) bool {
 //   - V(I15)-1 (forward): every apispec.AudienceParticipant route in routes
 //     not covered by ANY entry in paths is reported in uncovered, by its
 //     "METHOD /pattern" MuxPattern() string.
-//   - V(I15)-2 (reverse, audience mixing): every route of ANY OTHER
-//     audience that is reachable through some Prefix entry in paths is
-//     reported in foreign, annotated with the entry that exposes it — a
-//     future admin/operator route accidentally added under an existing
-//     Prefix (e.g. "/api/users/") would show up here even though nobody
-//     touched ingress-journey.yaml itself (ADR-0021 D2's asymmetry, the
-//     same "both directions have an incident" pattern ADR-0005 Decision 4
-//     already established for origin-guard).
+//   - V(I15)-2/V(I15)-6 (reverse, audience mixing): every route of ANY
+//     OTHER audience that is reachable through some entry (Prefix OR
+//     Exact) in paths is reported in foreign, annotated with the entry
+//     that exposes it — a future admin/operator route accidentally added
+//     under an existing Prefix (e.g. "/api/users/"), or an Exact entry
+//     hand-written to literally match one (e.g. "/api/state"), would show
+//     up here even though nobody meant to widen the allow-list (ADR-0021
+//     D2's asymmetry, the same "both directions have an incident" pattern
+//     ADR-0005 Decision 4 already established for origin-guard; ADR-0022
+//     extends this from Prefix-only to both pathTypes — see that ADR's D3'
+//     for why Exact needed no new matching logic, only removing the filter
+//     below).
 //
 // Both slices are sorted for stable, diffable fail messages; both are nil
 // (not just empty) when there is nothing to report, so callers can use
@@ -180,18 +184,20 @@ func CoverageDiff(routes []apispec.Route, paths []IngressEntry) (uncovered, fore
 		}
 	}
 	for _, e := range paths {
-		if e.PathType != "Prefix" {
-			// Exact entries expose exactly the one literal path they name —
-			// V(I15)-2 only worries about Prefix entries, which can expose
-			// routes nobody enumerated by name (D2).
-			continue
-		}
+		// ADR-0022 D3'/O1: Exact entries are walked too — an Exact entry
+		// that happens to literally match a non-participant mux Route is
+		// just as much an audience-mixing incident as a Prefix entry
+		// exposing one (C3: "one didn't check the audience" is the same
+		// mistake regardless of pathType). covers()'s Exact branch already
+		// implements the correct literal-equality rule (ADR-0021 D3), so no
+		// new matching logic is needed here — only the pathType == "Prefix"
+		// filter that used to skip this loop for Exact entries is gone.
 		for _, rt := range routes {
 			if rt.Audience == apispec.AudienceParticipant {
 				continue
 			}
 			if covers(rt.Pattern, e.Path, e.PathType) {
-				foreign = append(foreign, rt.MuxPattern()+" (audience="+string(rt.Audience)+", via ingress Prefix "+e.Path+")")
+				foreign = append(foreign, rt.MuxPattern()+" (audience="+string(rt.Audience)+", via ingress "+e.PathType+" "+e.Path+")")
 			}
 		}
 	}
@@ -208,6 +214,14 @@ func CoverageDiff(routes []apispec.Route, paths []IngressEntry) (uncovered, fore
 // blocking, to avoid landing-order flakiness between the PR that
 // renames/removes a mux route and the PR that updates the ingress chart).
 // Returned sorted.
+//
+// ADR-0022 D2': DeadExact and CoverageDiff's foreign (V(I15)-6) are
+// mutually exclusive by construction, not by any shared bookkeeping — dead
+// requires NO matching Route (found == false, above), foreign requires A
+// matching Route of the wrong audience (covers() == true, in CoverageDiff).
+// An Exact entry can never satisfy both in the same run, so a future
+// refactor that tries to unify them into one function's return value should
+// preserve this exclusivity rather than assume it needs re-deriving.
 func DeadExact(routes []apispec.Route, paths []IngressEntry) []string {
 	var dead []string
 	for _, e := range paths {
