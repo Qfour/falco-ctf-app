@@ -8,11 +8,37 @@
 FROM golang:1.26.6-alpine@sha256:af8d6740070b8906d12eae1c3e3ea0957fb63f492051ea05e354c38ef9fe88df
 
 WORKDIR /src
+ENV PATH="/root/go/bin:${PATH}"
 
 COPY go.mod go.sum ./
 RUN go mod download
 
+# ADR-0021 (Issue #238, Hard Invariant I15): internal/apispec/ingressparity
+# (imported only from internal/scoreboard's *_test.go — see that package's
+# own doc, and internal/apispec/dependency_boundary_test.go's
+# TestNoProductionBinaryImportsIngressParity, which statically proves no
+# cmd/* binary ever pulls it in) shells out to `helm template` to compare
+# charts/scoreboard/templates/ingress-journey.yaml's participant allow-list
+# against the live mux route table. `go install <module>@<version>` pins a
+# reproducible module version (not a mutable git ref) — the same
+# supply-chain pattern already used here for actionlint/govulncheck/
+# oapi-codegen (conventions.md G5-2). Module path stays helm.sh/helm/v3 even
+# though upstream now also tags v4.x releases; v3.21.4 was the latest
+# stable v3 release at implementation time (2026-08-29). Builds from source
+# inside this image — no curl download, no new apk package, no new GitHub
+# Action.
+RUN go install helm.sh/helm/v3/cmd/helm@v3.21.4
+
 COPY . .
+
+# Resolves charts/scoreboard's local file://../falco-ctf-common chart
+# dependency (P21 item 5) into charts/scoreboard/charts/*.tgz —
+# .gitignored and normally absent, so `helm template` would otherwise fail
+# with "found in Chart.yaml, but missing in charts/ directory" before
+# ingressparity's tests ever get to run. file:// dependency only: no
+# network access needed (matches CI-free-prod's existing offline-build
+# expectations).
+RUN helm dependency build charts/scoreboard
 
 RUN go vet ./...
 RUN go test ./... -count=1

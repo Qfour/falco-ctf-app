@@ -49,6 +49,14 @@ import (
 // never pull in.
 const specparityImportPath = modulePrefix + "internal/apispec/specparity"
 
+// ingressparityImportPath is internal/apispec/ingressparity's own
+// module-qualified import path (ADR-0021 / Issue #238, Hard Invariant
+// I15) — that package's own doc says a production binary must never pull
+// it in, mirroring specparity's rationale (a gopkg.in/yaml.v3 + os/exec
+// dependency has no business in a distroless service's SBOM for zero
+// runtime benefit).
+const ingressparityImportPath = modulePrefix + "internal/apispec/ingressparity"
+
 // transitiveModuleImports breadth-first walks the module-internal import
 // graph starting at start (a module-qualified package path, e.g.
 // modulePrefix+"cmd/auth-policy"), following importsOf's module-internal
@@ -96,6 +104,31 @@ func TestNoProductionBinaryImportsSpecparity(t *testing.T) {
 			closure := transitiveModuleImports(t, root, modulePrefix+"cmd/"+cmd)
 			if closure[specparityImportPath] {
 				t.Fatalf("cmd/%s's module-internal import closure includes %s — a production binary must never import the test-only spec-comparison package (route.go's own package doc; 5x review BLOCKING 1: this previously widened both distroless services' SBOM/CVE surface — a yaml.v3 dependency — for zero runtime benefit)", cmd, specparityImportPath)
+			}
+		})
+	}
+}
+
+// TestNoProductionBinaryImportsIngressParity is ADR-0021's (Issue #238)
+// counterpart to TestNoProductionBinaryImportsSpecparity, checking ALL
+// THREE http.ServeMux-owning binaries — including cmd/scoreboard, which
+// TestNoProductionBinaryImportsSpecparity above deliberately skips (its own
+// comment: "nothing in this Requirement asked for it"). ingressparity's own
+// package doc states the stronger claim "本番コードから import されない
+// こと" (no production binary, not just auth-policy/collector), so this
+// test checks scoreboard too — the one binary that actually imports
+// ingressparity from its OWN test files
+// (internal/scoreboard/ingress_journey_parity_test.go), making it the most
+// likely of the three to accidentally gain a non-test import if someone
+// ever "simplified" that test file's helpers into a production-reachable
+// spot.
+func TestNoProductionBinaryImportsIngressParity(t *testing.T) {
+	root := repoRoot(t)
+	for _, cmd := range []string{"auth-policy", "collector", "scoreboard"} {
+		t.Run(cmd, func(t *testing.T) {
+			closure := transitiveModuleImports(t, root, modulePrefix+"cmd/"+cmd)
+			if closure[ingressparityImportPath] {
+				t.Fatalf("cmd/%s's module-internal import closure includes %s — a production binary must never import the test-only ingress-coverage package (ADR-0021 / internal/apispec/ingressparity's own package doc: a yaml.v3 + os/exec dependency has no business in a distroless service's SBOM for zero runtime benefit)", cmd, ingressparityImportPath)
 			}
 		})
 	}

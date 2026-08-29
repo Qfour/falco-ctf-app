@@ -5,8 +5,27 @@
 # Claude Code settings
 .claude
 
-# Helm charts — not needed in any image build
-charts/
+# Helm charts — not needed by most image builds. Exception: Dockerfile.test
+# needs charts/scoreboard (+ its local file://../falco-ctf-common chart
+# dependency, P21 item 5) to `helm template`
+# charts/scoreboard/templates/ingress-journey.yaml for the ADR-0021 (Issue
+# #238, Hard Invariant I15) ingress-participant-route-coverage test. Every
+# OTHER Dockerfile using this root context (scoreboard/auth-policy/
+# collector image builds, Dockerfile.gen, Dockerfile.tidy) never COPYs
+# charts/ regardless of what's in the build context, so widening the
+# context here doesn't change what lands in any final image layer.
+#
+# `charts/*` (exclude each DIRECT child) + `!charts/<name>/` (re-include
+# specific children) is the standard "exclude everything except these"
+# idiom — NOT the same as excluding `charts/` itself and trying to
+# re-include a file nested inside it, which .dockerignore/.gitignore
+# semantics do NOT support (a negation cannot resurrect a path under an
+# already fully-excluded parent). Re-including the directory ENTRY itself
+# via `charts/*` + `!charts/scoreboard/` is the supported form: once
+# re-included, nothing further excludes its own contents.
+charts/*
+!charts/scoreboard/
+!charts/falco-ctf-common/
 
 # Scan output
 scan-logs/
