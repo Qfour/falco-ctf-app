@@ -130,9 +130,9 @@ func TestI15_IngressJourneyRouteCoverage(t *testing.T) {
 		}
 	})
 
-	t.Run("reverse: no ingress Prefix entry exposes a non-participant route", func(t *testing.T) {
+	t.Run("reverse: no ingress entry (Prefix or Exact) exposes a non-participant route", func(t *testing.T) {
 		if len(foreign) > 0 {
-			t.Errorf("%d non-participant route(s) reachable through a participant Prefix entry in ingress-journey.yaml (ADR-0021 D2 — an admin/operator route accidentally added under an existing Prefix, e.g. \"/api/users/\", would leak through the single-origin ingress to any authenticated login; server-side isAdmin()/selfOrAdmin() gates remain the primary defense — see ADR-0021 D2's defense-in-depth note — but this is an architecture-drift signal that should never fire): %v", len(foreign), foreign)
+			t.Errorf("%d non-participant route(s) reachable through a participant allow-list entry in ingress-journey.yaml (ADR-0021 D2 — an admin/operator route accidentally added under an existing Prefix, e.g. \"/api/users/\", would leak through the single-origin ingress to any authenticated login; ADR-0022 extends this to a hand-written Exact entry literally matching one, e.g. \"/api/state\"; server-side isAdmin()/selfOrAdmin() gates remain the primary defense — see ADR-0021 D2's defense-in-depth note — but this is an architecture-drift signal that should never fire): %v", len(foreign), foreign)
 		}
 	})
 }

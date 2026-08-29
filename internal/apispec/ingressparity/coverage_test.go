@@ -202,6 +202,48 @@ func TestCoverageDiff_MutationCases(t *testing.T) {
 	})
 }
 
+// TestCoverageDiff_ExactAudienceMixing is ADR-0022 V(I15)-6 (blocking,
+// new): the reverse audience-mixing check must fire for an Exact entry too,
+// not just a Prefix one (case 3 above, TestCoverageDiff_MutationCases).
+// Before ADR-0022's fix, CoverageDiff's reverse loop skipped every
+// non-Prefix entry outright, so this exact fixture's foreign was
+// structurally always empty — a hand-written Exact entry literally
+// matching a non-participant route (e.g. "/api/state", Audience: Operator)
+// passed green.
+func TestCoverageDiff_ExactAudienceMixing(t *testing.T) {
+	routes := []apispec.Route{
+		participantRoute("GET", "/portal"),
+		// The mutation: an operator-audience route whose mux Pattern is the
+		// literal string a hand-added Exact ingress entry names below.
+		route("GET", "/api/state", apispec.AudienceOperator),
+	}
+	paths := []IngressEntry{
+		{Path: "/portal", PathType: "Exact"},
+		{Path: "/api/state", PathType: "Exact"},
+	}
+
+	uncovered, foreign := CoverageDiff(routes, paths)
+	if len(uncovered) != 0 {
+		t.Errorf("uncovered = %v, want empty", uncovered)
+	}
+	if len(foreign) != 1 {
+		t.Fatalf("foreign = %v, want exactly 1 entry", foreign)
+	}
+	const want = "GET /api/state (audience=operator, via ingress Exact /api/state)"
+	if foreign[0] != want {
+		t.Errorf("foreign[0] = %q, want %q", foreign[0], want)
+	}
+
+	// D2' regression guard: the same synthetic input must NOT show up in
+	// DeadExact — "matches a route of the wrong audience" (foreign) and
+	// "matches no route at all" (dead) are mutually exclusive by
+	// construction (see DeadExact's own doc comment), and this fixture
+	// pins that exclusivity rather than trusting it never breaks.
+	if dead := DeadExact(routes, paths); len(dead) != 0 {
+		t.Errorf("DeadExact = %v, want empty (an Exact entry matching a wrong-audience route is foreign, not dead — D2')", dead)
+	}
+}
+
 // TestCoverageDiff_GreenOnMatchedInput is the non-mutated control for the
 // cases above: a matched, minimal (routes, paths) pair must report BOTH
 // slices empty, so a future change to CoverageDiff can't pass the mutation
