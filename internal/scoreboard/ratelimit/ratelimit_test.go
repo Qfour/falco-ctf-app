@@ -129,3 +129,78 @@ func TestClientIP_FallsBackToRemoteAddr(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+// TestClientIP_PriorityOrder is the ADR-0023 V1 table: CF-Connecting-IP
+// (valid) wins over everything, an invalid/absent CF-Connecting-IP falls
+// back to XFF leftmost (pre-ADR-0023 behavior, unchanged), and with neither
+// present it falls back to RemoteAddr (also unchanged).
+func TestClientIP_PriorityOrder(t *testing.T) {
+	tests := []struct {
+		name       string
+		cfConnIP   string // "" = header not set
+		xff        string // "" = header not set
+		remoteAddr string
+		want       string
+	}{
+		{
+			name:       "valid CF-Connecting-IP alone wins",
+			cfConnIP:   "198.51.100.9",
+			remoteAddr: "10.0.0.1:1234",
+			want:       "198.51.100.9",
+		},
+		{
+			name:       "valid CF-Connecting-IP wins over XFF when both present",
+			cfConnIP:   "198.51.100.9",
+			xff:        "203.0.113.4, 10.0.0.1",
+			remoteAddr: "10.0.0.1:1234",
+			want:       "198.51.100.9",
+		},
+		{
+			name:       "CF-Connecting-IP present but empty falls back to XFF",
+			cfConnIP:   "",
+			xff:        "203.0.113.4, 10.0.0.1",
+			remoteAddr: "10.0.0.1:1234",
+			want:       "203.0.113.4",
+		},
+		{
+			name:       "CF-Connecting-IP syntactically invalid falls back to XFF",
+			cfConnIP:   "not-an-ip",
+			xff:        "203.0.113.4, 10.0.0.1",
+			remoteAddr: "10.0.0.1:1234",
+			want:       "203.0.113.4",
+		},
+		{
+			name:       "CF-Connecting-IP whitespace-only falls back to XFF",
+			cfConnIP:   "   ",
+			xff:        "203.0.113.4, 10.0.0.1",
+			remoteAddr: "10.0.0.1:1234",
+			want:       "203.0.113.4",
+		},
+		{
+			name:       "neither CF-Connecting-IP nor XFF falls back to RemoteAddr",
+			remoteAddr: "10.5.5.5:12345",
+			want:       "10.5.5.5",
+		},
+		{
+			name:       "invalid CF-Connecting-IP and absent XFF falls back to RemoteAddr",
+			cfConnIP:   "999.999.999.999",
+			remoteAddr: "10.5.5.5:12345",
+			want:       "10.5.5.5",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest("GET", "/", nil)
+			if tc.cfConnIP != "" {
+				r.Header.Set("CF-Connecting-IP", tc.cfConnIP)
+			}
+			if tc.xff != "" {
+				r.Header.Set("X-Forwarded-For", tc.xff)
+			}
+			r.RemoteAddr = tc.remoteAddr
+			if got := ratelimit.ClientIP(r); got != tc.want {
+				t.Fatalf("ClientIP() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

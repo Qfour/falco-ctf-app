@@ -108,16 +108,50 @@ func (l *Limiter) Middleware(keyFn func(*http.Request) string) func(http.Handler
 	}
 }
 
-// ClientIP extracts the remote IP for rate-limit keying. Prefers
-// X-Forwarded-For's leftmost entry when present (ingress-nginx populates
-// this); falls back to RemoteAddr. Returns the IP without port.
+// ClientIP extracts the remote IP for rate-limit keying (ADR-0023).
+// Priority order:
+//
+//  1. CF-Connecting-IP, when non-empty and a syntactically valid IP
+//     (net.ParseIP). Cloudflare's edge sets this header itself, overwriting
+//     any client-supplied value — unlike X-Forwarded-For, which Cloudflare
+//     forwards append-only, leaving the attacker-controlled leftmost entry
+//     intact. The validity check keeps a malformed/unexpected value (e.g. a
+//     misconfigured upstream) from becoming an unbounded bucket key.
+//  2. X-Forwarded-For's leftmost entry, when (1) is absent or invalid
+//     (pre-ADR-0023 behavior, unchanged — ingress-nginx populates this).
+//  3. RemoteAddr, when neither header is present.
+//
+// prod/vm-prod run behind Cloudflare, so CF-Connecting-IP is expected to be
+// present on essentially every request there; local/dev and the
+// non-Cloudflare-routed POST /falco/events path fall through to (2)/(3) by
+// design (ADR-0023 D3/D5) and are not a signal of anything wrong.
+//
+// clientIPSource (ADR-0023 V5) records which tier was used so a sustained
+// non-"cf_connecting_ip" rate in prod/vm-prod is observable as a signal that
+// the CF-Connecting-IP contract has drifted (ADR-0023 Signpost 2), rather
+// than silently fail-open.
+//
+// ADR-0023 D1b: internal/collector strips CF-Connecting-IP (alongside
+// X-Forwarded-For/X-Real-IP) from participant-controlled forwards before
+// they can reach any caller of this function, so a workspace pod cannot use
+// this new priority tier to forge a rate-limit key over the collector's
+// ClusterIP-direct path. Any future addition of a new trusted header here
+// MUST be mirrored by a strip in collector.go's Director (ADR-0023
+// Signpost 5) — forgetting that pairing is exactly the regression D1b
+// fixed.
 func ClientIP(r *http.Request) string {
+	if cf := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); cf != "" && net.ParseIP(cf) != nil {
+		clientIPSource.WithLabelValues("cf_connecting_ip").Inc()
+		return cf
+	}
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		clientIPSource.WithLabelValues("x_forwarded_for").Inc()
 		if i := strings.Index(xff, ","); i > 0 {
 			return strings.TrimSpace(xff[:i])
 		}
 		return strings.TrimSpace(xff)
 	}
+	clientIPSource.WithLabelValues("remote_addr").Inc()
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
