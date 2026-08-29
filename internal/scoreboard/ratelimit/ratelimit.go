@@ -108,8 +108,12 @@ func (l *Limiter) Middleware(keyFn func(*http.Request) string) func(http.Handler
 	}
 }
 
-// ClientIP extracts the remote IP for rate-limit keying (ADR-0023).
-// Priority order:
+// clientIP is the pure ADR-0023 extraction logic shared by ClientIP and
+// ClientIPKeyed. It has NO side effects (no metric emission) — callers
+// decide separately whether/how to record the source, so that computing the
+// IP more than once for the same request (e.g. once in a rate-limit
+// Middleware keyFn and again in a log line) never double-counts a metric
+// (ADR-0023 review R5-F2). Priority order:
 //
 //  1. CF-Connecting-IP, when non-empty and a syntactically valid IP
 //     (net.ParseIP). Cloudflare's edge sets this header itself, overwriting
@@ -124,12 +128,9 @@ func (l *Limiter) Middleware(keyFn func(*http.Request) string) func(http.Handler
 // prod/vm-prod run behind Cloudflare, so CF-Connecting-IP is expected to be
 // present on essentially every request there; local/dev and the
 // non-Cloudflare-routed POST /falco/events path fall through to (2)/(3) by
-// design (ADR-0023 D3/D5) and are not a signal of anything wrong.
-//
-// clientIPSource (ADR-0023 V5) records which tier was used so a sustained
-// non-"cf_connecting_ip" rate in prod/vm-prod is observable as a signal that
-// the CF-Connecting-IP contract has drifted (ADR-0023 Signpost 2), rather
-// than silently fail-open.
+// design (ADR-0023 D3/D5) and are not a signal of anything wrong on their
+// own — see ClientIPKeyed's doc for why that distinction needs a caller
+// label, not just a source label.
 //
 // ADR-0023 D1b: internal/collector strips CF-Connecting-IP (alongside
 // X-Forwarded-For/X-Real-IP) from participant-controlled forwards before
@@ -139,22 +140,63 @@ func (l *Limiter) Middleware(keyFn func(*http.Request) string) func(http.Handler
 // MUST be mirrored by a strip in collector.go's Director (ADR-0023
 // Signpost 5) — forgetting that pairing is exactly the regression D1b
 // fixed.
-func ClientIP(r *http.Request) string {
+func clientIP(r *http.Request) (ip, source string) {
 	if cf := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); cf != "" && net.ParseIP(cf) != nil {
-		clientIPSource.WithLabelValues("cf_connecting_ip").Inc()
-		return cf
+		return cf, "cf_connecting_ip"
 	}
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		clientIPSource.WithLabelValues("x_forwarded_for").Inc()
 		if i := strings.Index(xff, ","); i > 0 {
-			return strings.TrimSpace(xff[:i])
+			return strings.TrimSpace(xff[:i]), "x_forwarded_for"
 		}
-		return strings.TrimSpace(xff)
+		return strings.TrimSpace(xff), "x_forwarded_for"
 	}
-	clientIPSource.WithLabelValues("remote_addr").Inc()
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		return r.RemoteAddr, "remote_addr"
 	}
-	return host
+	return host, "remote_addr"
+}
+
+// ClientIP extracts the remote IP for rate-limit keying (ADR-0023) without
+// recording it to ClientIPSourceTotal. Use this when the IP value is needed but a
+// V5 counter increment already happened (or will happen) elsewhere for the
+// same request — e.g. csp_report.go computes it once per request for its log
+// line, separately from the ClientIPKeyed call the rate-limit Middleware
+// already made (ADR-0023 review R5-F2: calling this in a loop over a batched
+// report no longer risks inflating ClientIPSourceTotal, because this function
+// never touches it).
+//
+// See clientIP's doc for the full CF-Connecting-IP / XFF / RemoteAddr
+// priority order and the ADR-0023 D1b dependency on internal/collector.
+func ClientIP(r *http.Request) string {
+	ip, _ := clientIP(r)
+	return ip
+}
+
+// ClientIPKeyed returns a rate-limit Middleware keyFn that behaves exactly
+// like ClientIP but additionally records ADR-0023 V5 observability: each
+// call increments ClientIPSourceTotal labelled by BOTH which header tier won
+// (source) and which route family is asking (caller). The caller label
+// exists because /falco/events (ADR-0023 D5) never goes through Cloudflare
+// and therefore ALWAYS falls back past CF-Connecting-IP — without
+// distinguishing it, its high, constant request volume drowns out the
+// signal ADR-0023 Signpost 2 depends on ("a sustained non-cf_connecting_ip
+// rate on a Cloudflare-fronted route means the contract drifted"): an
+// operator graphing the unlabelled counter could never tell a real
+// CF-Connecting-IP outage on prod/vm-prod's submit/display-name/questions
+// traffic apart from ordinary /falco/events noise (ADR-0023 review R5-F1).
+// With the caller label, that query becomes "any caller other than
+// falco_events" — trivial to express and graph.
+//
+// Each of this function's callers passes a caller name that identifies the
+// limiter/route family it wires into a rate-limit Middleware, so the
+// increment happens exactly once per incoming HTTP request (inside the
+// Middleware's keyFn), never once per downstream log line or loop
+// iteration.
+func ClientIPKeyed(caller string) func(*http.Request) string {
+	return func(r *http.Request) string {
+		ip, source := clientIP(r)
+		ClientIPSourceTotal.WithLabelValues(caller, source).Inc()
+		return ip
+	}
 }
