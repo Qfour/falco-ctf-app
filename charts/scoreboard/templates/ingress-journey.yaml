@@ -105,43 +105,43 @@ spec:
         #                      all, regardless of what the Go handler itself
         #                      would do with the request.
         #   /vendor/cybercore.min.css — the vendored, pinned cybercore-css
-        #                      stylesheet (P23-6) portal.html's <link> tag
-        #                      loads on every /portal render. Exact, not
-        #                      Prefix: internal/scoreboard/view/vendorassets.go
-        #                      embeds exactly this one file at exactly this
-        #                      one mux Pattern (apispec Audience: participant,
-        #                      Authz: none) — there is no /vendor/ directory
-        #                      of further assets today, so a Prefix rule
-        #                      would open ingress reachability for paths the
-        #                      mux does not yet (and may never) serve, ahead
-        #                      of any actual route existing. Mirrors /portal
-        #                      and /csp-report's Exact choice for the same
-        #                      reason: this entry's specificity should track
-        #                      the mux Pattern it stands in for, not
-        #                      pre-provision for hypothetical future assets.
-        #                      Same Issue #235 gap class as #95: correctly
-        #                      declared x-ctf-authz: none in the Go
-        #                      handler/spec, but every participant's browser
-        #                      hit /check-admin's 403 here because ingress
-        #                      never carried a matching allow-list entry —
-        #                      the portal rendered with no styling at all
-        #                      (not a hard failure, so it shipped unnoticed
-        #                      until #95's review-5x flagged the same class
-        #                      of gap by inspection, Issue #235).
+        #                               stylesheet (P23-6) portal.html's <link> tag
+        #                               loads on every /portal render. Exact, not
+        #                               Prefix: internal/scoreboard/view/vendorassets.go
+        #                               embeds exactly this one file at exactly this
+        #                               one mux Pattern (apispec Audience: participant,
+        #                               Authz: none) — there is no /vendor/ directory
+        #                               of further assets today, so a Prefix rule
+        #                               would open ingress reachability for paths the
+        #                               mux does not yet (and may never) serve, ahead
+        #                               of any actual route existing. Mirrors /portal
+        #                               and /csp-report's Exact choice for the same
+        #                               reason: this entry's specificity should track
+        #                               the mux Pattern it stands in for, not
+        #                               pre-provision for hypothetical future assets.
+        #                               Same Issue #235 gap class as #95: correctly
+        #                               declared x-ctf-authz: none in the Go
+        #                               handler/spec, but every participant's browser
+        #                               hit /check-admin's 403 here because ingress
+        #                               never carried a matching allow-list entry —
+        #                               the portal rendered with no styling at all
+        #                               (not a hard failure, so it shipped unnoticed
+        #                               until #95's review-5x flagged the same class
+        #                               of gap by inspection, Issue #235).
         #   /static/tokens.css — the design-token single source (app#116)
-        #                      both portal.html and the admin index.html
-        #                      <link> to. Same Exact rationale as
-        #                      /vendor/cybercore.min.css immediately above:
-        #                      one embedded file, one mux Pattern, no
-        #                      /static/ directory of further assets to
-        #                      pre-provision a Prefix for. If a future
-        #                      change under /static/ or /vendor/ adds a
-        #                      second embedded asset, add its own Exact
-        #                      entry here (or revisit Prefix deliberately,
-        #                      as a genuine multi-asset decision, not a
-        #                      leftover from allowing before the mux route
-        #                      exists) rather than reusing this comment's
-        #                      "one file" reasoning unmodified.
+        #                        both portal.html and the admin index.html
+        #                        <link> to. Same Exact rationale as
+        #                        /vendor/cybercore.min.css immediately above:
+        #                        one embedded file, one mux Pattern, no
+        #                        /static/ directory of further assets to
+        #                        pre-provision a Prefix for. If a future
+        #                        change under /static/ or /vendor/ adds a
+        #                        second embedded asset, add its own Exact
+        #                        entry here (or revisit Prefix deliberately,
+        #                        as a genuine multi-asset decision, not a
+        #                        leftover from allowing before the mux route
+        #                        exists) rather than reusing this comment's
+        #                        "one file" reasoning unmodified.
         # NOTE: /falco/events (Falco ingest, no app-layer auth) is deliberately
         # absent — routing it here would let any login forge trigger solves.
         paths:
