@@ -7,6 +7,12 @@
 - Date / Deciders: 2026-08-29 / architect (起案)、security-engineer (advisory・条件充足)、
   VP (承認)。origin-guard/ingress 境界に触れるため security-engineer レビューを
   Accepted の条件とした (充足済み)
+- **2026-08-29 追記 (Status のみ。Decision/Verification 本文は凍結・未編集— ADR-0005 と
+  同じ規律)**: Issue #240 (review-5x R4, architect 本人による self-catch) で D2 の
+  reverse 検査が Exact エントリの audience 混入 (「一致するが audience が違う」) を
+  一切見ていない gap を発見。**ADR-0022 が D2 のこの部分のみを限定 supersede** し、
+  V(I15)-6 (blocking) を追加する。本 ADR の O1/D1/D3/D4 および V(I15)-1/2/3/4/5 は
+  無傷のまま有効。
 - 関連: Issue #238 (本 ADR の発注元) / #95 (`POST /csp-report`, review-5x が着地前に検出) /
   #235 (`/vendor/cybercore.min.css` + `/static/tokens.css`, **本番で参加者 portal が
   無スタイル表示**のまま着地した実障害) / ADR-0005 (I14, mux↔spec parity。本 ADR はこれを
