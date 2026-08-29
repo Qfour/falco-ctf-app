@@ -19,12 +19,14 @@
 //     forwarded. /internal/*, /api/admin/*, /metrics, /falco/events are never
 //     reachable through the collector.
 //   - XFF-spoof resistance. Unlike the scoreboard (which sits behind
-//     ingress-nginx and can trust an injected X-Forwarded-For), the collector
-//     is hit directly by workspace pods over the ClusterIP. A workspace could
-//     therefore send an arbitrary X-Forwarded-For to dodge a per-IP limit. So
-//     the collector keys its own limiter on r.RemoteAddr (the real workspace
-//     pod IP) and STRIPS inbound X-Forwarded-For / X-Real-IP before forwarding,
-//     so the downstream scoreboard limiter also sees only the real connection.
+//     ingress-nginx/Cloudflare and can trust an injected X-Forwarded-For or
+//     CF-Connecting-IP, ADR-0023), the collector is hit directly by workspace
+//     pods over the ClusterIP. A workspace could therefore send an arbitrary
+//     X-Forwarded-For / CF-Connecting-IP to dodge a per-IP limit. So the
+//     collector keys its own limiter on r.RemoteAddr (the real workspace
+//     pod IP) and STRIPS inbound X-Forwarded-For / X-Real-IP / CF-Connecting-IP
+//     before forwarding, so the downstream scoreboard limiter also sees only
+//     the real connection.
 //
 // Routes fronted (method + path → upstream):
 //
@@ -97,16 +99,29 @@ func New(upstream string, logger *slog.Logger, opts ...Option) (*Handler, error)
 	h.proxy = httputil.NewSingleHostReverseProxy(u)
 	// Strip participant-controlled forwarding headers before forwarding. The
 	// workspace connects directly (no trusted ingress-nginx in front), so any
-	// inbound X-Forwarded-For / X-Real-IP is attacker-chosen and must not reach
-	// the scoreboard, whose limiter trusts XFF's leftmost entry. We delete them
-	// after NewSingleHostReverseProxy's Director runs; ReverseProxy then appends
-	// its own X-Forwarded-For = the real RemoteAddr, so downstream sees the
-	// genuine connection IP. (X-Real-IP is not re-added by ReverseProxy.)
+	// inbound X-Forwarded-For / X-Real-IP / CF-Connecting-IP is
+	// attacker-chosen and must not reach the scoreboard, whose limiter
+	// (ratelimit.ClientIP) trusts CF-Connecting-IP first, then XFF's leftmost
+	// entry (ADR-0023). We delete them after NewSingleHostReverseProxy's
+	// Director runs; ReverseProxy then appends its own X-Forwarded-For = the
+	// real RemoteAddr, so downstream sees the genuine connection IP.
+	// (X-Real-IP and CF-Connecting-IP are not re-added by ReverseProxy.)
+	//
+	// CF-Connecting-IP (ADR-0023 D1b): this collector is never reached
+	// through Cloudflare (it fronts the ClusterIP-direct workspace path), so
+	// any CF-Connecting-IP a workspace sends is always forged. Without this
+	// strip, ratelimit.ClientIP's new CF-Connecting-IP-first priority would
+	// let a workspace mint an arbitrary rate-limit key per request and
+	// bypass the scoreboard's per-route submit/display-name budgets
+	// entirely (security-engineer HIGH finding, ADR-0023). Any future
+	// addition of a new trusted header to ratelimit.ClientIP MUST be
+	// mirrored here (ADR-0023 Signpost 5).
 	baseDirector := h.proxy.Director
 	h.proxy.Director = func(req *http.Request) {
 		baseDirector(req)
 		req.Header.Del("X-Forwarded-For")
 		req.Header.Del("X-Real-IP")
+		req.Header.Del("CF-Connecting-IP")
 	}
 	// Fail closed on upstream errors: a proxy dial failure must not leak a
 	// Go default 502 body or the upstream address into the participant shell.

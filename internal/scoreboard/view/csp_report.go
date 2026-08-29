@@ -150,6 +150,21 @@ func (h *Handler) cspReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Computed ONCE per request, not once per batch entry (ADR-0023 review
+	// R5-F2): ratelimit.ClientIP(r) is a pure function of the request's
+	// headers/RemoteAddr, so it returns the identical value for every entry
+	// in a application/reports+json batch. The earlier version called it
+	// again inside the batch loop below — harmless for the bucket key
+	// itself (same value every time), but if ClientIP had gone on
+	// incrementing a metric per call (as an earlier draft of the ADR-0023 V5
+	// counter did), a single HTTP request with N batched entries would have
+	// inflated that counter by 1+N instead of 1. Computing it once here and
+	// threading it through logCSPViolation keeps the metric-emitting call
+	// (ratelimit.ClientIPKeyed, wired into h.cspReportLimiter's Middleware in
+	// Routes()) as the ONLY place this request's source is ever counted;
+	// ClientIP itself is metric-free by design now (see its doc).
+	clientIP := ratelimit.ClientIP(r)
+
 	switch ct {
 	case contentTypeCSPReport:
 		var payload struct {
@@ -160,7 +175,7 @@ func (h *Handler) cspReport(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "malformed report"})
 			return
 		}
-		h.logCSPViolation(r, "csp-report",
+		h.logCSPViolation(r, clientIP, "csp-report",
 			payload.Report.DocumentURI, payload.Report.BlockedURI,
 			payload.Report.ViolatedDirective, payload.Report.EffectiveDirective,
 			payload.Report.Disposition, payload.Report.SourceFile, payload.Report.ScriptSample)
@@ -183,7 +198,7 @@ func (h *Handler) cspReport(w http.ResponseWriter, r *http.Request) {
 			if e.Type != "" && e.Type != "csp-violation" {
 				continue
 			}
-			h.logCSPViolation(r, "reports+json",
+			h.logCSPViolation(r, clientIP, "reports+json",
 				e.Body.DocumentURL, e.Body.BlockedURL,
 				"" /* no violated-directive in this format */, e.Body.EffectiveDirective,
 				e.Body.Disposition, e.Body.SourceFile, e.Body.Sample)
@@ -214,7 +229,13 @@ func (h *Handler) cspReport(w http.ResponseWriter, r *http.Request) {
 // fmt.Fprintf/os.Stdout.WriteString instead of an h.logger call) — see
 // csp_report_test.go's escaping test doc for the mutation actually proven
 // against.
-func (h *Handler) logCSPViolation(r *http.Request, format, documentURI, blockedURI, violatedDirective, effectiveDirective, disposition, sourceFile, sample string) {
+//
+// clientIP is the caller's ratelimit.ClientIP(r) value, computed ONCE by
+// cspReport before the csp-report/reports+json branch and threaded through
+// here (rather than this function calling ratelimit.ClientIP(r) itself) so
+// a application/reports+json batch of N entries logs N lines with the same
+// value instead of recomputing it N times (ADR-0023 review R5-F2).
+func (h *Handler) logCSPViolation(r *http.Request, clientIP, format, documentURI, blockedURI, violatedDirective, effectiveDirective, disposition, sourceFile, sample string) {
 	metrics.CSPViolationReports.WithLabelValues("accepted").Inc()
 	if h.logger == nil {
 		return
@@ -226,12 +247,18 @@ func (h *Handler) logCSPViolation(r *http.Request, format, documentURI, blockedU
 		// ingress-nginx's own pod IP (scoreboard sits behind the Service,
 		// never sees the real peer on the TCP connection), so it is
 		// constant across every caller and useless for abuse tracking.
-		// ratelimit.ClientIP trusts X-Forwarded-For's leftmost entry
-		// (ingress-nginx populates it); logging BOTH values — rather than
-		// replacing remote_addr — keeps the raw TCP peer visible too, so a
-		// future investigation can see the gap between "who actually
-		// dialed us" and "who we CLAIM rate-limited this request as".
-		"client_ip", ratelimit.ClientIP(r),
+		// ratelimit.ClientIP trusts CF-Connecting-IP first (Cloudflare-set,
+		// non-spoofable on this Cloudflare-fronted route), then
+		// X-Forwarded-For's leftmost entry, then RemoteAddr (ADR-0023 D1;
+		// this endpoint runs behind Cloudflare in prod/vm-prod, so
+		// cf_connecting_ip is the expected source here — see
+		// internal/scoreboard/ratelimit's ClientIPKeyed("csp_report") call
+		// in Routes(), below, which is what actually records that source to
+		// the V5 counter). Logging BOTH values — rather than replacing
+		// remote_addr — keeps the raw TCP peer visible too, so a future
+		// investigation can see the gap between "who actually dialed us"
+		// and "who we CLAIM rate-limited this request as".
+		"client_ip", clientIP,
 		"format", format,
 		"document_uri", truncateCSPReportField(documentURI),
 		"blocked_uri", truncateCSPReportField(blockedURI),
@@ -263,22 +290,27 @@ func (h *Handler) logCSPViolation(r *http.Request, format, documentURI, blockedU
 // inline-script violates N times) while still bounding a single source
 // hammering this endpoint.
 //
-// The KEY this bucket is keyed on (ratelimit.ClientIP — X-Forwarded-For's
-// leftmost entry, falling back to RemoteAddr) is itself spoofable: XFF is a
-// client-supplied header ingress-nginx forwards rather than rewrites, so a
-// caller can claim any IP it likes and get its own fresh bucket every time
-// (R1-F2, /review-5x). This is a pre-existing, cross-repo, Class-2 gap
-// shared by EVERY ratelimit-keyed route on this service, not something
-// introduced here — tracked separately as app#236 (ingress-nginx realip
-// behavior under investigation by platform-engineer) rather than fixed
-// per-route. Deliberately NOT blocking this endpoint's landing: unlike
-// /falco/events or /api/challenges/{cid}/submit, a spoofed key here can
-// only buy an attacker MORE of this endpoint's own log lines (log/metric
-// flooding) — it reaches no scoring or authorization decision, so the
-// residual risk is bounded to this package's own observability, not
-// scoring integrity. Once app#236 lands a stronger key, this limiter
-// inherits it for free (ratelimit.ClientIP is shared code, not
-// reimplemented here).
+// The KEY this bucket is keyed on (ratelimit.ClientIP/ClientIPKeyed) is, as
+// of ADR-0023 (app#236, landed), CF-Connecting-IP first — a Cloudflare-set
+// header the client cannot override on a Cloudflare-fronted route, which
+// this one is — falling back to X-Forwarded-For's leftmost entry, then
+// RemoteAddr. Before ADR-0023 (R1-F2, /review-5x) this bucket's key was XFF
+// leftmost only, itself spoofable: XFF is a client-supplied header
+// ingress-nginx forwards rather than rewrites, so a caller could claim any
+// IP it liked and get a fresh bucket every time. On prod/vm-prod (Cloudflare
+// enabled) that gap is now closed: this endpoint's ClientIPKeyed("csp_report")
+// call (Routes(), below) should observe the "cf_connecting_ip" source under
+// normal operation, and a caller cannot forge that header (D4). The
+// spoofable XFF-only path still applies on local (colima, ADR-0023 D3,
+// intentional — no real participants there) and would reappear if
+// Cloudflare's CF-Connecting-IP delivery ever drifted (ADR-0023 D6 keeps
+// this fail-open rather than fail-closed, since — as this paragraph
+// originally argued before ADR-0023 — a spoofed key here can only buy an
+// attacker MORE of this endpoint's own log lines, never a scoring or
+// authorization decision). This limiter inherits ADR-0023's fix for free,
+// same as every other ratelimit-keyed route on this service
+// (ratelimit.ClientIP/ClientIPKeyed is shared code, not reimplemented
+// here).
 func newCSPReportLimiter() *ratelimit.Limiter {
 	return ratelimit.New(5 /* req/s */, 50 /* burst */)
 }

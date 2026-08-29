@@ -330,9 +330,14 @@ func (h *Handler) og(next http.Handler) http.Handler {
 // it was removed rather than documented as test-only, since it had no test
 // either.
 func (h *Handler) Routes() []apispec.Route {
-	submitMW := h.submitLimiter.Middleware(ratelimit.ClientIP)
-	dnMW := h.displayNameLimiter.Middleware(ratelimit.ClientIP)
-	questionMW := h.questionLimiter.Middleware(ratelimit.ClientIP)
+	// ADR-0023 V5 caller labels (ratelimit.ClientIPKeyed): these three route
+	// families ARE Cloudflare-fronted (unlike ingest's /falco/events, see
+	// that package's ClientIPKeyed call), so a sustained non-cf_connecting_ip
+	// clientIPSource rate under these labels is the ADR-0023 Signpost 2 drift
+	// signal — see internal/scoreboard/ratelimit/metrics.go's doc.
+	submitMW := h.submitLimiter.Middleware(ratelimit.ClientIPKeyed("submit"))
+	dnMW := h.displayNameLimiter.Middleware(ratelimit.ClientIPKeyed("display_name"))
+	questionMW := h.questionLimiter.Middleware(ratelimit.ClientIPKeyed("questions"))
 	return []apispec.Route{
 		{
 			Method: "GET", Pattern: "/api/state",

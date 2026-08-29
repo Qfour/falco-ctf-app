@@ -217,7 +217,12 @@ func (h *Handler) Routes() []apispec.Route {
 			OriginGuarded:    false,
 			CollectorForward: false,
 			RateLimit:        "per-IP 5 req/s burst 50 (browser-emitted, no app-layer identity check — see csp_report.go)",
-			Handler:          h.cspReportLimiter.Middleware(ratelimit.ClientIP)(http.HandlerFunc(h.cspReport)),
+			// "csp_report" (ADR-0023 V5 caller label, review R5-F1): this
+			// route IS Cloudflare-fronted (same appHost as the portal), so
+			// unlike ingest's "falco_events" label it should track
+			// clientIPSource's cf_connecting_ip source under normal
+			// operation.
+			Handler: h.cspReportLimiter.Middleware(ratelimit.ClientIPKeyed("csp_report"))(http.HandlerFunc(h.cspReport)),
 		},
 	}
 }

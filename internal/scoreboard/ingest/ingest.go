@@ -72,7 +72,13 @@ func New(grader *scoring.Grader, s *store.Store, logger *slog.Logger, now func()
 // `*http.ServeMux` parameter made ingest look mux-owning to the mechanical
 // detector even though it never itself holds one.
 func (h *Handler) Routes() []apispec.Route {
-	mw := h.limiter.Middleware(ratelimit.ClientIP)
+	// "falco_events" (ADR-0023 V5 caller label): this route is never
+	// Cloudflare-routed (ADR-0023 D5 — falcosidekick calls it internally),
+	// so it always falls back past CF-Connecting-IP. Labelling it distinctly
+	// lets an operator exclude this route's high, constant volume when
+	// watching clientIPSource for a real CF-Connecting-IP drift signal on
+	// the Cloudflare-fronted routes (ADR-0023 review R5-F1).
+	mw := h.limiter.Middleware(ratelimit.ClientIPKeyed("falco_events"))
 	return []apispec.Route{
 		{
 			Method:           "POST",

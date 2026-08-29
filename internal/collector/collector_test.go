@@ -19,6 +19,7 @@ type upstreamRecorder struct {
 	calls    []string // "METHOD PATH"
 	lastXFF  string   // X-Forwarded-For as seen by the upstream on the last call
 	lastReal string   // X-Real-IP as seen by the upstream on the last call
+	lastCFIP string   // CF-Connecting-IP as seen by the upstream on the last call
 }
 
 func (u *upstreamRecorder) handler() http.Handler {
@@ -27,6 +28,7 @@ func (u *upstreamRecorder) handler() http.Handler {
 		u.calls = append(u.calls, r.Method+" "+r.URL.Path)
 		u.lastXFF = r.Header.Get("X-Forwarded-For")
 		u.lastReal = r.Header.Get("X-Real-IP")
+		u.lastCFIP = r.Header.Get("CF-Connecting-IP")
 		u.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -47,6 +49,12 @@ func (u *upstreamRecorder) forwardedHeaders() (xff, real string) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return u.lastXFF, u.lastReal
+}
+
+func (u *upstreamRecorder) lastCFConnectingIP() string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.lastCFIP
 }
 
 // newTestCollector wires a collector at a fixed clock (rate-limit burst never
@@ -283,6 +291,97 @@ func TestForward_StripsInboundForwardingHeaders(t *testing.T) {
 	// ReverseProxy appends the genuine connection IP (loopback in the test).
 	if xff == "" {
 		t.Error("expected ReverseProxy to set X-Forwarded-For to the real RemoteAddr")
+	}
+}
+
+// TestForward_StripsCFConnectingIP proves the ADR-0023 D1b fix: the collector
+// removes a participant-controlled CF-Connecting-IP before forwarding. Without
+// this strip, a workspace could send an arbitrary CF-Connecting-IP on every
+// request through the collector's submit/display-name forward and — since
+// ratelimit.ClientIP now trusts CF-Connecting-IP first (ADR-0023 D1) — mint a
+// fresh rate-limit key per request, bypassing the scoreboard's per-route
+// submit/display-name budgets entirely (security-engineer HIGH finding).
+//
+// Mutation check (ADR-0023 V4, V8-style, reported not committed): commenting
+// out the `req.Header.Del("CF-Connecting-IP")` line in collector.go's
+// Director turns this test red — the upstream then observes the spoofed
+// value verbatim, proving the assertion actually exercises the strip.
+func TestForward_StripsCFConnectingIP(t *testing.T) {
+	c, up := newTestCollector(t)
+	req, _ := http.NewRequest("POST", c.URL+"/api/challenges/10-final-exfil/submit", strings.NewReader(`{}`))
+	req.Header.Set("CF-Connecting-IP", "198.51.100.42")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	resp.Body.Close()
+
+	if got := up.lastCFConnectingIP(); got != "" {
+		t.Fatalf("spoofed CF-Connecting-IP leaked to upstream: %q", got)
+	}
+}
+
+// TestForward_StripsCFConnectingIP_DisplayName is the same assertion as
+// TestForward_StripsCFConnectingIP but for the other CollectorForward=true
+// route that shares ratelimit.ClientIP downstream (display-name) — ADR-0023
+// C2 identifies both submit and display-name as exposed by the D1b gap, so
+// both routes get independent coverage rather than assuming submit's
+// coverage generalizes.
+func TestForward_StripsCFConnectingIP_DisplayName(t *testing.T) {
+	c, up := newTestCollector(t)
+	req, _ := http.NewRequest("POST", c.URL+"/api/users/alice/display-name", strings.NewReader(`{"name":"Alice"}`))
+	req.Header.Set("CF-Connecting-IP", "198.51.100.42")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	resp.Body.Close()
+
+	if got := up.lastCFConnectingIP(); got != "" {
+		t.Fatalf("spoofed CF-Connecting-IP leaked to upstream: %q", got)
+	}
+}
+
+// TestRateLimit_CFConnectingIPSpoofDoesNotBypass is the CF-Connecting-IP
+// analogue of TestRateLimit_XFFSpoofDoesNotBypass: rotating CF-Connecting-IP
+// on every request must not let a caller escape the collector's own per-IP
+// budget, because the collector's limiter is keyed on remoteIP (RemoteAddr),
+// a function independent of ratelimit.ClientIP (ADR-0023 V4 point 3 — this
+// also regression-covers that remoteIP itself was not accidentally changed
+// to consult CF-Connecting-IP).
+func TestRateLimit_CFConnectingIPSpoofDoesNotBypass(t *testing.T) {
+	up := &upstreamRecorder{}
+	upSrv := httptest.NewServer(up.handler())
+	defer upSrv.Close()
+
+	now := time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC)
+	h, err := New(upSrv.URL, testLogger(), WithNow(func() time.Time { return now }))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	c := httptest.NewServer(h)
+	defer c.Close()
+
+	var got429 bool
+	for i := 0; i < 12; i++ {
+		req, _ := http.NewRequest("POST", c.URL+"/api/challenges/10-final-exfil/submit", strings.NewReader(`{}`))
+		// A different forged CF-Connecting-IP on each request — if the
+		// collector's own limiter trusted it, this would mint a fresh bucket
+		// every time and never throttle.
+		req.Header.Set("CF-Connecting-IP", "198.51.100."+strconv.Itoa(i))
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("req %d: %v", i, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusTooManyRequests {
+			got429 = true
+		}
+	}
+	if !got429 {
+		t.Fatal("CF-Connecting-IP rotation bypassed the collector's per-IP limit — remoteIP must ignore it")
 	}
 }
 
