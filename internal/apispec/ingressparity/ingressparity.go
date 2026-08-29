@@ -76,11 +76,23 @@ func normalize(path string) string {
 // segment to occupy an ENTIRE path segment — never a partial segment like
 // "/api/users{user}" — so the substring up to and including the "/"
 // immediately before the first "{" is always a literal, param-free prefix
-// of pattern. When pattern has no "{" at all, hasParam is false and prefix
-// equals pattern itself; callers must branch on hasParam rather than
-// treating a param-free pattern's "prefix" as meaningful on its own (D3:
-// the param-free and param-carrying cases compare against ingress paths
-// with DIFFERENT rules).
+// of pattern, AND (review-5x R2-F3, LOW: the earlier version of this
+// comment overclaimed "always ends in /" without qualification) that
+// prefix ends in "/" for every hasParam==true pattern this codebase's
+// route tables actually contain — every one of them starts with a literal
+// "/" before any "{", because a bare "{param}" with no leading "/" is not
+// a legal http.ServeMux pattern at all (patterns are always rooted paths).
+// The only way prefix could fail to end in "/" is i==0 (the FIRST byte of
+// pattern is "{" — pattern[:0] is ""), which the mux's own pattern syntax
+// makes unreachable in practice; if some future pattern-construction bug
+// ever DID produce that, staticPfx == p2 (a Prefix ingress entry, itself
+// always normalize()d to end in "/") would just never match "" — the
+// route would show up as uncovered (V(I15)-1), not silently pass. When
+// pattern has no "{" at all, hasParam is false and prefix equals pattern
+// itself; callers must branch on hasParam rather than treating a
+// param-free pattern's "prefix" as meaningful on its own (D3: the
+// param-free and param-carrying cases compare against ingress paths with
+// DIFFERENT rules).
 func staticPrefix(pattern string) (prefix string, hasParam bool) {
 	if i := strings.IndexByte(pattern, '{'); i >= 0 {
 		return pattern[:i], true
@@ -113,9 +125,11 @@ func covers(pattern, path, pathType string) bool {
 	case "Prefix":
 		p2 := normalize(path) + "/"
 		if hasParam {
-			// staticPrefix always ends in "/" (see staticPrefix's doc), so it
-			// is already in the same normalized shape as p2 — compare
-			// directly.
+			// staticPfx ends in "/" for every pattern this codebase's route
+			// tables produce (see staticPrefix's doc for the exact
+			// qualification and the fail-closed fallback if that ever
+			// stopped holding), so it is already in the same normalized
+			// shape as p2 — compare directly.
 			return staticPfx == p2 || strings.HasPrefix(staticPfx, p2)
 		}
 		// A param-free Pattern may equal the ingress path itself (with its

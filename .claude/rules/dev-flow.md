@@ -163,3 +163,14 @@ pipeline-only 環境では SysQL の findings API が空。
 | image push | なし | main マージ・tag push のみ |
 
 ローカルの `make scan` が事実上の最終ゲート。CI scan は安全網。
+
+⚠ **`go test` 行の「Stop hook 自動」は `make test` (= `Dockerfile.test` でコンテナ実行、
+`falco-go` skill 参照) を指す。** ホストで素の `go test ./...` を直接叩く経路
+(コンテナを経由しない) では、I15 (`internal/apispec/ingressparity` /
+`internal/scoreboard/ingress_journey_parity_test.go`、ADR-0021) の検査が
+`helm` の不在で **`t.Skip` — 失敗ではなく静かにスキップ**される
+(`requireHelm`/`requireHelmForIngressJourney` が `exec.LookPath("helm")` を見て
+分岐)。ホストに `helm` が入っていれば素の `go test` でも動くが、それは偶然の一致に
+過ぎない — **I15 が実際に検査していることの保証は `make test` (Dockerfile.test 経由、
+`go install helm.sh/helm/v3/cmd/helm@<pin>` 同梱) のみ**。「`go test ./...` が緑だった」
+を「I15 が通った」と読み替えないこと。

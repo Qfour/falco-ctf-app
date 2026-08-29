@@ -1,7 +1,10 @@
 package ingressparity
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -115,15 +118,40 @@ func LoadIngressEntries(journeyHost string) ([]IngressEntry, error) {
 // therefore an empty, non-nil-vs-nil-irrelevant slice — see
 // LoadIngressEntries' doc for why that is a legitimate, caller-checked
 // outcome rather than an error here.
+//
+// review-5x R2-F4 (LOW): a plain single-shot yaml.Unmarshal only ever reads
+// the FIRST "---"-separated document in a stream and silently drops
+// anything after it — if `--show-only templates/ingress-journey.yaml` ever
+// matched more than one rendered document (a future chart change turning
+// this template into a multi-object manifest, or a `--show-only` glob
+// behaviour change upstream), any paths[] entries living in a SECOND
+// document would vanish here with no error, exactly the "extraction quietly
+// drops data" failure mode this package's whole design (D4, ADR-0021 C4)
+// exists to avoid. This decodes every document in the stream with
+// yaml.Decoder and FAILS if more than one is present, rather than silently
+// keeping only the first.
 func parseIngressEntries(doc []byte) ([]IngressEntry, error) {
-	var ri renderedIngress
-	if err := yaml.Unmarshal(doc, &ri); err != nil {
-		return nil, fmt.Errorf("parse rendered ingress-journey.yaml: %w", err)
+	dec := yaml.NewDecoder(bytes.NewReader(doc))
+	var docs []renderedIngress
+	for {
+		var ri renderedIngress
+		if err := dec.Decode(&ri); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return nil, fmt.Errorf("parse rendered ingress-journey.yaml (document %d): %w", len(docs)+1, err)
+		}
+		docs = append(docs, ri)
+	}
+	if len(docs) > 1 {
+		return nil, fmt.Errorf("helm template --show-only templates/ingress-journey.yaml rendered %d YAML documents, want at most 1 — this package only reads the first document's spec.rules[].http.paths[], so a second document's entries would silently vanish; parseIngressEntries needs updating if ingress-journey.yaml legitimately became multi-document", len(docs))
 	}
 	var entries []IngressEntry
-	for _, rule := range ri.Spec.Rules {
-		for _, p := range rule.HTTP.Paths {
-			entries = append(entries, IngressEntry{Path: p.Path, PathType: p.PathType})
+	if len(docs) == 1 {
+		for _, rule := range docs[0].Spec.Rules {
+			for _, p := range rule.HTTP.Paths {
+				entries = append(entries, IngressEntry{Path: p.Path, PathType: p.PathType})
+			}
 		}
 	}
 	return entries, nil

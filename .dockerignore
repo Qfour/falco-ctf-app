@@ -9,11 +9,23 @@
 # needs charts/scoreboard (+ its local file://../falco-ctf-common chart
 # dependency, P21 item 5) to `helm template`
 # charts/scoreboard/templates/ingress-journey.yaml for the ADR-0021 (Issue
-# #238, Hard Invariant I15) ingress-participant-route-coverage test. Every
-# OTHER Dockerfile using this root context (scoreboard/auth-policy/
-# collector image builds, Dockerfile.gen, Dockerfile.tidy) never COPYs
-# charts/ regardless of what's in the build context, so widening the
-# context here doesn't change what lands in any final image layer.
+# #238, Hard Invariant I15) ingress-participant-route-coverage test.
+#
+# review-5x R5-F2: an earlier version of this comment claimed "every OTHER
+# Dockerfile using this root context ... never COPYs charts/", which is only
+# true for scoreboard/auth-policy/collector's Dockerfiles (each COPYs
+# explicit narrow paths — go.mod/cmd/<bin>/internal/<pkg>/…, never charts/)
+# and Dockerfile.gen (COPYs only docs/ and api/). Dockerfile.tidy does
+# `COPY . .` (its whole point is `go mod tidy` seeing every source file that
+# might import something), so widening this file DOES put charts/scoreboard
+# and charts/falco-ctf-common into ITS build context too. That has no
+# functional effect — Dockerfile.tidy's `export` stage only ever copies
+# go.mod/go.sum back out (see that Dockerfile's final COPY --from=tidy
+# lines), so no chart content reaches `make tidy`'s output — but it DOES
+# mean a future edit to charts/scoreboard/** invalidates Docker's build
+# cache for `make tidy`'s `COPY . .` layer (and everything after it) even
+# though tidy's actual output can't change. Purely a build-cache-locality
+# cost, not a correctness one.
 #
 # `charts/*` (exclude each DIRECT child) + `!charts/<name>/` (re-include
 # specific children) is the standard "exclude everything except these"

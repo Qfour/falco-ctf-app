@@ -22,11 +22,25 @@ RUN go mod download
 # against the live mux route table. `go install <module>@<version>` pins a
 # reproducible module version (not a mutable git ref) — the same
 # supply-chain pattern already used here for actionlint/govulncheck/
-# oapi-codegen (conventions.md G5-2). Module path stays helm.sh/helm/v3 even
-# though upstream now also tags v4.x releases; v3.21.4 was the latest
-# stable v3 release at implementation time (2026-08-29). Builds from source
-# inside this image — no curl download, no new apk package, no new GitHub
-# Action.
+# oapi-codegen (conventions.md G5-2). Builds from source inside this image
+# — no curl download, no new apk package, no new GitHub Action.
+#
+# v3 (module path helm.sh/helm/v3) is DELIBERATELY kept even though upstream
+# now also tags v4.x releases — review-5x R3-F2 (VP ruling, 2026-08-29):
+# v3.21.4 (latest stable v3 at implementation time) gets patch/security
+# releases through 2027-02 (v3's feature branch itself went EOL 2026-09, but
+# security patches continue past that — this repo only needs the CLI to
+# render YAML deterministically, not new features). v4 is NOT adopted here
+# because (a) `helm template --show-only`'s output compatibility with v3
+# hasn't been verified for this repo's charts — a silent behavioural change
+# in Prefix/trailing-slash rendering, key ordering, or `--show-only` itself
+# would be exactly the kind of drift ADR-0021 D3 spent a security-engineer
+# HIGH advisory getting right, and re-verifying that against a moving major
+# version this close to an event is not a trade worth making, and (b) CI's
+# chart-lint job (azure/setup-helm@v5) hasn't been bumped to default to v4
+# either, so switching only Dockerfile.test's helm would create a v3/v4
+# split between the two chart-touching CI paths. Revisit at the next
+# deliberate helm version bump (post-event), not as a side effect of this PR.
 RUN go install helm.sh/helm/v3/cmd/helm@v3.21.4
 
 COPY . .

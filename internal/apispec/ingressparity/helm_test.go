@@ -55,3 +55,62 @@ func TestLoadIngressEntries_EmptyJourneyHostRendersNothing(t *testing.T) {
 		t.Fatalf("LoadIngressEntries(\"\") = %v entries, nil error — want an error (chart's ingress.journeyHost guard should have made `--show-only templates/ingress-journey.yaml` fail to find any rendered content); either the chart guard changed shape or this package's understanding of it (ADR-0021 C4) is stale", entries)
 	}
 }
+
+// TestParseIngressEntries_MultiDocumentFailsClosed is review-5x R2-F4's (LOW)
+// regression guard: parseIngressEntries must FAIL (not silently keep only
+// the first document's entries) when its input contains more than one
+// "---"-separated YAML document — the failure mode a plain single-shot
+// yaml.Unmarshal would have had, and the one this package's whole design
+// (D4, ADR-0021 C4 — extraction must never quietly drop data) exists to
+// avoid. No `helm` binary needed — this feeds synthetic YAML bytes directly.
+func TestParseIngressEntries_MultiDocumentFailsClosed(t *testing.T) {
+	const twoDocuments = `apiVersion: networking.k8s.io/v1
+kind: Ingress
+spec:
+  rules:
+    - host: a.example.invalid
+      http:
+        paths:
+          - path: /portal
+            pathType: Exact
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+spec:
+  rules:
+    - host: b.example.invalid
+      http:
+        paths:
+          - path: /api/users/
+            pathType: Prefix
+`
+	entries, err := parseIngressEntries([]byte(twoDocuments))
+	if err == nil {
+		t.Fatalf("parseIngressEntries(2 documents) = %v entries, nil error — want an error; a second document's paths[] entries (here /api/users/) must never be silently dropped", entries)
+	}
+}
+
+// TestParseIngressEntries_SingleDocumentStillWorks is the non-mutated
+// control for the guard above: a single document must still decode
+// normally, so the multi-document check can't pass its own test above
+// vacuously by rejecting everything.
+func TestParseIngressEntries_SingleDocumentStillWorks(t *testing.T) {
+	const oneDocument = `apiVersion: networking.k8s.io/v1
+kind: Ingress
+spec:
+  rules:
+    - host: a.example.invalid
+      http:
+        paths:
+          - path: /portal
+            pathType: Exact
+`
+	entries, err := parseIngressEntries([]byte(oneDocument))
+	if err != nil {
+		t.Fatalf("parseIngressEntries(1 document): unexpected error: %v", err)
+	}
+	want := []IngressEntry{{Path: "/portal", PathType: "Exact"}}
+	if len(entries) != 1 || entries[0] != want[0] {
+		t.Errorf("parseIngressEntries(1 document) = %v, want %v", entries, want)
+	}
+}

@@ -47,30 +47,48 @@ func requireHelmForIngressJourney(t *testing.T) {
 	}
 }
 
-// participantRoutesAndIngressPaths is the shared ADR-0021 extraction step
-// for every test below: the real scoreboard route table's
-// AudienceParticipant subset, and the real chart's rendered participant
-// allow-list. Both non-empty-asserted here (V(I15)-4) so a silent
-// extraction failure on EITHER side fails loud, exactly once, instead of
-// each subtest re-discovering it independently with a less specific
-// message.
-func participantRoutesAndIngressPaths(t *testing.T) ([]apispec.Route, []ingressparity.IngressEntry) {
+// allRoutesAndIngressPaths is the shared ADR-0021 extraction step for every
+// test below: the FULL real scoreboard route table (every audience — NOT
+// pre-filtered to AudienceParticipant) and the real chart's rendered
+// participant allow-list.
+//
+// review-5x R2-F1 (BLOCKING): an earlier version of this helper returned
+// only the AudienceParticipant subset, and TestI15_IngressJourneyRouteCoverage
+// passed THAT into ingressparity.CoverageDiff. CoverageDiff's own reverse
+// loop already does `if rt.Audience == apispec.AudienceParticipant {
+// continue }` to skip participant routes while scanning for foreign
+// (non-participant) ones reachable through a Prefix entry — feeding it an
+// ALREADY-participant-only slice made that loop's condition true for every
+// remaining element, so `foreign` was STRUCTURALLY always empty: injecting
+// an operator/admin route under an existing Prefix (e.g. "/api/users/")
+// would never turn V(I15)-2 red, even though coverage_test.go's synthetic
+// "case 3" mutation test (same CoverageDiff function, given a
+// deliberately-mixed-audience slice) passed fine — the bug was entirely in
+// THIS integration point, not in CoverageDiff itself. CoverageDiff's own
+// contract (see its doc) is that it needs the FULL route table to do the
+// reverse check at all; only the forward check only ever looks at
+// AudienceParticipant elements of its input. So: hand it everything.
+func allRoutesAndIngressPaths(t *testing.T) ([]apispec.Route, []ingressparity.IngressEntry) {
 	t.Helper()
 	requireHelmForIngressJourney(t)
 
 	f := newSpecFixture(t)
 	allRoutes := f.srv.Routes()
-	var participant []apispec.Route
+
+	// V(I15)-4, route-table half: an empty PARTICIPANT subset would make
+	// the forward assertion vacuously pass (nothing to check) — the same
+	// "green because broken" failure mode ADR-0021 C4 warns about for I14's
+	// own V8 discipline. Checked here (not by pre-filtering the slice
+	// CoverageDiff receives — see the R2-F1 note above for why that's the
+	// bug this replaced) so a silent extraction failure still fails loud,
+	// exactly once, before either subtest runs.
+	participantCount := 0
 	for _, rt := range allRoutes {
 		if rt.Audience == apispec.AudienceParticipant {
-			participant = append(participant, rt)
+			participantCount++
 		}
 	}
-	// V(I15)-4, route-table half: an empty extraction here would make every
-	// forward/reverse assertion below vacuously pass (nothing to check),
-	// exactly the "green because broken" failure mode ADR-0021 C4 warns
-	// about for I14's own V8 discipline — fail loud instead.
-	if len(participant) == 0 {
+	if participantCount == 0 {
 		t.Fatalf("scoreboard.Handler.Routes() contains 0 AudienceParticipant routes out of %d total — extraction is broken (or every participant route lost its audience label), not \"nothing to check\"", len(allRoutes))
 	}
 
@@ -88,7 +106,7 @@ func participantRoutesAndIngressPaths(t *testing.T) ([]apispec.Route, []ingressp
 	if len(entries) == 0 {
 		t.Fatal("ingressparity.LoadIngressEntries returned 0 path entries for a non-empty journeyHost — charts/scoreboard/templates/ingress-journey.yaml rendered nothing; extraction is broken, not \"nothing to compare\"")
 	}
-	return participant, entries
+	return allRoutes, entries
 }
 
 // TestI15_IngressJourneyRouteCoverage is ADR-0021's main blocking gate:
@@ -98,9 +116,13 @@ func participantRoutesAndIngressPaths(t *testing.T) ([]apispec.Route, []ingressp
 // green IS Verification V(I15)-5 case 1 (the real-chart baseline; cases
 // 2-5, all synthetic-input, live in
 // internal/apispec/ingressparity/coverage_test.go).
+//
+// CoverageDiff is given the FULL route table (allRoutes), never a
+// participant-only pre-filter — see allRoutesAndIngressPaths' doc (R2-F1)
+// for why a pre-filtered slice structurally disables the reverse check.
 func TestI15_IngressJourneyRouteCoverage(t *testing.T) {
-	participant, entries := participantRoutesAndIngressPaths(t)
-	uncovered, foreign := ingressparity.CoverageDiff(participant, entries)
+	allRoutes, entries := allRoutesAndIngressPaths(t)
+	uncovered, foreign := ingressparity.CoverageDiff(allRoutes, entries)
 
 	t.Run("forward: every AudienceParticipant route is reachable through the ingress allow-list", func(t *testing.T) {
 		if len(uncovered) > 0 {
