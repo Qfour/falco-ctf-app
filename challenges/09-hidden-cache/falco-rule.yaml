@@ -3,7 +3,11 @@ type: trigger
 expectedRules:
   - Create Hardlink Over Sensitive Files
 # ATT&CK mapping — canonical source for docs/Navigator layer (make gen-attack).
+# ATT&CK v19 (2026-04-28) split TA0005 "Defense Evasion" into "Stealth"
+# (TA0005) and "Defense Impairment" (TA0112, new). T1564 stayed under
+# Stealth — verified attack.mitre.org (ADR-0024). techniqueId/Name
+# unchanged, tactic label only.
 attack:
-  tactic: "Defense Evasion"
+  tactic: "Stealth"
   techniqueId: "T1564"
   techniqueName: "Hide Artifacts"

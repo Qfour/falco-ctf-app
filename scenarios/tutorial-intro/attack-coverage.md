@@ -11,12 +11,12 @@
 |---|---|---|---|---|
 | 00 | チュートリアル (遊び方 / 0問目) | Execution | `T1059.004` | Command and Scripting Interpreter: Unix Shell |
 | 01 | Initial Recon | Discovery | `T1613` | Container and Resource Discovery |
-| 03 | Stealth Read | Defense Evasion | `T1564` | Hide Artifacts |
+| 03 | Stealth Read | Stealth | `T1564` | Hide Artifacts |
 
 ## 宣言 tactics (scenario.yaml) との一致
 
-宣言: Execution, Discovery, Defense Evasion
+宣言: Execution, Discovery, Stealth
 
-実際: Execution, Discovery, Defense Evasion
+実際: Execution, Discovery, Stealth
 
 一致 (advisory チェック済み — 詳細は `make gen-attack` の標準出力)。

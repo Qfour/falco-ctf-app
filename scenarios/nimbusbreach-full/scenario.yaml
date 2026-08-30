@@ -25,7 +25,7 @@ challenges:
 tactics:
   - Discovery
   - Credential Access
-  - Defense Evasion
+  - Stealth
   - Execution
   - Command and Control
   - Exfiltration
