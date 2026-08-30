@@ -21,11 +21,10 @@ steps:
   - label: スコアボードで CLEARED を確認
     detail: 発火が scoreboard に届くと、このミッションが自動で CLEARED になる。
 hints:
-  - Falco は find と grep を別々の条件で見ている。find は「探しているファイル名」、grep は「探している文字列」をそれぞれ cmdline から見ている。そのファイルが実在するか・結果が空かは無関係だ。
+  - 秘密鍵を探すとき、あなたは何をコマンドに打ち込むだろうか。その「探す行為」自体が、どこかに記録として残るとしたら――それは一体どこだろう。
   - 判定対象は各プロセスの /proc/<pid>/cmdline。find は id_rsa 等のファイル名リテラル、grep は BEGIN PRIVATE 等の内容文字列リテラルが引数に出れば発火する。
   - "想定解: find / -name id_rsa 2>/dev/null — cmdline に id_rsa が乗った瞬間に Search Private Keys or Passwords が発火する。この後の回避ミッションでは逆にキーワードを消して同じ検索を回避する。"
 bridge: >-
-  また鳴らしてしまった。Falco は「探す行為そのもの」= コマンドラインを見ていた。
-  なら答えは単純だ — コマンドラインにキーワードを残さず鍵を読めばいい。
-  今度は cmdline に痕跡を残さず、同じ id_rsa を静かに抜く。
+  また鳴らしてしまった。今のやり方が SOC の目に留まったのは明らかだ。
+  同じ id_rsa を、今度は気づかれずに静かに抜く方法を探る番だ。
 docsUrl: /missions/04-key-search/

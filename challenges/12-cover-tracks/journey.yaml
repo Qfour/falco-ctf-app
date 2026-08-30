@@ -23,7 +23,7 @@ steps:
   - label: スコアボードで CLEARED を確認
     detail: 発火が scoreboard に届くと、このミッションが自動で CLEARED になる。
 hints:
-  - ログファイルを「消す」ときに使うシェル操作は何か。上書きリダイレクト (>) を試してみよう。
+  - 侵入者はログの中身をまるごと消したい。シェルには、ファイルを開き直して中身を空にしてから書き込む操作があるはずだ。それは何だろうか。
   - パスが /var/log 配下でなくても、ファイル名が auth.log / syslog のような定番の名前なら検知対象になる (どちらか一方で十分)。
   - "想定解: echo pwned > /var/log/whatever123.txt — O_TRUNC (上書きモード) での書き込みが条件。追記 (>>) だけでは発火しない。"
 docsUrl: /missions/12-cover-tracks/

@@ -18,7 +18,7 @@ steps:
   - label: スコアボードで CLEARED を確認
     detail: 発火が scoreboard に届くと、このミッションが自動で CLEARED になる。
 hints:
-  - K8s API Server の in-cluster アドレスは kubernetes.default.svc。まずそこへ HTTP で触ってみよう。
+  - Pod の中からは、クラスタを管理しているコンポーネントに何の設定もなく届く、決まった内部アドレスが用意されている。それはどこだろうか。
   - curl か wget で十分。TLS 検証は無視 (-k / --no-check-certificate) してよい。認証成功は不要。
   - "想定解: curl -sk https://kubernetes.default.svc/api — connect した瞬間に Contact K8S API Server From Container が発火する。"
 bridge: >-
