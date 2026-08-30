@@ -20,7 +20,7 @@ steps:
   - label: スコアボードで CLEARED を確認
     detail: 発火が scoreboard に届くと、このミッションが自動で CLEARED になる。
 hints:
-  - シェル起動が怪しいかは親プロセスが何かで決まる。httpd や nginx がシェルを起こしたら Falco は異常と見なす。
+  - シェルの起動自体はどのプロセスからでも起こる、ありふれた操作だ。では、正常な起動と攻撃者による起動を、何から見分けられるのだろうか。
   - カーネルは proc.pname を実行ファイルの basename から決める。"httpd" という名前の実行ファイルを置き、その中からシェルを起こせばよい。
   - "想定解: sh /opt/ctf/missions/06-web-rce-shell/fixtures/fake-httpd.sh — /tmp/httpd (comm=httpd) から /bin/sh を起こし発火。別名で動かすと親 comm が変わり発火しない点は、この先の回避ミッションでも使える種になる。"
 bridge: >-

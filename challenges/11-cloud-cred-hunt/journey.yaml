@@ -20,7 +20,7 @@ steps:
   - label: スコアボードで CLEARED を確認
     detail: 発火が scoreboard に届くと、このミッションが自動で CLEARED になる。
 hints:
-  - クラウド侵害の初動は「この箱からクラウドへ行ける鍵はないか」。AWS の長期資格情報は決まった場所 (.aws 配下) に平文で置かれる。その「漁る」コマンド自体を Falco が見ている。
+  - クラウド侵害の初動は「この箱からクラウドへ行ける鍵はないか」を探すことだ。AWS の長期資格情報は、慣習的にどこに平文で置かれているだろうか。
   - grep 系コマンドの引数に AWS キーの語 (aws_secret_access_key など) を含めるか、find の引数を .aws/credentials で終わらせる。実ファイルの有無に関わらずコマンドの形で発火する。
   - "想定解: grep -r aws_secret_access_key ~/.aws/  もしくは  find ~ -path '*.aws/credentials' — cmdline が Find AWS Credentials の条件に一致した瞬間に発火。実クラウド脅威検知は Sysdig のクラウドコネクタ (CDR/CSPM) が面で担う。"
 docsUrl: /missions/11-cloud-cred-hunt/

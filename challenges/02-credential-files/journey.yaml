@@ -24,6 +24,5 @@ hints:
   - "想定解: cat /etc/shadow — 開いた瞬間に Read sensitive file untrusted が発火する。path 文字列で判定している点を覚えておくと、この先の回避ミッションで効いてくる。"
 bridge: >-
   盛大にアラートを鳴らしてしまった — SOC はもうこちらを見ている。だが今のは「正面から
-  読んだ」から光った。Falco が path 文字列で見ているなら、同じ shadow を別の道から
-  読めば気づかれない。今度は静かにやり直す番だ。
+  読んだ」から光ったに過ぎない。同じ shadow をもう一度、今度は静かに読み直す番だ。
 docsUrl: /missions/02-credential-files/
