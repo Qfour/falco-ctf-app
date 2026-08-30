@@ -22,7 +22,11 @@ expectedFlag: FALCO{dev-silent-search}
 # exact match for `cat < id_rsa` evading the forbidden rule's proc.args match.
 # (Not the T1027 parent: that's about obfuscating file/payload content, a
 # different mechanism than obfuscating the command invocation itself.)
+# ATT&CK v19 (2026-04-28) split TA0005 "Defense Evasion" into "Stealth"
+# (TA0005) and "Defense Impairment" (TA0112, new). T1027.010 stayed under
+# Stealth — verified attack.mitre.org (ADR-0024). techniqueId/Name
+# unchanged, tactic label only.
 attack:
-  tactic: "Defense Evasion"
+  tactic: "Stealth"
   techniqueId: "T1027.010"
   techniqueName: "Command Obfuscation"

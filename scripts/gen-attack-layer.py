@@ -35,7 +35,13 @@ import sys
 # --- config -----------------------------------------------------------------
 # ATT&CK Enterprise version the mappings were authored against. Bump together
 # with any technique-id review. navigatorVersion tracks the layer schema.
-ATTACK_VERSION = "15"
+# v15 -> v19 bump: ADR-0024 (2026-08-31) — TA0005 "Defense Evasion" split into
+# "Stealth" (TA0005) and "Defense Impairment" (TA0112, new) in v19
+# (2026-04-28). All 14 challenges' techniqueIds re-verified against
+# attack.mitre.org before this bump (03/05/09/12 affected; 12 also needed a
+# techniqueId remap, T1070.002 -> T1685.006 — see the challenge's
+# falco-rule.yaml comment).
+ATTACK_VERSION = "19"
 NAVIGATOR_VERSION = "4.9.5"
 LAYER_VERSION = "4.5"
 DOMAIN = "enterprise-attack"

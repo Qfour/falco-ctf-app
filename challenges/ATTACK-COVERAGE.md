@@ -3,7 +3,7 @@
 
 # ATT&CK カバレッジ — CTF Company killchain
 
-MITRE ATT&CK Enterprise (v15) 対応表。Navigator レイヤは `attack-navigator-layer.json`。
+MITRE ATT&CK Enterprise (v19) 対応表。Navigator レイヤは `attack-navigator-layer.json`。
 
 ## カバーする Tactic / Technique
 
@@ -12,16 +12,16 @@ MITRE ATT&CK Enterprise (v15) 対応表。Navigator レイヤは `attack-navigat
 | 00 | チュートリアル (遊び方 / 0問目) | Execution | `T1059.004` | Command and Scripting Interpreter: Unix Shell |
 | 01 | Initial Recon | Discovery | `T1613` | Container and Resource Discovery |
 | 02 | Credential Files | Credential Access | `T1003.008` | OS Credential Dumping: /etc/passwd and /etc/shadow |
-| 03 | Stealth Read | Defense Evasion | `T1564` | Hide Artifacts |
+| 03 | Stealth Read | Stealth | `T1564` | Hide Artifacts |
 | 04 | Key Search | Credential Access | `T1552.001` | Unsecured Credentials: Credentials In Files |
-| 05 | Silent Search | Defense Evasion | `T1027.010` | Command Obfuscation |
+| 05 | Silent Search | Stealth | `T1027.010` | Command Obfuscation |
 | 06 | Web RCE Shell | Execution | `T1059.004` | Command and Scripting Interpreter: Unix Shell |
 | 07 | Persist | Execution | `T1204.002` | User Execution: Malicious File |
 | 08 | C2 Beacon | Command and Control | `T1095` | Non-Application Layer Protocol |
-| 09 | Hidden Cache | Defense Evasion | `T1564` | Hide Artifacts |
+| 09 | Hidden Cache | Stealth | `T1564` | Hide Artifacts |
 | 10 | The Final Exfil (Boss) | Exfiltration | `T1041` | Exfiltration Over C2 Channel |
 | 11 | Cloud Cred Hunt (クラウド脅威検知・疑似版 / bonus) | Credential Access | `T1552.001` | Unsecured Credentials: Credentials In Files |
-| 12 | Cover Tracks (ログ消去検知 / bonus) | Defense Evasion | `T1070.002` | Indicator Removal: Clear Linux or Mac System Logs |
+| 12 | Cover Tracks (ログ消去検知 / bonus) | Defense Impairment | `T1685.006` | Disable or Modify Tools: Clear Linux or Mac System Logs |
 | 13 | Archive Loot (収集データの圧縮検知 / bonus) | Collection | `T1560.001` | Archive Collected Data: Archive via Utility |
 
 ## 意図的に扱わない領域 (カバレッジの穴)

@@ -15,7 +15,11 @@ expectedFlag: FALCO{dev-stealth-read}
 # alternate path. Remapped to the T1564 parent (platform includes Linux):
 # reaching /etc/shadow via /proc/self/root/... to stay off the path-string
 # monitor's radar is "hiding an artifact of behavior to evade detection".
+# ATT&CK v19 (2026-04-28) split TA0005 "Defense Evasion" into "Stealth"
+# (TA0005) and "Defense Impairment" (TA0112, new). T1564 stayed under
+# Stealth — verified attack.mitre.org (ADR-0024). techniqueId/Name
+# unchanged, tactic label only.
 attack:
-  tactic: "Defense Evasion"
+  tactic: "Stealth"
   techniqueId: "T1564"
   techniqueName: "Hide Artifacts"
