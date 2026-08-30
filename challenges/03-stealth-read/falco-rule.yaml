@@ -7,11 +7,15 @@ forbiddenRules:
 # the ctf-user chart's dev default so local end-to-end submit passes.
 expectedFlag: FALCO{dev-stealth-read}
 # ATT&CK mapping — canonical source for docs/Navigator layer (make gen-attack).
-# T1006: evade twin of 02. Reaching /etc/shadow via /proc/self/root/... bypasses
-# the path-string file monitor — accessing the same data through an alternate path
-# to defeat file-access monitoring is Direct Volume Access. (T1622 Debugger Evasion
-# is unrelated: this evades a Falco file rule, not a debugger.)
+# T1006 (previous mapping) is Network Devices/Windows only on attack.mitre.org —
+# no Linux platform, so it cannot describe this procfs technique. Checked Linux
+# Hide Artifacts sub-techniques for a closer fit: T1564.001 (hidden files/dirs),
+# T1564.005 (separate hidden filesystem), T1564.013 (bind-mount over /proc to
+# hide a process from ps/top) — none model reading an existing file via an
+# alternate path. Remapped to the T1564 parent (platform includes Linux):
+# reaching /etc/shadow via /proc/self/root/... to stay off the path-string
+# monitor's radar is "hiding an artifact of behavior to evade detection".
 attack:
   tactic: "Defense Evasion"
-  techniqueId: "T1006"
-  techniqueName: "Direct Volume Access"
+  techniqueId: "T1564"
+  techniqueName: "Hide Artifacts"

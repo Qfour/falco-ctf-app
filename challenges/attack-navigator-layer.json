@@ -16,10 +16,10 @@
       "enabled": true
     },
     {
-      "techniqueID": "T1082",
+      "techniqueID": "T1613",
       "score": 100,
       "color": "#e60d0d",
-      "comment": "01-initial-recon Initial Recon — System Information Discovery",
+      "comment": "01-initial-recon Initial Recon — Container and Resource Discovery",
       "enabled": true
     },
     {
@@ -30,10 +30,10 @@
       "enabled": true
     },
     {
-      "techniqueID": "T1006",
+      "techniqueID": "T1564",
       "score": 100,
       "color": "#e60d0d",
-      "comment": "03-stealth-read Stealth Read — Direct Volume Access",
+      "comment": "03-stealth-read Stealth Read — Hide Artifacts; 09-hidden-cache Hidden Cache — Hide Artifacts",
       "enabled": true
     },
     {
@@ -44,10 +44,10 @@
       "enabled": true
     },
     {
-      "techniqueID": "T1202",
+      "techniqueID": "T1027.010",
       "score": 100,
       "color": "#e60d0d",
-      "comment": "05-silent-search Silent Search — Indirect Command Execution",
+      "comment": "05-silent-search Silent Search — Command Obfuscation",
       "enabled": true
     },
     {
@@ -62,13 +62,6 @@
       "score": 100,
       "color": "#e60d0d",
       "comment": "08-c2-beacon C2 Beacon — Non-Application Layer Protocol",
-      "enabled": true
-    },
-    {
-      "techniqueID": "T1564",
-      "score": 100,
-      "color": "#e60d0d",
-      "comment": "09-hidden-cache Hidden Cache — Hide Artifacts",
       "enabled": true
     },
     {

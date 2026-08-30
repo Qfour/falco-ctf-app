@@ -10,8 +10,8 @@
 | # | Mission | Tactic | Technique | Technique 名 |
 |---|---|---|---|---|
 | 00 | チュートリアル (遊び方 / 0問目) | Execution | `T1059.004` | Command and Scripting Interpreter: Unix Shell |
-| 01 | Initial Recon | Discovery | `T1082` | System Information Discovery |
-| 03 | Stealth Read | Defense Evasion | `T1006` | Direct Volume Access |
+| 01 | Initial Recon | Discovery | `T1613` | Container and Resource Discovery |
+| 03 | Stealth Read | Defense Evasion | `T1564` | Hide Artifacts |
 
 ## 宣言 tactics (scenario.yaml) との一致
 

@@ -4,7 +4,12 @@ expectedRules:
   - Contact K8S API Server From Container
 # ATT&CK mapping — canonical source for docs/Navigator layer (make gen-attack).
 # Consumed only by scripts/gen-attack-layer.py; catalog.go ignores unknown keys.
+# T1613: rule fires on connect() to the in-cluster K8s API Server from a container
+# with no known-good caller. T1082 (previous mapping) has no Containers platform
+# and describes host/OS profiling, not API-server reachability. T1613's platform
+# is Containers and its own definition names Kubernetes APIs as the example
+# vector — the exact fit (verified attack.mitre.org).
 attack:
   tactic: "Discovery"
-  techniqueId: "T1082"
-  techniqueName: "System Information Discovery"
+  techniqueId: "T1613"
+  techniqueName: "Container and Resource Discovery"
