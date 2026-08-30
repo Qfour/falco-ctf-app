@@ -14,15 +14,22 @@ steps:
     detail: /root/.ssh/id_rsa に postStart で秘密鍵が配置されている。
   - label: cmdline に痕跡を残さず読む
     detail: |
-      NG: cat /root/.ssh/id_rsa           (cmdline に id_rsa が残り発火)
-      コマンドライン引数にファイル名を出さずに、同じファイルの中身をシェルへ渡す
-      仕組みがある。シェルの入出力の繋ぎ方を思い出そう。
+      現状の Search Private Keys or Passwords は grep/egrep/fgrep が BEGIN PRIVATE
+      等の文字列を含む場合、または find が id_rsa 等のファイル名を含む場合にのみ
+      発火する条件になっており、素の cat /root/.ssh/id_rsa 単体ではこのルールを
+      発火させない。だが CLEARED はそれだけでは成立しない — このミッションは
+      「入力リダイレクトで鍵を読んだ」ことを示す positive-proof ルール (Shell
+      Redirected Private Key Read) の発火を別途要求している。コマンドライン引数に
+      ファイル名を出さずに、同じファイルの中身をシェルへ渡す仕組みを使おう。
+      シェルの入出力の繋ぎ方を思い出そう。
   - label: flag を提出
     detail: 鍵の中身に埋め込まれた FALCO{...} を下のフォームから提出する。
 hints:
   - コマンドライン引数にファイル名を出さずにファイルを読む方法を考えよう。
-  - シェルの入力リダイレクト `<` を使うと、exec される cmdline は引数を含まない。
-  - "想定解: cat < /root/.ssh/id_rsa | grep FALCO / xxd < /root/.ssh/id_rsa。fork-exec された cat の /proc/<pid>/cmdline は \"cat\" のみになる。"
+  - シェルの入力リダイレクト `<` を使うと、exec される cmdline は引数を含まない —
+    このミッションは、その技法を実際に使ったことを示す positive-proof ルールの
+    発火を CLEARED の条件にしている。
+  - "想定解: cat < /root/.ssh/id_rsa | grep FALCO / xxd < /root/.ssh/id_rsa。シェルが redirection でファイルを開くイベント自体が Shell Redirected Private Key Read を発火させ、これが技法を使った証明になる。fork-exec された cat の /proc/<pid>/cmdline は \"cat\" のみになる。"
 bridge: >-
   鍵を静かに手に入れた。ここからが本題 — 盗んだ資格情報で別のサービスへ横展開する。
   CTF Company の Web サーバには RCE がある。Web プロセスに化けてシェルを起こしにいく。
