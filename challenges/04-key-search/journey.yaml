@@ -13,13 +13,16 @@ steps:
     detail: 攻撃者は shadow の次に SSH 秘密鍵や API キーを探す。ルールはその検索コマンドを見ている。
   - label: 鍵っぽいキーワードをコマンドラインに出す
     detail: |
-      find や grep で鍵っぽい名前 (id_rsa 等) や PRIVATE KEY 文字列を検索してみよう。
-      それらが cmdline に乗れば発火する。実在しない path でも、結果が空でも構わない。
+      find はファイル名の完全一致リテラル (id_rsa / id_dsa / id_ed25519 /
+      id_ecdsa)、grep/egrep/fgrep は BEGIN PRIVATE 等の内容文字列リテラルを
+      cmdline に含むかで、それぞれ別々の条件として判定される。
+      find /tmp -name id_rsa のようにキーワードが cmdline に乗れば発火する。
+      実在しない path でも、結果が空でも構わない。
   - label: スコアボードで CLEARED を確認
     detail: 発火が scoreboard に届くと、このミッションが自動で CLEARED になる。
 hints:
-  - Falco は find / grep で「鍵っぽい名前」を探すコマンドラインを見ている。そのファイルが実在するか・結果が空かは無関係だ。
-  - 判定対象は各プロセスの /proc/<pid>/cmdline。引数に鍵のキーワードが出れば発火する。
+  - Falco は find と grep を別々の条件で見ている。find は「探しているファイル名」、grep は「探している文字列」をそれぞれ cmdline から見ている。そのファイルが実在するか・結果が空かは無関係だ。
+  - 判定対象は各プロセスの /proc/<pid>/cmdline。find は id_rsa 等のファイル名リテラル、grep は BEGIN PRIVATE 等の内容文字列リテラルが引数に出れば発火する。
   - "想定解: find / -name id_rsa 2>/dev/null — cmdline に id_rsa が乗った瞬間に Search Private Keys or Passwords が発火する。この後の回避ミッションでは逆にキーワードを消して同じ検索を回避する。"
 bridge: >-
   また鳴らしてしまった。Falco は「探す行為そのもの」= コマンドラインを見ていた。

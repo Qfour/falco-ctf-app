@@ -16,10 +16,14 @@ fake openssh-key (`plant.sh` が配置) 中に `FALCO{...}` を埋め込み。
 ## 想定解
 
 ```bash
-# NG (cmdline に id_rsa を含む):
-cat /root/.ssh/id_rsa                # 発火
+# 現状 (deployed) の Search Private Keys or Passwords は grep/find の cmdline
+# リテラル一致のみを条件にしており、cat 単体ではこのルールを発火させない。
+# だが正規の想定解ではない — このミッションは「入力リダイレクトで鍵を読んだ」
+# ことを示す positive-proof ルール (Shell Redirected Private Key Read) の発火を
+# CLEARED の条件にしている (ADR-0008)。
+cat /root/.ssh/id_rsa                # forbidden は発火しないが CLEARED しない
 
-# OK (入力リダイレクト — exec'd cmdline は "cat" のみ):
+# 正規の想定解 (入力リダイレクト — exec'd cmdline は "cat" のみ):
 cat < /root/.ssh/id_rsa | grep FALCO
 xxd < /root/.ssh/id_rsa
 od -c < /root/.ssh/id_rsa | tail
@@ -27,6 +31,8 @@ od -c < /root/.ssh/id_rsa | tail
 
 shell の `<` でファイルを開き stdin に渡すと、fork-exec された `cat`
 の `/proc/<pid>/cmdline` は `cat` のみ — 引数に id_rsa は出ない。
+シェルが redirection でファイルを open するイベント自体が Shell
+Redirected Private Key Read を発火させ、これが技法を使った証明になる。
 
 ## 解説
 
