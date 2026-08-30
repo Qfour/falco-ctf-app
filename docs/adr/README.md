@@ -31,6 +31,19 @@
 | [0021](0021-ingress-participant-route-coverage-gate.md) | scoreboard 単一起点 ingress の participant allow-list を機械検査する新規 Hard Invariant (I15) (Issue #238) | **Accepted** | `internal/apispec/ingressparity` (test-only) が `scoreboard.Handler.Routes()` の `AudienceParticipant` 集合と `helm template charts/scoreboard` がレンダリングする `ingress-journey.yaml` の participant allow-list を双方向比較 (#95/#235 の欠陥クラスの機械ゲート)。提案 I15 | **D2 の Exact エントリに関する記述** (reverse audience 混入検査を Prefix のみに限定していた部分) を [0022](0022-ingress-exact-entry-audience-mixing-gate.md) が限定 supersede (D1/D3/D4・CI 配線・V(I15)-1/4/5 は無傷) |
 | [0022](0022-ingress-exact-entry-audience-mixing-gate.md) | I15 の reverse audience 混入検査を Exact エントリにも拡張 (Issue #240、ADR-0021 D2 の限定 supersede) | **Accepted** | `CoverageDiff` の reverse ループから Prefix 限定フィルタを削除し、`covers()` の既存 Exact 分岐 (ADR-0021 D3) をそのまま流用。新規 V(I15)-6 (blocking) を追加、DeadExact (V(I15)-3, advisory) とは排他的に独立。I15 の正典文言を「各 Prefix エントリ」→「各エントリ (Prefix/Exact 問わず)」に更新 | — |
 | [0023](0023-rate-limit-client-ip-cf-connecting-ip.md) | rate-limit キーを `CF-Connecting-IP` 優先に切り替え XFF leftmost 偽装を是正 (クロスリポ契約、Issue #236) | **Accepted** | `ratelimit.ClientIP` を 3 段 fallback (CF-Connecting-IP valid → XFF leftmost → RemoteAddr)、collector が CF-Connecting-IP も strip (D1b、D1 と同一 PR)、platform ingress が prod/vm-prod で `forwarded-for-header: CF-Connecting-IP` 供給。fail-open 維持 + fallback 観測可能化。**Accepted ≠ 脆弱性解消済 (V2 実クラスタ確認まで実質未解消)** | — |
+| [0024](0024-attack-v19-tactic-split-adoption.md) | MITRE ATT&CK v19 の Defense Evasion (TA0005) 分割 (Stealth / Defense Impairment 新設 TA0112) への追従 + version pin bump (Issue #249) | **Accepted** | `tactic: "Defense Evasion"` を使う 4 件 (03/05/09/12) のうち 3 件はラベルのみ `"Stealth"` へ更新、12-cover-tracks は techniqueId 自体を remap。`ATTACK_VERSION` を `"15"` → `"19"` に bump (Navigator layer JSON は tactic を持たないため描画影響なし。既存 14 件全数の v19 有効性を実機確認済み) | — |
+
+## ADR 番号の採番
+
+- ADR の番号は **ファイル名** (`docs/adr/NNNN-<slug>.md`) で決まる。本文の
+  `# ADR-NNNN` ヘッダはファイル名と一致させる。
+- 新規 ADR を書くときは `make check-adr` を実行し、標準出力の
+  「Next free ADR number」を採番に使う (既存最大 + 1。予約済み欠番
+  (例: ADR-0009) を自動では埋めない — 意図的な予約はそのままにする)。
+- CI (`flag-guard` job、`scripts/check-adr-numbers.sh`) が (a) 番号重複、
+  (b) ファイル名とヘッダの不一致、(c) この索引への掲載漏れ、を機械的に
+  検査し fail-closed で block する。この節冒頭の「ADR を新設したらこの
+  索引に 1 行追加する」規律は、以後は人手の記憶ではなく CI が強制する。
 
 ## 規律（ADR-0003 / ADR-0001 で確立したもの）
 

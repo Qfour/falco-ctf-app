@@ -17,7 +17,7 @@ SYSDIG_URL   ?= https://app.au1.sysdig.com
 # host repo are not shared into the VM.
 GO_IMAGE ?= golang:1.26-alpine
 
-.PHONY: help dev dev-down build push load-colima deploy-local helm-dep-build lint check-seccomp check-flag-isolation check-namespace-ownership check-image-hygiene test tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-template-hex check-rules check-freshness clean scan
+.PHONY: help dev dev-down build push load-colima deploy-local helm-dep-build lint check-seccomp check-flag-isolation check-namespace-ownership check-image-hygiene test tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-template-hex check-rules check-freshness check-adr clean scan
 
 help:
 	@echo "Targets:"
@@ -44,6 +44,7 @@ help:
 	@echo "  check-template-hex — fail if a raw hex color literal appears in view/templates/*.html (app#116 — single design-token source is static/tokens.css)"
 	@echo "  check-rules     — fail if a challenge references a non-existent Falco rule"
 	@echo "  check-freshness — fail if a Dockerfile base image cycle is past EOL (needs network)"
+	@echo "  check-adr       — fail on ADR number collisions, filename/header drift, or docs/adr/README.md index gaps (#181); prints the next free ADR number on success"
 	@echo "  scan            — sysdig-cli-scanner on all built images (SYSDIG_SECURE_API_TOKEN required)"
 	@echo "  clean           — remove built images locally"
 
@@ -182,6 +183,9 @@ check-rules:
 
 check-freshness:
 	./scripts/check-freshness.sh
+
+check-adr:
+	./scripts/check-adr-numbers.sh
 
 scan: build
 	@command -v sysdig-cli-scanner >/dev/null 2>&1 || \

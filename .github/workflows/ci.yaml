@@ -159,8 +159,12 @@ jobs:
   # Flag hygiene: no real flags in the public repo + generated values in sync
   # + design-token single-source check (app#116 — no raw hex color literal
   # in internal/scoreboard/view/templates/*.html; a red run here is a
-  # design-token hygiene failure, NOT a flag leak — the two checks share
-  # this job for CI-job-count economy, not because they're the same risk).
+  # design-token hygiene failure, NOT a flag leak)
+  # + ADR number/index hygiene (#181 — duplicate ADR numbers, filename/header
+  # drift, docs/adr/README.md index gaps; unrelated to flags or design
+  # tokens). All three checks share this job for CI-job-count economy and
+  # because it's already a required check, not because they're the same
+  # risk category.
   # Branch protection check: "flag-guard"
   # ------------------------------------------------------------------
   flag-guard:
@@ -171,6 +175,8 @@ jobs:
         run: ./scripts/check-flags.sh
       - name: design-token single-source (app#116 — no raw hex in view/templates/*.html)
         run: ./scripts/check-template-hex.sh
+      - name: ADR number / index hygiene (#181)
+        run: ./scripts/check-adr-numbers.sh
 
   # ------------------------------------------------------------------
   # Shell hygiene: shellcheck (-S warning) over every shell script in the repo.
