@@ -10,11 +10,11 @@ MITRE ATT&CK Enterprise (v15) 対応表。Navigator レイヤは `attack-navigat
 | # | Mission | Tactic | Technique | Technique 名 |
 |---|---|---|---|---|
 | 00 | チュートリアル (遊び方 / 0問目) | Execution | `T1059.004` | Command and Scripting Interpreter: Unix Shell |
-| 01 | Initial Recon | Discovery | `T1082` | System Information Discovery |
+| 01 | Initial Recon | Discovery | `T1613` | Container and Resource Discovery |
 | 02 | Credential Files | Credential Access | `T1003.008` | OS Credential Dumping: /etc/passwd and /etc/shadow |
-| 03 | Stealth Read | Defense Evasion | `T1006` | Direct Volume Access |
+| 03 | Stealth Read | Defense Evasion | `T1564` | Hide Artifacts |
 | 04 | Key Search | Credential Access | `T1552.001` | Unsecured Credentials: Credentials In Files |
-| 05 | Silent Search | Defense Evasion | `T1202` | Indirect Command Execution |
+| 05 | Silent Search | Defense Evasion | `T1027.010` | Command Obfuscation |
 | 06 | Web RCE Shell | Execution | `T1059.004` | Command and Scripting Interpreter: Unix Shell |
 | 07 | Persist | Execution | `T1204.002` | User Execution: Malicious File |
 | 08 | C2 Beacon | Command and Control | `T1095` | Non-Application Layer Protocol |

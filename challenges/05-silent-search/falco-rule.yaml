@@ -14,11 +14,15 @@ requireExpectedRuleFire: true
 # Placeholder for local dev/tests. Real flag injected at deploy via FLAGS_FILE.
 expectedFlag: FALCO{dev-silent-search}
 # ATT&CK mapping — canonical source for docs/Navigator layer (make gen-attack).
-# T1202: evade twin of 04. Reading the key via shell input redirection (cat < file)
-# keeps the sensitive arg out of the exec'd cmdline, defeating the cmdline-signature
-# rule — invoking the read indirectly to bypass command-line monitoring is Indirect
-# Command Execution. (T1027 Obfuscated Files is unrelated: nothing is obfuscated.)
+# T1202 (previous mapping) is Windows-only on attack.mitre.org — its definition
+# is specifically Forfiles/pcalua.exe/WSL/Scriptrunner indirection, not shell
+# redirection. T1027.010 Command Obfuscation (platform: Linux/Windows/macOS)
+# explicitly names "input streams" among the tricks used to keep arguments out
+# of a monitored command line, citing stdin-based obfuscation in the wild — an
+# exact match for `cat < id_rsa` evading the forbidden rule's proc.args match.
+# (Not the T1027 parent: that's about obfuscating file/payload content, a
+# different mechanism than obfuscating the command invocation itself.)
 attack:
   tactic: "Defense Evasion"
-  techniqueId: "T1202"
-  techniqueName: "Indirect Command Execution"
+  techniqueId: "T1027.010"
+  techniqueName: "Command Obfuscation"
