@@ -1,8 +1,31 @@
 // Package apispec is the shared plumbing behind ADR-0005 (OpenAPI canon +
 // parity gate): each HTTP-mux-owning binary (scoreboard, collector,
 // auth-policy) exposes its route set as a declarative table (Route), and
-// Register is the ONLY function in this codebase allowed to call
+// NewMux is the ONLY function in this codebase allowed to call
 // http.ServeMux.Handle for such a table-driven package.
+//
+// NewMux OWNS mux construction (task #146 — see its own doc for the full
+// rationale): it builds a fresh *http.ServeMux internally and returns it,
+// rather than taking a caller-supplied mux and mutating it in place the way
+// the former Register(mux, routes) did. That old shape let a second call —
+// `apispec.Register(h.mux, sneakyRoutes)` pasted right after the real
+// `h.routes = apispec.Register(h.mux, declared)` — install a spec-less,
+// origin-guard-less route onto the SAME live production mux while every
+// ADR-0005 V1-V4 check stayed green, because every check reads
+// Handler.Routes() (== h.routes, only the FIRST call's return value); the
+// second call's routes were live on the mux but invisible to every parity
+// check (this codebase's own register_singlecall_test.go pins that exploit).
+// A static assert (TestApispecRegisterSingleCallPerMuxOwningPackage, now
+// renamed for NewMux) closed the gap by detection; NewMux closes it
+// structurally: since NewMux never accepts an existing mux to add routes to,
+// a second call can only ever produce a SECOND, independent *http.ServeMux —
+// there is no operation in this package or in net/http that merges two
+// ServeMux instances together, and staticreg_test.go already bans any direct
+// mux.Handle/HandleFunc call outside this file, so there is no OTHER way to
+// graft more routes onto the real production mux after construction either.
+// Public Register no longer exists in this package at all — "write a second
+// Register call on the same mux" is not merely detected, it does not
+// typecheck (the call has no eligible callee to bind to).
 //
 // Why a table instead of parsing the mux or grepping source: http.ServeMux
 // cannot enumerate its own registered patterns, and literal-grep extraction
@@ -19,12 +42,12 @@
 // can compare a package's ACTUAL registered route set against the spec's
 // DECLARED operation set structurally, never by re-parsing source text.
 //
-// This package holds ONLY Route/Register + the stdlib "net/http" import — no
+// This package holds ONLY Route/NewMux + the stdlib "net/http" import — no
 // YAML parsing, no spec comparison logic. That logic (Spec/LoadSpec/
 // RouteSetDiff/BoolExtParity/StringExtParity/CompareResponse/...) lives in
 // the sibling internal/apispec/specparity package instead, imported ONLY
 // from *_test.go files. Before that split, every production binary that
-// imports this package for Route/Register alone (cmd/auth-policy,
+// imports this package for Route/NewMux alone (cmd/auth-policy,
 // cmd/collector) also pulled specparity's "gopkg.in/yaml.v3" dependency into
 // its OWN build — Go compiles every non-test .go file in a directory as one
 // unit, so a yaml import anywhere in this directory would have widened both
@@ -59,7 +82,7 @@ const (
 )
 
 // Route is one row of a service's declarative route table — the single
-// artifact that BOTH drives http.ServeMux registration (via Register, below)
+// artifact that BOTH drives http.ServeMux registration (via NewMux, below)
 // AND is what the ADR-0005 parity tests compare against docs/openapi-*.yaml.
 // Building the mux from anything other than this slice (e.g. a second,
 // "for documentation only" list) would reopen the exact drift ADR-0005
@@ -153,9 +176,9 @@ type Route struct {
 	// field as unchecked; see the table above for the actual, narrower gap
 	// (the string vs. the real limiter behind it) that IS still unchecked.
 	RateLimit string
-	// Handler is the actual handler Register installs. Left nil in a table
+	// Handler is the actual handler NewMux installs. Left nil in a table
 	// built purely for metadata inspection (e.g. a parity test that never
-	// calls Register) is fine — Register nil-checks before installing.
+	// calls NewMux) is fine — NewMux nil-checks before installing.
 	Handler http.Handler
 }
 
@@ -163,12 +186,12 @@ type Route struct {
 // http.ServeMux.Handle expects.
 func (rt Route) MuxPattern() string { return rt.Method + " " + rt.Pattern }
 
-// Register installs every route in routes that has a non-nil Handler onto
-// mux, and returns exactly that installed subset — the routes list a
-// top-level Handler.Routes() method should store and hand back, so a parity
-// test comparing against docs/openapi-*.yaml sees what the mux ACTUALLY
-// serves, never a second, independently-maintained "what we meant to
-// install" list.
+// NewMux builds a brand-new *http.ServeMux, installs every route in routes
+// that has a non-nil Handler onto it, and returns BOTH the mux and exactly
+// that installed subset — the routes list a top-level Handler.Routes()
+// method should store and hand back, so a parity test comparing against
+// docs/openapi-*.yaml sees what the mux ACTUALLY serves, never a second,
+// independently-maintained "what we meant to install" list.
 //
 // It is the ONLY call site in this codebase allowed to invoke mux.Handle for
 // a table-driven package (ADR-0005 V2's blocking design constraint) —
@@ -178,23 +201,40 @@ func (rt Route) MuxPattern() string { return rt.Method + " " + rt.Pattern }
 // function, so a future route added the old way (bypassing the table) fails
 // the build instead of silently becoming a V1 blind spot.
 //
+// NewMux deliberately does NOT take a *http.ServeMux parameter (task #146,
+// unlike the former Register(mux, routes)): a caller cannot hand it an
+// ALREADY-WIRED production mux and ask for more routes to be added later.
+// Every call starts a fresh mux, so a second call anywhere in a mux-owning
+// package's production code can only ever produce a second, freestanding
+// *http.ServeMux that nothing wires to a listener — it cannot silently graft
+// extra routes onto the mux already stored in h.mux the way a second
+// Register(h.mux, sneakyRoutes) call used to (see the package doc above for
+// the exact exploit this closes). This is the structural half of the fix;
+// internal/apispec/register_singlecall_test.go's
+// TestApispecNewMuxSingleCallPerMuxOwningPackage is the remaining detective
+// half, now guarding against wasted/confusing extra calls and against a
+// call's return value being silently dropped, rather than against a route
+// actually reaching the live mux unnoticed (that class of bug no longer
+// typechecks).
+//
 // A nil Handler is silently skipped rather than passed to mux.Handle (which
 // would panic on a nil handler) — deliberately, so a table built purely for
 // metadata inspection (e.g. a parity test constructing Route values that are
-// never run through Register at all) stays legal. This is NOT a silent
+// never run through NewMux at all) stays legal. This is NOT a silent
 // production hole: before this function returned its installed subset, a
 // production Route entry with Handler == nil would 404 at the mux while its
 // OWN package's Routes() method still listed it — vacuously "documented and
 // implemented" to every ADR-0005 V1-V4 check, because those checks read
-// Routes() directly rather than what Register actually did (5x review,
+// Routes() directly rather than what NewMux actually did (5x review,
 // MEDIUM 1: R1 confirmed no ADR-0005 check goes red for `Handler: nil` on a
 // real route, only the behavioural handler tests do). Every top-level
 // Handler.Routes() method (scoreboard, collector, auth-policy) now returns
-// THIS function's return value, stored at construction time — so "the route
-// set the parity gate checks" and "the route set the mux actually serves"
-// are, structurally, the same slice; a Handler{} literal can no longer drift
-// the two apart by leaving Handler nil.
-func Register(mux *http.ServeMux, routes []Route) []Route {
+// THIS function's second return value, stored at construction time — so "the
+// route set the parity gate checks" and "the route set the mux actually
+// serves" are, structurally, the same slice; a Handler{} literal can no
+// longer drift the two apart by leaving Handler nil.
+func NewMux(routes []Route) (*http.ServeMux, []Route) {
+	mux := http.NewServeMux()
 	installed := make([]Route, 0, len(routes))
 	for _, rt := range routes {
 		if rt.Handler == nil {
@@ -203,5 +243,5 @@ func Register(mux *http.ServeMux, routes []Route) []Route {
 		mux.Handle(rt.MuxPattern(), rt.Handler)
 		installed = append(installed, rt)
 	}
-	return installed
+	return mux, installed
 }

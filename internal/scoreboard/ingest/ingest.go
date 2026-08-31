@@ -52,25 +52,25 @@ func New(grader *scoring.Grader, s *store.Store, logger *slog.Logger, now func()
 }
 
 // Routes returns the ingest package's declarative route table (ADR-0005
-// V2) — the single artifact apispec.Register loops over AND what the parity
+// V2) — the single artifact apispec.NewMux loops over AND what the parity
 // tests (internal/scoreboard's *_test.go) compare against
 // docs/openapi-scoreboard.yaml.
 //
-// This package deliberately has no Register(mux) method of its own (final
-// review round, requirement 6.1: one used to exist here, calling
+// This package deliberately has no Register(mux)/NewMux method of its own
+// (final review round, requirement 6.1: one used to exist here, calling
 // apispec.Register(mux, h.Routes()) directly — the ONLY place in the
 // repository other than scoreboard.Handler's NewHandler that called
 // apispec.Register in production terms, but it was never actually reached
 // in production: scoreboard.Handler's NewHandler always collects every
-// sub-package's Routes() into one table and calls apispec.Register exactly
+// sub-package's Routes() into one table and calls apispec.NewMux exactly
 // once). Its sole caller was this package's own test file, which now calls
-// apispec.Register(mux, h.Routes()) directly instead — the same call every
-// other package's test/production wiring uses. Keeping a second, only-called-
-// from-tests Register(mux) method around also worked against Requirement 3's
-// "at most one apispec.Register call per mux-owning package" invariant
+// apispec.NewMux(h.Routes()) directly instead — the same call every other
+// package's test/production wiring uses. Keeping a second, only-called-
+// from-tests mux-building method around also worked against Requirement 3's
+// "at most one apispec.NewMux call per mux-owning package" invariant
 // (internal/apispec/register_singlecall_test.go): declaring a
-// `*http.ServeMux` parameter made ingest look mux-owning to the mechanical
-// detector even though it never itself holds one.
+// `*http.ServeMux` field/parameter made ingest look mux-owning to the
+// mechanical detector even though it never itself holds one.
 func (h *Handler) Routes() []apispec.Route {
 	// "falco_events" (ADR-0023 V5 caller label): this route is never
 	// Cloudflare-routed (ADR-0023 D5 — falcosidekick calls it internally),

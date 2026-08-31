@@ -312,7 +312,7 @@ func (h *Handler) og(next http.Handler) http.Handler {
 
 // Routes returns the api package's declarative route table (ADR-0005 V2) —
 // the single artifact scoreboard.Handler's NewHandler feeds into
-// apispec.Register, and (via that same call's return value) what the parity
+// apispec.NewMux, and (via that same call's return value) what the parity
 // tests (internal/scoreboard's *_test.go) compare against
 // docs/openapi-scoreboard.yaml. Every route's OriginGuarded /
 // CollectorForward value below is repeated, unchanged, from the per-route
@@ -320,11 +320,12 @@ func (h *Handler) og(next http.Handler) http.Handler {
 // og's doc for the general shape of the asymmetry and each entry below for
 // the route-specific reasoning.
 //
-// This package deliberately has no Register(mux) method of its own (LOW, 5x
-// review: one used to exist here, calling apispec.Register(mux, h.Routes())
-// directly, but nothing in this codebase — production or test — ever called
-// it; scoreboard.Handler's NewHandler always collects every sub-package's
-// Routes() into one table and calls apispec.Register exactly once). A
+// This package deliberately has no Register(mux)/NewMux method of its own
+// (LOW, 5x review: one used to exist here, calling apispec.Register(mux,
+// h.Routes()) directly, but nothing in this codebase — production or test —
+// ever called it; scoreboard.Handler's NewHandler always collects every
+// sub-package's Routes() into one table and calls apispec.NewMux exactly
+// once). A
 // second, unused registration entry point contradicted I14's "single
 // registration path" claim on its face, even though it happened to be dead;
 // it was removed rather than documented as test-only, since it had no test

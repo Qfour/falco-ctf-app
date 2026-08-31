@@ -75,7 +75,6 @@ func NewHandler(cfg Config, logger *slog.Logger) *Handler {
 				DisableCompression:  true,
 			},
 		},
-		mux:      http.NewServeMux(),
 		adminSet: make(map[string]struct{}, len(cfg.AdminEmails)),
 	}
 	for _, e := range cfg.AdminEmails {
@@ -85,10 +84,13 @@ func NewHandler(cfg Config, logger *slog.Logger) *Handler {
 		}
 		h.adminSet[e] = struct{}{}
 	}
-	// declared is the DESIRED table; h.routes below becomes apispec.Register's
-	// RETURN value, not this slice itself (MEDIUM 1, 5x review — see
-	// route.go's Register doc): that is what makes Routes() report exactly
-	// what the mux serves, never a route a future edit left Handler: nil on.
+	// declared is the DESIRED table; h.mux/h.routes below become apispec.
+	// NewMux's RETURN values, not a pre-built mux + this slice itself
+	// (MEDIUM 1, 5x review — see route.go's NewMux doc): that is what makes
+	// Routes() report exactly what the mux serves, never a route a future
+	// edit left Handler: nil on. NewMux (task #146) also owns mux
+	// construction, so there is no separately-constructed mux variable this
+	// declared table could be pointed at instead of the real one.
 	declared := []apispec.Route{
 		{
 			Method: "GET", Pattern: "/healthz",
@@ -115,12 +117,12 @@ func NewHandler(cfg Config, logger *slog.Logger) *Handler {
 			Handler: http.HandlerFunc(h.checkAdmin),
 		},
 	}
-	h.routes = apispec.Register(h.mux, declared)
+	h.mux, h.routes = apispec.NewMux(declared)
 	return h
 }
 
 // Routes returns the route set this Handler ACTUALLY registered onto its
-// mux (ADR-0005 V2) — exactly apispec.Register's return value from
+// mux (ADR-0005 V2) — exactly apispec.NewMux's second return value from
 // NewHandler, for the parity test (server_test.go) to compare against
 // docs/openapi-auth-policy.yaml. Returns a copy (MEDIUM 5, 5x review):
 // callers must not be able to mutate this Handler's live route table by
