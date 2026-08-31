@@ -18,6 +18,7 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/api"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/detect"
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/ingest"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/scoring"
 	"github.com/Qfour/falco-ctf-app/internal/serverutil"
 	"github.com/Qfour/falco-ctf-app/internal/store"
@@ -113,6 +114,28 @@ func main() {
 	//     added, which the single-origin portal host must also be passed to
 	//     — see charts/ctf-user/values.yaml ttyd.frameAncestors).
 	portalTtydSuffix := serverutil.Env("PORTAL_TTYD_SUFFIX", "")
+	// FALCO_WEBHOOK_SHARED_SECRET / WEBHOOK_SECRET_MODE (ADR-WS-0006 Layer
+	// 2, "実装引き渡し (software-engineer)" section): a static shared-secret
+	// header falcosidekick's customHeaders config attaches to every
+	// POST /falco/events, checked in constant time by
+	// internal/scoreboard/ingest before RecordRuleFire/OnRuleFire ever run.
+	// off (the default) reproduces today's behaviour exactly, so this ships
+	// harmlessly independent of the paired platform PR (workspace#26) that
+	// starts sending the header — sequencing between the two app/platform
+	// PRs is NOT required (ADR-WS-0006 rollout step 4). warn/enforce are an
+	// operator opt-in performed AFTER the platform side is live, and only
+	// after warn has shown zero mismatches on genuine traffic for a full CTF
+	// session. An unrecognised WEBHOOK_SECRET_MODE is a misconfiguration,
+	// not something to silently coerce to "off" (an operator who thinks
+	// enforce is protecting them must not discover otherwise from a typo) —
+	// fail loud here, at boot, same posture as DETECT_RUNNER=k8s's required
+	// envs above.
+	webhookSharedSecret := serverutil.Env("FALCO_WEBHOOK_SHARED_SECRET", "")
+	webhookSecretMode, err := ingest.ParseSecretMode(serverutil.Env("WEBHOOK_SECRET_MODE", string(ingest.SecretModeOff)))
+	if err != nil {
+		logger.Error("invalid WEBHOOK_SECRET_MODE", "err", err)
+		os.Exit(1)
+	}
 	// Points policy (#40 self-service hints with a score penalty). PLACEHOLDER
 	// defaults — the real per-solve award and per-hint-index penalty schedule are
 	// CEO-confirmed event-tuning values (see scoring.DefaultHintPenalties:
@@ -189,7 +212,7 @@ func main() {
 		logger.Error("falco rule excerpt load failed", "dir", challengesDir, "err", err)
 		os.Exit(1)
 	}
-	logger.Info("catalog loaded", "dir", challengesDir, "challenges", cat.IDs(), "journeys", len(journeys), "falco_rule_excerpts", len(falcoRules), "docs_base_url", docsBaseURL, "portal_ttyd_suffix", portalTtydSuffix, "flag_overrides", flagsFile != "", "scenario", scenarioID)
+	logger.Info("catalog loaded", "dir", challengesDir, "challenges", cat.IDs(), "journeys", len(journeys), "falco_rule_excerpts", len(falcoRules), "docs_base_url", docsBaseURL, "portal_ttyd_suffix", portalTtydSuffix, "flag_overrides", flagsFile != "", "scenario", scenarioID, "webhook_secret_mode", string(webhookSecretMode), "webhook_secret_set", webhookSharedSecret != "")
 
 	st, err := store.Open(dbPath)
 	if err != nil {
@@ -266,6 +289,7 @@ func main() {
 		scoreboard.WithPoints(points),
 		scoreboard.WithTtydSuffix(portalTtydSuffix),
 		scoreboard.WithQA(qaSt),
+		scoreboard.WithWebhookSecret(webhookSharedSecret, webhookSecretMode),
 	)
 
 	// Auto-solve sweeper (P16): re-derives exfil-delivered-but-unsolved evade

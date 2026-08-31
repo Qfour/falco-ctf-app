@@ -11,7 +11,9 @@
 package ingest
 
 import (
+	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -26,15 +28,62 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/store"
 )
 
+// SharedSecretHeader is the header falcosidekick's customHeaders config
+// attaches to every /falco/events POST (ADR-WS-0006 Layer 2, second
+// defense-in-depth layer behind the ADR-WS-0005 NetworkPolicy). The literal
+// string is a cross-repo contract with falco-ctf-platform's falco values
+// (customHeaders) — it must match EXACTLY; do not rename without a
+// coordinated two-repo PR.
+const SharedSecretHeader = "X-Falco-Shared-Secret"
+
+// SecretMode selects how receive() treats SharedSecretHeader (ADR-WS-0006).
+// The zero value behaves exactly like SecretModeOff (see receive()) so test
+// fixtures that never opt in stay on today's behaviour.
+type SecretMode string
+
+const (
+	// SecretModeOff performs no header check at all — today's behaviour,
+	// and the wire default (cmd/scoreboard/main.go) so this feature ships
+	// harmlessly ahead of/independent of the paired platform PR that starts
+	// sending the header.
+	SecretModeOff SecretMode = "off"
+	// SecretModeWarn verifies the header, bumps metrics.FalcoEventsSecretMismatch
+	// on a mismatch, and processes the request exactly as before (fail-open,
+	// observability-only) — the ADR-WS-0006 rollout step before enforce.
+	SecretModeWarn SecretMode = "warn"
+	// SecretModeEnforce verifies the header and rejects a mismatch (missing
+	// header included) with 401 before the request body is even decoded —
+	// store.RecordRuleFire and everything downstream of it is never reached
+	// (fail-closed).
+	SecretModeEnforce SecretMode = "enforce"
+)
+
+// ParseSecretMode validates a WEBHOOK_SECRET_MODE env value. cmd/scoreboard's
+// main treats a non-nil error as a boot-time fatal (ADR-WS-0006's "implementation
+// handoff" note) rather than silently falling back to off — an operator typo
+// must not look like enforce is active when it is not.
+func ParseSecretMode(raw string) (SecretMode, error) {
+	switch SecretMode(raw) {
+	case SecretModeOff, SecretModeWarn, SecretModeEnforce:
+		return SecretMode(raw), nil
+	default:
+		return "", fmt.Errorf("invalid WEBHOOK_SECRET_MODE %q: want one of %q, %q, %q", raw, SecretModeOff, SecretModeWarn, SecretModeEnforce)
+	}
+}
+
 type Handler struct {
 	store   *store.Store
 	grader  *scoring.Grader
 	logger  *slog.Logger
 	now     func() time.Time
 	limiter *ratelimit.Limiter
+	// sharedSecret / secretMode are ADR-WS-0006's Layer 2 shared-secret
+	// verification config. See SecretMode's doc for the 3 states.
+	sharedSecret string
+	secretMode   SecretMode
 }
 
-func New(grader *scoring.Grader, s *store.Store, logger *slog.Logger, now func() time.Time) *Handler {
+func New(grader *scoring.Grader, s *store.Store, logger *slog.Logger, now func() time.Time, sharedSecret string, secretMode SecretMode) *Handler {
 	// Per-source-IP token bucket. /falco/events is a high-volume internal
 	// endpoint (falcosidekick batches events); rate is generous so a busy
 	// CTF doesn't get throttled while still capping pathological bursts.
@@ -47,7 +96,9 @@ func New(grader *scoring.Grader, s *store.Store, logger *slog.Logger, now func()
 		// participants × low syscall-event rate). falcosidekick is the only
 		// legitimate caller; this caps a misconfigured/looping sender, not a
 		// tuning knob. Revisit only if load testing (scripts/load.sh) shows 429s.
-		limiter: ratelimit.New(100 /* req/s */, 200 /* burst */).WithNow(now),
+		limiter:      ratelimit.New(100 /* req/s */, 200 /* burst */).WithNow(now),
+		sharedSecret: sharedSecret,
+		secretMode:   secretMode,
 	}
 }
 
@@ -94,6 +145,43 @@ func (h *Handler) Routes() []apispec.Route {
 }
 
 func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
+	// ADR-WS-0006 Layer 2: shared-secret verification runs FIRST — before the
+	// body is even read/decoded — so an enforce-mode mismatch never reaches
+	// store.RecordRuleFire or scoring.Grader.OnRuleFire (fail-closed: no
+	// scoring-integrity table is touched by a forged request). off (the
+	// zero value AND the wire default) skips this block entirely, so a
+	// fixture/test that never opts in reproduces today's behaviour exactly.
+	if h.secretMode == SecretModeWarn || h.secretMode == SecretModeEnforce {
+		// Both sides must be non-empty to count as a match: comparing two
+		// empty strings with subtle.ConstantTimeCompare returns 1 (equal
+		// length, equal — trivially empty — contents), which would let an
+		// operator's empty-secret misconfiguration in enforce mode pass
+		// every request that simply omits the header. h.sharedSecret == ""
+		// is exactly the I7 "no real secret has been provisioned yet"
+		// default, and that must fail closed, not fail open.
+		got := r.Header.Get(SharedSecretHeader)
+		matched := h.sharedSecret != "" && got != "" &&
+			subtle.ConstantTimeCompare([]byte(got), []byte(h.sharedSecret)) == 1
+		if !matched {
+			// Deliberately a metric distinct from FalcoEventsReceived, not a
+			// new outcome label on it (see that metric's "one outcome label
+			// per request" exclusivity doc): an enforce-mode mismatch never
+			// reaches ANY of FalcoEventsReceived's existing outcome branches
+			// below (it returns here), and a warn-mode mismatch falls
+			// through into one of those branches too — bumping this AND a
+			// FalcoEventsReceived label for the same request would be
+			// correct for warn but impossible to express as "the" single
+			// outcome label for enforce.
+			metrics.FalcoEventsSecretMismatch.WithLabelValues(string(h.secretMode)).Inc()
+			if h.secretMode == SecretModeEnforce {
+				h.logger.Warn("falco webhook shared secret mismatch, rejecting", "mode", string(h.secretMode))
+				httpx.WriteJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid or missing shared secret"})
+				return
+			}
+			h.logger.Warn("falco webhook shared secret mismatch, continuing (warn mode)", "mode", string(h.secretMode))
+		}
+	}
+
 	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	// oapi.FalcoEvent is the OpenAPI-generated contract (docs/openapi-scoreboard.yaml,
 	// shared with falco-ctf-platform's falcosidekick config).

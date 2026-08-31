@@ -151,6 +151,21 @@ spec:
             - name: FLAGS_FILE
               value: /etc/ctf-flags/{{ .Values.flagsSecret.key }}
             {{- end }}
+            {{- /* ADR-WS-0006 Layer 2 (webhook shared-secret). The secret
+                   value ALWAYS comes from the chart-owned Secret (see
+                   templates/secret-webhook.yaml) — never rendered inline —
+                   so an empty default never appears in `helm template`
+                   output or in this Deployment's own spec. WEBHOOK_SECRET_MODE
+                   is a plain (non-secret) value; `off` is the safe default so
+                   an operator who has not set anything gets today's
+                   behaviour unchanged. */}}
+            - name: FALCO_WEBHOOK_SHARED_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: scoreboard-webhook-secret
+                  key: sharedSecret
+            - name: WEBHOOK_SECRET_MODE
+              value: {{ .Values.webhookSecretMode | default "off" | quote }}
           volumeMounts:
             - name: data
               mountPath: /var/lib/scoreboard

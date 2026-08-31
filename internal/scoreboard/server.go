@@ -63,6 +63,13 @@ type Handler struct {
 	// ttydSuffix (P23-4) feeds the portal Terminal pane's iframe src builder
 	// (view.New / portal.ttydURLFor) — see WithTtydSuffix.
 	ttydSuffix string
+	// webhookSharedSecret / webhookSecretMode are ADR-WS-0006's Layer 2
+	// shared-secret verification config, threaded through unchanged to
+	// ingest.New — see WithWebhookSecret. Zero values (unset) behave exactly
+	// like ingest.SecretModeOff, so a test fixture that never calls this
+	// option reproduces today's behaviour.
+	webhookSharedSecret string
+	webhookSecretMode   ingest.SecretMode
 	// routes is the FULL, flattened route table this binary registers —
 	// this package's own /healthz + /metrics rows, plus ingest's, api's and
 	// view's Routes() (ADR-0005 V2). Stored so Routes() can return it to the
@@ -155,6 +162,23 @@ func WithTtydSuffix(suffix string) Option {
 	return func(h *Handler) { h.ttydSuffix = suffix }
 }
 
+// WithWebhookSecret sets the ADR-WS-0006 Layer 2 shared-secret verification
+// config the ingest handler's receive() checks on every POST /falco/events
+// (before the body is even decoded). secret is FALCO_WEBHOOK_SHARED_SECRET
+// (empty = nothing can ever match, fail-closed if mode is warn/enforce);
+// mode is WEBHOOK_SECRET_MODE, validated by ingest.ParseSecretMode at the
+// caller (cmd/scoreboard/main.go treats an invalid mode as boot-time fatal,
+// not a silent fallback). Bundled into one option (rather than two, unlike
+// most other With* setters here) because a secret set without a mode, or a
+// mode set without a secret, is never a state anyone should be able to wire
+// up by only calling half the pair.
+func WithWebhookSecret(secret string, mode ingest.SecretMode) Option {
+	return func(h *Handler) {
+		h.webhookSharedSecret = secret
+		h.webhookSecretMode = mode
+	}
+}
+
 func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts ...Option) *Handler {
 	h := &Handler{
 		cat:    cat,
@@ -186,7 +210,7 @@ func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts .
 		metrics.SolvesTotal.WithLabelValues(r.Challenge, "evade").Inc()
 	})
 
-	ih := ingest.New(grader, s, logger, h.now)
+	ih := ingest.New(grader, s, logger, h.now, h.webhookSharedSecret, h.webhookSecretMode)
 	ah := api.New(cat, grader, s, logger, h.now, h.adminEmails, h.allowedOrigins, api.JourneyConfig{
 		Journeys:    h.journeys,
 		FalcoRules:  h.falcoRules,

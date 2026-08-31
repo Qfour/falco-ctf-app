@@ -132,6 +132,36 @@ flagsSecret:
   name: scoreboard-flags
   key: flags.yaml
 
+# ADR-WS-0006 (webhook shared-secret, Layer 2 defense-in-depth behind the
+# ADR-WS-0005 NetworkPolicy): a static header falcosidekick's customHeaders
+# config attaches to every POST /falco/events, checked in constant time by
+# internal/scoreboard/ingest BEFORE the request body is decoded. Unlike
+# flagsSecret above, THIS chart owns the Secret object itself
+# (templates/secret-webhook.yaml renders it from webhookSharedSecret
+# directly) — the ADR's single-SOPS-source design has the platform helmfile
+# supply this value straight to both this chart AND falco's customHeaders,
+# with no manual `kubectl create secret` step to forget.
+#
+# webhookSharedSecret: the shared-secret VALUE (hex string,
+#   `openssl rand -hex 32` per the ADR — hex avoids falcosidekick's
+#   customHeaders `:`/`,` parser constraints). Empty (default) = I7
+#   fail-closed: internal/scoreboard/ingest never matches an empty secret
+#   against ANY header value, even an empty one, so warn/enforce with this
+#   unset behave as "everything mismatches" rather than accidentally
+#   fail-open.
+# webhookSecretMode: off (default, current behaviour, safe to ship ahead of
+#   the paired platform customHeaders rollout) | warn (verify + count
+#   mismatches on a dedicated metric, still process every request) |
+#   enforce (verify; a missing/incorrect header is REJECTED 401 before
+#   store.RecordRuleFire ever runs). cmd/scoreboard/main.go treats any other
+#   string as a boot-time fatal misconfiguration, not a silent fallback to
+#   off. Flip warn -> enforce only after a full CTF session's worth of warn
+#   traffic shows zero mismatches on genuine falcosidekick requests (ADR
+#   rollout step 4) — this is an operator runbook step, not something this
+#   chart enforces.
+webhookSharedSecret: ""
+webhookSecretMode: "off"
+
 ingress:
   enabled: true
   className: nginx
