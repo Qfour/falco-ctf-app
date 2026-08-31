@@ -5,7 +5,7 @@
 # the Helm chart's ConfigMap for legacy single-mission deploys, but
 # all-missions mode reads from the image-baked /opt/ctf/missions/
 # directory below.
-FROM alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40
+FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 
 # Tools commonly required by Falco-detection-style CTF challenges.
 #
@@ -16,35 +16,35 @@ FROM alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc
 # を含む課題用途は busybox wget で動作確認済み (--no-check-certificate も honor)。
 # → 脆弱バイナリを除去 = Critical を実解消 (例外で握り潰さない、P13/#18 の CEO 条件)。
 #
-# alpine 3.22→3.23 bump (#227 2026-09-01 方針、workspace#31):
-# curl/libcurl・vim/vim-common/xxd・util-linux (agetty/blkid/cfdisk) の High CVE は
-# 3.22 サイクルに fix apk が無く cycle bump でのみ解消した (live APKINDEX 実測、
-# 2026-09-01)。**厳密バージョン pin** (他パッケージと同じ規律。P12 の digest pin と
-# 同じ思想 — 未 pin の `apk add`/`apk upgrade` は build 時点の live APKINDEX に依存し
-# bit-identical を壊すため)。以下は
-# https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/APKINDEX.tar.gz を
-# 実測して確認した版数 (2026-09-01):
-#   libssl3/libcrypto3 3.5.8-r0 (base に焼き込まれた 3.5.7-r0 の fix 版。3.23 でも
-#     base image 自体は再ビルドされていないため引き続き明示 upgrade が必要)
-#   curl/libcurl 8.20.0-r0 (fix >= 8.18.0 を満たす。旧 8.14.1-r3 の CVE を解消)
-#   vim/vim-common/xxd 9.2.1014-r0 (9.2.x 系列。旧 9.1.1566-r0 の CVE を解消)
-#   util-linux 2.41.4-r0 (agetty/blkid/cfdisk を含む単一パッケージ。旧 2.41-r9 の
-#     High を解消 — #227 2026-09-01 コメントで新規検出、3.23 bump で自動解消)
-#   bash 5.3.3-r1 (念のため厳密 pin。既存 pin 対象への追加)
+# alpine 3.23→3.24 re-bump (#227 2026-09-01 続報、workspace#31):
+# 3.23 bump 後の scan で curl/libcurl だけ drift した — pin 時点 (2026-09-01 午前)
+# は 8.20.0-r0 が fix だったが、Sysdig の CVE フィードが同日中に 8.21.0 要求へ
+# 更新され、8.20.0-r0 は再び High 扱いになった。3.23 リポジトリには 8.21.0-r0 が
+# 無いため cycle bump (3.23→3.24) でのみ解消できる。以下は
+# https://dl-cdn.alpinelinux.org/alpine/v3.24/main (community は vim 系) を
+# `docker run alpine@<digest> apk policy` で実測して確認した版数 (2026-09-01):
+#   libssl3/libcrypto3 3.5.8-r0 (3.23 と同じ pin を維持。base に焼き込まれた
+#     3.5.7-r0 の fix 版で、3.24 でも base image 自体は再ビルドされていないため
+#     引き続き明示 upgrade が必要)
+#   curl/libcurl 8.21.0-r0 (fix。8.20.0-r0 で再発した High を解消)
+#   vim/vim-common/xxd 9.2.1014-r0 (3.23 と同一版、3.24 でも不変)
+#   util-linux 2.42.1-r0 (3.23 の 2.41.4-r0 から 3.24 側で上がった版に追随)
+#   bash 5.3.9-r1 (3.23 の 5.3.3-r1 から 3.24 側で上がった版に追随、念のため厳密 pin)
 # **この画像にはなお残る High CVE がある** (upstream fix 自体が未着地、または
-# alpine パッケージへの backport 待ち — 2026-09-01 時点で fix 版なし):
+# alpine パッケージへの backport 待ち — 2026-09-01 時点で fix 版なし。3.23→3.24
+# でも版数不変):
 #   jq 1.8.1-r0 (fix 1.8.2, CVE-2026-49839)
-#   libxml2 2.13.9-r1 (fix 2.15.2, CVE-2026-0989/2025-8732; CVE-2026-11979 は
+#   libxml2 2.13.9-r2 (fix 2.15.2, CVE-2026-0989/2025-8732; CVE-2026-11979 は
 #     upstream に fix 自体が存在しない)
 # 上記 2 件は Issue #227 に残課題として記録 (VP 判断: 2026-08-28 コメントの
 # 「厳密 pin のみで残存を許容し、再点検トリガ付きで open 維持」を継続適用)。
 RUN apk add --no-cache --upgrade libssl3=3.5.8-r0 libcrypto3=3.5.8-r0 \
  && apk add --no-cache \
-        bash=5.3.3-r1 \
+        bash=5.3.9-r1 \
         coreutils \
         busybox-extras \
-        curl=8.20.0-r0 \
-        libcurl=8.20.0-r0 \
+        curl=8.21.0-r0 \
+        libcurl=8.21.0-r0 \
         netcat-openbsd \
         bind-tools \
         jq \
@@ -52,7 +52,7 @@ RUN apk add --no-cache --upgrade libssl3=3.5.8-r0 libcrypto3=3.5.8-r0 \
         vim=9.2.1014-r0 \
         vim-common=9.2.1014-r0 \
         xxd=9.2.1014-r0 \
-        util-linux=2.41.4-r0 \
+        util-linux=2.42.1-r0 \
         procps \
         grep \
         findutils \
