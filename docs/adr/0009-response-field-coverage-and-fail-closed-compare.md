@@ -1,7 +1,8 @@
 # ADR-0009: V5 のレスポンス欠陥検査を機械列挙・fail-closed 化し、Decision-Verification 不整合を正典化する (ADR-0005 の限定 supersede)
 
-- Status: **Proposed**
-- Date / Deciders: 2026-08-31 / architect (起案)。承認は VP・CEO (後日、review-5x 後)
+- Status: **Accepted**
+- Date / Deciders: 2026-08-31 / architect (起案)、VP (実装・検証)、CEO (Accept 2026-08-31)。
+  Decision A (#262) / Decision B (#258) の実装は main に landing 済、Decision C (V3b 条文化) は本 ADR で完了 (#144 CLOSED)。
 - 関連:
   - **supersede 対象**: [ADR-0005](0005-openapi-canon-and-parity-gate.md) の `## Verification` 節のうち
     **V5 の「最低限カバーすべき4つ」という floor 記述**、および **V3 に対応する named Verification 項目が
