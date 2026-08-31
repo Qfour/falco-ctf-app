@@ -516,6 +516,50 @@ func TestAPISpec_V5_SubmitFlagVerdictFieldsMatchSpec(t *testing.T) {
 	}
 }
 
+// --- ADR-0009 Decision B (oneOf, real spec) -------------------------------
+
+// TestAPISpec_VB2_FalcoEventsOneOfBranchesMatchSpec is ADR-0009 Verification
+// V(B)-2, run against the REAL docs/openapi-scoreboard.yaml (not a synthetic
+// fixture — internal/apispec/specparity/parity_test.go already proves the
+// algorithm in isolation). `POST /falco/events`'s 200 response is
+// oneOf[IngestAccepted, IngestIgnored] (docs/openapi-scoreboard.yaml:406-408)
+// — before ADR-0009, CompareResponse's total lack of oneOf support meant
+// resolve() returned the raw {"oneOf": [...]} node, `properties` was absent,
+// and the old fail-open leaf swallowed EVERY actual, including one matching
+// neither branch (confirmed by real-code inspection, ADR-0009 Context C3
+// point 1). This pins both directions against today's real spec: (a) an
+// actual matching neither branch must be reported, (b) an actual matching
+// exactly one branch (either one) must be clean.
+func TestAPISpec_VB2_FalcoEventsOneOfBranchesMatchSpec(t *testing.T) {
+	spec := loadScoreboardSpec(t)
+	op, ok := spec.Operations()["POST /falco/events"]
+	if !ok {
+		t.Fatal("spec has no POST /falco/events operation")
+	}
+	schema := spec.OperationResponseSchema(op, "200")
+	if schema == nil {
+		t.Fatal("POST /falco/events 200 has no application/json schema")
+	}
+
+	// (a) actual matches neither IngestAccepted nor IngestIgnored.
+	neither := map[string]any{"totally_wrong_key": true}
+	if mismatches := specparity.CompareResponse(spec, schema, neither, "root"); len(mismatches) == 0 {
+		t.Fatal("expected a non-empty mismatch for an actual matching no oneOf branch, got none")
+	}
+
+	// (b) actual matches exactly the IngestAccepted branch.
+	accepted := map[string]any{"accepted": true, "user": "u1", "rule": "Recon Rule"}
+	if mismatches := specparity.CompareResponse(spec, schema, accepted, "root"); len(mismatches) != 0 {
+		t.Fatalf("expected no mismatch for a valid IngestAccepted actual, got %+v", mismatches)
+	}
+
+	// (b, other branch) actual matches exactly the IngestIgnored branch.
+	ignored := map[string]any{"ignored": true, "reason": "not a ctf workspace event"}
+	if mismatches := specparity.CompareResponse(spec, schema, ignored, "root"); len(mismatches) != 0 {
+		t.Fatalf("expected no mismatch for a valid IngestIgnored actual, got %+v", mismatches)
+	}
+}
+
 // --- V8 (real spec + real table mutation proof) --------------------------
 
 // TestAPISpec_V8_MutationsFailAgainstRealData re-runs the three ADR-0005 V8
