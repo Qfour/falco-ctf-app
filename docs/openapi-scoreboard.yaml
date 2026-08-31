@@ -375,8 +375,17 @@ paths:
       x-ctf-collector-forward: false
       x-ctf-rate-limit: per-IP 100 req/s burst 200 (falcosidekick batches)
       description: |
-        Ingest endpoint. Isolation is NetworkPolicy's job (only falcosidekick
-        reaches it); the handler adds no auth but re-checks the event shape.
+        Ingest endpoint. Isolation is NetworkPolicy's job (ADR-WS-0005 Layer
+        1: only falcosidekick reaches it); the handler re-checks the event
+        shape and, optionally, an `X-Falco-Shared-Secret` header (ADR-WS-0006
+        Layer 2 defense-in-depth, in case the NetworkPolicy layer regresses).
+        The header check is controlled by the deploy-time
+        `WEBHOOK_SECRET_MODE` (off by default — this route accepts
+        unauthenticated requests exactly as before unless an operator opts
+        in) and is verified in constant time (`subtle.ConstantTimeCompare`)
+        BEFORE the body below is decoded, so a rejected request never reaches
+        scoring. `off`/`warn` never return 401 for this reason; `enforce`
+        does.
 
         Events outside the `ctf-<username>` / `workspace` ns+pod pair, events
         whose `container.image.repository` does not contain the challenge image
@@ -408,6 +417,15 @@ paths:
                   - $ref: "#/components/schemas/IngestIgnored"
         "400":
           description: malformed JSON body
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          description: |
+            WEBHOOK_SECRET_MODE=enforce only (ADR-WS-0006): the
+            X-Falco-Shared-Secret header was missing or did not match.
+            Returned before the body is decoded — no rule fire is recorded
+            and scoring.Grader.OnRuleFire is never invoked.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

@@ -33,6 +33,28 @@ var FalcoEventsReceived = promauto.NewCounterVec(
 	[]string{"outcome"},
 )
 
+// FalcoEventsSecretMismatch counts POST /falco/events requests whose
+// X-Falco-Shared-Secret header failed the ADR-WS-0006 Layer 2 constant-time
+// comparison against FALCO_WEBHOOK_SHARED_SECRET. Kept as a SEPARATE metric
+// from FalcoEventsReceived rather than a new outcome label on it, to
+// preserve that metric's "one outcome label per request" exclusivity
+// discipline (see its own doc): an enforce-mode mismatch returns 401 before
+// any FalcoEventsReceived outcome branch runs, while a warn-mode mismatch
+// continues on to bump one of those branches too — the two metrics are not
+// meant to sum to the same total.
+//
+//	mode: "warn" | "enforce" (only ever incremented in these two modes; off
+//	      mode skips the check entirely — see internal/scoreboard/ingest)
+var FalcoEventsSecretMismatch = promauto.NewCounterVec(
+	prometheus.CounterOpts{
+		Namespace: "scoreboard",
+		Subsystem: "ingest",
+		Name:      "falco_events_secret_mismatch_total",
+		Help:      "POST /falco/events requests with a missing/incorrect X-Falco-Shared-Secret header, labelled by WEBHOOK_SECRET_MODE.",
+	},
+	[]string{"mode"},
+)
+
 // SolvesTotal counts solves recorded (trigger or evade path).
 //
 //	challenge_id: catalog id
