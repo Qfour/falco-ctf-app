@@ -152,7 +152,6 @@ func TestAuthz_CatchesUnenforcedGate(t *testing.T) {
 		// caller's identity at all — the exact defect shape
 		// scoreboard's PR #149 review-5x R1 finding described, ported here
 		// for auth-policy's own route table.
-		mux := http.NewServeMux()
 		rt := apispec.Route{
 			Method:  "GET",
 			Pattern: "/check-admin-audit",
@@ -161,7 +160,7 @@ func TestAuthz_CatchesUnenforcedGate(t *testing.T) {
 				w.WriteHeader(http.StatusOK) // BUG: never checks the caller's identity.
 			}),
 		}
-		apispec.Register(mux, []apispec.Route{rt})
+		mux, _ := apispec.NewMux([]apispec.Route{rt})
 		if violation := authzCheck(t, mux, rt); violation == "" {
 			t.Fatal("expected authzCheck to flag a declared-admin route whose handler never enforces it, got no violation — the detector would be a permanent no-op")
 		}
@@ -171,7 +170,6 @@ func TestAuthz_CatchesUnenforcedGate(t *testing.T) {
 		// The negative branch matters equally: a route declared Authz: none
 		// whose handler mistakenly gates on identity anyway (e.g. a
 		// copy-pasted admin check left on a route meant to be open).
-		mux := http.NewServeMux()
 		rt := apispec.Route{
 			Method:  "GET",
 			Pattern: "/healthz-audit",
@@ -180,7 +178,7 @@ func TestAuthz_CatchesUnenforcedGate(t *testing.T) {
 				w.WriteHeader(http.StatusForbidden) // BUG: over-gates a route declared open.
 			}),
 		}
-		apispec.Register(mux, []apispec.Route{rt})
+		mux, _ := apispec.NewMux([]apispec.Route{rt})
 		if violation := authzCheck(t, mux, rt); violation == "" {
 			t.Fatal("expected authzCheck to flag a declared-open route whose handler over-gates, got no violation — the negative branch would be a permanent no-op")
 		}

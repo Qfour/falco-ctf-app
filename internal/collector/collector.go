@@ -86,7 +86,6 @@ func New(upstream string, logger *slog.Logger, opts ...Option) (*Handler, error)
 	}
 	h := &Handler{
 		logger: logger,
-		mux:    http.NewServeMux(),
 		now:    time.Now,
 	}
 	for _, opt := range opts {
@@ -147,10 +146,13 @@ func New(upstream string, logger *slog.Logger, opts ...Option) (*Handler, error)
 	// intent — and it is also why docs/openapi-collector.yaml does not
 	// document this route at all (no exclusion list; see that spec's info
 	// description).
-	// declared is the DESIRED table; h.routes below becomes apispec.Register's
-	// RETURN value, not this slice itself (MEDIUM 1, 5x review — see
-	// route.go's Register doc): that is what makes Routes() report exactly
-	// what the mux serves, never a route a future edit left Handler: nil on.
+	// declared is the DESIRED table; h.mux/h.routes below become apispec.
+	// NewMux's RETURN values, not a pre-built mux + this slice itself
+	// (MEDIUM 1, 5x review — see route.go's NewMux doc): that is what makes
+	// Routes() report exactly what the mux serves, never a route a future
+	// edit left Handler: nil on. NewMux (task #146) also owns mux
+	// construction, so there is no separately-constructed mux variable this
+	// declared table could be pointed at instead of the real one.
 	declared := []apispec.Route{
 		{
 			Method: "POST", Pattern: "/api/challenges/{cid}/submit",
@@ -192,13 +194,13 @@ func New(upstream string, logger *slog.Logger, opts ...Option) (*Handler, error)
 			Handler: promhttp.Handler(),
 		},
 	}
-	h.routes = apispec.Register(h.mux, declared)
+	h.mux, h.routes = apispec.NewMux(declared)
 
 	return h, nil
 }
 
 // Routes returns the route set this Handler ACTUALLY registered onto its mux
-// (ADR-0005 V2) — exactly apispec.Register's return value from New(), for
+// (ADR-0005 V2) — exactly apispec.NewMux's second return value from New(), for
 // the parity tests (collector_test.go) to compare against
 // docs/openapi-collector.yaml. Returns a copy (MEDIUM 5, 5x review): callers
 // must not be able to mutate this Handler's live route table by mutating an

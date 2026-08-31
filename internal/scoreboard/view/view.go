@@ -227,11 +227,11 @@ func (h *Handler) Routes() []apispec.Route {
 	}
 }
 
-// This package deliberately has no Register(mux) method of its own (LOW,
-// 5x review: one used to exist here, calling apispec.Register(mux,
+// This package deliberately has no Register(mux)/NewMux method of its own
+// (LOW, 5x review: one used to exist here, calling apispec.Register(mux,
 // h.Routes()) directly, but nothing — production or test — ever called it;
 // scoreboard.Handler's NewHandler always collects every sub-package's
-// Routes() into one table and calls apispec.Register exactly once). Keeping
+// Routes() into one table and calls apispec.NewMux exactly once). Keeping
 // an unused second registration entry point around contradicted I14's
 // "single registration path" claim on its face; removed rather than
 // documented as test-only, since it had no test either.

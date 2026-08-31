@@ -48,16 +48,15 @@ func newFixture(t *testing.T, clock func() time.Time) (*httptest.Server, *store.
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h := ingest.New(grader, s, logger, clock)
 
-	mux := http.NewServeMux()
 	// ADR-0005 V2 / Requirement 6.1 (final review round): ingest no longer
 	// carries its own Register(mux) method (LOW, 5x review — it was dead
 	// code, called only from here in production terms; scoreboard.Handler's
 	// NewHandler collects every sub-package's Routes() and calls
-	// apispec.Register exactly once). This test now goes through the SAME
+	// apispec.NewMux exactly once). This test now goes through the SAME
 	// call every other package's test/production wiring uses, so a mutation
-	// to apispec.Register itself is exercised here too, not bypassed by a
+	// to apispec.NewMux itself is exercised here too, not bypassed by a
 	// package-local shortcut.
-	apispec.Register(mux, h.Routes())
+	mux, _ := apispec.NewMux(h.Routes())
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv, s
