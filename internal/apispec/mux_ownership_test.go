@@ -163,10 +163,14 @@ func declaresServeMux(t *testing.T, dir string) bool {
 	return false
 }
 
-// cmdOwnsServeMux answers ADR-0005 Decision 2's rule by breadth-first
-// walking the module-internal import graph starting at cmd/<name>, checking
-// every visited package directory for a direct http.NewServeMux() call.
-func cmdOwnsServeMux(t *testing.T, root, cmdName string) bool {
+// muxOwningDir breadth-first walks the module-internal import graph
+// starting at cmd/<name>, checking every visited package directory for a
+// ServeMux declaration (declaresServeMux), and returns the absolute path of
+// the first one found. This is the SAME mechanical walk cmdOwnsServeMux
+// uses for its bool answer — parity_coverage_test.go (#148) reuses it
+// directly instead of re-deriving cmd-name -> internal-package via a
+// second, potentially-divergent hand-written map.
+func muxOwningDir(t *testing.T, root, cmdName string) (string, bool) {
 	t.Helper()
 	start := modulePrefix + "cmd/" + cmdName
 	visited := map[string]bool{}
@@ -180,11 +184,19 @@ func cmdOwnsServeMux(t *testing.T, root, cmdName string) bool {
 		visited[pkg] = true
 		dir := filepath.Join(root, strings.TrimPrefix(pkg, modulePrefix))
 		if declaresServeMux(t, dir) {
-			return true
+			return dir, true
 		}
 		queue = append(queue, importsOf(t, dir)...)
 	}
-	return false
+	return "", false
+}
+
+// cmdOwnsServeMux answers ADR-0005 Decision 2's rule: does cmd/<name>
+// (transitively, via this module's own import graph) own an http.ServeMux.
+func cmdOwnsServeMux(t *testing.T, root, cmdName string) bool {
+	t.Helper()
+	_, found := muxOwningDir(t, root, cmdName)
+	return found
 }
 
 // TestCmdOwnsServeMux_MechanicalDetermination pins the mechanism itself
