@@ -57,14 +57,20 @@
 | scoreboard | `golang:1.26-alpine` | `gcr.io/distroless/static-debian13:nonroot` |
 | auth-policy | `golang:1.26-alpine` | `gcr.io/distroless/static-debian13:nonroot` |
 | collector | `golang:1.26-alpine` | `gcr.io/distroless/static-debian13:nonroot` |
-| ttyd | (single-stage) | `alpine:3.22` |
+| ttyd | (single-stage) | `alpine:3.24` |
 | ttyd-proxy | `golang:1.26-alpine` | `gcr.io/distroless/static-debian13:nonroot` |
-| challenge | (single-stage) | `alpine:3.22` |
+| challenge | (single-stage) | `alpine:3.24` |
 | docs | `python:3.12-slim` (mkdocs-material + pandoc + weasyprint) | `nginxinc/nginx-unprivileged:1.30-alpine` |
 | detect-grader | (single-stage) | `falcosecurity/falco:0.43.1` (wolfi/apko base; digest pin。非 root 65532 ユーザを build 時に追加) |
 
 - alpine は最新 cycle ではなく「リリース後 ~1 年経過した supported cycle」を選ぶ
-  (apk pin の安定性と EOL 余裕のバランス。2026-07 時点: 3.22)。
+  (apk pin の安定性と EOL 余裕のバランス。2026-07 時点: 3.22。2026-09-01、#227/workspace#31 の
+  CVE bump で 3.23 へ更新。**同日中に curl/libcurl の CVE フィードが drift し 3.23
+  リポジトリに fix apk が無かったため、同 workspace#31 の続報で即日 3.24 へ再 bump**
+  — この 2 回目の bump は「~1 年経過」ガイドラインの例外 (CVE urgency 優先。3.24 は
+  2026-06-09 リリース・EOL 2028-06-01 で「~1 年経過」には遠く及ばないが、curl High CVE
+  を cycle 内 apk pin で解消する手段が無いため cycle bump が唯一の解)。
+  EOL は `make check-freshness` で機械確認。
   cycle 鮮度は `make check-freshness`、パッケージ鮮度は CVE scan (PR CI) の二層でカバー。
 
 - docs イメージの build context = repo root (`challenges/` を読んで gen-pages.sh が
@@ -110,7 +116,7 @@ docker buildx imagetools inspect golang:1.26-alpine --format '{{.Manifest.MediaT
 #                                       go-vulncheck/gen-diff-check が旧イメージで回り CVE ゲートが
 #                                       赤のまま漏れる。app#78/#87 で発覚)、
 #     distroless static-debian13:nonroot = scoreboard/auth-policy、
-#     alpine:3.22                     = images/{ttyd,challenge}、
+#     alpine:3.24                     = images/{ttyd,challenge}、
 #     python:3.12-slim                = images/docs (build stage)、
 #     nginx-unprivileged:1.30-alpine  = images/docs (serve stage)、
 #     falcosecurity/falco:0.43.1      = images/detect-grader (Falco 版 bump 時は
@@ -122,7 +128,7 @@ make check-freshness      # cycle が EOL でないこと
 make test                 # Go build/test (Dockerfile.test) が通ること
 ```
 
-cycle 自体を上げる場合 (例: alpine 3.22→3.23) は tag も一緒に変え、apk pin と
+cycle 自体を上げる場合 (例: alpine 3.23→3.24) は tag も一緒に変え、apk pin と
 `## Dockerfile 規約` 表・UID 表も見直す (P8 の bump 手順と同じ)。
 
 ## サプライチェーン: CI workflow / action 参照の pin (P12)
