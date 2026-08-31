@@ -57,14 +57,15 @@
 | scoreboard | `golang:1.26-alpine` | `gcr.io/distroless/static-debian13:nonroot` |
 | auth-policy | `golang:1.26-alpine` | `gcr.io/distroless/static-debian13:nonroot` |
 | collector | `golang:1.26-alpine` | `gcr.io/distroless/static-debian13:nonroot` |
-| ttyd | (single-stage) | `alpine:3.22` |
+| ttyd | (single-stage) | `alpine:3.23` |
 | ttyd-proxy | `golang:1.26-alpine` | `gcr.io/distroless/static-debian13:nonroot` |
-| challenge | (single-stage) | `alpine:3.22` |
+| challenge | (single-stage) | `alpine:3.23` |
 | docs | `python:3.12-slim` (mkdocs-material + pandoc + weasyprint) | `nginxinc/nginx-unprivileged:1.30-alpine` |
 | detect-grader | (single-stage) | `falcosecurity/falco:0.43.1` (wolfi/apko base; digest pin。非 root 65532 ユーザを build 時に追加) |
 
 - alpine は最新 cycle ではなく「リリース後 ~1 年経過した supported cycle」を選ぶ
-  (apk pin の安定性と EOL 余裕のバランス。2026-07 時点: 3.22)。
+  (apk pin の安定性と EOL 余裕のバランス。2026-07 時点: 3.22。2026-09-01、#227/workspace#31 の
+  CVE bump で 3.23 へ更新 — 3.23 は 2025-12-03 リリース・EOL 2027-11-01)。
   cycle 鮮度は `make check-freshness`、パッケージ鮮度は CVE scan (PR CI) の二層でカバー。
 
 - docs イメージの build context = repo root (`challenges/` を読んで gen-pages.sh が
@@ -110,7 +111,7 @@ docker buildx imagetools inspect golang:1.26-alpine --format '{{.Manifest.MediaT
 #                                       go-vulncheck/gen-diff-check が旧イメージで回り CVE ゲートが
 #                                       赤のまま漏れる。app#78/#87 で発覚)、
 #     distroless static-debian13:nonroot = scoreboard/auth-policy、
-#     alpine:3.22                     = images/{ttyd,challenge}、
+#     alpine:3.23                     = images/{ttyd,challenge}、
 #     python:3.12-slim                = images/docs (build stage)、
 #     nginx-unprivileged:1.30-alpine  = images/docs (serve stage)、
 #     falcosecurity/falco:0.43.1      = images/detect-grader (Falco 版 bump 時は
