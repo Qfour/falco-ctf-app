@@ -272,6 +272,14 @@ challenge コンテナは UID 表のとおり **root (0) が意図的** (CTF rea
   各課題の expectedRules + forbiddenRules の rule ブロックを抽出 → `challenges/<NN>/rule.yaml`。
 - **Falco バージョンを上げたら再抽出**(condition/output が変わるため)。docs の
   gen-pages.py は存在すれば描画、無ければスキップ(必須ではない)。
+- **同一 Falco ルールを表示する課題は sync group として同時更新する** — 例:
+  `02-credential-files`(trigger)と `03-stealth-read`(evade)はどちらも
+  `Read sensitive file untrusted` を表示するため、両者の `rule.yaml` は
+  byte-identical でなければならない。再抽出時に片方だけ更新すると drift し、
+  参加者に見せるルール条件が課題間で食い違う(採点には非影響、issue #122)。
+  `scripts/check-challenge-rules.sh` の `RULE_YAML_SYNC_GROUPS` がこれを
+  機械強制する(必須 CI check `challenge-rules` に相乗り)。新しい sync group は
+  同スクリプトの配列に 1 行追記する。
 
 ## Scope / 影響範囲
 
