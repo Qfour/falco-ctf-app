@@ -16,6 +16,7 @@ package scoreboard_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -29,6 +30,7 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/qa"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard"
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/api"
 	"github.com/Qfour/falco-ctf-app/internal/store"
 )
 
@@ -512,6 +514,555 @@ func TestAPISpec_V5_SubmitFlagVerdictFieldsMatchSpec(t *testing.T) {
 	for k := range want {
 		if !union[k] {
 			t.Errorf("SubmitFlagVerdict.properties declares %q but no documented branch ever emitted it", k)
+		}
+	}
+}
+
+// --- ADR-0009 Decision A: machine-derived V5 coverage ---------------------
+
+// v5Coverage is ADR-0009 Decision A point 2: every scoreboard operation
+// specparity.ResponseObjectOperations() derives from docs/openapi-scoreboard.yaml,
+// mapped to whether a V5 field-comparison test exists for it.
+// TestAPISpec_VA1_ResponseObjectCoverageBidirectional below enforces this
+// table stays EXACTLY in sync with the derivation: an entry cannot be added
+// speculatively (that would be "stale coverage entry") and an operation
+// cannot be added to the spec without a field test landing in the SAME PR
+// (that would be "documented, no coverage") — ADR-0005 Decision 1's
+// no-exclusion-list discipline, applied to response schemas instead of
+// routes.
+var v5Coverage = map[string]bool{
+	"GET /healthz": true, // TestAPISpec_V5_HealthzFieldsMatchSpec
+	// TestAPISpec_VB2_FalcoEventsOneOfBranchesMatchSpec already performs a
+	// real CompareResponse field comparison against BOTH oneOf branches
+	// (ADR-0009 Decision B) — that satisfies "a V5 field-comparison test
+	// exists for this operation" without a second, differently-named test.
+	"POST /falco/events":                                        true,
+	"POST /api/challenges/{cid}/submit":                         true, // TestAPISpec_V5_SubmitFlagVerdictFieldsMatchSpec
+	"POST /api/challenges/{cid}/submit-detect":                  true, // TestAPISpec_V5_SubmitDetectVerdictFieldsMatchSpec
+	"POST /internal/exfil/{cid}":                                true, // TestAPISpec_V5_ExfilReceiptFieldsMatchSpec
+	"GET /api/users/{user}/me":                                  true, // TestAPISpec_V5_MeFieldsMatchSpec
+	"GET /api/users/{user}/journey":                             true, // TestAPISpec_V5_JourneyFieldsMatchSpec
+	"POST /api/users/{user}/challenges/{cid}/steps/{idx}/check": true, // TestAPISpec_V5_StepCheckResultFieldsMatchSpec
+	"POST /api/users/{user}/challenges/{cid}/hints/{idx}":       true, // TestAPISpec_V5_OpenHintResultFieldsMatchSpec
+	"POST /api/users/{user}/challenges/{cid}/reset-dirty":       true, // TestAPISpec_V5_ResetDirtyResultFieldsMatchSpec
+	"POST /api/users/{user}/display-name":                       true, // TestAPISpec_V5_DisplayNameResultFieldsMatchSpec
+	"GET /api/users/{user}/questions":                           true, // TestAPISpec_V5_QuestionListFieldsMatchSpec
+	"POST /api/users/{user}/questions":                          true, // TestAPISpec_V5_QuestionThreadFieldsMatchSpec (create branch)
+	"GET /api/users/{user}/questions/{qid}":                     true, // TestAPISpec_V5_QuestionThreadFieldsMatchSpec (get branch)
+	"POST /api/users/{user}/questions/{qid}/messages":           true, // TestAPISpec_V5_QuestionThreadFieldsMatchSpec (message branch)
+	"GET /api/state":                                            true, // TestAPISpec_V5_StateFieldsMatchSpec
+	"POST /api/admin/reset":                                     true, // TestAPISpec_V5_AdminResetResultFieldsMatchSpec
+	"POST /api/admin/users/{user}/display-name":                 true, // TestAPISpec_V5_AdminDisplayNameResultFieldsMatchSpec
+	"GET /api/admin/questions":                                  true, // TestAPISpec_V5_AdminQuestionListFieldsMatchSpec
+	"GET /api/admin/questions/{qid}":                            true, // TestAPISpec_V5_AdminQuestionThreadFieldsMatchSpec (get branch)
+	"POST /api/admin/questions/{qid}/reply":                     true, // TestAPISpec_V5_AdminQuestionThreadFieldsMatchSpec (reply branch)
+}
+
+// TestAPISpec_VA1_ResponseObjectCoverageBidirectional is ADR-0009
+// Verification V(A)-1's core check against the REAL spec + REAL v5Coverage
+// table (RouteSetDiff's V1 shape, applied to specparity.ResponseObjectOperations()
+// vs. v5Coverage instead of a route table).
+func TestAPISpec_VA1_ResponseObjectCoverageBidirectional(t *testing.T) {
+	spec := loadScoreboardSpec(t)
+	derived := specparity.ResponseObjectOperations(spec)
+
+	// ADR-0009 V(A)-2: a silently-empty derivation must not read as "no diff".
+	if len(derived) == 0 {
+		t.Fatal("specparity.ResponseObjectOperations() returned zero operations for docs/openapi-scoreboard.yaml — derivation is broken, not clean")
+	}
+
+	derivedOnly, coverageOnly := specparity.CoverageDiff(derived, v5Coverage)
+	if len(derivedOnly) > 0 {
+		t.Errorf("documented operation(s) with NO V5 field-comparison test: %v", derivedOnly)
+	}
+	if len(coverageOnly) > 0 {
+		t.Errorf("stale v5Coverage entr(y/ies) (operation no longer derived from the spec): %v", coverageOnly)
+	}
+
+	// ADR-0009 C2's 14 (scoreboard) + Decision A point 4's 7 QuestionList/
+	// QuestionThread additions = 21. Same PROCESS reasoning as V1's route
+	// count pin above: forces every PR that adds/removes a response-object
+	// operation to touch this line, so the count change itself gets
+	// reviewed instead of silently passing because the bidirectional diff
+	// above happened to stay empty.
+	if len(derived) != 21 {
+		t.Errorf("expected 21 response-object operations (ADR-0009 C2 + Decision A), got %d: %v", len(derived), derived)
+	}
+}
+
+// TestAPISpec_VA1_MutationsFailBothDirections is ADR-0009 Verification
+// V(A)-1's explicit mutation-testing requirement: BOTH directions of
+// CoverageDiff must go red against TODAY's real derived set, not just in the
+// abstract (internal/apispec/specparity/parity_test.go already proves the
+// algorithm itself against synthetic fixtures — this re-runs it against the
+// real docs/openapi-scoreboard.yaml, mirroring how TestAPISpec_V8_* re-runs
+// the V8 mutation classes for real).
+func TestAPISpec_VA1_MutationsFailBothDirections(t *testing.T) {
+	spec := loadScoreboardSpec(t)
+	derived := specparity.ResponseObjectOperations(spec)
+
+	t.Run("derived_only_documented_no_coverage", func(t *testing.T) {
+		mutated := make(map[string]bool, len(v5Coverage))
+		for k, v := range v5Coverage {
+			mutated[k] = v
+		}
+		delete(mutated, "GET /healthz") // simulate: the field test for this operation was never written
+		derivedOnly, _ := specparity.CoverageDiff(derived, mutated)
+		found := false
+		for _, k := range derivedOnly {
+			if k == "GET /healthz" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("expected derivedOnly to flag GET /healthz, got %v", derivedOnly)
+		}
+	})
+
+	t.Run("coverage_only_stale_entry", func(t *testing.T) {
+		mutated := make(map[string]bool, len(v5Coverage)+1)
+		for k, v := range v5Coverage {
+			mutated[k] = v
+		}
+		mutated["GET /api/does-not-exist"] = true // simulate: a table entry left behind after a route removal
+		_, coverageOnly := specparity.CoverageDiff(derived, mutated)
+		found := false
+		for _, k := range coverageOnly {
+			if k == "GET /api/does-not-exist" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("expected coverageOnly to flag GET /api/does-not-exist, got %v", coverageOnly)
+		}
+	})
+}
+
+// --- ADR-0009 Decision A: the newly-required V5 field-comparison tests ---
+//
+// One test per operation ResponseObjectOperations() derives that the pre-
+// existing 4 V5 tests (+ VB2's oneOf test) did not already cover. Each
+// follows the SAME shape as the existing V5 tests above: build a real
+// request through the shared fixture, decode the JSON body, and assert
+// CompareResponse returns zero mismatches against the spec's declared
+// schema.
+
+func TestAPISpec_V5_HealthzFieldsMatchSpec(t *testing.T) {
+	spec := loadScoreboardSpec(t)
+	f := newSpecFixture(t)
+
+	w := f.do("GET", "/healthz", "", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("healthz: status=%d body=%s", w.Code, w.Body)
+	}
+	actual := f.decodedJSON(w)
+	schema := spec.SchemaByName("Health")
+	if schema == nil {
+		t.Fatal("spec has no components.schemas.Health")
+	}
+	for _, m := range specparity.CompareResponse(spec, schema, actual, "Health") {
+		t.Errorf("%s: extra=%v missing=%v note=%q", m.Path, m.Extra, m.Missing, m.Note)
+	}
+}
+
+func TestAPISpec_V5_ExfilReceiptFieldsMatchSpec(t *testing.T) {
+	spec := loadScoreboardSpec(t)
+	f := newSpecFixture(t) // "03-boss" has RequireExfil: true
+
+	w := f.do("POST", "/internal/exfil/03-boss", "", map[string]any{"user": "mona", "flag": "FALCO{boss}"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("exfil: status=%d body=%s", w.Code, w.Body)
+	}
+	actual := f.decodedJSON(w)
+	schema := spec.SchemaByName("ExfilReceipt")
+	if schema == nil {
+		t.Fatal("spec has no components.schemas.ExfilReceipt")
+	}
+	for _, m := range specparity.CompareResponse(spec, schema, actual, "ExfilReceipt") {
+		t.Errorf("%s: extra=%v missing=%v note=%q", m.Path, m.Extra, m.Missing, m.Note)
+	}
+}
+
+func TestAPISpec_V5_StepCheckResultFieldsMatchSpec(t *testing.T) {
+	spec := loadScoreboardSpec(t)
+	f := newSpecFixture(t) // "01-recon" has journey content (2 steps)
+
+	w := f.do("POST", "/api/users/nina/challenges/01-recon/steps/0/check", "nina@ctf.local", map[string]any{"checked": true})
+	if w.Code != http.StatusOK {
+		t.Fatalf("step check: status=%d body=%s", w.Code, w.Body)
+	}
+	actual := f.decodedJSON(w)
+	schema := spec.SchemaByName("StepCheckResult")
+	if schema == nil {
+		t.Fatal("spec has no components.schemas.StepCheckResult")
+	}
+	for _, m := range specparity.CompareResponse(spec, schema, actual, "StepCheckResult") {
+		t.Errorf("%s: extra=%v missing=%v note=%q", m.Path, m.Extra, m.Missing, m.Note)
+	}
+}
+
+func TestAPISpec_V5_OpenHintResultFieldsMatchSpec(t *testing.T) {
+	spec := loadScoreboardSpec(t)
+	f := newSpecFixture(t) // "01-recon" has journey content (2 hints)
+
+	w := f.do("POST", "/api/users/oscar/challenges/01-recon/hints/1", "oscar@ctf.local", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("open hint: status=%d body=%s", w.Code, w.Body)
+	}
+	actual := f.decodedJSON(w)
+	schema := spec.SchemaByName("OpenHintResult")
+	if schema == nil {
+		t.Fatal("spec has no components.schemas.OpenHintResult")
+	}
+	for _, m := range specparity.CompareResponse(spec, schema, actual, "OpenHintResult") {
+		t.Errorf("%s: extra=%v missing=%v note=%q", m.Path, m.Extra, m.Missing, m.Note)
+	}
+}
+
+func TestAPISpec_V5_ResetDirtyResultFieldsMatchSpec(t *testing.T) {
+	spec := loadScoreboardSpec(t)
+	f := newSpecFixture(t)
+
+	// Idempotent no-op reset (paul was never tainted) — ResetDirtyResult's
+	// shape does not vary with whether the pair was actually dirty.
+	w := f.do("POST", "/api/users/paul/challenges/02-evade/reset-dirty", "paul@ctf.local", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("reset-dirty: status=%d body=%s", w.Code, w.Body)
+	}
+	actual := f.decodedJSON(w)
+	schema := spec.SchemaByName("ResetDirtyResult")
+	if schema == nil {
+		t.Fatal("spec has no components.schemas.ResetDirtyResult")
+	}
+	for _, m := range specparity.CompareResponse(spec, schema, actual, "ResetDirtyResult") {
+		t.Errorf("%s: extra=%v missing=%v note=%q", m.Path, m.Extra, m.Missing, m.Note)
+	}
+}
+
+func TestAPISpec_V5_DisplayNameResultFieldsMatchSpec(t *testing.T) {
+	spec := loadScoreboardSpec(t)
+	f := newSpecFixture(t)
+
+	// No X-Auth-Request-Email header: this participant route's ONLY real
+	// caller is the collector's verbatim forward of a workspace curl
+	// (claimed-identity fallback — see the spec operation's own
+	// description), so this is the realistic caller shape to test.
+	w := f.do("POST", "/api/users/quinn/display-name", "", map[string]any{"name": "Quinn"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("display-name: status=%d body=%s", w.Code, w.Body)
+	}
+	actual := f.decodedJSON(w)
+	schema := spec.SchemaByName("DisplayNameResult")
+	if schema == nil {
+		t.Fatal("spec has no components.schemas.DisplayNameResult")
+	}
+	for _, m := range specparity.CompareResponse(spec, schema, actual, "DisplayNameResult") {
+		t.Errorf("%s: extra=%v missing=%v note=%q", m.Path, m.Extra, m.Missing, m.Note)
+	}
+}
+
+func TestAPISpec_V5_AdminResetResultFieldsMatchSpec(t *testing.T) {
+	spec := loadScoreboardSpec(t)
+	f := newSpecFixture(t)
+
+	w := f.do("POST", "/api/admin/reset", specFixtureAdmin, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("admin reset: status=%d body=%s", w.Code, w.Body)
+	}
+	actual := f.decodedJSON(w)
+	schema := spec.SchemaByName("AdminResetResult")
+	if schema == nil {
+		t.Fatal("spec has no components.schemas.AdminResetResult")
+	}
+	for _, m := range specparity.CompareResponse(spec, schema, actual, "AdminResetResult") {
+		t.Errorf("%s: extra=%v missing=%v note=%q", m.Path, m.Extra, m.Missing, m.Note)
+	}
+}
+
+func TestAPISpec_V5_AdminDisplayNameResultFieldsMatchSpec(t *testing.T) {
+	spec := loadScoreboardSpec(t)
+	f := newSpecFixture(t)
+
+	w := f.do("POST", "/api/admin/users/rick/display-name", specFixtureAdmin, map[string]any{"name": "Rick"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("admin display-name: status=%d body=%s", w.Code, w.Body)
+	}
+	actual := f.decodedJSON(w)
+	schema := spec.SchemaByName("DisplayNameResult")
+	if schema == nil {
+		t.Fatal("spec has no components.schemas.DisplayNameResult")
+	}
+	for _, m := range specparity.CompareResponse(spec, schema, actual, "DisplayNameResult") {
+		t.Errorf("%s: extra=%v missing=%v note=%q", m.Path, m.Extra, m.Missing, m.Note)
+	}
+}
+
+// TestAPISpec_V5_QuestionListFieldsMatchSpec covers the PARTICIPANT listing
+// (GET /api/users/{user}/questions). Deliberately exercised with ZERO
+// tickets: docs/openapi-scoreboard.yaml's QuestionSummary.user is declared
+// as a `properties` entry but is NOT in `required`, and
+// qa.Store.ListForUser never sets it (see the schema's own description,
+// "only present in the ADMIN listing" — internal/scoreboard/api/qa_oapi.go's
+// toOapiSummary carries it through as a nil *string, so it is genuinely
+// ABSENT from the JSON, not null). V5's exact-key-match rule compares the
+// full declared `properties` set (spec.go's PropertyNames doc: deliberately
+// NOT `required`, so it does not special-case this), so populating this
+// list and letting CompareResponse recurse into a `user`-less
+// QuestionSummary would report a "missing: [user]" mismatch — a real,
+// pre-existing, INTENTIONAL schema/handler asymmetry (documented in the
+// spec's own prose) that ADR-0009 Decision A/B does not touch or resolve.
+// TestAPISpec_V5_AdminQuestionListFieldsMatchSpec below exercises the
+// non-vacuous QuestionSummary recursion instead, where ListAll DOES always
+// set `user`. See the PR report for this judgment call.
+func TestAPISpec_V5_QuestionListFieldsMatchSpec(t *testing.T) {
+	spec := loadScoreboardSpec(t)
+	f := newSpecFixture(t)
+
+	w := f.do("GET", "/api/users/sam/questions", "sam@ctf.local", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("questions list: status=%d body=%s", w.Code, w.Body)
+	}
+	actual := f.decodedJSON(w)
+	schema := spec.SchemaByName("QuestionList")
+	if schema == nil {
+		t.Fatal("spec has no components.schemas.QuestionList")
+	}
+	for _, m := range specparity.CompareResponse(spec, schema, actual, "QuestionList") {
+		t.Errorf("%s: extra=%v missing=%v note=%q", m.Path, m.Extra, m.Missing, m.Note)
+	}
+	if questions, _ := actual["questions"].([]any); len(questions) != 0 {
+		t.Fatalf("test bug: expected zero tickets for a fresh user, got %d", len(questions))
+	}
+}
+
+// TestAPISpec_V5_QuestionThreadFieldsMatchSpec exercises all THREE
+// participant operations whose 200 schema is QuestionThread — createQuestion,
+// getQuestion, postQuestionMessage — since QuestionThread's shape does not
+// vary by which route produced it (unlike SubmitFlagVerdict/
+// SubmitDetectVerdict's branch-dependent keys, every declared property is
+// always present here, so a single schema comparison per call is enough; no
+// union-of-branches judgment call needed).
+func TestAPISpec_V5_QuestionThreadFieldsMatchSpec(t *testing.T) {
+	spec := loadScoreboardSpec(t)
+	f := newSpecFixture(t)
+	schema := spec.SchemaByName("QuestionThread")
+	if schema == nil {
+		t.Fatal("spec has no components.schemas.QuestionThread")
+	}
+	compare := func(label string, actual map[string]any) {
+		t.Helper()
+		for _, m := range specparity.CompareResponse(spec, schema, actual, label) {
+			t.Errorf("%s: extra=%v missing=%v note=%q", m.Path, m.Extra, m.Missing, m.Note)
+		}
+	}
+
+	w := f.do("POST", "/api/users/tara/questions", "tara@ctf.local", map[string]any{"subject": "help", "body": "how do I start?"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("create question: status=%d body=%s", w.Code, w.Body)
+	}
+	created := f.decodedJSON(w)
+	compare("QuestionThread(create)", created)
+	qid, _ := created["id"].(string)
+	if qid == "" {
+		t.Fatal("created ticket has no id — cannot exercise get/messages")
+	}
+	if messages, _ := created["messages"].([]any); len(messages) == 0 {
+		t.Fatal("created ticket has an empty messages[] — the array-recursion branch was never exercised")
+	}
+
+	w = f.do("GET", "/api/users/tara/questions/"+qid, "tara@ctf.local", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("get question: status=%d body=%s", w.Code, w.Body)
+	}
+	compare("QuestionThread(get)", f.decodedJSON(w))
+
+	w = f.do("POST", "/api/users/tara/questions/"+qid+"/messages", "tara@ctf.local", map[string]any{"body": "any update?"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("post message: status=%d body=%s", w.Code, w.Body)
+	}
+	compare("QuestionThread(message)", f.decodedJSON(w))
+}
+
+// TestAPISpec_V5_AdminQuestionListFieldsMatchSpec covers the ADMIN listing
+// (GET /api/admin/questions) — the QuestionList/QuestionSummary companion
+// to the participant test above, seeded with one ticket so ListAll's
+// always-set `user` field exercises the array-recursion branch
+// non-vacuously (the asymmetry TestAPISpec_V5_QuestionListFieldsMatchSpec's
+// doc comment explains).
+func TestAPISpec_V5_AdminQuestionListFieldsMatchSpec(t *testing.T) {
+	spec := loadScoreboardSpec(t)
+	f := newSpecFixture(t)
+
+	w := f.do("POST", "/api/users/uma/questions", "uma@ctf.local", map[string]any{"subject": "s", "body": "b"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("seed ticket: status=%d body=%s", w.Code, w.Body)
+	}
+
+	w = f.do("GET", "/api/admin/questions", specFixtureAdmin, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("admin questions list: status=%d body=%s", w.Code, w.Body)
+	}
+	actual := f.decodedJSON(w)
+	schema := spec.SchemaByName("QuestionList")
+	if schema == nil {
+		t.Fatal("spec has no components.schemas.QuestionList")
+	}
+	for _, m := range specparity.CompareResponse(spec, schema, actual, "QuestionList") {
+		t.Errorf("%s: extra=%v missing=%v note=%q", m.Path, m.Extra, m.Missing, m.Note)
+	}
+	if questions, _ := actual["questions"].([]any); len(questions) == 0 {
+		t.Fatal("fixture produced an empty questions[] — the array-recursion branch was never exercised")
+	}
+}
+
+// TestAPISpec_V5_AdminQuestionThreadFieldsMatchSpec covers the two ADMIN
+// operations whose 200 schema is QuestionThread — adminGetQuestion and
+// adminReplyQuestion.
+func TestAPISpec_V5_AdminQuestionThreadFieldsMatchSpec(t *testing.T) {
+	spec := loadScoreboardSpec(t)
+	f := newSpecFixture(t)
+	schema := spec.SchemaByName("QuestionThread")
+	if schema == nil {
+		t.Fatal("spec has no components.schemas.QuestionThread")
+	}
+	compare := func(label string, actual map[string]any) {
+		t.Helper()
+		for _, m := range specparity.CompareResponse(spec, schema, actual, label) {
+			t.Errorf("%s: extra=%v missing=%v note=%q", m.Path, m.Extra, m.Missing, m.Note)
+		}
+	}
+
+	w := f.do("POST", "/api/users/vera/questions", "vera@ctf.local", map[string]any{"subject": "s", "body": "b"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("seed ticket: status=%d body=%s", w.Code, w.Body)
+	}
+	qid, _ := f.decodedJSON(w)["id"].(string)
+	if qid == "" {
+		t.Fatal("seed ticket has no id")
+	}
+
+	w = f.do("GET", "/api/admin/questions/"+qid, specFixtureAdmin, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("admin get question: status=%d body=%s", w.Code, w.Body)
+	}
+	compare("QuestionThread(admin get)", f.decodedJSON(w))
+
+	w = f.do("POST", "/api/admin/questions/"+qid+"/reply", specFixtureAdmin, map[string]any{"body": "here's how"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("admin reply: status=%d body=%s", w.Code, w.Body)
+	}
+	replied := f.decodedJSON(w)
+	compare("QuestionThread(admin reply)", replied)
+	if answered, _ := replied["answered"].(bool); !answered {
+		t.Fatalf("expected answered=true after an admin reply, got %+v", replied)
+	}
+}
+
+// fakeDetectRunner is a scriptable scoring.DetectRunner (structurally — Go
+// needs no import of the interface's package to satisfy it). Duplicated
+// minimally here rather than imported from scoring_test.go, matching this
+// file's existing "no cross-file test-helper dependency" convention
+// (falcoFire's doc comment above states the same reasoning). Grade's return
+// shape is (evasionFires, benignFires int, invalid bool, err error) —
+// scoring.SubmitDetect's contract.
+type fakeDetectRunner struct {
+	evasionFires, benignFires int
+	invalid                   bool
+}
+
+func (f *fakeDetectRunner) Grade(_ context.Context, _, _ string) (int, int, bool, error) {
+	return f.evasionFires, f.benignFires, f.invalid, nil
+}
+
+// newDetectSpecFixture is a DEDICATED fixture (not the shared specFixture
+// above) because submit-detect needs a "detect"-type catalog entry plus a
+// wired DetectRunner — neither of which the shared fixture's
+// trigger/evade-only catalog carries, and adding them there would perturb
+// the V1 route-count / catalog assumptions the other V5 tests pin.
+func newDetectSpecFixture(t *testing.T, runner *fakeDetectRunner) *specFixture {
+	t.Helper()
+	cat := catalog.Catalog{
+		"05-detect": {ID: "05-detect", Type: "detect"},
+	}
+	st, err := store.Open(filepath.Join(t.TempDir(), "apispec-detect.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := scoreboard.NewHandler(cat, st, logger,
+		scoreboard.WithAllowedOrigins([]string{specFixtureOrigin}),
+		scoreboard.WithDetect(api.DetectConfig{Runner: runner}),
+	)
+	return &specFixture{t: t, srv: srv}
+}
+
+// TestAPISpec_V5_SubmitDetectVerdictFieldsMatchSpec follows the SAME
+// aggregate-union judgment call as
+// TestAPISpec_V5_SubmitFlagVerdictFieldsMatchSpec above (that test's doc
+// comment explains the reasoning in full): SubmitDetectVerdict declares
+// `required: [status, solved]` plus 5 further optional properties, and no
+// SINGLE branch (invalid / missed / false-positive / solved —
+// api/api.go's submitDetect switch over scoring.DetectStatus) ever emits
+// all of them. This compares the UNION of keys observed across all four
+// documented branches against the schema's declared properties.
+func TestAPISpec_V5_SubmitDetectVerdictFieldsMatchSpec(t *testing.T) {
+	spec := loadScoreboardSpec(t)
+	runner := &fakeDetectRunner{}
+	f := newDetectSpecFixture(t, runner)
+
+	submitDetect := func(user string) map[string]any {
+		t.Helper()
+		w := f.do("POST", "/api/challenges/05-detect/submit-detect", user+"@ctf.local", map[string]any{"user": user, "condition": "evt.type=open"})
+		if w.Code != http.StatusOK {
+			t.Fatalf("submit-detect %s: status=%d body=%s", user, w.Code, w.Body)
+		}
+		return f.decodedJSON(w)
+	}
+
+	runner.invalid = true
+	invalid := submitDetect("iris")
+	if status, _ := invalid["status"].(string); status != "invalid" {
+		t.Fatalf("expected invalid branch, got %+v", invalid)
+	}
+
+	runner.invalid, runner.evasionFires, runner.benignFires = false, 0, 0
+	missed := submitDetect("jack")
+	if status, _ := missed["status"].(string); status != "missed" {
+		t.Fatalf("expected missed branch, got %+v", missed)
+	}
+
+	runner.evasionFires, runner.benignFires = 2, 1
+	falsePositive := submitDetect("kim")
+	if status, _ := falsePositive["status"].(string); status != "false-positive" {
+		t.Fatalf("expected false-positive branch, got %+v", falsePositive)
+	}
+
+	runner.evasionFires, runner.benignFires = 2, 0
+	solved := submitDetect("liam")
+	if status, _ := solved["status"].(string); status != "solved" {
+		t.Fatalf("expected solved branch, got %+v", solved)
+	}
+
+	schema := spec.SchemaByName("SubmitDetectVerdict")
+	if schema == nil {
+		t.Fatal("spec has no components.schemas.SubmitDetectVerdict")
+	}
+	want := spec.PropertyNames(schema)
+
+	union := map[string]bool{}
+	branches := []map[string]any{invalid, missed, falsePositive, solved}
+	for _, b := range branches {
+		for k := range b {
+			union[k] = true
+			if !want[k] {
+				t.Errorf("branch %+v has key %q not declared in SubmitDetectVerdict.properties", b, k)
+			}
+		}
+	}
+	for k := range want {
+		if !union[k] {
+			t.Errorf("SubmitDetectVerdict.properties declares %q but no documented branch ever emitted it", k)
 		}
 	}
 }

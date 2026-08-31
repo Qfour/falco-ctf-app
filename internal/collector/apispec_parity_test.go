@@ -10,8 +10,11 @@ package collector
 // only needs to parse, never needs to be reachable, for these checks).
 
 import (
+	"encoding/json"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 
@@ -154,6 +157,104 @@ func TestAPISpec_V4_CollectorForwardBijection(t *testing.T) {
 	}
 	if got := specparity.ResetDirtySpecViolation(scoreboardSpec.Operations()); got != "" {
 		t.Error(got)
+	}
+}
+
+// --- ADR-0009 Decision A: machine-derived V5 coverage ---------------------
+
+// v5Coverage is ADR-0009 Decision A point 2 for the collector binary:
+// specparity.ResponseObjectOperations() derives exactly ONE operation from
+// docs/openapi-collector.yaml (GET /healthz — the two forward routes have no
+// `schema` under their `application/json: {}` content, since the relayed
+// scoreboard body is out of this spec's scope, and /metrics is text/plain).
+var v5Coverage = map[string]bool{
+	"GET /healthz": true, // TestAPISpec_V5_HealthzFieldsMatchSpec
+}
+
+// TestAPISpec_VA1_ResponseObjectCoverageBidirectional is ADR-0009
+// Verification V(A)-1 against the collector's real spec + real v5Coverage
+// table.
+func TestAPISpec_VA1_ResponseObjectCoverageBidirectional(t *testing.T) {
+	spec := loadCollectorSpec(t)
+	derived := specparity.ResponseObjectOperations(spec)
+
+	if len(derived) == 0 {
+		t.Fatal("specparity.ResponseObjectOperations() returned zero operations for docs/openapi-collector.yaml — derivation is broken, not clean")
+	}
+	derivedOnly, coverageOnly := specparity.CoverageDiff(derived, v5Coverage)
+	if len(derivedOnly) > 0 {
+		t.Errorf("documented operation(s) with NO V5 field-comparison test: %v", derivedOnly)
+	}
+	if len(coverageOnly) > 0 {
+		t.Errorf("stale v5Coverage entr(y/ies) (operation no longer derived from the spec): %v", coverageOnly)
+	}
+	if len(derived) != 1 {
+		t.Errorf("expected 1 response-object operation (ADR-0009 C2), got %d: %v", len(derived), derived)
+	}
+}
+
+// TestAPISpec_VA1_MutationsFailBothDirections re-runs V(A)-1's mutation
+// proof against the collector's real derived set (see the scoreboard
+// package's identically-purposed test for the full reasoning).
+func TestAPISpec_VA1_MutationsFailBothDirections(t *testing.T) {
+	spec := loadCollectorSpec(t)
+	derived := specparity.ResponseObjectOperations(spec)
+
+	t.Run("derived_only_documented_no_coverage", func(t *testing.T) {
+		derivedOnly, _ := specparity.CoverageDiff(derived, map[string]bool{}) // simulate: table never populated
+		found := false
+		for _, k := range derivedOnly {
+			if k == "GET /healthz" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("expected derivedOnly to flag GET /healthz against an empty table, got %v", derivedOnly)
+		}
+	})
+
+	t.Run("coverage_only_stale_entry", func(t *testing.T) {
+		mutated := map[string]bool{"GET /healthz": true, "GET /api/does-not-exist": true}
+		_, coverageOnly := specparity.CoverageDiff(derived, mutated)
+		found := false
+		for _, k := range coverageOnly {
+			if k == "GET /api/does-not-exist" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("expected coverageOnly to flag GET /api/does-not-exist, got %v", coverageOnly)
+		}
+	})
+}
+
+// TestAPISpec_V5_HealthzFieldsMatchSpec is the field-comparison test
+// v5Coverage above declares for GET /healthz.
+func TestAPISpec_V5_HealthzFieldsMatchSpec(t *testing.T) {
+	spec := loadCollectorSpec(t)
+	h := newParityFixtureHandler(t)
+
+	r := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("healthz: status=%d body=%s", w.Code, w.Body)
+	}
+	var actual map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &actual); err != nil {
+		t.Fatalf("decode JSON: %v (body=%s)", err, w.Body)
+	}
+
+	op, ok := spec.Operations()["GET /healthz"]
+	if !ok {
+		t.Fatal("spec has no GET /healthz operation")
+	}
+	schema := spec.OperationResponseSchema(op, "200")
+	if schema == nil {
+		t.Fatal("GET /healthz 200 has no application/json schema")
+	}
+	for _, m := range specparity.CompareResponse(spec, schema, actual, "healthz") {
+		t.Errorf("%s: extra=%v missing=%v note=%q", m.Path, m.Extra, m.Missing, m.Note)
 	}
 }
 
