@@ -9,7 +9,11 @@
   Signpost「単一 Pod 隔離モデル自体が変更される決定が下った場合…P27 成長優先順位表の
   Lateral Movement 項目 [T1021系, multi-pod 前提] が実装されるタイミングで再検討が
   自然」(`docs/adr/0016-privilege-escalation-out-of-scope.md:115-118`) が予告していた
-  再訪そのもの。新規 ADR — 他 ADR を supersede しない。
+  再訪そのもの。新規 ADR — 他 ADR を supersede しない。2026-09-01 時点の EKS 実体
+  (NetworkPolicy enforcement = 方式A) を反映するため、workspace
+  `docs/adr/0005-eks-networkpolicy-enforcement.md` (ADR-WS-0005, Accepted) を根拠3
+  (egress lockdown) の正典として参照するよう更新 (workspace#22 security 監査 →
+  workspace#23 task brief)。
 
 ## Context
 
@@ -34,13 +38,17 @@ Privilege Escalation (`ATTACK-COVERAGE.md:34-35`, ADR-0016 引用) は既に正�
   のみ。同一 namespace の他 Pod や他 namespace への `list`/`get`/`exec` 権限は一切無い。
   `plant`/`challenge` コンテナは `automountServiceAccountToken: false`
   (`pod.yaml:81`) でトークンそのものを持たない。
-- **egress lockdown (P11.5) が cloud/他ホストへの到達も塞ぐ**: `CLAUDE.md:71` 「collector を
-  参加者向け単一入口にする」。`falco-ctf-platform/helmfile/releases/calico/values.yaml.gotmpl:1-7`
-  は「P11.5 egress lockdown」の enforcement を Calico (NetworkPolicy enforcer) の
-  導入理由として明記している。既存 mission 11 (`challenges/11-cloud-cred-hunt/README.md:3-4`)
+- **egress lockdown (P11.5) が cloud/他ホストへの到達も塞ぐ (根拠3、補強)**: `CLAUDE.md:71`
+  「collector を参加者向け単一入口にする」。NetworkPolicy enforcement の機構は
+  substrate 依存 (EKS: VPC CNI NetworkPolicy agent [方式A] / k3s: Calico) であり、
+  正典は workspace `docs/adr/0005-eks-networkpolicy-enforcement.md` (ADR-WS-0005,
+  Accepted 2026-09-01)。既存 mission 11 (`challenges/11-cloud-cred-hunt/README.md:3-4`)
   は「実 AWS 接続・実クレデンシャル・実 API 呼び出しは一切無い」ことを設計上の前提として
   明言済み — これは T1021.007 (Cloud Services) が要求する「実際に別のクラウド resource
   へ到達する」行為が、既存の運用制約下で不可能であることの既存の実例である。
+  **この根拠は補強材料であり、下記「結論の dispositive 性」に示すとおり、根拠3
+  自体の実効性 (2026-09-01 時点で ADR-WS-0005 の netpol-probe 実測待ち、下記
+  Verification 節参照) に結論そのものは左右されない。**
 - **upstream `falcosecurity/rules` (pin `falco-rules-3.0.1`) に T1021 系の default rule は
   無い** (`falco_rules.yaml` を実 fetch し実測: SSH に言及する rule は 3 本
   [`Disallowed SSH Connection Non Standard Port` / `Run shell untrusted` /
@@ -49,14 +57,32 @@ Privilege Escalation (`ATTACK-COVERAGE.md:34-35`, ADR-0016 引用) は既に正�
   ADR-0017 と同じ discipline (upstream を実際に fetch して確認、仮説のまま進めない) で
   確認した。
 
+**結論の dispositive 性 (根拠3 の状態に結論が左右されない構造)**:
+
+上記 4 根拠のうち、**根拠1 (単一 Pod topology) と根拠2 (RBAC resourceNames scope)
+の 2 つだけで、結論 (T1021 構造的に不可) は独立に dispositive に成立する**。T1021
+(Remote Services) の定義上の要件は「侵害済みホストから、窃取済みの正規認証情報で
+認証して、別の到達可能な principal へ移動する」ことであり、根拠1 が示す「移動先と
+なる第二の到達可能な principal が構造的に存在しない」時点でこの要件は満たされない。
+根拠2 (`role.yaml:11-19` の `resourceNames: ["workspace"]` 固定 RBAC scope) は
+その構造が SA token 経由でもバイパスできないことを裏付ける。この 2 つは
+NetworkPolicy enforcement 機構 (根拠3) にも upstream ruleset の状態 (根拠4) にも
+依存しない、Pod トポロジと K8s RBAC という enforcement レイヤ非依存の事実である。
+
+根拠3 (egress lockdown) と根拠4 (upstream ruleset) は補強材料であり、結論を成立
+させる単独の必要条件ではない。根拠3 は 2026-09-01 時点で EKS 実体において暫定状態
+にある (ADR-WS-0005 の netpol-probe 実測待ち — 下記 Verification 節参照) が、この
+暫定性は結論そのものの成否には影響しない (security-engineer 監査 workspace#22、
+PASS with conditions)。
+
 **Sub-technique 別の判定**:
 
 | Sub-technique | 判定 | 根拠 |
 |---|---|---|
 | T1021.001 (RDP) | 不成立 | Linux コンテナ環境に RDP サーバは存在せず (image に無い)、技術的に意味を持たない。Windows 前提の技術 |
 | T1021.002 (SMB/Windows Admin Shares) | 不成立 | 同上。Samba を追加インストールしても「移動先」の別ホストが構造的に無い (下記) |
-| T1021.004 (SSH) | 構造的に不成立 | 移動先となる第二の到達可能な Pod/ホストが存在しない。egress lockdown が sshd を持つ他ホストへの到達を塞ぐ。SA token は自身の Pod のみに scope される (`role.yaml:11-19`) |
-| T1021.007 (Cloud Services) | 構造的に不成立 | egress lockdown (Calico enforced) が実クラウド API への到達を塞ぎ、mission 11 の既存設計判断 (「実 API 呼び出し無し」) と同じ壁に当たる |
+| T1021.004 (SSH) | 構造的に不成立 (根拠1・根拠2 で dispositive) | 移動先となる第二の到達可能な Pod/ホストが構造的に存在しない (根拠1)。SA token は自身の Pod のみに scope される (根拠2, `role.yaml:11-19`)。egress lockdown (根拠3、補強・正典 ADR-WS-0005) が sshd を持つ他ホストへの到達も塞ぐ |
+| T1021.007 (Cloud Services) | 構造的に不成立 (根拠1・根拠2 で dispositive) | 移動先となる別の到達可能な principal が構造的に存在しない (根拠1・根拠2)。egress lockdown (根拠3、補強・正典 ADR-WS-0005。EKS では方式A の netpol-probe 実測待ち) が実クラウド API への到達も塞ぎ、mission 11 の既存設計判断 (「実 API 呼び出し無し」) と同じ壁に当たる |
 
 **「同一 Pod 内コンテナ間の移動」を代替として使えるか (task 制約 (b) の検討)**:
 
@@ -78,7 +104,8 @@ namespace内、認証情報の窃取や横取りも発生しない) ため、ATT
   参加者数 × 2 Pod でクラスタリソースが倍増。
 - **リスクと可逆性**: 高リスク・低可逆性の方向。ADR-0001 の SA token 隔離設計
   (`role.yaml:11-19` の `resourceNames: ["workspace"]` 固定) と P11.5 egress
-  lockdown (Calico enforcement) という、この CTF の**防御境界そのもの**を緩める。
+  lockdown (NetworkPolicy enforcement — substrate により EKS: 方式A / k3s: Calico、
+  正典 ADR-WS-0005) という、この CTF の**防御境界そのもの**を緩める。
   ADR-0016 が T1611 (Escape to Host) を除外した理由 (「単一Pod隔離という防御境界
   そのものが構造的に阻止済み」) の**逆側**を意図的に開けることになり、開けた瞬間に
   他の除外済み技術 (T1611 等) の再訪も避けられなくなる可能性がある。**Hard Invariant
@@ -158,9 +185,24 @@ CEO レベルの決定を要し、既存経路の再解釈 (Option 2) は実際�
 
 ## Verification
 
-無し。本決定はドキュメント/生成器の定義変更のみであり、「決定が守られているか」を
-機械的に検査する対象が存在しない (Hard Invariant への昇格は行わない — ADR-0015/0016
-と同じ歯止め規則に従う)。
+本決定 (Option 3: ドキュメント/生成器の定義変更のみ) 自体に対する機械検査対象は
+無い (Hard Invariant への昇格は行わない — ADR-0015/0016 と同じ歯止め規則に従う)。
+結論 (T1021 構造的に不可) は根拠1・根拠2 だけで dispositive に成立するため、
+この判定は下記 Signpost の状態に関わらず揺るがない。
+
+**根拠3 (egress lockdown) 限定の Signpost**: 根拠3 が主張する「egress lockdown が
+cloud/他ホストへの到達を塞ぐ」の実効性は、ADR-WS-0005 (方式A: VPC CNI
+NetworkPolicy agent) の実測ゲート — 次回 EKS stand-up での netpol-probe
+(workspace→scoreboard 直 POST が timeout すること) + verify.sh / verify-auth.sh
+フル green — に従属する。2026-09-01 時点でこの実測は未了 (prod cluster は
+2026-08-17 teardown 済みで現在稼働クラスタ無し)。netpol-probe が green で実証
+されるまで、根拠3 は「文言上は substrate 中立に記述されているが、EKS 上での
+enforcement は未証明」の暫定状態として扱う (security-engineer 監査
+workspace#22、PASS with conditions)。netpol-probe が green で実証された時点で
+根拠3 は正式に成立へ格上げされる。regression した場合 (netpol-probe が期待どおり
+timeout しない等) は ADR-WS-0005 の Signpost 1 (Calico policy-only fallback 検討)
+に従う — その場合でも根拠1・根拠2 が dispositive であるため本 ADR の結論自体は
+再訪不要。
 
 ## Advice
 
