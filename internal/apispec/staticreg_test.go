@@ -16,7 +16,7 @@ import (
 // reachable — via this module's own import graph, exactly the BFS
 // mux_ownership_test.go's cmdOwnsServeMux already performs for V6 — from an
 // http.ServeMux-owning cmd/* binary, EXCLUDING internal/apispec/route.go
-// (the ONE file apispec.Register's own doc comment names as the sole
+// (the ONE file apispec.NewMux's own doc comment names as the sole
 // permitted mux.Handle call site in this codebase).
 //
 // This replaces the former registrationTargets hand-written 6-file
@@ -79,10 +79,10 @@ func scanTargets(t *testing.T, root string) []string {
 // SELECTOR EXPRESSION whose name is "Handle" or "HandleFunc" on ANY receiver
 // (mux.Handle(...), h.mux.Handle(...), a bare `reg := h.mux.HandleFunc`
 // reference later called elsewhere, ...). After the ADR-0005 refactor the
-// only such reference in the whole tree is apispec.Register's own mux.Handle
+// only such reference in the whole tree is apispec.NewMux's own mux.Handle
 // (route.go, scanTargets' one named exclusion), so a passing result means
 // every owning package's route set equals exactly what its
-// Routes()/Register() table contains — the precondition the V1
+// Routes()/NewMux() table contains — the precondition the V1
 // bidirectional set-equality check depends on.
 //
 // Requirement 4 (R1#2, final review round): this used to gate on
@@ -125,8 +125,8 @@ func TestNoDirectMuxRegistrationOutsideTable(t *testing.T) {
 		t.Run(rel, func(t *testing.T) {
 			violations := findDirectMuxCalls(t, path)
 			if len(violations) > 0 {
-				t.Fatalf("%s: found %d direct mux registration call(s) outside apispec.Register: %v — "+
-					"route registration must go through a Route table + apispec.Register (ADR-0005 V2)",
+				t.Fatalf("%s: found %d direct mux registration call(s) outside apispec.NewMux: %v — "+
+					"route registration must go through a Route table + apispec.NewMux (ADR-0005 V2)",
 					path, len(violations), violations)
 			}
 		})

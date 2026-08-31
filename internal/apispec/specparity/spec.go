@@ -145,6 +145,32 @@ func (s *Spec) SchemaByName(name string) map[string]any {
 	return sch
 }
 
+// OperationResponseSchema returns an operation's `application/json` response
+// schema for a given status code (e.g. "200"), or nil if the operation, that
+// status, or its application/json content is absent. This is the navigation
+// CompareResponse's callers need to locate the schema to compare a decoded
+// response body against (ADR-0005 V5 / ADR-0009 Decision B).
+func (s *Spec) OperationResponseSchema(op map[string]any, status string) map[string]any {
+	responses, ok := op["responses"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	resp, ok := responses[status].(map[string]any)
+	if !ok {
+		return nil
+	}
+	content, ok := resp["content"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	media, ok := content["application/json"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	schema, _ := media["schema"].(map[string]any)
+	return schema
+}
+
 // navigateMap walks nested map[string]any keys, returning (nil, false) as
 // soon as any hop is missing or not itself a map.
 func navigateMap(root map[string]any, keys ...string) (map[string]any, bool) {
@@ -196,6 +222,55 @@ func (s *Spec) resolve(schema map[string]any) map[string]any {
 		return map[string]any{"properties": merged}
 	}
 	return schema
+}
+
+// resolveForCompare is resolve()'s CompareResponse-facing twin (ADR-0009
+// Decision B-3): it performs the IDENTICAL $ref/allOf resolution as
+// resolve(), but a $ref whose target name is absent from
+// components.schemas is reported via the second return value ("dangling
+// $ref: <name>") instead of silently propagating nil the way resolve() does.
+// resolve() itself is left unchanged — PropertyNames/PropertySchema/
+// ItemsSchema's existing "absent means empty" callers are out of ADR-0009's
+// scope and keep their current behavior.
+func (s *Spec) resolveForCompare(schema map[string]any) (resolved map[string]any, danglingRef string) {
+	if schema == nil {
+		return nil, ""
+	}
+	if ref, ok := schema["$ref"].(string); ok {
+		const prefix = "#/components/schemas/"
+		if !strings.HasPrefix(ref, prefix) {
+			// Not a components.schemas ref — outside this package's
+			// documented, narrow $ref support (see the Spec type's doc
+			// comment). Same as resolve(): propagate nil, not an error.
+			return nil, ""
+		}
+		name := strings.TrimPrefix(ref, prefix)
+		target := s.SchemaByName(name)
+		if target == nil {
+			return nil, "dangling $ref: " + name
+		}
+		return s.resolveForCompare(target)
+	}
+	if allOf, ok := schema["allOf"].([]any); ok && len(allOf) > 0 {
+		merged := map[string]any{}
+		for _, el := range allOf {
+			elm, ok := el.(map[string]any)
+			if !ok {
+				continue
+			}
+			r, dangling := s.resolveForCompare(elm)
+			if dangling != "" {
+				return nil, dangling
+			}
+			if props, ok := r["properties"].(map[string]any); ok {
+				for k, v := range props {
+					merged[k] = v
+				}
+			}
+		}
+		return map[string]any{"properties": merged}, ""
+	}
+	return schema, ""
 }
 
 // PropertyNames returns the resolved schema's declared `properties` key set

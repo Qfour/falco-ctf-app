@@ -8,6 +8,8 @@ package authpolicy_test
 // network I/O at construction time, so the upstream URL only needs to parse.
 
 import (
+	"encoding/json"
+	"net/http"
 	"path/filepath"
 	"testing"
 
@@ -104,6 +106,102 @@ func TestAPISpec_V3b_StringExtParity(t *testing.T) {
 		if len(mismatched) > 0 {
 			t.Errorf("%s parity failed: %v", c.key, mismatched)
 		}
+	}
+}
+
+// --- ADR-0009 Decision A: machine-derived V5 coverage ---------------------
+
+// v5Coverage is ADR-0009 Decision A point 2 for the auth-policy binary:
+// specparity.ResponseObjectOperations() derives exactly ONE operation from
+// docs/openapi-auth-policy.yaml (GET /healthz — /check and /check-admin's
+// 200 responses carry only `headers`, no `content` at all, and /metrics is
+// text/plain).
+var v5Coverage = map[string]bool{
+	"GET /healthz": true, // TestAPISpec_V5_HealthzFieldsMatchSpec
+}
+
+// TestAPISpec_VA1_ResponseObjectCoverageBidirectional is ADR-0009
+// Verification V(A)-1 against auth-policy's real spec + real v5Coverage
+// table.
+func TestAPISpec_VA1_ResponseObjectCoverageBidirectional(t *testing.T) {
+	spec := loadAuthPolicySpec(t)
+	derived := specparity.ResponseObjectOperations(spec)
+
+	if len(derived) == 0 {
+		t.Fatal("specparity.ResponseObjectOperations() returned zero operations for docs/openapi-auth-policy.yaml — derivation is broken, not clean")
+	}
+	derivedOnly, coverageOnly := specparity.CoverageDiff(derived, v5Coverage)
+	if len(derivedOnly) > 0 {
+		t.Errorf("documented operation(s) with NO V5 field-comparison test: %v", derivedOnly)
+	}
+	if len(coverageOnly) > 0 {
+		t.Errorf("stale v5Coverage entr(y/ies) (operation no longer derived from the spec): %v", coverageOnly)
+	}
+	if len(derived) != 1 {
+		t.Errorf("expected 1 response-object operation (ADR-0009 C2), got %d: %v", len(derived), derived)
+	}
+}
+
+// TestAPISpec_VA1_MutationsFailBothDirections re-runs V(A)-1's mutation
+// proof against auth-policy's real derived set (see the scoreboard
+// package's identically-purposed test for the full reasoning).
+func TestAPISpec_VA1_MutationsFailBothDirections(t *testing.T) {
+	spec := loadAuthPolicySpec(t)
+	derived := specparity.ResponseObjectOperations(spec)
+
+	t.Run("derived_only_documented_no_coverage", func(t *testing.T) {
+		derivedOnly, _ := specparity.CoverageDiff(derived, map[string]bool{}) // simulate: table never populated
+		found := false
+		for _, k := range derivedOnly {
+			if k == "GET /healthz" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("expected derivedOnly to flag GET /healthz against an empty table, got %v", derivedOnly)
+		}
+	})
+
+	t.Run("coverage_only_stale_entry", func(t *testing.T) {
+		mutated := map[string]bool{"GET /healthz": true, "GET /api/does-not-exist": true}
+		_, coverageOnly := specparity.CoverageDiff(derived, mutated)
+		found := false
+		for _, k := range coverageOnly {
+			if k == "GET /api/does-not-exist" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("expected coverageOnly to flag GET /api/does-not-exist, got %v", coverageOnly)
+		}
+	})
+}
+
+// TestAPISpec_V5_HealthzFieldsMatchSpec is the field-comparison test
+// v5Coverage above declares for GET /healthz.
+func TestAPISpec_V5_HealthzFieldsMatchSpec(t *testing.T) {
+	spec := loadAuthPolicySpec(t)
+	h := newHandler("http://oauth2-proxy.invalid")
+
+	resp := do(t, h, "/healthz", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("healthz: got %d, want 200", resp.StatusCode)
+	}
+	var actual map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&actual); err != nil {
+		t.Fatalf("decode JSON: %v", err)
+	}
+
+	op, ok := spec.Operations()["GET /healthz"]
+	if !ok {
+		t.Fatal("spec has no GET /healthz operation")
+	}
+	schema := spec.OperationResponseSchema(op, "200")
+	if schema == nil {
+		t.Fatal("GET /healthz 200 has no application/json schema")
+	}
+	for _, m := range specparity.CompareResponse(spec, schema, actual, "healthz") {
+		t.Errorf("%s: extra=%v missing=%v note=%q", m.Path, m.Extra, m.Missing, m.Note)
 	}
 }
 

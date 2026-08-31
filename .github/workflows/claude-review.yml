@@ -22,9 +22,17 @@ permissions:
 jobs:
   claude-review:
     runs-on: ubuntu-latest
+    # #130: ANTHROPIC_API_KEY 未設定だとレビュー内容と無関係に毎 PR 赤くなり signal
+    # integrity を損なう (本物の赤と区別不能に)。key があれば動き、無ければ下記 step を
+    # skip して job を green にする。fail-open ではない — レビューの有無は /review-5x +
+    # Lead レビューで別途 gate 済み。key 登録 (課金) や workflow 削除は CEO 判断 (選択肢 1/2)。
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
       - uses: actions/checkout@v7
-      - uses: anthropics/claude-code-action@v1
+      - name: Claude review (skipped when ANTHROPIC_API_KEY is not configured — #130)
+        if: ${{ env.ANTHROPIC_API_KEY != '' }}
+        uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |

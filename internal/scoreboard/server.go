@@ -160,7 +160,6 @@ func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts .
 		cat:    cat,
 		store:  s,
 		logger: logger,
-		mux:    http.NewServeMux(),
 		now:    time.Now,
 	}
 	for _, opt := range opts {
@@ -209,13 +208,17 @@ func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts .
 	// mux.Handle outside the table" check (internal/apispec) covers this
 	// file too, not just the sub-packages.
 	//
-	// declared is the DESIRED table; apispec.Register's return value (not
-	// declared itself) becomes h.routes below — MEDIUM 1 (5x review): a
-	// Route with Handler == nil is silently skipped by Register (never
-	// panics, never reaches the mux), so storing `declared` verbatim here
-	// would let such a route pass every ADR-0005 V1-V4 check while actually
-	// 404ing at runtime. Storing Register's installed-subset return value
-	// instead means Routes() can only ever report what the mux truly serves.
+	// declared is the DESIRED table; apispec.NewMux's second return value
+	// (not declared itself) becomes h.routes below, and its FIRST return
+	// value becomes h.mux — MEDIUM 1 (5x review): a Route with Handler ==
+	// nil is silently skipped by NewMux (never panics, never reaches the
+	// mux), so storing `declared` verbatim here would let such a route pass
+	// every ADR-0005 V1-V4 check while actually 404ing at runtime. Storing
+	// NewMux's installed-subset return value instead means Routes() can only
+	// ever report what the mux truly serves. NewMux (task #146) also OWNS
+	// mux construction — h.mux is set HERE, not via http.NewServeMux() up in
+	// the struct literal above, so there is no separately-constructed mux
+	// this call could be handed to add routes to later.
 	declared := []apispec.Route{
 		{
 			Method: "GET", Pattern: "/healthz",
@@ -233,15 +236,15 @@ func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts .
 	declared = append(declared, ih.Routes()...)
 	declared = append(declared, ah.Routes()...)
 	declared = append(declared, vh.Routes()...)
-	h.routes = apispec.Register(h.mux, declared)
+	h.mux, h.routes = apispec.NewMux(declared)
 
 	return h
 }
 
 // Routes returns this binary's FULL, flattened, ACTUALLY-INSTALLED route set
 // (this package's own healthz/metrics rows plus ingest's, api's and view's —
-// ADR-0005 V2/V1) — exactly apispec.Register's return value from NewHandler,
-// not the input table Register was given, so a parity test reading this
+// ADR-0005 V2/V1) — exactly apispec.NewMux's second return value from
+// NewHandler, not the input table NewMux was given, so a parity test reading this
 // back sees what the mux truly serves (MEDIUM 1) rather than a second,
 // independently-maintained "what we meant to install" list. Returns a copy
 // (MEDIUM 5, 5x review): the ORIGINAL slice header pointed at this Handler's

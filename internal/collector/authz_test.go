@@ -163,7 +163,6 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 // Enforced's count guards above pin at zero today).
 func TestAuthz_CatchesUnenforcedGate(t *testing.T) {
 	t.Run("declared_admin_but_never_enforced", func(t *testing.T) {
-		mux := http.NewServeMux()
 		rt := apispec.Route{
 			Method:  "GET",
 			Pattern: "/internal-audit",
@@ -172,14 +171,13 @@ func TestAuthz_CatchesUnenforcedGate(t *testing.T) {
 				w.WriteHeader(http.StatusOK) // BUG: never checks the caller's identity.
 			}),
 		}
-		apispec.Register(mux, []apispec.Route{rt})
+		mux, _ := apispec.NewMux([]apispec.Route{rt})
 		if violation := authzCheck(t, mux, rt); violation == "" {
 			t.Fatal("expected authzCheck to flag a declared-admin route whose handler never enforces it, got no violation — the detector would be a permanent no-op")
 		}
 	})
 
 	t.Run("declared_open_but_over_gated", func(t *testing.T) {
-		mux := http.NewServeMux()
 		rt := apispec.Route{
 			Method:  "GET",
 			Pattern: "/healthz-audit",
@@ -192,7 +190,7 @@ func TestAuthz_CatchesUnenforcedGate(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 			}),
 		}
-		apispec.Register(mux, []apispec.Route{rt})
+		mux, _ := apispec.NewMux([]apispec.Route{rt})
 		if violation := authzCheck(t, mux, rt); violation == "" {
 			t.Fatal("expected authzCheck to flag a declared-open route whose handler over-gates, got no violation — the negative branch would be a permanent no-op")
 		}
