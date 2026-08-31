@@ -14,6 +14,7 @@ package specparity
 // trusting it against a 1,600-line real spec.
 
 import (
+	"sort"
 	"testing"
 
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
@@ -609,5 +610,205 @@ func TestCompareResponse_AnyOf_UsesSameCodePath(t *testing.T) {
 	neither := map[string]any{"totally_wrong_key": true}
 	if mismatches := CompareResponse(s, schema, neither, "root"); len(mismatches) == 0 {
 		t.Fatal("expected a non-empty mismatch for an anyOf actual matching no branch, got none")
+	}
+}
+
+// --- ADR-0009 Decision A: ResponseObjectOperations / CoverageDiff --------
+//
+// Generic, algorithm-level proof (synthetic spec, no service fixture) that
+// ResponseObjectOperations derives exactly the operations Decision A defines
+// as in-scope, and that CoverageDiff's bidirectional comparison catches both
+// mutation directions V(A)-1 requires. Each service's OWN
+// apispec_parity_test.go additionally re-runs the same two directions
+// against ITS real docs/openapi-*.yaml + real v5Coverage table (mirroring
+// how V8's real-data proof sits alongside this file's synthetic one).
+
+// responseObjectOpsFixtureSpec builds a *Spec whose `paths` exercise every
+// ResponseObjectOperations decision point:
+//
+//	GET /object-ref       200 application/json $ref -> object w/ properties  (IN)
+//	POST /object-ref-201  201 application/json $ref -> object w/ properties  (IN)
+//	POST /oneof-object    200 application/json oneOf, both branches objects  (IN)
+//	GET /no-properties    200 application/json {type: object} (no properties) (OUT)
+//	GET /text-only        200 text/plain only, no application/json           (OUT)
+//	POST /oneof-mixed     200 oneOf where one branch has no properties       (OUT)
+//	GET /dangling-ref     200 application/json $ref to a schema that does
+//	                       not exist in components.schemas                   (OUT)
+func responseObjectOpsFixtureSpec() *Spec {
+	return &Spec{raw: map[string]any{
+		"paths": map[string]any{
+			"/object-ref": map[string]any{
+				"get": map[string]any{
+					"responses": map[string]any{
+						"200": map[string]any{"content": map[string]any{
+							"application/json": map[string]any{"schema": map[string]any{"$ref": "#/components/schemas/A"}},
+						}},
+					},
+				},
+			},
+			"/object-ref-201": map[string]any{
+				"post": map[string]any{
+					"responses": map[string]any{
+						"201": map[string]any{"content": map[string]any{
+							"application/json": map[string]any{"schema": map[string]any{"$ref": "#/components/schemas/A"}},
+						}},
+					},
+				},
+			},
+			"/oneof-object": map[string]any{
+				"post": map[string]any{
+					"responses": map[string]any{
+						"200": map[string]any{"content": map[string]any{
+							"application/json": map[string]any{"schema": map[string]any{
+								"oneOf": []any{
+									map[string]any{"$ref": "#/components/schemas/A"},
+									map[string]any{"$ref": "#/components/schemas/D"},
+								},
+							}},
+						}},
+					},
+				},
+			},
+			"/no-properties": map[string]any{
+				"get": map[string]any{
+					"responses": map[string]any{
+						"200": map[string]any{"content": map[string]any{
+							"application/json": map[string]any{"schema": map[string]any{"type": "object"}},
+						}},
+					},
+				},
+			},
+			"/text-only": map[string]any{
+				"get": map[string]any{
+					"responses": map[string]any{
+						"200": map[string]any{"content": map[string]any{
+							"text/plain": map[string]any{},
+						}},
+					},
+				},
+			},
+			"/oneof-mixed": map[string]any{
+				"post": map[string]any{
+					"responses": map[string]any{
+						"200": map[string]any{"content": map[string]any{
+							"application/json": map[string]any{"schema": map[string]any{
+								"oneOf": []any{
+									map[string]any{"$ref": "#/components/schemas/A"},
+									map[string]any{"type": "object"},
+								},
+							}},
+						}},
+					},
+				},
+			},
+			"/dangling-ref": map[string]any{
+				"get": map[string]any{
+					"responses": map[string]any{
+						"200": map[string]any{"content": map[string]any{
+							"application/json": map[string]any{"schema": map[string]any{"$ref": "#/components/schemas/Missing"}},
+						}},
+					},
+				},
+			},
+		},
+		"components": map[string]any{"schemas": map[string]any{
+			"A": map[string]any{"type": "object", "properties": map[string]any{"x": map[string]any{"type": "string"}}},
+			"D": map[string]any{"type": "object", "properties": map[string]any{"y": map[string]any{"type": "string"}}},
+		}},
+	}}
+}
+
+// TestResponseObjectOperations_DerivesExactlyTheInScopeSet is V(A)-2's
+// non-empty half plus the positive/negative shape decisions Decision A point
+// 1 defines: object $ref (200 and 201), object-only oneOf are IN; a
+// properties-less object, a text/plain-only response, a oneOf with a
+// non-object branch, and a dangling $ref are all OUT.
+func TestResponseObjectOperations_DerivesExactlyTheInScopeSet(t *testing.T) {
+	got := ResponseObjectOperations(responseObjectOpsFixtureSpec())
+	want := []string{"GET /object-ref", "POST /oneof-object", "POST /object-ref-201"}
+	sort.Strings(want)
+	if !slicesEqual(got, want) {
+		t.Fatalf("ResponseObjectOperations() = %v, want %v", got, want)
+	}
+}
+
+// TestResponseObjectOperations_EmptySpec_ReturnsEmpty is the OTHER end of
+// V(A)-2: a spec with no paths at all must derive to an empty set (not
+// silently panic or return something non-empty) — this is what makes the
+// per-service "len(derived) == 0 -> Fatal" caller guard (V(A)-2's own text:
+// "空を返したら fail する側の呼び出し") meaningful to have at all.
+func TestResponseObjectOperations_EmptySpec_ReturnsEmpty(t *testing.T) {
+	s := &Spec{raw: map[string]any{}}
+	if got := ResponseObjectOperations(s); len(got) != 0 {
+		t.Fatalf("expected empty spec to derive zero operations, got %v", got)
+	}
+}
+
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// TestCoverageDiff_CleanIsEmpty pins the non-mutated baseline: a coverage
+// table with EXACTLY the derived set's keys (all true) must report no diff.
+func TestCoverageDiff_CleanIsEmpty(t *testing.T) {
+	derived := []string{"GET /a", "POST /b"}
+	coverage := map[string]bool{"GET /a": true, "POST /b": true}
+	derivedOnly, coverageOnly := CoverageDiff(derived, coverage)
+	if len(derivedOnly) != 0 || len(coverageOnly) != 0 {
+		t.Fatalf("clean fixture must have no diff, got derivedOnly=%v coverageOnly=%v", derivedOnly, coverageOnly)
+	}
+}
+
+// TestCoverageDiff_CatchesDerivedOnly is V(A)-1 mutation direction (a): an
+// operation ResponseObjectOperations() derives but the table never mentions
+// (or, equivalently, maps to false) must be reported as derivedOnly
+// ("documented operation, no V5 coverage").
+func TestCoverageDiff_CatchesDerivedOnly(t *testing.T) {
+	derived := []string{"GET /a", "POST /b"}
+	coverage := map[string]bool{"GET /a": true} // POST /b missing entirely
+	derivedOnly, coverageOnly := CoverageDiff(derived, coverage)
+	if len(derivedOnly) != 1 || derivedOnly[0] != "POST /b" {
+		t.Fatalf("expected derivedOnly=[POST /b], got %v", derivedOnly)
+	}
+	if len(coverageOnly) != 0 {
+		t.Fatalf("expected no coverageOnly entries, got %v", coverageOnly)
+	}
+}
+
+// TestCoverageDiff_CatchesCoverageOnly is V(A)-1 mutation direction (b): a
+// table entry ResponseObjectOperations() no longer derives (a stale entry —
+// e.g. left behind after a schema lost its `properties` or a route was
+// removed) must be reported as coverageOnly ("stale coverage entry").
+func TestCoverageDiff_CatchesCoverageOnly(t *testing.T) {
+	derived := []string{"GET /a"}
+	coverage := map[string]bool{"GET /a": true, "DELETE /gone": true}
+	derivedOnly, coverageOnly := CoverageDiff(derived, coverage)
+	if len(derivedOnly) != 0 {
+		t.Fatalf("expected no derivedOnly entries, got %v", derivedOnly)
+	}
+	if len(coverageOnly) != 1 || coverageOnly[0] != "DELETE /gone" {
+		t.Fatalf("expected coverageOnly=[DELETE /gone], got %v", coverageOnly)
+	}
+}
+
+// TestCoverageDiff_FalseTableEntryIsTreatedAsAbsent proves a table entry
+// explicitly set to false (as opposed to omitted) is NOT treated as
+// "covered" — CoverageDiff must fail closed on that shape too, matching
+// StringExtParity/BoolExtParity's existing "absence, not an implicit
+// default" discipline elsewhere in this package.
+func TestCoverageDiff_FalseTableEntryIsTreatedAsAbsent(t *testing.T) {
+	derived := []string{"GET /a"}
+	coverage := map[string]bool{"GET /a": false}
+	derivedOnly, _ := CoverageDiff(derived, coverage)
+	if len(derivedOnly) != 1 || derivedOnly[0] != "GET /a" {
+		t.Fatalf("expected a false table entry to be treated as uncovered, got derivedOnly=%v", derivedOnly)
 	}
 }
