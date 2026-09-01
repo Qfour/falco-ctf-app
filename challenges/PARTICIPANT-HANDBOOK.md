@@ -201,7 +201,8 @@ trigger でルールを理解 → evade で同じルールを回避 のサイク
 
 ## 7. 行き詰まったら
 
-1. `cat /opt/ctf/missions/<NN>-<slug>/fixtures/welcome.txt` を再読 — ヒントが段階別に書かれている
+1. Journey UI のヒントを段階的に開く (気付き→概要→解答)。`welcome.txt`
+   (`cat /opt/ctf/missions/<NN>-<slug>/fixtures/welcome.txt`) はシナリオ/背景の再確認に
 2. 同じワークスペースで `man <command>` (alpine の `man` パッケージは
    入っていない場合がありますが) もしくは `<command> --help`
 3. それでも分からなければ運営に質問。質問の質を上げるために、以下を
