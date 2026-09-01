@@ -33,6 +33,15 @@ ARG KUBECTL_SHA256_ARM64=0ecf44450ee6063bf19dd166a103ee6df4a9034455c2abce626e6ee
 # 2026-09-01) — 既存 pin をそのまま 3.24 リポジトリに再確認して引き継ぐ。
 # kubectl (Go toolchain High) は本 bump のスコープ外 — v1.36→v1.37 は EKS skew
 # 確認要のため別 brief (workspace#31 brief 記載どおり)。
+#
+# workspace#33 skew 確認 (2026-09-01 実施、NG — v1.36.4 のまま維持):
+# terraform/providers/eks/variables.tf の kubernetes_version default (実 tfvars
+# 無し、EKS teardown 中につきこれが唯一の実運用想定値) = "1.30"。kubectl の
+# 公式 version skew policy (https://kubernetes.io/releases/version-skew-policy/)
+# は kube-apiserver ±1 minor のみ対応。v1.37 (skew 7) はもちろん、現行 v1.36.4
+# (skew 6) も既にポリシー外 — kubectl-exec のみの利用なので実害は未確認だが、
+# 次回 cluster_version 決定時に kubectl 側の追随可否を再評価すること
+# (再点検トリガは workspace#33 に準拠: EKS 実クラスタ確定 / 次回 stand-up)。
 RUN apk add --no-cache --upgrade libssl3=3.5.8-r0 libcrypto3=3.5.8-r0 \
  && apk add --no-cache \
         "ttyd=1.7.7-r0" \
