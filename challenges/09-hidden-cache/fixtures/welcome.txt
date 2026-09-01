@@ -47,8 +47,10 @@ Falco rule は **sensitive_files macro に該当するファイル** に対す�
   # → -r--r----- 2 root root ... /etc/.cache.bak
   #     ↑ リンク数 2 (= /etc/sudoers とどちらか) — hardlink 成立
 
-この環境では /tmp と /etc は別ファイルシステム上にあるため、/tmp への hardlink は作れない
-(`ln` は `EXDEV` で失敗する)。/etc 内 (`/etc/.cache.bak`) には成立する。
+hardlink は同一ファイルシステム内でしか張れない(別ファイルシステムをまた
+ぐと `ln` は `EXDEV` で失敗する)。宛先を /etc/sudoers と同じ /etc 内
+(`/etc/.cache.bak`) にしておけば、この環境のマウント構成に関わらず確実
+に成立する。
 
 # クリア条件
 

@@ -9,26 +9,43 @@ plant:
       PLANT_SEED_ROOT=/plant-seed
 
       # ---- 10-final-exfil ----
-      # seed /etc from the build-time snapshot (ADR-0001 S-a / ADR-0007) — runs once, directory-wide
-      mkdir -p "${PLANT_SEED_ROOT}/etc"
-      cp -a "/opt/ctf/plant-seed/etc/." "${PLANT_SEED_ROOT}/etc/"
       #
-      # Mission 10 (Final Exfil) — plant the master key as a CTF_MASTER_KEY line at
-      # the end of /etc/shadow. Reading it naively fires Read-sensitive (evade with
-      # Mission 03 /proc/self/root). The capstone then requires exfiltrating it to
-      # the collector over HTTP (see requireExfil in falco-rule.yaml).
+      # Mission 10 (Final Exfil) — plant the master key alone in
+      # /opt/nimbus/vault/master.key (ADR-0025-derived design, 2026-09-01 CEO
+      # decision: separate evade flags out of the shared /etc/shadow file into a
+      # purpose-built vault; the vault filename is CEO/architect-specified for this
+      # mission). Reading it naively fires Read-sensitive (evade with Mission 03's
+      # /proc/self/root technique, reused against this new path). The capstone
+      # then requires exfiltrating it to the collector over HTTP (see requireExfil
+      # in falco-rule.yaml).
       #
       # ADR-0001 Option B + ADR-0007 Option 1: same seed-dir model as
-      # 03-stealth-read/plant.sh (which shares this plant-target — gen-values.sh
-      # dedupes the /opt/ctf/plant-seed/etc/ directory-wide restore to run once,
-      # then appends both missions' lines in mission-id sort order). See that
-      # file's header for the full explanation, including why the mount is
-      # directory-granularity (/etc, not /etc/shadow) and why it is NOT readOnly
-      # (mission 09's hardlink target).
+      # 03-stealth-read/plant.sh, which shares this plant-target
+      # (/opt/nimbus/vault) — gen-values.sh dedupes the directory mount + mkdir -p
+      # so it's declared once, same structure as 03/10 previously sharing /etc.
+      # `plant-target-type: dir` means the mount IS this directory itself (mission
+      # 05's /root/.ssh shape). No `plant-seed-source`: /opt/nimbus/vault is a
+      # brand-new directory, nothing to restore first. No `plant-mount-readonly`
+      # override: nothing needs to write into /opt/nimbus/vault at runtime, so it
+      # stays readOnly:true.
+      #
+      # The file holds the flag ALONE (no "CTF_MASTER_KEY:" comment prefix, no
+      # surrounding content) — `cat` on it prints exactly the flag.
+      #
+      # platform-side dependency (cross-repo, same as ADR-0008/0017/0025-style
+      # customRules precedent): `Read sensitive file untrusted` must be extended
+      # via Falco `customRules` (append) to also match
+      # `fd.name = "/opt/nimbus/vault/master.key"` — this repo's falco-rule.yaml
+      # forbiddenRules stays unchanged (same 7 rule names, wider upstream
+      # condition on one of them), so no custom-falco-rules.txt entry is needed.
+      # Deploy order: platform's customRules append MUST land before this
+      # plant-target is live, or the naive `cat /opt/nimbus/vault/master.key`
+      # free-wins the read leg of this mission with no detection at all.
       #
       # CTF_FLAG_10_FINAL_EXFIL is injected into the `plant` initContainer from the
       # ctf-flags Secret.
-      echo "# CTF_MASTER_KEY: ${CTF_FLAG_10_FINAL_EXFIL:?flag env not set by ctf-user chart}" >> "${PLANT_SEED_ROOT}/etc/shadow"
+      mkdir -p "${PLANT_SEED_ROOT}/opt/nimbus/vault"
+      printf '%s\n' "${CTF_FLAG_10_FINAL_EXFIL:?flag env not set by ctf-user chart}" > "${PLANT_SEED_ROOT}/opt/nimbus/vault/master.key"
   mounts:
-    - path: /etc
-      readOnly: false
+    - path: /opt/nimbus/vault
+      readOnly: true

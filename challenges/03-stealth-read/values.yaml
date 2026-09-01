@@ -9,44 +9,55 @@ plant:
       PLANT_SEED_ROOT=/plant-seed
 
       # ---- 03-stealth-read ----
-      # seed /etc from the build-time snapshot (ADR-0001 S-a / ADR-0007) — runs once, directory-wide
-      mkdir -p "${PLANT_SEED_ROOT}/etc"
-      cp -a "/opt/ctf/plant-seed/etc/." "${PLANT_SEED_ROOT}/etc/"
       #
-      # Mission 03 (Stealth Read) — plant the flag at the end of /etc/shadow.
+      # Mission 03 (Stealth Read) — plant the flag alone in a dedicated vault file,
+      # NOT appended to /etc/shadow (ADR-0025-derived design, 2026-09-01 CEO
+      # decision: separate evade flags out of the shared /etc/shadow file into a
+      # purpose-built vault so 03/10 no longer visibly "converge on the same
+      # answer file").
       #
       # ADR-0001 Option B + ADR-0007 Option 1: this script runs in the `plant`
-      # initContainer, never in the challenge container. It never touches the real
-      # /etc/shadow — it writes into the seed emptyDir at $PLANT_SEED_ROOT
-      # (gen-values.sh sets this var and, because `plant-seed-source` above is
-      # declared, restores the WHOLE /etc directory — not just this one file —
-      # from the build-time snapshot at /opt/ctf/plant-seed/etc/ into
-      # $PLANT_SEED_ROOT/etc/ *before* this line runs; gen-values.sh dedupes this
-      # restore so it happens once even though 10-final-exfil shares this
-      # plant-target). The chart then binds $PLANT_SEED_ROOT/etc onto /etc in the
-      # challenge container via a **directory-granularity** subPath mount (ADR-0007
-      # — a file-granularity mount of /etc/shadow itself made the container
-      # runtime's own mount-setup trigger `Read sensitive file untrusted` on every
-      # deploy, because `open_read`-family rules match any `fd.typechar='f'` open
-      # of the destination; a directory destination can never satisfy that) — the
-      # participant still sees the exact same /etc/shadow path they always did.
+      # initContainer, never in the challenge container. $PLANT_SEED_ROOT is the
+      # seed emptyDir (gen-values.sh sets this var). `plant-target-type: dir` means
+      # the mount IS this directory itself (same shape as mission 05's
+      # /root/.ssh — no enclosing-directory indirection needed). No
+      # `plant-seed-source` header: /opt/nimbus/vault is a brand-new directory with
+      # no pre-existing content on the challenge image to restore first (unlike
+      # /etc, which mission 02/09 need populated with the rest of a realistic
+      # /etc). This mount is shared with 10-final-exfil/plant.sh, which also
+      # targets /opt/nimbus/vault (gen-values.sh dedupes the mount + mkdir -p, same
+      # structure as 03/10 previously sharing /etc — see that script's
+      # MOUNTDIR_KEYS handling). No `plant-mount-readonly` override either: unlike
+      # /etc, nothing needs to write into /opt/nimbus/vault at runtime, so it stays
+      # readOnly:true (fail-closed default).
       #
-      # `plant-mount-readonly: false`: this mount is NOT readOnly, because mission
-      # 09 (challenges/09-hidden-cache, which has no plant.sh of its own — its
-      # plant-target /etc/sudoers is baked directly into the image, not planted)
-      # needs `ln /etc/sudoers /etc/.cache.bak` to succeed, which requires a
-      # writable /etc. This has nothing to do with 03/10's own plant.sh logic; it
-      # is recorded here (the first mission, in sort order, to declare the /etc
-      # mount) purely because gen-values.sh needs exactly one place to read it
-      # from and 09 has no plant.sh to host the declaration. See
-      # docs/adr/0007-plant-mount-directory-granularity.md Consequences
-      # ("諦めたもの" — readOnly:true is given up for this mount only;
-      # mission 05's /root/.ssh mount stays readOnly:true).
+      # The vault file holds the flag ALONE (no comment prefix, no surrounding
+      # credential-file content) — `cat` on it prints exactly the flag and nothing
+      # else. Filename `creds.recover` is thematic for the Operation NimbusBreach
+      # narrative: a staged credential-recovery artifact an attacker would stash
+      # after harvesting secrets, consistent with 03's briefing (CTF Company SOC
+      # is watching /etc/shadow-style reads after mission 02; the same
+      # path-string-based Falco rule is made to also cover this vault file on the
+      # platform side, so the participant must reuse 03's own /proc/self/root
+      # technique instead of finding an unmonitored path "for free").
+      #
+      # platform-side dependency (cross-repo, same as ADR-0008/0017/0025-style
+      # customRules precedent): `Read sensitive file untrusted` must be extended
+      # via Falco `customRules` (append) to also match
+      # `fd.name = "/opt/nimbus/vault/creds.recover"` — this repo's falco-rule.yaml
+      # forbiddenRules stays "Read sensitive file untrusted" unchanged (same rule
+      # name, wider upstream condition), so no custom-falco-rules.txt entry is
+      # needed (that manifest is for NEW rule names only). Deploy order: platform's
+      # customRules append MUST land before this plant-target is live, or the
+      # naive `cat /opt/nimbus/vault/creds.recover` free-wins the mission with no
+      # detection at all (same failure mode ADR-0025 §Consequences documents for
+      # its own mission10 vault path).
       #
       # CTF_FLAG_03_STEALTH_READ is injected into the `plant` initContainer from the
       # ctf-flags Secret (the chart supplies a FALCO{dev-...} default for local
       # runs).
-      echo "# ${CTF_FLAG_03_STEALTH_READ:?flag env not set by ctf-user chart}" >> "${PLANT_SEED_ROOT}/etc/shadow"
+      mkdir -p "${PLANT_SEED_ROOT}/opt/nimbus/vault"
+      printf '%s\n' "${CTF_FLAG_03_STEALTH_READ:?flag env not set by ctf-user chart}" > "${PLANT_SEED_ROOT}/opt/nimbus/vault/creds.recover"
   mounts:
-    - path: /etc
-      readOnly: false
+    - path: /opt/nimbus/vault
+      readOnly: true

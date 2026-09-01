@@ -45,12 +45,14 @@ overrides:
   03-stealth-read:
     briefing: >-
       Mission 02 で正面から /etc/shadow を読んだら盛大に検知された。CTF Company の SOC は
-      もうアラートを見ている可能性が高い。だが同じ情報を Falco に気づかれず取り直せれば、
-      SOC は単発の false positive と判断するはずだ。Read sensitive file untrusted を
-      一度も発火させずに /etc/shadow 末尾の flag を抜き出し、提出せよ。
+      もうアラートを見ている可能性が高い。同じ Read sensitive file untrusted は
+      /etc/shadow 専用ではなく、資格情報退避用の vault ファイルにも効いている — だが
+      同じ情報を Falco に気づかれず取り直せれば、SOC は単発の false positive と
+      判断するはずだ。Read sensitive file untrusted を一度も発火させずに
+      /opt/nimbus/vault/creds.recover の flag を抜き出し、提出せよ。
     bridge: >-
-      ハッシュは静かに抜いた。SOC は単発の false positive で片付けただろう。
-      だが本番の横展開に効くのは shadow じゃない — SSH 鍵や AWS クレデンシャルだ。
+      退避された資格情報は静かに抜いた。SOC は単発の false positive で片付けただろう。
+      だが本番の横展開に効くのはそれだけじゃない — SSH 鍵や AWS クレデンシャルだ。
       箱の中を漁りにいく。まずは正面から find でどうなるか見てみよう。
   06-web-rce-shell:
     briefing: >-

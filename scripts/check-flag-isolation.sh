@@ -282,7 +282,19 @@ assert_challenge_mounts() { # 1-4, 1-5, 1-18 (challenge side) — ADR-0007 granu
         # a bare plant-target FILE path. The file-path check runs first and
         # is the sharper of the two failure messages (it names exactly the
         # regression class ADR-0007 exists to catch).
-        if is_in_allowlist "$mp_bare" "${file_targets[@]}"; then
+        # bash 3.2 (macOS default) note: file_targets[] is legitimately
+        # empty as of the 2026-09-01 vault-separation change (no challenge
+        # currently declares plant-target-type: file — see
+        # challenges/gen-values.sh's file_type_mount_targets() comment for
+        # the same fact on the gen-values side). Under `set -u`, expanding
+        # "${file_targets[@]}" when the array has zero elements raises
+        # "unbound variable" in bash 3.2 (a known pre-4.4 quirk — empty
+        # arrays are NOT the same as unset scalars for this purpose). The
+        # ${file_targets[@]+"${file_targets[@]}"} form guards that: it only
+        # expands the inner "${file_targets[@]}" when the array has at least
+        # one element (or is otherwise "set"), and produces nothing (not an
+        # error) when it is empty — is_in_allowlist then just never matches.
+        if is_in_allowlist "$mp_bare" ${file_targets[@]+"${file_targets[@]}"}; then
           violation 1-4 "challenge volumeMount mountPath '${mp_bare}' is a FILE-granularity plant-target, not its enclosing directory (ADR-0007 requires directory granularity — a file destination makes the runtime's own mount-setup trigger open_read-family Falco rules on every deploy)"
           bad4=1
         elif ! is_in_allowlist "$mp_bare" "${allowlist[@]}"; then

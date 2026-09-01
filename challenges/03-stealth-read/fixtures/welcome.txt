@@ -7,16 +7,19 @@
 # シナリオ
 
 Mission 02 で正面切って `/etc/shadow` を読んだら盛大に検知された。
-CTF Company の SOC はもう alert を見ている可能性が高い。
+CTF Company の SOC はこの手のアクセスを常時監視している — 同じ
+"Read sensitive file untrusted" は `/etc/shadow` 専用ではなく、
+資格情報退避用の vault ファイルにも効いている。
 **だが諦めない**。同じ情報を、Falco に気づかれない方法で取り直す
 ことができれば、SOC は「単発の false positive」と判断するはず。
 
 # ゴール
 
-`/etc/shadow` の末尾に**この Mission 用の flag**が書かれている。
-flag を取り出し、scoreboard に提出せよ。**ただし** "Read sensitive file
-untrusted" を一度でも発火させると検知されたと判定され、**やり直すまで
-提出できない**（時間が経っても自動的には解除されない）。
+`/opt/nimbus/vault/creds.recover` に**この Mission 用の flag だけ**が
+書かれている。flag を取り出し、scoreboard に提出せよ。**ただし**
+"Read sensitive file untrusted" を一度でも発火させると検知されたと
+判定され、**やり直すまで提出できない**（時間が経っても自動的には
+解除されない）。
 
 # 背景
 
@@ -26,8 +29,8 @@ Falco のルールは多くの場合 **fd.name (= open に渡された path)** �
 
 # 試すこと
 
-Journey UI のヒントを段階的に開きながら、`cat /etc/shadow` ではない
-方法で中身を取り出すアプローチを探そう。
+Journey UI のヒントを段階的に開きながら、`cat /opt/nimbus/vault/creds.recover`
+ではない方法で中身を取り出すアプローチを探そう。
 
 # 提出方法
 
