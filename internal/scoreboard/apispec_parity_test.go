@@ -188,7 +188,7 @@ func TestAPISpec_V1_RouteSetMatchesSpec(t *testing.T) {
 	// CONTENT comparison, it cannot "cancel out" (LOW, 5x review: an earlier
 	// version of this comment claimed otherwise, which is not a real
 	// detection gap and isn't why this assert exists). The actual value is
-	// PROCESS, not detection: this literal `27` forces every PR that adds or
+	// PROCESS, not detection: this literal `33` forces every PR that adds or
 	// removes a route to touch this line, so the route-count CHANGE itself
 	// shows up in the diff and gets reviewed, instead of silently sliding
 	// through as "RouteSetDiff was still empty, so nothing to see here" —
@@ -197,9 +197,11 @@ func TestAPISpec_V1_RouteSetMatchesSpec(t *testing.T) {
 	// minus app#84's removal of the orphaned operator-broadcast hint API
 	// (GET /api/hints, POST /api/admin/hints — P22-1 follow-up, dead code
 	// once the docs-site hint timer it served was retired), plus Issue #95's
-	// POST /csp-report (CSP violation report intake).
-	if len(routes) != 27 {
-		t.Errorf("expected 27 registered routes (ADR-0005 C1 + ADR-0006 P25 + app#116 - app#84 + app#95), got %d: %v", len(routes), routes)
+	// POST /csp-report (CSP violation report intake), plus app#96's
+	// self-hosted Google Fonts vendoring (GET /vendor/fonts.css + 5 vendored
+	// woff2 files — P12 follow-up, egress-zero for the portal's fonts).
+	if len(routes) != 33 {
+		t.Errorf("expected 33 registered routes (ADR-0005 C1 + ADR-0006 P25 + app#116 - app#84 + app#95 + app#96), got %d: %v", len(routes), routes)
 	}
 }
 

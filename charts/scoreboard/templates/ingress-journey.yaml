@@ -132,16 +132,29 @@ spec:
         #                        both portal.html and the admin index.html
         #                        <link> to. Same Exact rationale as
         #                        /vendor/cybercore.min.css immediately above:
-        #                        one embedded file, one mux Pattern, no
-        #                        /static/ directory of further assets to
-        #                        pre-provision a Prefix for. If a future
-        #                        change under /static/ or /vendor/ adds a
-        #                        second embedded asset, add its own Exact
-        #                        entry here (or revisit Prefix deliberately,
-        #                        as a genuine multi-asset decision, not a
-        #                        leftover from allowing before the mux route
-        #                        exists) rather than reusing this comment's
-        #                        "one file" reasoning unmodified.
+        #                        one embedded file, one mux Pattern.
+        #   /vendor/fonts.css, /vendor/fonts/chakrapetch-500.woff2,
+        #   /vendor/fonts/chakrapetch-600.woff2,
+        #   /vendor/fonts/chakrapetch-700.woff2, /vendor/fonts/inter-var.woff2,
+        #   /vendor/fonts/jetbrainsmono-var.woff2 — the self-hosted Google
+        #                        Fonts stylesheet + its 5 vendored woff2 files
+        #                        (app#96, P12 follow-up: replaces the portal's
+        #                        former fonts.googleapis.com/fonts.gstatic.com
+        #                        <link>). This IS the "second embedded asset
+        #                        under /vendor/" the comment above used to
+        #                        anticipate — still Exact per file (6 literal
+        #                        entries), not a Prefix /vendor/fonts/ rule:
+        #                        internal/scoreboard/view/vendorassets.go
+        #                        registers one mux Pattern per file (no
+        #                        wildcard/path-param route), so a Prefix rule
+        #                        here would open ingress reachability for
+        #                        paths the mux does not serve, same reasoning
+        #                        as /vendor/cybercore.min.css's Exact choice.
+        #                        If a THIRD /vendor/ asset is ever added,
+        #                        revisit Prefix deliberately at that point
+        #                        (as a genuine multi-asset decision) rather
+        #                        than reusing this comment's per-file
+        #                        reasoning unmodified.
         # NOTE: /falco/events (Falco ingest, no app-layer auth) is deliberately
         # absent — routing it here would let any login forge trigger solves.
         paths:
@@ -181,6 +194,48 @@ spec:
                 port:
                   number: 80
           - path: /static/tokens.css
+            pathType: Exact
+            backend:
+              service:
+                name: scoreboard
+                port:
+                  number: 80
+          - path: /vendor/fonts.css
+            pathType: Exact
+            backend:
+              service:
+                name: scoreboard
+                port:
+                  number: 80
+          - path: /vendor/fonts/chakrapetch-500.woff2
+            pathType: Exact
+            backend:
+              service:
+                name: scoreboard
+                port:
+                  number: 80
+          - path: /vendor/fonts/chakrapetch-600.woff2
+            pathType: Exact
+            backend:
+              service:
+                name: scoreboard
+                port:
+                  number: 80
+          - path: /vendor/fonts/chakrapetch-700.woff2
+            pathType: Exact
+            backend:
+              service:
+                name: scoreboard
+                port:
+                  number: 80
+          - path: /vendor/fonts/inter-var.woff2
+            pathType: Exact
+            backend:
+              service:
+                name: scoreboard
+                port:
+                  number: 80
+          - path: /vendor/fonts/jetbrainsmono-var.woff2
             pathType: Exact
             backend:
               service:
