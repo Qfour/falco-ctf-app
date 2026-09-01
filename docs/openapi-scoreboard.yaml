@@ -274,6 +274,152 @@ paths:
         "304":
           description: If-None-Match matched the embedded ETag
 
+  /vendor/fonts.css:
+    get:
+      summary: Self-hosted Google Fonts stylesheet (app#96, P12 follow-up)
+      operationId: vendorFontsCSS
+      tags: [infra]
+      x-ctf-audience: participant
+      x-ctf-authz: none
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
+      description: |
+        Replaces the portal's former `<link href="https://fonts.googleapis.com
+        /css2?...">` (a pre-P23-6 external CDN load) with the same 10
+        Chakra Petch / Inter / JetBrains Mono family+weight combinations,
+        vendored and embedded in the binary — see
+        internal/scoreboard/view/vendor/fonts/PROVENANCE.md for the exact
+        fetch URL, per-file sha256, subset scope (latin-only), and the SIL
+        OFL license text each family ships under. `src: url(...)` in this
+        stylesheet points at the same-origin `/vendor/fonts/*.woff2` routes
+        below — never a CDN (P12: egress-zero). Immutable + ETag, same
+        treatment as /vendor/cybercore.min.css. Renaming the path is a
+        template + spec change.
+      responses:
+        "200":
+          description: stylesheet
+          content:
+            text/css: {}
+        "304":
+          description: If-None-Match matched the embedded ETag
+
+  /vendor/fonts/chakrapetch-500.woff2:
+    get:
+      summary: Vendored Chakra Petch 500 (weight) woff2 (app#96)
+      operationId: vendorFontChakraPetch500
+      tags: [infra]
+      x-ctf-audience: participant
+      x-ctf-authz: none
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
+      description: |
+        Referenced by /vendor/fonts.css's `@font-face` rule for Chakra Petch
+        weight 500. See vendor/fonts/PROVENANCE.md's pin table for the
+        upstream fonts.gstatic.com URL and sha256 this was fetched from.
+      responses:
+        "200":
+          description: woff2 font file
+          content:
+            font/woff2: {}
+        "304":
+          description: If-None-Match matched the embedded ETag
+
+  /vendor/fonts/chakrapetch-600.woff2:
+    get:
+      summary: Vendored Chakra Petch 600 (weight) woff2 (app#96)
+      operationId: vendorFontChakraPetch600
+      tags: [infra]
+      x-ctf-audience: participant
+      x-ctf-authz: none
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
+      description: |
+        Referenced by /vendor/fonts.css's `@font-face` rule for Chakra Petch
+        weight 600. See vendor/fonts/PROVENANCE.md's pin table for the
+        upstream fonts.gstatic.com URL and sha256 this was fetched from.
+      responses:
+        "200":
+          description: woff2 font file
+          content:
+            font/woff2: {}
+        "304":
+          description: If-None-Match matched the embedded ETag
+
+  /vendor/fonts/chakrapetch-700.woff2:
+    get:
+      summary: Vendored Chakra Petch 700 (weight) woff2 (app#96)
+      operationId: vendorFontChakraPetch700
+      tags: [infra]
+      x-ctf-audience: participant
+      x-ctf-authz: none
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
+      description: |
+        Referenced by /vendor/fonts.css's `@font-face` rule for Chakra Petch
+        weight 700. See vendor/fonts/PROVENANCE.md's pin table for the
+        upstream fonts.gstatic.com URL and sha256 this was fetched from.
+      responses:
+        "200":
+          description: woff2 font file
+          content:
+            font/woff2: {}
+        "304":
+          description: If-None-Match matched the embedded ETag
+
+  /vendor/fonts/inter-var.woff2:
+    get:
+      summary: Vendored Inter variable-font woff2, weights 400/500/600/700 (app#96)
+      operationId: vendorFontInter
+      tags: [infra]
+      x-ctf-audience: participant
+      x-ctf-authz: none
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
+      description: |
+        Referenced by /vendor/fonts.css's 4 `@font-face` rules for Inter
+        (weights 400/500/600/700) — Google Fonts publishes Inter as a
+        variable font, so all 4 declared weights resolve to this ONE file
+        (a browser instantiates the "wght" axis per declared weight; see
+        vendor/fonts/PROVENANCE.md). Upstream fonts.gstatic.com URL and
+        sha256 in that same pin table.
+      responses:
+        "200":
+          description: woff2 font file
+          content:
+            font/woff2: {}
+        "304":
+          description: If-None-Match matched the embedded ETag
+
+  /vendor/fonts/jetbrainsmono-var.woff2:
+    get:
+      summary: Vendored JetBrains Mono variable-font woff2, weights 400/500/700 (app#96)
+      operationId: vendorFontJetBrainsMono
+      tags: [infra]
+      x-ctf-audience: participant
+      x-ctf-authz: none
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
+      description: |
+        Referenced by /vendor/fonts.css's 3 `@font-face` rules for
+        JetBrains Mono (weights 400/500/700) — Google Fonts publishes
+        JetBrains Mono as a variable font, so all 3 declared weights
+        resolve to this ONE file (same "wght" axis instantiation as Inter
+        above; see vendor/fonts/PROVENANCE.md). Upstream fonts.gstatic.com
+        URL and sha256 in that same pin table.
+      responses:
+        "200":
+          description: woff2 font file
+          content:
+            font/woff2: {}
+        "304":
+          description: If-None-Match matched the embedded ETag
+
   /csp-report:
     post:
       summary: Content-Security-Policy violation report intake (Issue #95)

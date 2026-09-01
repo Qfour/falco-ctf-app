@@ -239,8 +239,8 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 	// class rather than one combined total — a single combined count could
 	// hide, e.g., every AuthzAdmin route losing its classification to
 	// AuthzNone by mistake behind AuthzNone's count silently absorbing the
-	// difference. 7 admin + 11 self(-write) + 9 none/claimed-identity = 27,
-	// matching ADR-0005/ADR-0006/app#116/app#84/app#95's real-world
+	// difference. 7 admin + 11 self(-write) + 15 none/claimed-identity = 33,
+	// matching ADR-0005/ADR-0006/app#116/app#84/app#95/app#96's real-world
 	// route-count canon (apispec_parity_test.go's
 	// TestAPISpec_V1_RouteSetMatchesSpec).
 	if adminGated != 7 {
@@ -249,8 +249,8 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 	if selfGated != 11 {
 		t.Fatalf("expected exactly 11 Authz: self-or-admin(-write) routes (GET /api/users/{user}/me, GET /api/users/{user}/journey, POST /api/challenges/{cid}/submit-detect, POST /api/users/{user}/challenges/{cid}/steps/{idx}/check, POST /api/users/{user}/challenges/{cid}/hints/{idx}, POST /api/users/{user}/challenges/{cid}/reset-dirty, POST /api/users/{user}/display-name; ADR-0006 P25: GET /api/users/{user}/questions, POST /api/users/{user}/questions, GET /api/users/{user}/questions/{qid}, POST /api/users/{user}/questions/{qid}/messages), got %d", selfGated)
 	}
-	if openGated != 9 {
-		t.Fatalf("expected exactly 9 Authz: none/claimed-identity routes (GET /portal, GET the cybercore css asset, GET the design-tokens css asset (app#116), POST /falco/events, GET /healthz, GET /metrics, POST /api/challenges/{cid}/submit, POST /internal/exfil/{cid}; Issue #95: POST /csp-report), got %d", openGated)
+	if openGated != 15 {
+		t.Fatalf("expected exactly 15 Authz: none/claimed-identity routes (GET /portal, GET the cybercore css asset, GET the design-tokens css asset (app#116), POST /falco/events, GET /healthz, GET /metrics, POST /api/challenges/{cid}/submit, POST /internal/exfil/{cid}; Issue #95: POST /csp-report; app#96: GET /vendor/fonts.css + its 5 vendored woff2 assets), got %d", openGated)
 	}
 }
 

@@ -136,13 +136,15 @@ func New(isAdmin func(*http.Request) bool, deriveUser func(*http.Request) string
 }
 
 // Routes returns the view package's declarative route table (ADR-0005 V2).
-// GET / (admin dashboard), GET /portal (P23-1 unified shell), the vendored
-// cybercore-css stylesheet, and the design-tokens stylesheet (app#116) are
-// the only four routes left after the P19-2b cutover removed GET /me and
-// GET /journey (see the package doc above).
+// GET / (admin dashboard), GET /portal (P23-1 unified shell), POST
+// /csp-report (Issue #95), and the vendored same-origin assets (cybercore-css,
+// design-tokens (app#116), and — app#96, P12 follow-up — the self-hosted
+// Google Fonts stylesheet + its 5 woff2 files) make up the route table left
+// after the P19-2b cutover removed GET /me and GET /journey (see the
+// package doc above).
 //
-// The cybercore-css and tokens-css routes' Pattern fields are the
-// cybercoreCSSPath / tokensCSSPath CONSTANTS (vendorassets.go), not a string
+// Every vendored-asset route's Pattern field is that asset's own PATH
+// CONSTANT (vendorassets.go), not a string
 // built by concatenating "GET "+path at the mux.HandleFunc call site the way
 // the pre-ADR-0005 code did — that concatenation is exactly what defeated a
 // literal-grep route extraction (ADR-0005 V2's motivating example). Reading
@@ -189,6 +191,69 @@ func (h *Handler) Routes() []apispec.Route {
 			CollectorForward: false,
 			RateLimit:        "none",
 			Handler:          http.HandlerFunc(serveTokensCSS),
+		},
+		{
+			// app#96 (P12 follow-up): self-hosted Google Fonts stylesheet —
+			// see vendorassets.go's "Google Fonts self-host" section doc and
+			// vendor/fonts/PROVENANCE.md.
+			Method:           "GET",
+			Pattern:          vendorFontsCSSPath,
+			Audience:         apispec.AudienceParticipant,
+			Authz:            apispec.AuthzNone,
+			OriginGuarded:    false,
+			CollectorForward: false,
+			RateLimit:        "none",
+			Handler:          http.HandlerFunc(serveVendorFontsCSS),
+		},
+		{
+			Method:           "GET",
+			Pattern:          fontChakraPetch500Path,
+			Audience:         apispec.AudienceParticipant,
+			Authz:            apispec.AuthzNone,
+			OriginGuarded:    false,
+			CollectorForward: false,
+			RateLimit:        "none",
+			Handler:          http.HandlerFunc(serveFontChakraPetch500),
+		},
+		{
+			Method:           "GET",
+			Pattern:          fontChakraPetch600Path,
+			Audience:         apispec.AudienceParticipant,
+			Authz:            apispec.AuthzNone,
+			OriginGuarded:    false,
+			CollectorForward: false,
+			RateLimit:        "none",
+			Handler:          http.HandlerFunc(serveFontChakraPetch600),
+		},
+		{
+			Method:           "GET",
+			Pattern:          fontChakraPetch700Path,
+			Audience:         apispec.AudienceParticipant,
+			Authz:            apispec.AuthzNone,
+			OriginGuarded:    false,
+			CollectorForward: false,
+			RateLimit:        "none",
+			Handler:          http.HandlerFunc(serveFontChakraPetch700),
+		},
+		{
+			Method:           "GET",
+			Pattern:          fontInterPath,
+			Audience:         apispec.AudienceParticipant,
+			Authz:            apispec.AuthzNone,
+			OriginGuarded:    false,
+			CollectorForward: false,
+			RateLimit:        "none",
+			Handler:          http.HandlerFunc(serveFontInter),
+		},
+		{
+			Method:           "GET",
+			Pattern:          fontJetBrainsMonoPath,
+			Audience:         apispec.AudienceParticipant,
+			Authz:            apispec.AuthzNone,
+			OriginGuarded:    false,
+			CollectorForward: false,
+			RateLimit:        "none",
+			Handler:          http.HandlerFunc(serveFontJetBrainsMono),
 		},
 		{
 			// POST /csp-report (Issue #95 / P23-6 follow-up) — the sink
