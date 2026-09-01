@@ -3,7 +3,7 @@
  * #1C2A35 / ...) were hand-typed independently in THREE places across TWO
  * templates: templates/index.html's `:root` block (--falco/--bg/--accent
  * namespace), templates/portal.html's cybercore override block
- * (--cyber-*/--color-* namespace, themes the vendored cybercore-css), and
+ * (--cyber-* and --color-* namespaces, themes the vendored cybercore-css), and
  * templates/portal.html's own `:root` block (--p-* namespace, the P23
  * portal-redesign's own "single source of truth" — true only WITHIN
  * portal.html, not across files). A 2026-08-18 org-design research pass
@@ -33,7 +33,7 @@
  * hex-dedup):
  *   1. Base Falco palette (--falco/--bg/--accent/... — templates/index.html's
  *      original namespace, kept as the canonical literal-hex definitions).
- *   2. cybercore-css override (--cyber-*/--color-*/--font-* — themes the
+ *   2. cybercore-css override (--cyber-*, --color-*, --font-* — themes the
  *      vendored cybercore.min.css; see templates/portal.html's own comment
  *      above where this block used to live for why it is a currently-unused
  *      no-op today — that fact is unchanged by this file, see app#116).
@@ -78,7 +78,7 @@
                                 doc for why 3-digit hex needed its own pass. */
 
   /* --- 2. cybercore-css override (templates/portal.html's former
-     --cyber-*/--color-* block; re-themes cybercore.min.css's own defaults —
+     --cyber-* and --color-* block; re-themes cybercore.min.css's own defaults —
      see vendor/cybercore/PROVENANCE.md's variable dump). The tint/shade
      steps (300/400/600/900 etc.) that have no counterpart in section 1 keep
      their own literal hex; steps that land exactly on a section-1 color
