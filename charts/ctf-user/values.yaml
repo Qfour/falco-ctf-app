@@ -167,7 +167,22 @@ ingress:
 auth:
   enabled: true
   authUrl: "http://auth-policy.auth-policy.svc.cluster.local:80/check?host={{ .Values.username }}"
-  authSignin: "http://auth.{{ .Values.dnsSuffix }}/oauth2/start?rd=$scheme://$host$escaped_request_uri"
+  # appHost = the single-origin participant app host (P19-2b, e.g.
+  # "app.<dnsSuffix>") that fronts oauth2-proxy's /oauth2/start sign-in page.
+  # ctf-user is NOT a platform helmfile release (it's deployed via
+  # deploy-user.sh, not helmfile), so there is no helmfile values layer to
+  # supply this — override via `deploy-user.sh --app-host <host>` (same
+  # passthrough shape as `--frame-ancestors` above / `PORTAL_TTYD_SUFFIX`:
+  # platform's deploy-event-workspaces.sh forwards it per-user so operators
+  # don't set it by hand — see falco-ctf-app-conventions.md's Cross-repo
+  # 契約 table once wired). Empty default falls back to the legacy
+  # `auth.<dnsSuffix>` compat-bridge host (app#99 follow-up target for
+  # removal) so unconfigured/local deploys keep working unchanged — this is
+  # fail-soft UX only (a stale sign-in redirect just 404s/misdirects), it
+  # does NOT touch `authUrl`'s prefix-exact host↔email check above (I8
+  # unaffected).
+  appHost: ""
+  authSignin: 'http://{{ .Values.auth.appHost | default (printf "auth.%s" .Values.dnsSuffix) }}/oauth2/start?rd=$scheme://$host$escaped_request_uri'
 
 networkPolicy:
   enabled: true

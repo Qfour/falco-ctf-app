@@ -12,7 +12,7 @@
 #   deploy-user.sh [--challenges-dir <path>] [--scenarios-dir <path>] \
 #                  [--display-name <name>] \
 #                  [--flags-file <path>] [--dns-suffix <suffix>] \
-#                  [--frame-ancestors <csp-value>] \
+#                  [--frame-ancestors <csp-value>] [--app-host <host>] \
 #                  [--egress-lockdown --api-server-cidr <cidr>] \
 #                  <username> <challenge-id>
 #
@@ -46,6 +46,14 @@
 #   /portal); prod's real value collapses to a single origin once P19 lands.
 #   Omit to keep the chart's fail-safe default ('none' — nobody may frame
 #   ttyd), which is correct if the portal is not deployed/reachable yet.
+#
+# --app-host <host>: bare host (no scheme) of the single-origin participant
+#   app (P19-2b, e.g. "app.<dns-suffix>") that fronts oauth2-proxy's
+#   /oauth2/start sign-in page. Used ONLY to build the unauthenticated ttyd
+#   Ingress's `auth-signin` redirect target (chart's `auth.authSignin`) — it
+#   does not touch `auth.authUrl`'s host↔email check (I8). Omit to keep the
+#   chart's `auth.<dns-suffix>` compat-bridge default (app#99 follow-up:
+#   pass this once the platform-side bridge Ingress is ready to retire).
 #
 # --egress-lockdown: turn on the ctf-user egress NetworkPolicy (P11.5). The
 #   workspace can then only reach the collector + kube-dns + the API server;
@@ -81,6 +89,7 @@ DISPLAY_NAME=""
 FLAGS_FILE=""
 DNS_SUFFIX=""
 FRAME_ANCESTORS=""
+APP_HOST=""
 EGRESS_LOCKDOWN=0
 API_SERVER_CIDR=""
 POSITIONAL=()
@@ -102,6 +111,10 @@ while [[ $# -gt 0 ]]; do
       FRAME_ANCESTORS="${2:?--frame-ancestors requires a value}"; shift 2 ;;
     --frame-ancestors=*)
       FRAME_ANCESTORS="${1#--frame-ancestors=}"; shift ;;
+    --app-host)
+      APP_HOST="${2:?--app-host requires a value}"; shift 2 ;;
+    --app-host=*)
+      APP_HOST="${1#--app-host=}"; shift ;;
     --display-name)
       DISPLAY_NAME="${2:?--display-name requires a value}"; shift 2 ;;
     --display-name=*)
@@ -390,6 +403,15 @@ if [[ -n "${FRAME_ANCESTORS}" ]]; then
   FRAME_ANCESTORS_ARGS+=(--set-string "ttyd.frameAncestors=${FRAME_ANCESTORS}")
 fi
 
+# app#99: single-origin app host for the ttyd Ingress's auth-signin redirect
+# (chart default falls back to the auth.<dnsSuffix> compat bridge). Same
+# --set-string rationale as FRAME_ANCESTORS_ARGS above (avoid helm --set
+# coercing a bare hostname).
+APP_HOST_ARGS=()
+if [[ -n "${APP_HOST}" ]]; then
+  APP_HOST_ARGS+=(--set-string "auth.appHost=${APP_HOST}")
+fi
+
 # Egress lockdown (P11.5). Off unless --egress-lockdown is passed, so the local
 # demo path (no flag) keeps egress open and non-destructive. When on, enable the
 # ctf-user egress NetworkPolicy and pin the apiserver CIDR (validated above).
@@ -414,6 +436,7 @@ helm upgrade --install "${RELEASE}" "${CHART_DIR}" \
   ${DNS_SUFFIX:+--set dnsSuffix="${DNS_SUFFIX}"} \
   ${IMAGE_ARGS:+"${IMAGE_ARGS[@]}"} \
   ${FRAME_ANCESTORS_ARGS:+"${FRAME_ANCESTORS_ARGS[@]}"} \
+  ${APP_HOST_ARGS:+"${APP_HOST_ARGS[@]}"} \
   ${EGRESS_ARGS:+"${EGRESS_ARGS[@]}"} \
   ${VALUES_ARGS:+"${VALUES_ARGS[@]}"} \
   ${FLAG_ARGS:+"${FLAG_ARGS[@]}"} \
