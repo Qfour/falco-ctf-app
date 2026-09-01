@@ -62,6 +62,14 @@
 # --api-server-cidr <cidr>: apiserver endpoint CIDR the workspace needs for
 #   ttyd's `kubectl exec` (e.g. 10.100.0.1/32 in prod EKS). Only used with
 #   --egress-lockdown. Get it from terraform output on the platform side.
+#   NOTE (ADR-WS-0005 enforcement fix, 2026-09-01): this CIDR alone is NOT
+#   sufficient once the cluster's NetworkPolicy agent enforces egress —
+#   in-cluster kubectl always dials the `kubernetes.default` Service
+#   ClusterIP, not the real apiserver address this CIDR authorizes. This
+#   script derives that ClusterIP itself (`kubectl get svc kubernetes -n
+#   default`) and adds it as a second, narrower egress rule automatically —
+#   no separate flag needed, but --egress-lockdown now also requires kubectl
+#   access to the target cluster's `default` namespace.
 #
 # Env override:
 #   FALCO_CTF_CHALLENGES_DIR=<path>   (lower precedence than --challenges-dir)
@@ -153,6 +161,31 @@ if [[ "${EGRESS_LOCKDOWN}" -eq 1 && -z "${API_SERVER_CIDR}" ]]; then
   echo "--egress-lockdown requires --api-server-cidr <cidr>" >&2
   echo "  (the apiserver endpoint CIDR; from terraform output on prod EKS)" >&2
   exit 2
+fi
+
+# ADR-WS-0005 enforcement fix (2026-09-01 Bottlerocket PoC): --api-server-cidr
+# above authorizes the apiserver's real VPC/ENI address, but in-cluster
+# `kubectl` (what ttyd's `kubectl exec` uses) always dials the
+# `kubernetes.default` Service ClusterIP instead. Once the cluster's
+# NetworkPolicy agent enforces egress, that dial is evaluated against the
+# ClusterIP itself — which is OUTSIDE apiServerCidr's range — so `kubectl
+# exec` breaks even with a correct --api-server-cidr. Derive the ClusterIP
+# ourselves (the `kubernetes` Service in `default` always exists and its
+# ClusterIP is exactly what kubelet injects as $KUBERNETES_SERVICE_HOST in
+# every Pod on this same cluster) rather than adding a third CLI flag or
+# threading a new terraform output through the platform side. Fail fast, same
+# rationale as the check above: a silently-empty value would ship a broken
+# workspace.
+API_SERVER_CLUSTER_IP=""
+if [[ "${EGRESS_LOCKDOWN}" -eq 1 ]]; then
+  API_SERVER_CLUSTER_IP="$(kubectl get svc kubernetes -n default -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)"
+  if [[ -z "${API_SERVER_CLUSTER_IP}" ]]; then
+    echo "--egress-lockdown: could not read the 'kubernetes' Service ClusterIP in the 'default' namespace" >&2
+    echo "  (needed so the workspace egress NetworkPolicy allows the API server's" >&2
+    echo "   ClusterIP under NetworkPolicy enforcement — ADR-WS-0005 fix; check" >&2
+    echo "   kubectl context/access to the target cluster)" >&2
+    exit 2
+  fi
 fi
 
 # Precedence: --challenges-dir > $FALCO_CTF_CHALLENGES_DIR > default sibling repo.
@@ -419,6 +452,8 @@ EGRESS_ARGS=()
 if [[ "${EGRESS_LOCKDOWN}" -eq 1 ]]; then
   EGRESS_ARGS+=(--set "networkPolicy.egress.enabled=true")
   EGRESS_ARGS+=(--set "networkPolicy.egress.apiServerCidr=${API_SERVER_CIDR}")
+  # ADR-WS-0005 enforcement fix — see the derivation + fail-fast check above.
+  EGRESS_ARGS+=(--set-string "networkPolicy.egress.apiServerClusterIP=${API_SERVER_CLUSTER_IP}/32")
 fi
 
 info "[3/${LAST_STEP}] helm upgrade --install ${RELEASE} (challenge=${CHALLENGE_ID})"
