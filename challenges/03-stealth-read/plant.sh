@@ -32,15 +32,20 @@
 # platform side, so the participant must reuse 03's own /proc/self/root
 # technique instead of finding an unmonitored path "for free").
 #
-# platform-side dependency (cross-repo, same as ADR-0008/0017/0025-style
-# customRules precedent): `Read sensitive file untrusted` must be extended
-# via Falco `customRules` (append) to also match
-# `fd.name = "/opt/nimbus/vault/creds.recover"` — this repo's falco-rule.yaml
-# forbiddenRules stays "Read sensitive file untrusted" unchanged (same rule
-# name, wider upstream condition), so no custom-falco-rules.txt entry is
-# needed (that manifest is for NEW rule names only). Deploy order: platform's
-# customRules append MUST land before this plant-target is live, or the
-# naive `cat /opt/nimbus/vault/creds.recover` free-wins the mission with no
+# platform-side dependency (cross-repo, ADR-0025 — 3rd customRules entry
+# after ADR-0008/0017's precedent): `Read sensitive file untrusted` must be
+# extended via Falco `customRules` (append) to also match ANY path under
+# this vault directory — `fd.name startswith "/opt/nimbus/vault/"` (a
+# directory-prefix match, not an exact-path match: ADR-0025 §Context has VP
+# choosing dir-prefix over exact-match specifically so this one customRule
+# entry covers both this file and 10-final-exfil/master.key without a
+# per-file append, and so a future 3rd vault file needs no rule change).
+# This repo's falco-rule.yaml forbiddenRules stays "Read sensitive file
+# untrusted" unchanged (same rule name, wider upstream condition), so no
+# custom-falco-rules.txt entry is needed (that manifest is for NEW rule
+# names only). Deploy order: platform's customRules append MUST land before
+# this plant-target is live, or the naive
+# `cat /opt/nimbus/vault/creds.recover` free-wins the mission with no
 # detection at all (same failure mode ADR-0025 §Consequences documents for
 # its own mission10 vault path).
 #

@@ -23,15 +23,20 @@
 # The file holds the flag ALONE (no "CTF_MASTER_KEY:" comment prefix, no
 # surrounding content) — `cat` on it prints exactly the flag.
 #
-# platform-side dependency (cross-repo, same as ADR-0008/0017/0025-style
-# customRules precedent): `Read sensitive file untrusted` must be extended
-# via Falco `customRules` (append) to also match
-# `fd.name = "/opt/nimbus/vault/master.key"` — this repo's falco-rule.yaml
-# forbiddenRules stays unchanged (same 7 rule names, wider upstream
-# condition on one of them), so no custom-falco-rules.txt entry is needed.
-# Deploy order: platform's customRules append MUST land before this
-# plant-target is live, or the naive `cat /opt/nimbus/vault/master.key`
-# free-wins the read leg of this mission with no detection at all.
+# platform-side dependency (cross-repo, ADR-0025 — 3rd customRules entry
+# after ADR-0008/0017's precedent): `Read sensitive file untrusted` must be
+# extended via Falco `customRules` (append) to also match ANY path under
+# this vault directory — `fd.name startswith "/opt/nimbus/vault/"` (a
+# directory-prefix match, not an exact-path match: ADR-0025 §Context has VP
+# choosing dir-prefix over exact-match specifically so this one customRule
+# entry covers both this file and 03-stealth-read/creds.recover without a
+# per-file append, and so a future 3rd vault file needs no rule change).
+# This repo's falco-rule.yaml forbiddenRules stays unchanged (same 7 rule
+# names, wider upstream condition on one of them), so no
+# custom-falco-rules.txt entry is needed. Deploy order: platform's
+# customRules append MUST land before this plant-target is live, or the
+# naive `cat /opt/nimbus/vault/master.key` free-wins the read leg of this
+# mission with no detection at all.
 #
 # CTF_FLAG_10_FINAL_EXFIL is injected into the `plant` initContainer from the
 # ctf-flags Secret.

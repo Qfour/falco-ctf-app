@@ -114,6 +114,17 @@ plant_target_file_allowlist() {
 # reasoning — mirrors gen-values.sh's WRITABLE_MOUNT_DIRS derivation
 # (mission 09's `/etc/sudoers` hardlink target; see
 # challenges/03-stealth-read/plant.sh's `plant-mount-readonly` header).
+#
+# 2026-09-01 (ADR-0025 vault-separation): no plant.sh currently declares
+# `plant-mount-readonly: false` for /etc or anywhere else (mission 03/10
+# moved off /etc/shadow to /opt/nimbus/vault, which nothing writes into at
+# runtime; mission 09 no longer has /etc separately mounted at all, so its
+# hardlink target needs no readOnly:false override). This entry is
+# VACUOUS as of today — it never matches a rendered mountPath in any
+# render-matrix scope, so `mount_dir_is_writable` always returns false and
+# every mount is asserted readOnly:true. Left in place (not emptied) as a
+# ready allowlist slot for if /etc (or another mount) needs write access
+# again in the future.
 WRITABLE_MOUNT_DIR_ALLOWLIST=(/etc)
 
 mount_dir_is_writable() { # $1=mount dir -> rc 0 iff it is allowed readOnly:false

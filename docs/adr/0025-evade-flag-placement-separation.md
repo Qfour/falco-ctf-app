@@ -36,10 +36,12 @@
   という**技法**そのものの学習導線は保たれる — 技法はファイル非依存であり、実装は既に 03 の
   README/journey.yaml をこの前提で書き換え済み (`challenges/03-stealth-read/README.md`:
   「02 で `/etc/shadow` を読んで発火することを学んだ。同じ検知は `/etc/shadow` 専用ではない…」
-  という導入に変更、`journey.yaml` の briefing/steps も同型に更新)。**ただし
+  という導入に変更、`journey.yaml` の briefing/steps も同型に更新)。
   `challenges/02-credential-files/README.md:20-21` の「これが 03 の核心 (同 inode を別 path で
-  開けば抜けられる)」という文は 2026-09-01 時点でまだ未更新のまま残っており、02/03 が同一 inode を
-  もはや共有しないため事実として不成立になっている** — 実装 PR の残タスク (Consequences 参照)。
+  開けば抜けられる)」という文も、02/03 が同一 inode を もはや共有しないため事実として
+  不成立になっていた点を **実装済み** (commit `6dca49d` で「03 はこの原理を利用する:
+  同じ Falco ルールが監視している別のファイルに、検知されない path 経由で到達する」へ
+  書き換え済み。Consequences 参照)。
 - **改訂前の実配置** (baseline として記録):
 
   | 課題 | type | 改訂前 file:line | flag 埋め込み |
@@ -55,13 +57,13 @@
   mission09 (`09-hidden-cache`、plant.sh を持たず `/etc/sudoers` を image に直接焼き込み) の
   `ln /etc/sudoers /etc/.cache.bak` が書き込み可能な `/etc` を要求するために存在していた。**
 - **02↔03 の共有は事故ではなく意図的な教育装置だった (改訂前の前提)**:
-  `challenges/02-credential-files/README.md:20-21` (改訂前・現状も未更新) 「ファイル中身ではなく
+  `challenges/02-credential-files/README.md:20-21` (改訂前) 「ファイル中身ではなく
   path 文字列をルールが見ている / これが 03 の核心 (同 inode を別 path で開けば抜けられる)」。
   `challenges/03-stealth-read/README.md` (改訂前) も 02 を明示的に前提にした導入文。
   **本改訂により、この「同一 inode」ペアリングは破棄される** — 技法の実演は 02/03 それぞれが
   別ファイル (02: `/etc/shadow`、03: `/opt/nimbus/vault/creds.recover`) に対して同じ
   path-string 判定の性質 (「発火は中身ではなく path を見る」) を独立に示す形に変わる
-  (03 側は実装済み、02 側は未更新のまま — 上記参照)。
+  (03/02 双方とも実装済み — commit `6dca49d`、上記参照)。
 - **Falco 側の制約 (private 正典 `falco-ctf-platform/docs/falco-detection-conditions.md` §1
   で実測済み)**: `sensitive_files` マクロは `fd.name in (sensitive_file_names) or fd.directory
   in (/etc/sudoers.d, /etc/pam.d)`、`sensitive_file_names` = `/etc/shadow`, `/etc/sudoers`,
@@ -183,10 +185,11 @@ mission03 にも一律に適用することを優先した。02 単独で `/etc/
   「02 で `/etc/shadow` を読んで発火することを学んだ。同じ検知は `/etc/shadow` 専用ではない —
   vault ファイルにも同じルールが効いている」という導入に書き換え、02 への依存関係を「同一ファイル」
   ではなく「同じ path-string 判定の性質」として再定義している。
-- `challenges/02-credential-files/README.md`: **⚠ 未実装 (実装 PR の残タスク)**。「これが 03 の核心
-  (同 inode を別 path で開けば抜けられる)」の文が現状 (`README.md:20-21`) 未更新のまま残っており、
-  02/03 がもはや同一 inode を共有しないため事実として成立しない。「path 文字列判定という Falco の
-  性質」自体の解説は残し、「03 も同じ性質を別ファイルに対して利用する」という記述へ改める必要がある。
+- `challenges/02-credential-files/README.md`: **実装済み (commit `6dca49d`)**。「これが 03 の核心
+  (同 inode を別 path で開けば抜けられる)」の文 (旧 `README.md:20-21`) は 02/03 がもはや同一 inode
+  を共有しないため事実として成立しなくなっていたが、「path 文字列判定という Falco の性質」自体の
+  解説は残しつつ「03 はこの原理を利用する: 同じ Falco ルールが監視している別のファイルに、検知
+  されない path 経由で到達する」という記述へ書き換え済み。
 - `challenges/{03,10}-*/plant.sh` のコメント: **実装済み**。旧 `/etc` mount 共有・mission09 向け
   `readOnly:false` override への言及は新しいコメントから除去され、`/opt/nimbus/vault` を
   03/10 で共有するモデルの説明に置き換わっている。
@@ -200,7 +203,7 @@ mission03 にも一律に適用することを優先した。02 単独で `/etc/
 
 **コスト**: Option 1 より高いが中程度。plant.sh 2 本の retarget、platform 側 customRules
 追記 1 本 (dir-prefix なので mission 追加あたりのコスト増分はゼロ)、README/journey は
-03/10 完了・02 は残タスク。**forbiddenRules/expectedFlag のスキーマは無変更**なので
+03/10/02 いずれも実装済み (commit `6dca49d`)。**forbiddenRules/expectedFlag のスキーマは無変更**なので
 catalog/scoring/API 側の変更は一切不要。**旧 `/etc` mount group の消滅により `gen-values.sh`
 が生成する `plant.mounts` は 1 エントリ減る**(単純化)。
 
@@ -227,8 +230,8 @@ mission03 にもこれを一律適用することを選択した。02↔03 の�
 が失われても、**技法そのもの (Falco が path 文字列で判定する性質) はファイルに依存しない** ので、
 02 (`/etc/shadow` を loud に読ませる) と 03 (vault ファイルを `/proc/self/root` 経由で stealth に
 読む) をそれぞれ独立した教材として書き直せば、「sensitive file を読むと発火する」+
-「`/proc/self/root` で回避する」という 2 つの学習ポイントは個別に保たれる (03 側は README/journey
-の書き換えで既に実装、02 側は残タスク — Consequences 参照)。
+「`/proc/self/root` で回避する」という 2 つの学習ポイントは個別に保たれる (03/02 いずれも
+README/journey の書き換えで実装済み — commit `6dca49d`、Consequences 参照)。
 
 customRule は VP 判断で dir-prefix match (`fd.name startswith "/opt/nimbus/vault/"`) を採る。
 mission03/10 の 2 課題を同一 customRule でカバーでき、将来 vault namespace にファイルが増えても
@@ -238,9 +241,10 @@ rule 側の変更が不要になる — exact match を課題数ぶん積み上�
 
 - **手放すもの**: 02↔03 の「同一ファイルへの loud/stealth 対比」という教育装置。
   `challenges/02-credential-files/README.md:20-21` の「これが 03 の核心」という文は事実として
-  成立しなくなるため実装 PR で書き換える (**未完了。03 側の書き換えは実装済みだが 02 側は
-  2026-09-01 時点で未着手 — 実装 PR の DoD に加える**)。architect 初稿はこの装置の保持を
-  最優先したが、CEO はこれを手放す判断を明示的に行った。
+  成立しなくなるため実装 PR で書き換えた (**実装済み — commit `6dca49d`。「03 はこの原理を
+  利用する: 同じ Falco ルールが監視している別のファイルに、検知されない path 経由で到達する」
+  へ更新**)。architect 初稿はこの装置の保持を最優先したが、CEO はこれを手放す判断を明示的に
+  行った。
 - **手放すもの (2)**: 「vault ファイルを upstream の閉じた `sensitive_file_names` リストへ
   追加する」という更に単純な代替 (macro append) は採らない — マクロは他の upstream ルールからも
   参照されうる共有資産であり、rule 直下への append の方がブラスト半径が狭く、ADR-0008 の
@@ -307,6 +311,20 @@ rule 側の変更が不要になる — exact match を課題数ぶん積み上�
    dir-prefix match は課題追加コストをゼロに保つ設計上の意図どおりだが、単一ディレクトリに
    複数課題が集中しすぎると mount dedupe group の可読性が下がる。3課題目が生じた時点で
    サブディレクトリ分割 (`/opt/nimbus/vault/<mission-id>/`) を再検討する。
+6. **将来 `plant-target-type: file` を持つ課題が再導入された場合** (本 ADR で 03/10 が
+   `file` → `dir` へ移行した結果、2026-09-01 時点でカタログ全体に `file`-type plant-target が
+   0 件になり、`challenges/gen-values.sh` の ADR-0007 Verification 2 negative test は
+   live catalog データではなく synthetic override (`check_mount_granularity()` の第 4 引数)
+   で `/etc/shadow` を注入する形に変わっている) — **synthetic override だけでなく、
+   `file_type_mount_targets()` が実データ (`plant_target_type "${id}/plant.sh"` の実際の
+   宣言) から正しく非空集合を抽出する配線も再確認すること**。synthetic override の
+   rejection logic 自体は生きているが、それは「実カタログにファイル種別が存在するときに
+   `file_type_mount_targets()` が正しく拾えるか」という別の経路を検査しない
+   (`gen-values.sh` の `file_type_mount_targets()` コメント、`scripts/check-flag-isolation.sh`
+   の `plant_target_file_allowlist()` も同型の理由で 2026-09-01 時点は空集合)。新規
+   `file`-type 課題を追加した PR では、`./challenges/gen-values.sh --check` が
+   その課題の plant-target を正しく `plant.mounts` の dirname として反映しているかを
+   diff で目視確認すること。
 
 ## Verification
 
@@ -335,9 +353,9 @@ rule 側の変更が不要になる — exact match を課題数ぶん積み上�
   mount エントリが 1 本に dedupe され、旧 `/etc` mount エントリが `plant.mounts` から消えている
   ことを実装 PR の diff で確認する。ADR-0007 Verification 2 の negative test (synthetic
   `/etc/shadow` override 経由) も green であること。
-- **(g) [必須・残タスク] 02 README 整合性**: `challenges/02-credential-files/README.md` の
+- **(g) [必須・実装済み] 02 README 整合性**: `challenges/02-credential-files/README.md` の
   「これが 03 の核心」文が書き換えられ、02/03 が別ファイルであることと矛盾しないことを
-  実装 PR のレビューで確認する (2026-09-01 時点で未着手、Consequences 参照)。
+  review-5x で確認済み (commit `6dca49d`、Consequences 参照)。
 - **(h) 本 ADR は Hard Invariant を新設しない**。I13a/I13b の対象候補集合への追加是非は
   実装 PR のタイミングで判断する (ADR-0008/0017 と同じ「実機 cluster 実測が残 gate」の
   未昇格候補として扱う)。
