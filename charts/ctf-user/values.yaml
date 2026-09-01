@@ -197,3 +197,13 @@ networkPolicy:
   egress:
     enabled: false
     apiServerCidr: ""
+    # apiServerClusterIP: single ipBlock (deploy-user.sh passes it as
+    # "<ip>/32") for the `kubernetes.default` Service ClusterIP — see
+    # templates/networkpolicy.yaml's comment for why this is a SEPARATE
+    # field from apiServerCidr (VPC/real-endpoint CIDR) rather than folded
+    # into it: under VPC CNI NetworkPolicy agent enforcement (ADR-WS-0005),
+    # `kubectl exec`'s egress is evaluated against the ClusterIP, which sits
+    # outside apiServerCidr's range. deploy-user.sh derives this
+    # automatically (kubectl get svc kubernetes -n default) when
+    # --egress-lockdown is passed — no new CLI flag, no terraform plumbing.
+    apiServerClusterIP: ""

@@ -12,6 +12,18 @@
 # /falco/events or hit the scoreboard's internal endpoints directly.
 # `apiServerCidr` must be set to the real apiserver endpoint CIDR or ttyd's
 # `kubectl exec` to challenge will be blocked.
+#
+# `apiServerClusterIP` (ADR-WS-0005 enforcement fix, 2026-09-01 Bottlerocket
+# PoC finding): in-cluster `kubectl` (what ttyd uses) always dials the
+# `kubernetes.default` Service ClusterIP (`$KUBERNETES_SERVICE_HOST`), never
+# the apiserver's real VPC/ENI address that `apiServerCidr` authorizes. Once
+# VPC CNI NetworkPolicy agent enforcement is ON (ADR-WS-0005), egress is
+# evaluated PRE-DNAT against that ClusterIP — which sits in the cluster's
+# service CIDR, a separate non-routed range OUTSIDE the VPC CIDR — so
+# `apiServerCidr` alone no longer covers `kubectl exec` traffic and it times
+# out. This second ipBlock closes that gap without widening the lockdown to
+# the whole service CIDR (deploy-user.sh derives and passes exactly the
+# single ClusterIP /32).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -75,6 +87,17 @@ spec:
           port: 443
         - protocol: TCP
           port: 6443
+    {{- end }}
+    {{- with .Values.networkPolicy.egress.apiServerClusterIP }}
+    # Kubernetes API service ClusterIP — see comment block above. Single
+    # /32, port 443 only (the `kubernetes` Service in `default` always
+    # listens on 443 regardless of the real apiserver port).
+    - to:
+        - ipBlock:
+            cidr: {{ . }}
+      ports:
+        - protocol: TCP
+          port: 443
     {{- end }}
   {{- end }}
 {{- end }}
