@@ -377,7 +377,7 @@ ATT&CK のキルチェーン順 + trigger/evade の対 (5 ペア):
 4. trigger 課題: コマンド実行 → 自動 solve
 5. evade 課題: `source /opt/ctf/submit.sh && submit <mission-id> 'FALCO{...}'`
 
-詰まったら welcome.txt の HINT 1 → 2 → 3 を開封。
+詰まったら Journey UI でヒントを段階解放 (気付き → 概要 → 解答)。
 
 ---
 
@@ -444,6 +444,6 @@ P16-P17 1 min  → 25 分経過
 
 1. 全員が welcome.txt を読み始めるのを確認
 2. 5-10 分後 「みなさん 01 解けてますか?」と声かけ
-3. evade 課題 (02 / 05) で詰まった人がいたら個別に HINT 2 を促す
-4. 最後の 10 分で「あと 5 問残ってる方は HINT 3 まで開封 OK」と告知
+3. evade 課題 (02 / 05) で詰まった人がいたら個別に Journey UI の 2 段目ヒントを促す
+4. 最後の 10 分で「あと 5 問残ってる方は Journey UI の 3 段目ヒントまで開いて OK」と告知
 -->

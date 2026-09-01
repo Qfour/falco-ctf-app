@@ -4,9 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Falco CTF · scoreboard</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<!-- Chakra Petch / Inter / JetBrains Mono (app#96, P12 follow-up): vendored,
+     self-hosted, SIL OFL — see internal/scoreboard/view/vendor/fonts/
+     PROVENANCE.md for the fetch URL/sha256/license per file and
+     vendorassets.go for the go:embed serving paths. Same-origin only, never
+     a CDN (P12: egress-zero) — replaces the former fonts.googleapis.com
+     <link> + its two fonts.gstatic.com preconnects (no longer needed:
+     same-origin requests don't benefit from preconnect). -->
+<link rel="stylesheet" href="/vendor/fonts.css">
 <!-- Design tokens (app#116): single hex source for the --falco/--bg/--accent
      custom properties this page's CSS below consumes via var(...). Self-
      hosted, same-origin (see internal/scoreboard/view/vendorassets.go /

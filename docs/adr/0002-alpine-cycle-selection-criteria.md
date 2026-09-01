@@ -1,6 +1,11 @@
 # ADR-0002: alpine の cycle 選定基準を「リリース後 ~1 年」から「安定性実績 + EOL runway + CVE fix 到達性」に置き換え、3.22 → 3.23 へ bump する
 
-- Status: Proposed
+- Status: **Accepted** (2026-09-01, VP merge = 承認。Decision 自体は 2026-08-18 に
+  VP が承認済みだったが Status 昇格が漏れ Proposed のまま放置され、まさに本 ADR が
+  警告した「同じ議論の再発」が app#266 の 3.23→3.24 即日 re-bump として現実化した
+  (security-engineer MEDIUM 指摘、workspace#32)。本 PR の merge が昇格を是正する。
+  app#266 の 2 段階 bump (3.22→3.23→3.24) は条件 3 [CVE fix 到達性] の緊急パスとして
+  本 ADR の 3 条件方式でそのまま正当化される — 個別の追加決定は不要)
 - Date / Deciders: 2026-08-18 / VP (承認) + CEO (merge)
 - 関連: P8 (freshness)、P12 (digest pin)、`.claude/rules/falco-ctf-app-conventions.md:47-49`
   (現行の cycle 選定規約) / :75-101 (digest bump 手順)、ADR-0001 (同時期の workspace 変更)

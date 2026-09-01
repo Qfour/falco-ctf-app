@@ -52,7 +52,7 @@ func newNonce() (string, error) {
 //     also listed (a nonce-source present alongside 'unsafe-inline' would
 //     make browsers ignore 'unsafe-inline' per the CSP spec anyway, but we
 //     don't rely on that — it's simply absent).
-//   - style-src 'self' 'unsafe-inline' https://fonts.googleapis.com:
+//   - style-src 'self' 'unsafe-inline':
 //     DELIBERATELY NOT nonce-restricted, unlike script-src. portal.html uses
 //     ~34 static inline style="..." attributes plus another ~20 CLIENT-SIDE
 //     JS-GENERATED style="..." attributes (template literals computing
@@ -79,14 +79,17 @@ func newNonce() (string, error) {
 //     pragmatic tradeoff: it keeps the existing rendering code unchanged
 //     (no scope creep beyond P23-6's stated cybercore + CSP task) while
 //     script-src — the directive that actually stops code execution —
-//     stays strict. https://fonts.googleapis.com is additionally allowed
-//     because portal.html's <link href="https://fonts.googleapis.com/css2?...">
-//     (pre-existing, unrelated to this task) fetches a stylesheet from
-//     that origin; leaving it off would break the page's fonts.
-//   - font-src 'self' https://fonts.gstatic.com: the Google Fonts
-//     stylesheet above in turn references font files hosted on
-//     fonts.gstatic.com — 'self' alone would 404 in-browser for all
-//     @font-face src loads and silently fall back to system fonts.
+//     stays strict. https://fonts.googleapis.com used to be additionally
+//     allowed here because portal.html's <link href="https://fonts.
+//     googleapis.com/css2?..."> fetched a stylesheet from that origin;
+//     app#96 (P12 follow-up) vendored that stylesheet + its font files
+//     same-origin (GET /vendor/fonts.css, internal/scoreboard/view/
+//     vendorassets.go), so 'self' alone now covers it — the external
+//     origin allowance is gone, not just unused.
+//   - font-src 'self': the Google Fonts stylesheet's font files
+//     (fonts.gstatic.com) are, likewise, now vendored same-origin under
+//     /vendor/fonts/*.woff2 (app#96) — 'self' alone is sufficient; there is
+//     no longer any @font-face src that leaves this origin.
 //   - img-src 'self' data:: the vendored cybercore.min.css's icon/noise
 //     glyphs are inline `url("data:image/svg+xml,...")` (see
 //     vendor/cybercore/PROVENANCE.md's external-reference audit) — no
@@ -174,8 +177,8 @@ func portalCSP(nonce, ttydSuffix string) string {
 	}
 	return "default-src 'self'; " +
 		"script-src 'self' 'nonce-" + nonce + "'; " +
-		"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
-		"font-src 'self' https://fonts.gstatic.com; " +
+		"style-src 'self' 'unsafe-inline'; " +
+		"font-src 'self'; " +
 		"img-src 'self' data:; " +
 		"connect-src 'self'; " +
 		frameSrc + "; " +
@@ -239,9 +242,12 @@ func writeSecurityHeaders(w http.ResponseWriter, ttydSuffix string) (string, err
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	// Referrer-Policy: strict-origin-when-cross-origin — do not leak the full
 	// portal path (which may embed nothing sensitive today, but could in a
-	// future edit) to a cross-origin resource (e.g. the Google Fonts
-	// stylesheet request above); same-origin requests still get the full
-	// referrer.
+	// future edit) to any cross-origin resource this page might ever load
+	// (app#96: the Google Fonts stylesheet/font requests that used to be the
+	// motivating example here are gone — everything this page loads today is
+	// same-origin, but the header stays as defense-in-depth for whatever
+	// cross-origin resource a future edit adds); same-origin requests still
+	// get the full referrer.
 	w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 	return nonce, nil
 }

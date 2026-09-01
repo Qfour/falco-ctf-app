@@ -55,11 +55,13 @@ func TestNewNonce_Base64Encoded(t *testing.T) {
 // P23-6 design settled on (see csp.go's portalCSP doc for the per-directive
 // rationale): script-src is nonce-restricted WITHOUT 'unsafe-inline',
 // style-src deliberately DOES carry 'unsafe-inline' (documented tradeoff —
-// see portalCSP's doc for why), and the Google Fonts origins this page's
-// pre-existing <link> tags depend on are present so CSP does not regress
-// font loading. Exercised with an EMPTY ttydSuffix (the local/most-deploys
-// case, see PORTAL_TTYD_SUFFIX's doc) — TestPortalCSP_FrameSrc below covers
-// the non-empty-suffix case R5 added.
+// see portalCSP's doc for why). style-src/font-src carry NO external origin
+// (app#96, P12 follow-up: the Google Fonts stylesheet + font files this page
+// used to load cross-origin are now vendored same-origin under
+// /vendor/fonts.css and /vendor/fonts/*.woff2 — 'self' alone covers them).
+// Exercised with an EMPTY ttydSuffix (the local/most-deploys case, see
+// PORTAL_TTYD_SUFFIX's doc) — TestPortalCSP_FrameSrc below covers the
+// non-empty-suffix case R5 added.
 func TestPortalCSP_ContainsExpectedDirectives(t *testing.T) {
 	nonce := "abc123=="
 	csp := portalCSP(nonce, "")
@@ -67,8 +69,8 @@ func TestPortalCSP_ContainsExpectedDirectives(t *testing.T) {
 	mustContain := []string{
 		"default-src 'self'",
 		"script-src 'self' 'nonce-abc123=='",
-		"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-		"font-src 'self' https://fonts.gstatic.com",
+		"style-src 'self' 'unsafe-inline'",
+		"font-src 'self'",
 		"img-src 'self' data:",
 		"frame-src 'none'",
 		"object-src 'none'",
@@ -80,6 +82,18 @@ func TestPortalCSP_ContainsExpectedDirectives(t *testing.T) {
 	for _, want := range mustContain {
 		if !strings.Contains(csp, want) {
 			t.Errorf("portalCSP missing directive %q; got: %s", want, csp)
+		}
+	}
+
+	// app#96 (P12 follow-up / egress-zero): neither fonts.googleapis.com nor
+	// fonts.gstatic.com may appear anywhere in the CSP any more — asserted
+	// as an explicit ABSENCE (not just "mustContain the new shorter
+	// directive strings" above) so a future edit that re-adds either origin
+	// (e.g. reverting to a CDN) is caught here even if it appended the
+	// origin to some OTHER directive this test doesn't already pin.
+	for _, forbidden := range []string{"fonts.googleapis.com", "fonts.gstatic.com"} {
+		if strings.Contains(csp, forbidden) {
+			t.Errorf("portalCSP must not reference external font CDN origin %q (app#96: self-hosted): %s", forbidden, csp)
 		}
 	}
 
