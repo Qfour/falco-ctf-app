@@ -20,6 +20,18 @@
 # CTF_FLAG_05_SILENT_SEARCH is injected into the `plant` initContainer from
 # the ctf-flags Secret.
 #
+# Flag clarity fix (2026-09-01, content-engineer judgment call): previously
+# the flag was spliced MID-LINE into the fake base64 body
+# ("tzc2gtZWQyNTUxOQAAACBm${FLAG}_FAKEKEY=") — technically visible (curly
+# braces stand out against base64's alphabet) but easy to misread or
+# mis-copy since it sits embedded inside a line of gibberish with no
+# delimiter of its own. The base64 body below is now pure filler (never
+# contains the flag), and the flag is appended as its own clearly-labeled
+# line after the key block — still inside the same planted file (thematic:
+# a NimbusBreach ops note jotted alongside a recovered key backup), still
+# read the same way (cat/xxd/od on this file, no grep/find needed), but now
+# unambiguous at a glance and trivially copy-pasteable as a whole line.
+#
 # ADR-0008 Decision (1a): the key file is written via `cat > ... <<EOF` — a
 # shell redirection the shell itself performs, not a separate exec — under a
 # scoped `umask 077` instead of a trailing standalone `chmod 600 ...`. A
@@ -40,7 +52,8 @@ mkdir -p "${PLANT_SEED_ROOT}/root/.ssh"
   cat > "${PLANT_SEED_ROOT}/root/.ssh/id_rsa" <<EOF
 -----BEGIN OPENSSH PRIVATE KEY-----
 b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAA
-tzc2gtZWQyNTUxOQAAACBm${CTF_FLAG_05_SILENT_SEARCH:?flag env not set by ctf-user chart}_FAKEKEY=
+tzc2gtZWQyNTUxOQAAACBtVGhpc0lzTm90QVJlYWxLZXlEb05vdFVzZUl0AAAA
 -----END OPENSSH PRIVATE KEY-----
+# nimbus-ops recovery note — do not lose again: ${CTF_FLAG_05_SILENT_SEARCH:?flag env not set by ctf-user chart}
 EOF
 )

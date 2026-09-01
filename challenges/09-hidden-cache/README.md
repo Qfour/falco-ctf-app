@@ -18,8 +18,10 @@ ln /etc/sudoers /etc/.cache.bak
 ls -la /etc/.cache.bak   # → リンク数 2 / 内容は /etc/sudoers と同一
 ```
 
-この環境では `/tmp` と `/etc` は別ファイルシステム上にあるため、`/tmp` への hardlink は作れない
-(`ln` は `EXDEV` で失敗する)。`/etc` 内 (`/etc/.cache.bak`) には成立する。
+hardlink は **同一ファイルシステム内**でしか張れない (別ファイルシステムを
+またぐと `ln` は `EXDEV` で失敗する)。宛先を `/etc/sudoers` と同じ `/etc`
+内 (`/etc/.cache.bak`) にしておけば、この環境のマウント構成に関わらず
+確実に成立する。
 
 ## 解説
 
