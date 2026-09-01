@@ -114,6 +114,17 @@ plant_target_file_allowlist() {
 # reasoning — mirrors gen-values.sh's WRITABLE_MOUNT_DIRS derivation
 # (mission 09's `/etc/sudoers` hardlink target; see
 # challenges/03-stealth-read/plant.sh's `plant-mount-readonly` header).
+#
+# 2026-09-01 (ADR-0025 vault-separation): no plant.sh currently declares
+# `plant-mount-readonly: false` for /etc or anywhere else (mission 03/10
+# moved off /etc/shadow to /opt/nimbus/vault, which nothing writes into at
+# runtime; mission 09 no longer has /etc separately mounted at all, so its
+# hardlink target needs no readOnly:false override). This entry is
+# VACUOUS as of today — it never matches a rendered mountPath in any
+# render-matrix scope, so `mount_dir_is_writable` always returns false and
+# every mount is asserted readOnly:true. Left in place (not emptied) as a
+# ready allowlist slot for if /etc (or another mount) needs write access
+# again in the future.
 WRITABLE_MOUNT_DIR_ALLOWLIST=(/etc)
 
 mount_dir_is_writable() { # $1=mount dir -> rc 0 iff it is allowed readOnly:false
@@ -282,7 +293,19 @@ assert_challenge_mounts() { # 1-4, 1-5, 1-18 (challenge side) — ADR-0007 granu
         # a bare plant-target FILE path. The file-path check runs first and
         # is the sharper of the two failure messages (it names exactly the
         # regression class ADR-0007 exists to catch).
-        if is_in_allowlist "$mp_bare" "${file_targets[@]}"; then
+        # bash 3.2 (macOS default) note: file_targets[] is legitimately
+        # empty as of the 2026-09-01 vault-separation change (no challenge
+        # currently declares plant-target-type: file — see
+        # challenges/gen-values.sh's file_type_mount_targets() comment for
+        # the same fact on the gen-values side). Under `set -u`, expanding
+        # "${file_targets[@]}" when the array has zero elements raises
+        # "unbound variable" in bash 3.2 (a known pre-4.4 quirk — empty
+        # arrays are NOT the same as unset scalars for this purpose). The
+        # ${file_targets[@]+"${file_targets[@]}"} form guards that: it only
+        # expands the inner "${file_targets[@]}" when the array has at least
+        # one element (or is otherwise "set"), and produces nothing (not an
+        # error) when it is empty — is_in_allowlist then just never matches.
+        if is_in_allowlist "$mp_bare" ${file_targets[@]+"${file_targets[@]}"}; then
           violation 1-4 "challenge volumeMount mountPath '${mp_bare}' is a FILE-granularity plant-target, not its enclosing directory (ADR-0007 requires directory granularity — a file destination makes the runtime's own mount-setup trigger open_read-family Falco rules on every deploy)"
           bad4=1
         elif ! is_in_allowlist "$mp_bare" "${allowlist[@]}"; then

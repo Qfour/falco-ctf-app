@@ -28,8 +28,9 @@ overrides:
   03-stealth-read:
     briefing: >-
       正面から /etc/shadow を読むと Falco の Read sensitive file untrusted が
-      即座に発火する。CTF Company の SOC はこの手のアクセスを常時監視している —
-      同じ情報を Falco に気づかれず取り直せれば、SOC は単発の false positive と
-      判断するはずだ。Read sensitive file untrusted を一度も発火させずに
-      /etc/shadow 末尾の flag を抜き出し、提出せよ。
+      即座に発火する。CTF Company の SOC はこの手のアクセスを常時監視しており、
+      同じ検知は資格情報退避用の vault ファイルにも効いている。同じ情報を
+      Falco に気づかれず取り直せれば、SOC は単発の false positive と判断するはずだ。
+      Read sensitive file untrusted を一度も発火させずに
+      /opt/nimbus/vault/creds.recover の flag を取り出し、提出せよ。
     bridge: ""

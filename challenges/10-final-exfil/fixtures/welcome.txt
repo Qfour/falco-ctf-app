@@ -24,7 +24,7 @@ CTF Company の **master key** にようやく手が届いた。だが「読む�
 3 段すべてを満たすと solve:
 
   (1) master key を **発火させずに読む**
-      /etc/shadow 末尾の `# CTF_MASTER_KEY:` 行 (Read-sensitive = 禁止)
+      /opt/nimbus/vault/master.key の中身 (Read-sensitive = 禁止)
   (2) 読んだ flag を **drop server (collector) へ HTTP で持ち出す**
   (3) `submit` で完了 — このミッションに取り組んでいる間、7 つの禁止
       ルールを 1 つも発火させておらず、かつ (2) の exfil が記録済みで

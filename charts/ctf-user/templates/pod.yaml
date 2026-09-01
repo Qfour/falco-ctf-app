@@ -334,11 +334,22 @@ spec:
       # the seed volume root (F5). `.Values.plant.mounts` is now a list of
       # {path, readOnly} objects (per-mount, not a single blanket flag) —
       # readOnly is false ONLY for the mount(s) a mission genuinely needs to
-      # write into at runtime (currently /etc, for mission 09's
-      # `ln .../etc/sudoers /etc/.cache.bak`; see
-      # challenges/03-stealth-read/plant.sh's `plant-mount-readonly` header
-      # and challenges/gen-values.sh). Mission 05's /root/.ssh mount stays
-      # readOnly: true. Omitted entirely (no `volumeMounts:` key) when
+      # write into at runtime, driven by each plant.sh's optional
+      # `# plant-mount-readonly: false` header (see challenges/gen-values.sh).
+      # As of the 2026-09-01 vault-separation change (ADR-0025), mission 03/10
+      # moved their plant-target off /etc/shadow to a brand-new
+      # /opt/nimbus/vault directory that nothing needs to write into at
+      # runtime, and mission 09 (which has no plant.sh of its own — its
+      # `ln /etc/sudoers /etc/.cache.bak` needed a writable /etc only because
+      # /etc used to be bind-mounted for 03/10's sake) no longer has /etc
+      # separately mounted at all — `/etc` reverts to being part of the
+      # challenge container's own writable rootfs, no `plant.mounts` entry
+      # required. **No mount currently declares `plant-mount-readonly: false`,
+      # so this readOnly:false override path is vacuous today** — every
+      # rendered mount (currently /opt/nimbus/vault, /root/.ssh) is
+      # readOnly: true. Kept as a per-mount (not blanket) mechanism because a
+      # future mission may need it again. Omitted entirely (no `volumeMounts:`
+      # key) when
       # .Values.plant.mounts is empty, e.g. a values file for a
       # trigger-only challenge that plants nothing.
       {{- if or .Values.plant.mounts .Values.scenario.missions }}
