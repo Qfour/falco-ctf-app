@@ -3,18 +3,30 @@
 # has only `pods/exec` on this Pod's name.
 FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 
-ARG KUBECTL_VERSION=v1.36.4
+ARG KUBECTL_VERSION=v1.35.8
 # sha256 は https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/<arch>/kubectl.sha256
 # の実値を焼き込み。KUBECTL_VERSION を上げたら両方更新すること。
-# v1.36.2 -> v1.36.4 (2026-08-28, #227): CHANGELOG-1.36.md の "Update
-# golang.org/x/text and golang.org/x/net dependencies to include security
-# updates" (kubernetes/kubernetes#141226) が golang.org/x/net v0.49.0->v0.56.0
-# (CVE-2026-46600/-39821/-33814) と golang.org/x/text v0.33.0->v0.39.0
-# (CVE-2026-56852) を解消。.go-version も 1.26.4->1.26.5 に上がるが、Go 本体の
-# stdlib CVE (CVE-2026-56862 ほか、fix = go1.26.6) は v1.36.4 時点でも未解消
-# のまま残る (stable-1.36 の最新パッチが v1.36.4 — 2026-08-28 時点で確認)。
-ARG KUBECTL_SHA256_AMD64=8b8f088da2dab964f853b38464033b1be15ede2839eca751482357c45abdd05a
-ARG KUBECTL_SHA256_ARM64=0ecf44450ee6063bf19dd166a103ee6df4a9034455c2abce626e6eea657d73fb
+#
+# v1.36.4 -> v1.35.8 (2026-09-01, workspace#33 続報): platform 側で EKS
+# extended support 終了 (1.30 は新規作成不可) が判明し、cluster_version を
+# 1.34 へ bump する方針に変更。kubectl 公式 skew policy
+# (https://kubernetes.io/releases/version-skew-policy/, apiserver ±1 minor)
+# 上、cluster 1.34 に対する in-policy kubectl は 1.33-1.35 — v1.36.4 は
+# skew+2 で NG になったため、範囲内の最新パッチ v1.35.8 (stable-1.35.txt
+# 実測、v1.35.9 は 404 で不存在確認済み) へ down-bump。
+#
+# Go toolチェーン High 7 件 (CVE-2026-56862/-56853/-56860/-56858/-56859/
+# -33818/-56864/-56865、fix = go1.26.6) は **本 bump では解消しない** —
+# v1.35.8 の .go-version は 1.26.5 のまま (v1.36.4 と同じ)。skew policy が
+# 1.33-1.35 に縛る一方、go1.26.6 を含む 1.35.x パッチはまだ存在しない
+# (1.35 系は 1.36 系より先にブランチしたため toolchain 更新が遅行する)。
+# x/net (v0.56.0) / x/text (v0.39.0) 由来の CVE-2026-46600/-39821/-56852
+# は v1.35.8 の go.mod 時点で既に解消済み (CHANGELOG-1.35.md 実測) — 残る
+# のは stdlib 本体 (crypto/tls 等) の 7 High のみ。skew policy 内で選べる
+# 最善が v1.35.8 であり、残 CVE は accept 継続 (再点検トリガ: 1.35 系に
+# go1.26.6 ベースのパッチが出る / cluster_version が再確定する)。
+ARG KUBECTL_SHA256_AMD64=874d5e72dbb819f43cff16bcd1e4f8bac5b7f2361fe1e55049b0a6c676fb0cbf
+ARG KUBECTL_SHA256_ARM64=cc749967b62f4422260bc9c0aa7a7c55f45175ae38cb8d95767b5d2b7e04c1fd
 
 # alpine 3.23→3.24 re-bump (#227 2026-09-01 続報、workspace#31):
 # 3.23 bump 後の scan で curl/libcurl だけ drift した — pin 時点 (2026-09-01 午前)
@@ -31,8 +43,8 @@ ARG KUBECTL_SHA256_ARM64=0ecf44450ee6063bf19dd166a103ee6df4a9034455c2abce626e6ee
 #   bash 5.3.9-r1 (3.23 の 5.3.3-r1 から 3.24 側で上がった版に追随、念のため厳密 pin)
 # ca-certificates / ttyd / tini の版数は 3.23→3.24 で不変 (live APKINDEX 実測、
 # 2026-09-01) — 既存 pin をそのまま 3.24 リポジトリに再確認して引き継ぐ。
-# kubectl (Go toolchain High) は本 bump のスコープ外 — v1.36→v1.37 は EKS skew
-# 確認要のため別 brief (workspace#31 brief 記載どおり)。
+# kubectl (Go toolchain High) は本 alpine bump のスコープ外 — バージョン選定の
+# 経緯は上の ARG KUBECTL_VERSION 直下のコメント (workspace#33) を参照。
 RUN apk add --no-cache --upgrade libssl3=3.5.8-r0 libcrypto3=3.5.8-r0 \
  && apk add --no-cache \
         "ttyd=1.7.7-r0" \
