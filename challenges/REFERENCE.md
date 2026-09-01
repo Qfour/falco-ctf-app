@@ -195,8 +195,9 @@ cp /etc/shadow /tmp/c                 # ← Create Hardlink は発火しない
 
 ## 6. 行き詰まったときの定石
 
-1. **welcome.txt を再読** — ミッション固有のヒントが書いてある
-   (`cat /opt/ctf/missions/<NN>-<slug>/fixtures/welcome.txt`)
+1. **Journey UI のヒントを段階的に開く** — 気付き→概要→解答の順で開示される
+   (`welcome.txt` はシナリオ/背景の再確認に:
+   `cat /opt/ctf/missions/<NN>-<slug>/fixtures/welcome.txt`)
 2. **Falco ルール本体を読む** — 何を見ているかを直接確認
    - 参考: https://github.com/falcosecurity/rules/blob/main/rules/falco_rules.yaml
 3. **`/proc/self/<...>`** に逃げる — `/proc/<pid>/root` / `/proc/<pid>/cmdline` 等
