@@ -63,13 +63,31 @@
 | docs | `python:3.12-slim` (mkdocs-material + pandoc + weasyprint) | `nginxinc/nginx-unprivileged:1.30-alpine` |
 | detect-grader | (single-stage) | `falcosecurity/falco:0.43.1` (wolfi/apko base; digest pin。非 root 65532 ユーザを build 時に追加) |
 
-- alpine は最新 cycle ではなく「リリース後 ~1 年経過した supported cycle」を選ぶ
-  (apk pin の安定性と EOL 余裕のバランス。2026-07 時点: 3.22。2026-09-01、#227/workspace#31 の
-  CVE bump で 3.23 へ更新。**同日中に curl/libcurl の CVE フィードが drift し 3.23
-  リポジトリに fix apk が無かったため、同 workspace#31 の続報で即日 3.24 へ再 bump**
-  — この 2 回目の bump は「~1 年経過」ガイドラインの例外 (CVE urgency 優先。3.24 は
-  2026-06-09 リリース・EOL 2028-06-01 で「~1 年経過」には遠く及ばないが、curl High CVE
-  を cycle 内 apk pin で解消する手段が無いため cycle bump が唯一の解)。
+- alpine の cycle は次の 3 条件を満たす **最古の supported cycle** を選ぶ
+  (「リリース後 ~1 年経過」という月数基準は 2026-08 に廃止 — ADR-0002, Accepted):
+  1. **安定性実績**: patch release が 3 回以上出ている (= `x.y.3` 以降)
+  2. **EOL runway**: EOL まで 12 ヶ月以上ある (`make check-freshness` が検証)
+  3. **CVE fix 到達性**: 現在 open な High/Critical の fix version が
+     その cycle の main/community に存在する (`apk policy <pkg>` で実測)
+
+  条件 1-3 を満たす cycle が複数あるときは最古を選ぶ (apk exact pin の再解決コストは
+  bump 毎に発生するため、無用に新しい cycle を追わない)。条件 3 を満たさない場合に限り
+  1 cycle 新しい側へ上げ、PR 本文に `apk policy` の実測出力と bump 後の残存 CVE を明記する。
+
+  **CVE 緊急 bump の例外パス (正式な例外として明記)**: 選定済み cycle の運用中に scan の
+  CVE フィードが drift し、新規 High/Critical の fix 版が現行 cycle に存在しないと
+  判明した場合、条件 1 (patch 実績 3 回) の到達を待たずに 1 cycle 上へ即日 re-bump してよい
+  — 条件 3 (fix 到達性) は CVE urgency の前では月数・patch 回数より優先する。PR 本文に
+  「何が緊急 bump を要求したか (CVE ID・fix 版番号)」を明記すること。
+  前例 (#227/workspace#31 → app#266): 3.22→3.23 で curl 等の High を解消した同日中に
+  curl/libcurl の CVE フィードが drift し 3.23 に fix apk が無いと判明、条件 3 の
+  緊急パスで即日 3.23→3.24 へ再 bump (3.24 は 2026-06-09 リリース・EOL 2028-06-01 で
+  条件 1 の patch 実績には遠く及ばないが、緊急パスは条件 1 を要求しない)。
+
+  fix が全 cycle・edge に存在しない場合は cycle bump では解決しない —— パッケージ自体の
+  除去を第一候補とする (前例: wget を busybox wget に置換, images/challenge/Dockerfile:12-17)。
+
+  2026-09 時点の適合解: **3.24** (app#266 の緊急パス bump 後の到達点)。
   EOL は `make check-freshness` で機械確認。
   cycle 鮮度は `make check-freshness`、パッケージ鮮度は CVE scan (PR CI) の二層でカバー。
 
