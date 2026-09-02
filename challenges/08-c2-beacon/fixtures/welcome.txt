@@ -33,16 +33,17 @@ Falco rule は 2 番目の **dup2 (= dup syscall + dst fd ∈ {0,1,2})** が
 
 # 試すこと
 
-接続先は実在する outbound 可能なサーバ (DNS の 53/tcp は受ける):
+⚠ このワークスペースは egress lockdown 済み (P11.5) — collector / DNS /
+API server 以外への outbound は届かない (接続が silently drop され、
+connect() がハングして dup2 に到達しない = 発火しない)。**接続先はこの
+Pod 自身の DNS リゾルバ (常に許可されている) にする**:
 
-  bash -c 'exec 1<>/dev/tcp/8.8.8.8/53'
+  DNS=$(awk '/^nameserver/{print $2; exit}' /etc/resolv.conf)
+  bash -c "exec 1<>/dev/tcp/$DNS/53"
 
 bash の `<>` は:
-  - `connect(socket, "8.8.8.8:53")`
+  - `connect(socket, "$DNS:53")` — DNS サーバは TCP 53 も受け付けるので即成立
   - `dup2(socketfd, 1)`  ← Falco 発火
-
-接続が成立しなくても、bash が dup2 する瞬間にルールは発火する
-場合がある。確実に発火させるには接続成立が必要。
 
 # クリア条件
 
