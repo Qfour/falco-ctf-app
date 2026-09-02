@@ -39,7 +39,9 @@ ARG KUBECTL_SHA256_ARM64=cc749967b62f4422260bc9c0aa7a7c55f45175ae38cb8d95767b5d2
 #   libssl3/libcrypto3 3.5.8-r0 (3.23 と同じ pin を維持。base に焼き込まれた
 #     3.5.7-r0 の fix 版で、3.24 でも base image 自体は再ビルドされていないため
 #     引き続き明示 upgrade が必要)
-#   curl/libcurl 8.21.0-r0 (fix。8.20.0-r0 で再発した High を解消)
+#   curl/libcurl 8.22.0-r0 (2026-09-03: alpine 3.24 リポジトリから 8.21.0-r0 が
+#   既に外れ apk resolve が failing していたため再 pin。`apk policy curl` 実測
+#   で 3.24/main の唯一の提供版が 8.22.0-r0 であることを確認済み)
 #   bash 5.3.9-r1 (3.23 の 5.3.3-r1 から 3.24 側で上がった版に追随、念のため厳密 pin)
 # ca-certificates / ttyd / tini の版数は 3.23→3.24 で不変 (live APKINDEX 実測、
 # 2026-09-01) — 既存 pin をそのまま 3.24 リポジトリに再確認して引き継ぐ。
@@ -50,7 +52,7 @@ RUN apk add --no-cache --upgrade libssl3=3.5.8-r0 libcrypto3=3.5.8-r0 \
         "ttyd=1.7.7-r0" \
         "bash=5.3.9-r1" \
         "ca-certificates=20260611-r0" \
-        "curl=8.21.0-r0" \
+        "curl=8.22.0-r0" \
         "tini=0.19.0-r3" \
  && ARCH="$(uname -m)" \
  && case "${ARCH}" in \

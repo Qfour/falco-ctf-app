@@ -26,7 +26,9 @@ FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec4
 #   libssl3/libcrypto3 3.5.8-r0 (3.23 と同じ pin を維持。base に焼き込まれた
 #     3.5.7-r0 の fix 版で、3.24 でも base image 自体は再ビルドされていないため
 #     引き続き明示 upgrade が必要)
-#   curl/libcurl 8.21.0-r0 (fix。8.20.0-r0 で再発した High を解消)
+#   curl/libcurl 8.22.0-r0 (2026-09-03: alpine 3.24 リポジトリから 8.21.0-r0 が
+#     既に外れ apk resolve が failing していたため再 pin。`apk policy curl` 実測
+#     で 3.24/main の唯一の提供版が 8.22.0-r0 であることを確認済み)
 #   vim/vim-common/xxd 9.2.1014-r0 (3.23 と同一版、3.24 でも不変)
 #   util-linux 2.42.1-r0 (3.23 の 2.41.4-r0 から 3.24 側で上がった版に追随)
 #   bash 5.3.9-r1 (3.23 の 5.3.3-r1 から 3.24 側で上がった版に追随、念のため厳密 pin)
@@ -43,8 +45,8 @@ RUN apk add --no-cache --upgrade libssl3=3.5.8-r0 libcrypto3=3.5.8-r0 \
         bash=5.3.9-r1 \
         coreutils \
         busybox-extras \
-        curl=8.21.0-r0 \
-        libcurl=8.21.0-r0 \
+        curl=8.22.0-r0 \
+        libcurl=8.22.0-r0 \
         netcat-openbsd \
         bind-tools \
         jq \
