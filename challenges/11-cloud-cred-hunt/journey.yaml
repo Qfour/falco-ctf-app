@@ -20,7 +20,18 @@ steps:
   - label: スコアボードで CLEARED を確認
     detail: 発火が scoreboard に届くと、このミッションが自動で CLEARED になる。
 hints:
-  - クラウド侵害の初動は「この箱からクラウドへ行ける鍵はないか」を探すことだ。AWS の長期資格情報は、慣習的にどこに平文で置かれているだろうか。
-  - grep 系コマンドの引数に AWS キーの語 (aws_secret_access_key など) を含めるか、find の引数を .aws/credentials で終わらせる。実ファイルの有無に関わらずコマンドの形で発火する。
-  - "想定解: grep -r aws_secret_access_key ~/.aws/  もしくは  find ~ -path '*.aws/credentials' — cmdline が Find AWS Credentials の条件に一致した瞬間に発火。実クラウド脅威検知は Sysdig のクラウドコネクタ (CDR/CSPM) が面で担う。"
+  - kind: rule
+    text: >-
+      クラウド侵害の初動は「この箱からクラウドへ行ける鍵はないか」を探すことだ。AWS
+      の長期資格情報は、慣習的にどこに平文で置かれているだろうか。検知ルールは
+      Find AWS Credentials だ。
+    ruleRefs: [Find AWS Credentials]
+  - kind: command
+    text: >-
+      grep 系コマンドの引数に AWS キーの語 (aws_secret_access_key など) を含めるか、
+      find の引数を .aws/credentials で終わらせる。実ファイルの有無に関わらずコマンドの
+      形で発火する。grep/find での探索例はコマンド集『2. ファイル探索・読み取り』を参照。
+    cheatsheetRef: "2"
+  - kind: solution
+    text: "想定解: grep -r aws_secret_access_key ~/.aws/  もしくは  find ~ -path '*.aws/credentials' — cmdline が Find AWS Credentials の条件に一致した瞬間に発火。実クラウド脅威検知は Sysdig のクラウドコネクタ (CDR/CSPM) が面で担う。"
 docsUrl: /missions/11-cloud-cred-hunt/

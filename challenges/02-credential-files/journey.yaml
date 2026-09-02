@@ -19,9 +19,19 @@ steps:
   - label: スコアボードで CLEARED を確認
     detail: 読み取りが scoreboard に届くと、このミッションが自動で CLEARED になる。
 hints:
-  - Linux で「パスワードハッシュの実体」が置かれる伝統的なファイルは何か。本来 root しか読まない場所だ。
-  - Falco が見るのは open に渡した path (fd.name)。cat / less / head どのコマンドで開いても発火する。
-  - "想定解: cat /etc/shadow — 開いた瞬間に Read sensitive file untrusted が発火する。path 文字列で判定している点を覚えておくと、この先の回避ミッションで効いてくる。"
+  - kind: rule
+    text: >-
+      Linux で「パスワードハッシュの実体」が置かれる伝統的なファイルは何か。本来 root
+      しか読まない場所だ。検知ルールは Read sensitive file untrusted。
+    ruleRefs: [Read sensitive file untrusted]
+  - kind: command
+    text: >-
+      Falco が見るのは open に渡した path (fd.name)。cat / less / head どのコマンドで
+      開いても発火する。ファイルの探索・読み取りコマンドはコマンド集
+      『2. ファイル探索・読み取り』にまとめてある。
+    cheatsheetRef: "2"
+  - kind: solution
+    text: "想定解: cat /etc/shadow — 開いた瞬間に Read sensitive file untrusted が発火する。path 文字列で判定している点を覚えておくと、この先の回避ミッションで効いてくる。"
 bridge: >-
   盛大にアラートを鳴らしてしまった — SOC はもうこちらを見ている。だが今のは「正面から
   読んだ」から光ったに過ぎない。同じ Read sensitive file untrusted は /etc/shadow

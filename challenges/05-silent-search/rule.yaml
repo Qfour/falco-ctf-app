@@ -45,3 +45,47 @@
   priority:
     WARNING
   tags: [maturity_stable, host, container, process, filesystem, mitre_credential_access, T1552.001]
+
+# --- customRule (ADR-0008 Decision (2)(3)) ---------------------------------
+# NOT part of the upstream falcosecurity/rules ruleset (see
+# challenges/custom-falco-rules.txt allowlist). This is the mission's
+# `expectedRules` positive-proof rule (falco-rule.yaml
+# `requireExpectedRuleFire: true`) — it fires when a shell opens
+# /root/.ssh/id_rsa via input redirection BEFORE exec'ing its next command,
+# proving the participant used the redirection technique rather than merely
+# never having triggered "Search Private Keys or Passwords" above.
+#
+# Extracted verbatim from the customRules definition source
+# (falco-ctf-platform helmfile/releases/falco/values.yaml.gotmpl,
+# rules-mission05-positive-proof.yaml), not from a live cluster dump — see
+# conventions.md "課題ドキュメント用 rule.yaml" (re-extract from the deployed
+# ruleset if this definition or the Falco version changes). `open_read` and
+# `shell_binaries` below are the same upstream falco_rules.yaml dependencies
+# already used elsewhere in this repo's rule.yaml excerpts (e.g.
+# challenges/02-credential-files/rule.yaml, challenges/06-web-rce-shell/rule.yaml).
+- macro: open_read
+  condition: (evt.type in (open,openat,openat2) and evt.is_open_read=true and fd.typechar='f' and fd.num>=0)
+
+- list: shell_binaries
+  items: [ash, bash, csh, ksh, sh, tcsh, zsh, dash]
+
+- rule: Shell Redirected Private Key Read
+  desc: >
+    A shell opened a private-key file for reading BEFORE exec'ing its next
+    command (input-redirection: `cmd < keyfile`), which keeps the filename
+    out of the exec'd child's cmdline. Positive proof of the evasion
+    technique — contrast with reading the same file via a direct argument
+    (`cat /root/.ssh/id_rsa`), which opens the file from the CHILD process
+    AFTER execve, when proc.name is already the child command, never a
+    shell (caught instead by "Search Private Keys or Passwords").
+  condition: >
+    open_read
+    and proc.name in (shell_binaries)
+    and fd.name = "/root/.ssh/id_rsa"
+    and container.name != "plant"
+  output: >
+    Shell opened private key via redirection (technique proof)
+    file=%fd.name shell=%proc.name command=%proc.cmdline user=%user.name
+    k8s.ns=%k8s.ns.name k8s.pod=%k8s.pod.name
+  priority: NOTICE
+  tags: [maturity_stable, host, container, process, filesystem, ctf_positive_proof]

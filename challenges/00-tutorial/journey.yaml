@@ -26,7 +26,19 @@ steps:
       evade 課題ではここで flag を提出する — 本番の 03/05/10 で実際に体験する。
       ヒントは「気付き→概要→解答」の 3 段。焦らず 1 つずつ開くのが攻略のコツ。
 hints:
-  - trigger 課題は「あなたの操作でルールが鳴る」と自動クリア。まずはターミナルで何か 1 コマンド動かしてみよう。何が「怪しい実行」と見なされるかを考える。
-  - Falco は「どこから実行したか」も見ている。/dev/shm (共有メモリ上の書込可能領域) からのプログラム実行は攻撃者が好む隠し場所として監視されている。そこに置いて実行してみよう。
-  - "想定解: echo 'echo hi' > /dev/shm/hello.sh && sh /dev/shm/hello.sh — /dev/shm 上のスクリプト実行で Execution from /dev/shm が発火し、自動で CLEARED になる。"
+  - kind: rule
+    text: >-
+      trigger 課題は「あなたの操作でルールが鳴る」と自動クリア。まずはターミナルで何か 1
+      コマンド動かしてみよう。何が「怪しい実行」と見なされるかを考える。このミッションを
+      検知するルールは Execution from /dev/shm だ。
+    ruleRefs: [Execution from /dev/shm]
+  - kind: command
+    text: >-
+      Falco は「どこから実行したか」も見ている。/dev/shm (共有メモリ上の書込可能領域)
+      からのプログラム実行は攻撃者が好む隠し場所として監視されている。そこに置いて
+      実行してみよう。プロセス実行を Falco がどう見ているかはコマンド集
+      『3. プロセス / システム調査』も参考に。
+    cheatsheetRef: "3"
+  - kind: solution
+    text: "想定解: echo 'echo hi' > /dev/shm/hello.sh && sh /dev/shm/hello.sh — /dev/shm 上のスクリプト実行で Execution from /dev/shm が発火し、自動で CLEARED になる。"
 docsUrl: /missions/00-tutorial/

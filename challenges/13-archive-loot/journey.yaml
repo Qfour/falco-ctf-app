@@ -21,7 +21,19 @@ steps:
   - label: スコアボードで CLEARED を確認
     detail: 発火が scoreboard に届くと、このミッションが自動で CLEARED になる。
 hints:
-  - "持ち出す前に、漁った戦利品を1つにまとめておきたい。アーカイブ/圧縮系のコマンドを試してみよう。"
-  - "対象は fixtures/loot/ 配下のファイル群。tar czf <出力先>.tar.gz <対象ディレクトリ> のような形で丸ごとまとめれば十分。"
-  - "想定解: tar czf /tmp/loot.tar.gz /opt/ctf/missions/13-archive-loot/fixtures/loot/ — cd してから相対パスで同じ操作をしても同じ判定になる (kernel が絶対パスへ解決するため)。ただの cat での閲覧や、無関係な場所へのアーカイブでは発火しない。"
+  - kind: rule
+    text: >-
+      持ち出す前に、漁った戦利品を1つにまとめておきたい。アーカイブ/圧縮系のコマンドを
+      試してみよう。検知ルールは Archive Collected Data — 収集済みディレクトリを
+      アーカイブ/圧縮ツールが読み取った瞬間に発火する。
+    ruleRefs: [Archive Collected Data]
+  - kind: command
+    text: >-
+      対象は fixtures/loot/ 配下のファイル群。tar czf <出力先>.tar.gz <対象ディレクトリ>
+      のような形で丸ごとまとめれば十分。対象ディレクトリの中身を確認するコマンドは
+      コマンド集『2. ファイル探索・読み取り』も参考に (このミッションは収集ではなく
+      アーカイブ化)。
+    cheatsheetRef: "2"
+  - kind: solution
+    text: "想定解: tar czf /tmp/loot.tar.gz /opt/ctf/missions/13-archive-loot/fixtures/loot/ — cd してから相対パスで同じ操作をしても同じ判定になる (kernel が絶対パスへ解決するため)。ただの cat での閲覧や、無関係な場所へのアーカイブでは発火しない。"
 docsUrl: /missions/13-archive-loot/

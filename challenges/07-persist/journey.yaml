@@ -19,15 +19,27 @@ steps:
   - label: スコアボードで CLEARED を確認
     detail: 発火が scoreboard に届くと、このミッションが自動で CLEARED になる。
 hints:
-  - コンテナの中身は image を build した時点で固定されているはずだ。だとすれば、実行時になって「後から追加されたもの」を、一体どうやって見分けられるのだろうか。
-  - 「書いてから実行」の両方が要る。元から在る /bin/ls の実行では発火しない。/tmp のような書込可能な場所に自分のファイルを作って動かしてみよう。
-  - |
-    想定解:
-    cp /bin/busybox /tmp/httpd    # image に無い ELF を upper layer に drop
-    chmod +x /tmp/httpd
-    exec /tmp/httpd --help        # 新規バイナリの実行 → is_exe_upper_layer=true で発火
-    drop+実行の両方が揃うと Drop and execute new binary in container が発火する、という教訓は、この先の回避ミッションで効いてくる。
-    （シェルスクリプトを exec すると判定対象が interpreter=base image になり発火しないので、実 ELF を置くのがコツ）
+  - kind: rule
+    text: >-
+      コンテナの中身は image を build した時点で固定されているはずだ。だとすれば、実行時に
+      なって「後から追加されたもの」を、一体どうやって見分けられるのだろうか。検知ルールは
+      Drop and execute new binary in container — overlayfs の upper layer から実行された
+      瞬間に発火する。
+    ruleRefs: [Drop and execute new binary in container]
+  - kind: command
+    text: >-
+      「書いてから実行」の両方が要る。元から在る /bin/ls の実行では発火しない。/tmp
+      のような書込可能な場所に自分のファイルを作って動かしてみよう。実行ファイルの
+      comm/exec 周りの観察はコマンド集『3. プロセス / システム調査』を参考に。
+    cheatsheetRef: "3"
+  - kind: solution
+    text: |
+      想定解:
+      cp /bin/busybox /tmp/httpd    # image に無い ELF を upper layer に drop
+      chmod +x /tmp/httpd
+      exec /tmp/httpd --help        # 新規バイナリの実行 → is_exe_upper_layer=true で発火
+      drop+実行の両方が揃うと Drop and execute new binary in container が発火する、という教訓は、この先の回避ミッションで効いてくる。
+      （シェルスクリプトを exec すると判定対象が interpreter=base image になり発火しないので、実 ELF を置くのがコツ）
 bridge: >-
   backdoor は据えた。あとは「好きな時に戻ってくる」ための通り道が要る。
   古典の reverse shell を貼って、こちらの C2 サーバへビーコンを飛ばす。
