@@ -46,17 +46,20 @@ cat /etc/os-release          # alpine 3.20 ベース
 |---|---|
 | 何を見るか | `fd.name` が `/etc/shadow` / `/etc/sudoers` / `/etc/pam.d/*` 等の sensitive_files に一致 |
 | 発火条件 (大意) | `open_read` syscall で対象パスを開いた + 開いたプロセスが trusted リスト外 |
-| 出題 | **02 (発火)**, **03 (回避)** |
-| 回避の発想 | path 文字列マッチ → 同じファイルに別の path で到達できれば抜ける |
+| 出題 | **02 (発火)**, **03 (回避)**, **10 (回避)** |
+| 回避の発想 | path 文字列マッチ → 同じ検知対象を別の path で到達できれば抜ける |
 
 実 condition (抜粋): `open_read and sensitive_files and proc_name_exists and not proc.name in (許可リスト...) and not <user_known 例外>`
 
-主な回避路 (例):
+主な回避路 (例。02 は `/etc/shadow` を正面から読んで発火させる trigger、03/10 は
+資格情報退避用の vault ファイル (`/opt/nimbus/vault/creds.recover` / `master.key`)
+を同じルールに気づかれず読む evade — 対象ファイルが違う点に注意):
 ```bash
-cat /etc/shadow                  # ← 発火する
-cat /proc/self/root/etc/shadow   # ← 同じ inode、別 path。発火しない
-cat /proc/$$/root/etc/shadow     # 〃
-ln -s /etc/shadow /tmp/x; cat /tmp/x   # symlink 経由 (fd.name 解決は kernel 次第)
+cat /etc/shadow                                      # ← 発火する (Mission 02)
+cat /opt/nimbus/vault/creds.recover                  # ← こちらも同ルールの対象。発火する
+cat /proc/self/root/opt/nimbus/vault/creds.recover   # ← 同じ inode、別 path。発火しない
+cat /proc/$$/root/opt/nimbus/vault/creds.recover     # 〃
+ln -s /opt/nimbus/vault/creds.recover /tmp/x; cat /tmp/x   # symlink 経由 (fd.name 解決は kernel 次第)
 ```
 
 ### 3.2 `Search Private Keys or Passwords`
@@ -174,7 +177,7 @@ cp /etc/shadow /tmp/c                 # ← Create Hardlink は発火しない
 
 | 方法 | 例 | 性質 |
 |---|---|---|
-| `/proc/<pid>/root` | `/proc/self/root/etc/shadow` | プロセスの mount namespace の root を指す symlink。**最も汎用** |
+| `/proc/<pid>/root` | `/proc/self/root/opt/nimbus/vault/creds.recover` | プロセスの mount namespace の root を指す symlink。**最も汎用** |
 | Symbolic link | `ln -s /etc/shadow /tmp/x` | 多くの Falco ルールは fd.name に **解決後** の path を入れるので無効な場合あり |
 | Hard link | `ln /etc/sudoers /tmp/x` | この環境では `/etc` 全体が別ファイルシステム (emptyDir) 上にあるため、`/etc` 配下の sensitive file を `/tmp` へ hardlink できない (`EXDEV`)。`/etc` 内の別 path (`ln /etc/sudoers /etc/x`) なら同一 fs なので成立する。**ただし** `Create Hardlink Over Sensitive Files` は `evt.arg.oldpath` のみを条件にしており、この `EXDEV` で失敗した `link` syscall でも発火する (destination の成否は検知ロジックに影響しない) |
 | Bind mount | `mount --bind /etc/shadow /tmp/x; cat /tmp/x` | `mount --bind` は **CAP_SYS_ADMIN** を要するが、challenge コンテナは同 capability を付与せず privileged でもない (`charts/ctf-user/templates/pod.yaml` に `capabilities.add`・`privileged` なし) ため **この環境では実行不可** — 存在しない解法なので使わない |

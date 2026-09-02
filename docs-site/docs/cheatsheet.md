@@ -82,7 +82,7 @@ grep -rE 'BEGIN.*PRIVATE KEY' /etc 2>/dev/null   # 中身をパターン再帰�
 cat  /etc/shadow                     # そのまま表示
 less /etc/sudoers                    # ページャで読む(q で終了)
 head -n 20 /etc/passwd               # 先頭 N 行
-tail -n 5  /etc/shadow               # 末尾 N 行(flag が末尾にある課題向け)
+tail -n 5  /etc/shadow               # 末尾 N 行
 file  /path/to/blob                  # ファイル種別を判定
 od -c /path/to/blob | head           # バイナリを文字つきダンプ
 hexdump -C /path/to/blob | head      # 16 進ダンプ(util-linux)

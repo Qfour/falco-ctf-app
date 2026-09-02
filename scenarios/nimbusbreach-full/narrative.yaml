@@ -40,8 +40,9 @@ overrides:
       境界の中で読んでも逃れられない。Read sensitive file untrusted を発火させれば CLEARED。
     bridge: >-
       盛大にアラートを鳴らしてしまった — SOC はもうこちらを見ている。だが今のは「正面から
-      読んだ」から光った。Falco が path 文字列で見ているなら、同じ shadow を別の道から
-      読めば気づかれない。今度は静かにやり直す番だ。
+      読んだ」から光ったに過ぎない。同じ Read sensitive file untrusted は /etc/shadow
+      専用ではなく、資格情報退避用の vault ファイルにも効いている。今度はその vault
+      ファイルを、Falco に気づかれず静かに取り直す番だ。
   03-stealth-read:
     briefing: >-
       Mission 02 で正面から /etc/shadow を読んだら盛大に検知された。CTF Company の SOC は
