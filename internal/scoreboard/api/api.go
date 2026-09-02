@@ -1496,15 +1496,33 @@ func (h *Handler) openHint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.logger.Info("hint_view", "user", user, "cid", cid, "idx", idx, "newly", newly, "remote_addr", r.RemoteAddr)
+	hint := j.Hints[idx-1]
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"ok":    true,
 		"user":  user,
 		"cid":   cid,
 		"idx":   idx,
-		"hint":  j.Hints[idx-1],
+		"hint":  hint.Text,
 		"total": len(j.Hints),
 		"newly": newly,
+		// kind/ruleRefs/cheatsheetRef (unified hints Phase 1): additive fields
+		// the portal uses to render the Hint1=Rule+link / Hint2=Command+link /
+		// Hint3=想定解 treatment. RuleRefs/CheatsheetRef are normalised to
+		// non-nil so they always marshal as JSON [] / "" (never null/omitted).
+		"kind":          hint.Kind,
+		"ruleRefs":      nonNilStrings(hint.RuleRefs),
+		"cheatsheetRef": hint.CheatsheetRef,
 	})
+}
+
+// nonNilStrings normalises a possibly-nil []string to a non-nil empty slice
+// so JSON marshals it as `[]` rather than `null`. journey.yaml hints commonly
+// omit ruleRefs entirely (back-compat scalar form always does).
+func nonNilStrings(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }
 
 // --- App-H2 evade dirty-flag reset ------------------------------------------
@@ -2028,15 +2046,22 @@ func (h *Handler) missionDetail(user, cid, status, leadIn string, checkedSteps, 
 		}
 	}
 	type hintView struct {
-		Idx  int    `json:"idx"`
-		Text string `json:"text"`
+		Idx           int      `json:"idx"`
+		Text          string   `json:"text"`
+		Kind          string   `json:"kind"`
+		RuleRefs      []string `json:"ruleRefs"`
+		CheatsheetRef string   `json:"cheatsheetRef"`
 	}
 	openedList := make([]hintView, 0, len(opened))
 	nextHint := 0 // 1-based index of the next unopened hint; 0 = all opened OR locked
 	if !locked {
 		for i := 1; i <= len(j.Hints); i++ {
 			if _, ok := opened[i]; ok {
-				openedList = append(openedList, hintView{Idx: i, Text: j.Hints[i-1]})
+				h := j.Hints[i-1]
+				openedList = append(openedList, hintView{
+					Idx: i, Text: h.Text, Kind: h.Kind,
+					RuleRefs: nonNilStrings(h.RuleRefs), CheatsheetRef: h.CheatsheetRef,
+				})
 			} else if nextHint == 0 {
 				nextHint = i
 			}

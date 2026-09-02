@@ -37,14 +37,14 @@ func newJourneyFixture(t *testing.T, extra ...scoreboard.Option) *journeyFixture
 		"01-recon": {
 			ChallengeID: "01-recon", Title: "偵察", Tagline: "obj-1", Briefing: "brief-1",
 			Steps:   []catalog.JourneyStep{{Label: "s0", Detail: "d0"}, {Label: "s1", Detail: "d1"}},
-			Hints:   []string{"h1", "h2", "h3"},
+			Hints:   catalog.JourneyHints{{Kind: "rule", Text: "h1"}, {Kind: "command", Text: "h2"}, {Kind: "solution", Text: "h3"}},
 			Bridge:  "bridge-1",
 			DocsURL: "/missions/01-recon/",
 		},
 		"02-evade": {
 			ChallengeID: "02-evade", Title: "回避", Tagline: "obj-2", Briefing: "brief-2",
 			Steps: []catalog.JourneyStep{{Label: "s0", Detail: "d0"}},
-			Hints: []string{"eh1", "eh2"},
+			Hints: catalog.JourneyHints{{Kind: "rule", Text: "eh1"}, {Kind: "command", Text: "eh2"}},
 		},
 	}
 	st, err := store.Open(filepath.Join(t.TempDir(), "j.db"))
@@ -210,6 +210,7 @@ func bridgeOf(m map[string]any, id string) string {
 //   - the first mission's detail has an empty `leadIn` (no previous mission);
 //   - after solving 01, the now-current mission (02) detail exposes the PREVIOUS
 //     mission's bridge as `leadIn`, so the pull persists past the overlay.
+//
 // All fields are display-only and never gate a solve.
 func TestJourney_BridgeAndLeadIn(t *testing.T) {
 	f := newJourneyFixture(t)
@@ -510,6 +511,19 @@ func TestJourney_HintInOrderReveal(t *testing.T) {
 	if d1["hint"] != "h1" {
 		t.Fatalf("hint 1 text: %v", d1["hint"])
 	}
+	// Unified hints Phase 1: openHint's response carries kind/ruleRefs/
+	// cheatsheetRef alongside the legacy `hint` text key. hint 1's fixture
+	// data (newJourneyFixture) is Kind:"rule" with no ruleRefs/cheatsheetRef
+	// declared, so those must normalise to [] / "" (never null/omitted).
+	if d1["kind"] != "rule" {
+		t.Fatalf("hint 1 kind: %v", d1["kind"])
+	}
+	if refs, ok := d1["ruleRefs"].([]any); !ok || len(refs) != 0 {
+		t.Fatalf("hint 1 ruleRefs should be an empty array, got %v (%T)", d1["ruleRefs"], d1["ruleRefs"])
+	}
+	if d1["cheatsheetRef"] != "" {
+		t.Fatalf("hint 1 cheatsheetRef should be empty string, got %v", d1["cheatsheetRef"])
+	}
 	if w2 := f.req("POST", "/api/users/alice/challenges/01-recon/hints/2", nil); w2.Code != http.StatusOK {
 		t.Fatalf("hint 2 after 1 must 200, got %d", w2.Code)
 	}
@@ -521,6 +535,17 @@ func TestJourney_HintInOrderReveal(t *testing.T) {
 	}
 	if hints["lockedCount"].(float64) != 1 || hints["nextIndex"].(float64) != 3 {
 		t.Fatalf("hint meta wrong: %v", hints)
+	}
+	// missionDetail's hints.opened[] carries the same kind/ruleRefs/
+	// cheatsheetRef trio as openHint's response (unified hints Phase 1).
+	opened := hints["opened"].([]any)
+	o0 := opened[0].(map[string]any)
+	if o0["kind"] != "rule" {
+		t.Fatalf("opened[0].kind: %v", o0["kind"])
+	}
+	o1 := opened[1].(map[string]any)
+	if o1["kind"] != "command" {
+		t.Fatalf("opened[1].kind: %v", o1["kind"])
 	}
 }
 

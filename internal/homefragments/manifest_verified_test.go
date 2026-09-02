@@ -247,10 +247,10 @@ func TestTutorialChaptersVerifiedClean_NoHintOverlap(t *testing.T) {
 	var overlaps []overlapText
 	for _, j := range journeys {
 		for _, h := range j.Hints {
-			if strings.TrimSpace(h) == "" {
+			if strings.TrimSpace(h.Text) == "" {
 				continue
 			}
-			overlaps = append(overlaps, overlapText{field: "hints[]", text: h})
+			overlaps = append(overlaps, overlapText{field: "hints[]", text: h.Text})
 		}
 		for _, s := range j.Steps {
 			if strings.TrimSpace(s.Detail) == "" {

@@ -212,6 +212,14 @@ func main() {
 		logger.Error("falco rule excerpt load failed", "dir", challengesDir, "err", err)
 		os.Exit(1)
 	}
+	// Unified hints Phase 1: advisory validation of JourneyHint.RuleRefs
+	// against this mission's rule.yaml / falco-rule.yaml rule names. Warn-only
+	// (fail-soft) — a bad ref is a content typo in display copy, not a
+	// scoring/security defect, so it must not block boot (catalog.
+	// ValidateHintRuleRefs doc).
+	for _, w := range catalog.ValidateHintRuleRefs(journeys, cat, falcoRules) {
+		logger.Warn("journey hint ruleRef validation", "detail", w)
+	}
 	logger.Info("catalog loaded", "dir", challengesDir, "challenges", cat.IDs(), "journeys", len(journeys), "falco_rule_excerpts", len(falcoRules), "docs_base_url", docsBaseURL, "portal_ttyd_suffix", portalTtydSuffix, "flag_overrides", flagsFile != "", "scenario", scenarioID, "webhook_secret_mode", string(webhookSecretMode), "webhook_secret_set", webhookSharedSecret != "")
 
 	st, err := store.Open(dbPath)
