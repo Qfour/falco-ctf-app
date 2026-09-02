@@ -79,6 +79,15 @@ const (
 	AuthzSelfOrAdmin      Authz = "self-or-admin"
 	AuthzSelfOrAdminWrite Authz = "self-or-admin-write"
 	AuthzClaimedIdentity  Authz = "claimed-identity"
+	// AuthzAuthenticated (app#292 Phase 2 / QA Board): any caller carrying a
+	// proven X-Auth-Request-Email identity may proceed — unlike
+	// AuthzSelfOrAdmin(Write), it enforces NO username-match against a
+	// {user} path segment, because Board routes carry no {user} segment at
+	// all (threads are keyed by author identity, and ownership/audience
+	// checks live inside internal/board.Store itself, not in the HTTP
+	// gate). A missing/blank header is still fail-closed 403 — see
+	// api.Handler.requireAuthenticated.
+	AuthzAuthenticated Authz = "authenticated"
 )
 
 // Route is one row of a service's declarative route table — the single

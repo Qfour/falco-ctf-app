@@ -15,7 +15,6 @@ import (
 
 	"github.com/Qfour/falco-ctf-app/internal/board"
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
-	"github.com/Qfour/falco-ctf-app/internal/qa"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/api"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/detect"
@@ -223,30 +222,15 @@ func main() {
 	defer st.Close()
 	logger.Info("store opened", "path", dbPath, "solved_loaded", st.SolvedCount())
 
-	// P25 QA ticket-chat store (ADR-0006): a second SQLite file in the SAME
-	// PVC directory as SCOREBOARD_DB — no new env var, no new chart value
-	// (ADR-0006 Decision 3). Physically separate from the scoring/solve store
-	// above (internal/qa never imports internal/store or
-	// internal/scoreboard/scoring — internal/apispec's qa_boundary_test.go
-	// machine-checks that).
-	qaSt, err := qa.Open(filepath.Join(filepath.Dir(dbPath), "qa.db"))
-	if err != nil {
-		logger.Error("qa store open failed", "path", dbPath, "err", err)
-		os.Exit(1)
-	}
-	defer qaSt.Close()
-	logger.Info("qa store opened")
-
-	// QA Board (app#292 Phase 1, destination model — supersedes P25's
-	// per-user QA above for future callers): a THIRD SQLite file in the
-	// SAME PVC directory, physically separate from both store (scoring) and
-	// qa (P25) — internal/board never imports internal/store or
-	// internal/scoreboard/scoring (internal/apispec's board_boundary_test.go
-	// machine-checks that), and board.db is a brand-new file rather than a
-	// migration of qa.db's rows (internal/board's package doc). Opened here
-	// only to run its migration at boot and prove the file is reachable —
-	// HTTP wiring (Routes/handlers/spec) is a later phase (app#292 Phase 2+),
-	// so boardSt has no reader yet.
+	// QA Board (app#292 — destination model, replaces P25's per-user QA
+	// ticket chat wholesale as of Phase 2): a second SQLite file in the SAME
+	// PVC directory as SCOREBOARD_DB, physically separate from the
+	// scoring/solve store above (internal/board never imports internal/store
+	// or internal/scoreboard/scoring — internal/apispec's
+	// board_boundary_test.go machine-checks that). P25's internal/qa package
+	// and its qa.db file are gone (Phase 2 cutover); board.db is a
+	// brand-new file, not a migration of the old ticket data (internal/board's
+	// package doc).
 	boardSt, err := board.Open(filepath.Join(filepath.Dir(dbPath), "board.db"))
 	if err != nil {
 		logger.Error("board store open failed", "path", dbPath, "err", err)
@@ -307,7 +291,7 @@ func main() {
 		scoreboard.WithDetect(detectCfg),
 		scoreboard.WithPoints(points),
 		scoreboard.WithTtydSuffix(portalTtydSuffix),
-		scoreboard.WithQA(qaSt),
+		scoreboard.WithBoard(boardSt),
 		scoreboard.WithWebhookSecret(webhookSharedSecret, webhookSecretMode),
 	)
 

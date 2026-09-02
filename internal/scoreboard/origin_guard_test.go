@@ -16,8 +16,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Qfour/falco-ctf-app/internal/board"
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
-	"github.com/Qfour/falco-ctf-app/internal/qa"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard"
 	"github.com/Qfour/falco-ctf-app/internal/store"
 )
@@ -42,16 +42,16 @@ func newOriginFixture(t *testing.T, allowedOrigins []string) *scoreboard.Handler
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	qaSt, err := qa.Open(filepath.Join(t.TempDir(), "og-qa.db"))
+	boardSt, err := board.Open(filepath.Join(t.TempDir(), "og-board.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { qaSt.Close() })
+	t.Cleanup(func() { boardSt.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	return scoreboard.NewHandler(cat, st, logger,
 		scoreboard.WithAdminEmails([]string{"admin@ctf.local"}),
 		scoreboard.WithAllowedOrigins(allowedOrigins),
-		scoreboard.WithQA(qaSt),
+		scoreboard.WithBoard(boardSt),
 	)
 }
 
@@ -88,7 +88,14 @@ const allowedOrigin = "https://scoreboard.ctf.example.com"
 // which could be bumped on a route-count change while the other was missed
 // (they are in different files, so a diff review of one does not surface
 // the other going stale). Both now pin against this single constant.
-const wantOriginGuardedRouteCount = 9
+//
+// app#292 Phase 2: P25's 3 QA origin-guarded routes (questions POST,
+// questions/{qid}/messages POST, admin/questions/{qid}/reply) are gone
+// (cutover — internal/qa removed wholesale), replaced by the QA Board's 7
+// (participant: boardCreateThread, boardAppendMessage, boardLikeThread,
+// boardUnlikeThread; operator: boardAdminReply, boardAdminSetThreadState,
+// boardAdminSetMessageState). 9 - 3 + 7 = 13.
+const wantOriginGuardedRouteCount = 13
 
 // TestOriginGuard_ResetFormCSRF is the mitigation's headline case: a
 // body-less POST /api/admin/reset (the route a CSRF <form> auto-submit can
@@ -200,7 +207,8 @@ var pathParamValues = map[string]string{
 	"user": "alice",
 	"cid":  "02-evade",
 	"idx":  "0",
-	"qid":  "deadbeef",
+	"tid":  "deadbeef",
+	"mid":  "deadbeef",
 }
 
 var pathParamPattern = regexp.MustCompile(`\{([^}]+)\}`)
@@ -300,7 +308,7 @@ func TestOriginGuard_AllProtectedRoutesEnforced(t *testing.T) {
 	// breaking (e.g. Routes() returning nil) — shows up as a numeric
 	// assertion failure, not a shrinking, easy-to-miss subtest count.
 	if guarded != wantOriginGuardedRouteCount {
-		t.Fatalf("expected exactly %d OriginGuarded routes (ADR-0005/ADR-0006 canon: api.go's admin/reset, admin/display-name, submit-detect, steps/check, hints/{idx}, reset-dirty, questions (POST), questions/{qid}/messages (POST), admin/questions/{qid}/reply — admin/hints removed as dead code, app#84), got %d", wantOriginGuardedRouteCount, guarded)
+		t.Fatalf("expected exactly %d OriginGuarded routes (ADR-0005 canon: api.go's admin/reset, admin/display-name, submit-detect, steps/check, hints/{idx}, reset-dirty — admin/hints removed as dead code, app#84; app#292 Phase 2 QA Board: boardCreateThread, boardAppendMessage, boardLikeThread, boardUnlikeThread, boardAdminReply, boardAdminSetThreadState, boardAdminSetMessageState — P25's QA routes are gone, cutover), got %d", wantOriginGuardedRouteCount, guarded)
 	}
 	if unguardedWrites == 0 {
 		t.Fatal("expected at least one unguarded POST route to exercise the negative branch — the derivation might be broken")

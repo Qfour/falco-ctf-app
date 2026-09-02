@@ -1,24 +1,32 @@
 package apispec
 
-// app#292 Phase 1 / QA Board destination model: internal/board must be
-// physically separate from internal/store and internal/scoreboard/scoring,
-// the SAME shape ADR-0006 Verification 1 already applies to internal/qa
-// (qa_boundary_test.go) — internal/board's package doc states this
-// explicitly. This file is that same check with internal/board substituted
-// as the subject package, reusing dependency_boundary_test.go's
-// transitiveModuleImports helper (same package, same test binary) rather
-// than re-implementing an import-graph BFS a third time.
+// app#292 QA Board destination model: internal/board must be physically
+// separate from internal/store and internal/scoreboard/scoring, the SAME
+// shape ADR-0006 Verification 1 applied to P25's internal/qa before it (that
+// package, and its qa_boundary_test.go counterpart to this file, were
+// removed wholesale in app#292 Phase 2 — the destination model supersedes
+// P25's per-user QA ticket chat entirely). This file is that same check
+// with internal/board substituted as the subject package, reusing
+// dependency_boundary_test.go's transitiveModuleImports helper (same
+// package, same test binary) rather than re-implementing an import-graph
+// BFS a third time.
 
 import (
 	"path/filepath"
 	"testing"
 )
 
-// boardImportPath is the module-qualified package path this check is about.
-// storeImportPath / scoringImportPath are already declared in
-// qa_boundary_test.go (same package apispec) — reused here rather than
-// redeclared.
-const boardImportPath = modulePrefix + "internal/board"
+// boardImportPath / storeImportPath / scoringImportPath are the
+// module-qualified package paths this check is about. storeImportPath /
+// scoringImportPath used to be declared in P25's qa_boundary_test.go
+// (same package apispec) and were reused here rather than redeclared; now
+// that that file is gone (app#292 Phase 2 cutover), this file is their sole
+// remaining declaration site.
+const (
+	boardImportPath   = modulePrefix + "internal/board"
+	storeImportPath   = modulePrefix + "internal/store"
+	scoringImportPath = modulePrefix + "internal/scoreboard/scoring"
+)
 
 // TestBoardPackageDoesNotImportStoreOrScoring is app#292 Phase 1's
 // counterpart to TestQaPackageDoesNotImportStoreOrScoring: walk

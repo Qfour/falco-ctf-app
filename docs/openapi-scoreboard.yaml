@@ -29,7 +29,10 @@ info:
     --------------------------------------------------------------
       x-ctf-audience          participant | operator | internal | infra
       x-ctf-authz             none | admin | self-or-admin |
-                              self-or-admin-write | claimed-identity
+                              self-or-admin-write | claimed-identity |
+                              authenticated (app#292: any proven identity,
+                              no {user}-path self-match — see QA Board
+                              operations below)
       x-ctf-origin-guard      true | false — whether the route is wrapped by
                               api.Handler.og (internal/scoreboard/originguard,
                               ALLOWED_ORIGINS, P23-2). MUST be stated
@@ -1137,87 +1140,96 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
-  /api/users/{user}/questions:
+  /api/board/threads:
     get:
-      summary: List the caller's own P25 QA tickets (summary)
-      operationId: listQuestions
+      summary: List the QA Board threads the caller may see
+      operationId: boardListThreads
       tags: [participant]
       x-ctf-audience: participant
-      x-ctf-authz: self-or-admin
+      x-ctf-authz: authenticated
       x-ctf-origin-guard: false
       x-ctf-collector-forward: false
       x-ctf-rate-limit: none
       description: |
-        ADR-0006 (P25): one-way participant -> operator QA ticket chat. "1
-        ticket = 1 thread" — a participant may open several tickets; each is
-        listed here as a summary (never the message bodies). Self-scoped
-        read, same posture as `/me` / `/journey`; an admin may read any
-        user's list.
-      parameters:
-        - $ref: "#/components/parameters/User"
+        app#292 (destination model, replaces P25's per-user QA ticket chat
+        wholesale): every `audience: all` thread (visible to every
+        authenticated participant) PLUS the caller's own `audience: admin`
+        threads (private, visible only to their own author and admins) —
+        never another participant's private thread. `authenticated`, not
+        `self-or-admin`: this route carries no `{user}` path segment to
+        match against: the caller's OWN identity (from
+        `X-Auth-Request-Email`) is implicitly "self" and there is nothing
+        else to authorize. Hidden/deleted threads are omitted (moderation
+        state is admin-only visibility — see `GET /api/admin/board/threads`
+        for the full queue).
       responses:
         "200":
-          description: ticket summaries, most-recently-active first
+          description: thread summaries, pinned-first then most-recently-active first
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/QuestionList" }
-        "400":
-          description: invalid user
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
+              schema: { $ref: "#/components/schemas/BoardList" }
         "403":
-          description: caller is neither `{user}` nor an admin
+          description: missing/blank identity header
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "500":
-          description: could not list questions
+          description: could not list board threads
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
     post:
-      summary: Open a new P25 QA ticket
-      operationId: createQuestion
+      summary: Open a new QA Board thread
+      operationId: boardCreateThread
       tags: [participant]
       x-ctf-audience: participant
-      x-ctf-authz: self-or-admin-write
+      x-ctf-authz: authenticated
       x-ctf-origin-guard: true
       x-ctf-collector-forward: false
-      x-ctf-rate-limit: per-IP 1 req/10s burst 3 (shared with postQuestionMessage)
+      x-ctf-rate-limit: identity 1 req/10s burst 3 (shared with boardAppendMessage)
       description: |
-        ADR-0006 (P25). `author` / `author_role` are ALWAYS server-set
-        (`participant` / `{user}`) — the request schema below has no such
-        fields at all, so there is nothing for a participant to smuggle a
-        role claim through; any such keys in a raw request body are
-        silently ignored (security-engineer finding 1, HIGH).
+        `author` / `author_role` are ALWAYS server-set (`participant` / the
+        caller's own derived username) — the request schema below has no
+        such fields at all, so there is nothing for a participant to
+        smuggle a role claim through; any such keys in a raw request body
+        are silently ignored (same discipline P25's createQuestion
+        enforced, security-engineer finding 1).
 
-        Origin-guarded + self-or-admin-write, the SAME two-gate stack
-        `steps/{idx}/check` and `hints/{idx}` use above: reached ONLY from
-        the portal's browser fetch. NOT added to the collector's forward
-        allowlist (`docs/openapi-collector.yaml`) — a participant's QA send
-        has no legitimate workspace/curl caller, so adding one would only
-        widen the attack surface (ADR-0006 explicitly declines this).
-      parameters:
-        - $ref: "#/components/parameters/User"
+        `audience` selects visibility: `all` (public — any authenticated
+        participant may read and like it) or `admin` (private — visible
+        only to its own author and admins). Fail-closed: any value OTHER
+        than exactly `admin` or `all` (including an absent/empty field) is
+        treated as `admin` — a malformed or omitted audience never
+        accidentally becomes public.
+
+        The opening `body` (and every other free-text board write) is
+        rejected 400 if it matches the shape `FALCO{...}` — a fairness
+        control, not a real-flag comparison (the board has no access to any
+        challenge's actual flag value; see the handler's own doc for why
+        blanket shape-rejection, not value comparison, is the correct gate
+        here).
+
+        Origin-guarded: reached ONLY from the portal's browser fetch, never
+        the collector's forward allowlist (`docs/openapi-collector.yaml`) —
+        same reasoning ADR-0006 gave for declining to add P25's QA there.
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/CreateQuestionRequest" }
+            schema: { $ref: "#/components/schemas/CreateThreadRequest" }
       responses:
         "200":
-          description: ticket created (its one message is the participant's own opening body)
+          description: thread created (its one message is the participant's own opening body)
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/QuestionThread" }
+              schema: { $ref: "#/components/schemas/BoardThread" }
         "400":
-          description: invalid user, malformed body, or subject/body empty or over the length cap
+          description: malformed body, body empty/over the length cap, or body matches the flag shape
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "403":
-          description: origin guard denied, or caller is neither `{user}` nor an admin
+          description: origin guard denied, or missing/blank identity header
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1227,106 +1239,95 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "500":
-          description: could not create the ticket
+          description: could not create the thread
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
-  /api/users/{user}/questions/{qid}:
+  /api/board/threads/{tid}:
     get:
-      summary: Read one of the caller's own P25 QA tickets (full thread)
-      operationId: getQuestion
+      summary: Read one QA Board thread (full messages)
+      operationId: boardGetThread
       tags: [participant]
       x-ctf-audience: participant
-      x-ctf-authz: self-or-admin
+      x-ctf-authz: authenticated
       x-ctf-origin-guard: false
       x-ctf-collector-forward: false
       x-ctf-rate-limit: none
       description: |
-        ADR-0006 Decision 2: the composite (id,user) ownership check happens
-        inside the store call this handler makes, under one lock hold —
-        `self-or-admin` only proves the caller MAY act as `{user}`, it says
-        nothing about whether `{qid}` belongs to `{user}`. An unknown id and
-        a cross-user id both produce the SAME 404 (no existence oracle for
-        another participant's ticket).
+        The entitlement check (audience/ownership/moderation-state) happens
+        inside `internal/board.Store.GetThread`, under the SAME lock hold
+        as the read itself — an unknown id, a wrong-audience `admin` thread
+        belonging to another participant, and a moderated-away (hidden/
+        deleted) thread ALL produce the same 404 (no existence oracle).
       parameters:
-        - $ref: "#/components/parameters/User"
-        - $ref: "#/components/parameters/Qid"
+        - $ref: "#/components/parameters/Tid"
       responses:
         "200":
-          description: the ticket's full thread
+          description: the thread's full messages, plus this caller's like status
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/QuestionThread" }
-        "400":
-          description: invalid user
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
+              schema: { $ref: "#/components/schemas/BoardThread" }
         "403":
-          description: caller is neither `{user}` nor an admin
+          description: missing/blank identity header
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "404":
-          description: unknown ticket id, or it does not belong to `{user}`
+          description: unknown thread id, wrong-audience, or moderated away
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "500":
-          description: could not load the ticket
+          description: could not load the thread
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
-  /api/users/{user}/questions/{qid}/messages:
+  /api/board/threads/{tid}/messages:
     post:
-      summary: Post a follow-up message on the caller's own P25 QA ticket
-      operationId: postQuestionMessage
+      summary: Post a follow-up message on the caller's OWN QA Board thread
+      operationId: boardAppendMessage
       tags: [participant]
       x-ctf-audience: participant
-      x-ctf-authz: self-or-admin-write
+      x-ctf-authz: authenticated
       x-ctf-origin-guard: true
       x-ctf-collector-forward: false
-      x-ctf-rate-limit: per-IP 1 req/10s burst 3 (shared with createQuestion)
+      x-ctf-rate-limit: identity 1 req/10s burst 3 (shared with boardCreateThread)
       description: |
-        Same origin-guard + self-or-admin-write + shared rate-limit bucket as
-        `POST /api/users/{user}/questions`. `author` / `author_role` are
-        ALWAYS server-set (`participant` / `{user}`) — never read from the
-        request body.
-
-        IDOR discipline (ADR-0006 Decision 2 / security-engineer finding 4):
-        the composite-key ownership check and the message insert happen
-        inside ONE store call, under one lock hold — never a separate
-        "check ownership" round trip followed by a separate "now write"
-        round trip. A cross-user `{qid}` (one that exists but belongs to a
-        DIFFERENT participant) 404s exactly like an unknown one.
+        Own-thread-only: `internal/board.Store.AppendOwnMessage` performs
+        the ownership check and the insert inside ONE call, under one lock
+        hold — another participant's `{tid}` 404s exactly like an unknown
+        one (no existence oracle, same IDOR discipline P25's
+        postQuestionMessage documented). `author` / `author_role` are
+        ALWAYS server-set (`participant` / the caller's own derived
+        username) — never read from the request body. Same flag-shape
+        rejection as `boardCreateThread`.
       parameters:
-        - $ref: "#/components/parameters/User"
-        - $ref: "#/components/parameters/Qid"
+        - $ref: "#/components/parameters/Tid"
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/PostQuestionMessageRequest" }
+            schema: { $ref: "#/components/schemas/PostMessageRequest" }
       responses:
         "200":
           description: message appended; the full, updated thread
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/QuestionThread" }
+              schema: { $ref: "#/components/schemas/BoardThread" }
         "400":
-          description: invalid user, malformed body, or body empty or over the length cap
+          description: malformed body, body empty/over the length cap, or body matches the flag shape
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "403":
-          description: origin guard denied, or caller is neither `{user}` nor an admin
+          description: origin guard denied, or missing/blank identity header
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "404":
-          description: unknown ticket id, or it does not belong to `{user}`
+          description: unknown thread id, or it does not belong to the caller
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1337,6 +1338,94 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "500":
           description: could not append the message
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/board/threads/{tid}/like:
+    post:
+      summary: Like an `audience:all` QA Board thread
+      operationId: boardLikeThread
+      tags: [participant]
+      x-ctf-audience: participant
+      x-ctf-authz: authenticated
+      x-ctf-origin-guard: true
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: identity 1 req/s burst 10 (shared with boardUnlikeThread)
+      description: |
+        Idempotent (`internal/board.Store.Like` is `INSERT OR IGNORE` — a
+        second like from the same caller is a harmless no-op, not an
+        error). Fails closed (404, no existence/audience oracle) for an
+        `audience: admin` thread — there is no like affordance on a private
+        thread — and for a moderated-away (hidden/deleted) one. Liking the
+        caller's OWN thread is rejected 409 (`ErrSelfLike` — a distinct
+        error from the 404 cases above, since a self-like thread IS one the
+        caller can see, it is just a disallowed action on it).
+      parameters:
+        - $ref: "#/components/parameters/Tid"
+      responses:
+        "200":
+          description: like recorded (or already recorded)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LikeResult" }
+        "403":
+          description: origin guard denied, or missing/blank identity header
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: unknown thread id, `audience:admin`, or moderated away
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: caller is the thread's own author (self-like)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: rate limited
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: could not like the thread
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/board/threads/{tid}/unlike:
+    post:
+      summary: Remove the caller's like from a QA Board thread
+      operationId: boardUnlikeThread
+      tags: [participant]
+      x-ctf-audience: participant
+      x-ctf-authz: authenticated
+      x-ctf-origin-guard: true
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: identity 1 req/s burst 10 (shared with boardLikeThread)
+      description: |
+        Idempotent, unconditional delete (`internal/board.Store.Unlike`) —
+        a no-op for a thread the caller never liked, or one that was never
+        likeable at all. There is nothing to leak by allowing this
+        unconditionally, unlike the like path's insert (see that
+        operation's own description).
+      parameters:
+        - $ref: "#/components/parameters/Tid"
+      responses:
+        "200":
+          description: like removed (or already absent)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LikeResult" }
+        "403":
+          description: missing/blank identity header
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: could not unlike the thread
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1452,10 +1541,10 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
-  /api/admin/questions:
+  /api/admin/board/threads:
     get:
-      summary: List every P25 QA ticket, every participant (summary)
-      operationId: adminListQuestions
+      summary: List every QA Board thread, every audience, every moderation state (operator)
+      operationId: boardAdminListThreads
       tags: [operator]
       x-ctf-audience: operator
       x-ctf-authz: admin
@@ -1463,69 +1552,43 @@ paths:
       x-ctf-collector-forward: false
       x-ctf-rate-limit: none
       description: |
-        ADR-0006 (P25). No `{user}` in this route — it is a standalone admin
-        route, not a self-scoped one (Decision 1). Each summary carries
-        `user` (unlike the participant listing's summaries, which omit it —
-        the caller already knows it is their own).
-      responses:
-        "200":
-          description: ticket summaries across every participant, most-recently-active first
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/QuestionList" }
-        "403":
-          description: caller is not an admin
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-        "500":
-          description: could not list questions
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
+        The moderation queue: EVERY thread, both audiences, hidden/deleted
+        included (`internal/board.Store.ListThreads(isAdmin=true)`) — an
+        operator needs to see what has already been acted on, not just the
+        live/public set. No `{user}` in this route — standalone admin
+        route, same shape P25's adminListQuestions had before it.
 
-  /api/admin/questions/{qid}:
-    get:
-      summary: Read any P25 QA ticket by id (full thread)
-      operationId: adminGetQuestion
-      tags: [operator]
-      x-ctf-audience: operator
-      x-ctf-authz: admin
-      x-ctf-origin-guard: false
-      x-ctf-collector-forward: false
-      x-ctf-rate-limit: none
-      description: |
-        No `{user}` path segment, so no composite-key ownership check
-        applies — `admin` alone is the intended gate for this route
-        (ADR-0006 Decision 2).
+        MUST stay under `/api/admin/` (never `/api/board/`): placing an
+        admin route under the participant prefix would (a) fail the I15
+        reverse ingress-audience check and (b) lose the admin ingress
+        host's own `/check-admin` second line of defense.
       parameters:
-        - $ref: "#/components/parameters/Qid"
+        - name: sort
+          in: query
+          required: false
+          schema: { type: string, enum: [likes, recent] }
+          description: sort order hint for the operator moderation UI; default is pinned-first then most-recently-active
       responses:
         "200":
-          description: the ticket's full thread
+          description: thread summaries across every participant and audience
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/QuestionThread" }
+              schema: { $ref: "#/components/schemas/BoardList" }
         "403":
           description: caller is not an admin
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-        "404":
-          description: unknown ticket id
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
         "500":
-          description: could not load the ticket
+          description: could not list board threads
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
-  /api/admin/questions/{qid}/reply:
+  /api/admin/board/threads/{tid}/reply:
     post:
-      summary: Reply to a P25 QA ticket as the operator
-      operationId: adminReplyQuestion
+      summary: Reply to a QA Board thread as the operator
+      operationId: boardAdminReply
       tags: [operator]
       x-ctf-audience: operator
       x-ctf-authz: admin
@@ -1533,40 +1596,36 @@ paths:
       x-ctf-collector-forward: false
       x-ctf-rate-limit: none
       description: |
-        THE only legitimate operator reply path (ADR-0006 Decision 1,
-        security-engineer finding 5, LOW). `author_role` is always `admin`
-        and `author` is always the caller's OWN proven identity
-        (`X-Auth-Request-Email`) — never request-body input. A ticket's
-        derived `answered` flips to true only via a message this route
-        writes.
+        `author_role` is always `admin` and `author` is always the fixed
+        constant `"staff"` — NEVER the caller's raw
+        `X-Auth-Request-Email` value, unlike P25's adminReply (which used
+        the caller's own email as `author`). app#292's design deliberately
+        does not put a real operator email on the wire a participant reads
+        back — the real identity is logged server-side only. A thread's
+        `answered` flips to true only via a message this route writes
+        (`internal/board.Store.AppendAdminReply`'s convenience side
+        effect — still independently overridable via `boardAdminSetThreadState`).
 
-        `self-or-admin-write`'s admin branch would technically also let an
-        admin identity through the PARTICIPANT follow-up route
-        (`POST /api/users/{user}/questions/{qid}/messages`) — this codebase
-        does not add a technical block against that misuse (no new gate
-        primitive); it is self-detecting instead, since that route
-        hardcodes `author_role: participant` unconditionally, so a reply
-        posted through it would never contribute to `answered`. Operator
-        UI/runbook guidance points exclusively at this route.
+        Same flag-shape rejection as the participant write routes.
 
-        Origin-guarded like the operator dashboard's other admin writes
-        (reset / hints / display-name); never rate-limited, matching that
-        same trusted-actor precedent.
+        Origin-guarded like the operator dashboard's other admin writes;
+        never rate-limited, matching that same trusted-actor precedent
+        (P25's adminReply before it).
       parameters:
-        - $ref: "#/components/parameters/Qid"
+        - $ref: "#/components/parameters/Tid"
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/AdminReplyRequest" }
+            schema: { $ref: "#/components/schemas/PostReplyRequest" }
       responses:
         "200":
-          description: reply appended; the full, updated thread
+          description: reply appended; the full, updated thread (admin view)
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/QuestionThread" }
+              schema: { $ref: "#/components/schemas/BoardThread" }
         "400":
-          description: malformed body, or body empty or over the length cap
+          description: malformed body, body empty/over the length cap, or body matches the flag shape
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1576,12 +1635,116 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "404":
-          description: unknown ticket id
+          description: unknown thread id
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "500":
-          description: could not append the reply
+          description: could not reply to the thread
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/admin/board/threads/{tid}/state:
+    post:
+      summary: Moderate a QA Board thread (pinned / answered / visibility state)
+      operationId: boardAdminSetThreadState
+      tags: [operator]
+      x-ctf-audience: operator
+      x-ctf-authz: admin
+      x-ctf-origin-guard: true
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
+      description: |
+        Any combination of `pinned` / `answered` / `state`, applied in one
+        update (`internal/board.Store.SetThreadState` — only the fields
+        present are written; a request with none of the three is a
+        harmless no-op that still confirms `{tid}` exists). `state:
+        hidden` removes the thread from non-admin reads (list AND get)
+        while leaving it fully intact for admins; `state: deleted` goes
+        further and scrubs every message's `body` to `""` in every
+        response, including the admin's.
+      parameters:
+        - $ref: "#/components/parameters/Tid"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ThreadStateRequest" }
+      responses:
+        "200":
+          description: state applied; the full, updated thread (admin view)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BoardThread" }
+        "400":
+          description: state is present but not one of visible/hidden/deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: origin guard denied, or caller is not an admin
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: unknown thread id
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: could not update the thread's moderation state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/admin/board/messages/{mid}/state:
+    post:
+      summary: Moderate a single QA Board message (visibility state)
+      operationId: boardAdminSetMessageState
+      tags: [operator]
+      x-ctf-audience: operator
+      x-ctf-authz: admin
+      x-ctf-origin-guard: true
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
+      description: |
+        Moderates ONE message by id (`internal/board.Store.SetMessageState`)
+        without touching the rest of its thread — e.g. hiding a single
+        abusive follow-up. `state: hidden` removes the message from
+        non-admin reads entirely (not merely body-scrubbed); `state:
+        deleted` scrubs its `body` to `""` in EVERY response, including the
+        admin's.
+      parameters:
+        - $ref: "#/components/parameters/Mid"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MessageStateRequest" }
+      responses:
+        "200":
+          description: state applied
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessageStateResult" }
+        "400":
+          description: state is not one of visible/hidden/deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: origin guard denied, or caller is not an admin
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: unknown message id
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: could not update the message's moderation state
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1606,17 +1769,27 @@ components:
       required: true
       schema: { type: string }
       description: challenge id / catalog key (e.g. `03-stealth-read`)
-    Qid:
+    Tid:
       in: path
-      name: qid
+      name: tid
       required: true
       schema: { type: string }
       description: |
-        P25 QA ticket id (ADR-0006) — a 32-hex-char, server-generated,
-        non-enumerable value (`internal/qa.Store`'s newID). Not a
-        capability token: participant routes still enforce the composite
-        (id, user) ownership check server-side; this value's randomness is
-        defense-in-depth on top of that check, not a substitute for it.
+        QA Board thread id (app#292) — a 32-hex-char, server-generated,
+        non-enumerable value (`internal/board.Store`'s newID). Not a
+        capability token: participant routes still enforce the audience/
+        ownership/moderation-state entitlement check server-side; this
+        value's randomness is defense-in-depth on top of that check, not a
+        substitute for it.
+    Mid:
+      in: path
+      name: mid
+      required: true
+      schema: { type: string }
+      description: |
+        QA Board message id (app#292) — same shape/generation as `Tid`
+        above, scoped to one message within a thread rather than the
+        thread itself.
 
   schemas:
     Error:
@@ -2301,110 +2474,185 @@ components:
           additionalProperties: { type: integer }
         now: { type: string, format: date-time }
 
-    QuestionMessage:
+    BoardMessage:
       type: object
       description: |
-        One message in a P25 QA ticket thread (ADR-0006). `author_role` /
+        One message in a QA Board thread (app#292). `author_role` /
         `author` are always server-set per the ROUTE the message was
-        written through (`participant`+`{user}` on the participant write
-        routes, `admin`+the caller's own proven email on the operator reply
-        route) — never accepted from request-body input on any write route.
-      required: [author_role, author, body, created_at]
+        written through (`participant`+the caller's own derived username
+        on the participant write routes, `admin`+the fixed constant
+        `"staff"` on the operator reply route) — never accepted from
+        request-body input on any write route. `state` is a per-message
+        moderation column; a `deleted` message's `body` is `""` in every
+        response, including the admin's.
+      required: [id, author_role, author, body, created_at, state]
       properties:
+        id: { type: string }
         author_role:
           type: string
           enum: [participant, admin]
         author: { type: string }
         body: { type: string }
         created_at: { type: string, format: date-time }
+        state:
+          type: string
+          enum: [visible, hidden, deleted]
 
-    QuestionThread:
+    BoardThread:
       type: object
       description: |
-        A full P25 QA ticket ("1 ticket = 1 thread", ADR-0006): the opening
-        subject plus every message, oldest first. Returned by
-        createQuestion, getQuestion, postQuestionMessage, adminGetQuestion
-        and adminReplyQuestion alike, so a client can use ONE shape for
-        "here is the ticket after my action" everywhere.
-      required: [id, user, subject, created_at, messages, answered]
+        A full QA Board thread: the opening subject plus every message
+        this viewer/role is entitled to see (oldest first), plus this
+        thread's like count and whether the CALLER has liked it. Returned
+        by boardCreateThread, boardGetThread, boardAppendMessage,
+        boardAdminReply and boardAdminSetThreadState alike, so a client can
+        use ONE shape for "here is the thread after my action" everywhere.
+      required: [id, author, audience, subject, created_at, pinned, answered, state, messages, like_count, liked]
       properties:
         id: { type: string }
-        user: { type: string }
+        author: { type: string }
+        audience:
+          type: string
+          enum: [admin, all]
+          description: fixed at creation; no operation in this API ever changes it
         subject: { type: string }
         created_at: { type: string, format: date-time }
-        messages:
-          type: array
-          items: { $ref: "#/components/schemas/QuestionMessage" }
+        pinned: { type: boolean }
         answered:
           type: boolean
           description: |
-            Same DERIVATION rule as QuestionSummary.answered (at least one
-            message has `author_role: admin`) — added (Issue #167) so the
-            portal's Support/Queue panes can read `thread.answered` directly
-            instead of each independently re-deriving the same predicate
-            from `messages` client-side (`(th.messages || []).some(m =>
-            m.author_role === 'admin')`, duplicated in two places pre-#167).
+            A STORED column (unlike P25's QuestionSummary.answered, which
+            was derived per-listing): an admin reply flips it to true as a
+            convenience, but `boardAdminSetThreadState` can still
+            explicitly set it back to false (e.g. "we asked a clarifying
+            question, this isn't answered yet").
+        state:
+          type: string
+          enum: [visible, hidden, deleted]
+        messages:
+          type: array
+          items: { $ref: "#/components/schemas/BoardMessage" }
+        like_count: { type: integer }
+        liked:
+          type: boolean
+          description: whether the CALLER (the viewer this response was built for) has liked this thread
 
-    QuestionSummary:
+    BoardSummary:
       type: object
       description: |
-        One row of a P25 QA ticket LISTING — never the message bodies.
-        `answered` is DERIVED (at least one message has `author_role:
-        admin`), not a stored status column (ADR-0006 Decision 1) — it can
-        never drift out of sync with the messages that justify it.
-      required: [id, subject, created_at, updated_at, answered, message_count]
+        One row of a QA Board thread LISTING — never the message bodies.
+      required: [id, author, audience, subject, created_at, updated_at, pinned, answered, state, message_count, like_count, liked]
       properties:
         id: { type: string }
+        author: { type: string }
+        audience:
+          type: string
+          enum: [admin, all]
         subject: { type: string }
         created_at: { type: string, format: date-time }
         updated_at:
           type: string
           format: date-time
-          description: the latest message's created_at (or created_at itself, for a ticket with only its opening message)
+          description: the latest message's created_at (or created_at itself, for a thread with only its opening message)
+        pinned: { type: boolean }
         answered: { type: boolean }
-        message_count: { type: integer }
-        user:
+        state:
           type: string
-          description: only present in the ADMIN listing (`GET /api/admin/questions`) — the participant's own listing omits it (the caller already knows it is their own)
+          enum: [visible, hidden, deleted]
+        message_count: { type: integer }
+        like_count: { type: integer }
+        liked: { type: boolean }
 
-    QuestionList:
+    BoardList:
       type: object
-      required: [questions]
+      required: [threads]
       properties:
-        questions:
+        threads:
           type: array
-          items: { $ref: "#/components/schemas/QuestionSummary" }
+          items: { $ref: "#/components/schemas/BoardSummary" }
 
-    CreateQuestionRequest:
+    CreateThreadRequest:
       type: object
       description: |
         Deliberately has NO `author` / `author_role` property — there is
         nothing here for a participant to smuggle a role claim through
-        (security-engineer finding 1, HIGH). Any such keys present in a raw
-        request body are silently ignored.
-      required: [subject, body]
+        (same discipline P25's CreateQuestionRequest enforced). Any such
+        keys present in a raw request body are silently ignored.
+      required: [audience, subject, body]
       properties:
+        audience:
+          type: string
+          description: |
+            `admin` (private) or `all` (public). Any OTHER value —
+            including empty/absent — is treated as `admin` server-side
+            (fail-closed default; see boardCreateThread's own description).
+            Declared as a free string here, not `enum: [admin, all]`, so an
+            out-of-enum value is a documented 200-with-fallback rather than
+            a spec-level input the generated request type would reject
+            before the handler's own fail-closed coercion ever runs.
         subject:
           type: string
           description: "1..120 runes after trimming"
         body:
           type: string
-          description: "1..4096 bytes after trimming"
+          description: "1..4096 bytes after trimming; rejected 400 if it matches the flag shape FALCO{...}"
 
-    PostQuestionMessageRequest:
+    PostMessageRequest:
       type: object
-      description: same "no author/author_role" discipline as CreateQuestionRequest.
+      description: same "no author/author_role" discipline as CreateThreadRequest.
       required: [body]
       properties:
         body:
           type: string
-          description: "1..4096 bytes after trimming"
+          description: "1..4096 bytes after trimming; rejected 400 if it matches the flag shape FALCO{...}"
 
-    AdminReplyRequest:
+    PostReplyRequest:
       type: object
-      description: same "no author/author_role" discipline as CreateQuestionRequest — the operator's own identity comes from X-Auth-Request-Email, never the body.
+      description: same "no author/author_role" discipline as CreateThreadRequest — the operator's reply author is always the fixed constant "staff", never request-body input or the caller's raw email.
       required: [body]
       properties:
         body:
           type: string
-          description: "1..4096 bytes after trimming"
+          description: "1..4096 bytes after trimming; rejected 400 if it matches the flag shape FALCO{...}"
+
+    ThreadStateRequest:
+      type: object
+      description: |
+        Every field is optional; only the fields PRESENT are applied in
+        one update (`internal/board.Store.SetThreadState`). A request with
+        none of the three is a harmless no-op that still confirms `{tid}`
+        exists (never a silent success for an unknown id).
+      properties:
+        pinned: { type: boolean }
+        answered: { type: boolean }
+        state:
+          type: string
+          enum: [visible, hidden, deleted]
+
+    MessageStateRequest:
+      type: object
+      required: [state]
+      properties:
+        state:
+          type: string
+          enum: [visible, hidden, deleted]
+
+    LikeResult:
+      type: object
+      description: the like/unlike routes' small result shape — a full thread refetch is unnecessary for a toggle.
+      required: [ok, tid, liked, like_count]
+      properties:
+        ok: { type: boolean }
+        tid: { type: string }
+        liked: { type: boolean }
+        like_count: { type: integer }
+
+    MessageStateResult:
+      type: object
+      required: [ok, mid, state]
+      properties:
+        ok: { type: boolean }
+        mid: { type: string }
+        state:
+          type: string
+          enum: [visible, hidden, deleted]
