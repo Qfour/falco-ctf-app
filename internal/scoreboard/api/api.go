@@ -170,7 +170,17 @@ type Handler struct {
 	submitLimiter      *ratelimit.Limiter
 	displayNameLimiter *ratelimit.Limiter
 	adminSet           map[string]struct{}
-	originGuard        *originguard.Guard
+	// hiddenSet is the HIDDEN_USERS allowlist (CEO/ops request: a venue-demo
+	// account, e.g. test1, must be free to solve challenges and trip Falco
+	// rules without its score/solve state appearing on the PUBLIC leaderboard
+	// participants see). Applied ONLY inside computeLeaderboard's userSet
+	// construction — every other read (userMe's own row, /api/state's
+	// per-challenge solver lists, recent-solve feed) is untouched, so a hidden
+	// user's own self-view (GET /api/users/{user}/me) still works exactly as
+	// before; only their appearance in the RANKED FIELD is suppressed. Empty
+	// (default) = nobody hidden (I7: environment-agnostic default).
+	hiddenSet   map[string]struct{}
+	originGuard *originguard.Guard
 
 	journeys    catalog.Journeys
 	falcoRules  catalog.FalcoRuleExcerpts
@@ -245,12 +255,18 @@ const DetectGradeTimeout = 30 * time.Second
 // originguard to protect the browser-facing state-changing routes (see
 // Register). Empty = every guarded request is denied (fail-closed) — see
 // cmd/scoreboard/main.go for the deploy-time default and rationale.
-func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *slog.Logger, now func() time.Time, adminEmails []string, allowedOrigins []string, jc JourneyConfig, dc DetectConfig, bc BoardConfig) *Handler {
+//
+// hiddenUsers is the HIDDEN_USERS allowlist (comma-separated scoreboard
+// USERNAMES, not emails — unlike adminEmails/allowedOrigins, this is matched
+// against the store's user key directly, so it needs no email-domain
+// stripping). Empty = nobody hidden.
+func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *slog.Logger, now func() time.Time, adminEmails []string, allowedOrigins []string, hiddenUsers []string, jc JourneyConfig, dc DetectConfig, bc BoardConfig) *Handler {
 	// /submit accepts a claimed user identity. Without per-IP throttling a
 	// participant who scraped someone else's flag could brute-force submits.
 	// 1 req/s with burst 10 lets legitimate typing through but blocks
 	// automated flooding.
 	adminSet := newAdminSet(adminEmails)
+	hiddenSet := newHiddenSet(hiddenUsers)
 	journeys := jc.Journeys
 	if journeys == nil {
 		journeys = catalog.Journeys{}
@@ -283,6 +299,7 @@ func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *sl
 		submitLimiter:      ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now),
 		displayNameLimiter: ratelimit.New(0.2 /* one every 5s */, 5 /* burst */).WithNow(now),
 		adminSet:           adminSet,
+		hiddenSet:          hiddenSet,
 		originGuard:        originguard.New(allowedOrigins, logger),
 		journeys:           journeys,
 		falcoRules:         falcoRules,
@@ -314,6 +331,20 @@ func newAdminSet(adminEmails []string) map[string]struct{} {
 	for _, e := range adminEmails {
 		if e = strings.TrimSpace(strings.ToLower(e)); e != "" {
 			set[e] = struct{}{}
+		}
+	}
+	return set
+}
+
+// newHiddenSet normalises the HIDDEN_USERS allowlist into a lookup set
+// (trimmed, lower-cased, blanks dropped — usernames are already
+// lower-case-only per validUser, but normalising defensively costs nothing
+// and matches newAdminSet's shape). Empty input = empty set = nobody hidden.
+func newHiddenSet(hiddenUsers []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(hiddenUsers))
+	for _, u := range hiddenUsers {
+		if u = strings.TrimSpace(strings.ToLower(u)); u != "" {
+			set[u] = struct{}{}
 		}
 	}
 	return set
@@ -2284,6 +2315,19 @@ type lbEntry struct {
 //
 // Extracted from the former buildState body verbatim (DRY, #40/#39
 // continuity) — no ranking/scoring semantics changed by this refactor.
+//
+// HIDDEN_USERS (CEO/ops request): any user in h.hiddenSet is excluded from
+// the userSet this function builds below, so they never get an lbEntry —
+// they contribute no row to buildState's venue-projection leaderboard and
+// rank consecutively for everyone else (no gap left where the hidden user
+// would have sorted). This is a DISPLAY filter only: it does not touch
+// scoring (the hidden user's own solves/score are computed and stored
+// exactly as normal), and it does not affect userMe's OWN row for that
+// user — userMe pre-computes its own score independently of this
+// function's output and only overwrites it by finding a matching lbEntry
+// here, so a hidden user reading their own /me still sees their real score
+// (with rank falling back to userMe's zero-value default, same as any
+// zero-solve participant).
 func (h *Handler) computeLeaderboard(snap store.Snapshot, ids []string) []lbEntry {
 	// Catalog membership — filters out stale solves whose challenge id was
 	// renamed or removed (e.g. early-prototype `01-read-shadow` still in the
@@ -2296,10 +2340,16 @@ func (h *Handler) computeLeaderboard(snap store.Snapshot, ids []string) []lbEntr
 
 	userSet := map[string]struct{}{}
 	for u := range snap.EventsPerUser {
+		if _, hidden := h.hiddenSet[u]; hidden {
+			continue
+		}
 		userSet[u] = struct{}{}
 	}
 	for k := range snap.Solved {
 		if _, ok := idSet[k.Challenge]; !ok {
+			continue
+		}
+		if _, hidden := h.hiddenSet[k.User]; hidden {
 			continue
 		}
 		userSet[k.User] = struct{}{}

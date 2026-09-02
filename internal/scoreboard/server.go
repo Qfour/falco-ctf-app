@@ -42,6 +42,9 @@ type Handler struct {
 	dbPath      string
 	now         func() time.Time
 	adminEmails []string
+	// hiddenUsers is the HIDDEN_USERS allowlist (comma-separated scoreboard
+	// usernames) threaded through to the api handler — see WithHiddenUsers.
+	hiddenUsers []string
 	journeys    catalog.Journeys
 	falcoRules  catalog.FalcoRuleExcerpts
 	order       []string
@@ -86,6 +89,19 @@ func WithDBPath(p string) Option        { return func(h *Handler) { h.dbPath = p
 // WithAdminEmails sets the allowlist for admin-only endpoints (POST
 // /api/admin/reset). Empty = nobody (fail-closed).
 func WithAdminEmails(e []string) Option { return func(h *Handler) { h.adminEmails = e } }
+
+// WithHiddenUsers sets the HIDDEN_USERS allowlist (comma-separated scoreboard
+// USERNAMES — not emails, unlike WithAdminEmails/WithAllowedOrigins) that the
+// api handler's computeLeaderboard excludes from the ranked leaderboard (both
+// the operator venue-projection dashboard GET /api/state and the rank/score
+// this feeds into every participant's own GET /api/users/{user}/me lookup).
+// It is a DISPLAY-ONLY suppression: a hidden user still scores normally
+// (webhook ingest / MarkSolved are completely untouched) and can still read
+// their own /me. Intended use: a venue-demo account (e.g. "test1") an
+// operator drives during the event without its progress leaking onto the
+// leaderboard participants see. Empty = nobody hidden (I7: environment-
+// agnostic default).
+func WithHiddenUsers(u []string) Option { return func(h *Handler) { h.hiddenUsers = u } }
 
 // WithJourneys supplies the /journey UI narrative content (challengeId ->
 // Journey). Optional; a missing entry means "no briefing authored yet" and the
@@ -212,7 +228,7 @@ func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts .
 	})
 
 	ih := ingest.New(grader, s, logger, h.now, h.webhookSharedSecret, h.webhookSecretMode)
-	ah := api.New(cat, grader, s, logger, h.now, h.adminEmails, h.allowedOrigins, api.JourneyConfig{
+	ah := api.New(cat, grader, s, logger, h.now, h.adminEmails, h.allowedOrigins, h.hiddenUsers, api.JourneyConfig{
 		Journeys:    h.journeys,
 		FalcoRules:  h.falcoRules,
 		Order:       h.order,

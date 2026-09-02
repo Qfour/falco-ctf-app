@@ -1455,6 +1455,14 @@ paths:
         must use the self-scoped `/api/users/{user}/{me,journey}` reads. Empty
         `ADMIN_EMAILS` denies everyone (fail-closed). Never fetch this from a
         participant pane.
+
+        `HIDDEN_USERS` (comma-separated scoreboard usernames) is excluded from
+        the `leaderboard` array below and from rank assignment (no gap is left
+        where a hidden user would have sorted). This is a display-only
+        suppression for a venue-demo account: the hidden user's solves still
+        count toward `challenges[].solver_details` / `recent_solves` / the
+        per-challenge counters, and toward their own score — only the ranked
+        leaderboard row is omitted.
       responses:
         "200":
           description: full state snapshot
@@ -2214,7 +2222,11 @@ components:
           description: Grader arithmetic (base award per solve minus hint penalties, clamped at 0)
         rank:
           type: integer
-          description: 1-based; 0 means "no rank yet" (zero solves) and renders as "-"
+          description: |
+            1-based; 0 means "no rank yet" (zero solves) and renders as "-".
+            Also 0 for a `HIDDEN_USERS` account viewing their own `/me` — they
+            are excluded from the ranked field, so no rank exists for them
+            (their `score` above is still their real, unaffected value).
         hint_penalty:
           type: integer
           description: |
