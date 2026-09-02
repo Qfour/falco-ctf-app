@@ -669,17 +669,36 @@ type MissionSummaryType string
 
 // OpenHintResult defines model for OpenHintResult.
 type OpenHintResult struct {
-	Cid string `json:"cid"`
+	// CheatsheetRef optional cheatsheet anchor/id the portal may render as a link.
+	// Empty string, never omitted/null, when the hint carries no
+	// cheatsheet link.
+	CheatsheetRef string `json:"cheatsheetRef"`
+	Cid           string `json:"cid"`
 
-	// Hint hint copy from journey.yaml
+	// Hint hint copy from journey.yaml (JourneyHint.text)
 	Hint string `json:"hint"`
 
 	// Idx 1-based
 	Idx int `json:"idx"`
 
+	// Kind display label for this hint's staging (unified hints Phase 1:
+	// Hint1=Rule+link / Hint2=Command+link / Hint3=想定解). One of
+	// `rule`/`command`/`solution` by convention, but the portal must
+	// treat it as an opaque display string, not an enum it validates —
+	// a legacy scalar-string journey.yaml hint gets one inferred from
+	// its array position (0→rule, 1→command, 2+→solution). Purely
+	// presentational: it does NOT change the HINT1/HINT2/HINT3
+	// point-cost tier, which stays keyed to `idx`.
+	Kind string `json:"kind"`
+
 	// Newly false when the hint was already open (idempotent re-open)
 	Newly bool `json:"newly"`
 	Ok    bool `json:"ok"`
+
+	// RuleRefs Falco rule names from THIS mission's rule.yaml/falco-rule.yaml
+	// the portal may render as links. Always `[]`, never omitted/null,
+	// when the hint carries no rule link.
+	RuleRefs []string `json:"ruleRefs"`
 
 	// Total hint count for this mission
 	Total int    `json:"total"`
@@ -688,9 +707,23 @@ type OpenHintResult struct {
 
 // OpenedHint defines model for OpenedHint.
 type OpenedHint struct {
+	// CheatsheetRef optional cheatsheet anchor/id; empty string (never omitted/null)
+	// when the hint carries no cheatsheet link.
+	CheatsheetRef string `json:"cheatsheetRef"`
+
 	// Idx 1-based
-	Idx  int    `json:"idx"`
-	Text string `json:"text"`
+	Idx int `json:"idx"`
+
+	// Kind display label for this hint's staging (unified hints Phase 1),
+	// same contract as OpenHintResult.kind — opaque display string, not
+	// a validated enum. Inferred by array position for a legacy
+	// scalar-string journey.yaml hint (0→rule, 1→command, 2+→solution).
+	Kind string `json:"kind"`
+
+	// RuleRefs Falco rule names from this mission's rule.yaml/falco-rule.yaml;
+	// `[]` (never omitted/null) when the hint carries no rule link.
+	RuleRefs []string `json:"ruleRefs"`
+	Text     string   `json:"text"`
 }
 
 // PostMessageRequest same "no author/author_role" discipline as CreateThreadRequest.

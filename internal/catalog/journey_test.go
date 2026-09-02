@@ -56,8 +56,16 @@ docsUrl: /missions/01-initial-recon/
 	if len(j.Steps) != 1 || j.Steps[0].Label != "step one" || j.Steps[0].Detail != "do the thing" {
 		t.Fatalf("steps wrong: %+v", j.Steps)
 	}
-	if len(j.Hints) != 2 || j.Hints[1] != "hint two" {
+	if len(j.Hints) != 2 || j.Hints[1].Text != "hint two" {
 		t.Fatalf("hints wrong: %+v", j.Hints)
+	}
+	// Backward-compat: legacy scalar-string hints get a Kind inferred from
+	// their 0-based array position (hintKindForIndex: 0->rule, 1->command).
+	if j.Hints[0].Kind != "rule" || j.Hints[1].Kind != "command" {
+		t.Fatalf("legacy scalar hints should get inferred Kind by index: %+v", j.Hints)
+	}
+	if len(j.Hints[0].RuleRefs) != 0 || j.Hints[0].CheatsheetRef != "" {
+		t.Fatalf("legacy scalar hints must carry no ruleRefs/cheatsheetRef: %+v", j.Hints[0])
 	}
 	if j.DocsURL != "/missions/01-initial-recon/" {
 		t.Fatalf("docsUrl wrong: %q", j.DocsURL)
@@ -183,5 +191,163 @@ tagline: no title here
 `)
 	if _, err := catalog.LoadJourneys(dir, journeyCatalog()); err == nil {
 		t.Fatal("expected error when title is empty")
+	}
+}
+
+// --- Unified hints Phase 1: structured JourneyHint decoding ---------------
+
+func TestLoadJourneys_StructuredHints_DecodesKindRuleRefsCheatsheetRef(t *testing.T) {
+	dir := t.TempDir()
+	writeJourney(t, dir, "01-initial-recon", `
+challengeId: 01-initial-recon
+title: 潜入
+hints:
+  - kind: rule
+    text: watch for the recon rule
+    ruleRefs: ["Read sensitive file untrusted"]
+    cheatsheetRef: falco-rules-101
+  - kind: command
+    text: try find
+`)
+	js, err := catalog.LoadJourneys(dir, journeyCatalog())
+	if err != nil {
+		t.Fatalf("LoadJourneys: %v", err)
+	}
+	j := js["01-initial-recon"]
+	if len(j.Hints) != 2 {
+		t.Fatalf("expected 2 hints, got %d: %+v", len(j.Hints), j.Hints)
+	}
+	h0 := j.Hints[0]
+	if h0.Kind != "rule" || h0.Text != "watch for the recon rule" {
+		t.Fatalf("hint 0 fields wrong: %+v", h0)
+	}
+	if len(h0.RuleRefs) != 1 || h0.RuleRefs[0] != "Read sensitive file untrusted" {
+		t.Fatalf("hint 0 ruleRefs wrong: %+v", h0.RuleRefs)
+	}
+	if h0.CheatsheetRef != "falco-rules-101" {
+		t.Fatalf("hint 0 cheatsheetRef wrong: %q", h0.CheatsheetRef)
+	}
+	h1 := j.Hints[1]
+	if h1.Kind != "command" || h1.Text != "try find" {
+		t.Fatalf("hint 1 fields wrong: %+v", h1)
+	}
+	if len(h1.RuleRefs) != 0 || h1.CheatsheetRef != "" {
+		t.Fatalf("hint 1 with no ruleRefs/cheatsheetRef declared should decode empty: %+v", h1)
+	}
+}
+
+func TestLoadJourneys_MixedScalarAndStructuredHints(t *testing.T) {
+	dir := t.TempDir()
+	// Old scalar-string hints and the new mapping form may be freely mixed
+	// within one journey.yaml (content is migrated mission-by-mission, not
+	// all-at-once).
+	writeJourney(t, dir, "01-initial-recon", `
+challengeId: 01-initial-recon
+title: 潜入
+hints:
+  - a plain legacy hint
+  - kind: solution
+    text: the structured hint
+  - a third legacy hint
+  - a fourth legacy hint
+`)
+	js, err := catalog.LoadJourneys(dir, journeyCatalog())
+	if err != nil {
+		t.Fatalf("LoadJourneys: %v", err)
+	}
+	j := js["01-initial-recon"]
+	if len(j.Hints) != 4 {
+		t.Fatalf("expected 4 hints, got %d: %+v", len(j.Hints), j.Hints)
+	}
+	if j.Hints[0].Kind != "rule" || j.Hints[0].Text != "a plain legacy hint" {
+		t.Fatalf("hint 0 (legacy, index 0 -> rule) wrong: %+v", j.Hints[0])
+	}
+	if j.Hints[1].Kind != "solution" || j.Hints[1].Text != "the structured hint" {
+		t.Fatalf("hint 1 (structured, explicit kind) wrong: %+v", j.Hints[1])
+	}
+	// Index 2 and 3 are BOTH legacy scalars; hintKindForIndex infers off each
+	// element's own position in the array (2 and 3), not off some running
+	// count of scalar-only elements, so both land on "solution" (index >= 2).
+	if j.Hints[2].Kind != "solution" || j.Hints[2].Text != "a third legacy hint" {
+		t.Fatalf("hint 2 (legacy, index 2 -> solution) wrong: %+v", j.Hints[2])
+	}
+	if j.Hints[3].Kind != "solution" || j.Hints[3].Text != "a fourth legacy hint" {
+		t.Fatalf("hint 3 (legacy, index 3 -> solution, beyond the 3-tier schedule) wrong: %+v", j.Hints[3])
+	}
+}
+
+func TestLoadJourneys_MalformedHintEntryIsLoudError(t *testing.T) {
+	dir := t.TempDir()
+	// A hint entry that is neither a scalar nor a mapping (here: a nested
+	// sequence) must fail loudly at load, same posture as any other content
+	// typo (TestLoadJourneys_TitleRequired) — never silently drop hints.
+	writeJourney(t, dir, "01-initial-recon", `
+challengeId: 01-initial-recon
+title: 潜入
+hints:
+  - [not, a, valid, hint, entry]
+`)
+	if _, err := catalog.LoadJourneys(dir, journeyCatalog()); err == nil {
+		t.Fatal("expected error for a hint entry that is neither scalar nor mapping")
+	}
+}
+
+// --- ValidateHintRuleRefs ----------------------------------------------
+
+func TestValidateHintRuleRefs_UnknownRefIsWarned(t *testing.T) {
+	cat := catalog.Catalog{
+		"01-initial-recon": {ID: "01-initial-recon", Type: "trigger", ExpectedRules: []string{"Recon Rule"}},
+	}
+	journeys := catalog.Journeys{
+		"01-initial-recon": {
+			ChallengeID: "01-initial-recon",
+			Title:       "潜入",
+			Hints: catalog.JourneyHints{
+				{Kind: "rule", Text: "ok", RuleRefs: []string{"Recon Rule"}},           // known (ExpectedRules)
+				{Kind: "command", Text: "bad", RuleRefs: []string{"Nonexistent Rule"}}, // unknown
+			},
+		},
+	}
+	warnings := catalog.ValidateHintRuleRefs(journeys, cat, catalog.FalcoRuleExcerpts{})
+	if len(warnings) != 1 {
+		t.Fatalf("expected exactly 1 warning, got %d: %v", len(warnings), warnings)
+	}
+	if !strings.Contains(warnings[0], "Nonexistent Rule") {
+		t.Fatalf("warning should name the offending ref: %v", warnings[0])
+	}
+}
+
+func TestValidateHintRuleRefs_KnownFromRuleYamlExcerpt(t *testing.T) {
+	cat := catalog.Catalog{
+		"02-evade": {ID: "02-evade", Type: "evade"},
+	}
+	journeys := catalog.Journeys{
+		"02-evade": {
+			ChallengeID: "02-evade",
+			Title:       "回避",
+			Hints: catalog.JourneyHints{
+				{Kind: "rule", Text: "ok", RuleRefs: []string{"Read sensitive file untrusted"}},
+			},
+		},
+	}
+	rules := catalog.FalcoRuleExcerpts{
+		"02-evade": {Rules: []catalog.FalcoRuleItem{{Name: "Read sensitive file untrusted"}}},
+	}
+	if warnings := catalog.ValidateHintRuleRefs(journeys, cat, rules); len(warnings) != 0 {
+		t.Fatalf("ref present in rule.yaml excerpt must not warn: %v", warnings)
+	}
+}
+
+func TestValidateHintRuleRefs_NoRefsNoWarnings(t *testing.T) {
+	cat := journeyCatalog()
+	journeys := catalog.Journeys{
+		"01-initial-recon": {
+			ChallengeID: "01-initial-recon",
+			Title:       "潜入",
+			Hints:       catalog.JourneyHints{{Kind: "rule", Text: "no refs here"}},
+		},
+	}
+	if warnings := catalog.ValidateHintRuleRefs(journeys, cat, catalog.FalcoRuleExcerpts{}); len(warnings) != 0 {
+		t.Fatalf("a hint with no ruleRefs must never warn: %v", warnings)
 	}
 }

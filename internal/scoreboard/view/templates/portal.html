@@ -526,6 +526,13 @@
   #pane-story .hint-open .hint-copy-btn { font-family: 'Chakra Petch', sans-serif; text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.62rem; font-weight: 700; padding: 0.25rem 0.6rem; border-radius: 5px; border: 1px solid var(--border-strong); background: transparent; color: var(--text-dim); cursor: pointer; transition: all 0.15s; flex-shrink: 0; }
   #pane-story .hint-open .hint-copy-btn:hover { color: var(--accent); border-color: var(--accent); box-shadow: 0 0 10px var(--accent-glow); }
   #pane-story .hint-open .hint-copy-btn.copied { color: var(--success); border-color: var(--success); }
+  /* 統一ヒント Phase 3: Rule/コマンド集ジャンプ導線 (MVP). Reuses the
+     hint-copy-btn shape/token set (Chakra Petch button chrome, --accent /
+     --border-strong / --accent-glow) rather than inventing new visual
+     language — see falco-web skill's "design token" note. */
+  #pane-story .hint-open .hint-jumps { display: flex; gap: 0.5rem; margin-top: 0.5rem; flex-wrap: wrap; }
+  #pane-story .hint-open .hint-jump { font-family: 'Chakra Petch', sans-serif; text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.62rem; font-weight: 700; padding: 0.25rem 0.6rem; border-radius: 5px; border: 1px solid var(--border-strong); background: transparent; color: var(--accent); cursor: pointer; transition: all 0.15s; }
+  #pane-story .hint-open .hint-jump:hover { border-color: var(--accent); box-shadow: 0 0 10px var(--accent-glow); }
   #pane-story .hint-locked { display: flex; justify-content: space-between; align-items: center; background: var(--bg-elev); border: 1px dashed var(--border-strong); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--text-mute); font-size: 0.85rem; }
   #pane-story .btn { font-family: 'Chakra Petch', sans-serif; text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.72rem; font-weight: 700; padding: 0.45rem 0.9rem; border-radius: 6px; border: 1px solid var(--border-strong); background: transparent; color: var(--text-dim); cursor: pointer; transition: all 0.15s; }
   #pane-story .btn:hover { color: var(--accent); border-color: var(--accent); box-shadow: 0 0 12px var(--accent-glow); }
@@ -1013,6 +1020,12 @@
 <script nonce="{{.Nonce}}">
 (function () {
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  // slugify (統一ヒント Phase 3): trusted JS-side id derivation for a rule
+  // name, used ONLY to build an element id to scroll to (never rendered as
+  // HTML/text — the displayed rule name always goes through esc() as
+  // before, see renderFalcoRule below). Simple lowercase + non-alnum -> '-'
+  // + collapse-consecutive-dashes, per the MVP spec.
+  function slugify(s) { return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''); }
   // Portal shell (P23-1): identity comes from the server-injected role/user
   // globals (derived from X-Auth-Request-Email, api.DeriveUsername), not a
   // ?user= query param — the portal is one page per session, not one page
@@ -1049,6 +1062,31 @@
     refresh();
     setInterval(() => { if (!busy) refresh(); }, 2000);
   }
+
+  // 統一ヒント Phase 3 (MVP): a single delegated listener on #pane-story
+  // (the pane's own root element — never innerHTML-replaced, unlike its
+  // #pane-journey-page/#pane-journey-detail children which are rebuilt by
+  // ensureShell()/render() on every poll) handles clicks on the .hint-jump
+  // buttons rendered by hintJumpsHTML(). Delegation means this wiring
+  // never needs to be redone in wireDetail() as hint markup is repainted.
+  document.getElementById('pane-story').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-jump]');
+    if (!btn) return;
+    if (btn.dataset.jump === 'rule') {
+      // Deliberately do NOT touch location.hash here — changing it would
+      // route through showTab()/hashchange and could switch away from the
+      // Story tab this rule excerpt lives in. Plain in-page scroll only.
+      const target = document.getElementById(btn.dataset.target) || document.getElementById('falco-rule-section');
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else if (btn.dataset.jump === 'cheat') {
+      // MVP: jump to the top of the Tutorial tab (no precise cheatsheet
+      // anchor yet — see hintJumpsHTML's doc). Going through location.hash
+      // (rather than calling showTab() directly) keeps the hash router as
+      // the single source of truth for "which tab is active", matching the
+      // existing docs-link's `href="#home"` pattern above.
+      location.hash = 'tutorial';
+    }
+  });
 
   async function refresh() {
     try {
@@ -1339,6 +1377,34 @@
     return `<button type="button" class="btn back-to-current" id="pane-journey-back-current">← 現在のミッションへ戻る</button>`;
   }
 
+  // hintJumpsHTML (統一ヒント Phase 3, MVP) builds the "→ 検知ルールを見る" /
+  // "→ コマンド集を見る" jump buttons for one opened hint. Buttons are
+  // separate <button data-jump="..."> elements built by this JS, never an
+  // <a href="#..."> — a new in-content hash link would fight the
+  // showTab/hashchange router (see falco-web skill's routing note); the
+  // click is instead handled by a single delegated listener (see the
+  // 'click' listener attached to #pane-story near the top of this IIFE)
+  // that scrolls or switches tabs without touching location.hash for the
+  // rule case. h.text itself is unaffected — still displayed via esc() in
+  // .ht above, exactly as before this change.
+  function hintJumpsHTML(h) {
+    const refs = h.ruleRefs || [];
+    const buttons = [];
+    if (refs.length) {
+      // Single ref -> jump straight to that rule's <details>; zero-or-many
+      // (many here, since the branch requires non-empty) -> the combined
+      // Falco Rule section, per the MVP spec (no per-ref sub-navigation).
+      const target = refs.length === 1 ? ('fr-rule-' + slugify(refs[0])) : 'falco-rule-section';
+      buttons.push(`<button type="button" class="hint-jump" data-jump="rule" data-target="${esc(target)}">→ 検知ルールを見る</button>`);
+    }
+    if (h.cheatsheetRef) {
+      // MVP: the cheatsheetRef VALUE is not used for a precise in-page
+      // anchor yet (fast-follow) — the jump just opens the Tutorial tab.
+      buttons.push(`<button type="button" class="hint-jump" data-jump="cheat">→ コマンド集を見る</button>`);
+    }
+    return buttons.length ? `<div class="hint-jumps">${buttons.join('')}</div>` : '';
+  }
+
   function renderDetail(det) {
     const typeBadge = det.type ? `<span class="badge badge-${esc(det.type)}">${esc(det.type)}</span>` : '';
     const kicker = kickerFor(det);
@@ -1386,6 +1452,7 @@
           <button type="button" class="hint-copy-btn" data-hint-idx="${esc(String(h.idx))}">Copy</button>
         </div>
         <div class="ht">${esc(h.text)}</div>
+        ${hintJumpsHTML(h)}
       </div>`).join('');
     let lockedHTML = '';
     if (hints.lockedCount > 0 && hints.nextIndex > 0) {
@@ -1482,7 +1549,7 @@
     // three primary sections asked for.
     const rulesHTML = rules.length ? `<div class="fr-group">
       <div class="fr-group-title">Rules</div>
-      ${rules.map(r => `<details class="fr-item" open>
+      ${rules.map(r => `<details class="fr-item" id="fr-rule-${slugify(r.name)}" open>
         <summary><span class="fr-field-label">Rule</span> ${esc(r.name)}${r.priority ? `<span class="fr-priority">${esc(r.priority)}</span>` : ''}</summary>
         <div class="fr-body">
           ${r.desc ? `<div class="fr-field-label">Desc</div><div class="fr-desc">${esc(r.desc)}</div>` : ''}
@@ -1494,7 +1561,7 @@
     </div>` : '';
 
     return `<div class="sec-title">Falco Rule（このミッションの検知ルール）</div>
-      <div class="falco-rule">${listsHTML}${macrosHTML}${rulesHTML}</div>`;
+      <div class="falco-rule" id="falco-rule-section">${listsHTML}${macrosHTML}${rulesHTML}</div>`;
   }
 
   // triggerSection renders the live "how do I know I succeeded?" status for a

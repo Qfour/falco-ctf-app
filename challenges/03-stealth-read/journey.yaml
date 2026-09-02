@@ -31,9 +31,22 @@ steps:
   - label: flag を提出
     detail: ファイルの中身がそのまま FALCO{...} になっている。下のフォームから提出する。禁止ルールが一度でも発火すると検知されたと判定され、やり直すまで提出できない(時間が経っても自動的には解除されない)。
 hints:
-  - 同じファイル本体に、違う名前 (path) でたどり着く方法は Linux にいくつもある。ルールが見ているのは本体ではなく path 文字列だ。
-  - ルールは fd.name (open に渡した path) が監視対象の文字列と一致するかで判定している。同じ inode に別の path で到達すればすり抜けられる。man proc を読むか /proc/self/ を覗こう。
-  - "想定解: cat /proc/self/root/opt/nimbus/vault/creds.recover — /proc/self/root 経由なら fd.name が監視対象の path と一致せず発火しない。"
+  - kind: rule
+    text: >-
+      同じファイル本体に、違う名前 (path) でたどり着く方法は Linux にいくつもある。
+      ルールが見ているのは本体ではなく path 文字列だ。回避対象 (禁止) ルールは
+      Read sensitive file untrusted — 一度でも発火させると検知されたと判定され、
+      やり直すまで提出できない。
+    ruleRefs: [Read sensitive file untrusted]
+  - kind: command
+    text: >-
+      ルールは fd.name (open に渡した path) が監視対象の文字列と一致するかで判定している。
+      同じ inode に別の path で到達すればすり抜けられる。man proc を読むか /proc/self/ を
+      覗こう。/proc/self/ 配下の観察コマンドはコマンド集『3. プロセス / システム調査』
+      にまとめてある。
+    cheatsheetRef: "3"
+  - kind: solution
+    text: "想定解: cat /proc/self/root/opt/nimbus/vault/creds.recover — /proc/self/root 経由なら fd.name が監視対象の path と一致せず発火しない。"
 bridge: >-
   退避された資格情報は静かに抜いた。SOC は単発の false positive で片付けただろう。
   だが本番の横展開に効くのはそれだけじゃない — SSH 鍵や AWS クレデンシャルだ。

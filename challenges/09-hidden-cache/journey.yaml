@@ -21,9 +21,23 @@ steps:
   - label: スコアボードで CLEARED を確認
     detail: 発火が scoreboard に届くと、このミッションが自動で CLEARED になる。
 hints:
-  - credential を rotate されても困らないよう、攻撃者は「元ファイルを消されても中身が残る」保険を作っておきたい。Linux のファイルシステムには、それを可能にする仕組みがあるはずだ。それは何だろうか。
-  - -s 無しの ln が hardlink。symlink (ln -s) は別ルール (Create Symlink Over Sensitive Files) なので 09 では発火しない。
-  - "想定解: ln /etc/sudoers /etc/.cache.bak — sensitive file への link syscall で Create Hardlink Over Sensitive Files が発火する (hardlink は同一ファイルシステム内でしか張れないので、宛先を /etc/sudoers と同じ /etc 内にしておけば確実に成立する)。"
+  - kind: rule
+    text: >-
+      credential を rotate されても困らないよう、攻撃者は「元ファイルを消されても
+      中身が残る」保険を作っておきたい。Linux のファイルシステムには、それを可能に
+      する仕組みがあるはずだ。それは何だろうか。検知ルールは
+      Create Hardlink Over Sensitive Files — sensitive file への hardlink 作成
+      (link syscall) で発火する。
+    ruleRefs: [Create Hardlink Over Sensitive Files]
+  - kind: command
+    text: >-
+      -s 無しの ln が hardlink。symlink (ln -s) は別ルール
+      (Create Symlink Over Sensitive Files) なので 09 では発火しない。
+      ハードリンク/シンボリックリンクの操作例はコマンド集『4. リンク・inode 操作』
+      を参照。
+    cheatsheetRef: "4-inode"
+  - kind: solution
+    text: "想定解: ln /etc/sudoers /etc/.cache.bak — sensitive file への link syscall で Create Hardlink Over Sensitive Files が発火する (hardlink は同一ファイルシステム内でしか張れないので、宛先を /etc/sudoers と同じ /etc 内にしておけば確実に成立する)。"
 bridge: >-
   持ち出しの準備は整った。ここまで trigger で「何が光るか」を、evade で「どう消すか」を
   体に叩き込んだ。いよいよ総仕上げ — master key を全検知を回避したまま箱の外へ運び出す。

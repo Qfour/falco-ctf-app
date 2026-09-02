@@ -78,7 +78,7 @@ func newSpecFixture(t *testing.T) *specFixture {
 		"01-recon": {
 			ChallengeID: "01-recon", Title: "偵察", Tagline: "obj-1", Briefing: "brief-1",
 			Steps:  []catalog.JourneyStep{{Label: "s0", Detail: "d0"}, {Label: "s1", Detail: "d1"}},
-			Hints:  []string{"h1", "h2"},
+			Hints:  catalog.JourneyHints{{Kind: "rule", Text: "h1", RuleRefs: []string{"Recon Rule"}}, {Kind: "command", Text: "h2"}},
 			Bridge: "bridge-1",
 		},
 	}
@@ -564,16 +564,16 @@ var v5Coverage = map[string]bool{
 	// app#292 Phase 2 (QA Board — supersedes P25's 7 QuestionList/
 	// QuestionThread entries above wholesale):
 	"GET /api/board/threads":                     true, // TestAPISpec_V5_BoardListFieldsMatchSpec
-	"GET /api/board/threads/{tid}":                true, // TestAPISpec_V5_BoardThreadFieldsMatchSpec (get branch)
-	"POST /api/board/threads":                     true, // TestAPISpec_V5_BoardThreadFieldsMatchSpec (create branch)
-	"POST /api/board/threads/{tid}/messages":      true, // TestAPISpec_V5_BoardThreadFieldsMatchSpec (message branch)
-	"POST /api/board/threads/{tid}/like":          true, // TestAPISpec_V5_BoardLikeResultFieldsMatchSpec (like branch)
-	"POST /api/board/threads/{tid}/unlike":        true, // TestAPISpec_V5_BoardLikeResultFieldsMatchSpec (unlike branch)
-	"GET /api/admin/board/threads":                true, // TestAPISpec_V5_BoardAdminListThreadsFieldsMatchSpec
-	"GET /api/admin/board/threads/{tid}":          true, // TestAPISpec_V5_BoardAdminThreadFieldsMatchSpec (get branch)
-	"POST /api/admin/board/threads/{tid}/reply":   true, // TestAPISpec_V5_BoardAdminThreadFieldsMatchSpec (reply branch)
-	"POST /api/admin/board/threads/{tid}/state":   true, // TestAPISpec_V5_BoardAdminThreadFieldsMatchSpec (state branch)
-	"POST /api/admin/board/messages/{mid}/state":  true, // TestAPISpec_V5_BoardAdminSetMessageStateFieldsMatchSpec
+	"GET /api/board/threads/{tid}":               true, // TestAPISpec_V5_BoardThreadFieldsMatchSpec (get branch)
+	"POST /api/board/threads":                    true, // TestAPISpec_V5_BoardThreadFieldsMatchSpec (create branch)
+	"POST /api/board/threads/{tid}/messages":     true, // TestAPISpec_V5_BoardThreadFieldsMatchSpec (message branch)
+	"POST /api/board/threads/{tid}/like":         true, // TestAPISpec_V5_BoardLikeResultFieldsMatchSpec (like branch)
+	"POST /api/board/threads/{tid}/unlike":       true, // TestAPISpec_V5_BoardLikeResultFieldsMatchSpec (unlike branch)
+	"GET /api/admin/board/threads":               true, // TestAPISpec_V5_BoardAdminListThreadsFieldsMatchSpec
+	"GET /api/admin/board/threads/{tid}":         true, // TestAPISpec_V5_BoardAdminThreadFieldsMatchSpec (get branch)
+	"POST /api/admin/board/threads/{tid}/reply":  true, // TestAPISpec_V5_BoardAdminThreadFieldsMatchSpec (reply branch)
+	"POST /api/admin/board/threads/{tid}/state":  true, // TestAPISpec_V5_BoardAdminThreadFieldsMatchSpec (state branch)
+	"POST /api/admin/board/messages/{mid}/state": true, // TestAPISpec_V5_BoardAdminSetMessageStateFieldsMatchSpec
 }
 
 // TestAPISpec_VA1_ResponseObjectCoverageBidirectional is ADR-0009

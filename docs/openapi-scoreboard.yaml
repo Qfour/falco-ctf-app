@@ -2092,17 +2092,41 @@ components:
 
     OpenHintResult:
       type: object
-      required: [ok, user, cid, idx, hint, total, newly]
+      required: [ok, user, cid, idx, hint, total, newly, kind, ruleRefs, cheatsheetRef]
       properties:
         ok: { type: boolean, const: true }
         user: { type: string }
         cid: { type: string }
         idx: { type: integer, description: 1-based }
-        hint: { type: string, description: hint copy from journey.yaml }
+        hint: { type: string, description: hint copy from journey.yaml (JourneyHint.text) }
         total: { type: integer, description: hint count for this mission }
         newly:
           type: boolean
           description: false when the hint was already open (idempotent re-open)
+        kind:
+          type: string
+          description: |
+            display label for this hint's staging (unified hints Phase 1:
+            Hint1=Rule+link / Hint2=Command+link / Hint3=想定解). One of
+            `rule`/`command`/`solution` by convention, but the portal must
+            treat it as an opaque display string, not an enum it validates —
+            a legacy scalar-string journey.yaml hint gets one inferred from
+            its array position (0→rule, 1→command, 2+→solution). Purely
+            presentational: it does NOT change the HINT1/HINT2/HINT3
+            point-cost tier, which stays keyed to `idx`.
+        ruleRefs:
+          type: array
+          items: { type: string }
+          description: |
+            Falco rule names from THIS mission's rule.yaml/falco-rule.yaml
+            the portal may render as links. Always `[]`, never omitted/null,
+            when the hint carries no rule link.
+        cheatsheetRef:
+          type: string
+          description: |
+            optional cheatsheet anchor/id the portal may render as a link.
+            Empty string, never omitted/null, when the hint carries no
+            cheatsheet link.
 
     ResetDirtyResult:
       type: object
@@ -2242,10 +2266,28 @@ components:
 
     OpenedHint:
       type: object
-      required: [idx, text]
+      required: [idx, text, kind, ruleRefs, cheatsheetRef]
       properties:
         idx: { type: integer, description: 1-based }
         text: { type: string }
+        kind:
+          type: string
+          description: |
+            display label for this hint's staging (unified hints Phase 1),
+            same contract as OpenHintResult.kind — opaque display string, not
+            a validated enum. Inferred by array position for a legacy
+            scalar-string journey.yaml hint (0→rule, 1→command, 2+→solution).
+        ruleRefs:
+          type: array
+          items: { type: string }
+          description: |
+            Falco rule names from this mission's rule.yaml/falco-rule.yaml;
+            `[]` (never omitted/null) when the hint carries no rule link.
+        cheatsheetRef:
+          type: string
+          description: |
+            optional cheatsheet anchor/id; empty string (never omitted/null)
+            when the hint carries no cheatsheet link.
 
     HintsBlock:
       type: object

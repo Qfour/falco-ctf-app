@@ -18,9 +18,19 @@ steps:
   - label: スコアボードで CLEARED を確認
     detail: 発火が scoreboard に届くと、このミッションが自動で CLEARED になる。
 hints:
-  - Pod の中からは、クラスタを管理しているコンポーネントに何の設定もなく届く、決まった内部アドレスが用意されている。それはどこだろうか。
-  - curl か wget で十分。TLS 検証は無視 (-k / --no-check-certificate) してよい。認証成功は不要。
-  - "想定解: curl -sk https://kubernetes.default.svc/api — connect した瞬間に Contact K8S API Server From Container が発火する。"
+  - kind: rule
+    text: >-
+      Pod の中からは、クラスタを管理しているコンポーネントに何の設定もなく届く、決まった
+      内部アドレスが用意されている。それはどこだろうか。検知ルールは
+      Contact K8S API Server From Container だ。
+    ruleRefs: [Contact K8S API Server From Container]
+  - kind: command
+    text: >-
+      curl か wget で十分。TLS 検証は無視 (-k / --no-check-certificate) してよい。
+      認証成功は不要。コマンド例はコマンド集『1. Kubernetes / API サーバ偵察』にまとめてある。
+    cheatsheetRef: "1-kubernetes-api"
+  - kind: solution
+    text: "想定解: curl -sk https://kubernetes.default.svc/api — connect した瞬間に Contact K8S API Server From Container が発火する。"
 bridge: >-
   環境は掴んだ。API は締められているが、この箱の中には人間が置き忘れた鍵が必ずある。
   侵入の定石どおり、まずは認証情報から回収しにいく。
