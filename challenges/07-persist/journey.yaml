@@ -36,8 +36,7 @@ hints:
     text: |
       想定解:
       cp /bin/busybox /tmp/httpd    # image に無い ELF を upper layer に drop
-      chmod +x /tmp/httpd
-      exec /tmp/httpd --help        # 新規バイナリの実行 → is_exe_upper_layer=true で発火
+      chmod +x /tmp/httpd && /tmp/httpd    # 新規バイナリの実行 → is_exe_upper_layer=true で発火
       drop+実行の両方が揃うと Drop and execute new binary in container が発火する、という教訓は、この先の回避ミッションで効いてくる。
       （シェルスクリプトを exec すると判定対象が interpreter=base image になり発火しないので、実 ELF を置くのがコツ）
 bridge: >-

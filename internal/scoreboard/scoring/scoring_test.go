@@ -1495,3 +1495,31 @@ func TestSubmitEvade_SevenForbiddenRules_ResetRequiresFreshExfil(t *testing.T) {
 		t.Fatalf("fresh exfil after reset must solve, got %+v", out)
 	}
 }
+
+// TestUserScore_NoHintPenaltyChallengeExcludedFromPenalty (2026-09-03,
+// 00-tutorial): a challenge flagged catalog.Challenge.NoHintPenalty must not
+// contribute any of its revealed hint indices to the score penalty, while a
+// normal challenge in the same catalog keeps the existing per-hint-index
+// schedule unchanged. 00-tutorial reveals all 3 hint indices (which would
+// cost 10+30+50=90 under the default schedule if not exempt); 01-trigger
+// reveals only hint 1 (cost 10). Only the latter must be deducted.
+func TestUserScore_NoHintPenaltyChallengeExcludedFromPenalty(t *testing.T) {
+	cat := catalog.Catalog{
+		"00-tutorial": catalog.Challenge{ID: "00-tutorial", Type: "trigger", NoHintPenalty: true},
+		"01-trigger":  catalog.Challenge{ID: "01-trigger", Type: "trigger"},
+	}
+	fs := newFakeStore()
+	fs.hintViews = map[string]map[string][]int{
+		"alice": {
+			"00-tutorial": {1, 2, 3},
+			"01-trigger":  {1},
+		},
+	}
+	g := scoring.New(cat, fs, fixedClock(time.Unix(1000, 0).UTC()))
+
+	got := g.UserScore("alice", 2) // 2 solves * 100 base award
+	want := 2*scoring.DefaultPointsPerSolve - scoring.DefaultHintPenalties[0]
+	if got != want {
+		t.Fatalf("UserScore = %d, want %d (00-tutorial's 3 hint reveals must not be penalised)", got, want)
+	}
+}

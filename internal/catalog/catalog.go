@@ -92,6 +92,13 @@ type Challenge struct {
 	// rule to prove would be unsatisfiable by construction.
 	RequireExpectedRuleFire bool    `yaml:"requireExpectedRuleFire"`
 	Detect                  *Detect `yaml:"detect"`
+	// NoHintPenalty exempts this challenge's revealed hints from the
+	// per-hint-index score penalty (scoring.Grader.UserScore). Intended for
+	// zero-stakes onboarding missions (00-tutorial) where hints should be
+	// free to encourage exploring the UI without fear of losing points on
+	// the real scored missions that follow. Default false (every other
+	// challenge keeps the existing penalty schedule unchanged).
+	NoHintPenalty bool `yaml:"noHintPenalty"`
 	// dir is the challenge's directory name (e.g. "03-stealth-read-detect"),
 	// captured at load time. Detect capture paths are relative to <catalogRoot>/<dir>.
 	// Not a yaml field.

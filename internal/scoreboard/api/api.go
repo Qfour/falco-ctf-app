@@ -2202,7 +2202,16 @@ func (h *Handler) missionDetail(user, cid, status, leadIn string, checkedSteps, 
 			// nextHint is 0 — all opened, or locked per this function's doc) costs
 			// nothing, matching "there is nothing left to reveal". Projection
 			// only — the score arithmetic stays in the scoring layer.
-			"penalty": h.grader.HintPenaltyFor(nextHint),
+			// NoHintPenalty challenges (00-tutorial) always project 0 here —
+			// must agree with scoring.Grader.UserScore's own exemption, or the
+			// "open hint" button would advertise a cost that never actually
+			// gets deducted.
+			"penalty": func() int {
+				if ch.NoHintPenalty {
+					return 0
+				}
+				return h.grader.HintPenaltyFor(nextHint)
+			}(),
 		},
 	}
 }
