@@ -3,11 +3,13 @@ package ingest_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -155,6 +157,71 @@ func TestReceive_TaintPersistFailure_Returns500AndBumpsTaintErrorMetric(t *testi
 	// single request, or the label total silently exceeds the request count.
 	if after := testutil.ToFloat64(metrics.FalcoEventsReceived.WithLabelValues("accepted")); after != acceptedBefore {
 		t.Fatalf(`"accepted" metric = %v, want unchanged at %v (taint_error and accepted must be mutually exclusive per request)`, after, acceptedBefore)
+	}
+}
+
+// TestReceive_InvalidBody_StableMessageNoLeak is the Issue #113 regression
+// pin ingest never had (app#280 — the same err.Error()-in-response-body
+// pattern app#113 catalogued and api.go's errMsgInvalidBody family fixed
+// elsewhere, but ingest's own JSON decode had not been brought in line):
+// a body that fails json.Decode must return the same stable, generic
+// message, never the raw decoder err.Error(). encoding/json's error text
+// embeds the Go struct field name and json tag (e.g. "cannot unmarshal
+// number into Go struct field FalcoEvent.rule of type string" for the type-
+// mismatch case below), which is exactly the internal detail Issue #113
+// says must never reach an HTTP client.
+func TestReceive_InvalidBody_StableMessageNoLeak(t *testing.T) {
+	clock := func() time.Time { return time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC) }
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"truncated json", `{"rule": "Detect Outbound Connection"`},
+		{"type mismatch", `{"rule": 12345, "output_fields": {}}`}, // rule must be a string
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, s := newFixture(t, clock)
+
+			req, err := http.NewRequest(http.MethodPost, srv.URL+"/falco/events", strings.NewReader(tc.body))
+			if err != nil {
+				t.Fatalf("build request: %v", err)
+			}
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("POST /falco/events: %v", err)
+			}
+			t.Cleanup(func() { _ = resp.Body.Close() })
+
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", resp.StatusCode)
+			}
+
+			var got map[string]any
+			if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+				t.Fatal(err)
+			}
+			// The load-bearing assertion (app#280): the body must be the
+			// stable constant, not encoding/json's raw err.Error() — reverting
+			// ingest.go's WriteJSON call back to err.Error() must turn this
+			// red for the "type mismatch" case above.
+			if errMsg, _ := got["error"].(string); errMsg != "invalid request body" {
+				t.Fatalf(`response body error = %q, want the stable "invalid request body" message (not a raw decoder error)`, errMsg)
+			}
+			for _, leak := range []string{"FalcoEvent", "struct field", "json:", "Go struct", "unmarshal"} {
+				if strings.Contains(fmt.Sprint(got["error"]), leak) {
+					t.Fatalf("response body error %q leaks internal decoder detail %q", got["error"], leak)
+				}
+			}
+
+			// A rejected malformed body must never reach the store.
+			nowUnix := float64(clock().UnixNano()) / 1e9
+			if fires := s.RecentRuleFires("alice", nowUnix, 3600); len(fires) != 0 {
+				t.Fatalf("RecentRuleFires = %v, want empty (a rejected malformed body must never reach the store)", fires)
+			}
+		})
 	}
 }
 
