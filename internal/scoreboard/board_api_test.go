@@ -285,21 +285,107 @@ func TestBoard_Visibility_AdminAudience_CrossUser404(t *testing.T) {
 	// isAdmin bypass — it is a pure participant-scoped route (authz=
 	// authenticated, viewer=caller's own derived identity). An admin email
 	// gets 404 here too, exactly like any other non-owner: app#292's design
-	// gives admins NO single-thread GET at all (there is no
-	// GET /api/admin/board/threads/{tid} route) — the admin's read path for
-	// a specific thread's full content is boardAdminReply /
-	// boardAdminSetThreadState (both return the full admin-view BoardThread
-	// as a side effect of an action), proven below.
+	// gives admins their OWN dedicated single-thread GET
+	// (GET /api/admin/board/threads/{tid}, boardAdminGetThread), not a
+	// bypass baked into the participant route — proven below and in
+	// TestBoard_AdminGetThread_SeesFullTextIncludingHiddenAndDeleted.
 	w = f.do("GET", "/api/board/threads/"+tid, boardFixtureAdmin, nil)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("admin via the PARTICIPANT get-thread route (no isAdmin bypass by design): status=%d body=%s, want 404", w.Code, w.Body)
 	}
-	// The real admin visibility path: a no-op state update (no fields set)
-	// still confirms the thread exists and returns its full admin-view
-	// content.
-	w = f.do("POST", "/api/admin/board/threads/"+tid+"/state", boardFixtureAdmin, map[string]any{})
+	// The real admin visibility path: the dedicated admin GET route.
+	w = f.do("GET", "/api/admin/board/threads/"+tid, boardFixtureAdmin, nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("admin reading alice's thread via a no-op state update: status=%d body=%s, want 200", w.Code, w.Body)
+		t.Fatalf("admin reading alice's thread via boardAdminGetThread: status=%d body=%s, want 200", w.Code, w.Body)
+	}
+}
+
+// TestBoard_AdminGetThread_SeesFullTextIncludingHiddenAndDeleted proves the
+// gap-close: GET /api/admin/board/threads/{tid} bypasses the audience/
+// ownership/moderation-state entitlement check entirely (isAdmin=true) — a
+// PRIVATE thread, a HIDDEN thread, and a thread with a DELETED message are
+// all fully readable here, with the deleted message's body still scrubbed
+// to "" (a moderation content-removal, not a from-participants-only hide —
+// it applies to every viewer, admin included).
+func TestBoard_AdminGetThread_SeesFullTextIncludingHiddenAndDeleted(t *testing.T) {
+	f := newBoardFixture(t)
+
+	// Private (audience=admin) thread, never hidden/deleted.
+	alice := f.createAs("alice@ctf.local", "admin", "private help", "secret body")
+	tid := alice["id"].(string)
+	w := f.do("GET", "/api/admin/board/threads/"+tid, boardFixtureAdmin, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("admin get private thread: status=%d body=%s, want 200", w.Code, w.Body)
+	}
+	got := f.decode(w)
+	msgs, _ := got["messages"].([]any)
+	if len(msgs) != 1 || msgs[0].(map[string]any)["body"] != "secret body" {
+		t.Fatalf("expected the opening message's real body to round-trip for admin, got %+v", got)
+	}
+
+	// Hidden thread.
+	bob := f.createAs("bob@ctf.local", "all", "public help", "b")
+	tid2 := bob["id"].(string)
+	if w := f.do("POST", "/api/admin/board/threads/"+tid2+"/state", boardFixtureAdmin, map[string]any{"state": "hidden"}); w.Code != http.StatusOK {
+		t.Fatalf("hide: status=%d body=%s", w.Code, w.Body)
+	}
+	w = f.do("GET", "/api/admin/board/threads/"+tid2, boardFixtureAdmin, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("admin get hidden thread: status=%d body=%s, want 200", w.Code, w.Body)
+	}
+	if f.decode(w)["state"] != "hidden" {
+		t.Fatalf("expected state=hidden to round-trip, got %+v", f.decode(w))
+	}
+
+	// Deleted message: visible to admin with state=deleted, body scrubbed.
+	carol := f.createAs("carol@ctf.local", "all", "s", "message to delete")
+	tid3 := carol["id"].(string)
+	cmsgs, _ := carol["messages"].([]any)
+	mid := cmsgs[0].(map[string]any)["id"].(string)
+	if w := f.do("POST", "/api/admin/board/messages/"+mid+"/state", boardFixtureAdmin, map[string]any{"state": "deleted"}); w.Code != http.StatusOK {
+		t.Fatalf("delete message: status=%d body=%s", w.Code, w.Body)
+	}
+	w = f.do("GET", "/api/admin/board/threads/"+tid3, boardFixtureAdmin, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("admin get thread with a deleted message: status=%d body=%s, want 200", w.Code, w.Body)
+	}
+	got = f.decode(w)
+	dmsgs, _ := got["messages"].([]any)
+	if len(dmsgs) != 1 {
+		t.Fatalf("expected the deleted message to remain LISTED for admin (not omitted), got %+v", got)
+	}
+	dm := dmsgs[0].(map[string]any)
+	if dm["state"] != "deleted" || dm["body"] != "" {
+		t.Fatalf("expected state=deleted and body=\"\" (scrubbed, even for admin), got %+v", dm)
+	}
+}
+
+// TestBoard_AdminGetThread_NonAdminForbidden proves the admin gate itself:
+// a non-admin identity gets 403, never reaching the entitlement bypass at
+// all (regardless of whether they own the thread).
+func TestBoard_AdminGetThread_NonAdminForbidden(t *testing.T) {
+	f := newBoardFixture(t)
+	alice := f.createAs("alice@ctf.local", "all", "s", "b")
+	tid := alice["id"].(string)
+
+	w := f.do("GET", "/api/admin/board/threads/"+tid, "alice@ctf.local", nil)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("non-admin (even the thread's own author) on the admin GET route: status=%d body=%s, want 403", w.Code, w.Body)
+	}
+	w = f.do("GET", "/api/admin/board/threads/"+tid, "mallory@ctf.local", nil)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("unrelated non-admin identity on the admin GET route: status=%d body=%s, want 403", w.Code, w.Body)
+	}
+}
+
+// TestBoard_AdminGetThread_UnknownTid404 proves the unknown-id case on the
+// new route specifically (TestBoard_UnknownTid404 above predates this
+// route's existence).
+func TestBoard_AdminGetThread_UnknownTid404(t *testing.T) {
+	f := newBoardFixture(t)
+	w := f.do("GET", "/api/admin/board/threads/does-not-exist", boardFixtureAdmin, nil)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status=%d body=%s, want 404", w.Code, w.Body)
 	}
 }
 
@@ -502,8 +588,8 @@ func TestBoard_ModerationHiddenThread_NotVisibleToNonAdmin(t *testing.T) {
 	// GET /api/board/threads/{tid} is a pure participant route with no
 	// isAdmin bypass (see TestBoard_Visibility_AdminAudience_CrossUser404's
 	// doc) — even the admin gets 404 through it. Admin still sees the
-	// thread through its OWN surfaces: the moderation queue listing, and a
-	// no-op state update's full-thread response.
+	// thread through its OWN surfaces: the moderation queue listing, and
+	// the dedicated GET /api/admin/board/threads/{tid}.
 	w = f.do("GET", "/api/board/threads/"+tid, boardFixtureAdmin, nil)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("admin via the PARTICIPANT get-thread route: status=%d body=%s, want 404 (no isAdmin bypass by design)", w.Code, w.Body)
@@ -513,9 +599,9 @@ func TestBoard_ModerationHiddenThread_NotVisibleToNonAdmin(t *testing.T) {
 	if len(adminTs) != 1 {
 		t.Fatalf("admin listing must still include the hidden thread, got %+v", adminList)
 	}
-	w = f.do("POST", "/api/admin/board/threads/"+tid+"/state", boardFixtureAdmin, map[string]any{})
+	w = f.do("GET", "/api/admin/board/threads/"+tid, boardFixtureAdmin, nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("admin reading the hidden thread via a no-op state update: status=%d body=%s, want 200", w.Code, w.Body)
+		t.Fatalf("admin reading the hidden thread via boardAdminGetThread: status=%d body=%s, want 200", w.Code, w.Body)
 	}
 }
 
@@ -538,11 +624,10 @@ func TestBoard_ModerationDeletedMessage_BodyScrubbedForEveryone(t *testing.T) {
 		t.Fatalf("expected state=deleted in the result, got %+v", result)
 	}
 
-	// Admin's own view (via a no-op state update — see
-	// TestBoard_Visibility_AdminAudience_CrossUser404's doc for why this is
-	// the real admin single-thread read path) still shows the message
-	// (state=deleted), but body="".
-	got := f.decode(f.do("POST", "/api/admin/board/threads/"+tid+"/state", boardFixtureAdmin, map[string]any{}))
+	// Admin's own view (via boardAdminGetThread, the dedicated admin
+	// single-thread read path) still shows the message (state=deleted),
+	// but body="".
+	got := f.decode(f.do("GET", "/api/admin/board/threads/"+tid, boardFixtureAdmin, nil))
 	adminMsgs, _ := got["messages"].([]any)
 	if len(adminMsgs) != 1 {
 		t.Fatalf("expected the deleted message to remain listed for admin, got %+v", got)
@@ -712,11 +797,12 @@ func TestBoard_ErrorLeak_InvalidBody_AdminReply(t *testing.T) {
 
 // --- structural: the declared route set is exactly app#292 Phase 2's ten --
 
-// TestBoard_DeclaredRouteSetIsExactlyPhase2sTenRoutes mechanically pins the
-// board route family: 6 participant (all under /api/board/) + 4 operator
-// (all under /api/admin/board/) = 10. Mirrors P25's
+// TestBoard_DeclaredRouteSetIsExactlyPhase2sElevenRoutes mechanically pins
+// the board route family: 6 participant (all under /api/board/) + 5
+// operator (all under /api/admin/board/, including the post-review
+// gap-close boardAdminGetThread) = 11. Mirrors P25's
 // TestQA_DeclaredRouteSetIsExactlyDecision1sSevenRoutes.
-func TestBoard_DeclaredRouteSetIsExactlyPhase2sTenRoutes(t *testing.T) {
+func TestBoard_DeclaredRouteSetIsExactlyPhase2sElevenRoutes(t *testing.T) {
 	f := newBoardFixture(t)
 	want := map[string]bool{
 		"GET /api/board/threads":                     true,
@@ -726,6 +812,7 @@ func TestBoard_DeclaredRouteSetIsExactlyPhase2sTenRoutes(t *testing.T) {
 		"POST /api/board/threads/{tid}/like":          true,
 		"POST /api/board/threads/{tid}/unlike":        true,
 		"GET /api/admin/board/threads":                true,
+		"GET /api/admin/board/threads/{tid}":          true,
 		"POST /api/admin/board/threads/{tid}/reply":   true,
 		"POST /api/admin/board/threads/{tid}/state":   true,
 		"POST /api/admin/board/messages/{mid}/state":  true,
@@ -737,6 +824,6 @@ func TestBoard_DeclaredRouteSetIsExactlyPhase2sTenRoutes(t *testing.T) {
 		}
 	}
 	if len(got) != len(want) {
-		t.Fatalf("expected exactly the 10 app#292 Phase 2 routes, found %d of them in Routes(): %v", len(got), got)
+		t.Fatalf("expected exactly the 11 app#292 Phase 2 routes, found %d of them in Routes(): %v", len(got), got)
 	}
 }

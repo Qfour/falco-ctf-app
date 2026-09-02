@@ -369,6 +369,50 @@ func sortBoardSummaries(list []board.ThreadSummary, sortParam string) {
 	sort.SliceStable(list, func(i, j int) bool { return list[i].LikeCount > list[j].LikeCount })
 }
 
+// boardAdminGetThread serves GET /api/admin/board/threads/{tid}: the
+// operator's single-thread FULL-TEXT read — the admin counterpart to
+// boardGetThread. isAdmin=true bypasses board.Store.GetThread's audience/
+// ownership entitlement check entirely, so hidden AND deleted threads are
+// both visible here (same posture as boardAdminListThreads' moderation
+// queue). A deleted MESSAGE's body is still scrubbed to "" by the Store
+// itself regardless of viewer (board.go's own doc: deleting is a content
+// removal, not a from-participants-only hide) — admin sees that the
+// message existed and was deleted, never its content. Returns the SAME
+// BoardThread shape boardGetThread does (toOapiBoardThread reused
+// verbatim, #164 discipline).
+//
+// Deliberately does NOT exist under /api/board/ — see api.go's Routes()
+// comment on this entry and boardGetThread's own doc: the participant
+// route carries no isAdmin bypass by design, so this is the ONLY route
+// through which an admin can read one thread's full messages directly
+// (as opposed to via a side effect of boardAdminReply/
+// boardAdminSetThreadState).
+func (h *Handler) boardAdminGetThread(w http.ResponseWriter, r *http.Request) {
+	adminEmail, ok := h.isAdmin(r)
+	if !ok {
+		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "admin only"})
+		return
+	}
+	tid := r.PathValue("tid")
+	th, err := h.board.GetThread(adminEmail, true, tid)
+	if err != nil {
+		if errors.Is(err, board.ErrNotFound) {
+			httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"error": errMsgBoardThreadNotFound})
+			return
+		}
+		h.logger.Error("board admin get", "err", err, "tid", tid)
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgBoardGetFailed})
+		return
+	}
+	resp, err := toOapiBoardThread(th)
+	if err != nil {
+		h.logger.Error("board admin get convert", "err", err, "tid", tid)
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgBoardGetFailed})
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, resp)
+}
+
 // boardAdminReply serves POST /api/admin/board/threads/{tid}/reply — THE
 // only legitimate operator reply path (mirrors P25's adminReply /
 // ADR-0006 Decision 1 / security-engineer finding 5 reasoning exactly: an

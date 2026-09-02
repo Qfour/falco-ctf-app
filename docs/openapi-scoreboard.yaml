@@ -1260,6 +1260,13 @@ paths:
         as the read itself — an unknown id, a wrong-audience `admin` thread
         belonging to another participant, and a moderated-away (hidden/
         deleted) thread ALL produce the same 404 (no existence oracle).
+
+        This route carries NO isAdmin bypass: an admin identity gets the
+        exact same 404 a non-owner participant would for a private/
+        moderated-away thread — there is deliberately no "elevate to admin
+        visibility" shortcut on the participant surface. The operator's
+        equivalent full-text read is the dedicated
+        `GET /api/admin/board/threads/{tid}` (`boardAdminGetThread`) below.
       parameters:
         - $ref: "#/components/parameters/Tid"
       responses:
@@ -1581,6 +1588,62 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "500":
           description: could not list board threads
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/admin/board/threads/{tid}:
+    get:
+      summary: Read any QA Board thread by id, full text (operator)
+      operationId: boardAdminGetThread
+      tags: [operator]
+      x-ctf-audience: operator
+      x-ctf-authz: admin
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
+      description: |
+        The operator's single-thread FULL-TEXT read — the admin
+        counterpart to `boardGetThread`
+        (`GET /api/board/threads/{tid}`). `internal/board.Store.GetThread`
+        is called with `isAdmin=true`, which bypasses the audience/
+        ownership entitlement check entirely: a hidden OR deleted thread
+        is fully visible here, exactly like the moderation queue listing
+        (`boardAdminListThreads`) already shows it in summary form. A
+        `deleted` MESSAGE's `body` is still scrubbed to `""` by the Store
+        itself regardless of viewer — this route lets an operator see that
+        a message existed and was moderated away, never its content.
+
+        Returns the SAME `BoardThread` shape `boardGetThread` does (one
+        schema for "here is the thread", regardless of which audience's
+        route asked for it).
+
+        Deliberately does NOT exist under `/api/board/` — the participant
+        route carries NO isAdmin bypass by design (see that operation's own
+        description), so this is the intended, and only, route through
+        which an operator reads one thread's full messages directly
+        (as opposed to as a side effect of `boardAdminReply` /
+        `boardAdminSetThreadState`).
+      parameters:
+        - $ref: "#/components/parameters/Tid"
+      responses:
+        "200":
+          description: the thread's full messages, admin view (hidden/deleted included; deleted message bodies scrubbed)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BoardThread" }
+        "403":
+          description: caller is not an admin
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: unknown thread id
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: could not load the thread
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

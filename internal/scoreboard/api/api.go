@@ -20,6 +20,7 @@
 //	POST /api/board/threads/{tid}/like
 //	POST /api/board/threads/{tid}/unlike
 //	GET  /api/admin/board/threads
+//	GET  /api/admin/board/threads/{tid}
 //	POST /api/admin/board/threads/{tid}/reply
 //	POST /api/admin/board/threads/{tid}/state
 //	POST /api/admin/board/messages/{mid}/state
@@ -658,6 +659,25 @@ func (h *Handler) Routes() []apispec.Route {
 			Audience: apispec.AudienceOperator, Authz: apispec.AuthzAdmin,
 			OriginGuarded: false, CollectorForward: false, RateLimit: "none",
 			Handler: http.HandlerFunc(h.boardAdminListThreads),
+		},
+		{
+			// Gap closed post-Phase-2-review: the operator's single-thread
+			// FULL-TEXT read. board.Store.GetThread(viewer, isAdmin=true,
+			// tid) bypasses the audience/ownership entitlement check
+			// entirely (isAdmin=true) — hidden AND deleted threads are both
+			// visible here, exactly like the moderation queue listing
+			// above. A deleted MESSAGE's body is still scrubbed to "" by
+			// the Store itself (board.go's own doc — deleting is a content
+			// removal, not a from-participants-only hide, and that holds
+			// for every viewer including admin). Returns the SAME
+			// BoardThread shape the participant route does (toOapiBoardThread
+			// is reused verbatim, #164 discipline) — one shape for "here is
+			// the thread", regardless of which audience's route asked for
+			// it.
+			Method: "GET", Pattern: "/api/admin/board/threads/{tid}",
+			Audience: apispec.AudienceOperator, Authz: apispec.AuthzAdmin,
+			OriginGuarded: false, CollectorForward: false, RateLimit: "none",
+			Handler: http.HandlerFunc(h.boardAdminGetThread),
 		},
 		{
 			// THE operator reply path — author is ALWAYS the fixed "staff"

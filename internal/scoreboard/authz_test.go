@@ -256,14 +256,15 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 	// AuthzNone by mistake behind AuthzNone's count silently absorbing the
 	// difference. app#292 Phase 2: P25's 7 QA routes (3 admin, 4
 	// self-or-admin(-write)) are gone (internal/qa removed wholesale);
-	// the QA Board's 10 routes replace them under a FOURTH bucket for the
+	// the QA Board's 11 routes replace them under a FOURTH bucket for the
 	// 6 participant ones (authz=authenticated has no {user}-path
 	// self-match, so it is not "self-or-admin" — see authzCheck's own
-	// doc) plus 4 more admin routes. 8 admin + 7 self(-write) + 15
-	// none/claimed-identity + 6 authenticated = 36, matching
+	// doc) plus 5 admin routes (4 from the initial Phase 2 landing + 1
+	// post-review gap-close: boardAdminGetThread). 9 admin + 7 self(-write) +
+	// 15 none/claimed-identity + 6 authenticated = 37, matching
 	// apispec_parity_test.go's TestAPISpec_V1_RouteSetMatchesSpec.
-	if adminGated != 8 {
-		t.Fatalf("expected exactly 8 Authz: admin routes (ADR-0005 canon: GET /, GET /api/state, POST /api/admin/reset, POST /api/admin/users/{user}/display-name; app#292 QA Board: GET /api/admin/board/threads, POST /api/admin/board/threads/{tid}/reply, POST /api/admin/board/threads/{tid}/state, POST /api/admin/board/messages/{mid}/state), got %d", adminGated)
+	if adminGated != 9 {
+		t.Fatalf("expected exactly 9 Authz: admin routes (ADR-0005 canon: GET /, GET /api/state, POST /api/admin/reset, POST /api/admin/users/{user}/display-name; app#292 QA Board: GET /api/admin/board/threads, GET /api/admin/board/threads/{tid}, POST /api/admin/board/threads/{tid}/reply, POST /api/admin/board/threads/{tid}/state, POST /api/admin/board/messages/{mid}/state), got %d", adminGated)
 	}
 	if selfGated != 7 {
 		t.Fatalf("expected exactly 7 Authz: self-or-admin(-write) routes (GET /api/users/{user}/me, GET /api/users/{user}/journey, POST /api/challenges/{cid}/submit-detect, POST /api/users/{user}/challenges/{cid}/steps/{idx}/check, POST /api/users/{user}/challenges/{cid}/hints/{idx}, POST /api/users/{user}/challenges/{cid}/reset-dirty, POST /api/users/{user}/display-name — P25's 4 QA self-or-admin(-write) routes are gone, cutover), got %d", selfGated)

@@ -205,9 +205,13 @@ func TestAPISpec_V1_RouteSetMatchesSpec(t *testing.T) {
 	// wholesale) +10 QA Board routes (boardListThreads/boardGetThread/
 	// boardCreateThread/boardAppendMessage/boardLikeThread/
 	// boardUnlikeThread/boardAdminListThreads/boardAdminReply/
-	// boardAdminSetThreadState/boardAdminSetMessageState) = 33 - 7 + 10 = 36.
-	if len(routes) != 36 {
-		t.Errorf("expected 36 registered routes (ADR-0005 C1 + app#116 - app#84 + app#95 + app#96 - P25-QA(7) + app#292-Board(10)), got %d: %v", len(routes), routes)
+	// boardAdminSetThreadState/boardAdminSetMessageState) = 33 - 7 + 10 = 36,
+	// then +1 more for the post-review gap-close boardAdminGetThread
+	// (GET /api/admin/board/threads/{tid} — the operator's single-thread
+	// full-text read, closing the "no admin GET route" gap the initial
+	// Phase 2 report flagged) = 37.
+	if len(routes) != 37 {
+		t.Errorf("expected 37 registered routes (ADR-0005 C1 + app#116 - app#84 + app#95 + app#96 - P25-QA(7) + app#292-Board(10) + boardAdminGetThread(1)), got %d: %v", len(routes), routes)
 	}
 }
 
@@ -566,6 +570,7 @@ var v5Coverage = map[string]bool{
 	"POST /api/board/threads/{tid}/like":          true, // TestAPISpec_V5_BoardLikeResultFieldsMatchSpec (like branch)
 	"POST /api/board/threads/{tid}/unlike":        true, // TestAPISpec_V5_BoardLikeResultFieldsMatchSpec (unlike branch)
 	"GET /api/admin/board/threads":                true, // TestAPISpec_V5_BoardAdminListThreadsFieldsMatchSpec
+	"GET /api/admin/board/threads/{tid}":          true, // TestAPISpec_V5_BoardAdminThreadFieldsMatchSpec (get branch)
 	"POST /api/admin/board/threads/{tid}/reply":   true, // TestAPISpec_V5_BoardAdminThreadFieldsMatchSpec (reply branch)
 	"POST /api/admin/board/threads/{tid}/state":   true, // TestAPISpec_V5_BoardAdminThreadFieldsMatchSpec (state branch)
 	"POST /api/admin/board/messages/{mid}/state":  true, // TestAPISpec_V5_BoardAdminSetMessageStateFieldsMatchSpec
@@ -596,13 +601,14 @@ func TestAPISpec_VA1_ResponseObjectCoverageBidirectional(t *testing.T) {
 	// QuestionThread additions = 21 (P25). app#292 Phase 2 cutover: -7 QA
 	// entries (internal/qa removed wholesale) +10 QA Board entries
 	// (BoardList x2, BoardThread x3, LikeResult x2, MessageStateResult x1 —
-	// see v5Coverage above) = 21 - 7 + 10 = 24. Same PROCESS reasoning as
-	// V1's route count pin above: forces every PR that adds/removes a
-	// response-object operation to touch this line, so the count change
-	// itself gets reviewed instead of silently passing because the
-	// bidirectional diff above happened to stay empty.
-	if len(derived) != 24 {
-		t.Errorf("expected 24 response-object operations (ADR-0009 C2 + Decision A - P25-QA(7) + app#292-Board(10)), got %d: %v", len(derived), derived)
+	// see v5Coverage above) = 21 - 7 + 10 = 24, then +1 more for the
+	// post-review gap-close boardAdminGetThread (BoardThread x4 total) = 25.
+	// Same PROCESS reasoning as V1's route count pin above: forces every PR
+	// that adds/removes a response-object operation to touch this line, so
+	// the count change itself gets reviewed instead of silently passing
+	// because the bidirectional diff above happened to stay empty.
+	if len(derived) != 25 {
+		t.Errorf("expected 25 response-object operations (ADR-0009 C2 + Decision A - P25-QA(7) + app#292-Board(10) + boardAdminGetThread(1)), got %d: %v", len(derived), derived)
 	}
 }
 
@@ -922,9 +928,9 @@ func TestAPISpec_V5_BoardAdminListThreadsFieldsMatchSpec(t *testing.T) {
 	}
 }
 
-// TestAPISpec_V5_BoardAdminThreadFieldsMatchSpec covers the two ADMIN
-// operations whose 200 schema is BoardThread — boardAdminReply and
-// boardAdminSetThreadState — mirroring P25's
+// TestAPISpec_V5_BoardAdminThreadFieldsMatchSpec covers the three ADMIN
+// operations whose 200 schema is BoardThread — boardAdminGetThread,
+// boardAdminReply, and boardAdminSetThreadState — mirroring P25's
 // TestAPISpec_V5_AdminQuestionThreadFieldsMatchSpec.
 func TestAPISpec_V5_BoardAdminThreadFieldsMatchSpec(t *testing.T) {
 	spec := loadScoreboardSpec(t)
@@ -948,6 +954,12 @@ func TestAPISpec_V5_BoardAdminThreadFieldsMatchSpec(t *testing.T) {
 	if tid == "" {
 		t.Fatal("seed thread has no id")
 	}
+
+	w = f.do("GET", "/api/admin/board/threads/"+tid, specFixtureAdmin, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("admin get thread: status=%d body=%s", w.Code, w.Body)
+	}
+	compare("BoardThread(admin get)", f.decodedJSON(w))
 
 	w = f.do("POST", "/api/admin/board/threads/"+tid+"/reply", specFixtureAdmin, map[string]any{"body": "here's how"})
 	if w.Code != http.StatusOK {
