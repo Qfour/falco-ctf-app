@@ -524,7 +524,10 @@ type Me struct {
 	NextUnsolved *string   `json:"next_unsolved"`
 	Now          time.Time `json:"now"`
 
-	// Rank 1-based; 0 means "no rank yet" (zero solves) and renders as "-"
+	// Rank 1-based; 0 means "no rank yet" (zero solves) and renders as "-".
+	// Also 0 for a `HIDDEN_USERS` account viewing their own `/me` — they
+	// are excluded from the ranked field, so no rank exists for them
+	// (their `score` above is still their real, unaffected value).
 	Rank int `json:"rank"`
 
 	// RecentRuleFires rule fires for this user in the last 60s, in arrival order
