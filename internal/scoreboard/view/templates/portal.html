@@ -2006,24 +2006,77 @@
     return Math.floor(m / 60) + 'h' + (m % 60) + 'm';
   }
 
-  let lastState = null;   // latest /api/state, for the detail view
+  let lastState = null;   // latest successfully-fetched /api/state, for the detail view
+  let lastGoodAt = null;  // Date of the last successful /api/state fetch
   let currentCid = null;  // null = home; otherwise the open challenge id
   let resultOpen = false; // results screen toggle
 
   // ---------------- fetch loop ----------------
+  // On failure we never synthesize fake-looking data (#283) — a fetch
+  // failure is expected mid-event (scoreboard is a single Recreate-strategy
+  // replica that drops for a few seconds on redeploy/restart) and must never
+  // be mistaken for real standings by whoever is running the event.
   async function refresh() {
     try {
       const r = await fetch('/api/state');
       if (!r.ok) throw new Error('HTTP ' + r.status);
-      render(await r.json());
-      document.getElementById('pane-scoreboard-demo-tag').style.display = 'none';
-      document.getElementById('pane-scoreboard-updated').textContent = 'updated ' + new Date().toLocaleTimeString();
+      const d = await r.json();
+      lastGoodAt = new Date();
+      render(d);
+      setStatus('ok');
     } catch (e) {
-      // No backend (e.g. design preview) → show the layout with demo data.
-      render(DEMO);
-      document.getElementById('pane-scoreboard-demo-tag').style.display = 'inline-block';
-      document.getElementById('pane-scoreboard-updated').textContent = 'preview · demo data';
+      // Keep whatever real data is already on screen (if any) — just make
+      // the failure loudly visible instead of painting over it.
+      setStatus('error');
     }
+  }
+
+  function setStatus(kind) {
+    const tag = document.getElementById('pane-scoreboard-demo-tag');
+    const upd = document.getElementById('pane-scoreboard-updated');
+    if (kind === 'ok') {
+      tag.style.display = 'none';
+      upd.style.color = '';
+      upd.textContent = 'updated ' + lastGoodAt.toLocaleTimeString();
+      return;
+    }
+    if (kind === 'demo') {
+      tag.textContent = 'DEMO';
+      tag.style.display = 'inline-block';
+      upd.style.color = '';
+      upd.textContent = 'preview · demo data';
+      return;
+    }
+    // kind === 'error'
+    if (lastState && lastGoodAt) {
+      tag.textContent = 'STALE';
+      tag.style.display = 'inline-block';
+      upd.style.color = 'var(--warn)';
+      const secs = Math.max(0, Math.round((Date.now() - lastGoodAt.getTime()) / 1000));
+      upd.textContent = '⚠ update failed — last good data ' + secs + 's ago';
+    } else {
+      // Never fetched successfully yet: no real data exists to show at all.
+      tag.textContent = 'NO DATA';
+      tag.style.display = 'inline-block';
+      upd.style.color = 'var(--warn)';
+      upd.textContent = '⚠ could not reach the scoreboard';
+      renderConnectFailed();
+    }
+  }
+
+  // Explicit placeholder for "never loaded real data" — distinct from both
+  // the normal empty state (0 participants, real fetch succeeded) and demo
+  // data (opt-in design preview only, see DEMO below).
+  function renderConnectFailed() {
+    document.getElementById('pane-scoreboard-lb-meta').textContent = '—';
+    document.getElementById('pane-scoreboard-lb-body').innerHTML =
+      '<tr><td colspan="5" class="empty"><span class="icon">⚠</span>Could not reach the scoreboard — retrying…</td></tr>';
+    document.getElementById('pane-scoreboard-ch-meta').textContent = '—';
+    document.getElementById('pane-scoreboard-challenges').innerHTML =
+      '<div class="empty"><span class="icon">⚠</span>Could not load missions — retrying…</div>';
+    document.getElementById('pane-scoreboard-act-meta').textContent = '—';
+    document.getElementById('pane-scoreboard-activity').innerHTML =
+      '<div class="empty"><span class="icon">⚠</span>Could not load activity — retrying…</div>';
   }
 
   function render(d) {
@@ -2252,7 +2305,9 @@
     });
   }
 
-  // Demo data — only rendered when /api/state is unreachable (design preview).
+  // Demo data — design-preview only. Never auto-rendered on fetch failure
+  // (#283: that used to happen and was indistinguishable from real
+  // standings during a live event). Opt in explicitly with ?demo=1.
   const DEMO = {
     stats: { users: 5, challenges: 10, solves: 17, events: 1240 },
     leaderboard: [
@@ -2280,7 +2335,14 @@
   // Only poll it when the portal shell told us the viewer is admin — a
   // participant would otherwise just loop on 403s for a tab they cannot see
   // (P23-1: display-only optimisation, NOT the authorization boundary).
-  if (window.__PORTAL_ROLE__ === 'admin') {
+  //
+  // ?demo=1 is a separate, explicit opt-in for design preview — it renders
+  // DEMO once and does not touch the fetch/poll path at all, so it can never
+  // appear by accident (#283).
+  if (new URLSearchParams(location.search).get('demo') === '1') {
+    render(DEMO);
+    setStatus('demo');
+  } else if (window.__PORTAL_ROLE__ === 'admin') {
     refresh();
     setInterval(refresh, 2000);
   }
