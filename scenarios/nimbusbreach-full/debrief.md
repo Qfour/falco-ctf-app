@@ -25,8 +25,11 @@
 - **防御**: 許可プロセスを絞る / 読取の監査 / 機密を pod に置かない。
 
 ## 03 — 検知回避 (02 と同ルールを回避) (evade ★2)
-- **学び**: `fd.name` は「開く時に渡した path」。`/proc/self/root/etc/shadow` なら
-  `/etc/shadow` 文字列に当たらず発火しない。**同じ目的・違う path**。
+- **学び**: `fd.name` は「開く時に渡した path」。02 と同じ `Read sensitive file
+  untrusted` は `/etc/shadow` 専用ではなく、資格情報退避用の vault ファイル
+  (`/opt/nimbus/vault/creds.recover`) にも効いている。
+  `/proc/self/root/opt/nimbus/vault/creds.recover` なら監視対象の path 文字列に
+  当たらず発火しない。**同じルール・別ファイル・別 path**。
 - **防御**: inode (`fd.ino`) ベースのルール、`/proc/*/root` 経由読取の別ルール、重ね掛け。
 
 ## 04 — 資格情報収集 `Search Private Keys or Passwords` (trigger ★2)
