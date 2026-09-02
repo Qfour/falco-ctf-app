@@ -40,6 +40,12 @@ import (
 // traceability, just never serialized into the response body.
 const boardStaffAuthor = "staff"
 
+// boardStaffDisplay is the FIXED label every boardStaffAuthor-authored
+// message/thread renders as in the authorDisplay field (security+qa review,
+// app#292 Phase 3): a real operator identity is never derived here, same
+// posture as boardStaffAuthor itself.
+const boardStaffDisplay = "運営"
+
 // maxBoardSubjectRunes / maxBoardBodyBytes mirror P25's ADR-0006 Decision
 // 1 caps exactly (unchanged by app#292 — no reason to relitigate input
 // sizing alongside a visibility-model change).
@@ -96,7 +102,7 @@ func (h *Handler) boardListThreads(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgBoardListFailed})
 		return
 	}
-	resp, err := toOapiBoardList(summaries)
+	resp, err := toOapiBoardList(summaries, h.store.DisplayName)
 	if err != nil {
 		h.logger.Error("board list convert", "err", err, "viewer", viewer)
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgBoardListFailed})
@@ -139,6 +145,15 @@ func (h *Handler) boardCreateThread(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
+	// Same shape check as body below (security+qa review, app#292): subject
+	// is free text rendered right back to every participant who can see the
+	// thread (audience=all threads are PUBLIC), so a flag pasted into the
+	// subject leaks exactly as badly as one pasted into the body — this gate
+	// must not be body-only.
+	if flagShapePattern.MatchString(subject) {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": errMsgFlagShapeRejected})
+		return
+	}
 	body, err := validBoardBody(req.Body)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
@@ -166,7 +181,7 @@ func (h *Handler) boardCreateThread(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgBoardCreateFailed})
 		return
 	}
-	resp, err := toOapiBoardThread(th)
+	resp, err := toOapiBoardThread(th, h.store.DisplayName)
 	if err != nil {
 		h.logger.Error("board create convert", "err", err, "author", author, "tid", tid)
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgBoardCreateFailed})
@@ -199,7 +214,7 @@ func (h *Handler) boardGetThread(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgBoardGetFailed})
 		return
 	}
-	resp, err := toOapiBoardThread(th)
+	resp, err := toOapiBoardThread(th, h.store.DisplayName)
 	if err != nil {
 		h.logger.Error("board get convert", "err", err, "viewer", viewer, "tid", tid)
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgBoardGetFailed})
@@ -248,7 +263,7 @@ func (h *Handler) boardAppendMessage(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgBoardAppendFailed})
 		return
 	}
-	resp, err := toOapiBoardThread(th)
+	resp, err := toOapiBoardThread(th, h.store.DisplayName)
 	if err != nil {
 		h.logger.Error("board append convert", "err", err, "author", author, "tid", tid)
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgBoardAppendFailed})
@@ -315,13 +330,18 @@ func (h *Handler) boardUnlike(w http.ResponseWriter, r *http.Request) {
 // visibility grant: it is only ever called immediately after user's OWN
 // Like/Unlike call on tid — a thread the caller either just successfully
 // liked (guaranteeing it exists and is audience=all) or attempted to unlike
-// (defined to succeed even for an unknown or never-likeable tid).
-// isAdmin=true bypasses GetThread's entitlement check so an Unlike on a
-// genuinely unknown tid still gets a clean liked=false/like_count=0
-// response instead of erroring — board threads are never hard-deleted (only
-// soft-moderated), so this can only ever miss for a tid that never existed.
+// (defined to succeed even for an unknown, hidden, or never-likeable tid).
+// isAdmin=false (security+qa review, app#292) so Unlike's unconditional
+// success path cannot be used to READ the like_count of a thread user has
+// no entitlement to see: a hidden thread, a deleted thread, or another
+// participant's audience=admin thread all fall through GetThread's own
+// participant entitlement check (visibleToParticipant) to ErrNotFound here,
+// which this function turns into a clean liked=false/like_count=0 instead
+// of leaking the real count. Like's own success path is unaffected — Like
+// only ever succeeds on an audience=all, state=visible thread, which is
+// always non-admin-visible to every viewer by definition.
 func (h *Handler) boardLikeStatus(tid, user string) (count int, liked bool, ok bool) {
-	th, err := h.board.GetThread(user, true, tid)
+	th, err := h.board.GetThread(user, false, tid)
 	if err != nil {
 		return 0, false, false
 	}
@@ -346,7 +366,7 @@ func (h *Handler) boardAdminListThreads(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	sortBoardSummaries(summaries, r.URL.Query().Get("sort"))
-	resp, err := toOapiBoardList(summaries)
+	resp, err := toOapiBoardList(summaries, h.store.DisplayName)
 	if err != nil {
 		h.logger.Error("board admin list convert", "err", err)
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgBoardListFailed})
@@ -404,7 +424,7 @@ func (h *Handler) boardAdminGetThread(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgBoardGetFailed})
 		return
 	}
-	resp, err := toOapiBoardThread(th)
+	resp, err := toOapiBoardThread(th, h.store.DisplayName)
 	if err != nil {
 		h.logger.Error("board admin get convert", "err", err, "tid", tid)
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgBoardGetFailed})
@@ -457,7 +477,7 @@ func (h *Handler) boardAdminReply(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgBoardReplyFailed})
 		return
 	}
-	resp, err := toOapiBoardThread(th)
+	resp, err := toOapiBoardThread(th, h.store.DisplayName)
 	if err != nil {
 		h.logger.Error("board admin reply convert", "err", err, "tid", tid)
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgBoardReplyFailed})
@@ -510,7 +530,7 @@ func (h *Handler) boardAdminSetThreadState(w http.ResponseWriter, r *http.Reques
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgBoardStateFailed})
 		return
 	}
-	resp, err := toOapiBoardThread(th)
+	resp, err := toOapiBoardThread(th, h.store.DisplayName)
 	if err != nil {
 		h.logger.Error("board admin thread-state convert", "err", err, "tid", tid)
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgBoardStateFailed})

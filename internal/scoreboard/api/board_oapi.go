@@ -37,6 +37,20 @@ func parseBoardTimestamp(s string) (time.Time, error) {
 	return t, nil
 }
 
+// boardDisplayNameFunc resolves a board author slug (a participant's derived
+// username) to a human display name. Every call site threads through
+// h.store.DisplayName (security+qa review, app#292 Phase 3 — "author(slug)→
+// 表示名を api 層で解決"): internal/board never imports internal/store (its
+// own package doc's import-closure invariant, guarded by
+// board_boundary_test.go), so this resolution cannot happen inside
+// internal/board itself and must happen here, at the api-layer boundary
+// conversion. Store.DisplayName already falls back to the slug itself when
+// no display name is set — a resolution "failure" is definitionally
+// impossible here, but the type is kept as a plain func (rather than a
+// *store.Store field) so this file's unit tests can supply a trivial stub
+// without opening a real Store.
+type boardDisplayNameFunc func(user string) string
+
 // toOapiBoardMessage converts one board.Message into its oapi.BoardMessage
 // wire shape. board.Message.CreatedAt is always written as
 // h.now().UTC().Format(time.RFC3339Nano) by this handler package (see
@@ -45,53 +59,72 @@ func parseBoardTimestamp(s string) (time.Time, error) {
 // manual edit), so it is propagated as an error rather than silently
 // substituting the zero time.Time (qa_oapi.go's parseBoardTimestamp used the
 // exact same reasoning for the P25 predecessor this file replaces).
-func toOapiBoardMessage(m board.Message) (oapi.BoardMessage, error) {
+//
+// AuthorDisplay: an admin-authored message (AuthorRole == RoleAdmin, always
+// the fixed boardStaffAuthor constant per board.go's AppendAdminReply call)
+// gets the fixed boardStaffDisplay label ("運営") — never a real operator
+// name, same posture as the author field itself. A participant-authored
+// message resolves through displayName, which falls back to the slug
+// (fail-safe — see boardDisplayNameFunc's own doc).
+func toOapiBoardMessage(m board.Message, displayName boardDisplayNameFunc) (oapi.BoardMessage, error) {
 	createdAt, err := parseBoardTimestamp(m.CreatedAt)
 	if err != nil {
 		return oapi.BoardMessage{}, err
 	}
+	authorDisplay := boardStaffDisplay
+	if m.AuthorRole != board.RoleAdmin {
+		authorDisplay = displayName(m.Author)
+	}
 	return oapi.BoardMessage{
-		Id:         m.ID,
-		AuthorRole: oapi.BoardMessageAuthorRole(m.AuthorRole),
-		Author:     m.Author,
-		Body:       m.Body,
-		CreatedAt:  createdAt,
-		State:      oapi.BoardMessageState(m.State),
+		Id:            m.ID,
+		AuthorRole:    oapi.BoardMessageAuthorRole(m.AuthorRole),
+		Author:        m.Author,
+		AuthorDisplay: authorDisplay,
+		Body:          m.Body,
+		CreatedAt:     createdAt,
+		State:         oapi.BoardMessageState(m.State),
 	}, nil
 }
 
 // toOapiBoardThread converts a board.Thread into the oapi.BoardThread every
-// thread-returning board handler writes.
-func toOapiBoardThread(th board.Thread) (oapi.BoardThread, error) {
+// thread-returning board handler writes. A thread's top-level Author is
+// ALWAYS the participant who opened it (board.Store.CreateThread hardcodes
+// RoleParticipant for the opening message/thread row — there is no
+// "admin-authored thread"), so AuthorDisplay resolves through displayName
+// unconditionally, unlike toOapiBoardMessage's per-message role branch.
+func toOapiBoardThread(th board.Thread, displayName boardDisplayNameFunc) (oapi.BoardThread, error) {
 	createdAt, err := parseBoardTimestamp(th.CreatedAt)
 	if err != nil {
 		return oapi.BoardThread{}, err
 	}
 	msgs := make([]oapi.BoardMessage, 0, len(th.Messages))
 	for _, m := range th.Messages {
-		om, err := toOapiBoardMessage(m)
+		om, err := toOapiBoardMessage(m, displayName)
 		if err != nil {
 			return oapi.BoardThread{}, err
 		}
 		msgs = append(msgs, om)
 	}
 	return oapi.BoardThread{
-		Id:        th.ID,
-		Author:    th.Author,
-		Audience:  oapi.BoardThreadAudience(th.Audience),
-		Subject:   th.Subject,
-		CreatedAt: createdAt,
-		Pinned:    th.Pinned,
-		Answered:  th.Answered,
-		State:     oapi.BoardThreadState(th.State),
-		Messages:  msgs,
-		LikeCount: th.LikeCount,
-		Liked:     th.Liked,
+		Id:            th.ID,
+		Author:        th.Author,
+		AuthorDisplay: displayName(th.Author),
+		Audience:      oapi.BoardThreadAudience(th.Audience),
+		Subject:       th.Subject,
+		CreatedAt:     createdAt,
+		Pinned:        th.Pinned,
+		Answered:      th.Answered,
+		State:         oapi.BoardThreadState(th.State),
+		Messages:      msgs,
+		LikeCount:     th.LikeCount,
+		Liked:         th.Liked,
 	}, nil
 }
 
 // toOapiBoardSummary converts one board.ThreadSummary into oapi.BoardSummary.
-func toOapiBoardSummary(sm board.ThreadSummary) (oapi.BoardSummary, error) {
+// Same "always participant-authored" reasoning as toOapiBoardThread applies
+// to a summary row's Author.
+func toOapiBoardSummary(sm board.ThreadSummary, displayName boardDisplayNameFunc) (oapi.BoardSummary, error) {
 	createdAt, err := parseBoardTimestamp(sm.CreatedAt)
 	if err != nil {
 		return oapi.BoardSummary{}, err
@@ -101,28 +134,29 @@ func toOapiBoardSummary(sm board.ThreadSummary) (oapi.BoardSummary, error) {
 		return oapi.BoardSummary{}, err
 	}
 	return oapi.BoardSummary{
-		Id:           sm.ID,
-		Author:       sm.Author,
-		Audience:     oapi.BoardSummaryAudience(sm.Audience),
-		Subject:      sm.Subject,
-		CreatedAt:    createdAt,
-		UpdatedAt:    updatedAt,
-		Pinned:       sm.Pinned,
-		Answered:     sm.Answered,
-		State:        oapi.BoardSummaryState(sm.State),
-		MessageCount: sm.MessageCount,
-		LikeCount:    sm.LikeCount,
-		Liked:        sm.Liked,
+		Id:            sm.ID,
+		Author:        sm.Author,
+		AuthorDisplay: displayName(sm.Author),
+		Audience:      oapi.BoardSummaryAudience(sm.Audience),
+		Subject:       sm.Subject,
+		CreatedAt:     createdAt,
+		UpdatedAt:     updatedAt,
+		Pinned:        sm.Pinned,
+		Answered:      sm.Answered,
+		State:         oapi.BoardSummaryState(sm.State),
+		MessageCount:  sm.MessageCount,
+		LikeCount:     sm.LikeCount,
+		Liked:         sm.Liked,
 	}, nil
 }
 
 // toOapiBoardList converts a []board.ThreadSummary listing into
 // oapi.BoardList — the boardListThreads/boardAdminListThreads response
 // shape.
-func toOapiBoardList(summaries []board.ThreadSummary) (oapi.BoardList, error) {
+func toOapiBoardList(summaries []board.ThreadSummary, displayName boardDisplayNameFunc) (oapi.BoardList, error) {
 	out := make([]oapi.BoardSummary, 0, len(summaries))
 	for _, sm := range summaries {
-		os, err := toOapiBoardSummary(sm)
+		os, err := toOapiBoardSummary(sm, displayName)
 		if err != nil {
 			return oapi.BoardList{}, err
 		}

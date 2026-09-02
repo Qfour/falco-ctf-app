@@ -436,6 +436,7 @@ func TestBoard_UnknownTid404(t *testing.T) {
 		{"POST", "/api/board/threads/does-not-exist/messages", "alice@ctf.local", map[string]any{"body": "x"}},
 		{"POST", "/api/admin/board/threads/does-not-exist/reply", boardFixtureAdmin, map[string]any{"body": "x"}},
 		{"POST", "/api/admin/board/threads/does-not-exist/state", boardFixtureAdmin, map[string]any{"pinned": true}},
+		{"POST", "/api/admin/board/messages/does-not-exist/state", boardFixtureAdmin, map[string]any{"state": "hidden"}},
 	}
 	for _, c := range cases {
 		t.Run(c.method+" "+c.target, func(t *testing.T) {
@@ -555,6 +556,44 @@ func TestBoard_LikeRejectsAdminAudienceThread(t *testing.T) {
 	}
 }
 
+// TestBoard_Unlike_HiddenThreadDoesNotLeakCount proves boardUnlike's
+// response never leaks a hidden thread's real like_count (security+qa
+// review, app#292 Phase 3 — boardLikeStatus previously called GetThread
+// with isAdmin=true, bypassing the participant entitlement check entirely).
+// bob genuinely likes the thread while it is still visible (so a real
+// board_likes row exists and the count really is 1), an admin then hides
+// the thread, and bob's Unlike call — which Store.Unlike always succeeds at
+// unconditionally, hidden or not — must report the fail-closed zero value,
+// not the real underlying count.
+func TestBoard_Unlike_HiddenThreadDoesNotLeakCount(t *testing.T) {
+	f := newBoardFixture(t)
+	alice := f.createAs("alice@ctf.local", "all", "s", "b")
+	tid := alice["id"].(string)
+
+	w := f.do("POST", "/api/board/threads/"+tid+"/like", "bob@ctf.local", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("like: status=%d body=%s", w.Code, w.Body)
+	}
+	got := f.decode(w)
+	if got["like_count"].(float64) != 1 {
+		t.Fatalf("expected like_count=1 before hiding, got %+v", got)
+	}
+
+	w = f.do("POST", "/api/admin/board/threads/"+tid+"/state", boardFixtureAdmin, map[string]any{"state": "hidden"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("hide: status=%d body=%s", w.Code, w.Body)
+	}
+
+	w = f.do("POST", "/api/board/threads/"+tid+"/unlike", "bob@ctf.local", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("unlike on a hidden thread: status=%d body=%s, want 200 (Unlike is unconditional)", w.Code, w.Body)
+	}
+	got = f.decode(w)
+	if got["liked"] != false || got["like_count"].(float64) != 0 {
+		t.Fatalf("expected liked=false, like_count=0 for a hidden thread (no count leak), got %+v", got)
+	}
+}
+
 // --- moderation ----------------------------------------------------------------
 
 // TestBoard_ModerationHiddenThread_NotVisibleToNonAdmin proves state=hidden
@@ -602,6 +641,33 @@ func TestBoard_ModerationHiddenThread_NotVisibleToNonAdmin(t *testing.T) {
 	w = f.do("GET", "/api/admin/board/threads/"+tid, boardFixtureAdmin, nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("admin reading the hidden thread via boardAdminGetThread: status=%d body=%s, want 200", w.Code, w.Body)
+	}
+
+	// Same non-admin exclusion for state=deleted (qa review coverage,
+	// app#292 Phase 3 — the hidden case above was already covered; deleted
+	// shares visibleToParticipant's same `t.state = 'visible'` guard so it
+	// must behave identically for a fresh thread).
+	deletedTid := f.createAs("alice@ctf.local", "all", "s2", "b2")["id"].(string)
+	w = f.do("POST", "/api/admin/board/threads/"+deletedTid+"/state", boardFixtureAdmin, map[string]any{"state": "deleted"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete: status=%d body=%s", w.Code, w.Body)
+	}
+	w = f.do("GET", "/api/board/threads/"+deletedTid, "bob@ctf.local", nil)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("bob reading a deleted thread: status=%d body=%s, want 404", w.Code, w.Body)
+	}
+	w = f.do("GET", "/api/board/threads/"+deletedTid, "alice@ctf.local", nil)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("even the author reading their own deleted thread: status=%d body=%s, want 404", w.Code, w.Body)
+	}
+	deletedList := f.decode(f.do("GET", "/api/board/threads", "bob@ctf.local", nil))
+	deletedTs, _ := deletedList["threads"].([]any)
+	if len(deletedTs) != 0 {
+		t.Fatalf("deleted thread must not appear in a non-admin listing, got %+v", deletedList)
+	}
+	w = f.do("GET", "/api/admin/board/threads/"+deletedTid, boardFixtureAdmin, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("admin reading the deleted thread via boardAdminGetThread: status=%d body=%s, want 200", w.Code, w.Body)
 	}
 }
 
@@ -687,6 +753,29 @@ func TestBoard_FlagShapeRejected_ThreeWritePaths(t *testing.T) {
 			t.Fatalf("status=%d body=%s, want 400", w.Code, w.Body)
 		}
 	})
+	// create_thread_subject proves the SUBJECT is checked too, independent
+	// of body (security+qa review, app#292 Phase 3 — subject was NOT
+	// checked in Phase 2, a public audience=all thread's subject is
+	// rendered to every participant exactly like its body). The body here
+	// is deliberately clean, so a subject-only gate is the only thing that
+	// can turn this 400 — removing the subject check makes this red.
+	t.Run("create_thread_subject", func(t *testing.T) {
+		f := newBoardFixture(t)
+		w := f.do("POST", "/api/board/threads", "alice@ctf.local", map[string]any{"audience": "all", "subject": flaggy, "body": "clean body, no flag here"})
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("status=%d body=%s, want 400", w.Code, w.Body)
+		}
+	})
+	// create_thread_subject_empty_braces is flagShapePattern's own
+	// documented boundary case (`FALCO{}` — empty braces — is still
+	// rejected) exercised specifically through subject, not body.
+	t.Run("create_thread_subject_empty_braces", func(t *testing.T) {
+		f := newBoardFixture(t)
+		w := f.do("POST", "/api/board/threads", "alice@ctf.local", map[string]any{"audience": "all", "subject": "FALCO{}", "body": "clean body, no flag here"})
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("status=%d body=%s, want 400", w.Code, w.Body)
+		}
+	})
 	t.Run("append_message", func(t *testing.T) {
 		f := newBoardFixture(t)
 		tid := f.createAs("alice@ctf.local", "all", "s", "b")["id"].(string)
@@ -708,15 +797,28 @@ func TestBoard_FlagShapeRejected_ThreeWritePaths(t *testing.T) {
 // TestBoard_BareFalcoWordAllowed is flagShapePattern's negative case: the
 // bare word "FALCO" with no braces must NOT be rejected — a participant
 // should still be able to say "I'm stuck on the FALCO mission" in a support
-// thread.
+// thread. Covers both body (Phase 2) and subject (Phase 3 — the new check
+// added alongside body's) independently, so a subject check that
+// over-rejects (matching bare "FALCO" too) is caught here.
 func TestBoard_BareFalcoWordAllowed(t *testing.T) {
-	f := newBoardFixture(t)
-	w := f.do("POST", "/api/board/threads", "alice@ctf.local", map[string]any{
-		"audience": "all", "subject": "s", "body": "I'm stuck on the FALCO mission, help?",
+	t.Run("body", func(t *testing.T) {
+		f := newBoardFixture(t)
+		w := f.do("POST", "/api/board/threads", "alice@ctf.local", map[string]any{
+			"audience": "all", "subject": "s", "body": "I'm stuck on the FALCO mission, help?",
+		})
+		if w.Code != http.StatusOK {
+			t.Fatalf("bare FALCO word in body: status=%d body=%s, want 200", w.Code, w.Body)
+		}
 	})
-	if w.Code != http.StatusOK {
-		t.Fatalf("bare FALCO word: status=%d body=%s, want 200", w.Code, w.Body)
-	}
+	t.Run("subject", func(t *testing.T) {
+		f := newBoardFixture(t)
+		w := f.do("POST", "/api/board/threads", "alice@ctf.local", map[string]any{
+			"audience": "all", "subject": "stuck on the FALCO mission", "body": "help?",
+		})
+		if w.Code != http.StatusOK {
+			t.Fatalf("bare FALCO word in subject: status=%d body=%s, want 200", w.Code, w.Body)
+		}
+	})
 }
 
 // --- validation caps -----------------------------------------------------------

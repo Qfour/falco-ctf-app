@@ -145,12 +145,22 @@ type BoardList struct {
 // moderation column; a `deleted` message's `body` is `""` in every
 // response, including the admin's.
 type BoardMessage struct {
-	Author     string                 `json:"author"`
-	AuthorRole BoardMessageAuthorRole `json:"author_role"`
-	Body       string                 `json:"body"`
-	CreatedAt  time.Time              `json:"created_at"`
-	Id         string                 `json:"id"`
-	State      BoardMessageState      `json:"state"`
+	Author string `json:"author"`
+
+	// AuthorDisplay Server-resolved display name for `author` (app#292 Phase 3
+	// review). An `admin`-authored message always resolves to the
+	// fixed label `"運営"` (never a real operator identity, same
+	// posture as `author` itself). A `participant`-authored message
+	// resolves through the same display-name lookup the leaderboard
+	// uses; if none was ever set, this equals `author` — a lookup
+	// never fails or omits this field, it only ever falls back to
+	// the slug.
+	AuthorDisplay string                 `json:"authorDisplay"`
+	AuthorRole    BoardMessageAuthorRole `json:"author_role"`
+	Body          string                 `json:"body"`
+	CreatedAt     time.Time              `json:"created_at"`
+	Id            string                 `json:"id"`
+	State         BoardMessageState      `json:"state"`
 }
 
 // BoardMessageAuthorRole defines model for BoardMessage.AuthorRole.
@@ -161,17 +171,20 @@ type BoardMessageState string
 
 // BoardSummary One row of a QA Board thread LISTING — never the message bodies.
 type BoardSummary struct {
-	Answered     bool                 `json:"answered"`
-	Audience     BoardSummaryAudience `json:"audience"`
-	Author       string               `json:"author"`
-	CreatedAt    time.Time            `json:"created_at"`
-	Id           string               `json:"id"`
-	LikeCount    int                  `json:"like_count"`
-	Liked        bool                 `json:"liked"`
-	MessageCount int                  `json:"message_count"`
-	Pinned       bool                 `json:"pinned"`
-	State        BoardSummaryState    `json:"state"`
-	Subject      string               `json:"subject"`
+	Answered bool                 `json:"answered"`
+	Audience BoardSummaryAudience `json:"audience"`
+	Author   string               `json:"author"`
+
+	// AuthorDisplay same server-resolved display name as BoardThread.authorDisplay — always the thread's opening participant.
+	AuthorDisplay string            `json:"authorDisplay"`
+	CreatedAt     time.Time         `json:"created_at"`
+	Id            string            `json:"id"`
+	LikeCount     int               `json:"like_count"`
+	Liked         bool              `json:"liked"`
+	MessageCount  int               `json:"message_count"`
+	Pinned        bool              `json:"pinned"`
+	State         BoardSummaryState `json:"state"`
+	Subject       string            `json:"subject"`
 
 	// UpdatedAt the latest message's created_at (or created_at itself, for a thread with only its opening message)
 	UpdatedAt time.Time `json:"updated_at"`
@@ -198,11 +211,18 @@ type BoardThread struct {
 	Answered bool `json:"answered"`
 
 	// Audience fixed at creation; no operation in this API ever changes it
-	Audience  BoardThreadAudience `json:"audience"`
-	Author    string              `json:"author"`
-	CreatedAt time.Time           `json:"created_at"`
-	Id        string              `json:"id"`
-	LikeCount int                 `json:"like_count"`
+	Audience BoardThreadAudience `json:"audience"`
+	Author   string              `json:"author"`
+
+	// AuthorDisplay Server-resolved display name for `author` (app#292 Phase 3
+	// review) — always the participant who opened the thread, so
+	// always resolved through the display-name lookup, never the
+	// fixed staff label. Falls back to `author` itself when no
+	// display name was ever set.
+	AuthorDisplay string    `json:"authorDisplay"`
+	CreatedAt     time.Time `json:"created_at"`
+	Id            string    `json:"id"`
+	LikeCount     int       `json:"like_count"`
 
 	// Liked whether the CALLER (the viewer this response was built for) has liked this thread
 	Liked    bool             `json:"liked"`
@@ -263,7 +283,7 @@ type CreateThreadRequest struct {
 	// Body 1..4096 bytes after trimming; rejected 400 if it matches the flag shape FALCO{...}
 	Body string `json:"body"`
 
-	// Subject 1..120 runes after trimming
+	// Subject 1..120 runes after trimming; rejected 400 if it matches the flag shape FALCO{...} (same shape check as body — a public audience=all thread's subject is rendered to every participant just like its body)
 	Subject string `json:"subject"`
 }
 

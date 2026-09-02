@@ -63,9 +63,12 @@ var invalidDisplayName = regexp.MustCompile(`[<>&"'\x00-\x1f\x7f]`)
 
 // flagShapePattern is app#292 Phase 2's fairness gate: it matches the
 // SHAPE of a flag (`FALCO{...}`), never a specific value — every free-text
-// board write (thread creation, a participant's own follow-up, an admin
-// reply) is rejected 400 if its body matches this, regardless of whether
-// the braces contain a real, in-play flag. This is deliberately NOT a
+// board write (thread creation's subject AND body, a participant's own
+// follow-up, an admin reply) is rejected 400 if it matches this, regardless
+// of whether the braces contain a real, in-play flag (security+qa review,
+// app#292 Phase 3: the subject check was missing from Phase 2 — a public
+// audience=all thread's subject is rendered to every participant exactly
+// like its body, so it needed the same gate). This is deliberately NOT a
 // comparison against any actual challenge flag: comparing against real
 // values would require the board to know every challenge's expectedFlag
 // (a scope leak this package's board handlers must not have — board.Store

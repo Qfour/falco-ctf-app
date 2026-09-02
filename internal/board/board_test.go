@@ -324,6 +324,27 @@ func TestLike_UnknownThreadRejected(t *testing.T) {
 	}
 }
 
+// TestLike_HiddenAllAudienceThreadRejected proves Like's audience=all-only
+// guard is coupled with state=visible, not audience alone: an
+// otherwise-likeable audience=all thread that an admin has since hidden
+// must reject a new Like with the same ErrNotFound an unknown/wrong-audience
+// tid gets (qa review coverage, app#292 Phase 3 — this is the Store-level
+// counterpart of the api-layer boardLikeStatus isAdmin fix; Like itself
+// already enforced this, this test just pins it).
+func TestLike_HiddenAllAudienceThreadRejected(t *testing.T) {
+	st := openStore(t)
+	tid := mustCreate(t, st, "alice", board.AudienceAll, "s", "b", "2026-01-01T00:00:00Z")
+
+	hidden := board.StateHidden
+	if err := st.SetThreadState(tid, board.ThreadStateUpdate{State: &hidden}); err != nil {
+		t.Fatalf("SetThreadState hidden: %v", err)
+	}
+
+	if err := st.Like("bob", tid, "2026-01-01T00:01:00Z"); !errors.Is(err, board.ErrNotFound) {
+		t.Fatalf("liking a hidden audience=all thread: got err=%v, want ErrNotFound", err)
+	}
+}
+
 // --- Moderation ---------------------------------------------------------
 
 func TestSetThreadState_Hidden_ExcludedFromParticipantListingAndGet(t *testing.T) {

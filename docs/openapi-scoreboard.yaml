@@ -2548,13 +2548,24 @@ components:
         request-body input on any write route. `state` is a per-message
         moderation column; a `deleted` message's `body` is `""` in every
         response, including the admin's.
-      required: [id, author_role, author, body, created_at, state]
+      required: [id, author_role, author, authorDisplay, body, created_at, state]
       properties:
         id: { type: string }
         author_role:
           type: string
           enum: [participant, admin]
         author: { type: string }
+        authorDisplay:
+          type: string
+          description: |
+            Server-resolved display name for `author` (app#292 Phase 3
+            review). An `admin`-authored message always resolves to the
+            fixed label `"運営"` (never a real operator identity, same
+            posture as `author` itself). A `participant`-authored message
+            resolves through the same display-name lookup the leaderboard
+            uses; if none was ever set, this equals `author` — a lookup
+            never fails or omits this field, it only ever falls back to
+            the slug.
         body: { type: string }
         created_at: { type: string, format: date-time }
         state:
@@ -2570,10 +2581,18 @@ components:
         by boardCreateThread, boardGetThread, boardAppendMessage,
         boardAdminReply and boardAdminSetThreadState alike, so a client can
         use ONE shape for "here is the thread after my action" everywhere.
-      required: [id, author, audience, subject, created_at, pinned, answered, state, messages, like_count, liked]
+      required: [id, author, authorDisplay, audience, subject, created_at, pinned, answered, state, messages, like_count, liked]
       properties:
         id: { type: string }
         author: { type: string }
+        authorDisplay:
+          type: string
+          description: |
+            Server-resolved display name for `author` (app#292 Phase 3
+            review) — always the participant who opened the thread, so
+            always resolved through the display-name lookup, never the
+            fixed staff label. Falls back to `author` itself when no
+            display name was ever set.
         audience:
           type: string
           enum: [admin, all]
@@ -2604,10 +2623,13 @@ components:
       type: object
       description: |
         One row of a QA Board thread LISTING — never the message bodies.
-      required: [id, author, audience, subject, created_at, updated_at, pinned, answered, state, message_count, like_count, liked]
+      required: [id, author, authorDisplay, audience, subject, created_at, updated_at, pinned, answered, state, message_count, like_count, liked]
       properties:
         id: { type: string }
         author: { type: string }
+        authorDisplay:
+          type: string
+          description: same server-resolved display name as BoardThread.authorDisplay — always the thread's opening participant.
         audience:
           type: string
           enum: [admin, all]
@@ -2655,7 +2677,7 @@ components:
             before the handler's own fail-closed coercion ever runs.
         subject:
           type: string
-          description: "1..120 runes after trimming"
+          description: "1..120 runes after trimming; rejected 400 if it matches the flag shape FALCO{...} (same shape check as body — a public audience=all thread's subject is rendered to every participant just like its body)"
         body:
           type: string
           description: "1..4096 bytes after trimming; rejected 400 if it matches the flag shape FALCO{...}"
