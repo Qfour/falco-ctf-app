@@ -71,6 +71,18 @@ func ParseSecretMode(raw string) (SecretMode, error) {
 	}
 }
 
+// Stable, non-leaking response-body text (Issue #113 — mirrors
+// internal/scoreboard/api's errMsgInvalidBody family; package-local because
+// unexported constants don't cross package boundaries). Never put err.Error()
+// from a JSON decode or a store call into a response body — the decoder can
+// name internal struct fields and the store can surface driver text, schema
+// names, or file paths. Log the real err via h.logger next to the WriteJSON
+// call; the body always gets one of these constants instead.
+const (
+	errMsgInvalidBody    = "invalid request body"
+	errMsgRecordRuleFire = "could not record rule fire"
+)
+
 type Handler struct {
 	store   *store.Store
 	grader  *scoring.Grader
@@ -187,8 +199,9 @@ func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 	// shared with falco-ctf-platform's falcosidekick config).
 	var ev oapi.FalcoEvent
 	if err := json.NewDecoder(r.Body).Decode(&ev); err != nil {
+		h.logger.Warn("falco webhook: invalid body", "err", err)
 		metrics.FalcoEventsReceived.WithLabelValues("decode_error").Inc()
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": errMsgInvalidBody})
 		return
 	}
 
@@ -248,7 +261,7 @@ func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 	if _, err := h.store.RecordRuleFire(user, ev.Rule, tsUnix); err != nil {
 		h.logger.Error("record rule fire", "err", err)
 		metrics.FalcoEventsReceived.WithLabelValues("store_error").Inc()
-		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgRecordRuleFire})
 		return
 	}
 
