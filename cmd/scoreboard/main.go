@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Qfour/falco-ctf-app/internal/board"
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/qa"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard"
@@ -235,6 +236,24 @@ func main() {
 	}
 	defer qaSt.Close()
 	logger.Info("qa store opened")
+
+	// QA Board (app#292 Phase 1, destination model — supersedes P25's
+	// per-user QA above for future callers): a THIRD SQLite file in the
+	// SAME PVC directory, physically separate from both store (scoring) and
+	// qa (P25) — internal/board never imports internal/store or
+	// internal/scoreboard/scoring (internal/apispec's board_boundary_test.go
+	// machine-checks that), and board.db is a brand-new file rather than a
+	// migration of qa.db's rows (internal/board's package doc). Opened here
+	// only to run its migration at boot and prove the file is reachable —
+	// HTTP wiring (Routes/handlers/spec) is a later phase (app#292 Phase 2+),
+	// so boardSt has no reader yet.
+	boardSt, err := board.Open(filepath.Join(filepath.Dir(dbPath), "board.db"))
+	if err != nil {
+		logger.Error("board store open failed", "path", dbPath, "err", err)
+		os.Exit(1)
+	}
+	defer boardSt.Close()
+	logger.Info("board store opened")
 
 	// Detect-challenge grading (type: detect). The scoreboard image is distroless
 	// and falco-free (conventions), so grading is delegated to a DetectRunner that
