@@ -1,0 +1,31 @@
+# nimbusbreach-full + the 00-tutorial onboarding mission, for events that
+# want the intro course visible alongside the full 10-mission arc (as
+# opposed to tutorial-intro's separate 00,01,03 subset, or nimbusbreach-full's
+# scored-only 01-10). 00-tutorial has noHintPenalty: true (see
+# challenges/00-tutorial/falco-rule.yaml) so it stays a zero-stakes intro
+# even though it is now part of the scored catalog. Order: 00 (intro) then
+# the canonical 01→10 ascending arc — never reorder 01-10 (see
+# scenarios/README.md "Ordering principle").
+id: nimbusbreach-with-tutorial
+title: "CTF Company — Full Scenario + Tutorial (11 missions)"
+challenges:
+  - 00-tutorial
+  - 01-initial-recon
+  - 02-credential-files
+  - 03-stealth-read
+  - 04-key-search
+  - 05-silent-search
+  - 06-web-rce-shell
+  - 07-persist
+  - 08-c2-beacon
+  - 09-hidden-cache
+  - 10-final-exfil
+# Advisory only (P27-3) — same tactics as nimbusbreach-full (00-tutorial adds
+# no new tactic coverage beyond what 01/03 already exercise).
+tactics:
+  - Discovery
+  - Credential Access
+  - Stealth
+  - Execution
+  - Command and Control
+  - Exfiltration

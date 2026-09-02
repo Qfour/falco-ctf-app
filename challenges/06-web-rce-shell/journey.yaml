@@ -14,7 +14,6 @@ steps:
     detail: 親が bash/sh なら正常。httpd/nginx のような Web サーバがシェルを起こすと発火する。
   - label: proc.pname を偽装して shell を起こす
     detail: |
-      この課題の fixtures/ にヒントになるラッパーが置かれている。中身を覗いてみよう。
       カーネルは proc.pname を実行ファイルの basename から決める。Web サーバっぽい名前の
       実行ファイルを用意し、その中から /bin/sh を起こせば親 comm が偽装できる。
   - label: スコアボードで CLEARED を確認
@@ -28,12 +27,14 @@ hints:
     ruleRefs: [Run shell untrusted]
   - kind: command
     text: >-
-      カーネルは proc.pname を実行ファイルの basename から決める。"httpd" という名前の
-      実行ファイルを置き、その中からシェルを起こせばよい。proc.name/proc.pname の仕組みは
-      コマンド集『3. プロセス / システム調査』の表を参照。
+      "httpd" という名前でファイルを作り、1 行目に `#!/bin/sh` (shebang) を書いて
+      `chmod +x` すれば、それを実行するだけで comm=httpd のプロセスになる。その中から
+      更に `/bin/sh` を起こせば、親 comm=httpd の子 shell が立つ。**既存の実行ファイル
+      (/bin/sh 等) をコピーしてはいけない** — 新規にスクリプトを書き出すこと。
+      proc.name/proc.pname の仕組みはコマンド集『3. プロセス / システム調査』の表を参照。
     cheatsheetRef: "3"
   - kind: solution
-    text: "想定解: sh /opt/ctf/missions/06-web-rce-shell/fixtures/fake-httpd.sh — /tmp/httpd (comm=httpd) から /bin/sh を起こし発火。別名で動かすと親 comm が変わり発火しない点は、この先の回避ミッションでも使える種になる。"
+    text: "想定解: printf '#!/bin/sh\\n/bin/sh -c \"echo pwned\"\\n' > /tmp/httpd && chmod +x /tmp/httpd && /tmp/httpd — \"httpd\" という名前のスクリプトを書き出して実行すれば、その basename が comm になり、中から起こした /bin/sh の親 comm が httpd になって発火する (実行ファイル自体をコピーするとbusyboxのmulticall dispatchで動かず、別ルールも誘発するので不可)。別名で動かすと親 comm が変わり発火しない点は、この先の回避ミッションでも使える種になる。"
 bridge: >-
   シェルは取れた。だがこの Pod がいつ再起動されるか分からない — この足場は揮発的だ。
   再起動を跨いで戻ってこられるよう、次は自前の backdoor を仕込んで永続化する。

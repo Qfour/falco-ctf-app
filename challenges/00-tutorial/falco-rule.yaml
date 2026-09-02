@@ -5,10 +5,19 @@ type: trigger
 # どの課題も使っていない (auto-solve 衝突なし)。deterministic に発火する
 # 安全な 1 コマンドで解けるため、初回発火のフィードバックを体験できる。
 #
-# 採点非影響の担保: 本番の採点シナリオ nimbusbreach-full/scenario.yaml は
-# この 00-tutorial を含まない。scoreboard は SCENARIO_FILE で Restrict
-# (fail-closed) するため、本番採点・/api/state・leaderboard・total には
-# 出てこない。参加者にはチュートリアル専用シナリオ tutorial-intro を使う。
+# 採点非影響の担保 (デフォルト): 本番公式シナリオ nimbusbreach-full/scenario.yaml
+# はこの 00-tutorial を含まない。scoreboard は SCENARIO_FILE で Restrict
+# (fail-closed) するため、それを使う限り本番採点・/api/state・leaderboard・
+# total には出てこない。参加者専用のチュートリアルには tutorial-intro を使う。
+#
+# 00-tutorial をカタログに含める scenario (例: 00 + 01-10) を使う運用も
+# ある (2026-09-03 CEO 決定)。その場合でも「ゼロリスクの導入課題」を保つため
+# noHintPenalty: true — このミッションのヒントは何回開いても score から
+# 減点されない (internal/scoreboard/scoring の UserScore が
+# catalog.Challenge.NoHintPenalty を見て、このミッションの hint reveal を
+# 集計から除外する。missionDetail の projection も揺れないよう同じフラグを
+# 見て 0 を返す)。他ミッションのヒント減点スケジュールは無変更。
+noHintPenalty: true
 expectedRules:
   - Execution from /dev/shm
 # ATT&CK mapping — canonical source for docs/Navigator layer (make gen-attack).

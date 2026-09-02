@@ -29,15 +29,19 @@ proc.pname をコントロールできる。
 
 # 試すこと
 
-fixtures に用意されたラッパーをそのまま実行:
+  printf '#!/bin/sh\n/bin/sh -c "echo pwned"\n' > /tmp/httpd
+  chmod +x /tmp/httpd
+  /tmp/httpd
 
-  sh /opt/ctf/missions/06-web-rce-shell/fixtures/fake-httpd.sh
+これは:
+  1. "httpd" という名前でスクリプトを書き出す (basename = httpd → comm = httpd)
+  2. それを実行し、その中から `/bin/sh` を起こす
+  3. Falco: 親 comm = "httpd" → shell 起動 → 発火
 
-これは内部で:
-  1. `/tmp/httpd` という shell スクリプトを書き出し (comm = "httpd")
-  2. それを exec
-  3. `/tmp/httpd` の中で `/bin/sh -c "..."` が走る
-  4. Falco: 親 comm = "httpd" → shell 起動 → 発火
+  ⚠ `cp /bin/sh /tmp/httpd` のように実行ファイルそのものをコピーしてはいけない
+    (busybox の multicall dispatch で意図通りに動かず、かつ新規バイナリの
+    drop+exec として別ルールも発火してしまう)。上記のように **スクリプトを
+    書き出す** 形にすること。
 
 # クリア条件
 
@@ -45,5 +49,4 @@ fixtures に用意されたラッパーをそのまま実行:
 
 # 環境にあるもの
 
-  /opt/ctf/missions/06-web-rce-shell/fixtures/welcome.txt    ← このファイル
-  /opt/ctf/missions/06-web-rce-shell/fixtures/fake-httpd.sh  ← Web RCE シナリオ
+  /opt/ctf/missions/06-web-rce-shell/fixtures/welcome.txt  ← このファイル

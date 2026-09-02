@@ -330,8 +330,12 @@ func (g *Grader) currentMission(user string) string {
 func (g *Grader) UserScore(user string, solvedCount int) int {
 	var revealed []int
 	for cid, idxs := range g.store.HintViews(user) {
-		if _, ok := g.cat[cid]; !ok {
+		ch, ok := g.cat[cid]
+		if !ok {
 			continue // stale reveal for a challenge no longer in the catalog
+		}
+		if ch.NoHintPenalty {
+			continue // e.g. 00-tutorial: hints are free on this challenge
 		}
 		revealed = append(revealed, idxs...)
 	}
