@@ -27,8 +27,8 @@ import (
 
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
 	"github.com/Qfour/falco-ctf-app/internal/apispec/specparity"
+	"github.com/Qfour/falco-ctf-app/internal/board"
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
-	"github.com/Qfour/falco-ctf-app/internal/qa"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/api"
 	"github.com/Qfour/falco-ctf-app/internal/store"
@@ -87,18 +87,18 @@ func newSpecFixture(t *testing.T) *specFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	qaSt, err := qa.Open(filepath.Join(t.TempDir(), "apispec-qa.db"))
+	boardSt, err := board.Open(filepath.Join(t.TempDir(), "apispec-board.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { qaSt.Close() })
+	t.Cleanup(func() { boardSt.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := scoreboard.NewHandler(cat, st, logger,
 		scoreboard.WithJourneys(journeys),
 		scoreboard.WithOrder([]string{"01-recon", "02-evade", "03-boss"}),
 		scoreboard.WithAdminEmails([]string{specFixtureAdmin}),
 		scoreboard.WithAllowedOrigins([]string{specFixtureOrigin}),
-		scoreboard.WithQA(qaSt),
+		scoreboard.WithBoard(boardSt),
 	)
 	return &specFixture{t: t, srv: srv}
 }
@@ -188,20 +188,30 @@ func TestAPISpec_V1_RouteSetMatchesSpec(t *testing.T) {
 	// CONTENT comparison, it cannot "cancel out" (LOW, 5x review: an earlier
 	// version of this comment claimed otherwise, which is not a real
 	// detection gap and isn't why this assert exists). The actual value is
-	// PROCESS, not detection: this literal `33` forces every PR that adds or
+	// PROCESS, not detection: this literal `36` forces every PR that adds or
 	// removes a route to touch this line, so the route-count CHANGE itself
 	// shows up in the diff and gets reviewed, instead of silently sliding
 	// through as "RouteSetDiff was still empty, so nothing to see here" —
-	// matches ADR-0005 C1's real-world count (20) plus ADR-0006's P25 QA
-	// ticket-chat routes (7) plus app#116's /static/tokens.css route (1),
-	// minus app#84's removal of the orphaned operator-broadcast hint API
-	// (GET /api/hints, POST /api/admin/hints — P22-1 follow-up, dead code
-	// once the docs-site hint timer it served was retired), plus Issue #95's
-	// POST /csp-report (CSP violation report intake), plus app#96's
-	// self-hosted Google Fonts vendoring (GET /vendor/fonts.css + 5 vendored
-	// woff2 files — P12 follow-up, egress-zero for the portal's fonts).
-	if len(routes) != 33 {
-		t.Errorf("expected 33 registered routes (ADR-0005 C1 + ADR-0006 P25 + app#116 - app#84 + app#95 + app#96), got %d: %v", len(routes), routes)
+	// matches ADR-0005 C1's real-world count (20) plus app#116's
+	// /static/tokens.css route (1), minus app#84's removal of the orphaned
+	// operator-broadcast hint API (GET /api/hints, POST /api/admin/hints —
+	// P22-1 follow-up, dead code once the docs-site hint timer it served was
+	// retired), plus Issue #95's POST /csp-report (CSP violation report
+	// intake), plus app#96's self-hosted Google Fonts vendoring (GET
+	// /vendor/fonts.css + 5 vendored woff2 files — P12 follow-up,
+	// egress-zero for the portal's fonts). The prior pinned value (33,
+	// which already included P25's 7 QA ticket-chat routes) is superseded
+	// by app#292 Phase 2's cutover: -7 QA routes (internal/qa removed
+	// wholesale) +10 QA Board routes (boardListThreads/boardGetThread/
+	// boardCreateThread/boardAppendMessage/boardLikeThread/
+	// boardUnlikeThread/boardAdminListThreads/boardAdminReply/
+	// boardAdminSetThreadState/boardAdminSetMessageState) = 33 - 7 + 10 = 36,
+	// then +1 more for the post-review gap-close boardAdminGetThread
+	// (GET /api/admin/board/threads/{tid} — the operator's single-thread
+	// full-text read, closing the "no admin GET route" gap the initial
+	// Phase 2 report flagged) = 37.
+	if len(routes) != 37 {
+		t.Errorf("expected 37 registered routes (ADR-0005 C1 + app#116 - app#84 + app#95 + app#96 - P25-QA(7) + app#292-Board(10) + boardAdminGetThread(1)), got %d: %v", len(routes), routes)
 	}
 }
 
@@ -548,16 +558,22 @@ var v5Coverage = map[string]bool{
 	"POST /api/users/{user}/challenges/{cid}/hints/{idx}":       true, // TestAPISpec_V5_OpenHintResultFieldsMatchSpec
 	"POST /api/users/{user}/challenges/{cid}/reset-dirty":       true, // TestAPISpec_V5_ResetDirtyResultFieldsMatchSpec
 	"POST /api/users/{user}/display-name":                       true, // TestAPISpec_V5_DisplayNameResultFieldsMatchSpec
-	"GET /api/users/{user}/questions":                           true, // TestAPISpec_V5_QuestionListFieldsMatchSpec
-	"POST /api/users/{user}/questions":                          true, // TestAPISpec_V5_QuestionThreadFieldsMatchSpec (create branch)
-	"GET /api/users/{user}/questions/{qid}":                     true, // TestAPISpec_V5_QuestionThreadFieldsMatchSpec (get branch)
-	"POST /api/users/{user}/questions/{qid}/messages":           true, // TestAPISpec_V5_QuestionThreadFieldsMatchSpec (message branch)
 	"GET /api/state":                                            true, // TestAPISpec_V5_StateFieldsMatchSpec
 	"POST /api/admin/reset":                                     true, // TestAPISpec_V5_AdminResetResultFieldsMatchSpec
 	"POST /api/admin/users/{user}/display-name":                 true, // TestAPISpec_V5_AdminDisplayNameResultFieldsMatchSpec
-	"GET /api/admin/questions":                                  true, // TestAPISpec_V5_AdminQuestionListFieldsMatchSpec
-	"GET /api/admin/questions/{qid}":                            true, // TestAPISpec_V5_AdminQuestionThreadFieldsMatchSpec (get branch)
-	"POST /api/admin/questions/{qid}/reply":                     true, // TestAPISpec_V5_AdminQuestionThreadFieldsMatchSpec (reply branch)
+	// app#292 Phase 2 (QA Board — supersedes P25's 7 QuestionList/
+	// QuestionThread entries above wholesale):
+	"GET /api/board/threads":                     true, // TestAPISpec_V5_BoardListFieldsMatchSpec
+	"GET /api/board/threads/{tid}":                true, // TestAPISpec_V5_BoardThreadFieldsMatchSpec (get branch)
+	"POST /api/board/threads":                     true, // TestAPISpec_V5_BoardThreadFieldsMatchSpec (create branch)
+	"POST /api/board/threads/{tid}/messages":      true, // TestAPISpec_V5_BoardThreadFieldsMatchSpec (message branch)
+	"POST /api/board/threads/{tid}/like":          true, // TestAPISpec_V5_BoardLikeResultFieldsMatchSpec (like branch)
+	"POST /api/board/threads/{tid}/unlike":        true, // TestAPISpec_V5_BoardLikeResultFieldsMatchSpec (unlike branch)
+	"GET /api/admin/board/threads":                true, // TestAPISpec_V5_BoardAdminListThreadsFieldsMatchSpec
+	"GET /api/admin/board/threads/{tid}":          true, // TestAPISpec_V5_BoardAdminThreadFieldsMatchSpec (get branch)
+	"POST /api/admin/board/threads/{tid}/reply":   true, // TestAPISpec_V5_BoardAdminThreadFieldsMatchSpec (reply branch)
+	"POST /api/admin/board/threads/{tid}/state":   true, // TestAPISpec_V5_BoardAdminThreadFieldsMatchSpec (state branch)
+	"POST /api/admin/board/messages/{mid}/state":  true, // TestAPISpec_V5_BoardAdminSetMessageStateFieldsMatchSpec
 }
 
 // TestAPISpec_VA1_ResponseObjectCoverageBidirectional is ADR-0009
@@ -582,13 +598,17 @@ func TestAPISpec_VA1_ResponseObjectCoverageBidirectional(t *testing.T) {
 	}
 
 	// ADR-0009 C2's 14 (scoreboard) + Decision A point 4's 7 QuestionList/
-	// QuestionThread additions = 21. Same PROCESS reasoning as V1's route
-	// count pin above: forces every PR that adds/removes a response-object
-	// operation to touch this line, so the count change itself gets
-	// reviewed instead of silently passing because the bidirectional diff
-	// above happened to stay empty.
-	if len(derived) != 21 {
-		t.Errorf("expected 21 response-object operations (ADR-0009 C2 + Decision A), got %d: %v", len(derived), derived)
+	// QuestionThread additions = 21 (P25). app#292 Phase 2 cutover: -7 QA
+	// entries (internal/qa removed wholesale) +10 QA Board entries
+	// (BoardList x2, BoardThread x3, LikeResult x2, MessageStateResult x1 —
+	// see v5Coverage above) = 21 - 7 + 10 = 24, then +1 more for the
+	// post-review gap-close boardAdminGetThread (BoardThread x4 total) = 25.
+	// Same PROCESS reasoning as V1's route count pin above: forces every PR
+	// that adds/removes a response-object operation to touch this line, so
+	// the count change itself gets reviewed instead of silently passing
+	// because the bidirectional diff above happened to stay empty.
+	if len(derived) != 25 {
+		t.Errorf("expected 25 response-object operations (ADR-0009 C2 + Decision A - P25-QA(7) + app#292-Board(10) + boardAdminGetThread(1)), got %d: %v", len(derived), derived)
 	}
 }
 
@@ -799,57 +819,18 @@ func TestAPISpec_V5_AdminDisplayNameResultFieldsMatchSpec(t *testing.T) {
 	}
 }
 
-// TestAPISpec_V5_QuestionListFieldsMatchSpec covers the PARTICIPANT listing
-// (GET /api/users/{user}/questions). Deliberately exercised with ZERO
-// tickets: docs/openapi-scoreboard.yaml's QuestionSummary.user is declared
-// as a `properties` entry but is NOT in `required`, and
-// qa.Store.ListForUser never sets it (see the schema's own description,
-// "only present in the ADMIN listing" — internal/scoreboard/api/qa_oapi.go's
-// toOapiSummary carries it through as a nil *string, so it is genuinely
-// ABSENT from the JSON, not null). V5's exact-key-match rule compares the
-// full declared `properties` set (spec.go's PropertyNames doc: deliberately
-// NOT `required`, so it does not special-case this), so populating this
-// list and letting CompareResponse recurse into a `user`-less
-// QuestionSummary would report a "missing: [user]" mismatch — a real,
-// pre-existing, INTENTIONAL schema/handler asymmetry (documented in the
-// spec's own prose) that ADR-0009 Decision A/B does not touch or resolve.
-// TestAPISpec_V5_AdminQuestionListFieldsMatchSpec below exercises the
-// non-vacuous QuestionSummary recursion instead, where ListAll DOES always
-// set `user`. See the PR report for this judgment call.
-func TestAPISpec_V5_QuestionListFieldsMatchSpec(t *testing.T) {
+// TestAPISpec_V5_BoardThreadFieldsMatchSpec exercises all THREE participant
+// operations whose 200 schema is BoardThread — boardCreateThread,
+// boardGetThread, boardAppendMessage — mirroring P25's
+// TestAPISpec_V5_QuestionThreadFieldsMatchSpec exactly (BoardThread's shape
+// does not vary by which route produced it, so one schema comparison per
+// call is enough; no union-of-branches judgment call needed).
+func TestAPISpec_V5_BoardThreadFieldsMatchSpec(t *testing.T) {
 	spec := loadScoreboardSpec(t)
 	f := newSpecFixture(t)
-
-	w := f.do("GET", "/api/users/sam/questions", "sam@ctf.local", nil)
-	if w.Code != http.StatusOK {
-		t.Fatalf("questions list: status=%d body=%s", w.Code, w.Body)
-	}
-	actual := f.decodedJSON(w)
-	schema := spec.SchemaByName("QuestionList")
+	schema := spec.SchemaByName("BoardThread")
 	if schema == nil {
-		t.Fatal("spec has no components.schemas.QuestionList")
-	}
-	for _, m := range specparity.CompareResponse(spec, schema, actual, "QuestionList") {
-		t.Errorf("%s: extra=%v missing=%v note=%q", m.Path, m.Extra, m.Missing, m.Note)
-	}
-	if questions, _ := actual["questions"].([]any); len(questions) != 0 {
-		t.Fatalf("test bug: expected zero tickets for a fresh user, got %d", len(questions))
-	}
-}
-
-// TestAPISpec_V5_QuestionThreadFieldsMatchSpec exercises all THREE
-// participant operations whose 200 schema is QuestionThread — createQuestion,
-// getQuestion, postQuestionMessage — since QuestionThread's shape does not
-// vary by which route produced it (unlike SubmitFlagVerdict/
-// SubmitDetectVerdict's branch-dependent keys, every declared property is
-// always present here, so a single schema comparison per call is enough; no
-// union-of-branches judgment call needed).
-func TestAPISpec_V5_QuestionThreadFieldsMatchSpec(t *testing.T) {
-	spec := loadScoreboardSpec(t)
-	f := newSpecFixture(t)
-	schema := spec.SchemaByName("QuestionThread")
-	if schema == nil {
-		t.Fatal("spec has no components.schemas.QuestionThread")
+		t.Fatal("spec has no components.schemas.BoardThread")
 	}
 	compare := func(label string, actual map[string]any) {
 		t.Helper()
@@ -858,74 +839,105 @@ func TestAPISpec_V5_QuestionThreadFieldsMatchSpec(t *testing.T) {
 		}
 	}
 
-	w := f.do("POST", "/api/users/tara/questions", "tara@ctf.local", map[string]any{"subject": "help", "body": "how do I start?"})
+	w := f.do("POST", "/api/board/threads", "tara@ctf.local", map[string]any{"audience": "all", "subject": "help", "body": "how do I start?"})
 	if w.Code != http.StatusOK {
-		t.Fatalf("create question: status=%d body=%s", w.Code, w.Body)
+		t.Fatalf("create thread: status=%d body=%s", w.Code, w.Body)
 	}
 	created := f.decodedJSON(w)
-	compare("QuestionThread(create)", created)
-	qid, _ := created["id"].(string)
-	if qid == "" {
-		t.Fatal("created ticket has no id — cannot exercise get/messages")
+	compare("BoardThread(create)", created)
+	tid, _ := created["id"].(string)
+	if tid == "" {
+		t.Fatal("created thread has no id — cannot exercise get/messages")
 	}
 	if messages, _ := created["messages"].([]any); len(messages) == 0 {
-		t.Fatal("created ticket has an empty messages[] — the array-recursion branch was never exercised")
+		t.Fatal("created thread has an empty messages[] — the array-recursion branch was never exercised")
 	}
 
-	w = f.do("GET", "/api/users/tara/questions/"+qid, "tara@ctf.local", nil)
+	w = f.do("GET", "/api/board/threads/"+tid, "tara@ctf.local", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("get question: status=%d body=%s", w.Code, w.Body)
+		t.Fatalf("get thread: status=%d body=%s", w.Code, w.Body)
 	}
-	compare("QuestionThread(get)", f.decodedJSON(w))
+	compare("BoardThread(get)", f.decodedJSON(w))
 
-	w = f.do("POST", "/api/users/tara/questions/"+qid+"/messages", "tara@ctf.local", map[string]any{"body": "any update?"})
+	w = f.do("POST", "/api/board/threads/"+tid+"/messages", "tara@ctf.local", map[string]any{"body": "any update?"})
 	if w.Code != http.StatusOK {
 		t.Fatalf("post message: status=%d body=%s", w.Code, w.Body)
 	}
-	compare("QuestionThread(message)", f.decodedJSON(w))
+	compare("BoardThread(message)", f.decodedJSON(w))
 }
 
-// TestAPISpec_V5_AdminQuestionListFieldsMatchSpec covers the ADMIN listing
-// (GET /api/admin/questions) — the QuestionList/QuestionSummary companion
-// to the participant test above, seeded with one ticket so ListAll's
-// always-set `user` field exercises the array-recursion branch
-// non-vacuously (the asymmetry TestAPISpec_V5_QuestionListFieldsMatchSpec's
-// doc comment explains).
-func TestAPISpec_V5_AdminQuestionListFieldsMatchSpec(t *testing.T) {
+// TestAPISpec_V5_BoardListFieldsMatchSpec covers the PARTICIPANT listing
+// (GET /api/board/threads), seeded with one thread so the array-recursion
+// branch is exercised non-vacuously — unlike P25's QuestionList/
+// QuestionSummary, BoardSummary.author is REQUIRED (no participant-vs-admin
+// listing asymmetry to preserve here), so there is no reason to keep this
+// test deliberately empty the way P25's predecessor was.
+func TestAPISpec_V5_BoardListFieldsMatchSpec(t *testing.T) {
 	spec := loadScoreboardSpec(t)
 	f := newSpecFixture(t)
 
-	w := f.do("POST", "/api/users/uma/questions", "uma@ctf.local", map[string]any{"subject": "s", "body": "b"})
+	w := f.do("POST", "/api/board/threads", "sam@ctf.local", map[string]any{"audience": "all", "subject": "s", "body": "b"})
 	if w.Code != http.StatusOK {
-		t.Fatalf("seed ticket: status=%d body=%s", w.Code, w.Body)
+		t.Fatalf("seed thread: status=%d body=%s", w.Code, w.Body)
 	}
 
-	w = f.do("GET", "/api/admin/questions", specFixtureAdmin, nil)
+	w = f.do("GET", "/api/board/threads", "sam@ctf.local", nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("admin questions list: status=%d body=%s", w.Code, w.Body)
+		t.Fatalf("board list: status=%d body=%s", w.Code, w.Body)
 	}
 	actual := f.decodedJSON(w)
-	schema := spec.SchemaByName("QuestionList")
+	schema := spec.SchemaByName("BoardList")
 	if schema == nil {
-		t.Fatal("spec has no components.schemas.QuestionList")
+		t.Fatal("spec has no components.schemas.BoardList")
 	}
-	for _, m := range specparity.CompareResponse(spec, schema, actual, "QuestionList") {
+	for _, m := range specparity.CompareResponse(spec, schema, actual, "BoardList") {
 		t.Errorf("%s: extra=%v missing=%v note=%q", m.Path, m.Extra, m.Missing, m.Note)
 	}
-	if questions, _ := actual["questions"].([]any); len(questions) == 0 {
-		t.Fatal("fixture produced an empty questions[] — the array-recursion branch was never exercised")
+	if threads, _ := actual["threads"].([]any); len(threads) == 0 {
+		t.Fatal("fixture produced an empty threads[] — the array-recursion branch was never exercised")
 	}
 }
 
-// TestAPISpec_V5_AdminQuestionThreadFieldsMatchSpec covers the two ADMIN
-// operations whose 200 schema is QuestionThread — adminGetQuestion and
-// adminReplyQuestion.
-func TestAPISpec_V5_AdminQuestionThreadFieldsMatchSpec(t *testing.T) {
+// TestAPISpec_V5_BoardAdminListThreadsFieldsMatchSpec covers the ADMIN
+// listing (GET /api/admin/board/threads) — same BoardList/BoardSummary
+// shape as the participant listing, seeded so the array-recursion branch is
+// non-vacuous here too.
+func TestAPISpec_V5_BoardAdminListThreadsFieldsMatchSpec(t *testing.T) {
 	spec := loadScoreboardSpec(t)
 	f := newSpecFixture(t)
-	schema := spec.SchemaByName("QuestionThread")
+
+	w := f.do("POST", "/api/board/threads", "uma@ctf.local", map[string]any{"audience": "admin", "subject": "s", "body": "b"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("seed thread: status=%d body=%s", w.Code, w.Body)
+	}
+
+	w = f.do("GET", "/api/admin/board/threads", specFixtureAdmin, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("admin board list: status=%d body=%s", w.Code, w.Body)
+	}
+	actual := f.decodedJSON(w)
+	schema := spec.SchemaByName("BoardList")
 	if schema == nil {
-		t.Fatal("spec has no components.schemas.QuestionThread")
+		t.Fatal("spec has no components.schemas.BoardList")
+	}
+	for _, m := range specparity.CompareResponse(spec, schema, actual, "BoardList") {
+		t.Errorf("%s: extra=%v missing=%v note=%q", m.Path, m.Extra, m.Missing, m.Note)
+	}
+	if threads, _ := actual["threads"].([]any); len(threads) == 0 {
+		t.Fatal("fixture produced an empty threads[] — the array-recursion branch was never exercised")
+	}
+}
+
+// TestAPISpec_V5_BoardAdminThreadFieldsMatchSpec covers the three ADMIN
+// operations whose 200 schema is BoardThread — boardAdminGetThread,
+// boardAdminReply, and boardAdminSetThreadState — mirroring P25's
+// TestAPISpec_V5_AdminQuestionThreadFieldsMatchSpec.
+func TestAPISpec_V5_BoardAdminThreadFieldsMatchSpec(t *testing.T) {
+	spec := loadScoreboardSpec(t)
+	f := newSpecFixture(t)
+	schema := spec.SchemaByName("BoardThread")
+	if schema == nil {
+		t.Fatal("spec has no components.schemas.BoardThread")
 	}
 	compare := func(label string, actual map[string]any) {
 		t.Helper()
@@ -934,29 +946,121 @@ func TestAPISpec_V5_AdminQuestionThreadFieldsMatchSpec(t *testing.T) {
 		}
 	}
 
-	w := f.do("POST", "/api/users/vera/questions", "vera@ctf.local", map[string]any{"subject": "s", "body": "b"})
+	w := f.do("POST", "/api/board/threads", "vera@ctf.local", map[string]any{"audience": "admin", "subject": "s", "body": "b"})
 	if w.Code != http.StatusOK {
-		t.Fatalf("seed ticket: status=%d body=%s", w.Code, w.Body)
+		t.Fatalf("seed thread: status=%d body=%s", w.Code, w.Body)
 	}
-	qid, _ := f.decodedJSON(w)["id"].(string)
-	if qid == "" {
-		t.Fatal("seed ticket has no id")
+	tid, _ := f.decodedJSON(w)["id"].(string)
+	if tid == "" {
+		t.Fatal("seed thread has no id")
 	}
 
-	w = f.do("GET", "/api/admin/questions/"+qid, specFixtureAdmin, nil)
+	w = f.do("GET", "/api/admin/board/threads/"+tid, specFixtureAdmin, nil)
 	if w.Code != http.StatusOK {
-		t.Fatalf("admin get question: status=%d body=%s", w.Code, w.Body)
+		t.Fatalf("admin get thread: status=%d body=%s", w.Code, w.Body)
 	}
-	compare("QuestionThread(admin get)", f.decodedJSON(w))
+	compare("BoardThread(admin get)", f.decodedJSON(w))
 
-	w = f.do("POST", "/api/admin/questions/"+qid+"/reply", specFixtureAdmin, map[string]any{"body": "here's how"})
+	w = f.do("POST", "/api/admin/board/threads/"+tid+"/reply", specFixtureAdmin, map[string]any{"body": "here's how"})
 	if w.Code != http.StatusOK {
 		t.Fatalf("admin reply: status=%d body=%s", w.Code, w.Body)
 	}
 	replied := f.decodedJSON(w)
-	compare("QuestionThread(admin reply)", replied)
+	compare("BoardThread(admin reply)", replied)
 	if answered, _ := replied["answered"].(bool); !answered {
 		t.Fatalf("expected answered=true after an admin reply, got %+v", replied)
+	}
+
+	w = f.do("POST", "/api/admin/board/threads/"+tid+"/state", specFixtureAdmin, map[string]any{"pinned": true})
+	if w.Code != http.StatusOK {
+		t.Fatalf("admin thread state: status=%d body=%s", w.Code, w.Body)
+	}
+	stated := f.decodedJSON(w)
+	compare("BoardThread(admin state)", stated)
+	if pinned, _ := stated["pinned"].(bool); !pinned {
+		t.Fatalf("expected pinned=true after boardAdminSetThreadState, got %+v", stated)
+	}
+}
+
+// TestAPISpec_V5_BoardLikeResultFieldsMatchSpec covers the two operations
+// whose 200 schema is LikeResult — boardLikeThread and boardUnlikeThread.
+func TestAPISpec_V5_BoardLikeResultFieldsMatchSpec(t *testing.T) {
+	spec := loadScoreboardSpec(t)
+	f := newSpecFixture(t)
+	schema := spec.SchemaByName("LikeResult")
+	if schema == nil {
+		t.Fatal("spec has no components.schemas.LikeResult")
+	}
+	compare := func(label string, actual map[string]any) {
+		t.Helper()
+		for _, m := range specparity.CompareResponse(spec, schema, actual, label) {
+			t.Errorf("%s: extra=%v missing=%v note=%q", m.Path, m.Extra, m.Missing, m.Note)
+		}
+	}
+
+	w := f.do("POST", "/api/board/threads", "walt@ctf.local", map[string]any{"audience": "all", "subject": "s", "body": "b"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("seed thread: status=%d body=%s", w.Code, w.Body)
+	}
+	tid, _ := f.decodedJSON(w)["id"].(string)
+	if tid == "" {
+		t.Fatal("seed thread has no id")
+	}
+
+	// A DIFFERENT identity likes it (self-like is rejected — see
+	// board.ErrSelfLike / TestBoard_SelfLikeRejected).
+	w = f.do("POST", "/api/board/threads/"+tid+"/like", "yuki@ctf.local", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("like: status=%d body=%s", w.Code, w.Body)
+	}
+	liked := f.decodedJSON(w)
+	compare("LikeResult(like)", liked)
+	if v, _ := liked["liked"].(bool); !v {
+		t.Fatalf("expected liked=true after a successful like, got %+v", liked)
+	}
+
+	w = f.do("POST", "/api/board/threads/"+tid+"/unlike", "yuki@ctf.local", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("unlike: status=%d body=%s", w.Code, w.Body)
+	}
+	compare("LikeResult(unlike)", f.decodedJSON(w))
+}
+
+// TestAPISpec_V5_BoardAdminSetMessageStateFieldsMatchSpec covers
+// boardAdminSetMessageState's MessageStateResult schema.
+func TestAPISpec_V5_BoardAdminSetMessageStateFieldsMatchSpec(t *testing.T) {
+	spec := loadScoreboardSpec(t)
+	f := newSpecFixture(t)
+
+	w := f.do("POST", "/api/board/threads", "zara@ctf.local", map[string]any{"audience": "all", "subject": "s", "body": "opening message"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("seed thread: status=%d body=%s", w.Code, w.Body)
+	}
+	created := f.decodedJSON(w)
+	tid, _ := created["id"].(string)
+	msgs, _ := created["messages"].([]any)
+	if tid == "" || len(msgs) == 0 {
+		t.Fatal("seed thread missing id or opening message")
+	}
+	mid, _ := msgs[0].(map[string]any)["id"].(string)
+	if mid == "" {
+		t.Fatal("seed thread's opening message has no id")
+	}
+
+	w = f.do("POST", "/api/admin/board/messages/"+mid+"/state", specFixtureAdmin, map[string]any{"state": "hidden"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("admin message state: status=%d body=%s", w.Code, w.Body)
+	}
+	actual := f.decodedJSON(w)
+	schema := spec.SchemaByName("MessageStateResult")
+	if schema == nil {
+		t.Fatal("spec has no components.schemas.MessageStateResult")
+	}
+	for _, m := range specparity.CompareResponse(spec, schema, actual, "MessageStateResult") {
+		t.Errorf("%s: extra=%v missing=%v note=%q", m.Path, m.Extra, m.Missing, m.Note)
+	}
+	if state, _ := actual["state"].(string); state != "hidden" {
+		t.Fatalf("expected state=hidden to round-trip, got %+v", actual)
 	}
 }
 

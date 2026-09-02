@@ -9,6 +9,45 @@ import (
 	"time"
 )
 
+// Defines values for BoardMessageAuthorRole.
+const (
+	BoardMessageAuthorRoleAdmin       BoardMessageAuthorRole = "admin"
+	BoardMessageAuthorRoleParticipant BoardMessageAuthorRole = "participant"
+)
+
+// Defines values for BoardMessageState.
+const (
+	BoardMessageStateDeleted BoardMessageState = "deleted"
+	BoardMessageStateHidden  BoardMessageState = "hidden"
+	BoardMessageStateVisible BoardMessageState = "visible"
+)
+
+// Defines values for BoardSummaryAudience.
+const (
+	BoardSummaryAudienceAdmin BoardSummaryAudience = "admin"
+	BoardSummaryAudienceAll   BoardSummaryAudience = "all"
+)
+
+// Defines values for BoardSummaryState.
+const (
+	BoardSummaryStateDeleted BoardSummaryState = "deleted"
+	BoardSummaryStateHidden  BoardSummaryState = "hidden"
+	BoardSummaryStateVisible BoardSummaryState = "visible"
+)
+
+// Defines values for BoardThreadAudience.
+const (
+	Admin BoardThreadAudience = "admin"
+	All   BoardThreadAudience = "all"
+)
+
+// Defines values for BoardThreadState.
+const (
+	BoardThreadStateDeleted BoardThreadState = "deleted"
+	BoardThreadStateHidden  BoardThreadState = "hidden"
+	BoardThreadStateVisible BoardThreadState = "visible"
+)
+
 // Defines values for ChallengeStatType.
 const (
 	ChallengeStatTypeDetect  ChallengeStatType = "detect"
@@ -21,6 +60,20 @@ const (
 	BelowMinimumPriority   IngestIgnoredReason = "below minimum priority"
 	NotAChallengeContainer IngestIgnoredReason = "not a challenge container"
 	NotACtfWorkspaceEvent  IngestIgnoredReason = "not a ctf workspace event"
+)
+
+// Defines values for MessageStateRequestState.
+const (
+	MessageStateRequestStateDeleted MessageStateRequestState = "deleted"
+	MessageStateRequestStateHidden  MessageStateRequestState = "hidden"
+	MessageStateRequestStateVisible MessageStateRequestState = "visible"
+)
+
+// Defines values for MessageStateResultState.
+const (
+	MessageStateResultStateDeleted MessageStateResultState = "deleted"
+	MessageStateResultStateHidden  MessageStateResultState = "hidden"
+	MessageStateResultStateVisible MessageStateResultState = "visible"
 )
 
 // Defines values for MissionDetailStatus.
@@ -51,12 +104,6 @@ const (
 	Trigger MissionSummaryType = "trigger"
 )
 
-// Defines values for QuestionMessageAuthorRole.
-const (
-	Admin       QuestionMessageAuthorRole = "admin"
-	Participant QuestionMessageAuthorRole = "participant"
-)
-
 // Defines values for SubmitDetectVerdictStatus.
 const (
 	FalsePositive SubmitDetectVerdictStatus = "false-positive"
@@ -65,17 +112,131 @@ const (
 	Solved        SubmitDetectVerdictStatus = "solved"
 )
 
-// AdminReplyRequest same "no author/author_role" discipline as CreateQuestionRequest — the operator's own identity comes from X-Auth-Request-Email, never the body.
-type AdminReplyRequest struct {
-	// Body 1..4096 bytes after trimming
-	Body string `json:"body"`
-}
+// Defines values for ThreadStateRequestState.
+const (
+	ThreadStateRequestStateDeleted ThreadStateRequestState = "deleted"
+	ThreadStateRequestStateHidden  ThreadStateRequestState = "hidden"
+	ThreadStateRequestStateVisible ThreadStateRequestState = "visible"
+)
+
+// Defines values for BoardAdminListThreadsParamsSort.
+const (
+	Likes  BoardAdminListThreadsParamsSort = "likes"
+	Recent BoardAdminListThreadsParamsSort = "recent"
+)
 
 // AdminResetResult defines model for AdminResetResult.
 type AdminResetResult struct {
 	ClearedSolves int  `json:"cleared_solves"`
 	Ok            bool `json:"ok"`
 }
+
+// BoardList defines model for BoardList.
+type BoardList struct {
+	Threads []BoardSummary `json:"threads"`
+}
+
+// BoardMessage One message in a QA Board thread (app#292). `author_role` /
+// `author` are always server-set per the ROUTE the message was
+// written through (`participant`+the caller's own derived username
+// on the participant write routes, `admin`+the fixed constant
+// `"staff"` on the operator reply route) — never accepted from
+// request-body input on any write route. `state` is a per-message
+// moderation column; a `deleted` message's `body` is `""` in every
+// response, including the admin's.
+type BoardMessage struct {
+	Author string `json:"author"`
+
+	// AuthorDisplay Server-resolved display name for `author` (app#292 Phase 3
+	// review). An `admin`-authored message always resolves to the
+	// fixed label `"運営"` (never a real operator identity, same
+	// posture as `author` itself). A `participant`-authored message
+	// resolves through the same display-name lookup the leaderboard
+	// uses; if none was ever set, this equals `author` — a lookup
+	// never fails or omits this field, it only ever falls back to
+	// the slug.
+	AuthorDisplay string                 `json:"authorDisplay"`
+	AuthorRole    BoardMessageAuthorRole `json:"author_role"`
+	Body          string                 `json:"body"`
+	CreatedAt     time.Time              `json:"created_at"`
+	Id            string                 `json:"id"`
+	State         BoardMessageState      `json:"state"`
+}
+
+// BoardMessageAuthorRole defines model for BoardMessage.AuthorRole.
+type BoardMessageAuthorRole string
+
+// BoardMessageState defines model for BoardMessage.State.
+type BoardMessageState string
+
+// BoardSummary One row of a QA Board thread LISTING — never the message bodies.
+type BoardSummary struct {
+	Answered bool                 `json:"answered"`
+	Audience BoardSummaryAudience `json:"audience"`
+	Author   string               `json:"author"`
+
+	// AuthorDisplay same server-resolved display name as BoardThread.authorDisplay — always the thread's opening participant.
+	AuthorDisplay string            `json:"authorDisplay"`
+	CreatedAt     time.Time         `json:"created_at"`
+	Id            string            `json:"id"`
+	LikeCount     int               `json:"like_count"`
+	Liked         bool              `json:"liked"`
+	MessageCount  int               `json:"message_count"`
+	Pinned        bool              `json:"pinned"`
+	State         BoardSummaryState `json:"state"`
+	Subject       string            `json:"subject"`
+
+	// UpdatedAt the latest message's created_at (or created_at itself, for a thread with only its opening message)
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// BoardSummaryAudience defines model for BoardSummary.Audience.
+type BoardSummaryAudience string
+
+// BoardSummaryState defines model for BoardSummary.State.
+type BoardSummaryState string
+
+// BoardThread A full QA Board thread: the opening subject plus every message
+// this viewer/role is entitled to see (oldest first), plus this
+// thread's like count and whether the CALLER has liked it. Returned
+// by boardCreateThread, boardGetThread, boardAppendMessage,
+// boardAdminReply and boardAdminSetThreadState alike, so a client can
+// use ONE shape for "here is the thread after my action" everywhere.
+type BoardThread struct {
+	// Answered A STORED column (unlike P25's QuestionSummary.answered, which
+	// was derived per-listing): an admin reply flips it to true as a
+	// convenience, but `boardAdminSetThreadState` can still
+	// explicitly set it back to false (e.g. "we asked a clarifying
+	// question, this isn't answered yet").
+	Answered bool `json:"answered"`
+
+	// Audience fixed at creation; no operation in this API ever changes it
+	Audience BoardThreadAudience `json:"audience"`
+	Author   string              `json:"author"`
+
+	// AuthorDisplay Server-resolved display name for `author` (app#292 Phase 3
+	// review) — always the participant who opened the thread, so
+	// always resolved through the display-name lookup, never the
+	// fixed staff label. Falls back to `author` itself when no
+	// display name was ever set.
+	AuthorDisplay string    `json:"authorDisplay"`
+	CreatedAt     time.Time `json:"created_at"`
+	Id            string    `json:"id"`
+	LikeCount     int       `json:"like_count"`
+
+	// Liked whether the CALLER (the viewer this response was built for) has liked this thread
+	Liked    bool             `json:"liked"`
+	Messages []BoardMessage   `json:"messages"`
+	Pinned   bool             `json:"pinned"`
+	State    BoardThreadState `json:"state"`
+	Subject  string           `json:"subject"`
+}
+
+// BoardThreadAudience fixed at creation; no operation in this API ever changes it
+type BoardThreadAudience string
+
+// BoardThreadState defines model for BoardThread.State.
+type BoardThreadState string
 
 // ChallengeSolver defines model for ChallengeSolver.
 type ChallengeSolver struct {
@@ -105,15 +266,24 @@ type ChallengeStat struct {
 // ChallengeStatType defines model for ChallengeStat.Type.
 type ChallengeStatType string
 
-// CreateQuestionRequest Deliberately has NO `author` / `author_role` property — there is
+// CreateThreadRequest Deliberately has NO `author` / `author_role` property — there is
 // nothing here for a participant to smuggle a role claim through
-// (security-engineer finding 1, HIGH). Any such keys present in a raw
-// request body are silently ignored.
-type CreateQuestionRequest struct {
-	// Body 1..4096 bytes after trimming
+// (same discipline P25's CreateQuestionRequest enforced). Any such
+// keys present in a raw request body are silently ignored.
+type CreateThreadRequest struct {
+	// Audience `admin` (private) or `all` (public). Any OTHER value —
+	// including empty/absent — is treated as `admin` server-side
+	// (fail-closed default; see boardCreateThread's own description).
+	// Declared as a free string here, not `enum: [admin, all]`, so an
+	// out-of-enum value is a documented 200-with-fallback rather than
+	// a spec-level input the generated request type would reject
+	// before the handler's own fail-closed coercion ever runs.
+	Audience string `json:"audience"`
+
+	// Body 1..4096 bytes after trimming; rejected 400 if it matches the flag shape FALCO{...}
 	Body string `json:"body"`
 
-	// Subject 1..120 runes after trimming
+	// Subject 1..120 runes after trimming; rejected 400 if it matches the flag shape FALCO{...} (same shape check as body — a public audience=all thread's subject is rendered to every participant just like its body)
 	Subject string `json:"subject"`
 }
 
@@ -326,6 +496,14 @@ type LegacyCSPReport struct {
 	} `json:"csp-report,omitempty"`
 }
 
+// LikeResult the like/unlike routes' small result shape — a full thread refetch is unnecessary for a toggle.
+type LikeResult struct {
+	LikeCount int    `json:"like_count"`
+	Liked     bool   `json:"liked"`
+	Ok        bool   `json:"ok"`
+	Tid       string `json:"tid"`
+}
+
 // Me `GET /api/users/{user}/me`. Self-scoped: `rank`/`score` are the caller's
 // OWN row out of a field-wide computation — no other participant's data is
 // serialized (P23-ME-1).
@@ -361,6 +539,24 @@ type Me struct {
 	TotalChallenges int          `json:"total_challenges"`
 	User            string       `json:"user"`
 }
+
+// MessageStateRequest defines model for MessageStateRequest.
+type MessageStateRequest struct {
+	State MessageStateRequestState `json:"state"`
+}
+
+// MessageStateRequestState defines model for MessageStateRequest.State.
+type MessageStateRequestState string
+
+// MessageStateResult defines model for MessageStateResult.
+type MessageStateResult struct {
+	Mid   string                  `json:"mid"`
+	Ok    bool                    `json:"ok"`
+	State MessageStateResultState `json:"state"`
+}
+
+// MessageStateResultState defines model for MessageStateResult.State.
+type MessageStateResultState string
 
 // MissionDetail The selected mission's detail block (`Journey.detail`). Static content
 // (brief / steps / Falco rule excerpt) is returned for any status; only
@@ -497,68 +693,16 @@ type OpenedHint struct {
 	Text string `json:"text"`
 }
 
-// PostQuestionMessageRequest same "no author/author_role" discipline as CreateQuestionRequest.
-type PostQuestionMessageRequest struct {
-	// Body 1..4096 bytes after trimming
+// PostMessageRequest same "no author/author_role" discipline as CreateThreadRequest.
+type PostMessageRequest struct {
+	// Body 1..4096 bytes after trimming; rejected 400 if it matches the flag shape FALCO{...}
 	Body string `json:"body"`
 }
 
-// QuestionList defines model for QuestionList.
-type QuestionList struct {
-	Questions []QuestionSummary `json:"questions"`
-}
-
-// QuestionMessage One message in a P25 QA ticket thread (ADR-0006). `author_role` /
-// `author` are always server-set per the ROUTE the message was
-// written through (`participant`+`{user}` on the participant write
-// routes, `admin`+the caller's own proven email on the operator reply
-// route) — never accepted from request-body input on any write route.
-type QuestionMessage struct {
-	Author     string                    `json:"author"`
-	AuthorRole QuestionMessageAuthorRole `json:"author_role"`
-	Body       string                    `json:"body"`
-	CreatedAt  time.Time                 `json:"created_at"`
-}
-
-// QuestionMessageAuthorRole defines model for QuestionMessage.AuthorRole.
-type QuestionMessageAuthorRole string
-
-// QuestionSummary One row of a P25 QA ticket LISTING — never the message bodies.
-// `answered` is DERIVED (at least one message has `author_role:
-// admin`), not a stored status column (ADR-0006 Decision 1) — it can
-// never drift out of sync with the messages that justify it.
-type QuestionSummary struct {
-	Answered     bool      `json:"answered"`
-	CreatedAt    time.Time `json:"created_at"`
-	Id           string    `json:"id"`
-	MessageCount int       `json:"message_count"`
-	Subject      string    `json:"subject"`
-
-	// UpdatedAt the latest message's created_at (or created_at itself, for a ticket with only its opening message)
-	UpdatedAt time.Time `json:"updated_at"`
-
-	// User only present in the ADMIN listing (`GET /api/admin/questions`) — the participant's own listing omits it (the caller already knows it is their own)
-	User *string `json:"user,omitempty"`
-}
-
-// QuestionThread A full P25 QA ticket ("1 ticket = 1 thread", ADR-0006): the opening
-// subject plus every message, oldest first. Returned by
-// createQuestion, getQuestion, postQuestionMessage, adminGetQuestion
-// and adminReplyQuestion alike, so a client can use ONE shape for
-// "here is the ticket after my action" everywhere.
-type QuestionThread struct {
-	// Answered Same DERIVATION rule as QuestionSummary.answered (at least one
-	// message has `author_role: admin`) — added (Issue #167) so the
-	// portal's Support/Queue panes can read `thread.answered` directly
-	// instead of each independently re-deriving the same predicate
-	// from `messages` client-side (`(th.messages || []).some(m =>
-	// m.author_role === 'admin')`, duplicated in two places pre-#167).
-	Answered  bool              `json:"answered"`
-	CreatedAt time.Time         `json:"created_at"`
-	Id        string            `json:"id"`
-	Messages  []QuestionMessage `json:"messages"`
-	Subject   string            `json:"subject"`
-	User      string            `json:"user"`
+// PostReplyRequest same "no author/author_role" discipline as CreateThreadRequest — the operator's reply author is always the fixed constant "staff", never request-body input or the caller's raw email.
+type PostReplyRequest struct {
+	// Body 1..4096 bytes after trimming; rejected 400 if it matches the flag shape FALCO{...}
+	Body string `json:"body"`
 }
 
 // ReportsAPIEntry One element of the `report-to` (CSP3 Reporting API, current
@@ -724,14 +868,39 @@ type SubmitFlagVerdict struct {
 	User   *string `json:"user,omitempty"`
 }
 
+// ThreadStateRequest Every field is optional; only the fields PRESENT are applied in
+// one update (`internal/board.Store.SetThreadState`). A request with
+// none of the three is a harmless no-op that still confirms `{tid}`
+// exists (never a silent success for an unknown id).
+type ThreadStateRequest struct {
+	Answered *bool                    `json:"answered,omitempty"`
+	Pinned   *bool                    `json:"pinned,omitempty"`
+	State    *ThreadStateRequestState `json:"state,omitempty"`
+}
+
+// ThreadStateRequestState defines model for ThreadStateRequest.State.
+type ThreadStateRequestState string
+
 // Cid defines model for Cid.
 type Cid = string
 
-// Qid defines model for Qid.
-type Qid = string
+// Mid defines model for Mid.
+type Mid = string
+
+// Tid defines model for Tid.
+type Tid = string
 
 // User defines model for User.
 type User = string
+
+// BoardAdminListThreadsParams defines parameters for BoardAdminListThreads.
+type BoardAdminListThreadsParams struct {
+	// Sort sort order hint for the operator moderation UI; default is pinned-first then most-recently-active
+	Sort *BoardAdminListThreadsParamsSort `form:"sort,omitempty" json:"sort,omitempty"`
+}
+
+// BoardAdminListThreadsParamsSort defines parameters for BoardAdminListThreads.
+type BoardAdminListThreadsParamsSort string
 
 // GetUserJourneyParams defines parameters for GetUserJourney.
 type GetUserJourneyParams struct {
@@ -743,11 +912,23 @@ type GetUserJourneyParams struct {
 // CspReportApplicationReportsPlusJSONBody defines parameters for CspReport.
 type CspReportApplicationReportsPlusJSONBody = []ReportsAPIEntry
 
-// AdminReplyQuestionJSONRequestBody defines body for AdminReplyQuestion for application/json ContentType.
-type AdminReplyQuestionJSONRequestBody = AdminReplyRequest
+// BoardAdminSetMessageStateJSONRequestBody defines body for BoardAdminSetMessageState for application/json ContentType.
+type BoardAdminSetMessageStateJSONRequestBody = MessageStateRequest
+
+// BoardAdminReplyJSONRequestBody defines body for BoardAdminReply for application/json ContentType.
+type BoardAdminReplyJSONRequestBody = PostReplyRequest
+
+// BoardAdminSetThreadStateJSONRequestBody defines body for BoardAdminSetThreadState for application/json ContentType.
+type BoardAdminSetThreadStateJSONRequestBody = ThreadStateRequest
 
 // AdminSetDisplayNameJSONRequestBody defines body for AdminSetDisplayName for application/json ContentType.
 type AdminSetDisplayNameJSONRequestBody = DisplayNameRequest
+
+// BoardCreateThreadJSONRequestBody defines body for BoardCreateThread for application/json ContentType.
+type BoardCreateThreadJSONRequestBody = CreateThreadRequest
+
+// BoardAppendMessageJSONRequestBody defines body for BoardAppendMessage for application/json ContentType.
+type BoardAppendMessageJSONRequestBody = PostMessageRequest
 
 // SubmitFlagJSONRequestBody defines body for SubmitFlag for application/json ContentType.
 type SubmitFlagJSONRequestBody = SubmitFlagRequest
@@ -760,12 +941,6 @@ type SetStepCheckJSONRequestBody = StepCheckRequest
 
 // SetDisplayNameJSONRequestBody defines body for SetDisplayName for application/json ContentType.
 type SetDisplayNameJSONRequestBody = DisplayNameRequest
-
-// CreateQuestionJSONRequestBody defines body for CreateQuestion for application/json ContentType.
-type CreateQuestionJSONRequestBody = CreateQuestionRequest
-
-// PostQuestionMessageJSONRequestBody defines body for PostQuestionMessage for application/json ContentType.
-type PostQuestionMessageJSONRequestBody = PostQuestionMessageRequest
 
 // CspReportApplicationReportsPlusJSONRequestBody defines body for CspReport for application/reports+json ContentType.
 type CspReportApplicationReportsPlusJSONRequestBody = CspReportApplicationReportsPlusJSONBody

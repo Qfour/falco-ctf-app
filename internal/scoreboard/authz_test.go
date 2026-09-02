@@ -37,8 +37,8 @@ import (
 	"testing"
 
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
+	"github.com/Qfour/falco-ctf-app/internal/board"
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
-	"github.com/Qfour/falco-ctf-app/internal/qa"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/api"
 	"github.com/Qfour/falco-ctf-app/internal/store"
@@ -110,7 +110,8 @@ func authzConcretePath(rt apispec.Route) string {
 		"user": authzSelfUser,
 		"cid":  authzCID(rt),
 		"idx":  "0",
-		"qid":  "deadbeef",
+		"tid":  "deadbeef",
+		"mid":  "deadbeef",
 	}
 	return pathParamPattern.ReplaceAllStringFunc(rt.Pattern, func(seg string) string {
 		name := seg[1 : len(seg)-1]
@@ -146,17 +147,17 @@ func newAuthzFixture(t *testing.T) *scoreboard.Handler {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	qaSt, err := qa.Open(filepath.Join(t.TempDir(), "authz-qa.db"))
+	boardSt, err := board.Open(filepath.Join(t.TempDir(), "authz-board.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { qaSt.Close() })
+	t.Cleanup(func() { boardSt.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	return scoreboard.NewHandler(cat, st, logger,
 		scoreboard.WithAdminEmails([]string{authzAdminEmail}),
 		scoreboard.WithAllowedOrigins([]string{allowedOrigin}),
 		scoreboard.WithDetect(api.DetectConfig{Runner: noopDetectRunner{}}),
-		scoreboard.WithQA(qaSt),
+		scoreboard.WithBoard(boardSt),
 	)
 }
 
@@ -202,6 +203,18 @@ func authzCheck(t *testing.T, srv http.Handler, rt apispec.Route) string {
 			return fmt.Sprintf("%s: status=%d body=%s, must NOT be 403 (Authz: %s — an unrelated identity must never be gated here; a 403 means a future change over-gated this route)",
 				rt.MuxPattern(), w.Code, w.Body, rt.Authz)
 		}
+	case apispec.AuthzAuthenticated:
+		// app#292 Phase 2 (QA Board): unlike self-or-admin(-write), this
+		// gate performs NO username match against a {user} path segment —
+		// any proven identity, related or not, may proceed. A mismatched
+		// (but valid) identity like authzMismatchedEmail must NEVER be
+		// 403'd here; TestAuthz_AuthenticatedGate_MissingHeaderDenied below
+		// is this case's other half (missing header -> 403), which this
+		// helper cannot express since it always sends an identity header.
+		if w.Code == http.StatusForbidden {
+			return fmt.Sprintf("%s: status=%d body=%s, must NOT be 403 (Authz: authenticated — an unrelated-but-valid identity must never be gated here; a 403 means a future change wrongly added a self-or-admin-shaped username check to a route that carries no {user} segment)",
+				rt.MuxPattern(), w.Code, w.Body)
+		}
 	default:
 		return fmt.Sprintf("%s: unrecognised Authz value %q — authzCheck (and this test's count guards) need a new case before this route can be trusted", rt.MuxPattern(), rt.Authz)
 	}
@@ -216,7 +229,7 @@ func authzCheck(t *testing.T, srv http.Handler, rt apispec.Route) string {
 func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 	srv := newAuthzFixture(t)
 
-	var adminGated, selfGated, openGated int
+	var adminGated, selfGated, openGated, authenticatedGated int
 	for _, rt := range srv.Routes() {
 		rt := rt
 		switch rt.Authz {
@@ -226,6 +239,8 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 			selfGated++
 		case apispec.AuthzNone, apispec.AuthzClaimedIdentity:
 			openGated++
+		case apispec.AuthzAuthenticated:
+			authenticatedGated++
 		}
 		t.Run(string(rt.Authz)+"/"+rt.MuxPattern(), func(t *testing.T) {
 			if violation := authzCheck(t, srv, rt); violation != "" {
@@ -239,18 +254,68 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 	// class rather than one combined total — a single combined count could
 	// hide, e.g., every AuthzAdmin route losing its classification to
 	// AuthzNone by mistake behind AuthzNone's count silently absorbing the
-	// difference. 7 admin + 11 self(-write) + 15 none/claimed-identity = 33,
-	// matching ADR-0005/ADR-0006/app#116/app#84/app#95/app#96's real-world
-	// route-count canon (apispec_parity_test.go's
-	// TestAPISpec_V1_RouteSetMatchesSpec).
-	if adminGated != 7 {
-		t.Fatalf("expected exactly 7 Authz: admin routes (ADR-0005 canon: GET /, GET /api/state, POST /api/admin/reset, POST /api/admin/users/{user}/display-name; ADR-0006 P25: GET /api/admin/questions, GET /api/admin/questions/{qid}, POST /api/admin/questions/{qid}/reply), got %d", adminGated)
+	// difference. app#292 Phase 2: P25's 7 QA routes (3 admin, 4
+	// self-or-admin(-write)) are gone (internal/qa removed wholesale);
+	// the QA Board's 11 routes replace them under a FOURTH bucket for the
+	// 6 participant ones (authz=authenticated has no {user}-path
+	// self-match, so it is not "self-or-admin" — see authzCheck's own
+	// doc) plus 5 admin routes (4 from the initial Phase 2 landing + 1
+	// post-review gap-close: boardAdminGetThread). 9 admin + 7 self(-write) +
+	// 15 none/claimed-identity + 6 authenticated = 37, matching
+	// apispec_parity_test.go's TestAPISpec_V1_RouteSetMatchesSpec.
+	if adminGated != 9 {
+		t.Fatalf("expected exactly 9 Authz: admin routes (ADR-0005 canon: GET /, GET /api/state, POST /api/admin/reset, POST /api/admin/users/{user}/display-name; app#292 QA Board: GET /api/admin/board/threads, GET /api/admin/board/threads/{tid}, POST /api/admin/board/threads/{tid}/reply, POST /api/admin/board/threads/{tid}/state, POST /api/admin/board/messages/{mid}/state), got %d", adminGated)
 	}
-	if selfGated != 11 {
-		t.Fatalf("expected exactly 11 Authz: self-or-admin(-write) routes (GET /api/users/{user}/me, GET /api/users/{user}/journey, POST /api/challenges/{cid}/submit-detect, POST /api/users/{user}/challenges/{cid}/steps/{idx}/check, POST /api/users/{user}/challenges/{cid}/hints/{idx}, POST /api/users/{user}/challenges/{cid}/reset-dirty, POST /api/users/{user}/display-name; ADR-0006 P25: GET /api/users/{user}/questions, POST /api/users/{user}/questions, GET /api/users/{user}/questions/{qid}, POST /api/users/{user}/questions/{qid}/messages), got %d", selfGated)
+	if selfGated != 7 {
+		t.Fatalf("expected exactly 7 Authz: self-or-admin(-write) routes (GET /api/users/{user}/me, GET /api/users/{user}/journey, POST /api/challenges/{cid}/submit-detect, POST /api/users/{user}/challenges/{cid}/steps/{idx}/check, POST /api/users/{user}/challenges/{cid}/hints/{idx}, POST /api/users/{user}/challenges/{cid}/reset-dirty, POST /api/users/{user}/display-name — P25's 4 QA self-or-admin(-write) routes are gone, cutover), got %d", selfGated)
 	}
 	if openGated != 15 {
 		t.Fatalf("expected exactly 15 Authz: none/claimed-identity routes (GET /portal, GET the cybercore css asset, GET the design-tokens css asset (app#116), POST /falco/events, GET /healthz, GET /metrics, POST /api/challenges/{cid}/submit, POST /internal/exfil/{cid}; Issue #95: POST /csp-report; app#96: GET /vendor/fonts.css + its 5 vendored woff2 assets), got %d", openGated)
+	}
+	if authenticatedGated != 6 {
+		t.Fatalf("expected exactly 6 Authz: authenticated routes (app#292 QA Board participant routes: GET /api/board/threads, GET /api/board/threads/{tid}, POST /api/board/threads, POST /api/board/threads/{tid}/messages, POST /api/board/threads/{tid}/like, POST /api/board/threads/{tid}/unlike), got %d", authenticatedGated)
+	}
+}
+
+// TestAuthz_AuthenticatedGate_MissingHeaderDenied is AuthzAuthenticated's
+// other half (authzCheck's own doc explains why it cannot express this
+// itself — every call there sends X-Auth-Request-Email: authzMismatchedEmail,
+// never an absent header): a request carrying NO identity header at all
+// must be 403'd on every authz=authenticated route, the same fail-closed
+// posture selfOrAdmin uses for a missing header. Derives its case table
+// from srv.Routes() (never a hand-maintained list), matching every other
+// generic gate test in this file.
+func TestAuthz_AuthenticatedGate_MissingHeaderDenied(t *testing.T) {
+	srv := newAuthzFixture(t)
+
+	tested := 0
+	for _, rt := range srv.Routes() {
+		if rt.Authz != apispec.AuthzAuthenticated {
+			continue
+		}
+		rt := rt
+		tested++
+		t.Run(rt.MuxPattern(), func(t *testing.T) {
+			target := authzConcretePath(rt)
+			var body io.Reader
+			if rt.Method != http.MethodGet {
+				body = strings.NewReader(authzGenericBody)
+			}
+			r := httptest.NewRequest(rt.Method, target, body)
+			if body != nil {
+				r.Header.Set("Content-Type", "application/json")
+			}
+			r.Header.Set("Origin", allowedOrigin)
+			// Deliberately NO X-Auth-Request-Email header.
+			w := httptest.NewRecorder()
+			srv.ServeHTTP(w, r)
+			if w.Code != http.StatusForbidden {
+				t.Fatalf("%s: status=%d body=%s, want 403 (authz=authenticated with no identity header must be fail-closed)", rt.MuxPattern(), w.Code, w.Body)
+			}
+		})
+	}
+	if tested == 0 {
+		t.Fatal("found zero Authz: authenticated routes to test — the derivation is broken (or every board route lost its authz classification), not \"nothing to check\"")
 	}
 }
 

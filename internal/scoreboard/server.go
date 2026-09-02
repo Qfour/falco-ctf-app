@@ -23,8 +23,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
+	"github.com/Qfour/falco-ctf-app/internal/board"
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
-	"github.com/Qfour/falco-ctf-app/internal/qa"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/api"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/ingest"
@@ -56,10 +56,11 @@ type Handler struct {
 	sweeper        *scoring.Sweeper
 	detect         api.DetectConfig
 	allowedOrigins []string
-	// qaStore is the P25 QA ticket-chat store (ADR-0006), threaded through to
-	// the api handler unconditionally (see WithQA's doc — there is no "QA
-	// disabled" toggle, unlike detect's Runner).
-	qaStore *qa.Store
+	// boardStore is the QA Board store (app#292 Phase 2 — supersedes P25's
+	// qaStore wholesale), threaded through to the api handler unconditionally
+	// (see WithBoard's doc — there is no "board disabled" toggle, unlike
+	// detect's Runner).
+	boardStore *board.Store
 	// ttydSuffix (P23-4) feeds the portal Terminal pane's iframe src builder
 	// (view.New / portal.ttydURLFor) — see WithTtydSuffix.
 	ttydSuffix string
@@ -137,15 +138,15 @@ func WithAllowedOrigins(origins []string) Option {
 	return func(h *Handler) { h.allowedOrigins = origins }
 }
 
-// WithQA sets the P25 QA ticket-chat store (ADR-0006) the api handler's
-// question/admin-questions routes read and write. Unlike WithDetect's
-// Runner, this has no "feature off" nil-safe path in production —
-// cmd/scoreboard/main.go always opens a *qa.Store (ADR-0006 Decision 3: a
-// second file in the same SCOREBOARD_DB PVC directory, no new env var). A
-// test fixture that never calls WithQA leaves this nil; that is only safe
-// as long as the fixture also never issues a request to a QA route.
-func WithQA(store *qa.Store) Option {
-	return func(h *Handler) { h.qaStore = store }
+// WithBoard sets the QA Board store (app#292 Phase 2) the api handler's
+// board/admin-board routes read and write. Unlike WithDetect's Runner, this
+// has no "feature off" nil-safe path in production — cmd/scoreboard/main.go
+// always opens a *board.Store (a file in the same SCOREBOARD_DB PVC
+// directory, no new env var). A test fixture that never calls WithBoard
+// leaves this nil; that is only safe as long as the fixture also never
+// issues a request to a board route.
+func WithBoard(store *board.Store) Option {
+	return func(h *Handler) { h.boardStore = store }
 }
 
 // WithTtydSuffix sets the DNS suffix (PORTAL_TTYD_SUFFIX) the portal
@@ -216,7 +217,7 @@ func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts .
 		FalcoRules:  h.falcoRules,
 		Order:       h.order,
 		DocsBaseURL: h.docsBaseURL,
-	}, h.detect, api.QAConfig{Store: h.qaStore})
+	}, h.detect, api.BoardConfig{Store: h.boardStore})
 	// The operator index page (GET /) is admin-gated in the app layer too
 	// (P18-1 defense-in-depth) using the same ADMIN_EMAILS rule the api handler
 	// enforces. The participant journey/me pages are served ungated as static

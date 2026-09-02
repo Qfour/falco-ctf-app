@@ -70,6 +70,21 @@ spec:
         #   /api/users/     — self-scoped reads (me/journey) + per-user progress
         #                      writes (step-check / hint reveal / display-name);
         #                      all server-side self-or-admin gated.
+        #   /api/board/     — app#292 Phase 2 QA Board: the 6 participant routes
+        #                      (list/get/create/append-message/like/unlike),
+        #                      all server-side authz=authenticated gated (any
+        #                      proven identity — no {user} path segment to
+        #                      self-match, since threads are addressed by their
+        #                      own {tid} and internal/board.Store performs the
+        #                      audience/ownership entitlement check). The 4
+        #                      operator routes live under /api/admin/board/
+        #                      (audience=operator) — deliberately NOT covered by
+        #                      this Prefix, and the I15 reverse-audience test
+        #                      (internal/apispec/ingressparity) fails closed if
+        #                      they ever were: /api/admin/board/ does not share
+        #                      this entry's /api/board/ prefix, so it is
+        #                      structurally unreachable through this Ingress
+        #                      regardless.
         #   /api/challenges/ — the evade flag-submit form the Journey pane posts
         #                      to (plain-evade missions submit manually here);
         #                      the Grader enforces flag+window+exfil, and a
@@ -166,6 +181,13 @@ spec:
                 port:
                   number: 80
           - path: /api/users/
+            pathType: Prefix
+            backend:
+              service:
+                name: scoreboard
+                port:
+                  number: 80
+          - path: /api/board/
             pathType: Prefix
             backend:
               service:

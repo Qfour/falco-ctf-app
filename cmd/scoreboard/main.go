@@ -13,8 +13,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Qfour/falco-ctf-app/internal/board"
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
-	"github.com/Qfour/falco-ctf-app/internal/qa"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/api"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/detect"
@@ -222,19 +222,22 @@ func main() {
 	defer st.Close()
 	logger.Info("store opened", "path", dbPath, "solved_loaded", st.SolvedCount())
 
-	// P25 QA ticket-chat store (ADR-0006): a second SQLite file in the SAME
-	// PVC directory as SCOREBOARD_DB — no new env var, no new chart value
-	// (ADR-0006 Decision 3). Physically separate from the scoring/solve store
-	// above (internal/qa never imports internal/store or
-	// internal/scoreboard/scoring — internal/apispec's qa_boundary_test.go
-	// machine-checks that).
-	qaSt, err := qa.Open(filepath.Join(filepath.Dir(dbPath), "qa.db"))
+	// QA Board (app#292 — destination model, replaces P25's per-user QA
+	// ticket chat wholesale as of Phase 2): a second SQLite file in the SAME
+	// PVC directory as SCOREBOARD_DB, physically separate from the
+	// scoring/solve store above (internal/board never imports internal/store
+	// or internal/scoreboard/scoring — internal/apispec's
+	// board_boundary_test.go machine-checks that). P25's internal/qa package
+	// and its qa.db file are gone (Phase 2 cutover); board.db is a
+	// brand-new file, not a migration of the old ticket data (internal/board's
+	// package doc).
+	boardSt, err := board.Open(filepath.Join(filepath.Dir(dbPath), "board.db"))
 	if err != nil {
-		logger.Error("qa store open failed", "path", dbPath, "err", err)
+		logger.Error("board store open failed", "path", dbPath, "err", err)
 		os.Exit(1)
 	}
-	defer qaSt.Close()
-	logger.Info("qa store opened")
+	defer boardSt.Close()
+	logger.Info("board store opened")
 
 	// Detect-challenge grading (type: detect). The scoreboard image is distroless
 	// and falco-free (conventions), so grading is delegated to a DetectRunner that
@@ -288,7 +291,7 @@ func main() {
 		scoreboard.WithDetect(detectCfg),
 		scoreboard.WithPoints(points),
 		scoreboard.WithTtydSuffix(portalTtydSuffix),
-		scoreboard.WithQA(qaSt),
+		scoreboard.WithBoard(boardSt),
 		scoreboard.WithWebhookSecret(webhookSharedSecret, webhookSecretMode),
 	)
 

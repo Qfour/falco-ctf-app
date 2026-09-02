@@ -13,13 +13,17 @@
 //	POST /api/users/{user}/display-name
 //	POST /api/admin/reset
 //	POST /api/admin/users/{user}/display-name
-//	GET  /api/users/{user}/questions
-//	POST /api/users/{user}/questions
-//	GET  /api/users/{user}/questions/{qid}
-//	POST /api/users/{user}/questions/{qid}/messages
-//	GET  /api/admin/questions
-//	GET  /api/admin/questions/{qid}
-//	POST /api/admin/questions/{qid}/reply
+//	GET  /api/board/threads
+//	GET  /api/board/threads/{tid}
+//	POST /api/board/threads
+//	POST /api/board/threads/{tid}/messages
+//	POST /api/board/threads/{tid}/like
+//	POST /api/board/threads/{tid}/unlike
+//	GET  /api/admin/board/threads
+//	GET  /api/admin/board/threads/{tid}
+//	POST /api/admin/board/threads/{tid}/reply
+//	POST /api/admin/board/threads/{tid}/state
+//	POST /api/admin/board/messages/{mid}/state
 package api
 
 import (
@@ -36,8 +40,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
+	"github.com/Qfour/falco-ctf-app/internal/board"
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
-	"github.com/Qfour/falco-ctf-app/internal/qa"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/detect"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/metrics"
@@ -57,6 +61,30 @@ var validUser = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 // max keeps leaderboard columns predictable.
 var invalidDisplayName = regexp.MustCompile(`[<>&"'\x00-\x1f\x7f]`)
 
+// flagShapePattern is app#292 Phase 2's fairness gate: it matches the
+// SHAPE of a flag (`FALCO{...}`), never a specific value — every free-text
+// board write (thread creation's subject AND body, a participant's own
+// follow-up, an admin reply) is rejected 400 if it matches this, regardless
+// of whether the braces contain a real, in-play flag (security+qa review,
+// app#292 Phase 3: the subject check was missing from Phase 2 — a public
+// audience=all thread's subject is rendered to every participant exactly
+// like its body, so it needed the same gate). This is deliberately NOT a
+// comparison against any actual challenge flag: comparing against real
+// values would require the board to know every challenge's expectedFlag
+// (a scope leak this package's board handlers must not have — board.Store
+// is physically isolated from internal/store/scoring, see internal/board's
+// package doc), and would let a participant probe "is THIS specific string
+// the flag" via the board's 400/200 response — an oracle strictly worse
+// than blanket-rejecting the shape. Blanket rejection also catches an
+// HONEST mistake (a participant pasting what they believe is a flag while
+// asking for help) just as well as a deliberate leak attempt — the
+// fairness property this gate protects ("no participant's flag becomes
+// visible to another participant via the board") does not care about
+// intent. The empty-brace shape (FALCO with a bare "{}" pair) is still rejected;
+// bare "FALCO" with no braces at all is NOT (a participant should still be
+// able to say "I'm on the FALCO mission" in a support thread).
+var flagShapePattern = regexp.MustCompile(`FALCO\{[^}]*\}`)
+
 // Stable, non-leaking response-body text (Issue #113). Never put err.Error()
 // from a JSON decode or a store/SQLite call into a response body — the
 // decoder can name internal struct fields and the store can surface driver
@@ -69,6 +97,30 @@ const (
 	errMsgInvalidBody          = "invalid request body"
 	errMsgResetFailed          = "could not reset scoreboard"
 	errMsgSetDisplayNameFailed = "could not set display name"
+	// errMsgFlagShapeRejected is flagShapePattern's stable, non-leaking
+	// rejection text — deliberately does not echo back the offending text
+	// (which would just re-display the very value being rejected).
+	errMsgFlagShapeRejected = "message body must not contain a flag-shaped value"
+	// Board-specific stable, non-leaking text (Issue #113's discipline,
+	// applied to app#292 Phase 2 — see the const block above this one for
+	// the full rationale).
+	errMsgBoardListFailed     = "could not list board threads"
+	errMsgBoardCreateFailed   = "could not create board thread"
+	errMsgBoardGetFailed      = "could not load board thread"
+	errMsgBoardAppendFailed   = "could not append board message"
+	errMsgBoardReplyFailed    = "could not reply to board thread"
+	errMsgBoardLikeFailed     = "could not like board thread"
+	errMsgBoardUnlikeFailed   = "could not unlike board thread"
+	errMsgBoardStateFailed    = "could not update board moderation state"
+	errMsgBoardThreadNotFound = "thread not found"
+	errMsgBoardMsgNotFound    = "message not found"
+	errMsgBoardSelfLike       = "cannot like your own thread"
+	// errMsgBoardInvalidState mirrors internal/board.ErrInvalidState's text
+	// (a stable, self-crafted sentinel message — not a driver/schema leak —
+	// but restated as its own constant here rather than returning
+	// err.Error() directly, so this package's error bodies stay drawn from
+	// ONE local, grep-able set, matching every other handler in this file).
+	errMsgBoardInvalidState = `state must be "visible", "hidden", or "deleted"`
 )
 
 // triggerDetectWindowSeconds is the lookback the Journey UI uses to surface
@@ -134,25 +186,35 @@ type Handler struct {
 	detectRunner   scoring.DetectRunner
 	detectInflight chan struct{}
 
-	// qa is the P25 QA ticket-chat store (ADR-0006). nil is possible only in
-	// tests that never wire QAConfig — cmd/scoreboard/main.go always opens
-	// one, unconditionally (there is no "QA disabled" feature flag, unlike
-	// DetectConfig's Runner). Every qa route handler is reached only after a
-	// gate (selfOrAdmin/selfOrAdminWrite/isAdmin) has already run, so a nil
-	// qa here would only ever be dereferenced by a legitimately-authorized
-	// caller in a misconfigured deployment — acceptable because that is
-	// exactly the shape of every other required-but-unwired dependency in
-	// this Handler (e.g. a nil store would panic just as readily).
-	qa              *qa.Store
-	questionLimiter *ratelimit.Limiter
+	// board is the QA Board store (app#292 — destination model, supersedes
+	// P25's per-user QA ticket chat wholesale as of Phase 2). nil is possible
+	// only in tests that never wire BoardConfig — cmd/scoreboard/main.go
+	// always opens one, unconditionally (there is no "board disabled"
+	// feature flag, unlike DetectConfig's Runner). Every board route handler
+	// is reached only after a gate (requireAuthenticated/isAdmin) has
+	// already run, so a nil board here would only ever be dereferenced by a
+	// legitimately-authorized caller in a misconfigured deployment —
+	// acceptable because that is exactly the shape of every other
+	// required-but-unwired dependency in this Handler (e.g. a nil store
+	// would panic just as readily).
+	board *board.Store
+	// boardPostLimiter / boardLikeLimiter are the two identity-keyed rate
+	// buckets app#292 Phase 2 requires (separate from each other):
+	// boardPostLimiter covers thread creation + follow-up messages,
+	// boardLikeLimiter covers like/unlike. Both are participant-only —
+	// admin board writes (reply/state) are never rate-limited, matching
+	// P25's own admin-write precedent (adminReply/adminReset/etc., all
+	// RateLimit: "none").
+	boardPostLimiter *ratelimit.Limiter
+	boardLikeLimiter *ratelimit.Limiter
 }
 
-// QAConfig carries the P25 QA ticket-chat store (ADR-0006) into the api
-// handler. A separate config struct (matching JourneyConfig/DetectConfig's
-// shape) rather than a bare *qa.Store parameter, so New's signature reads
-// the same way for every optional subsystem this Handler wires.
-type QAConfig struct {
-	Store *qa.Store
+// BoardConfig carries the QA Board store (app#292) into the api handler. A
+// separate config struct (matching JourneyConfig/DetectConfig's shape)
+// rather than a bare *board.Store parameter, so New's signature reads the
+// same way for every optional subsystem this Handler wires.
+type BoardConfig struct {
+	Store *board.Store
 }
 
 // DetectConfig carries the detect-challenge grading inputs. Both fields are
@@ -183,7 +245,7 @@ const DetectGradeTimeout = 30 * time.Second
 // originguard to protect the browser-facing state-changing routes (see
 // Register). Empty = every guarded request is denied (fail-closed) — see
 // cmd/scoreboard/main.go for the deploy-time default and rationale.
-func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *slog.Logger, now func() time.Time, adminEmails []string, allowedOrigins []string, jc JourneyConfig, dc DetectConfig, qc QAConfig) *Handler {
+func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *slog.Logger, now func() time.Time, adminEmails []string, allowedOrigins []string, jc JourneyConfig, dc DetectConfig, bc BoardConfig) *Handler {
 	// /submit accepts a claimed user identity. Without per-IP throttling a
 	// participant who scraped someone else's flag could brute-force submits.
 	// 1 req/s with burst 10 lets legitimate typing through but blocks
@@ -228,12 +290,18 @@ func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *sl
 		docsBaseURL:        docsBaseURL,
 		detectRunner:       dc.Runner,
 		detectInflight:     inflight,
-		qa:                 qc.Store,
-		// ADR-0006 Decision 1: 10s/1 refill, burst 3 — shared by ticket
-		// creation and follow-up messages (ratelimit.ClientIP-keyed), so a
-		// spammer cannot dodge the bucket by spreading posts across many
-		// ticket ids.
-		questionLimiter: ratelimit.New(0.1 /* one every 10s */, 3 /* burst */).WithNow(now),
+		board:              bc.Store,
+		// app#292 Phase 2: 10s/1 refill, burst 3 — shared by thread creation
+		// and follow-up messages (identity-keyed, see boardIdentityKeyed), so
+		// a spammer cannot dodge the bucket by spreading posts across many
+		// thread ids. Mirrors P25's old questionLimiter rate exactly.
+		boardPostLimiter: ratelimit.New(0.1 /* one every 10s */, 3 /* burst */).WithNow(now),
+		// Likes are lower-stakes and clicked more casually than a written
+		// post, so this bucket is looser — 1/s refill, burst 10 (matches
+		// submitLimiter's shape), still identity-keyed and separate from the
+		// post bucket so a burst of likes can never starve a participant's
+		// ability to open a thread or reply.
+		boardLikeLimiter: ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now),
 	}
 }
 
@@ -338,7 +406,18 @@ func (h *Handler) Routes() []apispec.Route {
 	// signal — see internal/scoreboard/ratelimit/metrics.go's doc.
 	submitMW := h.submitLimiter.Middleware(ratelimit.ClientIPKeyed("submit"))
 	dnMW := h.displayNameLimiter.Middleware(ratelimit.ClientIPKeyed("display_name"))
-	questionMW := h.questionLimiter.Middleware(ratelimit.ClientIPKeyed("questions"))
+	// app#292 Phase 2: identity-keyed (never client-IP-keyed) — a board
+	// thread/message is attributed to the caller's OWN proven identity, so
+	// the rate-limit bucket should track that identity too, not the NAT/
+	// proxy IP a whole classroom of participants might share. boardIdentityKeyed
+	// never returns "" (ratelimit.go's Middleware treats an empty key as
+	// UNLIMITED — the fail-open trap this codebase's rate limiters must all
+	// avoid), falling back to "ip:"+ClientIP when no auth header is present
+	// (defense-in-depth; every board route this wraps also runs
+	// requireAuthenticated first, so that fallback should never actually
+	// fire in production).
+	boardPostMW := h.boardPostLimiter.Middleware(boardIdentityKeyed("board_post"))
+	boardLikeMW := h.boardLikeLimiter.Middleware(boardIdentityKeyed("board_like"))
 	return []apispec.Route{
 		{
 			Method: "GET", Pattern: "/api/state",
@@ -503,82 +582,207 @@ func (h *Handler) Routes() []apispec.Route {
 			Handler:   dnMW(http.HandlerFunc(h.setDisplayName)),
 		},
 		{
-			// P25 (ADR-0006): the caller's own QA ticket summaries. Reads are
-			// never origin-guarded or rate-limited (same posture as the other
-			// self-scoped reads above — /me, /journey).
-			Method: "GET", Pattern: "/api/users/{user}/questions",
-			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdmin,
+			// app#292 Phase 2: the participant's own visible board listing —
+			// every audience='all' thread PLUS the caller's own
+			// audience='admin' threads, never anyone else's. Reads are never
+			// origin-guarded or rate-limited (same posture as the other
+			// self-scoped reads above — /me, /journey, and P25's old
+			// listQuestions before it).
+			Method: "GET", Pattern: "/api/board/threads",
+			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzAuthenticated,
 			OriginGuarded: false, CollectorForward: false, RateLimit: "none",
-			Handler: http.HandlerFunc(h.listQuestions),
+			Handler: http.HandlerFunc(h.boardListThreads),
 		},
 		{
-			// Opens a new ticket. Origin-guarded + selfOrAdminWrite (the same
-			// two-gate stack steps/check and hints/{idx} use above): reached
-			// ONLY from the portal's browser fetch, never from the collector's
-			// forward allowlist (ADR-0006 explicitly declines to add QA there
-			// — a participant's QA send has no legitimate workspace/curl
-			// caller, so adding it would only widen the attack surface).
-			// Shares questionLimiter's bucket with postMessage below.
-			Method: "POST", Pattern: "/api/users/{user}/questions",
-			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdminWrite,
-			OriginGuarded: true, CollectorForward: false,
-			RateLimit: "per-IP 1 req/10s burst 3 (shared with postQuestionMessage)",
-			Handler:   h.og(questionMW(http.HandlerFunc(h.createQuestion))),
-		},
-		{
-			// One ticket's full thread. The composite (id,user) ownership
-			// check lives inside qa.Store.GetThreadForUser (ADR-0006 Decision
-			// 2) — selfOrAdmin only proves the caller MAY act as {user}, it
-			// says nothing about whether {qid} belongs to {user}.
-			Method: "GET", Pattern: "/api/users/{user}/questions/{qid}",
-			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdmin,
+			// One thread, full messages. board.Store.GetThread performs the
+			// audience/ownership/moderation-state entitlement check inside the
+			// SAME call as the read (no separate "check" round trip) — an
+			// unknown id, a wrong-audience id, and a moderated-away id are all
+			// the SAME 404 to a non-admin caller (no existence oracle).
+			Method: "GET", Pattern: "/api/board/threads/{tid}",
+			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzAuthenticated,
 			OriginGuarded: false, CollectorForward: false, RateLimit: "none",
-			Handler: http.HandlerFunc(h.getQuestion),
+			Handler: http.HandlerFunc(h.boardGetThread),
 		},
 		{
-			// Follow-up message on the caller's own ticket. Same origin-guard
-			// + selfOrAdminWrite + shared rate-limit bucket as createQuestion
-			// above; the composite-key ownership check + insert happen inside
-			// ONE qa.Store call (AppendMessageForUser), never two round trips
-			// (ADR-0006 Decision 2 / security-engineer finding 4).
-			Method: "POST", Pattern: "/api/users/{user}/questions/{qid}/messages",
-			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdminWrite,
+			// Opens a new thread. Origin-guarded (the same posture every
+			// participant board write below shares — reached ONLY from the
+			// portal's browser fetch, never the collector's forward allowlist,
+			// same reasoning ADR-0006 gave for declining to add P25's QA
+			// there). audience defaults/coerces to 'admin' (private,
+			// fail-closed) on anything but a literal 'admin'/'all' — see
+			// boardCreateThread's own doc.
+			Method: "POST", Pattern: "/api/board/threads",
+			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzAuthenticated,
 			OriginGuarded: true, CollectorForward: false,
-			RateLimit: "per-IP 1 req/10s burst 3 (shared with createQuestion)",
-			Handler:   h.og(questionMW(http.HandlerFunc(h.postMessage))),
+			RateLimit: "identity 1 req/10s burst 3 (shared with boardAppendMessage)",
+			Handler:   h.og(boardPostMW(http.HandlerFunc(h.boardCreateThread))),
 		},
 		{
-			// Operator's full ticket list, every participant. No {user} in
-			// this route — it is a standalone admin route, not a self-scoped
-			// one (ADR-0006 Decision 1).
-			Method: "GET", Pattern: "/api/admin/questions",
+			// Follow-up on the caller's OWN thread only — board.Store.
+			// AppendOwnMessage performs the ownership check and the insert
+			// inside ONE call (no separate check-then-write pair); another
+			// participant's {tid} 404s exactly like an unknown one.
+			Method: "POST", Pattern: "/api/board/threads/{tid}/messages",
+			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzAuthenticated,
+			OriginGuarded: true, CollectorForward: false,
+			RateLimit: "identity 1 req/10s burst 3 (shared with boardCreateThread)",
+			Handler:   h.og(boardPostMW(http.HandlerFunc(h.boardAppendMessage))),
+		},
+		{
+			// Toggle a like on an audience='all' thread that is not the
+			// caller's own — board.Store.Like enforces audience/state/
+			// self-like fail-closed (ErrNotFound/ErrSelfLike) before the
+			// insert. Own rate bucket, separate from the post bucket, so a
+			// burst of likes can never starve a participant's ability to
+			// open a thread or reply (and vice versa).
+			Method: "POST", Pattern: "/api/board/threads/{tid}/like",
+			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzAuthenticated,
+			OriginGuarded: true, CollectorForward: false,
+			RateLimit: "identity 1 req/s burst 10 (shared with boardUnlikeThread)",
+			Handler:   h.og(boardLikeMW(http.HandlerFunc(h.boardLike))),
+		},
+		{
+			// The like toggle's off state. board.Store.Unlike is an
+			// unconditional, idempotent delete (there is nothing to leak by
+			// allowing it unconditionally, unlike Like's insert path — see
+			// that method's own doc).
+			Method: "POST", Pattern: "/api/board/threads/{tid}/unlike",
+			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzAuthenticated,
+			OriginGuarded: true, CollectorForward: false,
+			RateLimit: "identity 1 req/s burst 10 (shared with boardLikeThread)",
+			Handler:   h.og(boardLikeMW(http.HandlerFunc(h.boardUnlike))),
+		},
+		{
+			// Operator moderation queue: every thread, every audience, every
+			// state (hidden/deleted included) — board.Store.ListThreads(
+			// isAdmin=true). No {user} in this route, same as P25's old
+			// adminListQuestions before it.
+			Method: "GET", Pattern: "/api/admin/board/threads",
 			Audience: apispec.AudienceOperator, Authz: apispec.AuthzAdmin,
 			OriginGuarded: false, CollectorForward: false, RateLimit: "none",
-			Handler: http.HandlerFunc(h.adminListQuestions),
+			Handler: http.HandlerFunc(h.boardAdminListThreads),
 		},
 		{
-			// One ticket, any participant, by id alone — admin routes do not
-			// go through {user}, so there is no composite key to check
-			// (ADR-0006 Decision 2: isAdmin alone is the intended gate here).
-			Method: "GET", Pattern: "/api/admin/questions/{qid}",
+			// Gap closed post-Phase-2-review: the operator's single-thread
+			// FULL-TEXT read. board.Store.GetThread(viewer, isAdmin=true,
+			// tid) bypasses the audience/ownership entitlement check
+			// entirely (isAdmin=true) — hidden AND deleted threads are both
+			// visible here, exactly like the moderation queue listing
+			// above. A deleted MESSAGE's body is still scrubbed to "" by
+			// the Store itself (board.go's own doc — deleting is a content
+			// removal, not a from-participants-only hide, and that holds
+			// for every viewer including admin). Returns the SAME
+			// BoardThread shape the participant route does (toOapiBoardThread
+			// is reused verbatim, #164 discipline) — one shape for "here is
+			// the thread", regardless of which audience's route asked for
+			// it.
+			Method: "GET", Pattern: "/api/admin/board/threads/{tid}",
 			Audience: apispec.AudienceOperator, Authz: apispec.AuthzAdmin,
 			OriginGuarded: false, CollectorForward: false, RateLimit: "none",
-			Handler: http.HandlerFunc(h.adminGetQuestion),
+			Handler: http.HandlerFunc(h.boardAdminGetThread),
 		},
 		{
-			// THE only legitimate operator reply path (ADR-0006 Decision 1 /
-			// security-engineer finding 5 — see adminReply's own doc for why
-			// this matters even though selfOrAdminWrite's admin branch would
-			// technically also let an admin post through the participant
-			// route). Origin-guarded like the operator dashboard's other
-			// admin writes (reset / hints / display-name above); never
-			// rate-limited, matching that same trusted-actor precedent.
-			Method: "POST", Pattern: "/api/admin/questions/{qid}/reply",
+			// THE operator reply path — author is ALWAYS the fixed "staff"
+			// constant (never the caller's raw email; see boardAdminReply's
+			// own doc), author_role is ALWAYS admin. Origin-guarded like the
+			// operator dashboard's other admin writes; never rate-limited,
+			// matching that same trusted-actor precedent (P25's adminReply
+			// before it).
+			Method: "POST", Pattern: "/api/admin/board/threads/{tid}/reply",
 			Audience: apispec.AudienceOperator, Authz: apispec.AuthzAdmin,
 			OriginGuarded: true, CollectorForward: false, RateLimit: "none",
-			Handler: h.og(http.HandlerFunc(h.adminReply)),
+			Handler: h.og(http.HandlerFunc(h.boardAdminReply)),
+		},
+		{
+			// Thread moderation: pinned / answered / state, any combination.
+			// MUST stay under /api/admin/ (never /api/board/) — the reverse
+			// I15 ingress check treats every /api/admin/board/* route as
+			// non-participant and the admin ingress's own /check-admin gate
+			// is the second line of defense a /api/board/ placement would
+			// lose.
+			Method: "POST", Pattern: "/api/admin/board/threads/{tid}/state",
+			Audience: apispec.AudienceOperator, Authz: apispec.AuthzAdmin,
+			OriginGuarded: true, CollectorForward: false, RateLimit: "none",
+			Handler: h.og(http.HandlerFunc(h.boardAdminSetThreadState)),
+		},
+		{
+			// Single-message moderation (e.g. hiding one abusive message
+			// without touching the rest of the thread).
+			Method: "POST", Pattern: "/api/admin/board/messages/{mid}/state",
+			Audience: apispec.AudienceOperator, Authz: apispec.AuthzAdmin,
+			OriginGuarded: true, CollectorForward: false, RateLimit: "none",
+			Handler: h.og(http.HandlerFunc(h.boardAdminSetMessageState)),
 		},
 	}
+}
+
+// boardIdentityKeyed returns a rate-limit Middleware keyFn for a board
+// bucket, keyed by the caller's proven identity (X-Auth-Request-Email)
+// rather than client IP — a board thread/message is attributed to that
+// identity, so the throttle should track it too. CRITICALLY, this never
+// returns "" — ratelimit.Limiter.Middleware treats an empty key as
+// UNLIMITED (`key == "" || l.Allow(key)`, internal/scoreboard/ratelimit/
+// ratelimit.go), which would silently defeat the whole bucket for any
+// caller with no identity header. Every route this wraps also runs
+// requireAuthenticated first (so in practice the header is always present
+// by the time this keyFn runs), but the "ip:"+ClientIP fallback exists as a
+// second, independent line of defense against that invariant ever being
+// violated by a future handler-ordering change.
+func boardIdentityKeyed(caller string) func(*http.Request) string {
+	return func(r *http.Request) string {
+		email := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Auth-Request-Email")))
+		if email != "" {
+			return caller + ":" + email
+		}
+		return caller + ":ip:" + ratelimit.ClientIP(r)
+	}
+}
+
+// requireAuthenticated is the app#292 Phase 2 authz=authenticated gate
+// primitive: any caller carrying a proven X-Auth-Request-Email identity may
+// proceed. Unlike selfOrAdmin(Write), it performs NO username-match against
+// a {user} path segment — board routes carry no {user} segment at all
+// (threads are addressed by their own {tid}, and ownership/audience/
+// moderation-state entitlement checks live inside internal/board.Store
+// itself, under the same lock hold as the read/write they gate — see that
+// package's doc). A missing/blank header is fail-closed 403, the same
+// "no proven identity -> deny" posture selfOrAdmin uses. Returns the
+// lower/trimmed caller email and whether the request may proceed;
+// board handlers derive the STORE identity to use (author/viewer) from
+// DeriveUsername separately (see each handler's own doc) — this gate only
+// answers "is anyone authenticated at all".
+func (h *Handler) requireAuthenticated(w http.ResponseWriter, r *http.Request) (string, bool) {
+	email := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Auth-Request-Email")))
+	if email == "" {
+		h.logger.Warn("board: denied, missing identity", "remote_addr", r.RemoteAddr)
+		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
+		return "", false
+	}
+	return email, true
+}
+
+// boardIdentity resolves a board participant route's caller identity in one
+// call: requireAuthenticated first (the authz=authenticated gate this whole
+// route family declares — any proven identity may proceed), then
+// DeriveUsername to derive the SPECIFIC username value every board.Store
+// call keys off (author/viewer). A header present but not shaped like a
+// valid username slug (DeriveUsername returns "") is ALSO 403 — fail-closed,
+// matching selfOrAdmin's own "no proven usable identity -> deny" posture;
+// this NEVER falls back to the raw email as a Store author value (board
+// authors are usernames, the same shape every other participant route in
+// this package uses, not email addresses).
+func (h *Handler) boardIdentity(w http.ResponseWriter, r *http.Request) (string, bool) {
+	if _, ok := h.requireAuthenticated(w, r); !ok {
+		return "", false
+	}
+	user := DeriveUsername(r)
+	if user == "" {
+		h.logger.Warn("board: denied, unusable identity", "remote_addr", r.RemoteAddr)
+		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
+		return "", false
+	}
+	return user, true
 }
 
 // --- admin reset ------------------------------------------------------------
