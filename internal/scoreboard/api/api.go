@@ -80,7 +80,7 @@ var invalidDisplayName = regexp.MustCompile(`[<>&"'\x00-\x1f\x7f]`)
 // asking for help) just as well as a deliberate leak attempt — the
 // fairness property this gate protects ("no participant's flag becomes
 // visible to another participant via the board") does not care about
-// intent. `FALCO{}` — the shape with empty braces — is still rejected;
+// intent. The empty-brace shape (FALCO with a bare "{}" pair) is still rejected;
 // bare "FALCO" with no braces at all is NOT (a participant should still be
 // able to say "I'm on the FALCO mission" in a support thread).
 var flagShapePattern = regexp.MustCompile(`FALCO\{[^}]*\}`)
