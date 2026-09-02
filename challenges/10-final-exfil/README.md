@@ -1,21 +1,23 @@
 # 10 — The Final Exfil (Boss)
 
 集大成。master key を **発火させずに読み**、**箱の外の collector へ静かに
-持ち出し (exfil)**、**submit** する。3 つすべてを満たして solve。単に読んで
-submit するだけでは通らない(`requireExfil`)。
+持ち出す (exfil)**。2 つすべてを満たして solve。単に読んで exfil するだけ
+でも、禁止ルールを 1 つでも発火させていれば通らない (`requireExfil`)。
 
 他シナリオで単体運用可能(採点は `falco-rule.yaml` 独立)、ただし 01-09 相当の
 知識を前提とする教育設計である(下記「なぜ 4-9 の知識が要るか」参照)。
 
-## 採点条件 (3 つすべて)
+## 採点条件 (2 つすべて)
 
-1. `submit` の flag が `expectedFlag` と一致
+1. その user が collector に正しい flag (`expectedFlag` と一致) を exfil 済み
+   (`POST /api/challenges/10-final-exfil/exfil`、`requireExfil: true`)
 2. この attempt (このミッションが現在の課題になって以降) に `forbiddenRules`
    (7 つ) が 1 つも発火していない (時間では解除されない。発火した場合は
    Journey 画面の「このミッションをやり直す」ボタンでやり直す —
    その際 exfil 済みの証跡も無効化されるので、やり直した後は再度 exfil が必要)
-3. その user が collector に正しい flag を exfil 済み
-   (`POST /api/challenges/10-final-exfil/exfil`、`requireExfil: true`)
+
+**提出操作は不要**: 上記 2 条件を満たした時点で、バックグラウンドの
+auto-solve sweeper (5 秒間隔) が自動で CLEARED にする (`Grader.Sweep`)。
 
 ## なぜ 4-9 の知識が要るか(設計意図)
 
@@ -51,10 +53,7 @@ curl -s "${FALCO_CTF_COLLECTOR}/api/challenges/10-final-exfil/exfil" \
   -H 'Content-Type: application/json' \
   -d "{\"user\":\"${FALCO_CTF_USER}\",\"flag\":\"${FLAG}\"}"
 #  → {"received":true,...}
-
-# 3) そのまま提出 (禁止ルールを一度も発火させていなければ solve)
-source /opt/ctf/submit.sh
-submit 10-final-exfil "${FLAG}"
+# 提出操作は不要 — 禁止ルールを一度も発火させていなければ数秒以内に自動で solve
 ```
 
 ## 解説

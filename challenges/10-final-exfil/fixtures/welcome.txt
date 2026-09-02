@@ -21,14 +21,14 @@ CTF Company の **master key** にようやく手が届いた。だが「読む�
 
 # ゴール
 
-3 段すべてを満たすと solve:
+2 段すべてを満たすと solve (提出操作は不要 — 自動判定):
 
   (1) master key を **発火させずに読む**
       /opt/nimbus/vault/master.key の中身 (Read-sensitive = 禁止)
   (2) 読んだ flag を **drop server (collector) へ HTTP で持ち出す**
-  (3) `submit` で完了 — このミッションに取り組んでいる間、7 つの禁止
-      ルールを 1 つも発火させておらず、かつ (2) の exfil が記録済みで
-      あること。**一度でも発火させると、待っても解除されない** —
+      — このミッションに取り組んでいる間、7 つの禁止ルールを 1 つも
+      発火させていないこと。両方満たすと数秒以内に自動で CLEARED に
+      なる。**一度でも発火させると、待っても解除されない** —
       Journey 画面の「このミッションをやり直す」ボタンでやり直す必要
       がある。**やり直すと exfil の記録も消えるので、(2) をもう一度
       行う必要がある。**
@@ -50,18 +50,13 @@ CTF Company の **master key** にようやく手が届いた。だが「読む�
   payload (JSON):
     {"user":"${FALCO_CTF_USER}","flag":"FALCO{...}"}
 
-# 提出方法
+# 判定
 
-  source /opt/ctf/submit.sh
-  submit 10-final-exfil 'FALCO{...}'
-
-レスポンス:
-  {"correct":true,"evaded":true,"solved":true,...}      ← Operation 完遂
-  {"correct":true,"evaded":false,"reason":"..."}         ← この attempt で発火済み(待っても解除されない。やり直しボタンでやり直す)
-  {"correct":true,"exfiltrated":false,"reason":"..."}    ← exfil 未完了(先に collector へ)
-  {"correct":false,"reason":"flag mismatch"}             ← flag 違い
+提出操作は不要。collector が exfil を受け取った時点で、7 つの禁止ルールを
+1 つも発火させていなければ数秒以内に自動で CLEARED になる (Journey 画面で
+確認できる)。発火済みの場合は「このミッションをやり直す」ボタンでやり直す
+(exfil の記録も消えるので、やり直した後は (2) をもう一度行う)。
 
 # 環境にあるもの
 
   /opt/ctf/missions/10-final-exfil/fixtures/welcome.txt   ← このファイル
-  /opt/ctf/submit.sh                                       ← source して submit
