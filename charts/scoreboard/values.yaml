@@ -21,6 +21,17 @@ env:
   # against the auth-policy-propagated X-Auth-Request-Email). Empty = nobody.
   # Use the same list as auth-policy's ADMIN_EMAILS.
   adminEmails: ""
+  # Comma-separated scoreboard USERNAMES (not emails, unlike adminEmails
+  # above) excluded from the ranked leaderboard (both the operator
+  # venue-projection dashboard GET /api/state and the rank/score fed into
+  # each hidden user's own GET /api/users/{user}/me). Intended for a
+  # venue-demo account (e.g. "test1") an operator drives live during the
+  # event: solving challenges / tripping Falco rules is fine, but its
+  # progress must not appear on the leaderboard participants see. This is a
+  # DISPLAY-ONLY suppression — scoring is completely unaffected, and a
+  # hidden user reading their own /me still sees their real score. Empty
+  # (default, I7: environment-agnostic) = nobody hidden.
+  hiddenUsers: ""
   # P23-2 CSRF mitigation: comma-separated allowlist of browser origins
   # (exact scheme://host[:port], no path/trailing slash). Pre-P19-2b (host-
   # split topology) this held two entries, e.g.

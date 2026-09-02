@@ -69,6 +69,36 @@ func newFixture(t *testing.T, now func() time.Time) *fixture {
 	return &fixture{t: t, cat: cat, st: st, srv: srv}
 }
 
+// newFixtureWithHidden is newFixture plus a HIDDEN_USERS allowlist (see
+// scoreboard.WithHiddenUsers) — same catalog/store/admin/origin wiring, so
+// the HIDDEN_USERS tests below exercise the SAME leaderboard machinery
+// (computeLeaderboard) every other Leaderboard/Me test in this file does,
+// with only the hidden-set difference isolated.
+func newFixtureWithHidden(t *testing.T, now func() time.Time, hidden []string) *fixture {
+	t.Helper()
+	cat := catalog.Catalog{
+		"01-read-shadow": catalog.Challenge{
+			ID:            "01-read-shadow",
+			Type:          "trigger",
+			ExpectedRules: []string{"Read sensitive file untrusted"},
+		},
+	}
+	st, err := store.Open(filepath.Join(t.TempDir(), "scoreboard.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	if now == nil {
+		now = time.Now
+	}
+	srv := scoreboard.NewHandler(cat, st, logger, scoreboard.WithNow(now),
+		scoreboard.WithAdminEmails([]string{fixtureAdminEmail}),
+		scoreboard.WithAllowedOrigins([]string{fixtureOrigin}),
+		scoreboard.WithHiddenUsers(hidden))
+	return &fixture{t: t, cat: cat, st: st, srv: srv}
+}
+
 // fixtureAdminEmail is the operator identity the default fixture recognises as
 // admin (ADMIN_EMAILS). doAdmin authenticates as this address.
 const fixtureAdminEmail = "admin@ctf.local"
@@ -1053,6 +1083,98 @@ func TestUserMe_NoOtherParticipantDataLeaks(t *testing.T) {
 		if strings.Contains(body, other) {
 			t.Errorf("participant /me response must not mention other participant %q, body=%s", other, body)
 		}
+	}
+}
+
+// ---------------- HIDDEN_USERS (venue-demo account exclusion) ----------------
+
+// TestLeaderboard_HiddenUsers_ExcludedAndRankCloses proves HIDDEN_USERS (a
+// venue-demo account, e.g. "test1", that an operator drives live during the
+// event) is excluded from computeLeaderboard's ranked field: it gets no row
+// in the admin dashboard's leaderboard array (GET /api/state), and — because
+// exclusion happens at userSet-construction time rather than by
+// post-hoc-hiding a computed row — the remaining participant's rank is NOT
+// left with a gap where the hidden user would have sorted (rank stays
+// consecutive over the VISIBLE field only).
+func TestLeaderboard_HiddenUsers_ExcludedAndRankCloses(t *testing.T) {
+	var clock time.Time
+	f := newFixtureWithHidden(t, func() time.Time { return clock }, []string{"test1"})
+
+	// test1 (hidden) solves FIRST. If it were not excluded, the earliest-solve
+	// tiebreak would put it at rank 1 and push alice to rank 2.
+	clock = time.Date(2026, 5, 11, 9, 0, 0, 0, time.UTC)
+	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "test1"))
+	clock = time.Date(2026, 5, 11, 9, 30, 0, 0, time.UTC)
+	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "alice"))
+
+	lb := decode(t, f.doAdmin("GET", "/api/state", nil))["leaderboard"].([]any)
+	if len(lb) != 1 {
+		t.Fatalf("leaderboard must exclude the hidden user, want 1 entry, got %d: %v", len(lb), lb)
+	}
+	row := lb[0].(map[string]any)
+	if row["user"] != "alice" {
+		t.Fatalf("only alice should be visible on the leaderboard, got %v", row)
+	}
+	if row["rank"].(float64) != 1 {
+		t.Errorf("alice's rank must close the gap left by the excluded hidden user, want 1, got %v", row["rank"])
+	}
+}
+
+// TestLeaderboard_HiddenUsers_UnknownEventOnlyUser proves the exclusion also
+// covers a hidden user who has ONLY tripped Falco rules without solving
+// anything (computeLeaderboard's userSet is seeded from BOTH
+// snap.EventsPerUser and snap.Solved — see its doc — so both sources of
+// membership must independently honour HIDDEN_USERS, not just the Solved
+// one exercised by the test above).
+func TestLeaderboard_HiddenUsers_UnknownEventOnlyUser(t *testing.T) {
+	f := newFixtureWithHidden(t, nil, []string{"test1"})
+
+	// A rule name that matches no challenge's ExpectedRules/ForbiddenRules
+	// (so OnRuleFire solves nothing) still bumps store.RecordRuleFire's
+	// eventsPerUser counter unconditionally — that is the OTHER membership
+	// source (snap.EventsPerUser) computeLeaderboard reads, independent of
+	// the snap.Solved source the test above exercises.
+	f.do("POST", "/falco/events", falcoEventBody("Unrelated benign rule", "test1"))
+
+	lb := decode(t, f.doAdmin("GET", "/api/state", nil))["leaderboard"].([]any)
+	// Without HIDDEN_USERS, this event alone would have given test1 exactly
+	// one lbEntry (via the EventsPerUser membership source) — assert the
+	// slice is empty, not just "no entry named test1", so an implementation
+	// that silently dropped the EventsPerUser exclusion (leaving only the
+	// Solved-side one) cannot pass by accident.
+	if len(lb) != 0 {
+		t.Fatalf("hidden user must not appear in the leaderboard via EventsPerUser membership either, want 0 entries, got %d: %v", len(lb), lb)
+	}
+}
+
+// TestUserMe_HiddenUser_SeesOwnScore_RankZero proves the HIDDEN_USERS
+// exclusion is display-only for the LEADERBOARD, not a block on the hidden
+// user's own self-view: a hidden user reading their own
+// GET /api/users/{user}/me must not crash and must still see their real
+// solved_count/score (scoring is completely untouched by the leaderboard
+// filter) — only rank falls back to computeLeaderboard's "no lbEntry found"
+// zero-value, the same "-"-rendering fallback a genuine zero-solve
+// participant already gets (TestUserMe_NoActivity_RankIsZero).
+func TestUserMe_HiddenUser_SeesOwnScore_RankZero(t *testing.T) {
+	var clock time.Time
+	f := newFixtureWithHidden(t, func() time.Time { return clock }, []string{"test1"})
+
+	clock = time.Date(2026, 5, 11, 9, 0, 0, 0, time.UTC)
+	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "test1"))
+
+	w := f.doUser("GET", "/api/users/test1/me", "test1", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("hidden user's own /me must not error, got %d body=%s", w.Code, w.Body)
+	}
+	m := decode(t, w)
+	if m["solved_count"].(float64) != 1 {
+		t.Errorf("hidden user's own /me must still report its real solved_count, got %v", m["solved_count"])
+	}
+	if m["score"].(float64) != 100 {
+		t.Errorf("hidden user's own /me must still report its real score (100, no hints used), got %v", m["score"])
+	}
+	if m["rank"].(float64) != 0 {
+		t.Errorf("hidden user has no leaderboard row, so rank must fall back to 0 (renders as \"-\"), got %v", m["rank"])
 	}
 }
 

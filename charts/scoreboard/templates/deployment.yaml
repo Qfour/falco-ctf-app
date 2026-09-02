@@ -91,6 +91,10 @@ spec:
             - name: ADMIN_EMAILS
               value: {{ . | quote }}
             {{- end }}
+            {{- with .Values.env.hiddenUsers }}
+            - name: HIDDEN_USERS
+              value: {{ . | quote }}
+            {{- end }}
             {{- /* P23-2 origin guard allowlist. `with` (not the ne/toString
                    form) is correct here: an empty string IS the fail-closed
                    default (deny every guarded POST) and there is no falsy-0

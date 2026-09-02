@@ -44,6 +44,18 @@ func main() {
 	// may read any user, a participant only their own). Empty = nobody
 	// (fail-closed everywhere).
 	adminEmails := serverutil.SplitCSV(serverutil.Env("ADMIN_EMAILS", ""))
+	// HIDDEN_USERS (CEO/ops request) is a comma-separated allowlist of
+	// scoreboard USERNAMES (not emails, unlike ADMIN_EMAILS) excluded from
+	// the ranked leaderboard computeLeaderboard builds — both the operator
+	// venue-projection dashboard (GET /api/state) and the rank/score fed into
+	// each participant's own GET /api/users/{user}/me lookup. Intended for a
+	// venue-demo account (e.g. "test1") an operator drives live during the
+	// event: solving challenges / tripping Falco rules is fine, but its
+	// progress must not appear on the leaderboard participants see. This is
+	// a DISPLAY-ONLY suppression — scoring (webhook ingest, MarkSolved) is
+	// completely unaffected, and a hidden user reading their own /me still
+	// sees their real score. Empty (default) = nobody hidden.
+	hiddenUsers := serverutil.SplitCSV(serverutil.Env("HIDDEN_USERS", ""))
 	// ALLOWED_ORIGINS (P23-2) is the CSRF-mitigation allowlist the api
 	// handler's origin guard checks every browser-facing state-changing
 	// request against (POST /api/admin/*, /api/challenges/{cid}/submit[-detect],
@@ -291,6 +303,7 @@ func main() {
 	handler := scoreboard.NewHandler(cat, st, logger,
 		scoreboard.WithDBPath(dbPath),
 		scoreboard.WithAdminEmails(adminEmails),
+		scoreboard.WithHiddenUsers(hiddenUsers),
 		scoreboard.WithAllowedOrigins(allowedOrigins),
 		scoreboard.WithJourneys(journeys),
 		scoreboard.WithFalcoRules(falcoRules),
