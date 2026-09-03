@@ -879,6 +879,50 @@ func TestLeaderboard_ScoreTie_BreaksByEarliest(t *testing.T) {
 	}
 }
 
+// TestLeaderboard_ScoreTie_BreaksByCompletionOrder_NotFirstSolve pins the
+// 2026-09-03 CEO decision: for players tied on score, the tiebreak is who
+// reached that score SOONEST (their most recent solve), not who started
+// first. alice solves her first challenge before bob but finishes her
+// second (and final, for this fixture) challenge AFTER bob finishes his —
+// so bob, who completed later-in-wall-clock-order but reached the tied
+// score first, must rank ahead of alice despite starting later. This is the
+// exact shape of the live incident that prompted the change: a fast starter
+// who finishes slow must not outrank a slower starter who finishes first.
+func TestLeaderboard_ScoreTie_BreaksByCompletionOrder_NotFirstSolve(t *testing.T) {
+	var clock time.Time
+	f := newFixture(t, func() time.Time { return clock })
+
+	// alice starts first (10:00), solving the trigger challenge...
+	clock = time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "alice"))
+
+	// ...bob starts second (10:10), solving the same trigger challenge...
+	clock = time.Date(2026, 5, 11, 10, 10, 0, 0, time.UTC)
+	f.do("POST", "/falco/events", falcoEventBody("Read sensitive file untrusted", "bob"))
+
+	// ...bob finishes his second (evade) challenge at 10:20, reaching
+	// score=200 first...
+	clock = time.Date(2026, 5, 11, 10, 20, 0, 0, time.UTC)
+	f.do("POST", "/api/challenges/02-evade/submit", map[string]any{"user": "bob", "flag": "FALCO{ok}"})
+
+	// ...alice finishes her second (evade) challenge LAST at 10:30, also
+	// reaching score=200, despite having started 10 minutes before bob.
+	clock = time.Date(2026, 5, 11, 10, 30, 0, 0, time.UTC)
+	f.do("POST", "/api/challenges/02-evade/submit", map[string]any{"user": "alice", "flag": "FALCO{ok}"})
+
+	lb := decode(t, f.doAdmin("GET", "/api/state", nil))["leaderboard"].([]any)
+	top := lb[0].(map[string]any)
+	if top["user"] != "bob" || top["score"].(float64) != 200 {
+		t.Fatalf("bob reached the tied score first and must rank first despite "+
+			"starting later; got order %v", lb)
+	}
+	second := lb[1].(map[string]any)
+	if second["user"] != "alice" {
+		t.Fatalf("alice must rank second (finished the tied score later, even "+
+			"though she started first); got %v", lb)
+	}
+}
+
 // Pins the bug fix: solve `at` must reflect when scoreboard received the
 // event, not Falco's event time. Falco/falcosidekick can buffer or batch,
 // delivering events with stale timestamps — that should not retro-date

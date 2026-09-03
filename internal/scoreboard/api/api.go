@@ -2291,6 +2291,18 @@ type lbEntry struct {
 	// still read solved counts; ranking keys off Score with Earliest as the
 	// tiebreak. Derived via grader.UserScore (ComputeScore single source) — no
 	// inline points math here (#39 direction).
+	//
+	// 2026-09-03 CEO decision (live 2026-09-03 event): Earliest now holds the
+	// user's MOST RECENT solve timestamp, not their first. Challenges are
+	// solved in a fixed order ending at the final mission, so "most recent
+	// solve" is the completion-order signal for players tied at the same
+	// score — whoever reached that score soonest ranks first. The prior
+	// "first-blood" tiebreak (earliest FIRST solve, e.g. the tutorial) let a
+	// player who started fast but finished slow outrank someone who actually
+	// finished earlier, which is not the intended notion of "official"
+	// ranking. JSON field name kept as "earliest" (no frontend renders it
+	// directly — verified 2026-09-03 — so the rename is deploy-safe without a
+	// wider contract change).
 	Score    int    `json:"score"`
 	Earliest string `json:"earliest"`
 	Events   int    `json:"events"`
@@ -2376,11 +2388,19 @@ func (h *Handler) computeLeaderboard(snap store.Snapshot, ids []string) []lbEntr
 	}
 	leaderboard := make([]lbEntry, 0, len(users))
 	for _, u := range users {
-		earliest := "9999"
+		// Track the MOST RECENT solve (not the first) — see lbEntry.Score doc
+		// comment above (2026-09-03 CEO decision). "" sorts before every real
+		// RFC3339 timestamp, so any real solve overwrites it; the "9999"
+		// sentinel is applied after the loop for zero-solve users so it still
+		// sorts last in the ascending tiebreak comparison below.
+		latest := ""
 		for _, p := range perUserSolves[u] {
-			if p[1] < earliest {
-				earliest = p[1]
+			if p[1] > latest {
+				latest = p[1]
 			}
+		}
+		if latest == "" {
+			latest = "9999"
 		}
 		solved := len(perUserSolves[u])
 		leaderboard = append(leaderboard, lbEntry{
@@ -2391,14 +2411,15 @@ func (h *Handler) computeLeaderboard(snap store.Snapshot, ids []string) []lbEntr
 			// the same catalog-filtered solved count used for the Solved column so
 			// the two agree, and the Grader adds the per-hint reveal penalty.
 			Score:    h.grader.UserScore(u, solved),
-			Earliest: earliest,
+			Earliest: latest,
 			Events:   snap.EventsPerUser[u],
 		})
 	}
 	// Rank by Score desc (#40, CEO decision — the leaderboard order now reflects
 	// the hint-penalty score, so a player who solved the same set with fewer
-	// hints outranks one who leaned on hints), with Earliest solve time as the
-	// tiebreak (the existing first-blood ordering, preserved for equal scores).
+	// hints outranks one who leaned on hints), with Earliest (now: most recent
+	// solve) as the tiebreak — this is a completion-order tiebreak, not
+	// first-blood (2026-09-03 CEO decision, see lbEntry.Score doc above).
 	sort.SliceStable(leaderboard, func(i, j int) bool {
 		if leaderboard[i].Score != leaderboard[j].Score {
 			return leaderboard[i].Score > leaderboard[j].Score
