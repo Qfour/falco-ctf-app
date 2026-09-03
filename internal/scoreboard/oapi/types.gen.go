@@ -464,12 +464,16 @@ type Journey struct {
 type LeaderboardEntry struct {
 	DisplayName string `json:"display_name"`
 
-	// Earliest RFC3339 first-solve time; the sentinel `"9999"` when solved == 0
+	// Earliest RFC3339 timestamp of the user's MOST RECENT solve (field name kept
+	// for API stability; semantics changed 2026-09-03 CEO decision — see
+	// `rank`). The sentinel `"9999"` when solved == 0.
 	Earliest string `json:"earliest"`
 	Events   int    `json:"events"`
 
-	// Rank 1-based, ranked by score desc with earliest first-solve as the
-	// tiebreak. 0 for participants with no solves (renders "-").
+	// Rank 1-based, ranked by score desc with `earliest` (most recent solve)
+	// as the tiebreak — a completion-order tiebreak: among players tied
+	// on score, whoever reached it soonest ranks first. 0 for
+	// participants with no solves (renders "-").
 	Rank int `json:"rank"`
 
 	// Score base award per solve minus hint penalties, clamped at 0
