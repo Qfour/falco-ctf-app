@@ -47,7 +47,7 @@ FROM nginxinc/nginx-unprivileged:1.30-alpine@sha256:93722936b82ec8a1178d48448e61
 # (not 3.22 — confirmed via nginxinc/docker-nginx's stable/alpine-slim/Dockerfile
 # on 2026-08-28), so its installed libssl3/libcrypto3 (3.5.7-r0) predates the
 # same 3.5.8-r0 fix as challenge/ttyd (CVE-2026-63072..63076/-54874/-18798/
-# -14456/-14457/-75803, High) but must be pinned against v3.24's own APKINDEX, not
+# -14456/-14457, High; plus -75803) but must be pinned against v3.24's own APKINDEX, not
 # v3.22's. **Exact version pin** (same discipline as challenge/ttyd/
 # detect-grader — untraced `apk upgrade` breaks bit-identical builds, #227).
 # 3.5.8-r0 confirmed present in
