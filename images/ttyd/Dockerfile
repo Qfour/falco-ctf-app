@@ -36,22 +36,26 @@ ARG KUBECTL_SHA256_ARM64=cc749967b62f4422260bc9c0aa7a7c55f45175ae38cb8d95767b5d2
 # https://dl-cdn.alpinelinux.org/alpine/v3.24/main (community は ttyd/tini/vim
 # 系) を `docker run alpine@<digest> apk policy` で実測して確認した版数
 # (2026-09-01):
-#   libssl3/libcrypto3 3.5.8-r0 (3.23 と同じ pin を維持。base に焼き込まれた
-#     3.5.7-r0 の fix 版で、3.24 でも base image 自体は再ビルドされていないため
-#     引き続き明示 upgrade が必要)
+#   libssl3/libcrypto3 3.5.9-r0 (2026-10-05: 3.24/main から 3.5.8-r0 が外れ apk
+#     resolve が failing していたため再 pin。`apk policy libssl3 libcrypto3` 実測で
+#     3.24/main の唯一の提供版が 3.5.9-r0。base に焼き込まれた 3.5.7-r0 からの
+#     明示 upgrade は引き続き必要 — 3.5.8-r0 の secfix [CVE-2026-63072..63076/
+#     -54874/-18798/-14456/-14457/-75803, secdb v3.24/main] は 3.5.9-r0 が包含)
 #   curl/libcurl 8.22.0-r0 (2026-09-03: alpine 3.24 リポジトリから 8.21.0-r0 が
 #   既に外れ apk resolve が failing していたため再 pin。`apk policy curl` 実測
 #   で 3.24/main の唯一の提供版が 8.22.0-r0 であることを確認済み)
 #   bash 5.3.9-r1 (3.23 の 5.3.3-r1 から 3.24 側で上がった版に追随、念のため厳密 pin)
-# ca-certificates / ttyd / tini の版数は 3.23→3.24 で不変 (live APKINDEX 実測、
-# 2026-09-01) — 既存 pin をそのまま 3.24 リポジトリに再確認して引き継ぐ。
+#   ca-certificates 20260909-r0 (2026-10-05: 3.24/main から 20260611-r0 が外れた
+#     ため再 pin。`apk policy ca-certificates` 実測で唯一の提供版)
+# ttyd / tini の版数は 3.23→3.24 で不変 (live APKINDEX 実測、2026-09-01。
+# 2026-10-05 の `apk policy` 再実測でも 1.7.7-r0 / 0.19.0-r3 のまま)。
 # kubectl (Go toolchain High) は本 alpine bump のスコープ外 — バージョン選定の
 # 経緯は上の ARG KUBECTL_VERSION 直下のコメント (workspace#33) を参照。
-RUN apk add --no-cache --upgrade libssl3=3.5.8-r0 libcrypto3=3.5.8-r0 \
+RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 \
  && apk add --no-cache \
         "ttyd=1.7.7-r0" \
         "bash=5.3.9-r1" \
-        "ca-certificates=20260611-r0" \
+        "ca-certificates=20260909-r0" \
         "curl=8.22.0-r0" \
         "tini=0.19.0-r3" \
  && ARCH="$(uname -m)" \

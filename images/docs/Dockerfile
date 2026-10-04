@@ -53,6 +53,10 @@ FROM nginxinc/nginx-unprivileged:1.30-alpine@sha256:93722936b82ec8a1178d48448e61
 # 3.5.8-r0 confirmed present in
 # https://dl-cdn.alpinelinux.org/alpine/v3.24/{main,community}/x86_64/APKINDEX.tar.gz
 # (measured 2026-08-28) and matches Sysdig's suggested fix version exactly.
+# Re-pinned 3.5.8-r0 -> 3.5.9-r0 on 2026-10-05: v3.24/main dropped 3.5.8-r0
+# (`apk add` failed with "unable to select packages"); `apk policy libssl3
+# libcrypto3` inside this base shows 3.5.9-r0 as the only version served.
+# 3.5.9-r0 supersedes 3.5.8-r0, so the CVE fixes listed above are retained.
 #
 # libxml2 (installed 2.13.9-r2, 3 High CVEs) is NOT pinned here: v3.24's live
 # APKINDEX still only serves 2.13.9-r2 (identical to installed — no newer
@@ -73,7 +77,7 @@ FROM nginxinc/nginx-unprivileged:1.30-alpine@sha256:93722936b82ec8a1178d48448e61
 # image still executes as 101, preserving nginx-unprivileged's non-root
 # model (no regression vs. before this Dockerfile even touched apk).
 USER root
-RUN apk add --no-cache --upgrade libssl3=3.5.8-r0 libcrypto3=3.5.8-r0
+RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0
 USER 101
 
 # --chmod: the non-root nginx user (uid 101) must read the config regardless of
