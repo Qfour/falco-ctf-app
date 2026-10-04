@@ -19,9 +19,9 @@ scoreboard は**全 10 課題を表示** (`scoreboardScenario` 未指定 or `nim
 |---|---|---|---|---|
 | 01 initial-recon | ★1 | trigger | ハンズオン | TeamTNT の K8s API 偵察 |
 | 02 credential-files | ★1 | trigger | ハンズオン | 資格情報窃取 (T1003) |
-| 03 stealth-read | ★2 | evade | ハンズオン | 02 と同ルールを回避 (`/proc/self/root`) |
+| 03 stealth-read | ★2 | evade | ハンズオン | 02 と同ルールを回避 |
 | 04 key-search | ★2 | trigger | ハンズオン | TeamTNT 鍵スクレイピング (T1552) |
-| 05 silent-search | ★3 | evade | **解説** | 04 を cmdline 回避 (入力リダイレクト) |
+| 05 silent-search | ★3 | evade | **解説** | 04 を cmdline 回避 |
 | 06 web-rce-shell | ★3 | trigger | ハンズオン | Log4Shell → web プロセスから shell |
 | 07 persist | ★3 | trigger | **解説** | upper-layer からの malware dropper |
 | 08 c2-beacon | ★4 | trigger | ハンズオン | Kinsing reverse shell C2 (T1059) |
