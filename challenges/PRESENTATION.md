@@ -394,7 +394,7 @@ submit <mission-id> 'FALCO{...}'
 ```
 
 `PARTICIPANT-HANDBOOK.md` と `REFERENCE.md` は事前配布版。
-ワークスペース内では `welcome.txt` を主軸に進めて OK。
+当日は Story タブを主軸に進める。ワークスペース内の `welcome.txt` にあるのは目的と提出方法だけ。
 
 ---
 
