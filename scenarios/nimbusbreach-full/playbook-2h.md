@@ -37,7 +37,7 @@ scoreboard は**全 10 課題を表示** (`scoreboardScenario` 未指定 or `nim
 2. ルール = `condition` が syscall フィールド (`fd.name`/`proc.pname`/`proc.cmdline`) に
    文字列/集合でマッチ (`REFERENCE.md §2`)。
 3. trigger = 発火させる / evade = 発火させず目的達成。
-4. ワークスペース操作・`/opt/ctf/INDEX.txt`・各 welcome.txt・submit 方法。
+4. ワークスペース操作・Story タブ (説明と段階ヒント)・各 welcome.txt (目的と提出方法)・submit 方法。
 
 **ガイド付き初回発火 (全員で Mission 01)**: `curl -sk https://kubernetes.default.svc/api`
 → scoreboard に発火が出るのを投影。
@@ -45,7 +45,7 @@ scoreboard は**全 10 課題を表示** (`scoreboardScenario` 未指定 or `nim
 ## ② CTF ハンズオン (0:30–1:30)
 
 参加者は scoreboard を見ながら **01→02→03→04→06→08** を順に。各 welcome.txt に
-難易度・目標/回避ルール・段階ヒント。運営は巡回し、03 (evade) で止まる人に
+難易度・目標/回避ルール・提出方法、段階ヒントは Story タブ。運営は巡回し、03 (evade) で止まる人に
 `/proc/self/root` のヒントを全体に出す。速い人には「05/07/09/10 も挑戦可」と促す。
 
 ## ③ 解説 — シナリオをやり切る (1:30–2:00)

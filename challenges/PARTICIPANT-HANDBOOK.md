@@ -2,9 +2,12 @@
 
 ようこそ。これは **Falco CTF** イベントの参加者向け資料です。
 当日の前に一度目を通し、イベント中はワークスペース内からいつでも
-参照できるようにしてください。ログイン直後に `/opt/ctf/INDEX.txt`
-が表示され、そこからミッションごとの welcome.txt
-(`/opt/ctf/missions/<NN>-<slug>/fixtures/welcome.txt`) に辿れます。
+参照できるようにしてください。ミッションの説明・手順・ヒント・提出は
+ポータルの **Story タブ** に集約されています。端末のログイン直後に出るのは
+表示名変更 (`setname`) の案内だけで、ミッション一覧は自動表示されません。
+端末側では各ミッションの welcome.txt
+(`/opt/ctf/missions/<NN>-<slug>/fixtures/welcome.txt`) で目的と提出方法を
+確認できます。
 
 ---
 
@@ -48,10 +51,13 @@ URL を開くと OIDC ログイン画面に転送されるので、それを入�
 
 | パス | 中身 |
 |---|---|
-| `/opt/ctf/INDEX.txt` | ミッション一覧 (ログイン時に自動表示) |
-| `/opt/ctf/missions/<NN>-<slug>/fixtures/welcome.txt` | **各ミッションの説明**。最初に必ず読む |
+| `/opt/ctf/missions/` | ミッションごとのディレクトリ (`ls /opt/ctf/missions/` で一覧) |
+| `/opt/ctf/missions/<NN>-<slug>/fixtures/welcome.txt` | **各ミッションの目的・種類・提出方法** (`cat` で読む。自動表示はされない) |
 | `/opt/ctf/submit.sh` | (evade ミッションのみ) flag 提出関数 |
-| `/opt/ctf/missions/<NN>-<slug>/README.md` | ミッションの背景・想定解 |
+| `/opt/ctf/setname.sh` | scoreboard の表示名変更 (ログイン時に案内が出る) |
+
+ミッションの背景・手順・段階ヒントは端末内には置いていません。ポータルの
+Story タブで読みます (ヒントは開示するとスコアが減点されます)。
 
 使えるツール:
 
@@ -155,7 +161,8 @@ trigger でルールを理解 → evade で同じルールを回避 のサイク
 > `challenges/ATTACK-COVERAGE.md` が正典 (各 `falco-rule.yaml` の `attack:` ブロック
 > から `make gen-attack` で生成)。drift を避けるため本表からは ATT&CK 列を外した。
 
-各 Mission の welcome.txt に詳しいシナリオ・HINT・提出方法が書いてある。
+各 Mission のシナリオ・手順・段階ヒントは Story タブに、目的と提出方法は
+welcome.txt にも書いてある。
 順番通りに進めるのを強く推奨 (後半は前半で学んだ技を前提とする)。
 
 ---
@@ -201,8 +208,9 @@ trigger でルールを理解 → evade で同じルールを回避 のサイク
 
 ## 7. 行き詰まったら
 
-1. Journey UI のヒントを段階的に開く (気付き→概要→解答)。`welcome.txt`
-   (`cat /opt/ctf/missions/<NN>-<slug>/fixtures/welcome.txt`) はシナリオ/背景の再確認に
+1. Story タブ (Journey UI) のヒントを段階的に開く (気付き→概要→解答、開示すると減点)。
+   `welcome.txt` (`cat /opt/ctf/missions/<NN>-<slug>/fixtures/welcome.txt`) は目的と
+   提出方法の再確認に
 2. 同じワークスペースで `man <command>` (alpine の `man` パッケージは
    入っていない場合がありますが) もしくは `<command> --help`
 3. それでも分からなければ運営に質問。質問の質を上げるために、以下を
@@ -233,6 +241,6 @@ trigger でルールを理解 → evade で同じルールを回避 のサイク
 - [Falco 公式: 概要](https://falco.org/docs/)
 - [Falco rules library](https://github.com/falcosecurity/rules/blob/main/rules/falco_rules.yaml)
 - [Falco fields reference](https://falco.org/docs/reference/rules/supported-fields/)
-- ワークスペース内のリファレンス: `/opt/ctf/REFERENCE.md`
+- リファレンスカード: [challenges/REFERENCE.md](./REFERENCE.md) (配布資料。ワークスペース内には置いていない)
 
 それでは健闘を祈ります。

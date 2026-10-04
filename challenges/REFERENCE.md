@@ -9,8 +9,8 @@
 
 ```bash
 echo $FALCO_CTF_USER         # ユーザ名 (= ctf-<username> namespace の username)
-cat /opt/ctf/INDEX.txt       # 10 ミッション一覧 (ログイン時に自動表示)
-ls /opt/ctf/missions/        # ミッション directory
+ls /opt/ctf/missions/        # ミッション一覧 (ミッションごとの directory)
+cat /opt/ctf/missions/<NN>-<slug>/fixtures/welcome.txt   # 目的・種類・提出方法
 hostname                     # = pod 名 (workspace)
 cat /etc/os-release          # alpine 3.20 ベース
 ```
