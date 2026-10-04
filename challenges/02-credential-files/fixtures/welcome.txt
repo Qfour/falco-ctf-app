@@ -7,7 +7,7 @@
 # 目的
 
 **TRIGGER 課題** — Falco ルール「Read sensitive file untrusted」を
-発火させると自動で CLEARED になる (提出操作は不要)。
+発火させると自動で CLEARED になる。提出操作は不要。
 root しか読まない機密ファイル (例: /etc/shadow) は、コンテナの中で読んでも
 検知される、という体験が狙い。
 

@@ -7,9 +7,9 @@
 # 目的
 
 **TRIGGER 課題** — Falco ルール「Redirect STDOUT/STDIN to Network Connection in Container」を
-発火させると自動で CLEARED になる (提出操作は不要)。
-reverse shell は network socket fd を stdout/stderr に dup する。Falco は、まさに
-この dup 操作を見張っている。
+発火させると自動で CLEARED になる。提出操作は不要。
+古典的な reverse shell payload は、network socket fd を stdout/stderr に
+dup する。Falco は、まさにこの dup 操作を見張っている。
 
 # 攻略ヒント
 

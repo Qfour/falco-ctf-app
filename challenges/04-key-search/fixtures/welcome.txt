@@ -7,7 +7,7 @@
 # 目的
 
 **TRIGGER 課題** — Falco ルール「Search Private Keys or Passwords」を
-発火させると自動で CLEARED になる (提出操作は不要)。
+発火させると自動で CLEARED になる。提出操作は不要。
 このルールはファイルの中身ではなくコマンドライン (proc.cmdline) を見るので、
 鍵が実在しなくても、結果が空でも発火する。
 

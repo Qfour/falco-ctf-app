@@ -7,7 +7,7 @@
 # 目的
 
 **TRIGGER 課題** — Falco ルール「Contact K8S API Server From Container」を
-発火させると自動で CLEARED になる (提出操作は不要)。
+発火させると自動で CLEARED になる。提出操作は不要。
 無 ServiceAccount の Pod からの匿名 connect は即座に検知される、という体験が狙い。
 
 # 攻略ヒント

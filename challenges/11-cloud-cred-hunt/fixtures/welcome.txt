@@ -14,7 +14,7 @@
 # 目的
 
 **TRIGGER 課題** — Falco ルール「Find AWS Credentials」を発火させると自動で
-CLEARED になる (提出操作は不要)。Falco は AWS 認証情報を grep/find で探す
+CLEARED になる。提出操作は不要。Falco は AWS 認証情報を grep/find で探す
 コマンドを見張っている。
 
 この箱には練習用のダミー資格情報が置いてある (AWS 公式ドキュメントの
