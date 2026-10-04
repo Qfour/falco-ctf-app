@@ -83,7 +83,9 @@ func portalPartials(t *testing.T) []portalPartial {
 }
 
 // templateCalls returns every {{template}} action reachable in n, including
-// those nested under if/range/with.
+// those nested under if/range/with. checkPortalAssembly uses it to FIND
+// nested calls so it can reject them; only a call that is a direct child of
+// the root's top-level list counts as composing a partial.
 func templateCalls(n parse.Node) []*parse.TemplateNode {
 	var out []*parse.TemplateNode
 	var walk func(parse.Node)
@@ -142,11 +144,16 @@ func pipeIsDot(p *parse.PipeNode) bool {
 //     own file is unchanged — "the diff of a partial is the diff of what is
 //     served" would stop being true.
 //
-//  2. The root calls every other partial exactly once, with `.` as the
-//     argument (without it the partial sees no data: every {{.Nonce}}
-//     renders empty and CSP blocks that script), and calls nothing that is
-//     not a partial. Uncalled = passes the source gates but is never served;
-//     called twice = duplicate element ids.
+//  2. The root composes every other partial UNCONDITIONALLY, exactly once:
+//     each is called by a {{template}} action that is a direct child of the
+//     root's top-level node list, with `.` as the argument (without it the
+//     partial sees no data: every {{.Nonce}} renders empty and CSP blocks
+//     that script), and the root calls nothing that is not a partial. A
+//     call inside {{if}}/{{range}}/{{with}} is a violation and is not
+//     counted: whether (and how many times) it is served would depend on
+//     data, which a static check cannot decide — `{{if false}}` drops the
+//     pane, `{{range}}` repeats it. Uncalled = passes the source gates but
+//     is never served; called twice = duplicate element ids.
 //
 //  3. No partial other than the root calls a template (flat layout).
 //
@@ -188,9 +195,21 @@ func checkPortalAssembly(fsys fs.FS) error {
 			errs = append(errs, fmt.Errorf("%s defines template(s) %q, want exactly [%q] — a partial must not contain {{define}}/{{block}}", p.name, defined, p.name))
 		}
 		for name, tree := range set {
+			topLevel := map[*parse.TemplateNode]bool{}
+			if tree.Root != nil {
+				for _, n := range tree.Root.Nodes {
+					if c, ok := n.(*parse.TemplateNode); ok {
+						topLevel[c] = true
+					}
+				}
+			}
 			for _, c := range templateCalls(tree.Root) {
 				if p.name != portalRootTmpl || name != portalRootTmpl {
 					errs = append(errs, fmt.Errorf("%s calls template %q — only the root %s composes partials (flat layout)", p.name, c.Name, portalRootTmpl))
+					continue
+				}
+				if !topLevel[c] {
+					errs = append(errs, fmt.Errorf("%s calls %q inside {{if}}/{{range}}/{{with}} — the root must compose every partial unconditionally, at its top level", p.name, c.Name))
 					continue
 				}
 				calls[c.Name]++
@@ -489,7 +508,31 @@ func TestPortalPartials_ChecksRejectMutations(t *testing.T) {
 			name:    "second call nested under if",
 			mutate:  portalFSEdit(portalRootTmpl, replaceOnce(homeCall, homeCall+"\n"+`{{if .Nonce}}{{template "pane-home.tmpl" .}}{{end}}`)),
 			check:   checkPortalAssembly,
-			wantErr: "partial pane-home.tmpl is called 2 time(s)",
+			wantErr: `portal.tmpl calls "pane-home.tmpl" inside {{if}}/{{range}}/{{with}}`,
+		},
+		{
+			name:    "only call wrapped in if false (pane never served)",
+			mutate:  portalFSEdit(portalRootTmpl, replaceOnce(homeCall, `{{ if false }}{{ template "pane-home.tmpl" . }}{{ end }}`)),
+			check:   checkPortalAssembly,
+			wantErr: `portal.tmpl calls "pane-home.tmpl" inside {{if}}/{{range}}/{{with}}`,
+		},
+		{
+			name:    "only call wrapped in if .Nonce (served depending on data)",
+			mutate:  portalFSEdit(portalRootTmpl, replaceOnce(`{{template "pane-tutorial.tmpl" . -}}`, `{{ if .Nonce }}{{ template "pane-tutorial.tmpl" . }}{{ end }}`)),
+			check:   checkPortalAssembly,
+			wantErr: `portal.tmpl calls "pane-tutorial.tmpl" inside {{if}}/{{range}}/{{with}}`,
+		},
+		{
+			name:    "only call wrapped in range (served N times)",
+			mutate:  portalFSEdit(portalRootTmpl, replaceOnce(homeCall, `{{range .Nonce}}{{template "pane-home.tmpl" $ -}}{{end}}`)),
+			check:   checkPortalAssembly,
+			wantErr: `portal.tmpl calls "pane-home.tmpl" inside {{if}}/{{range}}/{{with}}`,
+		},
+		{
+			name:    "only call wrapped in with, else branch",
+			mutate:  portalFSEdit(portalRootTmpl, replaceOnce(homeCall, `{{with .Nonce}}x{{else}}{{template "pane-home.tmpl" .}}{{end}}`)),
+			check:   checkPortalAssembly,
+			wantErr: `portal.tmpl calls "pane-home.tmpl" inside {{if}}/{{range}}/{{with}}`,
 		},
 		{
 			name: "root shell missing",

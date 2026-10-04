@@ -49,10 +49,14 @@ index.html — a gate that silently shrinks. So this walks the templates
 directory recursively and takes every regular file whatever its extension
 (a new extension or a deeper directory cannot fall outside the scan), and
 fails if a directory in REQUIRED_NONEMPTY contributes no file at all.
-Dotfiles and dot-directories (.DS_Store, editor swap files) are skipped:
-go:embed's `*.tmpl` glob never serves them. Any other file that is not
-valid UTF-8 is a FAIL naming the file, not a skip — an unreadable template
-is one this gate could not check.
+A file whose path has a dot-prefixed component (.DS_Store, .idea/...,
+editor swap files) is skipped UNLESS its name ends in .tmpl or .html. The
+exception matters: view.go's `//go:embed templates/portal/*.tmpl` is a glob,
+and that glob does embed a dot-prefixed match such as portal/.zz.tmpl
+(observed: the file shows up in the embedded FS), so it can be served and
+must be scanned. Any scanned file that is not valid UTF-8 is a
+FAIL naming the file, not a skip — an unreadable template is one this gate
+could not check.
 """
 import re
 import sys
@@ -66,6 +70,10 @@ TEMPLATES_DIR = REPO_ROOT / "internal" / "scoreboard" / "view" / "templates"
 # portal partial went missing from the scan, so the portal directory is
 # listed on its own.
 REQUIRED_NONEMPTY = (".", "portal")
+
+# Extensions that are scanned even under a dot-prefixed name — see the
+# module doc's dotfile paragraph.
+TEMPLATE_SUFFIXES = (".tmpl", ".html")
 
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
@@ -99,7 +107,11 @@ def main() -> int:
     files = sorted(
         p
         for p in TEMPLATES_DIR.rglob("*")
-        if p.is_file() and not any(part.startswith(".") for part in p.relative_to(TEMPLATES_DIR).parts)
+        if p.is_file()
+        and (
+            p.name.endswith(TEMPLATE_SUFFIXES)
+            or not any(part.startswith(".") for part in p.relative_to(TEMPLATES_DIR).parts)
+        )
     )
     for required in REQUIRED_NONEMPTY:
         directory = (TEMPLATES_DIR / required).resolve()
