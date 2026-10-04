@@ -333,7 +333,8 @@ func TestRenderPortal_CSPHeaderAndNonceInBody(t *testing.T) {
 	// without wiring the nonce; assert the count matches the template's
 	// known tag count so a regression here is caught explicitly rather than
 	// discovered as "some tab doesn't work" during manual QA).
-	allScriptTagsRe := regexp.MustCompile(`<script\b`)
+	// Case-insensitive: HTML tag names are, so `<SCRIPT>` is a script tag too.
+	allScriptTagsRe := regexp.MustCompile(`(?i)<script\b`)
 	allTags := allScriptTagsRe.FindAllString(body1, -1)
 	if len(allTags) != len(matches) {
 		t.Errorf("found %d <script> tags total but only %d carry nonce=\"...\" — every inline script must be nonced under this CSP", len(allTags), len(matches))
@@ -449,7 +450,8 @@ func TestIndexHandler_CSPHeaderAndNonceInBody(t *testing.T) {
 	// Every <script> tag in the page must carry the nonce attribute — see
 	// TestRenderPortal_CSPHeaderAndNonceInBody's identical assertion for why
 	// this is checked by count rather than trusting the loop above alone.
-	allScriptTagsRe := regexp.MustCompile(`<script\b`)
+	// Case-insensitive: HTML tag names are, so `<SCRIPT>` is a script tag too.
+	allScriptTagsRe := regexp.MustCompile(`(?i)<script\b`)
 	allTags := allScriptTagsRe.FindAllString(body1, -1)
 	if len(allTags) != len(matches) {
 		t.Errorf("found %d <script> tags total but only %d carry nonce=\"...\" — every inline script must be nonced under this CSP", len(allTags), len(matches))

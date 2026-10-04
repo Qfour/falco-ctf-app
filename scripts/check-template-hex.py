@@ -49,6 +49,10 @@ index.html — a gate that silently shrinks. So this walks the templates
 directory recursively and takes every regular file whatever its extension
 (a new extension or a deeper directory cannot fall outside the scan), and
 fails if a directory in REQUIRED_NONEMPTY contributes no file at all.
+Dotfiles and dot-directories (.DS_Store, editor swap files) are skipped:
+go:embed's `*.tmpl` glob never serves them. Any other file that is not
+valid UTF-8 is a FAIL naming the file, not a skip — an unreadable template
+is one this gate could not check.
 """
 import re
 import sys
@@ -92,7 +96,11 @@ def main() -> int:
         return 1
 
     print("==> scanning templates/** for raw hex color literals (3- and 6-digit, comments excluded)")
-    files = sorted(p for p in TEMPLATES_DIR.rglob("*") if p.is_file())
+    files = sorted(
+        p
+        for p in TEMPLATES_DIR.rglob("*")
+        if p.is_file() and not any(part.startswith(".") for part in p.relative_to(TEMPLATES_DIR).parts)
+    )
     for required in REQUIRED_NONEMPTY:
         directory = (TEMPLATES_DIR / required).resolve()
         if not any(p.parent.resolve() == directory for p in files):
@@ -105,13 +113,29 @@ def main() -> int:
             return 1
 
     hits: list[str] = []
+    unreadable: list[str] = []
     for path in files:
-        original = path.read_text(encoding="utf-8")
-        scannable = strip_comments(original)
         rel = path.relative_to(REPO_ROOT)
+        try:
+            original = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError) as e:
+            unreadable.append(f"{rel}: {e}")
+            continue
+        scannable = strip_comments(original)
         for lineno, line in enumerate(scannable.splitlines(), start=1):
             for m in HEX_RE.finditer(line):
                 hits.append(f"{rel}:{lineno}: {m.group(0)}")
+
+    if unreadable:
+        print("FAIL: could not read file(s) under internal/scoreboard/view/templates/ as UTF-8 text:", file=sys.stderr)
+        for u in unreadable:
+            print(f"  {u}", file=sys.stderr)
+        print(
+            "  → every non-dotfile under templates/ is scanned; a file that cannot be\n"
+            "    read cannot be checked. Remove it if it is not a template.",
+            file=sys.stderr,
+        )
+        return 1
 
     if hits:
         print("FAIL: raw hex color literal(s) found under internal/scoreboard/view/templates/:", file=sys.stderr)

@@ -91,13 +91,26 @@ type indexData struct {
 //     (where it has one) its own <script nonce> block
 //   - core-router.tmpl  the hash-tab router + role gate <script>
 //
-// Rules for editing (the tests in portal_partials_test.go enforce the
-// mechanical ones):
+// Rules for editing. portal_partials_test.go enforces all of them except
+// the trim marker (checkPortalAssembly / checkPortalScriptAndStyle say
+// exactly what is checked):
 //   - Each partial is named by its file basename (ParseFS) and holds no
-//     {{define}} wrapper. The root calls it as `{{template "x.tmpl" . -}}`
-//     on its own line: `.` hands portalData through (a partial that needs
-//     {{.Nonce}} gets nothing without it) and the trim marker swallows that
-//     line's newline so the assembled bytes equal plain concatenation.
+//     {{define}}/{{block}}. ParseFS reads files in name order and the last
+//     definition of a name wins, so a define in one file could replace
+//     another partial's body without that partial's file changing.
+//   - The root calls each partial as `{{template "x.tmpl" . -}}` on its own
+//     line: `.` hands portalData through (a partial that needs {{.Nonce}}
+//     gets nothing without it). The trim marker removes ALL whitespace
+//     that follows the action, not just one newline — here that is only
+//     the call line's own newline, because the next line starts at column
+//     0 with non-space text, so the assembled bytes equal plain
+//     concatenation. Blank lines between elements therefore live inside
+//     the partials, never between two calls in the root.
+//   - Call ORDER is fixed by rule, not by a pinned list. Today's one rule:
+//     core-router.tmpl is the root's last call (its script runs showTab()
+//     as soon as it is parsed and skips a pane not yet in the DOM). A PR
+//     that adds a partial whose position matters adds its own rule to
+//     checkPortalAssembly in that same PR.
 //   - Cut only at element boundaries (a whole <style>, a whole
 //     <script nonce="{{.Nonce}}">, a whole pane <div>). html/template's
 //     contextual escaping tracks context per template, so a cut inside a
@@ -133,7 +146,7 @@ const (
 // template.Must catches a syntax error in any partial at process start. A
 // {{template}} call naming a partial that does not exist is NOT a parse
 // error (it surfaces on first Execute), so that case is pinned by
-// TestPortalPartials_RootCallsEveryPartialExactlyOnce instead.
+// checkPortalAssembly (portal_partials_test.go) instead.
 var portalTmpl = template.Must(template.New(portalRootTmpl).ParseFS(portalFS, portalTmplGlob))
 
 type Handler struct {
