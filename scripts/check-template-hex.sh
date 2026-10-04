@@ -2,8 +2,9 @@
 # Design-token single-source gate (app#116).
 #
 # Fails (non-zero) if a raw hex color literal — 6-digit (#RRGGBB) or 3-digit
-# shorthand (#RGB) — appears anywhere in
-# internal/scoreboard/view/templates/*.html. Before app#116, the SAME hex
+# shorthand (#RGB) — appears in any file under
+# internal/scoreboard/view/templates/ (recursive — index.html and the
+# portal's templates/portal/*.tmpl partials, P28-0a). Before app#116, the SAME hex
 # codes were hand-duplicated across index.html and portal.html in three
 # separate `:root` namespaces with nothing stopping them from silently
 # drifting apart. internal/scoreboard/view/static/tokens.css is now the ONE
@@ -11,7 +12,7 @@
 # templates only reference it via `var(--...)`. This script makes that
 # mechanical rather than a convention someone can forget.
 #
-# Only templates/*.html are in scope — NOT static/tokens.css itself (the
+# Only files under templates/ are in scope — NOT static/tokens.css itself (the
 # single source is SUPPOSED to hold the literals) and NOT the vendored
 # cybercore.min.css (a pinned third-party file, not hand-authored here; see
 # vendor/cybercore/PROVENANCE.md).

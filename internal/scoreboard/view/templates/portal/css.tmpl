@@ -1,0 +1,874 @@
+<style>
+  /* ===== Portal shell chrome (tabs + layout) — new for P23-1 ===== */
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; min-height: 100vh;
+    background: var(--p-bg);
+    color: var(--p-text);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  /* ===== Unified header bar (portal-header-refine) =====
+     Single top-of-page bar: brand logo (left) + tab nav (immediately right
+     of the logo) + user identity (right-aligned). Replaces the old
+     per-pane "FALCO CTF" <h1> brand headings — those now show just the tab
+     name (see each pane's header markup below) since the brand lives here,
+     once. */
+  #portal-tabs {
+    display: flex; align-items: center; gap: 0.25rem; padding: 0.75rem 1.5rem 0;
+    background: var(--p-bg-elev); border-bottom: 1px solid var(--p-border);
+    position: sticky; top: 0; z-index: 100; flex-wrap: wrap;
+  }
+  #portal-brand {
+    font-family: 'Chakra Petch', sans-serif; font-size: 1rem; font-weight: 700;
+    letter-spacing: 0.04em; text-transform: uppercase; color: var(--p-text);
+    margin: 0 1.25rem 0.5rem 0; align-self: center; white-space: nowrap;
+  }
+  #portal-brand .accent { color: var(--p-accent); text-shadow: 0 0 14px rgba(0,203,226,0.35); }
+  #portal-tabs .tab {
+    font-family: 'Chakra Petch', sans-serif; font-size: 0.8rem; font-weight: 600;
+    letter-spacing: 0.08em; text-transform: uppercase; color: var(--p-text-dim);
+    background: transparent; border: none; border-bottom: 2px solid transparent;
+    padding: 0.65rem 1rem; cursor: pointer; text-decoration: none;
+  }
+  #portal-tabs .tab:hover { color: var(--p-text); }
+  #portal-tabs .tab.active { color: var(--p-accent); border-bottom-color: var(--p-accent); }
+  #portal-tabs .tab[hidden] { display: none; }
+  /* Right-aligned identity cluster: username only (portal-ui-polish:
+     removed the secondary role badge — see applyRole()'s doc in the
+     router script below for why the role STRING itself is still read,
+     just no longer rendered as a visible badge). */
+  #portal-identity {
+    margin-left: auto; align-self: center; margin-bottom: 0.5rem;
+    display: flex; align-items: center; gap: 0.55rem;
+  }
+  #portal-username {
+    font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.8rem;
+    font-weight: 600; color: var(--p-text); letter-spacing: 0.02em;
+  }
+  .pane { display: none; }
+  .pane.active { display: block; }
+
+  /* ===== Shared pane component classes (P23 portal-redesign) =====
+     Extracted from the near-identical rules #pane-scoreboard / #pane-story /
+     #pane-me / #pane-terminal each used to define locally (values taken
+     from #pane-scoreboard, the reference design — see the --p-* tokens in
+     /static/tokens.css, app#116). Each pane's OWN CSS (below) now carries only its
+     pane-specific delta, if any, on top of these; the HTML for each pane
+     was NOT rewritten to reference these classes explicitly (pane markup
+     keeps its existing .panel/.panel-header/.btn/.badge/etc class names —
+     see the "Scoped pane styles" section below, which now targets these
+     SAME class names but scoped per-pane only for the deltas that remain).
+     Pane-specific complex structures (podium, leaderboard table, mission
+     map, terminal iframe frame) are intentionally left pane-scoped below —
+     only the small, truly-repeated primitives are hoisted here. */
+  .p-shell {
+    background:
+      radial-gradient(at 15% -10%, rgba(0, 203, 226, 0.10) 0px, transparent 45%),
+      radial-gradient(at 90% 0%, rgba(183, 140, 255, 0.06) 0px, transparent 40%),
+      var(--p-bg);
+    background-attachment: fixed;
+    color: var(--p-text);
+    font-family: var(--p-font-body);
+    min-height: 100vh;
+    padding: var(--p-page-padding);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    position: relative;
+  }
+  .p-shell::before {
+    content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background-image:
+      linear-gradient(rgba(0, 203, 226, 0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0, 203, 226, 0.035) 1px, transparent 1px);
+    background-size: 44px 44px;
+    mask-image: radial-gradient(ellipse at 50% 0%, var(--ink-black) 30%, transparent 80%);
+  }
+  .p-shell > * { position: relative; z-index: 1; }
+
+  .p-h1 { font-family: var(--p-font-display); font-size: var(--p-h1); font-weight: 700; letter-spacing: 0.01em; text-transform: uppercase; line-height: 1; }
+  .p-h1 .accent { color: var(--p-accent); text-shadow: 0 0 18px var(--p-accent-glow), 0 0 40px rgba(0,203,226,0.25); }
+  .p-h1 .light { color: var(--p-text-mute); font-weight: 500; font-size: 0.85rem; letter-spacing: var(--p-tracking-wider); margin-left: 0.6rem; text-transform: uppercase; }
+
+  .p-btn { font-family: var(--p-font-display); text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.72rem; font-weight: 700; padding: 0.45rem 0.9rem; border-radius: 6px; border: 1px solid var(--p-border-strong); background: transparent; color: var(--p-text-dim); cursor: pointer; transition: all 0.15s; }
+  .p-btn:hover { color: var(--p-accent); border-color: var(--p-accent); box-shadow: 0 0 12px var(--p-accent-glow); }
+
+  .p-live { display: flex; align-items: center; gap: 0.5rem; color: var(--p-success); font-size: var(--p-micro); text-transform: uppercase; letter-spacing: 0.2em; font-weight: 700; justify-content: flex-end; }
+  .p-live::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--p-success); box-shadow: 0 0 12px var(--p-success-glow); animation: p-pulse 1.6s ease-in-out infinite; }
+  @keyframes p-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.45; transform: scale(1.25); } }
+
+  /* ===== Scoped pane styles (mechanically namespaced from the legacy
+     index/journey/me templates) ===== */
+
+  #pane-scoreboard {
+    /* Unified design tokens (P23 portal-redesign) — see the root --p-*
+       tokens in /static/tokens.css (app#116). Pane-local aliases kept so
+       the ~120 rules below (which reference --falco/--accent/--bg/etc
+       extensively) don't all need renaming; only the DEFINITIONS moved to
+       the shared :root layer. */
+    --falco: var(--p-accent);
+    --falco-2: var(--p-accent-2);
+    --bg: var(--p-bg);
+    --bg-elev: var(--p-bg-elev);
+    --surface: var(--p-surface);
+    --surface-2: var(--p-surface-2);
+    --border: var(--p-border);
+    --border-strong: var(--p-border-strong);
+    --text: var(--p-text);
+    --text-dim: var(--p-text-dim);
+    --text-mute: var(--p-text-mute);
+    --accent: var(--falco);
+    --accent-2: var(--falco-2);
+    --accent-glow: var(--p-accent-glow);
+    --success: var(--p-success);
+    --success-glow: var(--p-success-glow);
+    --warn: var(--p-warn);
+    --evade: var(--p-evade);        /* evade = violet, for game-y type contrast */
+    --evade-glow: var(--p-evade-glow);
+    --trigger: var(--p-accent);
+    --gold: var(--p-gold); --gold-glow: var(--p-gold-glow);
+    --silver: var(--p-silver);
+    --bronze: var(--p-bronze);
+    --danger: var(--p-danger);
+  }
+
+  #pane-scoreboard * { box-sizing: border-box; margin: 0; padding: 0; }
+  #pane-scoreboard { font-size: 16px; }
+  /* background/padding/grid-overlay/position now come from the shared
+     .p-shell class on this pane's outer <div> (P23 portal-redesign) — see
+     the .p-shell rule above. */
+  #pane-scoreboard .mono { font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace; }
+  #pane-scoreboard .display { font-family: 'Chakra Petch', sans-serif; letter-spacing: 0.02em; }
+  #pane-scoreboard code { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.875em; background: var(--surface-2); padding: 1px 6px; border-radius: 3px; color: var(--accent); }
+  #pane-scoreboard a { color: var(--accent); text-decoration: none; }
+
+  /* ===== Header ===== */
+  #pane-scoreboard header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 1.75rem; padding-bottom: 1.25rem; border-bottom: 1px solid var(--border); position: relative; }
+  #pane-scoreboard header::after { content: ''; position: absolute; left: 0; bottom: -1px; width: 160px; height: 2px; background: linear-gradient(90deg, var(--accent), transparent); box-shadow: 0 0 12px var(--accent-glow); }
+  /* .brand h1 / .live now come from the shared .p-h1 / .p-live classes
+     (P23 portal-redesign) on the markup below — see those rules above. */
+  #pane-scoreboard .updated { color: var(--text-mute); font-size: 0.7rem; margin-top: 0.3rem; text-align: right; font-family: 'JetBrains Mono', monospace; }
+  #pane-scoreboard .reset-btn { margin-top: 0.5rem; padding: 0.32rem 0.75rem; font-size: 0.65rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-mute); background: transparent; border: 1px solid var(--border-strong); border-radius: 6px; cursor: pointer; opacity: 0.7; transition: all 0.15s; }
+  #pane-scoreboard .reset-btn:hover { opacity: 1; color: var(--danger); border-color: var(--danger); box-shadow: 0 0 12px rgba(255,92,106,0.25); }
+  #pane-scoreboard .name-edit { margin-left: 0.4rem; padding: 0 0.25rem; font-size: 0.75rem; line-height: 1; color: var(--text-mute); background: transparent; border: none; cursor: pointer; opacity: 0; transition: opacity 0.15s; }
+  #pane-scoreboard tr:hover .name-edit { opacity: 0.55; }
+  #pane-scoreboard .name-edit:hover { opacity: 1; color: var(--accent); }
+
+  #pane-scoreboard .hdr-right { display: flex; flex-direction: column; align-items: flex-end; gap: 0.35rem; }
+  #pane-scoreboard .hdr-btns { display: flex; gap: 0.4rem; margin-top: 0.4rem; }
+  #pane-scoreboard .hdr-btns .reset-btn { margin-top: 0; }
+  #pane-scoreboard .result-btn { color: var(--accent); border-color: var(--border-strong); }
+  #pane-scoreboard .result-btn:hover { color: var(--accent); border-color: var(--accent); box-shadow: 0 0 12px var(--accent-glow); opacity: 1; }
+
+  /* ===== Podium (top 3) ===== */
+  #pane-scoreboard .podium { display: grid; grid-template-columns: 1fr 1.25fr 1fr; gap: 1rem; align-items: end; margin-bottom: 1.5rem; }
+  #pane-scoreboard .podium:empty { display: none; }
+  #pane-scoreboard .pod { background: linear-gradient(180deg, var(--surface) 0%, var(--bg-elev) 100%); border: 1px solid var(--border-strong); border-radius: 0.9rem; padding: 1.1rem 1rem 1.25rem; text-align: center; position: relative; overflow: hidden; }
+  #pane-scoreboard .pod .medal { font-family: 'Chakra Petch', sans-serif; font-size: 1.5rem; font-weight: 700; line-height: 1; }
+  #pane-scoreboard .pod .pod-name { font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 1rem; margin: 0.5rem 0 0.15rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #pane-scoreboard .pod .pod-score { font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--text-dim); }
+  #pane-scoreboard .pod .pod-score b { color: var(--accent); font-size: 1.05rem; }
+  #pane-scoreboard .pod .crown { position: absolute; inset: 0 0 auto 0; height: 3px; }
+  #pane-scoreboard .pod-1 { transform: translateY(-10px); border-color: var(--gold); box-shadow: 0 0 28px var(--gold-glow), inset 0 0 24px rgba(255,210,74,0.06); }
+  #pane-scoreboard .pod-1 .medal { color: var(--gold); text-shadow: 0 0 16px var(--gold-glow); }
+  #pane-scoreboard .pod-1 .crown { background: linear-gradient(90deg, transparent, var(--gold), transparent); box-shadow: 0 0 14px var(--gold-glow); }
+  #pane-scoreboard .pod-2 { border-color: var(--silver); }
+  #pane-scoreboard .pod-2 .medal { color: var(--silver); }
+  #pane-scoreboard .pod-2 .crown { background: linear-gradient(90deg, transparent, var(--silver), transparent); }
+  #pane-scoreboard .pod-3 { border-color: var(--bronze); }
+  #pane-scoreboard .pod-3 .medal { color: var(--bronze); }
+  #pane-scoreboard .pod-3 .crown { background: linear-gradient(90deg, transparent, var(--bronze), transparent); }
+  @media (max-width: 720px) { #pane-scoreboard .podium { grid-template-columns: 1fr; } #pane-scoreboard .pod-1 { transform: none; } }
+
+  /* ===== Panel ===== */
+  #pane-scoreboard .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 0.85rem; margin-bottom: 1.5rem; overflow: hidden; }
+  #pane-scoreboard .panel-header { padding: 0.9rem 1.5rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+  #pane-scoreboard .panel-header h2 { font-family: 'Chakra Petch', sans-serif; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.18em; color: var(--text); font-weight: 600; display: flex; align-items: center; gap: 0.6rem; }
+  #pane-scoreboard .panel-header h2::before { content: ''; width: 3px; height: 15px; background: var(--accent); border-radius: 2px; box-shadow: 0 0 10px var(--accent-glow); }
+  #pane-scoreboard .panel-aux { color: var(--text-mute); font-size: 0.75rem; font-family: 'JetBrains Mono', monospace; }
+
+  /* ===== Leaderboard ===== */
+  #pane-scoreboard table { width: 100%; border-collapse: collapse; }
+  #pane-scoreboard thead th { color: var(--text-mute); font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.15em; font-weight: 700; padding: 0.6rem 1.5rem; text-align: left; background: var(--bg-elev); }
+  #pane-scoreboard tbody tr { transition: background 0.2s; }
+  #pane-scoreboard tbody tr:hover { background: var(--surface-2); }
+  #pane-scoreboard tbody td { padding: 0.8rem 1.5rem; border-top: 1px solid var(--border); vertical-align: middle; }
+  #pane-scoreboard .rank { font-family: 'Chakra Petch', monospace; font-size: 1.15rem; font-weight: 700; width: 60px; color: var(--text-dim); }
+  #pane-scoreboard .rank-1 { color: var(--gold); text-shadow: 0 0 12px var(--gold-glow); }
+  #pane-scoreboard .rank-2 { color: var(--silver); }
+  #pane-scoreboard .rank-3 { color: var(--bronze); }
+  #pane-scoreboard .user-cell { font-family: 'JetBrains Mono', monospace; font-weight: 600; font-size: 0.95rem; }
+  #pane-scoreboard .score-cell { font-family: 'JetBrains Mono', monospace; font-size: 1rem; }
+  #pane-scoreboard .score-cell .total { color: var(--text-mute); }
+  #pane-scoreboard .progress { display: flex; gap: 3px; width: 100%; min-width: 140px; }
+  #pane-scoreboard .seg { flex: 1 1 0; height: 10px; border-radius: 2px; background: var(--surface-2); border: 1px solid var(--border); transition: all 0.3s; }
+  #pane-scoreboard .seg.filled { background: linear-gradient(180deg, var(--accent), var(--accent-2)); border-color: var(--accent); box-shadow: 0 0 7px var(--accent-glow); }
+
+  /* ===== Missions (challenges) ===== */
+  #pane-scoreboard .challenges { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem; padding: 1.25rem 1.5rem; }
+  #pane-scoreboard .challenge { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 0.6rem; padding: 1rem; transition: all 0.2s; position: relative; overflow: hidden; }
+  #pane-scoreboard .challenge::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--border-strong); transition: all 0.2s; }
+  #pane-scoreboard .challenge:hover { border-color: var(--accent); transform: translateY(-3px); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4), 0 0 20px rgba(0,203,226,0.12); }
+  #pane-scoreboard .challenge.clickable { cursor: pointer; }
+  #pane-scoreboard .challenge.full { border-color: var(--success); background: linear-gradient(135deg, var(--bg-elev) 0%, rgba(0, 203, 226, 0.07) 100%); }
+  #pane-scoreboard .challenge.full::before { background: var(--success); box-shadow: 0 0 12px var(--success-glow); }
+  #pane-scoreboard .detail-head { justify-content: flex-start; gap: 0.85rem; }
+  #pane-scoreboard .detail-head h2 .badge { margin-left: 0.4rem; }
+  #pane-scoreboard .back-btn { margin-top: 0; }
+  #pane-scoreboard .challenge .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
+  #pane-scoreboard .challenge .num { font-family: 'Chakra Petch', monospace; color: var(--text-mute); font-size: 0.7rem; font-weight: 700; letter-spacing: 0.12em; }
+  #pane-scoreboard .challenge .status { font-family: 'Chakra Petch', sans-serif; font-size: 0.6rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-mute); }
+  #pane-scoreboard .challenge.full .status { color: var(--success); }
+  #pane-scoreboard .badge { padding: 3px 9px; border-radius: 4px; font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.12em; font-weight: 700; }
+  #pane-scoreboard .badge-trigger { background: rgba(0, 203, 226, 0.12); color: var(--trigger); border: 1px solid rgba(0, 203, 226, 0.35); }
+  #pane-scoreboard .badge-evade { background: rgba(183, 140, 255, 0.12); color: var(--evade); border: 1px solid rgba(183, 140, 255, 0.35); }
+  #pane-scoreboard .challenge .name { font-family: 'Chakra Petch', sans-serif; font-weight: 600; margin-bottom: 0.45rem; color: var(--text); font-size: 0.98rem; }
+  #pane-scoreboard .challenge .rule { color: var(--text-dim); font-size: 0.7rem; font-family: 'JetBrains Mono', monospace; margin-bottom: 0.75rem; line-height: 1.4; word-break: break-word; }
+  #pane-scoreboard .challenge .dots { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 0.6rem; }
+  #pane-scoreboard .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--border-strong); transition: all 0.3s; }
+  #pane-scoreboard .dot.filled { background: var(--success); box-shadow: 0 0 7px var(--success-glow); }
+  #pane-scoreboard .challenge .footer { display: flex; justify-content: space-between; font-size: 0.7rem; color: var(--text-mute); font-family: 'JetBrains Mono', monospace; }
+  #pane-scoreboard .challenge .footer .solved-count { color: var(--success); font-weight: 700; }
+
+  /* ===== Activity ===== */
+  #pane-scoreboard .activity { padding: 0.5rem 0; max-height: 480px; overflow-y: auto; }
+  #pane-scoreboard .activity::-webkit-scrollbar { width: 6px; }
+  #pane-scoreboard .activity::-webkit-scrollbar-track { background: transparent; }
+  #pane-scoreboard .activity::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+  #pane-scoreboard .activity-item { display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 1.5rem; gap: 1rem; border-left: 2px solid transparent; transition: all 0.2s; }
+  #pane-scoreboard .activity-item:hover { background: var(--surface-2); border-left-color: var(--accent); }
+  #pane-scoreboard .activity-item.fresh { animation: sb-flash 1.4s ease; }
+  @keyframes sb-flash {
+    0% { background: var(--accent-glow); border-left-color: var(--accent); box-shadow: inset 0 0 28px var(--accent-glow); }
+    100% { background: transparent; border-left-color: transparent; box-shadow: none; }
+  }
+  #pane-scoreboard .activity-item .who { font-family: 'JetBrains Mono', monospace; font-weight: 600; color: var(--text); }
+  #pane-scoreboard .activity-item .verb { color: var(--text-mute); font-size: 0.8rem; margin: 0 0.4rem; }
+  #pane-scoreboard .activity-item .what { color: var(--accent); font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; }
+  #pane-scoreboard .activity-item .when { color: var(--text-mute); font-size: 0.7rem; font-family: 'JetBrains Mono', monospace; flex-shrink: 0; }
+
+  /* ===== Grid ===== */
+  #pane-scoreboard .grid { display: grid; grid-template-columns: 1.7fr 1fr; gap: 1.5rem; }
+  @media (max-width: 980px) {
+    #pane-scoreboard { padding: 1.25rem; }
+    #pane-scoreboard .grid { grid-template-columns: 1fr; }
+    #pane-scoreboard .brand h1 { font-size: 1.9rem; }
+  }
+
+  /* ===== Result screen ===== */
+  #pane-scoreboard .result-hero { text-align: center; padding: 0.5rem 0 2rem; position: relative; }
+  #pane-scoreboard .result-hero h1 { font-size: 3rem; font-weight: 700; letter-spacing: 0.06em; color: var(--accent); text-shadow: 0 0 32px var(--accent-glow), 0 0 60px rgba(0,203,226,0.25); }
+  #pane-scoreboard .result-sub { color: var(--text-dim); letter-spacing: 0.22em; text-transform: uppercase; font-size: 0.8rem; margin-top: 0.5rem; }
+  #pane-scoreboard .result-hero .back-btn { position: absolute; left: 0; top: 0.25rem; }
+  #pane-scoreboard .result-view .podium { margin-bottom: 2rem; }
+
+  #pane-scoreboard .empty { text-align: center; padding: 2.5rem 1rem; color: var(--text-mute); font-size: 0.875rem; }
+  #pane-scoreboard .empty .icon { font-size: 2rem; opacity: 0.4; display: block; margin-bottom: 0.5rem; }
+  #pane-scoreboard .demo-tag { display: none; font-size: 0.6rem; letter-spacing: 0.15em; color: var(--warn); border: 1px solid var(--warn); border-radius: 4px; padding: 1px 6px; text-transform: uppercase; }
+
+
+  #pane-story {
+    /* Unified design tokens (P23 portal-redesign) — see the root --p-*
+       tokens in /static/tokens.css (app#116). Pane-local aliases kept so
+       existing rules below don't all need renaming; only the DEFINITIONS
+       moved to :root. */
+    --falco: var(--p-accent); --falco-2: var(--p-accent-2);
+    --bg: var(--p-bg); --bg-elev: var(--p-bg-elev); --surface: var(--p-surface); --surface-2: var(--p-surface-2);
+    --border: var(--p-border); --border-strong: var(--p-border-strong);
+    --text: var(--p-text); --text-dim: var(--p-text-dim); --text-mute: var(--p-text-mute);
+    --accent: var(--falco); --accent-2: var(--falco-2);
+    --accent-glow: var(--p-accent-glow);
+    --success: var(--p-success); --success-glow: var(--p-success-glow);
+    --warn: var(--p-warn);
+    --evade: var(--p-evade); --evade-glow: var(--p-evade-glow);
+    --gold: var(--p-gold); --danger: var(--p-danger);
+  }
+  #pane-story * { box-sizing: border-box; margin: 0; padding: 0; }
+  #pane-story { font-size: 16px; }
+  /* background/padding/grid-overlay/position now come from the shared
+     .p-shell class on this pane's outer <div> (P23 portal-redesign) — see
+     the .p-shell rule above. */
+  #pane-story .mono { font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace; }
+  #pane-story .display { font-family: 'Chakra Petch', sans-serif; letter-spacing: 0.02em; }
+  #pane-story code { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.875em; background: var(--surface-2); padding: 1px 6px; border-radius: 3px; color: var(--accent); }
+  /* Falco Rule condition/output overflow fix (portal-header-refine item
+     10) — a raw <pre><code> (see renderFalcoRule's .fr-body markup below)
+     previously had NO overflow handling here at all (unlike .rich-content
+     pre, which already sets overflow-x: auto for the gen-time Home/Story
+     fragment content — a DIFFERENT code path, hand-authored template
+     literals in renderFalcoRule, not that shared class). A long, unbroken
+     Falco `condition` expression therefore forced the box (and, pre-fix,
+     the whole .layout grid track — see the min-width: 0 rule above) wider
+     than the pane, clipping at the viewport's right edge. Matches
+     .rich-content pre's own treatment for consistency across the two code
+     paths. */
+  #pane-story pre { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 0.5rem; padding: 0.85rem 1rem; overflow-x: auto; margin: 0.6rem 0; max-width: 100%; }
+  #pane-story pre code { background: none; padding: 0; color: var(--text-dim); white-space: pre; }
+  #pane-story a { color: var(--accent); text-decoration: none; }
+  #pane-story a:hover { text-decoration: underline; }
+
+  #pane-story header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 1.75rem; padding-bottom: 1.25rem; border-bottom: 1px solid var(--border); position: relative; }
+  #pane-story header::after { content: ''; position: absolute; left: 0; bottom: -1px; width: 160px; height: 2px; background: linear-gradient(90deg, var(--accent), transparent); box-shadow: 0 0 12px var(--accent-glow); }
+  /* .brand h1 / .live now come from the shared .p-h1 / .p-live classes
+     (P23 portal-redesign) on the markup below — see those rules above.
+     (portal-ui-polish: the .brand .subtitle tagline under this h1 was
+     removed from the markup, so its CSS rule is removed too.) */
+  #pane-story .updated { color: var(--text-mute); font-size: 0.7rem; margin-top: 0.3rem; text-align: right; font-family: 'JetBrains Mono', monospace; }
+
+  /* progress */
+  #pane-story .prog-wrap { margin-bottom: 1.5rem; }
+  #pane-story .prog-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.5rem; }
+  #pane-story .prog-head .label { font-family: 'Chakra Petch', sans-serif; text-transform: uppercase; letter-spacing: 0.18em; font-size: 0.75rem; color: var(--text-dim); }
+  #pane-story .prog-head .count { font-family: 'JetBrains Mono', monospace; font-size: 1rem; }
+  #pane-story .prog-head .count .total { color: var(--text-mute); }
+  #pane-story .bar { width: 100%; height: 10px; background: var(--bg-elev); border-radius: 5px; overflow: hidden; box-shadow: inset 0 0 0 1px var(--border); }
+  #pane-story .fill { height: 100%; background: linear-gradient(90deg, var(--accent-2), var(--accent)); box-shadow: 0 0 12px var(--accent-glow); transition: width 0.6s ease; }
+
+  /* min-width: 0 on both grid items (portal-header-refine item 10) — CSS
+     grid items default to `min-width: auto`, which lets an intrinsically
+     wide descendant (e.g. a long, unwrapped Falco rule `condition` line
+     inside a <pre>, see the .fr-item/.mission-body rules below) grow the
+     1fr detail column — and therefore the whole .layout / .p-shell page —
+     wider than the viewport, clipping content at the right edge instead of
+     wrapping/scrolling inside its own box. Without this, fixing the pre/
+     code overflow rules alone is not sufficient: the grid track itself
+     still expands to fit them. */
+  #pane-story .layout { display: grid; grid-template-columns: 320px 1fr; gap: 1.5rem; align-items: start; min-width: 0; }
+  #pane-story .layout > * { min-width: 0; }
+  @media (max-width: 900px) { #pane-story { padding: 1.25rem; } #pane-story .layout { grid-template-columns: 1fr; } }
+
+  #pane-story .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 0.85rem; overflow: hidden; }
+  #pane-story .panel-header { padding: 0.9rem 1.25rem; border-bottom: 1px solid var(--border); }
+  #pane-story .panel-header h2 { font-family: 'Chakra Petch', sans-serif; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.18em; color: var(--text); font-weight: 600; display: flex; align-items: center; gap: 0.6rem; }
+  #pane-story .panel-header h2::before { content: ''; width: 3px; height: 15px; background: var(--accent); border-radius: 2px; box-shadow: 0 0 10px var(--accent-glow); }
+
+  /* mission map (now clickable — free browsing, P23 Story-as-docs) */
+  #pane-story .map { list-style: none; padding: 0.35rem 0; }
+  #pane-story .map li { display: flex; align-items: center; gap: 0.7rem; padding: 0.6rem 1.25rem; border-left: 2px solid transparent; cursor: pointer; transition: background 0.12s; }
+  #pane-story .map li:hover { background: rgba(255,255,255,0.03); }
+  #pane-story .map li .ico { width: 22px; text-align: center; font-size: 0.95rem; }
+  #pane-story .map li .mtitle { font-size: 0.9rem; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #pane-story .map li .num { font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; color: var(--text-mute); }
+  #pane-story .map li.solved .ico { color: var(--success); }
+  #pane-story .map li.solved .mtitle { color: var(--text); }
+  #pane-story .map li.current { border-left-color: var(--accent); background: rgba(0,203,226,0.06); }
+  #pane-story .map li.current .ico { color: var(--accent); text-shadow: 0 0 10px var(--accent-glow); }
+  #pane-story .map li.current .mtitle { color: var(--accent); font-weight: 600; }
+  #pane-story .map li.locked { opacity: 0.5; }
+  #pane-story .map li.locked .ico { color: var(--text-mute); }
+  /* viewed: the mission whose detail is currently shown via free browsing
+     (?mission=), which may differ from .current — a thin accent outline
+     marks it distinctly from the "you are here" current-mission styling. */
+  #pane-story .map li.viewed { box-shadow: inset 3px 0 0 var(--accent-2); }
+  #pane-story .map li.just-unlocked { animation: jn-unlock 1.2s ease; }
+  @keyframes jn-unlock {
+    0% { background: rgba(0,203,226,0.25); transform: translateX(-6px); box-shadow: inset 0 0 24px var(--accent-glow); }
+    100% { background: transparent; transform: none; box-shadow: none; }
+  }
+
+  /* kill-chain overview (P23 Story-as-docs): data-driven node strip built from
+     missions[] (id/type/status) — trigger=--accent(blue), evade=--evade
+     (violet), solved=filled+check, current=glow, locked=dim. Connector line
+     drawn via a pseudo-element on every node except the first, so the strip
+     reflows responsively without needing an SVG viewBox. Purely decorative
+     progress visualization — click delegates to the same free-browse handler
+     as the mission map list (one source of truth for "which mission is this"). */
+  /* Single-row layout (portal-header-refine item 9): 10 nodes (post mission-11
+     exclusion, item 8) must fit on one line at typical desktop widths without
+     wrapping to a second row or visibly overflowing. Changed from
+     `flex-wrap: wrap` + `flex: 1 1 auto` + unbounded nowrap labels (which
+     let long titles push nodes wide enough to wrap) to `flex-wrap: nowrap`
+     + `flex: 1 1 0` (every node shares the row equally, shrinking together)
+     + a `max-width` + ellipsis on the label (long titles truncate instead of
+     forcing width). `overflow-x: auto` stays as the fallback for viewports
+     too narrow to fit 10 shrunk nodes at all (mobile) — see the media query
+     below — rather than the primary mechanism. */
+  #pane-story .killchain { display: flex; flex-wrap: nowrap; align-items: flex-start; gap: 0; padding: 1.1rem 1.25rem 1.3rem; background: var(--surface); border: 1px solid var(--border); border-radius: 0.85rem; margin-bottom: 1.5rem; overflow-x: auto; }
+  #pane-story .kc-node { position: relative; display: flex; flex-direction: column; align-items: center; gap: 0.4rem; padding: 0 0.4rem; cursor: pointer; flex: 1 1 0; min-width: 0; }
+  #pane-story .kc-node:not(:first-child)::before { content: ''; position: absolute; top: 15px; left: -50%; width: 100%; height: 2px; background: var(--border-strong); z-index: 0; }
+  #pane-story .kc-node.solved:not(:first-child)::before { background: var(--success); opacity: 0.6; }
+  #pane-story .kc-dot { position: relative; z-index: 1; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-size: 0.85rem; font-weight: 700; background: var(--bg-elev); border: 2px solid var(--border-strong); color: var(--text-mute); transition: all 0.15s; flex-shrink: 0; }
+  #pane-story .kc-node:hover .kc-dot { border-color: var(--accent); }
+  #pane-story .kc-node.type-trigger .kc-dot { border-color: var(--accent-2); }
+  #pane-story .kc-node.type-evade .kc-dot { border-color: var(--evade); }
+  #pane-story .kc-node.solved .kc-dot { background: var(--success); border-color: var(--success); color: var(--bg); box-shadow: 0 0 10px var(--success-glow); }
+  #pane-story .kc-node.type-evade.solved .kc-dot { background: var(--evade); border-color: var(--evade); box-shadow: 0 0 10px var(--evade-glow); }
+  #pane-story .kc-node.current .kc-dot { background: rgba(0,203,226,0.15); border-color: var(--accent); color: var(--accent); box-shadow: 0 0 14px var(--accent-glow); animation: p-pulse 1.8s ease-in-out infinite; }
+  #pane-story .kc-node.locked .kc-dot { opacity: 0.45; }
+  #pane-story .kc-node.viewed .kc-dot { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+  #pane-story .kc-label { font-family: 'JetBrains Mono', monospace; font-size: 0.62rem; letter-spacing: 0.04em; color: var(--text-mute); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+  #pane-story .kc-node.current .kc-label, #pane-story .kc-node.solved .kc-label { color: var(--text-dim); }
+  #pane-story .kc-node.locked .kc-label { opacity: 0.5; }
+  #pane-story .kc-type { font-size: 0.55rem; text-transform: uppercase; letter-spacing: 0.1em; }
+  #pane-story .kc-node.type-trigger .kc-type { color: var(--accent-2); }
+  #pane-story .kc-node.type-evade .kc-type { color: var(--evade); }
+  /* Below this width, 10 shrunk nodes would compress the dots/labels past
+     legibility — switch to a horizontally scrollable strip instead of
+     forcing further shrink (mobile fallback, unchanged mechanism from
+     before this task, just re-tuned min-width now that nodes flex-shrink
+     rather than flex-grow-from-auto). */
+  @media (max-width: 900px) { #pane-story .kc-node { flex: 0 0 auto; min-width: 64px; } }
+
+  /* Falco rule excerpt accordion (P23 Story-as-docs) — List / Macro / Rule
+     sections. Reuses .rich-content's code/pre typography for condition/
+     output text so it visually matches the Home tab's rule-explain code
+     blocks. Absent List/Macro sections are simply not rendered (see
+     renderFalcoRule) rather than shown as empty boxes. */
+  #pane-story .falco-rule { margin-top: 1.4rem; }
+  #pane-story .fr-group { margin-bottom: 0.9rem; }
+  #pane-story .fr-group-title { font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-mute); margin-bottom: 0.5rem; }
+  #pane-story .fr-item { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 0.5rem; padding: 0.75rem 1rem; margin-bottom: 0.6rem; }
+  #pane-story .fr-item summary { cursor: pointer; font-weight: 600; font-size: 0.9rem; color: var(--text); list-style: none; user-select: none; }
+  #pane-story .fr-item summary::-webkit-details-marker { display: none; }
+  #pane-story .fr-item summary::before { content: '▸ '; color: var(--text-mute); }
+  #pane-story .fr-item[open] summary::before { content: '▾ '; }
+  #pane-story .fr-item .fr-body { margin-top: 0.6rem; }
+  #pane-story .fr-item .fr-desc { color: var(--text-dim); font-size: 0.85rem; line-height: 1.6; margin-bottom: 0.5rem; overflow-wrap: anywhere; }
+  #pane-story .fr-item .fr-priority { display: inline-block; font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.08em; padding: 2px 7px; border-radius: 4px; background: rgba(255,176,32,0.12); color: var(--warn); border: 1px solid rgba(255,176,32,0.35); margin-left: 0.5rem; vertical-align: middle; }
+  #pane-story .fr-item .fr-tags { margin-top: 0.5rem; font-size: 0.65rem; color: var(--text-mute); font-family: 'JetBrains Mono', monospace; }
+  /* fr-field-label: the Rule/Desc/Condition/Output section labels (#40 rule
+     display split). font-weight:400 explicitly overrides the bold `summary`
+     it sits inline in (for the "Rule" label) so the label itself stays
+     visually secondary to the rule NAME that follows it. The block-level
+     Desc/Condition/Output labels sit on their own line above each section. */
+  #pane-story .fr-field-label { font-family: 'JetBrains Mono', monospace; font-size: 0.62rem; font-weight: 400; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-mute); }
+  #pane-story .fr-item summary .fr-field-label { margin-right: 0.35rem; }
+  #pane-story .fr-body > .fr-field-label { margin-bottom: 0.25rem; }
+  #pane-story .fr-body > .fr-field-label:not(:first-child) { margin-top: 0.6rem; }
+  #pane-story .fr-field-label-aux { opacity: 0.7; }
+  #pane-story .fr-list-items { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.4rem; }
+  #pane-story .fr-list-items span { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 4px; padding: 1px 7px; font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; color: var(--text-dim); }
+
+  /* mission detail */
+  #pane-story .mission { background: var(--surface); border: 1px solid var(--border); border-radius: 0.85rem; overflow: hidden; max-width: 100%; }
+  #pane-story .mission-head { padding: 1.4rem 1.6rem 1.1rem; border-bottom: 1px solid var(--border); background: linear-gradient(180deg, var(--bg-elev), var(--surface)); }
+  #pane-story .mission-head .kicker { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; letter-spacing: 0.12em; color: var(--text-mute); text-transform: uppercase; }
+  #pane-story .mission-head h2 { font-family: 'Chakra Petch', sans-serif; font-size: 1.6rem; margin: 0.25rem 0; overflow-wrap: anywhere; }
+  #pane-story .mission-head .tagline { color: var(--accent); font-size: 0.95rem; overflow-wrap: anywhere; }
+  /* C1 fixup: explicit "return to current mission" affordance, shown only
+     when the detail panel is browsing a solved/locked mission. */
+  #pane-story .back-to-current { margin-top: 0.7rem; }
+  #pane-story .badge { padding: 3px 9px; border-radius: 4px; font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.12em; font-weight: 700; margin-left: 0.5rem; vertical-align: middle; }
+  #pane-story .badge-trigger { background: rgba(0, 203, 226, 0.12); color: var(--falco); border: 1px solid rgba(0, 203, 226, 0.35); }
+  #pane-story .badge-evade { background: rgba(183, 140, 255, 0.12); color: var(--evade); border: 1px solid rgba(183, 140, 255, 0.35); }
+  #pane-story .mission-body { padding: 1.4rem 1.6rem; }
+  /* lead-in: previous mission's narrative bridge (#47), persisted above the briefing */
+  #pane-story .lead-in { position: relative; background: linear-gradient(90deg, rgba(0,203,226,0.07), transparent); border: 1px solid var(--border); border-left: 2px solid var(--accent); border-radius: 0.5rem; padding: 0.7rem 1rem 0.75rem; margin-bottom: 1.2rem; color: var(--text-dim); font-size: 0.92rem; line-height: 1.6; font-style: italic; }
+  #pane-story .lead-in .li-kicker { display: block; font-family: 'JetBrains Mono', monospace; font-size: 0.62rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); font-style: normal; margin-bottom: 0.35rem; opacity: 0.85; }
+  #pane-story .briefing { color: var(--text-dim); font-size: 0.98rem; line-height: 1.7; margin-bottom: 1.5rem; border-left: 2px solid var(--border-strong); padding-left: 1rem; overflow-wrap: anywhere; }
+  #pane-story .sec-title { font-family: 'Chakra Petch', sans-serif; text-transform: uppercase; letter-spacing: 0.16em; font-size: 0.72rem; color: var(--text-mute); margin: 1.4rem 0 0.7rem; }
+
+  #pane-story .steps { list-style: none; }
+  #pane-story .steps li { display: flex; gap: 0.8rem; padding: 0.7rem 0; border-bottom: 1px solid var(--border); align-items: flex-start; }
+  #pane-story .steps li:last-child { border-bottom: none; }
+  #pane-story .steps .box { flex-shrink: 0; width: 22px; height: 22px; border-radius: 6px; border: 1.5px solid var(--border-strong); background: var(--bg-elev); cursor: pointer; display: grid; place-items: center; color: transparent; font-size: 0.8rem; transition: all 0.15s; margin-top: 2px; }
+  #pane-story .steps .box:hover { border-color: var(--accent); }
+  #pane-story .steps li.done .box { background: linear-gradient(135deg, var(--accent), var(--accent-2)); border-color: var(--accent); color: var(--bg); box-shadow: 0 0 10px var(--accent-glow); }
+  #pane-story .steps .step-label { font-weight: 600; font-size: 0.95rem; }
+  #pane-story .steps li.done .step-label { color: var(--text-mute); text-decoration: line-through; }
+  #pane-story .steps .step-detail { color: var(--text-dim); font-size: 0.85rem; margin-top: 0.2rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+  #pane-story .score { color: var(--accent); font-weight: 700; }
+  #pane-story .hint-locked .pen { color: var(--warn); font-weight: 700; }
+  #pane-story .hints { display: flex; flex-direction: column; gap: 0.6rem; }
+  #pane-story .hint-open { background: var(--bg-elev); border: 1px solid var(--border); border-left: 2px solid var(--warn); border-radius: 0.5rem; padding: 0.7rem 1rem; }
+  #pane-story .hint-open .hn-row { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; }
+  #pane-story .hint-open .hn { font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; color: var(--warn); text-transform: uppercase; letter-spacing: 0.1em; }
+  #pane-story .hint-open .ht { color: var(--text-dim); font-size: 0.9rem; margin-top: 0.25rem; white-space: pre-wrap; overflow-wrap: anywhere; font-family: 'JetBrains Mono', monospace; }
+  #pane-story .hint-open .hint-copy-btn { font-family: 'Chakra Petch', sans-serif; text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.62rem; font-weight: 700; padding: 0.25rem 0.6rem; border-radius: 5px; border: 1px solid var(--border-strong); background: transparent; color: var(--text-dim); cursor: pointer; transition: all 0.15s; flex-shrink: 0; }
+  #pane-story .hint-open .hint-copy-btn:hover { color: var(--accent); border-color: var(--accent); box-shadow: 0 0 10px var(--accent-glow); }
+  #pane-story .hint-open .hint-copy-btn.copied { color: var(--success); border-color: var(--success); }
+  /* 統一ヒント Phase 3: Rule/コマンド集ジャンプ導線 (MVP). Reuses the
+     hint-copy-btn shape/token set (Chakra Petch button chrome, --accent /
+     --border-strong / --accent-glow) rather than inventing new visual
+     language — see falco-web skill's "design token" note. */
+  #pane-story .hint-open .hint-jumps { display: flex; gap: 0.5rem; margin-top: 0.5rem; flex-wrap: wrap; }
+  #pane-story .hint-open .hint-jump { font-family: 'Chakra Petch', sans-serif; text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.62rem; font-weight: 700; padding: 0.25rem 0.6rem; border-radius: 5px; border: 1px solid var(--border-strong); background: transparent; color: var(--accent); cursor: pointer; transition: all 0.15s; }
+  #pane-story .hint-open .hint-jump:hover { border-color: var(--accent); box-shadow: 0 0 10px var(--accent-glow); }
+  #pane-story .hint-locked { display: flex; justify-content: space-between; align-items: center; background: var(--bg-elev); border: 1px dashed var(--border-strong); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--text-mute); font-size: 0.85rem; }
+  #pane-story .btn { font-family: 'Chakra Petch', sans-serif; text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.72rem; font-weight: 700; padding: 0.45rem 0.9rem; border-radius: 6px; border: 1px solid var(--border-strong); background: transparent; color: var(--text-dim); cursor: pointer; transition: all 0.15s; }
+  #pane-story .btn:hover { color: var(--accent); border-color: var(--accent); box-shadow: 0 0 12px var(--accent-glow); }
+  #pane-story .btn-accent { color: var(--bg); background: linear-gradient(135deg, var(--accent), var(--accent-2)); border-color: var(--accent); }
+  #pane-story .btn-accent:hover { color: var(--bg); filter: brightness(1.08); }
+  /* app#125: dirty-flag "redo this mission" action — reuses the danger token
+     already defined for .submit-msg.err / .reset-btn:hover, no new colors. */
+  #pane-story .btn-danger { color: var(--danger); border-color: var(--danger); }
+  #pane-story .btn-danger:hover { color: var(--bg); background: var(--danger); border-color: var(--danger); box-shadow: 0 0 12px rgba(255,92,106,0.35); }
+
+  #pane-story .docs-link { display: inline-block; margin-top: 1.2rem; font-size: 0.85rem; }
+
+  /* evade submit */
+  #pane-story .submit-form { margin-top: 0.6rem; display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }
+  #pane-story .submit-form input { flex: 1 1 260px; background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: 6px; color: var(--text); font-family: 'JetBrains Mono', monospace; padding: 0.55rem 0.8rem; font-size: 0.9rem; }
+  #pane-story .submit-form input:focus { outline: none; border-color: var(--evade); box-shadow: 0 0 10px var(--evade-glow); }
+  #pane-story .submit-msg { margin-top: 0.6rem; font-size: 0.85rem; font-family: 'JetBrains Mono', monospace; min-height: 1.2em; }
+  #pane-story .submit-msg.ok { color: var(--success); }
+  #pane-story .submit-msg.err { color: var(--danger); }
+  #pane-story .submit-msg.warn { color: var(--warn); }
+
+  /* auto-solve live status (exfil-required evade) */
+  #pane-story .autosolve { margin-top: 0.6rem; background: var(--bg-elev); border: 1px solid var(--border); border-left: 2px solid var(--evade); border-radius: 0.5rem; padding: 0.9rem 1.1rem; }
+  #pane-story .autosolve .steps-flow { list-style: none; display: flex; flex-direction: column; gap: 0.55rem; }
+  #pane-story .autosolve .steps-flow li { display: flex; align-items: center; gap: 0.6rem; font-size: 0.9rem; color: var(--text-mute); }
+  #pane-story .autosolve .steps-flow li .dot { flex-shrink: 0; width: 20px; text-align: center; }
+  #pane-story .autosolve .steps-flow li.active { color: var(--text); font-weight: 600; }
+  #pane-story .autosolve .steps-flow li.done { color: var(--success); }
+  #pane-story .autosolve .steps-flow li.waiting .dot { animation: p-pulse 1.6s ease-in-out infinite; }
+  #pane-story .autosolve .hint { color: var(--text-mute); font-size: 0.8rem; margin-top: 0.7rem; }
+  /* app#125: always-on dirty-flag status (ADR-0003). Same .autosolve card,
+     left-border swapped from --evade to --danger when tainted; dirty rule
+     rows reuse --danger like .submit-msg.err. */
+  #pane-story .autosolve.dirty { border-left-color: var(--danger); }
+  #pane-story .autosolve .steps-flow li.dirty-rule { color: var(--danger); font-weight: 600; }
+  /* collapsible manual fallback */
+  #pane-story details.manual { margin-top: 0.8rem; }
+  #pane-story details.manual > summary { cursor: pointer; color: var(--text-mute); font-size: 0.82rem; list-style: none; user-select: none; }
+  #pane-story details.manual > summary::-webkit-details-marker { display: none; }
+  #pane-story details.manual > summary::before { content: '▸ '; color: var(--text-mute); }
+  #pane-story details.manual[open] > summary::before { content: '▾ '; }
+  #pane-story details.manual > summary:hover { color: var(--accent); }
+
+  #pane-story .empty { text-align: center; padding: 2.5rem 1rem; color: var(--text-mute); font-size: 0.9rem; }
+  #pane-story .empty .icon { font-size: 2rem; opacity: 0.4; display: block; margin-bottom: 0.5rem; }
+  #pane-story .help { background: var(--surface); border: 1px solid var(--border); border-radius: 0.85rem; padding: 2rem; text-align: center; max-width: 620px; margin: 3rem auto; }
+  #pane-story .help h2 { font-family: 'Chakra Petch', sans-serif; font-size: 1.2rem; margin-bottom: 0.6rem; }
+  #pane-story .help p { color: var(--text-dim); font-size: 0.95rem; }
+
+  /* CLEARED overlay */
+  #pane-story #pane-journey-clear-fx { position: fixed; inset: 0; z-index: 50; display: none; place-items: center; background: radial-gradient(ellipse at center, rgba(0,203,226,0.18), rgba(7,11,16,0.86)); backdrop-filter: blur(2px); }
+  #pane-story #pane-journey-clear-fx.show { display: grid; animation: jn-fxin 0.3s ease; }
+  #pane-story #pane-journey-clear-fx .card { text-align: center; }
+  #pane-story #pane-journey-clear-fx .stamp { font-family: 'Chakra Petch', sans-serif; font-size: 4rem; font-weight: 700; letter-spacing: 0.08em; color: var(--success); text-shadow: 0 0 40px var(--success-glow); animation: jn-stamp 0.5s cubic-bezier(.2,1.4,.4,1); }
+  #pane-story #pane-journey-clear-fx .sub { color: var(--text-dim); letter-spacing: 0.25em; text-transform: uppercase; margin-top: 0.6rem; font-size: 0.9rem; }
+  #pane-story #pane-journey-clear-fx .bridge-fx { display: none; max-width: 32rem; margin: 1.1rem auto 0; color: var(--text); font-size: 1.02rem; line-height: 1.65; font-style: italic; text-shadow: 0 0 24px rgba(0,203,226,0.15); animation: jn-bridgein 0.6s ease 0.35s both; }
+  @keyframes jn-bridgein { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  @keyframes jn-fxin { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes jn-stamp { 0% { transform: scale(2.2); opacity: 0; } 60% { transform: scale(0.92); opacity: 1; } 100% { transform: scale(1); } }
+
+
+  #pane-me {
+    /* Unified design tokens (P23 portal-redesign): switched from the old
+       standalone green palette (--accent: hex BDF78B) onto the SAME shared
+       cyan tokens #pane-scoreboard/#pane-story use — this is the core
+       visual-unification fix (the 3 faces of the portal no longer look
+       like 3 different apps). */
+    --bg: var(--p-bg);
+    --bg-elev: var(--p-bg-elev);
+    --surface: var(--p-surface);
+    --surface-2: var(--p-surface-2);
+    --border: var(--p-border);
+    --border-strong: var(--p-border-strong);
+    --text: var(--p-text);
+    --text-dim: var(--p-text-dim);
+    --text-mute: var(--p-text-mute);
+    --accent: var(--p-accent);
+    --accent-2: var(--p-accent-2);
+    --accent-glow: var(--p-accent-glow);
+    --success: var(--p-success);
+    --success-glow: var(--p-success-glow);
+    --rule-bg: var(--p-accent-glow);
+  }
+
+  #pane-me * { box-sizing: border-box; margin: 0; padding: 0; }
+  #pane-me { font-size: 16px; }
+  /* background/padding/grid-overlay/position now come from the shared
+     .p-shell class on this pane's outer <div> (P23 portal-redesign) — see
+     the .p-shell rule above. This also GAINS the faint cyber grid overlay
+     #pane-scoreboard/#pane-story already had and #pane-me previously
+     lacked, as a side effect of unifying onto one shell rule rather than
+     3 near-duplicates. */
+  #pane-me .mono { font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace; }
+  #pane-me a { color: var(--accent); text-decoration: none; }
+  #pane-me a:hover { text-decoration: underline; }
+
+  #pane-me header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 2rem; padding-bottom: 1.5rem; border-bottom: 1px solid var(--border); }
+  /* .brand h1 / .live now come from the shared .p-h1 / .p-live classes
+     (P23 portal-redesign) on the markup below — see those rules above.
+     (This also unifies #pane-me's H1 size/tracking with the other panes'
+     2.4rem display heading, and its LIVE badge color from the old green
+     --accent onto the shared cyan --p-success.)
+     (portal-ui-polish: the .brand .subtitle tagline under this h1 was
+     removed from the markup, so its CSS rule is removed too.) */
+  #pane-me .updated { color: var(--text-mute); font-size: 0.7rem; margin-top: 0.25rem; text-align: right; }
+
+  /* Identity hero */
+  #pane-me .ident { display: flex; align-items: center; gap: 1.25rem; margin-bottom: 2rem; padding: 1.5rem; background: var(--surface); border: 1px solid var(--border); border-radius: 0.75rem; }
+  #pane-me .ident .avatar { width: 56px; height: 56px; border-radius: 50%; background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: var(--bg); display: grid; place-items: center; font-family: 'JetBrains Mono', monospace; font-size: 1.4rem; font-weight: 700; }
+  #pane-me .ident .who-name { font-family: 'JetBrains Mono', monospace; font-size: 1.4rem; font-weight: 600; color: var(--text); }
+  #pane-me .ident .who-status { color: var(--text-dim); font-size: 0.875rem; margin-top: 0.15rem; }
+  /* P23-ME-1: own rank badge, self-scope only (no other participant's rank is
+     ever fetched or rendered here — see #pane-me's script / GET
+     /api/users/{user}/me's `rank` field, computed server-side from
+     computeLeaderboard but narrowed to the caller's own row before the
+     response is even built). "-" (no rank yet) mirrors the admin
+     dashboard's own convention for a 0-solve participant. */
+  #pane-me .ident .rank-badge { display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 64px; padding: 0.5rem 0.75rem; background: var(--bg); border: 1px solid var(--accent); border-radius: 0.6rem; box-shadow: 0 0 14px var(--accent-glow); }
+  #pane-me .ident .rank-badge .rank-num { font-family: 'JetBrains Mono', monospace; font-size: 1.5rem; font-weight: 700; color: var(--accent); line-height: 1; }
+  #pane-me .ident .rank-badge .rank-label { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-mute); margin-top: 0.2rem; }
+  #pane-me .ident .score-badge { display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 64px; padding: 0.5rem 0.75rem; }
+  #pane-me .ident .score-badge .score-num { font-family: 'JetBrains Mono', monospace; font-size: 1.5rem; font-weight: 700; color: var(--text); line-height: 1; }
+  #pane-me .ident .score-badge .score-label { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-mute); margin-top: 0.2rem; }
+  #pane-me .ident .progress-mini { margin-left: auto; min-width: 200px; }
+  #pane-me .ident .progress-mini .label { color: var(--text-mute); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.12em; margin-bottom: 0.4rem; }
+  #pane-me .ident .progress-mini .bar { width: 100%; height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; box-shadow: inset 0 0 0 1px var(--border); }
+  #pane-me .ident .progress-mini .fill { height: 100%; background: linear-gradient(90deg, var(--accent-2), var(--accent)); box-shadow: 0 0 10px var(--accent-glow); transition: width 0.5s ease; }
+  #pane-me .ident .progress-mini .count { color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 1rem; margin-top: 0.4rem; }
+  #pane-me .ident .progress-mini .count .total { color: var(--text-mute); }
+
+  /* Grid: left = next + solved, right = recent rule fires */
+  #pane-me .grid { display: grid; grid-template-columns: 1fr 1.3fr; gap: 1.5rem; }
+  @media (max-width: 980px) { #pane-me { padding: 1.25rem; } #pane-me .grid { grid-template-columns: 1fr; } }
+
+  /* .panel/.panel-header/.panel-aux: now IDENTICAL to #pane-scoreboard's
+     (P23 portal-redesign unification — was radius 0.75rem/padding
+     1rem/h2 color var(--text-dim)/no h2::before glow, all now matched to
+     the reference design's 0.85rem/0.9rem/var(--text)/glow via the shared
+     --p-* tokens). See #pane-scoreboard's .panel rules above (same
+     selector VALUES, kept pane-scoped rather than de-scoped to avoid a
+     wider HTML class-attribute rewrite across 3 script blocks). */
+  #pane-me .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--p-panel-radius); margin-bottom: 1.5rem; overflow: hidden; }
+  #pane-me .panel-header { padding: 0.9rem 1.5rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+  #pane-me .panel-header h2 { font-family: var(--p-font-display); font-size: var(--p-h3); text-transform: uppercase; letter-spacing: var(--p-tracking-wide); color: var(--text); font-weight: 600; display: flex; align-items: center; gap: 0.6rem; }
+  #pane-me .panel-header h2::before { content: ''; width: 3px; height: 15px; background: var(--accent); border-radius: 2px; box-shadow: 0 0 10px var(--accent-glow); }
+  #pane-me .panel-aux { color: var(--text-mute); font-size: 0.75rem; font-family: 'JetBrains Mono', monospace; }
+
+  /* Next challenge */
+  #pane-me .next { padding: 1.25rem 1.5rem; }
+  #pane-me .next .hint { color: var(--text-dim); font-size: 0.8rem; margin-bottom: 0.6rem; }
+  #pane-me .next .target { display: inline-block; padding: 0.75rem 1.25rem; background: var(--bg); border: 1px solid var(--accent); border-radius: 0.5rem; font-family: 'JetBrains Mono', monospace; font-size: 1.05rem; color: var(--accent); box-shadow: 0 0 16px var(--accent-glow); }
+  #pane-me .next .target.done { color: var(--text-mute); border-color: var(--border-strong); box-shadow: none; }
+
+  /* Solved list */
+  #pane-me .solved-list { list-style: none; padding: 0.5rem 0; }
+  #pane-me .solved-list li { display: flex; justify-content: space-between; align-items: center; padding: 0.65rem 1.5rem; border-left: 2px solid var(--accent); transition: background 0.15s; }
+  #pane-me .solved-list li:hover { background: var(--surface-2); }
+  #pane-me .solved-list li .chal { font-family: 'JetBrains Mono', monospace; font-weight: 600; color: var(--text); }
+  #pane-me .solved-list li .at { color: var(--text-mute); font-size: 0.75rem; font-family: 'JetBrains Mono', monospace; }
+  #pane-me .solved-list li .check { color: var(--accent); margin-right: 0.6rem; font-weight: 700; }
+
+  /* Rule fire feed */
+  #pane-me .fires { padding: 0.5rem 0; max-height: 520px; overflow-y: auto; }
+  #pane-me .fires::-webkit-scrollbar { width: 6px; }
+  #pane-me .fires::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+  #pane-me .fire-item { padding: 0.75rem 1.5rem; border-left: 2px solid transparent; transition: background 0.15s; }
+  #pane-me .fire-item:hover { background: var(--surface-2); border-left-color: var(--accent); }
+  #pane-me .fire-item.fresh { animation: me-flash 1.4s ease; }
+  @keyframes me-flash {
+    0%   { background: var(--rule-bg); border-left-color: var(--accent); box-shadow: inset 0 0 24px var(--accent-glow); }
+    100% { background: transparent; border-left-color: transparent; box-shadow: none; }
+  }
+  #pane-me .fire-item .rule { color: var(--accent); font-family: 'JetBrains Mono', monospace; font-size: 0.9rem; font-weight: 500; word-break: break-word; }
+  #pane-me .fire-item .when { color: var(--text-mute); font-size: 0.7rem; font-family: 'JetBrains Mono', monospace; margin-top: 0.2rem; }
+
+  #pane-me .empty { text-align: center; padding: 2.5rem 1rem; color: var(--text-mute); font-size: 0.875rem; }
+  #pane-me .empty .icon { font-size: 2rem; opacity: 0.4; display: block; margin-bottom: 0.5rem; }
+
+  #pane-me .help { background: var(--surface); border: 1px solid var(--border); border-radius: 0.75rem; padding: 1.5rem; text-align: center; }
+  #pane-me .help h2 { font-size: 1rem; font-weight: 600; color: var(--text); margin-bottom: 0.4rem; }
+  #pane-me .help p { color: var(--text-dim); font-size: 0.9rem; }
+  #pane-me .help code { background: var(--surface-2); padding: 2px 8px; border-radius: 3px; color: var(--accent); font-family: 'JetBrains Mono', monospace; font-size: 0.85em; }
+
+  /* ===== Board pane (app#292 QA Board, Phase 3) =====
+     Single tab replacing P25's Support(participant)+Queue(admin) pair —
+     destination-choice compose (private-to-admin / public-to-all) + a
+     participant view (Compose, My Threads, Public Timeline w/ likes) OR an
+     admin moderation queue (all threads, reply, pin/hide/delete/answered),
+     chosen once at mount by window.__PORTAL_ROLE__ (role does not change
+     mid-session). Local --p-* alias block + .panel/.panel-header/.badge/
+     .ticket-list/.thread-* selectors copied verbatim from the retired
+     #pane-support/#pane-queue (same design tokens, falco-web skill's
+     "reuse existing tokens" rule — no new visual language introduced).
+     New selectors this pane adds: .dest-choice/.dest-option/.dest-guide
+     (compose destination picker), .like-btn, .sort-toggle, .mod-actions,
+     .badge.private/.badge.public/.badge.pinned/.badge.hidden/.badge.deleted. */
+  #pane-board {
+    --bg: var(--p-bg);
+    --bg-elev: var(--p-bg-elev);
+    --surface: var(--p-surface);
+    --surface-2: var(--p-surface-2);
+    --border: var(--p-border);
+    --border-strong: var(--p-border-strong);
+    --text: var(--p-text);
+    --text-dim: var(--p-text-dim);
+    --text-mute: var(--p-text-mute);
+    --accent: var(--p-accent);
+    --accent-2: var(--p-accent-2);
+    --accent-glow: var(--p-accent-glow);
+    --success: var(--p-success);
+    --success-glow: var(--p-success-glow);
+    --warn: var(--p-warn);
+    --danger: var(--p-danger);
+  }
+  #pane-board * { box-sizing: border-box; margin: 0; padding: 0; }
+  #pane-board { font-size: 16px; }
+  #pane-board .mono { font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace; }
+  #pane-board header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 2rem; padding-bottom: 1.5rem; border-bottom: 1px solid var(--border); }
+  #pane-board .updated { color: var(--text-mute); font-size: 0.7rem; margin-top: 0.25rem; text-align: right; }
+  #pane-board .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--p-panel-radius); margin-bottom: 1.5rem; overflow: hidden; }
+  #pane-board .panel-header { padding: 0.9rem 1.5rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+  #pane-board .panel-header h2 { font-family: var(--p-font-display); font-size: var(--p-h3); text-transform: uppercase; letter-spacing: var(--p-tracking-wide); color: var(--text); font-weight: 600; display: flex; align-items: center; gap: 0.6rem; }
+  #pane-board .panel-header h2::before { content: ''; width: 3px; height: 15px; background: var(--accent); border-radius: 2px; box-shadow: 0 0 10px var(--accent-glow); }
+  #pane-board .panel-aux { color: var(--text-mute); font-size: 0.75rem; font-family: 'JetBrains Mono', monospace; }
+  #pane-board .badge { padding: 3px 9px; border-radius: 4px; font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.12em; font-weight: 700; white-space: nowrap; }
+  #pane-board .badge.answered { background: rgba(0, 203, 226, 0.12); color: var(--success); border: 1px solid rgba(0, 203, 226, 0.35); }
+  #pane-board .badge.pending { background: rgba(255, 176, 32, 0.12); color: var(--warn); border: 1px solid rgba(255, 176, 32, 0.35); }
+  #pane-board .badge.private { background: rgba(255, 176, 32, 0.1); color: var(--warn); border: 1px solid rgba(255, 176, 32, 0.3); }
+  #pane-board .badge.public { background: rgba(0, 203, 226, 0.1); color: var(--accent); border: 1px solid rgba(0, 203, 226, 0.3); }
+  #pane-board .badge.pinned { background: var(--accent-glow); color: var(--accent); border: 1px solid var(--accent); }
+  #pane-board .badge.hidden, #pane-board .badge.deleted { background: rgba(255, 92, 106, 0.1); color: var(--danger); border: 1px solid rgba(255, 92, 106, 0.3); }
+  #pane-board .ticket-list { list-style: none; }
+  #pane-board .ticket-list li { border-bottom: 1px solid var(--border); }
+  #pane-board .ticket-list li:last-child { border-bottom: none; }
+  #pane-board .ticket-row { display: flex; align-items: center; }
+  #pane-board .ticket-open { display: flex; justify-content: space-between; align-items: center; gap: 1rem; width: 100%; padding: 0.9rem 1.5rem; background: none; border: none; color: inherit; font: inherit; text-align: left; cursor: pointer; transition: background 0.15s; }
+  #pane-board .ticket-open:hover { background: var(--surface-2); }
+  #pane-board .ticket-row .ticket-open { flex: 1 1 auto; min-width: 0; }
+  #pane-board .ticket-row .like-btn, #pane-board .ticket-row .like-static { flex-shrink: 0; margin-right: 1rem; }
+  #pane-board .ticket-open .subject { font-weight: 600; color: var(--text); }
+  #pane-board .who { color: var(--accent); font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; }
+  #pane-board .ticket-open .meta { display: flex; align-items: center; gap: 0.6rem; color: var(--text-mute); font-size: 0.75rem; font-family: 'JetBrains Mono', monospace; white-space: nowrap; flex-wrap: wrap; justify-content: flex-end; }
+  #pane-board .empty { text-align: center; padding: 2.5rem 1rem; color: var(--text-mute); font-size: 0.875rem; }
+  #pane-board .empty .icon { font-size: 2rem; opacity: 0.4; display: block; margin-bottom: 0.5rem; }
+  #pane-board form.qa-form { padding: 1.25rem 1.5rem; }
+  #pane-board form.qa-form input, #pane-board form.qa-form textarea { display: block; width: 100%; background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: 6px; color: var(--text); font-family: 'JetBrains Mono', monospace; padding: 0.6rem 0.8rem; font-size: 0.9rem; margin-bottom: 0.6rem; resize: vertical; }
+  #pane-board form.qa-form input:focus, #pane-board form.qa-form textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 10px var(--accent-glow); }
+  #pane-board .dest-choice { display: flex; flex-direction: column; gap: 0.6rem; margin-bottom: 0.9rem; }
+  #pane-board .dest-option { display: block; border: 1px solid var(--border-strong); border-radius: 8px; padding: 0.7rem 0.9rem; cursor: pointer; transition: all 0.15s; background: var(--bg-elev); }
+  #pane-board .dest-option:hover { border-color: var(--accent); }
+  #pane-board .dest-option input[type="radio"] { width: auto; display: inline-block; margin: 0 0.5rem 0 0; vertical-align: middle; }
+  #pane-board .dest-option.checked { border-color: var(--accent); box-shadow: 0 0 10px var(--accent-glow); }
+  #pane-board .dest-option .dest-label { font-weight: 600; color: var(--text); }
+  #pane-board .dest-guide { margin: 0.35rem 0 0 1.6rem; color: var(--text-mute); font-size: 0.78rem; line-height: 1.5; }
+  #pane-board .btn { font-family: 'Chakra Petch', sans-serif; text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.72rem; font-weight: 700; padding: 0.55rem 1.1rem; border-radius: 6px; border: 1px solid var(--accent); background: transparent; color: var(--accent); cursor: pointer; transition: all 0.15s; }
+  #pane-board .btn:hover { background: var(--accent); color: var(--bg); box-shadow: 0 0 12px var(--accent-glow); }
+  #pane-board .btn-back { border-color: var(--border-strong); color: var(--text-dim); margin: 1.25rem 1.5rem 0; }
+  #pane-board .btn-back:hover { background: var(--surface-2); color: var(--text); box-shadow: none; }
+  #pane-board .btn-danger { color: var(--danger); border-color: var(--danger); }
+  #pane-board .btn-danger:hover { color: var(--bg); background: var(--danger); border-color: var(--danger); box-shadow: 0 0 12px rgba(255,92,106,0.35); }
+  #pane-board .btn-sm { padding: 0.3rem 0.6rem; font-size: 0.62rem; }
+  #pane-board .btn.active { background: var(--accent); color: var(--bg); }
+  #pane-board .like-btn { display: inline-flex; align-items: center; gap: 0.35rem; }
+  #pane-board .like-btn.liked { background: var(--accent); color: var(--bg); }
+  #pane-board .sort-toggle { display: flex; gap: 0.4rem; }
+  #pane-board .mod-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; padding: 0 1.5rem 1.25rem; }
+  #pane-board .section-tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+  #pane-board .submit-msg { margin-top: 0.5rem; font-size: 0.85rem; font-family: 'JetBrains Mono', monospace; min-height: 1.2em; }
+  #pane-board .submit-msg.ok { color: var(--success); }
+  #pane-board .submit-msg.err { color: var(--danger); }
+  #pane-board .thread-messages { padding: 0.5rem 1.5rem; max-height: 420px; overflow-y: auto; }
+  #pane-board .thread-msg { padding: 0.75rem 0; border-top: 1px solid var(--border); }
+  #pane-board .thread-msg:first-child { border-top: none; }
+  #pane-board .thread-msg-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.3rem; gap: 0.6rem; }
+  #pane-board .thread-msg-author { font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; }
+  #pane-board .thread-msg.role-admin .thread-msg-author { color: var(--accent); }
+  #pane-board .thread-msg.role-participant .thread-msg-author { color: var(--text-dim); }
+  #pane-board .thread-msg-at { color: var(--text-mute); font-size: 0.7rem; font-family: 'JetBrains Mono', monospace; white-space: nowrap; }
+  #pane-board .thread-msg-body { color: var(--text); font-size: 0.9rem; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+  #pane-board .help { background: var(--surface); border: 1px solid var(--border); border-radius: 0.75rem; padding: 1.5rem; text-align: center; margin: 0 1.5rem 1.5rem; }
+  #pane-board .help h2 { font-size: 1rem; font-weight: 600; color: var(--text); margin-bottom: 0.4rem; }
+  #pane-board .help p { color: var(--text-dim); font-size: 0.9rem; }
+  @media (max-width: 980px) { #pane-board { padding: 1.25rem; } }
+
+  /* ===== Home pane chassis (portal-ui-polish) =====
+     #pane-home has no leaderboard/mission-map/terminal-frame content of its
+     own — just a heading + intro paragraph + the #pane-home-panels
+     disclosure list (rules further below, unchanged). It has no --falco/
+     --accent LOCAL custom properties like #pane-scoreboard/#pane-story/
+     #pane-me do (it never needed pane-local aliases — .p-h1 already reads
+     var(--p-accent) directly), so this header rule references the shared
+     --p-* tokens straight, not a local --border/--accent alias. Narrower
+     than #pane-story/#pane-scoreboard's header rule on purpose: Home's
+     header has no right-hand .live/.updated cluster, so the glowing
+     ::after underline + space-between layout those panes need is skipped
+     here — just the bottom border. */
+  #pane-home header { margin-bottom: 1.5rem; padding-bottom: 1.25rem; border-bottom: 1px solid var(--p-border); }
+  #pane-home .home-intro { color: var(--p-text-dim); line-height: 1.6; margin: 0 0 0.75rem; font-size: 0.95rem; }
+  #pane-home .home-intro strong { color: var(--p-text); }
+  /* #3 fix: one line per tab (Story/Scoreboard/Terminal) instead of a single
+     hard-to-scan paragraph — same copy, list layout only. */
+  #pane-home .home-intro-list { color: var(--p-text-dim); line-height: 1.6; margin: 0 0 1rem; padding-left: 1.3rem; font-size: 0.95rem; }
+  #pane-home .home-intro-list li { margin-bottom: 0.3rem; }
+  #pane-home .home-intro-list strong { color: var(--p-text); }
+
+  /* ===== Shared rich-content styling (P23 portal-redesign) =====
+     Markdown-derived typography for gen-time-sanitized fragment HTML
+     (home.go / homefragments_gen.go) — extracted from what was previously
+     a #pane-home-panels-only ".home-panel-body" block. Unscoped by pane id
+     on purpose: this class only ever wraps server-generated, already-
+     sanitized fragment HTML (never client-rendered JS template-literal
+     output), so applying it in more than one place carries no new risk.
+     (Formerly ALSO reused by #pane-story .story-overview — that block was
+     removed in portal-header-refine item 7; see the Home panels' .home-panel
+     rules below, still the class's other consumer.) */
+  .rich-content { color: var(--p-text-dim); font-size: 0.92rem; line-height: 1.75; }
+  .rich-content h2 { font-family: 'Chakra Petch', sans-serif; font-size: 1.1rem; color: var(--p-text); margin: 1.1rem 0 0.5rem; }
+  .rich-content h3 { font-family: 'Chakra Petch', sans-serif; font-size: 0.95rem; color: var(--p-text); margin: 1rem 0 0.4rem; }
+  .rich-content p { margin: 0.6rem 0; }
+  .rich-content ul, .rich-content ol { margin: 0.6rem 0; padding-left: 1.4rem; }
+  .rich-content li { margin: 0.3rem 0; }
+  .rich-content strong { color: var(--p-text); }
+  .rich-content code { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.85em; background: var(--p-surface-2); padding: 1px 6px; border-radius: 3px; color: var(--p-accent); }
+  .rich-content pre { background: var(--p-bg-elev); border: 1px solid var(--p-border); border-radius: 0.5rem; padding: 0.85rem 1rem; overflow-x: auto; margin: 0.75rem 0; }
+  .rich-content pre code { background: none; padding: 0; color: var(--p-text-dim); }
+  .rich-content blockquote { border-left: 2px solid var(--p-warn); background: rgba(255,176,32,0.06); border-radius: 0 0.4rem 0.4rem 0; padding: 0.6rem 1rem; margin: 0.75rem 0; }
+  .rich-content hr { border: none; border-top: 1px solid var(--p-border); margin: 1.1rem 0; }
+  .rich-content table { width: 100%; border-collapse: collapse; margin: 0.75rem 0; font-size: 0.88rem; }
+  .rich-content th, .rich-content td { border: 1px solid var(--p-border); padding: 0.5rem 0.7rem; text-align: left; vertical-align: top; }
+  .rich-content th { background: var(--p-bg-elev); color: var(--p-text); font-family: 'Chakra Petch', sans-serif; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; }
+
+  /* ===== Home panels (P23-5): <details> disclosure panels rendered from
+     gen-time-sanitized fragments. Scoped under #pane-home-panels so these
+     structural rules only ever affect that server-generated subtree,
+     never the client-rendered panes above. The markdown typography INSIDE
+     each panel body now comes from the shared .rich-content class (see
+     above) rather than a #pane-home-panels-scoped copy.
+     P24: #pane-tutorial-panels (the Tutorial tab's equivalent container,
+     see tutorial.go/buildTutorialPanelsHTML) is added to every selector
+     below rather than getting its own CSS block — design-engineer decision
+     (REFACTORING.md P24 §4): the Tutorial pane reuses the SAME
+     .home-panel/.home-panel-body markup verbatim, no new design tokens. ===== */
+  #pane-home-panels, #pane-tutorial-panels { margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.9rem; }
+  #pane-home-panels .home-panel, #pane-tutorial-panels .home-panel { background: var(--p-surface); border: 1px solid var(--p-border); border-radius: 0.75rem; overflow: hidden; }
+  #pane-home-panels .home-panel > summary, #pane-tutorial-panels .home-panel > summary { cursor: pointer; list-style: none; padding: 0.9rem 1.25rem; font-family: 'Chakra Petch', sans-serif; font-size: 0.85rem; font-weight: 600; letter-spacing: 0.06em; color: var(--p-text); user-select: none; }
+  #pane-home-panels .home-panel > summary::-webkit-details-marker, #pane-tutorial-panels .home-panel > summary::-webkit-details-marker { display: none; }
+  #pane-home-panels .home-panel > summary::before, #pane-tutorial-panels .home-panel > summary::before { content: '▸ '; color: var(--p-text-mute); }
+  #pane-home-panels .home-panel[open] > summary::before, #pane-tutorial-panels .home-panel[open] > summary::before { content: '▾ '; }
+  #pane-home-panels .home-panel > summary:hover, #pane-tutorial-panels .home-panel > summary:hover { color: var(--p-accent); }
+  #pane-home-panels .home-panel-body, #pane-tutorial-panels .home-panel-body { padding: 0 1.25rem 1.25rem; border-top: 1px solid var(--p-border); }
+  #pane-home-panels .home-rule-explain-item, #pane-tutorial-panels .home-rule-explain-item { padding: 0.9rem 0; border-top: 1px solid var(--p-border); }
+  #pane-home-panels .home-rule-explain-item:first-child, #pane-tutorial-panels .home-rule-explain-item:first-child { border-top: none; padding-top: 0; }
+  #pane-home-panels .home-rule-explain-chal, #pane-tutorial-panels .home-rule-explain-chal { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--p-accent); margin: 0 0 0.5rem; }
+
+  /* ===== Terminal pane (item 9: restyled to match Story's card language) =====
+     Previously a bespoke .term-head/.term-frame/.term-placeholder trio with
+     its own one-off look. Now reuses #pane-story's SAME .mission/
+     .mission-head/.mission-body card chrome (background/border/radius +
+     kicker line) — see #pane-story's ".mission detail" block above, which
+     this aliases token-for-token so the two panes render identically.
+     iframe src/CSP/frame-src/fail-safe-placeholder LOGIC is unchanged; only
+     the surrounding chrome (card/heading/button/frame border) is restyled.
+     header/h1 chrome now comes from the SAME <header><h1 class="p-h1">
+     markup as #pane-home (added alongside this change) — plain
+     border-bottom, no Story-specific "● LIVE" glow (this pane doesn't poll).
+     (portal-ui-polish: the pane's own outer style="max-width:64rem" inline
+     attribute — the last inline style left on this pane's <div> — stays
+     pane-scoped here, for the same reason #pane-home lost its inline
+     style="" wrapper: keep the "chassis" free of one-off inline styles.) */
+  #pane-terminal {
+    max-width: 64rem;
+    /* Same pane-local token aliases as #pane-story, so the reused
+       .mission/.mission-head/.mission-body/.badge rules below resolve
+       identically in both panes. */
+    --bg-elev: var(--p-bg-elev); --surface: var(--p-surface);
+    --border: var(--p-border); --border-strong: var(--p-border-strong);
+    --text: var(--p-text); --text-dim: var(--p-text-dim); --text-mute: var(--p-text-mute);
+    --accent: var(--p-accent);
+  }
+  #pane-terminal header { margin-bottom: 1.5rem; padding-bottom: 1.25rem; border-bottom: 1px solid var(--p-border); }
+  #pane-terminal .mission { background: var(--surface); border: 1px solid var(--border); border-radius: 0.85rem; overflow: hidden; max-width: 100%; }
+  #pane-terminal .mission-head { padding: 1.1rem 1.6rem; border-bottom: 1px solid var(--border); background: linear-gradient(180deg, var(--bg-elev), var(--surface)); display: flex; justify-content: space-between; align-items: center; }
+  #pane-terminal .mission-head .kicker { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; letter-spacing: 0.12em; color: var(--text-mute); text-transform: uppercase; }
+  #pane-terminal .mission-body { padding: 1.4rem 1.6rem; }
+  #pane-terminal .term-frame { border: 1px solid var(--border); border-radius: var(--p-panel-radius); overflow: hidden; background: var(--ink-black); }
+  #pane-terminal .term-placeholder p { color: var(--text-dim); line-height: 1.6; margin: 0; }
+
+</style>

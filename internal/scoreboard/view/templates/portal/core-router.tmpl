@@ -1,0 +1,77 @@
+<script nonce="{{.Nonce}}">
+  // ===================== Portal shell: hash-tab router + role gate =====================
+  // P23-1 scope: this router only shows/hides <div class="pane"> — it is NOT an
+  // authorization boundary (see security note in view.go / portal.go). The
+  // admin-only Scoreboard tab is hidden here as defense-in-depth ONLY; its data
+  // source (/api/state) independently 403s a non-admin caller server-side.
+  // P24: 'tutorial' inserted between 'home' and 'story' — design-engineer
+  // decision (REFACTORING.md P24): the Tutorial tab must sit AFTER the Home
+  // landing page but BEFORE Story (=mission entry), so a participant reads
+  // concept-level Falco chapters before starting a mission, not after.
+  // app#292 QA Board Phase 3: 'board' replaces P25's separate 'queue'
+  // (admin-only) and 'support' (participant-only) tabs — ONE tab, never
+  // hidden; #pane-board's own script picks participant-vs-admin content by
+  // window.__PORTAL_ROLE__ at mount (see showTab()'s comment below for why
+  // 'board' gets no redirect entry unlike 'scoreboard').
+  const PORTAL_TABS = ['home', 'tutorial', 'story', 'scoreboard', 'board', 'me', 'terminal'];
+
+  function currentTab() {
+    const h = (location.hash || '').replace(/^#/, '');
+    // P23 portal-redesign fixup (R5 F1): #journey is the PRE-rename hash
+    // (old bookmarks / deep-links from before Journey became Story — e.g.
+    // the admin dashboard's own former "▶ Journey" link, now "▶ Story" ->
+    // #story, see templates/index.html). Redirect it to the current tab id
+    // rather than silently falling through to 'home' below. The underlying
+    // API route (GET /api/users/{user}/journey) is UNCHANGED — this is a UI
+    // hash alias only.
+    if (h === 'journey') return 'story';
+    if (PORTAL_TABS.includes(h)) return h;
+    return 'home';
+  }
+
+  function showTab(tab) {
+    if (tab === 'scoreboard' && window.__PORTAL_ROLE__ !== 'admin') tab = 'home';
+    // app#292: 'board' has NO role redirect here — unlike 'scoreboard'
+    // above, every authenticated caller (participant or admin) is
+    // entitled to #pane-board; the pane's own script just renders
+    // different content for the two roles (see its mount-time branch).
+    for (const t of PORTAL_TABS) {
+      const pane = document.getElementById('pane-' + t);
+      if (pane) pane.classList.toggle('active', t === tab);
+      const link = document.querySelector('#portal-tabs .tab[data-tab="' + t + '"]');
+      if (link) link.classList.toggle('active', t === tab);
+    }
+  }
+
+  function applyRole() {
+    const role = window.__PORTAL_ROLE__ || 'participant';
+    // Primary identity display (portal-header-refine): the LOGGED-IN
+    // username (server-derived via api.DeriveUsername from
+    // X-Auth-Request-Email — see window.__PORTAL_USER__'s doc up in the nav
+    // script above), not the role label. __PORTAL_USER__ is "" whenever
+    // DeriveUsername could not derive a slug (e.g. an operator whose email
+    // prefix does not match the participant username shape, or no header at
+    // all) — fall back to the role string itself ("admin"/"participant") so
+    // the identity slot is never left blank. Uses textContent throughout
+    // (never innerHTML), so no separate esc() helper is needed here even
+    // though window.__PORTAL_USER__ is caller-influenced (it can only ever
+    // equal the caller's OWN X-Auth-Request-Email prefix — see
+    // api.DeriveUsername's doc — and textContent never interprets its input
+    // as markup regardless).
+    const user = window.__PORTAL_USER__ || '';
+    document.getElementById('portal-username').textContent = user || role;
+    // Defense-in-depth ONLY (see comment above): hides the tab so a
+    // participant is not invited to click into a 403. The actual gate is
+    // server-side on GET /api/state (api.Handler.state → isAdmin).
+    // NOTE (portal-ui-polish): `role` is still read here purely to drive
+    // this admin-tab visibility gate — the visible role-badge <span> that
+    // used to render this string next to the username was removed; the
+    // underlying admin/participant determination (window.__PORTAL_ROLE__,
+    // server-side isAdmin) is UNCHANGED.
+    document.getElementById('tab-scoreboard').hidden = (role !== 'admin');
+  }
+
+  window.addEventListener('hashchange', () => showTab(currentTab()));
+  applyRole();
+  showTab(currentTab());
+</script>

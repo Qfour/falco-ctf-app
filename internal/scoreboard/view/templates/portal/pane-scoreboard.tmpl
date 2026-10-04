@@ -1,0 +1,459 @@
+<!-- ===== Scoreboard pane (moved from templates/index.html, namespaced;
+     admin-only content — see security note in view.go) ===== -->
+<div class="pane p-shell" id="pane-scoreboard">
+
+  <header>
+    <div class="brand">
+      <h1 class="p-h1"><span class="accent">Leaderboard</span></h1>
+    </div>
+    <div class="hdr-right">
+      <div class="live p-live">● LIVE <span class="demo-tag" id="pane-scoreboard-demo-tag">demo</span></div>
+      <div class="updated mono" id="pane-scoreboard-updated">connecting…</div>
+      <div class="hdr-btns">
+        <a id="pane-scoreboard-journey-link" class="reset-btn result-btn" href="#story" title="Open your guided mission story">▶ Story</a>
+        <button id="pane-scoreboard-result-btn" class="reset-btn result-btn" title="Open the results screen">🏆 Result</button>
+        <button id="pane-scoreboard-reset-btn" class="reset-btn" title="Clear all solves (admin only)">Reset board</button>
+      </div>
+    </div>
+  </header>
+
+  <section class="panel home-section">
+    <div class="panel-header">
+      <h2>Leaderboard</h2>
+      <span class="panel-aux" id="pane-scoreboard-lb-meta"></span>
+    </div>
+    <table>
+      <thead><tr>
+        <th style="width:60px">Rank</th>
+        <th>Participant</th>
+        <th style="text-align:right">Score</th>
+        <th>Solved</th>
+        <th style="width:30%">Progress</th>
+      </tr></thead>
+      <tbody id="pane-scoreboard-lb-body"></tbody>
+    </table>
+  </section>
+
+  <section class="grid home-section">
+    <div class="panel">
+      <div class="panel-header"><h2>Missions</h2><span class="panel-aux" id="pane-scoreboard-ch-meta"></span></div>
+      <div class="challenges" id="pane-scoreboard-challenges"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-header"><h2>Live feed</h2><span class="panel-aux" id="pane-scoreboard-act-meta"></span></div>
+      <div class="activity" id="pane-scoreboard-activity"></div>
+    </div>
+  </section>
+
+  <!-- Per-challenge leaderboard (shown when a Mission card is clicked) -->
+  <section class="panel detail-view" id="pane-scoreboard-detail-view" hidden>
+    <div class="panel-header detail-head">
+      <button id="pane-scoreboard-detail-back" class="reset-btn back-btn">← Home</button>
+      <h2 id="pane-scoreboard-detail-title">Challenge</h2>
+      <span class="panel-aux" id="pane-scoreboard-detail-meta"></span>
+    </div>
+    <table>
+      <thead><tr>
+        <th style="width:60px">Rank</th>
+        <th>Participant</th>
+        <th>Solved</th>
+        <th style="text-align:right">After 1st</th>
+      </tr></thead>
+      <tbody id="pane-scoreboard-detail-body"></tbody>
+    </table>
+  </section>
+
+  <!-- Result / award screen (opened by the Result button) -->
+  <section class="result-view" id="pane-scoreboard-result-view" hidden>
+    <div class="result-hero">
+      <button id="pane-scoreboard-result-back" class="reset-btn back-btn">← Back</button>
+      <h1 class="display">🏆 RESULTS</h1>
+      <div class="result-sub">CTF Company · Final Standings</div>
+    </div>
+    <div class="podium" id="pane-scoreboard-result-podium"></div>
+    <section class="panel">
+      <div class="panel-header"><h2>Final standings</h2><span class="panel-aux" id="pane-scoreboard-result-meta"></span></div>
+      <table>
+        <thead><tr>
+          <th style="width:60px">Rank</th>
+          <th>Participant</th>
+          <th style="text-align:right">Score</th>
+          <th>Solved</th>
+          <th style="width:30%">Progress</th>
+        </tr></thead>
+        <tbody id="pane-scoreboard-result-body"></tbody>
+      </table>
+    </section>
+  </section>
+
+<script nonce="{{.Nonce}}">
+(function () {
+  // ---------------- helpers ----------------
+  const seen = new Set();
+  let firstRender = true;
+  // Solve time as YYYY/MM/DD hh:mm:ss (24-hour local).
+  function fmtTime(iso) {
+    const d = new Date(iso);
+    const p = n => String(n).padStart(2, '0');
+    return d.getFullYear() + '/' + p(d.getMonth() + 1) + '/' + p(d.getDate()) + ' ' +
+           p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  }
+  function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  // Progress as one segment per mission; `done` of `total` lit.
+  function segs(done, total) {
+    let h = '';
+    for (let i = 0; i < total; i++) h += '<span class="seg' + (i < done ? ' filled' : '') + '"></span>';
+    return h || '<span class="seg"></span>';
+  }
+  function fmtDelta(ms) {
+    const s = Math.max(0, Math.round(ms / 1000));
+    if (s < 60) return s + 's';
+    const m = Math.floor(s / 60);
+    if (m < 60) return m + 'm' + (s % 60) + 's';
+    return Math.floor(m / 60) + 'h' + (m % 60) + 'm';
+  }
+
+  let lastState = null;   // latest successfully-fetched /api/state, for the detail view
+  let lastGoodAt = null;  // Date of the last successful /api/state fetch
+  let currentCid = null;  // null = home; otherwise the open challenge id
+  let resultOpen = false; // results screen toggle
+
+  // ---------------- fetch loop ----------------
+  // On failure we never synthesize fake-looking data (#283) — a fetch
+  // failure is expected mid-event (scoreboard is a single Recreate-strategy
+  // replica that drops for a few seconds on redeploy/restart) and must never
+  // be mistaken for real standings by whoever is running the event.
+  async function refresh() {
+    try {
+      const r = await fetch('/api/state');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      lastGoodAt = new Date();
+      render(d);
+      setStatus('ok');
+    } catch (e) {
+      // Keep whatever real data is already on screen (if any) — just make
+      // the failure loudly visible instead of painting over it.
+      setStatus('error');
+    }
+  }
+
+  function setStatus(kind) {
+    const tag = document.getElementById('pane-scoreboard-demo-tag');
+    const upd = document.getElementById('pane-scoreboard-updated');
+    if (kind === 'ok') {
+      tag.style.display = 'none';
+      upd.style.color = '';
+      upd.textContent = 'updated ' + lastGoodAt.toLocaleTimeString();
+      return;
+    }
+    if (kind === 'demo') {
+      tag.textContent = 'DEMO';
+      tag.style.display = 'inline-block';
+      upd.style.color = '';
+      upd.textContent = 'preview · demo data';
+      return;
+    }
+    // kind === 'error'
+    if (lastState && lastGoodAt) {
+      tag.textContent = 'STALE';
+      tag.style.display = 'inline-block';
+      upd.style.color = 'var(--warn)';
+      const secs = Math.max(0, Math.round((Date.now() - lastGoodAt.getTime()) / 1000));
+      upd.textContent = '⚠ update failed — last good data ' + secs + 's ago';
+    } else {
+      // Never fetched successfully yet: no real data exists to show at all.
+      tag.textContent = 'NO DATA';
+      tag.style.display = 'inline-block';
+      upd.style.color = 'var(--warn)';
+      upd.textContent = '⚠ could not reach the scoreboard';
+      renderConnectFailed();
+    }
+  }
+
+  // Explicit placeholder for "never loaded real data" — distinct from both
+  // the normal empty state (0 participants, real fetch succeeded) and demo
+  // data (opt-in design preview only, see DEMO below).
+  function renderConnectFailed() {
+    document.getElementById('pane-scoreboard-lb-meta').textContent = '—';
+    document.getElementById('pane-scoreboard-lb-body').innerHTML =
+      '<tr><td colspan="5" class="empty"><span class="icon">⚠</span>Could not reach the scoreboard — retrying…</td></tr>';
+    document.getElementById('pane-scoreboard-ch-meta').textContent = '—';
+    document.getElementById('pane-scoreboard-challenges').innerHTML =
+      '<div class="empty"><span class="icon">⚠</span>Could not load missions — retrying…</div>';
+    document.getElementById('pane-scoreboard-act-meta').textContent = '—';
+    document.getElementById('pane-scoreboard-activity').innerHTML =
+      '<div class="empty"><span class="icon">⚠</span>Could not load activity — retrying…</div>';
+  }
+
+  function render(d) {
+    lastState = d;
+    if (currentCid) renderDetail();   // keep the open challenge view live
+    if (resultOpen) renderResult();   // keep the results screen live
+    const totalChal = d.stats.challenges;
+    const totalUsers = d.stats.users;
+
+    // ---- leaderboard ----
+    document.getElementById('pane-scoreboard-lb-meta').textContent = totalUsers + ' participants';
+    const lb = document.getElementById('pane-scoreboard-lb-body');
+    if (d.leaderboard.length === 0) {
+      lb.innerHTML = '<tr><td colspan="5" class="empty"><span class="icon">∅</span>No participants yet — deploy a workspace to begin</td></tr>';
+    } else {
+      lb.innerHTML = d.leaderboard.map(p => {
+        const ranked = p.solved > 0;
+        const rankCls = ranked && p.rank <= 3 ? 'rank-' + p.rank : '';
+        // Score is the ranking metric (#40); Solved stays as the progress count.
+        const score = (p.score ?? 0);
+        return `<tr>
+          <td><span class="rank ${rankCls}">${ranked ? '#' + p.rank : '-'}</span></td>
+          <td><span class="user-cell">${esc(p.display_name || p.user)}<button class="name-edit" data-user="${esc(p.user)}" title="Rename on scoreboard (admin)">✎</button></span></td>
+          <td style="text-align:right"><span class="score-cell"><b>${score}</b></span></td>
+          <td><span class="score-cell">${p.solved}<span class="total">/${totalChal}</span></span></td>
+          <td><div class="progress">${segs(p.solved, totalChal)}</div></td>
+        </tr>`;
+      }).join('');
+    }
+
+    // ---- missions ----
+    document.getElementById('pane-scoreboard-ch-meta').textContent = d.challenges.length + ' total';
+    const ch = document.getElementById('pane-scoreboard-challenges');
+    if (d.challenges.length === 0) {
+      ch.innerHTML = '<div class="empty"><span class="icon">∅</span>No missions loaded</div>';
+    } else {
+      ch.innerHTML = d.challenges.map(c => {
+        const parts = c.id.split('-');
+        const num = parts[0];
+        const slug = parts.slice(1).join('-');
+        const dots = Array.from({length: Math.max(totalUsers, 1)}, (_, i) =>
+          `<span class="dot${i < c.solved_count ? ' filled' : ''}"></span>`).join('');
+        const rule = c.expectedRules[0] || c.forbiddenRules[0] || '';
+        const full = totalUsers > 0 && c.solved_count >= totalUsers ? ' full' : '';
+        const status = full ? 'CLEARED' : (c.solved_count > 0 ? 'IN PROGRESS' : 'OPEN');
+        const prefix = c.type === 'evade' ? '✗ ' : '✓ ';
+        return `<div class="challenge clickable${full}" data-cid="${esc(c.id)}" role="button" tabindex="0" title="View this mission's leaderboard">
+          <div class="head">
+            <span class="num">MISSION ${esc(num)}</span>
+            <span class="badge badge-${c.type}">${c.type}</span>
+          </div>
+          <div class="name">${esc(slug)}</div>
+          <div class="rule">${esc(prefix + rule)}</div>
+          <div class="dots">${dots}</div>
+          <div class="footer">
+            <span class="status">${status}</span>
+            <span><span class="solved-count">${c.solved_count}</span> / ${totalUsers || '?'} · ${c.first_solver ? '🏆 ' + esc(c.first_solver) : '—'}</span>
+          </div>
+        </div>`;
+      }).join('');
+    }
+
+    // ---- live feed ----
+    document.getElementById('pane-scoreboard-act-meta').textContent = d.recent_solves.length + ' shown';
+    const act = document.getElementById('pane-scoreboard-activity');
+    if (d.recent_solves.length === 0) {
+      act.innerHTML = '<div class="empty"><span class="icon">∅</span>No solves yet</div>';
+    } else {
+      act.innerHTML = d.recent_solves.map(s => {
+        const key = s.user + ':' + s.challenge;
+        const fresh = !firstRender && !seen.has(key);
+        seen.add(key);
+        return `<div class="activity-item${fresh ? ' fresh' : ''}">
+          <div style="min-width:0">
+            <span class="who">${esc(s.display_name || s.user)}</span>
+            <span class="verb">cleared</span>
+            <span class="what">${esc(s.challenge)}</span>
+          </div>
+          <span class="when" title="${esc(s.at)}">${fmtTime(s.at)}</span>
+        </div>`;
+      }).join('');
+    }
+    firstRender = false;
+  }
+
+  // ---------------- per-mission leaderboard ----------------
+  function openChallenge(cid) {
+    currentCid = cid;
+    resultOpen = false;
+    document.getElementById('pane-scoreboard-result-view').hidden = true;
+    document.getElementById('pane-scoreboard').querySelectorAll('.home-section').forEach(s => { s.hidden = true; });
+    document.getElementById('pane-scoreboard-detail-view').hidden = false;
+    renderDetail();
+    window.scrollTo(0, 0);
+  }
+  function goHome() {
+    currentCid = null;
+    resultOpen = false;
+    document.getElementById('pane-scoreboard-detail-view').hidden = true;
+    document.getElementById('pane-scoreboard-result-view').hidden = true;
+    document.getElementById('pane-scoreboard').querySelectorAll('.home-section').forEach(s => { s.hidden = false; });
+  }
+
+  // ---------------- results screen ----------------
+  function openResult() {
+    resultOpen = true;
+    currentCid = null;
+    document.getElementById('pane-scoreboard-detail-view').hidden = true;
+    document.getElementById('pane-scoreboard').querySelectorAll('.home-section').forEach(s => { s.hidden = true; });
+    document.getElementById('pane-scoreboard-result-view').hidden = false;
+    renderResult();
+    window.scrollTo(0, 0);
+  }
+  function renderResult() {
+    if (!lastState) return;
+    const lb = lastState.leaderboard || [];
+    const totalChal = lastState.stats.challenges;
+    const top = lb.filter(p => p.solved > 0).slice(0, 3);
+    const podium = document.getElementById('pane-scoreboard-result-podium');
+    if (top.length === 0) {
+      podium.innerHTML = '<div class="empty"><span class="icon">🏁</span>まだ solve がありません — 結果はイベント終了後に</div>';
+    } else {
+      const order = top.length >= 3 ? [top[1], top[0], top[2]] : (top.length === 2 ? [top[1], top[0]] : [top[0]]);
+      podium.innerHTML = order.map(p => {
+        const medal = p.rank === 1 ? '① CHAMPION' : (p.rank === 2 ? '② 2nd' : '③ 3rd');
+        return `<div class="pod pod-${p.rank}"><div class="crown"></div>
+          <div class="medal display">${medal}</div>
+          <div class="pod-name">${esc(p.display_name || p.user)}</div>
+          <div class="pod-score"><b>${p.score ?? 0}</b> pts · ${p.solved} / ${totalChal} missions</div>
+        </div>`;
+      }).join('');
+    }
+    document.getElementById('pane-scoreboard-result-meta').textContent = lb.length + ' participants';
+    const body = document.getElementById('pane-scoreboard-result-body');
+    body.innerHTML = lb.length === 0
+      ? '<tr><td colspan="5" class="empty"><span class="icon">∅</span>No participants</td></tr>'
+      : lb.map(p => {
+          const ranked = p.solved > 0;
+          const rankCls = ranked && p.rank <= 3 ? 'rank-' + p.rank : '';
+          return `<tr>
+            <td><span class="rank ${rankCls}">${ranked ? '#' + p.rank : '-'}</span></td>
+            <td><span class="user-cell">${esc(p.display_name || p.user)}</span></td>
+            <td style="text-align:right"><span class="score-cell"><b>${p.score ?? 0}</b></span></td>
+            <td><span class="score-cell">${p.solved}<span class="total">/${totalChal}</span></span></td>
+            <td><div class="progress">${segs(p.solved, totalChal)}</div></td>
+          </tr>`;
+        }).join('');
+  }
+  function renderDetail() {
+    if (!lastState || !currentCid) return;
+    const c = (lastState.challenges || []).find(x => x.id === currentCid);
+    if (!c) { goHome(); return; }
+    const rule = c.expectedRules[0] || c.forbiddenRules[0] || '';
+    document.getElementById('pane-scoreboard-detail-title').innerHTML =
+      esc(c.id) + ' <span class="badge badge-' + c.type + '">' + c.type + '</span>';
+    document.getElementById('pane-scoreboard-detail-meta').textContent =
+      c.solver_details.length + ' solved' + (rule ? ' · ' + rule : '');
+    const body = document.getElementById('pane-scoreboard-detail-body');
+    if (!c.solver_details.length) {
+      body.innerHTML = '<tr><td colspan="4" class="empty"><span class="icon">∅</span>Nobody has cleared this yet</td></tr>';
+      return;
+    }
+    const firstAt = new Date(c.solver_details[0].at).getTime();
+    body.innerHTML = c.solver_details.map((s, i) => {
+      const rank = i + 1;
+      const rankCls = rank <= 3 ? 'rank-' + rank : '';
+      const delta = rank === 1 ? '🏆 first' : '+' + fmtDelta(new Date(s.at).getTime() - firstAt);
+      return `<tr>
+        <td><span class="rank ${rankCls}">#${rank}</span></td>
+        <td><span class="user-cell">${esc(s.display_name || s.user)}</span></td>
+        <td><span class="when" title="${esc(s.at)}">${fmtTime(s.at)}</span></td>
+        <td style="text-align:right" class="mono">${delta}</td>
+      </tr>`;
+    }).join('');
+  }
+  // Click (or Enter/Space) a mission card → its leaderboard. Delegated on the
+  // persistent container since cards re-render every poll.
+  document.getElementById('pane-scoreboard-challenges').addEventListener('click', (e) => {
+    const card = e.target.closest('.challenge[data-cid]');
+    if (card) openChallenge(card.dataset.cid);
+  });
+  document.getElementById('pane-scoreboard-challenges').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const card = e.target.closest('.challenge[data-cid]');
+    if (card) { e.preventDefault(); openChallenge(card.dataset.cid); }
+  });
+  document.getElementById('pane-scoreboard-detail-back').addEventListener('click', goHome);
+  document.getElementById('pane-scoreboard-result-btn').addEventListener('click', openResult);
+  document.getElementById('pane-scoreboard-result-back').addEventListener('click', goHome);
+
+  // Admin rename: delegated on the (persistent) tbody since rows re-render.
+  document.getElementById('pane-scoreboard-lb-body').addEventListener('click', async (e) => {
+    const btn = e.target.closest('.name-edit');
+    if (!btn) return;
+    const user = btn.dataset.user;
+    const name = prompt('Scoreboard name for ' + user + ' (blank cancels):');
+    if (name === null) return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    try {
+      const r = await fetch('/api/admin/users/' + encodeURIComponent(user) + '/display-name', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: trimmed }),
+      });
+      if (r.ok) { await refresh(); }
+      else { alert('Rename failed (HTTP ' + r.status + '). Admin only / invalid name (1-32 chars, no <>&"\').'); }
+    } catch (err) { alert('Rename request error: ' + err); }
+  });
+
+  const resetBtn = document.getElementById('pane-scoreboard-reset-btn');
+  if (resetBtn) {
+    resetBtn.addEventListener('click', async () => {
+      if (!confirm('Reset the scoreboard? This clears all solves and event counts (display names are kept).')) return;
+      try {
+        const r = await fetch('/api/admin/reset', { method: 'POST' });
+        if (r.ok) {
+          const d = await r.json();
+          await refresh();
+          alert('Scoreboard reset — cleared ' + (d.cleared_solves ?? 0) + ' solve(s).');
+        } else {
+          alert('Reset failed (HTTP ' + r.status + '). Admin only.');
+        }
+      } catch (e) {
+        alert('Reset request error: ' + e);
+      }
+    });
+  }
+
+  // Demo data — design-preview only. Never auto-rendered on fetch failure
+  // (#283: that used to happen and was indistinguishable from real
+  // standings during a live event). Opt in explicitly with ?demo=1.
+  const DEMO = {
+    stats: { users: 5, challenges: 10, solves: 17, events: 1240 },
+    leaderboard: [
+      { rank: 1, user: 'user3', display_name: 'shadowfox', score: 680, solved: 7, events: 412 },
+      { rank: 2, user: 'user1', display_name: 'n0va', score: 470, solved: 5, events: 318 },
+      { rank: 3, user: 'user7', display_name: 'kernelpanic', score: 270, solved: 3, events: 196 },
+      { rank: 0, user: 'user2', display_name: 'user2', score: 0, solved: 0, events: 22 },
+      { rank: 0, user: 'user5', display_name: 'rookie', score: 0, solved: 0, events: 4 },
+    ],
+    challenges: [
+      { id: '01-initial-recon', type: 'trigger', expectedRules: ['Contact K8S API Server From Container'], forbiddenRules: [], solved_count: 5, first_solver: 'shadowfox', solver_details: [] },
+      { id: '02-credential-files', type: 'trigger', expectedRules: ['Read sensitive file untrusted'], forbiddenRules: [], solved_count: 4, first_solver: 'n0va', solver_details: [] },
+      { id: '03-stealth-read', type: 'evade', expectedRules: [], forbiddenRules: ['Read sensitive file untrusted'], solved_count: 2, first_solver: 'shadowfox', solver_details: [] },
+      { id: '06-web-rce-shell', type: 'trigger', expectedRules: ['Run shell untrusted'], forbiddenRules: [], solved_count: 3, first_solver: 'shadowfox', solver_details: [] },
+      { id: '10-final-exfil', type: 'evade', expectedRules: [], forbiddenRules: ['Contact K8S API Server From Container'], solved_count: 0, first_solver: null, solver_details: [] },
+    ],
+    recent_solves: [
+      { user: 'user3', display_name: 'shadowfox', challenge: '06-web-rce-shell', at: new Date(Date.now() - 9000).toISOString() },
+      { user: 'user1', display_name: 'n0va', challenge: '02-credential-files', at: new Date(Date.now() - 64000).toISOString() },
+      { user: 'user7', display_name: 'kernelpanic', challenge: '01-initial-recon', at: new Date(Date.now() - 200000).toISOString() },
+    ],
+  };
+
+  // Scoreboard data (/api/state) is admin-gated server-side (unchanged).
+  // Only poll it when the portal shell told us the viewer is admin — a
+  // participant would otherwise just loop on 403s for a tab they cannot see
+  // (P23-1: display-only optimisation, NOT the authorization boundary).
+  //
+  // ?demo=1 is a separate, explicit opt-in for design preview — it renders
+  // DEMO once and does not touch the fetch/poll path at all, so it can never
+  // appear by accident (#283).
+  if (new URLSearchParams(location.search).get('demo') === '1') {
+    render(DEMO);
+    setStatus('demo');
+  } else if (window.__PORTAL_ROLE__ === 'admin') {
+    refresh();
+    setInterval(refresh, 2000);
+  }
+})();
+</script>
+
+</div>

@@ -1,0 +1,171 @@
+<!-- ===== Me pane (moved from templates/me.html, namespaced) ===== -->
+<div class="pane p-shell" id="pane-me">
+
+  <header>
+    <div class="brand">
+      <h1 class="p-h1"><span class="accent">Scoreboard</span></h1>
+    </div>
+    <div>
+      <div class="live p-live">● LIVE</div>
+      <div class="updated mono" id="pane-me-updated">connecting…</div>
+    </div>
+  </header>
+
+  <div id="pane-me-page"></div>
+
+<script nonce="{{.Nonce}}">
+(function () {
+  function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function avatarChar(u) { return (u || '?').slice(-1).toUpperCase(); }
+  function fmtAgo(unixSec) {
+    const ms = Date.now() - unixSec * 1000;
+    const s = Math.max(0, Math.floor(ms / 1000));
+    if (s < 5)    return 'just now';
+    if (s < 60)   return s + 's ago';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    return Math.floor(s / 3600) + 'h ago';
+  }
+  function fmtAgoISO(iso) {
+    const ms = Date.now() - new Date(iso).getTime();
+    const s = Math.max(0, Math.floor(ms / 1000));
+    if (s < 5)    return 'just now';
+    if (s < 60)   return s + 's ago';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+    return Math.floor(s / 86400) + 'd ago';
+  }
+
+  // Portal shell (P23-1): identity comes from the server-injected
+  // __PORTAL_USER__ global (derived from X-Auth-Request-Email,
+  // api.DeriveUsername) rather than a ?user= query param. UI convenience
+  // only — /api/users/{user}/me is independently gated server-side
+  // (selfOrAdmin).
+  const user = window.__PORTAL_USER__ || '';
+  const fireSeen = new Set();
+  let firstRender = true;
+
+  if (!user) {
+    document.getElementById('pane-me-page').innerHTML = `
+      <div class="help">
+        <h2>Your username could not be determined</h2>
+        <p style="margin-top:0.75rem">Ask the operator for your username, or reload the portal after logging in again.</p>
+      </div>`;
+  } else {
+    refresh();
+    setInterval(refresh, 2000);
+  }
+
+  async function refresh() {
+    try {
+      const r = await fetch('/api/users/' + encodeURIComponent(user) + '/me');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      render(await r.json());
+      document.getElementById('pane-me-updated').textContent = 'updated ' + new Date().toLocaleTimeString();
+    } catch (e) {
+      document.getElementById('pane-me-updated').textContent = 'connection error';
+    }
+  }
+
+  function render(d) {
+    const total = d.total_challenges || 0;
+    const solvedCount = d.solved_count || 0;
+    const pct = total ? Math.round(100 * solvedCount / total) : 0;
+    const fires = d.recent_rule_fires || [];
+    const solved = d.solved || [];
+    const events = d.events || 0;
+    // P23-ME-1 (CEO decision 案① 完全プライベート): `rank`/`score` come straight
+    // from GET /api/users/{user}/me — the SAME selfOrAdmin-gated response this
+    // whole pane already fetches. The server computes the full field's
+    // standings (computeLeaderboard) but returns ONLY the caller's own
+    // rank/score in this field — see api.Handler.userMe's doc. There is no
+    // other user's rank/score/name anywhere in `d`; do not add a fetch to
+    // /api/state or any admin-only endpoint from this pane.
+    const rank = d.rank || 0;
+    const score = d.score ?? 0;
+    const rankLabel = rank > 0 ? '#' + rank : '-';
+
+    let nextHTML;
+    if (d.next_unsolved) {
+      nextHTML = `<span class="target">→ ${esc(d.next_unsolved)}</span>`;
+    } else if (solvedCount > 0) {
+      nextHTML = `<span class="target done">All ${total} challenges solved — nice work.</span>`;
+    } else {
+      nextHTML = `<span class="target">No challenges loaded yet</span>`;
+    }
+
+    const displayName = d.display_name || user;
+    const identitySuffix = (displayName !== user) ? ` <span style="color:var(--text-mute); font-weight:400; font-size:0.85rem">(${esc(user)})</span>` : '';
+    document.getElementById('pane-me-page').innerHTML = `
+      <section class="ident">
+        <div class="avatar">${avatarChar(displayName)}</div>
+        <div>
+          <div class="who-name">${esc(displayName)}${identitySuffix}</div>
+          <div class="who-status">${solvedCount > 0 ? solvedCount + ' challenge' + (solvedCount === 1 ? '' : 's') + ' solved · ' + events.toLocaleString() + ' Falco events triggered' : 'Just getting started · ' + events.toLocaleString() + ' Falco events seen'}</div>
+        </div>
+        <div class="rank-badge" title="Your rank (self only — no other participant's rank is shown here)">
+          <div class="rank-num">${esc(rankLabel)}</div>
+          <div class="rank-label">Rank</div>
+        </div>
+        <div class="score-badge">
+          <div class="score-num">${esc(String(score))}</div>
+          <div class="score-label">Score</div>
+        </div>
+        <div class="progress-mini">
+          <div class="label">Progress</div>
+          <div class="bar"><div class="fill" style="width:${pct}%"></div></div>
+          <div class="count">${solvedCount}<span class="total">/${total}</span> · ${pct}%</div>
+        </div>
+      </section>
+
+      <div class="grid">
+        <div>
+          <section class="panel">
+            <div class="panel-header"><h2>Next challenge</h2></div>
+            <div class="next">
+              <div class="hint">Pick this up in your terminal:</div>
+              ${nextHTML}
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h2>Solved</h2>
+              <span class="panel-aux">${solvedCount} done</span>
+            </div>
+            ${solved.length === 0
+              ? '<div class="empty"><span class="icon">∅</span>No solves yet — your first one will appear here.</div>'
+              : '<ul class="solved-list">' + solved.map(s => `
+                  <li>
+                    <span><span class="check">✓</span><span class="chal">${esc(s.challenge)}</span></span>
+                    <span class="at" title="${esc(s.at)}">${fmtAgoISO(s.at)}</span>
+                  </li>`).join('') + '</ul>'}
+          </section>
+        </div>
+
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Falco rules you triggered (last 60s)</h2>
+            <span class="panel-aux">${fires.length} fire${fires.length === 1 ? '' : 's'}</span>
+          </div>
+          <div class="fires">
+            ${fires.length === 0
+              ? '<div class="empty"><span class="icon">∅</span>Nothing in the last 60s.<br>Run a syscall in your workspace and watch this fill in.</div>'
+              : fires.slice().reverse().map(f => {
+                  const key = f.rule + ':' + f.at;
+                  const fresh = !firstRender && !fireSeen.has(key);
+                  fireSeen.add(key);
+                  return `<div class="fire-item${fresh ? ' fresh' : ''}">
+                    <div class="rule">${esc(f.rule)}</div>
+                    <div class="when">${fmtAgo(f.at)}</div>
+                  </div>`;
+                }).join('')}
+          </div>
+        </section>
+      </div>
+    `;
+    firstRender = false;
+  }
+})();
+</script>
+
+</div>

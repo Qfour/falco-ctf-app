@@ -666,20 +666,36 @@ func TestTemplates_NoRawHexColorLiterals(t *testing.T) {
 	// check-template-hex.py's HEX_RE doc for why \b at the end (not the
 	// start) is what stops a longer hex-like run from partial-matching.
 	hexRe := regexp.MustCompile(`#(?:[0-9a-fA-F]{3}){1,2}\b`)
-	for _, src := range []struct {
-		name string
-		body string
-	}{
-		{"templates/index.html", indexHTML},
-		{"templates/portal.html", portalHTMLSrc},
-	} {
+	// P28-0a: the portal's source is split into templates/portal/*.tmpl, so
+	// the hex scan covers index.html plus EVERY partial (portalPartials
+	// fails the test if it finds none — a scan over zero files would be
+	// green forever). The <link> assertion stays per DOCUMENT: index.html
+	// and the portal's root shell, which owns the portal's <head>.
+	type source struct {
+		name     string
+		body     string
+		wantLink bool
+	}
+	srcs := []source{{"templates/index.html", indexHTML, true}}
+	for _, p := range portalPartials(t) {
+		srcs = append(srcs, source{"templates/portal/" + p.name, p.body, p.name == portalRootTmpl})
+	}
+	linked := 0
+	for _, src := range srcs {
 		scannable := stripCommentsForHexScan(src.body)
 		if m := hexRe.FindAllString(scannable, -1); len(m) > 0 {
 			t.Errorf("%s contains raw hex color literal(s) %v (outside comments) — reference a token in static/tokens.css via var(...) instead (app#116)", src.name, m)
 		}
+		if !src.wantLink {
+			continue
+		}
+		linked++
 		if !strings.Contains(src.body, tokensCSSPath) {
 			t.Errorf("%s does not link %s — it must consume design tokens via <link> (app#116)", src.name, tokensCSSPath)
 		}
+	}
+	if linked != 2 {
+		t.Fatalf("checked the %s <link> on %d document(s), want 2 (index.html + the portal root %s) — the portal root was not among the scanned partials", tokensCSSPath, linked, portalRootTmpl)
 	}
 }
 
