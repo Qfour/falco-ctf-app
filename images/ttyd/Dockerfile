@@ -39,14 +39,19 @@ ARG KUBECTL_SHA256_ARM64=cc749967b62f4422260bc9c0aa7a7c55f45175ae38cb8d95767b5d2
 #   libssl3/libcrypto3 3.5.9-r0 (2026-10-05: 3.24/main から 3.5.8-r0 が外れ apk
 #     resolve が failing していたため再 pin。`apk policy libssl3 libcrypto3` 実測で
 #     3.24/main の唯一の提供版が 3.5.9-r0。base に焼き込まれた 3.5.7-r0 からの
-#     明示 upgrade は引き続き必要 — 3.5.8-r0 の secfix [CVE-2026-63072..63076/
-#     -54874/-18798/-14456/-14457/-75803, secdb v3.24/main] は 3.5.9-r0 が包含)
+#     明示 upgrade は引き続き必要。3.5.8-r0 の secfix [CVE-2026-63072..63076/
+#     -54874/-18798/-14456/-14457/-75803, secdb v3.24/main] は 3.5.9 に累積で
+#     含まれる — 上流 CHANGES.md の 3.5.7→3.5.8 節が 3.5.9 に残ることを aports と
+#     併せて確認済み (5x R1)。3.5.9 自体も追加の CVE 修正を含む
+#     (High は CVE-2026-84782))
 #   curl/libcurl 8.22.0-r0 (2026-09-03: alpine 3.24 リポジトリから 8.21.0-r0 が
 #   既に外れ apk resolve が failing していたため再 pin。`apk policy curl` 実測
 #   で 3.24/main の唯一の提供版が 8.22.0-r0 であることを確認済み)
 #   bash 5.3.9-r1 (3.23 の 5.3.3-r1 から 3.24 側で上がった版に追随、念のため厳密 pin)
 #   ca-certificates 20260909-r0 (2026-10-05: 3.24/main から 20260611-r0 が外れた
-#     ため再 pin。`apk policy ca-certificates` 実測で唯一の提供版)
+#     ため再 pin。`apk policy ca-certificates` 実測で唯一の提供版。base 由来の
+#     ca-certificates-bundle 20260611-r0 は pin 外で同居するが、bundle の中身は
+#     ビルド時に新データで再生成される (5x R2 実測: 119→121 件、TLS 動作確認済み))
 # ttyd / tini の版数は 3.23→3.24 で不変 (live APKINDEX 実測、2026-09-01。
 # 2026-10-05 の `apk policy` 再実測でも 1.7.7-r0 / 0.19.0-r3 のまま)。
 # kubectl (Go toolchain High) は本 alpine bump のスコープ外 — バージョン選定の

@@ -9,7 +9,7 @@
 # tag itself did not move, but upstream re-published a new index digest under
 # it, which is the mechanism that actually carries package-level CVE fixes
 # such as libssl3/libcrypto3 3.5.7-r0 -> 3.5.8-r0, CVE-2026-63072..63076 /
-# 54874 / 18798 / 14456 / 14457 — see Issue #227).
+# 54874 / 18798 / 14456 / 14457 / 75803 — see Issue #227).
 FROM python:3.12-slim@sha256:09f7da3bc104798d0afb40bc08d23ab2da20a76130cec1f2ef170848f5d85217 AS build
 
 RUN pip install --no-cache-dir "mkdocs-material==9.5.39"
@@ -47,7 +47,7 @@ FROM nginxinc/nginx-unprivileged:1.30-alpine@sha256:93722936b82ec8a1178d48448e61
 # (not 3.22 — confirmed via nginxinc/docker-nginx's stable/alpine-slim/Dockerfile
 # on 2026-08-28), so its installed libssl3/libcrypto3 (3.5.7-r0) predates the
 # same 3.5.8-r0 fix as challenge/ttyd (CVE-2026-63072..63076/-54874/-18798/
-# -14456/-14457, High) but must be pinned against v3.24's own APKINDEX, not
+# -14456/-14457/-75803, High) but must be pinned against v3.24's own APKINDEX, not
 # v3.22's. **Exact version pin** (same discipline as challenge/ttyd/
 # detect-grader — untraced `apk upgrade` breaks bit-identical builds, #227).
 # 3.5.8-r0 confirmed present in
@@ -56,7 +56,9 @@ FROM nginxinc/nginx-unprivileged:1.30-alpine@sha256:93722936b82ec8a1178d48448e61
 # Re-pinned 3.5.8-r0 -> 3.5.9-r0 on 2026-10-05: v3.24/main dropped 3.5.8-r0
 # (`apk add` failed with "unable to select packages"); `apk policy libssl3
 # libcrypto3` inside this base shows 3.5.9-r0 as the only version served.
-# 3.5.9-r0 supersedes 3.5.8-r0, so the CVE fixes listed above are retained.
+# 3.5.9 carries the 3.5.8 fixes listed above cumulatively (confirmed against
+# upstream CHANGES.md and aports in the 5x R1 review, not inferred from the
+# version number) and fixes further CVEs of its own (High: CVE-2026-84782).
 #
 # libxml2 (installed 2.13.9-r2, 3 High CVEs) is NOT pinned here: v3.24's live
 # APKINDEX still only serves 2.13.9-r2 (identical to installed — no newer
