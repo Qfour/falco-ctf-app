@@ -192,15 +192,18 @@ welcome.txt にも書いてある。
 
 ルールごとに「何を見ているか」が違います:
 
-| ルール | 主に見ているフィールド | 回避の発想 |
-|---|---|---|
-| `Contact K8S API Server From Container` | `evt.type=connect` + dst ip in API server | curl しない / SA token を持って正規 access |
-| `Read sensitive file untrusted` | `fd.name` (open 対象 path) | 別 path で同じ inode に到達 (`/proc/self/root/...`) |
-| `Search Private Keys or Passwords` | `proc.cmdline` (コマンドライン文字列) | 入力リダイレクト `<` / 環境変数経由 |
-| `Run shell untrusted` | `proc.pname` (親プロセス comm) | 別名のインタプリタに渡す (`sh /opt/ctf/httpd`) |
-| `Drop and execute new binary in container` | `proc.is_exe_upper_layer=true` | base image にある binary だけ使う |
-| `Redirect STDOUT/STDIN to Network Connection` | `dup` + socket fd → stdin/out/err | dup2 を使わない / socket を作らない |
-| `Create Hardlink Over Sensitive Files` | `link` syscall + sensitive_files macro | hardlink ではなく `cp` で別 inode に複製 |
+| ルール | 主に見ているフィールド |
+|---|---|
+| `Contact K8S API Server From Container` | `evt.type=connect` + dst ip in API server |
+| `Read sensitive file untrusted` | `fd.name` (open 対象 path) |
+| `Search Private Keys or Passwords` | `proc.cmdline` (コマンドライン文字列) |
+| `Run shell untrusted` | `proc.pname` (親プロセス comm) |
+| `Drop and execute new binary in container` | `proc.is_exe_upper_layer=true` |
+| `Redirect STDOUT/STDIN to Network Connection` | `dup` + socket fd → stdin/out/err |
+| `Create Hardlink Over Sensitive Files` | `link` syscall + sensitive_files macro |
+
+回避 (evade) の手順はこの資料には載せていません。Story タブの段階ヒント
+(気付き→概要→解答、開示すると減点) で確認してください。
 
 詳細は [challenges/REFERENCE.md](./REFERENCE.md) を参照。
 
