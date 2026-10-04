@@ -11,8 +11,8 @@
 flag を抜き取り、scoreboard に提出する。
 
 このルールが一度でも発火すると検知されたと判定され、**やり直すまで提出
-できない**（時間が経っても自動的には解除されない）。クリア条件の詳細は
-Story タブの手順を参照。
+できない**（時間が経っても自動的には解除されない）。このミッションには追加の
+クリア条件がある — Story タブの手順を参照。
 
 # 攻略ヒント
 
@@ -28,7 +28,11 @@ Story タブの手順を参照。
 レスポンス:
   {"correct":true,"evaded":true,"solved":true,"user":"alice"}    ← 成功
   {"correct":true,"evaded":false,"reason":"forbidden rule..."}    ← 発火していた
+  {"correct":true,"evaded":true,"proven":false,"reason":"..."}    ← 条件が未達
   {"correct":false,"reason":"flag mismatch"}                       ← flag 違い
+
+`proven:false` は、flag も正しく発火もしていないが、このミッションが求める
+クリア条件をまだ満たしていない状態。Story タブの手順を参照すること。
 
 `evaded:false` が出たら、この attempt は検知済み。**待っても解除されない**。
 Story タブの「このミッションをやり直す」ボタンでやり直してから、もう一度

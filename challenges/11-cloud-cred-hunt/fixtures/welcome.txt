@@ -17,10 +17,9 @@
 CLEARED になる (提出操作は不要)。Falco は AWS 認証情報を grep/find で探す
 コマンドを見張っている。
 
-この箱には練習用のダミー資格情報が置いてある (いずれも AWS 公式ドキュメントの
+この箱には練習用のダミー資格情報が置いてある (AWS 公式ドキュメントの
 EXAMPLE キー = 非シークレットのダミー):
 
-  ~/.aws/credentials
   /opt/ctf/missions/11-cloud-cred-hunt/fixtures/aws-credentials.sample
 
 # 攻略ヒント
