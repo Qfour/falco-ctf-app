@@ -1,10 +1,11 @@
 # ADR-0028: first-party 静的アセットを `GET /static/{asset}` 1 ルート + content-hash URL に集約する
 
 - Status: **Proposed** (Accepted 化は CEO merge 時。期限 = P28-0c の merge 前)
-- Date / Deciders: 2026-10-05 / VP (2026-10-04 既定 3、CEO 承認済み) + architect (起草) + security-engineer (レビュー必須・未受領) +
-  CEO (merge。クロスリポの path 契約 = Class-2)
+- Date / Deciders: 2026-10-05 / VP (2026-10-04 既定 3、CEO 承認済み) + architect (起草) + security-engineer・qa-engineer
+  (独立レビュー 2026-10-05。指摘は本版に反映済み、再確認待ち) + CEO (merge。クロスリポの path 契約 = Class-2)
 - 関連: app#277、workspace `REFACTORING.md` P28-0c、ADR-0005 (**Signpost 2 だけを supersede する。** Decision 1-5・Verification・
-  他の Signpost は無傷)、ADR-0021 / 0022 (I15)、ADR-0013 (単一 origin)、I1・I5・I14・I15
+  他の Signpost は無傷)、ADR-0021 / 0022 (I15)、ADR-0013 (単一 origin)、I1・I5・I14・I15、app#306 (portal のソース分割)
+- 行番号は e74d871。app#306 が先に入ると portal の template は `templates/portal/*.tmpl` になり、テストの行も動く
 
 ## Context
 
@@ -28,7 +29,8 @@
 **C4. 制約。** I15 の照合規則は「`{param}` は 1 セグメント全体」を前提にする (`{name...}` を使うなら規則の再設計 = ADR-0021
 Signpost 1)。Exact エントリは param を持つ route を被覆できない (`internal/apispec/ingressparity/ingressparity.go:124`)。HTML と
 アセットは同じバイナリに同居していて版ずれが無い (I5)。CSP は `'self'` で、path に依存しない
-(`internal/scoreboard/view/csp.go:178-183`)。
+(`internal/scoreboard/view/csp.go:178-183`)。本番は Cloudflare を経由する (proxied)。platform リポに cache の設定は無い
+(dashboard 側は未確認)。
 
 ## Options
 
@@ -36,8 +38,8 @@ Signpost 1)。Exact エントリは param を持つ route を被覆できない 
    コスト: 最小。page load ごとに再検証が 8 本。リスク: C1 は閉じるが C2 が残る (アセットを足すたびに 4 箇所と両リポの文書)。
    可逆。効き始める閾値: アセットが今後増えない場合。
 2. **`GET /static/{asset}` 1 ルート + content-hash URL【推奨】** — 配信名を `<name>.<hash>.<ext>` にし、登録表にある名前だけを返す。
-   コスト: HTML と CSS の参照を登録表から解決する配線、ingress は Prefix 1 本、テスト 3 箇所の追随。リスク: Prefix は mux が
-   出さない path にも ingress を開く (D4・D5 で扱う)。route は戻せるが、両リポの path 契約を 2 度動かすことになる。
+   コスト: HTML と CSS の参照を登録表から解決する配線、ingress は Prefix 1 本、テストの追随、platform の cache 設定。リスク:
+   Prefix は mux が出さない path にも ingress を開く (D4・D5 で扱う)。route は戻せるが、両リポの path 契約を 2 度動かすことになる。
    閾値: 次にアセットの中身を変える deploy から (P28-1 の `--q-*`)。
 3. **scoreboard の外から配る** (docs の nginx、別サービス、CDN) — コスト: 参加者向けの allow-list がもう 1 つ増える (ADR-0021
    Signpost 2)。CDN なら egress-zero (P12) を崩す。リスク: HTML とアセットが別 image になり、同居による「版ずれなし」を失う。
@@ -55,18 +57,27 @@ Signpost 1)。Exact エントリは param を持つ route を被覆できない 
   テンプレートと CSS は登録表から URL を得て、リテラルの path を書かない。登録表に無い名前は 404 — ハッシュ無しの名前
   (`/static/tokens.css`) も、埋め込みディレクトリに在るだけのファイル (LICENSE・PROVENANCE.md) も返さない。埋め込み FS を
   `http.FileServer` でそのまま出さない。
-- **D3 cache**: 配信名には `Cache-Control: public, max-age=31536000, immutable` (ETag と 304 は残す)。404 は `no-store`。HTML shell
-  (`/`・`/portal`) には `no-store` を明示する (現状は cache の指定が無い。古い HTML が古い配信名を指し続けないようにする)。
+- **D3 cache**: 配信名には `Cache-Control: public, max-age=31536000, immutable` (ETag と 304 は残す)。404 は `no-store` —
+  配信名は公開リポの内容から計算できるので、deploy の前に将来の名前を叩かれると 404 が共有 cache に残りうる。それを防ぐ統制でも
+  ある。HTML shell (`/`・`/portal`) には `no-store` を明示する (現状は cache の指定が無い)。shell は応答ごとの nonce と、利用者ごとの
+  `__PORTAL_USER__`・`__PORTAL_TTYD_URL__` を埋め込んでいる (`internal/scoreboard/view/templates/portal.html:975-977`)。共有 cache に
+  載れば他人の識別子が渡り、nonce も再利用される。性能のために緩めない。
 - **D4 ingress**: participant allow-list の Exact 8 本を `path: /static/`・`pathType: Prefix` の 1 本に替える。配信名は build ごとに
   変わるので chart は列挙できず、Exact は構造上も使えない (C4)。同一 host にある admin ingress の `/` (Prefix、`/check-admin`) との
   優先は最長一致で `/static/` が勝つ。既存の Prefix 3 本 (`ingress-journey.yaml:183-203`) が P19-2b から依存しているのと同じ機構で
   ある (`charts/scoreboard/templates/ingress.yaml:15-27`。`/static/` での実機確認は V7)。I15 の照合規則は無変更で被覆を判定でき、
   `/static/` の下に participant 以外の route を置けば reverse 検査が落とす。
-- **D5 `/static/` に置けるもの**: 誰に読まれてもよい表示用アセットだけ。`public` で配るので、共有 cache が認証を通さずに返しうる
-  (本番の edge が実際に cache しているかは未検証)。課題の内容 (Quest content・図鑑の文・ヒント) や利用者ごとに変わるものは
-  置かない。それらは self-scope の API で出す。
-- **D6 クロスリポ**: path 契約の変更なので両リポ同時 PR + 相互リンク。platform 側は文書だけである (C2 の 2 ファイルと
-  `docs/verification-gates-2026-08.md`。helmfile は path を持たない)。記載を「`/static/` (Prefix)」に
+- **D5 `/static/` に置けるもの**: 誰に読まれてもよい表示用アセットだけ。課題の内容 (Quest content・図鑑の文・ヒント) や利用者ごとに
+  変わるものは置かない (self-scope の API で出す)。散文の規則にせず、次で機械的に縛る。
+  - **登録表を pin する**: 論理名の集合をテストで固定する (変えるには pin の更新が要り、その PR は security-engineer レビュー必須)。
+    拡張子は `.css` と `.woff2` だけ。`.js` は Signposts 4 の supersede まで載せない (CSP は `script-src 'self'` を含むので、登録表に
+    入った script は nonce なしで実行できる)。入力は `view/static` と `view/vendor` の埋め込みだけ。
+  - **共有 cache の両面**: `public` で配るので、200 は認証を通らずに返りうる (だから公開してよいものだけを置く)。逆向きもある:
+    未認証の GET には sign-in への 302 が返り、これは Cache-Control を持たない。edge に載れば、認証済みの参加者にも 302 が返りうる
+    (**未実測**。現行の固定 URL にも同じ面がある)。V7 で測り、V8 で platform に「`/static/` は 200 以外を cache しない」設定を入れる。
+    (`/static/` を認証なしの Ingress に分ける案は、匿名の通信を採点権威のプロセスまで届かせるので採らない。)
+- **D6 クロスリポ**: path 契約の変更なので両リポ同時 PR + 相互リンク。platform 側は文書 (C2 の 2 ファイルと
+  `docs/verification-gates-2026-08.md`) と Cloudflare の cache 設定 (V8)。helmfile は path を持たない。記載を「`/static/` (Prefix)」に
   替えれば、以後アセットを足しても platform の変更は要らない。app の契約表にも「participant path の正典は
   `ingress-journey.yaml`、I15 が機械照合する。platform は文書で参照するだけ」の行を同じ PR で足す (現在 app 側に行が無い)。
 
@@ -89,7 +100,7 @@ Signpost 1)。Exact エントリは param を持つ route を被覆できない 
   auth-policy の間に既に 1 組ある) が増える。増えるのは検査の対象となる境界である。(4) 行数と総 operation 数は静的配信の薄い
   項目で動く指標で、責務の数を測っていなかった。
 - **35 を超えたときの処方**: 新しいバイナリではなく、bounded context の境界が import closure で引けているかを点検する (ADR-0019 の
-  context map、ADR-0029 の I17)。単一 writer を保ったまま境界を引けないと示されたときに限り、バイナリ分割を I1 と上記決定の
+  context map、ADR-0029 (予約) の I17)。単一 writer を保ったまま境界を引けないと示されたときに限り、バイナリ分割を I1 と上記決定の
   supersede (CEO 判断) として起案する。
 
 ## Consequences
@@ -99,9 +110,10 @@ Signpost 1)。Exact エントリは param を持つ route を被覆できない 
 - **deploy を跨いで開いたままのタブ**: 取得済みの CSS は使い続けられる。未取得のフォント (初めて使う weight) は旧配信名が 404 に
   なり、fallback フォントで表示される。機能は壊れず、再読込で直る。
 - **新たに守る不変条件**: 増やさない。I14 (route = spec) と I15 (ingress) が既に対象にしている。
-- **追随が要る検査**: `tokensCSSPath` の文字列検査 (`internal/scoreboard/view/csp_test.go:680`) を「描画後の HTML が登録表の配信名を参照している」
-  検査に替える。route 数の pin (`internal/scoreboard/apispec_parity_test.go:213` の 37 → 30、`internal/scoreboard/authz_test.go:272` の 15 → 8)。
-  `PROVENANCE.md` 2 本にある配信 path の記述。
+- **追随が要る検査**: `TestTemplates_NoRawHexColorLiterals` の中の `tokensCSSPath` の文字列検査 (`internal/scoreboard/view/csp_test.go:680`) を
+  V2 に置き換える。固定 path と個別 handler を前提にした `TestServeCybercoreCSS_*` / `TestServeTokensCSS_*` の 4 本 (`:519-624`) を
+  登録表の handler に合わせて書き直す。route 数の pin (`internal/scoreboard/apispec_parity_test.go:213` の 37 → 30、
+  `internal/scoreboard/authz_test.go:272` の 15 → 8)。`PROVENANCE.md` 2 本にある配信 path の記述。
 - **ADR-0005**: 本体は書き換えない。索引の 0005 の行から本 ADR へ導線を張る。本 ADR が Accepted になるまで Signpost 2 の元の
   文言が有効である。
 
@@ -111,36 +123,45 @@ Signpost 1)。Exact エントリは param を持つ route を被覆できない 
    別経路を検討する (バイナリと常駐メモリに載るため)。
 2. `/static/` に認証や利用者に依存する内容を置く要求が 1 件出る → D5 を緩めず API 側に route を設計する。要求が続くなら D5 の
    線引きを ADR で見直す。
-3. deploy 後に「表示が崩れた」報告が 1 件出る (古い HTML か、旧配信名の 404 が原因) → D3 の HTML cache 方針か、旧配信名の
-   猶予配信を再設計する。
+3. deploy 後に「表示が崩れた」報告が 1 件出る (古い HTML、旧配信名の 404、cache に載った 302 のいずれか) → D3 の cache 方針か、
+   旧配信名の猶予配信を再設計する。
 4. アセットにサブディレクトリが要る、または portal の JS / CSS を外部アセットにすると決まる (P28 architect §9 の覆す信号) →
    前者は I15 の照合規則の再設計が先 (ADR-0021 Signpost 1)。後者は script を登録表に載せる条件を本 ADR の supersede で決める。
 
 ## Verification
 
 V1〜V6 は P28-0c の PR で満たす (**未実装**)。V7 は実機でのみ確認可。V8 は両リポの PR で満たす。V9 は既に在る。
+**P28-0c の PR、登録表の pin を変える PR、platform の Cloudflare cache 設定は、いずれも security-engineer レビュー必須。**
 
 - **V1 route**: 静的配信の route がちょうど 1 本。I14 の parity が green (spec は 37 → 30 operation)。
-- **V2 参照の完全性**: `/` と `/portal` を描画した HTML と、配信する全 CSS に現れる `href` / `url()` が、すべて mux 経由で 200 を返す
-  配信名である。`/vendor/` とハッシュ無しの `/static/` は 0 件。参照の抽出が 0 件なら fail。
+- **V2 参照の完全性**: 対象は、`/` と `/portal` を描画した HTML (分割後は全 template を合成した結果) の `<link rel="stylesheet">` の
+  `href` と `<script src>`、および配信する CSS の `url()` のうち、`/` で始まる same-origin の path。`data:`・絶対 URL・`#…` は対象外
+  (cybercore の `url("data:…")`、`https://falco.org/…`、`<a href="/portal#story">` が実例)。対象がすべて、mux 経由で 200 を返す配信名で
+  ある。`/vendor/` とハッシュ無しの `/static/` は 0 件。対象の抽出が 0 件なら fail。
 - **V3 hash の性質**: アセットを 1 byte 変えると配信名が変わり、それを参照する CSS の配信名も変わる (合成した登録表でテスト)。
-- **V4 header**: 配信名は `max-age=31536000, immutable`。未知の名前・ハッシュ無しの名前・登録表に無い埋め込みファイルは 404 +
-  `no-store` + `{"error": …}`。HTML shell は `no-store`。
+- **V4 header と 404**: 配信名は `max-age=31536000, immutable`。未知の名前・ハッシュ無しの名前・登録表に無い埋め込みファイルは 404 +
+  `no-store` + `{"error": …}`。HTML shell は `no-store`。2 セグメントの名前 (`/static/a/b`)・`/static/..%2Fx`・`/static/%2e%2e` も 404 で、
+  admin の HTML を返さない (catch-all の `GET /` に落ちる経路。現状は `view.go:307-310` の 1 行だけが 404 にしており、固定する
+  テストが無い。同じ route 形の scratch probe (Go 1.26.6) では 3 形とも 404、リテラルの `..` は mux が redirect で正規化した)。
 - **V5 I15**: allow-list に `/static/` (Prefix) があり、`/vendor/*` の Exact が残っていない。合成入力で「`/static/` 配下の operator
   route」が reverse 検査で赤になる。
-- **V6 故意違反**: テンプレートにリテラルの `/static/tokens.css` を書くと V2 が赤、登録表から 1 本落とすと V2 が赤、を恒久の
-  テストケースにする。
-- **V7 実機 (単一 origin)**: admin でない参加者が配信名を 200 で取れる (`/check-admin` の 403 にならない)。`/static/does-not-exist` が
-  404 を返す (403 ではない)。tokens.css を変えた image に入れ替えた後、再訪したブラウザが hard reload なしで新しい CSS を得る
-  (app#277 の回帰。ブラウザ E2E ハーネスができるまでは qa の手動検証)。
-- **V8 クロスリポ**: platform の文書 PR が同時に出て、相互リンクされている。
+- **V6 pin と故意違反**: 登録表の論理名の集合と拡張子 (`.css` / `.woff2`) をテストで固定し、`.js` を足すと赤になる。テンプレートに
+  リテラルの `/static/tokens.css` を書くと V2 が赤、登録表から 1 本落とすと V2 が赤、を恒久のテストケースにする。
+- **V7 実機 (単一 origin、Cloudflare 経由)**: admin でない参加者が配信名を 200 で取れる (`/check-admin` の 403 にならない)。
+  `/static/does-not-exist` が 404 を返す (403 ではない)。同じ配信名を未認証 → 認証済みの順で取得し、各応答のステータスと
+  `cf-cache-status` を記録する (認証済みの取得に cache 済みの 302 が返らないこと)。tokens.css を変えた image に入れ替えた後、
+  再訪したブラウザが hard reload なしで新しい CSS を得る (app#277 の回帰。E2E ハーネスができるまでは qa の手動検証)。
+- **V8 クロスリポ (platform)**: 文書の PR が同時に出て相互リンクされている。Cloudflare に「`/static/` の 200 以外の応答を cache
+  しない」Cache Rule を入れ、手順を runbook に残す。
 - **V9 Signpost 2′ の計測点**: 既存の pin (`apispec_parity_test.go:610`) をそのまま使う。新しい検査は足さない。
 
-**architect の判定: yes, if** — V7 が緑であること、V8 が同時であること、D5 を security-engineer が確認すること。
+**architect の判定: yes, if** — V7 が緑であること、V8 が同時であること。
 
 ## Advice
 
+- security-engineer R1 (2026-10-05、REQUEST CHANGES → 本版に反映): D5 を機械強制にする (登録表の pin・拡張子・入力)、edge に
+  載る 302 の面と V7 / V8、D3 の理由 (negative cache の汚染、nonce と利用者識別子)、V4 の 404 ケース。
+- qa-engineer R2 (2026-10-05、APPROVE with comments → 本版に反映): V2 の対象の限定 (文面どおりでは必ず赤になる)、追随が要る
+  テスト 4 本、app#306 との順序。
 - app#277 (2026-09-01、review-5x R4): path に content hash を埋める案と、ingress を Prefix にする論点の指摘。
 - VP 既定 3 (2026-10-04、CEO 承認): Signpost 2 にはサービス分割で応えず、閾値を本 ADR で再定義する。
-- R2 / R4 レビュー (2026-10-04): 集約しても行数の条件が残ること、`tokensCSSPath` の検査が壊れることの指摘。
-- security-engineer: **未受領**。Accepted 化の前に必須 (D4 の Prefix と admin ingress の優先、D5 の線引き、404 の扱い)。
