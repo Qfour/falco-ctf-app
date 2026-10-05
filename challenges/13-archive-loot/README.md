@@ -42,7 +42,7 @@ cd /opt/ctf/missions/13-archive-loot/fixtures/loot && tar czf /tmp/loot.tar.gz .
 ```
 
 いずれも `archive_binaries` list のツールで対象ディレクトリを読み取れば発火する。
-次の操作では **発火しない** (fixtures/welcome.txt にも案内):
+次の操作では **発火しない** (fixtures/welcome.txt には載せていない — 運営向けの確認用):
 
 ```bash
 # 覗くだけ (archive ツールを使っていない) — 不発火

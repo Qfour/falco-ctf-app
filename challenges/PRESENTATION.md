@@ -41,7 +41,7 @@ style: |
 
 <br>
 
-参加者ハンドブック: `/opt/ctf/INDEX.txt` → `/opt/ctf/missions/<NN>-<slug>/fixtures/welcome.txt`
+ミッションの説明とヒント: ポータルの Story タブ / 端末内の目的と提出方法: `/opt/ctf/missions/<NN>-<slug>/fixtures/welcome.txt`
 
 > speaker: 今日の流れ — まず 25 分で **「Falco とは何か / なぜ要るか /
 > ルールはどう書かれているか」** を話します。その後すぐにワークスペースに
@@ -367,8 +367,8 @@ ATT&CK のキルチェーン順 + trigger/evade の対 (5 ペア):
 
 2. **Web ターミナル (ttyd)** が開く
 
-3. 最初の画面 — ログイン時に **`/opt/ctf/INDEX.txt`** が自動表示。
-   そこから次のコマンドへ:
+3. 最初の画面 — ログイン時に出るのは表示名変更 (`setname`) の案内だけ。
+   ミッションの説明は Story タブで読む。端末では目的と提出方法を確認できる:
    ```bash
    cat /opt/ctf/missions/01-initial-recon/fixtures/welcome.txt
    ```
@@ -386,7 +386,7 @@ ATT&CK のキルチェーン順 + trigger/evade の対 (5 ペア):
 ```bash
 $FALCO_CTF_USER          # 自分のユーザ名
 ls /opt/ctf/missions/    # 10 ミッション一覧
-cat /opt/ctf/INDEX.txt   # ログイン時に自動表示される overview
+cat /opt/ctf/missions/<NN>-<slug>/fixtures/welcome.txt   # 目的・種類・提出方法
 
 # evade の提出
 source /opt/ctf/submit.sh
@@ -394,7 +394,7 @@ submit <mission-id> 'FALCO{...}'
 ```
 
 `PARTICIPANT-HANDBOOK.md` と `REFERENCE.md` は事前配布版。
-ワークスペース内では `welcome.txt` を主軸に進めて OK。
+当日は Story タブを主軸に進める。ワークスペース内の `welcome.txt` にあるのは目的と提出方法だけ。
 
 ---
 
