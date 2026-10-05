@@ -33,7 +33,7 @@
 package view
 
 import (
-	_ "embed"
+	"embed"
 	"html/template"
 	"log/slog"
 	"net/http"
@@ -75,17 +75,79 @@ type indexData struct {
 	Nonce string
 }
 
-//go:embed templates/portal.html
-var portalHTMLSrc string
+// portalFS holds the participant portal's template SOURCE, split into
+// partials (P28-0a, REFACTORING.md P28 "architect 契約設計 §9"). Only the
+// source is split: GET /portal still serves ONE HTML document — same route,
+// CSP, ingress and cache behaviour as the former single-file
+// templates/portal.html. Comments elsewhere in this repo that still say
+// "templates/portal.html" / "portal.html" mean that assembled document.
+//
+// Layout (templates/portal/):
+//   - portal.tmpl       root shell: <head> links, nav, the server-injected
+//     identity <script>, then one {{template}} call per partial below, in
+//     document order
+//   - css.tmpl          the single <style> block
+//   - pane-<id>.tmpl    one per tab pane, each with its own markup and
+//     (where it has one) its own <script nonce> block
+//   - core-router.tmpl  the hash-tab router + role gate <script>
+//
+// Rules for editing. portal_partials_test.go enforces all of them except
+// the trim marker (checkPortalAssembly / checkPortalScriptAndStyle say
+// exactly what is checked):
+//   - Each partial is named by its file basename (ParseFS) and holds no
+//     {{define}}/{{block}}. ParseFS reads files in name order and the last
+//     definition of a name wins, so a define in one file could replace
+//     another partial's body without that partial's file changing.
+//   - The root calls each partial as `{{template "x.tmpl" . -}}` on its own
+//     line: `.` hands portalData through (a partial that needs {{.Nonce}}
+//     gets nothing without it). The trim marker removes ALL whitespace
+//     that follows the action, not just one newline — here that is only
+//     the call line's own newline, because the next line starts at column
+//     0 with non-space text, so the assembled bytes equal plain
+//     concatenation. Blank lines between elements therefore live inside
+//     the partials, never between two calls in the root.
+//   - Call ORDER is fixed by rule, not by a pinned list. Today's one rule:
+//     core-router.tmpl is the root's last call (its script runs showTab()
+//     as soon as it is parsed and skips a pane not yet in the DOM). A PR
+//     that adds a partial whose position matters adds its own rule to
+//     checkPortalAssembly in that same PR.
+//   - Cut only at element boundaries (a whole <style>, a whole
+//     <script nonce="{{.Nonce}}">, a whole pane <div>). html/template's
+//     contextual escaping tracks context per template, so a cut inside a
+//     <script> or an attribute would change how actions are escaped.
+//   - Every partial must be called from the root exactly once. An uncalled
+//     partial is scanned by the source gates but never served; a partial
+//     called twice duplicates element ids.
+//   - A new top-level file here is embedded automatically by the glob
+//     below, but nested directories are not (and are not scanned by the Go
+//     source gates) — keep the directory flat.
+//
+//go:embed templates/portal/*.tmpl
+var portalFS embed.FS
 
-// portalTmpl is parsed once at init from the embedded source. html/template
+const (
+	// portalTmplGlob is the ParseFS pattern matching the go:embed above.
+	portalTmplGlob = "templates/portal/*.tmpl"
+	// portalRootTmpl is the root shell's template name (its basename).
+	// portalTmpl is created under this name so ParseFS binds the root
+	// file's body to portalTmpl itself and portalTmpl.Execute renders the
+	// whole document.
+	portalRootTmpl = "portal.tmpl"
+)
+
+// portalTmpl is parsed once at init from the embedded partials. html/template
 // (not text/template) is load-bearing here: it auto-escapes {{.RoleJSON}} /
 // {{.UserJSON}} / {{.TtydURLJSON}} for their JS-string context, so even
 // though portal.go feeds them pre-marshalled template.JS (already-safe
 // JSON), a future edit that forgets to use template.JS still can't reopen an
 // XSS hole — html/template would HTML/JS-escape a plain string instead of
 // trusting it verbatim.
-var portalTmpl = template.Must(template.New("portal").Parse(portalHTMLSrc))
+//
+// template.Must catches a syntax error in any partial at process start. A
+// {{template}} call naming a partial that does not exist is NOT a parse
+// error (it surfaces on first Execute), so that case is pinned by
+// checkPortalAssembly (portal_partials_test.go) instead.
+var portalTmpl = template.Must(template.New(portalRootTmpl).ParseFS(portalFS, portalTmplGlob))
 
 type Handler struct {
 	// isAdmin gates the operator dashboard index page (GET /). It mirrors the

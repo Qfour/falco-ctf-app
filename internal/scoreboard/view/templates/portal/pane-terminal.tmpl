@@ -1,0 +1,97 @@
+<!-- ===== Terminal pane (P23-4): iframe embed of the caller's own ttyd.
+     src comes ONLY from the server-injected window.__PORTAL_TTYD_URL__ (see
+     view.renderPortal / portal.ttydURLFor) — this pane never reads a
+     header/query/param to pick the host. Cross-origin cookie delivery into
+     the iframe additionally requires the platform's oauth2-proxy cookie to
+     be SameSite=None+Secure (P23-4 platform half, implemented in
+     falco-ctf-platform in parallel — see that repo's PR for status); until
+     both halves are live the iframe may render an in-ttyd login prompt
+     instead of a live shell, which is expected and not a regression here.
+     Per-user isolation (I8) is enforced independently by auth-policy's
+     `/check?host=<user>` on the ttyd Ingress itself, regardless of what src
+     ends up in this iframe. ===== -->
+<div class="pane p-shell" id="pane-terminal">
+
+  <header>
+    <div class="brand">
+      <h1 class="p-h1"><span class="accent">Terminal</span></h1>
+    </div>
+  </header>
+
+  <div id="pane-terminal-page"></div>
+</div>
+
+<script nonce="{{.Nonce}}">
+(function () {
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+  // P23-4: window.__PORTAL_TTYD_URL__ is server-injected (view.renderPortal /
+  // portal.ttydURLFor), built ENTIRELY from the caller's own derived identity
+  // + a deploy-time suffix — never from anything this script reads off the
+  // page URL / query / headers. "" means the server could not compute it
+  // (no derived username, or PORTAL_TTYD_SUFFIX unset — see
+  // cmd/scoreboard/main.go), in which case we render the fail-safe
+  // "not configured" placeholder instead of an iframe.
+  const ttydURL = window.__PORTAL_TTYD_URL__ || '';
+
+  function render() {
+    const page = document.getElementById('pane-terminal-page');
+    if (!page) return;
+    if (!ttydURL) {
+      // #9: the outer pane already carries the shared <header><h1 class="p-h1">
+      // chrome (added alongside #pane-story/#pane-home above), so this inner
+      // card only needs Story's OWN card language — .mission/.mission-head/
+      // .mission-body (background/border/radius + kicker line), reusing
+      // #pane-story's classes verbatim rather than the old bespoke
+      // .term-head/.term-placeholder pair. Logic (the fail-safe placeholder
+      // itself) is unchanged.
+      page.innerHTML = `
+        <div class="mission">
+          <div class="mission-head"><div class="kicker">SESSION</div></div>
+          <div class="mission-body term-placeholder">
+            <p>
+              Your in-portal terminal is not configured for this deployment yet
+              (PORTAL_TTYD_SUFFIX unset, or your username could not be
+              determined). Use your workspace terminal at its usual address
+              instead (ask the operator if unsure).
+            </p>
+          </div>
+        </div>`;
+      return;
+    }
+    // ttydURL is server-generated and already validated (json-escaped by
+    // html/template on the way in); esc() here is defense-in-depth so a
+    // future change to how this value is produced can't reopen an
+    // attribute-breakout XSS.
+    const safeURL = esc(ttydURL);
+    // #9: same .mission/.mission-head/.mission-body card chrome as the
+    // placeholder branch above (and as #pane-story's mission detail cards) —
+    // only the iframe/Pop-out FUNCTIONALITY inside is terminal-specific.
+    page.innerHTML = `
+      <div class="mission">
+        <div class="mission-head">
+          <div class="kicker">SESSION</div>
+          <button type="button" id="pane-terminal-popout" class="p-btn">⤢ Pop out</button>
+        </div>
+        <div class="mission-body">
+          <div class="term-frame">
+            <iframe id="pane-terminal-iframe" src="${safeURL}" title="Terminal"
+              style="width:100%;height:70vh;border:0;display:block;background:var(--ink-black);"
+              allow="clipboard-read; clipboard-write"></iframe>
+          </div>
+        </div>
+      </div>`;
+    const popout = document.getElementById('pane-terminal-popout');
+    if (popout) {
+      // Full-screen pop-out (CEO decision ④): opens the SAME server-generated
+      // URL in a new tab/window rather than a synthetic full-viewport overlay,
+      // so paste/resize/focus behave exactly like visiting ttyd directly (no
+      // iframe quirks to work around).
+      popout.addEventListener('click', () => { window.open(ttydURL, '_blank', 'noopener'); });
+    }
+  }
+
+  render();
+})();
+</script>
+

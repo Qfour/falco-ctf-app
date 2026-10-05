@@ -1,0 +1,30 @@
+<!-- ===== Tutorial pane (P24): Falco 学習チュートリアル (座学、採点とは
+     完全に独立 — journey/scoreboard の状態には一切触れない). Same content
+     mechanism as #pane-home's {{.HomePanelsHTML}} above: gen-time
+     sanitized chapter fragments from cmd/gen-tutorial-fragments, go:embed'd
+     via tutorialfragments_gen.go (see tutorial.go's tutorialPanelsHTML doc
+     for the shared template.HTML trust boundary). No admin gate, no
+     self-scope check, no per-viewer branching — every caller sees the
+     exact SAME content (design-engineer decision, REFACTORING.md P24: same
+     trust boundary as Home's static panels). Placed between Home and Story
+     in both PORTAL_TABS and this nav (design-engineer decision, P24 §2):
+     a participant reads these concept chapters before entering Story
+     (=mission start), not after. Reuses the SAME .home-panel/
+     .home-panel-body CSS class as #pane-home-panels (see the
+     #pane-tutorial-panels scoping rule added alongside #pane-home-panels's
+     own rules above) — no new design tokens (design-engineer decision §4).
+     MVP has NO server-side read-tracking (architect decision, P24 §3): a
+     "chapter read" UX, if ever added, is client-side localStorage only and
+     must never be sent to the server — Tutorial does not write to
+     internal/store or internal/scoreboard/scoring, ever. ===== -->
+<div class="pane p-shell" id="pane-tutorial">
+
+  <header>
+    <div class="brand">
+      <h1 class="p-h1"><span class="accent">Tutorial</span></h1>
+    </div>
+  </header>
+
+  <div id="pane-tutorial-panels">{{.TutorialPanelsHTML}}</div>
+</div>
+

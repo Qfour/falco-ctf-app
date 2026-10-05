@@ -1,0 +1,58 @@
+<!-- ===== Home pane (P23-5: gen-time-sanitized content panels folded in from
+     docs-site — see docs-site/home-fragments.yaml for the content contract
+     and internal/scoreboard/view/home.go / portal.go for the security
+     rationale of injecting {{.HomePanelsHTML}} unescaped. This is now the
+     ONLY place in this template that intentionally bypasses
+     esc()/html/template auto-escaping — every other dynamic value in this
+     file keeps going through esc() or template.JS exactly as before P23-5.
+     (The Story pane's {{.StoryPanelHTML}} injection, the second such site
+     as of P23 portal-redesign, was REMOVED in portal-header-refine item 7
+     — see portal.go's StoryPanelHTML field doc for why the field itself is
+     still left in place, just unreferenced here.)
+     (portal-ui-polish: this pane's outer "chassis" — the bespoke inline
+     style="padding:...;max-width:..." wrapper + inline-styled <h1>/<p> —
+     is replaced with the SAME .p-shell / .p-h1 / header/.brand primitives
+     #pane-story / #pane-scoreboard / #pane-me / #pane-terminal already
+     share (see the "Shared pane component classes" block above), so all
+     five panes now sit in one visually consistent shell. Content INSIDE
+     #pane-home-panels — the {{.HomePanelsHTML}} fragments and the static
+     参考サイト links below — is unchanged.) ===== -->
+<div class="pane p-shell" id="pane-home">
+
+  <header>
+    <div class="brand">
+      <h1 class="p-h1"><span class="accent">Home</span></h1>
+    </div>
+  </header>
+
+  <p class="home-intro">統合ポータルへようこそ。上部のタブから進めてください。</p>
+  <ul class="home-intro-list">
+    <li><strong>Story</strong> — ミッションの流れを追う</li>
+    <li><strong>Scoreboard</strong> — 自分のリアルタイムな進捗を確認する</li>
+    <li><strong>Terminal</strong> — 実際に手を動かす</li>
+  </ul>
+  <div id="pane-home-panels">{{.HomePanelsHTML}}
+    <!-- 参考サイト (portal-header-refine, item 6): plain hand-authored static
+         links, NOT routed through docs-site/home-fragments.yaml's sanitizer
+         allowlist (deliberately: this is the ONE bit of Home content that is
+         NOT gen-time fragment content, so it does not need that pipeline,
+         and broadening the fragment sanitizer's allowlist just for two
+         static links would be a needless scope increase — same rationale
+         the falco.org/github links this replaces previously carried).
+         Placed as a sibling INSIDE #pane-home-panels (after the
+         gen-time-rendered {{.HomePanelsHTML}} fragments above) purely so it
+         inherits the SAME #pane-home-panels .home-panel/.home-panel-body
+         CSS scoping already defined above — this <details> element itself
+         is still hand-authored markup, not fragment content. -->
+    <details class="home-panel">
+      <summary>参考サイト</summary>
+      <div class="home-panel-body rich-content">
+        <ul>
+          <li><a href="https://falco.org/docs/reference/rules/" target="_blank" rel="noopener noreferrer">Falco Docs</a></li>
+          <li><a href="https://github.com/falcosecurity/rules/blob/72945ab934b4449a2bc4befe9e9fcdfe6e106090/rules/falco_rules.yaml" target="_blank" rel="noopener noreferrer">Falco Rules</a></li>
+        </ul>
+      </div>
+    </details>
+  </div>
+</div>
+

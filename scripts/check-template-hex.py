@@ -3,8 +3,9 @@
 follow-up on the original PR).
 
 Fails (exit 1) if a raw hex color literal — 6-digit (#RRGGBB) OR 3-digit
-shorthand (#RGB) — appears anywhere in
-internal/scoreboard/view/templates/*.html outside a comment.
+shorthand (#RGB) — appears outside a comment in ANY file under
+internal/scoreboard/view/templates/ (recursive: index.html and the portal's
+templates/portal/*.tmpl partials, P28-0a).
 internal/scoreboard/view/static/tokens.css is the ONE place a hex literal
 for the Falco CTF palette is written down (app#116); the two templates only
 reference it via `var(--...)`.
@@ -40,6 +41,22 @@ instead of just widening the regex naively:
     numbers stay accurate for the FAIL report) before running the hex
     regex closes the false-positive hole structurally, for ANY future
     issue-number mention, not just today's 5 known ones.
+
+Scan scope (P28-0a): the portal template was split from one
+templates/portal.html into templates/portal/*.tmpl. The original
+non-recursive `glob("*.html")` would have kept passing while scanning only
+index.html — a gate that silently shrinks. So this walks the templates
+directory recursively and takes every regular file whatever its extension
+(a new extension or a deeper directory cannot fall outside the scan), and
+fails if a directory in REQUIRED_NONEMPTY contributes no file at all.
+A file whose path has a dot-prefixed component (.DS_Store, .idea/...,
+editor swap files) is skipped UNLESS its name ends in .tmpl or .html. The
+exception matters: view.go's `//go:embed templates/portal/*.tmpl` is a glob,
+and that glob does embed a dot-prefixed match such as portal/.zz.tmpl
+(observed: the file shows up in the embedded FS), so it can be served and
+must be scanned. Any scanned file that is not valid UTF-8 is a
+FAIL naming the file, not a skip — an unreadable template is one this gate
+could not check.
 """
 import re
 import sys
@@ -47,6 +64,16 @@ import pathlib
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = REPO_ROOT / "internal" / "scoreboard" / "view" / "templates"
+
+# Directories (relative to TEMPLATES_DIR) that must each contribute at least
+# one scanned file. "." alone would be satisfied by index.html even if every
+# portal partial went missing from the scan, so the portal directory is
+# listed on its own.
+REQUIRED_NONEMPTY = (".", "portal")
+
+# Extensions that are scanned even under a dot-prefixed name — see the
+# module doc's dotfile paragraph.
+TEMPLATE_SUFFIXES = (".tmpl", ".html")
 
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
@@ -76,18 +103,54 @@ def main() -> int:
         print(f"FAIL: templates dir not found: {TEMPLATES_DIR}", file=sys.stderr)
         return 1
 
-    print("==> scanning templates/*.html for raw hex color literals (3- and 6-digit, comments excluded)")
+    print("==> scanning templates/** for raw hex color literals (3- and 6-digit, comments excluded)")
+    files = sorted(
+        p
+        for p in TEMPLATES_DIR.rglob("*")
+        if p.is_file()
+        and (
+            p.name.endswith(TEMPLATE_SUFFIXES)
+            or not any(part.startswith(".") for part in p.relative_to(TEMPLATES_DIR).parts)
+        )
+    )
+    for required in REQUIRED_NONEMPTY:
+        directory = (TEMPLATES_DIR / required).resolve()
+        if not any(p.parent.resolve() == directory for p in files):
+            print(
+                f"FAIL: no template file found directly under {directory.relative_to(REPO_ROOT)}/ — "
+                "the scan would silently cover less than the served templates. If the layout "
+                "changed on purpose, update REQUIRED_NONEMPTY in this script.",
+                file=sys.stderr,
+            )
+            return 1
+
     hits: list[str] = []
-    for path in sorted(TEMPLATES_DIR.glob("*.html")):
-        original = path.read_text(encoding="utf-8")
-        scannable = strip_comments(original)
+    unreadable: list[str] = []
+    for path in files:
         rel = path.relative_to(REPO_ROOT)
+        try:
+            original = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError) as e:
+            unreadable.append(f"{rel}: {e}")
+            continue
+        scannable = strip_comments(original)
         for lineno, line in enumerate(scannable.splitlines(), start=1):
             for m in HEX_RE.finditer(line):
                 hits.append(f"{rel}:{lineno}: {m.group(0)}")
 
+    if unreadable:
+        print("FAIL: could not read file(s) under internal/scoreboard/view/templates/ as UTF-8 text:", file=sys.stderr)
+        for u in unreadable:
+            print(f"  {u}", file=sys.stderr)
+        print(
+            "  → every non-dotfile under templates/ is scanned; a file that cannot be\n"
+            "    read cannot be checked. Remove it if it is not a template.",
+            file=sys.stderr,
+        )
+        return 1
+
     if hits:
-        print("FAIL: raw hex color literal(s) found in internal/scoreboard/view/templates/*.html:", file=sys.stderr)
+        print("FAIL: raw hex color literal(s) found under internal/scoreboard/view/templates/:", file=sys.stderr)
         for h in hits:
             print(f"  {h}", file=sys.stderr)
         print(
@@ -98,7 +161,9 @@ def main() -> int:
         )
         return 1
 
-    print("  ok: no raw hex literals in templates/*.html (outside comments) — tokens.css is the single source")
+    for path in files:
+        print(f"  scanned: {path.relative_to(REPO_ROOT)}")
+    print(f"  ok: no raw hex literals in {len(files)} template file(s) (outside comments) — tokens.css is the single source")
     return 0
 
 

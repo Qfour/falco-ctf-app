@@ -1,0 +1,933 @@
+<!-- ===== Story pane (P23 portal-redesign IA rename: was "Journey" — moved
+     from templates/journey.html, namespaced; internal element ids below
+     (pane-journey-page, pane-journey-updated, etc.) are UNCHANGED by this
+     rename — only the pane's OWN id (#pane-journey -> #pane-story), the tab
+     label/data-tab/hash, and CSS selectors prefixed with the pane id move.
+     See PR-3 for the Story tab's new lead-in content; this pane's game UI
+     (mission map / briefing / steps / hints) is untouched here.) ===== -->
+<div class="pane p-shell" id="pane-story">
+
+  <header>
+    <div class="brand">
+      <h1 class="p-h1"><span class="accent">Story</span></h1>
+    </div>
+    <div>
+      <div class="live p-live">● LIVE</div>
+      <div class="updated mono" id="pane-journey-updated">connecting…</div>
+    </div>
+  </header>
+
+  <!-- Story overview panel REMOVED (portal-header-refine item 7): the
+       "このイベントは…" lead-in text + table previously injected here via
+       {{.StoryPanelHTML}} (portal.go / home.go's storyPanelHTML) is no
+       longer rendered — the kill-chain diagram below now carries the
+       campaign-overview role on its own. portal.go's StoryPanelHTML field /
+       home.go's storyPanelHTML var / buildStoryPanelHTML are intentionally
+       LEFT IN PLACE (not deleted) pending content-lead's parallel removal
+       of the underlying "story" HomeFragment source
+       (docs-site/home-fragments.yaml) — ceasing to reference the field here
+       is the app-side half of that coordinated cleanup; see
+       TestRenderPortal_StoryPanelInjected in portal_test.go (updated
+       alongside this change) for the test that used to assert this markup
+       existed. -->
+
+  <div id="pane-journey-page"></div>
+
+  <div id="pane-journey-clear-fx"><div class="card">
+    <div class="stamp" id="pane-journey-clear-title">✔ CLEARED</div>
+    <div class="sub" id="pane-journey-clear-sub"></div>
+    <div class="bridge-fx" id="pane-journey-clear-bridge"></div>
+  </div></div>
+
+<script nonce="{{.Nonce}}">
+(function () {
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  // slugify (統一ヒント Phase 3): trusted JS-side id derivation for a rule
+  // name, used ONLY to build an element id to scroll to (never rendered as
+  // HTML/text — the displayed rule name always goes through esc() as
+  // before, see renderFalcoRule below). Simple lowercase + non-alnum -> '-'
+  // + collapse-consecutive-dashes, per the MVP spec.
+  function slugify(s) { return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''); }
+  // Portal shell (P23-1): identity comes from the server-injected role/user
+  // globals (derived from X-Auth-Request-Email, api.DeriveUsername), not a
+  // ?user= query param — the portal is one page per session, not one page
+  // per URL. This is a UI convenience only; every read/write below is
+  // independently re-checked server-side (selfOrAdmin / selfOrAdminWrite).
+  const user = window.__PORTAL_USER__ || '';
+
+  // Track prior solved set so we can detect a fresh CLEARED transition.
+  let prevSolved = null;        // Set of solved ids from last poll
+  let prevCurrent = undefined;  // last current id
+  let firstRender = true;
+  let busy = false;             // suppress re-render while a write is in flight
+  // Sticky evade-submit feedback. Holds {cid, cls, text} for a *failure-mode*
+  // result so it survives the 2s polling re-render (render() rebuilds #page and
+  // would otherwise wipe #submit-msg). Cleared on success or when the user moves
+  // to a different mission. See restoreSubmitMsg / the submit handler below.
+  let lastSubmit = null;
+  // viewedMission (P23 Story-as-docs, CEO decision: free mission browsing):
+  // when set, the next refresh() requests ?mission=<id> instead of the
+  // default "current" detail. null = follow current (the pre-existing
+  // behaviour). Set by clicking a mission map / kill-chain node; the server
+  // is the actual authority on which mission ids are valid (an unknown value
+  // silently falls back to current — see api.go's journey doc), this is only
+  // a display selection.
+  let viewedMission = null;
+
+  if (!user) {
+    document.getElementById('pane-journey-page').innerHTML = `
+      <div class="help">
+        <h2>Your username could not be determined</h2>
+        <p style="margin-top:0.8rem">Ask the operator for your username, or reload the portal after logging in again.</p>
+      </div>`;
+  } else {
+    refresh();
+    setInterval(() => { if (!busy) refresh(); }, 2000);
+  }
+
+  // 統一ヒント Phase 3 (MVP): a single delegated listener on #pane-story
+  // (the pane's own root element — never innerHTML-replaced, unlike its
+  // #pane-journey-page/#pane-journey-detail children which are rebuilt by
+  // ensureShell()/render() on every poll) handles clicks on the .hint-jump
+  // buttons rendered by hintJumpsHTML(). Delegation means this wiring
+  // never needs to be redone in wireDetail() as hint markup is repainted.
+  document.getElementById('pane-story').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-jump]');
+    if (!btn) return;
+    if (btn.dataset.jump === 'rule') {
+      // Deliberately do NOT touch location.hash here — changing it would
+      // route through showTab()/hashchange and could switch away from the
+      // Story tab this rule excerpt lives in. Plain in-page scroll only.
+      const target = document.getElementById(btn.dataset.target) || document.getElementById('falco-rule-section');
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else if (btn.dataset.jump === 'cheat') {
+      // MVP: jump to the top of the Tutorial tab (no precise cheatsheet
+      // anchor yet — see hintJumpsHTML's doc). Going through location.hash
+      // (rather than calling showTab() directly) keeps the hash router as
+      // the single source of truth for "which tab is active", matching the
+      // existing docs-link's `href="#home"` pattern above.
+      location.hash = 'tutorial';
+    }
+  });
+
+  async function refresh() {
+    try {
+      let url = '/api/users/' + encodeURIComponent(user) + '/journey';
+      if (viewedMission) url += '?mission=' + encodeURIComponent(viewedMission);
+      const r = await fetch(url);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      render(await r.json());
+      document.getElementById('pane-journey-updated').textContent = 'updated ' + new Date().toLocaleTimeString();
+    } catch (e) {
+      document.getElementById('pane-journey-updated').textContent = 'connection error';
+    }
+  }
+
+  // viewMission switches the free-browsed mission and re-fetches immediately
+  // (rather than waiting for the next 2s poll) so a click feels responsive.
+  // Wired onto both the kill-chain nodes and the mission map <li> items —
+  // one handler, one source of truth for "which mission was clicked".
+  //
+  // /review-5x C1 fixup: clicking the CURRENT mission's own node returns to
+  // auto-follow mode (viewedMission = null) rather than pinning ?mission=
+  // to an id that happens to equal current today — if the participant later
+  // solves it and current advances, a pinned id would freeze the detail pane
+  // on the now-stale mission instead of following. See followCurrent() for
+  // the explicit "back to current" affordance and the new-solve auto-clear
+  // in render() below, which cover the two other ways this could stick.
+  function viewMission(id) {
+    if (busy) return;
+    viewedMission = (id === lastCurrent) ? null : id;
+    refresh();
+  }
+
+  // followCurrent is the explicit "return to current mission" action (C1
+  // fixup) — resets free browsing unconditionally, independent of whichever
+  // mission is currently viewed. Wired onto the detail panel's "戻る" button
+  // (backToCurrentHTML, shown whenever det.status !== 'current') so a
+  // participant who browsed away is never stuck without an obvious way back,
+  // even before the next auto-solve.
+  function followCurrent() {
+    if (busy) return;
+    viewedMission = null;
+    refresh();
+  }
+
+  // lastCurrent tracks the server's `current` from the most recent render,
+  // so viewMission() above can tell "the node just clicked IS current" apart
+  // from "it's some other mission" without waiting for a render closure.
+  let lastCurrent = null;
+
+  // lastDetailSig is the JSON signature of the most recently PAINTED detail
+  // pane (see render() below) — never DOM content, purely a data fingerprint
+  // used to decide whether this poll tick needs to touch
+  // #pane-journey-detail at all. Starts null so the very first render always
+  // paints once.
+  let lastDetailSig = null;
+
+  // ensureShell builds the static #pane-journey-page skeleton exactly ONCE
+  // (on the very first render). Before this fix, EVERY render() call
+  // innerHTML-replaced the whole page (progress bar + killchain + map +
+  // detail) — which tore out and recreated every live node inside the detail
+  // pane (copy buttons, the submit <form>/<input>, open <details>, hint-open
+  // buttons, step checkboxes, focus, the "Copied!" flash) on every 2s poll,
+  // even when nothing about the detail had actually changed. Now the outer
+  // containers (#pj-progress / #pj-killchain / #pj-map / #pane-journey-detail)
+  // are created once and updated independently — #pane-journey-detail is
+  // handled entirely separately (see the signature check in render()) so a
+  // no-op poll tick never touches it.
+  function ensureShell() {
+    if (document.getElementById('pj-progress')) return;
+    document.getElementById('pane-journey-page').innerHTML = `
+      <div class="prog-wrap" id="pj-progress"></div>
+      <div class="killchain" id="pj-killchain"></div>
+      <div class="layout">
+        <section class="panel">
+          <div class="panel-header"><h2>Mission map</h2></div>
+          <ul class="map" id="pj-map"></ul>
+        </section>
+        <section id="pane-journey-detail" data-mission=""></section>
+      </div>`;
+  }
+
+  function render(d) {
+    ensureShell();
+    const missions = d.missions || [];
+    const total = d.total || missions.length || 0;
+    const solvedCount = d.solved_count || 0;
+    const pct = total ? Math.round(100 * solvedCount / total) : 0;
+    // Score (#40): server-computed (base award per solve minus per-hint reveal
+    // penalty, clamped at 0). Display-only — the number is the Grader's verdict.
+    const score = Number.isFinite(d.score) ? d.score : 0;
+
+    const solvedNow = new Set(missions.filter(m => m.status === 'solved').map(m => m.id));
+
+    // Detect a just-cleared mission (was current/not-solved last poll, now solved).
+    if (!firstRender && prevSolved) {
+      for (const m of missions) {
+        if (m.status === 'solved' && !prevSolved.has(m.id)) {
+          playCleared(m);
+          // C1 fixup: a fresh solve auto-clears free browsing and snaps the
+          // detail pane back to the new current mission. Without this, a
+          // participant who was browsing mission 03 while solving 01 (their
+          // actual current) would stay pinned to 03's detail forever (only a
+          // page reload recovered) — the whole point of "current" advancing
+          // is to guide them to what's next, and free browsing must not
+          // fight that guidance once it has actually moved.
+          viewedMission = null;
+          break;
+        }
+      }
+    }
+
+    // viewedId is the mission actually being SHOWN in the detail pane right
+    // now — d.detail.id when the server returned one (it always does unless
+    // every mission is solved AND viewedMission was never set), falling back
+    // to d.current. Used to mark BOTH the kill-chain node and the map <li>
+    // for the currently-viewed mission (independent of "current" — free
+    // browsing lets these differ; see the .viewed CSS rule).
+    const viewedId = (d.detail && d.detail.id) || d.current || null;
+
+    // Hidden bonus mission (portal-header-refine item 8, CEO decision):
+    // "11-cloud-cred-hunt" is excluded from the Story tab's VISUAL kill-chain
+    // + mission map ONLY — a display/projection filter, nothing else. total /
+    // solvedCount / pct / score above are NOT recomputed from this filtered
+    // list (they stay the server's real numbers, matching the Leaderboard/Me
+    // tabs) — this is display-only non-disclosure of the bonus mission's
+    // existence, not a scoring change. If mission 11 happens to be `current`
+    // or `viewedId` (e.g. a participant navigates straight to its detail via
+    // a direct API call), it is still excluded from THESE two lists but the
+    // detail pane below (which renders d.detail, not this filtered array)
+    // is untouched — this mission simply never appears as a clickable node.
+    // "12-cover-tracks" (P27-4) is the same kind of independent bonus mission
+    // as 11 (not part of the nimbusbreach-full killchain) so it gets the same
+    // treatment for consistency with the CEO decision above.
+    const HIDDEN_MISSION_IDS = ['11-cloud-cred-hunt', '12-cover-tracks'];
+    const visibleMissions = missions.filter(m => !HIDDEN_MISSION_IDS.includes(m.id));
+
+    // ---- kill-chain overview (P23 Story-as-docs) ----
+    // Data-driven from the SAME visibleMissions[] the map below uses — one
+    // source of truth for status/type/order (bonus mission already excluded
+    // above). Purely a visual overview; clicking a node free-browses exactly
+    // like clicking the map row for the same mission.
+    const killchainHTML = visibleMissions.map(m => {
+      const typeCls = m.type ? ' type-' + esc(m.type) : '';
+      const viewedCls = (m.id === viewedId) ? ' viewed' : '';
+      let dot = String(m.id).split('-')[0] || '?';
+      if (m.status === 'solved') dot = '✔';
+      else if (m.status === 'locked') dot = '🔒';
+      return `<div class="kc-node ${esc(m.status)}${typeCls}${viewedCls}" data-mission="${esc(m.id)}" title="${esc(m.title || m.id)}">
+        <div class="kc-dot">${esc(dot)}</div>
+        <div class="kc-label">${esc(m.title || m.id)}</div>
+        ${m.type ? `<div class="kc-type">${esc(m.type)}</div>` : ''}
+      </div>`;
+    }).join('');
+
+    // ---- mission map ----
+    const justUnlockedId = (!firstRender && prevCurrent && d.current && prevCurrent !== d.current) ? d.current : null;
+    const mapHTML = visibleMissions.map(m => {
+      let ico = '🔒', cls = m.status;
+      if (m.status === 'solved') ico = '✔';
+      else if (m.status === 'current') ico = '▶';
+      const num = (m.id.split('-')[0] || '');
+      const unlockCls = (m.id === justUnlockedId) ? ' just-unlocked' : '';
+      const viewedCls = (m.id === viewedId) ? ' viewed' : '';
+      return `<li class="${cls}${unlockCls}${viewedCls}" data-mission="${esc(m.id)}">
+        <span class="ico">${ico}</span>
+        <span style="min-width:0">
+          <span class="mtitle">${esc(m.title || m.id)}</span><br>
+          <span class="num">MISSION ${esc(num)} · ${esc(m.status.toUpperCase())}</span>
+        </span>
+      </li>`;
+    }).join('');
+
+    // ---- progress / killchain / map ----
+    // These three hold no interactive state of their own (no focus, no
+    // in-progress typing, no open <details>/copy-flash) — only their own
+    // click delegation, which is cheap to re-wire every tick since the click
+    // handler is stateless (viewMission(id) always does the same thing).
+    // Updating them independently (instead of one big innerHTML replace of
+    // the whole page) is what lets #pane-journey-detail below stay untouched
+    // when only progress/killchain/map actually changed.
+    document.getElementById('pj-progress').innerHTML = `
+      <div class="prog-head">
+        <span class="label">Mission progress</span>
+        <span class="count">${solvedCount}<span class="total">/${total}</span> · ${pct}% · <span class="score">SCORE ${score}</span></span>
+      </div>
+      <div class="bar"><div class="fill" style="width:${pct}%"></div></div>`;
+    document.getElementById('pj-killchain').innerHTML =
+      killchainHTML || '<div class="empty"><span class="icon">∅</span>ミッション未ロード</div>';
+    document.getElementById('pj-map').innerHTML =
+      mapHTML || '<div class="empty"><span class="icon">∅</span>ミッション未ロード</div>';
+
+    // Free-browsing click wiring (P23 Story-as-docs): delegate from both the
+    // kill-chain strip and the mission map — a click anywhere on a
+    // data-mission node re-fetches that mission's detail via viewMission().
+    // Re-wired every render since the innerHTML assignments above just
+    // replaced these nodes (the handler itself is stateless, so re-wiring is
+    // harmless — unlike the detail pane below, nothing here needs to survive
+    // across a tick).
+    document.getElementById('pane-story').querySelectorAll('.kc-node[data-mission], .map li[data-mission]').forEach(el => {
+      el.addEventListener('click', () => viewMission(el.dataset.mission));
+    });
+
+    // ---- detail ----
+    // Signature-based skip: #pane-journey-detail is the ONLY subtree that can
+    // hold live participant interaction state (an in-progress flag-input
+    // keystroke, the "Copied!" flash on a hint-copy button, an opened
+    // <details>, focus itself, a sticky submit-msg). Every prior version of
+    // this function rebuilt it on every 2s poll regardless of whether
+    // anything in it had actually changed, which is what tore all of that
+    // state out from under the participant. Now: compute a signature of the
+    // detail DATA (never DOM — see the JSON.stringify below), and only touch
+    // the DOM when that signature differs from the last one actually
+    // painted. This is a strict generalization of the old
+    // "skipDetailRerender" (which only protected an in-progress flagInput
+    // keystroke): a stable signature also naturally covers "focused on the
+    // flag input" (nothing in d.detail changes while the participant is
+    // just typing), so no separate focus-tracking special case is needed
+    // here. Any real change — a hint reveal (hints.opened grows), a solve
+    // (status flips), a mission switch (id/free-browse changes), an exfil
+    // receipt (exfilReceived flips) — changes the signature and repaints as
+    // before.
+    const sig = JSON.stringify(d.detail || null);
+    const detailChanged = sig !== lastDetailSig;
+
+    if (detailChanged) {
+      const detailHTML = d.detail ? renderDetail(d.detail) : renderAllDone(solvedCount, total);
+      const detailEl = document.getElementById('pane-journey-detail');
+      detailEl.dataset.mission = viewedId || '';
+      detailEl.innerHTML = detailHTML;
+      wireDetail(d.detail);
+      // Re-inject any sticky failure-mode submit result the polling
+      // re-render just wiped. Drop it if the user has moved on to a
+      // different mission.
+      if (lastSubmit && d.detail && lastSubmit.cid !== d.detail.id) lastSubmit = null;
+      restoreSubmitMsg();
+      lastDetailSig = sig;
+    }
+    // else: detail data is byte-for-byte identical to what's already
+    // painted — leave the DOM (and therefore focus, typed text, open
+    // <details>, copy-flash timers, etc.) completely alone.
+
+    prevSolved = solvedNow;
+    prevCurrent = d.current;
+    lastCurrent = d.current || null;
+    firstRender = false;
+  }
+
+  // Repaint the sticky evade-submit failure message onto the freshly rendered
+  // #submit-msg (if the current mission still shows the evade form).
+  function restoreSubmitMsg() {
+    if (!lastSubmit) return;
+    const msg = document.getElementById('pane-journey-submit-msg');
+    if (!msg) return;
+    msg.className = lastSubmit.cls;
+    msg.textContent = lastSubmit.text;
+  }
+
+  function renderAllDone(done, total) {
+    // No "→ scoreboard" link here: the operator board (GET /) is admin-gated and
+    // not routed on the journey host (P18 5x). Participants stay on their own
+    // journey; final standings are announced by the operators.
+    return `<div class="mission"><div class="empty">
+      <span class="icon">🏁</span>
+      全 ${total} ミッション攻略完了 — お見事。<br>
+      <span class="mono" style="opacity:.7">最終順位は運営が発表します。</span>
+    </div></div>`;
+  }
+
+  // kickerFor labels the detail panel by the mission's ACTUAL status rather
+  // than a hardcoded "CURRENT MISSION" — free browsing (P23 Story-as-docs)
+  // means the panel may be showing a solved or locked mission, and a
+  // solved/locked mission mislabeled "current" would be confusing (the
+  // kill-chain / map already carry the real status, but the detail panel's
+  // own heading should agree with them at a glance).
+  function kickerFor(det) {
+    if (det.status === 'solved') return 'MISSION CLEARED';
+    if (det.status === 'locked') return 'PREVIEW · LOCKED';
+    return 'CURRENT MISSION';
+  }
+
+  // backToCurrentHTML (C1 fixup) is the explicit "戻る" affordance shown in
+  // the mission-head whenever the detail panel is NOT showing the current
+  // mission (free-browsing a solved or locked one). Calls followCurrent(),
+  // the unconditional reset — a participant is never stuck without a
+  // one-click way back, even before the next auto-solve clears it for them.
+  function backToCurrentHTML(det) {
+    if (det.status === 'current') return '';
+    return `<button type="button" class="btn back-to-current" id="pane-journey-back-current">← 現在のミッションへ戻る</button>`;
+  }
+
+  // hintJumpsHTML (統一ヒント Phase 3, MVP) builds the "→ 検知ルールを見る" /
+  // "→ コマンド集を見る" jump buttons for one opened hint. Buttons are
+  // separate <button data-jump="..."> elements built by this JS, never an
+  // <a href="#..."> — a new in-content hash link would fight the
+  // showTab/hashchange router (see falco-web skill's routing note); the
+  // click is instead handled by a single delegated listener (see the
+  // 'click' listener attached to #pane-story near the top of this IIFE)
+  // that scrolls or switches tabs without touching location.hash for the
+  // rule case. h.text itself is unaffected — still displayed via esc() in
+  // .ht above, exactly as before this change.
+  function hintJumpsHTML(h) {
+    const refs = h.ruleRefs || [];
+    const buttons = [];
+    if (refs.length) {
+      // Single ref -> jump straight to that rule's <details>; zero-or-many
+      // (many here, since the branch requires non-empty) -> the combined
+      // Falco Rule section, per the MVP spec (no per-ref sub-navigation).
+      const target = refs.length === 1 ? ('fr-rule-' + slugify(refs[0])) : 'falco-rule-section';
+      buttons.push(`<button type="button" class="hint-jump" data-jump="rule" data-target="${esc(target)}">→ 検知ルールを見る</button>`);
+    }
+    if (h.cheatsheetRef) {
+      // MVP: the cheatsheetRef VALUE is not used for a precise in-page
+      // anchor yet (fast-follow) — the jump just opens the Tutorial tab.
+      buttons.push(`<button type="button" class="hint-jump" data-jump="cheat">→ コマンド集を見る</button>`);
+    }
+    return buttons.length ? `<div class="hint-jumps">${buttons.join('')}</div>` : '';
+  }
+
+  function renderDetail(det) {
+    const typeBadge = det.type ? `<span class="badge badge-${esc(det.type)}">${esc(det.type)}</span>` : '';
+    const kicker = kickerFor(det);
+    const backLink = backToCurrentHTML(det);
+    if (!det.hasJourney) {
+      return `<div class="mission">
+        <div class="mission-head">
+          <div class="kicker">${esc(kicker)}</div>
+          <h2>${esc(det.title || det.id)} ${typeBadge}</h2>
+          ${backLink}
+        </div>
+        <div class="mission-body">
+          <div class="empty"><span class="icon">📡</span>ブリーフィング準備中<br>
+          このミッションの作戦資料はまだ用意されていません。</div>
+          ${det.type === 'trigger' ? triggerSection(det) : ''}
+          ${det.type === 'evade' ? evadeSection(det) : ''}
+          ${renderFalcoRule(det)}
+        </div>
+      </div>`;
+    }
+
+    const steps = (det.steps || []).map(s => `
+      <li class="${s.checked ? 'done' : ''}" data-step="${s.idx}">
+        <div class="box" data-step="${s.idx}" data-checked="${s.checked ? '1' : '0'}" role="checkbox" aria-checked="${s.checked}">✓</div>
+        <div>
+          <div class="step-label">${esc(s.label)}</div>
+          ${s.detail ? `<div class="step-detail">${esc(s.detail)}</div>` : ''}
+        </div>
+      </li>`).join('');
+
+    const hints = det.hints || { total: 0, opened: [], lockedCount: 0, nextIndex: 0, penalty: 0 };
+    // penalty (#40): points forfeited per hint reveal. Server-supplied; shown on
+    // the open button + confirmed on click so the deduction is a deliberate act.
+    const penalty = Number.isFinite(hints.penalty) ? hints.penalty : 0;
+    // Each opened hint gets a copy button (STORY hint copy, HINT 3's multi-line
+    // solution command needs one-click paste-ability). The button carries only
+    // data-hint-idx — wireDetail() below looks up the raw h.text via closure
+    // over det.hints.opened and passes it straight to navigator.clipboard, so
+    // the un-escaped text never round-trips through the DOM/HTML (the display
+    // copy in .ht above still goes through esc() as always).
+    const openedHTML = (hints.opened || []).map(h => `
+      <div class="hint-open">
+        <div class="hn-row">
+          <div class="hn">HINT ${h.idx}</div>
+          <button type="button" class="hint-copy-btn" data-hint-idx="${esc(String(h.idx))}">Copy</button>
+        </div>
+        <div class="ht">${esc(h.text)}</div>
+        ${hintJumpsHTML(h)}
+      </div>`).join('');
+    let lockedHTML = '';
+    if (hints.lockedCount > 0 && hints.nextIndex > 0) {
+      const costLabel = penalty > 0 ? `（-${penalty}点）` : '';
+      lockedHTML = `<div class="hint-locked">
+        <span>🔒 ヒント ${hints.nextIndex} / ${hints.total}（未開封 ${hints.lockedCount}）${penalty > 0 ? ` · 開封で <span class="pen">-${penalty}点</span>` : ''}</span>
+        <button class="btn" id="pane-journey-open-hint" data-next="${hints.nextIndex}" data-cid="${esc(det.id)}" data-penalty="${penalty}">ヒントを開く${costLabel}</button>
+      </div>`;
+    }
+    const hintsBlock = (hints.total > 0)
+      ? `<div class="sec-title">Hints（段階開放）</div><div class="hints">${openedHTML}${lockedHTML || (hints.lockedCount === 0 ? '<div class="hint-locked">全ヒント開封済み</div>' : '')}</div>`
+      : '';
+
+    // P23-5: the old docs-link pointed at a separate participant docs
+    // Ingress that has been removed (charts/docs/templates/ingress.yaml —
+    // see home.go / docs-site/home-fragments.yaml). That content (rule
+    // explanations, cheatsheet, story) is now folded into THIS page's Home
+    // tab, so the link repoints in-page via the hash router
+    // (showTab/currentTab below) instead of out to a docs host. det.docsUrl
+    // itself is left wired end-to-end (server, journey.yaml schema) since
+    // removing the field is a content-schema change outside app-lead's
+    // charter here — the link/anchor point is what changes, not the field.
+    const docs = det.docsUrl ? `<a class="docs-link" href="#home">📖 詳細ブリーフィング (Home タブ) →</a>` : '';
+
+    return `<div class="mission">
+      <div class="mission-head">
+        <div class="kicker">${esc(kicker)}</div>
+        <h2>${esc(det.title)} ${typeBadge}</h2>
+        ${det.tagline ? `<div class="tagline">${esc(det.tagline)}</div>` : ''}
+        ${backLink}
+      </div>
+      <div class="mission-body">
+        ${det.leadIn ? `<div class="lead-in"><span class="li-kicker">前回からの引き</span>${esc(det.leadIn)}</div>` : ''}
+        ${det.briefing ? `<div class="briefing">${esc(det.briefing)}</div>` : ''}
+        ${det.type === 'trigger' ? triggerSection(det) : ''}
+        ${steps ? `<div class="sec-title">Steps（自己チェック）</div><ul class="steps">${steps}</ul>` : ''}
+        ${hintsBlock}
+        ${det.type === 'evade' ? evadeSection(det) : ''}
+        ${renderFalcoRule(det)}
+        ${docs}
+      </div>
+    </div>`;
+  }
+
+  // renderFalcoRule (P23 Story-as-docs) renders the mission's display-only
+  // Falco rule excerpt (List / Macro / Rule) — see api.go's missionDetail
+  // falcoRule doc and catalog/rules.go's LoadRuleExcerpts. Visible for ANY
+  // mission status (solved/current/locked, CEO decision): this content is
+  // static and identical for every viewer, unlike hints, so free-browsing to
+  // a locked mission still shows its rule excerpt.
+  //
+  // XSS: every value (list item, macro condition, rule desc/condition/output/
+  // priority/tag) flows through esc() — this is the SAME trust boundary as
+  // triggerSection's Falco rule NAMES above: rule.yaml is operator-authored
+  // display content (not participant input), but it is still escaped here
+  // rather than trusted, matching the portal's "esc() everywhere except the
+  // two committed, gen-time-sanitized template.HTML fragments" invariant (see
+  // portal.go / home.go's docs) — this is neither of those two fragments, so
+  // it goes through esc() like every other det.* field on this page.
+  //
+  // Fail-soft: hasFalcoRule false, or an excerpt with all three sections
+  // empty (e.g. a rule.yaml with only list:/macro: and no rule: yet — should
+  // not happen per catalog validation, but defensive), renders nothing.
+  function renderFalcoRule(det) {
+    if (!det.hasFalcoRule) return '';
+    const fr = det.falcoRule || { lists: [], macros: [], rules: [] };
+    const lists = fr.lists || [], macros = fr.macros || [], rules = fr.rules || [];
+    if (!lists.length && !macros.length && !rules.length) return '';
+
+    const listsHTML = lists.length ? `<div class="fr-group">
+      <div class="fr-group-title">Lists</div>
+      ${lists.map(l => `<div class="fr-item" style="cursor:default">
+        <div style="font-weight:600;font-size:0.9rem">${esc(l.name)}</div>
+        <div class="fr-list-items">${(l.items || []).map(i => `<span>${esc(i)}</span>`).join('')}</div>
+      </div>`).join('')}
+    </div>` : '';
+
+    const macrosHTML = macros.length ? `<div class="fr-group">
+      <div class="fr-group-title">Macros</div>
+      ${macros.map(m => `<details class="fr-item">
+        <summary>${esc(m.name)}</summary>
+        <div class="fr-body"><pre><code>${esc(m.condition)}</code></pre></div>
+      </details>`).join('')}
+    </div>` : '';
+
+    // Rule / Desc / Condition are labelled sections so a participant can tell
+    // "the rule's NAME" from "what it means" from "the actual match logic"
+    // at a glance, instead of three unlabelled blocks stacked together.
+    // desc is fail-soft (omitted entirely when empty, per rule.yaml content —
+    // some rule.yaml excerpts predate the desc: field). Output/Priority/Tags
+    // stay as secondary/auxiliary info: priority inline on the summary line
+    // (unchanged), output and tags labelled but visually de-emphasised below
+    // Condition, since they are supporting detail rather than one of the
+    // three primary sections asked for.
+    const rulesHTML = rules.length ? `<div class="fr-group">
+      <div class="fr-group-title">Rules</div>
+      ${rules.map(r => `<details class="fr-item" id="fr-rule-${slugify(r.name)}" open>
+        <summary><span class="fr-field-label">Rule</span> ${esc(r.name)}${r.priority ? `<span class="fr-priority">${esc(r.priority)}</span>` : ''}</summary>
+        <div class="fr-body">
+          ${r.desc ? `<div class="fr-field-label">Desc</div><div class="fr-desc">${esc(r.desc)}</div>` : ''}
+          ${r.condition ? `<div class="fr-field-label">Condition</div><pre><code>${esc(r.condition)}</code></pre>` : ''}
+          ${r.output ? `<div class="fr-field-label fr-field-label-aux">Output</div><pre><code>${esc(r.output)}</code></pre>` : ''}
+          ${(r.tags || []).length ? `<div class="fr-tags">${(r.tags || []).map(esc).join(' · ')}</div>` : ''}
+        </div>
+      </details>`).join('')}
+    </div>` : '';
+
+    return `<div class="sec-title">Falco Rule（このミッションの検知ルール）</div>
+      <div class="falco-rule" id="falco-rule-section">${listsHTML}${macrosHTML}${rulesHTML}</div>`;
+  }
+
+  // triggerSection renders the live "how do I know I succeeded?" status for a
+  // trigger mission (#39). A trigger challenge has no flag to submit — it
+  // auto-solves the instant the participant's action makes Falco emit one of the
+  // expected rules. Before this the participant had no on-screen cue for what
+  // success looks like; now we show, live:
+  //   - the success signal (which Falco rule(s) clear the mission), and
+  //   - whether the scoreboard has already SEEN that rule fire for this user
+  //     (det.detectedRules, a recent-window intersection from the API).
+  // Once detected, the normal 2s poll flips the mission to solved and triggers
+  // the CLEARED overlay — so a green "detected" row here is the immediate
+  // feedback that bridges "I ran the command" and "the map updated".
+  //
+  // XSS: only static copy + Falco rule NAMES flow in, all through esc(); rule
+  // names are public metadata, never a flag (matches #26 discipline).
+  function triggerSection(det) {
+    const expected = det.expectedRules || [];
+    const detected = new Set(det.detectedRules || []);
+    // No expected rules declared (shouldn't happen for a trigger challenge, but
+    // fail soft): show a generic "watching your workspace" cue.
+    if (!expected.length) {
+      return `<div class="sec-title">クリア条件（自動判定）</div>
+        <div class="autosolve">
+          <div class="hint">このミッションは、ワークスペースでの操作を Falco が検知すると自動的にクリアされます。ターミナルで課題の操作を実行してください。</div>
+        </div>`;
+    }
+    const anyDetected = expected.some(r => detected.has(r));
+    const rows = expected.map(r => {
+      const hit = detected.has(r);
+      return `<li class="${hit ? 'done' : 'waiting'}">
+        <span class="dot">${hit ? '✅' : '⏳'}</span>
+        <span>${esc(r)}${hit ? ' — 検知しました' : ''}</span>
+      </li>`;
+    }).join('');
+    return `<div class="sec-title">クリア条件（自動判定）</div>
+      <div class="autosolve">
+        <div class="hint" style="margin-top:0">ターミナルで操作を実行し、下の Falco ルールを発火させればミッションは自動でクリアされます（手動提出は不要）。</div>
+        <ul class="steps-flow" style="margin-top:0.7rem">${rows}</ul>
+        <div class="hint">${anyDetected
+          ? '✔ 検知されました — まもなくクリア表示に切り替わります。'
+          : 'まだ検知されていません。直近 60 秒の発火をここに表示します。'}</div>
+      </div>`;
+  }
+
+  // evadeSection chooses the primary UX for an evade mission:
+  //   - RequireExfil challenges lead with the auto-solve live status (the flag
+  //     is delivered by exfil; the scoreboard auto-clears once the window is
+  //     clean), demoting the manual submit form to a collapsed fallback.
+  //   - plain evade challenges keep the manual submit form as the primary path.
+  // app#125 (prod gate, ADR-0003 §A2/A3): dirtySection() is prepended to
+  // BOTH branches so the persistent taint state + the only working "undo"
+  // (POST .../reset-dirty) is always visible in the mission panel a
+  // participant is actually looking at — not just inside the requireExfil
+  // auto-solve flow (03/05 have no requireExfil, so before this change they
+  // showed NO dirty state at all here), and not only in the Me tab's 2s-poll
+  // fire feed (product-engineer's cross-cutting finding: Journey work and
+  // Me-tab feedback were on separate panes with no way back).
+  function evadeSection(det) {
+    const dirty = dirtySection(det);
+    if (det.requireExfil) {
+      return dirty + autoSolveStatus(det) + `
+        <details class="manual">
+          <summary>うまくいかない? 手動でフラグを提出</summary>
+          ${submitForm(det.id)}
+        </details>`;
+    }
+    return dirty + `<div class="sec-title">Flag 提出（evade）</div>${submitForm(det.id)}`;
+  }
+
+  // dirtySection (app#125, ADR-0003 §A2/A3 — prod gate for #124's persistent
+  // dirty flag): always-visible "検知状態" card for every evade mission,
+  // mirroring the always-on style of triggerSection / autoSolveStatus rather
+  // than only surfacing on a failed submit. Two states:
+  //   - clean: reassurance that the current attempt is untainted.
+  //   - dirty: which forbidden rule(s) fired (det.dirtyRules — Falco rule
+  //     NAMES only, never a flag value per I10, but still routed through
+  //     esc() like every other catalog-derived string on this page — #26)
+  //     plus the ONLY working recovery action: the reset-dirty button.
+  // Before this, the only on-screen text about recovering from dirty was
+  // autoSolveStatus's "reset-dirty でやり直すまで自動クリアされません" (a
+  // command name with no button behind it — origin-guard 403s the bare
+  // curl the old text implied, and the collector allowlist deliberately
+  // does NOT carry this route, see api.go's resetDirty doc). That line is
+  // now just a pointer to this section instead of a dead-end instruction.
+  function dirtySection(det) {
+    if (!det.dirty) {
+      return `<div class="sec-title">検知状態</div>
+        <div class="autosolve">
+          <div class="hint" style="margin-top:0">✅ この attempt はクリーンです（禁止ルールの発火なし）。このまま提出できます。</div>
+        </div>`;
+    }
+    const rows = (det.dirtyRules || []).map(r =>
+      `<li class="dirty-rule"><span class="dot">🔴</span><span>${esc(r)}</span></li>`).join('');
+    return `<div class="sec-title">検知状態</div>
+      <div class="autosolve dirty">
+        <div class="hint" style="margin-top:0;color:var(--danger)">🔴 検知されています — 以下の禁止ルールが発火し、この attempt は汚染されています。このまま提出しても通りません。</div>
+        <ul class="steps-flow" style="margin-top:0.6rem">${rows}</ul>
+        <div class="hint">回避技法をやり直すか、下のボタンでこの attempt をリセットしてください。</div>
+        <button type="button" class="btn btn-danger" id="pane-journey-reset-dirty"
+          data-cid="${esc(det.id)}" data-require-exfil="${det.requireExfil ? '1' : '0'}"
+          style="margin-top:0.6rem">このミッションをやり直す</button>
+        <div class="submit-msg" id="pane-journey-reset-msg"></div>
+      </div>`;
+  }
+
+  // autoSolveStatus renders the three-stage live flow for an exfil-required
+  // evade mission. Stage state is derived from det.exfilReceived (collector has
+  // a receipt). The mission map flips this section to "solved" via the normal
+  // poll once the sweeper clears it, so we only model received / waiting here.
+  function autoSolveStatus(det) {
+    const received = !!det.exfilReceived;
+    // Build each row via textContent-safe interpolation: only static copy and
+    // booleans feed in here (no user-controlled strings), matching #26's XSS
+    // discipline — the dynamic bits are class names, not injected content.
+    const rows = [
+      { cls: received ? 'done' : 'active',
+        dot: received ? '✅' : '⏳',
+        text: received ? 'collector が flag を受信しました' : 'collector への flag 配送を待機中…' },
+      // ADR-0003: there is no time window any more — `dirty` is a persistent
+      // per-attempt taint. The only clear action is the "検知状態" card's
+      // reset button (dirtySection(), rendered above this status), so this
+      // row now just points there instead of naming the API route — see
+      // dirtySection's doc for why the old copy was a dead-end instruction.
+      { cls: received ? (det.dirty ? 'active waiting' : 'done') : '',
+        dot: received ? (det.dirty ? '⏳' : '✅') : '·',
+        text: received
+          ? (det.dirty
+              ? '禁止ルールが発火済み — 上の「検知状態」でやり直すまで自動クリアされません'
+              : 'クリーンな attempt を確認 — 自動クリア待ち')
+          : 'クリーンな attempt の確保' },
+      { cls: '', dot: '🎉', text: '自動クリア' },
+    ];
+    const items = rows.map(r => `<li class="${r.cls}"><span class="dot">${r.dot}</span><span>${esc(r.text)}</span></li>`).join('');
+    return `<div class="sec-title">自動クリア（exfil）</div>
+      <div class="autosolve">
+        <ul class="steps-flow">${items}</ul>
+        <div class="hint">flag を collector に配送し、この attempt 中に禁止ルールが一度も発火していなければ自動的にクリアされます。手動提出は不要です。</div>
+      </div>`;
+  }
+
+  function submitForm(cid) {
+    return `<form class="submit-form" id="pane-journey-submit-form" data-cid="${esc(cid)}">
+        <input type="text" id="pane-journey-flag-input" placeholder="FALCO{...}" autocomplete="off" spellcheck="false">
+        <button type="submit" class="btn btn-accent">Submit</button>
+      </form>
+      <div class="submit-msg" id="pane-journey-submit-msg"></div>`;
+  }
+
+  function wireDetail(det) {
+    // C1 fixup: explicit "戻る" button, shown only when browsing away from
+    // current (backToCurrentHTML). Absent element = current-mission view, no-op.
+    const backBtn = document.getElementById('pane-journey-back-current');
+    if (backBtn) backBtn.addEventListener('click', followCurrent);
+
+    // Hint copy buttons: rendered fresh on every renderDetail() and rewired
+    // here every time wireDetail() runs afterward (same pattern as the rest of
+    // this function — no delegation needed since the whole panel innerHTML is
+    // replaced each render). Each button's raw text comes straight from
+    // det.hints.opened via closure (matched by idx), never from the DOM/HTML —
+    // this is the one path that must carry the UN-escaped h.text, since the
+    // displayed .ht span uses esc(h.text) and copying that would hand
+    // participants a mangled command (&amp; etc.) for HINT 3's copy-paste flow.
+    const openedHints = (det.hints && det.hints.opened) || [];
+    document.querySelectorAll('#pane-story .hint-copy-btn').forEach(btn => {
+      const hint = openedHints.find(h => String(h.idx) === btn.dataset.hintIdx);
+      if (!hint) return;
+      btn.addEventListener('click', () => copyHintText(btn, hint.text));
+    });
+
+    // step self-check toggles
+    document.getElementById('pane-story').querySelectorAll('.steps .box').forEach(box => {
+      box.addEventListener('click', async () => {
+        const idx = box.dataset.step;
+        const checked = box.dataset.checked !== '1';
+        busy = true;
+        try {
+          const r = await fetch('/api/users/' + encodeURIComponent(user) + '/challenges/' + encodeURIComponent(det.id) + '/steps/' + idx + '/check',
+            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ checked }) });
+          if (r.ok) {
+            box.dataset.checked = checked ? '1' : '0';
+            box.closest('li').classList.toggle('done', checked);
+          }
+        } catch (e) { /* ignore; next poll reconciles */ }
+        busy = false;
+      });
+    });
+
+    // progressive hint reveal
+    const openBtn = document.getElementById('pane-journey-open-hint');
+    if (openBtn) {
+      openBtn.addEventListener('click', async () => {
+        const idx = openBtn.dataset.next;
+        // Confirm the score cost before revealing (#40): a hint deducts points,
+        // so make the reveal a deliberate choice rather than an accidental click.
+        const pen = parseInt(openBtn.dataset.penalty || '0', 10);
+        if (pen > 0 && !confirm(`ヒント ${idx} を開くとスコアが ${pen} 点減点されます。開きますか?`)) return;
+        busy = true;
+        try {
+          const r = await fetch('/api/users/' + encodeURIComponent(user) + '/challenges/' + encodeURIComponent(openBtn.dataset.cid) + '/hints/' + idx,
+            { method: 'POST' });
+          if (r.ok) { await refresh(); }
+        } catch (e) { /* ignore */ }
+        busy = false;
+      });
+    }
+
+    // app#125 (prod gate, ADR-0003 §A2): reset-dirty — the ONLY way to clear
+    // the persistent taint. Mirrors the hint-reveal button's confirm+busy+
+    // fetch+refresh shape immediately above. A2-2 (CEO enforce decision)
+    // means this ALSO deletes the same (user, cid) collector exfil receipt,
+    // so a requireExfil mission (currently only 10-final-exfil) gets an
+    // extra confirm line — silently dropping a delivered receipt would turn
+    // "why did my exfil disappear" into a support ticket.
+    //
+    // Auth/origin: this fetch is a same-origin browser POST with no custom
+    // headers, so it naturally carries Origin/Referer — the shape the
+    // resetDirty route's origin-guard (api.go) requires and a header-less
+    // workspace curl cannot produce. Do not add a Content-Type/body here
+    // (the endpoint takes none) and do not route this through the collector
+    // (see resetDirty's doc: the collector's claimed-identity trust model
+    // would let any workspace erase another participant's taint AND exfil
+    // receipt — an attribution-forgery path this button must not reopen).
+    const resetBtn = document.getElementById('pane-journey-reset-dirty');
+    if (resetBtn) {
+      resetBtn.addEventListener('click', async () => {
+        const cid = resetBtn.dataset.cid;
+        const requireExfil = resetBtn.dataset.requireExfil === '1';
+        let confirmMsg = 'このミッションをやり直します。検知履歴（禁止ルールの発火記録）を削除し、クリーンな attempt から再挑戦できるようにします。';
+        if (requireExfil) {
+          confirmMsg += '\n\n⚠️ このミッションは exfil が必要です。やり直すと送信済みの exfil 証跡も削除されるため、再度 exfil で flag を配送する必要があります。';
+        }
+        confirmMsg += '\n\nやり直しますか？';
+        if (!confirm(confirmMsg)) return;
+        const msgEl = document.getElementById('pane-journey-reset-msg');
+        busy = true;
+        try {
+          const r = await fetch('/api/users/' + encodeURIComponent(user) + '/challenges/' + encodeURIComponent(cid) + '/reset-dirty',
+            { method: 'POST' });
+          if (r.ok) {
+            // Repaint immediately (don't make the participant wait up to 2s
+            // for the next poll) — same pattern as viewMission()/hint-reveal.
+            // The refreshed detail's dirtySection() will show the clean
+            // state, so no separate success flash is needed here.
+            await refresh();
+          } else {
+            if (msgEl) { msgEl.className = 'submit-msg err'; msgEl.textContent = 'リセットに失敗しました。しばらくしてから再試行してください。'; }
+          }
+        } catch (e) {
+          if (msgEl) { msgEl.className = 'submit-msg err'; msgEl.textContent = 'リセットに失敗しました（通信エラー）。'; }
+        }
+        busy = false;
+      });
+    }
+
+    // evade flag submit
+    const form = document.getElementById('pane-journey-submit-form');
+    if (form) {
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const cid = form.dataset.cid;
+        const flag = document.getElementById('pane-journey-flag-input').value.trim();
+        const msg = document.getElementById('pane-journey-submit-msg');
+        // setMsg paints the message now AND stores it so the polling re-render
+        // restores it (see restoreSubmitMsg). success=true means the message is
+        // transient (a refresh() + CLEARED transition will replace the view).
+        const setMsg = (cls, text, success) => {
+          msg.className = cls; msg.textContent = text;
+          lastSubmit = success ? null : { cid, cls, text };
+        };
+        if (!flag) { setMsg('submit-msg err', 'flag を入力してください', false); return; }
+        busy = true;
+        lastSubmit = null;
+        msg.className = 'submit-msg'; msg.textContent = '提出中…';
+        let solved = false;
+        try {
+          const r = await fetch('/api/challenges/' + encodeURIComponent(cid) + '/submit',
+            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user, flag }) });
+          const d = await r.json();
+          if (d.solved) { setMsg('submit-msg ok', '✔ 正解 — ミッションクリア！', true); solved = true; }
+          else if (d.correct === false) { setMsg('submit-msg err', '✗ flag が違います', false); }
+          else if (d.evaded === false) { setMsg('submit-msg warn', '検知されました: ' + (d.reason || 'forbidden rule fired'), false); }
+          else if (d.exfiltrated === false) { setMsg('submit-msg warn', (d.reason || 'まず collector に exfil してください'), false); }
+          else { setMsg('submit-msg', JSON.stringify(d), false); }
+        } catch (err) { setMsg('submit-msg err', '提出エラー: ' + err, false); }
+        busy = false;
+        // Only re-render on success (drives the CLEARED transition + next
+        // mission). On failure we keep the message on screen; the sticky
+        // lastSubmit state carries it through subsequent polling re-renders.
+        if (solved) refresh();
+      });
+    }
+  }
+
+  // copyHintText copies a hint's RAW text (not the escaped .ht innerHTML) to
+  // the clipboard so HINT 3's multi-line "想定解" command pastes verbatim
+  // (heredocs etc. would break if the copy path ever picked up esc()'d
+  // &amp;/&lt; entities instead of the real characters). Prefers the async
+  // Clipboard API (requires a secure context); falls back to a hidden
+  // textarea + execCommand('copy') for older/non-secure contexts, and
+  // silently no-ops (button just doesn't flip to "Copied!") if neither works
+  // rather than throwing into the click handler.
+  function copyHintText(btn, text) {
+    const flash = () => {
+      const prev = btn.textContent;
+      btn.textContent = 'Copied!';
+      btn.classList.add('copied');
+      setTimeout(() => { btn.textContent = prev; btn.classList.remove('copied'); }, 1500);
+    };
+    const fallbackCopy = () => {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        if (ok) flash();
+      } catch (e) { /* clipboard unavailable; silently ignore */ }
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(flash, fallbackCopy);
+    } else {
+      fallbackCopy();
+    }
+  }
+
+  function playCleared(m) {
+    const fx = document.getElementById('pane-journey-clear-fx');
+    document.getElementById('pane-journey-clear-title').textContent = '✔ CLEARED';
+    document.getElementById('pane-journey-clear-sub').textContent = (m.title || m.id) + ' 攻略';
+    // Narrative bridge toward the next mission (#47). textContent-safe; empty
+    // bridge (or final mission with no bridge) simply shows nothing. The lead-in
+    // block on the next mission carries the same beat once the overlay fades.
+    const bridge = document.getElementById('pane-journey-clear-bridge');
+    bridge.textContent = m && m.bridge ? m.bridge : '';
+    bridge.style.display = m && m.bridge ? 'block' : 'none';
+    fx.classList.add('show');
+    setTimeout(() => fx.classList.remove('show'), m && m.bridge ? 3200 : 1900);
+  }
+})();
+</script>
+
+</div>

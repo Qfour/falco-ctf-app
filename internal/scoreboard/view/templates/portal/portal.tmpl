@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Falco CTF · portal</title>
+<!-- Chakra Petch / Inter / JetBrains Mono (app#96, P12 follow-up): vendored,
+     self-hosted, SIL OFL — see internal/scoreboard/view/vendor/fonts/
+     PROVENANCE.md for the fetch URL/sha256/license per file and
+     vendorassets.go for the go:embed serving paths. Same-origin only, never
+     a CDN (P12: egress-zero) — replaces the former fonts.googleapis.com
+     <link> + its two fonts.gstatic.com preconnects (no longer needed:
+     same-origin requests don't benefit from preconnect). -->
+<link rel="stylesheet" href="/vendor/fonts.css">
+<!-- ===== cybercore-css (P23-6): vendored, self-hosted, MIT — see
+     internal/scoreboard/view/vendor/cybercore/PROVENANCE.md for the pinned
+     npm version/commit/shasum and vendorassets.go for the go:embed serving
+     path. Loaded from OUR OWN origin only, never a CDN (P12: egress-zero for
+     this asset).
+     NOTE (portal-ui-polish): the ONE cybercore COMPONENT CLASS this page
+     used to consume (.cyber-badge, on the now-removed #portal-role-badge
+     role indicator) is gone — see the "cybercore Falco-brand override"
+     tokens (--cyber-*/--color-*) in /static/tokens.css, which are
+     consequently unused CSS right now (left in place; removing the
+     cybercore layer outright is a bigger call than this batch's stated
+     scope of DOM/text changes — tracked as residual cleanup, not done
+     here). The journey/scoreboard/me panes never adopted cybercore
+     COMPONENT CLASSES to begin with — they keep their own bespoke game-fx
+     CSS and their own LOCAL --falco/--accent variables, and do NOT
+     reference any --cyber-* custom property.
+     Placed BEFORE the design-tokens link below so the hand-authored
+     --cyber-* overrides in tokens.css can win over cybercore.min.css's own
+     defaults by source-order (both have equal specificity on shared
+     selectors; later wins). -->
+<link rel="stylesheet" href="/vendor/cybercore.min.css">
+<!-- ===== Design tokens (app#116): single hex source ===== Every custom
+     property this page's CSS below consumes via var(...) — the --falco/
+     --accent-style base palette, the --cyber-*/--color-*/--font-* cybercore
+     override block described above, and the --p-* unified portal tokens
+     (P23 portal-redesign; #pane-scoreboard/#pane-story/#pane-me/
+     #pane-terminal and the shared .p-* component classes all read these) —
+     now lives in ONE place: internal/scoreboard/view/static/tokens.css (see
+     that file's own doc for the full "why" and the exact value-for-value
+     provenance of every token). This page no longer defines any of these
+     properties itself; they cascade in from this stylesheet. Self-hosted,
+     same-origin (vendorassets.go), loaded AFTER cybercore.min.css above so
+     its --cyber-* overrides still win by source order (see that link's
+     comment). -->
+<link rel="stylesheet" href="/static/tokens.css">
+{{template "css.tmpl" . -}}
+</head>
+<body>
+<!-- NOTE (P23-ME-1, CEO decision 案① 完全プライベート): the participant tab
+     below is LABELLED "Scoreboard" but its tab/pane INTERNAL id stays
+     data-tab="me" / #pane-me — do not rename these to "scoreboard": that
+     id/data-tab pair is already taken by the ADMIN-only full-field tab one line
+     up (id="tab-scoreboard", data-tab="scoreboard", #pane-scoreboard, gated
+     server-side by GET /api/state + isAdmin), which is LABELLED "Leaderboard"
+     to disambiguate for operators (who see both tabs). The two are distinct:
+     this one is the participant's PERSONAL, self-scoped view (own
+     rank/score/progress ONLY, via GET /api/users/{user}/me + selfOrAdmin — see
+     #pane-me's script below); the "Leaderboard" tab is the operator's
+     full-field dashboard. Keeping the internal names distinct (me vs
+     scoreboard) avoids colliding two different data sources / auth gates under
+     one id; the label↔id mismatch (pane "me" shows "Scoreboard") is deliberate
+     per the CEO naming decision. -->
+<nav id="portal-tabs">
+  <span id="portal-brand"><span class="accent">Falco</span> CTF</span>
+  <a class="tab" data-tab="home" href="#home">Home</a>
+  <a class="tab" data-tab="tutorial" href="#tutorial">Tutorial</a>
+  <a class="tab" data-tab="story" href="#story">Story</a>
+  <a class="tab" data-tab="scoreboard" href="#scoreboard" id="tab-scoreboard" hidden>Leaderboard</a>
+  <a class="tab" data-tab="me" href="#me">Scoreboard</a>
+  <a class="tab" data-tab="terminal" href="#terminal">Terminal</a>
+  <!-- app#292 QA Board Phase 3: replaces P25's separate Queue(admin)/
+       Support(participant) tabs with ONE tab for everyone — content inside
+       #pane-board differs by role (compose+My Threads+Public Timeline for
+       a participant, the moderation queue for an admin), but the tab
+       itself is never hidden (no admin-only gate here, unlike Leaderboard
+       above). -->
+  <a class="tab" data-tab="board" href="#board">Board</a>
+  <span id="portal-identity">
+    <span id="portal-username"></span>
+  </span>
+</nav>
+<script nonce="{{.Nonce}}">
+  // Server-injected identity (P23-1) + own-ttyd URL (P23-4). This is a
+  // DISPLAY-ONLY convenience for the shell (which tab to default to / show,
+  // which link to pre-fill, which iframe src to render) — it is NEVER the
+  // authorization boundary. Every API call the panes below make re-derives
+  // + re-checks identity server-side from the SAME X-Auth-Request-Email
+  // header (selfOrAdmin / selfOrAdminWrite / isAdmin in
+  // internal/scoreboard/api), so a participant cannot widen access by editing
+  // these globals in devtools — at most they can make the shell mis-render for
+  // themselves; the API still 403s anything they are not entitled to.
+  // __PORTAL_TTYD_URL__ is built server-side from that SAME identity plus a
+  // deploy-time suffix (never a client-supplied header/param — see
+  // view.renderPortal / portal.ttydURLFor); the Terminal pane below still
+  // relies on auth-policy's per-host `/check` (I8) to independently enforce
+  // that the iframe can only ever reach the caller's own workspace even if
+  // this value were hand-edited in devtools.
+  window.__PORTAL_ROLE__ = {{.RoleJSON}};
+  window.__PORTAL_USER__ = {{.UserJSON}};
+  window.__PORTAL_TTYD_URL__ = {{.TtydURLJSON}};
+</script>
+{{template "pane-story.tmpl" . -}}
+{{template "pane-scoreboard.tmpl" . -}}
+{{template "pane-me.tmpl" . -}}
+{{template "pane-board.tmpl" . -}}
+{{template "pane-home.tmpl" . -}}
+{{template "pane-tutorial.tmpl" . -}}
+{{template "pane-terminal.tmpl" . -}}
+{{template "core-router.tmpl" . -}}
+</body>
+</html>
