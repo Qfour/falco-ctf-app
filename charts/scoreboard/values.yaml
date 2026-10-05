@@ -138,6 +138,9 @@ persistence:
 # ApplyFlagOverrides replaces the FALCO{dev-...} placeholders baked into the
 # image. The Secret is created by the platform from events/<date>/flags.sops.yaml
 # (key: flags.yaml). Disabled = use the dev placeholders (local).
+# When enabled the scoreboard refuses to start unless the file supplies a
+# flag for every evade challenge it scores (after the scenario restriction)
+# and no supplied value equals the repository default.
 flagsSecret:
   enabled: false
   name: scoreboard-flags

@@ -37,7 +37,12 @@
 #
 # --flags-file <path>: decrypted events flags.yaml ({flags: {id: FALCO{...}}}).
 #   Overrides the chart's FALCO{dev-...} defaults with real per-event flags.
-#   Omit for local dev (dev placeholders are used).
+#   Fail-closed (validate-flags-file.sh): the file must supply a flag for
+#   EVERY evade challenge this deploy plants (all → all of them;
+#   scenario:<name> → the scenario's; <NN-slug> → that one), and no value
+#   may equal the repository/chart default. Otherwise the script exits
+#   non-zero before touching the cluster.
+#   Omit for local dev (dev placeholders are used, nothing is validated).
 #
 # --frame-ancestors <value>: CSP `frame-ancestors` source list the ttyd-proxy
 #   sidecar (P23-3) stamps on every ttyd response. Set this to the portal's
@@ -138,7 +143,7 @@ while [[ $# -gt 0 ]]; do
     --api-server-cidr=*)
       API_SERVER_CIDR="${1#--api-server-cidr=}"; shift ;;
     -h|--help)
-      sed -n '2,45p' "$0"; exit 0 ;;
+      sed -n '2,50p' "$0"; exit 0 ;;
     --)
       shift; POSITIONAL+=("$@"); break ;;
     -*)
@@ -197,31 +202,6 @@ if [[ ! -d "${CHALLENGES_DIR}" ]]; then
 fi
 # Resolve to absolute path so helm -f can find the values overlay if cwd changes.
 CHALLENGES_DIR="$(cd "${CHALLENGES_DIR}" && pwd)"
-
-# Real per-event flags (from events/<ev>/flags.dec.yaml, shape `{flags: {id: FALCO{...}}}`).
-# Each pair becomes --set-string challenge.flags.<id>=<flag>, overriding the
-# chart's FALCO{dev-...} defaults. ADR-0001 Option B: these values render into
-# the `ctf-flags` Secret and reach only the `plant` initContainer
-# (envFrom/secretKeyRef) — the `challenge` container never sees them (I12).
-FLAG_ARGS=()
-if [[ -n "${FLAGS_FILE}" ]]; then
-  [[ -f "${FLAGS_FILE}" ]] || { echo "flags file not found: ${FLAGS_FILE}" >&2; exit 1; }
-  while IFS=$'\t' read -r fid fval; do
-    [[ -z "${fid}" ]] && continue
-    fkey="$(printf '%s' "${fid}" | sed 's/\./\\./g')"
-    FLAG_ARGS+=(--set-string "challenge.flags.${fkey}=${fval}")
-  done < <(awk '
-    /^flags:/ { inblock=1; next }
-    inblock && /^[^[:space:]]/ { inblock=0 }
-    inblock && /^[[:space:]]+[^[:space:]#]/ {
-      line=$0; sub(/^[[:space:]]+/, "", line)
-      idx=index(line, ":"); k=substr(line, 1, idx-1); v=substr(line, idx+1)
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
-      gsub(/^["'"'"']|["'"'"']$/, "", v)
-      printf "%s\t%s\n", k, v
-    }' "${FLAGS_FILE}")
-  [[ ${#FLAG_ARGS[@]} -gt 0 ]] || { echo "no flags parsed from ${FLAGS_FILE} (expected a top-level 'flags:' map)" >&2; exit 1; }
-fi
 
 NS="ctf-${USERNAME}"
 RELEASE="${USERNAME}"
@@ -315,6 +295,36 @@ else
   if [[ -f "${CHALLENGE_VALUES}" ]]; then
     VALUES_ARGS+=(-f "${CHALLENGE_VALUES}")
   fi
+fi
+
+# Real per-event flags (from events/<ev>/flags.dec.yaml, shape `{flags: {id: FALCO{...}}}`).
+# Each pair becomes --set-string challenge.flags.<id>=<flag>, overriding the
+# chart's FALCO{dev-...} defaults. ADR-0001 Option B: these values render into
+# the `ctf-flags` Secret and reach only the `plant` initContainer
+# (envFrom/secretKeyRef) — the `challenge` container never sees them (I12).
+#
+# The file is validated first (validate-flags-file.sh, same rules as the
+# scoreboard's catalog.ApplyFlagOverrides): every evade challenge in scope
+# for this deploy mode must have a flag, and no value may equal the
+# repository/chart default. A rejected file exits here, before anything
+# touches the cluster. Runs after the mode resolution above because the scope
+# (all / scenario / single) decides which ids are required. Without
+# --flags-file nothing is validated and the chart defaults are used (local dev).
+FLAG_ARGS=()
+if [[ -n "${FLAGS_FILE}" ]]; then
+  [[ -f "${FLAGS_FILE}" ]] || { echo "flags file not found: ${FLAGS_FILE}" >&2; exit 1; }
+  # Explicit status check: the validator's own stderr explains the rejection
+  # (challenge ids only, never values).
+  if ! FLAG_PAIRS="$("${CHART_DIR}/validate-flags-file.sh" "${FLAGS_FILE}" "${CHALLENGES_DIR}" "${CHALLENGE_ID}" "${SCENARIOS_DIR}")"; then
+    echo "flags file validation failed: ${FLAGS_FILE} (see above)" >&2
+    exit 1
+  fi
+  while IFS=$'\t' read -r fid fval; do
+    [[ -z "${fid}" ]] && continue
+    fkey="$(printf '%s' "${fid}" | sed 's/\./\\./g')"
+    FLAG_ARGS+=(--set-string "challenge.flags.${fkey}=${fval}")
+  done <<< "${FLAG_PAIRS}"
+  [[ ${#FLAG_ARGS[@]} -gt 0 ]] || { echo "no flags parsed from ${FLAGS_FILE} (expected a top-level 'flags:' map)" >&2; exit 1; }
 fi
 
 # Determine total step count (5 normally — namespace/rotate/upgrade/verify/

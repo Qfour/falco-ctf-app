@@ -165,10 +165,10 @@ func main() {
 		logger.Error("catalog load failed", "dir", challengesDir, "err", err)
 		os.Exit(1)
 	}
-	if err := cat.ApplyFlagOverrides(flagsFile); err != nil {
-		logger.Error("flag overrides failed", "file", flagsFile, "err", err)
-		os.Exit(1)
-	}
+	// fullCat keeps the unrestricted catalog (repository-default flags) for
+	// ApplyFlagOverrides below: the flags file is validated against every
+	// known challenge, while coverage is required for the scored scope only.
+	fullCat := cat
 	scenarioID := ""
 	// order is the mission sequence the Journey UI walks. When a scenario is
 	// pinned we honour its explicit challenge order (Restrict returns a map,
@@ -189,6 +189,14 @@ func main() {
 		order = sc.Challenges
 	} else {
 		order = cat.IDs()
+	}
+	// Applied AFTER the scenario Restrict so that "every evade challenge has a
+	// flag supplied" is checked against what this instance actually scores.
+	// With FLAGS_FILE set, a missing or un-rotated flag refuses startup
+	// instead of leaving a challenge scored against the repository default.
+	if err := cat.ApplyFlagOverrides(flagsFile, fullCat); err != nil {
+		logger.Error("flag overrides failed", "file", flagsFile, "err", err)
+		os.Exit(1)
 	}
 	// Journey UI content (title/tagline/briefing/steps/hints/docsUrl). Optional
 	// per challenge; a missing journey.yaml just yields no briefing for that

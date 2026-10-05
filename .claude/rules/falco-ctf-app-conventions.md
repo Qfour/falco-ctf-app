@@ -253,6 +253,23 @@ challenge コンテナは UID 表のとおり **root (0) が意図的** (CTF rea
 - 採点側: scoreboard が `FLAGS_FILE` (yaml `{flags: {id: FALCO{...}}}`) を読み、
   evade challenge の `expectedFlag` を起動時に上書き (`catalog.ApplyFlagOverrides`、
   fail-closed)。空なら placeholder のまま (local/test)。
+- **flags ファイルを指定したら「完全かつローテーション済み」が必須 (両側 fail-closed)**:
+  (1) スコープ内の全 evade 課題に flag が供給されていること、(2) 供給値がリポ既定値
+  (`falco-rule.yaml` の `expectedFlag` / `charts/ctf-user/values.yaml` の
+  `challenge.flags`) と同値でないこと、(3) 未知 id・非 evade・形式不正が無いこと。
+  1 つでも破れば採点側は起動を拒否し、仕込み側は cluster に触れる前に非ゼロ終了する
+  (既定値のまま黙って動く経路を作らない)。エラー文言は id のみで flag 値を出さない。
+  - **スコープ**: 採点側 = scenario `Restrict` 後の catalog (`main.go` は Restrict の
+    **後**に `ApplyFlagOverrides(path, fullCatalog)` を呼ぶ。id の既知判定と既定値比較は
+    full catalog に対して行う)。仕込み側 = deploy モードが plant する evade 課題
+    (`all` = 全 evade / `scenario:<name>` = その scenario の evade / `<NN-slug>` =
+    その課題が evade なら 1 件)。スコープ外の evade id が載っているのは可
+    (1 つのイベント用ファイルを全モード・全 scenario で使い回せる)。
+  - 実装: 採点側 `internal/catalog/flags.go`、仕込み側
+    `charts/ctf-user/validate-flags-file.sh` (`deploy-user.sh --flags-file` が呼ぶ)。
+    **2 つは同じ規則の別実装** — 片方の規則を変えたらもう片方も変える。
+    テストは `internal/catalog/flags_test.go` (`make test`) と
+    `scripts/check-flags-file-validation.sh` (`make check-flags` / CI `flag-guard`)。
 - 仕込み側: `challenges/<NN>/plant.sh` が唯一の正典。フラグ実値は書かず
   `${CTF_FLAG_<ID>}` env を参照 (`<ID>` = challengeId 大文字・`-`→`_`)。
   **ADR-0001 (Option B, Accepted)**: `plant.sh` は `challenge` コンテナでは
@@ -327,7 +344,7 @@ challenge コンテナは UID 表のとおり **root (0) が意図的** (CTF rea
 | Challenges path | `deploy-user.sh --challenges-dir` (ctf-user chart 同梱、当 repo `challenges/` を default 参照)。`--scenarios-dir` (P27-1) は同様に当 repo `scenarios/` を default 参照 — `<username> scenario:<name>` モードでのみ使う。**platform 側 `deploy-event-workspaces.sh` (platform#130 で実装) は `--challenge` 未指定時、現在の環境の `scoreboardScenario` (採点スコープ) を helmfile 経由で読み取り `scenario:<name>` へ自動導出する** (`--challenge` 明示指定は自動導出より優先。`--env` で対象環境を選ぶ — `scripts/standup.sh` は `$HELM_ENV` を渡す) | 
 | Webhook payload | `POST /falco/events` は falcosidekick 標準形。フィールドキー変更は両 repo 同時 PR |
 | Cookie domain | `.<ctf-domain>` は platform が決定。app 側は前提とする |
-| Flags (**ADR-0001 Option B で更新**) | platform `events/<date>/flags.sops.yaml` が正典。scoreboard へは変わらず `FLAGS_FILE`。仕込み側は **`ctf-flags` Secret (`CTF_FLAG_<ID>` キー) → `plant` initContainer にのみ `envFrom`/`secretKeyRef` で到達** — `challenge` コンテナの env には CTF_FLAG_* は一切出現しない (ADR-0001 提案 I12)。`deploy-user.sh --flags-file` の `--set-string challenge.flags.<id>=...` という *引数* 面は不変 (C6)、到達経路だけが変わった。app は `FALCO{dev-<slug>}` placeholder のみ保持。dev default 値は両 repo で一致させる |
+| Flags (**ADR-0001 Option B で更新**) | platform `events/<date>/flags.sops.yaml` が正典。scoreboard へは変わらず `FLAGS_FILE`。仕込み側は **`ctf-flags` Secret (`CTF_FLAG_<ID>` キー) → `plant` initContainer にのみ `envFrom`/`secretKeyRef` で到達** — `challenge` コンテナの env には CTF_FLAG_* は一切出現しない (ADR-0001 提案 I12)。`deploy-user.sh --flags-file` の `--set-string challenge.flags.<id>=...` という *引数* 面は不変 (C6)、到達経路だけが変わった。app は `FALCO{dev-<slug>}` placeholder のみ保持。dev default 値は両 repo で一致させる。**flags ファイルの要件 (fail-closed)**: 指定時は、スコープ内の全 evade 課題の id を含み、どの値も dev default と同値でないこと — 満たさないファイルは scoreboard が起動を拒否し、`deploy-user.sh` が非ゼロ終了する (「フラグ注入」節参照)。platform はイベント用ファイルを全 evade id について生成する |
 | `ALLOWED_ORIGINS` (P23-2, **platform 側 P19-2a で landing 済**) | scoreboard の origin-guard middleware (`internal/scoreboard/originguard`) が読む CSRF 対策アローリスト env。chart 側は `charts/scoreboard/values.yaml` の `env.allowedOrigins` (default `""` = fail-closed = 全ガード対象ルートが拒否) と `templates/deployment.yaml` で受け皿を用意済み。**platform helmfile (`releases/scoreboard/values*.gotmpl` 等) が P19-2a (platform#54) でこの値の供給を landing 済み**。P19-2b の単一 origin 化後は値がさらに単一化: `https://app.<dnsSuffix>` の一値 (旧・host分離時代の `https://journey.<dnsSuffix>` 等の複数値は不要になった)。`userN.<dnsSuffix>` の ttyd origin は含めない (CSRF 踏み台化を防ぐため意図的に対象外)。値の実供給・検証は platform-lead 側 |
 | `PORTAL_TTYD_SUFFIX`⇔`ctf-user.dnsSuffix` 一致制約 (P23-4, **正典・実装済**) | scoreboard の portal Terminal タブは呼び手自身の ttyd iframe src を `https://<derived-username>.<PORTAL_TTYD_SUFFIX>` で構築する (`cmd/scoreboard/main.go` の `portalTtydSuffix := serverutil.Env("PORTAL_TTYD_SUFFIX", "")` (L115) → `WithTtydSuffix` → `internal/scoreboard/view/view.go` の `ttydSuffix` (L96-102) → `internal/scoreboard/view/portal.go` の `ttydURLFor`)。**この値は `charts/ctf-user` chart の `dnsSuffix` (per-user ttyd Ingress host `<username>.<dnsSuffix>` の分) と文字列完全一致していなければならない** — 不一致は fail-safe (iframe が 404 する、または auth-policy `/check` の host 照合で弾かれ 403。**参加者間の隔離自体 (I8) は破れない**が Terminal タブの UX が壊れる)。platform 側は `helmfile/releases/scoreboard/values.yaml.gotmpl` の `portalTtydSuffix: {{ .Values.dnsSuffix \| quote }}` (L79-88) が **同一 `dnsSuffix` から派生させる (別値をハードコードしない)** ことでこの一致を機械的に保証する。空 (default) = Terminal ペインは「未構成」プレースホルダに fail-safe (`view.go` L96-102、`portal.go` L34)。契約変更 (env 名・派生元) は両 repo 同時 PR |
 | Cookie `SameSite=None`+Secure embed 契約 (P23-4, **正典・実装済**) | portal Terminal タブが ttyd を **cross-origin `<iframe>`** で埋め込む (appHost origin のページに `userN.<dnsSuffix>` origin を埋め込み) ため、oauth2-proxy の session/CSRF cookie は `SameSite=Lax` のままだと iframe 内のサブリクエストに付与されず認証が壊れる。platform 側 `helmfile/releases/oauth2-proxy/values.yaml.gotmpl` の `cookie_samesite = "none"` (L60、`cookie_secure = true` は既設 L48) が緩和し、`cookie_csrf_samesite` は空継承で CSRF cookie も同時に `None` になる (L53-55 コメント参照)。**この緩和は単独では安全に成立しない** — (1) `internal/scoreboard/originguard` (P23-2) が状態変更 API の Origin/Referer を明示 allowlist (`ALLOWED_ORIGINS`、上記行) で fail-closed 検証し、SameSite=Lax が今まで閉じていた classic cross-site form-POST CSRF の穴を埋める (ガード対象は `h.og()` でラップされたルートに限る — submit / display-name (非 admin) / internal-exfil の 3 ルートは collector forward 経路のため意図的に対象外。`api.go` 側コメントに accepted residual risk として明記済みで、本緩和による新規悪化ではない)、(2) ttyd-proxy の `FRAME_ANCESTORS` (P23-3、上記「ttyd-proxy 配線」行) が iframe として許可する親 origin を制限する。**この 2 つが main に landing 済みであることが cookie 緩和の前提条件** (`internal/scoreboard/originguard/originguard.go` の package doc L1-15 に同じ依存関係の説明あり)。**merge 順序**: platform (cookie 緩和) を同時 or わずかに先行させる。app-first で merge すると iframe に cookie が届かず Terminal タブが login ループ/403 になり不可 (経緯は platform#53 / app#91 の PR 本文)。契約変更は両 repo 同時 PR |

@@ -21,6 +21,12 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
 
 ### Security
 
+- flags ファイル (`FLAGS_FILE` / `deploy-user.sh --flags-file`) の検証を fail-closed 化。
+  これまでは evade 課題の id が欠けていても既定値 (placeholder) のまま起動していた。
+  指定時は、スコープ内の全 evade 課題への供給と、既定値と異なる値であることを必須にし、
+  満たさなければ scoreboard は起動を拒否、`deploy-user.sh` は cluster に触れる前に終了する。
+  flags ファイルを指定しない経路 (ローカル開発) は変更なし。
+
 <!--
   compare リンク参照定義。リリース時に vX.Y.Z を最新タグへ更新すること
   (docs/RELEASING.md の手順参照)。初期は最初のタグを打つまでプレースホルダ。
