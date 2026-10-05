@@ -135,12 +135,13 @@ persistence:
   storageClassName: ""
 
 # Real per-event flags. When enabled, mount a Secret as FLAGS_FILE so
-# ApplyFlagOverrides replaces the FALCO{dev-...} placeholders baked into the
+# catalog.LoadScored replaces the FALCO{dev-...} placeholders baked into the
 # image. The Secret is created by the platform from events/<date>/flags.sops.yaml
 # (key: flags.yaml). Disabled = use the dev placeholders (local).
 # When enabled the scoreboard refuses to start unless the file supplies a
-# flag for every evade challenge it scores (after the scenario restriction)
-# and no supplied value equals the repository default.
+# flag for every evade challenge it scores (after the scenario restriction),
+# every value matches FALCO{...} (only A-Za-z0-9_- inside the braces), none equals a repository default
+# and no two challenges share a value (log: "flag overrides failed").
 flagsSecret:
   enabled: false
   name: scoreboard-flags

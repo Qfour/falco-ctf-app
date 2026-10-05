@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/scoring"
@@ -88,4 +89,27 @@ func TestHintPenaltySchedule(t *testing.T) {
 		setEnv(t, "SCORE_HINT_PENALTY", "")
 		eq(t, hintPenaltySchedule(logger), []int{10, 30, 50})
 	})
+}
+
+// main.go must obtain its catalog from catalog.LoadScored and nothing else:
+// that one call restricts to the scenario and applies FLAGS_FILE against the
+// right catalog. Restricting or loading the catalog by hand here would
+// reintroduce a second catalog value that the flag override could be applied
+// to by mistake (leaving the scored one on repository defaults, silently).
+// The behaviour of LoadScored itself — a pinned scenario's scored catalog
+// carries the file's flags — is covered in internal/catalog.
+func TestMainLoadsCatalogOnlyThroughLoadScored(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := string(src)
+	if n := strings.Count(code, "catalog.LoadScored(challengesDir, scenarioFile, flagsFile)"); n != 1 {
+		t.Fatalf("main.go calls catalog.LoadScored(challengesDir, scenarioFile, flagsFile) %d time(s), want exactly 1", n)
+	}
+	for _, banned := range []string{"catalog.Load(", "catalog.LoadScenario(", ".Restrict("} {
+		if strings.Contains(code, banned) {
+			t.Fatalf("main.go must not call %s directly; use catalog.LoadScored", banned)
+		}
+	}
 }

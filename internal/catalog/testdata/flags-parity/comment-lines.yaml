@@ -1,0 +1,8 @@
+# header
+flags:
+  # indented comment
+  03-stealth-read: FALCO{dev-parity-a}
+# column-0 comment inside the block
+  05-silent-search: FALCO{dev-parity-b}
+
+  10-final-exfil: FALCO{dev-parity-c}

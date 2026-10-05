@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Validate a per-event flags file before deploy-user.sh hands it to helm.
 #
-# This is the planting-side counterpart of the scoreboard's
-# catalog.ApplyFlagOverrides (internal/catalog/flags.go). Both sides read the
-# same file ({flags: {<challengeId>: FALCO{...}}}) and apply the same rules, so
-# an incomplete or un-rotated file is refused on both sides instead of leaving
-# a challenge on the repository default.
+# This is the planting-side EARLY CHECK for the same file the scoreboard reads
+# as FLAGS_FILE ({flags: {<challengeId>: FALCO{...}}}). The scoreboard
+# (internal/catalog/flags.go) is the authority on what is scored; this script
+# exists so a bad file is refused before anything touches a cluster. Where the
+# two disagree, the Go side is right and this script is what gets fixed. The
+# shared cases in internal/catalog/testdata/flags-parity are run against both
+# (scripts/check-flags-file-validation.sh / flags_test.go).
 #
 # Usage:
 #   validate-flags-file.sh <flags-file> <challenges-dir> <challenge-id> [<scenarios-dir>]
@@ -13,15 +15,24 @@
 # <challenge-id> is what deploy-user.sh was given: `all`, a single `<NN-slug>`,
 # or `scenario:<name>` (<scenarios-dir> is then required).
 #
+# Accepted file shape (deliberately narrower than YAML — anything else is
+# "line N: malformed entry"): one top-level `flags:` line, then one entry per
+# line, all at the same space indentation:
+#     <challengeId>: <value>        value may be wrapped in '...' or "..."
+# Blank lines and whole-line `#` comments are skipped. No inline comments,
+# tabs, flow/block/multi-line values, anchors, or `---` document markers.
+#
 # Rules (every violation is reported; any violation => exit 1):
-#   - the file has at least one entry under a top-level `flags:` map
+#   - every line of the `flags:` block is a well-formed entry
 #   - no challengeId appears twice
 #   - every entry names an evade challenge that exists in <challenges-dir>
 #     (challenges/<id>/falco-rule.yaml `type: evade`)
-#   - every value matches FALCO{...}
-#   - no value equals the repository default for that challenge
+#   - every value matches FALCO{...} (only A-Za-z0-9_- inside the braces; the only characters that
+#     reach helm --set-string and the scoreboard unchanged)
+#   - no value equals the repository default of ANY challenge
 #     (falco-rule.yaml `expectedFlag`, or this chart's values.yaml
-#     `challenge.flags.<id>`)
+#     `challenge.flags`)
+#   - no two entries carry the same value
 #   - every evade challenge IN SCOPE for this deploy has an entry:
 #       all              -> every evade challenge in <challenges-dir>
 #       scenario:<name>  -> the evade challenges listed in
@@ -29,12 +40,15 @@
 #       <NN-slug>        -> that challenge, if it is an evade challenge
 #     (the same scoping templates/ctf-flags-secret.yaml uses to decide which
 #     flags reach the `plant` initContainer). Entries for evade challenges
-#     outside the scope are allowed, so one event file works for every mode.
+#     outside the scope are validated too, so one event file works for every
+#     mode.
 #
-# Output: on success, one `<challengeId><TAB><flag>` line per entry on stdout
-# (deploy-user.sh turns these into --set-string args) and nothing else.
-# Diagnostics go to stderr and name challenge ids only — a flag value is never
-# printed in a message.
+# Output: on success, one `<challengeId><TAB><flag>` line on stdout for each
+# entry IN SCOPE, and nothing else. Out-of-scope entries are not emitted, so
+# they never become helm arguments or part of the release record.
+# Diagnostics go to stderr and contain only line numbers and challenge ids
+# that passed the id check — never a flag value, and never the text of a line
+# that was not understood.
 #
 # Exit status: 0 valid / 1 the file was rejected / 2 usage or unreadable input.
 set -euo pipefail
@@ -55,7 +69,7 @@ die() { # $1=exit-status $2=message
 [[ -d "${CHALLENGES_DIR}" ]] || die 2 "challenges dir not found: ${CHALLENGES_DIR}"
 [[ -f "${CHART_VALUES}" ]] || die 2 "chart values not found: ${CHART_VALUES}"
 
-FLAG_RE='^FALCO\{[^}]+\}$'
+FLAG_RE='^FALCO\{[A-Za-z0-9_-]+\}$'
 
 # index_of <needle> <haystack...> -> prints the 0-based index and returns 0,
 # or returns 1 if absent. (bash 3.2: no associative arrays.)
@@ -167,22 +181,51 @@ case "${CHALLENGE_ID}" in
 esac
 
 # --- the flags file itself ---------------------------------------------------
+# The awk below classifies every line of the `flags:` block and prints either
+#   P <TAB> <line-no> <TAB> <id> <TAB> <value>     a well-formed entry
+#   E <TAB> <line-no>                              anything else
+# An E record carries NO text from the file: a line this reader did not
+# understand may hold a flag value in an unexpected position.
 SUPPLIED_IDS=()
 SUPPLIED_VALUES=()
-while IFS=$'\t' read -r fid fval; do
-  [[ -z "${fid}" ]] && continue
-  SUPPLIED_IDS+=("${fid}")
-  SUPPLIED_VALUES+=("${fval}")
+MALFORMED_LINES=()
+while IFS=$'\t' read -r kind lineno fid fval; do
+  case "${kind}" in
+    P)
+      SUPPLIED_IDS+=("${fid}")
+      SUPPLIED_VALUES+=("${fval}")
+      ;;
+    E)
+      MALFORMED_LINES+=("${lineno}")
+      ;;
+  esac
 done < <(awk '
-  /^flags:/ { inblock=1; next }
-  inblock && /^[^[:space:]]/ { inblock=0 }
-  inblock && /^[[:space:]]+[^[:space:]#]/ {
-    line=$0; sub(/^[[:space:]]+/, "", line)
-    idx=index(line, ":"); k=substr(line, 1, idx-1); v=substr(line, idx+1)
-    gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
-    gsub(/^["'"'"']|["'"'"']$/, "", v)
-    printf "%s\t%s\n", k, v
-  }' "${FLAGS_FILE}")
+  /^(---|\.\.\.)([[:space:]]|$)/ { printf "E\t%d\n", NR; next }
+  /^flags:/ {
+    rest = substr($0, 7)
+    if (seen || rest !~ /^[[:space:]]*(#.*)?$/) { printf "E\t%d\n", NR }
+    seen = 1; inblock = 1; indent = -1
+    next
+  }
+  !inblock { next }
+  /^[[:space:]]*(#.*)?$/ { next }
+  /^[^[:space:]]/ { inblock = 0; next }
+  /^ +[A-Za-z0-9._-]+: +[^ ]/ {
+    match($0, /^ +/)
+    if (indent < 0) indent = RLENGTH
+    if (RLENGTH != indent) { printf "E\t%d\n", NR; next }
+    line = substr($0, RLENGTH + 1)
+    idx = index(line, ":"); k = substr(line, 1, idx - 1); v = substr(line, idx + 1)
+    gsub(/^ +| +$/, "", v)
+    n = length(v)
+    if (n >= 2 && ((substr(v, 1, 1) == "\"" && substr(v, n, 1) == "\"") || (substr(v, 1, 1) == "\047" && substr(v, n, 1) == "\047"))) {
+      v = substr(v, 2, n - 2)
+    }
+    if (v == "") { printf "E\t%d\n", NR; next }
+    printf "P\t%d\t%s\t%s\n", NR, k, v
+    next
+  }
+  { printf "E\t%d\n", NR }' "${FLAGS_FILE}")
 
 RC=0
 violation() {
@@ -190,12 +233,18 @@ violation() {
   RC=1
 }
 
-if [[ ${#SUPPLIED_IDS[@]} -eq 0 ]]; then
-  violation "no flags parsed from ${FLAGS_FILE} (expected a top-level 'flags:' map)"
+for lineno in ${MALFORMED_LINES[@]+"${MALFORMED_LINES[@]}"}; do
+  violation "line ${lineno}: malformed entry (expected '<challengeId>: FALCO{...}' on one line)"
+done
+
+if [[ ${#SUPPLIED_IDS[@]} -eq 0 && ${#MALFORMED_LINES[@]} -eq 0 ]]; then
+  violation "no flags found under a top-level 'flags:' key"
 fi
 
 i=0
 SEEN_IDS=()
+SEEN_VALUES=()
+SEEN_VALUE_IDS=()
 while [[ "${i}" -lt ${#SUPPLIED_IDS[@]} ]]; do
   fid="${SUPPLIED_IDS[${i}]}"
   fval="${SUPPLIED_VALUES[${i}]}"
@@ -207,24 +256,30 @@ while [[ "${i}" -lt ${#SUPPLIED_IDS[@]} ]]; do
   fi
   SEEN_IDS+=("${fid}")
 
-  if ! eidx="$(index_of "${fid}" ${EVADE_IDS[@]+"${EVADE_IDS[@]}"})"; then
+  if ! index_of "${fid}" ${EVADE_IDS[@]+"${EVADE_IDS[@]}"} >/dev/null; then
     violation "${fid}: not an evade challenge in ${CHALLENGES_DIR} (only evade challenges have flags)"
     continue
   fi
   if [[ ! "${fval}" =~ ${FLAG_RE} ]]; then
-    violation "${fid}: value must match FALCO{...}"
+    violation "${fid}: value must match FALCO{...} (only A-Za-z0-9_- inside the braces)"
     continue
   fi
-  if [[ "${fval}" == "${EVADE_DEFAULTS[${eidx}]}" ]]; then
-    violation "${fid}: value is the same as the repository default; supply a per-event value"
+  # A value equal to ANY challenge default (not just this challenge's) is a
+  # value that is public in this repository.
+  if didx="$(index_of "${fval}" ${EVADE_DEFAULTS[@]+"${EVADE_DEFAULTS[@]}"})"; then
+    violation "${fid}: value is the same as a repository default (of ${EVADE_IDS[${didx}]}); supply a per-event value"
     continue
   fi
-  if cidx="$(index_of "${fid}" ${CHART_IDS[@]+"${CHART_IDS[@]}"})"; then
-    if [[ "${fval}" == "${CHART_DEFAULTS[${cidx}]}" ]]; then
-      violation "${fid}: value is the same as the chart default; supply a per-event value"
-      continue
-    fi
+  if didx="$(index_of "${fval}" ${CHART_DEFAULTS[@]+"${CHART_DEFAULTS[@]}"})"; then
+    violation "${fid}: value is the same as a chart default (of ${CHART_IDS[${didx}]}); supply a per-event value"
+    continue
   fi
+  if didx="$(index_of "${fval}" ${SEEN_VALUES[@]+"${SEEN_VALUES[@]}"})"; then
+    violation "${fid}: value is the same as the one for ${SEEN_VALUE_IDS[${didx}]}; every challenge needs its own value"
+    continue
+  fi
+  SEEN_VALUES+=("${fval}")
+  SEEN_VALUE_IDS+=("${fid}")
 done
 
 for rid in ${REQUIRED_IDS[@]+"${REQUIRED_IDS[@]}"}; do
@@ -238,8 +293,11 @@ if [[ "${RC}" -ne 0 ]]; then
   exit 1
 fi
 
+# Only in-scope entries leave this script.
 i=0
 while [[ "${i}" -lt ${#SUPPLIED_IDS[@]} ]]; do
-  printf '%s\t%s\n' "${SUPPLIED_IDS[${i}]}" "${SUPPLIED_VALUES[${i}]}"
+  if index_of "${SUPPLIED_IDS[${i}]}" ${REQUIRED_IDS[@]+"${REQUIRED_IDS[@]}"} >/dev/null; then
+    printf '%s\t%s\n' "${SUPPLIED_IDS[${i}]}" "${SUPPLIED_VALUES[${i}]}"
+  fi
   i=$((i + 1))
 done

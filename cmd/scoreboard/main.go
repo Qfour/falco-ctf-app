@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -160,44 +161,23 @@ func main() {
 		HintPenalties: hintPenaltySchedule(logger),
 	}
 
-	cat, err := catalog.Load(challengesDir)
+	// One call loads the catalog, restricts it to the pinned scenario and
+	// applies the per-event flags (catalog.LoadScored). With FLAGS_FILE set,
+	// a missing, un-rotated or malformed flag refuses startup instead of
+	// leaving a challenge scored against the repository default.
+	scored, err := catalog.LoadScored(challengesDir, scenarioFile, flagsFile)
 	if err != nil {
-		logger.Error("catalog load failed", "dir", challengesDir, "err", err)
+		if errors.Is(err, catalog.ErrFlagOverrides) {
+			logger.Error("flag overrides failed", "file", flagsFile, "err", err)
+		} else {
+			logger.Error("catalog load failed", "dir", challengesDir, "scenario_file", scenarioFile, "err", err)
+		}
 		os.Exit(1)
 	}
-	// fullCat keeps the unrestricted catalog (repository-default flags) for
-	// ApplyFlagOverrides below: the flags file is validated against every
-	// known challenge, while coverage is required for the scored scope only.
-	fullCat := cat
-	scenarioID := ""
-	// order is the mission sequence the Journey UI walks. When a scenario is
-	// pinned we honour its explicit challenge order (Restrict returns a map,
-	// which loses ordering); otherwise fall back to the catalog's sorted ids
-	// (NN- prefixes sort into 01..10 sequence).
-	var order []string
-	if scenarioFile != "" {
-		sc, err := catalog.LoadScenario(scenarioFile)
-		if err != nil {
-			logger.Error("scenario load failed", "file", scenarioFile, "err", err)
-			os.Exit(1)
-		}
-		if cat, err = cat.Restrict(sc.Challenges); err != nil {
-			logger.Error("scenario restrict failed", "scenario", sc.ID, "err", err)
-			os.Exit(1)
-		}
-		scenarioID = sc.ID
-		order = sc.Challenges
-	} else {
-		order = cat.IDs()
-	}
-	// Applied AFTER the scenario Restrict so that "every evade challenge has a
-	// flag supplied" is checked against what this instance actually scores.
-	// With FLAGS_FILE set, a missing or un-rotated flag refuses startup
-	// instead of leaving a challenge scored against the repository default.
-	if err := cat.ApplyFlagOverrides(flagsFile, fullCat); err != nil {
-		logger.Error("flag overrides failed", "file", flagsFile, "err", err)
-		os.Exit(1)
-	}
+	// order is the mission sequence the Journey UI walks: the scenario's
+	// explicit challenge order when one is pinned, otherwise the catalog's
+	// sorted ids (NN- prefixes sort into 01..10 sequence).
+	cat, scenarioID, order := scored.Catalog, scored.ScenarioID, scored.Order
 	// Journey UI content (title/tagline/briefing/steps/hints/docsUrl). Optional
 	// per challenge; a missing journey.yaml just yields no briefing for that
 	// mission and the UI degrades gracefully ("ブリーフィング準備中").

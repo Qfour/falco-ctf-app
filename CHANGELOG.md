@@ -23,9 +23,14 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
 
 - flags ファイル (`FLAGS_FILE` / `deploy-user.sh --flags-file`) の検証を fail-closed 化。
   これまでは evade 課題の id が欠けていても既定値 (placeholder) のまま起動していた。
-  指定時は、スコープ内の全 evade 課題への供給と、既定値と異なる値であることを必須にし、
+  指定時は、スコープ内の全 evade 課題への供給、いずれの課題の既定値とも異なる値であること、
+  課題間で値が重複しないこと、値が `FALCO{...} (only A-Za-z0-9_- inside the braces)` の形であることを必須にし、
   満たさなければ scoreboard は起動を拒否、`deploy-user.sh` は cluster に触れる前に終了する。
   flags ファイルを指定しない経路 (ローカル開発) は変更なし。
+- **アップグレード時の注意**: 既存の `scoreboard-flags` Secret が不完全、既定値と同値、
+  または上記の形に合わない場合、この版に上げた scoreboard は再起動時に起動を拒否する
+  (ログは `flag overrides failed`)。上げる前に flags ファイルを確認すること。
+- `falco-rule.yaml` の `expectedFlag` も `FALCO{...} (only A-Za-z0-9_- inside the braces)` に制限 (従来は `}` 以外の任意文字)。
 
 <!--
   compare リンク参照定義。リリース時に vX.Y.Z を最新タグへ更新すること

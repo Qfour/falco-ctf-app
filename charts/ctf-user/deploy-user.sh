@@ -39,9 +39,10 @@
 #   Overrides the chart's FALCO{dev-...} defaults with real per-event flags.
 #   Fail-closed (validate-flags-file.sh): the file must supply a flag for
 #   EVERY evade challenge this deploy plants (all → all of them;
-#   scenario:<name> → the scenario's; <NN-slug> → that one), and no value
-#   may equal the repository/chart default. Otherwise the script exits
-#   non-zero before touching the cluster.
+#   scenario:<name> → the scenario's; <NN-slug> → that one); values must
+#   match FALCO{...} (only A-Za-z0-9_- inside the braces), differ from every repository/chart default
+#   and from each other. Otherwise the script exits non-zero before touching
+#   the cluster. Only the in-scope entries are passed to helm.
 #   Omit for local dev (dev placeholders are used, nothing is validated).
 #
 # --frame-ancestors <value>: CSP `frame-ancestors` source list the ttyd-proxy
@@ -303,11 +304,13 @@ fi
 # the `ctf-flags` Secret and reach only the `plant` initContainer
 # (envFrom/secretKeyRef) — the `challenge` container never sees them (I12).
 #
-# The file is validated first (validate-flags-file.sh, same rules as the
-# scoreboard's catalog.ApplyFlagOverrides): every evade challenge in scope
-# for this deploy mode must have a flag, and no value may equal the
-# repository/chart default. A rejected file exits here, before anything
-# touches the cluster. Runs after the mode resolution above because the scope
+# The file is validated first (validate-flags-file.sh, an early check of the
+# rules the scoreboard enforces in internal/catalog): every evade challenge in scope
+# for this deploy mode must have a flag; values are restricted to
+# FALCO{...} (only A-Za-z0-9_- inside the braces) and may not equal a repository/chart default or
+# each other. A rejected file exits here, before anything
+# touches the cluster. Only the entries IN SCOPE come back and are passed to
+# helm (the rest of the event file never becomes a helm argument). Runs after the mode resolution above because the scope
 # (all / scenario / single) decides which ids are required. Without
 # --flags-file nothing is validated and the chart defaults are used (local dev).
 FLAG_ARGS=()
@@ -324,7 +327,8 @@ if [[ -n "${FLAGS_FILE}" ]]; then
     fkey="$(printf '%s' "${fid}" | sed 's/\./\\./g')"
     FLAG_ARGS+=(--set-string "challenge.flags.${fkey}=${fval}")
   done <<< "${FLAG_PAIRS}"
-  [[ ${#FLAG_ARGS[@]} -gt 0 ]] || { echo "no flags parsed from ${FLAGS_FILE} (expected a top-level 'flags:' map)" >&2; exit 1; }
+  # FLAG_ARGS may legitimately be empty here: the validator emits only the
+  # entries in scope, and a trigger-only deploy has none.
 fi
 
 # Determine total step count (5 normally — namespace/rotate/upgrade/verify/

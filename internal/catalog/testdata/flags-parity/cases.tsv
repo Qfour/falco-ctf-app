@@ -1,0 +1,51 @@
+# Shared flags-file cases, run against BOTH readers of the per-event flags file:
+#   go    = internal/catalog (flags_test.go: TestFlagsFileParity) — the authority on what is scored
+#   shell = charts/ctf-user/validate-flags-file.sh (scripts/check-flags-file-validation.sh, mode `all`)
+# Both use the real challenges/ catalog. Every input that a side accepts must yield exactly
+# expected.tsv on that side, so an input both accept is read identically by both.
+# Rows where the verdicts differ are the known, fixed list of divergences (all are
+# "scoreboard accepts, planting-side pre-check refuses"). The opposite direction must stay empty.
+# Columns (TAB-separated): file  go  shell  note
+plain.yaml	accept	accept	baseline
+indent4.yaml	accept	accept	4-space indent
+single-quoted.yaml	accept	accept	'...' around a value
+double-quoted.yaml	accept	accept	"..." around a value
+comment-lines.yaml	accept	accept	whole-line comments and a blank line inside the block
+other-top-level-keys.yaml	accept	accept	unrelated top-level keys before and after
+trailing-spaces.yaml	accept	accept	trailing spaces after a value
+crlf.yaml	accept	reject	CRLF line endings
+inline-comment.yaml	accept	reject	inline comment after a value
+anchor.yaml	accept	reject	anchor on a value
+bom.yaml	accept	reject	UTF-8 BOM
+quoted-key.yaml	accept	reject	quoted key
+space-before-colon.yaml	accept	reject	`key : value`
+squote-escape.yaml	reject	reject	'' escape inside single quotes
+dquote-tab-escape.yaml	reject	reject	\t escape inside double quotes
+dquote-hex-escape.yaml	reject	reject	\x41 escape inside double quotes
+backslash-plain.yaml	reject	reject	backslash in a plain value
+comma.yaml	reject	reject	comma in a value
+comma-assignment.yaml	reject	reject	comma followed by key=value in a value
+colon-space-in-value.yaml	reject	reject	`: ` inside a value
+space-in-value.yaml	reject	reject	space inside a value
+value-on-next-line.yaml	reject	reject	value written on the line after the key
+list-form.yaml	reject	reject	list instead of a map
+swapped-key-value.yaml	reject	reject	key and value swapped
+block-scalar.yaml	reject	reject	|- block scalar
+alias.yaml	reject	reject	alias to another value
+flow-map.yaml	reject	reject	flow mapping
+tab-indent.yaml	reject	reject	tab indentation
+no-space-after-colon.yaml	reject	reject	`key:value`
+duplicate-id.yaml	reject	reject	same challengeId twice
+duplicate-flags-key.yaml	reject	reject	two top-level flags: keys
+multi-document.yaml	reject	reject	second YAML document
+nested-map.yaml	reject	reject	entries nested one level down
+missing-id.yaml	reject	reject	an evade challenge has no entry
+unknown-id.yaml	reject	reject	unknown challengeId
+trigger-id.yaml	reject	reject	entry for a trigger challenge
+own-default.yaml	reject	reject	value equals that challenge's repository default
+other-challenge-default.yaml	reject	reject	value equals ANOTHER challenge's repository default
+reused-value.yaml	reject	reject	two challenges share one value
+empty-value.yaml	reject	reject	empty value
+empty-map.yaml	reject	reject	empty flags map
+no-flags-key.yaml	reject	reject	no flags key
+empty-file.yaml	reject	reject	empty file
