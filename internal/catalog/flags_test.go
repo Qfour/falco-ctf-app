@@ -231,6 +231,26 @@ func TestScored(t *testing.T) {
 		{
 			name:    "no flags key at all: rejected",
 			body:    "other: 1\n",
+			wantErr: "line 1: unexpected top-level key",
+		},
+		{
+			name:    "another top-level key next to flags: rejected without echoing it",
+			body:    all3(evStealth, evSilent, evExfil) + "not-a-flag: 1\n",
+			wantErr: "line 5: unexpected top-level key",
+		},
+		{
+			name:    "inline comment after a value: rejected",
+			body:    "flags:\n  03-stealth-read: " + evStealth + " # note\n  05-silent-search: " + evSilent + "\n  10-final-exfil: " + evExfil + "\n",
+			wantErr: "line 2: flag for \"03-stealth-read\" must be a plain string written literally",
+		},
+		{
+			name:    "escaped value whose decoded form appears in an inline comment: rejected",
+			body:    "flags:\n  03-stealth-read: \"FALCO{test-event-\\x73tealth}\" # " + evStealth + "\n  05-silent-search: " + evSilent + "\n  10-final-exfil: " + evExfil + "\n",
+			wantErr: "line 2: flag for \"03-stealth-read\" must be a plain string written literally",
+		},
+		{
+			name:    "empty file: rejected",
+			body:    "",
 			wantErr: "no flags found",
 		},
 	}
@@ -461,7 +481,7 @@ func TestFlagsFileParity(t *testing.T) {
 				if !errors.Is(err, ErrFlagOverrides) {
 					t.Fatalf("expected reject, got err=%v", err)
 				}
-				if strings.Contains(err.Error(), "FALCO{dev-") || strings.Contains(err.Error(), "parity-") {
+				if strings.Contains(err.Error(), "FALCO{dev-") || strings.Contains(err.Error(), "parity-") || strings.Contains(err.Error(), "dev-decoy") {
 					t.Fatalf("error text leaks flag-file content: %q", err)
 				}
 			default:
@@ -469,7 +489,7 @@ func TestFlagsFileParity(t *testing.T) {
 			}
 		})
 	}
-	if cases < 40 {
+	if cases < 57 {
 		t.Fatalf("only %d parity cases read; the manifest was truncated", cases)
 	}
 	// The pre-check must never be the more permissive side: a file it lets

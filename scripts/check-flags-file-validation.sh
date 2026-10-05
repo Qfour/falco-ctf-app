@@ -249,7 +249,7 @@ while IFS=$'\t' read -r pfile pgo pshell pnote; do
       fi
       ;;
     reject:1)
-      if grep -qE 'FALCO\{dev-|parity-' "${WORK}/err" "${WORK}/out"; then
+      if grep -qE 'FALCO\{dev-|parity-|dev-decoy' "${WORK}/err" "${WORK}/out"; then
         fail "${label}: rejected, but file content was printed"
       elif [[ -s "${WORK}/out" ]]; then
         fail "${label}: rejected, but still wrote pairs to stdout"
@@ -262,7 +262,7 @@ while IFS=$'\t' read -r pfile pgo pshell pnote; do
       ;;
   esac
 done < "${PARITY}/cases.tsv"
-if [[ "${PARITY_CASES}" -lt 40 ]]; then
+if [[ "${PARITY_CASES}" -lt 57 ]]; then
   fail "only ${PARITY_CASES} parity case(s) read from ${PARITY}/cases.tsv"
 fi
 
@@ -395,7 +395,7 @@ expect_deploy_reaches_helm "no --flags-file, scenario mode: unchanged, no overri
 
 echo "==> ${CASES} case(s) run"
 # A run that executed no cases proves nothing.
-if [[ "${CASES}" -lt 90 ]]; then
+if [[ "${CASES}" -lt 106 ]]; then
   echo "FAIL: only ${CASES} case(s) ran — the test list was truncated" >&2
   RC=1
 fi

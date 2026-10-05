@@ -28,15 +28,8 @@ import (
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
-	challengesDir := serverutil.Env("CHALLENGES_DIR", "/app/challenges")
 	dbPath := serverutil.Env("SCOREBOARD_DB", "/var/lib/scoreboard/scoreboard.db")
 	addr := serverutil.Env("LISTEN_ADDR", ":8000")
-	// FLAGS_FILE injects real per-event flags over the FALCO{dev-...}
-	// placeholders baked into the public image. Empty = use placeholders.
-	flagsFile := serverutil.Env("FLAGS_FILE", "")
-	// SCENARIO_FILE restricts scoring + /api/state to one event composition
-	// (e.g. the 2-hour killchain subset). Empty = all challenges.
-	scenarioFile := serverutil.Env("SCENARIO_FILE", "")
 	// ADMIN_EMAILS is the operator allowlist verified against the
 	// auth-policy-propagated X-Auth-Request-Email. It gates the admin writes
 	// (POST /api/admin/*), the full-event views (GET /api/state and the operator
@@ -161,11 +154,13 @@ func main() {
 		HintPenalties: hintPenaltySchedule(logger),
 	}
 
-	// One call loads the catalog, restricts it to the pinned scenario and
-	// applies the per-event flags (catalog.LoadScored). With FLAGS_FILE set,
-	// a missing, un-rotated or malformed flag refuses startup instead of
+	// The scored catalog comes from scoredFromEnv (catalog.go) and nowhere
+	// else: it reads CHALLENGES_DIR / SCENARIO_FILE / FLAGS_FILE and loads,
+	// restricts and applies the per-event flags in one step. With FLAGS_FILE
+	// set, a missing, un-rotated or malformed flag refuses startup instead of
 	// leaving a challenge scored against the repository default.
-	scored, err := catalog.LoadScored(challengesDir, scenarioFile, flagsFile)
+	catCfg, scored, err := scoredFromEnv(serverutil.Env)
+	challengesDir, scenarioFile, flagsFile := catCfg.challengesDir, catCfg.scenarioFile, catCfg.flagsFile
 	if err != nil {
 		if errors.Is(err, catalog.ErrFlagOverrides) {
 			logger.Error("flag overrides failed", "file", flagsFile, "err", err)

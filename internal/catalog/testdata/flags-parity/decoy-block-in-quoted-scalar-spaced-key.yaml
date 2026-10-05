@@ -1,0 +1,10 @@
+note: "x
+flags:
+  03-stealth-read: FALCO{dev-decoy-a}
+  05-silent-search: FALCO{dev-decoy-b}
+  10-final-exfil: FALCO{dev-decoy-c}
+"
+flags :
+  03-stealth-read: FALCO{dev-parity-a}
+  05-silent-search: FALCO{dev-parity-b}
+  10-final-exfil: FALCO{dev-parity-c}

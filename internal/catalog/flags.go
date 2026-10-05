@@ -82,12 +82,14 @@ func LoadScored(challengesDir, scenarioFile, flagsFile string) (Scored, error) {
 //
 // Fail-closed — when flagsPath is set, each of these is an error and no flag
 // is applied:
-//   - the file is unreadable, not a single YAML document, or has no
-//     top-level `flags:` mapping with at least one entry
+//   - the file is unreadable, not a single YAML document, has any top-level
+//     key other than `flags:`, or `flags:` is not a block mapping with at
+//     least one entry
 //   - a key is not shaped like a challengeId, or appears twice
 //   - an entry names a challenge that is not in c, or is not evade
-//   - a value is not a scalar written literally on the same line as its key
-//     (no escapes, block/flow/multi-line forms or aliases), or does not match
+//   - a value is not a scalar written literally on the same line as its key,
+//     alone up to the end of that line (no escapes, tags, anchors, inline
+//     comments, block/flow/multi-line forms or aliases), or does not match
 //     FALCO{...} (only A-Za-z0-9_- inside the braces)
 //   - a value equals the repository default of ANY challenge
 //   - two entries carry the same value
@@ -179,6 +181,24 @@ func (c Catalog) scored(ids []string, flagsPath string) (Catalog, error) {
 	return out, nil
 }
 
+// writtenLiterally reports whether the scalar v is, in the source, exactly
+// its decoded value — bare, or wrapped in one pair of quotes — running from
+// the node's own column to the end of the line (trailing whitespace aside).
+// Anything else on that stretch (an escape that decodes to the value, a tag,
+// an anchor, an inline comment) fails, so text elsewhere on the line can
+// never stand in for the value.
+func writtenLiterally(lines []string, v *yaml.Node) bool {
+	if v.Line < 1 || v.Line > len(lines) {
+		return false
+	}
+	line := lines[v.Line-1]
+	if v.Column < 1 || v.Column > len(line) {
+		return false
+	}
+	src := strings.TrimRight(line[v.Column-1:], " \t\r")
+	return src == v.Value || src == `"`+v.Value+`"` || src == "'"+v.Value+"'"
+}
+
 type flagEntry struct {
 	id    string
 	value string
@@ -219,12 +239,15 @@ func readFlagsFile(path string) ([]flagEntry, error) {
 	root := doc.Content[0]
 	var flags *yaml.Node
 	for i := 0; i+1 < len(root.Content); i += 2 {
-		if k := root.Content[i]; k.Kind == yaml.ScalarNode && k.Value == "flags" {
-			if flags != nil {
-				return nil, fmt.Errorf("line %d: `flags:` appears more than once", k.Line)
-			}
-			flags = root.Content[i+1]
+		k := root.Content[i]
+		if k.Kind != yaml.ScalarNode || k.Value != "flags" {
+			// The key is not echoed: it is unvalidated file content.
+			return nil, fmt.Errorf("line %d: unexpected top-level key (the file may hold only `flags:`)", k.Line)
 		}
+		if flags != nil {
+			return nil, fmt.Errorf("line %d: `flags:` appears more than once", k.Line)
+		}
+		flags = root.Content[i+1]
 	}
 	if flags == nil || flags.Kind != yaml.MappingNode || len(flags.Content) == 0 {
 		return nil, errors.New("no flags found under top-level `flags:` key")
@@ -246,8 +269,7 @@ func readFlagsFile(path string) ([]flagEntry, error) {
 			return nil, fmt.Errorf("line %d: challengeId %q appears more than once", k.Line, id)
 		}
 		seen[id] = true
-		if v.Kind != yaml.ScalarNode || v.Line != k.Line || v.Line < 1 || v.Line > len(lines) || v.Value == "" ||
-			!strings.Contains(lines[v.Line-1], v.Value) {
+		if v.Kind != yaml.ScalarNode || v.Line != k.Line || v.Value == "" || !writtenLiterally(lines, v) {
 			return nil, fmt.Errorf("line %d: flag for %q must be a plain string written literally on the same line", k.Line, id)
 		}
 		entries = append(entries, flagEntry{id: id, value: v.Value})

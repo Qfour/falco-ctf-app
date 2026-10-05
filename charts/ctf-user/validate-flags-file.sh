@@ -19,8 +19,9 @@
 # "line N: malformed entry"): one top-level `flags:` line, then one entry per
 # line, all at the same space indentation:
 #     <challengeId>: <value>        value may be wrapped in '...' or "..."
-# Blank lines and whole-line `#` comments are skipped. No inline comments,
-# tabs, flow/block/multi-line values, anchors, or `---` document markers.
+# Blank lines and whole-line `#` comments are skipped anywhere. NOTHING else
+# may appear in the file: no other top-level key, no inline comments, tabs,
+# flow/block/multi-line values, anchors, or `---` document markers.
 #
 # Rules (every violation is reported; any violation => exit 1):
 #   - every line of the `flags:` block is a well-formed entry
@@ -200,16 +201,19 @@ while IFS=$'\t' read -r kind lineno fid fval; do
       ;;
   esac
 done < <(awk '
-  /^(---|\.\.\.)([[:space:]]|$)/ { printf "E\t%d\n", NR; next }
+  # The whole file is: blank lines, whole-line comments, ONE `flags:` line,
+  # and entries after it. Every other line — before, inside or after the
+  # block, at any indentation — is an E record. Nothing is skipped as
+  # "some other key": text this reader does not model could change what a
+  # YAML parser takes the flags to be.
+  /^[[:space:]]*(#.*)?$/ { next }
   /^flags:/ {
     rest = substr($0, 7)
     if (seen || rest !~ /^[[:space:]]*(#.*)?$/) { printf "E\t%d\n", NR }
-    seen = 1; inblock = 1; indent = -1
+    seen = 1; indent = -1
     next
   }
-  !inblock { next }
-  /^[[:space:]]*(#.*)?$/ { next }
-  /^[^[:space:]]/ { inblock = 0; next }
+  !seen { printf "E\t%d\n", NR; next }
   /^ +[A-Za-z0-9._-]+: +[^ ]/ {
     match($0, /^ +/)
     if (indent < 0) indent = RLENGTH
@@ -234,7 +238,7 @@ violation() {
 }
 
 for lineno in ${MALFORMED_LINES[@]+"${MALFORMED_LINES[@]}"}; do
-  violation "line ${lineno}: malformed entry (expected '<challengeId>: FALCO{...}' on one line)"
+  violation "line ${lineno}: malformed entry (the file may hold only one top-level 'flags:' key, '<challengeId>: FALCO{...}' entries under it, blank lines and # comments)"
 done
 
 if [[ ${#SUPPLIED_IDS[@]} -eq 0 && ${#MALFORMED_LINES[@]} -eq 0 ]]; then

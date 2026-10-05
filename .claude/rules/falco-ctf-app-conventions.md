@@ -265,7 +265,10 @@ challenge コンテナは UID 表のとおり **root (0) が意図的** (CTF rea
      この文字集合の外は、YAML の引用・エスケープの解釈差や `helm --set-string` の
      `,` 分割で、採点値と仕込み値が食い違い得るため受け付けない
   5. 未知 id・非 evade・重複 id が無く、`flags:` 直下に 1 行 1 エントリで値が同じ行に
-     リテラルで書かれている (ブロック/フロー/複数行/エイリアス/複数ドキュメント不可)
+     リテラルで書かれている (ブロック/フロー/複数行/エイリアス/タグ/アンカー/
+     インラインコメント/複数ドキュメント不可)
+  6. **ファイルにあるのは `flags:` 1 つ・その下のエントリ・空行・行コメントだけ**
+     (他のトップレベルキーは両側で拒否。`sops -d` の出力はこの形)
   - **この検査が保証しないこと**: 値の強度や、**過去イベントで使った値の再利用**は
     検出しない (検査しているのは「既定値と違う」「課題間で重複しない」ことだけ)。
     イベント毎の新規生成は platform 側の運用で担保する。
@@ -283,9 +286,12 @@ challenge コンテナは UID 表のとおり **root (0) が意図的** (CTF rea
     両方が読み、(a) 受理した側は必ず `expected.tsv` どおりに解釈する、(b) 判定が
     分かれる入力は `cases.tsv` に固定 (現状すべて「Go 受理・shell 拒否」。
     「shell だけ受理」は 0 件であることを両テストが assert)。
-  - `main.go` は catalog を **`catalog.LoadScored` 1 回の呼び出しだけ**で得る
-    (scenario の絞り込みと flag 上書きを 1 関数に閉じ、別々の catalog 値を
-    取り違える余地を無くす。`cmd/scoreboard/main_test.go` が固定)。
+  - `main()` は catalog を **`scoredFromEnv(serverutil.Env)` 1 回の呼び出しだけ**で得る
+    (`cmd/scoreboard/catalog.go`。env の読み取りと `catalog.LoadScored` =
+    読込 → scenario の絞り込み → flag 上書き、を 1 関数に閉じ、別々の catalog 値を
+    取り違える余地を無くす)。`cmd/scoreboard/main_test.go` の
+    `TestScoredFromEnv` (振る舞い) と `TestMainTakesCatalogOnlyFromScoredFromEnv`
+    (`main()` がその結果以外から catalog を得ない・差し替えない) が固定。
   - follow-up (この変更では未実施): 検査の単一ソース化 — `charts/ctf-user/templates/
     ctf-flags-secret.yaml` の描画に寄せて `helm template` でオフライン判定する案、
     または Go 実装を CLI 化して shell から呼ぶ案。現状は 2 実装 + parity テスト。
