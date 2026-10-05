@@ -3,7 +3,7 @@
 - Status: **Proposed** (Accepted 化は、本 ADR を同梱した実装 PR の CEO merge 時。ORGANIZATION.md §7 のゲート)
 - Date / Deciders: 2026-10-05 / CEO (同日「P28 と切り離して先に直す」、Class-2 merge)、VP (ADR 必須の裁定、レビュー指摘の
   採用)、architect (起草)、software-engineer (実装)、security-engineer (採点真正性の確認 — 確認待ち)
-- 関連: 実装ブランチ `fix/flags-file-fail-closed` (e416705 + レビュー反映 e628ea4)、契約表 Flags 行 (`.claude/rules/falco-ctf-app-conventions.md`)。ADR-0001
+- 関連: 実装ブランチ `fix/flags-file-fail-closed` (e416705 + レビュー反映 e628ea4・72ca801)、契約表 Flags 行 (`.claude/rules/falco-ctf-app-conventions.md`)。ADR-0001
   (flag の到達経路。C6 の引数面は不変) と ADR-0010 (I12) は supersede しない — あちらは「値がどこへ届くか」、本 ADR は
   「入力をどの条件で受理するか」。未 merge の ADR-0026 C1 が「別 Issue」とした修正の実体。platform の同時 PR (番号は起票時に追記)
 
@@ -62,8 +62,10 @@ A・B は新しい依存か values 契約の変更を伴うので、fail-open �
    触れる前の早期検出で、判定が食い違ったら Go に従う (直すのは shell 側)。一致は parity テストで確かめる: 共通の入力集
    `internal/catalog/testdata/flags-parity/` を両側のテストが読み、受理した側は `expected.tsv` どおりに読むこと、判定が
    分かれる入力は `cases.tsv` に固定すること、「shell だけ受理」が 0 件であることを両側が assert する。2026-10-05 時点で
-   43 入力: 両側受理 7 / 両側拒否 30 / Go 受理・shell 拒否 6 (CRLF・行末コメント・anchor・BOM・quoted key・`key : value`) /
-   shell だけ受理 0。
+   57 入力: 両側受理 6 / 両側拒否 45 / Go 受理・shell 拒否 6 (CRLF・BOM・quoted key・`key : value`・先頭の `---`・引用符つきの
+   `flags` キー) / shell だけ受理 0。flags ファイルに書けるのは `flags:` 1 行・その下のエントリ・空行・行コメントだけで、
+   それ以外のトップレベルキーや行は両側が拒否する (ブロックの外を読み飛ばすと、両側が受理して値が食い違う入力を作れたため)。
+   Go は値が同じ行にリテラルで書かれていること (`v.Column` から行末までの完全一致) を要求し、行末コメント・anchor・タグ付きの値は拒否する。
 5. エラー文言とログには行番号と検証済みの課題 id だけを出す。flag の値、解釈できなかった行の内容、YAML デコーダの文言は出さない。
 6. **catalog の読込を `catalog.LoadScored(challengesDir, scenarioFile, flagsFile)` 1 関数にまとめる** (読込 → scenario の
    Restrict → flag の検証と適用)。元の catalog は変更せず新しい catalog を返し、旧 `ApplyFlagOverrides` は廃止する (検証と適用の
@@ -108,7 +110,7 @@ A・B は新しい依存か values 契約の変更を伴うので、fail-open �
 
 ## Verification
 
-テスト名は e628ea4 時点。「変更前に red」= e74d871 の挙動では受理されてしまうケース (API が変わったので挙動で比べる)。
+テスト名は 72ca801 時点。「変更前に red」= e74d871 の挙動では受理されてしまうケース (API が変わったので挙動で比べる)。
 
 - **採点側** (`make test` = required の `test`): `internal/catalog/flags_test.go`
   - `TestScored` の拒否系サブテスト (変更前に red): `no scenario, one evade flag missing: rejected` /
@@ -124,8 +126,11 @@ A・B は新しい依存か values 契約の変更を伴うので、fail-open �
     `TestScored_MissingFileFailsClosed`、`TestFlagsFileParity` (D4)。
   - `TestLoadScored_RealCatalogAndScenarios` (D2・D6): 実 `challenges/` と全 scenario で、採点 catalog がファイルの flag を持ち、
     flags ファイル無しなら既定値のまま、evade id が欠けたファイルはその id がスコープ内のときだけ拒否されること。
-  - `cmd/scoreboard/main_test.go` の `TestMainLoadsCatalogOnlyThroughLoadScored` (D6): `main.go` が `LoadScored` を 1 回だけ呼び、
-    `catalog.Load(` / `catalog.LoadScenario(` / `.Restrict(` を直接呼ばないことをソースで検査する。
+  - `cmd/scoreboard` の `TestScoredFromEnv` (D6、振る舞い): env の読み取りと `LoadScored` の呼び出しをまとめた `scoredFromEnv` が、
+    scenario と flags を渡すと採点 catalog に値を入れ、evade id が欠ければエラーを返し、`FLAGS_FILE` なしなら既定値のままであること。
+  - `cmd/scoreboard/main_test.go` の `TestMainTakesCatalogOnlyFromScoredFromEnv` (D6、ソース検査): `catalog.LoadScored(` と
+    `scoredFromEnv(serverutil.Env)` がパッケージ全体で各 1 回、catalog の再代入なし、3 つの env キーの読み取りが各 1 回であること。
+    `main()` 自体は実行しておらず、別パッケージ経由で catalog を作る書き方は捕まえない (残余)。
 - **仕込み側** (`make check-flags` / CI `flag-guard` = required): `scripts/check-flags-file-validation.sh`
   - A 部 (変更前に red。e74d871 の deploy-user.sh は検証を持たない): `all: one evade flag missing` /
     `all: value equals the repository default` / `all: value equals ANOTHER challenge's repository default` /
@@ -145,5 +150,6 @@ A・B は新しい依存か values 契約の変更を伴うので、fail-open �
 - R3 conventions (2026-10-05): HI の新設・変更には当たらない。単一ソース化の follow-up を残す。1 PR のまま進める (片側だけ
   先に land すると「両側 fail-closed」が成り立たない期間ができる点で、architect も同意)。
 - R1 security-engineer (2026-10-05): flags ファイル自体を指定しない経路を要判断として提起 → 範囲外として明記した。
+- R1 / R2 の再確認 (2026-10-05、e628ea4) で出た「flags ブロックの外の扱い」と「配線のソース検査の迂回」は 72ca801 で対応 (D4・D6 の記述に反映)。
 - R4 architect 再確認 (2026-10-05、e628ea4): Finding 3 (→ D6 の `LoadScored`)・4 (Go が正)・6 (「ローテーション済み」を主張しない) の閉止を確認。
 - VP (2026-10-05): ADR の要否は R4 を採用 (R3 は不要と判定)。レビュー指摘を全件採用し、D1 (b)(c)・D3・D4 の parity・D6 を実装に追加。
