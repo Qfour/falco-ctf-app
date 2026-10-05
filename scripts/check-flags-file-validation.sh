@@ -262,9 +262,17 @@ while IFS=$'\t' read -r pfile pgo pshell pnote; do
       ;;
   esac
 done < "${PARITY}/cases.tsv"
-if [[ "${PARITY_CASES}" -lt 57 ]]; then
+if [[ "${PARITY_CASES}" -lt 73 ]]; then
   fail "only ${PARITY_CASES} parity case(s) read from ${PARITY}/cases.tsv"
 fi
+
+# NUL byte inside a comment: both readers refuse it. Generated here (and in
+# flags_test.go) instead of living in the shared testdata, because a tracked
+# file containing NUL is "binary" to git grep and scripts/check-flags.sh
+# could not scan it.
+NULFILE="${WORK}/nul.yaml"
+printf 'flags:\n  # a\000b\n  03-stealth-read: %s\n  05-silent-search: %s\n  10-final-exfil: %s\n' "${V03}" "${V05}" "${V10}" > "${NULFILE}"
+expect_validate reject "all: NUL byte inside a comment" 'the file contains NUL bytes' "${NULFILE}" "${CHALLENGES}" all
 
 echo "==> B. deploy-user.sh --flags-file (stub helm/kubectl)"
 STUB_BIN="${WORK}/bin"
@@ -395,7 +403,7 @@ expect_deploy_reaches_helm "no --flags-file, scenario mode: unchanged, no overri
 
 echo "==> ${CASES} case(s) run"
 # A run that executed no cases proves nothing.
-if [[ "${CASES}" -lt 106 ]]; then
+if [[ "${CASES}" -lt 123 ]]; then
   echo "FAIL: only ${CASES} case(s) ran — the test list was truncated" >&2
   RC=1
 fi

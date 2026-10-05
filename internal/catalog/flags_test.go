@@ -249,6 +249,15 @@ func TestScored(t *testing.T) {
 			wantErr: "line 2: flag for \"03-stealth-read\" must be a plain string written literally",
 		},
 		{
+			// Generated here rather than kept in testdata/flags-parity: a
+			// tracked file with a NUL byte is "binary" to git grep, which
+			// scripts/check-flags.sh cannot scan. The planting side has the
+			// same case in scripts/check-flags-file-validation.sh.
+			name:    "NUL byte inside a comment: rejected",
+			body:    "flags:\n  # a\x00b\n  03-stealth-read: " + evStealth + "\n  05-silent-search: " + evSilent + "\n  10-final-exfil: " + evExfil + "\n",
+			wantErr: "not valid YAML",
+		},
+		{
 			name:    "empty file: rejected",
 			body:    "",
 			wantErr: "no flags found",
@@ -489,7 +498,7 @@ func TestFlagsFileParity(t *testing.T) {
 			}
 		})
 	}
-	if cases < 57 {
+	if cases < 73 {
 		t.Fatalf("only %d parity cases read; the manifest was truncated", cases)
 	}
 	// The pre-check must never be the more permissive side: a file it lets

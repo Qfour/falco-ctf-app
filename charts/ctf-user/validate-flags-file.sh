@@ -19,9 +19,13 @@
 # "line N: malformed entry"): one top-level `flags:` line, then one entry per
 # line, all at the same space indentation:
 #     <challengeId>: <value>        value may be wrapped in '...' or "..."
-# Blank lines and whole-line `#` comments are skipped anywhere. NOTHING else
-# may appear in the file: no other top-level key, no inline comments, tabs,
-# flow/block/multi-line values, anchors, or `---` document markers.
+# Blank lines and whole-line `#` comments (indented with spaces only) are
+# skipped anywhere. NOTHING else may appear in the file: no other top-level
+# key, no inline comments, flow/block/multi-line values, anchors, or `---`
+# document markers. Any line — comments included — that contains a control
+# character (TAB and CR too), NEL / LS / PS (line breaks to a YAML parser), a
+# BOM, or bytes that are not well-formed UTF-8 is refused; other non-ASCII
+# text in comments is fine.
 #
 # Rules (every violation is reported; any violation => exit 1):
 #   - every line of the `flags:` block is a well-formed entry
@@ -182,6 +186,14 @@ case "${CHALLENGE_ID}" in
 esac
 
 # --- the flags file itself ---------------------------------------------------
+# NUL bytes cannot be screened reliably inside awk (some implementations end
+# the record at the first NUL), so they are refused up front.
+if ! LC_ALL=C tr -d '\000' < "${FLAGS_FILE}" | cmp -s - "${FLAGS_FILE}"; then
+  printf '  ✗ %s\n' "the file contains NUL bytes" >&2
+  printf 'validate-flags-file.sh: %s rejected for challenge-id %s — nothing was deployed\n' "${FLAGS_FILE}" "${CHALLENGE_ID}" >&2
+  exit 1
+fi
+
 # The awk below classifies every line of the `flags:` block and prints either
 #   P <TAB> <line-no> <TAB> <id> <TAB> <value>     a well-formed entry
 #   E <TAB> <line-no>                              anything else
@@ -200,16 +212,36 @@ while IFS=$'\t' read -r kind lineno fid fval; do
       MALFORMED_LINES+=("${lineno}")
       ;;
   esac
-done < <(awk '
+done < <(LC_ALL=C awk '
+  # LC_ALL=C: every pattern below is about BYTES, so the result does not
+  # depend on the awk implementation or the caller locale (checked with BWK
+  # awk, mawk, gawk and busybox awk).
+  #
+  # Screen each line before looking at its shape. A YAML parser treats more
+  # than "\n" as a line break (CR, NEL U+0085, LS U+2028, PS U+2029) and
+  # refuses control characters and invalid UTF-8 outright, even inside a
+  # comment. A line carrying any of those is refused here too, so that a
+  # comment this reader skips can never be a line break, an extra entry or a
+  # parse error for the scoreboard. Other non-ASCII text (in comments) is
+  # fine. In order: C0 controls incl. TAB and CR, DEL; C1 controls incl.
+  # NEL; LS / PS; BOM / U+FFFE / U+FFFF; anything that is not well-formed
+  # UTF-8.
+  /[\001-\037\177]/ || /\302[\200-\237]/ ||
+  index($0, "\342\200\250") || index($0, "\342\200\251") ||
+  index($0, "\357\273\277") || index($0, "\357\277\276") || index($0, "\357\277\277") ||
+  $0 !~ /^([\040-\176]|[\302-\337][\200-\277]|\340[\240-\277][\200-\277]|[\341-\354\356\357][\200-\277][\200-\277]|\355[\200-\237][\200-\277]|\360[\220-\277][\200-\277][\200-\277]|[\361-\363][\200-\277][\200-\277][\200-\277]|\364[\200-\217][\200-\277][\200-\277])*$/ {
+    printf "E\t%d\n", NR; next
+  }
   # The whole file is: blank lines, whole-line comments, ONE `flags:` line,
   # and entries after it. Every other line — before, inside or after the
   # block, at any indentation — is an E record. Nothing is skipped as
   # "some other key": text this reader does not model could change what a
   # YAML parser takes the flags to be.
-  /^[[:space:]]*(#.*)?$/ { next }
+  # Blank / comment lines: spaces only before the `#` (never [[:space:]]).
+  /^ *(#.*)?$/ { next }
   /^flags:/ {
     rest = substr($0, 7)
-    if (seen || rest !~ /^[[:space:]]*(#.*)?$/) { printf "E\t%d\n", NR }
+    if (seen || rest !~ /^ *(#.*)?$/) { printf "E\t%d\n", NR }
     seen = 1; indent = -1
     next
   }

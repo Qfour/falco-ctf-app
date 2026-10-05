@@ -63,3 +63,19 @@ leading-document-marker.yaml	accept	reject	leading --- document marker
 tagged-value.yaml	reject	reject	!!str tag on a value
 escape-with-literal-in-comment.yaml	reject	reject	escaped value whose decoded form appears in an inline comment
 quoted-flags-key.yaml	accept	reject	top-level key written "flags"
+comment-tab-indented.yaml	reject	reject	tab-indented comment line
+blank-line-tab-only.yaml	reject	reject	line holding only a tab
+comment-with-ls.yaml	reject	reject	U+2028 inside a comment
+comment-with-nel.yaml	reject	reject	U+0085 inside a comment
+comment-with-ps.yaml	reject	reject	U+2029 inside a comment
+comment-ls-hidden-entry.yaml	reject	reject	an entry after U+2028 inside a comment
+comment-cr-hidden-entry.yaml	reject	reject	an entry after a bare CR inside a comment
+comment-with-control-char.yaml	reject	reject	U+0001 inside a comment
+comment-with-c1-control.yaml	reject	reject	U+0084 inside a comment
+comment-invalid-utf8.yaml	reject	reject	invalid UTF-8 byte inside a comment
+comment-non-ascii.yaml	accept	accept	ordinary non-ASCII text in comments
+entry-tab-after-colon.yaml	accept	reject	tab between key and value
+entry-tab-after-value.yaml	accept	reject	tab after a value
+entry-ls-after-value.yaml	reject	reject	U+2028 after a value
+entry-nel-after-colon.yaml	reject	reject	U+0085 between key and value
+entry-ls-inside-value.yaml	reject	reject	U+2028 inside a value
