@@ -23,24 +23,31 @@ FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec4
 # 無いため cycle bump (3.23→3.24) でのみ解消できる。以下は
 # https://dl-cdn.alpinelinux.org/alpine/v3.24/main (community は vim 系) を
 # `docker run alpine@<digest> apk policy` で実測して確認した版数 (2026-09-01):
-#   libssl3/libcrypto3 3.5.8-r0 (3.23 と同じ pin を維持。base に焼き込まれた
-#     3.5.7-r0 の fix 版で、3.24 でも base image 自体は再ビルドされていないため
-#     引き続き明示 upgrade が必要)
+#   libssl3/libcrypto3 3.5.9-r0 (2026-10-05: 3.24/main から 3.5.8-r0 が外れ apk
+#     resolve が failing していたため再 pin。`apk policy libssl3 libcrypto3` 実測で
+#     3.24/main の唯一の提供版が 3.5.9-r0。base に焼き込まれた 3.5.7-r0 からの
+#     明示 upgrade は引き続き必要。3.5.8-r0 の secfix [CVE-2026-63072..63076/
+#     -54874/-18798/-14456/-14457/-75803, secdb v3.24/main] は 3.5.9 に累積で
+#     含まれる — 上流 CHANGES.md の 3.5.7→3.5.8 節が 3.5.9 に残ることを aports と
+#     併せて確認済み (5x R1)。3.5.9 自体も追加の CVE 修正を含む
+#     (High は CVE-2026-84782))
 #   curl/libcurl 8.22.0-r0 (2026-09-03: alpine 3.24 リポジトリから 8.21.0-r0 が
 #     既に外れ apk resolve が failing していたため再 pin。`apk policy curl` 実測
 #     で 3.24/main の唯一の提供版が 8.22.0-r0 であることを確認済み)
-#   vim/vim-common/xxd 9.2.1014-r0 (3.23 と同一版、3.24 でも不変)
-#   util-linux 2.42.1-r0 (3.23 の 2.41.4-r0 から 3.24 側で上がった版に追随)
+#   vim/vim-common/xxd 9.2.1091-r0 (2026-10-05: 3.24/community から 9.2.1014-r0 が
+#     外れたため再 pin。`apk policy` 実測で唯一の提供版)
+#   util-linux 2.42.3-r1 (2026-10-05: 3.24/main から 2.42.1-r0 が外れたため再 pin。
+#     `apk policy` 実測で唯一の提供版。secdb 上 2.42.3-r0/-r1 は CVE-2026-27456/
+#     -53612..53614/-76642/-78408..78410 の fix を含む)
 #   bash 5.3.9-r1 (3.23 の 5.3.3-r1 から 3.24 側で上がった版に追随、念のため厳密 pin)
 # **この画像にはなお残る High CVE がある** (upstream fix 自体が未着地、または
-# alpine パッケージへの backport 待ち — 2026-09-01 時点で fix 版なし。3.23→3.24
-# でも版数不変):
-#   jq 1.8.1-r0 (fix 1.8.2, CVE-2026-49839)
+# alpine パッケージへの backport 待ち — 2026-10-05 時点で 3.24 に fix 版なし):
 #   libxml2 2.13.9-r2 (fix 2.15.2, CVE-2026-0989/2025-8732; CVE-2026-11979 は
 #     upstream に fix 自体が存在しない)
-# 上記 2 件は Issue #227 に残課題として記録 (VP 判断: 2026-08-28 コメントの
-# 「厳密 pin のみで残存を許容し、再点検トリガ付きで open 維持」を継続適用)。
-RUN apk add --no-cache --upgrade libssl3=3.5.8-r0 libcrypto3=3.5.8-r0 \
+# jq は pin していないため 3.24/main の更新で 1.8.2-r0 (CVE-2026-49839 の fix 版、
+# `apk policy jq` 実測で唯一の提供版) へ自動で上がり、残存から外れた (2026-10-05)。
+# 残存 (libxml2) の追跡先は app#291 (#227 は CLOSED)。
+RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 \
  && apk add --no-cache \
         bash=5.3.9-r1 \
         coreutils \
@@ -51,10 +58,10 @@ RUN apk add --no-cache --upgrade libssl3=3.5.8-r0 libcrypto3=3.5.8-r0 \
         bind-tools \
         jq \
         less \
-        vim=9.2.1014-r0 \
-        vim-common=9.2.1014-r0 \
-        xxd=9.2.1014-r0 \
-        util-linux=2.42.1-r0 \
+        vim=9.2.1091-r0 \
+        vim-common=9.2.1091-r0 \
+        xxd=9.2.1091-r0 \
+        util-linux=2.42.3-r1 \
         procps \
         grep \
         findutils \
