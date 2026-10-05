@@ -47,9 +47,9 @@
 - 新規 ADR を書くときは `make check-adr` を実行し、標準出力の
   「Next free ADR number」を採番に使う (既存最大 + 1。予約済み欠番
   (例: ADR-0009) を自動では埋めない — 意図的な予約はそのままにする)。
-- **0026〜0032 は未 merge の ADR が使用・予約中** (0026〜0028 = P28-0 の前提、0029〜0031 = P28 用の予約、0032 = 起草予定)。
-  ADR-0033 はこれらを避けて採番した。`make check-adr` の「Next free ADR number」は既存の最大 + 1 を返すだけで
-  未 merge の番号を知らないので、採番前にこの行と `git log --oneline --all -- 'docs/adr/*'` を確認する。
+- **0029〜0031 は未起草の ADR 用に予約中** (P28 用。下の「規律」の項)。`make check-adr` の「Next free ADR number」は
+  既存の最大 + 1 を返すだけで、予約や未 merge の番号を知らないので、採番前にこの索引と
+  `git log --oneline --all -- 'docs/adr/*'` を確認する。
 - CI (`flag-guard` job、`scripts/check-adr-numbers.sh`) が (a) 番号重複、
   (b) ファイル名とヘッダの不一致、(c) この索引への掲載漏れ、を機械的に
   検査し fail-closed で block する。この節冒頭の「ADR を新設したらこの
