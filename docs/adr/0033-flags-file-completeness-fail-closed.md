@@ -1,11 +1,11 @@
 # ADR-0033: flags ファイルは指定したら完全であることを必須にする — スコープ内の全 evade 課題に既定値と異なる flag が無ければ、採点側は起動を拒否し、仕込み側は cluster に触れる前に止まる (クロスリポ契約)
 
-- Status: **Proposed** (Accepted 化は、本 ADR を同梱した実装 PR の CEO merge 時。ORGANIZATION.md §7 のゲート)
+- Status: **Accepted** (2026-10-06。本 ADR を同梱した実装 PR app#310 を CEO の指示で merge。platform 側は platform#200・#202)
 - Date / Deciders: 2026-10-05 / CEO (同日「P28 と切り離して先に直す」、Class-2 merge)、VP (ADR 必須の裁定、レビュー指摘の
-  採用)、architect (起草)、software-engineer (実装)、security-engineer (採点真正性の確認 — 確認待ち)
+  採用)、architect (起草)、software-engineer (実装)、security-engineer (採点真正性の確認 — 独立レビュー 4 往復で確認済み)
 - 関連: 実装ブランチ `fix/flags-file-fail-closed` (e416705 + レビュー反映 e628ea4・72ca801・5d1b205)、契約表 Flags 行 (`.claude/rules/falco-ctf-app-conventions.md`)。ADR-0001
   (flag の到達経路。C6 の引数面は不変) と ADR-0010 (I12) は supersede しない — あちらは「値がどこへ届くか」、本 ADR は
-  「入力をどの条件で受理するか」。未 merge の ADR-0026 C1 が「別 Issue」とした修正の実体。platform の同時 PR は platform#200 (flags を指定しない経路の遮断) と、その merge 後に起票する事前検査の PR
+  「入力をどの条件で受理するか」。未 merge の ADR-0026 C1 が「別 Issue」とした修正の実体。platform の同時 PR は platform#200 (flags を指定しない経路の遮断) と platform#202 (事前検査と生成)
 
 ## Context
 
