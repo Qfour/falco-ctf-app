@@ -5,7 +5,7 @@
   採用)、architect (起草)、software-engineer (実装)、security-engineer (採点真正性の確認 — 確認待ち)
 - 関連: 実装ブランチ `fix/flags-file-fail-closed` (e416705 + レビュー反映 e628ea4・72ca801・5d1b205)、契約表 Flags 行 (`.claude/rules/falco-ctf-app-conventions.md`)。ADR-0001
   (flag の到達経路。C6 の引数面は不変) と ADR-0010 (I12) は supersede しない — あちらは「値がどこへ届くか」、本 ADR は
-  「入力をどの条件で受理するか」。未 merge の ADR-0026 C1 が「別 Issue」とした修正の実体。platform の同時 PR (番号は起票時に追記)
+  「入力をどの条件で受理するか」。未 merge の ADR-0026 C1 が「別 Issue」とした修正の実体。platform の同時 PR は platform#200 (flags を指定しない経路の遮断) と、その merge 後に起票する事前検査の PR
 
 ## Context
 
