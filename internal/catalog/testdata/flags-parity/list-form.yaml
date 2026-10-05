@@ -1,0 +1,4 @@
+flags:
+  - FALCO{dev-parity-a}
+  - FALCO{dev-parity-b}
+  - FALCO{dev-parity-c}

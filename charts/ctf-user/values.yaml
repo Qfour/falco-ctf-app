@@ -95,7 +95,13 @@ challenge:
   # Defaults below are the FALCO{dev-...} placeholders; they MUST match the
   # falco-ctf-app falco-rule.yaml placeholders so local end-to-end submit works.
   # Real per-event flags are passed at deploy via deploy-user.sh --flags-file
-  # (rendered from events/<date>/flags.sops.yaml).
+  # (rendered from events/<date>/flags.sops.yaml). With --flags-file the
+  # script refuses to deploy unless the file supplies a flag for every evade
+  # challenge in scope, every value matches FALCO{...} (only A-Za-z0-9_- inside the braces), no value
+  # equals ANY default below, and no two challenges share a value
+  # (validate-flags-file.sh reads this map for the default comparison — keep
+  # it a plain `<id>: <value>` block at this indentation). Only the entries
+  # in scope for the deploy are passed on to helm.
   flags:
     03-stealth-read: FALCO{dev-stealth-read}
     05-silent-search: FALCO{dev-silent-search}

@@ -45,7 +45,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var flagRE = regexp.MustCompile(`^FALCO\{[^}]+\}$`)
+var flagRE = regexp.MustCompile(`^FALCO\{[A-Za-z0-9_-]+\}$`)
 
 // DefaultDetectRuleName is the fixed rule name the participant condition is
 // wrapped into when detect.ruleName is unset. The grader greps fires of this

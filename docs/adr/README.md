@@ -34,6 +34,7 @@
 | [0023](0023-rate-limit-client-ip-cf-connecting-ip.md) | rate-limit キーを `CF-Connecting-IP` 優先に切り替え XFF leftmost 偽装を是正 (クロスリポ契約、Issue #236) | **Accepted** | `ratelimit.ClientIP` を 3 段 fallback (CF-Connecting-IP valid → XFF leftmost → RemoteAddr)、collector が CF-Connecting-IP も strip (D1b、D1 と同一 PR)、platform ingress が prod/vm-prod で `forwarded-for-header: CF-Connecting-IP` 供給。fail-open 維持 + fallback 観測可能化。**Accepted ≠ 脆弱性解消済 (V2 実クラスタ確認まで実質未解消)** | — |
 | [0024](0024-attack-v19-tactic-split-adoption.md) | MITRE ATT&CK v19 の Defense Evasion (TA0005) 分割 (Stealth / Defense Impairment 新設 TA0112) への追従 + version pin bump (Issue #249) | **Accepted** | `tactic: "Defense Evasion"` を使う 4 件 (03/05/09/12) のうち 3 件はラベルのみ `"Stealth"` へ更新、12-cover-tracks は techniqueId 自体を remap。`ATTACK_VERSION` を `"15"` → `"19"` に bump (Navigator layer JSON は tactic を持たないため描画影響なし。既存 14 件全数の v19 有効性を実機確認済み) | — |
 | [0025](0025-evade-flag-placement-separation.md) | evade 課題 03/10 の flag を /etc/shadow から専用 vault `/opt/nimbus/vault/{creds.recover,master.key}` へ分離し、`Read sensitive file untrusted` へ dir-prefix append で sensitive 化 (クロスリポ契約、CEO 要望) | **Proposed** | 02 は /etc/shadow の loud baseline 維持、05 は flag clarity のみ。1 customRule (`fd.name startswith "/opt/nimbus/vault/" and container.name != "plant"`) で 03/10 を同時カバー。**デプロイ順序: platform 先行 (逆順で free-win)**。実機 fire/no-fire は次 stand-up 2026-09-03 待ち。app#278 / platform#170 | — |
+| [0033](0033-flags-file-completeness-fail-closed.md) | flags ファイルは指定したら完全であることを必須にする (クロスリポ契約、既存の fail-open の修正) | **Proposed** | 指定時は、スコープ内 (採点側 = scenario の Restrict 後 / 仕込み側 = deploy モード) の全 evade 課題に、どの既定値とも同値でなく課題間で重複しない flag を必須にし、破れば scoreboard は起動拒否・`deploy-user.sh` は cluster に触れる前に終了。文字集合を `^FALCO\{[A-Za-z0-9_-]+\}$` に限定 (`expectedFlag` にも適用)、ファイルは YAML の部分集合のみ受理。scoreboard の catalog は `catalog.LoadScored` 1 関数で読む。採点側 (Go) が正で、仕込み側 (shell) は早期検出、一致は parity テストで検査 (chart 描画への集約は follow-up の推奨)。platform に全 evade id の生成義務 (同時 PR)。HI 昇格は not yet | — |
 
 ## ADR 番号の採番
 
@@ -42,6 +43,9 @@
 - 新規 ADR を書くときは `make check-adr` を実行し、標準出力の
   「Next free ADR number」を採番に使う (既存最大 + 1。予約済み欠番
   (例: ADR-0009) を自動では埋めない — 意図的な予約はそのままにする)。
+- **0026〜0032 は未 merge の ADR が使用・予約中** (0026〜0028 = P28-0 の前提、0029〜0031 = P28 用の予約、0032 = 起草予定)。
+  ADR-0033 はこれらを避けて採番した。`make check-adr` の「Next free ADR number」は既存の最大 + 1 を返すだけで
+  未 merge の番号を知らないので、採番前にこの行と `git log --oneline --all -- 'docs/adr/*'` を確認する。
 - CI (`flag-guard` job、`scripts/check-adr-numbers.sh`) が (a) 番号重複、
   (b) ファイル名とヘッダの不一致、(c) この索引への掲載漏れ、を機械的に
   検査し fail-closed で block する。この節冒頭の「ADR を新設したらこの
