@@ -78,6 +78,28 @@ A・B は新しい依存か values 契約の変更を伴うので、fail-open �
    platform の同時 PR は、要件の明記、生成する id を app の evade 集合 (pinned `appImageTag` 時点) から導くこと、preflight での
    key の完全性検査、`scripts/standup.sh` が `--flags-file` を渡していない件、example 値の拒否を扱う。merge 順序は問わない
    (両側とも fail-closed。既存ファイルの key は要件を満たし、値の条件は復号が要るので platform の preflight で確かめる)。
+9. **platform 側の決定 — flags ファイルを指定しない経路を塞ぐ。** 本 ADR の検査は flags ファイルが指定されたときだけ働くので、
+   指定しない構成は platform が止める (platform の同時 PR。architect の同意 2026-10-05)。
+   (a) **local 以外の環境は flags 無しで render しない**: platform の helmfile は、env が `local` 以外で scoreboard の flags Secret が
+   有効でなければ render 時に失敗する。本番の env 名は列挙しない。新しい env・打ち間違い・既定の env も本番として扱う。
+   (b) **workspace の払い出しでは flags の出所を必ず 1 つ明示する**: 暗号化されたファイル (一時ファイルに復号し、終了時に削除する) /
+   復号済みのファイル / dev placeholder (env が local で、かつ kube context が local 系のときだけ許す) のどれか。local 以外で app の
+   検証器が無い (本 ADR より前の ref) ときは、何も払い出さない。
+   (c) **課金の前に gate を置く**: stand-up の実行モードでは、課金が発生する最初の step の前に、flags ファイルが存在する → app の clone が
+   pin した ref と一致する → キー集合が全 evade id と一致する → 復号できる → app の検証器が受理する、の順で検査する。どれかを
+   通らなければ何も apply しない。採点用の Secret と払い出しは、同じ実行で同じファイルから作る。
+   (d) **platform が持つ規則はキー集合と配線だけ**: 値の形・既定値・重複・スコープ内の完全性は本 ADR の規則 (Go が正) に委ね、
+   platform では再実装しない。platform が独自に見るのは、platform が持つ事実 (pin の一致、暗号化の受信者) だけ。platform は
+   スコープに関係なく全 evade id を要求する。これは Decision 8 の生成義務の検査で、Decision 2 のスコープ単位の受理との差は意図的。
+   (e) **事前検査は既定で復号しない**: 既定で見るのはキー集合・pin・受信者だけ (鍵は不要)。値の検査は明示の opt-in で行い、
+   stand-up 前の厳格モードで値を検査していなければ失敗にする。
+   (f) **デプロイ後の検査は値を読まない**: 見るのは、Secret が mount されていること・キーがあること・Ready であること・起動時に
+   拒否していないこと、だけ。値は scoreboard の起動時の検査が担う。
+   (g) **適用の順序は platform が先**: merge の順序は問わない (両側とも fail-closed)。イベントへ適用するときは、platform のゲートを先に
+   入れ、その後で pin を本 ADR を含む app の SHA に上げる。逆の順だと、不完全な Secret のまま scoreboard が再起動したとき、事前検査より
+   前に全断する (I1)。pin を上げるまでの間、local 以外の払い出しは止まる。
+   検証は platform の CI (render の負テスト、gate の selftest、事前検査の selftest。platform に required check は無いので、merge の時に
+   Checks を人が確認する)。残余: platform の CI は検証器を stub にするので、app の検証器の CLI との食い違いは検出しない。
 
 ## Consequences
 
