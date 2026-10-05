@@ -13,9 +13,10 @@
 コメントで「INTENTIONAL (guided-event decision, 2026-06)」と宣言している (`:91-95`)。tracked file 101 本 (ディレクトリを含めて
 130 entry) のうち **82 本が `<id>/fixtures/**` 以外**である: 14 課題すべての `README.md` (想定解)・`journey.yaml` (ヒント全文)・
 `falco-rule.yaml`・`rule.yaml`、`plant.sh` 3 本、生成 values 7 本、`gen-values.sh`、運営向け文書。03・05・10 の
-`falco-rule.yaml` は `expectedFlag` を持ち、03・10 は `README.md` にも同じ値がある。リポにあるのは placeholder だが、flags の
-上書きは列挙された id にだけ掛かり、欠けた evade id は placeholder のまま残る (`internal/catalog/flags.go:44-57`、
-`charts/ctf-user/deploy-user.sh:202-223`)。欠落を fail-closed にする修正は別 Issue (Class-2) とし、本 ADR では扱わない。
+`falco-rule.yaml` は `expectedFlag` を持ち、03・10 は `README.md` にも同じ値がある。リポにあるのは placeholder で、e74d871 時点の
+flags の上書きは列挙された id にだけ掛かり、欠けた evade id は placeholder のまま残っていた (`internal/catalog/flags.go:44-57`、
+`charts/ctf-user/deploy-user.sh:202-223`)。この欠落は ADR-0033 (Class-2、`fix/flags-file-fail-closed`) が fail-closed にする。
+本 ADR は image に同梱する内容だけを扱い、flag の供給条件は ADR-0033 に従う。
 COPY は追跡外のファイルも焼く: `.gitignore` 済みの `challenges/decks/` (`.gitignore:38`) や `.DS_Store` は `.dockerignore` に無い。
 
 **C2. scenario モードでも閉じていない。** platform は環境の `scoreboardScenario` から `scenario:<name>` を自動導出する (契約表
