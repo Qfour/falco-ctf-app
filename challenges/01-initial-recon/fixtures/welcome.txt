@@ -4,48 +4,22 @@
 │ 目標 Falco ルール: "Contact K8S API Server From Container"        │
 └──────────────────────────────────────────────────────────────────┘
 
-# 表示名について
+# 目的
 
-scoreboard に出る名前は **default で識別子 (`user1` 等)**。自分で好きな
-表示名に変更できる(いつでも何回でも):
+**TRIGGER 課題** — Falco ルール「Contact K8S API Server From Container」を
+発火させると自動で CLEARED になる。提出操作は不要。
+無 ServiceAccount の Pod からの匿名 connect は即座に検知される、という体験が狙い。
 
-  source /opt/ctf/setname.sh && setname 'あなたの名前'
+# 攻略ヒント
 
-識別子と表示名は別物 — submit や認証は identity で動き、表示だけが
-display name に置き換わる。1〜32 文字、`< > & " '` と制御文字は不可。
-
-# シナリオ
-
-CTF Company の Web フロントエンドの SSRF 脆弱性を突き、ようやく Pod
-内部に侵入した。最初の一手は環境把握 — Kubernetes クラスタの
-**API server に話しかけて何が動いているかを探る**。
-だが CTF Company のクラスタには Falco がいる。**ServiceAccount を
-持たない pod からの API access は即検知される** ことを身をもって
-学べ。
-
-# ゴール
-
-このコンテナで Falco ルール「Contact K8S API Server From Container」を
-発火させる。発火 = solve (提出操作は不要)。
-
-# 背景
-
-K8s API は本来、cluster の controller / kubelet / SA を持つ正規
-workload からしかアクセスされない。**外部から侵入した attacker が
-最初にやる動き** が API への匿名 connect — リスト一覧、リソース
-列挙、token 確認等。Falco はこれを直接検知する。
-
-# 試すこと
-
-  curl -sk https://kubernetes.default.svc/api
-
-curl が SA token を持たないので response は 401 / 403 になるが、
-**TCP connect は通る** → connect syscall を Falco が捕まえ rule 発火。
+手順とコマンドは、ポータルの **Story タブ**（Journey UI）にある段階ヒント
+「気付き → 概要 → 解答」から開く（開示するとスコアが段階的に減点される）。
+この端末はコマンドを実行する場所で、攻略手順そのものはここには置かない。
 
 # クリア条件
 
-`Contact K8S API Server From Container` がユーザ Namespace で
-発火する。
+`Contact K8S API Server From Container` がユーザ Namespace で発火する
+→ 自動で CLEARED。
 
 # 環境にあるもの
 

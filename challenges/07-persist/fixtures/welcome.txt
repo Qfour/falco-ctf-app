@@ -4,43 +4,24 @@
 │ 目標 Falco ルール: "Drop and execute new binary in container"     │
 └──────────────────────────────────────────────────────────────────┘
 
-# シナリオ
+# 目的
 
-shell が取れた (Mission 06)。だが Pod は再起動されるかもしれない。
-**永続化** したい — backdoor を書き込んで実行可能な場所に置き、
-そこから RCE を生やす。古典的だが効果的な手口だ。
+**TRIGGER 課題** — Falco ルール「Drop and execute new binary in container」を
+発火させると自動で CLEARED になる。提出操作は不要。
+runtime に書いた binary は overlayfs の upper layer に積まれる。Falco は exec 時に
+「base image に無い場所からの実行」を検知する。drop (書く) と execute (実行する)
+の両方が条件。
 
-# ゴール
+# 攻略ヒント
 
-このコンテナで Falco ルール「Drop and execute new binary in
-container」を発火させる。発火 = solve。
-
-# 背景
-
-コンテナイメージは build 時に layered filesystem として固められる。
-runtime に attacker が新しい binary を「**書く**」と、その書き込みは
-**overlayfs の upper layer** に積まれる。Falco は exec 時にこの layer
-情報を見て「**base image にない場所**から実行された」を判定する。
-
-つまり:
-
-  - base image に元から入っていた `/bin/ls` の exec      → 発火しない
-  - 自分で `/usr/local/bin/x` を作って exec               → 発火する
-
-「**drop (書く)** + **execute (実行する)**」の両方を 1 つの rule で
-捕捉する。
-
-# 試すこと
-
-  cp /bin/sleep /usr/local/bin/backdoor
-  /usr/local/bin/backdoor 1
-
-実行ファイルの中身は何でもよい (`/bin/sleep` の copy で OK)。
-**「書いてから実行する」** が条件。
+手順とコマンドは、ポータルの **Story タブ**（Journey UI）にある段階ヒント
+「気付き → 概要 → 解答」から開く（開示するとスコアが段階的に減点される）。
+この端末はコマンドを実行する場所で、攻略手順そのものはここには置かない。
 
 # クリア条件
 
-`Drop and execute new binary in container` が発火する。
+`Drop and execute new binary in container` がユーザ Namespace で発火する
+→ 自動で CLEARED。
 
 # 環境にあるもの
 

@@ -4,48 +4,23 @@
 │ 目標 Falco ルール: "Run shell untrusted"                          │
 └──────────────────────────────────────────────────────────────────┘
 
-# シナリオ
+# 目的
 
-ここまでで Mission 03 / 05 を解いたあなたは「Falco は文字列で見て
-いる、回避できる」と確信している。だが CTF Company の Web サーバには
-別の脆弱性もある — Java の `Runtime.exec()` 経由で OS shell が起こ
-せる、典型的 Web RCE。**実際に Web プロセス偽装で shell を起こすと
-何が起こるか** を体験せよ。
+**TRIGGER 課題** — Falco ルール「Run shell untrusted」を
+発火させると自動で CLEARED になる。提出操作は不要。
+Falco はシェルの親プロセス (proc.pname) を見ていて、親が httpd / nginx /
+apache2 等の Web サーバなら異常と判断する。
 
-# ゴール
+# 攻略ヒント
 
-このコンテナで Falco ルール「Run shell untrusted」を発火させる。
-発火 = solve。
-
-# 背景
-
-Falco が見るのは **shell プロセスの親の comm (proc.pname)**:
-- 親が `bash` / `sh` / `zsh` 等 → 普通のオペレータ操作。発火しない
-- 親が `httpd` / `nginx` / `apache2` / `postgres` 等 → 異常。発火
-
-Linux カーネルは `/proc/<pid>/comm` を **実行ファイルの basename**
-から決めるので、自分でファイル名を選んで実行ファイルを置けば
-proc.pname をコントロールできる。
-
-# 試すこと
-
-  printf '#!/bin/sh\n/bin/sh -c "echo pwned"\n' > /tmp/httpd
-  chmod +x /tmp/httpd
-  /tmp/httpd
-
-これは:
-  1. "httpd" という名前でスクリプトを書き出す (basename = httpd → comm = httpd)
-  2. それを実行し、その中から `/bin/sh` を起こす
-  3. Falco: 親 comm = "httpd" → shell 起動 → 発火
-
-  ⚠ `cp /bin/sh /tmp/httpd` のように実行ファイルそのものをコピーしてはいけない
-    (busybox の multicall dispatch で意図通りに動かず、かつ新規バイナリの
-    drop+exec として別ルールも発火してしまう)。上記のように **スクリプトを
-    書き出す** 形にすること。
+手順とコマンドは、ポータルの **Story タブ**（Journey UI）にある段階ヒント
+「気付き → 概要 → 解答」から開く（開示するとスコアが段階的に減点される）。
+この端末はコマンドを実行する場所で、攻略手順そのものはここには置かない。
 
 # クリア条件
 
-`Run shell untrusted` が発火する。
+`Run shell untrusted` がユーザ Namespace で発火する
+→ 自動で CLEARED。
 
 # 環境にあるもの
 

@@ -4,34 +4,41 @@
 │ 回避すべき Falco ルール: "Search Private Keys or Passwords"       │
 └──────────────────────────────────────────────────────────────────┘
 
-# シナリオ
+# 目的
 
-Mission 04 で雑に `find` を投げて即バレた。**cmdline に id_rsa を含
-めない** 方法で同じ情報を取り直せ。
-すでに鍵の場所は分かっている: `/root/.ssh/id_rsa`。
+**EVADE 課題** — `/root/.ssh/id_rsa` の中身に**この Mission 用の flag**が埋め
+込まれている。Falco ルール「Search Private Keys or Passwords」を**発火させずに**
+flag を抜き取り、scoreboard に提出する。
 
-# ゴール
+このルールが一度でも発火すると検知されたと判定され、**やり直すまで提出
+できない**（時間が経っても自動的には解除されない）。このミッションには追加の
+クリア条件がある — Story タブの手順を参照。
 
-`/root/.ssh/id_rsa` の中身に**この Mission 用の flag**が埋め込まれて
-いる。flag を抜き取り、scoreboard に提出。**ただし**「Search Private
-Keys or Passwords」を一度でも発火させると検知されたと判定され、
-**やり直すまで提出できない**（時間が経っても自動的には解除されない）。
-発火してしまったら、Journey 画面の「このミッションをやり直す」ボタン
-でやり直してから再挑戦すること。
+# 攻略ヒント
 
-# 背景
-
-ルールは `proc.cmdline` (= 各 exec'd プロセスの /proc/<pid>/cmdline)
-の文字列マッチで判定する。**shell の組み込み機能**を活かして、
-fork-exec される子プロセスの cmdline から **キーワードそのものを
-消す** のがコツ。
-
-# 試すこと
-
-Journey UI のヒントを段階的に開きながら、cmdline に "id_rsa" を
-出さない方法でファイルの中身を読む。
+手順とコマンドは、ポータルの **Story タブ**（Journey UI）にある段階ヒント
+「気付き → 概要 → 解答」から開く（開示するとスコアが段階的に減点される）。
+この端末はコマンドを実行する場所で、攻略手順そのものはここには置かない。
 
 # 提出方法
 
   source /opt/ctf/submit.sh
   submit 05-silent-search 'FALCO{...}'
+
+レスポンス:
+  {"correct":true,"evaded":true,"solved":true,"user":"alice"}    ← 成功
+  {"correct":true,"evaded":false,"reason":"forbidden rule..."}    ← 発火していた
+  {"correct":true,"evaded":true,"proven":false,"reason":"..."}    ← 条件が未達
+  {"correct":false,"reason":"flag mismatch"}                       ← flag 違い
+
+`proven:false` は、flag も正しく発火もしていないが、このミッションが求める
+クリア条件をまだ満たしていない状態。Story タブの手順を参照すること。
+
+`evaded:false` が出たら、この attempt は検知済み。**待っても解除されない**。
+Story タブの「このミッションをやり直す」ボタンでやり直してから、もう一度
+`submit` すること。
+
+# 環境にあるもの
+
+  /opt/ctf/missions/05-silent-search/fixtures/welcome.txt  ← このファイル
+  /opt/ctf/submit.sh     ← `source` して使う

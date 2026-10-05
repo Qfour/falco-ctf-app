@@ -4,31 +4,23 @@
 │ 目標 Falco ルール: "Read sensitive file untrusted"                │
 └──────────────────────────────────────────────────────────────────┘
 
-# シナリオ
+# 目的
 
-Mission 01 で「書き込めば即バレる」と分かった。次は王道の credential
-窃取だ。Linux で password hash が眠っている場所と言えば `/etc/shadow`。
-読んでみよう。
+**TRIGGER 課題** — Falco ルール「Read sensitive file untrusted」を
+発火させると自動で CLEARED になる。提出操作は不要。
+root しか読まない機密ファイル (例: /etc/shadow) は、コンテナの中で読んでも
+検知される、という体験が狙い。
 
-# ゴール
+# 攻略ヒント
 
-このコンテナで Falco ルール「Read sensitive file untrusted」を発火
-させる。発火 = solve。
-
-# 背景
-
-Falco の最も基本的な検知ルール。Linux の `/etc/shadow` は本来 root
-だけが読むファイル — 攻撃者が侵入後に最初に試す典型ターゲット。
-Falco は **コンテナ内であっても host kernel の syscall** を観測して
-いるので、コンテナ境界の中で読んでも逃れられない。
-
-# 試すこと
-
-  cat /etc/shadow
+手順とコマンドは、ポータルの **Story タブ**（Journey UI）にある段階ヒント
+「気付き → 概要 → 解答」から開く（開示するとスコアが段階的に減点される）。
+この端末はコマンドを実行する場所で、攻略手順そのものはここには置かない。
 
 # クリア条件
 
-`Read sensitive file untrusted` がユーザ Namespace で発火する。
+`Read sensitive file untrusted` がユーザ Namespace で発火する
+→ 自動で CLEARED。
 
 # 環境にあるもの
 

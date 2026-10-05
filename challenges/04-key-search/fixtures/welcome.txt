@@ -4,33 +4,23 @@
 │ 目標 Falco ルール: "Search Private Keys or Passwords"             │
 └──────────────────────────────────────────────────────────────────┘
 
-# シナリオ
+# 目的
 
-shadow から password hash は取れた (Mission 03)。だが本番の lateral
-movement には SSH 鍵 / AWS credential のほうが便利。
-さっそく `find` で探してみるか…  Falco に見つかるとも知らずに。
+**TRIGGER 課題** — Falco ルール「Search Private Keys or Passwords」を
+発火させると自動で CLEARED になる。提出操作は不要。
+このルールはファイルの中身ではなくコマンドライン (proc.cmdline) を見るので、
+鍵が実在しなくても、結果が空でも発火する。
 
-# ゴール
+# 攻略ヒント
 
-このコンテナで Falco ルール「Search Private Keys or Passwords」を
-発火させる。発火 = solve。
-
-# 背景
-
-このルールが面白いのは「**ファイルの中身ではなく、コマンドライン
-そのものを見ている**」点。`find` の引数に `id_rsa` という文字列が
-あるだけで発火し、**そのファイルが実在しなくても、結果が空でも**
-検知される。
-
-# 試すこと
-
-実在しない path でも OK。コマンドライン文字列だけで判定される。
-
-  find /tmp -iname id_rsa
+手順とコマンドは、ポータルの **Story タブ**（Journey UI）にある段階ヒント
+「気付き → 概要 → 解答」から開く（開示するとスコアが段階的に減点される）。
+この端末はコマンドを実行する場所で、攻略手順そのものはここには置かない。
 
 # クリア条件
 
-`Search Private Keys or Passwords` が発火する。
+`Search Private Keys or Passwords` がユーザ Namespace で発火する
+→ 自動で CLEARED。
 
 # 環境にあるもの
 

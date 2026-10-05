@@ -4,33 +4,20 @@
 │ 回避すべき Falco ルール: "Read sensitive file untrusted"          │
 └──────────────────────────────────────────────────────────────────┘
 
-# シナリオ
+# 目的
 
-Mission 02 で正面切って `/etc/shadow` を読んだら盛大に検知された。
-CTF Company の SOC はこの手のアクセスを常時監視している — 同じ
-"Read sensitive file untrusted" は `/etc/shadow` 専用ではなく、
-資格情報退避用の vault ファイルにも効いている。
-**だが諦めない**。同じ情報を、Falco に気づかれない方法で取り直す
-ことができれば、SOC は「単発の false positive」と判断するはず。
+**EVADE 課題** — `/opt/nimbus/vault/creds.recover` に**この Mission 用の flag
+だけ**が書かれている。Falco ルール「Read sensitive file untrusted」を**発火
+させずに** flag を取り出し、scoreboard に提出する。
 
-# ゴール
+このルールが一度でも発火すると検知されたと判定され、**やり直すまで提出
+できない**（時間が経っても自動的には解除されない）。
 
-`/opt/nimbus/vault/creds.recover` に**この Mission 用の flag だけ**が
-書かれている。flag を取り出し、scoreboard に提出せよ。**ただし**
-"Read sensitive file untrusted" を一度でも発火させると検知されたと
-判定され、**やり直すまで提出できない**（時間が経っても自動的には
-解除されない）。
+# 攻略ヒント
 
-# 背景
-
-Falco のルールは多くの場合 **fd.name (= open に渡された path)** で
-判定する。同じファイル本体に **異なる path** で到達できれば、検知
-ロジックからは別物に見える。
-
-# 試すこと
-
-Journey UI のヒントを段階的に開きながら、`cat /opt/nimbus/vault/creds.recover`
-ではない方法で中身を取り出すアプローチを探そう。
+手順とコマンドは、ポータルの **Story タブ**（Journey UI）にある段階ヒント
+「気付き → 概要 → 解答」から開く（開示するとスコアが段階的に減点される）。
+この端末はコマンドを実行する場所で、攻略手順そのものはここには置かない。
 
 # 提出方法
 
@@ -42,9 +29,9 @@ Journey UI のヒントを段階的に開きながら、`cat /opt/nimbus/vault/c
   {"correct":true,"evaded":false,"reason":"forbidden rule..."}    ← 発火していた
   {"correct":false,"reason":"flag mismatch"}                       ← flag 違い
 
-`evaded:false` が出たら、この attempt は検知済み。**待っても解除され
-ない**。Journey 画面の「このミッションをやり直す」ボタンでやり直して
-から、もう一度 `submit` すること。
+`evaded:false` が出たら、この attempt は検知済み。**待っても解除されない**。
+Story タブの「このミッションをやり直す」ボタンでやり直してから、もう一度
+`submit` すること。
 
 # 環境にあるもの
 
