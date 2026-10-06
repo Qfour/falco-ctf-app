@@ -1,0 +1,37 @@
+<script nonce="{{.Nonce}}">
+// ===================== Portal shared helpers =====================
+// esc() is the ONE HTML-escape path for the whole portal (P28-0a): every pane
+// script that builds markup for innerHTML / a template literal passes any
+// server- or catalog-derived string through it, with no exemption by origin.
+// It is declared here and nowhere else. portal_partials_test.go (checkPortalEsc)
+// pins the declaration line below verbatim, rejects any other declaration or
+// assignment of the name in any partial, and requires this partial to be
+// served before every script that uses esc.
+//
+// Why a top-level `const` and not `function esc` (or window.esc):
+//  - A top-level const/let in a classic script is a binding in the global
+//    Environment Record's [[DeclarativeRecord]], which is shared by every
+//    script of the document (ECMA-262, Global Environment Records and
+//    GlobalDeclarationInstantiation). A bare `esc` inside any other script's
+//    IIFE resolves to it through the global scope, so a pane needs no import.
+//  - It is NOT a property of window. `window.esc`, `self.esc = ...`,
+//    `window['esc'] = ...` and Object.defineProperty(window, 'esc', ...)
+//    neither read nor replace it: bare-name lookup finds the lexical binding
+//    first.
+//  - `esc = ...` anywhere is a TypeError (assignment to a constant), and a
+//    later script declaring the same name (`const|let|var|function esc`) fails
+//    at GlobalDeclarationInstantiation with a SyntaxError before any of that
+//    script runs. Both are fail-closed: the original esc keeps escaping.
+//  - TDZ: this only holds if the const line is the FIRST statement of this
+//    script (checkPortalEsc enforces it). A statement before it that throws
+//    aborts the script with esc still uninitialised, and every pane then
+//    dies with "Cannot access 'esc' before initialization" (a hoisted
+//    function declaration would have survived). Put any new helper AFTER it.
+//  - A bare global, like PORTAL_TABS in core-router.tmpl; the portal's other
+//    shared names are not namespaced either.
+//
+// Null-safe: null/undefined render as '' (never the text "null"/"undefined").
+// Every other value goes through String(), so a number or boolean is escaped
+// as its string form.
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+</script>

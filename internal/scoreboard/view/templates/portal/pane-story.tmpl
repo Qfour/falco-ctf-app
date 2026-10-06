@@ -41,7 +41,6 @@
 
 <script nonce="{{.Nonce}}">
 (function () {
-  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   // slugify (統一ヒント Phase 3): trusted JS-side id derivation for a rule
   // name, used ONLY to build an element id to scroll to (never rendered as
   // HTML/text — the displayed rule name always goes through esc() as

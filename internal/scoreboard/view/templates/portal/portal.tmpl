@@ -103,6 +103,7 @@
   window.__PORTAL_USER__ = {{.UserJSON}};
   window.__PORTAL_TTYD_URL__ = {{.TtydURLJSON}};
 </script>
+{{template "core-util.tmpl" . -}}
 {{template "pane-story.tmpl" . -}}
 {{template "pane-scoreboard.tmpl" . -}}
 {{template "pane-me.tmpl" . -}}

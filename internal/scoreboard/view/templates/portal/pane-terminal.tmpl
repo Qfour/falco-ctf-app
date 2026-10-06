@@ -23,7 +23,6 @@
 
 <script nonce="{{.Nonce}}">
 (function () {
-  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
   // P23-4: window.__PORTAL_TTYD_URL__ is server-injected (view.renderPortal /
   // portal.ttydURLFor), built ENTIRELY from the caller's own derived identity

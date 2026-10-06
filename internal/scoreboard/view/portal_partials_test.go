@@ -18,7 +18,9 @@ import (
 // portalLastPartial is the partial the root must call LAST. Call order is
 // fixed by rule rather than by pinning the whole list, so panes can still
 // be added or reordered freely; a PR that adds another order-dependent
-// partial adds its own rule to checkPortalAssembly.
+// partial adds its own rule: to checkPortalAssembly for a plain call-order
+// rule (this one), or to its own check when the rule is about a script's
+// content (esc: checkPortalEsc, which reads the order from rootCallOrder).
 //
 // Why the router is last: core-router.tmpl:74-76 runs applyRole() and
 // showTab(currentTab()) the moment its <script> is parsed. showTab looks
@@ -332,6 +334,234 @@ func checkPortalScriptAndStyle(fsys fs.FS) error {
 	return errors.Join(errs...)
 }
 
+// escWantLine is the ONE declaration of esc the portal may contain, pinned
+// verbatim. esc is the portal's only HTML-escape path, so what it does is the
+// XSS defence of every pane: a counting check ("one definition, before the
+// panes") passes a body with the `.replace` cut out or `"'` dropped from the
+// character class, which is why the whole line is compared. It is an arrow
+// bound by a top-level `const` (see core-util.tmpl for why that form): a
+// reassignment is a TypeError and a redeclaration a SyntaxError. Changing the
+// escaper means changing this constant, in a commit that says why.
+const escWantLine = `const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));`
+
+var (
+	// Whole-line `//` comments and `<!-- -->` comments are removed before
+	// scanning, so prose that names esc (core-util.tmpl documents every way
+	// of replacing it) is not a finding. Trailing `// ...` after code and
+	// `/* */` blocks are NOT removed: stripping them could hide code after a
+	// "/*" or "//" inside a string, and leaving them can only add a false
+	// positive, the safe direction.
+	escLineCommentRe = regexp.MustCompile(`(?m)^[ \t]*//.*$`)
+	escHTMLCommentRe = regexp.MustCompile(`(?s)<!--.*?-->`)
+
+	// A second declaration of esc, wherever on the line it sits (after `;`,
+	// `{`, in a comma list, indented inside an IIFE): `function esc` (also
+	// async / generator), `const|let|var|class esc`, a declarator list
+	// `const a = x, esc = ...` or a destructuring `const {esc} = ...`.
+	escDeclRe = regexp.MustCompile(`\b(?:function\*?|const|let|var|class)\s+esc\b|\b(?:const|let|var)\b[^;\n]*\besc\b\s*(?:=|[,}\]])`)
+
+	// A write to esc that is not a declaration: bare `esc = ...` (also
+	// `esc ||= ...`, `esc += ...`; not ==, ===, =>), a property write
+	// `x.esc = ...` / `self['esc'] = ...` / `globalThis.esc = ...`, and the
+	// reflective forms Object.defineProperty / defineProperties / assign and
+	// Reflect.set / defineProperty naming 'esc'. Against the const binding
+	// most of these are inert at run time, but none has a reason to exist
+	// and each is exactly what a later edit would use to swap the escaper.
+	// False positive by design: the `set(` branch also matches a legitimate
+	// call such as `keys.set('esc', back)` (a Map keyed by the string "esc").
+	// Rename the key or the variable rather than loosening this pattern.
+	escWriteRe = regexp.MustCompile("(?m)(?:^|[^\\w$.])esc\\s*(?:\\*\\*|<<|>>>?|&&|\\|\\||\\?\\?|[-+*/%&|^])?=(?:[^=>]|$)" +
+		"|(?:\\.\\s*esc\\b|\\[\\s*['\"`]esc['\"`]\\s*\\])\\s*(?:\\*\\*|<<|>>>?|&&|\\|\\||\\?\\?|[-+*/%&|^])?=(?:[^=>]|$)" +
+		"|\\b(?:defineProperty|defineProperties|assign|set)\\s*\\([^;\\n]*['\"`]esc['\"`]")
+
+	// A use of esc: a call `esc(` or a reference such as `.map(esc)` — not a
+	// property (`x.esc`), an object key (`esc:`) or part of a longer name.
+	escUseRe = regexp.MustCompile(`(?m)(?:^|[^\w$.])esc(?:[^\w$:]|$)`)
+)
+
+// stripEscComments removes the comment forms escLineCommentRe and
+// escHTMLCommentRe describe.
+func stripEscComments(s string) string {
+	return escLineCommentRe.ReplaceAllString(escHTMLCommentRe.ReplaceAllString(s, ""), "")
+}
+
+// escIsFirstStatement reports whether the declaration at byte offset at in
+// code is the first statement of its <script>: everything between the
+// script's open tag and at is whitespace (comments are already stripped from
+// code). That one condition gives both properties esc needs.
+//
+//   - Top level: a declaration inside an IIFE, function or block is private
+//     to that scope, and no other partial's script can reach it.
+//   - No TDZ window: esc is a const, so a statement BEFORE it that throws
+//     aborts the script and leaves esc uninitialised for good — every pane
+//     then fails with "Cannot access 'esc' before initialization" (a
+//     function declaration would have been hoisted and survived). Nothing
+//     can precede it, so nothing can throw first. A helper added to this
+//     partial later therefore goes after the esc line.
+func escIsFirstStatement(code string, at int) bool {
+	head := code[:at]
+	if i := strings.LastIndex(strings.ToLower(head), "<script"); i >= 0 {
+		if j := strings.Index(head[i:], ">"); j >= 0 {
+			head = head[i+j+1:]
+		}
+	}
+	return strings.TrimSpace(head) == ""
+}
+
+// rootCallOrder returns the names the root calls at its top level, in
+// document order (the order html/template serves them). TODO: this parses
+// the root the same way checkPortalAssembly does (the parse.New / SkipFuncCheck
+// block over each partial); fold the two into one shared helper the next time
+// either is touched.
+func rootCallOrder(fsys fs.FS) ([]string, error) {
+	b, err := fs.ReadFile(fsys, path.Dir(portalTmplGlob)+"/"+portalRootTmpl)
+	if err != nil {
+		return nil, err
+	}
+	tr := parse.New(portalRootTmpl)
+	tr.Mode = parse.SkipFuncCheck
+	set := map[string]*parse.Tree{}
+	if _, err := tr.Parse(string(b), "", "", set); err != nil {
+		return nil, fmt.Errorf("%s: parse: %w", portalRootTmpl, err)
+	}
+	var order []string
+	if root := set[portalRootTmpl]; root != nil && root.Root != nil {
+		for _, n := range root.Root.Nodes {
+			if c, ok := n.(*parse.TemplateNode); ok {
+				order = append(order, c.Name)
+			}
+		}
+	}
+	return order, nil
+}
+
+// checkPortalEsc verifies the single-escape-path rule (P28-0a), returning
+// every violation (nil when there is none):
+//
+//  1. Exactly one partial, in the whole portal, contains escWantLine, as a
+//     whole line starting at column 0 and exactly once. The escaper's body is
+//     compared, not just counted (see escWantLine).
+//
+//  2. That line is the FIRST statement of its script (escIsFirstStatement):
+//     top level, so it is a global binding and not private to an IIFE, and
+//     nothing before it that could throw and leave the const in its TDZ.
+//
+//  3. No partial, the declaring one included, declares or writes the name
+//     anywhere else (escDeclRe, escWriteRe): no local copy that shadows the
+//     shared one, no `esc = ...` / `self.esc = ...` / `window['esc'] = ...`
+//     / Object.defineProperty(window, 'esc', ...) that swaps it. This is a
+//     source scan, not a proof: `eval`, `with`, computed property names and
+//     the like are out of reach of a regex and are the reviewer's to catch.
+//
+//  4. The partial that declares esc is called by the root at its top level
+//     before every other partial that uses it (call or reference, escUseRe),
+//     and before any use of esc in the root's own inline script. A use served
+//     earlier is a ReferenceError at that pane's first render, which no Go
+//     test would otherwise see.
+func checkPortalEsc(fsys fs.FS) error {
+	parts, err := readPortalPartials(fsys)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	wantLineRe := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(escWantLine) + `[ \t]*$`)
+
+	// code is each partial with comments removed and, in the declaring
+	// partial, the one permitted declaration line removed.
+	code := map[string]string{}
+	definer, declAt := "", -1
+	total := 0
+	for _, p := range parts {
+		c := stripEscComments(p.body)
+		locs := wantLineRe.FindAllStringIndex(c, -1)
+		total += len(locs)
+		if len(locs) > 0 {
+			definer = p.name
+			if len(locs) == 1 {
+				declAt = locs[0][0]
+			}
+			// Cut every copy out so the scan below sees what is left;
+			// extra copies are reported through total.
+			c = c[:locs[0][0]] + c[locs[0][1]:]
+			for len(wantLineRe.FindStringIndex(c)) > 0 {
+				l := wantLineRe.FindStringIndex(c)
+				c = c[:l[0]] + c[l[1]:]
+			}
+		}
+		code[p.name] = c
+	}
+	switch {
+	case total == 0:
+		errs = append(errs, fmt.Errorf("no partial contains the exact definition line %q at column 0 — esc must be declared once, verbatim (a changed or removed escaper is a portal-wide XSS regression; if the change is intended, update escWantLine and say why)", escWantLine))
+	case total > 1:
+		errs = append(errs, fmt.Errorf("the definition line of esc appears %d times across the partials, want exactly 1", total))
+	}
+
+	for _, p := range parts {
+		c := code[p.name]
+		for _, re := range []*regexp.Regexp{escDeclRe, escWriteRe} {
+			for _, m := range re.FindAllString(c, -1) {
+				errs = append(errs, fmt.Errorf("%s: found %q — esc must be declared once, as the pinned const line, and never redeclared or reassigned (a local copy shadows the shared one; a write swaps it for every pane)", p.name, strings.TrimSpace(m)))
+			}
+		}
+	}
+
+	if total != 1 {
+		return errors.Join(errs...)
+	}
+	if !escIsFirstStatement(stripEscComments(partialBody(parts, definer)), declAt) {
+		errs = append(errs, fmt.Errorf("%s: the esc declaration is not the first statement of its <script> — code before it is either wrapping it in an IIFE/function/block (private to that scope) or can throw before the const is initialised, which leaves esc in its TDZ for every pane", definer))
+	}
+
+	order, err := rootCallOrder(fsys)
+	if err != nil {
+		return errors.Join(append(errs, err)...)
+	}
+	pos := map[string]int{}
+	for i, name := range order {
+		if _, seen := pos[name]; !seen {
+			pos[name] = i
+		}
+	}
+	dp, ok := pos[definer]
+	if !ok {
+		return errors.Join(append(errs, fmt.Errorf("%s declares esc but the root does not call it at its top level", definer))...)
+	}
+	for _, p := range parts {
+		switch {
+		case p.name == definer:
+			continue
+		case p.name == portalRootTmpl:
+			// The root's own inline script: whatever sits before the
+			// definer's call is served before esc exists.
+			rc := code[p.name]
+			callRe := regexp.MustCompile(`\{\{-?\s*template\s+"` + regexp.QuoteMeta(definer) + `"`)
+			if loc := callRe.FindStringIndex(rc); loc != nil && escUseRe.MatchString(rc[:loc[0]]) {
+				errs = append(errs, fmt.Errorf("%s uses esc in its inline script before it calls %s, which declares it — that use would be a ReferenceError", p.name, definer))
+			}
+			continue
+		}
+		up, ok := pos[p.name]
+		if !ok {
+			continue // reported by checkPortalAssembly
+		}
+		if up < dp && escUseRe.MatchString(code[p.name]) {
+			errs = append(errs, fmt.Errorf("%s uses esc but is served BEFORE %s, which declares it — that use would be a ReferenceError", p.name, definer))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// partialBody returns the body of the named partial.
+func partialBody(parts []portalPartial, name string) string {
+	for _, p := range parts {
+		if p.name == name {
+			return p.body
+		}
+	}
+	return ""
+}
+
 // TestPortalPartials_RootCallsEveryPartialExactlyOnce runs the assembly
 // contract (checkPortalAssembly's doc lists exactly what is guaranteed)
 // against the embedded partials.
@@ -347,6 +577,14 @@ func TestPortalPartials_RootCallsEveryPartialExactlyOnce(t *testing.T) {
 // this one names the offending file.
 func TestPortalPartials_ScriptAndStyleBlocksAreWholeAndNonced(t *testing.T) {
 	if err := checkPortalScriptAndStyle(portalFS); err != nil {
+		t.Error(err)
+	}
+}
+
+// TestPortalPartials_EscDefinedOnceBeforePanes runs checkPortalEsc against the
+// embedded partials.
+func TestPortalPartials_EscDefinedOnceBeforePanes(t *testing.T) {
+	if err := checkPortalEsc(portalFS); err != nil {
 		t.Error(err)
 	}
 }
@@ -407,10 +645,11 @@ func prependText(extra string) func(string) string {
 	return func(s string) string { return extra + s }
 }
 
-// TestPortalPartials_ChecksRejectMutations is the proof that the two checks
-// above can fail: each case applies ONE mutation to a copy of the real
-// partials and requires the named check to report it. The unmutated copy
-// must pass both, so a failure here is the mutation and not the copy.
+// TestPortalPartials_ChecksRejectMutations is the proof that the three checks
+// above (checkPortalAssembly, checkPortalScriptAndStyle, checkPortalEsc) can
+// fail: each case applies ONE mutation to a copy of the real partials and
+// requires the named check to report it. The unmutated copy must pass all
+// three, so a failure here is the mutation and not the copy.
 //
 // Cases 1-3 are mutations review found passing every test while changing
 // what is served (they hid behind `{{ ` spacing from the earlier
@@ -422,6 +661,9 @@ func TestPortalPartials_ChecksRejectMutations(t *testing.T) {
 	}
 	if err := checkPortalScriptAndStyle(clean); err != nil {
 		t.Fatalf("unmutated copy fails checkPortalScriptAndStyle: %v", err)
+	}
+	if err := checkPortalEsc(clean); err != nil {
+		t.Fatalf("unmutated copy fails checkPortalEsc: %v", err)
 	}
 
 	const homeCall = `{{template "pane-home.tmpl" . -}}`
@@ -551,6 +793,252 @@ func TestPortalPartials_ChecksRejectMutations(t *testing.T) {
 			},
 			check:   checkPortalAssembly,
 			wantErr: "no portal partials match",
+		},
+		// ---- esc: the pinned escaper body ----
+		{
+			name:    "esc body: the .replace is cut out",
+			mutate:  portalFSEdit("core-util.tmpl", replaceOnce(`.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))`, "")),
+			check:   checkPortalEsc,
+			wantErr: "no partial contains the exact definition line",
+		},
+		{
+			name:    "esc body: \"' dropped from the character class",
+			mutate:  portalFSEdit("core-util.tmpl", replaceOnce(`/[&<>"']/g`, `/[&<>]/g`)),
+			check:   checkPortalEsc,
+			wantErr: "no partial contains the exact definition line",
+		},
+		{
+			name:    "esc body: the &#39; entity is replaced",
+			mutate:  portalFSEdit("core-util.tmpl", replaceOnce(`'&#39;'`, `"'"`)),
+			check:   checkPortalEsc,
+			wantErr: "no partial contains the exact definition line",
+		},
+		{
+			name:    "esc body: null-safety removed",
+			mutate:  portalFSEdit("core-util.tmpl", replaceOnce(`String(s == null ? '' : s)`, `String(s)`)),
+			check:   checkPortalEsc,
+			wantErr: "no partial contains the exact definition line",
+		},
+		{
+			name:    "esc declaration renamed away (no definition at all)",
+			mutate:  portalFSEdit("core-util.tmpl", replaceOnce("const esc =", "const escape2 =")),
+			check:   checkPortalEsc,
+			wantErr: "no partial contains the exact definition line",
+		},
+		{
+			name:    "esc declaration is a function, not the pinned const",
+			mutate:  portalFSEdit("core-util.tmpl", replaceOnce(escWantLine, "function esc(s) { return String(s); }")),
+			check:   checkPortalEsc,
+			wantErr: "no partial contains the exact definition line",
+		},
+		// ---- esc: a second declaration, in every spelling ----
+		{
+			name:    "pane redeclares esc (function, indented in the IIFE)",
+			mutate:  portalFSEdit("pane-me.tmpl", replaceOnce("(function () {\n", "(function () {\n  function esc(s) { return String(s); }\n")),
+			check:   checkPortalEsc,
+			wantErr: "never redeclared or reassigned",
+		},
+		{
+			name:    "pane redeclares esc (async function)",
+			mutate:  portalFSEdit("pane-me.tmpl", replaceOnce("(function () {\n", "(function () {\n  async function esc(s) { return String(s); }\n")),
+			check:   checkPortalEsc,
+			wantErr: `found "function esc"`,
+		},
+		{
+			name:    "pane redeclares esc (const arrow)",
+			mutate:  portalFSEdit("pane-board.tmpl", replaceOnce("(function () {\n", "(function () {\n  const esc = s => String(s);\n")),
+			check:   checkPortalEsc,
+			wantErr: "never redeclared or reassigned",
+		},
+		{
+			name:    "pane redeclares esc (let)",
+			mutate:  portalFSEdit("pane-board.tmpl", replaceOnce("(function () {\n", "(function () {\n  let esc = s => String(s);\n")),
+			check:   checkPortalEsc,
+			wantErr: `found "let esc`,
+		},
+		{
+			name:    "pane redeclares esc (var)",
+			mutate:  portalFSEdit("pane-story.tmpl", replaceOnce("(function () {\n", "(function () {\n  var esc = s => String(s);\n")),
+			check:   checkPortalEsc,
+			wantErr: `found "var esc`,
+		},
+		{
+			name:    "pane redeclares esc mid-line after a semicolon",
+			mutate:  portalFSEdit("pane-terminal.tmpl", replaceOnce("(function () {\n", "(function () {\n  let z = 0; const esc = s => String(s);\n")),
+			check:   checkPortalEsc,
+			wantErr: "never redeclared or reassigned",
+		},
+		{
+			name:    "pane redeclares esc in a comma-separated declaration",
+			mutate:  portalFSEdit("pane-terminal.tmpl", replaceOnce("(function () {\n", "(function () {\n  const fmt = x => x, esc = s => String(s);\n")),
+			check:   checkPortalEsc,
+			wantErr: "never redeclared or reassigned",
+		},
+		{
+			name:    "pane destructures esc",
+			mutate:  portalFSEdit("pane-terminal.tmpl", replaceOnce("(function () {\n", "(function () {\n  const { esc } = helpers;\n")),
+			check:   checkPortalEsc,
+			wantErr: "never redeclared or reassigned",
+		},
+		{
+			name:    "the declaration line is duplicated in core-util",
+			mutate:  portalFSEdit("core-util.tmpl", replaceOnce(escWantLine, escWantLine+"\n"+escWantLine)),
+			check:   checkPortalEsc,
+			wantErr: "appears 2 times",
+		},
+		{
+			name:    "the declaration line is copied into a second partial",
+			mutate:  portalFSEdit("pane-home.tmpl", appendText("<script nonce=\"{{.Nonce}}\">\n"+escWantLine+"\n</script>\n")),
+			check:   checkPortalEsc,
+			wantErr: "appears 2 times",
+		},
+		{
+			name:    "the pinned line is not at column 0 (indented)",
+			mutate:  portalFSEdit("core-util.tmpl", replaceOnce(escWantLine, "  "+escWantLine)),
+			check:   checkPortalEsc,
+			wantErr: "no partial contains the exact definition line",
+		},
+		{
+			name:    "the pinned line follows other code on its line",
+			mutate:  portalFSEdit("core-util.tmpl", replaceOnce(escWantLine, "let z = 0; "+escWantLine)),
+			check:   checkPortalEsc,
+			wantErr: "no partial contains the exact definition line",
+		},
+		// ---- esc: reassignment / swap, in every spelling ----
+		{
+			name:    "pane reassigns esc (bare)",
+			mutate:  portalFSEdit("pane-me.tmpl", replaceOnce("(function () {\n", "(function () {\n  esc = s => s;\n")),
+			check:   checkPortalEsc,
+			wantErr: "never redeclared or reassigned",
+		},
+		{
+			name:    "pane reassigns esc (function expression, no space)",
+			mutate:  portalFSEdit("pane-me.tmpl", replaceOnce("(function () {\n", "(function () {\n  esc=function (s) { return s; };\n")),
+			check:   checkPortalEsc,
+			wantErr: "never redeclared or reassigned",
+		},
+		{
+			name:    "pane reassigns esc mid-line",
+			mutate:  portalFSEdit("pane-me.tmpl", replaceOnce("(function () {\n", "(function () {\n  if (x) { esc = s => s; }\n")),
+			check:   checkPortalEsc,
+			wantErr: "never redeclared or reassigned",
+		},
+		{
+			name:    "pane reassigns esc (compound ||=)",
+			mutate:  portalFSEdit("pane-me.tmpl", replaceOnce("(function () {\n", "(function () {\n  esc ||= s => s;\n")),
+			check:   checkPortalEsc,
+			wantErr: "never redeclared or reassigned",
+		},
+		{
+			name:    "pane assigns window.esc",
+			mutate:  portalFSEdit("pane-terminal.tmpl", replaceOnce("(function () {\n", "(function () {\n  window.esc = s => String(s);\n")),
+			check:   checkPortalEsc,
+			wantErr: "never redeclared or reassigned",
+		},
+		{
+			name:    "pane assigns self.esc",
+			mutate:  portalFSEdit("pane-terminal.tmpl", replaceOnce("(function () {\n", "(function () {\n  self.esc = s => String(s);\n")),
+			check:   checkPortalEsc,
+			wantErr: "never redeclared or reassigned",
+		},
+		{
+			name:    "pane assigns globalThis.esc",
+			mutate:  portalFSEdit("pane-terminal.tmpl", replaceOnce("(function () {\n", "(function () {\n  globalThis.esc = s => String(s);\n")),
+			check:   checkPortalEsc,
+			wantErr: "never redeclared or reassigned",
+		},
+		{
+			name:    "pane assigns window['esc']",
+			mutate:  portalFSEdit("pane-terminal.tmpl", replaceOnce("(function () {\n", "(function () {\n  window['esc'] = s => String(s);\n")),
+			check:   checkPortalEsc,
+			wantErr: "never redeclared or reassigned",
+		},
+		{
+			name:    "pane Object.defineProperty(window, 'esc', ...)",
+			mutate:  portalFSEdit("pane-terminal.tmpl", replaceOnce("(function () {\n", "(function () {\n  Object.defineProperty(window, 'esc', { value: s => s });\n")),
+			check:   checkPortalEsc,
+			wantErr: "never redeclared or reassigned",
+		},
+		{
+			name:    "pane Reflect.set(window, 'esc', ...)",
+			mutate:  portalFSEdit("pane-terminal.tmpl", replaceOnce("(function () {\n", "(function () {\n  Reflect.set(window, \"esc\", s => s);\n")),
+			check:   checkPortalEsc,
+			wantErr: "never redeclared or reassigned",
+		},
+		{
+			name:    "core-util itself reassigns esc after declaring it",
+			mutate:  portalFSEdit("core-util.tmpl", appendText("<script nonce=\"{{.Nonce}}\">\nesc = s => s;\n</script>\n")),
+			check:   checkPortalEsc,
+			wantErr: "never redeclared or reassigned",
+		},
+		// ---- esc: top level, and served before every use ----
+		{
+			name:    "shared declaration wrapped in an IIFE (private to that script)",
+			mutate:  portalFSEdit("core-util.tmpl", replaceOnce(escWantLine, "(function () {\n"+escWantLine+"\n})();")),
+			check:   checkPortalEsc,
+			wantErr: "not the first statement of its <script>",
+		},
+		{
+			name:    "shared declaration inside a block",
+			mutate:  portalFSEdit("core-util.tmpl", replaceOnce(escWantLine, "if (true) {\n"+escWantLine+"\n}")),
+			check:   checkPortalEsc,
+			wantErr: "not the first statement of its <script>",
+		},
+		{
+			name:    "a statement that can throw precedes the declaration (TDZ)",
+			mutate:  portalFSEdit("core-util.tmpl", replaceOnce(escWantLine, "document.getElementById('no-such-id').textContent = 'x';\n"+escWantLine)),
+			check:   checkPortalEsc,
+			wantErr: "not the first statement of its <script>",
+		},
+		{
+			name:    "a helper statement precedes the declaration",
+			mutate:  portalFSEdit("core-util.tmpl", replaceOnce(escWantLine, "const fmt = (n) => String(n);\n"+escWantLine)),
+			check:   checkPortalEsc,
+			wantErr: "not the first statement of its <script>",
+		},
+		{
+			name: "shared declaration served after the panes that use it",
+			mutate: portalFSEdit(portalRootTmpl, func(s string) string {
+				const util = `{{template "core-util.tmpl" . -}}` + "\n"
+				const router = `{{template "core-router.tmpl" . -}}` + "\n"
+				return strings.Replace(strings.Replace(s, util, "", 1), router, util+router, 1)
+			}),
+			check:   checkPortalEsc,
+			wantErr: "pane-story.tmpl uses esc but is served BEFORE core-util.tmpl",
+		},
+		{
+			name: "declaration moved from core-util into a later pane (top level of its script)",
+			mutate: func(t *testing.T, m fstest.MapFS) {
+				portalFSEdit("core-util.tmpl", replaceOnce(escWantLine, ""))(t, m)
+				portalFSEdit("pane-terminal.tmpl", replaceOnce("<script nonce=\"{{.Nonce}}\">\n", "<script nonce=\"{{.Nonce}}\">\n"+escWantLine+"\n"))(t, m)
+			},
+			check:   checkPortalEsc,
+			wantErr: "pane-story.tmpl uses esc but is served BEFORE pane-terminal.tmpl",
+		},
+		{
+			name:    "the root does not call the partial that declares esc",
+			mutate:  portalFSEdit(portalRootTmpl, replaceOnce(`{{template "core-util.tmpl" . -}}`+"\n", "")),
+			check:   checkPortalEsc,
+			wantErr: "core-util.tmpl declares esc but the root does not call it",
+		},
+		{
+			name:    "the root's own inline script uses esc before the declaring call",
+			mutate:  portalFSEdit(portalRootTmpl, replaceOnce(`{{template "core-util.tmpl" . -}}`, "<script nonce=\"{{.Nonce}}\">\ndocument.title = esc(window.__PORTAL_USER__);\n</script>\n{{template \"core-util.tmpl\" . -}}")),
+			check:   checkPortalEsc,
+			wantErr: "portal.tmpl uses esc in its inline script before it calls core-util.tmpl",
+		},
+		{
+			name: "a pane that only passes esc by reference is served before the declaration",
+			mutate: func(t *testing.T, m fstest.MapFS) {
+				const util = `{{template "core-util.tmpl" . -}}` + "\n"
+				const terminal = `{{template "pane-terminal.tmpl" . -}}`
+				portalFSEdit(portalRootTmpl, func(s string) string {
+					return strings.Replace(strings.Replace(s, util, "", 1), terminal, util+terminal, 1)
+				})(t, m)
+				portalFSEdit("pane-home.tmpl", appendText("<script nonce=\"{{.Nonce}}\">\n[1].map(esc);\n</script>\n"))(t, m)
+			},
+			check:   checkPortalEsc,
+			wantErr: "pane-home.tmpl uses esc but is served BEFORE core-util.tmpl",
 		},
 		{
 			name:    "script without nonce",
