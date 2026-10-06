@@ -22,6 +22,11 @@
 //    later script declaring the same name (`const|let|var|function esc`) fails
 //    at GlobalDeclarationInstantiation with a SyntaxError before any of that
 //    script runs. Both are fail-closed: the original esc keeps escaping.
+//  - TDZ: this only holds if the const line is the FIRST statement of this
+//    script (checkPortalEsc enforces it). A statement before it that throws
+//    aborts the script with esc still uninitialised, and every pane then
+//    dies with "Cannot access 'esc' before initialization" (a hoisted
+//    function declaration would have survived). Put any new helper AFTER it.
 //  - A bare global, like PORTAL_TABS in core-router.tmpl; the portal's other
 //    shared names are not namespaced either.
 //

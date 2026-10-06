@@ -18,7 +18,9 @@ import (
 // portalLastPartial is the partial the root must call LAST. Call order is
 // fixed by rule rather than by pinning the whole list, so panes can still
 // be added or reordered freely; a PR that adds another order-dependent
-// partial adds its own rule to checkPortalAssembly.
+// partial adds its own rule: to checkPortalAssembly for a plain call-order
+// rule (this one), or to its own check when the rule is about a script's
+// content (esc: checkPortalEsc, which reads the order from rootCallOrder).
 //
 // Why the router is last: core-router.tmpl:74-76 runs applyRole() and
 // showTab(currentTab()) the moment its <script> is parsed. showTab looks
@@ -365,6 +367,9 @@ var (
 	// Reflect.set / defineProperty naming 'esc'. Against the const binding
 	// most of these are inert at run time, but none has a reason to exist
 	// and each is exactly what a later edit would use to swap the escaper.
+	// False positive by design: the `set(` branch also matches a legitimate
+	// call such as `keys.set('esc', back)` (a Map keyed by the string "esc").
+	// Rename the key or the variable rather than loosening this pattern.
 	escWriteRe = regexp.MustCompile("(?m)(?:^|[^\\w$.])esc\\s*(?:\\*\\*|<<|>>>?|&&|\\|\\||\\?\\?|[-+*/%&|^])?=(?:[^=>]|$)" +
 		"|(?:\\.\\s*esc\\b|\\[\\s*['\"`]esc['\"`]\\s*\\])\\s*(?:\\*\\*|<<|>>>?|&&|\\|\\||\\?\\?|[-+*/%&|^])?=(?:[^=>]|$)" +
 		"|\\b(?:defineProperty|defineProperties|assign|set)\\s*\\([^;\\n]*['\"`]esc['\"`]")
@@ -380,34 +385,34 @@ func stripEscComments(s string) string {
 	return escLineCommentRe.ReplaceAllString(escHTMLCommentRe.ReplaceAllString(s, ""), "")
 }
 
-// scriptDepthBefore returns the net bracket depth, `(`/`{`/`[` minus their
-// closers, of the script text that precedes byte offset at in code, counted
-// from the last `<script` open tag before it. Zero means a declaration at
-// `at` is at the script's top level; an IIFE or function body left open makes
-// it positive. Brackets inside strings and regexes are counted too: the
-// count is a conservative approximation (it can only add false positives) and
-// the text before the declaration is, today, nothing but comments.
-func scriptDepthBefore(code string, at int) int {
+// escIsFirstStatement reports whether the declaration at byte offset at in
+// code is the first statement of its <script>: everything between the
+// script's open tag and at is whitespace (comments are already stripped from
+// code). That one condition gives both properties esc needs.
+//
+//   - Top level: a declaration inside an IIFE, function or block is private
+//     to that scope, and no other partial's script can reach it.
+//   - No TDZ window: esc is a const, so a statement BEFORE it that throws
+//     aborts the script and leaves esc uninitialised for good — every pane
+//     then fails with "Cannot access 'esc' before initialization" (a
+//     function declaration would have been hoisted and survived). Nothing
+//     can precede it, so nothing can throw first. A helper added to this
+//     partial later therefore goes after the esc line.
+func escIsFirstStatement(code string, at int) bool {
 	head := code[:at]
 	if i := strings.LastIndex(strings.ToLower(head), "<script"); i >= 0 {
 		if j := strings.Index(head[i:], ">"); j >= 0 {
 			head = head[i+j+1:]
 		}
 	}
-	depth := 0
-	for _, r := range head {
-		switch r {
-		case '(', '{', '[':
-			depth++
-		case ')', '}', ']':
-			depth--
-		}
-	}
-	return depth
+	return strings.TrimSpace(head) == ""
 }
 
 // rootCallOrder returns the names the root calls at its top level, in
-// document order (the order html/template serves them).
+// document order (the order html/template serves them). TODO: this parses
+// the root the same way checkPortalAssembly does (the parse.New / SkipFuncCheck
+// block over each partial); fold the two into one shared helper the next time
+// either is touched.
 func rootCallOrder(fsys fs.FS) ([]string, error) {
 	b, err := fs.ReadFile(fsys, path.Dir(portalTmplGlob)+"/"+portalRootTmpl)
 	if err != nil {
@@ -437,9 +442,9 @@ func rootCallOrder(fsys fs.FS) ([]string, error) {
 //     whole line starting at column 0 and exactly once. The escaper's body is
 //     compared, not just counted (see escWantLine).
 //
-//  2. That line is a top-level statement of its script (bracket depth 0 since
-//     the `<script` open tag), so it is a global binding and not private to
-//     an IIFE.
+//  2. That line is the FIRST statement of its script (escIsFirstStatement):
+//     top level, so it is a global binding and not private to an IIFE, and
+//     nothing before it that could throw and leave the const in its TDZ.
 //
 //  3. No partial, the declaring one included, declares or writes the name
 //     anywhere else (escDeclRe, escWriteRe): no local copy that shadows the
@@ -504,8 +509,8 @@ func checkPortalEsc(fsys fs.FS) error {
 	if total != 1 {
 		return errors.Join(errs...)
 	}
-	if d := scriptDepthBefore(stripEscComments(partialBody(parts, definer)), declAt); d != 0 {
-		errs = append(errs, fmt.Errorf("%s: the esc declaration is not at the top level of its script (bracket depth %d) — inside an IIFE or function it is private to that scope and other partials cannot reach it", definer, d))
+	if !escIsFirstStatement(stripEscComments(partialBody(parts, definer)), declAt) {
+		errs = append(errs, fmt.Errorf("%s: the esc declaration is not the first statement of its <script> — code before it is either wrapping it in an IIFE/function/block (private to that scope) or can throw before the const is initialised, which leaves esc in its TDZ for every pane", definer))
 	}
 
 	order, err := rootCallOrder(fsys)
@@ -640,10 +645,11 @@ func prependText(extra string) func(string) string {
 	return func(s string) string { return extra + s }
 }
 
-// TestPortalPartials_ChecksRejectMutations is the proof that the two checks
-// above can fail: each case applies ONE mutation to a copy of the real
-// partials and requires the named check to report it. The unmutated copy
-// must pass both, so a failure here is the mutation and not the copy.
+// TestPortalPartials_ChecksRejectMutations is the proof that the three checks
+// above (checkPortalAssembly, checkPortalScriptAndStyle, checkPortalEsc) can
+// fail: each case applies ONE mutation to a copy of the real partials and
+// requires the named check to report it. The unmutated copy must pass all
+// three, so a failure here is the mutation and not the copy.
 //
 // Cases 1-3 are mutations review found passing every test while changing
 // what is served (they hid behind `{{ ` spacing from the earlier
@@ -970,13 +976,25 @@ func TestPortalPartials_ChecksRejectMutations(t *testing.T) {
 			name:    "shared declaration wrapped in an IIFE (private to that script)",
 			mutate:  portalFSEdit("core-util.tmpl", replaceOnce(escWantLine, "(function () {\n"+escWantLine+"\n})();")),
 			check:   checkPortalEsc,
-			wantErr: "not at the top level of its script",
+			wantErr: "not the first statement of its <script>",
 		},
 		{
 			name:    "shared declaration inside a block",
 			mutate:  portalFSEdit("core-util.tmpl", replaceOnce(escWantLine, "if (true) {\n"+escWantLine+"\n}")),
 			check:   checkPortalEsc,
-			wantErr: "not at the top level of its script",
+			wantErr: "not the first statement of its <script>",
+		},
+		{
+			name:    "a statement that can throw precedes the declaration (TDZ)",
+			mutate:  portalFSEdit("core-util.tmpl", replaceOnce(escWantLine, "document.getElementById('no-such-id').textContent = 'x';\n"+escWantLine)),
+			check:   checkPortalEsc,
+			wantErr: "not the first statement of its <script>",
+		},
+		{
+			name:    "a helper statement precedes the declaration",
+			mutate:  portalFSEdit("core-util.tmpl", replaceOnce(escWantLine, "const fmt = (n) => String(n);\n"+escWantLine)),
+			check:   checkPortalEsc,
+			wantErr: "not the first statement of its <script>",
 		},
 		{
 			name: "shared declaration served after the panes that use it",
