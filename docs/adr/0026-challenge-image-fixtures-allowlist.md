@@ -1,6 +1,6 @@
 # ADR-0026: challenge image の `/opt/ctf/missions/` を fixtures allowlist にし、hints・想定解・採点メタを同梱しない
 
-- Status: **Accepted** (実装 PR app#<A1> の CEO merge 時。V1〜V3 は本 PR、V4〜V6・V8 は後続 PR で landing。先例は ADR-0033)
+- Status: **Accepted** (実装 PR app#319 の CEO merge 時。V1〜V3 は本 PR、V4〜V6・V8 は後続 PR で landing。先例は ADR-0033)
 - Date / Deciders: 2026-10-05 / CEO (2026-10-04「2026-06 の guided 方針を解除し、撤去する」) + VP + architect (起草) +
   security-engineer・qa-engineer (独立レビュー 2026-10-05。指摘は本版に反映済み、再確認待ち)
 - 関連: workspace `REFACTORING.md` P28-0d / P22 (2026-08-14 CEO 決定) / P27-1、ADR-0001 (監査 LOW「plant.sh の同梱」・I12)、
