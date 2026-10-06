@@ -1,6 +1,6 @@
 # ADR-0026: challenge image の `/opt/ctf/missions/` を fixtures allowlist にし、hints・想定解・採点メタを同梱しない
 
-- Status: **Proposed** (Accepted 化は CEO merge 時。期限 = P28-0d の software PR の merge 前)
+- Status: **Accepted** (実装 PR app#319 の CEO merge 時。V1〜V3 は本 PR、V5・V6 は app#318、V4・V8 は後続 PR で landing。先例は ADR-0033)
 - Date / Deciders: 2026-10-05 / CEO (2026-10-04「2026-06 の guided 方針を解除し、撤去する」) + VP + architect (起草) +
   security-engineer・qa-engineer (独立レビュー 2026-10-05。指摘は本版に反映済み、再確認待ち)
 - 関連: workspace `REFACTORING.md` P28-0d / P22 (2026-08-14 CEO 決定) / P27-1、ADR-0001 (監査 LOW「plant.sh の同梱」・I12)、
@@ -35,7 +35,9 @@ architect の probe でも再現)。なお `/opt/ctf/INDEX.txt` は image にも
 
 **C5. 制約。** I5 (全 8 イメージ同一 SHA。イメージを増やさない)。workspace 内で走る検査は shell builtin に限る (ingest は container
 名を見ないので、検査のプロセスが参加者の発火として採点される: `charts/ctf-user/assert-flag-isolation.sh:22-57`)。prod は CI-free で、
-一次ゲートは `make build` (`Makefile:66`)。path は動かせない: platform の Falco `customRules` が
+一次ゲートは `make build` (`Makefile:66`) のつもりだったが、**この前提は成り立たない**: platform の `docs/prod-deploy.md` は `make build` を
+使わず独自の build ループを持つので、`scripts/check-image-hygiene.sh <image>` の明示実行をそこへ足した (契約表に app が platform へ出す面として載せる)。
+app 側は `make push` も `check-image-hygiene` に依存させる。path は動かせない: platform の Falco `customRules` が
 `/opt/ctf/missions/13-archive-loot/fixtures/loot/` を条件に直書きしている
 (`falco-ctf-platform/helmfile/releases/falco/values.yaml.gotmpl:171`)。
 
@@ -74,10 +76,21 @@ architect の probe でも再現)。なお `/opt/ctf/INDEX.txt` は image にも
   (主張していないことを名前が主張してしまう)。
 - **D5 n-gram 規則** (ADR-0030 と単一実装で共有する。スコープ S ごとに評価する):
   1. **入力。** ヒント項目 = S の各課題の `hints[]` の各 `text`。無料表示項目 = S の各課題の `briefing`、各 `steps[].label`、各
-     `steps[].detail`、`rule.yaml`。fixtures 項目 = **全課題**の `challenges/*/fixtures/**` の各ファイル (S で絞らない)。
-     `journey.yaml` 由来の項目は YAML 解釈後の文字列、`rule.yaml` と fixtures は生バイトを UTF-8 として読む。非 UTF-8 は fail。
+     `steps[].detail`、`rule.yaml` の表示用フィールド。fixtures 項目 = **全課題**の `challenges/*/fixtures/**` の各ファイル (S で絞らない)。
+     ヒント項目と無料表示項目は、本番の scoreboard と同じ呼び出し列 `catalog.LoadScored` → `LoadJourneys` → `ApplyNarrativeOverrides` →
+     `LoadRuleExcerpts` が返す値 (YAML 解釈後の文字列) から作る (`cmd/scoreboard/main.go:162-205`、`LoadScored` は
+     `cmd/scoreboard/catalog.go:32`。S が scenario なら、その `scenario.yaml` と同じディレクトリの `narrative.yaml` を渡す)。
+     `rule.yaml` は `LoadRuleExcerpts` が返す表示用フィールドだけを項目にする: rules の name・desc・condition・output・priority・tags、
+     macros の name・condition、lists の name・items (portal の Falco Rule 欄が表示するもの:
+     `internal/scoreboard/view/templates/portal/pane-story.tmpl:541-587`)。文字列は 1 フィールドで 1 項目、`tags` と `items` は
+     要素ごとに 1 項目 (D5-3 と同じ理由で連結しない)。YAML コメントは含めない (参加者に見えない文を無料に数えると緩い側に倒れる)。
+     fixtures は生バイトを UTF-8 として読む。非 UTF-8 は fail。ヒント項目と fixtures 項目に Unicode General Category Cf の code point
+     (U+200B 等) があれば fail (非 UTF-8 と同じ扱い。Cf を挟むと n-gram が切れて検査を黙って通る)。正規化 (D5-2) は変えない。
+     無料表示項目の Cf は無料に数える並びを減らすだけ (厳しい側) なので対象外。Cf 以外の不可視文字 (異体字セレクタ等) は捕まえない (残余 3)。
      `briefing` は、scenario の `narrative.yaml` に override があれば**置き換える** (追記しない。`catalog.ApplyNarrativeOverrides` と同じ)。
      title・tagline・bridge・`rule-explain.md` は無料表示に**含めない** (意図的。厳しい側に倒す)。
+     この定義に改めても、下の「n の根拠」と「実測」の件数 (組の総数) は変わらない (architect 再測 2026-10-06: e74d871 と main a71fb20 の
+     tree の全スコープ・n = 8〜15 で、`rule.yaml` を生バイトで数えた件数と一致)。
   2. **正規化。** Unicode White_Space (Go の `unicode.IsSpace` が真) の rune を除くだけ。NFC / NFKC・大小文字・記号は変えない。
   3. **n-gram。** n = 10 **rune**。**項目ごとに切る** (項目を連結しない。連結すると項目の境界をまたぐ並びまで無料に数え、緩い側に
      倒れる)。
@@ -95,8 +108,28 @@ architect の probe でも再現)。なお `/opt/ctf/INDEX.txt` は image にも
   - **実測 (n=10)。** e74d871: full 364 / nimbusbreach-full 275 / nimbusbreach-with-tutorial 281 / tutorial-intro 42。
     tutorial-intro の 42 のうち 9 は「fixtures を全課題にする」ことで初めて拾える。app#308: 4 スコープとも 0。項目ごとに切る場合と
     連結する場合の差は、この 2 つの tree の full スコープでは 0 (定義として緩い側を塞ぐための規定である)。
+  - **ADR-0030 との関係。** ADR-0030 は D5 の規則 (n と正規化) を引き継ぐか、別の n が要るなら ADR-0030 の実装で n を
+    `internal/hintleak` の `Input` に移す (本 ADR は ADR-0030 の閾値を先取りしない。閾値は ADR-0030 で固定する: workspace `REFACTORING.md` P28 architect §5)。
 - **D6 順序**: content (app#308 の welcome.txt、app#309 の配布文書) が先、software (Dockerfile・検査・I16 昇格・契約表) が後。逆順だと
   V5 が赤になる。content は「D5 の規則で全スコープ 0」を満たしてから merge する。
+
+## 実装時の解釈 (Decision の文面で一意に決まらなかった点。Decision は変更しない)
+
+1. **catalog id = ディレクトリ名。** `falco-rule.yaml` の `challengeId` は必ず書き、ディレクトリ名と一致させる (builder が不一致で build を落とす)。
+   正典の `catalog.go` は「省略したらディレクトリ名を補う」側なので、schema の記述を直すことと Go テストでの強制は follow-up。
+2. **`/opt/ctf` 直下の固定集合** = ディレクトリ `missions`・`plant-seed` と、ファイル `answers.yaml`・`banner.sh`・`setname.sh`・`submit-yaml.sh`・`submit.sh`。
+3. **V4 の all / 単一課題モードの期待 id 集合は operator の checkout の `challenges/` から作る** (単一課題でも image は全 id を持つ。chart が絞るのは scenario
+   だけ)。image は `FALCO_CTF_IMAGE_TAG` から来るので、**checkout と image の ref の一致が deploy の条件**になる (ずれれば all / 単一でも止まる。fail-closed)。
+4. **V3 の「完全一致」** = `expectedFlag` 全文の部分文字列一致を image 全体で検査する。診断は path と件数だけを出し、値は出さない。
+5. **fixtures に未コミットの変更・追跡外・ignored のファイルがあると `make build` (の `check-image-hygiene`) が落ちる** (V1 の基準は `git ls-files` で、
+   sha256 と mode は作業ツリー = build context から読むため)。
+6. D5 は入力 0 件・非 UTF-8・ヒント項目と fixtures 項目の Cf を error とする (D5-1)。数える単位は (fixtures ファイル, 異なる n-gram)。
+7. **`type:` 行は厳密な形だけ受け付ける**: top-level の `type:` がちょうど 1 本で `type: trigger|evade|detect` に完全一致 (builder と V2 が同じ規則)。
+   platform の読み方は緩いが、build が通る tree では同じ集合になる。
+8. **I16 の「同じ PR で昇格」は、すべての機構が main に揃う最後の PR で昇格する、と読む。** P28-0d の software は 3 PR に分割した:
+   image と build 時の検査 (V1〜V3) = app#319 / n-gram の検査 (V5・V6) = app#318 / deploy 時の検査 (V4)・契約表 (D3)・V8・I16 昇格 = 後続 PR。
+   merge 順は #319 → #318 → 後続。I16 の昇格は機構が揃う最後の PR (後続) で行う。V6 のうち `README.md` を足した派生 image の
+   negative test は image 側の検査なので #319 に入る (`scripts/test-check-image-hygiene.sh`)。
 
 ## Consequences
 
@@ -132,8 +165,10 @@ architect の probe でも再現)。なお `/opt/ctf/INDEX.txt` は image にも
 
 ## Verification
 
-V1〜V6 と V8 は P28-0d の software PR で満たす (**未実装**)。V7 は実機でのみ確認可。V1〜V3 は `scripts/check-image-hygiene.sh` に足し、
-`make build` の fail-closed 経路で必ず走らせる (CI の `image-hygiene` job は required check ではない: `.github/workflows/ci.yaml:386-387`)。
+V1〜V6 と V8 は P28-0d の software PR で満たす。landing 先 (分割と merge 順は「実装時の解釈」8): **V1〜V3 = app#319** (V6 のうち
+派生 image の negative test も #319)、**V5・V6 = app#318**、V4・V8 = 後続 PR。V7 は実機でのみ確認可。V1〜V3 は
+`scripts/check-image-hygiene.sh` に足し、`make build` の fail-closed 経路で必ず走らせる (CI の `image-hygiene` job は required check
+ではない: `.github/workflows/ci.yaml:388-389`)。
 
 - **V1 build 時の entry-set**: 基準は `git ls-files 'challenges/*/fixtures/**'`。image の `/opt/ctf/missions/` 配下の全 path が
   `<id>(/fixtures(/.*)?)?` に一致し、全 id に `<id>/fixtures/` があり、基準の各ファイルが同じ bytes と mode で存在し、基準に無い
@@ -150,6 +185,7 @@ V1〜V6 と V8 は P28-0d の software PR で満たす (**未実装**)。V7 は�
 - **V5 Go** (`make test` = required check): `TestFixtures_CarryNoHintOnlyNgrams` が D5 を全スコープで検査する。走査 0 件は fail。
 - **V6 故意違反**: `TestHintLeakChecker_Mutation` — 合成入力で、別の課題のヒント文を fixtures に混ぜると赤 / 無料表示にある文は緑 /
   項目の境界をまたぐ並びは無料に数えない / 入力 0 件は赤。実 catalog の複製で、02 の想定解 (14 文字) を fixtures に混ぜると赤。
+  ヒント項目か fixtures 項目に Cf の code point (U+200B 等) を挟むと error (赤)。ヒント文を `rule.yaml` の YAML コメントにだけ置いて fixtures に混ぜると赤。
   スコープで結果が変わる例 (full では無料、ある scenario では無料でない文) がその scenario でだけ赤。あわせて、`README.md` を
   足した派生 image に V1 が非ゼロで終わる negative test。出力を PR 本文に貼る。
 - **V7 実機**: scenario・`all`・単一課題の各モードで deploy し、V4 が緑で、mission 13 が従来の path で発火して solve すること。
