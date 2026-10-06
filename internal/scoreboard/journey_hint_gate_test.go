@@ -194,8 +194,8 @@ func TestJourney_OutOfScenarioMission_FallsBackAndRevealIs404(t *testing.T) {
 }
 
 // TestJourney_LockedMission_OtherUsersRecordsNotShown pins the self-scope of
-// the store-driven projection: with hints and step ticks now shown for locked
-// missions, another participant's records for the same mission must never
+// the store-driven projection: now that hints and step ticks are shown even on
+// a locked mission, another participant's records for the same mission must never
 // appear in alice's view (the projection reads the store per user).
 func TestJourney_LockedMission_OtherUsersRecordsNotShown(t *testing.T) {
 	f := newJourneyFixture(t)
