@@ -14,6 +14,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 BASE="${1:?usage: test-check-image-hygiene.sh <image-ref>}"
+# Some cases below edit challenges/ temporarily and restore it with `git checkout`:
+# refuse to start unless challenges/ is clean (nothing of ours to lose, nothing to confuse).
+if ! git diff --quiet -- challenges || ! git diff --cached --quiet -- challenges || [ -n "$(git ls-files --others -- challenges)" ]; then
+  echo "SELFTEST: challenges/ has uncommitted or untracked changes; refusing to run (it edits and restores challenges/)." >&2
+  exit 2
+fi
 out="$(mktemp)"; trap 'rm -f "$out"' EXIT
 imgs=""; cleanup() { for i in $imgs; do docker rmi -f "$i" >/dev/null 2>&1 || true; done; rm -f "$out"; }; trap cleanup EXIT
 failures=0; n=0

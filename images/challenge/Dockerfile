@@ -8,9 +8,8 @@
 #   - the final stage receives only that allowlisted tree: for every catalog id,
 #     `<id>/fixtures/**` (and an empty `<id>/fixtures/` if the challenge has
 #     none). Everything else under challenges/ never reaches the final image.
-# All-missions mode reads from the image-baked /opt/ctf/missions/ directory
-# below; per-challenge fixtures can also be mounted via the Helm chart's
-# ConfigMap for legacy single-mission deploys.
+# Every mode reads from the image-baked /opt/ctf/missions/ directory below
+# (there is no per-deploy ConfigMap injection of fixtures).
 # ---------------------------------------------------------------------------
 # missions-builder — the only stage that reads the whole challenges/ tree
 # (ADR-0026 D1 / D2). Same base image digest as the final stage (I5: no new
