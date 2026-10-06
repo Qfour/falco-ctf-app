@@ -2,8 +2,11 @@ package hintleak_test
 
 import (
 	"errors"
+	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/hintleak"
@@ -96,17 +99,6 @@ func TestHintLeakChecker_Mutation(t *testing.T) {
 				wantRed: true,
 			},
 			{
-				// Only unicode.IsSpace runes are removed: U+200B (a format character, not
-				// White_Space) stays, so it breaks the run. This is the documented limit
-				// of D5 (reviewed by hand, dev-flow V8), pinned so it cannot drift silently.
-				name: "U+200B is NOT removed (GREEN)",
-				in: hintleak.Input{
-					Hints:   one("B hints[1]", "abcde\u200bfghijklm"),
-					Targets: one("A/fixtures/f", "abcdefghijklm"),
-				},
-				wantRed: false,
-			},
-			{
 				name: "no NFKC: full-width letters differ from ASCII (GREEN)",
 				in: hintleak.Input{
 					Hints:   one("B hints[1]", "\uff41\uff42\uff43\uff44\uff45\uff46\uff47\uff48\uff49\uff4a\uff4b"),
@@ -164,54 +156,106 @@ func TestHintLeakChecker_Mutation(t *testing.T) {
 		}
 	})
 
-	// --- replicas of the real catalog -------------------------------------
-	real := loadContent(t)
-
-	checkScope := func(t *testing.T, c content, name string) []hintleak.Violation {
-		t.Helper()
-		for _, s := range c.scopes() {
-			if s.name != name {
-				continue
+	t.Run("an invisible format character (Unicode Cf) in a hint or target is an error", func(t *testing.T) {
+		// Cf is not White_Space, so a ZWSP between two runes of a copied run would
+		// split every window across it and let the copy through silently. Refuse
+		// instead. (The normalisation itself still removes only White_Space.)
+		for _, r := range []rune{0x200B, 0xFEFF, 0x00AD, 0x2060, 0x200D} {
+			cf := string(r)
+			inHint := hintleak.Input{Hints: one("B hints[1]", "abcde"+cf+"fghijklm"), Targets: one("A/fixtures/f", "abcdefghijklm")}
+			inTarget := hintleak.Input{Hints: one("B hints[1]", "abcdefghijklm"), Targets: one("A/fixtures/f", "abcde"+cf+"fghijklm")}
+			for name, in := range map[string]hintleak.Input{"hint": inHint, "target": inTarget} {
+				_, err := hintleak.Check(in)
+				if !errors.Is(err, hintleak.ErrFormatChar) {
+					t.Errorf("U+%04X in a %s: err = %v, want ErrFormatChar", r, name, err)
+				} else if want := fmt.Sprintf("U+%04X", r); !strings.Contains(err.Error(), want) {
+					t.Errorf("U+%04X in a %s: error does not name the code point: %v", r, name, err)
+				}
 			}
-			in, err := c.input(s)
-			if err != nil {
-				t.Fatal(err)
-			}
-			vs, err := hintleak.Check(in)
-			if err != nil {
-				t.Fatal(err)
-			}
-			return vs
 		}
-		t.Fatalf("scope %q not found", name)
-		return nil
-	}
+		// Free items are not subject to the rule (they only ever REMOVE violations).
+		free := hintleak.Input{Hints: one("B hints[1]", "abcdefghijklm"), Free: one("A briefing", "x\u200by"), Targets: one("A/fixtures/f", "abcdefghijklm")}
+		if _, err := hintleak.Check(free); err != nil {
+			t.Errorf("Cf in a free item: err = %v, want none", err)
+		}
+	})
+
+	// --- replicas of the real tree --------------------------------------------
+	// Each case edits a COPY of the tracked files (copyRepo) and runs the real
+	// loaders (loadRepo), so the loader sequence itself is under test.
+	controlRoot := copyRepo(t)
+	control := loadRepo(t, controlRoot)
 
 	t.Run("replica: unmutated copy is green in every scope (control)", func(t *testing.T) {
-		c := real.clone()
-		for _, s := range c.scopes() {
-			if vs := checkScope(t, c, s.name); len(vs) > 0 {
+		for _, s := range control.scopes {
+			if vs := check(t, control, s.name); len(vs) > 0 {
 				t.Fatalf("scope %s is not clean before any mutation:\n%s", s.name, describe(vs))
 			}
 		}
 	})
 
+	// redSet runs every scope and returns the names that are RED.
+	redSet := func(t *testing.T, r repoData) map[string]bool {
+		t.Helper()
+		red := map[string]bool{}
+		for _, s := range r.scopes {
+			vs := check(t, r, s.name)
+			red[s.name] = len(vs) > 0
+			t.Logf("scope %-40s red=%v (%d violation(s))", s.name, red[s.name], len(vs))
+		}
+		return red
+	}
+	// wantRed fails unless red == the expected set (derived from the manifests),
+	// and unless the expectation itself is non-trivial (some RED and some GREEN).
+	wantRed := func(t *testing.T, r repoData, red map[string]bool, expect func(scopeData) bool, why string, needGreen bool) {
+		t.Helper()
+		nRed, nGreen := 0, 0
+		for _, s := range r.scopes {
+			exp := expect(s)
+			if exp {
+				nRed++
+			} else {
+				nGreen++
+			}
+			if red[s.name] != exp {
+				t.Errorf("scope %s: red=%v, want %v (%s)", s.name, red[s.name], exp, why)
+			}
+		}
+		if nRed == 0 || (needGreen && nGreen == 0) {
+			t.Fatalf("content の前提が変わった: the expectation derived from the manifests is trivial (%d RED / %d GREEN scopes) — this case no longer tests anything (%s)", nRed, nGreen, why)
+		}
+	}
+	normalize := func(s string) string {
+		return strings.Map(func(r rune) rune {
+			if unicode.IsSpace(r) {
+				return -1
+			}
+			return r
+		}, s)
+	}
+
 	t.Run("replica: 02's expected answer (14 runes) mixed into a fixture is RED", func(t *testing.T) {
-		const id = "02-credential-files"
-		j, ok := real.journeys[id]
-		if !ok || len(j.Hints) == 0 {
-			t.Fatalf("%s has no journey hints in the real catalog", id)
+		const id, answer = "02-credential-files", "cat /etc/shadow"
+		root := copyRepo(t)
+		r := loadRepo(t, root)
+		full := r.scope(t, "full")
+		// Preconditions: the answer really is a hint, and it is not free text.
+		hinted := false
+		for _, h := range full.in.Hints {
+			if h.Source == id+" hints[3]" && strings.Contains(h.Text, answer) {
+				hinted = true
+			}
 		}
-		// Precondition: the answer really is in the hints (so the mutation is a leak).
-		if last := j.Hints[len(j.Hints)-1].Text; !strings.Contains(last, "cat /etc/shadow") {
-			t.Fatalf("precondition: %s's last hint does not carry the expected answer: %q", id, last)
+		if !hinted {
+			t.Fatalf("content の前提が変わった: %s hints[3] no longer carries the expected answer %q", id, answer)
 		}
-		c := real.clone()
-		c.fixtures = append(c.fixtures, hintleak.Item{
-			Source: "01-initial-recon/fixtures/MUTATION.txt",
-			Text:   "手順メモ\n  cat /etc/shadow\n",
-		})
-		vs := checkScope(t, c, "full")
+		for _, f := range full.in.Free {
+			if strings.Contains(normalize(f.Text), normalize(answer)) {
+				t.Fatalf("content の前提が変わった: the answer %q now appears in free-display text %s", answer, f.Source)
+			}
+		}
+		addFixture(t, root, "01-initial-recon/fixtures/MUTATION.txt", "手順メモ\n  "+answer+"\n")
+		vs := check(t, loadRepo(t, root), "full")
 		if len(vs) == 0 {
 			t.Fatal("the answer 'cat /etc/shadow' (14 runes without spaces) in a fixture was NOT detected in the full scope")
 		}
@@ -224,40 +268,97 @@ func TestHintLeakChecker_Mutation(t *testing.T) {
 	})
 
 	t.Run("replica: a sentence free in the full catalog but not in one scenario is RED only there", func(t *testing.T) {
-		const (
-			marker    = "scope-marker-7f3a-sentence-alpha-beta"
-			hintHost  = "01-initial-recon" // in tutorial-intro and in the nimbusbreach scenarios
-			freeHost  = "04-key-search"    // free-display host: not in tutorial-intro, no narrative override
-			fixtureID = "13-archive-loot/fixtures/MUTATION.txt"
-		)
-		c := real.clone()
-		h := c.journeys[hintHost]
-		h.Hints = append(h.Hints, catalog.JourneyHint{Kind: "solution", Text: "追加ヒント: " + marker})
-		c.journeys[hintHost] = h
-		f := c.journeys[freeHost]
-		f.Briefing += "\n" + marker
-		c.journeys[freeHost] = f
-		c.fixtures = append(c.fixtures, hintleak.Item{Source: fixtureID, Text: marker})
+		const marker, hintHost, freeHost = "scope-marker-7f3a-sentence-alpha-beta", "01-initial-recon", "04-key-search"
+		root := copyRepo(t)
+		editJourney(t, root, hintHost, func(j *catalog.Journey) { addHint(j, "追加ヒント: "+marker) })
+		editJourney(t, root, freeHost, func(j *catalog.Journey) { j.Briefing += "\n" + marker })
+		addFixture(t, root, "13-archive-loot/fixtures/MUTATION.txt", marker)
+		r := loadRepo(t, root)
+		// RED where the marker is a hint but freeHost's (non-overridden) briefing is not shown.
+		wantRed(t, r, redSet(t, r), func(s scopeData) bool {
+			return s.has(hintHost) && !(s.has(freeHost) && !s.overrides[freeHost])
+		}, "hint host in scope, free host's briefing not shown", true)
+	})
 
-		if _, ok := real.scenarios["tutorial-intro"]; !ok {
-			t.Fatal("scenario tutorial-intro not found")
+	t.Run("replica: a narrative override REPLACES the briefing (does not append) — RED only where it overrides", func(t *testing.T) {
+		const marker, id = "override-marker-5d21-sentence-gamma-delta", "02-credential-files"
+		root := copyRepo(t)
+		editJourney(t, root, id, func(j *catalog.Journey) {
+			j.Briefing += "\n" + marker
+			addHint(j, "追加ヒント: "+marker)
+		})
+		addFixture(t, root, "13-archive-loot/fixtures/MUTATION.txt", marker)
+		r := loadRepo(t, root)
+		// Base briefing carries the marker (free) — unless a scenario's narrative replaces it.
+		wantRed(t, r, redSet(t, r), func(s scopeData) bool { return s.has(id) && s.overrides[id] },
+			"02 in scope and its briefing replaced by the scenario narrative", true)
+	})
+
+	for _, field := range []string{"title", "tagline", "bridge"} {
+		t.Run("replica: "+field+" is NOT free-display text — RED in every scope that has the mission", func(t *testing.T) {
+			const id = "01-initial-recon"
+			marker := "field-marker-3c9e-" + field + "-sentence-epsilon"
+			root := copyRepo(t)
+			editJourney(t, root, id, func(j *catalog.Journey) {
+				switch field {
+				case "title":
+					j.Title += " " + marker
+				case "tagline":
+					j.Tagline += " " + marker
+				case "bridge":
+					j.Bridge += " " + marker
+				}
+				addHint(j, "追加ヒント: "+marker)
+			})
+			addFixture(t, root, "13-archive-loot/fixtures/MUTATION.txt", marker)
+			r := loadRepo(t, root)
+			red := redSet(t, r)
+			// The marker is only in title/tagline/bridge + a hint: RED wherever the mission is in scope.
+			// (A scope without it has no such hint, so it is GREEN; derive both from the manifests.)
+			wantRed(t, r, red, func(s scopeData) bool { return s.has(id) }, field+" must not count as free text", false)
+		})
+	}
+
+	t.Run("replica: text only in a rule.yaml COMMENT is not free; text in a displayed rule field is", func(t *testing.T) {
+		const id = "01-initial-recon"
+		for _, tc := range []struct {
+			name, marker, ruleYAML string
+			wantRed                bool
+		}{
+			{"comment only", "comment-marker-8b41-sentence-zeta-eta", "\n# {M}\n", true},
+			{"displayed desc", "desc-marker-6a07-sentence-theta-iota",
+				"\n- rule: Hygiene Test Rule\n  desc: {M}\n  condition: evt.type = open\n  output: x\n  priority: INFO\n", false},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				root := copyRepo(t)
+				appendFile(t, filepath.Join(root, "challenges", id, "rule.yaml"), strings.ReplaceAll(tc.ruleYAML, "{M}", tc.marker))
+				editJourney(t, root, id, func(j *catalog.Journey) { addHint(j, "追加ヒント: "+tc.marker) })
+				addFixture(t, root, "13-archive-loot/fixtures/MUTATION.txt", tc.marker)
+				r := loadRepo(t, root)
+				for _, s := range r.scopes {
+					if !s.has(id) {
+						continue
+					}
+					if got := len(check(t, r, s.name)) > 0; got != tc.wantRed {
+						t.Errorf("scope %s: red=%v, want %v", s.name, got, tc.wantRed)
+					}
+				}
+			})
 		}
-		red := map[string]bool{}
-		for _, s := range c.scopes() {
-			vs := checkScope(t, c, s.name)
-			red[s.name] = len(vs) > 0
-			t.Logf("scope %-40s red=%v (%d violation(s))", s.name, red[s.name], len(vs))
+	})
+
+	t.Run("replica: a hint sentence in a NESTED fixture path is RED via the real loader", func(t *testing.T) {
+		const marker, id = "nested-marker-1e55-sentence-kappa-lambda", "02-credential-files"
+		root := copyRepo(t)
+		editJourney(t, root, id, func(j *catalog.Journey) { addHint(j, "追加ヒント: "+marker) })
+		addFixture(t, root, id+"/fixtures/a/b/x.txt", marker)
+		r := loadRepo(t, root)
+		if r.fixtureCount != control.fixtureCount+1 {
+			t.Fatalf("fixture files scanned = %d, want %d (the nested file must be picked up)", r.fixtureCount, control.fixtureCount+1)
 		}
-		if red["full"] {
-			t.Error("full: the marker is free there (via " + freeHost + "'s briefing) but the checker is RED")
-		}
-		if !red["scenario/tutorial-intro"] {
-			t.Error("scenario/tutorial-intro: the marker is hint-only there but the checker is GREEN")
-		}
-		for name, r := range red {
-			if name != "scenario/tutorial-intro" && r {
-				t.Errorf("%s is RED; only scenario/tutorial-intro (which excludes %s) should be", name, freeHost)
-			}
+		vs := check(t, r, "full")
+		if len(vs) == 0 || vs[0].Target != id+"/fixtures/a/b/x.txt" {
+			t.Fatalf("nested fixture not detected; violations=%d\n%s", len(vs), describe(vs))
 		}
 	})
 }

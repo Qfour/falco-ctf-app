@@ -12,7 +12,10 @@
 //     ... — the caller decides, see the ADR). Target items = the texts that
 //     must stay clean: for ADR-0026, every fixture file (all challenges, NOT
 //     narrowed to S). Items are read as UTF-8; a
-//     non-UTF-8 item is an error.
+//     non-UTF-8 item is an error. So is a hint item or target item containing
+//     an invisible format character (Unicode category Cf: U+200B, U+FEFF,
+//     U+00AD, U+2060, ...): it is not White_Space, so it would silently split a
+//     copied run and let it through. The normalisation below is unchanged.
 //  2. Normalise. Remove every rune for which [unicode.IsSpace] is true. Nothing
 //     else changes: no NFC/NFKC, no case folding, no punctuation stripping.
 //  3. n-gram. n = [GramRunes] runes, cut PER ITEM (items are never joined, so a
@@ -60,12 +63,17 @@ type Violation struct {
 
 // ErrEmptyInput is returned when there is nothing to scan. A scan that covers
 // zero items proves nothing, so it is an error rather than a clean result.
-var ErrEmptyInput = errors.New("hintleak: no hint items or no fixture items to scan")
+var ErrEmptyInput = errors.New("hintleak: no hint items or no target items to scan")
+
+// ErrFormatChar is returned (wrapped) when a hint item or a target item
+// contains a Unicode Cf (format) code point.
+var ErrFormatChar = errors.New("hintleak: item contains an invisible format character (Unicode Cf)")
 
 // Check applies the rule to in and returns the violations, sorted by
 // (Target, Gram). It returns [ErrEmptyInput] (wrapped) when in has no hint
-// item or no fixture item, and an error naming the item when any item is not
-// valid UTF-8.
+// item or no target item, an error naming the item when any item is not valid
+// UTF-8, and [ErrFormatChar] (wrapped, naming the item and code point) when a
+// hint or target item contains a Cf code point.
 func Check(in Input) ([]Violation, error) {
 	if len(in.Hints) == 0 || len(in.Targets) == 0 {
 		return nil, fmt.Errorf("%w (hints=%d targets=%d)", ErrEmptyInput, len(in.Hints), len(in.Targets))
@@ -74,6 +82,16 @@ func Check(in Input) ([]Violation, error) {
 		for _, it := range group {
 			if !utf8.ValidString(it.Text) {
 				return nil, fmt.Errorf("hintleak: %s is not valid UTF-8", it.Source)
+			}
+		}
+	}
+
+	for _, group := range [][]Item{in.Hints, in.Targets} {
+		for _, it := range group {
+			for _, r := range it.Text {
+				if unicode.Is(unicode.Cf, r) {
+					return nil, fmt.Errorf("%w: %s has U+%04X", ErrFormatChar, it.Source, r)
+				}
 			}
 		}
 	}
