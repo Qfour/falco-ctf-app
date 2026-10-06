@@ -17,6 +17,14 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
 
 ### Changed
 
+- 順番を飛ばした課題 (未到達の `locked` 課題) でも、ヒントを減点つきで開けるようになった。
+  開いたヒントと、付けたステップのチェックは、その課題の画面にそのまま表示される
+  (これまでは開封の API は通り減点も付くのに、画面には出なかった)。
+  `status` (`solved | current | locked`) の値と減点額 (10 / 30 / 50) は変わらない。
+  `GET /api/users/{user}/journey` の `detail.hints` と `detail.steps[].checked` は
+  `status` ではなく保存済みの状態だけで決まる。応答のキー集合は変わらない。
+  詳細: `docs/adr/0027-hint-gate-decoupled-from-current.md`。
+
 ### Fixed
 
 ### Security
