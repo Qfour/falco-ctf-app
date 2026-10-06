@@ -17,7 +17,7 @@ SYSDIG_URL   ?= https://app.au1.sysdig.com
 # host repo are not shared into the VM.
 GO_IMAGE ?= golang:1.26-alpine
 
-.PHONY: help dev dev-down build push load-colima deploy-local helm-dep-build lint check-seccomp check-flag-isolation check-namespace-ownership check-image-hygiene test tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-template-hex check-rules check-freshness check-adr clean scan
+.PHONY: help dev dev-down build push load-colima deploy-local helm-dep-build lint check-seccomp check-flag-isolation check-namespace-ownership check-image-hygiene check-image-hygiene-selftest test tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-template-hex check-rules check-freshness check-adr clean scan
 
 help:
 	@echo "Targets:"
@@ -32,7 +32,8 @@ help:
 	@echo "  check-seccomp       — fail if any rendered chart container's effective seccompProfile != RuntimeDefault"
 	@echo "  check-flag-isolation — fail if the ctf-user chart lets a flag reach the challenge container (ADR-0001 Verification 1)"
 	@echo "  check-namespace-ownership — fail if any chart (except ctf-user) renders its own kind: Namespace (ADR-0011)"
-	@echo "  check-image-hygiene — fail if the built challenge image's /opt/ctf/plant-seed/ snapshot carries flag/hash material or drifts from its real counterpart (ADR-0001 Verification 2-8)"
+	@echo "  check-image-hygiene — fail if the built challenge image's /opt/ctf/plant-seed/ snapshot carries flag/hash material or drifts from its real counterpart (ADR-0001 Verification 2-8), or if /opt/ctf/missions is not exactly <id>/fixtures/** (ADR-0026 V1-V3)"
+	@echo "  check-image-hygiene-selftest — mutation test: derived images with one deliberate violation each must FAIL check-image-hygiene (ADR-0026 V6)"
 	@echo "  test            — go test ./... (runs in $(GO_IMAGE) container)"
 	@echo "  tidy            — go mod tidy (runs in $(GO_IMAGE) container)"
 	@echo "  gen             — regenerate Go types from OpenAPI specs (docs/openapi-*.yaml)"
@@ -137,6 +138,12 @@ check-namespace-ownership:
 # scripts/check-image-hygiene.sh for why this can't live in CI alone).
 check-image-hygiene:
 	./scripts/check-image-hygiene.sh $(REGISTRY)/challenge:$(TAG)
+
+# ADR-0026 V6: proves check-image-hygiene.sh can actually fail (13 derived
+# images, one deliberate violation each). Not part of `make build` (it builds
+# extra throwaway images); CI's image-hygiene job runs it after the check.
+check-image-hygiene-selftest:
+	./scripts/test-check-image-hygiene.sh $(REGISTRY)/challenge:$(TAG)
 
 test:
 	docker build -f Dockerfile.test --progress=plain -t falco-ctf/gotest:local .

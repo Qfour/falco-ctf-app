@@ -398,6 +398,11 @@ jobs:
         run: docker build -t falco-ctf/challenge:ci-hygiene-check -f images/challenge/Dockerfile .
       - name: check image hygiene (fail-closed)
         run: ./scripts/check-image-hygiene.sh falco-ctf/challenge:ci-hygiene-check
+      # ADR-0026 V6: the check above must be able to fail — one derived image
+      # per deliberate violation (README.md added, mode/bytes drift, flag
+      # literal, ...) must each exit non-zero with its own message.
+      - name: image-hygiene mutation test (each deliberate violation must fail)
+        run: ./scripts/test-check-image-hygiene.sh falco-ctf/challenge:ci-hygiene-check
 
   # ------------------------------------------------------------------
   # Publish Helm charts to ECR (OCI). Same git SHA as the images
