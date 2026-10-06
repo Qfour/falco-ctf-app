@@ -242,3 +242,36 @@ func TestJourney_RealOrder_SkippedMissionHints(t *testing.T) {
 		})
 	}
 }
+
+// TestJourney_LockedMissionHintReveal_ScoreUnchanged is ADR-0027 V4's
+// "same solved + hint_views, same Score" pin, in the exact state qa measured
+// on 2026-10-04: 01-04 solved (400), a reveal of hint 1 on the LOCKED 06
+// (HINT1 = -10) is 390 — before and after this change, because scoring is not
+// touched. Both the journey and /me reads agree. (What the projection shows
+// for the opened hint is V2's business; this test is arithmetic only.)
+func TestJourney_LockedMissionHintReveal_ScoreUnchanged(t *testing.T) {
+	f, _ := newRealOrderFixture(t)
+	for _, cid := range []string{"01-initial-recon", "02-credential-files", "03-stealth-read", "04-key-search"} {
+		if _, err := f.st.MarkSolved("alice", cid, "2026-01-01T00:00:00Z"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if s := statusOf(f.journey("alice"), "06-web-rce-shell"); s != "locked" {
+		t.Fatalf("precondition: 06-web-rce-shell should be locked, got %q", s)
+	}
+	if got := f.journey("alice")["score"].(float64); got != 400 {
+		t.Fatalf("precondition: score with 4 solves must be 400, got %v", got)
+	}
+	if w := f.req("POST", "/api/users/alice/challenges/06-web-rce-shell/hints/1", nil); w.Code != http.StatusOK {
+		t.Fatalf("hint 1: %d body=%s", w.Code, w.Body)
+	}
+	m := f.journeyAt("alice", "06-web-rce-shell")
+	if m["score"].(float64) != 390 {
+		t.Fatalf("score after a reveal on a locked mission must be 400-10 = 390, got %v", m["score"])
+	}
+	me := f.reqAs("GET", "/api/users/alice/me", "alice@ctf.local", nil)
+	var mm map[string]any
+	if err := json.Unmarshal(me.Body.Bytes(), &mm); err != nil || mm["score"].(float64) != 390 {
+		t.Fatalf("/me score must agree (390): err=%v body=%s", err, me.Body)
+	}
+}
