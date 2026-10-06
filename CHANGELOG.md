@@ -22,6 +22,13 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
   禁止ルールの記録も無い evade の「検知状態」は、「クリーンです / このまま提出できます / クリーンな attempt を確認」
   を出さず、「未評価」(クリア済みの課題は「クリア済み」) の中立表示にする (ADR-0027 D6)。禁止ルールが記録されている
   場合の表示は status に関係なく従来どおり。API 側の変更 (hint 開封の判定を `current` から切り離す) と対で成立する。
+- 順番を飛ばした課題 (未到達の `locked` 課題) でも、ヒントを減点つきで開けるようになった。
+  開いたヒントと、付けたステップのチェックは、その課題の画面にそのまま表示される
+  (これまでは開封の API は通り減点も付くのに、画面には出なかった)。
+  `status` (`solved | current | locked`) の値と減点額 (10 / 30 / 50) は変わらない。
+  `GET /api/users/{user}/journey` の `detail.hints` と `detail.steps[].checked` は
+  `status` ではなく保存済みの状態だけで決まる。応答のキー集合は変わらない。
+  詳細: `docs/adr/0027-hint-gate-decoupled-from-current.md`。
 
 ### Fixed
 
