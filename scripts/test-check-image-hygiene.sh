@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Mutation test for scripts/check-image-hygiene.sh (ADR-0026 V1-V3, V6).
+# (A few cases temporarily edit the working tree and restore it with git checkout;
+# run it on a tree whose challenges/ has no uncommitted work.)
 #
 # A check that never fails is indistinguishable from one that works, so this
 # builds derived images (`FROM <image>` + one deliberate violation each) and
@@ -65,6 +67,52 @@ expect_fail "expectedFlag literal somewhere in the image" 'an expectedFlag liter
 # (the marker is split in the source so scripts/check-flags.sh does not see a literal)
 expect_fail "non-placeholder flag-shaped marker under /opt/ctf" 'a flag-shaped marker other than the placeholder notation' \
   "RUN echo 'FALCO''{something-else}' >> /opt/ctf/banner.sh"
+
+expect_fail "ignored/untracked file (.DS_Store) inside fixtures/" 'fixture file set differs' \
+  "RUN touch $M/00-tutorial/fixtures/.DS_Store"
+expect_fail "empty stray directory inside fixtures/" 'directory is not an ancestor of any tracked fixture' \
+  "RUN mkdir $M/00-tutorial/fixtures/stray"
+expect_fail "one fixture file missing (deletion direction)" 'fixture file set differs' \
+  "RUN rm $M/00-tutorial/fixtures/welcome.txt"
+expect_fail "id directory missing" 'id 00-tutorial has no directory' \
+  "RUN rm -r $M/00-tutorial"
+
+# --- build-context (working tree) mutations: the image is the unmodified base; the
+# tree is changed temporarily and restored by the trap/restore command. The
+# baseline above passed, so challenges/*/fixtures is clean before each of these.
+# expect_fail_tree <name> <expected message> <setup cmd> <restore cmd>
+expect_fail_tree() {
+  local name="$1" want="$2" rc=0
+  n=$((n + 1))
+  trap 'eval "$4"; cleanup' EXIT
+  eval "$3"
+  ./scripts/check-image-hygiene.sh "$BASE" >"$out" 2>&1 || rc=$?
+  eval "$4"
+  trap cleanup EXIT
+  if [ "$rc" -eq 0 ]; then echo "SELFTEST FAIL: tree mutation '$name' was NOT detected (exit 0)"; failures=$((failures + 1))
+  elif ! grep -qF -- "$want" "$out"; then echo "SELFTEST FAIL: tree mutation '$name' exited $rc without [$want]:"; sed 's/^/    /' "$out"; failures=$((failures + 1))
+  else echo "ok   (exit $rc): $name  ->  $(grep -F -- "$want" "$out" | head -n 1 | cut -c1-150)"; fi
+}
+F=challenges/00-tutorial/fixtures
+expect_fail_tree "tracked fixture edited in the working tree (dirty tree)" 'has uncommitted / untracked / ignored changes' \
+  "echo x >> $F/welcome.txt" "git checkout -q -- $F/welcome.txt"
+expect_fail_tree "exec bit of 11/aws dropped in the working tree" 'has uncommitted / untracked / ignored changes' \
+  "chmod 0644 challenges/11-cloud-cred-hunt/fixtures/aws" "chmod 0755 challenges/11-cloud-cred-hunt/fixtures/aws"
+expect_fail_tree "untracked file in the working-tree fixtures" 'has uncommitted / untracked / ignored changes' \
+  "touch $F/untracked.tmp" "rm -f $F/untracked.tmp"
+expect_fail_tree "quoted evade type (type: \"evade\") is not silently accepted" 'top-level type: must be exactly' \
+  "sed -i.bak 's/^type: evade/type: \"evade\"/' challenges/03-stealth-read/falco-rule.yaml; rm -f challenges/03-stealth-read/falco-rule.yaml.bak" \
+  "git checkout -q -- challenges/03-stealth-read/falco-rule.yaml"
+expect_fail_tree "trailing comment on the type line" 'top-level type: must be exactly' \
+  "sed -i.bak 's/^type: evade/type: evade # c/' challenges/03-stealth-read/falco-rule.yaml; rm -f challenges/03-stealth-read/falco-rule.yaml.bak" \
+  "git checkout -q -- challenges/03-stealth-read/falco-rule.yaml"
+
+# --- empty reference set must die, not pass: a fresh empty git repo with a copy of the script
+n=$((n + 1))
+E="$(mktemp -d)"; mkdir "$E/scripts"; cp scripts/check-image-hygiene.sh "$E/scripts/"; git -C "$E" init -q
+rc=0; "$E/scripts/check-image-hygiene.sh" "$BASE" >"$out" 2>&1 || rc=$?; rm -rf "$E"
+if [ "$rc" -ne 0 ] && grep -qF 'no catalog id' "$out"; then echo "ok   (exit $rc): empty reference set (no catalog id) dies  ->  $(grep -F 'no catalog id' "$out" | head -n 1 | cut -c1-120)"
+else echo "SELFTEST FAIL: empty reference set did not die (exit $rc)"; failures=$((failures + 1)); fi
 
 echo "== $n mutations, $failures failure(s)"
 [ "$failures" -eq 0 ]

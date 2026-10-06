@@ -97,15 +97,15 @@ if [ ! -d "$SNAP" ]; then
 fi
 
 # (i) crypt-hash-shaped string anywhere under the snapshot tree
-if [ -d "$SNAP" ] && grep -RE ":\\\$[0-9A-Za-z]+\\\$" "$SNAP" >/tmp/hygiene-hash-hits 2>/dev/null; then
-  echo "HYGIENE VIOLATION (i): crypt-hash-shaped string found under $SNAP:" >&2
+if [ -d "$SNAP" ] && grep -RlE ":\\\$[0-9A-Za-z]+\\\$" "$SNAP" >/tmp/hygiene-hash-hits 2>/dev/null; then
+  echo "HYGIENE VIOLATION (i): crypt-hash-shaped string found under $SNAP (file(s) only, the matched text is deliberately not printed):" >&2
   cat /tmp/hygiene-hash-hits >&2
   touch "$fail_file"
 fi
 
 # (ii) FALCO{ literal anywhere under the snapshot tree
-if [ -d "$SNAP" ] && grep -RF "FALCO{" "$SNAP" >/tmp/hygiene-flag-hits 2>/dev/null; then
-  echo "HYGIENE VIOLATION (ii): FALCO{ literal found under $SNAP:" >&2
+if [ -d "$SNAP" ] && grep -RlF "FALCO{" "$SNAP" >/tmp/hygiene-flag-hits 2>/dev/null; then
+  echo "HYGIENE VIOLATION (ii): FALCO{ literal found under $SNAP (file(s) only, the matched text is deliberately not printed):" >&2
   cat /tmp/hygiene-flag-hits >&2
   touch "$fail_file"
 fi
@@ -222,6 +222,15 @@ fi
 
 git -c core.quotepath=off ls-files challenges >"$T/all" || die "git ls-files (challenges) failed"
 
+# --- the build context must equal the index (A1-2) ----------------------------------
+# ADR-0026 V1's reference is `git ls-files`, but sha256/mode are read from the
+# working tree (the build context). They only mean "the committed content" if
+# the fixtures have no uncommitted change, untracked file or ignored file.
+git status --porcelain --untracked-files=all --ignored -- 'challenges/*/fixtures/**' >"$T/dirty" || die "git status failed"
+if [ -s "$T/dirty" ]; then
+  fail V1 "challenges/*/fixtures has uncommitted / untracked / ignored changes (V1 compares against git; commit or clean them): $(awk '{ printf "%s ", $0 }' "$T/dirty")"
+fi
+
 # --- untracked / ignored files in the working-tree fixtures --------------------
 # (the builder would copy them: the build context is the working tree)
 find challenges -path 'challenges/*/fixtures/*' \( -type f -o -type l \) | sort >"$T/wt-fixtures"
@@ -248,9 +257,12 @@ find /opt/ctf -mindepth 1 -maxdepth 1 -printf "T\t%y\t%f\n"
 ' >"$T/img-missions" || die "V1: inspecting /opt/ctf in ${IMAGE} failed"
 [ -s "$T/img-missions" ] || die "V1: /opt/ctf/missions in ${IMAGE} is empty"
 
+# directories below <id>/fixtures that are an ancestor of a tracked file (anything else is a stray dir)
+awk -F/ '{ p = $2 "/" $3; for (i = 4; i < NF; i++) { p = p "/" $i; print p } }' "$T/fixtures" | sort -u >"$T/exp-dirs"
+
 # V1a: every path is <id>(/fixtures(/.*)?)? ; level-1 = dirs named by ids ; level-2 = "fixtures" dir ; only f/d below
-awk -F'\t' -v idfile="$T/ids" '
-  BEGIN { while ((getline l < idfile) > 0) ids[l] = 1 }
+awk -F'\t' -v idfile="$T/ids" -v dirfile="$T/exp-dirs" '
+  BEGIN { while ((getline l < idfile) > 0) ids[l] = 1; while ((getline l < dirfile) > 0) okdir[l] = 1 }
   $1 == "E" {
     type = $2; path = $4; n = split(path, p, "/")
     if (n == 1) {
@@ -264,6 +276,7 @@ awk -F'\t' -v idfile="$T/ids" '
     } else {
       if (!(p[1] in ids) || p[2] != "fixtures") print path ": outside <id>/fixtures/"
       if (type != "f" && type != "d") print path ": unexpected file type " type " (symlink/special file)"
+      else if (type == "d" && !(path in okdir)) print path ": directory is not an ancestor of any tracked fixture"
     }
   }
   END {
@@ -314,7 +327,18 @@ done <"$T/nonfixtures"
 # --- V2: answers.yaml keys == evade ids -------------------------------------------
 : >"$T/evade-ids"
 while IFS= read -r rf; do
-  if grep -qE '^type:[[:space:]]*evade[[:space:]]*$' "$rf"; then basename "$(dirname "$rf")" >>"$T/evade-ids"; fi
+  # Same rule as the Dockerfile's missions-builder: exactly one top-level `type:`
+  # line, exactly `type: trigger|evade|detect`; anything else is a failure.
+  tcount="$(grep -c '^type:' "$rf" || true)"
+  tline="$(grep '^type:' "$rf" | head -n 1 || true)"
+  if [ "$tcount" != 1 ]; then fail V2 "$rf: needs exactly one top-level type: line (found $tcount)"
+  else
+    case "$tline" in
+      'type: trigger'|'type: detect') ;;
+      'type: evade') basename "$(dirname "$rf")" >>"$T/evade-ids" ;;
+      *) fail V2 "$rf: top-level type: must be exactly 'type: trigger|evade|detect'" ;;
+    esac
+  fi
 done <"$T/rules"
 sort -o "$T/evade-ids" "$T/evade-ids"
 docker run --rm --entrypoint sh "${IMAGE}" -c 'cat /opt/ctf/answers.yaml' >"$T/answers" || die "V2: reading /opt/ctf/answers.yaml failed"
@@ -331,13 +355,15 @@ while IFS= read -r rf; do
 done <"$T/rules"
 [ -s "$T/flags" ] || die "V3: no expectedFlag found in challenges/*/falco-rule.yaml (reference set empty)"
 if grep -vE '^FALCO\{[A-Za-z0-9_-]+\}$' "$T/flags" >"$T/flags-odd"; then die "V3: malformed expectedFlag: $(cat "$T/flags-odd")"; fi
-# (a) whole image: no expectedFlag literal. Patterns go in on stdin (never argv).
+# (a) whole image: no expectedFlag literal. Patterns go in via the environment, not
+# stdin (a `docker run -i` pipe hung once on a shared Colima daemon). They are the
+# repo's own expectedFlag values (placeholders in this public repo).
 # A positive control (a probe string that is also a pattern, planted in
 # /tmp/hygiene-probe) must come back, or the scan itself is broken (fail-closed).
 PROBE="hygiene-probe-$$-$(date +%s)"
-{ cat "$T/flags"; echo "$PROBE"; } | docker run --rm -i --entrypoint sh "${IMAGE}" -c '
+docker run --rm -e "HYGIENE_PATTERNS=$(cat "$T/flags"; echo "$PROBE")" --entrypoint sh "${IMAGE}" -c '
 set -eu
-cat >/tmp/hygiene-patterns
+printf "%s\n" "$HYGIENE_PATTERNS" >/tmp/hygiene-patterns
 probe=$(tail -n 1 /tmp/hygiene-patterns); echo "$probe" >/tmp/hygiene-probe
 find / -xdev -type f ! -path /tmp/hygiene-patterns -exec grep -Fal -f /tmp/hygiene-patterns {} + || true
 ' >"$T/flag-hits" || die "V3: scanning the image for flag literals failed"
@@ -351,7 +377,9 @@ MARK="FALCO""{"
 docker run --rm --entrypoint sh "${IMAGE}" -c 'grep -raoE "FALCO\{.{0,64}" /opt/ctf || [ $? -eq 1 ]' >"$T/falco-hits" \
   || die "V3: scanning /opt/ctf for FALCO{ failed"
 if sed "s/${MARK}\.\.\.}//g" "$T/falco-hits" | grep -qF "$MARK"; then
-  fail V3 "a flag-shaped marker other than the placeholder notation was found under /opt/ctf: $(grep -vF "${MARK}...}" "$T/falco-hits" | tr '\n' ' ')"
+  # path(s) and count only: never echo the matched text (it may be a real flag).
+  sed "s/${MARK}\.\.\.}//g" "$T/falco-hits" | grep -F "$MARK" | cut -d: -f1 | sort -u >"$T/falco-hit-files" || true
+  fail V3 "a flag-shaped marker other than the placeholder notation was found under /opt/ctf in $(wc -l <"$T/falco-hit-files" | tr -d ' ') file(s) (value not printed): $(tr '\n' ' ' <"$T/falco-hit-files")"
 fi
 
 if [ "$fails" -gt 0 ]; then

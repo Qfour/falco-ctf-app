@@ -36,13 +36,21 @@ RUN set -eu; \
 # answers.yaml — editable template for batch submission (ADR-0026 D2: generated
 # here so falco-rule.yaml is read by this stage only). Auto-listed from the
 # EVADE missions (the only ones needing a flag); trigger missions are omitted.
-RUN { echo '# EVADE 課題で読み取ったフラグを記入し、submit-yaml で一括提出:'; \
+# The `type:` rule is shared with scripts/check-image-hygiene.sh (V2): exactly
+# one top-level `type:` line, and it must be `type: trigger|evade|detect` (one
+# space, nothing after). Anything else (quoted value, trailing comment, ...)
+# fails the build instead of being silently read differently by two parsers.
+RUN set -eu; \
+    { echo '# EVADE 課題で読み取ったフラグを記入し、submit-yaml で一括提出:'; \
       echo '#   sh /opt/ctf/submit-yaml.sh'; \
       echo '# trigger 課題は提出不要(Falco 発火で自動 solve)。'; \
       for f in /src/challenges/[0-9][0-9]-*/falco-rule.yaml; do \
-        if grep -q 'type:[[:space:]]*evade' "$f"; then \
-          id=$(awk '/^challengeId:/{print $2}' "$f"); echo "${id}: "; \
-        fi; \
+        [ "$(grep -c '^type:' "$f")" = 1 ] || { echo "missions-builder: $f must have exactly one top-level type: line" >&2; exit 1; }; \
+        case "$(grep '^type:' "$f")" in \
+          'type: trigger'|'type: detect') ;; \
+          'type: evade') id=$(awk '/^challengeId:/{print $2}' "$f"); echo "${id}: " ;; \
+          *) echo "missions-builder: $f: top-level type: must be exactly 'type: trigger|evade|detect'" >&2; exit 1 ;; \
+        esac; \
       done; } > /out/answers.yaml
 
 # ---------------------------------------------------------------------------
