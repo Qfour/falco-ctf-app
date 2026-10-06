@@ -1,10 +1,53 @@
 # challenge base image — the playground users actually type into.
 #
 # Build context: **repo root** (so `challenges/` is reachable as a
-# build context path). Per-challenge fixtures are still mountable via
-# the Helm chart's ConfigMap for legacy single-mission deploys, but
-# all-missions mode reads from the image-baked /opt/ctf/missions/
-# directory below.
+# build context path). Two stages (ADR-0026, I16):
+#   - `missions-builder` is the ONLY stage that sees the whole `challenges/`
+#     tree (README.md / journey.yaml / falco-rule.yaml / plant.sh / values*.yaml
+#     / operator docs). It assembles an allowlisted tree and answers.yaml.
+#   - the final stage receives only that allowlisted tree: for every catalog id,
+#     `<id>/fixtures/**` (and an empty `<id>/fixtures/` if the challenge has
+#     none). Everything else under challenges/ never reaches the final image.
+# All-missions mode reads from the image-baked /opt/ctf/missions/ directory
+# below; per-challenge fixtures can also be mounted via the Helm chart's
+# ConfigMap for legacy single-mission deploys.
+# ---------------------------------------------------------------------------
+# missions-builder — the only stage that reads the whole challenges/ tree
+# (ADR-0026 D1 / D2). Same base image digest as the final stage (I5: no new
+# image, no new base). Nothing from this stage reaches the final image except
+# the two COPY --from lines in the final stage below.
+# ---------------------------------------------------------------------------
+FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b AS missions-builder
+COPY challenges/ /src/challenges/
+RUN set -eu; \
+    out=/out/missions; mkdir -p "$out"; n=0; \
+    for d in /src/challenges/[0-9][0-9]-*/; do \
+      [ -f "${d}falco-rule.yaml" ] || continue; \
+      id=${d%/}; id=${id##*/}; \
+      # catalog id == directory name (internal/catalog: LoadJourneys fails on a mismatch). \
+      [ "$(awk '/^challengeId:/{print $2}' "${d}falco-rule.yaml")" = "$id" ] \
+        || { echo "missions-builder: challengeId of $id/falco-rule.yaml != directory name" >&2; exit 1; }; \
+      mkdir -p "$out/$id/fixtures"; \
+      if [ -d "${d}fixtures" ]; then cp -a "${d}fixtures/." "$out/$id/fixtures/"; fi; \
+      n=$((n+1)); \
+    done; \
+    [ "$n" -gt 0 ] || { echo "missions-builder: no challenge directory found" >&2; exit 1; }
+
+# answers.yaml — editable template for batch submission (ADR-0026 D2: generated
+# here so falco-rule.yaml is read by this stage only). Auto-listed from the
+# EVADE missions (the only ones needing a flag); trigger missions are omitted.
+RUN { echo '# EVADE 課題で読み取ったフラグを記入し、submit-yaml で一括提出:'; \
+      echo '#   sh /opt/ctf/submit-yaml.sh'; \
+      echo '# trigger 課題は提出不要(Falco 発火で自動 solve)。'; \
+      for f in /src/challenges/[0-9][0-9]-*/falco-rule.yaml; do \
+        if grep -q 'type:[[:space:]]*evade' "$f"; then \
+          id=$(awk '/^challengeId:/{print $2}' "$f"); echo "${id}: "; \
+        fi; \
+      done; } > /out/answers.yaml
+
+# ---------------------------------------------------------------------------
+# final image
+# ---------------------------------------------------------------------------
 FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 
 # Tools commonly required by Falco-detection-style CTF challenges.
@@ -90,33 +133,28 @@ RUN printf '%s\n' \
  && chown root:root /etc/sudoers \
  && chmod 0440 /etc/sudoers
 
-# Bake the 10 missions + cross-mission helpers into the image. This is
+# Bake the missions' fixtures + cross-mission helpers into the image. This is
 # the source-of-truth for all-missions mode (deploy-user.sh <user> all):
 # the workspace pod has every welcome.txt + fixture available from
 # the first second of its life, no operator switching between missions.
 #
-# INTENTIONAL (guided-event decision, 2026-06): the whole challenges/ tree is
-# baked, including README.md (想定解) and falco-rule.yaml. This is a guided
-# learning event, not a blind competition — participants are allowed to read
-# briefs/solutions. If this ever becomes competitive, exclude operator/author
-# files here (README.md / falco-rule.yaml / plant.sh / values*.yaml).
-COPY challenges/ /opt/ctf/missions/
+# ADR-0026 D1 (I16): /opt/ctf/missions/ holds ONLY `<id>/fixtures/**` for every
+# catalog id (bytes and modes identical to the build context; assembled by the
+# missions-builder stage). README.md (想定解) / journey.yaml (ヒント全文) /
+# falco-rule.yaml / rule.yaml / plant.sh / values*.yaml are NOT in this image —
+# this supersedes the 2026-06 guided-event decision. Any new file under
+# challenges/ is excluded by default (allowlist, not denylist);
+# `make check-image-hygiene` (scripts/check-image-hygiene.sh V1-V3) fails the
+# build if the entry set drifts.
+COPY --from=missions-builder /out/missions/ /opt/ctf/missions/
 COPY challenges/submit-all.sh /opt/ctf/submit.sh
 COPY challenges/setname.sh /opt/ctf/setname.sh
 COPY challenges/submit-yaml.sh /opt/ctf/submit-yaml.sh
 COPY challenges/banner.sh /opt/ctf/banner.sh
 RUN chmod 0644 /opt/ctf/submit.sh /opt/ctf/setname.sh /opt/ctf/submit-yaml.sh /opt/ctf/banner.sh
 
-# answers.yaml — editable template for batch submission. Auto-listed from the
-# EVADE missions (the only ones needing a flag); trigger missions are omitted.
-RUN { echo '# EVADE 課題で読み取ったフラグを記入し、submit-yaml で一括提出:'; \
-      echo '#   sh /opt/ctf/submit-yaml.sh'; \
-      echo '# trigger 課題は提出不要(Falco 発火で自動 solve)。'; \
-      for f in /opt/ctf/missions/[0-9][0-9]-*/falco-rule.yaml; do \
-        if grep -q 'type:[[:space:]]*evade' "$f"; then \
-          id=$(awk '/^challengeId:/{print $2}' "$f"); echo "${id}: "; \
-        fi; \
-      done; } > /opt/ctf/answers.yaml
+# answers.yaml (generated in missions-builder, ADR-0026 D2).
+COPY --from=missions-builder /out/answers.yaml /opt/ctf/answers.yaml
 
 # Greet on login. Briefing/hints/flag submission all happen in the Story tab
 # (portal), not in-terminal, so banner.sh is intentionally minimal
