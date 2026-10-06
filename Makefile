@@ -17,7 +17,7 @@ SYSDIG_URL   ?= https://app.au1.sysdig.com
 # host repo are not shared into the VM.
 GO_IMAGE ?= golang:1.26-alpine
 
-.PHONY: help dev dev-down build push load-colima deploy-local helm-dep-build lint check-seccomp check-flag-isolation check-namespace-ownership check-image-hygiene test tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-template-hex check-rules check-freshness check-adr clean scan
+.PHONY: help dev dev-down build push load-colima deploy-local helm-dep-build lint check-seccomp check-flag-isolation check-namespace-ownership check-image-hygiene test tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-template-hex check-portal-render check-rules check-freshness check-adr clean scan
 
 help:
 	@echo "Targets:"
@@ -42,6 +42,7 @@ help:
 	@echo "  gen-attack      — regenerate ATT&CK Navigator layer + coverage table from falco-rule.yaml attack: blocks"
 	@echo "  check-flags     — fail if real flags leak into tracked files or values are stale; + deploy-user.sh --flags-file validation tests"
 	@echo "  check-template-hex — fail if a raw hex color literal appears under view/templates/ (recursive: index.html + portal/*.tmpl; app#116 — single design-token source is static/tokens.css)"
+	@echo "  check-portal-render — (macOS, optional; not in CI) run the portal evade-card render functions under jsc and assert ADR-0027 D6 (no clean claim for a non-current evade; dirty always shown; escaping)"
 	@echo "  check-rules     — fail if a challenge references a non-existent Falco rule"
 	@echo "  check-freshness — fail if a Dockerfile base image cycle is past EOL (needs network)"
 	@echo "  check-adr       — fail on ADR number collisions, filename/header drift, or docs/adr/README.md index gaps (#181); prints the next free ADR number on success"
@@ -178,6 +179,10 @@ check-flags:
 
 check-template-hex:
 	./scripts/check-template-hex.sh
+
+# jsc (JavaScriptCore) ships with macOS; not part of `make test` / CI.
+check-portal-render:
+	./scripts/check-portal-render.sh
 
 check-rules:
 	./scripts/check-challenge-rules.sh
