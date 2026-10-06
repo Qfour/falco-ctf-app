@@ -17,6 +17,12 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
 
 ### Changed
 
+- portal: 進行位置にない (`locked`) 課題の見出しを `PREVIEW · LOCKED` から `UPCOMING MISSION` に変更
+  (`locked` は「案内上の未到達」で、ヒントは減点つきで開ける: ADR-0027 D5)。`status` が `current` でなく
+  禁止ルールの記録も無い evade の「検知状態」は、「クリーンです / このまま提出できます / クリーンな attempt を確認」
+  を出さず、「未評価」(クリア済みの課題は「クリア済み」) の中立表示にする (ADR-0027 D6)。禁止ルールが記録されている
+  場合の表示は status に関係なく従来どおり。API 側の変更 (hint 開封の判定を `current` から切り離す) と対で成立する。
+
 ### Fixed
 
 ### Security
