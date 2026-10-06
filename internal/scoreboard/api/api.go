@@ -150,9 +150,9 @@ type JourneyConfig struct {
 	// P23 Story-as-docs). May be nil; a missing entry means "no rule.yaml
 	// authored for this challenge" and the UI omits the Falco Rule panel.
 	// Content is identical for every viewer (no per-user secret), so exposing
-	// it for ANY mission — solved, current, or locked — carries no fairness
-	// risk (unlike hints, which stay gated to the unlocked prefix; see
-	// missionDetail's lockedHints note).
+	// it for ANY mission, whatever its status, carries no fairness
+	// risk. (Hints are not status-gated either since ADR-0027: they are a
+	// function of what the participant has opened; see missionDetail.)
 	FalcoRules catalog.FalcoRuleExcerpts
 	Order      []string // mission sequence (scenario order or catalog ids)
 	// DocsBaseURL is the participant docs-site origin (e.g. https://docs.<suffix>).
@@ -1830,14 +1830,12 @@ func (h *Handler) userMe(w http.ResponseWriter, r *http.Request) {
 // `missions[]` — solved, current, OR locked — is a valid selection: brief /
 // steps / Falco rule excerpt are static content, identical for every viewer,
 // so letting a participant read ahead (e.g. to plan) is not a scoring
-// advantage. The ONE thing that stays gated to the unlocked prefix
-// (solved ∪ current) is progressive hints — see missionDetail's `hints` doc:
-// a hint is a scoring lever (reveal costs points AND could let a participant
-// solve a mission out of order by reading its answer-adjacent guidance before
-// reaching it), so a locked mission's hints object always reports
-// lockedCount == total and an empty opened list, regardless of what the
-// store has recorded (defensive: the UI never offers a reveal button for a
-// locked mission, but the handler does not trust the UI for this).
+// advantage. Progressive hints and step ticks are NOT gated by status either
+// (ADR-0027, CEO decision 2026-10-04: a skipped mission's hints may be
+// opened at the normal point cost): `detail.hints` and `detail.steps[].checked`
+// are a function of the store alone — see missionDetail. `status` is a
+// guidance label for the participant ("not reached yet"), not an access
+// control; the write side (openHint / stepCheck) never consulted it.
 // An invalid/unknown `?mission=` value is ignored (falls back to `current`)
 // rather than erroring — this is a display convenience, not an API contract
 // participants depend on for scoring.
@@ -1901,8 +1899,8 @@ func (h *Handler) journey(w http.ResponseWriter, r *http.Request) {
 	missions := make([]missionView, 0, len(order))
 	// statusOf mirrors the missionView.Status computation below, keyed by id —
 	// needed again after the loop to resolve the free-browsing `?mission=`
-	// selection's own status (to gate its hints) without re-deriving the
-	// solved/current/locked rule a second time inline.
+	// selection's own status (reported as detail.status) without re-deriving
+	// the solved/current/locked rule a second time inline.
 	statusOf := make(map[string]string, len(order))
 	for _, id := range order {
 		j, hasJourney := h.journeys[id]
@@ -1917,7 +1915,8 @@ func (h *Handler) journey(w http.ResponseWriter, r *http.Request) {
 		case id == current:
 			status = "current"
 		default:
-			// Guided progression: everything after the current mission is locked.
+			// Guided progression: everything after the current mission is
+			// "locked" — a guidance label only (ADR-0027 D2); it restricts no read.
 			status = "locked"
 		}
 		statusOf[id] = status
@@ -2024,35 +2023,27 @@ func (h *Handler) docsURL(rel string) string {
 // mission" pull persists past the CLEARED overlay; it is empty for the first
 // mission (display-only, never affects scoring).
 //
-// status is the mission's projected status (solved | current | locked) —
-// see journey's free-browsing doc. It gates ONLY the hints block: brief,
-// steps, and the Falco rule excerpt are static content identical for every
-// viewer, so they are always returned regardless of status (free browsing,
-// CEO decision). Hints stay fairness-sensitive (a reveal costs points, and
-// reading a locked mission's hints could let a participant skip ahead) — for
-// status=="locked" this function computes the hints block WITHOUT consulting
-// the store's opened set at all, always reporting the full hint count as
-// locked and an empty opened list. This is enforced HERE, not left to the
-// caller, so a future caller of missionDetail cannot forget the gate and leak
-// hint text for a mission the participant has not reached yet.
+// status is the mission's projected status (solved | current | locked) and is
+// reported verbatim as `status`. It is a guidance label only (ADR-0027 D2):
+// nothing in this function branches on it. In particular `hints`
+// (opened / lockedCount / nextIndex / penalty) and `steps[].checked` are a
+// function of checkedSteps / openedHints (the store) ALONE, so a skipped
+// ("locked") mission shows exactly the hints the participant opened and the
+// ticks they made — the write side (openHint / stepCheck) never consulted
+// status, and a projection that did made a billed hint invisible. Before
+// ADR-0027 (CEO decision 2026-08-17) a locked mission's hints were hidden
+// here and its steps were forced unchecked; CEO decision 2026-10-04 reversed
+// that. `hints.lockedCount` keeps its name and means "not opened yet".
 func (h *Handler) missionDetail(user, cid, status, leadIn string, checkedSteps, openedHints []int) map[string]any {
 	ch := h.cat[cid]
 	j, hasJourney := h.journeys[cid]
-	locked := status == "locked"
 
-	// checkedSteps is IGNORED for a locked mission (/review-5x C2 fixup,
-	// mirrors the hints gate immediately below): a locked mission's steps
-	// render as a plain read-only preview, never showing tick state from the
-	// store. This is the participant's own data (unlike hints there is no
-	// scoring lever here — a step tick never affects the solve verdict), but
-	// "locked is static display only" is the stated invariant for free
-	// browsing (CEO decision), so it applies uniformly rather than carving
-	// out an exception just because steps happen to be lower-stakes than hints.
+	// Step ticks are the participant's own data and have no scoring effect (a
+	// tick never affects the solve verdict); they are projected as stored,
+	// whatever the mission's status.
 	checked := make(map[int]struct{}, len(checkedSteps))
-	if !locked {
-		for _, i := range checkedSteps {
-			checked[i] = struct{}{}
-		}
+	for _, i := range checkedSteps {
+		checked[i] = struct{}{}
 	}
 	type stepView struct {
 		Idx     int    `json:"idx"`
@@ -2066,15 +2057,11 @@ func (h *Handler) missionDetail(user, cid, status, leadIn string, checkedSteps, 
 		steps = append(steps, stepView{Idx: i, Label: s.Label, Detail: s.Detail, Checked: isChecked})
 	}
 
-	// openedHints is IGNORED for a locked mission (see doc above) — every hint
-	// reports as locked, opened is always empty, regardless of what the store
-	// has on file (defensive fail-closed; the UI never offers a reveal button
-	// for a locked mission, but this holds even if it somehow did).
-	opened := make(map[int]struct{})
-	if !locked {
-		for _, i := range openedHints {
-			opened[i] = struct{}{}
-		}
+	// Hints are projected from the store's opened set, whatever the mission's
+	// status (see the doc above).
+	opened := make(map[int]struct{}, len(openedHints))
+	for _, i := range openedHints {
+		opened[i] = struct{}{}
 	}
 	type hintView struct {
 		Idx           int      `json:"idx"`
@@ -2084,24 +2071,18 @@ func (h *Handler) missionDetail(user, cid, status, leadIn string, checkedSteps, 
 		CheatsheetRef string   `json:"cheatsheetRef"`
 	}
 	openedList := make([]hintView, 0, len(opened))
-	nextHint := 0 // 1-based index of the next unopened hint; 0 = all opened OR locked
-	if !locked {
-		for i := 1; i <= len(j.Hints); i++ {
-			if _, ok := opened[i]; ok {
-				h := j.Hints[i-1]
-				openedList = append(openedList, hintView{
-					Idx: i, Text: h.Text, Kind: h.Kind,
-					RuleRefs: nonNilStrings(h.RuleRefs), CheatsheetRef: h.CheatsheetRef,
-				})
-			} else if nextHint == 0 {
-				nextHint = i
-			}
+	nextHint := 0 // 1-based index of the next unopened hint; 0 = all opened
+	for i := 1; i <= len(j.Hints); i++ {
+		if _, ok := opened[i]; ok {
+			h := j.Hints[i-1]
+			openedList = append(openedList, hintView{
+				Idx: i, Text: h.Text, Kind: h.Kind,
+				RuleRefs: nonNilStrings(h.RuleRefs), CheatsheetRef: h.CheatsheetRef,
+			})
+		} else if nextHint == 0 {
+			nextHint = i
 		}
 	}
-	// nextHint stays 0 for a locked mission (see doc above) — the UI must never
-	// offer a "reveal hint N" affordance for a mission the participant has not
-	// reached yet, and 0 is this projection's existing "nothing to reveal"
-	// signal (the same value an all-hints-opened current mission reports).
 	sort.SliceStable(openedList, func(a, b int) bool { return openedList[a].Idx < openedList[b].Idx })
 
 	title := cid
@@ -2170,7 +2151,7 @@ func (h *Handler) missionDetail(user, cid, status, leadIn string, checkedSteps, 
 	// falcoRule (P23 Story-as-docs): the display-only List/Macro/Rule excerpt
 	// from challenges/<NN>-<slug>/rule.yaml (catalog.LoadRuleExcerpts). Static
 	// content identical for every viewer — safe to return for ANY status
-	// (solved/current/locked; see this function's doc), unlike hints. A
+	// (solved/current/locked; see this function's doc). A
 	// challenge with no rule.yaml simply yields the zero-value excerpt (three
 	// non-nil empty slices), and hasFalcoRule is false so the UI can omit the
 	// panel entirely rather than render three empty sections.
@@ -2188,7 +2169,7 @@ func (h *Handler) missionDetail(user, cid, status, leadIn string, checkedSteps, 
 	// writes ch.Type=="evade" pairs — so a trigger/detect mission simply
 	// projects dirty=false / dirtyRules=[], exactly like exfilReceived does
 	// for requireExfil on a non-exfil mission. Safe to expose for ANY status
-	// (solved/current/locked, unlike hints): these are Falco rule NAMES only,
+	// (solved/current/locked): these are Falco rule NAMES only,
 	// never a flag value (conventions I10), and under the attempt-scope
 	// invariant (ADR-0003 A1) a not-yet-current evade mission can never be
 	// dirty, so there is nothing here a participant could read ahead of time
@@ -2230,7 +2211,7 @@ func (h *Handler) missionDetail(user, cid, status, leadIn string, checkedSteps, 
 			// shows this value on the "open hint" button so a participant makes an
 			// informed reveal ("opening costs N points") for the SPECIFIC hint
 			// they are about to open, not a flat figure. HintPenaltyFor(0) (when
-			// nextHint is 0 — all opened, or locked per this function's doc) costs
+			// nextHint is 0 — all opened) costs
 			// nothing, matching "there is nothing left to reveal". Projection
 			// only — the score arithmetic stays in the scoring layer.
 			// NoHintPenalty challenges (00-tutorial) always project 0 here —

@@ -644,8 +644,8 @@ func TestJourney_NoHintsForMissionWithoutJourney(t *testing.T) {
 
 // TestJourney_FreeBrowsing_SolvedMission proves `?mission=<id>` can select an
 // ALREADY-SOLVED mission's detail (CEO decision: brief/steps/rule are static
-// content, safe to re-read after solving; only hints stay gated to the
-// unlocked prefix — covered separately below).
+// content, safe to re-read after solving; hints and step ticks follow the
+// store whatever the status (ADR-0027) — covered separately below).
 func TestJourney_FreeBrowsing_SolvedMission(t *testing.T) {
 	f := newJourneyFixture(t)
 	if _, err := f.st.MarkSolved("alice", "01-recon", "2026-01-01T00:00:00Z"); err != nil {
@@ -664,9 +664,8 @@ func TestJourney_FreeBrowsing_SolvedMission(t *testing.T) {
 
 // TestJourney_FreeBrowsing_LockedMission proves `?mission=<id>` can select a
 // LOCKED mission's detail (brief/steps/rule readable ahead of reaching it —
-// CEO decision) while its hints stay fully locked (see the paired
-// TestJourney_FreeBrowsing_LockedMissionHintsAlwaysHidden below for the
-// fairness-critical assertion).
+// CEO decision). Its hints and step ticks follow the store (ADR-0027); see
+// TestJourney_FreeBrowsing_LockedMissionHints_FollowStore below.
 func TestJourney_FreeBrowsing_LockedMission(t *testing.T) {
 	f := newJourneyFixture(t)
 	// 03-late is locked (current is 01-recon).
@@ -692,26 +691,29 @@ func TestJourney_FreeBrowsing_InvalidMissionFallsBackToCurrent(t *testing.T) {
 	}
 }
 
-// TestJourney_FreeBrowsing_LockedMissionHintsAlwaysHidden is the fairness
-// pin (CEO: "locked mission hints 秘匿は公平性の不可侵"). It proves TWO
-// things:
-//  1. The normal path: 02-evade is locked (alice has not solved 01-recon), and
-//     ?mission=02-evade must report ALL hints as locked (lockedCount ==
-//     total, opened empty, nextIndex 0) even though 02-evade DOES have
-//     journey.yaml hints authored (eh1/eh2) — a lesser implementation might
-//     only omit the panel when hints are wholly absent, which would not catch
-//     this case.
-//  2. The defensive path: even if the store somehow already has opened-hint
-//     rows for a mission that is CURRENTLY locked (e.g. a participant opened
-//     hints while it was briefly current in an earlier scenario, then a
-//     scenario/order change relocked it), missionDetail must still refuse to
-//     surface them for a status=="locked" view — the gate reads status, not
-//     "does the store have anything", so it cannot be bypassed by a stale
-//     store row.
-func TestJourney_FreeBrowsing_LockedMissionHintsAlwaysHidden(t *testing.T) {
+// TestJourney_FreeBrowsing_LockedMissionHints_FollowStore is the ADR-0027 (D1)
+// inversion of TestJourney_FreeBrowsing_LockedMissionHintsAlwaysHidden.
+//
+// Old name and why it was reversed: the old test pinned the 2026-08-17 CEO
+// decision "locked mission hints 秘匿は公平性の不可侵" — a mission with
+// status "locked" reported lockedCount == total / opened [] / nextIndex 0 no
+// matter what the store held. The write side (openHint) never had that lock,
+// so a hint opened on a locked mission was billed (hint_views row, score
+// down) yet never shown. CEO decision 2026-10-04 ("飛ばした課題のヒントは
+// 開ける") reverses it: the hints projection is a function of the store alone
+// and does not look at status. The old stale-row assertion (a row in the store
+// must NOT surface for a locked mission) is now its mirror image.
+//
+// It proves, for 02-evade (status "locked": alice has not solved 01-recon):
+//  1. status stays "locked" (D2: the enum is unchanged);
+//  2. with nothing opened: lockedCount == total, opened [], nextIndex 1 (the
+//     next reveal is hint 1, no longer 0), penalty = HINT1 cost;
+//  3. a row in the store DOES surface: opened carries the text, nextIndex and
+//     penalty advance to hint 2.
+func TestJourney_FreeBrowsing_LockedMissionHints_FollowStore(t *testing.T) {
 	f := newJourneyFixture(t)
 
-	// (1) Normal path: 02-evade is locked; browse to it directly.
+	// (1)+(2) Nothing opened yet.
 	m := f.journeyAt("alice", "02-evade")
 	if s := statusOf(m, "02-evade"); s != "locked" {
 		t.Fatalf("precondition: 02-evade should be locked, got %q", s)
@@ -720,51 +722,57 @@ func TestJourney_FreeBrowsing_LockedMissionHintsAlwaysHidden(t *testing.T) {
 	if det["id"] != "02-evade" {
 		t.Fatalf("detail must be the browsed mission: %v", det)
 	}
+	if det["status"] != "locked" {
+		t.Fatalf("D2: detail.status must stay locked, got %v", det["status"])
+	}
 	hints := det["hints"].(map[string]any)
 	if hints["total"].(float64) != 2 {
 		t.Fatalf("02-evade should have 2 authored hints, got %v", hints["total"])
 	}
-	if hints["lockedCount"].(float64) != 2 {
-		t.Fatalf("locked mission must report ALL hints locked, got %v", hints)
+	if hints["lockedCount"].(float64) != 2 || len(hints["opened"].([]any)) != 0 {
+		t.Fatalf("nothing opened: want lockedCount 2 and opened [], got %v", hints)
 	}
-	if len(hints["opened"].([]any)) != 0 {
-		t.Fatalf("locked mission must never expose opened hint text, got %v", hints["opened"])
+	if hints["nextIndex"].(float64) != 1 {
+		t.Fatalf("a locked mission must offer the next reveal (nextIndex 1), got %v", hints["nextIndex"])
 	}
-	if hints["nextIndex"].(float64) != 0 {
-		t.Fatalf("locked mission must never offer a next-reveal index, got %v", hints["nextIndex"])
+	if hints["penalty"].(float64) != 10 {
+		t.Fatalf("penalty must price the next hint (HINT1 = 10) on a locked mission, got %v", hints["penalty"])
 	}
 
-	// (2) Defensive path: directly poke the store as if a hint had been opened
-	// for 02-evade in the past (simulating a stale row from before a relock),
-	// then re-browse to it while it is STILL locked. The gate must still hide it.
+	// (3) A store row for a locked mission is shown (and billed — the write
+	// side was always billing it; the projection now agrees).
 	if _, err := f.st.RecordHintView("alice", "02-evade", 1, "2026-01-01T00:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
 	m2 := f.journeyAt("alice", "02-evade")
-	det2 := m2["detail"].(map[string]any)
-	hints2 := det2["hints"].(map[string]any)
-	if len(hints2["opened"].([]any)) != 0 {
-		t.Fatalf("stale store row must NOT leak through the locked gate, got %v", hints2["opened"])
+	if s := statusOf(m2, "02-evade"); s != "locked" {
+		t.Fatalf("status must stay locked after a reveal, got %q", s)
 	}
-	if hints2["lockedCount"].(float64) != 2 {
-		t.Fatalf("stale store row must not reduce lockedCount for a locked mission, got %v", hints2)
+	hints2 := m2["detail"].(map[string]any)["hints"].(map[string]any)
+	opened2 := hints2["opened"].([]any)
+	if len(opened2) != 1 || opened2[0].(map[string]any)["text"] != "eh1" {
+		t.Fatalf("a store row must surface on a locked mission, got %v", opened2)
+	}
+	if hints2["lockedCount"].(float64) != 1 || hints2["nextIndex"].(float64) != 2 || hints2["penalty"].(float64) != 30 {
+		t.Fatalf("after opening hint 1: want lockedCount 1, nextIndex 2, penalty 30 (HINT2); got %v", hints2)
 	}
 }
 
-// TestJourney_FreeBrowsing_LockedMissionStepsAlwaysUnchecked is the /review-5x
-// C2 fixup pin: a locked mission's steps must render as a plain read-only
-// preview (checked: false for every step), never leaking store-recorded tick
-// state — mirrors the hints gate's "locked is static display only" posture
-// (see TestJourney_FreeBrowsing_LockedMissionHintsAlwaysHidden immediately
-// above) even though a step tick, unlike a hint reveal, has no scoring
-// consequence of its own.
-func TestJourney_FreeBrowsing_LockedMissionStepsAlwaysUnchecked(t *testing.T) {
+// TestJourney_FreeBrowsing_LockedMissionSteps_FollowStore is the ADR-0027 (D1)
+// inversion of TestJourney_FreeBrowsing_LockedMissionStepsAlwaysUnchecked.
+//
+// Old name and why it was reversed: the old test (a /review-5x C2 fixup)
+// forced checked:false for every step of a locked mission to mirror the hints
+// gate ("locked is static display only"). That gate is gone (see the hints
+// test above), and a step tick has no scoring consequence, so the tick the
+// participant recorded is shown whatever the status — otherwise a tick made
+// via the API would vanish from the screen exactly like the billed-but-hidden
+// hint did.
+func TestJourney_FreeBrowsing_LockedMissionSteps_FollowStore(t *testing.T) {
 	f := newJourneyFixture(t)
 
-	// Directly poke the store as if alice had ticked 02-evade's one step
-	// (e.g. while it was briefly current under a since-changed order), then
-	// browse to it while it is CURRENTLY locked (current is 01-recon). The
-	// gate must hide the tick regardless of what the store has on file.
+	// Tick 02-evade's one step, then browse to it while it is locked
+	// (current is 01-recon).
 	if err := f.st.SetStepCheck("alice", "02-evade", 0, true, "2026-01-01T00:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
@@ -772,29 +780,38 @@ func TestJourney_FreeBrowsing_LockedMissionStepsAlwaysUnchecked(t *testing.T) {
 	if s := statusOf(m, "02-evade"); s != "locked" {
 		t.Fatalf("precondition: 02-evade should be locked, got %q", s)
 	}
-	det := m["detail"].(map[string]any)
-	steps := det["steps"].([]any)
+	steps := m["detail"].(map[string]any)["steps"].([]any)
 	if len(steps) != 1 {
 		t.Fatalf("02-evade should have 1 authored step, got %d", len(steps))
 	}
-	if steps[0].(map[string]any)["checked"] != false {
-		t.Fatalf("locked mission must never expose checked step state, got %v", steps[0])
+	if steps[0].(map[string]any)["checked"] != true {
+		t.Fatalf("a locked mission must show the tick the store holds, got %v", steps[0])
 	}
 
-	// Sanity: the SAME store-recorded tick DOES surface once 02-evade becomes
-	// current (solve 01-recon), proving the gate is status-keyed, not a
-	// blanket "steps never reflect the store" regression.
-	if _, err := f.st.MarkSolved("alice", "01-recon", "2026-01-01T00:00:01Z"); err != nil {
+	// An un-ticked step on a locked mission stays false (the projection is the
+	// store, not "always true").
+	if err := f.st.SetStepCheck("alice", "02-evade", 0, false, "2026-01-01T00:00:01Z"); err != nil {
 		t.Fatal(err)
 	}
-	m2 := f.journey("alice")
-	if s := statusOf(m2, "02-evade"); s != "current" {
+	m2 := f.journeyAt("alice", "02-evade")
+	if got := m2["detail"].(map[string]any)["steps"].([]any)[0].(map[string]any)["checked"]; got != false {
+		t.Fatalf("an un-ticked step must project false, got %v", got)
+	}
+
+	// The same store-recorded tick keeps showing once 02-evade becomes current
+	// — the projection does not change with status in either direction.
+	if err := f.st.SetStepCheck("alice", "02-evade", 0, true, "2026-01-01T00:00:02Z"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.st.MarkSolved("alice", "01-recon", "2026-01-01T00:00:03Z"); err != nil {
+		t.Fatal(err)
+	}
+	m3 := f.journey("alice")
+	if s := statusOf(m3, "02-evade"); s != "current" {
 		t.Fatalf("precondition: 02-evade should now be current, got %q", s)
 	}
-	det2 := m2["detail"].(map[string]any)
-	steps2 := det2["steps"].([]any)
-	if steps2[0].(map[string]any)["checked"] != true {
-		t.Fatalf("current mission's step tick should surface once unlocked, got %v", steps2[0])
+	if got := m3["detail"].(map[string]any)["steps"].([]any)[0].(map[string]any)["checked"]; got != true {
+		t.Fatalf("current mission's step tick should still surface, got %v", got)
 	}
 }
 
@@ -850,9 +867,9 @@ func TestJourney_FalcoRuleExcerpt_PresentAndAbsent(t *testing.T) {
 }
 
 // TestJourney_FalcoRuleExcerpt_VisibleEvenWhenLocked proves the Falco rule
-// panel is exempt from the hints lock (CEO decision §B②: rule content is
-// static and identical for every viewer, unlike hints) — browsing to a
-// locked mission still returns its falcoRule excerpt.
+// panel is returned for a locked mission (CEO decision §B②: rule content is
+// static and identical for every viewer) — browsing to a locked mission
+// returns its falcoRule excerpt.
 func TestJourney_FalcoRuleExcerpt_VisibleEvenWhenLocked(t *testing.T) {
 	rules := catalog.FalcoRuleExcerpts{
 		"03-late": {

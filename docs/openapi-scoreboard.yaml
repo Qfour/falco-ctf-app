@@ -848,10 +848,12 @@ paths:
         locked — because brief / steps / Falco rule excerpt are static content
         identical for every viewer. An unknown value falls back to `current`
         rather than erroring (display convenience, not a contract clients may
-        depend on). The ONE thing gated to the unlocked prefix is hints: for a
-        locked mission the handler reports `lockedCount == total`, an empty
-        `opened`, `nextIndex == 0` and ignores the store's opened set entirely;
-        step tick state is likewise suppressed.
+        depend on). Hints and step ticks are NOT gated by status (ADR-0027,
+        CEO decision 2026-10-04): `detail.hints` and `detail.steps[].checked`
+        are a function of the store alone, so a skipped (`locked`) mission
+        shows exactly the hints the participant opened and the ticks they made.
+        `status` is a guidance label ("not reached yet"), not an access
+        control; the write routes never consulted it.
 
         Authorization is identical to `/api/users/{user}/me` (self-or-admin,
         fail-closed on a missing header).
@@ -2252,9 +2254,10 @@ components:
           type: string
           enum: [solved, current, locked]
           description: |
-            guided progression: everything after `current` is locked. Locked
-            missions are still readable (free browsing) but their hints and step
-            ticks are suppressed.
+            guided progression: everything after `current` is `locked`. A
+            guidance label only (ADR-0027): it restricts nothing — locked
+            missions are readable (free browsing), and their hints and step
+            ticks follow the store like any other mission's.
         hasJourney:
           type: boolean
           description: false = no journey.yaml; the UI shows "ブリーフィング準備中" (fail-soft)
@@ -2274,7 +2277,7 @@ components:
         detail: { type: string }
         checked:
           type: boolean
-          description: always false for a locked mission (store state is ignored there)
+          description: the tick the store holds for this step, whatever the mission's status
 
     OpenedHint:
       type: object
@@ -2304,11 +2307,13 @@ components:
     HintsBlock:
       type: object
       description: |
-        The ONE fairness-gated part of a mission detail. For a locked mission
-        this block reports `lockedCount == total`, `opened == []` and
-        `nextIndex == 0` regardless of what the store holds (defensive
-        fail-closed — the handler does not trust the UI to hide the reveal
-        button).
+        The hints block of a mission detail: a function of the store's opened
+        set alone, independent of the mission's `status` (ADR-0027 D1). A
+        skipped (`locked`) mission with nothing opened reports
+        `lockedCount == total`, `opened == []`, `nextIndex == 1` and the first
+        hint's `penalty`; opening a hint (write route, in order, billed at the
+        scheduled cost) makes it appear here. `lockedCount` is the number of
+        hints not yet opened (the name predates ADR-0027 and is kept).
       required: [total, opened, lockedCount, nextIndex, penalty]
       properties:
         total: { type: integer }
@@ -2318,7 +2323,7 @@ components:
         lockedCount: { type: integer }
         nextIndex:
           type: integer
-          description: 1-based index of the next unopened hint; 0 = nothing left to reveal (or locked)
+          description: 1-based index of the next unopened hint; 0 = nothing left to reveal (every hint is opened, or the mission has none)
         penalty:
           type: integer
           description: points forfeited by revealing hint `nextIndex` (0 when nextIndex is 0)
@@ -2375,8 +2380,9 @@ components:
       type: object
       description: |
         The selected mission's detail block (`Journey.detail`). Static content
-        (brief / steps / Falco rule excerpt) is returned for any status; only
-        `hints` — and step tick state — are gated to the unlocked prefix.
+        (brief / steps / Falco rule excerpt) is returned for any status, and
+        so are `hints` and step tick state: those are a function of the store
+        alone, not of `status` (ADR-0027).
       required:
         [id, status, title, tagline, briefing, leadIn, type, docsUrl,
          hasJourney, requireExfil, exfilReceived, requireExpectedRuleFire,
