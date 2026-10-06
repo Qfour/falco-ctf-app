@@ -15,7 +15,6 @@
 
 <script nonce="{{.Nonce}}">
 (function () {
-  function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   function avatarChar(u) { return (u || '?').slice(-1).toUpperCase(); }
   function fmtAgo(unixSec) {
     const ms = Date.now() - unixSec * 1000;

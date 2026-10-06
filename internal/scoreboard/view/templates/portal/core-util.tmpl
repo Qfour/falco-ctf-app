@@ -1,0 +1,19 @@
+<script nonce="{{.Nonce}}">
+  // ===================== Portal shared helpers =====================
+  // esc() is the ONE HTML-escape path for the whole portal (P28-0a): every pane
+  // script that builds markup for innerHTML / a template literal passes any
+  // server- or catalog-derived string through it, with no exemption by origin.
+  // It is defined here and nowhere else — a pane must not redefine it (a local
+  // copy shadows this one and can drift: portal_partials_test.go fails the
+  // build on a second `function esc`, and on this partial being called after a
+  // pane that uses it).
+  //
+  // Declared as a plain global (like PORTAL_TABS in core-router.tmpl, and not
+  // under window.__ctf.* — the existing shared names are bare). Each pane's IIFE
+  // reaches it through the global scope, so a pane script needs no import.
+  //
+  // null-safe: null/undefined render as '' (never the text "null"/"undefined").
+  // Every other value goes through String(), so a number or boolean is escaped
+  // as its string form.
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+</script>

@@ -332,6 +332,122 @@ func checkPortalScriptAndStyle(fsys fs.FS) error {
 	return errors.Join(errs...)
 }
 
+var (
+	// A definition of esc in any of the forms a pane could plausibly use:
+	// `function esc`, `const|let|var esc`, and a property assignment
+	// `window.esc = ` / `globalThis.esc = `. Matched at line start (after
+	// indentation) so a prose mention inside a `//` comment is not a
+	// definition. A second definition under another spelling (`esc = ...`
+	// without a keyword) is not matched; the call-order half of the check and
+	// code review cover that.
+	escDefRe = regexp.MustCompile(`(?m)^[ \t]*(?:function[ \t]+esc\b|(?:const|let|var)[ \t]+esc\b|(?:window|globalThis)\.esc[ \t]*=)`)
+	// Any mention of esc( — comments included, deliberately: a partial that
+	// only mentions it in prose is still required to come after the
+	// definition, which costs nothing and keeps the rule free of a
+	// comment-stripper.
+	escUseRe = regexp.MustCompile(`\besc\(`)
+	// A line-start IIFE opener. The shared esc must be a top-level
+	// declaration so other partials' scripts can reach it; inside an IIFE it
+	// would be private to that one script.
+	iifeOpenRe = regexp.MustCompile(`(?m)^\((?:function\b|async\b|\(\)[ \t]*=>)`)
+)
+
+// rootCallOrder returns the names the root calls at its top level, in
+// document order (the order html/template serves them).
+func rootCallOrder(fsys fs.FS) ([]string, error) {
+	b, err := fs.ReadFile(fsys, path.Dir(portalTmplGlob)+"/"+portalRootTmpl)
+	if err != nil {
+		return nil, err
+	}
+	tr := parse.New(portalRootTmpl)
+	tr.Mode = parse.SkipFuncCheck
+	set := map[string]*parse.Tree{}
+	if _, err := tr.Parse(string(b), "", "", set); err != nil {
+		return nil, fmt.Errorf("%s: parse: %w", portalRootTmpl, err)
+	}
+	var order []string
+	if root := set[portalRootTmpl]; root != nil && root.Root != nil {
+		for _, n := range root.Root.Nodes {
+			if c, ok := n.(*parse.TemplateNode); ok {
+				order = append(order, c.Name)
+			}
+		}
+	}
+	return order, nil
+}
+
+// checkPortalEsc verifies the single-escape-path rule (P28-0a): the portal
+// has exactly ONE definition of esc across all partials; it is a top-level
+// (non-IIFE) declaration; and the partial holding it is called by the root
+// before every other partial that uses esc(. A second definition is a
+// shadow that can drift from the first (the five panes once carried five
+// copies, two of them with a different null behaviour); a definition served
+// after a pane's script is a ReferenceError at that pane's first render,
+// which no Go test would otherwise see.
+func checkPortalEsc(fsys fs.FS) error {
+	parts, err := readPortalPartials(fsys)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	definer := ""
+	defs := 0
+	for _, p := range parts {
+		n := len(escDefRe.FindAllString(p.body, -1))
+		if n == 0 {
+			continue
+		}
+		defs += n
+		definer = p.name
+		if n > 1 {
+			errs = append(errs, fmt.Errorf("%s defines esc %d times, want exactly one definition across all partials", p.name, n))
+		}
+		if iifeOpenRe.MatchString(p.body) {
+			errs = append(errs, fmt.Errorf("%s defines esc but also opens an IIFE at line start — the shared esc must be a top-level declaration, or other partials' scripts cannot reach it", p.name))
+		}
+	}
+	switch {
+	case defs == 0:
+		return errors.Join(append(errs, errors.New("no partial defines esc — every pane's innerHTML escaping would be a ReferenceError"))...)
+	case defs > 1:
+		var who []string
+		for _, p := range parts {
+			if escDefRe.MatchString(p.body) {
+				who = append(who, p.name)
+			}
+		}
+		errs = append(errs, fmt.Errorf("esc is defined %d times (in %v), want exactly one — a local copy shadows the shared one and can drift from it", defs, who))
+		return errors.Join(errs...)
+	}
+	order, err := rootCallOrder(fsys)
+	if err != nil {
+		return errors.Join(append(errs, err)...)
+	}
+	pos := map[string]int{}
+	for i, name := range order {
+		if _, seen := pos[name]; !seen {
+			pos[name] = i
+		}
+	}
+	dp, ok := pos[definer]
+	if !ok {
+		return errors.Join(append(errs, fmt.Errorf("%s defines esc but the root does not call it at its top level", definer))...)
+	}
+	for _, p := range parts {
+		if p.name == definer || p.name == portalRootTmpl || !escUseRe.MatchString(p.body) {
+			continue
+		}
+		up, ok := pos[p.name]
+		if !ok {
+			continue // reported by checkPortalAssembly
+		}
+		if up < dp {
+			errs = append(errs, fmt.Errorf("%s uses esc( but is served BEFORE %s, which defines it — the call would fail with a ReferenceError", p.name, definer))
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // TestPortalPartials_RootCallsEveryPartialExactlyOnce runs the assembly
 // contract (checkPortalAssembly's doc lists exactly what is guaranteed)
 // against the embedded partials.
@@ -347,6 +463,14 @@ func TestPortalPartials_RootCallsEveryPartialExactlyOnce(t *testing.T) {
 // this one names the offending file.
 func TestPortalPartials_ScriptAndStyleBlocksAreWholeAndNonced(t *testing.T) {
 	if err := checkPortalScriptAndStyle(portalFS); err != nil {
+		t.Error(err)
+	}
+}
+
+// TestPortalPartials_EscDefinedOnceBeforePanes runs checkPortalEsc against the
+// embedded partials.
+func TestPortalPartials_EscDefinedOnceBeforePanes(t *testing.T) {
+	if err := checkPortalEsc(portalFS); err != nil {
 		t.Error(err)
 	}
 }
@@ -422,6 +546,9 @@ func TestPortalPartials_ChecksRejectMutations(t *testing.T) {
 	}
 	if err := checkPortalScriptAndStyle(clean); err != nil {
 		t.Fatalf("unmutated copy fails checkPortalScriptAndStyle: %v", err)
+	}
+	if err := checkPortalEsc(clean); err != nil {
+		t.Fatalf("unmutated copy fails checkPortalEsc: %v", err)
 	}
 
 	const homeCall = `{{template "pane-home.tmpl" . -}}`
@@ -551,6 +678,46 @@ func TestPortalPartials_ChecksRejectMutations(t *testing.T) {
 			},
 			check:   checkPortalAssembly,
 			wantErr: "no portal partials match",
+		},
+		{
+			name:    "a pane redefines esc locally (function)",
+			mutate:  portalFSEdit("pane-me.tmpl", replaceOnce("(function () {\n", "(function () {\n  function esc(s) { return String(s); }\n")),
+			check:   checkPortalEsc,
+			wantErr: "esc is defined 2 times",
+		},
+		{
+			name:    "a pane redefines esc locally (const arrow)",
+			mutate:  portalFSEdit("pane-board.tmpl", replaceOnce("(function () {\n", "(function () {\n  const esc = s => String(s);\n")),
+			check:   checkPortalEsc,
+			wantErr: "esc is defined 2 times",
+		},
+		{
+			name:    "a pane assigns window.esc",
+			mutate:  portalFSEdit("pane-terminal.tmpl", replaceOnce("(function () {\n", "(function () {\n  window.esc = s => String(s);\n")),
+			check:   checkPortalEsc,
+			wantErr: "esc is defined 2 times",
+		},
+		{
+			name:    "the shared definition is removed",
+			mutate:  portalFSEdit("core-util.tmpl", replaceOnce("function esc(s)", "function escape2(s)")),
+			check:   checkPortalEsc,
+			wantErr: "no partial defines esc",
+		},
+		{
+			name: "shared definition served after the panes that use it",
+			mutate: portalFSEdit(portalRootTmpl, func(s string) string {
+				const util = `{{template "core-util.tmpl" . -}}` + "\n"
+				const router = `{{template "core-router.tmpl" . -}}` + "\n"
+				return strings.Replace(strings.Replace(s, util, "", 1), router, util+router, 1)
+			}),
+			check:   checkPortalEsc,
+			wantErr: "uses esc( but is served BEFORE core-util.tmpl",
+		},
+		{
+			name:    "shared definition wrapped in an IIFE (private to that script)",
+			mutate:  portalFSEdit("core-util.tmpl", replaceOnce("  function esc(s)", "(function () {\n  function esc(s)")),
+			check:   checkPortalEsc,
+			wantErr: "opens an IIFE at line start",
 		},
 		{
 			name:    "script without nonce",
