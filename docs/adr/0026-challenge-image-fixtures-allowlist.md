@@ -1,6 +1,6 @@
 # ADR-0026: challenge image の `/opt/ctf/missions/` を fixtures allowlist にし、hints・想定解・採点メタを同梱しない
 
-- Status: **Proposed** (Accepted 化は CEO merge 時。期限 = P28-0d の software PR の merge 前)
+- Status: **Accepted** (実装 PR app#<A1> の CEO merge 時。V1〜V3 は本 PR、V4〜V6・V8 は後続 PR で landing。先例は ADR-0033)
 - Date / Deciders: 2026-10-05 / CEO (2026-10-04「2026-06 の guided 方針を解除し、撤去する」) + VP + architect (起草) +
   security-engineer・qa-engineer (独立レビュー 2026-10-05。指摘は本版に反映済み、再確認待ち)
 - 関連: workspace `REFACTORING.md` P28-0d / P22 (2026-08-14 CEO 決定) / P27-1、ADR-0001 (監査 LOW「plant.sh の同梱」・I12)、
@@ -35,7 +35,9 @@ architect の probe でも再現)。なお `/opt/ctf/INDEX.txt` は image にも
 
 **C5. 制約。** I5 (全 8 イメージ同一 SHA。イメージを増やさない)。workspace 内で走る検査は shell builtin に限る (ingest は container
 名を見ないので、検査のプロセスが参加者の発火として採点される: `charts/ctf-user/assert-flag-isolation.sh:22-57`)。prod は CI-free で、
-一次ゲートは `make build` (`Makefile:66`)。path は動かせない: platform の Falco `customRules` が
+一次ゲートは `make build` (`Makefile:66`) のつもりだったが、**この前提は成り立たない**: platform の `docs/prod-deploy.md` は `make build` を
+使わず独自の build ループを持つので、`scripts/check-image-hygiene.sh <image>` の明示実行をそこへ足した (契約表に app が platform へ出す面として載せる)。
+app 側は `make push` も `check-image-hygiene` に依存させる。path は動かせない: platform の Falco `customRules` が
 `/opt/ctf/missions/13-archive-loot/fixtures/loot/` を条件に直書きしている
 (`falco-ctf-platform/helmfile/releases/falco/values.yaml.gotmpl:171`)。
 
@@ -97,6 +99,22 @@ architect の probe でも再現)。なお `/opt/ctf/INDEX.txt` は image にも
     連結する場合の差は、この 2 つの tree の full スコープでは 0 (定義として緩い側を塞ぐための規定である)。
 - **D6 順序**: content (app#308 の welcome.txt、app#309 の配布文書) が先、software (Dockerfile・検査・I16 昇格・契約表) が後。逆順だと
   V5 が赤になる。content は「D5 の規則で全スコープ 0」を満たしてから merge する。
+
+## 実装時の解釈 (Decision の文面で一意に決まらなかった点。Decision は変更しない)
+
+1. **catalog id = ディレクトリ名。** `falco-rule.yaml` の `challengeId` は必ず書き、ディレクトリ名と一致させる (builder が不一致で build を落とす)。
+   正典の `catalog.go` は「省略したらディレクトリ名を補う」側なので、schema の記述を直すことと Go テストでの強制は follow-up。
+2. **`/opt/ctf` 直下の固定集合** = ディレクトリ `missions`・`plant-seed` と、ファイル `answers.yaml`・`banner.sh`・`setname.sh`・`submit-yaml.sh`・`submit.sh`。
+3. **V4 の all / 単一課題モードの期待 id 集合は operator の checkout の `challenges/` から作る** (単一課題でも image は全 id を持つ。chart が絞るのは scenario
+   だけ)。image は `FALCO_CTF_IMAGE_TAG` から来るので、**checkout と image の ref の一致が deploy の条件**になる (ずれれば all / 単一でも止まる。fail-closed)。
+4. **V3 の「完全一致」** = `expectedFlag` 全文の部分文字列一致を image 全体で検査する。診断は path と件数だけを出し、値は出さない。
+5. **fixtures に未コミットの変更・追跡外・ignored のファイルがあると `make build` (の `check-image-hygiene`) が落ちる** (V1 の基準は `git ls-files` で、
+   sha256 と mode は作業ツリー = build context から読むため)。
+6. D5 は入力 0 件・非 UTF-8 を error とする。数える単位は (fixtures ファイル, 異なる n-gram)。
+7. **`type:` 行は厳密な形だけ受け付ける**: top-level の `type:` がちょうど 1 本で `type: trigger|evade|detect` に完全一致 (builder と V2 が同じ規則)。
+   platform の読み方は緩いが、build が通る tree では同じ集合になる。
+8. **I16 の「同じ PR で昇格」は、すべての機構が main に揃う最後の PR で昇格する、と読む。** 実装は 3 本に分割した (image と build 時の検査 = V1〜V3 /
+   n-gram の検査 = V5・V6 / deploy 時の検査と I16 昇格・契約表・V8 = V4)。
 
 ## Consequences
 
