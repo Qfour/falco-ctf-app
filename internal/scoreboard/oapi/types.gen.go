@@ -406,7 +406,9 @@ type Health struct {
 // set alone, independent of the mission's `status` (ADR-0027 D1). A
 // skipped (`locked`) mission with nothing opened reports
 // `lockedCount == total`, `opened == []`, `nextIndex == 1` and the first
-// hint's `penalty`; opening a hint (write route, in order, billed at the
+// hint's `penalty` (for a mission that has at least one hint; when the
+// mission has none, `nextIndex == 0`, and a `NoHintPenalty` mission
+// always reports `penalty == 0`); opening a hint (write route, in order, billed at the
 // scheduled cost) makes it appear here. `lockedCount` is the number of
 // hints not yet opened (the name predates ADR-0027 and is kept).
 type HintsBlock struct {
@@ -619,7 +621,9 @@ type MissionDetail struct {
 	// set alone, independent of the mission's `status` (ADR-0027 D1). A
 	// skipped (`locked`) mission with nothing opened reports
 	// `lockedCount == total`, `opened == []`, `nextIndex == 1` and the first
-	// hint's `penalty`; opening a hint (write route, in order, billed at the
+	// hint's `penalty` (for a mission that has at least one hint; when the
+	// mission has none, `nextIndex == 0`, and a `NoHintPenalty` mission
+	// always reports `penalty == 0`); opening a hint (write route, in order, billed at the
 	// scheduled cost) makes it appear here. `lockedCount` is the number of
 	// hints not yet opened (the name predates ADR-0027 and is kept).
 	Hints HintsBlock `json:"hints"`
