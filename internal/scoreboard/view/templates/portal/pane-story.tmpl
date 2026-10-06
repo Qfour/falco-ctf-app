@@ -632,8 +632,8 @@
   }
 
   // evalPending (ADR-0027 D6): true when this evade's attempt has NOT been
-  // evaluated by the sweep — i.e. the mission is not the current one and no
-  // forbidden rule has been recorded. In that state nothing may claim the
+  // evaluated — i.e. the mission is not the current one and no forbidden rule
+  // has been recorded (ingest taints only the CURRENT mission, ADR-0003 A1). In that state nothing may claim the
   // attempt is clean / submittable (dirtySection, autoSolveStatus). A dirty
   // record is shown regardless of status. Branches on `status` until the API
   // carries an explicit attempt state (ADR-0032 / P28-1).
@@ -672,7 +672,7 @@
   // than only surfacing on a failed submit. Two states:
   //   - clean: reassurance that the current attempt is untainted. ONLY for the
   //     current mission (ADR-0027 D6): a non-current evade is never evaluated
-  //     (the sweep taints only the current mission, ADR-0003 A1), so "clean"
+  //     (ingest taints only the current mission, ADR-0003 A1), so "clean"
   //     there would present a gate nobody has checked as passed. Non-current +
   //     not dirty therefore renders the neutral evalPending() card instead;
   //     the dirty card below is shown whatever the status.
@@ -692,7 +692,7 @@
         <div class="autosolve">
           <div class="hint" style="margin-top:0">${det.status === 'solved'
             ? 'このミッションはクリア済みです。'
-            : '進行位置の課題から順に判定します。'}</div>
+            : 'この課題はまだ進行位置ではありません。'}</div>
         </div>`;
     }
     if (!det.dirty) {
@@ -749,7 +749,9 @@
     return `<div class="sec-title">自動クリア（exfil）</div>
       <div class="autosolve">
         <ul class="steps-flow">${items}</ul>
-        <div class="hint">flag を collector に配送し、この attempt 中に禁止ルールが一度も発火していなければ自動的にクリアされます。手動提出は不要です。</div>
+        <div class="hint">${pending
+          ? 'この課題はまだ進行位置ではありません。'
+          : 'flag を collector に配送し、この attempt 中に禁止ルールが一度も発火していなければ自動的にクリアされます。手動提出は不要です。'}</div>
       </div>`;
   }
 
