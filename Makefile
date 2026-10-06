@@ -66,7 +66,10 @@ build:
 	docker build -t $(REGISTRY)/detect-grader:$(TAG) -f images/detect-grader/Dockerfile images/detect-grader
 	$(MAKE) check-image-hygiene
 
-push:
+# check-image-hygiene first: prod is CI-free and an operator runs `make push` by
+# hand, so an image that was never through V1-V3 (e.g. `make build` failed) must
+# not be pushable (ADR-0026). It checks the challenge image about to be pushed.
+push: check-image-hygiene
 	@for img in $(IMAGES); do docker push $(REGISTRY)/$$img:$(TAG); done
 
 load-colima: build
