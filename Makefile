@@ -142,9 +142,12 @@ check-namespace-ownership:
 check-image-hygiene:
 	./scripts/check-image-hygiene.sh $(REGISTRY)/challenge:$(TAG)
 
-# ADR-0026 V6: proves check-image-hygiene.sh can actually fail (13 derived
-# images, one deliberate violation each). Not part of `make build` (it builds
-# extra throwaway images); CI's image-hygiene job runs it after the check.
+# ADR-0026 V6: proves check-image-hygiene.sh can actually fail (23 cases:
+# derived images with one deliberate violation each, plus build-context cases).
+# Not part of `make build` (it builds extra throwaway images); CI's image-hygiene
+# job runs it after the check. It TEMPORARILY EDITS challenges/ and restores it
+# with `git checkout`: never run it on a tree with uncommitted changes under
+# challenges/, and never in parallel with another run.
 check-image-hygiene-selftest:
 	./scripts/test-check-image-hygiene.sh $(REGISTRY)/challenge:$(TAG)
 
