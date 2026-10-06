@@ -378,19 +378,22 @@
 
   // kickerFor labels the detail panel by the mission's ACTUAL status rather
   // than a hardcoded "CURRENT MISSION" — free browsing (P23 Story-as-docs)
-  // means the panel may be showing a solved or locked mission, and a
-  // solved/locked mission mislabeled "current" would be confusing (the
-  // kill-chain / map already carry the real status, but the detail panel's
-  // own heading should agree with them at a glance).
+  // means the panel may be showing a mission other than the current one
+  // (already solved, or not yet reached), and mislabeling it "current" would
+  // be confusing (the kill-chain / map already carry the real status, but the
+  // detail panel's own heading should agree with them at a glance).
+  // ADR-0027 D2/D5: `locked` only means "not yet reached on the guided path" —
+  // it does NOT mean read-restricted (hints open there too, with the usual
+  // deduction), so the label must not read as a look-only preview.
   function kickerFor(det) {
     if (det.status === 'solved') return 'MISSION CLEARED';
-    if (det.status === 'locked') return 'PREVIEW · LOCKED';
+    if (det.status === 'locked') return 'UPCOMING MISSION';
     return 'CURRENT MISSION';
   }
 
   // backToCurrentHTML (C1 fixup) is the explicit "戻る" affordance shown in
   // the mission-head whenever the detail panel is NOT showing the current
-  // mission (free-browsing a solved or locked one). Calls followCurrent(),
+  // mission (free-browsing a solved one, or one not yet reached). Calls followCurrent(),
   // the unconditional reset — a participant is never stuck without a
   // one-click way back, even before the next auto-solve clears it for them.
   function backToCurrentHTML(det) {
@@ -522,8 +525,8 @@
   // Falco rule excerpt (List / Macro / Rule) — see api.go's missionDetail
   // falcoRule doc and catalog/rules.go's LoadRuleExcerpts. Visible for ANY
   // mission status (solved/current/locked, CEO decision): this content is
-  // static and identical for every viewer, unlike hints, so free-browsing to
-  // a locked mission still shows its rule excerpt.
+  // static and identical for every viewer (no per-user state), so
+  // free-browsing to a not-yet-reached mission still shows its rule excerpt.
   //
   // XSS: every value (list item, macro condition, rule desc/condition/output/
   // priority/tag) flows through esc() — this is the SAME trust boundary as
@@ -628,6 +631,16 @@
       </div>`;
   }
 
+  // evalPending (ADR-0027 D6): true when this evade's attempt has NOT been
+  // evaluated by the sweep — i.e. the mission is not the current one and no
+  // forbidden rule has been recorded. In that state nothing may claim the
+  // attempt is clean / submittable (dirtySection, autoSolveStatus). A dirty
+  // record is shown regardless of status. Branches on `status` until the API
+  // carries an explicit attempt state (ADR-0032 / P28-1).
+  function evalPending(det) {
+    return det.status !== 'current' && !det.dirty;
+  }
+
   // evadeSection chooses the primary UX for an evade mission:
   //   - RequireExfil challenges lead with the auto-solve live status (the flag
   //     is delivered by exfil; the scoreboard auto-clears once the window is
@@ -657,7 +670,12 @@
   // dirty flag): always-visible "検知状態" card for every evade mission,
   // mirroring the always-on style of triggerSection / autoSolveStatus rather
   // than only surfacing on a failed submit. Two states:
-  //   - clean: reassurance that the current attempt is untainted.
+  //   - clean: reassurance that the current attempt is untainted. ONLY for the
+  //     current mission (ADR-0027 D6): a non-current evade is never evaluated
+  //     (the sweep taints only the current mission, ADR-0003 A1), so "clean"
+  //     there would present a gate nobody has checked as passed. Non-current +
+  //     not dirty therefore renders the neutral evalPending() card instead;
+  //     the dirty card below is shown whatever the status.
   //   - dirty: which forbidden rule(s) fired (det.dirtyRules — Falco rule
   //     NAMES only, never a flag value per I10, but still routed through
   //     esc() like every other catalog-derived string on this page — #26)
@@ -669,6 +687,14 @@
   // does NOT carry this route, see api.go's resetDirty doc). That line is
   // now just a pointer to this section instead of a dead-end instruction.
   function dirtySection(det) {
+    if (evalPending(det)) {
+      return `<div class="sec-title">検知状態: ${det.status === 'solved' ? 'クリア済み' : '未評価'}</div>
+        <div class="autosolve">
+          <div class="hint" style="margin-top:0">${det.status === 'solved'
+            ? 'このミッションはクリア済みです。'
+            : '進行位置の課題から順に判定します。'}</div>
+        </div>`;
+    }
     if (!det.dirty) {
       return `<div class="sec-title">検知状態</div>
         <div class="autosolve">
@@ -695,6 +721,7 @@
   // poll once the sweeper clears it, so we only model received / waiting here.
   function autoSolveStatus(det) {
     const received = !!det.exfilReceived;
+    const pending = evalPending(det);
     // Build each row via textContent-safe interpolation: only static copy and
     // booleans feed in here (no user-controlled strings), matching #26's XSS
     // discipline — the dynamic bits are class names, not injected content.
@@ -707,9 +734,11 @@
       // reset button (dirtySection(), rendered above this status), so this
       // row now just points there instead of naming the API route — see
       // dirtySection's doc for why the old copy was a dead-end instruction.
-      { cls: received ? (det.dirty ? 'active waiting' : 'done') : '',
-        dot: received ? (det.dirty ? '⏳' : '✅') : '·',
-        text: received
+      // ADR-0027 D6: a non-current evade is not evaluated, so "received"
+      // must not turn this row into the "clean confirmed" state.
+      { cls: (received && !pending) ? (det.dirty ? 'active waiting' : 'done') : '',
+        dot: (received && !pending) ? (det.dirty ? '⏳' : '✅') : '·',
+        text: (received && !pending)
           ? (det.dirty
               ? '禁止ルールが発火済み — 上の「検知状態」でやり直すまで自動クリアされません'
               : 'クリーンな attempt を確認 — 自動クリア待ち')
