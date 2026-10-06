@@ -165,6 +165,15 @@ func TestJourney_OpenHint_UnknownChallengeIs404(t *testing.T) {
 func TestJourney_OutOfScenarioMission_FallsBackAndRevealIs404(t *testing.T) {
 	f, order := newRealOrderFixture(t)
 	const outside = "11-cloud-cred-hunt"
+	// The id must really exist under challenges/ — otherwise a rename would
+	// silently shrink this test into UnknownChallengeIs404 (same body).
+	full, err := catalog.Load("../../challenges")
+	if err != nil {
+		t.Fatalf("catalog.Load: %v", err)
+	}
+	if _, ok := full[outside]; !ok {
+		t.Fatalf("precondition: %s must exist under challenges/ (renamed? update this test), it is not in the full catalog", outside)
+	}
 	for _, id := range order {
 		if id == outside {
 			t.Fatalf("precondition: %s must be outside nimbusbreach-full, but it is in the order %v", outside, order)
@@ -181,6 +190,38 @@ func TestJourney_OutOfScenarioMission_FallsBackAndRevealIs404(t *testing.T) {
 	}
 	if got := f.st.HintViews("alice")[outside]; len(got) != 0 {
 		t.Fatalf("a 404 must record nothing, store has %v", got)
+	}
+}
+
+// TestJourney_LockedMission_OtherUsersRecordsNotShown pins the self-scope of
+// the store-driven projection: with hints and step ticks now shown for locked
+// missions, another participant's records for the same mission must never
+// appear in alice's view (the projection reads the store per user).
+func TestJourney_LockedMission_OtherUsersRecordsNotShown(t *testing.T) {
+	f := newJourneyFixture(t)
+	// bob opens 02-evade's hint 1 and ticks its step; alice has done neither.
+	if w := f.req("POST", "/api/users/bob/challenges/02-evade/hints/1", nil); w.Code != http.StatusOK {
+		t.Fatalf("bob hint 1: %d body=%s", w.Code, w.Body)
+	}
+	if w := f.req("POST", "/api/users/bob/challenges/02-evade/steps/0/check", map[string]any{"checked": true}); w.Code != http.StatusOK {
+		t.Fatalf("bob step check: %d body=%s", w.Code, w.Body)
+	}
+	// Control: bob does see his own records on the (locked for him too) mission.
+	mb := f.journeyAt("bob", "02-evade")
+	if len(hintsOf(t, mb)["opened"].([]any)) != 1 {
+		t.Fatalf("control: bob must see his own opened hint, got %v", hintsOf(t, mb))
+	}
+	ma := f.journeyAt("alice", "02-evade")
+	if s := statusOf(ma, "02-evade"); s != "locked" {
+		t.Fatalf("precondition: 02-evade should be locked for alice, got %q", s)
+	}
+	h := hintsOf(t, ma)
+	if len(h["opened"].([]any)) != 0 || h["nextIndex"].(float64) != 1 || h["lockedCount"].(float64) != 2 {
+		t.Fatalf("alice must not see bob's opened hint: want opened [], nextIndex 1, lockedCount 2; got %v", h)
+	}
+	steps := ma["detail"].(map[string]any)["steps"].([]any)
+	if steps[0].(map[string]any)["checked"] != false {
+		t.Fatalf("alice must not see bob's step tick, got %v", steps[0])
 	}
 }
 
