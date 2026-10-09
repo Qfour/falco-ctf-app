@@ -1,12 +1,12 @@
 # ADR-0032: evade の attempt を明示的な開始操作 (epoch) にし、solve を「その attempt の中で記録された証跡」だけで判定する — 10-final-exfil に attempt スコープの積極証明を入れる
 
-- Status: **Proposed** (Accepted 化は CEO merge 時。期限 = 次回イベントの前、CEO 決定 2026-10-05。rev2 = 2026-10-10: S1 の実装と R4 を反映。追加は末尾の「Decision の追加 (rev2)」)
+- Status: **Proposed** (Accepted 化は CEO merge 時。期限 = 次回イベントの前、CEO 決定 2026-10-05。rev2 = 2026-10-10: S1 の実装と R4 を反映。rev2.1 = 同日: review-5x (T3、app S2 + platform S1) の採用 findings と VP の決定を反映。追加は末尾の「Decision の追加」)
 - Date / Deciders: 2026-10-05 / CEO (2026-10-04 錨は明示的な attempt。2026-10-05 10 の積極証明は入れる方向で調査を先に・期限の前倒し・残余 1 / 2 の受容・05 も揃える。
   Class-2 の merge) + VP (承認、レビュー指摘の全件採用) + architect (起草・同意権) + content-engineer (実現性調査) + product-engineer (P28 の印・称号の合意) +
-  security-engineer・qa-engineer (独立レビュー 2 巡、2026-10-05。本版に反映済み) / rev2 (2026-10-10): architect (起草・D12 の同意権) + VP (発注)
+  security-engineer・qa-engineer (独立レビュー 2 巡、2026-10-05。本版に反映済み) / rev2 (2026-10-10): architect (起草・D12 の同意権) + VP (発注) / rev2.1 (同日): architect (起草・D12 (1) の Key Guard の例外に「yes, if」) + VP (決定・例外の承認)
 - 関連: ADR-0003 (Decision を supersede。I11 の起源)、ADR-0004・0008・0027 (限定 supersede。「supersede の範囲」の表)、ADR-0017 (custom rule の先例)、ADR-0020 (migration)、
-  ADR-0025 (10 の flag の置き場)、ADR-0033 (flags ファイルの完全性。Accepted)、Issue #121、workspace `REFACTORING.md` P28 architect §8 / §10、ADR-0031 (Proposed、app#321)、platform#207・#208・#209
-- 行番号は e74d871 (rev2 で足した参照は c5e0761。platform は S1 ブランチの 3aaf11f)。`0003:N` などは `docs/adr/` の各 ADR の行番号。**公開境界**: flag 実値・未公開の回避条件・rule の condition は書かない (condition の正典は
+  ADR-0025 (10 の flag の置き場)、ADR-0033 (flags ファイルの完全性。Accepted)、Issue #121、workspace `REFACTORING.md` P28 architect §8 / §10、ADR-0031 (Proposed、app#321)、platform#207・#208・#209、platform の Key Guard「Falco ruleset の override は customRules 経由のみ」(D12 (1) が例外)
+- 行番号は e74d871 (rev2 で足した参照は c5e0761。platform の `values.yaml.gotmpl` の行は platform main と platform の S1 PR で同じ。upstream の Falco・chart は版を併記)。`0003:N` などは `docs/adr/` の各 ADR の行番号。**公開境界**: flag 実値・未公開の回避条件・rule の condition は書かない (condition の正典は
   private の platform `docs/falco-detection-conditions.md`)。弱点は公開済みの範囲で、手順ではなく性質として書く
 
 ## Context
@@ -116,7 +116,7 @@
   active な attempt にだけ記録し、reset と切り替えで無効になる。(c) **05 も揃える** (CEO 2026-10-05): ADR-0008 は「reset 後に再証明させる利益は無い」とした (`0008:355-363`) が、錨が
   `current` だった時の判断である。開始が明示操作になると、証明が attempt の外で成立する限り、禁止ルールの gate は技法の実演を観測しないまま通過を許しうる。揃えれば全 evade で
   「1 回の attempt の中で技法が実演された」と同じ文で言え、課題ごとの指定 (`0008:442-445`) を持たずに済む。(d) **deploy は platform が先・app が後** (逆順は 10 が解けなくなる。
-  05 と同じ softlock: 契約表 Falco custom rule 行)。(e) 実機の fire / no-fire が済むまで「検証済み」と書かない。(f) rule 名は他課題と共有しない。(g)〜(j) (同じ stand-up・Me pane・表示抜粋・container 名) は末尾の「Decision の追加 (rev2)」。
+  05 と同じ softlock: 契約表 Falco custom rule 行)。(e) 実機の fire / no-fire が済むまで「検証済み」と書かない。(f) rule 名は他課題と共有しない。(g)〜(k) (同じ stand-up・Me pane・表示抜粋・container 名・`rule_matching: first` の前提) は末尾の「Decision の追加」。
 - **D10 nonce は採らない。** attempt への帰属は、サーバが受信時に押す epoch で足りる。nonce が加えるのは「receipt の送り主が portal を見られる本人である」ことの証明で、これは claimed
   identity の問題であり attempt の問題ではない。値が静的である限り、値の由来は nonce でも保証できず、参加者に手で写させる手順と exfil の body 契約の変更に見合わない。
   attempt ごとに値を変える案は、flag を 1 イベント 1 ファイルで 2 つの消費者に配る契約 (ADR-0033) と plant の経路 (ADR-0001 / I12) の作り直しになるので、本 ADR では扱わない (Signpost 3)。
@@ -184,8 +184,8 @@
 | 段階 | 内容 | 担当 | Class | security |
 |---|---|---|---|---|
 | S1 | platform: 10 の証明 rule `Nimbus Vault Master Key Read` を `customRules` の 4 件目に足す (standalone、container は `challenge` だけの allowlist。condition は private 正典 §7)。前提 = vault の free-win ゲートを ADR-0025 の append 固有の一致にする修正 (platform#209)。**載せるのは S2 を含む app の ref と同じ stand-up だけ** (D9 (g)) | content (condition) → platform | 2 (クロスリポ) | 必須 |
-| S1' | platform だけ: 03 の観測用の rule を D12 の条件で載せる (`INFO`・tag `ctf_observation`・最後に読み込むファイル・Falco の `priority` を `info`・upstream の INFO の rule を無効化)。採点に使わず app にも届かないので S2 と独立に載せてよい。Signpost 2 の計測は Falco ログの回収 (platform#208) が前提 | content (condition) → platform | 2 (採点の入力 = Falco の設定) | 必須 |
-| S2 | app: allowlist 1 行 (condition を表さない rule 名)、10 の `expectedRules` + `requireExpectedRuleFire`、参加者向けの文面 (D9 (h))、契約表 (Falco custom rule の行に container 名 = D9 (j)、Webhook payload の行に priority の層 = D12)、Verification の「Me pane の表示」と「機械で守るもの」の app 側。**merge の前提 = platform#207 (全 Falco pod での rule 名の読み込みと fire / no-fire のゲート) が stand-up で green** | content、software (テスト)、architect (契約表) | 2 | 必須 (`hints[]` を変えるので ADR-0026 V8 も) |
+| S1' | platform: 03 の観測用の rule を D12 の条件で載せる (`INFO`・tag `ctf_observation`・最後に読み込むファイル・Falco の `priority` を `info`・upstream の INFO の rule を `falco.yaml` の `rules:` で無効化 = Key Guard の例外 (D12 (1))・upstream の ruleset の凍結 (D12 (6)))。**app: 契約表の Webhook payload の行に priority の層 (D12 (4)) を、S1' と相互リンクした docs の PR で同時か先に入れる (S1' の merge 前提。S2 には入れない)**。観測用の rule は採点に使わず app に届かないので、S2 と独立に載せてよい。Signpost 2 の計測は Falco ログの回収 (platform#208) が前提 | content (condition) → platform、architect (契約表) | 2 (採点の入力 = Falco の設定。両リポ同時 PR) | 必須 |
+| S2 | app (app の S2 PR): allowlist 1 行 (condition を表さない rule 名)、10 の `expectedRules` + `requireExpectedRuleFire`、参加者向けの文面 (D9 (h))、契約表の Falco custom rule の行 (softlock の対象を 05・10 に、container 名 = D9 (j)、`rule_matching: first` の前提 = D9 (k)。Webhook payload の行は S1')、Verification の表の S2 の行 (一意性・表示抜粋・Me pane の 2 本) と flag-guard の 1 文 (「機械で守るもの」(3))。**merge の前提 = platform#207 (全 Falco pod での rule 名の読み込みと fire / no-fire のゲート) が stand-up で green** | content、software・qa (テストと flag-guard の 1 文)、architect (契約表) | 2 | 必須 (`hints[]` を変えるので ADR-0026 V8 も) |
 | S3a | migration と store の追加 (表 2・列 3・attempt の読み書き・`Reset` の 1 トランザクション化)。**既存の証跡の書き込み (epoch 0) と読み込み (全行) は変えない** | software | 2 | 必須 (ADR-0020) |
 | S3c | collector の Director で `X-Auth-Request-*` を落とす (S3b-1 の前提。現状は穴ではないが、「認証ヘッダーがある = 証明済み」を collector を通る経路でも成り立たせる: `internal/collector/collector.go:118-124`) | software | 2 | 必須 |
 | S3b-1 | 開始ルート・投影 (`attempt`・`alert`)・監査ログと counter、reset-dirty の authz と rate-limit の変更。**開始ルートは証跡 3 表に触れず、採点に効かない**。spec: 新 path と `AttemptResult`、`Journey.attempt`、`MissionDetail.alert`、reset-dirty の `x-ctf-authz` / `x-ctf-rate-limit` (+ `make gen`) | software、architect (spec) | 2 | 必須 |
@@ -216,12 +216,12 @@
 
 ## Verification
 
-すべて**未実装**。`make test` = required check。attempt の性質 (①〜⑨ = qa-engineer の骨子) は実 store で回す (`internal/scoreboard` の HTTP 経由か、実 `store.Open`。fakeStore は epoch の照合を
-持たないので根拠にしない)。区分: **[R]** = S3b-2 で入れ、S3b-2 の直前の tree で compile でき fail する (PR 本文に fail の出力を貼る) / **[S]** = 導入した段階で入れ、その段階で green。実装を
-故意に壊して赤になることを PR 本文に示す / **[G]** = 既存。無変更か、開始ヘルパを足すだけで全段階 green / **[I]** = 既存を反転・書き換える (旧名と理由を doc comment に残す)。
+S2 の行 (app の S2 PR で入る) を除き、すべて**未実装**。`make test` = required check。attempt の性質 (①〜⑨ = qa-engineer の骨子) は実 store で回す (`internal/scoreboard` の HTTP 経由か、実 `store.Open`。fakeStore は epoch の照合を
+持たないので根拠にしない)。区分: **[R]** = S3b-2 で入れ、S3b-2 の直前の tree で compile でき fail する (PR 本文に fail の出力を貼る) / **[S]** = 導入した段階で入れ、その段階で green。実装を故意に壊して赤になることを PR 本文に示す / **[G]** = 既存。無変更か、開始ヘルパを足すだけで全段階 green / **[I]** = 既存を反転・書き換える (旧名と理由を doc comment に残す)。
 
 | 段階 | 区分 | テスト |
 |---|---|---|
+| S2 | [S] | `TestExpectedRuleFire_NewRuleNameUniqueToMission10` (D9 (f)。S3b-2 の行から移した) / `TestMission10DisplayRuleExcerptExcludesProof` (D9 (i)。「機械で守るもの」(2)) / Me pane の 2 本 (既存の `TestFalcoEvents_IgnoresBelowMinimumPriority` の拡張を含む。下の「Me pane の表示」: Informational の発火は `GET …/me` の `recent_rule_fires` に出ず、10 の証明の rule の発火は出る。D9 (h)・D12 の app 側の層) |
 | S3a | [G] | I11 の既存 6 本と `internal/store/store_test.go` の証跡系が無変更で green |
 | S3a | [S] | `TestMigrate_UserVersion2_AddsEpochColumnsAndAttemptTables` / `TestAttempt_EpochNeverReused` (切り替え・やり直し・admin reset をまたぐ) / `TestAttemptWrite_FailureLeavesStateIntact` (開始・切り替え・やり直しのそれぞれで、採番表か `evade_attempt` の書き込みを失敗させる) / `TestAttempt_SurvivesStoreRestart` / `TestAdminReset_IsAtomic` (途中の DELETE を失敗させても何も消えない) / `TestAdminReset_ClearsAttempt_KeepsSequence` (Reset の後、最後の attempt が active に戻らず、次の epoch は続きから) |
 | S3c | [S] | collector の `TestForward_StripsAuthRequestHeaders` |
@@ -231,7 +231,7 @@
 | S3b-0 | [G] | 開始ヘルパを足すだけの既存テスト (採点は `current` のまま green)。⑨ `TestLeaderboard_CanonicalOrder_Unchanged` を足す: 正規順 (開始を挟む) の固定シナリオの leaderboard を、期待値のリテラルで持つ (ファイルの golden と再生成の仕組みは使わない。`make test` は host に書き戻さない) |
 | S4 | [S] | ⑩ `TestPortal_AttemptAndResetOnlyFromClickHandlers` (`internal/scoreboard/view` のテンプレートの静的検査: 開始ルートと reset-dirty を呼ぶ箇所がクリックのハンドラだけで、`abandon` とやり直しが確認を経ること) |
 | S3b-2 | [R] | ① `TestAttempt_W2_BossNotSolved_CurrentPinnedAt03` / `…_CurrentPinnedAt05` (10 の禁止発火と receipt があっても Sweep も手動 submit も solve しない) ② `TestAttempt_ReceiptBeforeStart_NotCounted` ③ `TestAttempt_ForbiddenFireDuringAttempt_Taints` / `TestAttempt_Restart_InvalidatesTaintReceiptAndProof` / `TestAttempt_SweepAndSubmit_SameVerdictInEveryState` (idle・clean・spotted・証明なし・receipt なし・完了) / `TestAttempt_SwitchAwayAndBack_OldEpochEvidenceNotCounted` (A → B → A。gate・Sweep・投影の 3 フィールドで、live でも再起動後でも) / `TestResetDirty_NotActive_NoOp_OtherAttemptUntouched` / `TestAttempt_TwinTrap_StartBeforePredecessor_Taints` ④ `TestOnRuleFire_RealCatalog_WithoutStart_NoEvadeSolves` ⑤ `TestAttempt_Proof_FiredBeforeStart_NotCounted` ⑦ `TestMigrate_UserVersion2_LegacyEvidenceRows_NeverCount` ⑨ `TestLeaderboard_OutOfScopeSolve_NotScored` (明示的な assert。golden にしない) |
-| S3b-2 | [S] | ② `TestAttempt_ReceiptAfterStart_Counts` / `TestAttempt_Receipt_MatchingValueNotReplacedByMismatch` (D2 (g)) / `TestExfil_ResponseIndependentOfState` (active の有無・D2 (g) の置き換え拒否・solve 済み・別の課題が active のどれでも status・キー・文言が同じ) ③ `TestStoreReads_OldEpochEvidenceNeverVisible` (store の読み出しメソッド全部の表 × live / 再起動後) / `TestAttemptStart_SameChallengeTwice_KeepsEvidence` ⑤ `TestAttempt_Proof_CleanButNoProofFire_NotSolved` / `…FiredAfterStart_Counts` / `TestExpectedRuleFire_NewRuleNameUniqueToMission10` ⑥ `TestAttempt_VerdictIgnoresClock` ⑦ `TestEvidence_ReDeliveredInNewEpoch_CountsAfterRestart` (3 表それぞれ。D2 (b)) / `TestStore_EvidenceWrite_WithoutActiveAttempt_WritesNothing` (D2 (a)) / `TestAttempt_UncountedReceipt_AuditLogAndCounter` (D11) |
+| S3b-2 | [S] | ② `TestAttempt_ReceiptAfterStart_Counts` / `TestAttempt_Receipt_MatchingValueNotReplacedByMismatch` (D2 (g)) / `TestExfil_ResponseIndependentOfState` (active の有無・D2 (g) の置き換え拒否・solve 済み・別の課題が active のどれでも status・キー・文言が同じ) ③ `TestStoreReads_OldEpochEvidenceNeverVisible` (store の読み出しメソッド全部の表 × live / 再起動後) / `TestAttemptStart_SameChallengeTwice_KeepsEvidence` ⑤ `TestAttempt_Proof_CleanButNoProofFire_NotSolved` / `…FiredAfterStart_Counts` (rule 名の一意性は S2 の行) ⑥ `TestAttempt_VerdictIgnoresClock` ⑦ `TestEvidence_ReDeliveredInNewEpoch_CountsAfterRestart` (3 表それぞれ。D2 (b)) / `TestStore_EvidenceWrite_WithoutActiveAttempt_WritesNothing` (D2 (a)) / `TestAttempt_UncountedReceipt_AuditLogAndCounter` (D11) |
 | S3b-2 | [I] | 反転: `TestOnRuleFire_ExpectedRuleFire_NotAttemptScoped` → `…_AttemptScoped`、`TestResetDirty_NeverClearsExpectedRuleFire` → `TestResetDirty_InvalidatesExpectedRuleFire`。書き換え: `TestOnRuleFire_RealCatalog_AttemptScope_TwinMissionsStayClean` (④。`internal/scoreboard/scoring/scoring_test.go:1361` の `WithOrder` が D7 で無くなる)、`TestOnRuleFire_AttemptScope_OnlyTaintsCurrentChallenge` (`:445` → `…_OnlyTaintsActiveAttempt`)、`…_IsIdempotent` (`:518`)、`TestSubmitEvade_SevenForbiddenRules_ResetRequiresFreshExfil`、`TestResetDirty_TransactionRollsBackOnPartialFailure`、`internal/scoreboard/server_test.go:573,644,686,739` (`current` への依存と行削除の reset)、`internal/scoreboard/ingest/ingest_test.go:120` (開始が無いと taint の書き込みが起きない)、`journey_api_test.go:295,363` (store に直接書いて投影を見る)、`internal/store/store_test.go` の証跡系 (特に `:464`)、`TestAPISpec_V5_SubmitFlagVerdictFieldsMatchSpec` (和集合に `started`) |
 | S3b-2 | [G] | ⑥ `TestSubmitEvade_DirtyStaysDirtyRegardlessOfClockAdvance`・`TestSubmit_CorrectFlag_AfterWaiting_StaysDirty_NotSolved`・trigger の既存テスト (attempt なしで solve する) / `TestDirtyFlag_SurvivesStoreRestart` / `TestSweep_ManualAndSweeperShareVerdict`・`TestSweep_AlreadySolved_Idempotent` / ⑨ `TestLeaderboard_CanonicalOrder_Unchanged` (期待値を変えない) / `TestAPISpec_V5_ExfilReceiptFieldsMatchSpec` |
 
@@ -243,16 +243,20 @@
 - **実機でだけ確認できるもの**: (a) 全 Falco pod で rule 名 `Nimbus Vault Master Key Read` が読み込まれていること (ファイルではなく名前で) と fire / no-fire = platform#207 のゲート。**S2 の merge の前に stand-up で green**
   (ADR-0008 (a-1)・ADR-0017 (a-2)(a-3) と同型。結果は private 正典に記録し、security-engineer が確認する) (b) 開始 → auto-solve の観測 → 手動 submit の E2E (d′) (c) deploy 経路が新しい rule を発火させないこと
   (I13b の対象 +1。S1' の観測用の rule は catalog の外だが、Signpost 2 の分子を汚すので同じく 0 件を見る) (d) Falco の `priority` を `info` にした後も catalog の rule の fire / no-fire (platform#207 と vault のゲート) が変わらないこと (D12)。
-- **機械で守るもの (rev2)**: (1) D9 (g) [推奨、platform の preflight]: platform の customRules が新設する rule 名の集合 (`ctf_observation` を除く) と、stand-up で使う app の pin の `challenges/custom-falco-rules.txt` が
+- **機械で守るもの (rev2・rev2.1)**: (1) D9 (g) [推奨、platform の preflight]: platform の customRules が新設する rule 名の集合 (`ctf_observation` を除く) と、stand-up で使う app の pin の `challenges/custom-falco-rules.txt` が
   一致しなければ no-go (S2 の無い回に 4 件目を載せることと、S1 の無い回に S2 を当てる softlock の両方を止める。無い間は private 正典 §9 の手順) (2) D9 (i): S2 で `challenges/10-final-exfil/rule.yaml` に証明の rule 名が無いことをテストで pin する
-  (3) D9 (j): `flag-guard` (`scripts/check-flag-isolation.sh:663-670`) は `plant` / `challenge` の不在で既に赤になる。S2 でその箇所に「platform の customRules が参照する。契約表」の 1 文を足す (4) D12 [platform の CI]: customRules のうち
+  (`TestMission10DisplayRuleExcerptExcludesProof`。上の表の S2 の行) (3) D9 (j): `flag-guard` (`scripts/check-flag-isolation.sh:663-670`) は `plant` / `challenge` の不在で既に赤になる。S2 でその箇所に「platform の customRules が参照する。契約表」の 1 文を足す (4) D12 [platform の CI]: customRules のうち
   tag `ctf_observation` の rule は `INFO` で最後に読み込まれるファイルにあり、それ以外に `INFO` 以下の rule が無い。Falco の `priority` が `info` なら upstream の INFO の rule が無効化され、sidekick の webhook の `minimumpriority` は `notice`。
-  stand-up では全 Falco pod の rule ファイル (falcoctl が入れたものを含む) の INFO の rule ⊆ 無効化リスト ∪ `ctf_observation` を検査する (upstream で catalog の rule が INFO に下がった場合もここで止まる)。
+  無効化は `falco.rules` の `disable` に名前の完全一致で書かれ (`*`・tag・`enable` を含まない)、customRules に INFO の rule を消す override が無い (D12 (1)、rev2.1)。
+  stand-up では全 Falco pod の rule ファイル (falcoctl が入れたものを含む) の INFO の rule ⊆ 無効化リスト ∪ `ctf_observation` を検査する (upstream で catalog の rule が INFO に下がった場合と、(1) の名前が変わって無効化が黙って外れた場合もここで止まる)
+  (5) D12 (6) [platform の preflight と stand-up、rev2.1]: `priority` が `info` なら、描画で falcoctl の install の ref が digest に pin され、follow は無効か同じ digest に pin されている。stand-up で全 Falco pod の upstream の
+  rule ファイルの hash が一致し、go / no-go に記録した版と同じ。teardown の前 (platform#208 の回収と同じ時) にもう一度比べ、違えばその回の go / no-go の記録に「開催中に rule の集合が変わった」と残す。
 - **I11 の表を書き換える条件**: 上の表の S3a〜S3b-2 のテスト (S4 の静的検査を含む) が main に入り、本 ADR が Accepted。(a)(b) が済むまで「検証済み」「実効的」と書かない。
 
-## Decision の追加 (rev2、2026-10-10)
+## Decision の追加 (rev2・rev2.1、2026-10-10)
 
-S1 (platform `feat/adr-0032-s1-proof-rules`。private 正典 `docs/falco-detection-conditions.md` §7〜§10) の実装と architect の R4 (2026-10-07) で分かった事実に合わせて足す。D1〜D11 と同格の決定で、
+S1 (platform の S1 PR。private 正典 `docs/falco-detection-conditions.md` §7〜§11) の実装と architect の R4 (2026-10-07) で分かった事実に合わせて足す。rev2.1 は review-5x (T3、2026-10-10、app S2 + platform S1) の
+採用 findings と VP の決定 (同日) を反映する: D9 (i) の基準・(j) の数・(k)、D12 の条件 (1)・(4)・(6) と覆す信号 (i)・(v)。D1〜D11 と同格の決定で、
 行番号を保つためにここに置く (ADR-0031 が `0032:111-113,156,232,239` を参照している)。前提の事実: ingest は image フィルタを通った全 rule の発火を rule 名で絞らずに記録し (`internal/scoreboard/ingest/ingest.go:261`、
 `internal/store/store.go:603-619`)、Me pane が「Falco rules you triggered (last 60s)」と events 数に出す (`internal/scoreboard/api/api.go:1760`、`internal/scoreboard/view/templates/portal/pane-me.tmpl:146`)。
 
@@ -262,9 +266,18 @@ S1 (platform `feat/adr-0032-s1-proof-rules`。private 正典 `docs/falco-detecti
 - **D9 (h) 証明は Me pane に見える前提で文面を揃える (05 と同型)。** D12 の隠し方は証明に使えない (INFO は app に届かず、採点もできない)。10 の文面は 05 (`challenges/05-silent-search/journey.yaml:20-22,31-35`) と
   同じく「禁止ルールは鳴らさない / 証明の rule は鳴ることが CLEARED の条件」と書き、condition の形は書かない。上の 4 箇所と README (`challenges/10-final-exfil/README.md:3,48`) を S2 で直す。
 - **D9 (i) 表示用の抜粋に載せない (公開境界)。** `challenges/10-final-exfil/rule.yaml` に証明の rule を載せない。載せると condition が公開される。05 が載せているのは、05 の condition が回避の経路を含まないため (private 正典 §10 (b))。
-- **D9 (j) ctf-user の container 名は契約。** 証明の rule は container 名を参照する (`charts/ctf-user/templates/pod.yaml:275` の `challenge` だけを許可する。initContainer の `plant` = `:102`・`missions-scope` = `:131` は同じ image で、
-  ingest の image フィルタを通る)。app 側で名前を変えると、flag-guard の名前を一緒に直せば app の CI は緑のまま、S2 の後に 10 が softlock する。契約表の Falco custom rule の行に「`challenge` / `plant` / `missions-scope` の
-  container 名は platform の customRules が参照する (condition は書かない)。変更は両リポ同時 PR」を S2 で足す。
+  **基準はこの 1 つにする (rev2.1)**: 証明の rule を表示用の抜粋に載せてよいのは、condition が回避の経路を含まない (見せても禁止ルールを避ける手順にならない) ときだけで、課題の位置づけ (教える課題か capstone か) は基準にしない。
+  03 の証明を Signpost 2 で gate にするときも、この基準で載せるかを決める。
+- **D9 (j) ctf-user の container 名は契約。** platform の customRules が名前で参照する container は 2 つで、`challenge` (`charts/ctf-user/templates/pod.yaml:275`。10 の証明の rule が許可する唯一の container) と
+  initContainer の `plant` (`:102`。05 の証明の rule と ADR-0025 の append が除外する) である。initContainer の `missions-scope` (`:131`) は名前では参照されないが、3 つとも同じ image で ingest の image フィルタを通るので、
+  gate は image でなく container 名で絞る必要がある (10 の証明が allowlist である理由)。app 側で `challenge` を改名すると、flag-guard の名前を一緒に直せば app の CI は緑のまま、S2 の後に 10 が softlock する。`plant` の改名は
+  05 の証明と ADR-0025 の append の除外を外し、deploy 経路の発火 (I13b) になりうる。契約表の Falco custom rule の行に「`challenge` / `plant` の container 名は platform の customRules が名前で参照する (condition は書かない。
+  `missions-scope` は allowlist が要る理由として書く)。変更は両リポ同時 PR」を S2 で足す (rev2.1 で、名前で参照される数を 3 から 2 に直した)。
+- **D9 (k) 証明の rule は `rule_matching: first` の下での前提を持つ (rev2.1)。** 05 と 10 の証明の rule は customRules の新設 rule で、upstream の rule より後に読み込まれる (`rules_files` の既定の順 =
+  `falco.yaml:241-244`。customRules は rules.d)。`first` では、先に読み込まれて有効な rule が同じ event に一致すると、後の rule は鳴らない (`falco.yaml:692-713`)。したがって証明の rule は「先に読み込まれる rule が
+  想定解の event に一致しない」ことを前提とし、崩れると 05・10 は softlock する (13 の trigger `Archive Collected Data` も同じ前提で、崩れると solve できない)。この前提は upstream の ruleset の版ごとの性質なので、
+  platform#207 の fire / no-fire はその stand-up の版についてだけ確かめる。開催中に版を変えない条件は D12 (6) (`priority` が `notice` 未満の間)。`notice` のままの回にも凍結を広げるかは VP の判断待ちで、
+  architect は広げる側を推奨する (follow と pod の再起動で版が変わる経路は `notice` でも同じで、打ち消しはログに出ない)。契約表の Falco custom rule の行にも同じ前提を 1 文で書く。
 - **D12 採点に使わない観測用の rule は priority で隠す (案 B)。** 03 の観測用の rule (残余 2・Signpost 2) は、鳴っても参加者に見えてはならない (上の前提の経路で Me pane に出る)。
   - 案 A: app の ingest に rule 名の drop-list を置く。入れ忘れると見える側に倒れ (fail-open)、観測用の rule 名が公開リポに載り、採点の入口に分岐が増える
   - 案 B: 観測用の rule を `INFO` にし、Falco の `priority` (platform `helmfile/releases/falco/values.yaml.gotmpl:28`、今 `notice`) を `info` に下げる。Falco の stdout には出るが、falcosidekick の webhook は
@@ -272,15 +285,31 @@ S1 (platform `feat/adr-0032-s1-proof-rules`。private 正典 `docs/falco-detecti
   - 案 C: app が falcosidekick の payload の `tags` を読み、`ctf_observation` を落とす (additive な payload 契約 = 両リポ同時 PR)。app で観測の発火を数えられるが、tag の入れ忘れと両リポの版のずれで見える側に倒れ、採点の入口に分岐が増える
   - **決定: B。** 理由: 隠す層が既存で 2 つあり、採点の入口に分岐を足さず、観測用の rule 名が公開リポに出ない。**architect の同意の条件** (B の新しい代償への対処): Falco は `rule_matching: first`
     (Falco 0.43.1 の `falco.yaml:692-713`。platform の描画も `first`) で、同じイベントに一致する rule のうち先に読み込まれたものだけを出す。priority を下げると upstream の INFO の rule (falco-rules-5.0.0 では
-    1 本: `falco_rules.yaml:685-701`) も読み込まれ、後に読み込まれる catalog の rule を鳴らさなくしうる (具体は private 正典に置く)。したがって (1) upstream の INFO の rule は Falco の設定で名前を指定して無効にする
-    (`rules:` = `falco.yaml:246-275`。今は `notice` なので読み込まれておらず、稼働する rule の集合は観測用の rule の分しか変わらない) (2) 観測用の rule は `INFO`・tag `ctf_observation` で、customRules の中で最後に
-    読み込まれるファイルに置く (rules.d はアルファベット順: `falco.yaml:205-206`。後に catalog の rule が無いので、それを鳴らさなくすることがない) (3) upstream の rule は falcoctl が `falco-rules:5` を追って入れる
-    (platform の描画) ので、無効化の漏れは stand-up で全 Falco pod の実ファイルと突き合わせて止める (Verification の「機械で守るもの」(4)) (4) 契約表の Webhook payload の行に「Debug / Informational の event は
-    採点にも表示にも使わない。platform の観測用の rule の非表示はこれと sidekick の `minimumpriority` の 2 層に依存する」を S1' より前か同時に足す (S2 か docs だけの PR) (5) `priority` を `info` にするのは観測用の
-    rule と同じ PR で行い、観測用の rule が無くなれば戻す
-  - **覆す信号**: (i) catalog の rule が INFO の rule に打ち消された例が実機か Falco ログで 1 件でも見つかる → priority を `notice` に戻して観測用の rule を外し、C を新 ADR で (ii) Signpost 2 を Falco ログから
-    測れない (次回イベントまでに platform#208 の回収が入らない、または回収に欠けがある) → C (app で観測の発火を数える) (iii) P28 で観測の発火を app で表示・集計したくなる → C (iv) Falco pod 1 つあたりの
-    INFO の行が 1 イベントで 03 の開始回数の 10 倍を超える (観測用の rule 以外の INFO が読み込まれている) → 無効化を直し、2 回続くなら C
+    1 本: `falco_rules.yaml:685-701`) も読み込まれ、後に読み込まれる catalog の rule を鳴らさなくしうる (具体は private 正典に置く)。したがって
+    (1) upstream の INFO の rule は、Falco の設定 (`falco.yaml` の `rules:` = `falco.yaml:246-275`。platform の values では `falco.rules`) の `disable` に名前を完全一致で書いて無効にする。customRules の override では消さない。
+    wildcard (`*`)・tag の指定・`enable` は使わない (catalog の rule を巻き込まない)。今は `notice` なので読み込まれておらず、稼働する rule の集合は観測用の rule の分しか変わらない。`rules:` を採る理由
+    (platform-engineer の推奨、rev2.1): 全 rules file を読み込んだ後に適用されるので読み込み順に依らず、一致する rule が無くても起動を壊さない (Falco 0.43.1 の `userspace/falco/app/actions/load_rules_files.cpp:131-150`、
+    `userspace/engine/indexable_ruleset.h:165-203`。`*` を含まない名前は完全一致: `userspace/engine/falco_utils.cpp:215-220`)。customRules の override (`enabled: false` + `override`) は、対象の rule が upstream から
+    消えると読み込みエラーになり (`userspace/engine/rule_loader_collector.cpp:275-278`)、Falco が起動しない側に倒れる (開催中に版が更新されたときも)。代償は、名前が変わると無効化が黙って外れること (→ (3) と (6) で止める)。
+    **(1) は platform の Key Guard「Falco ruleset の override は `values.yaml.gotmpl` の `customRules` 経由のみ」の例外である** (Key Guard の例外は architect の同意 + VP の承認: workspace `.claude/agents/architect.md:37`。
+    ADR を要する: `ORGANIZATION.md:490` ①)。architect の同意は「yes, if」: (a) 例外は D12 の無効化リストに限り、`rules:` を他の目的 (catalog の rule の有効・無効、upstream の rule の調整) に使わない
+    (b) 置き場所は同じ `helmfile/releases/falco/values.yaml.gotmpl` の `falco.rules` (override の入口は同じファイルの 2 箇所に留まる) (c) (3) の検査と (6) の凍結を同じ S1' に入れる (d) platform の Key Guard の文言を
+    S1' の PR で直し、例外を名指しする (e) 観測用の rule が無くなり `priority` を `notice` に戻すときに `falco.rules` も外す。VP の承認: 2026-10-10
+    (2) 観測用の rule は `INFO`・tag `ctf_observation` で、customRules の中で最後に読み込まれるファイルに置く (rules.d はアルファベット順: `falco.yaml:205-206`。後に catalog の rule が無いので、それを鳴らさなくすることがない)
+    (3) upstream の rule は falcoctl が `falco-rules:5` を追って入れる (platform の描画) ので、無効化の漏れ ((1) の名前が変わって黙って外れた場合を含む) は stand-up で全 Falco pod の実ファイルと突き合わせて止める
+    (Verification の「機械で守るもの」(4))
+    (4) 契約表の Webhook payload の行に「Debug / Informational の event は採点にも表示にも使わない。platform の観測用の rule の非表示はこれと sidekick の `minimumpriority` の 2 層に依存する」を足す。
+    **S1' の merge 前提: この行が app の main に入っていること (S1' の platform PR と相互リンクした app の docs の PR を、同時か先に merge する)。S2 には入れない** (rev2.1。旧版の「S2 か docs だけの PR」を改めた)
+    (5) `priority` を `info` にするのは観測用の rule と同じ PR で行い、観測用の rule が無くなれば戻す
+    (6) **`priority` を `notice` 未満にする間は upstream の ruleset を凍結する** (rev2.1): falcoctl の install の ref を stand-up で確かめた版の digest に pin し、follow は止めるか同じ digest に pin する (follow だけを
+    止めても、開催中に再起動・追加された pod は install で新しい版を入れる)。開催中に rule の集合を変えない。凍結した版は go / no-go の記録に残す。理由: (3) の検査は stand-up の時点の写しである。chart 8.0.5 の既定は
+    install も follow も `falco-rules:5` で、follow は 168h ごとに新しい版を見に行き (`charts/falco/values.yaml:567-568,582-588,620,631-633` @falco-8.0.5)、Falco は rule ファイルの変更を pod を再起動せずに読み直す
+    (`falco.yaml:187-195`)。開催中に INFO の rule が足されると catalog の rule (禁止ルールを含む) が打ち消されうるが、打ち消しは Falco のログに出ない
+  - **覆す信号**: (i) catalog の rule が INFO の rule に打ち消された例が 1 件でも見つかる。打ち消し自体は Falco のログに出ない (鳴らなかった rule は行を残さず、見えるのは打ち消した側の INFO の行だけで、それは (iv) で数える)
+    ので、確かめられるのは実機の fire テスト (platform#207 のゲートと Verification の実機 (d)) だけである (rev2.1) → priority を `notice` に戻して観測用の rule を外し、C を新 ADR で (打ち消しの類を丸ごと無くす
+    `rule_matching: all` も比べる。all は 1 つの event で鳴る rule が増えるので、fire / no-fire の表を全部測り直す) (ii) Signpost 2 を Falco ログから測れない (次回イベントまでに platform#208 の回収が入らない、
+    または回収に欠けがある) → C (app で観測の発火を数える) (iii) P28 で観測の発火を app で表示・集計したくなる → C (iv) Falco pod 1 つあたりの INFO の行が 1 イベントで 03 の開始回数の 10 倍を超える
+    (観測用の rule 以外の INFO が読み込まれている) → 無効化を直し、2 回続くなら C (v) `falco.rules` を D12 の外の目的で使いたい要求が出る (rev2.1) → 例外を広げず、Key Guard そのものを見直す ADR を書く
 
 ## Advice
 
@@ -302,3 +331,10 @@ S1 (platform `feat/adr-0032-s1-proof-rules`。private 正典 `docs/falco-detecti
 - VP (2026-10-10): D12 は B を推奨。覆す信号 3 つ (Falco の stdout の増加・P28 で app に出したい・`System user interactive` が noisy)。architect の判断: B を採り、`rule_matching: first` による打ち消しを同意の条件
   (1)〜(3) で塞いだ。3 つ目の信号は (1) の無効化で起きなくなるので (iv) に置き換えた。0.43.1 が同梱する ruleset は falco-rules-5.0.0 (Falco の `cmake/modules/rules.cmake:21` @0.43.1) で INFO は 1 本だが、cluster は
   falcoctl が入れる `falco-rules:5` の最新版を読む。未確認 (rev2): 打ち消しが実機で起きるか (静的読解のみ)、stand-up 時点の `falco-rules:5` の INFO の rule、残余 4 の点灯 (private 正典 §7-7)。
+- review-5x (T3、2026-10-10、app S2 + platform S1) の採用 findings と VP の決定 (同日) を rev2.1 に反映: R1#2 (D12 (6) の凍結と覆す信号 (i))、R4#4 (`falco.yaml` の `rules:` を採り、platform の Key Guard の
+  例外として記録。platform-engineer の推奨)、R4#5 (D9 (k) と契約表の 1 文)、R1#3・R3#1・R4#2 (Webhook payload の行は S1'、Me pane のテスト・flag-guard の 1 文・rule 名の一意性のテストは S2)、R2#7・R3#7・R4#8
+  (契約表と D9 (j) の container 名を 2 つに揃える)、R4#7 (branch 名と branch 上の SHA を PR の参照に)、R4#9・R4#10 (conventions の I13b と rule.yaml の抽出手順)。
+- architect の判断 (rev2.1): D12 (6) に install の ref の pin を含めた (開催中に再起動・追加された pod が新しい版を入れる経路も同じ穴で、follow を止めるだけでは塞がらない)。D9 (i) の基準を 1 つにした (R4#8 の後半。
+  `internal/catalog/rules_test.go` の `TestMission10DisplayRuleExcerptExcludesProof` のコメントは「教える課題か capstone か」を理由にしているので、テストの側を揃える)。覆す信号 (i) に `rule_matching: all` の比較を、
+  Key Guard の例外の範囲に (v) を足した。Falco の `rules:` の挙動は 0.43.1 のソースで確かめた (D12 (1) の行番号)。未決: `notice` のままの回の凍結 (D9 (k)。VP の判断待ち)。未確認 (rev2.1): falcoctl の ref を
+  digest で書けること (S1' で platform が確かめる)、`falco.rules` が chart 8.0.5 で `rules:` に描画されること (private 正典 §11-1 に platform の確認の記録がある)、`rules:` の disable が実機で効くこと (private 正典 §11-4)。
