@@ -3,19 +3,25 @@
 # NOTE: evade/boss mission — never write the flag value here (public repo).
 challengeId: 10-final-exfil
 title: 最終持ち出し — ボス戦
-tagline: master key を発火させず読み、箱の外へ静かに持ち出し、提出せよ
+tagline: 禁止ルールを 1 本も踏まずに master key を読み、箱の外へ静かに持ち出して提出せよ
 briefing: >-
   集大成。これまで学んだ「やってはいけないこと」を全て避けながら、master key を
-  読み・箱の外の collector へ静かに持ち出し (exfil)・提出する。3 つすべてを満たして
-  はじめて CLEARED。単に読んで提出するだけでは通らない (requireExfil)。禁止ルールは
-  7 つ — この attempt で 1 つでも発火すると、やり直すまで提出できない
-  (時間が経っても自動的には解除されない)。
+  読み・箱の外の collector へ静かに持ち出し (exfil)・提出する。禁止ルールは 7 つ —
+  この attempt で 1 つでも発火すると、やり直すまで提出できない (時間が経っても
+  自動的には解除されない)。加えてこのミッションは、素朴な cat を避けた「別経路での
+  読み」を実際に使ったことを示す positive-proof ルール (Nimbus Vault Master Key Read)
+  の発火を CLEARED の条件にしている — このルールが Me 画面の「発火させた Falco
+  ルール」に出るのは正常で、ここだけ他ミッションと逆に、発火させないと成立しない。
+  単に読んで持ち出すだけでは通らない (requireExfil)。
 steps:
-  - label: 発火させずに master key を読む
+  - label: 禁止ルールを踏まずに master key を読む
     detail: |
       直接 cat せず、path 迂回で検知を回避した手口を master key の vault
       ファイル (/opt/nimbus/vault/master.key) に再利用してみよう。
-      同じ回避がそのまま効く。
+      同じ回避がそのまま効く。この別経路での読みは禁止ルールを 1 本も踏まない
+      一方で、技法を実演したことを示す positive-proof ルール
+      (Nimbus Vault Master Key Read) を発火させる — この発火は正常で、
+      CLEARED の条件でもある (素朴な cat は逆に禁止ルール側を踏む)。
   - label: 既存の curl で collector へ静かに送る
     detail: |
       reverse shell (C2) や自前バイナリの drop+実行は禁止ルールに触れる。
@@ -30,9 +36,12 @@ steps:
 hints:
   - kind: rule
     text: >-
-      3 条件がある — 発火させず読む / collector へ exfil 済み / 提出。順番に片付けよう。
-      禁止ルールはこれまでの 01〜09 で学んだ全 7 本 — この attempt で 1 つでも発火させると、
-      やり直すまで提出できなくなる (時間が経っても自動的には解除されない)。
+      条件は 3 つ — 別経路で読む (技法の proof を発火させる) / collector へ exfil 済み /
+      禁止ルールを 1 本も踏んでいない。禁止ルールはこれまでの 01〜09 で学んだ全 7 本 —
+      この attempt で 1 つでも発火させると、やり直すまで提出できなくなる (時間が経っても
+      自動的には解除されない)。加えてこのミッションは、別経路での読みを実際に使ったことを
+      示す positive-proof ルール Nimbus Vault Master Key Read の発火を CLEARED の条件に
+      している (ここだけ他ミッションと逆で、発火させないと成立しない)。
     ruleRefs:
       - Contact K8S API Server From Container
       - Read sensitive file untrusted
@@ -41,6 +50,7 @@ hints:
       - Drop and execute new binary in container
       - Redirect STDOUT/STDIN to Network Connection in Container
       - Create Hardlink Over Sensitive Files
+      - Nimbus Vault Master Key Read
   - kind: command
     text: >-
       送信手段が鍵。reverse shell は collector (HTTP 受信のみ) に届かず、自前ツールの
@@ -51,7 +61,10 @@ hints:
     text: |
       想定解:
       FLAG=$(cat /proc/self/root/opt/nimbus/vault/master.key)
-      # /proc/self/root 経由で読むので fd.name が監視対象の path と一致せず発火しない (03 の技法の再利用)
+      # /proc/self/root 経由の別経路で読むので、禁止ルール (Read sensitive file
+      # untrusted) は踏まない (03 の技法の再利用)。代わりにこの別経路での読みが
+      # positive-proof ルール Nimbus Vault Master Key Read を発火させ、技法を使った
+      # 証明になる — この発火は正常で CLEARED の条件 (素朴な cat は逆に禁止ルール側を踏む)
 
       curl -s "$FALCO_CTF_COLLECTOR/api/challenges/10-final-exfil/exfil" \
         -H 'Content-Type: application/json' \
