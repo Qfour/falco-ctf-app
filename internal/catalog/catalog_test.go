@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
@@ -454,117 +455,120 @@ func TestEvadeForbiddenRules_IntersectPriorTriggerExpectedRules(t *testing.T) {
 	}
 }
 
-// TestExpectedRuleFire_NewRuleNameUniqueToMission05 is ADR-0008 Verification
-// (c): a NEW, independent test (not an extension of
-// TestEvadeForbiddenRules_IntersectPriorTriggerExpectedRules above) that
-// checks ONLY the newly-introduced rule name "Shell Redirected Private Key
-// Read" — never "Search Private Keys or Passwords", which is deliberately
-// shared across 04/05/10 and would make a blanket uniqueness assertion fail.
-// The point: this rule name is project-specific and mission-05-only by
-// design (ADR-0008 Decision (2)); if any OTHER challenge's expectedRules or
-// forbiddenRules ever comes to reference it, the "professional-only, single
-// gate" assumption Decision (3)'s NOT-attempt-scoped write depends on no
-// longer holds (see scoring.Grader.recordExpectedRuleFire's doc).
-func TestExpectedRuleFire_NewRuleNameUniqueToMission05(t *testing.T) {
-	cat, err := catalog.Load("../../challenges")
+// TestCustomFalcoRules_EachNameOwnedByExactlyOneChallenge is ADR-0032 D9 (f)
+// ("the proof rule name is not shared with any other challenge"), applied in
+// one table to EVERY project-specific Falco rule name in
+// challenges/custom-falco-rules.txt (the customRules allowlist, ADR-0008
+// Decision (5)) — so the next customRules entry adds a row here instead of a
+// 4th copy-pasted test. It replaces, name for name and with the same checks,
+// the retired TestExpectedRuleFire_NewRuleNameUniqueToMission05 (ADR-0008
+// Verification (c)), TestExpectedRuleFire_NewRuleNameUniqueToMission13
+// (ADR-0017 Verification (b)) and TestExpectedRuleFire_NewRuleNameUniqueToMission10
+// (ADR-0032 S2); an ADR that still cites one of those names means this test.
+//
+// Why a customRules name must have exactly one owner: scoring.Grader's
+// positive-proof write records a fire for EVERY evade challenge that lists
+// the rule in expectedRules with requireExpectedRuleFire set (it is not
+// keyed on which mission is current), so a proof rule shared with a second
+// challenge would let one mission's fire count as the other's proof, or
+// taint it if the second lists it as forbidden. Trigger owners (13) carry
+// no proof write, but the allowlist line and platform's deploy-order note
+// (contract table, "Falco custom rule override" row) are written for one
+// mission each, and a second consumer would make them wrong silently.
+//
+// Checked for each name (all four were checked by the retired tests too,
+// except that 05's requireExpectedRuleFire is now pinned as well):
+//  1. the allowlist and the table below name the same set: a new allowlist
+//     line fails here until its owner is declared, and a removed line fails
+//     until its row is dropped (no silent gap in either direction);
+//  2. exactly one challenge references the name in expectedRules ∪
+//     forbiddenRules, and that challenge is the declared owner;
+//  3. the owner lists it in expectedRules (its success / proof signal,
+//     never a forbidden rule);
+//  4. the owner's requireExpectedRuleFire is the declared value (05 and 10
+//     gate their solve on the proof; 13 is a trigger).
+//
+// Allowlist membership against upstream (that the name is NOT an upstream
+// rule) is a separate concern, enforced by scripts/check-challenge-rules.sh.
+func TestCustomFalcoRules_EachNameOwnedByExactlyOneChallenge(t *testing.T) {
+	const challengesDir = "../../challenges"
+	owners := map[string]struct {
+		owner        string
+		requireProof bool
+	}{
+		"Shell Redirected Private Key Read": {owner: "05-silent-search", requireProof: true},
+		"Archive Collected Data":            {owner: "13-archive-loot", requireProof: false},
+		"Nimbus Vault Master Key Read":      {owner: "10-final-exfil", requireProof: true},
+	}
+
+	raw, err := os.ReadFile(filepath.Join(challengesDir, "custom-falco-rules.txt"))
+	if err != nil {
+		t.Fatalf("read customRules allowlist: %v", err)
+	}
+	// Same parse as scripts/check-challenge-rules.sh: skip blank lines and
+	// lines whose first non-blank character is '#', strip trailing blanks.
+	var names []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		name := strings.TrimRight(line, " \t\r")
+		if slices.Contains(names, name) {
+			t.Errorf("custom-falco-rules.txt lists %q twice", name)
+			continue
+		}
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		t.Fatal("parsed 0 rule names from custom-falco-rules.txt — the parse is broken, not the allowlist empty")
+	}
+
+	// (1) allowlist set == table key set, both directions.
+	for _, name := range names {
+		if _, ok := owners[name]; !ok {
+			t.Errorf("custom-falco-rules.txt lists %q but this test declares no owner for it — add a row (ADR-0032 D9 (f): one owning challenge per customRules name)", name)
+		}
+	}
+	for name := range owners {
+		if !slices.Contains(names, name) {
+			t.Errorf("this test declares an owner for %q but custom-falco-rules.txt no longer lists it — drop the row", name)
+		}
+	}
+
+	cat, err := catalog.Load(challengesDir)
 	if err != nil {
 		t.Fatalf("load catalog: %v", err)
 	}
-	const ruleName = "Shell Redirected Private Key Read"
-	const owner = "05-silent-search"
-
-	owningIDs := []string{}
-	for _, cid := range cat.IDs() {
-		ch := cat[cid]
-		found := slices.Contains(ch.ExpectedRules, ruleName) || slices.Contains(ch.ForbiddenRules, ruleName)
-		if found {
-			owningIDs = append(owningIDs, cid)
+	for _, name := range names {
+		want, ok := owners[name]
+		if !ok {
+			continue // already reported by (1)
 		}
-	}
-	if len(owningIDs) != 1 || owningIDs[0] != owner {
-		t.Fatalf("%q must appear in exactly one challenge's expectedRules/forbiddenRules (%s), found in %v",
-			ruleName, owner, owningIDs)
-	}
-	if !slices.Contains(cat[owner].ExpectedRules, ruleName) {
-		t.Fatalf("%s must list %q in expectedRules, got %v", owner, ruleName, cat[owner].ExpectedRules)
-	}
-}
-
-// TestExpectedRuleFire_NewRuleNameUniqueToMission13 is ADR-0017 Verification
-// (b): a NEW, independent test (same shape as
-// TestExpectedRuleFire_NewRuleNameUniqueToMission05 above, ADR-0008
-// Verification (c)) that checks ONLY the newly-introduced customRules name
-// "Archive Collected Data" (this project's 2nd customRules entry). Unlike
-// mission05's rule, mission13 is trigger-type — there is no "positive proof,
-// not-attempt-scoped write" mechanism riding on this uniqueness — but the
-// same bookkeeping invariant still matters: this rule name is
-// project-specific and mission-13-only by design (ADR-0017 Decision (1)); if
-// any OTHER challenge's expectedRules or forbiddenRules ever comes to
-// reference it, the customRules allowlist (challenges/custom-falco-rules.txt)
-// and the platform-side deploy-order-dependency note (ADR-0017 Decision (5))
-// both stop being about a single, unambiguous mission.
-func TestExpectedRuleFire_NewRuleNameUniqueToMission13(t *testing.T) {
-	cat, err := catalog.Load("../../challenges")
-	if err != nil {
-		t.Fatalf("load catalog: %v", err)
-	}
-	const ruleName = "Archive Collected Data"
-	const owner = "13-archive-loot"
-
-	owningIDs := []string{}
-	for _, cid := range cat.IDs() {
-		ch := cat[cid]
-		found := slices.Contains(ch.ExpectedRules, ruleName) || slices.Contains(ch.ForbiddenRules, ruleName)
-		if found {
-			owningIDs = append(owningIDs, cid)
-		}
-	}
-	if len(owningIDs) != 1 || owningIDs[0] != owner {
-		t.Fatalf("%q must appear in exactly one challenge's expectedRules/forbiddenRules (%s), found in %v",
-			ruleName, owner, owningIDs)
-	}
-	if !slices.Contains(cat[owner].ExpectedRules, ruleName) {
-		t.Fatalf("%s must list %q in expectedRules, got %v", owner, ruleName, cat[owner].ExpectedRules)
-	}
-}
-
-// TestExpectedRuleFire_NewRuleNameUniqueToMission10 is ADR-0032 S2 / D9(a):
-// a NEW, independent test (same shape as
-// TestExpectedRuleFire_NewRuleNameUniqueToMission05 above, ADR-0008
-// Verification (c)) that checks ONLY the newly-introduced customRules name
-// "Nimbus Vault Master Key Read" (mission 10's capstone read-leg proof rule).
-// Like mission 05's "Shell Redirected Private Key Read", this is a positive-
-// proof, NOT-attempt-scoped write (scoring.Grader.recordExpectedRuleFire), so
-// the "professional-only, single gate" assumption depends on this rule name
-// being mission-10-only: if any OTHER challenge's expectedRules or
-// forbiddenRules ever comes to reference it, that assumption no longer holds.
-// (Allowlist membership — that the name exists in challenges/custom-falco-rules.txt
-// or upstream — is enforced separately by scripts/check-challenge-rules.sh.)
-func TestExpectedRuleFire_NewRuleNameUniqueToMission10(t *testing.T) {
-	cat, err := catalog.Load("../../challenges")
-	if err != nil {
-		t.Fatalf("load catalog: %v", err)
-	}
-	const ruleName = "Nimbus Vault Master Key Read"
-	const owner = "10-final-exfil"
-
-	owningIDs := []string{}
-	for _, cid := range cat.IDs() {
-		ch := cat[cid]
-		found := slices.Contains(ch.ExpectedRules, ruleName) || slices.Contains(ch.ForbiddenRules, ruleName)
-		if found {
-			owningIDs = append(owningIDs, cid)
-		}
-	}
-	if len(owningIDs) != 1 || owningIDs[0] != owner {
-		t.Fatalf("%q must appear in exactly one challenge's expectedRules/forbiddenRules (%s), found in %v",
-			ruleName, owner, owningIDs)
-	}
-	if !slices.Contains(cat[owner].ExpectedRules, ruleName) {
-		t.Fatalf("%s must list %q in expectedRules, got %v", owner, ruleName, cat[owner].ExpectedRules)
-	}
-	if !cat[owner].RequireExpectedRuleFire {
-		t.Fatalf("%s must set requireExpectedRuleFire=true (ADR-0032 D9(a))", owner)
+		t.Run(name, func(t *testing.T) {
+			// (2) exactly one referencing challenge, and it is the owner.
+			var referencing []string
+			for _, cid := range cat.IDs() {
+				ch := cat[cid]
+				if slices.Contains(ch.ExpectedRules, name) || slices.Contains(ch.ForbiddenRules, name) {
+					referencing = append(referencing, cid)
+				}
+			}
+			if len(referencing) != 1 || referencing[0] != want.owner {
+				t.Fatalf("%q must appear in exactly one challenge's expectedRules/forbiddenRules (%s), found in %v",
+					name, want.owner, referencing)
+			}
+			ch := cat[want.owner]
+			// (3) it is the owner's expectedRule, not a forbiddenRule.
+			if !slices.Contains(ch.ExpectedRules, name) {
+				t.Fatalf("%s must list %q in expectedRules, got expectedRules=%v forbiddenRules=%v",
+					want.owner, name, ch.ExpectedRules, ch.ForbiddenRules)
+			}
+			// (4) the proof gate is wired exactly as declared.
+			if ch.RequireExpectedRuleFire != want.requireProof {
+				t.Fatalf("%s requireExpectedRuleFire = %v, want %v", want.owner, ch.RequireExpectedRuleFire, want.requireProof)
+			}
+		})
 	}
 }
 

@@ -660,6 +660,7 @@ run_scope() { # $1=label, remaining args = helm template args (after $CHART_DIR)
   fi
 
   local plant_block challenge_block ttyd_block
+  # Container names `plant` / `challenge` are also referenced by platform's Falco customRules (contract table, "Falco custom rule override" row in .claude/rules/falco-ctf-app-conventions.md): rename only in a both-repos PR.
   plant_block="$(extract_named_block "$pod_doc" "    - name: plant")"
   challenge_block="$(extract_named_block "$pod_doc" "    - name: challenge")"
   ttyd_block="$(extract_named_block "$pod_doc" "    - name: ttyd")"
