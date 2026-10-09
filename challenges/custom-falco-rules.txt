@@ -14,3 +14,10 @@
 
 Shell Redirected Private Key Read
 Archive Collected Data
+# ADR-0032 S1/S2: mission 10 capstone read-leg positive-proof rule. Lands in
+# platform's customRules (feat/adr-0032-s1-proof-rules) in the same change
+# window as this line (10's expectedRules + requireExpectedRuleFire). Name is
+# deliberately condition-opaque and mission-10-only (not shared with any other
+# challenge). platform customRules must be live BEFORE 10's requireExpectedRuleFire
+# is enabled, or the mission softlocks (see .claude/rules contract table row).
+Nimbus Vault Master Key Read

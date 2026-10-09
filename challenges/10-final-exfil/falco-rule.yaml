@@ -8,6 +8,25 @@ forbiddenRules:
   - Drop and execute new binary in container
   - Redirect STDOUT/STDIN to Network Connection in Container
   - Create Hardlink Over Sensitive Files
+# ADR-0032 D9(a): positive proof-of-technique for the capstone READ leg.
+# "Nimbus Vault Master Key Read" is a NEW project-specific Falco rule (not
+# upstream — see challenges/custom-falco-rules.txt) that fires when the vault
+# key file is opened for read via an ALTERNATE path (the one the mission
+# teaches), proving the participant actually used the evasion technique rather
+# than merely never having tripped the forbidden rules above. Same shape as
+# mission 05's "Shell Redirected Private Key Read". The rule's condition is
+# intentionally NOT reproduced here (public repo, ADR-0032 §9 publication
+# boundary) — it lives only in the platform-side private canon.
+#
+# DEPLOY-ORDER DEPENDENCY (ADR-0032 S1 → S2): platform's S1 customRule must be
+# LIVE in the cluster before this requireExpectedRuleFire takes effect. If app
+# lands first, the proof rule never fires and this mission softlocks (permanent
+# unsolvable) — same failure mode as mission 05 (see the "Falco custom rule
+# override" row in .claude/rules/falco-ctf-app-conventions.md). Land platform →
+# app in the same stand-up, platform first.
+expectedRules:
+  - Nimbus Vault Master Key Read
+requireExpectedRuleFire: true
 # Placeholder for local dev/tests. Real flag injected at deploy via FLAGS_FILE.
 expectedFlag: FALCO{dev-final-exfil}
 # Capstone: solve also requires delivering the flag to the collector over HTTP
