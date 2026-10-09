@@ -1389,7 +1389,7 @@ func TestOnRuleFire_RealCatalog_AttemptScope_TwinMissionsStayClean(t *testing.T)
 			// before SubmitEvade can reach EvadeSolved. This fire must be a
 			// no-op for every OTHER mission's gates (the new rule name is not
 			// shared with any forbiddenRules/trigger expectedRules — see
-			// catalog_test.go's TestExpectedRuleFire_NewRuleNameUniqueToMission05).
+			// catalog_test.go's TestCustomFalcoRules_EachNameOwnedByExactlyOneChallenge).
 			if ch.RequireExpectedRuleFire {
 				for _, rule := range ch.ExpectedRules {
 					res := g.OnRuleFire("alice", rule)
@@ -1420,23 +1420,175 @@ func TestOnRuleFire_RealCatalog_AttemptScope_TwinMissionsStayClean(t *testing.T)
 	}
 }
 
+// --- ADR-0032 S2: 10-final-exfil's two positive gates on the Sweep path -----
+
+// realCapstone10 loads the PRODUCTION 10-final-exfil from challenges/ and
+// returns it as a one-mission catalog, so it is the participant's current
+// mission (as it is in the real run once 01-09 are solved) and a forbidden
+// fire taints it. It fails fast if 10 no longer has the shape its callers
+// pin — evade + requireExfil + requireExpectedRuleFire, with an expected
+// (proof) rule and forbidden rules — because a test that keeps passing
+// against a different shape proves nothing about 10.
+func realCapstone10(t *testing.T) (catalog.Catalog, catalog.Challenge) {
+	t.Helper()
+	all, err := catalog.Load("../../../challenges")
+	if err != nil {
+		t.Fatalf("load real challenges: %v", err)
+	}
+	cat, err := all.Restrict([]string{"10-final-exfil"})
+	if err != nil {
+		t.Fatalf("restrict to 10-final-exfil: %v", err)
+	}
+	ch := cat["10-final-exfil"]
+	if ch.Type != "evade" || !ch.RequireExfil || !ch.RequireExpectedRuleFire ||
+		len(ch.ExpectedRules) == 0 || len(ch.ForbiddenRules) == 0 || ch.ExpectedFlag == "" {
+		t.Fatalf("10-final-exfil is no longer evade + requireExfil + requireExpectedRuleFire with expected/forbidden rules "+
+			"(ADR-0032 D9 (a)); got type=%q requireExfil=%v requireExpectedRuleFire=%v expectedRules=%v forbiddenRules=%d",
+			ch.Type, ch.RequireExfil, ch.RequireExpectedRuleFire, ch.ExpectedRules, len(ch.ForbiddenRules))
+	}
+	return cat, ch
+}
+
+// TestSweep_Capstone10_RequiresProofAsWellAsExfil is ADR-0032 S2 / D9 (a) on
+// the path that solves 10 in production: 10 is requireExfil, so the
+// Sweeper's auto-solve after the participant's collector delivery ends the
+// mission, not a manual submit. With the matching receipt in and the pair
+// clean, the sweep must hold the solve until 10's read-leg proof rule has
+// fired (however many times it runs), and solve on the first sweep after
+// the fire. A Sweep that solved on "clean + receipt" alone would bring back
+// "never trip a forbidden rule, then curl the flag" — what D9 (a) closes.
+// The manual submit must give the same verdict (shared evaluateClean).
+func TestSweep_Capstone10_RequiresProofAsWellAsExfil(t *testing.T) {
+	cat, ch := realCapstone10(t)
+	fs := newFakeStore()
+	g := scoring.New(cat, fs, fixedClock(time.Now()))
+
+	if _, err := g.RecordExfil("alice", ch.ID, ch.ExpectedFlag); err != nil {
+		t.Fatal(err)
+	}
+	// Receipt in, clean, no proof. Sweep twice: waiting must not solve it.
+	for i := 1; i <= 2; i++ {
+		solved, err := g.Sweep()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(solved) != 0 {
+			t.Fatalf("sweep %d: receipt + clean but no proof fire must not auto-solve 10, got %+v", i, solved)
+		}
+	}
+	out, err := g.SubmitEvade("alice", ch.ID, ch.ExpectedFlag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != scoring.EvadeExpectedRuleFireRequired {
+		t.Fatalf("manual submit must agree with the sweep (proof missing), got %+v", out)
+	}
+	if fs.markSolvedCalls != 0 {
+		t.Fatalf("no path may reach MarkSolved before the proof fire; calls=%d", fs.markSolvedCalls)
+	}
+
+	// The proof rule fires. It is recorded as 10's proof and, not being one
+	// of 10's forbidden rules, must not taint the pair.
+	res := g.OnRuleFire("alice", ch.ExpectedRules[0])
+	if res.TaintErr != nil || res.ExpectedFireErr != nil || res.TriggerErr != nil {
+		t.Fatalf("proof fire: taintErr=%v expectedFireErr=%v triggerErr=%v", res.TaintErr, res.ExpectedFireErr, res.TriggerErr)
+	}
+	if !fs.HasExpectedRuleFire("alice", ch.ID) {
+		t.Fatalf("firing %q must record 10's proof", ch.ExpectedRules[0])
+	}
+	if got := fs.DirtyRules("alice", ch.ID); len(got) != 0 {
+		t.Fatalf("the proof rule must not taint 10, got dirty=%v", got)
+	}
+
+	solved, err := g.Sweep()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(solved) != 1 || solved[0] != (scoring.SweepResult{User: "alice", Challenge: ch.ID}) {
+		t.Fatalf("receipt + clean + proof must auto-solve exactly (alice, 10-final-exfil), got %+v", solved)
+	}
+	if fs.markSolvedCalls != 1 {
+		t.Fatalf("Grader must be the single MarkSolved writer; calls=%d", fs.markSolvedCalls)
+	}
+}
+
+// TestSweep_Capstone10_ProofDoesNotOverrideTaint: for 10 the proof is a
+// second gate, never a substitute for the clean gate (evaluateClean checks
+// the taint first). Receipt + proof + one forbidden fire must not solve,
+// on any sweep, and the manual submit must report the taint.
+func TestSweep_Capstone10_ProofDoesNotOverrideTaint(t *testing.T) {
+	cat, ch := realCapstone10(t)
+	fs := newFakeStore()
+	g := scoring.New(cat, fs, fixedClock(time.Now()))
+
+	forbidden := ch.ForbiddenRules[0]
+	for _, rule := range []string{forbidden, ch.ExpectedRules[0]} {
+		res := g.OnRuleFire("alice", rule)
+		if res.TaintErr != nil || res.ExpectedFireErr != nil || res.TriggerErr != nil {
+			t.Fatalf("fire %q: taintErr=%v expectedFireErr=%v triggerErr=%v", rule, res.TaintErr, res.ExpectedFireErr, res.TriggerErr)
+		}
+	}
+	if got := fs.DirtyRules("alice", ch.ID); len(got) != 1 || got[0] != forbidden {
+		t.Fatalf("forbidden fire %q must taint 10 (it is current), got dirty=%v", forbidden, got)
+	}
+	if !fs.HasExpectedRuleFire("alice", ch.ID) {
+		t.Fatal("proof fire must be recorded even on a tainted pair")
+	}
+	if _, err := g.RecordExfil("alice", ch.ID, ch.ExpectedFlag); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 1; i <= 2; i++ {
+		solved, err := g.Sweep()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(solved) != 0 {
+			t.Fatalf("sweep %d: proof + receipt must not auto-solve a tainted 10, got %+v", i, solved)
+		}
+	}
+	out, err := g.SubmitEvade("alice", ch.ID, ch.ExpectedFlag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != scoring.EvadeForbiddenFired || len(out.Offending) != 1 || out.Offending[0] != forbidden {
+		t.Fatalf("manual submit must report the taint (%q), got %+v", forbidden, out)
+	}
+	if fs.markSolvedCalls != 0 {
+		t.Fatalf("a tainted 10 must not reach MarkSolved; calls=%d", fs.markSolvedCalls)
+	}
+}
+
 // --- ADR-0003 Verification (c): highest-risk real shape (7 forbiddenRules +
-// requireExfil, matching 10-final-exfil) ------------------------------------
+// requireExfil + requireExpectedRuleFire, matching 10-final-exfil) ---------
 
 // TestSubmitEvade_SevenForbiddenRules_ResetRequiresFreshExfil exercises the
-// production capstone's exact shape (7 forbiddenRules + requireExfil is the
-// riskiest combination in the real catalog — see catalog_test.go's real-data
-// table) and proves the two properties that must hold TOGETHER:
+// production capstone's shape — 7 forbiddenRules + requireExfil (the
+// riskiest combination in the real catalog, see catalog_test.go's real-data
+// table) + requireExpectedRuleFire (ADR-0032 S2 / D9 (a)) — and proves the
+// properties that must hold TOGETHER:
 //  1. ANY ONE of the seven forbidden rules firing while the pair is current
 //     dirties it (attempt-scoped fan-out still works with >1 forbidden rule);
-//  2. a reset does NOT let a stale exfil receipt auto-solve it (ADR-0003
+//  2. a recorded proof plus a matching receipt do not outweigh the taint;
+//  3. a reset does NOT let a stale exfil receipt auto-solve it (ADR-0003
 //     A2-2, CEO enforce decision) — the pair needs a BRAND NEW exfil
-//     delivery after the reset, not just a clean taint.
+//     delivery after the reset, not just a clean taint;
+//  4. the proof recorded BEFORE the reset still counts after it (ADR-0008
+//     Decision (3): the proof is not attempt-scoped and store.ResetDirty
+//     does not clear it — pinned on the real store by
+//     internal/store's TestResetDirty_NeverClearsExpectedRuleFire), so the
+//     fresh receipt alone completes the solve.
+//
+// ADR-0032 D9 (b) makes the proof attempt-scoped in S3b-2 (its [I] list
+// inverts TestResetDirty_NeverClearsExpectedRuleFire); property 4 and the
+// EvadeExfilRequired assertion after the reset invert with it.
 func TestSubmitEvade_SevenForbiddenRules_ResetRequiresFreshExfil(t *testing.T) {
 	forbidden := []string{"r1", "r2", "r3", "r4", "r5", "r6", "r7"}
+	const proof = "proof"
 	cat := catalog.Catalog{
 		"10-boss": catalog.Challenge{
 			ID: "10-boss", Type: "evade", ForbiddenRules: forbidden,
+			ExpectedRules: []string{proof}, RequireExpectedRuleFire: true,
 			ExpectedFlag: "FALCO{boss}", RequireExfil: true,
 		},
 	}
@@ -1453,8 +1605,15 @@ func TestSubmitEvade_SevenForbiddenRules_ResetRequiresFreshExfil(t *testing.T) {
 		t.Fatalf("one of seven forbidden rules must dirty the pair, got %v", got)
 	}
 
-	// Deliver the exfil receipt anyway (as an unaware participant might) —
-	// must not solve while dirty.
+	// The participant also proves the technique and delivers the exfil
+	// receipt — neither may solve the pair while it is dirty.
+	res = g.OnRuleFire("alice", proof)
+	if res.TaintErr != nil || res.ExpectedFireErr != nil {
+		t.Fatalf("proof fire: taintErr=%v expectedFireErr=%v", res.TaintErr, res.ExpectedFireErr)
+	}
+	if !fs.HasExpectedRuleFire("alice", "10-boss") {
+		t.Fatal("proof fire must be recorded")
+	}
 	if _, err := g.RecordExfil("alice", "10-boss", "FALCO{boss}"); err != nil {
 		t.Fatal(err)
 	}
@@ -1463,24 +1622,25 @@ func TestSubmitEvade_SevenForbiddenRules_ResetRequiresFreshExfil(t *testing.T) {
 		t.Fatal(err)
 	}
 	if out.Status != scoring.EvadeForbiddenFired {
-		t.Fatalf("dirty pair must block even with exfil delivered, got %+v", out)
+		t.Fatalf("dirty pair must block even with proof + exfil delivered, got %+v", out)
 	}
 
 	// Reset (mirrors what store.ResetDirty does under the reset-dirty
 	// endpoint, ADR-0003 A2-2's enforce contract: the SAME call clears BOTH
-	// the taint AND the exfil receipt).
+	// the taint AND the exfil receipt, and leaves expected_rule_fire alone).
 	delete(fs.dirty, key("alice", "10-boss"))
 	delete(fs.exfil, key("alice", "10-boss"))
 
 	// Submitting again WITHOUT a fresh exfil delivery must NOT solve — this
 	// is A2-2's whole point (closing "fire → reset → auto-solve off the
-	// stale receipt").
+	// stale receipt"). EvadeExfilRequired (not EvadeExpectedRuleFireRequired)
+	// also shows the pre-reset proof still passed its gate (property 4).
 	out, err = g.SubmitEvade("alice", "10-boss", "FALCO{boss}")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if out.Status != scoring.EvadeExfilRequired {
-		t.Fatalf("A2-2: reset must require a FRESH exfil delivery, not resurrect the stale one, got %+v", out)
+		t.Fatalf("A2-2: reset must require a FRESH exfil delivery (with the pre-reset proof still counted), got %+v", out)
 	}
 
 	// A fresh delivery after the reset finally solves.

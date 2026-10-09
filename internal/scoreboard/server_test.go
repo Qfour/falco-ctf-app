@@ -394,18 +394,155 @@ func TestFalcoEvents_IgnoresNonChallengeContainer(t *testing.T) {
 	}
 }
 
+// capstone10 / capstone10ProofRule name mission 10 and its read-leg proof
+// rule (ADR-0032 S1/S2). The rule name is written out here, not read from
+// the catalog, because it is what platform's customRule emits on the
+// webhook: the tests below POST it as Falco would, against the catalog's
+// 10, so the two sides must spell it the same (contract table, "Falco
+// custom rule override" row — renamed only in a both-repos change).
+const (
+	capstone10          = "10-final-exfil"
+	capstone10ProofRule = "Nimbus Vault Master Key Read"
+)
+
+// newCapstone10Fixture is newFixture with the PRODUCTION 10-final-exfil
+// (loaded from challenges/, so its expectedRules / requireExpectedRuleFire /
+// forbiddenRules are the ones that ship) as the whole catalog — 10 is then
+// the participant's current mission, as it is in the real run once 01-09
+// are solved, so a Notice forbidden fire WOULD taint it. Same store / admin
+// / origin wiring as newFixture.
+func newCapstone10Fixture(t *testing.T, now func() time.Time) (*fixture, catalog.Challenge) {
+	t.Helper()
+	all, err := catalog.Load("../../challenges")
+	if err != nil {
+		t.Fatalf("load real challenges: %v", err)
+	}
+	cat, err := all.Restrict([]string{capstone10})
+	if err != nil {
+		t.Fatalf("restrict to %s: %v", capstone10, err)
+	}
+	ch := cat[capstone10]
+	if ch.Type != "evade" || !ch.RequireExpectedRuleFire || len(ch.ForbiddenRules) == 0 {
+		t.Fatalf("%s is no longer an evade mission gated on a proof fire with forbidden rules (ADR-0032 D9 (a)): "+
+			"type=%q requireExpectedRuleFire=%v forbiddenRules=%v", capstone10, ch.Type, ch.RequireExpectedRuleFire, ch.ForbiddenRules)
+	}
+	st, err := store.Open(filepath.Join(t.TempDir(), "scoreboard.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := scoreboard.NewHandler(cat, st, logger, scoreboard.WithNow(now),
+		scoreboard.WithAdminEmails([]string{fixtureAdminEmail}),
+		scoreboard.WithAllowedOrigins([]string{fixtureOrigin}))
+	return &fixture{t: t, cat: cat, st: st, srv: srv}, ch
+}
+
+// missionDetail reads GET /api/users/{user}/journey?mission={cid} as the
+// participant and returns its `detail` (the MissionDetail the portal's
+// Story pane renders, which carries expectedRuleFired).
+func (f *fixture) missionDetail(user, cid string) map[string]any {
+	f.t.Helper()
+	w := f.doUser("GET", "/api/users/"+user+"/journey?mission="+cid, user, nil)
+	if w.Code != http.StatusOK {
+		f.t.Fatalf("journey status: %d body=%s", w.Code, w.Body)
+	}
+	det, ok := decode(f.t, w)["detail"].(map[string]any)
+	if !ok {
+		f.t.Fatalf("journey response has no detail object: %s", w.Body)
+	}
+	return det
+}
+
 // App-H2: events explicitly tagged below the Notice priority threshold are
 // dropped to match the Falco rule contract.
+//
+// ADR-0032 D12 (with D9 (h)): this drop is the app-side one of the two
+// layers that keep platform's observation rules (INFO, tag
+// ctf_observation — never scored, never shown) out of the participant's
+// view; the other is falcosidekick's minimumpriority. So `ignored: true` in
+// the response is not enough: a below-Notice event must leave nothing the
+// Me pane shows (GET …/me `recent_rule_fires` and `events`), must not count
+// as 10's proof (`expectedRuleFired`, store HasExpectedRuleFire) and must
+// not taint the current mission. The fixture makes the real 10 current and
+// fires its proof rule and one of its forbidden rules — the two names
+// whose Notice fire WOULD change that state (see the next test). Every
+// check is t.Errorf so one run shows each layer that leaks.
 func TestFalcoEvents_IgnoresBelowMinimumPriority(t *testing.T) {
-	f := newFixture(t, nil)
+	now := time.Date(2026, 10, 10, 10, 0, 0, 0, time.UTC)
+	f, ch := newCapstone10Fixture(t, func() time.Time { return now })
 	for _, p := range []string{"Debug", "Informational"} {
-		w := f.do("POST", "/falco/events", falcoEventBody(
-			"Read sensitive file untrusted", "alice",
-			withPriority(p),
-		))
-		if decode(t, w)["ignored"] != true {
-			t.Fatalf("%s-priority events must be ignored: %s", p, w.Body)
+		for _, rule := range []string{capstone10ProofRule, ch.ForbiddenRules[0]} {
+			w := f.do("POST", "/falco/events", falcoEventBody(rule, "alice", withPriority(p)))
+			if w.Code != http.StatusOK || decode(t, w)["ignored"] != true {
+				t.Errorf("%s-priority %q must be ignored: %d %s", p, rule, w.Code, w.Body)
+			}
 		}
+	}
+
+	me := decode(t, f.doUser("GET", "/api/users/alice/me", "alice", nil))
+	if fires, _ := me["recent_rule_fires"].([]any); len(fires) != 0 {
+		t.Errorf("below-Notice fires must not reach the Me pane's recent_rule_fires (ADR-0032 D12), got %v", fires)
+	}
+	if me["events"] != float64(0) {
+		t.Errorf("below-Notice fires must not count in the Me pane's events, got %v", me["events"])
+	}
+	if f.st.HasExpectedRuleFire("alice", capstone10) {
+		t.Errorf("a below-Notice %q must not be recorded as %s's proof", capstone10ProofRule, capstone10)
+	}
+	if det := f.missionDetail("alice", capstone10); det["expectedRuleFired"] != false {
+		t.Errorf("%s expectedRuleFired must stay false after below-Notice fires, got %v", capstone10, det["expectedRuleFired"])
+	}
+	if got := f.st.DirtyRules("alice", capstone10); len(got) != 0 {
+		t.Errorf("a below-Notice forbidden fire must not taint %s, got %v", capstone10, got)
+	}
+}
+
+// TestFalcoEvents_Capstone10ProofFire_ShownOnMePaneAndCountsAsProof is the
+// other half of ADR-0032 D9 (h) / D12: 10's read-leg proof rule is a Notice
+// rule and, unlike D12's observation rules, is meant to be seen — 10's text
+// says (as 05's does) that the proof rule firing is part of CLEARED. A
+// Notice fire of capstone10ProofRule from ns ctf-<user>, pod workspace, on
+// the challenge image must (1) appear in GET …/me `recent_rule_fires` (the
+// Me pane's "Falco rules you triggered" list) and count in `events`, (2)
+// flip 10's `expectedRuleFired` on the journey detail (store
+// HasExpectedRuleFire), and (3) not taint 10. Since the catalog side comes
+// from challenges/, a rename of the rule on one side only fails (2).
+func TestFalcoEvents_Capstone10ProofFire_ShownOnMePaneAndCountsAsProof(t *testing.T) {
+	now := time.Date(2026, 10, 10, 10, 0, 0, 0, time.UTC)
+	f, _ := newCapstone10Fixture(t, func() time.Time { return now })
+
+	det := f.missionDetail("alice", capstone10)
+	if det["requireExpectedRuleFire"] != true || det["expectedRuleFired"] != false {
+		t.Fatalf("precondition: %s must require a proof and have none yet, got requireExpectedRuleFire=%v expectedRuleFired=%v",
+			capstone10, det["requireExpectedRuleFire"], det["expectedRuleFired"])
+	}
+
+	w := f.do("POST", "/falco/events", falcoEventBody(capstone10ProofRule, "alice", withPriority("Notice")))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d body=%s", w.Code, w.Body)
+	}
+	if got := decode(t, w); got["accepted"] != true || got["user"] != "alice" {
+		t.Fatalf("a Notice proof fire from ctf-alice/workspace must be accepted for alice, got %s", w.Body)
+	}
+
+	me := decode(t, f.doUser("GET", "/api/users/alice/me", "alice", nil))
+	fires, _ := me["recent_rule_fires"].([]any)
+	if len(fires) != 1 || fires[0].(map[string]any)["rule"] != capstone10ProofRule {
+		t.Errorf("the proof fire must be listed in the Me pane's recent_rule_fires (ADR-0032 D9 (h)), got %v", fires)
+	}
+	if me["events"] != float64(1) {
+		t.Errorf("the proof fire must count in the Me pane's events, got %v", me["events"])
+	}
+	if det := f.missionDetail("alice", capstone10); det["expectedRuleFired"] != true {
+		t.Errorf("%s expectedRuleFired must be true after a Notice %q fire — if the catalog's rule name and the "+
+			"name platform emits differ, the proof never lands and 10 softlocks; got %v", capstone10, capstone10ProofRule, det["expectedRuleFired"])
+	}
+	if !f.st.HasExpectedRuleFire("alice", capstone10) {
+		t.Errorf("the store must hold %s's proof after the fire", capstone10)
+	}
+	if got := f.st.DirtyRules("alice", capstone10); len(got) != 0 {
+		t.Errorf("the proof rule is not one of %s's forbidden rules and must not taint it, got %v", capstone10, got)
 	}
 }
 
