@@ -1,12 +1,12 @@
 # ADR-0032: evade の attempt を明示的な開始操作 (epoch) にし、solve を「その attempt の中で記録された証跡」だけで判定する — 10-final-exfil に attempt スコープの積極証明を入れる
 
-- Status: **Proposed** (Accepted 化は CEO merge 時。期限 = 次回イベントの前、CEO 決定 2026-10-05)
+- Status: **Proposed** (Accepted 化は CEO merge 時。期限 = 次回イベントの前、CEO 決定 2026-10-05。rev2 = 2026-10-10: S1 の実装と R4 を反映。追加は末尾の「Decision の追加 (rev2)」)
 - Date / Deciders: 2026-10-05 / CEO (2026-10-04 錨は明示的な attempt。2026-10-05 10 の積極証明は入れる方向で調査を先に・期限の前倒し・残余 1 / 2 の受容・05 も揃える。
   Class-2 の merge) + VP (承認、レビュー指摘の全件採用) + architect (起草・同意権) + content-engineer (実現性調査) + product-engineer (P28 の印・称号の合意) +
-  security-engineer・qa-engineer (独立レビュー 2 巡、2026-10-05。本版に反映済み)
+  security-engineer・qa-engineer (独立レビュー 2 巡、2026-10-05。本版に反映済み) / rev2 (2026-10-10): architect (起草・D12 の同意権) + VP (発注)
 - 関連: ADR-0003 (Decision を supersede。I11 の起源)、ADR-0004・0008・0027 (限定 supersede。「supersede の範囲」の表)、ADR-0017 (custom rule の先例)、ADR-0020 (migration)、
-  ADR-0025 (10 の flag の置き場)、ADR-0033 (flags ファイルの完全性。未 merge)、Issue #121、workspace `REFACTORING.md` P28 architect §8 / §10
-- 行番号は e74d871。`0003:N` などは `docs/adr/` の各 ADR の行番号。**公開境界**: flag 実値・未公開の回避条件・rule の condition は書かない (condition の正典は
+  ADR-0025 (10 の flag の置き場)、ADR-0033 (flags ファイルの完全性。Accepted)、Issue #121、workspace `REFACTORING.md` P28 architect §8 / §10、ADR-0031 (Proposed、app#321)、platform#207・#208・#209
+- 行番号は e74d871 (rev2 で足した参照は c5e0761。platform は S1 ブランチの 3aaf11f)。`0003:N` などは `docs/adr/` の各 ADR の行番号。**公開境界**: flag 実値・未公開の回避条件・rule の condition は書かない (condition の正典は
   private の platform `docs/falco-detection-conditions.md`)。弱点は公開済みの範囲で、手順ではなく性質として書く
 
 ## Context
@@ -116,7 +116,7 @@
   active な attempt にだけ記録し、reset と切り替えで無効になる。(c) **05 も揃える** (CEO 2026-10-05): ADR-0008 は「reset 後に再証明させる利益は無い」とした (`0008:355-363`) が、錨が
   `current` だった時の判断である。開始が明示操作になると、証明が attempt の外で成立する限り、禁止ルールの gate は技法の実演を観測しないまま通過を許しうる。揃えれば全 evade で
   「1 回の attempt の中で技法が実演された」と同じ文で言え、課題ごとの指定 (`0008:442-445`) を持たずに済む。(d) **deploy は platform が先・app が後** (逆順は 10 が解けなくなる。
-  05 と同じ softlock: 契約表 Falco custom rule 行)。(e) 実機の fire / no-fire が済むまで「検証済み」と書かない。(f) rule 名は他課題と共有しない。
+  05 と同じ softlock: 契約表 Falco custom rule 行)。(e) 実機の fire / no-fire が済むまで「検証済み」と書かない。(f) rule 名は他課題と共有しない。(g)〜(j) (同じ stand-up・Me pane・表示抜粋・container 名) は末尾の「Decision の追加 (rev2)」。
 - **D10 nonce は採らない。** attempt への帰属は、サーバが受信時に押す epoch で足りる。nonce が加えるのは「receipt の送り主が portal を見られる本人である」ことの証明で、これは claimed
   identity の問題であり attempt の問題ではない。値が静的である限り、値の由来は nonce でも保証できず、参加者に手で写させる手順と exfil の body 契約の変更に見合わない。
   attempt ごとに値を変える案は、flag を 1 イベント 1 ファイルで 2 つの消費者に配る契約 (ADR-0033) と plant の経路 (ADR-0001 / I12) の作り直しになるので、本 ADR では扱わない (Signpost 3)。
@@ -158,45 +158,45 @@
 ## Consequences
 
 - **諦めたもの**: 開始操作なしで進められる手軽さ。課題をまたいで証跡を持ち越すこと。05 の「一度証明すれば reset 後も有効」。
-- **残余 1 — 値の由来は保証しない**: 値は静的で課題ごとに 1 つなので、gate は「届いた値がその attempt の中で得られた」ことを保証しない。証明が保証するのは「開始後に技法が
-  実演された」ことだけで、**証明の発火と届いた値は結び付かない**。技法は実演されているので受容する、が content-engineer の判断 (受容の扱いは残余 2 の末尾)。
+- **残余 1 — 値の由来は保証しない**: 値は静的で課題ごとに 1 つなので、gate は「届いた値がその attempt の中で得られた」ことを保証しない。証明が保証するのは「開始後に証明の rule が
+  鳴った」ことだけで (05 では技法の実演と同じ。10 は残余 4)、**証明の発火と届いた値は結び付かない**。技法は実演されているので受容する、が content-engineer の判断だった (受容の扱いは残余 2 の末尾。10 は残余 4)。
 - **残余 2 — 積極証明を持たない evade (現状 03)**: gate が保証するのは「開始から solve までに禁止ルールの記録が無い」ことだけで、技法が使われたことも値の由来も保証しない
-  (W1 の一般化。ADR-0003 C5 = `0003:86-102`)。現行は 03 が `current` になった時点から禁止発火が taint になるが、本 ADR では開始操作より前の発火は taint にならない。閉じるのは
-  積極証明だけである。**調査の結果 (content-engineer 2026-10-05、静的読解): 03 に証明は足せるが条件つき** — 証明できるのは想定している読み方の一部に限られ、それ以外の正当な読み方に
-  証明が付かない場合がある (具体は private の正典と issue に置く)。**VP 裁定 (product-engineer が支持): 今は gate にしない。** platform に rule だけを採点に使わない形で先に載せ、次回
-  イベントで実測し、Signpost 2 の条件で再判断する。CEO の受容 (2026-10-05、残余 1・2) は「調査の結果が出るまで」だったので、次の再判断までの延長は本 ADR の merge で確定する。
+  (W1 の一般化。ADR-0003 C5 = `0003:86-102`)。現行は 03 が `current` になった時点から禁止発火が taint になるが、本 ADR では開始操作より前の発火は taint にならない。閉じるのは積極証明だけである。
+  **調査の結果 (content-engineer 2026-10-05、静的読解): 03 に証明は足せるが条件つき** — 証明が付くのは想定している読み方の一部だけ (具体は private の正典と issue)。**VP 裁定 (product-engineer が支持): 今は gate にしない。**
+  観測用の rule を S1' (採点に使わず、見せない: D12) で載せ、次回イベントで実測して Signpost 2 の条件で再判断する。CEO の受容 (2026-10-05、残余 1・2) は「調査の結果が出るまで」だったので、次の再判断までの延長は本 ADR の merge で確定する。
 - **残余 3 — 到着順**: 判定はイベントの到着順で行う。開始の直前に起きた発火が開始の後に届くと taint になる (厳格側。やり直しで回復する)。solve の後に届いた発火は効かない (既存: `0003:212`)。
+- **残余 4 — 10 の証明は技法の実演そのものを保証しない** (rev2): 技法を使わずに 10 の証明の rule を点灯させる操作がある (具体と受容の根拠は private 正典 §7-4。静的読解、未実測)。残余 1 とは別の残余で、
+  両方が重なると gate が保証するのは「開始後に禁止ルールの記録が無く、証明の rule が鳴り、正しい値が届いた」ことだけになる。**受容は CEO** (S2 の PR 本文で明示し、merge で確定する)。
 - **双子の罠**: 02 / 04 を解く前に 03 / 05 を開始すると、先行課題の必須発火 (同じ rule) が taint になる。定義どおりの挙動で、やり直しで回復する。参加者向けの文面と guard テストで扱う。
 - **`0003:461-464` の禁止を解除できる条件 (課題ごと)**: ① D1〜D8 が main に入り、Verification の表のテストが green ② その課題が attempt スコープの積極証明を持ち、rule の fire / no-fire が実機で
-  確認済み ③ 開始操作つきの E2E (d′) が green ④ 残余 1 の受容が有効である (残余 2 の末尾)。満たした課題に限り「1 回の attempt の中で、禁止ルールが発火せず、技法が実演され、
-  (requireExfil なら) 値が届いた」と書ける。「その値を技法で読んだ」「独力で解いた」とは書かない。03 は ② を満たさないので解除しない。10 の証明だけを epoch より先に入れた状態は
-  部分的な縮小で、解除しない。
+  確認済み ③ 開始操作つきの E2E (d′) が green ④ 残余 1 (残余 2 の末尾) と、10 は残余 4 (CEO) の受容が有効である。満たした課題に限り「1 回の attempt の中で、禁止ルールが発火せず、証明の rule が鳴り、
+  (requireExfil なら) 値が届いた」と書ける。「その値を技法で読んだ」「独力で解いた」と、10 の「技法を実演した」は書かない。03 は ② を満たさないので解除しない。10 の証明だけを epoch より先に入れた状態は部分的な縮小で、解除しない。
 - **参加者向けの文面** (content。ADR-0003 F2 の再発防止): 03・05・10 の README / journey / welcome、HANDBOOK、submit と exfil の応答文 (`api.go:1120-1126,1412-1413`) が「開始してから
   操作する。開始前の操作・receipt・証明は数えない」を言うこと。
 - **切り戻し**: migration 適用後の DB は旧イメージで開けない。migration をイベント中の hotfix として適用しない (段階と期限)。適用前の DB のバックアップを go / no-go の記録に含め、切り戻しは「旧イメージ + バックアップの復元」で行う。
 - **P28 の印・称号** (product-engineer と合意済み 2026-10-05。workspace `REFACTORING.md` P28 受け入れ条件 14〜18): architect §8 の条件 inScope (先行課題がすべて solve 済み) を
   「attempt の gate を通って solve した」に置き換える (順序は問わない。inScope と同義ではない)。条件: 文面は「この挑戦中、検知の記録なし」という事実の記述に限り、順番・完全制覇・
-  独力と読める語を入れない。突破印は 03・05・10 で同じ形にし、「指定の技法を実演した」という差は図鑑の説明文にだけ置く。ADR-0029 は「gate を通った solve」をサーバ側の solve の
+  独力と読める語を入れない。突破印は 03・05・10 で同じ形にし、「指定の技法を実演した」という差は図鑑の説明文にだけ置く (10 は残余 4 があるので断定しない文言にする。product-engineer の確認待ち)。ADR-0029 は「gate を通った solve」をサーバ側の solve の
   記録から導き、時刻の比較や claimed identity の経路から導かない。本 ADR の landing より前の evade の solve には印・称号を出さない。
 
 ## 段階と期限
 
 | 段階 | 内容 | 担当 | Class | security |
 |---|---|---|---|---|
-| S1 | 10 の証明 rule を platform の `customRules` に足す (app より先に deploy)。03 の観測用の rule も、採点に使わない形で載せる | content (condition) → platform | 2 (クロスリポ) | 必須 |
-| S2 | allowlist 1 行 (condition を表さない rule 名)、10 の `expectedRules` + `requireExpectedRuleFire`、契約表の行、参加者向けの文面 | content、architect (契約表) | 2 | 必須 |
+| S1 | platform: 10 の証明 rule `Nimbus Vault Master Key Read` を `customRules` の 4 件目に足す (standalone、container は `challenge` だけの allowlist。condition は private 正典 §7)。前提 = vault の free-win ゲートを ADR-0025 の append 固有の一致にする修正 (platform#209)。**載せるのは S2 を含む app の ref と同じ stand-up だけ** (D9 (g)) | content (condition) → platform | 2 (クロスリポ) | 必須 |
+| S1' | platform だけ: 03 の観測用の rule を D12 の条件で載せる (`INFO`・tag `ctf_observation`・最後に読み込むファイル・Falco の `priority` を `info`・upstream の INFO の rule を無効化)。採点に使わず app にも届かないので S2 と独立に載せてよい。Signpost 2 の計測は Falco ログの回収 (platform#208) が前提 | content (condition) → platform | 2 (採点の入力 = Falco の設定) | 必須 |
+| S2 | app: allowlist 1 行 (condition を表さない rule 名)、10 の `expectedRules` + `requireExpectedRuleFire`、参加者向けの文面 (D9 (h))、契約表 (Falco custom rule の行に container 名 = D9 (j)、Webhook payload の行に priority の層 = D12)、Verification の「Me pane の表示」と「機械で守るもの」の app 側。**merge の前提 = platform#207 (全 Falco pod での rule 名の読み込みと fire / no-fire のゲート) が stand-up で green** | content、software (テスト)、architect (契約表) | 2 | 必須 (`hints[]` を変えるので ADR-0026 V8 も) |
 | S3a | migration と store の追加 (表 2・列 3・attempt の読み書き・`Reset` の 1 トランザクション化)。**既存の証跡の書き込み (epoch 0) と読み込み (全行) は変えない** | software | 2 | 必須 (ADR-0020) |
 | S3c | collector の Director で `X-Auth-Request-*` を落とす (S3b-1 の前提。現状は穴ではないが、「認証ヘッダーがある = 証明済み」を collector を通る経路でも成り立たせる: `internal/collector/collector.go:118-124`) | software | 2 | 必須 |
 | S3b-1 | 開始ルート・投影 (`attempt`・`alert`)・監査ログと counter、reset-dirty の authz と rate-limit の変更。**開始ルートは証跡 3 表に触れず、採点に効かない**。spec: 新 path と `AttemptResult`、`Journey.attempt`、`MissionDetail.alert`、reset-dirty の `x-ctf-authz` / `x-ctf-rate-limit` (+ `make gen`) | software、architect (spec) | 2 | 必須 |
 | S3b-0 | 既存テストに開始ヘルパを挿入する (green のまま)。正規順の leaderboard の期待値を固定する | qa、software | 0 | 不要 |
 | S4 | portal の開始導線・`alert` 表示・確認 (切り替えとやり直し) | application (文言は product / content) | 1 | 必須 |
 | S3b-2 | 採点の切り替え (D2 の規律、D4〜D7、投影の 4 フィールド)。spec: `SubmitFlagVerdict.started` と、意味が変わるフィールド・reset-dirty・exfil の description (+ `make gen`)。反転・新規テスト、I11 の表の書き換え | software、architect (spec・I11) | 2 | 必須 |
-| S5 | 実機: rule の fire / no-fire、E2E (d′)、stand-up 前の DB バックアップ。platform の `docs/PROD-GATE-E2E-PLAN.md` を更新する (Origin だけを付けた reset-dirty の呼び出しは 403 になるので、認証つきの手順に直す) | qa、platform、sre | — (stand-up は CEO 承認) | private 正典の fire / no-fire 表を確認 |
+| S5 | 実機: rule の読み込みと fire / no-fire (platform#207)、E2E (d′)、stand-up 前の DB バックアップ、teardown 前の Falco ログの回収 (platform#208)。platform の `docs/PROD-GATE-E2E-PLAN.md` を更新する (Origin だけを付けた reset-dirty の呼び出しは 403 になるので、認証つきの手順に直す) | qa、platform、sre | — (stand-up は CEO 承認) | private 正典の fire / no-fire 表を確認 |
 
-- **S3b-1 から S3b-2 までの間は release tag を切らない** (表示は attempt、採点は `current` で食い違う)。S3b-2 は S4 より後に入れる (開始導線の無いまま採点だけ切り替わると、どの evade も
-  解けなくなる。ADR-0003 F3 と同じ失敗)。
+- **S3b-1 から S3b-2 までの間は release tag を切らない** (表示は attempt、採点は `current` で食い違う)。S3b-2 は S4 より後に入れる (開始導線の無いまま採点だけ切り替わると、どの evade も解けなくなる。ADR-0003 F3 と同じ失敗)。
 - **S3a 以降の tag は migration を含む。** イベント中の hotfix は、stand-up で使った tag から branch を切って出す (main の先頭を当てない)。
-- **期限**: 次回イベントの stand-up で使う app の SHA を固定する時点までに S1〜S3b-2 が merge 済みで、S5 がリハーサルで green。
+- **期限**: 次回イベントの stand-up で使う app の SHA を固定する時点までに S1〜S3b-2 (S1' を除く。S1' が入らない回は Signpost 2 を測らない) が merge 済みで、S5 がリハーサルで green。
 - **間に合わない回の退避** (CEO が go / no-go で選ぶ): 退避 a = 受容する (何も入れない) / 退避 b = (i') を入れる / 退避 c = 10 の証明だけを ADR-0008 の意味論で入れる (部分的な縮小)。
   architect の推奨: P28-0b がその回のリリースに入るなら b + c、入らないなら a でよい。(i') は `current` を gate の消費者にするので、(i) の landing と同時に撤去する。**手順**: VP が対象
   イベントを名指しした受容の Issue を起票 → CEO が Issue 上で受容または退避を明示 → platform のそのイベントの go / no-go 記録からリンク → その回は `0003:461-464` を維持 → 次の期限を置き直す。
@@ -204,12 +204,12 @@
 ## Signposts (この決定を覆す観測可能な信号)
 
 数値は仮 (基準データ未取得)。1 は D11 の counter (claimed identity の入力なので (user, cid) で重複を除き、問い合わせの件数と突き合わせる)、3・4 は D11 の監査ログと solve 時点の証跡行の `at`、
-2 は Falco のログから事後に測る (現行コードは `requireExpectedRuleFire` が false の課題の発火を記録しない: `scoring.go:476`)。
+2 は teardown の前に回収した Falco の stdout (platform#208) と D11 の監査ログから事後に測る (観測用の rule は D12 で app に届かない)。D12 を覆す信号は D12 に置く。
 
 1. **開始を忘れた操作の常態化**: `not_started` の submit と数えなかった receipt が 1 イベントで evade の提出全体の 20% を超える、または運営への同種の問い合わせが 5 件を超える →
    開始の導線を作り直す。自動開始に戻すなら錨が二重になるので新 ADR。
-2. **03 の gate が名目だけになる**: 次回イベントで、03 の solve のうち、開始から solve までに観測用の rule (採点に使わない。S1) の発火が無いものが半数を超える → 03 の証明を gate にするかを
-   再判断する。gate にする条件: この閾値を超える + 実機の fire / no-fire と、全ノードでの rule の読み込み・rule 名の一致が確認済み + 60 分のハンズオンで 03 の solve 時間の中央値が悪化しない見込み。
+2. **03 の gate が名目だけになる**: 次回イベントで、03 の solve のうち、開始から solve までに観測用の rule (採点に使わず、見せない: S1'・D12) の発火が無いものが半数を超える → 03 の証明を gate にするかを
+   再判断する。gate にする条件: この閾値を超える + 実機の fire / no-fire と、全ノードでの rule の読み込み・rule 名の一致が確認済み + 60 分のハンズオンで 03 の solve 時間の中央値が悪化しない見込み。gate にするときは rule を `NOTICE` に上げて証明にし、文面を D9 (h) の形にする。
 3. **値の由来**: 10 の solve のうち、その attempt で receipt が証明の発火より先に届いたものが 3 割を超える、または値の共有が運営で観測される → 値を attempt か参加者に結び付ける
    設計 (flags 契約と plant 経路の変更。別 ADR)。
 4. **1 つだけの active が実害になる**: 同じ参加者が 2 つの evade の間を 3 往復以上する例が 1 イベントで 5 人を超える → 課題ごとの attempt に変える (`evade_attempt` の主キーを変える migration)。
@@ -237,9 +237,50 @@
 
 - **[I] の洗い出しの正典**は、S3b-2 の作業ブランチで `make test` を回した fail の一覧である。上に無いものが出たら PR 本文に載せる。
 - **ブラウザでだけ確認できるもの (⑩)**: 閲覧・ポーリング・`?mission=` で開始ルートと reset-dirty が呼ばれないこと、確認の文面。ブラウザ E2E (ADR-0031) で固定し、ハーネスができるまでは qa の手動検証。
-- **実機でだけ確認できるもの**: (a) 10 の証明 rule の fire / no-fire と DaemonSet の読み込み (ADR-0008 (a-1)・ADR-0017 (a-2)(a-3) と同型。結果は private 正典に記録し、security-engineer が確認する)
-  (b) 開始 → auto-solve の観測 → 手動 submit の E2E (d′) (c) deploy 経路が新しい rule を発火させないこと (I13b の対象 +1)。
+- **Me pane の表示 (D9 (h)・D12)**: S2 で `TestFalcoEvents_IgnoresBelowMinimumPriority` (`internal/scoreboard/server_test.go:397-410`) を、Informational の発火が `GET …/me` の `recent_rule_fires` にも出ないことまで
+  見る形にし (D12 の app 側の層。doc comment に本 ADR を書く)、10 の証明の rule の発火は出ることを足す。描画は ADR-0031 (Proposed、app#321) の E3 を拡張して固定する (10 の証明の rule 名が Me pane の一覧に出て、
+  Informational の event は出ない)。ハーネスができるまでは qa の手動検証。
+- **実機でだけ確認できるもの**: (a) 全 Falco pod で rule 名 `Nimbus Vault Master Key Read` が読み込まれていること (ファイルではなく名前で) と fire / no-fire = platform#207 のゲート。**S2 の merge の前に stand-up で green**
+  (ADR-0008 (a-1)・ADR-0017 (a-2)(a-3) と同型。結果は private 正典に記録し、security-engineer が確認する) (b) 開始 → auto-solve の観測 → 手動 submit の E2E (d′) (c) deploy 経路が新しい rule を発火させないこと
+  (I13b の対象 +1。S1' の観測用の rule は catalog の外だが、Signpost 2 の分子を汚すので同じく 0 件を見る) (d) Falco の `priority` を `info` にした後も catalog の rule の fire / no-fire (platform#207 と vault のゲート) が変わらないこと (D12)。
+- **機械で守るもの (rev2)**: (1) D9 (g) [推奨、platform の preflight]: platform の customRules が新設する rule 名の集合 (`ctf_observation` を除く) と、stand-up で使う app の pin の `challenges/custom-falco-rules.txt` が
+  一致しなければ no-go (S2 の無い回に 4 件目を載せることと、S1 の無い回に S2 を当てる softlock の両方を止める。無い間は private 正典 §9 の手順) (2) D9 (i): S2 で `challenges/10-final-exfil/rule.yaml` に証明の rule 名が無いことをテストで pin する
+  (3) D9 (j): `flag-guard` (`scripts/check-flag-isolation.sh:663-670`) は `plant` / `challenge` の不在で既に赤になる。S2 でその箇所に「platform の customRules が参照する。契約表」の 1 文を足す (4) D12 [platform の CI]: customRules のうち
+  tag `ctf_observation` の rule は `INFO` で最後に読み込まれるファイルにあり、それ以外に `INFO` 以下の rule が無い。Falco の `priority` が `info` なら upstream の INFO の rule が無効化され、sidekick の webhook の `minimumpriority` は `notice`。
+  stand-up では全 Falco pod の rule ファイル (falcoctl が入れたものを含む) の INFO の rule ⊆ 無効化リスト ∪ `ctf_observation` を検査する (upstream で catalog の rule が INFO に下がった場合もここで止まる)。
 - **I11 の表を書き換える条件**: 上の表の S3a〜S3b-2 のテスト (S4 の静的検査を含む) が main に入り、本 ADR が Accepted。(a)(b) が済むまで「検証済み」「実効的」と書かない。
+
+## Decision の追加 (rev2、2026-10-10)
+
+S1 (platform `feat/adr-0032-s1-proof-rules`。private 正典 `docs/falco-detection-conditions.md` §7〜§10) の実装と architect の R4 (2026-10-07) で分かった事実に合わせて足す。D1〜D11 と同格の決定で、
+行番号を保つためにここに置く (ADR-0031 が `0032:111-113,156,232,239` を参照している)。前提の事実: ingest は image フィルタを通った全 rule の発火を rule 名で絞らずに記録し (`internal/scoreboard/ingest/ingest.go:261`、
+`internal/store/store.go:603-619`)、Me pane が「Falco rules you triggered (last 60s)」と events 数に出す (`internal/scoreboard/api/api.go:1760`、`internal/scoreboard/view/templates/portal/pane-me.tmpl:146`)。
+
+- **D9 (g) 10 の証明の rule は、S2 を含む app の ref と同じ stand-up でだけ載せる。** rule 名は `Nimbus Vault Master Key Read` (S1 で確定)。S2 の無い回に載せると、想定解の読み方で rule 名が Me pane に
+  「triggered」と出て、文面の「発火させず読む」(`challenges/10-final-exfil/journey.yaml:6,14,33,54`) と矛盾する (03 の観測用の rule を S1 から外したのと同じ理由)。(d) の「platform が先・app が後」は同じ stand-up の中の
+  順序で、別の回に分けてよいという意味ではない。S2 の無い回は platform の entry を外す (1 commit)。機械化は Verification の「機械で守るもの」(1)。
+- **D9 (h) 証明は Me pane に見える前提で文面を揃える (05 と同型)。** D12 の隠し方は証明に使えない (INFO は app に届かず、採点もできない)。10 の文面は 05 (`challenges/05-silent-search/journey.yaml:20-22,31-35`) と
+  同じく「禁止ルールは鳴らさない / 証明の rule は鳴ることが CLEARED の条件」と書き、condition の形は書かない。上の 4 箇所と README (`challenges/10-final-exfil/README.md:3,48`) を S2 で直す。
+- **D9 (i) 表示用の抜粋に載せない (公開境界)。** `challenges/10-final-exfil/rule.yaml` に証明の rule を載せない。載せると condition が公開される。05 が載せているのは、05 の condition が回避の経路を含まないため (private 正典 §10 (b))。
+- **D9 (j) ctf-user の container 名は契約。** 証明の rule は container 名を参照する (`charts/ctf-user/templates/pod.yaml:275` の `challenge` だけを許可する。initContainer の `plant` = `:102`・`missions-scope` = `:131` は同じ image で、
+  ingest の image フィルタを通る)。app 側で名前を変えると、flag-guard の名前を一緒に直せば app の CI は緑のまま、S2 の後に 10 が softlock する。契約表の Falco custom rule の行に「`challenge` / `plant` / `missions-scope` の
+  container 名は platform の customRules が参照する (condition は書かない)。変更は両リポ同時 PR」を S2 で足す。
+- **D12 採点に使わない観測用の rule は priority で隠す (案 B)。** 03 の観測用の rule (残余 2・Signpost 2) は、鳴っても参加者に見えてはならない (上の前提の経路で Me pane に出る)。
+  - 案 A: app の ingest に rule 名の drop-list を置く。入れ忘れると見える側に倒れ (fail-open)、観測用の rule 名が公開リポに載り、採点の入口に分岐が増える
+  - 案 B: 観測用の rule を `INFO` にし、Falco の `priority` (platform `helmfile/releases/falco/values.yaml.gotmpl:28`、今 `notice`) を `info` に下げる。Falco の stdout には出るが、falcosidekick の webhook は
+    `minimumpriority: notice` (`:47`) で転送せず、app も Debug / Info を無視する (`ingest.go:240-249`、`docs/openapi-scoreboard.yaml:1946-1951`)。隠す層は既存の 2 つ (platform と app に 1 つずつ) で、app は変えない
+  - 案 C: app が falcosidekick の payload の `tags` を読み、`ctf_observation` を落とす (additive な payload 契約 = 両リポ同時 PR)。app で観測の発火を数えられるが、tag の入れ忘れと両リポの版のずれで見える側に倒れ、採点の入口に分岐が増える
+  - **決定: B。** 理由: 隠す層が既存で 2 つあり、採点の入口に分岐を足さず、観測用の rule 名が公開リポに出ない。**architect の同意の条件** (B の新しい代償への対処): Falco は `rule_matching: first`
+    (Falco 0.43.1 の `falco.yaml:692-713`。platform の描画も `first`) で、同じイベントに一致する rule のうち先に読み込まれたものだけを出す。priority を下げると upstream の INFO の rule (falco-rules-5.0.0 では
+    1 本: `falco_rules.yaml:685-701`) も読み込まれ、後に読み込まれる catalog の rule を鳴らさなくしうる (具体は private 正典に置く)。したがって (1) upstream の INFO の rule は Falco の設定で名前を指定して無効にする
+    (`rules:` = `falco.yaml:246-275`。今は `notice` なので読み込まれておらず、稼働する rule の集合は観測用の rule の分しか変わらない) (2) 観測用の rule は `INFO`・tag `ctf_observation` で、customRules の中で最後に
+    読み込まれるファイルに置く (rules.d はアルファベット順: `falco.yaml:205-206`。後に catalog の rule が無いので、それを鳴らさなくすることがない) (3) upstream の rule は falcoctl が `falco-rules:5` を追って入れる
+    (platform の描画) ので、無効化の漏れは stand-up で全 Falco pod の実ファイルと突き合わせて止める (Verification の「機械で守るもの」(4)) (4) 契約表の Webhook payload の行に「Debug / Informational の event は
+    採点にも表示にも使わない。platform の観測用の rule の非表示はこれと sidekick の `minimumpriority` の 2 層に依存する」を S1' より前か同時に足す (S2 か docs だけの PR) (5) `priority` を `info` にするのは観測用の
+    rule と同じ PR で行い、観測用の rule が無くなれば戻す
+  - **覆す信号**: (i) catalog の rule が INFO の rule に打ち消された例が実機か Falco ログで 1 件でも見つかる → priority を `notice` に戻して観測用の rule を外し、C を新 ADR で (ii) Signpost 2 を Falco ログから
+    測れない (次回イベントまでに platform#208 の回収が入らない、または回収に欠けがある) → C (app で観測の発火を数える) (iii) P28 で観測の発火を app で表示・集計したくなる → C (iv) Falco pod 1 つあたりの
+    INFO の行が 1 イベントで 03 の開始回数の 10 倍を超える (観測用の rule 以外の INFO が読み込まれている) → 無効化を直し、2 回続くなら C
 
 ## Advice
 
@@ -255,3 +296,9 @@
 - architect の判断 (指摘の外、または委ねられたもの): reset-dirty も認証ヘッダー必須に揃えた。epoch を DB 全体の連番にした。I11 は運営の例外を文言に書く側にした (理由は D3)。
 - VP (2026-10-05): 指摘の全件採用、exfil の応答を一定にする裁定、03 を今は gate にしない裁定。未検証の前提: 開始直前の発火が開始後に届く頻度、開始を忘れる頻度、次回イベントの日付、
   03 の観測用の rule の実機での挙動と solve 時間への影響。
+- architect R4 (2026-10-07、platform S1 の手動レビュー): #1 同じ stand-up でだけ載せる (D9 (g))、#2 隠す機構は本 ADR に無い新しい設計 (D12)、#3 container 名のクロスリポ依存 (D9 (j))。
+- platform-engineer・content-engineer (S1、2026-10-06〜07) と review-5x (platform S1、2026-10-07): 03 を S1 から外す判断、container の allowlist、技法なしの点灯 (残余 4)、ゲートの偽 PASS (platform#209)、
+  verify のゲート (#207)、ログの回収 (#208)。
+- VP (2026-10-10): D12 は B を推奨。覆す信号 3 つ (Falco の stdout の増加・P28 で app に出したい・`System user interactive` が noisy)。architect の判断: B を採り、`rule_matching: first` による打ち消しを同意の条件
+  (1)〜(3) で塞いだ。3 つ目の信号は (1) の無効化で起きなくなるので (iv) に置き換えた。0.43.1 が同梱する ruleset は falco-rules-5.0.0 (Falco の `cmake/modules/rules.cmake:21` @0.43.1) で INFO は 1 本だが、cluster は
+  falcoctl が入れる `falco-rules:5` の最新版を読む。未確認 (rev2): 打ち消しが実機で起きるか (静的読解のみ)、stand-up 時点の `falco-rules:5` の INFO の rule、残余 4 の点灯 (private 正典 §7-7)。
