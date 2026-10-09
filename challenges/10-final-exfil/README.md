@@ -2,7 +2,8 @@
 
 集大成。master key を **禁止ルールを踏まずに別経路で読み**、**箱の外の
 collector へ静かに持ち出す (exfil)**。単に読んで exfil するだけでも、
-禁止ルールを 1 つでも発火させていれば通らない (`requireExfil`)。加えて、
+この attempt (このミッションが現在の課題になって以降) に禁止ルールを
+1 つでも発火させていれば通らない (`requireExfil`)。加えて、
 その「別経路での読み」を実際に使ったことを示す positive-proof ルール
 (`Nimbus Vault Master Key Read`) の発火が CLEARED の条件になっている
 (ここだけ他ミッションと逆で、発火させないと成立しない。05 と同型)。
@@ -22,17 +23,16 @@ collector へ静かに持ち出す (exfil)**。単に読んで exfil するだ�
    (`expectedRules` + `requireExpectedRuleFire`、ADR-0032 D9(a))。別経路での
    読みを実際に使ったことの積極証明。05 の `Shell Redirected Private Key Read`
    と同じ仕組みで、**このルールの発火は検知ではなく正常**(参加者の Me 画面の
-   「発火させた Falco ルール」に出るが、これは禁止ルールとは別物で、むしろ
-   CLEARED の条件)。素朴な `cat /opt/nimbus/vault/master.key` は逆に禁止ルール
-   側 (`Read sensitive file untrusted`) を踏み、proof は点かない — 1 回の読みで
-   両方が鳴ることはない。
+   「発火させた Falco ルール」= UI 見出し "Falco rules you triggered (last 60s)"
+   に出るが、これは禁止ルールとは別物で、むしろ CLEARED の条件)。禁止ルールを
+   踏まない別経路での読み方をすれば、この proof が点く。
 
 > **デプロイ順序 (ADR-0032 S1 → S2)**: 条件 3 の proof ルールは platform の
 > `customRules` で配信される。platform 側が実クラスタで稼働してから app 側の
 > `requireExpectedRuleFire` を有効化すること — 逆順だと proof が永久に鳴らず
 > ミッションが softlock する(05 と同じ失敗モード)。
 
-**提出操作は不要**: 上記 2 条件を満たした時点で、バックグラウンドの
+**提出操作は不要**: 上記 3 条件を満たした時点で、バックグラウンドの
 auto-solve sweeper (5 秒間隔) が自動で CLEARED にする (`Grader.Sweep`)。
 
 ## なぜ 4-9 の知識が要るか(設計意図)
