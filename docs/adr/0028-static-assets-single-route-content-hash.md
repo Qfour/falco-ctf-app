@@ -1,11 +1,20 @@
 # ADR-0028: first-party 静的アセットを `GET /static/{asset}` 1 ルート + content-hash URL に集約する
 
-- Status: **Proposed** (Accepted 化は CEO merge 時。期限 = P28-0c の merge 前)
+- Status: **Proposed**。**実装 PR = app の P28-0c PR。その PR の CEO merge 時に Accepted へ昇格する** (昇格は CEO が別 commit で行う。
+  実装 PR の commit は Status を変えない)。**Accepted は実機確認済み (V7) を意味しない** (先例: ADR-0023)。Accepted が指すのは決定の確定と
+  V1〜V6・V9 の landing で、V7 (実機) と V8 の Cloudflare Cache Rule は次回 stand-up の参加者入場前まで未了である。何が済み何が未了かは
+  「Verification」の各項目の「状態」を読む。
 - Date / Deciders: 2026-10-05 / VP (2026-10-04 既定 3、CEO 承認済み) + architect (起草) + security-engineer・qa-engineer
   (独立レビュー 2026-10-05。指摘は本版に反映済み、再確認待ち) + CEO (merge。クロスリポの path 契約 = Class-2)
+- 改訂: 2026-10-10 (architect。実装 PR に同梱)。Verification の各項目に状態 (満たすテスト名、未了の追跡先) を追記し、判定の時点を書き下し、
+  Consequences に rollout の制約と昇格 commit の中身を、Context の C4 と Signposts (5) に I1 への依存を足した。Decision の内容は変えていない
+  (D6 の末尾と Signpost 2′ の数字が実装後の実測に追随しただけ)。
 - 関連: app#277、workspace `REFACTORING.md` P28-0c、ADR-0005 (**Signpost 2 だけを supersede する。** Decision 1-5・Verification・
-  他の Signpost は無傷)、ADR-0021 / 0022 (I15)、ADR-0013 (単一 origin)、I1・I5・I14・I15、app#306 (portal のソース分割)
-- 行番号は e74d871。app#306 が先に入ると portal の template は `templates/portal/*.tmpl` になり、テストの行も動く
+  他の Signpost は無傷)、ADR-0021 / 0022 (I15)、ADR-0013 (単一 origin)、ADR-0023 (Accepted と実機確認を分ける先例)、I1・I5・I14・I15、
+  app#306 (portal のソース分割。2026-10-05 merge 済みで、portal の template は `templates/portal/*.tmpl`)
+- 読み方: Context の `file:line` と件数は **e74d871 (変更前) の実測**で、historical である。P28-0c が削除した
+  `internal/scoreboard/view/vendorassets.go` などは `git show e74d871:<path>` で読む。Verification のテスト名は関数名で、
+  `git grep -n 'func <名前>('` で引く (行番号は動くので書かない)。
 
 ## Context
 
@@ -28,7 +37,8 @@
 
 **C4. 制約。** I15 の照合規則は「`{param}` は 1 セグメント全体」を前提にする (`{name...}` を使うなら規則の再設計 = ADR-0021
 Signpost 1)。Exact エントリは param を持つ route を被覆できない (`internal/apispec/ingressparity/ingressparity.go:124`)。HTML と
-アセットは同じバイナリに同居していて版ずれが無い (I5)。CSP は `'self'` で、path に依存しない
+アセットは同じバイナリに同居していて版ずれが無い (I5)。これは**同じプロセスから出る**ことにも依存し、replicas=1 + Recreate (I1) が保証している
+(Signpost 5)。CSP は `'self'` で、path に依存しない
 (`internal/scoreboard/view/csp.go:178-183`)。本番は Cloudflare を経由する (proxied)。platform リポに cache の設定は無い
 (dashboard 側は未確認)。
 
@@ -79,14 +89,16 @@ Signpost 1)。Exact エントリは param を持つ route を被覆できない 
 - **D6 クロスリポ**: path 契約の変更なので両リポ同時 PR + 相互リンク。platform 側は文書 (C2 の 2 ファイルと
   `docs/verification-gates-2026-08.md`) と Cloudflare の cache 設定 (V8)。helmfile は path を持たない。記載を「`/static/` (Prefix)」に
   替えれば、以後アセットを足しても platform の変更は要らない。app の契約表にも「participant path の正典は
-  `ingress-journey.yaml`、I15 が機械照合する。platform は文書で参照するだけ」の行を同じ PR で足す (現在 app 側に行が無い)。
+  `ingress-journey.yaml`、I15 が機械照合する。platform は文書で参照するだけ」の行を同じ PR で足した
+  (`.claude/rules/falco-ctf-app-conventions.md` の Cross-repo 契約表『Participant path 集合』と `CLAUDE.md` の概要表。以前は app 側に行が無かった)。
 
 ### ADR-0005 Signpost 2 の置き換え (Signpost 2′)
 
-集約すると 30 operation になるが、行数は約 2,640 行 (見込み) で 2,500 を超えたままになる。数字を合わせにいくのではなく、測るものを直す。
+集約して 30 operation になったが、行数は約 2,670 行 (実装 PR の実測) で 2,500 を超えたままである。数字を合わせにいくのではなく、測るものを直す。
 
 - **数えるもの**: JSON object の応答を持つ operation。ADR-0009 の V(A)-1 が spec から機械導出している集合で、required check の
-  テストが件数を pin している (`internal/scoreboard/apispec_parity_test.go:610`、e74d871 で 25)。静的配信や HTML shell は入らない。
+  テストが件数を pin している (`internal/scoreboard/apispec_parity_test.go` の `TestAPISpec_VA1_ResponseObjectCoverageBidirectional`。
+  e74d871 でも実装 PR でも 25)。静的配信や HTML shell は入らない。
   本 ADR の前後で 25 のまま、P28 後は 27 の見込み。**35 を超えたら**点検する (35 は ADR-0005 の値を引き継ぐ)。pin の行を
   変える PR で必ず目に入る。
 - **行数の条件は廃止し、文書の大きさには文書の分割で応える。** 行数は description と schema の量で決まる (2,802 行のうち
@@ -110,12 +122,30 @@ Signpost 1)。Exact エントリは param を持つ route を被覆できない 
 - **deploy を跨いで開いたままのタブ**: 取得済みの CSS は使い続けられる。未取得のフォント (初めて使う weight) は旧配信名が 404 に
   なり、fallback フォントで表示される。機能は壊れず、再読込で直る。
 - **新たに守る不変条件**: 増やさない。I14 (route = spec) と I15 (ingress) が既に対象にしている。
-- **追随が要る検査**: `TestTemplates_NoRawHexColorLiterals` の中の `tokensCSSPath` の文字列検査 (`internal/scoreboard/view/csp_test.go:680`) を
-  V2 に置き換える。固定 path と個別 handler を前提にした `TestServeCybercoreCSS_*` / `TestServeTokensCSS_*` の 4 本 (`:519-624`) を
-  登録表の handler に合わせて書き直す。route 数の pin (`internal/scoreboard/apispec_parity_test.go:213` の 37 → 30、
-  `internal/scoreboard/authz_test.go:272` の 15 → 8)。`PROVENANCE.md` 2 本にある配信 path の記述。
-- **ADR-0005**: 本体は書き換えない。索引の 0005 の行から本 ADR へ導線を張る。本 ADR が Accepted になるまで Signpost 2 の元の
-  文言が有効である。
+- **追随した検査 (実装 PR で完了)**: `TestTemplates_NoRawHexColorLiterals` (`internal/scoreboard/view/csp_test.go`) の `tokensCSSPath` の
+  文字列検査は、template に `{{.Assets.URL "tokens.css"}}` があることの検査に替え、描画された参照が 200 で引けるかは V2 が見る。固定 path と
+  個別 handler を前提にした旧ハンドラのテスト 4 本 (cybercore と tokens の Content-Type・条件付き GET) は、登録表の handler に合わせて
+  `internal/scoreboard/view/static_assets_test.go` の V2・V4 のテストに統合した。route 数の pin は 37 → 30 (`apispec_parity_test.go`)、
+  Authz の none 区分は 15 → 8 (`authz_test.go`)。`PROVENANCE.md` 2 本にある配信 path の記述も実装 PR で更新した。
+- **V7・V8 が済むまでの残余**: 未認証の 302 が Cloudflare の edge に載りうる面は、現行の固定 URL (`/vendor/*`・`/static/tokens.css`) にも同じ形で
+  ある (D5)。この変更が新しく持ち込む面ではないが、未測定である点は同じで、V7 が初めて測る。
+- **rollout の制約 (運用): chart (ingress) と image は同じ SHA で同時に入れる。** participant ingress の allow-list (chart) と、HTML が参照する
+  配信名 (image) は対になっている。platform は chart を app clone の checkout (`appChartBase`) から、image を `appImageTag` から別々に pin する
+  (`falco-ctf-platform/helmfile/environments/prod.yaml.gotmpl:124-126`。契約表の『Charts』『Image naming』) ので、片方だけ進めると
+  portal が壊れる (見込み。実測は V7)。chart だけ新しいと、`/vendor/*` が participant ingress に無く (admin ingress の `/` に落ちて非 admin には
+  403)、旧 image の cybercore と fonts が取れない。image だけ新しいと、配信名が旧 chart の Exact 8 本に無く、全 CSS が取れずに無スタイルに
+  なる。**戻すときも chart と image を前の pin に同時に戻す。** platform の runbook と stand-up gate に「app clone の checkout と `appImageTag` が
+  同一 SHA」の確認を載せる (V8)。platform の `scripts/preflight-event.sh:68-77` は `versions.yaml` の ref と `appImageTag` の一致までしか見ず、
+  clone の checkout は見ない (機械では確かめられない部分。Verification の末尾)。
+- **cross-repo の merge 順**: app の実装 PR を先に merge してよい (platform が pin を動かすまで本番には届かない)。platform の文書 PR
+  (branch `docs/adr-0028-static-path-contract`) は、この変更を含む SHA への re-pin と**同時**に merge する。先に merge すると文書が稼働中の
+  pin (旧 path) と食い違い、re-pin の後に merge すると stand-up の gate が旧手順のまま新しい app に当たって偽の FAIL になる。
+- **ADR-0005**: 本体は書き換えない。索引の 0005 の行から本 ADR へ導線を張ってある (#311 で追加済み)。本 ADR が Accepted になるまで
+  Signpost 2 の元の文言が有効で、Accepted から Signpost 2′ が有効になる。
+- **Accepted への昇格 (CEO の別 commit) の中身**: 触るのは次の 3 箇所だけ。(1) 本 ADR の Status 行 (Proposed → Accepted。V7 と V8 の Cache Rule が
+  未了であることは Status に残す)、(2) 索引 `docs/adr/README.md` の 0028 の行の Status、(3) 索引の 0005 の行の括弧 (「0028 は Proposed … 元の文言が
+  有効」を「0028 が Accepted で、Signpost 2′ が有効」に)。Decision と V1〜V9 の定義は編集しない。V7 の実測と V8 の完了は、Verification の
+  「状態」行 (状態記述なので実態に追随させる) と Advice に、日付と結論を足す。
 
 ## Signposts (この決定を覆す観測可能な信号)
 
@@ -127,35 +157,93 @@ Signpost 1)。Exact エントリは param を持つ route を被覆できない 
    旧配信名の猶予配信を再設計する。
 4. アセットにサブディレクトリが要る、または portal の JS / CSS を外部アセットにすると決まる (P28 architect §9 の覆す信号) →
    前者は I15 の照合規則の再設計が先 (ADR-0021 Signpost 1)。後者は script を登録表に載せる条件を本 ADR の supersede で決める。
+5. **I1 を緩める提案が出る** (scoreboard の `replicas` を 1 より増やす、または `strategy` を `Recreate` 以外にする。
+   `charts/scoreboard/templates/deployment.yaml` の `fail` (`replicas` > 1) と `type: Recreate` を変える提案) → 配信名は、HTML とアセットが
+   **同じプロセス**から出ること (I1: replicas=1 + Recreate) に依存している。版の違うプロセスが同時に動くと、旧 Pod の HTML が旧配信名を参照し、
+   新 Pod の登録表にその名前が無くて 404 になる (portal が無スタイルになる)。緩める前に、直前の版の登録表を併せて持つ猶予配信か、版に依存しない
+   配信経路を先に設計する (Signpost 3 の「旧配信名の猶予配信」と同じ処方)。
 
 ## Verification
 
-V1〜V6 は P28-0c の PR で満たす (**未実装**)。V7 は実機でのみ確認可。V8 は両リポの PR で満たす。V9 は既に在る。
+**状況 (実装 PR 時点)**: V1〜V6 は実装 PR で満たす (各項目の「状態」にテスト名)。V9 は既存の pin。**V7 (実機) は未了。V8 は (a) 追跡中、(b) 未了。**
+V7 と V8(b) の期限は次回 stand-up の参加者入場前で、追跡先は platform の同時 PR (branch `docs/adr-0028-static-path-contract`)。
+**Accepted は V7 の確認済みを意味しない** (ADR-0023 の先例)。各項目の「状態」は状態記述なので実態に追随させる (定義の本文は編集しない)。
 **P28-0c の PR、登録表の pin を変える PR、platform の Cloudflare cache 設定は、いずれも security-engineer レビュー必須。**
 
 - **V1 route**: 静的配信の route がちょうど 1 本。I14 の parity が green (spec は 37 → 30 operation)。
+  **状態: 満たす (間接)。** `TestAPISpec_V1_RouteSetMatchesSpec` (`internal/scoreboard/apispec_parity_test.go`。route 集合 = spec の operation 集合で、
+  件数の pin は 30)、`TestAuthz_AllDeclaredGatesEnforced` (`internal/scoreboard/authz_test.go`。区分の pin は 9 + 7 + 8 + 6 = 30 で、none の 8 本に
+  `GET /static/{asset}` を含む)、`TestNoDirectMuxRegistrationOutsideTable` (`internal/apispec/staticreg_test.go`。route 表の外から mux に足せない)。
+  旧 `/vendor/*` と `/static/tokens.css` が無いこと (D1: alias なし) は V4 の `TestStaticAssets_NotFoundIsNoStoreJSON` が固定する。
+  **間接と書く理由**: 「静的配信の route が 1 本」を直接数える assert は無い。件数の pin が 1 本ぶんを固定し、増やす PR に pin の更新 (diff に出る変更) を
+  強いる形である。`/static/` の下に 2 本目を足しても I15 の Prefix は participant の route なら被覆するので、関門は pin の更新だけになる。
 - **V2 参照の完全性**: 対象は、`/` と `/portal` を描画した HTML (分割後は全 template を合成した結果) の `<link rel="stylesheet">` の
   `href` と `<script src>`、および配信する CSS の `url()` のうち、`/` で始まる same-origin の path。`data:`・絶対 URL・`#…` は対象外
   (cybercore の `url("data:…")`、`https://falco.org/…`、`<a href="/portal#story">` が実例)。対象がすべて、mux 経由で 200 を返す配信名で
   ある。`/vendor/` とハッシュ無しの `/static/` は 0 件。対象の抽出が 0 件なら fail。
+  **状態: 満たす。** `TestRenderedDocuments_AssetReferencesResolve` (`internal/scoreboard/view/static_assets_test.go`。実際の `GET /` と `GET /portal` の
+  描画結果から参照を抽出し、抽出件数が下限を下回れば fail にする。参照 (CSS の `url()` は再帰) がすべて mux 経由で 200 を返す `/static/` の配信名であること、
+  `/vendor/` とハッシュ無しが 0 件であること、`@import` が無いことを見る)。`TestTemplates_NoRawHexColorLiterals` (`internal/scoreboard/view/csp_test.go`) は、
+  template が `{{.Assets.URL "tokens.css"}}` で参照していることを見る。
 - **V3 hash の性質**: アセットを 1 byte 変えると配信名が変わり、それを参照する CSS の配信名も変わる (合成した登録表でテスト)。
+  **状態: 満たす。** `TestStaticAssets_HashProperties` (`static_assets_test.go`。フォントの 1 byte で、フォント自身と、それを参照する `fonts.css` の配信名が
+  変わり、無関係な `tokens.css` は変わらない。`fonts.css` の本文には解決済みの参照が入り、`asset:` の placeholder は残らない)。
 - **V4 header と 404**: 配信名は `max-age=31536000, immutable`。未知の名前・ハッシュ無しの名前・登録表に無い埋め込みファイルは 404 +
   `no-store` + `{"error": …}`。HTML shell は `no-store`。2 セグメントの名前 (`/static/a/b`)・`/static/..%2Fx`・`/static/%2e%2e` も 404 で、
-  admin の HTML を返さない (catch-all の `GET /` に落ちる経路。現状は `view.go:307-310` の 1 行だけが 404 にしており、固定する
-  テストが無い。同じ route 形の scratch probe (Go 1.26.6) では 3 形とも 404、リテラルの `..` は mux が redirect で正規化した)。
+  admin の HTML を返さない (`{asset}` に合わない形は catch-all の `GET /` に落ちる。そこで 404 にしているのは `internal/scoreboard/view/view.go` の
+  `index` 冒頭の path 判定 1 行 (`r.URL.Path != "/"`) だけで、**この 1 行を消すと participant ingress の `/static/` Prefix から operator 向けの handler に
+  届く**。固定するテストは `TestStaticAssets_ShapesOutsideTheAssetRoute`。同じ route 形の scratch probe (Go 1.26.6) では 3 形とも 404、リテラルの `..` は
+  mux が redirect で正規化した)。
+  **状態: 満たす。** `TestStaticAssets_ServeAndCacheHeaders` (配信名ごとに 200・`Cache-Control: public, max-age=31536000, immutable`・Content-Type・ETag・
+  `nosniff`・空でない body で、一致する `If-None-Match` は空の 304)、`TestStaticAssets_NotFoundIsNoStoreJSON` (ハッシュ無し・未知・登録表に無い埋め込みファイル
+  (`LICENSE`・`PROVENANCE.md`)・ハッシュ違い・旧 `/vendor/*` は 404。`/static/` の下は `no-store` + `{"error": …}`)、`TestStaticAssets_ShapesOutsideTheAssetRoute`
+  (route 形ごとに**どの handler が答えるか**を固定する。単一 segment の `..%2Fx`・`%2e%2e` は asset route の JSON 404 + `no-store`。`/static`・`/static/`・`/static/a/b` など
+  `{asset}` に合わない形は catch-all の `GET /` に落ち、`index` の path 判定による plain な 404 になる。admin の identity で組んだ mux で測るので、その判定を消すと
+  dashboard の HTML が 200 で返って赤になる)、`TestHTMLShells_AreNoStore` (`/`・`/portal`、非 admin の `GET /` の 403、`writeSecurityHeaders` が失敗した
+  `/portal` の 500 が `no-store`)。
 - **V5 I15**: allow-list に `/static/` (Prefix) があり、`/vendor/*` の Exact が残っていない。合成入力で「`/static/` 配下の operator
   route」が reverse 検査で赤になる。
+  **状態: 満たす。** `TestI15_StaticAssetsArePrefixOnly` (`internal/scoreboard/ingress_journey_parity_test.go`。実 chart の描画に `{/static/, Prefix}` が
+  ちょうど 1 本あり、`/vendor` と Exact の `/static` が無い。合成した operator route `/static/operator-only.json` で reverse 検査が赤になる)。既存の
+  `TestI15_IngressJourneyRouteCoverage` (forward / reverse を実 chart と実 route 表で見る) も green であること。
 - **V6 pin と故意違反**: 登録表の論理名の集合と拡張子 (`.css` / `.woff2`) をテストで固定し、`.js` を足すと赤になる。テンプレートに
   リテラルの `/static/tokens.css` を書くと V2 が赤、登録表から 1 本落とすと V2 が赤、を恒久のテストケースにする。
+  **状態: 満たす。** `TestStaticAssets_RegistryPin` (論理名の集合と拡張子 `.css` / `.woff2` を固定し、配信名の形 `<stem>.<16 桁の hex>.<ext>` も見る)、
+  `TestBuildAssetRegistry_Rejects` (`.js`・許可外の拡張子・サブディレクトリ・大文字・重複・空のファイル・未登録の参照・前方参照・引用符や空白付きで解決されない
+  `asset:` の参照・空の登録表は、起動時の `buildAssetRegistry` のエラーになる。1 ケース 1 欠陥で、エラー文言が欠陥の理由を含むことまで見る)、
+  `TestCheckAssetRefs_MutationsGoRed` (template にリテラルの `/static/tokens.css` や `/vendor/…` を書く、配信されない `<script src>` を足す、登録表から
+  tokens.css を落とす、登録表を付けない — いずれも V2 の検査か描画が赤になる。属性の順序が違う `<link>` も見逃さない)。
 - **V7 実機 (単一 origin、Cloudflare 経由)**: admin でない参加者が配信名を 200 で取れる (`/check-admin` の 403 にならない)。
   `/static/does-not-exist` が 404 を返す (403 ではない)。同じ配信名を未認証 → 認証済みの順で取得し、各応答のステータスと
   `cf-cache-status` を記録する (認証済みの取得に cache 済みの 302 が返らないこと)。tokens.css を変えた image に入れ替えた後、
   再訪したブラウザが hard reload なしで新しい CSS を得る (app#277 の回帰。E2E ハーネスができるまでは qa の手動検証)。
+  **状態: 未了 (実機でのみ確認可)。** 追跡先は platform の stand-up gate (platform の同時 PR `docs/adr-0028-static-path-contract` が
+  `docs/verification-gates-2026-08.md` に登録する)。期限は次回 stand-up の参加者入場前。結果 (各応答の status と `cf-cache-status`、測った日時、SHA) は
+  gate の記録に貼り、本 ADR の Advice に日付と結論を 1 行足す。
 - **V8 クロスリポ (platform)**: 文書の PR が同時に出て相互リンクされている。Cloudflare に「`/static/` の 200 以外の応答を cache
   しない」Cache Rule を入れ、手順を runbook に残す。
-- **V9 Signpost 2′ の計測点**: 既存の pin (`apispec_parity_test.go:610`) をそのまま使う。新しい検査は足さない。
+  **状態: (a) 文書の PR は追跡中、(b) Cache Rule は未了。** (a) platform の同時 PR (branch `docs/adr-0028-static-path-contract`)。app の実装 PR の本文と
+  platform の PR の本文に相互リンクを入れる (merge 前)。内容は、participant path の記載を「`/static/` (Prefix)」と「正典は app の `ingress-journey.yaml`」に直す、
+  旧 G2 の固定 path への curl を「HTML から配信名を拾う」手順に直す、V7 を gate に登録する、chart と image が同一 SHA であることの確認と、赤のときの
+  同時退避 (Consequences の rollout の制約) を載せる。(b) Cloudflare の dashboard の手動設定で、repo からは検証できない。手順は platform の
+  `docs/prod-deploy.md` (Step 6)、設定値は security-engineer のレビューを通す。期限は次回 stand-up の参加者入場前。
+- **V9 Signpost 2′ の計測点**: 既存の pin (`apispec_parity_test.go` の `len(derived) != 25`) をそのまま使う。新しい検査は足さない。
+  **状態: 満たす (既存)。** `TestAPISpec_VA1_ResponseObjectCoverageBidirectional` の件数 pin は実装 PR でも 25 のまま。
+
+**機械では確かめられないもの**: V7 (実機)。V8(b) (Cloudflare の dashboard)。chart (app clone の checkout) と image (`appImageTag`) が同一 SHA であること
+(platform の `scripts/preflight-event.sh:68-77` は `versions.yaml` の ref と `appImageTag` の一致までで、clone の checkout を見ない。stand-up の gate の手動確認が
+補う)。V1 の「静的配信の route が 1 本」を直接数えること (件数の pin による間接)。これらのために新しい Hard Invariant は作らない。
 
 **architect の判定: yes, if** — V7 が緑であること、V8 が同時であること。
+
+**時点の書き下し (2026-10-10 改訂)**:
+- **merge の時点**: V8(a)、つまり platform の同時 PR が出て、app の実装 PR と相互リンクされていること。V7 が platform の stand-up gate に登録されていること。
+- **次回 stand-up の参加者入場前**: V7 を実機で測って記録すること。V8(b)、つまり Cloudflare の Cache Rule を入れ、手順を runbook に残すこと。どちらかが未了の間は、
+  ADR-0028 を含む SHA を参加者が使う環境で公開しない (platform の gate。手順上の gate で、機械の stop ではない)。
+- 改訂前の文面は時点を書いていなかった。V7 は Cloudflare 経由の実機でしか測れず、cluster が無い間は merge の時点で満たせない。そこで V7 と V8(b) を merge の
+  条件から外し、入場前の条件にした。根拠は 3 つ: (1) merge しても本番には届かない (platform が chart と image を別々に pin し、pin を動かすまで届かない)、
+  (2) 未認証の 302 が edge に載りうる面は現行の固定 URL にも同じ形である (D5)、(3) platform の gate が入場前に V7 の緑を求める。(2) のとおり新しく持ち込む
+  面ではないが、未測定である点は変わらないので、期限は日付でなく「入場前」という出来事に置いた。
 
 ## Advice
 
@@ -165,3 +253,8 @@ V1〜V6 は P28-0c の PR で満たす (**未実装**)。V7 は実機でのみ�
   テスト 4 本、app#306 との順序。
 - app#277 (2026-09-01、review-5x R4): path に content hash を埋める案と、ingress を Prefix にする論点の指摘。
 - VP 既定 3 (2026-10-04、CEO 承認): Signpost 2 にはサービス分割で応えず、閾値を本 ADR で再定義する。
+- review-5x (2026-10-10、`feat/p28-0c-static-assets`。R4#2・R3#4・R4#4・R5#4・R5#5・R3#5 ほか → 本改訂に反映): 実装 PR に正典を同梱する
+  (Verification の各項目の状態と対応テスト、契約表の D6 の行、「未実装」と行番号の訂正)、判定の時点の書き下し、I1 への依存の Signpost、
+  chart と image の同一 SHA の rollout 制約。
+- VP 指示 (2026-10-10): Status は Proposed のままにし、Accepted への昇格は CEO が merge 時に別 commit で行う。V7 / V8 の追跡先は platform の
+  同時 PR と、次回 stand-up の参加者入場前。
