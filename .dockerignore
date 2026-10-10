@@ -48,3 +48,19 @@ scan-logs/
 *.pem
 *.key
 *.cert
+# Decrypted / credential material that must never reach a build context
+# (app#322, ADR-0031 H1 (h)). `**/` so a file in ANY subdirectory is
+# excluded too: a bare `*.dec.yaml` only matches at the context root
+# (.dockerignore is NOT .gitignore — no implicit any-depth matching; `**/`
+# also matches zero directories, so root-level files are still covered).
+#   *.dec.yaml / *.dec.json — sops-decrypted output (`sops -d > x.dec.yaml`)
+#   kubeconfig*             — cluster credentials
+#   *.secret.*              — local secret copies (e.g. flags.secret.yaml)
+# Excluding them only stops the context upload; whether a Dockerfile COPYs
+# them is a separate question. scripts/check-dockerignore.sh (CI flag-guard)
+# fails if any of these four lines goes missing, or if a tracked file would
+# match one of them.
+**/*.dec.yaml
+**/*.dec.json
+**/kubeconfig*
+**/*.secret.*
