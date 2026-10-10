@@ -33,7 +33,8 @@ text, and participant-supplied display names are English/Latin-script only
 coverage nothing in this app renders. Only the `/* latin */` block per
 family+weight is vendored (`unicode-range: U+0000-00FF, U+0131, ...` — see
 `fonts.css`, identical range on every rule copied verbatim from Google's
-response). If a future change needs non-Latin glyph coverage (e.g.
+response; the one deliberate edit is each `src: url(...)`, rewritten to
+`url(asset:<file>)` — see Bump procedure step 4). If a future change needs non-Latin glyph coverage (e.g.
 internationalized display names), that is a deliberate follow-up (add the
 needed subset's block + font file), not an oversight here.
 
@@ -99,15 +100,29 @@ url(...)` in the vendored stylesheet is a same-origin reference to one of the
 2. Extract only the `/* latin */`-commented `@font-face` blocks.
 3. Dedup by `src: url(...)` (variable-font families collapse to one file —
    see above) and download each unique URL.
-4. `shasum -a 256` every downloaded file and update this table.
-5. Re-run the external-reference audit (`grep -oE 'https?://[^)]+'` and
-   `grep -c '@import'` over the new `fonts.css`) before committing.
-6. Re-fetch each family's `OFL.txt` from
+4. Save the extracted blocks as `fonts.css` and rewrite EVERY
+   `src: url(https://fonts.gstatic.com/...)` to `src: url(asset:<file>)`,
+   where `<file>` is the local file name that URL was saved as in step 3
+   (e.g. `url(asset:inter-var.woff2)`). Exactly that form: no quotes, no
+   spaces. The upstream URL must not remain, and `staticassets.go` resolves
+   `asset:<file>` to the `/static/<stem>.<hash>.woff2` URL at start-up
+   (ADR-0028 D2); a malformed or unregistered reference makes the scoreboard
+   refuse to start (`buildAssetRegistry`), and `make test` catches it first.
+5. `shasum -a 256` every downloaded file and update the pin table.
+6. If the set of woff2 files changed (a file added, renamed or dropped),
+   update both: the `//go:embed` lines and `embeddedAssetSources()` in
+   `internal/scoreboard/view/staticassets.go` (woff2 entries BEFORE
+   `fonts.css`), and `wantLogicalNames` in `static_assets_test.go`. The pin
+   change needs security-engineer review (ADR-0028 D5).
+7. Re-run the external-reference audit (`grep -oE 'https?://[^)]+'` and
+   `grep -c '@import'` over the new `fonts.css`) before committing; the
+   audit must also find no `gstatic` URL left, only `asset:<file>`.
+8. Re-fetch each family's `OFL.txt` from
    `https://raw.githubusercontent.com/google/fonts/main/ofl/<family>/OFL.txt`
    only if the license text itself changed (rare — OFL text is near-static
    across font updates); update the commit-sha table above either way to
    record the check was re-done.
-7. `make test` (embed + CSP tests) and a colima smoke check (`make dev` /
+9. `make test` (embed + CSP tests) and a colima smoke check (`make dev` /
    `make load-colima` → open `/portal` and `/`, confirm no console
    errors/network requests to `fonts.googleapis.com`/`fonts.gstatic.com`,
    and every heading/mono text still renders in the intended typeface).

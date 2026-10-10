@@ -181,6 +181,10 @@ paths:
 
         `GET /` in Go 1.22+ matches every unrouted path, so this operation is
         also the 404 for unknown paths.
+
+        The 200 and the 403 carry `Cache-Control: no-store` (ADR-0028 D3): the
+        shell embeds a per-response CSP nonce, so a cacheable copy would hand
+        one response's nonce to another viewer.
       responses:
         "200":
           description: dashboard HTML (admin)
@@ -207,7 +211,11 @@ paths:
       x-ctf-rate-limit: none
       description: |
         Static single-template shell (P23-1). Served to ANY authenticated
-        caller and deliberately NOT admin-gated: it embeds no per-user data.
+        caller and deliberately NOT admin-gated: it embeds no admin data and
+        no other participant's data, but the response does differ per viewer
+        (role, username and ttyd URL as display hints, plus a per-response CSP
+        nonce), so every response carries `Cache-Control: no-store`
+        (ADR-0028 D3), the 500 included.
         The admin flag and the derived username are display hints only
         (api.NewAdminGate / api.DeriveUsername); every pane's actual data fetch
         is independently gated in the API handlers, so the shell cannot leak
