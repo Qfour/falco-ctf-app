@@ -14,7 +14,7 @@ forbiddenRules:
 # condition for this mission (requireExpectedRuleFire); that fact is all this
 # file asserts. Same shape as mission 05's "Shell Redirected Private Key Read".
 # The rule's condition is intentionally NOT reproduced here (public repo,
-# ADR-0032 §9 publication boundary) — it lives only in the platform-side
+# ADR-0032 D9 (i) publication boundary) — it lives only in the platform-side
 # private canon.
 #
 # DEPLOY ORDER: platform's customRule must be live before this takes effect, or
