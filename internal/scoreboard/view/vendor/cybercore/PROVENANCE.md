@@ -41,9 +41,9 @@ network surface as a hard boundary — see REFACTORING.md P23-6: "CDN 不可 =
 egress/P12". Loading this CSS from a third-party CDN would add an
 uncontrolled runtime dependency (availability + supply-chain: a CDN swap-out
 could serve different bytes at any time) that a git-SHA-pinned, go:embed'd
-file does not have. `internal/scoreboard/view/vendorassets.go` embeds this
-exact file into the scoreboard binary and serves it from `/vendor/cybercore.min.css`
-(same-origin, no external HTTP request the browser needs to make for this
+file does not have. `internal/scoreboard/view/staticassets.go` embeds this
+exact file into the scoreboard binary and serves it from `/static/cybercore.min.<hash>.css`
+(ADR-0028: one `GET /static/{asset}` route, content-hash name; same-origin, no external HTTP request the browser needs to make for this
 asset).
 
 ## External references inside the file (audited)

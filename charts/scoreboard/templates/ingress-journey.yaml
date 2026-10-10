@@ -119,57 +119,23 @@ spec:
         #                      cannot reach this route through ingress at
         #                      all, regardless of what the Go handler itself
         #                      would do with the request.
-        #   /vendor/cybercore.min.css — the vendored, pinned cybercore-css
-        #                               stylesheet (P23-6) portal.html's <link> tag
-        #                               loads on every /portal render. Exact, not
-        #                               Prefix: internal/scoreboard/view/vendorassets.go
-        #                               embeds exactly this one file at exactly this
-        #                               one mux Pattern (apispec Audience: participant,
-        #                               Authz: none) — there is no /vendor/ directory
-        #                               of further assets today, so a Prefix rule
-        #                               would open ingress reachability for paths the
-        #                               mux does not yet (and may never) serve, ahead
-        #                               of any actual route existing. Mirrors /portal
-        #                               and /csp-report's Exact choice for the same
-        #                               reason: this entry's specificity should track
-        #                               the mux Pattern it stands in for, not
-        #                               pre-provision for hypothetical future assets.
-        #                               Same Issue #235 gap class as #95: correctly
-        #                               declared x-ctf-authz: none in the Go
-        #                               handler/spec, but every participant's browser
-        #                               hit /check-admin's 403 here because ingress
-        #                               never carried a matching allow-list entry —
-        #                               the portal rendered with no styling at all
-        #                               (not a hard failure, so it shipped unnoticed
-        #                               until #95's review-5x flagged the same class
-        #                               of gap by inspection, Issue #235).
-        #   /static/tokens.css — the design-token single source (app#116)
-        #                        both portal.html and the admin index.html
-        #                        <link> to. Same Exact rationale as
-        #                        /vendor/cybercore.min.css immediately above:
-        #                        one embedded file, one mux Pattern.
-        #   /vendor/fonts.css, /vendor/fonts/chakrapetch-500.woff2,
-        #   /vendor/fonts/chakrapetch-600.woff2,
-        #   /vendor/fonts/chakrapetch-700.woff2, /vendor/fonts/inter-var.woff2,
-        #   /vendor/fonts/jetbrainsmono-var.woff2 — the self-hosted Google
-        #                        Fonts stylesheet + its 5 vendored woff2 files
-        #                        (app#96, P12 follow-up: replaces the portal's
-        #                        former fonts.googleapis.com/fonts.gstatic.com
-        #                        <link>). This IS the "second embedded asset
-        #                        under /vendor/" the comment above used to
-        #                        anticipate — still Exact per file (6 literal
-        #                        entries), not a Prefix /vendor/fonts/ rule:
-        #                        internal/scoreboard/view/vendorassets.go
-        #                        registers one mux Pattern per file (no
-        #                        wildcard/path-param route), so a Prefix rule
-        #                        here would open ingress reachability for
-        #                        paths the mux does not serve, same reasoning
-        #                        as /vendor/cybercore.min.css's Exact choice.
-        #                        If a THIRD /vendor/ asset is ever added,
-        #                        revisit Prefix deliberately at that point
-        #                        (as a genuine multi-asset decision) rather
-        #                        than reusing this comment's per-file
-        #                        reasoning unmodified.
+        #   /static/ — every first-party static asset (ADR-0028 D4): cybercore-css,
+        #              the design tokens and the self-hosted fonts. Prefix, not
+        #              Exact: the served names are content-hash names
+        #              (tokens.<hash>.css) that change with every build, so the
+        #              chart cannot list them. ONE entry stays correct when an
+        #              asset is added; the 8 Exact entries (/vendor/..., /static/
+        #              tokens.css) this replaces had to be edited per asset, and
+        #              forgetting one reached production twice (#95, #235).
+        #              Prefix opens ingress for paths the mux does not serve; the
+        #              mux answers those 404 (staticassets.go), it never falls
+        #              through to the admin dashboard. Longest-prefix wins over
+        #              the admin ingress's "/" (same mechanism as /api/users/,
+        #              P19-2b). Anything NON-participant registered under
+        #              /static/ fails the I15 reverse check in
+        #              ingress_journey_parity_test.go; what may be registered
+        #              (public display assets only, .css/.woff2) is pinned by
+        #              TestStaticAssets_RegistryPin.
         # NOTE: /falco/events (Falco ingest, no app-layer auth) is deliberately
         # absent — routing it here would let any login forge trigger solves.
         paths:
@@ -208,57 +174,8 @@ spec:
                 name: scoreboard
                 port:
                   number: 80
-          - path: /vendor/cybercore.min.css
-            pathType: Exact
-            backend:
-              service:
-                name: scoreboard
-                port:
-                  number: 80
-          - path: /static/tokens.css
-            pathType: Exact
-            backend:
-              service:
-                name: scoreboard
-                port:
-                  number: 80
-          - path: /vendor/fonts.css
-            pathType: Exact
-            backend:
-              service:
-                name: scoreboard
-                port:
-                  number: 80
-          - path: /vendor/fonts/chakrapetch-500.woff2
-            pathType: Exact
-            backend:
-              service:
-                name: scoreboard
-                port:
-                  number: 80
-          - path: /vendor/fonts/chakrapetch-600.woff2
-            pathType: Exact
-            backend:
-              service:
-                name: scoreboard
-                port:
-                  number: 80
-          - path: /vendor/fonts/chakrapetch-700.woff2
-            pathType: Exact
-            backend:
-              service:
-                name: scoreboard
-                port:
-                  number: 80
-          - path: /vendor/fonts/inter-var.woff2
-            pathType: Exact
-            backend:
-              service:
-                name: scoreboard
-                port:
-                  number: 80
-          - path: /vendor/fonts/jetbrainsmono-var.woff2
-            pathType: Exact
+          - path: /static/
+            pathType: Prefix
             backend:
               service:
                 name: scoreboard

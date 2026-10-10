@@ -7,18 +7,18 @@
 <!-- Chakra Petch / Inter / JetBrains Mono (app#96, P12 follow-up): vendored,
      self-hosted, SIL OFL — see internal/scoreboard/view/vendor/fonts/
      PROVENANCE.md for the fetch URL/sha256/license per file and
-     vendorassets.go for the go:embed serving paths. Same-origin only, never
+     staticassets.go for the go:embed serving paths. Same-origin only, never
      a CDN (P12: egress-zero) — replaces the former fonts.googleapis.com
      <link> + its two fonts.gstatic.com preconnects (no longer needed:
      same-origin requests don't benefit from preconnect). -->
-<link rel="stylesheet" href="/vendor/fonts.css">
+<link rel="stylesheet" href="{{.Assets.URL "fonts.css"}}">
 <!-- Design tokens (app#116): single hex source for the --falco/--bg/--accent
      custom properties this page's CSS below consumes via var(...). Self-
-     hosted, same-origin (see internal/scoreboard/view/vendorassets.go /
+     hosted, same-origin (see internal/scoreboard/view/staticassets.go /
      static/tokens.css's own doc for the full "why"). This page no longer
      defines these properties itself — they cascade in from this stylesheet,
      loaded before the <style> block below so it can rely on them. -->
-<link rel="stylesheet" href="/static/tokens.css">
+<link rel="stylesheet" href="{{.Assets.URL "tokens.css"}}">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html { font-size: 16px; }

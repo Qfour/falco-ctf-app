@@ -104,6 +104,10 @@ type portalData struct {
 	// without the nonce simply does not run, rather than reopening an XSS
 	// hole).
 	Nonce string
+	// Assets resolves logical static-asset names to their content-hash URLs
+	// ({{.Assets.URL "tokens.css"}}, ADR-0028 D2); the root shell's <link>
+	// tags are the only callers. An unknown name fails the render.
+	Assets *assetRegistry
 }
 
 // ttydURLFor builds the caller's own ttyd origin from their derived username
@@ -226,5 +230,6 @@ func renderPortal(w http.ResponseWriter, r *http.Request, isAdmin func(*http.Req
 		StoryPanelHTML:     storyPanelHTML,
 		TutorialPanelsHTML: tutorialPanelsHTML,
 		Nonce:              nonce,
+		Assets:             staticAssets,
 	})
 }

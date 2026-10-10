@@ -322,7 +322,7 @@ func checkPortalScriptAndStyle(fsys fs.FS) error {
 		return errors.Join(append(errs, fmt.Errorf("parse portal: %w", err))...)
 	}
 	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, portalData{Nonce: "test-nonce"}); err != nil {
+	if err := tmpl.Execute(&buf, portalData{Nonce: "test-nonce", Assets: staticAssets}); err != nil {
 		return errors.Join(append(errs, fmt.Errorf("execute portal: %w", err))...)
 	}
 	if got := len(anyScriptOpenRe.FindAllString(buf.String(), -1)); got != scripts {

@@ -261,7 +261,8 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 	// self-match, so it is not "self-or-admin" — see authzCheck's own
 	// doc) plus 5 admin routes (4 from the initial Phase 2 landing + 1
 	// post-review gap-close: boardAdminGetThread). 9 admin + 7 self(-write) +
-	// 15 none/claimed-identity + 6 authenticated = 37, matching
+	// 15 none/claimed-identity + 6 authenticated = 37; ADR-0028 then folded the
+	// 8 static-asset routes into one (none): 9 + 7 + 8 + 6 = 30, matching
 	// apispec_parity_test.go's TestAPISpec_V1_RouteSetMatchesSpec.
 	if adminGated != 9 {
 		t.Fatalf("expected exactly 9 Authz: admin routes (ADR-0005 canon: GET /, GET /api/state, POST /api/admin/reset, POST /api/admin/users/{user}/display-name; app#292 QA Board: GET /api/admin/board/threads, GET /api/admin/board/threads/{tid}, POST /api/admin/board/threads/{tid}/reply, POST /api/admin/board/threads/{tid}/state, POST /api/admin/board/messages/{mid}/state), got %d", adminGated)
@@ -269,8 +270,8 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 	if selfGated != 7 {
 		t.Fatalf("expected exactly 7 Authz: self-or-admin(-write) routes (GET /api/users/{user}/me, GET /api/users/{user}/journey, POST /api/challenges/{cid}/submit-detect, POST /api/users/{user}/challenges/{cid}/steps/{idx}/check, POST /api/users/{user}/challenges/{cid}/hints/{idx}, POST /api/users/{user}/challenges/{cid}/reset-dirty, POST /api/users/{user}/display-name — P25's 4 QA self-or-admin(-write) routes are gone, cutover), got %d", selfGated)
 	}
-	if openGated != 15 {
-		t.Fatalf("expected exactly 15 Authz: none/claimed-identity routes (GET /portal, GET the cybercore css asset, GET the design-tokens css asset (app#116), POST /falco/events, GET /healthz, GET /metrics, POST /api/challenges/{cid}/submit, POST /internal/exfil/{cid}; Issue #95: POST /csp-report; app#96: GET /vendor/fonts.css + its 5 vendored woff2 assets), got %d", openGated)
+	if openGated != 8 {
+		t.Fatalf("expected exactly 8 Authz: none/claimed-identity routes (GET /portal, GET /static/{asset} (ADR-0028), POST /falco/events, GET /healthz, GET /metrics, POST /api/challenges/{cid}/submit, POST /internal/exfil/{cid}; Issue #95: POST /csp-report), got %d", openGated)
 	}
 	if authenticatedGated != 6 {
 		t.Fatalf("expected exactly 6 Authz: authenticated routes (app#292 QA Board participant routes: GET /api/board/threads, GET /api/board/threads/{tid}, POST /api/board/threads, POST /api/board/threads/{tid}/messages, POST /api/board/threads/{tid}/like, POST /api/board/threads/{tid}/unlike), got %d", authenticatedGated)

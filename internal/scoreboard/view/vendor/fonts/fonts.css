@@ -14,13 +14,17 @@
  * only ONE file per family is vendored here even though 4 (Inter) / 3
  * (JetBrains Mono) @font-face rules reference it below. Chakra Petch is NOT
  * a variable font upstream, so its 3 weights are 3 separate files.
+ *
+ * The `asset:<file>` form used as the src target below is NOT CSS:
+ * staticassets.go resolves it to the target's content-hash URL (/static/NAME.<hash>.woff2) before this file is hashed and
+ * served (ADR-0028 D2). No literal path is written here.
  */
 @font-face {
   font-family: 'Chakra Petch';
   font-style: normal;
   font-weight: 500;
   font-display: swap;
-  src: url(/vendor/fonts/chakrapetch-500.woff2) format('woff2');
+  src: url(asset:chakrapetch-500.woff2) format('woff2');
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 @font-face {
@@ -28,7 +32,7 @@
   font-style: normal;
   font-weight: 600;
   font-display: swap;
-  src: url(/vendor/fonts/chakrapetch-600.woff2) format('woff2');
+  src: url(asset:chakrapetch-600.woff2) format('woff2');
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 @font-face {
@@ -36,7 +40,7 @@
   font-style: normal;
   font-weight: 700;
   font-display: swap;
-  src: url(/vendor/fonts/chakrapetch-700.woff2) format('woff2');
+  src: url(asset:chakrapetch-700.woff2) format('woff2');
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 @font-face {
@@ -44,7 +48,7 @@
   font-style: normal;
   font-weight: 400;
   font-display: swap;
-  src: url(/vendor/fonts/inter-var.woff2) format('woff2');
+  src: url(asset:inter-var.woff2) format('woff2');
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 @font-face {
@@ -52,7 +56,7 @@
   font-style: normal;
   font-weight: 500;
   font-display: swap;
-  src: url(/vendor/fonts/inter-var.woff2) format('woff2');
+  src: url(asset:inter-var.woff2) format('woff2');
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 @font-face {
@@ -60,7 +64,7 @@
   font-style: normal;
   font-weight: 600;
   font-display: swap;
-  src: url(/vendor/fonts/inter-var.woff2) format('woff2');
+  src: url(asset:inter-var.woff2) format('woff2');
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 @font-face {
@@ -68,7 +72,7 @@
   font-style: normal;
   font-weight: 700;
   font-display: swap;
-  src: url(/vendor/fonts/inter-var.woff2) format('woff2');
+  src: url(asset:inter-var.woff2) format('woff2');
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 @font-face {
@@ -76,7 +80,7 @@
   font-style: normal;
   font-weight: 400;
   font-display: swap;
-  src: url(/vendor/fonts/jetbrainsmono-var.woff2) format('woff2');
+  src: url(asset:jetbrainsmono-var.woff2) format('woff2');
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 @font-face {
@@ -84,7 +88,7 @@
   font-style: normal;
   font-weight: 500;
   font-display: swap;
-  src: url(/vendor/fonts/jetbrainsmono-var.woff2) format('woff2');
+  src: url(asset:jetbrainsmono-var.woff2) format('woff2');
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 @font-face {
@@ -92,6 +96,6 @@
   font-style: normal;
   font-weight: 700;
   font-display: swap;
-  src: url(/vendor/fonts/jetbrainsmono-var.woff2) format('woff2');
+  src: url(asset:jetbrainsmono-var.woff2) format('woff2');
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }

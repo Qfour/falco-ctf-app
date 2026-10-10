@@ -85,8 +85,9 @@ with the font — hence the three `LICENSE-*.txt` files kept alongside the
 ## External references inside `fonts.css` (audited)
 
 `grep -oE "https?://[^)]+" fonts.css` matches zero results — every `src:
-url(...)` in the vendored stylesheet is a same-origin `/vendor/fonts/*.woff2`
-path (`grep -c '@import'` is also zero). Egress-zero holds, mirroring
+url(...)` in the vendored stylesheet is a same-origin reference to one of the
+5 woff2 files, written as `asset:<file>` and resolved by `staticassets.go` to
+`/static/<stem>.<hash>.woff2` (ADR-0028 D2) when the stylesheet is registered (`grep -c '@import'` is also zero). Egress-zero holds, mirroring
 `vendor/cybercore/PROVENANCE.md`'s equivalent audit.
 
 ## Bump procedure

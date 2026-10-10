@@ -66,6 +66,10 @@ var indexTmpl = template.Must(template.New("index").Parse(indexHTML))
 // /api/state client-side (see the package doc above), so there is nothing
 // else to thread through.
 type indexData struct {
+	// Assets resolves logical static-asset names to their content-hash URLs
+	// ({{.Assets.URL "tokens.css"}}, ADR-0028 D2). Templates never spell a
+	// literal /static/... path.
+	Assets *assetRegistry
 	// Nonce (Issue #114) is the CSP script-src nonce generated fresh for
 	// THIS response by writeSecurityHeaders and simultaneously stamped onto
 	// the Content-Security-Policy response header — see portalData.Nonce's
@@ -199,19 +203,17 @@ func New(isAdmin func(*http.Request) bool, deriveUser func(*http.Request) string
 
 // Routes returns the view package's declarative route table (ADR-0005 V2).
 // GET / (admin dashboard), GET /portal (P23-1 unified shell), POST
-// /csp-report (Issue #95), and the vendored same-origin assets (cybercore-css,
-// design-tokens (app#116), and — app#96, P12 follow-up — the self-hosted
-// Google Fonts stylesheet + its 5 woff2 files) make up the route table left
-// after the P19-2b cutover removed GET /me and GET /journey (see the
-// package doc above).
+// /csp-report (Issue #95) and the single static-asset route GET
+// /static/{asset} (ADR-0028: cybercore-css, design tokens, self-hosted fonts,
+// all under content-hash names) make up the route table left after the
+// P19-2b cutover removed GET /me and GET /journey (see the package doc above).
 //
-// Every vendored-asset route's Pattern field is that asset's own PATH
-// CONSTANT (vendorassets.go), not a string
-// built by concatenating "GET "+path at the mux.HandleFunc call site the way
-// the pre-ADR-0005 code did — that concatenation is exactly what defeated a
-// literal-grep route extraction (ADR-0005 V2's motivating example). Reading
-// Pattern back through this method gives the parity test the actual runtime
-// string, however it was computed.
+// The static route's Pattern is the named constant staticRoutePattern
+// (staticassets.go), not a string built by concatenating "GET "+path at a
+// mux.HandleFunc call site the way the pre-ADR-0005 code did — that
+// concatenation is exactly what defeated a literal-grep route extraction
+// (ADR-0005 V2's motivating example). Reading Pattern back through this
+// method gives the parity test the actual runtime string.
 func (h *Handler) Routes() []apispec.Route {
 	return []apispec.Route{
 		{
@@ -235,87 +237,18 @@ func (h *Handler) Routes() []apispec.Route {
 			Handler:          http.HandlerFunc(h.portal),
 		},
 		{
+			// ADR-0028 D1: the ONE static-asset route. Every first-party asset
+			// (css, woff2) is served here under a content-hash name from the
+			// registry in staticassets.go; adding an asset adds no route, no spec
+			// operation and no ingress entry.
 			Method:           "GET",
-			Pattern:          cybercoreCSSPath,
+			Pattern:          staticRoutePattern,
 			Audience:         apispec.AudienceParticipant,
 			Authz:            apispec.AuthzNone,
 			OriginGuarded:    false,
 			CollectorForward: false,
 			RateLimit:        "none",
-			Handler:          http.HandlerFunc(serveCybercoreCSS),
-		},
-		{
-			Method:           "GET",
-			Pattern:          tokensCSSPath,
-			Audience:         apispec.AudienceParticipant,
-			Authz:            apispec.AuthzNone,
-			OriginGuarded:    false,
-			CollectorForward: false,
-			RateLimit:        "none",
-			Handler:          http.HandlerFunc(serveTokensCSS),
-		},
-		{
-			// app#96 (P12 follow-up): self-hosted Google Fonts stylesheet —
-			// see vendorassets.go's "Google Fonts self-host" section doc and
-			// vendor/fonts/PROVENANCE.md.
-			Method:           "GET",
-			Pattern:          vendorFontsCSSPath,
-			Audience:         apispec.AudienceParticipant,
-			Authz:            apispec.AuthzNone,
-			OriginGuarded:    false,
-			CollectorForward: false,
-			RateLimit:        "none",
-			Handler:          http.HandlerFunc(serveVendorFontsCSS),
-		},
-		{
-			Method:           "GET",
-			Pattern:          fontChakraPetch500Path,
-			Audience:         apispec.AudienceParticipant,
-			Authz:            apispec.AuthzNone,
-			OriginGuarded:    false,
-			CollectorForward: false,
-			RateLimit:        "none",
-			Handler:          http.HandlerFunc(serveFontChakraPetch500),
-		},
-		{
-			Method:           "GET",
-			Pattern:          fontChakraPetch600Path,
-			Audience:         apispec.AudienceParticipant,
-			Authz:            apispec.AuthzNone,
-			OriginGuarded:    false,
-			CollectorForward: false,
-			RateLimit:        "none",
-			Handler:          http.HandlerFunc(serveFontChakraPetch600),
-		},
-		{
-			Method:           "GET",
-			Pattern:          fontChakraPetch700Path,
-			Audience:         apispec.AudienceParticipant,
-			Authz:            apispec.AuthzNone,
-			OriginGuarded:    false,
-			CollectorForward: false,
-			RateLimit:        "none",
-			Handler:          http.HandlerFunc(serveFontChakraPetch700),
-		},
-		{
-			Method:           "GET",
-			Pattern:          fontInterPath,
-			Audience:         apispec.AudienceParticipant,
-			Authz:            apispec.AuthzNone,
-			OriginGuarded:    false,
-			CollectorForward: false,
-			RateLimit:        "none",
-			Handler:          http.HandlerFunc(serveFontInter),
-		},
-		{
-			Method:           "GET",
-			Pattern:          fontJetBrainsMonoPath,
-			Audience:         apispec.AudienceParticipant,
-			Authz:            apispec.AuthzNone,
-			OriginGuarded:    false,
-			CollectorForward: false,
-			RateLimit:        "none",
-			Handler:          http.HandlerFunc(serveFontJetBrainsMono),
+			Handler:          staticAssets.handler(),
 		},
 		{
 			// POST /csp-report (Issue #95 / P23-6 follow-up) — the sink
@@ -400,7 +333,7 @@ func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := indexTmpl.Execute(w, indexData{Nonce: nonce}); err != nil {
+	if err := indexTmpl.Execute(w, indexData{Nonce: nonce, Assets: staticAssets}); err != nil {
 		if h.logger != nil {
 			h.logger.Error("index render failed", "err", err)
 		}

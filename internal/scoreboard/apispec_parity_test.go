@@ -209,9 +209,11 @@ func TestAPISpec_V1_RouteSetMatchesSpec(t *testing.T) {
 	// then +1 more for the post-review gap-close boardAdminGetThread
 	// (GET /api/admin/board/threads/{tid} — the operator's single-thread
 	// full-text read, closing the "no admin GET route" gap the initial
-	// Phase 2 report flagged) = 37.
-	if len(routes) != 37 {
-		t.Errorf("expected 37 registered routes (ADR-0005 C1 + app#116 - app#84 + app#95 + app#96 - P25-QA(7) + app#292-Board(10) + boardAdminGetThread(1)), got %d: %v", len(routes), routes)
+	// Phase 2 report flagged) = 37. ADR-0028 (P28-0c) then replaced the 8
+	// per-file static routes (/vendor/* x7, /static/tokens.css) with the one
+	// GET /static/{asset}: 37 - 8 + 1 = 30.
+	if len(routes) != 30 {
+		t.Errorf("expected 30 registered routes (37 - 8 per-file static routes + GET /static/{asset}, ADR-0028), got %d: %v", len(routes), routes)
 	}
 }
 

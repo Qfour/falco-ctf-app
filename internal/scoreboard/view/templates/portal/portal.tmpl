@@ -7,20 +7,20 @@
 <!-- Chakra Petch / Inter / JetBrains Mono (app#96, P12 follow-up): vendored,
      self-hosted, SIL OFL — see internal/scoreboard/view/vendor/fonts/
      PROVENANCE.md for the fetch URL/sha256/license per file and
-     vendorassets.go for the go:embed serving paths. Same-origin only, never
+     staticassets.go for the go:embed serving paths. Same-origin only, never
      a CDN (P12: egress-zero) — replaces the former fonts.googleapis.com
      <link> + its two fonts.gstatic.com preconnects (no longer needed:
      same-origin requests don't benefit from preconnect). -->
-<link rel="stylesheet" href="/vendor/fonts.css">
+<link rel="stylesheet" href="{{.Assets.URL "fonts.css"}}">
 <!-- ===== cybercore-css (P23-6): vendored, self-hosted, MIT — see
      internal/scoreboard/view/vendor/cybercore/PROVENANCE.md for the pinned
-     npm version/commit/shasum and vendorassets.go for the go:embed serving
+     npm version/commit/shasum and staticassets.go for the go:embed serving
      path. Loaded from OUR OWN origin only, never a CDN (P12: egress-zero for
      this asset).
      NOTE (portal-ui-polish): the ONE cybercore COMPONENT CLASS this page
      used to consume (.cyber-badge, on the now-removed #portal-role-badge
      role indicator) is gone — see the "cybercore Falco-brand override"
-     tokens (--cyber-*/--color-*) in /static/tokens.css, which are
+     tokens (--cyber-*/--color-*) in tokens.css, which are
      consequently unused CSS right now (left in place; removing the
      cybercore layer outright is a bigger call than this batch's stated
      scope of DOM/text changes — tracked as residual cleanup, not done
@@ -32,7 +32,7 @@
      --cyber-* overrides in tokens.css can win over cybercore.min.css's own
      defaults by source-order (both have equal specificity on shared
      selectors; later wins). -->
-<link rel="stylesheet" href="/vendor/cybercore.min.css">
+<link rel="stylesheet" href="{{.Assets.URL "cybercore.min.css"}}">
 <!-- ===== Design tokens (app#116): single hex source ===== Every custom
      property this page's CSS below consumes via var(...) — the --falco/
      --accent-style base palette, the --cyber-*/--color-*/--font-* cybercore
@@ -43,10 +43,10 @@
      that file's own doc for the full "why" and the exact value-for-value
      provenance of every token). This page no longer defines any of these
      properties itself; they cascade in from this stylesheet. Self-hosted,
-     same-origin (vendorassets.go), loaded AFTER cybercore.min.css above so
+     same-origin (staticassets.go), loaded AFTER cybercore.min.css above so
      its --cyber-* overrides still win by source order (see that link's
      comment). -->
-<link rel="stylesheet" href="/static/tokens.css">
+<link rel="stylesheet" href="{{.Assets.URL "tokens.css"}}">
 {{template "css.tmpl" . -}}
 </head>
 <body>

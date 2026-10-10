@@ -921,6 +921,9 @@ type ThreadStateRequest struct {
 // ThreadStateRequestState defines model for ThreadStateRequest.State.
 type ThreadStateRequestState string
 
+// Asset defines model for Asset.
+type Asset = string
+
 // Cid defines model for Cid.
 type Cid = string
 
