@@ -1,6 +1,7 @@
 package view
 
 import (
+	"bytes"
 	"crypto/sha256"
 	_ "embed"
 	"encoding/hex"
@@ -56,6 +57,12 @@ const assetHashLen = 16
 // /static/... or /vendor/... path.
 var assetRefRe = regexp.MustCompile(`url\(asset:([^)]*)\)`)
 
+// cssCommentRe matches a CSS comment (non-greedy, across lines). The
+// "unresolved asset: reference" check below ignores comments, because a
+// vendored stylesheet may legitimately DESCRIBE the asset: form in prose
+// (fonts.css does).
+var cssCommentRe = regexp.MustCompile(`(?s)/\*.*?\*/`)
+
 // assetNameRe is the shape of a logical name: one path segment, lower-case,
 // and an extension that is one of staticAssetTypes.
 var assetNameRe = regexp.MustCompile(`^[a-z0-9]+(?:[.-][a-z0-9]+)*$`)
@@ -108,6 +115,9 @@ func buildAssetRegistry(sources []assetSource) (*assetRegistry, error) {
 		if _, dup := reg.byName[src.name]; dup {
 			return nil, fmt.Errorf("static asset %q registered twice", src.name)
 		}
+		if len(src.data) == 0 {
+			return nil, fmt.Errorf("static asset %q is empty", src.name)
+		}
 		body := src.data
 		if ext == ".css" {
 			var rerr error
@@ -122,6 +132,14 @@ func buildAssetRegistry(sources []assetSource) (*assetRegistry, error) {
 			})
 			if rerr != nil {
 				return nil, rerr
+			}
+			// assetRefRe only understands the exact form url(asset:NAME). A
+			// reference written any other way (url("asset:NAME"), url( asset:NAME ),
+			// a src: that is not inside url()) would survive resolution and be
+			// served as a dead link, with no start-up error. Anything that still
+			// says asset: outside a comment is such a reference.
+			if bytes.Contains(cssCommentRe.ReplaceAll(body, nil), []byte("asset:")) {
+				return nil, fmt.Errorf("static asset %q: an \"asset:\" reference is left unresolved after resolution (write it exactly as url(asset:<name>): no quotes, no spaces)", src.name)
 			}
 		}
 		sum := sha256.Sum256(body)

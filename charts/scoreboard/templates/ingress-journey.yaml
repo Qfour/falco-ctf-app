@@ -127,15 +127,22 @@ spec:
         #              asset is added; the 8 Exact entries (/vendor/..., /static/
         #              tokens.css) this replaces had to be edited per asset, and
         #              forgetting one reached production twice (#95, #235).
-        #              Prefix opens ingress for paths the mux does not serve; the
-        #              mux answers those 404 (staticassets.go), it never falls
-        #              through to the admin dashboard. Longest-prefix wins over
-        #              the admin ingress's "/" (same mechanism as /api/users/,
-        #              P19-2b). Anything NON-participant registered under
-        #              /static/ fails the I15 reverse check in
-        #              ingress_journey_parity_test.go; what may be registered
-        #              (public display assets only, .css/.woff2) is pinned by
-        #              TestStaticAssets_RegistryPin.
+        #              Prefix opens ingress for paths the mux does not serve, and
+        #              they split in two by shape: ONE segment that is not a
+        #              registered name (/static/nope, /static/..%2Fx) is answered
+        #              by staticassets.go with a JSON 404 + no-store; every other
+        #              shape (/static, /static/, /static/a/b) does not match
+        #              GET /static/{asset} and FALLS THROUGH to GET / (h.index),
+        #              which answers 404 only because of its `r.URL.Path != "/"`
+        #              check (view.go). That one line is what keeps these paths
+        #              off the admin dashboard handler; it is pinned by
+        #              TestStaticAssets_ShapesOutsideTheAssetRoute, not by this
+        #              chart. Longest-prefix wins over the admin ingress's "/"
+        #              (same mechanism as /api/users/, P19-2b). Anything
+        #              NON-participant registered under /static/ fails the I15
+        #              reverse check in ingress_journey_parity_test.go; what may
+        #              be registered (public display assets only, .css/.woff2) is
+        #              pinned by TestStaticAssets_RegistryPin.
         # NOTE: /falco/events (Falco ingest, no app-layer auth) is deliberately
         # absent — routing it here would let any login forge trigger solves.
         paths:

@@ -299,6 +299,16 @@ func (h *Handler) Routes() []apispec.Route {
 func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
 	// `GET /` in Go 1.22+ mux matches everything under /, so we reject
 	// non-root paths explicitly to surface 404 for unknown routes.
+	//
+	// This one check is also a security boundary, not only tidiness: the
+	// participant ingress carries a `/static/` Prefix entry (ADR-0028 D4,
+	// charts/scoreboard/templates/ingress-journey.yaml), and the shapes
+	// GET /static/{asset} does NOT match — /static, /static/, /static/a/b,
+	// /static/x/ — fall through the mux to THIS handler. Deleting the line
+	// below would let a participant reach the admin shell's handler through
+	// that Prefix (the app-layer admin gate below would still 403 a
+	// non-admin, but it would then be the only thing left). Pinned by
+	// TestStaticAssets_ShapesOutsideTheAssetRoute.
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return
