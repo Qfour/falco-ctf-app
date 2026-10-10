@@ -29,10 +29,11 @@
 //
 // Why a table instead of parsing the mux or grepping source: http.ServeMux
 // cannot enumerate its own registered patterns, and literal-grep extraction
-// is ALREADY broken by internal/scoreboard/view/vendorassets.go's
-// cybercoreCSSPath, which used to be wired via string concatenation
-// (mux.HandleFunc("GET "+cybercoreCSSPath, ...)) — a lexical scan would
-// silently drop that route. A Go slice of structs, read back at test time via
+// is already broken by any route whose pattern is not a string literal at
+// the registration call. The pre-ADR-0028 vendorassets.go (deleted) wired
+// its CSS route by string concatenation (mux.HandleFunc("GET "+cybercoreCSSPath,
+// ...)); today view.go's Pattern is the named constant staticRoutePattern
+// (staticassets.go) — a lexical scan would silently drop either one. A Go slice of structs, read back at test time via
 // the owning package's exported Routes() method, has no such blind spot: the
 // test sees the exact runtime string value, however it was computed.
 //

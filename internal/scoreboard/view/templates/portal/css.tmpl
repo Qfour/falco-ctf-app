@@ -52,7 +52,8 @@
      Extracted from the near-identical rules #pane-scoreboard / #pane-story /
      #pane-me / #pane-terminal each used to define locally (values taken
      from #pane-scoreboard, the reference design — see the --p-* tokens in
-     /static/tokens.css, app#116). Each pane's OWN CSS (below) now carries only its
+     static/tokens.css, app#116; served under a content-hash name, ADR-0028).
+     Each pane's OWN CSS (below) now carries only its
      pane-specific delta, if any, on top of these; the HTML for each pane
      was NOT rewritten to reference these classes explicitly (pane markup
      keeps its existing .panel/.panel-header/.btn/.badge/etc class names —
@@ -101,7 +102,7 @@
 
   #pane-scoreboard {
     /* Unified design tokens (P23 portal-redesign) — see the root --p-*
-       tokens in /static/tokens.css (app#116). Pane-local aliases kept so
+       tokens in static/tokens.css (app#116, ADR-0028). Pane-local aliases kept so
        the ~120 rules below (which reference --falco/--accent/--bg/etc
        extensively) don't all need renaming; only the DEFINITIONS moved to
        the shared :root layer. */
@@ -268,7 +269,7 @@
 
   #pane-story {
     /* Unified design tokens (P23 portal-redesign) — see the root --p-*
-       tokens in /static/tokens.css (app#116). Pane-local aliases kept so
+       tokens in static/tokens.css (app#116, ADR-0028). Pane-local aliases kept so
        existing rules below don't all need renaming; only the DEFINITIONS
        moved to :root. */
     --falco: var(--p-accent); --falco-2: var(--p-accent-2);

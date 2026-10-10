@@ -27,7 +27,8 @@ import (
 // internal/scoreboard/view/portal.go (a file the list never named) and
 // observing `make test` stay fully green. internal/scoreboard/view/ alone
 // had FIVE unscanned non-test files (portal.go, home.go, csp.go,
-// vendorassets.go, homefragments_gen.go); internal/collector/metrics.go and
+// vendorassets.go [deleted by ADR-0028, folded into staticassets.go],
+// homefragments_gen.go); internal/collector/metrics.go and
 // internal/authpolicy/metrics.go were unscanned too. Deriving the file set
 // from the same mux-ownership BFS V6 already trusts means every file in
 // every package a mux-owning binary can reach is scanned, with a single,
