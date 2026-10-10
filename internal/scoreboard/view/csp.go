@@ -219,6 +219,16 @@ func validateTtydSuffix(v string) error {
 // renderPortal already has in hand for ttydURLFor — pass it straight
 // through rather than re-deriving anything.
 func writeSecurityHeaders(w http.ResponseWriter, ttydSuffix string) (string, error) {
+	// Cache-Control: no-store (ADR-0028 D3). Both HTML shells embed a
+	// per-response CSP nonce, and /portal also embeds the viewer's own
+	// identifier (__PORTAL_USER__) and ttyd URL. Behind a shared cache
+	// (Cloudflare is in front of prod) a cacheable copy would hand one
+	// viewer's identifier, and a reused nonce, to another. Not loosened for
+	// performance. Set FIRST, before either failure return below: the 500
+	// the callers write when this function fails (a control character in
+	// PORTAL_TTYD_SUFFIX, no entropy for the nonce) then carries it too, as
+	// do the 403 of GET / and the 200s, which are written after this call.
+	w.Header().Set("Cache-Control", "no-store")
 	if err := validateTtydSuffix(ttydSuffix); err != nil {
 		return "", err
 	}
@@ -226,13 +236,6 @@ func writeSecurityHeaders(w http.ResponseWriter, ttydSuffix string) (string, err
 	if err != nil {
 		return "", fmt.Errorf("csp: generate nonce: %w", err)
 	}
-	// Cache-Control: no-store (ADR-0028 D3). Both HTML shells embed a
-	// per-response CSP nonce, and /portal also embeds the viewer's own
-	// identifier (__PORTAL_USER__) and ttyd URL. Behind a shared cache
-	// (Cloudflare is in front of prod) a cacheable copy would hand one
-	// viewer's identifier, and a reused nonce, to another. Not loosened for
-	// performance. 403/500 bodies from the same callers carry it too.
-	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Security-Policy", portalCSP(nonce, ttydSuffix))
 	// Reporting-Endpoints (Issue #95) declares the "csp-endpoint" group
 	// portalCSP's "report-to csp-endpoint" directive names, pointing it at

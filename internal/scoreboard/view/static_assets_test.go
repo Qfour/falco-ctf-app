@@ -89,31 +89,50 @@ func TestStaticAssets_RegistryPin(t *testing.T) {
 	}
 }
 
-// TestBuildAssetRegistry_Rejects is V6's deliberate-violation half: a .js, a
-// nested or upper-case name, a duplicate, a forward/unknown reference and an
-// empty registry all fail the build (so they fail process start-up).
+// TestBuildAssetRegistry_Rejects is V6's deliberate-violation half: each
+// input below is ONE defect, and the build must refuse it for THAT reason
+// (wantErr is a fragment of the error text that names the asset and the
+// defect). Asserting only "some error" would stay green if a case failed for
+// an unrelated reason, e.g. an extension check masking a name check.
 func TestBuildAssetRegistry_Rejects(t *testing.T) {
 	css := []byte("a{}")
 	cases := []struct {
-		name string
-		in   []assetSource
+		name    string
+		in      []assetSource
+		wantErr string
 	}{
-		{"a script cannot be registered (D5)", []assetSource{{"app.js", []byte("alert(1)")}}},
-		{"an extension outside the allow-list", []assetSource{{"LICENSE", []byte("x")}, {"readme.md", []byte("x")}}},
-		{"a subdirectory in the name", []assetSource{{"fonts/a.woff2", []byte("x")}}},
-		{"an upper-case name", []assetSource{{"Tokens.css", css}}},
-		{"a duplicate name", []assetSource{{"a.css", css}, {"a.css", css}}},
-		{"a reference to an unregistered asset", []assetSource{{"a.css", []byte("x{src:url(asset:missing.woff2)}")}}},
-		{"a reference to an asset listed AFTER it", []assetSource{{"a.css", []byte("x{src:url(asset:b.woff2)}")}, {"b.woff2", []byte("w")}}},
-		{"an empty registry", nil},
+		{"a script cannot be registered (D5)", []assetSource{{"app.js", []byte("alert(1)")}}, `"app.js": extension ".js" is not allowed`},
+		{"a name with no extension (LICENSE next to the vendored files)", []assetSource{{"LICENSE", []byte("x")}}, `"LICENSE": extension "" is not allowed`},
+		{"a markdown file (PROVENANCE.md next to the vendored files)", []assetSource{{"readme.md", []byte("x")}}, `"readme.md": extension ".md" is not allowed`},
+		{"a subdirectory in the name", []assetSource{{"fonts/a.woff2", []byte("x")}}, `"fonts/a.woff2": not a single lower-case path segment`},
+		{"an upper-case name", []assetSource{{"Tokens.css", css}}, `"Tokens.css": not a single lower-case path segment`},
+		{"a duplicate name", []assetSource{{"a.css", css}, {"a.css", css}}, `"a.css" registered twice`},
+		{"an empty file", []assetSource{{"a.css", nil}}, `"a.css" is empty`},
+		{"a reference to an unregistered asset", []assetSource{{"a.css", []byte("x{src:url(asset:missing.woff2)}")}}, `"a.css" references "missing.woff2", which is not registered`},
+		{"a reference to an asset listed AFTER it", []assetSource{{"a.css", []byte("x{src:url(asset:b.woff2)}")}, {"b.woff2", []byte("w")}}, `"a.css" references "b.woff2", which is not registered before it`},
+		{"a double-quoted reference", []assetSource{{"b.woff2", []byte("w")}, {"a.css", []byte(`x{src:url("asset:b.woff2")}`)}}, `"a.css": an "asset:" reference is left unresolved`},
+		{"a reference with spaces inside url()", []assetSource{{"b.woff2", []byte("w")}, {"a.css", []byte("x{src:url( asset:b.woff2 )}")}}, `"a.css": an "asset:" reference is left unresolved`},
+		{"an empty registry", nil, "registry is empty"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if reg, err := buildAssetRegistry(tc.in); err == nil {
+			reg, err := buildAssetRegistry(tc.in)
+			if err == nil {
 				t.Fatalf("buildAssetRegistry accepted %q, want an error (got %d assets)", tc.name, len(reg.byName))
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("buildAssetRegistry(%q) failed for a different reason:\n got  %v\n want it to contain %q", tc.name, err, tc.wantErr)
 			}
 		})
 	}
+
+	// The check is about the resolved CSS, not about the word: prose that
+	// merely DESCRIBES the form inside a comment (fonts.css does) is fine.
+	t.Run("asset: inside a CSS comment is not a reference", func(t *testing.T) {
+		if _, err := buildAssetRegistry([]assetSource{{"a.css", []byte("/* the asset:<file> form is resolved at start-up */ a{}")}}); err != nil {
+			t.Fatalf("a comment mentioning asset: was rejected: %v", err)
+		}
+	})
 }
 
 // TestStaticAssets_HashProperties is V3: one changed byte changes the asset's
@@ -173,8 +192,17 @@ func TestStaticAssets_ServeAndCacheHeaders(t *testing.T) {
 		if etag == "" {
 			t.Errorf("%s: no ETag", name)
 		}
+		if got := w.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+			t.Errorf("%s: X-Content-Type-Options = %q, want nosniff", name, got)
+		}
+		if w.Body.Len() == 0 {
+			t.Errorf("%s: 200 with an empty body", name)
+		}
 		if !bytes.Equal(w.Body.Bytes(), a.body) {
 			t.Errorf("%s: served %d bytes, want the registry's %d", name, w.Body.Len(), len(a.body))
+		}
+		if name == "tokens.css" && !strings.Contains(w.Body.String(), ":root") {
+			t.Errorf("tokens.css served without a :root block — the design tokens are missing: %.200q", w.Body.String())
 		}
 
 		w2 := doGET(mux, url, map[string]string{"If-None-Match": etag})
@@ -189,9 +217,8 @@ func TestStaticAssets_ServeAndCacheHeaders(t *testing.T) {
 
 // TestStaticAssets_NotFoundIsNoStoreJSON is V4's negative half: names the
 // registry did not produce are 404 + no-store + {"error": ...} — the
-// un-hashed names, files that are merely embedded, a wrong hash, and the
-// shapes that could fall through to the catch-all GET / (two segments,
-// percent-encoded dot-dot). None may return the admin HTML.
+// un-hashed names, files that are merely embedded, a wrong hash, a suffix.
+// The shapes that miss the asset route altogether are the next test's.
 func TestStaticAssets_NotFoundIsNoStoreJSON(t *testing.T) {
 	mux := staticTestMux(t)
 	tokens := staticAssets.byName["tokens.css"].servedName
@@ -221,17 +248,56 @@ func TestStaticAssets_NotFoundIsNoStoreJSON(t *testing.T) {
 			}
 		}
 	}
+}
 
-	// The route-shape probes only need: 404 and not the dashboard HTML.
-	for _, path := range []string{"/static/a/b", "/static/" + tokens + "/x", "/static/..%2Fx", "/static/%2e%2e", "/static/%2e%2e%2f", "/static/", "/static"} {
-		w := doGET(mux, path, nil)
-		if w.Code == http.StatusOK || strings.Contains(strings.ToLower(w.Body.String()), "<html") {
-			t.Errorf("GET %s = %d with body %q — must not serve a page or an asset", path, w.Code, w.Body.String())
-		}
-		if w.Code != http.StatusNotFound {
-			t.Errorf("GET %s = %d, want 404", path, w.Code)
-		}
+// TestStaticAssets_ShapesOutsideTheAssetRoute pins WHERE each odd /static/
+// shape is answered. The participant ingress carries a /static/ Prefix entry,
+// so every one of these reaches the app. Which handler answers differs, and
+// the difference is the security-relevant part:
+//
+//   - a single segment (even a percent-encoded dot-dot) matches
+//     GET /static/{asset} and gets staticassets.go's JSON 404 + no-store;
+//   - anything else does not match that route and FALLS THROUGH to GET /
+//     (the admin dashboard's handler), which is 404 only because of its
+//     `r.URL.Path != "/"` check in view.go. Here the mux is built with an
+//     admin identity, so if that check is deleted these paths return the
+//     dashboard HTML 200 and this test goes red.
+func TestStaticAssets_ShapesOutsideTheAssetRoute(t *testing.T) {
+	mux := staticTestMux(t) // isAdmin always true
+	tokens := staticAssets.byName["tokens.css"].servedName
+
+	for _, path := range []string{"/static/..%2Fx", "/static/%2e%2e", "/static/%2e%2e%2f"} {
+		t.Run("asset route 404: "+path, func(t *testing.T) {
+			w := doGET(mux, path, nil)
+			if w.Code != http.StatusNotFound || w.Header().Get("Cache-Control") != "no-store" ||
+				!strings.HasPrefix(w.Header().Get("Content-Type"), "application/json") {
+				t.Fatalf("GET %s = %d, Cache-Control %q, Content-Type %q, body %q; want the asset route's JSON 404 + no-store",
+					path, w.Code, w.Header().Get("Cache-Control"), w.Header().Get("Content-Type"), w.Body.String())
+			}
+		})
 	}
+
+	for _, path := range []string{"/static", "/static/", "/static/a/b", "/static/x/", "/static/" + tokens + "/x"} {
+		t.Run("falls through to GET / and is 404'd there: "+path, func(t *testing.T) {
+			w := doGET(mux, path, nil)
+			// http.NotFound from index(): text/plain, the stdlib body. The
+			// dashboard would be text/html, the asset route application/json.
+			if w.Code != http.StatusNotFound || !strings.HasPrefix(w.Header().Get("Content-Type"), "text/plain") ||
+				w.Body.String() != "404 page not found\n" {
+				t.Fatalf("GET %s = %d, Content-Type %q, body %q; want index()'s plain 404 (path check in view.go)",
+					path, w.Code, w.Header().Get("Content-Type"), w.Body.String())
+			}
+		})
+	}
+
+	// A doubled slash is cleaned by the mux itself: a 307 to the single-slash
+	// path, which is then the asset route again. It never reaches a handler.
+	t.Run("a doubled slash is redirected by the mux", func(t *testing.T) {
+		w := doGET(mux, "/static//"+tokens, nil)
+		if w.Code != http.StatusTemporaryRedirect || w.Header().Get("Location") != "/static/"+tokens {
+			t.Fatalf("GET /static//%s = %d Location %q, want 307 to /static/%s", tokens, w.Code, w.Header().Get("Location"), tokens)
+		}
+	})
 }
 
 // TestHTMLShells_AreNoStore is D3: both shells (and the 403 of GET /) carry
@@ -254,12 +320,27 @@ func TestHTMLShells_AreNoStore(t *testing.T) {
 	if w.Code != http.StatusForbidden || w.Header().Get("Cache-Control") != "no-store" {
 		t.Errorf("GET / as non-admin = %d, Cache-Control %q; want 403 + no-store", w.Code, w.Header().Get("Cache-Control"))
 	}
+
+	// The 500 that writeSecurityHeaders' own failure produces (a control
+	// character in PORTAL_TTYD_SUFFIX) carries no-store too: the header is
+	// set before the validation that can fail.
+	bad := New(func(*http.Request) bool { return true }, func(*http.Request) string { return "user1" }, "bad\x00suffix", slog.New(slog.DiscardHandler))
+	w = httptest.NewRecorder()
+	bad.portal(w, httptest.NewRequest("GET", "/portal", nil))
+	if w.Code != http.StatusInternalServerError || w.Header().Get("Cache-Control") != "no-store" {
+		t.Errorf("GET /portal with an invalid ttyd suffix = %d, Cache-Control %q, body %q; want 500 + no-store", w.Code, w.Header().Get("Cache-Control"), w.Body.String())
+	}
 }
 
 var (
-	// htmlRefRe: <link rel="stylesheet" href=...> and <script src=...>.
-	linkHrefRe  = regexp.MustCompile(`(?i)<link\b[^>]*\brel="stylesheet"[^>]*\bhref="([^"]*)"`)
-	scriptSrcRe = regexp.MustCompile(`(?i)<script\b[^>]*\bsrc="([^"]*)"`)
+	// The extraction cuts out each whole tag first and then looks at its
+	// attributes one by one, so attribute order (href before rel, extra
+	// attributes between them) does not change what is found.
+	linkTagRe   = regexp.MustCompile(`(?is)<link\b[^>]*>`)
+	scriptTagRe = regexp.MustCompile(`(?is)<script\b[^>]*>`)
+	relAttrRe   = regexp.MustCompile(`(?i)\brel="([^"]*)"`)
+	hrefAttrRe  = regexp.MustCompile(`(?i)\bhref="([^"]*)"`)
+	srcAttrRe   = regexp.MustCompile(`(?i)\bsrc="([^"]*)"`)
 	cssURLRe    = regexp.MustCompile(`url\(([^)]*)\)`)
 )
 
@@ -267,11 +348,20 @@ var (
 // script srcs that are same-origin paths (start with one "/").
 func sameOriginRefs(body string) []string {
 	var out []string
-	for _, re := range []*regexp.Regexp{linkHrefRe, scriptSrcRe} {
-		for _, m := range re.FindAllStringSubmatch(body, -1) {
-			if strings.HasPrefix(m[1], "/") && !strings.HasPrefix(m[1], "//") {
-				out = append(out, m[1])
-			}
+	add := func(ref string) {
+		if strings.HasPrefix(ref, "/") && !strings.HasPrefix(ref, "//") {
+			out = append(out, ref)
+		}
+	}
+	for _, tag := range linkTagRe.FindAllString(body, -1) {
+		rel, href := relAttrRe.FindStringSubmatch(tag), hrefAttrRe.FindStringSubmatch(tag)
+		if rel != nil && href != nil && strings.EqualFold(strings.TrimSpace(rel[1]), "stylesheet") {
+			add(href[1])
+		}
+	}
+	for _, tag := range scriptTagRe.FindAllString(body, -1) {
+		if src := srcAttrRe.FindStringSubmatch(tag); src != nil {
+			add(src[1])
 		}
 	}
 	return out
@@ -400,15 +490,30 @@ func TestCheckAssetRefs_MutationsGoRed(t *testing.T) {
 		var buf bytes.Buffer
 		if err := portalTmpl.Execute(&buf, portalData{Nonce: "n", Assets: reg}); err == nil {
 			t.Fatal("portal rendered although tokens.css is not in the registry")
+		} else if !strings.Contains(err.Error(), `"tokens.css" is not registered`) {
+			t.Fatalf("portal failed for a different reason: %v", err)
 		}
 		if err := indexTmpl.Execute(&buf, indexData{Nonce: "n", Assets: reg}); err == nil {
 			t.Fatal("index rendered although tokens.css is not in the registry")
+		} else if !strings.Contains(err.Error(), `"tokens.css" is not registered`) {
+			t.Fatalf("index failed for a different reason: %v", err)
 		}
 	})
 	t.Run("a nil registry fails the render", func(t *testing.T) {
 		var buf bytes.Buffer
 		if err := portalTmpl.Execute(&buf, portalData{Nonce: "n"}); err == nil {
 			t.Fatal("portal rendered with no registry attached")
+		} else if !strings.Contains(err.Error(), "no registry is attached") {
+			t.Fatalf("portal failed for a different reason: %v", err)
+		}
+	})
+	t.Run("attribute order does not hide a stylesheet", func(t *testing.T) {
+		// href before rel, and an attribute between them: a pattern that
+		// assumed rel-then-href would extract nothing and V2 would pass
+		// on a document it never looked at.
+		refs := sameOriginRefs(`<link href="/static/a.css" media="all" rel="stylesheet"><link rel="icon" href="/favicon.ico">`)
+		if len(refs) != 1 || refs[0] != "/static/a.css" {
+			t.Fatalf("extracted %v, want exactly [/static/a.css] (rel=icon is not a stylesheet)", refs)
 		}
 	})
 }
