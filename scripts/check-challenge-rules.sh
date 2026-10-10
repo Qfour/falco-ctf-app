@@ -10,8 +10,20 @@
 # the rule actually fire when the intended action runs") needs a cluster — see
 # falco-ctf-platform scripts/verify.sh for the Falco→scoreboard pipeline check.
 #
-# Pin matches the falco chart's bundled rules (helmfile falco release). Bump
-# both together. Override the source with FALCO_RULES_URL for a local file.
+# PIN (app#323): FALCO_RULES_REF must be the falcosecurity/rules version the
+# platform cluster ACTUALLY loads, not an older one that merely still passes.
+# The cluster follows the `falco-rules` falcoctl artifact on its 5 series
+# (falco-ctf-platform helmfile/releases/falco); the platform freezes that to
+# one version by digest (5.2.0 at the time of writing). A stale pin here makes
+# this required check green while the real ruleset has renamed/dropped a rule:
+# an evade `forbiddenRules` entry then never fires (free-win), a trigger
+# `expectedRules` entry never fires (softlock). When the platform's version
+# moves, bump FALCO_RULES_REF in the same change window. Override the source
+# with FALCO_RULES_URL for a local file.
+#
+# FAIL-CLOSED: the fetch must succeed (curl -f: a deleted tag / HTTP error /
+# network failure exits non-zero, never an empty "no rules" pass) and must
+# contain a plausible number of `- rule:` entries before anything is compared.
 #
 # ADR-0008 Decision (5): the platform's Falco deployment now also loads
 # project-specific `customRules` (falco-ctf-platform/helmfile/releases/falco/
@@ -29,14 +41,28 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
-FALCO_RULES_REF="${FALCO_RULES_REF:-falco-rules-3.0.1}"
+FALCO_RULES_REF="${FALCO_RULES_REF:-falco-rules-5.2.0}"
 FALCO_RULES_URL="${FALCO_RULES_URL:-https://raw.githubusercontent.com/falcosecurity/rules/${FALCO_RULES_REF}/rules/falco_rules.yaml}"
 CUSTOM_RULES_FILE="${CUSTOM_RULES_FILE:-challenges/custom-falco-rules.txt}"
 
 rules_file="$(mktemp)"
 trap 'rm -f "$rules_file"' EXIT
 echo "==> fetching Falco ruleset (${FALCO_RULES_REF})"
-curl -fsSL "$FALCO_RULES_URL" -o "$rules_file"
+curl -fsSL --retry 3 --retry-delay 2 "$FALCO_RULES_URL" -o "$rules_file"
+
+# Whole rule names, one per line. Membership is an EXACT line match: a plain
+# `grep -F "rule: $r"` would also accept a referenced name that is merely a
+# prefix of a longer upstream rule name.
+upstream_names="$(mktemp)"
+trap 'rm -f "$rules_file" "$upstream_names"' EXIT
+sed -nE 's/^- rule: (.*[^[:space:]])[[:space:]]*$/\1/p' "$rules_file" > "$upstream_names"
+MIN_UPSTREAM_RULES=10
+upstream_count="$(wc -l < "$upstream_names" | tr -d ' ')"
+if [ "$upstream_count" -lt "$MIN_UPSTREAM_RULES" ]; then
+  echo "FAIL: ${FALCO_RULES_URL} yielded ${upstream_count} rules (< ${MIN_UPSTREAM_RULES}) — not a Falco ruleset; refusing to compare against it." >&2
+  exit 1
+fi
+echo "    ${upstream_count} upstream rules"
 
 echo "==> loading project custom rule manifest (${CUSTOM_RULES_FILE})"
 custom_rules=""
@@ -52,7 +78,7 @@ refs="$(grep -rhoE '^[[:space:]]+- "?[A-Z][^"]+"?$' challenges/*/falco-rule.yaml
 rc=0
 while IFS= read -r r; do
   [ -z "$r" ] && continue
-  if grep -qF "rule: $r" "$rules_file"; then
+  if grep -qxF -- "$r" "$upstream_names"; then
     echo "  ✓ $r (upstream)"
   elif printf '%s\n' "$custom_rules" | grep -qxF "$r"; then
     echo "  ✓ $r (custom, ${CUSTOM_RULES_FILE})"
