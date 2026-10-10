@@ -1605,7 +1605,7 @@ func TestSubmitEvade_SevenForbiddenRules_ResetRequiresFreshExfil(t *testing.T) {
 		t.Fatalf("one of seven forbidden rules must dirty the pair, got %v", got)
 	}
 
-	// The participant also proves the technique and delivers the exfil
+	// The participant also fires the proof rule and delivers the exfil
 	// receipt — neither may solve the pair while it is dirty.
 	res = g.OnRuleFire("alice", proof)
 	if res.TaintErr != nil || res.ExpectedFireErr != nil {

