@@ -120,6 +120,7 @@ falco-ctf-app/
 | Challenges path | platform の `deploy-user.sh --challenges-dir <path>` が当 repo の `challenges/` を指す。CI では sparse checkout |
 | Webhook payload | `POST /falco/events` の JSON は falcosidekick 標準形。フィールドキー変更は両 repo 同時 PR |
 | Cookie domain | `.<ctf-domain>` は platform が決定。app 側は前提とする |
+| Participant path | 参加者に開く path 集合の正典は `charts/scoreboard/templates/ingress-journey.yaml` (I15 が mux と機械照合する)。platform は文書で参照するだけ。path / pathType の変更は両 repo 同時 PR。chart と image は同じ SHA で同時に入れる (ADR-0028) |
 
 ## ブランチ戦略 (GitHub Flow + release タグ)
 
