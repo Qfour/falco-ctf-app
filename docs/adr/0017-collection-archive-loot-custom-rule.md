@@ -355,7 +355,7 @@ rule override (ADR-0008)」行に、実装 PR のタイミングで本 rule 名�
   ディレクトリへの `tar` → NO FIRE。実際の Falco JSON 出力
   (`rule=Archive Collected Data`, `file=.../customer-roster.csv`, `tool=tar`) を
   challenge README に転記済み。
-- **(b)**: `TestExpectedRuleFire_NewRuleNameUniqueToMission13`
+- **(b)**: `TestCustomFalcoRules_EachNameOwnedByExactlyOneChallenge` (旧 `…UniqueToMission13` を表駆動に統合、ADR-0032 S2)
   (`internal/catalog/catalog_test.go`) を新設、ADR-0008 の
   `...Mission05` 版と同型。`make test` (`docker build --no-cache`, VP 独立再実行)
   で green。

@@ -221,7 +221,7 @@ S2 の行 (app の S2 PR で入る) を除き、すべて**未実装**。`make t
 
 | 段階 | 区分 | テスト |
 |---|---|---|
-| S2 | [S] | `TestExpectedRuleFire_NewRuleNameUniqueToMission10` (D9 (f)。S3b-2 の行から移した) / `TestMission10DisplayRuleExcerptExcludesProof` (D9 (i)。「機械で守るもの」(2)) / Me pane の 2 本 (既存の `TestFalcoEvents_IgnoresBelowMinimumPriority` の拡張を含む。下の「Me pane の表示」: Informational の発火は `GET …/me` の `recent_rule_fires` に出ず、10 の証明の rule の発火は出る。D9 (h)・D12 の app 側の層) |
+| S2 | [S] | `TestCustomFalcoRules_EachNameOwnedByExactlyOneChallenge` (D9 (f)。S3b-2 の行から移した) / `TestMission10DisplayRuleExcerptExcludesProof` (D9 (i)。「機械で守るもの」(2)) / Me pane の 2 本 (既存の `TestFalcoEvents_IgnoresBelowMinimumPriority` の拡張を含む。下の「Me pane の表示」: Informational の発火は `GET …/me` の `recent_rule_fires` に出ず、10 の証明の rule の発火は出る。D9 (h)・D12 の app 側の層) |
 | S3a | [G] | I11 の既存 6 本と `internal/store/store_test.go` の証跡系が無変更で green |
 | S3a | [S] | `TestMigrate_UserVersion2_AddsEpochColumnsAndAttemptTables` / `TestAttempt_EpochNeverReused` (切り替え・やり直し・admin reset をまたぐ) / `TestAttemptWrite_FailureLeavesStateIntact` (開始・切り替え・やり直しのそれぞれで、採番表か `evade_attempt` の書き込みを失敗させる) / `TestAttempt_SurvivesStoreRestart` / `TestAdminReset_IsAtomic` (途中の DELETE を失敗させても何も消えない) / `TestAdminReset_ClearsAttempt_KeepsSequence` (Reset の後、最後の attempt が active に戻らず、次の epoch は続きから) |
 | S3c | [S] | collector の `TestForward_StripsAuthRequestHeaders` |
