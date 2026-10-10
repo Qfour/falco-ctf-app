@@ -17,7 +17,7 @@ SYSDIG_URL   ?= https://app.au1.sysdig.com
 # host repo are not shared into the VM.
 GO_IMAGE ?= golang:1.26-alpine
 
-.PHONY: help dev dev-down build push load-colima deploy-local helm-dep-build lint check-seccomp check-flag-isolation check-namespace-ownership check-image-hygiene test tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-template-hex check-rules check-freshness check-adr clean scan
+.PHONY: help dev dev-down build push load-colima deploy-local helm-dep-build lint check-seccomp check-flag-isolation check-namespace-ownership check-image-hygiene test tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-template-hex check-rules check-freshness check-adr check-dockerignore clean scan
 
 help:
 	@echo "Targets:"
@@ -44,6 +44,7 @@ help:
 	@echo "  check-template-hex — fail if a raw hex color literal appears under view/templates/ (recursive: index.html + portal/*.tmpl; app#116 — single design-token source is static/tokens.css)"
 	@echo "  check-rules     — fail if a challenge references a non-existent Falco rule"
 	@echo "  check-freshness — fail if a Dockerfile base image cycle is past EOL (needs network)"
+	@echo "  check-dockerignore — fail if .dockerignore stops excluding decrypted/credential files (*.dec.yaml, *.dec.json, kubeconfig*, *.secret.*) or a tracked file matches them (app#322)"
 	@echo "  check-adr       — fail on ADR number collisions, filename/header drift, or docs/adr/README.md index gaps (#181); prints the next free ADR number on success"
 	@echo "  scan            — sysdig-cli-scanner on all built images (SYSDIG_SECURE_API_TOKEN required)"
 	@echo "  clean           — remove built images locally"
@@ -187,6 +188,13 @@ check-freshness:
 
 check-adr:
 	./scripts/check-adr-numbers.sh
+
+# app#322 (ADR-0031 H1 (h)): .dockerignore must keep excluding decrypted /
+# credential files from every build context. --selftest proves the guard
+# rejects broken inputs. See scripts/check-dockerignore.sh.
+check-dockerignore:
+	./scripts/check-dockerignore.sh
+	./scripts/check-dockerignore.sh --selftest
 
 scan: build
 	@command -v sysdig-cli-scanner >/dev/null 2>&1 || \

@@ -162,7 +162,10 @@ jobs:
   # design-token hygiene failure, NOT a flag leak)
   # + ADR number/index hygiene (#181 — duplicate ADR numbers, filename/header
   # drift, docs/adr/README.md index gaps; unrelated to flags or design
-  # tokens). All three checks share this job for CI-job-count economy and
+  # tokens)
+  # + .dockerignore credential-file exclusions (app#322 — *.dec.yaml,
+  # *.dec.json, kubeconfig*, *.secret.* must stay excluded from build
+  # contexts). All four checks share this job for CI-job-count economy and
   # because it's already a required check, not because they're the same
   # risk category.
   # Branch protection check: "flag-guard"
@@ -179,6 +182,10 @@ jobs:
         run: ./scripts/check-template-hex.sh
       - name: ADR number / index hygiene (#181)
         run: ./scripts/check-adr-numbers.sh
+      - name: .dockerignore excludes decrypted/credential files (app#322, fail-closed + selftest)
+        run: |
+          ./scripts/check-dockerignore.sh
+          ./scripts/check-dockerignore.sh --selftest
 
   # ------------------------------------------------------------------
   # Shell hygiene: shellcheck (-S warning) over every shell script in the repo.
