@@ -173,4 +173,21 @@
   --p-tracking-wider: 0.35em;
   --p-page-padding: 2.25rem 3rem 4rem;
   --p-panel-radius: 0.85rem;
+
+  /* --- 4. Avatar background colors (ADR-0034 D9, S1). The six colors a
+     participant picks for the circle behind a white glyph (static/avatars,
+     one SVG per glyph). A color is applied to the img background and never
+     inside the SVG, where custom properties do not resolve. Rule: every value
+     keeps white-glyph contrast >= 3:1 (WCAG 1.4.11, non-text). The tests
+     compute this from this very file (TestAvatarColors_WhiteContrast), so a
+     new value that is too light fails there. cyan and violet reuse existing
+     palette steps; the other four are new hues kept inside the same lightness
+     band, so that on --surface-2 and --bg they still read as a disc. The
+     comment on each line is the hue family. --- */
+  --avatar-cyan: var(--falco-2);          /* Falco blue, the brand step */
+  --avatar-magenta: #D02D7A;              /* hot pink, apart from violet by hue */
+  --avatar-amber: #A05A00;                /* burnt orange, darker than --warn so white reads */
+  --avatar-lime: #6C9E10;                 /* green-yellow, the lightest of the six */
+  --avatar-violet: var(--cyber-magenta-700); /* the evade violet, deep step */
+  --avatar-slate: #5F7385;                /* blue-gray, the quiet one */
 }
