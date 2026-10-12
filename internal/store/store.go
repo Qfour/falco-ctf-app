@@ -445,9 +445,11 @@ func (s *Store) StepChecks(user string) map[string][]int {
 }
 
 // SetDisplayName sets or OVERWRITES the display name for `user`
-// (last-write-wins). Used by both the participant self-service path
-// (`/api/users/{user}/display-name`, keyed to the workspace's own
-// $FALCO_CTF_USER) and the admin override (`/api/admin/users/{user}/...`).
+// (last-write-wins). Its only caller is the admin override
+// (`POST /api/admin/users/{user}/display-name`); a participant's own name is
+// written, together with the avatar, by SetProfile (`POST
+// /api/users/{user}/profile`, ADR-0034 D8). The participant display-name route
+// and the workspace's `setname` that used it were removed in ADR-0034 S1.
 // Identity (`user`) is the auth-derived stable key; `name` is purely cosmetic.
 // Unset users render as their username (see DisplayName).
 func (s *Store) SetDisplayName(user, name, at string) error {

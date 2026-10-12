@@ -15,6 +15,16 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
 
 ### Added
 
+- 参加者のプロフィール (ADR-0034 D8〜D10)。表示名に加えて、用意した絵柄の id (`<glyph>-<color>`、8 glyph x 6 色 = 48 個。画像のアップロードは無い) を選べる。
+  - `POST /api/users/{user}/profile` — body は `{display_name?, avatar?}` (1 つ以上、他の key は 400)。origin-guard 付き・self-or-admin (認証ヘッダー必須)・identity 単位の rate limit・collector は forward しない。全項目を検証してから 1 トランザクションで書く。`avatar` は 47 個から選べ、運営の掲示に付く固定の `flame-slate` は 400。
+  - `POST /api/admin/users/{user}/profile-reset` — 表示名と絵柄を seat の既定に戻す (admin のみ・origin-guard 付き)。
+  - 応答に `avatar` を additive で追加: `Me`・`Journey`・`LeaderboardEntry`・`ChallengeSolver`・`SolveRecord`、`BoardMessage` は `authorAvatar`。未設定の席は seat から決まる既定の id (`user1`〜`user40` は互いに異なる)。
+  - `GET /static/{asset}` が `avatars/` の下に限り `.svg` を配る (ADR-0028 D5 の拡張子の集合を ADR-0034 D9 が限定 supersede)。登録表が起動時に SVG を要素・属性の allow-list で検査し、応答に `X-Content-Type-Options: nosniff` と `sandbox` の CSP を付ける。
+  - SQLite の schema migration 2 (`avatars` 表。additive)。**アップグレード時の注意は下の「Upgrade note」。**
+- **Upgrade note (migration 2 / ロールバック)**: この版の scoreboard が一度起動した DB は `PRAGMA user_version = 2` になる。以降、この版より前の image に戻すと、旧 image は ADR-0020 の downgrade guard (fail-closed) により起動を拒否する (`database schema version v2 is newer than this binary supports`)。復旧は次のどちらか。
+  - **DB を復元する** — migration 前の PVC snapshot / 退避を戻す (確実。その後に書かれた solve は失われる)。
+  - **`avatars` は additive なので `user_version` を 1 に戻す** — scoreboard を止めて (replicas=1 + Recreate)、DB ファイルに `PRAGMA user_version = 1;` を実行してから旧 image を起動する (scoreboard の image に `sqlite3` は無いので、DB を別 Pod にマウントするか取り出して実行する)。旧 image は `avatars` 表を読まず、自分の表はそのまま使える。後でこの版に上げ直すと migration 2 は `CREATE TABLE IF NOT EXISTS` なので、戻す前に選ばれていた絵柄は残る。`internal/store` の `TestMigrate_RollbackToV1_OldBinaryRunsAndAReUpgradeKeepsAvatars` が旧 binary の拒否・戻した後の起動・再アップグレードを固定している。実機の PVC での手順は未リハーサル。
+
 ### Changed
 
 - portal: 進行位置にない (`locked`) 課題の見出しを `PREVIEW · LOCKED` から `UPCOMING MISSION` に変更
@@ -29,9 +39,10 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
   `GET /api/users/{user}/journey` の `detail.hints` と `detail.steps[].checked` は
   `status` ではなく保存済みの状態だけで決まる。応答のキー集合は変わらない。
   詳細: `docs/adr/0027-hint-gate-decoupled-from-current.md`。
+- **破壊的変更 (公開 contract)**: 次の 3 つは外部クライアントや運用 script に見える除去である。[`docs/RELEASING.md`](docs/RELEASING.md) の MAJOR の列挙 (webhook payload / image 命名 / challenges スキーマ) には直接は当たらないが、contract の除去なので MAJOR 相当として扱う (実際の版は CEO のタグ運用で決める)。(1) 参加者用 `POST /api/users/{user}/display-name` の撤去 (Removed)、(2) collector の forward 2 本化 (下)、(3) `deploy-user.sh --display-name` の廃止 (下)。platform の `--names-file` 廃止を先に merge し、その後に events の app pin を進める。
 - collector の forward を 3 本から 2 本 (`submit` / `exfil`) にした (ADR-0034 D12 S1)。`POST /api/users/{user}/display-name` は collector でも 404/405 (default-deny) になる。`docs/openapi-collector.yaml` は 5 → 4 operation、`docs/openapi-scoreboard.yaml` は `x-ctf-collector-forward: true` が 3 → 2 本。**公開 contract の変更**: 外部クライアントが collector 経由で表示名を書いていた場合は、認証済みの profile route に移る必要がある。
 - 表示名と絵柄の設定は、ワークスペースの端末ではなくポータルの Me 画面に移った。初期値は seat のまま。案内文 (`banner.sh`、00-tutorial の welcome / step、ハンドブック、コマンド集) を差し替えた。
-- `deploy-user.sh` の `--display-name` を廃止した (ADR-0034 D10)。渡すと理由を stderr に出して exit 2 になり、kubectl / helm を呼ばずに止まる。deploy は表示名を書かない (旧 step 6 を削除、step 数は常に 5)。platform の `deploy-event-workspaces.sh --names-file` も同時に廃止する (platform 側の変更)。
+- `deploy-user.sh` の `--display-name` を廃止した (ADR-0034 D10)。渡すと理由を stderr に出して exit 2 になり、kubectl / helm を呼ばずに止まる。deploy は表示名を書かない (旧 step 6 を削除、step 数は常に 5)。platform の `deploy-event-workspaces.sh --names-file` も同時に廃止する (platform 側の変更)。**`--names-file` を使っている間に、この変更を含む app ref へ events の pin を進めると、全 user の deploy が exit 2 になる** (cluster に触れる前に止まり、理由が出る)。platform の廃止を先に merge すること。
 
 ### Removed
 
@@ -58,7 +69,7 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
   検査の selftest は `scripts/check-missions-allowlist-assert.sh` (`make check-flags` / CI `flag-guard`)。
 - portal (`/portal`) と admin dashboard (`/`) は他の origin の iframe に埋め込めなくなった (`frame-ancestors 'none'` + `X-Frame-Options: DENY`)。oauth2-proxy の `SameSite=None` cookie の下で起こり得た clickjacking を閉じる。ttyd の埋め込み (portal が親) には影響しない (app#326)
 
-- `POST /api/users/{user}/display-name` を collector 専用にした (ADR-0034 D12 S1 の前倒し)。`X-Auth-Request-*` ヘッダが 1 つでも付いた要求 (= ブラウザ経路) は本人でも admin でも 403、本文が `application/json` でなければ 415。これまでは journey ingress 経由の cross-site POST で本人 (admin セッションなら全員) の表示名を書き換えられ、偽ヘッダ付き要求の 200 / 403 の差で `ADMIN_EMAILS` への所属も推測できた。端末の `setname` (collector 経由・ヘッダ無し・JSON) は変更なし。
+- `POST /api/users/{user}/display-name` のブラウザ経路を閉じた (ADR-0034 D12 S1 の前倒し)。`X-Auth-Request-*` ヘッダが 1 つでも付いた要求 (= ブラウザ経路) は本人でも admin でも 403、本文が `application/json` でなければ 415 にした。これまでは journey ingress 経由の cross-site POST で本人 (admin セッションなら全員) の表示名を書き換えられ、偽ヘッダ付き要求の 200 / 403 の差で `ADMIN_EMAILS` への所属も推測できた。**この項は、その hotfix を単独で入れた版の記録である。ADR-0034 S1 を含む版ではこの route 自体を Removed 項で撤去しており、collector の forward も、端末の `setname` もない。**
 - Falco webhook (`POST /falco/events`) と collector 専用の exfil sink (`POST /internal/exfil/{cid}`) の受信をブラウザ経路から閉じた。`X-Auth-Request-*` ヘッダが付いた要求は 403、本文が `application/json` でなければ 415 (falcosidekick の webhook は元から JSON。exfil の受信は `Content-Type: application/json` を要求するので、`-H` 無しの `curl -d` は 415 になる)。
 - flags ファイル (`FLAGS_FILE` / `deploy-user.sh --flags-file`) の検証を fail-closed 化。
   これまでは evade 課題の id が欠けていても既定値 (placeholder) のまま起動していた。

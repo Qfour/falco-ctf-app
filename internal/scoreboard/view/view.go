@@ -238,7 +238,7 @@ func (h *Handler) Routes() []apispec.Route {
 		},
 		{
 			// ADR-0028 D1: the ONE static-asset route. Every first-party asset
-			// (css, woff2) is served here under a content-hash name from the
+			// (css, woff2 and, under avatars/, svg) is served here under a content-hash name from the
 			// registry in staticassets.go; adding an asset adds no route, no spec
 			// operation and no ingress entry.
 			Method:           "GET",

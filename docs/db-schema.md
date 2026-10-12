@@ -131,10 +131,11 @@ Participant/operator-set leaderboard display name. **Last-write-wins** — every
 writer overwrites, there is no first-set-only rule (an older version of this
 page said the participant path was first-set-only; it never was in the store,
 and the spec and `Store.SetDisplayName` / `Store.SetProfile` are the canon).
-Writers: `POST /api/users/{user}/profile` (self-or-admin, ADR-0034 D8, together
-with the avatar in one transaction), the collector-forwarded
-`POST /api/users/{user}/display-name`, and the admin
-`POST /api/admin/users/{user}/display-name`. `POST
+Writers: exactly two. `POST /api/users/{user}/profile` (self-or-admin, ADR-0034
+D8, together with the avatar in one transaction, via `Store.SetProfile`) and the
+admin `POST /api/admin/users/{user}/display-name` (`Store.SetDisplayName`). The
+collector-forwarded participant `POST /api/users/{user}/display-name` (the
+workspace's `setname`) was removed in ADR-0034 S1. `POST
 /api/admin/users/{user}/profile-reset` deletes the row (the name falls back to
 the seat). `POST /api/admin/reset` leaves it alone.
 

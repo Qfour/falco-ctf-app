@@ -1685,6 +1685,17 @@ func (h *Handler) resetDirty(w http.ResponseWriter, r *http.Request) {
 
 // --- request-shape helpers shared by collector-only / JSON-only writes -------
 
+// NOTE (unused on this branch, kept on purpose): the three helpers below
+// (errMsgUnsupportedMediaType, hasProxyIdentityHeader, isJSONContentType) came
+// in with the display-name browser-path hotfix, whose only caller was the
+// participant display-name route that ADR-0034 S1 removes. The webhook / exfil
+// browser-path hotfix (branch fix/webhook-exfil-browser-path-403, which merges
+// BEFORE this one) calls all three for POST /falco/events and
+// POST /internal/exfil/{cid}, and the Authz vocabulary entry
+// internal-claimed-identity (apispec.AuthzInternalClaimedIdentity) is used by
+// those two routes for the same reason. Do not delete them as dead code, and do
+// not paper over the lack of a caller with `_ =`.
+
 // errMsgUnsupportedMediaType is the stable 415 body for routes that require a
 // JSON request body.
 const errMsgUnsupportedMediaType = "content type must be application/json"

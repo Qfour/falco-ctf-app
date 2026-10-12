@@ -81,7 +81,7 @@ falco-ctf-app/
 │                       authpolicy / collector
 ├── scoreboard/         Dockerfile のみ (Go multi-stage, Falco webhook 受信 + 採点)
 ├── auth-policy/        Dockerfile のみ (Go multi-stage, host↔email 認可)
-├── collector/          Dockerfile のみ (Go, 参加者向け単一入口。submit/me/exfil を
+├── collector/          Dockerfile のみ (Go, 参加者向け単一入口。submit/exfil を
 │                       scoreboard へ forward。CTF 状態は持たない)
 ├── images/
 │   ├── ttyd/           ユーザが触る Web ターミナル
@@ -142,7 +142,7 @@ make deploy-local         # helm upgrade --install scoreboard + auth-policy (app
 |---|---|---|
 | `scoreboard` | Falco webhook 受信 + ユーザ×課題マトリクス + 採点 | `charts/scoreboard/` |
 | `auth-policy` | ingress-nginx auth-url 前段 (host↔email) | `charts/auth-policy/` |
-| `collector` | 参加者向け単一入口 (submit/me/exfil を scoreboard へ forward) | `charts/collector/` |
+| `collector` | 参加者向け単一入口 (submit/exfil を scoreboard へ forward) | `charts/collector/` |
 | `ttyd` | Web ターミナル (kubectl exec バックエンド) | `charts/ctf-user/` |
 | `challenge` | challenge コンテナのベースイメージ | `charts/ctf-user/` |
 | `docs` | 課題ドキュメントサイト (MkDocs Material + PDF) | `charts/docs/` |

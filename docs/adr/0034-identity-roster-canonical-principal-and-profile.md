@@ -140,7 +140,7 @@ pin されている (ADR-0028 D5。P28-0c で実装中)。
     既存の `/api/users/` Prefix と admin の `/` に入るので、I15 の追加作業は無い。
 - **D9 絵柄。** id は `<glyph>-<color>`。集合は Go の表 1 つで、検証・描画・既定値の正典にする。組合せは 48 以上 (40 席 + 予約 8。brief の 8 × 6 を仮置き、
   design が決める)。既定は seat から決める: `user<N>` (先頭 0 なしの 10 進で N ≤ 組合せ数 − 8) は N 番目、他の seat (`test1`・`user01`・範囲外の N) は
-  末尾 8 個の予約域に hash で割り当てる (prod の席 = N 席 + `test1` で重複しない)。DB に表に無い id が残っていれば応答も描画も既定の id にする。画像は
+  末尾 8 個の予約域のうち、**運営の固定 id (48 番目) を除く 7 個**に hash で割り当てる (prod の席 = N 席 + `test1` で重複しない。運営の固定 id は D8 のとおり参加者が持てない: 既定にも選択肢にもせず、profile route は 400。S1 の review-5x R4#3 で実装に揃えた)。DB に表に無い id が残っていれば応答も描画も既定の id にする。画像は
   `/static/` の SVG とし、**ADR-0028 D5 の拡張子の集合に `.svg` を足す (限定 supersede)**。条件: (a) 登録表を作るときに (名前空間, 要素 / 属性) の組を
   allowlist で検査し (列挙に無いものは拒否。XHTML 名前空間の `script` も落ちる)、とくに `script`・`foreignObject`・`on*` 属性・`animate` / `set`・`xml:base`・
   `<?xml-stylesheet`・`<!DOCTYPE` / `<!ENTITY`・`#` 以外への参照・`url(#…)` 以外の url を起動時エラーにする (b) `.svg` の応答に `X-Content-Type-Options: nosniff`
