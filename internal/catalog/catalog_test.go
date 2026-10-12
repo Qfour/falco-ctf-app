@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
@@ -175,6 +176,25 @@ expectedRules: ["Z"]`)
 	}
 }
 
+// TestLoad_ChallengeIDMustEqualDirName pins ADR-0026 interpretation 1 (app#320):
+// an explicit challengeId that differs from the directory name is rejected by
+// Load, not left to downstream checks.
+func TestLoad_ChallengeIDMustEqualDirName(t *testing.T) {
+	dir := t.TempDir()
+	writeChallenge(t, dir, "07-persist", `challengeId: "99-other"
+type: trigger
+expectedRules: ["Z"]`)
+	cat, err := catalog.Load(dir)
+	if err == nil {
+		t.Fatalf("expected error for challengeId != directory name, got catalog %v", cat.IDs())
+	}
+	for _, want := range []string{"99-other", "07-persist", "directory name"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q should mention %q", err, want)
+		}
+	}
+}
+
 func TestLoad_SkipsDirsWithoutFalcoRule(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "empty-dir"), 0o755); err != nil {
@@ -334,6 +354,13 @@ func TestLoad_RealChallenges(t *testing.T) {
 		"11-cloud-cred-hunt",
 		"12-cover-tracks",
 		"13-archive-loot",
+	}
+	// ADR-0026 interpretation 1 (app#320): challengeId == directory name for every
+	// real challenge (Load already rejects a mismatch; this pins it on the real tree).
+	for id, ch := range cat {
+		if ch.Dir() != id {
+			t.Errorf("challenge %q lives in directory %q: challengeId must equal the directory name", id, ch.Dir())
+		}
 	}
 	ids := cat.IDs()
 	if len(ids) != len(want) {
