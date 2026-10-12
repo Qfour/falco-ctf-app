@@ -192,6 +192,14 @@ paths:
         origin-guarded (no browser fetches it). Note the collector's bucket here
         is 1 req/s burst 10, while the scoreboard's own display-name limiter is
         stricter (1 per 5s, burst 5) — the tighter one wins in practice.
+
+        The scoreboard route is collector-only (`x-ctf-authz:
+        internal-claimed-identity` there): the collector adds no
+        `X-Auth-Request-*` header and passes `Content-Type` through, and the
+        scoreboard's refusals are relayed verbatim — `403` if the request
+        carried any `X-Auth-Request-*` header (a client-supplied one is
+        forwarded as-is, so a forged header is always refused), `415` if the
+        body is not `application/json`.
       parameters:
         - in: path
           name: user
@@ -208,6 +216,14 @@ paths:
             application/json: {}
         "400":
           description: relayed scoreboard error
+          content:
+            application/json: {}
+        "403":
+          description: relayed scoreboard refusal — the request carried an `X-Auth-Request-*` header
+          content:
+            application/json: {}
+        "415":
+          description: relayed scoreboard refusal — body is not `application/json`
           content:
             application/json: {}
         "429":

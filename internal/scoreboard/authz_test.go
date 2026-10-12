@@ -161,6 +161,28 @@ func newAuthzFixture(t *testing.T) *scoreboard.Handler {
 	)
 }
 
+// authzDo issues rt's request (allowed Origin, generic write body for non-GET)
+// with X-Auth-Request-Email: email when withHeader, or with NO identity header
+// at all when !withHeader.
+func authzDo(srv http.Handler, rt apispec.Route, email string, withHeader bool) *httptest.ResponseRecorder {
+	target := authzConcretePath(rt)
+	var body io.Reader
+	if rt.Method != http.MethodGet {
+		body = strings.NewReader(authzGenericBody)
+	}
+	r := httptest.NewRequest(rt.Method, target, body)
+	if body != nil {
+		r.Header.Set("Content-Type", "application/json")
+	}
+	r.Header.Set("Origin", allowedOrigin)
+	if withHeader {
+		r.Header.Set("X-Auth-Request-Email", email)
+	}
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, r)
+	return w
+}
+
 // authzCheck issues the request rt's Authz declaration calls for — an
 // allowed Origin (so the origin guard, a DIFFERENT mechanism that also
 // returns 403, can never masquerade as "the authz gate worked"; the mirror
@@ -178,29 +200,36 @@ func newAuthzFixture(t *testing.T) *scoreboard.Handler {
 // cannot be reused as a value-returning predicate the way this can.
 func authzCheck(t *testing.T, srv http.Handler, rt apispec.Route) string {
 	t.Helper()
-	target := authzConcretePath(rt)
-	var body io.Reader
-	if rt.Method != http.MethodGet {
-		body = strings.NewReader(authzGenericBody)
-	}
-	r := httptest.NewRequest(rt.Method, target, body)
-	if body != nil {
-		r.Header.Set("Content-Type", "application/json")
-	}
-	r.Header.Set("Origin", allowedOrigin)
-	r.Header.Set("X-Auth-Request-Email", authzMismatchedEmail)
-	w := httptest.NewRecorder()
-	srv.ServeHTTP(w, r)
+	w := authzDo(srv, rt, authzMismatchedEmail, true)
 
 	switch rt.Authz {
-	case apispec.AuthzAdmin, apispec.AuthzSelfOrAdmin, apispec.AuthzSelfOrAdminWrite, apispec.AuthzInternalClaimedIdentity:
-		// AuthzInternalClaimedIdentity (display-name, ADR-0034 D12 S1): ANY
-		// X-Auth-Request-* header is refused, so this proof request (which
-		// carries one) must be 403 exactly like the identity-gated classes.
-		// The header-less 200 half lives in TestDisplayName_CollectorPathStillWorks.
+	case apispec.AuthzAdmin, apispec.AuthzSelfOrAdmin, apispec.AuthzSelfOrAdminWrite:
 		if w.Code != http.StatusForbidden {
 			return fmt.Sprintf("%s: status=%d body=%s, want 403 (Authz: %s — %s does not satisfy it)",
 				rt.MuxPattern(), w.Code, w.Body, rt.Authz, authzMismatchedEmail)
+		}
+	case apispec.AuthzInternalClaimedIdentity:
+		// Collector-only (ADR-0034 D12 S1): ANY X-Auth-Request-* header is
+		// refused, whoever it claims to be, and a header-less request is NOT
+		// refused. The mismatched-identity 403 above alone cannot tell this
+		// class from self-or-admin(-write) (both 403 a stranger), so the two
+		// extra probes below are what pin the distinction: an ADMIN header (or
+		// the {user} owner's) still 403s here, which self-or-admin(-write)
+		// would let through; and no header at all passes, which self-or-admin
+		// (read) would 403.
+		if w.Code != http.StatusForbidden {
+			return fmt.Sprintf("%s: status=%d body=%s, want 403 (Authz: %s — any X-Auth-Request-* header is refused)",
+				rt.MuxPattern(), w.Code, w.Body, rt.Authz)
+		}
+		for _, email := range []string{authzAdminEmail, authzSelfUser + "@ctf.local"} {
+			if wa := authzDo(srv, rt, email, true); wa.Code != http.StatusForbidden {
+				return fmt.Sprintf("%s: status=%d body=%s with X-Auth-Request-Email: %s, want 403 (Authz: %s — a proven admin/owner identity must be refused too; a 200 means the route fell back to a self-or-admin-shaped gate)",
+					rt.MuxPattern(), wa.Code, wa.Body, email, rt.Authz)
+			}
+		}
+		if wn := authzDo(srv, rt, "", false); wn.Code == http.StatusForbidden {
+			return fmt.Sprintf("%s: status=%d body=%s with NO identity header, must NOT be 403 (Authz: %s — the collector path carries no header and must keep working)",
+				rt.MuxPattern(), wn.Code, wn.Body, rt.Authz)
 		}
 	case apispec.AuthzNone, apispec.AuthzClaimedIdentity:
 		if w.Code == http.StatusForbidden {
@@ -353,6 +382,31 @@ func TestAuthz_CatchesUnenforcedGate(t *testing.T) {
 		mux, _ := apispec.NewMux([]apispec.Route{rt})
 		if violation := authzCheck(t, mux, rt); violation == "" {
 			t.Fatal("expected authzCheck to flag a declared-admin route whose handler never enforces it, got no violation — the detector would be a permanent no-op")
+		}
+	})
+
+	t.Run("declared_internal_claimed_identity_but_self_or_admin_write_shaped", func(t *testing.T) {
+		// The shape display-name had before the collector-only fix:
+		// selfOrAdminWrite — a stranger's header is 403, but an admin's (or the
+		// owner's) passes and a header-less request passes. authzCheck must
+		// flag it for a route declaring internal-claimed-identity, which a
+		// "mismatched email gets 403" probe alone cannot (the same 403).
+		rt := apispec.Route{
+			Method:  "POST",
+			Pattern: "/api/users/{user}/example-internal",
+			Authz:   apispec.AuthzInternalClaimedIdentity,
+			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if email := r.Header.Get("X-Auth-Request-Email"); email != "" &&
+					email != authzAdminEmail && !strings.HasPrefix(email, r.PathValue("user")+"@") {
+					w.WriteHeader(http.StatusForbidden) // BUG: header-bearing admin/owner requests are accepted.
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+			}),
+		}
+		mux, _ := apispec.NewMux([]apispec.Route{rt})
+		if violation := authzCheck(t, mux, rt); violation == "" {
+			t.Fatal("expected authzCheck to flag an internal-claimed-identity route that is really self-or-admin-write shaped, got no violation — the class would be indistinguishable from self-or-admin-write")
 		}
 	})
 

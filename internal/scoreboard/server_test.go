@@ -1447,6 +1447,14 @@ func (f *fixture) dnReq(user, contentType, body string, hdr map[string]string) *
 		r.Header.Set("Content-Type", contentType)
 	}
 	for k, v := range hdr {
+		if k != http.CanonicalHeaderKey(k) {
+			// Header.Set would canonicalize this back to the usual spelling,
+			// making the "lower-cased wire spelling" case identical to the
+			// owner case. Assign the map key verbatim, the way an HTTP/2 or
+			// non-canonicalizing client's raw key can end up in r.Header.
+			r.Header[k] = []string{v}
+			continue
+		}
 		r.Header.Set(k, v)
 	}
 	r.Header.Set("Origin", fixtureOrigin)
