@@ -7,6 +7,8 @@
 # kubeconfig, or a local `*.secret.*` copy left in the working tree is sent to
 # the Docker daemon unless .dockerignore excludes it. Nothing else notices a
 # line being deleted from .dockerignore, so this makes it mechanical.
+# The older secrets block (*.db / .env / *.pem / *.key / *.cert) is held to the
+# same `**/` form: a bare `.env` or `*.key` only matches at the context root.
 #
 # CHECKS (all must pass, exit 0; otherwise exit 1):
 #   1. Each REQUIRED pattern is present as an exact, non-comment line.
@@ -34,6 +36,11 @@ REQUIRED=(
   '**/*.dec.json'
   '**/kubeconfig*'
   '**/*.secret.*'
+  '**/*.db'
+  '**/.env'
+  '**/*.pem'
+  '**/*.key'
+  '**/*.cert'
 )
 
 file=.dockerignore
@@ -60,24 +67,36 @@ check_file() {
     fi
   done
   # Check 2: any re-include (`!...`) that targets these stems.
-  if grep -nE '^[[:space:]]*!.*(\.dec\.|kubeconfig|\.secret\.)' "$f"; then
+  if grep -nE '^[[:space:]]*!.*(\.dec\.|kubeconfig|\.secret\.|\.db|\.env|\.pem|\.key|\.cert)' "$f"; then
     echo "FAIL: $f re-includes (!) a path matching a decrypted/credential pattern"
     rc=1
   fi
   return "$rc"
 }
 
-check_tracked_files() {
-  local f rc=0
+# Reads paths on stdin; prints a FAIL line per path whose basename matches one
+# of the REQUIRED patterns (the patterns are `**/<basename-glob>`, so the glob is
+# the pattern minus its `**/` prefix — one source of truth, no second list).
+# Returns 1 if any path matched.
+tracked_matches() {
+  local f b p g rc=0
   while IFS= read -r f; do
-    # Match on the basename: the patterns are `**/<basename-glob>`.
-    case "${f##*/}" in
-      *.dec.yaml|*.dec.json|kubeconfig*|*.secret.*)
-        echo "FAIL: tracked file matches a .dockerignore credential pattern: $f"
-        rc=1 ;;
-    esac
-  done < <(git ls-files)
+    b="${f##*/}"
+    for p in "${REQUIRED[@]}"; do
+      g="${p#\*\*/}"
+      # shellcheck disable=SC2053  # $g is intentionally a glob
+      if [[ "$b" == $g ]]; then
+        echo "FAIL: tracked file matches .dockerignore pattern $p: $f"
+        rc=1
+        break
+      fi
+    done
+  done
   return "$rc"
+}
+
+check_tracked_files() {
+  git ls-files | tracked_matches
 }
 
 if [ "$selftest" -eq 1 ]; then
@@ -102,11 +121,32 @@ if [ "$selftest" -eq 1 ]; then
     sed "s|^$(printf '%s' "$p" | sed 's/[][\.*^$/|]/\\&/g')\$|# $p|" "$real" > "$tmp/comment"
     expect_reject "line commented out: $p" "$tmp/comment"
   done
-  sed 's|^\*\*/\*\.dec\.yaml$|*.dec.yaml|' "$real" > "$tmp/rootonly"
-  expect_reject "root-only form (*.dec.yaml)" "$tmp/rootonly"
+  # Bare (root-only) form of each pattern: the `**/` stripped. Must be rejected
+  # — a bare `*.key` / `.env` is exactly the gap app#322 closes.
+  for p in "${REQUIRED[@]}"; do
+    esc="$(printf '%s' "$p" | sed 's/[][\.*^$/|]/\\&/g')"
+    sed "s|^${esc}\$|${p#\*\*/}|" "$real" > "$tmp/rootonly"
+    expect_reject "root-only form: ${p#\*\*/}" "$tmp/rootonly"
+  done
   { cat "$real"; echo '!foo.dec.yaml'; } > "$tmp/negated"
   expect_reject "re-include after exclusion" "$tmp/negated"
-  echo "ok: selftest — guard rejected all $n broken .dockerignore variants"
+  # Tracked-file check: a path list containing a match must be rejected, one
+  # without must pass (otherwise "rejects" could just mean "rejects everything").
+  expect_tracked_reject() { # path
+    n=$((n + 1))
+    if printf '%s\n' "$1" | tracked_matches >/dev/null 2>&1; then
+      echo "FAIL: selftest: tracked-file check ACCEPTED $1"
+      exit 1
+    fi
+  }
+  for t in a.db sub/dir/x.db .env sub/.env deploy/x.pem k/y.key z.cert \
+           sub/prod.dec.yaml sub/kubeconfig-prod x/flags.secret.yaml; do
+    expect_tracked_reject "$t"
+  done
+  printf '%s\n' main.go charts/scoreboard/values.yaml .env.example docs/key.md \
+    | tracked_matches >/dev/null \
+    || { echo "FAIL: selftest: tracked-file check rejected innocent paths"; exit 1; }
+  echo "ok: selftest — guard rejected all $n broken variants (.dockerignore + tracked-file check)"
   exit 0
 fi
 
@@ -114,4 +154,4 @@ check_file "$file"
 if [ "$check_tracked" -eq 1 ]; then
   check_tracked_files
 fi
-echo "ok: $file excludes ${#REQUIRED[@]} decrypted/credential patterns; no tracked file matches"
+echo "ok: $file excludes ${#REQUIRED[@]} decrypted/credential patterns (all in **/ form); no tracked file matches"

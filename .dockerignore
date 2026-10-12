@@ -42,12 +42,16 @@ charts/*
 # Scan output
 scan-logs/
 
-# Secrets and local state
-*.db
-.env
-*.pem
-*.key
-*.cert
+# Secrets and local state. `**/` for the same reason as the block below:
+# .dockerignore (unlike .gitignore) matches a bare pattern only at the context
+# root, so a bare `*.key` would let `scripts/x.key` or `deploy/.env` into the
+# build context (app#322). `**/` also matches zero directories, so root-level
+# files stay covered. scripts/check-dockerignore.sh requires these exact lines.
+**/*.db
+**/.env
+**/*.pem
+**/*.key
+**/*.cert
 # Decrypted / credential material that must never reach a build context
 # (app#322, ADR-0031 H1 (h)). `**/` so a file in ANY subdirectory is
 # excluded too: a bare `*.dec.yaml` only matches at the context root
