@@ -275,8 +275,15 @@ paths:
         registered (LICENSE, PROVENANCE.md) and anything else is 404.
 
         Only public, display-only assets that look the same to every viewer
-        belong here (D5). The registry accepts `.css` and `.woff2` only and
-        its logical names are pinned by a test.
+        belong here (D5). The registry accepts `.css`, `.woff2` and, only
+        under the `avatars/` logical-name directory, `.svg` (ADR-0034 D9,
+        a limited supersede of D5); its logical names are pinned by a test.
+        An `.svg` is parsed against an element/attribute allow-list when the
+        registry is built (a name outside the list stops the start-up), and
+        its response also carries `X-Content-Type-Options: nosniff` and
+        `Content-Security-Policy: default-src 'none'; style-src
+        'unsafe-inline'; sandbox`. A directory is joined with `-` in the
+        served name: `avatars/falcon.svg` is `avatars-falcon.<hash>.svg`.
 
         A registered name is `Cache-Control: public, max-age=31536000,
         immutable` with an ETag (a matching If-None-Match gets 304). The 404
@@ -290,6 +297,7 @@ paths:
           content:
             text/css: {}
             font/woff2: {}
+            image/svg+xml: {}
         "304":
           description: If-None-Match matched the asset's ETag
         "404":
