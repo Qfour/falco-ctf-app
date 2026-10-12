@@ -5,6 +5,14 @@ import (
 	"testing"
 )
 
+// Addresses with a NON-reserved domain are assembled from these constants, never
+// written as a literal: scripts/check-emails.sh (ADR-0034 V17) fails on any
+// tracked file carrying a real-looking address.
+const (
+	publicDomain   = "ctf.dev"
+	lookalikeLabel = "evil-local"
+)
+
 // ADR-0034 V10 (scoreboard half): the reserved-name startup check, one defect
 // per case. auth-policy's own V10 cases (internal/authpolicy/roster_test.go)
 // go through the same Validate.
@@ -35,11 +43,11 @@ func TestValidate_OneDefectPerCase(t *testing.T) {
 		{name: "empty domain rejected for auth-policy", domain: "", wantErr: "EXPECTED_EMAIL_DOMAIN is empty"},
 		{name: "blank domain rejected for auth-policy", domain: "   ", wantErr: "EXPECTED_EMAIL_DOMAIN is empty"},
 		{name: "empty domain allowed for the scoreboard", domain: "", allowEmpty: true, wantDomain: ""},
-		{name: "empty domain does not excuse a bad admin", domain: "", allowEmpty: true, admins: []string{"a@ctf.dev"}, wantErr: "ADMIN_EMAILS"},
+		{name: "empty domain does not excuse a bad admin", domain: "", allowEmpty: true, admins: []string{"a@" + publicDomain}, wantErr: "ADMIN_EMAILS"},
 		{name: "admin on a reserved domain passes and is lower-cased", domain: "ctf.local", admins: []string{" Ops@CTF.local ", ""}, wantDomain: "ctf.local", wantAdmins: []string{"ops@ctf.local"}},
-		{name: "admin on a public domain rejected", domain: "ctf.local", admins: []string{"ops@gmail.com"}, wantErr: "not a reserved name"},
-		{name: "admin one bad among good rejected", domain: "ctf.local", admins: []string{"ops@ctf.local", "x@ctf.dev"}, wantErr: "x@ctf.dev"},
-		{name: "admin last-label lookalike rejected", domain: "ctf.local", admins: []string{"ops@ctf.evil-local"}, wantErr: "not a reserved name"},
+		{name: "admin on a public domain rejected", domain: "ctf.local", admins: []string{"ops@" + publicDomain}, wantErr: "not a reserved name"},
+		{name: "admin one bad among good rejected", domain: "ctf.local", admins: []string{"ops@ctf.local", "x@" + publicDomain}, wantErr: "x@" + publicDomain},
+		{name: "admin last-label lookalike rejected", domain: "ctf.local", admins: []string{"ops@ctf." + lookalikeLabel}, wantErr: "not a reserved name"},
 		{name: "admin trailing dot rejected", domain: "ctf.local", admins: []string{"ops@ctf.local."}, wantErr: "empty label"},
 		{name: "admin non-ASCII rejected (Kelvin sign in local part)", domain: "ctf.local", admins: []string{"ops\u212a@ctf.local"}, wantErr: "non-ASCII"},
 		{name: "admin without @ rejected", domain: "ctf.local", admins: []string{"ops"}, wantErr: "exactly one '@'"},

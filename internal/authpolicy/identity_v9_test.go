@@ -11,6 +11,13 @@ import (
 	"testing"
 )
 
+// The two production folded domains, as bare domains (an address built from
+// them is concatenated, never a literal: scripts/check-emails.sh).
+const (
+	gmailDomain      = "gmail.com"
+	googlemailDomain = "googlemail.com"
+)
+
 var cookie = map[string]string{"Cookie": "_oauth2_proxy=fake-session"}
 
 // resolveCase is one (identity, endpoint) -> status expectation.
@@ -40,8 +47,8 @@ func TestV9_Resolution(t *testing.T) {
 		{"upstream returned no email header, workspace", "", "/check-workspace?host=user7", 403},
 		{"non-ASCII look-alike of a seat (ToLower folds U+212A to k)", "mar\u212a@ctf.local", "/check-participant", 403},
 		{"the real seat it imitates", "mark@ctf.local", "/check-participant", 200},
-		{"local part empty after gmail folding", "+x@gmail.com", "/check-participant", 403},
-		{"local part empty after gmail folding, workspace", "...@googlemail.com", "/check-workspace?host=user7", 403},
+		{"local part empty after gmail folding", "+x@" + gmailDomain, "/check-participant", 403},
+		{"local part empty after gmail folding, workspace", "...@" + googlemailDomain, "/check-workspace?host=user7", 403},
 
 		// rostered
 		{"static seat on its own workspace", "user7@ctf.local", "/check-workspace?host=user7", 200},

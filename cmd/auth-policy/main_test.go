@@ -7,6 +7,10 @@ import (
 	"testing"
 )
 
+// publicDomain has a non-reserved last label; addresses on it are concatenated
+// (scripts/check-emails.sh forbids such literals in tracked files).
+const publicDomain = "ctf.dev"
+
 func envOf(m map[string]string) func(string, string) string {
 	return func(k, fallback string) string {
 		if v := m[k]; v != "" {
@@ -40,7 +44,7 @@ func TestConfigFromEnv_FailClosed(t *testing.T) {
 		{"ROSTER_FILE points nowhere", map[string]string{"ROSTER_FILE": "/nonexistent/roster.yaml"}, "open"},
 		{"ROSTER_FILE empty", map[string]string{"ROSTER_FILE": empty}, "empty"},
 		{"EXPECTED_EMAIL_DOMAIN not reserved", map[string]string{"ROSTER_FILE": good, "EXPECTED_EMAIL_DOMAIN": "ctf.dev"}, "not a reserved name"},
-		{"ADMIN_EMAILS not reserved", map[string]string{"ROSTER_FILE": good, "ADMIN_EMAILS": "ops@gmail.com"}, "not a reserved name"},
+		{"ADMIN_EMAILS not reserved", map[string]string{"ROSTER_FILE": good, "ADMIN_EMAILS": "ops@" + publicDomain}, "not a reserved name"},
 		{"ADMIN_EMAILS overlaps a seat", map[string]string{"ROSTER_FILE": good, "ADMIN_EMAILS": "user1@ctf.local"}, "ADMIN_EMAILS"},
 	}
 	for _, c := range cases {

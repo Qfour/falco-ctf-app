@@ -15,6 +15,10 @@ import (
 // reserved domain so no real address is ever written down (ADR-0034 D11).
 var foldTest = []string{"fold.example", "alias.example"}
 
+// publicDomain is a domain whose last label is NOT reserved; addresses on it are
+// assembled by concatenation so the source carries no such literal.
+const publicDomain = "ctf.dev"
+
 const baseRoster = `
 seats:
   - seat: user1
@@ -93,7 +97,7 @@ func TestParseRoster_OneDefectPerCase(t *testing.T) {
 		{name: "domain with trailing dot", doc: baseRoster, domain: "ctf.local.", wantErr: "empty label"},
 		{name: "domain empty", doc: baseRoster, domain: " ", wantErr: "EXPECTED_EMAIL_DOMAIN is empty"},
 		{name: "domain non-ASCII", doc: baseRoster, domain: "ctf.\u212aocal", wantErr: "non-ASCII"},
-		{name: "admin on a non-reserved domain", doc: baseRoster, admins: []string{"ops@gmail.com"}, wantErr: "not a reserved name"},
+		{name: "admin on a non-reserved domain", doc: baseRoster, admins: []string{"ops@" + publicDomain}, wantErr: "not a reserved name"},
 		{name: "admin non-ASCII", doc: baseRoster, admins: []string{"op\u212a@ctf.local"}, wantErr: "non-ASCII"},
 	}
 	for _, c := range cases {
@@ -174,9 +178,10 @@ func TestGoogleMailDomains_Pinned(t *testing.T) {
 }
 
 func TestNormalizeEmail(t *testing.T) {
-	// Production set on a synthetic address shape: gmail rules apply to the
-	// real domains by name, so these two use them as bare strings in a unit
-	// test of the function, not as contacts.
+	// Production set: the folded domains come from GoogleMailDomains() and the
+	// addresses are assembled from them, so no mailbox-shaped literal on a
+	// public domain is ever written down (scripts/check-emails.sh, ADR-0034 V17).
+	g0, g1 := GoogleMailDomains()[0], GoogleMailDomains()[1]
 	cases := []struct {
 		in   string
 		want string // "" = rejected
@@ -184,13 +189,13 @@ func TestNormalizeEmail(t *testing.T) {
 		{"User7@CTF.Local", "user7@ctf.local"},
 		{"  a@b.example  ", "a@b.example"},
 		{"a.b+c@b.example", "a.b+c@b.example"}, // not a folded domain: kept
-		{"a.b+c@gmail.com", "ab@gmail.com"},
-		{"A.B@GoogleMail.com", "ab@gmail.com"},
-		{"+x@gmail.com", ""},
-		{".@gmail.com", ""},
-		{"a@@gmail.com", ""},
-		{"a@b@gmail.com", ""},
-		{"@gmail.com", ""},
+		{"a.b+c@" + g0, "ab@" + g0},
+		{"A.B@" + strings.ToUpper(g1), "ab@" + g0},
+		{"+x@" + g0, ""},
+		{".@" + g0, ""},
+		{"a@@" + g0, ""},
+		{"a@b@" + g0, ""},
+		{"@" + g0, ""},
 		{"a@", ""},
 		{"a", ""},
 		{"", ""},

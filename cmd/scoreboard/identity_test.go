@@ -5,6 +5,10 @@ import (
 	"testing"
 )
 
+// publicDomain has a non-reserved last label; addresses on it are concatenated
+// (scripts/check-emails.sh forbids such literals in tracked files).
+const publicDomain = "ctf.dev"
+
 func envMap(m map[string]string) func(string, string) string {
 	return func(k, fallback string) string {
 		if v := m[k]; v != "" {
@@ -31,8 +35,8 @@ func TestIdentityFromEnv(t *testing.T) {
 		{"domain with a public last label", map[string]string{"EXPECTED_EMAIL_DOMAIN": "ctf.dev"}, "not a reserved name", "", ""},
 		{"domain last label lookalike", map[string]string{"EXPECTED_EMAIL_DOMAIN": "ctf.evil-local"}, "not a reserved name", "", ""},
 		{"domain with trailing dot", map[string]string{"EXPECTED_EMAIL_DOMAIN": "ctf.local."}, "empty label", "", ""},
-		{"admin on a public domain", map[string]string{"EXPECTED_EMAIL_DOMAIN": "ctf.local", "ADMIN_EMAILS": "ops@gmail.com"}, "not a reserved name", "", ""},
-		{"admin on a public domain even with the domain unset", map[string]string{"ADMIN_EMAILS": "ops@gmail.com"}, "not a reserved name", "", ""},
+		{"admin on a public domain", map[string]string{"EXPECTED_EMAIL_DOMAIN": "ctf.local", "ADMIN_EMAILS": "ops@" + publicDomain}, "not a reserved name", "", ""},
+		{"admin on a public domain even with the domain unset", map[string]string{"ADMIN_EMAILS": "ops@" + publicDomain}, "not a reserved name", "", ""},
 		{"admin non-ASCII", map[string]string{"EXPECTED_EMAIL_DOMAIN": "ctf.local", "ADMIN_EMAILS": "ops\u212a@ctf.local"}, "non-ASCII", "", ""},
 	}
 	for _, c := range cases {

@@ -52,7 +52,7 @@ const maxRosterBytes = 1 << 20
 //     domain label
 //   - for gmail.com / googlemail.com only: `+tag` and every '.' dropped from the
 //     local part, domain unified to gmail.com. A local part that becomes empty
-//     (`+x@gmail.com`) is not an identity.
+//     (`+x@` on a folded domain) is not an identity.
 func NormalizeEmail(s string) (string, bool) { return normalizeEmail(s, googleMailDomains[:]) }
 
 func normalizeEmail(s string, folded []string) (string, bool) {

@@ -39,8 +39,8 @@ func TestEmailMatchesUser_ExactCanonical(t *testing.T) {
 		{"user10@ctf.local", "user1", "ctf.local", false},
 		{"user1@ctf.local", "user10", "ctf.local", false},
 		{"user1@other.example", "user1", "ctf.local", false},
-		{"user1@ctf.local.evil", "user1", "ctf.local", false},
-		{"user1@ctf.localx", "user1", "ctf.local", false},
+		{"user1@ctf.local.evil.example", "user1", "ctf.local", false},
+		{"user1@ctf.localx.example", "user1", "ctf.local", false},
 		{"alice@", "alice", "", false}, // V11: empty domain, header `alice@`
 		{"alice@ctf.local", "alice", "", false},
 		{"", "alice", "ctf.local", false},
