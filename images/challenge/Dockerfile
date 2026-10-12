@@ -170,8 +170,9 @@ RUN chmod 0644 /opt/ctf/submit.sh /opt/ctf/submit-yaml.sh /opt/ctf/banner.sh
 COPY --from=missions-builder /out/answers.yaml /opt/ctf/answers.yaml
 
 # Greet on login. Briefing/hints/flag submission all happen in the Story tab
-# (portal), not in-terminal, so banner.sh is intentionally minimal
-# (display-name change only).
+# (portal), not in-terminal, so banner.sh is intentionally minimal (a pointer
+# to the portal's Me screen, where the display name and avatar are set; there is
+# no in-terminal profile tool since ADR-0034 S1).
 RUN echo 'sh /opt/ctf/banner.sh 2>/dev/null' >> /etc/profile
 
 # ADR-0007 (Option 1, supersedes the file-granularity snapshot from
