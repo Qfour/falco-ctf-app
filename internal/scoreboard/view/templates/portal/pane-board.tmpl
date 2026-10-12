@@ -476,7 +476,7 @@
       document.getElementById('board-detail-messages').innerHTML = (th.messages || []).map(m => `
         <div class="thread-msg role-${m.author_role === 'admin' ? 'admin' : 'participant'}">
           <div class="thread-msg-head">
-            <span class="thread-msg-author">${m.author_role === 'admin' ? 'Operator' : (m.author === user ? 'You' : esc(m.authorDisplay || m.author))}</span>
+            <span class="thread-msg-author with-avatar">${avatarImg(m.authorAvatar, 'sm')}<span>${m.author_role === 'admin' ? 'Operator' : (m.author === user ? 'You' : esc(m.authorDisplay || m.author))}</span></span>
             <span class="thread-msg-at" title="${esc(m.created_at)}">${fmtAgoISO(m.created_at)}</span>
           </div>
           <div class="thread-msg-body">${m.state === 'deleted' ? '(message removed)' : esc(m.body)}</div>
@@ -757,7 +757,7 @@
       document.getElementById('board-admin-messages').innerHTML = (th.messages || []).map(m => `
         <div class="thread-msg role-${m.author_role === 'admin' ? 'admin' : 'participant'}">
           <div class="thread-msg-head">
-            <span class="thread-msg-author">${m.author_role === 'admin' ? 'Operator' : esc(m.authorDisplay || m.author)}</span>
+            <span class="thread-msg-author with-avatar">${avatarImg(m.authorAvatar, 'sm')}<span>${m.author_role === 'admin' ? 'Operator' : esc(m.authorDisplay || m.author)}</span></span>
             <span class="thread-msg-at" title="${esc(m.created_at)}">${fmtAgoISO(m.created_at)}${m.state !== 'visible' ? ' · ' + esc(m.state) : ''}</span>
           </div>
           <div class="thread-msg-body">${m.state === 'deleted' ? '(message removed)' : esc(m.body)}</div>

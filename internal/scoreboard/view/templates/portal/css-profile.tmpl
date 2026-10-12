@@ -8,6 +8,11 @@
      .avatar declares its own default. Colors are tokens only (no hex). */
   .avatar-sm { --avatar-size: 1.5rem; }
   .avatar-lg { --avatar-size: 3.5rem; }
+  /* A name with a picture in front of it (leaderboard row, Board author, feed). */
+  .with-avatar { display: inline-flex; align-items: center; gap: 0.5rem; vertical-align: middle; }
+  #pane-scoreboard .pod .pod-avatar { display: flex; justify-content: center; margin-top: 0.5rem; }
+  #pane-scoreboard .activity-item .avatar { margin-right: 0.45rem; }
+  #pane-board .thread-msg-author.with-avatar .avatar { --avatar-size: 1.25rem; }
 
   /* ---- Profile section of the Me pane ---- */
   #pane-me .profile[hidden] { display: none; }

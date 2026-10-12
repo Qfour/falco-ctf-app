@@ -138,7 +138,7 @@ func checkPortalAvatar(fsys fstest.MapFS) error {
 		}
 	}
 	prof := body("css-profile.tmpl")
-	for _, sel := range []string{".avatar-sm {", ".avatar-lg {"} {
+	for _, sel := range []string{".avatar-sm {", ".avatar-lg {", ".with-avatar {"} {
 		if !strings.Contains(prof, sel) {
 			fail("css-profile.tmpl: no %q rule", sel)
 		}
@@ -147,6 +147,10 @@ func checkPortalAvatar(fsys fstest.MapFS) error {
 	// ---- display sites ----
 	for _, site := range []struct{ partial, want, why string }{
 		{"pane-me.tmpl", `avatarImg(d.avatar, 'lg')`, "Me hero (replaces avatarChar)"},
+		{"pane-scoreboard.tmpl", `avatarImg(p.avatar, 'sm')`, "Leaderboard rows / Result table (LeaderboardEntry.avatar)"},
+		{"pane-scoreboard.tmpl", `avatarImg(p.avatar, 'lg')`, "Result podium"},
+		{"pane-scoreboard.tmpl", `avatarImg(s.avatar, 'sm')`, "mission detail (ChallengeSolver) and live feed (SolveRecord)"},
+		{"pane-board.tmpl", `avatarImg(m.authorAvatar, 'sm')`, "Board thread messages (BoardMessage.authorAvatar)"},
 	} {
 		if !strings.Contains(body(site.partial), site.want) {
 			fail("%s no longer draws %s — %s", site.partial, site.want, site.why)
@@ -154,6 +158,15 @@ func checkPortalAvatar(fsys fstest.MapFS) error {
 	}
 	if strings.Contains(body("pane-me.tmpl"), "avatarChar") {
 		fail("pane-me.tmpl still has avatarChar — the initial-letter avatar is replaced by the picture")
+	}
+	if n := strings.Count(body("pane-scoreboard.tmpl"), "avatarImg(p.avatar, 'sm')"); n != 2 {
+		fail("pane-scoreboard.tmpl draws avatarImg(p.avatar, 'sm') %d time(s), want 2 (Leaderboard rows + Result table: LeaderboardEntry.avatar)", n)
+	}
+	if n := strings.Count(body("pane-scoreboard.tmpl"), "avatarImg(s.avatar, 'sm')"); n != 2 {
+		fail("pane-scoreboard.tmpl draws avatarImg(s.avatar, 'sm') %d time(s), want 2 (mission detail + live feed)", n)
+	}
+	if n := strings.Count(body("pane-board.tmpl"), "avatarImg(m.authorAvatar, 'sm')"); n != 2 {
+		fail("pane-board.tmpl draws avatarImg(m.authorAvatar, 'sm') %d time(s), want 2 (participant thread + operator thread)", n)
 	}
 
 	// ---- the profile form ----
@@ -219,8 +232,16 @@ func TestPortalAvatar_ChecksRejectMutations(t *testing.T) {
 		{"avatarImg takes a URL for any glyph", portalFSEdit(util, replaceOnce(`AVATAR_GLYPHS.includes(p.glyph) && typeof`, `typeof`)), "AVATAR_GLYPHS.includes"},
 		{"avatarImg gains an inline style", portalFSEdit(util, replaceOnce(`alt="" width`, `alt="" style="background:red" width`)), "style= or on*="},
 		{"avatarImg gains an onerror handler", portalFSEdit(util, replaceOnce(`alt="" width`, `alt="" onerror="x()" width`)), "style= or on*="},
+		{"a pane writes the <img> itself", portalFSEdit("pane-scoreboard.tmpl", replaceOnce(`${avatarImg(p.avatar, 'lg')}`, `<img class="avatar" src="/static/avatars/${p.avatar}.svg">`)), "writes an <img class=\"avatar\"> itself"},
+		{"inline SVG in a pane", portalFSEdit("pane-board.tmpl", appendText("<svg viewBox=\"0 0 1 1\"></svg>\n")), "inline <svg>"},
 		{"a colour rule is gone", portalFSEdit("css-avatar.tmpl", replaceOnce(`.avatar-lime `, `.avatar-green `)), "no `.avatar-lime"},
 		{"the Me hero goes back to the initial letter", portalFSEdit(me, replaceOnce(`${avatarImg(d.avatar, 'lg')}`, `<div class="avatar">${avatarChar(displayName)}</div>`)), "avatarChar"},
+		{"the leaderboard stops drawing avatars", portalFSEdit("pane-scoreboard.tmpl", replaceOnce(`avatarImg(p.avatar, 'sm')`, `''`)), "Leaderboard rows"},
+		{"the board stops drawing authorAvatar (operator thread)", portalFSEdit("pane-board.tmpl", func(s string) string {
+			i := strings.LastIndex(s, "avatarImg(m.authorAvatar, 'sm')")
+			return s[:i] + "''" + s[i+len("avatarImg(m.authorAvatar, 'sm')"):]
+		}), "participant thread + operator thread"},
+		{"the grid loses its radiogroup role", portalFSEdit(me, replaceOnce(`role="radiogroup"`, ``)), "radiogroup"},
 		{"ArrowUp is no longer handled", portalFSEdit(me, replaceOnce(`case 'ArrowUp'`, `case 'KeyU'`)), "case 'ArrowUp'"},
 		{"saving posts to another route", portalFSEdit(me, replaceOnce(`+ '/profile'`, `+ '/display-name'`)), "/profile"},
 		{"the 429 sentence is dropped", portalFSEdit(me, replaceOnce(`r.status === 429`, `r.status === 428`)), "429"},
