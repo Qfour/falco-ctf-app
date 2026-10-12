@@ -41,6 +41,15 @@ info:
     are attacker-chosen, and the scoreboard's limiter trusts XFF's leftmost
     entry. The collector's own limiter therefore keys on `r.RemoteAddr`.
 
+    EVERY inbound header whose name starts with `X-Auth-Request-` (any case:
+    `-Email`, `-User`, `-Preferred-Username`, `-Groups`, and any future one) is
+    also STRIPPED, unconditionally, on every forwarded route (ADR-0034 D6).
+    Those headers are how auth-policy tells the scoreboard who a request is; a
+    workspace sends them directly, so they are forged. Stripping them keeps the
+    scoreboard's header-absent branch ("claimed identity", NetworkPolicy-isolated)
+    the only way a collector request is seen, and keeps a forged admin email from
+    ever being compared against `ADMIN_EMAILS`.
+
     Per-operation extensions carry the same meaning as in
     docs/openapi-scoreboard.yaml, plus one that is specific to this document:
 
