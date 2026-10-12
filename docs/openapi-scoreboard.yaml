@@ -2713,7 +2713,7 @@ components:
         `authorAvatar` (ADR-0034 D8) is the author's avatar id, always present:
         a `participant`-authored message carries that participant's current
         avatar (the seat's default when none was chosen); an `admin`-authored
-        message carries one FIXED id (`shield-slate`), the same for every
+        message carries one FIXED id (`flame-slate`), the same for every
         operator and derived from no account. It is an ordinary table id, so it
         does not by itself prove the author is staff — `author_role` does.
       required: [id, author_role, author, authorDisplay, authorAvatar, body, created_at, state]

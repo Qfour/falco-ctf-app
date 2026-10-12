@@ -40,10 +40,12 @@ const (
 	SeatCapacity = Count - ReservedCount
 
 	// StaffID is the fixed id carried by an operator-authored board message.
-	// It is not derived from any seat. It is also an ordinary table entry
-	// (user12's default), so it is NOT a proof of staff by itself: the board
-	// message's authorRole is.
-	StaffID = "shield-slate"
+	// It is not derived from any seat. It is the LAST id of the reserved tail
+	// (the 48th), so no numbered seat (user1..user40) ever defaults to it. It
+	// is still an ordinary table entry (a reserved seat such as test1 can hash
+	// to it, and anyone may pick it), so it is NOT a proof of staff by itself:
+	// the board message's authorRole is.
+	StaffID = "flame-slate"
 
 	// ColorTokenPrefix + colour is the CSS custom property tokens.css must
 	// define for each colour; FileSuffix follows the glyph for the asset name.

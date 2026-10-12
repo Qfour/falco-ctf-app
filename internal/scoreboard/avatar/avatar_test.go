@@ -2,6 +2,7 @@ package avatar
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -219,4 +220,23 @@ func fnv32a(s string) uint32 {
 		h *= 16777619
 	}
 	return h
+}
+
+// StaffID is the 48th id: the last of the reserved tail, so no numbered seat
+// (user1..user40) defaults to it (ADR-0034 D8; VP decision).
+func TestStaffID_IsTheLastReservedID(t *testing.T) {
+	if StaffID != "flame-slate" {
+		t.Fatalf("StaffID = %q, want flame-slate", StaffID)
+	}
+	if n := Number(StaffID); n != Count {
+		t.Fatalf("Number(StaffID) = %d, want %d (the last id)", n, Count)
+	}
+	if Number(StaffID) <= SeatCapacity {
+		t.Fatalf("StaffID is inside the numbered-seat range (1..%d)", SeatCapacity)
+	}
+	for n := 1; n <= SeatCapacity; n++ {
+		if Default("user"+strconv.Itoa(n)) == StaffID {
+			t.Fatalf("user%d defaults to StaffID", n)
+		}
+	}
 }
