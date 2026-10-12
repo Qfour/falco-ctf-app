@@ -1093,7 +1093,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ProfileResult" }
         "400":
-          description: invalid user, body that is not exactly the allowed JSON object, no field given, invalid name (empty, >32 runes, or forbidden characters), or an `avatar` that is not in the table or is the operator's fixed `flame-slate` — nothing was written
+          description: invalid user, body that is not exactly the allowed JSON object, no field given, invalid name (empty, >32 runes, or forbidden characters — HTML metachars `<>&"'`, Unicode control characters C0/DEL/C1 and format characters Cf such as U+200B / U+202E; a ZWJ U+200D between two emoji is allowed; app#331), or an `avatar` that is not in the table or is the operator's fixed `flame-slate` — nothing was written
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1518,7 +1518,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/DisplayNameResult" }
         "400":
-          description: invalid user or invalid name
+          description: invalid user or invalid name (same rules as the participant route, including the Unicode Cf / C1 rejection; app#331)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
