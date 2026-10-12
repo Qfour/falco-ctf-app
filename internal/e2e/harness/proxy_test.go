@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -261,5 +262,159 @@ func TestNewProxy_RejectsAnInjectableIdentity(t *testing.T) {
 		if _, err := NewProxy(ln, site, email); err == nil {
 			t.Errorf("NewProxy accepted the identity %q", email)
 		}
+	}
+}
+
+// countingSite counts what reaches it, so a test can tell "refused by the
+// Proxy" from "forwarded and answered".
+func countingSite(t *testing.T) (*Site, *int32) {
+	t.Helper()
+	var hits int32
+	site, err := NewSite(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		_, _ = io.WriteString(w, "reached: "+r.Header.Get(IdentityHeader))
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(site.Close)
+	return site, &hits
+}
+
+// rawDo sends a request with an explicit Host (the Go client takes it from
+// req.Host, not from a header).
+func rawDo(t *testing.T, method, url, host string, hdr map[string]string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(method, url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if host != "" {
+		req.Host = host
+	}
+	for k, v := range hdr {
+		req.Header.Set(k, v)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, url, err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	return resp
+}
+
+// The identity is a capability: the Proxy injects it on every request it
+// forwards, so it must forward only the page's own requests (security review of
+// ADR-0031 H1, MEDIUM-1). Each case is a deliberate break; none may reach the
+// upstream, and each must be answered 403.
+func TestProxy_RefusesRequestsThatAreNotThePagesOwn(t *testing.T) {
+	site, hits := countingSite(t)
+	p := newTestProxy(t, site)
+	own := p.Origin()
+	cases := []struct {
+		name, method, path, host string
+		hdr                      map[string]string
+		fault                    string
+	}{
+		{"another Host (DNS rebinding)", "GET", "/portal", "attacker.example:" + strings.TrimPrefix(own, "http://127.0.0.1:"), nil, "refused-host"},
+		{"localhost is not the served Host", "GET", "/portal", "localhost:" + strings.TrimPrefix(own, "http://127.0.0.1:"), nil, "refused-host"},
+		{"right name, wrong port", "GET", "/portal", "127.0.0.1:1", nil, "refused-host"},
+		{"Host without a port", "GET", "/portal", "127.0.0.1", nil, "refused-host"},
+		{"text/plain POST from another page's origin", "POST", "/api/admin/hints", "", map[string]string{"Origin": "https://evil.example", "Content-Type": "text/plain"}, "refused-origin"},
+		{"Origin of another port on 127.0.0.1", "POST", "/api/x", "", map[string]string{"Origin": "http://127.0.0.1:9"}, "refused-origin"},
+		{"opaque Origin null", "POST", "/api/x", "", map[string]string{"Origin": "null"}, "refused-origin"},
+		{"Sec-Fetch-Site cross-site", "GET", "/api/x", "", map[string]string{"Sec-Fetch-Site": "cross-site"}, "refused-fetch-site"},
+		{"Sec-Fetch-Site same-site (another port)", "GET", "/api/x", "", map[string]string{"Sec-Fetch-Site": "same-site"}, "refused-fetch-site"},
+		{"the webhook", "POST", "/falco/events", "", nil, "refused-path"},
+		{"the webhook with a trailing path", "POST", "/falco/events/x", "", nil, "refused-path"},
+		{"the internal surface", "POST", "/internal/exfil/11", "", nil, "refused-path"},
+		{"the internal surface via dot segments", "POST", "/a/../internal/exfil/11", "", nil, "refused-path"},
+		{"the webhook via a doubled slash", "POST", "//falco/events", "", nil, "refused-path"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			before := atomic.LoadInt32(hits)
+			mark := p.Mark()
+			resp := rawDo(t, c.method, own+c.path, c.host, c.hdr)
+			body, _ := io.ReadAll(resp.Body)
+			if resp.StatusCode != 403 {
+				t.Errorf("status = %d (%s), want 403", resp.StatusCode, body)
+			}
+			if got := atomic.LoadInt32(hits); got != before {
+				t.Errorf("the upstream was reached (%d -> %d hits); the Proxy must not forward this", before, got)
+			}
+			if strings.Contains(string(body), "user1@") {
+				t.Errorf("the injected identity leaked into the refusal: %s", body)
+			}
+			if es := p.Since(mark); len(es) != 1 || es[0].Fault != c.fault || es[0].Status != 403 || !es[0].Done {
+				t.Errorf("log = %s, want one entry refused as %s with 403", FormatLog(es), c.fault)
+			}
+		})
+	}
+}
+
+// The other direction: what the page itself sends must still pass, or the
+// refusals above would be indistinguishable from a proxy that forwards nothing.
+func TestProxy_ForwardsThePagesOwnRequests(t *testing.T) {
+	site, hits := countingSite(t)
+	p := newTestProxy(t, site)
+	own := p.Origin()
+	cases := []struct {
+		name, method string
+		hdr          map[string]string
+	}{
+		{"navigation typed in the address bar", "GET", map[string]string{"Sec-Fetch-Site": "none"}},
+		{"same-origin fetch", "GET", map[string]string{"Sec-Fetch-Site": "same-origin"}},
+		{"same-origin POST", "POST", map[string]string{"Origin": own, "Sec-Fetch-Site": "same-origin"}},
+		{"a client with no browser headers", "GET", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			before := atomic.LoadInt32(hits)
+			resp := rawDo(t, c.method, own+"/api/ok", "", c.hdr)
+			body, _ := io.ReadAll(resp.Body)
+			if resp.StatusCode != 200 || string(body) != "reached: user1@e2e.test" {
+				t.Errorf("status %d body %q, want the upstream's 200 with the injected identity", resp.StatusCode, body)
+			}
+			if got := atomic.LoadInt32(hits); got != before+1 {
+				t.Errorf("hits %d -> %d, want exactly one more", before, got)
+			}
+		})
+	}
+	// Names that merely start like a refused path are not refused.
+	for _, path := range []string{"/falco/eventsx", "/internals", "/api/internal/x"} {
+		if got := rawDo(t, "GET", own+path, "", nil).StatusCode; got != 200 {
+			t.Errorf("GET %s = %d, want it forwarded (200)", path, got)
+		}
+	}
+}
+
+// `make e2e-serve` binds the proxy to every interface of its container (docker's
+// publish is what keeps it on the host's loopback). The served Host and Origin
+// must then still be the 127.0.0.1 form, not the listener's "[::]:port".
+func TestProxy_OnAWildcardListenerServesOnlyTheLoopbackHost(t *testing.T) {
+	ln, err := net.Listen("tcp", "0.0.0.0:0")
+	if err != nil {
+		t.Skipf("no wildcard listener: %v", err)
+	}
+	site, hits := countingSite(t)
+	p, err := NewProxy(ln, site, "user1@e2e.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(p.Close)
+	if !strings.HasPrefix(p.Origin(), "http://127.0.0.1:") {
+		t.Fatalf("Origin = %q, want the 127.0.0.1 form", p.Origin())
+	}
+	if got := rawDo(t, "GET", p.Origin()+"/x", "", nil).StatusCode; got != 200 {
+		t.Errorf("GET via 127.0.0.1 = %d, want 200", got)
+	}
+	port := strings.TrimPrefix(p.Origin(), "http://127.0.0.1:")
+	before := atomic.LoadInt32(hits)
+	if got := rawDo(t, "GET", p.Origin()+"/x", "evil.example:"+port, nil).StatusCode; got != 403 {
+		t.Errorf("GET with another Host = %d, want 403", got)
+	}
+	if atomic.LoadInt32(hits) != before {
+		t.Error("a request with another Host reached the upstream")
 	}
 }

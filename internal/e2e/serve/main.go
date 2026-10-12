@@ -64,9 +64,16 @@ func run() error {
 		return err
 	}
 
-	// The proxy listens on every interface of the container (docker's publish
-	// is what restricts it to the host's loopback). The browser's origin is the
-	// published one, which is the origin the child's guard must accept.
+	// The proxy listens on every interface of the container: docker's publish
+	// (-p 127.0.0.1:P:P) is what restricts it to the host's loopback, and it
+	// reaches the container through its bridge address, so a loopback-only bind
+	// inside the container would be unreachable (and --network host, which
+	// would allow one, is refused by V8). What stands in for a loopback bind is
+	// the proxy's own checks: it serves only Host 127.0.0.1:<port> and refuses
+	// a foreign Origin / Sec-Fetch-Site (harness.Proxy), so another container on
+	// the bridge, a DNS-rebound name or another page in the browser gets a 403.
+	// The browser's origin is the published one, which is the origin the
+	// child's guard must accept.
 	ln, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port))
 	if err != nil {
 		return err

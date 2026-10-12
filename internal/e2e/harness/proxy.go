@@ -16,6 +16,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"path"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -47,7 +49,9 @@ type Entry struct {
 	// the upstream failed, or the client went away). A stalled request stays
 	// not-Done until it is cancelled.
 	Done bool
-	// Fault names the injected fault that answered instead of the upstream.
+	// Fault names the injected fault that answered instead of the upstream, or
+	// "refused-<host|origin|fetch-site|path>" when the Proxy itself answered
+	// 403 and forwarded nothing.
 	Fault string
 }
 
@@ -99,16 +103,25 @@ type faultRule struct {
 //
 //  1. overwrites X-Auth-Request-Email on every request (the ingress does the
 //     same, so a client cannot choose its identity),
-//  2. records every request in arrival order (Entries),
-//  3. can answer 404 / 500 / a stall instead of the upstream (InjectFault),
-//  4. never rewrites a response header (the CSP the scoreboard sets reaches the
+//  2. answers 403 itself, before anything is forwarded, to a request that is
+//     not the page's own (see refusal): the identity is a capability, and
+//     without this any page in the same browser (or a DNS-rebound name) could
+//     use it,
+//  3. records every request in arrival order (Entries),
+//  4. can answer 404 / 500 / a stall instead of the upstream (InjectFault),
+//  5. never rewrites a response header (the CSP the scoreboard sets reaches the
 //     browser untouched) and adds no X-Forwarded-* header.
 type Proxy struct {
 	up    Upstream
 	email string
-	srv   *http.Server
-	ln    net.Listener
-	rp    *httputil.ReverseProxy
+	// host and origin are the only Host header and Origin the proxy serves:
+	// "127.0.0.1:<port>" and "http://127.0.0.1:<port>", the form `make
+	// e2e-serve` publishes and the browser harness navigates to.
+	host   string
+	origin string
+	srv    *http.Server
+	ln     net.Listener
+	rp     *httputil.ReverseProxy
 
 	closing chan struct{}
 	closeMu sync.Once
@@ -127,8 +140,13 @@ func NewProxy(ln net.Listener, up Upstream, email string) (*Proxy, error) {
 	if email == "" || strings.ContainsAny(email, "\r\n") {
 		return nil, fmt.Errorf("harness: invalid identity e-mail %q", email)
 	}
+	tcp, ok := ln.Addr().(*net.TCPAddr)
+	if !ok {
+		return nil, fmt.Errorf("harness: NewProxy needs a TCP listener, got %T", ln.Addr())
+	}
 	target := mustParseURL("http://" + up.upstreamAddr())
-	p := &Proxy{up: up, email: email, ln: ln, closing: make(chan struct{})}
+	host := net.JoinHostPort("127.0.0.1", strconv.Itoa(tcp.Port))
+	p := &Proxy{up: up, email: email, ln: ln, host: host, origin: "http://" + host, closing: make(chan struct{})}
 	p.cond = sync.NewCond(&p.mu)
 	p.rp = &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
@@ -147,8 +165,10 @@ func NewProxy(ln net.Listener, up Upstream, email string) (*Proxy, error) {
 	return p, nil
 }
 
-// Origin is the scheme://host:port the browser must use.
-func (p *Proxy) Origin() string { return "http://" + p.ln.Addr().String() }
+// Origin is the scheme://host:port the browser must use. It is always the
+// 127.0.0.1 form, whatever address the listener is bound to (in the e2e-serve
+// container it is bound to every interface, and only this Host is served).
+func (p *Proxy) Origin() string { return p.origin }
 
 // Email is the identity the proxy injects.
 func (p *Proxy) Email() string { return p.email }
@@ -195,7 +215,63 @@ func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter 
 // allows it.
 const FlushPath = "/__e2e/flush"
 
+// refusedPrefixes are the paths the Proxy never forwards. /falco/events is the
+// webhook the event feeds (the seeds put events into the child directly, not
+// through here) and /internal/ is the server-to-server surface; a browser page
+// has no business on either, and forwarding them with an injected identity
+// would hand any local page a way in. Matched on the raw and on the cleaned
+// path, since the proxy has no mux that would clean it before the check.
+var refusedPrefixes = []string{"/falco/events", "/internal"}
+
+func refusedPath(p string) bool {
+	for _, cand := range []string{p, path.Clean("/" + p)} {
+		for _, pre := range refusedPrefixes {
+			if cand == pre || strings.HasPrefix(cand, pre+"/") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// refusal returns why r must be answered 403 without being forwarded, or "".
+//
+//   - Host must be exactly 127.0.0.1:<port>: any other name (a DNS-rebound
+//     one, a LAN address, localhost) is not the origin this proxy serves.
+//   - A request that carries an Origin must carry the proxy's own (a form or
+//     fetch from another page sends its own origin, "null" included).
+//   - Sec-Fetch-Site other than same-origin / none (a typed or bookmarked
+//     navigation) is another page's request: cross-site, and same-site (another
+//     port on 127.0.0.1) too. A client that sends none of these headers (curl)
+//     is not a browser acting for another page and is let through.
+//   - /falco/events and /internal/ are never forwarded.
+func (p *Proxy) refusal(r *http.Request) string {
+	if r.Host != p.host {
+		return "host"
+	}
+	if vals, ok := r.Header["Origin"]; ok && (len(vals) != 1 || vals[0] != p.origin) {
+		return "origin"
+	}
+	switch r.Header.Get("Sec-Fetch-Site") {
+	case "", "same-origin", "none":
+	default:
+		return "fetch-site"
+	}
+	if refusedPath(r.URL.Path) {
+		return "path"
+	}
+	return ""
+}
+
 func (p *Proxy) serve(w http.ResponseWriter, r *http.Request) {
+	if why := p.refusal(r); why != "" {
+		seq := p.begin(r)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":"refused by the e2e proxy"}`))
+		p.finish(seq, http.StatusForbidden, "refused-"+why)
+		return
+	}
 	if r.URL.Path == FlushPath {
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(http.StatusNoContent)
