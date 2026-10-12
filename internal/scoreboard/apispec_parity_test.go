@@ -211,9 +211,11 @@ func TestAPISpec_V1_RouteSetMatchesSpec(t *testing.T) {
 	// full-text read, closing the "no admin GET route" gap the initial
 	// Phase 2 report flagged) = 37. ADR-0028 (P28-0c) then replaced the 8
 	// per-file static routes (/vendor/* x7, /static/tokens.css) with the one
-	// GET /static/{asset}: 37 - 8 + 1 = 30.
-	if len(routes) != 30 {
-		t.Errorf("expected 30 registered routes (37 - 8 per-file static routes + GET /static/{asset}, ADR-0028), got %d: %v", len(routes), routes)
+	// GET /static/{asset}: 37 - 8 + 1 = 30. ADR-0034 S1 (D8) then adds the two
+	// profile routes (POST /api/users/{user}/profile, POST
+	// /api/admin/users/{user}/profile-reset): 30 + 2 = 32.
+	if len(routes) != 32 {
+		t.Errorf("expected 32 registered routes (30 + the 2 ADR-0034 profile routes), got %d: %v", len(routes), routes)
 	}
 }
 
@@ -563,6 +565,8 @@ var v5Coverage = map[string]bool{
 	"GET /api/state":                                            true, // TestAPISpec_V5_StateFieldsMatchSpec
 	"POST /api/admin/reset":                                     true, // TestAPISpec_V5_AdminResetResultFieldsMatchSpec
 	"POST /api/admin/users/{user}/display-name":                 true, // TestAPISpec_V5_AdminDisplayNameResultFieldsMatchSpec
+	"POST /api/users/{user}/profile":                            true, // TestAPISpec_V5_ProfileResultFieldsMatchSpec
+	"POST /api/admin/users/{user}/profile-reset":                true, // TestAPISpec_V5_AdminProfileResetResultFieldsMatchSpec
 	// app#292 Phase 2 (QA Board — supersedes P25's 7 QuestionList/
 	// QuestionThread entries above wholesale):
 	"GET /api/board/threads":                     true, // TestAPISpec_V5_BoardListFieldsMatchSpec
@@ -609,8 +613,9 @@ func TestAPISpec_VA1_ResponseObjectCoverageBidirectional(t *testing.T) {
 	// that adds/removes a response-object operation to touch this line, so
 	// the count change itself gets reviewed instead of silently passing
 	// because the bidirectional diff above happened to stay empty.
-	if len(derived) != 25 {
-		t.Errorf("expected 25 response-object operations (ADR-0009 C2 + Decision A - P25-QA(7) + app#292-Board(10) + boardAdminGetThread(1)), got %d: %v", len(derived), derived)
+	// ADR-0034 S1 adds the two profile operations (ProfileResult x2): 27.
+	if len(derived) != 27 {
+		t.Errorf("expected 27 response-object operations (ADR-0009 C2 + Decision A - P25-QA(7) + app#292-Board(10) + boardAdminGetThread(1) + ADR-0034 profile(2)), got %d: %v", len(derived), derived)
 	}
 }
 
@@ -781,6 +786,45 @@ func TestAPISpec_V5_DisplayNameResultFieldsMatchSpec(t *testing.T) {
 		t.Fatal("spec has no components.schemas.DisplayNameResult")
 	}
 	for _, m := range specparity.CompareResponse(spec, schema, actual, "DisplayNameResult") {
+		t.Errorf("%s: extra=%v missing=%v note=%q", m.Path, m.Extra, m.Missing, m.Note)
+	}
+}
+
+// ADR-0034 V1/V2: the two profile routes answer with ProfileResult. The
+// participant one is called as the participant themselves (the header is
+// REQUIRED — there is no header-less shape to test, unlike display-name).
+func TestAPISpec_V5_ProfileResultFieldsMatchSpec(t *testing.T) {
+	spec := loadScoreboardSpec(t)
+	f := newSpecFixture(t)
+
+	w := f.do("POST", "/api/users/quinn/profile", "quinn@ctf.local", map[string]any{"display_name": "Quinn", "avatar": "bug-lime"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("profile: status=%d body=%s", w.Code, w.Body)
+	}
+	actual := f.decodedJSON(w)
+	schema := spec.SchemaByName("ProfileResult")
+	if schema == nil {
+		t.Fatal("spec has no components.schemas.ProfileResult")
+	}
+	for _, m := range specparity.CompareResponse(spec, schema, actual, "ProfileResult") {
+		t.Errorf("%s: extra=%v missing=%v note=%q", m.Path, m.Extra, m.Missing, m.Note)
+	}
+}
+
+func TestAPISpec_V5_AdminProfileResetResultFieldsMatchSpec(t *testing.T) {
+	spec := loadScoreboardSpec(t)
+	f := newSpecFixture(t)
+
+	w := f.do("POST", "/api/admin/users/rick/profile-reset", specFixtureAdmin, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("admin profile-reset: status=%d body=%s", w.Code, w.Body)
+	}
+	actual := f.decodedJSON(w)
+	schema := spec.SchemaByName("ProfileResult")
+	if schema == nil {
+		t.Fatal("spec has no components.schemas.ProfileResult")
+	}
+	for _, m := range specparity.CompareResponse(spec, schema, actual, "ProfileResult") {
 		t.Errorf("%s: extra=%v missing=%v note=%q", m.Path, m.Extra, m.Missing, m.Note)
 	}
 }

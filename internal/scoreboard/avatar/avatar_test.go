@@ -36,6 +36,29 @@ func TestTable_FortyEightDistinctIDsInContractOrder(t *testing.T) {
 	}
 }
 
+func TestGlyphAndColorNames_AreCopiesInTableOrder(t *testing.T) {
+	g, c := GlyphNames(), ColorNames()
+	if len(g) != 8 || len(c) != 6 || g[0] != "falcon" || g[7] != "flame" || c[0] != "cyan" || c[5] != "slate" {
+		t.Fatalf("GlyphNames=%v ColorNames=%v", g, c)
+	}
+	g[0], c[0] = "x", "y"
+	if GlyphNames()[0] != "falcon" || ColorNames()[0] != "cyan" {
+		t.Fatal("mutating the returned slices changed the table")
+	}
+	// every id is exactly glyph-color from the two lists.
+	want := map[string]bool{}
+	for _, gg := range GlyphNames() {
+		for _, cc := range ColorNames() {
+			want[gg+"-"+cc] = true
+		}
+	}
+	for _, id := range IDs() {
+		if !want[id] {
+			t.Fatalf("id %q is not <glyph>-<color> from GlyphNames x ColorNames", id)
+		}
+	}
+}
+
 func TestIDs_ReturnsACopy(t *testing.T) {
 	a := IDs()
 	a[0] = "tampered"

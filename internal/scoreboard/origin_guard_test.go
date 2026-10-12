@@ -95,8 +95,10 @@ const allowedOrigin = "https://scoreboard.ctf.example.com"
 // (cutover — internal/qa removed wholesale), replaced by the QA Board's 7
 // (participant: boardCreateThread, boardAppendMessage, boardLikeThread,
 // boardUnlikeThread; operator: boardAdminReply, boardAdminSetThreadState,
-// boardAdminSetMessageState). 9 - 3 + 7 = 13.
-const wantOriginGuardedRouteCount = 13
+// boardAdminSetMessageState). 9 - 3 + 7 = 13. ADR-0034 S1 (D8) adds the two
+// profile routes — setProfile (participant) and adminResetProfile (operator),
+// both browser-only and both guarded: 13 + 2 = 15.
+const wantOriginGuardedRouteCount = 15
 
 // TestOriginGuard_ResetFormCSRF is the mitigation's headline case: a
 // body-less POST /api/admin/reset (the route a CSRF <form> auto-submit can

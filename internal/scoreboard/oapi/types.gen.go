@@ -9,6 +9,58 @@ import (
 	"time"
 )
 
+// Defines values for AvatarId.
+const (
+	BugAmber        AvatarId = "bug-amber"
+	BugCyan         AvatarId = "bug-cyan"
+	BugLime         AvatarId = "bug-lime"
+	BugMagenta      AvatarId = "bug-magenta"
+	BugSlate        AvatarId = "bug-slate"
+	BugViolet       AvatarId = "bug-violet"
+	FalconAmber     AvatarId = "falcon-amber"
+	FalconCyan      AvatarId = "falcon-cyan"
+	FalconLime      AvatarId = "falcon-lime"
+	FalconMagenta   AvatarId = "falcon-magenta"
+	FalconSlate     AvatarId = "falcon-slate"
+	FalconViolet    AvatarId = "falcon-violet"
+	FlameAmber      AvatarId = "flame-amber"
+	FlameCyan       AvatarId = "flame-cyan"
+	FlameLime       AvatarId = "flame-lime"
+	FlameMagenta    AvatarId = "flame-magenta"
+	FlameSlate      AvatarId = "flame-slate"
+	FlameViolet     AvatarId = "flame-violet"
+	KeyAmber        AvatarId = "key-amber"
+	KeyCyan         AvatarId = "key-cyan"
+	KeyLime         AvatarId = "key-lime"
+	KeyMagenta      AvatarId = "key-magenta"
+	KeySlate        AvatarId = "key-slate"
+	KeyViolet       AvatarId = "key-violet"
+	LockAmber       AvatarId = "lock-amber"
+	LockCyan        AvatarId = "lock-cyan"
+	LockLime        AvatarId = "lock-lime"
+	LockMagenta     AvatarId = "lock-magenta"
+	LockSlate       AvatarId = "lock-slate"
+	LockViolet      AvatarId = "lock-violet"
+	RadarAmber      AvatarId = "radar-amber"
+	RadarCyan       AvatarId = "radar-cyan"
+	RadarLime       AvatarId = "radar-lime"
+	RadarMagenta    AvatarId = "radar-magenta"
+	RadarSlate      AvatarId = "radar-slate"
+	RadarViolet     AvatarId = "radar-violet"
+	ShieldAmber     AvatarId = "shield-amber"
+	ShieldCyan      AvatarId = "shield-cyan"
+	ShieldLime      AvatarId = "shield-lime"
+	ShieldMagenta   AvatarId = "shield-magenta"
+	ShieldSlate     AvatarId = "shield-slate"
+	ShieldViolet    AvatarId = "shield-violet"
+	TerminalAmber   AvatarId = "terminal-amber"
+	TerminalCyan    AvatarId = "terminal-cyan"
+	TerminalLime    AvatarId = "terminal-lime"
+	TerminalMagenta AvatarId = "terminal-magenta"
+	TerminalSlate   AvatarId = "terminal-slate"
+	TerminalViolet  AvatarId = "terminal-violet"
+)
+
 // Defines values for BoardMessageAuthorRole.
 const (
 	BoardMessageAuthorRoleAdmin       BoardMessageAuthorRole = "admin"
@@ -131,6 +183,15 @@ type AdminResetResult struct {
 	Ok            bool `json:"ok"`
 }
 
+// AvatarId A prepared avatar (ADR-0034 D9): `<glyph>-<color>`, 8 glyphs x 6 colours =
+// 48 ids, ordered glyph-outer / colour-inner. The Go table
+// (`internal/scoreboard/avatar`) is the source of truth and a test pins this
+// enum to it. The image is `/static/avatars-<glyph>.<hash>.svg` tinted with the
+// `--avatar-<color>` token — never an upload. A client that meets an id it
+// does not know (an older bundle against a newer table) must draw the
+// default image, not fail.
+type AvatarId string
+
 // BoardList defines model for BoardList.
 type BoardList struct {
 	Threads []BoardSummary `json:"threads"`
@@ -144,8 +205,24 @@ type BoardList struct {
 // request-body input on any write route. `state` is a per-message
 // moderation column; a `deleted` message's `body` is `""` in every
 // response, including the admin's.
+//
+// `authorAvatar` (ADR-0034 D8) is the author's avatar id, always present:
+// a `participant`-authored message carries that participant's current
+// avatar (the seat's default when none was chosen); an `admin`-authored
+// message carries one FIXED id (`shield-slate`), the same for every
+// operator and derived from no account. It is an ordinary table id, so it
+// does not by itself prove the author is staff — `author_role` does.
 type BoardMessage struct {
 	Author string `json:"author"`
+
+	// AuthorAvatar A prepared avatar (ADR-0034 D9): `<glyph>-<color>`, 8 glyphs x 6 colours =
+	// 48 ids, ordered glyph-outer / colour-inner. The Go table
+	// (`internal/scoreboard/avatar`) is the source of truth and a test pins this
+	// enum to it. The image is `/static/avatars-<glyph>.<hash>.svg` tinted with the
+	// `--avatar-<color>` token — never an upload. A client that meets an id it
+	// does not know (an older bundle against a newer table) must draw the
+	// default image, not fail.
+	AuthorAvatar AvatarId `json:"authorAvatar"`
 
 	// AuthorDisplay Server-resolved display name for `author` (app#292 Phase 3
 	// review). An `admin`-authored message always resolves to the
@@ -240,9 +317,18 @@ type BoardThreadState string
 
 // ChallengeSolver defines model for ChallengeSolver.
 type ChallengeSolver struct {
-	At          time.Time `json:"at"`
-	DisplayName string    `json:"display_name"`
-	User        string    `json:"user"`
+	At time.Time `json:"at"`
+
+	// Avatar A prepared avatar (ADR-0034 D9): `<glyph>-<color>`, 8 glyphs x 6 colours =
+	// 48 ids, ordered glyph-outer / colour-inner. The Go table
+	// (`internal/scoreboard/avatar`) is the source of truth and a test pins this
+	// enum to it. The image is `/static/avatars-<glyph>.<hash>.svg` tinted with the
+	// `--avatar-<color>` token — never an upload. A client that meets an id it
+	// does not know (an older bundle against a newer table) must draw the
+	// default image, not fail.
+	Avatar      AvatarId `json:"avatar"`
+	DisplayName string   `json:"display_name"`
+	User        string   `json:"user"`
 }
 
 // ChallengeStat defines model for ChallengeStat.
@@ -442,6 +528,15 @@ type IngestIgnoredReason string
 // Journey `GET /api/users/{user}/journey` — the participant portal's main
 // projection (polled every 2s). Display-only.
 type Journey struct {
+	// Avatar A prepared avatar (ADR-0034 D9): `<glyph>-<color>`, 8 glyphs x 6 colours =
+	// 48 ids, ordered glyph-outer / colour-inner. The Go table
+	// (`internal/scoreboard/avatar`) is the source of truth and a test pins this
+	// enum to it. The image is `/static/avatars-<glyph>.<hash>.svg` tinted with the
+	// `--avatar-<color>` token — never an upload. A client that meets an id it
+	// does not know (an older bundle against a newer table) must draw the
+	// default image, not fail.
+	Avatar AvatarId `json:"avatar"`
+
 	// Current first unsolved mission id. **null** when every mission is solved
 	// (the key is always present).
 	Current *string `json:"current"`
@@ -466,7 +561,15 @@ type Journey struct {
 
 // LeaderboardEntry defines model for LeaderboardEntry.
 type LeaderboardEntry struct {
-	DisplayName string `json:"display_name"`
+	// Avatar A prepared avatar (ADR-0034 D9): `<glyph>-<color>`, 8 glyphs x 6 colours =
+	// 48 ids, ordered glyph-outer / colour-inner. The Go table
+	// (`internal/scoreboard/avatar`) is the source of truth and a test pins this
+	// enum to it. The image is `/static/avatars-<glyph>.<hash>.svg` tinted with the
+	// `--avatar-<color>` token — never an upload. A client that meets an id it
+	// does not know (an older bundle against a newer table) must draw the
+	// default image, not fail.
+	Avatar      AvatarId `json:"avatar"`
+	DisplayName string   `json:"display_name"`
 
 	// Earliest RFC3339 timestamp of the user's MOST RECENT solve (field name kept
 	// for API stability; semantics changed 2026-09-03 CEO decision — see
@@ -516,6 +619,15 @@ type LikeResult struct {
 // OWN row out of a field-wide computation — no other participant's data is
 // serialized (P23-ME-1).
 type Me struct {
+	// Avatar A prepared avatar (ADR-0034 D9): `<glyph>-<color>`, 8 glyphs x 6 colours =
+	// 48 ids, ordered glyph-outer / colour-inner. The Go table
+	// (`internal/scoreboard/avatar`) is the source of truth and a test pins this
+	// enum to it. The image is `/static/avatars-<glyph>.<hash>.svg` tinted with the
+	// `--avatar-<color>` token — never an upload. A client that meets an id it
+	// does not know (an older bundle against a newer table) must draw the
+	// default image, not fail.
+	Avatar AvatarId `json:"avatar"`
+
 	// DisplayName falls back to `user` when unset
 	DisplayName string `json:"display_name"`
 
@@ -756,6 +868,39 @@ type PostReplyRequest struct {
 	Body string `json:"body"`
 }
 
+// ProfileRequest `POST /api/users/{user}/profile`. At least one field; no other key is
+// accepted (400). Both are validated before anything is written.
+type ProfileRequest struct {
+	// Avatar A prepared avatar (ADR-0034 D9): `<glyph>-<color>`, 8 glyphs x 6 colours =
+	// 48 ids, ordered glyph-outer / colour-inner. The Go table
+	// (`internal/scoreboard/avatar`) is the source of truth and a test pins this
+	// enum to it. The image is `/static/avatars-<glyph>.<hash>.svg` tinted with the
+	// `--avatar-<color>` token — never an upload. A client that meets an id it
+	// does not know (an older bundle against a newer table) must draw the
+	// default image, not fail.
+	Avatar *AvatarId `json:"avatar,omitempty"`
+
+	// DisplayName 1..32 runes after trimming; no <>&"' and no control characters (same rule as DisplayNameRequest.name)
+	DisplayName *string `json:"display_name,omitempty"`
+}
+
+// ProfileResult the profile AFTER the write (or the reset)
+type ProfileResult struct {
+	// Avatar A prepared avatar (ADR-0034 D9): `<glyph>-<color>`, 8 glyphs x 6 colours =
+	// 48 ids, ordered glyph-outer / colour-inner. The Go table
+	// (`internal/scoreboard/avatar`) is the source of truth and a test pins this
+	// enum to it. The image is `/static/avatars-<glyph>.<hash>.svg` tinted with the
+	// `--avatar-<color>` token — never an upload. A client that meets an id it
+	// does not know (an older bundle against a newer table) must draw the
+	// default image, not fail.
+	Avatar AvatarId `json:"avatar"`
+
+	// DisplayName falls back to `user` when unset
+	DisplayName string `json:"display_name"`
+	Ok          bool   `json:"ok"`
+	User        string `json:"user"`
+}
+
 // ReportsAPIEntry One element of the `report-to` (CSP3 Reporting API, current
 // mechanism) wire format `POST /csp-report` accepts under
 // `application/reports+json` — a JSON array of these. Same
@@ -800,10 +945,19 @@ type SolveEntry struct {
 
 // SolveRecord defines model for SolveRecord.
 type SolveRecord struct {
-	At          time.Time `json:"at"`
-	Challenge   string    `json:"challenge"`
-	DisplayName string    `json:"display_name"`
-	User        string    `json:"user"`
+	At time.Time `json:"at"`
+
+	// Avatar A prepared avatar (ADR-0034 D9): `<glyph>-<color>`, 8 glyphs x 6 colours =
+	// 48 ids, ordered glyph-outer / colour-inner. The Go table
+	// (`internal/scoreboard/avatar`) is the source of truth and a test pins this
+	// enum to it. The image is `/static/avatars-<glyph>.<hash>.svg` tinted with the
+	// `--avatar-<color>` token — never an upload. A client that meets an id it
+	// does not know (an older bundle against a newer table) must draw the
+	// default image, not fail.
+	Avatar      AvatarId `json:"avatar"`
+	Challenge   string   `json:"challenge"`
+	DisplayName string   `json:"display_name"`
+	User        string   `json:"user"`
 }
 
 // State `GET /api/state` — admin-only, whole-field snapshot. Every solve list is
@@ -995,6 +1149,9 @@ type SetStepCheckJSONRequestBody = StepCheckRequest
 
 // SetDisplayNameJSONRequestBody defines body for SetDisplayName for application/json ContentType.
 type SetDisplayNameJSONRequestBody = DisplayNameRequest
+
+// SetProfileJSONRequestBody defines body for SetProfile for application/json ContentType.
+type SetProfileJSONRequestBody = ProfileRequest
 
 // CspReportApplicationReportsPlusJSONRequestBody defines body for CspReport for application/reports+json ContentType.
 type CspReportApplicationReportsPlusJSONRequestBody = CspReportApplicationReportsPlusJSONBody

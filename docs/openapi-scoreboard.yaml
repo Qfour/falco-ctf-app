@@ -816,7 +816,7 @@ paths:
       x-ctf-authz: self-or-admin
       x-ctf-origin-guard: true
       x-ctf-collector-forward: false
-      x-ctf-rate-limit: identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty; separate from submit)
+      x-ctf-rate-limit: identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit)
       description: |
         Purely presentational: journey `steps` are an info-only checklist with
         no auto-detection, so a tick never affects a solve verdict — it lets a
@@ -884,7 +884,7 @@ paths:
       x-ctf-authz: self-or-admin
       x-ctf-origin-guard: true
       x-ctf-collector-forward: false
-      x-ctf-rate-limit: identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty; separate from submit)
+      x-ctf-rate-limit: identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit)
       description: |
         Hints open in order: opening `idx` N requires N-1 already open (409
         otherwise), so participants approach the answer progressively instead of
@@ -953,7 +953,7 @@ paths:
       x-ctf-authz: self-or-admin
       x-ctf-origin-guard: true
       x-ctf-collector-forward: false
-      x-ctf-rate-limit: identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty; separate from submit)
+      x-ctf-rate-limit: identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit)
       description: |
         The ONLY way an evade challenge returns to clean once a forbidden Falco
         rule fired while it was the participant's current mission (ADR-0003
@@ -1083,6 +1083,74 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "500":
           description: could not store the name
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/users/{user}/profile:
+    post:
+      summary: Set the caller's own display name and/or avatar (profile)
+      operationId: setProfile
+      tags: [participant]
+      x-ctf-audience: participant
+      x-ctf-authz: self-or-admin
+      x-ctf-origin-guard: true
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit)
+      description: |
+        ADR-0034 D8. The participant's profile is exactly two cosmetic things: a
+        display name and one avatar id picked from the prepared table
+        (`AvatarId`, 48 values). Identity stays anchored to the auth-derived
+        `{user}` slug; nothing here is ever an email, a real name or an image.
+
+        Body: `{display_name?, avatar?}` — at least one, no other key (an
+        unknown key is 400, as is a JSON `null` or a non-string value). EVERY
+        field is validated before ANYTHING is written, and the two tables
+        (`display_names`, `avatars`) are written in ONE transaction, so a bad
+        `avatar` next to a good `display_name` is 400 and the name is NOT
+        changed. Last-write-wins (there is no first-set-only rule). A field
+        left out keeps its current value.
+
+        Authorization is `self-or-admin` and the identity header is REQUIRED:
+        a request with no `X-Auth-Request-Email` is 403, never the
+        claimed-identity fallback `self-or-admin-write` allows. This route is
+        origin-guarded and is NOT in the collector's forward allowlist (a
+        workspace `curl` cannot reach it, on purpose: the portal's profile form
+        is the only participant path). Rate-limited per proven identity on the
+        same fail-closed bucket as the other browser-only participant actions.
+
+        The response carries the values AFTER the write: `avatar` is the id now
+        in effect (always a table id).
+      parameters:
+        - $ref: "#/components/parameters/User"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProfileRequest" }
+      responses:
+        "200":
+          description: profile stored
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProfileResult" }
+        "400":
+          description: invalid user, body that is not exactly the allowed JSON object, no field given, invalid name (empty, >32 runes, or forbidden characters), or an `avatar` that is not in the table — nothing was written
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: origin guard denied, or the request carries no X-Auth-Request-Email identity (denied before the rate limit; no token is consumed), or the caller is neither `{user}` nor an admin
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: rate limited (per-identity bucket — keyed by the caller's X-Auth-Request-Email, not the client IP)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: could not store the profile (nothing was written)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1434,7 +1502,7 @@ paths:
       x-ctf-rate-limit: none
       description: |
         Wipes all solves and the in-memory event / rule-fire counters. Display
-        names are preserved. Used to clear a demo run before the real event.
+        names and avatars (the profile, ADR-0034 D10) are preserved. Used to clear a demo run before the real event.
 
         The most destructive route in this service — it is the origin guard's
         actual target. Admin only (`ADMIN_EMAILS`, propagated by auth-policy on
@@ -1499,6 +1567,49 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "500":
           description: could not store the name
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/admin/users/{user}/profile-reset:
+    post:
+      summary: Return ANY user's display name and avatar to their defaults (admin)
+      operationId: adminResetProfile
+      tags: [operator]
+      x-ctf-audience: operator
+      x-ctf-authz: admin
+      x-ctf-origin-guard: true
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
+      description: |
+        ADR-0034 D8. Deletes the user's `display_names` and `avatars` rows in one
+        transaction, so the name is the seat again and the avatar is the seat's
+        derived default. Idempotent (resetting an untouched seat is a no-op).
+        This is the operator's way to take back an inappropriate name or avatar,
+        and the way a deletion request is honoured (ADR-0034 D11). Not
+        origin-guard-exempt and not collector-forwarded.
+
+        The response carries the values AFTER the reset.
+      parameters:
+        - $ref: "#/components/parameters/User"
+      responses:
+        "200":
+          description: profile reset to the defaults
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProfileResult" }
+        "400":
+          description: invalid user
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: origin guard denied, or caller is not an admin
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: could not reset (nothing was changed)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -2116,6 +2227,91 @@ components:
         user: { type: string }
         display_name: { type: string }
 
+    AvatarId:
+      type: string
+      description: |
+        A prepared avatar (ADR-0034 D9): `<glyph>-<color>`, 8 glyphs x 6 colours =
+        48 ids, ordered glyph-outer / colour-inner. The Go table
+        (`internal/scoreboard/avatar`) is the source of truth and a test pins this
+        enum to it. The image is `/static/avatars-<glyph>.<hash>.svg` tinted with the
+        `--avatar-<color>` token — never an upload. A client that meets an id it
+        does not know (an older bundle against a newer table) must draw the
+        default image, not fail.
+      enum:
+        - falcon-cyan
+        - falcon-magenta
+        - falcon-amber
+        - falcon-lime
+        - falcon-violet
+        - falcon-slate
+        - shield-cyan
+        - shield-magenta
+        - shield-amber
+        - shield-lime
+        - shield-violet
+        - shield-slate
+        - key-cyan
+        - key-magenta
+        - key-amber
+        - key-lime
+        - key-violet
+        - key-slate
+        - terminal-cyan
+        - terminal-magenta
+        - terminal-amber
+        - terminal-lime
+        - terminal-violet
+        - terminal-slate
+        - radar-cyan
+        - radar-magenta
+        - radar-amber
+        - radar-lime
+        - radar-violet
+        - radar-slate
+        - lock-cyan
+        - lock-magenta
+        - lock-amber
+        - lock-lime
+        - lock-violet
+        - lock-slate
+        - bug-cyan
+        - bug-magenta
+        - bug-amber
+        - bug-lime
+        - bug-violet
+        - bug-slate
+        - flame-cyan
+        - flame-magenta
+        - flame-amber
+        - flame-lime
+        - flame-violet
+        - flame-slate
+
+    ProfileRequest:
+      type: object
+      description: |
+        `POST /api/users/{user}/profile`. At least one field; no other key is
+        accepted (400). Both are validated before anything is written.
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        display_name:
+          type: string
+          description: "1..32 runes after trimming; no <>&\"' and no control characters (same rule as DisplayNameRequest.name)"
+        avatar: { $ref: "#/components/schemas/AvatarId" }
+
+    ProfileResult:
+      type: object
+      description: the profile AFTER the write (or the reset)
+      required: [ok, user, display_name, avatar]
+      properties:
+        ok: { type: boolean, const: true }
+        user: { type: string }
+        display_name:
+          type: string
+          description: falls back to `user` when unset
+        avatar: { $ref: "#/components/schemas/AvatarId" }
+
     AdminResetResult:
       type: object
       required: [ok, cleared_solves]
@@ -2146,13 +2342,15 @@ components:
         OWN row out of a field-wide computation — no other participant's data is
         serialized (P23-ME-1).
       required:
-        [user, display_name, solved, solved_count, total_challenges,
+        [user, display_name, avatar, solved, solved_count, total_challenges,
          next_unsolved, recent_rule_fires, events, score, rank, hint_penalty, now]
       properties:
         user: { type: string }
         display_name:
           type: string
           description: falls back to `user` when unset
+        avatar:
+          $ref: "#/components/schemas/AvatarId"
         solved:
           type: array
           description: this user's solves in solve order, filtered to catalog membership
@@ -2420,10 +2618,11 @@ components:
       description: |
         `GET /api/users/{user}/journey` — the participant portal's main
         projection (polled every 2s). Display-only.
-      required: [user, display_name, solved_count, total, current, missions, detail, score, hint_penalty, now]
+      required: [user, display_name, avatar, solved_count, total, current, missions, detail, score, hint_penalty, now]
       properties:
         user: { type: string }
         display_name: { type: string }
+        avatar: { $ref: "#/components/schemas/AvatarId" }
         solved_count: { type: integer }
         total:
           type: integer
@@ -2453,10 +2652,11 @@ components:
 
     LeaderboardEntry:
       type: object
-      required: [user, display_name, solved, score, earliest, events, rank]
+      required: [user, display_name, avatar, solved, score, earliest, events, rank]
       properties:
         user: { type: string }
         display_name: { type: string }
+        avatar: { $ref: "#/components/schemas/AvatarId" }
         solved: { type: integer }
         score:
           type: integer
@@ -2478,10 +2678,11 @@ components:
 
     ChallengeSolver:
       type: object
-      required: [user, display_name, at]
+      required: [user, display_name, avatar, at]
       properties:
         user: { type: string }
         display_name: { type: string }
+        avatar: { $ref: "#/components/schemas/AvatarId" }
         at: { type: string, format: date-time }
 
     ChallengeStat:
@@ -2514,10 +2715,11 @@ components:
 
     SolveRecord:
       type: object
-      required: [user, display_name, challenge, at]
+      required: [user, display_name, avatar, challenge, at]
       properties:
         user: { type: string }
         display_name: { type: string }
+        avatar: { $ref: "#/components/schemas/AvatarId" }
         challenge: { type: string }
         at: { type: string, format: date-time }
 
@@ -2568,7 +2770,14 @@ components:
         request-body input on any write route. `state` is a per-message
         moderation column; a `deleted` message's `body` is `""` in every
         response, including the admin's.
-      required: [id, author_role, author, authorDisplay, body, created_at, state]
+
+        `authorAvatar` (ADR-0034 D8) is the author's avatar id, always present:
+        a `participant`-authored message carries that participant's current
+        avatar (the seat's default when none was chosen); an `admin`-authored
+        message carries one FIXED id (`shield-slate`), the same for every
+        operator and derived from no account. It is an ordinary table id, so it
+        does not by itself prove the author is staff — `author_role` does.
+      required: [id, author_role, author, authorDisplay, authorAvatar, body, created_at, state]
       properties:
         id: { type: string }
         author_role:
@@ -2586,6 +2795,7 @@ components:
             uses; if none was ever set, this equals `author` — a lookup
             never fails or omits this field, it only ever falls back to
             the slug.
+        authorAvatar: { $ref: "#/components/schemas/AvatarId" }
         body: { type: string }
         created_at: { type: string, format: date-time }
         state:

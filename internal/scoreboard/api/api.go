@@ -11,8 +11,10 @@
 //	POST /api/users/{user}/challenges/{cid}/hints/{idx}
 //	POST /api/users/{user}/challenges/{cid}/reset-dirty
 //	POST /api/users/{user}/display-name
+//	POST /api/users/{user}/profile
 //	POST /api/admin/reset
 //	POST /api/admin/users/{user}/display-name
+//	POST /api/admin/users/{user}/profile-reset
 //	GET  /api/board/threads
 //	GET  /api/board/threads/{tid}
 //	POST /api/board/threads
@@ -42,6 +44,7 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
 	"github.com/Qfour/falco-ctf-app/internal/board"
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/avatar"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/detect"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/metrics"
@@ -141,7 +144,7 @@ const (
 const triggerDetectWindowSeconds = 60
 
 // actionBucket is the ratelimit.IdentityRequestsTotal "bucket" label of
-// Handler.actionLimiter (steps/check + hints/{idx} + reset-dirty). Keep it a
+// Handler.actionLimiter (steps/check + hints/{idx} + reset-dirty + profile). Keep it a
 // fixed constant: it is a metric label.
 const actionBucket = "participant_action"
 
@@ -180,9 +183,10 @@ type Handler struct {
 	// submitLimiter: that one is keyed by client IP, and under a venue NAT
 	// every participant shares one IP, so one person's hint opens could 429
 	// someone else's submit (solve time is a tie-break). A future ADR-0032
-	// attempt route joins this bucket via actionMW.
+	// attempt route joins this bucket via actionMW. POST /api/users/{user}/profile
+	// (ADR-0034 D8) joins it too.
 	actionLimiter *ratelimit.Limiter
-	adminSet           map[string]struct{}
+	adminSet      map[string]struct{}
 	// hiddenSet is the HIDDEN_USERS allowlist (CEO/ops request: a venue-demo
 	// account, e.g. test1, must be free to solve challenges and trip Falco
 	// rules without its score/solve state appearing on the PUBLIC leaderboard
@@ -512,6 +516,16 @@ func (h *Handler) Routes() []apispec.Route {
 			Handler: h.og(http.HandlerFunc(h.adminSetDisplayName)),
 		},
 		{
+			// ADR-0034 D8: the operator's take-back for an inappropriate name or
+			// avatar (and the deletion-request path, D11). Same posture as the
+			// admin display-name route: the dashboard (browser) is the caller, so
+			// it is origin-guarded; never collector-forwarded.
+			Method: "POST", Pattern: "/api/admin/users/{user}/profile-reset",
+			Audience: apispec.AudienceOperator, Authz: apispec.AuthzAdmin,
+			OriginGuarded: true, CollectorForward: false, RateLimit: "none",
+			Handler: h.og(http.HandlerFunc(h.adminResetProfile)),
+		},
+		{
 			// NOT wrapped by the origin guard (P23-2 follow-up). This route has
 			// TWO callers: the journey UI (browser fetch, carries Origin) AND the
 			// collector's verbatim forward of the participant's curl submission
@@ -591,7 +605,7 @@ func (h *Handler) Routes() []apispec.Route {
 			Method: "POST", Pattern: "/api/users/{user}/challenges/{cid}/steps/{idx}/check",
 			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdmin,
 			OriginGuarded: true, CollectorForward: false,
-			RateLimit: "identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty; separate from submit)",
+			RateLimit: "identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit)",
 			Handler:   h.og(actionMW(http.HandlerFunc(h.stepCheck))),
 		},
 		{
@@ -601,7 +615,7 @@ func (h *Handler) Routes() []apispec.Route {
 			Method: "POST", Pattern: "/api/users/{user}/challenges/{cid}/hints/{idx}",
 			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdmin,
 			OriginGuarded: true, CollectorForward: false,
-			RateLimit: "identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty; separate from submit)",
+			RateLimit: "identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit)",
 			Handler:   h.og(actionMW(http.HandlerFunc(h.openHint))),
 		},
 		{
@@ -627,8 +641,22 @@ func (h *Handler) Routes() []apispec.Route {
 			Method: "POST", Pattern: "/api/users/{user}/challenges/{cid}/reset-dirty",
 			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdmin,
 			OriginGuarded: true, CollectorForward: false,
-			RateLimit: "identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty; separate from submit)",
+			RateLimit: "identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit)",
 			Handler:   h.og(actionMW(http.HandlerFunc(h.resetDirty))),
+		},
+		{
+			// ADR-0034 D8: the participant's own profile (display name + one
+			// prepared avatar id). Browser-only like steps/check: origin-guarded,
+			// NOT in the collector's forward allowlist, and gated by selfOrAdmin
+			// (identity header REQUIRED) — NOT selfOrAdminWrite, whose header-less
+			// claimed-identity allow would let a cluster-internal caller write
+			// someone else's profile. actionMW is the identity-keyed fail-closed
+			// bucket (a header-less request is 403 before it touches a bucket).
+			Method: "POST", Pattern: "/api/users/{user}/profile",
+			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdmin,
+			OriginGuarded: true, CollectorForward: false,
+			RateLimit: "identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit)",
+			Handler:   h.og(actionMW(http.HandlerFunc(h.setProfile))),
 		},
 		{
 			// NOT wrapped by the origin guard (P23-2 follow-up) — and it must not
@@ -1864,6 +1892,7 @@ func (h *Handler) userMe(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"user":              user,
 		"display_name":      displayName,
+		"avatar":            avatar.Resolve(snap.Avatars[user], user),
 		"solved":            solved,
 		"solved_count":      len(solved),
 		"total_challenges":  len(ids),
@@ -2056,6 +2085,7 @@ func (h *Handler) journey(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"user":         user,
 		"display_name": displayName,
+		"avatar":       avatar.Resolve(snap.Avatars[user], user),
 		"solved_count": len(solvedSet),
 		"total":        len(order),
 		"current":      currentJSON,
@@ -2340,7 +2370,11 @@ func (h *Handler) state(w http.ResponseWriter, r *http.Request) {
 type lbEntry struct {
 	User        string `json:"user"`
 	DisplayName string `json:"display_name"`
-	Solved      int    `json:"solved"`
+	// Avatar is the always-present avatar id (ADR-0034 D8): the stored id, or
+	// the seat's default when none is stored / the stored id left the table.
+	// Display-only — it never feeds Score or Rank.
+	Avatar string `json:"avatar"`
+	Solved int    `json:"solved"`
 	// Score is the ranking metric (#40, CEO decision): the Grader's points
 	// arithmetic (base award per solve − per-hint reveal penalty, clamped at
 	// 0). Additive alongside Solved/Earliest so per-challenge progress bars
@@ -2462,6 +2496,7 @@ func (h *Handler) computeLeaderboard(snap store.Snapshot, ids []string) []lbEntr
 		leaderboard = append(leaderboard, lbEntry{
 			User:        u,
 			DisplayName: displayOf(u),
+			Avatar:      avatar.Resolve(snap.Avatars[u], u),
 			Solved:      solved,
 			// Score is the Grader's arithmetic; the handler only projects it. Pass
 			// the same catalog-filtered solved count used for the Solved column so
@@ -2519,10 +2554,12 @@ func (h *Handler) buildState() map[string]any {
 		}
 		return u
 	}
+	avatarOf := func(u string) string { return avatar.Resolve(snap.Avatars[u], u) }
 
 	type chSolver struct {
 		User        string `json:"user"`
 		DisplayName string `json:"display_name"`
+		Avatar      string `json:"avatar"`
 		At          string `json:"at"`
 	}
 	type chStat struct {
@@ -2551,7 +2588,7 @@ func (h *Handler) buildState() map[string]any {
 		details := make([]chSolver, 0, len(solvers))
 		for _, s := range solvers {
 			names = append(names, s[0])
-			details = append(details, chSolver{User: s[0], DisplayName: displayOf(s[0]), At: s[1]})
+			details = append(details, chSolver{User: s[0], DisplayName: displayOf(s[0]), Avatar: avatarOf(s[0]), At: s[1]})
 		}
 		var first *string
 		if len(solvers) > 0 {
@@ -2583,6 +2620,7 @@ func (h *Handler) buildState() map[string]any {
 	type recentEntry struct {
 		User        string `json:"user"`
 		DisplayName string `json:"display_name"`
+		Avatar      string `json:"avatar"`
 		Challenge   string `json:"challenge"`
 		At          string `json:"at"`
 	}
@@ -2594,6 +2632,7 @@ func (h *Handler) buildState() map[string]any {
 		allSolves = append(allSolves, recentEntry{
 			User:        k.User,
 			DisplayName: displayOf(k.User),
+			Avatar:      avatarOf(k.User),
 			Challenge:   k.Challenge,
 			At:          at,
 		})

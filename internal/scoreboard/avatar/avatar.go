@@ -6,6 +6,12 @@
 // derivation (a seat that never chose), and the asset/colour names the static
 // files and tokens.css must provide (File, ColorToken).
 //
+// Import closure: this package imports only the standard library (no store,
+// no scoring, no api), on purpose, so internal/scoreboard/view (the static
+// asset registry) and tests anywhere can import it without a cycle. Other
+// packages should DERIVE from GlyphNames / ColorNames / Valid / File /
+// ColorToken, or assert equality with them, rather than keep a second list.
+//
 // An id is "<glyph>-<color>". Glyphs (8) are the outer axis and colours (6)
 // the inner one, so the 48 ids run falcon-cyan (1st) ... flame-slate (48th).
 package avatar
@@ -16,16 +22,16 @@ import (
 	"strconv"
 )
 
-// Glyphs and Colors are ordered: the order defines every id's 1-based number,
+// glyphs and colors are ordered: the order defines every id's 1-based number,
 // and therefore which seat gets which default. Appending is safe; reordering
 // or inserting changes existing seats' defaults.
 var (
-	Glyphs = [...]string{"falcon", "shield", "key", "terminal", "radar", "lock", "bug", "flame"}
-	Colors = [...]string{"cyan", "magenta", "amber", "lime", "violet", "slate"}
+	glyphs = [...]string{"falcon", "shield", "key", "terminal", "radar", "lock", "bug", "flame"}
+	colors = [...]string{"cyan", "magenta", "amber", "lime", "violet", "slate"}
 )
 
 const (
-	// Count is len(Glyphs) * len(Colors).
+	// Count is len(glyphs) * len(colors).
 	Count = 48
 	// ReservedCount is the tail of the table kept for seats that are not
 	// "user<N>" with N in 1..SeatCapacity (test1, user01, an out-of-range N).
@@ -48,9 +54,9 @@ const (
 // ids is the full ordered table, built once from the two axes.
 var ids = func() [Count]string {
 	var out [Count]string
-	for gi, g := range Glyphs {
-		for ci, c := range Colors {
-			out[gi*len(Colors)+ci] = g + "-" + c
+	for gi, g := range glyphs {
+		for ci, c := range colors {
+			out[gi*len(colors)+ci] = g + "-" + c
 		}
 	}
 	return out
@@ -68,9 +74,25 @@ var index = func() map[string]int {
 func init() {
 	// A compile-time-shaped guard: the constant and the axes must agree, or the
 	// reserved-tail arithmetic below silently points at the wrong entries.
-	if len(Glyphs)*len(Colors) != Count || len(index) != Count {
+	if len(glyphs)*len(colors) != Count || len(index) != Count {
 		panic("avatar: table size drifted from Count (duplicate glyph/colour?)")
 	}
+}
+
+// GlyphNames returns the 8 glyph names in table order (a copy). Each is the
+// stem of one asset file: avatars/<glyph>.svg (File).
+func GlyphNames() []string {
+	out := make([]string, len(glyphs))
+	copy(out, glyphs[:])
+	return out
+}
+
+// ColorNames returns the 6 colour names in table order (a copy). Each maps to
+// the CSS custom property ColorTokenPrefix + name ("--avatar-cyan").
+func ColorNames() []string {
+	out := make([]string, len(colors))
+	copy(out, colors[:])
+	return out
 }
 
 // IDs returns the full ordered table (a copy).
@@ -100,11 +122,12 @@ func Parse(id string) (glyph, color string, ok bool) {
 	if !found {
 		return "", "", false
 	}
-	return Glyphs[i/len(Colors)], Colors[i%len(Colors)], true
+	return glyphs[i/len(colors)], colors[i%len(colors)], true
 }
 
-// File returns the asset file name for id's glyph ("falcon.svg"), served from
-// view/static/avatars/. The colour is NOT in the file: it is applied from
+// File returns the asset file name for id's glyph ("falcon.svg"), stored under
+// view/static/avatars/ (served as avatars-<glyph>.<hash>.svg by the static
+// registry). The colour is NOT in the file: it is applied from
 // ColorToken on the <img> background, so 8 files cover 48 ids.
 func File(id string) (string, bool) {
 	g, _, ok := Parse(id)
