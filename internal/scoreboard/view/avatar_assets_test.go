@@ -278,7 +278,7 @@ func hexRGB(t *testing.T, h string) [3]float64 {
 	return out
 }
 
-func relLuminance(rgb [3]float64) float64 {
+func avatarRelLuminance(rgb [3]float64) float64 {
 	return 0.2126*srgbLinear(rgb[0]) + 0.7152*srgbLinear(rgb[1]) + 0.0722*srgbLinear(rgb[2])
 }
 
@@ -286,9 +286,9 @@ func relLuminance(rgb [3]float64) float64 {
 // glyph reads on every color, >= 3:1 (WCAG 1.4.11 non-text contrast). The
 // values are computed from tokens.css itself, so a lighter edit goes red here.
 func TestAvatarColors_WhiteContrast(t *testing.T) {
-	white := relLuminance([3]float64{255, 255, 255})
+	white := avatarRelLuminance([3]float64{255, 255, 255})
 	for color, hex := range avatarTokenValues(t) {
-		l := relLuminance(hexRGB(t, hex))
+		l := avatarRelLuminance(hexRGB(t, hex))
 		ratio := (white + 0.05) / (l + 0.05)
 		if ratio < 3.0 {
 			t.Errorf("--avatar-%s %s: contrast with a white glyph %.2f:1, want >= 3:1", color, hex, ratio)
