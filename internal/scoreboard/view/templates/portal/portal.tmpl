@@ -54,6 +54,7 @@
 <link rel="stylesheet" href="{{.Assets.URL "tokens.css"}}">
 {{template "css.tmpl" . -}}
 {{template "css-avatar.tmpl" . -}}
+{{template "css-profile.tmpl" . -}}
 {{template "css-a11y.tmpl" . -}}
 </head>
 <body>
@@ -124,6 +125,9 @@
   window.__PORTAL_ROLE__ = {{.RoleJSON}};
   window.__PORTAL_USER__ = {{.UserJSON}};
   window.__PORTAL_TTYD_URL__ = {{.TtydURLJSON}};
+  // Avatar picture URLs by glyph (ADR-0034 S1), read by avatarImg() in
+  // core-util.tmpl. Display-only, same-origin static assets.
+  const ASSETS = Object.freeze({ avatars: Object.freeze({{.AvatarURLsJSON}}) });
 </script>
 {{template "core-util.tmpl" . -}}
 {{template "pane-story.tmpl" . -}}
