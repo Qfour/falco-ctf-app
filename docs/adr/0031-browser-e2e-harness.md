@@ -82,7 +82,7 @@ dialog で止まり、要求の網羅を見られず、作り手の自己申告�
     要求の網羅 (Chrome から要求の一覧を読めるかは未確認)、cross-origin の ttyd iframe の cookie (D2)、回帰の継続。
   - **(b) CI = `make e2e`。** `internal/e2e/` (build tag `e2e`) の Go テストが、`cmd/scoreboard` の実バイナリ (`scoreboard/Dockerfile` と同じ build flag) を子プロセスとして起動する。子の env は
     allowlist から組んで親の env を継がない: `LISTEN_ADDR` (loopback)・`SCOREBOARD_DB` (一時)・`ALLOWED_ORIGINS` (proxy の origin) (`cmd/scoreboard/main.go:31-32,75`)・`CHALLENGES_DIR`・
-    `SCENARIO_FILE` (`cmd/scoreboard/catalog.go:28-29`)・`PORTAL_TTYD_SUFFIX` (予約 TLD のテスト値 `<名>.test`: `main.go:122`)。`FLAGS_FILE`・`ADMIN_EMAILS`・webhook の secret (既定 off: `:140`)
+    `SCENARIO_FILE` (`cmd/scoreboard/catalog.go:28-29`)・`PORTAL_TTYD_SUFFIX` (予約 TLD のテスト値 `<名>.test`: `main.go:122`)・`QUEST_ENABLED=true` (ADR-0029 D3: 未設定は無効なので、E2E が常に Quest 無効で回って緑にならないように。シナリオは `quest_enabled` を assert する)。`FLAGS_FILE`・`ADMIN_EMAILS`・webhook の secret (既定 off: `:140`)
     は渡さず、無いことを起動時に assert する。テスト専用の時計 (`scoreboard.WithNow`: `internal/scoreboard/server.go:86`) と store への直書きは使わない — main の組み立て (`main.go:286-299`) を写すと drift の元になる。
   - 手前の proxy は (1) `X-Auth-Request-Email` を上書きで注入する (ingress と同じ向き) (2) 全要求を順序つきで記録する (3) 障害 (404・500・応答の停止) を注入できる (4) 応答のヘッダ (CSP を
     含む) を書き換えない。upstream は自分が起動した子だけで、env や引数で差し替えられない。ブラウザは chromedp で Chromium を headless で動かし、`--host-resolver-rules` で `user1.<suffix>` を
