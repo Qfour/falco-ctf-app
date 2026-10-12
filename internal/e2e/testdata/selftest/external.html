@@ -1,0 +1,8 @@
+<!doctype html>
+<meta charset="utf-8">
+<link rel="icon" href="data:,">
+<title>self-test: external origin</title>
+<p>A page that reaches outside (P12: egress-zero).</p>
+<img src="http://external.test/pixel.png" alt=""
+     onerror="document.documentElement.dataset.done = '1'"
+     onload="document.documentElement.dataset.done = '1'">

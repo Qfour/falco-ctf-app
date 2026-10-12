@@ -1,0 +1,12 @@
+<!doctype html>
+<meta charset="utf-8">
+<link rel="icon" href="data:,">
+<title>self-test: automatic POST two seconds after load</title>
+<p>Nothing is clicked; the page writes by itself.</p>
+<script>
+setTimeout(function () {
+  fetch('/api/auto', { method: 'POST' }).then(function () {
+    document.documentElement.dataset.done = '1';
+  });
+}, 2000);
+</script>

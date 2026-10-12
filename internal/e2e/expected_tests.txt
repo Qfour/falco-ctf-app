@@ -1,0 +1,10 @@
+# The top-level tests `make e2e` must see pass (ADR-0031 D1 (b), V6).
+#
+# scripts/e2e-verdict.py compares this list with the tests that actually passed
+# in the run: a name missing from the run, a passing test not listed here, a
+# skip, a failure, or an empty list all fail `make e2e`. Add the name here in
+# the same change that adds the test.
+TestE2E_E3_DirtyMissionBrowseWritesNothingAndResetAsksFirst
+TestSelfTest_SharedAssertionsTurnRedOnPlantedDefects
+TestSelfTest_AMissingWriteIsADifference
+TestSelfTest_BrowserIsMissingIsAnError

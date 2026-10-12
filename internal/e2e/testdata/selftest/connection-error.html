@@ -1,0 +1,19 @@
+<!doctype html>
+<meta charset="utf-8">
+<link rel="icon" href="data:,">
+<title>self-test: caught render exception</title>
+<p id="updated">connecting…</p>
+<script>
+// The portal's refresh(): a render exception is caught by the surrounding try
+// and turned into the "connection error" label; nothing is uncaught.
+async function refresh() {
+  try {
+    var data = null;
+    data.render();
+    document.getElementById('updated').textContent = 'updated';
+  } catch (e) {
+    document.getElementById('updated').textContent = 'connection error';
+  }
+}
+refresh().then(function () { document.documentElement.dataset.done = '1'; });
+</script>
