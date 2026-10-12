@@ -169,12 +169,12 @@ type JourneyConfig struct {
 }
 
 type Handler struct {
-	cat                catalog.Catalog
-	store              *store.Store
-	grader             *scoring.Grader
-	logger             *slog.Logger
-	now                func() time.Time
-	submitLimiter      *ratelimit.Limiter
+	cat           catalog.Catalog
+	store         *store.Store
+	grader        *scoring.Grader
+	logger        *slog.Logger
+	now           func() time.Time
+	submitLimiter *ratelimit.Limiter
 	// actionLimiter is the IDENTITY-keyed bucket (app#315, ADR-0027
 	// Consequences, ADR-0032 D3) shared by the browser-only participant
 	// actions: steps/check, hints/{idx}, reset-dirty. Deliberately NOT
@@ -306,23 +306,23 @@ func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *sl
 		inflight = make(chan struct{}, cap)
 	}
 	return &Handler{
-		cat:                cat,
-		store:              s,
-		grader:             grader,
-		logger:             logger,
-		now:                now,
-		submitLimiter:      ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now),
-		actionLimiter:      ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now),
-		adminSet:           adminSet,
-		hiddenSet:          hiddenSet,
-		originGuard:        originguard.New(allowedOrigins, logger),
-		journeys:           journeys,
-		falcoRules:         falcoRules,
-		order:              order,
-		docsBaseURL:        docsBaseURL,
-		detectRunner:       dc.Runner,
-		detectInflight:     inflight,
-		board:              bc.Store,
+		cat:            cat,
+		store:          s,
+		grader:         grader,
+		logger:         logger,
+		now:            now,
+		submitLimiter:  ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now),
+		actionLimiter:  ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now),
+		adminSet:       adminSet,
+		hiddenSet:      hiddenSet,
+		originGuard:    originguard.New(allowedOrigins, logger),
+		journeys:       journeys,
+		falcoRules:     falcoRules,
+		order:          order,
+		docsBaseURL:    docsBaseURL,
+		detectRunner:   dc.Runner,
+		detectInflight: inflight,
+		board:          bc.Store,
 		// app#292 Phase 2: 10s/1 refill, burst 3 — shared by thread creation
 		// and follow-up messages (identity-keyed, see boardIdentityKeyed), so
 		// a spammer cannot dodge the bucket by spreading posts across many
