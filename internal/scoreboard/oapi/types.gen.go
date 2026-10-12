@@ -184,7 +184,10 @@ type AdminResetResult struct {
 }
 
 // AvatarId A prepared avatar (ADR-0034 D9): `<glyph>-<color>`, 8 glyphs x 6 colours =
-// 48 ids, ordered glyph-outer / colour-inner. The Go table
+// 48 ids, ordered glyph-outer / colour-inner. The 48th, `flame-slate`, is the
+// operator's fixed id on a board message (ADR-0034 D8): it is in this enum
+// (responses carry it) but the profile API refuses it, so a participant's
+// own `avatar` is one of the other 47. The Go table
 // (`internal/scoreboard/avatar`) is the source of truth and a test pins this
 // enum to it. The image is `/static/avatars-<glyph>.<hash>.svg` tinted with the
 // `--avatar-<color>` token — never an upload. A client that meets an id it
@@ -216,7 +219,10 @@ type BoardMessage struct {
 	Author string `json:"author"`
 
 	// AuthorAvatar A prepared avatar (ADR-0034 D9): `<glyph>-<color>`, 8 glyphs x 6 colours =
-	// 48 ids, ordered glyph-outer / colour-inner. The Go table
+	// 48 ids, ordered glyph-outer / colour-inner. The 48th, `flame-slate`, is the
+	// operator's fixed id on a board message (ADR-0034 D8): it is in this enum
+	// (responses carry it) but the profile API refuses it, so a participant's
+	// own `avatar` is one of the other 47. The Go table
 	// (`internal/scoreboard/avatar`) is the source of truth and a test pins this
 	// enum to it. The image is `/static/avatars-<glyph>.<hash>.svg` tinted with the
 	// `--avatar-<color>` token — never an upload. A client that meets an id it
@@ -320,7 +326,10 @@ type ChallengeSolver struct {
 	At time.Time `json:"at"`
 
 	// Avatar A prepared avatar (ADR-0034 D9): `<glyph>-<color>`, 8 glyphs x 6 colours =
-	// 48 ids, ordered glyph-outer / colour-inner. The Go table
+	// 48 ids, ordered glyph-outer / colour-inner. The 48th, `flame-slate`, is the
+	// operator's fixed id on a board message (ADR-0034 D8): it is in this enum
+	// (responses carry it) but the profile API refuses it, so a participant's
+	// own `avatar` is one of the other 47. The Go table
 	// (`internal/scoreboard/avatar`) is the source of truth and a test pins this
 	// enum to it. The image is `/static/avatars-<glyph>.<hash>.svg` tinted with the
 	// `--avatar-<color>` token — never an upload. A client that meets an id it
@@ -529,7 +538,10 @@ type IngestIgnoredReason string
 // projection (polled every 2s). Display-only.
 type Journey struct {
 	// Avatar A prepared avatar (ADR-0034 D9): `<glyph>-<color>`, 8 glyphs x 6 colours =
-	// 48 ids, ordered glyph-outer / colour-inner. The Go table
+	// 48 ids, ordered glyph-outer / colour-inner. The 48th, `flame-slate`, is the
+	// operator's fixed id on a board message (ADR-0034 D8): it is in this enum
+	// (responses carry it) but the profile API refuses it, so a participant's
+	// own `avatar` is one of the other 47. The Go table
 	// (`internal/scoreboard/avatar`) is the source of truth and a test pins this
 	// enum to it. The image is `/static/avatars-<glyph>.<hash>.svg` tinted with the
 	// `--avatar-<color>` token — never an upload. A client that meets an id it
@@ -562,7 +574,10 @@ type Journey struct {
 // LeaderboardEntry defines model for LeaderboardEntry.
 type LeaderboardEntry struct {
 	// Avatar A prepared avatar (ADR-0034 D9): `<glyph>-<color>`, 8 glyphs x 6 colours =
-	// 48 ids, ordered glyph-outer / colour-inner. The Go table
+	// 48 ids, ordered glyph-outer / colour-inner. The 48th, `flame-slate`, is the
+	// operator's fixed id on a board message (ADR-0034 D8): it is in this enum
+	// (responses carry it) but the profile API refuses it, so a participant's
+	// own `avatar` is one of the other 47. The Go table
 	// (`internal/scoreboard/avatar`) is the source of truth and a test pins this
 	// enum to it. The image is `/static/avatars-<glyph>.<hash>.svg` tinted with the
 	// `--avatar-<color>` token — never an upload. A client that meets an id it
@@ -620,7 +635,10 @@ type LikeResult struct {
 // serialized (P23-ME-1).
 type Me struct {
 	// Avatar A prepared avatar (ADR-0034 D9): `<glyph>-<color>`, 8 glyphs x 6 colours =
-	// 48 ids, ordered glyph-outer / colour-inner. The Go table
+	// 48 ids, ordered glyph-outer / colour-inner. The 48th, `flame-slate`, is the
+	// operator's fixed id on a board message (ADR-0034 D8): it is in this enum
+	// (responses carry it) but the profile API refuses it, so a participant's
+	// own `avatar` is one of the other 47. The Go table
 	// (`internal/scoreboard/avatar`) is the source of truth and a test pins this
 	// enum to it. The image is `/static/avatars-<glyph>.<hash>.svg` tinted with the
 	// `--avatar-<color>` token — never an upload. A client that meets an id it
@@ -869,10 +887,16 @@ type PostReplyRequest struct {
 }
 
 // ProfileRequest `POST /api/users/{user}/profile`. At least one field; no other key is
-// accepted (400). Both are validated before anything is written.
+// accepted (400). Both are validated before anything is written. `avatar`
+// is any `AvatarId` except the operator's fixed `flame-slate` (400): the
+// enum stays 48 because a board message carries that id, but a participant
+// can hold only the other 47.
 type ProfileRequest struct {
 	// Avatar A prepared avatar (ADR-0034 D9): `<glyph>-<color>`, 8 glyphs x 6 colours =
-	// 48 ids, ordered glyph-outer / colour-inner. The Go table
+	// 48 ids, ordered glyph-outer / colour-inner. The 48th, `flame-slate`, is the
+	// operator's fixed id on a board message (ADR-0034 D8): it is in this enum
+	// (responses carry it) but the profile API refuses it, so a participant's
+	// own `avatar` is one of the other 47. The Go table
 	// (`internal/scoreboard/avatar`) is the source of truth and a test pins this
 	// enum to it. The image is `/static/avatars-<glyph>.<hash>.svg` tinted with the
 	// `--avatar-<color>` token — never an upload. A client that meets an id it
@@ -887,7 +911,10 @@ type ProfileRequest struct {
 // ProfileResult the profile AFTER the write (or the reset)
 type ProfileResult struct {
 	// Avatar A prepared avatar (ADR-0034 D9): `<glyph>-<color>`, 8 glyphs x 6 colours =
-	// 48 ids, ordered glyph-outer / colour-inner. The Go table
+	// 48 ids, ordered glyph-outer / colour-inner. The 48th, `flame-slate`, is the
+	// operator's fixed id on a board message (ADR-0034 D8): it is in this enum
+	// (responses carry it) but the profile API refuses it, so a participant's
+	// own `avatar` is one of the other 47. The Go table
 	// (`internal/scoreboard/avatar`) is the source of truth and a test pins this
 	// enum to it. The image is `/static/avatars-<glyph>.<hash>.svg` tinted with the
 	// `--avatar-<color>` token — never an upload. A client that meets an id it
@@ -948,7 +975,10 @@ type SolveRecord struct {
 	At time.Time `json:"at"`
 
 	// Avatar A prepared avatar (ADR-0034 D9): `<glyph>-<color>`, 8 glyphs x 6 colours =
-	// 48 ids, ordered glyph-outer / colour-inner. The Go table
+	// 48 ids, ordered glyph-outer / colour-inner. The 48th, `flame-slate`, is the
+	// operator's fixed id on a board message (ADR-0034 D8): it is in this enum
+	// (responses carry it) but the profile API refuses it, so a participant's
+	// own `avatar` is one of the other 47. The Go table
 	// (`internal/scoreboard/avatar`) is the source of truth and a test pins this
 	// enum to it. The image is `/static/avatars-<glyph>.<hash>.svg` tinted with the
 	// `--avatar-<color>` token — never an upload. A client that meets an id it

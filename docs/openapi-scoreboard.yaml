@@ -1035,7 +1035,8 @@ paths:
       description: |
         ADR-0034 D8. The participant's profile is exactly two cosmetic things: a
         display name and one avatar id picked from the prepared table
-        (`AvatarId`, 48 values). Identity stays anchored to the auth-derived
+        (`AvatarId`, 48 values, of which 47 are selectable: the operator's
+        fixed `flame-slate` is refused with 400, ADR-0034 D8). Identity stays anchored to the auth-derived
         `{user}` slug; nothing here is ever an email, a real name or an image.
 
         Body: `{display_name?, avatar?}` — at least one, no other key (an
@@ -1070,7 +1071,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ProfileResult" }
         "400":
-          description: invalid user, body that is not exactly the allowed JSON object, no field given, invalid name (empty, >32 runes, or forbidden characters), or an `avatar` that is not in the table — nothing was written
+          description: invalid user, body that is not exactly the allowed JSON object, no field given, invalid name (empty, >32 runes, or forbidden characters), or an `avatar` that is not in the table or is the operator's fixed `flame-slate` — nothing was written
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -2170,7 +2171,10 @@ components:
       type: string
       description: |
         A prepared avatar (ADR-0034 D9): `<glyph>-<color>`, 8 glyphs x 6 colours =
-        48 ids, ordered glyph-outer / colour-inner. The Go table
+        48 ids, ordered glyph-outer / colour-inner. The 48th, `flame-slate`, is the
+        operator's fixed id on a board message (ADR-0034 D8): it is in this enum
+        (responses carry it) but the profile API refuses it, so a participant's
+        own `avatar` is one of the other 47. The Go table
         (`internal/scoreboard/avatar`) is the source of truth and a test pins this
         enum to it. The image is `/static/avatars-<glyph>.<hash>.svg` tinted with the
         `--avatar-<color>` token — never an upload. A client that meets an id it
@@ -2230,7 +2234,10 @@ components:
       type: object
       description: |
         `POST /api/users/{user}/profile`. At least one field; no other key is
-        accepted (400). Both are validated before anything is written.
+        accepted (400). Both are validated before anything is written. `avatar`
+        is any `AvatarId` except the operator's fixed `flame-slate` (400): the
+        enum stays 48 because a board message carries that id, but a participant
+        can hold only the other 47.
       additionalProperties: false
       minProperties: 1
       properties:

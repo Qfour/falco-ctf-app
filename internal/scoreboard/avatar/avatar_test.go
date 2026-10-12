@@ -140,12 +140,13 @@ func TestDefault_NumberedSeatsAreDistinctAndOrdered(t *testing.T) {
 
 func TestDefault_ReservedRange(t *testing.T) {
 	all := IDs()
+	// A seat that never chose lands on the 41st..47th; the 48th is StaffID's.
 	reserved := map[string]bool{}
-	for _, id := range all[SeatCapacity:] {
+	for _, id := range all[SeatCapacity : Count-1] {
 		reserved[id] = true
 	}
-	if len(reserved) != ReservedCount {
-		t.Fatalf("reserved tail = %d ids, want %d", len(reserved), ReservedCount)
+	if len(reserved) != ParticipantReservedCount || ParticipantReservedCount != ReservedCount-1 {
+		t.Fatalf("participant reserved tail = %d ids, want %d", len(reserved), ParticipantReservedCount)
 	}
 	for _, seat := range []string{
 		"test1", "user01", "user0", "user00", "user041", "user41", "user48", "user49", "user1000",
@@ -153,7 +154,7 @@ func TestDefault_ReservedRange(t *testing.T) {
 	} {
 		got := Default(seat)
 		if !reserved[got] {
-			t.Errorf("Default(%q) = %q (#%d), want one of the reserved 41st..48th ids", seat, got, Number(got))
+			t.Errorf("Default(%q) = %q (#%d), want one of the reserved 41st..47th ids", seat, got, Number(got))
 		}
 	}
 	// the boundary: 40 is numbered, 41 is reserved.
@@ -174,8 +175,23 @@ func TestDefault_StableAndDisjointFromNumberedSeats(t *testing.T) {
 		}
 	}
 	// Pinned: a changed hash would silently re-skin every reserved seat.
-	if got, want := Default("test1"), IDs()[40+int(fnv32a("test1")%8)]; got != want {
+	if got, want := Default("test1"), IDs()[40+int(fnv32a("test1")%7)]; got != want {
 		t.Fatalf("Default(test1) = %q, want %q", got, want)
+	}
+	// Pinned strings: Default is derived on every read, so a change to the
+	// table (appending included) re-skins seats that never chose. These make
+	// such a change a visible test diff instead of a silent one (R2#7).
+	for seat, want := range map[string]string{
+		"user1":  "falcon-cyan",
+		"user7":  "shield-cyan",
+		"user40": "bug-lime",
+		"test1":  "bug-slate",
+		"user41": "flame-lime",
+		"user01": "flame-lime",
+	} {
+		if got := Default(seat); got != want {
+			t.Errorf("Default(%q) = %q, want the pinned %q", seat, got, want)
+		}
 	}
 	// prod = N numbered seats + test1: test1 can never take a numbered seat's id.
 	numbered := map[string]bool{}
@@ -188,7 +204,7 @@ func TestDefault_StableAndDisjointFromNumberedSeats(t *testing.T) {
 }
 
 func TestResolve_UnknownStoredFallsBackToDefault(t *testing.T) {
-	if got := Resolve("flame-slate", "user3"); got != "flame-slate" {
+	if got := Resolve("bug-slate", "user3"); got != "bug-slate" {
 		t.Errorf("Resolve(valid) = %q, want the stored id", got)
 	}
 	for _, stored := range []string{"", "bogus", "falcon-red", "falcon-cyan.svg"} {
@@ -238,5 +254,93 @@ func TestStaffID_IsTheLastReservedID(t *testing.T) {
 		if Default("user"+strconv.Itoa(n)) == StaffID {
 			t.Fatalf("user%d defaults to StaffID", n)
 		}
+	}
+}
+
+// The operator's fixed id is not a participant's: no seat shape defaults to it
+// (numbered, out-of-range, malformed, and a large sweep of hashed names), it is
+// not in the participant set, and it is not selectable (ADR-0034 D8).
+func TestStaffID_IsNeverAParticipantsID(t *testing.T) {
+	seats := []string{"test1", "user01", "user0", "user00", "user41", "user48", "user49", "user1000",
+		"user99999999999999999999", "admin", "x", "User1", "user1 ", "", "ctf-admin", "staff", "operator"}
+	for n := 1; n <= 2000; n++ {
+		seats = append(seats, "user"+strconv.Itoa(n), "test"+strconv.Itoa(n), "u"+strconv.Itoa(n), "user0"+strconv.Itoa(n))
+	}
+	hit := map[string]bool{}
+	for _, seat := range seats {
+		got := Default(seat)
+		if got == StaffID {
+			t.Fatalf("Default(%q) = StaffID", seat)
+		}
+		if n := Number(got); n == 0 || n >= Count {
+			t.Fatalf("Default(%q) = %q (#%d), want a participant id (1..%d)", seat, got, n, Count-1)
+		}
+		if !Selectable(got) {
+			t.Fatalf("Default(%q) = %q is not Selectable", seat, got)
+		}
+		if n := Number(got); n > SeatCapacity {
+			hit[got] = true
+		}
+	}
+	// the hash reaches the whole 41st..47th range (a divisor that silently
+	// shrank would leave ids unreachable).
+	if len(hit) != ParticipantReservedCount {
+		t.Errorf("hashed seats reached %d of the %d reserved participant ids: %v", len(hit), ParticipantReservedCount, hit)
+	}
+}
+
+func TestParticipantIDs_AreTheTableWithoutStaffID(t *testing.T) {
+	p := ParticipantIDs()
+	if len(p) != ParticipantCount || ParticipantCount != Count-1 {
+		t.Fatalf("len(ParticipantIDs()) = %d, want %d", len(p), Count-1)
+	}
+	all := IDs()
+	for i, id := range p {
+		if id == StaffID {
+			t.Fatalf("ParticipantIDs() contains StaffID at %d", i)
+		}
+		if id != all[i] {
+			t.Fatalf("ParticipantIDs()[%d] = %q, want the table's %q (same order, StaffID is last)", i, id, all[i])
+		}
+		if !Selectable(id) || !Valid(id) {
+			t.Fatalf("%q from ParticipantIDs() is not Selectable/Valid", id)
+		}
+	}
+	p[0] = "tampered"
+	if ParticipantIDs()[0] != "falcon-cyan" {
+		t.Fatal("mutating ParticipantIDs()'s result changed the table")
+	}
+}
+
+func TestSelectable(t *testing.T) {
+	for _, tc := range []struct {
+		id   string
+		want bool
+	}{
+		{"falcon-cyan", true},
+		{"bug-slate", true}, // the 47th: the last id a participant can hold
+		{StaffID, false},    // in the table (Valid) but the operator's
+		{"", false},
+		{"nope-cyan", false},
+		{"Flame-Slate", false},
+		{"flame-slate ", false},
+	} {
+		if got := Selectable(tc.id); got != tc.want {
+			t.Errorf("Selectable(%q) = %v, want %v", tc.id, got, tc.want)
+		}
+	}
+	if !Valid(StaffID) {
+		t.Error("StaffID must stay a Valid table id (board messages carry it)")
+	}
+}
+
+func TestResolve_StoredStaffIDDegradesToTheDefault(t *testing.T) {
+	// The profile API never writes it, but a hand-edited DB must not make a
+	// participant look like the operator.
+	if got, want := Resolve(StaffID, "user3"), Default("user3"); got != want {
+		t.Errorf("Resolve(StaffID, user3) = %q, want the default %q", got, want)
+	}
+	if got := Resolve(StaffID, "test1"); got == StaffID {
+		t.Errorf("Resolve(StaffID, test1) = StaffID")
 	}
 }

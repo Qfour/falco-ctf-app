@@ -334,6 +334,8 @@ func TestProfile_V2_InvalidFieldIs400AndNothingChanges(t *testing.T) {
 		{"valid glyph, unknown colour", `{"display_name":"Fresh","avatar":"falcon-red"}`},
 		{"upper-case id", `{"display_name":"Fresh","avatar":"Falcon-Cyan"}`},
 		{"empty avatar", `{"display_name":"Fresh","avatar":""}`},
+		{"the operator's fixed StaffID (a table id a participant may not hold, ADR-0034 D8)", `{"display_name":"Fresh","avatar":"` + avatar.StaffID + `"}`},
+		{"the operator's fixed StaffID alone", `{"avatar":"` + avatar.StaffID + `"}`},
 		{"avatar with a file extension", `{"display_name":"Fresh","avatar":"falcon-cyan.svg"}`},
 		{"avatar that is a path", `{"avatar":"../falcon-cyan"}`},
 		{"avatar that is a URL / data URI", `{"avatar":"data:image/svg+xml;base64,PHN2Zy8+"}`},
@@ -577,13 +579,16 @@ func TestProfile_DefaultsInResponses(t *testing.T) {
 		seen[a] = user
 	}
 	reserved := map[string]bool{}
-	for _, id := range avatar.IDs()[avatar.SeatCapacity:] {
+	for _, id := range avatar.ParticipantIDs()[avatar.SeatCapacity:] {
 		reserved[id] = true
 	}
 	for _, user := range []string{"test1", "user01", "user41"} {
 		a, _ := f.me(user)["avatar"].(string)
 		if !reserved[a] {
-			t.Fatalf("%s default = %q, want one of the reserved 41st..48th ids", user, a)
+			t.Fatalf("%s default = %q, want one of the reserved 41st..47th ids", user, a)
+		}
+		if a == avatar.StaffID {
+			t.Fatalf("%s default is the operator's StaffID", user)
 		}
 		if seen[a] != "" {
 			t.Fatalf("%s default %q collides with %s", user, a, seen[a])

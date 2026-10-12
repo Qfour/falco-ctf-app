@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/avatar"
 )
 
 // ADR-0034 S1 (D8/D9, V2/V4): the portal's profile form and avatar drawing.
@@ -32,8 +34,14 @@ import (
 //     detail / live feed, Board thread messages) draws the avatar the API sent.
 
 var (
-	avatarContractGlyphs = []string{"falcon", "shield", "key", "terminal", "radar", "lock", "bug", "flame"}
-	avatarContractColors = []string{"cyan", "magenta", "amber", "lime", "violet", "slate"}
+	// The lists the portal must agree with come from the Go table, not from a
+	// second literal here: a glyph or colour added to internal/scoreboard/avatar
+	// alone fails this gate (the portal's JS arrays and css-avatar.tmpl are
+	// hand-copied, ADR-0034 review R4#5), instead of silently drawing the
+	// fallback.
+	avatarContractGlyphs = avatar.GlyphNames()
+	avatarContractColors = avatar.ColorNames()
+	cssColorRuleAny      = regexp.MustCompile(`\.avatar-([a-z]+)\s*\{\s*background-color:\s*var\(--avatar-`)
 
 	jsStrListRe  = func(name string) *regexp.Regexp { return regexp.MustCompile(`const ` + name + ` = \[([^\]]*)\];`) }
 	jsQuotedRe   = regexp.MustCompile(`'([^']*)'`)
@@ -84,8 +92,8 @@ func checkPortalAvatar(fsys fstest.MapFS) error {
 		fail("core-util.tmpl hard-codes an avatar URL — URLs come from ASSETS.avatars (portal.tmpl), which the server fills from the static-asset registry")
 	}
 	root := body("portal.tmpl")
-	if !regexp.MustCompile(`const ASSETS = Object\.freeze\(\{ avatars: Object\.freeze\(\{\{\.AvatarURLsJSON\}\}\) \}\);`).MatchString(root) {
-		fail("portal.tmpl: no `const ASSETS = Object.freeze({ avatars: ... {{.AvatarURLsJSON}} ... })` — avatarImg() reads its URLs from there")
+	if !regexp.MustCompile(`const ASSETS = Object\.freeze\(\{ avatars: Object\.freeze\(\{\{\.AvatarURLsJSON\}\}\), avatarChoices: Object\.freeze\(\{\{\.AvatarChoicesJSON\}\}\) \}\);`).MatchString(root) {
+		fail("portal.tmpl: no `const ASSETS = Object.freeze({ avatars: ... {{.AvatarURLsJSON}} ..., avatarChoices: ... {{.AvatarChoicesJSON}} ... })` — avatarImg() reads its URLs from there and the picker its choices")
 	}
 
 	// ---- avatarImg(): esc() on every interpolation, no style/onerror ----
@@ -136,6 +144,15 @@ func checkPortalAvatar(fsys fstest.MapFS) error {
 		if !cssColorRule(c).MatchString(css) {
 			fail("css-avatar.tmpl: no `.avatar-%s { background-color: var(--avatar-%s) }` rule", c, c)
 		}
+	}
+	// ...and no colour rule the table does not name (a stale class would look
+	// valid but never be reached).
+	var cssColors []string
+	for _, m := range cssColorRuleAny.FindAllStringSubmatch(css, -1) {
+		cssColors = append(cssColors, m[1])
+	}
+	if !sameList(cssColors, avatarContractColors) {
+		fail("css-avatar.tmpl: .avatar-<color> rules = %v, want avatar.ColorNames() = %v", cssColors, avatarContractColors)
 	}
 	prof := body("css-profile.tmpl")
 	for _, sel := range []string{".avatar-sm {", ".avatar-lg {", ".with-avatar {"} {
@@ -270,9 +287,27 @@ func TestPortalAvatar_ServedURLMap(t *testing.T) {
 		t.Fatalf("renderPortal: %v", err)
 	}
 	body := w.Body.String()
-	m := regexp.MustCompile(`const ASSETS = Object\.freeze\(\{ avatars: Object\.freeze\((\{[^}]*\})\) \}\);`).FindStringSubmatch(body)
+	m := regexp.MustCompile(`const ASSETS = Object\.freeze\(\{ avatars: Object\.freeze\((\{[^}]*\})\), avatarChoices: Object\.freeze\((\[[^\]]*\])\) \}\);`).FindStringSubmatch(body)
 	if m == nil {
-		t.Fatal("the served portal has no ASSETS.avatars declaration")
+		t.Fatal("the served portal has no ASSETS.avatars / ASSETS.avatarChoices declaration")
+	}
+	// ASSETS.avatarChoices is what a participant can pick: the table without the
+	// operator's fixed StaffID, in table order (ADR-0034 D8). The picker draws
+	// these; the profile API refuses any other.
+	var choices []string
+	if err := json.Unmarshal([]byte(m[2]), &choices); err != nil {
+		t.Fatalf("ASSETS.avatarChoices is not a JSON array: %v (%s)", err, m[2])
+	}
+	if !sameList(choices, avatar.ParticipantIDs()) {
+		t.Errorf("ASSETS.avatarChoices = %v, want avatar.ParticipantIDs() = %v", choices, avatar.ParticipantIDs())
+	}
+	if len(choices) != avatar.ParticipantCount {
+		t.Errorf("ASSETS.avatarChoices has %d ids, want %d", len(choices), avatar.ParticipantCount)
+	}
+	for _, id := range choices {
+		if id == avatar.StaffID {
+			t.Errorf("ASSETS.avatarChoices offers the operator's fixed %s", id)
+		}
 	}
 	var got map[string]string
 	if err := json.Unmarshal([]byte(m[1]), &got); err != nil {

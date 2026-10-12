@@ -146,7 +146,9 @@ func (h *Handler) setProfile(w http.ResponseWriter, r *http.Request) {
 		}
 		name = &n
 	}
-	if rawAvatar != nil && !avatar.Valid(*rawAvatar) {
+	// Selectable, not Valid: the operator's fixed StaffID is a table id but a
+	// participant may not hold it (ADR-0034 D8).
+	if rawAvatar != nil && !avatar.Selectable(*rawAvatar) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": errMsgUnknownAvatar})
 		return
 	}

@@ -127,7 +127,9 @@
   window.__PORTAL_TTYD_URL__ = {{.TtydURLJSON}};
   // Avatar picture URLs by glyph (ADR-0034 S1), read by avatarImg() in
   // core-util.tmpl. Display-only, same-origin static assets.
-  const ASSETS = Object.freeze({ avatars: Object.freeze({{.AvatarURLsJSON}}) });
+  // avatarChoices = the ids a participant may pick (the table without the
+  // operator's fixed id, ADR-0034 D8), in table order: the picker draws these.
+  const ASSETS = Object.freeze({ avatars: Object.freeze({{.AvatarURLsJSON}}), avatarChoices: Object.freeze({{.AvatarChoicesJSON}}) });
 </script>
 {{template "core-util.tmpl" . -}}
 {{template "pane-story.tmpl" . -}}
