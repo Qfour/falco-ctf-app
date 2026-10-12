@@ -1,8 +1,8 @@
 # ADR-0030: Quest content を 3 ファイルに置き、開示はサーバが solve の事実だけで決める — 公開抜粋に無い rule の中身・evade の盲点・解法の文を、solve 前に見える文と他課題の とくぎ に出さない
 
 - Status: **Proposed** (Accepted 化は CEO の確認時。期限 = P28-1 の content の merge 前: workspace `REFACTORING.md:1901`)
-- Date / Deciders: 2026-10-12 / architect (起草・同意権) + VP (発注と裁定 = D5 の PR の順序、2026-10-12)。独立レビュー: qa-engineer R2 (2026-10-12、本版に反映)、
-  security-engineer (進行中)
+- Date / Deciders: 2026-10-12 / architect (起草・同意権) + VP (発注と裁定 = D5 の PR の順序・D7 の security 必須の範囲、2026-10-12)。独立レビュー: qa-engineer R2・
+  security-engineer R1 (どちらも 2026-10-12、本版に反映)
 - 関連: workspace `REFACTORING.md` P28 (受け入れ条件 3・4・5・11・14〜16、architect §1・§4・§5・§8、VP 裁定 2・3・7)、P22 (2026-08-14 CEO 決定:
   ヒントの唯一経路は journey の減点つきの開封、docs-admin は維持)、ADR-0014 (overlay の形)、ADR-0026 (D5 の n-gram 規則と V8)、ADR-0027 (どの課題の
   ヒントも減点つきで開ける)、ADR-0028 D5 (`/static/` に Quest content を置かない)、ADR-0029 (D1 の許可リスト・D2 の入力型・D7 の印の条件)、ADR-0031 (D2: HTTP の
@@ -33,8 +33,10 @@
   Home には出ないが、HTML は scoreboard の binary に埋め込まれている (`internal/scoreboard/view/homefragments_gen.go:37-40`)。除外は表示側の 1 分岐
   (`internal/scoreboard/view/home.go:67-75`、test は `home_test.go:90-100`)。中身は rule が「何を見ていないか」を含む (`challenges/03-stealth-read/rule-explain.md:19-27`、
   `challenges/04-key-search/rule-explain.md:27`)。
-- **C6 公開リポ。** Quest content は GitHub で読める (順位の真正性の上限: product brief)。端末には入らない (ADR-0026 D1 の allowlist が自動で除く)。
-  scoreboard の image には入る (`scoreboard/Dockerfile:24-25`)。本 ADR の開示境界は「portal がいつ何を出すか」であって、秘密の保持ではない。
+- **C6 公開リポ。** Quest content は GitHub で読める (順位の真正性の上限: product brief)。端末に入らないのは ADR-0026 D1 の allowlist が landing した後で、c5e0761 では
+  challenge image が `challenges/` を丸ごと `/opt/ctf/missions/` に COPY する (`images/challenge/Dockerfile:103`) ので、codex.yaml と quest.yaml の `skill.counter` が
+  端末から読める。scoreboard の image には `challenges/` が丸ごと入る (`scoreboard/Dockerfile:24-25`。起動時の検査は README.md と rule-explain.md を読める)。本 ADR の
+  開示境界は「portal がいつ何を出すか」であって、秘密の保持ではない。
 - **C7 prod は CI-free** (image は手で build する: `REFACTORING.md:24-27`)。required check を通っていない tree からも image を作れる。
 - **C8 `hintleak.Check` は範囲全体で error を返す。** 守る文か対象に Cf (不可視の書式文字) が 1 つある、どれかの項目が非 UTF-8、守る文か対象が 0 件、のどれでも、
   違反の一覧ではなく範囲全体の error を返す (`internal/hintleak/hintleak.go:77-97`、branch `feat/hintleak-ngram-check` の 6f52615)。
@@ -95,6 +97,7 @@
   | `skill` の `name`・`defense`・`counter` | その課題を solve した (経路を問わない) | 自課題の solve 後 |
   | `labels` | 印・称号の条件が成り立った | — |
 
+  - `sight` は battleLog の `sights` で、発火しただけで見える (受け入れ条件 4)。印の gate が実際に効くのは図鑑の `axis` と `story` だけである。
   - `skill` を返す面は 2 つ (MissionDetail の `encounter.skill` と QuestBook の `skills`) で、条件は同じ。battleLog の `sights` の key は、同じ応答の battleLog に出た
     rule だけ。
   - 図鑑の範囲は Restrict 後の catalog の rule。QuestBook は self-scope で、他者の要求は 403 (I8、受け入れ条件 3)。admin (ADMIN_EMAILS) は他者の QuestBook を読めるが、
@@ -129,10 +132,12 @@
     import できない (ADR-0029 D1) ので、合成層が `hintleak.Item` に詰めて渡す。ADR-0026 の検査・起動時・CI が同じ関数を使う (V7)。
   - 範囲は full catalog と各 `scenarios/*/scenario.yaml`。図鑑はその範囲の rule だけ、overlay はその scenario だけを対象にする。報告の単位は
     (対象の項目, 異なる n-gram)。除外リストを作らず、Quest 側の言い換えで消す。
-  - **起動時も同じ検査を回す** (C7: 検査を通っていない tree から作った image でも、未 solve の解法を出さない)。Check は範囲全体で error を返す (C8) ので、起動時は
-    次の順にする。(1) Quest の各 entry を先に UTF-8 と Cf で検査し、駄目な entry を破棄する (2) Check の違反に当たった entry を破棄し、他は残す (3) それでも Check が
-    error なら (守る文か無料表示の側の Cf・非 UTF-8、守る文が 0 件)、Quest の文をすべて破棄して Quest を無効にし (`quest_enabled` = 0)、counter を増やす。log を出して
-    文を残すことはしない (開示が fail-open になる) (4) 対象が 0 件なら何もしない。CI では (1)・(3)・(4) も fail。
+  - **起動時も同じ検査を回す** (C7: 検査を通っていない tree から作った image でも、未 solve の解法を出さない)。入力が欠けると守る文が縮んで緩む側に倒れ、Check は
+    範囲全体で error を返す (C8) ので、起動時は次の順にする。(0) 範囲の各課題に `README.md` と journey があることを確かめる (rule-explain.md は 4 本だけなので要求しない)
+    (1) Quest の各 entry を先に UTF-8 と Cf で検査し、駄目な entry を破棄する (2) Check の違反に当たった entry を破棄し、他は残す (3) (0) が欠けているか Check が error
+    なら (守る文か無料表示の側の Cf・非 UTF-8、守る文が 0 件)、Quest の文をすべて破棄して Quest を無効にする (`quest_enabled` = 0)。log を出して文を残すことはしない
+    (開示が fail-open になる) (4) 対象が 0 件なら何もしない。(2)・(3) の破棄は counter の kind `ngram` に数え、preflight は 1 件以上を no-go 相当の信号として扱う
+    (ADR-0029 D9)。CI では (0)・(1)・(3)・(4) も fail。
 - **D5 CI と起動時の分担。** CI (`make test`、full catalog と全 scenario) では fail、起動時は warn と entry の破棄 (ADR-0029 D3)。(1) quest.yaml の
   `challengeId` = ディレクトリ ∈ catalog (2) codex の rule の集合 = full catalog の expected ∪ forbidden (双方向) (3) `signal` が課題の type と `requireExfil`・
   `requireExpectedRuleFire` に適合する (4) overlay の orphan (5) D4 (6) 公開抜粋に無い rule の entry が文を持たない、scenario ごとの抜粋の範囲 (7) D1 の厳格な decode
@@ -140,7 +145,9 @@
   - **PR の順序 (VP 裁定 2026-10-12)**: 実 tree に対する検査は、codex.yaml を入れる content の PR (security レビュー必須) と同じ PR に載せる。software の先行 PR は検査の
     本体と、合成 fixture に対する検査だけを持つ。実 tree を走査する test 関数 (数行。本体は software の関数) は content の PR で足し、ファイルが無ければ fail にする
     (`t.Skip` しない。先に入れると赤になり、skip は黙って緑になるので、ファイルと検査を同じ PR に置く)。ADR-0032 S2 (10 の証明 rule) は codex の rule 集合を変えるので、
-    S2 を先に merge し、codex.yaml は S2 の後の集合で書く。
+    S2 を先に merge し、codex.yaml は S2 の後の集合で書く。最初の content の PR の merge は ADR-0026 V1 (challenge image の entry-set の build 時検査: `0026:138`) の
+    landing の後に置く (それまでは C6 のとおり端末から読める)。CEO が F1 の維持に覆した回 (P28-0d') は、quest.yaml と codex.yaml を challenge image から除く変更
+    (REFACTORING §7: `REFACTORING.md:1854`) を同じ前提にする。
 - **D6 rule-explain.md の扱い。**
   - 参加者向けの源にしない。参加者向けのルール解説の正は codex.yaml。docs-admin での描画は変えない (P22 の決定 (iv))。
   - D4 の守る文に入れる (Quest に写せば CI と起動時の検査が落とす)。
@@ -149,8 +156,10 @@
     回避の原理が全員の Home に出る。docs-admin は `gen-pages.py:161` が直接読むので影響しない。担当は content (yaml) と software (生成物と test)。
   - REFACTORING §1 の「portal Home からも除外 (`docs-site/gen-pages.py:104-115,161`)」は、除外の場所の記述が誤りである (実体は C5 の `home.go`)。
 - **D7 所有とレビュー。** 3 ファイルの中身は content-engineer、loader と検査は software-engineer (実 tree の test 関数も software か qa が書き、content の PR に同梱する)。
-  3 ファイルを変える PR は security-engineer のレビューを必須にする (ADR-0026 V8 の対象 = fixtures と `hints[]` に足す)。schema の変更は architect の同意と VP の承認
-  (journey.yaml と同じ: `internal/catalog/journey.go:8`)。
+  security-engineer のレビューを必須にするのは、3 ファイルを変える PR と、開示を決めるコード (`internal/quest`・`internal/scoreboard/api/quest.go`・n-gram の検査の
+  テスト・`internal/hintleak`) を変える PR (ADR-0026 V8 の対象 = fixtures と `hints[]` に足す)。REFACTORING の段階表で security を「不要」としている P28-3 (overlay =
+  solve 前の文、ボスの phases) と P28-4 は「必須」に直す (`REFACTORING.md:1922-1923`。VP 決定 2026-10-12。表は workspace の文書なので VP が直す)。schema の変更は
+  architect の同意と VP の承認 (journey.yaml と同じ: `internal/catalog/journey.go:8`)。
 
 **Hard Invariant は提案しない。** 中心の主張 (言い換えを含めて解法が漏れない) は機械で検査できず、検査できる部分 (V1〜V5) は `make test` の required に
 乗る。HI にすると「Quest の文がヒントの経路を守っている」と読めてしまう (ADR-0026 D4 と同じ理由。主張していないことを名前に主張させない)。
@@ -158,7 +167,7 @@
 ## Consequences
 
 - **諦めたもの**: debrief.md・README・rule-explain の文をそのまま Quest に写すこと (言い換えが要る)。10 の証明の rule の図鑑の解説。図鑑で盲点を
-  教えること (evade の とくぎ でだけ教える)。content を software より先に入れること (D5)。
+  教えること (evade の とくぎ でだけ教える)。content を software・ADR-0026 V1 より先に入れること (D5)。
 - **残余 (隠さない)**:
   1. evade の `skill` は経路を問わず開くので、順序外や W1 で 03 を抜けた人にも、10 の部分解が減点なしで届く (「本人は解いた」原則で許容: REFACTORING §5)。
   2. 範囲外の solve も Score に乗る (表示では直らない。ADR-0032 が閉じる)。
@@ -167,11 +176,13 @@
   5. 10 の証明は技法の実演を保証しない (ADR-0032 rev2.1 の残余 4)。05 と 10 の差は、事実としてだけ書く。
   6. 図鑑の tier 1 は trigger の solve でも開く (02 の後に「Read sensitive file untrusted」の見るものが見える)。rule.yaml の言い換えなら無料表示と同格だが、
      言い換えを越えた記述はレビューでしか止まらない。
-  7. private の検知条件 (証明と観測の rule) と Quest の文の突き合わせは機械にできない (条件を公開リポに置けない)。security が private の正典で確かめる。
+  7. private の検知条件 (証明と観測の rule) と Quest の文の突き合わせは、公開側の CI では機械にできない (条件を公開リポに置けない)。security が private の正典で
+     確かめる。platform の preflight は app の pin を読むので、private の deny-list を stand-up 時に quest.yaml と codex.yaml へ当てられる (platform の follow-up)。
 - **他 ADR への影響**: ADR-0026 の n-gram の実装を、入力の違う 2 つ目の呼び手が使う (n と正規化は共有し、守る文の集合は ADR ごとに決める)。ADR-0026 の検査は、無料表示の
   項目を `internal/catalog` の関数から得るように変わる (V7)。
 - **REFACTORING との差** (VP へ報告): §5 の守る文を hints[] から hints[] ∪ README ∪ rule-explain に広げた (厳しい側。受け入れ条件 5 は厳しくなるだけで、9 は不変)。
   起動時の検査と破棄の順 (D4)、公開抜粋の規則 (D2)、`labels`・`undisclosed`、D6、PR の順序 (D5) を足した。§1 の rule-explain の除外の記述を訂正した (受け入れ条件 5)。
+  段階表の P28-3・P28-4 の security を「必須」にした (D7)。
 
 ## Signposts (この決定を覆す観測可能な信号)
 
@@ -186,8 +197,8 @@
 
 ## Verification
 
-すべて**未実装**。「software」= P28-1 の content の前提になる software の PR、「content」= 最初の content の PR (D5 の順序)。V6 は D6 の PR。counter は前後の差分で
-assert する (metric はプロセスで共有される)。
+すべて**未実装**。「software」= P28-1 の content の前提になる software の PR、「content」= 最初の content の PR (D5 の順序。ADR-0026 V1 の後)。V6 は D6 の PR。
+counter は前後の差分で assert する (metric はプロセスで共有される)。
 
 - **V1 schema と CI の検証** (D5 の (1)〜(10)、`make test`)。
   - software: 各項に、壊した複製の tree で赤になる case を持つ。D1 の decode: 1 entry に未知の key → その entry だけ破棄 (起動時) / fail (CI)、mapping か list の位置に
@@ -195,9 +206,10 @@ assert する (metric はプロセスで共有される)。
   - content: 実 tree で `codex.yaml` が無い、または課題の quest.yaml が 0 件なら fail (skip しない)。codex の rule 集合は S2 の後の集合と双方向に一致する。
 - **V2 n-gram** (D4): `TestQuestContent_CarriesNoProtectedOnlyNgrams` (full と全 scenario)。故意違反: 03 の hints の文を 02 の skill に混ぜると赤
   (REFACTORING §5 の名指し) / 03 の rule-explain の文を「Read sensitive file untrusted」の sight に混ぜると赤 / 03 の README の文を 10 の skill に混ぜると
-  赤 / 自課題の hints の文を自課題の skill に置くと緑 / 無料表示にある文は緑 / 範囲で結果が変わる例がその範囲でだけ赤。起動時: 違反した entry だけが破棄され
-  他は残る / Cf を含む entry は破棄され他は残る / 守る文の側の Cf で Check が error → Quest の文がすべて破棄され `quest_enabled` = 0 / 対象 0 件 → 起動時は何もしない、
-  CI は fail。合成 fixture は software、実 tree は content。
+  赤 / 自課題の hints の文を自課題の skill に置くと、他課題の守る文に同じ並びが無ければ緑 / 自課題の想定解の文でも、他課題の守る文にだけある並びを含めば赤 (03 の
+  skill に、10 の守る文と重なる 03 の想定解の行を書く) / 無料表示にある文は緑 / 範囲で結果が変わる例がその範囲でだけ赤。起動時: 違反した entry だけが破棄され
+  他は残る / Cf を含む entry は破棄され他は残る / 守る文の側の Cf で Check が error → Quest の文がすべて破棄され `quest_enabled` = 0 / 範囲の課題の README.md か
+  journey を消した tree → 同じ (fail-closed) / 対象 0 件 → 起動時は何もしない、CI は fail / 破棄が kind `ngram` に数えられる。合成 fixture は software、実 tree は content。
 - **V3 否定** (受け入れ条件 5。HTTP の性質なので `make test` = required に置き、ADR-0031 D2 により `make e2e` には置かない): `TestQuest_NegativeDisclosure_AllBodies`。
   実 catalog と nimbusbreach-full で、状態 = 10 だけ solve / 1 課題だけ solve (課題ごと) / X 以外を全部 solve (X = 03・05・10)。QuestBook・journey (全課題の
   `?mission=`)・me の body 全体の文字列を集め、未 solve の課題の守る文に対する違反が 0、`FALCO{` が 0。故意違反: 10 の skill に 03 のヒントを混ぜた複製で赤。
@@ -210,7 +222,7 @@ assert する (metric はプロセスで共有される)。
   key と文の pin、禁止語の逐語の検査、content のファイルに `FALCO{` が無い。
 - **V6 rule-explain**: `HomeFragments` に `ChalNN` が空でない entry が 0 件 (生成物を作り直した PR で)。
 - **V7 単一実装**: 無料表示と守る文の項目を組む関数は `internal/catalog` の 1 つで、ADR-0026 の検査・起動時・CI がそれを呼ぶ (3 者が同じ集合を得ることを test で確かめる)。
-- **V8 レビューの規律**: dev-flow のゲート表に 3 ファイルを security 必須として載せる (ADR-0026 V8 の行に足す)。
+- **V8 レビューの規律**: dev-flow のゲート表に、3 ファイルと D7 のコードの経路を security 必須として載せる (ADR-0026 V8 の行に足す)。
 - **機械で守れないもの**: 言い換えによる漏えい、IP の境界、private の条件との突き合わせ (D3 の「人」の欄)。
 
 ## Advice
@@ -224,4 +236,8 @@ assert する (metric はプロセスで共有される)。
 - **qa-engineer R2 (2026-10-12、REQUEST CHANGES。方向には同意)**。VP が全件を採用し、本版に反映した: 起動時の Check の error の扱い (D4・V2)・PR の順序と skip の禁止
   (D5・V1)・V3 を `make test` に置き、body 全体と状態を広げる (V3)・V4 の追加 (2 つの面・`sights` の key・admin・admin reset)・厳格な decode のテストの形 (D1・V1)・API の
   出力の `FALCO{` (D3 (g)・V3)・counter の差分。yaml.v3 の 2 つの挙動 (qa は未確認としていた) は architect が v3.0.1 のソースで確かめた (C9)。
-- security-engineer のレビューは進行中 (守る文の範囲・起動時の破棄・D6・private の条件との突き合わせ)。content-engineer の助言 (schema の使いやすさ) を求める。
+- **security-engineer R1 (2026-10-12、REQUEST CHANGES。BLOCKING なし)**。VP が全件を採用し、本版に反映した: C6 の訂正と ADR-0026 V1 を content の前提にする
+  (C6・D5)・起動時の入力の欠けを fail-closed にし、`ngram` の破棄を preflight の信号にする (D4)・security 必須の範囲にコードの経路を足し、段階表を直す (D7・V8)・
+  `sight` は発火で見えると書く (D2)・自課題の文が他課題の守る文に当たる例 (V2)・private の deny-list の follow-up (残余 7)。D6 の binary からの撤去は、security が
+  実コードで妥当と確認した。
+- content-engineer の助言 (schema の使いやすさ) を求める。
