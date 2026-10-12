@@ -18,8 +18,7 @@ import (
 // stamps X-Auth-Request-*; falcosidekick never does): any X-Auth-Request-*
 // header => 403 before everything else, and a non-JSON Content-Type => 415.
 // Neither may record a rule fire or taint anything, in ANY secret mode —
-// production runs webhookSecretMode=warn, where a secret-less request is
-// otherwise processed.
+// warn mode, where a secret-less request is otherwise processed.
 
 const browserPathBody = `{"rule":"Detect Outbound Connection","priority":"Warning","output_fields":{"k8s.ns.name":"ctf-alice","k8s.pod.name":"workspace","container.image.repository":"falco-ctf/challenge"}}`
 
@@ -59,7 +58,7 @@ func TestReceive_ProxyIdentityHeader_ForbiddenAndNothingRecorded(t *testing.T) {
 		mode ingest.SecretMode
 	}{
 		{"off", ingest.SecretModeOff},
-		{"warn (production)", ingest.SecretModeWarn},
+		{"warn", ingest.SecretModeWarn},
 		{"enforce", ingest.SecretModeEnforce},
 	}
 	headers := []struct {
@@ -105,7 +104,7 @@ func TestReceive_ProxyIdentityHeader_ForbiddenAndNothingRecorded(t *testing.T) {
 // Header-less + JSON is falcosidekick's real shape (its client sends
 // "application/json; charset=utf-8" and the platform only adds the shared
 // secret header) and keeps being processed exactly as before — in the
-// production warn mode WITHOUT a secret, and with the secret.
+// warn mode WITHOUT a secret, and with the secret.
 func TestReceive_HeaderlessJSON_StillProcessed(t *testing.T) {
 	clock := func() time.Time { return time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC) }
 	nowUnix := float64(clock().UnixNano()) / 1e9
@@ -132,8 +131,8 @@ func TestReceive_NonJSONContentType_415AndNothingRecorded(t *testing.T) {
 	// and near-misses.
 	for _, ct := range []string{"text/plain", "text/plain;charset=UTF-8", "application/x-www-form-urlencoded", "multipart/form-data; boundary=x", "application/jsonx", "application/json-seq", ""} {
 		t.Run(strings.ReplaceAll(ct, "/", "_")+"|", func(t *testing.T) {
-			// warn mode with no secret sent: the production posture in which this
-			// request would otherwise be processed.
+			// warn mode with no secret sent: the posture in which this request
+			// would otherwise be processed.
 			srv, s := newFixtureWithSecret(t, clock, "correct-horse-battery-staple", ingest.SecretModeWarn)
 			before := testutil.ToFloat64(metrics.FalcoEventsReceived.WithLabelValues("unsupported_media_type"))
 

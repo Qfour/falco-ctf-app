@@ -44,6 +44,15 @@ metadata:
     {{- with .Values.ingress.authSignin }}
     nginx.ingress.kubernetes.io/auth-signin: {{ . | quote }}
     {{- end }}
+    {{- /* The passthrough must not replace the identity-stamping gate: overriding
+         either key would let browser requests reach the scoreboard WITHOUT
+         X-Auth-Request-* (indistinguishable from the collector / falcosidekick
+         path, so the internal-only 403s stop firing). Refuse at render time. */ -}}
+    {{- range $k := list "nginx.ingress.kubernetes.io/auth-url" "nginx.ingress.kubernetes.io/auth-response-headers" }}
+    {{- if hasKey (default dict $.Values.ingress.annotations) $k }}
+    {{- fail (printf "ingress.annotations must not set %s (it is fixed by this chart: the auth gate is not overridable)" $k) }}
+    {{- end }}
+    {{- end }}
     {{- with .Values.ingress.annotations }}
     {{- toYaml . | nindent 4 }}
     {{- end }}

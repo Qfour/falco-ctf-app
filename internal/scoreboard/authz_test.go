@@ -437,3 +437,51 @@ func TestAuthz_CatchesUnenforcedGate(t *testing.T) {
 		}
 	})
 }
+
+// internalAudienceViolations returns every route that is declared
+// Audience: internal yet not Authz: internal-claimed-identity. An "internal"
+// route is one only the cluster-internal callers (collector, falcosidekick)
+// may reach; any other Authz class (none, claimed-identity, ...) lets a
+// browser-path request through, which is how POST /falco/events and
+// POST /internal/exfil/{cid} stayed reachable from a participant's browser.
+// If a future internal-only class is added, extend the allowed set HERE.
+func internalAudienceViolations(routes []apispec.Route) (violations []string, internalCount int) {
+	for _, rt := range routes {
+		if rt.Audience != apispec.AudienceInternal {
+			continue
+		}
+		internalCount++
+		if rt.Authz != apispec.AuthzInternalClaimedIdentity {
+			violations = append(violations, fmt.Sprintf("%s: Audience internal but Authz %q (want %q)", rt.MuxPattern(), rt.Authz, apispec.AuthzInternalClaimedIdentity))
+		}
+	}
+	return violations, internalCount
+}
+
+// TestAuthz_InternalAudienceRoutesAreInternalClaimedIdentity pins the
+// invariant "every scoreboard route with x-ctf-audience: internal is gated
+// internal-claimed-identity". authzCheck only enforces what a route
+// DECLARES, so an internal route declared Authz: none would pass every other
+// check here while being reachable from the browser path.
+func TestAuthz_InternalAudienceRoutesAreInternalClaimedIdentity(t *testing.T) {
+	violations, internalCount := internalAudienceViolations(newAuthzFixture(t).Routes())
+	if internalCount == 0 {
+		t.Fatal("found zero Audience: internal routes — the derivation is broken (or every internal route lost its audience label), not \"nothing to check\"")
+	}
+	for _, v := range violations {
+		t.Error(v)
+	}
+}
+
+// TestAuthz_InternalAudienceInvariantCatchesOpenRoute proves the detector is
+// not vacuous: an Audience: internal route declared Authz: none is flagged.
+func TestAuthz_InternalAudienceInvariantCatchesOpenRoute(t *testing.T) {
+	routes := []apispec.Route{
+		{Method: "POST", Pattern: "/internal/ok", Audience: apispec.AudienceInternal, Authz: apispec.AuthzInternalClaimedIdentity},
+		{Method: "POST", Pattern: "/internal/leaky", Audience: apispec.AudienceInternal, Authz: apispec.AuthzNone},
+	}
+	violations, internalCount := internalAudienceViolations(routes)
+	if internalCount != 2 || len(violations) != 1 || !strings.Contains(violations[0], "/internal/leaky") {
+		t.Fatalf("want exactly the open internal route flagged, got count=%d violations=%v", internalCount, violations)
+	}
+}

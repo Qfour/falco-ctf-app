@@ -34,6 +34,7 @@ reverse shell (C2) や自前バイナリの drop+実行は禁止ルールに触�
 
   送信先:  POST /api/challenges/10-final-exfil/exfil  (collector)
   payload: {"user","flag"} の JSON
+           (API の契約: -H 'Content-Type: application/json' が必須。無いと 415)
 
 collector の URL と自分のユーザ名は、この端末の環境変数に入っている
 (`env | grep CTF` で確認できる)。

@@ -51,7 +51,7 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
 - portal (`/portal`) と admin dashboard (`/`) は他の origin の iframe に埋め込めなくなった (`frame-ancestors 'none'` + `X-Frame-Options: DENY`)。oauth2-proxy の `SameSite=None` cookie の下で起こり得た clickjacking を閉じる。ttyd の埋め込み (portal が親) には影響しない (app#326)
 
 - `POST /api/users/{user}/display-name` を collector 専用にした (ADR-0034 D12 S1 の前倒し)。`X-Auth-Request-*` ヘッダが 1 つでも付いた要求 (= ブラウザ経路) は本人でも admin でも 403、本文が `application/json` でなければ 415。これまでは journey ingress 経由の cross-site POST で本人 (admin セッションなら全員) の表示名を書き換えられ、偽ヘッダ付き要求の 200 / 403 の差で `ADMIN_EMAILS` への所属も推測できた。端末の `setname` (collector 経由・ヘッダ無し・JSON) は変更なし。
-- Falco webhook (`POST /falco/events`) と collector 専用の exfil sink (`POST /internal/exfil/{cid}`) の受信をブラウザ経路から閉じた。`X-Auth-Request-*` ヘッダが付いた要求は 403、本文が `application/json` でなければ 415 (falcosidekick と collector の正規経路は変更なし)。
+- Falco webhook (`POST /falco/events`) と collector 専用の exfil sink (`POST /internal/exfil/{cid}`) の受信をブラウザ経路から閉じた。`X-Auth-Request-*` ヘッダが付いた要求は 403、本文が `application/json` でなければ 415 (falcosidekick の webhook は元から JSON。exfil の受信は `Content-Type: application/json` を要求するので、`-H` 無しの `curl -d` は 415 になる)。
 - flags ファイル (`FLAGS_FILE` / `deploy-user.sh --flags-file`) の検証を fail-closed 化。
   これまでは evade 課題の id が欠けていても既定値 (placeholder) のまま起動していた。
   指定時は、スコープ内の全 evade 課題への供給、いずれの課題の既定値とも異なる値であること、
