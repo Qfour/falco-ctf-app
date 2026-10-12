@@ -26,8 +26,8 @@ services:
       # Mount challenges/ live so falco-rule.yaml edits reload on container restart.
       - ./challenges:/app/challenges:ro
 
-  # Participant-facing front (P11.5 full one-pipe). Forwards submit / me /
-  # display-name and rewrites the boss exfil drop to the scoreboard's internal
+  # Participant-facing front (P11.5 full one-pipe). Forwards submit
+  # and rewrites the boss exfil drop to the scoreboard's internal
   # sink. Locally reachable on :8002; workspaces would only ever hit this.
   #   curl -X POST http://localhost:8002/api/challenges/10-final-exfil/exfil \
   #     -H 'content-type: application/json' -d '{"user":"user1","flag":"FALCO{dev-final-exfil}"}'

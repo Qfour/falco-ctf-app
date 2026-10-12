@@ -7,7 +7,7 @@ package collector
 // it does no identity checking of its own — every route it registers today
 // declares Authz: none or Authz: claimed-identity (never admin /
 // self-or-admin), because caller identity is either irrelevant (healthz/
-// metrics) or claimed-in-body-and-never-proven (submit/display-name/exfil;
+// metrics) or claimed-in-body-and-never-proven (submit/exfil;
 // the scoreboard downstream is the one that ever proves anything). So the
 // POSITIVE direction of this file's derived table (an Authz: admin /
 // self-or-admin route MUST 403 a mismatched identity) has zero real cases
@@ -137,8 +137,8 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 
 	// Non-vacuous count guards (mirrors scoreboard/auth-policy authz_test.go's
 	// discipline): pin the per-class counts to ADR-0005 C1's real-world
-	// canon (5 routes total: 3 forwarded participant writes +
-	// healthz/metrics). adminGated/selfGated are pinned to 0 DELIBERATELY —
+	// canon (4 routes total: 2 forwarded participant writes +
+	// healthz/metrics; ADR-0034 S1 removed the display-name forward). adminGated/selfGated are pinned to 0 DELIBERATELY —
 	// see the package-level doc above; a nonzero value here means a future
 	// route declared Authz: admin/self-or-admin on the collector, which is
 	// itself worth a second look (the collector is meant to stay a thin
@@ -149,8 +149,8 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 	if selfGated != 0 {
 		t.Fatalf("expected zero Authz: self-or-admin route on the collector (thin-forwarder design), got %d", selfGated)
 	}
-	if openGated != 5 {
-		t.Fatalf("expected exactly 5 Authz: none/claimed-identity routes (POST submit, POST display-name, POST exfil, GET healthz, GET metrics), got %d", openGated)
+	if openGated != 4 {
+		t.Fatalf("expected exactly 4 Authz: none/claimed-identity routes (POST submit, POST exfil, GET healthz, GET metrics), got %d", openGated)
 	}
 }
 

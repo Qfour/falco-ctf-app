@@ -65,7 +65,7 @@ spec:
           port: 53
     # collector Service (the ONLY path to the scoreboard). Selected by
     # namespace+pod label — no ipBlock (P11.5): the workspace fronts submit /
-    # me / display-name / exfil here; scoreboard(:8000) is never reachable.
+    # exfil here; scoreboard(:8000) is never reachable.
     # Egress NP filters post-DNAT, so target the collector Pod's container port.
     - to:
         - namespaceSelector:

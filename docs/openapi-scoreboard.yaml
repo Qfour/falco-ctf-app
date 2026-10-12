@@ -45,12 +45,12 @@ info:
                               not a default of false.
       x-ctf-collector-forward true | false — whether the collector
                               (internal/collector) can reach this route on a
-                              participant's behalf. Exactly three routes are
+                              participant's behalf. Exactly two routes are
                               true; see docs/openapi-collector.yaml.
       x-ctf-rate-limit        the bucket applied, or "none".
 
     Why origin-guard is a spec field and not a comment: the guard's presence is
-    ASYMMETRIC on purpose (submit / display-name / internal-exfil are excluded
+    ASYMMETRIC on purpose (submit / internal-exfil are excluded
     because the collector forwards them with no browser Origin), and that
     asymmetry is security-relevant in BOTH directions — adding a guard breaks
     flag submission, removing the one on reset-dirty opens an unauthenticated
@@ -1022,79 +1022,6 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
-  /api/users/{user}/display-name:
-    post:
-      summary: Set the caller's own scoreboard display name
-      operationId: setDisplayName
-      tags: [participant]
-      x-ctf-audience: participant
-      x-ctf-authz: internal-claimed-identity
-      x-ctf-origin-guard: false
-      x-ctf-collector-forward: true
-      x-ctf-rate-limit: per-IP 1 req / 5s burst 5
-      description: |
-        Cosmetic only — identity stays anchored to the auth-derived slug.
-        Upsert; re-runnable.
-
-        COLLECTOR-ONLY. The one legitimate caller is the collector's verbatim
-        forward of the participant's `curl` (cluster-internal Service; the
-        header-less claimed-identity model, where NetworkPolicy is the
-        isolation control). The browser path is closed: oauth2-proxy stamps
-        `X-Auth-Request-Email` on every request that reaches this route through
-        the journey ingress (`/api/users/` prefix), so a request carrying ANY
-        `X-Auth-Request-*` header is refused `403` before anything else is
-        evaluated — for the owner, for an admin, for anyone. (Previously such
-        a request was gated self-or-admin, which let a cross-site POST rename
-        the victim's own name or, from an admin session, anyone's, and let a
-        forged header turn the 200/403 split into an `ADMIN_EMAILS`
-        membership oracle; a forged header is now always 403.) The body must
-        be `application/json` (`415` otherwise): a cross-site no-cors POST
-        cannot send that Content-Type. The operator's rename button uses the
-        separate, origin-guarded admin route.
-
-        NOT origin-guarded (`x-ctf-origin-guard: false`): the collector's curl
-        forward sends no Origin/Referer, so a fail-closed Origin gate would 403
-        every legitimate call. The header refusal above is the browser-path
-        control instead.
-      parameters:
-        - $ref: "#/components/parameters/User"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/DisplayNameRequest" }
-      responses:
-        "200":
-          description: name set
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/DisplayNameResult" }
-        "400":
-          description: invalid user, or invalid name (empty, >32 runes, or forbidden characters)
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-        "403":
-          description: the request carried an `X-Auth-Request-*` header (arrived via the browser / auth-proxied path, which this route does not accept)
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-        "415":
-          description: request body is not `application/json`
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-        "429":
-          description: rate limited
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-        "500":
-          description: could not store the name
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-
   /api/users/{user}/profile:
     post:
       summary: Set the caller's own display name and/or avatar (profile)
@@ -1545,11 +1472,15 @@ paths:
       x-ctf-rate-limit: none
       description: |
         Operator path to set/correct any user's leaderboard name
-        (last-write-wins). Participants use the collector-only
-        `POST /api/users/{user}/display-name`. Both upsert; the default name is
-        the username. This is the route the operator dashboard's rename button
-        calls, which is why it stays origin-guarded while the participant one
-        (collector-only; refuses any `X-Auth-Request-*` header) is not.
+        (last-write-wins). Upsert; the default name is the username. This is
+        the route the operator dashboard's rename button calls, which is why it
+        stays origin-guarded.
+
+        There is no participant counterpart here any more: the participant
+        route `POST /api/users/{user}/display-name` (collector-only, reached by
+        the workspace's `setname`) was removed in ADR-0034 S1. A participant
+        sets their own display name and avatar through the authenticated
+        profile route (ADR-0034 D8-D10), not through the collector.
       parameters:
         - $ref: "#/components/parameters/User"
       requestBody:

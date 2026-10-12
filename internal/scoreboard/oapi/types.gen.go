@@ -1147,9 +1147,6 @@ type SubmitDetectJSONRequestBody = SubmitDetectRequest
 // SetStepCheckJSONRequestBody defines body for SetStepCheck for application/json ContentType.
 type SetStepCheckJSONRequestBody = StepCheckRequest
 
-// SetDisplayNameJSONRequestBody defines body for SetDisplayName for application/json ContentType.
-type SetDisplayNameJSONRequestBody = DisplayNameRequest
-
 // SetProfileJSONRequestBody defines body for SetProfile for application/json ContentType.
 type SetProfileJSONRequestBody = ProfileRequest
 

@@ -303,7 +303,10 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 	// browser path of POST /falco/events and POST /internal/exfil/{cid} moves
 	// both out of the none/claimed-identity bucket (their Authz was
 	// claimed-identity, which openGated counts with none) into
-	// internal-claimed-identity: 9 + 6 + 3 + 6 + 6 = 30, matching
+	// internal-claimed-identity: 9 + 6 + 3 + 6 + 6 = 30; ADR-0034 S1 then removed
+	// the participant display-name route (internal-claimed-identity 3 -> 2) and
+	// added the two profile routes (+1 admin, +1 self-or-admin):
+	// 10 + 7 + 2 + 6 + 6 = 31, matching
 	// apispec_parity_test.go's TestAPISpec_V1_RouteSetMatchesSpec.
 	// ADR-0034 S1 (D8): +1 admin (POST /api/admin/users/{user}/profile-reset) and
 	// +1 self-or-admin (POST /api/users/{user}/profile).
@@ -316,8 +319,8 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 	if openGated != 6 {
 		t.Fatalf("expected exactly 6 Authz: none/claimed-identity routes (GET /portal, GET /static/{asset} (ADR-0028), GET /healthz, GET /metrics, POST /api/challenges/{cid}/submit; Issue #95: POST /csp-report), got %d", openGated)
 	}
-	if internalGated != 3 {
-		t.Fatalf("expected exactly 3 Authz: internal-claimed-identity routes (POST /api/users/{user}/display-name, collector-only — ADR-0034 D12 S1; POST /falco/events and POST /internal/exfil/{cid}, internal-only — browser path closed), got %d", internalGated)
+	if internalGated != 2 {
+		t.Fatalf("expected exactly 2 Authz: internal-claimed-identity routes (POST /falco/events and POST /internal/exfil/{cid}, internal-only — browser path closed; the collector-only participant display-name route was removed in ADR-0034 D12 S1), got %d", internalGated)
 	}
 	if authenticatedGated != 6 {
 		t.Fatalf("expected exactly 6 Authz: authenticated routes (app#292 QA Board participant routes: GET /api/board/threads, GET /api/board/threads/{tid}, POST /api/board/threads, POST /api/board/threads/{tid}/messages, POST /api/board/threads/{tid}/like, POST /api/board/threads/{tid}/unlike), got %d", authenticatedGated)

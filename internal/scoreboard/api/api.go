@@ -10,7 +10,6 @@
 //	POST /api/users/{user}/challenges/{cid}/steps/{idx}/check
 //	POST /api/users/{user}/challenges/{cid}/hints/{idx}
 //	POST /api/users/{user}/challenges/{cid}/reset-dirty
-//	POST /api/users/{user}/display-name
 //	POST /api/users/{user}/profile
 //	POST /api/admin/reset
 //	POST /api/admin/users/{user}/display-name
@@ -176,7 +175,6 @@ type Handler struct {
 	logger             *slog.Logger
 	now                func() time.Time
 	submitLimiter      *ratelimit.Limiter
-	displayNameLimiter *ratelimit.Limiter
 	// actionLimiter is the IDENTITY-keyed bucket (app#315, ADR-0027
 	// Consequences, ADR-0032 D3) shared by the browser-only participant
 	// actions: steps/check, hints/{idx}, reset-dirty. Deliberately NOT
@@ -314,7 +312,6 @@ func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *sl
 		logger:             logger,
 		now:                now,
 		submitLimiter:      ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now),
-		displayNameLimiter: ratelimit.New(0.2 /* one every 5s */, 5 /* burst */).WithNow(now),
 		actionLimiter:      ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now),
 		adminSet:           adminSet,
 		hiddenSet:          hiddenSet,
@@ -421,8 +418,7 @@ func DeriveUsername(r *http.Request) string {
 // state-changing routes. NOT applied to routes that are also (or solely)
 // reached via the collector's server-to-server forward — see each route's
 // own comment below for why it is excluded (POST /internal/exfil/{cid},
-// POST /api/challenges/{cid}/submit, POST
-// /api/users/{user}/display-name).
+// POST /api/challenges/{cid}/submit).
 func (h *Handler) og(next http.Handler) http.Handler {
 	return h.originGuard.Middleware(next)
 }
@@ -454,7 +450,6 @@ func (h *Handler) Routes() []apispec.Route {
 	// clientIPSource rate under these labels is the ADR-0023 Signpost 2 drift
 	// signal — see internal/scoreboard/ratelimit/metrics.go's doc.
 	submitMW := h.submitLimiter.Middleware(ratelimit.ClientIPKeyed("submit"))
-	dnMW := h.displayNameLimiter.Middleware(ratelimit.ClientIPKeyed("display_name"))
 	// app#315: identity-keyed, FAIL-CLOSED (MiddlewareStrict: no proven
 	// identity header -> 403 without consuming a token, never "unlimited" and
 	// never an IP fallback). Order on the wire is og -> actionMW -> handler
@@ -508,8 +503,10 @@ func (h *Handler) Routes() []apispec.Route {
 		},
 		{
 			// The operator dashboard's rename button calls this route, which is
-			// why it stays origin-guarded (unlike the participant-facing
-			// display-name route below, whose only caller is the collector).
+			// why it stays origin-guarded. (The participant-facing
+			// POST /api/users/{user}/display-name route was removed in ADR-0034
+			// S1: a participant now sets display name + avatar through the
+			// authenticated profile route, not a collector forward.)
 			Method: "POST", Pattern: "/api/admin/users/{user}/display-name",
 			Audience: apispec.AudienceOperator, Authz: apispec.AuthzAdmin,
 			OriginGuarded: true, CollectorForward: false, RateLimit: "none",
@@ -596,7 +593,7 @@ func (h *Handler) Routes() []apispec.Route {
 			// identity-keyed action bucket (app#315) — NOT /submit's per-IP
 			// bucket, so a NAT'd venue's tick/hint traffic cannot 429 a solve.
 			// This IS
-			// origin-guarded: unlike submit/display-name below, it is reached
+			// origin-guarded: unlike submit below, it is reached
 			// ONLY from the portal's Journey pane browser fetch
 			// (templates/portal.html) — the collector's forward allowlist
 			// (internal/collector/collector.go) does not include
@@ -657,29 +654,6 @@ func (h *Handler) Routes() []apispec.Route {
 			OriginGuarded: true, CollectorForward: false,
 			RateLimit: "identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit)",
 			Handler:   h.og(actionMW(http.HandlerFunc(h.setProfile))),
-		},
-		{
-			// NOT wrapped by the origin guard (P23-2 follow-up) — and it must not
-			// be: this route has only ONE legitimate caller, the collector's
-			// verbatim forward (internal/collector/collector.go — "Routes
-			// fronted") of the participant's curl-issued display-name update, which
-			// sends no Origin/Referer, so a fail-closed Origin gate would 403 every
-			// legitimate call.
-			//
-			// Instead setDisplayName closes the BROWSER path directly (security
-			// review of ADR-0034, 2026-10-12): the journey ingress still routes
-			// /api/users/ here and oauth2-proxy stamps X-Auth-Request-Email on every
-			// such request, so ANY X-Auth-Request-* header => 403 (before the
-			// admin check, so the 200/403 split can no longer reveal ADMIN_EMAILS
-			// membership), and a body that is not application/json => 415 (a
-			// cross-site no-cors form/text POST cannot set that Content-Type). The
-			// declared Authz is therefore the internal-only claimed-identity class,
-			// not self-or-admin-write: no proven identity is ever accepted here.
-			Method: "POST", Pattern: "/api/users/{user}/display-name",
-			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzInternalClaimedIdentity,
-			OriginGuarded: false, CollectorForward: true,
-			RateLimit: "per-IP 1 req / 5s burst 5",
-			Handler:   dnMW(http.HandlerFunc(h.setDisplayName)),
 		},
 		{
 			// app#292 Phase 2: the participant's own visible board listing —
@@ -974,14 +948,11 @@ func (h *Handler) selfOrAdmin(w http.ResponseWriter, r *http.Request, user strin
 }
 
 // selfOrAdminWrite is the dual-path WRITE gate used by exactly one route:
-// POST /api/challenges/{cid}/submit-detect. display-name (ADR-0034 D12 S1) no
-// longer uses it: that route is collector-only (internal-claimed-identity,
-// setDisplayName 403s any X-Auth-Request-* header), so it never reaches the
-// header-present branch below. step-check, hint reveal and reset-dirty do NOT
-// use it either: they run actionMW + selfOrAdmin, which 403 a header-less
-// request. The header-less branch below survives only for submit-detect. It
-// differs from the read gate (selfOrAdmin) by being conditional on the
-// PRESENCE of an auth header:
+// POST /api/challenges/{cid}/submit-detect. step-check, hint reveal,
+// reset-dirty and profile do NOT use it: they run actionMW + selfOrAdmin, which
+// 403 a header-less request. The header-less branch below survives only for
+// submit-detect. It differs from the read gate (selfOrAdmin)
+// by being conditional on the PRESENCE of an auth header:
 //
 //   - Header present (request arrived over an auth-proxied ingress host — the
 //     participant journey host or the admin host): apply the full self-or-admin
@@ -989,14 +960,15 @@ func (h *Handler) selfOrAdmin(w http.ResponseWriter, r *http.Request, user strin
 //     or a non-admin third party is denied (403). Admins may write any {user}.
 //     This closes the P18 HIGH: on the journey host, oauth2-proxy injects
 //     X-Auth-Request-Email for ANY login, so without this a participant could
-//     tick another participant's steps, drive the openHint 409/200 cross-user
-//     oracle, or overwrite another player's display name.
+//     tick another participant's steps or drive the openHint 409/200 cross-user
+//     oracle.
 //
 //   - Header absent (request arrived over the cluster-internal Service — a
-//     workspace pod, or the collector's forward): fall back to the legacy
-//     claimed-identity trust model (allow). This path carries no proven
-//     identity and never has; NetworkPolicy is the isolation control there. Not
-//     loosening it keeps the write collector path unchanged.
+//     workspace pod): fall back to the legacy claimed-identity trust model
+//     (allow). This path carries no proven identity and never has;
+//     NetworkPolicy is the isolation control there. (The collector's
+//     display-name forward that used to rely on this was removed in ADR-0034
+//     S1; the remaining header-less callers are the guarded/forwarded writes.)
 //
 // Rationale for keying off header presence (not hostname): identical to
 // selfOrAdmin's design note — both auth-proxied hosts inject the header and the
@@ -1711,85 +1683,11 @@ func (h *Handler) resetDirty(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "user": user, "cid": cid, "dirty": false})
 }
 
-// --- /api/users/{user}/display-name ----------------------------------------
+// --- request-shape helpers shared by collector-only / JSON-only writes -------
 
 // errMsgUnsupportedMediaType is the stable 415 body for routes that require a
 // JSON request body.
 const errMsgUnsupportedMediaType = "content type must be application/json"
-
-// setDisplayName lets a participant pick a cosmetic name shown on the
-// scoreboard. Identity (`user`) stays anchored to the auth-derived slug;
-// only the rendered name changes. Re-runnable any number of times.
-//
-// Body shape:  {"name": "Alice"}
-// Constraints: 1..32 runes, no <>&"' or control chars (UI / shell safety).
-//
-// Auth (ADR-0034 D12 S1, security review 2026-10-12): collector-only.
-//   - The one legitimate caller is the collector's forward of the participant's
-//     curl (cluster-internal Service): no X-Auth-Request-* header, identity is
-//     the claimed {user} in the path (isolation is NetworkPolicy's job; see audit
-//     log entries for traceability).
-//   - The browser path (journey ingress -> oauth2-proxy) ALWAYS carries
-//     X-Auth-Request-Email, so a request with any X-Auth-Request-* header is
-//     refused 403 outright — it is never self-or-admin gated here. That closes
-//     the cross-site (SameSite=None cookie) rename of the victim's own name, the
-//     admin-session rename of everyone, and the oracle where a forged
-//     X-Auth-Request-Email through the collector turned the 200/403 split into an
-//     ADMIN_EMAILS membership test (a forged header is now always 403).
-//   - Body must be application/json (415 otherwise): a cross-site no-cors POST
-//     can only send text/plain, form-urlencoded or multipart.
-func (h *Handler) setDisplayName(w http.ResponseWriter, r *http.Request) {
-	// First, before any other check: the response must not depend on who the
-	// header claims to be (no ADMIN_EMAILS oracle).
-	if httpx.HasProxyIdentityHeader(r) {
-		h.logger.Warn("display name denied: browser/proxy path not accepted", "remote_addr", r.RemoteAddr)
-		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
-		return
-	}
-	user := strings.TrimSpace(r.PathValue("user"))
-	if !validUser.MatchString(user) {
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
-		return
-	}
-	if !httpx.IsJSONContentType(r) {
-		httpx.WriteJSON(w, http.StatusUnsupportedMediaType, map[string]any{"error": errMsgUnsupportedMediaType})
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
-	var req struct {
-		Name string `json:"name"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.logger.Warn("set display name: invalid body", "err", err, "user", user, "remote_addr", r.RemoteAddr)
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": errMsgInvalidBody})
-		return
-	}
-	name, err := validDisplayName(req.Name)
-	if err != nil {
-		// Self-crafted validation message (validDisplayName), not an
-		// internal/store error — safe to return verbatim.
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
-		return
-	}
-
-	at := h.now().UTC().Format(time.RFC3339Nano)
-	if err := h.store.SetDisplayName(user, name, at); err != nil {
-		h.logger.Error("set display name", "err", err, "user", user)
-		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgSetDisplayNameFailed})
-		return
-	}
-	h.logger.Info("display_name",
-		"user", user,
-		"display_name", name,
-		"remote_addr", r.RemoteAddr,
-	)
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"ok":           true,
-		"user":         user,
-		"display_name": name,
-	})
-}
 
 // --- /api/users/{user}/me ---------------------------------------------------
 

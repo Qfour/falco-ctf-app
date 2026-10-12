@@ -20,7 +20,7 @@ falco-ctf-app/
 ├── scoreboard/         Dockerfile のみ (Go multi-stage, challenges/ 焼込)
 ├── auth-policy/        Dockerfile のみ (Go multi-stage, stdlib のみ)
 ├── collector/          Dockerfile のみ (Go multi-stage。参加者向け単一入口。
-│                       submit/display-name/exfil の3本のみ scoreboard へ forward。
+│                       submit/exfil の2本のみ scoreboard へ forward (display-name は ADR-0034 S1 で撤去)。
 │                       me は非転送 (self-scope bypass を避ける設計判断)。CTF 状態は持たない)
 ├── images/{ttyd,challenge,docs,detect-grader}/  Dockerfile のみ
 │                       (docs = MkDocs+PDF サイト、detect-grader = falco base + grade.sh
@@ -70,7 +70,7 @@ falco-ctf-app/
 
 - **collector を参加者向け単一入口にする (P11.5)** — ctf-user の egress lockdown
   後、workspace が到達できる先を collector 1 つに絞る。collector は submit /
-  display-name / exfil の3本を scoreboard へ verbatim forward するだけで CTF 状態
+  exfil の2本を scoreboard へ verbatim forward するだけで CTF 状態
   (catalog / flags / DB) を持たない。**`GET /api/users/{user}/me` は意図的に
   非転送** (匿名で client 任意の `{user}` を読めると self-scope bypass になるため、
   進捗の読み取りは認証済みの journey host 経由に限定する — 出所は

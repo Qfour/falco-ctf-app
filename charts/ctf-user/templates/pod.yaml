@@ -282,8 +282,8 @@ spec:
         - name: FALCO_CTF_CHALLENGE
           value: "{{ .Values.challengeId }}"
         # P11.5 full one-pipe: the workspace reaches the scoreboard ONLY via the
-        # collector. FALCO_CTF_COLLECTOR is the canonical target for submit / me /
-        # display-name / exfil. FALCO_CTF_SCOREBOARD is kept for backward compat
+        # collector. FALCO_CTF_COLLECTOR is the canonical target for submit /
+        # exfil. FALCO_CTF_SCOREBOARD is kept for backward compat
         # with older helper scripts, but now points at the collector too — the
         # scoreboard Service is unreachable once egress lockdown is on.
         - name: FALCO_CTF_COLLECTOR

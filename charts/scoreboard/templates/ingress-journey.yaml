@@ -77,7 +77,7 @@ spec:
         #                      pages used, so this single entry now covers what
         #                      three routes used to.
         #   /api/users/     — self-scoped reads (me/journey) + per-user progress
-        #                      writes (step-check / hint reveal / display-name);
+        #                      writes (step-check / hint reveal);
         #                      all server-side self-or-admin gated.
         #   /api/board/     — app#292 Phase 2 QA Board: the 6 participant routes
         #                      (list/get/create/append-message/like/unlike),

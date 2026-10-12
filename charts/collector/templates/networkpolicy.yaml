@@ -21,7 +21,7 @@ spec:
     - Ingress
     - Egress
   ingress:
-    # ctf-user workspaces → submit / me / display-name / exfil. NP can't restrict
+    # ctf-user workspaces → submit / exfil. NP can't restrict
     # by path; the collector's default-deny router + scoreboard's internal-only
     # exfil sink keep the workspace from reaching ingest/admin/internal surfaces.
     - from:
