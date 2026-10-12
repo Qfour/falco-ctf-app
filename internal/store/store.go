@@ -8,6 +8,12 @@
 // Persistence (SQLite, WAL):
 //   - solved      (user, challenge, at)            PRIMARY KEY (user, challenge)
 //   - display_names (user, name, set_at)           PRIMARY KEY (user)
+//   - avatars     (user, avatar, set_at)           PRIMARY KEY (user)
+//     ADR-0034 D10: the participant-chosen avatar id (a key into the table in
+//     internal/scoreboard/avatar — never an image). Same lifecycle as
+//     display_names: last-write-wins, preserved by Reset(), cleared per user by
+//     ResetProfile. The store keeps the raw id; the API resolves an id that is
+//     no longer in the table to the seat's default.
 //   - hint_release  (mission, hint, at)            PRIMARY KEY (mission, hint)
 //     Orphaned (app#84, P22-1 follow-up): the operator-broadcast hint API
 //     (GET /api/hints, POST /api/admin/hints, ReleaseHint/ReleasedHints) that
@@ -114,6 +120,7 @@ type Store struct {
 	eventsPerUser map[string]int
 	ruleFires     map[string][]ruleFire // user -> bounded list (RetentionSeconds)
 	displayNames  map[string]string     // user -> participant-chosen display name
+	avatars       map[string]string     // user -> participant-chosen avatar id (ADR-0034)
 	hintViews     map[hintViewKey]bool  // (user,challenge,hintIdx) participant-revealed
 	stepChecks    map[stepCheckKey]bool // (user,challenge,stepIdx) participant self-checked
 	// dirtyRules mirrors the evade_dirty table: (user,challenge) -> set of
@@ -192,6 +199,7 @@ func Open(path string) (*Store, error) {
 		eventsPerUser:    make(map[string]int),
 		ruleFires:        make(map[string][]ruleFire),
 		displayNames:     make(map[string]string),
+		avatars:          make(map[string]string),
 		hintViews:        make(map[hintViewKey]bool),
 		stepChecks:       make(map[stepCheckKey]bool),
 		dirtyRules:       make(map[SolveKey]map[string]struct{}),
@@ -238,6 +246,22 @@ func (s *Store) loadFromDB() error {
 		s.displayNames[user] = name
 	}
 	if err := dn.Err(); err != nil {
+		return err
+	}
+
+	av, err := s.db.Query("SELECT user, avatar FROM avatars")
+	if err != nil {
+		return err
+	}
+	defer av.Close()
+	for av.Next() {
+		var user, avatar string
+		if err := av.Scan(&user, &avatar); err != nil {
+			return err
+		}
+		s.avatars[user] = avatar
+	}
+	if err := av.Err(); err != nil {
 		return err
 	}
 
@@ -450,6 +474,92 @@ func (s *Store) DisplayName(user string) string {
 		return n
 	}
 	return user
+}
+
+// SetProfile writes the display name and/or the avatar id for `user` in ONE
+// transaction (ADR-0034 D8): either both land or neither does, so a failed
+// second write can never leave a half-applied profile. A nil argument leaves
+// that field untouched; callers validate BEFORE calling (the store is not the
+// validator — avatar ids belong to internal/scoreboard/avatar, names to the
+// api layer). Last-write-wins, like SetDisplayName. The in-memory mirrors move
+// only after the commit, the same fail-closed order ResetDirty uses.
+func (s *Store) SetProfile(user string, name, avatar *string, at string) error {
+	if name == nil && avatar == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op once Commit succeeds
+
+	if name != nil {
+		if _, err := tx.Exec(
+			`INSERT INTO display_names (user, name, set_at) VALUES (?, ?, ?)
+			 ON CONFLICT(user) DO UPDATE SET name = excluded.name, set_at = excluded.set_at`,
+			user, *name, at,
+		); err != nil {
+			return err
+		}
+	}
+	if avatar != nil {
+		if _, err := tx.Exec(
+			`INSERT INTO avatars (user, avatar, set_at) VALUES (?, ?, ?)
+			 ON CONFLICT(user) DO UPDATE SET avatar = excluded.avatar, set_at = excluded.set_at`,
+			user, *avatar, at,
+		); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if name != nil {
+		s.displayNames[user] = *name
+	}
+	if avatar != nil {
+		s.avatars[user] = *avatar
+	}
+	return nil
+}
+
+// ResetProfile deletes `user`'s display name AND avatar rows in one
+// transaction, returning both to their defaults (the seat, and the seat's
+// derived avatar). Idempotent. Used by the admin profile-reset route.
+func (s *Store) ResetProfile(user string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op once Commit succeeds
+
+	if _, err := tx.Exec("DELETE FROM display_names WHERE user = ?", user); err != nil {
+		return err
+	}
+	if _, err := tx.Exec("DELETE FROM avatars WHERE user = ?", user); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	delete(s.displayNames, user)
+	delete(s.avatars, user)
+	return nil
+}
+
+// Avatar returns the stored avatar id for `user`, or "" when none was ever
+// set. It is the RAW stored value: it may name an id the avatar table no
+// longer has, so callers render it through avatar.Resolve.
+func (s *Store) Avatar(user string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.avatars[user]
 }
 
 // RecordRuleFire bumps the per-user event count (in-memory only) and appends
@@ -862,6 +972,7 @@ type Snapshot struct {
 	Solved        map[SolveKey]string
 	EventsPerUser map[string]int
 	DisplayNames  map[string]string
+	Avatars       map[string]string // raw stored ids; resolve via avatar.Resolve
 }
 
 func (s *Store) Snapshot() Snapshot {
@@ -871,6 +982,7 @@ func (s *Store) Snapshot() Snapshot {
 		Solved:        make(map[SolveKey]string, len(s.solved)),
 		EventsPerUser: make(map[string]int, len(s.eventsPerUser)),
 		DisplayNames:  make(map[string]string, len(s.displayNames)),
+		Avatars:       make(map[string]string, len(s.avatars)),
 	}
 	for k, v := range s.solved {
 		out.Solved[k] = v
@@ -880,6 +992,9 @@ func (s *Store) Snapshot() Snapshot {
 	}
 	for k, v := range s.displayNames {
 		out.DisplayNames[k] = v
+	}
+	for k, v := range s.avatars {
+		out.Avatars[k] = v
 	}
 	return out
 }
@@ -892,9 +1007,8 @@ func (s *Store) SolvedCount() int {
 
 // Reset clears all solves (DB + memory) and the in-memory event / rule-fire
 // counters, returning the scoreboard to an empty state. Returns how many
-// solves were cleared. Display names are deliberately preserved — they are
-// operator-seeded participant identities (re-set only on workspace deploy),
-// not "results". Used by the admin reset endpoint to wipe a demo/test run
+// solves were cleared. Display names and avatars are deliberately preserved
+// — they are participant identity/profile (ADR-0034 D10), not "results". Used by the admin reset endpoint to wipe a demo/test run
 // before the real event starts.
 func (s *Store) Reset() (clearedSolves int, err error) {
 	s.mu.Lock()

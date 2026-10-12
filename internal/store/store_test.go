@@ -647,3 +647,132 @@ func TestExpectedRuleFire_SurvivesReopen(t *testing.T) {
 		t.Fatal("ADR-0008 regression: positive proof did not survive a store restart")
 	}
 }
+
+// --- ADR-0034 D8/D10: profile (display name + avatar id) ---------------------
+
+func strp(s string) *string { return &s }
+
+func TestSetProfile_BothFieldsPersistAcrossReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "scoreboard.db")
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetProfile("user3", strp("Alice"), strp("bug-lime"), "2026-10-13T00:00:00Z"); err != nil {
+		t.Fatalf("SetProfile: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// V4: the value survives a store re-open (it came back from the DB, not
+	// from a process-local map).
+	s2, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s2.Close() })
+	if got := s2.DisplayName("user3"); got != "Alice" {
+		t.Fatalf("DisplayName after reopen = %q, want Alice", got)
+	}
+	if got := s2.Avatar("user3"); got != "bug-lime" {
+		t.Fatalf("Avatar after reopen = %q, want bug-lime", got)
+	}
+	snap := s2.Snapshot()
+	if snap.Avatars["user3"] != "bug-lime" || snap.DisplayNames["user3"] != "Alice" {
+		t.Fatalf("Snapshot did not carry the profile: %+v / %+v", snap.Avatars, snap.DisplayNames)
+	}
+}
+
+func TestSetProfile_NilFieldIsLeftUntouched_LastWriteWins(t *testing.T) {
+	s := newStore(t)
+	if err := s.SetProfile("user3", strp("Alice"), strp("bug-lime"), "t1"); err != nil {
+		t.Fatal(err)
+	}
+	// avatar only: the name must stay.
+	if err := s.SetProfile("user3", nil, strp("flame-slate"), "t2"); err != nil {
+		t.Fatal(err)
+	}
+	if s.DisplayName("user3") != "Alice" || s.Avatar("user3") != "flame-slate" {
+		t.Fatalf("avatar-only write changed the name or missed the avatar: %q / %q", s.DisplayName("user3"), s.Avatar("user3"))
+	}
+	// name only (overwrites: NOT first-set-only): the avatar must stay.
+	if err := s.SetProfile("user3", strp("Bob"), nil, "t3"); err != nil {
+		t.Fatal(err)
+	}
+	if s.DisplayName("user3") != "Bob" || s.Avatar("user3") != "flame-slate" {
+		t.Fatalf("name-only write changed the avatar or did not overwrite: %q / %q", s.DisplayName("user3"), s.Avatar("user3"))
+	}
+	// nothing to write is a no-op, not an error.
+	if err := s.SetProfile("user3", nil, nil, "t4"); err != nil {
+		t.Fatalf("empty SetProfile: %v", err)
+	}
+	// another seat is untouched.
+	if s.Avatar("user4") != "" || s.DisplayName("user4") != "user4" {
+		t.Fatalf("user4 picked up user3's profile: %q / %q", s.Avatar("user4"), s.DisplayName("user4"))
+	}
+}
+
+func TestReset_PreservesDisplayNamesAndAvatars(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "scoreboard.db")
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetProfile("user3", strp("Alice"), strp("bug-lime"), "t"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.MarkSolved("user3", "01-read-shadow", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.Reset(); err != nil || n != 1 {
+		t.Fatalf("Reset: n=%d err=%v", n, err)
+	}
+	if s.DisplayName("user3") != "Alice" || s.Avatar("user3") != "bug-lime" {
+		t.Fatalf("admin Reset dropped the profile: %q / %q", s.DisplayName("user3"), s.Avatar("user3"))
+	}
+	// ... and on disk, not just in memory.
+	_ = s.Close()
+	s2, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s2.Close() })
+	if s2.DisplayName("user3") != "Alice" || s2.Avatar("user3") != "bug-lime" {
+		t.Fatalf("profile lost across Reset + reopen: %q / %q", s2.DisplayName("user3"), s2.Avatar("user3"))
+	}
+}
+
+func TestResetProfile_ClearsBothAndIsIdempotent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "scoreboard.db")
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetProfile("user3", strp("Alice"), strp("bug-lime"), "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetProfile("user4", strp("Zed"), strp("lock-cyan"), "t"); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ { // idempotent
+		if err := s.ResetProfile("user3"); err != nil {
+			t.Fatalf("ResetProfile #%d: %v", i, err)
+		}
+	}
+	if s.DisplayName("user3") != "user3" || s.Avatar("user3") != "" {
+		t.Fatalf("ResetProfile left user3 at %q / %q, want the seat and no stored avatar", s.DisplayName("user3"), s.Avatar("user3"))
+	}
+	if s.DisplayName("user4") != "Zed" || s.Avatar("user4") != "lock-cyan" {
+		t.Fatalf("ResetProfile(user3) touched user4: %q / %q", s.DisplayName("user4"), s.Avatar("user4"))
+	}
+	_ = s.Close()
+	s2, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s2.Close() })
+	if s2.DisplayName("user3") != "user3" || s2.Avatar("user3") != "" {
+		t.Fatalf("reset did not reach the DB: %q / %q", s2.DisplayName("user3"), s2.Avatar("user3"))
+	}
+}

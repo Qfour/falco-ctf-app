@@ -42,6 +42,11 @@ erDiagram
         TEXT name
         TEXT set_at
     }
+    avatars {
+        TEXT user PK
+        TEXT avatar "prepared avatar id (<glyph>-<color>), never an image"
+        TEXT set_at
+    }
     hint_release {
         TEXT mission PK
         INTEGER hint PK "1-based hint index, operator-released"
@@ -122,15 +127,41 @@ the Grader's attempt-scope current() derivation.
 
 ### `display_names`
 
-Participant/operator-set leaderboard display name. Last-write-wins
-(participant self-service `POST /api/users/{user}/display-name`
-first-set-only; the admin path `POST /api/admin/users/{user}/display-name`
-may always override).
+Participant/operator-set leaderboard display name. **Last-write-wins** — every
+writer overwrites, there is no first-set-only rule (an older version of this
+page said the participant path was first-set-only; it never was in the store,
+and the spec and `Store.SetDisplayName` / `Store.SetProfile` are the canon).
+Writers: `POST /api/users/{user}/profile` (self-or-admin, ADR-0034 D8, together
+with the avatar in one transaction), the collector-forwarded
+`POST /api/users/{user}/display-name`, and the admin
+`POST /api/admin/users/{user}/display-name`. `POST
+/api/admin/users/{user}/profile-reset` deletes the row (the name falls back to
+the seat). `POST /api/admin/reset` leaves it alone.
 
 ```sql
 CREATE TABLE display_names (
   user   TEXT PRIMARY KEY,
   name   TEXT NOT NULL,
+  set_at TEXT NOT NULL
+);
+```
+
+### `avatars`
+
+Added by migration 2 (ADR-0034 D10). The participant-chosen avatar **id** — a
+key into the table in `internal/scoreboard/avatar` (`<glyph>-<color>`, 48 ids),
+never an image. Same lifecycle as `display_names`: last-write-wins, written
+with the display name in one transaction by `POST /api/users/{user}/profile`,
+deleted by `profile-reset`, preserved by `POST /api/admin/reset`. The column set
+is closed and pinned by `TestMigrate_AvatarsTable_ColumnSetIsPinned` (ADR-0034
+V7): there is no email, real-name or image column, and adding one needs a new
+ADR. A row whose `avatar` is no longer in the Go table is read as the seat's
+default (`avatar.Resolve`), so no response ever carries an unknown id.
+
+```sql
+CREATE TABLE avatars (
+  user   TEXT PRIMARY KEY,
+  avatar TEXT NOT NULL,
   set_at TEXT NOT NULL
 );
 ```
@@ -323,6 +354,7 @@ Test: `TestFalcoEvents_SolveTimestampUsesReceiptTime`.
 | v1.1    | 2026-06-08 through 2026-07-13 | Incremental additions as participant-facing features landed: `display_names` (operator + self-service leaderboard names), `hint_release` (operator-released hints), `exfil` (P16 auto-solve receipts), `hint_views` + `step_checks` (P15 Journey UI). `events_per_user` table dropped in favour of an in-memory-only counter (display-only, no scoring impact) — see "In-memory only" above |
 | v2      | 2026-08-18 | App-H2 (PR #124): `evade_dirty` added (persistent evade forbidden-rule taint), replacing the old in-memory `ruleFires`-windowed evade gate |
 | v2.1    | 2026-08-18 | ADR-0003 (attempt scope, same-day follow-up after PR #124 was found to block every regular participant — see the ADR): no schema change. `evade_dirty` writes are now scoped to the participant's CURRENT mission (was: unconditional fan-out to every evade challenge sharing the fired rule name — #124's regression). `ResetDirty` now also deletes the pair's `exfil` row (A2-2 enforce decision) |
+| `PRAGMA user_version` 2 | 2026-10-13 | ADR-0034 D10 (migration 2): `avatars (user PRIMARY KEY, avatar, set_at)` added; `display_names` unchanged. `POST /api/admin/reset` preserves it like `display_names`. Column set pinned by a test (no email / name / image column) |
 
 **Upgrade note (app#124 5x review, R1 LOW):** the `d24fe02` build (App-H2
 before ADR-0003's attempt scope landed) wrote `evade_dirty` rows with NO
