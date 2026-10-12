@@ -443,6 +443,12 @@ func TestMiddlewareStrict_429IsJSONWithRetryAfterAndMetric(t *testing.T) {
 	l := ratelimit.New(0.1, 1).WithNow(func() time.Time { return now })
 	h := l.MiddlewareStrict("test_429", ratelimit.IdentityKeyed)(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	// IdentityRequestsTotal is a process-global counter: assert deltas, not
+	// absolutes, so the test survives -count>1 and other tests sharing a bucket.
+	before := map[string]float64{}
+	for _, outcome := range []string{"allowed", "limited"} {
+		before[outcome] = testutil.ToFloat64(ratelimit.IdentityRequestsTotal.WithLabelValues("test_429", outcome))
+	}
 	h.ServeHTTP(httptest.NewRecorder(), identityReq("alice@ctf.local"))
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, identityReq("alice@ctf.local"))
@@ -451,8 +457,8 @@ func TestMiddlewareStrict_429IsJSONWithRetryAfterAndMetric(t *testing.T) {
 		t.Fatalf("429 shape: code=%d retry-after=%q ct=%q", w.Code, w.Header().Get("Retry-After"), w.Header().Get("Content-Type"))
 	}
 	for outcome, want := range map[string]float64{"allowed": 1, "limited": 1} {
-		if got := testutil.ToFloat64(ratelimit.IdentityRequestsTotal.WithLabelValues("test_429", outcome)); got != want {
-			t.Fatalf("metric bucket=test_429 outcome=%s = %v, want %v", outcome, got, want)
+		if got := testutil.ToFloat64(ratelimit.IdentityRequestsTotal.WithLabelValues("test_429", outcome)) - before[outcome]; got != want {
+			t.Fatalf("metric bucket=test_429 outcome=%s delta = %v, want %v", outcome, got, want)
 		}
 	}
 }

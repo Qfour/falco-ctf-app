@@ -454,11 +454,14 @@ func (h *Handler) Routes() []apispec.Route {
 	// app#315: identity-keyed, FAIL-CLOSED (MiddlewareStrict: no proven
 	// identity header -> 403 without consuming a token, never "unlimited" and
 	// never an IP fallback). Order on the wire is og -> actionMW -> handler
-	// (selfOrAdminWrite): the origin guard still rejects the header-less
-	// curl shape first, and this closes the remaining hole — a header-less
-	// caller carrying a spoofed allowed Origin would otherwise reach
+	// (selfOrAdmin): the origin guard still rejects the header-less curl
+	// shape first, and this closes the remaining hole — a header-less caller
+	// carrying a spoofed allowed Origin would otherwise reach
 	// selfOrAdminWrite's claimed-identity branch on routes that are
-	// browser-only by design.
+	// browser-only by design. The three handlers behind actionMW therefore
+	// use selfOrAdmin (header REQUIRED), not selfOrAdminWrite, and their
+	// Authz is declared self-or-admin accordingly; actionMW is a second
+	// layer, not the only one.
 	actionMW := h.actionLimiter.MiddlewareStrict(actionBucket, ratelimit.IdentityKeyed)
 	// app#292 Phase 2: identity-keyed (never client-IP-keyed) — a board
 	// thread/message is attributed to the caller's OWN proven identity, so
@@ -579,7 +582,7 @@ func (h *Handler) Routes() []apispec.Route {
 			// steps/{idx}/check — so there is no server-to-server caller to
 			// protect against a fail-closed gate here.
 			Method: "POST", Pattern: "/api/users/{user}/challenges/{cid}/steps/{idx}/check",
-			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdminWrite,
+			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdmin,
 			OriginGuarded: true, CollectorForward: false,
 			RateLimit: "identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty; separate from submit)",
 			Handler:   h.og(actionMW(http.HandlerFunc(h.stepCheck))),
@@ -589,7 +592,7 @@ func (h *Handler) Routes() []apispec.Route {
 			// a second one: the 409/200 distinction is a cross-user oracle if an
 			// unauthenticated caller can drive it.
 			Method: "POST", Pattern: "/api/users/{user}/challenges/{cid}/hints/{idx}",
-			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdminWrite,
+			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdmin,
 			OriginGuarded: true, CollectorForward: false,
 			RateLimit: "identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty; separate from submit)",
 			Handler:   h.og(actionMW(http.HandlerFunc(h.openHint))),
@@ -600,13 +603,14 @@ func (h *Handler) Routes() []apispec.Route {
 			// model and route family as steps/check and hints/{idx} above —
 			// reached ONLY from the portal's Journey pane browser fetch, never
 			// from the collector's forward allowlist — so it is origin-guarded
-			// and self/admin-write gated the same way.
+			// and gated by selfOrAdmin (header required) the same way.
 			//
 			// Do NOT remove the origin guard from this route and do NOT add it
 			// to the collector's forward allowlist: ADR-0003 A2-2 made this
 			// endpoint able to delete another participant's exfil receipt, and
 			// the header-less claimed-identity fallback in selfOrAdminWrite
-			// carries no proof the caller IS {user}. The guard 403s exactly the
+			// (which this route no longer uses: it runs selfOrAdmin) carries no
+			// proof the caller IS {user}. The guard 403s exactly the
 			// shape a header-less cluster-internal caller sends, BEFORE the
 			// self-or-admin check runs — that is what keeps A2-2's destructive
 			// reset from becoming an unauthenticated cross-user action (app#124
@@ -614,7 +618,7 @@ func (h *Handler) Routes() []apispec.Route {
 			// check (not just a bijection count), that reset-dirty never appears
 			// in the collector-forward set.
 			Method: "POST", Pattern: "/api/users/{user}/challenges/{cid}/reset-dirty",
-			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdminWrite,
+			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdmin,
 			OriginGuarded: true, CollectorForward: false,
 			RateLimit: "identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty; separate from submit)",
 			Handler:   h.og(actionMW(http.HandlerFunc(h.resetDirty))),
@@ -929,9 +933,13 @@ func (h *Handler) selfOrAdmin(w http.ResponseWriter, r *http.Request, user strin
 	return false
 }
 
-// selfOrAdminWrite is the participant-facing WRITE gate for /api/users/{user}/*
-// mutations (step-check, hint reveal, display-name). It differs from the read
-// gate (selfOrAdmin) by being conditional on the PRESENCE of an auth header:
+// selfOrAdminWrite is the dual-path WRITE gate used by exactly two routes:
+// POST /api/users/{user}/display-name (collector forward) and
+// POST /api/challenges/{cid}/submit-detect. step-check, hint reveal and
+// reset-dirty do NOT use it: they run actionMW + selfOrAdmin, which 403 a
+// header-less request. The header-less branch below survives only for
+// display-name and submit-detect. It differs from the read gate (selfOrAdmin)
+// by being conditional on the PRESENCE of an auth header:
 //
 //   - Header present (request arrived over an auth-proxied ingress host — the
 //     participant journey host or the admin host): apply the full self-or-admin
@@ -1205,7 +1213,7 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 // limiter middleware) and adds two detect-specific controls:
 //
 //   - self-scope: on an auth-proxied host the caller may only grade as its OWN
-//     {user} (selfOrAdminWrite, the same gate step-check / display-name use). The
+//     {user} (selfOrAdminWrite, the same dual-path gate display-name uses). The
 //     claimed body user must match the proven identity; an admin may grade for
 //     any user. Over the cluster-internal path (no auth header) the legacy
 //     claimed-identity model holds (NetworkPolicy is the isolation control there).
@@ -1444,8 +1452,10 @@ func (h *Handler) exfilInternal(w http.ResponseWriter, r *http.Request) {
 // stepCheck ticks (checked=true) or clears (checked=false) step {idx} (0-based)
 // of {cid} for {user}. Purely presentational: journey `steps` are an info-only
 // checklist with no auto-detection, so a tick never affects the solve verdict —
-// it just lets a participant track their own progress across page reloads. Same
-// claimed-identity trust model as /submit (logged, never proven).
+// it just lets a participant track their own progress across page reloads.
+// Auth: actionMW (identity rate limit, 403 without the header) then
+// selfOrAdmin (header REQUIRED, self-or-admin). Unlike /submit there is no
+// claimed-identity branch: this route is browser-only (origin-guarded).
 //
 // Body:  {"checked": true}
 // Route: POST /api/users/{user}/challenges/{cid}/steps/{idx}/check
@@ -1456,7 +1466,7 @@ func (h *Handler) stepCheck(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
 		return
 	}
-	if !h.selfOrAdminWrite(w, r, user) {
+	if !h.selfOrAdmin(w, r, user) {
 		return
 	}
 	if _, ok := h.cat[cid]; !ok {
@@ -1512,7 +1522,7 @@ func (h *Handler) openHint(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
 		return
 	}
-	if !h.selfOrAdminWrite(w, r, user) {
+	if !h.selfOrAdmin(w, r, user) {
 		return
 	}
 	if _, ok := h.cat[cid]; !ok {
@@ -1601,23 +1611,19 @@ func nonNilStrings(s []string) []string {
 // guard against a confusing 200-that-does-nothing, matching /submit's own
 // pre-body type guard).
 //
-// Auth: self-or-admin WRITE gate (selfOrAdminWrite, same as stepCheck /
-// openHint) — over the auth-proxied journey/admin host a participant may
-// only reset their OWN {user}'s taint; an admin may reset any.
-// selfOrAdminWrite itself has a claimed-identity fallback for a header-less
-// caller (see its own doc), but that fallback is UNREACHABLE for this route
-// in practice: Register mounts resetDirty behind h.og (originguard.Guard),
-// which 403s any request carrying neither an Origin nor a Referer header —
-// exactly the shape a header-less cluster-internal caller sends — before
-// selfOrAdminWrite ever runs. That is deliberate (app#124 5x review, R1
-// finding C3), not an oversight: A2-2 made this endpoint able to delete
-// ANOTHER participant's collector exfil receipt, and the claimed-identity
-// model carries no proof the caller IS that participant, so leaving this
-// route reachable without a browser-supplied Origin/Referer would turn
-// A2-2's destructive reset into an unauthenticated cross-user action. Do not
-// remove h.og from this route's registration, and do not add this path to
-// the collector's forwarding allowlist (internal/collector/collector.go) —
-// either would reopen exactly that path.
+// Auth: selfOrAdmin (same as stepCheck / openHint; the identity header is
+// REQUIRED) — over the auth-proxied journey/admin host a participant may only
+// reset their OWN {user}'s taint; an admin may reset any. A header-less caller
+// is 403'd twice over: by actionMW (MiddlewareStrict, no identity -> 403) and
+// by selfOrAdmin itself; h.og (originguard.Guard) also 403s any request
+// carrying neither an Origin nor a Referer before either runs. All three
+// layers are deliberate (app#124 5x review, R1 finding C3): A2-2 made this
+// endpoint able to delete ANOTHER participant's collector exfil receipt, and
+// the claimed-identity model carries no proof the caller IS that participant.
+// Do not remove h.og from this route's registration, do not swap the gate
+// back to selfOrAdminWrite, and do not add this path to the collector's
+// forwarding allowlist (internal/collector/collector.go) — any of those would
+// reopen exactly that path.
 func (h *Handler) resetDirty(w http.ResponseWriter, r *http.Request) {
 	user := strings.TrimSpace(r.PathValue("user"))
 	cid := r.PathValue("cid")
@@ -1625,7 +1631,7 @@ func (h *Handler) resetDirty(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
 		return
 	}
-	if !h.selfOrAdminWrite(w, r, user) {
+	if !h.selfOrAdmin(w, r, user) {
 		return
 	}
 	ch, ok := h.cat[cid]
