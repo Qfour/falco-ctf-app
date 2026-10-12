@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -161,5 +162,75 @@ func TestMigrate_V1DBGainsAvatarsAndKeepsDisplayNames(t *testing.T) {
 	}
 	if err := s.SetProfile("user3", nil, func() *string { a := "key-amber"; return &a }(), "t"); err != nil {
 		t.Fatalf("avatars table unusable after upgrade: %v", err)
+	}
+}
+
+// TestMigrate_RollbackToV1_OldBinaryRunsAndAReUpgradeKeepsAvatars is the
+// evidence behind the CHANGELOG upgrade note for migration 2. Pointing a
+// pre-ADR-0034 image (it knows only migration 1) at a v2 database is refused
+// (ADR-0020's downgrade guard, fail-closed). The documented recovery is to set
+// `PRAGMA user_version = 1`: `avatars` is additive and the old binary never
+// reads it, so the old binary then opens the file and its own tables are
+// intact; and re-upgrading later (migration 2 is CREATE TABLE IF NOT EXISTS)
+// keeps every avatar row written before the rollback.
+func TestMigrate_RollbackToV1_OldBinaryRunsAndAReUpgradeKeepsAvatars(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "scoreboard.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name, av := "Alice", "key-amber"
+	if err := s.SetProfile("user3", &name, &av, "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	oldBinary := migrations[:1] // what a pre-ADR-0034 image knows
+
+	db, err := sql.Open("sqlite", sqliteDSN(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	// 1. unchanged: the old binary refuses a v2 database.
+	if err := migrate(db, oldBinary); err == nil || !strings.Contains(err.Error(), "newer than this binary supports") {
+		t.Fatalf("old binary on a v2 db: err = %v, want the downgrade refusal", err)
+	}
+	// 2. the recovery: set user_version back to 1.
+	if _, err := db.Exec("PRAGMA user_version = 1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrate(db, oldBinary); err != nil {
+		t.Fatalf("old binary on a db rolled back to v1: %v", err)
+	}
+	if got := userVersion(t, db); got != 1 {
+		t.Fatalf("user_version = %d after the old binary ran, want 1 (it must not touch the counter)", got)
+	}
+	var n string
+	if err := db.QueryRow("SELECT name FROM display_names WHERE user = 'user3'").Scan(&n); err != nil || n != "Alice" {
+		t.Fatalf("display_names row after rollback = %q, %v, want Alice", n, err)
+	}
+	// ...and the old binary can keep writing its own tables.
+	if _, err := db.Exec("INSERT INTO display_names (user, name, set_at) VALUES ('user4', 'Bob', 't') ON CONFLICT(user) DO UPDATE SET name = excluded.name"); err != nil {
+		t.Fatalf("old binary's own write failed: %v", err)
+	}
+	_ = db.Close()
+
+	// 3. re-upgrade: migration 2 runs again and the avatar row survived.
+	s2, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open (re-upgrade): %v", err)
+	}
+	defer func() { _ = s2.Close() }()
+	if got := userVersion(t, s2.db); got != latestSchemaVersion(migrations) {
+		t.Fatalf("user_version = %d after re-upgrade, want %d", got, latestSchemaVersion(migrations))
+	}
+	if got := s2.Avatar("user3"); got != "key-amber" {
+		t.Fatalf("avatar after rollback + re-upgrade = %q, want key-amber (CREATE TABLE IF NOT EXISTS must keep the rows)", got)
+	}
+	if got := s2.DisplayName("user4"); got != "Bob" {
+		t.Fatalf("a row the old binary wrote = %q, want Bob", got)
 	}
 }

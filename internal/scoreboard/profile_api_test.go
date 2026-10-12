@@ -40,6 +40,7 @@ type profileFixture struct {
 	st      *store.Store
 	dbPath  string
 	boardDB string
+	extra   []scoreboard.Option // re-applied by reopen, so a restart keeps the same config
 }
 
 // newProfileFixture opens a store at a path the test can re-open (V4), with two
@@ -47,7 +48,7 @@ type profileFixture struct {
 func newProfileFixture(t *testing.T, extra ...scoreboard.Option) *profileFixture {
 	t.Helper()
 	dir := t.TempDir()
-	f := &profileFixture{t: t, dbPath: filepath.Join(dir, "profile.db"), boardDB: filepath.Join(dir, "profile-board.db")}
+	f := &profileFixture{t: t, dbPath: filepath.Join(dir, "profile.db"), boardDB: filepath.Join(dir, "profile-board.db"), extra: extra}
 	f.open(extra...)
 	return f
 }
@@ -86,7 +87,7 @@ func (f *profileFixture) reopen() {
 	if err := f.st.Close(); err != nil {
 		f.t.Fatal(err)
 	}
-	f.open()
+	f.open(f.extra...)
 }
 
 // raw sends body verbatim with the allowed Origin and, when email != "", the
@@ -807,5 +808,152 @@ func TestProfile_V7_ResponsesCarryNoEmailOrImageField(t *testing.T) {
 		if bytes.Contains(body, []byte(banned)) {
 			t.Fatalf("profile response contains %q: %s", banned, w.Body)
 		}
+	}
+}
+
+// --- V5: scoring and visibility are untouched by a profile ---------------------------------
+
+// stateBoard returns the /api/state leaderboard as admin: every row, in order.
+func (f *profileFixture) stateBoard() []map[string]any {
+	f.t.Helper()
+	w := f.do("GET", "/api/state", profileAdmin, nil)
+	if w.Code != http.StatusOK {
+		f.t.Fatalf("/api/state: %d %s", w.Code, w.Body)
+	}
+	raw, _ := f.decode(w)["leaderboard"].([]any)
+	out := make([]map[string]any, 0, len(raw))
+	for _, e := range raw {
+		row, _ := e.(map[string]any)
+		out = append(out, row)
+	}
+	return out
+}
+
+// scoreColumns is the part of a leaderboard that scoring decides, rendered as
+// one comparable string: order, user, rank, score, solved and tiebreak. The
+// display_name and avatar columns are deliberately left out (they are what a
+// profile changes).
+func scoreColumns(rows []map[string]any) string {
+	var b strings.Builder
+	for _, r := range rows {
+		fmt.Fprintf(&b, "%v|rank=%v|score=%v|solved=%v|earliest=%v|events=%v\n",
+			r["user"], r["rank"], r["score"], r["solved"], r["earliest"], r["events"])
+	}
+	return b.String()
+}
+
+// ADR-0034 V5 (golden): with the same solved + hint_views, changing a display
+// name or an avatar never changes who ranks where or by how much. The names
+// below are chosen so an alphabetical tie-break (or any name-keyed sort) would
+// reorder the board: the leader gets the alphabetically last name.
+func TestProfile_V5_RankAndScoreDoNotDependOnNameOrAvatar(t *testing.T) {
+	f := newProfileFixture(t)
+	solve := func(user, cid, at string) {
+		t.Helper()
+		if _, err := f.st.MarkSolved(user, cid, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	solve("user1", "01-recon", "2026-10-13T00:01:00Z")
+	solve("user1", "02-evade", "2026-10-13T00:05:00Z")
+	solve("user2", "01-recon", "2026-10-13T00:02:00Z")
+	solve("user3", "01-recon", "2026-10-13T00:03:00Z")
+	if _, err := f.st.RecordHintView("user2", "01-recon", 1, "2026-10-13T00:02:30Z"); err != nil {
+		t.Fatal(err)
+	}
+
+	before := f.stateBoard()
+	if len(before) < 3 {
+		t.Fatalf("precondition: leaderboard has %d rows, want the 3 solvers: %v", len(before), before)
+	}
+	golden := scoreColumns(before)
+	if !strings.Contains(golden, "rank=1") || !strings.Contains(golden, "rank=2") {
+		t.Fatalf("precondition: no ranked rows in the golden:\n%s", golden)
+	}
+
+	for user, p := range map[string]map[string]any{
+		"user1": {"display_name": "Zed (last alphabetically)", "avatar": "bug-slate"},
+		"user2": {"display_name": "Aaron (first alphabetically)", "avatar": "falcon-cyan"},
+		"user3": {"avatar": "flame-lime"},
+	} {
+		if w := f.setProfile(user, user+"@ctf.local", p); w.Code != http.StatusOK {
+			t.Fatalf("setProfile(%s): %d %s", user, w.Code, w.Body)
+		}
+	}
+	after := f.stateBoard()
+	if got := scoreColumns(after); got != golden {
+		t.Fatalf("a profile change moved the scoring columns:\n before:\n%s after:\n%s", golden, got)
+	}
+	// the test must be able to fail: the profile columns DID change.
+	changed := false
+	for i := range after {
+		if after[i]["display_name"] != before[i]["display_name"] || after[i]["avatar"] != before[i]["avatar"] {
+			changed = true
+		}
+	}
+	if !changed {
+		t.Fatal("precondition: the profile change did not reach the leaderboard (the golden would pass vacuously)")
+	}
+
+	// ...and again after a reset and after a restart.
+	if w := f.do("POST", "/api/admin/users/user1/profile-reset", profileAdmin, nil); w.Code != http.StatusOK {
+		t.Fatalf("profile-reset: %d %s", w.Code, w.Body)
+	}
+	f.reopen()
+	if got := scoreColumns(f.stateBoard()); got != golden {
+		t.Fatalf("scoring columns moved after profile-reset + reopen:\n before:\n%s after:\n%s", golden, got)
+	}
+}
+
+// ADR-0034 V5 (hidden seats): HIDDEN_USERS removes a seat from the board, and a
+// profile written for that seat (by itself or by an admin) does not bring it
+// back, neither as a row nor through its new display name anywhere in /api/state.
+func TestProfile_V5_HiddenSeatStaysOffTheBoardAfterAProfileIsSet(t *testing.T) {
+	f := newProfileFixture(t, scoreboard.WithHiddenUsers([]string{"user9"}))
+	for _, u := range []string{"user3", "user9"} {
+		if _, err := f.st.MarkSolved(u, "01-recon", "2026-10-13T00:00:00Z"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	onBoard := func(user string) bool {
+		for _, r := range f.stateBoard() {
+			if r["user"] == user {
+				return true
+			}
+		}
+		return false
+	}
+	if !onBoard("user3") || onBoard("user9") {
+		t.Fatalf("precondition: user3 on board = %v (want true), hidden user9 on board = %v (want false)", onBoard("user3"), onBoard("user9"))
+	}
+
+	const secretName = "HiddenSeatName"
+	if w := f.setProfile("user9", "user9@ctf.local", map[string]any{"display_name": secretName, "avatar": "radar-lime"}); w.Code != http.StatusOK {
+		t.Fatalf("hidden seat's own profile write: %d %s", w.Code, w.Body)
+	}
+	if w := f.setProfile("user9", profileAdmin, map[string]any{"avatar": "key-amber"}); w.Code != http.StatusOK {
+		t.Fatalf("admin writing the hidden seat's profile: %d %s", w.Code, w.Body)
+	}
+	if onBoard("user9") {
+		t.Fatal("a profile brought the HIDDEN_USERS seat onto the leaderboard")
+	}
+	// HIDDEN_USERS is a leaderboard filter (api.go: the per-challenge solver
+	// lists and the recent-solve feed are untouched by design), so the seat's
+	// name is not asserted absent from those: it shows there under the seat id
+	// already. What V5 pins is the board, and that the stats do not count it.
+	var st struct {
+		Stats struct {
+			Users int `json:"users"`
+		} `json:"stats"`
+	}
+	if w := f.do("GET", "/api/state", profileAdmin, nil); json.Unmarshal(w.Body.Bytes(), &st) != nil || st.Stats.Users != 1 {
+		t.Fatalf("stats.users = %d after the hidden seat set a profile, want 1 (only user3 is counted): %s", st.Stats.Users, w.Body)
+	}
+	f.reopen()
+	if onBoard("user9") {
+		t.Fatal("the hidden seat is back on the leaderboard after a restart")
+	}
+	if !onBoard("user3") {
+		t.Fatal("the visible seat disappeared")
 	}
 }
