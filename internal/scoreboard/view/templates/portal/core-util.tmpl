@@ -69,13 +69,6 @@ const announce = (msg) => {
 // know cannot turn into a request for some other path.
 const AVATAR_GLYPHS = ['falcon', 'shield', 'key', 'terminal', 'radar', 'lock', 'bug', 'flame'];
 const AVATAR_COLORS = ['cyan', 'magenta', 'amber', 'lime', 'violet', 'slate'];
-// The operator's fixed picture. It MUST equal Go's avatar.StaffID: the server
-// refuses it from a participant (it is the "this is staff" mark on the Board),
-// so the picker draws it as a disabled "staff only" radio instead of an option.
-// TODO(VP, ADR-0034 S1 integration): the Go side will publish the set a
-// participant may pick (ASSETS staffId / participantIds); switch to that JSON
-// and drop this constant.
-const AVATAR_STAFF_ID = 'flame-slate';
 // What an id outside the table (or a missing field from an older server)
 // draws as: a neutral-coloured falcon, never a broken image and never the raw
 // string.

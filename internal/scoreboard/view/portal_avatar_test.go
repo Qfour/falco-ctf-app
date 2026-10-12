@@ -88,8 +88,10 @@ func checkPortalAvatar(fsys fstest.MapFS) error {
 	} else if !sameList(c, avatarContractColors) {
 		fail("core-util.tmpl: AVATAR_COLORS = %v, want %v", c, avatarContractColors)
 	}
-	if !strings.Contains(util, "const AVATAR_STAFF_ID = '"+avatar.StaffID+"';") {
-		fail("core-util.tmpl: AVATAR_STAFF_ID must equal avatar.StaffID (%q) — the picker draws that id as the disabled staff-only radio", avatar.StaffID)
+	// The operator's id is NOT named in any template: the picker takes its
+	// choices from ASSETS.avatarChoices, so the rule has one home (avatar.StaffID).
+	if strings.Contains(util, "AVATAR_STAFF_ID") || strings.Contains(util, avatar.StaffID) {
+		fail("core-util.tmpl names the operator's avatar (AVATAR_STAFF_ID / %q) — the picker must read ASSETS.avatarChoices instead", avatar.StaffID)
 	}
 	if strings.Contains(util, "AVATAR_SRC") || regexp.MustCompile(`/static/avatars`).MatchString(util) {
 		fail("core-util.tmpl hard-codes an avatar URL — URLs come from ASSETS.avatars (portal.tmpl), which the server fills from the static-asset registry")
@@ -195,7 +197,8 @@ func checkPortalAvatar(fsys fstest.MapFS) error {
 		{`role="radiogroup" aria-labelledby="pane-me-profile-avatar-label"`, "the grid is a radiogroup with an accessible name"},
 		{`role="radio" aria-checked="false" tabindex="-1"`, "each option is a radio with a roving tabindex"},
 		{`aria-label="' + esc(optLabel(id)) + '"`, "each radio's name is its glyph and colour (esc'd)"},
-		{`const pickable = (id) => id !== AVATAR_STAFF_ID;`, "the operator's fixed avatar is not a choice (it is a disabled radio)"},
+		{`Array.isArray(ASSETS.avatarChoices)) ? ASSETS.avatarChoices : []`, "the picker's choices are the server's ASSETS.avatarChoices"},
+		{`const pickable = (id) => AVATAR_CHOICES.includes(id);`, "a grid id outside the choices (the operator's fixed avatar) is not pickable: it is a disabled radio"},
 		{`' aria-disabled="true"'`, "the staff radio is aria-disabled"},
 		{`: staff only'`, "the staff radio says it is staff only"},
 		{`if (saving || serverSig === null) return;`, "submit is refused before the first /me answer"},
@@ -249,7 +252,7 @@ func TestPortalAvatar_ChecksRejectMutations(t *testing.T) {
 		mutate func(*testing.T, fstest.MapFS)
 		want   string
 	}{
-		{"the staff id drifts from avatar.StaffID", portalFSEdit(util, replaceOnce("AVATAR_STAFF_ID = 'flame-slate'", "AVATAR_STAFF_ID = 'flame-cyan'")), "AVATAR_STAFF_ID"},
+		{"core-util names the staff avatar again", portalFSEdit(util, replaceOnce("const AVATAR_FALLBACK", "const AVATAR_STAFF_ID = '"+avatar.StaffID+"';\nconst AVATAR_FALLBACK")), "names the operator's avatar"},
 		{"a glyph is dropped from the table", portalFSEdit(util, replaceOnce("'bug', 'flame'];", "'flame'];")), "AVATAR_GLYPHS"},
 		{"a colour is renamed", portalFSEdit(util, replaceOnce("'violet', 'slate'];", "'purple', 'slate'];")), "AVATAR_COLORS"},
 		{"avatarImg hard-codes a URL", portalFSEdit(util, replaceOnce("const AVATAR_COLORS", "const AVATAR_SRC = { falcon: '/static/avatars/falcon.svg' };\nconst AVATAR_COLORS")), "hard-codes an avatar URL"},
@@ -268,7 +271,8 @@ func TestPortalAvatar_ChecksRejectMutations(t *testing.T) {
 			i := strings.LastIndex(s, "avatarImg(m.authorAvatar, 'sm')")
 			return s[:i] + "''" + s[i+len("avatarImg(m.authorAvatar, 'sm')"):]
 		}), "participant thread + operator thread"},
-		{"the staff avatar becomes a choice", portalFSEdit(me, replaceOnce(`id !== AVATAR_STAFF_ID`, `true`)), "not a choice"},
+		{"the staff avatar becomes a choice", portalFSEdit(me, replaceOnce(`AVATAR_CHOICES.includes(id)`, `true`)), "not pickable"},
+		{"the picker stops reading ASSETS.avatarChoices", portalFSEdit(me, replaceOnce(`Array.isArray(ASSETS.avatarChoices)) ? ASSETS.avatarChoices : []`, `[]`)), "ASSETS.avatarChoices"},
 		{"Save is enabled before the first /me", portalFSEdit(me, replaceOnce(`saving || !loaded`, `saving`)), "disabled until the first /me"},
 		{"the grid loses its radiogroup role", portalFSEdit(me, replaceOnce(`role="radiogroup"`, ``)), "radiogroup"},
 		{"ArrowUp is no longer handled", portalFSEdit(me, replaceOnce(`case 'ArrowUp'`, `case 'KeyU'`)), "case 'ArrowUp'"},
@@ -315,6 +319,26 @@ func TestPortalAvatar_ServedURLMap(t *testing.T) {
 	}
 	if len(choices) != avatar.ParticipantCount {
 		t.Errorf("ASSETS.avatarChoices has %d ids, want %d", len(choices), avatar.ParticipantCount)
+	}
+	// The picker draws the whole table (the 8 x 6 shape) and disables whatever
+	// is not in avatarChoices, so "disabled radios" == table minus choices must
+	// be exactly the operator's id, and nothing outside the table may be offered.
+	inChoices := map[string]bool{}
+	for _, id := range choices {
+		inChoices[id] = true
+	}
+	var disabled []string
+	for _, id := range avatar.IDs() {
+		if !inChoices[id] {
+			disabled = append(disabled, id)
+		}
+		delete(inChoices, id)
+	}
+	if !sameList(disabled, []string{avatar.StaffID}) {
+		t.Errorf("table minus ASSETS.avatarChoices = %v, want just the operator's %s (the one disabled radio)", disabled, avatar.StaffID)
+	}
+	if len(inChoices) != 0 {
+		t.Errorf("ASSETS.avatarChoices offers ids outside the table: %v", inChoices)
 	}
 	for _, id := range choices {
 		if id == avatar.StaffID {
