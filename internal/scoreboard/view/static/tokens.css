@@ -53,7 +53,10 @@
   --border-strong: #2B3F4D;
   --text: #EAF7FA;
   --text-dim: #9DB4BF;
-  --text-mute: #5C7480;
+  --text-mute: #748E9B;     /* P28-0a (3) a11y: was #5C7480 = 3.28:1 on --surface-2 and
+                                3.64:1 on --surface, under WCAG AA (4.5:1) for body-size
+                                text. Same hue, lightness raised: 4.68:1 on --surface-2,
+                                5.19:1 on --surface. Still visibly below --text-dim. */
   --accent: var(--falco);
   --accent-2: var(--falco-2);
   --accent-glow: rgba(0, 203, 226, 0.35);
@@ -156,4 +159,11 @@
   --p-tracking-wider: 0.35em;
   --p-page-padding: 2.25rem 3rem 4rem;
   --p-panel-radius: 0.85rem;
+
+  /* Keyboard focus ring (P28-0a (2) a11y). An alias onto --falco, so no new
+     hex. Contrast against every surface in use is >= 8.17:1 (WCAG 2.2 non-text
+     contrast needs 3:1). Painted only by :focus-visible, see the a11y block at
+     the end of templates/portal/css.tmpl. */
+  --focus-ring: var(--falco);
+  --p-focus-ring: var(--focus-ring);
 }
