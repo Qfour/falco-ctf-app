@@ -25,6 +25,15 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
   - **DB を復元する** — migration 前の PVC snapshot / 退避を戻す (確実。その後に書かれた solve は失われる)。
   - **`avatars` は additive なので `user_version` を 1 に戻す** — scoreboard を止めて (replicas=1 + Recreate)、DB ファイルに `PRAGMA user_version = 1;` を実行してから旧 image を起動する (scoreboard の image に `sqlite3` は無いので、DB を別 Pod にマウントするか取り出して実行する)。旧 image は `avatars` 表を読まず、自分の表はそのまま使える。後でこの版に上げ直すと migration 2 は `CREATE TABLE IF NOT EXISTS` なので、戻す前に選ばれていた絵柄は残る。`internal/store` の `TestMigrate_RollbackToV1_OldBinaryRunsAndAReUpgradeKeepsAvatars` が旧 binary の拒否・戻した後の起動・再アップグレードを固定している。実機の PVC での手順は未リハーサル。
   - **戻し先は display-name の封鎖 (Security 項) を含む版に限る** — それより前の image に戻すと、origin-guard の無い参加者用 display-name route が journey ingress に戻り、CSRF と ADMIN_EMAILS の oracle が復活する。
+- **identity ロスター (ADR-0034 D2)**: auth-policy が `ROSTER_FILE` (YAML の `seats:` に `{seat, external?}`) を
+  起動時に読み、認証済み identity を seat (workspace 名) に解決する唯一の表になった。
+  正規化は ASCII のみ・小文字化・`gmail.com` / `googlemail.com` に限り dot と `+tag` を落とす。
+  chart は roster の Secret (`roster.secretName`、key `roster.yaml`) を mount する。
+- `GET /check-participant` (auth-policy): 参加者側の ingress の auth-url。`ADMIN_EMAILS` か、ロスターで seat に
+  解決できる identity にだけ 200。解決できた identity には `X-Auth-Request-{Email,User,Preferred-Username}`
+  を正規形 `<seat>@<EXPECTED_EMAIL_DOMAIN>` だけで上書きして返す。
+- `/healthz` (auth-policy) に `roster_seats` / `roster_external` (件数のみ)。
+- scoreboard の `EXPECTED_EMAIL_DOMAIN` (chart: `env.expectedEmailDomain`)。
 
 ### Changed
 
@@ -44,6 +53,20 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
 - collector の forward を 3 本から 2 本 (`submit` / `exfil`) にした (ADR-0034 D12 S1)。`POST /api/users/{user}/display-name` は collector でも 404/405 (default-deny) になる。`docs/openapi-collector.yaml` は 5 → 4 operation、`docs/openapi-scoreboard.yaml` は `x-ctf-collector-forward: true` が 3 → 2 本。**公開 contract の変更**: 外部クライアントが collector 経由で表示名を書いていた場合は、認証済みの profile route に移る必要がある。
 - 表示名と絵柄の設定は、ワークスペースの端末ではなくポータルの Me 画面に移った。初期値は seat のまま。案内文 (`banner.sh`、00-tutorial の welcome / step、ハンドブック、コマンド集) を差し替えた。
 - `deploy-user.sh` の `--display-name` を廃止した (ADR-0034 D10)。渡すと理由を stderr に出して exit 2 になり、kubectl / helm を呼ばずに止まる。deploy は表示名を書かない (旧 step 6 を削除、step 数は常に 5)。platform の `deploy-event-workspaces.sh --names-file` も同時に廃止する (platform 側の変更)。**`--names-file` を使っている間に、この変更を含む app ref へ events の pin を進めると、全 user の deploy が exit 2 になる** (cluster に触れる前に止まり、理由が出る)。platform の廃止を先に merge すること。
+- **破壊的変更 (auth-policy の endpoint)**: `GET /check?host=<h>` を **`GET /check-workspace?host=<h>` に改名して
+  `/check` を削除**。新 chart + 旧 binary、旧 chart + 新 binary のどちらの組でも auth の subrequest は 404 になり、
+  ingress が 500 で閉じる (開かない)。判定は「ロスターで解決した seat が host と完全一致」(前方一致をやめた)。
+- **破壊的変更 (ロスター必須)**: auth-policy は `ROSTER_FILE` が無い・空・不正なら**起動しない**。
+  `EXPECTED_EMAIL_DOMAIN` と `ADMIN_EMAILS` の各ドメインの最後のラベルは予約名 (`local` `test` `invalid`
+  `example` `localhost`) でなければならず、`ADMIN_EMAILS` がロスターの seat / external と重なっても起動しない。
+- **破壊的変更 (chart の値)**: `ingress.journeyAuthUrl` (scoreboard)、`ingress.adminAuthUrl` (docs)、
+  `auth.authUrl` と **`auth.enabled` (ctf-user)** を廃止。全 Ingress の auth-url は template に固定
+  (参加者 = `/check-participant`、workspace = `/check-workspace?host=<username>`、運営 = `/check-admin`)。
+  古い値を渡すと描画が失敗する。annotation の passthrough に `auth-url` / `auth-response-headers` があっても失敗する。
+- **破壊的変更 (scoreboard)**: self の照合を `<user>@<EXPECTED_EMAIL_DOMAIN>` との**完全一致**に変更
+  (これまでは任意ドメインの `<user>@` 前方一致)。`EXPECTED_EMAIL_DOMAIN` が未設定の scoreboard は誰も self と
+  みなさない (参加者は締め出される。fail-closed)。platform は auth-policy と scoreboard に同じ値を渡すこと。
+- 403 の本文から email を除いた (固定文字列 `forbidden`)。
 
 ### Removed
 
@@ -72,6 +95,9 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
 
 - `POST /api/users/{user}/display-name` のブラウザ経路を閉じた (ADR-0034 D12 S1 の前倒し)。`X-Auth-Request-*` ヘッダが 1 つでも付いた要求 (= ブラウザ経路) は本人でも admin でも 403、本文が `application/json` でなければ 415 にした。これまでは journey ingress 経由の cross-site POST で本人 (admin セッションなら全員) の表示名を書き換えられ、偽ヘッダ付き要求の 200 / 403 の差で `ADMIN_EMAILS` への所属も推測できた。**この項は、その hotfix を単独で入れた版の記録である。ADR-0034 S1 を含む版ではこの route 自体を Removed 項で撤去しており、collector の forward も、端末の `setname` もない。**
 - Falco webhook (`POST /falco/events`) と collector 専用の exfil sink (`POST /internal/exfil/{cid}`) の受信をブラウザ経路から閉じた。`X-Auth-Request-*` ヘッダが付いた要求は 403、本文が `application/json` でなければ 415 (falcosidekick の webhook は元から JSON。exfil の受信は `Content-Type: application/json` を要求するので、`-H` 無しの `curl -d` は 415 になる)。
+- **collector**: workspace からの要求のうち `X-Auth-Request-` で始まるヘッダを、すべての転送 route で無条件に消す
+  (ADR-0034 D6)。これまでは通っており、転送先で proven identity と区別がつかなかった。
+- 参加者の門を「認証済みなら誰でも」から「ロスターに載った identity」に替えた (外部 IdP を足す前提。ADR-0034 C2)。
 - flags ファイル (`FLAGS_FILE` / `deploy-user.sh --flags-file`) の検証を fail-closed 化。
   これまでは evade 課題の id が欠けていても既定値 (placeholder) のまま起動していた。
   指定時は、スコープ内の全 evade 課題への供給、いずれの課題の既定値とも異なる値であること、
