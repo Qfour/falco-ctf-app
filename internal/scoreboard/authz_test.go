@@ -193,7 +193,11 @@ func authzCheck(t *testing.T, srv http.Handler, rt apispec.Route) string {
 	srv.ServeHTTP(w, r)
 
 	switch rt.Authz {
-	case apispec.AuthzAdmin, apispec.AuthzSelfOrAdmin, apispec.AuthzSelfOrAdminWrite:
+	case apispec.AuthzAdmin, apispec.AuthzSelfOrAdmin, apispec.AuthzSelfOrAdminWrite, apispec.AuthzInternalClaimedIdentity:
+		// AuthzInternalClaimedIdentity (display-name, ADR-0034 D12 S1): ANY
+		// X-Auth-Request-* header is refused, so this proof request (which
+		// carries one) must be 403 exactly like the identity-gated classes.
+		// The header-less 200 half lives in TestDisplayName_CollectorPathStillWorks.
 		if w.Code != http.StatusForbidden {
 			return fmt.Sprintf("%s: status=%d body=%s, want 403 (Authz: %s — %s does not satisfy it)",
 				rt.MuxPattern(), w.Code, w.Body, rt.Authz, authzMismatchedEmail)
@@ -229,7 +233,7 @@ func authzCheck(t *testing.T, srv http.Handler, rt apispec.Route) string {
 func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 	srv := newAuthzFixture(t)
 
-	var adminGated, selfGated, openGated, authenticatedGated int
+	var adminGated, selfGated, openGated, authenticatedGated, internalGated int
 	for _, rt := range srv.Routes() {
 		rt := rt
 		switch rt.Authz {
@@ -241,6 +245,8 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 			openGated++
 		case apispec.AuthzAuthenticated:
 			authenticatedGated++
+		case apispec.AuthzInternalClaimedIdentity:
+			internalGated++
 		}
 		t.Run(string(rt.Authz)+"/"+rt.MuxPattern(), func(t *testing.T) {
 			if violation := authzCheck(t, srv, rt); violation != "" {
@@ -262,16 +268,21 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 	// doc) plus 5 admin routes (4 from the initial Phase 2 landing + 1
 	// post-review gap-close: boardAdminGetThread). 9 admin + 7 self(-write) +
 	// 15 none/claimed-identity + 6 authenticated = 37; ADR-0028 then folded the
-	// 8 static-asset routes into one (none): 9 + 7 + 8 + 6 = 30, matching
+	// 8 static-asset routes into one (none): 9 + 7 + 8 + 6 = 30; ADR-0034 D12 S1
+	// then moved display-name out of self(-write) into its own
+	// internal-claimed-identity class: 9 + 6 + 1 + 8 + 6 = 30, matching
 	// apispec_parity_test.go's TestAPISpec_V1_RouteSetMatchesSpec.
 	if adminGated != 9 {
 		t.Fatalf("expected exactly 9 Authz: admin routes (ADR-0005 canon: GET /, GET /api/state, POST /api/admin/reset, POST /api/admin/users/{user}/display-name; app#292 QA Board: GET /api/admin/board/threads, GET /api/admin/board/threads/{tid}, POST /api/admin/board/threads/{tid}/reply, POST /api/admin/board/threads/{tid}/state, POST /api/admin/board/messages/{mid}/state), got %d", adminGated)
 	}
-	if selfGated != 7 {
-		t.Fatalf("expected exactly 7 Authz: self-or-admin(-write) routes (GET /api/users/{user}/me, GET /api/users/{user}/journey, POST /api/challenges/{cid}/submit-detect, POST /api/users/{user}/challenges/{cid}/steps/{idx}/check, POST /api/users/{user}/challenges/{cid}/hints/{idx}, POST /api/users/{user}/challenges/{cid}/reset-dirty, POST /api/users/{user}/display-name — P25's 4 QA self-or-admin(-write) routes are gone, cutover), got %d", selfGated)
+	if selfGated != 6 {
+		t.Fatalf("expected exactly 6 Authz: self-or-admin(-write) routes (GET /api/users/{user}/me, GET /api/users/{user}/journey, POST /api/challenges/{cid}/submit-detect, POST /api/users/{user}/challenges/{cid}/steps/{idx}/check, POST /api/users/{user}/challenges/{cid}/hints/{idx}, POST /api/users/{user}/challenges/{cid}/reset-dirty — P25's 4 QA self-or-admin(-write) routes are gone, cutover), got %d", selfGated)
 	}
 	if openGated != 8 {
 		t.Fatalf("expected exactly 8 Authz: none/claimed-identity routes (GET /portal, GET /static/{asset} (ADR-0028), POST /falco/events, GET /healthz, GET /metrics, POST /api/challenges/{cid}/submit, POST /internal/exfil/{cid}; Issue #95: POST /csp-report), got %d", openGated)
+	}
+	if internalGated != 1 {
+		t.Fatalf("expected exactly 1 Authz: internal-claimed-identity route (POST /api/users/{user}/display-name, collector-only — ADR-0034 D12 S1), got %d", internalGated)
 	}
 	if authenticatedGated != 6 {
 		t.Fatalf("expected exactly 6 Authz: authenticated routes (app#292 QA Board participant routes: GET /api/board/threads, GET /api/board/threads/{tid}, POST /api/board/threads, POST /api/board/threads/{tid}/messages, POST /api/board/threads/{tid}/like, POST /api/board/threads/{tid}/unlike), got %d", authenticatedGated)

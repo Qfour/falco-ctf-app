@@ -16,6 +16,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Qfour/falco-ctf-app/internal/apispec"
 	"github.com/Qfour/falco-ctf-app/internal/board"
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard"
@@ -293,7 +294,16 @@ func TestOriginGuard_AllProtectedRoutesEnforced(t *testing.T) {
 		case rt.Method == "POST":
 			unguardedWrites++
 			t.Run("unguarded/"+rt.MuxPattern(), func(t *testing.T) {
-				w := ogReq(t, srv, rt.Method, target, evilOrigin, "", "admin@ctf.local", strings.NewReader("{}"))
+				email := "admin@ctf.local"
+				if rt.Authz == apispec.AuthzInternalClaimedIdentity {
+					// Collector-only routes refuse ANY X-Auth-Request-* header
+					// with their own 403 (ADR-0034 D12 S1), which is not the
+					// origin guard. Send the header-less shape the collector
+					// forward actually has, so a 403 here still means "the
+					// origin guard wrongly wraps this route".
+					email = ""
+				}
+				w := ogReq(t, srv, rt.Method, target, evilOrigin, "", email, strings.NewReader("{}"))
 				if w.Code == http.StatusForbidden {
 					t.Fatalf("%s: status=%d body=%s, must NOT be 403 (OriginGuarded: false — a deliberately unguarded write, e.g. collector-forwarded)", rt.MuxPattern(), w.Code, w.Body)
 				}

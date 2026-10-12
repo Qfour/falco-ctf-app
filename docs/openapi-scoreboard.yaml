@@ -30,6 +30,9 @@ info:
       x-ctf-audience          participant | operator | internal | infra
       x-ctf-authz             none | admin | self-or-admin |
                               self-or-admin-write | claimed-identity |
+                              internal-claimed-identity (claimed identity on
+                              the cluster-internal / collector path ONLY: any
+                              X-Auth-Request-* header => 403) |
                               authenticated (app#292: any proven identity,
                               no {user}-path self-match — see QA Board
                               operations below)
@@ -966,7 +969,7 @@ paths:
       operationId: setDisplayName
       tags: [participant]
       x-ctf-audience: participant
-      x-ctf-authz: self-or-admin-write
+      x-ctf-authz: internal-claimed-identity
       x-ctf-origin-guard: false
       x-ctf-collector-forward: true
       x-ctf-rate-limit: per-IP 1 req / 5s burst 5
@@ -974,16 +977,26 @@ paths:
         Cosmetic only — identity stays anchored to the auth-derived slug.
         Upsert; re-runnable.
 
-        NOT origin-guarded (`x-ctf-origin-guard: false`) because its ONLY caller
-        is the collector's verbatim forward of the participant's `curl` (no
-        browser template in this repo fetches this path; the portal's rename
-        button uses the ADMIN route). A fail-closed gate here would 403 every
-        legitimate call while protecting no browser-CSRF surface.
+        COLLECTOR-ONLY. The one legitimate caller is the collector's verbatim
+        forward of the participant's `curl` (cluster-internal Service; the
+        header-less claimed-identity model, where NetworkPolicy is the
+        isolation control). The browser path is closed: oauth2-proxy stamps
+        `X-Auth-Request-Email` on every request that reaches this route through
+        the journey ingress (`/api/users/` prefix), so a request carrying ANY
+        `X-Auth-Request-*` header is refused `403` before anything else is
+        evaluated — for the owner, for an admin, for anyone. (Previously such
+        a request was gated self-or-admin, which let a cross-site POST rename
+        the victim's own name or, from an admin session, anyone's, and let a
+        forged header turn the 200/403 split into an `ADMIN_EMAILS`
+        membership oracle; a forged header is now always 403.) The body must
+        be `application/json` (`415` otherwise): a cross-site no-cors POST
+        cannot send that Content-Type. The operator's rename button uses the
+        separate, origin-guarded admin route.
 
-        Dual-path authorization keyed off the PRESENCE of
-        `X-Auth-Request-Email`: header present (auth-proxied host) -> full
-        self-or-admin; header absent (cluster-internal / collector) -> legacy
-        claimed-identity model, where NetworkPolicy is the isolation control.
+        NOT origin-guarded (`x-ctf-origin-guard: false`): the collector's curl
+        forward sends no Origin/Referer, so a fail-closed Origin gate would 403
+        every legitimate call. The header refusal above is the browser-path
+        control instead.
       parameters:
         - $ref: "#/components/parameters/User"
       requestBody:
@@ -1003,7 +1016,12 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "403":
-          description: caller is neither `{user}` nor an admin (auth-proxied host only)
+          description: the request carried an `X-Auth-Request-*` header (arrived via the browser / auth-proxied path, which this route does not accept)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "415":
+          description: request body is not `application/json`
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1400,11 +1418,11 @@ paths:
       x-ctf-rate-limit: none
       description: |
         Operator path to set/correct any user's leaderboard name
-        (last-write-wins). Participants use the collector-fronted
+        (last-write-wins). Participants use the collector-only
         `POST /api/users/{user}/display-name`. Both upsert; the default name is
         the username. This is the route the operator dashboard's rename button
         calls, which is why it stays origin-guarded while the participant one
-        does not.
+        (collector-only; refuses any `X-Auth-Request-*` header) is not.
       parameters:
         - $ref: "#/components/parameters/User"
       requestBody:

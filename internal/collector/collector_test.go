@@ -20,6 +20,8 @@ type upstreamRecorder struct {
 	lastXFF  string   // X-Forwarded-For as seen by the upstream on the last call
 	lastReal string   // X-Real-IP as seen by the upstream on the last call
 	lastCFIP string   // CF-Connecting-IP as seen by the upstream on the last call
+	lastCT   string   // Content-Type as seen by the upstream on the last call
+	lastAuth []string // X-Auth-Request-* header names as seen by the upstream on the last call
 }
 
 func (u *upstreamRecorder) handler() http.Handler {
@@ -29,6 +31,13 @@ func (u *upstreamRecorder) handler() http.Handler {
 		u.lastXFF = r.Header.Get("X-Forwarded-For")
 		u.lastReal = r.Header.Get("X-Real-IP")
 		u.lastCFIP = r.Header.Get("CF-Connecting-IP")
+		u.lastCT = r.Header.Get("Content-Type")
+		u.lastAuth = nil
+		for k := range r.Header {
+			if strings.HasPrefix(http.CanonicalHeaderKey(k), "X-Auth-Request-") {
+				u.lastAuth = append(u.lastAuth, k)
+			}
+		}
 		u.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -136,6 +145,26 @@ func TestDisplayName_ForwardedTransparently(t *testing.T) {
 	r.Body.Close()
 	if got := up.last(); got != "POST /api/users/alice/display-name" {
 		t.Fatalf("display-name forward = %q", got)
+	}
+}
+
+// TestDisplayName_ForwardAddsNoProxyIdentity pins the collector side of the
+// display-name collector-only contract (ADR-0034 D12 S1): the scoreboard now
+// 403s any request carrying an X-Auth-Request-* header, so the collector must
+// never ADD one on the forward (it does not), and must pass the participant
+// curl's Content-Type (application/json, required by the scoreboard) through
+// untouched.
+func TestDisplayName_ForwardAddsNoProxyIdentity(t *testing.T) {
+	c, up := newTestCollector(t)
+	r := do(t, "POST", c.URL+"/api/users/alice/display-name", `{"name":"Alice"}`)
+	r.Body.Close()
+	up.mu.Lock()
+	defer up.mu.Unlock()
+	if len(up.lastAuth) != 0 {
+		t.Fatalf("collector forwarded X-Auth-Request-* headers %v on a header-less request", up.lastAuth)
+	}
+	if up.lastCT != "application/json" {
+		t.Fatalf("upstream Content-Type = %q, want application/json passed through", up.lastCT)
 	}
 }
 
