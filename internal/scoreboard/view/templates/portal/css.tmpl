@@ -30,9 +30,6 @@
     background: transparent; border: none; border-bottom: 2px solid transparent;
     padding: 0.65rem 1rem; cursor: pointer; text-decoration: none;
   }
-  /* The tab links sit in an inner role=tablist wrapper (portal.tmpl) so the
-     nav keeps its landmark role; it lays them out exactly as the flat nav did. */
-  #portal-tablist { display: flex; align-items: center; gap: 0.25rem; flex-wrap: wrap; }
   #portal-tabs .tab:hover { color: var(--p-text); }
   #portal-tabs .tab.active { color: var(--p-accent); border-bottom-color: var(--p-accent); }
   #portal-tabs .tab[hidden] { display: none; }
@@ -154,8 +151,10 @@
   #pane-scoreboard .reset-btn:hover { opacity: 1; color: var(--danger); border-color: var(--danger); box-shadow: 0 0 12px rgba(255,92,106,0.25); }
   #pane-scoreboard .name-edit { margin-left: 0.4rem; padding: 0 0.25rem; font-size: 0.75rem; line-height: 1; color: var(--text-mute); background: transparent; border: none; cursor: pointer; opacity: 0; transition: opacity 0.15s; }
   #pane-scoreboard tr:hover .name-edit, #pane-scoreboard tr:focus-within .name-edit { opacity: 0.55; }
-  #pane-scoreboard .name-edit:focus-visible { opacity: 1; }
-  #pane-scoreboard .name-edit:hover { opacity: 1; color: var(--accent); }
+  /* `tr` keeps these at (1,2,1), the specificity of the :hover / :focus-within
+     rule above; without it (1,2,0) loses and the focused button stays dim. */
+  #pane-scoreboard tr .name-edit:focus-visible { opacity: 1; }
+  #pane-scoreboard tr .name-edit:hover { opacity: 1; color: var(--accent); }
 
   #pane-scoreboard .hdr-right { display: flex; flex-direction: column; align-items: flex-end; gap: 0.35rem; }
   #pane-scoreboard .hdr-btns { display: flex; gap: 0.4rem; margin-top: 0.4rem; }
@@ -875,47 +874,4 @@
   #pane-terminal .term-frame { border: 1px solid var(--border); border-radius: var(--p-panel-radius); overflow: hidden; background: var(--ink-black); }
   #pane-terminal .term-placeholder p { color: var(--text-dim); line-height: 1.6; margin: 0; }
 
-  /* ===== Accessibility (P28-0a (3), REFACTORING.md P28 acceptance 7) =====
-     Kept as the LAST rules of the stylesheet so that, at equal specificity,
-     they win over the pane rules above. Colors are tokens only (no hex). */
-
-  /* Keyboard focus ring. :focus-visible matches keyboard focus (and text
-     fields), not a mouse click on a button or link, so there is no ring on
-     click. The :focus:not(:focus-visible) rule restates that for UAs that
-     paint a ring on :focus. The ring token is >= 3:1 on every surface. */
-  :focus-visible { outline: 2px solid var(--p-focus-ring); outline-offset: 2px; }
-  :focus:not(:focus-visible) { outline: none; }
-  /* Elements that clip their own box (overflow:hidden) or sit flush in a bar
-     draw the ring inside, so it is never cut off. */
-  #portal-tabs .tab:focus-visible,
-  #pane-scoreboard .challenge:focus-visible,
-  #pane-story .map li:focus-visible,
-  #pane-board .ticket-open:focus-visible { outline-offset: -2px; }
-  /* The radio inside a boxed option: ring the box. */
-  #pane-board .dest-option:has(input:focus-visible) { outline: 2px solid var(--p-focus-ring); outline-offset: 2px; }
-  #pane-board .dest-option input:focus-visible { outline: none; }
-
-  /* Placeholder text: the UA default is a mid-gray that falls under AA on
-     these dark fields. --text-mute is >= 4.5:1 on every surface. */
-  ::placeholder { color: var(--p-text-mute); opacity: 1; }
-
-  /* Visually hidden, still read by screen readers (the #portal-live region). */
-  .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
-
-  /* Reduced motion: every animation and transition ends at once on its FINAL
-     state, so nothing pulses, flashes or slides, and the end state (the
-     CLEARED stamp, the bridge text, a finished progress bar) is still shown.
-     0.01ms rather than 0s so animationend / transitionend still fire. An
-     infinite animation is cut to one iteration and then drops back to the
-     element's own resting style (a steady dot instead of a pulse). */
-  @media (prefers-reduced-motion: reduce) {
-    *, *::before, *::after {
-      animation-duration: 0.01ms !important;
-      animation-delay: 0s !important;
-      animation-iteration-count: 1 !important;
-      transition-duration: 0.01ms !important;
-      transition-delay: 0s !important;
-      scroll-behavior: auto !important;
-    }
-  }
 </style>

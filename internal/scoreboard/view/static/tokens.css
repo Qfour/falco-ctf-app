@@ -24,8 +24,12 @@
  * follow-up on the original app#116 PR found 4 pre-existing 3-digit `#000`
  * literals the 6-digit-only regex had missed; see --ink-black below).
  *
- * This is a pure extraction: every value below is copied verbatim from
- * whichever of the three blocks first defined it. No color was changed.
+ * The app#116 extraction itself was pure: every value was copied verbatim from
+ * whichever of the three blocks first defined it, and no color was changed.
+ * From P28-0a (3) on there ARE intentional value changes, each marked where it
+ * is made: --text-mute is raised to WCAG AA (4.5:1) for body-size text. The
+ * docs-site palette (docs-site/docs/assets/extra.css) keeps its own copy of
+ * that value and is updated by hand.
  *
  * Three sections below, kept separate because each namespace's PROPERTY
  * NAMES are still referenced verbatim from CSS elsewhere in the two
@@ -39,6 +43,9 @@
  *      no-op today — that fact is unchanged by this file, see app#116).
  *   3. Portal namespace (--p-* — templates/portal.html's unified pane
  *      tokens, P23 portal-redesign).
+ * A new namespace (the P28 --q-* quest tokens) gets a section 4, appended
+ * after section 3. A color token that belongs to the palette goes in section 1
+ * and is aliased from the namespace that needs it.
  */
 
 :root {
@@ -71,6 +78,11 @@
   --silver: #CFE0E8;
   --bronze: #E0925A;
   --danger: #ff5c6a;
+  /* Keyboard focus ring (P28-0a (3) a11y). An alias onto --falco, so no new
+     hex. Contrast against every surface in use is >= 8.17:1 (WCAG 2.2 non-text
+     contrast needs 3:1). Painted only by :focus-visible, see
+     templates/portal/css-a11y.tmpl. Section 3 aliases it as --p-focus-ring. */
+  --focus-ring: var(--falco);
   --ink-black: #000;        /* pure black — deliberately NOT --bg (#070B10):
                                 used for the mask-image gradient stops
                                 (index.html body::before / portal.html
@@ -139,6 +151,8 @@
   --p-accent: var(--falco);
   --p-accent-2: var(--falco-2);
   --p-accent-glow: var(--accent-glow);
+  --p-focus-ring: var(--focus-ring);   /* P28-0a (3). Not in tokens.css before this change: inline CSS must
+                                          var() it with a --p-accent fallback until ADR-0028 (content-hash URL). */
   --p-success: var(--success);
   --p-success-glow: var(--success-glow);
   --p-warn: var(--warn);
@@ -159,11 +173,4 @@
   --p-tracking-wider: 0.35em;
   --p-page-padding: 2.25rem 3rem 4rem;
   --p-panel-radius: 0.85rem;
-
-  /* Keyboard focus ring (P28-0a (2) a11y). An alias onto --falco, so no new
-     hex. Contrast against every surface in use is >= 8.17:1 (WCAG 2.2 non-text
-     contrast needs 3:1). Painted only by :focus-visible, see the a11y block at
-     the end of templates/portal/css.tmpl. */
-  --focus-ring: var(--falco);
-  --p-focus-ring: var(--focus-ring);
 }

@@ -45,6 +45,10 @@
   // P28-0a (4): what the screen reader is told when the polled data CHANGES
   // (announce() in core-util.tmpl). The 2-second repaint itself is not
   // announced; lastSolved and connOK make each announcement fire once per change.
+  // announce() is last-write-wins, so refresh() joins everything one poll has
+  // to say (connection restored + new solve + new rule fires) into ONE call.
+  // If P28-1's message window gets its own live region, fold announce() into it
+  // rather than keeping two regions.
   let lastSolved = null;
   let connOK = true;
 
@@ -63,9 +67,10 @@
     try {
       const r = await fetch('/api/users/' + encodeURIComponent(user) + '/me');
       if (!r.ok) throw new Error('HTTP ' + r.status);
-      render(await r.json());
+      const notes = render(await r.json());   // sentences for what changed in THIS poll
       document.getElementById('pane-me-updated').textContent = 'updated ' + new Date().toLocaleTimeString();
-      if (!connOK) { connOK = true; announce('Connection restored.'); }
+      if (!connOK) { connOK = true; notes.unshift('Connection restored.'); }
+      if (notes.length > 0) announce(notes.join(' '));
     } catch (e) {
       document.getElementById('pane-me-updated').textContent = 'connection error';
       if (connOK) { connOK = false; announce('Connection error. Retrying.'); }
@@ -171,16 +176,22 @@
         </section>
       </div>
     `;
-    // Announce only what changed since the previous poll (never on the first paint).
+    // What changed since the previous poll (never on the first paint). Returned
+    // to refresh(), which announces it together with any connection change.
+    const notes = [];
     if (!firstRender) {
       if (lastSolved !== null && solvedCount > lastSolved) {
-        announce('Challenge solved. ' + solvedCount + ' of ' + total + ' done.');
-      } else if (freshFires.length > 0) {
-        announce('Falco rule fired: ' + freshFires.join(', '));
+        notes.push('Challenge solved. ' + solvedCount + ' of ' + total + ' done.');
       }
+      // Same rule name can fire several times: say each name once, and a count
+      // instead of a list when there are many.
+      const names = [...new Set(freshFires)];
+      if (names.length > 3) notes.push(names.length + ' Falco rules fired.');
+      else if (names.length > 0) notes.push('Falco rule fired: ' + names.join(', '));
     }
     lastSolved = solvedCount;
     firstRender = false;
+    return notes;
   }
 })();
 </script>
