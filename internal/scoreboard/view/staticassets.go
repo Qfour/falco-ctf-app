@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/avatar"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
 )
 
@@ -309,11 +310,12 @@ var fontJetBrainsMonoBytes []byte
 var avatarFS embed.FS
 
 // avatarAssetGlyphs is the glyph set whose files are registered, in the
-// registry's order. It is the asset side of the ADR-0034 D9 id set
-// (<glyph>-<color>); the Go table that validates ids lives with the profile
-// code, and TestAvatarAssets_CoverGlyphsAndColors pins this list against the
-// design contract (8 glyphs, one file each, nothing else in the directory).
-var avatarAssetGlyphs = []string{"falcon", "shield", "key", "terminal", "radar", "lock", "bug", "flame"}
+// registry's order. It is derived from avatar.GlyphNames(), the one table that
+// validates ids (ADR-0034 D9, <glyph>-<color>), so the asset side cannot keep
+// a second list. TestAvatarAssets_CoverGlyphsAndColors pins it against the
+// design contract (8 glyphs, one file each, nothing else in the directory) and
+// TestAvatarAssets_MatchAvatarTable against the table.
+var avatarAssetGlyphs = avatar.GlyphNames()
 
 // avatarAssetSources reads one source per glyph; a missing file is a build
 // bug, so it panics at start-up like the rest of the registry.

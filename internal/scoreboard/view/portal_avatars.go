@@ -5,23 +5,19 @@ import (
 	"html/template"
 )
 
-// avatarGlyphs are the picture files of the prepared avatars (ADR-0034 D9),
-// in the contract's order. The glyph/colour table itself lives in
-// internal/scoreboard/avatar; this package only needs the glyph names to build
-// the URL map the portal's JavaScript draws from.
-var avatarGlyphs = [...]string{"falcon", "shield", "key", "terminal", "radar", "lock", "bug", "flame"}
-
 // avatarURLsJSON returns the glyph -> URL object that portal.tmpl exposes as
-// ASSETS.avatars.
+// ASSETS.avatars. The URLs are the content-hashed served names from the static
+// asset registry (ADR-0028), keyed by the glyph names of the avatar table
+// (internal/scoreboard/avatar, ADR-0034 D9); the portal's JavaScript cannot
+// call {{.Assets.URL}}, so it reads this map instead.
 //
-// STOPGAP until ADR-0028 (content-hash static assets) is merged with this
-// branch: the URL is the fixed path /static/avatars/<glyph>.svg. When it
-// lands, replace the body with a json.Marshal of staticAssets.avatarURLs()
-// (same keys, served hashed URLs); nothing else in the portal changes.
+// A registry that cannot name a glyph is a build bug and already panics at
+// start-up (avatarAssetSources); the error branches here are unreachable and
+// degrade to an empty object rather than a broken page.
 func avatarURLsJSON() template.JS {
-	m := make(map[string]string, len(avatarGlyphs))
-	for _, g := range avatarGlyphs {
-		m[g] = "/static/avatars/" + g + ".svg"
+	m, err := staticAssets.avatarURLs()
+	if err != nil {
+		return template.JS("{}")
 	}
 	b, err := json.Marshal(m)
 	if err != nil { // a map[string]string cannot fail to marshal
