@@ -125,3 +125,21 @@ jobs:
             echo "::error::generated artifacts are stale. Run 'make gen', 'make tidy', and 'make gen-attack', then commit." >&2
             exit 1
           fi
+
+  # ------------------------------------------------------------------
+  # e2e — browser E2E (ADR-0031 D1 (b)): the real cmd/scoreboard binary behind a
+  # recording proxy, driven by a real headless Chromium inside Dockerfile.e2e.
+  # advisory (not in the required set); no path filter, so that promoting it
+  # later cannot leave a PR waiting for a check that never ran; no
+  # continue-on-error; no container:, no service, no new action — the runner only
+  # runs `make e2e`, whose BuildKit build is where the tests run (offline). The
+  # verdict is made on the host by scripts/e2e-verdict.py, so a skipped or missing
+  # result is red. Promotion to required is a CEO admin operation (ADR-0031 D1
+  # (c)): add `e2e` to setup-rulesets.sh CHECKS.
+  # ------------------------------------------------------------------
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: browser E2E (make e2e)
+        run: make e2e

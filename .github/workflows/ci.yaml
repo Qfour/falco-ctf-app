@@ -186,6 +186,8 @@ jobs:
         run: |
           ./scripts/check-dockerignore.sh
           ./scripts/check-dockerignore.sh --selftest
+      - name: browser E2E verdict is fail-closed (ADR-0031 V6, planted-defect fixtures)
+        run: ./scripts/check-e2e-verdict.sh
 
   # ------------------------------------------------------------------
   # Shell hygiene: shellcheck (-S warning) over every shell script in the repo.

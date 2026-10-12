@@ -1,0 +1,63 @@
+# Browser E2E image (ADR-0031). NOT one of the I5 images: it is never pushed,
+# is not in Makefile's IMAGES, and is not in ci.yaml's build matrix.
+#
+#   make e2e                          # run the scenarios (target `export`)
+#   make e2e-serve SEED=dirty-05      # look at the portal (target `serve`)
+#
+# Stages
+#   tools   base of Dockerfile.test + exact-pinned Chromium + module cache
+#   build   sources, `go vet -tags e2e`, the scoreboard binary (built like
+#           scoreboard/Dockerfile), the e2e-serve binary
+#   run     the scenarios, offline. BuildKit does not export a failed RUN, so
+#           scripts/e2e-run.sh always exits 0 and writes `go test -json` and its
+#           exit code to /verdict; the verdict is made on the host
+#           (scripts/e2e-verdict.py), where a missing or stale file is a failure
+#   export  scratch with /verdict only (`docker build --target export -o DIR`)
+#   serve   the seeded portal, distroless like scoreboard
+#
+# Pins (ADR-0031 D5). Alpine's index keeps ONE version of each package, so an
+# exact pin stops building the day Alpine ships a new Chromium. That is
+# deliberate (fail closed); .github/workflows/e2e-pins.yaml checks every day
+# whether the pins below still match the index. To bump:
+#   1. docker run --rm <the golang image below> sh -c \
+#        'apk update >/dev/null && apk policy chromium font-wqy-zenhei'
+#   2. edit the two versions below (never unpin, never use a range, never switch
+#      to another repository to get green again)
+#   3. bump chromedp and cdproto in go.mod if the new Chromium needs it (run
+#      `make tidy`)
+#   4. `make e2e` must be green; paste the `apk policy` output and the verdict
+#      line into the PR. Dependabot's chromedp PRs merge only with `e2e` green.
+# `chromium` (not chromium-headless-shell) so the browser is the one a
+# participant has. font-wqy-zenhei exists only so that CJK text in a failure
+# screenshot is readable.
+FROM golang:1.26.6-alpine@sha256:af8d6740070b8906d12eae1c3e3ea0957fb63f492051ea05e354c38ef9fe88df AS tools
+RUN apk add --no-cache chromium=152.0.7977.82-r0 font-wqy-zenhei=0.9.46-r0
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+
+FROM tools AS build
+COPY . .
+# The e2e-tagged code must compile (Dockerfile.test does the same for make test).
+RUN go vet -tags e2e ./internal/e2e/...
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -trimpath -o /out/scoreboard ./cmd/scoreboard \
+ && CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -trimpath -o /out/e2e-serve ./internal/e2e/serve
+
+FROM build AS run
+# The run id and the SHA change on every `make e2e`, so this layer is never a
+# cache hit; they are written to the verdict, where the host checks them.
+ARG E2E_RUN_ID=unset
+ARG E2E_GIT_SHA=unset
+# No network: nothing the scenarios do may reach outside (loopback only).
+RUN --network=none E2E_RUN_ID="${E2E_RUN_ID}" E2E_GIT_SHA="${E2E_GIT_SHA}" ./scripts/e2e-run.sh
+
+FROM scratch AS export
+COPY --from=run /verdict/ /
+
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:d29e660cc75a5b6b1334e03c5c81ccf9bc0884a002c6000dbf0fb96034814478 AS serve
+COPY --from=build /out/scoreboard /app/scoreboard
+COPY --from=build /out/e2e-serve /app/e2e-serve
+COPY challenges /app/challenges
+COPY scenarios /app/scenarios
+ENV E2E_SCOREBOARD_BIN=/app/scoreboard E2E_ROOT=/app
+ENTRYPOINT ["/app/e2e-serve"]

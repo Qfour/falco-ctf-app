@@ -1,0 +1,5 @@
+# Fixture for scripts/check-e2e-pins.sh (ADR-0031 V9): the same shape as
+# Dockerfile.e2e with a pin that Alpine's index does not have. The checker must
+# exit 1 on this file. It is not a Dockerfile (check-freshness scans those).
+FROM golang:1.26.6-alpine@sha256:af8d6740070b8906d12eae1c3e3ea0957fb63f492051ea05e354c38ef9fe88df AS tools
+RUN apk add --no-cache chromium=1.0.0-r0 font-wqy-zenhei=0.9.46-r0
