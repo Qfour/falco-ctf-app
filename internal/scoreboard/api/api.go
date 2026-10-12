@@ -148,6 +148,11 @@ const triggerDetectWindowSeconds = 60
 // fixed constant: it is a metric label.
 const actionBucket = "participant_action"
 
+// detectBucket is the same label for Handler.detectLimiter (submit-detect
+// only, app#328). Separate from actionBucket so a burst of grader submissions
+// (each one a replay Job) cannot 429 a participant's hint open or step tick.
+const detectBucket = "detect"
+
 // JourneyConfig carries the /journey UI inputs into the api handler:
 // narrative content, the mission progression order, and the docs-site origin.
 // All are optional — the handler applies safe defaults (see New).
@@ -185,6 +190,10 @@ type Handler struct {
 	// attempt route joins this bucket via actionMW. POST /api/users/{user}/profile
 	// (ADR-0034 D8) joins it too.
 	actionLimiter *ratelimit.Limiter
+	// detectLimiter is submit-detect's own IDENTITY-keyed bucket (app#328):
+	// same shape as actionLimiter (1 req/s, burst 10) but a separate token
+	// map, so grading does not spend the hint/step/reset budget.
+	detectLimiter *ratelimit.Limiter
 	adminSet      map[string]struct{}
 	// emailDomain is IdentityConfig.ExpectedEmailDomain (lower-cased, trimmed).
 	// Read-only after New.
@@ -328,6 +337,7 @@ func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *sl
 		now:            now,
 		submitLimiter:  ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now),
 		actionLimiter:  ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now),
+		detectLimiter:  ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now),
 		adminSet:       adminSet,
 		emailDomain:    strings.ToLower(strings.TrimSpace(ic.ExpectedEmailDomain)),
 		hiddenSet:      hiddenSet,
@@ -487,7 +497,10 @@ func (h *Handler) Routes() []apispec.Route {
 	// that is browser-only by design. The handlers behind actionMW use
 	// selfOrAdmin (header REQUIRED) and their Authz is declared
 	// self-or-admin accordingly; actionMW is a second layer, not the only one.
+	// app#328 moved submit-detect (the route that attaches a SOLVE) onto the
+	// same gate with its OWN bucket (detectMW), so it is header-REQUIRED too.
 	actionMW := h.actionLimiter.MiddlewareStrict(actionBucket, ratelimit.IdentityKeyed)
+	detectMW := h.detectLimiter.MiddlewareStrict(detectBucket, ratelimit.IdentityKeyed)
 	// app#292 Phase 2: identity-keyed (never client-IP-keyed) — a board
 	// thread/message is attributed to the caller's OWN proven identity, so
 	// the rate-limit bucket should track that identity too, not the NAT/
@@ -568,29 +581,30 @@ func (h *Handler) Routes() []apispec.Route {
 			Method: "POST", Pattern: "/api/challenges/{cid}/submit",
 			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzClaimedIdentity,
 			OriginGuarded: false, CollectorForward: true,
-			RateLimit: "per-IP 1 req/s burst 10 (shared with submit-detect)",
+			RateLimit: "per-IP 1 req/s burst 10",
 			Handler:   submitMW(http.HandlerFunc(h.submit)),
 		},
 		{
-			// Detect grading shares the per-IP submit bucket with /submit but
-			// NOT its trust model: this route is gated by selfOrAdmin (identity
-			// header REQUIRED), /submit is claimed-identity (keying this bucket
-			// by identity is app#328). A global in-flight cap is enforced inside the
-			// handler (429 past it, never queued). Unlike /submit above, this
-			// route has only ONE caller: the journey UI's browser fetch (the
-			// "Grade" button on a detect mission's condition textarea —
-			// docs/detect-challenge-design.md §6). The collector's forward
-			// allowlist (internal/collector/collector.go — "Routes fronted") does
-			// NOT include submit-detect, so there is no server-to-server curl
-			// caller to protect against a fail-closed gate here — same reasoning
-			// as steps/{idx}/check and hints/{idx} below. Origin-guarded, and
-			// gated by selfOrAdmin (identity header REQUIRED: a header-less
-			// request is 403, app#346).
+			// Detect grading is rate-limited on its own identity-keyed bucket
+			// (app#328; it used to share /submit's per-IP bucket, and is kept
+			// apart from the hint/step/reset bucket) plus a global
+			// in-flight cap enforced inside the handler (429 past it, never
+			// queued). Unlike /submit above, this route has only ONE caller: the
+			// journey UI's browser fetch (the "Grade" button on a detect
+			// mission's condition textarea — docs/detect-challenge-design.md §6).
+			// The collector's forward allowlist (internal/collector/collector.go
+			// — "Routes fronted") does NOT include submit-detect, so there is no
+			// server-to-server curl caller to protect against a fail-closed gate
+			// here — same reasoning as steps/{idx}/check and hints/{idx} below.
+			// Origin-guarded, then detectMW (no identity header -> 403, no token
+			// consumed), then submitDetect's selfOrAdmin (identity header
+			// REQUIRED, app#346). Do NOT add this path to the collector's forward
+			// allowlist.
 			Method: "POST", Pattern: "/api/challenges/{cid}/submit-detect",
 			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdmin,
 			OriginGuarded: true, CollectorForward: false,
-			RateLimit: "per-IP 1 req/s burst 10 + global in-flight grader cap (5)",
-			Handler:   h.og(submitMW(http.HandlerFunc(h.submitDetect))),
+			RateLimit: "identity 1 req/s burst 10 (own bucket, separate from steps/check, hints, reset-dirty, profile and submit) + global in-flight grader cap (5)",
+			Handler:   h.og(detectMW(http.HandlerFunc(h.submitDetect))),
 		},
 		{
 			// Exfil is an internal-only endpoint reached solely by the collector
@@ -632,7 +646,7 @@ func (h *Handler) Routes() []apispec.Route {
 			Method: "POST", Pattern: "/api/users/{user}/challenges/{cid}/steps/{idx}/check",
 			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdmin,
 			OriginGuarded: true, CollectorForward: false,
-			RateLimit: "identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit)",
+			RateLimit: "identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit and submit-detect)",
 			Handler:   h.og(actionMW(http.HandlerFunc(h.stepCheck))),
 		},
 		{
@@ -642,7 +656,7 @@ func (h *Handler) Routes() []apispec.Route {
 			Method: "POST", Pattern: "/api/users/{user}/challenges/{cid}/hints/{idx}",
 			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdmin,
 			OriginGuarded: true, CollectorForward: false,
-			RateLimit: "identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit)",
+			RateLimit: "identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit and submit-detect)",
 			Handler:   h.og(actionMW(http.HandlerFunc(h.openHint))),
 		},
 		{
@@ -669,7 +683,7 @@ func (h *Handler) Routes() []apispec.Route {
 			Method: "POST", Pattern: "/api/users/{user}/challenges/{cid}/reset-dirty",
 			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdmin,
 			OriginGuarded: true, CollectorForward: false,
-			RateLimit: "identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit)",
+			RateLimit: "identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit and submit-detect)",
 			Handler:   h.og(actionMW(http.HandlerFunc(h.resetDirty))),
 		},
 		{
@@ -683,7 +697,7 @@ func (h *Handler) Routes() []apispec.Route {
 			Method: "POST", Pattern: "/api/users/{user}/profile",
 			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdmin,
 			OriginGuarded: true, CollectorForward: false,
-			RateLimit: "identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit)",
+			RateLimit: "identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit and submit-detect)",
 			Handler:   h.og(actionMW(http.HandlerFunc(h.setProfile))),
 		},
 		{
@@ -1199,8 +1213,10 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 // --- submit-detect ----------------------------------------------------------
 
 // submitDetect grades a participant-authored Falco condition for a detect-type
-// challenge. It reuses /submit's per-IP rate limiter middleware and adds two
-// detect-specific controls:
+// challenge. It is browser-only (origin-guarded, not in the collector's
+// forward allowlist) and, since app#328, is gated by detectMW (identity-keyed
+// rate limit, 403 without the X-Auth-Request-Email header) then selfOrAdmin
+// (header REQUIRED). It adds two detect-specific controls:
 //
 //   - self-scope: the identity header is REQUIRED (selfOrAdmin; app#346). The
 //     claimed body user must equal the proven identity's canonical form

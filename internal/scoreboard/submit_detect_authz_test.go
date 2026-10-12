@@ -41,9 +41,10 @@ func submitDetectAs(t *testing.T, srv http.Handler, bodyUser, email string) *htt
 	return w
 }
 
-// The table shares ONE fixture, so it depends on (a) the per-IP submit bucket
-// (burst 10 per RemoteAddr; submit-detect is limited by it) — the rows must
-// stay under that budget, and a new row past it turns into a 429 — and (b)
+// The table shares ONE fixture, so it depends on (a) submit-detect's own
+// identity-keyed bucket (burst 10 per X-Auth-Request-Email, app#328) — rows that
+// reuse one email must stay under that budget, and a new row past it turns into
+// a 429; the header-less row is 403 before a token is consumed — and (b)
 // authz_test.go's noopDetectRunner returning a "missed" verdict, which is
 // what makes a request that passes the gate a plain 200.
 func TestSubmitDetect_RequiresProvenIdentity(t *testing.T) {

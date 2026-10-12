@@ -378,7 +378,9 @@ func TestOriginGuard_SubmitDetectRequiresOrigin(t *testing.T) {
 		t.Fatalf("submit-detect without Origin/Referer: status=%d body=%s, want 403 (no collector caller to protect, must be origin-gated)", w.Code, w.Body)
 	}
 
-	w = ogReq(t, srv, "POST", "/api/challenges/02-evade/submit-detect", allowedOrigin, "", "",
+	// app#328: a proven identity is required past the guard (actionMW), so send
+	// one — otherwise the 403 below would be actionMW's, not the guard's.
+	w = ogReq(t, srv, "POST", "/api/challenges/02-evade/submit-detect", allowedOrigin, "", "alice@ctf.local",
 		strings.NewReader(`{"user":"alice","condition":"x"}`))
 	// No DetectRunner is wired in this fixture, so the handler itself returns
 	// 503 (feature off) — the point here is only that a same-origin request

@@ -98,7 +98,8 @@ func TestErrorLeak_InvalidBody_SubmitDetect(t *testing.T) {
 	// contract for the identical json.NewDecoder call shape submitDetect
 	// uses. If a future change wires a runner into this fixture, tighten
 	// this test to also exercise the malformed-body 400 here.
-	w := f.doRawAs("POST", "/api/challenges/nope/submit-detect", "", "{")
+	// app#328: submit-detect requires a proven identity (detectMW), so send one.
+	w := f.doRawAs("POST", "/api/challenges/nope/submit-detect", "alice@ctf.local", "{")
 	if w.Code != 503 {
 		t.Fatalf("status = %d, want 503 (no detect runner wired)", w.Code)
 	}
