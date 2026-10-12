@@ -19,6 +19,13 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
 
 ### Fixed
 
+- 手順確認 (steps/check)・ヒント開封・やり直し (reset-dirty) の rate limit を、提出 (submit) の
+  IP 単位 bucket から切り離し、認証ヘッダーの email 単位 (1 req/s・burst 10) にした。
+  会場の NAT の下で、誰かのヒント開封が他の参加者の提出を 429 にすることがなくなる (#315)。
+  この 3 つのルートは、認証ヘッダーの無い要求を 403 で拒否する (bucket は消費しない)。
+  これまではヘッダー無しでも (許可された Origin を付ければ) 通っていた。
+  `ratelimit_identity_requests_total{bucket,outcome}` で bucket 別の allowed / limited / no_identity を見られる。
+
 ### Security
 
 - flags ファイル (`FLAGS_FILE` / `deploy-user.sh --flags-file`) の検証を fail-closed 化。

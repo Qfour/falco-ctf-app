@@ -140,6 +140,11 @@ const (
 // concepts; this one purely feeds a UI live-status cue.
 const triggerDetectWindowSeconds = 60
 
+// actionBucket is the ratelimit.IdentityRequestsTotal "bucket" label of
+// Handler.actionLimiter (steps/check + hints/{idx} + reset-dirty). Keep it a
+// fixed constant: it is a metric label.
+const actionBucket = "participant_action"
+
 // JourneyConfig carries the /journey UI inputs into the api handler:
 // narrative content, the mission progression order, and the docs-site origin.
 // All are optional — the handler applies safe defaults (see New).
@@ -169,6 +174,14 @@ type Handler struct {
 	now                func() time.Time
 	submitLimiter      *ratelimit.Limiter
 	displayNameLimiter *ratelimit.Limiter
+	// actionLimiter is the IDENTITY-keyed bucket (app#315, ADR-0027
+	// Consequences, ADR-0032 D3) shared by the browser-only participant
+	// actions: steps/check, hints/{idx}, reset-dirty. Deliberately NOT
+	// submitLimiter: that one is keyed by client IP, and under a venue NAT
+	// every participant shares one IP, so one person's hint opens could 429
+	// someone else's submit (solve time is a tie-break). A future ADR-0032
+	// attempt route joins this bucket via actionMW.
+	actionLimiter *ratelimit.Limiter
 	adminSet           map[string]struct{}
 	// hiddenSet is the HIDDEN_USERS allowlist (CEO/ops request: a venue-demo
 	// account, e.g. test1, must be free to solve challenges and trip Falco
@@ -298,6 +311,7 @@ func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *sl
 		now:                now,
 		submitLimiter:      ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now),
 		displayNameLimiter: ratelimit.New(0.2 /* one every 5s */, 5 /* burst */).WithNow(now),
+		actionLimiter:      ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now),
 		adminSet:           adminSet,
 		hiddenSet:          hiddenSet,
 		originGuard:        originguard.New(allowedOrigins, logger),
@@ -437,6 +451,15 @@ func (h *Handler) Routes() []apispec.Route {
 	// signal — see internal/scoreboard/ratelimit/metrics.go's doc.
 	submitMW := h.submitLimiter.Middleware(ratelimit.ClientIPKeyed("submit"))
 	dnMW := h.displayNameLimiter.Middleware(ratelimit.ClientIPKeyed("display_name"))
+	// app#315: identity-keyed, FAIL-CLOSED (MiddlewareStrict: no proven
+	// identity header -> 403 without consuming a token, never "unlimited" and
+	// never an IP fallback). Order on the wire is og -> actionMW -> handler
+	// (selfOrAdminWrite): the origin guard still rejects the header-less
+	// curl shape first, and this closes the remaining hole — a header-less
+	// caller carrying a spoofed allowed Origin would otherwise reach
+	// selfOrAdminWrite's claimed-identity branch on routes that are
+	// browser-only by design.
+	actionMW := h.actionLimiter.MiddlewareStrict(actionBucket, ratelimit.IdentityKeyed)
 	// app#292 Phase 2: identity-keyed (never client-IP-keyed) — a board
 	// thread/message is attributed to the caller's OWN proven identity, so
 	// the rate-limit bucket should track that identity too, not the NAT/
@@ -546,7 +569,9 @@ func (h *Handler) Routes() []apispec.Route {
 		},
 		{
 			// Journey progression writes (self-check ticks). Rate-limited on the
-			// same bucket as /submit — participant-facing writes. This IS
+			// identity-keyed action bucket (app#315) — NOT /submit's per-IP
+			// bucket, so a NAT'd venue's tick/hint traffic cannot 429 a solve.
+			// This IS
 			// origin-guarded: unlike submit/display-name below, it is reached
 			// ONLY from the portal's Journey pane browser fetch
 			// (templates/portal.html) — the collector's forward allowlist
@@ -556,8 +581,8 @@ func (h *Handler) Routes() []apispec.Route {
 			Method: "POST", Pattern: "/api/users/{user}/challenges/{cid}/steps/{idx}/check",
 			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdminWrite,
 			OriginGuarded: true, CollectorForward: false,
-			RateLimit: "per-IP 1 req/s burst 10",
-			Handler:   h.og(submitMW(http.HandlerFunc(h.stepCheck))),
+			RateLimit: "identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty; separate from submit)",
+			Handler:   h.og(actionMW(http.HandlerFunc(h.stepCheck))),
 		},
 		{
 			// Progressive hint reveal — same reasoning as steps/check above, plus
@@ -566,8 +591,8 @@ func (h *Handler) Routes() []apispec.Route {
 			Method: "POST", Pattern: "/api/users/{user}/challenges/{cid}/hints/{idx}",
 			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdminWrite,
 			OriginGuarded: true, CollectorForward: false,
-			RateLimit: "per-IP 1 req/s burst 10",
-			Handler:   h.og(submitMW(http.HandlerFunc(h.openHint))),
+			RateLimit: "identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty; separate from submit)",
+			Handler:   h.og(actionMW(http.HandlerFunc(h.openHint))),
 		},
 		{
 			// App-H2: the explicit, self-scoped escape hatch from the persistent
@@ -591,8 +616,8 @@ func (h *Handler) Routes() []apispec.Route {
 			Method: "POST", Pattern: "/api/users/{user}/challenges/{cid}/reset-dirty",
 			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdminWrite,
 			OriginGuarded: true, CollectorForward: false,
-			RateLimit: "per-IP 1 req/s burst 10",
-			Handler:   h.og(submitMW(http.HandlerFunc(h.resetDirty))),
+			RateLimit: "identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty; separate from submit)",
+			Handler:   h.og(actionMW(http.HandlerFunc(h.resetDirty))),
 		},
 		{
 			// NOT wrapped by the origin guard (P23-2 follow-up). Unlike submit

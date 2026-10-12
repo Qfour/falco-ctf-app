@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -73,7 +74,20 @@ const journeyFixtureOrigin = "https://scoreboard.ctf.local"
 
 func (f *journeyFixture) req(method, target string, body any) *httptest.ResponseRecorder {
 	f.t.Helper()
-	return f.reqAs(method, target, "", body)
+	// app#315: POST /api/users/{user}/challenges/... (steps/check, hints,
+	// reset-dirty) now require a proven identity (X-Auth-Request-Email) to get
+	// past the identity-keyed action limiter, exactly as on the real journey
+	// host. These tests exercise the journey logic, not that gate, so act as
+	// the path's own {user} (self). Tests of the gate itself use reqAs/reqRaw.
+	email := ""
+	if method == "POST" {
+		if rest, ok := strings.CutPrefix(target, "/api/users/"); ok {
+			if user, tail, ok := strings.Cut(rest, "/"); ok && strings.HasPrefix(tail, "challenges/") {
+				email = user + "@ctf.local"
+			}
+		}
+	}
+	return f.reqAs(method, target, email, body)
 }
 
 // reqAs issues a request carrying X-Auth-Request-Email = email (omitted when
@@ -955,13 +969,19 @@ func TestJourneyWriteGate_StepCheck_HeaderPresent(t *testing.T) {
 	}
 }
 
-// TestJourneyWriteGate_StepCheck_NoHeader proves the collector / workspace
-// case: with no auth header the claimed-identity model still applies (allow).
+// TestJourneyWriteGate_StepCheck_NoHeader proves app#315's fail-closed rule:
+// steps/check is browser-only (not in the collector's forward allowlist), so a
+// request with NO proven identity is 403'd by the identity-keyed action
+// limiter — it no longer falls through to selfOrAdminWrite's claimed-identity
+// branch (which only exists for the collector-forwarded submit/display-name).
 func TestJourneyWriteGate_StepCheck_NoHeader(t *testing.T) {
 	f := newJourneyFixture(t)
-	// req() sends no X-Auth-Request-Email — cluster-internal path.
-	if w := f.req("POST", "/api/users/alice/challenges/01-recon/steps/0/check", map[string]any{"checked": true}); w.Code != http.StatusOK {
-		t.Fatalf("header-less step-check must 200 (collector path), got %d body=%s", w.Code, w.Body)
+	// reqAs with a blank email sends no X-Auth-Request-Email.
+	if w := f.reqAs("POST", "/api/users/alice/challenges/01-recon/steps/0/check", "", map[string]any{"checked": true}); w.Code != http.StatusForbidden {
+		t.Fatalf("header-less step-check must 403 (fail-closed, app#315), got %d body=%s", w.Code, w.Body)
+	}
+	if st := f.journey("alice")["detail"].(map[string]any)["steps"].([]any)[0].(map[string]any)["checked"]; st != false {
+		t.Fatalf("a denied header-less step-check must not record the tick, got checked=%v", st)
 	}
 }
 
@@ -977,9 +997,9 @@ func TestJourneyWriteGate_OpenHint_CrossUserOracleBlocked(t *testing.T) {
 	if w := f.reqAs("POST", "/api/users/alice/challenges/01-recon/hints/1", "alice@ctf.local", nil); w.Code != http.StatusOK {
 		t.Fatalf("self hint open must 200, got %d body=%s", w.Code, w.Body)
 	}
-	// header-less (collector/workspace) still allowed
-	if w := f.req("POST", "/api/users/alice/challenges/01-recon/hints/1", nil); w.Code != http.StatusOK {
-		t.Fatalf("header-less hint open must 200, got %d body=%s", w.Code, w.Body)
+	// header-less -> 403 (app#315: browser-only route, no claimed-identity path)
+	if w := f.reqAs("POST", "/api/users/alice/challenges/01-recon/hints/1", "", nil); w.Code != http.StatusForbidden {
+		t.Fatalf("header-less hint open must 403 (fail-closed, app#315), got %d body=%s", w.Code, w.Body)
 	}
 }
 
@@ -1049,18 +1069,21 @@ func TestJourneyWriteGate_ResetDirty_HeaderPresent(t *testing.T) {
 	}
 }
 
-// TestJourneyWriteGate_ResetDirty_NoHeader proves the collector/workspace
-// case: with no auth header the claimed-identity model still applies (allow).
+// TestJourneyWriteGate_ResetDirty_NoHeader proves app#315's fail-closed rule
+// for the destructive route: with no proven identity (even carrying an allowed
+// Origin, which req* always sends) reset-dirty is 403 and the taint stays.
+// Before app#315 this was 200 via selfOrAdminWrite's claimed-identity branch
+// — reachable by anything that could forge the Origin header.
 func TestJourneyWriteGate_ResetDirty_NoHeader(t *testing.T) {
 	f := newJourneyFixture(t)
 	if err := f.st.MarkDirty("alice", "02-evade", "Recon Rule", "2026-01-01T00:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
-	if w := f.req("POST", "/api/users/alice/challenges/02-evade/reset-dirty", nil); w.Code != http.StatusOK {
-		t.Fatalf("header-less reset-dirty must 200 (collector path), got %d body=%s", w.Code, w.Body)
+	if w := f.reqAs("POST", "/api/users/alice/challenges/02-evade/reset-dirty", "", nil); w.Code != http.StatusForbidden {
+		t.Fatalf("header-less reset-dirty must 403 (fail-closed, app#315), got %d body=%s", w.Code, w.Body)
 	}
-	if got := f.st.DirtyRules("alice", "02-evade"); len(got) != 0 {
-		t.Fatalf("header-less reset-dirty must still clear the taint, still dirty: %v", got)
+	if got := f.st.DirtyRules("alice", "02-evade"); len(got) == 0 {
+		t.Fatalf("a denied header-less reset-dirty must not clear the taint")
 	}
 }
 
