@@ -14,7 +14,10 @@ import (
 // FalcoEventsReceived counts /falco/events POST receipts.
 //
 //	outcome: "accepted" | "ignored" | "decode_error" | "store_error" |
-//	         "taint_error"
+//	         "taint_error" | "forbidden" | "unsupported_media_type"
+//
+// forbidden / unsupported_media_type are requests refused before any decode:
+// the browser path (an X-Auth-Request-* header) and a non-JSON Content-Type.
 //
 // taint_error (ADR-0003 A5) is distinct from store_error: it fires when the
 // event was otherwise accepted but the persistent evade-dirty taint write

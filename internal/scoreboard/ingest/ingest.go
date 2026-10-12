@@ -81,6 +81,8 @@ func ParseSecretMode(raw string) (SecretMode, error) {
 const (
 	errMsgInvalidBody    = "invalid request body"
 	errMsgRecordRuleFire = "could not record rule fire"
+	errMsgForbidden      = "forbidden"
+	errMsgNotJSON        = "content type must be application/json"
 )
 
 type Handler struct {
@@ -147,7 +149,7 @@ func (h *Handler) Routes() []apispec.Route {
 			Method:           "POST",
 			Pattern:          "/falco/events",
 			Audience:         apispec.AudienceInternal,
-			Authz:            apispec.AuthzNone,
+			Authz:            apispec.AuthzInternalClaimedIdentity,
 			OriginGuarded:    false,
 			CollectorForward: false,
 			RateLimit:        "per-IP 100 req/s burst 200 (falcosidekick batches)",
@@ -157,6 +159,21 @@ func (h *Handler) Routes() []apispec.Route {
 }
 
 func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
+	// Internal-only route: the sole legitimate caller (falcosidekick, admitted
+	// by NetworkPolicy) never sets X-Auth-Request-*. The admin ingress
+	// catch-all, however, also routes /falco/events here for an admin BROWSER,
+	// where oauth2-proxy always stamps the header — so any such header means the
+	// browser path and is refused 403 BEFORE the secret check, the body decode
+	// or anything that could record a fire or touch scoring. Without this a
+	// cross-site (SameSite=None) POST from an admin session could forge events
+	// (webhookSecretMode=warn lets a secret-less request through).
+	if httpx.HasProxyIdentityHeader(r) {
+		h.logger.Warn("falco webhook denied: browser/proxy path not accepted", "remote_addr", r.RemoteAddr)
+		metrics.FalcoEventsReceived.WithLabelValues("forbidden").Inc()
+		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": errMsgForbidden})
+		return
+	}
+
 	// ADR-WS-0006 Layer 2: shared-secret verification runs FIRST — before the
 	// body is even read/decoded — so an enforce-mode mismatch never reaches
 	// store.RecordRuleFire or scoring.Grader.OnRuleFire (fail-closed: no
@@ -192,6 +209,17 @@ func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 			}
 			h.logger.Warn("falco webhook shared secret mismatch, continuing (warn mode)", "mode", string(h.secretMode))
 		}
+	}
+
+	// falcosidekick posts "application/json; charset=utf-8" (its client's
+	// DefaultContentType; customHeaders here only adds the shared secret).
+	// Anything else — notably what a cross-site no-cors POST can send (text/plain,
+	// form-urlencoded, multipart) — is refused before the body is decoded.
+	if !httpx.IsJSONContentType(r) {
+		h.logger.Warn("falco webhook: unsupported content type", "content_type", r.Header.Get("Content-Type"))
+		metrics.FalcoEventsReceived.WithLabelValues("unsupported_media_type").Inc()
+		httpx.WriteJSON(w, http.StatusUnsupportedMediaType, map[string]any{"error": errMsgNotJSON})
+		return
 	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)

@@ -31,7 +31,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"mime"
 	"net/http"
 	"regexp"
 	"sort"
@@ -565,8 +564,15 @@ func (h *Handler) Routes() []apispec.Route {
 			// server-to-server request with no browser Origin/Referer, so gating
 			// it would 403 every legitimate exfil receipt and silently break the
 			// boss capstone's scoring path.
+			//
+			// The ingress admin catch-all still routes /internal/exfil/ here for
+			// an admin BROWSER (oauth2-proxy stamps X-Auth-Request-Email on it),
+			// so exfilInternal itself closes that path: any X-Auth-Request-* header
+			// => 403, body not application/json => 415. The collector adds no such
+			// header, so the legitimate caller is unaffected. Authz is therefore the
+			// internal-only claimed-identity class (same as display-name).
 			Method: "POST", Pattern: "/internal/exfil/{cid}",
-			Audience: apispec.AudienceInternal, Authz: apispec.AuthzClaimedIdentity,
+			Audience: apispec.AudienceInternal, Authz: apispec.AuthzInternalClaimedIdentity,
 			OriginGuarded: false, CollectorForward: true,
 			RateLimit: "none (the limit lives on the collector front)",
 			Handler:   http.HandlerFunc(h.exfilInternal),
@@ -1391,7 +1397,8 @@ func (h *Handler) submitDetect(w http.ResponseWriter, r *http.Request) {
 // Trust model: identity (`user`) is claimed, never proven — same as /submit,
 // logged for traceability. The endpoint adds no auth of its own; it is reached
 // only from the collector (scoreboard NetworkPolicy admits collector, not
-// ctf-user). The flag is matched at submit time (RequireExfil via HasExfil), so
+// ctf-user). The browser path is refused outright: any X-Auth-Request-* header
+// => 403, a non-JSON Content-Type => 415 (see the checks at the top). The flag is matched at submit time (RequireExfil via HasExfil), so
 // a wrong value recorded here simply fails the eventual submit.
 func (h *Handler) exfilInternal(w http.ResponseWriter, r *http.Request) {
 	cid := r.PathValue("cid")
@@ -1399,6 +1406,22 @@ func (h *Handler) exfilInternal(w http.ResponseWriter, r *http.Request) {
 		fields := []any{"cid", cid, "remote_addr", r.RemoteAddr, "outcome", outcome}
 		fields = append(fields, extra...)
 		h.logger.Info("exfil_internal", fields...)
+	}
+
+	// Collector-only: the browser path (admin ingress catch-all ->
+	// oauth2-proxy) always carries X-Auth-Request-*, the collector never does.
+	// Refused before ANY other check so nothing (not even 404 / 400) varies with
+	// the request's content, and a cross-site (SameSite=None) POST from an admin
+	// session can neither record a receipt nor probe the catalog.
+	if httpx.HasProxyIdentityHeader(r) {
+		auditLog("browser_path_denied")
+		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
+		return
+	}
+	if !httpx.IsJSONContentType(r) {
+		auditLog("unsupported_media_type")
+		httpx.WriteJSON(w, http.StatusUnsupportedMediaType, map[string]any{"error": errMsgUnsupportedMediaType})
+		return
 	}
 
 	// Pre-body guards (unknown challenge / exfil not accepted) gate whether we
@@ -1665,26 +1688,6 @@ func (h *Handler) resetDirty(w http.ResponseWriter, r *http.Request) {
 // JSON request body.
 const errMsgUnsupportedMediaType = "content type must be application/json"
 
-// hasProxyIdentityHeader reports whether the request carries ANY
-// X-Auth-Request-* header (present, even with an empty value). oauth2-proxy /
-// the ingress auth-response-headers stamp these on every browser-path request;
-// the cluster-internal collector path never sets them.
-func hasProxyIdentityHeader(r *http.Request) bool {
-	for k := range r.Header {
-		if strings.HasPrefix(http.CanonicalHeaderKey(k), "X-Auth-Request-") {
-			return true
-		}
-	}
-	return false
-}
-
-// isJSONContentType reports whether the Content-Type media type is exactly
-// application/json (parameters such as charset are allowed).
-func isJSONContentType(r *http.Request) bool {
-	mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	return err == nil && mt == "application/json"
-}
-
 // setDisplayName lets a participant pick a cosmetic name shown on the
 // scoreboard. Identity (`user`) stays anchored to the auth-derived slug;
 // only the rendered name changes. Re-runnable any number of times.
@@ -1709,7 +1712,7 @@ func isJSONContentType(r *http.Request) bool {
 func (h *Handler) setDisplayName(w http.ResponseWriter, r *http.Request) {
 	// First, before any other check: the response must not depend on who the
 	// header claims to be (no ADMIN_EMAILS oracle).
-	if hasProxyIdentityHeader(r) {
+	if httpx.HasProxyIdentityHeader(r) {
 		h.logger.Warn("display name denied: browser/proxy path not accepted", "remote_addr", r.RemoteAddr)
 		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
 		return
@@ -1719,7 +1722,7 @@ func (h *Handler) setDisplayName(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
 		return
 	}
-	if !isJSONContentType(r) {
+	if !httpx.IsJSONContentType(r) {
 		httpx.WriteJSON(w, http.StatusUnsupportedMediaType, map[string]any{"error": errMsgUnsupportedMediaType})
 		return
 	}

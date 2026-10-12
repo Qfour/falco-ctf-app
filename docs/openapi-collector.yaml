@@ -88,6 +88,12 @@ paths:
 
         `{cid}` is validated as a `NN-slug` here (not just downstream) so a
         crafted path cannot be reflected into the upstream URL.
+
+        The scoreboard sink is collector-only (`internal-claimed-identity`
+        there): the collector adds no `X-Auth-Request-*` header and passes
+        `Content-Type` through, so the `Content-Type: application/json` the
+        mission brief's `curl` sets is REQUIRED (`415` otherwise), and a
+        client-supplied `X-Auth-Request-*` header is refused `403`.
       parameters:
         - $ref: "#/components/parameters/Cid"
       requestBody:
@@ -113,6 +119,14 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: relayed scoreboard refusal — the request carried an `X-Auth-Request-*` header
+          content:
+            application/json: {}
+        "415":
+          description: relayed scoreboard refusal — body is not `application/json`
+          content:
+            application/json: {}
         "429":
           description: rate limited (`text/plain`)
           content:
