@@ -11,7 +11,6 @@
 #
 # Usage:
 #   deploy-user.sh [--challenges-dir <path>] [--scenarios-dir <path>] \
-#                  [--display-name <name>] \
 #                  [--flags-file <path>] [--dns-suffix <suffix>] \
 #                  [--frame-ancestors <csp-value>] [--app-host <host>] \
 #                  [--egress-lockdown --api-server-cidr <cidr>] \
@@ -84,10 +83,10 @@
 # Defaults to <repo-root>/challenges (this chart lives at charts/ctf-user).
 #
 # Display name:
-#   `--display-name 'Alice'` records the cosmetic name shown on the
-#   scoreboard / /me page for this user. Display names are first-set-only;
-#   re-running the script with a different name leaves the original in
-#   place (idempotent for re-deploys).
+#   `--display-name` was REMOVED (ADR-0034 D10 / D12): passing it exits 2
+#   with the reason, before any kubectl/helm call. This script no longer
+#   writes a display name at all — the initial name is the user's seat, and a
+#   participant changes it (and picks an avatar) in the portal's Me screen.
 set -euo pipefail
 
 # Chart lives at <app-repo>/charts/ctf-user; challenges/ is a sibling under the
@@ -100,7 +99,6 @@ DEFAULT_SCENARIOS_DIR="${REPO_ROOT}/scenarios"
 
 CHALLENGES_DIR=""
 SCENARIOS_DIR=""
-DISPLAY_NAME=""
 FLAGS_FILE=""
 DNS_SUFFIX=""
 FRAME_ANCESTORS=""
@@ -130,10 +128,14 @@ while [[ $# -gt 0 ]]; do
       APP_HOST="${2:?--app-host requires a value}"; shift 2 ;;
     --app-host=*)
       APP_HOST="${1#--app-host=}"; shift ;;
-    --display-name)
-      DISPLAY_NAME="${2:?--display-name requires a value}"; shift 2 ;;
-    --display-name=*)
-      DISPLAY_NAME="${1#--display-name=}"; shift ;;
+    --display-name|--display-name=*)
+      # Removed, not ignored: silently accepting it would let an operator
+      # believe names were being set. Fail loudly with the reason (exit 2,
+      # like any other unknown flag) before touching the cluster.
+      echo "--display-name was removed (ADR-0034 D10): deploy-user.sh no longer writes a display name." >&2
+      echo "  The initial display name is the user's seat; a participant sets their own name and avatar" >&2
+      echo "  in the portal's Me screen. Drop the flag (and any --names-file that fed it)." >&2
+      exit 2 ;;
     --flags-file)
       FLAGS_FILE="${2:?--flags-file requires a path}"; shift 2 ;;
     --flags-file=*)
@@ -156,7 +158,7 @@ while [[ $# -gt 0 ]]; do
 done
 set -- "${POSITIONAL[@]:-}"
 
-USAGE_MSG='usage: deploy-user.sh [--challenges-dir <path>] [--scenarios-dir <path>] [--display-name <name>] <username> <all|NN-slug|scenario:name>'
+USAGE_MSG='usage: deploy-user.sh [--challenges-dir <path>] [--scenarios-dir <path>] <username> <all|NN-slug|scenario:name>'
 USERNAME="${1:?${USAGE_MSG}}"
 CHALLENGE_ID="${2:?${USAGE_MSG}}"
 
@@ -344,12 +346,8 @@ if [[ -n "${FLAGS_FILE}" ]]; then
   # entries in scope, and a trigger-only deploy has none.
 fi
 
-# Determine total step count (5 normally — namespace/rotate/upgrade/verify/
-# assert —, 6 when display-name is set).
+# Total step count: namespace/rotate/upgrade/verify/assert.
 LAST_STEP=5
-if [[ -n "${DISPLAY_NAME}" ]]; then
-  LAST_STEP=6
-fi
 
 # Namespace ownership (platform#75 / ADR-0011-consistent single-owner pattern).
 #
@@ -517,33 +515,3 @@ green "  ✓ ready — http://${HOST}/"
 # per-user exit status on the platform side).
 info "[5/${LAST_STEP}] assert flag isolation (ADR-0001 Verification 3)"
 "${CHART_DIR}/assert-flag-isolation.sh" "${NS}" "${CHALLENGES_DIR}" "${CHALLENGE_ID}" "${SCENARIOS_DIR}"
-
-# Register the display name on the scoreboard (first-set-only).
-# We can't reach scoreboard.scoreboard.svc directly from the operator's
-# machine, so we exec into an ingress-nginx pod (which the scoreboard
-# NetworkPolicy already admits) and curl from there.
-if [[ -n "${DISPLAY_NAME}" ]]; then
-  info "[6/${LAST_STEP}] register display name on scoreboard"
-  INGRESS_POD=$(kubectl -n ingress-nginx get pod \
-    -l app.kubernetes.io/name=ingress-nginx \
-    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-  if [[ -z "${INGRESS_POD}" ]]; then
-    yellow "  ⚠ ingress-nginx pod not found; skipping display-name registration"
-    yellow "    (run again later with --display-name '${DISPLAY_NAME}' to retry)"
-    exit 0
-  fi
-  PAYLOAD=$(printf '{"name":"%s"}' "${DISPLAY_NAME}")
-  RESPONSE=$(kubectl -n ingress-nginx exec "${INGRESS_POD}" -- \
-    curl -s -X POST -H 'Content-Type: application/json' \
-    -d "${PAYLOAD}" \
-    "http://scoreboard.scoreboard.svc/api/users/${USERNAME}/display-name" || true)
-  case "${RESPONSE}" in
-    *'"ok":true'*)
-      green "  ✓ display name registered: ${DISPLAY_NAME}" ;;
-    *'already set'*)
-      yellow "  ⚠ display name already set; first-set-only semantics keep the original"
-      yellow "    ${RESPONSE}" ;;
-    *)
-      yellow "  ⚠ unexpected response: ${RESPONSE}" ;;
-  esac
-fi

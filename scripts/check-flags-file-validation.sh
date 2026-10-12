@@ -390,6 +390,11 @@ expect_deploy_rejected "scenario nimbusbreach-full: one evade flag missing" '10-
 expect_deploy_rejected "scenario tutorial-intro: its evade flag missing" '03-stealth-read: no flag supplied' --flags-file "${NO03}" user1 scenario:tutorial-intro
 expect_deploy_rejected "single evade challenge: its flag missing" '03-stealth-read: no flag supplied' --flags-file "${ONLY05}" user1 03-stealth-read
 expect_deploy_rejected "flags file does not exist" 'flags file not found' --flags-file "${WORK}/does-not-exist.yaml" user1 all
+# ADR-0034 D10: --display-name is removed, not ignored. Both spellings, with a
+# complete (otherwise valid) flags file so a rejection can only be the flag
+# itself; nothing may reach helm/kubectl.
+expect_deploy_rejected "--display-name (separate value) is removed" '--display-name was removed' --display-name 'Alice' --flags-file "${FULL}" user1 all
+expect_deploy_rejected "--display-name=value is removed" '--display-name was removed' --display-name=Alice --flags-file "${FULL}" user1 scenario:tutorial-intro
 
 expect_deploy_reaches_helm "all: complete file" "${ALL_PAIRS}" --flags-file "${FULL}" user1 all
 expect_deploy_reaches_helm "scenario nimbusbreach-full: complete file" "${ALL_PAIRS}" --flags-file "${FULL}" user1 scenario:nimbusbreach-full
@@ -403,7 +408,7 @@ expect_deploy_reaches_helm "no --flags-file, scenario mode: unchanged, no overri
 
 echo "==> ${CASES} case(s) run"
 # A run that executed no cases proves nothing.
-if [[ "${CASES}" -lt 123 ]]; then
+if [[ "${CASES}" -lt 125 ]]; then
   echo "FAIL: only ${CASES} case(s) ran — the test list was truncated" >&2
   RC=1
 fi
