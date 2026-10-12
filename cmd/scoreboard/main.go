@@ -37,7 +37,17 @@ func main() {
 	// self-scope read gate (P18: GET /api/users/{user}/{me,journey} — an admin
 	// may read any user, a participant only their own). Empty = nobody
 	// (fail-closed everywhere).
-	adminEmails := serverutil.SplitCSV(serverutil.Env("ADMIN_EMAILS", ""))
+	//
+	// EXPECTED_EMAIL_DOMAIN (ADR-0034 D5) is the domain of the canonical
+	// `<seat>@<domain>` identity auth-policy stamps on every participant
+	// request; "self" is exact equality with that form. Both values are
+	// validated at boot (identityFromEnv): a domain or an admin email whose last
+	// label is not a reserved name refuses to start.
+	expectedEmailDomain, adminEmails, err := identityFromEnv(serverutil.Env)
+	if err != nil {
+		logger.Error("refusing to start", "err", err)
+		os.Exit(1)
+	}
 	// HIDDEN_USERS (CEO/ops request) is a comma-separated allowlist of
 	// scoreboard USERNAMES (not emails, unlike ADMIN_EMAILS) excluded from
 	// the ranked leaderboard computeLeaderboard builds — both the operator
@@ -97,7 +107,7 @@ func main() {
 	// PORTAL_TTYD_SUFFIX (P23-4) is the DNS suffix the portal's Terminal pane
 	// uses to build each caller's OWN ttyd iframe src:
 	// `https://<derived-username>.<PORTAL_TTYD_SUFFIX>` (see
-	// view.renderPortal / portal.ttydURLFor, and api.DeriveUsername for the
+	// view.renderPortal / portal.ttydURLFor, and api.NewUsernameDeriver for the
 	// username derivation). This MUST equal charts/ctf-user's `dnsSuffix`
 	// value (the per-user ttyd Ingress host is `<username>.<dnsSuffix>`
 	// there too) or the iframe will 404 / point at the wrong host. Empty
@@ -286,6 +296,7 @@ func main() {
 	handler := scoreboard.NewHandler(cat, st, logger,
 		scoreboard.WithDBPath(dbPath),
 		scoreboard.WithAdminEmails(adminEmails),
+		scoreboard.WithExpectedEmailDomain(expectedEmailDomain),
 		scoreboard.WithHiddenUsers(hiddenUsers),
 		scoreboard.WithAllowedOrigins(allowedOrigins),
 		scoreboard.WithJourneys(journeys),

@@ -91,6 +91,13 @@ spec:
             - name: ADMIN_EMAILS
               value: {{ . | quote }}
             {{- end }}
+            {{- /* ADR-0034 D5: omitted when empty, and an unset EXPECTED_EMAIL_DOMAIN
+                   makes the scoreboard treat NO email as a participant's own
+                   (fail-closed), so a forgotten value is loud, not permissive. */}}
+            {{- with .Values.env.expectedEmailDomain }}
+            - name: EXPECTED_EMAIL_DOMAIN
+              value: {{ . | quote }}
+            {{- end }}
             {{- with .Values.env.hiddenUsers }}
             - name: HIDDEN_USERS
               value: {{ . | quote }}

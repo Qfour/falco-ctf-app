@@ -251,7 +251,7 @@ func TestPortalCSP_FrameSrc(t *testing.T) {
 			// The wildcard must cover ANY participant's own subdomain, not
 			// just a specific username — CSP has no per-viewer templating,
 			// and per-user isolation is enforced elsewhere (auth-policy's
-			// /check, I8), not by this directive. Assert the wildcard form
+			// /check-workspace, I8), not by this directive. Assert the wildcard form
 			// specifically (not e.g. a single hardcoded hostname).
 			if !strings.Contains(csp, "https://*."+tc.ttydSuffix) {
 				t.Errorf("expected a wildcard subdomain allowance for ttydSuffix=%q; got: %s", tc.ttydSuffix, csp)

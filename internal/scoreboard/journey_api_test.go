@@ -60,6 +60,7 @@ func newJourneyFixture(t *testing.T, extra ...scoreboard.Option) *journeyFixture
 	// the origin guard's fail-closed default (see origin_guard_test.go for the
 	// guard's own dedicated coverage).
 	opts := append([]scoreboard.Option{
+		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 		scoreboard.WithJourneys(journeys),
 		scoreboard.WithOrder([]string{"01-recon", "02-evade", "03-late"}),
 		scoreboard.WithAllowedOrigins([]string{journeyFixtureOrigin}),
@@ -320,6 +321,7 @@ func TestJourney_ExfilReceivedProjection(t *testing.T) {
 	t.Cleanup(func() { st.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := scoreboard.NewHandler(cat, st, logger,
+		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 		scoreboard.WithJourneys(journeys),
 		scoreboard.WithOrder([]string{"01-boss"}),
 	)
@@ -391,6 +393,7 @@ func TestJourney_ExpectedRuleFiredProjection(t *testing.T) {
 	t.Cleanup(func() { st.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := scoreboard.NewHandler(cat, st, logger,
+		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 		scoreboard.WithJourneys(journeys),
 		scoreboard.WithOrder([]string{"01-proof"}),
 	)

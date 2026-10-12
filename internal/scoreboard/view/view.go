@@ -160,7 +160,7 @@ type Handler struct {
 	// production wiring always supplies it.
 	isAdmin func(*http.Request) bool
 	// deriveUser derives the DISPLAY-ONLY username the portal shell pre-fills
-	// into the Journey/Me panes (api.DeriveUsername — see that function's doc
+	// into the Journey/Me panes (api.NewUsernameDeriver — see that function's doc
 	// for why this is never an authorization decision). Nil = "" always (the
 	// portal falls back to its "could not determine" empty state — the same
 	// empty state the removed legacy /journey and /me pages used to show for
@@ -187,7 +187,7 @@ type Handler struct {
 // behind the already-admin-gated ingress host — and also drives the GET
 // /portal role injection (P23-1: which tab/pane the shell shows by default).
 // Pass nil to leave / ungated (tests). deriveUser supplies the /portal
-// username hint (api.DeriveUsername); nil = no hint. ttydSuffix (P23-4)
+// username hint (api.NewUsernameDeriver); nil = no hint. ttydSuffix (P23-4)
 // supplies the Terminal pane's iframe host suffix; "" = no iframe (fail-safe
 // placeholder). logger may be nil (tests); production wiring always
 // supplies one so a template-render failure on GET /portal is observable.

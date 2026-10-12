@@ -98,8 +98,12 @@ servers:
     description: in-cluster Service (no auth headers are injected on this path)
   - url: https://app.{dnsSuffix}
     description: |
-      single participant+operator origin (P19-2b). oauth2-proxy / auth-policy
-      inject `X-Auth-Request-Email` here.
+      single participant+operator origin (P19-2b). auth-policy stamps
+      `X-Auth-Request-Email` here (ADR-0034): for a participant it is ALWAYS the
+      canonical `<seat>@<EXPECTED_EMAIL_DOMAIN>`, never the IdP's real email
+      (ingress-nginx overwrites the header from auth-policy's response, so a
+      client-supplied copy is discarded). Operators carry their static account's
+      email.
     variables:
       dnsSuffix:
         default: example.invalid
@@ -725,7 +729,11 @@ paths:
         Self-scoped read (P18): the caller may only read their OWN progress.
         Identity comes from `X-Auth-Request-Email`; a missing or blank header is
         DENIED (403, fail-closed) — the `{user}` path parameter is never trusted
-        on its own. Admins (`ADMIN_EMAILS`) may read any user.
+        on its own. "Self" is EXACT equality of the header with the canonical
+        `<user>@<EXPECTED_EMAIL_DOMAIN>` that auth-policy stamps (ADR-0034 D5,
+        I8): there is no prefix rule, an email on any other domain is not self,
+        and an unset/empty `EXPECTED_EMAIL_DOMAIN` makes nobody self
+        (fail-closed). Admins (`ADMIN_EMAILS`) may read any user.
 
         `rank` / `score` are computed over the WHOLE field
         (`computeLeaderboard`) but only the caller's own row is serialized
@@ -1837,7 +1845,8 @@ components:
         pattern: "^[a-z0-9][a-z0-9-]{0,62}$"
       description: |
         auth-derived username slug — the same shape auth-policy enforces on
-        `/check?host=`, so the two boundaries agree (conventions I8). A blank
+        `/check-workspace?host=` (and the roster enforces on a seat), so the
+        boundaries agree (conventions I8). A blank
         segment (`/api/users//...`) is answered 400 before routing, never
         silently redirected.
     Cid:

@@ -87,6 +87,7 @@ load-colima: build
 deploy-local: helm-dep-build
 	helm upgrade --install scoreboard charts/scoreboard -n scoreboard \
 	  --set image.tag=dev \
+	  --set env.expectedEmailDomain=ctf.local \
 	  --set persistence.storageClassName=local-path \
 	  --set ingress.host=scoreboard.192.168.64.2.nip.io --set ingress.tls=true \
 	  --set ingress.authSignin='http://auth.192.168.64.2.nip.io/oauth2/start?rd=$$scheme://$$host$$escaped_request_uri'

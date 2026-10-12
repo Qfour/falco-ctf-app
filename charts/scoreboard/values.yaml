@@ -21,6 +21,16 @@ env:
   # against the auth-policy-propagated X-Auth-Request-Email). Empty = nobody.
   # Use the same list as auth-policy's ADMIN_EMAILS.
   adminEmails: ""
+  # ADR-0034 D5 / I8: the domain of the canonical participant identity
+  # `<seat>@<expectedEmailDomain>` that auth-policy stamps on X-Auth-Request-Email.
+  # "self" is EXACT equality with that form. MUST equal auth-policy's
+  # env.expectedEmailDomain (the platform supplies one value to both). Its last
+  # label must be a reserved name (local, test, invalid, example, localhost) —
+  # the scoreboard refuses to start otherwise, and the same applies to every
+  # adminEmails entry. EMPTY (the default, I7: no environment-specific value
+  # here) = no email is ever a participant's own: every participant self check
+  # is false (fail-closed). Admins are unaffected.
+  expectedEmailDomain: ""
   # Comma-separated scoreboard USERNAMES (not emails, unlike adminEmails
   # above) excluded from the ranked leaderboard (both the operator
   # venue-projection dashboard GET /api/state and the rank/score fed into

@@ -94,6 +94,7 @@ func newSpecFixture(t *testing.T) *specFixture {
 	t.Cleanup(func() { boardSt.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := scoreboard.NewHandler(cat, st, logger,
+		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 		scoreboard.WithJourneys(journeys),
 		scoreboard.WithOrder([]string{"01-recon", "02-evade", "03-boss"}),
 		scoreboard.WithAdminEmails([]string{specFixtureAdmin}),
@@ -1123,6 +1124,7 @@ func newDetectSpecFixture(t *testing.T, runner *fakeDetectRunner) *specFixture {
 	t.Cleanup(func() { st.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := scoreboard.NewHandler(cat, st, logger,
+		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 		scoreboard.WithAllowedOrigins([]string{specFixtureOrigin}),
 		scoreboard.WithDetect(api.DetectConfig{Runner: runner}),
 	)

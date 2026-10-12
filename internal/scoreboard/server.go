@@ -42,6 +42,9 @@ type Handler struct {
 	dbPath      string
 	now         func() time.Time
 	adminEmails []string
+	// emailDomain is EXPECTED_EMAIL_DOMAIN (ADR-0034 D5) — see
+	// WithExpectedEmailDomain. Empty = no email is ever a participant's own.
+	emailDomain string
 	// hiddenUsers is the HIDDEN_USERS allowlist (comma-separated scoreboard
 	// usernames) threaded through to the api handler — see WithHiddenUsers.
 	hiddenUsers []string
@@ -89,6 +92,15 @@ func WithDBPath(p string) Option        { return func(h *Handler) { h.dbPath = p
 // WithAdminEmails sets the allowlist for admin-only endpoints (POST
 // /api/admin/reset). Empty = nobody (fail-closed).
 func WithAdminEmails(e []string) Option { return func(h *Handler) { h.adminEmails = e } }
+
+// WithExpectedEmailDomain sets EXPECTED_EMAIL_DOMAIN (ADR-0034 D5): the domain
+// auth-policy spells every participant's canonical identity with
+// (`<seat>@<domain>`). The self check is exact equality with that form, and the
+// portal's username hint accepts only it. Empty (the default) means NO email is
+// a participant's own — every self-or-admin check for a non-admin is false —
+// which is the fail-closed choice: a deployment that forgot to supply the value
+// locks participants out loudly instead of trusting whatever domain arrives.
+func WithExpectedEmailDomain(d string) Option { return func(h *Handler) { h.emailDomain = d } }
 
 // WithHiddenUsers sets the HIDDEN_USERS allowlist (comma-separated scoreboard
 // USERNAMES — not emails, unlike WithAdminEmails/WithAllowedOrigins) that the
@@ -233,16 +245,16 @@ func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts .
 		FalcoRules:  h.falcoRules,
 		Order:       h.order,
 		DocsBaseURL: h.docsBaseURL,
-	}, h.detect, api.BoardConfig{Store: h.boardStore})
+	}, h.detect, api.BoardConfig{Store: h.boardStore}, api.IdentityConfig{ExpectedEmailDomain: h.emailDomain})
 	// The operator index page (GET /) is admin-gated in the app layer too
 	// (P18-1 defense-in-depth) using the same ADMIN_EMAILS rule the api handler
 	// enforces. The participant journey/me pages are served ungated as static
 	// shells (they carry no data; their per-user API is self-scoped). GET
 	// /portal (P23-1) is served to any authenticated caller — see
 	// view.renderPortal's doc for why that is safe (no admin data is ever
-	// embedded; the api.NewAdminGate/api.DeriveUsername results feed only
+	// embedded; the api.NewAdminGate/api.NewUsernameDeriver results feed only
 	// display hints, and every pane's actual data fetch stays gated in api.Handler).
-	vh := view.New(api.NewAdminGate(h.adminEmails), api.DeriveUsername, h.ttydSuffix, logger)
+	vh := view.New(api.NewAdminGate(h.adminEmails), api.NewUsernameDeriver(h.emailDomain), h.ttydSuffix, logger)
 
 	// This binary's OWN two routes (liveness + metrics), table-driven like
 	// every sub-handler's (ADR-0005 V2) so the static "no direct

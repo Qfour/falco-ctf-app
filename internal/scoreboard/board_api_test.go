@@ -58,6 +58,7 @@ func newBoardFixture(t *testing.T, extra ...scoreboard.Option) *boardFixture {
 	t.Cleanup(func() { boardSt.Close() }) //nolint:errcheck // double-close after a test's own fault-injection Close is fine, error discarded either way
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	opts := append([]scoreboard.Option{
+		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 		scoreboard.WithAdminEmails([]string{boardFixtureAdmin}),
 		scoreboard.WithAllowedOrigins([]string{boardFixtureOrigin}),
 		scoreboard.WithBoard(boardSt),
@@ -908,16 +909,16 @@ func TestBoard_DeclaredRouteSetIsExactlyPhase2sElevenRoutes(t *testing.T) {
 	f := newBoardFixture(t)
 	want := map[string]bool{
 		"GET /api/board/threads":                     true,
-		"GET /api/board/threads/{tid}":                true,
-		"POST /api/board/threads":                     true,
-		"POST /api/board/threads/{tid}/messages":      true,
-		"POST /api/board/threads/{tid}/like":          true,
-		"POST /api/board/threads/{tid}/unlike":        true,
-		"GET /api/admin/board/threads":                true,
-		"GET /api/admin/board/threads/{tid}":          true,
-		"POST /api/admin/board/threads/{tid}/reply":   true,
-		"POST /api/admin/board/threads/{tid}/state":   true,
-		"POST /api/admin/board/messages/{mid}/state":  true,
+		"GET /api/board/threads/{tid}":               true,
+		"POST /api/board/threads":                    true,
+		"POST /api/board/threads/{tid}/messages":     true,
+		"POST /api/board/threads/{tid}/like":         true,
+		"POST /api/board/threads/{tid}/unlike":       true,
+		"GET /api/admin/board/threads":               true,
+		"GET /api/admin/board/threads/{tid}":         true,
+		"POST /api/admin/board/threads/{tid}/reply":  true,
+		"POST /api/admin/board/threads/{tid}/state":  true,
+		"POST /api/admin/board/messages/{mid}/state": true,
 	}
 	got := map[string]bool{}
 	for _, rt := range f.srv.Routes() {

@@ -17,6 +17,11 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/store"
 )
 
+// fixtureEmailDomain is the EXPECTED_EMAIL_DOMAIN every scoreboard test
+// fixture runs under (ADR-0034 D5): participant identities in these tests are
+// the canonical "<user>@ctf.local" form auth-policy would have stamped.
+const fixtureEmailDomain = "ctf.local"
+
 type fixture struct {
 	t   *testing.T
 	cat catalog.Catalog
@@ -64,6 +69,7 @@ func newFixture(t *testing.T, now func() time.Time) *fixture {
 	// itself (see origin_guard_test.go for that), so it must not be
 	// collaterally denied by the fail-closed default.
 	srv := scoreboard.NewHandler(cat, st, logger, scoreboard.WithNow(now),
+		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 		scoreboard.WithAdminEmails([]string{fixtureAdminEmail}),
 		scoreboard.WithAllowedOrigins([]string{fixtureOrigin}))
 	return &fixture{t: t, cat: cat, st: st, srv: srv}
@@ -93,6 +99,7 @@ func newFixtureWithHidden(t *testing.T, now func() time.Time, hidden []string) *
 		now = time.Now
 	}
 	srv := scoreboard.NewHandler(cat, st, logger, scoreboard.WithNow(now),
+		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 		scoreboard.WithAdminEmails([]string{fixtureAdminEmail}),
 		scoreboard.WithAllowedOrigins([]string{fixtureOrigin}),
 		scoreboard.WithHiddenUsers(hidden))
@@ -227,6 +234,7 @@ func TestAdminReset(t *testing.T) {
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := scoreboard.NewHandler(cat, st, logger,
+		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 		scoreboard.WithAdminEmails([]string{"admin@ctf.local"}),
 		scoreboard.WithAllowedOrigins([]string{fixtureOrigin}))
 
@@ -273,6 +281,7 @@ func TestAdminSetDisplayName(t *testing.T) {
 	defer st.Close()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := scoreboard.NewHandler(cat, st, logger,
+		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 		scoreboard.WithAdminEmails([]string{"admin@ctf.local"}),
 		scoreboard.WithAllowedOrigins([]string{fixtureOrigin}))
 
