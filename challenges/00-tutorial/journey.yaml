@@ -13,7 +13,7 @@ briefing: >-
   各ミッションには「気付き → 概要 → 解答」の段階ヒントがある。詰まったら順に開こう。
 steps:
   - label: ワークスペース端末を開く
-    detail: 画面のターミナル (ttyd) で以下を実行できる状態にする。表示名と絵柄はポータルの Me 画面で設定できる。
+    detail: 画面のターミナル (ttyd) で以下を実行できる状態にする。表示名と絵柄はポータルの Scoreboard タブ › Profile で設定できる。
   - label: /dev/shm からスクリプトを実行して発火させる
     detail: |
       echo 'echo hello from the tutorial' > /dev/shm/hello.sh
