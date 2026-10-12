@@ -691,6 +691,48 @@ func TestPortalPartials_EscDefinedOnceBeforePanes(t *testing.T) {
 	}
 }
 
+// TestPortalPartials_InnerHTMLInterpolationsAreEscaped pins the two
+// interpolations app#313 found going into innerHTML without esc(): the
+// challenge type in pane-scoreboard (card badge + detail title). It is a
+// deliberate pin on these sites, not a general lint (a generic "every ${...}
+// in a template literal" scan has too many false positives: numbers,
+// pre-escaped locals, class-name constants). A new unescaped site is caught
+// by review and the falco-web skill; this test only stops these two from
+// regressing. (The third site, avatarChar in pane-me, went away with
+// ADR-0034 S1; pane-story's m.status was already escaped.)
+func TestPortalPartials_InnerHTMLInterpolationsAreEscaped(t *testing.T) {
+	body := map[string]string{}
+	for _, p := range portalPartials(t) {
+		body[p.name] = p.body
+	}
+	pins := []struct {
+		file   string
+		want   []string // each must appear
+		forbid []string // none may appear
+	}{
+		{"pane-scoreboard.tmpl",
+			[]string{"badge-${esc(c.type)}\">${esc(c.type)}</span>", "badge-' + esc(c.type) + '\">' + esc(c.type) + '</span>"},
+			[]string{"${c.type}", "+ c.type +"}},
+	}
+	for _, pin := range pins {
+		b, ok := body[pin.file]
+		if !ok {
+			t.Errorf("%s: partial not found", pin.file)
+			continue
+		}
+		for _, w := range pin.want {
+			if !strings.Contains(b, w) {
+				t.Errorf("%s: missing escaped interpolation %q (app#313)", pin.file, w)
+			}
+		}
+		for _, f := range pin.forbid {
+			if strings.Contains(b, f) {
+				t.Errorf("%s: unescaped interpolation %q going into innerHTML (app#313)", pin.file, f)
+			}
+		}
+	}
+}
+
 // TestPortalPartials_CountWithinSignpost enforces the architect's bound
 // (REFACTORING.md P28 §9: "partial が 15 を超える" is a signal to revisit
 // the split-source/single-document decision, not something to drift past).
