@@ -42,7 +42,8 @@
         <p class="profile-help" id="pane-me-profile-avatar-help">Arrow keys move through the grid: left and right step one, up and down move a row. Home and End jump to the first and last.</p>
       </div>
       <div class="profile-actions">
-        <button type="submit" class="p-btn" id="pane-me-profile-save">Save profile</button>
+        <button type="submit" class="p-btn" id="pane-me-profile-save" disabled aria-describedby="pane-me-profile-save-help">Save profile</button>
+        <p class="profile-help" id="pane-me-profile-save-help">Save unlocks once your current profile has loaded, so it cannot overwrite your saved avatar. If this stays, check your connection.</p>
         <p class="profile-msg" id="pane-me-profile-msg"></p>
       </div>
     </form>
@@ -80,6 +81,11 @@
   const AVATAR_COLS = AVATAR_COLORS.length;
   const avatarId = (id) => { const p = avatarParts(id); return p.glyph + '-' + p.color; };
   const avatarLabel = (id) => { const p = avatarParts(id); return p.glyph.charAt(0).toUpperCase() + p.glyph.slice(1) + ', ' + p.color; };
+  // The operator's id is in the grid (it keeps the 8 x 6 shape) but is not a
+  // choice: it is drawn as a disabled radio that says so. The server rejects it
+  // anyway (400); this keeps a participant from picking something that cannot save.
+  const pickable = (id) => id !== AVATAR_STAFF_ID;
+  const optLabel = (id) => avatarLabel(id) + (pickable(id) ? '' : ': staff only');
   const nameInput = document.getElementById('pane-me-profile-name');
   const grid = document.getElementById('pane-me-profile-avatar');
   const saveBtn = document.getElementById('pane-me-profile-save');
@@ -88,32 +94,47 @@
   let serverName = null, serverAvatar = null, serverSig = null;
   let chosen = AVATAR_IDS[0];
   let saving = false;
+  // Save is locked until the FIRST /me answer has filled the form (serverSig
+  // !== null). Before that `chosen` is only the default (falcon-cyan), and a
+  // save would send it as if the participant had picked it, overwriting the
+  // saved avatar. The reason is the button's aria-describedby text.
+  const saveHelp = document.getElementById('pane-me-profile-save-help');
+  function syncSave() {
+    const loaded = serverSig !== null;
+    saveBtn.disabled = saving || !loaded;
+    saveHelp.hidden = loaded;
+    if (loaded) saveBtn.removeAttribute('aria-describedby'); else saveBtn.setAttribute('aria-describedby', 'pane-me-profile-save-help');
+  }
+  syncSave();
   let profileSeq = 0;   // bumped when a save finishes; see refresh()
 
-  // The 48 radios are built once and never rebuilt (focus and the keyboard
+  // The 48 radios (47 choices + the disabled staff one) are built once and never rebuilt (focus and the keyboard
   // position live on them). esc() on every interpolation, as everywhere.
   grid.innerHTML = AVATAR_IDS.map((id, i) =>
-    '<button type="button" class="avatar-opt" role="radio" aria-checked="false" tabindex="-1" data-i="' + i + '" data-id="' + esc(id) + '" aria-label="' + esc(avatarLabel(id)) + '" title="' + esc(avatarLabel(id)) + '">' + avatarImg(id, 'sm') + '</button>'
+    '<button type="button" class="avatar-opt" role="radio" aria-checked="false" tabindex="-1" data-i="' + i + '" data-id="' + esc(id) + '"' + (pickable(id) ? '' : ' aria-disabled="true"') + ' aria-label="' + esc(optLabel(id)) + '" title="' + esc(optLabel(id)) + '">' + avatarImg(id, 'sm') + '</button>'
   ).join('');
   const opts = Array.from(grid.querySelectorAll('[role="radio"]'));
 
   function paintChosen() {
+    // Roving tabindex: the grid is ONE Tab stop. If the saved avatar is the
+    // staff one (not focusable), the stop is the first choice instead.
+    const stop = pickable(chosen) ? AVATAR_IDS.indexOf(chosen) : 0;
     opts.forEach((o, i) => {
-      const on = AVATAR_IDS[i] === chosen;
-      o.setAttribute('aria-checked', on ? 'true' : 'false');
-      o.setAttribute('tabindex', on ? '0' : '-1');   // roving tabindex: the grid is ONE Tab stop
+      o.setAttribute('aria-checked', AVATAR_IDS[i] === chosen ? 'true' : 'false');
+      o.setAttribute('tabindex', i === stop ? '0' : '-1');
     });
     document.getElementById('pane-me-profile-chosen').textContent = avatarLabel(chosen);
     document.getElementById('pane-me-profile-preview').innerHTML = avatarImg(chosen, 'lg');
   }
   function select(i, focus) {
+    if (!pickable(AVATAR_IDS[i])) return;
     chosen = AVATAR_IDS[i];
     paintChosen();
     if (focus) opts[i].focus();
   }
   grid.addEventListener('click', (e) => {
     const o = e.target.closest('[role="radio"]');
-    if (o) select(Number(o.dataset.i), false);
+    if (o) select(Number(o.dataset.i), false);   // select() ignores the staff radio
   });
   // Selection follows focus, like a native radio group. Left/Right step one,
   // Up/Down move a row (same colour, next glyph) because the grid is drawn 6
@@ -121,14 +142,21 @@
   grid.addEventListener('keydown', (e) => {
     if (e.altKey || e.ctrlKey || e.metaKey) return;
     const n = AVATAR_IDS.length, cur = AVATAR_IDS.indexOf(chosen);
+    // Move by `step`, then on past the staff radio (same direction) if that is
+    // where it landed.
+    const go = (from, step) => {
+      let t = (from + step + n) % n;
+      while (!pickable(AVATAR_IDS[t])) t = (t + (step < 0 ? -1 : 1) + n) % n;
+      return t;
+    };
     let to;
     switch (e.key) {
-      case 'ArrowRight': to = (cur + 1) % n; break;
-      case 'ArrowLeft':  to = (cur - 1 + n) % n; break;
-      case 'ArrowDown':  to = (cur + AVATAR_COLS) % n; break;
-      case 'ArrowUp':    to = (cur - AVATAR_COLS + n) % n; break;
-      case 'Home':       to = 0; break;
-      case 'End':        to = n - 1; break;
+      case 'ArrowRight': to = go(cur, 1); break;
+      case 'ArrowLeft':  to = go(cur, -1); break;
+      case 'ArrowDown':  to = go(cur, AVATAR_COLS); break;
+      case 'ArrowUp':    to = go(cur, -AVATAR_COLS); break;
+      case 'Home':       to = go(-1, 1); break;
+      case 'End':        to = go(n, -1); break;
       default: return;
     }
     e.preventDefault();
@@ -148,6 +176,7 @@
     serverSig = sig; serverName = name; serverAvatar = av;
     document.getElementById('pane-me-profile-seat').textContent = 'Seat: ' + user;
     if (untouched) { nameInput.value = name; chosen = av; paintChosen(); }
+    syncSave();   // the first answer unlocks Save
   }
 
   function showMsg(text, isErr) {
@@ -182,7 +211,7 @@
   nameInput.addEventListener('input', () => { if (nameInput.getAttribute('aria-invalid')) showMsg('', false); });
   document.getElementById('pane-me-profile-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    if (saving) return;
+    if (saving || serverSig === null) return;   // Save is disabled before the first /me; Enter in the name field must not bypass it
     const name = nameInput.value.trim();
     const problem = nameProblem(name);
     if (problem) { showMsg(problem, true); announce(problem); nameInput.focus(); return; }
@@ -190,7 +219,7 @@
     if (name !== serverName) body.display_name = name;
     if (chosen !== serverAvatar) body.avatar = chosen;
     if (Object.keys(body).length === 0) { showMsg('Nothing to save: the name and avatar are already as shown.', false); return; }
-    saving = true; saveBtn.disabled = true;
+    saving = true; syncSave();
     showMsg('Saving…', false);
     try {
       const r = await fetch('/api/users/' + encodeURIComponent(user) + '/profile', {
@@ -212,7 +241,7 @@
       const s = 'Not saved: could not reach the server. Check your connection and try again.';
       showMsg(s, true); announce(s);
     } finally {
-      saving = false; saveBtn.disabled = false;
+      saving = false; syncSave();
     }
   });
 

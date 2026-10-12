@@ -88,6 +88,9 @@ func checkPortalAvatar(fsys fstest.MapFS) error {
 	} else if !sameList(c, avatarContractColors) {
 		fail("core-util.tmpl: AVATAR_COLORS = %v, want %v", c, avatarContractColors)
 	}
+	if !strings.Contains(util, "const AVATAR_STAFF_ID = '"+avatar.StaffID+"';") {
+		fail("core-util.tmpl: AVATAR_STAFF_ID must equal avatar.StaffID (%q) — the picker draws that id as the disabled staff-only radio", avatar.StaffID)
+	}
 	if strings.Contains(util, "AVATAR_SRC") || regexp.MustCompile(`/static/avatars`).MatchString(util) {
 		fail("core-util.tmpl hard-codes an avatar URL — URLs come from ASSETS.avatars (portal.tmpl), which the server fills from the static-asset registry")
 	}
@@ -191,7 +194,13 @@ func checkPortalAvatar(fsys fstest.MapFS) error {
 	for _, want := range []struct{ text, why string }{
 		{`role="radiogroup" aria-labelledby="pane-me-profile-avatar-label"`, "the grid is a radiogroup with an accessible name"},
 		{`role="radio" aria-checked="false" tabindex="-1"`, "each option is a radio with a roving tabindex"},
-		{`aria-label="' + esc(avatarLabel(id)) + '"`, "each radio's name is its glyph and colour (esc'd)"},
+		{`aria-label="' + esc(optLabel(id)) + '"`, "each radio's name is its glyph and colour (esc'd)"},
+		{`const pickable = (id) => id !== AVATAR_STAFF_ID;`, "the operator's fixed avatar is not a choice (it is a disabled radio)"},
+		{`' aria-disabled="true"'`, "the staff radio is aria-disabled"},
+		{`: staff only'`, "the staff radio says it is staff only"},
+		{`if (saving || serverSig === null) return;`, "submit is refused before the first /me answer"},
+		{`saveBtn.disabled = saving || !loaded;`, "Save is disabled until the first /me answer has filled the form"},
+		{`id="pane-me-profile-save" disabled aria-describedby="pane-me-profile-save-help"`, "Save starts disabled and says why"},
 		{`case 'ArrowRight'`, "keyboard: arrows"}, {`case 'ArrowLeft'`, "keyboard: arrows"},
 		{`case 'ArrowDown'`, "keyboard: arrows"}, {`case 'ArrowUp'`, "keyboard: arrows"},
 		{`case 'Home'`, "keyboard: Home"}, {`case 'End'`, "keyboard: End"},
@@ -240,6 +249,7 @@ func TestPortalAvatar_ChecksRejectMutations(t *testing.T) {
 		mutate func(*testing.T, fstest.MapFS)
 		want   string
 	}{
+		{"the staff id drifts from avatar.StaffID", portalFSEdit(util, replaceOnce("AVATAR_STAFF_ID = 'flame-slate'", "AVATAR_STAFF_ID = 'flame-cyan'")), "AVATAR_STAFF_ID"},
 		{"a glyph is dropped from the table", portalFSEdit(util, replaceOnce("'bug', 'flame'];", "'flame'];")), "AVATAR_GLYPHS"},
 		{"a colour is renamed", portalFSEdit(util, replaceOnce("'violet', 'slate'];", "'purple', 'slate'];")), "AVATAR_COLORS"},
 		{"avatarImg hard-codes a URL", portalFSEdit(util, replaceOnce("const AVATAR_COLORS", "const AVATAR_SRC = { falcon: '/static/avatars/falcon.svg' };\nconst AVATAR_COLORS")), "hard-codes an avatar URL"},
@@ -258,6 +268,8 @@ func TestPortalAvatar_ChecksRejectMutations(t *testing.T) {
 			i := strings.LastIndex(s, "avatarImg(m.authorAvatar, 'sm')")
 			return s[:i] + "''" + s[i+len("avatarImg(m.authorAvatar, 'sm')"):]
 		}), "participant thread + operator thread"},
+		{"the staff avatar becomes a choice", portalFSEdit(me, replaceOnce(`id !== AVATAR_STAFF_ID`, `true`)), "not a choice"},
+		{"Save is enabled before the first /me", portalFSEdit(me, replaceOnce(`saving || !loaded`, `saving`)), "disabled until the first /me"},
 		{"the grid loses its radiogroup role", portalFSEdit(me, replaceOnce(`role="radiogroup"`, ``)), "radiogroup"},
 		{"ArrowUp is no longer handled", portalFSEdit(me, replaceOnce(`case 'ArrowUp'`, `case 'KeyU'`)), "case 'ArrowUp'"},
 		{"saving posts to another route", portalFSEdit(me, replaceOnce(`+ '/profile'`, `+ '/display-name'`)), "/profile"},

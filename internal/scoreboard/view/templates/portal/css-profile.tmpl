@@ -32,6 +32,8 @@
   #pane-me .avatar-opt { display: inline-grid; place-items: center; padding: 0.35rem; border-radius: 0.6rem; border: 1px solid var(--p-border); background: transparent; cursor: pointer; }
   #pane-me .avatar-opt .avatar { --avatar-size: 1.75rem; }
   #pane-me .avatar-opt:hover { border-color: var(--p-border-strong); background: var(--p-surface-2); }
+  #pane-me .avatar-opt[aria-disabled="true"] { opacity: 0.4; cursor: not-allowed; }
+  #pane-me .avatar-opt[aria-disabled="true"]:hover { border-color: var(--p-border); background: transparent; }
   #pane-me .avatar-opt[aria-checked="true"] { border-color: var(--p-accent); box-shadow: 0 0 10px var(--p-accent-glow); background: var(--p-surface-2); }
   #pane-me .profile-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 0.9rem; }
   #pane-me .profile-actions .p-btn[disabled] { opacity: 0.55; cursor: progress; }
