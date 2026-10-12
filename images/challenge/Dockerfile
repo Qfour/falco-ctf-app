@@ -162,10 +162,9 @@ RUN printf '%s\n' \
 # build if the entry set drifts.
 COPY --from=missions-builder /out/missions/ /opt/ctf/missions/
 COPY challenges/submit-all.sh /opt/ctf/submit.sh
-COPY challenges/setname.sh /opt/ctf/setname.sh
 COPY challenges/submit-yaml.sh /opt/ctf/submit-yaml.sh
 COPY challenges/banner.sh /opt/ctf/banner.sh
-RUN chmod 0644 /opt/ctf/submit.sh /opt/ctf/setname.sh /opt/ctf/submit-yaml.sh /opt/ctf/banner.sh
+RUN chmod 0644 /opt/ctf/submit.sh /opt/ctf/submit-yaml.sh /opt/ctf/banner.sh
 
 # answers.yaml (generated in missions-builder, ADR-0026 D2).
 COPY --from=missions-builder /out/answers.yaml /opt/ctf/answers.yaml

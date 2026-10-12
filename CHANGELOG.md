@@ -29,6 +29,14 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
   `GET /api/users/{user}/journey` の `detail.hints` と `detail.steps[].checked` は
   `status` ではなく保存済みの状態だけで決まる。応答のキー集合は変わらない。
   詳細: `docs/adr/0027-hint-gate-decoupled-from-current.md`。
+- collector の forward を 3 本から 2 本 (`submit` / `exfil`) にした (ADR-0034 D12 S1)。`POST /api/users/{user}/display-name` は collector でも 404/405 (default-deny) になる。`docs/openapi-collector.yaml` は 5 → 4 operation、`docs/openapi-scoreboard.yaml` は `x-ctf-collector-forward: true` が 3 → 2 本。**公開 contract の変更**: 外部クライアントが collector 経由で表示名を書いていた場合は、認証済みの profile route に移る必要がある。
+- 表示名と絵柄の設定は、ワークスペースの端末ではなくポータルの Me 画面に移った。初期値は seat のまま。案内文 (`banner.sh`、00-tutorial の welcome / step、ハンドブック、コマンド集) を差し替えた。
+- `deploy-user.sh` の `--display-name` を廃止した (ADR-0034 D10)。渡すと理由を stderr に出して exit 2 になり、kubectl / helm を呼ばずに止まる。deploy は表示名を書かない (旧 step 6 を削除、step 数は常に 5)。platform の `deploy-event-workspaces.sh --names-file` も同時に廃止する (platform 側の変更)。
+
+### Removed
+
+- 端末の `setname` (`challenges/setname.sh` と、challenge image の `/opt/ctf/setname.sh`) を撤去した。ワークスペースから表示名を書く経路はなくなる。
+- 参加者用 `POST /api/users/{user}/display-name` を spec と mux から撤去した。admin 用 `POST /api/admin/users/{user}/display-name` は残る。`internal-claimed-identity` の語彙は残す (webhook / exfil の browser-path 封鎖が同じ語彙を使うため)。
 
 ### Fixed
 
