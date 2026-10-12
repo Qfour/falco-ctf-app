@@ -31,7 +31,7 @@
  * docs-site palette (docs-site/docs/assets/extra.css) keeps its own copy of
  * that value and is updated by hand.
  *
- * Three sections below, kept separate because each namespace's PROPERTY
+ * Four sections below, kept separate because each namespace's PROPERTY
  * NAMES are still referenced verbatim from CSS elsewhere in the two
  * templates (renaming them would be a much bigger, riskier change than this
  * hex-dedup):
@@ -43,9 +43,11 @@
  *      no-op today — that fact is unchanged by this file, see app#116).
  *   3. Portal namespace (--p-* — templates/portal.html's unified pane
  *      tokens, P23 portal-redesign).
- * A new namespace (the P28 --q-* quest tokens) gets a section 4, appended
- * after section 3. A color token that belongs to the palette goes in section 1
- * and is aliased from the namespace that needs it.
+ *   4. Avatar namespace (--avatar-<color>, ADR-0034 D9): aliases only; the
+ *      four hues the palette did not have are written in section 1.
+ * A new namespace (the P28 --q-* quest tokens) gets the next free section
+ * (5), appended after section 4. A color token that belongs to the palette
+ * goes in section 1 and is aliased from the namespace that needs it.
  */
 
 :root {
@@ -78,6 +80,14 @@
   --silver: #CFE0E8;
   --bronze: #E0925A;
   --danger: #ff5c6a;
+  /* Avatar fills (ADR-0034 D9): hues the palette had no step for. They live
+     here (section 1, the one place a palette hex is written) and section 4
+     aliases them as --avatar-<color>. Each keeps white-glyph contrast >= 3:1
+     (TestAvatarColors_WhiteContrast reads them through the alias). */
+  --hot-pink: #D02D7A;      /* hot pink, apart from --evade violet by hue */
+  --burnt-orange: #A05A00;  /* darker than --warn so a white glyph reads */
+  --leaf-green: #6C9E10;    /* green-yellow, the lightest of the six */
+  --slate-blue: #5F7385;    /* blue-gray, the quiet one */
   /* Keyboard focus ring (P28-0a (3) a11y). An alias onto --falco, so no new
      hex. Contrast against every surface in use is >= 8.17:1 (WCAG 2.2 non-text
      contrast needs 3:1). Painted only by :focus-visible, see
@@ -177,7 +187,9 @@
   /* --- 4. Avatar background colors (ADR-0034 D9, S1). The six colors a
      participant picks for the circle behind a white glyph (static/avatars,
      one SVG per glyph). A color is applied to the img background and never
-     inside the SVG, where custom properties do not resolve. Rule: every value
+     inside the SVG, where custom properties do not resolve. Every value is an
+     alias onto a section-1 literal (the header's rule: a color token that
+     belongs to the palette is written once, in section 1). Rule: every value
      keeps white-glyph contrast >= 3:1 (WCAG 1.4.11, non-text). The tests
      compute this from this very file (TestAvatarColors_WhiteContrast), so a
      new value that is too light fails there. cyan and violet reuse existing
@@ -185,9 +197,9 @@
      band, so that on --surface-2 and --bg they still read as a disc. The
      comment on each line is the hue family. --- */
   --avatar-cyan: var(--falco-2);          /* Falco blue, the brand step */
-  --avatar-magenta: #D02D7A;              /* hot pink, apart from violet by hue */
-  --avatar-amber: #A05A00;                /* burnt orange, darker than --warn so white reads */
-  --avatar-lime: #6C9E10;                 /* green-yellow, the lightest of the six */
+  --avatar-magenta: var(--hot-pink);      /* hot pink, apart from violet by hue */
+  --avatar-amber: var(--burnt-orange);    /* burnt orange, darker than --warn so white reads */
+  --avatar-lime: var(--leaf-green);       /* green-yellow, the lightest of the six */
   --avatar-violet: var(--cyber-magenta-700); /* the evade violet, deep step */
-  --avatar-slate: #5F7385;                /* blue-gray, the quiet one */
+  --avatar-slate: var(--slate-blue);      /* blue-gray, the quiet one */
 }
