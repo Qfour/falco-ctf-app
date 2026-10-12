@@ -66,4 +66,6 @@ ingress:
   # disables this ingress entirely (no ingress at all is then rendered by
   # this chart).
   adminHost: ""
-  adminAuthUrl: "http://auth-policy.auth-policy.svc.cluster.local:80/check-admin"
+  # REMOVED (ADR-0034 D4): `adminAuthUrl`. The Ingress's auth-url is fixed in
+  # templates/ingress-admin.yaml to auth-policy /check-admin; setting the old
+  # value fails the render.

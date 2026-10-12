@@ -202,12 +202,13 @@ ingress:
   annotations: {}
 
   # P18 participant journey host (a SECOND ingress off the same scoreboard
-  # Service), gated by ANY authenticated login (not /check-admin). The
-  # scoreboard self-scopes reads off the forwarded X-Auth-Request-Email.
+  # Service), gated by auth-policy /check-participant (a rostered identity or an
+  # ADMIN_EMAILS member; not /check-admin). The scoreboard self-scopes reads off
+  # the canonical X-Auth-Request-Email auth-policy forwards.
   # Empty journeyHost = the journey ingress is not rendered (local dev / any env
   # that does not stand up a participant host). Real values are supplied by the
   # platform helmfile (key names MUST match platform feat/p18-journey-host:
-  # journeyHost / journeyAuthUrl / journeyAnnotations).
+  # journeyHost / journeyAnnotations).
   #
   # P19-2b (single origin): set this to the SAME value as `host` above (e.g.
   # both = app.<suffix>) — ingress.yaml (this admin Ingress) and
@@ -219,8 +220,10 @@ ingress:
   # unchanged. ttyd stays on its OWN per-user subdomain regardless
   # (`userN.<dnsSuffix>` — see charts/ctf-user, unrelated to this host).
   journeyHost: ""
-  # oauth2-proxy any-login auth subrequest (e.g. https://<suffix>/oauth2/auth).
-  journeyAuthUrl: "http://oauth2-proxy.example.invalid/oauth2/auth"
+  # REMOVED (ADR-0034 D4): `journeyAuthUrl`. The participant Ingress's auth-url is
+  # fixed in templates/ingress-journey.yaml to auth-policy /check-participant
+  # (an ADMIN_EMAILS member or a rostered identity); setting the old value now
+  # fails the render. The admin Ingress is likewise fixed to /check-admin.
   # Extra annotations for the journey ingress ONLY. Kept separate from
   # `annotations` on purpose: the shared block may carry a cert-manager issuer /
   # per-host secretName which would make the journey host issue a redundant

@@ -38,6 +38,15 @@
 charts/*
 !charts/scoreboard/
 !charts/falco-ctf-common/
+# ADR-0034 V12 renders EVERY app chart (auth-policy, collector, docs, ctf-user
+# too) inside Dockerfile.test to pin each Ingress's auth-url, so those charts
+# are in the test build context as well. Image Dockerfiles COPY explicit narrow
+# paths and never charts/, so this only affects `make test` / `make tidy`
+# build-cache locality, exactly as the paragraph above describes.
+!charts/auth-policy/
+!charts/collector/
+!charts/docs/
+!charts/ctf-user/
 
 # Scan output
 scan-logs/

@@ -1,4 +1,7 @@
 {{- if and .Values.ingress.enabled .Values.ingress.journeyHost }}
+{{- if hasKey .Values.ingress "journeyAuthUrl" }}
+{{- fail "ingress.journeyAuthUrl was removed (ADR-0034 D4): the participant Ingress's auth-url is fixed to auth-policy /check-participant; delete the value" }}
+{{- end }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -7,9 +10,14 @@ metadata:
   labels:
     {{- include "falco-ctf-common.labels" (dict "name" "scoreboard" "managedBy" .Release.Service) | nindent 4 }}
   annotations:
-    # P18 participant gate: ANY authenticated login (oauth2-proxy /oauth2/auth
-    # directly — no host<->email binding, no admin allowlist). The scoreboard
-    # self-scopes reads off the forwarded X-Auth-Request-Email.
+    # Participant gate (ADR-0034 D4): auth-policy /check-participant — an
+    # ADMIN_EMAILS member, or an identity the roster resolves to a seat. It was
+    # "ANY authenticated login" (oauth2-proxy /oauth2/auth directly) until
+    # ADR-0034: with an external IdP "authenticated" is a much larger set than
+    # "invited". The endpoint is FIXED here (no value can point this Ingress back
+    # at oauth2-proxy), and auth-policy rewrites X-Auth-Request-{Email,User,
+    # Preferred-Username} to the canonical <seat>@<EXPECTED_EMAIL_DOMAIN>, so the
+    # scoreboard's self check is plain equality on that form.
     #
     # P19-2b: `.Values.ingress.host` (admin, see ingress.yaml) and
     # `.Values.ingress.journeyHost` (this Ingress) are now expected to be the
@@ -25,7 +33,7 @@ metadata:
     # host's /check-admin gate (I8: this does NOT loosen the auth boundary —
     # admin ingress.yaml + its /check-admin stay untouched; self-scope
     # enforcement lives server-side in the scoreboard).
-    nginx.ingress.kubernetes.io/auth-url: {{ .Values.ingress.journeyAuthUrl | quote }}
+    nginx.ingress.kubernetes.io/auth-url: "http://auth-policy.auth-policy.svc.cluster.local:80/check-participant"
     {{- with .Values.ingress.authSignin }}
     nginx.ingress.kubernetes.io/auth-signin: {{ . | quote }}
     {{- end }}
