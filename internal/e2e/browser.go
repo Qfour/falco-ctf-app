@@ -435,9 +435,25 @@ func (b *Browser) Reload() {
 	}
 }
 
-// Click clicks the first element matching the CSS selector.
+// Click clicks the first element matching the CSS selector, the way a person
+// would: the element is scrolled to the middle of the viewport (the portal's
+// fixed navigation bar covers an element scrolled to the top edge), and the
+// click is refused when something else would receive it.
 func (b *Browser) Click(selector string) {
 	b.t.Helper()
+	sel := strconv.Quote(selector)
+	covered := Eval[string](b, `(function () {
+  var el = document.querySelector(`+sel+`);
+  if (!el) return 'no element matches';
+  el.scrollIntoView({ block: 'center', inline: 'center' });
+  var r = el.getBoundingClientRect();
+  var top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+  if (top && (top === el || el.contains(top))) return '';
+  return 'covered by ' + (top ? top.tagName + (top.id ? '#' + top.id : '') : 'nothing');
+})()`)
+	if covered != "" {
+		b.t.Fatalf("click %s: %s\n%s", selector, covered, b.diagnostics())
+	}
 	ctx, cancel := b.limited()
 	defer cancel()
 	if err := chromedp.Do(ctx, chromedp.Click(chromedp.CSS(selector))); err != nil {

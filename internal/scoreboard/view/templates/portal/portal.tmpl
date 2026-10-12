@@ -4,6 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Falco CTF · portal</title>
+<!-- No favicon is served: an empty data: icon stops the browser asking for
+     /favicon.ico, whose 404 is a console error on every page load. The browser
+     E2E (ADR-0031) fails on any console error and does not allow-list this one;
+     a data: URL stays inside img-src 'self' data:. -->
+<link rel="icon" href="data:,">
 <!-- Chakra Petch / Inter / JetBrains Mono (app#96, P12 follow-up): vendored,
      self-hosted, SIL OFL — see internal/scoreboard/view/vendor/fonts/
      PROVENANCE.md for the fetch URL/sha256/license per file and
