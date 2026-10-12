@@ -11,7 +11,7 @@ package authpolicy_test
 // (the exact shape scoreboard's authz_test.go package doc describes).
 //
 // Structural difference from scoreboard's version: auth-policy's "self"
-// binding is NOT a {user} path segment — GET /check reads a `?host=`
+// binding is NOT a {user} path segment — GET /check-workspace reads a `?host=`
 // QUERY PARAMETER and compares it against the identity oauth2-proxy's
 // /oauth2/auth subrequest returns (never a header on the incoming
 // request itself). So this file derives its case table from
@@ -33,30 +33,30 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
 )
 
-// authzSelfHost is the ?host= value every /check-shaped case in this file
-// uses. authzMismatchedEmail below is deliberately NEITHER "alice@..." NOR
-// in the admin allowlist, so it satisfies neither half of /check's
-// disjunction (I8 prefix-exact OR admin override) and neither half of
-// /check-admin's allowlist check.
+// authzSelfHost is the ?host= value every /check-workspace case in this file
+// uses. authzMismatchedEmail below is deliberately NEITHER a rostered
+// identity NOR in the admin allowlist, so it satisfies neither half of
+// /check-workspace's and /check-participant's disjunction (roster seat OR
+// admin override) and neither half of /check-admin's allowlist check.
 const authzSelfHost = "alice"
 
 // authzMismatchedEmail is what the fake oauth2-proxy upstream returns for
 // every request this file issues. It must fail BOTH gates so every
 // Authz: admin / self-or-admin case in the derived table produces the same
 // expected 403 without per-route bespoke identities.
-const authzMismatchedEmail = "mallory@ctf.local"
+const authzMismatchedEmail = "mallory@ctf.local" // not in fixtureRoster
 
 // authzAdminAllowlist is the ADMIN_EMAILS entry configured on the fixture
 // handler. authzMismatchedEmail is deliberately NOT a member.
 const authzAdminAllowlist = "admin@ctf.local"
 
-// authzTarget builds a concrete httptest target for rt. /check is the only
+// authzTarget builds a concrete httptest target for rt. /check-workspace is the only
 // route in this service whose "self" binding lives in a query string rather
 // than a mux path segment (auth-policy's routes carry no {name} path
 // parameters at all today), so this is a simpler, single-case version of
 // scoreboard authz_test.go's authzConcretePath.
 func authzTarget(rt apispec.Route) string {
-	if rt.Pattern == "/check" {
+	if rt.Pattern == "/check-workspace" {
 		return rt.Pattern + "?host=" + authzSelfHost
 	}
 	return rt.Pattern
@@ -78,9 +78,9 @@ func authzCheck(t *testing.T, srv http.Handler, rt apispec.Route) string {
 	srv.ServeHTTP(w, r)
 
 	switch rt.Authz {
-	case apispec.AuthzAdmin, apispec.AuthzSelfOrAdmin, apispec.AuthzSelfOrAdminWrite:
+	case apispec.AuthzAdmin, apispec.AuthzSelfOrAdmin, apispec.AuthzSelfOrAdminWrite, apispec.AuthzRostered:
 		if w.Code != http.StatusForbidden {
-			return fmt.Sprintf("%s: status=%d body=%s, want 403 (Authz: %s — %s satisfies neither host=%s nor the admin allowlist)",
+			return fmt.Sprintf("%s: status=%d body=%s, want 403 (Authz: %s — %s satisfies neither the roster (host=%s) nor the admin allowlist)",
 				rt.MuxPattern(), w.Code, w.Body, rt.Authz, authzMismatchedEmail, authzSelfHost)
 		}
 	case apispec.AuthzNone, apispec.AuthzClaimedIdentity:
@@ -105,7 +105,7 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 	defer upstream.Close()
 	h := newAdminHandler(upstream.URL, authzAdminAllowlist)
 
-	var adminGated, selfGated, openGated int
+	var adminGated, selfGated, rosteredGated, openGated int
 	for _, rt := range h.Routes() {
 		rt := rt
 		switch rt.Authz {
@@ -113,6 +113,8 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 			adminGated++
 		case apispec.AuthzSelfOrAdmin, apispec.AuthzSelfOrAdminWrite:
 			selfGated++
+		case apispec.AuthzRostered:
+			rosteredGated++
 		case apispec.AuthzNone, apispec.AuthzClaimedIdentity:
 			openGated++
 		}
@@ -125,14 +127,17 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 
 	// Non-vacuous count guards (mirrors scoreboard authz_test.go's V8-2
 	// discipline): pin the per-class counts to ADR-0005 C1's real-world
-	// canon (4 routes total) so a route silently losing its classification
+	// canon (5 routes total, ADR-0034 D3) so a route silently losing its classification
 	// — or the derivation breaking outright — shows up as a numeric
 	// assertion failure, not a shrinking, easy-to-miss subtest count.
 	if adminGated != 1 {
 		t.Fatalf("expected exactly 1 Authz: admin route (GET /check-admin), got %d", adminGated)
 	}
 	if selfGated != 1 {
-		t.Fatalf("expected exactly 1 Authz: self-or-admin route (GET /check), got %d", selfGated)
+		t.Fatalf("expected exactly 1 Authz: self-or-admin route (GET /check-workspace), got %d", selfGated)
+	}
+	if rosteredGated != 1 {
+		t.Fatalf("expected exactly 1 Authz: rostered route (GET /check-participant), got %d", rosteredGated)
 	}
 	if openGated != 2 {
 		t.Fatalf("expected exactly 2 Authz: none routes (GET /healthz, GET /metrics), got %d", openGated)

@@ -90,9 +90,15 @@ deploy-local: helm-dep-build
 	  --set persistence.storageClassName=local-path \
 	  --set ingress.host=scoreboard.192.168.64.2.nip.io --set ingress.tls=true \
 	  --set ingress.authSignin='http://auth.192.168.64.2.nip.io/oauth2/start?rd=$$scheme://$$host$$escaped_request_uri'
+	@# ADR-0034 D2: auth-policy refuses to start without a roster, so the dev
+	@# roster Secret (key roster.yaml) must exist before the pod. The dev admin
+	@# must NOT be a roster seat's canonical email (startup error), hence
+	@# admin@ctf.local and not user1@ctf.local.
+	kubectl -n auth-policy create secret generic auth-policy-roster \
+	  --from-file=roster.yaml=scripts/dev-roster.yaml --dry-run=client -o yaml | kubectl apply -f -
 	helm upgrade --install auth-policy charts/auth-policy -n auth-policy \
 	  --set image.tag=dev \
-	  --set env.expectedEmailDomain=ctf.local --set env.adminEmails=user1@ctf.local
+	  --set env.expectedEmailDomain=ctf.local --set env.adminEmails=admin@ctf.local
 
 # P21 item 5 (REFACTORING.md): charts/{scoreboard,auth-policy,collector,docs,
 # ctf-user} pull in the charts/falco-ctf-common library chart

@@ -12,6 +12,7 @@ RUN go mod download
 
 COPY cmd/auth-policy ./cmd/auth-policy
 COPY internal/authpolicy ./internal/authpolicy
+COPY internal/identity ./internal/identity
 COPY internal/serverutil ./internal/serverutil
 # Only route.go (Route/Register, stdlib-only) — NOT the whole internal/apispec
 # directory, which also holds internal/apispec/specparity (yaml.v3-dependent

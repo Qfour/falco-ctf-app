@@ -5,21 +5,23 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-// checksTotal counts /check decisions by outcome. Cardinality is bounded
-// (~5 enum values), no per-user labels.
+// checksTotal counts /check-workspace and /check-participant decisions by
+// endpoint and outcome. Cardinality is bounded (2 x ~6 enum values), no
+// per-user labels. Alerts that sum over it without `by (endpoint)` keep working.
 //
-//	result: "ok" | "unauthenticated" | "forbidden" | "bad_request" | "upstream_error"
+//	endpoint: "workspace" | "participant"
+//	result:   "ok" | "ok_admin" | "unauthenticated" | "forbidden" | "bad_request" | "upstream_error"
 var checksTotal = promauto.NewCounterVec(
 	prometheus.CounterOpts{
 		Namespace: "auth_policy",
 		Name:      "checks_total",
-		Help:      "auth-policy /check decisions, labelled by outcome.",
+		Help:      "auth-policy /check-workspace and /check-participant decisions, labelled by endpoint and outcome.",
 	},
-	[]string{"result"},
+	[]string{"endpoint", "result"},
 )
 
 // adminChecksTotal mirrors checksTotal for /check-admin so operators can
-// alert on admin-gate failures separately from the per-user gate.
+// alert on admin-gate failures separately from the roster gates.
 var adminChecksTotal = promauto.NewCounterVec(
 	prometheus.CounterOpts{
 		Namespace: "auth_policy",

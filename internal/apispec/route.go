@@ -97,6 +97,12 @@ const (
 	// gate). A missing/blank header is still fail-closed 403 — see
 	// api.Handler.requireAuthenticated.
 	AuthzAuthenticated Authz = "authenticated"
+	// AuthzRostered (ADR-0034 D3, auth-policy GET /check-participant): the
+	// ingress subrequest answers 200 only for an ADMIN_EMAILS member or an
+	// identity the roster resolves to a seat; everything else is 403. There is
+	// no {user} to match against (that is AuthzSelfOrAdmin's workspace
+	// counterpart on /check-workspace?host=): this is the participant door.
+	AuthzRostered Authz = "rostered"
 )
 
 // Route is one row of a service's declarative route table — the single
