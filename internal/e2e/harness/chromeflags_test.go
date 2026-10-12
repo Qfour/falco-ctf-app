@@ -84,3 +84,49 @@ func TestChromiumPath_MissingBrowserIsAnError(t *testing.T) {
 		t.Error("ChromiumPath accepted a file that is not executable")
 	}
 }
+
+// The live command line is checked, not only the list we built: each case is a
+// switch that reaches a process by a route the static checks do not see.
+func TestCheckArgv_AcceptsOnlyTheAllowlistPlusChromedpsOwn(t *testing.T) {
+	const bin = "/usr/lib/chromium/chromium"
+	good := []string{bin, "--headless", "--lang=ja-JP", "--host-resolver-rules=MAP * ~NOTFOUND",
+		"--user-data-dir=/tmp/x/profile", "--remote-debugging-pipe", "about:blank"}
+	if err := CheckArgv(bin, good); err != nil {
+		t.Fatalf("a command line made of allowed switches was refused: %v", err)
+	}
+	cases := []struct {
+		name string
+		argv []string
+		want string
+	}{
+		{"empty", nil, "started as"},
+		{"a wrapper script instead of the binary", append([]string{"/usr/bin/chromium"}, good[1:]...), "wrapper"},
+		{"certificate errors off, added by ModifyCmdFunc", append(append([]string{}, good...), "--ignore-certificate-errors"), "banned"},
+		{"web security off", append(append([]string{}, good...), "--disable-web-security"), "banned"},
+		{"a proxy server", append(append([]string{}, good...), "--proxy-server=http://evil.example:3128"), "allowlist"},
+		{"a listening debug port", append(append([]string{}, good...), "--remote-debugging-port=9222"), "allowlist"},
+		{"a bare URL other than about:blank", append(append([]string{}, good...), "http://evil.example/"), "not a --switch"},
+		{"a switch one of chromedp's defaults would add", append(append([]string{}, good...), "--enable-automation"), "allowlist"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := CheckArgv(bin, c.argv)
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("CheckArgv(%q) = %v, want an error mentioning %q", c.argv, err, c.want)
+			}
+		})
+	}
+}
+
+func TestReadArgv_ReadsAProcessCommandLine(t *testing.T) {
+	if _, err := os.Stat("/proc/self/cmdline"); err != nil {
+		t.Skip("no /proc")
+	}
+	argv, err := ReadArgv(os.Getpid())
+	if err != nil || len(argv) == 0 {
+		t.Fatalf("ReadArgv(self) = %q, %v", argv, err)
+	}
+	if _, err := ReadArgv(-1); err == nil {
+		t.Error("ReadArgv of a process that does not exist succeeded")
+	}
+}

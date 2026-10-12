@@ -134,6 +134,7 @@ docker buildx imagetools inspect golang:1.26-alpine --format '{{.Manifest.MediaT
 #                                       go-vulncheck/gen-diff-check が旧イメージで回り CVE ゲートが
 #                                       赤のまま漏れる。app#78/#87 で発覚)、
 #     distroless static-debian13:nonroot = scoreboard/auth-policy、
+#                                       Dockerfile.e2e (serve stage。`make e2e-serve` のイメージ)、
 #     alpine:3.24                     = images/{ttyd,challenge}、
 #     python:3.12-slim                = images/docs (build stage)、
 #     nginx-unprivileged:1.30-alpine  = images/docs (serve stage)、

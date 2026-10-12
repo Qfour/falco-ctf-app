@@ -87,6 +87,7 @@ type Browser struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+	bin    string // the browser binary, argv[0] of the live process
 
 	mu          sync.Mutex
 	cond        *sync.Cond
@@ -157,7 +158,7 @@ func NewBrowser(t *testing.T, cfg BrowserConfig) *Browser {
 		opts = append(opts, chromedp.Flag(f.Name, f.Value))
 	}
 
-	b := &Browser{t: t, proxy: cfg.Proxy, allowed: map[string]bool{cfg.Proxy.Origin(): true}, flushSeen: map[string]int{}}
+	b := &Browser{t: t, bin: path, proxy: cfg.Proxy, allowed: map[string]bool{cfg.Proxy.Origin(): true}, flushSeen: map[string]int{}}
 	b.cond = sync.NewCond(&b.mu)
 	for _, o := range cfg.ExtraOrigins {
 		b.allowed[o] = true
@@ -211,6 +212,15 @@ func NewBrowser(t *testing.T, cfg BrowserConfig) *Browser {
 		b.Close()
 		t.Fatalf("browser setup: %v", err)
 	}
+	// The flags we passed were checked above; what the process really got is
+	// checked here (a switch can arrive by a route the static checks do not see).
+	if argv, err := b.Argv(); err != nil {
+		b.Close()
+		t.Fatalf("browser command line: %v", err)
+	} else if err := harness.CheckArgv(b.bin, argv); err != nil {
+		b.Close()
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
 		if t.Failed() {
 			b.dumpDiagnostics()
@@ -218,6 +228,17 @@ func NewBrowser(t *testing.T, cfg BrowserConfig) *Browser {
 		b.Close()
 	})
 	return b
+}
+
+// Argv is the command line the browser process is running with, read back from
+// /proc (V3: the allowlist is checked against the live process, not only
+// against the list the harness built).
+func (b *Browser) Argv() ([]string, error) {
+	c := chromedp.FromContext(b.ctx)
+	if c == nil || c.Browser == nil || c.Browser.Process() == nil {
+		return nil, errors.New("the browser process is not known")
+	}
+	return harness.ReadArgv(c.Browser.Process().Pid)
 }
 
 // Close stops the browser and the collector goroutines.

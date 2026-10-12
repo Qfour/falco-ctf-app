@@ -264,9 +264,37 @@ var bannedSleepCalls = map[string]map[string]bool{
 	"chromedp": {"Sleep": true},
 }
 
+// bannedBrowserIdents are chromedp / CDP names that switch off a check or
+// rewrite what the browser would see by a route the Chromium flag allowlist
+// does not cover: a trust or proxy switch set through chromedp's own options,
+// the escape hatch that edits the command line afterwards, chromedp's default
+// option set (a dozen unreviewed switches), a connection to some other
+// browser, CDP's certificate-error override, and request interception (which
+// can answer in place of the server). The live command line is checked as well
+// (harness.CheckArgv), but a CDP call leaves no trace there.
+var bannedBrowserIdents = map[string]string{
+	"IgnoreCertErrors":            "switches certificate checking off",
+	"ProxyServer":                 "sends the browser's traffic elsewhere",
+	"ModifyCmdFunc":               "edits the command line after the allowlist was checked",
+	"DefaultExecAllocatorOptions": "brings switches nobody reviewed",
+	"NewRemoteAllocator":          "drives a browser the harness did not launch with its allowlist",
+	"SetIgnoreCertificateErrors":  "Security.setIgnoreCertificateErrors switches certificate checking off",
+	"SetRequestInterception":      "can answer a request in place of the server",
+	"FulfillRequest":              "Fetch.fulfillRequest answers a request in place of the server",
+	"ContinueResponse":            "Fetch.continueResponse rewrites a response",
+}
+
+// bannedBrowserImports are CDP domains the harness has no use for: Fetch (answers
+// or rewrites requests and responses) and Security (certificate overrides).
+var bannedBrowserImports = []string{
+	"github.com/chromedp/cdproto/fetch",
+	"github.com/chromedp/cdproto/security",
+}
+
 // e2eSourceViolations parses every .go file under dir (testdata excluded) and
 // reports a sleep or timer call, any identifier or string that names
-// Page.setBypassCSP, and a string literal that is a banned Chromium switch
+// Page.setBypassCSP, a banned chromedp / CDP name or import (see
+// bannedBrowserIdents), and a string literal that is a banned Chromium switch
 // (outside the files that define and test the ban list).
 func e2eSourceViolations(t *testing.T, dir string, banFiles ...string) []string {
 	t.Helper()
@@ -303,6 +331,16 @@ func e2eSourceViolations(t *testing.T, dir string, banFiles ...string) []string 
 				if strings.Contains(strings.ToLower(x.Name), "bypasscsp") {
 					report(x.Pos(), "identifier "+x.Name+" (Page.setBypassCSP is forbidden)")
 				}
+				if why, bad := bannedBrowserIdents[x.Name]; bad {
+					report(x.Pos(), "identifier "+x.Name+" ("+why+")")
+				}
+			case *ast.ImportSpec:
+				ip, _ := strconv.Unquote(x.Path.Value)
+				for _, b := range bannedBrowserImports {
+					if ip == b || strings.HasPrefix(ip, b+"/") {
+						report(x.Pos(), "import "+x.Path.Value+" (a CDP domain that rewrites requests, responses or certificate trust)")
+					}
+				}
 			case *ast.BasicLit:
 				if x.Kind != token.STRING {
 					return true
@@ -310,6 +348,11 @@ func e2eSourceViolations(t *testing.T, dir string, banFiles ...string) []string 
 				s, _ := strconv.Unquote(x.Value)
 				if strings.Contains(strings.ToLower(s), "bypasscsp") {
 					report(x.Pos(), "string "+x.Value+" (Page.setBypassCSP is forbidden)")
+				}
+				for _, cdp := range []string{"Security.setIgnoreCertificateErrors", "Fetch.", "Network.setRequestInterception"} {
+					if strings.Contains(s, cdp) {
+						report(x.Pos(), "string "+x.Value+" names the CDP method "+cdp+" (rewrites what the browser sees)")
+					}
 				}
 				if !slices.Contains(banFiles, filepath.Base(path)) {
 					for _, flag := range harness.BannedChromiumFlags {
@@ -346,6 +389,19 @@ func TestE2ESourceDetector_CatchesPlantedViolations(t *testing.T) {
 		"setBypassCSP call":    "package x\n\nfunc f(p interface{ SetBypassCSP(bool) }) { p.SetBypassCSP(true) }\n",
 		"setBypassCSP literal": "package x\n\nvar m = \"Page.setBypassCSP\"\n",
 		"disable-web-security": "package x\n\nvar f = \"--disable-web-security\"\n",
+		// V3 review (LOW-1): routes to the same ends that the flag allowlist and a
+		// string match on a switch name do not see.
+		"chromedp.IgnoreCertErrors":            "package x\n\nimport \"github.com/chromedp/chromedp\"\n\nvar _ = chromedp.IgnoreCertErrors\n",
+		"chromedp.ProxyServer":                 "package x\n\nimport \"github.com/chromedp/chromedp\"\n\nvar _ = chromedp.ProxyServer(\"http://x\")\n",
+		"chromedp.ModifyCmdFunc":               "package x\n\nimport \"github.com/chromedp/chromedp\"\n\nvar _ = chromedp.ModifyCmdFunc\n",
+		"chromedp.DefaultExecAllocatorOptions": "package x\n\nimport \"github.com/chromedp/chromedp\"\n\nvar _ = chromedp.DefaultExecAllocatorOptions\n",
+		"chromedp.NewRemoteAllocator":          "package x\n\nimport \"github.com/chromedp/chromedp\"\n\nvar _ = chromedp.NewRemoteAllocator\n",
+		"security.SetIgnoreCertificateErrors":  "package x\n\nfunc f(security interface{ SetIgnoreCertificateErrors(bool) }) { security.SetIgnoreCertificateErrors(true) }\n",
+		"fetch import":                         "package x\n\nimport _ \"github.com/chromedp/cdproto/fetch\"\n",
+		"security import":                      "package x\n\nimport _ \"github.com/chromedp/cdproto/security\"\n",
+		"fetch.FulfillRequest":                 "package x\n\nfunc f(fetch interface{ FulfillRequest(string) }) { fetch.FulfillRequest(\"1\") }\n",
+		"CDP method as a string":               "package x\n\nvar m = \"Fetch.fulfillRequest\"\n",
+		"Security CDP method as a string":      "package x\n\nvar m = \"Security.setIgnoreCertificateErrors\"\n",
 	}
 	for name, src := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -449,6 +505,12 @@ func TestTestIDDetector_CatchesPlantedReaders(t *testing.T) {
 
 var publishFlag = regexp.MustCompile(`(?:^|\s)(?:-p|--publish|-P|--publish-all)(?:\s+|=)?(\S*)`)
 
+// hostNetworkFlag matches --network host / --network=host (and the --net
+// spellings). Host networking makes the container's every listener a listener
+// of the host itself, on every interface: the -p 127.0.0.1 restriction would be
+// moot (docker ignores -p there), so it is as bad as publishing on 0.0.0.0.
+var hostNetworkFlag = regexp.MustCompile(`(?:^|\s)--net(?:work)?(?:\s+|=)["']?host["']?(?:\s|$)`)
+
 // e2eServePublishViolations checks the e2e-serve recipe's docker run: every
 // published port is bound to 127.0.0.1, there is at least one, and none is
 // -P / --publish-all (which publishes every EXPOSEd port on all interfaces).
@@ -464,6 +526,9 @@ func e2eServePublishViolations(makefile string) []string {
 	}
 	recipe = strings.ReplaceAll(recipe, "\\\n", " ")
 	var out []string
+	if hostNetworkFlag.MatchString(recipe) {
+		out = append(out, "runs with --network host (every listener of the container is then a listener of the host, whatever -p says)")
+	}
 	n := 0
 	for _, m := range publishFlag.FindAllStringSubmatch(recipe, -1) {
 		n++
@@ -499,6 +564,12 @@ func TestE2EServePublishDetector_CatchesPlantedViolations(t *testing.T) {
 		"long form":        strings.Replace(good, "-p 127.0.0.1:", "--publish 8787:", 1),
 		"second, open one": strings.Replace(good, "img", "-p 9000:9000 img", 1),
 		"no publish":       strings.Replace(good, "-p 127.0.0.1:$(E2E_PORT):$(E2E_PORT)", "", 1),
+		// V8 review (LOW-2): host networking is as open as 0.0.0.0, with -p still in place.
+		"--network host":                      strings.Replace(good, "--rm", "--rm --network host", 1),
+		"--network=host":                      strings.Replace(good, "--rm", "--rm --network=host", 1),
+		"--net=host":                          strings.Replace(good, "--rm", "--rm --net=host", 1),
+		"--network host quoted":               strings.Replace(good, "--rm", `--rm --network "host"`, 1),
+		"--network host at the end of a line": strings.Replace(good, "img", "--network host \\\n\t  img", 1),
 	} {
 		if v := e2eServePublishViolations(mk); len(v) == 0 {
 			t.Errorf("planted %q not flagged", name)

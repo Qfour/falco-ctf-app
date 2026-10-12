@@ -25,6 +25,9 @@ on:
           - Dockerfile.e2e
           - scripts/testdata/e2e-pin-BAD.txt
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: false

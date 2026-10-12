@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -144,4 +145,61 @@ func ChromiumPath(getenv func(string) string, stat func(string) (os.FileInfo, er
 		return "", errors.New("harness: " + path + " is not an executable file")
 	}
 	return path, nil
+}
+
+// chromedpAddedSwitches are the switches chromedp itself puts on the command
+// line besides the ones ChromiumFlags hands it: the profile directory (which
+// NewBrowser sets), the CDP transport, and the start page. They are the only
+// ones tolerated on a live process that are not in AllowedChromiumFlags.
+var chromedpAddedSwitches = map[string]bool{
+	"user-data-dir":         true,
+	"remote-debugging-pipe": true,
+}
+
+// CheckArgv checks the command line a running Chromium really has (read back
+// from /proc), not the list we meant to pass: a switch can arrive by a path the
+// static checks do not see (chromedp.ModifyCmdFunc, its default option set, an
+// env var Chromium reads, a wrapper script). Allowed: the binary itself as
+// argv[0], every switch in AllowedChromiumFlags, chromedp's own
+// (chromedpAddedSwitches) and the start page about:blank. A banned switch gets
+// its own message; anything else is "not in the allowlist".
+func CheckArgv(binary string, argv []string) error {
+	if len(argv) == 0 || argv[0] != binary {
+		return fmt.Errorf("harness: Chromium started as %q, want %q (a wrapper script adds switches of its own)", argv, binary)
+	}
+	banned := map[string]bool{}
+	for _, b := range BannedChromiumFlags {
+		banned[b] = true
+	}
+	for _, a := range argv[1:] {
+		if a == "about:blank" {
+			continue
+		}
+		name, ok := strings.CutPrefix(a, "--")
+		if !ok {
+			return fmt.Errorf("harness: Chromium has the argument %q, which is not a --switch", a)
+		}
+		name, _, _ = strings.Cut(name, "=")
+		switch {
+		case banned[name]:
+			return fmt.Errorf("harness: Chromium is running with the banned switch %q", a)
+		case AllowedChromiumFlags[name] != "", chromedpAddedSwitches[name]:
+		default:
+			return fmt.Errorf("harness: Chromium is running with %q, which is not in the allowlist", a)
+		}
+	}
+	return nil
+}
+
+// ReadArgv returns the command line of process pid (Linux: /proc/<pid>/cmdline,
+// NUL-separated).
+func ReadArgv(pid int) ([]string, error) {
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cmdline")
+	if err != nil {
+		return nil, fmt.Errorf("harness: reading the browser's command line: %w", err)
+	}
+	if len(b) == 0 {
+		return nil, fmt.Errorf("harness: the browser (pid %d) has an empty command line", pid)
+	}
+	return strings.Split(strings.TrimSuffix(string(b), "\x00"), "\x00"), nil
 }

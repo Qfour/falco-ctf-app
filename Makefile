@@ -165,8 +165,10 @@ test:
 # always exits 0 and leaves `go test -json` + its exit code in the export dir, and
 # scripts/e2e-verdict.py judges them HERE, fail-closed: exit code, this run's id and
 # SHA (a stale or cached verdict is refused), no skip, and the set of passed tests
-# equal to internal/e2e/expected_tests.txt. E2E_OUT is fixed (it is rm -rf'd).
-E2E_OUT := .e2e-out
+# equal to internal/e2e/expected_tests.txt. E2E_OUT is fixed (it is rm -rf'd):
+# `override` makes the assignment win over `make e2e E2E_OUT=...` and over an
+# E2E_OUT in the environment (under `make -e`), which a plain `:=` does not.
+override E2E_OUT := .e2e-out
 e2e:
 	rm -rf $(E2E_OUT)
 	mkdir -p $(E2E_OUT)

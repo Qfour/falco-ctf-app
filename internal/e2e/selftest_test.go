@@ -149,3 +149,28 @@ func TestSelfTest_BrowserIsMissingIsAnError(t *testing.T) {
 		t.Fatal("ChromiumPath accepted a browser that is not there")
 	}
 }
+
+// V3, the live half: the command line Chromium really runs with is read back
+// from /proc and holds only allowlisted switches, chromedp's own, and
+// about:blank. NewBrowser already refuses a browser that fails this; the test
+// states it independently, and checks the pieces the isolation depends on are
+// really there (a check that reads an empty line would pass for anything).
+func TestSelfTest_ChromiumRunsWithOnlyAllowlistedArgv(t *testing.T) {
+	b := selfTestBrowser(t, nil)
+	argv, err := b.Argv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := harness.CheckArgv(b.bin, argv); err != nil {
+		t.Fatalf("%v\nargv: %q", err, argv)
+	}
+	joined := "\x00" + strings.Join(argv, "\x00") + "\x00"
+	for _, want := range []string{"--headless", "--host-resolver-rules=", "--disable-extensions", "--user-data-dir="} {
+		if !strings.Contains(joined, "\x00"+want) {
+			t.Errorf("the live command line has no %s: %q", want, argv)
+		}
+	}
+	if len(argv) < 10 {
+		t.Errorf("the live command line is suspiciously short: %q", argv)
+	}
+}
