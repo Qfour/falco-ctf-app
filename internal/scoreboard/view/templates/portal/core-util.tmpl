@@ -34,4 +34,38 @@
 // Every other value goes through String(), so a number or boolean is escaped
 // as its string form.
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+// ---- Accessibility helpers (P28-0a (4)). Declared AFTER esc on purpose (see the
+// TDZ note above). They use textContent / Element.click() only, no markup.
+
+// announce(msg) speaks msg once through the portal's single polite live region
+// (#portal-live in portal.tmpl). Call it for a CHANGE a sighted user would
+// notice (a new solve, a new rule fire, a lost connection), never for the
+// 2-second polling repaint itself. The region is cleared first so the same
+// sentence twice in a row is still announced.
+const announce = (msg) => {
+  const el = document.getElementById('portal-live');
+  if (!el) return;
+  el.textContent = '';
+  setTimeout(() => { el.textContent = String(msg == null ? '' : msg); }, 50);
+};
+
+// Keyboard activation for a non-native control. A pane marks a <div>/<li>/<span>
+// that has a click handler as role="button" (Enter and Space) or
+// role="checkbox" (Space) plus tabindex="0", and this one delegated listener
+// turns the key into the same click the mouse produces. Native <button>,
+// <a>, <input>, <summary> are left to the browser. A pane that already handles
+// the key itself and calls preventDefault (the Leaderboard mission cards) is
+// skipped, so nothing fires twice. Needs no re-wiring after an innerHTML
+// repaint: it is attached to document, once.
+document.addEventListener('keydown', (e) => {
+  if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
+  const el = e.target;
+  if (!el || !el.getAttribute || el.matches('a, button, input, select, textarea, summary')) return;
+  const role = el.getAttribute('role');
+  const ok = role === 'button' ? (e.key === 'Enter' || e.key === ' ') : (role === 'checkbox' && e.key === ' ');
+  if (!ok) return;
+  e.preventDefault();
+  el.click();
+});
 </script>

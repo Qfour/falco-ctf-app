@@ -42,6 +42,11 @@
   const user = window.__PORTAL_USER__ || '';
   const fireSeen = new Set();
   let firstRender = true;
+  // P28-0a (4): what the screen reader is told when the polled data CHANGES
+  // (announce() in core-util.tmpl). The 2-second repaint itself is not
+  // announced; lastSolved and connOK make each announcement fire once per change.
+  let lastSolved = null;
+  let connOK = true;
 
   if (!user) {
     document.getElementById('pane-me-page').innerHTML = `
@@ -60,8 +65,10 @@
       if (!r.ok) throw new Error('HTTP ' + r.status);
       render(await r.json());
       document.getElementById('pane-me-updated').textContent = 'updated ' + new Date().toLocaleTimeString();
+      if (!connOK) { connOK = true; announce('Connection restored.'); }
     } catch (e) {
       document.getElementById('pane-me-updated').textContent = 'connection error';
+      if (connOK) { connOK = false; announce('Connection error. Retrying.'); }
     }
   }
 
@@ -92,6 +99,7 @@
       nextHTML = `<span class="target">No challenges loaded yet</span>`;
     }
 
+    const freshFires = [];   // rule names that appeared since the last poll (filled while building the fires list below)
     const displayName = d.display_name || user;
     const identitySuffix = (displayName !== user) ? ` <span style="color:var(--text-mute); font-weight:400; font-size:0.85rem">(${esc(user)})</span>` : '';
     document.getElementById('pane-me-page').innerHTML = `
@@ -152,6 +160,7 @@
               : fires.slice().reverse().map(f => {
                   const key = f.rule + ':' + f.at;
                   const fresh = !firstRender && !fireSeen.has(key);
+                  if (fresh) freshFires.push(f.rule);
                   fireSeen.add(key);
                   return `<div class="fire-item${fresh ? ' fresh' : ''}">
                     <div class="rule">${esc(f.rule)}</div>
@@ -162,6 +171,15 @@
         </section>
       </div>
     `;
+    // Announce only what changed since the previous poll (never on the first paint).
+    if (!firstRender) {
+      if (lastSolved !== null && solvedCount > lastSolved) {
+        announce('Challenge solved. ' + solvedCount + ' of ' + total + ' done.');
+      } else if (freshFires.length > 0) {
+        announce('Falco rule fired: ' + freshFires.join(', '));
+      }
+    }
+    lastSolved = solvedCount;
     firstRender = false;
   }
 })();

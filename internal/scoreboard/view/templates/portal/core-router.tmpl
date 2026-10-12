@@ -39,8 +39,57 @@
       const pane = document.getElementById('pane-' + t);
       if (pane) pane.classList.toggle('active', t === tab);
       const link = document.querySelector('#portal-tabs .tab[data-tab="' + t + '"]');
-      if (link) link.classList.toggle('active', t === tab);
+      if (link) {
+        link.classList.toggle('active', t === tab);
+        // app#285: tablist state. Roving tabindex: only the selected tab is in
+        // the Tab order; the others are reached with the arrow keys (below).
+        link.setAttribute('aria-selected', t === tab ? 'true' : 'false');
+        link.tabIndex = (t === tab) ? 0 : -1;
+      }
     }
+  }
+
+  // app#285: each pane is the tabpanel of its tab. Set once here, not in the
+  // pane partials, so a new pane needs only its PORTAL_TABS entry and a tab
+  // link with id="tab-<id>".
+  function wireTabpanels() {
+    for (const t of PORTAL_TABS) {
+      const pane = document.getElementById('pane-' + t);
+      if (!pane) continue;
+      pane.setAttribute('role', 'tabpanel');
+      pane.setAttribute('aria-labelledby', 'tab-' + t);
+    }
+  }
+
+  // app#285: WAI-ARIA tabs keyboard model with automatic activation. Left /
+  // Right move to the previous / next visible tab (wrapping), Home / End to the
+  // first / last; the tab is focused and the hash follows, which showTab()
+  // renders. Space activates the focused tab like Enter (a link only reacts to
+  // Enter natively). Hidden tabs (the admin-only Leaderboard for a participant)
+  // are skipped.
+  function wireTablistKeys() {
+    const tablist = document.getElementById('portal-tablist');
+    if (!tablist) return;
+    tablist.addEventListener('keydown', (e) => {
+      if (e.altKey || e.ctrlKey || e.metaKey) return;
+      const cur = e.target.closest ? e.target.closest('.tab') : null;
+      if (!cur) return;
+      const tabs = Array.from(tablist.querySelectorAll('.tab')).filter((t) => !t.hidden);
+      const i = tabs.indexOf(cur);
+      if (i < 0) return;
+      let next;
+      switch (e.key) {
+        case 'ArrowRight': next = tabs[(i + 1) % tabs.length]; break;
+        case 'ArrowLeft': next = tabs[(i - 1 + tabs.length) % tabs.length]; break;
+        case 'Home': next = tabs[0]; break;
+        case 'End': next = tabs[tabs.length - 1]; break;
+        case ' ': next = cur; break;
+        default: return;
+      }
+      e.preventDefault();
+      next.focus();
+      location.hash = '#' + next.dataset.tab;
+    });
   }
 
   function applyRole() {
@@ -72,6 +121,8 @@
   }
 
   window.addEventListener('hashchange', () => showTab(currentTab()));
+  wireTabpanels();
+  wireTablistKeys();
   applyRole();
   showTab(currentTab());
 </script>
