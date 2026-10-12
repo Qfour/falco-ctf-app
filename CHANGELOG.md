@@ -24,6 +24,7 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
 - **Upgrade note (migration 2 / ロールバック)**: この版の scoreboard が一度起動した DB は `PRAGMA user_version = 2` になる。以降、この版より前の image に戻すと、旧 image は ADR-0020 の downgrade guard (fail-closed) により起動を拒否する (`database schema version v2 is newer than this binary supports`)。復旧は次のどちらか。
   - **DB を復元する** — migration 前の PVC snapshot / 退避を戻す (確実。その後に書かれた solve は失われる)。
   - **`avatars` は additive なので `user_version` を 1 に戻す** — scoreboard を止めて (replicas=1 + Recreate)、DB ファイルに `PRAGMA user_version = 1;` を実行してから旧 image を起動する (scoreboard の image に `sqlite3` は無いので、DB を別 Pod にマウントするか取り出して実行する)。旧 image は `avatars` 表を読まず、自分の表はそのまま使える。後でこの版に上げ直すと migration 2 は `CREATE TABLE IF NOT EXISTS` なので、戻す前に選ばれていた絵柄は残る。`internal/store` の `TestMigrate_RollbackToV1_OldBinaryRunsAndAReUpgradeKeepsAvatars` が旧 binary の拒否・戻した後の起動・再アップグレードを固定している。実機の PVC での手順は未リハーサル。
+  - **戻し先は display-name の封鎖 (Security 項) を含む版に限る** — それより前の image に戻すと、origin-guard の無い参加者用 display-name route が journey ingress に戻り、CSRF と ADMIN_EMAILS の oracle が復活する。
 
 ### Changed
 
