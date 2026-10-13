@@ -37,13 +37,18 @@ metadata:
     nginx.ingress.kubernetes.io/auth-signin: {{ . | quote }}
     {{- end }}
     nginx.ingress.kubernetes.io/auth-response-headers: "X-Auth-Request-User,X-Auth-Request-Email,X-Auth-Request-Preferred-Username"
-    {{- /* The passthrough must not replace the identity-stamping gate: overriding
-         either key would let browser requests reach the scoreboard WITHOUT
-         X-Auth-Request-* (indistinguishable from the collector / falcosidekick
-         path, so the internal-only 403s stop firing). Refuse at render time. */ -}}
-    {{- range $k := list "nginx.ingress.kubernetes.io/auth-url" "nginx.ingress.kubernetes.io/auth-response-headers" }}
-    {{- if hasKey (default dict $.Values.ingress.annotations) $k }}
-    {{- fail (printf "ingress.annotations must not set %s (it is fixed by this chart: the auth gate is not overridable)" $k) }}
+    {{- /* The passthrough must not replace or weaken the identity-stamping gate
+         (ADR-0034 D4). The whole nginx.ingress.kubernetes.io/auth- namespace is
+         refused, not just auth-url / auth-response-headers: auth-cache-key and
+         auth-cache-duration would reuse one caller's 200 (with its canonical
+         identity headers) for another, or keep a revoked seat admitted for the
+         cache period; auth-snippet and auth-proxy-set-headers change what the
+         auth subrequest carries. Without X-Auth-Request-* from auth-policy the
+         browser path is indistinguishable from the collector / falcosidekick
+         path, so the internal-only 403s stop firing. Refuse at render time. */ -}}
+    {{- range $k, $_ := (default dict $.Values.ingress.annotations) }}
+    {{- if hasPrefix "nginx.ingress.kubernetes.io/auth-" (toString $k) }}
+    {{- fail (printf "ingress.annotations must not set %s (every nginx.ingress.kubernetes.io/auth-* annotation is fixed by this chart: the auth gate is not overridable)" $k) }}
     {{- end }}
     {{- end }}
     {{- with .Values.ingress.annotations }}

@@ -6,11 +6,8 @@ package ingressparity
 
 import (
 	"os/exec"
-	"sort"
 	"strings"
 	"testing"
-
-	"gopkg.in/yaml.v3"
 )
 
 func v12MustHelm(t *testing.T) {
@@ -253,7 +250,14 @@ func TestV12_RenderTimeGuards(t *testing.T) {
 		name, chart, set, wantErr string
 	}
 	var cases []tc
-	for _, key := range []string{"auth-url", "auth-response-headers"} {
+	// D4: the whole nginx.ingress.kubernetes.io/auth- namespace is refused (prefix
+	// match), including the cache and subrequest-shaping keys that do not
+	// replace the endpoint but let one caller's 200 be reused for another
+	// (auth-cache-key / auth-cache-duration), keep a removed seat admitted for
+	// the cache period, or change what the subrequest carries (auth-snippet /
+	// auth-proxy-set-headers). auth-signin is also refused here: the chart owns
+	// it through the dedicated ingress.authSignin value.
+	for _, key := range []string{"auth-url", "auth-response-headers", "auth-cache-key", "auth-cache-duration", "auth-snippet", "auth-proxy-set-headers", "auth-signin", "auth-method", "auth-tls-secret"} {
 		cases = append(cases,
 			tc{"scoreboard admin passthrough sets " + key, "scoreboard", "ingress.annotations." + prefix + key + "=x", "must not set nginx.ingress.kubernetes.io/" + key},
 			tc{"scoreboard journey passthrough sets " + key, "scoreboard", "ingress.journeyAnnotations." + prefix + key + "=x", "must not set nginx.ingress.kubernetes.io/" + key},
@@ -279,6 +283,11 @@ func TestV12_RenderTimeGuards(t *testing.T) {
 			}
 		})
 	}
+	// The new dedicated value for auth-signin is not the passthrough and still works.
+	signinArgs := append(append([]string(nil), base["scoreboard"]...), "--set-string", "ingress.authSignin=https://login.example.invalid/start")
+	if msg, err := HelmTemplateExpectFailure("scoreboard", signinArgs...); err != nil {
+		t.Fatalf("ingress.authSignin was rejected: %v\n%s", err, msg)
+	}
 	// The benign passthrough still works (the guard is not "reject all annotations").
 	args := append(append([]string(nil), base["scoreboard"]...), "--set-string", `ingress.journeyAnnotations.example\.invalid/team=ctf`)
 	if msg, err := HelmTemplateExpectFailure("scoreboard", args...); err != nil {
@@ -286,68 +295,98 @@ func TestV12_RenderTimeGuards(t *testing.T) {
 	}
 }
 
-type npDoc struct {
-	Kind     string `yaml:"kind"`
-	Metadata struct {
-		Name string `yaml:"name"`
-	} `yaml:"metadata"`
-	Spec struct {
-		Ingress []struct {
-			From []struct {
-				NamespaceSelector *struct {
-					MatchLabels map[string]string `yaml:"matchLabels"`
-				} `yaml:"namespaceSelector"`
-				PodSelector *struct{} `yaml:"podSelector"`
-				IPBlock     *struct{} `yaml:"ipBlock"`
-			} `yaml:"from"`
-		} `yaml:"ingress"`
-	} `yaml:"spec"`
+// goodAllowIngress is the scoreboard-allow ingress block as the chart renders it.
+const goodAllowIngress = `
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: falco
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              app.kubernetes.io/name: collector
+`
+
+// npDocs builds a scoreboard NetworkPolicy render from the two policies' bodies
+// plus any extra documents, so each mutation below is a one-line difference.
+func npDocs(allowIngress, denyIngress, extra string) []byte {
+	return []byte(`---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: scoreboard-default-deny
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+` + denyIngress + `---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: scoreboard-allow
+spec:
+  policyTypes: [Ingress, Egress]
+  ingress:` + allowIngress + extra)
 }
 
 // V12 / I8 premise: the scoreboard accepts connections only from ingress-nginx
-// (after auth-policy), the collector, and falco. Anything else could reach it
-// without an auth-policy-stamped identity.
+// (after auth-policy), the collector, and falco. The whole chart is rendered
+// (no --show-only), so a NetworkPolicy added by any template is seen.
 func TestV12_ScoreboardNetworkPolicyAllowsOnlyTheThreeSources(t *testing.T) {
 	v12MustHelm(t)
-	out, err := helmTemplate("scoreboard", "--show-only", "templates/networkpolicy.yaml")
+	var args []string
+	for _, r := range Recipes() {
+		if r.Chart == "scoreboard" {
+			args = r.Args
+		}
+	}
+	out, err := helmTemplate("scoreboard", args...)
 	if err != nil {
 		t.Fatal(err)
 	}
-	dec := yaml.NewDecoder(strings.NewReader(string(out)))
-	var sources []string
-	found := false
-	for {
-		var d npDoc
-		if err := dec.Decode(&d); err != nil {
-			break
-		}
-		if d.Metadata.Name != "scoreboard-allow" {
-			continue
-		}
-		found = true
-		for _, rule := range d.Spec.Ingress {
-			for _, f := range rule.From {
-				if f.NamespaceSelector == nil || f.PodSelector != nil || f.IPBlock != nil {
-					t.Fatalf("a scoreboard ingress source is not a plain namespaceSelector: %+v", f)
-				}
-				for k, v := range f.NamespaceSelector.MatchLabels {
-					sources = append(sources, k+"="+v)
-				}
+	if !strings.Contains(string(out), "kind: NetworkPolicy") {
+		t.Fatal("no NetworkPolicy in the scoreboard render: extraction is broken, not clean")
+	}
+	for _, v := range CheckScoreboardNetworkPolicies(out) {
+		t.Errorf("%s", v)
+	}
+}
+
+// V12: the NetworkPolicy pin has teeth. The control is clean; each mutation (a
+// source that would let a workspace reach the scoreboard directly) is caught.
+func TestV12_ScoreboardNetworkPolicyMutationsAreCaught(t *testing.T) {
+	if v := CheckScoreboardNetworkPolicies(npDocs(goodAllowIngress, "", "")); len(v) != 0 {
+		t.Fatalf("control already violates: %v", v)
+	}
+	muts := []struct{ name, allow, deny, extra string }{
+		{"a rule with ports but no from (all sources)", goodAllowIngress + "    - ports:\n        - port: 8000\n", "", ""},
+		{"an empty rule (all sources)", goodAllowIngress + "    - {}\n", "", ""},
+		{"from: [] (all sources)", goodAllowIngress + "    - from: []\n", "", ""},
+		{"namespaceSelector: {} (every namespace)", goodAllowIngress + "    - from:\n        - namespaceSelector: {}\n", "", ""},
+		{"namespaceSelector with matchExpressions only", goodAllowIngress + "    - from:\n        - namespaceSelector:\n            matchExpressions:\n              - {key: kubernetes.io/metadata.name, operator: Exists}\n", "", ""},
+		{"matchLabels plus matchExpressions on a pinned source", strings.Replace(goodAllowIngress, "kubernetes.io/metadata.name: falco\n", "kubernetes.io/metadata.name: falco\n            matchExpressions:\n              - {key: x, operator: Exists}\n", 1), "", ""},
+		{"a podSelector-only source", goodAllowIngress + "    - from:\n        - podSelector: {}\n", "", ""},
+		{"an ipBlock source", goodAllowIngress + "    - from:\n        - ipBlock:\n            cidr: 0.0.0.0/0\n", "", ""},
+		{"an extra labelled namespace (ctf-user)", goodAllowIngress + "    - from:\n        - namespaceSelector:\n            matchLabels:\n              kubernetes.io/metadata.name: ctf-user1\n", "", ""},
+		{"a pinned source removed", strings.Replace(goodAllowIngress, "kubernetes.io/metadata.name: falco", "kubernetes.io/metadata.name: falco-gone", 1), "", ""},
+		{"default-deny admits everything", goodAllowIngress, "  ingress:\n    - {}\n", ""},
+		{"a second NetworkPolicy under another name", goodAllowIngress, "", "---\napiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: scoreboard-open\nspec:\n  podSelector: {}\n  ingress:\n    - {}\n"},
+	}
+	for _, m := range muts {
+		t.Run(m.name, func(t *testing.T) {
+			if v := CheckScoreboardNetworkPolicies(npDocs(m.allow, m.deny, m.extra)); len(v) == 0 {
+				t.Fatalf("mutation %q went undetected", m.name)
 			}
+		})
+	}
+	t.Run("a required policy is missing", func(t *testing.T) {
+		if v := CheckScoreboardNetworkPolicies([]byte("kind: ConfigMap\nmetadata:\n  name: x\n")); len(v) == 0 {
+			t.Fatal("a render with no NetworkPolicy must not read as clean")
 		}
-	}
-	if !found {
-		t.Fatal("scoreboard-allow NetworkPolicy not found in the render: extraction is broken, not clean")
-	}
-	sort.Strings(sources)
-	want := []string{
-		"app.kubernetes.io/name=collector",
-		"kubernetes.io/metadata.name=falco",
-		"kubernetes.io/metadata.name=ingress-nginx",
-	}
-	if strings.Join(sources, ",") != strings.Join(want, ",") {
-		t.Fatalf("scoreboard ingress sources = %v, want exactly %v (ADR-0034 D7: the header-completeness premise)", sources, want)
-	}
+	})
 }
 
 // ADR-0034 V17 (scoreboard half, 条件 14): the roster is personal data and
