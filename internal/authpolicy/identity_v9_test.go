@@ -87,6 +87,73 @@ func TestV9_Resolution(t *testing.T) {
 	}
 }
 
+// V9: the state of the upstream (oauth2-proxy) and of the roster, crossed with
+// ALL THREE endpoints. /check-participant is the participant gate every journey
+// request goes through, so its 401 (ingress-nginx turns it into the sign-in
+// redirect) and its 502 (masked: an oauth2-proxy outage must neither read as a
+// pass nor leak the upstream's status) are pinned here exactly like
+// /check-workspace's and /check-admin's.
+func TestV9_StateByEndpoint(t *testing.T) {
+	endpoints := []struct{ name, target, passer string }{
+		{"check-workspace", "/check-workspace?host=user7", "user7@ctf.local"},
+		{"check-participant", "/check-participant", "user7@ctf.local"},
+		{"check-admin", "/check-admin", "admin@ctf.local"},
+	}
+	states := []struct {
+		name string
+		// upstream answers (status, email); unreachable ignores them.
+		unreachable bool
+		status      int
+		email       func(passer string) string
+		want        int
+		wantBody    string
+	}{
+		{"unauthenticated: oauth2-proxy says 401 -> 401 (sign-in redirect)", false, http.StatusUnauthorized, func(string) string { return "" }, http.StatusUnauthorized, "not authenticated"},
+		{"oauth2-proxy unreachable -> 502", true, 0, nil, http.StatusBadGateway, "oauth2-proxy unreachable"},
+		{"oauth2-proxy answers 500 -> masked 502", false, http.StatusInternalServerError, func(p string) string { return p }, http.StatusBadGateway, "upstream error"},
+		{"oauth2-proxy answers 200 (not the 202 auth contract) -> 502", false, http.StatusOK, func(p string) string { return p }, http.StatusBadGateway, "upstream error"},
+		{"authenticated but not in the table -> 403", false, http.StatusAccepted, func(string) string { return "stranger@other.example" }, http.StatusForbidden, "forbidden"},
+		{"authenticated and allowed through this gate -> 200", false, http.StatusAccepted, func(p string) string { return p }, http.StatusOK, ""},
+	}
+	for _, ep := range endpoints {
+		for _, st := range states {
+			t.Run(ep.name+"/"+st.name, func(t *testing.T) {
+				url := "http://127.0.0.1:1/oauth2/auth" // port 1 refuses immediately
+				if !st.unreachable {
+					up := fakeOAuth2Proxy(t, func(*http.Request) (int, string) { return st.status, st.email(ep.passer) })
+					defer up.Close()
+					url = up.URL
+				}
+				h := newAdminHandler(url, fixtureAdmin)
+				resp := do(t, h, ep.target, cookie)
+				body, _ := io.ReadAll(resp.Body)
+				if resp.StatusCode != st.want {
+					t.Fatalf("%s: got %d (%s), want %d", ep.target, resp.StatusCode, body, st.want)
+				}
+				if st.wantBody != "" && strings.TrimSpace(string(body)) != st.wantBody {
+					t.Errorf("%s: body = %q, want the fixed string %q", ep.target, body, st.wantBody)
+				}
+				// A masked upstream failure never carries the upstream's status or
+				// the caller's identity.
+				if st.want == http.StatusBadGateway {
+					for _, bad := range []string{"500", "200", "202", ep.passer} {
+						if strings.Contains(string(body), bad) {
+							t.Errorf("%s: 502 body %q leaks %q", ep.target, body, bad)
+						}
+					}
+				}
+				// Only 200 may carry identity headers: a failure must not hand
+				// ingress-nginx a header set that downstream could read.
+				if st.want != http.StatusOK {
+					if got := resp.Header.Get("X-Auth-Request-Email"); got != "" {
+						t.Errorf("%s: a %d response carries X-Auth-Request-Email %q", ep.target, st.want, got)
+					}
+				}
+			})
+		}
+	}
+}
+
 // V9: for a rostered identity the three identity headers are the canonical
 // form and NOTHING the IdP returned, even when oauth2-proxy returns a User /
 // Preferred-Username that is not the seat (a Google `sub`, an attacker-chosen

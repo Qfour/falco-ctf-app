@@ -69,8 +69,10 @@ func TestV11_EmptyDomainNobodyIsSelf(t *testing.T) {
 				}
 			}
 			// header-present write (selfOrAdminWrite's gate): same closed answer.
-			if w := f.reqAs("POST", "/api/users/alice/display-name", email, map[string]any{"name": "Alice"}); w.Code != http.StatusForbidden {
-				t.Errorf("POST display-name as %q with an empty domain: got %d, want 403", email, w.Code)
+			// A route whose browser path is open (display-name's is closed, so
+			// a 403 there would prove nothing about the domain).
+			if w := f.reqAs("POST", "/api/users/alice/challenges/01-recon/hints/1", email, nil); w.Code != http.StatusForbidden {
+				t.Errorf("POST hint open as %q with an empty domain: got %d, want 403", email, w.Code)
 			}
 		})
 	}
@@ -87,17 +89,75 @@ func TestV11_EmptyDomainNobodyIsSelf(t *testing.T) {
 		if w := f.reqAs("GET", "/api/users/alice/me", "alice@ctf.local", nil); w.Code != http.StatusOK {
 			t.Fatalf("control: got %d (%s)", w.Code, w.Body)
 		}
+		if w := f.reqAs("POST", "/api/users/alice/challenges/01-recon/hints/1", "alice@ctf.local", nil); w.Code != http.StatusOK {
+			t.Fatalf("control (write): got %d (%s)", w.Code, w.Body)
+		}
 	})
 }
 
-// V11: header-present writes use the same exact comparison.
+// v11WriteRoutes are the header-gated WRITE routes that stay open to a
+// header-bearing participant: they all go through selfOrAdminWrite, and each
+// answers 200 for the canonical identity. display-name is deliberately NOT
+// among them: the browser path to it is closed (ADR-0034 D12 / the display-name
+// hotfix: with X-Auth-Request-* present it is always 403), so a 200 control or a
+// 403 there would not say anything about the domain comparison.
+var v11WriteRoutes = []struct {
+	name, target string
+	body         any
+	prep         func(t *testing.T, f *journeyFixture)
+}{
+	{"step check", "/api/users/user7/challenges/01-recon/steps/0/check", map[string]any{"checked": true}, nil},
+	{"hint open", "/api/users/user7/challenges/01-recon/hints/1", nil, nil},
+	{"reset-dirty", "/api/users/user7/challenges/02-evade/reset-dirty", nil, func(t *testing.T, f *journeyFixture) {
+		t.Helper()
+		if err := f.st.MarkDirty("user7", "02-evade", "Recon Rule", "2026-01-01T00:00:00Z"); err != nil {
+			t.Fatal(err)
+		}
+	}},
+}
+
+// V11: header-present writes use the same exact comparison. For every
+// selfOrAdminWrite route the canonical identity gets 200 (the control) while the
+// same local part on another domain, and another seat on the right domain, get
+// 403 from the identity comparison: the header is present and well-formed in
+// every case, so "empty header" cannot be the reason.
 func TestV11_WriteGateIsExactToo(t *testing.T) {
-	f := newJourneyFixture(t)
-	if w := f.reqAs("POST", "/api/users/user7/display-name", "user7@other.example", map[string]any{"name": "mallory"}); w.Code != http.StatusForbidden {
-		t.Fatalf("foreign-domain write as user7: got %d (%s), want 403", w.Code, w.Body)
+	cases := []struct {
+		name  string
+		email string
+		want  int
+	}{
+		{"canonical identity (control)", "user7@ctf.local", http.StatusOK},
+		{"canonical, upper-cased header", "USER7@CTF.LOCAL", http.StatusOK},
+		{"same local part, foreign domain", "user7@other.example", http.StatusForbidden},
+		{"same local part, look-alike domain suffix", "user7@ctf.local.evil.example", http.StatusForbidden},
+		{"another seat on the right domain", "user8@ctf.local", http.StatusForbidden},
+		{"seat is a prefix of the caller", "user70@ctf.local", http.StatusForbidden},
 	}
-	if w := f.reqAs("POST", "/api/users/user7/display-name", "user7@ctf.local", map[string]any{"name": "Seven"}); w.Code != http.StatusOK {
-		t.Fatalf("canonical write as user7: got %d (%s), want 200", w.Code, w.Body)
+	for _, rt := range v11WriteRoutes {
+		for _, c := range cases {
+			t.Run(rt.name+"/"+c.name, func(t *testing.T) {
+				f := newJourneyFixture(t)
+				if rt.prep != nil {
+					rt.prep(t, f)
+				}
+				w := f.reqAs("POST", rt.target, c.email, rt.body)
+				if w.Code != c.want {
+					t.Fatalf("POST %s as %q: got %d (%s), want %d", rt.target, c.email, w.Code, w.Body, c.want)
+				}
+			})
+		}
+		// The 403s are not an artifact of the header being absent: the header-less
+		// (collector / workspace) path still answers 200 on the same route.
+		t.Run(rt.name+"/no header is the internal path (200)", func(t *testing.T) {
+			f := newJourneyFixture(t)
+			if rt.prep != nil {
+				rt.prep(t, f)
+			}
+			if w := f.reqAs("POST", rt.target, "", rt.body); w.Code != http.StatusOK {
+				t.Fatalf("header-less POST %s: got %d (%s), want 200", rt.target, w.Code, w.Body)
+			}
+		})
 	}
 }
 

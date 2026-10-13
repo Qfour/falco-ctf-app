@@ -173,7 +173,10 @@ func TestParseRoster_ErrorsNeverEchoValues(t *testing.T) {
 // The same rule for the other startup input that can hold a mailbox: a mistyped
 // ADMIN_EMAILS element is named by position.
 func TestParseRoster_AdminErrorsNeverEchoValues(t *testing.T) {
-	for _, adm := range []string{"leakmarker@" + publicDomain, "leakmarker\u212a@ctf.local", "leakmarker", "leak@marker@ctf.local"} {
+	// The domain half of an entry is a value too (R3#11): a mistyped entry's
+	// domain, rejected as not reserved or as not a plausible domain, is not echoed.
+	for _, adm := range []string{"leakmarker@" + publicDomain, "leakmarker\u212a@ctf.local", "leakmarker", "leak@marker@ctf.local",
+		"ops@leakmarker." + "notreserved", "ops@leakmarker.local.", "ops@leakmarker..local", "ops@ctf." + "leakmarker"} {
 		_, err := parseRoster([]byte(baseRoster), "ctf.local", []string{"admin@ctf.local", adm}, foldTest)
 		if err == nil {
 			t.Fatalf("admin %q accepted", adm)
@@ -297,7 +300,7 @@ func TestResolve_RowAndRequestNormalisedAlike(t *testing.T) {
 		}
 	}
 	for _, id := range []string{"", "ab", "abc@fold.example", "user1@fold.example", "user1@other.example", "user3@ctf.local", "+x@fold.example", "user1+x@ctf.local", "USER1@ctf.local.", "user2@ctf.local@x"} {
-		if seat, ok := r.Resolve(id); id != "user1@fold.example" && ok {
+		if seat, ok := r.Resolve(id); ok {
 			t.Errorf("Resolve(%q) = %q, want unresolved", id, seat)
 		}
 	}

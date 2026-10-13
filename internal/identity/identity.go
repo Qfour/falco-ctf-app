@@ -110,12 +110,16 @@ func NormalizeAdminEmails(raw []string) ([]string, error) {
 		if at <= 0 || at != strings.LastIndexByte(e, '@') || at == len(e)-1 {
 			return nil, fmt.Errorf("ADMIN_EMAILS[%d]: want exactly one '@' with a non-empty local part and domain", i)
 		}
+		// NormalizeDomain / CheckReservedDomain quote the domain they reject
+		// (right for EXPECTED_EMAIL_DOMAIN, which is configuration). An admin
+		// entry's domain is part of a mailbox, so neither error is passed on:
+		// the entry is named by position and the defect by kind only.
 		dom, err := NormalizeDomain(e[at+1:])
 		if err != nil {
-			return nil, fmt.Errorf("ADMIN_EMAILS[%d]: %w", i, err)
+			return nil, fmt.Errorf("ADMIN_EMAILS[%d]: domain is not a plausible ASCII domain (empty label from a trailing or doubled dot)", i)
 		}
 		if err := CheckReservedDomain(dom); err != nil {
-			return nil, fmt.Errorf("ADMIN_EMAILS[%d]: %w", i, err)
+			return nil, fmt.Errorf("ADMIN_EMAILS[%d]: domain is not a reserved name", i)
 		}
 		out = append(out, e)
 	}
