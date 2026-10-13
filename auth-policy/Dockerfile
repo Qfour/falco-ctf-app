@@ -3,9 +3,13 @@
 FROM golang:1.26.9-alpine@sha256:3082400e369fa24d5fc60bca20edab3f6d604e0c5a690ec66b295eff4dd87ade AS build
 WORKDIR /src
 
-# Copy module files first for layer caching. `go.su[m]` is a glob that
-# silently no-ops when go.sum doesn't exist yet (auth-policy has no
-# external deps, so go.sum may be absent until scoreboard lands).
+# Copy module files first for layer caching. This binary has third-party
+# dependencies (gopkg.in/yaml.v3 for the roster parser since ADR-0034 S2, and
+# the prometheus client for /metrics), so go.sum is required for the build.
+# The exact set is pinned by internal/apispec/dependency_boundary_test.go
+# (TestAuthPolicyThirdPartyImportsArePinned). The `go.su[m]` glob is a
+# leftover from when this service had no external deps and no go.sum; go.sum
+# always exists now (a build without it fails at `go mod download`/`go build`).
 COPY go.mod ./
 COPY go.su[m] ./
 RUN go mod download
@@ -15,8 +19,9 @@ COPY internal/authpolicy ./internal/authpolicy
 COPY internal/identity ./internal/identity
 COPY internal/serverutil ./internal/serverutil
 # Only route.go (Route/Register, stdlib-only) — NOT the whole internal/apispec
-# directory, which also holds internal/apispec/specparity (yaml.v3-dependent
-# spec-loading/parity-comparison code, imported ONLY from *_test.go files).
+# directory, which also holds internal/apispec/specparity (spec-loading /
+# parity-comparison code, imported ONLY from *_test.go files; it is test-only
+# code, not part of the roster's yaml.v3 use).
 # BLOCKING 1 (5x review): this service failed to build at all before this
 # line existed (internal/authpolicy/server.go imports internal/apispec for
 # Route/Register), and the fix is this single-file COPY, not the whole
@@ -43,9 +48,13 @@ COPY internal/serverutil ./internal/serverutil
 #     on the host (where the whole directory exists) and red ONLY inside
 #     this image build.
 # Either error's "obvious" fix is `COPY internal/apispec ./internal/apispec`
-# — which "works" by silently pulling specparity's yaml.v3 dependency (and
-# any future non-stdlib dependency specparity picks up) into this distroless
-# binary's build, reopening BLOCKING 1 above. The correct fix is to move
+# — which "works" by silently pulling the test-only specparity package (and
+# any non-stdlib dependency it picks up in the future) into this distroless
+# binary's build, reopening BLOCKING 1 above. (gopkg.in/yaml.v3 is already in
+# this binary through internal/authpolicy's roster parser; what widening adds
+# is specparity's code, and the set of third-party imports this binary may
+# have is pinned separately by TestAuthPolicyThirdPartyImportsArePinned.)
+# The correct fix is to move
 # whatever code triggered the error into internal/apispec/specparity (or a
 # *_test.go file) instead of widening this line.
 # internal/apispec/dependency_boundary_test.go's TestNoProductionBinaryImportsSpecparity
