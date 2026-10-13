@@ -2,10 +2,11 @@ package api
 
 import "testing"
 
-// app#331: validDisplayName rejects Unicode Cf (format) and C1 (U+0080-009F)
-// characters on top of the old ASCII metachar / C0 / DEL set, so "Alice" +
-// U+200B (renders as "Alice") cannot be used to impersonate another seat on
-// the Board / venue projection. A ZWJ between two emoji is the one allowed Cf.
+// app#331: validDisplayName rejects Unicode Cf (format: bidi controls,
+// zero-width characters) and C1 (U+0080-009F) characters on top of the old
+// ASCII metachar / C0 / DEL set. A ZWJ between two emoji is the one allowed Cf.
+// This is not an anti-impersonation test: blank-looking characters outside Cf
+// (U+3164, U+2800, ...) and duplicate names still pass.
 
 func TestValidDisplayName_RejectsFormatAndC1(t *testing.T) {
 	bad := []struct{ name, in string }{

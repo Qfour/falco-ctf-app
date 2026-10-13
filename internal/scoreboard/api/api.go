@@ -62,14 +62,17 @@ var validUser = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 // invalidDisplayName rejects characters that would break either UI
 // rendering (HTML metachars) or shell display (control chars), plus the
-// invisible ones that let one seat's name look like another's (app#331):
+// bidi controls, zero-width characters (Cf) and C1 controls (app#331). This
+// is NOT an anti-impersonation control: other invisible or blank-looking
+// characters still pass (Lo U+3164 / U+115F / U+1160 / U+FFA0, So U+2800, Mn
+// U+034F / U+FE00-FE0F / U+E0100-E01EF / U+180B-180D), and duplicate names are
+// allowed, so one seat can still be made to look like another's.
 //
 //   - \p{Cc}: the C0 controls (U+0000-001F), DEL (U+007F) AND the C1 controls
 //     (U+0080-009F, e.g. U+0085 NEL). The old class stopped at U+007F.
 //   - \p{Cf}: format characters — U+200B ZERO WIDTH SPACE, U+202E RIGHT-TO-LEFT
 //     OVERRIDE and the other bidi controls, U+2060 WORD JOINER, U+FEFF BOM,
-//     U+00AD SOFT HYPHEN, the tag characters, ... "Alice" + U+200B renders
-//     exactly like "Alice", which is the spoof. Aligns with ADR-0026 D5-1,
+//     U+00AD SOFT HYPHEN, the tag characters, ... Aligns with ADR-0026 D5-1,
 //     which already treats Cf as an error.
 //
 // One exception is carved out in displayNameHasForbidden (not here — a regexp
@@ -1083,8 +1086,9 @@ func displayNameHasForbidden(name string) bool {
 
 // validDisplayName trims + validates a display name: 1..32 runes, no HTML/shell
 // metachars, no control (C0/C1) or format (Cf) characters (app#331; a ZWJ
-// between emoji is the one allowed Cf). Shared by the participant and admin
-// set endpoints, so both reject the same names.
+// between emoji is the one allowed Cf). Shared by the participant profile
+// route (profile.go) and the admin set-display-name endpoint, so both reject
+// the same names.
 //
 // Whitespace is trimmed first (strings.TrimSpace), so a name that is only
 // padded at the ends by U+0085 NEL / NBSP / tabs is stored as the trimmed
@@ -1094,8 +1098,8 @@ func displayNameHasForbidden(name string) bool {
 // NFC (app#331 question): not applied. Normalising only collapses canonically
 // equivalent spellings of one string ("é" as U+00E9 vs "e"+U+0301) to the same
 // bytes; it would matter if display names had to be UNIQUE (they do not:
-// duplicates are allowed), and it would not stop the spoof this closes
-// (invisible characters are not a normalisation difference). It would add
+// duplicates are allowed), and it would not stop invisible characters
+// (they are not a normalisation difference). It would add
 // golang.org/x/text/unicode/norm as a direct dependency for no security
 // gain, so revisit it together with a uniqueness rule, not before.
 func validDisplayName(raw string) (string, error) {

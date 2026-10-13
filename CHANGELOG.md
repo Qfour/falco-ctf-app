@@ -91,7 +91,7 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
   認証ヘッダーの無い要求は 403 で拒否し、bucket を消費せず handler (body の読み取り) にも入らない。
   route 表・OpenAPI の `x-ctf-rate-limit` と /submit 側の「(shared with submit-detect)」も実挙動に合わせた (#328)。
 - 表示名の検証が Unicode の Cf (U+200B 零幅スペース・U+202E bidi 上書きなど) と C1 制御文字 (U+0080〜009F) を通していたのを拒否にした。
-  `Alice` に不可視文字を足して他の席に見た目を似せられなくなる (ADR-0026 D5-1 の Cf 拒否と同じ方針)。参加者用・admin 用の両 route で同じ検証。
+  bidi 制御・ゼロ幅 (Cf)・C1 制御の拒否に限る (ADR-0026 D5-1 の Cf 拒否と同じ方針)。他の席への見た目のなりすましを防ぐものではない。プロフィール route (`POST /api/users/{user}/profile` の `display_name`) と admin 用 display-name route の両方で同じ検証。
   ZWJ (U+200D) で連結する絵文字は 2 つの絵文字に挟まれたときだけ通す。日本語・絵文字・結合文字の名前は従来どおり通る (#331)。
 
 ### Security
