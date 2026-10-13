@@ -13,8 +13,13 @@ every finding to it.
 
 1. **Cross-user workspace access**. The single most important
    invariant: a logged-in user must NOT be able to reach another user's
-   `ctf-<other>/workspace` via ingress. The defense is auth-policy's
-   prefix-exact `<host>@` email match. Any relaxation = breach.
+   `ctf-<other>/workspace` via ingress. The defense is Hard Invariant I8
+   (the I8 row of `.claude/rules/falco-ctf-app-conventions.md`): one
+   roster is the only identity-to-seat mapping, the seat match is exact,
+   and the header-integrity premises hold (every Ingress auth-url pinned
+   to auth-policy, the collector strips `X-Auth-Request-*`, the
+   scoreboard NetworkPolicy admits only its three sources). Any
+   relaxation = breach.
 2. **Falco webhook authenticity**. `/falco/events` has no auth (it's a
    cluster-internal endpoint reached by falcosidekick). NetworkPolicy
    should restrict ingress to the falcosidekick namespace. A reachable

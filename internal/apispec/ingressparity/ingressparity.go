@@ -1,4 +1,24 @@
-// Package ingressparity is the ADR-0021 (Issue #238) counterpart to
+// Package ingressparity holds the invariants over what the app's charts RENDER
+// (`helm template` output): checks that no hand-written Go code and no spec
+// can express, because the facts live only in the rendered manifests. Every
+// file here is imported only from *_test.go files and is one of:
+//
+//   - the participant-route allow-list in ingress-journey.yaml (ADR-0021,
+//     Hard Invariant I15): this file, helm.go, coverage_test.go
+//   - the Ingress auth gate (ADR-0034 V12, the premise of Hard Invariant I8):
+//     ingressauth.go + authurl_test.go pin each Ingress's role -> auth-policy
+//     endpoint, its identity headers, and the render-time guards on the
+//     annotation passthroughs
+//   - the scoreboard's NetworkPolicy sources and pod selection (ADR-0034 V12,
+//     I8's other premise): netpol.go
+//
+// A new rendered-chart invariant belongs here, with the ADR that owns it named
+// beside it. (If this set keeps growing, the package name — which is still the
+// I15-era one — is the thing to change, not the scope.)
+//
+// The rest of this comment is the I15 part, the package's original purpose.
+//
+// This package is the ADR-0021 (Issue #238) counterpart to
 // internal/apispec/specparity: it holds the comparison logic behind the new
 // Hard Invariant I15 — "the scoreboard's single-origin production ingress
 // (charts/scoreboard/templates/ingress-journey.yaml) actually lets every

@@ -169,7 +169,7 @@ func ttydURLFor(user, suffix string) string {
 //     another user's identifiers. The Scoreboard pane's actual data comes
 //     from a client-side fetch('/api/state') that 403s a non-admin exactly
 //     as it does on the legacy GET / today.
-//  3. The portal is served to ANY authenticated caller (isAdmin==false is
+//  3. The portal is served to ANY caller the participant gate admits (isAdmin==false is
 //     participant, not denied) — unlike GET / (the legacy operator
 //     dashboard), which stays admin-only. This is intentional: the portal
 //     shell carries no admin data, so there is nothing to protect by gating

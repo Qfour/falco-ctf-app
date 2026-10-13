@@ -430,7 +430,11 @@ func UsernameFromEmail(email, domain string) string {
 // decision: every read/write the Journey/Me panes make is independently
 // re-checked by selfOrAdmin / selfOrAdminWrite against the SAME header. A caller
 // cannot use it to see another user's data — it only returns the caller's OWN
-// seat (an admin's own email is not a seat, so an admin derives "").
+// local part. It does not know what a seat is: it returns the local part of
+// any `<slug>@<expectedEmailDomain>`, so an ADMIN_EMAILS member on that domain
+// (e.g. admin@ctf.local with expectedEmailDomain ctf.local) derives "admin",
+// and one on another reserved domain derives "". That is display-only; whether
+// the caller may do anything is isAdmin / selfOrAdmin, never this.
 func NewUsernameDeriver(expectedEmailDomain string) func(*http.Request) string {
 	domain := strings.ToLower(strings.TrimSpace(expectedEmailDomain))
 	return func(r *http.Request) string {
@@ -976,10 +980,10 @@ func (h *Handler) selfOrAdmin(w http.ResponseWriter, r *http.Request, user strin
 //     participant journey host or the admin host): apply the full self-or-admin
 //     rule. A logged-in participant may only mutate their OWN {user}; a mismatch
 //     or a non-admin third party is denied (403). Admins may write any {user}.
-//     This closes the P18 HIGH: on the journey host, oauth2-proxy injects
-//     X-Auth-Request-Email for ANY login, so without this a participant could
-//     tick another participant's steps or drive the openHint 409/200 cross-user
-//     oracle.
+//     This closes the P18 HIGH: on the journey host every participant the
+//     gate admits (a roster identity or an admin) carries a valid
+//     X-Auth-Request-Email, so without this a participant could tick another
+//     participant's steps or drive the openHint 409/200 cross-user oracle.
 //
 //   - Header absent (request arrived over the cluster-internal Service — a
 //     workspace pod): fall back to the legacy claimed-identity trust model

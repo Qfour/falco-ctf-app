@@ -98,9 +98,10 @@ func truncateCSPReportField(s string) string {
 // instead of silently vanishing in the browser console (Issue #95 / P23-6
 // follow-up).
 //
-// Threat model: reachable by ANY authenticated CTF login, not just the
+// Threat model: reachable by ANY caller the participant gate admits (a roster
+// identity or an ADMIN_EMAILS member), not just the
 // caller reporting a genuine violation of their OWN page load — mirrors
-// /portal's own ingress-layer gate (any login, no host<->email binding;
+// /portal's own ingress-layer gate (auth-policy /check-participant, no host<->email binding;
 // see charts/scoreboard/templates/ingress-journey.yaml's /csp-report entry,
 // added there specifically because this route's initial landing OMITTED it
 // and fell through to the admin-only catch-all, 403ing every non-admin

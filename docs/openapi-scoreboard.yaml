@@ -223,14 +223,16 @@ paths:
       x-ctf-collector-forward: false
       x-ctf-rate-limit: none
       description: |
-        Static single-template shell (P23-1). Served to ANY authenticated
-        caller and deliberately NOT admin-gated: it embeds no admin data and
-        no other participant's data, but the response does differ per viewer
-        (role, username and ttyd URL as display hints, plus a per-response CSP
+        Static single-template shell (P23-1). Served to ANY caller the
+        participant gate admits (auth-policy `/check-participant`: an identity
+        the roster resolves to a seat, or an `ADMIN_EMAILS` member) and
+        deliberately NOT admin-gated: it embeds no admin data and no other
+        participant's data, but the response does differ per viewer (role,
+        username and ttyd URL as display hints, plus a per-response CSP
         nonce), so every response carries `Cache-Control: no-store`
         (ADR-0028 D3), the 500 included.
         The admin flag and the derived username are display hints only
-        (api.NewAdminGate / api.DeriveUsername); every pane's actual data fetch
+        (api.NewAdminGate / api.NewUsernameDeriver); every pane's actual data fetch
         is independently gated in the API handlers, so the shell cannot leak
         another participant's state.
 
@@ -328,7 +330,8 @@ paths:
         P12's egress-zero posture rules out an external report collector —
         this binary is the collector.
 
-        Reachable by ANY authenticated CTF login (ingress-layer gate,
+        Reachable by ANY caller the participant gate admits (ingress-layer
+        `/check-participant` gate,
         mirrors `GET /portal` — see `charts/scoreboard/templates/`
         `ingress-journey.yaml`'s `/csp-report` entry; a never-logged-in
         client cannot reach this route through ingress at all), but NOT
@@ -1154,8 +1157,8 @@ paths:
         are silently ignored (same discipline P25's createQuestion
         enforced, security-engineer finding 1).
 
-        `audience` selects visibility: `all` (public — any authenticated
-        participant may read and like it) or `admin` (private — visible
+        `audience` selects visibility: `all` (public — any participant the
+        gate admits may read and like it) or `admin` (private — visible
         only to its own author and admins). Fail-closed: any value OTHER
         than exactly `admin` or `all` (including an absent/empty field) is
         treated as `admin` — a malformed or omitted audience never

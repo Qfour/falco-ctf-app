@@ -2,7 +2,7 @@ package authpolicy_test
 
 // Issue #160: this is internal/scoreboard/authz_test.go's
 // TestAuthz_AllDeclaredGatesEnforced pattern, ported to auth-policy — the
-// service that owns I8 (prefix-exact `<host>@` binding). Before this file,
+// service that owns I8 (the roster identity table and the exact seat match). Before this file,
 // docs/openapi-auth-policy.yaml's x-ctf-authz was only compared as a
 // DECLARED string (apispec_parity_test.go's TestAPISpec_V3b_StringExtParity)
 // against apispec.Route.Authz, itself just a hand-set field on a

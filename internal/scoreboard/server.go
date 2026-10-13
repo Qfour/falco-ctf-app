@@ -250,7 +250,9 @@ func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts .
 	// (P18-1 defense-in-depth) using the same ADMIN_EMAILS rule the api handler
 	// enforces. The participant journey/me pages are served ungated as static
 	// shells (they carry no data; their per-user API is self-scoped). GET
-	// /portal (P23-1) is served to any authenticated caller — see
+	// /portal (P23-1) is served to any caller the participant gate admits
+	// (auth-policy /check-participant: a roster identity or an ADMIN_EMAILS
+	// member) — see
 	// view.renderPortal's doc for why that is safe (no admin data is ever
 	// embedded; the api.NewAdminGate/api.NewUsernameDeriver results feed only
 	// display hints, and every pane's actual data fetch stays gated in api.Handler).

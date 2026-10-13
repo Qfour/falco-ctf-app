@@ -62,7 +62,7 @@ flowchart TB
   authp <-->|"/oauth2/auth"| o2p
   o2p <-->|"OIDC"| dex
   ing -->|"/ , /api/state (admin)"| sb
-  ing -->|"/portal , /api/users , /api/challenges (any-login)"| sb
+  ing -->|"/portal , /api/users , /api/challenges (/check-participant)"| sb
   ing -->|"/docs-admin (admin)"| docs
   ing -->|"userN.host"| ttp --> ttyd -->|"kubectl exec (同一 Pod)"| chal
   sb -.->|"TERMINAL タブで iframe 埋め込み"| ttp
