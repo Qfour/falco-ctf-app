@@ -7,7 +7,7 @@
 # kubeconfig, or a local `*.secret.*` copy left in the working tree is sent to
 # the Docker daemon unless .dockerignore excludes it. Nothing else notices a
 # line being deleted from .dockerignore, so this makes it mechanical.
-# The older secrets block (*.db / .env / *.pem / *.key / *.cert) is held to the
+# The older secrets block (*.db / .env / .env.* / *.pem / *.key / *.cert / *.crt) is held to the
 # same `**/` form: a bare `.env` or `*.key` only matches at the context root.
 #
 # CHECKS (all must pass, exit 0; otherwise exit 1):
@@ -38,9 +38,11 @@ REQUIRED=(
   '**/*.secret.*'
   '**/*.db'
   '**/.env'
+  '**/.env.*'
   '**/*.pem'
   '**/*.key'
   '**/*.cert'
+  '**/*.crt'
 )
 
 file=.dockerignore
@@ -67,7 +69,7 @@ check_file() {
     fi
   done
   # Check 2: any re-include (`!...`) that targets these stems.
-  if grep -nE '^[[:space:]]*!.*(\.dec\.|kubeconfig|\.secret\.|\.db|\.env|\.pem|\.key|\.cert)' "$f"; then
+  if grep -nE '^[[:space:]]*!.*(\.dec\.|kubeconfig|\.secret\.|\.db|\.env|\.pem|\.key|\.cert|\.crt)' "$f"; then
     echo "FAIL: $f re-includes (!) a path matching a decrypted/credential pattern"
     rc=1
   fi
@@ -139,11 +141,12 @@ if [ "$selftest" -eq 1 ]; then
       exit 1
     fi
   }
-  for t in a.db sub/dir/x.db .env sub/.env deploy/x.pem k/y.key z.cert \
+  for t in a.db sub/dir/x.db .env sub/.env .env.prod sub/.env.local \
+           deploy/x.pem k/y.key z.cert ca/root.crt \
            sub/prod.dec.yaml sub/kubeconfig-prod x/flags.secret.yaml; do
     expect_tracked_reject "$t"
   done
-  printf '%s\n' main.go charts/scoreboard/values.yaml .env.example docs/key.md \
+  printf '%s\n' main.go charts/scoreboard/values.yaml docs/env.md docs/key.md \
     | tracked_matches >/dev/null \
     || { echo "FAIL: selftest: tracked-file check rejected innocent paths"; exit 1; }
   echo "ok: selftest — guard rejected all $n broken variants (.dockerignore + tracked-file check)"

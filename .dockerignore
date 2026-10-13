@@ -46,12 +46,17 @@ scan-logs/
 # .dockerignore (unlike .gitignore) matches a bare pattern only at the context
 # root, so a bare `*.key` would let `scripts/x.key` or `deploy/.env` into the
 # build context (app#322). `**/` also matches zero directories, so root-level
-# files stay covered. scripts/check-dockerignore.sh requires these exact lines.
+# files stay covered. `.env.*` / `*.crt` mirror .gitignore (app#322 LOW-5); no
+# Dockerfile COPYs a `.env.*` or `.crt`, and `.env.example` is neither tracked
+# nor needed by any build, so no `!` re-include. scripts/check-dockerignore.sh
+# requires these exact lines.
 **/*.db
 **/.env
+**/.env.*
 **/*.pem
 **/*.key
 **/*.cert
+**/*.crt
 # Decrypted / credential material that must never reach a build context
 # (app#322, ADR-0031 H1 (h)). `**/` so a file in ANY subdirectory is
 # excluded too: a bare `*.dec.yaml` only matches at the context root
