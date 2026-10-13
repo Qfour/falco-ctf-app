@@ -9,7 +9,7 @@
   --md-default-bg-color: #070B10;
   --md-default-fg-color: #EAF7FA;
   --md-default-fg-color--light: #9DB4BF;
-  --md-default-fg-color--lighter: #5C7480;
+  --md-default-fg-color--lighter: #748E9B;   /* = tokens.css --text-mute (WCAG AA since P28-0a (3); was #5C7480) */
   --md-default-fg-color--lightest: #1C2A35;
   --md-typeset-color: #EAF7FA;
   --md-primary-fg-color: #0D141B;        /* dark header (not bright blue) */
