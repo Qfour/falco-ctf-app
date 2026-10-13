@@ -1,9 +1,19 @@
 # ttyd container — serves a Web terminal that kubectl-exec's into the challenge
 # container of the same Pod. Intended to run as a non-root user with a SA that
 # has only `pods/exec` on this Pod's name.
-FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 
-ARG KUBECTL_VERSION=v1.35.8
+ARG KUBECTL_VERSION=v1.35.9
+# v1.35.8 -> v1.35.9 (2026-10-13, CI scan 全 PR 赤の追跡): v1.35.9 が公開された
+# (下の v1.35.8 節で「404 で不存在」と確認した版)。skew policy 内 (cluster 1.34 に
+# 対し 1.33-1.35) を維持したまま patch だけ上げる。v1.35.9 の .go-version は 1.26.8
+# (v1.35.8 は 1.26.5)。sha256 は dl.k8s.io/release/v1.35.9/bin/linux/<arch>/kubectl.sha256
+# の実値。**残存**: Sysdig の fix は Go 1.26.9 / golang.org/x/net v0.60.0 (GO-2026-6617)
+# だが、kubectl は v1.35.9 (go1.26.8, x/net v0.56.0) / v1.36.5 (go1.26.8, x/net v0.56.0) /
+# v1.37.1 (go1.26.8, x/net v0.57.0) のいずれも未達 — upstream の patch 待ち
+# **受け入れの期限と解除条件 (2026-10-13)**: release-1.35 の .go-version が 1.26.9 以上
+# (v1.35.10 以降) になった時点で bump する。それまで build (ttyd)/scan は赤のまま
+# (required check ではない)。追跡: app#338。
 # sha256 は https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/<arch>/kubectl.sha256
 # の実値を焼き込み。KUBECTL_VERSION を上げたら両方更新すること。
 #
@@ -25,8 +35,8 @@ ARG KUBECTL_VERSION=v1.35.8
 # のは stdlib 本体 (crypto/tls 等) の 7 High のみ。skew policy 内で選べる
 # 最善が v1.35.8 であり、残 CVE は accept 継続 (再点検トリガ: 1.35 系に
 # go1.26.6 ベースのパッチが出る / cluster_version が再確定する)。
-ARG KUBECTL_SHA256_AMD64=874d5e72dbb819f43cff16bcd1e4f8bac5b7f2361fe1e55049b0a6c676fb0cbf
-ARG KUBECTL_SHA256_ARM64=cc749967b62f4422260bc9c0aa7a7c55f45175ae38cb8d95767b5d2b7e04c1fd
+ARG KUBECTL_SHA256_AMD64=3cfeaf80be482b435b0aa214aff6e0b2c312ee23c0ff20810c75517b6004c6eb
+ARG KUBECTL_SHA256_ARM64=39c98bca82875d9a9ddfb6f3c5ab17c3f78ea0801230683e538a67d5c053308d
 
 # alpine 3.23→3.24 re-bump (#227 2026-09-01 続報、workspace#31):
 # 3.23 bump 後の scan で curl/libcurl だけ drift した — pin 時点 (2026-09-01 午前)
@@ -54,9 +64,12 @@ ARG KUBECTL_SHA256_ARM64=cc749967b62f4422260bc9c0aa7a7c55f45175ae38cb8d95767b5d2
 #     ビルド時に新データで再生成される (5x R2 実測: 119→121 件、TLS 動作確認済み))
 # ttyd / tini の版数は 3.23→3.24 で不変 (live APKINDEX 実測、2026-09-01。
 # 2026-10-05 の `apk policy` 再実測でも 1.7.7-r0 / 0.19.0-r3 のまま)。
+# zlib 1.3.2-r1 (2026-10-13: base digest を 3.24 の最新 294b683c へ更新。base に
+#   焼き込まれた zlib は 1.3.2-r0 のままで Sysdig が High を出すため明示 upgrade。
+#   `apk policy zlib` 実測で 3.24/main が 1.3.2-r1 を提供)
 # kubectl (Go toolchain High) は本 alpine bump のスコープ外 — バージョン選定の
 # 経緯は上の ARG KUBECTL_VERSION 直下のコメント (workspace#33) を参照。
-RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 \
+RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 zlib=1.3.2-r1 \
  && apk add --no-cache \
         "ttyd=1.7.7-r0" \
         "bash=5.3.9-r1" \

@@ -5,7 +5,7 @@
 # the Helm chart's ConfigMap for legacy single-mission deploys, but
 # all-missions mode reads from the image-baked /opt/ctf/missions/
 # directory below.
-FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 
 # Tools commonly required by Falco-detection-style CTF challenges.
 #
@@ -40,14 +40,23 @@ FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec4
 #     `apk policy` 実測で唯一の提供版。secdb 上 2.42.3-r0/-r1 は CVE-2026-27456/
 #     -53612..53614/-76642/-78408..78410 の fix を含む)
 #   bash 5.3.9-r1 (3.23 の 5.3.3-r1 から 3.24 側で上がった版に追随、念のため厳密 pin)
+# zlib 1.3.2-r1 (2026-10-13: base digest を 3.24 の最新 294b683c へ更新。base の zlib は
+#   1.3.2-r0 のままで Sysdig が High を出すため明示 upgrade。`apk policy zlib` 実測で
+#   3.24/main が 1.3.2-r1 を提供)
 # **この画像にはなお残る High CVE がある** (upstream fix 自体が未着地、または
 # alpine パッケージへの backport 待ち — 2026-10-05 時点で 3.24 に fix 版なし):
-#   libxml2 2.13.9-r2 (fix 2.15.2, CVE-2026-0989/2025-8732; CVE-2026-11979 は
-#     upstream に fix 自体が存在しない)
+#   libxml2 2.13.9-r2 (fix 2.15.2、2026-10-13 時点の Sysdig suggested fix は 2.15.4;
+#     CVE-2026-0989/2025-8732; CVE-2026-11979 は upstream に fix 自体が存在しない。
+#     `apk policy libxml2` 実測 (2026-10-13): 3.24 / edge/main とも 2.13.9-r2 のみ。
+#     引き込み元は bind-tools -> bind-libs (`apk info -r libxml2`)。bind-tools は
+#     参加者向けに dig/nslookup として文書化済み (PARTICIPANT-HANDBOOK / cheatsheet)
+#     のため、除去は content 判断 — 本 PR では触らない)。
+#     **受け入れの期限と解除条件**: bind-tools を `drill` (ldns、libxml2 を引かない) +
+#     busybox nslookup へ置換する PR が入るまで。追跡: app#338 と置換 issue)
 # jq は pin していないため 3.24/main の更新で 1.8.2-r0 (CVE-2026-49839 の fix 版、
 # `apk policy jq` 実測で唯一の提供版) へ自動で上がり、残存から外れた (2026-10-05)。
 # 残存 (libxml2) の追跡先は app#291 (#227 は CLOSED)。
-RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 \
+RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 zlib=1.3.2-r1 \
  && apk add --no-cache \
         bash=5.3.9-r1 \
         coreutils \
