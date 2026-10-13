@@ -256,7 +256,7 @@
 
   // Portal shell (P23-1): identity comes from the server-injected
   // __PORTAL_USER__ global (derived from X-Auth-Request-Email,
-  // api.DeriveUsername) rather than a ?user= query param. UI convenience
+  // api.NewUsernameDeriver) rather than a ?user= query param. UI convenience
   // only — /api/users/{user}/me is independently gated server-side
   // (selfOrAdmin).
   const user = window.__PORTAL_USER__ || '';

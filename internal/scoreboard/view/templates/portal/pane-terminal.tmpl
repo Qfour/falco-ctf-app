@@ -8,8 +8,10 @@
      both halves are live the iframe may render an in-ttyd login prompt
      instead of a live shell, which is expected and not a regression here.
      Per-user isolation (I8) is enforced independently by auth-policy's
-     `/check?host=<user>` on the ttyd Ingress itself, regardless of what src
-     ends up in this iframe. ===== -->
+     `/check-workspace?host=<user>` on the ttyd Ingress itself (the roster is
+     one table; the caller's canonical `<seat>@<EXPECTED_EMAIL_DOMAIN>` must
+     match the host's seat exactly), regardless of what src ends up in this
+     iframe. ===== -->
 <div class="pane p-shell" id="pane-terminal">
 
   <header>
