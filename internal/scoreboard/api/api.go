@@ -963,10 +963,16 @@ func emailMatchesUser(email, user, domain string) bool {
 // admin hosts are auth-proxied and inject X-Auth-Request-Email; the
 // cluster-internal Service path (workspace pods, collector, Falco) injects no
 // such header and is therefore denied here. This is the minimal safe signal —
-// the scoreboard need not know the hostname, and the header cannot be forged
-// from inside the cluster because the internal Service path never sets it and
-// ingress strips/overwrites any client-supplied copy (auth-request headers are
-// set by oauth2-proxy, not passed through from the client).
+// the scoreboard need not know the hostname. The header is a PROOF of identity
+// only while three things outside this file hold (it is not unforgeable by
+// itself): (1) the ingress `auth-response-headers` annotation stays pinned on
+// every scoreboard ingress, so ingress-nginx overwrites any client-supplied
+// X-Auth-Request-* with the oauth2-proxy subrequest's values; (2) the
+// scoreboard NetworkPolicy keeps workspaces off the Service (only
+// ingress-nginx, the collector and falcosidekick reach it), so nothing in the
+// cluster can send its own copy of the header; (3) the collector forwards only
+// its allowlisted routes (submit-detect is not one of them) and strips every
+// inbound X-Auth-Request-* (ADR-0034 D6).
 func (h *Handler) selfOrAdmin(w http.ResponseWriter, r *http.Request, user string) bool {
 	email := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Auth-Request-Email")))
 	if email == "" {
@@ -1224,6 +1230,10 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 //     with no X-Auth-Request-Email — the cluster-internal Service path, which
 //     has no legitimate caller for this route (the collector does not forward
 //     it and NetworkPolicy keeps workspaces off it) — is 403.
+//     The header is trusted only while the conditions on selfOrAdmin hold (the
+//     ingress auth-response-headers pin, the scoreboard NetworkPolicy, and the
+//     collector NOT forwarding this route while stripping X-Auth-Request-*):
+//     do not add submit-detect to the collector's forward allowlist.
 //   - global in-flight cap: a per-submission grader (docker/Job) is the net-new
 //     DoS lever, so past detectInflight's capacity the request is REJECTED with
 //     429 (never queued) — a flood cannot spawn unbounded grader work.

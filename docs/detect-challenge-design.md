@@ -115,9 +115,10 @@ Key design points:
 - **Self-scope:** the `/api/challenges/{cid}/submit-detect` handler is gated by
   `selfOrAdmin` (the `X-Auth-Request-Email` header is REQUIRED, the body `user` must equal the
   canonical `<seat>@<EXPECTED_EMAIL_DOMAIN>` exactly, admin is the one exception; no header is 403,
-  app#346), behind the origin guard. Since app#328 it is rate-limited on the identity-keyed action
-  bucket (403 without the header, before a token is consumed), no longer on `/submit`'s per-IP
-  bucket, plus the global in-flight cap, and it is audit-logged. No claimed-user path.
+  app#346), behind the origin guard. Since app#328 it is rate-limited on its own identity-keyed
+  `detect` bucket (`detectMW`; 403 without the header, before a token is consumed), no longer on
+  `/submit`'s per-IP bucket nor the hint/step/reset-dirty one, plus the global in-flight cap, and it
+  is audit-logged. No claimed-user path.
 - **No attacker-supplied time**, no forbidden-window — detect grading is purely a
   function of the (static capture, submitted condition) pair, so it is deterministic and
   replay-stable across scoreboard restarts (I1).
