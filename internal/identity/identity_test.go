@@ -46,7 +46,7 @@ func TestValidate_OneDefectPerCase(t *testing.T) {
 		{name: "empty domain does not excuse a bad admin", domain: "", allowEmpty: true, admins: []string{"a@" + publicDomain}, wantErr: "ADMIN_EMAILS"},
 		{name: "admin on a reserved domain passes and is lower-cased", domain: "ctf.local", admins: []string{" Ops@CTF.local ", ""}, wantDomain: "ctf.local", wantAdmins: []string{"ops@ctf.local"}},
 		{name: "admin on a public domain rejected", domain: "ctf.local", admins: []string{"ops@" + publicDomain}, wantErr: "not a reserved name"},
-		{name: "admin one bad among good rejected", domain: "ctf.local", admins: []string{"ops@ctf.local", "x@" + publicDomain}, wantErr: "x@" + publicDomain},
+		{name: "admin one bad among good rejected", domain: "ctf.local", admins: []string{"ops@ctf.local", "x@" + publicDomain}, wantErr: "ADMIN_EMAILS[1]"},
 		{name: "admin last-label lookalike rejected", domain: "ctf.local", admins: []string{"ops@ctf." + lookalikeLabel}, wantErr: "not a reserved name"},
 		{name: "admin trailing dot rejected", domain: "ctf.local", admins: []string{"ops@ctf.local."}, wantErr: "empty label"},
 		{name: "admin non-ASCII rejected (Kelvin sign in local part)", domain: "ctf.local", admins: []string{"ops\u212a@ctf.local"}, wantErr: "non-ASCII"},

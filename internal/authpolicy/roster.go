@@ -14,7 +14,12 @@ package authpolicy
 //	    external: someone@partner.example   # optional, at most one
 //
 // The file is personal data once an `external` is present. It is never logged
-// whole and never served: only its counts reach /healthz.
+// whole and never served: only its counts reach /healthz. Startup errors name a
+// row by its index (`seats[N]`) or a line number, NEVER by a value (seat,
+// external, an unknown key's name, or a YAML type error's excerpt): a mistyped
+// `seat:` is often a real email, and a CrashLoop would print it on every
+// restart (ADR-0034 D3: a raw email may be logged only when it is REJECTED at
+// request time).
 
 import (
 	"bytes"
@@ -22,6 +27,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -141,7 +149,7 @@ func parseRoster(data []byte, domain string, admins []string, folded []string) (
 	for _, a := range cfg.Admins {
 		n, ok := normalizeEmail(a, folded)
 		if !ok {
-			return nil, fmt.Errorf("roster: ADMIN_EMAILS entry %q does not normalise", a)
+			return nil, errors.New("roster: an ADMIN_EMAILS entry does not normalise")
 		}
 		adminSet[n] = struct{}{}
 	}
@@ -153,7 +161,7 @@ func parseRoster(data []byte, domain string, admins []string, folded []string) (
 		if errors.Is(err, io.EOF) {
 			return nil, errors.New("roster: file is empty")
 		}
-		return nil, fmt.Errorf("roster: parse: %w", err)
+		return nil, fmt.Errorf("roster: parse: %s", yamlErrorLocation(err))
 	}
 	var extra rosterDoc
 	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
@@ -169,43 +177,47 @@ func parseRoster(data []byte, domain string, admins []string, folded []string) (
 		seats:    make(map[string]struct{}, len(doc.Seats)),
 		external: make(map[string]string),
 	}
+	seatIndex := make(map[string]int, len(doc.Seats))
+	externalIndex := make(map[string]int)
 	for i, row := range doc.Seats {
 		if !identity.IsPlainASCII(row.Seat) {
-			return nil, fmt.Errorf("roster: seats[%d]: seat %q: %w", i, row.Seat, identity.ErrNotASCII)
+			return nil, fmt.Errorf("roster: seats[%d]: seat: %w", i, identity.ErrNotASCII)
 		}
 		if !validHost.MatchString(row.Seat) {
-			return nil, fmt.Errorf("roster: seats[%d]: seat %q must match %s", i, row.Seat, validHost)
+			return nil, fmt.Errorf("roster: seats[%d]: seat must match %s", i, validHost)
 		}
-		if _, dup := r.seats[row.Seat]; dup {
-			return nil, fmt.Errorf("roster: seats[%d]: duplicate seat %q", i, row.Seat)
+		if first, dup := seatIndex[row.Seat]; dup {
+			return nil, fmt.Errorf("roster: seats[%d]: duplicate seat (same as seats[%d])", i, first)
 		}
+		seatIndex[row.Seat] = i
 		r.seats[row.Seat] = struct{}{}
 		if _, hit := adminSet[identity.Canonical(row.Seat, cfg.Domain)]; hit {
-			return nil, fmt.Errorf("roster: seat %q: %s is also in ADMIN_EMAILS", row.Seat, identity.Canonical(row.Seat, cfg.Domain))
+			return nil, fmt.Errorf("roster: seats[%d]: the seat's canonical email is also in ADMIN_EMAILS", i)
 		}
 		if row.External == nil {
 			continue
 		}
 		ext := *row.External
 		if strings.TrimSpace(ext) == "" {
-			return nil, fmt.Errorf("roster: seat %q: external is blank (omit the key instead)", row.Seat)
+			return nil, fmt.Errorf("roster: seats[%d]: external is blank (omit the key instead)", i)
 		}
 		if !identity.IsPlainASCII(strings.TrimSpace(ext)) {
-			return nil, fmt.Errorf("roster: seat %q: external: %w", row.Seat, identity.ErrNotASCII)
+			return nil, fmt.Errorf("roster: seats[%d]: external: %w", i, identity.ErrNotASCII)
 		}
 		n, ok := normalizeEmail(ext, folded)
 		if !ok {
-			return nil, fmt.Errorf("roster: seat %q: external is not a usable email (shape, or an empty local part after normalisation)", row.Seat)
+			return nil, fmt.Errorf("roster: seats[%d]: external is not a usable email (shape, or an empty local part after normalisation)", i)
 		}
 		if n[strings.IndexByte(n, '@')+1:] == cfg.Domain {
-			return nil, fmt.Errorf("roster: seat %q: external is in EXPECTED_EMAIL_DOMAIN %q; that domain is the seat namespace", row.Seat, cfg.Domain)
+			return nil, fmt.Errorf("roster: seats[%d]: external is in EXPECTED_EMAIL_DOMAIN %q; that domain is the seat namespace", i, cfg.Domain)
 		}
 		if _, hit := adminSet[n]; hit {
-			return nil, fmt.Errorf("roster: seat %q: external is also in ADMIN_EMAILS", row.Seat)
+			return nil, fmt.Errorf("roster: seats[%d]: external is also in ADMIN_EMAILS", i)
 		}
-		if other, dup := r.external[n]; dup {
-			return nil, fmt.Errorf("roster: seat %q: external duplicates seat %q's after normalisation", row.Seat, other)
+		if first, dup := externalIndex[n]; dup {
+			return nil, fmt.Errorf("roster: seats[%d]: external duplicates seats[%d]'s after normalisation", i, first)
 		}
+		externalIndex[n] = i
 		r.external[n] = row.Seat
 	}
 	return r, nil
@@ -245,4 +257,42 @@ func (r *Roster) Resolve(rawEmail string) (seat string, ok bool) {
 		return seat, true
 	}
 	return "", false
+}
+
+var yamlLineRE = regexp.MustCompile(`line ([0-9]+)`)
+
+// yamlErrorLocation reduces a yaml.v3 decode error to line numbers only. The
+// library's messages quote the offending key (`field emial not found`) or the
+// offending scalar (`cannot unmarshal !!str `x@y` into ...`); either can be a
+// real email in a file that is personal data, so none of that text is kept.
+func yamlErrorLocation(err error) string {
+	var lines []int
+	seen := map[int]bool{}
+	collect := func(msg string) {
+		for _, m := range yamlLineRE.FindAllStringSubmatch(msg, -1) {
+			if n, convErr := strconv.Atoi(m[1]); convErr == nil && !seen[n] {
+				seen[n] = true
+				lines = append(lines, n)
+			}
+		}
+	}
+	var te *yaml.TypeError
+	kind := "syntax error"
+	if errors.As(err, &te) {
+		kind = "structure error (unknown key or wrong type)"
+		for _, m := range te.Errors {
+			collect(m)
+		}
+	} else {
+		collect(err.Error())
+	}
+	if len(lines) == 0 {
+		return kind
+	}
+	sort.Ints(lines)
+	parts := make([]string, len(lines))
+	for i, n := range lines {
+		parts[i] = strconv.Itoa(n)
+	}
+	return kind + " at line " + strings.Join(parts, ", ")
 }

@@ -39,7 +39,8 @@ info:
 
     **Startup is fail-closed.** `ROSTER_FILE` must exist, parse (YAML,
     `seats:` list of `{seat, external?}`, unknown keys rejected) and hold at
-    least one seat; `EXPECTED_EMAIL_DOMAIN` and every `ADMIN_EMAILS` domain must
+    least one seat; `EXPECTED_EMAIL_DOMAIN` must be set (there is no default) and
+    it and every `ADMIN_EMAILS` domain must
     end in a reserved label (`local` `test` `invalid` `example` `localhost`);
     seats and `external` emails must be unique **after normalisation**; no
     `external` may be in `EXPECTED_EMAIL_DOMAIN`; neither an `external` nor a

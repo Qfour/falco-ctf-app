@@ -16,12 +16,17 @@ import (
 
 // configFromEnv builds the service config from the environment and refuses
 // (returns an error) on anything ADR-0034 D2 forbids: a missing, empty or
-// malformed ROSTER_FILE, an EXPECTED_EMAIL_DOMAIN or ADMIN_EMAILS domain whose
+// malformed ROSTER_FILE, an unset EXPECTED_EMAIL_DOMAIN, an EXPECTED_EMAIL_DOMAIN
+// or ADMIN_EMAILS domain whose
 // last label is not a reserved name, or an overlap between ADMIN_EMAILS and the
 // roster. There is no "run without a roster" mode.
 func configFromEnv(env func(key, fallback string) string) (authpolicy.Config, error) {
 	rawAdmins := serverutil.SplitCSV(env("ADMIN_EMAILS", ""))
-	idCfg, err := identity.Validate(env("EXPECTED_EMAIL_DOMAIN", "ctf.local"), rawAdmins, false)
+	// No default: an unset EXPECTED_EMAIL_DOMAIN must reach identity.Validate as
+	// empty so auth-policy refuses to start (it cannot resolve a seat without a
+	// domain). The chart always passes a value, and docker-compose / `make
+	// deploy-local` pass ctf.local explicitly.
+	idCfg, err := identity.Validate(env("EXPECTED_EMAIL_DOMAIN", ""), rawAdmins, false)
 	if err != nil {
 		return authpolicy.Config{}, fmt.Errorf("identity config: %w", err)
 	}

@@ -40,12 +40,16 @@ func TestConfigFromEnv_FailClosed(t *testing.T) {
 		env  map[string]string
 		want string
 	}{
-		{"ROSTER_FILE unset", map[string]string{"ADMIN_EMAILS": "admin@ctf.local"}, "ROSTER_FILE is not set"},
-		{"ROSTER_FILE points nowhere", map[string]string{"ROSTER_FILE": "/nonexistent/roster.yaml"}, "open"},
-		{"ROSTER_FILE empty", map[string]string{"ROSTER_FILE": empty}, "empty"},
+		{"ROSTER_FILE unset", map[string]string{"EXPECTED_EMAIL_DOMAIN": "ctf.local", "ADMIN_EMAILS": "admin@ctf.local"}, "ROSTER_FILE is not set"},
+		{"ROSTER_FILE points nowhere", map[string]string{"EXPECTED_EMAIL_DOMAIN": "ctf.local", "ROSTER_FILE": "/nonexistent/roster.yaml"}, "open"},
+		{"ROSTER_FILE empty", map[string]string{"EXPECTED_EMAIL_DOMAIN": "ctf.local", "ROSTER_FILE": empty}, "empty"},
+		// Security LOW-4: there is no default domain. A valid roster and admin
+		// list with EXPECTED_EMAIL_DOMAIN unset (or blank) must still refuse.
+		{"EXPECTED_EMAIL_DOMAIN unset", map[string]string{"ROSTER_FILE": good, "ADMIN_EMAILS": "admin@ctf.local"}, "EXPECTED_EMAIL_DOMAIN is empty"},
+		{"EXPECTED_EMAIL_DOMAIN blank", map[string]string{"ROSTER_FILE": good, "EXPECTED_EMAIL_DOMAIN": "   "}, "EXPECTED_EMAIL_DOMAIN is empty"},
 		{"EXPECTED_EMAIL_DOMAIN not reserved", map[string]string{"ROSTER_FILE": good, "EXPECTED_EMAIL_DOMAIN": "ctf.dev"}, "not a reserved name"},
-		{"ADMIN_EMAILS not reserved", map[string]string{"ROSTER_FILE": good, "ADMIN_EMAILS": "ops@" + publicDomain}, "not a reserved name"},
-		{"ADMIN_EMAILS overlaps a seat", map[string]string{"ROSTER_FILE": good, "ADMIN_EMAILS": "user1@ctf.local"}, "ADMIN_EMAILS"},
+		{"ADMIN_EMAILS not reserved", map[string]string{"EXPECTED_EMAIL_DOMAIN": "ctf.local", "ROSTER_FILE": good, "ADMIN_EMAILS": "ops@" + publicDomain}, "not a reserved name"},
+		{"ADMIN_EMAILS overlaps a seat", map[string]string{"EXPECTED_EMAIL_DOMAIN": "ctf.local", "ROSTER_FILE": good, "ADMIN_EMAILS": "user1@ctf.local"}, "ADMIN_EMAILS"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -64,6 +68,7 @@ func TestConfigFromEnv_Valid(t *testing.T) {
 	good := writeRoster(t, "seats:\n  - seat: user1\n  - seat: user2\n    external: p@partner.example\n")
 	cfg, err := configFromEnv(envOf(map[string]string{
 		"ROSTER_FILE":           good,
+		"EXPECTED_EMAIL_DOMAIN": "ctf.local",
 		"ADMIN_EMAILS":          "Admin@ctf.local, ops@ctf.local",
 		"OAUTH2_PROXY_AUTH_URL": "http://oauth2.invalid/oauth2/auth",
 	}))
@@ -74,7 +79,7 @@ func TestConfigFromEnv_Valid(t *testing.T) {
 		t.Fatalf("roster not loaded: %+v", cfg.Roster)
 	}
 	if cfg.ExpectedEmailDomain != "ctf.local" {
-		t.Errorf("default EXPECTED_EMAIL_DOMAIN = %q", cfg.ExpectedEmailDomain)
+		t.Errorf("EXPECTED_EMAIL_DOMAIN = %q", cfg.ExpectedEmailDomain)
 	}
 	if got := strings.Join(cfg.AdminEmails, ","); got != "admin@ctf.local,ops@ctf.local" {
 		t.Errorf("admins = %q", got)

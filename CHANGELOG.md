@@ -58,11 +58,13 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
   ingress が 500 で閉じる (開かない)。判定は「ロスターで解決した seat が host と完全一致」(前方一致をやめた)。
 - **破壊的変更 (ロスター必須)**: auth-policy は `ROSTER_FILE` が無い・空・不正なら**起動しない**。
   `EXPECTED_EMAIL_DOMAIN` と `ADMIN_EMAILS` の各ドメインの最後のラベルは予約名 (`local` `test` `invalid`
-  `example` `localhost`) でなければならず、`ADMIN_EMAILS` がロスターの seat / external と重なっても起動しない。
+  `example` `localhost`) でなければならず、`ADMIN_EMAILS` がロスターの seat / external と重なっても auth-policy は起動しない
+  (scoreboard はロスターを持たないので重なりを検出できない: `ADMIN_EMAILS` は同じ 1 値を auth-policy と scoreboard の両 release に渡す)。
 - **破壊的変更 (chart の値)**: `ingress.journeyAuthUrl` (scoreboard)、`ingress.adminAuthUrl` (docs)、
   `auth.authUrl` と **`auth.enabled` (ctf-user)** を廃止。全 Ingress の auth-url は template に固定
   (参加者 = `/check-participant`、workspace = `/check-workspace?host=<username>`、運営 = `/check-admin`)。
-  古い値を渡すと描画が失敗する。annotation の passthrough に `auth-url` / `auth-response-headers` があっても失敗する。
+  古い値を渡すと描画が失敗する。annotation の passthrough に `nginx.ingress.kubernetes.io/auth-` で始まる key があっても失敗する
+  (`auth-url` / `auth-response-headers` だけでなく `auth-cache-key` / `auth-cache-duration` / `auth-snippet` / `auth-proxy-set-headers` 等。3 chart)。
 - **破壊的変更 (scoreboard)**: self の照合を `<user>@<EXPECTED_EMAIL_DOMAIN>` との**完全一致**に変更
   (これまでは任意ドメインの `<user>@` 前方一致)。`EXPECTED_EMAIL_DOMAIN` が未設定の scoreboard は誰も self と
   みなさない (参加者は締め出される。fail-closed)。platform は auth-policy と scoreboard に同じ値を渡すこと。

@@ -94,25 +94,28 @@ func Canonical(seat, domain string) string { return seat + "@" + domain }
 // operator routes.
 func NormalizeAdminEmails(raw []string) ([]string, error) {
 	out := make([]string, 0, len(raw))
-	for _, e := range raw {
+	// Errors name an entry by its position, never by its value: a mistyped
+	// ADMIN_EMAILS element is often a real mailbox and the message ends up in a
+	// pod log on every restart (ADR-0034 D3).
+	for i, e := range raw {
 		e = strings.TrimSpace(e)
 		if e == "" {
 			continue
 		}
 		if !IsPlainASCII(e) {
-			return nil, fmt.Errorf("ADMIN_EMAILS entry %q: %w", e, ErrNotASCII)
+			return nil, fmt.Errorf("ADMIN_EMAILS[%d]: %w", i, ErrNotASCII)
 		}
 		e = strings.ToLower(e)
 		at := strings.IndexByte(e, '@')
 		if at <= 0 || at != strings.LastIndexByte(e, '@') || at == len(e)-1 {
-			return nil, fmt.Errorf("ADMIN_EMAILS entry %q: want exactly one '@' with a non-empty local part and domain", e)
+			return nil, fmt.Errorf("ADMIN_EMAILS[%d]: want exactly one '@' with a non-empty local part and domain", i)
 		}
 		dom, err := NormalizeDomain(e[at+1:])
 		if err != nil {
-			return nil, fmt.Errorf("ADMIN_EMAILS entry %q: %w", e, err)
+			return nil, fmt.Errorf("ADMIN_EMAILS[%d]: %w", i, err)
 		}
 		if err := CheckReservedDomain(dom); err != nil {
-			return nil, fmt.Errorf("ADMIN_EMAILS entry %q: %w", e, err)
+			return nil, fmt.Errorf("ADMIN_EMAILS[%d]: %w", i, err)
 		}
 		out = append(out, e)
 	}

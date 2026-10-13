@@ -50,15 +50,15 @@ func TestParseRoster_OneDefectPerCase(t *testing.T) {
 		{name: "comment-only file", doc: "# nothing here\n", wantErr: "empty"},
 		{name: "seats: [] (zero seats)", doc: "seats: []\n", wantErr: "no seats"},
 		{name: "seats key absent (null)", doc: "seats:\n", wantErr: "no seats"},
-		{name: "unknown top-level key", doc: "seats:\n  - seat: user1\nextra: 1\n", wantErr: "field extra not found"},
-		{name: "typo'd top-level key (seat: instead of seats:)", doc: "seat:\n  - seat: user1\n", wantErr: "field seat not found"},
-		{name: "unknown row key", doc: "seats:\n  - seat: user1\n    emial: a@b.example\n", wantErr: "field emial not found"},
-		{name: "external as a list (at most one)", doc: "seats:\n  - seat: user1\n    external: [a@p.example, b@p.example]\n", wantErr: "parse"},
+		{name: "unknown top-level key", doc: "seats:\n  - seat: user1\nextra: 1\n", wantErr: "structure error (unknown key or wrong type) at line 3"},
+		{name: "typo'd top-level key (seat: instead of seats:)", doc: "seat:\n  - seat: user1\n", wantErr: "structure error (unknown key or wrong type) at line 1"},
+		{name: "unknown row key", doc: "seats:\n  - seat: user1\n    emial: a@b.example\n", wantErr: "structure error (unknown key or wrong type) at line 3"},
+		{name: "external as a list (at most one)", doc: "seats:\n  - seat: user1\n    external: [a@p.example, b@p.example]\n", wantErr: "structure error (unknown key or wrong type) at line 3"},
 		{name: "two YAML documents", doc: "seats:\n  - seat: user1\n---\nseats:\n  - seat: user2\n", wantErr: "more than one"},
-		{name: "not YAML at all", doc: "seats: [\n", wantErr: "parse"},
+		{name: "not YAML at all", doc: "seats: [\n", wantErr: "roster: parse: syntax error"},
 
 		// --- seats
-		{name: "duplicate seat", doc: "seats:\n  - seat: user1\n  - seat: user1\n", wantErr: "duplicate seat"},
+		{name: "duplicate seat", doc: "seats:\n  - seat: user1\n  - seat: user1\n", wantErr: "seats[1]: duplicate seat (same as seats[0])"},
 		{name: "seat with upper case", doc: "seats:\n  - seat: User1\n", wantErr: "must match"},
 		{name: "seat with leading hyphen", doc: "seats:\n  - seat: -user1\n", wantErr: "must match"},
 		{name: "seat with a space", doc: "seats:\n  - seat: \"user 1\"\n", wantErr: "non-ASCII"},
@@ -117,6 +117,70 @@ func TestParseRoster_OneDefectPerCase(t *testing.T) {
 				t.Fatalf("error %q does not name the defect (want substring %q)", err, c.wantErr)
 			}
 		})
+	}
+}
+
+// ADR-0034 D3 / security LOW-2: a startup error names a row by index or line,
+// never by a value. The file is personal data once an `external` is present, and
+// a CrashLoop would print the message on every restart. Each document below
+// carries a marker in the position that the old messages echoed (seat, external,
+// an unknown key's name, a scalar of the wrong type, a duplicate); the error
+// must still be raised and must contain none of them.
+func TestParseRoster_ErrorsNeverEchoValues(t *testing.T) {
+	const m = "leakmarker"
+	cases := []struct {
+		name   string
+		doc    string
+		admins []string
+	}{
+		{"seat holding an email (shape)", "seats:\n  - seat: " + m + ".seat@partner.example\n", nil},
+		{"seat with upper case", "seats:\n  - seat: " + strings.ToUpper(m) + "\n", nil},
+		{"seat non-ASCII", "seats:\n  - seat: \"" + m + "\u212a\"\n", nil},
+		{"duplicate seat", "seats:\n  - seat: " + m + "\n  - seat: " + m + "\n", nil},
+		{"seat is an admin", "seats:\n  - seat: " + m + "\n", []string{m + "@ctf.local"}},
+		{"external blank-ish shape", "seats:\n  - seat: user1\n    external: " + m + "\n", nil},
+		{"external two @", "seats:\n  - seat: user1\n    external: " + m + "@a@partner.example\n", nil},
+		{"external non-ASCII", "seats:\n  - seat: user1\n    external: \"" + m + "\u212a@partner.example\"\n", nil},
+		{"external in the seat domain", "seats:\n  - seat: user1\n    external: " + m + "@ctf.local\n", nil},
+		{"external is an admin", "seats:\n  - seat: user1\n    external: " + m + "@partner.example\n", []string{m + "@partner.example"}},
+		{"duplicate external", "seats:\n  - seat: user1\n    external: " + m + "@partner.example\n  - seat: user2\n    external: " + m + "@partner.example\n", nil},
+		{"unknown row key named like an email", "seats:\n  - seat: user1\n    " + m + ": x\n", nil},
+		{"unknown top-level key", "seats:\n  - seat: user1\n" + m + ": 1\n", nil},
+		{"seat of the wrong YAML type", "seats:\n  - seat: [" + m + "@partner.example]\n", nil},
+		{"external of the wrong YAML type", "seats:\n  - seat: user1\n    external: {" + m + ": " + m + "}\n", nil},
+		{"seats is a scalar", "seats: " + m + "@partner.example\n", nil},
+		{"syntax error carrying a value", "seats: [" + m + "@partner.example\n", nil},
+		{"syntax error, unbalanced quote", "seats:\n  - seat: \"" + m + "@partner.example\n", nil},
+		{"second document", "seats:\n  - seat: user1\n---\nseats:\n  - seat: " + m + "\n", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			admins := c.admins
+			if admins == nil {
+				admins = []string{"admin@ctf.local"}
+			}
+			_, err := parseRoster([]byte(c.doc), "ctf.local", admins, foldTest)
+			if err == nil {
+				t.Fatal("document with this defect was accepted: the case does not test the error text")
+			}
+			if strings.Contains(strings.ToLower(err.Error()), m) {
+				t.Fatalf("startup error echoes a value from the roster: %q", err)
+			}
+		})
+	}
+}
+
+// The same rule for the other startup input that can hold a mailbox: a mistyped
+// ADMIN_EMAILS element is named by position.
+func TestParseRoster_AdminErrorsNeverEchoValues(t *testing.T) {
+	for _, adm := range []string{"leakmarker@" + publicDomain, "leakmarker\u212a@ctf.local", "leakmarker", "leak@marker@ctf.local"} {
+		_, err := parseRoster([]byte(baseRoster), "ctf.local", []string{"admin@ctf.local", adm}, foldTest)
+		if err == nil {
+			t.Fatalf("admin %q accepted", adm)
+		}
+		if strings.Contains(err.Error(), "leakmarker") || !strings.Contains(err.Error(), "ADMIN_EMAILS[1]") {
+			t.Fatalf("admin error %q must name the entry by position (ADMIN_EMAILS[1]) and not echo it", err)
+		}
 	}
 }
 
