@@ -63,8 +63,10 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
 - **破壊的変更 (chart の値)**: `ingress.journeyAuthUrl` (scoreboard)、`ingress.adminAuthUrl` (docs)、
   `auth.authUrl` と **`auth.enabled` (ctf-user)** を廃止。全 Ingress の auth-url は template に固定
   (参加者 = `/check-participant`、workspace = `/check-workspace?host=<username>`、運営 = `/check-admin`)。
-  古い値を渡すと描画が失敗する。annotation の passthrough に `nginx.ingress.kubernetes.io/auth-` で始まる key があっても失敗する
-  (`auth-url` / `auth-response-headers` だけでなく `auth-cache-key` / `auth-cache-duration` / `auth-snippet` / `auth-proxy-set-headers` 等。3 chart)。
+  古い値を渡すと描画が失敗する。Ingress の annotation passthrough は**許可 key の allowlist** (`nginx.ingress.kubernetes.io/ssl-redirect` /
+  `nginx.ingress.kubernetes.io/proxy-body-size` / `cert-manager.io/cluster-issuer`) で、それ以外の key は描画が失敗する
+  (`auth-*` に限らず `satisfy` や `whitelist-source-range` / `allowlist-source-range` も)。対象は 3 つの passthrough
+  (scoreboard の admin / journey、docs の admin)。ctf-user には passthrough が無い。
 - **破壊的変更 (scoreboard)**: self の照合を `<user>@<EXPECTED_EMAIL_DOMAIN>` との**完全一致**に変更
   (これまでは任意ドメインの `<user>@` 前方一致)。`EXPECTED_EMAIL_DOMAIN` が未設定の scoreboard は誰も self と
   みなさない (参加者は締め出される。fail-closed)。platform は auth-policy と scoreboard に同じ値を渡すこと。

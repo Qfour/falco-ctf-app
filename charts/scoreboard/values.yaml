@@ -198,7 +198,10 @@ ingress:
   tlsSecretName: ""
   # Per-environment oauth2-proxy sign-in URL for the admin gate. Empty = omit.
   authSignin: ""
-  # Extra annotations merged in (e.g. cert-manager issuer, ssl-redirect in prod).
+  # Extra annotations merged in. An ALLOWLIST (falco-ctf-common
+  # .ingressPassthrough): nginx.ingress.kubernetes.io/ssl-redirect,
+  # nginx.ingress.kubernetes.io/proxy-body-size, cert-manager.io/cluster-issuer.
+  # Any other key fails the render (ADR-0034 D4).
   annotations: {}
 
   # P18 participant journey host (a SECOND ingress off the same scoreboard
@@ -228,6 +231,7 @@ ingress:
   # `annotations` on purpose: the shared block may carry a cert-manager issuer /
   # per-host secretName which would make the journey host issue a redundant
   # Let's Encrypt cert instead of riding the wildcard default-ssl-certificate.
+  # Same allowlist as `annotations` (ADR-0034 D4).
   journeyAnnotations: {}
 
 # P20 node-tier pinning. Empty = no scheduling constraint (EKS / local render

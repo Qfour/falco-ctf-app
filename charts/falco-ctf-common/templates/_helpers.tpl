@@ -176,3 +176,41 @@ app.kubernetes.io/managed-by: {{ .managedBy }}
 {{- $tag := .tag | default .appVersion -}}
 {{ .repository }}:{{ $tag }}
 {{- end -}}
+
+{{- /*
+  falco-ctf-common.ingressPassthrough — the free-form Ingress annotation
+  passthrough (scoreboard ingress.annotations / ingress.journeyAnnotations,
+  docs ingress.annotations), as an ALLOWLIST (ADR-0034 D4 / V12).
+
+  It was a denylist of the nginx.ingress.kubernetes.io/auth- prefix. A denylist
+  cannot name every key that defeats the identity-stamping auth gate:
+  `satisfy: "any"` plus a `whitelist-source-range` / `allowlist-source-range`
+  lets a request from an allowed address skip the auth subrequest entirely, so
+  no canonical X-Auth-Request-* headers are stamped and the internal-only 403s
+  stop distinguishing the browser path. So the passthrough accepts only the keys
+  the platform helmfile actually supplies today, and every other key fails the
+  render. A new key is added HERE, in the same PR that has a reason for it, with
+  a V12 case (internal/apispec/ingressparity/authurl_test.go).
+
+  Allowed:
+    nginx.ingress.kubernetes.io/ssl-redirect     (prod, vm-prod)
+    nginx.ingress.kubernetes.io/proxy-body-size  (prod, vm-prod)
+    cert-manager.io/cluster-issuer               (vm-prod admin Ingress)
+
+  Arg: a dict with `field` (the values path, for the error message) and
+  `annotations` (the map). Emits the map as YAML; the caller indents it.
+
+  Usage:
+    {{- with .Values.ingress.annotations }}
+    {{- include "falco-ctf-common.ingressPassthrough" (dict "field" "ingress.annotations" "annotations" .) | nindent 4 }}
+    {{- end }}
+*/}}
+{{- define "falco-ctf-common.ingressPassthrough" -}}
+{{- $allowed := list "nginx.ingress.kubernetes.io/ssl-redirect" "nginx.ingress.kubernetes.io/proxy-body-size" "cert-manager.io/cluster-issuer" -}}
+{{- range $k, $_ := .annotations -}}
+{{- if not (has (toString $k) $allowed) -}}
+{{- fail (printf "%s must not set %s (the passthrough is an allowlist: %s; the auth gate and everything that can bypass it, e.g. satisfy / *-source-range / auth-*, is fixed by this chart)" $.field $k (join ", " $allowed)) -}}
+{{- end -}}
+{{- end -}}
+{{- toYaml .annotations -}}
+{{- end -}}

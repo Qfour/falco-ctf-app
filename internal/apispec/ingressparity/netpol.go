@@ -52,11 +52,27 @@ type npObject struct {
 		Name string `yaml:"name"`
 	} `yaml:"metadata"`
 	Spec struct {
-		PolicyTypes []string `yaml:"policyTypes"`
+		PodSelector *npSelector `yaml:"podSelector"`
+		PolicyTypes []string    `yaml:"policyTypes"`
 		Ingress     []struct {
 			From []npPeer `yaml:"from"`
 		} `yaml:"ingress"`
+		// Deployment only: the labels the scoreboard Pod actually carries.
+		Template struct {
+			Metadata struct {
+				Labels map[string]string `yaml:"labels"`
+			} `yaml:"metadata"`
+		} `yaml:"template"`
 	} `yaml:"spec"`
+}
+
+func hasPolicyType(types []string, want string) bool {
+	for _, t := range types {
+		if t == want {
+			return true
+		}
+	}
+	return false
 }
 
 // CheckScoreboardNetworkPolicies takes the full `helm template charts/scoreboard`
@@ -65,7 +81,7 @@ func CheckScoreboardNetworkPolicies(doc []byte) []string {
 	var viol []string
 	dec := yaml.NewDecoder(bytes.NewReader(doc))
 	var names []string
-	var allow, deny *npObject
+	var allow, deny, deployment *npObject
 	for {
 		var o npObject
 		if err := dec.Decode(&o); err != nil {
@@ -73,6 +89,11 @@ func CheckScoreboardNetworkPolicies(doc []byte) []string {
 				break
 			}
 			return append(viol, fmt.Sprintf("parse helm output: %v", err))
+		}
+		if o.Kind == "Deployment" && o.Metadata.Name == "scoreboard" {
+			d := o
+			deployment = &d
+			continue
 		}
 		if o.Kind != "NetworkPolicy" {
 			continue
@@ -97,14 +118,30 @@ func CheckScoreboardNetworkPolicies(doc []byte) []string {
 	if len(deny.Spec.Ingress) != 0 {
 		viol = append(viol, "scoreboard-default-deny has ingress rules: it must admit nothing")
 	}
-	hasIngress := false
-	for _, pt := range allow.Spec.PolicyTypes {
-		if pt == "Ingress" {
-			hasIngress = true
-		}
+	// The two policies must actually SELECT the scoreboard Pod. Without this a
+	// default-deny that selects nothing, or an allow whose podSelector matches
+	// no Pod, leaves the Pod unrestricted while the sources below still look
+	// right (R1#4).
+	if !hasPolicyType(deny.Spec.PolicyTypes, "Ingress") {
+		viol = append(viol, "scoreboard-default-deny does not list Ingress in policyTypes: it would not deny any ingress")
 	}
-	if !hasIngress {
+	if sel := deny.Spec.PodSelector; sel == nil || len(sel.MatchLabels) != 0 || len(sel.MatchExpressions) != 0 {
+		viol = append(viol, "scoreboard-default-deny podSelector must be {} (every Pod in the namespace)")
+	}
+	if !hasPolicyType(allow.Spec.PolicyTypes, "Ingress") {
 		viol = append(viol, "scoreboard-allow does not list Ingress in policyTypes")
+	}
+	switch sel := allow.Spec.PodSelector; {
+	case deployment == nil:
+		viol = append(viol, "no Deployment named scoreboard in the render: cannot confirm scoreboard-allow selects the scoreboard Pod")
+	case sel == nil || len(sel.MatchLabels) == 0 || len(sel.MatchExpressions) != 0:
+		viol = append(viol, "scoreboard-allow podSelector must be a non-empty matchLabels (no matchExpressions)")
+	default:
+		for k, v := range sel.MatchLabels {
+			if deployment.Spec.Template.Metadata.Labels[k] != v {
+				viol = append(viol, fmt.Sprintf("scoreboard-allow podSelector %s=%s does not match the scoreboard Pod template's labels %v: the allow policy would select no Pod", k, v, deployment.Spec.Template.Metadata.Labels))
+			}
+		}
 	}
 
 	var sources []string

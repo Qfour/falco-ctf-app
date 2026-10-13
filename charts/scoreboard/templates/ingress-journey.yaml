@@ -45,21 +45,13 @@ metadata:
     # by the participant. (security-lead cross-repo 5x focus.)
     nginx.ingress.kubernetes.io/auth-response-headers: "X-Auth-Request-User,X-Auth-Request-Email,X-Auth-Request-Preferred-Username"
     {{- /* The passthrough must not replace or weaken the identity-stamping gate
-         (ADR-0034 D4). The whole nginx.ingress.kubernetes.io/auth- namespace is
-         refused, not just auth-url / auth-response-headers: auth-cache-key and
-         auth-cache-duration would reuse one caller's 200 (with its canonical
-         identity headers) for another, or keep a revoked seat admitted for the
-         cache period; auth-snippet and auth-proxy-set-headers change what the
-         auth subrequest carries. Without X-Auth-Request-* from auth-policy the
-         browser path is indistinguishable from the collector / falcosidekick
-         path, so the internal-only 403s stop firing. Refuse at render time. */ -}}
-    {{- range $k, $_ := (default dict $.Values.ingress.journeyAnnotations) }}
-    {{- if hasPrefix "nginx.ingress.kubernetes.io/auth-" (toString $k) }}
-    {{- fail (printf "ingress.journeyAnnotations must not set %s (every nginx.ingress.kubernetes.io/auth-* annotation is fixed by this chart: the auth gate is not overridable)" $k) }}
-    {{- end }}
-    {{- end }}
+         (ADR-0034 D4). It is an ALLOWLIST of keys (falco-ctf-common
+         .ingressPassthrough), not a list of refused prefixes: `satisfy: any`
+         with a source-range would admit a caller without the auth subrequest,
+         so no canonical identity headers are stamped and the internal-only 403s
+         stop firing; auth-cache-* would reuse one caller's 200 for another. */ -}}
     {{- with .Values.ingress.journeyAnnotations }}
-    {{- toYaml . | nindent 4 }}
+    {{- include "falco-ctf-common.ingressPassthrough" (dict "field" "ingress.journeyAnnotations" "annotations" .) | nindent 4 }}
     {{- end }}
 spec:
   ingressClassName: {{ .Values.ingress.className }}
@@ -67,7 +59,8 @@ spec:
     - host: {{ .Values.ingress.journeyHost | quote }}
       http:
         # Participant allow-list (P18 5x fix; P19-2b cutover). The journey
-        # host is reachable by ANY authenticated login, so it must NOT
+        # host is reachable by ANY identity /check-participant admits (a roster
+        # seat or an ADMIN_EMAILS member), so it must NOT
         # re-expose the whole scoreboard like the admin host's `path: /`
         # does. Only the paths the unified portal shell actually needs are
         # routed here; everything else (GET /, /api/state, /api/admin/*,
@@ -82,7 +75,7 @@ spec:
         #                      over Home/Journey/Me/Terminal (+ Scoreboard for
         #                      admins) panes; Exact/GET. Admin-only data stays
         #                      gated server-side (isAdmin), so opening this to
-        #                      any authenticated login is safe. P19-2b removed
+        #                      any /check-participant identity is safe. P19-2b removed
         #                      the legacy /journey and /me routes (see
         #                      internal/scoreboard/view/view.go) — the portal's
         #                      Journey/Me tabs fetch the exact same
@@ -129,8 +122,8 @@ spec:
         #                      violation report silently 403'd while the app
         #                      layer (x-ctf-authz: none — no per-identity
         #                      check in the Go handler itself) looked
-        #                      correctly configured. "any authenticated
-        #                      login" here is a real narrower-than-public
+        #                      correctly configured. "any /check-participant
+        #                      identity" here is a real narrower-than-public
         #                      gate, not decorative: a same-origin CSP
         #                      report request carries the portal's own
         #                      session cookie (Fetch/Reporting API spec:

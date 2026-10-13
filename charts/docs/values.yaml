@@ -55,7 +55,9 @@ ingress:
   tlsSecretName: ""
   authSignin: ""
   # Extra annotations merged in (e.g. ssl-redirect in prod). Still used by
-  # ingress-admin.yaml.
+  # ingress-admin.yaml. An ALLOWLIST (falco-ctf-common .ingressPassthrough):
+  # ssl-redirect, proxy-body-size, cert-manager.io/cluster-issuer; any other
+  # key fails the render (ADR-0034 D4).
   annotations: {}
   # 運営用ビュー: the docs chart's ONLY remaining Ingress (P23-5 / P19-2b).
   # Single-origin host (SAME value as the scoreboard chart's `ingress.host`,

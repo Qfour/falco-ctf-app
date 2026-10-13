@@ -245,23 +245,40 @@ func TestV12_RenderTimeGuards(t *testing.T) {
 			base[r.Chart] = r.Args
 		}
 	}
-	const prefix = `nginx\.ingress\.kubernetes\.io/`
 	type tc struct {
 		name, chart, set, wantErr string
 	}
 	var cases []tc
-	// D4: the whole nginx.ingress.kubernetes.io/auth- namespace is refused (prefix
-	// match), including the cache and subrequest-shaping keys that do not
-	// replace the endpoint but let one caller's 200 be reused for another
-	// (auth-cache-key / auth-cache-duration), keep a removed seat admitted for
-	// the cache period, or change what the subrequest carries (auth-snippet /
-	// auth-proxy-set-headers). auth-signin is also refused here: the chart owns
-	// it through the dedicated ingress.authSignin value.
-	for _, key := range []string{"auth-url", "auth-response-headers", "auth-cache-key", "auth-cache-duration", "auth-snippet", "auth-proxy-set-headers", "auth-signin", "auth-method", "auth-tls-secret"} {
+	// D4 / R1#1: the passthrough is an ALLOWLIST (falco-ctf-common
+	// .ingressPassthrough), not a refused-prefix list. Every key below is
+	// refused: the auth-* family (auth-cache-key / auth-cache-duration reuse one
+	// caller's 200 for another or keep a removed seat admitted;
+	// auth-snippet / auth-proxy-set-headers change the subrequest; auth-signin is
+	// owned by the dedicated ingress.authSignin value), satisfy and the
+	// source-range keys (`satisfy: any` plus a source-range admits a caller
+	// WITHOUT the auth subrequest, so no canonical identity headers are
+	// stamped), and unknown keys of any prefix (an annotation nobody has
+	// reviewed against the gate).
+	refused := []string{
+		"nginx.ingress.kubernetes.io/auth-url", "nginx.ingress.kubernetes.io/auth-response-headers",
+		"nginx.ingress.kubernetes.io/auth-cache-key", "nginx.ingress.kubernetes.io/auth-cache-duration",
+		"nginx.ingress.kubernetes.io/auth-snippet", "nginx.ingress.kubernetes.io/auth-proxy-set-headers",
+		"nginx.ingress.kubernetes.io/auth-signin", "nginx.ingress.kubernetes.io/auth-method",
+		"nginx.ingress.kubernetes.io/auth-tls-secret",
+		"nginx.ingress.kubernetes.io/satisfy",
+		"nginx.ingress.kubernetes.io/whitelist-source-range",
+		"nginx.ingress.kubernetes.io/allowlist-source-range",
+		"nginx.ingress.kubernetes.io/configuration-snippet",
+		"nginx.ingress.kubernetes.io/proxy-read-timeout", // a real, harmless nginx key that is simply not allowed
+		"example.invalid/team",                           // unknown key, foreign prefix
+	}
+	// helm --set needs the dots inside a key escaped.
+	esc := func(k string) string { return strings.ReplaceAll(k, ".", `\.`) }
+	for _, key := range refused {
 		cases = append(cases,
-			tc{"scoreboard admin passthrough sets " + key, "scoreboard", "ingress.annotations." + prefix + key + "=x", "must not set nginx.ingress.kubernetes.io/" + key},
-			tc{"scoreboard journey passthrough sets " + key, "scoreboard", "ingress.journeyAnnotations." + prefix + key + "=x", "must not set nginx.ingress.kubernetes.io/" + key},
-			tc{"docs passthrough sets " + key, "docs", "ingress.annotations." + prefix + key + "=x", "must not set nginx.ingress.kubernetes.io/" + key},
+			tc{"scoreboard admin passthrough sets " + key, "scoreboard", "ingress.annotations." + esc(key) + "=x", "must not set " + key},
+			tc{"scoreboard journey passthrough sets " + key, "scoreboard", "ingress.journeyAnnotations." + esc(key) + "=x", "must not set " + key},
+			tc{"docs passthrough sets " + key, "docs", "ingress.annotations." + esc(key) + "=x", "must not set " + key},
 		)
 	}
 	cases = append(cases,
@@ -288,10 +305,41 @@ func TestV12_RenderTimeGuards(t *testing.T) {
 	if msg, err := HelmTemplateExpectFailure("scoreboard", signinArgs...); err != nil {
 		t.Fatalf("ingress.authSignin was rejected: %v\n%s", err, msg)
 	}
-	// The benign passthrough still works (the guard is not "reject all annotations").
-	args := append(append([]string(nil), base["scoreboard"]...), "--set-string", `ingress.journeyAnnotations.example\.invalid/team=ctf`)
-	if msg, err := HelmTemplateExpectFailure("scoreboard", args...); err != nil {
-		t.Fatalf("an unrelated passthrough annotation was rejected: %v\n%s", err, msg)
+	// The allowed keys still work on each of the three passthroughs (the guard is
+	// not "reject all annotations"), and they reach the rendered Ingress.
+	allowed := []string{"nginx.ingress.kubernetes.io/ssl-redirect", "nginx.ingress.kubernetes.io/proxy-body-size", "cert-manager.io/cluster-issuer"}
+	for _, p := range []struct{ chart, field, ingress string }{
+		{"scoreboard", "ingress.annotations", "scoreboard"},
+		{"scoreboard", "ingress.journeyAnnotations", "scoreboard-journey"},
+		{"docs", "ingress.annotations", "docs-admin"},
+	} {
+		args := append([]string(nil), base[p.chart]...)
+		for _, key := range allowed {
+			args = append(args, "--set-string", p.field+"."+esc(key)+"=v")
+		}
+		out, err := helmTemplate(p.chart, args...)
+		if err != nil {
+			t.Fatalf("%s %s: an allowed passthrough key was rejected: %v", p.chart, p.field, err)
+		}
+		ings, err := parseAuthIngresses(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var found bool
+		for _, g := range ings {
+			if g.Name != p.ingress {
+				continue
+			}
+			found = true
+			for _, key := range allowed {
+				if g.Annotations[key] != "v" {
+					t.Errorf("%s: allowed key %s did not reach the rendered Ingress (annotations %v)", p.ingress, key, g.Annotations)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("%s: Ingress not in the render: extraction is broken", p.ingress)
+		}
 	}
 }
 
@@ -311,10 +359,27 @@ const goodAllowIngress = `
               app.kubernetes.io/name: collector
 `
 
+// npDeployment is the Pod template the NetworkPolicies must select.
+const npDeployment = `---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scoreboard
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: scoreboard
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: scoreboard
+        app.kubernetes.io/part-of: falco-ctf
+`
+
 // npDocs builds a scoreboard NetworkPolicy render from the two policies' bodies
 // plus any extra documents, so each mutation below is a one-line difference.
 func npDocs(allowIngress, denyIngress, extra string) []byte {
-	return []byte(`---
+	return []byte(npDeployment + `---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -328,6 +393,9 @@ kind: NetworkPolicy
 metadata:
   name: scoreboard-allow
 spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: scoreboard
   policyTypes: [Ingress, Egress]
   ingress:` + allowIngress + extra)
 }
@@ -378,6 +446,28 @@ func TestV12_ScoreboardNetworkPolicyMutationsAreCaught(t *testing.T) {
 	for _, m := range muts {
 		t.Run(m.name, func(t *testing.T) {
 			if v := CheckScoreboardNetworkPolicies(npDocs(m.allow, m.deny, m.extra)); len(v) == 0 {
+				t.Fatalf("mutation %q went undetected", m.name)
+			}
+		})
+	}
+	// R1#4: the policies must SELECT the scoreboard Pod. Each is a one-line
+	// difference from the control render.
+	base := string(npDocs(goodAllowIngress, "", ""))
+	sel := []struct{ name, old, new string }{
+		{"default-deny selects only some Pods", "  podSelector: {}\n  policyTypes: [Ingress, Egress]\n", "  podSelector:\n    matchLabels:\n      app.kubernetes.io/name: other\n  policyTypes: [Ingress, Egress]\n"},
+		{"default-deny has no Ingress policyType", "  podSelector: {}\n  policyTypes: [Ingress, Egress]\n", "  podSelector: {}\n  policyTypes: [Egress]\n"},
+		{"scoreboard-allow selects a label no scoreboard Pod carries", "      app.kubernetes.io/name: scoreboard\n  policyTypes", "      app.kubernetes.io/name: scoreboard-typo\n  policyTypes"},
+		{"scoreboard-allow has no Ingress policyType", "metadata:\n  name: scoreboard-allow\nspec:\n  podSelector:\n    matchLabels:\n      app.kubernetes.io/name: scoreboard\n  policyTypes: [Ingress, Egress]", "metadata:\n  name: scoreboard-allow\nspec:\n  podSelector:\n    matchLabels:\n      app.kubernetes.io/name: scoreboard\n  policyTypes: [Egress]"},
+		{"scoreboard-allow podSelector is {} (not tied to the scoreboard Pod)", "  podSelector:\n    matchLabels:\n      app.kubernetes.io/name: scoreboard\n  policyTypes: [Ingress, Egress]\n  ingress:", "  podSelector: {}\n  policyTypes: [Ingress, Egress]\n  ingress:"},
+		{"the Pod template loses the label the allow policy selects", "      labels:\n        app.kubernetes.io/name: scoreboard\n", "      labels:\n        app.kubernetes.io/name: renamed\n"},
+		{"the scoreboard Deployment is missing from the render", npDeployment, ""},
+	}
+	for _, m := range sel {
+		t.Run(m.name, func(t *testing.T) {
+			if !strings.Contains(base, m.old) {
+				t.Fatalf("mutation anchor %q not found in the control render: the test is vacuous", m.old)
+			}
+			if v := CheckScoreboardNetworkPolicies([]byte(strings.Replace(base, m.old, m.new, 1))); len(v) == 0 {
 				t.Fatalf("mutation %q went undetected", m.name)
 			}
 		})
