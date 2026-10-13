@@ -39,7 +39,21 @@ FROM falcosecurity/falco:0.44.1@sha256:d0cfe422d6ac0e0f20857798f46c7d7273210e1b0
 # here, #227). 3.6.4-r0 is the version confirmed by fetching
 # https://packages.wolfi.dev/os/x86_64/APKINDEX.tar.gz (measured 2026-08-28) —
 # it is past both fix thresholds above.
-RUN apk add --no-cache --upgrade libssl3=3.6.4-r0 libcrypto3=3.6.4-r0
+#
+# 2026-10-13 追加 pin (CI scan が FAILED、Sysdig の suggested fix に厳密一致させる。
+# base の falcosecurity/falco:0.44.1 digest は d0cfe422 のまま (新 tag 無し)。
+# `apk policy <pkg>` を base 内で実測し、いずれも apk.cgr.dev/chainguard が複数版を
+# 保持していて下記版を解決できることを確認済み):
+#   curl / libcurl-openssl4   8.20.0-r1 -> 8.22.0-r0
+#   zlib                      1.3.2-r3  -> 1.3.2.1_rc20260601-r0
+#   glibc / glibc-locale-posix / ld-linux / libcrypt1   2.43-r8 -> 2.43-r10
+#   libnghttp2-14             1.69.0-r0 -> 1.70.0-r0
+RUN apk add --no-cache --upgrade \
+        libssl3=3.6.4-r0 libcrypto3=3.6.4-r0 \
+        curl=8.22.0-r0 libcurl-openssl4=8.22.0-r0 \
+        zlib=1.3.2.1_rc20260601-r0 \
+        glibc=2.43-r10 glibc-locale-posix=2.43-r10 ld-linux=2.43-r10 libcrypt1=2.43-r10 \
+        libnghttp2-14=1.70.0-r0
 
 # Create the non-root grader user (the wolfi/apko base ships no 65532 user).
 # Done at build time as root; the container then runs as 65532 (USER below and

@@ -33,7 +33,7 @@ RUN for mode in participant admin; do \
 # ── serve ───────────────────────────────────────────────────────────
 # nginx-unprivileged listens on 8080 as a non-root user (uid 101) — fits
 # runAsNonRoot without extra config.
-FROM nginxinc/nginx-unprivileged:1.30-alpine@sha256:93722936b82ec8a1178d48448e619226680d2de3706a1640800e186cd5fa7fd3
+FROM nginxinc/nginx-unprivileged:1.30-alpine@sha256:56b8272e43a0525f67aed68d1e0794a712d10e3e45a563e118e9a77c817e6f86
 
 # apk upgrade (#227 follow-up, 2026-08-28): PR #228 CI (build (docs) / scan)
 # measured 21 High CVEs surviving the digest bump above, ALL attributed to
@@ -78,8 +78,20 @@ FROM nginxinc/nginx-unprivileged:1.30-alpine@sha256:93722936b82ec8a1178d48448e61
 # `USER root` / `USER 101` so the apk write happens as root but the final
 # image still executes as 101, preserving nginx-unprivileged's non-root
 # model (no regression vs. before this Dockerfile even touched apk).
+#
+# 2026-10-13 (CI scan 全 PR 赤の追跡): base digest を 56b8272e (3.24.2、libssl3 3.5.9 /
+# curl 8.22.0 / libexpat 2.8.5 / pcre2 10.49 / tiff 4.7.2 / libuuid 2.42.3 /
+# nghttp2 1.70.0 を既に含む) へ更新した。残りの 2 件:
+#   - zlib: base は 1.3.2-r0、3.24/main の 1.3.2-r1 へ明示 pin upgrade
+#   - libxml2 2.13.9-r2: 3.24 / edge/main とも fix apk 無し (`apk policy` 実測) なので
+#     上の「pin できない」状況は変わらない。ただし引き込み元は nginx-module-xslt /
+#     libxslt / nginx-module-njs の 3 つのみ (`apk info -r libxml2` 実測) で、docs-site/
+#     nginx.conf は load_module も xslt/njs の directive も使わない静的配信。
+#     この 3 つを `apk del` して libxml2 ごと image から除く (残存 High を除去で実解消、
+#     例外で握り潰さない)。nginx 本体は pcre2 を使うので pcre2 は残る。
 USER root
-RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0
+RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 zlib=1.3.2-r1 \
+ && apk del --no-cache nginx-module-xslt nginx-module-njs libxslt libxml2
 USER 101
 
 # --chmod: the non-root nginx user (uid 101) must read the config regardless of
