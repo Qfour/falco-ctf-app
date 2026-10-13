@@ -120,7 +120,12 @@ var v11WriteRoutes = []struct {
 // selfOrAdminWrite route the canonical identity gets 200 (the control) while the
 // same local part on another domain, and another seat on the right domain, get
 // 403 from the identity comparison: the header is present and well-formed in
-// every case, so "empty header" cannot be the reason.
+// every case, so "empty header" cannot be the reason (the canonical row is the
+// control on the same route and fixture).
+//
+// There is deliberately no header-less case here: selfOrAdminWrite's header-less
+// fallback has no legitimate caller on these routes (the collector does not
+// forward them and a workspace cannot reach the scoreboard: NetworkPolicy).
 func TestV11_WriteGateIsExactToo(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -147,17 +152,6 @@ func TestV11_WriteGateIsExactToo(t *testing.T) {
 				}
 			})
 		}
-		// The 403s are not an artifact of the header being absent: the header-less
-		// (collector / workspace) path still answers 200 on the same route.
-		t.Run(rt.name+"/no header is the internal path (200)", func(t *testing.T) {
-			f := newJourneyFixture(t)
-			if rt.prep != nil {
-				rt.prep(t, f)
-			}
-			if w := f.reqAs("POST", rt.target, "", rt.body); w.Code != http.StatusOK {
-				t.Fatalf("header-less POST %s: got %d (%s), want 200", rt.target, w.Code, w.Body)
-			}
-		})
 	}
 }
 
