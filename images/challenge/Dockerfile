@@ -50,7 +50,9 @@ FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cab
 #     `apk policy libxml2` 実測 (2026-10-13): 3.24 / edge/main とも 2.13.9-r2 のみ。
 #     引き込み元は bind-tools -> bind-libs (`apk info -r libxml2`)。bind-tools は
 #     参加者向けに dig/nslookup として文書化済み (PARTICIPANT-HANDBOOK / cheatsheet)
-#     のため、除去は content 判断 — 本 PR では触らない)
+#     のため、除去は content 判断 — 本 PR では触らない)。
+#     **受け入れの期限と解除条件**: bind-tools を `drill` (ldns、libxml2 を引かない) +
+#     busybox nslookup へ置換する PR が入るまで。追跡: app#338 と置換 issue)
 # jq は pin していないため 3.24/main の更新で 1.8.2-r0 (CVE-2026-49839 の fix 版、
 # `apk policy jq` 実測で唯一の提供版) へ自動で上がり、残存から外れた (2026-10-05)。
 # 残存 (libxml2) の追跡先は app#291 (#227 は CLOSED)。

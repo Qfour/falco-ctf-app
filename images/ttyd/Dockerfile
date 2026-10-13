@@ -11,7 +11,9 @@ ARG KUBECTL_VERSION=v1.35.9
 # の実値。**残存**: Sysdig の fix は Go 1.26.9 / golang.org/x/net v0.60.0 (GO-2026-6617)
 # だが、kubectl は v1.35.9 (go1.26.8, x/net v0.56.0) / v1.36.5 (go1.26.8, x/net v0.56.0) /
 # v1.37.1 (go1.26.8, x/net v0.57.0) のいずれも未達 — upstream の patch 待ち
-# (再点検トリガ: kubernetes/kubernetes の .go-version が 1.26.9 以上の 1.35.x)。
+# **受け入れの期限と解除条件 (2026-10-13)**: release-1.35 の .go-version が 1.26.9 以上
+# (v1.35.10 以降) になった時点で bump する。それまで build (ttyd)/scan は赤のまま
+# (required check ではない)。追跡: app#338。
 # sha256 は https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/<arch>/kubectl.sha256
 # の実値を焼き込み。KUBECTL_VERSION を上げたら両方更新すること。
 #

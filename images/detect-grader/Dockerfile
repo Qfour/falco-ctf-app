@@ -26,34 +26,36 @@
 #   docker buildx imagetools inspect falcosecurity/falco:0.44.1 --format '{{.Manifest.Digest}}'
 FROM falcosecurity/falco:0.44.1@sha256:d0cfe422d6ac0e0f20857798f46c7d7273210e1b064b22821e4e6e7f843cde6b
 
-# apk upgrade (#227): no falcosecurity/falco tag newer than 0.44.1 exists yet
-# (checked 2026-08-28 against the Docker Hub tag list), so there is no base
-# digest to bump to. The wolfi/apko base still ships libssl3/libcrypto3
-# 3.6.3-r0 (CVE-2026-14456 fix=3.6.3-r5, CVE-2026-54876 fix=3.6.3-r4, both
-# High). This base DOES ship a usable apk toolchain (verified by inspecting
-# the published image layers — usr/bin/apk + usr/lib/apk/db are present), so
-# an explicit upgrade here picks up the fix without waiting for a new Falco
-# release. **Exact version pin** (same discipline as the digest pin in P12 —
-# an un-pinned `apk upgrade` depends on the live APKINDEX at build time and
-# breaks bit-identical builds; flagged by security-engineer review and fixed
-# here, #227). 3.6.4-r0 is the version confirmed by fetching
-# https://packages.wolfi.dev/os/x86_64/APKINDEX.tar.gz (measured 2026-08-28) —
-# it is past both fix thresholds above.
+# apk upgrade (#227): base の falcosecurity/falco:0.44.1 は digest を据え置く。
+# 0.45.0 は 2026-09-21 に出ているが上げない: 上の通り Falco の版を上げるときは
+# captures の再録と cluster の Falco (platform の chart) との整合を同時に取る必要が
+# あり、CVE 修正のために単独で上げると grading が cluster の検知とずれる。追跡は
+# follow-up issue (detect-grader を falco 0.45.0 へ)。
+# この base は wolfi/apko 由来で apk toolchain を持つ (usr/bin/apk + usr/lib/apk/db を
+# 確認済み)。libssl3/libcrypto3 3.6.3-r0 には CVE-2026-14456 (fix 3.6.3-r5) /
+# CVE-2026-54876 (fix 3.6.3-r4) があり、明示 upgrade で解消する。
 #
-# 2026-10-13 追加 pin (CI scan が FAILED、Sysdig の suggested fix に厳密一致させる。
-# base の falcosecurity/falco:0.44.1 digest は d0cfe422 のまま (新 tag 無し)。
-# `apk policy <pkg>` を base 内で実測し、いずれも apk.cgr.dev/chainguard が複数版を
-# 保持していて下記版を解決できることを確認済み):
-#   curl / libcurl-openssl4   8.20.0-r1 -> 8.22.0-r0
-#   zlib                      1.3.2-r3  -> 1.3.2.1_rc20260601-r0
+# **Exact version pin** (P12 と同じ規律 — 未 pin の `apk upgrade` は build 時の live
+# APKINDEX に依存し bit-identical を壊す。#227)。版は apk.cgr.dev/chainguard の
+# APKINDEX を base 内で `apk policy` 実測 (2026-10-13)、いずれも各 CVE の fix 版以上。
+#
+# curl / libcurl-openssl4 は **pin せず除去**する (2026-10-13、security review M1):
+#   - grader は curl を使わない。grade.sh は http_output / grpc を無効にして
+#     `falco -c ... -r ...` を replay 実行するだけ。
+#   - falco バイナリは libcurl / libssl に動的リンクしていない
+#     (`ld-linux --list /usr/bin/falco` = libm / libc / libpthread / libdl / librt のみ)。
+#   - curl 8.22.0 へ `--upgrade` すると依存 33 pkg が動き、openssl 4.0 の
+#     libcrypto/libssl と provider-legacy が新規に入って OpenSSL 3 と 4 が同居する。
+#     除去すれば curl/libcurl の High/Medium が丸ごと消え、この問題も起きない。
+# 他の pin (Sysdig suggested fix に厳密一致):
+#   zlib             1.3.2-r3 -> 1.3.2.1_rc20260601-r0
 #   glibc / glibc-locale-posix / ld-linux / libcrypt1   2.43-r8 -> 2.43-r10
-#   libnghttp2-14             1.69.0-r0 -> 1.70.0-r0
-RUN apk add --no-cache --upgrade \
+#   libnghttp2-14    1.69.0-r0 -> 1.70.0-r0 (curl 除去後も残る場合のみ効く)
+RUN apk del --no-cache curl libcurl-openssl4 \
+ && apk add --no-cache --upgrade \
         libssl3=3.6.4-r0 libcrypto3=3.6.4-r0 \
-        curl=8.22.0-r0 libcurl-openssl4=8.22.0-r0 \
         zlib=1.3.2.1_rc20260601-r0 \
-        glibc=2.43-r10 glibc-locale-posix=2.43-r10 ld-linux=2.43-r10 libcrypt1=2.43-r10 \
-        libnghttp2-14=1.70.0-r0
+        glibc=2.43-r10 glibc-locale-posix=2.43-r10 ld-linux=2.43-r10 libcrypt1=2.43-r10
 
 # Create the non-root grader user (the wolfi/apko base ships no 65532 user).
 # Done at build time as root; the container then runs as 65532 (USER below and
