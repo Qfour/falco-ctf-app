@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
@@ -85,12 +86,52 @@ const (
 	errMsgNotJSON        = "content type must be application/json"
 )
 
+// Per-participant (namespace) rate limits, app#359. The key is the
+// participant, NEVER the sender: every event arrives from the single
+// falcosidekick IP, so a per-IP bucket is one bucket for the whole event and
+// one participant's flood starved everyone else's forbidden-rule fires — which
+// falcosidekick does not retry, so an evade read as clean (ADR-0003).
+//
+//   - observation: rules in no challenge's forbidden/expected rules. They feed
+//     only the presentational recent_rule_fires list, so over the bucket they
+//     are dropped with 429 (counted + audit-logged).
+//   - scoring: rules some challenge forbids or expects. These are NEVER
+//     dropped: over the bucket the participant's current evade mission is
+//     tainted instead (scoring.Grader.TaintOnOverflow, fail-closed) and the
+//     request is answered 200. The bucket is sized far above anything a human
+//     plausibly fires, so a participant only reaches it by flooding — and then
+//     only they are affected.
+const (
+	observationRate  = 20  // req/s per participant
+	observationBurst = 100 //
+	scoringRate      = 100 // req/s per participant
+	scoringBurst     = 400 //
+)
+
+// RateLimitDescription is the x-ctf-rate-limit string for POST /falco/events;
+// docs/openapi-scoreboard.yaml must carry the same text (StringExtParity).
+const RateLimitDescription = "per-participant (ns) bucket - observation rules 20 req/s burst 100 then 429, scoring rules 100 req/s burst 400 then fail-closed taint (never dropped)"
+
+// maxNSLabels bounds the ns label cardinality of the rate-limit metrics: a
+// forged event (shared secret off) could otherwise mint unlimited series.
+const maxNSLabels = 1024
+
 type Handler struct {
-	store   *store.Store
-	grader  *scoring.Grader
-	logger  *slog.Logger
-	now     func() time.Time
-	limiter *ratelimit.Limiter
+	store  *store.Store
+	grader *scoring.Grader
+	logger *slog.Logger
+	now    func() time.Time
+	// observeLimiter / scoringLimiter are keyed by participant (ns without the
+	// "ctf-" prefix); see the const block above. auditLimiter throttles the
+	// audit log line to ~1 per 10s per (class, participant) so a flood cannot
+	// also flood the log.
+	observeLimiter *ratelimit.Limiter
+	scoringLimiter *ratelimit.Limiter
+	auditLimiter   *ratelimit.Limiter
+	// nsSeen is the set of ns values already used as a metric label (guarded
+	// by nsMu); past maxNSLabels new ones are labelled "_other".
+	nsMu   sync.Mutex
+	nsSeen map[string]struct{}
 	// sharedSecret / secretMode are ADR-WS-0006's Layer 2 shared-secret
 	// verification config. See SecretMode's doc for the 3 states.
 	sharedSecret string
@@ -98,21 +139,53 @@ type Handler struct {
 }
 
 func New(grader *scoring.Grader, s *store.Store, logger *slog.Logger, now func() time.Time, sharedSecret string, secretMode SecretMode) *Handler {
-	// Per-source-IP token bucket. /falco/events is a high-volume internal
-	// endpoint (falcosidekick batches events); rate is generous so a busy
-	// CTF doesn't get throttled while still capping pathological bursts.
-	return &Handler{
-		store:  s,
-		grader: grader,
-		logger: logger,
-		now:    now,
-		// Intentionally fixed: sized for a single-cluster CTF (a few hundred
-		// participants × low syscall-event rate). falcosidekick is the only
-		// legitimate caller; this caps a misconfigured/looping sender, not a
-		// tuning knob. Revisit only if load testing (scripts/load.sh) shows 429s.
-		limiter:      ratelimit.New(100 /* req/s */, 200 /* burst */).WithNow(now),
+	// Intentionally fixed: sized for a single-cluster CTF (a few hundred
+	// participants x low syscall-event rate). falcosidekick is the only
+	// legitimate caller and there is deliberately NO per-sender-IP limiter any
+	// more (app#359): it would be a single shared bucket, and any 429 from it
+	// can drop a forbidden-rule fire. Cost of unattributed (ignored) events is
+	// bounded by the 64KiB body cap and the sender being NetworkPolicy +
+	// shared-secret gated (ADR-WS-0005/0006).
+	return (&Handler{
+		store:        s,
+		grader:       grader,
+		logger:       logger,
+		now:          now,
+		nsSeen:       make(map[string]struct{}),
 		sharedSecret: sharedSecret,
 		secretMode:   secretMode,
+	}).WithLimits(observationRate, observationBurst, scoringRate, scoringBurst)
+}
+
+// WithLimits replaces the per-participant buckets (tests use tiny ones). Not
+// for production tuning — see the const block.
+func (h *Handler) WithLimits(observeRate, observeBurst, scoreRate, scoreBurst float64) *Handler {
+	h.observeLimiter = ratelimit.New(observeRate, observeBurst).WithNow(h.now)
+	h.scoringLimiter = ratelimit.New(scoreRate, scoreBurst).WithNow(h.now)
+	h.auditLimiter = ratelimit.New(0.1, 1).WithNow(h.now)
+	return h
+}
+
+// nsLabel returns ns as a metric label, or "_other" once maxNSLabels distinct
+// values have been used (or ns is implausibly long).
+func (h *Handler) nsLabel(ns string) string {
+	h.nsMu.Lock()
+	defer h.nsMu.Unlock()
+	if _, ok := h.nsSeen[ns]; ok {
+		return ns
+	}
+	if len(ns) > 63 || len(h.nsSeen) >= maxNSLabels {
+		return "_other"
+	}
+	h.nsSeen[ns] = struct{}{}
+	return ns
+}
+
+// audit logs a rate-limit event (sampled per class+participant, see
+// auditLimiter). The metric is the exact count; this is the who/what trail.
+func (h *Handler) audit(class, ns, rule string) {
+	if h.auditLimiter.Allow(class + "/" + ns) {
+		h.logger.Warn("falco events rate limited", "class", class, "ns", ns, "rule", rule)
 	}
 }
 
@@ -137,13 +210,6 @@ func New(grader *scoring.Grader, s *store.Store, logger *slog.Logger, now func()
 // `*http.ServeMux` field/parameter made ingest look mux-owning to the
 // mechanical detector even though it never itself holds one.
 func (h *Handler) Routes() []apispec.Route {
-	// "falco_events" (ADR-0023 V5 caller label): this route is never
-	// Cloudflare-routed (ADR-0023 D5 — falcosidekick calls it internally),
-	// so it always falls back past CF-Connecting-IP. Labelling it distinctly
-	// lets an operator exclude this route's high, constant volume when
-	// watching clientIPSource for a real CF-Connecting-IP drift signal on
-	// the Cloudflare-fronted routes (ADR-0023 review R5-F1).
-	mw := h.limiter.Middleware(ratelimit.ClientIPKeyed("falco_events"))
 	return []apispec.Route{
 		{
 			Method:           "POST",
@@ -152,8 +218,8 @@ func (h *Handler) Routes() []apispec.Route {
 			Authz:            apispec.AuthzInternalClaimedIdentity,
 			OriginGuarded:    false,
 			CollectorForward: false,
-			RateLimit:        "per-IP 100 req/s burst 200 (falcosidekick batches)",
-			Handler:          mw(http.HandlerFunc(h.receive)),
+			RateLimit:        RateLimitDescription,
+			Handler:          http.HandlerFunc(h.receive),
 		},
 	}
 }
@@ -278,6 +344,23 @@ func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 
 	user := strings.TrimPrefix(ns, "ctf-")
 
+	// app#359: per-participant limit, applied only after attribution so the
+	// bucket is the participant's, not the (single, shared) sender's. A
+	// scoring-relevant event is never dropped — see the const block.
+	if h.grader.AffectsScoring(ev.Rule) {
+		if !h.scoringLimiter.Allow(user) {
+			h.scoringOverflow(w, ns, user, ev.Rule)
+			return
+		}
+	} else if !h.observeLimiter.Allow(user) {
+		metrics.FalcoEventsRateLimited.WithLabelValues(h.nsLabel(ns)).Inc()
+		metrics.FalcoEventsReceived.WithLabelValues("rate_limited").Inc()
+		h.audit("observation_dropped", ns, ev.Rule)
+		w.Header().Set("Retry-After", "1")
+		httpx.WriteJSON(w, http.StatusTooManyRequests, map[string]any{"error": "rate limit exceeded"})
+		return
+	}
+
 	// Rule-fire timestamp uses server-side now() rather than the
 	// attacker-controlled ev.Time. ev.Time is retained as a log field for
 	// observability (e.g. measuring Falco→scoreboard delivery latency) but
@@ -366,4 +449,24 @@ func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 
 	metrics.FalcoEventsReceived.WithLabelValues("accepted").Inc()
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"accepted": true, "user": user, "rule": ev.Rule})
+}
+
+// scoringOverflow handles a scoring-relevant event over the participant's
+// scoring bucket (app#359): fail-closed taint instead of a drop, counted and
+// audit-logged. The event is otherwise NOT processed (no feed entry, no
+// trigger solve / proof record) — the taint makes that safe for evade, and a
+// skipped trigger/proof fire only delays a solve the participant can repeat.
+// Answered like an accepted event (the taint IS the handling); a failed taint
+// write is the same 500 + taint_error as the normal path.
+func (h *Handler) scoringOverflow(w http.ResponseWriter, ns, user, rule string) {
+	metrics.FalcoEventsScoringOverflow.WithLabelValues(h.nsLabel(ns)).Inc()
+	h.audit("scoring_overflow_tainted", ns, rule)
+	if err := h.grader.TaintOnOverflow(user); err != nil {
+		h.logger.Error("mark dirty on overflow", "err", err)
+		metrics.FalcoEventsReceived.WithLabelValues("taint_error").Inc()
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "could not persist taint"})
+		return
+	}
+	metrics.FalcoEventsReceived.WithLabelValues("overflow_tainted").Inc()
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"accepted": true, "user": user, "rule": rule})
 }
