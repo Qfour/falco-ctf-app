@@ -200,3 +200,58 @@ func ClientIPKeyed(caller string) func(*http.Request) string {
 		return ip
 	}
 }
+
+// KeyFunc extracts a rate-limit key from a request, reporting ok=false when
+// the request carries no usable key. MiddlewareStrict treats !ok (and an empty
+// key) as a DENY, never as "unlimited" — the opposite of Middleware's
+// `key == ""` pass-through, which exists for legacy IP keying where an empty
+// IP "cannot happen". Use this shape for every NEW identity-keyed bucket
+// (app#315, ADR-0027 Consequences, ADR-0032 D3): the key function is the only
+// thing a route family chooses, the fail-closed behaviour is not optional.
+type KeyFunc func(*http.Request) (key string, ok bool)
+
+// IdentityHeader is the proven-identity header oauth2-proxy / auth-policy
+// inject on the participant (journey) host. The ingress overwrites any
+// client-supplied value; cluster-internal Service paths do not carry it at all.
+const IdentityHeader = "X-Auth-Request-Email"
+
+// IdentityKeyed is the KeyFunc for identity-keyed buckets: the lower-cased,
+// trimmed X-Auth-Request-Email. A missing or blank header is ok=false. It does
+// NOT fall back to the client IP — that fallback is exactly what let one NAT'd
+// venue share a single bucket (app#315).
+func IdentityKeyed(r *http.Request) (string, bool) {
+	email := strings.ToLower(strings.TrimSpace(r.Header.Get(IdentityHeader)))
+	return email, email != ""
+}
+
+// MiddlewareStrict is Middleware's fail-closed sibling for identity-keyed
+// buckets. `bucket` names the bucket for the IdentityRequestsTotal metric (use
+// a small fixed set of constants — it is a label). Outcomes:
+//
+//   - keyFn !ok or key == "" -> 403 {"error":"forbidden"}; NO token is consumed
+//     (so an anonymous flood cannot drain anyone's bucket) and the handler
+//     never runs
+//   - bucket empty           -> 429 {"error":"rate limit exceeded"}, Retry-After: 1
+//   - otherwise              -> next
+//
+// Place it AFTER the origin guard and BEFORE the handler's own authz gate.
+func (l *Limiter) MiddlewareStrict(bucket string, keyFn KeyFunc) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			key, ok := keyFn(r)
+			if !ok || key == "" {
+				IdentityRequestsTotal.WithLabelValues(bucket, "no_identity").Inc()
+				httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
+				return
+			}
+			if !l.Allow(key) {
+				IdentityRequestsTotal.WithLabelValues(bucket, "limited").Inc()
+				w.Header().Set("Retry-After", "1")
+				httpx.WriteJSON(w, http.StatusTooManyRequests, map[string]any{"error": "rate limit exceeded"})
+				return
+			}
+			IdentityRequestsTotal.WithLabelValues(bucket, "allowed").Inc()
+			next.ServeHTTP(w, r)
+		})
+	}
+}

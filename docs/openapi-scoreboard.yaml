@@ -8,8 +8,8 @@ info:
     Subject of this document
     ------------------------
     **Every route `cmd/scoreboard`'s mux registers — not "the JSON API".**
-    That includes the HTML shells (`GET /`, `GET /portal`), the vendored
-    stylesheet, `/healthz` and `/metrics`. Non-JSON routes get a thin entry
+    That includes the HTML shells (`GET /`, `GET /portal`), the static
+    assets (`GET /static/{asset}`), `/healthz` and `/metrics`. Non-JSON routes get a thin entry
     (summary + statuses + audience, no schema); they are here so the
     documented route set can be compared to the registered route set as an
     EXACT SET (ADR-0005 Verification). A spec whose scope is "the API only"
@@ -185,6 +185,10 @@ paths:
 
         `GET /` in Go 1.22+ matches every unrouted path, so this operation is
         also the 404 for unknown paths.
+
+        The 200 and the 403 carry `Cache-Control: no-store` (ADR-0028 D3): the
+        shell embeds a per-response CSP nonce, so a cacheable copy would hand
+        one response's nonce to another viewer.
       responses:
         "200":
           description: dashboard HTML (admin)
@@ -211,7 +215,11 @@ paths:
       x-ctf-rate-limit: none
       description: |
         Static single-template shell (P23-1). Served to ANY authenticated
-        caller and deliberately NOT admin-gated: it embeds no per-user data.
+        caller and deliberately NOT admin-gated: it embeds no admin data and
+        no other participant's data, but the response does differ per viewer
+        (role, username and ttyd URL as display hints, plus a per-response CSP
+        nonce), so every response carries `Cache-Control: no-store`
+        (ADR-0028 D3), the 500 included.
         The admin flag and the derived username are display hints only
         (api.NewAdminGate / api.DeriveUsername); every pane's actual data fetch
         is independently gated in the API handlers, so the shell cannot leak
@@ -235,10 +243,10 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
-  /vendor/cybercore.min.css:
+  /static/{asset}:
     get:
-      summary: Vendored cybercore-css stylesheet (self-hosted, never a CDN)
-      operationId: vendorCybercoreCSS
+      summary: First-party static asset under a content-hash name (ADR-0028)
+      operationId: staticAsset
       tags: [infra]
       x-ctf-audience: participant
       x-ctf-authz: none
@@ -246,191 +254,44 @@ paths:
       x-ctf-collector-forward: false
       x-ctf-rate-limit: none
       description: |
-        P23-6. Embedded in the binary and served same-origin so the portal
-        never fetches a third-party asset (supply chain, P12). Immutable +
-        ETag. The path is pinned by internal/scoreboard/view/vendorassets.go
-        and linked from the portal template, so renaming it is a template +
-        spec change.
+        ADR-0028 (P28-0c, app#277). The ONE route for every embedded
+        first-party asset — the cybercore-css stylesheet, the design tokens
+        (app#116) and the self-hosted fonts stylesheet with its woff2 files
+        (app#96). Adding an asset adds no route, no operation here and no
+        ingress entry.
+
+        `{asset}` is a content-hash name `<stem>.<hash><ext>`
+        (`tokens.<hash>.css`), built at start-up from the embedded bytes
+        AFTER references between assets are resolved (a changed font changes
+        the name of the stylesheet that references it). Templates and CSS get
+        the URL from the registry; nobody writes the name by hand, and the
+        hash changes on every deploy that changes the bytes. Only names in
+        the registry answer: an un-hashed name, an embedded file that is not
+        registered (LICENSE, PROVENANCE.md) and anything else is 404.
+
+        Only public, display-only assets that look the same to every viewer
+        belong here (D5). The registry accepts `.css` and `.woff2` only and
+        its logical names are pinned by a test.
+
+        A registered name is `Cache-Control: public, max-age=31536000,
+        immutable` with an ETag (a matching If-None-Match gets 304). The 404
+        is `no-store` so a probe for a name that does not exist yet cannot
+        leave a negative cache entry.
+      parameters:
+        - $ref: "#/components/parameters/Asset"
       responses:
         "200":
-          description: stylesheet
+          description: the asset
           content:
             text/css: {}
-        "304":
-          description: If-None-Match matched the embedded ETag
-
-  /static/tokens.css:
-    get:
-      summary: Design token single source (app#116)
-      operationId: tokensCSS
-      tags: [infra]
-      x-ctf-audience: participant
-      x-ctf-authz: none
-      x-ctf-origin-guard: false
-      x-ctf-collector-forward: false
-      x-ctf-rate-limit: none
-      description: |
-        The one place a hex color literal for the Falco CTF palette is
-        written down (app#116 — see internal/scoreboard/view/static/tokens.css's
-        own doc for the full history: before this route existed the same hex
-        codes were hand-duplicated across templates/index.html and
-        templates/portal.html in three separate `:root` namespaces).
-        Embedded in the binary and served same-origin (never a CDN, P12).
-        Immutable + ETag, same treatment as /vendor/cybercore.min.css. Linked
-        from both templates; renaming the path is a template + spec change.
-      responses:
-        "200":
-          description: stylesheet
-          content:
-            text/css: {}
-        "304":
-          description: If-None-Match matched the embedded ETag
-
-  /vendor/fonts.css:
-    get:
-      summary: Self-hosted Google Fonts stylesheet (app#96, P12 follow-up)
-      operationId: vendorFontsCSS
-      tags: [infra]
-      x-ctf-audience: participant
-      x-ctf-authz: none
-      x-ctf-origin-guard: false
-      x-ctf-collector-forward: false
-      x-ctf-rate-limit: none
-      description: |
-        Replaces the portal's former `<link href="https://fonts.googleapis.com
-        /css2?...">` (a pre-P23-6 external CDN load) with the same 10
-        Chakra Petch / Inter / JetBrains Mono family+weight combinations,
-        vendored and embedded in the binary — see
-        internal/scoreboard/view/vendor/fonts/PROVENANCE.md for the exact
-        fetch URL, per-file sha256, subset scope (latin-only), and the SIL
-        OFL license text each family ships under. `src: url(...)` in this
-        stylesheet points at the same-origin `/vendor/fonts/*.woff2` routes
-        below — never a CDN (P12: egress-zero). Immutable + ETag, same
-        treatment as /vendor/cybercore.min.css. Renaming the path is a
-        template + spec change.
-      responses:
-        "200":
-          description: stylesheet
-          content:
-            text/css: {}
-        "304":
-          description: If-None-Match matched the embedded ETag
-
-  /vendor/fonts/chakrapetch-500.woff2:
-    get:
-      summary: Vendored Chakra Petch 500 (weight) woff2 (app#96)
-      operationId: vendorFontChakraPetch500
-      tags: [infra]
-      x-ctf-audience: participant
-      x-ctf-authz: none
-      x-ctf-origin-guard: false
-      x-ctf-collector-forward: false
-      x-ctf-rate-limit: none
-      description: |
-        Referenced by /vendor/fonts.css's `@font-face` rule for Chakra Petch
-        weight 500. See vendor/fonts/PROVENANCE.md's pin table for the
-        upstream fonts.gstatic.com URL and sha256 this was fetched from.
-      responses:
-        "200":
-          description: woff2 font file
-          content:
             font/woff2: {}
         "304":
-          description: If-None-Match matched the embedded ETag
-
-  /vendor/fonts/chakrapetch-600.woff2:
-    get:
-      summary: Vendored Chakra Petch 600 (weight) woff2 (app#96)
-      operationId: vendorFontChakraPetch600
-      tags: [infra]
-      x-ctf-audience: participant
-      x-ctf-authz: none
-      x-ctf-origin-guard: false
-      x-ctf-collector-forward: false
-      x-ctf-rate-limit: none
-      description: |
-        Referenced by /vendor/fonts.css's `@font-face` rule for Chakra Petch
-        weight 600. See vendor/fonts/PROVENANCE.md's pin table for the
-        upstream fonts.gstatic.com URL and sha256 this was fetched from.
-      responses:
-        "200":
-          description: woff2 font file
+          description: If-None-Match matched the asset's ETag
+        "404":
+          description: no such registered name (JSON Error schema, no-store)
           content:
-            font/woff2: {}
-        "304":
-          description: If-None-Match matched the embedded ETag
-
-  /vendor/fonts/chakrapetch-700.woff2:
-    get:
-      summary: Vendored Chakra Petch 700 (weight) woff2 (app#96)
-      operationId: vendorFontChakraPetch700
-      tags: [infra]
-      x-ctf-audience: participant
-      x-ctf-authz: none
-      x-ctf-origin-guard: false
-      x-ctf-collector-forward: false
-      x-ctf-rate-limit: none
-      description: |
-        Referenced by /vendor/fonts.css's `@font-face` rule for Chakra Petch
-        weight 700. See vendor/fonts/PROVENANCE.md's pin table for the
-        upstream fonts.gstatic.com URL and sha256 this was fetched from.
-      responses:
-        "200":
-          description: woff2 font file
-          content:
-            font/woff2: {}
-        "304":
-          description: If-None-Match matched the embedded ETag
-
-  /vendor/fonts/inter-var.woff2:
-    get:
-      summary: Vendored Inter variable-font woff2, weights 400/500/600/700 (app#96)
-      operationId: vendorFontInter
-      tags: [infra]
-      x-ctf-audience: participant
-      x-ctf-authz: none
-      x-ctf-origin-guard: false
-      x-ctf-collector-forward: false
-      x-ctf-rate-limit: none
-      description: |
-        Referenced by /vendor/fonts.css's 4 `@font-face` rules for Inter
-        (weights 400/500/600/700) — Google Fonts publishes Inter as a
-        variable font, so all 4 declared weights resolve to this ONE file
-        (a browser instantiates the "wght" axis per declared weight; see
-        vendor/fonts/PROVENANCE.md). Upstream fonts.gstatic.com URL and
-        sha256 in that same pin table.
-      responses:
-        "200":
-          description: woff2 font file
-          content:
-            font/woff2: {}
-        "304":
-          description: If-None-Match matched the embedded ETag
-
-  /vendor/fonts/jetbrainsmono-var.woff2:
-    get:
-      summary: Vendored JetBrains Mono variable-font woff2, weights 400/500/700 (app#96)
-      operationId: vendorFontJetBrainsMono
-      tags: [infra]
-      x-ctf-audience: participant
-      x-ctf-authz: none
-      x-ctf-origin-guard: false
-      x-ctf-collector-forward: false
-      x-ctf-rate-limit: none
-      description: |
-        Referenced by /vendor/fonts.css's 3 `@font-face` rules for
-        JetBrains Mono (weights 400/500/700) — Google Fonts publishes
-        JetBrains Mono as a variable font, so all 3 declared weights
-        resolve to this ONE file (same "wght" axis instantiation as Inter
-        above; see vendor/fonts/PROVENANCE.md). Upstream fonts.gstatic.com
-        URL and sha256 in that same pin table.
-      responses:
-        "200":
-          description: woff2 font file
-          content:
-            font/woff2: {}
-        "304":
-          description: If-None-Match matched the embedded ETag
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /csp-report:
     post:
@@ -896,10 +757,10 @@ paths:
       operationId: setStepCheck
       tags: [participant]
       x-ctf-audience: participant
-      x-ctf-authz: self-or-admin-write
+      x-ctf-authz: self-or-admin
       x-ctf-origin-guard: true
       x-ctf-collector-forward: false
-      x-ctf-rate-limit: per-IP 1 req/s burst 10
+      x-ctf-rate-limit: identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty; separate from submit)
       description: |
         Purely presentational: journey `steps` are an info-only checklist with
         no auto-detection, so a tick never affects a solve verdict — it lets a
@@ -908,6 +769,11 @@ paths:
         Origin-guarded: reached ONLY from the portal's browser fetch and NOT in
         the collector's forward allowlist, so there is no server-to-server
         caller a fail-closed gate would break.
+
+        Authz is `self-or-admin` (identity header REQUIRED, 403 without it —
+        the identity rate limiter and the handler gate both enforce this); the
+        header-less claimed-identity branch of `self-or-admin-write` does not
+        apply to this route.
       parameters:
         - $ref: "#/components/parameters/User"
         - $ref: "#/components/parameters/Cid"
@@ -933,7 +799,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "403":
-          description: origin guard denied, or caller is neither `{user}` nor an admin
+          description: origin guard denied, or caller is neither `{user}` nor an admin, or the request carries no X-Auth-Request-Email identity (denied before the rate limit; no token is consumed)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -943,7 +809,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "429":
-          description: rate limited
+          description: rate limited (per-identity bucket — keyed by the caller's X-Auth-Request-Email, not the client IP, so other participants behind the same NAT are unaffected)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -959,10 +825,10 @@ paths:
       operationId: openHint
       tags: [participant]
       x-ctf-audience: participant
-      x-ctf-authz: self-or-admin-write
+      x-ctf-authz: self-or-admin
       x-ctf-origin-guard: true
       x-ctf-collector-forward: false
-      x-ctf-rate-limit: per-IP 1 req/s burst 10
+      x-ctf-rate-limit: identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty; separate from submit)
       description: |
         Hints open in order: opening `idx` N requires N-1 already open (409
         otherwise), so participants approach the answer progressively instead of
@@ -997,7 +863,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "403":
-          description: origin guard denied, or caller is neither `{user}` nor an admin
+          description: origin guard denied, or caller is neither `{user}` nor an admin, or the request carries no X-Auth-Request-Email identity (denied before the rate limit; no token is consumed)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1012,7 +878,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "429":
-          description: rate limited
+          description: rate limited (per-identity bucket — keyed by the caller's X-Auth-Request-Email, not the client IP, so other participants behind the same NAT are unaffected)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1028,10 +894,10 @@ paths:
       operationId: resetDirty
       tags: [participant]
       x-ctf-audience: participant
-      x-ctf-authz: self-or-admin-write
+      x-ctf-authz: self-or-admin
       x-ctf-origin-guard: true
       x-ctf-collector-forward: false
-      x-ctf-rate-limit: per-IP 1 req/s burst 10
+      x-ctf-rate-limit: identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty; separate from submit)
       description: |
         The ONLY way an evade challenge returns to clean once a forbidden Falco
         rule fired while it was the participant's current mission (ADR-0003
@@ -1046,10 +912,11 @@ paths:
 
         **Do not remove the origin guard from this route and do not add it to
         the collector's forward allowlist.** A2-2 made this endpoint able to
-        delete another participant's exfil receipt, and the header-less
-        claimed-identity fallback in the write gate carries no proof the caller
-        IS `{user}`. The guard 403s exactly the shape a header-less
-        cluster-internal caller sends, BEFORE the self-or-admin check runs —
+        delete another participant's exfil receipt, and a header-less
+        claimed-identity caller carries no proof the caller IS `{user}`. The
+        guard 403s exactly the shape a header-less cluster-internal caller
+        sends, BEFORE the self-or-admin check runs (which also requires the
+        identity header, as does the rate limiter) —
         that is what keeps A2-2's destructive reset from becoming an
         unauthenticated cross-user action (app#124 5x, R1 C3).
 
@@ -1071,7 +938,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "403":
-          description: origin guard denied, or caller is neither `{user}` nor an admin
+          description: origin guard denied, or caller is neither `{user}` nor an admin, or the request carries no X-Auth-Request-Email identity (denied before the rate limit; no token is consumed)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1081,7 +948,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "429":
-          description: rate limited
+          description: rate limited (per-identity bucket — keyed by the caller's X-Auth-Request-Email, not the client IP, so other participants behind the same NAT are unaffected)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1831,6 +1698,14 @@ paths:
 
 components:
   parameters:
+    Asset:
+      in: path
+      name: asset
+      required: true
+      schema: { type: string }
+      description: |
+        content-hash asset name, `<stem>.<hash><ext>` (ADR-0028). One path
+        segment; only names the server's registry produced are served.
     User:
       in: path
       name: user

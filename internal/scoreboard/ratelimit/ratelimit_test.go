@@ -328,3 +328,137 @@ func TestClientIPKeyed_RecordsCallerAndSource(t *testing.T) {
 		})
 	}
 }
+
+// --- app#315: identity-keyed, fail-closed buckets (MiddlewareStrict) ---------
+
+func identityReq(email string) *http.Request {
+	r := httptest.NewRequest("POST", "/", nil)
+	if email != "" {
+		r.Header.Set(ratelimit.IdentityHeader, email)
+	}
+	return r
+}
+
+func TestIdentityKeyed(t *testing.T) {
+	for _, c := range []struct {
+		name, header string
+		want         string
+		wantOK       bool
+	}{
+		{"plain email", "alice@ctf.local", "alice@ctf.local", true},
+		{"lower-cased and trimmed", "  Alice@CTF.local ", "alice@ctf.local", true},
+		{"missing header", "", "", false},
+		{"blank header is not an identity", "   ", "", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := httptest.NewRequest("POST", "/", nil)
+			if c.header != "" {
+				r.Header.Set(ratelimit.IdentityHeader, c.header)
+			}
+			got, ok := ratelimit.IdentityKeyed(r)
+			if got != c.want || ok != c.wantOK {
+				t.Fatalf("IdentityKeyed(%q) = (%q, %v), want (%q, %v)", c.header, got, ok, c.want, c.wantOK)
+			}
+		})
+	}
+}
+
+// Two identities behind the SAME client IP get independent buckets: this is
+// the whole point of app#315 (venue NAT).
+func TestMiddlewareStrict_SameIPDifferentIdentitiesAreIndependent(t *testing.T) {
+	now := time.Unix(0, 0)
+	l := ratelimit.New(0.1, 2).WithNow(func() time.Time { return now })
+	h := l.MiddlewareStrict("test_same_ip", ratelimit.IdentityKeyed)(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	do := func(email string) int {
+		r := identityReq(email)
+		r.RemoteAddr = "203.0.113.7:1234" // the one shared NAT address
+		r.Header.Set("X-Forwarded-For", "203.0.113.7")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w.Code
+	}
+	for i := 0; i < 2; i++ {
+		if c := do("alice@ctf.local"); c != 204 {
+			t.Fatalf("alice burst[%d]: got %d, want 204", i, c)
+		}
+	}
+	if c := do("alice@ctf.local"); c != http.StatusTooManyRequests {
+		t.Fatalf("alice past burst: got %d, want 429", c)
+	}
+	if c := do("bob@ctf.local"); c != 204 {
+		t.Fatalf("bob (same IP, other identity) must have his own bucket: got %d, want 204", c)
+	}
+}
+
+// A request with no identity is 403, runs no handler, and consumes NO token —
+// including from a bucket that another identity could otherwise be draining.
+// It must never degrade to "unlimited" (Middleware's empty-key pass-through).
+func TestMiddlewareStrict_NoIdentityIsDeniedAndConsumesNothing(t *testing.T) {
+	now := time.Unix(0, 0)
+	l := ratelimit.New(0.1, 1).WithNow(func() time.Time { return now })
+	called := 0
+	h := l.MiddlewareStrict("test_no_identity", ratelimit.IdentityKeyed)(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called++; w.WriteHeader(204) }))
+	before := testutil.ToFloat64(ratelimit.IdentityRequestsTotal.WithLabelValues("test_no_identity", "no_identity"))
+	for i := 0; i < 50; i++ {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, identityReq(""))
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("header-less call %d: got %d, want 403 body=%s", i, w.Code, w.Body)
+		}
+		var body map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || body["error"] == nil {
+			t.Fatalf("403 body must be the {\"error\":...} JSON shape, got %q (%v)", w.Body, err)
+		}
+	}
+	if called != 0 {
+		t.Fatalf("handler ran %d times for header-less requests, want 0", called)
+	}
+	// The (only) token of a real identity is untouched by the anonymous flood.
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, identityReq("alice@ctf.local"))
+	if w.Code != 204 {
+		t.Fatalf("alice after anonymous flood: got %d, want 204", w.Code)
+	}
+	if d := testutil.ToFloat64(ratelimit.IdentityRequestsTotal.WithLabelValues("test_no_identity", "no_identity")) - before; d != 50 {
+		t.Fatalf("no_identity metric delta = %v, want 50", d)
+	}
+}
+
+// An empty key with ok=true (a buggy KeyFunc) is still a deny, not unlimited.
+func TestMiddlewareStrict_EmptyKeyIsDenied(t *testing.T) {
+	l := ratelimit.New(1, 1)
+	h := l.MiddlewareStrict("test_empty_key", func(*http.Request) (string, bool) { return "", true })(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, identityReq("alice@ctf.local"))
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("empty key must be denied, got %d", w.Code)
+	}
+}
+
+func TestMiddlewareStrict_429IsJSONWithRetryAfterAndMetric(t *testing.T) {
+	now := time.Unix(0, 0)
+	l := ratelimit.New(0.1, 1).WithNow(func() time.Time { return now })
+	h := l.MiddlewareStrict("test_429", ratelimit.IdentityKeyed)(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	// IdentityRequestsTotal is a process-global counter: assert deltas, not
+	// absolutes, so the test survives -count>1 and other tests sharing a bucket.
+	before := map[string]float64{}
+	for _, outcome := range []string{"allowed", "limited"} {
+		before[outcome] = testutil.ToFloat64(ratelimit.IdentityRequestsTotal.WithLabelValues("test_429", outcome))
+	}
+	h.ServeHTTP(httptest.NewRecorder(), identityReq("alice@ctf.local"))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, identityReq("alice@ctf.local"))
+	if w.Code != http.StatusTooManyRequests || w.Header().Get("Retry-After") != "1" ||
+		w.Header().Get("Content-Type") != "application/json" {
+		t.Fatalf("429 shape: code=%d retry-after=%q ct=%q", w.Code, w.Header().Get("Retry-After"), w.Header().Get("Content-Type"))
+	}
+	for outcome, want := range map[string]float64{"allowed": 1, "limited": 1} {
+		if got := testutil.ToFloat64(ratelimit.IdentityRequestsTotal.WithLabelValues("test_429", outcome)) - before[outcome]; got != want {
+			t.Fatalf("metric bucket=test_429 outcome=%s delta = %v, want %v", outcome, got, want)
+		}
+	}
+}

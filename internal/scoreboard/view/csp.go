@@ -83,12 +83,12 @@ func newNonce() (string, error) {
 //     allowed here because portal.html's <link href="https://fonts.
 //     googleapis.com/css2?..."> fetched a stylesheet from that origin;
 //     app#96 (P12 follow-up) vendored that stylesheet + its font files
-//     same-origin (GET /vendor/fonts.css, internal/scoreboard/view/
-//     vendorassets.go), so 'self' alone now covers it — the external
+//     same-origin (GET /static/fonts.<hash>.css, internal/scoreboard/view/
+//     staticassets.go), so 'self' alone now covers it — the external
 //     origin allowance is gone, not just unused.
 //   - font-src 'self': the Google Fonts stylesheet's font files
 //     (fonts.gstatic.com) are, likewise, now vendored same-origin under
-//     /vendor/fonts/*.woff2 (app#96) — 'self' alone is sufficient; there is
+//     /static/*.<hash>.woff2 (app#96) — 'self' alone is sufficient; there is
 //     no longer any @font-face src that leaves this origin.
 //   - img-src 'self' data:: the vendored cybercore.min.css's icon/noise
 //     glyphs are inline `url("data:image/svg+xml,...")` (see
@@ -225,6 +225,16 @@ func validateTtydSuffix(v string) error {
 // renderPortal already has in hand for ttydURLFor — pass it straight
 // through rather than re-deriving anything.
 func writeSecurityHeaders(w http.ResponseWriter, ttydSuffix string) (string, error) {
+	// Cache-Control: no-store (ADR-0028 D3). Both HTML shells embed a
+	// per-response CSP nonce, and /portal also embeds the viewer's own
+	// identifier (__PORTAL_USER__) and ttyd URL. Behind a shared cache
+	// (Cloudflare is in front of prod) a cacheable copy would hand one
+	// viewer's identifier, and a reused nonce, to another. Not loosened for
+	// performance. Set FIRST, before either failure return below: the 500
+	// the callers write when this function fails (a control character in
+	// PORTAL_TTYD_SUFFIX, no entropy for the nonce) then carries it too, as
+	// do the 403 of GET / and the 200s, which are written after this call.
+	w.Header().Set("Cache-Control", "no-store")
 	if err := validateTtydSuffix(ttydSuffix); err != nil {
 		// X-Frame-Options: DENY (app#326) — legacy twin of the CSP
 		// frame-ancestors 'none' in portalCSP. Stamped on BOTH failure
