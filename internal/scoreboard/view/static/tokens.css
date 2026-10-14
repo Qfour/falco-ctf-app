@@ -17,7 +17,7 @@
  * no other name in this file already carrying it, or (b) a var(...) alias
  * onto one of those literals — never a second hex literal for a color this
  * file already defines. templates/index.html and templates/portal.html only
- * `<link>` to this stylesheet (see vendorassets.go's serveTokensCSS) and
+ * `<link>` to this stylesheet (served via staticassets.go as /static/tokens.<hash>.css) and
  * reference these custom properties via var(--...); they carry no hex of
  * their own (mechanically enforced — scripts/check-template-hex.sh, which
  * catches BOTH 6-digit (#RRGGBB) and 3-digit (#RGB) hex — a review-5x

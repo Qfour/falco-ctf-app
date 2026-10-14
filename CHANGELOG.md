@@ -28,6 +28,7 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
   `ratelimit_identity_requests_total{bucket,outcome}` で bucket 別の allowed / limited / no_identity を見られる。
 
 ### Security
+- portal (`/portal`) と admin dashboard (`/`) は他の origin の iframe に埋め込めなくなった (`frame-ancestors 'none'` + `X-Frame-Options: DENY`)。oauth2-proxy の `SameSite=None` cookie の下で起こり得た clickjacking を閉じる。ttyd の埋め込み (portal が親) には影響しない (app#326)
 
 - flags ファイル (`FLAGS_FILE` / `deploy-user.sh --flags-file`) の検証を fail-closed 化。
   これまでは evade 課題の id が欠けていても既定値 (placeholder) のまま起動していた。

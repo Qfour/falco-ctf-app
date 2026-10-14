@@ -6,7 +6,8 @@ package scoreboard_test
 // NOT let any other-audience route through via a Prefix entry. This is a
 // THIRD artifact ADR-0005's I14 (mux vs. docs/openapi-scoreboard.yaml) is
 // structurally blind to — #95 (POST /csp-report) and #235
-// (/vendor/cybercore.min.css, /static/tokens.css — landed in PRODUCTION)
+// (/vendor/cybercore.min.css, /static/tokens.css — landed in PRODUCTION;
+// ADR-0028 later folded all static assets into one /static/ Prefix entry)
 // were both mux-declared-and-spec-declared routes missing from this
 // allow-list. See docs/adr/0021-ingress-participant-route-coverage-gate.md
 // for the full Context/Decision/Verification.
@@ -20,6 +21,7 @@ package scoreboard_test
 
 import (
 	"os/exec"
+	"strings"
 	"testing"
 
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
@@ -154,5 +156,39 @@ func TestI15_DeadExactEntriesAdvisory(t *testing.T) {
 	}
 	if dead := ingressparity.DeadExact(f.srv.Routes(), entries); len(dead) > 0 {
 		t.Logf("advisory (not blocking): %d Exact entr(y/ies) in ingress-journey.yaml have no matching mux Route — likely drift from a rename/removal that didn't update the chart: %v", len(dead), dead)
+	}
+}
+
+// TestI15_StaticAssetsArePrefixOnly is ADR-0028 V5. The participant ingress
+// carries ONE /static/ Prefix entry (content-hash names cannot be listed) and
+// no /vendor/ entry, and an operator route placed under /static/ goes red in
+// the reverse check — the Prefix opens that path space, so the gate is what
+// keeps it participant-only.
+func TestI15_StaticAssetsArePrefixOnly(t *testing.T) {
+	allRoutes, entries := allRoutesAndIngressPaths(t)
+
+	staticPrefix := 0
+	for _, e := range entries {
+		switch {
+		case e.Path == "/static/" && e.PathType == "Prefix":
+			staticPrefix++
+		case strings.HasPrefix(e.Path, "/vendor"):
+			t.Errorf("ingress-journey.yaml still carries the removed /vendor entry %+v", e)
+		case strings.HasPrefix(e.Path, "/static") && e.PathType != "Prefix":
+			t.Errorf("ingress-journey.yaml carries an Exact /static entry %+v — hashed names cannot be listed (ADR-0028 D4)", e)
+		}
+	}
+	if staticPrefix != 1 {
+		t.Errorf("want exactly one {/static/, Prefix} entry, got %d in %v", staticPrefix, entries)
+	}
+
+	mutated := append(append([]apispec.Route(nil), allRoutes...), apispec.Route{
+		Method:   "GET",
+		Pattern:  "/static/operator-only.json",
+		Audience: apispec.AudienceOperator,
+		Authz:    apispec.AuthzAdmin,
+	})
+	if _, foreign := ingressparity.CoverageDiff(mutated, entries); len(foreign) == 0 {
+		t.Error("an operator route under /static/ did not turn the I15 reverse check red")
 	}
 }

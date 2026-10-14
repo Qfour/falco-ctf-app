@@ -199,7 +199,7 @@ type portalCSS struct {
 var (
 	a11yHTMLCommentRe   = regexp.MustCompile(`(?s)<!--.*?-->`)
 	a11yJSLineCommentRe = regexp.MustCompile(`(?m)^[ \t]*//.*$`)
-	cssCommentRe        = regexp.MustCompile(`(?s)/\*.*?\*/`)
+	a11yCSSCommentRe    = regexp.MustCompile(`(?s)/\*.*?\*/`)
 	styleElemRe         = regexp.MustCompile(`(?is)<style\b[^>]*>(.*?)</style\s*>`)
 	// A JS ${...} interpolation or a {{...}} template action: a value the
 	// scan cannot evaluate, replaced by a placeholder so its braces do not
@@ -279,7 +279,7 @@ func (pc *portalCSS) parse(partial string, line int, src string, inline bool) er
 	if inline {
 		src = inlineSel + "{" + src + "}"
 	}
-	src = blankKeepLines(cssCommentRe, src, " ")
+	src = blankKeepLines(a11yCSSCommentRe, src, " ")
 	pc.sources = append(pc.sources, cssSource{partial: partial, line: line, text: src})
 
 	type frame struct {
