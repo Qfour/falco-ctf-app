@@ -14,12 +14,19 @@ import (
 	"time"
 )
 
-// buildScoreboard builds cmd/scoreboard the way scoreboard/Dockerfile does.
-// A missing toolchain is a failure, not a skip.
+// buildScoreboard builds cmd/scoreboard (CGO off, like scoreboard/Dockerfile).
+// It leaves out the Dockerfile's -trimpath and -ldflags="-s -w": they change
+// only file paths and symbols in the binary, not what it does, and -trimpath
+// would miss the build cache that `go vet ./...` has just filled in
+// Dockerfile.test — a full recompile (modernc.org/sqlite above all) that made
+// this test the critical path of the required `test` check (~20 s locally,
+// 30-55 s on the CI runner; with the cache, ~1 s: review-5x T3 R5#1). The
+// browser E2E (Dockerfile.e2e) runs the binary built with the Dockerfile's
+// flags. A missing toolchain is a failure, not a skip.
 func buildScoreboard(t *testing.T, root string) string {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), "scoreboard")
-	cmd := exec.Command("go", "build", "-trimpath", "-o", out, "./cmd/scoreboard")
+	cmd := exec.Command("go", "build", "-o", out, "./cmd/scoreboard")
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if b, err := cmd.CombinedOutput(); err != nil {
@@ -47,9 +54,12 @@ func getJSON(t *testing.T, method, url string, hdr map[string]string) (int, map[
 
 // TestRealBinary_BehindTheProxy runs the whole non-browser chain on the real
 // cmd/scoreboard binary, so `make test` covers it without Chromium: the env
-// allowlist, the seeds over HTTP, the proxy's identity injection, the CSP that
-// reaches the client untouched, and the origin guard that the proxy's origin
-// satisfies (and a foreign one does not).
+// allowlist, the seeds over HTTP (each in its production caller's shape), the
+// proxy's identity injection, the CSP that reaches the client untouched, and
+// the child's own origin guard (ALLOWED_ORIGINS): accepted for the proxy's
+// origin, refused for a foreign one and for none — the refusals asked of the
+// child directly, since the proxy turns a foreign Origin away before the child
+// ever sees it.
 func TestRealBinary_BehindTheProxy(t *testing.T) {
 	root, err := RepoRoot(".")
 	if err != nil {
@@ -120,17 +130,45 @@ func TestRealBinary_BehindTheProxy(t *testing.T) {
 		t.Errorf("portal CSP = %q: want the nonce and frame-src from PORTAL_TTYD_SUFFIX", csp)
 	}
 
-	// Origin guard: the proxy's origin is the allowed one, a foreign one is not.
-	reset := origin + "/api/users/user1/challenges/05-silent-search/reset-dirty"
-	if code, _, _ = getJSON(t, "POST", reset, map[string]string{"Origin": "https://evil.test"}); code != 403 {
-		t.Errorf("reset-dirty with a foreign Origin answered %d, want 403", code)
+	// Origin guard. Through the proxy a foreign Origin never reaches the child:
+	// the proxy answers 403 itself (refused-origin) and forwards nothing, so
+	// that 403 is the proxy's and says nothing about the child's guard.
+	const resetPath = "/api/users/user1/challenges/05-silent-search/reset-dirty"
+	mark := proxy.Mark()
+	if code, _, _ = getJSON(t, "POST", origin+resetPath, map[string]string{"Origin": "https://evil.test"}); code != 403 {
+		t.Errorf("reset-dirty with a foreign Origin through the proxy answered %d, want 403", code)
 	}
-	if code, _, _ = getJSON(t, "POST", reset, map[string]string{"Origin": origin}); code != 200 {
+	if got := proxy.Since(mark); len(got) != 1 || got[0].Fault != "refused-origin" {
+		t.Errorf("the proxy should have refused the foreign Origin itself (refused-origin), log:\n%s", FormatLog(got))
+	}
+	// The child's guard, asked directly with the identity the proxy would have
+	// injected: a foreign Origin is refused, and so is a request with no
+	// Origin or Referer at all (fail-closed: what curl or a server sends).
+	user1 := map[string]string{IdentityHeader: "user1@" + IdentityDomain}
+	for name, hdr := range map[string]map[string]string{
+		"a foreign Origin":     {IdentityHeader: user1[IdentityHeader], "Origin": "https://evil.test"},
+		"no Origin or Referer": user1,
+	} {
+		if code, body, _ := getJSON(t, "POST", child.URL()+resetPath, hdr); code != 403 {
+			t.Errorf("the child's origin guard let reset-dirty with %s through: %d %v (ALLOWED_ORIGINS=%s)", name, code, body, origin)
+		}
+	}
+	_, j, _ = getJSON(t, "GET", child.URL()+"/api/users/user1/journey", user1)
+	if d, _ := j["detail"].(map[string]any); d["dirty"] != true {
+		t.Fatalf("a refused reset-dirty changed the server state: dirty=%v (want true)", d["dirty"])
+	}
+	// The proxy's own origin is the allowed one: forwarded, accepted, clean.
+	if code, _, _ = getJSON(t, "POST", origin+resetPath, map[string]string{"Origin": origin}); code != 200 {
 		t.Errorf("reset-dirty with the allowed Origin answered %d, want 200", code)
 	}
-	wantWrites := []string{"POST /api/users/user1/challenges/05-silent-search/reset-dirty", "POST /api/users/user1/challenges/05-silent-search/reset-dirty"}
-	if got := proxy.Writes(0); strings.Join(got, "|") != strings.Join(wantWrites, "|") {
-		t.Errorf("writes = %v, want the two reset-dirty POSTs", got)
+	// The log has both POSTs: the refused one (with its fault, nothing
+	// forwarded) and the accepted one (forwarded, 200).
+	wantWrites := []string{"POST " + resetPath, "POST " + resetPath}
+	if got := proxy.Writes(mark); strings.Join(got, "|") != strings.Join(wantWrites, "|") {
+		t.Errorf("writes = %v, want the refused and the accepted reset-dirty POST", got)
+	}
+	if got := proxy.Since(mark); len(got) != 2 || got[1].Fault != "" || got[1].Status != 200 {
+		t.Errorf("the allowed reset-dirty should have been forwarded and answered 200, log:\n%s", FormatLog(got))
 	}
 	_, j, _ = getJSON(t, "GET", origin+"/api/users/user1/journey", nil)
 	if d, _ := j["detail"].(map[string]any); d["dirty"] != false {

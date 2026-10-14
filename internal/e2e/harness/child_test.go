@@ -14,6 +14,7 @@ func validEnv() []string {
 		"SCENARIO_FILE=/src/scenarios/nimbusbreach-full/scenario.yaml",
 		"PORTAL_TTYD_SUFFIX=e2e.test",
 		"QUEST_ENABLED=true",
+		"EXPECTED_EMAIL_DOMAIN=e2e.test",
 	}
 }
 
@@ -64,6 +65,9 @@ func TestCheckChildEnv_RejectsPlantedViolations(t *testing.T) {
 		{"a real-looking ttyd suffix", replace("PORTAL_TTYD_SUFFIX", "ctf-event.dev"), ".test"},
 		{"Quest switched off", replace("QUEST_ENABLED", "false"), "QUEST_ENABLED"},
 		{"a missing catalog", drop("CHALLENGES_DIR"), "CHALLENGES_DIR"},
+		{"a relative DB path (an empty WorkDir)", replace("SCOREBOARD_DB", "scoreboard.db"), "absolute"},
+		{"an identity domain other than the synthetic one", replace("EXPECTED_EMAIL_DOMAIN", "ctf.dev"), "EXPECTED_EMAIL_DOMAIN"},
+		{"no identity domain (S2: nobody is self)", drop("EXPECTED_EMAIL_DOMAIN"), "EXPECTED_EMAIL_DOMAIN"},
 		{"a variable set twice", with("QUEST_ENABLED=true"), "twice"},
 	}
 	for _, c := range cases {
@@ -103,6 +107,18 @@ func TestScoreboardConfigEnv_ComesFromTheAllowlistAlone(t *testing.T) {
 		}
 		if strings.Contains(kv, "/real/flags.yaml") || strings.Contains(kv, "root@example.com") {
 			t.Errorf("the parent's environment leaked into the child: %s", kv)
+		}
+	}
+}
+
+func TestScoreboardConfigEnv_RefusesAnEmptyOrRelativeWorkDir(t *testing.T) {
+	for _, wd := range []string{"", "work", "./w"} {
+		_, err := ScoreboardConfig{
+			Binary: "/x", WorkDir: wd, ChallengesDir: "/src/challenges",
+			ScenarioFile: "/src/s.yaml", AllowedOrigin: "http://127.0.0.1:1", TtydSuffix: "e2e.test",
+		}.Env()
+		if err == nil || !strings.Contains(err.Error(), "WorkDir") {
+			t.Errorf("WorkDir %q: Env() = %v, want it refused", wd, err)
 		}
 	}
 }

@@ -34,6 +34,12 @@ var ChildEnvAllowlist = []string{
 	// It is passed so that a run is never silently the Quest-off run once that
 	// code lands. cmd/scoreboard on main does not read it yet.
 	"QUEST_ENABLED",
+	// EXPECTED_EMAIL_DOMAIN is read by the ADR-0034 S2 identity code: self is
+	// then the exact "<user>@<domain>" and an unset domain matches nobody
+	// (fail-closed), which would turn every seed's self-scope read into a 403.
+	// It is IdentityDomain, the domain of every synthetic e-mail (EmailFor), so
+	// the two cannot drift. cmd/scoreboard on main does not read it yet.
+	"EXPECTED_EMAIL_DOMAIN",
 }
 
 // childEnvForbidden are the variables whose presence in the child's env is a
@@ -68,6 +74,11 @@ type ScoreboardConfig struct {
 
 // Env builds the child's whole environment from the allowlist and checks it.
 func (c ScoreboardConfig) Env() ([]string, error) {
+	// The SQLite files go in WorkDir: an empty or relative one would put them
+	// in whatever directory the parent runs in (a package dir of the repo).
+	if c.WorkDir == "" || !filepath.IsAbs(c.WorkDir) {
+		return nil, fmt.Errorf("harness: ScoreboardConfig.WorkDir %q must be an absolute directory", c.WorkDir)
+	}
 	listen := c.ListenAddr
 	if listen == "" {
 		var err error
@@ -83,6 +94,7 @@ func (c ScoreboardConfig) Env() ([]string, error) {
 		"SCENARIO_FILE=" + c.ScenarioFile,
 		"PORTAL_TTYD_SUFFIX=" + c.TtydSuffix,
 		"QUEST_ENABLED=true",
+		"EXPECTED_EMAIL_DOMAIN=" + IdentityDomain,
 	}
 	if err := CheckChildEnv(env); err != nil {
 		return nil, err
@@ -92,8 +104,8 @@ func (c ScoreboardConfig) Env() ([]string, error) {
 
 // CheckChildEnv is the assertion Start runs on the env it is about to give the
 // child (ADR-0031 D1 (b), V8): only allowlisted names, none of the privileged
-// ones, a loopback listen address, exactly one http(s) origin, a reserved-TLD
-// ttyd suffix.
+// ones, a loopback listen address, an absolute DB path, exactly one http(s)
+// origin, a reserved-TLD ttyd suffix and identity domain.
 func CheckChildEnv(env []string) error {
 	seen := map[string]string{}
 	for _, kv := range env {
@@ -137,11 +149,17 @@ func CheckChildEnv(env []string) error {
 	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
 		return fmt.Errorf("harness: LISTEN_ADDR %q must be a loopback IP literal", seen["LISTEN_ADDR"])
 	}
+	if db := seen["SCOREBOARD_DB"]; !filepath.IsAbs(db) {
+		return fmt.Errorf("harness: SCOREBOARD_DB %q must be an absolute path (a relative one lands in the parent's working directory)", db)
+	}
 	if o := seen["ALLOWED_ORIGINS"]; strings.Contains(o, ",") || !isOrigin(o) {
 		return fmt.Errorf("harness: ALLOWED_ORIGINS %q must be exactly one scheme://host[:port] origin", o)
 	}
 	if s := seen["PORTAL_TTYD_SUFFIX"]; !strings.HasSuffix(s, ".test") {
 		return fmt.Errorf("harness: PORTAL_TTYD_SUFFIX %q must end in the reserved .test TLD", s)
+	}
+	if d := seen["EXPECTED_EMAIL_DOMAIN"]; d != IdentityDomain {
+		return fmt.Errorf("harness: EXPECTED_EMAIL_DOMAIN %q must be the synthetic identity domain %q (the domain EmailFor builds every e-mail with)", d, IdentityDomain)
 	}
 	if seen["QUEST_ENABLED"] != "true" {
 		return fmt.Errorf("harness: QUEST_ENABLED must be true, got %q", seen["QUEST_ENABLED"])

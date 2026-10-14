@@ -21,7 +21,10 @@ import (
 // identity e-mail it builds can never be a surprising one.
 var UserPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
-// IdentityDomain is the reserved-TLD domain of every synthetic identity.
+// IdentityDomain is the reserved-TLD domain of every synthetic identity
+// (ADR-0031 V8: a `.test` name, so no IdP can hold such an address). It is
+// also the child's EXPECTED_EMAIL_DOMAIN (ADR-0034 S2), under which
+// "<user>@<IdentityDomain>" is exactly user's own identity.
 const IdentityDomain = "e2e.test"
 
 // TtydSuffix is the PORTAL_TTYD_SUFFIX test value: the portal builds each
