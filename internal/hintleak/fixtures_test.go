@@ -36,8 +36,7 @@ func independentFixtureCount(t *testing.T, root string) int {
 }
 
 // TestFixtures_CarryNoHintOnlyNgrams is ADR-0026 V5 (the second sentence of the
-// proposed Hard Invariant I16, ADR-0026 D4 — not yet promoted; promotion is a
-// later PR): in every scope — the full catalog and each
+// Hard Invariant I16, ADR-0026 D4; promoted in conventions 2026-10-14): in every scope — the full catalog and each
 // scenarios/*/scenario.yaml — no challenges/*/fixtures/** file contains a
 // 10-rune n-gram that appears in a hint but in no free-display text of that
 // scope. A violation is fixed by rewording the fixture; there is no exclusion

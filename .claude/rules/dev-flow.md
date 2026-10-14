@@ -90,6 +90,7 @@ flowchart TD
 | falco-rule.yaml schema | PostEdit 自動 | ✅ | `scripts/claude-hook-postedit.sh` |
 | /api/state 確認 | 手動 | ✅ | `make dev` → curl /api/state |
 | /review-challenge | PR 直前 | ✅ | `/review-challenge` |
+| security-engineer レビュー | PR 直前 | `challenges/*/fixtures/**` または `journey.yaml` の `hints[]` を変える時 ✅ (ADR-0026 V8 / I16。n-gram 検査 `internal/hintleak` は逐語一致しか捕まえない。言い換えによるヒント漏えいは文面レビューだけが防ぐ) | `/security-audit` (または `/review-5x` の R1) |
 
 ---
 
@@ -129,7 +130,7 @@ flowchart TD
 | /review-code | ✅ 必須 | — | ✅ 必須 | — |
 | /review-manifests | — | ✅ 必須 | — | — |
 | /review-challenge | — | — | ✅ 必須 | — |
-| /security-audit | auth触れた時 | — | — | ✅ 必須 |
+| /security-audit | auth触れた時 | — | fixtures/ か `hints[]` を変えた時 ✅ (V8) | ✅ 必須 |
 
 ---
 
