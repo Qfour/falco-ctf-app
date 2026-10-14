@@ -1,6 +1,6 @@
 # ADR-0032: evade の attempt を明示的な開始操作 (epoch) にし、solve を「その attempt の中で記録された証跡」だけで判定する — 10-final-exfil に attempt スコープの積極証明を入れる
 
-- Status: **Proposed** (Accepted 化は CEO merge 時。期限 = 次回イベントの前、CEO 決定 2026-10-05。rev2 = 2026-10-10: S1 の実装と R4 を反映。rev2.1 = 同日: review-5x (T3、app S2 + platform S1) の採用 findings と VP の決定を反映。追加は末尾の「Decision の追加」)
+- Status: **Accepted** (2026-10-14。実装: platform #222 / #223 / #225 / #226 / #228、app #360 / #363。残余 4 は CEO 受容 = この PR の merge をもって。merge 前提「#207 gate が stand-up で green」は platform #226 (runtime gate) の merge をもって読み替え、次の stand-up の go/no-go で確認する (CEO 決定 2026-10-14)。旧 Proposed の記述: Accepted 化は CEO merge 時。期限 = 次回イベントの前、CEO 決定 2026-10-05。rev2 = 2026-10-10: S1 の実装と R4 を反映。rev2.1 = 同日: review-5x (T3、app S2 + platform S1) の採用 findings と VP の決定を反映。追加は末尾の「Decision の追加」)
 - Date / Deciders: 2026-10-05 / CEO (2026-10-04 錨は明示的な attempt。2026-10-05 10 の積極証明は入れる方向で調査を先に・期限の前倒し・残余 1 / 2 の受容・05 も揃える。
   Class-2 の merge) + VP (承認、レビュー指摘の全件採用) + architect (起草・同意権) + content-engineer (実現性調査) + product-engineer (P28 の印・称号の合意) +
   security-engineer・qa-engineer (独立レビュー 2 巡、2026-10-05。本版に反映済み) / rev2 (2026-10-10): architect (起草・D12 の同意権) + VP (発注) / rev2.1 (同日): architect (起草・D12 (1) の Key Guard の例外に「yes, if」) + VP (決定・例外の承認)
@@ -251,6 +251,7 @@ S2 の行 (app の S2 PR で入る) を除き、すべて**未実装**。`make t
   stand-up では全 Falco pod の rule ファイル (falcoctl が入れたものを含む) の INFO の rule ⊆ 無効化リスト ∪ `ctf_observation` を検査する (upstream で catalog の rule が INFO に下がった場合と、(1) の名前が変わって無効化が黙って外れた場合もここで止まる)
   (5) D12 (6) [platform の preflight と stand-up、rev2.1]: `priority` が `info` なら、描画で falcoctl の install の ref が digest に pin され、follow は無効か同じ digest に pin されている。stand-up で全 Falco pod の upstream の
   rule ファイルの hash が一致し、go / no-go に記録した版と同じ。teardown の前 (platform#208 の回収と同じ時) にもう一度比べ、違えばその回の go / no-go の記録に「開催中に rule の集合が変わった」と残す。
+- **実装状況 (2026-10-14 注記)**: 「機械で守るもの」(4)(5) と D12 は platform #223 で実装済み = (o6) `minimumpriority` 検査、CI での実 render、pod 検査の HARD gate、upstream rule hash の記録と照合。hash の初回信頼 (TOFU) は follow-up platform#224。**S1' (`priority` を `info` にする層) を有効にする stand-up の go/no-go は、手動 probe が必須**(`priority=informational` の下で 05 / 10 の proof と 03 / 10 の forbidden が fire することの確認。platform docs §11-5)。10 の proof の rule 名は `Nimbus Vault Master Key Read`。
 - **I11 の表を書き換える条件**: 上の表の S3a〜S3b-2 のテスト (S4 の静的検査を含む) が main に入り、本 ADR が Accepted。(a)(b) が済むまで「検証済み」「実効的」と書かない。
 
 ## Decision の追加 (rev2・rev2.1、2026-10-10)
