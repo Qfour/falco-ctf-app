@@ -118,7 +118,7 @@ falco-ctf-app/
 | Image | `${REGISTRY}/falco-ctf-{scoreboard,auth-policy,collector,ttyd,challenge,docs,detect-grader}:<tag>`。tag は git SHA (全 7 イメージ同一 SHA、I5)。platform 側 chart/manifest が values で pin |
 | detect-grader Job | scoreboard が `type: detect` 採点で per-submission K8s Job を起動。namespace/image/RBAC/NetworkPolicy の契約は conventions.md 参照 |
 | Challenges path | platform の `deploy-user.sh --challenges-dir <path>` が当 repo の `challenges/` を指す。CI では sparse checkout |
-| Webhook payload | `POST /falco/events` の JSON は falcosidekick 標準形。フィールドキー変更は両 repo 同時 PR |
+| Webhook payload | `POST /falco/events` の JSON は falcosidekick 標準形。フィールドキー変更は両 repo 同時 PR。Debug / Informational は採点にも表示にも使わない。観測 rule の非表示は、この ingest 側の priority 下限と platform の falcosidekick `minimumpriority` の **2 層**に依存する (ADR-0032 D12) |
 | Cookie domain | `.<ctf-domain>` は platform が決定。app 側は前提とする |
 | Participant path | 参加者に開く path 集合の正典は `charts/scoreboard/templates/ingress-journey.yaml` (I15 が mux と機械照合する)。platform は文書で参照するだけ。path / pathType の変更は両 repo 同時 PR。chart と image は同じ SHA で同時に入れる (ADR-0028) |
 
