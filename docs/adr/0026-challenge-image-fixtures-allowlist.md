@@ -1,6 +1,6 @@
 # ADR-0026: challenge image の `/opt/ctf/missions/` を fixtures allowlist にし、hints・想定解・採点メタを同梱しない
 
-- Status: **Accepted** (実装 PR app#319 の CEO merge 時。V1〜V3 は本 PR、V5・V6 は app#318、V4・V8 は後続 PR で landing。先例は ADR-0033)
+- Status: **Accepted** (2026-10-14。実装: app#318 / #319、platform#203。3/3 = deploy 時検査 (V4)・V8・I16 昇格は未着手。先例は ADR-0033)
 - Date / Deciders: 2026-10-05 / CEO (2026-10-04「2026-06 の guided 方針を解除し、撤去する」) + VP + architect (起草) +
   security-engineer・qa-engineer (独立レビュー 2026-10-05。指摘は本版に反映済み、再確認待ち)
 - 関連: workspace `REFACTORING.md` P28-0d / P22 (2026-08-14 CEO 決定) / P27-1、ADR-0001 (監査 LOW「plant.sh の同梱」・I12)、
@@ -65,7 +65,7 @@ app 側は `make push` も `check-image-hygiene` に依存させる。path は�
   `submit.sh` など 4 本の COPY と `/opt/ctf/plant-seed/` は無変更 (「`/etc` に触る最後の RUN」の規律 `:139-145` も維持)。
 - **D3 path は不変、契約表に行を足す** (両リポ、相互リンク): 「workspace 内 `/opt/ctf/missions/<challengeId>/fixtures/**` =
   `challenges/<challengeId>/fixtures/**`。platform の `customRules` がこの絶対パスに依存する。変えると該当の trigger 課題が無検知
-  (解けない) になる。変更は両リポ同時 PR」。
+  (解けない) になる。変更は両リポ同時 PR」。(契約 docs は platform#203 で main 済み。deploy 時検査との結線は 3/3 で実装)
 - **D4 I16 (提案・未昇格)**:
   > challenge image の `/opt/ctf/missions/` は、catalog の各 id について `<id>/fixtures/**` だけを持つ (他の entry を持たず、全 id に
   > `<id>/fixtures/` がある)。`challenges/*/fixtures/**` は、D5 の規則で違反となる n-gram (`hints[]` にあって無料表示に無い 10 rune) を
@@ -127,7 +127,7 @@ app 側は `make push` も `check-image-hygiene` に依存させる。path は�
 7. **`type:` 行は厳密な形だけ受け付ける**: top-level の `type:` がちょうど 1 本で `type: trigger|evade|detect` に完全一致 (builder と V2 が同じ規則)。
    platform の読み方は緩いが、build が通る tree では同じ集合になる。
 8. **I16 の「同じ PR で昇格」は、すべての機構が main に揃う最後の PR で昇格する、と読む。** P28-0d の software は 3 PR に分割した:
-   image と build 時の検査 (V1〜V3) = app#319 / n-gram の検査 (V5・V6) = app#318 / deploy 時の検査 (V4)・契約表 (D3)・V8・I16 昇格 = 後続 PR。
+   image と build 時の検査 (V1〜V3) = app#319 / n-gram の検査 (V5・V6) = app#318 / deploy 時の検査 (V4)・V8・I16 昇格 = 後続 PR (3/3。契約表 (D3) は platform#203 で main 済み)。
    merge 順は #319 → #318 → 後続。I16 の昇格は機構が揃う最後の PR (後続) で行う。V6 のうち `README.md` を足した派生 image の
    negative test は image 側の検査なので #319 に入る (`scripts/test-check-image-hygiene.sh`)。
 
@@ -166,7 +166,7 @@ app 側は `make push` も `check-image-hygiene` に依存させる。path は�
 ## Verification
 
 V1〜V6 と V8 は P28-0d の software PR で満たす。landing 先 (分割と merge 順は「実装時の解釈」8): **V1〜V3 = app#319** (V6 のうち
-派生 image の negative test も #319)、**V5・V6 = app#318**、V4・V8 = 後続 PR。V7 は実機でのみ確認可。V1〜V3 は
+派生 image の negative test も #319)、**V5・V6 = app#318**、V4・V8 = 後続 PR (3/3 で実装)。V7 は実機でのみ確認可。V1〜V3 は
 `scripts/check-image-hygiene.sh` に足し、`make build` の fail-closed 経路で必ず走らせる (CI の `image-hygiene` job は required check
 ではない: `.github/workflows/ci.yaml:388-389`)。
 
