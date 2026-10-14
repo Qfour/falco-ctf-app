@@ -179,6 +179,10 @@ paths:
         `X-Auth-Request-Email`, or any identity when `ADMIN_EMAILS` is empty —
         gets a 403 HTML stub instead of the shell.
 
+        Never embeddable (app#326): every response from the shell (200, 403,
+        500) carries `X-Frame-Options: DENY`, and the 200/403 CSP carries
+        `frame-ancestors 'none'`.
+
         `GET /` in Go 1.22+ matches every unrouted path, so this operation is
         also the 404 for unknown paths.
       responses:
@@ -215,6 +219,11 @@ paths:
 
         The Terminal tab's iframe src is built from `PORTAL_TTYD_SUFFIX`;
         empty = a "not configured" placeholder instead of an iframe.
+
+        The portal embeds ttyd but is never itself embeddable (app#326): the
+        CSP carries `frame-ancestors 'none'` and the response carries
+        `X-Frame-Options: DENY`. (`frame-ancestors` restricts who may frame
+        this page; the ttyd iframe is governed by `frame-src`.)
       responses:
         "200":
           description: portal HTML

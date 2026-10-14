@@ -109,12 +109,110 @@ func TestPortalCSP_ContainsExpectedDirectives(t *testing.T) {
 		t.Errorf("script-src must not contain 'unsafe-inline' (defeats the nonce restriction): %q", scriptSrc)
 	}
 
-	// frame-ancestors must be absent — that directive belongs to
-	// internal/ttydproxy (P23-3), a different response entirely (see
-	// portalCSP's doc for why conflating the two would be wrong).
-	if strings.Contains(csp, "frame-ancestors") {
-		t.Errorf("portal CSP must not set frame-ancestors (owned by ttydproxy, not the portal response): %s", csp)
+	// frame-ancestors 'none' (app#326): nobody may embed the portal / the
+	// admin dashboard. This is the OTHER direction from frame-src above:
+	// frame-ancestors constrains who may frame THIS page, while the Terminal
+	// pane's ttyd iframe is governed by frame-src (portal = framer) and by
+	// ttydproxy's own frame-ancestors on ttyd's responses (ttyd = framed).
+	// So 'none' here cannot affect the ttyd embed. It also cannot produce a
+	// CSP violation on the portal's own console (ADR-0031 E3's "CSP
+	// violations == 0" assert): frame-ancestors is enforced against a page
+	// being loaded INSIDE a frame, never against the top-level document.
+	if !strings.Contains(csp, "frame-ancestors 'none'") {
+		t.Errorf("portal CSP must set frame-ancestors 'none' (app#326): %s", csp)
 	}
+	if n := strings.Count(csp, "frame-ancestors"); n != 1 {
+		t.Errorf("frame-ancestors appears %d times in CSP, want exactly 1: %s", n, csp)
+	}
+}
+
+// TestPortalCSP_FullPolicyPin pins the WHOLE policy string for an empty and
+// a configured ttydSuffix, so a directive added, dropped or reordered by a
+// change aimed at one directive (app#326 added frame-ancestors) shows up as
+// a diff here instead of slipping through the contains-checks above.
+func TestPortalCSP_FullPolicyPin(t *testing.T) {
+	const common = "default-src 'self'; " +
+		"script-src 'self' 'nonce-N'; " +
+		"style-src 'self' 'unsafe-inline'; " +
+		"font-src 'self'; " +
+		"img-src 'self' data:; " +
+		"connect-src 'self'; "
+	const tail = "; object-src 'none'; " +
+		"base-uri 'self'; " +
+		"form-action 'self'; " +
+		"frame-ancestors 'none'; " +
+		"report-uri /csp-report; " +
+		"report-to csp-endpoint"
+	cases := map[string]string{
+		"":              common + "frame-src 'none'" + tail,
+		"ctf-event.dev": common + "frame-src https://*.ctf-event.dev" + tail,
+	}
+	for suffix, want := range cases {
+		if got := portalCSP("N", suffix); got != want {
+			t.Errorf("portalCSP(%q) =\n  %s\nwant\n  %s", suffix, got, want)
+		}
+	}
+}
+
+// TestFrameProtection_OnPortalDashboardAndForbidden is the app#326
+// end-to-end pin: every HTML shell response (GET /portal 200, GET / 200,
+// GET / 403) and the 500 path carry BOTH CSP frame-ancestors 'none' and
+// X-Frame-Options: DENY, so oauth2-proxy's cookie_samesite=none cannot be
+// turned into a clickjacking surface.
+func TestFrameProtection_OnPortalDashboardAndForbidden(t *testing.T) {
+	check := func(t *testing.T, name string, h http.Header) {
+		t.Helper()
+		if csp := h.Get("Content-Security-Policy"); !strings.Contains(csp, "frame-ancestors 'none'") {
+			t.Errorf("%s: CSP lacks frame-ancestors 'none': %q", name, csp)
+		}
+		if got := h.Get("X-Frame-Options"); got != "DENY" {
+			t.Errorf("%s: X-Frame-Options = %q, want DENY", name, got)
+		}
+	}
+
+	t.Run("GET /portal 200", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		if err := renderPortal(w, httptest.NewRequest("GET", "/portal", nil), nil, nil, ""); err != nil {
+			t.Fatalf("renderPortal: %v", err)
+		}
+		check(t, "/portal", w.Header())
+	})
+	t.Run("GET /portal with ttyd suffix 200", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		if err := renderPortal(w, httptest.NewRequest("GET", "/portal", nil), nil, nil, "ctf-event.dev"); err != nil {
+			t.Fatalf("renderPortal: %v", err)
+		}
+		check(t, "/portal (ttyd configured)", w.Header())
+	})
+	t.Run("GET / admin 200", func(t *testing.T) {
+		h := New(func(*http.Request) bool { return true }, nil, "", slog.New(slog.DiscardHandler))
+		w := httptest.NewRecorder()
+		h.index(w, httptest.NewRequest("GET", "/", nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+		}
+		check(t, "/ (200)", w.Header())
+	})
+	t.Run("GET / non-admin 403", func(t *testing.T) {
+		h := New(func(*http.Request) bool { return false }, nil, "", slog.New(slog.DiscardHandler))
+		w := httptest.NewRecorder()
+		h.index(w, httptest.NewRequest("GET", "/", nil))
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403", w.Code)
+		}
+		check(t, "/ (403)", w.Header())
+	})
+	t.Run("writeSecurityHeaders failure (500 path) still denies framing", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		if _, err := writeSecurityHeaders(w, "bad\r\nsuffix"); err == nil {
+			t.Fatal("expected an error for a control character in the suffix")
+		}
+		// No CSP is built on this path (the policy would embed the bad
+		// value); XFO is the one framing header that is, and it must be.
+		if got := w.Header().Get("X-Frame-Options"); got != "DENY" {
+			t.Errorf("X-Frame-Options on the failure path = %q, want DENY", got)
+		}
+	})
 }
 
 // TestPortalCSP_FrameSrc is the R5 (2026-08-16 /review-5x) regression test:
