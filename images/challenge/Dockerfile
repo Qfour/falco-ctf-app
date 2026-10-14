@@ -96,19 +96,18 @@ FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cab
 # zlib 1.3.2-r1 (2026-10-13: base digest を 3.24 の最新 294b683c へ更新。base の zlib は
 #   1.3.2-r0 のままで Sysdig が High を出すため明示 upgrade。`apk policy zlib` 実測で
 #   3.24/main が 1.3.2-r1 を提供)
-# **この画像にはなお残る High CVE がある** (upstream fix 自体が未着地、または
-# alpine パッケージへの backport 待ち — 2026-10-05 時点で 3.24 に fix 版なし):
-#   libxml2 2.13.9-r2 (fix 2.15.2、2026-10-13 時点の Sysdig suggested fix は 2.15.4;
-#     CVE-2026-0989/2025-8732; CVE-2026-11979 は upstream に fix 自体が存在しない。
-#     `apk policy libxml2` 実測 (2026-10-13): 3.24 / edge/main とも 2.13.9-r2 のみ。
-#     引き込み元は bind-tools -> bind-libs (`apk info -r libxml2`)。bind-tools は
-#     参加者向けに dig/nslookup として文書化済み (PARTICIPANT-HANDBOOK / cheatsheet)
-#     のため、除去は content 判断 — 本 PR では触らない)。
-#     **受け入れの期限と解除条件**: bind-tools を `drill` (ldns、libxml2 を引かない) +
-#     busybox nslookup へ置換する PR が入るまで。追跡: app#338 と置換 issue)
+# libxml2 (2026-10-15 解消): 旧 bind-tools -> bind-libs が libxml2 2.13.9-r2 を引き込み、
+#   3.24 / edge/main とも fix 版が無く `build (challenge) / scan` が常に赤だった
+#   (app#338 / #345)。bind-tools を `drill` (ldns。`apk info -R drill` の依存は
+#   libc.musl + libldns のみで libxml2 を引かない) + base busybox の `nslookup` へ
+#   置換した。`apk policy drill` 実測 (base digest 294b683c) で 3.24/main の唯一の
+#   提供版が 1.8.4-r1。画像内の libxml2 は 0 本 (`apk info | grep -c libxml2` = 0)。
+#   dig 相当は `drill <name>` / `drill @<server> <name>`、nslookup は busybox 版
+#   (docs の例と同じ `nslookup <name>` がそのまま動く)。
+#   これで残存 High は無くなった (jq は下記の通り自動で fix 版へ上がる)。
 # jq は pin していないため 3.24/main の更新で 1.8.2-r0 (CVE-2026-49839 の fix 版、
 # `apk policy jq` 実測で唯一の提供版) へ自動で上がり、残存から外れた (2026-10-05)。
-# 残存 (libxml2) の追跡先は app#291 (#227 は CLOSED)。
+# CVE feed の drift (pin 版が後から High 扱いになる) の追跡先は app#291。
 RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 zlib=1.3.2-r1 \
  && apk add --no-cache \
         bash=5.3.9-r1 \
@@ -117,7 +116,7 @@ RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 zlib=1.3.2
         curl=8.22.0-r0 \
         libcurl=8.22.0-r0 \
         netcat-openbsd \
-        bind-tools \
+        drill=1.8.4-r1 \
         jq \
         less \
         vim=9.2.1178-r0 \
