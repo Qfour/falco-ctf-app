@@ -24,6 +24,14 @@
 #        `fixtures` directory (fixtures' own contents are never opened).
 #        Dot entries are enumerated too. See the 3-8 judgment block below.
 #
+# WHAT 3-8 does and does not prove: it is a deploy-moment check of the image
+# the Pod actually started from (a tag mix-up, an image older than the
+# checkout, a scenario copy that went wrong). It does NOT defend against a
+# malicious registry-side replacement (digest pin / signing do that), and
+# re-running it AFTER participants have used the workspace is NOT evidence
+# about the image: they are root in `challenge` and can change /opt/ctf. Audit
+# an image with `scripts/check-image-hygiene.sh <image digest>`, not with this.
+#
 # WHY builtin-only (this is the load-bearing part — do not "simplify" this
 # script by swapping any check below for grep/cat/head/tail/awk/find/cp):
 #
@@ -310,6 +318,29 @@ else
     exit 1
   fi
 fi
+# The expectation itself is validated before anything is compared: a duplicate
+# id would turn "observed == expected" into a one-directional check (count
+# equal + expected ⊆ observed lets a missing id hide behind a repeated one),
+# and an id outside the probe's character set could never be observed (and
+# would reach the diagnostics below raw).
+for _i in "${!EXPECTED_MISSION_IDS[@]}"
+do
+  case "${EXPECTED_MISSION_IDS[_i]}" in
+    ''|*[!A-Za-z0-9._-]*)
+      printf 'assert-flag-isolation.sh: expected id #%d has a character outside [A-Za-z0-9._-] — refusing (3-8 fail-closed)\n' "${_i}" >&2
+      exit 1
+      ;;
+  esac
+  for _j in "${!EXPECTED_MISSION_IDS[@]}"
+  do
+    if [ "${_j}" -gt "${_i}" ] && [ "${EXPECTED_MISSION_IDS[_j]}" = "${EXPECTED_MISSION_IDS[_i]}" ]
+    then
+      printf 'assert-flag-isolation.sh: duplicate id "%s" in the expected mission set (%s) — refusing (3-8 fail-closed)\n' \
+        "${EXPECTED_MISSION_IDS[_i]}" "${SCENARIO_FILE:-${CHALLENGES_DIR}}" >&2
+      exit 1
+    fi
+  done
+done
 
 # ---------------------------------------------------------------------------
 # NOTE (flag-guard): diagnostic messages below say "flag-marker line(s)" and never
@@ -561,6 +592,31 @@ done <<< "${OBSERVED}"
 
 VIOLATIONS=()
 
+# The probe's output is untrusted text (it comes from inside the workspace,
+# via a possibly fake `sh`) and is printed to the operator's terminal below.
+# Every value must stay inside the probe's own character set; anything else
+# (escape sequences, control characters, glob metacharacters) becomes 3-0 and
+# the value is replaced by a placeholder so it is never echoed or split.
+# MISSIONS_LIST is ids only; BAD / SUBBAD also carry '/', ':' and the
+# <bad-name> placeholder.
+for _v in OBS_PLANT_SEED_ROOT_EXISTS OBS_SA_TOKEN_EXISTS OBS_ENV_HAS_CTF_FLAG OBS_PROC1_HAS_CTF_FLAG \
+          OBS_SHADOW_FALCO_LINES OBS_SSH_KEY_EXISTS OBS_MISSIONS_LIST OBS_MISSIONS_BAD OBS_MISSIONS_SUBBAD OBS_PROBE_END
+do
+  _val="${!_v}"
+  _bad=no
+  case "${_v}" in
+    OBS_MISSIONS_BAD|OBS_MISSIONS_SUBBAD)
+      case "${_val}" in *[!A-Za-z0-9._/:\<\>\ -]*) _bad=yes ;; esac ;;
+    *)
+      case "${_val}" in *[!A-Za-z0-9._\ -]*) _bad=yes ;; esac ;;
+  esac
+  if [ "${_bad}" = yes ]
+  then
+    VIOLATIONS+=("3-0: probe field ${_v#OBS_} has a character outside its allowed set — value discarded")
+    printf -v "${_v}" '%s' '<rejected>'
+  fi
+done
+
 # A truncated probe must not read as "nothing found" (the 3-8 fields default
 # to empty above): the last line is a sentinel.
 if [ "${OBS_PROBE_END}" != "yes" ]
@@ -614,9 +670,16 @@ fi
 #       empty). fixtures' own contents are deliberately not inspected.
 # ADR-0026 V4 は「image の allowlist 証跡」を image 自身に問い合わせる:
 # build 時の検査 (check-image-hygiene.sh) が通った image でも、tag の取り違え・
-# 古い image・registry 上の差し替えは deploy の瞬間にしか見えない。
+# 古い image は deploy の瞬間にしか見えない。防げるのはここまで:
+# 悪意ある registry 上の差し替えは digest pin / 署名の役目で、この検査では防げない。
+# 参加者が触った後に再実行しても image の証跡にならない (監査は
+# `scripts/check-image-hygiene.sh <image digest>` で行う)。
+# Split with globbing off: the value is already charset-checked above, but a
+# glob character must never expand against the operator's filesystem.
+set -f
 # shellcheck disable=SC2206  # intentional word-splitting on unquoted var
 OBS_MISSIONS_ARR=(${OBS_MISSIONS_LIST})
+set +f
 MISSIONS_OK=yes
 if [ "${#OBS_MISSIONS_ARR[@]}" -ne "${#EXPECTED_MISSION_IDS[@]}" ]
 then
@@ -626,6 +689,25 @@ else
   do
     found=0
     for x in "${OBS_MISSIONS_ARR[@]}"
+    do
+      if [ "${x}" = "${sid}" ]
+      then
+        found=1
+        break
+      fi
+    done
+    if [ "${found}" -eq 0 ]
+    then
+      MISSIONS_OK=no
+      break
+    fi
+  done
+  # observed ⊆ expected too (expected is duplicate-free, so with equal counts
+  # this makes the comparison a true two-way set equality)
+  for x in "${OBS_MISSIONS_ARR[@]}"
+  do
+    found=0
+    for sid in "${EXPECTED_MISSION_IDS[@]}"
     do
       if [ "${x}" = "${sid}" ]
       then

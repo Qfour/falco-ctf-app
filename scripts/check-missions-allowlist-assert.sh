@@ -69,6 +69,11 @@ payload="${payload//\/root\/.ssh/${FAKE_ROOT}/root/.ssh}"
 payload="${payload//\/var\/run\/secrets/${FAKE_ROOT}/var/run/secrets}"
 payload="${payload//\/proc\/1\/environ/${FAKE_ROOT}/proc1-environ}"
 payload="${payload//\/plant-seed/${FAKE_ROOT}/plant-seed}"
+if [[ -n "${FAKE_EXTRA_LINES:-}" ]]; then
+  sh -c "${payload}"
+  printf '%s\n' "${FAKE_EXTRA_LINES}"
+  exit
+fi
 exec sh -c "${payload}"
 STUB
 chmod +x "${WORK}/bin/kubectl"
@@ -286,6 +291,39 @@ expect reject "scenario:two: README.md beside fixtures/" '01-alpha/README.md' "$
 
 r="$(newroot sc-short 01-alpha)"
 expect reject "scenario:two: a scenario id is missing" 'expected exactly [01-alpha 02-beta]' "$r" "${CH}" scenario:two "${SC}"
+
+echo "==> 3-8 hardening: duplicate ids, probe charset"
+# Duplicate id in the scenario's list: refused before comparing anything (a
+# duplicate would let a missing id hide behind a repeated one).
+mkdir -p "${SC}/dup"
+printf 'name: dup\nchallenges:\n  - 01-alpha\n  - 01-alpha\n  - 02-beta\n' >"${SC}/dup/scenario.yaml"
+r="$(newroot dup-img 01-alpha 02-beta)"
+expect reject "scenario: duplicate id in challenges: is refused" 'duplicate id "01-alpha"' "$r" "${CH}" scenario:dup "${SC}"
+r="$(newroot dup-img-3 01-alpha 03-gamma)"
+expect reject "scenario: duplicate id is refused even when the image lacks 02-beta" 'duplicate id' "$r" "${CH}" scenario:dup "${SC}"
+
+# An expected id outside the probe's character set is refused.
+mkdir -p "${SC}/oddid"
+printf 'name: oddid\nchallenges:\n  - 01-alpha\n  - 02-b*ta\n' >"${SC}/oddid/scenario.yaml"
+r="$(newroot odd-img 01-alpha 02-beta)"
+expect reject "scenario: id with a glob character is refused" 'character outside [A-Za-z0-9._-]' "$r" "${CH}" scenario:oddid "${SC}"
+
+# A fake `sh` (or tampered probe) that prints values outside the character set:
+# glob characters / escape sequences must become 3-0 and never be echoed.
+# FAKE_EXTRA_LINES is appended to the probe's stdout by the stub.
+r="$(newroot esc 01-alpha 02-beta 03-gamma)"
+CASES=$((CASES + 1))
+set +e
+PATH="${WORK}/bin:${PATH}" FAKE_ROOT="$r" FAKE_EXTRA_LINES="$(printf 'MISSIONS_LIST=*\nMISSIONS_BAD=\033]0;pwned\007')" \
+  "${ASSERT}" ns-test "${CH}" all >"${WORK}/out.$$" 2>&1
+rc=$?
+set -e
+if [[ "${rc}" -ne 0 ]] && grep -qF '3-0: probe field MISSIONS_LIST' "${WORK}/out.$$" \
+  && grep -qF '3-0: probe field MISSIONS_BAD' "${WORK}/out.$$" && ! grep -q "$(printf '\033')" "${WORK}/out.$$"; then
+  pass "all: out-of-charset probe values -> 3-0, no escape byte reaches the output"
+else
+  fail "all: out-of-charset probe values not handled (rc=${rc}): $(tr '\n' ' ' <"${WORK}/out.$$" | cat -v)"
+fi
 
 echo
 if [[ "${CASES}" -lt 20 ]]; then

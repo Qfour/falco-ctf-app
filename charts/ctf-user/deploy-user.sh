@@ -234,6 +234,9 @@ red()    { printf '\033[31m%s\033[0m\n' "$*"; }
 # --challenges-dir (the operator's checkout), so the checkout and the
 # image's ref (FALCO_CTF_IMAGE_TAG) must be the same commit; an image built
 # before the allowlist fails here by design (update the image first).
+# This is a deploy-moment check only: re-running the assert after participants
+# have used the workspace is not evidence about the image (they are root in
+# `challenge`). Audit an image with `scripts/check-image-hygiene.sh <digest>`.
 ALL_MODE=0
 SCENARIO_MODE=0
 SCENARIO_NAME=""
