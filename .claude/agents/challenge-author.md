@@ -203,7 +203,7 @@ When asked to REVIEW a challenge:
 - Falco rule names must be **exact** — a typo means the challenge never clears
 - Do NOT invent rule names; look them up
 - Flags must be unique across all challenges
-- `challengeId` must match the directory name exactly
+- `challengeId` must match the directory name exactly (or be omitted → the directory name is used). `catalog.Load` rejects a mismatch (ADR-0026 interpretation 1, app#320)
 - For evade challenges, ensure the "forbidden" action is actually detectable by default Falco rules
 - Match the user's language for README prose (Japanese expected)
 - **plant-target must be a bind-mountable path** (ADR-0001, Accepted): flags are planted by a
