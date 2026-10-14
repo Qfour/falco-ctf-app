@@ -14,10 +14,16 @@ import (
 // FalcoEventsReceived counts /falco/events POST receipts.
 //
 //	outcome: "accepted" | "ignored" | "decode_error" | "store_error" |
-//	         "taint_error" | "forbidden" | "unsupported_media_type"
+//	         "taint_error" | "forbidden" | "unsupported_media_type" |
+//	         "rate_limited" | "overflow_tainted"
 //
 // forbidden / unsupported_media_type are requests refused before any decode:
 // the browser path (an X-Auth-Request-* header) and a non-JSON Content-Type.
+//
+// rate_limited / overflow_tainted (app#359) are the two per-participant
+// rate-limit outcomes: an observation-only event answered 429, and a
+// scoring-relevant event that exceeded its participant's bucket and was
+// converted into a fail-closed taint instead of being dropped.
 //
 // taint_error (ADR-0003 A5) is distinct from store_error: it fires when the
 // event was otherwise accepted but the persistent evade-dirty taint write
@@ -34,6 +40,45 @@ var FalcoEventsReceived = promauto.NewCounterVec(
 		Help:      "Falco webhook events received, labelled by ingest outcome.",
 	},
 	[]string{"outcome"},
+)
+
+// FalcoEventsRateLimited counts POST /falco/events requests answered 429
+// because the participant's (ns's) OBSERVATION bucket was empty (app#359).
+// Only events that never affect scoring (their rule is in no challenge's
+// forbidden/expected rules) are ever dropped; a non-zero value means only that
+// presentational feed entries were lost. A preflight/verify that wants "the
+// ingest path lost nothing that matters" should require
+// FalcoEventsScoringOverflow == 0, not this.
+//
+//	ns: the participant's namespace (bounded: see ingest.nsLabel; "_other"
+//	    past the cap so a forged ns cannot grow the series set)
+var FalcoEventsRateLimited = promauto.NewCounterVec(
+	prometheus.CounterOpts{
+		Namespace: "scoreboard",
+		Subsystem: "ingest",
+		Name:      "falco_events_rate_limited_total",
+		Help:      "POST /falco/events requests answered 429 (observation-only rule over its per-participant bucket), by participant namespace.",
+	},
+	[]string{"ns"},
+)
+
+// FalcoEventsScoringOverflow counts scoring-relevant events (their rule is in
+// some challenge's forbidden or expected rules) that exceeded the
+// participant's scoring bucket (app#359). They are NEVER dropped: the
+// participant's current evade mission is tainted instead (fail-closed — "not
+// seen" must not read as "clean", ADR-0003). Non-zero means a participant
+// fired scoring rules faster than a human plausibly does; an event-day verify
+// should require 0.
+//
+//	ns: as FalcoEventsRateLimited
+var FalcoEventsScoringOverflow = promauto.NewCounterVec(
+	prometheus.CounterOpts{
+		Namespace: "scoreboard",
+		Subsystem: "ingest",
+		Name:      "falco_events_scoring_overflow_total",
+		Help:      "Scoring-relevant /falco/events over the per-participant bucket, converted to a fail-closed evade taint (never dropped), by participant namespace.",
+	},
+	[]string{"ns"},
 )
 
 // FalcoEventsSecretMismatch counts POST /falco/events requests whose

@@ -1683,3 +1683,66 @@ func TestUserScore_NoHintPenaltyChallengeExcludedFromPenalty(t *testing.T) {
 		t.Fatalf("UserScore = %d, want %d (00-tutorial's 3 hint reveals must not be penalised)", got, want)
 	}
 }
+
+// --- app#359: rate-limit overflow is a fail-closed taint -----------------------
+
+func TestAffectsScoring_ForbiddenAndExpectedRulesOnly(t *testing.T) {
+	g := scoring.New(testCatalog(), newFakeStore(), fixedClock(time.Now()))
+	for rule, want := range map[string]bool{
+		"Read sensitive file untrusted":     true, // forbidden by 02/03 and expected by 01
+		"Shell Redirected Private Key Read": true, // expectedRules of a proof mission
+		"Terminal shell in container":       false,
+		"":                                  false,
+	} {
+		if got := g.AffectsScoring(rule); got != want {
+			t.Errorf("AffectsScoring(%q) = %v, want %v", rule, got, want)
+		}
+	}
+}
+
+func TestTaintOnOverflow_TaintsCurrentEvadeOnly_Idempotent_BlocksSubmit(t *testing.T) {
+	fs := newFakeStore()
+	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
+
+	// current(alice) = 01-trigger (a trigger mission): nothing to taint.
+	if err := g.TaintOnOverflow("alice"); err != nil {
+		t.Fatal(err)
+	}
+	if len(fs.dirty) != 0 {
+		t.Fatalf("a non-evade current mission must not be tainted, got %v", fs.dirty)
+	}
+
+	// Solve 01 -> current = 02-evade (evade): tainted with the sentinel.
+	g.OnRuleFire("alice", "Read sensitive file untrusted")
+	if err := g.TaintOnOverflow("alice"); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, r := range fs.DirtyRules("alice", "02-evade") {
+		found = found || r == scoring.OverflowTaintRule
+	}
+	if !found {
+		t.Fatalf("overflow sentinel missing: %v", fs.DirtyRules("alice", "02-evade"))
+	}
+	n := len(fs.DirtyRules("alice", "02-evade"))
+	if err := g.TaintOnOverflow("alice"); err != nil || len(fs.DirtyRules("alice", "02-evade")) != n {
+		t.Fatalf("second overflow must be a no-op (err=%v, rules %v)", err, fs.DirtyRules("alice", "02-evade"))
+	}
+	if out, _ := g.SubmitEvade("alice", "02-evade", "FALCO{ok}"); out.Status != scoring.EvadeForbiddenFired {
+		t.Fatalf("an overflow-tainted mission must block the solve, got %+v", out)
+	}
+	// Other participants are untouched.
+	if got := fs.DirtyRules("bob", "02-evade"); len(got) != 0 {
+		t.Fatalf("bob tainted by alice's overflow: %v", got)
+	}
+}
+
+func TestTaintOnOverflow_PersistFailureIsReturned(t *testing.T) {
+	fs := newFakeStore()
+	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
+	g.OnRuleFire("alice", "Read sensitive file untrusted") // current -> 02-evade
+	fs.markDirtyErr = errors.New("disk full")
+	if err := g.TaintOnOverflow("alice"); err == nil {
+		t.Fatal("a failed overflow-taint write must surface (fail-closed), got nil")
+	}
+}

@@ -211,6 +211,11 @@ type Grader struct {
 	// api.New's identical default so a Grader built without WithOrder still
 	// behaves consistently with the Journey projection's default.
 	order []string
+	// scoringRules is every rule name any challenge lists in ForbiddenRules or
+	// ExpectedRules (built once in New; the catalog is immutable afterwards).
+	// A fire of one of these can change a score, so the ingest path must never
+	// silently drop it (app#359) — see AffectsScoring.
+	scoringRules map[string]struct{}
 }
 
 // New builds a Grader. `now` is injected (WithNow pattern) so tests drive a
@@ -221,7 +226,54 @@ func New(cat catalog.Catalog, store ScoreStore, now func() time.Time) *Grader {
 	if now == nil {
 		now = time.Now
 	}
-	return &Grader{cat: cat, store: store, now: now, points: DefaultPointsPolicy()}
+	rules := make(map[string]struct{})
+	for _, ch := range cat {
+		for _, r := range ch.ForbiddenRules {
+			rules[r] = struct{}{}
+		}
+		for _, r := range ch.ExpectedRules {
+			rules[r] = struct{}{}
+		}
+	}
+	return &Grader{cat: cat, store: store, now: now, points: DefaultPointsPolicy(), scoringRules: rules}
+}
+
+// OverflowTaintRule is the synthetic rule name TaintOnOverflow records. It is
+// not a Falco rule; it shows up in a mission's dirtyRules so the participant
+// (and an operator) can tell an overflow taint from a real forbidden fire.
+const OverflowTaintRule = "(falco event rate exceeded - taint)"
+
+// AffectsScoring reports whether a fire of `rule` can change any score: it is
+// in some challenge's forbiddenRules (taint), expectedRules (trigger solve or
+// ADR-0008/0032 positive proof). The ingest rate limiter uses it to decide
+// which events may be dropped (none of these) and which may not (app#359).
+func (g *Grader) AffectsScoring(rule string) bool {
+	_, ok := g.scoringRules[rule]
+	return ok
+}
+
+// TaintOnOverflow is the fail-closed answer to a scoring-relevant event the
+// ingest path cannot process because the participant exceeded their scoring
+// bucket (app#359): it taints the participant's CURRENT mission if that is
+// evade-type, with OverflowTaintRule, exactly like a forbidden fire would —
+// "we did not look at this event" must never read as "clean". Persistent and
+// attempt-scoped like any taint (reset-dirty is the only way back). Idempotent:
+// once the sentinel is recorded a flood costs no further writes. A non-evade
+// current mission has nothing to taint (a dropped trigger/proof fire just
+// delays that solve; the participant re-fires).
+func (g *Grader) TaintOnOverflow(user string) error {
+	cur := g.currentMission(user)
+	if cur == "" {
+		return nil
+	}
+	ch, ok := g.cat[cur]
+	if !ok || ch.Type != "evade" {
+		return nil
+	}
+	if slices.Contains(g.store.DirtyRules(user, cur), OverflowTaintRule) {
+		return nil
+	}
+	return g.store.MarkDirty(user, cur, OverflowTaintRule, g.now().UTC().Format(time.RFC3339Nano))
 }
 
 // WithPoints overrides the Grader's points policy (base award per solve +
