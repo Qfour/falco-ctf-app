@@ -3,6 +3,7 @@ package catalog_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
@@ -277,4 +278,62 @@ func TestLoadRuleExcerpts_NoFlagLeakage(t *testing.T) {
 		// documents that the returned type structurally cannot carry one.
 	}
 	_ = ex
+}
+
+// TestMission10DisplayRuleExcerptExcludesProof is ADR-0032 rev2 D9(i), security
+// finding F3: the participant-facing DISPLAY excerpt
+// challenges/10-final-exfil/rule.yaml must NOT reveal the capstone read-leg
+// positive-proof rule — neither its NAME ("Nimbus Vault Master Key Read") nor
+// any condition/output/desc that mentions the vault key path "master.key".
+// The proof rule's condition lives only in the platform-side private canon
+// (publication boundary); exposing it here would hand participants the exact
+// shape the proof keys on.
+//
+// This is DELIBERATELY ASYMMETRIC with mission 05: 05's display excerpt
+// (challenges/05-silent-search/rule.yaml) DOES carry its own proof rule
+// "Shell Redirected Private Key Read" in full, because 05 is a teaching
+// mission whose whole point is to show how input-redirection reads differ
+// from a direct read — its condition is intended public content. Mission 10
+// is the capstone/boss: the same technique must be DISCOVERED and re-applied,
+// so its proof condition stays hidden. If a future edit copies 10's proof
+// rule into its display excerpt (as 05 has), this test fails loudly rather
+// than silently leaking the boundary. (Allowlist membership of the rule NAME
+// — in challenges/custom-falco-rules.txt or upstream — is a separate concern
+// enforced by scripts/check-challenge-rules.sh; this test is only about the
+// display excerpt.)
+func TestMission10DisplayRuleExcerptExcludesProof(t *testing.T) {
+	const challengesDir = "../../challenges"
+	cat, err := catalog.Load(challengesDir)
+	if err != nil {
+		t.Fatalf("load catalog: %v", err)
+	}
+	excerpts, err := catalog.LoadRuleExcerpts(challengesDir, cat)
+	if err != nil {
+		t.Fatalf("load rule excerpts: %v", err)
+	}
+	ex, ok := excerpts["10-final-exfil"]
+	if !ok {
+		// A missing display excerpt for 10 is itself fine (no leak possible),
+		// but 10 is expected to ship a rule.yaml showing its forbidden rules,
+		// so flag the absence to catch an accidental deletion.
+		t.Fatalf("10-final-exfil has no display rule excerpt (rule.yaml); expected the forbidden-rule excerpt to be present")
+	}
+
+	const proofRuleName = "Nimbus Vault Master Key Read"
+	const vaultKeyNeedle = "master.key"
+	for _, r := range ex.Rules {
+		if r.Name == proofRuleName {
+			t.Errorf("10-final-exfil display excerpt (rule.yaml) must NOT contain the proof rule %q (publication boundary, ADR-0032 rev2 D9(i)); it belongs only in the platform-side private canon", proofRuleName)
+		}
+		for field, val := range map[string]string{"condition": r.Condition, "output": r.Output, "desc": r.Desc} {
+			if strings.Contains(val, vaultKeyNeedle) {
+				t.Errorf("10-final-exfil display excerpt rule %q %s mentions %q — the vault key path must not appear in the public display excerpt (ADR-0032 rev2 D9(i))", r.Name, field, vaultKeyNeedle)
+			}
+		}
+	}
+	for _, m := range ex.Macros {
+		if strings.Contains(m.Condition, vaultKeyNeedle) {
+			t.Errorf("10-final-exfil display excerpt macro %q condition mentions %q — must not appear in the public excerpt", m.Name, vaultKeyNeedle)
+		}
+	}
 }
