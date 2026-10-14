@@ -402,15 +402,19 @@ type Health struct {
 	SolvedLoaded int `json:"solved_loaded"`
 }
 
-// HintsBlock The ONE fairness-gated part of a mission detail. For a locked mission
-// this block reports `lockedCount == total`, `opened == []` and
-// `nextIndex == 0` regardless of what the store holds (defensive
-// fail-closed — the handler does not trust the UI to hide the reveal
-// button).
+// HintsBlock The hints block of a mission detail: a function of the store's opened
+// set alone, independent of the mission's `status` (ADR-0027 D1). A
+// skipped (`locked`) mission with nothing opened reports
+// `lockedCount == total`, `opened == []`, `nextIndex == 1` and the first
+// hint's `penalty` (for a mission that has at least one hint; when the
+// mission has none, `nextIndex == 0`, and a `NoHintPenalty` mission
+// always reports `penalty == 0`); opening a hint (write route, in order, billed at the
+// scheduled cost) makes it appear here. `lockedCount` is the number of
+// hints not yet opened (the name predates ADR-0027 and is kept).
 type HintsBlock struct {
 	LockedCount int `json:"lockedCount"`
 
-	// NextIndex 1-based index of the next unopened hint; 0 = nothing left to reveal (or locked)
+	// NextIndex 1-based index of the next unopened hint; 0 = nothing left to reveal (every hint is opened, or the mission has none)
 	NextIndex int          `json:"nextIndex"`
 	Opened    []OpenedHint `json:"opened"`
 
@@ -566,8 +570,9 @@ type MessageStateResult struct {
 type MessageStateResultState string
 
 // MissionDetail The selected mission's detail block (`Journey.detail`). Static content
-// (brief / steps / Falco rule excerpt) is returned for any status; only
-// `hints` — and step tick state — are gated to the unlocked prefix.
+// (brief / steps / Falco rule excerpt) is returned for any status, and
+// so are `hints` and step tick state: those are a function of the store
+// alone, not of `status` (ADR-0027).
 type MissionDetail struct {
 	Briefing string `json:"briefing"`
 
@@ -612,11 +617,15 @@ type MissionDetail struct {
 	HasFalcoRule bool `json:"hasFalcoRule"`
 	HasJourney   bool `json:"hasJourney"`
 
-	// Hints The ONE fairness-gated part of a mission detail. For a locked mission
-	// this block reports `lockedCount == total`, `opened == []` and
-	// `nextIndex == 0` regardless of what the store holds (defensive
-	// fail-closed — the handler does not trust the UI to hide the reveal
-	// button).
+	// Hints The hints block of a mission detail: a function of the store's opened
+	// set alone, independent of the mission's `status` (ADR-0027 D1). A
+	// skipped (`locked`) mission with nothing opened reports
+	// `lockedCount == total`, `opened == []`, `nextIndex == 1` and the first
+	// hint's `penalty` (for a mission that has at least one hint; when the
+	// mission has none, `nextIndex == 0`, and a `NoHintPenalty` mission
+	// always reports `penalty == 0`); opening a hint (write route, in order, billed at the
+	// scheduled cost) makes it appear here. `lockedCount` is the number of
+	// hints not yet opened (the name predates ADR-0027 and is kept).
 	Hints HintsBlock `json:"hints"`
 	Id    string     `json:"id"`
 
@@ -655,9 +664,10 @@ type MissionSummary struct {
 	HasJourney bool   `json:"hasJourney"`
 	Id         string `json:"id"`
 
-	// Status guided progression: everything after `current` is locked. Locked
-	// missions are still readable (free browsing) but their hints and step
-	// ticks are suppressed.
+	// Status guided progression: everything after `current` is `locked`. A
+	// guidance label only (ADR-0027): it restricts nothing — locked
+	// missions are readable (free browsing), and their hints and step
+	// ticks follow the store like any other mission's.
 	Status  MissionSummaryStatus `json:"status"`
 	Tagline string               `json:"tagline"`
 
@@ -666,9 +676,10 @@ type MissionSummary struct {
 	Type  MissionSummaryType `json:"type"`
 }
 
-// MissionSummaryStatus guided progression: everything after `current` is locked. Locked
-// missions are still readable (free browsing) but their hints and step
-// ticks are suppressed.
+// MissionSummaryStatus guided progression: everything after `current` is `locked`. A
+// guidance label only (ADR-0027): it restricts nothing — locked
+// missions are readable (free browsing), and their hints and step
+// ticks follow the store like any other mission's.
 type MissionSummaryStatus string
 
 // MissionSummaryType defines model for MissionSummary.Type.
@@ -819,7 +830,7 @@ type State struct {
 
 // Step defines model for Step.
 type Step struct {
-	// Checked always false for a locked mission (store state is ignored there)
+	// Checked the tick the store holds for this step, whatever the mission's status
 	Checked bool   `json:"checked"`
 	Detail  string `json:"detail"`
 
