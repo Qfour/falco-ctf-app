@@ -41,6 +41,13 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
   `ratelimit_identity_requests_total{bucket,outcome}` で bucket 別の allowed / limited / no_identity を見られる。
 
 ### Security
+- challenge image の `/opt/ctf/missions/` は `<id>/fixtures/**` だけ、という条件を **deploy 時にも検査する** (ADR-0026 V4、不変条件 I16)。
+  `deploy-user.sh` が `helm upgrade --wait` の直後に呼ぶ `assert-flag-isolation.sh` の check 3-8 を、scenario に加えて
+  `all` / 単一課題の全モードで実行する: `/opt/ctf/missions/` の直下が期待する id 集合と完全に一致し、すべて実ディレクトリで、
+  各 `<id>/` は実ディレクトリの `fixtures` だけを持つ (dot entry も見る。fixtures の中身は開かない)。違反があれば `deploy-user.sh` は
+  非ゼロで終了する。**運用の注意**: 期待する id 集合は `--challenges-dir` (operator の checkout) から作るので、checkout と image の ref
+  を揃えること。allowlist 前の image に新しい ctf-user chart を deploy すると 3-8 で止まる (image を先に更新する)。
+  検査の selftest は `scripts/check-missions-allowlist-assert.sh` (`make check-flags` / CI `flag-guard`)。
 - portal (`/portal`) と admin dashboard (`/`) は他の origin の iframe に埋め込めなくなった (`frame-ancestors 'none'` + `X-Frame-Options: DENY`)。oauth2-proxy の `SameSite=None` cookie の下で起こり得た clickjacking を閉じる。ttyd の埋め込み (portal が親) には影響しない (app#326)
 
 - flags ファイル (`FLAGS_FILE` / `deploy-user.sh --flags-file`) の検証を fail-closed 化。

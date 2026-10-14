@@ -109,7 +109,7 @@ after adding/editing a `scenario.yaml`). Before P27-1, the workspace had no
 such scoping — every deploy planted/exposed every challenge, so scoring could
 be restricted to a scenario while the workspace still leaked every other
 challenge's content. `charts/ctf-user/assert-flag-isolation.sh` verifies this
-boundary at deploy time (checks 3-1..3-8).
+boundary at deploy time (checks 3-1..3-8; 3-8 also runs in `all` / single-challenge mode since ADR-0026 V4).
 
 ## Scenario + editions
 
