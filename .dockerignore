@@ -42,9 +42,41 @@ charts/*
 # Scan output
 scan-logs/
 
-# Secrets and local state
-*.db
-.env
-*.pem
-*.key
-*.cert
+# Secrets and local state. `**/` for the same reason as the block below:
+# .dockerignore (unlike .gitignore) matches a bare pattern only at the context
+# root, so a bare `*.key` would let `scripts/x.key` or `deploy/.env` into the
+# build context (app#322). `**/` also matches zero directories, so root-level
+# files stay covered. `.env.*` / `*.crt` mirror .gitignore (app#322 LOW-5); no
+# Dockerfile COPYs a `.env.*` or `.crt`, and `.env.example` is neither tracked
+# nor needed by any build, so no `!` re-include. scripts/check-dockerignore.sh
+# requires these exact lines.
+**/*.db
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/*.cert
+**/*.crt
+# Decrypted / credential material that must never reach a build context
+# (app#322, ADR-0031 H1 (h)). `**/` so a file in ANY subdirectory is
+# excluded too: a bare `*.dec.yaml` only matches at the context root
+# (.dockerignore is NOT .gitignore — no implicit any-depth matching; `**/`
+# also matches zero directories, so root-level files are still covered).
+#   *.dec.yaml / *.dec.json — sops-decrypted output (`sops -d > x.dec.yaml`)
+#   kubeconfig*             — cluster credentials
+#   *.secret.*              — local secret copies (e.g. flags.secret.yaml)
+# Excluding them only stops the context upload; whether a Dockerfile COPYs
+# them is a separate question. scripts/check-dockerignore.sh (CI flag-guard)
+# fails if any of these four lines goes missing, or if a tracked file would
+# match one of them.
+**/*.dec.yaml
+**/*.dec.json
+**/kubeconfig*
+**/*.secret.*
+# Event production decks embed REAL flags and are gitignored here (.gitignore
+# `challenges/decks/`; they live in falco-ctf-platform events/<date>/decks/).
+# scoreboard/Dockerfile `COPY challenges /app/challenges` (and the challenge /
+# docs images) would bake a stray local copy into a pushed image, and `make
+# push` builds from the operator's working tree. Root-anchored on purpose: the
+# only such directory is challenges/decks/. No Dockerfile reads it.
+challenges/decks/
