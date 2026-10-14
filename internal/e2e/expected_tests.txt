@@ -4,7 +4,10 @@
 # in the run: a name missing from the run, a passing test not listed here, a
 # skip, a failure, or an empty list all fail `make e2e`. Add the name here in
 # the same change that adds the test.
+TestE2E_E1_LockedMissionHintOpensWithItsCostShownFirst
+TestE2E_E2_CleanVerdictOnlyOnTheCurrentEvadeAndDirtyWithinTwoPolls
 TestE2E_E3_DirtyMissionBrowseWritesNothingAndResetAsksFirst
+TestE2E_E4_TerminalIframeIsTheCallersOwnTtydAndTheCSPLetsItLoad
 TestSelfTest_SharedAssertionsTurnRedOnPlantedDefects
 TestSelfTest_AMissingWriteIsADifference
 TestSelfTest_BrowserIsMissingIsAnError

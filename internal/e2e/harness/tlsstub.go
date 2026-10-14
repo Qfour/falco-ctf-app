@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -9,9 +10,11 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"fmt"
 	"math/big"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -29,9 +32,11 @@ type TLSStub struct {
 	srv  *http.Server
 	spki string
 
-	mu   sync.Mutex
-	hits []string
-	once sync.Once
+	mu     sync.Mutex
+	cond   *sync.Cond // signalled on every hit and on Close
+	hits   []string
+	closed bool
+	once   sync.Once
 }
 
 // NewTLSStub serves host (e.g. "user1.e2e.test") on a free loopback port.
@@ -68,9 +73,11 @@ func NewTLSStub(host string) (*TLSStub, error) {
 		return nil, err
 	}
 	t := &TLSStub{host: host, ln: ln, spki: base64.StdEncoding.EncodeToString(sum[:])}
+	t.cond = sync.NewCond(&t.mu)
 	t.srv = &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.mu.Lock()
 		t.hits = append(t.hits, r.Method+" "+r.Host+r.URL.Path)
+		t.cond.Broadcast()
 		t.mu.Unlock()
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte("<!doctype html><meta charset=utf-8><title>ttyd stub</title><p>ttyd stub</p>"))
@@ -99,5 +106,44 @@ func (t *TLSStub) Hits() []string {
 	return append([]string(nil), t.hits...)
 }
 
-// Close stops the stub.
-func (t *TLSStub) Close() { t.once.Do(func() { _ = t.srv.Close() }) }
+// Wait blocks until pred(hits) is true. It is woken by every request the stub
+// serves, never by a clock; ctx is the deadline (how long a failure takes to
+// show, not a condition for success). pred runs with the stub's lock held.
+func (t *TLSStub) Wait(ctx context.Context, what string, pred func(hits []string) bool) error {
+	stop := context.AfterFunc(ctx, func() {
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		t.cond.Broadcast()
+	})
+	defer stop()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for !pred(t.hits) {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("waiting for %s: %w (stub %s saw: %s)", what, err, t.host, describeHits(t.hits))
+		}
+		if t.closed {
+			return fmt.Errorf("waiting for %s: stub closed (saw: %s)", what, describeHits(t.hits))
+		}
+		t.cond.Wait()
+	}
+	return nil
+}
+
+func describeHits(h []string) string {
+	if len(h) == 0 {
+		return "no request"
+	}
+	return strings.Join(h, ", ")
+}
+
+// Close stops the stub and releases a Wait.
+func (t *TLSStub) Close() {
+	t.once.Do(func() {
+		_ = t.srv.Close()
+		t.mu.Lock()
+		t.closed = true
+		t.cond.Broadcast()
+		t.mu.Unlock()
+	})
+}

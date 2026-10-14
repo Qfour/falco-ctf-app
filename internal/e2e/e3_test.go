@@ -34,9 +34,6 @@ func TestE2E_E3_DirtyMissionBrowseWritesNothingAndResetAsksFirst(t *testing.T) {
 	b, p := e.B, e.Proxy
 	journey := harness.Matcher{Method: "GET", Path: "/api/users/user1/journey"}
 	board := harness.Matcher{Method: "GET", Path: "/api/board/threads"}
-	missionIs := func(id string) string {
-		return `document.getElementById('pane-journey-detail').dataset.mission === '` + id + `'`
-	}
 	resetButton := `!!document.querySelector('#pane-journey-detail #pane-journey-reset-dirty')`
 
 	// Before: what the server says, over HTTP.

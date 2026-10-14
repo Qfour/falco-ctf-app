@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
@@ -30,7 +31,10 @@ type Env struct {
 	Proxy  *harness.Proxy
 	Stub   *harness.TLSStub
 	Seeder *harness.Seeder
-	B      *Browser
+	// Plan is the catalog the child serves: content-derived expectations (a
+	// hint's text, a forbidden rule's name) are read from it at run time.
+	Plan *harness.Plan
+	B    *Browser
 }
 
 // NewEnv starts the world and applies the named seed for user1. The binary comes
@@ -113,7 +117,7 @@ func NewEnv(t *testing.T, seed string) *Env {
 		HostRules:    harness.HostResolverRules(map[string]string{stub.Host(): stub.Addr()}),
 		SPKIHash:     stub.SPKIHash(),
 	})
-	return &Env{T: t, Ctx: ctx, Root: root, User: user, Child: child, Proxy: proxy, Stub: stub, Seeder: seeder, B: b}
+	return &Env{T: t, Ctx: ctx, Root: root, User: user, Child: child, Proxy: proxy, Stub: stub, Seeder: seeder, Plan: plan, B: b}
 }
 
 // Detail reads the user's journey over HTTP (not through the proxy, so it is
@@ -129,4 +133,22 @@ func (e *Env) Detail(mission string) map[string]any {
 		e.T.Fatalf("journey has no detail: %v", j)
 	}
 	return d
+}
+
+// detailText is the visible text of the mission detail (#pane-journey-detail),
+// the one region a scenario reads copy from (ADR-0031 D3).
+const detailText = `(document.getElementById('pane-journey-detail') || {}).textContent || ''`
+
+// missionIs is the DOM predicate "the detail shows mission id".
+func missionIs(id string) string {
+	return `document.getElementById('pane-journey-detail').dataset.mission === ` + jsString(id)
+}
+
+// jsString renders s as a JavaScript string literal (JSON is a subset).
+func jsString(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		panic(err) // a Go string always marshals
+	}
+	return string(b)
 }

@@ -44,21 +44,35 @@ func EmailFor(user string) (string, error) {
 type Plan struct {
 	Order   []string
 	Catalog catalog.Catalog
+	// Journeys is the journey.yaml content the child serves (hint texts are
+	// read from here by a scenario, never copied into it).
+	Journeys catalog.Journeys
 }
 
-// LoadPlan reads the catalog the scoreboard child will load.
+// LoadPlan reads the catalog the scoreboard child will load, the way
+// cmd/scoreboard does (catalog.LoadScored, then LoadJourneys over its catalog).
 func LoadPlan(challengesDir, scenarioFile string) (*Plan, error) {
 	scored, err := catalog.LoadScored(challengesDir, scenarioFile, "")
 	if err != nil {
 		return nil, err
 	}
-	return &Plan{Order: scored.Order, Catalog: scored.Catalog}, nil
+	journeys, err := catalog.LoadJourneys(challengesDir, scored.Catalog)
+	if err != nil {
+		return nil, err
+	}
+	return &Plan{Order: scored.Order, Catalog: scored.Catalog, Journeys: journeys}, nil
 }
 
 // Seeder puts a scoreboard child into a state using its HTTP surface only:
 // POST /falco/events and POST /api/challenges/{cid}/submit (ADR-0031 D3). It
 // talks to the child directly, not through the Proxy, so a seed never appears
 // in the request log a scenario judges.
+//
+// Each request has the shape its production caller gives it (see caller), not
+// one shape for all: a seed that sent the ingress's identity header on the
+// webhook would exercise a path production never takes, and the scoreboard
+// refuses exactly that path (app#334: any X-Auth-Request-* header on
+// /falco/events or /internal/* is the browser path and gets 403).
 type Seeder struct {
 	base   string
 	email  string
@@ -66,13 +80,33 @@ type Seeder struct {
 	plan   *Plan
 }
 
-// NewSeeder returns a Seeder for child acting as email (the X-Auth-Request-Email
-// it sends on reads, where the scoreboard requires one).
-func NewSeeder(child *Scoreboard, email string, plan *Plan) *Seeder {
-	return &Seeder{base: child.URL(), email: email, client: &http.Client{}, plan: plan}
+// NewSeeder returns a Seeder for up (the scoreboard child, or in a unit test a
+// recording Site). email is the X-Auth-Request-Email it sends on its
+// self-scope reads (GET .../journey) and nowhere else: the webhook and the
+// submit go out without any X-Auth-Request-* header.
+func NewSeeder(up Upstream, email string, plan *Plan) *Seeder {
+	return &Seeder{base: "http://" + up.upstreamAddr(), email: email, client: &http.Client{}, plan: plan}
 }
 
-func (s *Seeder) do(ctx context.Context, method, path string, body any, out any) error {
+// caller is who sends a request in production, which decides its headers.
+type caller int
+
+const (
+	// asFalcosidekick: POST /falco/events the way falcosidekick sends it over
+	// the cluster-internal Service — a JSON body and no X-Auth-Request-*
+	// header (no ingress is in that path).
+	asFalcosidekick caller = iota
+	// asCollector: POST .../submit the way the collector forwards a
+	// participant's curl (the submit's primary path, falco-api) — a JSON body,
+	// no X-Auth-Request-* header; the user is the one the body claims.
+	asCollector
+	// asIngress: a self-scope read as the ingress delivers it — the identity
+	// header set to the seeder's e-mail (the scoreboard refuses the read
+	// without one).
+	asIngress
+)
+
+func (s *Seeder) do(ctx context.Context, who caller, method, path string, body any, out any) error {
 	var rd io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -85,7 +119,9 @@ func (s *Seeder) do(ctx context.Context, method, path string, body any, out any)
 	if err != nil {
 		return err
 	}
-	req.Header.Set(IdentityHeader, s.email)
+	if who == asIngress {
+		req.Header.Set(IdentityHeader, s.email)
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -109,9 +145,12 @@ func (s *Seeder) do(ctx context.Context, method, path string, body any, out any)
 	return nil
 }
 
-// FireRule delivers one Falco event for user's workspace, exactly as
-// falcosidekick would (ingest.go's filter: ns ctf-<user>, pod workspace, a
-// falco-ctf/challenge image, priority Notice or above).
+// FireRule delivers one Falco event for user's workspace in the shape
+// falcosidekick sends (asFalcosidekick: JSON, no X-Auth-Request-* header) with
+// the fields ingest.go's filter reads: ns ctf-<user>, pod workspace, a
+// falco-ctf/challenge image, priority Notice or above. No webhook secret: the
+// child runs with the secret mode off (FALCO_WEBHOOK_SHARED_SECRET and
+// WEBHOOK_SECRET_MODE are forbidden in its env).
 func (s *Seeder) FireRule(ctx context.Context, user, rule string) error {
 	ev := map[string]any{
 		"rule":     rule,
@@ -123,7 +162,7 @@ func (s *Seeder) FireRule(ctx context.Context, user, rule string) error {
 		},
 	}
 	var res map[string]any
-	if err := s.do(ctx, http.MethodPost, "/falco/events", ev, &res); err != nil {
+	if err := s.do(ctx, asFalcosidekick, http.MethodPost, "/falco/events", ev, &res); err != nil {
 		return err
 	}
 	if ignored, _ := res["ignored"].(bool); ignored {
@@ -132,21 +171,23 @@ func (s *Seeder) FireRule(ctx context.Context, user, rule string) error {
 	return nil
 }
 
-// Submit posts a flag for cid on behalf of user and returns the verdict body.
+// Submit posts a flag for cid on behalf of user, the way the collector forwards
+// a participant's curl (asCollector), and returns the verdict body.
 func (s *Seeder) Submit(ctx context.Context, user, cid, flag string) (map[string]any, error) {
 	var res map[string]any
-	err := s.do(ctx, http.MethodPost, "/api/challenges/"+cid+"/submit", map[string]any{"user": user, "flag": flag}, &res)
+	err := s.do(ctx, asCollector, http.MethodPost, "/api/challenges/"+cid+"/submit", map[string]any{"user": user, "flag": flag}, &res)
 	return res, err
 }
 
-// Journey reads GET /api/users/{user}/journey (optionally ?mission=).
+// Journey reads GET /api/users/{user}/journey (optionally ?mission=) as the
+// ingress delivers it (asIngress: with the seeder's identity).
 func (s *Seeder) Journey(ctx context.Context, user, mission string) (map[string]any, error) {
 	path := "/api/users/" + user + "/journey"
 	if mission != "" {
 		path += "?mission=" + mission
 	}
 	var res map[string]any
-	err := s.do(ctx, http.MethodGet, path, nil, &res)
+	err := s.do(ctx, asIngress, http.MethodGet, path, nil, &res)
 	return res, err
 }
 

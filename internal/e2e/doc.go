@@ -15,7 +15,8 @@
 //     seeds and the Chromium flag allowlist. It has no chromedp import, so its
 //     unit tests run in `make test` (required), not only in `make e2e`.
 //   - internal/e2e (this package, `e2e` tag): the chromedp helper, the common
-//     assertions, the scenarios (E3) and the self-test of the assertions (V2).
+//     assertions, the scenarios (E1-E4, ADR-0031 V1) and the self-test of the
+//     assertions (V2).
 //   - internal/e2e/serve: `make e2e-serve`, the same child + proxy + seed for a
 //     person (or Claude in Chrome) to look at the portal.
 //
