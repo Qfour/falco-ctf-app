@@ -19,6 +19,7 @@
 /internal/                      @Qfour
 /charts/                        @Qfour
 /images/                        @Qfour
+/Dockerfile.e2e                 @Qfour
 /Dockerfile.gen                 @Qfour
 /Dockerfile.test                @Qfour
 /Dockerfile.tidy                @Qfour

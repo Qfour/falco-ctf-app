@@ -1,0 +1,12 @@
+<!doctype html>
+<meta charset="utf-8">
+<link rel="icon" href="data:,">
+<title>self-test: one click, one POST</title>
+<button id="go" type="button">go</button>
+<script>
+document.getElementById('go').addEventListener('click', function () {
+  fetch('/api/click', { method: 'POST' }).then(function () {
+    document.documentElement.dataset.done = '1';
+  });
+});
+</script>

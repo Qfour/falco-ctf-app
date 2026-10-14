@@ -13,7 +13,7 @@ CHANGED=$(git diff --name-only main...HEAD 2>/dev/null || true)
 # ---- Pattern detection ----
 HAS_GO=$(echo "$CHANGED"    | grep -cE '^(cmd|internal)/|^go\.(mod|sum)$|^(scoreboard|auth-policy)/Dockerfile$' || true)
 HAS_CHART=$(echo "$CHANGED"  | grep -cE '^charts/' || true)
-HAS_IMAGE=$(echo "$CHANGED"  | grep -cE '^images/|^Dockerfile\.(test|tidy|gen)$' || true)
+HAS_IMAGE=$(echo "$CHANGED"  | grep -cE '^images/|^Dockerfile\.(test|tidy|gen|e2e)$' || true)
 
 # ---- A: Go pattern — run make test if new commits haven't been tested ----
 if [[ "$HAS_GO" -gt 0 ]]; then

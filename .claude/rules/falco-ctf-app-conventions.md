@@ -130,13 +130,14 @@ docker buildx imagetools inspect golang:1.26-alpine --format '{{.Manifest.MediaT
 
 # 2. 該当 Dockerfile の FROM を `image:tag@sha256:<新digest>` に差し替える
 #    (同一 image を使う複数 Dockerfile は同じ digest に揃える。現状:
-#     golang:1.26-alpine              = scoreboard/auth-policy/Dockerfile.{test,gen,tidy}
+#     golang:1.26-alpine              = scoreboard/auth-policy/Dockerfile.{test,gen,tidy,e2e}
 #                                       + .github/workflows/checks.yaml の go-vulncheck /
 #                                       gen-diff-check job の container.image (#88 — Dockerfile 群だけ
 #                                       bump して checks.yaml の container を旧 digest で残すと
 #                                       go-vulncheck/gen-diff-check が旧イメージで回り CVE ゲートが
 #                                       赤のまま漏れる。app#78/#87 で発覚)、
 #     distroless static-debian13:nonroot = scoreboard/auth-policy、
+#                                       Dockerfile.e2e (serve stage。`make e2e-serve` のイメージ)、
 #     alpine:3.24                     = images/{ttyd,challenge}、
 #     python:3.12-slim                = images/docs (build stage)、
 #     nginx-unprivileged:1.30-alpine  = images/docs (serve stage)、

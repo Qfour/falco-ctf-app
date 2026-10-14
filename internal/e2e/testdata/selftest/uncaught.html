@@ -1,0 +1,9 @@
+<!doctype html>
+<meta charset="utf-8">
+<link rel="icon" href="data:,">
+<title>self-test: uncaught error</title>
+<p>An error nobody catches.</p>
+<script>
+setTimeout(function () { throw new Error('planted uncaught error'); }, 0);
+setTimeout(function () { document.documentElement.dataset.done = '1'; }, 100);
+</script>

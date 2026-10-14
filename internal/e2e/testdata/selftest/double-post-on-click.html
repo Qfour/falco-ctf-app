@@ -1,0 +1,20 @@
+<!doctype html>
+<meta charset="utf-8">
+<link rel="icon" href="data:,">
+<title>self-test: one click, two POSTs</title>
+<button id="go" type="button">go</button>
+<script>
+// Two listeners on one button: what a handler wired again on every re-render
+// looks like from the outside.
+var finished = 0;
+function post() {
+  fetch('/api/click', { method: 'POST' }).then(function () {
+    finished++;
+    if (finished === 2) document.documentElement.dataset.done = '1';
+  });
+}
+// Two distinct closures: the DOM ignores a second registration of the same
+// function, which is not what a handler wired again on every render does.
+document.getElementById('go').addEventListener('click', function () { post(); });
+document.getElementById('go').addEventListener('click', function () { post(); });
+</script>

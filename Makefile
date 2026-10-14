@@ -17,7 +17,7 @@ SYSDIG_URL   ?= https://app.au1.sysdig.com
 # host repo are not shared into the VM.
 GO_IMAGE ?= golang:1.26-alpine
 
-.PHONY: help dev dev-down build push load-colima deploy-local helm-dep-build lint check-seccomp check-flag-isolation check-namespace-ownership check-image-hygiene check-image-hygiene-selftest test tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-template-hex check-portal-render check-rules check-freshness check-adr check-dockerignore clean scan
+.PHONY: help dev dev-down build push load-colima deploy-local helm-dep-build lint check-seccomp check-flag-isolation check-namespace-ownership check-image-hygiene check-image-hygiene-selftest test e2e e2e-serve check-e2e-verdict tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-template-hex check-portal-render check-rules check-freshness check-adr check-dockerignore clean scan
 
 help:
 	@echo "Targets:"
@@ -35,6 +35,9 @@ help:
 	@echo "  check-image-hygiene — fail if the built challenge image's /opt/ctf/plant-seed/ snapshot carries flag/hash material or drifts from its real counterpart (ADR-0001 Verification 2-8), or if /opt/ctf/missions is not exactly <id>/fixtures/** (ADR-0026 V1-V3)"
 	@echo "  check-image-hygiene-selftest — mutation test: derived images with one deliberate violation each must FAIL check-image-hygiene (ADR-0026 V6)"
 	@echo "  test            — go test ./... (runs in $(GO_IMAGE) container)"
+	@echo "  e2e             — browser E2E (ADR-0031): real scoreboard + real Chromium in Dockerfile.e2e; verdict made on the host, needs python3 (advisory CI job: e2e)"
+	@echo "  e2e-serve       — SEED=<name> [AS=user1] [E2E_PORT=8787]: seeded portal with injected identity on 127.0.0.1 only (ADR-0031 D1 (a))"
+	@echo "  check-e2e-verdict — planted-defect fixtures for the e2e verdict (ADR-0031 V6)"
 	@echo "  tidy            — go mod tidy (runs in $(GO_IMAGE) container)"
 	@echo "  gen             — regenerate Go types from OpenAPI specs (docs/openapi-*.yaml)"
 	@echo "  gen-home-fragments — regenerate Portal Home tab HTML fragments (docs-site/home-fragments.yaml)"
@@ -155,6 +158,56 @@ check-image-hygiene-selftest:
 
 test:
 	docker build -f Dockerfile.test --progress=plain -t falco-ctf/gotest:local .
+
+# Browser E2E (ADR-0031). Not part of `make test`: that only COMPILES the
+# e2e-tagged code (`go vet -tags e2e`). The scenarios run inside a BuildKit RUN
+# with no network; BuildKit exports nothing from a failed RUN, so the run script
+# always exits 0 and leaves `go test -json` + its exit code in the export dir, and
+# scripts/e2e-verdict.py judges them HERE, fail-closed: exit code, this run's id and
+# SHA (a stale or cached verdict is refused; "<sha>-dirty" when the work tree has
+# uncommitted changes, since the build context is the tree), no skip, and the set of passed tests
+# equal to internal/e2e/expected_tests.txt. E2E_OUT is fixed (it is rm -rf'd):
+# `override` makes the assignment win over `make e2e E2E_OUT=...` and over an
+# E2E_OUT in the environment (under `make -e`), which a plain `:=` does not.
+override E2E_OUT := .e2e-out
+e2e:
+	rm -rf $(E2E_OUT)
+	mkdir -p $(E2E_OUT)
+	@run_id="$$(date +%s)-$$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"; \
+	sha="$$(git rev-parse HEAD)"; \
+	if [ -n "$$(git status --porcelain)" ]; then sha="$$sha-dirty"; echo "warning: uncommitted changes — the verdict is for the work tree, not for HEAD" >&2; fi; \
+	echo "== make e2e: run $$run_id, HEAD $$sha =="; \
+	docker build -f Dockerfile.e2e --target export --progress=plain \
+	  --build-arg E2E_RUN_ID="$$run_id" --build-arg E2E_GIT_SHA="$$sha" \
+	  -o $(E2E_OUT) . || exit 1; \
+	python3 scripts/e2e-verdict.py --dir $(E2E_OUT) --expected internal/e2e/expected_tests.txt \
+	  --run-id "$$run_id" --sha "$$sha"
+
+# The same child + proxy + seed as `make e2e`, for a person (or Claude in
+# Chrome) to look at. The one published port is bound to the host's loopback
+# (-p 127.0.0.1:...), and the container is read-only, capability-less and
+# non-root. The charset checks on SEED / AS below are an early, readable error,
+# not a boundary (make expands the values into the recipe before any shell sees
+# them); the boundary is the e2e-serve binary, which validates SEED, AS
+# (harness.EmailFor) and E2E_PORT again. Until ADR-0031 stage P is complete
+# (D1 (a) (i)-(v)), only a person opens this — not Claude in Chrome.
+E2E_PORT ?= 8787
+# AS is make's built-in name for the assembler (default "as"), so `?=` would keep
+# that: take it from the command line only, else user1.
+E2E_USER := $(if $(filter command line,$(origin AS)),$(AS),user1)
+e2e-serve:
+	@case "$(SEED)" in ''|*[!a-z0-9-]*|-*) echo "error: SEED=<name> is required ([a-z0-9-]); see internal/e2e/harness/seed.go (fresh, clean-05, dirty-05)" >&2; exit 2;; esac
+	@case "$(E2E_USER)" in ''|*[!a-z0-9-]*|-*) echo "error: AS must match ^[a-z0-9][a-z0-9-]{0,62}$$" >&2; exit 2;; esac
+	@case "$(E2E_PORT)" in ''|*[!0-9]*) echo "error: E2E_PORT must be a number >= 1024" >&2; exit 2;; esac
+	docker build -f Dockerfile.e2e --target serve -t falco-ctf/e2e-serve:local .
+	docker run --rm --name falco-ctf-e2e-serve \
+	  -p 127.0.0.1:$(E2E_PORT):$(E2E_PORT) \
+	  --read-only --tmpfs /tmp:rw,mode=1777 --cap-drop ALL --security-opt no-new-privileges \
+	  -e SEED=$(SEED) -e AS=$(E2E_USER) -e E2E_PORT=$(E2E_PORT) \
+	  falco-ctf/e2e-serve:local
+
+check-e2e-verdict:
+	./scripts/check-e2e-verdict.sh
 
 # Uses a `docker build -o .` export stage so it works under Colima (which
 # does not share the host repo path into its VM by default).
