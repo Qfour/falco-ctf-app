@@ -13,7 +13,7 @@
 # Exit: 0 all pins current, 1 a pin is gone/stale or FILE has no pin to check,
 # 2 Docker or network trouble (not a verdict about the pins).
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 
 file="${1:-Dockerfile.e2e}"
 [ -f "$file" ] || { echo "check-e2e-pins: $file not found" >&2; exit 1; }

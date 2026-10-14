@@ -5,7 +5,7 @@
 # that refuses everything is caught too. Needs only bash and python3; no Docker.
 # Runs in CI's required `flag-guard` job.
 set -u
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 
 verdict=scripts/e2e-verdict.py
 run_id=run-123
