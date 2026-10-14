@@ -15,7 +15,7 @@ import (
 //
 //	outcome: "accepted" | "ignored" | "decode_error" | "store_error" |
 //	         "taint_error" | "forbidden" | "unsupported_media_type" |
-//	         "rate_limited" | "overflow_tainted"
+//	         "rate_limited" | "overflow_tainted" | "overflow_skipped"
 //
 // forbidden / unsupported_media_type are requests refused before any decode:
 // the browser path (an X-Auth-Request-* header) and a non-JSON Content-Type.
@@ -23,7 +23,9 @@ import (
 // rate_limited / overflow_tainted (app#359) are the two per-participant
 // rate-limit outcomes: an observation-only event answered 429, and a
 // scoring-relevant event that exceeded its participant's bucket and was
-// converted into a fail-closed taint instead of being dropped.
+// converted into a fail-closed taint (overflow_tainted) or, when the normal
+// taint predicate did not apply (current mission is not an evade mission
+// forbidding that rule), skipped without a taint (overflow_skipped).
 //
 // taint_error (ADR-0003 A5) is distinct from store_error: it fires when the
 // event was otherwise accepted but the persistent evade-dirty taint write
@@ -64,9 +66,10 @@ var FalcoEventsRateLimited = promauto.NewCounterVec(
 
 // FalcoEventsScoringOverflow counts scoring-relevant events (their rule is in
 // some challenge's forbidden or expected rules) that exceeded the
-// participant's scoring bucket (app#359). They are NEVER dropped: the
-// participant's current evade mission is tainted instead (fail-closed — "not
-// seen" must not read as "clean", ADR-0003). Non-zero means a participant
+// participant's scoring bucket (app#359). They are never silently dropped: the
+// normal taint predicate is applied (current evade mission forbids the rule ->
+// taint, fail-closed — "not seen" must not read as "clean", ADR-0003); other
+// scoring rules are skipped (overflow_skipped). Non-zero means a participant
 // fired scoring rules faster than a human plausibly does; an event-day verify
 // should require 0.
 //
@@ -76,7 +79,7 @@ var FalcoEventsScoringOverflow = promauto.NewCounterVec(
 		Namespace: "scoreboard",
 		Subsystem: "ingest",
 		Name:      "falco_events_scoring_overflow_total",
-		Help:      "Scoring-relevant /falco/events over the per-participant bucket, converted to a fail-closed evade taint (never dropped), by participant namespace.",
+		Help:      "Scoring-relevant /falco/events over the per-participant bucket: tainted if the current evade mission forbids the rule (fail-closed), else skipped; never answered 429. By participant namespace.",
 	},
 	[]string{"ns"},
 )

@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -96,9 +97,10 @@ const (
 //     only the presentational recent_rule_fires list, so over the bucket they
 //     are dropped with 429 (counted + audit-logged).
 //   - scoring: rules some challenge forbids or expects. These are NEVER
-//     dropped: over the bucket the participant's current evade mission is
-//     tainted instead (scoring.Grader.TaintOnOverflow, fail-closed) and the
-//     request is answered 200. The bucket is sized far above anything a human
+//     dropped: over the bucket the normal taint predicate is still applied
+//     (scoring.Grader.TaintOnOverflow: current evade mission forbids the rule
+//     -> taint with the real rule, fail-closed) and the request is answered
+//     200. The bucket is sized far above anything a human
 //     plausibly fires, so a participant only reaches it by flooding — and then
 //     only they are affected.
 const (
@@ -110,11 +112,19 @@ const (
 
 // RateLimitDescription is the x-ctf-rate-limit string for POST /falco/events;
 // docs/openapi-scoreboard.yaml must carry the same text (StringExtParity).
-const RateLimitDescription = "per-participant (ns) bucket - observation rules 20 req/s burst 100 then 429, scoring rules 100 req/s burst 400 then fail-closed taint (never dropped)"
+const RateLimitDescription = "per-participant (ns) bucket - observation rules 20 req/s burst 100 then 429, scoring rules 100 req/s burst 400 then fail-closed taint if forbidden (never 429)"
 
 // maxNSLabels bounds the ns label cardinality of the rate-limit metrics: a
 // forged event (shared secret off) could otherwise mint unlimited series.
 const maxNSLabels = 1024
+
+// validUser mirrors internal/scoreboard/api's validUser (the auth-derived
+// username slug auth-policy also enforces). The ns of an event is
+// sender-supplied JSON; it becomes a limiter key, a store key and a metric
+// label, so it is validated at attribution time and an event whose ns does not
+// fit is "ignored" like any non-workspace event. Duplicated, not imported: api
+// is not a dependency of ingest. Keep the two in step.
+var validUser = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 type Handler struct {
 	store  *store.Store
@@ -183,9 +193,10 @@ func (h *Handler) nsLabel(ns string) string {
 
 // audit logs a rate-limit event (sampled per class+participant, see
 // auditLimiter). The metric is the exact count; this is the who/what trail.
-func (h *Handler) audit(class, ns, rule string) {
+// tainted is the mission id a scoring overflow tainted ("" = none).
+func (h *Handler) audit(class, ns, rule, tainted string) {
 	if h.auditLimiter.Allow(class + "/" + ns) {
-		h.logger.Warn("falco events rate limited", "class", class, "ns", ns, "rule", rule)
+		h.logger.Warn("falco events rate limited", "class", class, "ns", ns, "rule", rule, "tainted_mission", tainted)
 	}
 }
 
@@ -307,7 +318,7 @@ func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 		pod = *ev.OutputFields.K8sPodName
 	}
 
-	if !strings.HasPrefix(ns, "ctf-") || pod != "workspace" {
+	if !strings.HasPrefix(ns, "ctf-") || !validUser.MatchString(strings.TrimPrefix(ns, "ctf-")) || pod != "workspace" {
 		metrics.FalcoEventsReceived.WithLabelValues("ignored").Inc()
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"ignored": true, "reason": "not a ctf workspace event"})
 		return
@@ -346,7 +357,7 @@ func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 
 	// app#359: per-participant limit, applied only after attribution so the
 	// bucket is the participant's, not the (single, shared) sender's. A
-	// scoring-relevant event is never dropped — see the const block.
+	// scoring-relevant event is never answered 429 — see the const block.
 	if h.grader.AffectsScoring(ev.Rule) {
 		if !h.scoringLimiter.Allow(user) {
 			h.scoringOverflow(w, ns, user, ev.Rule)
@@ -355,7 +366,7 @@ func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 	} else if !h.observeLimiter.Allow(user) {
 		metrics.FalcoEventsRateLimited.WithLabelValues(h.nsLabel(ns)).Inc()
 		metrics.FalcoEventsReceived.WithLabelValues("rate_limited").Inc()
-		h.audit("observation_dropped", ns, ev.Rule)
+		h.audit("observation_dropped", ns, ev.Rule, "")
 		w.Header().Set("Retry-After", "1")
 		httpx.WriteJSON(w, http.StatusTooManyRequests, map[string]any{"error": "rate limit exceeded"})
 		return
@@ -452,21 +463,29 @@ func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 }
 
 // scoringOverflow handles a scoring-relevant event over the participant's
-// scoring bucket (app#359): fail-closed taint instead of a drop, counted and
-// audit-logged. The event is otherwise NOT processed (no feed entry, no
-// trigger solve / proof record) — the taint makes that safe for evade, and a
-// skipped trigger/proof fire only delays a solve the participant can repeat.
-// Answered like an accepted event (the taint IS the handling); a failed taint
-// write is the same 500 + taint_error as the normal path.
+// scoring bucket (app#359): fail-closed instead of a drop. Grader.TaintOnOverflow
+// applies the normal taint predicate (current evade mission forbids this rule)
+// with the real rule name; the event is otherwise NOT processed (no feed entry,
+// no trigger solve / proof record) — a skipped trigger/proof fire only delays a
+// solve the participant can repeat. Always counted in FalcoEventsScoringOverflow
+// (an event was not fully processed); the outcome label says whether a mission
+// was actually tainted. Answered like an accepted event; a failed taint write is
+// the same 500 + taint_error as the normal path.
 func (h *Handler) scoringOverflow(w http.ResponseWriter, ns, user, rule string) {
 	metrics.FalcoEventsScoringOverflow.WithLabelValues(h.nsLabel(ns)).Inc()
-	h.audit("scoring_overflow_tainted", ns, rule)
-	if err := h.grader.TaintOnOverflow(user); err != nil {
+	tainted, err := h.grader.TaintOnOverflow(user, rule)
+	if err != nil {
+		h.audit("scoring_overflow", ns, rule, tainted)
 		h.logger.Error("mark dirty on overflow", "err", err)
 		metrics.FalcoEventsReceived.WithLabelValues("taint_error").Inc()
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "could not persist taint"})
 		return
 	}
-	metrics.FalcoEventsReceived.WithLabelValues("overflow_tainted").Inc()
+	outcome := "overflow_skipped"
+	if tainted != "" {
+		outcome = "overflow_tainted"
+	}
+	h.audit("scoring_overflow", ns, rule, tainted)
+	metrics.FalcoEventsReceived.WithLabelValues(outcome).Inc()
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"accepted": true, "user": user, "rule": rule})
 }

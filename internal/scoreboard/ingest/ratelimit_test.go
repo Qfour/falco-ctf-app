@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,34 +26,52 @@ import (
 // app#359: the /falco/events bucket is the PARTICIPANT, not the (single,
 // shared) falcosidekick sender. These tests pin the three properties that
 // make a flood by one participant harmless to the others:
-//   - a scoring-relevant (forbidden/expected) event is never dropped: over the
-//     bucket it taints the participant's current evade mission instead,
+//   - a scoring-relevant (forbidden/expected) event is never answered 429: over
+//     the bucket the NORMAL taint predicate still applies (current evade
+//     mission forbids the rule -> tainted with that real rule; nothing wider),
 //   - an observation-only event over the bucket is 429, counted per ns,
 //   - one participant's flood never changes another participant's outcome.
 
 const (
 	forbiddenRule    = "Detect Outbound Connection" // forbidden by 02-evade
+	proofRule        = "Proof Technique Rule"       // expected (not forbidden) by 02-evade
+	triggerRule      = "Trigger Mission Rule"       // expected by 01-trigger
 	observationRule  = "Some Unlisted Noisy Rule"   // in no challenge
-	rlNamespacePfx   = "ctf-"
 	tinyBurst        = 3
 	rlEvadeChallenge = "02-evade"
 )
 
-func newRateLimitFixture(t *testing.T) (*httptest.Server, *store.Store) {
+// evadeOnlyCatalog: 02-evade is the participant's CURRENT mission from the
+// start (nothing else to be current instead).
+func evadeOnlyCatalog() catalog.Catalog {
+	return catalog.Catalog{
+		rlEvadeChallenge: {ID: rlEvadeChallenge, Type: "evade", ForbiddenRules: []string{forbiddenRule}, ExpectedRules: []string{proofRule}},
+	}
+}
+
+// triggerFirstCatalog: 01-trigger is current until its rule fires.
+func triggerFirstCatalog() catalog.Catalog {
+	c := evadeOnlyCatalog()
+	c["01-trigger"] = catalog.Challenge{ID: "01-trigger", Type: "trigger", ExpectedRules: []string{triggerRule}}
+	return c
+}
+
+// newRateLimitFixture wires a real ingest handler. tiny=true uses frozen-clock
+// buckets of tinyBurst (no refill); tiny=false keeps the production limits.
+func newRateLimitFixture(t *testing.T, cat catalog.Catalog, tiny bool) (*httptest.Server, *store.Store) {
 	t.Helper()
 	fixed := time.Date(2026, 10, 14, 0, 0, 0, 0, time.UTC)
 	clock := func() time.Time { return fixed } // frozen: buckets never refill
-	cat := catalog.Catalog{
-		rlEvadeChallenge: {ID: rlEvadeChallenge, Type: "evade", ForbiddenRules: []string{forbiddenRule}},
-	}
 	s, err := store.Open(filepath.Join(t.TempDir(), "scoreboard.db"))
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	grader := scoring.New(cat, s, clock)
-	h := ingest.New(grader, s, slog.New(slog.NewTextHandler(io.Discard, nil)), clock, "", ingest.SecretModeOff).
-		WithLimits(0, tinyBurst, 0, tinyBurst)
+	h := ingest.New(grader, s, slog.New(slog.NewTextHandler(io.Discard, nil)), clock, "", ingest.SecretModeOff)
+	if tiny {
+		h.WithLimits(0, tinyBurst, 0, tinyBurst)
+	}
 	mux, _ := apispec.NewMux(h.Routes())
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -83,8 +102,7 @@ func post(t *testing.T, url, ns, rule string, extra map[string]any) *http.Respon
 }
 
 func TestRateLimit_OneParticipantFlood_DoesNotDropAnotherParticipantsForbiddenFire(t *testing.T) {
-	srv, s := newRateLimitFixture(t)
-	// alice floods well past both buckets (observation and scoring).
+	srv, s := newRateLimitFixture(t, evadeOnlyCatalog(), true)
 	for i := 0; i < 5*tinyBurst; i++ {
 		post(t, srv.URL, "ctf-flood-a", observationRule, nil)
 		post(t, srv.URL, "ctf-flood-a", forbiddenRule, nil)
@@ -101,56 +119,84 @@ func TestRateLimit_OneParticipantFlood_DoesNotDropAnotherParticipantsForbiddenFi
 	}
 }
 
-func TestRateLimit_ScoringOverflow_TaintsInsteadOfDropping(t *testing.T) {
-	srv, s := newRateLimitFixture(t)
-	before := testutil.ToFloat64(metrics.FalcoEventsScoringOverflow.WithLabelValues("ctf-over"))
-	beforeRL := testutil.ToFloat64(metrics.FalcoEventsRateLimited.WithLabelValues("ctf-over"))
+// A forbidden rule that overflows the scoring bucket still taints the current
+// evade mission — with the REAL rule name — and is never 429.
+func TestRateLimit_ForbiddenRuleOverflow_TaintsWithRealRuleNeverDrops(t *testing.T) {
+	srv, s := newRateLimitFixture(t, evadeOnlyCatalog(), true)
+	over := testutil.ToFloat64(metrics.FalcoEventsScoringOverflow.WithLabelValues("ctf-over"))
+	rl := testutil.ToFloat64(metrics.FalcoEventsRateLimited.WithLabelValues("ctf-over"))
+	tainted := testutil.ToFloat64(metrics.FalcoEventsReceived.WithLabelValues("overflow_tainted"))
 
-	// Within the bucket: the real forbidden rule is recorded, no sentinel.
+	// Exhaust the scoring bucket with proof fires (current evade does not
+	// forbid them), then a forbidden fire arrives over the bucket.
 	for i := 0; i < tinyBurst; i++ {
-		if resp := post(t, srv.URL, "ctf-over", forbiddenRule, nil); resp.StatusCode != http.StatusOK {
-			t.Fatalf("in-bucket event %d: status %d", i, resp.StatusCode)
-		}
+		post(t, srv.URL, "ctf-over", proofRule, nil)
 	}
-	if got := s.DirtyRules("over", rlEvadeChallenge); !slices.Equal(got, []string{forbiddenRule}) {
-		t.Fatalf("in-bucket dirtyRules = %v, want [%q]", got, forbiddenRule)
+	if got := s.DirtyRules("over", rlEvadeChallenge); len(got) != 0 {
+		t.Fatalf("in-bucket proof fires must not taint: %v", got)
 	}
-
-	// Over the bucket: NOT 429 (never dropped), accepted, and the sentinel
-	// taint is recorded alongside the real one; the overflow metric moves, the
-	// 429 metric does not.
 	resp := post(t, srv.URL, "ctf-over", forbiddenRule, nil)
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("over-bucket scoring event: status %d, want 200 (taint, never 429)", resp.StatusCode)
+		t.Fatalf("over-bucket forbidden event: status %d, want 200 (taint, never 429)", resp.StatusCode)
 	}
-	got := s.DirtyRules("over", rlEvadeChallenge)
-	if !slices.Contains(got, scoring.OverflowTaintRule) || !slices.Contains(got, forbiddenRule) {
-		t.Fatalf("dirtyRules = %v, want both %q and %q", got, forbiddenRule, scoring.OverflowTaintRule)
+	if got := s.DirtyRules("over", rlEvadeChallenge); !slices.Equal(got, []string{forbiddenRule}) {
+		t.Fatalf("dirtyRules = %v, want exactly [%q] (real rule, no synthetic name)", got, forbiddenRule)
 	}
-	if d := testutil.ToFloat64(metrics.FalcoEventsScoringOverflow.WithLabelValues("ctf-over")) - before; d != 1 {
+	if d := testutil.ToFloat64(metrics.FalcoEventsScoringOverflow.WithLabelValues("ctf-over")) - over; d != 1 {
 		t.Fatalf("scoring_overflow delta = %v, want 1", d)
 	}
-	if d := testutil.ToFloat64(metrics.FalcoEventsRateLimited.WithLabelValues("ctf-over")) - beforeRL; d != 0 {
+	if d := testutil.ToFloat64(metrics.FalcoEventsRateLimited.WithLabelValues("ctf-over")) - rl; d != 0 {
 		t.Fatalf("rate_limited delta = %v, want 0 (scoring events are never 429)", d)
+	}
+	if d := testutil.ToFloat64(metrics.FalcoEventsReceived.WithLabelValues("overflow_tainted")) - tainted; d != 1 {
+		t.Fatalf("overflow_tainted outcome delta = %v, want 1", d)
 	}
 }
 
-func TestRateLimit_ScoringOverflow_TaintsEvenWhenOverflowRuleIsNotForbidden(t *testing.T) {
-	srv, s := newRateLimitFixture(t)
-	// The flood is of a rule that is forbidden for 02-evade; the point here is
-	// the fail-closed direction — a participant who exhausted the scoring
-	// bucket has their current evade mission tainted regardless of which
-	// event arrived next.
-	for i := 0; i < tinyBurst+1; i++ {
-		post(t, srv.URL, "ctf-over2", forbiddenRule, nil)
+// M1: a burst of a rule the current evade mission does NOT forbid (the proof
+// rule of 05/10 is fired repeatedly by the correct run) must never taint it,
+// however far over the bucket it goes.
+func TestRateLimit_ProofRuleFlood_DoesNotTaintCorrectRun(t *testing.T) {
+	srv, s := newRateLimitFixture(t, evadeOnlyCatalog(), true)
+	skipped := testutil.ToFloat64(metrics.FalcoEventsReceived.WithLabelValues("overflow_skipped"))
+	for i := 0; i < 5*tinyBurst; i++ {
+		if resp := post(t, srv.URL, "ctf-proof", proofRule, nil); resp.StatusCode != http.StatusOK {
+			t.Fatalf("proof event %d: status %d, want 200", i, resp.StatusCode)
+		}
 	}
-	if !slices.Contains(s.DirtyRules("over2", rlEvadeChallenge), scoring.OverflowTaintRule) {
-		t.Fatalf("overflow sentinel missing: %v", s.DirtyRules("over2", rlEvadeChallenge))
+	if got := s.DirtyRules("proof", rlEvadeChallenge); len(got) != 0 {
+		t.Fatalf("a proof-rule flood tainted a correct run: %v", got)
+	}
+	if d := testutil.ToFloat64(metrics.FalcoEventsReceived.WithLabelValues("overflow_skipped")) - skipped; d != float64(4*tinyBurst) {
+		t.Fatalf("overflow_skipped delta = %v, want %d", d, 4*tinyBurst)
+	}
+}
+
+// Current mission is a trigger mission: overflow of a scoring rule is 200,
+// taints nothing and does NOT solve the trigger (the event is skipped).
+func TestRateLimit_OverflowWhileTriggerCurrent_NoTaintNoSolve(t *testing.T) {
+	srv, s := newRateLimitFixture(t, triggerFirstCatalog(), true)
+	tainted := testutil.ToFloat64(metrics.FalcoEventsReceived.WithLabelValues("overflow_tainted"))
+	for i := 0; i < tinyBurst; i++ {
+		post(t, srv.URL, "ctf-trig", forbiddenRule, nil) // current is 01-trigger: no taint, no solve
+	}
+	resp := post(t, srv.URL, "ctf-trig", triggerRule, nil) // over the bucket
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d, want 200", resp.StatusCode)
+	}
+	if s.IsSolved("trig", "01-trigger") {
+		t.Fatal("an over-bucket (skipped) trigger fire must not solve")
+	}
+	if got := s.DirtyRules("trig", rlEvadeChallenge); len(got) != 0 {
+		t.Fatalf("nothing may be tainted while a trigger mission is current: %v", got)
+	}
+	if d := testutil.ToFloat64(metrics.FalcoEventsReceived.WithLabelValues("overflow_tainted")) - tainted; d != 0 {
+		t.Fatalf("overflow_tainted delta = %v, want 0 (nothing was tainted)", d)
 	}
 }
 
 func TestRateLimit_ObservationOverBucket_429AndCountedPerNamespace(t *testing.T) {
-	srv, _ := newRateLimitFixture(t)
+	srv, _ := newRateLimitFixture(t, evadeOnlyCatalog(), true)
 	before := testutil.ToFloat64(metrics.FalcoEventsRateLimited.WithLabelValues("ctf-noisy"))
 	var statuses []int
 	for i := 0; i < tinyBurst+2; i++ {
@@ -163,19 +209,16 @@ func TestRateLimit_ObservationOverBucket_429AndCountedPerNamespace(t *testing.T)
 	if d := testutil.ToFloat64(metrics.FalcoEventsRateLimited.WithLabelValues("ctf-noisy")) - before; d != 2 {
 		t.Fatalf("rate_limited delta = %v, want 2", d)
 	}
-	// Another participant's observation bucket is untouched.
 	if resp := post(t, srv.URL, "ctf-quiet", observationRule, nil); resp.StatusCode != http.StatusOK {
 		t.Fatalf("other participant's observation event: status %d, want 200", resp.StatusCode)
 	}
 }
 
 func TestRateLimit_ScoringAndObservationBucketsAreIndependent(t *testing.T) {
-	srv, s := newRateLimitFixture(t)
+	srv, s := newRateLimitFixture(t, evadeOnlyCatalog(), true)
 	for i := 0; i < 3*tinyBurst; i++ { // drain the observation bucket
 		post(t, srv.URL, "ctf-indep", observationRule, nil)
 	}
-	// A scoring event right after must still be processed normally (real
-	// rule recorded, no overflow sentinel).
 	if resp := post(t, srv.URL, "ctf-indep", forbiddenRule, nil); resp.StatusCode != http.StatusOK {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
@@ -184,11 +227,13 @@ func TestRateLimit_ScoringAndObservationBucketsAreIndependent(t *testing.T) {
 	}
 }
 
+// Cluster noise (other namespaces) used to burn the shared sender bucket. It
+// must neither be limited nor consume anyone's bucket. Runs at the PRODUCTION
+// limits and past the old per-IP burst (200), so it also catches a regression
+// to the shared bucket.
 func TestRateLimit_UnattributedEvents_AreNeverRateLimited(t *testing.T) {
-	srv, _ := newRateLimitFixture(t)
-	// Cluster noise (other namespaces) used to burn the shared sender bucket.
-	// It must neither be limited nor consume anyone's bucket.
-	for i := 0; i < 10*tinyBurst; i++ {
+	srv, _ := newRateLimitFixture(t, evadeOnlyCatalog(), false)
+	for i := 0; i < 450; i++ {
 		if resp := post(t, srv.URL, "kube-system", observationRule, nil); resp.StatusCode != http.StatusOK {
 			t.Fatalf("non-ctf event %d: status %d, want 200 ignored", i, resp.StatusCode)
 		}
@@ -198,16 +243,35 @@ func TestRateLimit_UnattributedEvents_AreNeverRateLimited(t *testing.T) {
 	}
 }
 
+// M2: the ns is sender-supplied JSON that becomes a limiter key, a store key
+// and a metric label. One that is not a username slug is "ignored" like any
+// non-workspace event and reaches none of them.
+func TestRateLimit_InvalidNamespace_IsIgnored(t *testing.T) {
+	srv, s := newRateLimitFixture(t, evadeOnlyCatalog(), true)
+	long := "ctf-" + strings.Repeat("a", 64)
+	for _, ns := range []string{"ctf-", "ctf-Alice", "ctf-a_b", "ctf--x", "ctf-a b", "ctf-a/b", long} {
+		resp := post(t, srv.URL, ns, forbiddenRule, nil)
+		var body map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatalf("ns %q: decode: %v", ns, err)
+		}
+		if resp.StatusCode != http.StatusOK || body["ignored"] != true {
+			t.Fatalf("ns %q: status %d body %v, want 200 ignored", ns, resp.StatusCode, body)
+		}
+	}
+	if got := s.DirtyRules("", rlEvadeChallenge); len(got) != 0 {
+		t.Fatalf("an invalid ns reached the store: %v", got)
+	}
+}
+
 func TestRateLimit_OverflowTaintPersistFailure_Returns500(t *testing.T) {
-	srv, s := newRateLimitFixture(t)
+	srv, s := newRateLimitFixture(t, evadeOnlyCatalog(), true)
 	for i := 0; i < tinyBurst; i++ {
-		post(t, srv.URL, "ctf-broken", forbiddenRule, nil)
+		post(t, srv.URL, "ctf-broken", proofRule, nil)
 	}
 	if err := s.Close(); err != nil { // break persistence only
 		t.Fatalf("close: %v", err)
 	}
-	// "ctf-broken" is already dirty in memory with the real rule, but the
-	// overflow sentinel write must fail loudly (5xx), never 200-as-clean.
 	if resp := post(t, srv.URL, "ctf-broken", forbiddenRule, nil); resp.StatusCode != http.StatusInternalServerError {
 		t.Fatalf("status %d, want 500 on overflow-taint persist failure", resp.StatusCode)
 	}

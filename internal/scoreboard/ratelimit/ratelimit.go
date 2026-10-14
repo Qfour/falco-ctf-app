@@ -1,9 +1,10 @@
 // Package ratelimit provides a small in-memory token-bucket limiter keyed
-// by an arbitrary string (typically the requester's IP). Defense-in-depth
-// against /submit brute-forcing and /falco/events flooding — the primary
-// controls are the NetworkPolicy (limiting /falco/events to the falco ns)
-// and per-IP ingress-nginx rate limits, but a per-pod fallback here keeps
-// the scoreboard responsive even if those upstream controls drift.
+// by an arbitrary string (the requester's IP, or a proven identity). Defense-in-depth
+// against /submit brute-forcing — the primary controls are per-IP ingress-nginx
+// rate limits, but a per-pod fallback here keeps the scoreboard responsive even
+// if those upstream controls drift. /falco/events is NOT keyed by IP: its single
+// sender would make one shared bucket, so internal/scoreboard/ingest keys by
+// participant (app#359).
 package ratelimit
 
 import (
