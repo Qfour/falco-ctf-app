@@ -73,3 +73,10 @@ scan-logs/
 **/*.dec.json
 **/kubeconfig*
 **/*.secret.*
+# Event production decks embed REAL flags and are gitignored here (.gitignore
+# `challenges/decks/`; they live in falco-ctf-platform events/<date>/decks/).
+# scoreboard/Dockerfile `COPY challenges /app/challenges` (and the challenge /
+# docs images) would bake a stray local copy into a pushed image, and `make
+# push` builds from the operator's working tree. Root-anchored on purpose: the
+# only such directory is challenges/decks/. No Dockerfile reads it.
+challenges/decks/
