@@ -1,0 +1,57 @@
+<style nonce="{{.Nonce}}">
+  /* ===== Accessibility (P28-0a (3), REFACTORING.md P28 acceptance 7) =====
+     Its own partial, called right after css.tmpl in portal.tmpl, so these
+     rules come later in the cascade and win at equal specificity over the pane
+     rules in css.tmpl. Colors are tokens only (no hex). */
+
+  /* The tab links sit in an inner role=tablist wrapper (portal.tmpl) so the
+     nav keeps its landmark role; it lays them out exactly as the flat nav did. */
+  #portal-tablist { display: flex; align-items: center; gap: 0.25rem; flex-wrap: wrap; }
+
+  /* Keyboard focus ring. :focus-visible matches keyboard focus (and text
+     fields), not a mouse click on a button or link, so there is no ring on
+     click. The :focus:not(:focus-visible) rule restates that for UAs that
+     paint a ring on :focus. The ring token is >= 3:1 on every surface.
+     The var() fallback: tokens.css is served from a fixed URL with a 24h
+     immutable cache (ADR-0028 not landed), so a browser can pair this fresh
+     HTML with an OLD tokens.css that has no --p-focus-ring. An undefined var()
+     makes the whole declaration invalid at computed-value time and the ring
+     would vanish; --p-accent (= --falco, the same color) is in every
+     tokens.css, so the fallback keeps the ring. Drop it once content-hash
+     URLs (ADR-0028) land. */
+  :focus-visible { outline: 2px solid var(--p-focus-ring, var(--p-accent)); outline-offset: 2px; }
+  :focus:not(:focus-visible) { outline: none; }
+  /* Elements that clip their own box (overflow:hidden) or sit flush in a bar
+     draw the ring inside, so it is never cut off. */
+  #portal-tabs .tab:focus-visible,
+  #pane-scoreboard .challenge:focus-visible,
+  #pane-story .map li:focus-visible,
+  #pane-board .ticket-open:focus-visible { outline-offset: -2px; }
+  /* The radio inside a boxed option: ring the box. */
+  #pane-board .dest-option:has(input:focus-visible) { outline: 2px solid var(--p-focus-ring, var(--p-accent)); outline-offset: 2px; }
+  #pane-board .dest-option input:focus-visible { outline: none; }
+
+  /* Placeholder text: the UA default is a mid-gray that falls under AA on
+     these dark fields. --text-mute is >= 4.5:1 on every surface. */
+  ::placeholder { color: var(--p-text-mute); opacity: 1; }
+
+  /* Visually hidden, still read by screen readers (the #portal-live region). */
+  .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
+
+  /* Reduced motion: every animation and transition ends at once on its FINAL
+     state, so nothing pulses, flashes or slides, and the end state (the
+     CLEARED stamp, the bridge text, a finished progress bar) is still shown.
+     0.01ms rather than 0s so animationend / transitionend still fire. An
+     infinite animation is cut to one iteration and then drops back to the
+     element's own resting style (a steady dot instead of a pulse). */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-delay: 0s !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      transition-delay: 0s !important;
+      scroll-behavior: auto !important;
+    }
+  }
+</style>
