@@ -1,6 +1,6 @@
 # ADR-0027: ヒントと steps の gate を読み投影の `current` から切り離し、どの課題でも減点つきで開けるようにする
 
-- Status: **Proposed** (Accepted 化は CEO merge 時。期限 = P28-0b の merge 前)
+- Status: **Accepted** (2026-10-14。実装: app#316 / #317 = P28-0b 1/2・2/2。順序外の進行が標準になる期間は ADR-0032 で閉じる想定で、ADR-0032 S1 は platform branch で実装中・未 merge)
 - Date / Deciders: 2026-10-05 / CEO (2026-10-04 判断 3「開ける」) + VP + architect (起草) + security-engineer・qa-engineer
   (独立レビュー 2026-10-05。指摘は本版に反映済み)
 - 関連: workspace `REFACTORING.md` P28-0b、app#105 (2026-08-17 CEO 決定)、ADR-0003 (A1・Option 1 / 2・Signpost 1 / 4 / 5)、
