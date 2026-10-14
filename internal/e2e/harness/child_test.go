@@ -85,7 +85,7 @@ func TestCheckChildEnv_RejectsPlantedViolations(t *testing.T) {
 
 func TestScoreboardConfigEnv_ComesFromTheAllowlistAlone(t *testing.T) {
 	t.Setenv("FLAGS_FILE", "/real/flags.yaml")
-	t.Setenv("ADMIN_EMAILS", "root@example.com")
+	t.Setenv("ADMIN_EMAILS", "root@ops.invalid")
 	env, err := ScoreboardConfig{
 		Binary: "/x", WorkDir: "/tmp/w", ChallengesDir: "/src/challenges",
 		ScenarioFile: "/src/s.yaml", AllowedOrigin: "http://127.0.0.1:1", TtydSuffix: "e2e.test",
@@ -105,7 +105,7 @@ func TestScoreboardConfigEnv_ComesFromTheAllowlistAlone(t *testing.T) {
 		if !allowed[k] {
 			t.Errorf("env carries %s, which is not allowlisted", k)
 		}
-		if strings.Contains(kv, "/real/flags.yaml") || strings.Contains(kv, "root@example.com") {
+		if strings.Contains(kv, "/real/flags.yaml") || strings.Contains(kv, "root@ops.invalid") {
 			t.Errorf("the parent's environment leaked into the child: %s", kv)
 		}
 	}
