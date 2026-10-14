@@ -80,3 +80,6 @@ scan-logs/
 # push` builds from the operator's working tree. Root-anchored on purpose: the
 # only such directory is challenges/decks/. No Dockerfile reads it.
 challenges/decks/
+
+# `make e2e` export dir (ADR-0031): never part of a build context
+.e2e-out/

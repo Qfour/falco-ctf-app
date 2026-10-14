@@ -1,0 +1,10 @@
+<!doctype html>
+<meta charset="utf-8">
+<link rel="icon" href="data:,">
+<title>self-test: POST on load</title>
+<p>A page that writes as soon as it loads (ADR-0032 D8: a start must come from a click).</p>
+<script>
+fetch('/api/side-effect', { method: 'POST' }).then(function () {
+  document.documentElement.dataset.done = '1';
+});
+</script>

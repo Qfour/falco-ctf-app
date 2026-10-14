@@ -330,3 +330,22 @@ func TestRenderPortal_TtydURLInjection(t *testing.T) {
 		})
 	}
 }
+
+// TestRenderPortal_DeclaresAnEmptyDataIcon pins the one line ADR-0031 H1 added
+// to the portal shell: without an icon declared, the browser asks for
+// /favicon.ico, whose 404 is a console error on every load — and the browser
+// E2E fails on any console error (it does not allow-list one). The icon is a
+// data: URL, which the portal CSP's img-src must keep allowing.
+func TestRenderPortal_DeclaresAnEmptyDataIcon(t *testing.T) {
+	r := httptest.NewRequest("GET", "/portal", nil)
+	w := httptest.NewRecorder()
+	if err := renderPortal(w, r, nil, nil, ""); err != nil {
+		t.Fatalf("renderPortal: %v", err)
+	}
+	if n := strings.Count(w.Body.String(), `<link rel="icon" href="data:,">`); n != 1 {
+		t.Errorf("the portal declares the empty data: icon %d times, want once", n)
+	}
+	if csp := portalCSP("n", ""); !strings.Contains(csp, "img-src 'self' data:;") {
+		t.Errorf("portal CSP %q no longer allows a data: image, which the icon is", csp)
+	}
+}

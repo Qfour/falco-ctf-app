@@ -50,3 +50,7 @@ challenges/decks/
 # churn with no reproducibility benefit for a file:// (not registry) dep.
 charts/*/charts/
 charts/*/Chart.lock
+
+# `make e2e` export dir: go test -json, the verdict files, failure diagnostics
+# (ADR-0031 D1 (b)). Also in .dockerignore.
+.e2e-out/

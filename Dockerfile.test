@@ -55,4 +55,8 @@ COPY . .
 RUN helm dependency build charts/scoreboard
 
 RUN go vet ./...
+# ADR-0031: the browser E2E code (build tag e2e, chromedp) is only COMPILED here —
+# `make e2e` (Dockerfile.e2e) is what runs it. internal/apispec's
+# e2e_boundary_test.go keeps it out of every production binary.
+RUN go vet -tags e2e ./...
 RUN go test ./... -count=1

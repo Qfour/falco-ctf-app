@@ -1,0 +1,11 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="data:,">
+<title>self-test: CSP violation in head</title>
+<script>document.title = 'an inline script in head, which the CSP header forbids';</script>
+<script src="/done.js"></script>
+</head>
+<body><p>The inline script in the head above is blocked.</p></body>
+</html>

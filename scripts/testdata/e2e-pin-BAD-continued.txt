@@ -1,0 +1,7 @@
+# Fixture for scripts/check-e2e-pins.sh (review-5x T3 R2#8): a good pin on the
+# `apk add` line and a bad one on its `\` continuation line. The checker must
+# read both and exit 1; reading only the first physical line it saw the good
+# pin alone and passed. It is not a Dockerfile (check-freshness scans those).
+FROM golang:1.26.9-alpine@sha256:3082400e369fa24d5fc60bca20edab3f6d604e0c5a690ec66b295eff4dd87ade AS tools
+RUN apk add --no-cache font-wqy-zenhei=0.9.46-r0 \
+    chromium=1.0.0-r0

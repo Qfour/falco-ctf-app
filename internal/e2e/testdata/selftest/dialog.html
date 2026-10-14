@@ -1,0 +1,9 @@
+<!doctype html>
+<meta charset="utf-8">
+<link rel="icon" href="data:,">
+<title>self-test: a dialog nobody expected</title>
+<p>A page that asks a question on load.</p>
+<script>
+confirm('really?');
+document.documentElement.dataset.done = '1';
+</script>

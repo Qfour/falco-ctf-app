@@ -1,0 +1,44 @@
+name: E2E pins
+
+# ADR-0031 D5 (advisory): Dockerfile.e2e pins Chromium and a font to exact apk
+# versions, and Alpine's index keeps only the newest version of a package — so a
+# pin disappears the day Alpine ships an update and `make e2e` stops building
+# (fail closed, on purpose). This job finds that within a day instead of on the
+# next PR. Same shape as freshness.yaml: it needs the network, so it is
+# scheduled, not run per PR, and it is not a required check.
+#
+# workflow_dispatch can also run the checker against the planted-bad fixture
+# (ADR-0031 V9): that run must be RED — it shows the detector fails on a pin that
+# is not in the index.
+
+on:
+  schedule:
+    # every day 05:30 UTC
+    - cron: "30 5 * * *"
+  workflow_dispatch:
+    inputs:
+      file:
+        description: "File whose apk pins to check (the bad fixture must turn the job red)."
+        type: choice
+        default: Dockerfile.e2e
+        options:
+          - Dockerfile.e2e
+          - scripts/testdata/e2e-pin-BAD.txt
+          - scripts/testdata/e2e-pin-BAD-continued.txt
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  e2e-pins:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: apk pins of Dockerfile.e2e are still in Alpine's index
+        env:
+          PIN_FILE: ${{ inputs.file || 'Dockerfile.e2e' }}
+        run: ./scripts/check-e2e-pins.sh "$PIN_FILE"

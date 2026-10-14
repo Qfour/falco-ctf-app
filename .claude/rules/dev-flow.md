@@ -11,7 +11,7 @@ CLAUDE.md は概要のみ持ち、詳細はこのファイルを参照する。
 | 変更ファイル | パターン |
 |---|---|
 | `cmd/**`, `internal/**`, `go.mod`, `go.sum`, `scoreboard/Dockerfile`, `auth-policy/Dockerfile` | **A: Go コード** |
-| `images/*/Dockerfile`, `Dockerfile.test`, `Dockerfile.tidy`, `Dockerfile.gen` | **D: イメージ** |
+| `images/*/Dockerfile`, `Dockerfile.test`, `Dockerfile.tidy`, `Dockerfile.gen`, `Dockerfile.e2e` | **D: イメージ** |
 | `charts/**` のみ | **B: Chart** |
 | `challenges/**` のみ | **C: Challenge** |
 
