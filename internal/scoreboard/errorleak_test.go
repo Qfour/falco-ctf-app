@@ -132,6 +132,9 @@ func TestErrorLeak_InvalidBody_StepCheck(t *testing.T) {
 	r := httptest.NewRequest("POST", "/api/users/alice/challenges/02-evade/steps/0/check", strings.NewReader("{"))
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("Origin", journeyFixtureOrigin)
+	// app#315: the identity-keyed action limiter 403s a header-less request
+	// before the decoder runs, so act as the participant (journey host).
+	r.Header.Set("X-Auth-Request-Email", "alice@ctf.local")
 	w := httptest.NewRecorder()
 	f.srv.ServeHTTP(w, r)
 	assertErrorBody(t, w, 400, "invalid request body")

@@ -757,10 +757,10 @@ paths:
       operationId: setStepCheck
       tags: [participant]
       x-ctf-audience: participant
-      x-ctf-authz: self-or-admin-write
+      x-ctf-authz: self-or-admin
       x-ctf-origin-guard: true
       x-ctf-collector-forward: false
-      x-ctf-rate-limit: per-IP 1 req/s burst 10
+      x-ctf-rate-limit: identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty; separate from submit)
       description: |
         Purely presentational: journey `steps` are an info-only checklist with
         no auto-detection, so a tick never affects a solve verdict — it lets a
@@ -769,6 +769,11 @@ paths:
         Origin-guarded: reached ONLY from the portal's browser fetch and NOT in
         the collector's forward allowlist, so there is no server-to-server
         caller a fail-closed gate would break.
+
+        Authz is `self-or-admin` (identity header REQUIRED, 403 without it —
+        the identity rate limiter and the handler gate both enforce this); the
+        header-less claimed-identity branch of `self-or-admin-write` does not
+        apply to this route.
       parameters:
         - $ref: "#/components/parameters/User"
         - $ref: "#/components/parameters/Cid"
@@ -794,7 +799,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "403":
-          description: origin guard denied, or caller is neither `{user}` nor an admin
+          description: origin guard denied, or caller is neither `{user}` nor an admin, or the request carries no X-Auth-Request-Email identity (denied before the rate limit; no token is consumed)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -804,7 +809,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "429":
-          description: rate limited
+          description: rate limited (per-identity bucket — keyed by the caller's X-Auth-Request-Email, not the client IP, so other participants behind the same NAT are unaffected)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -820,10 +825,10 @@ paths:
       operationId: openHint
       tags: [participant]
       x-ctf-audience: participant
-      x-ctf-authz: self-or-admin-write
+      x-ctf-authz: self-or-admin
       x-ctf-origin-guard: true
       x-ctf-collector-forward: false
-      x-ctf-rate-limit: per-IP 1 req/s burst 10
+      x-ctf-rate-limit: identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty; separate from submit)
       description: |
         Hints open in order: opening `idx` N requires N-1 already open (409
         otherwise), so participants approach the answer progressively instead of
@@ -858,7 +863,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "403":
-          description: origin guard denied, or caller is neither `{user}` nor an admin
+          description: origin guard denied, or caller is neither `{user}` nor an admin, or the request carries no X-Auth-Request-Email identity (denied before the rate limit; no token is consumed)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -873,7 +878,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "429":
-          description: rate limited
+          description: rate limited (per-identity bucket — keyed by the caller's X-Auth-Request-Email, not the client IP, so other participants behind the same NAT are unaffected)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -889,10 +894,10 @@ paths:
       operationId: resetDirty
       tags: [participant]
       x-ctf-audience: participant
-      x-ctf-authz: self-or-admin-write
+      x-ctf-authz: self-or-admin
       x-ctf-origin-guard: true
       x-ctf-collector-forward: false
-      x-ctf-rate-limit: per-IP 1 req/s burst 10
+      x-ctf-rate-limit: identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty; separate from submit)
       description: |
         The ONLY way an evade challenge returns to clean once a forbidden Falco
         rule fired while it was the participant's current mission (ADR-0003
@@ -907,10 +912,11 @@ paths:
 
         **Do not remove the origin guard from this route and do not add it to
         the collector's forward allowlist.** A2-2 made this endpoint able to
-        delete another participant's exfil receipt, and the header-less
-        claimed-identity fallback in the write gate carries no proof the caller
-        IS `{user}`. The guard 403s exactly the shape a header-less
-        cluster-internal caller sends, BEFORE the self-or-admin check runs —
+        delete another participant's exfil receipt, and a header-less
+        claimed-identity caller carries no proof the caller IS `{user}`. The
+        guard 403s exactly the shape a header-less cluster-internal caller
+        sends, BEFORE the self-or-admin check runs (which also requires the
+        identity header, as does the rate limiter) —
         that is what keeps A2-2's destructive reset from becoming an
         unauthenticated cross-user action (app#124 5x, R1 C3).
 
@@ -932,7 +938,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "403":
-          description: origin guard denied, or caller is neither `{user}` nor an admin
+          description: origin guard denied, or caller is neither `{user}` nor an admin, or the request carries no X-Auth-Request-Email identity (denied before the rate limit; no token is consumed)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -942,7 +948,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "429":
-          description: rate limited
+          description: rate limited (per-identity bucket — keyed by the caller's X-Auth-Request-Email, not the client IP, so other participants behind the same NAT are unaffected)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

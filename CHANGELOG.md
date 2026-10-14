@@ -19,6 +19,14 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
 
 ### Fixed
 
+- 手順確認 (steps/check)・ヒント開封・やり直し (reset-dirty) の rate limit を、提出 (submit) の
+  IP 単位 bucket から切り離し、認証ヘッダーの email 単位 (1 req/s・burst 10) にした。
+  会場の NAT の下で、誰かのヒント開封が他の参加者の提出を 429 にすることがなくなる (#315)。
+  この 3 つのルートは、認証ヘッダーの無い要求を 403 で拒否する (bucket は消費しない)。
+  これまではヘッダー無しでも (許可された Origin を付ければ) 通っていた。
+- 上記 3 ルートの認可を self-or-admin (認証ヘッダー必須) に揃えた。route 表・OpenAPI の `x-ctf-authz` も実挙動に合わせて更新 (#315)。
+  `ratelimit_identity_requests_total{bucket,outcome}` で bucket 別の allowed / limited / no_identity を見られる。
+
 ### Security
 - portal (`/portal`) と admin dashboard (`/`) は他の origin の iframe に埋め込めなくなった (`frame-ancestors 'none'` + `X-Frame-Options: DENY`)。oauth2-proxy の `SameSite=None` cookie の下で起こり得た clickjacking を閉じる。ttyd の埋め込み (portal が親) には影響しない (app#326)
 
