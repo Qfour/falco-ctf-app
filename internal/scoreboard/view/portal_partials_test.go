@@ -32,6 +32,15 @@ import (
 // calls, not their order, and no test executes the page's JS.
 const portalLastPartial = "core-router.tmpl"
 
+// portalA11yCSSPartial is the partial that holds the portal's accessibility
+// CSS (P28-0a (3)): the focus ring, the outline-removal allowlist and the
+// reduced-motion block. REFACTORING.md P28 §9 puts CSS that P28 adds into a
+// feature partial rather than css.tmpl, and requires it to be the LAST
+// CSS-carrying partial the root calls (checkPortalAssembly rule 6), so that at
+// equal specificity its rules win over every pane rule in css.tmpl. What its
+// CSS must contain is checkPortalA11yCSS's job (portal_a11y_test.go).
+const portalA11yCSSPartial = "css-a11y.tmpl"
+
 // portalPartial is one templates/portal/*.tmpl source file.
 type portalPartial struct {
 	name string // basename == html/template name
@@ -166,6 +175,14 @@ func pipeIsDot(p *parse.PipeNode) bool {
 //     last-definition-wins hazard as (1), seen from the parsed set (it also
 //     covers two files sharing a basename, should the glob ever widen).
 //
+//  6. Every partial that carries CSS (a <style> element) is called inside the
+//     root's <head>, portalA11yCSSPartial is one of them and the LAST one
+//     called, and after that call the root serves no <style> or stylesheet
+//     <link> of its own (checkRootCSSOrder). CSS served later — a pane that
+//     brings its own <style> into <body>, a sheet linked after the a11y
+//     partial — wins the cascade at equal specificity and can take back the
+//     focus ring or the reduced-motion block without touching that partial.
+//
 // Not checked: the trailing trim marker on a call. Leaving it off only emits
 // one extra newline between elements.
 func checkPortalAssembly(fsys fs.FS) error {
@@ -177,6 +194,7 @@ func checkPortalAssembly(fsys fs.FS) error {
 	have := map[string]bool{}
 	calls := map[string]int{}
 	lastCall := "" // name of the root's final {{template}} call, in document order
+	var rootTree *parse.Tree
 	for _, p := range parts {
 		have[p.name] = true
 		tr := parse.New(p.name)
@@ -195,6 +213,9 @@ func checkPortalAssembly(fsys fs.FS) error {
 		sort.Strings(defined)
 		if len(defined) != 1 || defined[0] != p.name {
 			errs = append(errs, fmt.Errorf("%s defines template(s) %q, want exactly [%q] — a partial must not contain {{define}}/{{block}}", p.name, defined, p.name))
+		}
+		if p.name == portalRootTmpl {
+			rootTree = set[portalRootTmpl]
 		}
 		for name, tree := range set {
 			topLevel := map[*parse.TemplateNode]bool{}
@@ -247,6 +268,17 @@ func checkPortalAssembly(fsys fs.FS) error {
 		errs = append(errs, fmt.Errorf("root %s's last {{template}} call is %q, want %q — the router must come after every pane (see portalLastPartial)", portalRootTmpl, lastCall, portalLastPartial))
 	}
 
+	cssParts := map[string]bool{}
+	for _, p := range parts {
+		if p.name != portalRootTmpl && anyStyleOpenRe.MatchString(escHTMLCommentRe.ReplaceAllString(p.body, "")) {
+			cssParts[p.name] = true
+		}
+	}
+	if !cssParts[portalA11yCSSPartial] {
+		errs = append(errs, fmt.Errorf("%s is not a partial that carries a <style> — the portal's a11y CSS lives there (see portalA11yCSSPartial)", portalA11yCSSPartial))
+	}
+	errs = append(errs, checkRootCSSOrder(rootTree, cssParts)...)
+
 	tmpl, err := template.New(portalRootTmpl).ParseFS(fsys, portalTmplGlob)
 	if err != nil {
 		return errors.Join(append(errs, fmt.Errorf("html/template parse: %w", err))...)
@@ -267,6 +299,66 @@ func checkPortalAssembly(fsys fs.FS) error {
 }
 
 var (
+	headOpenRe       = regexp.MustCompile(`(?i)<head\b[^>]*>`)
+	headCloseRe      = regexp.MustCompile(`(?i)</head\s*>`)
+	stylesheetLinkRe = regexp.MustCompile(`(?i)<link\b[^>]*\brel\s*=\s*["']?stylesheet\b`)
+)
+
+// lastMatch returns the start of the last match of re in s, or -1.
+func lastMatch(re *regexp.Regexp, s string) int {
+	locs := re.FindAllStringIndex(s, -1)
+	if len(locs) == 0 {
+		return -1
+	}
+	return locs[len(locs)-1][0]
+}
+
+// checkRootCSSOrder is checkPortalAssembly rule 6, over the root's top-level
+// nodes in document order (the order html/template serves them). cssParts is
+// the set of partials that carry a <style>. A call nested under
+// if/range/with is not looked at here: rule 2 already rejects it.
+func checkRootCSSOrder(root *parse.Tree, cssParts map[string]bool) []error {
+	if root == nil || root.Root == nil {
+		return []error{fmt.Errorf("%s: no parse tree to check the CSS order on", portalRootTmpl)}
+	}
+	const (
+		beforeHead = iota
+		inHead
+		afterHead
+	)
+	var errs []error
+	state, lastCSS, a11yServed := beforeHead, "", false
+	for _, n := range root.Root.Nodes {
+		switch v := n.(type) {
+		case *parse.TextNode:
+			txt := escHTMLCommentRe.ReplaceAllString(string(v.Text), "")
+			if a11yServed && (anyStyleOpenRe.MatchString(txt) || stylesheetLinkRe.MatchString(txt)) {
+				errs = append(errs, fmt.Errorf("%s serves a <style> or stylesheet <link> of its own after it calls %s — CSS served later wins the cascade over the a11y rules at equal specificity", portalRootTmpl, portalA11yCSSPartial))
+			}
+			switch o, c := lastMatch(headOpenRe, txt), lastMatch(headCloseRe, txt); {
+			case c > o:
+				state = afterHead
+			case o > c:
+				state = inHead
+			}
+		case *parse.TemplateNode:
+			if !cssParts[v.Name] {
+				continue
+			}
+			if state != inHead {
+				errs = append(errs, fmt.Errorf("%s carries CSS (<style>) but %s calls it outside <head> — page CSS belongs in <head>, and CSS served in <body> comes after %s in the cascade", v.Name, portalRootTmpl, portalA11yCSSPartial))
+			}
+			lastCSS = v.Name
+			a11yServed = a11yServed || v.Name == portalA11yCSSPartial
+		}
+	}
+	if cssParts[portalA11yCSSPartial] && lastCSS != portalA11yCSSPartial {
+		errs = append(errs, fmt.Errorf("the last CSS-carrying partial %s calls is %q, want %q — the a11y CSS must come last in the cascade (see portalA11yCSSPartial)", portalRootTmpl, lastCSS, portalA11yCSSPartial))
+	}
+	return errs
+}
+
+var (
 	// Open/close tags are matched at line start: that is how every real one
 	// is written in these files, and it keeps prose mentions inside comments
 	// and JS strings ("a future inline <script> ...") out of the count. The
@@ -282,8 +374,12 @@ var (
 
 // checkPortalScriptAndStyle verifies, per partial and at SOURCE level, that
 // no <script>/<style> element straddles a partial boundary (a cut made
-// mid-element would shift html/template's escaping context across it) and
-// that every <script> open tag is exactly `<script nonce="{{.Nonce}}">`.
+// mid-element would shift html/template's escaping context across it), that
+// every <script> open tag is exactly `<script nonce="{{.Nonce}}">`, and that
+// every <style> open tag is exactly `<style>` or `<style nonce="{{.Nonce}}">`
+// (style-src carries 'unsafe-inline', so the nonce is optional there, but any
+// other attribute can switch the whole block off — media="print" — and a
+// nonce that is not the per-response {{.Nonce}} is not a nonce).
 // It then renders the document assembled from fsys and requires the number
 // of <script> and <style> tags served to equal the number the source scan
 // saw, so a tag the line-start matcher cannot see (indented, or injected by
@@ -294,6 +390,7 @@ func checkPortalScriptAndStyle(fsys fs.FS) error {
 		return err
 	}
 	const wantOpen = `<script nonce="{{.Nonce}}">`
+	const wantStyleOpen, wantStyleOpenNonced = `<style>`, `<style nonce="{{.Nonce}}">`
 	var errs []error
 	scripts, styles := 0, 0
 	for _, p := range parts {
@@ -310,6 +407,11 @@ func checkPortalScriptAndStyle(fsys fs.FS) error {
 				errs = append(errs, fmt.Errorf("%s: script open tag %q, want exactly %q (CSP script-src is nonce-only; an un-nonced inline script is silently blocked)", p.name, tag, wantOpen))
 			}
 		}
+		for _, tag := range srcStyleOpenRe.FindAllString(p.body, -1) {
+			if tag != wantStyleOpen && tag != wantStyleOpenNonced {
+				errs = append(errs, fmt.Errorf("%s: style open tag %q, want exactly %q or %q (an attribute such as media= can switch the whole block off; a nonce other than {{.Nonce}} is not one)", p.name, tag, wantStyleOpen, wantStyleOpenNonced))
+			}
+		}
 		scripts += len(opens)
 		styles += o
 	}
@@ -322,7 +424,7 @@ func checkPortalScriptAndStyle(fsys fs.FS) error {
 		return errors.Join(append(errs, fmt.Errorf("parse portal: %w", err))...)
 	}
 	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, portalData{Nonce: "test-nonce"}); err != nil {
+	if err := tmpl.Execute(&buf, portalData{Nonce: "test-nonce", Assets: staticAssets}); err != nil {
 		return errors.Join(append(errs, fmt.Errorf("execute portal: %w", err))...)
 	}
 	if got := len(anyScriptOpenRe.FindAllString(buf.String(), -1)); got != scripts {
@@ -411,8 +513,8 @@ func escIsFirstStatement(code string, at int) bool {
 // rootCallOrder returns the names the root calls at its top level, in
 // document order (the order html/template serves them). TODO: this parses
 // the root the same way checkPortalAssembly does (the parse.New / SkipFuncCheck
-// block over each partial); fold the two into one shared helper the next time
-// either is touched.
+// block over each partial; checkRootCSSOrder walks the tree that block keeps);
+// fold the two into one shared helper the next time either is touched.
 func rootCallOrder(fsys fs.FS) ([]string, error) {
 	b, err := fs.ReadFile(fsys, path.Dir(portalTmplGlob)+"/"+portalRootTmpl)
 	if err != nil {
@@ -667,6 +769,8 @@ func TestPortalPartials_ChecksRejectMutations(t *testing.T) {
 	}
 
 	const homeCall = `{{template "pane-home.tmpl" . -}}`
+	const cssCall = `{{template "css.tmpl" . -}}`
+	const a11yCall = `{{template "` + portalA11yCSSPartial + `" . -}}`
 	cases := []struct {
 		name    string
 		mutate  func(*testing.T, fstest.MapFS)
@@ -1078,6 +1182,66 @@ func TestPortalPartials_ChecksRejectMutations(t *testing.T) {
 			mutate:  portalFSEdit("pane-home.tmpl", appendText("<style>\n.x{}\n")),
 			check:   checkPortalScriptAndStyle,
 			wantErr: "pane-home.tmpl: 1 <style> open tag(s) but 0 </style>",
+		},
+		// ---- CSS partials: in <head>, the a11y partial last (rule 6) ----
+		{
+			name: "a11y CSS called before css.tmpl",
+			mutate: portalFSEdit(portalRootTmpl, func(s string) string {
+				return strings.Replace(s, cssCall+"\n"+a11yCall, a11yCall+"\n"+cssCall, 1)
+			}),
+			check:   checkPortalAssembly,
+			wantErr: `last CSS-carrying partial portal.tmpl calls is "css.tmpl", want "css-a11y.tmpl"`,
+		},
+		{
+			name: "a11y CSS called in <body>",
+			mutate: portalFSEdit(portalRootTmpl, func(s string) string {
+				s = strings.Replace(s, a11yCall+"\n", "", 1)
+				return strings.Replace(s, "<body>\n", "<body>\n"+a11yCall+"\n", 1)
+			}),
+			check:   checkPortalAssembly,
+			wantErr: "css-a11y.tmpl carries CSS (<style>) but portal.tmpl calls it outside <head>",
+		},
+		{
+			name:    "a pane brings its own <style> into <body>, after the a11y CSS",
+			mutate:  portalFSEdit("pane-home.tmpl", appendText("<style>\n  #pane-home :focus-visible { outline: none; }\n</style>\n")),
+			check:   checkPortalAssembly,
+			wantErr: "pane-home.tmpl carries CSS (<style>) but portal.tmpl calls it outside <head>",
+		},
+		{
+			name:    "root serves its own <style> after the a11y CSS",
+			mutate:  portalFSEdit(portalRootTmpl, replaceOnce(a11yCall, a11yCall+"\n<style>\n  :focus-visible { outline: none; }\n</style>")),
+			check:   checkPortalAssembly,
+			wantErr: "portal.tmpl serves a <style> or stylesheet <link> of its own after it calls css-a11y.tmpl",
+		},
+		{
+			name:    "root links a stylesheet after the a11y CSS",
+			mutate:  portalFSEdit(portalRootTmpl, replaceOnce(a11yCall, a11yCall+"\n<link rel=\"stylesheet\" href=\"/static/late.css\">")),
+			check:   checkPortalAssembly,
+			wantErr: "portal.tmpl serves a <style> or stylesheet <link> of its own after it calls css-a11y.tmpl",
+		},
+		{
+			name:    "a11y CSS no longer called",
+			mutate:  portalFSEdit(portalRootTmpl, replaceOnce(a11yCall+"\n", "")),
+			check:   checkPortalAssembly,
+			wantErr: `last CSS-carrying partial portal.tmpl calls is "css.tmpl", want "css-a11y.tmpl"`,
+		},
+		{
+			name:    "a11y partial loses its <style> (CSS moved elsewhere)",
+			mutate:  portalFSEdit(portalA11yCSSPartial, func(s string) string { return strings.NewReplacer("<style", "<div", "</style>", "</div>").Replace(s) }),
+			check:   checkPortalAssembly,
+			wantErr: "css-a11y.tmpl is not a partial that carries a <style>",
+		},
+		{
+			name:    "style tag with a media attribute",
+			mutate:  portalFSEdit(portalA11yCSSPartial, replaceOnce(`<style nonce="{{.Nonce}}">`, `<style nonce="{{.Nonce}}" media="print">`)),
+			check:   checkPortalScriptAndStyle,
+			wantErr: `css-a11y.tmpl: style open tag "<style nonce=\"{{.Nonce}}\" media=\"print\">"`,
+		},
+		{
+			name:    "style tag with a hard-coded nonce",
+			mutate:  portalFSEdit(portalA11yCSSPartial, replaceOnce(`<style nonce="{{.Nonce}}">`, `<style nonce="abc123">`)),
+			check:   checkPortalScriptAndStyle,
+			wantErr: `css-a11y.tmpl: style open tag "<style nonce=\"abc123\">"`,
 		},
 		{
 			name:    "duplicate call doubles a served style block",

@@ -7,20 +7,20 @@
 <!-- Chakra Petch / Inter / JetBrains Mono (app#96, P12 follow-up): vendored,
      self-hosted, SIL OFL — see internal/scoreboard/view/vendor/fonts/
      PROVENANCE.md for the fetch URL/sha256/license per file and
-     vendorassets.go for the go:embed serving paths. Same-origin only, never
+     staticassets.go for the go:embed serving paths. Same-origin only, never
      a CDN (P12: egress-zero) — replaces the former fonts.googleapis.com
      <link> + its two fonts.gstatic.com preconnects (no longer needed:
      same-origin requests don't benefit from preconnect). -->
-<link rel="stylesheet" href="/vendor/fonts.css">
+<link rel="stylesheet" href="{{.Assets.URL "fonts.css"}}">
 <!-- ===== cybercore-css (P23-6): vendored, self-hosted, MIT — see
      internal/scoreboard/view/vendor/cybercore/PROVENANCE.md for the pinned
-     npm version/commit/shasum and vendorassets.go for the go:embed serving
+     npm version/commit/shasum and staticassets.go for the go:embed serving
      path. Loaded from OUR OWN origin only, never a CDN (P12: egress-zero for
      this asset).
      NOTE (portal-ui-polish): the ONE cybercore COMPONENT CLASS this page
      used to consume (.cyber-badge, on the now-removed #portal-role-badge
      role indicator) is gone — see the "cybercore Falco-brand override"
-     tokens (--cyber-*/--color-*) in /static/tokens.css, which are
+     tokens (--cyber-*/--color-*) in tokens.css, which are
      consequently unused CSS right now (left in place; removing the
      cybercore layer outright is a bigger call than this batch's stated
      scope of DOM/text changes — tracked as residual cleanup, not done
@@ -32,7 +32,7 @@
      --cyber-* overrides in tokens.css can win over cybercore.min.css's own
      defaults by source-order (both have equal specificity on shared
      selectors; later wins). -->
-<link rel="stylesheet" href="/vendor/cybercore.min.css">
+<link rel="stylesheet" href="{{.Assets.URL "cybercore.min.css"}}">
 <!-- ===== Design tokens (app#116): single hex source ===== Every custom
      property this page's CSS below consumes via var(...) — the --falco/
      --accent-style base palette, the --cyber-*/--color-*/--font-* cybercore
@@ -43,11 +43,12 @@
      that file's own doc for the full "why" and the exact value-for-value
      provenance of every token). This page no longer defines any of these
      properties itself; they cascade in from this stylesheet. Self-hosted,
-     same-origin (vendorassets.go), loaded AFTER cybercore.min.css above so
+     same-origin (staticassets.go), loaded AFTER cybercore.min.css above so
      its --cyber-* overrides still win by source order (see that link's
      comment). -->
-<link rel="stylesheet" href="/static/tokens.css">
+<link rel="stylesheet" href="{{.Assets.URL "tokens.css"}}">
 {{template "css.tmpl" . -}}
+{{template "css-a11y.tmpl" . -}}
 </head>
 <body>
 <!-- NOTE (P23-ME-1, CEO decision 案① 完全プライベート): the participant tab
@@ -64,25 +65,40 @@
      scoreboard) avoids colliding two different data sources / auth gates under
      one id; the label↔id mismatch (pane "me" shows "Scoreboard") is deliberate
      per the CEO naming decision. -->
-<nav id="portal-tabs">
+<nav id="portal-tabs" aria-label="Portal">
   <span id="portal-brand"><span class="accent">Falco</span> CTF</span>
-  <a class="tab" data-tab="home" href="#home">Home</a>
-  <a class="tab" data-tab="tutorial" href="#tutorial">Tutorial</a>
-  <a class="tab" data-tab="story" href="#story">Story</a>
-  <a class="tab" data-tab="scoreboard" href="#scoreboard" id="tab-scoreboard" hidden>Leaderboard</a>
-  <a class="tab" data-tab="me" href="#me">Scoreboard</a>
-  <a class="tab" data-tab="terminal" href="#terminal">Terminal</a>
+  <!-- app#285 / P28-0a (4): the tabs are a WAI-ARIA tablist. role/aria-selected/
+       aria-controls are static here; aria-selected and the roving tabindex (only
+       the selected tab is in the Tab order) are kept in step with the hash
+       router by showTab() in core-router.tmpl, which also gives each .pane
+       role=tabpanel and arrow-key / Home / End movement between tabs. The
+       links stay real <a href="#tab"> so a hash deep-link and middle-click
+       still work. With scripting off every tab simply stays tabbable. -->
+  <div id="portal-tablist" role="tablist" aria-label="Portal sections">
+  <a class="tab" id="tab-home" role="tab" aria-controls="pane-home" aria-selected="false" data-tab="home" href="#home">Home</a>
+  <a class="tab" id="tab-tutorial" role="tab" aria-controls="pane-tutorial" aria-selected="false" data-tab="tutorial" href="#tutorial">Tutorial</a>
+  <a class="tab" id="tab-story" role="tab" aria-controls="pane-story" aria-selected="false" data-tab="story" href="#story">Story</a>
+  <a class="tab" data-tab="scoreboard" href="#scoreboard" id="tab-scoreboard" hidden role="tab" aria-controls="pane-scoreboard" aria-selected="false">Leaderboard</a>
+  <a class="tab" id="tab-me" role="tab" aria-controls="pane-me" aria-selected="false" data-tab="me" href="#me">Scoreboard</a>
+  <a class="tab" id="tab-terminal" role="tab" aria-controls="pane-terminal" aria-selected="false" data-tab="terminal" href="#terminal">Terminal</a>
   <!-- app#292 QA Board Phase 3: replaces P25's separate Queue(admin)/
        Support(participant) tabs with ONE tab for everyone — content inside
        #pane-board differs by role (compose+My Threads+Public Timeline for
        a participant, the moderation queue for an admin), but the tab
        itself is never hidden (no admin-only gate here, unlike Leaderboard
        above). -->
-  <a class="tab" data-tab="board" href="#board">Board</a>
+  <a class="tab" id="tab-board" role="tab" aria-controls="pane-board" aria-selected="false" data-tab="board" href="#board">Board</a>
+  </div>
   <span id="portal-identity">
     <span id="portal-username"></span>
   </span>
 </nav>
+<!-- P28-0a (4): the ONE polite live region of the portal, filled by announce()
+     in core-util.tmpl. It is empty by default and is NOT the 2-second polling
+     display itself (re-reading "updated 12:00:02" every poll would drown a
+     screen-reader user): panes announce only a CHANGE (a new solve, a new rule
+     fire, a lost connection). -->
+<div id="portal-live" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
 <script nonce="{{.Nonce}}">
   // Server-injected identity (P23-1) + own-ttyd URL (P23-4). This is a
   // DISPLAY-ONLY convenience for the shell (which tab to default to / show,

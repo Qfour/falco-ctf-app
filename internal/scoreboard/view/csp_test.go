@@ -58,7 +58,7 @@ func TestNewNonce_Base64Encoded(t *testing.T) {
 // see portalCSP's doc for why). style-src/font-src carry NO external origin
 // (app#96, P12 follow-up: the Google Fonts stylesheet + font files this page
 // used to load cross-origin are now vendored same-origin under
-// /vendor/fonts.css and /vendor/fonts/*.woff2 — 'self' alone covers them).
+// /static/fonts.<hash>.css and /static/*.<hash>.woff2 — 'self' alone covers them).
 // Exercised with an EMPTY ttydSuffix (the local/most-deploys case, see
 // PORTAL_TTYD_SUFFIX's doc) — TestPortalCSP_FrameSrc below covers the
 // non-empty-suffix case R5 added.
@@ -109,12 +109,110 @@ func TestPortalCSP_ContainsExpectedDirectives(t *testing.T) {
 		t.Errorf("script-src must not contain 'unsafe-inline' (defeats the nonce restriction): %q", scriptSrc)
 	}
 
-	// frame-ancestors must be absent — that directive belongs to
-	// internal/ttydproxy (P23-3), a different response entirely (see
-	// portalCSP's doc for why conflating the two would be wrong).
-	if strings.Contains(csp, "frame-ancestors") {
-		t.Errorf("portal CSP must not set frame-ancestors (owned by ttydproxy, not the portal response): %s", csp)
+	// frame-ancestors 'none' (app#326): nobody may embed the portal / the
+	// admin dashboard. This is the OTHER direction from frame-src above:
+	// frame-ancestors constrains who may frame THIS page, while the Terminal
+	// pane's ttyd iframe is governed by frame-src (portal = framer) and by
+	// ttydproxy's own frame-ancestors on ttyd's responses (ttyd = framed).
+	// So 'none' here cannot affect the ttyd embed. It also cannot produce a
+	// CSP violation on the portal's own console (ADR-0031 E3's "CSP
+	// violations == 0" assert): frame-ancestors is enforced against a page
+	// being loaded INSIDE a frame, never against the top-level document.
+	if !strings.Contains(csp, "frame-ancestors 'none'") {
+		t.Errorf("portal CSP must set frame-ancestors 'none' (app#326): %s", csp)
 	}
+	if n := strings.Count(csp, "frame-ancestors"); n != 1 {
+		t.Errorf("frame-ancestors appears %d times in CSP, want exactly 1: %s", n, csp)
+	}
+}
+
+// TestPortalCSP_FullPolicyPin pins the WHOLE policy string for an empty and
+// a configured ttydSuffix, so a directive added, dropped or reordered by a
+// change aimed at one directive (app#326 added frame-ancestors) shows up as
+// a diff here instead of slipping through the contains-checks above.
+func TestPortalCSP_FullPolicyPin(t *testing.T) {
+	const common = "default-src 'self'; " +
+		"script-src 'self' 'nonce-N'; " +
+		"style-src 'self' 'unsafe-inline'; " +
+		"font-src 'self'; " +
+		"img-src 'self' data:; " +
+		"connect-src 'self'; "
+	const tail = "; object-src 'none'; " +
+		"base-uri 'self'; " +
+		"form-action 'self'; " +
+		"frame-ancestors 'none'; " +
+		"report-uri /csp-report; " +
+		"report-to csp-endpoint"
+	cases := map[string]string{
+		"":              common + "frame-src 'none'" + tail,
+		"ctf-event.dev": common + "frame-src https://*.ctf-event.dev" + tail,
+	}
+	for suffix, want := range cases {
+		if got := portalCSP("N", suffix); got != want {
+			t.Errorf("portalCSP(%q) =\n  %s\nwant\n  %s", suffix, got, want)
+		}
+	}
+}
+
+// TestFrameProtection_OnPortalDashboardAndForbidden is the app#326
+// end-to-end pin: every HTML shell response (GET /portal 200, GET / 200,
+// GET / 403) and the 500 path carry BOTH CSP frame-ancestors 'none' and
+// X-Frame-Options: DENY, so oauth2-proxy's cookie_samesite=none cannot be
+// turned into a clickjacking surface.
+func TestFrameProtection_OnPortalDashboardAndForbidden(t *testing.T) {
+	check := func(t *testing.T, name string, h http.Header) {
+		t.Helper()
+		if csp := h.Get("Content-Security-Policy"); !strings.Contains(csp, "frame-ancestors 'none'") {
+			t.Errorf("%s: CSP lacks frame-ancestors 'none': %q", name, csp)
+		}
+		if got := h.Get("X-Frame-Options"); got != "DENY" {
+			t.Errorf("%s: X-Frame-Options = %q, want DENY", name, got)
+		}
+	}
+
+	t.Run("GET /portal 200", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		if err := renderPortal(w, httptest.NewRequest("GET", "/portal", nil), nil, nil, ""); err != nil {
+			t.Fatalf("renderPortal: %v", err)
+		}
+		check(t, "/portal", w.Header())
+	})
+	t.Run("GET /portal with ttyd suffix 200", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		if err := renderPortal(w, httptest.NewRequest("GET", "/portal", nil), nil, nil, "ctf-event.dev"); err != nil {
+			t.Fatalf("renderPortal: %v", err)
+		}
+		check(t, "/portal (ttyd configured)", w.Header())
+	})
+	t.Run("GET / admin 200", func(t *testing.T) {
+		h := New(func(*http.Request) bool { return true }, nil, "", slog.New(slog.DiscardHandler))
+		w := httptest.NewRecorder()
+		h.index(w, httptest.NewRequest("GET", "/", nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+		}
+		check(t, "/ (200)", w.Header())
+	})
+	t.Run("GET / non-admin 403", func(t *testing.T) {
+		h := New(func(*http.Request) bool { return false }, nil, "", slog.New(slog.DiscardHandler))
+		w := httptest.NewRecorder()
+		h.index(w, httptest.NewRequest("GET", "/", nil))
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403", w.Code)
+		}
+		check(t, "/ (403)", w.Header())
+	})
+	t.Run("writeSecurityHeaders failure (500 path) still denies framing", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		if _, err := writeSecurityHeaders(w, "bad\r\nsuffix"); err == nil {
+			t.Fatal("expected an error for a control character in the suffix")
+		}
+		// No CSP is built on this path (the policy would embed the bad
+		// value); XFO is the one framing header that is, and it must be.
+		if got := w.Header().Get("X-Frame-Options"); got != "DENY" {
+			t.Errorf("X-Frame-Options on the failure path = %q, want DENY", got)
+		}
+	})
 }
 
 // TestPortalCSP_FrameSrc is the R5 (2026-08-16 /review-5x) regression test:
@@ -509,121 +607,9 @@ func TestIndexHandler_ForbiddenResponseStillCarriesCSP(t *testing.T) {
 	}
 }
 
-// TestServeCybercoreCSS_ContentTypeAndNoExternalRefs proves GET
-// /vendor/cybercore.min.css (P23-6) serves the vendored stylesheet
-// same-origin with the correct Content-Type, and that the served bytes
-// contain no external network reference — a regression here (e.g. a bump to
-// a cybercore version that adds a Google Fonts @import) would silently
-// reopen the egress-zero property vendorassets.go's doc / PROVENANCE.md
-// documents today. This is a lightweight runtime echo of the offline audit
-// already recorded in vendor/cybercore/PROVENANCE.md; it does not replace
-// that audit's obligation to re-check on every version bump.
-func TestServeCybercoreCSS_ContentTypeAndNoExternalRefs(t *testing.T) {
-	r := httptest.NewRequest("GET", cybercoreCSSPath, nil)
-	w := httptest.NewRecorder()
-	serveCybercoreCSS(w, r)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", w.Code)
-	}
-	ct := w.Header().Get("Content-Type")
-	if !strings.HasPrefix(ct, "text/css") {
-		t.Errorf("Content-Type = %q, want text/css prefix", ct)
-	}
-	body := w.Body.String()
-	if body == "" {
-		t.Fatal("served cybercore.min.css body is empty")
-	}
-
-	// No @import (would trigger a second, possibly cross-origin, fetch).
-	if strings.Contains(body, "@import") {
-		t.Error("vendored cybercore.min.css must not contain @import")
-	}
-	// Every url(...) must be a data: URI (icons/noise filters are inlined
-	// SVG) — never an http(s) fetch. The one non-data string this file is
-	// known to contain is the XML namespace "http://www.w3.org/2000/svg"
-	// INSIDE a data: URI, which is not itself a url(...) target — this loop
-	// specifically inspects url(...) targets, not arbitrary substrings.
-	urlRe := regexp.MustCompile(`url\(([^)]*)\)`)
-	for _, m := range urlRe.FindAllStringSubmatch(body, -1) {
-		target := strings.Trim(m[1], `"'`)
-		if !strings.HasPrefix(target, "data:") {
-			t.Errorf("found a non-data: url() target in vendored cybercore.min.css: %q", target)
-		}
-	}
-}
-
-// TestServeCybercoreCSS_ConditionalGET proves the ETag-based 304 fast path
-// works: a request carrying the SAME ETag the first response advertised
-// gets 304 Not Modified with no body, matching the Cache-Control this
-// handler sets (see vendorassets.go's doc for why this asset — unlike every
-// other embedded HTML page — gets explicit caching headers).
-func TestServeCybercoreCSS_ConditionalGET(t *testing.T) {
-	w1 := httptest.NewRecorder()
-	serveCybercoreCSS(w1, httptest.NewRequest("GET", cybercoreCSSPath, nil))
-	etag := w1.Header().Get("ETag")
-	if etag == "" {
-		t.Fatal("expected an ETag header on the first response")
-	}
-
-	r2 := httptest.NewRequest("GET", cybercoreCSSPath, nil)
-	r2.Header.Set("If-None-Match", etag)
-	w2 := httptest.NewRecorder()
-	serveCybercoreCSS(w2, r2)
-	if w2.Code != http.StatusNotModified {
-		t.Fatalf("status = %d, want 304 for a matching If-None-Match", w2.Code)
-	}
-	if w2.Body.Len() != 0 {
-		t.Errorf("304 response must have an empty body, got %d bytes", w2.Body.Len())
-	}
-}
-
-// TestServeTokensCSS_ContentTypeAndBody mirrors
-// TestServeCybercoreCSS_ContentTypeAndNoExternalRefs above, for the
-// design-token single source (app#116) — see static/tokens.css's own doc
-// for the full "why".
-func TestServeTokensCSS_ContentTypeAndBody(t *testing.T) {
-	r := httptest.NewRequest("GET", tokensCSSPath, nil)
-	w := httptest.NewRecorder()
-	serveTokensCSS(w, r)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", w.Code)
-	}
-	ct := w.Header().Get("Content-Type")
-	if !strings.HasPrefix(ct, "text/css") {
-		t.Errorf("Content-Type = %q, want text/css prefix", ct)
-	}
-	body := w.Body.String()
-	if body == "" {
-		t.Fatal("served tokens.css body is empty")
-	}
-	if !strings.Contains(body, ":root") {
-		t.Error("tokens.css must define a :root block")
-	}
-}
-
-// TestServeTokensCSS_ConditionalGET mirrors
-// TestServeCybercoreCSS_ConditionalGET above — see that test's doc.
-func TestServeTokensCSS_ConditionalGET(t *testing.T) {
-	w1 := httptest.NewRecorder()
-	serveTokensCSS(w1, httptest.NewRequest("GET", tokensCSSPath, nil))
-	etag := w1.Header().Get("ETag")
-	if etag == "" {
-		t.Fatal("expected an ETag header on the first response")
-	}
-
-	r2 := httptest.NewRequest("GET", tokensCSSPath, nil)
-	r2.Header.Set("If-None-Match", etag)
-	w2 := httptest.NewRecorder()
-	serveTokensCSS(w2, r2)
-	if w2.Code != http.StatusNotModified {
-		t.Fatalf("status = %d, want 304 for a matching If-None-Match", w2.Code)
-	}
-	if w2.Body.Len() != 0 {
-		t.Errorf("304 response must have an empty body, got %d bytes", w2.Body.Len())
-	}
-}
+// (The former TestServeCybercoreCSS_* / TestServeTokensCSS_* handler tests
+// lived here; ADR-0028 replaced the per-file handlers with one registry
+// handler and their cases moved to static_assets_test.go.)
 
 // stripCommentsForHexScan mirrors scripts/check-template-hex.py's
 // strip_comments() exactly (same three passes, same "blank non-newline
@@ -664,6 +650,7 @@ func stripCommentsForHexScan(src string) string {
 // template instead of adding a token to static/tokens.css and referencing
 // it via var(...).
 func TestTemplates_NoRawHexColorLiterals(t *testing.T) {
+	const tokensLinkAction = `{{.Assets.URL "tokens.css"}}`
 	// Exactly 3 or 6 hex digits with a trailing word boundary — see
 	// check-template-hex.py's HEX_RE doc for why \b at the end (not the
 	// start) is what stops a longer hex-like run from partial-matching.
@@ -692,12 +679,15 @@ func TestTemplates_NoRawHexColorLiterals(t *testing.T) {
 			continue
 		}
 		linked++
-		if !strings.Contains(src.body, tokensCSSPath) {
-			t.Errorf("%s does not link %s — it must consume design tokens via <link> (app#116)", src.name, tokensCSSPath)
+		// ADR-0028 D2: the <link> is resolved through the registry, never a
+		// literal path. static_assets_test.go proves the rendered href
+		// resolves to a 200; this only proves the source asks for tokens.
+		if !strings.Contains(src.body, tokensLinkAction) {
+			t.Errorf("%s does not link tokens.css (%s) — it must consume design tokens via <link> (app#116)", src.name, tokensLinkAction)
 		}
 	}
 	if linked != 2 {
-		t.Fatalf("checked the %s <link> on %d document(s), want 2 (index.html + the portal root %s) — the portal root was not among the scanned partials", tokensCSSPath, linked, portalRootTmpl)
+		t.Fatalf("checked the tokens.css <link> on %d document(s), want 2 (index.html + the portal root %s) — the portal root was not among the scanned partials", linked, portalRootTmpl)
 	}
 }
 

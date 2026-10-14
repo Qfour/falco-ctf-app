@@ -52,7 +52,8 @@
      Extracted from the near-identical rules #pane-scoreboard / #pane-story /
      #pane-me / #pane-terminal each used to define locally (values taken
      from #pane-scoreboard, the reference design — see the --p-* tokens in
-     /static/tokens.css, app#116). Each pane's OWN CSS (below) now carries only its
+     static/tokens.css, app#116; served under a content-hash name, ADR-0028).
+     Each pane's OWN CSS (below) now carries only its
      pane-specific delta, if any, on top of these; the HTML for each pane
      was NOT rewritten to reference these classes explicitly (pane markup
      keeps its existing .panel/.panel-header/.btn/.badge/etc class names —
@@ -101,7 +102,7 @@
 
   #pane-scoreboard {
     /* Unified design tokens (P23 portal-redesign) — see the root --p-*
-       tokens in /static/tokens.css (app#116). Pane-local aliases kept so
+       tokens in static/tokens.css (app#116, ADR-0028). Pane-local aliases kept so
        the ~120 rules below (which reference --falco/--accent/--bg/etc
        extensively) don't all need renaming; only the DEFINITIONS moved to
        the shared :root layer. */
@@ -147,11 +148,14 @@
   /* .brand h1 / .live now come from the shared .p-h1 / .p-live classes
      (P23 portal-redesign) on the markup below — see those rules above. */
   #pane-scoreboard .updated { color: var(--text-mute); font-size: 0.7rem; margin-top: 0.3rem; text-align: right; font-family: 'JetBrains Mono', monospace; }
-  #pane-scoreboard .reset-btn { margin-top: 0.5rem; padding: 0.32rem 0.75rem; font-size: 0.65rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-mute); background: transparent; border: 1px solid var(--border-strong); border-radius: 6px; cursor: pointer; opacity: 0.7; transition: all 0.15s; }
+  #pane-scoreboard .reset-btn { margin-top: 0.5rem; padding: 0.32rem 0.75rem; font-size: 0.65rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-mute); background: transparent; border: 1px solid var(--border-strong); border-radius: 6px; cursor: pointer; transition: all 0.15s; }
   #pane-scoreboard .reset-btn:hover { opacity: 1; color: var(--danger); border-color: var(--danger); box-shadow: 0 0 12px rgba(255,92,106,0.25); }
   #pane-scoreboard .name-edit { margin-left: 0.4rem; padding: 0 0.25rem; font-size: 0.75rem; line-height: 1; color: var(--text-mute); background: transparent; border: none; cursor: pointer; opacity: 0; transition: opacity 0.15s; }
-  #pane-scoreboard tr:hover .name-edit { opacity: 0.55; }
-  #pane-scoreboard .name-edit:hover { opacity: 1; color: var(--accent); }
+  #pane-scoreboard tr:hover .name-edit, #pane-scoreboard tr:focus-within .name-edit { opacity: 0.55; }
+  /* `tr` keeps these at (1,2,1), the specificity of the :hover / :focus-within
+     rule above; without it (1,2,0) loses and the focused button stays dim. */
+  #pane-scoreboard tr .name-edit:focus-visible { opacity: 1; }
+  #pane-scoreboard tr .name-edit:hover { opacity: 1; color: var(--accent); }
 
   #pane-scoreboard .hdr-right { display: flex; flex-direction: column; align-items: flex-end; gap: 0.35rem; }
   #pane-scoreboard .hdr-btns { display: flex; gap: 0.4rem; margin-top: 0.4rem; }
@@ -268,7 +272,7 @@
 
   #pane-story {
     /* Unified design tokens (P23 portal-redesign) — see the root --p-*
-       tokens in /static/tokens.css (app#116). Pane-local aliases kept so
+       tokens in static/tokens.css (app#116, ADR-0028). Pane-local aliases kept so
        existing rules below don't all need renaming; only the DEFINITIONS
        moved to :root. */
     --falco: var(--p-accent); --falco-2: var(--p-accent-2);
@@ -499,7 +503,7 @@
   /* evade submit */
   #pane-story .submit-form { margin-top: 0.6rem; display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }
   #pane-story .submit-form input { flex: 1 1 260px; background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: 6px; color: var(--text); font-family: 'JetBrains Mono', monospace; padding: 0.55rem 0.8rem; font-size: 0.9rem; }
-  #pane-story .submit-form input:focus { outline: none; border-color: var(--evade); box-shadow: 0 0 10px var(--evade-glow); }
+  #pane-story .submit-form input:focus { border-color: var(--evade); box-shadow: 0 0 10px var(--evade-glow); }
   #pane-story .submit-msg { margin-top: 0.6rem; font-size: 0.85rem; font-family: 'JetBrains Mono', monospace; min-height: 1.2em; }
   #pane-story .submit-msg.ok { color: var(--success); }
   #pane-story .submit-msg.err { color: var(--danger); }
@@ -730,7 +734,7 @@
   #pane-board .empty .icon { font-size: 2rem; opacity: 0.4; display: block; margin-bottom: 0.5rem; }
   #pane-board form.qa-form { padding: 1.25rem 1.5rem; }
   #pane-board form.qa-form input, #pane-board form.qa-form textarea { display: block; width: 100%; background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: 6px; color: var(--text); font-family: 'JetBrains Mono', monospace; padding: 0.6rem 0.8rem; font-size: 0.9rem; margin-bottom: 0.6rem; resize: vertical; }
-  #pane-board form.qa-form input:focus, #pane-board form.qa-form textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 10px var(--accent-glow); }
+  #pane-board form.qa-form input:focus, #pane-board form.qa-form textarea:focus { border-color: var(--accent); box-shadow: 0 0 10px var(--accent-glow); }
   #pane-board .dest-choice { display: flex; flex-direction: column; gap: 0.6rem; margin-bottom: 0.9rem; }
   #pane-board .dest-option { display: block; border: 1px solid var(--border-strong); border-radius: 8px; padding: 0.7rem 0.9rem; cursor: pointer; transition: all 0.15s; background: var(--bg-elev); }
   #pane-board .dest-option:hover { border-color: var(--accent); }

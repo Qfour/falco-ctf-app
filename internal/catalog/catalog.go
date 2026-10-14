@@ -2,7 +2,11 @@
 //
 // Schema:
 //
-//	challengeId:   string (defaults to directory name)
+//	challengeId:   string — optional. Omitted: filled with the directory name.
+//	               Explicit: MUST equal the directory name, otherwise Load
+//	               rejects the file (ADR-0026 interpretation 1; app#320). The
+//	               directory name is canonical: the challenge image builder,
+//	               journeys, fixtures paths and hint-leak check all key by it.
 //	type:          "trigger" | "evade" | "detect" (required)
 //	expectedRules: []string  — solve when one of these rules fires
 //	forbiddenRules:[]string  — submission rejected once any of these has fired
@@ -167,6 +171,11 @@ func parseFile(path, dirName string) (Challenge, error) {
 	}
 	if ch.ID == "" {
 		ch.ID = dirName
+	} else if ch.ID != dirName {
+		// ADR-0026 interpretation 1: the directory name is canonical. Journeys,
+		// fixtures (/opt/ctf/missions/<challengeId>/) and the hint-leak check are
+		// keyed by directory, so a differing explicit id would silently drop out.
+		return Challenge{}, fmt.Errorf("challenge %q lives in directory %q: challengeId must equal the directory name (omit it to default to the directory name)", ch.ID, dirName)
 	}
 	ch.dir = dirName
 	if ch.Type == "" {

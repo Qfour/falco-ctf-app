@@ -34,4 +34,23 @@
 // Every other value goes through String(), so a number or boolean is escaped
 // as its string form.
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+// ---- Accessibility helpers (P28-0a (4)). Declared AFTER esc on purpose (see the
+// TDZ note above). textContent only, no markup.
+// (A delegated keydown that turns Enter/Space on role=button / checkbox into a
+// click is NOT here yet: nothing uses it until the P28-0b story wiring, which
+// brings it in together with its first user.)
+
+// announce(msg) speaks msg once through the portal's single polite live region
+// (#portal-live in portal.tmpl). Call it for a CHANGE a sighted user would
+// notice (a new solve, a new rule fire, a lost connection), never for the
+// 2-second polling repaint itself. The region is cleared first so the same
+// sentence twice in a row is still announced.
+const announce = (msg) => {
+  const el = document.getElementById('portal-live');
+  if (!el) return;
+  el.textContent = '';
+  setTimeout(() => { el.textContent = String(msg == null ? '' : msg); }, 50);
+};
+
 </script>

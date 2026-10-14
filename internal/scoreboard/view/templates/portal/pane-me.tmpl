@@ -42,6 +42,15 @@
   const user = window.__PORTAL_USER__ || '';
   const fireSeen = new Set();
   let firstRender = true;
+  // P28-0a (4): what the screen reader is told when the polled data CHANGES
+  // (announce() in core-util.tmpl). The 2-second repaint itself is not
+  // announced; lastSolved and connOK make each announcement fire once per change.
+  // announce() is last-write-wins, so refresh() joins everything one poll has
+  // to say (connection restored + new solve + new rule fires) into ONE call.
+  // If P28-1's message window gets its own live region, fold announce() into it
+  // rather than keeping two regions.
+  let lastSolved = null;
+  let connOK = true;
 
   if (!user) {
     document.getElementById('pane-me-page').innerHTML = `
@@ -58,10 +67,13 @@
     try {
       const r = await fetch('/api/users/' + encodeURIComponent(user) + '/me');
       if (!r.ok) throw new Error('HTTP ' + r.status);
-      render(await r.json());
+      const notes = render(await r.json());   // sentences for what changed in THIS poll
       document.getElementById('pane-me-updated').textContent = 'updated ' + new Date().toLocaleTimeString();
+      if (!connOK) { connOK = true; notes.unshift('Connection restored.'); }
+      if (notes.length > 0) announce(notes.join(' '));
     } catch (e) {
       document.getElementById('pane-me-updated').textContent = 'connection error';
+      if (connOK) { connOK = false; announce('Connection error. Retrying.'); }
     }
   }
 
@@ -92,6 +104,7 @@
       nextHTML = `<span class="target">No challenges loaded yet</span>`;
     }
 
+    const freshFires = [];   // rule names that appeared since the last poll (filled while building the fires list below)
     const displayName = d.display_name || user;
     const identitySuffix = (displayName !== user) ? ` <span style="color:var(--text-mute); font-weight:400; font-size:0.85rem">(${esc(user)})</span>` : '';
     document.getElementById('pane-me-page').innerHTML = `
@@ -152,6 +165,7 @@
               : fires.slice().reverse().map(f => {
                   const key = f.rule + ':' + f.at;
                   const fresh = !firstRender && !fireSeen.has(key);
+                  if (fresh) freshFires.push(f.rule);
                   fireSeen.add(key);
                   return `<div class="fire-item${fresh ? ' fresh' : ''}">
                     <div class="rule">${esc(f.rule)}</div>
@@ -162,7 +176,22 @@
         </section>
       </div>
     `;
+    // What changed since the previous poll (never on the first paint). Returned
+    // to refresh(), which announces it together with any connection change.
+    const notes = [];
+    if (!firstRender) {
+      if (lastSolved !== null && solvedCount > lastSolved) {
+        notes.push('Challenge solved. ' + solvedCount + ' of ' + total + ' done.');
+      }
+      // Same rule name can fire several times: say each name once, and a count
+      // instead of a list when there are many.
+      const names = [...new Set(freshFires)];
+      if (names.length > 3) notes.push(names.length + ' Falco rules fired.');
+      else if (names.length > 0) notes.push('Falco rule fired: ' + names.join(', '));
+    }
+    lastSolved = solvedCount;
     firstRender = false;
+    return notes;
   }
 })();
 </script>

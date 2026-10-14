@@ -83,12 +83,12 @@ func newNonce() (string, error) {
 //     allowed here because portal.html's <link href="https://fonts.
 //     googleapis.com/css2?..."> fetched a stylesheet from that origin;
 //     app#96 (P12 follow-up) vendored that stylesheet + its font files
-//     same-origin (GET /vendor/fonts.css, internal/scoreboard/view/
-//     vendorassets.go), so 'self' alone now covers it — the external
+//     same-origin (GET /static/fonts.<hash>.css, internal/scoreboard/view/
+//     staticassets.go), so 'self' alone now covers it — the external
 //     origin allowance is gone, not just unused.
 //   - font-src 'self': the Google Fonts stylesheet's font files
 //     (fonts.gstatic.com) are, likewise, now vendored same-origin under
-//     /vendor/fonts/*.woff2 (app#96) — 'self' alone is sufficient; there is
+//     /static/*.<hash>.woff2 (app#96) — 'self' alone is sufficient; there is
 //     no longer any @font-face src that leaves this origin.
 //   - img-src 'self' data:: the vendored cybercore.min.css's icon/noise
 //     glyphs are inline `url("data:image/svg+xml,...")` (see
@@ -129,16 +129,21 @@ func newNonce() (string, error) {
 //     instead of an iframe, so frame-src 'none' costs nothing (there is no
 //     legitimate frame to allow) and is fail-closed if a future bug ever
 //     tried to frame something anyway.
-//   - frame-ancestors is DELIBERATELY OMITTED here — that directive is
-//     owned by internal/ttydproxy (P23-3), one layer down (protecting the
-//     ttyd iframe target FROM being framed), not by the page that DOES the
-//     framing. Setting frame-ancestors on the portal's own response would
-//     control who may frame the PORTAL, an orthogonal concern P23-6 was
-//     not asked to change and that has no operator-supplied value wired in
-//     yet (see cmd/scoreboard/main.go — no PORTAL_FRAME_ANCESTORS-equivalent
-//     env exists). Do not conflate the two: ttyd-proxy's CSP protects ttyd
-//     from being framed by anything other than the portal; this CSP
-//     protects the portal's OWN script/style/resource loading.
+//   - frame-ancestors 'none' (app#326): the portal and the admin dashboard
+//     are never legitimately embedded by anyone, so no parent is allowed.
+//     Without this, oauth2-proxy's `cookie_samesite = "none"` (needed for
+//     P23-4's cross-origin ttyd iframe) let any third-party origin frame the
+//     logged-in participant's portal (clickjacking). DIRECTION, do not
+//     confuse with frame-src above: frame-ancestors restricts who may embed
+//     THIS page; frame-src restricts what THIS page may embed. The portal
+//     embeds ttyd (frame-src), it is not embedded (frame-ancestors), so
+//     'none' cannot break the Terminal pane. The ttyd side is the mirror
+//     image and is owned by internal/ttydproxy (P23-3), which stamps its
+//     own frame-ancestors (the portal origin, not 'none') on ttyd's
+//     responses. 'none' needs no operator-supplied value, so it is a
+//     constant, not an env. X-Frame-Options: DENY is set alongside by
+//     writeSecurityHeaders for browsers/proxies that predate or ignore
+//     CSP frame-ancestors; both say the same thing.
 //   - report-uri + report-to (Issue #95 / P23-6 follow-up — observability,
 //     not enforcement; adding these cannot make the policy MORE permissive,
 //     only makes an existing violation visible): P12's egress-zero posture
@@ -185,6 +190,7 @@ func portalCSP(nonce, ttydSuffix string) string {
 		"object-src 'none'; " +
 		"base-uri 'self'; " +
 		"form-action 'self'; " +
+		"frame-ancestors 'none'; " +
 		"report-uri " + cspReportPath + "; " +
 		"report-to csp-endpoint"
 }
@@ -219,13 +225,30 @@ func validateTtydSuffix(v string) error {
 // renderPortal already has in hand for ttydURLFor — pass it straight
 // through rather than re-deriving anything.
 func writeSecurityHeaders(w http.ResponseWriter, ttydSuffix string) (string, error) {
+	// Cache-Control: no-store (ADR-0028 D3). Both HTML shells embed a
+	// per-response CSP nonce, and /portal also embeds the viewer's own
+	// identifier (__PORTAL_USER__) and ttyd URL. Behind a shared cache
+	// (Cloudflare is in front of prod) a cacheable copy would hand one
+	// viewer's identifier, and a reused nonce, to another. Not loosened for
+	// performance. Set FIRST, before either failure return below: the 500
+	// the callers write when this function fails (a control character in
+	// PORTAL_TTYD_SUFFIX, no entropy for the nonce) then carries it too, as
+	// do the 403 of GET / and the 200s, which are written after this call.
+	w.Header().Set("Cache-Control", "no-store")
 	if err := validateTtydSuffix(ttydSuffix); err != nil {
+		// X-Frame-Options: DENY (app#326) — legacy twin of the CSP
+		// frame-ancestors 'none' in portalCSP. Stamped on BOTH failure
+		// returns as well as the success path below (the callers write a 500
+		// when this function fails; that response must not be frameable).
+		w.Header().Set("X-Frame-Options", "DENY")
 		return "", err
 	}
 	nonce, err := newNonce()
 	if err != nil {
+		w.Header().Set("X-Frame-Options", "DENY")
 		return "", fmt.Errorf("csp: generate nonce: %w", err)
 	}
+	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Content-Security-Policy", portalCSP(nonce, ttydSuffix))
 	// Reporting-Endpoints (Issue #95) declares the "csp-endpoint" group
 	// portalCSP's "report-to csp-endpoint" directive names, pointing it at

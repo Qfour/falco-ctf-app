@@ -38,3 +38,24 @@ var ClientIPSourceTotal = promauto.NewCounterVec(
 	},
 	[]string{"caller", "source"},
 )
+
+// IdentityRequestsTotal counts requests that went through an identity-keyed
+// bucket (Limiter.MiddlewareStrict, app#315), labelled by:
+//
+//	bucket:  which bucket — a fixed set of constants at the call sites
+//	         (e.g. "participant_action" for steps/check + hints + reset-dirty).
+//	         Distinguishes these from the IP-keyed submit bucket, whose own
+//	         counter is ClientIPSourceTotal{caller="submit"}.
+//	outcome: "allowed" | "limited" (429) | "no_identity" (403, no token consumed)
+//
+// A sustained "no_identity" rate means something reaches an authenticated
+// route without the ingress-injected header (a header-less caller that got
+// past the origin guard, or an ingress change dropping the header).
+var IdentityRequestsTotal = promauto.NewCounterVec(
+	prometheus.CounterOpts{
+		Namespace: "ratelimit",
+		Name:      "identity_requests_total",
+		Help:      "Requests through an identity-keyed rate-limit bucket, by bucket and outcome (allowed|limited|no_identity). no_identity requests are denied 403 without consuming a token.",
+	},
+	[]string{"bucket", "outcome"},
+)
