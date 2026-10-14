@@ -18,6 +18,11 @@
 #        (this is the participant's actual terminal path, not the
 #        operator's — a separate RBAC principal from the one running this
 #        script)
+#   3-8  ADR-0026 V4 (all three modes: scenario / `all` / single mission):
+#        /opt/ctf/missions/ holds EXACTLY the expected challenge ids, every
+#        one a real directory, and each <id>/ holds nothing but a real
+#        `fixtures` directory (fixtures' own contents are never opened).
+#        Dot entries are enumerated too. See the 3-8 judgment block below.
 #
 # WHY builtin-only (this is the load-bearing part — do not "simplify" this
 # script by swapping any check below for grep/cat/head/tail/awk/find/cp):
@@ -91,10 +96,17 @@
 # whether /root/.ssh/id_rsa is expected to exist at all (3-5 / 3-6, computed
 # dynamically from the actual plant.sh headers in <challenges-dir> that are
 # in scope for this deploy — never hardcoded to the all-missions "2"), and
-# (P27-1, 3-8) exactly which challenge ids /opt/ctf/missions/ is expected to
-# contain — "every id under <challenges-dir>" for all/single mode (image-
-# baked, unchanged), or exactly the scenario's own `challenges:` list for
-# scenario mode.
+# (3-8, P27-1 + ADR-0026 V4) exactly which challenge ids /opt/ctf/missions/
+# is expected to contain:
+#   - scenario mode: exactly the scenario's own `challenges:` list (the
+#     `missions-scope` initContainer copies only those), and
+#   - `all` / single-mission mode: every catalog id in <challenges-dir>
+#     (a directory holding falco-rule.yaml; id == directory name, ADR-0026
+#     解釈 1). A single-mission deploy still gets the image's FULL id set —
+#     the chart only narrows scenarios. The id set therefore comes from the
+#     OPERATOR'S CHECKOUT, so the checkout and the image's ref must agree
+#     (ADR-0026 解釈 3): a checkout that drifts from the image stops the
+#     deploy here (fail-closed), by design.
 #
 # Exit status: 0 if every check passes, non-zero (with violations printed
 # to stderr) otherwise. Called from deploy-user.sh with no `||` / `if`
@@ -275,6 +287,30 @@ then
   fi
 fi
 
+# 3-8 expected id set (ADR-0026 V4). Scenario mode: the scenario's own list.
+# `all` / single: every catalog id under <challenges-dir> — a directory that
+# holds falco-rule.yaml (so non-challenge dirs such as an untracked decks/
+# are not ids). Zero ids is fail-closed: an empty expectation would let an
+# empty or wrong missions tree compare equal to "nothing".
+EXPECTED_MISSION_IDS=()
+if [ "${SCENARIO_MODE}" = yes ]
+then
+  EXPECTED_MISSION_IDS=("${SCENARIO_CHALLENGE_IDS[@]}")
+else
+  for d in "${CHALLENGES_DIR}"/*/
+  do
+    [ -f "${d}falco-rule.yaml" ] || continue
+    _id="${d%/}"
+    _id="${_id##*/}"
+    EXPECTED_MISSION_IDS+=("${_id}")
+  done
+  if [ "${#EXPECTED_MISSION_IDS[@]}" -eq 0 ]
+  then
+    printf 'assert-flag-isolation.sh: no catalog id (<dir>/falco-rule.yaml) under %s — cannot judge 3-8\n' "${CHALLENGES_DIR}" >&2
+    exit 1
+  fi
+fi
+
 # ---------------------------------------------------------------------------
 # NOTE (flag-guard): diagnostic messages below say "flag-marker line(s)" and never
 # spell the literal FALCO + { on a line that also contains a ${...} expansion.
@@ -391,25 +427,70 @@ then
   SSH_KEY_EXISTS=yes
 fi
 
-# P27-1 (3-8): the immediate subdirectory names under /opt/ctf/missions/ —
-# every challenge id whose fixtures/README/falco-rule.yaml this deploy
-# makes reachable from inside the participant's own shell. Glob only (shell
-# builtin, no external binary): a challenge id never contains whitespace, so
-# space-joining is a safe, unambiguous wire format for the single-line
-# KEY=VALUE contract the rest of this probe uses.
+# 3-8 (P27-1 + ADR-0026 V4): enumerate /opt/ctf/missions/ — glob and shell
+# builtins only (no external binary: see header). Dot entries are listed too
+# (`*` alone skips them): `.[!.]*` and `..?*`. A glob that matches nothing
+# stays as its literal pattern, so every candidate is confirmed to exist
+# (`-e`, or `-L` for a dangling symlink) before it is counted.
+#   MISSIONS_LIST   clean-named entries that are real directories (not symlinks)
+#   MISSIONS_BAD    top-level entries that are NOT a real directory (file,
+#                   symlink, ...) or whose name has a character outside
+#                   [A-Za-z0-9._-] (reported as <bad-name>, never echoed raw:
+#                   a name with a newline could otherwise forge a KEY=VALUE
+#                   line of this protocol)
+#   MISSIONS_SUBBAD "<id>/<entry>" for every entry under <id>/ other than a
+#                   real `fixtures` directory, plus "<id>/fixtures:missing"
+#                   / "<id>/fixtures:not-a-dir". fixtures' contents are never
+#                   opened (V4).
+# A challenge id never contains whitespace, so space-joining is a safe wire
+# format for the single-line KEY=VALUE contract the rest of this probe uses.
 MISSIONS_LIST=""
+MISSIONS_BAD=""
+MISSIONS_SUBBAD=""
 if [ -d /opt/ctf/missions ]
 then
-  for _mdir in /opt/ctf/missions/*/
+  for _mdir in /opt/ctf/missions/* /opt/ctf/missions/.[!.]* /opt/ctf/missions/..?*
   do
-    [ -d "${_mdir}" ] || continue
-    _mb="${_mdir%/}"
-    _mb="${_mb##*/}"
-    if [ -z "${MISSIONS_LIST}" ]
+    if [ ! -e "${_mdir}" ] && [ ! -L "${_mdir}" ]
     then
-      MISSIONS_LIST="${_mb}"
-    else
-      MISSIONS_LIST="${MISSIONS_LIST} ${_mb}"
+      continue
+    fi
+    _mb="${_mdir##*/}"
+    case "${_mb}" in
+      *[!A-Za-z0-9._-]*) _mb="<bad-name>" ;;
+    esac
+    if [ -L "${_mdir}" ] || [ ! -d "${_mdir}" ] || [ "${_mb}" = "<bad-name>" ]
+    then
+      MISSIONS_BAD="${MISSIONS_BAD:+${MISSIONS_BAD} }${_mb}"
+      continue
+    fi
+    MISSIONS_LIST="${MISSIONS_LIST:+${MISSIONS_LIST} }${_mb}"
+    _fx=missing
+    for _sub in "${_mdir}"/* "${_mdir}"/.[!.]* "${_mdir}"/..?*
+    do
+      if [ ! -e "${_sub}" ] && [ ! -L "${_sub}" ]
+      then
+        continue
+      fi
+      _sb="${_sub##*/}"
+      case "${_sb}" in
+        *[!A-Za-z0-9._-]*) _sb="<bad-name>" ;;
+      esac
+      if [ "${_sb}" = fixtures ]
+      then
+        if [ -L "${_sub}" ] || [ ! -d "${_sub}" ]
+        then
+          _fx=not-a-dir
+        else
+          _fx=ok
+        fi
+        continue
+      fi
+      MISSIONS_SUBBAD="${MISSIONS_SUBBAD:+${MISSIONS_SUBBAD} }${_mb}/${_sb}"
+    done
+    if [ "${_fx}" != ok ]
+    then
+      MISSIONS_SUBBAD="${MISSIONS_SUBBAD:+${MISSIONS_SUBBAD} }${_mb}/fixtures:${_fx}"
     fi
   done
 fi
@@ -421,6 +502,9 @@ printf 'PROC1_HAS_CTF_FLAG=%s\n' "${PROC1_HAS_CTF_FLAG}"
 printf 'SHADOW_FALCO_LINES=%s\n' "${SHADOW_FALCO_LINES}"
 printf 'SSH_KEY_EXISTS=%s\n' "${SSH_KEY_EXISTS}"
 printf 'MISSIONS_LIST=%s\n' "${MISSIONS_LIST}"
+printf 'MISSIONS_BAD=%s\n' "${MISSIONS_BAD}"
+printf 'MISSIONS_SUBBAD=%s\n' "${MISSIONS_SUBBAD}"
+printf 'PROBE_END=yes\n'
 PROBE_EOF
 
 run_probe() { # prints the probe's stdout, or aborts (set -e) on kubectl failure
@@ -455,6 +539,9 @@ OBS_PROC1_HAS_CTF_FLAG=""
 OBS_SHADOW_FALCO_LINES=""
 OBS_SSH_KEY_EXISTS=""
 OBS_MISSIONS_LIST=""
+OBS_MISSIONS_BAD=""
+OBS_MISSIONS_SUBBAD=""
+OBS_PROBE_END=""
 
 while IFS='=' read -r key val
 do
@@ -466,10 +553,20 @@ do
     SHADOW_FALCO_LINES)     OBS_SHADOW_FALCO_LINES="${val}" ;;
     SSH_KEY_EXISTS)         OBS_SSH_KEY_EXISTS="${val}" ;;
     MISSIONS_LIST)          OBS_MISSIONS_LIST="${val}" ;;
+    MISSIONS_BAD)           OBS_MISSIONS_BAD="${val}" ;;
+    MISSIONS_SUBBAD)        OBS_MISSIONS_SUBBAD="${val}" ;;
+    PROBE_END)              OBS_PROBE_END="${val}" ;;
   esac
 done <<< "${OBSERVED}"
 
 VIOLATIONS=()
+
+# A truncated probe must not read as "nothing found" (the 3-8 fields default
+# to empty above): the last line is a sentinel.
+if [ "${OBS_PROBE_END}" != "yes" ]
+then
+  VIOLATIONS+=("3-0: probe output incomplete (no PROBE_END sentinel) — cannot trust any check below")
+fi
 
 if [ "${OBS_ENV_HAS_CTF_FLAG}" != "no" ]
 then
@@ -506,45 +603,54 @@ then
   VIOLATIONS+=("3-7: ttyd's own kubectl exec into challenge failed (participant terminal would be broken)")
 fi
 
-# 3-8 (P27-1, scenario-scope content isolation): scenario mode ONLY — the
-# observed /opt/ctf/missions/ directory set must be EXACTLY this scenario's
-# `challenges:` list, no more (an out-of-scenario id's fixtures/README/
-# falco-rule.yaml reachable — the P27-1 gap this whole feature closes) and
-# no less (a broken missions-scope copy would silently degrade a
-# participant's own in-scope mission). "all"/single-mission mode never runs
-# this check — they intentionally keep the full image-baked tree, unchanged
-# (images/challenge/Dockerfile's guided-event decision).
-if [ "${SCENARIO_MODE}" = yes ]
+# 3-8 (P27-1 + ADR-0026 V4), all three modes. Three independent conditions:
+#   (a) the observed id set == EXPECTED_MISSION_IDS, both directions: an
+#       out-of-scope id (P27-1: its fixtures reachable) or a missing one (a
+#       broken missions-scope copy / an image older than the checkout) fails.
+#       Zero observed entries fails too (expected is never empty, see above).
+#   (b) every top-level entry is a real directory (MISSIONS_BAD empty) —
+#       this includes dot entries such as .DS_Store.
+#   (c) each <id>/ holds only a real `fixtures` directory (MISSIONS_SUBBAD
+#       empty). fixtures' own contents are deliberately not inspected.
+# ADR-0026 V4 は「image の allowlist 証跡」を image 自身に問い合わせる:
+# build 時の検査 (check-image-hygiene.sh) が通った image でも、tag の取り違え・
+# 古い image・registry 上の差し替えは deploy の瞬間にしか見えない。
+# shellcheck disable=SC2206  # intentional word-splitting on unquoted var
+OBS_MISSIONS_ARR=(${OBS_MISSIONS_LIST})
+MISSIONS_OK=yes
+if [ "${#OBS_MISSIONS_ARR[@]}" -ne "${#EXPECTED_MISSION_IDS[@]}" ]
 then
-  # shellcheck disable=SC2206  # intentional word-splitting on unquoted var
-  OBS_MISSIONS_ARR=(${OBS_MISSIONS_LIST})
-  MISSIONS_OK=yes
-  if [ "${#OBS_MISSIONS_ARR[@]}" -ne "${#SCENARIO_CHALLENGE_IDS[@]}" ]
-  then
-    MISSIONS_OK=no
-  else
-    for sid in "${SCENARIO_CHALLENGE_IDS[@]}"
+  MISSIONS_OK=no
+else
+  for sid in "${EXPECTED_MISSION_IDS[@]}"
+  do
+    found=0
+    for x in "${OBS_MISSIONS_ARR[@]}"
     do
-      found=0
-      for x in "${OBS_MISSIONS_ARR[@]}"
-      do
-        if [ "${x}" = "${sid}" ]
-        then
-          found=1
-          break
-        fi
-      done
-      if [ "${found}" -eq 0 ]
+      if [ "${x}" = "${sid}" ]
       then
-        MISSIONS_OK=no
+        found=1
         break
       fi
     done
-  fi
-  if [ "${MISSIONS_OK}" != yes ]
-  then
-    VIOLATIONS+=("3-8: /opt/ctf/missions/ contains [${OBS_MISSIONS_LIST}], expected exactly [${SCENARIO_CHALLENGE_IDS[*]}] for challenge-id=${CHALLENGE_ID}")
-  fi
+    if [ "${found}" -eq 0 ]
+    then
+      MISSIONS_OK=no
+      break
+    fi
+  done
+fi
+if [ "${MISSIONS_OK}" != yes ]
+then
+  VIOLATIONS+=("3-8: /opt/ctf/missions/ contains [${OBS_MISSIONS_LIST}], expected exactly [${EXPECTED_MISSION_IDS[*]}] for challenge-id=${CHALLENGE_ID}")
+fi
+if [ -n "${OBS_MISSIONS_BAD}" ]
+then
+  VIOLATIONS+=("3-8: /opt/ctf/missions/ has entries that are not a plain directory: [${OBS_MISSIONS_BAD}]")
+fi
+if [ -n "${OBS_MISSIONS_SUBBAD}" ]
+then
+  VIOLATIONS+=("3-8: an <id>/ directory holds something other than a plain fixtures/ directory: [${OBS_MISSIONS_SUBBAD}]")
 fi
 
 if [ "${#VIOLATIONS[@]}" -gt 0 ]
@@ -558,7 +664,6 @@ then
   exit 1
 fi
 
-CHECKS_RUN="3-1..3-7"
-[ "${SCENARIO_MODE}" = yes ] && CHECKS_RUN="3-1..3-8"
+CHECKS_RUN="3-1..3-8"
 printf 'assert-flag-isolation.sh: OK — %s clean for namespace %s (challenge-id=%s)\n' \
   "${CHECKS_RUN}" "${NS}" "${CHALLENGE_ID}"

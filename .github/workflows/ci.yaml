@@ -175,6 +175,8 @@ jobs:
         run: ./scripts/check-flags.sh
       - name: flags-file validation is fail-closed (deploy-user.sh --flags-file, no cluster)
         run: ./scripts/check-flags-file-validation.sh
+      - name: deploy-time missions allowlist assert (ADR-0026 V4, check 3-8) accepts a clean image and rejects each violation (stub kubectl, no cluster)
+        run: ./scripts/check-missions-allowlist-assert.sh
       - name: design-token single-source (app#116 — no raw hex under view/templates/)
         run: ./scripts/check-template-hex.sh
       - name: ADR number / index hygiene (#181)
