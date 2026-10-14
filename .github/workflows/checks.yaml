@@ -13,6 +13,7 @@ name: Checks
 #   - go-vulncheck   : go.sum 依存 / stdlib の既知脆弱性 (image CVE scan がカバーしない層)
 #   - gen-diff-check : make gen (oapi) / make tidy / make gen-attack 後の git diff
 #                      (spec↔code / 依存 / ATT&CK 生成物 drift)
+#   - e2e            : make e2e — 実 scoreboard + 実 Chromium のブラウザ E2E (ADR-0031 D1 (b))
 #
 # base image EOL 検知 (check-freshness) は network 必須ゆえ freshness.yaml の
 # scheduled cron に分離した (PR 毎には回さない)。
@@ -27,6 +28,11 @@ on:
     branches: [main]
   push:
     branches: [main]
+
+# 全 job は読むだけ (token で書く job は無い)。repo / org の既定 token 権限が後で
+# 広がっても、PR 由来のコードを動かすこの workflow には効かないように固定する。
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -139,7 +145,12 @@ jobs:
   # ------------------------------------------------------------------
   e2e:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7
+        with:
+          # make e2e needs no GitHub token (it reads the checkout and pulls public images).
+          persist-credentials: false
       - name: browser E2E (make e2e)
         run: make e2e

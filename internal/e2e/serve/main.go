@@ -3,9 +3,10 @@
 // person (or Claude in Chrome) can open the portal in an ordinary browser.
 //
 // It runs inside the e2e-serve image. The Makefile publishes its one port as
-// 127.0.0.1:<port> only; the scoreboard child listens on loopback inside the
-// container, and the proxy's upstream is that child alone (harness.NewProxy
-// takes no URL). Configuration is SEED, AS and E2E_PORT, each validated; there
+// 127.0.0.1:<port> only (on the host, nothing but the host itself reaches it);
+// the scoreboard child listens on loopback inside the container, and the
+// proxy's upstream is that child alone (harness.NewProxy takes no URL). See run
+// for what the proxy does and does not refuse on the container's network. Configuration is SEED, AS and E2E_PORT, each validated; there
 // is no other knob, and no secret or real flag is involved (FLAGS_FILE and
 // ADMIN_EMAILS are never in the child's env: harness.CheckChildEnv).
 package main
@@ -68,12 +69,19 @@ func run() error {
 	// (-p 127.0.0.1:P:P) is what restricts it to the host's loopback, and it
 	// reaches the container through its bridge address, so a loopback-only bind
 	// inside the container would be unreachable (and --network host, which
-	// would allow one, is refused by V8). What stands in for a loopback bind is
-	// the proxy's own checks: it serves only Host 127.0.0.1:<port> and refuses
-	// a foreign Origin / Sec-Fetch-Site (harness.Proxy), so another container on
-	// the bridge, a DNS-rebound name or another page in the browser gets a 403.
-	// The browser's origin is the published one, which is the origin the
-	// child's guard must accept.
+	// would allow one, is refused by V8).
+	//
+	// What the proxy's own checks add (harness.Proxy.refusal) is narrower than a
+	// loopback bind: it serves only Host 127.0.0.1:<port> and refuses a foreign
+	// Origin or Sec-Fetch-Site, so requests a BROWSER makes for another page or
+	// for a DNS-rebound name get a 403. It does not refuse a non-browser client:
+	// a process that can reach the container's bridge address (another container
+	// on the same docker network) and sends Host 127.0.0.1:<port> with no Origin
+	// is forwarded with the synthetic identity. That is the residual risk, and
+	// it is bounded by what the identity is: a seeded, non-admin user of a
+	// throw-away scoreboard with placeholder flags (FLAGS_FILE and ADMIN_EMAILS
+	// never reach the child). The browser's origin is the published one, which
+	// is the origin the child's guard must accept.
 	ln, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port))
 	if err != nil {
 		return err

@@ -165,9 +165,10 @@ jobs:
   # tokens)
   # + .dockerignore credential-file exclusions (app#322 — *.dec.yaml,
   # *.dec.json, kubeconfig*, *.secret.* must stay excluded from build
-  # contexts). All four checks share this job for CI-job-count economy and
-  # because it's already a required check, not because they're the same
-  # risk category.
+  # contexts) + the browser E2E harness's fail-closed verdict and image scope
+  # (ADR-0031 V6 / D1 (b): Dockerfile.e2e is never an I5 image). These checks
+  # share this job for CI-job-count economy and because it's already a
+  # required check, not because they're the same risk category.
   # Branch protection check: "flag-guard"
   # ------------------------------------------------------------------
   flag-guard:
@@ -188,6 +189,10 @@ jobs:
           ./scripts/check-dockerignore.sh --selftest
       - name: browser E2E verdict is fail-closed (ADR-0031 V6, planted-defect fixtures)
         run: ./scripts/check-e2e-verdict.sh
+      - name: the browser E2E images stay out of the I5 build matrix (ADR-0031 D1 (b), fail-closed + selftest)
+        run: |
+          ./scripts/check-e2e-image-scope.sh
+          ./scripts/check-e2e-image-scope.sh --selftest
 
   # ------------------------------------------------------------------
   # Shell hygiene: shellcheck (-S warning) over every shell script in the repo.

@@ -119,8 +119,10 @@ func TestCheckArgv_AcceptsOnlyTheAllowlistPlusChromedpsOwn(t *testing.T) {
 }
 
 func TestReadArgv_ReadsAProcessCommandLine(t *testing.T) {
+	// No skip without /proc: make test (Dockerfile.test) and make e2e run on
+	// Linux, and the live-argv check (V3) depends on reading it.
 	if _, err := os.Stat("/proc/self/cmdline"); err != nil {
-		t.Skip("no /proc")
+		t.Fatalf("no /proc/self/cmdline (%v): the browser's live command line could not be checked either", err)
 	}
 	argv, err := ReadArgv(os.Getpid())
 	if err != nil || len(argv) == 0 {

@@ -100,10 +100,12 @@ func cmdNames(t *testing.T, root string) []string {
 func TestNoProductionBinaryImportsTheE2EHarness(t *testing.T) {
 	root := repoRoot(t)
 	names := cmdNames(t, root)
-	// ADR-0031 V4 names six binaries. A seventh must be a deliberate decision, and
-	// zero means the enumeration is broken (an empty loop would pass forever).
-	if len(names) != 6 {
-		t.Fatalf("cmd/ has %d binaries %v; ADR-0031 V4 checks the six production binaries — update this test with the new one", len(names), names)
+	// Every binary under cmd/ is checked, however many there are: zero means the
+	// enumeration is broken (an empty loop would pass forever). How many binaries
+	// there should be is not this test's business (review-5x T3 R4#7) — a new one
+	// is checked the day it appears.
+	if len(names) == 0 {
+		t.Fatal("cmd/ has no binary directory — the enumeration is broken, and checking nothing proves nothing")
 	}
 	for _, cmd := range names {
 		t.Run(cmd, func(t *testing.T) {
@@ -259,9 +261,32 @@ func TestStrayE2ETagDetector_CatchesPlantedFile(t *testing.T) {
 
 // --- V3 ---
 
+// bannedSleepCalls is keyed by import path, not by the name a file gives the
+// package: `import t "time"` and `import cdp "github.com/chromedp/chromedp"`
+// are the same packages (review-5x T3 R2#7). A dot import is refused outright
+// (it hides the package at the call site).
 var bannedSleepCalls = map[string]map[string]bool{
-	"time":     {"Sleep": true, "After": true, "Tick": true, "NewTicker": true, "NewTimer": true, "AfterFunc": true},
-	"chromedp": {"Sleep": true},
+	"time":                         {"Sleep": true, "After": true, "Tick": true, "NewTicker": true, "NewTimer": true, "AfterFunc": true},
+	"github.com/chromedp/chromedp": {"Sleep": true},
+}
+
+// importNames maps the name each import is used by in f to its path (the
+// declared name, or the path's last element when there is none). Blank and
+// dot imports are not in the map.
+func importNames(f *ast.File) map[string]string {
+	out := map[string]string{}
+	for _, imp := range f.Imports {
+		p, _ := strconv.Unquote(imp.Path.Value)
+		name := p[strings.LastIndex(p, "/")+1:]
+		if imp.Name != nil {
+			name = imp.Name.Name
+		}
+		if name == "_" || name == "." {
+			continue
+		}
+		out[name] = p
+	}
+	return out
 }
 
 // bannedBrowserIdents are chromedp / CDP names that switch off a check or
@@ -321,11 +346,14 @@ func e2eSourceViolations(t *testing.T, dir string, banFiles ...string) []string 
 		report := func(pos token.Pos, what string) {
 			out = append(out, rel+":"+strconv.Itoa(fset.Position(pos).Line)+": "+what)
 		}
+		names := importNames(f)
 		ast.Inspect(f, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.SelectorExpr:
-				if id, ok := x.X.(*ast.Ident); ok && bannedSleepCalls[id.Name][x.Sel.Name] {
-					report(x.Pos(), id.Name+"."+x.Sel.Name+" (wait on the proxy's log or a DOM predicate, never on a clock)")
+				if id, ok := x.X.(*ast.Ident); ok && id.Obj == nil {
+					if p, imported := names[id.Name]; imported && bannedSleepCalls[p][x.Sel.Name] {
+						report(x.Pos(), id.Name+"."+x.Sel.Name+" ("+p+"; wait on the proxy's log or a DOM predicate, never on a clock)")
+					}
 				}
 			case *ast.Ident:
 				if strings.Contains(strings.ToLower(x.Name), "bypasscsp") {
@@ -336,6 +364,9 @@ func e2eSourceViolations(t *testing.T, dir string, banFiles ...string) []string 
 				}
 			case *ast.ImportSpec:
 				ip, _ := strconv.Unquote(x.Path.Value)
+				if x.Name != nil && x.Name.Name == "." {
+					report(x.Pos(), "dot import of "+x.Path.Value+" (hides the package a call comes from, so a sleep or a banned call cannot be seen)")
+				}
 				for _, b := range bannedBrowserImports {
 					if ip == b || strings.HasPrefix(ip, b+"/") {
 						report(x.Pos(), "import "+x.Path.Value+" (a CDP domain that rewrites requests, responses or certificate trust)")
@@ -382,13 +413,17 @@ func TestE2ESourceHasNoSleepBypassOrBannedFlag(t *testing.T) {
 
 func TestE2ESourceDetector_CatchesPlantedViolations(t *testing.T) {
 	cases := map[string]string{
-		"time.Sleep":           "package x\n\nimport \"time\"\n\nfunc f() { time.Sleep(time.Second) }\n",
-		"time.After":           "package x\n\nimport \"time\"\n\nfunc f() { <-time.After(time.Second) }\n",
-		"time.NewTicker":       "package x\n\nimport \"time\"\n\nfunc f() { _ = time.NewTicker(time.Second) }\n",
-		"chromedp.Sleep":       "package x\n\nimport \"github.com/chromedp/chromedp\"\n\nvar _ = chromedp.Sleep\n",
-		"setBypassCSP call":    "package x\n\nfunc f(p interface{ SetBypassCSP(bool) }) { p.SetBypassCSP(true) }\n",
-		"setBypassCSP literal": "package x\n\nvar m = \"Page.setBypassCSP\"\n",
-		"disable-web-security": "package x\n\nvar f = \"--disable-web-security\"\n",
+		"time.Sleep": "package x\n\nimport \"time\"\n\nfunc f() { time.Sleep(time.Second) }\n",
+		// review-5x T3 R2#7: the same calls under another name, or none.
+		"time.Sleep under an alias":     "package x\n\nimport t \"time\"\n\nfunc f() { t.Sleep(t.Second) }\n",
+		"chromedp.Sleep under an alias": "package x\n\nimport cdp \"github.com/chromedp/chromedp\"\n\nvar _ = cdp.Sleep\n",
+		"a dot import of time":          "package x\n\nimport . \"time\"\n\nfunc f() { Sleep(Second) }\n",
+		"time.After":                    "package x\n\nimport \"time\"\n\nfunc f() { <-time.After(time.Second) }\n",
+		"time.NewTicker":                "package x\n\nimport \"time\"\n\nfunc f() { _ = time.NewTicker(time.Second) }\n",
+		"chromedp.Sleep":                "package x\n\nimport \"github.com/chromedp/chromedp\"\n\nvar _ = chromedp.Sleep\n",
+		"setBypassCSP call":             "package x\n\nfunc f(p interface{ SetBypassCSP(bool) }) { p.SetBypassCSP(true) }\n",
+		"setBypassCSP literal":          "package x\n\nvar m = \"Page.setBypassCSP\"\n",
+		"disable-web-security":          "package x\n\nvar f = \"--disable-web-security\"\n",
 		// V3 review (LOW-1): routes to the same ends that the flag allowlist and a
 		// string match on a switch name do not see.
 		"chromedp.IgnoreCertErrors":            "package x\n\nimport \"github.com/chromedp/chromedp\"\n\nvar _ = chromedp.IgnoreCertErrors\n",
@@ -412,10 +447,18 @@ func TestE2ESourceDetector_CatchesPlantedViolations(t *testing.T) {
 			}
 		})
 	}
-	dir := t.TempDir()
-	mustWriteGoFile(t, dir, "ok.go", "package x\n\nimport \"time\"\n\nconst limit = 5 * time.Second\n")
-	if v := e2eSourceViolations(t, dir, "chromeflags.go", "chromeflags_test.go"); len(v) != 0 {
-		t.Errorf("a time.Duration constant was flagged: %v", v)
+	for name, src := range map[string]string{
+		"a time.Duration constant": "package x\n\nimport \"time\"\n\nconst limit = 5 * time.Second\n",
+		// The check is by path: another package that happens to be named time is
+		// not the clock, and neither is a local variable of that name.
+		"a package aliased as time": "package x\n\nimport time \"example.com/notclock\"\n\nfunc f() { time.Sleep() }\n",
+		"a local that shadows time": "package x\n\nimport \"time\"\n\nvar _ = time.Second\n\ntype c struct{}\n\nfunc (c) Sleep() {}\n\nfunc f() { var time c; time.Sleep() }\n",
+	} {
+		dir := t.TempDir()
+		mustWriteGoFile(t, dir, "ok.go", src)
+		if v := e2eSourceViolations(t, dir, "chromeflags.go", "chromeflags_test.go"); len(v) != 0 {
+			t.Errorf("%s was flagged: %v", name, v)
+		}
 	}
 }
 
@@ -572,6 +615,110 @@ func TestE2EServePublishDetector_CatchesPlantedViolations(t *testing.T) {
 		"--network host at the end of a line": strings.Replace(good, "img", "--network host \\\n\t  img", 1),
 	} {
 		if v := e2eServePublishViolations(mk); len(v) == 0 {
+			t.Errorf("planted %q not flagged", name)
+		}
+	}
+}
+
+// --- V5 / D1 (b): the e2e image runs its tests offline and is not an I5 image ---
+
+// e2eRunNetworkViolations checks Dockerfile.e2e: every RUN that executes
+// scripts/e2e-run.sh carries --network=none among its RUN flags (the scenarios
+// can then reach nothing but loopback), and there is at least one such RUN.
+func e2eRunNetworkViolations(dockerfile string) []string {
+	joined := strings.ReplaceAll(dockerfile, "\\\n", " ")
+	var out []string
+	n := 0
+	for _, line := range strings.Split(joined, "\n") {
+		l := strings.TrimSpace(line)
+		if !strings.HasPrefix(strings.ToUpper(l), "RUN ") || !strings.Contains(l, "scripts/e2e-run.sh") {
+			continue
+		}
+		n++
+		offline := false
+		for _, f := range strings.Fields(l)[1:] {
+			if !strings.HasPrefix(f, "--") {
+				break // the RUN flags end where the command begins
+			}
+			if f == "--network=none" {
+				offline = true
+			}
+		}
+		if !offline {
+			out = append(out, "the RUN that executes the scenarios has no --network=none: "+l)
+		}
+	}
+	if n == 0 {
+		out = append(out, "no RUN executes scripts/e2e-run.sh (the check would look at nothing)")
+	}
+	return out
+}
+
+var imagesLine = regexp.MustCompile(`(?m)^IMAGES[ \t]*[:?]?=[ \t]*(.*)$`)
+
+// e2eMakefileImageViolations checks that neither e2e image is one of the I5
+// images in the Makefile's IMAGES (build / push / load-colima / scan), and that
+// the list is found and non-empty. ci.yaml's build matrix is the other half;
+// .github/ is not in the Docker build context make test runs in, so that half
+// is scripts/check-e2e-image-scope.sh, run by the required flag-guard job.
+func e2eMakefileImageViolations(makefile string) []string {
+	m := imagesLine.FindStringSubmatch(makefile)
+	if m == nil || len(strings.Fields(m[1])) == 0 {
+		return []string{"no IMAGES list in the Makefile (the check would look at nothing)"}
+	}
+	var out []string
+	for _, img := range strings.Fields(m[1]) {
+		if strings.Contains(img, "e2e") {
+			out = append(out, "Makefile IMAGES has "+img)
+		}
+	}
+	return out
+}
+
+func TestE2EImageRunsOfflineAndIsNotAnI5Image(t *testing.T) {
+	root := repoRoot(t)
+	read := func(rel string) string {
+		b, err := os.ReadFile(filepath.Join(root, rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	if v := e2eRunNetworkViolations(read("Dockerfile.e2e")); len(v) > 0 {
+		t.Errorf("Dockerfile.e2e: %v (ADR-0031 D1 (b) / V5)", v)
+	}
+	if v := e2eMakefileImageViolations(read("Makefile")); len(v) > 0 {
+		t.Errorf("%v (ADR-0031 D1 (b): the e2e images are never pushed, so they are not I5 images)", v)
+	}
+}
+
+func TestE2EImageDetectors_CatchPlantedViolations(t *testing.T) {
+	goodDF := "FROM x AS run\nARG E2E_RUN_ID=unset\nRUN --network=none E2E_RUN_ID=\"${E2E_RUN_ID}\" \\\n  ./scripts/e2e-run.sh\n"
+	if v := e2eRunNetworkViolations(goodDF); len(v) != 0 {
+		t.Fatalf("the good Dockerfile was flagged: %v", v)
+	}
+	for name, df := range map[string]string{
+		"no --network flag":          strings.Replace(goodDF, "--network=none ", "", 1),
+		"network default":            strings.Replace(goodDF, "--network=none", "--network=default", 1),
+		"the flag after the command": strings.Replace(strings.Replace(goodDF, "--network=none ", "", 1), "./scripts/e2e-run.sh", "./scripts/e2e-run.sh --network=none", 1),
+		"no RUN of the scenarios":    "FROM x\nRUN true\n",
+	} {
+		if v := e2eRunNetworkViolations(df); len(v) == 0 {
+			t.Errorf("planted %q not flagged", name)
+		}
+	}
+
+	goodMK := "REGISTRY ?= r\nIMAGES       := scoreboard auth-policy collector\n"
+	if v := e2eMakefileImageViolations(goodMK); len(v) != 0 {
+		t.Fatalf("the good Makefile was flagged: %v", v)
+	}
+	for name, mk := range map[string]string{
+		"e2e-serve in IMAGES": strings.Replace(goodMK, "collector", "collector e2e-serve", 1),
+		"e2e in IMAGES":       strings.Replace(goodMK, "scoreboard", "e2e scoreboard", 1),
+		"no IMAGES":           "REGISTRY ?= r\n",
+		"an empty IMAGES":     "IMAGES :=\nSYSDIG_URL ?= x\n",
+	} {
+		if v := e2eMakefileImageViolations(mk); len(v) == 0 {
 			t.Errorf("planted %q not flagged", name)
 		}
 	}

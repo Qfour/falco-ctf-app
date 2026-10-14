@@ -305,6 +305,21 @@ func StartScoreboard(ctx context.Context, c ScoreboardConfig) (*Scoreboard, erro
 	if resp.StatusCode != http.StatusOK {
 		return fail("/healthz", fmt.Errorf("status %d", resp.StatusCode))
 	}
+	// LISTEN_ADDR is a port that was free a moment ago (freeLoopbackAddr), not
+	// one held for the child, so the answer above could come from another
+	// process that took the port in between, while the child's own bind failed.
+	// The child logs "listen failed" and exits in that case: check that it is
+	// still running and has not said so. (Narrower, not closed: the child logs
+	// the configured address, not a bound one, so it cannot be told to take :0
+	// and report the port it got.)
+	select {
+	case <-s.done:
+		return fail("exited right after start-up", errOrExit(s.err))
+	default:
+	}
+	if strings.Contains(logs.String(), `"msg":"listen failed"`) {
+		return fail("could not bind "+addr, errors.New("listen failed"))
+	}
 	return s, nil
 }
 

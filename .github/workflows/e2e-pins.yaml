@@ -24,6 +24,7 @@ on:
         options:
           - Dockerfile.e2e
           - scripts/testdata/e2e-pin-BAD.txt
+          - scripts/testdata/e2e-pin-BAD-continued.txt
 
 permissions:
   contents: read

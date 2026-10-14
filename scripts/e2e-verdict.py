@@ -7,7 +7,9 @@ or unreadable file included) exits non-zero with the reasons on stderr.
 
   - test.json, exit, run_id, sha exist and are not empty;
   - run_id and sha equal the values this `make e2e` generated (so a verdict left
-    over from an earlier run, or from a cached layer, is refused);
+    over from an earlier run, or from a cached layer, is refused). The sha check
+    proves the build arg reached the run; what was tested is the work tree, so
+    make e2e marks a tree with uncommitted changes as "<sha>-dirty";
   - the recorded `go test` exit code is 0;
   - every line of test.json is a JSON object (no unreadable line);
   - no test, at any depth, was skipped or failed, and the package passed;
@@ -117,7 +119,11 @@ def main():
 
     if problems:
         fail(problems)
-    print("e2e-verdict: PASS: %d tests, run %s, sha %s" % (len(passed), a.run_id, a.sha[:12]))
+    # make e2e appends -dirty to the SHA when the work tree had uncommitted
+    # changes (the build context is the work tree, not the commit): keep that
+    # visible in the PASS line rather than cutting it off with the hash.
+    short = a.sha[:12] + ("-dirty" if a.sha.endswith("-dirty") else "")
+    print("e2e-verdict: PASS: %d tests, run %s, sha %s" % (len(passed), a.run_id, short))
 
 
 if __name__ == "__main__":

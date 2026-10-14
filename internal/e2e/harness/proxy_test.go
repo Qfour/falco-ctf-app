@@ -5,11 +5,16 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Qfour/falco-ctf-app/internal/apispec/specparity"
 )
 
 // echoSite answers every request with the identity header it saw and a CSP, so
@@ -395,7 +400,9 @@ func TestProxy_ForwardsThePagesOwnRequests(t *testing.T) {
 func TestProxy_OnAWildcardListenerServesOnlyTheLoopbackHost(t *testing.T) {
 	ln, err := net.Listen("tcp", "0.0.0.0:0")
 	if err != nil {
-		t.Skipf("no wildcard listener: %v", err)
+		// make test runs in Dockerfile.test (Linux): a wildcard bind failing
+		// there is an environment defect, and a skip would hide it.
+		t.Fatalf("no wildcard listener: %v", err)
 	}
 	site, hits := countingSite(t)
 	p, err := NewProxy(ln, site, "user1@e2e.test")
@@ -416,5 +423,79 @@ func TestProxy_OnAWildcardListenerServesOnlyTheLoopbackHost(t *testing.T) {
 	}
 	if atomic.LoadInt32(hits) != before {
 		t.Error("a request with another Host reached the upstream")
+	}
+}
+
+var pathParam = regexp.MustCompile(`\{[^}/]+\}`)
+
+// refusalParityViolations compares the proxy's refusedPath with the spec's
+// audience of every operation: an `x-ctf-audience: internal` route (the
+// webhook, the collector's server-to-server calls) must be refused — the proxy
+// would otherwise hand it the injected identity — and every other route must
+// be forwarded, since the page's own requests go through. A missing audience
+// is a violation too (ADR-0005: the x-ctf-* keys have no default).
+func refusalParityViolations(ops map[string]map[string]any) (out []string, internal int) {
+	for key, op := range ops {
+		_, path, _ := strings.Cut(key, " ")
+		concrete := pathParam.ReplaceAllString(path, "x")
+		aud, ok := specparity.StringExt(op, "x-ctf-audience")
+		switch {
+		case !ok:
+			out = append(out, key+": no x-ctf-audience")
+		case aud == "internal":
+			internal++
+			if !refusedPath(concrete) {
+				out = append(out, key+": internal in the spec, but the e2e proxy would forward it with an injected identity (add it to refusedPrefixes)")
+			}
+		case refusedPath(concrete):
+			out = append(out, key+": audience "+aud+", but the e2e proxy refuses it (a page's own request must be forwarded)")
+		}
+	}
+	sort.Strings(out)
+	return out, internal
+}
+
+// review-5x T3 R4#5: refusedPrefixes is a hand copy of the spec's internal
+// audience; this keeps the two equal, so a new internal route cannot be
+// forwarded with the injected identity unnoticed.
+func TestProxy_RefusesExactlyTheSpecsInternalRoutes(t *testing.T) {
+	root, err := RepoRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := specparity.LoadSpec(filepath.Join(root, "docs", "openapi-scoreboard.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ops := spec.Operations()
+	v, internal := refusalParityViolations(ops)
+	if len(ops) == 0 || internal == 0 {
+		t.Fatalf("the spec gave %d operations, %d internal — the extraction is broken, and a comparison over nothing proves nothing", len(ops), internal)
+	}
+	if len(v) > 0 {
+		t.Fatalf("the e2e proxy's refused paths and the spec's internal audience differ:\n  %s", strings.Join(v, "\n  "))
+	}
+}
+
+func TestRefusalParity_CatchesPlantedDrift(t *testing.T) {
+	ext := func(aud string) map[string]any { return map[string]any{"x-ctf-audience": aud} }
+	cases := map[string]map[string]map[string]any{
+		"a new internal route outside refusedPrefixes": {"POST /hooks/new": ext("internal")},
+		"a participant route the proxy would refuse":   {"GET /internal/me": ext("participant")},
+		"an operation with no audience":                {"GET /api/x": {}},
+	}
+	for name, ops := range cases {
+		if v, _ := refusalParityViolations(ops); len(v) != 1 {
+			t.Errorf("%s: violations = %v, want exactly one", name, v)
+		}
+	}
+	ok := map[string]map[string]any{
+		"POST /falco/events":          ext("internal"),
+		"POST /internal/exfil/{cid}":  ext("internal"),
+		"GET /api/users/{user}/me":    ext("participant"),
+		"GET /api/users/{user}/x/{y}": ext("participant"),
+	}
+	if v, internal := refusalParityViolations(ok); len(v) != 0 || internal != 2 {
+		t.Errorf("the matching set gave %v (%d internal)", v, internal)
 	}
 }

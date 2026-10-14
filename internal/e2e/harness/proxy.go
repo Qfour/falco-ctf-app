@@ -221,6 +221,8 @@ const FlushPath = "/__e2e/flush"
 // has no business on either, and forwarding them with an injected identity
 // would hand any local page a way in. Matched on the raw and on the cleaned
 // path, since the proxy has no mux that would clean it before the check.
+// TestProxy_RefusesExactlyTheSpecsInternalRoutes keeps this list equal to the
+// operations docs/openapi-scoreboard.yaml marks `x-ctf-audience: internal`.
 var refusedPrefixes = []string{"/falco/events", "/internal"}
 
 func refusedPath(p string) bool {

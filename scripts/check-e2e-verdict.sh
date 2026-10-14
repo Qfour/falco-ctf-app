@@ -76,4 +76,14 @@ printf '1\n' >"$tmp/nobrowser/exit"
 : >"$tmp/noexpected.txt"; good "$tmp/noexp";             check "an empty expected list" fail "$tmp/noexp" "$tmp/noexpected.txt"
 printf 'TestA\nTestA\nTestB\n' >"$tmp/dup.txt";          check "a test listed twice" fail "$tmp/ok" "$tmp/dup.txt"
 
+# A work tree with uncommitted changes: make e2e passes "<sha>-dirty". It must be
+# matched like any sha, and stay visible in the PASS line (not cut off with the hash).
+good "$tmp/dirty"; printf '%s-dirty\n' "$sha" >"$tmp/dirty/sha"
+out="$(python3 "$verdict" --dir "$tmp/dirty" --expected "$tmp/expected.txt" --run-id "$run_id" --sha "$sha-dirty" 2>&1)"
+rc=$?
+case "$rc:$out" in
+  0:*-dirty*) echo "ok:   a dirty tree's sha is matched and shown as -dirty (pass)" ;;
+  *) echo "FAIL: a dirty tree's sha: exit $rc: $out"; status=1 ;;
+esac
+
 exit "$status"
