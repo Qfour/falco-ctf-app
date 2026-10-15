@@ -172,7 +172,7 @@ nc -v example.invalid 80
 bash -c 'exec 3<>/dev/tcp/example.invalid/80; echo done >&3'
 
 # DNS 調査(busybox の nslookup)
-nslookup collector.collector.svc
+nslookup collector.collector.svc.cluster.local   # busybox は search ドメインを付けないので FQDN で
 nslookup example.invalid <server>   # DNS サーバを指定する場合
 ```
 
