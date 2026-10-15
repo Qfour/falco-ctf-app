@@ -96,19 +96,15 @@ FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cab
 # zlib 1.3.2-r1 (2026-10-13: base digest を 3.24 の最新 294b683c へ更新。base の zlib は
 #   1.3.2-r0 のままで Sysdig が High を出すため明示 upgrade。`apk policy zlib` 実測で
 #   3.24/main が 1.3.2-r1 を提供)
-# **この画像にはなお残る High CVE がある** (upstream fix 自体が未着地、または
-# alpine パッケージへの backport 待ち — 2026-10-05 時点で 3.24 に fix 版なし):
-#   libxml2 2.13.9-r2 (fix 2.15.2、2026-10-13 時点の Sysdig suggested fix は 2.15.4;
-#     CVE-2026-0989/2025-8732; CVE-2026-11979 は upstream に fix 自体が存在しない。
-#     `apk policy libxml2` 実測 (2026-10-13): 3.24 / edge/main とも 2.13.9-r2 のみ。
-#     引き込み元は bind-tools -> bind-libs (`apk info -r libxml2`)。bind-tools は
-#     参加者向けに dig/nslookup として文書化済み (PARTICIPANT-HANDBOOK / cheatsheet)
-#     のため、除去は content 判断 — 本 PR では触らない)。
-#     **受け入れの期限と解除条件**: bind-tools を `drill` (ldns、libxml2 を引かない) +
-#     busybox nslookup へ置換する PR が入るまで。追跡: app#338 と置換 issue)
+# DNS ツール (2026-10-15): 旧 bind-tools は bind-libs 経由で libxml2 2.13.9-r2 (High) を
+#   引き込み、代替の drill/ldns 1.8.4-r1 も High (fix 1.9.1)。どちらも Alpine 3.24 に
+#   fix が無い (`apk policy` 実測。ldns 1.9.x は edge/main のみ) ため、DNS 調査は base
+#   busybox の `nslookup <name> [server]` だけにした (app#338 / #345)。
+#   edge/main の ldns 1.9.x が 3.24 に来たら drill の再導入を再検討する。
+#   画像内の libxml2 / ldns は 0 本。残存 High は無い (jq は下記の通り自動で fix 版へ上がる)。
 # jq は pin していないため 3.24/main の更新で 1.8.2-r0 (CVE-2026-49839 の fix 版、
 # `apk policy jq` 実測で唯一の提供版) へ自動で上がり、残存から外れた (2026-10-05)。
-# 残存 (libxml2) の追跡先は app#291 (#227 は CLOSED)。
+# CVE feed の drift (pin 版が後から High 扱いになる) の追跡先は app#291。
 RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 zlib=1.3.2-r1 \
  && apk add --no-cache \
         bash=5.3.9-r1 \
@@ -117,7 +113,6 @@ RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 zlib=1.3.2
         curl=8.22.0-r0 \
         libcurl=8.22.0-r0 \
         netcat-openbsd \
-        bind-tools \
         jq \
         less \
         vim=9.2.1178-r0 \
