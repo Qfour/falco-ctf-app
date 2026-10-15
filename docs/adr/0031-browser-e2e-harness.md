@@ -1,11 +1,16 @@
 # ADR-0031: ブラウザでの確認を二層にする — 開発時は Claude が専用ブラウザで確かめて証跡を残し、CI は Go のテストが実バイナリと実 Chromium を動かす E2E (`make e2e`) で固定する
 
-- Status: **Proposed** (Accepted 化の期限 = P28-1 の着手前: workspace `REFACTORING.md:1902`。ハーネスの実装は受け入れ判定まで。時限自動承認の対象: workspace `ORGANIZATION.md:472`)
+- Status: **Proposed** (Accepted 化の期限 = P28-1 の着手前: workspace `REFACTORING.md:1902`。ハーネスの実装は受け入れ判定まで。時限自動承認の対象: workspace `ORGANIZATION.md:472`。rev2 = 2026-10-15: H1 (app#361、
+  0eb9a5f、2026-10-14 merge) で確定した事実、Signpost 3 の大きさの較正、Verification と段階の状態を反映した。Accepted 化は D1 (c) の観測期間の開始を兼ね、CEO が行う (workspace `REFACTORING.md:2034`。
+  上の時限自動承認より優先)。追加は末尾の「Decision の追加 (rev2)」)
 - Date / Deciders: 2026-10-06 起草・2026-10-07 改訂 / CEO (ADR-WS-0009 の H「検証できないものは出荷しない」を承認。CI は Playwright 相当を `make test` の層に) + VP (発注・査定) + architect (起草・同意権) /
-  独立レビュー: qa-engineer R2・security-engineer R1 (2026-10-07、app#321。両者とも方向を承認して REQUEST CHANGES。指摘の反映先は Advice)
-- 関連: ADR-0027 V6・V7 (`0027:152-154`)、ADR-0032 D8・⑩ (`0032:111-113,239`)、app#316 / #317 (P28-0b、draft)、workspace `REFACTORING.md` P28 (受け入れ条件 2・4・6・7 = `:1619-1629`、
-  `:1657,1801`)、workspace `DEV-METHOD-REVIEW.md` H (`:22,49,128-130`) と CEO 判断 8 (`:171`)、workspace `GITHUB-OPS.md` G5 (`:242-254`)
-- 行番号は c5e0761 (platform は 873eed2)。`0027:N` などは `docs/adr/` の各 ADR、`pane-<名>` は `internal/scoreboard/view/templates/portal/pane-<名>.tmpl`、`conventions` は
+  独立レビュー: qa-engineer R2・security-engineer R1 (2026-10-07、app#321。両者とも方向を承認して REQUEST CHANGES。指摘の反映先は Advice) / rev2 (2026-10-15): architect (起草) + VP (発注。review-5x 9 回目の
+  R3#3・R4#4・R4#6・R5#5 と VP の決定 2 つ)
+- 関連: ADR-0027 V6・V7 (`0027:152-154`)、ADR-0032 D8・⑩ (`0032:111-113,239`)、app#316 / #317 (P28-0b、draft。rev2: merge 済み)、workspace `REFACTORING.md` P28 (受け入れ条件 2・4・6・7 = `:1619-1629`、
+  `:1657,1801`)、workspace `DEV-METHOD-REVIEW.md` H (`:22,49,128-130`) と CEO 判断 8 (`:171`)、workspace `GITHUB-OPS.md` G5 (`:242-254`)、app#361 (H1、0eb9a5f)・app#334 (webhook の browser-path 403、
+  draft)・ADR-0034 (Proposed、未 merge。S2 = `feat/adr-0034-s2-identity-roster` f76c9b1)・review-5x 9 回目 (workspace#69)
+- 行番号は c5e0761 (platform は 873eed2。rev2 で足した参照は app 4e39112 = H1 の後の main、workspace 46b2fe9、ADR-0034 は `feat/adr-0034-s1` 696f28d)。`0027:N` などは `docs/adr/` の各 ADR、`pane-<名>` は
+  `internal/scoreboard/view/templates/portal/pane-<名>.tmpl`、`conventions` は
   `.claude/rules/falco-ctf-app-conventions.md`。Claude Code の docs は 2026-10-06 / 07 に取得した `https://code.claude.com/docs/en/<page>` を「docs: <page>」と書く。docs に無いことは「未確認」と書く
 
 ## Context
@@ -75,34 +80,45 @@ dialog で止まり、要求の網羅を見られず、作り手の自己申告�
       形は docs: sub-agents)、workspace の `scripts/claude/check-agent-skills.sh` で検査する (workspace の別 PR。VP)。architect と security-engineer は `tools:` の allowlist に MCP が無い。
   - 起動は **`make e2e-serve SEED=<名前> [AS=user1]`** — (b) と同じ image・seed・proxy で、identity を注入した portal を `127.0.0.1` にだけ出す (V8)。compose と `ALLOWED_ORIGINS` の dev 値は
     変えない。Desktop は副の経路で、`launch.json` の `url` でこれに付ける (clean profile なので専用ブラウザは要らない)。手順は project skill に記録し、Engineer と `/run`・`/verify` が同じ手順を使う
-    (docs: skills)。auth・ttyd・iframe に触れる変更は platform の local stack で確かめ、ログインだけ人が行う (Claude はログイン画面で止まって人に渡す: docs: chrome)。
+    (docs: skills)。auth・ttyd・iframe に触れる変更は platform の local stack で確かめ、ログインだけ人が行う (Claude はログイン画面で止まって人に渡す: docs: chrome)。rev2: 段階 P が揃うまで `e2e-serve`
+    は人だけが開く (D6 (5))。container の中の bind と proxy の拒否規則は D6。
   - **画像の規律**: 証跡用の local stack は `events/` の flags と names を渡さずに立てる (platform の `scripts/deploy-event-workspaces.sh:11-13` は `--env local` でも `--flags-file` と
     `--names-file` を受ける)。VP は PR に添付する前に各画像を確かめる。GIF は `e2e-serve` で撮ったものだけ (GIF は見えるものをすべて写す: C5)。
   - 確かめられること: 見た目・DOM・console・クリックで進む流れ・ポーリングでの変化 (GIF も可)。確かめられないこと: ネイティブ dialog の先 (人が閉じるか CI に任せる)、ページが出した
     要求の網羅 (Chrome から要求の一覧を読めるかは未確認)、cross-origin の ttyd iframe の cookie (D2)、回帰の継続。
   - **(b) CI = `make e2e`。** `internal/e2e/` (build tag `e2e`) の Go テストが、`cmd/scoreboard` の実バイナリ (`scoreboard/Dockerfile` と同じ build flag) を子プロセスとして起動する。子の env は
     allowlist から組んで親の env を継がない: `LISTEN_ADDR` (loopback)・`SCOREBOARD_DB` (一時)・`ALLOWED_ORIGINS` (proxy の origin) (`cmd/scoreboard/main.go:31-32,75`)・`CHALLENGES_DIR`・
-    `SCENARIO_FILE` (`cmd/scoreboard/catalog.go:28-29`)・`PORTAL_TTYD_SUFFIX` (予約 TLD のテスト値 `<名>.test`: `main.go:122`)・`QUEST_ENABLED=true` (ADR-0029 D3: 未設定は無効なので、E2E が常に Quest 無効で回って緑にならないように。シナリオは `quest_enabled` を assert する)。`FLAGS_FILE`・`ADMIN_EMAILS`・webhook の secret (既定 off: `:140`)
-    は渡さず、無いことを起動時に assert する。テスト専用の時計 (`scoreboard.WithNow`: `internal/scoreboard/server.go:86`) と store への直書きは使わない — main の組み立て (`main.go:286-299`) を写すと drift の元になる。
+    `SCENARIO_FILE` (`cmd/scoreboard/catalog.go:28-29`)・`PORTAL_TTYD_SUFFIX` (予約 TLD のテスト値 `<名>.test`: `main.go:122`)・`QUEST_ENABLED=true` (ADR-0029 D3: 未設定は無効なので、E2E が常に Quest
+    無効で回って緑にならないように。シナリオは `quest_enabled` を assert する)・`EXPECTED_EMAIL_DOMAIN=e2e.test` (rev2: D8 (2))。`FLAGS_FILE`・`ADMIN_EMAILS`・webhook の secret (既定 off: `:140`)
+    は渡さず、無いことを起動時に assert する (rev2: 実装は `WEBHOOK_SECRET_MODE`・`HIDDEN_USERS`・`DETECT_RUNNER` も禁じる: `internal/e2e/harness/child.go:48-55`)。テスト専用の時計 (`scoreboard.WithNow`:
+    `internal/scoreboard/server.go:86`) と store への直書きは使わない — main の組み立て (`main.go:286-299`) を写すと drift の元になる。
   - 手前の proxy は (1) `X-Auth-Request-Email` を上書きで注入する (ingress と同じ向き) (2) 全要求を順序つきで記録する (3) 障害 (404・500・応答の停止) を注入できる (4) 応答のヘッダ (CSP を
-    含む) を書き換えない。upstream は自分が起動した子だけで、env や引数で差し替えられない。ブラウザは chromedp で Chromium を headless で動かし、`--host-resolver-rules` で `user1.<suffix>` を
-    loopback の TLS stub に向ける (iframe は頁の読み込みで作られる: `pane-terminal:69-79,93`。信頼させるのは stub の鍵だけで、`--ignore-certificate-errors-spki-list` が候補 (未確認)。証明書の検査を全体で切る flag は使わない)。
+    含む) を書き換えない。upstream は自分が起動した子だけで、env や引数で差し替えられない。rev2: 役割を 2 つ足した (自前の 403 と `/__e2e/flush`)。bind と拒否規則とあわせて D6。ブラウザは chromedp で Chromium を
+    headless で動かし、`--host-resolver-rules` で `user1.<suffix>` を
+    loopback の TLS stub に向ける (iframe は頁の読み込みで作られる: `pane-terminal:69-79,93`。信頼させるのは stub の鍵だけで、`--ignore-certificate-errors-spki-list` が候補 (未確認)。証明書の検査を全体で切る
+    flag は使わない)。rev2: spki-list で確定した。起動する binary と argv の検査は D7。
   - `Dockerfile.e2e`: base は `Dockerfile.test:8` と同じ digest、Chromium と font は apk の exact pin (D5)、テストを回す `RUN` は `--network=none` (外部への要求を構造的に持たない。loopback は
-    使える見込み: V5 で実測)。push しない — `Makefile:12` の `IMAGES` と CI の build matrix (`.github/workflows/ci.yaml:282-340`) に入れないので I5 の 8 image ではない。build step の Chromium は
+    使える見込み: V5 で実測。rev2: 使える = E1〜E4 が緑)。push しない (rev2: `serve` target の `e2e-serve` の image も同じ: D9) — `Makefile:12` の `IMAGES` と CI の build matrix
+    (`.github/workflows/ci.yaml:282-340`) に入れないので I5 の 8 image ではない。build step の Chromium は
     root なので `--no-sandbox` になるが、読み込むのは loopback の first-party の頁だけで、step は offline で秘密を持たない (security-engineer が既存の `go test` と同じ信頼範囲と確認した: Advice)。
   - **判定は fail-closed で、host 側で行う。** BuildKit は失敗した `RUN` の後を export しないので、test の `RUN` は `go test -json` の出力と終了コードをファイルに書いて常に 0 で終わる。
     `make e2e` は (1) export 先の専用 dir (`.gitignore` と `.dockerignore` の両方に載せる) を空にしてから build する (2) 毎回生成する `E2E_RUN_ID` と HEAD の SHA を build ARG で渡し (test の層の
-    cache を外す)、判定ファイルに書かせる (3) build の後で、RUN_ID と SHA の一致・終了コード 0・pass したテスト名の集合 = `internal/e2e` に置く名前の表・skip 0 をすべて確かめ、1 つでも欠ければ
+    cache を外す)、判定ファイルに書かせる (rev2: 未 commit の変更がある tree は `<sha>-dirty`: `Makefile:178`) (3) build の後で、RUN_ID と SHA の一致・終了コード 0・pass したテスト名の集合 = `internal/e2e`
+    に置く名前の表・skip 0 をすべて確かめ、1 つでも欠ければ
     非ゼロで終わる (ファイルの欠落・空・読めない行も fail。`t.Skip` で黙って緑にしない: `dev-flow.md:167-176` の I15 の前例)。診断 (要求ログ・console・DOM の抜粋・画像) も同じ export に入る (`Makefile:151-152` の形)。
-  - `make e2e` は **`make test` と別の target**。`make test` は E2E を実行せず、`go vet -tags e2e ./...` でコンパイルだけを確かめる。Stop hook は変えない。
+  - `make e2e` は **`make test` と別の target**。`make test` は E2E を実行せず、`go vet -tags e2e ./...` でコンパイルだけを確かめる。Stop hook は変えない。rev2: ブラウザを使わない `internal/e2e/harness`
+    の単体・統合テストは `make test` で回る (D8 (3))。
   - CI: job `e2e` を advisory の workflow (`.github/workflows/checks.yaml:3-9`) に置き、path filter を付けずに全 PR で回す (昇格したときに永久 pending を作らない)。`continue-on-error` と
     `container:` は使わない。runner の上で `actions/checkout` の後に `make e2e` を実行するだけ (BuildKit の build の中でテストが回る。services も port の公開も使わず、Colima と同じ経路)。新しい
-    third-party action を足さない — 診断を artifact にするなら `actions/upload-artifact` を P12 の例外表 (`conventions:172-177`) に足し、同じ PR で表を実態 (`actions/checkout@v7` ほか: `checks.yaml:20-22`) に直す。
-  - 見積 (未計測。V5 で実測する): image は `Dockerfile.test` の image + 0.4〜0.5GiB。job は `test / go-test` の 2 分 52 秒 + 1〜2 分 (apk、バイナリの build、4 シナリオ。各 10〜20 秒で、2 秒ポーリングの待ちが支配的)。
+    third-party action を足さない — 診断を artifact にするなら `actions/upload-artifact` を P12 の例外表 (`conventions:172-177`) に足し、同じ PR で表を実態 (`actions/checkout@v7` ほか: `checks.yaml:20-22`)
+    に直す。rev2: job は `checks.yaml:135-156`。H1 は診断を artifact にしていない (Consequences)。
+  - 見積 (未計測。V5 で実測する): image は `Dockerfile.test` の image + 0.4〜0.5GiB。job は `test / go-test` の 2 分 52 秒 + 1〜2 分 (apk、バイナリの build、4 シナリオ。各 10〜20 秒で、2
+    秒ポーリングの待ちが支配的)。rev2: 実測は V5。image は `Dockerfile.test` より 0.46GB 小さく (helm と repo 全体の vet・test の build cache を持たないためと推定。層ごとの実測は無い)、Chromium と font
+    の層は見積を超えて約 0.76GiB、job は `test` と並行に走り単独で 2 分前後。見積の形が外れたので、Signpost 3 の大きさを較正した。
   - **(c) required への昇格**: 次をすべて満たしたら、CEO が `setup-rulesets.sh` の CHECKS に `e2e` を足す — V1 の E1〜E4 と V2 の自己テストが main で green / 2 週間以上かつ 20 run 以上で
     flake 0 / job の p95 が 10 分以下 / D5 の検知 job が main で動き、期間中の bump がすべて検知から 2 日以内に main に入った (bump が無ければ V9 で検知を示す)。**flake** = test stage の失敗で、
     同じ SHA の再実行で緑になったもの。build stage の失敗 (apk・base image・Go module の取得、index の更新) は flake に数えず、原因つきで別に記録する (取得の失敗が run の 2% を超えたら昇格
-    しない)。cancel された run は数えない。赤の run の再実行と分類は qa-engineer。
+    しない)。cancel された run は数えない。赤の run の再実行と分類は qa-engineer。rev2: 定期 job の赤の扱いと、index の更新による赤の数え方は D10。
 - **D2 対象の固定。**
   - **入れる規則**: ブラウザが出荷物の JS を出荷物の CSP の下で動かすこと、ポーリングとサーバ状態の収束、ページ自身が出す要求の列、ネイティブ dialog を挟む操作、のどれかに依存する
     性質だけ。HTTP 応答への assert (Go テスト) か、描画関数の出力への assert (jsc・template の静的テスト) で言えるものは入れない。
@@ -119,7 +135,7 @@ dialog で止まり、要求の網羅を見られず、作り手の自己申告�
     投影の値は Go テスト、描画の組み合わせは jsc と template の検査。
 - **D3 決定論。**
   - シナリオごとに新しいバイナリ・一時 DB・browser context、直列。seed はバイナリの HTTP 面だけ (`POST /falco/events`、`POST /api/challenges/{cid}/submit`) で入れ、proxy を通さない (要求ログに
-    混ぜない)。seed の手順は 1 箇所に置いて `make e2e-serve` と共有する。ADR-0032 で開始操作が要るようになったら、そこだけを直す。
+    混ぜない。rev2: 要求は本番の呼び手ごとの形: D8 (1))。seed の手順は 1 箇所に置いて `make e2e-serve` と共有する。ADR-0032 で開始操作が要るようになったら、そこだけを直す。
   - 待ち合わせに sleep を使わない (V3)。同期点はサーバ側が proxy の記録、クライアント側が DOM の述語 (締切つき。締切は失敗までの上限で、成功の条件ではない) で、規則は H1 の受け入れ条件 (b)。
     否定の assert は、同じ描画の肯定の同期点の後にだけ置く。
   - 時刻: サーバの時計は本物のまま。時刻を含む表示 (`updated …`・相対時刻) は assert しない。rate-limit の bucket は 1 req/s・burst 10 (`api.go:299`) なので、1 シナリオの書き込みは
@@ -136,7 +152,7 @@ dialog で止まり、要求の網羅を見られず、作り手の自己申告�
   >
   > | browser E2E | `make e2e` (PR 前に推奨) | advisory (`e2e`)。ADR-0031 D1 (c) を満たしたら blocking |
   >
-  > 注意: `make test` は E2E を実行しない (コンパイルだけ)。「`make test` が緑」を「ブラウザで確かめた」と読み替えない。
+  > 注意: `make test` はブラウザの E2E を実行しない (シナリオはコンパイルだけ。ブラウザを使わない harness の統合テストは回る: ADR-0031 D8 (3))。「`make test` が緑」を「ブラウザで確かめた」と読み替えない。
   - **証跡の最小形** (PR 本文。画像は確かめた状態ごとに 1 枚):
     ```
     ### ブラウザ確認 (ADR-0031 D4)
@@ -150,38 +166,55 @@ dialog で止まり、要求の網羅を見られず、作り手の自己申告�
 - **D5 Chromium の pin の保守。** index は 1 版だけを載せる (C6) ので、exact pin は Chromium の更新のたびに index から消え、`Dockerfile.e2e` の build が止まる (fail-closed)。
   - 直すのは pin の更新だけ。unpin・版の範囲指定・別の repository への切替で緑に戻さない。
   - 検知: freshness 型の定期 job (`.github/workflows/freshness.yaml:3-16` と同じ形。network を使うので PR では回さず、advisory) を毎日と `workflow_dispatch` で回し、pin した base image の中で
-    `apk policy` を引いて、`Dockerfile.e2e` の apk の pin のどれかが index の版と違えば赤にする。
+    `apk policy` を引いて、`Dockerfile.e2e` の apk の pin のどれかが index の版と違えば赤にする。rev2: `.github/workflows/e2e-pins.yaml` と `scripts/check-e2e-pins.sh` (`\` の継続行も読む)。赤の扱いは D10。
   - bump: 担当は software-engineer (Dockerfile の担当)。Chromium を上げる PR では chromedp と cdproto の版も見直し、上げるなら同じ PR で上げる。Dependabot は apk を上げないので、Dependabot の
     chromedp の PR は `e2e` が緑のときだけ merge する。PR に `apk policy` の出力と `make e2e` の判定を貼る。
-  - `Dockerfile.e2e` を digest の bump の一覧 (`conventions:129-141` の `golang:1.26-alpine` の行) に足す (H1)。package は `chromium` を使い、同じ版の `chromium-headless-shell` (旧 headless の
+  - `Dockerfile.e2e` を digest の bump の一覧 (`conventions:129-141` の `golang:1.26-alpine` の行) に足す (H1。rev2: 済 = `conventions:133,140`)。package は `chromium` を使い、同じ版の `chromium-headless-shell` (旧 headless の
     別実装。x86_64 で installed 188.9MiB) は使わない — 小さいが、参加者のブラウザとの差を増やすため。
 
 ## Consequences
 
 - **諦めたもの**: WebKit と Firefox (Chromium だけ)。Playwright の自動待機・trace・時計の制御。画素の比較。開発時に dialog の先まで自動で確かめること。I8 の cookie 側の自動化 (D2)。
-- **新しい不変条件は足さない。** `e2e` が required になるまで機械強制が blocking でないので、Hard Invariant は提案しない (`docs/adr/README.md` の規律)。
+- **新しい不変条件は足さない。** `e2e` が required になるまで機械強制が blocking でないので、Hard Invariant は提案しない (`docs/adr/README.md` の規律)。rev2: V3・V4・V6・V8 と D8 (3) は required の check で
+  blocking になったが、守るのは harness の境界と seed の形で、製品の性質ではないので判断は変えない。
 - **影響**: go.mod に test 専用の依存が入る (本番の binary に入らないことを V4 で検査)。CI の job と定期 job が 1 つずつ増え、Chromium の bump が定常の作業になる (D5)。`Dockerfile.e2e` は
   Class-2 (Dockerfile: workspace `ORGANIZATION.md:277`) で、security-engineer のレビューと CEO の merge が要る。ADR-0027 V6 / V7 と ADR-0032 ⑩ の「qa の手動検証」は、E1〜E3 が main に入った
-  時点でシナリオ名に置き換わる。platform の stand-up のリハーサルに iframe の cookie の手動項目が 1 つ増える (sre-engineer)。D1 (a) (i) の Read の deny は Claude のどの session にも効くので、
+  時点でシナリオ名に置き換わる (rev2: 入った = app#361)。platform の stand-up のリハーサルに iframe の cookie の手動項目が 1 つ増える (sre-engineer)。D1 (a) (i) の Read の deny は Claude のどの session にも効くので、
   `events/` を読む作業 (event の pin の更新など) も Claude に頼めなくなる — 困るなら `events/**` を `--chrome` の session にだけ効かせる方法を CEO が選ぶ (方法は未確認)。
 - **architect の判定 (同意権)**: `Dockerfile.e2e` は I5 の image ではない — **yes, if** push しない・`IMAGES` と build matrix に入れない・base の digest と Chromium の exact pin・テストの
-  step が offline・pin の保守 (D5) を持つ。契約 (`ALLOWED_ORIGINS`・cookie domain・compose の dev 値・`PORTAL_TTYD_SUFFIX` の派生規則 `conventions:377`) と API (spec) は変えない — E4 はテスト値を子の env に渡すだけ。
+  step が offline・pin の保守 (D5) を持つ。契約 (`ALLOWED_ORIGINS`・cookie domain・compose の dev 値・`PORTAL_TTYD_SUFFIX` の派生規則 `conventions:377`) と API (spec) は変えない — E4 はテスト値を子の env
+  に渡すだけ。rev2: この条件は H1 で満たされた — `run` と `serve` の 2 target とも push せず、`IMAGES` と build matrix に無い (`TestE2EImageRunsOfflineAndIsNotAnI5Image`・`scripts/check-e2e-image-scope.sh`)。
+  base は `Dockerfile.test` と同じ digest、Chromium と font は exact pin、テストの `RUN` は `--network=none`、D5 の定期 job がある。`EXPECTED_EMAIL_DOMAIN` (D8 (2)) も子に渡すテスト値で、契約を変えない。
 - **助言 (非拘束)**: (1) application-engineer へ — ネイティブ `confirm()` は Claude in Chrome を止める (C5)。P28-1 でページ内の確認に置き換えるなら、開発時にも dialog の先まで確かめられる
   (ADR-0032 D8 は確認の形を指定していない)。(2) e2e の image は CI に JS の実行系を持ち込むので、#316 の描画行列を同じ image の Chromium (サーバ無し) で回せば macOS の jsc への依存を外せる。
   どちらも E2E の対象を広げる話ではない。
+- **harness は契約の consumer になった (rev2)**: D8 (3) の規則により、identity・ingest・submit の経路の契約と scoreboard の起動に要る env を変える PR は `internal/e2e/harness` も直す。その path の担当
+  (qa-engineer。path 表は H2 の DoD (4)) と、WIP の「同一ファイルを触る PR は 1 本」の判定がこの path にも及ぶ。
+- **開発機の資源 (rev2)**: Colima の `falco-build` (4 CPU・8GiB・disk 40GiB。2026-10-15 の `colima list`) で、cold の `make e2e` 1 回が VM のディスクを約 2.0GB 使い (build cache)、メモリのピークは約 1.8GiB
+  (app#361)。Chromium の層と build cache は `make test` の分に加わる。`no space left` は `docker builder prune -af` で戻す。host の前提は docker と python3 (`Makefile:38`)。
+- **CI の診断 (rev2)**: 要求ログ・console・DOM・画像は export の dir に入るが、`e2e` job は artifact にしない (`checks.yaml:146-156`)。赤の run の分類 (D1 (c)) に要るなら、D1 (b) のとおり
+  `actions/upload-artifact` を P12 の例外表に足す PR を出す (その表の `actions/checkout@v4` は実態の v7 と食い違ったまま: `conventions:178`)。
 
 ## 段階と期限
 
-| 段階 | 内容 | 担当 | Class | security |
-|---|---|---|---|---|
-| H0 | 本 ADR を Accepted にする (期限 = P28-1 の着手前) | architect → VP | 0 | 不要 |
-| P | D1 (a) の前提: (i)〜(iv) の設定と、(v) の `disallowedTools` + `check-agent-skills.sh` の検査 (workspace の PR)。**揃うまで Claude にブラウザを操作させない** | CEO (設定)・VP (PR) | — | 必須 |
-| H1 | `Dockerfile.e2e`・`internal/e2e` (proxy・TLS stub・helper・判定器・自己テスト・E1〜E4)・`make e2e` / `e2e-serve`・`Dockerfile.test` の `go vet -tags e2e`・job `e2e` (advisory)・D5 の定期 job・V4 / V8 の境界テスト | qa-engineer (オーナー。シナリオ・helper・判定器)、software-engineer (Dockerfile・Makefile・CI・D5) | 2 | 必須 |
-| H2 | dev-flow の文 (D4)・`e2e-serve` の手順の project skill・ORGANIZATION §7 の DoD・platform のリハーサルの手動項目 (iframe の cookie) | application-engineer・VP・sre-engineer | 0 | 不要 |
-| H3 | `e2e` を required にする (D1 (c) の記録を添える) | CEO (admin) | — | — |
+| 段階 | 内容 | 担当 | Class | security | 状態 (rev2、2026-10-15) |
+|---|---|---|---|---|---|
+| H0 | 本 ADR を Accepted にする (期限 = P28-1 の着手前) | architect → VP | 0 | 不要 | 未。Accepted 化は D1 (c) の観測期間の開始を兼ね、CEO が行う |
+| P | D1 (a) の前提: (i)〜(iv) の設定と、(v) の `disallowedTools` + `check-agent-skills.sh` の検査 (workspace の PR)。**揃うまで Claude にブラウザを操作させない** | CEO (設定)・VP (PR) | — | 必須 | 未。(v) = workspace#54 (draft、未 merge)。(i)〜(iv) は CEO の設定で、architect は確かめていない |
+| H1 | `Dockerfile.e2e`・`internal/e2e` (proxy・TLS stub・helper・判定器・自己テスト・E1〜E4)・`make e2e` / `e2e-serve`・`Dockerfile.test` の `go vet -tags e2e`・job `e2e` (advisory)・D5 の定期 job・V4 / V8 の境界テスト | qa-engineer (オーナー。シナリオ・helper・判定器)、software-engineer (Dockerfile・Makefile・CI・D5) | 2 | 必須 | **済** (app#361、0eb9a5f、2026-10-14。E1〜E4 と自己テスト 4 本。security APPROVE with comments、review-5x 9 回目の採用を反映) |
+| H2 | dev-flow の文 (D4)・`e2e-serve` の手順の project skill・ORGANIZATION §7 の DoD・platform のリハーサルの手動項目 (iframe の cookie) | application-engineer・VP・sre-engineer | 0 | 不要 | 一部済 (下の「H2 の DoD」) |
+| H3 | `e2e` を required にする (D1 (c) の記録を添える) | CEO (admin) | — | — | 未 (D1 (c) を満たした後) |
 
-- **H1 は P28-0b (#316 / #317) の merge の後に出す** (E1 / E2 はその挙動を固定する)。0b が遅れるなら H1 は E3・E4 と自己テストだけで出し、E1 / E2 は 0b の merge 後の PR で足す。
-- **H1 までの間**: ADR-0027 V6 / V7 と ADR-0032 ⑩ は qa の手動検証のまま。P が揃っていれば platform の local stack で人がログインした専用ブラウザを Claude が操作し、揃うまでは qa が手で確かめ、どちらも D4 の最小形で残す。
+- **H1 は P28-0b (#316 / #317) の merge の後に出す** (E1 / E2 はその挙動を固定する)。0b が遅れるなら H1 は E3・E4 と自己テストだけで出し、E1 / E2 は 0b の merge 後の PR で足す。rev2: 0b は H1 より先に main
+  に入った (app#316 / #317。ADR-0027 は Accepted = app#356) ので縮退は使わず、E1〜E4 をすべて H1 に入れた。
+- **H1 までの間**: ADR-0027 V6 / V7 と ADR-0032 ⑩ は qa の手動検証のまま。P が揃っていれば platform の local stack で人がログインした専用ブラウザを Claude が操作し、揃うまでは qa が手で確かめ、どちらも D4
+  の最小形で残す。rev2: H1 の後は E1〜E3 がこれに代わる。ADR-0032 の Verification が E3 に求める Me pane の拡張 (`0032:241`) と開始操作 (ADR-0032 S4) は H1 に無く、それぞれの段の PR が E3 を足す。
+- **H2 の DoD (rev2)**: 済 = `Dockerfile.e2e` をパターン D の判定 (`.claude/rules/dev-flow.md:14`)・Stop hook の `HAS_IMAGE` (`scripts/claude-hook-stop.sh:16`)・CODEOWNERS (`.github/CODEOWNERS:22`) に足した
+  (#361)。残り: (1) D4 の 2 行と注意 (`dev-flow.md:42-48` のパターン A の表と `:157-164` の CI の表) — application-engineer (2) `e2e-serve` の手順の project skill。sub-repo の skill は workspace の session
+  から解決されない (workspace `CLAUDE.md`) ので workspace に置き、D6 (5) を書く (3) ORGANIZATION §7 の DoD の 1 行 — VP (4) ORGANIZATION の path 表に `falco-ctf-app/internal/e2e/**` を足す: 主担当 qa-engineer、
+  `Dockerfile.e2e`・Makefile・CI の配線は software-engineer、シナリオを足す application-engineer (D4) との関係を 1 行 (今は software-engineer の `internal` に含まれる: workspace `ORGANIZATION.md:133`) — VP / CEO
+  (5) platform のリハーサルの手動項目 (iframe の cookie: D2 (i)) — sre-engineer (6) app `CLAUDE.md:15,37` の layout と Dockerfile の一覧、`internal/e2e/doc.go:11-21` の layout に D9 の置き場 (7) D10 (3) の Issue
+  の起票 (VP が採るなら) — software-engineer。
 - **H1 の受け入れ条件** (qa-engineer が確かめ、VP が査定する):
   - (a) 書き込みが無いことを確かめる窓は、最長のポーリング (board の 5 秒: `pane-board:135,584`) 以上をとる。`#pane-story` は描き直されない (`pane-story:87-93`) ので、listener の積み重なりは二重 POST として現れる。
   - (b) 同期点: (1) 状態を変えたら、変更の前に始まった journey の GET がすべて完了し、変更の後に始まった GET が 1 回以上完了するまで待つ (`setInterval` の GET は重なり、応答は逆転し得る。
@@ -194,25 +227,47 @@ dialog で止まり、要求の網羅を見られず、作り手の自己申告�
   - (e) 障害注入は 404・500・応答の停止の 3 種。前提: seed の event は ns `ctf-`・pod `workspace`・image に `falco-ctf/challenge`・priority が notice 以上 (`internal/scoreboard/ingest/ingest.go:216-248`)。
     `make e2e` では seed の submit とブラウザの書き込みが同じ rate-limit の bucket (127.0.0.1) に入る (D3)。
   - (f) Chromium: 起動 flag は allowlist で持ち、`--disable-dev-shm-usage` を明示し、`--disable-web-security` と証明書の検査を全体で切る flag を入れない。CJK の font は診断画像を読むため
-    だけに入れる (候補 `font-wqy-zenhei` installed 16.3MiB。`font-noto-cjk` は 88.8MiB)。Colima の VM に要るメモリを実測して PR に書く。chromedp の版を決め直す。
+    だけに入れる (候補 `font-wqy-zenhei` installed 16.3MiB。`font-noto-cjk` は 88.8MiB)。Colima の VM に要るメモリを実測して PR に書く。chromedp の版を決め直す。rev2: 約 1.8GiB、v0.21.0 (V5・D7 (4))。
   - (g) 未確認を確かめて PR に書く: chromedp の既定の flag (`--no-sandbox`・`/dev/shm`)・`golang:1.26.6-alpine` の digest の Alpine の版・`# syntax=` 無しの `RUN --network=none` と loopback・
-    BuildKit の `/dev/shm`・Reporting API の report が proxy に届くか・Chrome の Local Network Access。
-  - (h) 既存の穴 (本 ADR の外。別 issue で扱う): `.dockerignore` に `*.dec.yaml` と `kubeconfig*` が無い (`.dockerignore:45-50`。`.gitignore:23` には `kubeconfig*` がある)。
+    BuildKit の `/dev/shm`・Reporting API の report が proxy に届くか・Chrome の Local Network Access。rev2: 結果は「Decision の追加」の H1 (g)。
+  - (h) 既存の穴 (本 ADR の外。別 issue で扱う): `.dockerignore` に `*.dec.yaml` と `kubeconfig*` が無い (`.dockerignore:45-50`。`.gitignore:23` には `kubeconfig*` がある)。rev2: app#357 (4ad54f5) で閉じた
+    (`.dockerignore:72-75`)。
 
 ## Signposts (この決定を覆す観測可能な信号)
 
-数値は仮 (基準データ未取得)。1・3 は CI の run 履歴から、2 はイベント後の問い合わせとリハーサルの記録から、4 は docs から測る。
+数値は仮 (基準データ未取得。rev2: 3 の基準は H1 の実測 = V5)。1 と 3 の所要は CI の run 履歴から、3 の大きさは V5 の手順で `Dockerfile.e2e` か `Dockerfile.test` を変える PR (パターン D。D5 の bump を含む)
+ごとに、2 はイベント後の問い合わせとリハーサルの記録から、4 は docs から測る。
 
 1. **待ち合わせ由来の flake**: 2 週間で `e2e` の flake が 2 件を超える、または run の 2% を超え、原因が待ち合わせ → D3 の同期点を見直し、直らなければ Option 2 (自動待機) に移す。
 2. **ブラウザ固有の欠陥**: 参加者の申告かリハーサルで、WebKit か Firefox でだけ再現する portal の欠陥が 1 件出る → 該当シナリオに Option 2 で WebKit / Firefox を足す。
-3. **費用**: `e2e` の p50 が 10 分を超える、image が 2GiB を超える、またはシナリオが 15 本を超える → 並列化か分割 (時計の制御が要るなら in-process の server を再検討)。Chromium の bump が
-   月 4 回を超えるか、index の更新で `e2e` が 2 日を超えて赤だったことが 2 回ある → 版が消えない配布 (Debian の snapshot か、digest で pin した Chromium 入りの base image) を再検討する。
+3. **費用** (rev2 で大きさを較正): `e2e` の p50 が 10 分を超えるか (H1: CI の job で 2 分前後)、シナリオが 15 本を超える → 並列化か分割 (時計の制御が要るなら in-process の server を再検討)。
+   **大きさ**: `Dockerfile.e2e` の `run` stage の image が、同じ commit・同じ arch の `Dockerfile.test` の image を **1GiB** 超える (H1: 3.07GB と 3.53GB で −0.46GB。1GiB は、D1 (b) の見立て =
+   test の級に Chromium を 1 つ足したもの (H1 の層は約 0.76GiB) を、余裕を見ても超えた所) → 並列化ではなく大きさに効く手当てをする: Chromium を動かす stage から Go の toolchain と module cache を外す
+   (test binary は build stage で作る)、tools の層を分ける。`chromium-headless-shell` への切替は D5 の判断 (参加者のブラウザとの差) を覆すときだけで、大きさだけを理由にしない。早期の兆候: CI の `e2e` の
+   log に毎 run 出る apk の `OK: <N> MiB` (Chromium と font。base の 17 package を含む) が 1GiB を超えたら (H1: 778.5 MiB、x86_64)、大きさを V5 の手順で測り直す。旧版の「image が 2GiB を超える」は、
+   D1 (b) の見積 (`Dockerfile.test` の image + 0.4〜0.5GiB) と起草の時点から両立せず (`Dockerfile.test` だけで 3.53GB)、H1 の初日に発火した。絶対値は base と Go の依存の成長を e2e の費用と取り違えるので、
+   `Dockerfile.test` からの差に替えた。
+   Chromium の bump が月 4 回を超えるか、index の更新で `e2e` が 2 日を超えて赤だったことが 2 回ある → 版が消えない配布 (Debian の snapshot か、digest で pin した Chromium 入りの base image) を
+   再検討する (rev2: 2 日の数え方は D10)。
 4. **開発時の経路**: Desktop の Browser pane の tool が subagent に届き、画像を disk に保存できると docs に書かれる → D1 (a) の主を Desktop に替える。専用ブラウザの設定が要らず、managed 設定
    `disableBrowserExternalNavigation: true` で外部への遷移を構造的に止められる (C5) ので、拡張の site 許可と classifier より強い境界になる。
 
 ## Verification
 
-すべて**未実装** (H1 で入れる)。
+状態 (rev2、2026-10-15。旧版は「すべて未実装 (H1 で入れる)」): V1〜V6・V8 は H1 (app#361) で main に入った。V7 は D1 (c) の昇格の PR で満たす。V9 は未実施。`e2e` は advisory の
+まま (required の集合 = workspace `scripts/change-mgmt/setup-rulesets.sh:54` に `e2e` は無い。足すのは D1 (c) を満たした後の CEO)。main の `e2e` は 3 run とも緑 (0eb9a5f・07ed49b・4e39112)。
+
+| V | 状態 | 機械で守るもの・証跡 (app 4e39112) |
+|---|---|---|
+| V1 | 済 | `internal/e2e/e1_test.go`〜`e4_test.go`、名前の表 `internal/e2e/expected_tests.txt:7-10`。故意に壊した変更で赤 (app#361 の本文): frame-src を壊すと E1〜E4 (共通 assert の CSP 違反と E4)、suffix を空にすると E4 だけ (E3 は緑のまま)、locked の課題のヒントを隠すと E1、ADR-0027 D6 の中立表示を外すと E2 |
+| V2 | 済 | `TestSelfTest_SharedAssertionsTurnRedOnPlantedDefects` が (a)〜(g) と console.error・想定外の dialog を赤にし、きれいな頁は 0 件 (`internal/e2e/selftest_test.go:63-130`)。ほかに書き込みの欠落・ブラウザの不在・live の argv の 3 本 (`expected_tests.txt:11-14`) |
+| V3 | 済 | `internal/apispec/e2e_boundary_test.go` の V3 (`:406`。sleep は import path で照合し、別名と dot import も捕まえる。`Page.setBypassCSP` と、証明書・要求の書き換えの API を拒む)・`TestProductDoesNotReadDataTestID` (`:503`)。live の argv は D7 (2) |
+| V4 | 済 | 下の V4 (rev2 で本数の文言を直した) |
+| V5 | 済 | `TestE2EImageRunsOfflineAndIsNotAnI5Image` (`e2e_boundary_test.go:678`)・`scripts/check-e2e-image-scope.sh` (flag-guard: `.github/workflows/ci.yaml:194-197`)。実測は下の V5 |
+| V6 | 済 | `scripts/check-e2e-verdict.sh` の 18 件 (flag-guard: `ci.yaml:192-193`。`<sha>-dirty` を含む) |
+| V7 | 未 | D1 (c) の昇格の PR |
+| V8 | 済 | `TestE2EServePublishesOnlyToHostLoopback` (`--network host` も拒む: `e2e_boundary_test.go:547-596`)・`TestCheckChildEnv_RejectsPlantedViolations`・proxy の拒否 (D6 (2))。proxy の bind は container の中で `0.0.0.0` (D6 (1)) |
+| V9 | 未実施 | `e2e-pins.yaml` の `workflow_dispatch` で `scripts/testdata/e2e-pin-BAD.txt` と `e2e-pin-BAD-continued.txt` を選んで赤を確かめ (`.github/workflows/e2e-pins.yaml:18-27`)、H0 の PR か V7 の記録に貼る。2026-10-15 09:00 JST の時点で `E2E pins` の run は 0 件 (定期の初回は同日 14:30 JST = 05:30 UTC) |
 
 - **V1 最初の 4 シナリオ** (実 catalog + `nimbusbreach-full`、user1。各シナリオは守る性質を故意に壊した変更で赤になることを PR 本文に出力で示す):
   - **E1 (ADR-0027 V6)**: 01〜04 を solve して current = 05。地図で 06 を開くと、`?mission=06` の詳細が `locked` のまま「ヒント 1」の開封と減点 10 を出す。押すと dialog の文に 10 点が出る。
@@ -227,12 +282,18 @@ dialog で止まり、要求の網羅を見られず、作り手の自己申告�
   行く (e) 描画の例外を try で捕まえて「connection error」を出す (f) 読み込みの 2 秒後に自動で POST する (g) 1 回のクリックで同じ POST を 2 回出す、のそれぞれを共通 assert が赤にする。
 - **V3 静的検査**: `internal/e2e` に `time.Sleep`・`chromedp.Sleep`・`time.After` が無い。製品の template と JS が `data-testid` を読まない。Chromium の起動 flag が allowlist の外に無く、
   `--disable-web-security` と `Page.setBypassCSP` を使わない。
-- **V4 境界**: `cmd/*` の 6 本すべて (auth-policy・collector・scoreboard・ttyd-proxy・gen-home-fragments・gen-tutorial-fragments) の、module 内の import の閉包にある package の import (標準・外部を
+- **V4 境界**: `cmd/*` のすべて (H1 の時点で auth-policy・collector・scoreboard・ttyd-proxy・gen-home-fragments・gen-tutorial-fragments の 6 本。rev2: 本数は固定せず、0 本のときだけ赤:
+  `internal/apispec/e2e_boundary_test.go:100-118`) の、module 内の import の閉包にある package の import (標準・外部を
   含む) に `github.com/chromedp/` と `internal/e2e` が無い。`importsOf` は module 内の import だけを返す (`internal/apispec/mux_ownership_test.go:66-85`) ので、`allImportsOf`
   (`internal/apispec/dependency_boundary_test.go:183-189`) の形で外部も集め、parse は今と同じく build tag を無視する。`//go:build e2e` を持つファイルは `internal/e2e/` の下にだけある。どれも故意の
-  破りの fixture で赤になることをテストに持つ。`Dockerfile.test` の `go vet -tags e2e ./...` で E2E のコードがコンパイルされ続ける。すべて `make test` = required。
+  破りの fixture で赤になることをテストに持つ。`Dockerfile.test` の `go vet -tags e2e ./...` で E2E のコードがコンパイルされ続ける。すべて `make test` = required。rev2: 同じ検査が D9 の置き場を支える。
 - **V5 image と所要**: base の digest pin・Chromium と font の exact pin・テストの `RUN --network=none` (loopback が使え、外部に出られないことを実測)。`IMAGES` と build matrix に無い。image の
   大きさと job の所要を実測して PR に貼る (見積を超えたら Signpost 3 で扱う)。
+  - rev2 (H1 の実測。app#361 の本文「実測 (V5)」と CI の log): image 3.07GB (`Dockerfile.test` は 3.53GB)。Chromium と font の層は CI (x86_64) の apk で `OK: 778.5 MiB in 197 packages`
+    (run 38601836666。うち base の 17)。`make e2e` は local の cold 1 分 46 秒・warm 57 秒、CI の job は PR で 1 分 58 秒・main の 3 run で 2 分 14 秒〜2 分 26 秒。Colima の VM のメモリのピーク約 1.8GiB、
+    cold の 1 回で VM のディスク +2.0GB。required の `test` への影響は D8 (3)。loopback は `--network=none` の下で使える (E1〜E4 が緑)。外に出られないことの実測は記録に無い (`--network=none` の
+    構造に頼る)。H1 の 3.07GB / 3.53GB の測り方も記録に無い (未確認)。**以後の測り方** (Signpost 3): 同じ commit・同じ arch で、`docker build -f Dockerfile.e2e --target run` に tag を付けた image と、
+    `make test` の `falco-ctf/gotest:local` (`Makefile:160`) の `docker image inspect` の Size を比べ、初回の値を基準として PR に残す。
 - **V6 判定の fail-closed**: 判定器に次のどれを与えても `make e2e` が非ゼロで終わる — 終了コードが 0 でない / pass の名前が表より少ない・多い / skip が 1 件 / RUN_ID が今回のものでない (前回の
   判定ファイル・cache された層の判定ファイル) / SHA の不一致 / ファイルの欠落・空・読めない行 / ブラウザ不在。各ケースを fixture として恒久化し、required の check (`make test` か `flag-guard`) で回す。
 - **V7 昇格の記録**: CHECKS を変える PR に、期間・run 数・flake 数・build stage の失敗の内訳・p95・bump の所要を貼る (D1 (c))。
@@ -240,6 +301,78 @@ dialog で止まり、要求の網羅を見られず、作り手の自己申告�
   email は予約 TLD `.test` の合成ドメインで組む / 子の env に `ADMIN_EMAILS` と `FLAGS_FILE` が無いことを起動時に assert する / proxy の応答の CSP ヘッダは子の応答と同じ / 起動時に出す URL は
   1 つで、拡張の site 許可はその origin だけ (D1 (a) (iii))。設定値の検査は故意の破りの fixture で赤になることをテストに持つ。
 - **V9 pin の検知**: D5 の定期 job が、index と違う pin を与えると赤になることを `workflow_dispatch` で示し、PR に貼る。
+- **D6〜D10 の検査 (rev2)**: D6 = `TestProxy_RefusesRequestsThatAreNotThePagesOwn`・`TestProxy_ForwardsThePagesOwnRequests`・`TestProxy_OnAWildcardListenerServesOnlyTheLoopbackHost`・
+  `TestProxy_RefusesExactlyTheSpecsInternalRoutes` (`internal/e2e/harness/proxy_test.go:315,363,400,461`) と V8。D7 = V3・`TestCheckArgv_AcceptsOnlyTheAllowlistPlusChromedpsOwn`
+  (`internal/e2e/harness/chromeflags_test.go:90`)・live の argv の自己テスト。D8 = `TestSeeder_EachRequestHasItsProductionCallersShape` (`seed_test.go:98`)・`TestCheckChildEnv_RejectsPlantedViolations`
+  (`child_test.go:29`)・`TestRealBinary_BehindTheProxy` (`integration_test.go:63`)。ここまで `make test` = required。D9 = V4。D10 = 機械の確認は無し (赤そのものは `e2e-pins.yaml` が出し、bump の所要は
+  V7 の記録で人が数える)。
+
+## Decision の追加 (rev2、2026-10-15)
+
+H1 (app#361、0eb9a5f) の実装で確定した事実と判断を足す。出所は review-5x 9 回目 (T3、2026-10-14、workspace#69) が architect に回した R3#3・R4#4・R4#6・R5#5 と、VP の決定 2 つ。
+D1〜D5 と同格の決定で、D1 (b) の 4 つの役割・D2 の対象・D3 の決定論・D5 の pin の規律は変えない。行番号は app 4e39112。
+
+- **D6 `e2e-serve` の bind と proxy の拒否規則。**
+  - (1) proxy は container の中で `0.0.0.0:<port>` に bind する (`internal/e2e/serve/main.go:68-85`)。docker の `-p 127.0.0.1:P:P` (`Makefile:204`) は host の側を loopback に限るが、container には
+    bridge の address で届くので、container の中で loopback だけに bind すると誰も届かない。loopback に bind できる `--network host` は V8 の検査が拒む (`internal/apispec/e2e_boundary_test.go:551-555,572`)。
+    子 (scoreboard) は container の中の loopback で listen する (`internal/e2e/harness/child.go:145-151`)。
+  - (2) そのかわり proxy は、次の要求に自分で 403 を返し、何も転送しない (`internal/e2e/harness/proxy.go:239-281`。記録には `refused-<理由>`): Host が `127.0.0.1:<port>` と完全には一致しない
+    (`localhost`・LAN の address・DNS rebinding の名前) / Origin があって自分の origin と一致しない (`null` と複数の値を含む) / `Sec-Fetch-Site` があって `same-origin` でも `none` でもない (`cross-site` と、
+    127.0.0.1 の別の port からの `same-site`) / path が `/falco/events` か `/internal` の下 (生の path と clean した path の両方で見る)。拒む path の集合が spec の `x-ctf-audience: internal` の operation と
+    一致することは `TestProxy_RefusesExactlyTheSpecsInternalRoutes` (`proxy_test.go:461`) が見る。`Origin()` は listener の address に依らず `http://127.0.0.1:<port>` (`proxy.go:168-171`。`0.0.0.0` の
+    listener でも同じ: `proxy_test.go:400`)。
+  - (3) **残余**: Origin も `Sec-Fetch-Site` も送らない非ブラウザの client は通す (`proxy.go:247-248`)。同じ docker network の別の container の process が Host を `127.0.0.1:<port>` と名乗れば、合成
+    identity で転送される (`serve/main.go:74-84`)。届く先は seed 済みの非 admin の使い捨ての scoreboard で、flag は公開の placeholder (`FLAGS_FILE`・`ADMIN_EMAILS` は子の env に入らない:
+    `child.go:48-55`)。拒否規則が防ぐのはブラウザが別の頁や rebinding の名前のために出す要求で、loopback への bind の代わりではない。security-engineer の review (app#361、APPROVE with comments) は
+    bind をこの Host の検査で担保とした。**覆す信号**: 信頼しない container (課題の image など) を同じ docker で `e2e-serve` と並べて動かす使い方が出る → `e2e-serve` を専用の user-defined network で
+    起動する (default bridge の他の container から届かなくなる)。
+  - (4) **proxy の役割を D1 (b) の (1)〜(4) に 2 つ足す**: (5) 上の自前の 403 (6) `/__e2e/flush` に 204 を返す (`proxy.go:211-216,277-281`。転送も記録もしない。ブラウザ側の helper が、それより前の
+    console・binding・network の event を処理し終えたことを知る印で、頁の CSP の `connect-src 'self'` の内: `internal/e2e/browser.go:520-541`)。**残余** (review-5x 9 回目 R2#4。VP は採用の外):
+    `Report` の書き込みの比較は、この印のブラウザ側の送出 (`Network.requestWillBeSent`) で締めるので、直前に頁が出した POST が proxy にまだ届いていなければ二重 POST を見落としうる (偽陰性の向き)。
+    **覆す信号**: 二重 POST の欠陥が E2E をすり抜けて見つかる → ブラウザ側で書き込みを数え、proxy の記録がそれに追いつくまで待ってから比べる。
+  - (5) **段階 P が揃うまで `e2e-serve` は人だけが開く** (Claude in Chrome で開かない: `Makefile:192-193`。VP 2026-10-14)。H2 の skill にも書く。
+- **D7 Chromium の起動 (H1 (f) の確定)。**
+  - (1) 起動するのは実体の binary `/usr/lib/chromium/chromium` で、Alpine の launcher script ではない (`/usr/bin/chromium` は `/etc/chromium/*.conf` を読み、allowlist の外の switch を足す:
+    `internal/e2e/harness/chromeflags.go:127-131`)。
+  - (2) switch は allowlist (`chromeflags.go:24-38`) と禁止表 (`:42-50`) から組み、chromedp の既定の option 群は使わない (`:19-23`)。起動の後に `/proc/<pid>/cmdline` を読み戻し、allowlist・chromedp
+    自身の `--user-data-dir` と `--remote-debugging-pipe`・`about:blank` の外があれば失敗にする (`CheckArgv`: `:159-192`。`NewBrowser` が毎回呼ぶ: `internal/e2e/browser.go:216-224`。自己テストは
+    `TestSelfTest_ChromiumRunsWithOnlyAllowlistedArgv`)。browser は親の env を継がない (`browser.go:150-156`)。
+  - (3) `--host-resolver-rules` は stub の名前を loopback に向け、ほかを NOTFOUND にし、`EXCLUDE 127.0.0.1` を置く (rule は IP literal にも効くので、無いと proxy 自身が引けない:
+    `chromeflags.go:108-125`)。stub の鍵だけを `--ignore-certificate-errors-spki-list` で信頼する (D1 (b) の未確認を解消: E4 で stub が iframe の GET を受ける)。
+  - (4) chromedp は v0.21.0、cdproto は v0.157.8 (`go.mod:6-7`。起草時の 0.20 系から API が変わった)。Chromium を上げる PR で chromedp も見直す規律 (D5) は変えない。
+  - (5) クリックは要素を viewport の中央へ scroll し、ほかの要素に覆われていれば失敗にする (portal の固定の nav が上端の要素を覆う: `browser.go:459-477`)。
+- **D8 seed の形と、required の `make test` に置く連鎖。**
+  - (1) **seed の要求は本番の呼び手ごとの形にする** (`internal/e2e/harness/seed.go:69-110`): webhook (`POST /falco/events`) は falcosidekick の形 = JSON で `X-Auth-Request-*` を付けない。submit は
+    collector の forward の形 (submit の主経路) = `X-Auth-Request-*` を付けず、user は body が名乗る。identity を付けるのは self-scope の読み (`GET …/journey`) だけ。
+    `TestSeeder_EachRequestHasItsProductionCallersShape` (`seed_test.go:92-98`) が記録用の Site で確かめる (全要求に付ける変更で赤)。全要求に identity を付けていた版は、webhook の
+    `X-Auth-Request-*` を 403 にする app#334 と、どちらが後に merge されても required の `test` を赤にした (文字の衝突の無い、意味の衝突: review-5x 9 回目 R2#1 / R4#2)。
+  - (2) **子の env に `EXPECTED_EMAIL_DOMAIN=e2e.test` を足す** (`child.go:37-42,97`。D1 (b) の allowlist は 8 個になった)。値は合成 email (`EmailFor` = `<user>@e2e.test`: `seed.go:24-41`) と同じ
+    定数 `IdentityDomain` から作り、`CheckChildEnv` が一致を要求する (`child.go:161-163`)。**ADR-0034 S2 と合流する前提**: S2 の scoreboard は `EXPECTED_EMAIL_DOMAIN` を読み、空なら self が誰とも
+    一致しない (fail-closed) ので、渡さなければ seed の self-scope の読みがすべて 403 になる。`e2e.test` の最後のラベル `test` は ADR-0034 の予約名 (D2: `feat/adr-0034-s1` の `:98`) で、D5
+    (`:116-117`) が `EXPECTED_EMAIL_DOMAIN` に掛ける起動検査を通る (S2 の branch f76c9b1 の `cmd/scoreboard/identity.go:25`)。#361 の先端と S2 の trial merge は `make e2e` まで緑 (app#361 の本文)。
+    前提は、S2 の merge の時点で変数名と予約名の規則が変わっていないこと — 変わるなら S2 の PR が harness を直す ((3) の規則)。main の `cmd/scoreboard` はまだ読まない (`child.go:37-42`)。
+    `QUEST_ENABLED` も同じで、Quest のコードが main に無いので、D1 (b) の「シナリオは `quest_enabled` を assert する」はまだ無い (Quest を入れる PR が足す)。
+  - (3) **実バイナリ・実 catalog・seed の連鎖を required の `make test` に置く。** `internal/e2e/harness` は build tag を持たないので、`TestRealBinary_BehindTheProxy`
+    (`internal/e2e/harness/integration_test.go:55-187`) が `Dockerfile.test:62` の `go test ./...` で回る: `cmd/scoreboard` を build → allowlist の env で子を起動 → 3 つの seed → proxy の identity 注入
+    → CSP の素通し → 子の origin guard (proxy を通さずに子へ: 外部の Origin と Origin 無しは 403 で、dirty は変わらない)。ブラウザを使わないので、Option 3 を退けた理由 (required の `test` と
+    Stop hook がブラウザに依存する) は当たらない。費用は required の `test` の job で +4.5 秒 (1 run の比較。app#361。ADR-0021 Signpost 3 の目安 +60 秒の内)。この build は `-trimpath` を付けない —
+    付けると直前の `go vet ./...` の build cache が外れて全部を compile し直し、go test の step が 50〜75 秒になった (`integration_test.go:17-25`。`make e2e` の binary は `Dockerfile.e2e:43` で
+    `-trimpath` 付き)。
+  - **規則 (帰結)**: identity・ingest・submit の経路の契約、または scoreboard の起動に要る env を変える PR は、harness の seed と子の env (`ChildEnvAllowlist`・`CheckChildEnv`・`child_test.go`) を同じ
+    PR で直す。直さなければ required の `test` が赤になる (#334 と S2 が実例)。**覆す信号**: harness 由来の flake が required の `test` に 1 件でも出る、またはこの連鎖で `test` の job の中央値が
+    +60 秒を超える → まず直す。2 回目なら `make e2e` の側へ移し、この規則は review の確認項目に戻す (移すと機械の強制が消える)。
+- **D9 本番でない entry point の置き場。** `cmd/` に置くのは本番の binary と生成器だけ (H1 の時点で auth-policy・collector・scoreboard・ttyd-proxy と gen-home-fragments・gen-tutorial-fragments)。
+  テストの harness の entry point は harness の tree の下に置く: `make e2e-serve` の `package main` は `internal/e2e/serve` (`serve/main.go:1-12`)。build するのは `Dockerfile.e2e` の build stage だけ
+  (`Dockerfile.e2e:43-44`) で、`serve` target の image は push せず、`IMAGES` と build matrix に無い (D1 (b) と同じ)。機械: V4 は `cmd/` の全 binary の import の閉包に `internal/e2e` と chromedp が
+  無いことを見るので、harness を import する entry point を `cmd/` に置くと赤になる (`internal/apispec/e2e_boundary_test.go:100-118`)。app `CLAUDE.md:15,37` の layout と Dockerfile の一覧は H2 で直す。
+- **D10 定期 job の赤の扱い (VP 決定 2026-10-14、app#361)。** `e2e-pins` (`.github/workflows/e2e-pins.yaml:14-17`、毎日 05:30 UTC) の赤は、qa-engineer が週次で確かめて `/ceo-report` に載せる。
+  bump は software-engineer (D5)。**帰結**: 週次の確認だけだと、赤から bump の merge までが最長 7 日になり、D1 (c) の「検知から 2 日以内」と Signpost 3 の「`e2e` が 2 日を超えて赤」を、確認の
+  周期そのものが破る。そこで (1) bump の所要は、定期 job が初めて赤になった run の時刻から数える (人が気づいた時刻からは数えない) (2) index の更新 (pin が index から消えた) による `e2e` の赤は、
+  D1 (c) の「取得の失敗が run の 2%」に数えず、bump の所要で測る (3) 週次より速く人に届ける経路として、赤の run で Issue を起票する step (`GITHUB_TOKEN` の `issues: write` で足り、新しい action
+  は要らない) を、D1 (c) の観測期間の開始までに置くことを推奨する (要判断: VP)。
+- **H1 (g) の結果。** `--network=none` の下で loopback は使える (E1〜E4 が BuildKit の `RUN` の中で緑。CI の ubuntu-latest と Colima の両方)。BuildKit の `/dev/shm` (64MiB) は
+  `--disable-dev-shm-usage` で避けた (`chromeflags.go:28`)。base は `golang:1.26.9-alpine` (Alpine v3.24。`Dockerfile.test` に揃えた)。chromedp の既定の flag は使わない (D7 (2))。Reporting API の
+  report と Chrome の Local Network Access は記録が無い (未確認)。判定は `securitypolicyviolation` で集め (`browser.go:102-134`)、E4 で iframe の要求が stub に届くので、どちらも判定を左右していない。
 
 ## Advice
 
@@ -254,3 +387,15 @@ dialog で止まり、要求の網羅を見られず、作り手の自己申告�
   書き込み要求の比較を集合から列に改めた (共通 assert の定義なので D2 に置いた)。全シナリオで `PORTAL_TTYD_SUFFIX` を渡す (iframe は読み込み時に作られるので E4 の外でも stub が要る)。初版の
   昇格条件「pin が index から消えたことを main が赤くなる前に検知できる」は、index が 1 版だけで消える時と赤くなる時が同じなので満たせず、検知から main までの日数に替えた。D1 (a) (v) の対象は、
   `tools:` を持たない 9 職から UI を確かめる 3 職を除いた 6 職と読んだ。
+- review-5x 9 回目 (T3、2026-10-14、app#361、workspace#69) が architect に回した 4 件: R3#3 → D6・D7・Verification の状態。R4#4 → Signpost 3・V5・Consequences の開発機の資源。
+  R4#6 → D6 (4)・D8 (3)・D9。R5#5 → Verification の状態の表・段階の状態の列・H2 の DoD。同じ review のほかの指摘で本 ADR に入れたもの: R4#3 → D8 (2) (architect の判定 = yes, if S2 の merge の
+  時点で変数名と予約名の規則が変わらない)、R1#2・R2#9 → D6 (3)、R2#4 → D6 (4) の残余 (VP は採用の外)、R1#5 → D6 (5)、R5#2 → D10、R4#8 → H2 の DoD (4)。R5#5 の後半 (conventions の bump の
+  手順に、`scripts/testdata/e2e-pin-BAD.txt` を置換の対象から外す注記) は本 ADR の外。
+- VP の決定 (2026-10-14、app#361 の本文): 定期 job の赤は qa-engineer が週次で確かめて `/ceo-report` に載せる。段階 P が揃うまで `e2e-serve` は人だけが使う。Accepted 化 (= D1 (c) の観測期間の開始)
+  は CEO (workspace `REFACTORING.md:2034`)。
+- security-engineer (app#361 の review、APPROVE with comments): MEDIUM-1 (proxy が Host と Origin を見ずに、どの要求にも identity を注入していた) → D6 (2)。LOW → D7 (2) の live の argv・V3 の拒否の
+  拡張・V8 の `--network host`。確認されたこと: 本番の binary と chart に混ざらない (V4)、`--network=none` で secret を持たない、serve は nonroot・read-only・cap-drop、publish は `127.0.0.1:` だけ。
+- architect の判断 (rev2): Signpost 3 の大きさを `Dockerfile.test` からの差に替えた (絶対値は base と Go の依存の成長を e2e の費用と取り違え、H1 では D1 (b) の見積とも両立しなかった)。閾値の 1GiB は、
+  D1 (b) の見立て (test の級に Chromium を 1 つ足す。H1 の層は約 0.76GiB) を余裕を見ても超えた所。CI の log の apk の値を早期の兆候にしたのは、毎 run に手間なく出るから。D10 で、週次の確認と D1 (c)
+  の 2 日が両立しないことを記録し、所要は赤の run の時刻から数えるとした。harness の統合テストを required に置くことは、契約を変える PR に harness を同じ PR で直させる強制として採った (Option 3 を
+  退けた理由はブラウザで、ここには当たらない)。rev2 でも不変条件は足さない。
