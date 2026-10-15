@@ -62,7 +62,7 @@ Story タブで読みます (ヒントは開示するとスコアが減点され
 使えるツール:
 
 - 基本: `bash`, `cat`, `less`, `vim`, `grep`, `find`, `od`, `file`, `head`, `tail`
-- ネットワーク: `curl`, `wget`, `nc` (netcat), `nslookup`/`dig` (bind-tools)
+- ネットワーク: `curl`, `wget`, `nc` (netcat), `nslookup <name> [server]` (busybox)
 - プロセス: `ps`, `top`, `pstree` (procps)
 - その他: `jq` (JSON 整形), `busybox-extras`
 
