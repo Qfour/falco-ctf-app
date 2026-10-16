@@ -322,7 +322,7 @@
       wrap.innerHTML = pub.length === 0
         ? '<div class="empty"><span class="icon">∅</span>No public threads yet.</div>'
         : '<ul class="ticket-list">' + pub.map(t => {
-            const who = esc(t.authorDisplay || t.author || '');
+            const who = '<bdi>' + esc(t.authorDisplay || t.author || '') + '</bdi>';
             const canLike = t.author !== user;
             const likeEl = canLike
               ? `<button type="button" class="btn btn-sm like-btn${t.liked ? ' liked' : ''}" data-tid="${esc(t.id)}" data-liked="${t.liked ? '1' : '0'}">♥ ${t.like_count}</button>`
@@ -466,7 +466,7 @@
       const sig = 'thread-content:' + JSON.stringify(th);
       if (sig === lastDetailSig) return;
       lastDetailSig = sig;
-      const who = esc(th.authorDisplay || th.author || '');
+      const who = '<bdi>' + esc(th.authorDisplay || th.author || '') + '</bdi>';
       document.getElementById('board-detail-subject').innerHTML =
         esc(th.subject) + (th.author !== user ? ' <span class="who">— ' + who + '</span>' : '');
       document.getElementById('board-detail-badges').innerHTML =
@@ -476,7 +476,7 @@
       document.getElementById('board-detail-messages').innerHTML = (th.messages || []).map(m => `
         <div class="thread-msg role-${m.author_role === 'admin' ? 'admin' : 'participant'}">
           <div class="thread-msg-head">
-            <span class="thread-msg-author with-avatar">${avatarImg(m.authorAvatar, 'sm')}<span>${m.author_role === 'admin' ? 'Operator' : (m.author === user ? 'You' : esc(m.authorDisplay || m.author))}</span></span>
+            <span class="thread-msg-author with-avatar">${avatarImg(m.authorAvatar, 'sm')}<span>${m.author_role === 'admin' ? 'Operator' : (m.author === user ? 'You' : '<bdi>' + esc(m.authorDisplay || m.author) + '</bdi>')}</span></span>
             <span class="thread-msg-at" title="${esc(m.created_at)}">${fmtAgoISO(m.created_at)}</span>
           </div>
           <div class="thread-msg-body">${m.state === 'deleted' ? '(message removed)' : esc(m.body)}</div>
@@ -666,7 +666,7 @@
         : '<ul class="ticket-list">' + threads.map(t => `
             <li>
               <button type="button" class="ticket-open" data-tid="${esc(t.id)}">
-                <span class="subject">${t.pinned ? '<span class="badge pinned">Pinned</span> ' : ''}${esc(t.subject)} <span class="who">— ${esc(t.authorDisplay || t.author || '')}</span></span>
+                <span class="subject">${t.pinned ? '<span class="badge pinned">Pinned</span> ' : ''}${esc(t.subject)} <span class="who">— <bdi>${esc(t.authorDisplay || t.author || '')}</bdi></span></span>
                 <span class="meta">
                   <span class="badge ${t.audience === 'admin' ? 'private' : 'public'}">${t.audience === 'admin' ? 'Private' : 'Public'}</span>
                   <span class="badge ${t.answered ? 'answered' : 'pending'}">${t.answered ? 'Answered' : 'Awaiting reply'}</span>
@@ -748,7 +748,7 @@
       if (sig === lastDetailSig) return;
       lastDetailSig = sig;
       currentTh = th;
-      document.getElementById('board-admin-subject').innerHTML = esc(th.subject) + ' <span class="who">— ' + esc(th.authorDisplay || th.author) + '</span>';
+      document.getElementById('board-admin-subject').innerHTML = esc(th.subject) + ' <span class="who">— <bdi>' + esc(th.authorDisplay || th.author) + '</bdi></span>';
       document.getElementById('board-admin-badges').innerHTML =
         (th.pinned ? '<span class="badge pinned">Pinned</span> ' : '') +
         '<span class="badge ' + (th.audience === 'admin' ? 'private' : 'public') + '">' + (th.audience === 'admin' ? 'Private' : 'Public') + '</span> ' +
@@ -757,7 +757,7 @@
       document.getElementById('board-admin-messages').innerHTML = (th.messages || []).map(m => `
         <div class="thread-msg role-${m.author_role === 'admin' ? 'admin' : 'participant'}">
           <div class="thread-msg-head">
-            <span class="thread-msg-author with-avatar">${avatarImg(m.authorAvatar, 'sm')}<span>${m.author_role === 'admin' ? 'Operator' : esc(m.authorDisplay || m.author)}</span></span>
+            <span class="thread-msg-author with-avatar">${avatarImg(m.authorAvatar, 'sm')}<span>${m.author_role === 'admin' ? 'Operator' : '<bdi>' + esc(m.authorDisplay || m.author) + '</bdi>'}</span></span>
             <span class="thread-msg-at" title="${esc(m.created_at)}">${fmtAgoISO(m.created_at)}${m.state !== 'visible' ? ' · ' + esc(m.state) : ''}</span>
           </div>
           <div class="thread-msg-body">${m.state === 'deleted' ? '(message removed)' : esc(m.body)}</div>

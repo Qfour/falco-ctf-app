@@ -338,7 +338,7 @@
       <section class="ident">
         ${avatarImg(d.avatar, 'lg')}
         <div>
-          <div class="who-name">${esc(displayName)}${identitySuffix}</div>
+          <div class="who-name"><bdi>${esc(displayName)}</bdi>${identitySuffix}</div>
           <div class="who-status">${solvedCount > 0 ? solvedCount + ' challenge' + (solvedCount === 1 ? '' : 's') + ' solved · ' + events.toLocaleString() + ' Falco events triggered' : 'Just getting started · ' + events.toLocaleString() + ' Falco events seen'}</div>
         </div>
         <div class="rank-badge" title="Your rank (self only — no other participant's rank is shown here)">
