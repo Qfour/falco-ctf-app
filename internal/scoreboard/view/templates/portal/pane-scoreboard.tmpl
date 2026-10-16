@@ -205,7 +205,7 @@
         const score = (p.score ?? 0);
         return `<tr>
           <td><span class="rank ${rankCls}">${ranked ? '#' + p.rank : '-'}</span></td>
-          <td><span class="user-cell with-avatar">${avatarImg(p.avatar, 'sm')}<span>${esc(p.display_name || p.user)}</span><button class="name-edit" data-user="${esc(p.user)}" title="Rename on scoreboard (admin)">✎</button></span></td>
+          <td><span class="user-cell with-avatar">${avatarImg(p.avatar, 'sm')}<span>${nameHTML(p.display_name || p.user)}</span><button class="name-edit" data-user="${esc(p.user)}" title="Rename on scoreboard (admin)">✎</button></span></td>
           <td style="text-align:right"><span class="score-cell"><b>${score}</b></span></td>
           <td><span class="score-cell">${p.solved}<span class="total">/${totalChal}</span></span></td>
           <td><div class="progress">${segs(p.solved, totalChal)}</div></td>
@@ -258,7 +258,7 @@
         return `<div class="activity-item${fresh ? ' fresh' : ''}">
           <div style="min-width:0">
             ${avatarImg(s.avatar, 'sm')}
-            <span class="who">${esc(s.display_name || s.user)}</span>
+            <span class="who">${nameHTML(s.display_name || s.user)}</span>
             <span class="verb">cleared</span>
             <span class="what">${esc(s.challenge)}</span>
           </div>
@@ -312,7 +312,7 @@
         return `<div class="pod pod-${p.rank}"><div class="crown"></div>
           <div class="medal display">${medal}</div>
           <div class="pod-avatar">${avatarImg(p.avatar, 'lg')}</div>
-          <div class="pod-name">${esc(p.display_name || p.user)}</div>
+          <div class="pod-name">${nameHTML(p.display_name || p.user)}</div>
           <div class="pod-score"><b>${p.score ?? 0}</b> pts · ${p.solved} / ${totalChal} missions</div>
         </div>`;
       }).join('');
@@ -326,7 +326,7 @@
           const rankCls = ranked && p.rank <= 3 ? 'rank-' + p.rank : '';
           return `<tr>
             <td><span class="rank ${rankCls}">${ranked ? '#' + p.rank : '-'}</span></td>
-            <td><span class="user-cell with-avatar">${avatarImg(p.avatar, 'sm')}<span>${esc(p.display_name || p.user)}</span></span></td>
+            <td><span class="user-cell with-avatar">${avatarImg(p.avatar, 'sm')}<span>${nameHTML(p.display_name || p.user)}</span></span></td>
             <td style="text-align:right"><span class="score-cell"><b>${p.score ?? 0}</b></span></td>
             <td><span class="score-cell">${p.solved}<span class="total">/${totalChal}</span></span></td>
             <td><div class="progress">${segs(p.solved, totalChal)}</div></td>
@@ -354,7 +354,7 @@
       const delta = rank === 1 ? '🏆 first' : '+' + fmtDelta(new Date(s.at).getTime() - firstAt);
       return `<tr>
         <td><span class="rank ${rankCls}">#${rank}</span></td>
-        <td><span class="user-cell with-avatar">${avatarImg(s.avatar, 'sm')}<span>${esc(s.display_name || s.user)}</span></span></td>
+        <td><span class="user-cell with-avatar">${avatarImg(s.avatar, 'sm')}<span>${nameHTML(s.display_name || s.user)}</span></span></td>
         <td><span class="when" title="${esc(s.at)}">${fmtTime(s.at)}</span></td>
         <td style="text-align:right" class="mono">${delta}</td>
       </tr>`;

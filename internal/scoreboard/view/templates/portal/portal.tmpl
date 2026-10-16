@@ -112,7 +112,7 @@
   // which link to pre-fill, which iframe src to render) — it is NEVER the
   // authorization boundary. Every API call the panes below make re-derives
   // + re-checks identity server-side from the SAME X-Auth-Request-Email
-  // header (selfOrAdmin / selfOrAdminWrite / isAdmin in
+  // header (selfOrAdmin / isAdmin in
   // internal/scoreboard/api), so a participant cannot widen access by editing
   // these globals in devtools — at most they can make the shell mis-render for
   // themselves; the API still 403s anything they are not entitled to.
