@@ -49,8 +49,8 @@ func TestV13_StripsAuthRequestHeadersOnEveryForwardedRoute(t *testing.T) {
 		}
 	}
 	// Non-vacuous: the derivation must find the collector's real forward set.
-	if len(forwarded) != 3 {
-		t.Fatalf("derived %d forwarded routes %v, want 3 (submit, display-name, exfil); the derivation is broken, not clean", len(forwarded), forwarded)
+	if len(forwarded) != 2 {
+		t.Fatalf("derived %d forwarded routes %v, want 2 (submit, exfil: ADR-0034 S1 removed the display-name forward); the derivation is broken, not clean", len(forwarded), forwarded)
 	}
 
 	// Named headers from the ADR plus an arbitrary one no list would contain,

@@ -68,9 +68,9 @@ func TestV11_EmptyDomainNobodyIsSelf(t *testing.T) {
 					t.Errorf("GET %s as %q with an empty domain: got %d, want 403", ep, email, w.Code)
 				}
 			}
-			// header-present write (selfOrAdminWrite's gate): same closed answer.
-			// A route whose browser path is open (display-name's is closed, so
-			// a 403 there would prove nothing about the domain).
+			// header-present write (actionMW + selfOrAdmin): same closed answer.
+			// A header-less request is 403 on this route since ADR-0034 S1, so
+			// this case sends the header and the 403 comes from the domain.
 			if w := f.reqAs("POST", "/api/users/alice/challenges/01-recon/hints/1", email, nil); w.Code != http.StatusForbidden {
 				t.Errorf("POST hint open as %q with an empty domain: got %d, want 403", email, w.Code)
 			}
@@ -95,12 +95,12 @@ func TestV11_EmptyDomainNobodyIsSelf(t *testing.T) {
 	})
 }
 
-// v11WriteRoutes are the header-gated WRITE routes that stay open to a
-// header-bearing participant: they all go through selfOrAdminWrite, and each
-// answers 200 for the canonical identity. display-name is deliberately NOT
-// among them: the browser path to it is closed (ADR-0034 D12 / the display-name
-// hotfix: with X-Auth-Request-* present it is always 403), so a 200 control or a
-// 403 there would not say anything about the domain comparison.
+// v11WriteRoutes are the header-gated WRITE routes of the participant's own
+// browser path: step check, hint open and reset-dirty all go through actionMW +
+// selfOrAdmin (ADR-0034 S1 / app#315), and each answers 200 for the canonical
+// identity. The participant display-name route no longer exists (S1 removed it),
+// and webhook / exfil are closed to the browser path, so none of them can say
+// anything about the domain comparison.
 var v11WriteRoutes = []struct {
 	name, target string
 	body         any
@@ -117,15 +117,15 @@ var v11WriteRoutes = []struct {
 }
 
 // V11: header-present writes use the same exact comparison. For every
-// selfOrAdminWrite route the canonical identity gets 200 (the control) while the
+// actionMW route the canonical identity gets 200 (the control) while the
 // same local part on another domain, and another seat on the right domain, get
 // 403 from the identity comparison: the header is present and well-formed in
 // every case, so "empty header" cannot be the reason (the canonical row is the
 // control on the same route and fixture).
 //
-// There is deliberately no header-less case here: selfOrAdminWrite's header-less
-// fallback has no legitimate caller on these routes (the collector does not
-// forward them and a workspace cannot reach the scoreboard: NetworkPolicy).
+// There is deliberately no header-less case here: since ADR-0034 S1 these three
+// routes answer 403 to a header-less request (actionMW), so a "header-less ->
+// 200" assertion would be wrong, and the 403 is pinned by the S1 authz tests.
 func TestV11_WriteGateIsExactToo(t *testing.T) {
 	cases := []struct {
 		name  string
