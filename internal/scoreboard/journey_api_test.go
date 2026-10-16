@@ -1020,23 +1020,18 @@ func TestJourneyWriteGate_OpenHint_CrossUserOracleBlocked(t *testing.T) {
 	}
 }
 
-// TestJourneyWriteGate_DisplayName proves display-name is self-or-admin gated
-// on the auth-proxied host but stays claimed-identity over the collector path.
+// TestJourneyWriteGate_DisplayName proves display-name is collector-only
+// (ADR-0034 D12 S1): every auth-proxied identity — self, other, admin — is
+// 403 (there is no self-or-admin path any more), and only the header-less
+// collector-fronted call is allowed.
 func TestJourneyWriteGate_DisplayName(t *testing.T) {
 	f := newJourneyFixture(t, scoreboard.WithAdminEmails([]string{"root@ctf.local"}))
 	body := map[string]any{"name": "Nickname"}
 
-	// self → allowed
-	if w := f.reqAs("POST", "/api/users/alice/display-name", "alice@ctf.local", body); w.Code != http.StatusOK {
-		t.Fatalf("self display-name must 200, got %d body=%s", w.Code, w.Body)
-	}
-	// other → 403 (cannot overwrite another player's name)
-	if w := f.reqAs("POST", "/api/users/alice/display-name", "mallory@ctf.local", body); w.Code != http.StatusForbidden {
-		t.Fatalf("cross-user display-name must 403, got %d body=%s", w.Code, w.Body)
-	}
-	// admin → allowed for any user
-	if w := f.reqAs("POST", "/api/users/alice/display-name", "root@ctf.local", body); w.Code != http.StatusOK {
-		t.Fatalf("admin display-name must 200, got %d body=%s", w.Code, w.Body)
+	for _, email := range []string{"alice@ctf.local", "mallory@ctf.local", "root@ctf.local"} {
+		if w := f.reqAs("POST", "/api/users/alice/display-name", email, body); w.Code != http.StatusForbidden {
+			t.Fatalf("display-name with X-Auth-Request-Email=%s must 403, got %d body=%s", email, w.Code, w.Body)
+		}
 	}
 	// header-less (collector-fronted display-name, accepted LOW) → allowed
 	if w := f.req("POST", "/api/users/alice/display-name", body); w.Code != http.StatusOK {

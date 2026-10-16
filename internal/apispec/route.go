@@ -80,6 +80,13 @@ const (
 	AuthzSelfOrAdmin      Authz = "self-or-admin"
 	AuthzSelfOrAdminWrite Authz = "self-or-admin-write"
 	AuthzClaimedIdentity  Authz = "claimed-identity"
+	// AuthzInternalClaimedIdentity: claimed identity on the cluster-internal
+	// (collector-forwarded) path ONLY. Any request carrying an
+	// X-Auth-Request-* header — i.e. anything that arrived through the
+	// browser/oauth2-proxy path — is refused 403, so no proven identity is
+	// ever accepted and the status cannot reveal who the header claims to be.
+	// Contrast AuthzClaimedIdentity, which lets header-bearing requests through.
+	AuthzInternalClaimedIdentity Authz = "internal-claimed-identity"
 	// AuthzAuthenticated (app#292 Phase 2 / QA Board): any caller carrying a
 	// proven X-Auth-Request-Email identity may proceed — unlike
 	// AuthzSelfOrAdmin(Write), it enforces NO username-match against a

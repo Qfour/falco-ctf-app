@@ -31,6 +31,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"mime"
 	"net/http"
 	"regexp"
 	"sort"
@@ -624,19 +625,24 @@ func (h *Handler) Routes() []apispec.Route {
 			Handler:   h.og(actionMW(http.HandlerFunc(h.resetDirty))),
 		},
 		{
-			// NOT wrapped by the origin guard (P23-2 follow-up). Unlike submit
-			// above, this route has only ONE caller: the collector's verbatim
-			// forward (internal/collector/collector.go — "Routes fronted") of the
-			// participant's curl-issued display-name update. No browser template
-			// in this repo fetches this participant-facing path directly (the
-			// journey UI has no such call; the only browser caller of a
-			// display-name endpoint is index.html's ADMIN
-			// /api/admin/users/{user}/display-name, a distinct route that stays
-			// origin-guarded above). A fail-closed gate here would therefore 403
-			// every legitimate call with no browser-CSRF surface to protect in
-			// exchange.
+			// NOT wrapped by the origin guard (P23-2 follow-up) — and it must not
+			// be: this route has only ONE legitimate caller, the collector's
+			// verbatim forward (internal/collector/collector.go — "Routes
+			// fronted") of the participant's curl-issued display-name update, which
+			// sends no Origin/Referer, so a fail-closed Origin gate would 403 every
+			// legitimate call.
+			//
+			// Instead setDisplayName closes the BROWSER path directly (security
+			// review of ADR-0034, 2026-10-12): the journey ingress still routes
+			// /api/users/ here and oauth2-proxy stamps X-Auth-Request-Email on every
+			// such request, so ANY X-Auth-Request-* header => 403 (before the
+			// admin check, so the 200/403 split can no longer reveal ADMIN_EMAILS
+			// membership), and a body that is not application/json => 415 (a
+			// cross-site no-cors form/text POST cannot set that Content-Type). The
+			// declared Authz is therefore the internal-only claimed-identity class,
+			// not self-or-admin-write: no proven identity is ever accepted here.
 			Method: "POST", Pattern: "/api/users/{user}/display-name",
-			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdminWrite,
+			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzInternalClaimedIdentity,
 			OriginGuarded: false, CollectorForward: true,
 			RateLimit: "per-IP 1 req / 5s burst 5",
 			Handler:   dnMW(http.HandlerFunc(h.setDisplayName)),
@@ -1655,6 +1661,30 @@ func (h *Handler) resetDirty(w http.ResponseWriter, r *http.Request) {
 
 // --- /api/users/{user}/display-name ----------------------------------------
 
+// errMsgUnsupportedMediaType is the stable 415 body for routes that require a
+// JSON request body.
+const errMsgUnsupportedMediaType = "content type must be application/json"
+
+// hasProxyIdentityHeader reports whether the request carries ANY
+// X-Auth-Request-* header (present, even with an empty value). oauth2-proxy /
+// the ingress auth-response-headers stamp these on every browser-path request;
+// the cluster-internal collector path never sets them.
+func hasProxyIdentityHeader(r *http.Request) bool {
+	for k := range r.Header {
+		if strings.HasPrefix(http.CanonicalHeaderKey(k), "X-Auth-Request-") {
+			return true
+		}
+	}
+	return false
+}
+
+// isJSONContentType reports whether the Content-Type media type is exactly
+// application/json (parameters such as charset are allowed).
+func isJSONContentType(r *http.Request) bool {
+	mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	return err == nil && mt == "application/json"
+}
+
 // setDisplayName lets a participant pick a cosmetic name shown on the
 // scoreboard. Identity (`user`) stays anchored to the auth-derived slug;
 // only the rendered name changes. Re-runnable any number of times.
@@ -1662,25 +1692,35 @@ func (h *Handler) resetDirty(w http.ResponseWriter, r *http.Request) {
 // Body shape:  {"name": "Alice"}
 // Constraints: 1..32 runes, no <>&"' or control chars (UI / shell safety).
 //
-// Auth (P18 5x): dual-path, keyed off the presence of X-Auth-Request-Email
-// (selfOrAdminWrite):
-//   - Over an auth-proxied ingress host (participant journey host / admin host)
-//     the header is present, so the write is gated self-or-admin — a login can
-//     only rename their OWN {user}, and cannot overwrite another player's name.
-//   - Over the cluster-internal Service (the collector's display-name forward,
-//     or a workspace pod) no header is set, so the legacy claimed-identity model
-//     is preserved (isolation is NetworkPolicy's job). This keeps the
-//     collector-fronted display-name flow (accepted LOW) working unchanged.
-//
-// Lacking cryptographic proof of identity on the internal path is intentional —
-// see audit log entries for traceability.
+// Auth (ADR-0034 D12 S1, security review 2026-10-12): collector-only.
+//   - The one legitimate caller is the collector's forward of the participant's
+//     curl (cluster-internal Service): no X-Auth-Request-* header, identity is
+//     the claimed {user} in the path (isolation is NetworkPolicy's job; see audit
+//     log entries for traceability).
+//   - The browser path (journey ingress -> oauth2-proxy) ALWAYS carries
+//     X-Auth-Request-Email, so a request with any X-Auth-Request-* header is
+//     refused 403 outright — it is never self-or-admin gated here. That closes
+//     the cross-site (SameSite=None cookie) rename of the victim's own name, the
+//     admin-session rename of everyone, and the oracle where a forged
+//     X-Auth-Request-Email through the collector turned the 200/403 split into an
+//     ADMIN_EMAILS membership test (a forged header is now always 403).
+//   - Body must be application/json (415 otherwise): a cross-site no-cors POST
+//     can only send text/plain, form-urlencoded or multipart.
 func (h *Handler) setDisplayName(w http.ResponseWriter, r *http.Request) {
+	// First, before any other check: the response must not depend on who the
+	// header claims to be (no ADMIN_EMAILS oracle).
+	if hasProxyIdentityHeader(r) {
+		h.logger.Warn("display name denied: browser/proxy path not accepted", "remote_addr", r.RemoteAddr)
+		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
+		return
+	}
 	user := strings.TrimSpace(r.PathValue("user"))
 	if !validUser.MatchString(user) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
 		return
 	}
-	if !h.selfOrAdminWrite(w, r, user) {
+	if !isJSONContentType(r) {
+		httpx.WriteJSON(w, http.StatusUnsupportedMediaType, map[string]any{"error": errMsgUnsupportedMediaType})
 		return
 	}
 

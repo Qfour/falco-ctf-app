@@ -3,12 +3,14 @@ package scoreboard_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1431,6 +1433,127 @@ func TestDisplayName_ParticipantCanChange(t *testing.T) {
 	got := decode(t, f.doUser("GET", "/api/users/alice/me", "alice", nil))
 	if got["display_name"] != "Second" {
 		t.Fatalf("latest name should win, got %v", got["display_name"])
+	}
+}
+
+// dnReq issues POST /api/users/{user}/display-name with an explicit
+// Content-Type (omitted when "") and arbitrary extra headers, so the
+// collector-only contract (ADR-0034 D12 S1) can be probed from both sides:
+// the header-less internal path and the X-Auth-Request-* browser path.
+func (f *fixture) dnReq(user, contentType, body string, hdr map[string]string) *httptest.ResponseRecorder {
+	f.t.Helper()
+	r := httptest.NewRequest("POST", "/api/users/"+user+"/display-name", strings.NewReader(body))
+	if contentType != "" {
+		r.Header.Set("Content-Type", contentType)
+	}
+	for k, v := range hdr {
+		if k != http.CanonicalHeaderKey(k) {
+			// Header.Set would canonicalize this back to the usual spelling,
+			// making the "lower-cased wire spelling" case identical to the
+			// owner case. Assign the map key verbatim, the way an HTTP/2 or
+			// non-canonicalizing client's raw key can end up in r.Header.
+			r.Header[k] = []string{v}
+			continue
+		}
+		r.Header.Set(k, v)
+	}
+	r.Header.Set("Origin", fixtureOrigin)
+	// A distinct client IP per call: the display-name limiter is per-IP
+	// (burst 5), and these tests probe many shapes against one fixture.
+	r.Header.Set("X-Forwarded-For", fmt.Sprintf("203.0.113.%d", dnSeq.Add(1)%250+1))
+	w := httptest.NewRecorder()
+	f.srv.ServeHTTP(w, r)
+	return w
+}
+
+// dnSeq numbers dnReq calls (see its X-Forwarded-For).
+var dnSeq atomic.Uint32
+
+// meDisplayName reads alice's display_name back through the admin /me read.
+func (f *fixture) meDisplayName(user string) any {
+	f.t.Helper()
+	return decode(f.t, f.doAdmin("GET", "/api/users/"+user+"/me", nil))["display_name"]
+}
+
+// TestDisplayName_BrowserPathForbidden pins the collector-only contract
+// (security review of ADR-0034, 2026-10-12): ANY X-Auth-Request-* header on
+// POST /api/users/{user}/display-name is 403 — for the owner, for an admin
+// (an admin session must not rename everyone from a cross-site POST), for a
+// stranger, and for a header carrying only a non-email member or an empty
+// value — and the stored name never changes.
+func TestDisplayName_BrowserPathForbidden(t *testing.T) {
+	f := newFixture(t, nil)
+	body := `{"name":"Hijacked"}`
+	cases := []struct {
+		name string
+		hdr  map[string]string
+	}{
+		{"owner (journey host, oauth2-proxy stamped)", map[string]string{"X-Auth-Request-Email": "alice@ctf.local"}},
+		{"admin session", map[string]string{"X-Auth-Request-Email": fixtureAdminEmail}},
+		{"other participant", map[string]string{"X-Auth-Request-Email": "mallory@ctf.local"}},
+		{"X-Auth-Request-User only", map[string]string{"X-Auth-Request-User": "alice"}},
+		{"empty-valued X-Auth-Request-Email", map[string]string{"X-Auth-Request-Email": ""}},
+		{"lower-cased wire spelling", map[string]string{"x-auth-request-email": "alice@ctf.local"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			w := f.dnReq("alice", "application/json", body, c.hdr)
+			if w.Code != http.StatusForbidden {
+				t.Fatalf("status=%d body=%s, want 403", w.Code, w.Body)
+			}
+			if got := f.meDisplayName("alice"); got != "alice" {
+				t.Fatalf("display name changed to %v despite 403", got)
+			}
+		})
+	}
+}
+
+// TestDisplayName_ForgedHeaderGivesNoAdminOracle: a forged
+// X-Auth-Request-Email (what a workspace can attach to a collector-forwarded
+// request) must produce the SAME response whether or not the claimed address
+// is in ADMIN_EMAILS — before this fix the 200 / 403 split revealed
+// ADMIN_EMAILS membership.
+func TestDisplayName_ForgedHeaderGivesNoAdminOracle(t *testing.T) {
+	f := newFixture(t, nil)
+	body := `{"name":"Probe"}`
+	admin := f.dnReq("bob", "application/json", body, map[string]string{"X-Auth-Request-Email": fixtureAdminEmail})
+	nonAdmin := f.dnReq("bob", "application/json", body, map[string]string{"X-Auth-Request-Email": "nobody@ctf.local"})
+	if admin.Code != http.StatusForbidden || nonAdmin.Code != http.StatusForbidden {
+		t.Fatalf("forged-header statuses admin=%d nonAdmin=%d, want both 403", admin.Code, nonAdmin.Code)
+	}
+	if admin.Body.String() != nonAdmin.Body.String() {
+		t.Fatalf("response bodies differ (oracle): admin=%q nonAdmin=%q", admin.Body, nonAdmin.Body)
+	}
+}
+
+// TestDisplayName_CollectorPathStillWorks: header-less + application/json is
+// the collector forward and must keep returning 200 (incl. a charset param).
+func TestDisplayName_CollectorPathStillWorks(t *testing.T) {
+	f := newFixture(t, nil)
+	for _, ct := range []string{"application/json", "application/json; charset=utf-8", "Application/JSON"} {
+		w := f.dnReq("alice", ct, `{"name":"Alice"}`, nil)
+		if w.Code != http.StatusOK {
+			t.Fatalf("Content-Type=%q: status=%d body=%s, want 200", ct, w.Code, w.Body)
+		}
+	}
+	if got := f.meDisplayName("alice"); got != "Alice" {
+		t.Fatalf("display name = %v, want Alice", got)
+	}
+}
+
+// TestDisplayName_NonJSONContentTypeRejected: the only Content-Types a
+// cross-site no-cors POST can carry (text/plain, form-urlencoded, multipart)
+// — plus a missing header — are refused 415 and change nothing.
+func TestDisplayName_NonJSONContentTypeRejected(t *testing.T) {
+	f := newFixture(t, nil)
+	for _, ct := range []string{"text/plain", "text/plain;charset=UTF-8", "application/x-www-form-urlencoded", "multipart/form-data; boundary=x", "application/jsonx", ""} {
+		w := f.dnReq("alice", ct, `{"name":"Hijacked"}`, nil)
+		if w.Code != http.StatusUnsupportedMediaType {
+			t.Fatalf("Content-Type=%q: status=%d body=%s, want 415", ct, w.Code, w.Body)
+		}
+		if got := f.meDisplayName("alice"); got != "alice" {
+			t.Fatalf("Content-Type=%q: display name changed to %v", ct, got)
+		}
 	}
 }
 
