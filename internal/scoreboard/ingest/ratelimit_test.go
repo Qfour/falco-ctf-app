@@ -60,6 +60,11 @@ func triggerFirstCatalog() catalog.Catalog {
 // buckets of tinyBurst (no refill); tiny=false keeps the production limits.
 func newRateLimitFixture(t *testing.T, cat catalog.Catalog, tiny bool) (*httptest.Server, *store.Store) {
 	t.Helper()
+	return newRateLimitFixtureMode(t, cat, tiny, "", ingest.SecretModeOff)
+}
+
+func newRateLimitFixtureMode(t *testing.T, cat catalog.Catalog, tiny bool, secret string, mode ingest.SecretMode) (*httptest.Server, *store.Store) {
+	t.Helper()
 	fixed := time.Date(2026, 10, 14, 0, 0, 0, 0, time.UTC)
 	clock := func() time.Time { return fixed } // frozen: buckets never refill
 	s, err := store.Open(filepath.Join(t.TempDir(), "scoreboard.db"))
@@ -68,7 +73,7 @@ func newRateLimitFixture(t *testing.T, cat catalog.Catalog, tiny bool) (*httptes
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	grader := scoring.New(cat, s, clock)
-	h := ingest.New(grader, s, slog.New(slog.NewTextHandler(io.Discard, nil)), clock, "", ingest.SecretModeOff)
+	h := ingest.New(grader, s, slog.New(slog.NewTextHandler(io.Discard, nil)), clock, secret, mode)
 	if tiny {
 		h.WithLimits(0, tinyBurst, 0, tinyBurst)
 	}
@@ -274,5 +279,57 @@ func TestRateLimit_OverflowTaintPersistFailure_Returns500(t *testing.T) {
 	}
 	if resp := post(t, srv.URL, "ctf-broken", forbiddenRule, nil); resp.StatusCode != http.StatusInternalServerError {
 		t.Fatalf("status %d, want 500 on overflow-taint persist failure", resp.StatusCode)
+	}
+}
+
+// Merge-order pin (#334 x #359): the decode-free gates — browser/proxy identity
+// header (403), non-JSON Content-Type (415), shared-secret mismatch in enforce
+// mode (401) — return BEFORE the per-participant limiter. A rejected request
+// must never spend the participant's bucket, so a flood of them cannot push the
+// same ns's genuine event into overflow. Each rejected body is a valid scoring
+// event for the pinned ns, so a gate that slipped behind the limiter would
+// drain the tiny bucket and bump the overflow metrics.
+func TestRateLimit_PreDecodeGatesReturnBeforeTheLimiter(t *testing.T) {
+	const secret = "dev-not-a-secret"
+	srv, s := newRateLimitFixtureMode(t, evadeOnlyCatalog(), true, secret, ingest.SecretModeEnforce)
+	body, _ := json.Marshal(map[string]any{"rule": forbiddenRule, "priority": "Warning", "output_fields": map[string]any{
+		"k8s.ns.name": "ctf-pin", "k8s.pod.name": "workspace", "container.image.repository": "falco-ctf/challenge"}})
+	send := func(contentType string, hdr map[string]string) int {
+		req, err := http.NewRequest(http.MethodPost, srv.URL+"/falco/events", bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", contentType)
+		for k, v := range hdr {
+			req.Header.Set(k, v)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+	over := testutil.ToFloat64(metrics.FalcoEventsScoringOverflow.WithLabelValues("ctf-pin"))
+	ok := map[string]string{ingest.SharedSecretHeader: secret}
+	for i := 0; i < 5*tinyBurst; i++ {
+		if got := send("application/json", map[string]string{ingest.SharedSecretHeader: secret, "X-Auth-Request-Email": "u@ctf.local"}); got != http.StatusForbidden {
+			t.Fatalf("proxy-identity header: status %d, want 403", got)
+		}
+		if got := send("text/plain", ok); got != http.StatusUnsupportedMediaType {
+			t.Fatalf("text/plain: status %d, want 415", got)
+		}
+		if got := send("application/json", map[string]string{ingest.SharedSecretHeader: "wrong"}); got != http.StatusUnauthorized {
+			t.Fatalf("secret mismatch: status %d, want 401", got)
+		}
+	}
+	if got := send("application/json", ok); got != http.StatusOK {
+		t.Fatalf("genuine event: status %d, want 200", got)
+	}
+	if d := testutil.ToFloat64(metrics.FalcoEventsScoringOverflow.WithLabelValues("ctf-pin")) - over; d != 0 {
+		t.Fatalf("scoring_overflow delta = %v, want 0: a pre-decode gate spent the participant's bucket", d)
+	}
+	if got := s.DirtyRules("pin", rlEvadeChallenge); !slices.Equal(got, []string{forbiddenRule}) {
+		t.Fatalf("dirtyRules = %v, want exactly [%q]", got, forbiddenRule)
 	}
 }
