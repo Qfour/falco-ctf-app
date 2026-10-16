@@ -19,7 +19,7 @@ info:
 
     Default-deny routing is part of the contract
     --------------------------------------------
-    Only the three participant routes below are forwarded. Everything else
+    Only the two participant routes below are forwarded (`exfil` and `submit`). Everything else
     (`/falco/events`, `/internal/*`, `/api/admin/*`, `/api/state`, and
     deliberately `GET /api/users/{user}/me`) 404s at the mux. `me` is excluded
     on purpose: an anonymous, client-chosen `{user}` read through the collector
@@ -28,12 +28,27 @@ info:
     attack surface; it requires an ADR (see ADR-0005 Consequences) and, for a
     destructive route, is forbidden — `reset-dirty` must never be fronted.**
 
+    `POST /api/users/{user}/display-name` is NOT fronted any more (ADR-0034
+    D12, S1). It used to be the third forward, reached by the workspace's
+    `setname`; both are removed. A participant now sets display name and
+    avatar on the authenticated portal origin (profile route), and a request
+    for the old path through the collector 404s like any other unlisted route.
+
     Header hygiene
     --------------
     Inbound `X-Forwarded-For` / `X-Real-IP` are STRIPPED before forwarding: the
     workspace connects directly (no trusted ingress in front), so those headers
     are attacker-chosen, and the scoreboard's limiter trusts XFF's leftmost
     entry. The collector's own limiter therefore keys on `r.RemoteAddr`.
+
+    EVERY inbound header whose name starts with `X-Auth-Request-` (any case:
+    `-Email`, `-User`, `-Preferred-Username`, `-Groups`, and any future one) is
+    also STRIPPED, unconditionally, on every forwarded route (ADR-0034 D6).
+    Those headers are how auth-policy tells the scoreboard who a request is; a
+    workspace sends them directly, so they are forged. Stripping them keeps the
+    scoreboard's header-absent branch ("claimed identity", NetworkPolicy-isolated)
+    the only way a collector request is seen, and keeps a forged admin email from
+    ever being compared against `ADMIN_EMAILS`.
 
     Per-operation extensions carry the same meaning as in
     docs/openapi-scoreboard.yaml, plus one that is specific to this document:
@@ -46,7 +61,7 @@ info:
                             `x-ctf-collector-forward: true`, and every such
                             scoreboard operation must be named by exactly one
                             collector operation. That is what turns "the
-                            collector fronts exactly three routes" from prose
+                            collector fronts exactly two routes" from prose
                             repeated in four files into a checked contract.
 
 servers:
@@ -88,6 +103,12 @@ paths:
 
         `{cid}` is validated as a `NN-slug` here (not just downstream) so a
         crafted path cannot be reflected into the upstream URL.
+
+        The scoreboard sink is collector-only (`internal-claimed-identity`
+        there): the collector adds no `X-Auth-Request-*` header and passes
+        `Content-Type` through, so the `Content-Type: application/json` the
+        mission brief's `curl` sets is REQUIRED (`415` otherwise), and a
+        client-supplied `X-Auth-Request-*` header is refused `403`.
       parameters:
         - $ref: "#/components/parameters/Cid"
       requestBody:
@@ -113,6 +134,14 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: relayed scoreboard refusal — the request carried an `X-Auth-Request-*` header
+          content:
+            application/json: {}
+        "415":
+          description: relayed scoreboard refusal — body is not `application/json`
+          content:
+            application/json: {}
         "429":
           description: rate limited (`text/plain`)
           content:
@@ -163,55 +192,6 @@ paths:
             application/json: {}
         "429":
           description: rate limited by the collector, or relayed from the scoreboard (`text/plain`)
-          content:
-            text/plain: {}
-        "500":
-          description: relayed scoreboard error
-          content:
-            application/json: {}
-        "502":
-          description: upstream forward failed
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-
-  /api/users/{user}/display-name:
-    post:
-      summary: Set the participant's display name (transparent forward)
-      operationId: forwardDisplayName
-      tags: [participant]
-      x-ctf-audience: participant
-      x-ctf-authz: claimed-identity
-      x-ctf-origin-guard: false
-      x-ctf-collector-forward: true
-      x-ctf-forward-target: "POST /api/users/{user}/display-name"
-      x-ctf-rate-limit: per-IP (RemoteAddr) 1 req/s burst 10
-      description: |
-        Verbatim reverse-proxy. This is the ONLY caller of the scoreboard's
-        participant display-name route, which is why that route is not
-        origin-guarded (no browser fetches it). Note the collector's bucket here
-        is 1 req/s burst 10, while the scoreboard's own display-name limiter is
-        stricter (1 per 5s, burst 5) — the tighter one wins in practice.
-      parameters:
-        - in: path
-          name: user
-          required: true
-          schema: { type: string }
-      requestBody:
-        required: true
-        content:
-          application/json: {}
-      responses:
-        "200":
-          description: relayed scoreboard response (`DisplayNameResult`)
-          content:
-            application/json: {}
-        "400":
-          description: relayed scoreboard error
-          content:
-            application/json: {}
-        "429":
-          description: rate limited by the collector or the scoreboard (`text/plain`)
           content:
             text/plain: {}
         "500":

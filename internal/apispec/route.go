@@ -80,6 +80,14 @@ const (
 	AuthzSelfOrAdmin      Authz = "self-or-admin"
 	AuthzSelfOrAdminWrite Authz = "self-or-admin-write"
 	AuthzClaimedIdentity  Authz = "claimed-identity"
+	// AuthzInternalClaimedIdentity: claimed identity (taken from the path, the
+	// body or the event payload, never proven) on the cluster-internal path
+	// ONLY — the collector's forwards and falcosidekick's webhook. Any request carrying an
+	// X-Auth-Request-* header — i.e. anything that arrived through the
+	// browser/oauth2-proxy path — is refused 403, so no proven identity is
+	// ever accepted and the status cannot reveal who the header claims to be.
+	// Contrast AuthzClaimedIdentity, which lets header-bearing requests through.
+	AuthzInternalClaimedIdentity Authz = "internal-claimed-identity"
 	// AuthzAuthenticated (app#292 Phase 2 / QA Board): any caller carrying a
 	// proven X-Auth-Request-Email identity may proceed — unlike
 	// AuthzSelfOrAdmin(Write), it enforces NO username-match against a
@@ -89,6 +97,12 @@ const (
 	// gate). A missing/blank header is still fail-closed 403 — see
 	// api.Handler.requireAuthenticated.
 	AuthzAuthenticated Authz = "authenticated"
+	// AuthzRostered (ADR-0034 D3, auth-policy GET /check-participant): the
+	// ingress subrequest answers 200 only for an ADMIN_EMAILS member or an
+	// identity the roster resolves to a seat; everything else is 403. There is
+	// no {user} to match against (that is AuthzSelfOrAdmin's workspace
+	// counterpart on /check-workspace?host=): this is the participant door.
+	AuthzRostered Authz = "rostered"
 )
 
 // Route is one row of a service's declarative route table — the single

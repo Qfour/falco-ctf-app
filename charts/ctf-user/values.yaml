@@ -5,8 +5,8 @@ username: user1
 challengeId: "01-read-shadow"
 
 # collector — the participant-facing front (P11.5 full one-pipe). The workspace
-# reaches the scoreboard ONLY through this URL: submit / me / display-name are
-# forwarded, the boss exfil drop is rewritten to the scoreboard's internal sink.
+# reaches the scoreboard ONLY through this URL: submit is
+# forwarded verbatim, the boss exfil drop is rewritten to the scoreboard's internal sink.
 # Injected as FALCO_CTF_COLLECTOR into both workspace containers. Base URL of the
 # collector Service (default = in-cluster ClusterIP:80). Platform helmfile
 # overrides per environment if the Service name/namespace differs.
@@ -162,17 +162,21 @@ ingress:
   # / ops by passing --set ingress.host=... or --set dnsSuffix=...
   host: "{{ .Values.username }}.{{ .Values.dnsSuffix }}"
 
-# oauth2-proxy front-door + host↔email binding via the in-cluster auth-policy
-# service. Each user's Ingress points auth-url at
-# `auth-policy/check?host=<username>`; auth-policy forwards the cookie to
-# oauth2-proxy /oauth2/auth, reads X-Auth-Request-Email, and returns 200 only
-# if the email belongs to the matching user.
+# oauth2-proxy front-door + identity-roster binding via the in-cluster
+# auth-policy service. Each user's Ingress points auth-url at
+# `auth-policy/check-workspace?host=<username>` (ADR-0034 D3/D4 — FIXED in
+# templates/ingress.yaml; there is deliberately no value for it and no way to
+# render an Ingress without it): auth-policy forwards the cookie to oauth2-proxy
+# /oauth2/auth, resolves the identity to a seat through its roster, and returns
+# 200 only if that seat is this workspace's username (or the caller is an
+# ADMIN_EMAILS member).
 #
 # Why not point auth-url straight at oauth2-proxy? Because that lets any
-# logged-in Dex user reach any workspace.
+# logged-in user reach any workspace.
+#
+# REMOVED (ADR-0034 D4): `auth.enabled` (false rendered an Ingress with no auth
+# gate at all) and `auth.authUrl`. Setting either now fails the render.
 auth:
-  enabled: true
-  authUrl: "http://auth-policy.auth-policy.svc.cluster.local:80/check?host={{ .Values.username }}"
   # appHost = the single-origin participant app host (P19-2b, e.g.
   # "app.<dnsSuffix>") that fronts oauth2-proxy's /oauth2/start sign-in page.
   # ctf-user is NOT a platform helmfile release (it's deployed via
@@ -185,8 +189,8 @@ auth:
   # `auth.<dnsSuffix>` compat-bridge host (app#99 follow-up target for
   # removal) so unconfigured/local deploys keep working unchanged — this is
   # fail-soft UX only (a stale sign-in redirect just 404s/misdirects), it
-  # does NOT touch `authUrl`'s prefix-exact host↔email check above (I8
-  # unaffected).
+  # does NOT touch the auth-policy roster check the Ingress's fixed auth-url
+  # makes (I8 unaffected).
   appHost: ""
   authSignin: 'http://{{ .Values.auth.appHost | default (printf "auth.%s" .Values.dnsSuffix) }}/oauth2/start?rd=$scheme://$host$escaped_request_uri'
 

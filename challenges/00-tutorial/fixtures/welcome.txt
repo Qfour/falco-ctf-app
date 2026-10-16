@@ -11,13 +11,11 @@
 
 # 表示名について
 
-scoreboard に出る名前は **default で識別子 (`user1` 等)**。好きな表示名に
-変更できる (いつでも何回でも):
-
-  source /opt/ctf/setname.sh && setname 'あなたの名前'
+scoreboard に出る名前は **default で識別子 (`user1` 等)**。表示名と絵柄は、
+ポータルの **Scoreboard タブ › Profile** で設定できる (いつでも何回でも)。端末からは変更しない。
 
 識別子と表示名は別物 — submit や認証は identity で動き、表示だけが display
-name に置き換わる。1〜32 文字、`< > & " '` と制御文字は不可。
+name に置き換わる。
 
 # 課題は 2 種類ある
 

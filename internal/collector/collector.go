@@ -1,7 +1,7 @@
 // Package collector is the participant-facing front for the CTF workspace
 // (P11.5 full one-pipe). Once ctf-user egress lockdown is on, a workspace pod
 // can reach *only* the collector — never the scoreboard directly. The collector
-// therefore fronts the participant WRITE routes (submit / display-name) and,
+// therefore fronts the participant WRITE route (submit) and,
 // for the boss capstone, receives the exfil drop and forwards it to the
 // scoreboard's internal-only sink. Progress READ (GET /me) is NOT fronted here:
 // participant progress is viewed on the browser journey host (authenticated,
@@ -18,6 +18,11 @@
 //   - Default-deny routing: only the explicitly-listed participant routes are
 //     forwarded. /internal/*, /api/admin/*, /metrics, /falco/events are never
 //     reachable through the collector.
+//   - Identity-header strip (ADR-0034 D6). A workspace is not behind
+//     ingress-nginx, so every request header named X-Auth-Request-* is forged;
+//     the collector deletes ALL of them before forwarding, whatever the route.
+//     A request the scoreboard receives over this path therefore never carries
+//     a proven identity (the claimed-identity routes' premise).
 //   - XFF-spoof resistance. Unlike the scoreboard (which sits behind
 //     ingress-nginx/Cloudflare and can trust an injected X-Forwarded-For or
 //     CF-Connecting-IP, ADR-0023), the collector is hit directly by workspace
@@ -32,7 +37,6 @@
 //
 //	POST /api/challenges/{cid}/exfil       → scoreboard POST /internal/exfil/{cid}
 //	POST /api/challenges/{cid}/submit      → scoreboard (transparent)
-//	POST /api/users/{user}/display-name    → scoreboard (transparent)
 //	GET  /healthz                          collector liveness (local)
 //	GET  /metrics                          collector Prometheus exposition
 //
@@ -48,6 +52,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -111,7 +116,7 @@ func New(upstream string, logger *slog.Logger, opts ...Option) (*Handler, error)
 	// any CF-Connecting-IP a workspace sends is always forged. Without this
 	// strip, ratelimit.ClientIP's new CF-Connecting-IP-first priority would
 	// let a workspace mint an arbitrary rate-limit key per request and
-	// bypass the scoreboard's per-route submit/display-name budgets
+	// bypass the scoreboard's per-route submit budget
 	// entirely (security-engineer HIGH finding, ADR-0023). Any future
 	// addition of a new trusted header to ratelimit.ClientIP MUST be
 	// mirrored here (ADR-0023 Signpost 5).
@@ -121,6 +126,7 @@ func New(upstream string, logger *slog.Logger, opts ...Option) (*Handler, error)
 		req.Header.Del("X-Forwarded-For")
 		req.Header.Del("X-Real-IP")
 		req.Header.Del("CF-Connecting-IP")
+		stripAuthRequestHeaders(req.Header)
 	}
 	// Fail closed on upstream errors: a proxy dial failure must not leak a
 	// Go default 502 body or the upstream address into the participant shell.
@@ -162,13 +168,6 @@ func New(upstream string, logger *slog.Logger, opts ...Option) (*Handler, error)
 			Handler:   rl(h.proxy),
 		},
 		{
-			Method: "POST", Pattern: "/api/users/{user}/display-name",
-			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzClaimedIdentity,
-			OriginGuarded: false, CollectorForward: true,
-			RateLimit: "per-IP (RemoteAddr) 1 req/s burst 10",
-			Handler:   rl(h.proxy),
-		},
-		{
 			// Exfil drop → rewrite to the scoreboard's internal-only sink (see
 			// h.exfil). The public /api/challenges/{cid}/exfil path stays the
 			// participant-facing contract (curl target in the Mission 10
@@ -197,6 +196,31 @@ func New(upstream string, logger *slog.Logger, opts ...Option) (*Handler, error)
 	h.mux, h.routes = apispec.NewMux(declared)
 
 	return h, nil
+}
+
+// authRequestPrefix is the prefix of every identity header auth-policy /
+// oauth2-proxy stamp on a request that came through ingress-nginx
+// (X-Auth-Request-Email, -User, -Preferred-Username, -Groups, …).
+const authRequestPrefix = "x-auth-request-"
+
+// stripAuthRequestHeaders deletes EVERY header whose name starts with
+// "X-Auth-Request-" (case-insensitively), unconditionally (ADR-0034 D6, the same
+// class of duty as ADR-0023 D1b). A workspace connects to the collector
+// directly, so any such header is forged. Forwarded to the scoreboard it would
+// either (a) turn a header-less claimed-identity write into a proven-identity
+// one — letting a workspace impersonate an admin or any seat — or (b) make the
+// scoreboard's 200/403 answer depend on a forged identity (the ADMIN_EMAILS
+// oracle the display-name hotfix closed). The match is by PREFIX over every
+// header, not a list of known names: a new X-Auth-Request-* header added to
+// auth-response-headers later is covered without anyone remembering to add it
+// here. Keys are compared lower-cased because a hand-built request (tests,
+// future callers) may carry a non-canonical key that Header.Del would miss.
+func stripAuthRequestHeaders(h http.Header) {
+	for k := range h {
+		if strings.HasPrefix(strings.ToLower(k), authRequestPrefix) {
+			delete(h, k)
+		}
+	}
 }
 
 // Routes returns the route set this Handler ACTUALLY registered onto its mux

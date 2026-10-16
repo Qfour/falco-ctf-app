@@ -54,6 +54,16 @@ COPY . .
 # expectations).
 RUN helm dependency build charts/scoreboard
 
+# ADR-0034 V12 renders EVERY app chart (auth-policy, collector, docs, ctf-user
+# as well as scoreboard) to pin each Ingress's auth-url, so every chart that
+# declares a dependency needs it resolved here too (still file:// only).
+# .dockerignore re-includes those charts for this build context.
+RUN for c in charts/*; do \
+      if grep -q '^dependencies:' "$c/Chart.yaml" 2>/dev/null; then \
+        helm dependency build "$c" || exit 1; \
+      fi; \
+    done
+
 RUN go vet ./...
 # ADR-0031: the browser E2E code (build tag e2e, chromedp) is only COMPILED here —
 # `make e2e` (Dockerfile.e2e) is what runs it. internal/apispec's

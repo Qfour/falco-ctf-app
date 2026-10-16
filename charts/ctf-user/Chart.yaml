@@ -15,5 +15,5 @@ keywords:
 # charts/falco-ctf-common (see Makefile `lint`/`deploy-local`).
 dependencies:
   - name: falco-ctf-common
-    version: "0.1.0"
+    version: "0.2.0"
     repository: "file://../falco-ctf-common"

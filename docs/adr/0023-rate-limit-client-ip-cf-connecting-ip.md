@@ -64,7 +64,7 @@ func ClientIP(r *http.Request) string {
 | `POST /api/users/{user}/display-name` (**参加者向け**。⚠ 旧版は本行を admin 専用と誤記していた — `api.go:497` で `h.setDisplayName` に配線され、**唯一の呼び手は collector forward** [`api.go:481-490` のコメント: 「No browser template in this repo fetches this participant-facing path directly」]。admin 専用の `POST /api/admin/users/{user}/display-name` [`api.go:367-370`] は別ハンドラ `h.adminSetDisplayName` で rate limiter 自体を持たず、`ratelimit.ClientIP` を呼ばないので本 ADR の対象外) | `api.go:334` `dnMW` | **collector forward (curl) のみ** — journey UI からの直接 fetch は存在しない | **経由しない** — submit の collector-forward 経路と同じ理由で ⚠ D1 単体では新規偽装口 (D1b で是正) |
 | `POST /api/users/{user}/questions`, `.../messages` | `api.go:335` `questionMW` | journey UI ブラウザ fetch のみ (collector forward 対象外) | 経由する。collector forward 経路が無いので D1b の対象外 |
 | `POST /csp-report` | `view.go:220` `cspReportLimiter` | ブラウザの CSP violation report beacon (**認可なし・rate limit が唯一の防御層**、app#95) | 経由する。collector forward 対象外 |
-| `POST /falco/events` | `ingest.go:75` `h.limiter` | falcosidekick (**cluster 内部**、Falco DaemonSet の sidekick コンポーネント) | **経由しない** — ingress-nginx/Cloudflare を通らない内部呼び出し。本 ADR の修正の恩恵を受けない (下記 D5)。collector 経由でもない (falcosidekick は collector を通さず直接叩く) ので D1b の対象外 |
+| `POST /falco/events` (⚠ **追補 2026-10-14, app#359: IP を見なくなった** — 下記 D5 追補) | ~~`ingest.go:75` `h.limiter`~~ → 参加者 (ns) 単位の bucket | falcosidekick (**cluster 内部**、Falco DaemonSet の sidekick コンポーネント) | **経由しない** — ingress-nginx/Cloudflare を通らない内部呼び出し。本 ADR の修正の恩恵を受けない (下記 D5)。collector 経由でもない (falcosidekick は collector を通さず直接叩く) ので D1b の対象外 |
 
 `POST /internal/exfil/{cid}` は `RateLimit: "none (the limit lives on the
 collector front)"` (`api.go` コメント) — `ratelimit.ClientIP` を使わないので対象外
@@ -322,6 +322,16 @@ XFF leftmost (未修正のまま) または `RemoteAddr` にフォールバッ�
 明記し、将来「なぜ #236 後も /falco/events だけ直っていないのか」という
 疑問を防ぐ**。
 
+> **追補 (2026-10-14, app#359)**: 上の「実質的な防御層は NetworkPolicy であって rate-limit
+> キーの精度ではない」は**誤りだった**。送り手は falcosidekick の 1 IP なので per-IP bucket は
+> **全参加者で 1 つ**になり、誰かの大量発火 (や ctf 以外の ns の noise) が別参加者の forbidden の発火を
+> 429 で落とした (sidekick は再送しない → evade が clean に見える。ADR-0003 の前提が崩れる)。
+> 是正として `/falco/events` は **IP を見なくなり** (`ClientIPKeyed("falco_events")` は廃止、
+> `client_ip_source_total{caller="falco_events"}` は出なくなる)、参加者 (event の ns) 単位の
+> bucket で制限する。採点に効く rule は 429 で落とさず、通常の taint 述語 (現在の evade が forbid する
+> rule) を適用する。したがって D5 の「対象外」は**キーの話としては失効**し、本 ADR の IP 規則はこのルートに
+> 適用されない。
+
 ### D6. fail-open を維持する (fail-closed にしない)
 
 `CF-Connecting-IP` が prod/vm-prod で万一欠落した場合 (Cloudflare 側の障害・
@@ -419,6 +429,8 @@ I-番号を持たず、Cross-repo 契約表 + パッケージ doc + 単体テス
 4. **`/falco/events` の rate-limit 精度が実際に問題化したら** (falcosidekick
    経路のなりすまし・DoS が実害を持つケースが見つかったら) — D5 の
    「対象外」判断を再訪し、NetworkPolicy 以外の追加防御を検討する。
+   **→ 発火した (app#359, 2026-10-14)**: 共有 bucket が全参加者の forbidden を落とし得た。
+   参加者単位 bucket への変更で解消 (D5 追補)。
 5. **`ratelimit.ClientIP` に将来別の信頼ヘッダ (例: 将来の CDN 切替) を
    追加するとき、`collector.go` の `Director` の strip 対象を同時に
    拡張し忘れたら** — D1b と全く同型の regression が再発する。実装 PR は

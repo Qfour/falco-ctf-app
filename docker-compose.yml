@@ -21,13 +21,16 @@ services:
       # (fetch()'d from http://localhost:8000 itself) to keep working locally.
       # Prod sets this to the real scoreboard/journey host(s) via helmfile.
       ALLOWED_ORIGINS: http://localhost:8000
+      # ADR-0034 D5: self = "<user>@<EXPECTED_EMAIL_DOMAIN>", exact. Must equal
+      # auth-policy's value; empty would make every self check fail (closed).
+      EXPECTED_EMAIL_DOMAIN: ctf.local
     volumes:
       - scoreboard-data:/var/lib/scoreboard
       # Mount challenges/ live so falco-rule.yaml edits reload on container restart.
       - ./challenges:/app/challenges:ro
 
-  # Participant-facing front (P11.5 full one-pipe). Forwards submit / me /
-  # display-name and rewrites the boss exfil drop to the scoreboard's internal
+  # Participant-facing front (P11.5 full one-pipe). Forwards submit
+  # and rewrites the boss exfil drop to the scoreboard's internal
   # sink. Locally reachable on :8002; workspaces would only ever hit this.
   #   curl -X POST http://localhost:8002/api/challenges/10-final-exfil/exfil \
   #     -H 'content-type: application/json' -d '{"user":"user1","flag":"FALCO{dev-final-exfil}"}'
@@ -54,11 +57,19 @@ services:
       # No real oauth2-proxy locally — point at a fake that always 202s.
       OAUTH2_PROXY_AUTH_URL: http://mock-oauth2/oauth2/auth
       EXPECTED_EMAIL_DOMAIN: ctf.local
+      # ADR-0034 D2: the roster is required (no roster = refuses to start). The
+      # dev admin is NOT a seat's canonical email (that overlap is a startup
+      # error), so it is a separate static account.
+      ROSTER_FILE: /etc/auth-policy/roster/roster.yaml
+      ADMIN_EMAILS: admin@ctf.local
+    volumes:
+      - ./scripts/dev-roster.yaml:/etc/auth-policy/roster/roster.yaml:ro
     depends_on:
       - mock-oauth2
 
   # Tiny static server pretending to be oauth2-proxy's auth subrequest.
-  # Always returns 202 with X-Auth-Request-Email = user1@ctf.local.
+  # Always returns 202 with X-Auth-Request-Email = user1@ctf.local (a seat in
+  # scripts/dev-roster.yaml).
   mock-oauth2:
     image: nginx:1.27-alpine
     volumes:

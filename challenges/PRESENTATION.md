@@ -367,7 +367,7 @@ ATT&CK のキルチェーン順 + trigger/evade の対 (5 ペア):
 
 2. **Web ターミナル (ttyd)** が開く
 
-3. 最初の画面 — ログイン時に出るのは表示名変更 (`setname`) の案内だけ。
+3. 最初の画面 — ログイン時に出るのはポータルの **Scoreboard タブ › Profile** (表示名と絵柄の設定) への案内だけ。
    ミッションの説明は Story タブで読む。端末では目的と提出方法を確認できる:
    ```bash
    cat /opt/ctf/missions/01-initial-recon/fixtures/welcome.txt

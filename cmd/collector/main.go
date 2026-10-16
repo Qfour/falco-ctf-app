@@ -1,6 +1,6 @@
 // Command collector is the participant-facing front for CTF workspaces
 // (P11.5 full one-pipe). Once ctf-user egress lockdown is on, a workspace can
-// reach only the collector — it forwards submit / me / display-name verbatim to
+// reach only the collector — it forwards submit verbatim to
 // the scoreboard and rewrites the boss exfil drop to the scoreboard's
 // internal-only sink. It holds no CTF state (no catalog, flags, or DB).
 // See internal/collector for the HTTP surface.

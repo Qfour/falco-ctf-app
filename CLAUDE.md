@@ -20,7 +20,7 @@ falco-ctf-app/
 ├── scoreboard/         Dockerfile のみ (Go multi-stage, challenges/ 焼込)
 ├── auth-policy/        Dockerfile のみ (Go multi-stage, stdlib のみ)
 ├── collector/          Dockerfile のみ (Go multi-stage。参加者向け単一入口。
-│                       submit/display-name/exfil の3本のみ scoreboard へ forward。
+│                       submit/exfil の2本のみ scoreboard へ forward (display-name は ADR-0034 S1 で撤去)。
 │                       me は非転送 (self-scope bypass を避ける設計判断)。CTF 状態は持たない)
 ├── images/{ttyd,challenge,docs,detect-grader}/  Dockerfile のみ
 │                       (docs = MkDocs+PDF サイト、detect-grader = falco base + grade.sh
@@ -57,8 +57,9 @@ falco-ctf-app/
   すれば overlay 可能(local dev では compose で実体 mount)。
 
 - **auth-policy は別サービス** — oauth2-proxy 単体では「認証済ユーザ = 全 workspace
-  到達可」になる問題を解消するため。`X-Auth-Request-Email` を読んで
-  `<username>@` 一致を確認する小さな Go サービス。
+  到達可」になる問題を解消するため。`X-Auth-Request-Email` をロスター 1 表 (`ROSTER_FILE`) で引き、正規形
+  `<seat>@<EXPECTED_EMAIL_DOMAIN>` に書き換えて下流へ渡す小さな Go サービス (ADR-0034 D2/D3。
+  表に無い identity は 403、workspace は seat と host の完全一致)。
 
 - **ttyd / challenge イメージはここに置く** — ユーザの体験面はアプリ層の責務。
   platform 側の ctf-user chart は image tag を values で pin するだけ。
@@ -70,7 +71,7 @@ falco-ctf-app/
 
 - **collector を参加者向け単一入口にする (P11.5)** — ctf-user の egress lockdown
   後、workspace が到達できる先を collector 1 つに絞る。collector は submit /
-  display-name / exfil の3本を scoreboard へ verbatim forward するだけで CTF 状態
+  exfil の2本を scoreboard へ verbatim forward するだけで CTF 状態
   (catalog / flags / DB) を持たない。**`GET /api/users/{user}/me` は意図的に
   非転送** (匿名で client 任意の `{user}` を読めると self-scope bypass になるため、
   進捗の読み取りは認証済みの journey host 経由に限定する — 出所は
@@ -99,7 +100,8 @@ falco-ctf-app/
   admin dashboard のみ admin-gate 対象)。
 
 - **docker-compose に mock-oauth2 を含める** — auth-policy 単体テストのため。
-  本物の Dex を立てるコストを払わずに /check 経路が動く。
+  本物の Dex を立てるコストを払わずに `/check-workspace` / `/check-participant` /
+  `/check-admin` の経路が動く (`/check` は ADR-0034 S2 で削除)。
 
 - **`Dockerfile.test` / `Dockerfile.tidy` / `Dockerfile.gen` を分離** — Colima は
   host repo path を VM に共有しないため `docker run -v` が効かない。代わりに

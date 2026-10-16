@@ -154,11 +154,34 @@ func newAuthzFixture(t *testing.T) *scoreboard.Handler {
 	t.Cleanup(func() { boardSt.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	return scoreboard.NewHandler(cat, st, logger,
+		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 		scoreboard.WithAdminEmails([]string{authzAdminEmail}),
 		scoreboard.WithAllowedOrigins([]string{allowedOrigin}),
 		scoreboard.WithDetect(api.DetectConfig{Runner: noopDetectRunner{}}),
 		scoreboard.WithBoard(boardSt),
 	)
+}
+
+// authzDo issues rt's request (allowed Origin, generic write body for non-GET)
+// with X-Auth-Request-Email: email when withHeader, or with NO identity header
+// at all when !withHeader.
+func authzDo(srv http.Handler, rt apispec.Route, email string, withHeader bool) *httptest.ResponseRecorder {
+	target := authzConcretePath(rt)
+	var body io.Reader
+	if rt.Method != http.MethodGet {
+		body = strings.NewReader(authzGenericBody)
+	}
+	r := httptest.NewRequest(rt.Method, target, body)
+	if body != nil {
+		r.Header.Set("Content-Type", "application/json")
+	}
+	r.Header.Set("Origin", allowedOrigin)
+	if withHeader {
+		r.Header.Set("X-Auth-Request-Email", email)
+	}
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, r)
+	return w
 }
 
 // authzCheck issues the request rt's Authz declaration calls for — an
@@ -178,25 +201,36 @@ func newAuthzFixture(t *testing.T) *scoreboard.Handler {
 // cannot be reused as a value-returning predicate the way this can.
 func authzCheck(t *testing.T, srv http.Handler, rt apispec.Route) string {
 	t.Helper()
-	target := authzConcretePath(rt)
-	var body io.Reader
-	if rt.Method != http.MethodGet {
-		body = strings.NewReader(authzGenericBody)
-	}
-	r := httptest.NewRequest(rt.Method, target, body)
-	if body != nil {
-		r.Header.Set("Content-Type", "application/json")
-	}
-	r.Header.Set("Origin", allowedOrigin)
-	r.Header.Set("X-Auth-Request-Email", authzMismatchedEmail)
-	w := httptest.NewRecorder()
-	srv.ServeHTTP(w, r)
+	w := authzDo(srv, rt, authzMismatchedEmail, true)
 
 	switch rt.Authz {
 	case apispec.AuthzAdmin, apispec.AuthzSelfOrAdmin, apispec.AuthzSelfOrAdminWrite:
 		if w.Code != http.StatusForbidden {
 			return fmt.Sprintf("%s: status=%d body=%s, want 403 (Authz: %s — %s does not satisfy it)",
 				rt.MuxPattern(), w.Code, w.Body, rt.Authz, authzMismatchedEmail)
+		}
+	case apispec.AuthzInternalClaimedIdentity:
+		// Collector-only (ADR-0034 D12 S1): ANY X-Auth-Request-* header is
+		// refused, whoever it claims to be, and a header-less request is NOT
+		// refused. The mismatched-identity 403 above alone cannot tell this
+		// class from self-or-admin(-write) (both 403 a stranger), so the two
+		// extra probes below are what pin the distinction: an ADMIN header (or
+		// the {user} owner's) still 403s here, which self-or-admin(-write)
+		// would let through; and no header at all passes, which self-or-admin
+		// (read) would 403.
+		if w.Code != http.StatusForbidden {
+			return fmt.Sprintf("%s: status=%d body=%s, want 403 (Authz: %s — any X-Auth-Request-* header is refused)",
+				rt.MuxPattern(), w.Code, w.Body, rt.Authz)
+		}
+		for _, email := range []string{authzAdminEmail, authzSelfUser + "@ctf.local"} {
+			if wa := authzDo(srv, rt, email, true); wa.Code != http.StatusForbidden {
+				return fmt.Sprintf("%s: status=%d body=%s with X-Auth-Request-Email: %s, want 403 (Authz: %s — a proven admin/owner identity must be refused too; a 200 means the route fell back to a self-or-admin-shaped gate)",
+					rt.MuxPattern(), wa.Code, wa.Body, email, rt.Authz)
+			}
+		}
+		if wn := authzDo(srv, rt, "", false); wn.Code == http.StatusForbidden {
+			return fmt.Sprintf("%s: status=%d body=%s with NO identity header, must NOT be 403 (Authz: %s — the collector path carries no header and must keep working)",
+				rt.MuxPattern(), wn.Code, wn.Body, rt.Authz)
 		}
 	case apispec.AuthzNone, apispec.AuthzClaimedIdentity:
 		if w.Code == http.StatusForbidden {
@@ -229,7 +263,7 @@ func authzCheck(t *testing.T, srv http.Handler, rt apispec.Route) string {
 func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 	srv := newAuthzFixture(t)
 
-	var adminGated, selfGated, openGated, authenticatedGated int
+	var adminGated, selfGated, openGated, authenticatedGated, internalGated int
 	for _, rt := range srv.Routes() {
 		rt := rt
 		switch rt.Authz {
@@ -241,6 +275,8 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 			openGated++
 		case apispec.AuthzAuthenticated:
 			authenticatedGated++
+		case apispec.AuthzInternalClaimedIdentity:
+			internalGated++
 		}
 		t.Run(string(rt.Authz)+"/"+rt.MuxPattern(), func(t *testing.T) {
 			if violation := authzCheck(t, srv, rt); violation != "" {
@@ -262,16 +298,30 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 	// doc) plus 5 admin routes (4 from the initial Phase 2 landing + 1
 	// post-review gap-close: boardAdminGetThread). 9 admin + 7 self(-write) +
 	// 15 none/claimed-identity + 6 authenticated = 37; ADR-0028 then folded the
-	// 8 static-asset routes into one (none): 9 + 7 + 8 + 6 = 30, matching
+	// 8 static-asset routes into one (none): 9 + 7 + 8 + 6 = 30; ADR-0034 D12 S1
+	// then moved display-name out of self(-write) into its own
+	// internal-claimed-identity class: 9 + 6 + 1 + 8 + 6 = 30; closing the
+	// browser path of POST /falco/events and POST /internal/exfil/{cid} moves
+	// both out of the none/claimed-identity bucket (their Authz was
+	// claimed-identity, which openGated counts with none) into
+	// internal-claimed-identity: 9 + 6 + 3 + 6 + 6 = 30; ADR-0034 S1 then removed
+	// the participant display-name route (internal-claimed-identity 3 -> 2) and
+	// added the two profile routes (+1 admin, +1 self-or-admin):
+	// 10 + 7 + 2 + 6 + 6 = 31, matching
 	// apispec_parity_test.go's TestAPISpec_V1_RouteSetMatchesSpec.
-	if adminGated != 9 {
-		t.Fatalf("expected exactly 9 Authz: admin routes (ADR-0005 canon: GET /, GET /api/state, POST /api/admin/reset, POST /api/admin/users/{user}/display-name; app#292 QA Board: GET /api/admin/board/threads, GET /api/admin/board/threads/{tid}, POST /api/admin/board/threads/{tid}/reply, POST /api/admin/board/threads/{tid}/state, POST /api/admin/board/messages/{mid}/state), got %d", adminGated)
+	// ADR-0034 S1 (D8): +1 admin (POST /api/admin/users/{user}/profile-reset) and
+	// +1 self-or-admin (POST /api/users/{user}/profile).
+	if adminGated != 10 {
+		t.Fatalf("expected exactly 10 Authz: admin routes (ADR-0005 canon: GET /, GET /api/state, POST /api/admin/reset, POST /api/admin/users/{user}/display-name; app#292 QA Board: GET /api/admin/board/threads, GET /api/admin/board/threads/{tid}, POST /api/admin/board/threads/{tid}/reply, POST /api/admin/board/threads/{tid}/state, POST /api/admin/board/messages/{mid}/state; ADR-0034: POST /api/admin/users/{user}/profile-reset), got %d", adminGated)
 	}
 	if selfGated != 7 {
-		t.Fatalf("expected exactly 7 Authz: self-or-admin(-write) routes (GET /api/users/{user}/me, GET /api/users/{user}/journey, POST /api/challenges/{cid}/submit-detect, POST /api/users/{user}/challenges/{cid}/steps/{idx}/check, POST /api/users/{user}/challenges/{cid}/hints/{idx}, POST /api/users/{user}/challenges/{cid}/reset-dirty, POST /api/users/{user}/display-name — P25's 4 QA self-or-admin(-write) routes are gone, cutover), got %d", selfGated)
+		t.Fatalf("expected exactly 7 Authz: self-or-admin(-write) routes (GET /api/users/{user}/me, GET /api/users/{user}/journey, POST /api/challenges/{cid}/submit-detect, POST /api/users/{user}/challenges/{cid}/steps/{idx}/check, POST /api/users/{user}/challenges/{cid}/hints/{idx}, POST /api/users/{user}/challenges/{cid}/reset-dirty, ADR-0034: POST /api/users/{user}/profile — P25's 4 QA self-or-admin(-write) routes are gone, cutover), got %d", selfGated)
 	}
-	if openGated != 8 {
-		t.Fatalf("expected exactly 8 Authz: none/claimed-identity routes (GET /portal, GET /static/{asset} (ADR-0028), POST /falco/events, GET /healthz, GET /metrics, POST /api/challenges/{cid}/submit, POST /internal/exfil/{cid}; Issue #95: POST /csp-report), got %d", openGated)
+	if openGated != 6 {
+		t.Fatalf("expected exactly 6 Authz: none/claimed-identity routes (GET /portal, GET /static/{asset} (ADR-0028), GET /healthz, GET /metrics, POST /api/challenges/{cid}/submit; Issue #95: POST /csp-report), got %d", openGated)
+	}
+	if internalGated != 2 {
+		t.Fatalf("expected exactly 2 Authz: internal-claimed-identity routes (POST /falco/events and POST /internal/exfil/{cid}, internal-only — browser path closed; the collector-only participant display-name route was removed in ADR-0034 D12 S1), got %d", internalGated)
 	}
 	if authenticatedGated != 6 {
 		t.Fatalf("expected exactly 6 Authz: authenticated routes (app#292 QA Board participant routes: GET /api/board/threads, GET /api/board/threads/{tid}, POST /api/board/threads, POST /api/board/threads/{tid}/messages, POST /api/board/threads/{tid}/like, POST /api/board/threads/{tid}/unlike), got %d", authenticatedGated)
@@ -345,6 +395,31 @@ func TestAuthz_CatchesUnenforcedGate(t *testing.T) {
 		}
 	})
 
+	t.Run("declared_internal_claimed_identity_but_self_or_admin_write_shaped", func(t *testing.T) {
+		// The shape display-name had before the collector-only fix:
+		// selfOrAdminWrite — a stranger's header is 403, but an admin's (or the
+		// owner's) passes and a header-less request passes. authzCheck must
+		// flag it for a route declaring internal-claimed-identity, which a
+		// "mismatched email gets 403" probe alone cannot (the same 403).
+		rt := apispec.Route{
+			Method:  "POST",
+			Pattern: "/api/users/{user}/example-internal",
+			Authz:   apispec.AuthzInternalClaimedIdentity,
+			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if email := r.Header.Get("X-Auth-Request-Email"); email != "" &&
+					email != authzAdminEmail && !strings.HasPrefix(email, r.PathValue("user")+"@") {
+					w.WriteHeader(http.StatusForbidden) // BUG: header-bearing admin/owner requests are accepted.
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+			}),
+		}
+		mux, _ := apispec.NewMux([]apispec.Route{rt})
+		if violation := authzCheck(t, mux, rt); violation == "" {
+			t.Fatal("expected authzCheck to flag an internal-claimed-identity route that is really self-or-admin-write shaped, got no violation — the class would be indistinguishable from self-or-admin-write")
+		}
+	})
+
 	t.Run("declared_open_but_over_gated", func(t *testing.T) {
 		// The negative branch matters equally: a route declared Authz: none
 		// whose handler mistakenly DOES gate on identity (e.g. a
@@ -368,4 +443,52 @@ func TestAuthz_CatchesUnenforcedGate(t *testing.T) {
 			t.Fatal("expected authzCheck to flag a declared-open route whose handler over-gates, got no violation — the negative branch would be a permanent no-op")
 		}
 	})
+}
+
+// internalAudienceViolations returns every route that is declared
+// Audience: internal yet not Authz: internal-claimed-identity. An "internal"
+// route is one only the cluster-internal callers (collector, falcosidekick)
+// may reach; any other Authz class (none, claimed-identity, ...) lets a
+// browser-path request through, which is how POST /falco/events and
+// POST /internal/exfil/{cid} stayed reachable from a participant's browser.
+// If a future internal-only class is added, extend the allowed set HERE.
+func internalAudienceViolations(routes []apispec.Route) (violations []string, internalCount int) {
+	for _, rt := range routes {
+		if rt.Audience != apispec.AudienceInternal {
+			continue
+		}
+		internalCount++
+		if rt.Authz != apispec.AuthzInternalClaimedIdentity {
+			violations = append(violations, fmt.Sprintf("%s: Audience internal but Authz %q (want %q)", rt.MuxPattern(), rt.Authz, apispec.AuthzInternalClaimedIdentity))
+		}
+	}
+	return violations, internalCount
+}
+
+// TestAuthz_InternalAudienceRoutesAreInternalClaimedIdentity pins the
+// invariant "every scoreboard route with x-ctf-audience: internal is gated
+// internal-claimed-identity". authzCheck only enforces what a route
+// DECLARES, so an internal route declared Authz: none would pass every other
+// check here while being reachable from the browser path.
+func TestAuthz_InternalAudienceRoutesAreInternalClaimedIdentity(t *testing.T) {
+	violations, internalCount := internalAudienceViolations(newAuthzFixture(t).Routes())
+	if internalCount == 0 {
+		t.Fatal("found zero Audience: internal routes — the derivation is broken (or every internal route lost its audience label), not \"nothing to check\"")
+	}
+	for _, v := range violations {
+		t.Error(v)
+	}
+}
+
+// TestAuthz_InternalAudienceInvariantCatchesOpenRoute proves the detector is
+// not vacuous: an Audience: internal route declared Authz: none is flagged.
+func TestAuthz_InternalAudienceInvariantCatchesOpenRoute(t *testing.T) {
+	routes := []apispec.Route{
+		{Method: "POST", Pattern: "/internal/ok", Audience: apispec.AudienceInternal, Authz: apispec.AuthzInternalClaimedIdentity},
+		{Method: "POST", Pattern: "/internal/leaky", Audience: apispec.AudienceInternal, Authz: apispec.AuthzNone},
+	}
+	violations, internalCount := internalAudienceViolations(routes)
+	if internalCount != 2 || len(violations) != 1 || !strings.Contains(violations[0], "/internal/leaky") {
+		t.Fatalf("want exactly the open internal route flagged, got count=%d violations=%v", internalCount, violations)
+	}
 }

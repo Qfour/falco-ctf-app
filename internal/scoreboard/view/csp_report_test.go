@@ -188,7 +188,7 @@ func TestCSPReport_AcceptsReportsAPIFormat(t *testing.T) {
 // the two accepted shapes is rejected BEFORE the body is even parsed — the
 // route's threat-model doc says the Content-Type allowlist is one of the
 // defenses against this route performing no per-identity check at the app
-// layer (any authenticated CTF login can reach it — see
+// layer (any caller the participant gate admits can reach it — see
 // charts/scoreboard/templates/ingress-journey.yaml's /csp-report entry —
 // but none of them are trusted not to forge the body).
 func TestCSPReport_RejectsUnsupportedContentType(t *testing.T) {

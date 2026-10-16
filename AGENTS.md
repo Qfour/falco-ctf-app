@@ -125,7 +125,8 @@ detect:
 以下は最重要の禁則のみ再掲する。
 
 - **Do NOT** scoreboard を replica >1 で動かす (SQLite 並行書込不可)
-- **Do NOT** auth-policy の email 照合を prefix-exact から緩める
+- **Do NOT** auth-policy の identity 判定をロスター 1 表 + 正規形の完全一致 (I8、ADR-0034 D7) から緩める。
+  workspace / participant / admin のどの経路でも、表に無い identity を通さない
 - **Do NOT** image tag を `latest` で本番 deploy
 - **Do NOT** `git add .` / `git add -A`
 - **Do NOT** Dockerfile / yaml に実シークレットを焼き込む

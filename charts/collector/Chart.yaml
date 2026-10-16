@@ -1,6 +1,6 @@
 apiVersion: v2
 name: collector
-description: Falco CTF collector — participant-facing front; forwards submit/me/display-name and the boss exfil drop to the scoreboard (P11.5)
+description: Falco CTF collector — participant-facing front; forwards submit and the boss exfil drop to the scoreboard (P11.5)
 type: application
 version: 0.1.0
 # appVersion is set at publish time to the falco-ctf-app git SHA (Invariant I4/I5).
@@ -11,5 +11,5 @@ appVersion: "0.0.0"
 # after any change to charts/falco-ctf-common (see Makefile `lint`/`deploy-local`).
 dependencies:
   - name: falco-ctf-common
-    version: "0.1.0"
+    version: "0.2.0"
     repository: "file://../falco-ctf-common"

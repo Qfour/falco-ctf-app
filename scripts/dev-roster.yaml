@@ -1,0 +1,10 @@
+# Local-dev identity roster (ADR-0034 D2) for docker compose and
+# `make deploy-local`. Synthetic data only: every address is on a reserved
+# domain (ctf.local is EXPECTED_EMAIL_DOMAIN). The real event roster is rendered
+# by falco-ctf-platform from the seat list and a private external-identity file
+# and is never in this repository.
+seats:
+  - seat: user1
+  - seat: user2
+  - seat: user3
+  - seat: test1

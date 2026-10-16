@@ -3,7 +3,7 @@ package view
 import (
 	"bytes"
 	"crypto/sha256"
-	_ "embed"
+	"embed"
 	"encoding/hex"
 	"fmt"
 	"net/http"
@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/avatar"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
 )
 
@@ -32,10 +33,21 @@ import (
 //
 // D5 — what may live here: public, display-only assets that are identical for
 // every viewer. Enforced mechanically, not by prose: buildAssetRegistry
-// rejects every extension but .css and .woff2 (so a script can never be
+// rejects every extension but .css, .woff2 and .svg (so a script can never be
 // registered while CSP carries script-src 'self'), and the set of logical
 // names is pinned by TestStaticAssets_RegistryPin — changing that pin needs a
 // security-engineer review.
+//
+// ADR-0034 D9 is a LIMITED supersede of that D5 extension set: .svg is added,
+// and only under the avatars/ directory (one logical-name prefix, see
+// staticAssetDirs), because a participant's picture is one of 8 glyphs drawn
+// for this repo. An SVG is a document, not an image format: it can carry
+// script, a foreignObject, an external reference. So an .svg is never served
+// as-is: buildAssetRegistry parses it and checks every (namespace, element)
+// and (namespace, attribute) against an allow-list (svgsanitize.go), and a
+// name outside the list is a START-UP error, not a runtime strip. The response
+// also carries a CSP of its own (staticSVGCSP), so a script that somehow got in
+// still cannot run when the URL is opened directly.
 const (
 	// staticRoutePattern is the single mux/spec pattern for static assets.
 	staticRoutePattern = "/static/{asset}"
@@ -63,7 +75,7 @@ var assetRefRe = regexp.MustCompile(`url\(asset:([^)]*)\)`)
 // (fonts.css does).
 var cssCommentRe = regexp.MustCompile(`(?s)/\*.*?\*/`)
 
-// assetNameRe is the shape of a logical name: one path segment, lower-case,
+// assetNameRe is the shape of one path segment of a logical name: lower-case
 // and an extension that is one of staticAssetTypes.
 var assetNameRe = regexp.MustCompile(`^[a-z0-9]+(?:[.-][a-z0-9]+)*$`)
 
@@ -72,7 +84,31 @@ var assetNameRe = regexp.MustCompile(`^[a-z0-9]+(?:[.-][a-z0-9]+)*$`)
 var staticAssetTypes = map[string]string{
 	".css":   "text/css; charset=utf-8",
 	".woff2": "font/woff2", // RFC 8081
+	".svg":   "image/svg+xml",
 }
+
+// staticAssetDirs lists the only directory prefixes a logical name may have,
+// and the one extension allowed inside each. A logical name is otherwise a
+// single segment. The SERVED name is still one segment (ADR-0028 D1: the route
+// has no sub-directories): "avatars/falcon.svg" is served as
+// "avatars-falcon.<hash>.svg". Every extension that needs a sanitizer
+// (staticSanitizedExts) is allowed ONLY inside a directory listed here, so a
+// top-level .svg is an error.
+var staticAssetDirs = map[string]string{
+	"avatars": ".svg", // ADR-0034 D9
+}
+
+// staticSanitizedExts are the extensions whose bytes are parsed and checked
+// before they are registered.
+var staticSanitizedExts = map[string]func(name string, data []byte) error{
+	".svg": sanitizeSVG,
+}
+
+const (
+	// staticSVGCSP is ADR-0034 D9 (b): on a directly opened .svg URL no script
+	// runs, nothing is fetched, and the document is in a unique origin.
+	staticSVGCSP = "default-src 'none'; style-src 'unsafe-inline'; sandbox"
+)
 
 // assetSource is one input to the registry. Sources are processed in order;
 // a CSS source may only reference sources listed BEFORE it.
@@ -87,6 +123,7 @@ type staticAsset struct {
 	body        []byte
 	contentType string
 	etag        string
+	csp         string // Content-Security-Policy of the response; "" = none
 }
 
 // assetRegistry maps logical names to their served form and back.
@@ -107,16 +144,24 @@ func buildAssetRegistry(sources []assetSource) (*assetRegistry, error) {
 		ext := path.Ext(src.name)
 		ctype, ok := staticAssetTypes[ext]
 		if !ok {
-			return nil, fmt.Errorf("static asset %q: extension %q is not allowed (D5: only .css and .woff2)", src.name, ext)
+			return nil, fmt.Errorf("static asset %q: extension %q is not allowed (D5: only .css, .woff2 and, under avatars/, .svg)", src.name, ext)
 		}
-		if !assetNameRe.MatchString(src.name) {
-			return nil, fmt.Errorf("static asset %q: not a single lower-case path segment", src.name)
+		stem, err := logicalStem(src.name, ext)
+		if err != nil {
+			return nil, err
 		}
 		if _, dup := reg.byName[src.name]; dup {
 			return nil, fmt.Errorf("static asset %q registered twice", src.name)
 		}
 		if len(src.data) == 0 {
 			return nil, fmt.Errorf("static asset %q is empty", src.name)
+		}
+		var csp string
+		if check, sanitized := staticSanitizedExts[ext]; sanitized {
+			if err := check(src.name, src.data); err != nil {
+				return nil, err
+			}
+			csp = staticSVGCSP
 		}
 		body := src.data
 		if ext == ".css" {
@@ -146,10 +191,11 @@ func buildAssetRegistry(sources []assetSource) (*assetRegistry, error) {
 		hash := hex.EncodeToString(sum[:])[:assetHashLen]
 		a := &staticAsset{
 			name:        src.name,
-			servedName:  strings.TrimSuffix(src.name, ext) + "." + hash + ext,
+			servedName:  stem + "." + hash + ext,
 			body:        body,
 			contentType: ctype,
 			etag:        `"` + hash + `"`,
+			csp:         csp,
 		}
 		reg.byName[a.name] = a
 		reg.byServed[a.servedName] = a
@@ -158,6 +204,34 @@ func buildAssetRegistry(sources []assetSource) (*assetRegistry, error) {
 		return nil, fmt.Errorf("static asset registry is empty")
 	}
 	return reg, nil
+}
+
+// logicalStem validates a logical name's shape and returns the stem of its
+// served name (the name without the extension, any directory joined with '-').
+// A name is one segment, or "<dir>/<segment>" for a dir in staticAssetDirs
+// whose required extension matches. An .svg outside such a directory is
+// refused for that reason, not for its shape.
+func logicalStem(name, ext string) (string, error) {
+	dir, file, inDir := strings.Cut(name, "/")
+	if !inDir {
+		file, dir = name, ""
+	}
+	if dir != "" {
+		want, known := staticAssetDirs[dir]
+		if !known || want != ext {
+			return "", fmt.Errorf("static asset %q: not a single lower-case path segment (only the directories in staticAssetDirs, each with its one extension, are allowed)", name)
+		}
+	} else if _, sanitized := staticSanitizedExts[ext]; sanitized {
+		return "", fmt.Errorf("static asset %q: %s is allowed only inside a directory of staticAssetDirs (ADR-0034 D9)", name, ext)
+	}
+	if !assetNameRe.MatchString(file) {
+		return "", fmt.Errorf("static asset %q: not a single lower-case path segment", name)
+	}
+	stem := strings.TrimSuffix(file, ext)
+	if dir != "" {
+		stem = dir + "-" + stem
+	}
+	return stem, nil
 }
 
 // URL returns the served URL for a logical name. It is what templates call
@@ -191,6 +265,9 @@ func (g *assetRegistry) handler() http.Handler {
 		h.Set("Cache-Control", staticImmutableCache)
 		h.Set("ETag", a.etag)
 		h.Set("X-Content-Type-Options", "nosniff")
+		if a.csp != "" {
+			h.Set("Content-Security-Policy", a.csp)
+		}
 		if match := r.Header.Get("If-None-Match"); match != "" && match == a.etag {
 			w.WriteHeader(http.StatusNotModified)
 			return
@@ -226,11 +303,39 @@ var fontInterBytes []byte
 //go:embed vendor/fonts/jetbrainsmono-var.woff2
 var fontJetBrainsMonoBytes []byte
 
+// avatarFS holds the avatar glyphs (ADR-0034 D9). Only *.svg is embedded, so
+// avatars/PROVENANCE.md next to them is not part of any registry input.
+//
+//go:embed static/avatars/*.svg
+var avatarFS embed.FS
+
+// avatarAssetGlyphs is the glyph set whose files are registered, in the
+// registry's order. It is derived from avatar.GlyphNames(), the one table that
+// validates ids (ADR-0034 D9, <glyph>-<color>), so the asset side cannot keep
+// a second list. TestAvatarAssets_CoverGlyphsAndColors pins it against the
+// design contract (8 glyphs, one file each, nothing else in the directory) and
+// TestAvatarAssets_MatchAvatarTable against the table.
+var avatarAssetGlyphs = avatar.GlyphNames()
+
+// avatarAssetSources reads one source per glyph; a missing file is a build
+// bug, so it panics at start-up like the rest of the registry.
+func avatarAssetSources() []assetSource {
+	out := make([]assetSource, 0, len(avatarAssetGlyphs))
+	for _, g := range avatarAssetGlyphs {
+		b, err := avatarFS.ReadFile("static/avatars/" + g + ".svg")
+		if err != nil {
+			panic("view: avatar asset " + g + ": " + err.Error())
+		}
+		out = append(out, assetSource{"avatars/" + g + ".svg", b})
+	}
+	return out
+}
+
 // embeddedAssetSources lists every first-party asset. woff2 files come first
 // because fonts.css references them. This list IS the registry's logical-name
 // set; TestStaticAssets_RegistryPin pins it.
 func embeddedAssetSources() []assetSource {
-	return []assetSource{
+	srcs := []assetSource{
 		{"chakrapetch-500.woff2", fontChakraPetch500Bytes},
 		{"chakrapetch-600.woff2", fontChakraPetch600Bytes},
 		{"chakrapetch-700.woff2", fontChakraPetch700Bytes},
@@ -240,6 +345,23 @@ func embeddedAssetSources() []assetSource {
 		{"cybercore.min.css", cybercoreCSSBytes},
 		{"tokens.css", tokensCSSBytes},
 	}
+	return append(srcs, avatarAssetSources()...)
+}
+
+// avatarURLs returns the served URL of every avatar glyph, keyed by glyph id.
+// The portal's JavaScript cannot call {{.Assets.URL}}, so a template that
+// needs the URLs serializes this map (the names are content hashes and change
+// with the bytes).
+func (g *assetRegistry) avatarURLs() (map[string]string, error) {
+	out := make(map[string]string, len(avatarAssetGlyphs))
+	for _, glyph := range avatarAssetGlyphs {
+		u, err := g.URL("avatars/" + glyph + ".svg")
+		if err != nil {
+			return nil, err
+		}
+		out[glyph] = u
+	}
+	return out, nil
 }
 
 // staticAssets is the process-wide registry, built once at init from the

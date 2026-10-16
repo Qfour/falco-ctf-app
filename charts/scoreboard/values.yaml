@@ -21,6 +21,16 @@ env:
   # against the auth-policy-propagated X-Auth-Request-Email). Empty = nobody.
   # Use the same list as auth-policy's ADMIN_EMAILS.
   adminEmails: ""
+  # ADR-0034 D5 / I8: the domain of the canonical participant identity
+  # `<seat>@<expectedEmailDomain>` that auth-policy stamps on X-Auth-Request-Email.
+  # "self" is EXACT equality with that form. MUST equal auth-policy's
+  # env.expectedEmailDomain (the platform supplies one value to both). Its last
+  # label must be a reserved name (local, test, invalid, example, localhost) —
+  # the scoreboard refuses to start otherwise, and the same applies to every
+  # adminEmails entry. EMPTY (the default, I7: no environment-specific value
+  # here) = no email is ever a participant's own: every participant self check
+  # is false (fail-closed). Admins are unaffected.
+  expectedEmailDomain: ""
   # Comma-separated scoreboard USERNAMES (not emails, unlike adminEmails
   # above) excluded from the ranked leaderboard (both the operator
   # venue-projection dashboard GET /api/state and the rank/score fed into
@@ -188,16 +198,20 @@ ingress:
   tlsSecretName: ""
   # Per-environment oauth2-proxy sign-in URL for the admin gate. Empty = omit.
   authSignin: ""
-  # Extra annotations merged in (e.g. cert-manager issuer, ssl-redirect in prod).
+  # Extra annotations merged in. An ALLOWLIST (falco-ctf-common
+  # .ingressPassthrough): nginx.ingress.kubernetes.io/ssl-redirect,
+  # nginx.ingress.kubernetes.io/proxy-body-size, cert-manager.io/cluster-issuer.
+  # Any other key fails the render (ADR-0034 D4).
   annotations: {}
 
   # P18 participant journey host (a SECOND ingress off the same scoreboard
-  # Service), gated by ANY authenticated login (not /check-admin). The
-  # scoreboard self-scopes reads off the forwarded X-Auth-Request-Email.
+  # Service), gated by auth-policy /check-participant (a rostered identity or an
+  # ADMIN_EMAILS member; not /check-admin). The scoreboard self-scopes reads off
+  # the canonical X-Auth-Request-Email auth-policy forwards.
   # Empty journeyHost = the journey ingress is not rendered (local dev / any env
   # that does not stand up a participant host). Real values are supplied by the
   # platform helmfile (key names MUST match platform feat/p18-journey-host:
-  # journeyHost / journeyAuthUrl / journeyAnnotations).
+  # journeyHost / journeyAnnotations).
   #
   # P19-2b (single origin): set this to the SAME value as `host` above (e.g.
   # both = app.<suffix>) — ingress.yaml (this admin Ingress) and
@@ -209,12 +223,15 @@ ingress:
   # unchanged. ttyd stays on its OWN per-user subdomain regardless
   # (`userN.<dnsSuffix>` — see charts/ctf-user, unrelated to this host).
   journeyHost: ""
-  # oauth2-proxy any-login auth subrequest (e.g. https://<suffix>/oauth2/auth).
-  journeyAuthUrl: "http://oauth2-proxy.example.invalid/oauth2/auth"
+  # REMOVED (ADR-0034 D4): `journeyAuthUrl`. The participant Ingress's auth-url is
+  # fixed in templates/ingress-journey.yaml to auth-policy /check-participant
+  # (an ADMIN_EMAILS member or a rostered identity); setting the old value now
+  # fails the render. The admin Ingress is likewise fixed to /check-admin.
   # Extra annotations for the journey ingress ONLY. Kept separate from
   # `annotations` on purpose: the shared block may carry a cert-manager issuer /
   # per-host secretName which would make the journey host issue a redundant
   # Let's Encrypt cert instead of riding the wildcard default-ssl-certificate.
+  # Same allowlist as `annotations` (ADR-0034 D4).
   journeyAnnotations: {}
 
 # P20 node-tier pinning. Empty = no scheduling constraint (EKS / local render

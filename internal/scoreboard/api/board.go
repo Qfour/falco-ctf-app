@@ -181,7 +181,7 @@ func (h *Handler) boardCreateThread(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgBoardCreateFailed})
 		return
 	}
-	resp, err := toOapiBoardThread(th, h.store.DisplayName)
+	resp, err := toOapiBoardThread(th, h.store.DisplayName, h.avatarFor)
 	if err != nil {
 		h.logger.Error("board create convert", "err", err, "author", author, "tid", tid)
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgBoardCreateFailed})
@@ -214,7 +214,7 @@ func (h *Handler) boardGetThread(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgBoardGetFailed})
 		return
 	}
-	resp, err := toOapiBoardThread(th, h.store.DisplayName)
+	resp, err := toOapiBoardThread(th, h.store.DisplayName, h.avatarFor)
 	if err != nil {
 		h.logger.Error("board get convert", "err", err, "viewer", viewer, "tid", tid)
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgBoardGetFailed})
@@ -263,7 +263,7 @@ func (h *Handler) boardAppendMessage(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgBoardAppendFailed})
 		return
 	}
-	resp, err := toOapiBoardThread(th, h.store.DisplayName)
+	resp, err := toOapiBoardThread(th, h.store.DisplayName, h.avatarFor)
 	if err != nil {
 		h.logger.Error("board append convert", "err", err, "author", author, "tid", tid)
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgBoardAppendFailed})
@@ -424,7 +424,7 @@ func (h *Handler) boardAdminGetThread(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgBoardGetFailed})
 		return
 	}
-	resp, err := toOapiBoardThread(th, h.store.DisplayName)
+	resp, err := toOapiBoardThread(th, h.store.DisplayName, h.avatarFor)
 	if err != nil {
 		h.logger.Error("board admin get convert", "err", err, "tid", tid)
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgBoardGetFailed})
@@ -477,7 +477,7 @@ func (h *Handler) boardAdminReply(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgBoardReplyFailed})
 		return
 	}
-	resp, err := toOapiBoardThread(th, h.store.DisplayName)
+	resp, err := toOapiBoardThread(th, h.store.DisplayName, h.avatarFor)
 	if err != nil {
 		h.logger.Error("board admin reply convert", "err", err, "tid", tid)
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgBoardReplyFailed})
@@ -530,7 +530,7 @@ func (h *Handler) boardAdminSetThreadState(w http.ResponseWriter, r *http.Reques
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgBoardStateFailed})
 		return
 	}
-	resp, err := toOapiBoardThread(th, h.store.DisplayName)
+	resp, err := toOapiBoardThread(th, h.store.DisplayName, h.avatarFor)
 	if err != nil {
 		h.logger.Error("board admin thread-state convert", "err", err, "tid", tid)
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgBoardStateFailed})

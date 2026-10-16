@@ -27,7 +27,9 @@ Produce a structured review, severity-ranked, actionable.
      incorrect error handling, missing nil checks where they matter
    - **Boundary violations** (the big ones, per AGENTS.md):
      - scoreboard replica >1 or strategy != Recreate
-     - auth-policy email check using contains/suffix instead of prefix-exact
+     - an identity-to-seat rule other than the roster table + exact seat match
+       (contains / prefix / suffix), or any I8 premise weakened (see the I8 row
+       of `.claude/rules/falco-ctf-app-conventions.md`)
      - challenges/ split out of this repo
      - image tag = `latest` in prod manifests
      - scoreboard SQLite schema change without migration doc

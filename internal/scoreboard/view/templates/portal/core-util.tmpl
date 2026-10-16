@@ -53,4 +53,51 @@ const announce = (msg) => {
   setTimeout(() => { el.textContent = String(msg == null ? '' : msg); }, 50);
 };
 
+// ---- Avatars (ADR-0034 D9, S1 profile). Declared AFTER esc (TDZ note above).
+// An avatar id is "<glyph>-<color>" from a closed table (the Go table in
+// internal/scoreboard/avatar is the source of truth; these two lists mirror it
+// and portal_avatar_test.go pins them). The picture is a static SVG drawn with
+// <img> ONLY (never inline SVG, never innerHTML of SVG text); the colour is NOT
+// in the SVG: it is the <img>'s background, picked by the avatar-<color> class
+// (css-avatar.tmpl, from the --avatar-<color> tokens). It cannot be an inline
+// style attribute (CSP) and a CSS variable would not reach inside an SVG that
+// is loaded through <img>.
+//
+// The URL of each glyph's file comes from ASSETS.avatars (portal.tmpl, filled
+// by the server from the static-asset registry). avatarImg() never builds a URL
+// from the id: it looks the glyph up in that map, so an id the table does not
+// know cannot turn into a request for some other path.
+const AVATAR_GLYPHS = ['falcon', 'shield', 'key', 'terminal', 'radar', 'lock', 'bug', 'flame'];
+const AVATAR_COLORS = ['cyan', 'magenta', 'amber', 'lime', 'violet', 'slate'];
+// What an id outside the table (or a missing field from an older server)
+// draws as: a neutral-coloured falcon, never a broken image and never the raw
+// string.
+const AVATAR_FALLBACK = { glyph: 'falcon', color: 'slate' };
+
+// avatarParts(id) -> {glyph, color}. Exact match against the table; a glyph
+// name has no '-', so the FIRST '-' splits the id. includes() on the list, not
+// a property lookup, so "__proto__-cyan" is just an unknown id.
+const avatarParts = (id) => {
+  const s = String(id == null ? '' : id);
+  const i = s.indexOf('-');
+  if (i <= 0) return AVATAR_FALLBACK;
+  const glyph = s.slice(0, i), color = s.slice(i + 1);
+  if (!AVATAR_GLYPHS.includes(glyph) || !AVATAR_COLORS.includes(color)) return AVATAR_FALLBACK;
+  return { glyph, color };
+};
+
+// avatarImg(id, size?) -> markup for innerHTML. size is 'sm' | 'lg' | omitted;
+// anything else is ignored. Every interpolated value goes through esc() even
+// though each comes from the table above (no exemption by origin). alt is empty
+// on purpose: the picture is decoration, the display name next to it is the
+// text a screen reader reads. width/height are the layout reservation if the
+// file 404s (the CSS size is --avatar-size).
+const avatarImg = (id, size) => {
+  const p = avatarParts(id);
+  const cls = size === 'sm' || size === 'lg' ? ' avatar-' + size : '';
+  const urls = (typeof ASSETS === 'object' && ASSETS && ASSETS.avatars) || {};
+  const src = AVATAR_GLYPHS.includes(p.glyph) && typeof urls[p.glyph] === 'string' ? urls[p.glyph] : '';
+  return '<img class="avatar' + esc(cls) + ' avatar-' + esc(p.color) + '" src="' + esc(src) + '" alt="" width="32" height="32">';
+};
+
 </script>

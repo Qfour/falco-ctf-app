@@ -13,6 +13,40 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/authpolicy"
 )
 
+// fixtureRoster is the synthetic identity table every handler test uses. Only
+// reserved domains appear (ADR-0034 D11): ctf.local is EXPECTED_EMAIL_DOMAIN,
+// partner.example is a stand-in for an external IdP's domain.
+const fixtureRoster = `
+seats:
+  - seat: alice
+  - seat: bob
+    external: Bob.Ext@Partner.Example
+  - seat: user1
+  - seat: user7
+    external: user7.ext@partner.example
+  - seat: user8
+  - seat: user10
+  - seat: mark
+`
+
+const (
+	fixtureDomain = "ctf.local"
+	fixtureAdmin  = "admin@ctf.local"
+)
+
+func mustRoster(t *testing.T, yamlDoc string, admins ...string) *authpolicy.Roster {
+	t.Helper()
+	r, err := authpolicy.ParseRoster([]byte(yamlDoc), fixtureDomain, admins)
+	if err != nil {
+		t.Fatalf("ParseRoster: %v", err)
+	}
+	return r
+}
+
+// fakeOAuth2Proxy answers oauth2-proxy's /oauth2/auth subrequest. When email
+// is non-empty it also sets X-Auth-Request-User to the local part (the shape
+// oauth2-proxy gives for a static account); use fakeUpstream to control every
+// header.
 func fakeOAuth2Proxy(t *testing.T, behavior func(r *http.Request) (status int, email string)) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -25,23 +59,41 @@ func fakeOAuth2Proxy(t *testing.T, behavior func(r *http.Request) (status int, e
 	}))
 }
 
-func newHandler(upstreamURL string) *authpolicy.Handler {
-	cfg := authpolicy.Config{
-		OAuth2ProxyURL:      upstreamURL,
-		ExpectedEmailDomain: "ctf.local",
-		UpstreamTimeout:     2 * time.Second,
-	}
-	return authpolicy.NewHandler(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+// fakeUpstream answers 202 with exactly the given response headers, so a test
+// can make oauth2-proxy return a User / Preferred-Username that differs from
+// the seat (ADR-0034 V9: the old fake echoed the local part, which cannot tell
+// "passed through" from "rewritten").
+func fakeUpstream(t *testing.T, headers map[string]string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		for k, v := range headers {
+			w.Header()[http.CanonicalHeaderKey(k)] = []string{v}
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
 }
 
+func quietLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+func newHandler(upstreamURL string) *authpolicy.Handler {
+	return newAdminHandler(upstreamURL)
+}
+
+// newAdminHandler builds a handler over the fixture roster with the given
+// ADMIN_EMAILS.
 func newAdminHandler(upstreamURL string, admins ...string) *authpolicy.Handler {
+	r, err := authpolicy.ParseRoster([]byte(fixtureRoster), fixtureDomain, admins)
+	if err != nil {
+		panic(err)
+	}
 	cfg := authpolicy.Config{
 		OAuth2ProxyURL:      upstreamURL,
-		ExpectedEmailDomain: "ctf.local",
+		ExpectedEmailDomain: fixtureDomain,
 		UpstreamTimeout:     2 * time.Second,
 		AdminEmails:         admins,
+		Roster:              r,
 	}
-	return authpolicy.NewHandler(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	return authpolicy.NewHandler(cfg, quietLogger())
 }
 
 func do(t *testing.T, h http.Handler, target string, headers map[string]string) *http.Response {
@@ -65,7 +117,7 @@ func TestHealthz(t *testing.T) {
 
 func TestCheck_MissingHost(t *testing.T) {
 	h := newHandler("http://example.invalid")
-	resp := do(t, h, "/check", nil)
+	resp := do(t, h, "/check-workspace", nil)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("expected 400 when host missing, got %d", resp.StatusCode)
 	}
@@ -77,7 +129,7 @@ func TestCheck_NotAuthenticated_Returns401(t *testing.T) {
 	})
 	defer upstream.Close()
 	h := newHandler(upstream.URL)
-	resp := do(t, h, "/check?host=alice", nil)
+	resp := do(t, h, "/check-workspace?host=alice", nil)
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("expected 401 (let auth-signin redirect), got %d", resp.StatusCode)
 	}
@@ -89,7 +141,7 @@ func TestCheck_AuthenticatedWrongUser_Returns403(t *testing.T) {
 	})
 	defer upstream.Close()
 	h := newHandler(upstream.URL)
-	resp := do(t, h, "/check?host=alice", map[string]string{"Cookie": "_oauth2_proxy=foo"})
+	resp := do(t, h, "/check-workspace?host=alice", map[string]string{"Cookie": "_oauth2_proxy=foo"})
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("expected 403 for cross-user access, got %d", resp.StatusCode)
 	}
@@ -104,7 +156,7 @@ func TestCheck_AuthenticatedSameUser_Returns200(t *testing.T) {
 	})
 	defer upstream.Close()
 	h := newHandler(upstream.URL)
-	resp := do(t, h, "/check?host=alice", map[string]string{"Cookie": "_oauth2_proxy=foo"})
+	resp := do(t, h, "/check-workspace?host=alice", map[string]string{"Cookie": "_oauth2_proxy=foo"})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
@@ -124,7 +176,7 @@ func TestCheck_EmailPrefixBoundary(t *testing.T) {
 	})
 	defer upstream.Close()
 	h := newHandler(upstream.URL)
-	resp := do(t, h, "/check?host=alice", nil)
+	resp := do(t, h, "/check-workspace?host=alice", nil)
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("alice2@... must NOT satisfy host=alice; got %d", resp.StatusCode)
 	}
@@ -137,7 +189,7 @@ func TestCheck_Admin_ReachesAnyHost_Returns200(t *testing.T) {
 	})
 	defer upstream.Close()
 	h := newAdminHandler(upstream.URL, "admin@ctf.local")
-	resp := do(t, h, "/check?host=user7", map[string]string{"Cookie": "_oauth2_proxy=foo"})
+	resp := do(t, h, "/check-workspace?host=user7", map[string]string{"Cookie": "_oauth2_proxy=foo"})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("admin should reach any workspace, got %d", resp.StatusCode)
 	}
@@ -150,7 +202,7 @@ func TestCheck_NonAdminWrongHost_StillForbidden(t *testing.T) {
 	})
 	defer upstream.Close()
 	h := newAdminHandler(upstream.URL, "admin@ctf.local")
-	resp := do(t, h, "/check?host=user7", map[string]string{"Cookie": "_oauth2_proxy=foo"})
+	resp := do(t, h, "/check-workspace?host=user7", map[string]string{"Cookie": "_oauth2_proxy=foo"})
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("non-admin cross-user must stay 403, got %d", resp.StatusCode)
 	}
@@ -159,7 +211,7 @@ func TestCheck_NonAdminWrongHost_StillForbidden(t *testing.T) {
 func TestCheck_UpstreamUnreachable_Returns502(t *testing.T) {
 	// Port 1 reliably refuses connections immediately.
 	h := newHandler("http://127.0.0.1:1/oauth2/auth")
-	resp := do(t, h, "/check?host=alice", nil)
+	resp := do(t, h, "/check-workspace?host=alice", nil)
 	if resp.StatusCode != http.StatusBadGateway {
 		t.Fatalf("expected 502 when upstream is down, got %d", resp.StatusCode)
 	}
@@ -174,7 +226,7 @@ func TestCheck_UpstreamUnexpectedStatus_MaskedAs502(t *testing.T) {
 	})
 	defer upstream.Close()
 	h := newHandler(upstream.URL)
-	resp := do(t, h, "/check?host=alice", nil)
+	resp := do(t, h, "/check-workspace?host=alice", nil)
 	if resp.StatusCode != http.StatusBadGateway {
 		t.Fatalf("expected 502 (masked), got %d", resp.StatusCode)
 	}
@@ -259,10 +311,18 @@ func TestCheckAdmin_CaseInsensitive(t *testing.T) {
 func TestCheck_InvalidHost_Returns400(t *testing.T) {
 	h := newHandler("http://example.invalid")
 	for _, host := range []string{"alice@evil", "alice/admin", "alice space", "ALICE", "../etc"} {
-		target := "/check?host=" + url.QueryEscape(host)
+		target := "/check-workspace?host=" + url.QueryEscape(host)
 		resp := do(t, h, target, nil)
 		if resp.StatusCode != http.StatusBadRequest {
 			t.Errorf("host=%q must 400, got %d", host, resp.StatusCode)
 		}
 	}
+}
+
+func newNoRosterHandler(upstreamURL string) *authpolicy.Handler {
+	return authpolicy.NewHandler(authpolicy.Config{
+		OAuth2ProxyURL:      upstreamURL,
+		ExpectedEmailDomain: fixtureDomain,
+		UpstreamTimeout:     2 * time.Second,
+	}, quietLogger())
 }

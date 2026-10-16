@@ -13,9 +13,44 @@
 
   <div id="pane-me-page"></div>
 
+  <!-- ADR-0034 S1 (D8/D9): the participant's own profile. It lives OUTSIDE
+       #pane-me-page on purpose: that container is rebuilt with innerHTML on
+       every 2-second poll, which would drop focus, a half-typed name and the
+       keyboard position in the avatar grid. This section is built once and
+       only its VALUES follow the poll, and only while the form is untouched
+       (see applyServer below). Names, ids and messages are written with
+       textContent / esc(); the radio buttons are generated once from the
+       closed table in core-util.tmpl. -->
+  <section class="panel profile" id="pane-me-profile" aria-labelledby="pane-me-profile-h">
+    <div class="panel-header">
+      <h2 id="pane-me-profile-h">Profile</h2>
+      <span class="panel-aux" id="pane-me-profile-seat"></span>
+    </div>
+    <form class="profile-form" id="pane-me-profile-form" novalidate>
+      <div class="profile-row">
+        <label class="profile-label" for="pane-me-profile-name">Display name</label>
+        <input class="profile-input" id="pane-me-profile-name" name="display_name" type="text" autocomplete="off" spellcheck="false" aria-describedby="pane-me-profile-name-help pane-me-profile-msg">
+        <p class="profile-help" id="pane-me-profile-name-help">1 to 32 characters, without &lt; &gt; &amp; or quotes. Shown on the leaderboard and on your Board posts. It does not change your score.</p>
+      </div>
+      <div class="profile-row">
+        <span class="profile-label" id="pane-me-profile-avatar-label">Avatar</span>
+        <div class="profile-avatar-line">
+          <span class="profile-preview" id="pane-me-profile-preview" aria-hidden="true"></span>
+          <span class="profile-chosen">Selected: <b id="pane-me-profile-chosen"></b></span>
+        </div>
+        <div class="avatar-grid" id="pane-me-profile-avatar" role="radiogroup" aria-labelledby="pane-me-profile-avatar-label" aria-describedby="pane-me-profile-avatar-help"></div>
+        <p class="profile-help" id="pane-me-profile-avatar-help">Arrow keys move through the grid: left and right step one, up and down move a row. Home and End jump to the first and last.</p>
+      </div>
+      <div class="profile-actions">
+        <button type="submit" class="p-btn" id="pane-me-profile-save" disabled aria-describedby="pane-me-profile-save-help">Save profile</button>
+        <p class="profile-help" id="pane-me-profile-save-help">Save unlocks once your current profile has loaded, so it cannot overwrite your saved avatar. If this stays, check your connection.</p>
+        <p class="profile-msg" id="pane-me-profile-msg"></p>
+      </div>
+    </form>
+  </section>
+
 <script nonce="{{.Nonce}}">
 (function () {
-  function avatarChar(u) { return (u || '?').slice(-1).toUpperCase(); }
   function fmtAgo(unixSec) {
     const ms = Date.now() - unixSec * 1000;
     const s = Math.max(0, Math.floor(ms / 1000));
@@ -34,9 +69,194 @@
     return Math.floor(s / 86400) + 'd ago';
   }
 
+  // ---------------- profile (ADR-0034 S1, D8/D9) ----------------
+  // POST /api/users/{user}/profile {display_name?, avatar?} -> {ok, user,
+  // display_name, avatar}. Same-origin fetch: oauth2-proxy puts the identity
+  // header on it and the browser adds Origin, which the route's origin-guard
+  // requires. Only the fields that CHANGED are sent (at least one is required).
+  // The server is the authority on every rule below; the checks here only turn
+  // a predictable 400 into a sentence before the round trip.
+  // AVATAR_IDS is the grid's SHAPE: the whole table (8 glyphs x 6 colours = 48
+  // ids, glyph outer, colour inner = row-major order), which the arrow keys'
+  // "one row = AVATAR_COLS" step depends on. It is NOT the list of choices.
+  const AVATAR_IDS = [];
+  AVATAR_GLYPHS.forEach(g => AVATAR_COLORS.forEach(c => AVATAR_IDS.push(g + '-' + c)));
+  // What a participant may pick is what the SERVER says: ASSETS.avatarChoices
+  // (portal.tmpl; avatar.ParticipantIDs(), 47 ids). A grid id that is not in it
+  // (the operator's fixed picture) is drawn as a disabled radio. Nothing in this
+  // file names that id, so the rule has one home (Go's avatar.StaffID).
+  const AVATAR_CHOICES = (typeof ASSETS === 'object' && ASSETS && Array.isArray(ASSETS.avatarChoices)) ? ASSETS.avatarChoices : [];
+  const AVATAR_COLS = AVATAR_COLORS.length;
+  const avatarId = (id) => { const p = avatarParts(id); return p.glyph + '-' + p.color; };
+  const avatarLabel = (id) => { const p = avatarParts(id); return p.glyph.charAt(0).toUpperCase() + p.glyph.slice(1) + ', ' + p.color; };
+  // A grid id outside ASSETS.avatarChoices keeps its cell (the 8 x 6 shape) but
+  // is not a choice: it is drawn as a disabled radio that says so. The server
+  // rejects it anyway (400); this keeps a participant from picking something
+  // that cannot save.
+  const pickable = (id) => AVATAR_CHOICES.includes(id);
+  const optLabel = (id) => avatarLabel(id) + (pickable(id) ? '' : ': staff only');
+  const nameInput = document.getElementById('pane-me-profile-name');
+  const grid = document.getElementById('pane-me-profile-avatar');
+  const saveBtn = document.getElementById('pane-me-profile-save');
+  const msgEl = document.getElementById('pane-me-profile-msg');
+  // What the server last said (null until the first poll), what the form holds.
+  let serverName = null, serverAvatar = null, serverSig = null;
+  let chosen = AVATAR_CHOICES[0] || AVATAR_IDS[0];   // the form's default until the first /me
+  let saving = false;
+  // Save is locked until the FIRST /me answer has filled the form (serverSig
+  // !== null). Before that `chosen` is only the default (falcon-cyan), and a
+  // save would send it as if the participant had picked it, overwriting the
+  // saved avatar. The reason is the button's aria-describedby text.
+  const saveHelp = document.getElementById('pane-me-profile-save-help');
+  function syncSave() {
+    const loaded = serverSig !== null;
+    saveBtn.disabled = saving || !loaded;
+    saveHelp.hidden = loaded;
+    if (loaded) saveBtn.removeAttribute('aria-describedby'); else saveBtn.setAttribute('aria-describedby', 'pane-me-profile-save-help');
+  }
+  syncSave();
+  let profileSeq = 0;   // bumped when a save finishes; see refresh()
+
+  // The 48 radios (47 choices + the disabled staff one) are built once and never rebuilt (focus and the keyboard
+  // position live on them). esc() on every interpolation, as everywhere.
+  grid.innerHTML = AVATAR_IDS.map((id, i) =>
+    '<button type="button" class="avatar-opt" role="radio" aria-checked="false" tabindex="-1" data-i="' + i + '" data-id="' + esc(id) + '"' + (pickable(id) ? '' : ' aria-disabled="true"') + ' aria-label="' + esc(optLabel(id)) + '" title="' + esc(optLabel(id)) + '">' + avatarImg(id, 'sm') + '</button>'
+  ).join('');
+  const opts = Array.from(grid.querySelectorAll('[role="radio"]'));
+
+  function paintChosen() {
+    // Roving tabindex: the grid is ONE Tab stop. If the saved avatar is the
+    // staff one (not focusable), the stop is the first choice instead.
+    const stop = pickable(chosen) ? AVATAR_IDS.indexOf(chosen) : Math.max(0, AVATAR_IDS.findIndex(pickable));
+    opts.forEach((o, i) => {
+      o.setAttribute('aria-checked', AVATAR_IDS[i] === chosen ? 'true' : 'false');
+      o.setAttribute('tabindex', i === stop ? '0' : '-1');
+    });
+    document.getElementById('pane-me-profile-chosen').textContent = avatarLabel(chosen);
+    document.getElementById('pane-me-profile-preview').innerHTML = avatarImg(chosen, 'lg');
+  }
+  function select(i, focus) {
+    if (!pickable(AVATAR_IDS[i])) return;
+    chosen = AVATAR_IDS[i];
+    paintChosen();
+    if (focus) opts[i].focus();
+  }
+  grid.addEventListener('click', (e) => {
+    const o = e.target.closest('[role="radio"]');
+    if (o) select(Number(o.dataset.i), false);   // select() ignores the staff radio
+  });
+  // Selection follows focus, like a native radio group. Left/Right step one,
+  // Up/Down move a row (same colour, next glyph) because the grid is drawn 6
+  // wide; all four wrap. Enter/Space on a focused radio is a native click.
+  grid.addEventListener('keydown', (e) => {
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    const n = AVATAR_IDS.length, cur = AVATAR_IDS.indexOf(chosen);
+    // Move by `step`, then on past the staff radio (same direction) if that is
+    // where it landed.
+    const go = (from, step) => {
+      let t = (from + step + n) % n;
+      for (let k = 0; k < n && !pickable(AVATAR_IDS[t]); k++) t = (t + (step < 0 ? -1 : 1) + n) % n;   // bounded: no choices at all must not spin
+      return t;
+    };
+    let to;
+    switch (e.key) {
+      case 'ArrowRight': to = go(cur, 1); break;
+      case 'ArrowLeft':  to = go(cur, -1); break;
+      case 'ArrowDown':  to = go(cur, AVATAR_COLS); break;
+      case 'ArrowUp':    to = go(cur, -AVATAR_COLS); break;
+      case 'Home':       to = go(-1, 1); break;
+      case 'End':        to = go(n, -1); break;
+      default: return;
+    }
+    e.preventDefault();
+    select(to, true);
+  });
+
+  // The form's VALUES follow the poll, but only while the participant has not
+  // touched it, and only when the server's value actually changed: an
+  // unchanged poll never writes into the input (that would eat what is being
+  // typed). Preserved on purpose: the typed name, the chosen radio, focus.
+  function applyServer(d) {
+    const name = d.display_name || user;
+    const av = avatarId(d.avatar);
+    const sig = name + '\n' + av;
+    if (sig === serverSig) return;
+    const untouched = serverSig === null || (nameInput.value === serverName && chosen === serverAvatar);
+    serverSig = sig; serverName = name; serverAvatar = av;
+    document.getElementById('pane-me-profile-seat').textContent = 'Seat: ' + user;
+    if (untouched) { nameInput.value = name; chosen = av; paintChosen(); }
+    syncSave();   // the first answer unlocks Save
+  }
+
+  function showMsg(text, isErr) {
+    msgEl.textContent = text;
+    msgEl.classList.toggle('is-error', !!isErr);
+    if (isErr) nameInput.setAttribute('aria-invalid', 'true'); else nameInput.removeAttribute('aria-invalid');
+  }
+  // Mirrors the server's validDisplayName (trim, 1-32 runes, no <>&"' or control
+  // characters). Returns a sentence, or '' when the name is fine.
+  function nameProblem(name) {
+    if (!name) return 'Enter a display name of 1 to 32 characters.';
+    const n = Array.from(name).length;
+    if (n > 32) return 'That display name is ' + n + ' characters; the limit is 32.';
+    if (/[<>&"'\x00-\x1f\x7f]/.test(name)) return 'A display name cannot contain < > & or quote marks.';
+    return '';
+  }
+  // A sentence for a failed save: the cause, not just the status. The server's
+  // own words (JSON {"error": ...}) are appended to a 400 and set with
+  // textContent, never as markup.
+  async function failureSentence(r) {
+    let detail = '';
+    try { const j = await r.json(); if (j && typeof j.error === 'string') detail = j.error; } catch (_) { /* no body */ }
+    if (r.status === 400) return 'Not saved: the server did not accept that' + (detail ? ' (' + detail + ')' : '') + '. Use 1 to 32 characters for the name and pick an avatar from the grid.';
+    if (r.status === 403) return 'Not saved: you can only change your own profile. If your sign-in expired, reload the portal and sign in again.';
+    if (r.status === 429) {
+      const ra = r.headers && r.headers.get ? r.headers.get('Retry-After') : null;
+      return 'Not saved: too many changes in a short time. ' + (ra && /^\d+$/.test(ra) ? 'Wait ' + ra + ' seconds and try again.' : 'Wait a moment and try again.');
+    }
+    return 'Not saved: the server answered with HTTP ' + r.status + '. Try again in a moment.';
+  }
+
+  nameInput.addEventListener('input', () => { if (nameInput.getAttribute('aria-invalid')) showMsg('', false); });
+  document.getElementById('pane-me-profile-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (saving || serverSig === null) return;   // Save is disabled before the first /me; Enter in the name field must not bypass it
+    const name = nameInput.value.trim();
+    const problem = nameProblem(name);
+    if (problem) { showMsg(problem, true); announce(problem); nameInput.focus(); return; }
+    const body = {};
+    if (name !== serverName) body.display_name = name;
+    if (chosen !== serverAvatar) body.avatar = chosen;
+    if (Object.keys(body).length === 0) { showMsg('Nothing to save: the name and avatar are already as shown.', false); return; }
+    saving = true; syncSave();
+    showMsg('Saving…', false);
+    try {
+      const r = await fetch('/api/users/' + encodeURIComponent(user) + '/profile', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        const s = await failureSentence(r);
+        showMsg(s, true); announce(s);
+        return;
+      }
+      const j = await r.json();
+      serverName = j.display_name || user; serverAvatar = avatarId(j.avatar); serverSig = serverName + '\n' + serverAvatar;
+      nameInput.value = serverName; chosen = serverAvatar; paintChosen();
+      profileSeq++;   // any /me response already in flight is now older than the form
+      showMsg('Saved.', false);
+      announce('Profile saved. Display name ' + serverName + ', avatar ' + avatarLabel(serverAvatar) + '.');
+      await refresh();   // repaint the hero now instead of waiting for the next poll
+    } catch (err) {
+      const s = 'Not saved: could not reach the server. Check your connection and try again.';
+      showMsg(s, true); announce(s);
+    } finally {
+      saving = false; syncSave();
+    }
+  });
+
   // Portal shell (P23-1): identity comes from the server-injected
   // __PORTAL_USER__ global (derived from X-Auth-Request-Email,
-  // api.DeriveUsername) rather than a ?user= query param. UI convenience
+  // api.NewUsernameDeriver) rather than a ?user= query param. UI convenience
   // only — /api/users/{user}/me is independently gated server-side
   // (selfOrAdmin).
   const user = window.__PORTAL_USER__ || '';
@@ -53,6 +273,7 @@
   let connOK = true;
 
   if (!user) {
+    document.getElementById('pane-me-profile').hidden = true;   // nothing to save a profile FOR
     document.getElementById('pane-me-page').innerHTML = `
       <div class="help">
         <h2>Your username could not be determined</h2>
@@ -65,9 +286,15 @@
 
   async function refresh() {
     try {
+      const seq = profileSeq;
       const r = await fetch('/api/users/' + encodeURIComponent(user) + '/me');
       if (!r.ok) throw new Error('HTTP ' + r.status);
-      const notes = render(await r.json());   // sentences for what changed in THIS poll
+      const d = await r.json();
+      const notes = render(d);   // sentences for what changed in THIS poll
+      // The profile form follows the poll only while untouched (applyServer),
+      // and not at all when a save finished while this request was in flight:
+      // `d` is then older than the form.
+      if (seq === profileSeq) applyServer(d);
       document.getElementById('pane-me-updated').textContent = 'updated ' + new Date().toLocaleTimeString();
       if (!connOK) { connOK = true; notes.unshift('Connection restored.'); }
       if (notes.length > 0) announce(notes.join(' '));
@@ -109,7 +336,7 @@
     const identitySuffix = (displayName !== user) ? ` <span style="color:var(--text-mute); font-weight:400; font-size:0.85rem">(${esc(user)})</span>` : '';
     document.getElementById('pane-me-page').innerHTML = `
       <section class="ident">
-        <div class="avatar">${avatarChar(displayName)}</div>
+        ${avatarImg(d.avatar, 'lg')}
         <div>
           <div class="who-name">${esc(displayName)}${identitySuffix}</div>
           <div class="who-status">${solvedCount > 0 ? solvedCount + ' challenge' + (solvedCount === 1 ? '' : 's') + ' solved · ' + events.toLocaleString() + ' Falco events triggered' : 'Just getting started · ' + events.toLocaleString() + ' Falco events seen'}</div>

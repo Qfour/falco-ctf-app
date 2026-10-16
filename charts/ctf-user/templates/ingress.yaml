@@ -1,4 +1,10 @@
 {{- if .Values.ingress.enabled }}
+{{- if hasKey .Values.auth "enabled" }}
+{{- fail "auth.enabled was removed (ADR-0034 D4): the workspace Ingress always carries the auth-policy gate; delete the value" }}
+{{- end }}
+{{- if hasKey .Values.auth "authUrl" }}
+{{- fail "auth.authUrl was removed (ADR-0034 D4): the workspace Ingress's auth-url is fixed to auth-policy /check-workspace?host=<username>; delete the value" }}
+{{- end }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -19,12 +25,13 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-next-upstream: "error timeout http_502 http_504"
     nginx.ingress.kubernetes.io/proxy-next-upstream-tries: "3"
     nginx.ingress.kubernetes.io/proxy-next-upstream-timeout: "5"
-    {{- if .Values.auth.enabled }}
-    # auth-policy front door: oauth2-proxy auth + host↔email check.
-    nginx.ingress.kubernetes.io/auth-url: {{ tpl .Values.auth.authUrl . | quote }}
+    # auth-policy front door (ADR-0034 D4): oauth2-proxy auth + the identity
+    # roster (seat == this workspace's username). ALWAYS rendered: there is no
+    # switch that produces a workspace Ingress without an auth gate (the former
+    # `auth.enabled: false` did), and the endpoint is fixed here, not a value.
+    nginx.ingress.kubernetes.io/auth-url: "http://auth-policy.auth-policy.svc.cluster.local:80/check-workspace?host={{ .Values.username | urlquery }}"
     nginx.ingress.kubernetes.io/auth-signin: {{ tpl .Values.auth.authSignin . | quote }}
     nginx.ingress.kubernetes.io/auth-response-headers: "X-Auth-Request-User,X-Auth-Request-Email,X-Auth-Request-Preferred-Username"
-    {{- end }}
 spec:
   ingressClassName: {{ .Values.ingress.className }}
   tls:

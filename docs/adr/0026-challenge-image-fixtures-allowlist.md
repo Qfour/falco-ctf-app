@@ -117,7 +117,7 @@ app 側は `make push` も `check-image-hygiene` に依存させる。path は�
 
 1. **catalog id = ディレクトリ名。** `falco-rule.yaml` の `challengeId` は必ず書き、ディレクトリ名と一致させる (builder が不一致で build を落とす)。
    正典の `catalog.go` は「省略したらディレクトリ名を補う」側なので、schema の記述を直すことと Go テストでの強制は follow-up。
-2. **`/opt/ctf` 直下の固定集合** = ディレクトリ `missions`・`plant-seed` と、ファイル `answers.yaml`・`banner.sh`・`setname.sh`・`submit-yaml.sh`・`submit.sh`。
+2. **`/opt/ctf` 直下の固定集合** = ディレクトリ `missions`・`plant-seed` と、ファイル `answers.yaml`・`banner.sh`・`submit-yaml.sh`・`submit.sh`。(`setname.sh` は ADR-0034 S1 で撤去: 参加者は Me 画面で表示名と絵柄を設定する。)
 3. **V4 の all / 単一課題モードの期待 id 集合は operator の checkout の `challenges/` から作る** (単一課題でも image は全 id を持つ。chart が絞るのは scenario
    だけ)。image は `FALCO_CTF_IMAGE_TAG` から来るので、**checkout と image の ref の一致が deploy の条件**になる (ずれれば all / 単一でも止まる。fail-closed)。
 4. **V3 の「完全一致」** = `expectedFlag` 全文の部分文字列一致を image 全体で検査する。診断は path と件数だけを出し、値は出さない。
@@ -146,7 +146,7 @@ app 側は `make push` も `check-image-hygiene` に依存させる。path は�
 - **追跡外ファイルの経路も閉じる**: `.gitignore` 済みだが `.dockerignore` に無いディレクトリ (例: `challenges/decks/`) が image に
   焼かれる経路は、final stage が `<id>/fixtures/` しか受け取らないので無くなる。fixtures の中の追跡外ファイルは V1 が落とす。
 - **影響なし (静的読解で確認)**: `plant` (seed script は values に inline: `challenges/values-all.yaml:10-13`)、`missions-scope`
-  (絞った tree をそのまま複製する)、submit / setname / submit-yaml / banner (missions を読まない)、docs image (build context から
+  (絞った tree をそのまま複製する)、submit / submit-yaml / banner (missions を読まない。setname は ADR-0034 S1 で撤去)、docs image (build context から
   直接読む)、platform (path 不変。helmfile の変更なし、文書の行追加だけ)。
 - **追随が要る記述**: conventions の Dockerfile 規約表 (challenge を single-stage と書いている)、`charts/ctf-user/values.yaml:78-80,135-142`、
   `pod.yaml:132-143,364-371`、`assert-flag-isolation.sh:94-97,509-516`、ORGANIZATION.md §2 (Dockerfile = software、fixtures = content)。

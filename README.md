@@ -62,7 +62,7 @@ flowchart TB
   authp <-->|"/oauth2/auth"| o2p
   o2p <-->|"OIDC"| dex
   ing -->|"/ , /api/state (admin)"| sb
-  ing -->|"/portal , /api/users , /api/challenges (any-login)"| sb
+  ing -->|"/portal , /api/users , /api/challenges (/check-participant)"| sb
   ing -->|"/docs-admin (admin)"| docs
   ing -->|"userN.host"| ttp --> ttyd -->|"kubectl exec (同一 Pod)"| chal
   sb -.->|"TERMINAL タブで iframe 埋め込み"| ttp
@@ -81,7 +81,7 @@ falco-ctf-app/
 │                       authpolicy / collector
 ├── scoreboard/         Dockerfile のみ (Go multi-stage, Falco webhook 受信 + 採点)
 ├── auth-policy/        Dockerfile のみ (Go multi-stage, host↔email 認可)
-├── collector/          Dockerfile のみ (Go, 参加者向け単一入口。submit/me/exfil を
+├── collector/          Dockerfile のみ (Go, 参加者向け単一入口。submit/exfil を
 │                       scoreboard へ forward。CTF 状態は持たない)
 ├── images/
 │   ├── ttyd/           ユーザが触る Web ターミナル
@@ -120,8 +120,10 @@ curl -X POST http://localhost:8000/falco/events \
                         "container.image.repository":"falco-ctf/challenge"}}'
 curl http://localhost:8000/api/state | jq
 
-# auth-policy /check を試す (mock-oauth2 が常に 202)
-curl -i http://localhost:8001/check?host=user1
+# auth-policy を試す (mock-oauth2 が常に 202 + user1@ctf.local。scripts/dev-roster.yaml が identity 表)
+curl -i "http://localhost:8001/check-workspace?host=user1"   # 200 (ロスターの seat == host)
+curl -i "http://localhost:8001/check-workspace?host=user2"   # 403
+curl -i http://localhost:8001/check-participant               # 200
 ```
 
 ## colima k3s への deploy
@@ -142,7 +144,7 @@ make deploy-local         # helm upgrade --install scoreboard + auth-policy (app
 |---|---|---|
 | `scoreboard` | Falco webhook 受信 + ユーザ×課題マトリクス + 採点 | `charts/scoreboard/` |
 | `auth-policy` | ingress-nginx auth-url 前段 (host↔email) | `charts/auth-policy/` |
-| `collector` | 参加者向け単一入口 (submit/me/exfil を scoreboard へ forward) | `charts/collector/` |
+| `collector` | 参加者向け単一入口 (submit/exfil を scoreboard へ forward) | `charts/collector/` |
 | `ttyd` | Web ターミナル (kubectl exec バックエンド) | `charts/ctf-user/` |
 | `challenge` | challenge コンテナのベースイメージ | `charts/ctf-user/` |
 | `docs` | 課題ドキュメントサイト (MkDocs Material + PDF) | `charts/docs/` |

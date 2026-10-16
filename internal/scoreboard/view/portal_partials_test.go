@@ -771,6 +771,9 @@ func TestPortalPartials_ChecksRejectMutations(t *testing.T) {
 	const homeCall = `{{template "pane-home.tmpl" . -}}`
 	const cssCall = `{{template "css.tmpl" . -}}`
 	const a11yCall = `{{template "` + portalA11yCSSPartial + `" . -}}`
+	// ADR-0034 S1: css-avatar.tmpl (design) and css-profile.tmpl sit between css.tmpl and the a11y CSS.
+	const avatarCall = `{{template "css-avatar.tmpl" . -}}`
+	const profileCall = `{{template "css-profile.tmpl" . -}}`
 	cases := []struct {
 		name    string
 		mutate  func(*testing.T, fstest.MapFS)
@@ -1187,10 +1190,18 @@ func TestPortalPartials_ChecksRejectMutations(t *testing.T) {
 		{
 			name: "a11y CSS called before css.tmpl",
 			mutate: portalFSEdit(portalRootTmpl, func(s string) string {
-				return strings.Replace(s, cssCall+"\n"+a11yCall, a11yCall+"\n"+cssCall, 1)
+				return strings.Replace(s, cssCall+"\n"+avatarCall+"\n"+profileCall+"\n"+a11yCall, avatarCall+"\n"+profileCall+"\n"+a11yCall+"\n"+cssCall, 1)
 			}),
 			check:   checkPortalAssembly,
 			wantErr: `last CSS-carrying partial portal.tmpl calls is "css.tmpl", want "css-a11y.tmpl"`,
+		},
+		{
+			name: "a11y CSS called before the profile CSS",
+			mutate: portalFSEdit(portalRootTmpl, func(s string) string {
+				return strings.Replace(s, profileCall+"\n"+a11yCall, a11yCall+"\n"+profileCall, 1)
+			}),
+			check:   checkPortalAssembly,
+			wantErr: `last CSS-carrying partial portal.tmpl calls is "css-profile.tmpl", want "css-a11y.tmpl"`,
 		},
 		{
 			name: "a11y CSS called in <body>",
@@ -1223,7 +1234,7 @@ func TestPortalPartials_ChecksRejectMutations(t *testing.T) {
 			name:    "a11y CSS no longer called",
 			mutate:  portalFSEdit(portalRootTmpl, replaceOnce(a11yCall+"\n", "")),
 			check:   checkPortalAssembly,
-			wantErr: `last CSS-carrying partial portal.tmpl calls is "css.tmpl", want "css-a11y.tmpl"`,
+			wantErr: `last CSS-carrying partial portal.tmpl calls is "css-profile.tmpl", want "css-a11y.tmpl"`,
 		},
 		{
 			name:    "a11y partial loses its <style> (CSS moved elsewhere)",

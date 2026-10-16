@@ -20,7 +20,7 @@ type portalData struct {
 	// (defense-in-depth) — see api.Handler.state, which independently 403s a
 	// non-admin regardless of what this value says.
 	RoleJSON template.JS
-	// UserJSON is the derived username (api.DeriveUsername) or "" when it
+	// UserJSON is the derived username (api.NewUsernameDeriver (api.UsernameFromEmail)) or "" when it
 	// could not be determined, pre-marshalled to JSON. It pre-fills the
 	// Journey/Me panes' identity so a participant does not have to type
 	// their own username — but every API call those panes make
@@ -28,6 +28,18 @@ type portalData struct {
 	// header server-side (selfOrAdmin / selfOrAdminWrite), so this value
 	// cannot be used to widen access even if tampered with client-side.
 	UserJSON template.JS
+	// AvatarURLsJSON (ADR-0034 S1) is the served URL of each avatar glyph's
+	// SVG, keyed by glyph and pre-marshalled to a JSON object. The portal's
+	// JavaScript cannot call {{.Assets.URL}}, so it reads these through the
+	// ASSETS constant in portal.tmpl. Display-only: the URLs are same-origin
+	// static assets and carry no identity.
+	AvatarURLsJSON template.JS
+	// AvatarChoicesJSON (ADR-0034 D8) is the ordered array of avatar ids a
+	// participant may pick (avatar.ParticipantIDs(): the table without the
+	// operator's fixed StaffID), exposed as ASSETS.avatarChoices. The profile
+	// picker draws exactly these; the server refuses any other (400), so this
+	// is a convenience, not a gate.
+	AvatarChoicesJSON template.JS
 	// TtydURLJSON (P23-4) is the caller's OWN ttyd origin
 	// (`https://<derived-username>.<ttydSuffix>`), pre-marshalled to JSON, or
 	// "" when it could not be computed (no derived username, or the
@@ -37,14 +49,14 @@ type portalData struct {
 	// instead of an iframe (see templates/portal.html).
 	//
 	// SECURITY: built ENTIRELY from server-side inputs — the same
-	// DeriveUsername(r) result already trusted for UserJSON, plus a
+	// deriveUser(r) result already trusted for UserJSON, plus a
 	// deploy-time env, NEVER from any client-supplied header/query/param. A
 	// participant cannot make their own portal page iframe someone ELSE's
 	// ttyd by tampering with the request: there is no request input this
 	// function reads to pick the hostname other than their own authenticated
 	// identity. Per-user isolation (I8) is additionally enforced
 	// independently at the network layer regardless of this value — the
-	// ttyd-proxy's Ingress requires auth-policy's `/check?host=<user>`
+	// ttyd-proxy's Ingress requires auth-policy's `/check-workspace?host=<user>`
 	// subrequest, which re-derives identity from the iframe's OWN
 	// cookie/Origin and 403s a mismatch — so even a manually-edited iframe
 	// src pointed at another user's host still 403s. This field only ever
@@ -148,7 +160,7 @@ func ttydURLFor(user, suffix string) string {
 //     panes make is re-gated by the API using the request's own
 //     X-Auth-Request-Email header, which the browser cannot forge (see
 //     api.selfOrAdmin's doc for why), and the ttyd iframe target is
-//     independently re-checked by auth-policy's per-host `/check` (I8) no
+//     independently re-checked by auth-policy's per-host `/check-workspace` (I8) no
 //     matter what src ends up in the DOM.
 //  2. No admin-only DATA is ever embedded in this HTML (for admin or
 //     participant). The only per-viewer data here are a static "admin" or
@@ -157,7 +169,7 @@ func ttydURLFor(user, suffix string) string {
 //     another user's identifiers. The Scoreboard pane's actual data comes
 //     from a client-side fetch('/api/state') that 403s a non-admin exactly
 //     as it does on the legacy GET / today.
-//  3. The portal is served to ANY authenticated caller (isAdmin==false is
+//  3. The portal is served to ANY caller the participant gate admits (isAdmin==false is
 //     participant, not denied) — unlike GET / (the legacy operator
 //     dashboard), which stays admin-only. This is intentional: the portal
 //     shell carries no admin data, so there is nothing to protect by gating
@@ -226,6 +238,8 @@ func renderPortal(w http.ResponseWriter, r *http.Request, isAdmin func(*http.Req
 		RoleJSON:           template.JS(roleJSON),
 		UserJSON:           template.JS(userJSON),
 		TtydURLJSON:        template.JS(ttydURLJSON),
+		AvatarURLsJSON:     avatarURLsJSON(),
+		AvatarChoicesJSON:  avatarChoicesJSON(),
 		HomePanelsHTML:     homePanelsHTML,
 		StoryPanelHTML:     storyPanelHTML,
 		TutorialPanelsHTML: tutorialPanelsHTML,

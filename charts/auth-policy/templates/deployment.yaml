@@ -15,6 +15,14 @@ spec:
       labels:
         app.kubernetes.io/name: auth-policy
         app.kubernetes.io/part-of: falco-ctf
+      {{- with .Values.roster.checksum }}
+      annotations:
+        # The roster is read once at startup (ADR-0034 D2: no hot reload), so a
+        # changed Secret must roll the pods. The platform renders the Secret
+        # (this chart does not own it) and passes a digest of its content here;
+        # a different digest is a different pod template = a rolling restart.
+        checksum/roster: {{ . | quote }}
+      {{- end }}
     spec:
       automountServiceAccountToken: false
       securityContext:
@@ -56,6 +64,16 @@ spec:
             # gate). Empty default = nobody is admin (fail-closed).
             - name: ADMIN_EMAILS
               value: {{ .Values.env.adminEmails | quote }}
+            # ROSTER_FILE (ADR-0034 D2): the identity roster. REQUIRED — the
+            # process refuses to start without a readable, valid file, and the
+            # Secret volume below is not optional, so a missing Secret leaves
+            # the pod in ContainerCreating (closed) rather than serving.
+            - name: ROSTER_FILE
+              value: "/etc/auth-policy/roster/roster.yaml"
+          volumeMounts:
+            - name: roster
+              mountPath: /etc/auth-policy/roster
+              readOnly: true
           readinessProbe:
             httpGet: { path: /healthz, port: http }
             initialDelaySeconds: 2
@@ -66,3 +84,11 @@ spec:
             periodSeconds: 30
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: roster
+          secret:
+            secretName: {{ required "roster.secretName is required (ADR-0034 D2: auth-policy cannot start without a roster)" .Values.roster.secretName | quote }}
+            # World-readable inside the pod only: the container runs as 65532
+            # with no fsGroup, so a root-owned 0400/0440 file would be
+            # unreadable. The pod has exactly one process and a read-only root.
+            defaultMode: 0444

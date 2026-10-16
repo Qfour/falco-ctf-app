@@ -293,3 +293,85 @@ var _ = yaml.Marshal
 		t.Fatalf("expected exactly one flagged import [gopkg.in/yaml.v3], got %v", bad)
 	}
 }
+
+// thirdPartyImportsInClosure returns the sorted, de-duplicated set of
+// non-stdlib, non-module imports made by the NON-TEST files of every
+// module-internal package in start's import closure. This is the set of
+// third-party packages the binary compiles in directly.
+func thirdPartyImportsInClosure(t *testing.T, root, start string) []string {
+	t.Helper()
+	set := map[string]bool{}
+	for pkg := range transitiveModuleImports(t, root, start) {
+		dir := filepath.Join(root, strings.TrimPrefix(pkg, modulePrefix))
+		if _, err := os.Stat(dir); err != nil {
+			continue
+		}
+		for _, imp := range allImportsOf(t, dir) {
+			if !isStdlibImportPath(imp) && !strings.HasPrefix(imp, modulePrefix) {
+				set[imp] = true
+			}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for imp := range set {
+		out = append(out, imp)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// authPolicyThirdPartyImports is the exact set of third-party packages
+// cmd/auth-policy may compile in (ADR-0034 S2, security LOW-3). gopkg.in/yaml.v3
+// entered this distroless binary with the roster parser
+// (internal/authpolicy/roster.go); upstream is archived (2025-04-01), so the
+// set is pinned: a new dependency, or a second YAML library, changes the SBOM
+// of the service that decides who is admitted and must be a reviewed change to
+// this list. The prometheus trio is the metrics endpoint every service serves.
+// The migration to the maintained fork go.yaml.in/yaml/v3 is a tracked
+// follow-up, not part of S2.
+var authPolicyThirdPartyImports = []string{
+	"github.com/prometheus/client_golang/prometheus",
+	"github.com/prometheus/client_golang/prometheus/promauto",
+	"github.com/prometheus/client_golang/prometheus/promhttp",
+	"gopkg.in/yaml.v3",
+}
+
+func TestAuthPolicyThirdPartyImportsArePinned(t *testing.T) {
+	root := repoRoot(t)
+	got := thirdPartyImportsInClosure(t, root, modulePrefix+"cmd/auth-policy")
+	if len(got) == 0 {
+		t.Fatal("cmd/auth-policy's closure has no third-party imports — extraction is broken (internal/authpolicy imports gopkg.in/yaml.v3 and prometheus), not clean")
+	}
+	if strings.Join(got, "\n") != strings.Join(authPolicyThirdPartyImports, "\n") {
+		t.Fatalf("cmd/auth-policy's third-party imports = %v, want exactly %v: adding a dependency to the auth-policy binary is a security-reviewed change — update authPolicyThirdPartyImports and auth-policy/Dockerfile's comments together", got, authPolicyThirdPartyImports)
+	}
+}
+
+// V8 proof for the pin: a third-party import reachable from the binary through
+// a module-internal hop (not a direct import) changes the set, and a stdlib or
+// module-internal import does not.
+func TestAuthPolicyThirdPartyImports_CatchesTransitiveAddition(t *testing.T) {
+	root := t.TempDir()
+	mustWriteGoFile(t, filepath.Join(root, "cmd", "fakebin"), "main.go",
+		`package main
+
+import (
+	"net/http"
+
+	_ "`+modulePrefix+`internal/fixture-a"
+)
+
+var _ = http.StatusOK
+
+func main() {}
+`)
+	mustWriteGoFile(t, filepath.Join(root, "internal", "fixture-a"), "a.go",
+		`package fixturea
+
+import _ "example.com/new/dependency"
+`)
+	got := thirdPartyImportsInClosure(t, root, modulePrefix+"cmd/fakebin")
+	if len(got) != 1 || got[0] != "example.com/new/dependency" {
+		t.Fatalf("thirdPartyImportsInClosure = %v, want exactly [example.com/new/dependency]", got)
+	}
+}

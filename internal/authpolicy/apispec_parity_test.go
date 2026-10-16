@@ -46,9 +46,16 @@ func TestAPISpec_V1_RouteSetMatchesSpec(t *testing.T) {
 	if len(implOnly) > 0 {
 		t.Errorf("implemented but undocumented: %v", implOnly)
 	}
-	// ADR-0005 C1's real-world count: /healthz, /metrics, /check, /check-admin.
-	if len(routes) != 4 {
-		t.Errorf("expected 4 registered routes (ADR-0005 C1), got %d: %v", len(routes), routes)
+	// ADR-0005 C1's real-world count, as of ADR-0034 D3: /healthz, /metrics,
+	// /check-workspace, /check-participant, /check-admin (the old /check is
+	// gone).
+	if len(routes) != 5 {
+		t.Errorf("expected 5 registered routes (ADR-0034 D3), got %d: %v", len(routes), routes)
+	}
+	for _, rt := range routes {
+		if rt.Pattern == "/check" {
+			t.Errorf("GET /check is registered; ADR-0034 D3 removed it (an old chart must 404, not be served)")
+		}
 	}
 }
 
@@ -81,7 +88,7 @@ func TestAPISpec_V3_OriginGuardAndCollectorForwardParity(t *testing.T) {
 // 2(b)) but, before specparity.StringExtParity existed, nothing ever
 // compared their VALUES between docs/openapi-auth-policy.yaml and
 // Handler.Routes() — only their presence was checked elsewhere (V2's
-// mandatory-field discipline). A reversed x-ctf-authz (e.g. GET /check
+// mandatory-field discipline). A reversed x-ctf-authz (e.g. GET /check-workspace
 // declared "admin" while the route stays self-or-admin) would have passed
 // `make test` silently. This wires the value comparison in for real.
 func TestAPISpec_V3b_StringExtParity(t *testing.T) {
@@ -113,7 +120,7 @@ func TestAPISpec_V3b_StringExtParity(t *testing.T) {
 
 // v5Coverage is ADR-0009 Decision A point 2 for the auth-policy binary:
 // specparity.ResponseObjectOperations() derives exactly ONE operation from
-// docs/openapi-auth-policy.yaml (GET /healthz — /check and /check-admin's
+// docs/openapi-auth-policy.yaml (GET /healthz — the check endpoints'
 // 200 responses carry only `headers`, no `content` at all, and /metrics is
 // text/plain).
 var v5Coverage = map[string]bool{
@@ -243,16 +250,16 @@ func TestAPISpec_V8_MutationsFailAgainstRealData(t *testing.T) {
 			}
 			mutatedOps[k] = cp
 		}
-		delete(mutatedOps["GET /check"], "x-ctf-origin-guard")
+		delete(mutatedOps["GET /check-workspace"], "x-ctf-origin-guard")
 		missingKey, _, _ := specparity.BoolExtParity(mutatedOps, routes, "x-ctf-origin-guard", func(rt apispec.Route) bool { return rt.OriginGuarded })
 		found := false
 		for _, k := range missingKey {
-			if k == "GET /check" {
+			if k == "GET /check-workspace" {
 				found = true
 			}
 		}
 		if !found {
-			t.Fatalf("expected missingKey to flag GET /check, got %v", missingKey)
+			t.Fatalf("expected missingKey to flag GET /check-workspace, got %v", missingKey)
 		}
 	})
 

@@ -10,10 +10,37 @@ image:
 
 env:
   oauth2ProxyAuthUrl: "http://oauth2-proxy.oauth2-proxy.svc.cluster.local:80/oauth2/auth"
-  # Invariant I8: prefix-exact <username>@ match. Must match oauth2-proxy email_domains.
+  # Invariant I8 (ADR-0034): the canonical identity downstream is
+  # <seat>@<expectedEmailDomain>. The LAST label MUST be a reserved name
+  # (local, test, invalid, example, localhost) — auth-policy refuses to start
+  # otherwise, so an external IdP can never hold a verified email in this domain.
   expectedEmailDomain: "example.invalid"
-  # /check-admin allowlist (comma-separated). Empty = nobody (fail-closed).
+  # Operator allowlist (comma-separated): /check-admin, and the admin override on
+  # /check-workspace and /check-participant. Empty = nobody (fail-closed). Every
+  # entry must be a reserved-domain static account and must NOT also be a roster
+  # seat's canonical email or an `external` (checked at startup).
   adminEmails: ""
+
+# The identity roster (ADR-0034 D2) — the ONE table mapping an authenticated
+# identity to a seat. Rendered by the platform (it holds the external emails,
+# which are personal data and never live in this public repo) into a Secret in
+# the auth-policy namespace; this chart only mounts it at
+# /etc/auth-policy/roster/roster.yaml (ROSTER_FILE). File shape:
+#
+#   seats:
+#     - seat: user1
+#     - seat: user2
+#       external: someone@partner.example   # optional, at most one
+#
+# There is no "no roster" mode: a missing Secret keeps the pod from starting.
+roster:
+  # Name of the Secret (key `roster.yaml`) in the release namespace.
+  secretName: "auth-policy-roster"
+  # Optional digest of the Secret's content. auth-policy reads the roster once,
+  # so a changed roster must roll the pods; the platform passes e.g. the
+  # sha256 here and a new value changes the pod template. Empty = no annotation
+  # (then roll with `kubectl rollout restart`).
+  checksum: ""
 
 # Prod runs 2 replicas with zone spread (auth hot path). Local leaves false.
 highAvailability: false

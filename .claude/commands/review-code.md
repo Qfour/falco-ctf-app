@@ -6,8 +6,8 @@ argument-hint: [optional focus area]
 Run the `reviewer` subagent to review Go code changes on the current branch against main.
 
 Brief the reviewer with this context:
-- Project: falco-ctf-app — scoreboard (SQLite + Falco webhook ingest) / auth-policy (X-Auth-Request-Email prefix-exact check)
-- Hard Invariants to verify: I1 (scoreboard replicas:1 + Recreate), I2/I3 (runAsUser 65532, fsGroup 65532), I8 (auth-policy prefix-exact — NEVER relax), I4/I5 (image tag = git SHA)
+- Project: falco-ctf-app — scoreboard (SQLite + Falco webhook ingest) / auth-policy (identity roster + exact seat match, ADR-0034)
+- Hard Invariants to verify: I1 (scoreboard replicas:1 + Recreate), I2/I3 (runAsUser 65532, fsGroup 65532), I8 (identity roster + exact seat match; the I8 row of the conventions file — NEVER relax), I4/I5 (image tag = git SHA)
 - Cross-repo contract: `/falco/events` JSON schema (falcosidekick standard) must not change without platform-side PR
 - Rules: `.claude/rules/falco-ctf-app-conventions.md`
 - Focus area from user: $ARGUMENTS

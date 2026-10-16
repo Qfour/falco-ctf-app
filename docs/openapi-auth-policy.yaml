@@ -5,24 +5,68 @@ info:
   description: |
     The auth-policy binary's COMPLETE HTTP surface (ADR-0005).
 
-    Combines oauth2-proxy authentication with a host<->email binding check,
-    exposed as an ingress-nginx `auth-url` subrequest target.
+    Combines oauth2-proxy authentication with the **identity roster**
+    (ADR-0034 D2): one table that maps an authenticated identity (a static
+    account's `<seat>@<EXPECTED_EMAIL_DOMAIN>`, or one rostered `external`
+    email) to a **seat** (a workspace name such as `user7`). It is exposed as
+    three ingress-nginx `auth-url` subrequest targets.
 
-      ingress ── /check?host=<expected-username> ──►  authpolicy
-                                                         │
-                                                         └─► oauth2-proxy /oauth2/auth
-                                                                (cookie forwarded)
+      ingress ── /check-workspace?host=<seat> ──►  authpolicy
+      ingress ── /check-participant ────────────►     │
+      ingress ── /check-admin ──────────────────►     └─► oauth2-proxy /oauth2/auth
+                                                            (cookie forwarded)
 
     Plain `auth-url: oauth2-proxy/oauth2/auth` would let any logged-in user
-    reach any user's workspace. This service closes that gap without requiring
+    reach any user's workspace, and with an external IdP "logged in" is a much
+    larger set than "invited". This service closes that gap without requiring
     ingress-nginx snippet annotations (which the admission webhook blocks).
+
+    **The identity headers on a 200 are the CANONICAL form, not the IdP's
+    email.** For a rostered identity, `X-Auth-Request-Email` is
+    `<seat>@<EXPECTED_EMAIL_DOMAIN>` and `X-Auth-Request-User` /
+    `X-Auth-Request-Preferred-Username` are `<seat>`, whatever oauth2-proxy
+    returned; the IdP's real email and `sub` never leave this process. So a
+    downstream service (the scoreboard) compares its `{user}` against the
+    canonical form with plain equality (I8). The only exception is an
+    `ADMIN_EMAILS` member, whose headers are passed through (they are
+    reserved-domain static accounts by startup validation). The header is named
+    "Email" for compatibility with every existing gate; it carries a canonical
+    identity, not necessarily a deliverable address.
+
+    **There is no prefix, suffix or substring rule.** An identity that is not in
+    the roster (and not in `ADMIN_EMAILS`) is 403 on every check endpoint, and
+    no 403 body carries an email or a seat.
+
+    **Startup is fail-closed.** `ROSTER_FILE` must exist, parse (YAML,
+    `seats:` list of `{seat, external?}`, unknown keys rejected) and hold at
+    least one seat; `EXPECTED_EMAIL_DOMAIN` must be set (there is no default) and
+    it and every `ADMIN_EMAILS` domain must
+    end in a reserved label (`local` `test` `invalid` `example` `localhost`);
+    seats and `external` emails must be unique **after normalisation**; no
+    `external` may be in `EXPECTED_EMAIL_DOMAIN`; neither an `external` nor a
+    `<seat>@<EXPECTED_EMAIL_DOMAIN>` may be in `ADMIN_EMAILS`; everything must be
+    plain ASCII. Violating any of these refuses to start (there is no
+    "no roster" mode). The roster is read once; adding or revoking a row is a
+    Secret swap plus a rolling restart.
+
+    **Normalisation** (one function, applied to roster rows and to every
+    request identity): plain ASCII only, lower-cased, exactly one `@`; for
+    `gmail.com` / `googlemail.com` ONLY, `+tag` and every `.` are dropped from
+    the local part and the domain becomes `gmail.com` (a local part that becomes
+    empty is not an identity).
+
+    The previous `GET /check?host=` route is **removed** (breaking, ADR-0034
+    D3): an old binary behind a new chart (or the reverse) answers the
+    subrequest with 404, which ingress-nginx turns into a 500 — closed, never
+    open.
 
     Error bodies here are `text/plain` (`http.Error`), NOT the scoreboard's JSON
     `Error` schema. That is deliberate and not a drift: these responses are
     consumed by ingress-nginx as a subrequest status, never rendered to a user.
 
     Per-operation extensions carry the same meaning as in
-    docs/openapi-scoreboard.yaml.
+    docs/openapi-scoreboard.yaml. `x-ctf-authz: rostered` (new) means "an
+    `ADMIN_EMAILS` member, or an identity the roster resolves to a seat".
 
     Generated code: `internal/authpolicy/oapi/types.gen.go` (`make gen`,
     api/cfg-auth-policy.yaml). Never hand-edit the generated file.
@@ -57,7 +101,7 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [ok, oauth2_proxy, domain, admin_count]
+                required: [ok, oauth2_proxy, domain, admin_count, roster_seats, roster_external]
                 properties:
                   ok: { type: boolean, const: true }
                   oauth2_proxy: { type: string }
@@ -71,6 +115,20 @@ paths:
                       override and /check-admin deny everyone (fail-closed) —
                       the value operators check first when admin access appears
                       broken. Deliberately a COUNT, not the addresses.
+                  roster_seats:
+                    type: integer
+                    description: |
+                      number of seats in the loaded identity roster
+                      (ADR-0034 D2). Always >= 1 on a running binary (an empty
+                      roster refuses to start); a binary that predates the
+                      roster has no such key, which is how the platform
+                      preflight detects "S2 is not live" (ADR-0034 V15).
+                  roster_external:
+                    type: integer
+                    description: |
+                      how many of those seats carry an `external` identity.
+                      A COUNT only: the roster is personal data and is never
+                      served.
 
   /metrics:
     get:
@@ -84,11 +142,12 @@ paths:
       x-ctf-rate-limit: none
       description: |
         Series (internal/authpolicy/metrics.go owns the label sets):
-          - `auth_policy_checks_total{result}`
+          - `auth_policy_checks_total{endpoint,result}`
+              endpoint in {workspace, participant}
               result in {ok, ok_admin, unauthenticated, forbidden, bad_request,
                          upstream_error}
               `ok_admin` = the ADMIN_EMAILS override matched (I8's one
-              intentional exception) rather than the `<host>@` prefix. A rising
+              intentional exception) rather than a roster seat. A rising
               `ok_admin` during an event means operators are reaching
               participant workspaces — expected during support, worth noticing
               otherwise.
@@ -103,10 +162,10 @@ paths:
           content:
             text/plain: {}
 
-  /check:
+  /check-workspace:
     get:
-      summary: Authorize a workspace request (per-user binding)
-      operationId: check
+      summary: Authorize a workspace request (roster seat == host)
+      operationId: checkWorkspace
       tags: [internal]
       x-ctf-audience: internal
       x-ctf-authz: self-or-admin
@@ -115,29 +174,30 @@ paths:
       x-ctf-rate-limit: none
       description: |
         Called by ingress-nginx as an `auth-url` subrequest before proxying to a
-        user's `workspace` Service.
+        user's `workspace` Service. Replaces `GET /check` (removed).
 
         Decision tree:
 
-        | upstream oauth2-proxy | email | response |
+        | upstream oauth2-proxy | identity | response |
         |---|---|---|
         | 401 | n/a | **401** — ingress redirects to /oauth2/start |
-        | 202 | in `ADMIN_EMAILS` | **200** — operator override (any host) |
-        | 202 | starts with `<host>@` | **200** — identity headers propagated |
-        | 202 | anything else | **403** — cross-user, no redirect |
+        | 202 | in `ADMIN_EMAILS` | **200** — operator override (any host), headers passed through |
+        | 202 | resolves (roster) to seat == `host` | **200** — headers REWRITTEN to the canonical form |
+        | 202 | resolves to another seat | **403** — cross-user, no redirect |
+        | 202 | not in the roster (incl. empty / malformed / non-ASCII) | **403** |
         | any other status | n/a | **502** — masked, upstream status NOT surfaced |
         | unreachable | n/a | **502** |
 
-        The match is **prefix-exact**: the email must start with `<host>@`, so
-        `alice2@...` does NOT satisfy `host=alice` (conventions I8). The
-        ADMIN_EMAILS override is I8's ONE intentional exception, and it is the
-        same allowlist /check-admin uses; an empty allowlist grants nobody
-        (fail-closed).
+        The match is an **exact** seat comparison against the roster's
+        resolution — there is no prefix rule, so `user10` never satisfies
+        `host=user1` and an external `user7@<anything>` is not user7 unless the
+        roster says so (conventions I8). The ADMIN_EMAILS override is I8's ONE
+        intentional exception, and it is the same allowlist /check-admin uses;
+        an empty allowlist grants nobody (fail-closed).
 
         Note the masking row: an unexpected oauth2-proxy status becomes a
         generic 502 on purpose — the upstream status and body must not leak
-        outward. (The previous version of this spec claimed 5xx was surfaced
-        verbatim. It never was.)
+        outward.
       parameters:
         - in: query
           name: host
@@ -146,9 +206,9 @@ paths:
             type: string
             pattern: "^[a-z0-9][a-z0-9-]{0,62}$"
           description: |
-            expected username (== the first label of the workspace ingress
-            host). Same slug shape the scoreboard enforces on
-            `/api/users/{user}/...`, so the two boundaries agree.
+            expected seat (== the first label of the workspace ingress host).
+            Same slug shape the scoreboard enforces on `/api/users/{user}/...`
+            and the roster enforces on `seat`, so the boundaries agree.
         - in: header
           name: Cookie
           schema: { type: string }
@@ -161,7 +221,9 @@ paths:
         "200":
           description: |
             authorized (own workspace, or an admin override). Response headers
-            carry identity for the upstream backend.
+            carry identity for the upstream backend: for a rostered seat they
+            are the canonical `<seat>@<EXPECTED_EMAIL_DOMAIN>` / `<seat>` and
+            nothing the IdP returned.
           headers:
             X-Auth-Request-Email:
               schema: { type: string }
@@ -179,10 +241,77 @@ paths:
             text/plain: {}
         "403":
           description: |
-            authenticated, but the email neither matches `<host>@` nor is in
-            ADMIN_EMAILS. The body echoes the caller's own email and the
-            requested host (operator debugging aid on an internal subrequest
-            path; it is never rendered to a browser).
+            authenticated, but the identity is neither in ADMIN_EMAILS nor the
+            roster seat named by `host`. The body is the fixed string
+            `forbidden`: it never carries the caller's email or seat (the
+            operator reads the identity from the log, only for an identity that
+            is not in the roster at all).
+          content:
+            text/plain: {}
+        "500":
+          description: could not build the upstream request
+          content:
+            text/plain: {}
+        "502":
+          description: oauth2-proxy unreachable, or returned an unexpected status (masked)
+          content:
+            text/plain: {}
+
+  /check-participant:
+    get:
+      summary: Authorize a participant request (any rostered identity)
+      operationId: checkParticipant
+      tags: [internal]
+      x-ctf-audience: internal
+      x-ctf-authz: rostered
+      x-ctf-origin-guard: false
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: none
+      description: |
+        The `auth-url` subrequest for the participant side of the single-origin
+        host (`/portal`, `/api/users/`, `/api/board/`, `/api/challenges/`,
+        `/csp-report`, the static assets). It replaces "any authenticated login"
+        with "an identity the roster resolves to a seat" (ADR-0034 C2): with an
+        external IdP, authenticated is a much larger set than invited.
+
+        | upstream oauth2-proxy | identity | response |
+        |---|---|---|
+        | 401 | n/a | **401** — ingress redirects to /oauth2/start |
+        | 202 | in `ADMIN_EMAILS` | **200** — headers passed through |
+        | 202 | resolves (roster) to a seat | **200** — headers REWRITTEN to the canonical form |
+        | 202 | not in the roster | **403** |
+        | any other status / unreachable | n/a | **502** — masked |
+
+        Takes no `host`: which seat a request may act on is the scoreboard's
+        self-or-admin check against the canonical `X-Auth-Request-Email` this
+        endpoint returns.
+      parameters:
+        - in: header
+          name: Cookie
+          schema: { type: string }
+          description: forwarded to oauth2-proxy
+        - in: header
+          name: Authorization
+          schema: { type: string }
+          description: forwarded to oauth2-proxy (if present)
+      responses:
+        "200":
+          description: |
+            admin, or a rostered identity. For a rostered identity the headers
+            are the canonical `<seat>@<EXPECTED_EMAIL_DOMAIN>` / `<seat>`.
+          headers:
+            X-Auth-Request-Email:
+              schema: { type: string }
+            X-Auth-Request-User:
+              schema: { type: string }
+            X-Auth-Request-Preferred-Username:
+              schema: { type: string }
+        "401":
+          description: unauthenticated — ingress should redirect to /oauth2/start
+          content:
+            text/plain: {}
+        "403":
+          description: authenticated but not in ADMIN_EMAILS or the roster. Fixed body `forbidden` (no email, no seat).
           content:
             text/plain: {}
         "500":
@@ -207,7 +336,7 @@ paths:
       description: |
         The `auth-url` subrequest for operator hosts (the scoreboard dashboard
         and any admin view). Returns 200 only when the authenticated email is in
-        `ADMIN_EMAILS` (case-insensitive). **An empty allowlist denies everyone
+        `ADMIN_EMAILS` (case-insensitive; the same normalisation as the roster). **An empty allowlist denies everyone
         — fail-closed.** Takes no `host` parameter: there is no per-user binding
         to check, only membership.
 
@@ -238,7 +367,7 @@ paths:
           content:
             text/plain: {}
         "403":
-          description: authenticated but not in the admin allowlist (or the allowlist is empty)
+          description: authenticated but not in the admin allowlist (or the allowlist is empty). Fixed body `forbidden` (no email, no seat).
           content:
             text/plain: {}
         "500":

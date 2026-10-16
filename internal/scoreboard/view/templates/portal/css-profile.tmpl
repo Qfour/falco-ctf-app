@@ -1,0 +1,43 @@
+<style nonce="{{.Nonce}}">
+  /* ===== Avatar sizes / placement + the profile form (ADR-0034 S1, D8/D9) =====
+     Called after css-avatar.tmpl (design-engineer: the .avatar disc and the six
+     .avatar-<color> backgrounds) and before css-a11y.tmpl (which stays the last
+     CSS the root serves: portal_partials_test.go, checkRootCSSOrder). The
+     size rules below sit at the same specificity as .avatar and come later, so
+     they win; --avatar-size is set on the element, not an ancestor, because
+     .avatar declares its own default. Colors are tokens only (no hex). */
+  .avatar-sm { --avatar-size: 1.5rem; }
+  .avatar-lg { --avatar-size: 3.5rem; }
+  /* A name with a picture in front of it (leaderboard row, Board author, feed). */
+  .with-avatar { display: inline-flex; align-items: center; gap: 0.5rem; vertical-align: middle; }
+  #pane-scoreboard .pod .pod-avatar { display: flex; justify-content: center; margin-top: 0.5rem; }
+  #pane-scoreboard .activity-item .avatar { margin-right: 0.45rem; }
+  #pane-board .thread-msg-author.with-avatar .avatar { --avatar-size: 1.25rem; }
+
+  /* ---- Profile section of the Me pane ---- */
+  #pane-me .profile[hidden] { display: none; }
+  #pane-me .profile { margin-top: 1.5rem; }
+  #pane-me .profile-form { padding: 1.25rem 1.5rem; display: flex; flex-direction: column; gap: 1.25rem; }
+  #pane-me .profile-row { display: flex; flex-direction: column; gap: 0.4rem; }
+  #pane-me .profile-label { font-family: var(--p-font-display); font-size: var(--p-h3); text-transform: uppercase; letter-spacing: var(--p-tracking-wide); color: var(--p-text-dim); font-weight: 600; }
+  #pane-me .profile-input { width: 100%; max-width: 24rem; background: var(--p-bg-elev); border: 1px solid var(--p-border-strong); border-radius: 6px; color: var(--p-text); font-family: 'JetBrains Mono', monospace; padding: 0.6rem 0.8rem; font-size: 0.95rem; }
+  #pane-me .profile-input[aria-invalid="true"] { border-color: var(--p-danger); }
+  #pane-me .profile-help { color: var(--p-text-mute); font-size: 0.8rem; max-width: 40rem; }
+  #pane-me .profile-avatar-line { display: flex; align-items: center; gap: 0.9rem; }
+  #pane-me .profile-chosen { color: var(--p-text-dim); font-size: 0.9rem; }
+  #pane-me .profile-chosen b { color: var(--p-text); font-weight: 600; }
+  /* 8 glyphs (rows) x 6 colours (columns). The column count is fixed so the
+     grid keeps its shape (Up/Down in the script move exactly one row). */
+  #pane-me .avatar-grid { display: grid; grid-template-columns: repeat(6, max-content); gap: 0.4rem; }
+  #pane-me .avatar-opt { display: inline-grid; place-items: center; padding: 0.35rem; border-radius: 0.6rem; border: 1px solid var(--p-border); background: transparent; cursor: pointer; }
+  #pane-me .avatar-opt .avatar { --avatar-size: 1.75rem; }
+  #pane-me .avatar-opt:hover { border-color: var(--p-border-strong); background: var(--p-surface-2); }
+  #pane-me .avatar-opt[aria-disabled="true"] { opacity: 0.4; cursor: not-allowed; }
+  #pane-me .avatar-opt[aria-disabled="true"]:hover { border-color: var(--p-border); background: transparent; }
+  #pane-me .avatar-opt[aria-checked="true"] { border-color: var(--p-accent); box-shadow: 0 0 10px var(--p-accent-glow); background: var(--p-surface-2); }
+  #pane-me .profile-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 0.9rem; }
+  #pane-me .profile-actions .p-btn[disabled] { opacity: 0.55; cursor: progress; }
+  #pane-me .profile-msg { color: var(--p-text-dim); font-size: 0.85rem; }
+  #pane-me .profile-msg.is-error { color: var(--p-danger); }
+  #pane-me .profile-msg:empty { display: none; }
+</style>

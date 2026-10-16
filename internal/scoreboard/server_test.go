@@ -17,6 +17,11 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/store"
 )
 
+// fixtureEmailDomain is the EXPECTED_EMAIL_DOMAIN every scoreboard test
+// fixture runs under (ADR-0034 D5): participant identities in these tests are
+// the canonical "<user>@ctf.local" form auth-policy would have stamped.
+const fixtureEmailDomain = "ctf.local"
+
 type fixture struct {
 	t   *testing.T
 	cat catalog.Catalog
@@ -64,6 +69,7 @@ func newFixture(t *testing.T, now func() time.Time) *fixture {
 	// itself (see origin_guard_test.go for that), so it must not be
 	// collaterally denied by the fail-closed default.
 	srv := scoreboard.NewHandler(cat, st, logger, scoreboard.WithNow(now),
+		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 		scoreboard.WithAdminEmails([]string{fixtureAdminEmail}),
 		scoreboard.WithAllowedOrigins([]string{fixtureOrigin}))
 	return &fixture{t: t, cat: cat, st: st, srv: srv}
@@ -93,6 +99,7 @@ func newFixtureWithHidden(t *testing.T, now func() time.Time, hidden []string) *
 		now = time.Now
 	}
 	srv := scoreboard.NewHandler(cat, st, logger, scoreboard.WithNow(now),
+		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 		scoreboard.WithAdminEmails([]string{fixtureAdminEmail}),
 		scoreboard.WithAllowedOrigins([]string{fixtureOrigin}),
 		scoreboard.WithHiddenUsers(hidden))
@@ -116,8 +123,8 @@ func falcoEventBody(rule, user string, opts ...func(map[string]any)) map[string]
 	body := map[string]any{
 		"rule": rule,
 		"output_fields": map[string]any{
-			"k8s.ns.name":               "ctf-" + user,
-			"k8s.pod.name":              "workspace",
+			"k8s.ns.name":                "ctf-" + user,
+			"k8s.pod.name":               "workspace",
 			"container.image.repository": "docker.io/falco-ctf/challenge",
 		},
 	}
@@ -227,6 +234,7 @@ func TestAdminReset(t *testing.T) {
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := scoreboard.NewHandler(cat, st, logger,
+		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 		scoreboard.WithAdminEmails([]string{"admin@ctf.local"}),
 		scoreboard.WithAllowedOrigins([]string{fixtureOrigin}))
 
@@ -273,6 +281,7 @@ func TestAdminSetDisplayName(t *testing.T) {
 	defer st.Close()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := scoreboard.NewHandler(cat, st, logger,
+		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 		scoreboard.WithAdminEmails([]string{"admin@ctf.local"}),
 		scoreboard.WithAllowedOrigins([]string{fixtureOrigin}))
 
@@ -433,6 +442,7 @@ func newCapstone10Fixture(t *testing.T, now func() time.Time) (*fixture, catalog
 	t.Cleanup(func() { st.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := scoreboard.NewHandler(cat, st, logger, scoreboard.WithNow(now),
+		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 		scoreboard.WithAdminEmails([]string{fixtureAdminEmail}),
 		scoreboard.WithAllowedOrigins([]string{fixtureOrigin}))
 	return &fixture{t: t, cat: cat, st: st, srv: srv}, ch
@@ -1359,11 +1369,16 @@ func TestUserMe_HiddenUser_SeesOwnScore_RankZero(t *testing.T) {
 	}
 }
 
-// ---------------- /api/users/{user}/display-name ----------------
+// ---------------- display name: read-side propagation + the removed participant route ----------------
+//
+// ADR-0034 S1: the participant POST /api/users/{user}/display-name (reached by
+// the workspace's `setname` through the collector) is gone. The display name is
+// still READ on every projection; it is WRITTEN here only by the admin route
+// (TestAdminSetDisplayName) and, from S1-a, by the authenticated profile route.
 
 func TestDisplayName_SetThenReadInState(t *testing.T) {
 	f := newFixture(t, nil)
-	w := f.do("POST", "/api/users/alice/display-name", map[string]any{"name": "Alice ★"})
+	w := f.doAdmin("POST", "/api/admin/users/alice/display-name", map[string]any{"name": "Alice ★"})
 	if w.Code != 200 {
 		t.Fatalf("status: %d body=%s", w.Code, w.Body)
 	}
@@ -1398,39 +1413,57 @@ func TestDisplayName_DefaultsToIdentity(t *testing.T) {
 	}
 }
 
-func TestDisplayName_Validation(t *testing.T) {
+func TestDisplayName_AdminRouteValidation(t *testing.T) {
 	f := newFixture(t, nil)
 	bad := []map[string]any{
-		{"name": ""},                                          // empty
-		{"name": "<script>"},                                   // HTML metachar
-		{"name": "ab&cd"},                                      // HTML metachar
-		{"name": "ab\x00cd"},                                   // control char
-		{"name": "1234567890123456789012345678901234567890"},   // > 32 runes
+		{"name": ""},         // empty
+		{"name": "<script>"}, // HTML metachar
+		{"name": "ab&cd"},    // HTML metachar
+		{"name": "ab\x00cd"}, // control char
+		{"name": "1234567890123456789012345678901234567890"}, // > 32 runes
 	}
 	for _, b := range bad {
-		w := f.do("POST", "/api/users/alice/display-name", b)
+		w := f.doAdmin("POST", "/api/admin/users/alice/display-name", b)
 		if w.Code != 400 {
 			t.Errorf("name=%v should be 400, got %d", b["name"], w.Code)
 		}
 	}
 }
 
-// Participants can set AND change their own display name (last-write-wins).
-// Pins the self-service rename contract.
-func TestDisplayName_ParticipantCanChange(t *testing.T) {
+// TestDisplayName_ParticipantRouteRemoved pins ADR-0034 D12 / S1: the
+// participant POST /api/users/{user}/display-name is not on the mux at all —
+// for the header-less collector shape, for a browser-path request carrying
+// X-Auth-Request-*, and for an admin session — so none of them can write a
+// name, and the route is not in the declared route table either. (Not 403 or
+// 200: that would mean a handler still exists behind a gate.)
+func TestDisplayName_ParticipantRouteRemoved(t *testing.T) {
 	f := newFixture(t, nil)
-	w1 := f.do("POST", "/api/users/alice/display-name", map[string]any{"name": "First"})
-	if w1.Code != 200 {
-		t.Fatalf("first set should succeed, got %d", w1.Code)
+	for _, rt := range f.srv.Routes() {
+		if rt.Pattern == "/api/users/{user}/display-name" {
+			t.Fatalf("route table still declares %s %s", rt.Method, rt.Pattern)
+		}
 	}
-	w2 := f.do("POST", "/api/users/alice/display-name", map[string]any{"name": "Second"})
-	if w2.Code != 200 {
-		t.Fatalf("second set (change) should succeed, got %d", w2.Code)
+	cases := []struct {
+		name  string
+		email string
+	}{
+		{"header-less (the removed collector forward / setname shape)", ""},
+		{"owner (journey host, oauth2-proxy stamped)", "alice@ctf.local"},
+		{"admin session", fixtureAdminEmail},
 	}
-	// /me reflects the latest name
-	got := decode(t, f.doUser("GET", "/api/users/alice/me", "alice", nil))
-	if got["display_name"] != "Second" {
-		t.Fatalf("latest name should win, got %v", got["display_name"])
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			w := f.doAs("POST", "/api/users/alice/display-name", c.email, map[string]any{"name": "Hijacked"})
+			// 405 (not 404) is what the mux gives: GET / is registered, so an
+			// unknown path answers Method Not Allowed to a POST. Either way no
+			// handler ran; a 403 or 200 would mean a handler is still behind it.
+			if w.Code != http.StatusNotFound && w.Code != http.StatusMethodNotAllowed {
+				t.Fatalf("status=%d body=%s, want 404/405 (route removed)", w.Code, w.Body)
+			}
+			if got := decode(t, f.doAdmin("GET", "/api/users/alice/me", nil))["display_name"]; got != "alice" {
+				t.Fatalf("display name changed to %v", got)
+			}
+		})
 	}
 }
 
@@ -1439,7 +1472,7 @@ func TestDisplayName_ParticipantCanChange(t *testing.T) {
 // internal/scoreboard/view/view.go's package doc). The equivalent
 // HTML-serving coverage for the unified portal shell lives in
 // internal/scoreboard/view/portal_test.go (TestRenderPortal_*), and
-// TestDisplayName_ParticipantCanChange above already covers the underlying
+// TestDisplayName_SetThenReadInState above already covers the underlying
 // /api/users/{user}/me data path the portal's Me pane fetches from.
 
 // TestLegacyMeJourneyRoutes_Removed pins the P19-2b cutover: GET /me and
@@ -1474,7 +1507,8 @@ func TestIndexHTML_ServedAtRoot(t *testing.T) {
 
 // ---------------- P23-1: unified portal shell ----------------
 //
-// GET /portal is served to ANY authenticated caller (unlike GET /, which
+// GET /portal is served to ANY caller the participant gate admits (a roster
+// identity or an ADMIN_EMAILS member; unlike GET /, which
 // stays admin-only) — it carries no admin/participant DATA, only two
 // display-only hints (role label, derived username). Authorization for the
 // actual data stays entirely in the API layer (isAdmin / selfOrAdmin), which
@@ -1514,7 +1548,7 @@ func TestPortalHTML_ServedToAdmin(t *testing.T) {
 	if !strings.Contains(body, `window.__PORTAL_ROLE__ = "admin"`) {
 		t.Errorf("expected admin role injection, body=%s", body)
 	}
-	// DeriveUsername runs the same code path for admin as for a participant:
+	// NewUsernameDeriver runs the same code path for admin as for a participant:
 	// fixtureAdminEmail ("admin@ctf.local") has an "@"-prefix that IS a valid
 	// username slug, so the shell still gets a derived-user hint for the
 	// admin viewer (display-only — see the no-admin-data assertions below for
@@ -1684,9 +1718,10 @@ func TestReadGate_EmptyHeaderFailClosed(t *testing.T) {
 }
 
 // TestReadGate_PrefixExactNoMismatch is the core I8-mirror property: user1's
-// identity must NOT satisfy a request for user10 / user1x. The match is
-// prefix-exact ("user1@…"), not a substring/front-match, so the character after
-// the username is pinned to '@'.
+// identity must NOT satisfy a request for user10 / user1x. The match is the
+// exact canonical `<user>@<EXPECTED_EMAIL_DOMAIN>` (ADR-0034 D5), not a
+// prefix/substring/front-match, so the character after the username is pinned
+// to '@' and nothing may follow the domain.
 func TestReadGate_PrefixExactNoMismatch(t *testing.T) {
 	f := newFixture(t, nil)
 	// Caller user1@ requests user10's data → 403 (user10@ ≠ user1@ prefix).

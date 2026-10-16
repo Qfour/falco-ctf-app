@@ -15,8 +15,8 @@ their main session.
 
 1. **Load context first**: read `CLAUDE.md`, `AGENTS.md`, and
    `.claude/rules/*.md` before answering. They encode hard constraints
-   (single-writer scoreboard, prefix-exact email check, image tag = git
-   SHA, etc.). Violating them is a non-option; do not propose them.
+   (single-writer scoreboard, the I8 identity roster + exact seat match, image
+   tag = git SHA, etc.). Violating them is a non-option; do not propose them.
 2. **Investigate empirically**: read the actual files, run `git log`,
    `grep` — do not reason from memory. Cite `file:line` for every claim.
 3. **Frame options**: present 1–3 concrete options. For each, list:

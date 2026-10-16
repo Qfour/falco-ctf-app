@@ -94,6 +94,7 @@ func newSpecFixture(t *testing.T) *specFixture {
 	t.Cleanup(func() { boardSt.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := scoreboard.NewHandler(cat, st, logger,
+		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 		scoreboard.WithJourneys(journeys),
 		scoreboard.WithOrder([]string{"01-recon", "02-evade", "03-boss"}),
 		scoreboard.WithAdminEmails([]string{specFixtureAdmin}),
@@ -188,7 +189,7 @@ func TestAPISpec_V1_RouteSetMatchesSpec(t *testing.T) {
 	// CONTENT comparison, it cannot "cancel out" (LOW, 5x review: an earlier
 	// version of this comment claimed otherwise, which is not a real
 	// detection gap and isn't why this assert exists). The actual value is
-	// PROCESS, not detection: this literal `36` forces every PR that adds or
+	// PROCESS, not detection: this literal forces every PR that adds or
 	// removes a route to touch this line, so the route-count CHANGE itself
 	// shows up in the diff and gets reviewed, instead of silently sliding
 	// through as "RouteSetDiff was still empty, so nothing to see here" —
@@ -211,9 +212,12 @@ func TestAPISpec_V1_RouteSetMatchesSpec(t *testing.T) {
 	// full-text read, closing the "no admin GET route" gap the initial
 	// Phase 2 report flagged) = 37. ADR-0028 (P28-0c) then replaced the 8
 	// per-file static routes (/vendor/* x7, /static/tokens.css) with the one
-	// GET /static/{asset}: 37 - 8 + 1 = 30.
-	if len(routes) != 30 {
-		t.Errorf("expected 30 registered routes (37 - 8 per-file static routes + GET /static/{asset}, ADR-0028), got %d: %v", len(routes), routes)
+	// GET /static/{asset}: 37 - 8 + 1 = 30. ADR-0034 S1 (D8) then adds the two
+	// profile routes (POST /api/users/{user}/profile, POST
+	// /api/admin/users/{user}/profile-reset) and removes the participant POST
+	// /api/users/{user}/display-name (setname's collector forward): 30 + 2 - 1 = 31.
+	if len(routes) != 31 {
+		t.Errorf("expected 31 registered routes (30 + the 2 ADR-0034 profile routes - the participant display-name route), got %d: %v", len(routes), routes)
 	}
 }
 
@@ -274,8 +278,8 @@ func TestAPISpec_V3_OriginGuardParity(t *testing.T) {
 			forwarded = append(forwarded, rt.MuxPattern())
 		}
 	}
-	if len(forwarded) != 3 {
-		t.Errorf("expected 3 collector-forwarded scoreboard routes (ADR-0005 Decision 1), got %d: %v", len(forwarded), forwarded)
+	if len(forwarded) != 2 {
+		t.Errorf("expected 2 collector-forwarded scoreboard routes (submit, internal exfil — ADR-0005 Decision 1, ADR-0034 D12), got %d: %v", len(forwarded), forwarded)
 	}
 }
 
@@ -559,10 +563,11 @@ var v5Coverage = map[string]bool{
 	"POST /api/users/{user}/challenges/{cid}/steps/{idx}/check": true, // TestAPISpec_V5_StepCheckResultFieldsMatchSpec
 	"POST /api/users/{user}/challenges/{cid}/hints/{idx}":       true, // TestAPISpec_V5_OpenHintResultFieldsMatchSpec
 	"POST /api/users/{user}/challenges/{cid}/reset-dirty":       true, // TestAPISpec_V5_ResetDirtyResultFieldsMatchSpec
-	"POST /api/users/{user}/display-name":                       true, // TestAPISpec_V5_DisplayNameResultFieldsMatchSpec
 	"GET /api/state":                                            true, // TestAPISpec_V5_StateFieldsMatchSpec
 	"POST /api/admin/reset":                                     true, // TestAPISpec_V5_AdminResetResultFieldsMatchSpec
 	"POST /api/admin/users/{user}/display-name":                 true, // TestAPISpec_V5_AdminDisplayNameResultFieldsMatchSpec
+	"POST /api/users/{user}/profile":                            true, // TestAPISpec_V5_ProfileResultFieldsMatchSpec
+	"POST /api/admin/users/{user}/profile-reset":                true, // TestAPISpec_V5_AdminProfileResetResultFieldsMatchSpec
 	// app#292 Phase 2 (QA Board — supersedes P25's 7 QuestionList/
 	// QuestionThread entries above wholesale):
 	"GET /api/board/threads":                     true, // TestAPISpec_V5_BoardListFieldsMatchSpec
@@ -604,13 +609,16 @@ func TestAPISpec_VA1_ResponseObjectCoverageBidirectional(t *testing.T) {
 	// entries (internal/qa removed wholesale) +10 QA Board entries
 	// (BoardList x2, BoardThread x3, LikeResult x2, MessageStateResult x1 —
 	// see v5Coverage above) = 21 - 7 + 10 = 24, then +1 more for the
-	// post-review gap-close boardAdminGetThread (BoardThread x4 total) = 25.
+	// post-review gap-close boardAdminGetThread (BoardThread x4 total) = 25,
+	// then -1 for ADR-0034 S1 removing the participant display-name route
+	// (its DisplayNameResult entry; the admin one stays) = 24.
 	// Same PROCESS reasoning as V1's route count pin above: forces every PR
 	// that adds/removes a response-object operation to touch this line, so
 	// the count change itself gets reviewed instead of silently passing
 	// because the bidirectional diff above happened to stay empty.
-	if len(derived) != 25 {
-		t.Errorf("expected 25 response-object operations (ADR-0009 C2 + Decision A - P25-QA(7) + app#292-Board(10) + boardAdminGetThread(1)), got %d: %v", len(derived), derived)
+	// ADR-0034 S1 adds the two profile operations (ProfileResult x2) and drops the participant display-name one: 26.
+	if len(derived) != 26 {
+		t.Errorf("expected 26 response-object operations (ADR-0009 C2 + Decision A - P25-QA(7) + app#292-Board(10) + boardAdminGetThread(1) + ADR-0034 profile(2) - participant display-name(1)), got %d: %v", len(derived), derived)
 	}
 }
 
@@ -763,24 +771,41 @@ func TestAPISpec_V5_ResetDirtyResultFieldsMatchSpec(t *testing.T) {
 	}
 }
 
-func TestAPISpec_V5_DisplayNameResultFieldsMatchSpec(t *testing.T) {
+// ADR-0034 V1/V2: the two profile routes answer with ProfileResult. The
+// participant one is called as the participant themselves (the header is
+// REQUIRED — there is no header-less shape to test, unlike display-name).
+func TestAPISpec_V5_ProfileResultFieldsMatchSpec(t *testing.T) {
 	spec := loadScoreboardSpec(t)
 	f := newSpecFixture(t)
 
-	// No X-Auth-Request-Email header: this participant route's ONLY real
-	// caller is the collector's verbatim forward of a workspace curl
-	// (claimed-identity fallback — see the spec operation's own
-	// description), so this is the realistic caller shape to test.
-	w := f.do("POST", "/api/users/quinn/display-name", "", map[string]any{"name": "Quinn"})
+	w := f.do("POST", "/api/users/quinn/profile", "quinn@ctf.local", map[string]any{"display_name": "Quinn", "avatar": "bug-lime"})
 	if w.Code != http.StatusOK {
-		t.Fatalf("display-name: status=%d body=%s", w.Code, w.Body)
+		t.Fatalf("profile: status=%d body=%s", w.Code, w.Body)
 	}
 	actual := f.decodedJSON(w)
-	schema := spec.SchemaByName("DisplayNameResult")
+	schema := spec.SchemaByName("ProfileResult")
 	if schema == nil {
-		t.Fatal("spec has no components.schemas.DisplayNameResult")
+		t.Fatal("spec has no components.schemas.ProfileResult")
 	}
-	for _, m := range specparity.CompareResponse(spec, schema, actual, "DisplayNameResult") {
+	for _, m := range specparity.CompareResponse(spec, schema, actual, "ProfileResult") {
+		t.Errorf("%s: extra=%v missing=%v note=%q", m.Path, m.Extra, m.Missing, m.Note)
+	}
+}
+
+func TestAPISpec_V5_AdminProfileResetResultFieldsMatchSpec(t *testing.T) {
+	spec := loadScoreboardSpec(t)
+	f := newSpecFixture(t)
+
+	w := f.do("POST", "/api/admin/users/rick/profile-reset", specFixtureAdmin, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("admin profile-reset: status=%d body=%s", w.Code, w.Body)
+	}
+	actual := f.decodedJSON(w)
+	schema := spec.SchemaByName("ProfileResult")
+	if schema == nil {
+		t.Fatal("spec has no components.schemas.ProfileResult")
+	}
+	for _, m := range specparity.CompareResponse(spec, schema, actual, "ProfileResult") {
 		t.Errorf("%s: extra=%v missing=%v note=%q", m.Path, m.Extra, m.Missing, m.Note)
 	}
 }
@@ -1099,6 +1124,7 @@ func newDetectSpecFixture(t *testing.T, runner *fakeDetectRunner) *specFixture {
 	t.Cleanup(func() { st.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := scoreboard.NewHandler(cat, st, logger,
+		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 		scoreboard.WithAllowedOrigins([]string{specFixtureOrigin}),
 		scoreboard.WithDetect(api.DetectConfig{Runner: runner}),
 	)

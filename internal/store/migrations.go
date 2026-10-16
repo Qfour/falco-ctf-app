@@ -122,6 +122,26 @@ var migrations = []migration{
 			return err
 		},
 	},
+	{
+		// ADR-0034 D10: the participant-chosen avatar, kept in its own table so
+		// display_names is untouched. The column set is deliberately closed
+		// (V7 pins it in a test): a prepared avatar id only — no email, no real
+		// name, no image bytes ever get a column here. `avatar` is not
+		// FK-checked against the Go table (internal/scoreboard/avatar): a row
+		// naming an id a later build dropped is read as "the seat's default".
+		version: 2,
+		name:    "avatars (ADR-0034 D10)",
+		apply: func(tx *sql.Tx) error {
+			_, err := tx.Exec(`
+				CREATE TABLE IF NOT EXISTS avatars (
+				  user   TEXT PRIMARY KEY,
+				  avatar TEXT NOT NULL,
+				  set_at TEXT NOT NULL
+				);
+			`)
+			return err
+		},
+	},
 }
 
 // latestSchemaVersion is the highest version number in migrations, i.e. the

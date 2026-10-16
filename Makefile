@@ -44,7 +44,7 @@ help:
 	@echo "  gen-tutorial-fragments — regenerate Portal Tutorial tab HTML fragments (docs-site/tutorial-chapters.yaml)"
 	@echo "  gen-values      — regenerate challenge values.yaml / values-all.yaml / values-scenario-<name>.yaml from plant.sh + scenarios/"
 	@echo "  gen-attack      — regenerate ATT&CK Navigator layer + coverage table from falco-rule.yaml attack: blocks"
-	@echo "  check-flags     — fail if real flags leak into tracked files or values are stale; + deploy-user.sh --flags-file validation tests + deploy-time missions allowlist (ADR-0026 V4, 3-8) selftest"
+	@echo "  check-flags     — fail if real flags leak into tracked files or values are stale; + deploy-user.sh --flags-file validation tests + deploy-time missions allowlist (ADR-0026 V4, 3-8) selftest; + fail on any tracked email outside the reserved domains (ADR-0034 V17)"
 	@echo "  check-template-hex — fail if a raw hex color literal appears under view/templates/ (recursive: index.html + portal/*.tmpl; app#116 — single design-token source is static/tokens.css)"
 	@echo "  check-portal-render — (macOS, optional; not in CI) run the portal evade-card render functions under jsc and assert ADR-0027 D6 (no clean claim for a non-current evade; dirty always shown; escaping)"
 	@echo "  check-rules     — fail if a challenge references a non-existent Falco rule"
@@ -87,12 +87,19 @@ load-colima: build
 deploy-local: helm-dep-build
 	helm upgrade --install scoreboard charts/scoreboard -n scoreboard \
 	  --set image.tag=dev \
+	  --set env.expectedEmailDomain=ctf.local \
 	  --set persistence.storageClassName=local-path \
 	  --set ingress.host=scoreboard.192.168.64.2.nip.io --set ingress.tls=true \
 	  --set ingress.authSignin='http://auth.192.168.64.2.nip.io/oauth2/start?rd=$$scheme://$$host$$escaped_request_uri'
+	@# ADR-0034 D2: auth-policy refuses to start without a roster, so the dev
+	@# roster Secret (key roster.yaml) must exist before the pod. The dev admin
+	@# must NOT be a roster seat's canonical email (startup error), hence
+	@# admin@ctf.local and not user1@ctf.local.
+	kubectl -n auth-policy create secret generic auth-policy-roster \
+	  --from-file=roster.yaml=scripts/dev-roster.yaml --dry-run=client -o yaml | kubectl apply -f -
 	helm upgrade --install auth-policy charts/auth-policy -n auth-policy \
 	  --set image.tag=dev \
-	  --set env.expectedEmailDomain=ctf.local --set env.adminEmails=user1@ctf.local
+	  --set env.expectedEmailDomain=ctf.local --set env.adminEmails=admin@ctf.local
 
 # P21 item 5 (REFACTORING.md): charts/{scoreboard,auth-policy,collector,docs,
 # ctf-user} pull in the charts/falco-ctf-common library chart
@@ -244,6 +251,8 @@ check-flags:
 	./scripts/check-flags.sh
 	./scripts/check-flags-file-validation.sh
 	./scripts/check-missions-allowlist-assert.sh
+	./scripts/check-emails.sh
+	./scripts/check-emails-selftest.sh
 
 check-template-hex:
 	./scripts/check-template-hex.sh

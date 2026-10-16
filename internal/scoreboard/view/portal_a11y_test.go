@@ -694,7 +694,7 @@ func TestPortalCSS_A11yGateRejectsMutations(t *testing.T) {
 		{"the reduced-motion block keeps infinite iterations", portalFSEdit(a11y, replaceOnce("animation-iteration-count: 1 !important", "animation-iteration-count: infinite !important")), "lacks animation-iteration-count: 1 !important"},
 		// ---- the scan itself ----
 		{"no <style> element anywhere", func(t *testing.T, m fstest.MapFS) {
-			for _, name := range []string{"css.tmpl", a11y} {
+			for _, name := range []string{"css.tmpl", "css-avatar.tmpl", "css-profile.tmpl", a11y} {
 				portalFSReplaceRe(name, `(?i)(</?)style\b`, "${1}div")(t, m)
 			}
 		}, "the a11y CSS gate would be scanning nothing"},

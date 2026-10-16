@@ -39,7 +39,8 @@ jobs:
             Review this pull request against the repo's conventions in CLAUDE.md,
             AGENTS.md, and .claude/rules/. Focus on: the Hard Invariants
             (scoreboard replicas=1, UID 65532, image tag != latest, placeholder
-            chart defaults, auth-policy prefix-exact email match), no real flags
+            chart defaults, I8 = the identity roster + exact seat match: see the
+            I8 row of .claude/rules/falco-ctf-app-conventions.md), no real flags
             or secrets committed, and cross-repo contract drift. Post inline
             comments on issues.
           claude_args: "--max-turns 6"

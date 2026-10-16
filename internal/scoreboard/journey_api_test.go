@@ -60,6 +60,7 @@ func newJourneyFixture(t *testing.T, extra ...scoreboard.Option) *journeyFixture
 	// the origin guard's fail-closed default (see origin_guard_test.go for the
 	// guard's own dedicated coverage).
 	opts := append([]scoreboard.Option{
+		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 		scoreboard.WithJourneys(journeys),
 		scoreboard.WithOrder([]string{"01-recon", "02-evade", "03-late"}),
 		scoreboard.WithAllowedOrigins([]string{journeyFixtureOrigin}),
@@ -320,6 +321,7 @@ func TestJourney_ExfilReceivedProjection(t *testing.T) {
 	t.Cleanup(func() { st.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := scoreboard.NewHandler(cat, st, logger,
+		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 		scoreboard.WithJourneys(journeys),
 		scoreboard.WithOrder([]string{"01-boss"}),
 	)
@@ -391,6 +393,7 @@ func TestJourney_ExpectedRuleFiredProjection(t *testing.T) {
 	t.Cleanup(func() { st.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := scoreboard.NewHandler(cat, st, logger,
+		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 		scoreboard.WithJourneys(journeys),
 		scoreboard.WithOrder([]string{"01-proof"}),
 	)
@@ -1017,30 +1020,6 @@ func TestJourneyWriteGate_OpenHint_CrossUserOracleBlocked(t *testing.T) {
 	// header-less -> 403 (app#315: browser-only route, no claimed-identity path)
 	if w := f.reqAs("POST", "/api/users/alice/challenges/01-recon/hints/1", "", nil); w.Code != http.StatusForbidden {
 		t.Fatalf("header-less hint open must 403 (fail-closed, app#315), got %d body=%s", w.Code, w.Body)
-	}
-}
-
-// TestJourneyWriteGate_DisplayName proves display-name is self-or-admin gated
-// on the auth-proxied host but stays claimed-identity over the collector path.
-func TestJourneyWriteGate_DisplayName(t *testing.T) {
-	f := newJourneyFixture(t, scoreboard.WithAdminEmails([]string{"root@ctf.local"}))
-	body := map[string]any{"name": "Nickname"}
-
-	// self → allowed
-	if w := f.reqAs("POST", "/api/users/alice/display-name", "alice@ctf.local", body); w.Code != http.StatusOK {
-		t.Fatalf("self display-name must 200, got %d body=%s", w.Code, w.Body)
-	}
-	// other → 403 (cannot overwrite another player's name)
-	if w := f.reqAs("POST", "/api/users/alice/display-name", "mallory@ctf.local", body); w.Code != http.StatusForbidden {
-		t.Fatalf("cross-user display-name must 403, got %d body=%s", w.Code, w.Body)
-	}
-	// admin → allowed for any user
-	if w := f.reqAs("POST", "/api/users/alice/display-name", "root@ctf.local", body); w.Code != http.StatusOK {
-		t.Fatalf("admin display-name must 200, got %d body=%s", w.Code, w.Body)
-	}
-	// header-less (collector-fronted display-name, accepted LOW) → allowed
-	if w := f.req("POST", "/api/users/alice/display-name", body); w.Code != http.StatusOK {
-		t.Fatalf("header-less display-name must 200 (collector path), got %d body=%s", w.Code, w.Body)
 	}
 }
 

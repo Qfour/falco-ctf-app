@@ -20,6 +20,8 @@ type upstreamRecorder struct {
 	lastXFF  string   // X-Forwarded-For as seen by the upstream on the last call
 	lastReal string   // X-Real-IP as seen by the upstream on the last call
 	lastCFIP string   // CF-Connecting-IP as seen by the upstream on the last call
+	lastCT   string   // Content-Type as seen by the upstream on the last call
+	lastAuth []string // X-Auth-Request-* header names as seen by the upstream on the last call
 }
 
 func (u *upstreamRecorder) handler() http.Handler {
@@ -29,6 +31,13 @@ func (u *upstreamRecorder) handler() http.Handler {
 		u.lastXFF = r.Header.Get("X-Forwarded-For")
 		u.lastReal = r.Header.Get("X-Real-IP")
 		u.lastCFIP = r.Header.Get("CF-Connecting-IP")
+		u.lastCT = r.Header.Get("Content-Type")
+		u.lastAuth = nil
+		for k := range r.Header {
+			if strings.HasPrefix(http.CanonicalHeaderKey(k), "X-Auth-Request-") {
+				u.lastAuth = append(u.lastAuth, k)
+			}
+		}
 		u.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -105,6 +114,25 @@ func TestExfil_RewrittenToInternalSink(t *testing.T) {
 	}
 }
 
+// TestExfil_ForwardAddsNoProxyIdentity pins the collector side of the
+// scoreboard's internal-only exfil sink: the sink 403s any request carrying an
+// X-Auth-Request-* header and 415s a non-JSON body, so the collector must never
+// ADD an identity header on the rewritten forward and must pass the
+// participant curl's Content-Type through untouched.
+func TestExfil_ForwardAddsNoProxyIdentity(t *testing.T) {
+	c, up := newTestCollector(t)
+	resp := do(t, "POST", c.URL+"/api/challenges/10-final-exfil/exfil", `{"user":"alice","flag":"FALCO{x}"}`)
+	resp.Body.Close()
+	up.mu.Lock()
+	defer up.mu.Unlock()
+	if len(up.lastAuth) != 0 {
+		t.Fatalf("collector forwarded X-Auth-Request-* headers %v on a header-less exfil", up.lastAuth)
+	}
+	if up.lastCT != "application/json" {
+		t.Fatalf("upstream Content-Type = %q, want application/json passed through", up.lastCT)
+	}
+}
+
 func TestExfil_InvalidCID_Rejected(t *testing.T) {
 	c, up := newTestCollector(t)
 	// Path-traversal attempt must not reach the upstream at all.
@@ -130,12 +158,31 @@ func TestSubmit_ForwardedTransparently(t *testing.T) {
 	}
 }
 
-func TestDisplayName_ForwardedTransparently(t *testing.T) {
+// TestDisplayName_NotForwarded pins ADR-0034 D12 / S1: the participant
+// display-name write (the workspace's `setname`) is no longer fronted, so the
+// collector default-denies it — 404/405 at the mux, never reaching the
+// upstream — for every shape `setname` used (JSON body, header-less) and for a
+// forged X-Auth-Request-Email. A participant now sets display name and avatar
+// through the authenticated profile route on the portal origin.
+func TestDisplayName_NotForwarded(t *testing.T) {
 	c, up := newTestCollector(t)
-	r := do(t, "POST", c.URL+"/api/users/alice/display-name", `{"name":"Alice"}`)
-	r.Body.Close()
-	if got := up.last(); got != "POST /api/users/alice/display-name" {
-		t.Fatalf("display-name forward = %q", got)
+	for _, hdr := range []map[string]string{nil, {"X-Auth-Request-Email": "admin@ctf.local"}} {
+		req, _ := http.NewRequest("POST", c.URL+"/api/users/alice/display-name", strings.NewReader(`{"name":"Alice"}`))
+		req.Header.Set("Content-Type", "application/json")
+		for k, v := range hdr {
+			req.Header.Set(k, v)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("do: %v", err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusMethodNotAllowed {
+			t.Fatalf("POST display-name (headers %v): status = %d, want 404/405 (default-deny)", hdr, resp.StatusCode)
+		}
+	}
+	if up.last() != "" {
+		t.Fatalf("display-name must not reach upstream, got %q", up.last())
 	}
 }
 
@@ -167,7 +214,8 @@ func TestDefaultDeny_BlockedRoutes(t *testing.T) {
 		{"POST", "/api/admin/reset"},
 		{"GET", "/api/state"},
 		{"GET", "/"},
-		{"GET", "/api/users/alice/me"}, // progress read is not fronted (P18)
+		{"GET", "/api/users/alice/me"},            // progress read is not fronted (P18)
+		{"POST", "/api/users/alice/display-name"}, // setname's forward, removed in ADR-0034 S1
 	}
 	for _, b := range blocked {
 		resp := do(t, b.method, c.URL+b.path, "")
@@ -297,10 +345,10 @@ func TestForward_StripsInboundForwardingHeaders(t *testing.T) {
 // TestForward_StripsCFConnectingIP proves the ADR-0023 D1b fix: the collector
 // removes a participant-controlled CF-Connecting-IP before forwarding. Without
 // this strip, a workspace could send an arbitrary CF-Connecting-IP on every
-// request through the collector's submit/display-name forward and — since
+// request through the collector's submit/exfil forward and — since
 // ratelimit.ClientIP now trusts CF-Connecting-IP first (ADR-0023 D1) — mint a
 // fresh rate-limit key per request, bypassing the scoreboard's per-route
-// submit/display-name budgets entirely (security-engineer HIGH finding).
+// submit budget entirely (security-engineer HIGH finding).
 //
 // Mutation check (ADR-0023 V4, V8-style, reported not committed): commenting
 // out the `req.Header.Del("CF-Connecting-IP")` line in collector.go's
@@ -322,15 +370,15 @@ func TestForward_StripsCFConnectingIP(t *testing.T) {
 	}
 }
 
-// TestForward_StripsCFConnectingIP_DisplayName is the same assertion as
-// TestForward_StripsCFConnectingIP but for the other CollectorForward=true
-// route that shares ratelimit.ClientIP downstream (display-name) — ADR-0023
-// C2 identifies both submit and display-name as exposed by the D1b gap, so
-// both routes get independent coverage rather than assuming submit's
-// coverage generalizes.
-func TestForward_StripsCFConnectingIP_DisplayName(t *testing.T) {
+// TestForward_StripsCFConnectingIP_Exfil is the same assertion as
+// TestForward_StripsCFConnectingIP but for the other participant forward: the
+// exfil drop is rewritten to the scoreboard's internal sink but still goes
+// through the same proxy Director, and a forged CF-Connecting-IP there would
+// mint a rate-limit key per request just like on submit. (Before ADR-0034 S1
+// this slot covered the display-name forward, which no longer exists.)
+func TestForward_StripsCFConnectingIP_Exfil(t *testing.T) {
 	c, up := newTestCollector(t)
-	req, _ := http.NewRequest("POST", c.URL+"/api/users/alice/display-name", strings.NewReader(`{"name":"Alice"}`))
+	req, _ := http.NewRequest("POST", c.URL+"/api/challenges/10-final-exfil/exfil", strings.NewReader(`{"user":"alice","flag":"FALCO{x}"}`))
 	req.Header.Set("CF-Connecting-IP", "198.51.100.42")
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
@@ -341,6 +389,9 @@ func TestForward_StripsCFConnectingIP_DisplayName(t *testing.T) {
 
 	if got := up.lastCFConnectingIP(); got != "" {
 		t.Fatalf("spoofed CF-Connecting-IP leaked to upstream: %q", got)
+	}
+	if got, want := up.last(), "POST /internal/exfil/10-final-exfil"; got != want {
+		t.Fatalf("upstream call = %q, want %q (the strip test must actually reach the exfil rewrite)", got, want)
 	}
 }
 

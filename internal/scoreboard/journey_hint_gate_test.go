@@ -55,6 +55,7 @@ func newRealOrderFixture(t *testing.T) (*journeyFixture, []string) {
 		scoreboard.WithJourneys(journeys),
 		scoreboard.WithOrder(scored.Order),
 		scoreboard.WithAllowedOrigins([]string{journeyFixtureOrigin}),
+		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 	)
 	return &journeyFixture{t: t, srv: srv, st: st}, scored.Order
 }

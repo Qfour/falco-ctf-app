@@ -1,0 +1,39 @@
+<style nonce="{{.Nonce}}">
+  /* ===== Avatar (ADR-0034 D9, S1) =====
+     Its own partial (P28 §9: a feature's CSS does not go into css.tmpl), called
+     right after css.tmpl in portal.tmpl. A participant's picture is a plain
+     <img> of one white glyph from /static/ (static/avatars/<glyph>.svg) on a
+     round background; the COLOR is this element's background-color, taken from
+     a tokens.css variable, because custom properties do not resolve inside an
+     SVG loaded through <img>. Colors are tokens only (no hex).
+
+       <img class="avatar avatar-cyan" src="..." alt="" width="32" height="32">
+
+     One of avatar-{cyan,magenta,amber,lime,violet,slate}. alt is empty when the
+     display name sits next to the picture (the picture is decoration there);
+     put the name in alt when it stands alone. The size is --avatar-size
+     (default 2rem; set it on the element or an ancestor). A glyph that 404s
+     leaves a plain colored disc: width/height are fixed, so the layout does not
+     move. */
+  .avatar {
+    --avatar-size: 2rem;
+    display: inline-block; flex: none; vertical-align: middle;
+    box-sizing: border-box;
+    width: var(--avatar-size); height: var(--avatar-size);
+    /* Padding in the element's own units (a % would resolve against the
+       parent's width): the glyph fills 60% of the disc. */
+    padding: calc(var(--avatar-size) * 0.2);
+    border-radius: 50%;
+    object-fit: contain;
+    background-color: var(--p-surface-2);
+    /* A 1px ring so the disc still separates from --p-bg / --p-surface when
+       two colors sit side by side in the Result list. */
+    box-shadow: 0 0 0 1px var(--p-border-strong);
+  }
+  .avatar-cyan    { background-color: var(--avatar-cyan); }
+  .avatar-magenta { background-color: var(--avatar-magenta); }
+  .avatar-amber   { background-color: var(--avatar-amber); }
+  .avatar-lime    { background-color: var(--avatar-lime); }
+  .avatar-violet  { background-color: var(--avatar-violet); }
+  .avatar-slate   { background-color: var(--avatar-slate); }
+</style>
