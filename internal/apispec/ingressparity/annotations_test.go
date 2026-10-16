@@ -74,3 +74,42 @@ func TestIngresses_StampProxyIdentityHeaders(t *testing.T) {
 		})
 	}
 }
+
+// TestIngresses_AuthAnnotationsNotOverridable pins the other half of
+// TestIngresses_StampProxyIdentityHeaders: the free-form annotations
+// passthrough (ingress.annotations / ingress.journeyAnnotations) must not be
+// able to replace auth-url or auth-response-headers. The chart `fail`s at
+// render time instead of letting a values typo or a copied annotation block
+// silently drop the identity-stamping gate.
+func TestIngresses_AuthAnnotationsNotOverridable(t *testing.T) {
+	requireHelm(t)
+	root, err := repoRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct{ template, valuesKey string }{
+		{"templates/ingress.yaml", "ingress.annotations"},
+		{"templates/ingress-journey.yaml", "ingress.journeyAnnotations"},
+	}
+	for _, c := range cases {
+		for _, key := range []string{"auth-url", "auth-response-headers"} {
+			t.Run(c.template+"/"+key, func(t *testing.T) {
+				cmd := exec.Command("helm", "template", "charts/scoreboard",
+					"--show-only", c.template,
+					"--set", "ingress.enabled=true",
+					"--set", "ingress.host=app.example.invalid",
+					"--set", "ingress.journeyHost=app.example.invalid",
+					"--set-string", c.valuesKey+".nginx\\.ingress\\.kubernetes\\.io/"+key+"=x",
+				)
+				cmd.Dir = root
+				out, err := cmd.CombinedOutput()
+				if err == nil {
+					t.Fatalf("helm template succeeded with %s overriding %s; want a render-time failure. output:\n%s", c.valuesKey, key, out)
+				}
+				if !strings.Contains(string(out), "must not set nginx.ingress.kubernetes.io/"+key) {
+					t.Fatalf("helm template failed but not with the override guard (unrelated error would make this test vacuous):\n%s", out)
+				}
+			})
+		}
+	}
+}

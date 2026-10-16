@@ -31,8 +31,10 @@ info:
       x-ctf-authz             none | admin | self-or-admin |
                               self-or-admin-write | claimed-identity |
                               internal-claimed-identity (claimed identity on
-                              the cluster-internal / collector path ONLY: any
-                              X-Auth-Request-* header => 403) |
+                              the cluster-internal path ONLY — collector
+                              forwards, falcosidekick's webhook: any
+                              X-Auth-Request-* header => 403, body not
+                              application/json => 415) |
                               authenticated (app#292: any proven identity,
                               no {user}-path self-match — see QA Board
                               operations below)
@@ -392,12 +394,20 @@ paths:
       operationId: receiveFalcoEvent
       tags: [internal]
       x-ctf-audience: internal
-      x-ctf-authz: none
+      x-ctf-authz: internal-claimed-identity
       x-ctf-origin-guard: false
       x-ctf-collector-forward: false
       x-ctf-rate-limit: per-IP 100 req/s burst 200 (falcosidekick batches)
       description: |
-        Ingest endpoint. Isolation is NetworkPolicy's job (ADR-WS-0005 Layer
+        Ingest endpoint. INTERNAL-ONLY: the browser path is refused. The admin
+        ingress catch-all also routes this path, where oauth2-proxy stamps
+        `X-Auth-Request-*` on every browser request, so a request carrying ANY
+        such header is answered `403` before anything else (the shared-secret
+        check included) and nothing is recorded; falcosidekick never sets one.
+        The body must be `application/json` (`415` otherwise; falcosidekick
+        sends `application/json; charset=utf-8`).
+
+        Isolation is NetworkPolicy's job (ADR-WS-0005 Layer
         1: only falcosidekick reaches it); the handler re-checks the event
         shape and, optionally, an `X-Falco-Shared-Secret` header (ADR-WS-0006
         Layer 2 defense-in-depth, in case the NetworkPolicy layer regresses).
@@ -439,6 +449,16 @@ paths:
                   - $ref: "#/components/schemas/IngestIgnored"
         "400":
           description: malformed JSON body
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: the request carried an `X-Auth-Request-*` header (arrived via the browser / auth-proxied path, which this route does not accept)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "415":
+          description: request body is not `application/json`
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -601,7 +621,7 @@ paths:
       operationId: recordExfil
       tags: [internal]
       x-ctf-audience: internal
-      x-ctf-authz: claimed-identity
+      x-ctf-authz: internal-claimed-identity
       x-ctf-origin-guard: false
       x-ctf-collector-forward: true
       x-ctf-rate-limit: none (the limit lives on the collector front)
@@ -611,7 +631,11 @@ paths:
         (docs/openapi-collector.yaml), which rewrites the path to this sink and
         forwards the body unchanged. Isolation is NetworkPolicy (scoreboard
         ingress admits the collector, not ctf-user); this handler adds no auth
-        of its own and identity is claimed.
+        of its own and identity is claimed. The browser path is refused: the
+        admin ingress catch-all also routes this path, where oauth2-proxy stamps
+        `X-Auth-Request-*`, so a request carrying ANY such header is `403`
+        before anything else is evaluated (the collector adds none), and a body
+        that is not `application/json` is `415`.
 
         Documented here — rather than omitted to avoid being mistaken for a
         participant entry point — because it is a two-service contract, and
@@ -641,8 +665,18 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: the request carried an `X-Auth-Request-*` header (arrived via the browser / auth-proxied path, which this route does not accept)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "404":
           description: unknown challenge id
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "415":
+          description: request body is not `application/json`
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

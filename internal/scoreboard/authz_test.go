@@ -299,7 +299,10 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 	// 15 none/claimed-identity + 6 authenticated = 37; ADR-0028 then folded the
 	// 8 static-asset routes into one (none): 9 + 7 + 8 + 6 = 30; ADR-0034 D12 S1
 	// then moved display-name out of self(-write) into its own
-	// internal-claimed-identity class: 9 + 6 + 1 + 8 + 6 = 30, matching
+	// internal-claimed-identity class: 9 + 6 + 1 + 8 + 6 = 30; closing the
+	// browser path of POST /falco/events and POST /internal/exfil/{cid} moves
+	// both from none into internal-claimed-identity: 9 + 6 + 3 + 6 + 6 = 30,
+	// matching
 	// apispec_parity_test.go's TestAPISpec_V1_RouteSetMatchesSpec.
 	if adminGated != 9 {
 		t.Fatalf("expected exactly 9 Authz: admin routes (ADR-0005 canon: GET /, GET /api/state, POST /api/admin/reset, POST /api/admin/users/{user}/display-name; app#292 QA Board: GET /api/admin/board/threads, GET /api/admin/board/threads/{tid}, POST /api/admin/board/threads/{tid}/reply, POST /api/admin/board/threads/{tid}/state, POST /api/admin/board/messages/{mid}/state), got %d", adminGated)
@@ -307,11 +310,11 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 	if selfGated != 6 {
 		t.Fatalf("expected exactly 6 Authz: self-or-admin(-write) routes (GET /api/users/{user}/me, GET /api/users/{user}/journey, POST /api/challenges/{cid}/submit-detect, POST /api/users/{user}/challenges/{cid}/steps/{idx}/check, POST /api/users/{user}/challenges/{cid}/hints/{idx}, POST /api/users/{user}/challenges/{cid}/reset-dirty — P25's 4 QA self-or-admin(-write) routes are gone, cutover), got %d", selfGated)
 	}
-	if openGated != 8 {
-		t.Fatalf("expected exactly 8 Authz: none/claimed-identity routes (GET /portal, GET /static/{asset} (ADR-0028), POST /falco/events, GET /healthz, GET /metrics, POST /api/challenges/{cid}/submit, POST /internal/exfil/{cid}; Issue #95: POST /csp-report), got %d", openGated)
+	if openGated != 6 {
+		t.Fatalf("expected exactly 6 Authz: none/claimed-identity routes (GET /portal, GET /static/{asset} (ADR-0028), GET /healthz, GET /metrics, POST /api/challenges/{cid}/submit; Issue #95: POST /csp-report), got %d", openGated)
 	}
-	if internalGated != 1 {
-		t.Fatalf("expected exactly 1 Authz: internal-claimed-identity route (POST /api/users/{user}/display-name, collector-only — ADR-0034 D12 S1), got %d", internalGated)
+	if internalGated != 3 {
+		t.Fatalf("expected exactly 3 Authz: internal-claimed-identity routes (POST /api/users/{user}/display-name, collector-only — ADR-0034 D12 S1; POST /falco/events and POST /internal/exfil/{cid}, internal-only — browser path closed), got %d", internalGated)
 	}
 	if authenticatedGated != 6 {
 		t.Fatalf("expected exactly 6 Authz: authenticated routes (app#292 QA Board participant routes: GET /api/board/threads, GET /api/board/threads/{tid}, POST /api/board/threads, POST /api/board/threads/{tid}/messages, POST /api/board/threads/{tid}/like, POST /api/board/threads/{tid}/unlike), got %d", authenticatedGated)
@@ -433,4 +436,52 @@ func TestAuthz_CatchesUnenforcedGate(t *testing.T) {
 			t.Fatal("expected authzCheck to flag a declared-open route whose handler over-gates, got no violation — the negative branch would be a permanent no-op")
 		}
 	})
+}
+
+// internalAudienceViolations returns every route that is declared
+// Audience: internal yet not Authz: internal-claimed-identity. An "internal"
+// route is one only the cluster-internal callers (collector, falcosidekick)
+// may reach; any other Authz class (none, claimed-identity, ...) lets a
+// browser-path request through, which is how POST /falco/events and
+// POST /internal/exfil/{cid} stayed reachable from a participant's browser.
+// If a future internal-only class is added, extend the allowed set HERE.
+func internalAudienceViolations(routes []apispec.Route) (violations []string, internalCount int) {
+	for _, rt := range routes {
+		if rt.Audience != apispec.AudienceInternal {
+			continue
+		}
+		internalCount++
+		if rt.Authz != apispec.AuthzInternalClaimedIdentity {
+			violations = append(violations, fmt.Sprintf("%s: Audience internal but Authz %q (want %q)", rt.MuxPattern(), rt.Authz, apispec.AuthzInternalClaimedIdentity))
+		}
+	}
+	return violations, internalCount
+}
+
+// TestAuthz_InternalAudienceRoutesAreInternalClaimedIdentity pins the
+// invariant "every scoreboard route with x-ctf-audience: internal is gated
+// internal-claimed-identity". authzCheck only enforces what a route
+// DECLARES, so an internal route declared Authz: none would pass every other
+// check here while being reachable from the browser path.
+func TestAuthz_InternalAudienceRoutesAreInternalClaimedIdentity(t *testing.T) {
+	violations, internalCount := internalAudienceViolations(newAuthzFixture(t).Routes())
+	if internalCount == 0 {
+		t.Fatal("found zero Audience: internal routes — the derivation is broken (or every internal route lost its audience label), not \"nothing to check\"")
+	}
+	for _, v := range violations {
+		t.Error(v)
+	}
+}
+
+// TestAuthz_InternalAudienceInvariantCatchesOpenRoute proves the detector is
+// not vacuous: an Audience: internal route declared Authz: none is flagged.
+func TestAuthz_InternalAudienceInvariantCatchesOpenRoute(t *testing.T) {
+	routes := []apispec.Route{
+		{Method: "POST", Pattern: "/internal/ok", Audience: apispec.AudienceInternal, Authz: apispec.AuthzInternalClaimedIdentity},
+		{Method: "POST", Pattern: "/internal/leaky", Audience: apispec.AudienceInternal, Authz: apispec.AuthzNone},
+	}
+	violations, internalCount := internalAudienceViolations(routes)
+	if internalCount != 2 || len(violations) != 1 || !strings.Contains(violations[0], "/internal/leaky") {
+		t.Fatalf("want exactly the open internal route flagged, got count=%d violations=%v", internalCount, violations)
+	}
 }

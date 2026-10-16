@@ -114,6 +114,25 @@ func TestExfil_RewrittenToInternalSink(t *testing.T) {
 	}
 }
 
+// TestExfil_ForwardAddsNoProxyIdentity pins the collector side of the
+// scoreboard's internal-only exfil sink: the sink 403s any request carrying an
+// X-Auth-Request-* header and 415s a non-JSON body, so the collector must never
+// ADD an identity header on the rewritten forward and must pass the
+// participant curl's Content-Type through untouched.
+func TestExfil_ForwardAddsNoProxyIdentity(t *testing.T) {
+	c, up := newTestCollector(t)
+	resp := do(t, "POST", c.URL+"/api/challenges/10-final-exfil/exfil", `{"user":"alice","flag":"FALCO{x}"}`)
+	resp.Body.Close()
+	up.mu.Lock()
+	defer up.mu.Unlock()
+	if len(up.lastAuth) != 0 {
+		t.Fatalf("collector forwarded X-Auth-Request-* headers %v on a header-less exfil", up.lastAuth)
+	}
+	if up.lastCT != "application/json" {
+		t.Fatalf("upstream Content-Type = %q, want application/json passed through", up.lastCT)
+	}
+}
+
 func TestExfil_InvalidCID_Rejected(t *testing.T) {
 	c, up := newTestCollector(t)
 	// Path-traversal attempt must not reach the upstream at all.

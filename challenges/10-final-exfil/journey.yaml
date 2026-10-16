@@ -26,7 +26,8 @@ steps:
     detail: |
       reverse shell (C2) や自前バイナリの drop+実行は禁止ルールに触れる。
       箱に元からある道具だけで collector (HTTP 受信のみ) へ静かに送る方法を考えよう。
-      送信先は POST /api/challenges/10-final-exfil/exfil、payload は {"user","flag"}。
+      送信先は POST /api/challenges/10-final-exfil/exfil、payload は {"user","flag"} の JSON
+      (API の契約として -H 'Content-Type: application/json' が必須)。
   - label: 自動判定を待つ
     detail: |
       提出操作は不要。禁止ルールを 1 つも発火させていない状態で、proof ルールの発火と

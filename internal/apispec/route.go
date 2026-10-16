@@ -80,8 +80,9 @@ const (
 	AuthzSelfOrAdmin      Authz = "self-or-admin"
 	AuthzSelfOrAdminWrite Authz = "self-or-admin-write"
 	AuthzClaimedIdentity  Authz = "claimed-identity"
-	// AuthzInternalClaimedIdentity: claimed identity on the cluster-internal
-	// (collector-forwarded) path ONLY. Any request carrying an
+	// AuthzInternalClaimedIdentity: claimed identity (taken from the path, the
+	// body or the event payload, never proven) on the cluster-internal path
+	// ONLY — the collector's forwards and falcosidekick's webhook. Any request carrying an
 	// X-Auth-Request-* header — i.e. anything that arrived through the
 	// browser/oauth2-proxy path — is refused 403, so no proven identity is
 	// ever accepted and the status cannot reveal who the header claims to be.
