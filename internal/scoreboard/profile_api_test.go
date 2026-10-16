@@ -73,6 +73,7 @@ func (f *profileFixture) open(extra ...scoreboard.Option) {
 	opts := append([]scoreboard.Option{
 		scoreboard.WithAdminEmails([]string{profileAdmin, profileAdmin2}),
 		scoreboard.WithAllowedOrigins([]string{profileOrigin}),
+		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 		scoreboard.WithBoard(bs),
 		scoreboard.WithOrder([]string{"01-recon", "02-evade"}),
 	}, extra...)
@@ -246,7 +247,10 @@ func TestProfile_V1_OtherParticipantIs403AndWritesNothing(t *testing.T) {
 		{"a different seat", "user4@ctf.local"},
 		{"prefix-longer seat (user30@ is not user3@)", "user30@ctf.local"},
 		{"suffix of the seat", "xuser3@ctf.local"},
-		{"outside domain, same local part is still prefix-exact (I8 mirror): other seat", "user5@evil.example"},
+		{"outside domain, other seat", "user5@evil.example"},
+		// ADR-0034 D5: self is EXACT equality with <user>@<EXPECTED_EMAIL_DOMAIN>,
+		// so the same local part on another domain is not user3 either.
+		{"same seat, foreign domain (I8: exact, not prefix)", "user3@evil.example"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := f.setProfile("user3", tc.email, map[string]any{"display_name": "Hijack", "avatar": "flame-slate"})

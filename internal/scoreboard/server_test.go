@@ -442,6 +442,7 @@ func newCapstone10Fixture(t *testing.T, now func() time.Time) (*fixture, catalog
 	t.Cleanup(func() { st.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := scoreboard.NewHandler(cat, st, logger, scoreboard.WithNow(now),
+		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 		scoreboard.WithAdminEmails([]string{fixtureAdminEmail}),
 		scoreboard.WithAllowedOrigins([]string{fixtureOrigin}))
 	return &fixture{t: t, cat: cat, st: st, srv: srv}, ch
