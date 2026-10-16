@@ -51,7 +51,7 @@
   // globals (derived from X-Auth-Request-Email, api.NewUsernameDeriver), not a
   // ?user= query param — the portal is one page per session, not one page
   // per URL. This is a UI convenience only; every read/write below is
-  // independently re-checked server-side (selfOrAdmin / selfOrAdminWrite).
+  // independently re-checked server-side (selfOrAdmin / isAdmin).
   const user = window.__PORTAL_USER__ || '';
 
   // Track prior solved set so we can detect a fresh CLEARED transition.
