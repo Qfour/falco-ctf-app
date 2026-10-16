@@ -958,11 +958,11 @@ func TestJourney_DocsURL_AbsoluteWhenSet(t *testing.T) {
 
 // --- P18 5x: /api/users/{user}/* write gate ---------------------------------
 //
-// The write gate (selfOrAdminWrite) is conditional on the presence of the
-// X-Auth-Request-Email header. Over an auth-proxied host (journey/admin) the
-// header is set, so writes are self-or-admin gated. Over the cluster-internal
-// Service (collector / workspace) no header is set, so the legacy
-// claimed-identity model is preserved (collector display-name path unchanged).
+// The write gate is selfOrAdmin: the X-Auth-Request-Email header is REQUIRED.
+// Over an auth-proxied host (journey/admin) the header is set, so writes are
+// self-or-admin gated. Over the cluster-internal Service (collector /
+// workspace) no header is set and the write is 403 (the former header-less
+// claimed-identity gate, selfOrAdminWrite, was removed in app#346).
 
 // TestJourneyWriteGate_StepCheck_HeaderPresent proves the journey-host case:
 // self may tick, a third party is 403, and admin may tick anyone.
@@ -992,8 +992,8 @@ func TestJourneyWriteGate_StepCheck_HeaderPresent(t *testing.T) {
 // TestJourneyWriteGate_StepCheck_NoHeader proves app#315's fail-closed rule:
 // steps/check is browser-only (not in the collector's forward allowlist), so a
 // request with NO proven identity is 403'd by the identity-keyed action
-// limiter — it no longer falls through to selfOrAdminWrite's claimed-identity
-// branch (which only exists for the collector-forwarded submit/display-name).
+// limiter — it no longer falls through to a claimed-identity branch (the
+// removed selfOrAdminWrite gate, app#346).
 func TestJourneyWriteGate_StepCheck_NoHeader(t *testing.T) {
 	f := newJourneyFixture(t)
 	// reqAs with a blank email sends no X-Auth-Request-Email.
