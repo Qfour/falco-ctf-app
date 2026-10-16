@@ -35,6 +35,14 @@
 // as its string form.
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
+// nameHTML(s) is how a PARTICIPANT-CHOSEN name (display_name / authorDisplay)
+// is put into markup: esc() inside a <bdi>. <bdi> isolates the name's text
+// direction (unicode-bidi: isolate), so a right-to-left character in a name
+// cannot reorder the text around it (the rank, the "—" before an author, the
+// identity suffix; app#343). Declared AFTER esc (TDZ note above). A name is
+// never passed to esc() bare: portal_bidi_test.go scans every partial for that.
+const nameHTML = (s) => '<bdi>' + esc(s) + '</bdi>';
+
 // ---- Accessibility helpers (P28-0a (4)). Declared AFTER esc on purpose (see the
 // TDZ note above). textContent only, no markup.
 // (A delegated keydown that turns Enter/Space on role=button / checkbox into a

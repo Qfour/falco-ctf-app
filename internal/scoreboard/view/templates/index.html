@@ -277,6 +277,9 @@
            p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
   }
   function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  // A participant-chosen name goes into markup as esc() inside a <bdi>, so a right-to-left
+  // character in it cannot reorder the text around it (app#343).
+  const nameHTML = (s) => '<bdi>' + esc(s) + '</bdi>';
   // Progress as one segment per mission; `done` of `total` lit.
   function segs(done, total) {
     let h = '';
@@ -331,7 +334,7 @@
         const score = (p.score ?? 0);
         return `<tr>
           <td><span class="rank ${rankCls}">${ranked ? '#' + p.rank : '-'}</span></td>
-          <td><span class="user-cell"><bdi>${esc(p.display_name || p.user)}</bdi><button class="name-edit" data-user="${esc(p.user)}" title="Rename on scoreboard (admin)">✎</button></span></td>
+          <td><span class="user-cell">${nameHTML(p.display_name || p.user)}<button class="name-edit" data-user="${esc(p.user)}" title="Rename on scoreboard (admin)">✎</button></span></td>
           <td style="text-align:right"><span class="score-cell"><b>${score}</b></span></td>
           <td><span class="score-cell">${p.solved}<span class="total">/${totalChal}</span></span></td>
           <td><div class="progress">${segs(p.solved, totalChal)}</div></td>
@@ -383,7 +386,7 @@
         seen.add(key);
         return `<div class="activity-item${fresh ? ' fresh' : ''}">
           <div style="min-width:0">
-            <span class="who"><bdi>${esc(s.display_name || s.user)}</bdi></span>
+            <span class="who">${nameHTML(s.display_name || s.user)}</span>
             <span class="verb">cleared</span>
             <span class="what">${esc(s.challenge)}</span>
           </div>
@@ -436,7 +439,7 @@
         const medal = p.rank === 1 ? '① CHAMPION' : (p.rank === 2 ? '② 2nd' : '③ 3rd');
         return `<div class="pod pod-${p.rank}"><div class="crown"></div>
           <div class="medal display">${medal}</div>
-          <div class="pod-name"><bdi>${esc(p.display_name || p.user)}</bdi></div>
+          <div class="pod-name">${nameHTML(p.display_name || p.user)}</div>
           <div class="pod-score"><b>${p.score ?? 0}</b> pts · ${p.solved} / ${totalChal} missions</div>
         </div>`;
       }).join('');
@@ -450,7 +453,7 @@
           const rankCls = ranked && p.rank <= 3 ? 'rank-' + p.rank : '';
           return `<tr>
             <td><span class="rank ${rankCls}">${ranked ? '#' + p.rank : '-'}</span></td>
-            <td><span class="user-cell"><bdi>${esc(p.display_name || p.user)}</bdi></span></td>
+            <td><span class="user-cell">${nameHTML(p.display_name || p.user)}</span></td>
             <td style="text-align:right"><span class="score-cell"><b>${p.score ?? 0}</b></span></td>
             <td><span class="score-cell">${p.solved}<span class="total">/${totalChal}</span></span></td>
             <td><div class="progress">${segs(p.solved, totalChal)}</div></td>
@@ -478,7 +481,7 @@
       const delta = rank === 1 ? '🏆 first' : '+' + fmtDelta(new Date(s.at).getTime() - firstAt);
       return `<tr>
         <td><span class="rank ${rankCls}">#${rank}</span></td>
-        <td><span class="user-cell"><bdi>${esc(s.display_name || s.user)}</bdi></span></td>
+        <td><span class="user-cell">${nameHTML(s.display_name || s.user)}</span></td>
         <td><span class="when" title="${esc(s.at)}">${fmtTime(s.at)}</span></td>
         <td style="text-align:right" class="mono">${delta}</td>
       </tr>`;
