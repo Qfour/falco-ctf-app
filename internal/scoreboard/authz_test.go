@@ -45,7 +45,7 @@ import (
 )
 
 // authzSelfUser is the "self" identity embedded in every request this file
-// issues — as the {user} path segment for every AuthzSelfOrAdmin(Write)
+// issues — as the {user} path segment for every AuthzSelfOrAdmin
 // route that carries one, and (for the one route that doesn't — see
 // authzGenericBody's doc) as the JSON body's "user" field instead.
 const authzSelfUser = "alice"
@@ -76,7 +76,7 @@ const authzAdminEmail = "admin@ctf.local"
 // POST /api/challenges/{cid}/submit-detect is the only Authz-gated route
 // whose caller identity comes from the REQUEST BODY rather than a {user}
 // path segment (api.go's submitDetect reads `user := req.User`, never
-// r.PathValue) — every other AuthzSelfOrAdmin(Write) route gets its "self"
+// r.PathValue) — every other AuthzSelfOrAdmin route gets its "self"
 // value from authzConcretePath substituting {user} in the URL instead. Using
 // the SAME authzSelfUser value in both places keeps "the self identity under
 // test" consistent across the whole derived table, whichever way a given
@@ -86,7 +86,7 @@ const authzGenericBody = `{"user":"alice","name":"alice","checked":true,"conditi
 // authzCID picks the {cid} path substitution for rt. Every Authz-gated route
 // except submit-detect runs its authz gate BEFORE ever looking at the
 // challenge catalog (see each handler's own doc in api.go: isAdmin/
-// selfOrAdmin/selfOrAdminWrite are all checked first), so "02-evade" — a
+// selfOrAdmin are all checked first), so "02-evade" — a
 // plain evade challenge — is a safe universal default for them. submit-
 // detect is the ONE exception: api.go's submitDetect checks
 // `h.detectRunner != nil` and `ch.Type != "detect"` BEFORE it ever reaches
@@ -127,9 +127,11 @@ func authzConcretePath(rt apispec.Route) string {
 // stdlib types) purely so POST /api/challenges/{cid}/submit-detect's
 // pre-authz guard (`h.detectRunner != nil`) passes. Grade's return value
 // never matters here: api.go's submitDetect reads the body and checks
-// selfOrAdminWrite BEFORE it ever calls h.grader.SubmitDetect (which is the
+// selfOrAdmin BEFORE it ever calls h.grader.SubmitDetect (which is the
 // only caller of the runner) — the authz gate under test in this file always
-// resolves (pass or 403) before Grade would run.
+// resolves (pass or 403) before Grade would run. One exception:
+// submit_detect_authz_test.go's 200 rows DO run Grade and depend on this
+// (0, 0, false) "missed" verdict being a 200 response.
 type noopDetectRunner struct{}
 
 func (noopDetectRunner) Grade(_ context.Context, _, _ string) (int, int, bool, error) {
@@ -204,7 +206,7 @@ func authzCheck(t *testing.T, srv http.Handler, rt apispec.Route) string {
 	w := authzDo(srv, rt, authzMismatchedEmail, true)
 
 	switch rt.Authz {
-	case apispec.AuthzAdmin, apispec.AuthzSelfOrAdmin, apispec.AuthzSelfOrAdminWrite:
+	case apispec.AuthzAdmin, apispec.AuthzSelfOrAdmin:
 		if w.Code != http.StatusForbidden {
 			return fmt.Sprintf("%s: status=%d body=%s, want 403 (Authz: %s — %s does not satisfy it)",
 				rt.MuxPattern(), w.Code, w.Body, rt.Authz, authzMismatchedEmail)
@@ -213,9 +215,9 @@ func authzCheck(t *testing.T, srv http.Handler, rt apispec.Route) string {
 		// Collector-only (ADR-0034 D12 S1): ANY X-Auth-Request-* header is
 		// refused, whoever it claims to be, and a header-less request is NOT
 		// refused. The mismatched-identity 403 above alone cannot tell this
-		// class from self-or-admin(-write) (both 403 a stranger), so the two
+		// class from self-or-admin (both 403 a stranger), so the two
 		// extra probes below are what pin the distinction: an ADMIN header (or
-		// the {user} owner's) still 403s here, which self-or-admin(-write)
+		// the {user} owner's) still 403s here, which self-or-admin
 		// would let through; and no header at all passes, which self-or-admin
 		// (read) would 403.
 		if w.Code != http.StatusForbidden {
@@ -238,7 +240,7 @@ func authzCheck(t *testing.T, srv http.Handler, rt apispec.Route) string {
 				rt.MuxPattern(), w.Code, w.Body, rt.Authz)
 		}
 	case apispec.AuthzAuthenticated:
-		// app#292 Phase 2 (QA Board): unlike self-or-admin(-write), this
+		// app#292 Phase 2 (QA Board): unlike self-or-admin, this
 		// gate performs NO username match against a {user} path segment —
 		// any proven identity, related or not, may proceed. A mismatched
 		// (but valid) identity like authzMismatchedEmail must NEVER be
@@ -269,7 +271,7 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 		switch rt.Authz {
 		case apispec.AuthzAdmin:
 			adminGated++
-		case apispec.AuthzSelfOrAdmin, apispec.AuthzSelfOrAdminWrite:
+		case apispec.AuthzSelfOrAdmin:
 			selfGated++
 		case apispec.AuthzNone, apispec.AuthzClaimedIdentity:
 			openGated++
@@ -291,7 +293,7 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 	// hide, e.g., every AuthzAdmin route losing its classification to
 	// AuthzNone by mistake behind AuthzNone's count silently absorbing the
 	// difference. app#292 Phase 2: P25's 7 QA routes (3 admin, 4
-	// self-or-admin(-write)) are gone (internal/qa removed wholesale);
+	// self-or-admin) are gone (internal/qa removed wholesale);
 	// the QA Board's 11 routes replace them under a FOURTH bucket for the
 	// 6 participant ones (authz=authenticated has no {user}-path
 	// self-match, so it is not "self-or-admin" — see authzCheck's own
@@ -311,11 +313,14 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 	// apispec_parity_test.go's TestAPISpec_V1_RouteSetMatchesSpec.
 	// ADR-0034 S1 (D8): +1 admin (POST /api/admin/users/{user}/profile-reset) and
 	// +1 self-or-admin (POST /api/users/{user}/profile).
+	// app#346: the self-or-admin-write class (submit-detect, its only user)
+	// is gone — submit-detect is plain self-or-admin, so the combined self
+	// count stays 7 (6 + 1) but the vocabulary has no "write" member.
 	if adminGated != 10 {
 		t.Fatalf("expected exactly 10 Authz: admin routes (ADR-0005 canon: GET /, GET /api/state, POST /api/admin/reset, POST /api/admin/users/{user}/display-name; app#292 QA Board: GET /api/admin/board/threads, GET /api/admin/board/threads/{tid}, POST /api/admin/board/threads/{tid}/reply, POST /api/admin/board/threads/{tid}/state, POST /api/admin/board/messages/{mid}/state; ADR-0034: POST /api/admin/users/{user}/profile-reset), got %d", adminGated)
 	}
 	if selfGated != 7 {
-		t.Fatalf("expected exactly 7 Authz: self-or-admin(-write) routes (GET /api/users/{user}/me, GET /api/users/{user}/journey, POST /api/challenges/{cid}/submit-detect, POST /api/users/{user}/challenges/{cid}/steps/{idx}/check, POST /api/users/{user}/challenges/{cid}/hints/{idx}, POST /api/users/{user}/challenges/{cid}/reset-dirty, ADR-0034: POST /api/users/{user}/profile — P25's 4 QA self-or-admin(-write) routes are gone, cutover), got %d", selfGated)
+		t.Fatalf("expected exactly 7 Authz: self-or-admin routes (GET /api/users/{user}/me, GET /api/users/{user}/journey, POST /api/challenges/{cid}/submit-detect, POST /api/users/{user}/challenges/{cid}/steps/{idx}/check, POST /api/users/{user}/challenges/{cid}/hints/{idx}, POST /api/users/{user}/challenges/{cid}/reset-dirty, ADR-0034: POST /api/users/{user}/profile — P25's 4 QA self-or-admin(-write) routes are gone, cutover), got %d", selfGated)
 	}
 	if openGated != 6 {
 		t.Fatalf("expected exactly 6 Authz: none/claimed-identity routes (GET /portal, GET /static/{asset} (ADR-0028), GET /healthz, GET /metrics, POST /api/challenges/{cid}/submit; Issue #95: POST /csp-report), got %d", openGated)
@@ -395,9 +400,10 @@ func TestAuthz_CatchesUnenforcedGate(t *testing.T) {
 		}
 	})
 
-	t.Run("declared_internal_claimed_identity_but_self_or_admin_write_shaped", func(t *testing.T) {
-		// The shape display-name had before the collector-only fix:
-		// selfOrAdminWrite — a stranger's header is 403, but an admin's (or the
+	t.Run("declared_internal_claimed_identity_but_dual_path_gate_shaped", func(t *testing.T) {
+		// The shape display-name had before the collector-only fix, and the
+		// one the removed self-or-admin-write class implemented (app#346) — a
+		// stranger's header is 403, but an admin's (or the
 		// owner's) passes and a header-less request passes. authzCheck must
 		// flag it for a route declaring internal-claimed-identity, which a
 		// "mismatched email gets 403" probe alone cannot (the same 403).
@@ -416,7 +422,7 @@ func TestAuthz_CatchesUnenforcedGate(t *testing.T) {
 		}
 		mux, _ := apispec.NewMux([]apispec.Route{rt})
 		if violation := authzCheck(t, mux, rt); violation == "" {
-			t.Fatal("expected authzCheck to flag an internal-claimed-identity route that is really self-or-admin-write shaped, got no violation — the class would be indistinguishable from self-or-admin-write")
+			t.Fatal("expected authzCheck to flag an internal-claimed-identity route that is really dual-path-gate shaped (header-less passes, admin/owner pass), got no violation — the class would be indistinguishable from self-or-admin")
 		}
 	})
 

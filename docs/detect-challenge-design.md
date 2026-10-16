@@ -112,9 +112,11 @@ Key design points:
   The Grader interprets the counts into a `DetectStatus` and, on `DetectSolved`, calls
   the *existing* `g.store.MarkSolved` — so a detect solve is authentically identical to
   every other solve (same table, same idempotency, same `/api/state`).
-- **Self-scope / authenticity unchanged:** the `/api/challenges/{cid}/submit-detect`
-  handler reuses the exact `/submit` trust model (claimed user, rate-limited on the same
-  bucket, audit-logged). No new auth surface.
+- **Self-scope:** the `/api/challenges/{cid}/submit-detect` handler is gated by
+  `selfOrAdmin` (the `X-Auth-Request-Email` header is REQUIRED, the body `user` must equal the
+  canonical `<seat>@<EXPECTED_EMAIL_DOMAIN>` exactly, admin is the one exception; no header is 403,
+  app#346), behind the origin guard. The per-IP bucket is shared with `/submit` (identity-keying it
+  is app#328), plus the global in-flight cap, and it is audit-logged. No claimed-user path.
 - **No attacker-supplied time**, no forbidden-window — detect grading is purely a
   function of the (static capture, submitted condition) pair, so it is deterministic and
   replay-stable across scoreboard restarts (I1).
@@ -253,8 +255,8 @@ version bumps (capture format & field semantics can change).
   (`falco-ctf-detect-grader`). This is a convention change to the I5 image set and the
   Dockerfile/UID tables → must be ratified (CEO/VP) and reflected in
   `.claude/rules/falco-ctf-app-conventions.md`.
-- **I8 (identity roster + exact seat match):** untouched — no auth-policy change; submit reuses the
-  existing claimed-identity model.
+- **I8 (identity roster + exact seat match):** untouched — no auth-policy change; submit-detect uses
+  `selfOrAdmin` (identity header required, exact match), not the claimed-identity model.
 - **I10 (no secrets in image/yaml):** captures must be verified secret/flag-free before
   commit (§5).
 - **Cross-repo:** platform must supply grader-namespace RBAC (create/get Jobs) +
@@ -331,7 +333,7 @@ feasibility risk.
 |---|---|---|---|
 | catalog `type: detect` + validation + tests | schema, path-safety validation | app-lead | S |
 | Grader `SubmitDetect` + `DetectRunner` port + tests | single judgment point, fake runner in tests | app-lead | M |
-| `/submit-detect` handler + oapi type + rate limit | thin adapter, reuse `/submit` trust model | app-lead | S |
+| `/submit-detect` handler + oapi type + rate limit | thin adapter; `selfOrAdmin` gate + origin guard, per-IP bucket shared with `/submit` | app-lead | S |
 | `falco-ctf-detect-grader` image + entrypoint | falco + skeleton + `-V` gate + 2-pass replay + JSON out | app-lead | M |
 | K8s-Job DetectRunner (client-go) | create/watch/read Job, deadline, concurrency cap | app-lead | M–L |
 | grader RBAC (Role/RoleBinding) + deny-all NetworkPolicy + image pin | namespace, least-priv Job perms | platform-lead | M |

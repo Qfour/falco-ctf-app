@@ -266,7 +266,7 @@ func concretePath(pattern string) string {
 //     would silently break scoring the same way P23-2's original bug did).
 //
 // Every request carries X-Auth-Request-Email: admin@ctf.local (the fixture's
-// admin) so a 403 from isAdmin/selfOrAdmin/selfOrAdminWrite — a DIFFERENT
+// admin) so a 403 from isAdmin/selfOrAdmin — a DIFFERENT
 // mechanism that also returns 403, unrelated to the origin guard — can never
 // masquerade as "the guard worked": admin bypasses all three of those checks
 // regardless of the substituted {user} value, isolating the origin guard as

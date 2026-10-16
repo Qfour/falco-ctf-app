@@ -100,9 +100,7 @@ func parseProfileBody(body io.Reader) (displayName, avatarID *string, err error)
 // setProfile is POST /api/users/{user}/profile.
 //
 // Authorization is selfOrAdmin (the identity header is REQUIRED; a header-less
-// caller is 403), deliberately NOT selfOrAdminWrite, whose header-less branch
-// is a claimed-identity allow that only exists for the collector-forwarded
-// routes. The route is origin-guarded and rate-limited on the identity bucket
+// caller is 403; there is no claimed-identity fallback). The route is origin-guarded and rate-limited on the identity bucket
 // (actionMW) in Routes(); both run before this handler.
 //
 // Order is: validate EVERYTHING, then write once. A good display_name next to a

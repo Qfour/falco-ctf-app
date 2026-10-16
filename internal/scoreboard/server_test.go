@@ -854,7 +854,7 @@ func TestResetDirty_ClearsTaint_ThenCleanSubmitSolves(t *testing.T) {
 }
 
 // TestResetDirty_SelfScope proves the reset endpoint is gated exactly like the
-// other /api/users/{user}/* writes (selfOrAdminWrite, I8): a third party
+// other /api/users/{user}/* writes (selfOrAdmin, I8): a third party
 // cannot clear another participant's taint, and admin may reset anyone's.
 func TestResetDirty_SelfScope(t *testing.T) {
 	f := newFixture(t, nil)

@@ -25,7 +25,7 @@ type portalData struct {
 	// Journey/Me panes' identity so a participant does not have to type
 	// their own username — but every API call those panes make
 	// independently re-derives + re-checks the SAME X-Auth-Request-Email
-	// header server-side (selfOrAdmin / selfOrAdminWrite), so this value
+	// header server-side (selfOrAdmin), so this value
 	// cannot be used to widen access even if tampered with client-side.
 	UserJSON template.JS
 	// AvatarURLsJSON (ADR-0034 S1) is the served URL of each avatar glyph's
@@ -150,7 +150,7 @@ func ttydURLFor(user, suffix string) string {
 // text; summarised here for anyone editing this function):
 //
 //  1. Authorization stays entirely server-side, in the API layer
-//     (internal/scoreboard/api: isAdmin / selfOrAdmin / selfOrAdminWrite).
+//     (internal/scoreboard/api: isAdmin / selfOrAdmin).
 //     This function decides NOTHING about who may read/write what — it only
 //     decides what a handful of harmless display hints (role label,
 //     username pre-fill, own-ttyd URL) get embedded in HTML the browser

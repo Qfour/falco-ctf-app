@@ -428,7 +428,7 @@ func UsernameFromEmail(email, domain string) string {
 //
 // It is a UI convenience and a board author key, never an authorization
 // decision: every read/write the Journey/Me panes make is independently
-// re-checked by selfOrAdmin / selfOrAdminWrite against the SAME header. A caller
+// re-checked by selfOrAdmin against the SAME header. A caller
 // cannot use it to see another user's data — it only returns the caller's OWN
 // local part. It does not know what a seat is: it returns the local part of
 // any `<slug>@<expectedEmailDomain>`, so an ADMIN_EMAILS member on that domain
@@ -483,12 +483,10 @@ func (h *Handler) Routes() []apispec.Route {
 	// never an IP fallback). Order on the wire is og -> actionMW -> handler
 	// (selfOrAdmin): the origin guard still rejects the header-less curl
 	// shape first, and this closes the remaining hole — a header-less caller
-	// carrying a spoofed allowed Origin would otherwise reach
-	// selfOrAdminWrite's claimed-identity branch on routes that are
-	// browser-only by design. The three handlers behind actionMW therefore
-	// use selfOrAdmin (header REQUIRED), not selfOrAdminWrite, and their
-	// Authz is declared self-or-admin accordingly; actionMW is a second
-	// layer, not the only one.
+	// carrying a spoofed allowed Origin must not reach a handler on a route
+	// that is browser-only by design. The handlers behind actionMW use
+	// selfOrAdmin (header REQUIRED) and their Authz is declared
+	// self-or-admin accordingly; actionMW is a second layer, not the only one.
 	actionMW := h.actionLimiter.MiddlewareStrict(actionBucket, ratelimit.IdentityKeyed)
 	// app#292 Phase 2: identity-keyed (never client-IP-keyed) — a board
 	// thread/message is attributed to the caller's OWN proven identity, so
@@ -574,8 +572,10 @@ func (h *Handler) Routes() []apispec.Route {
 			Handler:   submitMW(http.HandlerFunc(h.submit)),
 		},
 		{
-			// Detect grading reuses the SAME per-IP submit limiter (same trust
-			// model as /submit) plus a global in-flight cap enforced inside the
+			// Detect grading shares the per-IP submit bucket with /submit but
+			// NOT its trust model: this route is gated by selfOrAdmin (identity
+			// header REQUIRED), /submit is claimed-identity (keying this bucket
+			// by identity is app#328). A global in-flight cap is enforced inside the
 			// handler (429 past it, never queued). Unlike /submit above, this
 			// route has only ONE caller: the journey UI's browser fetch (the
 			// "Grade" button on a detect mission's condition textarea —
@@ -583,9 +583,11 @@ func (h *Handler) Routes() []apispec.Route {
 			// allowlist (internal/collector/collector.go — "Routes fronted") does
 			// NOT include submit-detect, so there is no server-to-server curl
 			// caller to protect against a fail-closed gate here — same reasoning
-			// as steps/{idx}/check and hints/{idx} below. Origin-guarded.
+			// as steps/{idx}/check and hints/{idx} below. Origin-guarded, and
+			// gated by selfOrAdmin (identity header REQUIRED: a header-less
+			// request is 403, app#346).
 			Method: "POST", Pattern: "/api/challenges/{cid}/submit-detect",
-			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdminWrite,
+			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdmin,
 			OriginGuarded: true, CollectorForward: false,
 			RateLimit: "per-IP 1 req/s burst 10 + global in-flight grader cap (5)",
 			Handler:   h.og(submitMW(http.HandlerFunc(h.submitDetect))),
@@ -654,9 +656,10 @@ func (h *Handler) Routes() []apispec.Route {
 			// Do NOT remove the origin guard from this route and do NOT add it
 			// to the collector's forward allowlist: ADR-0003 A2-2 made this
 			// endpoint able to delete another participant's exfil receipt, and
-			// the header-less claimed-identity fallback in selfOrAdminWrite
-			// (which this route no longer uses: it runs selfOrAdmin) carries no
-			// proof the caller IS {user}. The guard 403s exactly the
+			// a header-less cluster-internal caller would carry no proof it IS
+			// {user}. selfOrAdmin, which this route runs, 403s it (the dual-path
+			// self-or-admin-write gate that used to let it through was removed,
+			// app#346). The guard 403s exactly the
 			// shape a header-less cluster-internal caller sends, BEFORE the
 			// self-or-admin check runs — that is what keeps A2-2's destructive
 			// reset from becoming an unauthenticated cross-user action (app#124
@@ -673,9 +676,9 @@ func (h *Handler) Routes() []apispec.Route {
 			// ADR-0034 D8: the participant's own profile (display name + one
 			// prepared avatar id). Browser-only like steps/check: origin-guarded,
 			// NOT in the collector's forward allowlist, and gated by selfOrAdmin
-			// (identity header REQUIRED) — NOT selfOrAdminWrite, whose header-less
-			// claimed-identity allow would let a cluster-internal caller write
-			// someone else's profile. actionMW is the identity-keyed fail-closed
+			// (identity header REQUIRED): a header-less claimed-identity allow
+			// would let a cluster-internal caller write someone else's profile.
+			// actionMW is the identity-keyed fail-closed
 			// bucket (a header-less request is 403 before it touches a bucket).
 			Method: "POST", Pattern: "/api/users/{user}/profile",
 			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdmin,
@@ -843,7 +846,7 @@ func boardIdentityKeyed(caller string) func(*http.Request) string {
 
 // requireAuthenticated is the app#292 Phase 2 authz=authenticated gate
 // primitive: any caller carrying a proven X-Auth-Request-Email identity may
-// proceed. Unlike selfOrAdmin(Write), it performs NO username-match against
+// proceed. Unlike selfOrAdmin, it performs NO username-match against
 // a {user} path segment — board routes carry no {user} segment at all
 // (threads are addressed by their own {tid}, and ownership/audience/
 // moderation-state entitlement checks live inside internal/board.Store
@@ -916,7 +919,7 @@ func (h *Handler) isAdmin(r *http.Request) (string, bool) {
 //
 // This is a mirror of auth-policy's canonical form, not a shared import beyond
 // internal/identity's constants: auth-policy is a separate binary. The callers
-// (selfOrAdmin / selfOrAdminWrite) lower-case the header before calling in; the
+// (selfOrAdmin) lower-case the header before calling in; the
 // domain is lower-cased at construction.
 func emailMatchesUser(email, user, domain string) bool {
 	if email == "" || user == "" || domain == "" {
@@ -965,56 +968,6 @@ func (h *Handler) selfOrAdmin(w http.ResponseWriter, r *http.Request, user strin
 		return true
 	}
 	h.logger.Warn("read gate denied: identity mismatch", "remote_addr", r.RemoteAddr, "user", user, "email", email)
-	httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
-	return false
-}
-
-// selfOrAdminWrite is the dual-path WRITE gate used by exactly one route:
-// POST /api/challenges/{cid}/submit-detect. step-check, hint reveal,
-// reset-dirty and profile do NOT use it: they run actionMW + selfOrAdmin, which
-// 403 a header-less request. The header-less branch below survives only for
-// submit-detect. It differs from the read gate (selfOrAdmin)
-// by being conditional on the PRESENCE of an auth header:
-//
-//   - Header present (request arrived over an auth-proxied ingress host — the
-//     participant journey host or the admin host): apply the full self-or-admin
-//     rule. A logged-in participant may only mutate their OWN {user}; a mismatch
-//     or a non-admin third party is denied (403). Admins may write any {user}.
-//     This closes the P18 HIGH: on the journey host every participant the
-//     gate admits (a roster identity or an admin) carries a valid
-//     X-Auth-Request-Email, so without this a participant could tick another
-//     participant's steps or drive the openHint 409/200 cross-user oracle.
-//
-//   - Header absent (request arrived over the cluster-internal Service — a
-//     workspace pod): fall back to the legacy claimed-identity trust model
-//     (allow). This path carries no proven identity and never has;
-//     NetworkPolicy is the isolation control there. (The collector's
-//     display-name forward that used to rely on this was removed in ADR-0034
-//     S1. Since S1 the only caller of selfOrAdminWrite is submit-detect, and
-//     this header-less branch has no legitimate caller left; closing it
-//     (403) is tracked in app#346.)
-//
-// Rationale for keying off header presence (not hostname): identical to
-// selfOrAdmin's design note — both auth-proxied hosts inject the header and the
-// internal Service path never does; ingress overwrites any client-supplied copy
-// (auth-response-headers), so the header cannot be forged from inside the
-// cluster. Returns true when the request may proceed; writes a 403 and returns
-// false otherwise.
-func (h *Handler) selfOrAdminWrite(w http.ResponseWriter, r *http.Request, user string) bool {
-	email := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Auth-Request-Email")))
-	if email == "" {
-		// Cluster-internal (collector / workspace): no auth header ever set here.
-		// Preserve the claimed-identity model — isolation is NetworkPolicy's job.
-		return true
-	}
-	// Auth-proxied host (journey/admin): enforce self-or-admin on the proven id.
-	if _, ok := h.adminSet[email]; ok {
-		return true
-	}
-	if emailMatchesUser(email, user, h.emailDomain) {
-		return true
-	}
-	h.logger.Warn("write gate denied: identity mismatch", "remote_addr", r.RemoteAddr, "user", user, "email", email)
 	httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
 	return false
 }
@@ -1246,14 +1199,15 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 // --- submit-detect ----------------------------------------------------------
 
 // submitDetect grades a participant-authored Falco condition for a detect-type
-// challenge. It reuses the /submit trust model (claimed identity, per-IP rate
-// limiter middleware) and adds two detect-specific controls:
+// challenge. It reuses /submit's per-IP rate limiter middleware and adds two
+// detect-specific controls:
 //
-//   - self-scope: on an auth-proxied host the caller may only grade as its OWN
-//     {user} (selfOrAdminWrite, the dual-path write gate). The
-//     claimed body user must match the proven identity; an admin may grade for
-//     any user. Over the cluster-internal path (no auth header) the legacy
-//     claimed-identity model holds (NetworkPolicy is the isolation control there).
+//   - self-scope: the identity header is REQUIRED (selfOrAdmin; app#346). The
+//     claimed body user must equal the proven identity's canonical form
+//     (ADR-0034 S2: exact match); an admin may grade for any user. A request
+//     with no X-Auth-Request-Email — the cluster-internal Service path, which
+//     has no legitimate caller for this route (the collector does not forward
+//     it and NetworkPolicy keeps workspaces off it) — is 403.
 //   - global in-flight cap: a per-submission grader (docker/Job) is the net-new
 //     DoS lever, so past detectInflight's capacity the request is REJECTED with
 //     429 (never queued) — a flood cannot spawn unbounded grader work.
@@ -1316,9 +1270,10 @@ func (h *Handler) submitDetect(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
 		return
 	}
-	// Self-scope: on an auth-proxied host the claimed user must be the proven
-	// identity (or admin). Uses validated `user` for the exact canonical-form match.
-	if !h.selfOrAdminWrite(w, r, user) {
+	// Self-scope: the identity header is REQUIRED (header-less is 403) and the
+	// body user must equal the proven identity's canonical form (or the caller
+	// be an admin). Uses validated `user` for the exact canonical-form match.
+	if !h.selfOrAdmin(w, r, user) {
 		auditLog("forbidden", "user", user)
 		return
 	}
@@ -1675,7 +1630,7 @@ func nonNilStrings(s []string) []string {
 // endpoint able to delete ANOTHER participant's collector exfil receipt, and
 // the claimed-identity model carries no proof the caller IS that participant.
 // Do not remove h.og from this route's registration, do not swap the gate
-// back to selfOrAdminWrite, and do not add this path to the collector's
+// back to a gate that lets a header-less caller through, and do not add this path to the collector's
 // forwarding allowlist (internal/collector/collector.go) — any of those would
 // reopen exactly that path.
 func (h *Handler) resetDirty(w http.ResponseWriter, r *http.Request) {
