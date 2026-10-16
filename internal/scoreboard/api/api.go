@@ -968,7 +968,9 @@ func (h *Handler) selfOrAdmin(w http.ResponseWriter, r *http.Request, user strin
 //     (allow). This path carries no proven identity and never has;
 //     NetworkPolicy is the isolation control there. (The collector's
 //     display-name forward that used to rely on this was removed in ADR-0034
-//     S1; the remaining header-less callers are the guarded/forwarded writes.)
+//     S1. Since S1 the only caller of selfOrAdminWrite is submit-detect, and
+//     this header-less branch has no legitimate caller left; closing it
+//     (403) is tracked in app#346.)
 //
 // Rationale for keying off header presence (not hostname): identical to
 // selfOrAdmin's design note — both auth-proxied hosts inject the header and the
@@ -1684,17 +1686,6 @@ func (h *Handler) resetDirty(w http.ResponseWriter, r *http.Request) {
 }
 
 // --- request-shape helpers shared by collector-only / JSON-only writes -------
-
-// NOTE (unused on this branch, kept on purpose): the three helpers below
-// (errMsgUnsupportedMediaType, hasProxyIdentityHeader, isJSONContentType) came
-// in with the display-name browser-path hotfix, whose only caller was the
-// participant display-name route that ADR-0034 S1 removes. The webhook / exfil
-// browser-path hotfix (branch fix/webhook-exfil-browser-path-403, which merges
-// BEFORE this one) calls all three for POST /falco/events and
-// POST /internal/exfil/{cid}, and the Authz vocabulary entry
-// internal-claimed-identity (apispec.AuthzInternalClaimedIdentity) is used by
-// those two routes for the same reason. Do not delete them as dead code, and do
-// not paper over the lack of a caller with `_ =`.
 
 // errMsgUnsupportedMediaType is the stable 415 body for routes that require a
 // JSON request body.

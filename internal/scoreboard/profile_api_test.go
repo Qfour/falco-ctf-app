@@ -365,7 +365,7 @@ func TestProfile_V2_BodyMustBeExactlyTheAllowedObject(t *testing.T) {
 		name string
 		body string
 	}{
-		{"unknown key next to a valid one", `{"display_name":"Fresh","email":"a@b.c"}`},
+		{"unknown key next to a valid one", `{"display_name":"Fresh","email":"a@b.example"}`},
 		{"unknown key alone", `{"image":"AAAA"}`},
 		{"email key", `{"email":"user3@ctf.local"}`},
 		{"real-name key", `{"name":"Fresh"}`},
