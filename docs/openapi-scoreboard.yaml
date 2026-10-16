@@ -397,7 +397,7 @@ paths:
       x-ctf-authz: internal-claimed-identity
       x-ctf-origin-guard: false
       x-ctf-collector-forward: false
-      x-ctf-rate-limit: per-IP 100 req/s burst 200 (falcosidekick batches)
+      x-ctf-rate-limit: per-participant (ns) bucket - observation rules 20 req/s burst 100 then 429, scoring rules 100 req/s burst 400 then fail-closed taint if forbidden (never 429)
       description: |
         Ingest endpoint. INTERNAL-ONLY: the browser path is refused. The admin
         ingress catch-all also routes this path, where oauth2-proxy stamps
@@ -433,6 +433,23 @@ paths:
         CURRENT mission only (ADR-0003 attempt scope) — a persistent flag with
         no time window; `POST /api/users/{user}/challenges/{cid}/reset-dirty`
         is the only way back to clean.
+
+        Rate limit (app#359): the bucket is the PARTICIPANT (the event's
+        `ctf-<username>` namespace), never the sender — every event comes from
+        one falcosidekick IP, so a per-sender bucket let one participant's
+        flood drop another's forbidden-rule fire (which falcosidekick does not
+        retry), reading an evade as clean. A rule that no challenge forbids or
+        expects feeds only the presentational recent-fires list: over its
+        bucket it is answered 429 (`scoreboard_ingest_falco_events_rate_limited_total`).
+        A rule some challenge forbids or expects is NEVER answered 429: over the
+        (much larger) scoring bucket the normal taint predicate is still applied
+        (the participant's current evade mission forbids the rule -> tainted with
+        that rule, fail-closed), every other scoring rule is skipped (a skipped
+        trigger/proof fire only delays a solve), and the request is answered 200
+        as accepted (`scoreboard_ingest_falco_events_scoring_overflow_total`;
+        verify should require 0). Events outside the ctf workspace/challenge
+        filters (including an ns that is not a valid username slug) are not rate
+        limited at all.
       requestBody:
         required: true
         content:
@@ -472,7 +489,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "429":
-          description: rate limited (internal/scoreboard/ratelimit)
+          description: an observation-only rule (no challenge forbids or expects it) exceeded the participant's bucket
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

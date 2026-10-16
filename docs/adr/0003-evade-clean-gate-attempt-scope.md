@@ -544,6 +544,10 @@ ORGANIZATION.md:347 の歯止め (「`Verification` が無い ADR は Hard Invar
    **古い `current` で評価される窓 (ms)** がある。判定は**寛容側 (taint しない側) に倒れる**ので A1 と矛盾しないが、
    イベント率が上がるとこの窓に入る確率が上がる。→ **per-user mutex を `OnRuleFire` に入れる**
    (ロック粒度が上がるので、必要になるまで入れない)
+   **追補 (2026-10-14, app#359)**: `Grader.TaintOnOverflow` (`/falco/events` の参加者単位 bucket 超過時に
+   呼ばれる) は `OnRuleFire` と並ぶ **2 本目の user 単位で直列化されていない taint 経路**。同じ述語
+   (`taintTarget`: 現在の evade が forbid する rule) を共有するので、`current` の古さによる誤差は同じ向き
+   (寛容側) に倒れ A1 とは矛盾しない。per-user mutex を入れるときは **両方の経路**を同じロックで囲むこと。
 
 ---
 

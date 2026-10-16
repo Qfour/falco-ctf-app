@@ -211,6 +211,11 @@ type Grader struct {
 	// api.New's identical default so a Grader built without WithOrder still
 	// behaves consistently with the Journey projection's default.
 	order []string
+	// scoringRules is every rule name any challenge lists in ForbiddenRules or
+	// ExpectedRules (built once in New; the catalog is immutable afterwards).
+	// A fire of one of these can change a score, so the ingest path must never
+	// silently drop it (app#359) — see AffectsScoring.
+	scoringRules map[string]struct{}
 }
 
 // New builds a Grader. `now` is injected (WithNow pattern) so tests drive a
@@ -221,7 +226,67 @@ func New(cat catalog.Catalog, store ScoreStore, now func() time.Time) *Grader {
 	if now == nil {
 		now = time.Now
 	}
-	return &Grader{cat: cat, store: store, now: now, points: DefaultPointsPolicy()}
+	rules := make(map[string]struct{})
+	for _, ch := range cat {
+		for _, r := range ch.ForbiddenRules {
+			rules[r] = struct{}{}
+		}
+		for _, r := range ch.ExpectedRules {
+			rules[r] = struct{}{}
+		}
+	}
+	return &Grader{cat: cat, store: store, now: now, points: DefaultPointsPolicy(), scoringRules: rules}
+}
+
+// AffectsScoring reports whether a fire of `rule` can change any score: it is
+// in some challenge's forbiddenRules (taint), expectedRules (trigger solve or
+// ADR-0008/0032 positive proof). The ingest rate limiter uses it to decide
+// which events may be dropped (none of these) and which may not (app#359).
+func (g *Grader) AffectsScoring(rule string) bool {
+	_, ok := g.scoringRules[rule]
+	return ok
+}
+
+// TaintOnOverflow is the fail-closed answer to a scoring-relevant event the
+// ingest path cannot fully process because the participant exceeded their
+// scoring bucket (app#359). It applies EXACTLY the taint predicate
+// markDirtyOnRuleFire does (ADR-0003 A1 / I11): the participant's CURRENT
+// mission is tainted, with the REAL rule name, iff it is evade-type and lists
+// `rule` among its forbiddenRules — and nothing else. Widening it (tainting on
+// any overflow) would taint a correct run that fires a proof rule in a burst.
+// "We did not look at this event" therefore never reads as "clean" for the one
+// thing that can make a run unclean, while every other rule is merely skipped
+// (a skipped trigger/proof fire only delays a solve the participant can repeat).
+//
+// It returns the id of the mission it tainted ("" if none: current is a
+// trigger/other mission, or the rule is not forbidden for it) so the caller
+// can report what actually happened. Persistence failure is returned; like
+// MarkDirty the in-memory taint is already set. There is deliberately no
+// "already dirty" short-circuit: MarkDirty is an idempotent INSERT OR IGNORE,
+// and a skip based on in-memory state would also skip the RETRY of a write
+// that failed earlier.
+func (g *Grader) TaintOnOverflow(user, rule string) (tainted string, err error) {
+	cur, ok := g.taintTarget(user, rule)
+	if !ok {
+		return "", nil
+	}
+	at := g.now().UTC().Format(time.RFC3339Nano)
+	return cur, g.store.MarkDirty(user, cur, rule, at)
+}
+
+// taintTarget is the single definition of "which mission does a fire of
+// `rule` taint": the participant's current mission, iff evade-type and
+// forbidding `rule`.
+func (g *Grader) taintTarget(user, rule string) (cid string, ok bool) {
+	cur := g.currentMission(user)
+	if cur == "" {
+		return "", false // every mission solved; nothing can be "current"
+	}
+	ch, found := g.cat[cur]
+	if !found || ch.Type != "evade" || !slices.Contains(ch.ForbiddenRules, rule) {
+		return "", false
+	}
+	return cur, true
 }
 
 // WithPoints overrides the Grader's points policy (base award per solve +
@@ -425,15 +490,8 @@ func (g *Grader) evaluateTrigger(user, rule string) ([]TriggerResult, error) {
 // unexported (ADR-0003 A4): OnRuleFire is the only public entry point that
 // may call this.
 func (g *Grader) markDirtyOnRuleFire(user, rule string) error {
-	cur := g.currentMission(user)
-	if cur == "" {
-		return nil // every mission solved; nothing can be "current"
-	}
-	ch, ok := g.cat[cur]
-	if !ok || ch.Type != "evade" {
-		return nil
-	}
-	if !slices.Contains(ch.ForbiddenRules, rule) {
+	cur, ok := g.taintTarget(user, rule)
+	if !ok {
 		return nil
 	}
 	at := g.now().UTC().Format(time.RFC3339Nano)
