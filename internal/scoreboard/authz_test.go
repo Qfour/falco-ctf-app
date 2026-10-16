@@ -301,8 +301,9 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 	// then moved display-name out of self(-write) into its own
 	// internal-claimed-identity class: 9 + 6 + 1 + 8 + 6 = 30; closing the
 	// browser path of POST /falco/events and POST /internal/exfil/{cid} moves
-	// both from none into internal-claimed-identity: 9 + 6 + 3 + 6 + 6 = 30,
-	// matching
+	// both out of the none/claimed-identity bucket (their Authz was
+	// claimed-identity, which openGated counts with none) into
+	// internal-claimed-identity: 9 + 6 + 3 + 6 + 6 = 30, matching
 	// apispec_parity_test.go's TestAPISpec_V1_RouteSetMatchesSpec.
 	if adminGated != 9 {
 		t.Fatalf("expected exactly 9 Authz: admin routes (ADR-0005 canon: GET /, GET /api/state, POST /api/admin/reset, POST /api/admin/users/{user}/display-name; app#292 QA Board: GET /api/admin/board/threads, GET /api/admin/board/threads/{tid}, POST /api/admin/board/threads/{tid}/reply, POST /api/admin/board/threads/{tid}/state, POST /api/admin/board/messages/{mid}/state), got %d", adminGated)

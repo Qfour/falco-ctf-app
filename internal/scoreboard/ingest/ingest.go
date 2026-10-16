@@ -251,8 +251,10 @@ func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ADR-WS-0006 Layer 2: shared-secret verification runs FIRST — before the
-	// body is even read/decoded — so an enforce-mode mismatch never reaches
+	// ADR-WS-0006 Layer 2: shared-secret verification runs right after the 403
+	// browser-path gate above (the first check on a request that can only come
+	// from the internal path) — before the body is even read/decoded — so an
+	// enforce-mode mismatch never reaches
 	// store.RecordRuleFire or scoring.Grader.OnRuleFire (fail-closed: no
 	// scoring-integrity table is touched by a forged request). off (the
 	// zero value AND the wire default) skips this block entirely, so a
@@ -358,6 +360,13 @@ func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 	// app#359: per-participant limit, applied only after attribution so the
 	// bucket is the participant's, not the (single, shared) sender's. A
 	// scoring-relevant event is never answered 429 — see the const block.
+	//
+	// Gate order is a security invariant (#334): 403 browser-path gate ->
+	// shared secret -> 415 Content-Type -> decode -> attribution -> THIS limiter.
+	// A limiter must never be moved ahead of the 403 gate: a request carrying
+	// X-Auth-Request-* (the browser path) has to be refused before it can touch
+	// any bucket, audit entry or taint — otherwise a cross-site POST could drain
+	// a participant's bucket or force an overflow taint.
 	if h.grader.AffectsScoring(ev.Rule) {
 		if !h.scoringLimiter.Allow(user) {
 			h.scoringOverflow(w, ns, user, ev.Rule)
