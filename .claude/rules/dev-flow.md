@@ -175,3 +175,10 @@ pipeline-only 環境では SysQL の findings API が空。
 過ぎない — **I15 が実際に検査していることの保証は `make test` (Dockerfile.test 経由、
 `go install helm.sh/helm/v3/cmd/helm@<pin>` 同梱) のみ**。「`go test ./...` が緑だった」
 を「I15 が通った」と読み替えないこと。
+
+例外 (意図的): **V12 (`internal/apispec/ingressparity/authurl_test.go`、ADR-0034) は
+`helm` が無いと `t.Skip` ではなく `t.Fatal` で FAIL する** (`v12MustHelm`)。skip された
+V12 は「どの Ingress も認証されている」を静かに緑にしてしまうため。ホストで素の
+`go test ./...` を回して V12 で落ちたら、コードの不具合ではなく `helm` の不在
+(または `helm dependency build` 未実行) を疑う。`make test` では `Dockerfile.test` が
+helm を同梱して依存を解決するので起きない。

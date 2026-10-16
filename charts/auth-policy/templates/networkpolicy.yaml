@@ -1,6 +1,6 @@
 # auth-policy NetworkPolicies — default-deny + ingress only from ingress-nginx
 # (auth-url subrequest) and egress only to kube-dns + oauth2-proxy. auth-policy
-# is the host↔email enforcement point; locking the network plane is part of the
+# is the identity-roster enforcement point (ADR-0034); locking the network plane is part of the
 # defense.
 {{ include "falco-ctf-common.networkPolicy.defaultDeny" (dict "name" "auth-policy" "namespace" "auth-policy") }}
 ---
@@ -17,7 +17,7 @@ spec:
     - Ingress
     - Egress
   ingress:
-    # ingress-nginx subrequest → /check, /check-admin
+    # ingress-nginx subrequest → /check-workspace, /check-participant, /check-admin
     - from:
         - namespaceSelector:
             matchLabels:

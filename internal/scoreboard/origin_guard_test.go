@@ -50,6 +50,7 @@ func newOriginFixture(t *testing.T, allowedOrigins []string) *scoreboard.Handler
 	t.Cleanup(func() { boardSt.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	return scoreboard.NewHandler(cat, st, logger,
+		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 		scoreboard.WithAdminEmails([]string{"admin@ctf.local"}),
 		scoreboard.WithAllowedOrigins(allowedOrigins),
 		scoreboard.WithBoard(boardSt),

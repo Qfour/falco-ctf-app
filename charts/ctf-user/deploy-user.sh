@@ -57,7 +57,7 @@
 #   app (P19-2b, e.g. "app.<dns-suffix>") that fronts oauth2-proxy's
 #   /oauth2/start sign-in page. Used ONLY to build the unauthenticated ttyd
 #   Ingress's `auth-signin` redirect target (chart's `auth.authSignin`) — it
-#   does not touch `auth.authUrl`'s host↔email check (I8). Omit to keep the
+#   does not touch the roster check (I8). Omit to keep the
 #   chart's `auth.<dns-suffix>` compat-bridge default (app#99 follow-up:
 #   pass this once the platform-side bridge Ingress is ready to retire).
 #

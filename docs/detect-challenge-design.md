@@ -253,7 +253,7 @@ version bumps (capture format & field semantics can change).
   (`falco-ctf-detect-grader`). This is a convention change to the I5 image set and the
   Dockerfile/UID tables → must be ratified (CEO/VP) and reflected in
   `.claude/rules/falco-ctf-app-conventions.md`.
-- **I8 (auth prefix-exact):** untouched — no auth-policy change; submit reuses the
+- **I8 (identity roster + exact seat match):** untouched — no auth-policy change; submit reuses the
   existing claimed-identity model.
 - **I10 (no secrets in image/yaml):** captures must be verified secret/flag-free before
   commit (§5).

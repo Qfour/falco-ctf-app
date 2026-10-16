@@ -1,0 +1,83 @@
+# ADR-0034 D2 — the email normaliser's shared case table (R3#5 / R4#2).
+#
+# One implementation is Go (internal/authpolicy NormalizeEmail); platform has a
+# shell one (scripts/lib/roster.sh roster_normalize_email). They must agree on
+# every row. This file is read by BOTH test suites; a row that one side
+# disagrees with is a bug in that side, not a reason to drop the row.
+#
+# Format (tab-separated; two columns; `input<TAB>expect`):
+#   - blank lines and lines starting with `#` are ignored
+#   - split each line on its FIRST tab only. `input` may be empty (the line then
+#     starts with a tab) and may contain spaces; neither column ever contains a
+#     tab or a newline. Do NOT read it with `IFS=$'\t' read` (tab is IFS
+#     whitespace: a leading empty field collapses) — use awk -F'\t' or cut.
+#   - `expect` is the normalised email, or the literal REJECT
+#   - `{G0}` / `{G1}` stand for the two folded Google domains
+#     (gmail.com / googlemail.com). They are substituted in BOTH columns before
+#     use. Written as placeholders because scripts/check-emails.sh forbids a
+#     mailbox-shaped literal on a public domain in any tracked file.
+#   - every other address is on a reserved domain (local / test / invalid /
+#     example / localhost)
+#
+# The platform-side reader should be strict: an unparsable row, or a file with
+# fewer than the Go side's minimum row count, is a FAIL, never a skip.
+
+# --- accepted: shape, case, surrounding blanks
+user7@ctf.local	user7@ctf.local
+User7@CTF.Local	user7@ctf.local
+USER7@CTF.LOCAL	user7@ctf.local
+  a@b.example  	a@b.example
+a@localhost	a@localhost
+
+# --- accepted: a non-Google domain is only lower-cased (dots and +tag kept)
+a.b+c@b.example	a.b+c@b.example
+user7+x@ctf.local	user7+x@ctf.local
+A.B@Partner.Example	a.b@partner.example
+a.b@sub.{G0}	a.b@sub.{G0}
+
+# --- accepted: the two Google domains fold (dots and +tag dropped, domain unified to the first)
+a.b+c@{G0}	ab@{G0}
+a.b+c@{G1}	ab@{G0}
+A.B+X@{G1}	ab@{G0}
+a@{G1}	a@{G0}
+a..b@{G0}	ab@{G0}
+a+@{G0}	a@{G0}
+a+b+c@{G0}	a@{G0}
+
+# --- rejected: empty / blank
+	REJECT
+   	REJECT
+
+# --- rejected: no @, an empty side, or more than one @
+user7	REJECT
+user7.ctf.local	REJECT
+@	REJECT
+@ctf.local	REJECT
+user7@	REJECT
+a@@c.example	REJECT
+a@b@c.example	REJECT
+user7@ctf.local@x.example	REJECT
+a@b@{G0}	REJECT
+
+# --- rejected: a space inside the address
+a b@c.example	REJECT
+a@c .example	REJECT
+
+# --- rejected: non-ASCII, checked BEFORE case folding (U+212A KELVIN SIGN lower-cases to k)
+marK@ctf.local	REJECT
+é@c.example	REJECT
+a@é.example	REJECT
+ａ@c.example	REJECT
+
+# --- rejected: a domain with an empty label (trailing dot, leading dot, doubled dot)
+a@c.example.	REJECT
+a@.example	REJECT
+a@c..example	REJECT
+USER1@ctf.local.	REJECT
+
+# --- rejected: nothing left of the local part after Google folding
++x@{G0}	REJECT
+.@{G0}	REJECT
+...@{G1}	REJECT
++@{G0}	REJECT
+.+x@{G0}	REJECT

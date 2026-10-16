@@ -98,8 +98,12 @@ servers:
     description: in-cluster Service (no auth headers are injected on this path)
   - url: https://app.{dnsSuffix}
     description: |
-      single participant+operator origin (P19-2b). oauth2-proxy / auth-policy
-      inject `X-Auth-Request-Email` here.
+      single participant+operator origin (P19-2b). auth-policy stamps
+      `X-Auth-Request-Email` here (ADR-0034): for a participant it is ALWAYS the
+      canonical `<seat>@<EXPECTED_EMAIL_DOMAIN>`, never the IdP's real email
+      (ingress-nginx overwrites the header from auth-policy's response, so a
+      client-supplied copy is discarded). Operators carry their static account's
+      email.
     variables:
       dnsSuffix:
         default: example.invalid
@@ -219,14 +223,16 @@ paths:
       x-ctf-collector-forward: false
       x-ctf-rate-limit: none
       description: |
-        Static single-template shell (P23-1). Served to ANY authenticated
-        caller and deliberately NOT admin-gated: it embeds no admin data and
-        no other participant's data, but the response does differ per viewer
-        (role, username and ttyd URL as display hints, plus a per-response CSP
+        Static single-template shell (P23-1). Served to ANY caller the
+        participant gate admits (auth-policy `/check-participant`: an identity
+        the roster resolves to a seat, or an `ADMIN_EMAILS` member) and
+        deliberately NOT admin-gated: it embeds no admin data and no other
+        participant's data, but the response does differ per viewer (role,
+        username and ttyd URL as display hints, plus a per-response CSP
         nonce), so every response carries `Cache-Control: no-store`
         (ADR-0028 D3), the 500 included.
         The admin flag and the derived username are display hints only
-        (api.NewAdminGate / api.DeriveUsername); every pane's actual data fetch
+        (api.NewAdminGate / api.NewUsernameDeriver); every pane's actual data fetch
         is independently gated in the API handlers, so the shell cannot leak
         another participant's state.
 
@@ -324,7 +330,8 @@ paths:
         P12's egress-zero posture rules out an external report collector —
         this binary is the collector.
 
-        Reachable by ANY authenticated CTF login (ingress-layer gate,
+        Reachable by ANY caller the participant gate admits (ingress-layer
+        `/check-participant` gate,
         mirrors `GET /portal` — see `charts/scoreboard/templates/`
         `ingress-journey.yaml`'s `/csp-report` entry; a never-logged-in
         client cannot reach this route through ingress at all), but NOT
@@ -725,7 +732,11 @@ paths:
         Self-scoped read (P18): the caller may only read their OWN progress.
         Identity comes from `X-Auth-Request-Email`; a missing or blank header is
         DENIED (403, fail-closed) — the `{user}` path parameter is never trusted
-        on its own. Admins (`ADMIN_EMAILS`) may read any user.
+        on its own. "Self" is EXACT equality of the header with the canonical
+        `<user>@<EXPECTED_EMAIL_DOMAIN>` that auth-policy stamps (ADR-0034 D5,
+        I8): there is no prefix rule, an email on any other domain is not self,
+        and an unset/empty `EXPECTED_EMAIL_DOMAIN` makes nobody self
+        (fail-closed). Admins (`ADMIN_EMAILS`) may read any user.
 
         `rank` / `score` are computed over the WHOLE field
         (`computeLeaderboard`) but only the caller's own row is serialized
@@ -1146,8 +1157,8 @@ paths:
         are silently ignored (same discipline P25's createQuestion
         enforced, security-engineer finding 1).
 
-        `audience` selects visibility: `all` (public — any authenticated
-        participant may read and like it) or `admin` (private — visible
+        `audience` selects visibility: `all` (public — any participant the
+        gate admits may read and like it) or `admin` (private — visible
         only to its own author and admins). Fail-closed: any value OTHER
         than exactly `admin` or `all` (including an absent/empty field) is
         treated as `admin` — a malformed or omitted audience never
@@ -1837,7 +1848,8 @@ components:
         pattern: "^[a-z0-9][a-z0-9-]{0,62}$"
       description: |
         auth-derived username slug — the same shape auth-policy enforces on
-        `/check?host=`, so the two boundaries agree (conventions I8). A blank
+        `/check-workspace?host=` (and the roster enforces on a seat), so the
+        boundaries agree (conventions I8). A blank
         segment (`/api/users//...`) is answered 400 before routing, never
         silently redirected.
     Cid:

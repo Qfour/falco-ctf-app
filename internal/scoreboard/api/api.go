@@ -43,6 +43,7 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
 	"github.com/Qfour/falco-ctf-app/internal/board"
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
+	"github.com/Qfour/falco-ctf-app/internal/identity"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/avatar"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/detect"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
@@ -55,7 +56,7 @@ import (
 )
 
 // validUser matches the auth-derived identity username slug — same shape
-// auth-policy enforces on incoming /check?host=… so the two sides agree.
+// auth-policy enforces on incoming /check-workspace?host=… so the two sides agree.
 var validUser = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 // invalidDisplayName rejects characters that would break either UI
@@ -185,6 +186,9 @@ type Handler struct {
 	// (ADR-0034 D8) joins it too.
 	actionLimiter *ratelimit.Limiter
 	adminSet      map[string]struct{}
+	// emailDomain is IdentityConfig.ExpectedEmailDomain (lower-cased, trimmed).
+	// Read-only after New.
+	emailDomain string
 	// hiddenSet is the HIDDEN_USERS allowlist (CEO/ops request: a venue-demo
 	// account, e.g. test1, must be free to solve challenges and trip Falco
 	// rules without its score/solve state appearing on the PUBLIC leaderboard
@@ -242,6 +246,17 @@ type BoardConfig struct {
 	Store *board.Store
 }
 
+// IdentityConfig carries the I8 identity contract (ADR-0034 D5) into the api
+// handler. ExpectedEmailDomain is EXPECTED_EMAIL_DOMAIN, the same value
+// auth-policy spells the canonical identity with: after auth-policy the only
+// identity a participant request can carry is `<seat>@<ExpectedEmailDomain>`,
+// so "self" is exact equality with `<user>@<ExpectedEmailDomain>`. EMPTY means
+// no email can ever be a participant's own (every self check is false and
+// UsernameFromEmail yields ""): fail-closed, never "any domain".
+type IdentityConfig struct {
+	ExpectedEmailDomain string
+}
+
 // DetectConfig carries the detect-challenge grading inputs. Both fields are
 // optional: when Runner is nil the /submit-detect endpoint returns 503 (feature
 // off — e.g. local dev with no falco). InflightCap <= 0 falls back to
@@ -275,7 +290,7 @@ const DetectGradeTimeout = 30 * time.Second
 // USERNAMES, not emails — unlike adminEmails/allowedOrigins, this is matched
 // against the store's user key directly, so it needs no email-domain
 // stripping). Empty = nobody hidden.
-func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *slog.Logger, now func() time.Time, adminEmails []string, allowedOrigins []string, hiddenUsers []string, jc JourneyConfig, dc DetectConfig, bc BoardConfig) *Handler {
+func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *slog.Logger, now func() time.Time, adminEmails []string, allowedOrigins []string, hiddenUsers []string, jc JourneyConfig, dc DetectConfig, bc BoardConfig, ic IdentityConfig) *Handler {
 	// /submit accepts a claimed user identity. Without per-IP throttling a
 	// participant who scraped someone else's flag could brute-force submits.
 	// 1 req/s with burst 10 lets legitimate typing through but blocks
@@ -314,6 +329,7 @@ func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *sl
 		submitLimiter:  ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now),
 		actionLimiter:  ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now),
 		adminSet:       adminSet,
+		emailDomain:    strings.ToLower(strings.TrimSpace(ic.ExpectedEmailDomain)),
 		hiddenSet:      hiddenSet,
 		originGuard:    originguard.New(allowedOrigins, logger),
 		journeys:       journeys,
@@ -382,29 +398,18 @@ func NewAdminGate(adminEmails []string) func(*http.Request) bool {
 	}
 }
 
-// DeriveUsername extracts the display-only username slug from a request's
-// X-Auth-Request-Email header, for the SOLE purpose of pre-filling the portal
-// shell's Journey/Me pane identity (P23-1) — it is a UI convenience, never an
-// authorization decision. Returns "" when the header is absent or the prefix
-// before "@" is not a valid username slug (validUser) — in that case the
-// portal shows an empty state asking the participant to check with the
-// operator for their username, or to reload the portal after logging in
-// again; there is no "?user=" manual-entry affordance.
-//
-// This is deliberately NOT the authorization boundary: whatever username this
-// returns, every read/write the Journey/Me panes make is independently
-// re-checked by selfOrAdmin / selfOrAdminWrite against the SAME
-// X-Auth-Request-Email header server-side (I8-mirrored prefix-exact). A caller
-// cannot use this function to see another user's data — it can only ever
-// return the caller's OWN derived slug (or admin's own, which is not a
-// participant identity and typically has no journey/me data of its own).
-func DeriveUsername(r *http.Request) string {
-	email := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Auth-Request-Email")))
-	if email == "" {
+// UsernameFromEmail returns the seat in a canonical identity: email must be
+// exactly `<seat>@<domain>` (already lower-cased by the caller) with seat a valid
+// username slug. It returns "" for anything else — in particular for ANY other
+// domain, and always when domain is empty (fail-closed). This is the one place
+// the canonical form is parsed; selfOrAdmin's equality check and the portal's
+// display hint both go through the same exact comparison.
+func UsernameFromEmail(email, domain string) string {
+	if email == "" || domain == "" {
 		return ""
 	}
 	at := strings.IndexByte(email, '@')
-	if at <= 0 {
+	if at <= 0 || email[at+1:] != domain {
 		return ""
 	}
 	user := email[:at]
@@ -412,6 +417,29 @@ func DeriveUsername(r *http.Request) string {
 		return ""
 	}
 	return user
+}
+
+// NewUsernameDeriver returns the function the portal shell and the board use to
+// turn a request into the display-only username slug (ADR-0034 D5; the former
+// package-level DeriveUsername). It reads X-Auth-Request-Email and accepts ONLY
+// the canonical `<seat>@<expectedEmailDomain>`: an email on any other domain, or
+// any email when expectedEmailDomain is empty, derives "" — so `alice@evil` can
+// never become the author "alice".
+//
+// It is a UI convenience and a board author key, never an authorization
+// decision: every read/write the Journey/Me panes make is independently
+// re-checked by selfOrAdmin / selfOrAdminWrite against the SAME header. A caller
+// cannot use it to see another user's data — it only returns the caller's OWN
+// local part. It does not know what a seat is: it returns the local part of
+// any `<slug>@<expectedEmailDomain>`, so an ADMIN_EMAILS member on that domain
+// (e.g. admin@ctf.local with expectedEmailDomain ctf.local) derives "admin",
+// and one on another reserved domain derives "". That is display-only; whether
+// the caller may do anything is isAdmin / selfOrAdmin, never this.
+func NewUsernameDeriver(expectedEmailDomain string) func(*http.Request) string {
+	domain := strings.ToLower(strings.TrimSpace(expectedEmailDomain))
+	return func(r *http.Request) string {
+		return UsernameFromEmail(strings.ToLower(strings.TrimSpace(r.Header.Get("X-Auth-Request-Email"))), domain)
+	}
 }
 
 // og wraps a handler with the origin guard (P23-2). Applied to browser-only
@@ -824,7 +852,7 @@ func boardIdentityKeyed(caller string) func(*http.Request) string {
 // "no proven identity -> deny" posture selfOrAdmin uses. Returns the
 // lower/trimmed caller email and whether the request may proceed;
 // board handlers derive the STORE identity to use (author/viewer) from
-// DeriveUsername separately (see each handler's own doc) — this gate only
+// UsernameFromEmail separately (see each handler's own doc) — this gate only
 // answers "is anyone authenticated at all".
 func (h *Handler) requireAuthenticated(w http.ResponseWriter, r *http.Request) (string, bool) {
 	email := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Auth-Request-Email")))
@@ -839,18 +867,19 @@ func (h *Handler) requireAuthenticated(w http.ResponseWriter, r *http.Request) (
 // boardIdentity resolves a board participant route's caller identity in one
 // call: requireAuthenticated first (the authz=authenticated gate this whole
 // route family declares — any proven identity may proceed), then
-// DeriveUsername to derive the SPECIFIC username value every board.Store
+// UsernameFromEmail to derive the SPECIFIC username value every board.Store
 // call keys off (author/viewer). A header present but not shaped like a
-// valid username slug (DeriveUsername returns "") is ALSO 403 — fail-closed,
+// valid username slug (UsernameFromEmail returns "") is ALSO 403 — fail-closed,
 // matching selfOrAdmin's own "no proven usable identity -> deny" posture;
 // this NEVER falls back to the raw email as a Store author value (board
 // authors are usernames, the same shape every other participant route in
 // this package uses, not email addresses).
 func (h *Handler) boardIdentity(w http.ResponseWriter, r *http.Request) (string, bool) {
-	if _, ok := h.requireAuthenticated(w, r); !ok {
+	email, ok := h.requireAuthenticated(w, r)
+	if !ok {
 		return "", false
 	}
-	user := DeriveUsername(r)
+	user := UsernameFromEmail(email, h.emailDomain)
 	if user == "" {
 		h.logger.Warn("board: denied, unusable identity", "remote_addr", r.RemoteAddr)
 		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
@@ -875,33 +904,25 @@ func (h *Handler) isAdmin(r *http.Request) (string, bool) {
 	return email, ok
 }
 
-// emailMatchesUser reports whether the auth-derived caller email belongs to the
-// given username slug, using the SAME prefix-exact rule auth-policy /check
-// enforces (conventions I8): the email must begin with "<user>@". This is a
-// mirror — not a shared import — because auth-policy is a separate service /
-// binary (see CLAUDE.md); the semantics ("email == username+"@"+domain",
-// domain-agnostic) are reproduced here so the two auth boundaries agree.
+// emailMatchesUser reports whether the auth-derived caller email is the given
+// username's own identity: EXACT equality with the canonical `<user>@<domain>`
+// (ADR-0034 D5, conventions I8). After auth-policy rewrites the identity
+// headers to the canonical form, that is the only email a participant request
+// carries; there is no prefix rule, so `user10@…` does not satisfy user1 and an
+// email on any other domain (`user1@evil.example`) satisfies nobody. An empty
+// domain makes every comparison false (fail-closed): a deployment that did not
+// configure EXPECTED_EMAIL_DOMAIN locks participants out rather than letting any
+// `alice@…` through.
 //
-// Not a verbatim mirror: this is a LOWERCASE-NORMALISED prefix-exact match. The
-// callers (selfOrAdmin / selfOrAdminWrite) lower-case the header before calling
-// in, whereas auth-policy /check (internal/authpolicy/server.go, the raw
-// strings.HasPrefix on X-Auth-Request-Email) compares the email verbatim. The
-// normalisation only ever makes THIS side STRICTER-or-equal (case-folding can
-// grant no match the raw check would deny), so it cannot open a hole the auth
-// boundary closes. Signpost: on an IdP swap (email casing / claim shape change),
-// auth-policy /check and emailMatchesUser must be revisited together — they are
-// the two halves of the same cross-user isolation invariant (I8).
-//
-// Prefix-exact is deliberate and NOT a substring match: "user1@…" is required,
-// so a caller "user10@…" or "user1x@…" does NOT satisfy user="user1" — the
-// character after "user1" is the literal '@', and "user10@" has '0' there, so
-// HasPrefix("user10@…", "user1@") is false. This is the exact anti-mismatch
-// property auth-policy relies on for cross-user workspace isolation.
-func emailMatchesUser(email, user string) bool {
-	if email == "" || user == "" {
+// This is a mirror of auth-policy's canonical form, not a shared import beyond
+// internal/identity's constants: auth-policy is a separate binary. The callers
+// (selfOrAdmin / selfOrAdminWrite) lower-case the header before calling in; the
+// domain is lower-cased at construction.
+func emailMatchesUser(email, user, domain string) bool {
+	if email == "" || user == "" || domain == "" {
 		return false
 	}
-	return strings.HasPrefix(email, user+"@")
+	return email == identity.Canonical(user, domain)
 }
 
 // selfOrAdmin is the participant-facing read gate (P18). It derives the caller
@@ -911,7 +932,8 @@ func emailMatchesUser(email, user string) bool {
 // also propagates on the admin host — and authorizes the request for {user}
 // iff:
 //
-//   - the caller email prefix-exact matches "<user>@" (self, I8-mirrored), OR
+//   - the caller email equals the canonical "<user>@<EXPECTED_EMAIL_DOMAIN>" exactly
+//     (self, I8 — auth-policy rewrites the header to that form), OR
 //   - the caller email is in ADMIN_EMAILS (operator override — the one
 //     intentional exception, identical to auth-policy /check).
 //
@@ -939,7 +961,7 @@ func (h *Handler) selfOrAdmin(w http.ResponseWriter, r *http.Request, user strin
 	if _, ok := h.adminSet[email]; ok {
 		return true
 	}
-	if emailMatchesUser(email, user) {
+	if emailMatchesUser(email, user, h.emailDomain) {
 		return true
 	}
 	h.logger.Warn("read gate denied: identity mismatch", "remote_addr", r.RemoteAddr, "user", user, "email", email)
@@ -958,10 +980,10 @@ func (h *Handler) selfOrAdmin(w http.ResponseWriter, r *http.Request, user strin
 //     participant journey host or the admin host): apply the full self-or-admin
 //     rule. A logged-in participant may only mutate their OWN {user}; a mismatch
 //     or a non-admin third party is denied (403). Admins may write any {user}.
-//     This closes the P18 HIGH: on the journey host, oauth2-proxy injects
-//     X-Auth-Request-Email for ANY login, so without this a participant could
-//     tick another participant's steps or drive the openHint 409/200 cross-user
-//     oracle.
+//     This closes the P18 HIGH: on the journey host every participant the
+//     gate admits (a roster identity or an admin) carries a valid
+//     X-Auth-Request-Email, so without this a participant could tick another
+//     participant's steps or drive the openHint 409/200 cross-user oracle.
 //
 //   - Header absent (request arrived over the cluster-internal Service — a
 //     workspace pod): fall back to the legacy claimed-identity trust model
@@ -989,7 +1011,7 @@ func (h *Handler) selfOrAdminWrite(w http.ResponseWriter, r *http.Request, user 
 	if _, ok := h.adminSet[email]; ok {
 		return true
 	}
-	if emailMatchesUser(email, user) {
+	if emailMatchesUser(email, user, h.emailDomain) {
 		return true
 	}
 	h.logger.Warn("write gate denied: identity mismatch", "remote_addr", r.RemoteAddr, "user", user, "email", email)
@@ -1295,7 +1317,7 @@ func (h *Handler) submitDetect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Self-scope: on an auth-proxied host the claimed user must be the proven
-	// identity (or admin). Uses validated `user` for the prefix-exact match.
+	// identity (or admin). Uses validated `user` for the exact canonical-form match.
 	if !h.selfOrAdminWrite(w, r, user) {
 		auditLog("forbidden", "user", user)
 		return

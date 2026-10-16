@@ -154,6 +154,7 @@ func newAuthzFixture(t *testing.T) *scoreboard.Handler {
 	t.Cleanup(func() { boardSt.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	return scoreboard.NewHandler(cat, st, logger,
+		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 		scoreboard.WithAdminEmails([]string{authzAdminEmail}),
 		scoreboard.WithAllowedOrigins([]string{allowedOrigin}),
 		scoreboard.WithDetect(api.DetectConfig{Runner: noopDetectRunner{}}),

@@ -17,6 +17,11 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/store"
 )
 
+// fixtureEmailDomain is the EXPECTED_EMAIL_DOMAIN every scoreboard test
+// fixture runs under (ADR-0034 D5): participant identities in these tests are
+// the canonical "<user>@ctf.local" form auth-policy would have stamped.
+const fixtureEmailDomain = "ctf.local"
+
 type fixture struct {
 	t   *testing.T
 	cat catalog.Catalog
@@ -64,6 +69,7 @@ func newFixture(t *testing.T, now func() time.Time) *fixture {
 	// itself (see origin_guard_test.go for that), so it must not be
 	// collaterally denied by the fail-closed default.
 	srv := scoreboard.NewHandler(cat, st, logger, scoreboard.WithNow(now),
+		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 		scoreboard.WithAdminEmails([]string{fixtureAdminEmail}),
 		scoreboard.WithAllowedOrigins([]string{fixtureOrigin}))
 	return &fixture{t: t, cat: cat, st: st, srv: srv}
@@ -93,6 +99,7 @@ func newFixtureWithHidden(t *testing.T, now func() time.Time, hidden []string) *
 		now = time.Now
 	}
 	srv := scoreboard.NewHandler(cat, st, logger, scoreboard.WithNow(now),
+		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 		scoreboard.WithAdminEmails([]string{fixtureAdminEmail}),
 		scoreboard.WithAllowedOrigins([]string{fixtureOrigin}),
 		scoreboard.WithHiddenUsers(hidden))
@@ -227,6 +234,7 @@ func TestAdminReset(t *testing.T) {
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := scoreboard.NewHandler(cat, st, logger,
+		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 		scoreboard.WithAdminEmails([]string{"admin@ctf.local"}),
 		scoreboard.WithAllowedOrigins([]string{fixtureOrigin}))
 
@@ -273,6 +281,7 @@ func TestAdminSetDisplayName(t *testing.T) {
 	defer st.Close()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := scoreboard.NewHandler(cat, st, logger,
+		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 		scoreboard.WithAdminEmails([]string{"admin@ctf.local"}),
 		scoreboard.WithAllowedOrigins([]string{fixtureOrigin}))
 
@@ -433,6 +442,7 @@ func newCapstone10Fixture(t *testing.T, now func() time.Time) (*fixture, catalog
 	t.Cleanup(func() { st.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := scoreboard.NewHandler(cat, st, logger, scoreboard.WithNow(now),
+		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 		scoreboard.WithAdminEmails([]string{fixtureAdminEmail}),
 		scoreboard.WithAllowedOrigins([]string{fixtureOrigin}))
 	return &fixture{t: t, cat: cat, st: st, srv: srv}, ch
@@ -1497,7 +1507,8 @@ func TestIndexHTML_ServedAtRoot(t *testing.T) {
 
 // ---------------- P23-1: unified portal shell ----------------
 //
-// GET /portal is served to ANY authenticated caller (unlike GET /, which
+// GET /portal is served to ANY caller the participant gate admits (a roster
+// identity or an ADMIN_EMAILS member; unlike GET /, which
 // stays admin-only) — it carries no admin/participant DATA, only two
 // display-only hints (role label, derived username). Authorization for the
 // actual data stays entirely in the API layer (isAdmin / selfOrAdmin), which
@@ -1537,7 +1548,7 @@ func TestPortalHTML_ServedToAdmin(t *testing.T) {
 	if !strings.Contains(body, `window.__PORTAL_ROLE__ = "admin"`) {
 		t.Errorf("expected admin role injection, body=%s", body)
 	}
-	// DeriveUsername runs the same code path for admin as for a participant:
+	// NewUsernameDeriver runs the same code path for admin as for a participant:
 	// fixtureAdminEmail ("admin@ctf.local") has an "@"-prefix that IS a valid
 	// username slug, so the shell still gets a derived-user hint for the
 	// admin viewer (display-only — see the no-admin-data assertions below for
@@ -1707,9 +1718,10 @@ func TestReadGate_EmptyHeaderFailClosed(t *testing.T) {
 }
 
 // TestReadGate_PrefixExactNoMismatch is the core I8-mirror property: user1's
-// identity must NOT satisfy a request for user10 / user1x. The match is
-// prefix-exact ("user1@…"), not a substring/front-match, so the character after
-// the username is pinned to '@'.
+// identity must NOT satisfy a request for user10 / user1x. The match is the
+// exact canonical `<user>@<EXPECTED_EMAIL_DOMAIN>` (ADR-0034 D5), not a
+// prefix/substring/front-match, so the character after the username is pinned
+// to '@' and nothing may follow the domain.
 func TestReadGate_PrefixExactNoMismatch(t *testing.T) {
 	f := newFixture(t, nil)
 	// Caller user1@ requests user10's data → 403 (user10@ ≠ user1@ prefix).

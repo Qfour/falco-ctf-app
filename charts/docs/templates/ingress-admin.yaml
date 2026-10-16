@@ -18,6 +18,9 @@ admin docs site. pathType Prefix (not Exact) because mkdocs emits sub-pages
 (missions/, assets/, etc.) that must all fall under this one path.
 */}}
 {{- if .Values.ingress.adminHost }}
+{{- if hasKey .Values.ingress "adminAuthUrl" }}
+{{- fail "ingress.adminAuthUrl was removed (ADR-0034 D4): the docs-admin Ingress's auth-url is fixed to auth-policy /check-admin; delete the value" }}
+{{- end }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -28,13 +31,20 @@ metadata:
   annotations:
     # 運営ゲート: auth-policy /check-admin (ADMIN_EMAILS のみ通過)。未ログインは
     # auth-signin へ。nginx 側は /docs-admin path prefix で想定解・解説ルートを返す。
-    nginx.ingress.kubernetes.io/auth-url: {{ .Values.ingress.adminAuthUrl | quote }}
+    # ADR-0034 D4: endpoint は template に固定 (値では差し替えられない)。
+    nginx.ingress.kubernetes.io/auth-url: "http://auth-policy.auth-policy.svc.cluster.local:80/check-admin"
     {{- with .Values.ingress.authSignin }}
     nginx.ingress.kubernetes.io/auth-signin: {{ . | quote }}
     {{- end }}
-    nginx.ingress.kubernetes.io/auth-response-headers: "X-Auth-Request-User,X-Auth-Request-Email"
+    nginx.ingress.kubernetes.io/auth-response-headers: "X-Auth-Request-User,X-Auth-Request-Email,X-Auth-Request-Preferred-Username"
+    {{- /* The passthrough must not replace or weaken the identity-stamping gate
+         (ADR-0034 D4). It is an ALLOWLIST of keys (falco-ctf-common
+         .ingressPassthrough), not a list of refused prefixes: `satisfy: any`
+         with a source-range would admit a caller without the auth subrequest,
+         so no canonical identity headers are stamped and the internal-only 403s
+         stop firing; auth-cache-* would reuse one caller's 200 for another. */ -}}
     {{- with .Values.ingress.annotations }}
-    {{- toYaml . | nindent 4 }}
+    {{- include "falco-ctf-common.ingressPassthrough" (dict "field" "ingress.annotations" "annotations" .) | nindent 4 }}
     {{- end }}
 spec:
   ingressClassName: {{ .Values.ingress.className }}

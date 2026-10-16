@@ -62,7 +62,7 @@ flowchart TB
   authp <-->|"/oauth2/auth"| o2p
   o2p <-->|"OIDC"| dex
   ing -->|"/ , /api/state (admin)"| sb
-  ing -->|"/portal , /api/users , /api/challenges (any-login)"| sb
+  ing -->|"/portal , /api/users , /api/challenges (/check-participant)"| sb
   ing -->|"/docs-admin (admin)"| docs
   ing -->|"userN.host"| ttp --> ttyd -->|"kubectl exec (同一 Pod)"| chal
   sb -.->|"TERMINAL タブで iframe 埋め込み"| ttp
@@ -120,8 +120,10 @@ curl -X POST http://localhost:8000/falco/events \
                         "container.image.repository":"falco-ctf/challenge"}}'
 curl http://localhost:8000/api/state | jq
 
-# auth-policy /check を試す (mock-oauth2 が常に 202)
-curl -i http://localhost:8001/check?host=user1
+# auth-policy を試す (mock-oauth2 が常に 202 + user1@ctf.local。scripts/dev-roster.yaml が identity 表)
+curl -i "http://localhost:8001/check-workspace?host=user1"   # 200 (ロスターの seat == host)
+curl -i "http://localhost:8001/check-workspace?host=user2"   # 403
+curl -i http://localhost:8001/check-participant               # 200
 ```
 
 ## colima k3s への deploy

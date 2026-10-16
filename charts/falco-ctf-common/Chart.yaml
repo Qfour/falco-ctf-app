@@ -2,4 +2,4 @@ apiVersion: v2
 name: falco-ctf-common
 description: Falco CTF shared Helm library — named templates for the securityContext / NetworkPolicy patterns duplicated across the service charts (P21 item 5, REFACTORING.md)
 type: library
-version: 0.1.0
+version: 0.2.0

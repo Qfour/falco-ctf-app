@@ -18,7 +18,7 @@ metadata:
     # but ingress-nginx merges same-host Ingress objects and dispatches by
     # path specificity, so the journey Ingress's more specific paths
     # (/portal Exact, /api/users/ and /api/challenges/ Prefix) win over this
-    # `/` rule for those exact routes and keep their own (any-login)
+    # `/` rule for those exact routes and keep their own (/check-participant)
     # auth-url/auth-response-headers — this `/check-admin` gate only ever
     # applies to paths NEITHER Ingress object claims more specifically
     # (i.e. GET /, /api/state, /api/admin/*, /falco/events,
@@ -44,17 +44,14 @@ metadata:
     {{- with .Values.ingress.authSignin }}
     nginx.ingress.kubernetes.io/auth-signin: {{ . | quote }}
     {{- end }}
-    {{- /* The passthrough must not replace the identity-stamping gate: overriding
-         either key would let browser requests reach the scoreboard WITHOUT
-         X-Auth-Request-* (indistinguishable from the collector / falcosidekick
-         path, so the internal-only 403s stop firing). Refuse at render time. */ -}}
-    {{- range $k := list "nginx.ingress.kubernetes.io/auth-url" "nginx.ingress.kubernetes.io/auth-response-headers" }}
-    {{- if hasKey (default dict $.Values.ingress.annotations) $k }}
-    {{- fail (printf "ingress.annotations must not set %s (it is fixed by this chart: the auth gate is not overridable)" $k) }}
-    {{- end }}
-    {{- end }}
+    {{- /* The passthrough must not replace or weaken the identity-stamping gate
+         (ADR-0034 D4). It is an ALLOWLIST of keys (falco-ctf-common
+         .ingressPassthrough), not a list of refused prefixes: `satisfy: any`
+         with a source-range would admit a caller without the auth subrequest,
+         so no canonical identity headers are stamped and the internal-only 403s
+         stop firing; auth-cache-* would reuse one caller's 200 for another. */ -}}
     {{- with .Values.ingress.annotations }}
-    {{- toYaml . | nindent 4 }}
+    {{- include "falco-ctf-common.ingressPassthrough" (dict "field" "ingress.annotations" "annotations" .) | nindent 4 }}
     {{- end }}
 spec:
   ingressClassName: {{ .Values.ingress.className }}

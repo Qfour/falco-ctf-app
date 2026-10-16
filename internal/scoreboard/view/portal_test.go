@@ -10,7 +10,7 @@ import (
 // TestRenderPortal_RoleAndUserInjection proves the two display-only globals
 // are populated as expected for each isAdmin/deriveUser combination P23-1
 // relies on. This is a lower-level unit test of renderPortal itself; the
-// end-to-end wiring (real isAdmin/DeriveUsername, real HTTP gates on
+// end-to-end wiring (real isAdmin/NewUsernameDeriver, real HTTP gates on
 // /api/state) is covered by internal/scoreboard's server_test.go.
 func TestRenderPortal_RoleAndUserInjection(t *testing.T) {
 	cases := []struct {
@@ -80,11 +80,11 @@ func TestRenderPortal_RoleAndUserInjection(t *testing.T) {
 
 // TestRenderPortal_UserValueIsJSONEscaped proves a maliciously-shaped derived
 // username (e.g. containing quotes / script-closing sequences — should never
-// happen in practice since DeriveUsername validates against validUser, but
+// happen in practice since NewUsernameDeriver validates against validUser, but
 // this function must not assume its caller always will) cannot break out of
 // the JS string context and inject a script. html/template's escaping of a
 // template.JS value is what's under test here, not the *content* of a real
-// DeriveUsername username (which is validated elsewhere).
+// NewUsernameDeriver username (which is validated elsewhere).
 func TestRenderPortal_UserValueIsJSONEscaped(t *testing.T) {
 	malicious := `</script><script>alert(1)</script>`
 	r := httptest.NewRequest("GET", "/portal", nil)

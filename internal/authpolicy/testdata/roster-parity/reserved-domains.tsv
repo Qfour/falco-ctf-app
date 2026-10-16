@@ -1,0 +1,39 @@
+# ADR-0034 D2 — the reserved-domain rule's shared case table (R3#5 / R4#2).
+#
+# `input` is a bare domain (an EXPECTED_EMAIL_DOMAIN, or the domain part of an
+# ADMIN_EMAILS element); `expect` is OK when it is a plausible ASCII domain whose
+# LAST label is a reserved name (local / test / invalid / example / localhost),
+# else REJECT. Go: identity.NormalizeDomain + identity.CheckReservedDomain.
+# Platform shell: scripts/lib/roster.sh roster_domain_reserved. Same file format
+# as cases.tsv (see its header): split on the first tab, `#` and blank lines
+# ignored, `{G0}` / `{G1}` placeholders.
+
+# --- OK: the last label is reserved, compared exactly
+ctf.local	OK
+CTF.LOCAL	OK
+partner.example	OK
+a.b.c.test	OK
+x.invalid	OK
+localhost	OK
+my.localhost	OK
+example	OK
+ctf.local.evil.example	OK
+
+# --- REJECT: a label that merely resembles a reserved one
+evil-local	REJECT
+x.notlocal	REJECT
+ctf.localx	REJECT
+local.com	REJECT
+example.com	REJECT
+{G0}	REJECT
+{G1}	REJECT
+sub.{G0}	REJECT
+
+# --- REJECT: not a plausible domain
+	REJECT
+ctf.local.	REJECT
+.local	REJECT
+ctf..local	REJECT
+a@ctf.local	REJECT
+ctf.löcal	REJECT
+ctf. local	REJECT

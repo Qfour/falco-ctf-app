@@ -95,17 +95,17 @@
   function applyRole() {
     const role = window.__PORTAL_ROLE__ || 'participant';
     // Primary identity display (portal-header-refine): the LOGGED-IN
-    // username (server-derived via api.DeriveUsername from
+    // username (server-derived via api.NewUsernameDeriver from
     // X-Auth-Request-Email — see window.__PORTAL_USER__'s doc up in the nav
     // script above), not the role label. __PORTAL_USER__ is "" whenever
-    // DeriveUsername could not derive a slug (e.g. an operator whose email
-    // prefix does not match the participant username shape, or no header at
-    // all) — fall back to the role string itself ("admin"/"participant") so
+    // the deriver could not derive a seat (the email is not exactly the
+    // canonical `<seat>@<EXPECTED_EMAIL_DOMAIN>` — e.g. an admin's own email, an
+    // email on another domain, or no header at all) — fall back to the role string itself ("admin"/"participant") so
     // the identity slot is never left blank. Uses textContent throughout
     // (never innerHTML), so no separate esc() helper is needed here even
     // though window.__PORTAL_USER__ is caller-influenced (it can only ever
-    // equal the caller's OWN X-Auth-Request-Email prefix — see
-    // api.DeriveUsername's doc — and textContent never interprets its input
+    // equal the seat of the caller's OWN X-Auth-Request-Email — see
+    // api.NewUsernameDeriver / api.UsernameFromEmail docs — and textContent never interprets its input
     // as markup regardless).
     const user = window.__PORTAL_USER__ || '';
     document.getElementById('portal-username').textContent = user || role;

@@ -119,7 +119,7 @@ func newNonce() (string, error) {
 //     OWN derived identity (never client-supplied — see ttydURLFor's
 //     security doc), and even a manually-edited src pointed at a
 //     DIFFERENT user's subdomain still independently 403s at
-//     auth-policy's per-host `/check` (I8) — CSP frame-src here is only
+//     auth-policy's per-host `/check-workspace` (I8) — CSP frame-src here is only
 //     ever a "may this ORIGIN be framed at all by this page" allowlist,
 //     not an authorization boundary (matches TtydURLJSON's own doc: "this
 //     field only ever narrows a caller to their OWN workspace"). When
