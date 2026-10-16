@@ -572,8 +572,10 @@ func (h *Handler) Routes() []apispec.Route {
 			Handler:   submitMW(http.HandlerFunc(h.submit)),
 		},
 		{
-			// Detect grading reuses the SAME per-IP submit limiter (same trust
-			// model as /submit) plus a global in-flight cap enforced inside the
+			// Detect grading shares the per-IP submit bucket with /submit but
+			// NOT its trust model: this route is gated by selfOrAdmin (identity
+			// header REQUIRED), /submit is claimed-identity (keying this bucket
+			// by identity is app#328). A global in-flight cap is enforced inside the
 			// handler (429 past it, never queued). Unlike /submit above, this
 			// route has only ONE caller: the journey UI's browser fetch (the
 			// "Grade" button on a detect mission's condition textarea —
@@ -654,10 +656,10 @@ func (h *Handler) Routes() []apispec.Route {
 			// Do NOT remove the origin guard from this route and do NOT add it
 			// to the collector's forward allowlist: ADR-0003 A2-2 made this
 			// endpoint able to delete another participant's exfil receipt, and
-			// a header-less claimed-identity caller would carry no proof the
-			// caller IS {user} (selfOrAdmin, which this route runs, 403s it;
-			// the claimed-identity gate no longer exists, app#346). The guard
-			// 403s exactly the
+			// a header-less cluster-internal caller would carry no proof it IS
+			// {user}. selfOrAdmin, which this route runs, 403s it (the dual-path
+			// self-or-admin-write gate that used to let it through was removed,
+			// app#346). The guard 403s exactly the
 			// shape a header-less cluster-internal caller sends, BEFORE the
 			// self-or-admin check runs — that is what keeps A2-2's destructive
 			// reset from becoming an unauthenticated cross-user action (app#124
@@ -844,7 +846,7 @@ func boardIdentityKeyed(caller string) func(*http.Request) string {
 
 // requireAuthenticated is the app#292 Phase 2 authz=authenticated gate
 // primitive: any caller carrying a proven X-Auth-Request-Email identity may
-// proceed. Unlike selfOrAdmin(Write), it performs NO username-match against
+// proceed. Unlike selfOrAdmin, it performs NO username-match against
 // a {user} path segment — board routes carry no {user} segment at all
 // (threads are addressed by their own {tid}, and ownership/audience/
 // moderation-state entitlement checks live inside internal/board.Store
@@ -1268,8 +1270,9 @@ func (h *Handler) submitDetect(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
 		return
 	}
-	// Self-scope: on an auth-proxied host the claimed user must be the proven
-	// identity (or admin). Uses validated `user` for the exact canonical-form match.
+	// Self-scope: the identity header is REQUIRED (header-less is 403) and the
+	// body user must equal the proven identity's canonical form (or the caller
+	// be an admin). Uses validated `user` for the exact canonical-form match.
 	if !h.selfOrAdmin(w, r, user) {
 		auditLog("forbidden", "user", user)
 		return

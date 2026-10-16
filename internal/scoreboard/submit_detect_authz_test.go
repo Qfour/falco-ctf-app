@@ -41,6 +41,11 @@ func submitDetectAs(t *testing.T, srv http.Handler, bodyUser, email string) *htt
 	return w
 }
 
+// The table shares ONE fixture, so it depends on (a) the per-IP submit bucket
+// (burst 10 per RemoteAddr; submit-detect is limited by it) — the rows must
+// stay under that budget, and a new row past it turns into a 429 — and (b)
+// authz_test.go's noopDetectRunner returning a "missed" verdict, which is
+// what makes a request that passes the gate a plain 200.
 func TestSubmitDetect_RequiresProvenIdentity(t *testing.T) {
 	srv := newAuthzFixture(t)
 	for _, tc := range []struct {
@@ -111,6 +116,9 @@ func goSourceViolations(t *testing.T, file string, src any) []string {
 // TestAuthz_SelfOrAdminWriteVocabularyIsGone: 0 declarations, 0 calls, 0
 // route declarations, 0 spec values — in every non-test Go file under
 // internal/ and cmd/ and in every docs/openapi-*.yaml.
+//
+// Scope: non-test .go files and docs/openapi-*.yaml ONLY. Templates and docs
+// (including comments in them) are out of scope; a human fixes those.
 func TestAuthz_SelfOrAdminWriteVocabularyIsGone(t *testing.T) {
 	root := filepath.Join("..", "..")
 	var violations []string

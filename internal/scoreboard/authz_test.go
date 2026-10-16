@@ -129,7 +129,9 @@ func authzConcretePath(rt apispec.Route) string {
 // never matters here: api.go's submitDetect reads the body and checks
 // selfOrAdmin BEFORE it ever calls h.grader.SubmitDetect (which is the
 // only caller of the runner) — the authz gate under test in this file always
-// resolves (pass or 403) before Grade would run.
+// resolves (pass or 403) before Grade would run. One exception:
+// submit_detect_authz_test.go's 200 rows DO run Grade and depend on this
+// (0, 0, false) "missed" verdict being a 200 response.
 type noopDetectRunner struct{}
 
 func (noopDetectRunner) Grade(_ context.Context, _, _ string) (int, int, bool, error) {

@@ -592,13 +592,16 @@ paths:
         condition and the capture contents are NEVER returned — only fire
         counts.
 
-        ONE caller (the portal's Grade button), so the origin guard is safe to
-        apply here: the collector does not forward this route. Authz is
-        `self-or-admin` and the identity header is REQUIRED: the claimed body
-        `user` must be the proven identity's canonical form (or the caller an
-        admin), and a request with no `X-Auth-Request-Email` is `403` (app#346;
-        there is no claimed-identity fallback). Past the global in-flight cap the request is REJECTED
-        with 429, never queued (a per-submission grader Job is the net-new DoS
+        There is no caller today (no detect challenge ships yet). The planned
+        caller is the portal's Grade button (docs/detect-challenge-design.md
+        §6); the origin guard and the required identity header assume that
+        browser-only caller, and the collector does not forward this route.
+        Authz is `self-or-admin`: a request that gets past the feature /
+        catalog / body checks (see 503, 404, 400) is `403` when it carries no
+        `X-Auth-Request-Email` (app#346; there is no claimed-identity
+        fallback), and `403` when the body `user` is not the proven identity's
+        canonical form (an admin may grade any user). Past the global in-flight
+        cap the request is REJECTED with 429, never queued (a per-submission grader Job is the net-new DoS
         lever). With no runner configured the route answers 503 (feature off),
         not 404/500.
       parameters:
