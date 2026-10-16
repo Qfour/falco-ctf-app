@@ -158,7 +158,7 @@ func (f *profileFixture) wantProfile(user, wantName, wantAvatar string) {
 // --- V1: route, header, self --------------------------------------------------
 
 // The headline: a request with an ALLOWED Origin and NO identity header is 403
-// and writes nothing. (With a selfOrAdminWrite implementation this would be a
+// and writes nothing. (With a header-less-allowing implementation this would be a
 // claimed-identity 200 — the origin guard only stops the no-Origin curl shape,
 // not a forged Origin.)
 func TestProfile_V1_HeaderlessWithAllowedOriginIs403(t *testing.T) {
@@ -172,7 +172,7 @@ func TestProfile_V1_HeaderlessWithAllowedOriginIs403(t *testing.T) {
 
 // V1: "Routes() から self-or-admin の全 route を導出してヘッダ無しの 403を確かめる".
 // The existing derivation (TestAuthz_AllDeclaredGatesEnforced) only fires with a
-// MISMATCHED identity, which a selfOrAdminWrite handler also rejects, so it
+// MISMATCHED identity, which a header-less-allowing handler also rejects, so it
 // cannot tell the two gates apart. This one sends NO header, with an allowed
 // Origin (so the origin guard cannot be the thing that answered 403).
 func headerlessViolation(srv http.Handler, rt apispec.Route) string {
@@ -198,7 +198,7 @@ func TestProfile_V1_EverySelfOrAdminRouteRejectsHeaderless(t *testing.T) {
 	srv := newAuthzFixture(t)
 	var checked []string
 	for _, rt := range srv.Routes() {
-		if rt.Authz != apispec.AuthzSelfOrAdmin { // NOT -write: its header-less branch is the collector path, by design
+		if rt.Authz != apispec.AuthzSelfOrAdmin {
 			continue
 		}
 		checked = append(checked, rt.MuxPattern())
@@ -210,9 +210,10 @@ func TestProfile_V1_EverySelfOrAdminRouteRejectsHeaderless(t *testing.T) {
 		})
 	}
 	sort.Strings(checked)
-	// non-vacuous: the 2 reads + steps/check + hints + reset-dirty + profile.
-	if len(checked) != 6 {
-		t.Fatalf("derived %d self-or-admin routes %v, want 6 (the derivation is broken, or a route changed gate)", len(checked), checked)
+	// non-vacuous: the 2 reads + steps/check + hints + reset-dirty + profile
+	// + submit-detect (app#346: it used to be self-or-admin-write).
+	if len(checked) != 7 {
+		t.Fatalf("derived %d self-or-admin routes %v, want 7 (the derivation is broken, or a route changed gate)", len(checked), checked)
 	}
 	found := false
 	for _, c := range checked {
@@ -224,11 +225,11 @@ func TestProfile_V1_EverySelfOrAdminRouteRejectsHeaderless(t *testing.T) {
 }
 
 // The detector is not vacuous: a self-or-admin route backed by a handler that
-// falls back to claimed-identity (selfOrAdminWrite's shape) is flagged.
+// falls back to claimed-identity (the removed selfOrAdminWrite's shape) is flagged.
 func TestProfile_V1_HeaderlessDetectorCatchesClaimedIdentityFallback(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/users/{user}/profile", func(w http.ResponseWriter, r *http.Request) {
-		// selfOrAdminWrite's header-less branch: no header -> allow.
+		// the removed self-or-admin-write gate's header-less branch: no header -> allow.
 		if r.Header.Get("X-Auth-Request-Email") == "" {
 			w.WriteHeader(http.StatusOK)
 			return

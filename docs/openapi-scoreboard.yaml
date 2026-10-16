@@ -29,7 +29,7 @@ info:
     --------------------------------------------------------------
       x-ctf-audience          participant | operator | internal | infra
       x-ctf-authz             none | admin | self-or-admin |
-                              self-or-admin-write | claimed-identity |
+                              claimed-identity |
                               internal-claimed-identity (claimed identity on
                               the cluster-internal path ONLY — collector
                               forwards, falcosidekick's webhook: any
@@ -581,7 +581,7 @@ paths:
       operationId: submitDetect
       tags: [participant]
       x-ctf-audience: participant
-      x-ctf-authz: self-or-admin-write
+      x-ctf-authz: self-or-admin
       x-ctf-origin-guard: true
       x-ctf-collector-forward: false
       x-ctf-rate-limit: per-IP 1 req/s burst 10 + global in-flight grader cap (5)
@@ -593,9 +593,11 @@ paths:
         counts.
 
         ONE caller (the portal's Grade button), so the origin guard is safe to
-        apply here: the collector does not forward this route. On an
-        auth-proxied host the claimed body `user` must be the proven identity
-        (or an admin). Past the global in-flight cap the request is REJECTED
+        apply here: the collector does not forward this route. Authz is
+        `self-or-admin` and the identity header is REQUIRED: the claimed body
+        `user` must be the proven identity's canonical form (or the caller an
+        admin), and a request with no `X-Auth-Request-Email` is `403` (app#346;
+        there is no claimed-identity fallback). Past the global in-flight cap the request is REJECTED
         with 429, never queued (a per-submission grader Job is the net-new DoS
         lever). With no runner configured the route answers 503 (feature off),
         not 404/500.
@@ -618,7 +620,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "403":
-          description: origin guard denied, or caller is neither `{user}` nor an admin
+          description: origin guard denied, no identity header, or caller is neither `{user}` nor an admin
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -846,9 +848,8 @@ paths:
         caller a fail-closed gate would break.
 
         Authz is `self-or-admin` (identity header REQUIRED, 403 without it —
-        the identity rate limiter and the handler gate both enforce this); the
-        header-less claimed-identity branch of `self-or-admin-write` does not
-        apply to this route.
+        the identity rate limiter and the handler gate both enforce this);
+        no claimed-identity fallback exists for this route.
       parameters:
         - $ref: "#/components/parameters/User"
         - $ref: "#/components/parameters/Cid"
@@ -1059,8 +1060,8 @@ paths:
         left out keeps its current value.
 
         Authorization is `self-or-admin` and the identity header is REQUIRED:
-        a request with no `X-Auth-Request-Email` is 403, never the
-        claimed-identity fallback `self-or-admin-write` allows. This route is
+        a request with no `X-Auth-Request-Email` is 403 (there is no
+        claimed-identity fallback). This route is
         origin-guarded and is NOT in the collector's forward allowlist (a
         workspace `curl` cannot reach it, on purpose: the portal's profile form
         is the only participant path). Rate-limited per proven identity on the

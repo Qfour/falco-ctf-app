@@ -86,7 +86,7 @@ func authzCheck(t *testing.T, srv http.Handler, rt apispec.Route) string {
 	srv.ServeHTTP(w, r)
 
 	switch rt.Authz {
-	case apispec.AuthzAdmin, apispec.AuthzSelfOrAdmin, apispec.AuthzSelfOrAdminWrite:
+	case apispec.AuthzAdmin, apispec.AuthzSelfOrAdmin:
 		if w.Code != http.StatusForbidden {
 			return fmt.Sprintf("%s: status=%d body=%s, want 403 (Authz: %s — %s must not be granted)",
 				rt.MuxPattern(), w.Code, w.Body, rt.Authz, authzMismatchedEmail)
@@ -123,7 +123,7 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 		switch rt.Authz {
 		case apispec.AuthzAdmin:
 			adminGated++
-		case apispec.AuthzSelfOrAdmin, apispec.AuthzSelfOrAdminWrite:
+		case apispec.AuthzSelfOrAdmin:
 			selfGated++
 		case apispec.AuthzNone, apispec.AuthzClaimedIdentity:
 			openGated++

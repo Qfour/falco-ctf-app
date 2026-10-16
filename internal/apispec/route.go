@@ -75,11 +75,10 @@ const (
 type Authz string
 
 const (
-	AuthzNone             Authz = "none"
-	AuthzAdmin            Authz = "admin"
-	AuthzSelfOrAdmin      Authz = "self-or-admin"
-	AuthzSelfOrAdminWrite Authz = "self-or-admin-write"
-	AuthzClaimedIdentity  Authz = "claimed-identity"
+	AuthzNone            Authz = "none"
+	AuthzAdmin           Authz = "admin"
+	AuthzSelfOrAdmin     Authz = "self-or-admin"
+	AuthzClaimedIdentity Authz = "claimed-identity"
 	// AuthzInternalClaimedIdentity: claimed identity (taken from the path, the
 	// body or the event payload, never proven) on the cluster-internal path
 	// ONLY — the collector's forwards and falcosidekick's webhook. Any request carrying an
@@ -90,7 +89,7 @@ const (
 	AuthzInternalClaimedIdentity Authz = "internal-claimed-identity"
 	// AuthzAuthenticated (app#292 Phase 2 / QA Board): any caller carrying a
 	// proven X-Auth-Request-Email identity may proceed — unlike
-	// AuthzSelfOrAdmin(Write), it enforces NO username-match against a
+	// AuthzSelfOrAdmin, it enforces NO username-match against a
 	// {user} path segment, because Board routes carry no {user} segment at
 	// all (threads are keyed by author identity, and ownership/audience
 	// checks live inside internal/board.Store itself, not in the HTTP
