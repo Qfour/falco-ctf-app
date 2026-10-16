@@ -80,7 +80,7 @@ Signpost 1)。Exact エントリは param を持つ route を被覆できない 
 - **D5 `/static/` に置けるもの**: 誰に読まれてもよい表示用アセットだけ。課題の内容 (Quest content・図鑑の文・ヒント) や利用者ごとに
   変わるものは置かない (self-scope の API で出す)。散文の規則にせず、次で機械的に縛る。
   - **登録表を pin する**: 論理名の集合をテストで固定する (変えるには pin の更新が要り、その PR は security-engineer レビュー必須)。
-    拡張子は `.css` と `.woff2` だけ。`.js` は Signposts 4 の supersede まで載せない (CSP は `script-src 'self'` を含むので、登録表に
+    拡張子は `.css` と `.woff2` だけ (**ADR-0034 D9 が限定的に supersede**: `avatars/` の下に限り `.svg` を足した。登録表が起動時に SVG を要素・属性の allow-list で検査し、応答に nosniff と `sandbox` の CSP を付ける)。`.js` は Signposts 4 の supersede まで載せない (CSP は `script-src 'self'` を含むので、登録表に
     入った script は nonce なしで実行できる)。入力は `view/static` と `view/vendor` の埋め込みだけ。
   - **共有 cache の両面**: `public` で配るので、200 は認証を通らずに返りうる (だから公開してよいものだけを置く)。逆向きもある:
     未認証の GET には sign-in への 302 が返り、これは Cache-Control を持たない。edge に載れば、認証済みの参加者にも 302 が返りうる

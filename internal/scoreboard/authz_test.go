@@ -303,19 +303,24 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 	// browser path of POST /falco/events and POST /internal/exfil/{cid} moves
 	// both out of the none/claimed-identity bucket (their Authz was
 	// claimed-identity, which openGated counts with none) into
-	// internal-claimed-identity: 9 + 6 + 3 + 6 + 6 = 30, matching
+	// internal-claimed-identity: 9 + 6 + 3 + 6 + 6 = 30; ADR-0034 S1 then removed
+	// the participant display-name route (internal-claimed-identity 3 -> 2) and
+	// added the two profile routes (+1 admin, +1 self-or-admin):
+	// 10 + 7 + 2 + 6 + 6 = 31, matching
 	// apispec_parity_test.go's TestAPISpec_V1_RouteSetMatchesSpec.
-	if adminGated != 9 {
-		t.Fatalf("expected exactly 9 Authz: admin routes (ADR-0005 canon: GET /, GET /api/state, POST /api/admin/reset, POST /api/admin/users/{user}/display-name; app#292 QA Board: GET /api/admin/board/threads, GET /api/admin/board/threads/{tid}, POST /api/admin/board/threads/{tid}/reply, POST /api/admin/board/threads/{tid}/state, POST /api/admin/board/messages/{mid}/state), got %d", adminGated)
+	// ADR-0034 S1 (D8): +1 admin (POST /api/admin/users/{user}/profile-reset) and
+	// +1 self-or-admin (POST /api/users/{user}/profile).
+	if adminGated != 10 {
+		t.Fatalf("expected exactly 10 Authz: admin routes (ADR-0005 canon: GET /, GET /api/state, POST /api/admin/reset, POST /api/admin/users/{user}/display-name; app#292 QA Board: GET /api/admin/board/threads, GET /api/admin/board/threads/{tid}, POST /api/admin/board/threads/{tid}/reply, POST /api/admin/board/threads/{tid}/state, POST /api/admin/board/messages/{mid}/state; ADR-0034: POST /api/admin/users/{user}/profile-reset), got %d", adminGated)
 	}
-	if selfGated != 6 {
-		t.Fatalf("expected exactly 6 Authz: self-or-admin(-write) routes (GET /api/users/{user}/me, GET /api/users/{user}/journey, POST /api/challenges/{cid}/submit-detect, POST /api/users/{user}/challenges/{cid}/steps/{idx}/check, POST /api/users/{user}/challenges/{cid}/hints/{idx}, POST /api/users/{user}/challenges/{cid}/reset-dirty — P25's 4 QA self-or-admin(-write) routes are gone, cutover), got %d", selfGated)
+	if selfGated != 7 {
+		t.Fatalf("expected exactly 7 Authz: self-or-admin(-write) routes (GET /api/users/{user}/me, GET /api/users/{user}/journey, POST /api/challenges/{cid}/submit-detect, POST /api/users/{user}/challenges/{cid}/steps/{idx}/check, POST /api/users/{user}/challenges/{cid}/hints/{idx}, POST /api/users/{user}/challenges/{cid}/reset-dirty, ADR-0034: POST /api/users/{user}/profile — P25's 4 QA self-or-admin(-write) routes are gone, cutover), got %d", selfGated)
 	}
 	if openGated != 6 {
 		t.Fatalf("expected exactly 6 Authz: none/claimed-identity routes (GET /portal, GET /static/{asset} (ADR-0028), GET /healthz, GET /metrics, POST /api/challenges/{cid}/submit; Issue #95: POST /csp-report), got %d", openGated)
 	}
-	if internalGated != 3 {
-		t.Fatalf("expected exactly 3 Authz: internal-claimed-identity routes (POST /api/users/{user}/display-name, collector-only — ADR-0034 D12 S1; POST /falco/events and POST /internal/exfil/{cid}, internal-only — browser path closed), got %d", internalGated)
+	if internalGated != 2 {
+		t.Fatalf("expected exactly 2 Authz: internal-claimed-identity routes (POST /falco/events and POST /internal/exfil/{cid}, internal-only — browser path closed; the collector-only participant display-name route was removed in ADR-0034 D12 S1), got %d", internalGated)
 	}
 	if authenticatedGated != 6 {
 		t.Fatalf("expected exactly 6 Authz: authenticated routes (app#292 QA Board participant routes: GET /api/board/threads, GET /api/board/threads/{tid}, POST /api/board/threads, POST /api/board/threads/{tid}/messages, POST /api/board/threads/{tid}/like, POST /api/board/threads/{tid}/unlike), got %d", authenticatedGated)

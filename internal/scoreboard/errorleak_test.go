@@ -111,12 +111,6 @@ func TestErrorLeak_InvalidBody_ExfilInternal(t *testing.T) {
 	assertErrorBody(t, w, 400, "invalid request body")
 }
 
-func TestErrorLeak_InvalidBody_SetDisplayName(t *testing.T) {
-	f := newFixture(t, nil)
-	w := f.doRawAs("POST", "/api/users/alice/display-name", "", "{")
-	assertErrorBody(t, w, 400, "invalid request body")
-}
-
 // TestErrorLeak_InvalidBody_StepCheck pins the same decode-error contract for
 // stepCheck (api.go's third json.NewDecoder call site, one of the 13 fixed by
 // Issue #113). newFixture's catalog has no journey content wired, so it would
@@ -162,14 +156,5 @@ func TestErrorLeak_StoreError_AdminSetDisplayName(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := f.doAdmin("POST", "/api/admin/users/alice/display-name", map[string]any{"name": "Alice"})
-	assertErrorBody(t, w, 500, "could not set display name")
-}
-
-func TestErrorLeak_StoreError_SetDisplayName(t *testing.T) {
-	f := newFixture(t, nil)
-	if err := f.st.Close(); err != nil {
-		t.Fatal(err)
-	}
-	w := f.do("POST", "/api/users/alice/display-name", map[string]any{"name": "Alice"})
 	assertErrorBody(t, w, 500, "could not set display name")
 }

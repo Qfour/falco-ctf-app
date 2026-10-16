@@ -44,6 +44,15 @@ func doGET(mux http.Handler, target string, hdr map[string]string) *httptest.Res
 // security-engineer review (the registry is what 'script-src self' and the
 // public cache trust). Extensions are pinned separately below.
 var wantLogicalNames = []string{
+	// ADR-0034 D9 (limited supersede of ADR-0028 D5): the 8 avatar glyphs.
+	"avatars/bug.svg",
+	"avatars/falcon.svg",
+	"avatars/flame.svg",
+	"avatars/key.svg",
+	"avatars/lock.svg",
+	"avatars/radar.svg",
+	"avatars/shield.svg",
+	"avatars/terminal.svg",
 	"chakrapetch-500.woff2",
 	"chakrapetch-600.woff2",
 	"chakrapetch-700.woff2",
@@ -71,11 +80,14 @@ func TestStaticAssets_RegistryPin(t *testing.T) {
 	for ext := range staticAssetTypes {
 		gotExts[ext] = true
 	}
-	if !reflect.DeepEqual(gotExts, map[string]bool{".css": true, ".woff2": true}) {
-		t.Fatalf("allowed static asset extensions = %v, want exactly .css and .woff2 (D5: no .js while CSP carries script-src 'self')", gotExts)
+	if !reflect.DeepEqual(gotExts, map[string]bool{".css": true, ".woff2": true, ".svg": true}) {
+		t.Fatalf("allowed static asset extensions = %v, want exactly .css, .woff2 and .svg (D5 + ADR-0034 D9: no .js while CSP carries script-src 'self'; .svg only through the sanitizer, only under avatars/)", gotExts)
+	}
+	if !reflect.DeepEqual(staticAssetDirs, map[string]string{"avatars": ".svg"}) {
+		t.Fatalf("static asset directories = %v, want exactly avatars -> .svg (ADR-0034 D9)", staticAssetDirs)
 	}
 
-	servedRe := regexp.MustCompile(`^[a-z0-9]+(?:[.-][a-z0-9]+)*\.[0-9a-f]{16}\.(css|woff2)$`)
+	servedRe := regexp.MustCompile(`^[a-z0-9]+(?:[.-][a-z0-9]+)*\.[0-9a-f]{16}\.(css|woff2|svg)$`)
 	for name, a := range staticAssets.byName {
 		if !servedRe.MatchString(a.servedName) {
 			t.Errorf("%s: served name %q does not match <stem>.<16 hex>.<ext>", name, a.servedName)
@@ -105,6 +117,11 @@ func TestBuildAssetRegistry_Rejects(t *testing.T) {
 		{"a name with no extension (LICENSE next to the vendored files)", []assetSource{{"LICENSE", []byte("x")}}, `"LICENSE": extension "" is not allowed`},
 		{"a markdown file (PROVENANCE.md next to the vendored files)", []assetSource{{"readme.md", []byte("x")}}, `"readme.md": extension ".md" is not allowed`},
 		{"a subdirectory in the name", []assetSource{{"fonts/a.woff2", []byte("x")}}, `"fonts/a.woff2": not a single lower-case path segment`},
+		{"a nested subdirectory under avatars/", []assetSource{{"avatars/x/a.svg", []byte(okSVG)}}, `"avatars/x/a.svg": not a single lower-case path segment`},
+		{"a stylesheet under avatars/ (the directory takes only .svg)", []assetSource{{"avatars/a.css", css}}, `"avatars/a.css": not a single lower-case path segment`},
+		{"an svg at the top level (ADR-0034 D9: only under avatars/)", []assetSource{{"a.svg", []byte(okSVG)}}, `"a.svg": .svg is allowed only inside a directory`},
+		{"an svg in another directory", []assetSource{{"icons/a.svg", []byte(okSVG)}}, `"icons/a.svg": not a single lower-case path segment`},
+		{"an upper-case avatar name", []assetSource{{"avatars/Falcon.svg", []byte(okSVG)}}, `"avatars/Falcon.svg": not a single lower-case path segment`},
 		{"an upper-case name", []assetSource{{"Tokens.css", css}}, `"Tokens.css": not a single lower-case path segment`},
 		{"a duplicate name", []assetSource{{"a.css", css}, {"a.css", css}}, `"a.css" registered twice`},
 		{"an empty file", []assetSource{{"a.css", nil}}, `"a.css" is empty`},

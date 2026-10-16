@@ -32,7 +32,7 @@ spec:
       ports:
         - protocol: TCP
           port: 8000
-    # collector → participant surface (submit / me / display-name) + the
+    # collector → participant surface (submit) + the
     # internal exfil sink /internal/exfil/{cid} (P11.5 full one-pipe). Workspaces
     # NEVER reach the scoreboard directly: with egress lockdown on, ctf-user can
     # only talk to the collector, which fronts and forwards here. The old

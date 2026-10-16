@@ -41,7 +41,7 @@
 #       catalog id; every tracked `challenges/*/fixtures/**` file is there
 #       with the same sha256 + mode and nothing else is (no untracked/ignored
 #       file, no symlink/special file); no tracked non-fixture file under
-#       challenges/ (except the 4 individually COPY'd tools) has a sha256
+#       challenges/ (except the 3 individually COPY'd tools) has a sha256
 #       found anywhere in the image; the entry set directly under /opt/ctf
 #       is pinned.
 #   V2  the keys of /opt/ctf/answers.yaml == the catalog's evade ids.
@@ -204,10 +204,10 @@ sha256_of() { # $1=file -> hex digest (macOS has shasum, Linux sha256sum)
 }
 mode_of() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"; }
 
-# The 4 tools COPY'd individually by images/challenge/Dockerfile (ADR-0026 D2:
+# The 3 tools COPY'd individually by images/challenge/Dockerfile (ADR-0026 D2:
 # unchanged). Pinned HERE, not derived from the Dockerfile, so adding a COPY
 # of another challenges/ file cannot silently exempt it from the sha256 scan.
-TOOLS="challenges/submit-all.sh challenges/setname.sh challenges/submit-yaml.sh challenges/banner.sh"
+TOOLS="challenges/submit-all.sh challenges/submit-yaml.sh challenges/banner.sh"
 
 # --- reference sets from git (fail-closed on any error / empty set) ---------
 git -c core.quotepath=off ls-files 'challenges/*/falco-rule.yaml' >"$T/rules" || die "git ls-files (falco-rule.yaml) failed"
@@ -302,12 +302,12 @@ done <"$T/exp-fixtures"
 
 # V1c: /opt/ctf top-level entry set is pinned
 awk -F'\t' '$1 == "T" { print $2, $3 }' "$T/img-missions" | sort >"$T/top"
-printf '%s\n' 'd missions' 'd plant-seed' 'f answers.yaml' 'f banner.sh' 'f setname.sh' 'f submit-yaml.sh' 'f submit.sh' | sort >"$T/top-exp"
+printf '%s\n' 'd missions' 'd plant-seed' 'f answers.yaml' 'f banner.sh' 'f submit-yaml.sh' 'f submit.sh' | sort >"$T/top-exp"
 if ! cmp -s "$T/top" "$T/top-exp"; then
   fail V1 "/opt/ctf entry set differs (< expected only / > image only): $(diff "$T/top-exp" "$T/top" | grep '^[<>]' | tr '\n' ';')"
 fi
 
-# V1d: no tracked non-fixture challenges/ file (minus the 4 tools; empty files carry no content)
+# V1d: no tracked non-fixture challenges/ file (minus the 3 tools; empty files carry no content)
 # has a sha256 found anywhere in the image (whole filesystem, -xdev).
 docker run --rm --entrypoint sh "${IMAGE}" -c 'set -eu; find / -xdev -type f -exec sha256sum {} + >/tmp/sums; cut -d" " -f1 /tmp/sums' >"$T/img-all-sha.raw" \
   || die "V1: hashing the image filesystem failed"

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/Qfour/falco-ctf-app/internal/board"
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/avatar"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/oapi"
 )
 
@@ -51,6 +52,13 @@ func parseBoardTimestamp(s string) (time.Time, error) {
 // without opening a real Store.
 type boardDisplayNameFunc func(user string) string
 
+// boardAvatarFunc resolves a board author slug to the avatar id the response
+// carries (ADR-0034 D8): the stored id, or the seat's default. Threaded the
+// same way, and for the same reason, as boardDisplayNameFunc — internal/board
+// never imports internal/store or the avatar table. An admin-authored message
+// never calls it: it carries avatar.StaffID.
+type boardAvatarFunc func(user string) string
+
 // toOapiBoardMessage converts one board.Message into its oapi.BoardMessage
 // wire shape. board.Message.CreatedAt is always written as
 // h.now().UTC().Format(time.RFC3339Nano) by this handler package (see
@@ -63,23 +71,27 @@ type boardDisplayNameFunc func(user string) string
 // AuthorDisplay: an admin-authored message (AuthorRole == RoleAdmin, always
 // the fixed boardStaffAuthor constant per board.go's AppendAdminReply call)
 // gets the fixed boardStaffDisplay label ("運営") — never a real operator
-// name, same posture as the author field itself. A participant-authored
-// message resolves through displayName, which falls back to the slug
-// (fail-safe — see boardDisplayNameFunc's own doc).
-func toOapiBoardMessage(m board.Message, displayName boardDisplayNameFunc) (oapi.BoardMessage, error) {
+// name, same posture as the author field itself. AuthorAvatar follows the same
+// rule: it is the one fixed avatar.StaffID, never derived from the operator.
+// A participant-authored message resolves through displayName, which falls
+// back to the slug (fail-safe — see boardDisplayNameFunc's own doc).
+func toOapiBoardMessage(m board.Message, displayName boardDisplayNameFunc, avatarOf boardAvatarFunc) (oapi.BoardMessage, error) {
 	createdAt, err := parseBoardTimestamp(m.CreatedAt)
 	if err != nil {
 		return oapi.BoardMessage{}, err
 	}
 	authorDisplay := boardStaffDisplay
+	authorAvatar := avatar.StaffID
 	if m.AuthorRole != board.RoleAdmin {
 		authorDisplay = displayName(m.Author)
+		authorAvatar = avatarOf(m.Author)
 	}
 	return oapi.BoardMessage{
 		Id:            m.ID,
 		AuthorRole:    oapi.BoardMessageAuthorRole(m.AuthorRole),
 		Author:        m.Author,
 		AuthorDisplay: authorDisplay,
+		AuthorAvatar:  oapi.AvatarId(authorAvatar),
 		Body:          m.Body,
 		CreatedAt:     createdAt,
 		State:         oapi.BoardMessageState(m.State),
@@ -92,14 +104,14 @@ func toOapiBoardMessage(m board.Message, displayName boardDisplayNameFunc) (oapi
 // RoleParticipant for the opening message/thread row — there is no
 // "admin-authored thread"), so AuthorDisplay resolves through displayName
 // unconditionally, unlike toOapiBoardMessage's per-message role branch.
-func toOapiBoardThread(th board.Thread, displayName boardDisplayNameFunc) (oapi.BoardThread, error) {
+func toOapiBoardThread(th board.Thread, displayName boardDisplayNameFunc, avatarOf boardAvatarFunc) (oapi.BoardThread, error) {
 	createdAt, err := parseBoardTimestamp(th.CreatedAt)
 	if err != nil {
 		return oapi.BoardThread{}, err
 	}
 	msgs := make([]oapi.BoardMessage, 0, len(th.Messages))
 	for _, m := range th.Messages {
-		om, err := toOapiBoardMessage(m, displayName)
+		om, err := toOapiBoardMessage(m, displayName, avatarOf)
 		if err != nil {
 			return oapi.BoardThread{}, err
 		}

@@ -46,7 +46,8 @@ func renderedAnnotations(t *testing.T, template string) map[string]string {
 
 // TestIngresses_StampProxyIdentityHeaders pins the premise the "browser path
 // is closed by a 403 on any X-Auth-Request-* header" controls rest on
-// (display-name, POST /falco/events, POST /internal/exfil/{cid}): BOTH
+// (POST /falco/events, POST /internal/exfil/{cid}; the participant display-name
+// route that was the first of these is gone, ADR-0034 S1): BOTH
 // Ingress objects (the participant journey one and the admin catch-all) must
 // run an auth subrequest and list X-Auth-Request-Email in
 // auth-response-headers, so every request reaching the scoreboard through a

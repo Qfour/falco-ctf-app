@@ -1020,25 +1020,6 @@ func TestJourneyWriteGate_OpenHint_CrossUserOracleBlocked(t *testing.T) {
 	}
 }
 
-// TestJourneyWriteGate_DisplayName proves display-name is collector-only
-// (ADR-0034 D12 S1): every auth-proxied identity — self, other, admin — is
-// 403 (there is no self-or-admin path any more), and only the header-less
-// collector-fronted call is allowed.
-func TestJourneyWriteGate_DisplayName(t *testing.T) {
-	f := newJourneyFixture(t, scoreboard.WithAdminEmails([]string{"root@ctf.local"}))
-	body := map[string]any{"name": "Nickname"}
-
-	for _, email := range []string{"alice@ctf.local", "mallory@ctf.local", "root@ctf.local"} {
-		if w := f.reqAs("POST", "/api/users/alice/display-name", email, body); w.Code != http.StatusForbidden {
-			t.Fatalf("display-name with X-Auth-Request-Email=%s must 403, got %d body=%s", email, w.Code, w.Body)
-		}
-	}
-	// header-less (collector-fronted display-name, accepted LOW) → allowed
-	if w := f.req("POST", "/api/users/alice/display-name", body); w.Code != http.StatusOK {
-		t.Fatalf("header-less display-name must 200 (collector path), got %d body=%s", w.Code, w.Body)
-	}
-}
-
 // TestJourneyWriteGate_ResetDirty_HeaderPresent mirrors StepCheck (App-H2):
 // self may reset own dirty taint, a third party is 403 and does NOT clear it,
 // and admin may reset anyone's. 02-evade is this fixture's evade-type

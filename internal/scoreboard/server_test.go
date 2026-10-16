@@ -3,14 +3,12 @@ package scoreboard_test
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -118,8 +116,8 @@ func falcoEventBody(rule, user string, opts ...func(map[string]any)) map[string]
 	body := map[string]any{
 		"rule": rule,
 		"output_fields": map[string]any{
-			"k8s.ns.name":               "ctf-" + user,
-			"k8s.pod.name":              "workspace",
+			"k8s.ns.name":                "ctf-" + user,
+			"k8s.pod.name":               "workspace",
 			"container.image.repository": "docker.io/falco-ctf/challenge",
 		},
 	}
@@ -1361,11 +1359,16 @@ func TestUserMe_HiddenUser_SeesOwnScore_RankZero(t *testing.T) {
 	}
 }
 
-// ---------------- /api/users/{user}/display-name ----------------
+// ---------------- display name: read-side propagation + the removed participant route ----------------
+//
+// ADR-0034 S1: the participant POST /api/users/{user}/display-name (reached by
+// the workspace's `setname` through the collector) is gone. The display name is
+// still READ on every projection; it is WRITTEN here only by the admin route
+// (TestAdminSetDisplayName) and, from S1-a, by the authenticated profile route.
 
 func TestDisplayName_SetThenReadInState(t *testing.T) {
 	f := newFixture(t, nil)
-	w := f.do("POST", "/api/users/alice/display-name", map[string]any{"name": "Alice ★"})
+	w := f.doAdmin("POST", "/api/admin/users/alice/display-name", map[string]any{"name": "Alice ★"})
 	if w.Code != 200 {
 		t.Fatalf("status: %d body=%s", w.Code, w.Body)
 	}
@@ -1400,160 +1403,57 @@ func TestDisplayName_DefaultsToIdentity(t *testing.T) {
 	}
 }
 
-func TestDisplayName_Validation(t *testing.T) {
+func TestDisplayName_AdminRouteValidation(t *testing.T) {
 	f := newFixture(t, nil)
 	bad := []map[string]any{
-		{"name": ""},                                          // empty
-		{"name": "<script>"},                                   // HTML metachar
-		{"name": "ab&cd"},                                      // HTML metachar
-		{"name": "ab\x00cd"},                                   // control char
-		{"name": "1234567890123456789012345678901234567890"},   // > 32 runes
+		{"name": ""},         // empty
+		{"name": "<script>"}, // HTML metachar
+		{"name": "ab&cd"},    // HTML metachar
+		{"name": "ab\x00cd"}, // control char
+		{"name": "1234567890123456789012345678901234567890"}, // > 32 runes
 	}
 	for _, b := range bad {
-		w := f.do("POST", "/api/users/alice/display-name", b)
+		w := f.doAdmin("POST", "/api/admin/users/alice/display-name", b)
 		if w.Code != 400 {
 			t.Errorf("name=%v should be 400, got %d", b["name"], w.Code)
 		}
 	}
 }
 
-// Participants can set AND change their own display name (last-write-wins).
-// Pins the self-service rename contract.
-func TestDisplayName_ParticipantCanChange(t *testing.T) {
+// TestDisplayName_ParticipantRouteRemoved pins ADR-0034 D12 / S1: the
+// participant POST /api/users/{user}/display-name is not on the mux at all —
+// for the header-less collector shape, for a browser-path request carrying
+// X-Auth-Request-*, and for an admin session — so none of them can write a
+// name, and the route is not in the declared route table either. (Not 403 or
+// 200: that would mean a handler still exists behind a gate.)
+func TestDisplayName_ParticipantRouteRemoved(t *testing.T) {
 	f := newFixture(t, nil)
-	w1 := f.do("POST", "/api/users/alice/display-name", map[string]any{"name": "First"})
-	if w1.Code != 200 {
-		t.Fatalf("first set should succeed, got %d", w1.Code)
-	}
-	w2 := f.do("POST", "/api/users/alice/display-name", map[string]any{"name": "Second"})
-	if w2.Code != 200 {
-		t.Fatalf("second set (change) should succeed, got %d", w2.Code)
-	}
-	// /me reflects the latest name
-	got := decode(t, f.doUser("GET", "/api/users/alice/me", "alice", nil))
-	if got["display_name"] != "Second" {
-		t.Fatalf("latest name should win, got %v", got["display_name"])
-	}
-}
-
-// dnReq issues POST /api/users/{user}/display-name with an explicit
-// Content-Type (omitted when "") and arbitrary extra headers, so the
-// collector-only contract (ADR-0034 D12 S1) can be probed from both sides:
-// the header-less internal path and the X-Auth-Request-* browser path.
-func (f *fixture) dnReq(user, contentType, body string, hdr map[string]string) *httptest.ResponseRecorder {
-	f.t.Helper()
-	r := httptest.NewRequest("POST", "/api/users/"+user+"/display-name", strings.NewReader(body))
-	if contentType != "" {
-		r.Header.Set("Content-Type", contentType)
-	}
-	for k, v := range hdr {
-		if k != http.CanonicalHeaderKey(k) {
-			// Header.Set would canonicalize this back to the usual spelling,
-			// making the "lower-cased wire spelling" case identical to the
-			// owner case. Assign the map key verbatim, the way an HTTP/2 or
-			// non-canonicalizing client's raw key can end up in r.Header.
-			r.Header[k] = []string{v}
-			continue
+	for _, rt := range f.srv.Routes() {
+		if rt.Pattern == "/api/users/{user}/display-name" {
+			t.Fatalf("route table still declares %s %s", rt.Method, rt.Pattern)
 		}
-		r.Header.Set(k, v)
 	}
-	r.Header.Set("Origin", fixtureOrigin)
-	// A distinct client IP per call: the display-name limiter is per-IP
-	// (burst 5), and these tests probe many shapes against one fixture.
-	r.Header.Set("X-Forwarded-For", fmt.Sprintf("203.0.113.%d", dnSeq.Add(1)%250+1))
-	w := httptest.NewRecorder()
-	f.srv.ServeHTTP(w, r)
-	return w
-}
-
-// dnSeq numbers dnReq calls (see its X-Forwarded-For).
-var dnSeq atomic.Uint32
-
-// meDisplayName reads alice's display_name back through the admin /me read.
-func (f *fixture) meDisplayName(user string) any {
-	f.t.Helper()
-	return decode(f.t, f.doAdmin("GET", "/api/users/"+user+"/me", nil))["display_name"]
-}
-
-// TestDisplayName_BrowserPathForbidden pins the collector-only contract
-// (security review of ADR-0034, 2026-10-12): ANY X-Auth-Request-* header on
-// POST /api/users/{user}/display-name is 403 — for the owner, for an admin
-// (an admin session must not rename everyone from a cross-site POST), for a
-// stranger, and for a header carrying only a non-email member or an empty
-// value — and the stored name never changes.
-func TestDisplayName_BrowserPathForbidden(t *testing.T) {
-	f := newFixture(t, nil)
-	body := `{"name":"Hijacked"}`
 	cases := []struct {
-		name string
-		hdr  map[string]string
+		name  string
+		email string
 	}{
-		{"owner (journey host, oauth2-proxy stamped)", map[string]string{"X-Auth-Request-Email": "alice@ctf.local"}},
-		{"admin session", map[string]string{"X-Auth-Request-Email": fixtureAdminEmail}},
-		{"other participant", map[string]string{"X-Auth-Request-Email": "mallory@ctf.local"}},
-		{"X-Auth-Request-User only", map[string]string{"X-Auth-Request-User": "alice"}},
-		{"empty-valued X-Auth-Request-Email", map[string]string{"X-Auth-Request-Email": ""}},
-		{"lower-cased wire spelling", map[string]string{"x-auth-request-email": "alice@ctf.local"}},
+		{"header-less (the removed collector forward / setname shape)", ""},
+		{"owner (journey host, oauth2-proxy stamped)", "alice@ctf.local"},
+		{"admin session", fixtureAdminEmail},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			w := f.dnReq("alice", "application/json", body, c.hdr)
-			if w.Code != http.StatusForbidden {
-				t.Fatalf("status=%d body=%s, want 403", w.Code, w.Body)
+			w := f.doAs("POST", "/api/users/alice/display-name", c.email, map[string]any{"name": "Hijacked"})
+			// 405 (not 404) is what the mux gives: GET / is registered, so an
+			// unknown path answers Method Not Allowed to a POST. Either way no
+			// handler ran; a 403 or 200 would mean a handler is still behind it.
+			if w.Code != http.StatusNotFound && w.Code != http.StatusMethodNotAllowed {
+				t.Fatalf("status=%d body=%s, want 404/405 (route removed)", w.Code, w.Body)
 			}
-			if got := f.meDisplayName("alice"); got != "alice" {
-				t.Fatalf("display name changed to %v despite 403", got)
+			if got := decode(t, f.doAdmin("GET", "/api/users/alice/me", nil))["display_name"]; got != "alice" {
+				t.Fatalf("display name changed to %v", got)
 			}
 		})
-	}
-}
-
-// TestDisplayName_ForgedHeaderGivesNoAdminOracle: a forged
-// X-Auth-Request-Email (what a workspace can attach to a collector-forwarded
-// request) must produce the SAME response whether or not the claimed address
-// is in ADMIN_EMAILS — before this fix the 200 / 403 split revealed
-// ADMIN_EMAILS membership.
-func TestDisplayName_ForgedHeaderGivesNoAdminOracle(t *testing.T) {
-	f := newFixture(t, nil)
-	body := `{"name":"Probe"}`
-	admin := f.dnReq("bob", "application/json", body, map[string]string{"X-Auth-Request-Email": fixtureAdminEmail})
-	nonAdmin := f.dnReq("bob", "application/json", body, map[string]string{"X-Auth-Request-Email": "nobody@ctf.local"})
-	if admin.Code != http.StatusForbidden || nonAdmin.Code != http.StatusForbidden {
-		t.Fatalf("forged-header statuses admin=%d nonAdmin=%d, want both 403", admin.Code, nonAdmin.Code)
-	}
-	if admin.Body.String() != nonAdmin.Body.String() {
-		t.Fatalf("response bodies differ (oracle): admin=%q nonAdmin=%q", admin.Body, nonAdmin.Body)
-	}
-}
-
-// TestDisplayName_CollectorPathStillWorks: header-less + application/json is
-// the collector forward and must keep returning 200 (incl. a charset param).
-func TestDisplayName_CollectorPathStillWorks(t *testing.T) {
-	f := newFixture(t, nil)
-	for _, ct := range []string{"application/json", "application/json; charset=utf-8", "Application/JSON"} {
-		w := f.dnReq("alice", ct, `{"name":"Alice"}`, nil)
-		if w.Code != http.StatusOK {
-			t.Fatalf("Content-Type=%q: status=%d body=%s, want 200", ct, w.Code, w.Body)
-		}
-	}
-	if got := f.meDisplayName("alice"); got != "Alice" {
-		t.Fatalf("display name = %v, want Alice", got)
-	}
-}
-
-// TestDisplayName_NonJSONContentTypeRejected: the only Content-Types a
-// cross-site no-cors POST can carry (text/plain, form-urlencoded, multipart)
-// — plus a missing header — are refused 415 and change nothing.
-func TestDisplayName_NonJSONContentTypeRejected(t *testing.T) {
-	f := newFixture(t, nil)
-	for _, ct := range []string{"text/plain", "text/plain;charset=UTF-8", "application/x-www-form-urlencoded", "multipart/form-data; boundary=x", "application/jsonx", ""} {
-		w := f.dnReq("alice", ct, `{"name":"Hijacked"}`, nil)
-		if w.Code != http.StatusUnsupportedMediaType {
-			t.Fatalf("Content-Type=%q: status=%d body=%s, want 415", ct, w.Code, w.Body)
-		}
-		if got := f.meDisplayName("alice"); got != "alice" {
-			t.Fatalf("Content-Type=%q: display name changed to %v", ct, got)
-		}
 	}
 }
 
@@ -1562,7 +1462,7 @@ func TestDisplayName_NonJSONContentTypeRejected(t *testing.T) {
 // internal/scoreboard/view/view.go's package doc). The equivalent
 // HTML-serving coverage for the unified portal shell lives in
 // internal/scoreboard/view/portal_test.go (TestRenderPortal_*), and
-// TestDisplayName_ParticipantCanChange above already covers the underlying
+// TestDisplayName_SetThenReadInState above already covers the underlying
 // /api/users/{user}/me data path the portal's Me pane fetches from.
 
 // TestLegacyMeJourneyRoutes_Removed pins the P19-2b cutover: GET /me and

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Qfour/falco-ctf-app/internal/board"
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/avatar"
 )
 
 // identityDisplayName is a trivial boardDisplayNameFunc stub for tests that
@@ -21,6 +22,13 @@ import (
 // back unchanged, same as a real Store.DisplayName lookup would for a user
 // who never set one.
 func identityDisplayName(user string) string { return user }
+
+// defaultAvatar is a boardAvatarFunc stub for a seat that never chose: the
+// derived default, exactly what Handler.avatarFor returns with an empty store.
+func defaultAvatar(user string) string { return avatar.Default(user) }
+
+// spyAvatar must never be reached for an admin-authored message.
+func spyAvatar(user string) string { return "SHOULD NOT BE CALLED: " + user }
 
 func TestToOapiBoardMessage_ConvertsAuthorRoleStateAndTimestamp(t *testing.T) {
 	m := board.Message{
@@ -31,7 +39,7 @@ func TestToOapiBoardMessage_ConvertsAuthorRoleStateAndTimestamp(t *testing.T) {
 		CreatedAt:  "2026-01-01T00:00:00.5Z",
 		State:      board.StateVisible,
 	}
-	got, err := toOapiBoardMessage(m, identityDisplayName)
+	got, err := toOapiBoardMessage(m, identityDisplayName, defaultAvatar)
 	if err != nil {
 		t.Fatalf("toOapiBoardMessage: %v", err)
 	}
@@ -46,7 +54,7 @@ func TestToOapiBoardMessage_ConvertsAuthorRoleStateAndTimestamp(t *testing.T) {
 
 func TestToOapiBoardMessage_MalformedTimestampErrors(t *testing.T) {
 	m := board.Message{AuthorRole: board.RoleParticipant, Author: "alice", Body: "b", CreatedAt: "not-a-timestamp", State: board.StateVisible}
-	if _, err := toOapiBoardMessage(m, identityDisplayName); err == nil {
+	if _, err := toOapiBoardMessage(m, identityDisplayName, defaultAvatar); err == nil {
 		t.Fatal("expected an error for a malformed stored timestamp, got nil — a corrupt board row must not silently render as the zero time")
 	}
 }
@@ -58,7 +66,7 @@ func TestToOapiBoardMessage_MalformedTimestampErrors(t *testing.T) {
 func TestToOapiBoardMessage_AdminAuthorGetsFixedStaffLabel(t *testing.T) {
 	spy := func(user string) string { return "SHOULD NOT BE CALLED: " + user }
 	m := board.Message{ID: "m1", AuthorRole: board.RoleAdmin, Author: "staff", Body: "hi", CreatedAt: "2026-01-01T00:00:00Z", State: board.StateVisible}
-	got, err := toOapiBoardMessage(m, spy)
+	got, err := toOapiBoardMessage(m, spy, spyAvatar)
 	if err != nil {
 		t.Fatalf("toOapiBoardMessage: %v", err)
 	}
@@ -81,12 +89,46 @@ func TestToOapiBoardMessage_ParticipantAuthorResolvesThroughDisplayName(t *testi
 		return user
 	}
 	m := board.Message{ID: "m1", AuthorRole: board.RoleParticipant, Author: "alice", Body: "hi", CreatedAt: "2026-01-01T00:00:00Z", State: board.StateVisible}
-	got, err := toOapiBoardMessage(m, resolve)
+	got, err := toOapiBoardMessage(m, resolve, defaultAvatar)
 	if err != nil {
 		t.Fatalf("toOapiBoardMessage: %v", err)
 	}
 	if got.AuthorDisplay != "Alice A." {
 		t.Fatalf("AuthorDisplay = %q, want the resolved display name", got.AuthorDisplay)
+	}
+}
+
+// TestToOapiBoardMessage_AvatarComesFromTheAuthorRole is ADR-0034 D8 for
+// BoardMessage.authorAvatar: an admin-authored message carries the ONE fixed
+// staff id and never consults the resolver; a participant-authored one
+// carries whatever the resolver returns for the slug (the plumbing only —
+// Resolve's fallback is the avatar package's own test).
+func TestToOapiBoardMessage_AvatarComesFromTheAuthorRole(t *testing.T) {
+	adminMsg := board.Message{ID: "m1", AuthorRole: board.RoleAdmin, Author: "staff", Body: "hi", CreatedAt: "2026-01-01T00:00:00Z", State: board.StateVisible}
+	got, err := toOapiBoardMessage(adminMsg, identityDisplayName, spyAvatar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got.AuthorAvatar) != avatar.StaffID {
+		t.Fatalf("admin message AuthorAvatar = %q, want the fixed %q", got.AuthorAvatar, avatar.StaffID)
+	}
+
+	pick := func(user string) string {
+		if user == "alice" {
+			return "bug-lime"
+		}
+		return avatar.Default(user)
+	}
+	partMsg := board.Message{ID: "m2", AuthorRole: board.RoleParticipant, Author: "alice", Body: "hi", CreatedAt: "2026-01-01T00:00:00Z", State: board.StateVisible}
+	got, err = toOapiBoardMessage(partMsg, identityDisplayName, pick)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AuthorAvatar != "bug-lime" {
+		t.Fatalf("participant message AuthorAvatar = %q, want the resolved bug-lime", got.AuthorAvatar)
+	}
+	if !avatar.Valid(string(got.AuthorAvatar)) {
+		t.Fatalf("AuthorAvatar %q is not a table id", got.AuthorAvatar)
 	}
 }
 
@@ -107,7 +149,7 @@ func TestToOapiBoardThread_PropagatesFieldsAndMessages(t *testing.T) {
 		LikeCount: 3,
 		Liked:     true,
 	}
-	got, err := toOapiBoardThread(th, identityDisplayName)
+	got, err := toOapiBoardThread(th, identityDisplayName, defaultAvatar)
 	if err != nil {
 		t.Fatalf("toOapiBoardThread: %v", err)
 	}
@@ -130,7 +172,7 @@ func TestToOapiBoardThread_PropagatesFieldsAndMessages(t *testing.T) {
 
 func TestToOapiBoardThread_MalformedThreadTimestampErrors(t *testing.T) {
 	th := board.Thread{ID: "x", Author: "alice", Audience: board.AudienceAll, Subject: "s", CreatedAt: "garbage", State: board.StateVisible}
-	if _, err := toOapiBoardThread(th, identityDisplayName); err == nil {
+	if _, err := toOapiBoardThread(th, identityDisplayName, defaultAvatar); err == nil {
 		t.Fatal("expected an error for a malformed thread-level CreatedAt, got nil")
 	}
 }

@@ -16,6 +16,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
@@ -72,10 +74,33 @@ func TestAPISpec_V1_RouteSetMatchesSpec(t *testing.T) {
 	if len(implOnly) > 0 {
 		t.Errorf("implemented but undocumented: %v", implOnly)
 	}
-	// ADR-0005 C1's real-world count: 3 forwarded participant routes + 2
-	// local infra routes = 5.
-	if len(routes) != 5 {
-		t.Errorf("expected 5 registered routes (ADR-0005 C1), got %d: %v", len(routes), routes)
+	// ADR-0005 C1's real-world count, less the display-name forward that
+	// ADR-0034 D12 / S1 removed: 2 forwarded participant routes (submit,
+	// exfil) + 2 local infra routes = 4.
+	if len(routes) != 4 {
+		t.Errorf("expected 4 registered routes (ADR-0005 C1 less ADR-0034 S1's display-name), got %d: %v", len(routes), routes)
+	}
+}
+
+// TestAPISpec_V1_ForwardSetIsSubmitAndExfil pins the forward allowlist as a
+// literal set (ADR-0034 D12: forward 3 -> 2). The count above could be
+// satisfied by swapping one forward for another with both files mutated in
+// tandem; naming the two members is what makes that a visible diff.
+func TestAPISpec_V1_ForwardSetIsSubmitAndExfil(t *testing.T) {
+	h := newParityFixtureHandler(t)
+	var got []string
+	for _, rt := range h.Routes() {
+		if rt.CollectorForward {
+			got = append(got, rt.MuxPattern())
+		}
+	}
+	sort.Strings(got)
+	want := []string{
+		"POST /api/challenges/{cid}/exfil",
+		"POST /api/challenges/{cid}/submit",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("collector forward set = %v, want exactly %v", got, want)
 	}
 }
 

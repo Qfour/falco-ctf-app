@@ -28,6 +28,18 @@ type portalData struct {
 	// header server-side (selfOrAdmin / selfOrAdminWrite), so this value
 	// cannot be used to widen access even if tampered with client-side.
 	UserJSON template.JS
+	// AvatarURLsJSON (ADR-0034 S1) is the served URL of each avatar glyph's
+	// SVG, keyed by glyph and pre-marshalled to a JSON object. The portal's
+	// JavaScript cannot call {{.Assets.URL}}, so it reads these through the
+	// ASSETS constant in portal.tmpl. Display-only: the URLs are same-origin
+	// static assets and carry no identity.
+	AvatarURLsJSON template.JS
+	// AvatarChoicesJSON (ADR-0034 D8) is the ordered array of avatar ids a
+	// participant may pick (avatar.ParticipantIDs(): the table without the
+	// operator's fixed StaffID), exposed as ASSETS.avatarChoices. The profile
+	// picker draws exactly these; the server refuses any other (400), so this
+	// is a convenience, not a gate.
+	AvatarChoicesJSON template.JS
 	// TtydURLJSON (P23-4) is the caller's OWN ttyd origin
 	// (`https://<derived-username>.<ttydSuffix>`), pre-marshalled to JSON, or
 	// "" when it could not be computed (no derived username, or the
@@ -226,6 +238,8 @@ func renderPortal(w http.ResponseWriter, r *http.Request, isAdmin func(*http.Req
 		RoleJSON:           template.JS(roleJSON),
 		UserJSON:           template.JS(userJSON),
 		TtydURLJSON:        template.JS(ttydURLJSON),
+		AvatarURLsJSON:     avatarURLsJSON(),
+		AvatarChoicesJSON:  avatarChoicesJSON(),
 		HomePanelsHTML:     homePanelsHTML,
 		StoryPanelHTML:     storyPanelHTML,
 		TutorialPanelsHTML: tutorialPanelsHTML,

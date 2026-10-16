@@ -1,7 +1,7 @@
 // Package collector is the participant-facing front for the CTF workspace
 // (P11.5 full one-pipe). Once ctf-user egress lockdown is on, a workspace pod
 // can reach *only* the collector — never the scoreboard directly. The collector
-// therefore fronts the participant WRITE routes (submit / display-name) and,
+// therefore fronts the participant WRITE route (submit) and,
 // for the boss capstone, receives the exfil drop and forwards it to the
 // scoreboard's internal-only sink. Progress READ (GET /me) is NOT fronted here:
 // participant progress is viewed on the browser journey host (authenticated,
@@ -32,7 +32,6 @@
 //
 //	POST /api/challenges/{cid}/exfil       → scoreboard POST /internal/exfil/{cid}
 //	POST /api/challenges/{cid}/submit      → scoreboard (transparent)
-//	POST /api/users/{user}/display-name    → scoreboard (transparent)
 //	GET  /healthz                          collector liveness (local)
 //	GET  /metrics                          collector Prometheus exposition
 //
@@ -111,7 +110,7 @@ func New(upstream string, logger *slog.Logger, opts ...Option) (*Handler, error)
 	// any CF-Connecting-IP a workspace sends is always forged. Without this
 	// strip, ratelimit.ClientIP's new CF-Connecting-IP-first priority would
 	// let a workspace mint an arbitrary rate-limit key per request and
-	// bypass the scoreboard's per-route submit/display-name budgets
+	// bypass the scoreboard's per-route submit budget
 	// entirely (security-engineer HIGH finding, ADR-0023). Any future
 	// addition of a new trusted header to ratelimit.ClientIP MUST be
 	// mirrored here (ADR-0023 Signpost 5).
@@ -156,13 +155,6 @@ func New(upstream string, logger *slog.Logger, opts ...Option) (*Handler, error)
 	declared := []apispec.Route{
 		{
 			Method: "POST", Pattern: "/api/challenges/{cid}/submit",
-			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzClaimedIdentity,
-			OriginGuarded: false, CollectorForward: true,
-			RateLimit: "per-IP (RemoteAddr) 1 req/s burst 10",
-			Handler:   rl(h.proxy),
-		},
-		{
-			Method: "POST", Pattern: "/api/users/{user}/display-name",
 			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzClaimedIdentity,
 			OriginGuarded: false, CollectorForward: true,
 			RateLimit: "per-IP (RemoteAddr) 1 req/s burst 10",
