@@ -945,13 +945,15 @@ func (h *Handler) selfOrAdmin(w http.ResponseWriter, r *http.Request, user strin
 	return false
 }
 
-// selfOrAdminWrite is the dual-path WRITE gate used by exactly two routes:
-// POST /api/users/{user}/display-name (collector forward) and
-// POST /api/challenges/{cid}/submit-detect. step-check, hint reveal and
-// reset-dirty do NOT use it: they run actionMW + selfOrAdmin, which 403 a
-// header-less request. The header-less branch below survives only for
-// display-name and submit-detect. It differs from the read gate (selfOrAdmin)
-// by being conditional on the PRESENCE of an auth header:
+// selfOrAdminWrite is the dual-path WRITE gate used by exactly one route:
+// POST /api/challenges/{cid}/submit-detect. display-name (ADR-0034 D12 S1) no
+// longer uses it: that route is collector-only (internal-claimed-identity,
+// setDisplayName 403s any X-Auth-Request-* header), so it never reaches the
+// header-present branch below. step-check, hint reveal and reset-dirty do NOT
+// use it either: they run actionMW + selfOrAdmin, which 403 a header-less
+// request. The header-less branch below survives only for submit-detect. It
+// differs from the read gate (selfOrAdmin) by being conditional on the
+// PRESENCE of an auth header:
 //
 //   - Header present (request arrived over an auth-proxied ingress host — the
 //     participant journey host or the admin host): apply the full self-or-admin
@@ -962,12 +964,11 @@ func (h *Handler) selfOrAdmin(w http.ResponseWriter, r *http.Request, user strin
 //     tick another participant's steps, drive the openHint 409/200 cross-user
 //     oracle, or overwrite another player's display name.
 //
-//   - Header absent (request arrived over the cluster-internal Service — the
-//     collector's display-name forward, or a workspace pod): fall back to the
-//     legacy claimed-identity trust model (allow). This path carries no proven
+//   - Header absent (request arrived over the cluster-internal Service — a
+//     workspace pod, or the collector's forward): fall back to the legacy
+//     claimed-identity trust model (allow). This path carries no proven
 //     identity and never has; NetworkPolicy is the isolation control there. Not
-//     loosening it keeps the collector-fronted display-name flow working
-//     (accepted LOW) and the write collector path unchanged.
+//     loosening it keeps the write collector path unchanged.
 //
 // Rationale for keying off header presence (not hostname): identical to
 // selfOrAdmin's design note — both auth-proxied hosts inject the header and the
@@ -1225,7 +1226,7 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 // limiter middleware) and adds two detect-specific controls:
 //
 //   - self-scope: on an auth-proxied host the caller may only grade as its OWN
-//     {user} (selfOrAdminWrite, the same dual-path gate display-name uses). The
+//     {user} (selfOrAdminWrite, the dual-path write gate). The
 //     claimed body user must match the proven identity; an admin may grade for
 //     any user. Over the cluster-internal path (no auth header) the legacy
 //     claimed-identity model holds (NetworkPolicy is the isolation control there).
