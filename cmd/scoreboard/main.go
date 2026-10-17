@@ -234,6 +234,9 @@ func main() {
 	}
 	defer st.Close()
 	logger.Info("store opened", "path", dbPath, "solved_loaded", st.SolvedCount())
+	// app#403: the display-name rule is enforced on write only; surface rows
+	// saved before it tightened (count + seats, never the value).
+	warnStoredDisplayNames(logger, st)
 
 	// QA Board (app#292 — destination model, replaces P25's per-user QA
 	// ticket chat wholesale as of Phase 2): a second SQLite file in the SAME
