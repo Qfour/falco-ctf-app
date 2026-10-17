@@ -59,12 +59,12 @@
   - (d) 更新の経路を書く: tag があれば Dependabot、無ければ手動。手動の契機は (b) の finding・engine の不具合がテストに出たとき・version-watch の点検。
   - (e) 実行は secret の無い test の container の中だけ (`Dockerfile.test`、CI の go-test)。事実として、本番 image の builder (`images/ttyd-proxy/Dockerfile` ほか) も `go mod download` で go.mod の全 module (goja を含む) を取得する。link も実行もしないので binary には入らない ((a) の検査が見る)。後続の test 専用依存を判断するときはこの取得も入口の面として数える。
   - (f) テストの判定が library の意味に依存するなら、その意味を自己検査で固定する (`TestEngine_UnicodePropertyEscapes_SelfCheck`: `portal_nameproblem_test.go` の `TestEngine_UnicodePropertyEscapes_SelfCheck`)。
-- **D5 #381 の merge の条件。** #381 は次の表を満たす (PR 本文に貼る)。(a) の実 graph (V2) と (b) (V5) は follow-up とし、**app #400、期限 = 次の stand-up の前** (security は follow-up を可とした: F4・F5)。#400 が期限までに main に入らなければ、次の test 専用依存の PR と D3 の PR はどちらも出さない。
+- **D5 #381 の merge の条件。** #381 は次の表を満たす (PR 本文に貼る)。(a) の実 graph (V2) と (b) (V5) は follow-up とし、**app #400、期限 = 次の stand-up の前** (security は follow-up を可とした: F4・F5)。**追補 (2026-10-17): #400 で機械化済み (V2 / V5)。下の表の (a)(b) と、末尾の「追補」を見る。**#400 が期限までに main に入らなければ、次の test 専用依存の PR と D3 の PR はどちらも出さない。
 
   | D4 | #381 |
   |---|---|
-  | (a) graph | 静的閉包は済み (`e2e_boundary_test.go:38-41,125-137`。security の実測で planted M1〜M3 が赤、`go list -deps ./cmd/<x>` で 6 本とも goja 0 件)。実 graph の test は follow-up (#400) |
-  | (b) govulncheck -test | follow-up (#400。手元の `govulncheck -test ./internal/scoreboard/view/` は No vulnerabilities found: security) |
+  | (a) graph | 静的閉包は済み (`e2e_boundary_test.go:38-41,125-137`。security の実測で planted M1〜M3 が赤、`go list -deps ./cmd/<x>` で 6 本とも goja 0 件)。実 graph の test は follow-up (#400)。**#400 で機械化済み (V2)**: 一覧は `internal/apispec/testdata/test-only-deps.txt` の 1 箇所で、`e2e_boundary_test.go` の静的 closure と `testonly_deps_test.go` の `go list -deps ./cmd/...` (既定 tag と `-tags e2e`) が同じ file を読む |
+  | (b) govulncheck -test | follow-up (#400。手元の `govulncheck -test ./internal/scoreboard/view/` は No vulnerabilities found: security)。**#400 で機械化済み (V5)**: `checks.yaml` の `go-vulncheck` に `-test` と `-test -tags e2e` の step、と test 専用 module を root にする `scripts/check-test-only-vuln.sh` の step。**`-test` だけでは goja を見ていない** (追補) |
   | (c) pin | e1fc788e4f41 = master first-parent の merge commit (#745、署名 verified) |
   | (d) 更新 | 手動 (pseudo-version のため Dependabot は上げない) |
   | (e) 実行の場所 | `Dockerfile.test` の中だけ (CI の go-test は `contents: read`、secret を渡さない: security) |
@@ -90,12 +90,20 @@
 ## Verification
 
 - **V1 境界 (済み、required の `make test`)**: `TestNoProductionBinaryImportsTheE2EHarness` が `cmd/` の全 binary (0 本なら赤) の静的閉包に `github.com/dop251/` が無いことを見る (`e2e_boundary_test.go:104-121`)。planted: `cmd/fakebin` が goja を直に import すると赤 (`:125-137`)。security の実測で M1〜M3 が赤。
-- **V2 実 graph (follow-up #400、D5)**: `make test` の中で `go list -deps ./cmd/...` の出力に D4 (a) の prefix が 0 件。一覧の prefix が go.mod に無ければ赤。planted: module の中の非 test file を経由して goja を引くと赤。
+- **V2 実 graph (#400 で機械化済み、D5)**: `make test` の中で `go list -deps ./cmd/...` の出力に D4 (a) の prefix が 0 件。一覧の prefix が go.mod に無ければ赤。planted: module の中の非 test file を経由して goja を引くと赤。
 - **V3 engine の自己検査 (済み)**: `TestEngine_UnicodePropertyEscapes_SelfCheck` が `[true,false,true]` 以外で赤。旧い pin (67663e7a) に戻すと `[false true false]` で赤になる (#381 本文)。
 - **V4 振る舞い (済み)**: 共有表の「form だけが拒否 = 0 件」(`TestNameProblem_AnswersTheSharedTable`、`TestDisplayNameParity_ClientIsNeverStricter`) と、server・form それぞれの全 code point の走査 (`rule.yaml` と突き合わせ)。security の mutation M4〜M10 (M9 は F2 の 4 行で赤になった)。
-- **V5 脆弱性検査 (follow-up #400、D5)**: `.github/workflows/checks.yaml` に `govulncheck -test ./...` と `-tags e2e` の step がある。
+- **V5 脆弱性検査 (#400 で機械化済み、D5)**: `.github/workflows/checks.yaml` に `govulncheck -test ./...` と `-test -tags e2e ./...` の step、と `scripts/check-test-only-vuln.sh` の step がある (どれも `if: ${{ !cancelled() }}`、非 required の advisory job `go-vulncheck` の中。job 名は変えていない)。後者は一覧 (V2 と同じ file) の module の package を root にして走らせ、一覧の各 module が govulncheck の「scanned modules」に出ることを確かめる (出なければ赤): ログに goja・regexp2・go-sourcemap・google/pprof が出る。
 - **V6 D3 の完了**: `scripts/check-portal-render.sh` と Makefile の target が無く、ADR-0027 D6 の行列 (status × dirty × requireExfil × exfilReceived) が `make test` の goja のテストにある。
 - **機械の確認が無いもの**: D4 (c) の pin の出自 (network が要る)。PR 本文の記録と security の review で確かめる。
+
+## 追補 (2026-10-17、#400)
+
+- **`govulncheck -test` は in-package の test file の import を見ない。** 実測 (govulncheck v1.1.4 と v1.9.0、使い捨ての module): 脆弱な `golang.org/x/text v0.3.0` を `a_test.go` (`package t`) だけが import すると、`-test` は "No vulnerabilities found" で、scanned modules に x/text が出ない。同じ import を `package t_test` (外部 test package) に置くと報告される。goja は `portal_nameproblem_test.go` (in-package) から import されるので、`-test ./...` だけでは goja と推移依存 (regexp2・go-sourcemap・pprof) が scan の外にある。security の手元の確認 (上の表) はこの限界の下の "No vulnerabilities found" だった。
+- **だから V5 は 2 面で満たす。** (1) `-test` / `-test -tags e2e` の step は、ADR が名指した形で残す (外部 test package と、test だけの chromedp 側の経路は見える)。(2) `scripts/check-test-only-vuln.sh` が、一覧 (D4 (a) の同じ file) と `go list -test -tags e2e -deps ./...` から test 専用 module の package を引き、それを root にして govulncheck を走らせる。library の root は export された API が入口になるので、test でしか動かない code に対して最も保守的な scan になる。各 module が scanned modules に出ることまで確かめるので、scan が goja を見ていない状態は赤になる。
+- **一覧は両方向に検査される** (`testonly_deps_test.go`): go.mod にも module にも無い entry は赤 (古い entry が防御に見え続けない)。test が使い production が使わない module が一覧に無ければ赤 (新しい test 専用依存、または goja の更新で増えた推移依存は、同じ PR で一覧に足し、D4 (c)(d) を満たすまで `make test` が止める)。
+- **planted** (実 toolchain、`go.mod`・`go.sum` を共有する使い捨ての module): `cmd/fakebin` が goja を直接 / 非 test file の経由で import、goja の推移依存 3 つを直接 import、internal/e2e/harness を 2 hop で import、build tag e2e の中の chromedp を `-tags e2e` で build、のどれも赤。clean な binary と、test file だけが goja を import する binary は緑。
+- **V5 の step が存在し続けることは `make test` では見えない** (`.dockerignore` が `.github` を除くので、test の container に workflow が無い)。step は job の中で動くので、消せば PR の diff に出る。
 
 ## Advice
 

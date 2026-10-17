@@ -10,7 +10,8 @@ name: Checks
 #
 # ここに集約する PR トリガの静的検査 (既存 ci.yaml の required job には足さない):
 #   - actionlint     : workflow YAML の静的検査 + mutable action ref (P12 違反) 検出
-#   - go-vulncheck   : go.sum 依存 / stdlib の既知脆弱性 (image CVE scan がカバーしない層)
+#   - go-vulncheck   : go.sum 依存 / stdlib の既知脆弱性 (image CVE scan がカバーしない層。
+#                      test 専用依存も見る: ADR-0035 V5)
 #   - gen-diff-check : make gen (oapi) / make tidy / make gen-attack 後の git diff
 #                      (spec↔code / 依存 / ATT&CK 生成物 drift)
 #   - e2e            : make e2e — 実 scoreboard + 実 Chromium のブラウザ E2E (ADR-0031 D1 (b))
@@ -56,6 +57,8 @@ jobs:
 
   # ------------------------------------------------------------------
   # go-vulncheck — go.sum 依存 / Go stdlib の既知脆弱性 (govulncheck)。
+  # production の import (./...)、-test (外部 test package のみ)、test 専用 module
+  # そのもの (scripts/check-test-only-vuln.sh) の 3 面 (ADR-0035 D4 (b) / V5, #400)。
   # image CVE scan (PR CI build job) がカバーしないソース依存レイヤ。
   # CodeQL (G3) とは別レイヤ (CodeQL=コードパターン、govulncheck=既知 CVE の到達性)。
   # golang container 内で実行 (Colima 同様 host repo は checkout でコンテナに入る)。
@@ -77,6 +80,43 @@ jobs:
           GOBIN="$(go env GOPATH)/bin"
           export PATH="$PATH:$GOBIN"
           govulncheck ./...
+      # ADR-0035 D4 (b) / V5 (#400): the steps above read only what a production
+      # binary imports, so a dependency that only tests import (chromedp, goja and
+      # goja's dependencies) was never scanned. Each step below runs even when an
+      # earlier one is red (`!cancelled()`), so one run leaves all four results.
+      #
+      # -test adds the test packages as roots, but only EXTERNAL ones
+      # (`package x_test`): an import in an in-package test file (`package x`) is
+      # not seen (measured on govulncheck v1.1.4 and v1.9.0; the header of
+      # scripts/check-test-only-vuln.sh has the reproduction). goja is imported from
+      # an in-package test file, so -test alone says "No vulnerabilities found"
+      # without having looked at it. It stays because it is what V5 names and it
+      # costs nothing; the step after it is the one that scans goja.
+      - name: govulncheck -test ./...
+        if: ${{ !cancelled() }}
+        run: |
+          set -eu
+          GOBIN="$(go env GOPATH)/bin"
+          export PATH="$PATH:$GOBIN"
+          govulncheck -test -show verbose ./...
+      - name: govulncheck -test -tags e2e ./...
+        if: ${{ !cancelled() }}
+        run: |
+          set -eu
+          GOBIN="$(go env GOPATH)/bin"
+          export PATH="$PATH:$GOBIN"
+          govulncheck -test -tags e2e -show verbose ./...
+      # The test-only modules themselves (internal/apispec/testdata/test-only-deps.txt,
+      # the same list as the `make test` graph check) as roots, and a check that
+      # govulncheck lists each of them among the modules it scanned: the log shows
+      # goja, regexp2, go-sourcemap and google/pprof, or the step is red.
+      - name: govulncheck the test-only modules
+        if: ${{ !cancelled() }}
+        run: |
+          set -eu
+          GOBIN="$(go env GOPATH)/bin"
+          export PATH="$PATH:$GOBIN"
+          sh scripts/check-test-only-vuln.sh
 
   # ------------------------------------------------------------------
   # gen-diff-check — 生成物 drift 検知。
