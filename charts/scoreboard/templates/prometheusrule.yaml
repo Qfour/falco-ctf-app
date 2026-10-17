@@ -62,29 +62,34 @@ spec:
             summary: "no Falco events accepted by scoreboard in 5m"
             description: "Either a very quiet event, or the Falco→falcosidekick→scoreboard path is broken. Run scripts/verify.sh."
 
-        # app#387. Counts POSTs that reached an identity-keyed route (every
-        # MiddlewareStrict bucket in internal/scoreboard/api) with no
-        # X-Auth-Request-Email (ratelimit_identity_requests_total{outcome=
-        # "no_identity"}; 403, no token consumed). It does NOT cover the read
-        # gates (selfOrAdmin, and requireAuthenticated on the board GET routes,
-        # which have no limiter), which log their own non-sampled Warn and have
-        # no metric. It also cannot see a forged header
-        # that gets through (that is outcome="allowed"; the preventive controls
-        # for that are V12/V13). Triage by the remote_addr of the sampled Warn
-        # line "identity-keyed route denied" in the scoreboard log:
-        #   ingress-nginx Pod IP -> the I8 premise (1) broke (auth-url /
-        #     auth-response-headers no longer inject the header);
-        #   collector Pod IP     -> the collector forward table grew onto an
-        #     identity-keyed route (ADR-0034 D12; needs an ADR);
-        #   anything else        -> NetworkPolicy is not enforcing, or probing:
-        #     test it by hand.
-        - alert: ScoreboardNoIdentityDenials
+        # app#404 (ADR-0038), replacing app#387's per-bucket rule. Counts every
+        # request an identity gate refused for lack of a usable proven identity,
+        # in ONE metric, scoreboard_identity_denials_total{gate, reason}:
+        #   gate=strict         the identity-keyed rate-limit buckets (403, no token spent)
+        #   gate=self_or_admin  selfOrAdmin (me / journey, the participant POSTs)
+        #   gate=authenticated  requireAuthenticated / boardIdentity (board)
+        #   gate=portal         GET /portal served a shell (200) to a caller with
+        #                       no usable identity: on a fresh page load this is
+        #                       the ONLY signal, the panes stay empty and send nothing
+        # In a healthy production reason=no_identity and reason=non_canonical are
+        # 0: every sender that can reach the scoreboard goes through the ingress'
+        # auth-url (I8 premise 1) or is falcosidekick / the collector, which hit
+        # no identity gate. So the threshold is "> 0" for every gate and there is
+        # no `for:`: a larger number only delays detection (the portal gate emits
+        # one count per page load). reason=mismatch (a canonical identity for
+        # another seat) is a participant's own action, never alerted on.
+        # It does NOT see a forged header that gets through (a valid identity for
+        # the wrong person); the preventive controls for that are V12/V13. A
+        # manual `kubectl port-forward` + curl without the header fires it too:
+        # that is correct (it reached an identity gate with no identity), and it
+        # clears in 5 minutes.
+        - alert: ScoreboardIdentityDenials
           expr: |
-            sum by (bucket) (increase(ratelimit_identity_requests_total{outcome="no_identity"}[5m])) > 10
+            sum by (gate, reason) (increase(scoreboard_identity_denials_total{reason=~"no_identity|non_canonical"}[5m])) > 0
           labels:
             severity: warning
             component: scoreboard
           annotations:
-            summary: "scoreboard denied >10 identity-less requests in 5m (bucket {{ "{{ $labels.bucket }}" }})"
-            description: "POSTs reached an identity-keyed route without X-Auth-Request-Email (403, no token consumed). Read remote_addr in the scoreboard log line 'identity-keyed route denied': ingress-nginx Pod IP = auth-url/auth-response-headers broke (I8 premise 1); collector Pod IP = the forward table grew onto an identity-keyed route (ADR-0034 D12); anything else = NetworkPolicy not enforcing or probing. Read-gate denials (selfOrAdmin, and requireAuthenticated on the board GET routes) are not counted here."
+            summary: "scoreboard identity gate {{ "{{ $labels.gate }}" }} denied requests (reason {{ "{{ $labels.reason }}" }}) in the last 5m"
+            description: "An identity gate refused (gate=portal: served an empty shell to) a caller without a usable proven identity; this stays 0 in a healthy production. reason=no_identity (X-Auth-Request-Email absent or blank): read remote_addr in the scoreboard log line 'identity gate denied'. ingress-nginx Pod IP = auth-url / auth-response-headers broke (I8 premise 1); collector Pod IP = the forward table grew onto an identity route (ADR-0034 D12, ADR-0037 V7); anything else = NetworkPolicy not enforcing, or probing. reason=non_canonical (header present but not <seat>@EXPECTED_EMAIL_DOMAIN, nor an ADMIN_EMAILS member where the gate admits one): EXPECTED_EMAIL_DOMAIN differs between auth-policy and the scoreboard or is empty, or auth-policy is not stamping the canonical form."
 {{- end }}

@@ -4,6 +4,12 @@
 
 # Claude Code settings
 .claude
+# Exception: the conventions file holds the cross-repo contract table, and
+# internal/scoreboard/identityobs/contract_test.go (app#404, ADR-0038) compares
+# its "identity 拒否の観測" row with the metric the process exposes. Dockerfile.test
+# (`COPY . .`) is the only build that runs it; no pushed image copies the repo
+# root, and the file is a public markdown document.
+!.claude/rules/falco-ctf-app-conventions.md
 
 # Helm charts — not needed by most image builds. Exception: Dockerfile.test
 # needs charts/scoreboard (+ its local file://../falco-ctf-common chart
