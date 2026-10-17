@@ -59,25 +59,26 @@ func TestAPISpec_V1_RouteSetMatchesSpec(t *testing.T) {
 	}
 }
 
-// TestAPISpec_ClaimedIdentityImpliesForwardOrInternal is the route-table
-// property behind app#346 / #376 on auth-policy's live Routes():
-// claimed-identity => CollectorForward=true (Audience does not exempt it),
-// internal-claimed-identity => Audience=internal, none => no path parameter
-// that could name a caller, and a word apispec.AuthzIdentitySources does not
-// classify is a violation (app#393). It is derived from the tables, not from
-// route names.
+// TestAPISpec_IdentitySourceProperty runs specparity.IdentitySourceViolations
+// on auth-policy's live Routes(), so every Authz word on this service is forced
+// through apispec.AuthzIdentitySources (app#346 / #376 / #393): a word the
+// table does not classify is a violation; claimed-identity =>
+// CollectorForward=true (Audience does not exempt it),
+// internal-claimed-identity => Audience=internal, and a claimed word with no
+// rule is a violation; none => no path parameter that could name a caller.
+// It is derived from the tables, not from route names.
 // auth-policy declares neither claimed word today (it authorises from the
 // ingress subrequest headers, never from a claimed identity), so checked == 0
 // is the expected result; the test stays wired — and is required by
 // parity_coverage_test.go — so a future claimed-identity route here is
 // covered the moment it is declared.
-func TestAPISpec_ClaimedIdentityImpliesForwardOrInternal(t *testing.T) {
+func TestAPISpec_IdentitySourceProperty(t *testing.T) {
 	h := newHandler("http://oauth2-proxy.invalid")
 	routes := h.Routes()
 	if len(routes) == 0 {
 		t.Fatal("auth-policy Routes() returned zero routes — the scan is empty, not clean")
 	}
-	checked, violations := specparity.ClaimedIdentityForwardViolations(routes)
+	checked, violations := specparity.IdentitySourceViolations(routes)
 	for _, v := range violations {
 		t.Error(v)
 	}

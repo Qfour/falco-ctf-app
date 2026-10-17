@@ -13,9 +13,12 @@ package scoreboard_test
 // spec agree, and claimed-identity routes have a legitimate caller"):
 // internal/apispec/authz_vocabulary_test.go (every Authz constant is used by a
 // Route and appears in a spec; every spec value is a constant) and
-// specparity.ClaimedIdentityForwardViolations on each service's Routes()
-// (app#376). A re-introduced word of the same shape is not red by itself;
-// adding a word to the vocabulary is the architect's call (ADR-0034 判定).
+// specparity.IdentitySourceViolations on each service's Routes()
+// (TestAPISpec_IdentitySourceProperty, app#376 / #393). A re-introduced word
+// of the same shape is red until apispec.AuthzIdentitySources classifies it
+// and, if claimed, specparity gives it its own rule — both are reviewed
+// edits; adding a word to the vocabulary is the architect's call (ADR-0034
+// 判定).
 // The generic "no identity header => 403" guard for every proven route
 // (apispec.AuthzIdentitySources) is TestAuthz_EveryProvenRouteRejectsHeaderless,
 // not this file.

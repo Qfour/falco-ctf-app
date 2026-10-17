@@ -219,6 +219,7 @@ C4 の 4 論点に対する結論:
   提示する」前提なので、この境界を正しく表現できない。**誤解を生む標準表現より、
   正確な独自 extension + 散文を採る** (この判断自体を汎用 skill `openapi-expert` に一般化して書いた)。
 - 追補 (2026-10-17): `self-or-admin-write` は app#346 (#374) で廃止。語彙の三者一致 (定数 / Route / spec) と identity 語彙の性質は #391 の `internal/apispec` が機械検査する。
+  #393 (#409) で分類表 `apispec.AuthzIdentitySources` (proven / claimed / none) が語彙を書く 4 か所目になり、claimed の語彙には specparity の規則 (`specparity.IdentitySourceViolations`、app#413 で改名) が要る。
 
 ### Decision 4. origin-guard は **spec の必須フィールドとして表現する** (`x-ctf-origin-guard`)
 

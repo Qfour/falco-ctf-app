@@ -354,21 +354,23 @@ func TestAPISpec_V4_ResetDirtyNeverForwarded(t *testing.T) {
 	}
 }
 
-// TestAPISpec_ClaimedIdentityImpliesForwardOrInternal is the route-table
-// property behind app#346 / #376 on scoreboard's live Routes():
-// claimed-identity => CollectorForward=true (Audience does not exempt it),
-// internal-claimed-identity => Audience=internal, none => no path parameter
-// that could name a caller, and a word apispec.AuthzIdentitySources does not
-// classify is a violation (app#393). It is derived from the tables, not from
-// route names.
+// TestAPISpec_IdentitySourceProperty runs specparity.IdentitySourceViolations
+// on scoreboard's live Routes(), so every Authz word on this service is forced
+// through apispec.AuthzIdentitySources (app#346 / #376 / #393): a word the
+// table does not classify is a violation; claimed-identity =>
+// CollectorForward=true (Audience does not exempt it),
+// internal-claimed-identity => Audience=internal, and a claimed word with no
+// rule is a violation; none => no path parameter that could name a caller.
+// It is derived from the tables, not from route names, and the name is
+// required in every mux-owning package by parity_coverage_test.go.
 // The scoreboard declares claimed-identity routes, so checked must be > 0.
-func TestAPISpec_ClaimedIdentityImpliesForwardOrInternal(t *testing.T) {
+func TestAPISpec_IdentitySourceProperty(t *testing.T) {
 	f := newSpecFixture(t)
 	routes := f.srv.Routes()
 	if len(routes) == 0 {
 		t.Fatal("scoreboard Routes() returned zero routes — the scan is empty, not clean")
 	}
-	checked, violations := specparity.ClaimedIdentityForwardViolations(routes)
+	checked, violations := specparity.IdentitySourceViolations(routes)
 	for _, v := range violations {
 		t.Error(v)
 	}

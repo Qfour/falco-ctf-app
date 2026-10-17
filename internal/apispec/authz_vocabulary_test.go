@@ -500,9 +500,9 @@ func TestAuthzVocabulary_ConstantsRoutesAndSpecsAgree(t *testing.T) {
 // that make the per-service wiring enough (app#393): (c) puts every constant
 // in a spec; the scanned specs are exactly the mux owners' (the test below);
 // every mux owner must run V1 and V3b (each spec operation is a live route
-// with the same x-ctf-authz) and the identity-source property on its live
-// Routes() (TestParityTestsExistForEverySpec). So every word is on a live
-// route that specparity.ClaimedIdentityForwardViolations reads, and that
+// with the same x-ctf-authz) and TestAPISpec_IdentitySourceProperty on its
+// live Routes() (TestParityTestsExistForEverySpec). So every word is on a
+// live route that specparity.IdentitySourceViolations reads, and that
 // property fails a word the table does not classify. Dropping any of the
 // three from requiredParityTestFuncs breaks the chain, so it is red here.
 func TestAuthzVocabulary_ClassificationReachesEveryServiceRoute(t *testing.T) {
@@ -513,7 +513,7 @@ func TestAuthzVocabulary_ClassificationReachesEveryServiceRoute(t *testing.T) {
 	for _, fn := range []string{
 		"TestAPISpec_V1_RouteSetMatchesSpec",
 		"TestAPISpec_V3b_StringExtParity",
-		"TestAPISpec_ClaimedIdentityImpliesForwardOrInternal",
+		"TestAPISpec_IdentitySourceProperty",
 	} {
 		if !required[fn] {
 			t.Errorf("requiredParityTestFuncs lost %s: a service could skip it, and a word would no longer be forced through the identity-source table on that service's routes", fn)

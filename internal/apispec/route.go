@@ -141,10 +141,11 @@ const (
 //	        | rostered                             | (TestAuthz_EveryProvenRouteRejectsHeaderless);
 //	        |                                      | auth-policy: no proven identity -> 401/403
 //	        |                                      | (TestAuthz_EveryProvenRouteRejectsUnproven)
-//	claimed | claimed-identity,                    | specparity.ClaimedIdentityForwardViolations: each
-//	        | internal-claimed-identity            | claimed word needs its own rule; every service pins
-//	        |                                      | its claimed routes as a literal set
-//	none    | none                                 | ClaimedIdentityForwardViolations: no path parameter
+//	claimed | claimed-identity,                    | specparity.IdentitySourceViolations (every
+//	        | internal-claimed-identity            | service's TestAPISpec_IdentitySourceProperty):
+//	        |                                      | each claimed word needs its own rule; every
+//	        |                                      | service pins its claimed routes as a literal set
+//	none    | none                                 | IdentitySourceViolations: no path parameter
 //	        |                                      | outside the non-identity set ({asset}); every
 //	        |                                      | service pins its none routes as a literal set.
 //	        |                                      | NOT caught: an identity read from the body, the
@@ -152,8 +153,9 @@ const (
 //	        |                                      | (the literal-set pin makes such a route a named diff)
 //
 // A word missing from this map is a violation wherever it is read
-// (ClaimedIdentityForwardViolations runs on every service's Routes();
-// authz_vocabulary_test.go (d) compares it with the declared constants).
+// (IdentitySourceViolations runs on every service's Routes() and fails a
+// route whose word the map does not classify; authz_vocabulary_test.go (d)
+// compares the map with the declared constants).
 func AuthzIdentitySources() map[Authz]IdentitySource {
 	return map[Authz]IdentitySource{
 		AuthzAdmin:                   IdentityProven,

@@ -7,11 +7,11 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
 )
 
-// claimedIdentityBaseline is a clean table covering every legitimate shape:
+// identitySourceBaseline is a clean table covering every legitimate shape:
 // a forwarded claimed-identity route, the internal-only webhook, a proven
 // route with {user} in its path, and none routes with no path parameter or
 // only a non-identity one ({asset}, and the {$} anchor).
-func claimedIdentityBaseline() []apispec.Route {
+func identitySourceBaseline() []apispec.Route {
 	return []apispec.Route{
 		{Method: "POST", Pattern: "/api/challenges/{cid}/submit", Audience: apispec.AudienceParticipant, Authz: apispec.AuthzClaimedIdentity, CollectorForward: true},
 		{Method: "POST", Pattern: "/internal/exfil/{cid}", Audience: apispec.AudienceInternal, Authz: apispec.AuthzInternalClaimedIdentity, CollectorForward: true},
@@ -23,8 +23,8 @@ func claimedIdentityBaseline() []apispec.Route {
 	}
 }
 
-func TestClaimedIdentityForwardViolations_CleanBaseline(t *testing.T) {
-	checked, v := ClaimedIdentityForwardViolations(claimedIdentityBaseline())
+func TestIdentitySourceViolations_CleanBaseline(t *testing.T) {
+	checked, v := IdentitySourceViolations(identitySourceBaseline())
 	if len(v) != 0 {
 		t.Fatalf("clean baseline must have no violations, got %v", v)
 	}
@@ -33,13 +33,16 @@ func TestClaimedIdentityForwardViolations_CleanBaseline(t *testing.T) {
 	}
 }
 
-// TestClaimedIdentityForwardViolations_Mutations is the V8 proof for the
+// TestIdentitySourceViolations_Mutations is the V8 proof for the
 // property: each mutation of the clean table must turn it red, and name the
-// route and the reason. The two rules are separate (claimed-identity needs a
-// forward, internal-claimed-identity needs Audience=internal), so each
-// mutation is one that a looser "forward OR internal" rule would let through
-// or that the strict rule must still catch.
-func TestClaimedIdentityForwardViolations_Mutations(t *testing.T) {
+// route and the reason. It covers every rule, per identity source: the two
+// claimed rules are separate (claimed-identity needs a forward,
+// internal-claimed-identity needs Audience=internal), so those mutations are
+// ones a looser "forward OR internal" rule would let through or the strict
+// rule must still catch; an unclassified word, a claimed word with no rule
+// and a source that is none of the three are each red (app#393); and a none
+// route with an identity path parameter, under any name, is red.
+func TestIdentitySourceViolations_Mutations(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		mutate func([]apispec.Route) []apispec.Route
@@ -109,7 +112,7 @@ func TestClaimedIdentityForwardViolations_Mutations(t *testing.T) {
 			if tc.table != nil {
 				tc.table(table)
 			}
-			_, v := claimedIdentityViolations(tc.mutate(claimedIdentityBaseline()), table)
+			_, v := identitySourceViolations(tc.mutate(identitySourceBaseline()), table)
 			if len(v) != 1 {
 				t.Fatalf("want exactly 1 violation, got %v", v)
 			}
@@ -119,7 +122,7 @@ func TestClaimedIdentityForwardViolations_Mutations(t *testing.T) {
 		})
 	}
 	// Not vacuous the other way round: an empty table checks nothing, and says so.
-	if checked, v := ClaimedIdentityForwardViolations(nil); checked != 0 || len(v) != 0 {
+	if checked, v := IdentitySourceViolations(nil); checked != 0 || len(v) != 0 {
 		t.Fatalf("empty table: checked=%d violations=%v", checked, v)
 	}
 }
