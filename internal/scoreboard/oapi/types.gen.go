@@ -378,7 +378,7 @@ type CreateThreadRequest struct {
 	// Body 1..4096 bytes after trimming; rejected 400 if it matches the flag shape FALCO{...}
 	Body string `json:"body"`
 
-	// Subject 1..120 runes after trimming; rejected 400 if it matches the flag shape FALCO{...} (same shape check as body — a public audience=all thread's subject is rendered to every participant just like its body)
+	// Subject 1..120 runes after trimming; rejected 400 if it matches the flag shape FALCO{...} (same shape check as body — a public audience=all thread's subject is rendered to every participant just like its body); rejected 400 if it contains a control (Cc) or format (Cf: bidi controls such as U+202E, zero-width characters) character, with the display-name rule's one ZWJ-between-emoji exception (see `DisplayNameRequest.name`) — but unlike a name, ' " & < > are allowed (the 400 sentence is fixed and never echoes the subject)
 	Subject string `json:"subject"`
 }
 

@@ -849,6 +849,55 @@ func TestBoard_ValidationCaps(t *testing.T) {
 	}
 }
 
+// app#377: a thread subject refuses the control / format characters a display
+// name refuses (U+202E and the other bidi controls, zero-width characters, C1),
+// with a FIXED sentence that does not echo the input, and creates nothing. The
+// ' " & < > that a display name refuses stay legal in a subject (prose).
+func TestBoard_SubjectRefusesFormatAndControlCharacters(t *testing.T) {
+	bad := map[string]string{
+		"U+202E bidi override": "reversed \u202e",
+		"U+2067 right-to-left": "a \u2067b",
+		"U+200B zero width":    "a\u200bb",
+		"U+0085 NEL":           "a\u0085b",
+		"newline":              "a\nb",
+		"ZWJ after a letter":   "word\u200d",
+		"tag character":        "a\U000E0067b",
+	}
+	for label, subject := range bad {
+		t.Run(label, func(t *testing.T) {
+			f := newBoardFixture(t)
+			w := f.do("POST", "/api/board/threads", "alice@ctf.local", map[string]any{"audience": "all", "subject": subject, "body": "ok"})
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status=%d body=%s, want 400", w.Code, w.Body)
+			}
+			got := f.decode(w)
+			if got["error"] != "subject contains forbidden characters" {
+				t.Fatalf("error = %v, want the fixed sentence", got["error"])
+			}
+			enc, _ := json.Marshal(subject)
+			if strings.Contains(w.Body.String(), strings.Trim(string(enc), `"`)) || strings.Contains(w.Body.String(), subject) {
+				t.Fatalf("the 400 echoes the input: %s", w.Body)
+			}
+			list := f.do("GET", "/api/board/threads", "alice@ctf.local", nil)
+			if strings.Contains(list.Body.String(), `"id"`) {
+				t.Fatalf("a rejected subject must create no thread: %s", list.Body)
+			}
+		})
+	}
+	for _, subject := range []string{`Can't see "FALCO" output`, "a & b <c>", "\U0001F469\u200d\U0001F4BB help", "ミッション3"} {
+		t.Run("accept/"+subject, func(t *testing.T) {
+			f := newBoardFixture(t)
+			w := f.do("POST", "/api/board/threads", "alice@ctf.local", map[string]any{"audience": "all", "subject": subject, "body": "ok"})
+			if w.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s, want 200", w.Code, w.Body)
+			}
+			if got := f.decode(w)["subject"]; got != subject {
+				t.Fatalf("subject not round-tripped verbatim: got %v", got)
+			}
+		})
+	}
+}
+
 func TestBoard_ValidationCaps_BoundaryExactSucceeds(t *testing.T) {
 	subject := strings.Repeat("a", 120)
 	body := strings.Repeat("b", 4096)

@@ -61,7 +61,15 @@ const maxBoardRequestBytes = maxBoardBodyBytes + 1<<10
 
 // validBoardSubject trims and bound-checks a thread subject (<=120 runes
 // after trimming, matching validDisplayName's rune-counting convention —
-// subject is display text).
+// subject is display text) and refuses the control (Cc, C0/C1) and format (Cf:
+// bidi controls, zero-width characters) characters validDisplayName refuses
+// (app#377), with the same ZWJ-between-emoji exception. A subject is rendered
+// INLINE next to the author ("subject — author"), so an unclosed U+202E in it
+// could reorder what follows; the portal also isolates it in a <bdi>, this is
+// the server half. Unlike a display name it may contain ' " & < > (prose;
+// output is escaped). The rule is displayNameHasForbidden's, shared through
+// inlineTextHasForbidden and testdata/display-name-parity/rule.yaml. The
+// message is fixed: the offending input is never echoed back.
 func validBoardSubject(raw string) (string, error) {
 	s := strings.TrimSpace(raw)
 	if s == "" {
@@ -69,6 +77,9 @@ func validBoardSubject(raw string) (string, error) {
 	}
 	if utf8.RuneCountInString(s) > maxBoardSubjectRunes {
 		return "", fmt.Errorf("subject too long (max %d runes)", maxBoardSubjectRunes)
+	}
+	if inlineTextHasForbidden(s) {
+		return "", fmt.Errorf("subject contains forbidden characters")
 	}
 	return s, nil
 }
