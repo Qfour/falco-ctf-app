@@ -53,6 +53,26 @@ const nameHTML = (s) => '<bdi>' + esc(s) + '</bdi>';
 // its own block, so its direction cannot leak out of it).
 const textHTML = (s) => '<bdi>' + esc(s) + '</bdi>';
 
+// ---- Display-name trim and the server's error text (app#401). Declared AFTER esc.
+// trimName(raw) trims the way the SERVER does: Go's strings.TrimSpace = unicode.IsSpace:
+// ASCII whitespace, U+0085 NEL, U+00A0, U+1680, U+2000-200A, U+2028, U+2029, U+202F,
+// U+205F, U+3000. String.prototype.trim is NOT that set: it also strips U+FEFF (which the
+// server keeps, and refuses as Cf) and does not strip U+0085 (which the server strips),
+// so trim() would refuse "Alice" + NEL where the server stores "Alice". It is the one
+// trim for every name the portal sends: the Profile form (pane-me.tmpl) and the admin
+// rename (pane-scoreboard.tmpl). portal_nameproblem_test.go runs it against Go's table
+// and pins that no other partial defines it. templates/index.html does not load this
+// partial and carries a byte-identical copy of trimName and serverErrorText until the
+// dashboard's rendering is merged into the portal (#378). The list of what index.html
+// copies is the sharedHelpers table in portal_bidi_test.go (pinned declaration lines,
+// one definition in the portal, one copy in index.html): that table is #378's work list.
+const trimName = (raw) => String(raw).replace(/^[\t\n\v\f\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+|[\t\n\v\f\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+$/g, '');
+
+// serverErrorText(r) is the server's own sentence of a failed response (JSON {"error": ...})
+// as a STRING, '' when there is no such body. The caller shows it with textContent or an
+// alert(), never as markup (a name the admin typed can come back inside it).
+const serverErrorText = async (r) => { try { const j = await r.json(); if (j && typeof j.error === 'string') return j.error; } catch (_) { /* no body */ } return ''; };
+
 // ---- Accessibility helpers (P28-0a (4)). Declared AFTER esc on purpose (see the
 // TDZ note above). textContent only, no markup.
 // (A delegated keydown that turns Enter/Space on role=button / checkbox into a

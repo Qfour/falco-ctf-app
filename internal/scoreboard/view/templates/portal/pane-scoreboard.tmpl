@@ -382,7 +382,7 @@
     const user = btn.dataset.user;
     const name = prompt('Scoreboard name for ' + user + ' (blank cancels):');
     if (name === null) return;
-    const trimmed = name.trim();
+    const trimmed = trimName(name);   // core-util.tmpl: the server's trim set, not String.prototype.trim
     if (!trimmed) return;
     try {
       const r = await fetch('/api/admin/users/' + encodeURIComponent(user) + '/display-name', {
@@ -390,7 +390,14 @@
         body: JSON.stringify({ name: trimmed }),
       });
       if (r.ok) { await refresh(); }
-      else { alert('Rename failed (HTTP ' + r.status + '). Admin only / invalid name (1-32 chars, no <>&"\').'); }
+      else {
+        // The server's own words (a 400 says which rule the name broke; a 403 says admin only),
+        // as TEXT: alert() shows a string and never parses markup. The rule is NOT written out
+        // here: it lives in the server (validDisplayName) and rule.yaml, so a rule that grows
+        // (app#381) cannot leave this message stale.
+        const why = await serverErrorText(r);
+        alert('Rename failed (HTTP ' + r.status + ')' + (why ? ': ' + why : '.'));
+      }
     } catch (err) { alert('Rename request error: ' + err); }
   });
 
