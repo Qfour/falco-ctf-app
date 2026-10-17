@@ -691,45 +691,88 @@ func TestPortalPartials_EscDefinedOnceBeforePanes(t *testing.T) {
 	}
 }
 
-// TestPortalPartials_InnerHTMLInterpolationsAreEscaped pins the two
-// interpolations app#313 found going into innerHTML without esc(): the
-// challenge type in pane-scoreboard (card badge + detail title). It is a
-// deliberate pin on these sites, not a general lint (a generic "every ${...}
-// in a template literal" scan has too many false positives: numbers,
-// pre-escaped locals, class-name constants). A new unescaped site is caught
-// by review and the falco-web skill; this test only stops these two from
-// regressing. (The third site, avatarChar in pane-me, went away with
-// ADR-0034 S1; pane-story's m.status was already escaped.)
-func TestPortalPartials_InnerHTMLInterpolationsAreEscaped(t *testing.T) {
+// indexHTMLPath is where checkInnerHTMLPins reads the admin dashboard from.
+// It is not a portal partial (portalFS holds only the portal), so the pin
+// takes it from the same fs.FS under its embedded path; the real test builds
+// that FS from indexHTML (the go:embed in view.go).
+const indexHTMLPath = "templates/index.html"
+
+// innerHTMLPins lists the interpolations that go into innerHTML and had no
+// esc() before app#313 (five sites, three files). It is a deliberate pin on
+// these sites, not a general lint: a generic "every ${...} in a template
+// literal" scan has too many false positives (numbers, pre-escaped locals,
+// class-name constants). A new unescaped site is caught by review and the
+// falco-web skill; the pins only stop these five from regressing.
+//
+//   - pane-scoreboard.tmpl: challenge type in the card badge, and in the
+//     detail title (2 sites)
+//   - pane-story.tmpl: m.status as a CSS class in the mission map <li> (1).
+//     The kill-chain node above it (kc-node) already used esc(m.status).
+//   - index.html: challenge type in the admin dashboard card badge and in the
+//     detail title (2 sites). Same shape as pane-scoreboard, same fix.
+//
+// (A sixth site, avatarChar in pane-me, went away with ADR-0034 S1.)
+var innerHTMLPins = []struct {
+	file   string
+	want   []string // each must appear
+	forbid []string // none may appear
+}{
+	{"pane-scoreboard.tmpl",
+		[]string{"badge-${esc(c.type)}\">${esc(c.type)}</span>", "badge-' + esc(c.type) + '\">' + esc(c.type) + '</span>"},
+		[]string{"${c.type}", "+ c.type +"}},
+	{"pane-story.tmpl",
+		[]string{`<li class="${esc(cls)}${unlockCls}${viewedCls}"`},
+		[]string{`class="${cls}`}},
+	{"index.html",
+		[]string{"badge-${esc(c.type)}\">${esc(c.type)}</span>", "badge-' + esc(c.type) + '\">' + esc(c.type) + '</span>"},
+		[]string{"${c.type}", "+ c.type +"}},
+}
+
+// checkInnerHTMLPins reports every pin in innerHTMLPins that does not hold in
+// fsys: a want that is missing or a forbid that is present, per file. A file
+// that cannot be found is an error too, so a pin cannot go vacuous when the
+// file is renamed.
+func checkInnerHTMLPins(fsys fs.FS) error {
 	body := map[string]string{}
-	for _, p := range portalPartials(t) {
+	parts, err := readPortalPartials(fsys)
+	if err != nil {
+		return err
+	}
+	for _, p := range parts {
 		body[p.name] = p.body
 	}
-	pins := []struct {
-		file   string
-		want   []string // each must appear
-		forbid []string // none may appear
-	}{
-		{"pane-scoreboard.tmpl",
-			[]string{"badge-${esc(c.type)}\">${esc(c.type)}</span>", "badge-' + esc(c.type) + '\">' + esc(c.type) + '</span>"},
-			[]string{"${c.type}", "+ c.type +"}},
+	b, err := fs.ReadFile(fsys, indexHTMLPath)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", indexHTMLPath, err)
 	}
-	for _, pin := range pins {
+	body["index.html"] = string(b)
+
+	var errs []error
+	for _, pin := range innerHTMLPins {
 		b, ok := body[pin.file]
 		if !ok {
-			t.Errorf("%s: partial not found", pin.file)
+			errs = append(errs, fmt.Errorf("%s: file not found", pin.file))
 			continue
 		}
 		for _, w := range pin.want {
 			if !strings.Contains(b, w) {
-				t.Errorf("%s: missing escaped interpolation %q (app#313)", pin.file, w)
+				errs = append(errs, fmt.Errorf("%s: missing escaped interpolation %q (app#313)", pin.file, w))
 			}
 		}
 		for _, f := range pin.forbid {
 			if strings.Contains(b, f) {
-				t.Errorf("%s: unescaped interpolation %q going into innerHTML (app#313)", pin.file, f)
+				errs = append(errs, fmt.Errorf("%s: unescaped interpolation %q going into innerHTML (app#313)", pin.file, f))
 			}
 		}
+	}
+	return errors.Join(errs...)
+}
+
+// TestPortalPartials_InnerHTMLInterpolationsAreEscaped runs checkInnerHTMLPins
+// against the embedded partials and the embedded admin dashboard.
+func TestPortalPartials_InnerHTMLInterpolationsAreEscaped(t *testing.T) {
+	if err := checkInnerHTMLPins(mutatedPortalFS(t, func(*testing.T, fstest.MapFS) {})); err != nil {
+		t.Error(err)
 	}
 }
 
@@ -753,6 +796,7 @@ func mutatedPortalFS(t *testing.T, mutate func(t *testing.T, m fstest.MapFS)) fs
 	for _, p := range portalPartials(t) {
 		m[dir+"/"+p.name] = &fstest.MapFile{Data: []byte(p.body)}
 	}
+	m[indexHTMLPath] = &fstest.MapFile{Data: []byte(indexHTML)}
 	mutate(t, m)
 	return m
 }
@@ -777,6 +821,24 @@ func portalFSEdit(name string, edit func(string) string) func(*testing.T, fstest
 	}
 }
 
+// indexFSEdit is portalFSEdit for the admin dashboard (templates/index.html),
+// with the same fail-if-unchanged guard.
+func indexFSEdit(edit func(string) string) func(*testing.T, fstest.MapFS) {
+	return func(t *testing.T, m fstest.MapFS) {
+		t.Helper()
+		f, ok := m[indexHTMLPath]
+		if !ok {
+			t.Fatalf("mutation targets %s, which is not in the fs", indexHTMLPath)
+		}
+		before := string(f.Data)
+		after := edit(before)
+		if after == before {
+			t.Fatalf("mutation of %s changed nothing — the text it rewrites is no longer in the file", indexHTMLPath)
+		}
+		m[indexHTMLPath] = &fstest.MapFile{Data: []byte(after)}
+	}
+}
+
 func replaceOnce(old, new string) func(string) string {
 	return func(s string) string { return strings.Replace(s, old, new, 1) }
 }
@@ -789,11 +851,12 @@ func prependText(extra string) func(string) string {
 	return func(s string) string { return extra + s }
 }
 
-// TestPortalPartials_ChecksRejectMutations is the proof that the three checks
-// above (checkPortalAssembly, checkPortalScriptAndStyle, checkPortalEsc) can
+// TestPortalPartials_ChecksRejectMutations is the proof that the four checks
+// above (checkPortalAssembly, checkPortalScriptAndStyle, checkPortalEsc,
+// checkInnerHTMLPins) can
 // fail: each case applies ONE mutation to a copy of the real partials and
 // requires the named check to report it. The unmutated copy must pass all
-// three, so a failure here is the mutation and not the copy.
+// four, so a failure here is the mutation and not the copy.
 //
 // Cases 1-3 are mutations review found passing every test while changing
 // what is served (they hid behind `{{ ` spacing from the earlier
@@ -808,6 +871,9 @@ func TestPortalPartials_ChecksRejectMutations(t *testing.T) {
 	}
 	if err := checkPortalEsc(clean); err != nil {
 		t.Fatalf("unmutated copy fails checkPortalEsc: %v", err)
+	}
+	if err := checkInnerHTMLPins(clean); err != nil {
+		t.Fatalf("unmutated copy fails checkInnerHTMLPins: %v", err)
 	}
 
 	const homeCall = `{{template "pane-home.tmpl" . -}}`
@@ -1301,6 +1367,37 @@ func TestPortalPartials_ChecksRejectMutations(t *testing.T) {
 			mutate:  portalFSEdit(portalRootTmpl, replaceOnce(homeCall, homeCall+"\n"+`{{ template "css.tmpl" . }}`)),
 			check:   checkPortalScriptAndStyle,
 			wantErr: "a style tag is served that the source scan does not cover",
+		},
+		// ---- app#313: innerHTML interpolations that must stay behind esc() ----
+		{
+			name:    "pane-scoreboard card badge: type back to bare",
+			mutate:  portalFSEdit("pane-scoreboard.tmpl", replaceOnce("badge-${esc(c.type)}\">${esc(c.type)}</span>", "badge-${c.type}\">${c.type}</span>")),
+			check:   checkInnerHTMLPins,
+			wantErr: "pane-scoreboard.tmpl: unescaped interpolation \"${c.type}\"",
+		},
+		{
+			name:    "pane-scoreboard detail title: type back to bare",
+			mutate:  portalFSEdit("pane-scoreboard.tmpl", replaceOnce("badge-' + esc(c.type) + '\">' + esc(c.type) + '</span>", "badge-' + c.type + '\">' + c.type + '</span>")),
+			check:   checkInnerHTMLPins,
+			wantErr: "pane-scoreboard.tmpl: unescaped interpolation \"+ c.type +\"",
+		},
+		{
+			name:    "pane-story mission map: class back to bare cls",
+			mutate:  portalFSEdit("pane-story.tmpl", replaceOnce(`<li class="${esc(cls)}${unlockCls}`, `<li class="${cls}${unlockCls}`)),
+			check:   checkInnerHTMLPins,
+			wantErr: "pane-story.tmpl: unescaped interpolation \"class=\\\"${cls}\"",
+		},
+		{
+			name: "index.html card badge: type back to bare",
+			mutate: indexFSEdit(replaceOnce("badge-${esc(c.type)}\">${esc(c.type)}</span>", "badge-${c.type}\">${c.type}</span>")),
+			check:   checkInnerHTMLPins,
+			wantErr: "index.html: unescaped interpolation \"${c.type}\"",
+		},
+		{
+			name: "index.html detail title: type back to bare",
+			mutate: indexFSEdit(replaceOnce("badge-' + esc(c.type) + '\">' + esc(c.type) + '</span>", "badge-' + c.type + '\">' + c.type + '</span>")),
+			check:   checkInnerHTMLPins,
+			wantErr: "index.html: unescaped interpolation \"+ c.type +\"",
 		},
 	}
 	for _, tc := range cases {
