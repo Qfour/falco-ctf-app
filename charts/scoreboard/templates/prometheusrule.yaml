@@ -62,14 +62,21 @@ spec:
             summary: "no Falco events accepted by scoreboard in 5m"
             description: "Either a very quiet event, or the Falco→falcosidekick→scoreboard path is broken. Run scripts/verify.sh."
 
-        # app#387. Identity-keyed routes (submit-detect, steps/hints/reset-dirty)
-        # 403 any request without the ingress-injected X-Auth-Request-Email.
-        # Cluster-internal senders without it are limited by NetworkPolicy to
-        # platform components, so a sustained rate means an ingress header-
-        # overwrite gap, a collector strip gap, or probing. A Warn line (sampled,
-        # 1 per 10s per bucket) names the route + remote_addr in the scoreboard log.
-        # `increase` misses the very first increment of a brand-new series,
-        # which is irrelevant at this threshold.
+        # app#387. Counts POSTs that reached an identity-keyed route (the
+        # actionBucket / detectBucket routes in internal/scoreboard/api) with no
+        # X-Auth-Request-Email (ratelimit_identity_requests_total{outcome=
+        # "no_identity"}; 403, no token consumed). It does NOT cover the read
+        # gates (selfOrAdmin / requireAuthenticated), which log their own
+        # non-sampled Warn and have no metric. It also cannot see a forged header
+        # that gets through (that is outcome="allowed"; the preventive controls
+        # for that are V12/V13). Triage by the remote_addr of the sampled Warn
+        # line "identity-keyed route denied" in the scoreboard log:
+        #   ingress-nginx Pod IP -> the I8 premise (1) broke (auth-url /
+        #     auth-response-headers no longer inject the header);
+        #   collector Pod IP     -> the collector forward table grew onto an
+        #     identity-keyed route (ADR-0034 D12; needs an ADR);
+        #   anything else        -> NetworkPolicy is not enforcing, or probing:
+        #     test it by hand.
         - alert: ScoreboardNoIdentityDenials
           expr: |
             sum by (bucket) (increase(ratelimit_identity_requests_total{outcome="no_identity"}[5m])) > 10
@@ -78,5 +85,5 @@ spec:
             component: scoreboard
           annotations:
             summary: "scoreboard denied >10 identity-less requests in 5m (bucket {{ "{{ $labels.bucket }}" }})"
-            description: "Requests reached an identity-keyed route without X-Auth-Request-Email (403, no token consumed). Check the scoreboard log for 'identity-keyed route denied' (route, remote_addr, reason), then ingress header overwrite and collector header stripping."
+            description: "POSTs reached an identity-keyed route without X-Auth-Request-Email (403, no token consumed). Read remote_addr in the scoreboard log line 'identity-keyed route denied': ingress-nginx Pod IP = auth-url/auth-response-headers broke (I8 premise 1); collector Pod IP = the forward table grew onto an identity-keyed route (ADR-0034 D12); anything else = NetworkPolicy not enforcing or probing. Read-gate denials (selfOrAdmin / requireAuthenticated) are not counted here."
 {{- end }}

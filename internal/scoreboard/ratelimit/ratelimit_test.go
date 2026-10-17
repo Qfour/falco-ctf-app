@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/ratelimit"
@@ -602,5 +603,43 @@ func TestMiddlewareStrict_NoIdentityLogIsSampledPerBucket(t *testing.T) {
 	// Sampling is log-only: the metric still counts every denial (25+5+1).
 	if d := testutil.ToFloat64(ratelimit.IdentityRequestsTotal.WithLabelValues("bucket_a", "no_identity")) - metricBefore; d != 31 {
 		t.Fatalf("metric delta = %v, want 31", d)
+	}
+}
+
+// app#387: the series exist at 0 as soon as the bucket's middleware wraps a
+// handler, so Prometheus' increase() counts the very first denial.
+func TestMiddlewareStrict_PrecreatesOutcomeSeriesAtZero(t *testing.T) {
+	const bucket = "test_precreate"
+	ratelimit.New(1, 1).MiddlewareStrict(bucket, ratelimit.IdentityKeyed)(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	mfs, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]float64{}
+	for _, mf := range mfs {
+		if mf.GetName() != "ratelimit_identity_requests_total" {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			var b, o string
+			for _, lp := range m.GetLabel() {
+				switch lp.GetName() {
+				case "bucket":
+					b = lp.GetValue()
+				case "outcome":
+					o = lp.GetValue()
+				}
+			}
+			if b == bucket {
+				seen[o] = m.GetCounter().GetValue()
+			}
+		}
+	}
+	for _, o := range []string{"allowed", "limited", "no_identity"} {
+		v, ok := seen[o]
+		if !ok || v != 0 {
+			t.Errorf("outcome %q: present=%v value=%v, want a series at 0 right after wrapping", o, ok, v)
+		}
 	}
 }

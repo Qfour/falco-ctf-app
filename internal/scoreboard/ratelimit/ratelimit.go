@@ -255,6 +255,10 @@ func IdentityKeyed(r *http.Request) (string, bool) {
 	return email, email != ""
 }
 
+// identityOutcomes are the IdentityRequestsTotal outcome label values that
+// MiddlewareStrict emits; each is pre-created per bucket when it wraps a handler.
+var identityOutcomes = []string{"allowed", "limited", "no_identity"}
+
 // MiddlewareStrict is Middleware's fail-closed sibling for identity-keyed
 // buckets. `bucket` names the bucket for the IdentityRequestsTotal metric (use
 // a small fixed set of constants — it is a label). Outcomes:
@@ -271,6 +275,12 @@ func IdentityKeyed(r *http.Request) (string, bool) {
 // Place it AFTER the origin guard and BEFORE the handler's own authz gate.
 func (l *Limiter) MiddlewareStrict(bucket string, keyFn KeyFunc) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
+		// Create every outcome series at 0 now (no Inc), so the first real
+		// denial is an increase from an existing 0 and Prometheus' increase()
+		// counts it (a series born at 1 contributes no increase). app#387.
+		for _, o := range identityOutcomes {
+			IdentityRequestsTotal.WithLabelValues(bucket, o)
+		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			key, ok := keyFn(r)
 			if !ok || key == "" {
