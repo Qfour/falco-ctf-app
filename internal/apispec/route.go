@@ -165,9 +165,19 @@ const (
 //	                  | describes the actual ratelimit.Limiter wired into the
 //	                  | handler (e.g. "per-IP 1 req/s burst 10" could drift
 //	                  | from the real ratelimit.New(...) call and nothing
-//	                  | would notice) — a third, so-far-unclosed instance of
-//	                  | exactly this struct's "declared vs enforced" gap.
-//	                  | Signposted, not fixed, by ADR-0005.
+//	                  | would notice) — a third instance of exactly this
+//	                  | struct's "declared vs enforced" gap. Signposted, not
+//	                  | fixed, by ADR-0005. Partly closed by app#389
+//	                  | (internal/scoreboard/identity_bucket_test.go): every
+//	                  | "identity ..." route and POST /submit's per-IP bucket
+//	                  | are checked behaviourally against a table whose
+//	                  | numbers also build the expected string (burst, keying,
+//	                  | sharing; rate for the identity rows), every declaration
+//	                  | must start with none / identity / per-IP /
+//	                  | per-participant, and a "none" route must never 429.
+//	                  | Still unchecked: POST /csp-report's per-IP bucket, the
+//	                  | per-participant ingest bucket (internal/scoreboard/
+//	                  | ingest has its own tests), and submit's rate.
 type Route struct {
 	// Method is the HTTP method ("GET", "POST", ...).
 	Method string

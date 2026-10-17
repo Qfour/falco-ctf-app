@@ -7,6 +7,7 @@ package scoreboard_test
 // scoreboard.WithAllowedOrigins.
 
 import (
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -14,19 +15,24 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
 	"github.com/Qfour/falco-ctf-app/internal/board"
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard"
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/originguard"
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/ratelimit"
 	"github.com/Qfour/falco-ctf-app/internal/store"
 )
 
 // newOriginFixture builds a handler carrying an evade + exfil-required
 // challenge (so /submit and /internal/exfil/{cid} are both exercisable) and
-// an admin identity, with the given allowed origins wired in.
-func newOriginFixture(t *testing.T, allowedOrigins []string) *scoreboard.Handler {
+// an admin identity, with the given allowed origins wired in. opts are applied
+// after those (e.g. scoreboard.WithNow to freeze the rate limiters' clock).
+func newOriginFixture(t *testing.T, allowedOrigins []string, opts ...scoreboard.Option) *scoreboard.Handler {
 	t.Helper()
 	cat := catalog.Catalog{
 		"02-evade": {
@@ -49,18 +55,18 @@ func newOriginFixture(t *testing.T, allowedOrigins []string) *scoreboard.Handler
 	}
 	t.Cleanup(func() { boardSt.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return scoreboard.NewHandler(cat, st, logger,
+	return scoreboard.NewHandler(cat, st, logger, append([]scoreboard.Option{
 		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 		scoreboard.WithAdminEmails([]string{"admin@ctf.local"}),
 		scoreboard.WithAllowedOrigins(allowedOrigins),
 		scoreboard.WithBoard(boardSt),
-	)
+	}, opts...)...)
 }
 
 // ogReq issues a request against srv with optional Origin/Referer/auth
 // headers. body may be nil (several protected routes, like /api/admin/reset,
 // take no body at all — the mitigation's core case).
-func ogReq(t *testing.T, srv *scoreboard.Handler, method, target string, origin, referer, authEmail string, body io.Reader) *httptest.ResponseRecorder {
+func ogReq(t *testing.T, srv http.Handler, method, target string, origin, referer, authEmail string, body io.Reader) *httptest.ResponseRecorder {
 	t.Helper()
 	r := httptest.NewRequest(method, target, body)
 	if body != nil {
@@ -222,9 +228,16 @@ var pathParamPattern = regexp.MustCompile(`\{([^}]+)\}`)
 // future path-param name doesn't panic the test — it just gets a
 // less-meaningful substitution), producing a URL usable as an httptest
 // target.
-func concretePath(pattern string) string {
+func concretePath(pattern string) string { return concretePathAs(pattern, pathParamValues["user"]) }
+
+// concretePathAs is concretePath with {user} = user, so a request can target
+// the caller's own seat whoever the caller is.
+func concretePathAs(pattern, user string) string {
 	return pathParamPattern.ReplaceAllStringFunc(pattern, func(seg string) string {
 		name := seg[1 : len(seg)-1]
+		if name == "user" {
+			return user
+		}
 		if v, ok := pathParamValues[name]; ok {
 			return v
 		}
@@ -443,5 +456,206 @@ func TestOriginGuard_ExfilBypassesGuard(t *testing.T) {
 	w2 := ogReq(t, srv2, "POST", "/internal/exfil/03-exfil", "", "", "", strings.NewReader(`{"user":"bob","flag":"FALCO{boss}"}`))
 	if w2.Code != http.StatusOK {
 		t.Fatalf("exfil with empty allowlist: status=%d body=%s, want 200", w2.Code, w2.Body)
+	}
+}
+
+// --- og -> rate limiter order, derived from Routes() (app#389) ---------------
+
+// foreignOrigin is an Origin that is not in any fixture's ALLOWED_ORIGINS.
+const foreignOrigin = "https://evil.example.com"
+
+// declaresRateLimit reports whether rt declares a rate-limit bucket. A route
+// without one declares x-ctf-rate-limit "none", optionally followed by the
+// reason ("none (the limit lives on the collector front)"). Anything else,
+// the empty string included, counts as a bucket, so a blank declaration is
+// pulled into the checks below instead of being skipped.
+func declaresRateLimit(rt apispec.Route) bool {
+	return rt.RateLimit != "none" && !strings.HasPrefix(rt.RateLimit, "none ")
+}
+
+// guardedRateLimitedRoutes is TestOriginGuardRunsBeforeRateLimiter's case
+// table: every route that is origin-guarded AND rate-limited.
+func guardedRateLimitedRoutes(routes []apispec.Route) []apispec.Route {
+	var out []apispec.Route
+	for _, rt := range routes {
+		if rt.OriginGuarded && declaresRateLimit(rt) {
+			out = append(out, rt)
+		}
+	}
+	return out
+}
+
+// testClock is a settable clock for the rate limiters (scoreboard.WithNow).
+// It does not move unless a test advances it, so a bucket never refills
+// mid-test and a burst is an exact count.
+type testClock struct{ ns atomic.Int64 }
+
+func newTestClock() *testClock {
+	c := &testClock{}
+	c.ns.Store(time.Unix(1_700_000_000, 0).UnixNano())
+	return c
+}
+
+func (c *testClock) now() time.Time          { return time.Unix(0, c.ns.Load()) }
+func (c *testClock) advance(d time.Duration) { c.ns.Add(int64(d)) }
+
+// newLimiterFixture is newOriginFixture with the limiters on clock.
+func newLimiterFixture(t *testing.T, clock *testClock) *scoreboard.Handler {
+	t.Helper()
+	return newOriginFixture(t, []string{allowedOrigin}, scoreboard.WithNow(clock.now))
+}
+
+// limiterReq sends rt from origin as user's own seat: {user} = user and
+// X-Auth-Request-Email = user@<fixture domain>; user "" sends no identity
+// header (and the default seat). The body is "{}" for every route: the rate
+// limiters run before any handler reads it, and every outcome the handler
+// gives it (400 / 404 / 503 / 2xx) is equally "not limited".
+func limiterReq(t *testing.T, srv http.Handler, rt apispec.Route, origin, user string) *httptest.ResponseRecorder {
+	t.Helper()
+	seat, email := pathParamValues["user"], ""
+	if user != "" {
+		seat, email = user, user+"@"+fixtureEmailDomain
+	}
+	return ogReq(t, srv, rt.Method, concretePathAs(rt.Pattern, seat), origin, "", email, strings.NewReader("{}"))
+}
+
+// limited reports whether w is a rate limiter's 429. A 429 with any other
+// body (submit-detect's in-flight grader cap) fails the test: it is not the
+// bucket being measured.
+func limited(t *testing.T, rt apispec.Route, w *httptest.ResponseRecorder) bool {
+	t.Helper()
+	if w.Code != http.StatusTooManyRequests {
+		return false
+	}
+	if !strings.Contains(w.Body.String(), `"rate limit exceeded"`) {
+		t.Fatalf("%s: a 429 that is not the rate limiter's: %s", rt.MuxPattern(), w.Body)
+	}
+	return true
+}
+
+const maxBurstProbe = 64
+
+// burstOf sends rt as user from the allowed origin until the limiter answers
+// 429 and returns how many requests got past it (-1: never limited within
+// maxBurstProbe).
+func burstOf(t *testing.T, srv http.Handler, rt apispec.Route, user string) int {
+	t.Helper()
+	for n := 0; n < maxBurstProbe; n++ {
+		if limited(t, rt, limiterReq(t, srv, rt, allowedOrigin, user)) {
+			return n
+		}
+	}
+	return -1
+}
+
+// ogBeforeLimiterViolation reports how rt breaks "the origin guard runs
+// before the rate limiter", or "" when it does not. fresh must return a new
+// handler (full buckets, frozen clock) on every call.
+//
+// Cookies are SameSite=None, so another site's page can make a victim's
+// browser POST with the victim's identity header. The guard must 403 that
+// before the limiter spends a token; otherwise the flood drains the victim's
+// bucket and their own same-origin requests 429 (security review of app#379,
+// L1). The control burst (no flood) is measured first: a route that never
+// 429s cannot show the order either way, so that is a violation too.
+func ogBeforeLimiterViolation(t *testing.T, fresh func() http.Handler, rt apispec.Route) string {
+	t.Helper()
+	burst := burstOf(t, fresh(), rt, "alice")
+	if burst <= 0 {
+		return fmt.Sprintf("%s declares RateLimit %q, but from the allowed origin alice's burst is %d (-1: no 429 in %d requests), so the order cannot be observed", rt.MuxPattern(), rt.RateLimit, burst, maxBurstProbe)
+	}
+	srv := fresh()
+	for i := 1; i <= burst+1; i++ { // one past the burst
+		if w := limiterReq(t, srv, rt, foreignOrigin, "alice"); w.Code != http.StatusForbidden {
+			return fmt.Sprintf("%s: cross-origin request #%d carrying alice's identity: status=%d body=%s, want 403 (a 429 means the limiter runs before the origin guard)", rt.MuxPattern(), i, w.Code, w.Body)
+		}
+	}
+	if got := burstOf(t, srv, rt, "alice"); got != burst {
+		return fmt.Sprintf("%s: alice's burst after a cross-origin flood is %d, want the untouched %d (the flood spent her tokens: the limiter runs before the origin guard)", rt.MuxPattern(), got, burst)
+	}
+	return ""
+}
+
+// TestOriginGuardRunsBeforeRateLimiter (app#389) checks og -> limiter ->
+// handler on EVERY route that is OriginGuarded and declares a RateLimit,
+// derived from srv.Routes() the way TestOriginGuard_AllProtectedRoutesEnforced
+// derives its table. It replaces a hand-written list of 2 of those routes
+// (submit-detect, reset-dirty), which a new guarded, rate-limited route would
+// not have joined.
+func TestOriginGuardRunsBeforeRateLimiter(t *testing.T) {
+	routes := guardedRateLimitedRoutes(newOriginFixture(t, []string{allowedOrigin}).Routes())
+	if len(routes) == 0 {
+		t.Fatal("derived 0 origin-guarded, rate-limited routes: the derivation is broken, not clean")
+	}
+	for _, rt := range routes {
+		t.Run(rt.MuxPattern(), func(t *testing.T) {
+			fresh := func() http.Handler { return newLimiterFixture(t, newTestClock()) }
+			if v := ogBeforeLimiterViolation(t, fresh, rt); v != "" {
+				t.Fatal(v)
+			}
+		})
+	}
+}
+
+// syntheticMux serves one route per handler, all built fresh, from the real
+// originguard and ratelimit packages (the same pieces api.Routes() composes).
+func syntheticMux(routes ...apispec.Route) http.Handler {
+	mux, _ := apispec.NewMux(routes)
+	return mux
+}
+
+func syntheticOK() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+}
+
+// The order check is not vacuous: limiter -> og, and a declared limit that is
+// not wired at all, are both flagged; og -> limiter passes.
+func TestOriginGuardRunsBeforeRateLimiter_DetectorCatchesSwappedOrder(t *testing.T) {
+	rt := apispec.Route{Method: "POST", Pattern: "/api/users/{user}/example", OriginGuarded: true, RateLimit: "identity 1 req/s burst 10"}
+	for _, tc := range []struct {
+		name      string
+		wire      func(og, lim func(http.Handler) http.Handler) http.Handler
+		wantFlags bool
+	}{
+		{"og -> limiter (api.Routes()' order)", func(og, lim func(http.Handler) http.Handler) http.Handler { return og(lim(syntheticOK())) }, false},
+		{"limiter -> og (swapped)", func(og, lim func(http.Handler) http.Handler) http.Handler { return lim(og(syntheticOK())) }, true},
+		{"og only (declared limit not wired)", func(og, _ func(http.Handler) http.Handler) http.Handler { return og(syntheticOK()) }, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fresh := func() http.Handler {
+				og := originguard.New([]string{allowedOrigin}, slog.New(slog.NewTextHandler(io.Discard, nil))).Middleware
+				lim := ratelimit.New(1, 10).WithNow(newTestClock().now).MiddlewareStrict("example", ratelimit.IdentityKeyed)
+				r := rt
+				r.Handler = tc.wire(og, lim)
+				return syntheticMux(r)
+			}
+			if v := ogBeforeLimiterViolation(t, fresh, rt); (v != "") != tc.wantFlags {
+				t.Fatalf("violation = %q, want flagged=%v", v, tc.wantFlags)
+			}
+		})
+	}
+}
+
+// The derivation picks up a NEW guarded, rate-limited route with no edit to
+// the test, and leaves out the routes the order does not apply to.
+func TestGuardedRateLimitedRoutes_DerivesNewRoutes(t *testing.T) {
+	routes := append(newOriginFixture(t, []string{allowedOrigin}).Routes(),
+		apispec.Route{Method: "POST", Pattern: "/new/guarded-limited", OriginGuarded: true, RateLimit: "identity 1 req/s burst 5"},
+		apispec.Route{Method: "POST", Pattern: "/new/guarded-blank", OriginGuarded: true, RateLimit: ""},
+		apispec.Route{Method: "POST", Pattern: "/new/guarded-none", OriginGuarded: true, RateLimit: "none (no bucket)"},
+		apispec.Route{Method: "POST", Pattern: "/new/unguarded-limited", OriginGuarded: false, RateLimit: "per-IP 1 req/s burst 10"},
+	)
+	got := map[string]bool{}
+	for _, rt := range guardedRateLimitedRoutes(routes) {
+		got[rt.Pattern] = true
+	}
+	for pattern, want := range map[string]bool{
+		"/new/guarded-limited": true, "/new/guarded-blank": true,
+		"/new/guarded-none": false, "/new/unguarded-limited": false,
+		"/api/challenges/{cid}/submit-detect": true, "/api/challenges/{cid}/submit": false, "/api/admin/reset": false,
+	} {
+		if got[pattern] != want {
+			t.Errorf("%s derived = %v, want %v", pattern, got[pattern], want)
+		}
 	}
 }
