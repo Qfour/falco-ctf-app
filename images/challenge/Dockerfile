@@ -85,7 +85,7 @@ FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cab
 #     既に外れ apk resolve が failing していたため再 pin。`apk policy curl` 実測
 #     で 3.24/main の唯一の提供版が 8.22.0-r0 であることを確認済み)
 #   vim/vim-common/xxd 9.2.1202-r0 (2026-10-17: 9.2.1178-r0 が index から外れ再 pin
-#     (app#382)。drift 履歴 1091 → 1178 (#354、10-14) → 1202 (10-17) と 4 日で 3 回目。
+#     (app#382)。re-pin 履歴: 10-05 (#307) / 10-14 (#354、1091 → 1178) / 10-17 (#382、→ 1202)。12 日で 3 回。
 #     以下は 2026-10-14 時点の記録: 3.24/community から 9.2.1091-r0 が
 #     外れ apk resolve が failing していたため再 pin。`apk policy vim vim-common
 #     xxd` 実測 (base digest 294b683c) で唯一の提供版。2026-10-05 は 9.2.1014-r0 →
