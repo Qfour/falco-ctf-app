@@ -8,15 +8,18 @@ import (
 )
 
 // claimedIdentityBaseline is a clean table covering every legitimate shape:
-// a forwarded claimed-identity route, the internal-only webhook, and routes
-// whose Authz is not a claimed identity (which the property ignores).
+// a forwarded claimed-identity route, the internal-only webhook, a proven
+// route with {user} in its path, and none routes with no path parameter or
+// only a non-identity one ({asset}, and the {$} anchor).
 func claimedIdentityBaseline() []apispec.Route {
 	return []apispec.Route{
 		{Method: "POST", Pattern: "/api/challenges/{cid}/submit", Audience: apispec.AudienceParticipant, Authz: apispec.AuthzClaimedIdentity, CollectorForward: true},
 		{Method: "POST", Pattern: "/internal/exfil/{cid}", Audience: apispec.AudienceInternal, Authz: apispec.AuthzInternalClaimedIdentity, CollectorForward: true},
 		{Method: "POST", Pattern: "/falco/events", Audience: apispec.AudienceInternal, Authz: apispec.AuthzInternalClaimedIdentity},
 		{Method: "POST", Pattern: "/api/challenges/{cid}/submit-detect", Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdmin},
+		{Method: "GET", Pattern: "/api/users/{user}/me", Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdmin},
 		{Method: "GET", Pattern: "/healthz", Audience: apispec.AudienceInfra, Authz: apispec.AuthzNone},
+		{Method: "GET", Pattern: "/static/{asset}/{$}", Audience: apispec.AudienceParticipant, Authz: apispec.AuthzNone},
 	}
 }
 
@@ -41,36 +44,72 @@ func TestClaimedIdentityForwardViolations_Mutations(t *testing.T) {
 		name   string
 		mutate func([]apispec.Route) []apispec.Route
 		want   string
+		// table, when set, edits a copy of apispec.AuthzIdentitySources for
+		// the shapes the real vocabulary cannot express.
+		table func(map[apispec.Authz]apispec.IdentitySource)
 	}{
 		{"submit loses CollectorForward (participant claimed-identity, nobody forwards it)", func(rs []apispec.Route) []apispec.Route {
 			rs[0].CollectorForward = false
 			return rs
-		}, "Authz=claimed-identity with CollectorForward=false"},
+		}, "Authz=claimed-identity with CollectorForward=false", nil},
 		// NOT the historical app#346 code: a synthetic composition that
 		// relabels a route as claimed-identity with no forward, which is the
 		// shape app#346 removed from submit-detect.
 		{"synthetic: submit-detect relabelled claimed-identity, no forward (the shape app#346 removed)", func(rs []apispec.Route) []apispec.Route {
 			return append(rs, apispec.Route{Method: "POST", Pattern: "/api/challenges/{cid}/submit-detect", Audience: apispec.AudienceParticipant, Authz: apispec.AuthzClaimedIdentity})
-		}, "Authz=claimed-identity with CollectorForward=false"},
+		}, "Authz=claimed-identity with CollectorForward=false", nil},
 		// The hole a "forward OR internal" rule leaves: Audience=internal must
 		// NOT exempt AuthzClaimedIdentity from needing a forward.
 		{"claimed-identity + AudienceInternal + CollectorForward=false (Audience does not exempt claimed-identity)", func(rs []apispec.Route) []apispec.Route {
 			return append(rs, apispec.Route{Method: "POST", Pattern: "/internal/other", Audience: apispec.AudienceInternal, Authz: apispec.AuthzClaimedIdentity})
-		}, "Authz=claimed-identity with CollectorForward=false"},
+		}, "Authz=claimed-identity with CollectorForward=false", nil},
 		{"admin-audience route declared internal-claimed-identity without a forward", func(rs []apispec.Route) []apispec.Route {
 			return append(rs, apispec.Route{Method: "POST", Pattern: "/api/admin/reset", Audience: apispec.AudienceOperator, Authz: apispec.AuthzInternalClaimedIdentity})
-		}, "Authz=internal-claimed-identity with Audience=operator"},
+		}, "Authz=internal-claimed-identity with Audience=operator", nil},
 		// A forward does not make a participant route internal.
 		{"participant route declared internal-claimed-identity WITH a forward (the forward does not exempt it)", func(rs []apispec.Route) []apispec.Route {
 			return append(rs, apispec.Route{Method: "POST", Pattern: "/api/users/{user}/display-name", Audience: apispec.AudienceParticipant, Authz: apispec.AuthzInternalClaimedIdentity, CollectorForward: true})
-		}, "Authz=internal-claimed-identity with Audience=participant"},
+		}, "Authz=internal-claimed-identity with Audience=participant", nil},
 		{"internal-claimed-identity loses its Audience=internal", func(rs []apispec.Route) []apispec.Route {
 			rs[2].Audience = apispec.AudienceInfra
 			return rs
-		}, "Authz=internal-claimed-identity with Audience=infra"},
+		}, "Authz=internal-claimed-identity with Audience=infra", nil},
+		// app#393: the words are read from the table, so a word under another
+		// name is not outside the property but a violation.
+		{"a route carries a word the table does not classify (claimed-identity under another name)", func(rs []apispec.Route) []apispec.Route {
+			return append(rs, apispec.Route{Method: "POST", Pattern: "/api/challenges/{cid}/submit-v2", Audience: apispec.AudienceParticipant, Authz: apispec.Authz("collector-claimed"), CollectorForward: true})
+		}, "Authz=collector-claimed is not classified in apispec.AuthzIdentitySources", nil},
+		{"a word classified claimed that has no rule", func(rs []apispec.Route) []apispec.Route {
+			return append(rs, apispec.Route{Method: "POST", Pattern: "/api/challenges/{cid}/submit-v2", Audience: apispec.AudienceParticipant, Authz: apispec.Authz("collector-claimed"), CollectorForward: true})
+		}, "Authz=collector-claimed is classified claimed but has no rule", func(m map[apispec.Authz]apispec.IdentitySource) {
+			m["collector-claimed"] = apispec.IdentityClaimed
+		}},
+		{"a word classified as a source that is none of the three", func(rs []apispec.Route) []apispec.Route {
+			return append(rs, apispec.Route{Method: "GET", Pattern: "/x", Audience: apispec.AudienceInfra, Authz: apispec.Authz("odd")})
+		}, `Authz=odd has identity source "maybe"`, func(m map[apispec.Authz]apispec.IdentitySource) {
+			m["odd"] = apispec.IdentitySource("maybe")
+		}},
+		// The #391 hole: a header-less write that reads its identity from the
+		// path, declared none instead of claimed-identity.
+		{"a none route with {user} in its path (a claimed identity declared as none)", func(rs []apispec.Route) []apispec.Route {
+			return append(rs, apispec.Route{Method: "POST", Pattern: "/api/users/{user}/display-name", Audience: apispec.AudienceParticipant, Authz: apispec.AuthzNone})
+		}, "Authz=none with path parameter {user}", nil},
+		{"a none route with a {user...} wildcard", func(rs []apispec.Route) []apispec.Route {
+			rs[5].Pattern = "/files/{user...}"
+			return rs
+		}, "Authz=none with path parameter {user}", nil},
+		// The rule is an allowlist, so renaming the identity parameter does
+		// not get past it.
+		{"a none route whose identity parameter is renamed ({seat})", func(rs []apispec.Route) []apispec.Route {
+			return append(rs, apispec.Route{Method: "GET", Pattern: "/api/seats/{seat}/journey", Audience: apispec.AudienceParticipant, Authz: apispec.AuthzNone})
+		}, "Authz=none with path parameter {seat}", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, v := ClaimedIdentityForwardViolations(tc.mutate(claimedIdentityBaseline()))
+			table := apispec.AuthzIdentitySources()
+			if tc.table != nil {
+				tc.table(table)
+			}
+			_, v := claimedIdentityViolations(tc.mutate(claimedIdentityBaseline()), table)
 			if len(v) != 1 {
 				t.Fatalf("want exactly 1 violation, got %v", v)
 			}

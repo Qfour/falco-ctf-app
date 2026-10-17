@@ -28,6 +28,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
@@ -105,7 +108,8 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 	defer upstream.Close()
 	h := newAdminHandler(upstream.URL, authzAdminAllowlist)
 
-	var adminGated, selfGated, rosteredGated, openGated int
+	var adminGated, selfGated, rosteredGated int
+	var none, claimed []string
 	for _, rt := range h.Routes() {
 		rt := rt
 		switch rt.Authz {
@@ -115,8 +119,16 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 			selfGated++
 		case apispec.AuthzRostered:
 			rosteredGated++
-		case apispec.AuthzNone, apispec.AuthzClaimedIdentity:
-			openGated++
+		}
+		src, ok := apispec.IdentitySourceOf(rt.Authz)
+		if !ok {
+			t.Errorf("%s: Authz %q is not classified in apispec.AuthzIdentitySources", rt.MuxPattern(), rt.Authz)
+		}
+		switch src {
+		case apispec.IdentityNone:
+			none = append(none, rt.MuxPattern())
+		case apispec.IdentityClaimed:
+			claimed = append(claimed, string(rt.Authz)+" "+rt.MuxPattern())
 		}
 		t.Run(string(rt.Authz)+"/"+rt.MuxPattern(), func(t *testing.T) {
 			if violation := authzCheck(t, h, rt); violation != "" {
@@ -139,8 +151,90 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 	if rosteredGated != 1 {
 		t.Fatalf("expected exactly 1 Authz: rostered route (GET /check-participant), got %d", rosteredGated)
 	}
-	if openGated != 2 {
-		t.Fatalf("expected exactly 2 Authz: none routes (GET /healthz, GET /metrics), got %d", openGated)
+	// app#393: none and the claimed words are pinned apart, as literal sets
+	// selected by apispec.AuthzIdentitySources. auth-policy accepts no
+	// claimed identity at all.
+	sort.Strings(none)
+	if strings.Join(none, ",") != "GET /healthz,GET /metrics" {
+		t.Errorf("identity source none routes = %q, want exactly GET /healthz and GET /metrics", none)
+	}
+	if len(claimed) != 0 {
+		t.Errorf("identity source claimed routes = %q, want none (auth-policy authorises from the oauth2-proxy subrequest only)", claimed)
+	}
+}
+
+// TestAuthz_EveryProvenRouteRejectsUnproven is auth-policy's check of the
+// "proven" row of apispec.AuthzIdentitySources (app#393), the counterpart of
+// scoreboard's TestAuthz_EveryProvenRouteRejectsHeaderless. Here the proof is
+// the /oauth2/auth subrequest, so a route whose word is classified proven
+// answers 401 when oauth2-proxy authenticates nobody and 403 when it answers
+// 202 without an identity — never 2xx. The routes are selected by the table,
+// so rostered is covered with admin and self-or-admin, and so is any word
+// classified proven later.
+func TestAuthz_EveryProvenRouteRejectsUnproven(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		upstream int // the fake oauth2-proxy's status; it never sends an email
+		want     int
+	}{
+		{"oauth2-proxy says not authenticated", http.StatusUnauthorized, http.StatusUnauthorized},
+		{"oauth2-proxy authenticates without an identity", http.StatusAccepted, http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			upstream := fakeOAuth2Proxy(t, func(*http.Request) (int, string) { return tc.upstream, "" })
+			defer upstream.Close()
+			h := newAdminHandler(upstream.URL, authzAdminAllowlist)
+			words := map[apispec.Authz]bool{}
+			for _, rt := range h.Routes() {
+				src, ok := apispec.IdentitySourceOf(rt.Authz)
+				if !ok {
+					t.Errorf("%s: Authz %q is not classified in apispec.AuthzIdentitySources", rt.MuxPattern(), rt.Authz)
+					continue
+				}
+				if src != apispec.IdentityProven {
+					continue
+				}
+				words[rt.Authz] = true
+				if v := unprovenViolation(h, rt, tc.want); v != "" {
+					t.Error(v)
+				}
+			}
+			want := map[apispec.Authz]bool{apispec.AuthzAdmin: true, apispec.AuthzSelfOrAdmin: true, apispec.AuthzRostered: true}
+			if !reflect.DeepEqual(words, want) {
+				t.Fatalf("proven words exercised = %v, want %v (the derivation is broken, or a word changed class)", words, want)
+			}
+		})
+	}
+}
+
+// unprovenViolation sends rt's request with a session cookie (so the handler
+// asks oauth2-proxy, whose answer the test fixes) and reports any status but
+// want.
+func unprovenViolation(h http.Handler, rt apispec.Route, want int) string {
+	r := httptest.NewRequest(rt.Method, authzTarget(rt), nil)
+	r.Header.Set("Cookie", "_oauth2_proxy=fake-session")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != want {
+		return fmt.Sprintf("%s: status=%d body=%s, want %d (Authz: %s is classified proven)", rt.MuxPattern(), w.Code, w.Body, want, rt.Authz)
+	}
+	return ""
+}
+
+// The detector is not vacuous (ADR-0005 V8, as scoreboard's
+// TestAuthz_HeaderlessDetectorCatchesClaimedFallback): a proven route whose
+// handler answers 200 without asking oauth2-proxy is flagged for both
+// unproven answers.
+func TestAuthz_UnprovenDetectorCatchesUngatedRoute(t *testing.T) {
+	rt := apispec.Route{Method: "GET", Pattern: "/check-participant-audit", Authz: apispec.AuthzRostered,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK) // BUG: never asks oauth2-proxy.
+		})}
+	mux, _ := apispec.NewMux([]apispec.Route{rt})
+	for _, want := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		if v := unprovenViolation(mux, rt, want); v == "" {
+			t.Errorf("a 200 on a proven route was not flagged (want %d)", want)
+		}
 	}
 }
 

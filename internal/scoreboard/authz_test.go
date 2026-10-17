@@ -33,6 +33,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -244,7 +246,7 @@ func authzCheck(t *testing.T, srv http.Handler, rt apispec.Route) string {
 		// gate performs NO username match against a {user} path segment —
 		// any proven identity, related or not, may proceed. A mismatched
 		// (but valid) identity like authzMismatchedEmail must NEVER be
-		// 403'd here; TestAuthz_AuthenticatedGate_MissingHeaderDenied below
+		// 403'd here; TestAuthz_EveryProvenRouteRejectsHeaderless below
 		// is this case's other half (missing header -> 403), which this
 		// helper cannot express since it always sends an identity header.
 		if w.Code == http.StatusForbidden {
@@ -265,7 +267,8 @@ func authzCheck(t *testing.T, srv http.Handler, rt apispec.Route) string {
 func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 	srv := newAuthzFixture(t)
 
-	var adminGated, selfGated, openGated, authenticatedGated, internalGated int
+	var adminGated, selfGated, authenticatedGated int
+	var none, claimed []string
 	for _, rt := range srv.Routes() {
 		rt := rt
 		switch rt.Authz {
@@ -273,12 +276,18 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 			adminGated++
 		case apispec.AuthzSelfOrAdmin:
 			selfGated++
-		case apispec.AuthzNone, apispec.AuthzClaimedIdentity:
-			openGated++
 		case apispec.AuthzAuthenticated:
 			authenticatedGated++
-		case apispec.AuthzInternalClaimedIdentity:
-			internalGated++
+		}
+		src, ok := apispec.IdentitySourceOf(rt.Authz)
+		if !ok {
+			t.Errorf("%s: Authz %q is not classified in apispec.AuthzIdentitySources", rt.MuxPattern(), rt.Authz)
+		}
+		switch src {
+		case apispec.IdentityNone:
+			none = append(none, rt.MuxPattern())
+		case apispec.IdentityClaimed:
+			claimed = append(claimed, string(rt.Authz)+" "+rt.MuxPattern())
 		}
 		t.Run(string(rt.Authz)+"/"+rt.MuxPattern(), func(t *testing.T) {
 			if violation := authzCheck(t, srv, rt); violation != "" {
@@ -305,7 +314,7 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 	// internal-claimed-identity class: 9 + 6 + 1 + 8 + 6 = 30; closing the
 	// browser path of POST /falco/events and POST /internal/exfil/{cid} moves
 	// both out of the none/claimed-identity bucket (their Authz was
-	// claimed-identity, which openGated counts with none) into
+	// claimed-identity, counted with none at the time) into
 	// internal-claimed-identity: 9 + 6 + 3 + 6 + 6 = 30; ADR-0034 S1 then removed
 	// the participant display-name route (internal-claimed-identity 3 -> 2) and
 	// added the two profile routes (+1 admin, +1 self-or-admin):
@@ -316,62 +325,108 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 	// app#346: the self-or-admin-write class (submit-detect, its only user)
 	// is gone — submit-detect is plain self-or-admin, so the combined self
 	// count stays 7 (6 + 1) but the vocabulary has no "write" member.
+	// app#393: none and the claimed words are no longer one bucket. A route
+	// that accepts a claimed identity relabelled none moved between two
+	// counts that summed the same; now both are literal sets (selected by
+	// apispec.AuthzIdentitySources, like the collector's forward set), so a
+	// route entering or leaving either is a named diff.
 	if adminGated != 10 {
 		t.Fatalf("expected exactly 10 Authz: admin routes (ADR-0005 canon: GET /, GET /api/state, POST /api/admin/reset, POST /api/admin/users/{user}/display-name; app#292 QA Board: GET /api/admin/board/threads, GET /api/admin/board/threads/{tid}, POST /api/admin/board/threads/{tid}/reply, POST /api/admin/board/threads/{tid}/state, POST /api/admin/board/messages/{mid}/state; ADR-0034: POST /api/admin/users/{user}/profile-reset), got %d", adminGated)
 	}
 	if selfGated != 7 {
 		t.Fatalf("expected exactly 7 Authz: self-or-admin routes (GET /api/users/{user}/me, GET /api/users/{user}/journey, POST /api/challenges/{cid}/submit-detect, POST /api/users/{user}/challenges/{cid}/steps/{idx}/check, POST /api/users/{user}/challenges/{cid}/hints/{idx}, POST /api/users/{user}/challenges/{cid}/reset-dirty, ADR-0034: POST /api/users/{user}/profile — P25's 4 QA self-or-admin(-write) routes are gone, cutover), got %d", selfGated)
 	}
-	if openGated != 6 {
-		t.Fatalf("expected exactly 6 Authz: none/claimed-identity routes (GET /portal, GET /static/{asset} (ADR-0028), GET /healthz, GET /metrics, POST /api/challenges/{cid}/submit; Issue #95: POST /csp-report), got %d", openGated)
-	}
-	if internalGated != 2 {
-		t.Fatalf("expected exactly 2 Authz: internal-claimed-identity routes (POST /falco/events and POST /internal/exfil/{cid}, internal-only — browser path closed; the collector-only participant display-name route was removed in ADR-0034 D12 S1), got %d", internalGated)
-	}
+	// GET /static/{asset} is ADR-0028's single static route; POST
+	// /csp-report is Issue #95.
+	pinRouteSet(t, "identity source none", none, []string{
+		"GET /healthz", "GET /metrics", "GET /portal", "GET /static/{asset}", "POST /csp-report",
+	})
+	// internal-claimed-identity is internal-only (browser path closed); the
+	// collector-only participant display-name route went in ADR-0034 D12 S1.
+	pinRouteSet(t, "identity source claimed", claimed, []string{
+		"claimed-identity POST /api/challenges/{cid}/submit",
+		"internal-claimed-identity POST /falco/events",
+		"internal-claimed-identity POST /internal/exfil/{cid}",
+	})
 	if authenticatedGated != 6 {
 		t.Fatalf("expected exactly 6 Authz: authenticated routes (app#292 QA Board participant routes: GET /api/board/threads, GET /api/board/threads/{tid}, POST /api/board/threads, POST /api/board/threads/{tid}/messages, POST /api/board/threads/{tid}/like, POST /api/board/threads/{tid}/unlike), got %d", authenticatedGated)
 	}
 }
 
-// TestAuthz_AuthenticatedGate_MissingHeaderDenied is AuthzAuthenticated's
-// other half (authzCheck's own doc explains why it cannot express this
-// itself — every call there sends X-Auth-Request-Email: authzMismatchedEmail,
-// never an absent header): a request carrying NO identity header at all
-// must be 403'd on every authz=authenticated route, the same fail-closed
-// posture selfOrAdmin uses for a missing header. Derives its case table
-// from srv.Routes() (never a hand-maintained list), matching every other
-// generic gate test in this file.
-func TestAuthz_AuthenticatedGate_MissingHeaderDenied(t *testing.T) {
-	srv := newAuthzFixture(t)
+// pinRouteSet fails unless got (in any order) is exactly want.
+func pinRouteSet(t *testing.T, what string, got, want []string) {
+	t.Helper()
+	sort.Strings(got)
+	sort.Strings(want)
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("%s routes = %q, want exactly %q", what, got, want)
+	}
+}
 
-	tested := 0
+// headerlessViolation sends rt's request with an ALLOWED Origin (so the
+// origin guard cannot be what answers 403) and NO identity header, and
+// reports anything but 403.
+func headerlessViolation(srv http.Handler, rt apispec.Route) string {
+	if w := authzDo(srv, rt, "", false); w.Code != http.StatusForbidden {
+		return fmt.Sprintf("%s: header-less status=%d body=%s, want 403 (Authz: %s is classified proven, so it requires the identity header)", rt.MuxPattern(), w.Code, w.Body, rt.Authz)
+	}
+	return ""
+}
+
+// TestAuthz_EveryProvenRouteRejectsHeaderless is the scoreboard's check of
+// the "proven" row of apispec.AuthzIdentitySources (app#393): every route
+// whose word is classified proven answers a request with no identity header
+// with 403. The routes are selected by the table, not by word, so admin,
+// self-or-admin, authenticated and any word classified proven later are all
+// covered, and a claimed word mis-classified proven is red here (its route
+// lets the header-less request through). TestAuthz_AllDeclaredGatesEnforced
+// sends a MISMATCHED identity, which a header-less-allowing handler also
+// rejects, so it cannot tell the two gates apart; this test can. Replaces
+// TestProfile_V1_EverySelfOrAdminRouteRejectsHeaderless (self-or-admin only)
+// and TestAuthz_AuthenticatedGate_MissingHeaderDenied (authenticated only).
+func TestAuthz_EveryProvenRouteRejectsHeaderless(t *testing.T) {
+	srv := newAuthzFixture(t)
+	words := map[apispec.Authz]bool{}
 	for _, rt := range srv.Routes() {
-		if rt.Authz != apispec.AuthzAuthenticated {
+		src, ok := apispec.IdentitySourceOf(rt.Authz)
+		if !ok {
+			t.Errorf("%s: Authz %q is not classified in apispec.AuthzIdentitySources", rt.MuxPattern(), rt.Authz)
 			continue
 		}
+		if src != apispec.IdentityProven {
+			continue
+		}
+		words[rt.Authz] = true
 		rt := rt
-		tested++
-		t.Run(rt.MuxPattern(), func(t *testing.T) {
-			target := authzConcretePath(rt)
-			var body io.Reader
-			if rt.Method != http.MethodGet {
-				body = strings.NewReader(authzGenericBody)
-			}
-			r := httptest.NewRequest(rt.Method, target, body)
-			if body != nil {
-				r.Header.Set("Content-Type", "application/json")
-			}
-			r.Header.Set("Origin", allowedOrigin)
-			// Deliberately NO X-Auth-Request-Email header.
-			w := httptest.NewRecorder()
-			srv.ServeHTTP(w, r)
-			if w.Code != http.StatusForbidden {
-				t.Fatalf("%s: status=%d body=%s, want 403 (authz=authenticated with no identity header must be fail-closed)", rt.MuxPattern(), w.Code, w.Body)
+		t.Run(string(rt.Authz)+"/"+rt.MuxPattern(), func(t *testing.T) {
+			if v := headerlessViolation(srv, rt); v != "" {
+				t.Fatal(v)
 			}
 		})
 	}
-	if tested == 0 {
-		t.Fatal("found zero Authz: authenticated routes to test — the derivation is broken (or every board route lost its authz classification), not \"nothing to check\"")
+	// Non-vacuous: every proven word the scoreboard declares was exercised
+	// (rostered is auth-policy's; per-word route counts are pinned above).
+	want := map[apispec.Authz]bool{apispec.AuthzAdmin: true, apispec.AuthzSelfOrAdmin: true, apispec.AuthzAuthenticated: true}
+	if !reflect.DeepEqual(words, want) {
+		t.Fatalf("proven words exercised = %v, want %v (the derivation is broken, or a word changed class)", words, want)
+	}
+}
+
+// The detector is not vacuous: a proven route backed by a handler that falls
+// back to a claimed identity when the header is missing (the removed
+// selfOrAdminWrite's shape) is flagged.
+func TestAuthz_HeaderlessDetectorCatchesClaimedFallback(t *testing.T) {
+	rt := apispec.Route{Method: "POST", Pattern: "/api/users/{user}/profile", Authz: apispec.AuthzSelfOrAdmin,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("X-Auth-Request-Email") == "" {
+				w.WriteHeader(http.StatusOK) // BUG: no header -> allow.
+				return
+			}
+			w.WriteHeader(http.StatusForbidden)
+		})}
+	mux, _ := apispec.NewMux([]apispec.Route{rt})
+	if v := headerlessViolation(mux, rt); v == "" {
+		t.Fatal("a header-less 200 on a proven route was not flagged")
 	}
 }
 
