@@ -90,6 +90,7 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
 
 ### Fixed
 
+- portal の失敗表示と trim を揃えた (#411 の admin rename、#415 の board の返信・運営の返信・reset)。失敗した応答は server の文をそのまま (text として) 出し、本文・件名・表示名は server と同じ trim 集合 (`strings.TrimSpace`) で空判定・長さ判定する (#425)。
 - 手順確認 (steps/check)・ヒント開封・やり直し (reset-dirty) の rate limit を、提出 (submit) の
   IP 単位 bucket から切り離し、認証ヘッダーの email 単位 (1 req/s・burst 10) にした。
   会場の NAT の下で、誰かのヒント開封が他の参加者の提出を 429 にすることがなくなる (#315)。
