@@ -1,21 +1,23 @@
 package apispec
 
 // ADR-0035 D4 (a) / V2: no test-only module (chromedp, goja and its transitive
-// dependencies, internal/e2e) may be in a production binary's dependency graph.
-// e2e_boundary_test.go checks the static import closure of cmd/* with go/parser;
-// this file asks the toolchain: `go list -deps ./cmd/...` is the graph `go build`
-// links, and none of the prefixes of testdata/test-only-deps.txt (the ONE list,
-// read by both) may be in it. The list is checked both ways: an entry that names
-// nothing in go.mod or in the module is red (stale), and a module that only tests
-// reach and no entry covers is red (a new test-only dependency enters through
-// ADR-0035 D4). Each check also runs on a planted violation, a synthetic module
-// with this go.mod and go.sum so `go list` resolves the real modules from the cache.
+// dependencies, internal/e2e, ...) may be in a production binary's dependency
+// graph. e2e_boundary_test.go checks the static import closure of cmd/* with
+// go/parser; this file asks the toolchain: `go list -deps ./cmd/...` is the graph
+// `go build` links, and none of the entries of testdata/test-only-deps.txt (the
+// ONE list, read by both) may be in it. The list is checked both ways: an entry
+// that names nothing in go.mod or in the module is red (stale), and a module that
+// only tests reach and no entry names (the module itself, or a path under it; an
+// org prefix is not enough) is red (complete). Each check also runs on a planted
+// violation through the real toolchain: a synthetic module with this go.mod and
+// go.sum, so `go list` resolves the real modules from the cache.
 
 import (
 	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -261,9 +263,11 @@ func uncoveredTestOnlyModules(testModules, prodModules, deps []string) []string 
 		if prod[m] || m == own || seen[m] {
 			continue
 		}
+		// Covered only by an entry that IS the module or lies under it: an entry at an
+		// org (github.com/dop251) must not silently cover a sibling module added later.
 		covered := false
 		for _, d := range deps {
-			if hasPathPrefix(m, d) {
+			if hasPathPrefix(d, m) {
 				covered = true
 				break
 			}
@@ -296,12 +300,12 @@ func TestTestOnlyDepsList_CoversEveryTestOnlyModule(t *testing.T) {
 		t.Fatalf("the module sets were not read (production %d, with tests %d) — comparing them proves nothing", len(prod), len(tests))
 	}
 	if missing := uncoveredTestOnlyModules(tests, prod, deps); len(missing) > 0 {
-		t.Fatalf("modules that only tests reach and %s does not list: %v — a test-only dependency (or a new transitive one) enters through ADR-0035 D4: add it to the list in the same PR, with the pin and the update path D4 (c)(d) asks for", testOnlyDepsFile, missing)
+		t.Fatalf("modules that only tests reach and %s does not name: %v — a NEW DIRECT test-only dependency needs its own ADR until workspace #77 is decided (ORGANIZATION §8 criterion 4; ADR-0035 基準④との関係); a transitive dependency that an approved one gained in an update may, provisionally, be added to the list with the D4 table in the PR body (VP ruling)", testOnlyDepsFile, missing)
 	}
 }
 
 func TestUncoveredTestOnlyModules_CatchesAnUnlistedModule(t *testing.T) {
-	deps := []string{"github.com/dop251", "github.com/dlclark/regexp2"}
+	deps := []string{"github.com/dop251/goja", "github.com/dlclark/regexp2/v2"}
 	prod := []string{"github.com/Qfour/falco-ctf-app", "golang.org/x/net"}
 	tests := []string{"github.com/Qfour/falco-ctf-app", "golang.org/x/net", "github.com/dop251/goja", "github.com/dlclark/regexp2/v2", "github.com/go-sourcemap/sourcemap", "github.com/dop251/goja"}
 	got := uncoveredTestOnlyModules(tests, prod, deps)
@@ -313,6 +317,16 @@ func TestUncoveredTestOnlyModules_CatchesAnUnlistedModule(t *testing.T) {
 	}
 	if got := uncoveredTestOnlyModules(tests, prod, append(deps, "github.com/go-sourcemap/sourcemap")); len(got) != 0 {
 		t.Fatalf("a listed module is covered: uncovered = %v", got)
+	}
+	// An org entry is not a module entry: a sibling module under the same org (here
+	// goja_nodejs, next to the listed goja) is uncovered until it is named itself.
+	sibling := append(append([]string{}, tests...), "github.com/dop251/goja_nodejs")
+	got = uncoveredTestOnlyModules(sibling, prod, append(deps, "github.com/go-sourcemap/sourcemap"))
+	if len(got) != 1 || got[0] != "github.com/dop251/goja_nodejs" {
+		t.Fatalf("uncovered = %v, want exactly [github.com/dop251/goja_nodejs]", got)
+	}
+	if got := uncoveredTestOnlyModules(sibling, prod, []string{"github.com/dop251", "github.com/dlclark/regexp2/v2", "github.com/go-sourcemap/sourcemap"}); len(got) != 2 {
+		t.Fatalf("an org-level entry covered a module: uncovered = %v, want goja and goja_nodejs", got)
 	}
 }
 
@@ -350,57 +364,102 @@ func TestRealGraphDetector_CatchesPlantedImports(t *testing.T) {
 		name  string
 		files map[string]string
 		flags []string
-		want  string // an import path that must be flagged; "" = nothing may be
+		want  []string // import paths that must all be flagged; empty = nothing may be
 	}{
 		{"goja imported directly by the binary", map[string]string{
 			"cmd/fakebin/main.go": mainImporting("github.com/dop251/goja"),
-		}, nil, "github.com/dop251/goja"},
+		}, nil, []string{"github.com/dop251/goja"}},
 		{"goja reached through a non-test file of an internal package", map[string]string{
 			"cmd/fakebin/main.go":     mainImporting(modulePrefix + "internal/fixture-a"),
 			"internal/fixture-a/a.go": "package fixturea\n\nimport _ \"github.com/dop251/goja\"\n",
-		}, nil, "github.com/dop251/goja"},
+		}, nil, []string{"github.com/dop251/goja"}},
 		{"goja's dependencies imported directly (regexp2, sourcemap, pprof)", map[string]string{
 			"cmd/fakebin/main.go": "package main\n\nimport (\n\t_ \"github.com/dlclark/regexp2/v2\"\n\t_ \"github.com/go-sourcemap/sourcemap\"\n\t_ \"github.com/google/pprof/profile\"\n)\n\nfunc main() {}\n",
-		}, nil, "github.com/google/pprof/profile"},
+		}, nil, []string{"github.com/dlclark/regexp2/v2", "github.com/go-sourcemap/sourcemap", "github.com/google/pprof/profile"}},
 		{"the E2E harness reached through two hops", map[string]string{
 			"cmd/fakebin/main.go":       mainImporting(modulePrefix + "internal/fixture-a"),
 			"internal/fixture-a/a.go":   "package fixturea\n\nimport _ \"" + modulePrefix + "internal/fixture-b\"\n",
 			"internal/fixture-b/b.go":   "package fixtureb\n\nimport _ \"" + modulePrefix + "internal/e2e/harness\"\n",
 			"internal/e2e/harness/h.go": "package harness\n",
-		}, nil, modulePrefix + "internal/e2e/harness"},
+		}, nil, []string{modulePrefix + "internal/e2e/harness"}},
 		{"chromedp behind the e2e build tag, built with -tags e2e", map[string]string{
 			"cmd/fakebin/main.go": "package main\n\nfunc main() {}\n",
 			"cmd/fakebin/e2e.go":  "//go:build e2e\n\npackage main\n\nimport _ \"github.com/chromedp/chromedp\"\n",
-		}, []string{"-tags", "e2e"}, "github.com/chromedp/chromedp"},
+		}, []string{"-tags", "e2e"}, []string{"github.com/chromedp/chromedp"}},
 		{"an e2e-tagged file in a build that does not pass the tag (the tag keeps test-only code out of an ordinary build)", map[string]string{
 			"cmd/fakebin/main.go": "package main\n\nfunc main() {}\n",
 			"cmd/fakebin/e2e.go":  "//go:build e2e\n\npackage main\n\nimport _ \"github.com/chromedp/chromedp\"\n",
-		}, nil, ""},
+		}, nil, nil},
 		{"a clean binary", map[string]string{
 			"cmd/fakebin/main.go": mainImporting("net/http"),
-		}, nil, ""},
+		}, nil, nil},
 		{"a clean binary whose test file imports goja", map[string]string{
 			"cmd/fakebin/main.go":      "package main\n\nfunc main() {}\n",
 			"cmd/fakebin/main_test.go": "package main\n\nimport (\n\t_ \"github.com/dop251/goja\"\n\t\"testing\"\n)\n\nfunc TestX(t *testing.T) {}\n",
-		}, nil, ""},
+		}, nil, nil},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			dir := plantedModule(t, root, c.files)
 			graph := productionGraph(t, dir, c.flags...)
 			hits := testOnlyHits(graph, deps)
-			if c.want == "" {
+			if len(c.want) == 0 {
 				if len(hits) != 0 {
 					t.Fatalf("a clean binary was flagged: %v", hits)
 				}
 				return
 			}
-			for _, h := range hits {
-				if h == c.want {
-					return
+			for _, w := range c.want {
+				if !slices.Contains(hits, w) {
+					t.Errorf("planted import of %s not flagged; hits = %v (graph has %d packages)", w, hits, len(graph))
 				}
 			}
-			t.Fatalf("planted import of %s not flagged; hits = %v (graph has %d packages)", c.want, hits, len(graph))
 		})
+	}
+}
+
+// The completeness check through the real toolchain: a module that only a test
+// file imports (kylelemons/godebug is a real test-only module of this repo) is
+// uncovered while its entry is missing and covered once it is named; the same
+// import in the binary's own file puts it in the production graph instead.
+func TestCompletenessCheck_CatchesAPlantedTestOnlyModule(t *testing.T) {
+	root := repoRoot(t)
+	deps := loadTestOnlyDeps(t, root)
+	const mod = "github.com/kylelemons/godebug"
+	var without []string
+	for _, d := range deps {
+		if d != mod {
+			without = append(without, d)
+		}
+	}
+	if len(without) == len(deps) {
+		t.Fatalf("%s is not an entry of the list; this planted case needs a real test-only module", mod)
+	}
+	const modFmt = "{{with .Module}}{{.Path}}{{end}}"
+	read := func(dir string) (prod, tests []string) {
+		return goList(t, dir, "-deps", "-f", modFmt, "./cmd/..."), moduleOfEveryPackage(t, dir, "-test", "-tags", "e2e")
+	}
+
+	dir := plantedModule(t, root, map[string]string{
+		"cmd/fakebin/main.go":      "package main\n\nfunc main() {}\n",
+		"cmd/fakebin/main_test.go": "package main\n\nimport (\n\t_ \"" + mod + "/diff\"\n\t\"testing\"\n)\n\nfunc TestX(t *testing.T) {}\n",
+	})
+	prod, tests := read(dir)
+	if got := uncoveredTestOnlyModules(tests, prod, without); len(got) != 1 || got[0] != mod {
+		t.Fatalf("a module only a test imports, with no entry: uncovered = %v, want [%s]", got, mod)
+	}
+	if got := uncoveredTestOnlyModules(tests, prod, deps); len(got) != 0 {
+		t.Fatalf("the module is named in the list but uncovered = %v", got)
+	}
+
+	dir = plantedModule(t, root, map[string]string{
+		"cmd/fakebin/main.go": "package main\n\nimport _ \"" + mod + "/diff\"\n\nfunc main() {}\n",
+	})
+	prod, tests = read(dir)
+	if len(testOnlyHits(productionGraph(t, dir), deps)) == 0 {
+		t.Fatal("the import moved into main.go is not flagged by the production-graph check")
+	}
+	if got := uncoveredTestOnlyModules(tests, prod, without); len(got) != 0 {
+		t.Fatalf("a module in the production graph is not test-only (that check is the graph's): uncovered = %v", got)
 	}
 }
