@@ -1206,7 +1206,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "403":
-          description: origin guard denied, or missing/blank identity header
+          description: origin guard denied, or the request carries no `X-Auth-Request-Email` identity (denied by the rate limiter before any token is consumed), or an identity that is not the canonical `<seat>@<EXPECTED_EMAIL_DOMAIN>` form (the handler's 403, after the bucket)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1306,7 +1306,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "403":
-          description: origin guard denied, or missing/blank identity header
+          description: origin guard denied, or the request carries no `X-Auth-Request-Email` identity (denied by the rate limiter before any token is consumed), or an identity that is not the canonical `<seat>@<EXPECTED_EMAIL_DOMAIN>` form (the handler's 403, after the bucket)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1354,7 +1354,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/LikeResult" }
         "403":
-          description: origin guard denied, or missing/blank identity header
+          description: origin guard denied, or the request carries no `X-Auth-Request-Email` identity (denied by the rate limiter before any token is consumed), or an identity that is not the canonical `<seat>@<EXPECTED_EMAIL_DOMAIN>` form (the handler's 403, after the bucket)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1404,7 +1404,12 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/LikeResult" }
         "403":
-          description: missing/blank identity header
+          description: origin guard denied, or the request carries no `X-Auth-Request-Email` identity (denied by the rate limiter before any token is consumed), or an identity that is not the canonical `<seat>@<EXPECTED_EMAIL_DOMAIN>` form (the handler's 403, after the bucket)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: rate limited
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

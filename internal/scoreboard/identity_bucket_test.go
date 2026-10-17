@@ -14,7 +14,7 @@ package scoreboard_test
 //   - identity-keyed: behind one IP (httptest sends one RemoteAddr, i.e. the
 //     venue-NAT case) another identity keeps its full burst;
 //   - header-less: never gets through and spends no identity's token; on a
-//     strict row the limiter ITSELF answers every one (its no_identity
+//     row the limiter ITSELF answers every one (its no_identity
 //     counter moves by the number sent), never an IP-keyed 429;
 //   - sharing: draining a route 429s exactly the routes on its own row and
 //     nothing else, not another identity bucket and not submit's per-IP one;
@@ -22,9 +22,11 @@ package scoreboard_test
 //     is limited at exactly its burst, per IP, without limiting any
 //     identity row.
 //
-// A NEW row is strict: true (MiddlewareStrict, the app#315 shape).
-// strict: false is board_post and board_like only (TableMatchesRoutes
-// asserts that set; whether to make them strict too is #390 / #397).
+// Every row is MiddlewareStrict (the app#315 shape; board_post and board_like
+// joined it in app#397): the properties below are checked as strict ones, and
+// the table has no "lenient" kind to opt into (#390). A bucket that falls back
+// to a client-IP key when the header is missing is caught by the properties
+// (TestIdentityBuckets_PropertyDetectorCatchesPassThrough).
 //
 // x-ctf-rate-limit is free text, so the rows cannot be derived from it yet: a
 // new identity bucket is a new row here. Route-specific claims stay with the
@@ -34,7 +36,6 @@ package scoreboard_test
 import (
 	"fmt"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -47,20 +48,19 @@ import (
 )
 
 type rateBucket struct {
-	name    string        // the bucket; for a strict row, its ratelimit.IdentityRequestsTotal label
+	name    string        // the bucket; for an identity row, its ratelimit.IdentityRequestsTotal label
 	burst   int           // requests that pass from a full bucket
 	refill  time.Duration // time for one token to come back
-	strict  bool          // MiddlewareStrict: header-less is the limiter's 403, no token, no IP fallback
 	members []string      // MuxPattern of every route on the bucket
 }
 
 var identityBuckets = []rateBucket{
 	{
-		name: "detect", burst: 10, refill: time.Second, strict: true,
+		name: "detect", burst: 10, refill: time.Second,
 		members: []string{"POST /api/challenges/{cid}/submit-detect"},
 	},
 	{
-		name: "participant_action", burst: 10, refill: time.Second, strict: true,
+		name: "participant_action", burst: 10, refill: time.Second,
 		members: []string{
 			"POST /api/users/{user}/challenges/{cid}/steps/{idx}/check",
 			"POST /api/users/{user}/challenges/{cid}/hints/{idx}",
@@ -69,15 +69,11 @@ var identityBuckets = []rateBucket{
 		},
 	},
 	{
-		// Not strict: boardIdentityKeyed falls back to a client-IP key when the
-		// header is missing, and the 403 comes from requireAuthenticated in the
-		// handler, after that key has spent a token. Past the IP key's burst a
-		// header-less request is 429 instead.
-		name: "board_post", burst: 3, refill: 10 * time.Second, strict: false,
+		name: "board_post", burst: 3, refill: 10 * time.Second,
 		members: []string{"POST /api/board/threads", "POST /api/board/threads/{tid}/messages"},
 	},
 	{
-		name: "board_like", burst: 10, refill: time.Second, strict: false,
+		name: "board_like", burst: 10, refill: time.Second,
 		members: []string{"POST /api/board/threads/{tid}/like", "POST /api/board/threads/{tid}/unlike"},
 	},
 }
@@ -123,11 +119,7 @@ func routeByPattern(t *testing.T, routes []apispec.Route, pattern string) apispe
 func TestIdentityBuckets_TableMatchesRoutes(t *testing.T) {
 	routes := newOriginFixture(t, []string{allowedOrigin}).Routes()
 	rowOf := map[string]string{}
-	var lenient []string
 	for _, b := range identityBuckets {
-		if !b.strict {
-			lenient = append(lenient, b.name)
-		}
 		for _, m := range b.members {
 			if prev, dup := rowOf[m]; dup {
 				t.Errorf("%s is on two rows (%s, %s)", m, prev, b.name)
@@ -151,10 +143,6 @@ func TestIdentityBuckets_TableMatchesRoutes(t *testing.T) {
 	if derived == 0 {
 		t.Fatal("derived 0 identity rate-limited routes: the derivation is broken, not clean")
 	}
-	sort.Strings(lenient)
-	if got := strings.Join(lenient, ","); got != "board_like,board_post" {
-		t.Errorf("rows with strict: false = [%s], want [board_like,board_post]: a new identity bucket is MiddlewareStrict (#390)", got)
-	}
 	if declares("identity 1 req/s burst 100", "identity 1 req/s burst 10") {
 		t.Error(`declares matched "burst 10" inside "burst 100": the match has no word boundary`)
 	}
@@ -176,12 +164,9 @@ func bucketPropertyViolation(t *testing.T, srv http.Handler, clock *testClock, r
 		return fmt.Sprintf("%s: bob (same IP) got burst %d after alice drained hers, want %d: the bucket is not identity-keyed", p, n, b.burst)
 	}
 	// A 403 alone cannot tell the limiter's answer from the handler's gate, so
-	// on a strict row the limiter's own no_identity counter must move by
-	// exactly the number of header-less requests sent.
+	// the limiter's own no_identity counter must move by exactly the number of
+	// header-less requests sent.
 	noIdentity := func() float64 {
-		if !b.strict {
-			return 0
-		}
 		return testutil.ToFloat64(ratelimit.IdentityRequestsTotal.WithLabelValues(b.name, "no_identity"))
 	}
 	before := noIdentity()
@@ -192,16 +177,12 @@ func bucketPropertyViolation(t *testing.T, srv http.Handler, clock *testClock, r
 			blank = "   "
 		}
 		w := ogReq(t, srv, rt.Method, concretePath(rt.Pattern), allowedOrigin, "", blank, strings.NewReader("{}"))
-		if w.Code == http.StatusForbidden || (!b.strict && limited(t, rt, w)) {
+		if w.Code == http.StatusForbidden {
 			continue
 		}
-		want := "403 every time (no token taken, never an IP-keyed 429)"
-		if !b.strict {
-			want = "403 or the limiter's 429, never through"
-		}
-		return fmt.Sprintf("%s: header-less request #%d (X-Auth-Request-Email %q): status=%d body=%s, want %s", p, i, blank, w.Code, w.Body, want)
+		return fmt.Sprintf("%s: header-less request #%d (X-Auth-Request-Email %q): status=%d body=%s, want 403 every time (no token taken, never an IP-keyed 429)", p, i, blank, w.Code, w.Body)
 	}
-	if got := noIdentity() - before; b.strict && got != float64(sent) {
+	if got := noIdentity() - before; got != float64(sent) {
 		return fmt.Sprintf("%s: the limiter answered %v of %d header-less requests itself (ratelimit_identity_requests_total{bucket=%q,outcome=\"no_identity\"}); the other 403s came from behind it, so the bucket is not MiddlewareStrict", p, got, sent, b.name)
 	}
 	if n := burstOf(t, srv, rt, "carol"); n != b.burst {
@@ -257,9 +238,12 @@ func gate403() http.Handler {
 	})
 }
 
-// The property check is not vacuous: a strict row whose limiter lets an empty
-// key through (the handler behind it still answers 403) is flagged, while a
-// real MiddlewareStrict passes every property.
+// The property check is not vacuous: a row whose limiter lets an empty key
+// through (the handler behind it still answers 403), and one whose identity key
+// falls back to the client IP when the header is missing (the shape board_post
+// and board_like had before app#397: the 403 came from the handler, after a
+// token was spent, and past the IP key's burst it was 429), are both flagged,
+// while a real MiddlewareStrict passes every property.
 func TestIdentityBuckets_PropertyDetectorCatchesPassThrough(t *testing.T) {
 	rt := apispec.Route{Method: "POST", Pattern: "/api/users/{user}/example"}
 	for _, tc := range []struct {
@@ -273,9 +257,17 @@ func TestIdentityBuckets_PropertyDetectorCatchesPassThrough(t *testing.T) {
 		{"empty-key pass-through Middleware behind a 403 gate", func(l *ratelimit.Limiter, _ string) http.Handler {
 			return l.Middleware(identityOrEmpty)(gate403())
 		}, true},
+		{"identity with a client-IP fallback behind a 403 gate (board before app#397)", func(l *ratelimit.Limiter, _ string) http.Handler {
+			return l.Middleware(func(r *http.Request) string {
+				if k := identityOrEmpty(r); k != "" {
+					return k
+				}
+				return "ip:" + ratelimit.ClientIP(r)
+			})(gate403())
+		}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			b := rateBucket{name: "example_proof_" + strconv.FormatBool(tc.wantFlags), burst: 10, refill: time.Second, strict: true}
+			b := rateBucket{name: "example_proof_" + strconv.Itoa(len(tc.name)), burst: 10, refill: time.Second}
 			clock := newTestClock()
 			r := rt
 			r.Handler = tc.wire(ratelimit.New(1, 10).WithNow(clock.now), b.name)
