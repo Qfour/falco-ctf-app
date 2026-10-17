@@ -8,14 +8,18 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
 )
 
-// ClaimedIdentityForwardViolations is the ROUTE-TABLE property behind
-// app#346 / #376 / #393. The vocabulary half of that work — an x-ctf-authz
-// word may only exist if its constant, a Route, a spec and
-// apispec.AuthzIdentitySources all agree and something uses it — is ADR-0034
-// 判定 (c); internal/apispec/authz_vocabulary_test.go checks it. This
-// function is the other half: a route may accept an identity nobody proved
-// only for a written-down reason. Every route is looked up in
-// apispec.AuthzIdentitySources (never in a list of word names):
+// IdentitySourceViolations is the ROUTE-TABLE property behind
+// app#346 / #376 / #393: every route's Authz word is looked up in
+// apispec.AuthzIdentitySources (never in a list of word names) and must
+// satisfy the rule for its identity source. It was
+// ClaimedIdentityForwardViolations until app#413; the property had grown from
+// the claimed words to every word, and the old name said only the claimed
+// half. The vocabulary half of that work — an x-ctf-authz word may only exist
+// if its constant, a Route, a spec and apispec.AuthzIdentitySources all agree
+// and something uses it — is ADR-0034 判定 (c);
+// internal/apispec/authz_vocabulary_test.go checks it. This function is the
+// other half: a route may accept an identity nobody proved only for a
+// written-down reason. Per identity source:
 //
 //   - a word the table does not classify is a violation (fail-closed): it
 //     cannot be shown not to accept a claimed identity.
@@ -47,9 +51,9 @@ import (
 //     tested per service from the same table.
 //
 // The checks run on each service's live Routes(): parity_coverage_test.go
-// requires a test of the calling name in every mux-owning package (that the
-// test calls this function on the live Routes() is held by review, not by a
-// check). Together with
+// requires a test named TestAPISpec_IdentitySourceProperty in every
+// mux-owning package (that the test calls this function on the live Routes()
+// is held by review, not by a check). Together with
 // authz_vocabulary_test.go (c) (every constant is in a spec) and V1 / V3b
 // (every spec operation is a live route with the same x-ctf-authz), every
 // declared word is on some live route this function reads, so the
@@ -58,13 +62,13 @@ import (
 // checked is how many claimed routes the scan looked at; a caller that knows
 // its service has some asserts checked > 0, so a scan that saw no route at
 // all cannot pass as "no violations".
-func ClaimedIdentityForwardViolations(routes []apispec.Route) (checked int, violations []string) {
-	return claimedIdentityViolations(routes, apispec.AuthzIdentitySources())
+func IdentitySourceViolations(routes []apispec.Route) (checked int, violations []string) {
+	return identitySourceViolations(routes, apispec.AuthzIdentitySources())
 }
 
-// claimedIdentityViolations is the property against an injected table, so the
+// identitySourceViolations is the property against an injected table, so the
 // mutation tests can classify words the real vocabulary does not have.
-func claimedIdentityViolations(routes []apispec.Route, sources map[apispec.Authz]apispec.IdentitySource) (checked int, violations []string) {
+func identitySourceViolations(routes []apispec.Route, sources map[apispec.Authz]apispec.IdentitySource) (checked int, violations []string) {
 	for _, rt := range routes {
 		head := rt.MuxPattern() + ": Authz=" + string(rt.Authz)
 		src, ok := sources[rt.Authz]
@@ -97,7 +101,7 @@ func claimedIdentityViolations(routes []apispec.Route, sources map[apispec.Authz
 						") — internal-claimed-identity is only for Audience=internal endpoints; a forward does not make a participant/operator route internal (app#346)")
 				}
 			default:
-				violations = append(violations, head+" is classified claimed but has no rule in ClaimedIdentityForwardViolations — write down its legitimate caller before a route uses it (app#393)")
+				violations = append(violations, head+" is classified claimed but has no rule in IdentitySourceViolations — write down its legitimate caller before a route uses it (app#393)")
 			}
 		default:
 			violations = append(violations, head+" has identity source "+strconv.Quote(string(src))+", which is none of proven / claimed / none (app#393)")

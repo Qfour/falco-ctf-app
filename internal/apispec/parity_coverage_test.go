@@ -34,11 +34,16 @@ import (
 //   - TestAPISpec_V3b_StringExtParity — x-ctf-audience / x-ctf-authz /
 //     x-ctf-rate-limit string parity. The core "spec isn't lying about who
 //     can call this" check.
-//   - TestAPISpec_ClaimedIdentityImpliesForwardOrInternal — the route-table
-//     property for claimed-identity Authz words (app#346 / #376). It is wired
-//     into EVERY service, including one that declares no claimed-identity
+//   - TestAPISpec_IdentitySourceProperty — the entry point that forces every
+//     Authz word to be classified, on every service: it runs
+//     specparity.IdentitySourceViolations on the service's live Routes(),
+//     which fails a word apispec.AuthzIdentitySources does not classify, a
+//     claimed word without its own rule, and a none route with a path
+//     parameter that could name a caller (app#346 / #376 / #393). It is
+//     wired into EVERY service, including one that declares no claimed
 //     route (checked == 0 is allowed there), so a route declared later is
-//     covered the moment it appears.
+//     covered the moment it appears. Named
+//     TestAPISpec_ClaimedIdentityImpliesForwardOrInternal until app#413.
 //
 // Deliberately NOT included, with reasons that must hold for as long as
 // they're excluded (re-evaluate if either premise changes):
@@ -61,7 +66,7 @@ import (
 var requiredParityTestFuncs = []string{
 	"TestAPISpec_V1_RouteSetMatchesSpec",
 	"TestAPISpec_V3b_StringExtParity",
-	"TestAPISpec_ClaimedIdentityImpliesForwardOrInternal",
+	"TestAPISpec_IdentitySourceProperty",
 }
 
 // testFuncNames returns the set of top-level (non-method) function names
