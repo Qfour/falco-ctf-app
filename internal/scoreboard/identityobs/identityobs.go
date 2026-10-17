@@ -22,8 +22,8 @@
 // compile on the host and break only the collector image build, which is not a
 // required check); it takes a func(*http.Request) from its caller instead, and
 // this package imports ratelimit for the header name — which makes the reverse
-// import a cycle the compiler rejects. TestCollectorClosureExcludesIdentityobs
-// is the second tripwire.
+// import a cycle the compiler rejects. TestNoDistrolessBinaryLinksIdentityobs
+// (internal/apispec/identityobs_boundary_test.go) is the second tripwire.
 package identityobs
 
 import (
@@ -122,17 +122,24 @@ func isDeclared(p Pair) bool {
 // label (metrics.go's rule: nothing per-participant; per-route 403s are in
 // scoreboard_http_request_duration_seconds). Process-global like every other
 // metric here; tests assert deltas.
-var DenialsTotal = newDenialsTotal()
+var DenialsTotal = newDenialsVec(prometheus.DefaultRegisterer)
 
-func newDenialsTotal() *prometheus.CounterVec {
-	v := promauto.NewCounterVec(prometheus.CounterOpts{
+func denialsOpts() prometheus.CounterOpts {
+	return prometheus.CounterOpts{
 		Namespace: "scoreboard",
 		Subsystem: "identity",
 		Name:      "denials_total",
 		Help: "Requests an identity gate refused for lack of a usable proven identity, by gate and reason. " +
 			"gate=portal counts portal shells served without a usable identity (the identity panes stay empty). " +
 			"In healthy production reason=no_identity and reason=non_canonical stay 0.",
-	}, []string{"gate", "reason"})
+	}
+}
+
+// newDenialsVec registers the metric on reg and creates every declared series
+// at 0. It takes the Registerer so a test can check the pre-generation on a
+// fresh registry, independent of what else the process has already done.
+func newDenialsVec(reg prometheus.Registerer) *prometheus.CounterVec {
+	v := promauto.With(reg).NewCounterVec(denialsOpts(), []string{"gate", "reason"})
 	for _, p := range declared {
 		v.WithLabelValues(string(p.Gate), string(p.Reason))
 	}

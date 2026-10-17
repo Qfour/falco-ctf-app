@@ -71,10 +71,21 @@ func expectedGate(t *testing.T, rt apispec.Route) identityobs.Gate {
 	return ""
 }
 
-func identityGateRoutes(routes []apispec.Route) []apispec.Route {
+// identityGateRoutes is every route whose access decision needs a proven
+// identity and that is not an admin route (admin has its own gate, which
+// ADR-0038 leaves out of the vocabulary): derived from the Authz vocabulary's
+// IdentitySource, so a new word with the same meaning is picked up without an
+// edit here (app#393). A word the vocabulary does not classify is an error.
+func identityGateRoutes(t *testing.T, routes []apispec.Route) []apispec.Route {
+	t.Helper()
 	var out []apispec.Route
 	for _, rt := range routes {
-		if rt.Authz == apispec.AuthzSelfOrAdmin || rt.Authz == apispec.AuthzAuthenticated {
+		src, ok := apispec.IdentitySourceOf(rt.Authz)
+		if !ok {
+			t.Errorf("%s: Authz %q is not classified by apispec.AuthzIdentitySources", rt.MuxPattern(), rt.Authz)
+			continue
+		}
+		if src == apispec.IdentityProven && rt.Authz != apispec.AuthzAdmin {
 			out = append(out, rt)
 		}
 	}
@@ -87,7 +98,7 @@ func identityGateRoutes(routes []apispec.Route) []apispec.Route {
 // refused. GET /portal is added by name (Authz none, the only route that shows
 // the identity).
 func TestIdentityDenials_EveryGateRouteCountsOnceAtItsOwnGate(t *testing.T) {
-	routes := identityGateRoutes(newOriginFixture(t, []string{allowedOrigin}).Routes())
+	routes := identityGateRoutes(t, newOriginFixture(t, []string{allowedOrigin}).Routes())
 	if len(routes) < 10 {
 		t.Fatalf("derived %d identity-gated routes: the derivation is broken, not clean", len(routes))
 	}
@@ -327,9 +338,12 @@ func TestIdentityDenials_LogCarriesNeitherIdentityNorPath(t *testing.T) {
 	}
 }
 
-// V3: right after the production handler is assembled, before any request, the
-// metric has exactly the 8 declared series (every gate has a no_identity one),
-// and ratelimit_identity_requests_total has no no_identity series at all.
+// V3 (default registry): once the production handler is assembled the metric
+// has exactly the 8 declared series, and ratelimit_identity_requests_total has
+// no no_identity outcome at all. The pre-generation itself (every pair exists at
+// 0 right after registration, with a mutation that removes it) is checked in
+// identityobs on a fresh registry, which is the canonical test: this one only
+// sees the default registry, where earlier tests may already have run.
 func TestIdentityDenials_SeriesPregeneratedAndOldOutcomeGone(t *testing.T) {
 	newLimiterFixture(t, newTestClock())
 	mfs, err := prometheus.DefaultGatherer.Gather()
@@ -368,6 +382,59 @@ func TestIdentityDenials_SeriesPregeneratedAndOldOutcomeGone(t *testing.T) {
 	for _, p := range identityobs.Declared() {
 		if !denials[p] {
 			t.Errorf("series %v is missing before any request", p)
+		}
+	}
+}
+
+// A request that HAS an identity gets through the strict middleware (it is not a
+// strict denial) and is refused by the gate behind it: that gate counts it
+// once, and gate=strict reason=no_identity does not move (ADR-0038 D1: "a
+// request is never also counted by self_or_admin"). One representative route per
+// identity bucket, on the fixture that has the detect runner (so submit-detect
+// reaches its gate). A canonical identity for another seat is a mismatch where
+// the gate matches a seat (self_or_admin); one on another domain is
+// non_canonical at either gate.
+func TestIdentityDenials_AnIdentifiedRequestIsCountedOnlyByTheInnerGate(t *testing.T) {
+	routes := newAuthzFixture(t).Routes()
+	strict := identityobs.Pair{Gate: identityobs.GateStrict, Reason: identityobs.ReasonNoIdentity}
+	for _, b := range identityBuckets {
+		rt := routeByPattern(t, routes, b.members[0])
+		var inner identityobs.Gate
+		switch rt.Authz {
+		case apispec.AuthzSelfOrAdmin:
+			inner = identityobs.GateSelfOrAdmin
+		case apispec.AuthzAuthenticated:
+			inner = identityobs.GateAuthenticated
+		default:
+			t.Fatalf("%s (row %s): Authz %q is not an identity gate", rt.MuxPattern(), b.name, rt.Authz)
+		}
+		cases := []struct {
+			name, email string
+			reason      identityobs.Reason
+		}{{"another domain", "alice@evil.example", identityobs.ReasonNonCanonical}}
+		if inner == identityobs.GateSelfOrAdmin {
+			cases = append(cases, struct {
+				name, email string
+				reason      identityobs.Reason
+			}{"another canonical seat", "mallory@ctf.local", identityobs.ReasonMismatch})
+		}
+		for _, tc := range cases {
+			t.Run(b.name+"/"+tc.name, func(t *testing.T) {
+				srv := newAuthzFixture(t)
+				before := denialCounts()
+				w := authzDo(srv, rt, tc.email, true)
+				if w.Code != http.StatusForbidden {
+					t.Fatalf("%s as %q: status=%d body=%s, want 403", rt.MuxPattern(), tc.email, w.Code, w.Body)
+				}
+				got := moved(before, denialCounts())
+				want := identityobs.Pair{Gate: inner, Reason: tc.reason}
+				if len(got) != 1 || got[want] != 1 {
+					t.Fatalf("series moved = %v, want exactly %v by 1", got, want)
+				}
+				if got[strict] != 0 {
+					t.Fatalf("strict/no_identity moved for a request that had an identity: %v", got)
+				}
+			})
 		}
 	}
 }

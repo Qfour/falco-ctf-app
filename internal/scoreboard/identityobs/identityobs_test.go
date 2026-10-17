@@ -580,3 +580,64 @@ func TestNilObserverStillCounts(t *testing.T) {
 		t.Fatalf("delta = %v, want 1", d)
 	}
 }
+
+// referencesOutside lists the non-test files outside identityobs that mention
+// identityobs.<name>.
+func referencesOutside(t *testing.T, root, name string) []string {
+	t.Helper()
+	var files []string
+	fset := token.NewFileSet()
+	for _, top := range []string{"cmd", "internal"} {
+		if _, err := os.Stat(filepath.Join(root, top)); os.IsNotExist(err) {
+			continue
+		}
+		err := filepath.WalkDir(filepath.Join(root, top), func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return err
+			}
+			if strings.Contains(filepath.ToSlash(path), "internal/scoreboard/identityobs/") {
+				return nil
+			}
+			f, perr := parser.ParseFile(fset, path, nil, 0)
+			if perr != nil {
+				return perr
+			}
+			ast.Inspect(f, func(n ast.Node) bool {
+				if sel, ok := n.(*ast.SelectorExpr); ok {
+					if id, ok := sel.X.(*ast.Ident); ok && id.Name == "identityobs" && sel.Sel.Name == name {
+						files = append(files, path)
+					}
+				}
+				return true
+			})
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	return files
+}
+
+// V6: the counter is incremented in one place. A gate that did
+// identityobs.DenialsTotal.WithLabelValues(...).Inc() itself would skip the
+// declared-pair check and the sampled log; every gate goes through Record.
+// (Test code reads the counter; that is the point of exporting it.)
+func TestNothingOutsideIncrementsDenialsTotalDirectly(t *testing.T) {
+	if got := referencesOutside(t, moduleRoot(t), "DenialsTotal"); len(got) > 0 {
+		t.Fatalf("non-test code outside identityobs references identityobs.DenialsTotal: %v (record through Observer.Record)", got)
+	}
+	// Not vacuous: a synthetic gate that increments it directly is found.
+	root := t.TempDir()
+	dir := filepath.Join(root, "internal", "scoreboard", "api")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := "package api\n\nimport \"" + pkgImport + "\"\n\nfunc deny() { identityobs.DenialsTotal.WithLabelValues(\"strict\", \"no_identity\").Inc() }\n"
+	if err := os.WriteFile(filepath.Join(dir, "x.go"), []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := referencesOutside(t, root, "DenialsTotal"); len(got) != 1 {
+		t.Fatalf("the synthetic direct increment was not found: %v", got)
+	}
+}
