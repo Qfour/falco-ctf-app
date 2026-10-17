@@ -33,6 +33,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
@@ -117,16 +119,16 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	var adminGated, selfGated, openGated int
+	var proven, none, claimed []string
 	for _, rt := range h.Routes() {
 		rt := rt
-		switch rt.Authz {
-		case apispec.AuthzAdmin:
-			adminGated++
-		case apispec.AuthzSelfOrAdmin:
-			selfGated++
-		case apispec.AuthzNone, apispec.AuthzClaimedIdentity:
-			openGated++
+		switch src, _ := apispec.IdentitySourceOf(rt.Authz); src {
+		case apispec.IdentityProven:
+			proven = append(proven, string(rt.Authz)+" "+rt.MuxPattern())
+		case apispec.IdentityNone:
+			none = append(none, rt.MuxPattern())
+		case apispec.IdentityClaimed:
+			claimed = append(claimed, string(rt.Authz)+" "+rt.MuxPattern())
 		}
 		t.Run(string(rt.Authz)+"/"+rt.MuxPattern(), func(t *testing.T) {
 			if violation := authzCheck(t, h, rt); violation != "" {
@@ -135,22 +137,31 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 		})
 	}
 
-	// Non-vacuous count guards (mirrors scoreboard/auth-policy authz_test.go's
-	// discipline): pin the per-class counts to ADR-0005 C1's real-world
-	// canon (4 routes total: 2 forwarded participant writes +
-	// healthz/metrics; ADR-0034 S1 removed the display-name forward). adminGated/selfGated are pinned to 0 DELIBERATELY —
-	// see the package-level doc above; a nonzero value here means a future
-	// route declared Authz: admin/self-or-admin on the collector, which is
-	// itself worth a second look (the collector is meant to stay a thin
-	// forwarder with no gates of its own).
-	if adminGated != 0 {
-		t.Fatalf("expected zero Authz: admin routes on the collector (thin-forwarder design), got %d", adminGated)
-	}
-	if selfGated != 0 {
-		t.Fatalf("expected zero Authz: self-or-admin route on the collector (thin-forwarder design), got %d", selfGated)
-	}
-	if openGated != 4 {
-		t.Fatalf("expected exactly 4 Authz: none/claimed-identity routes (POST submit, POST exfil, GET healthz, GET metrics), got %d", openGated)
+	// Non-vacuous guards (mirrors scoreboard/auth-policy authz_test.go's
+	// discipline), by identity source (apispec.AuthzIdentitySources) and as
+	// literal sets like TestAPISpec_V1_ForwardSetIsSubmitAndExfil: ADR-0005
+	// C1's canon is 4 routes (2 forwarded participant writes +
+	// healthz/metrics; ADR-0034 S1 removed the display-name forward). No
+	// proven route, DELIBERATELY — see the package-level doc above; one here
+	// means the collector grew a gate of its own, which is worth a second
+	// look (it is meant to stay a thin forwarder). app#393: none and
+	// claimed-identity are pinned apart, so relabelling a claimed route none
+	// is a named diff instead of a move inside one count.
+	pinRouteSet(t, "identity source proven", proven, nil)
+	pinRouteSet(t, "identity source none", none, []string{"GET /healthz", "GET /metrics"})
+	pinRouteSet(t, "identity source claimed", claimed, []string{
+		"claimed-identity POST /api/challenges/{cid}/exfil",
+		"claimed-identity POST /api/challenges/{cid}/submit",
+	})
+}
+
+// pinRouteSet fails unless got (in any order) is exactly want.
+func pinRouteSet(t *testing.T, what string, got, want []string) {
+	t.Helper()
+	sort.Strings(got)
+	sort.Strings(want)
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("%s routes = %q, want exactly %q", what, got, want)
 	}
 }
 
