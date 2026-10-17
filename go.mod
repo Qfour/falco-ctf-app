@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/chromedp/cdproto v0.157.9
 	github.com/chromedp/chromedp v0.21.0
-	github.com/dop251/goja v0.0.0-20260923012348-67663e7a3b97
+	github.com/dop251/goja v0.0.0-20261001121453-e1fc788e4f41
 	github.com/prometheus/client_golang v1.25.0
 	github.com/yuin/goldmark v1.8.6
 	golang.org/x/net v0.61.0

@@ -142,6 +142,26 @@ var out = CASES.map(function (name) {
 });
 `
 
+// TestEngine_UnicodePropertyEscapes_SelfCheck pins the ENGINE, not the form:
+// the sweep and the shared table are only as faithful as goja's \p{..} support.
+// A goja whose `u`-mode regexps that do not fall back to regexp2 mishandle
+// \p{..} (the old pin, a mid-branch commit, answered [false,true,false] for
+// the probe below) would turn this file's "run the form's JS" premise into a
+// lie, so the engine is checked against what a browser answers.
+func TestEngine_UnicodePropertyEscapes_SelfCheck(t *testing.T) {
+	var got []bool
+	runJS(t, "", `var out = [
+		/\p{Cf}/u.test("\u200B"),
+		/[\p{Cc}\p{Cf}]/u.test("c"),
+		/\p{Cc}/u.test("\u0085")
+	];`, nil, &got)
+	want := []bool{true, false, true}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Fatalf("goja's Unicode property escapes are broken (got %v, a browser answers %v): "+
+			"the pinned goja is too old or regressed; pin a master first-parent merge commit", got, want)
+	}
+}
+
 // TestNameProblem_AnswersTheSharedTable: for every row of the table shared with
 // the server's test, the form's answer is the `client` column, and an accepted
 // name is trimmed to exactly what the server stores. A row with
