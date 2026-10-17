@@ -169,3 +169,142 @@ func TestBoardReplyPaths_MockCatchesTheBodyReadBeforeTheStatusCheck(t *testing.T
 		}
 	}
 }
+
+// The board's two click actions (the operator's moderation: onModerate, a Like / Unlike:
+// onToggleLike) say why a refused click was refused, the way the reply paths do (app#432,
+// the two #425 left out): onModerate showed 'connection error' for ANY HTTP failure, and
+// onToggleLike dropped a non-ok response without a word. Now a failed response shows the
+// server's own sentence as TEXT in #pane-board-action-msg (serverErrorText -> textContent),
+// the generic HTTP sentence only when the response has none, and a later success leaves no
+// refusal on screen. Same limits as above: the document and fetch are fakes.
+
+// boardActionResult is what the driver reports after one run of a click handler.
+type boardActionResult struct {
+	URL      string `json:"url"`
+	Msg      string `json:"msg"`
+	Cls      string `json:"cls"`
+	Hidden   bool   `json:"hidden"`
+	Updated  string `json:"updated"`
+	Rendered int    `json:"rendered"`
+	Reloads  int    `json:"reloads"`
+}
+
+// runBoardAction runs the two handlers' source (moderateJS, likeJS: the real text, or a
+// mutation of it) through the scenarios and returns "<moderate|like>.<scenario>" -> result.
+func runBoardAction(t *testing.T, moderateJS, likeJS string) map[string]boardActionResult {
+	t.Helper()
+	parts := portalPartials(t)
+	util, pane := partialBody(parts, "core-util.tmpl"), partialBody(parts, "pane-board.tmpl")
+	var rules strings.Builder
+	rules.WriteString(extractJSConst(t, util, "serverErrorText") + "\n")
+	rules.WriteString(extractJSFunc(t, pane, "showActionMsg") + "\n")
+	rules.WriteString(moderateJS + "\n" + likeJS + "\n")
+	driver := `
+var selectedTid = 't1', currentTh = { id: 't1' }, lastListSig = 'x', lastPublicSig = 'x';
+var rendered = 0, reloads = 0, urls = [], mode = 'ok';
+var updatedEl = { textContent: '' };
+var actionMsgEl = { textContent: '', className: 'submit-msg', hidden: true };
+function renderThread() { rendered++; }
+function loadThread() { reloads++; return Promise.resolve(); }
+function loadList() { reloads++; return Promise.resolve(); }
+// A Response body is ONE-SHOT, as in Fetch (see runBoardSend).
+function resp(status, ok, parse) {
+  var bodyUsed = false;
+  return { status: status, ok: ok, get bodyUsed() { return bodyUsed; }, json: function () {
+    if (bodyUsed) return Promise.reject(new TypeError('Body has already been consumed.'));
+    bodyUsed = true; return parse();
+  } };
+}
+var fetch = function (url) {
+  urls.push(url);
+  if (mode === 'forbidden') return Promise.resolve(resp(403, false, function () { return Promise.resolve({ error: '<img src=x onerror=alert(1)>' }); }));
+  if (mode === 'server') return Promise.resolve(resp(500, false, function () { return Promise.resolve({ error: 'internal error' }); }));
+  if (mode === 'nobody') return Promise.resolve(resp(403, false, function () { return Promise.reject(new Error('not json')); }));
+  if (mode === 'rate') return Promise.resolve(resp(429, false, function () { return Promise.resolve({ error: 'slow down' }); }));
+  if (mode === 'down') return Promise.reject(new TypeError('Failed to fetch'));
+  return Promise.resolve(resp(200, true, function () { return Promise.resolve({ id: 't1' }); }));
+};
+var paths = {
+  moderate: function () { return onModerate({ pinned: true }); },
+  like:     function () { return onToggleLike('t1', false); },
+};
+// keep: the earlier attempt's message stays on screen (the element is never rebuilt).
+function run(which, m, keep) {
+  mode = m; rendered = 0; reloads = 0; urls.length = 0; updatedEl.textContent = '';
+  if (!keep) { actionMsgEl.textContent = ''; actionMsgEl.className = 'submit-msg'; actionMsgEl.hidden = true; }
+  return paths[which]().then(function () {
+    return { url: urls[0], msg: actionMsgEl.textContent, cls: actionMsgEl.className, hidden: actionMsgEl.hidden, updated: updatedEl.textContent, rendered: rendered, reloads: reloads };
+  });
+}
+var out = {};
+var chain = Promise.resolve();
+['moderate', 'like'].forEach(function (w) {
+  chain = chain
+    .then(function () { return run(w, 'forbidden'); }).then(function (r) { out[w + '.forbidden'] = r; })
+    .then(function () { return run(w, 'server'); }).then(function (r) { out[w + '.server'] = r; })
+    .then(function () { return run(w, 'nobody'); }).then(function (r) { out[w + '.nobody'] = r; })
+    .then(function () { return run(w, 'rate'); }).then(function (r) { out[w + '.rate'] = r; })
+    .then(function () { return run(w, 'down'); }).then(function (r) { out[w + '.down'] = r; })
+    .then(function () { return run(w, 'forbidden'); })
+    .then(function () { return run(w, 'ok', true); }).then(function (r) { out[w + '.recovered'] = r; });
+});
+`
+	var got map[string]boardActionResult
+	runJS(t, rules.String(), driver, nil, &got)
+	return got
+}
+
+func TestBoardActions_ShowTheServerSentenceAndClearItOnSuccess(t *testing.T) {
+	got := runBoardAction(t, boardHandlerJS(t, "onModerate"), boardHandlerJS(t, "onToggleLike"))
+	for _, w := range []struct{ name, url, generic string }{
+		{"moderate", "/api/admin/board/threads/t1/state", "Could not update the thread (HTTP 403)."},
+		{"like", "/api/board/threads/t1/like", "Could not update the like (HTTP 403)."},
+	} {
+		t.Run(w.name, func(t *testing.T) {
+			for _, k := range []string{"forbidden", "server", "nobody", "rate", "down", "recovered"} {
+				if _, ok := got[w.name+"."+k]; !ok {
+					t.Fatalf("%s: the scenario did not finish", k)
+				}
+			}
+			if f := got[w.name+".forbidden"]; f.URL != w.url || f.Msg != "<img src=x onerror=alert(1)>" || !strings.Contains(f.Cls, "err") || f.Hidden || f.Rendered != 0 || f.Reloads != 0 || f.Updated != "" {
+				t.Errorf("a 403 must show the server's sentence as text (no markup is made of it), repaint nothing, and not claim a connection error: %+v", f)
+			}
+			if s := got[w.name+".server"]; s.Msg != "internal error" || !strings.Contains(s.Cls, "err") || s.Hidden || s.Updated != "" {
+				t.Errorf("a 500 with a body shows that body, not 'connection error': %+v", s)
+			}
+			if n := got[w.name+".nobody"]; n.Msg != w.generic || !strings.Contains(n.Cls, "err") || n.Hidden || n.Updated != "" {
+				t.Errorf("a failure without a JSON body falls back to the HTTP status sentence %q: %+v", w.generic, n)
+			}
+			if d := got[w.name+".down"]; d.Updated != "connection error" || d.Msg != "" {
+				t.Errorf("a transport failure keeps the connection-error status line and puts nothing in the action message: %+v", d)
+			}
+			if r := got[w.name+".recovered"]; r.Msg != "" || r.Cls != "submit-msg" || !r.Hidden || r.Rendered+r.Reloads != 1 {
+				t.Errorf("a click that works after a refusal must clear the refusal (text, err class, shown) and repaint once: %+v", r)
+			}
+		})
+	}
+	// A like that hits the rate limit keeps its own status-line sentence; the action
+	// message is for the refusals that had none.
+	if r := got["like.rate"]; r.Updated != "rate limited — try again in a moment" || r.Msg != "" {
+		t.Errorf("a 429 on a like says so on the status line and leaves the action message alone: %+v", r)
+	}
+}
+
+// TestBoardActions_MockCatchesTheBodyReadBeforeTheStatusCheck: as for the reply paths, a
+// handler that reads r.json() BEFORE `if (!r.ok)` leaves serverErrorText nothing to read,
+// and the mock's one-shot Response turns that into a lost sentence.
+func TestBoardActions_MockCatchesTheBodyReadBeforeTheStatusCheck(t *testing.T) {
+	mutate := func(js string) string {
+		const gate = "if (!r.ok) {"
+		if strings.Count(js, gate) != 1 {
+			t.Fatalf("want exactly one %q in the handler to mutate", gate)
+		}
+		return strings.Replace(js, gate, "await r.json().catch(() => ({}));\n        "+gate, 1)
+	}
+	got := runBoardAction(t, mutate(boardHandlerJS(t, "onModerate")), mutate(boardHandlerJS(t, "onToggleLike")))
+	for _, w := range []string{"moderate", "like"} {
+		if f := got[w+".forbidden"]; f.Msg == "<img src=x onerror=alert(1)>" {
+			t.Errorf("%s: the mutated handler (body read before the status check) still shows the server's sentence: the mock does not enforce one read", w)
+		}
+	}
+}

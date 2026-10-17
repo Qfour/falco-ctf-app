@@ -38,6 +38,11 @@
     </div>
   </header>
 
+  <!-- A refused Like / moderation click (onToggleLike, onModerate) says why here: the
+       server's own sentence, set with textContent by showActionMsg(). Outside
+       #pane-board-page so a view change does not rebuild it; hidden while empty. -->
+  <div class="submit-msg" id="pane-board-action-msg" hidden></div>
+
   <div id="pane-board-page"></div>
 
 <script nonce="{{.Nonce}}">
@@ -104,6 +109,15 @@
   const role = window.__PORTAL_ROLE__ || 'participant';
   const page = document.getElementById('pane-board-page');
   const updatedEl = document.getElementById('pane-board-updated');
+  const actionMsgEl = document.getElementById('pane-board-action-msg');
+  // showActionMsg shows (text) or clears ('') the refusal of the last Like / moderation
+  // click. A refusal is red like the reply forms' (submit-msg err); a success or a view
+  // change leaves none behind.
+  function showActionMsg(text) {
+    actionMsgEl.textContent = text;
+    actionMsgEl.className = text ? 'submit-msg err' : 'submit-msg';
+    actionMsgEl.hidden = !text;
+  }
 
   if (!user) {
     page.innerHTML = `
@@ -457,6 +471,7 @@
       const isOwn = th.author === user;
       const canLike = th.audience === 'all' && !isOwn;
       if (builtView !== shellKey) {
+        showActionMsg('');
         page.innerHTML = `
           <button type="button" class="btn btn-back" id="board-detail-back">← Back to Board</button>
           <section class="panel">
@@ -481,6 +496,7 @@
         if (back) back.addEventListener('click', () => {
           selectedTid = null;
           builtView = null;
+          showActionMsg('');
           loadList().catch(() => { updatedEl.textContent = 'connection error'; });
         });
         const appendForm = document.getElementById('board-append-form');
@@ -591,7 +607,12 @@
           // renders a Like affordance on the caller's own thread); no-op.
           return;
         }
-        if (!r.ok) return;
+        if (!r.ok) {
+          // The server's own sentence as a string, textContent (serverErrorText, core-util.tmpl).
+          showActionMsg((await serverErrorText(r)) || ('Could not update the like (HTTP ' + r.status + ').'));
+          return;
+        }
+        showActionMsg('');
         // Refresh whichever view is showing this thread's like state.
         if (selectedTid === tid) {
           await loadThread(tid);
@@ -736,6 +757,7 @@
     function renderThread(th) {
       const shellKey = 'thread:' + th.id;
       if (builtView !== shellKey) {
+        showActionMsg('');
         page.innerHTML = `
           <button type="button" class="btn btn-back" id="board-admin-back">← Back to all threads</button>
           <section class="panel">
@@ -764,6 +786,7 @@
         if (back) back.addEventListener('click', () => {
           selectedTid = null;
           builtView = null;
+          showActionMsg('');
           loadList().catch(() => { updatedEl.textContent = 'connection error'; });
         });
         const replyForm = document.getElementById('board-admin-reply-form');
@@ -816,8 +839,14 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(patch),
         });
-        if (!r.ok) throw new Error('HTTP ' + r.status);
+        if (!r.ok) {
+          // The server's own sentence (a 403 says admin only) as a string, textContent
+          // (serverErrorText, core-util.tmpl); read before r.json(), a body is read once.
+          showActionMsg((await serverErrorText(r)) || ('Could not update the thread (HTTP ' + r.status + ').'));
+          return;
+        }
         const d = await r.json();
+        showActionMsg('');
         if (selectedTid === d.id) renderThread(d);
         lastListSig = null; // force the moderation-queue list to repaint next poll
       } catch (e) {
