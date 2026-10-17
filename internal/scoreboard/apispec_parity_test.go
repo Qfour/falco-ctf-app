@@ -354,6 +354,26 @@ func TestAPISpec_V4_ResetDirtyNeverForwarded(t *testing.T) {
 	}
 }
 
+// TestAPISpec_ClaimedIdentityImpliesForwardOrInternal is the route-table
+// property behind app#346 / #376 on scoreboard's live Routes():
+// claimed-identity => CollectorForward=true (Audience does not exempt it),
+// internal-claimed-identity => Audience=internal. It is derived from the
+// table, not from route names. The scoreboard declares claimed-identity routes, so checked must be > 0.
+func TestAPISpec_ClaimedIdentityImpliesForwardOrInternal(t *testing.T) {
+	f := newSpecFixture(t)
+	routes := f.srv.Routes()
+	if len(routes) == 0 {
+		t.Fatal("scoreboard Routes() returned zero routes — the scan is empty, not clean")
+	}
+	checked, violations := specparity.ClaimedIdentityForwardViolations(routes)
+	for _, v := range violations {
+		t.Error(v)
+	}
+	if checked == 0 {
+		t.Fatal("no claimed-identity route was seen — the scoreboard declares some, so the property ran on nothing")
+	}
+}
+
 // --- V5 ------------------------------------------------------------------
 
 func TestAPISpec_V5_JourneyFieldsMatchSpec(t *testing.T) {

@@ -1388,14 +1388,14 @@ func TestPortalPartials_ChecksRejectMutations(t *testing.T) {
 			wantErr: "pane-story.tmpl: unescaped interpolation \"class=\\\"${cls}\"",
 		},
 		{
-			name: "index.html card badge: type back to bare",
-			mutate: indexFSEdit(replaceOnce("badge-${esc(c.type)}\">${esc(c.type)}</span>", "badge-${c.type}\">${c.type}</span>")),
+			name:    "index.html card badge: type back to bare",
+			mutate:  indexFSEdit(replaceOnce("badge-${esc(c.type)}\">${esc(c.type)}</span>", "badge-${c.type}\">${c.type}</span>")),
 			check:   checkInnerHTMLPins,
 			wantErr: "index.html: unescaped interpolation \"${c.type}\"",
 		},
 		{
-			name: "index.html detail title: type back to bare",
-			mutate: indexFSEdit(replaceOnce("badge-' + esc(c.type) + '\">' + esc(c.type) + '</span>", "badge-' + c.type + '\">' + c.type + '</span>")),
+			name:    "index.html detail title: type back to bare",
+			mutate:  indexFSEdit(replaceOnce("badge-' + esc(c.type) + '\">' + esc(c.type) + '</span>", "badge-' + c.type + '\">' + c.type + '</span>")),
 			check:   checkInnerHTMLPins,
 			wantErr: "index.html: unescaped interpolation \"+ c.type +\"",
 		},

@@ -271,12 +271,12 @@ func TestLoad_Detect_RejectsBadCapturePaths(t *testing.T) {
 	// Each case is a single offending path (paired with a valid other path) that
 	// resolveCapture must reject at load time.
 	cases := map[string]struct{ evasion, benign string }{
-		"empty":       {"", "detect/benign.scap"},
-		"absolute":    {"/etc/shadow", "detect/benign.scap"},
-		"dotdot":      {"../../../etc/shadow", "detect/benign.scap"},
-		"dotdot-mid":  {"detect/../../secret.scap", "detect/benign.scap"},
-		"dot-only":    {".", "detect/benign.scap"},
-		"benign-bad":  {"detect/evasion.scap", "../escape.scap"},
+		"empty":      {"", "detect/benign.scap"},
+		"absolute":   {"/etc/shadow", "detect/benign.scap"},
+		"dotdot":     {"../../../etc/shadow", "detect/benign.scap"},
+		"dotdot-mid": {"detect/../../secret.scap", "detect/benign.scap"},
+		"dot-only":   {".", "detect/benign.scap"},
+		"benign-bad": {"detect/evasion.scap", "../escape.scap"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
