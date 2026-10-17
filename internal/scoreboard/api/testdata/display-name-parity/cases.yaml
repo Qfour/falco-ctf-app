@@ -21,8 +21,10 @@
 # through and leaves that rule to the server (whose own sentence is then shown).
 # Both tests fail on any other difference.
 #
-# 30 rows were server-reject and 18 server-accept in app#331 (api/display_name_test.go);
-# the trim rows at the end are new (they pin the form's trim to strings.TrimSpace).
+# This table is the ONLY list of validDisplayName's accept / reject inputs (the former
+# api/display_name_test.go was folded in: app#381 review-5x R3#4). The character class is swept
+# separately over every code point (rule.yaml).
+# The trim rows at the end pin the form's trim to strings.TrimSpace.
 
 cases:
   # ---- server: reject, client: reject (Cf / C1 / metachars / control / length) ----
@@ -53,6 +55,7 @@ cases:
   - {name: "a", repeat: 33,   server: reject, client: reject, note: "33 runes, repeated"}
   - {name: "\u3042", repeat: 33, server: reject, client: reject, note: "33 hiragana (runes, not bytes)"}
   - {name: "\U0001F98A", repeat: 33, server: reject, client: reject, note: "33 emoji (code points, not UTF-16 units)"}
+  - {name: "\U0001F3F4\U000E0067\U000E0062\U000E0065\U000E006E\U000E0067\U000E007F", server: reject, client: reject, note: "England flag (U+1F3F4 + tag characters, Cf): refused on purpose, subdivision flags are not supported"}
   # ---- server: reject, client: ACCEPT -- U+200D only (the server's emoji-adjacency rule) ----
   - {name: "Alice\u200D",           server: reject, client: accept, note: "ZWJ after a letter, trailing: the form lets it through, the server refuses"}
   - {name: "Ali\u200Dce",           server: reject, client: accept, note: "ZWJ between letters"}

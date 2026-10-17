@@ -41,11 +41,24 @@ func extractJSFunc(t *testing.T, src, name string) string {
 	if start < 0 {
 		t.Fatalf("pane-me.tmpl: function %s not found (the test cuts it out of the source)", name)
 	}
-	end := strings.Index(src[start+1:], "\n  }\n")
-	if end < 0 {
-		t.Fatalf("pane-me.tmpl: function %s has no closing brace at 2-space indent", name)
+	rest := src[start+1:]
+	var fn string
+	if nl := strings.Index(rest, "\n"); nl >= 0 && strings.HasSuffix(strings.TrimRight(rest[:nl], " \t"), "}") &&
+		strings.Count(rest[:nl], "{") == strings.Count(rest[:nl], "}") {
+		fn = rest[:nl] // a one-line function (trimName): cut just that line
+	} else {
+		end := strings.Index(rest, "\n  }\n")
+		if end < 0 {
+			t.Fatalf("pane-me.tmpl: function %s has no closing brace at 2-space indent", name)
+		}
+		fn = rest[:end+len("\n  }")]
 	}
-	return src[start+1 : start+1+end+len("\n  }")]
+	// A cut that swallowed a neighbour would declare it twice (sloppy-mode JS
+	// would not complain), so the cut must hold exactly the one declaration.
+	if n := strings.Count(fn, "function "); n != 1 {
+		t.Fatalf("pane-me.tmpl: the text cut out for %s holds %d `function ` declarations, want exactly 1:\n%s", name, n, fn)
+	}
+	return fn
 }
 
 func extractJSConst(t *testing.T, src, name string) string {
@@ -128,6 +141,49 @@ func loadNameParityCases(t *testing.T) []nameParityCase {
 		t.Fatalf("cases.yaml: %d rows, want at least 17", len(f.Cases))
 	}
 	return f.Cases
+}
+
+// nameRule is ../api/testdata/display-name-parity/rule.yaml, the character class
+// the server's sweep (api/display_name_parity_test.go) compares to as well.
+type nameRule struct {
+	Meta       string   `yaml:"meta"`
+	Categories []string `yaml:"categories"`
+	Exempt     int      `yaml:"exempt"`
+}
+
+func loadNameRule(t *testing.T) nameRule {
+	t.Helper()
+	raw, err := os.ReadFile("../api/testdata/display-name-parity/rule.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r nameRule
+	dec := yaml.NewDecoder(strings.NewReader(string(raw)))
+	dec.KnownFields(true)
+	if err := dec.Decode(&r); err != nil {
+		t.Fatalf("rule.yaml: %v", err)
+	}
+	if r.Meta == "" || len(r.Categories) == 0 || r.Exempt == 0 {
+		t.Fatalf("rule.yaml: incomplete rule %+v", r)
+	}
+	for _, c := range r.Categories {
+		if unicode.Categories[c] == nil {
+			t.Fatalf("rule.yaml: unknown Unicode category %q", c)
+		}
+	}
+	return r
+}
+
+func (r nameRule) forbidden(c rune) bool {
+	if strings.ContainsRune(r.Meta, c) {
+		return true
+	}
+	for _, cat := range r.Categories {
+		if unicode.Is(unicode.Categories[cat], c) {
+			return true
+		}
+	}
+	return false
 }
 
 type planResult struct {
@@ -262,7 +318,8 @@ var out = {
 }
 
 // TestNameProblem_SweepEveryCodePoint: for EVERY Unicode code point, the form
-// refuses it (inside "a" + c + "b") exactly when the server's class does -- the
+// refuses it (inside "a" + c + "b") exactly when the rule (rule.yaml, also swept
+// against the server by api/display_name_parity_test.go) does -- the
 // ASCII metacharacters, \p{Cc}, \p{Cf} -- except U+200D, which the form always
 // lets through; and the form's trim removes exactly the code points Go's
 // strings.TrimSpace removes. The table covers chosen names; this covers all of
@@ -276,7 +333,7 @@ for (var cp = 0; cp <= 0x10FFFF; cp++) {
   if (cp >= 0xD800 && cp <= 0xDFFF) continue;   // surrogates are not code points
   if (cp >= 0x40000 && cp <= 0xDFFFF) continue; // planes 4-13: unassigned, no Cc/Cf (keeps the sweep to ~3 s)
   var ch = String.fromCodePoint(cp);
-  if (nameProblem('a' + ch + 'b') !== '') rejected.push(cp);
+  if (cp !== EXEMPT && nameProblem('a' + ch + 'b') !== '') rejected.push(cp);
   if (trimName(ch) === '') trimmed.push(cp);
 }
 var out = { rejected: rejected, trimmed: trimmed };
@@ -285,15 +342,16 @@ var out = { rejected: rejected, trimmed: trimmed };
 		Rejected []int `json:"rejected"`
 		Trimmed  []int `json:"trimmed"`
 	}
-	runJS(t, nameRulesJS(t), driver, nil, &got)
+	runJS(t, nameRulesJS(t), driver, map[string]any{"EXEMPT": loadNameRule(t).Exempt}, &got)
 
+	rule := loadNameRule(t)
 	var wantRej, wantTrim []int
 	for cp := 0; cp <= unicode.MaxRune; cp++ {
 		if (cp >= 0xD800 && cp <= 0xDFFF) || (cp >= 0x40000 && cp <= 0xDFFFF) {
 			continue
 		}
 		r := rune(cp)
-		if cp != 0x200D && (strings.ContainsRune(`<>&"'`, r) || unicode.Is(unicode.Cc, r) || unicode.Is(unicode.Cf, r)) {
+		if cp != rule.Exempt && rule.forbidden(r) {
 			wantRej = append(wantRej, cp)
 		}
 		if strings.TrimSpace(string(r)) == "" {

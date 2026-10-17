@@ -384,7 +384,25 @@ type CreateThreadRequest struct {
 
 // DisplayNameRequest defines model for DisplayNameRequest.
 type DisplayNameRequest struct {
-	// Name 1..32 runes after trimming; no <>&"' and no control characters (UI / shell safety)
+	// Name The display name. THE rule (the profile route, the 400 descriptions
+	// and `ProfileRequest.display_name` point here):
+	// - leading / trailing whitespace is trimmed first, with the set of
+	//   Go's `strings.TrimSpace` (so U+0085 NEL, U+00A0 and U+3000 are
+	//   trimmed; U+FEFF is not whitespace and is refused as Cf);
+	// - 1..32 runes after trimming;
+	// - refused: the HTML / quoting metacharacters `<>&"'`, the control
+	//   characters Cc (C0, DEL, C1 = U+0080-009F) and the format
+	//   characters Cf (zero-width characters, bidi controls such as
+	//   U+202E, the soft hyphen, the tag characters, ...);
+	// - the one exception: a ZWJ U+200D is accepted only directly
+	//   between an emoji and an emoji, i.e. when the rune on its left is
+	//   a Symbol-other (So), U+FE0F or a skin-tone modifier
+	//   (U+1F3FB-1F3FF) and the rune on its right is a Symbol-other. The
+	//   server alone decides this; the Profile form lets every U+200D
+	//   through and shows the server's sentence on a 400. A subdivision
+	//   flag (England, Scotland, Wales: U+1F3F4 + tag characters) is
+	//   refused, because tag characters are Cf.
+	// A form is never stricter than this rule.
 	Name string `json:"name"`
 }
 
@@ -904,7 +922,7 @@ type ProfileRequest struct {
 	// default image, not fail.
 	Avatar *AvatarId `json:"avatar,omitempty"`
 
-	// DisplayName 1..32 runes after trimming; no <>&"' and no control characters (same rule as DisplayNameRequest.name)
+	// DisplayName The rule is `DisplayNameRequest.name`'s (trim, 1..32 runes, no metacharacters / control / format characters)
 	DisplayName *string `json:"display_name,omitempty"`
 }
 

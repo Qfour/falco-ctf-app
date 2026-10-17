@@ -1,0 +1,15 @@
+# The display-name rule's character class, as DATA, read by both sweeps (app#381 review-5x R2#1):
+#   - internal/scoreboard/api/display_name_parity_test.go sweeps every code point through
+#     displayNameHasForbidden (the server);
+#   - internal/scoreboard/view/portal_nameproblem_test.go sweeps every code point through the
+#     Profile form's nameProblem (pane-me.tmpl).
+# Both compare against THIS rule, so "form == rule" and "server == rule" hold over all of Unicode
+# and the form is therefore never stricter than the server there. The class is the one
+# invalidDisplayName (api.go) is written as: [<>&"'\p{Cc}\p{Cf}].
+#
+# The rule is evaluated with Go's unicode tables (Unicode 15.0.0 for Go 1.26). cases.yaml (not this
+# file) pins the one exception, U+200D, which the server accepts only between two emoji.
+
+meta: "<>&\"'"          # the HTML / quoting metacharacters
+categories: [Cc, Cf]    # Unicode general categories refused (names as in Go's unicode.Categories)
+exempt: 0x200D          # not swept: the table pins it (server: only between emoji; form: always passes)

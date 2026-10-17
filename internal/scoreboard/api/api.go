@@ -1068,6 +1068,11 @@ func isEmojiBase(r rune) bool { return unicode.Is(unicode.So, r) }
 // or a ZWJ next to a letter (any non-emoji) is forbidden like every other Cf.
 // NFC normalisation is deliberately NOT done here: see the app#331 note on
 // validDisplayName.
+//
+// Subdivision flags (England / Scotland / Wales: U+1F3F4 + tag characters
+// U+E0020-E007F, which are Cf) are therefore refused too. That is accepted on
+// purpose (review-5x 16, app#381): a tag run is an invisible-text carrier, and
+// the table pins it (cases.yaml, "England flag").
 func displayNameHasForbidden(name string) bool {
 	runes := []rune(name)
 	for i, r := range runes {

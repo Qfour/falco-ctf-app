@@ -1,12 +1,20 @@
 package api
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
+
+// app#331: validDisplayName rejects Unicode Cf (format: bidi controls,
+// zero-width characters) and C1 (U+0080-009F) characters on top of the old
+// ASCII metachar / C0 / DEL set. A ZWJ between two emoji is the one allowed Cf.
+// This is not an anti-impersonation test: blank-looking characters outside Cf
+// (U+3164, U+2800, ...) and duplicate names still pass.
 
 // Parity table for the display-name rule (app#331, app#343), the SERVER half.
 //
@@ -117,5 +125,86 @@ func TestDisplayNameParity_ClientIsNeverStricter(t *testing.T) {
 	}
 	if serverOnlyReject == 0 {
 		t.Fatal("the table has no ZWJ row the server refuses and the form lets through; the documented difference is gone")
+	}
+}
+
+// nameRule is testdata/display-name-parity/rule.yaml: the character class both
+// sweeps (this package's and the form's, in internal/scoreboard/view) compare to.
+type nameRule struct {
+	Meta       string   `yaml:"meta"`
+	Categories []string `yaml:"categories"`
+	Exempt     int      `yaml:"exempt"`
+}
+
+func loadNameRule(t *testing.T) nameRule {
+	t.Helper()
+	raw, err := os.ReadFile("testdata/display-name-parity/rule.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r nameRule
+	dec := yaml.NewDecoder(strings.NewReader(string(raw)))
+	dec.KnownFields(true)
+	if err := dec.Decode(&r); err != nil {
+		t.Fatalf("rule.yaml: %v", err)
+	}
+	if r.Meta == "" || len(r.Categories) == 0 || r.Exempt == 0 {
+		t.Fatalf("rule.yaml: incomplete rule %+v", r)
+	}
+	for _, c := range r.Categories {
+		if unicode.Categories[c] == nil {
+			t.Fatalf("rule.yaml: unknown Unicode category %q", c)
+		}
+	}
+	return r
+}
+
+// forbidden is the rule for one code point (the exempt one is not asked).
+func (r nameRule) forbidden(c rune) bool {
+	if strings.ContainsRune(r.Meta, c) {
+		return true
+	}
+	for _, cat := range r.Categories {
+		if unicode.Is(unicode.Categories[cat], c) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestDisplayNameParity_SweepEveryCodePoint: for EVERY code point c,
+// displayNameHasForbidden("a"+c+"b") agrees with the rule (meta | Cc | Cf), except
+// U+200D, which is only accepted between two emoji (the table pins that; here it
+// must be refused between letters). With the form's sweep doing the same against
+// the same rule, "form == rule" and "server == rule" hold over all of Unicode, so
+// the form is never stricter than the server for any single code point.
+func TestDisplayNameParity_SweepEveryCodePoint(t *testing.T) {
+	rule := loadNameRule(t)
+	var disagree []string
+	var refused int
+	for cp := 0; cp <= unicode.MaxRune; cp++ {
+		if cp >= 0xD800 && cp <= 0xDFFF { // surrogates are not code points
+			continue
+		}
+		if cp == rule.Exempt {
+			if !displayNameHasForbidden("a" + string(rune(cp)) + "b") {
+				disagree = append(disagree, fmt.Sprintf("U+%04X between letters is accepted", cp))
+			}
+			continue
+		}
+		r := rune(cp)
+		got := displayNameHasForbidden("a" + string(r) + "b")
+		if got {
+			refused++
+		}
+		if want := rule.forbidden(r); got != want {
+			disagree = append(disagree, fmt.Sprintf("U+%04X server=%v rule=%v", cp, got, want))
+		}
+	}
+	if len(disagree) > 0 {
+		t.Fatalf("the server and the rule disagree (unicode.Version %s): %v", unicode.Version, disagree)
+	}
+	if refused < 200 {
+		t.Fatalf("the sweep refused only %d code points; the rule is not being applied", refused)
 	}
 }
