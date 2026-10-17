@@ -140,6 +140,22 @@ func ttydURLFor(user, suffix string) string {
 	return "https://" + user + "." + suffix
 }
 
+// portalViewer is the one place the shell's role ("admin" | "participant") and
+// display username ("" when the caller is not a canonical seat) come from.
+// renderPortal embeds them; Handler.portal reads the same pair to tell whether a
+// caller with no usable identity got an empty shell (app#404, gate=portal).
+// Either predicate may be nil (tests): participant, no user.
+func portalViewer(r *http.Request, isAdmin func(*http.Request) bool, deriveUser func(*http.Request) string) (role, user string) {
+	role = "participant"
+	if isAdmin != nil && isAdmin(r) {
+		role = "admin"
+	}
+	if deriveUser != nil {
+		user = deriveUser(r)
+	}
+	return role, user
+}
+
 // renderPortal writes the GET /portal shell to w. isAdmin/deriveUser may be
 // nil (matching view.Handler's nil-safety for tests); a nil isAdmin renders
 // as participant, a nil deriveUser renders "" (no username hint, which also
@@ -194,14 +210,7 @@ func ttydURLFor(user, suffix string) string {
 //     TtydURLJSON gets template auto-escaping as a safety net, not just
 //     discipline.
 func renderPortal(w http.ResponseWriter, r *http.Request, isAdmin func(*http.Request) bool, deriveUser func(*http.Request) string, ttydSuffix string) error {
-	role := "participant"
-	if isAdmin != nil && isAdmin(r) {
-		role = "admin"
-	}
-	user := ""
-	if deriveUser != nil {
-		user = deriveUser(r)
-	}
+	role, user := portalViewer(r, isAdmin, deriveUser)
 	ttydURL := ttydURLFor(user, ttydSuffix)
 
 	roleJSON, err := json.Marshal(role)

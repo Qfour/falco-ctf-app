@@ -8,7 +8,6 @@
 package ratelimit
 
 import (
-	"log/slog"
 	"math"
 	"net"
 	"net/http"
@@ -31,25 +30,6 @@ type Limiter struct {
 
 	mu      sync.Mutex
 	buckets map[string]*bucket
-
-	// logger receives the MiddlewareStrict no-identity denial line (app#387).
-	// nil means slog.Default() at log time.
-	logger *slog.Logger
-	// denyMu guards denyLog (kept apart from mu so a 403 flood never contends
-	// with Allow on the token buckets).
-	denyMu  sync.Mutex
-	denyLog map[string]*denyState // keyed by the MiddlewareStrict bucket label
-}
-
-// denyLogInterval is the per-bucket spacing of the no-identity denial log line
-// (app#387). The metric counts every denial; the log is a sampled pointer to
-// "this is happening, look at the counter", so an anonymous flood cannot flood
-// the log (or the Recreate-lost pod log's tail) with it.
-const denyLogInterval = 10 * time.Second
-
-type denyState struct {
-	last       time.Time // when a line was last emitted for this bucket
-	suppressed int       // denials swallowed since then
 }
 
 type bucket struct {
@@ -66,22 +46,12 @@ func New(rate, burst float64) *Limiter {
 		eviction: 5 * time.Minute,
 		now:      time.Now,
 		buckets:  make(map[string]*bucket),
-		denyLog:  make(map[string]*denyState),
 	}
 }
 
 // WithNow swaps the clock for tests.
 func (l *Limiter) WithNow(now func() time.Time) *Limiter {
 	l.now = now
-	return l
-}
-
-// WithLogger sets the logger for the MiddlewareStrict no-identity denial line
-// (app#387). A nil logger is ignored (slog.Default() is used).
-func (l *Limiter) WithLogger(logger *slog.Logger) *Limiter {
-	if logger != nil {
-		l.logger = logger
-	}
 	return l
 }
 
@@ -266,26 +236,41 @@ func IdentityKeyed(r *http.Request) (string, bool) {
 
 // identityOutcomes are the IdentityRequestsTotal outcome label values that
 // MiddlewareStrict emits; each is pre-created per bucket when it wraps a handler.
-var identityOutcomes = []string{"allowed", "limited", "no_identity"}
+// "no_identity" is not one of them: a header-less 403 is counted by the caller's
+// NoIdentityObserver (scoreboard_identity_denials_total{gate="strict"}), so the
+// same refusal is not counted by two metrics (app#404, ADR-0038 D1).
+var identityOutcomes = []string{"allowed", "limited"}
+
+// NoIdentityObserver is told about every request MiddlewareStrict refuses for
+// lack of an identity, right before it writes the 403. It is the only way the
+// refusal is observed (count, log): this package neither counts nor logs it, and
+// does not import the package that does (internal/scoreboard/identityobs). The
+// collector links and COPYs this package by name but not that one (app#404,
+// ADR-0038 C6 (a), D3), so an import in that direction would build on the host
+// and in CI and break only the collector image.
+type NoIdentityObserver func(r *http.Request)
 
 // MiddlewareStrict is Middleware's fail-closed sibling for identity-keyed
 // buckets. `bucket` names the bucket for the IdentityRequestsTotal metric (use
-// a small fixed set of constants — it is a label). Outcomes:
+// a small fixed set of constants — it is a label). onNoIdentity is REQUIRED: a
+// nil observer panics when the middleware is assembled (not on the first
+// request), so a wiring that forgets it can never ship a gate that refuses
+// silently. Outcomes:
 //
-//   - keyFn !ok or key == "" -> 403 {"error":"forbidden"}; NO token is consumed
-//     (so an anonymous flood cannot drain anyone's bucket) and the handler
-//     never runs. One Warn line per bucket per 10s is logged (bucket, route
-//     pattern, remote host, reason no_identity|empty_identity, and how many
-//     denials were suppressed since the last line); the identity header's value
-//     is never logged (app#387)
+//   - keyFn !ok or key == "" -> onNoIdentity(r), then 403 {"error":"forbidden"};
+//     NO token is consumed (so an anonymous flood cannot drain anyone's bucket)
+//     and the handler never runs. Not counted in IdentityRequestsTotal.
 //   - bucket empty           -> 429 {"error":"rate limit exceeded"}, Retry-After: 1
 //   - otherwise              -> next
 //
 // Place it AFTER the origin guard and BEFORE the handler's own authz gate.
-func (l *Limiter) MiddlewareStrict(bucket string, keyFn KeyFunc) func(http.Handler) http.Handler {
+func (l *Limiter) MiddlewareStrict(bucket string, keyFn KeyFunc, onNoIdentity NoIdentityObserver) func(http.Handler) http.Handler {
+	if onNoIdentity == nil {
+		panic("ratelimit: MiddlewareStrict needs a NoIdentityObserver (bucket " + bucket + ")")
+	}
 	return func(next http.Handler) http.Handler {
 		// Create every outcome series at 0 now (no Inc), so the first real
-		// denial is an increase from an existing 0 and Prometheus' increase()
+		// "limited" is an increase from an existing 0 and Prometheus' increase()
 		// counts it (a series born at 1 contributes no increase). app#387.
 		for _, o := range identityOutcomes {
 			IdentityRequestsTotal.WithLabelValues(bucket, o)
@@ -293,8 +278,7 @@ func (l *Limiter) MiddlewareStrict(bucket string, keyFn KeyFunc) func(http.Handl
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			key, ok := keyFn(r)
 			if !ok || key == "" {
-				IdentityRequestsTotal.WithLabelValues(bucket, "no_identity").Inc()
-				l.logNoIdentity(bucket, r)
+				onNoIdentity(r)
 				httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
 				return
 			}
@@ -308,48 +292,4 @@ func (l *Limiter) MiddlewareStrict(bucket string, keyFn KeyFunc) func(http.Handl
 			next.ServeHTTP(w, r)
 		})
 	}
-}
-
-// logNoIdentity emits the sampled Warn line for a header-less / blank-identity
-// denial (app#387). The first denial per bucket logs immediately; later ones
-// within denyLogInterval are only counted and reported as `suppressed` on the
-// next line. Only fixed-vocabulary values are logged: the bucket label, the mux
-// route PATTERN (not the URL path, which carries a participant name), the
-// remote host and the reason. The X-Auth-Request-Email value is never read
-// here — only whether the header is present at all.
-func (l *Limiter) logNoIdentity(bucket string, r *http.Request) {
-	now := l.now()
-	l.denyMu.Lock()
-	st, ok := l.denyLog[bucket]
-	if !ok {
-		st = &denyState{}
-		l.denyLog[bucket] = st
-	} else if now.Sub(st.last) < denyLogInterval {
-		st.suppressed++
-		l.denyMu.Unlock()
-		return
-	}
-	suppressed := st.suppressed
-	st.last, st.suppressed = now, 0
-	l.denyMu.Unlock()
-
-	reason := "no_identity"
-	if len(r.Header.Values(IdentityHeader)) > 0 {
-		reason = "empty_identity"
-	}
-	route := r.Pattern
-	if route == "" {
-		route = "-"
-	}
-	remote := r.RemoteAddr
-	if host, _, err := net.SplitHostPort(remote); err == nil {
-		remote = host
-	}
-	logger := l.logger
-	if logger == nil {
-		logger = slog.Default()
-	}
-	logger.Warn("identity-keyed route denied: no identity",
-		"bucket", bucket, "route", route, "remote_addr", remote,
-		"reason", reason, "suppressed", suppressed)
 }
