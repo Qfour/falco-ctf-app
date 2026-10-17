@@ -4,13 +4,23 @@ import (
 	"bytes"
 	"encoding/json"
 	"log/slog"
+	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/Qfour/falco-ctf-app/internal/store"
 )
+
+// These tests pin the WIRING of the boot check: Warn / Info switch, the count,
+// the seat cap, that no name value is logged, and where main() calls it. The
+// inputs below are NOT a statement of the display-name rule (that lives in
+// internal/scoreboard/api/testdata/display-name-parity/cases.yaml and is checked
+// by api.TestStoredDisplayNameViolations_*): they are just values the rule
+// refuses or accepts, there to make the wiring observable.
 
 // bootLog opens a fresh store, seeds display names straight into it (bypassing
 // the API's write-time validation, as an older release did), runs the boot
@@ -73,8 +83,17 @@ func TestWarnStoredDisplayNames_ViolationsWarnWithSeatsAndCount(t *testing.T) {
 			t.Fatalf("seats = %v, want %v", seats, want)
 		}
 	}
-	if !strings.Contains(r["msg"].(string), "profile-reset") {
-		t.Errorf("warning does not name the admin remedy: %v", r["msg"])
+	if r["msg"] != storedNameCheckMsg {
+		t.Errorf("msg = %v, want the shared %q", r["msg"], storedNameCheckMsg)
+	}
+	if r["seats_truncated"] != false {
+		t.Errorf("seats_truncated = %v, want false for 5 seats: %s", r["seats_truncated"], out)
+	}
+	remedy, _ := r["remedy"].(string)
+	for _, must := range []string{"profile-reset", "admin display-name", "Origin", "restart"} {
+		if !strings.Contains(remedy, must) {
+			t.Errorf("remedy lacks %q: %q", must, remedy)
+		}
 	}
 	// The value of a refused name must never reach the log, in any encoding.
 	for _, secret := range []string{"zero", "width", "nel", "evil", "rlo", "bold", "aaaaaaaa", "\u200b", "\u0085", "\u202e", `\u200b`, `\u0085`, `\u202e`} {
@@ -99,6 +118,12 @@ func TestWarnStoredDisplayNames_AllValidReportsZeroAtInfo(t *testing.T) {
 	if len(recs) != 1 {
 		t.Fatalf("want exactly 1 log record, got %d: %s", len(recs), out)
 	}
+	if recs[0]["msg"] != storedNameCheckMsg {
+		t.Fatalf("Info msg = %v, want the same %q as the Warn", recs[0]["msg"], storedNameCheckMsg)
+	}
+	if _, has := recs[0]["remedy"]; has {
+		t.Errorf("a clean check carries no remedy: %s", out)
+	}
 	if recs[0]["level"] != "INFO" || recs[0]["violations"] != float64(0) {
 		t.Fatalf("want INFO with violations=0, got: %s", out)
 	}
@@ -114,20 +139,64 @@ func TestWarnStoredDisplayNames_EmptyStoreReportsZero(t *testing.T) {
 	}
 }
 
-func TestWarnStoredDisplayNames_SeatListIsBoundedCountIsNot(t *testing.T) {
-	names := map[string]string{}
-	for i := 0; i < maxLoggedSeats+10; i++ {
-		names["user"+strconv.Itoa(i)] = "bad\u200bname"
+func TestWarnStoredDisplayNames_SeatCapBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		n         int
+		truncated bool
+	}{
+		{maxLoggedSeats, false},
+		{maxLoggedSeats + 1, true},
+		{maxLoggedSeats + 10, true},
+	} {
+		t.Run(strconv.Itoa(tc.n), func(t *testing.T) {
+			names := map[string]string{}
+			var all []string
+			for i := 0; i < tc.n; i++ {
+				seat := "user" + strconv.Itoa(i)
+				names[seat] = "bad\u200bname"
+				all = append(all, seat)
+			}
+			sort.Strings(all) // lexicographic, as the check returns them
+			_, recs := bootLog(t, names)
+			r := recs[0]
+			if r["violations"] != float64(tc.n) {
+				t.Fatalf("violations = %v, want %d (the count is never capped)", r["violations"], tc.n)
+			}
+			if r["seats_truncated"] != tc.truncated {
+				t.Fatalf("seats_truncated = %v, want %v", r["seats_truncated"], tc.truncated)
+			}
+			want := all
+			if len(want) > maxLoggedSeats {
+				want = want[:maxLoggedSeats]
+			}
+			var got []string
+			for _, v := range r["seats"].([]any) {
+				got = append(got, v.(string))
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("seats = %v\nwant the first %d of the sorted list %v", got, len(want), want)
+			}
+		})
 	}
-	_, recs := bootLog(t, names)
-	r := recs[0]
-	if r["violations"] != float64(maxLoggedSeats+10) {
-		t.Fatalf("violations = %v, want %d", r["violations"], maxLoggedSeats+10)
+}
+
+// TestMainCallsTheStoredNameCheckAfterStoreOpen pins the wiring in main.go the way
+// TestMainTakesCatalogOnlyFromScoredFromEnv pins the catalog: ONE call, after the
+// store is opened (the check reads the store) and before the server listens.
+func TestMainCallsTheStoredNameCheckAfterStoreOpen(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := len(r["seats"].([]any)); got != maxLoggedSeats {
-		t.Fatalf("seats len = %d, want %d", got, maxLoggedSeats)
+	code := string(src)
+	const call = "warnStoredDisplayNames(logger, st)"
+	if c := strings.Count(code, call); c != 1 {
+		t.Fatalf("%q appears %d time(s) in main.go, want exactly 1", call, c)
 	}
-	if r["seats_truncated"] != true {
-		t.Fatalf("seats_truncated = %v, want true", r["seats_truncated"])
+	open := strings.Index(code, "store.Open(dbPath)")
+	at := strings.Index(code, call)
+	serve := strings.Index(code, "serverutil.Serve(")
+	if open < 0 || serve < 0 || !(open < at && at < serve) {
+		t.Fatalf("want store.Open (%d) < %s (%d) < serverutil.Serve (%d) in main.go", open, call, at, serve)
 	}
 }

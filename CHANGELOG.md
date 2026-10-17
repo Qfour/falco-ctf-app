@@ -34,9 +34,8 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
   を正規形 `<seat>@<EXPECTED_EMAIL_DOMAIN>` だけで上書きして返す。
 - `/healthz` (auth-policy) に `roster_seats` / `roster_external` (件数のみ)。
 - scoreboard の `EXPECTED_EMAIL_DOMAIN` (chart: `env.expectedEmailDomain`)。
-- scoreboard: 起動時 (store を開いた直後、serve の前) に、保存済みの表示名のうち現在の規則 (Cc / Cf / C1・HTML の metachar・32 文字) を通らないものを数え、件数と seat を Warn で 1 行出す (0 件なら Info)。規則は書き込み時にしか効かないので、規則が厳しくなる前 (app#331 / #381) に保存された名前は再検証されず公開 board に出続けるため (app#403)。名前の値はログに出さない (規則が拒む文字を含みうる)。自動では書き換えない。
-  - **Upgrade note**: Warn が出たら、その seat に admin が `POST /api/admin/users/{user}/profile-reset` を打つ (表示名と絵柄が seat の既定に戻る)。seat 一覧は 50 件で打ち切り、件数は全件。
-
+- scoreboard: 起動時 (store を開いた直後、serve の前) に、保存済みの表示名のうち現在の書き込み経路が保存する値と一致しないもの (規則 = Cc / Cf / C1・HTML の metachar・32 文字を通らない、または端に空白・NEL・LF がある) を数え、件数と seat を Warn で 1 行出す (app#403)。規則は書き込み時にしか効かないので、規則が厳しくなる前 (app#331 / #381) に保存された名前は再検証されず公開 board に出続けるため。Info (0 件) と Warn は同じ msg `stored display name check` で、件数は `violations`、対処の案内は `remedy`。名前の値はログに出さない (規則が拒む文字を含みうる)。自動では書き換えない。
+  - **Upgrade note**: Warn が出たら、運営 dashboard の admin display-name (同じ validator) で名前だけ直す。表示名と絵柄を seat の既定に戻すなら `POST /api/admin/users/{user}/profile-reset` (origin-guard 付きなので admin session と許可 Origin が要る)。`seats` は 50 件で打ち切り、件数は全件。直した後に scoreboard を再起動すると残りが出る。
 ### Changed
 
 - board: 件名 (thread の subject) が control (Cc: C0/C1、改行・tab を含む) と format (Cf: U+202E などの bidi 制御、ゼロ幅文字) の文字を含むと `POST /api/board/threads` が 400 になる (固定文 `subject contains forbidden characters`、入力は返さない)。表示名 (#331) と同じ規則で、ZWJ は絵文字の間だけ許可。`' " & < >` は散文なので許可のまま。portal は件名を `<bdi>` で隔離して表示する (#377)。
@@ -100,7 +99,7 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
 - 表示名の検証が Unicode の Cf (U+200B 零幅スペース・U+202E bidi 上書きなど) と C1 制御文字 (U+0080〜009F) を通していたのを拒否にした。
   bidi 制御・ゼロ幅 (Cf)・C1 制御の拒否に限る (ADR-0026 D5-1 の Cf 拒否と同じ方針)。他の席への見た目のなりすましを防ぐものではない。プロフィール route (`POST /api/users/{user}/profile` の `display_name`) と admin 用 display-name route の両方で同じ検証。
   ZWJ (U+200D) で連結する絵文字は 2 つの絵文字に挟まれたときだけ通す。日本語・絵文字・結合文字の名前は従来どおり通る。**例外**: 地域旗の絵文字 (イングランド・スコットランド・ウェールズ = U+1F3F4 + tag 文字 U+E0020〜E007F) は tag 文字が Cf なので server・form とも拒否になる (受け入れる判断。`api.go` のコメントと case 表の行で固定) (#331)。
-  **upgrade note**: この版より前に保存された名前は再検証されない (起動時の読み込みも admin reset も検査しない)。直す手段は admin の profile-reset (追跡 = #403)。
+  **upgrade note**: この版より前に保存された名前は書き込み時にしか検査されない。起動時に件数と seat を Warn で出す (Added の app#403 項目)。自動では書き換えない。
   Portal のプロフィール form の検査も同じ規則にした。form は server より厳しくならない (U+200D は常に通し、絵文字の間かどうかは server が判定する)。両端の空白は server の `strings.TrimSpace` と同じ集合 (U+0085 を含み U+FEFF は含まない) で落とす。名前を変えたときだけ検査するので、保存済みの名前のまま絵柄だけ変える保存は止まらない。共有の case 表 `internal/scoreboard/api/testdata/display-name-parity/cases.yaml` を server (`validDisplayName`) と form の両方に流して固定 (#343)。
 
 ### Security
