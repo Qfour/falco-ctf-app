@@ -35,6 +35,10 @@ import (
 
 const (
 	chromedpPrefix = "github.com/chromedp/"
+	// jsEnginePrefix: goja, the pure-Go JS engine the portal's display-name test
+	// (internal/scoreboard/view/portal_nameproblem_test.go, app#343) runs the
+	// form's JS in. Test-only, like chromedp: no production binary links it.
+	jsEnginePrefix = "github.com/dop251/"
 	e2ePrefix      = modulePrefix + "internal/e2e"
 )
 
@@ -74,7 +78,7 @@ func e2eLeaks(t *testing.T, root, cmd string) []string {
 	t.Helper()
 	var bad []string
 	for imp := range allImportsClosure(t, root, modulePrefix+"cmd/"+cmd) {
-		if strings.HasPrefix(imp, chromedpPrefix) || imp == e2ePrefix || strings.HasPrefix(imp, e2ePrefix+"/") {
+		if strings.HasPrefix(imp, chromedpPrefix) || strings.HasPrefix(imp, jsEnginePrefix) || imp == e2ePrefix || strings.HasPrefix(imp, e2ePrefix+"/") {
 			bad = append(bad, imp)
 		}
 	}
@@ -110,7 +114,7 @@ func TestNoProductionBinaryImportsTheE2EHarness(t *testing.T) {
 	for _, cmd := range names {
 		t.Run(cmd, func(t *testing.T) {
 			if bad := e2eLeaks(t, root, cmd); len(bad) > 0 {
-				t.Fatalf("cmd/%s's import closure includes %v — a production binary must never import chromedp or internal/e2e (ADR-0031 V4: test-only code, and a browser-automation dependency, in a distroless image)", cmd, bad)
+				t.Fatalf("cmd/%s's import closure includes %v — a production binary must never import chromedp, a test JS engine (goja) or internal/e2e (ADR-0031 V4: test-only code, and a browser-automation dependency, in a distroless image)", cmd, bad)
 			}
 		})
 	}
@@ -128,6 +132,9 @@ func TestE2ELeakDetector_CatchesPlantedImports(t *testing.T) {
 		{"chromedp imported directly by the binary", map[string]string{
 			"cmd/fakebin/main.go": "package main\n\nimport _ \"github.com/chromedp/chromedp\"\n\nfunc main() {}\n",
 		}, chromedpPrefix + "chromedp"},
+		{"the test JS engine imported directly by the binary", map[string]string{
+			"cmd/fakebin/main.go": "package main\n\nimport _ \"github.com/dop251/goja\"\n\nfunc main() {}\n",
+		}, jsEnginePrefix + "goja"},
 		{"chromedp reached through an internal package", map[string]string{
 			"cmd/fakebin/main.go":     "package main\n\nimport _ \"" + modulePrefix + "internal/fixture-a\"\n\nfunc main() {}\n",
 			"internal/fixture-a/a.go": "package fixturea\n\nimport _ \"github.com/chromedp/cdproto/page\"\n",

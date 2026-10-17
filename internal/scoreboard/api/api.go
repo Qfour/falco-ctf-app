@@ -38,6 +38,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
@@ -60,9 +61,26 @@ import (
 var validUser = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 // invalidDisplayName rejects characters that would break either UI
-// rendering (HTML metachars) or shell display (control chars). A 32-rune
-// max keeps leaderboard columns predictable.
-var invalidDisplayName = regexp.MustCompile(`[<>&"'\x00-\x1f\x7f]`)
+// rendering (HTML metachars) or shell display (control chars), plus the
+// bidi controls, zero-width characters (Cf) and C1 controls (app#331). This
+// is NOT an anti-impersonation control: other invisible or blank-looking
+// characters still pass (Lo U+3164 / U+115F / U+1160 / U+FFA0, So U+2800, Mn
+// U+034F / U+FE00-FE0F / U+E0100-E01EF / U+180B-180D), and duplicate names are
+// allowed, so one seat can still be made to look like another's.
+//
+//   - \p{Cc}: the C0 controls (U+0000-001F), DEL (U+007F) AND the C1 controls
+//     (U+0080-009F, e.g. U+0085 NEL). The old class stopped at U+007F.
+//   - \p{Cf}: format characters — U+200B ZERO WIDTH SPACE, U+202E RIGHT-TO-LEFT
+//     OVERRIDE and the other bidi controls, U+2060 WORD JOINER, U+FEFF BOM,
+//     U+00AD SOFT HYPHEN, the tag characters, ... Aligns with ADR-0026 D5-1,
+//     which already treats Cf as an error.
+//
+// One exception is carved out in displayNameHasForbidden (not here — a regexp
+// cannot look at neighbours): U+200D ZERO WIDTH JOINER between two emoji,
+// because that is what makes a ZWJ emoji sequence such as the "woman
+// technologist" one render as a single glyph. A 32-rune max keeps leaderboard
+// columns predictable.
+var invalidDisplayName = regexp.MustCompile(`[<>&"'\p{Cc}\p{Cf}]`)
 
 // flagShapePattern is app#292 Phase 2's fairness gate: it matches the
 // SHAPE of a flag (`FALCO{...}`), never a specific value — every free-text
@@ -1028,8 +1046,67 @@ func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "cleared_solves": n})
 }
 
+// zeroWidthJoiner (U+200D) is the one Cf character displayNameHasForbidden
+// lets through, and only between two emoji (see isEmojiBase / isEmojiPrefix).
+const zeroWidthJoiner = '\u200d'
+
+// isEmojiPrefix reports whether r may immediately precede a ZWJ in an emoji
+// sequence: an emoji base (Symbol, other: U+1F469, U+2764, ...), a skin-tone
+// modifier (U+1F3FB-1F3FF) or the emoji variation selector
+// U+FE0F (which follows bases such as U+2764 and U+1F3F3). Letters, digits and
+// punctuation are NOT emoji, so "Alice" + ZWJ stays rejected.
+func isEmojiPrefix(r rune) bool {
+	return r == '\ufe0f' || (r >= 0x1f3fb && r <= 0x1f3ff) || unicode.Is(unicode.So, r)
+}
+
+// isEmojiBase reports whether r may immediately follow a ZWJ: an emoji base.
+func isEmojiBase(r rune) bool { return unicode.Is(unicode.So, r) }
+
+// displayNameHasForbidden reports whether name contains a rune
+// invalidDisplayName matches, other than a U+200D that sits directly between
+// an emoji prefix and an emoji base. A ZWJ at either end, two ZWJs in a row,
+// or a ZWJ next to a letter (any non-emoji) is forbidden like every other Cf.
+// NFC normalisation is deliberately NOT done here: see the app#331 note on
+// validDisplayName.
+//
+// Subdivision flags (England / Scotland / Wales: U+1F3F4 + tag characters
+// U+E0020-E007F, which are Cf) are therefore refused too. That is accepted on
+// purpose (review-5x 16, app#381): a tag run is an invisible-text carrier, and
+// the table pins it (cases.yaml, "England flag").
+func displayNameHasForbidden(name string) bool {
+	runes := []rune(name)
+	for i, r := range runes {
+		if r == zeroWidthJoiner {
+			if i > 0 && i+1 < len(runes) && isEmojiPrefix(runes[i-1]) && isEmojiBase(runes[i+1]) {
+				continue
+			}
+			return true
+		}
+		if invalidDisplayName.MatchString(string(r)) {
+			return true
+		}
+	}
+	return false
+}
+
 // validDisplayName trims + validates a display name: 1..32 runes, no HTML/shell
-// metachars. Shared by the participant and admin set endpoints.
+// metachars, no control (C0/C1) or format (Cf) characters (app#331; a ZWJ
+// between emoji is the one allowed Cf). Shared by the participant profile
+// route (profile.go) and the admin set-display-name endpoint, so both reject
+// the same names.
+//
+// Whitespace is trimmed first (strings.TrimSpace), so a name that is only
+// padded at the ends by U+0085 NEL / NBSP / tabs is stored as the trimmed
+// name; the same characters in the MIDDLE are rejected (Cc) or kept (NBSP is
+// Zs, not Cc/Cf — see the app#331 residuals).
+//
+// NFC (app#331 question): not applied. Normalising only collapses canonically
+// equivalent spellings of one string ("é" as U+00E9 vs "e"+U+0301) to the same
+// bytes; it would matter if display names had to be UNIQUE (they do not:
+// duplicates are allowed), and it would not stop invisible characters
+// (they are not a normalisation difference). It would add
+// golang.org/x/text/unicode/norm as a direct dependency for no security
+// gain, so revisit it together with a uniqueness rule, not before.
 func validDisplayName(raw string) (string, error) {
 	name := strings.TrimSpace(raw)
 	if name == "" {
@@ -1038,7 +1115,7 @@ func validDisplayName(raw string) (string, error) {
 	if utf8.RuneCountInString(name) > 32 {
 		return "", fmt.Errorf("name too long (max 32 runes)")
 	}
-	if invalidDisplayName.MatchString(name) {
+	if displayNameHasForbidden(name) {
 		return "", fmt.Errorf("name contains forbidden characters")
 	}
 	return name, nil

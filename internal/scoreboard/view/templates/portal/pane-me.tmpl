@@ -193,14 +193,56 @@
     msgEl.classList.toggle('is-error', !!isErr);
     if (isErr) nameInput.setAttribute('aria-invalid', 'true'); else nameInput.removeAttribute('aria-invalid');
   }
-  // Mirrors the server's validDisplayName (trim, 1-32 runes, no <>&"' or control
-  // characters). Returns a sentence, or '' when the name is fine.
+  // The display-name rule, mirroring the server's validDisplayName (api.go,
+  // app#331, app#343). The server is the authority; this only saves a round
+  // trip, so it must NEVER be stricter than the server: a name the server
+  // accepts must not be refused here. Whatever it lets through that the server
+  // then refuses is shown with the server's own sentence (textContent, see
+  // failureSentence). The shared case table internal/scoreboard/api/testdata/
+  // display-name-parity/cases.yaml, run through both sides, pins this
+  // (portal_nameproblem_test.go, api/display_name_parity_test.go).
+  //
+  // Trim: the server uses Go's strings.TrimSpace = unicode.IsSpace: ASCII
+  // whitespace, U+0085 NEL, U+00A0, U+1680, U+2000-200A, U+2028, U+2029, U+202F,
+  // U+205F, U+3000. String.prototype.trim is NOT that set: it also strips U+FEFF
+  // (which the server keeps, and refuses as Cf) and does not strip U+0085 (which
+  // the server strips). Trimming with trim() would refuse "Alice" + NEL here
+  // while the server stores "Alice". So: our own set, same as Go's.
+  //
+  // Refused: < > & " ' (NAME_HTML_META), and \p{Cc} (C0, DEL, C1) or \p{Cf}
+  // (zero-width characters, bidi controls such as U+202E, U+FEFF, soft hyphen)
+  // (NAME_HIDDEN) EXCEPT U+200D ZERO WIDTH JOINER, which is always let through
+  // here: the server accepts it only between two emoji (what makes a ZWJ emoji
+  // sequence one glyph) and refuses it elsewhere with its own sentence, so the
+  // emoji-adjacency rule lives in one place, the server.
+  const NAME_EDGE_SPACE = /^[\t\n\v\f\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+|[\t\n\v\f\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+$/g;
+  const NAME_HTML_META = /[<>&"']/;
+  const NAME_HIDDEN = /(?!\u200D)[\p{Cc}\p{Cf}]/u;
+  function trimName(raw) { return String(raw).replace(NAME_EDGE_SPACE, ''); }
+  // Returns a sentence, or '' when the (already trimmed) name is fine.
   function nameProblem(name) {
     if (!name) return 'Enter a display name of 1 to 32 characters.';
     const n = Array.from(name).length;
     if (n > 32) return 'That display name is ' + n + ' characters; the limit is 32.';
-    if (/[<>&"'\x00-\x1f\x7f]/.test(name)) return 'A display name cannot contain < > & or quote marks.';
+    if (NAME_HTML_META.test(name)) return 'A display name cannot contain < > & or quote marks.';
+    if (NAME_HIDDEN.test(name)) return 'A display name cannot contain control or invisible formatting characters (zero-width and right-to-left override characters, for example).';
     return '';
+  }
+  // What Save does with the form's values: {problem} (nothing is sent) or
+  // {body} (the POST body; empty when nothing changed). The name is checked
+  // ONLY when it differs from the saved one: a saved name (which may predate
+  // the rule, or hold something this check is stricter on) must not stop the
+  // participant from changing just the avatar.
+  function planSave(rawName, savedName, chosenAvatar, savedAvatar) {
+    const name = trimName(rawName);
+    const body = {};
+    if (name !== savedName) {
+      const problem = nameProblem(name);
+      if (problem) return { problem: problem };
+      body.display_name = name;
+    }
+    if (chosenAvatar !== savedAvatar) body.avatar = chosenAvatar;
+    return { body: body };
   }
   // A sentence for a failed save: the cause, not just the status. The server's
   // own words (JSON {"error": ...}) are appended to a 400 and set with
@@ -221,12 +263,9 @@
   document.getElementById('pane-me-profile-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     if (saving || serverSig === null) return;   // Save is disabled before the first /me; Enter in the name field must not bypass it
-    const name = nameInput.value.trim();
-    const problem = nameProblem(name);
-    if (problem) { showMsg(problem, true); announce(problem); nameInput.focus(); return; }
-    const body = {};
-    if (name !== serverName) body.display_name = name;
-    if (chosen !== serverAvatar) body.avatar = chosen;
+    const plan = planSave(nameInput.value, serverName, chosen, serverAvatar);
+    if (plan.problem) { showMsg(plan.problem, true); announce(plan.problem); nameInput.focus(); return; }
+    const body = plan.body;
     if (Object.keys(body).length === 0) { showMsg('Nothing to save: the name and avatar are already as shown.', false); return; }
     saving = true; syncSave();
     showMsg('Saving…', false);

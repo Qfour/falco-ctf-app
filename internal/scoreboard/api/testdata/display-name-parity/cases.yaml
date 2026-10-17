@@ -1,0 +1,100 @@
+# Shared case table for the display-name rule, read by BOTH sides (app#331, app#343):
+#   - internal/scoreboard/api/display_name_parity_test.go calls validDisplayName
+#     (the server, the authority) on every row;
+#   - internal/scoreboard/view/portal_nameproblem_test.go runs the Profile form's
+#     JS (planSave in pane-me.tmpl) on every row under a JS engine.
+# Same shape as internal/catalog/testdata/flags-parity: one table, two implementations.
+#
+# Row fields
+#   name    the raw input, as typed (YAML double-quoted: \uXXXX, \UXXXXXXXX, \xNN)
+#   repeat  optional: the name is repeated this many times (length cases)
+#   server  accept | reject : what validDisplayName answers
+#   client  accept | reject : what the form's check answers (nothing is sent on reject)
+#   stored  accept rows only, optional: the trimmed name both sides must produce
+#           (default: the name itself)
+#   note    why the row is here
+#
+# The contract: the form is NEVER stricter than the server, so no row may be
+# `client: reject` with `server: accept`. The one allowed difference is
+# `client: accept` with `server: reject`, and only for U+200D (ZERO WIDTH
+# JOINER): the server accepts it only between two emoji, the form lets every ZWJ
+# through and leaves that rule to the server (whose own sentence is then shown).
+# Both tests fail on any other difference.
+#
+# This table is the ONLY list of validDisplayName's accept / reject inputs (the former
+# api/display_name_test.go was folded in: app#381 review-5x R3#4). The character class is swept
+# separately over every code point (rule.yaml).
+# The trim rows at the end pin the form's trim to strings.TrimSpace.
+
+cases:
+  # ---- server: reject, client: reject (Cf / C1 / metachars / control / length) ----
+  - {name: "Ali\u200Bce",     server: reject, client: reject, note: "U+200B zero width space, middle"}
+  - {name: "Alice\u200B",     server: reject, client: reject, note: "U+200B trailing (not whitespace, so not trimmed)"}
+  - {name: "\u200BAlice",     server: reject, client: reject, note: "U+200B leading"}
+  - {name: "\u202EecilA",     server: reject, client: reject, note: "U+202E right-to-left override"}
+  - {name: "Al\u202Dice",     server: reject, client: reject, note: "U+202D left-to-right override"}
+  - {name: "Al\u2066ice",     server: reject, client: reject, note: "U+2066 left-to-right isolate"}
+  - {name: "Al\u200Eice",     server: reject, client: reject, note: "U+200E left-to-right mark"}
+  - {name: "Ali\u0085ce",     server: reject, client: reject, note: "U+0085 NEL in the middle (C1)"}
+  - {name: "Ali\u0080ce",     server: reject, client: reject, note: "U+0080 C1 lower bound"}
+  - {name: "Ali\u009fce",     server: reject, client: reject, note: "U+009F C1 upper bound"}
+  - {name: "Ali\u2060ce",     server: reject, client: reject, note: "U+2060 word joiner"}
+  - {name: "Ali\uFEFFce",     server: reject, client: reject, note: "U+FEFF BOM / ZWNBSP"}
+  - {name: "Ali\u00ADce",     server: reject, client: reject, note: "U+00AD soft hyphen"}
+  - {name: "Ali\u200Cce",     server: reject, client: reject, note: "U+200C zero width non-joiner"}
+  - {name: "Ali\U000E0041ce", server: reject, client: reject, note: "tag character U+E0041 (Cf)"}
+  - {name: "",                server: reject, client: reject, note: "empty"}
+  - {name: "   ",             server: reject, client: reject, note: "whitespace only (trimmed to empty)"}
+  - {name: "<b>",             server: reject, client: reject, note: "HTML metachar <"}
+  - {name: "a&b",             server: reject, client: reject, note: "HTML metachar &"}
+  - {name: "a\"b",            server: reject, client: reject, note: "double quote"}
+  - {name: "a'b",             server: reject, client: reject, note: "single quote"}
+  - {name: "ab\x00cd",        server: reject, client: reject, note: "C0 control NUL"}
+  - {name: "ab\x7Fcd",        server: reject, client: reject, note: "DEL"}
+  - {name: "123456789012345678901234567890123", server: reject, client: reject, note: "33 runes"}
+  - {name: "a", repeat: 33,   server: reject, client: reject, note: "33 runes, repeated"}
+  - {name: "\u3042", repeat: 33, server: reject, client: reject, note: "33 hiragana (runes, not bytes)"}
+  - {name: "\U0001F98A", repeat: 33, server: reject, client: reject, note: "33 emoji (code points, not UTF-16 units)"}
+  - {name: "\U0001F3F4\U000E0067\U000E0062\U000E0065\U000E006E\U000E0067\U000E007F", server: reject, client: reject, note: "England flag (U+1F3F4 + tag characters, Cf): refused on purpose, subdivision flags are not supported"}
+  # ---- server: reject, client: ACCEPT -- U+200D only (the server's emoji-adjacency rule) ----
+  - {name: "Alice\u200D",           server: reject, client: accept, note: "ZWJ after a letter, trailing: the form lets it through, the server refuses"}
+  - {name: "Ali\u200Dce",           server: reject, client: accept, note: "ZWJ between letters"}
+  - {name: "\u200D\U0001F469",      server: reject, client: accept, note: "ZWJ leading"}
+  - {name: "\U0001F469\u200D\u200D\U0001F4BB", server: reject, client: accept, note: "ZWJ doubled between emoji"}
+  - {name: "\U0001F469\u200D",      server: reject, client: accept, note: "ZWJ after an emoji with nothing after it"}
+  - {name: "A\u200D\U0001F4BB",     server: reject, client: accept, note: "ZWJ between a letter and an emoji"}
+  - {name: "\u200D",                server: reject, client: accept, note: "ZWJ alone"}
+  - {name: "\U0001F469\u200DA",      server: reject, client: accept, note: "ZWJ after an emoji, then a LETTER: the base-side of the rule alone cannot let it through (isEmojiBase on the next rune)"}
+  - {name: "\U0001F469\u200D1",      server: reject, client: accept, note: "ZWJ after an emoji, then a DIGIT"}
+  # ---- ZWJ next to another Cf: the ZWJ exception does not let a neighbouring format char through ----
+  - {name: "\U0001F469\u200D\u202E\U0001F4BB", server: reject, client: reject, note: "ZWJ then RLO (U+202E) before the emoji"}
+  - {name: "\U0001F469\u200D\U0001F4BB\u202E", server: reject, client: reject, note: "ZWJ sequence then a trailing RLO"}
+  # ---- server: accept, client: accept ----
+  - {name: "Alice",                 server: accept, client: accept, note: "ascii"}
+  - {name: "Alice \u2605 B-2",      server: accept, client: accept, note: "ascii with spaces and a symbol"}
+  - {name: "\u5C71\u7530 \u592A\u90CE",              server: accept, client: accept, note: "japanese"}
+  - {name: "\u3055\u304F\u3089\u685C\u30B5\u30AF\u30E9",          server: accept, client: accept, note: "kana + kanji"}
+  - {name: "\uFF21\uFF4C\uFF49\uFF43\uFF45",              server: accept, client: accept, note: "fullwidth latin"}
+  - {name: "\uD55C\uAD6D\uC5B4",                 server: accept, client: accept, note: "korean"}
+  - {name: "\U0001F98A Fox",        server: accept, client: accept, note: "emoji"}
+  - {name: "\U0001F469\U0001F4BB",  server: accept, client: accept, note: "two plain emoji"}
+  - {name: "\U0001F469\u200D\U0001F4BB", server: accept, client: accept, note: "ZWJ emoji sequence (technologist)"}
+  - {name: "\U0001F469\U0001F3FD\u200D\U0001F4BB", server: accept, client: accept, note: "ZWJ sequence with skin tone"}
+  - {name: "\U0001F3F3\uFE0F\u200D\U0001F308", server: accept, client: accept, note: "ZWJ sequence with variation selector"}
+  - {name: "\U0001F468\u200D\U0001F469\u200D\U0001F467", server: accept, client: accept, note: "ZWJ family (two joiners)"}
+  - {name: "Cafe\u0301",            server: accept, client: accept, note: "combining acute (e + U+0301)"}
+  - {name: "Caf\u00E9",             server: accept, client: accept, note: "precomposed e-acute"}
+  - {name: "\u307E\u3099",          server: accept, client: accept, note: "combining dakuten U+3099"}
+  - {name: "  Alice  ",             server: accept, client: accept, stored: "Alice", note: "ASCII spaces trimmed"}
+  - {name: "Alice\u0085",           server: accept, client: accept, stored: "Alice", note: "trailing NEL is whitespace to Go's TrimSpace"}
+  - {name: "12345678901234567890123456789012", server: accept, client: accept, note: "exactly 32 runes"}
+  - {name: "a", repeat: 32,         server: accept, client: accept, note: "32 runes, repeated"}
+  - {name: "\U0001F98A", repeat: 32, server: accept, client: accept, note: "32 emoji, each 2 UTF-16 units"}
+  # ---- trim parity: the form trims with the SAME set as strings.TrimSpace, not String.trim ----
+  - {name: "\u0085Alice",           server: accept, client: accept, stored: "Alice", note: "leading NEL: Go trims it, String.trim would not (and the form would wrongly refuse it as C1)"}
+  - {name: "\uFEFFAlice",           server: reject, client: reject, note: "leading U+FEFF: Go keeps it (Cf, refused), String.trim would strip it and send Alice"}
+  - {name: "Alice\uFEFF",           server: reject, client: reject, note: "trailing U+FEFF, same"}
+  - {name: "\u00A0Alice\u3000",     server: accept, client: accept, stored: "Alice", note: "NBSP and ideographic space at the edges"}
+  - {name: "\u2003\u2028Alice\u2029\u202F", server: accept, client: accept, stored: "Alice", note: "em space, line/paragraph separators, narrow NBSP at the edges"}
+  - {name: "\t\n\v\f\rAlice \t", server: accept, client: accept, stored: "Alice", note: "ASCII whitespace at the edges"}
+  - {name: "Ali\u00A0ce",           server: accept, client: accept, note: "NBSP in the middle is Zs (not Cc/Cf): kept by both (app#331 residual)"}

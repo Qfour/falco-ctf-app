@@ -90,6 +90,11 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
   共有していた。ヒント / step 確認 / reset-dirty の bucket とは別なので、将来 portal に Grade ボタンが付いたときも (現時点で呼び出し元は無い)、その連打でそれらが 429 にならない (逆も同じ)。
   認証ヘッダーの無い要求は 403 で拒否し、bucket を消費せず handler (body の読み取り) にも入らない。
   route 表・OpenAPI の `x-ctf-rate-limit` と /submit 側の「(shared with submit-detect)」も実挙動に合わせた (#328)。
+- 表示名の検証が Unicode の Cf (U+200B 零幅スペース・U+202E bidi 上書きなど) と C1 制御文字 (U+0080〜009F) を通していたのを拒否にした。
+  bidi 制御・ゼロ幅 (Cf)・C1 制御の拒否に限る (ADR-0026 D5-1 の Cf 拒否と同じ方針)。他の席への見た目のなりすましを防ぐものではない。プロフィール route (`POST /api/users/{user}/profile` の `display_name`) と admin 用 display-name route の両方で同じ検証。
+  ZWJ (U+200D) で連結する絵文字は 2 つの絵文字に挟まれたときだけ通す。日本語・絵文字・結合文字の名前は従来どおり通る。**例外**: 地域旗の絵文字 (イングランド・スコットランド・ウェールズ = U+1F3F4 + tag 文字 U+E0020〜E007F) は tag 文字が Cf なので server・form とも拒否になる (受け入れる判断。`api.go` のコメントと case 表の行で固定) (#331)。
+  **upgrade note**: この版より前に保存された名前は再検証されない (起動時の読み込みも admin reset も検査しない)。直す手段は admin の profile-reset (追跡 = #403)。
+  Portal のプロフィール form の検査も同じ規則にした。form は server より厳しくならない (U+200D は常に通し、絵文字の間かどうかは server が判定する)。両端の空白は server の `strings.TrimSpace` と同じ集合 (U+0085 を含み U+FEFF は含まない) で落とす。名前を変えたときだけ検査するので、保存済みの名前のまま絵柄だけ変える保存は止まらない。共有の case 表 `internal/scoreboard/api/testdata/display-name-parity/cases.yaml` を server (`validDisplayName`) と form の両方に流して固定 (#343)。
 
 ### Security
 - **`POST /api/challenges/{cid}/submit-detect` は `X-Auth-Request-Email` 必須になった (app#346)**。ヘッダ無しは 403 (以前は origin-guard を通れば claimed identity で通っていた)。body の `user` は identity の正規形 `<seat>@<EXPECTED_EMAIL_DOMAIN>` との完全一致 (admin は例外)。合わせて `x-ctf-authz: self-or-admin-write` の語彙 (spec・`apispec.AuthzSelfOrAdminWrite`・ゲート関数) を廃止した。collector はこの route を元々転送せず workspace からも届かないので、外部クライアントへの実害は想定していない。`docs/RELEASING.md` の bump 基準 (公開 contract の破壊的変更 = MAJOR に当たらない、認可の厳格化) では **minor** 扱い。
