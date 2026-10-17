@@ -206,21 +206,17 @@
   // pane-scoreboard) is Go's strings.TrimSpace set, not String.prototype.trim; the
   // reason is written there.
   //
-  // Refused: < > & " ' (NAME_HTML_META), and \p{Cc} (C0, DEL, C1) or \p{Cf}
-  // (zero-width characters, bidi controls such as U+202E, U+FEFF, soft hyphen)
-  // (NAME_HIDDEN) EXCEPT U+200D ZERO WIDTH JOINER, which is always let through
-  // here: the server accepts it only between two emoji (what makes a ZWJ emoji
-  // sequence one glyph) and refuses it elsewhere with its own sentence, so the
-  // emoji-adjacency rule lives in one place, the server.
+  // Refused: < > & " ' (NAME_HTML_META), and hasHiddenChar() (core-util.tmpl, the one
+  // definition shared with the board's subject: \p{Cc} or \p{Cf} EXCEPT U+200D, which is
+  // always let through here and refused outside emoji by the server alone).
   const NAME_HTML_META = /[<>&"']/;
-  const NAME_HIDDEN = /(?!\u200D)[\p{Cc}\p{Cf}]/u;
   // Returns a sentence, or '' when the (already trimmed) name is fine.
   function nameProblem(name) {
     if (!name) return 'Enter a display name of 1 to 32 characters.';
     const n = Array.from(name).length;
     if (n > 32) return 'That display name is ' + n + ' characters; the limit is 32.';
     if (NAME_HTML_META.test(name)) return 'A display name cannot contain < > & or quote marks.';
-    if (NAME_HIDDEN.test(name)) return 'A display name cannot contain control or invisible formatting characters (zero-width and right-to-left override characters, for example).';
+    if (hasHiddenChar(name)) return 'A display name cannot contain control or invisible formatting characters (zero-width and right-to-left override characters, for example).';
     return '';
   }
   // What Save does with the form's values: {problem} (nothing is sent) or

@@ -40,7 +40,7 @@ func extractJSFunc(t *testing.T, src, name string) string {
 	t.Helper()
 	start := strings.Index(src, "\n  function "+name+"(")
 	if start < 0 {
-		t.Fatalf("pane-me.tmpl: function %s not found (the test cuts it out of the source)", name)
+		t.Fatalf("function %s not found (the test cuts it out of the source)", name)
 	}
 	rest := src[start+1:]
 	var fn string
@@ -50,14 +50,14 @@ func extractJSFunc(t *testing.T, src, name string) string {
 	} else {
 		end := strings.Index(rest, "\n  }\n")
 		if end < 0 {
-			t.Fatalf("pane-me.tmpl: function %s has no closing brace at 2-space indent", name)
+			t.Fatalf("function %s has no closing brace at 2-space indent", name)
 		}
 		fn = rest[:end+len("\n  }")]
 	}
 	// A cut that swallowed a neighbour would declare it twice (sloppy-mode JS
 	// would not complain), so the cut must hold exactly the one declaration.
 	if n := strings.Count(fn, "function "); n != 1 {
-		t.Fatalf("pane-me.tmpl: the text cut out for %s holds %d `function ` declarations, want exactly 1:\n%s", name, n, fn)
+		t.Fatalf("the text cut out for %s holds %d `function ` declarations, want exactly 1:\n%s", name, n, fn)
 	}
 	return fn
 }
@@ -72,17 +72,16 @@ func extractJSConst(t *testing.T, src, name string) string {
 	return m
 }
 
-// nameRulesJS is the form's rule: the shared trim (trimName) cut out of core-util.tmpl,
-// the rest out of pane-me.tmpl.
+// nameRulesJS is the form's rule: the shared trim (trimName) and the shared Cc / Cf class
+// (hasHiddenChar) cut out of core-util.tmpl, the rest out of pane-me.tmpl.
 func nameRulesJS(t *testing.T) string {
 	t.Helper()
 	parts := portalPartials(t)
 	util, pane := partialBody(parts, "core-util.tmpl"), partialBody(parts, "pane-me.tmpl")
 	var b strings.Builder
 	b.WriteString(extractJSConst(t, util, "trimName") + "\n")
-	for _, c := range []string{"NAME_HTML_META", "NAME_HIDDEN"} {
-		b.WriteString(extractJSConst(t, pane, c) + "\n")
-	}
+	b.WriteString(extractJSConst(t, util, "hasHiddenChar") + "\n") // the Cc / Cf class, shared with the board's subject (app#408)
+	b.WriteString(extractJSConst(t, pane, "NAME_HTML_META") + "\n")
 	for _, f := range []string{"nameProblem", "planSave"} {
 		b.WriteString(extractJSFunc(t, pane, f) + "\n")
 	}

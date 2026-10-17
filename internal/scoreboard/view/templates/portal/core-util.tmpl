@@ -73,6 +73,19 @@ const trimName = (raw) => String(raw).replace(/^[\t\n\v\f\r \u0085\u00A0\u1680\u
 // alert(), never as markup (a name the admin typed can come back inside it).
 const serverErrorText = async (r) => { try { const j = await r.json(); if (j && typeof j.error === 'string') return j.error; } catch (_) { /* no body */ } return ''; };
 
+// hasHiddenChar(s) is true when s holds a control (\p{Cc}: C0, DEL, C1, so a TAB or a line
+// break too) or an invisible formatting character (\p{Cf}: zero-width characters, bidi
+// controls such as U+202E, U+FEFF, the soft hyphen), EXCEPT U+200D ZERO WIDTH JOINER, which
+// is always let through here: the server accepts it only between two emoji (what makes a ZWJ
+// emoji sequence one glyph) and refuses it elsewhere with its own sentence, so the
+// emoji-adjacency rule lives in one place, the server. A form built on this is never
+// stricter than the server. It is the class of rule.yaml's `categories` (api/testdata/
+// display-name-parity), and the one definition for both users: the Profile display name
+// (nameProblem, pane-me.tmpl, which adds the metacharacters < > & " ') and a new board
+// thread's subject (subjectProblem, pane-board.tmpl, which is prose and does not).
+// portal_nameproblem_test.go sweeps every code point against rule.yaml.
+const hasHiddenChar = (s) => /(?!\u200D)[\p{Cc}\p{Cf}]/u.test(s);
+
 // ---- Accessibility helpers (P28-0a (4)). Declared AFTER esc on purpose (see the
 // TDZ note above). textContent only, no markup.
 // (A delegated keydown that turns Enter/Space on role=button / checkbox into a
