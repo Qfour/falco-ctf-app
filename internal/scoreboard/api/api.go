@@ -277,8 +277,11 @@ type DetectConfig struct {
 
 // DefaultDetectInflightCap bounds concurrent grader executions globally. A
 // per-submission grader (docker/Job) is the net-new amplification vector; this
-// hard cap (rejected past it with 429, never queued) plus the per-IP submit
-// limiter keeps a flood from spawning unbounded work (design §3.3).
+// hard cap (rejected past it with 429, never queued) plus the identity-keyed
+// detect bucket (detectMW, burst 10, 1 req/s per identity) keeps a flood from
+// spawning unbounded work (design §3.3). The cap is shared by every identity;
+// a per-identity concurrency limit is tracked separately (security review of
+// app#379, M1).
 const DefaultDetectInflightCap = 5
 
 // DetectGradeTimeout bounds a single detect grade end-to-end (compile gate +
@@ -965,14 +968,21 @@ func emailMatchesUser(email, user, domain string) bool {
 // such header and is therefore denied here. This is the minimal safe signal —
 // the scoreboard need not know the hostname. The header is a PROOF of identity
 // only while three things outside this file hold (it is not unforgeable by
-// itself): (1) the ingress `auth-response-headers` annotation stays pinned on
-// every scoreboard ingress, so ingress-nginx overwrites any client-supplied
-// X-Auth-Request-* with the oauth2-proxy subrequest's values; (2) the
-// scoreboard NetworkPolicy keeps workspaces off the Service (only
-// ingress-nginx, the collector and falcosidekick reach it), so nothing in the
-// cluster can send its own copy of the header; (3) the collector forwards only
-// its allowlisted routes (submit-detect is not one of them) and strips every
-// inbound X-Auth-Request-* (ADR-0034 D6).
+// itself): (1) the scoreboard ingresses keep their auth-url pointed at
+// auth-policy (/check-participant, /check-admin) and keep the
+// `auth-response-headers` annotation pinned, so ingress-nginx overwrites a
+// client-supplied copy of exactly those listed headers (not every
+// X-Auth-Request-*; the scoreboard trusts -Email only) with auth-policy's
+// response. For a participant seat auth-policy stamps the canonical
+// `<seat>@<domain>` form (stampCanonical), which is why one seat maps to one
+// identity (and one rate-limit bucket); only an ADMIN_EMAILS identity is passed
+// through as oauth2-proxy reported it (lower-cased); (2) the scoreboard
+// NetworkPolicy keeps participant-controlled workloads (workspaces) off the
+// Service: it admits the falco and ingress-nginx namespaces and the namespace
+// labelled for the collector, so the only senders that can reach it are
+// platform components, and only with a CNI that enforces NetworkPolicy;
+// (3) the collector forwards only its allowlisted routes (submit-detect is not
+// one of them) and strips every inbound X-Auth-Request-* (ADR-0034 D6).
 func (h *Handler) selfOrAdmin(w http.ResponseWriter, r *http.Request, user string) bool {
 	email := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Auth-Request-Email")))
 	if email == "" {

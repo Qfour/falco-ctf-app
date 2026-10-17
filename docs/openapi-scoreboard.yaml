@@ -596,10 +596,14 @@ paths:
         caller is the portal's Grade button (docs/detect-challenge-design.md
         §6); the origin guard and the required identity header assume that
         browser-only caller, and the collector does not forward this route.
-        Authz is `self-or-admin`: a request that gets past the feature /
-        catalog / body checks (see 503, 404, 400) is `403` when it carries no
-        `X-Auth-Request-Email` (app#346; there is no claimed-identity
-        fallback; the identity rate limiter enforces the same before it consumes a token, app#328), and `403` when the body `user` is not the proven identity's
+        Authz is `self-or-admin`. A request that carries no (or a blank)
+        `X-Auth-Request-Email` is `403` FIRST: the identity-keyed rate limiter
+        (app#328) turns it away before a token is consumed and before the
+        handler runs, so that 403 is returned ahead of the 503 (feature off),
+        404 (unknown challenge) and 400 (bad body) answers below (app#346;
+        there is no claimed-identity fallback). A request that has an identity
+        and passes the feature / catalog / body checks (see 503, 404, 400) is
+        `403` when the body `user` is not the proven identity's
         canonical form (an admin may grade any user). Past the global in-flight
         cap the request is REJECTED with 429, never queued (a per-submission grader Job is the net-new DoS
         lever). With no runner configured the route answers 503 (feature off),

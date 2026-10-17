@@ -254,3 +254,112 @@ func TestSubmitDetect_DoesNotShareActionBucketWithResetDirty(t *testing.T) {
 		t.Fatalf("detect stays limited on its own bucket, got %d body=%s", w.Code, w.Body)
 	}
 }
+
+// crossOrigin POSTs as `email` with an Origin that is NOT in ALLOWED_ORIGINS.
+// The identity header is valid, so the only thing that can (and must) stop
+// the request is the origin guard.
+func (f *sdFixture) crossOrigin(target, email string, body map[string]any) *httptest.ResponseRecorder {
+	f.t.Helper()
+	b, _ := json.Marshal(body)
+	r := httptest.NewRequest("POST", target, bytes.NewReader(b))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Origin", "https://evil.example")
+	r.Header.Set("X-Auth-Request-Email", email)
+	w := httptest.NewRecorder()
+	f.srv.ServeHTTP(w, r)
+	return w
+}
+
+// Order og -> limiter -> handler (security review of app#379, L1). Cookies are
+// SameSite=None, so another site's page can make a victim's browser POST with
+// the victim's identity header. The origin guard must 403 that BEFORE the
+// identity-keyed limiter spends a token; if the limiter ran first, the flood
+// would drain the victim's bucket and their own (same-origin) request would
+// 429. Pinned for submit-detect (detectMW) and reset-dirty (actionMW): both
+// must stay `h.og(<limiter>(handler))`, and swapping them turns this red.
+func TestOriginGuardRunsBeforeIdentityLimiter(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		target string
+		body   map[string]any
+		// burst counts the 2xx the SAME identity can still get from an allowed
+		// origin before its own 429.
+		burst func(f *sdFixture) int
+	}{
+		{
+			name:   "submit-detect (detectMW)",
+			target: sdURL,
+			body:   map[string]any{"user": "alice", "condition": "evt.type=open"},
+			burst:  func(f *sdFixture) int { return f.drain("alice@ctf.local", "alice") },
+		},
+		{
+			name:   "reset-dirty (actionMW)",
+			target: sdReset,
+			body:   nil,
+			burst: func(f *sdFixture) int {
+				n := 0
+				for i := 0; i < 30; i++ {
+					switch w := f.do(sdReset, "alice@ctf.local", nil); w.Code {
+					case http.StatusTooManyRequests:
+						return n
+					case http.StatusOK:
+						n++
+					default:
+						f.t.Fatalf("reset-dirty: unexpected %d body=%s", w.Code, w.Body)
+					}
+				}
+				f.t.Fatal("reset-dirty never rate-limited in 30 requests")
+				return n
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newSDFixture(t)
+			for i := 0; i < 30; i++ { // far past burst 10
+				if w := f.crossOrigin(tc.target, "alice@ctf.local", tc.body); w.Code != http.StatusForbidden {
+					t.Fatalf("cross-origin #%d: got %d, want 403 (never 429: the limiter must not run before the origin guard) body=%s", i, w.Code, w.Body)
+				}
+			}
+			if n := f.runner.calls.Load(); n != 0 {
+				t.Fatalf("cross-origin requests reached the grader %d times, want 0", n)
+			}
+			if n := tc.burst(f); n != 10 {
+				t.Fatalf("alice's burst after a cross-origin flood = %d, want the full 10", n)
+			}
+		})
+	}
+}
+
+// A request for another seat is turned away by selfOrAdmin, and it must be
+// turned away BEFORE the grader runs (security review of app#379, L3). The
+// runner here solves on every call, so "grade first, 403 afterwards" would
+// leave a victim's solve in the store and calls > 0; status alone would not
+// catch that.
+func TestSubmitDetect_DeniedIdentityNeverReachesGrader(t *testing.T) {
+	f := newSDFixture(t)
+	for _, tc := range []struct{ name, email string }{
+		{"other seat (bob@ grades as alice)", "bob@ctf.local"},
+		{"prefix-longer seat (alice2@ grades as alice)", "alice2@ctf.local"},
+	} {
+		if w := f.detect(tc.email, "alice"); w.Code != http.StatusForbidden {
+			t.Fatalf("%s: got %d, want 403 body=%s", tc.name, w.Code, w.Body)
+		}
+	}
+	if n := f.runner.calls.Load(); n != 0 {
+		t.Fatalf("denied requests reached the grader %d times, want 0", n)
+	}
+	if f.st.IsSolved("alice", "05-detect") {
+		t.Fatal("a denied request recorded a solve for alice")
+	}
+	// Control: the proven identity DOES reach the grader and the runner does
+	// solve, so the zeros above cannot be an artifact of this fixture.
+	if w := f.detect("alice@ctf.local", "alice"); w.Code != http.StatusOK {
+		t.Fatalf("control: got %d, want 200 body=%s", w.Code, w.Body)
+	}
+	if n := f.runner.calls.Load(); n != 1 {
+		t.Fatalf("control: grader calls = %d, want 1", n)
+	}
+	if !f.st.IsSolved("alice", "05-detect") {
+		t.Fatal("control: the solving runner did not record a solve; the IsSolved check proves nothing")
+	}
+}
