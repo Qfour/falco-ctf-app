@@ -48,10 +48,10 @@
   // + collapse-consecutive-dashes, per the MVP spec.
   function slugify(s) { return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''); }
   // Portal shell (P23-1): identity comes from the server-injected role/user
-  // globals (derived from X-Auth-Request-Email, api.DeriveUsername), not a
+  // globals (derived from X-Auth-Request-Email, api.NewUsernameDeriver), not a
   // ?user= query param — the portal is one page per session, not one page
   // per URL. This is a UI convenience only; every read/write below is
-  // independently re-checked server-side (selfOrAdmin / selfOrAdminWrite).
+  // independently re-checked server-side (selfOrAdmin / isAdmin).
   const user = window.__PORTAL_USER__ || '';
 
   // Track prior solved set so we can detect a fresh CLEARED transition.
@@ -271,7 +271,7 @@
       const num = (m.id.split('-')[0] || '');
       const unlockCls = (m.id === justUnlockedId) ? ' just-unlocked' : '';
       const viewedCls = (m.id === viewedId) ? ' viewed' : '';
-      return `<li class="${cls}${unlockCls}${viewedCls}" data-mission="${esc(m.id)}">
+      return `<li class="${esc(cls)}${unlockCls}${viewedCls}" data-mission="${esc(m.id)}">
         <span class="ico">${ico}</span>
         <span style="min-width:0">
           <span class="mtitle">${esc(m.title || m.id)}</span><br>

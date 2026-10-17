@@ -31,7 +31,8 @@
 # participant has. font-wqy-zenhei exists only so that CJK text in a failure
 # screenshot is readable.
 FROM golang:1.26.9-alpine@sha256:3082400e369fa24d5fc60bca20edab3f6d604e0c5a690ec66b295eff4dd87ade AS tools
-RUN apk add --no-cache chromium=152.0.7977.82-r0 font-wqy-zenhei=0.9.46-r0
+# chromium drift: 152.0.7977.82 -> 155.0.8059.39 (2026-10-17, app#382)
+RUN apk add --no-cache chromium=155.0.8059.39-r0 font-wqy-zenhei=0.9.46-r0
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
