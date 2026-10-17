@@ -32,6 +32,9 @@ var (
 	bareNameEscRe  = regexp.MustCompile(`(?:^|[^\w$.])esc\(\s*` + nameFieldArg)
 	nameHTMLUseRe  = regexp.MustCompile(`(?:^|[^\w$.])nameHTML\(\s*` + nameFieldArg)
 	nameHTMLDeclRe = regexp.MustCompile(`\b(?:function\*?|const|let|var|class)\s+nameHTML\b`)
+	// esc(nameHTML(x)) shows the literal text "&lt;bdi&gt;"; nameHTML(esc(x))
+	// escapes twice ("&amp;lt;"). Neither is an XSS, both are a broken display.
+	doubleEscRe = regexp.MustCompile(`(?:^|[^\w$.])(?:esc\(\s*nameHTML\(|nameHTML\(\s*esc\()`)
 )
 
 // The two pinned declarations. The portal's lives in core-util.tmpl after esc
@@ -50,12 +53,20 @@ var bidiFloors = map[string]int{
 }
 
 // checkBidiNames returns every violation of the rule in the portal partials
-// (name -> body) and the dashboard source.
-func checkBidiNames(portal map[string]string, index string) []error {
+// (name -> body) and the dashboard source. floors is the per-file lower bound
+// on nameHTML(<name>) sites; a file named in floors that is not among the
+// scanned files is an error too (a renamed or split partial must not drop out
+// of the floor silently).
+func checkBidiNames(portal map[string]string, index string, floors map[string]int) []error {
 	var errs []error
 	files := map[string]string{"index.html": index}
 	for n, b := range portal {
 		files[n] = b
+	}
+	for name := range floors {
+		if _, ok := files[name]; !ok {
+			errs = append(errs, fmt.Errorf("%s has a nameHTML floor but is not among the scanned files (renamed or removed? move the floor with it)", name))
+		}
 	}
 	sites, portalDecls, indexDecls := 0, 0, 0
 	for name, raw := range files {
@@ -63,9 +74,12 @@ func checkBidiNames(portal map[string]string, index string) []error {
 		for _, m := range bareNameEscRe.FindAllString(body, -1) {
 			errs = append(errs, fmt.Errorf("%s: %q hands a display name to a bare esc(); use nameHTML() so the name is bidi-isolated (app#343)", name, strings.TrimSpace(m)))
 		}
+		for _, m := range doubleEscRe.FindAllString(body, -1) {
+			errs = append(errs, fmt.Errorf("%s: %q escapes a name twice (nameHTML already calls esc)", name, strings.TrimSpace(m)))
+		}
 		n := len(nameHTMLUseRe.FindAllString(body, -1))
 		sites += n
-		if floor, ok := bidiFloors[name]; ok && n < floor {
+		if floor, ok := floors[name]; ok && n < floor {
 			errs = append(errs, fmt.Errorf("%s: %d nameHTML(<name>) sites, want at least %d (a site moved or stopped matching the scan)", name, n, floor))
 		}
 		d := len(nameHTMLDeclRe.FindAllString(body, -1))
@@ -101,66 +115,112 @@ func bidiSources(t *testing.T) (map[string]string, string) {
 
 func TestDisplayNames_AreBidiIsolated(t *testing.T) {
 	portal, index := bidiSources(t)
-	for _, err := range checkBidiNames(portal, index) {
+	for _, err := range checkBidiNames(portal, index, bidiFloors) {
 		t.Error(err)
 	}
 }
 
 // TestDisplayNames_BidiGateCatchesRegressions pins that the gate goes red for
 // the edits that would undo the isolation, by applying each to the real source.
+// Each case names the error it must produce (want); with only set, EVERY error
+// must be that one, so a case proves its own assert and not a neighbour's. The
+// floor and the zero-sites asserts each have such a case: without it, deleting
+// either assert would leave this table green.
 func TestDisplayNames_BidiGateCatchesRegressions(t *testing.T) {
+	type bidiSrc struct {
+		portal map[string]string
+		index  string
+		floors map[string]int
+	}
 	cases := []struct {
 		name   string
-		mutate func(portal map[string]string, index *string)
+		want   string // a substring of at least one error
+		only   bool   // every error contains want
+		mutate func(s *bidiSrc)
 	}{
-		{"one nameHTML goes back to a bare esc", func(p map[string]string, _ *string) {
-			p["pane-scoreboard.tmpl"] = strings.Replace(p["pane-scoreboard.tmpl"], "nameHTML(p.display_name || p.user)", "esc(p.display_name || p.user)", 1)
+		{"one nameHTML goes back to a bare esc", "hands a display name to a bare esc()", false, func(s *bidiSrc) {
+			s.portal["pane-scoreboard.tmpl"] = strings.Replace(s.portal["pane-scoreboard.tmpl"], "nameHTML(p.display_name || p.user)", "esc(p.display_name || p.user)", 1)
 		}},
-		{"a new partial escapes display_name bare", func(p map[string]string, _ *string) {
-			p["pane-new.tmpl"] = "<script>el.innerHTML = esc(row.display_name);</script>"
+		{"a new partial escapes display_name bare", "hands a display name to a bare esc()", true, func(s *bidiSrc) {
+			s.portal["pane-new.tmpl"] = "<script>el.innerHTML = esc(row.display_name);</script>"
 		}},
-		{"a new partial escapes authorDisplay bare", func(p map[string]string, _ *string) {
-			p["pane-new.tmpl"] = "<script>el.innerHTML = `${esc(m.authorDisplay || m.author)}`;</script>"
+		{"a new partial escapes authorDisplay bare", "hands a display name to a bare esc()", true, func(s *bidiSrc) {
+			s.portal["pane-new.tmpl"] = "<script>el.innerHTML = `${esc(m.authorDisplay || m.author)}`;</script>"
 		}},
-		{"the Me pane escapes displayName bare", func(p map[string]string, _ *string) {
-			p["pane-me.tmpl"] = strings.Replace(p["pane-me.tmpl"], "nameHTML(displayName)", "esc(displayName)", 1)
+		{"the Me pane escapes displayName bare", "hands a display name to a bare esc()", false, func(s *bidiSrc) {
+			s.portal["pane-me.tmpl"] = strings.Replace(s.portal["pane-me.tmpl"], "nameHTML(displayName)", "esc(displayName)", 1)
 		}},
-		{"a second nameHTML declaration", func(p map[string]string, _ *string) {
-			p["pane-new.tmpl"] = "<script>const nameHTML = (s) => esc(s);</script>"
+		{"a name is escaped around nameHTML", "escapes a name twice", true, func(s *bidiSrc) {
+			s.portal["pane-new.tmpl"] = "<script>el.innerHTML = esc(nameHTML(row.display_name));</script>"
 		}},
-		{"the nameHTML declaration is gone", func(p map[string]string, _ *string) {
-			p["core-util.tmpl"] = strings.Replace(p["core-util.tmpl"], nameHTMLWantLine, "", 1)
+		{"a name is escaped inside nameHTML", "escapes a name twice", false, func(s *bidiSrc) {
+			s.portal["pane-new.tmpl"] = "<script>el.innerHTML = nameHTML(esc(row.display_name));</script>"
 		}},
-		{"nameHTML stops using <bdi>", func(p map[string]string, _ *string) {
-			p["core-util.tmpl"] = strings.Replace(p["core-util.tmpl"], nameHTMLWantLine, `const nameHTML = (s) => esc(s);`, 1)
+		{"a second nameHTML declaration", "declares nameHTML 2 times", false, func(s *bidiSrc) {
+			s.portal["pane-new.tmpl"] = "<script>const nameHTML = (s) => esc(s);</script>"
 		}},
-		{"the dashboard escapes a name bare", func(_ map[string]string, idx *string) {
-			*idx = strings.Replace(*idx, "nameHTML(s.display_name || s.user)", "esc(s.display_name || s.user)", 1)
+		{"the nameHTML declaration is gone", "declares nameHTML 0 times", false, func(s *bidiSrc) {
+			s.portal["core-util.tmpl"] = strings.Replace(s.portal["core-util.tmpl"], nameHTMLWantLine, "", 1)
 		}},
-		{"the dashboard loses its nameHTML", func(_ map[string]string, idx *string) {
-			*idx = strings.Replace(*idx, nameHTMLWantLine, "", 1)
+		{"nameHTML stops using <bdi>", "not as the pinned line", true, func(s *bidiSrc) {
+			s.portal["core-util.tmpl"] = strings.Replace(s.portal["core-util.tmpl"], nameHTMLWantLine, `const nameHTML = (s) => esc(s);`, 1)
 		}},
-		{"every site is gone", func(p map[string]string, idx *string) {
-			for k := range p {
-				p[k] = ""
+		{"the dashboard escapes a name bare", "hands a display name to a bare esc()", false, func(s *bidiSrc) {
+			s.index = strings.Replace(s.index, "nameHTML(s.display_name || s.user)", "esc(s.display_name || s.user)", 1)
+		}},
+		{"the dashboard loses its nameHTML", "index.html declares nameHTML 0 times", false, func(s *bidiSrc) {
+			s.index = strings.Replace(s.index, nameHTMLWantLine, "", 1)
+		}},
+		// The floor, alone: the name is reached through an alias, which the scan
+		// cannot see, so only the lower bound notices that a site is missing.
+		{"a site is hidden behind an alias (floor only)", "want at least 5", true, func(s *bidiSrc) {
+			s.portal["pane-scoreboard.tmpl"] = strings.Replace(s.portal["pane-scoreboard.tmpl"], "nameHTML(p.display_name || p.user)", "esc(nm)", 1)
+		}},
+		// F-1: the partial with a floor is renamed (and its site aliased), so the
+		// floor's key matches no scanned file.
+		{"a partial with a floor is renamed (floor key unmatched)", "has a nameHTML floor but is not among the scanned files", true, func(s *bidiSrc) {
+			s.portal["pane-profile.tmpl"] = strings.Replace(s.portal["pane-me.tmpl"], "nameHTML(displayName)", "esc(nm)", 1)
+			delete(s.portal, "pane-me.tmpl")
+		}},
+		{"every site is gone", "no nameHTML(<name>) site at all", false, func(s *bidiSrc) {
+			for k := range s.portal {
+				s.portal[k] = ""
 			}
-			*idx = ""
+			s.index = ""
+		}},
+		// The zero-sites assert, alone: nothing but the two pinned declarations,
+		// and no floors, so the only thing wrong is that nothing is checked.
+		{"nothing is scanned (zero sites only)", "no nameHTML(<name>) site at all", true, func(s *bidiSrc) {
+			s.portal = map[string]string{"core-util.tmpl": nameHTMLWantLine + "\n"}
+			s.index = "  " + nameHTMLWantLine + "\n"
+			s.floors = nil
 		}},
 	}
 	basePortal, baseIndex := bidiSources(t)
-	if errs := checkBidiNames(basePortal, baseIndex); len(errs) != 0 {
+	if errs := checkBidiNames(basePortal, baseIndex, bidiFloors); len(errs) != 0 {
 		t.Fatalf("the unmodified source must pass the gate first: %v", errs)
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			portal := map[string]string{}
+			src := bidiSrc{portal: map[string]string{}, index: baseIndex, floors: bidiFloors}
 			for k, v := range basePortal {
-				portal[k] = v
+				src.portal[k] = v
 			}
-			index := baseIndex
-			c.mutate(portal, &index)
-			if len(checkBidiNames(portal, index)) == 0 {
-				t.Errorf("the gate stayed green after: %s", c.name)
+			c.mutate(&src)
+			errs := checkBidiNames(src.portal, src.index, src.floors)
+			if len(errs) == 0 {
+				t.Fatalf("the gate stayed green after: %s", c.name)
+			}
+			found := false
+			for _, err := range errs {
+				if strings.Contains(err.Error(), c.want) {
+					found = true
+				} else if c.only {
+					t.Errorf("unexpected error (this case must produce only %q): %v", c.want, err)
+				}
+			}
+			if !found {
+				t.Errorf("no error contains %q; got %v", c.want, errs)
 			}
 		})
 	}
