@@ -146,6 +146,32 @@ func TestExfil_InvalidCID_Rejected(t *testing.T) {
 	}
 }
 
+// An id outside the slug grammar is answered by the collector with a fixed 404
+// and never forwarded, whatever its length.
+func TestSubmit_UnknownCIDShapeIsNotForwarded(t *testing.T) {
+	c, up := newTestCollector(t)
+	for _, cid := range []string{
+		strings.Repeat("a", 4096),
+		"BAD_ID",
+		"10-final-exfil.",
+		"x",
+		"a%20b",
+	} {
+		resp := do(t, "POST", c.URL+"/api/challenges/"+cid+"/submit", `{"user":"alice","flag":"FALCO{x}"}`)
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("cid %.20q: status = %d, want 404", cid, resp.StatusCode)
+		}
+		if strings.TrimSpace(string(body)) != `{"error":"unknown challenge"}` {
+			t.Fatalf("cid %.20q: body = %.100s, want the fixed body", cid, body)
+		}
+		if up.last() != "" {
+			t.Fatalf("cid %.20q: forwarded upstream as %q", cid, up.last())
+		}
+	}
+}
+
 func TestSubmit_ForwardedTransparently(t *testing.T) {
 	c, up := newTestCollector(t)
 	resp := do(t, "POST", c.URL+"/api/challenges/10-final-exfil/submit", `{"user":"alice","flag":"FALCO{x}"}`)

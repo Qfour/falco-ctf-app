@@ -61,6 +61,38 @@ import (
 // auth-policy enforces on incoming /check-workspace?host=… so the two sides agree.
 var validUser = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
+// validCID is the grammar of a catalog challenge id as it may appear in a
+// {cid} path segment: the same character set the flags file accepts for a
+// challengeId (internal/catalog flagIDRE) plus a length cap. It is checked
+// before any catalog lookup so an id outside the grammar is never used as a
+// metric label, logged, or reflected in a response.
+var validCID = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
+
+// unknownCIDLabel is the single metric-label / log value every cid that is not
+// a catalog key is folded into, so the label set stays the closed catalog.
+const unknownCIDLabel = "_unknown"
+
+// cidLabel returns cid when it is a catalog key, else unknownCIDLabel. Every
+// metric label and audit-log field that carries a {cid} goes through it.
+func (h *Handler) cidLabel(cid string) string {
+	if validCID.MatchString(cid) {
+		if _, ok := h.cat[cid]; ok {
+			return cid
+		}
+	}
+	return unknownCIDLabel
+}
+
+// challenge looks up cid in the catalog, checking the grammar first. A cid
+// outside the grammar is simply "not found".
+func (h *Handler) challenge(cid string) (catalog.Challenge, bool) {
+	if !validCID.MatchString(cid) {
+		return catalog.Challenge{}, false
+	}
+	ch, ok := h.cat[cid]
+	return ch, ok
+}
+
 // invalidDisplayName rejects characters that would break either UI
 // rendering (HTML metachars) or shell display (control chars), plus the
 // bidi controls, zero-width characters (Cf) and C1 controls (app#331). This
@@ -129,6 +161,7 @@ var flagShapePattern = regexp.MustCompile(`FALCO\{[^}]*\}`)
 // second wording change.
 const (
 	errMsgInvalidBody          = "invalid request body"
+	errMsgUnknownChallenge     = "unknown challenge"
 	errMsgResetFailed          = "could not reset scoreboard"
 	errMsgSetDisplayNameFailed = "could not set display name"
 	// errMsgFlagShapeRejected is flagShapePattern's stable, non-leaking
@@ -1197,7 +1230,7 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 	// alongside it for cross-referencing.
 	auditLog := func(outcome string, extra ...any) {
 		fields := []any{
-			"cid", cid,
+			"cid", h.cidLabel(cid),
 			"remote_addr", r.RemoteAddr,
 			"outcome", outcome,
 		}
@@ -1210,14 +1243,14 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 	// verdict is the Grader's (SubmitEvade returns the same statuses). We peek
 	// the catalog for the pre-body guards, then hand the full decision to the
 	// Grader once we have user+flag.
-	if _, ok := h.cat[cid]; !ok {
-		metrics.SubmissionsTotal.WithLabelValues(cid, "unknown_challenge").Inc()
+	if _, ok := h.challenge(cid); !ok {
+		metrics.SubmissionsTotal.WithLabelValues(h.cidLabel(cid), "unknown_challenge").Inc()
 		auditLog("unknown_challenge")
-		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"error": "unknown challenge: " + cid})
+		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"error": errMsgUnknownChallenge})
 		return
 	}
 	if h.cat[cid].Type != "evade" {
-		metrics.SubmissionsTotal.WithLabelValues(cid, "not_evade").Inc()
+		metrics.SubmissionsTotal.WithLabelValues(h.cidLabel(cid), "not_evade").Inc()
 		auditLog("not_evade")
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": cid + " is not an evade challenge"})
 		return
@@ -1226,7 +1259,7 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
 	var req oapi.SubmitFlagJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		metrics.SubmissionsTotal.WithLabelValues(cid, "bad_request").Inc()
+		metrics.SubmissionsTotal.WithLabelValues(h.cidLabel(cid), "bad_request").Inc()
 		auditLog("bad_request", "err", err.Error())
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": errMsgInvalidBody})
 		return
@@ -1235,7 +1268,7 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 	flag := strings.TrimSpace(req.Flag)
 
 	if user == "" {
-		metrics.SubmissionsTotal.WithLabelValues(cid, "bad_request").Inc()
+		metrics.SubmissionsTotal.WithLabelValues(h.cidLabel(cid), "bad_request").Inc()
 		auditLog("bad_request", "reason", "missing user")
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "user required"})
 		return
@@ -1270,11 +1303,11 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 	}
 	switch outcome.Status {
 	case scoring.EvadeWrongFlag:
-		metrics.SubmissionsTotal.WithLabelValues(cid, "wrong_flag").Inc()
+		metrics.SubmissionsTotal.WithLabelValues(h.cidLabel(cid), "wrong_flag").Inc()
 		auditLog("wrong_flag", "user", user)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"correct": false, "reason": "flag mismatch"})
 	case scoring.EvadeForbiddenFired:
-		metrics.SubmissionsTotal.WithLabelValues(cid, "not_evaded").Inc()
+		metrics.SubmissionsTotal.WithLabelValues(h.cidLabel(cid), "not_evaded").Inc()
 		auditLog("not_evaded", "user", user, "offending_rules", outcome.Offending)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"correct": true,
@@ -1303,7 +1336,7 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 		// between EvadeForbiddenFired and EvadeExfilRequired to mirror
 		// evaluateClean's gate order (dirty -> expectedRuleFire -> exfil ->
 		// solve).
-		metrics.SubmissionsTotal.WithLabelValues(cid, "not_proven").Inc()
+		metrics.SubmissionsTotal.WithLabelValues(h.cidLabel(cid), "not_proven").Inc()
 		auditLog("not_proven", "user", user)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"correct": true,
@@ -1317,7 +1350,7 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 			),
 		})
 	case scoring.EvadeExfilRequired:
-		metrics.SubmissionsTotal.WithLabelValues(cid, "not_exfiltrated").Inc()
+		metrics.SubmissionsTotal.WithLabelValues(h.cidLabel(cid), "not_exfiltrated").Inc()
 		auditLog("not_exfiltrated", "user", user)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"correct":     true,
@@ -1331,9 +1364,9 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 		})
 	case scoring.EvadeSolved:
 		if outcome.Newly {
-			metrics.SolvesTotal.WithLabelValues(cid, "evade").Inc()
+			metrics.SolvesTotal.WithLabelValues(h.cidLabel(cid), "evade").Inc()
 		}
-		metrics.SubmissionsTotal.WithLabelValues(cid, "solved").Inc()
+		metrics.SubmissionsTotal.WithLabelValues(h.cidLabel(cid), "solved").Inc()
 		auditLog("solved", "user", user, "newly", outcome.Newly, "display_name", h.store.DisplayName(user))
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"correct":      true,
@@ -1374,7 +1407,7 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) submitDetect(w http.ResponseWriter, r *http.Request) {
 	cid := r.PathValue("cid")
 	auditLog := func(outcome string, extra ...any) {
-		fields := []any{"cid", cid, "remote_addr", r.RemoteAddr, "outcome", outcome}
+		fields := []any{"cid", h.cidLabel(cid), "remote_addr", r.RemoteAddr, "outcome", outcome}
 		fields = append(fields, extra...)
 		h.logger.Info("submit_detect", fields...)
 	}
@@ -1389,15 +1422,15 @@ func (h *Handler) submitDetect(w http.ResponseWriter, r *http.Request) {
 	// Pre-body guards (unknown challenge / not detect type) gate whether we read
 	// the body — verdict is still the Grader's (SubmitDetect returns the same
 	// statuses).
-	ch, ok := h.cat[cid]
+	ch, ok := h.challenge(cid)
 	if !ok {
-		metrics.SubmissionsTotal.WithLabelValues(cid, "unknown_challenge").Inc()
+		metrics.SubmissionsTotal.WithLabelValues(h.cidLabel(cid), "unknown_challenge").Inc()
 		auditLog("unknown_challenge")
-		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"error": "unknown challenge: " + cid})
+		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"error": errMsgUnknownChallenge})
 		return
 	}
 	if ch.Type != "detect" {
-		metrics.SubmissionsTotal.WithLabelValues(cid, "not_detect").Inc()
+		metrics.SubmissionsTotal.WithLabelValues(h.cidLabel(cid), "not_detect").Inc()
 		auditLog("not_detect")
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": cid + " is not a detect challenge"})
 		return
@@ -1406,7 +1439,7 @@ func (h *Handler) submitDetect(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, detect.MaxConditionBytes+1<<10)
 	var req oapi.SubmitDetectJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		metrics.SubmissionsTotal.WithLabelValues(cid, "bad_request").Inc()
+		metrics.SubmissionsTotal.WithLabelValues(h.cidLabel(cid), "bad_request").Inc()
 		auditLog("bad_request", "err", err.Error())
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": errMsgInvalidBody})
 		return
@@ -1414,13 +1447,13 @@ func (h *Handler) submitDetect(w http.ResponseWriter, r *http.Request) {
 	user := strings.TrimSpace(req.User)
 	condition := strings.TrimSpace(req.Condition)
 	if user == "" {
-		metrics.SubmissionsTotal.WithLabelValues(cid, "bad_request").Inc()
+		metrics.SubmissionsTotal.WithLabelValues(h.cidLabel(cid), "bad_request").Inc()
 		auditLog("bad_request", "reason", "missing user")
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "user required"})
 		return
 	}
 	if !validUser.MatchString(user) {
-		metrics.SubmissionsTotal.WithLabelValues(cid, "bad_request").Inc()
+		metrics.SubmissionsTotal.WithLabelValues(h.cidLabel(cid), "bad_request").Inc()
 		auditLog("bad_request", "reason", "invalid user")
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
 		return
@@ -1433,13 +1466,13 @@ func (h *Handler) submitDetect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if condition == "" {
-		metrics.SubmissionsTotal.WithLabelValues(cid, "bad_request").Inc()
+		metrics.SubmissionsTotal.WithLabelValues(h.cidLabel(cid), "bad_request").Inc()
 		auditLog("bad_request", "user", user, "reason", "missing condition")
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "condition required"})
 		return
 	}
 	if len(condition) > detect.MaxConditionBytes {
-		metrics.SubmissionsTotal.WithLabelValues(cid, "bad_request").Inc()
+		metrics.SubmissionsTotal.WithLabelValues(h.cidLabel(cid), "bad_request").Inc()
 		auditLog("bad_request", "user", user, "reason", "condition too large")
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "condition too large"})
 		return
@@ -1451,7 +1484,7 @@ func (h *Handler) submitDetect(w http.ResponseWriter, r *http.Request) {
 	case h.detectInflight <- struct{}{}:
 		defer func() { <-h.detectInflight }()
 	default:
-		metrics.SubmissionsTotal.WithLabelValues(cid, "rate_limited").Inc()
+		metrics.SubmissionsTotal.WithLabelValues(h.cidLabel(cid), "rate_limited").Inc()
 		auditLog("inflight_cap", "user", user)
 		httpx.WriteJSON(w, http.StatusTooManyRequests, map[string]any{"error": "too many in-flight grader jobs; retry shortly"})
 		return
@@ -1475,7 +1508,7 @@ func (h *Handler) submitDetect(w http.ResponseWriter, r *http.Request) {
 	}
 	switch outcome.Status {
 	case scoring.DetectInvalidCondition:
-		metrics.SubmissionsTotal.WithLabelValues(cid, "detect_invalid").Inc()
+		metrics.SubmissionsTotal.WithLabelValues(h.cidLabel(cid), "detect_invalid").Inc()
 		auditLog("invalid", "user", user)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"status": "invalid",
@@ -1483,7 +1516,7 @@ func (h *Handler) submitDetect(w http.ResponseWriter, r *http.Request) {
 			"reason": "the condition did not compile (falco -V rejected it). Check the syntax and the macros you referenced.",
 		})
 	case scoring.DetectMissedEvasion:
-		metrics.SubmissionsTotal.WithLabelValues(cid, "detect_missed").Inc()
+		metrics.SubmissionsTotal.WithLabelValues(h.cidLabel(cid), "detect_missed").Inc()
 		auditLog("missed", "user", user, "evasion_fires", outcome.EvasionFires, "benign_fires", outcome.BenignFires)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"status":        "missed",
@@ -1493,7 +1526,7 @@ func (h *Handler) submitDetect(w http.ResponseWriter, r *http.Request) {
 			"reason":        "your rule did not fire on the attack capture. It fired 0× on the evasion — it is not detecting the behaviour.",
 		})
 	case scoring.DetectFalsePositive:
-		metrics.SubmissionsTotal.WithLabelValues(cid, "detect_false_positive").Inc()
+		metrics.SubmissionsTotal.WithLabelValues(h.cidLabel(cid), "detect_false_positive").Inc()
 		auditLog("false_positive", "user", user, "evasion_fires", outcome.EvasionFires, "benign_fires", outcome.BenignFires)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"status":        "false-positive",
@@ -1504,9 +1537,9 @@ func (h *Handler) submitDetect(w http.ResponseWriter, r *http.Request) {
 		})
 	case scoring.DetectSolved:
 		if outcome.Newly {
-			metrics.SolvesTotal.WithLabelValues(cid, "detect").Inc()
+			metrics.SolvesTotal.WithLabelValues(h.cidLabel(cid), "detect").Inc()
 		}
-		metrics.SubmissionsTotal.WithLabelValues(cid, "solved").Inc()
+		metrics.SubmissionsTotal.WithLabelValues(h.cidLabel(cid), "solved").Inc()
 		auditLog("solved", "user", user, "newly", outcome.Newly, "evasion_fires", outcome.EvasionFires, "display_name", h.store.DisplayName(user))
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"status":        "solved",
@@ -1538,7 +1571,7 @@ func (h *Handler) submitDetect(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) exfilInternal(w http.ResponseWriter, r *http.Request) {
 	cid := r.PathValue("cid")
 	auditLog := func(outcome string, extra ...any) {
-		fields := []any{"cid", cid, "remote_addr", r.RemoteAddr, "outcome", outcome}
+		fields := []any{"cid", h.cidLabel(cid), "remote_addr", r.RemoteAddr, "outcome", outcome}
 		fields = append(fields, extra...)
 		h.logger.Info("exfil_internal", fields...)
 	}
@@ -1562,9 +1595,9 @@ func (h *Handler) exfilInternal(w http.ResponseWriter, r *http.Request) {
 	// Pre-body guards (unknown challenge / exfil not accepted) gate whether we
 	// read the body at all, matching the prior order. Their verdict is the
 	// Grader's — RecordExfil re-applies the same guards before recording.
-	if _, ok := h.cat[cid]; !ok {
+	if _, ok := h.challenge(cid); !ok {
 		auditLog("unknown_challenge")
-		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"error": "unknown challenge: " + cid})
+		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"error": errMsgUnknownChallenge})
 		return
 	}
 	if !h.cat[cid].RequireExfil {
@@ -1640,8 +1673,8 @@ func (h *Handler) stepCheck(w http.ResponseWriter, r *http.Request) {
 	if !h.selfOrAdmin(w, r, user) {
 		return
 	}
-	if _, ok := h.cat[cid]; !ok {
-		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"error": "unknown challenge: " + cid})
+	if _, ok := h.challenge(cid); !ok {
+		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"error": errMsgUnknownChallenge})
 		return
 	}
 	j, ok := h.journeys[cid]
@@ -1696,8 +1729,8 @@ func (h *Handler) openHint(w http.ResponseWriter, r *http.Request) {
 	if !h.selfOrAdmin(w, r, user) {
 		return
 	}
-	if _, ok := h.cat[cid]; !ok {
-		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"error": "unknown challenge: " + cid})
+	if _, ok := h.challenge(cid); !ok {
+		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"error": errMsgUnknownChallenge})
 		return
 	}
 	j, ok := h.journeys[cid]
@@ -1805,9 +1838,9 @@ func (h *Handler) resetDirty(w http.ResponseWriter, r *http.Request) {
 	if !h.selfOrAdmin(w, r, user) {
 		return
 	}
-	ch, ok := h.cat[cid]
+	ch, ok := h.challenge(cid)
 	if !ok {
-		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"error": "unknown challenge: " + cid})
+		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"error": errMsgUnknownChallenge})
 		return
 	}
 	if ch.Type != "evade" {

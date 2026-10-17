@@ -59,15 +59,27 @@ func SplitCSV(s string) []string {
 	return out
 }
 
+// MaxHeaderBytes caps the request line plus headers every service accepts.
+// net/http answers an oversized request with 431 before the handler runs. The
+// default (1 MiB) is far above anything the portal, ingress or workspaces send.
+const MaxHeaderBytes = 64 << 10
+
+// newServer builds the http.Server Serve runs: one place for the limits that
+// all binaries share.
+func newServer(addr string, h http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           h,
+		ReadHeaderTimeout: 5 * time.Second,
+		MaxHeaderBytes:    MaxHeaderBytes,
+	}
+}
+
 // Serve runs h on addr until SIGINT/SIGTERM, then gracefully shuts down with a
 // 5s deadline. onListen (if non-nil) is called just before ListenAndServe so
 // the caller can log its startup line. Returns the first non-graceful error.
 func Serve(addr string, h http.Handler, logger *slog.Logger, onListen func()) error {
-	srv := &http.Server{
-		Addr:              addr,
-		Handler:           h,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
+	srv := newServer(addr, h)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
