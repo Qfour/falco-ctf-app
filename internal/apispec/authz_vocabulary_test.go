@@ -14,6 +14,17 @@ package apispec
 //	(b) every x-ctf-authz value in every spec is a declared constant
 //	(c) every declared constant appears in some spec (no dead vocabulary)
 //
+// "Declared" is decided by the TYPE CHECKER, not by the spelling of a
+// declaration: every const or var whose type is apispec.Authz is found
+// whether it is written `const X Authz = "x"`, `const X = Authz("x")`, as an
+// implicit repetition inside a const group, as a function-local const, or as a
+// var, and whether it sits in internal/apispec or (wrongly) anywhere else
+// under internal/ and cmd/. The packages are type-checked from source with
+// go/types (module packages recursively, stdlib through the source importer;
+// a third-party import is left unresolved, which costs only the expressions
+// that mention it). A const outside internal/apispec, and any var, is
+// reported: the vocabulary has exactly one home.
+//
 // plus: the spec files scanned are exactly the ones the mux-owning binaries
 // (mux_ownership_test.go) are derived to need, and nothing is scanned empty.
 //
@@ -23,10 +34,15 @@ package apispec
 
 import (
 	"go/ast"
+	"go/build"
+	"go/constant"
+	"go/importer"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -35,39 +51,160 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// authzConstsInSource returns name -> value for every constant of type Authz
-// declared in src (a string-literal initialiser; any other initialiser form is
-// reported in bad, so a constant built at run time cannot dodge the scan).
-func authzConstsInSource(t *testing.T, file string, src any) (consts map[string]string, bad []string) {
+// srcLoader type-checks packages from source for the declaration scan. Module
+// packages (modulePrefix) are loaded recursively from root; the standard
+// library goes through go/importer's "source" importer; anything else (a
+// third-party module) is reported as unimportable, which go/types survives
+// with a fake package. pre seeds packages by import path (the planted-forms
+// tests inject their own apispec stand-in this way).
+type srcLoader struct {
+	t      *testing.T
+	root   string
+	fset   *token.FileSet
+	std    types.Importer
+	pkgs   map[string]*types.Package
+	checks map[string]*checkedPkg
+}
+
+// checkedPkg is one type-checked package: its files, its type info and the
+// type errors the checker reported (non-fatal for packages with third-party
+// imports; asserted empty for internal/apispec itself).
+type checkedPkg struct {
+	pkg   *types.Package
+	files []*ast.File
+	info  *types.Info
+	errs  []error
+}
+
+func newSrcLoader(t *testing.T, root string) *srcLoader {
 	t.Helper()
-	f, err := parser.ParseFile(token.NewFileSet(), file, src, parser.SkipObjectResolution)
-	if err != nil {
-		t.Fatalf("parse %s: %v", file, err)
+	// The "source" importer reads go/build.Default when it imports, and for a
+	// cgo package (net) it would run `go tool cgo`, which needs a C toolchain
+	// this scan has no use for. The pure-Go variants carry the same exported
+	// API, so cgo is switched off for the life of the loader and restored
+	// after (no test in this package runs in parallel).
+	cgo := build.Default.CgoEnabled
+	build.Default.CgoEnabled = false
+	t.Cleanup(func() { build.Default.CgoEnabled = cgo })
+	fset := token.NewFileSet()
+	return &srcLoader{
+		t: t, root: root, fset: fset,
+		std:    importer.ForCompiler(fset, "source", nil),
+		pkgs:   map[string]*types.Package{},
+		checks: map[string]*checkedPkg{},
 	}
+}
+
+func (l *srcLoader) Import(path string) (*types.Package, error) {
+	if p, ok := l.pkgs[path]; ok {
+		return p, nil
+	}
+	switch {
+	case strings.HasPrefix(path, modulePrefix):
+		c := l.checkDir(path, filepath.Join(l.root, filepath.FromSlash(strings.TrimPrefix(path, modulePrefix))))
+		return c.pkg, nil
+	case !strings.Contains(strings.SplitN(path, "/", 2)[0], "."):
+		return l.std.Import(path)
+	}
+	return nil, os.ErrNotExist // third-party: unresolved on purpose
+}
+
+// checkDir parses every non-test .go file in dir (build tags are NOT applied:
+// a tagged file must not be a place to hide a declaration) and type-checks
+// them as the package path.
+func (l *srcLoader) checkDir(path, dir string) *checkedPkg {
+	l.t.Helper()
+	if c, ok := l.checks[path]; ok {
+		return c
+	}
+	var files []*ast.File
+	for _, p := range nonTestGoFiles(l.t, dir) {
+		f, err := parser.ParseFile(l.fset, p, nil, parser.SkipObjectResolution)
+		if err != nil {
+			l.t.Fatalf("parse %s: %v", p, err)
+		}
+		files = append(files, f)
+	}
+	return l.check(path, files)
+}
+
+func (l *srcLoader) check(path string, files []*ast.File) *checkedPkg {
+	l.t.Helper()
+	c := &checkedPkg{files: files, info: &types.Info{Defs: map[*ast.Ident]types.Object{}}}
+	l.checks[path] = c // registered before Check: a module import cycle cannot recurse forever
+	conf := types.Config{Importer: l, FakeImportC: true, Error: func(err error) { c.errs = append(c.errs, err) }}
+	name := ""
+	if len(files) > 0 {
+		name = files[0].Name.Name
+	}
+	c.pkg, _ = conf.Check(path, l.fset, files, c.info)
+	if c.pkg == nil {
+		c.pkg = types.NewPackage(path, name)
+	}
+	l.pkgs[path] = c.pkg
+	return c
+}
+
+// authzType returns the apispec.Authz named type out of the checked apispec
+// package. Both a missing type and type errors in the package fail the test:
+// the vocabulary home imports only the standard library, so nothing in it may
+// be unresolved.
+func authzType(t *testing.T, apispec *checkedPkg) *types.Named {
+	t.Helper()
+	for _, err := range apispec.errs {
+		t.Errorf("internal/apispec does not type-check (it imports only the stdlib, so this is a broken scan, not a tolerated gap): %v", err)
+	}
+	obj := apispec.pkg.Scope().Lookup("Authz")
+	tn, ok := obj.(*types.TypeName)
+	if !ok {
+		t.Fatalf("internal/apispec declares no type Authz (found %v) — the declaration scan is broken", obj)
+	}
+	named, ok := tn.Type().(*types.Named)
+	if !ok {
+		t.Fatalf("apispec.Authz is %v, not a defined type", tn.Type())
+	}
+	return named
+}
+
+// authzDeclsIn finds, in one type-checked package, every const and var
+// declaration (package level or inside a function) whose type is authz. A
+// const yields name -> value in consts when home is true (the package is
+// internal/apispec); a const anywhere else, and a var anywhere, is reported
+// in bad with its position, so a word cannot be minted outside the one file
+// that declares the vocabulary.
+func authzDeclsIn(c *checkedPkg, fset *token.FileSet, authz *types.Named, home bool) (consts map[string]string, bad []string) {
 	consts = map[string]string{}
-	for _, d := range f.Decls {
-		gd, ok := d.(*ast.GenDecl)
-		if !ok || gd.Tok != token.CONST {
-			continue
-		}
-		for _, sp := range gd.Specs {
-			vs := sp.(*ast.ValueSpec)
-			if id, ok := vs.Type.(*ast.Ident); !ok || id.Name != "Authz" {
-				continue
+	for _, f := range c.files {
+		ast.Inspect(f, func(n ast.Node) bool {
+			gd, ok := n.(*ast.GenDecl)
+			if !ok || (gd.Tok != token.CONST && gd.Tok != token.VAR) {
+				return true
 			}
-			for i, name := range vs.Names {
-				var lit *ast.BasicLit
-				if i < len(vs.Values) {
-					lit, _ = vs.Values[i].(*ast.BasicLit)
+			for _, sp := range gd.Specs {
+				for _, name := range sp.(*ast.ValueSpec).Names {
+					obj := c.info.Defs[name]
+					if obj == nil || !types.Identical(obj.Type(), authz) {
+						continue
+					}
+					where := fset.Position(name.Pos()).String()
+					switch o := obj.(type) {
+					case *types.Const:
+						if !home {
+							bad = append(bad, where+": Authz constant "+name.Name+" is declared outside internal/apispec — the vocabulary has one home")
+							continue
+						}
+						if o.Val().Kind() != constant.String {
+							bad = append(bad, where+": Authz constant "+name.Name+" is not a string constant")
+							continue
+						}
+						consts[name.Name] = constant.StringVal(o.Val())
+					case *types.Var:
+						bad = append(bad, where+": var "+name.Name+" has type apispec.Authz — a word is a constant in internal/apispec, never a variable")
+					}
 				}
-				if lit == nil || lit.Kind != token.STRING {
-					bad = append(bad, file+": Authz constant "+name.Name+" is not a plain string literal")
-					continue
-				}
-				v, _ := strconv.Unquote(lit.Value)
-				consts[name.Name] = v
 			}
-		}
+			return true
+		})
 	}
 	return consts, bad
 }
@@ -105,26 +242,41 @@ func authzUsesInSource(t *testing.T, file string, src any) (uses map[string]int,
 	return uses, bad
 }
 
-// repoAuthzSources reads the real vocabulary: the constants declared in this
-// package's non-test files, and the Route uses in every non-test Go file under
-// internal/ and cmd/. parsed is how many files the use scan covered.
-func repoAuthzSources(t *testing.T, root string) (consts map[string]string, uses map[string]int, parsed int, bad []string) {
+// repoAuthzSources reads the real vocabulary: the constants declared in
+// internal/apispec (type-checked), every Authz-typed declaration elsewhere
+// under internal/ and cmd/ (all reported in bad), and the Route uses in every
+// non-test Go file there. parsed is how many files the use scan covered and
+// packages how many packages the declaration scan type-checked.
+func repoAuthzSources(t *testing.T, root string) (consts map[string]string, uses map[string]int, parsed, packages int, bad []string) {
 	t.Helper()
-	consts = map[string]string{}
-	for _, p := range nonTestGoFiles(t, filepath.Join(root, "internal", "apispec")) {
-		c, b := authzConstsInSource(t, p, nil)
-		for k, v := range c {
-			consts[k] = v
-		}
-		bad = append(bad, b...)
-	}
+	l := newSrcLoader(t, root)
+	apispecDir := filepath.Join(root, "internal", "apispec")
+	home := l.checkDir(apispecImportPath, apispecDir)
+	authz := authzType(t, home)
+	consts, b := authzDeclsIn(home, l.fset, authz, true)
+	bad = append(bad, b...)
+	packages++
+
 	uses = map[string]int{}
 	for _, dir := range []string{"internal", "cmd"} {
 		err := filepath.WalkDir(filepath.Join(root, dir), func(p string, d os.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
-			if d.IsDir() || !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
+			if d.IsDir() {
+				// internal/apispec itself was checked above; its subpackages
+				// (specparity, ingressparity) are checked like any other.
+				if d.Name() == "testdata" || p == apispecDir || len(nonTestGoFilesIn(p)) == 0 {
+					return nil
+				}
+				rel, _ := filepath.Rel(root, p)
+				c := l.checkDir(modulePrefix+filepath.ToSlash(rel), p)
+				_, b := authzDeclsIn(c, l.fset, authz, false)
+				bad = append(bad, b...)
+				packages++
+				return nil
+			}
+			if !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
 				return nil
 			}
 			parsed++
@@ -139,7 +291,23 @@ func repoAuthzSources(t *testing.T, root string) (consts map[string]string, uses
 			t.Fatalf("walk %s: %v", dir, err)
 		}
 	}
-	return consts, uses, parsed, bad
+	return consts, uses, parsed, packages, bad
+}
+
+// nonTestGoFilesIn is nonTestGoFiles without a *testing.T (a directory that
+// cannot be read counts as having none; the walk reports its own errors).
+func nonTestGoFilesIn(dir string) []string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if n := e.Name(); !e.IsDir() && strings.HasSuffix(n, ".go") && !strings.HasSuffix(n, "_test.go") {
+			out = append(out, filepath.Join(dir, n))
+		}
+	}
+	return out
 }
 
 // specAuthzValuesInYAML returns value -> operations ("METHOD path") that
@@ -238,13 +406,16 @@ func sortedKeys[V any](m map[string]V) []string {
 // TestAuthzVocabulary_ConstantsRoutesAndSpecsAgree runs (a)-(c) on the repo.
 func TestAuthzVocabulary_ConstantsRoutesAndSpecsAgree(t *testing.T) {
 	root := repoRoot(t)
-	consts, uses, parsed, bad := repoAuthzSources(t, root)
+	consts, uses, parsed, packages, bad := repoAuthzSources(t, root)
 	specValues, files, ops := repoSpecAuthzValues(t, root)
 
 	// Fail-closed: an empty scan is "nothing to compare", never "agreement".
 	// No count is hard-coded; non-emptiness is the only requirement.
 	if len(consts) == 0 {
 		t.Fatal("no Authz constant found in internal/apispec — the declaration scan is broken")
+	}
+	if packages < 2 {
+		t.Fatalf("the declaration scan type-checked %d packages — it never left internal/apispec, so it is broken", packages)
 	}
 	if parsed == 0 || len(uses) == 0 {
 		t.Fatalf("parsed %d non-test Go files and found %d distinct Authz constants in Routes — the use scan is broken", parsed, len(uses))
@@ -347,10 +518,85 @@ func TestAuthzVocabularyDetector_CatchesMutations(t *testing.T) {
 // The extractors themselves: planted source/spec text must be seen, so an
 // extractor that silently returns nothing cannot hide behind the empty-scan
 // guard alone.
+// plantedApispec is a stand-in for internal/apispec that declares the Authz
+// type and one word in every form the declaration scan must see.
+const plantedApispec = `package apispec
+
+type Authz string
+
+const (
+	AuthzA Authz = "a"         // typed, string literal
+	AuthzB Authz = "b" + "c"   // computed, still a constant
+	AuthzC       = Authz("c")  // conversion form, no declared type
+	AuthzD Authz = "d"
+	AuthzE                     // implicit repetition of "d"
+)
+
+const AuthzF, AuthzG = Authz("f"), Authz("g")
+
+const notAWord = "plain" // an untyped string constant is not vocabulary
+
+func f() {
+	const authzLocal Authz = "l" // function-local
+	_ = authzLocal
+}
+
+var AuthzVar = Authz("v") // a var is never a word
+`
+
 func TestAuthzVocabularyExtractors_SeePlantedForms(t *testing.T) {
-	consts, bad := authzConstsInSource(t, "planted.go", "package apispec\ntype Authz string\nconst (\n\tAuthzA Authz = \"a\"\n\tAuthzB Authz = \"b\" + \"c\"\n)\n")
-	if consts["AuthzA"] != "a" || len(bad) != 1 {
-		t.Fatalf("consts=%v bad=%v: want AuthzA=a and the computed AuthzB flagged", consts, bad)
+	l := newSrcLoader(t, t.TempDir())
+	home := l.check(apispecImportPath, []*ast.File{mustParse(t, l.fset, "apispec.go", plantedApispec)})
+	authz := authzType(t, home)
+	consts, bad := authzDeclsIn(home, l.fset, authz, true)
+	want := map[string]string{"AuthzA": "a", "AuthzB": "bc", "AuthzC": "c", "AuthzD": "d", "AuthzE": "d", "AuthzF": "f", "AuthzG": "g", "authzLocal": "l"}
+	if !reflect.DeepEqual(consts, want) {
+		t.Fatalf("constants = %v, want %v (conversion, group repetition, computed and function-local forms must all be seen; the untyped notAWord must not)", consts, want)
+	}
+	if len(bad) != 1 || !strings.Contains(bad[0], "var AuthzVar") {
+		t.Fatalf("bad = %v, want exactly the AuthzVar var", bad)
+	}
+
+	// The same forms OUTSIDE internal/apispec are all violations; a look-alike
+	// type named Authz in another package, and plain strings, are not.
+	outside := l.check(modulePrefix+"internal/planted", []*ast.File{mustParse(t, l.fset, "planted.go", `package planted
+
+import ap "`+apispecImportPath+`"
+
+type Authz string // not ours
+
+const (
+	X ap.Authz = "x"
+	Y          = ap.Authz("y")
+	A ap.Authz = "a"
+	B
+)
+
+var V ap.Authz = "v"
+var W = ap.Authz("w")
+
+const Lookalike Authz = "l"
+const Plain = "p"
+
+func f() { const local ap.Authz = "z"; _ = local }
+`)})
+	if len(outside.errs) != 0 {
+		t.Fatalf("planted package does not type-check: %v", outside.errs)
+	}
+	_, bad = authzDeclsIn(outside, l.fset, authz, false)
+	sort.Strings(bad)
+	names := []string{"Authz constant A", "Authz constant B", "Authz constant X", "Authz constant Y", "Authz constant local", "var V", "var W"}
+	if len(bad) != len(names) {
+		t.Fatalf("bad = %v, want one per %v (and none for Lookalike / Plain)", bad, names)
+	}
+	for _, n := range names {
+		found := false
+		for _, b := range bad {
+			found = found || strings.Contains(b, n+" ")
+		}
+		if !found {
+			t.Fatalf("no violation names %q in %v", n, bad)
+		}
 	}
 
 	uses, bad := authzUsesInSource(t, "planted.go", `package p
@@ -380,4 +626,13 @@ var _ = []ap.Route{{Authz: ap.AuthzA}, {Authz: ap.AuthzA}, {Authz: "none"}}
 	if ops != 3 || len(vals["none"]) != 1 || len(vals["admin"]) != 1 || len(vals) != 2 {
 		t.Fatalf("ops=%d vals=%v: want 3 operations and none/admin once each", ops, vals)
 	}
+}
+
+func mustParse(t *testing.T, fset *token.FileSet, name, src string) *ast.File {
+	t.Helper()
+	f, err := parser.ParseFile(fset, name, src, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatalf("parse %s: %v", name, err)
+	}
+	return f
 }

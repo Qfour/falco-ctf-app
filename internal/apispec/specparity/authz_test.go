@@ -32,27 +32,50 @@ func TestClaimedIdentityForwardViolations_CleanBaseline(t *testing.T) {
 
 // TestClaimedIdentityForwardViolations_Mutations is the V8 proof for the
 // property: each mutation of the clean table must turn it red, and name the
-// route.
+// route and the reason. The two rules are separate (claimed-identity needs a
+// forward, internal-claimed-identity needs Audience=internal), so each
+// mutation is one that a looser "forward OR internal" rule would let through
+// or that the strict rule must still catch.
 func TestClaimedIdentityForwardViolations_Mutations(t *testing.T) {
-	for name, mutate := range map[string]func([]apispec.Route) []apispec.Route{
-		"submit loses CollectorForward (participant claimed-identity, nobody forwards it)": func(rs []apispec.Route) []apispec.Route {
+	for _, tc := range []struct {
+		name   string
+		mutate func([]apispec.Route) []apispec.Route
+		want   string
+	}{
+		{"submit loses CollectorForward (participant claimed-identity, nobody forwards it)", func(rs []apispec.Route) []apispec.Route {
 			rs[0].CollectorForward = false
 			return rs
-		},
-		"synthetic claimed-identity route with CollectorForward=false (the app#346 shape)": func(rs []apispec.Route) []apispec.Route {
+		}, "Authz=claimed-identity with CollectorForward=false"},
+		// NOT the historical app#346 code: a synthetic composition that
+		// relabels a route as claimed-identity with no forward, which is the
+		// shape app#346 removed from submit-detect.
+		{"synthetic: submit-detect relabelled claimed-identity, no forward (the shape app#346 removed)", func(rs []apispec.Route) []apispec.Route {
 			return append(rs, apispec.Route{Method: "POST", Pattern: "/api/challenges/{cid}/submit-detect", Audience: apispec.AudienceParticipant, Authz: apispec.AuthzClaimedIdentity})
-		},
-		"admin-audience route declared internal-claimed-identity without a forward": func(rs []apispec.Route) []apispec.Route {
+		}, "Authz=claimed-identity with CollectorForward=false"},
+		// The hole a "forward OR internal" rule leaves: Audience=internal must
+		// NOT exempt AuthzClaimedIdentity from needing a forward.
+		{"claimed-identity + AudienceInternal + CollectorForward=false (Audience does not exempt claimed-identity)", func(rs []apispec.Route) []apispec.Route {
+			return append(rs, apispec.Route{Method: "POST", Pattern: "/internal/other", Audience: apispec.AudienceInternal, Authz: apispec.AuthzClaimedIdentity})
+		}, "Authz=claimed-identity with CollectorForward=false"},
+		{"admin-audience route declared internal-claimed-identity without a forward", func(rs []apispec.Route) []apispec.Route {
 			return append(rs, apispec.Route{Method: "POST", Pattern: "/api/admin/reset", Audience: apispec.AudienceOperator, Authz: apispec.AuthzInternalClaimedIdentity})
-		},
+		}, "Authz=internal-claimed-identity with Audience=operator"},
+		// A forward does not make a participant route internal.
+		{"participant route declared internal-claimed-identity WITH a forward (the forward does not exempt it)", func(rs []apispec.Route) []apispec.Route {
+			return append(rs, apispec.Route{Method: "POST", Pattern: "/api/users/{user}/display-name", Audience: apispec.AudienceParticipant, Authz: apispec.AuthzInternalClaimedIdentity, CollectorForward: true})
+		}, "Authz=internal-claimed-identity with Audience=participant"},
+		{"internal-claimed-identity loses its Audience=internal", func(rs []apispec.Route) []apispec.Route {
+			rs[2].Audience = apispec.AudienceInfra
+			return rs
+		}, "Authz=internal-claimed-identity with Audience=infra"},
 	} {
-		t.Run(name, func(t *testing.T) {
-			_, v := ClaimedIdentityForwardViolations(mutate(claimedIdentityBaseline()))
+		t.Run(tc.name, func(t *testing.T) {
+			_, v := ClaimedIdentityForwardViolations(tc.mutate(claimedIdentityBaseline()))
 			if len(v) != 1 {
 				t.Fatalf("want exactly 1 violation, got %v", v)
 			}
-			if !strings.Contains(v[0], "CollectorForward=false") {
-				t.Fatalf("violation does not say why: %q", v[0])
+			if !strings.Contains(v[0], tc.want) {
+				t.Fatalf("violation does not say why (want %q): %q", tc.want, v[0])
 			}
 		})
 	}

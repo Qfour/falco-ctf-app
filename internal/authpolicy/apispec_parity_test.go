@@ -60,11 +60,14 @@ func TestAPISpec_V1_RouteSetMatchesSpec(t *testing.T) {
 }
 
 // TestAPISpec_ClaimedIdentityImpliesForwardOrInternal is the route-table
-// property behind ADR-0034 判定 (c) (#376): on auth-policy's live Routes(), a
-// route with Authz claimed-identity / internal-claimed-identity is either
-// reached by the collector's forward allowlist (CollectorForward=true) or is
-// Audience=internal. It is derived from the table, not from route names.
-// auth-policy declares none today (checked == 0 is legitimate); the test stays wired so a future one is covered.
+// property behind app#346 / #376 on auth-policy's live Routes():
+// claimed-identity => CollectorForward=true (Audience does not exempt it),
+// internal-claimed-identity => Audience=internal. It is derived from the
+// table, not from route names. auth-policy declares neither word today (it
+// authorises from the ingress subrequest headers, never from a claimed
+// identity), so checked == 0 is the expected result; the test stays wired —
+// and is required by parity_coverage_test.go — so a future claimed-identity
+// route here is covered the moment it is declared.
 func TestAPISpec_ClaimedIdentityImpliesForwardOrInternal(t *testing.T) {
 	h := newHandler("http://oauth2-proxy.invalid")
 	routes := h.Routes()
@@ -75,7 +78,7 @@ func TestAPISpec_ClaimedIdentityImpliesForwardOrInternal(t *testing.T) {
 	for _, v := range violations {
 		t.Error(v)
 	}
-	_ = checked
+	t.Logf("claimed-identity routes checked on auth-policy: %d (0 is legitimate)", checked)
 }
 
 func TestAPISpec_V3_OriginGuardAndCollectorForwardParity(t *testing.T) {

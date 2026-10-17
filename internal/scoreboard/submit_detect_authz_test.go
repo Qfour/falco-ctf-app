@@ -7,12 +7,17 @@ package scoreboard_test
 // that branch had no legitimate caller. submit-detect is now plain
 // self-or-admin (identity header REQUIRED, exact canonical match per ADR-0034
 // S2) and the self-or-admin-write VOCABULARY — constant, spec value, gate
-// function — is deleted. This file pins the route's behaviour. That the
-// vocabulary cannot come back as dead words is not pinned here by name: it is
-// the general form in internal/apispec/authz_vocabulary_test.go (every Authz
-// constant is used by a Route and appears in a spec; every spec value is a
-// constant) plus specparity.ClaimedIdentityForwardViolations on each
-// service's Routes() (app#376).
+// function — is deleted. This file pins the route's behaviour. What guards
+// against the vocabulary or the shape coming back is NOT a name ban any more
+// (the guarantee changed from "that name is forbidden" to "constant, Route and
+// spec agree, and claimed-identity routes have a legitimate caller"):
+// internal/apispec/authz_vocabulary_test.go (every Authz constant is used by a
+// Route and appears in a spec; every spec value is a constant) and
+// specparity.ClaimedIdentityForwardViolations on each service's Routes()
+// (app#376). A re-introduced word of the same shape is not red by itself;
+// adding a word to the vocabulary is the architect's call (ADR-0034 判定).
+// The generic "no identity header => 403" guard for every self-or-admin route
+// is TestProfile_V1_EverySelfOrAdminRouteRejectsHeaderless, not this file.
 
 import (
 	"net/http"

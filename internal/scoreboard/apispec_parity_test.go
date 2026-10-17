@@ -355,11 +355,10 @@ func TestAPISpec_V4_ResetDirtyNeverForwarded(t *testing.T) {
 }
 
 // TestAPISpec_ClaimedIdentityImpliesForwardOrInternal is the route-table
-// property behind ADR-0034 判定 (c) (#376): on scoreboard's live Routes(), a
-// route with Authz claimed-identity / internal-claimed-identity is either
-// reached by the collector's forward allowlist (CollectorForward=true) or is
-// Audience=internal. It is derived from the table, not from route names.
-// The scoreboard declares claimed-identity routes, so checked must be > 0.
+// property behind app#346 / #376 on scoreboard's live Routes():
+// claimed-identity => CollectorForward=true (Audience does not exempt it),
+// internal-claimed-identity => Audience=internal. It is derived from the
+// table, not from route names. The scoreboard declares claimed-identity routes, so checked must be > 0.
 func TestAPISpec_ClaimedIdentityImpliesForwardOrInternal(t *testing.T) {
 	f := newSpecFixture(t)
 	routes := f.srv.Routes()
