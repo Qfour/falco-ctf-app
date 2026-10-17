@@ -59,6 +59,25 @@ func TestAPISpec_V1_RouteSetMatchesSpec(t *testing.T) {
 	}
 }
 
+// TestAPISpec_ClaimedIdentityImpliesForwardOrInternal is the route-table
+// property behind ADR-0034 判定 (c) (#376): on auth-policy's live Routes(), a
+// route with Authz claimed-identity / internal-claimed-identity is either
+// reached by the collector's forward allowlist (CollectorForward=true) or is
+// Audience=internal. It is derived from the table, not from route names.
+// auth-policy declares none today (checked == 0 is legitimate); the test stays wired so a future one is covered.
+func TestAPISpec_ClaimedIdentityImpliesForwardOrInternal(t *testing.T) {
+	h := newHandler("http://oauth2-proxy.invalid")
+	routes := h.Routes()
+	if len(routes) == 0 {
+		t.Fatal("auth-policy Routes() returned zero routes — the scan is empty, not clean")
+	}
+	checked, violations := specparity.ClaimedIdentityForwardViolations(routes)
+	for _, v := range violations {
+		t.Error(v)
+	}
+	_ = checked
+}
+
 func TestAPISpec_V3_OriginGuardAndCollectorForwardParity(t *testing.T) {
 	spec := loadAuthPolicySpec(t)
 	h := newHandler("http://oauth2-proxy.invalid")

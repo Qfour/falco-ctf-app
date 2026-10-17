@@ -54,6 +54,27 @@ func newParityFixtureHandler(t *testing.T) *Handler {
 	return h
 }
 
+// TestAPISpec_ClaimedIdentityImpliesForwardOrInternal is the route-table
+// property behind ADR-0034 判定 (c) (#376): on collector's live Routes(), a
+// route with Authz claimed-identity / internal-claimed-identity is either
+// reached by the collector's forward allowlist (CollectorForward=true) or is
+// Audience=internal. It is derived from the table, not from route names.
+// The collector forwards claimed-identity routes, so checked must be > 0.
+func TestAPISpec_ClaimedIdentityImpliesForwardOrInternal(t *testing.T) {
+	h := newParityFixtureHandler(t)
+	routes := h.Routes()
+	if len(routes) == 0 {
+		t.Fatal("collector Routes() returned zero routes — the scan is empty, not clean")
+	}
+	checked, violations := specparity.ClaimedIdentityForwardViolations(routes)
+	for _, v := range violations {
+		t.Error(v)
+	}
+	if checked == 0 {
+		t.Fatal("no claimed-identity route was seen — the collector declares some, so the property ran on nothing")
+	}
+}
+
 func TestAPISpec_V1_RouteSetMatchesSpec(t *testing.T) {
 	spec := loadCollectorSpec(t)
 	h := newParityFixtureHandler(t)
