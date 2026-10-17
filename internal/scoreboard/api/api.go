@@ -183,6 +183,14 @@ const actionBucket = "participant_action"
 // (each one a replay Job) cannot 429 a participant's hint open or step tick.
 const detectBucket = "detect"
 
+// boardPostBucket / boardLikeBucket are the same label for
+// Handler.boardPostLimiter (thread creation + follow-up messages) and
+// Handler.boardLikeLimiter (like + unlike), strict since app#397.
+const (
+	boardPostBucket = "board_post"
+	boardLikeBucket = "board_like"
+)
+
 // JourneyConfig carries the /journey UI inputs into the api handler:
 // narrative content, the mission progression order, and the docs-site origin.
 // All are optional — the handler applies safe defaults (see New).
@@ -383,16 +391,16 @@ func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *sl
 		detectInflight: inflight,
 		board:          bc.Store,
 		// app#292 Phase 2: 10s/1 refill, burst 3 — shared by thread creation
-		// and follow-up messages (identity-keyed, see boardIdentityKeyed), so
+		// and follow-up messages (identity-keyed, MiddlewareStrict), so
 		// a spammer cannot dodge the bucket by spreading posts across many
 		// thread ids. Mirrors P25's old questionLimiter rate exactly.
-		boardPostLimiter: ratelimit.New(0.1 /* one every 10s */, 3 /* burst */).WithNow(now),
+		boardPostLimiter: ratelimit.New(0.1 /* one every 10s */, 3 /* burst */).WithNow(now).WithLogger(logger),
 		// Likes are lower-stakes and clicked more casually than a written
 		// post, so this bucket is looser — 1/s refill, burst 10 (matches
 		// submitLimiter's shape), still identity-keyed and separate from the
 		// post bucket so a burst of likes can never starve a participant's
 		// ability to open a thread or reply.
-		boardLikeLimiter: ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now),
+		boardLikeLimiter: ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now).WithLogger(logger),
 	}
 }
 
@@ -534,18 +542,17 @@ func (h *Handler) Routes() []apispec.Route {
 	// same gate with its OWN bucket (detectMW), so it is header-REQUIRED too.
 	actionMW := h.actionLimiter.MiddlewareStrict(actionBucket, ratelimit.IdentityKeyed)
 	detectMW := h.detectLimiter.MiddlewareStrict(detectBucket, ratelimit.IdentityKeyed)
-	// app#292 Phase 2: identity-keyed (never client-IP-keyed) — a board
-	// thread/message is attributed to the caller's OWN proven identity, so
-	// the rate-limit bucket should track that identity too, not the NAT/
-	// proxy IP a whole classroom of participants might share. boardIdentityKeyed
-	// never returns "" (ratelimit.go's Middleware treats an empty key as
-	// UNLIMITED — the fail-open trap this codebase's rate limiters must all
-	// avoid), falling back to "ip:"+ClientIP when no auth header is present
-	// (defense-in-depth; every board route this wraps also runs
-	// requireAuthenticated first, so that fallback should never actually
-	// fire in production).
-	boardPostMW := h.boardPostLimiter.Middleware(boardIdentityKeyed("board_post"))
-	boardLikeMW := h.boardLikeLimiter.Middleware(boardIdentityKeyed("board_like"))
+	// app#292 Phase 2 / app#397: identity-keyed and FAIL-CLOSED, the same
+	// MiddlewareStrict shape as actionMW/detectMW. A board thread/message is
+	// attributed to the caller's OWN proven identity, so the bucket tracks that
+	// identity, never the NAT/proxy IP a whole classroom shares. A header-less
+	// (or blank) request is the limiter's 403 and spends no token; before
+	// app#397 these two buckets fell back to an "ip:"+ClientIP key, which let a
+	// header-less request spend a token and, past the IP key's burst, answer
+	// 429 instead of 403. Every board route also runs requireAuthenticated
+	// (header REQUIRED), so no legitimate caller is affected.
+	boardPostMW := h.boardPostLimiter.MiddlewareStrict(boardPostBucket, ratelimit.IdentityKeyed)
+	boardLikeMW := h.boardLikeLimiter.MiddlewareStrict(boardLikeBucket, ratelimit.IdentityKeyed)
 	return []apispec.Route{
 		{
 			Method: "GET", Pattern: "/api/state",
@@ -869,28 +876,6 @@ func (h *Handler) Routes() []apispec.Route {
 			OriginGuarded: true, CollectorForward: false, RateLimit: "none",
 			Handler: h.og(http.HandlerFunc(h.boardAdminSetMessageState)),
 		},
-	}
-}
-
-// boardIdentityKeyed returns a rate-limit Middleware keyFn for a board
-// bucket, keyed by the caller's proven identity (X-Auth-Request-Email)
-// rather than client IP — a board thread/message is attributed to that
-// identity, so the throttle should track it too. CRITICALLY, this never
-// returns "" — ratelimit.Limiter.Middleware treats an empty key as
-// UNLIMITED (`key == "" || l.Allow(key)`, internal/scoreboard/ratelimit/
-// ratelimit.go), which would silently defeat the whole bucket for any
-// caller with no identity header. Every route this wraps also runs
-// requireAuthenticated first (so in practice the header is always present
-// by the time this keyFn runs), but the "ip:"+ClientIP fallback exists as a
-// second, independent line of defense against that invariant ever being
-// violated by a future handler-ordering change.
-func boardIdentityKeyed(caller string) func(*http.Request) string {
-	return func(r *http.Request) string {
-		email := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Auth-Request-Email")))
-		if email != "" {
-			return caller + ":" + email
-		}
-		return caller + ":ip:" + ratelimit.ClientIP(r)
 	}
 }
 

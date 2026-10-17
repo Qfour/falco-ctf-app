@@ -1189,6 +1189,16 @@ paths:
         Origin-guarded: reached ONLY from the portal's browser fetch, never
         the collector's forward allowlist (`docs/openapi-collector.yaml`) —
         same reasoning ADR-0006 gave for declining to add P25's QA there.
+
+        Rate limit (app#397): the bucket is keyed by the caller's identity
+        (`X-Auth-Request-Email`) and fail-closed. A request with no identity
+        header, or a blank one, is answered 403 by the limiter itself, spends
+        no token, and never reaches the handler; it is never 429, and there
+        is no client-IP fallback key. (Before app#397 the two board buckets
+        fell back to an IP key, so a header-less request spent a token and
+        past that key's burst got 429 instead of 403.) Every board route
+        also requires the header (`x-ctf-authz: authenticated`), so no
+        legitimate caller is affected.
       requestBody:
         required: true
         content:
@@ -1287,6 +1297,16 @@ paths:
         ALWAYS server-set (`participant` / the caller's own derived
         username) — never read from the request body. Same flag-shape
         rejection as `boardCreateThread`.
+
+        Rate limit (app#397): the bucket is keyed by the caller's identity
+        (`X-Auth-Request-Email`) and fail-closed. A request with no identity
+        header, or a blank one, is answered 403 by the limiter itself, spends
+        no token, and never reaches the handler; it is never 429, and there
+        is no client-IP fallback key. (Before app#397 the two board buckets
+        fell back to an IP key, so a header-less request spent a token and
+        past that key's burst got 429 instead of 403.) Every board route
+        also requires the header (`x-ctf-authz: authenticated`), so no
+        legitimate caller is affected.
       parameters:
         - $ref: "#/components/parameters/Tid"
       requestBody:
@@ -1345,6 +1365,16 @@ paths:
         caller's OWN thread is rejected 409 (`ErrSelfLike` — a distinct
         error from the 404 cases above, since a self-like thread IS one the
         caller can see, it is just a disallowed action on it).
+
+        Rate limit (app#397): the bucket is keyed by the caller's identity
+        (`X-Auth-Request-Email`) and fail-closed. A request with no identity
+        header, or a blank one, is answered 403 by the limiter itself, spends
+        no token, and never reaches the handler; it is never 429, and there
+        is no client-IP fallback key. (Before app#397 the two board buckets
+        fell back to an IP key, so a header-less request spent a token and
+        past that key's burst got 429 instead of 403.) Every board route
+        also requires the header (`x-ctf-authz: authenticated`), so no
+        legitimate caller is affected.
       parameters:
         - $ref: "#/components/parameters/Tid"
       responses:
@@ -1395,6 +1425,16 @@ paths:
         likeable at all. There is nothing to leak by allowing this
         unconditionally, unlike the like path's insert (see that
         operation's own description).
+
+        Rate limit (app#397): the bucket is keyed by the caller's identity
+        (`X-Auth-Request-Email`) and fail-closed. A request with no identity
+        header, or a blank one, is answered 403 by the limiter itself, spends
+        no token, and never reaches the handler; it is never 429, and there
+        is no client-IP fallback key. (Before app#397 the two board buckets
+        fell back to an IP key, so a header-less request spent a token and
+        past that key's burst got 429 instead of 403.) Every board route
+        also requires the header (`x-ctf-authz: authenticated`), so no
+        legitimate caller is affected.
       parameters:
         - $ref: "#/components/parameters/Tid"
       responses:
@@ -1404,7 +1444,12 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/LikeResult" }
         "403":
-          description: missing/blank identity header
+          description: origin guard denied, or missing/blank identity header
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: rate limited
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

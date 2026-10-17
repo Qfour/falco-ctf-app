@@ -22,9 +22,11 @@ package scoreboard_test
 //     is limited at exactly its burst, per IP, without limiting any
 //     identity row.
 //
-// A NEW row is strict: true (MiddlewareStrict, the app#315 shape).
-// strict: false is board_post and board_like only (TableMatchesRoutes
-// asserts that set; whether to make them strict too is #390 / #397).
+// Every row is strict: true (MiddlewareStrict, the app#315 shape); since
+// app#397 board_post and board_like are too, and TableMatchesRoutes asserts
+// that no row is strict: false (a new identity bucket is MiddlewareStrict,
+// #390). The strict: false branches below stay so that a row that is not
+// strict is still measured honestly, should one ever be argued for.
 //
 // x-ctf-rate-limit is free text, so the rows cannot be derived from it yet: a
 // new identity bucket is a new row here. Route-specific claims stay with the
@@ -34,7 +36,6 @@ package scoreboard_test
 import (
 	"fmt"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -69,15 +70,11 @@ var identityBuckets = []rateBucket{
 		},
 	},
 	{
-		// Not strict: boardIdentityKeyed falls back to a client-IP key when the
-		// header is missing, and the 403 comes from requireAuthenticated in the
-		// handler, after that key has spent a token. Past the IP key's burst a
-		// header-less request is 429 instead.
-		name: "board_post", burst: 3, refill: 10 * time.Second, strict: false,
+		name: "board_post", burst: 3, refill: 10 * time.Second, strict: true,
 		members: []string{"POST /api/board/threads", "POST /api/board/threads/{tid}/messages"},
 	},
 	{
-		name: "board_like", burst: 10, refill: time.Second, strict: false,
+		name: "board_like", burst: 10, refill: time.Second, strict: true,
 		members: []string{"POST /api/board/threads/{tid}/like", "POST /api/board/threads/{tid}/unlike"},
 	},
 }
@@ -151,9 +148,8 @@ func TestIdentityBuckets_TableMatchesRoutes(t *testing.T) {
 	if derived == 0 {
 		t.Fatal("derived 0 identity rate-limited routes: the derivation is broken, not clean")
 	}
-	sort.Strings(lenient)
-	if got := strings.Join(lenient, ","); got != "board_like,board_post" {
-		t.Errorf("rows with strict: false = [%s], want [board_like,board_post]: a new identity bucket is MiddlewareStrict (#390)", got)
+	if len(lenient) != 0 {
+		t.Errorf("rows with strict: false = %v, want none: an identity bucket is MiddlewareStrict (#390, #397)", lenient)
 	}
 	if declares("identity 1 req/s burst 100", "identity 1 req/s burst 10") {
 		t.Error(`declares matched "burst 10" inside "burst 100": the match has no word boundary`)

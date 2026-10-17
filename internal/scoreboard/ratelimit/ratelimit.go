@@ -125,6 +125,15 @@ func (l *Limiter) Allow(key string) bool {
 // http.Error's text/plain, the only non-2xx deviation from the "{"error":
 // string}" contract besides view.portal's 500; see that package for the
 // other half).
+//
+// Keying an identity bucket through this function (an identity key that falls
+// back to the client IP, or to "" = unlimited when the header is missing) is
+// retired as of app#397: no route does it any more, and every identity-keyed
+// bucket is MiddlewareStrict. What remains here is the per-IP keying
+// (ClientIPKeyed, ClientIP, collector's remoteIP), where an empty key "cannot
+// happen". ADR-0037 S1a will replace the choice of key kind by a declaration;
+// until then, do not add an identity-keyed caller of Middleware. (This is not
+// a "Deprecated:" marker because the per-IP callers are live.)
 func (l *Limiter) Middleware(keyFn func(*http.Request) string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
