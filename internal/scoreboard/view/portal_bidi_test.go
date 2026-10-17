@@ -29,8 +29,9 @@ import (
 // fields whose value a participant wrote. The scan regexps below are derived from
 // it, so a field added here is gated everywhere (and one removed is not). A name
 // reached under another spelling (an alias const) is not seen; the floor and the
-// review are what cover that. first_solver is a username slug, not a name.
-var inlineTextFields = []string{"display_name", "authorDisplay", "subject"}
+// review are what cover that. first_solver (app#428) is a username the server now
+// holds to the slug grammar, but it is still a stored claimed value, so it is gated too.
+var inlineTextFields = []string{"display_name", "authorDisplay", "subject", "first_solver"}
 
 // inlineTextLocals are bare local names that hold such a value (the Me pane's
 // `displayName`).
@@ -159,14 +160,14 @@ func writeRe(helper string) *regexp.Regexp {
 
 // bidiFloors are the numbers of isolated sites (nameHTML / textHTML on participant
 // inline text) when this was written: scoreboard 5 (leaderboard row, activity, pod,
-// challenge board, solver list), board 11 (6 names: public list, thread header,
+// challenge board, solver list, first_solver of a mission card), board 11 (6 names: public list, thread header,
 // message authors, admin list and header; 5 subjects: my list, public list, thread
-// header, admin list and header), Me 1, admin dashboard 5.
+// header, admin list and header), Me 1, admin dashboard 6 (5 + the mission card's first_solver).
 var bidiFloors = map[string]int{
-	"pane-scoreboard.tmpl": 5,
+	"pane-scoreboard.tmpl": 6,
 	"pane-board.tmpl":      11,
 	"pane-me.tmpl":         1,
-	"index.html":           5,
+	"index.html":           6,
 }
 
 // checkBidiNames returns every violation of the rule in the portal partials
@@ -346,7 +347,7 @@ func TestDisplayNames_BidiGateCatchesRegressions(t *testing.T) {
 		}},
 		// The floor, alone: the name is reached through an alias, which the scan
 		// cannot see, so only the lower bound notices that a site is missing.
-		{"a site is hidden behind an alias (floor only)", "want at least 5", true, func(s *bidiSrc) {
+		{"a site is hidden behind an alias (floor only)", "want at least 6", true, func(s *bidiSrc) {
 			s.portal["pane-scoreboard.tmpl"] = strings.Replace(s.portal["pane-scoreboard.tmpl"], "nameHTML(p.display_name || p.user)", "esc(nm)", 1)
 		}},
 		// F-1: the partial with a floor is renamed (and its site aliased), so the
