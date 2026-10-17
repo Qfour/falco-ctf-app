@@ -71,6 +71,24 @@
   // instead so the client-side cap matches the server's unit exactly.
   const MAX_SUBJECT_RUNES = 120;
   function runeLen(s) { return Array.from(s).length; }
+  // The new-thread form's pre-check of the subject, in the server's order
+  // (validBoardSubject, internal/scoreboard/api/board.go: trim, empty, 120 runes,
+  // inlineTextHasForbidden): the argument is ALREADY trimmed with trimName() (core-util.tmpl,
+  // Go's strings.TrimSpace set, not String.prototype.trim). The server's 400 for a forbidden
+  // character is a fixed sentence that does not say which one, so a participant who pasted a
+  // TAB or a zero-width space could not find it: this names the kind of character and what to
+  // do. Never stricter than the server: a subject is prose, so the metacharacters < > & " '
+  // stay legal (unlike a display name), and hasHiddenChar() (core-util.tmpl, the same
+  // definition as the Profile name) lets U+200D through, which the server refuses outside
+  // emoji with its own sentence. portal_subjectproblem_test.go sweeps every code point against
+  // rule.yaml and the shared cases. Returns a sentence, or '' when the subject is fine.
+  function subjectProblem(subject) {
+    if (!subject) return 'Enter a subject of 1 to ' + MAX_SUBJECT_RUNES + ' characters.';
+    const n = runeLen(subject);
+    if (n > MAX_SUBJECT_RUNES) return 'That subject is ' + n + ' characters; the limit is ' + MAX_SUBJECT_RUNES + '.';
+    if (hasHiddenChar(subject)) return 'The subject has a tab, a line break or an invisible character (zero-width or right-to-left override characters, for example, often from pasted text). Remove them and send again.';
+    return '';
+  }
 
   // Portal shell (P23-1): identity from the server-injected
   // __PORTAL_USER__/__PORTAL_ROLE__ globals, same convenience #pane-me
@@ -357,15 +375,16 @@
       const bodyEl = document.getElementById('board-new-body');
       const msgEl = document.getElementById('board-new-msg');
       const audience = destEl ? destEl.value : 'admin';
-      const subject = subjectEl.value.trim();
+      const subject = trimName(subjectEl.value);
       const body = bodyEl.value.trim();
-      if (!subject || !body) {
-        msgEl.textContent = 'Subject and body are both required.';
+      const subjectWhy = subjectProblem(subject);
+      if (subjectWhy) {
+        msgEl.textContent = subjectWhy;
         msgEl.className = 'submit-msg err';
         return;
       }
-      if (runeLen(subject) > MAX_SUBJECT_RUNES) {
-        msgEl.textContent = 'Subject too long (max ' + MAX_SUBJECT_RUNES + ' characters).';
+      if (!body) {
+        msgEl.textContent = 'Enter the message body.';
         msgEl.className = 'submit-msg err';
         return;
       }
@@ -386,12 +405,15 @@
           msgEl.className = 'submit-msg err';
           return;
         }
-        const d = await r.json().catch(() => ({}));
         if (!r.ok) {
-          msgEl.textContent = d.error || ('Could not send (HTTP ' + r.status + ').');
+          // The server's own sentence, as a string, shown with textContent (serverErrorText,
+          // core-util.tmpl): the 400 for a subject the pre-check above let through (a
+          // ZWJ outside emoji, a character class newer than this browser knows) reads here.
+          msgEl.textContent = (await serverErrorText(r)) || ('Could not send (HTTP ' + r.status + ').');
           msgEl.className = 'submit-msg err';
           return;
         }
+        const d = await r.json().catch(() => ({}));
         // Reentrancy guard: only jump into the new thread if the
         // participant is still on the list view they submitted from.
         // Either way the new thread surfaces on the next list load
