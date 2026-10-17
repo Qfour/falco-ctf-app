@@ -166,8 +166,10 @@ const (
 //	                  | handler (e.g. "per-IP 1 req/s burst 10" could drift
 //	                  | from the real ratelimit.New(...) call and nothing
 //	                  | would notice) — a third instance of exactly this
-//	                  | struct's "declared vs enforced" gap. Signposted, not
-//	                  | fixed, by ADR-0005. Partly closed by app#389
+//	                  | struct's "declared vs enforced" gap. Not signposted
+//	                  | by ADR-0005 (its Signposts list no rate-limit item);
+//	                  | the rest is left to ADR-0037 (Proposed) V5. Partly
+//	                  | closed by app#389
 //	                  | (internal/scoreboard/identity_bucket_test.go): every
 //	                  | "identity ..." route and POST /submit's per-IP bucket
 //	                  | are checked behaviourally against a table whose
