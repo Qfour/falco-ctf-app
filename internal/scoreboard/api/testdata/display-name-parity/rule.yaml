@@ -7,6 +7,11 @@
 # and the form is therefore never stricter than the server there. The class is the one
 # invalidDisplayName (api.go) is written as: [<>&"'\p{Cc}\p{Cf}].
 #
+#   - internal/scoreboard/api/board_subject_rule_test.go sweeps every code point through
+#     validBoardSubject (app#377). A board subject shares `categories` and `exempt` with the
+#     display name but NOT `meta` (a subject is prose: ' " & < > stay legal). Changing
+#     `categories` therefore changes the subject rule too.
+#
 # The rule is evaluated with Go's unicode tables (Unicode 15.0.0 for Go 1.26). cases.yaml (not this
 # file) pins the one exception, U+200D, which the server accepts only between two emoji.
 

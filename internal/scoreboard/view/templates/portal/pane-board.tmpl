@@ -293,7 +293,7 @@
         : '<ul class="ticket-list">' + mine.map(t => `
             <li>
               <button type="button" class="ticket-open" data-tid="${esc(t.id)}">
-                <span class="subject">${t.pinned ? '<span class="badge pinned">Pinned</span> ' : ''}${esc(t.subject)}</span>
+                <span class="subject">${t.pinned ? '<span class="badge pinned">Pinned</span> ' : ''}${textHTML(t.subject)}</span>
                 <span class="meta">
                   <span class="badge ${t.audience === 'admin' ? 'private' : 'public'}">${t.audience === 'admin' ? 'Private' : 'Public'}</span>
                   <span class="badge ${t.answered ? 'answered' : 'pending'}">${t.answered ? 'Answered' : 'Awaiting reply'}</span>
@@ -330,7 +330,7 @@
             return `
             <li class="ticket-row">
               <button type="button" class="ticket-open" data-tid="${esc(t.id)}">
-                <span class="subject">${t.pinned ? '<span class="badge pinned">Pinned</span> ' : ''}${esc(t.subject)} <span class="who">— ${who}</span></span>
+                <span class="subject">${t.pinned ? '<span class="badge pinned">Pinned</span> ' : ''}${textHTML(t.subject)} <span class="who">— ${who}</span></span>
                 <span class="meta">
                   <span class="badge ${t.answered ? 'answered' : 'pending'}">${t.answered ? 'Answered' : 'Awaiting reply'}</span>
                   <span>${fmtAgoISO(t.updated_at)}</span>
@@ -468,7 +468,7 @@
       lastDetailSig = sig;
       const who = nameHTML(th.authorDisplay || th.author || '');
       document.getElementById('board-detail-subject').innerHTML =
-        esc(th.subject) + (th.author !== user ? ' <span class="who">— ' + who + '</span>' : '');
+        textHTML(th.subject) + (th.author !== user ? ' <span class="who">— ' + who + '</span>' : '');
       document.getElementById('board-detail-badges').innerHTML =
         (th.pinned ? '<span class="badge pinned">Pinned</span> ' : '') +
         '<span class="badge ' + (th.audience === 'admin' ? 'private' : 'public') + '">' + (th.audience === 'admin' ? 'Private' : 'Public') + '</span> ' +
@@ -666,7 +666,7 @@
         : '<ul class="ticket-list">' + threads.map(t => `
             <li>
               <button type="button" class="ticket-open" data-tid="${esc(t.id)}">
-                <span class="subject">${t.pinned ? '<span class="badge pinned">Pinned</span> ' : ''}${esc(t.subject)} <span class="who">— ${nameHTML(t.authorDisplay || t.author || '')}</span></span>
+                <span class="subject">${t.pinned ? '<span class="badge pinned">Pinned</span> ' : ''}${textHTML(t.subject)} <span class="who">— ${nameHTML(t.authorDisplay || t.author || '')}</span></span>
                 <span class="meta">
                   <span class="badge ${t.audience === 'admin' ? 'private' : 'public'}">${t.audience === 'admin' ? 'Private' : 'Public'}</span>
                   <span class="badge ${t.answered ? 'answered' : 'pending'}">${t.answered ? 'Answered' : 'Awaiting reply'}</span>
@@ -748,7 +748,7 @@
       if (sig === lastDetailSig) return;
       lastDetailSig = sig;
       currentTh = th;
-      document.getElementById('board-admin-subject').innerHTML = esc(th.subject) + ' <span class="who">— ' + nameHTML(th.authorDisplay || th.author) + '</span>';
+      document.getElementById('board-admin-subject').innerHTML = textHTML(th.subject) + ' <span class="who">— ' + nameHTML(th.authorDisplay || th.author) + '</span>';
       document.getElementById('board-admin-badges').innerHTML =
         (th.pinned ? '<span class="badge pinned">Pinned</span> ' : '') +
         '<span class="badge ' + (th.audience === 'admin' ? 'private' : 'public') + '">' + (th.audience === 'admin' ? 'Private' : 'Public') + '</span> ' +

@@ -3,6 +3,9 @@
 #     (the server, the authority) on every row;
 #   - internal/scoreboard/view/portal_nameproblem_test.go runs the Profile form's
 #     JS (planSave in pane-me.tmpl) on every row under a JS engine.
+#   - internal/scoreboard/api/board_subject_rule_test.go (app#377) reuses the rows to check that a
+#     board subject answers like a display name once the metacharacters are replaced by a neutral
+#     letter (a subject keeps ' " & < >; categories / exempt are shared, meta is display-name only).
 # Same shape as internal/catalog/testdata/flags-parity: one table, two implementations.
 #
 # Row fields

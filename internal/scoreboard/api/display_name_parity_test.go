@@ -161,9 +161,12 @@ func loadNameRule(t *testing.T) nameRule {
 
 // forbidden is the rule for one code point (the exempt one is not asked).
 func (r nameRule) forbidden(c rune) bool {
-	if strings.ContainsRune(r.Meta, c) {
-		return true
-	}
+	return strings.ContainsRune(r.Meta, c) || r.forbiddenInvisible(c)
+}
+
+// forbiddenInvisible is the rule without the metacharacters: the Cc / Cf half,
+// which inline prose (a board subject, app#377) shares with a display name.
+func (r nameRule) forbiddenInvisible(c rune) bool {
 	for _, cat := range r.Categories {
 		if unicode.Is(unicode.Categories[cat], c) {
 			return true

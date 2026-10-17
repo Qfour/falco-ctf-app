@@ -80,7 +80,19 @@ var validUser = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 // because that is what makes a ZWJ emoji sequence such as the "woman
 // technologist" one render as a single glyph. A 32-rune max keeps leaderboard
 // columns predictable.
-var invalidDisplayName = regexp.MustCompile(`[<>&"'\p{Cc}\p{Cf}]`)
+//
+// The Cc + Cf half is written once (forbiddenInvisible) and shared with
+// invalidInlineText.
+var invalidDisplayName = regexp.MustCompile(`[<>&"'` + forbiddenInvisible + `]`)
+
+// forbiddenInvisible is the Cc + Cf half of the display-name class, as regexp
+// class members; invalidDisplayName adds the metacharacters.
+const forbiddenInvisible = `\p{Cc}\p{Cf}`
+
+// invalidInlineText is the class for text a participant writes that is rendered
+// INLINE next to other text (the board's thread subject, app#377): Cc + Cf, with
+// no HTML metacharacters (prose keeps ' " & < >; output escaping covers them).
+var invalidInlineText = regexp.MustCompile(`[` + forbiddenInvisible + `]`)
 
 // flagShapePattern is app#292 Phase 2's fairness gate: it matches the
 // SHAPE of a flag (`FALCO{...}`), never a specific value — every free-text
@@ -1074,7 +1086,21 @@ func isEmojiBase(r rune) bool { return unicode.Is(unicode.So, r) }
 // purpose (review-5x 16, app#381): a tag run is an invisible-text carrier, and
 // the table pins it (cases.yaml, "England flag").
 func displayNameHasForbidden(name string) bool {
-	runes := []rune(name)
+	return hasForbiddenRune(name, invalidDisplayName)
+}
+
+// inlineTextHasForbidden is displayNameHasForbidden for inline prose (a board
+// subject, app#377): the same Cc / Cf refusal and the same ZWJ-between-emoji
+// exception (one scan, hasForbiddenRune), without the metacharacters. Both are
+// swept against testdata/display-name-parity/rule.yaml.
+func inlineTextHasForbidden(s string) bool {
+	return hasForbiddenRune(s, invalidInlineText)
+}
+
+// hasForbiddenRune is the one scan behind both predicates: class says what is
+// refused, and a ZWJ is the one exception (see displayNameHasForbidden).
+func hasForbiddenRune(s string, class *regexp.Regexp) bool {
+	runes := []rune(s)
 	for i, r := range runes {
 		if r == zeroWidthJoiner {
 			if i > 0 && i+1 < len(runes) && isEmojiPrefix(runes[i-1]) && isEmojiBase(runes[i+1]) {
@@ -1082,7 +1108,7 @@ func displayNameHasForbidden(name string) bool {
 			}
 			return true
 		}
-		if invalidDisplayName.MatchString(string(r)) {
+		if class.MatchString(string(r)) {
 			return true
 		}
 	}

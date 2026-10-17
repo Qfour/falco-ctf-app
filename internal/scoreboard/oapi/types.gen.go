@@ -378,14 +378,15 @@ type CreateThreadRequest struct {
 	// Body 1..4096 bytes after trimming; rejected 400 if it matches the flag shape FALCO{...}
 	Body string `json:"body"`
 
-	// Subject 1..120 runes after trimming; rejected 400 if it matches the flag shape FALCO{...} (same shape check as body — a public audience=all thread's subject is rendered to every participant just like its body)
+	// Subject 1..120 runes after trimming; rejected 400 if it matches the flag shape FALCO{...} (same shape check as body — a public audience=all thread's subject is rendered to every participant just like its body); rejected 400 if it contains a control (Cc) or format (Cf: bidi controls such as U+202E, zero-width characters) character, with the display-name rule's one ZWJ-between-emoji exception (see `DisplayNameRequest.name`) — but unlike a name, ' " & < > are allowed (the 400 sentence is fixed and never echoes the subject)
 	Subject string `json:"subject"`
 }
 
 // DisplayNameRequest defines model for DisplayNameRequest.
 type DisplayNameRequest struct {
 	// Name The display name. THE rule (the profile route, the 400 descriptions
-	// and `ProfileRequest.display_name` point here):
+	// and `ProfileRequest.display_name` point here; `CreateThreadRequest.subject`
+	// reuses only its Cc / Cf half, with the same ZWJ exception):
 	// - leading / trailing whitespace is trimmed first, with the set of
 	//   Go's `strings.TrimSpace` (so U+0085 NEL, U+00A0 and U+3000 are
 	//   trimmed; U+FEFF is not whitespace and is refused as Cf);
