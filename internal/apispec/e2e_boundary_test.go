@@ -33,14 +33,10 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/e2e/harness"
 )
 
-const (
-	chromedpPrefix = "github.com/chromedp/"
-	// jsEnginePrefix: goja, the pure-Go JS engine the portal's display-name test
-	// (internal/scoreboard/view/portal_nameproblem_test.go, app#343) runs the
-	// form's JS in. Test-only, like chromedp: no production binary links it.
-	jsEnginePrefix = "github.com/dop251/"
-	e2ePrefix      = modulePrefix + "internal/e2e"
-)
+// The test-only prefixes (chromedp, goja and its transitive dependencies,
+// internal/e2e, ...) live in ONE list, testdata/test-only-deps.txt (ADR-0035 D4
+// (a)); see testonly_deps_test.go. This file's static closure check and the real
+// `go list` check there read the same file.
 
 // allImportsClosure is the import closure of the package at start (a
 // module-qualified path): every import, standard, external and module-internal,
@@ -76,14 +72,14 @@ func allImportsClosure(t *testing.T, root, start string) map[string]bool {
 // have.
 func e2eLeaks(t *testing.T, root, cmd string) []string {
 	t.Helper()
-	var bad []string
+	// The list is read from the real repo root even when root is a synthetic tree
+	// (the planted-violation tests below): the list is the thing under test.
+	deps := loadTestOnlyDeps(t, repoRoot(t))
+	var closure []string
 	for imp := range allImportsClosure(t, root, modulePrefix+"cmd/"+cmd) {
-		if strings.HasPrefix(imp, chromedpPrefix) || strings.HasPrefix(imp, jsEnginePrefix) || imp == e2ePrefix || strings.HasPrefix(imp, e2ePrefix+"/") {
-			bad = append(bad, imp)
-		}
+		closure = append(closure, imp)
 	}
-	sort.Strings(bad)
-	return bad
+	return testOnlyHits(closure, deps)
 }
 
 func cmdNames(t *testing.T, root string) []string {
@@ -114,7 +110,7 @@ func TestNoProductionBinaryImportsTheE2EHarness(t *testing.T) {
 	for _, cmd := range names {
 		t.Run(cmd, func(t *testing.T) {
 			if bad := e2eLeaks(t, root, cmd); len(bad) > 0 {
-				t.Fatalf("cmd/%s's import closure includes %v — a production binary must never import chromedp, a test JS engine (goja) or internal/e2e (ADR-0031 V4: test-only code, and a browser-automation dependency, in a distroless image)", cmd, bad)
+				t.Fatalf("cmd/%s's import closure includes %v — a production binary must never import a test-only dependency (testdata/test-only-deps.txt: chromedp, the test JS engine goja and its dependencies, internal/e2e; ADR-0035 D4 (a), ADR-0031 V4: test-only code, and a browser-automation dependency, in a distroless image)", cmd, bad)
 			}
 		})
 	}
@@ -131,14 +127,14 @@ func TestE2ELeakDetector_CatchesPlantedImports(t *testing.T) {
 	}{
 		{"chromedp imported directly by the binary", map[string]string{
 			"cmd/fakebin/main.go": "package main\n\nimport _ \"github.com/chromedp/chromedp\"\n\nfunc main() {}\n",
-		}, chromedpPrefix + "chromedp"},
+		}, "github.com/chromedp/chromedp"},
 		{"the test JS engine imported directly by the binary", map[string]string{
 			"cmd/fakebin/main.go": "package main\n\nimport _ \"github.com/dop251/goja\"\n\nfunc main() {}\n",
-		}, jsEnginePrefix + "goja"},
+		}, "github.com/dop251/goja"},
 		{"chromedp reached through an internal package", map[string]string{
 			"cmd/fakebin/main.go":     "package main\n\nimport _ \"" + modulePrefix + "internal/fixture-a\"\n\nfunc main() {}\n",
 			"internal/fixture-a/a.go": "package fixturea\n\nimport _ \"github.com/chromedp/cdproto/page\"\n",
-		}, chromedpPrefix + "cdproto/page"},
+		}, "github.com/chromedp/cdproto/page"},
 		{"the harness reached through two hops", map[string]string{
 			"cmd/fakebin/main.go":     "package main\n\nimport _ \"" + modulePrefix + "internal/fixture-a\"\n\nfunc main() {}\n",
 			"internal/fixture-a/a.go": "package fixturea\n\nimport _ \"" + modulePrefix + "internal/fixture-b\"\n",

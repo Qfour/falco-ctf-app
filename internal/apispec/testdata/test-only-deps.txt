@@ -1,0 +1,49 @@
+# Test-only dependencies (ADR-0035 D4 (a)): the ONE list of import-path prefixes
+# that no production binary (cmd/*) may reach, however indirectly.
+#
+# Single source. Three consumers read this file and nothing else:
+#   - internal/apispec/e2e_boundary_test.go: the static import-closure check
+#     (V1) and its planted violations.
+#   - internal/apispec/testonly_deps_test.go: the real-graph check (V2: `go list
+#     -deps ./cmd/...` has none of these), the stale-entry check (an entry that
+#     is in neither go.mod nor the module is red) and the completeness check
+#     (every module that only a test reaches must be listed here).
+#   - scripts/check-test-only-vuln.sh: the CI govulncheck step that scans exactly
+#     these modules (ADR-0035 V5).
+#
+# Format: one import-path prefix per line; `#` starts a comment. A prefix matches
+# itself and everything below it (`github.com/dop251/goja` matches
+# `github.com/dop251/goja/parser`, not `github.com/dop251/gojax`); a trailing `/`
+# is ignored. A module-internal prefix is written in full. An external entry names
+# the MODULE (the path in go.mod), not its org: the completeness check counts a
+# module as covered only by an entry that is the module or lies under it.
+#
+# Adding a NEW DIRECT test-only dependency needs its own ADR until workspace #77 is
+# decided (ORGANIZATION.md section 8 criterion 4; ADR-0035 「基準④との関係」);
+# the completeness check is red until the module is listed here. A transitive
+# dependency that an already approved one gained in an update may, provisionally,
+# be added here with the D4 table in the PR body (VP ruling). Removing the last
+# user of one means deleting its line (the stale-entry check is red until you do).
+
+# chromedp + cdproto: the browser E2E harness (ADR-0031), `make e2e`, build tag e2e.
+github.com/chromedp/chromedp
+github.com/chromedp/cdproto
+# ...and chromedp's own JSON dependency (reached only with -tags e2e).
+github.com/go-json-experiment/json
+
+# goja: the pure-Go JS engine the portal's display-name test runs the form's JS
+# in (ADR-0035, app#343). The next three are goja's transitive dependencies.
+github.com/dop251/goja
+github.com/dlclark/regexp2/v2
+github.com/go-sourcemap/sourcemap
+github.com/google/pprof
+
+# Reached only by test packages (prometheus/testutil's diff).
+github.com/kylelemons/godebug
+
+# Test-only packages of this module: no cmd/* binary may link them (V1 / V2 look
+# at all of cmd/*; internal/apispec/dependency_boundary_test.go also names the
+# two parity packages on its own).
+github.com/Qfour/falco-ctf-app/internal/e2e
+github.com/Qfour/falco-ctf-app/internal/apispec/specparity
+github.com/Qfour/falco-ctf-app/internal/apispec/ingressparity
