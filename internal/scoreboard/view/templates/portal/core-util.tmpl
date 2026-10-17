@@ -43,6 +43,16 @@ const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&a
 // never passed to esc() bare: portal_bidi_test.go scans every partial for that.
 const nameHTML = (s) => '<bdi>' + esc(s) + '</bdi>';
 
+// textHTML(s) is the same for the OTHER text a participant writes that sits inline
+// next to more text: a board thread's subject ("subject — author"; app#377). An
+// unclosed U+202E in a subject would reorder the "—" and the author after it just as
+// one in a name would, so the subject gets the same <bdi> isolation. The two helpers
+// are the same one-liner on purpose: nameHTML is for a name, textHTML for prose, and
+// portal_bidi_test.go gates both from one definition of "participant inline text"
+// (display_name, authorDisplay, subject). Not for a block of text (a message body is
+// its own block, so its direction cannot leak out of it).
+const textHTML = (s) => '<bdi>' + esc(s) + '</bdi>';
+
 // ---- Accessibility helpers (P28-0a (4)). Declared AFTER esc on purpose (see the
 // TDZ note above). textContent only, no markup.
 // (A delegated keydown that turns Enter/Space on role=button / checkbox into a
