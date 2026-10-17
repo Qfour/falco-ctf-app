@@ -2,9 +2,10 @@ package scoreboard_test
 
 // ADR-0034 S1 (D8-D10) verification at the HTTP boundary: V1 (route, header,
 // self), V2 (avatar id validation, no partial write), V4 (persistence,
-// state, reset), V8 (no email in any GET), plus the identity rate-limit
-// bucket (D8) and the "no email / name / image field" shape of the API (V7's
-// HTTP half; the DB half is internal/store's column-set pin).
+// state, reset), V8 (no email in any GET), plus the "no email / name / image
+// field" shape of the API (V7's HTTP half; the DB half is internal/store's
+// column-set pin). The profile route's identity rate-limit bucket (D8) is the
+// participant_action row of identity_bucket_test.go's table.
 
 import (
 	"bytes"
