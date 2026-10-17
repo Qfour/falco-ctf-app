@@ -2,9 +2,12 @@ package api
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"unicode"
+
+	"gopkg.in/yaml.v3"
 )
 
 // app#377: a board thread subject is participant-written text rendered INLINE
@@ -87,58 +90,113 @@ func metaToX(chars string) []string {
 	return out
 }
 
-// TestBoardSubject_Table: the subject-specific accept / reject rows (the shared
-// display-name table has no board rows), and the 400 sentence being fixed.
-func TestBoardSubject_Table(t *testing.T) {
-	const forbiddenMsg = "subject contains forbidden characters"
-	cases := []struct {
-		name    string
-		in      string
-		wantErr string // "" = accept
-		stored  string // accept rows: default = trimmed input
-	}{
-		{"plain", "Stuck on mission 3", "", ""},
-		{"apostrophe and quotes are prose", `Can't see "FALCO" output`, "", ""},
-		{"ampersand and angle brackets are prose", "a & b <c>", "", ""},
-		{"Japanese", "ミッション 3 が進まない", "", ""},
-		{"ZWJ emoji sequence", "help \U0001F469\u200D\U0001F4BB", "", ""},
-		{"trimmed", "  hello \t", "", "hello"},
-		{"RLO unclosed", "reversed \u202E", forbiddenMsg, ""},
-		{"RLI isolate", "a \u2067b", forbiddenMsg, ""},
-		{"zero width space", "a\u200Bb", forbiddenMsg, ""},
-		{"BOM", "a\uFEFFb", forbiddenMsg, ""},
-		{"NEL (C1)", "a\u0085b", forbiddenMsg, ""},
-		{"newline inside", "a\nb", forbiddenMsg, ""},
-		{"tab inside", "a\tb", forbiddenMsg, ""},
-		{"NUL", "a\x00b", forbiddenMsg, ""},
-		{"ZWJ after a letter", "word\u200D", forbiddenMsg, ""},
-		{"tag characters", "\U0001F3F4\U000E0067\U000E0062", forbiddenMsg, ""},
-		{"empty", "", "subject required", ""},
-		{"only whitespace", " \t ", "subject required", ""},
-		{"too long", strings.Repeat("a", maxBoardSubjectRunes+1), "subject too long (max 120 runes)", ""},
+// boardSubjectCase is one row of testdata/board-subject/cases.yaml, shared with the
+// portal's form test (view/portal_subjectproblem_test.go).
+type boardSubjectCase struct {
+	Name   string  `yaml:"name"`
+	Repeat int     `yaml:"repeat"`
+	Server string  `yaml:"server"`
+	Error  string  `yaml:"error"`
+	Client string  `yaml:"client"`
+	Stored *string `yaml:"stored"`
+	Note   string  `yaml:"note"`
+}
+
+func (c boardSubjectCase) input() string {
+	if c.Repeat > 0 {
+		return strings.Repeat(c.Name, c.Repeat)
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got, err := validBoardSubject(c.in)
-			if c.wantErr == "" {
+	return c.Name
+}
+
+func loadBoardSubjectCases(t *testing.T) []boardSubjectCase {
+	t.Helper()
+	raw, err := os.ReadFile("testdata/board-subject/cases.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f struct {
+		Cases []boardSubjectCase `yaml:"cases"`
+	}
+	dec := yaml.NewDecoder(strings.NewReader(string(raw)))
+	dec.KnownFields(true)
+	if err := dec.Decode(&f); err != nil {
+		t.Fatalf("board-subject/cases.yaml: %v", err)
+	}
+	if len(f.Cases) == 0 {
+		t.Fatal("board-subject/cases.yaml: no cases")
+	}
+	for i, c := range f.Cases {
+		if (c.Server != "accept" && c.Server != "reject") || (c.Client != "accept" && c.Client != "reject") {
+			t.Fatalf("board-subject/cases.yaml row %d (%s): server/client must be accept|reject, got %q/%q", i, c.Note, c.Server, c.Client)
+		}
+		if (c.Server == "reject") != (c.Error != "") {
+			t.Fatalf("board-subject/cases.yaml row %d (%s): `error` is exactly the reject rows' sentence", i, c.Note)
+		}
+		if c.Stored != nil && c.Server != "accept" {
+			t.Fatalf("board-subject/cases.yaml row %d (%s): stored only makes sense on a server: accept row", i, c.Note)
+		}
+	}
+	return f.Cases
+}
+
+// TestBoardSubject_Table: the subject accept / reject rows (the shared display-name
+// table has no board rows; the portal form's test reads the same file), and the 400
+// sentence being fixed.
+func TestBoardSubject_Table(t *testing.T) {
+	if maxBoardSubjectRunes != 120 {
+		t.Fatalf("maxBoardSubjectRunes = %d: the length rows of board-subject/cases.yaml and the form's MAX_SUBJECT_RUNES say 120; change them together", maxBoardSubjectRunes)
+	}
+	for _, c := range loadBoardSubjectCases(t) {
+		in := c.input()
+		t.Run(c.Note, func(t *testing.T) {
+			got, err := validBoardSubject(in)
+			if c.Server == "accept" {
 				if err != nil {
-					t.Fatalf("validBoardSubject(%+q) = error %v, want accept", c.in, err)
+					t.Fatalf("validBoardSubject(%+q) = error %v, want accept", in, err)
 				}
-				want := c.stored
-				if want == "" {
-					want = c.in
+				want := in
+				if c.Stored != nil {
+					want = *c.Stored
 				}
 				if got != want {
-					t.Fatalf("validBoardSubject(%+q) stored %+q, want %+q", c.in, got, want)
+					t.Fatalf("validBoardSubject(%+q) stored %+q, want %+q", in, got, want)
 				}
 				return
 			}
 			if err == nil {
-				t.Fatalf("validBoardSubject(%+q) = %q, nil; want %q", c.in, got, c.wantErr)
+				t.Fatalf("validBoardSubject(%+q) = %q, nil; want %q", in, got, c.Error)
 			}
-			if err.Error() != c.wantErr {
-				t.Fatalf("validBoardSubject(%+q) error = %q, want %q", c.in, err, c.wantErr)
+			if err.Error() != c.Error {
+				t.Fatalf("validBoardSubject(%+q) error = %q, want %q", in, err, c.Error)
 			}
 		})
+	}
+}
+
+// TestBoardSubject_ClientIsNeverStricter: the table never records a form that refuses a
+// subject the server accepts, and the one documented difference (form accepts, server
+// refuses) is only ever on a row holding U+200D, and still exists. The "client-only reject = 0"
+// half of the contract (as TestDisplayNameParity_ClientIsNeverStricter); the view test checks
+// that the form really answers the table.
+func TestBoardSubject_ClientIsNeverStricter(t *testing.T) {
+	var clientOnlyReject, serverOnlyReject int
+	for _, c := range loadBoardSubjectCases(t) {
+		switch {
+		case c.Client == "reject" && c.Server == "accept":
+			clientOnlyReject++
+			t.Errorf("%s: the form refuses a subject the server accepts (%+q)", c.Note, c.input())
+		case c.Client == "accept" && c.Server == "reject":
+			serverOnlyReject++
+			if !strings.ContainsRune(c.input(), zeroWidthJoiner) {
+				t.Errorf("%s: only a ZWJ may be accepted by the form and refused by the server (%+q)", c.Note, c.input())
+			}
+		}
+	}
+	if clientOnlyReject != 0 {
+		t.Fatalf("client-only rejects = %d, want 0", clientOnlyReject)
+	}
+	if serverOnlyReject == 0 {
+		t.Fatal("the table has no ZWJ row the server refuses and the form lets through; the documented difference is gone")
 	}
 }

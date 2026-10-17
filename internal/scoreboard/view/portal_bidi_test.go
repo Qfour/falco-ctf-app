@@ -64,11 +64,14 @@ const nameEdgeClass = `\t\n\v\f\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u2
 // BODIES are one); the dashboard has its own esc, so its own nameHTML next to it, and
 // no textHTML (it renders no board). trimName is the server's trim set for a name the
 // portal sends, serverErrorText reads the server's {"error"} as a string (app#401).
+// hasHiddenChar is the Cc / Cf class (minus U+200D) both the Profile name and a new
+// board thread's subject pre-check with (app#408); index.html has no such form.
 var sharedHelpers = []sharedHelper{
 	{"nameHTML", `const nameHTML = (s) => '<bdi>' + esc(s) + '</bdi>';`, 1, 1},
 	{"textHTML", `const textHTML = (s) => '<bdi>' + esc(s) + '</bdi>';`, 1, 0},
 	{"trimName", `const trimName = (raw) => String(raw).replace(/^[` + nameEdgeClass + `]+|[` + nameEdgeClass + `]+$/g, '');`, 1, 1},
 	{"serverErrorText", `const serverErrorText = async (r) => { try { const j = await r.json(); if (j && typeof j.error === 'string') return j.error; } catch (_) { /* no body */ } return ''; };`, 1, 1},
+	{"hasHiddenChar", `const hasHiddenChar = (() => { let re = null; try { re = new RegExp('(?!\\u200D)[\\p{Cc}\\p{Cf}]', 'u'); } catch (_) { /* no \\p{..}: never refuse, the server decides */ } return (s) => re !== null && re.test(s); })();`, 1, 0},
 }
 
 // isolateHelpers are the two bidi-isolating rows of sharedHelpers.
@@ -461,6 +464,12 @@ func TestSharedHelpers_GateCatchesRegressions(t *testing.T) {
 		{"index.html declares trimName twice", "index.html declares trimName 2 times", func(s *src) {
 			s.index += "\n  " + line("trimName") + "\n"
 		}},
+		{"hasHiddenChar is declared again in pane-board", "the portal declares hasHiddenChar 2 times", func(s *src) {
+			s.portal["pane-board.tmpl"] += "\n<script>  const hasHiddenChar = (s) => /[\\u0000-\\u001f]/.test(s);</script>"
+		}},
+		{"hasHiddenChar is added to index.html", "index.html declares hasHiddenChar 1 times, want exactly 0", func(s *src) {
+			s.index += "\n  " + line("hasHiddenChar") + "\n"
+		}},
 	}
 	basePortal, baseIndex := bidiSources(t)
 	if errs := checkSharedHelpers(basePortal, baseIndex, sharedHelpers); len(errs) != 0 {
@@ -482,6 +491,75 @@ func TestSharedHelpers_GateCatchesRegressions(t *testing.T) {
 			}
 			if !found {
 				t.Errorf("no error contains %q; got %v", c.want, errs)
+			}
+		})
+	}
+}
+
+// checkHiddenCharClass returns every file (a portal partial or index.html) that writes the
+// Cc / Cf class itself instead of calling hasHiddenChar: the class has ONE definition,
+// core-util.tmpl's pinned line (app#408). Comments are stripped first (core-util's own doc
+// names the class), and the pinned line is cut out.
+func checkHiddenCharClass(portal map[string]string, index string, pinned string) []error {
+	files := map[string]string{"index.html": index}
+	for n, b := range portal {
+		files[n] = b
+	}
+	names := make([]string, 0, len(files))
+	for n := range files {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	var errs []error
+	for _, n := range names {
+		body := strings.ReplaceAll(stripEscComments(files[n]), pinned, "")
+		for _, class := range []string{`\p{Cc}`, `\p{Cf}`} {
+			if strings.Contains(body, class) {
+				errs = append(errs, fmt.Errorf("%s writes %s itself: the Cc/Cf class is hasHiddenChar's (core-util.tmpl), the one definition shared by the Profile name and the board subject", n, class))
+			}
+		}
+	}
+	return errs
+}
+
+func TestHiddenCharClass_HasOneDefinition(t *testing.T) {
+	portal, index := bidiSources(t)
+	var pinned string
+	for _, h := range sharedHelpers {
+		if h.name == "hasHiddenChar" {
+			pinned = h.wantLine
+		}
+	}
+	if pinned == "" {
+		t.Fatal("no sharedHelpers row hasHiddenChar")
+	}
+	for _, err := range checkHiddenCharClass(portal, index, pinned) {
+		t.Error(err)
+	}
+	// The gate must see a restatement, in any partial or in the dashboard.
+	for _, m := range []struct {
+		name   string
+		mutate func(p map[string]string, idx *string)
+	}{
+		{"pane-me restates the class inline", func(p map[string]string, _ *string) {
+			p["pane-me.tmpl"] += "\n<script>const x = (s) => /[\\p{Cc}]/u.test(s);</script>"
+		}},
+		{"pane-board restates Cf", func(p map[string]string, _ *string) {
+			p["pane-board.tmpl"] += "\n<script>const y = new RegExp('\\\\p{Cf}', 'u');</script>"
+		}},
+		{"index.html restates the class", func(_ map[string]string, idx *string) {
+			*idx += "\n<script>const z = /\\p{Cc}/u;</script>"
+		}},
+	} {
+		t.Run(m.name, func(t *testing.T) {
+			p := map[string]string{}
+			for k, v := range portal {
+				p[k] = v
+			}
+			idx := index
+			m.mutate(p, &idx)
+			if len(checkHiddenCharClass(p, idx, pinned)) == 0 {
+				t.Error("the gate did not catch a restated Cc/Cf class")
 			}
 		})
 	}

@@ -1,0 +1,58 @@
+# Shared case table for a board thread's subject, read by BOTH sides (app#377, app#408):
+#   - internal/scoreboard/api/board_subject_rule_test.go calls validBoardSubject (the server, the
+#     authority) on every row;
+#   - internal/scoreboard/view/portal_subjectproblem_test.go runs the new-thread form's JS
+#     (trimName + subjectProblem, pane-board.tmpl / core-util.tmpl) on every row under goja.
+# Same shape as ../display-name-parity/cases.yaml: one table, two implementations. The character
+# class is swept separately over every code point (../display-name-parity/rule.yaml: `categories`
+# and `exempt` apply to a subject, `meta` does not: a subject is prose).
+#
+# Row fields
+#   name    the raw input, as typed (YAML double-quoted: \uXXXX, \UXXXXXXXX, \xNN)
+#   repeat  optional: the name is repeated this many times (length cases)
+#   server  accept | reject : what validBoardSubject answers
+#   error   reject rows only: the server's sentence (the 400 body's `error`)
+#   client  accept | reject : what the form's pre-check answers (nothing is sent on reject)
+#   stored  accept rows only, optional: the trimmed subject both sides must produce
+#           (default: the name itself)
+#   note    why the row is here
+#
+# The contract (same as the display name): the form is NEVER stricter than the server, so no row
+# may be `client: reject` with `server: accept`. The one allowed difference is `client: accept`
+# with `server: reject`, only for U+200D (ZERO WIDTH JOINER): the server accepts it only between
+# two emoji, the form lets every ZWJ through and leaves that rule to the server (the api loader
+# fails a row of that kind without a U+200D in its input, and fails if no such row remains).
+#
+# Scope of `client`: the form's whole pre-check, which is the JS decision (trimName + subjectProblem)
+# AND the DOM attributes of the subject <input>. An attribute that stops typing earlier than the
+# server would make a `client: accept` row false in the real form; the view test therefore also pins
+# that #board-new-subject has no maxlength (the attribute counts UTF-16 units of the untrimmed value).
+cases:
+  - {name: "Stuck on mission 3", server: accept, client: accept, note: "plain"}
+  - {name: "Can't see \"FALCO\" output", server: accept, client: accept, note: "apostrophe and quotes are prose"}
+  - {name: "a & b <c>", server: accept, client: accept, note: "ampersand and angle brackets are prose"}
+  - {name: "ミッション 3 が進まない", server: accept, client: accept, note: "Japanese"}
+  - {name: "help \U0001F469\u200D\U0001F4BB", server: accept, client: accept, note: "ZWJ emoji sequence"}
+  - {name: "  hello \t", server: accept, client: accept, stored: hello, note: "trimmed (leading, trailing space and TAB)"}
+  - {name: "\uFEFFhello", server: reject, error: "subject contains forbidden characters", client: reject, note: "a leading BOM: String.prototype.trim used to strip it, trimName (the server's strings.TrimSpace set) keeps it and the form refuses it, as the server does (intended change of app#401)"}
+  - {name: "a\u0085b", server: reject, error: "subject contains forbidden characters", client: reject, note: "NEL inside (C1 control)"}
+  - {name: "hello\u0085", server: accept, client: accept, stored: hello, note: "a trailing NEL is trimmed (strings.TrimSpace; String.prototype.trim would keep it)"}
+  - {name: "\u00A0hello\u3000", server: accept, client: accept, stored: hello, note: "NBSP and ideographic space are trimmed"}
+  - {name: "reversed \u202E", server: reject, error: "subject contains forbidden characters", client: reject, note: "RLO unclosed"}
+  - {name: "a \u2067b", server: reject, error: "subject contains forbidden characters", client: reject, note: "RLI isolate"}
+  - {name: "a\u200Bb", server: reject, error: "subject contains forbidden characters", client: reject, note: "zero width space"}
+  - {name: "a\uFEFFb", server: reject, error: "subject contains forbidden characters", client: reject, note: "BOM"}
+  - {name: "a\u00ADb", server: reject, error: "subject contains forbidden characters", client: reject, note: "soft hyphen"}
+  - {name: "a\u200Eb", server: reject, error: "subject contains forbidden characters", client: reject, note: "LRM"}
+  - {name: "a\nb", server: reject, error: "subject contains forbidden characters", client: reject, note: "newline inside"}
+  - {name: "a\tb", server: reject, error: "subject contains forbidden characters", client: reject, note: "TAB inside (the paste case of app#408)"}
+  - {name: "a\x00b", server: reject, error: "subject contains forbidden characters", client: reject, note: "NUL"}
+  - {name: "word\u200D", server: reject, error: "subject contains forbidden characters", client: accept, note: "ZWJ after a letter (the one allowed difference: the form passes it, the server refuses it outside emoji)"}
+  - {name: "\U0001F3F4\U000E0067\U000E0062", server: reject, error: "subject contains forbidden characters", client: reject, note: "tag characters (Cf)"}
+  - {name: "", server: reject, error: "subject required", client: reject, note: "empty"}
+  - {name: " \t ", server: reject, error: "subject required", client: reject, note: "only whitespace"}
+  - {name: "\u200B", server: reject, error: "subject contains forbidden characters", client: reject, note: "only a zero width space (not whitespace to the trim, so not empty)"}
+  - {name: "a", repeat: 120, server: accept, client: accept, note: "exactly 120 runes"}
+  - {name: "a", repeat: 121, server: reject, error: "subject too long (max 120 runes)", client: reject, note: "121 runes"}
+  - {name: "\U0001F600", repeat: 120, server: accept, client: accept, note: "120 astral runes (240 UTF-16 units; counted by code point)"}
+  - {name: "\U0001F600", repeat: 121, server: reject, error: "subject too long (max 120 runes)", client: reject, note: "121 astral runes"}
