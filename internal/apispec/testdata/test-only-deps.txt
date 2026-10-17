@@ -1,0 +1,40 @@
+# Test-only dependencies (ADR-0035 D4 (a)): the ONE list of import-path prefixes
+# that no production binary (cmd/*) may reach, however indirectly.
+#
+# Single source. Three consumers read this file and nothing else:
+#   - internal/apispec/e2e_boundary_test.go: the static import-closure check
+#     (V1) and its planted violations.
+#   - internal/apispec/testonly_deps_test.go: the real-graph check (V2: `go list
+#     -deps ./cmd/...` has none of these), the stale-entry check (an entry that
+#     is in neither go.mod nor the module is red) and the completeness check
+#     (every module that only a test reaches must be listed here).
+#   - scripts/check-test-only-vuln.sh: the CI govulncheck step that scans exactly
+#     these modules (ADR-0035 V5).
+#
+# Format: one import-path prefix per line; `#` starts a comment. A prefix matches
+# itself and everything below it (`github.com/dop251` matches
+# `github.com/dop251/goja/parser`, not `github.com/dop251x/y`); a trailing `/`
+# is ignored. A module-internal prefix is written in full.
+#
+# Adding a test-only dependency means adding it here in the same PR (the
+# completeness check is red until you do) and satisfying ADR-0035 D4 (b)-(f).
+# Removing the last user of one means deleting its line (the stale-entry check is
+# red until you do).
+
+# chromedp + cdproto: the browser E2E harness (ADR-0031), `make e2e`, build tag e2e.
+github.com/chromedp/
+# ...and chromedp's own JSON dependency (reached only with -tags e2e).
+github.com/go-json-experiment/json
+
+# goja: the pure-Go JS engine the portal's display-name test runs the form's JS
+# in (ADR-0035, app#343). The next three are goja's transitive dependencies.
+github.com/dop251/
+github.com/dlclark/regexp2
+github.com/go-sourcemap/sourcemap
+github.com/google/pprof
+
+# Reached only by test packages (prometheus/testutil's diff).
+github.com/kylelemons/godebug
+
+# The E2E harness itself.
+github.com/Qfour/falco-ctf-app/internal/e2e
