@@ -1,9 +1,12 @@
 package ratelimit_test
 
 import (
+	"bytes"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -460,5 +463,144 @@ func TestMiddlewareStrict_429IsJSONWithRetryAfterAndMetric(t *testing.T) {
 		if got := testutil.ToFloat64(ratelimit.IdentityRequestsTotal.WithLabelValues("test_429", outcome)) - before[outcome]; got != want {
 			t.Fatalf("metric bucket=test_429 outcome=%s delta = %v, want %v", outcome, got, want)
 		}
+	}
+}
+
+// --- app#387: sampled Warn line for no-identity denials ----------------------
+
+// denyLogLines decodes the JSON log buffer into one map per emitted line.
+func denyLogLines(t *testing.T, buf *bytes.Buffer) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, ln := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		if ln == "" {
+			continue
+		}
+		var m map[string]any
+		if err := json.Unmarshal([]byte(ln), &m); err != nil {
+			t.Fatalf("log line is not JSON: %q (%v)", ln, err)
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+func denyReq(path, pattern, remote string, hdr map[string]string) *http.Request {
+	r := httptest.NewRequest("POST", path, nil)
+	r.Pattern = pattern
+	r.RemoteAddr = remote
+	for k, v := range hdr {
+		r.Header.Set(k, v)
+	}
+	return r
+}
+
+func TestMiddlewareStrict_NoIdentityLogsWarnWithoutIdentityOrPath(t *testing.T) {
+	now := time.Unix(1000, 0)
+	var buf bytes.Buffer
+	l := ratelimit.New(1, 10).WithNow(func() time.Time { return now }).
+		WithLogger(slog.New(slog.NewJSONHandler(&buf, nil)))
+	h := l.MiddlewareStrict("test_log", ratelimit.IdentityKeyed)(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+
+	// header absent
+	h.ServeHTTP(httptest.NewRecorder(), denyReq("/api/users/victim/x", "POST /api/users/{user}/x", "10.1.2.3:51000", nil))
+	lines := denyLogLines(t, &buf)
+	if len(lines) != 1 {
+		t.Fatalf("want 1 log line, got %d: %s", len(lines), buf.String())
+	}
+	got := lines[0]
+	want := map[string]any{
+		"level": "WARN", "bucket": "test_log", "route": "POST /api/users/{user}/x",
+		"remote_addr": "10.1.2.3", "reason": "no_identity", "suppressed": float64(0),
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("log[%q] = %v, want %v (line: %s)", k, got[k], v, buf.String())
+		}
+	}
+	if strings.Contains(buf.String(), "victim") {
+		t.Errorf("the URL path (participant name) leaked into the log: %s", buf.String())
+	}
+
+	// header present but blank -> empty_identity (after the sampling window)
+	now = now.Add(denyWindow)
+	buf.Reset()
+	h.ServeHTTP(httptest.NewRecorder(), denyReq("/", "", "[::1]:1", map[string]string{ratelimit.IdentityHeader: "   "}))
+	lines = denyLogLines(t, &buf)
+	if len(lines) != 1 || lines[0]["reason"] != "empty_identity" || lines[0]["route"] != "-" || lines[0]["remote_addr"] != "::1" {
+		t.Fatalf("blank header: got %s", buf.String())
+	}
+}
+
+// A keyFn that denies a request that DOES carry an identity header (e.g. a
+// future stricter keyFn) must still never put the header value in the log.
+func TestMiddlewareStrict_NoIdentityLogNeverContainsHeaderValue(t *testing.T) {
+	var buf bytes.Buffer
+	l := ratelimit.New(1, 10).WithLogger(slog.New(slog.NewJSONHandler(&buf, nil)))
+	h := l.MiddlewareStrict("test_leak", func(*http.Request) (string, bool) { return "", false })(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	h.ServeHTTP(httptest.NewRecorder(), denyReq("/", "POST /p", "10.0.0.1:1",
+		map[string]string{ratelimit.IdentityHeader: "secret.person@ctf.local", "Cookie": "sess=abc"}))
+	if buf.Len() == 0 {
+		t.Fatal("expected a log line")
+	}
+	for _, bad := range []string{"secret.person", "ctf.local", "sess=abc"} {
+		if strings.Contains(buf.String(), bad) {
+			t.Errorf("log contains %q: %s", bad, buf.String())
+		}
+	}
+}
+
+// denyWindow mirrors the package's 10s sampling interval (unexported); the
+// sampling test below fails loudly if the two drift apart.
+const denyWindow = 10 * time.Second
+
+func TestMiddlewareStrict_NoIdentityLogIsSampledPerBucket(t *testing.T) {
+	now := time.Unix(1000, 0)
+	var buf bytes.Buffer
+	lg := slog.New(slog.NewJSONHandler(&buf, nil))
+	clock := func() time.Time { return now }
+	l := ratelimit.New(1, 10).WithNow(clock).WithLogger(lg)
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) })
+	a := l.MiddlewareStrict("bucket_a", ratelimit.IdentityKeyed)(next)
+	b := l.MiddlewareStrict("bucket_b", ratelimit.IdentityKeyed)(next)
+	deny := func(h http.Handler, n int) {
+		for i := 0; i < n; i++ {
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, denyReq("/", "POST /p", "10.0.0.1:1", nil))
+			if w.Code != http.StatusForbidden {
+				t.Fatalf("got %d, want 403", w.Code)
+			}
+		}
+	}
+	metricBefore := testutil.ToFloat64(ratelimit.IdentityRequestsTotal.WithLabelValues("bucket_a", "no_identity"))
+
+	deny(a, 25) // 25 denials in one instant -> exactly one line
+	if n := len(denyLogLines(t, &buf)); n != 1 {
+		t.Fatalf("25 denials in the window: %d lines, want 1\n%s", n, buf.String())
+	}
+	now = now.Add(denyWindow - time.Second) // still inside the window
+	deny(a, 5)
+	if n := len(denyLogLines(t, &buf)); n != 1 {
+		t.Fatalf("inside the window: %d lines, want 1", n)
+	}
+	deny(b, 1) // another bucket is not throttled by a's window
+	if n := len(denyLogLines(t, &buf)); n != 2 {
+		t.Fatalf("bucket_b first denial: %d lines, want 2", n)
+	}
+	now = now.Add(time.Second) // window elapsed for a
+	deny(a, 1)
+	lines := denyLogLines(t, &buf)
+	if len(lines) != 3 {
+		t.Fatalf("after the window: %d lines, want 3\n%s", len(lines), buf.String())
+	}
+	last := lines[2]
+	if last["bucket"] != "bucket_a" || last["suppressed"] != float64(29) { // 24 + 5 swallowed
+		t.Fatalf("resumed line = %v, want bucket_a suppressed=29", last)
+	}
+	// Sampling is log-only: the metric still counts every denial (25+5+1).
+	if d := testutil.ToFloat64(ratelimit.IdentityRequestsTotal.WithLabelValues("bucket_a", "no_identity")) - metricBefore; d != 31 {
+		t.Fatalf("metric delta = %v, want 31", d)
 	}
 }

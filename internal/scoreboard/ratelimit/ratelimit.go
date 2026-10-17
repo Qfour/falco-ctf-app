@@ -8,6 +8,7 @@
 package ratelimit
 
 import (
+	"log/slog"
 	"math"
 	"net"
 	"net/http"
@@ -30,6 +31,25 @@ type Limiter struct {
 
 	mu      sync.Mutex
 	buckets map[string]*bucket
+
+	// logger receives the MiddlewareStrict no-identity denial line (app#387).
+	// nil means slog.Default() at log time.
+	logger *slog.Logger
+	// denyMu guards denyLog (kept apart from mu so a 403 flood never contends
+	// with Allow on the token buckets).
+	denyMu  sync.Mutex
+	denyLog map[string]*denyState // keyed by the MiddlewareStrict bucket label
+}
+
+// denyLogInterval is the per-bucket spacing of the no-identity denial log line
+// (app#387). The metric counts every denial; the log is a sampled pointer to
+// "this is happening, look at the counter", so an anonymous flood cannot flood
+// the log (or the Recreate-lost pod log's tail) with it.
+const denyLogInterval = 10 * time.Second
+
+type denyState struct {
+	last       time.Time // when a line was last emitted for this bucket
+	suppressed int       // denials swallowed since then
 }
 
 type bucket struct {
@@ -46,12 +66,22 @@ func New(rate, burst float64) *Limiter {
 		eviction: 5 * time.Minute,
 		now:      time.Now,
 		buckets:  make(map[string]*bucket),
+		denyLog:  make(map[string]*denyState),
 	}
 }
 
 // WithNow swaps the clock for tests.
 func (l *Limiter) WithNow(now func() time.Time) *Limiter {
 	l.now = now
+	return l
+}
+
+// WithLogger sets the logger for the MiddlewareStrict no-identity denial line
+// (app#387). A nil logger is ignored (slog.Default() is used).
+func (l *Limiter) WithLogger(logger *slog.Logger) *Limiter {
+	if logger != nil {
+		l.logger = logger
+	}
 	return l
 }
 
@@ -231,7 +261,10 @@ func IdentityKeyed(r *http.Request) (string, bool) {
 //
 //   - keyFn !ok or key == "" -> 403 {"error":"forbidden"}; NO token is consumed
 //     (so an anonymous flood cannot drain anyone's bucket) and the handler
-//     never runs
+//     never runs. One Warn line per bucket per 10s is logged (bucket, route
+//     pattern, remote host, reason no_identity|empty_identity, and how many
+//     denials were suppressed since the last line); the identity header's value
+//     is never logged (app#387)
 //   - bucket empty           -> 429 {"error":"rate limit exceeded"}, Retry-After: 1
 //   - otherwise              -> next
 //
@@ -242,6 +275,7 @@ func (l *Limiter) MiddlewareStrict(bucket string, keyFn KeyFunc) func(http.Handl
 			key, ok := keyFn(r)
 			if !ok || key == "" {
 				IdentityRequestsTotal.WithLabelValues(bucket, "no_identity").Inc()
+				l.logNoIdentity(bucket, r)
 				httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
 				return
 			}
@@ -255,4 +289,48 @@ func (l *Limiter) MiddlewareStrict(bucket string, keyFn KeyFunc) func(http.Handl
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// logNoIdentity emits the sampled Warn line for a header-less / blank-identity
+// denial (app#387). The first denial per bucket logs immediately; later ones
+// within denyLogInterval are only counted and reported as `suppressed` on the
+// next line. Only fixed-vocabulary values are logged: the bucket label, the mux
+// route PATTERN (not the URL path, which carries a participant name), the
+// remote host and the reason. The X-Auth-Request-Email value is never read
+// here — only whether the header is present at all.
+func (l *Limiter) logNoIdentity(bucket string, r *http.Request) {
+	now := l.now()
+	l.denyMu.Lock()
+	st, ok := l.denyLog[bucket]
+	if !ok {
+		st = &denyState{}
+		l.denyLog[bucket] = st
+	} else if now.Sub(st.last) < denyLogInterval {
+		st.suppressed++
+		l.denyMu.Unlock()
+		return
+	}
+	suppressed := st.suppressed
+	st.last, st.suppressed = now, 0
+	l.denyMu.Unlock()
+
+	reason := "no_identity"
+	if len(r.Header.Values(IdentityHeader)) > 0 {
+		reason = "empty_identity"
+	}
+	route := r.Pattern
+	if route == "" {
+		route = "-"
+	}
+	remote := r.RemoteAddr
+	if host, _, err := net.SplitHostPort(remote); err == nil {
+		remote = host
+	}
+	logger := l.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	logger.Warn("identity-keyed route denied: no identity",
+		"bucket", bucket, "route", route, "remote_addr", remote,
+		"reason", reason, "suppressed", suppressed)
 }

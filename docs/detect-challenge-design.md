@@ -118,9 +118,16 @@ Key design points:
   app#346), behind the origin guard. Since app#328 it is rate-limited on its own identity-keyed
   `detect` bucket (`detectMW`; 403 without the header, before a token is consumed), no longer on
   `/submit`'s per-IP bucket nor the hint/step/reset-dirty one, plus the global in-flight cap. A
-  request that reaches the handler is audit-logged; a header-less 403 is recorded only by the
-  metric `ratelimit_identity_requests_total{bucket="detect",outcome="no_identity"}` (no log line
-  and no alert yet; tracked in #387). No claimed-user path.
+  request that reaches the handler is audit-logged. A header-less 403 is observable three ways
+  (app#387): the metric `ratelimit_identity_requests_total{bucket="detect",outcome="no_identity"}`
+  counts every denial; a sampled Warn line `identity-keyed route denied: no identity` (fields
+  `bucket`, `route` pattern, `remote_addr`, `reason` = `no_identity`|`empty_identity`,
+  `suppressed`; at most one per bucket per 10s, the rest counted in `suppressed`; the
+  identity value and the URL path are never logged) says where from; and the chart's
+  `ScoreboardNoIdentityDenials` alert (warning, >10 in 5m per bucket) fires on a sustained rate,
+  i.e. an ingress header-overwrite / collector strip gap or probing. This is the ADR-0023 V5
+  style "leave a trace an operator can follow" applied to the identity header. No claimed-user
+  path.
 - **No attacker-supplied time**, no forbidden-window — detect grading is purely a
   function of the (static capture, submitted condition) pair, so it is deterministic and
   replay-stable across scoreboard restarts (I1).
