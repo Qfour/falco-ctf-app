@@ -385,7 +385,8 @@ type CreateThreadRequest struct {
 // DisplayNameRequest defines model for DisplayNameRequest.
 type DisplayNameRequest struct {
 	// Name The display name. THE rule (the profile route, the 400 descriptions
-	// and `ProfileRequest.display_name` point here):
+	// and `ProfileRequest.display_name` point here; `CreateThreadRequest.subject`
+	// reuses only its Cc / Cf half, with the same ZWJ exception):
 	// - leading / trailing whitespace is trimmed first, with the set of
 	//   Go's `strings.TrimSpace` (so U+0085 NEL, U+00A0 and U+3000 are
 	//   trimmed; U+FEFF is not whitespace and is refused as Cf);

@@ -879,7 +879,10 @@ func TestBoard_SubjectRefusesFormatAndControlCharacters(t *testing.T) {
 				t.Fatalf("the 400 echoes the input: %s", w.Body)
 			}
 			list := f.do("GET", "/api/board/threads", "alice@ctf.local", nil)
-			if strings.Contains(list.Body.String(), `"id"`) {
+			if list.Code != http.StatusOK {
+				t.Fatalf("list: status=%d body=%s", list.Code, list.Body)
+			}
+			if ts, ok := f.decode(list)["threads"].([]any); !ok || len(ts) != 0 {
 				t.Fatalf("a rejected subject must create no thread: %s", list.Body)
 			}
 		})

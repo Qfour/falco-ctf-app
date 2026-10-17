@@ -40,7 +40,10 @@ var inlineTextLocals = []string{"displayName"}
 var inlineTextArg = `(?:[A-Za-z_$][\w$]*\.(?:` + strings.Join(inlineTextFields, "|") + `)\b|(?:` + strings.Join(inlineTextLocals, "|") + `)\b)`
 
 // isolateHelpers are the two helpers that isolate it (the same one-liner, see
-// core-util.tmpl), each with its pinned declaration. The portal declares each once
+// core-util.tmpl), each with its pinned declaration. They stay two names on
+// purpose (nameHTML for a name, textHTML for prose; a later difference, such as an
+// aria-label for a name, must not touch the other), and
+// TestDisplayNames_IsolationHelpersAreTheSameLine pins that the BODIES are one. The portal declares each once
 // (core-util.tmpl); the dashboard has its own esc, so its own copy of nameHTML next
 // to it, and no textHTML (it renders no board).
 var isolateHelpers = []struct {
@@ -61,8 +64,25 @@ var (
 	doubleEscRe = regexp.MustCompile(`(?:^|[^\w$.])(?:esc\(\s*(?:nameHTML|textHTML)\(|(?:nameHTML|textHTML)\(\s*esc\()`)
 )
 
+// declRe finds a declaration of helper wherever on the line it sits, in the
+// forms portal_partials_test.go's escDeclRe finds for esc: `function|const|let|
+// var|class helper`, a declarator list `const a = x, helper = ...` and a
+// destructuring `const {helper} = ...`. The pinned line is one such match.
 func declRe(helper string) *regexp.Regexp {
-	return regexp.MustCompile(`\b(?:function\*?|const|let|var|class)\s+` + helper + `\b`)
+	return regexp.MustCompile(`\b(?:function\*?|const|let|var|class)\s+` + helper + `\b|\b(?:const|let|var)\b[^;\n]*\b` + helper + `\b\s*(?:=|[,}\]])`)
+}
+
+// writeRe finds a write to helper that is not a declaration (escWriteRe's
+// forms): bare `helper = ...` (also `||=`, `+=`; not ==, ===, =>), a property
+// write `x.helper = ...` / `self['helper'] = ...`, and defineProperty /
+// defineProperties / assign / set naming 'helper'. The scan runs on a body with
+// the pinned line and the declaration matches already cut out. False positive by
+// design, as for esc: `m.set('textHTML', v)`; rename the key rather than
+// loosening the pattern.
+func writeRe(helper string) *regexp.Regexp {
+	return regexp.MustCompile("(?m)(?:^|[^\\w$.])" + helper + "\\s*(?:\\*\\*|<<|>>>?|&&|\\|\\||\\?\\?|[-+*/%&|^])?=(?:[^=>]|$)" +
+		"|(?:\\.\\s*" + helper + "\\b|\\[\\s*['\"`]" + helper + "['\"`]\\s*\\])\\s*(?:\\*\\*|<<|>>>?|&&|\\|\\||\\?\\?|[-+*/%&|^])?=(?:[^=>]|$)" +
+		"|\\b(?:defineProperty|defineProperties|assign|set)\\s*\\([^;\\n]*['\"`]" + helper + "['\"`]")
 }
 
 // bidiFloors are the numbers of isolated sites (nameHTML / textHTML on participant
@@ -110,7 +130,14 @@ func checkBidiNames(portal map[string]string, index string, floors map[string]in
 			errs = append(errs, fmt.Errorf("%s: %d nameHTML/textHTML(<participant inline text>) sites, want at least %d (a site moved or stopped matching the scan)", name, n, floor))
 		}
 		for _, h := range isolateHelpers {
-			d := len(declRe(h.name).FindAllString(body, -1))
+			dre := declRe(h.name)
+			d := len(dre.FindAllString(body, -1))
+			// What is left once the pinned line and every declaration are cut out
+			// can only be a write to the helper.
+			rest := dre.ReplaceAllString(strings.ReplaceAll(body, h.wantLine, ""), "")
+			for _, m := range writeRe(h.name).FindAllString(rest, -1) {
+				errs = append(errs, fmt.Errorf("%s: found %q — %s must be declared once, as the pinned line, and never reassigned (a write swaps the isolation for every pane)", name, strings.TrimSpace(m), h.name))
+			}
 			if name == "index.html" {
 				indexDecls[h.name] += d
 			} else {
@@ -149,6 +176,14 @@ var (
 	nameHTMLWantLine = isolateHelpers[0].wantLine
 	textHTMLWantLine = isolateHelpers[1].wantLine
 )
+
+func TestDisplayNames_IsolationHelpersAreTheSameLine(t *testing.T) {
+	a := strings.ReplaceAll(isolateHelpers[0].wantLine, isolateHelpers[0].name, "H")
+	b := strings.ReplaceAll(isolateHelpers[1].wantLine, isolateHelpers[1].name, "H")
+	if a != b {
+		t.Fatalf("nameHTML and textHTML must differ only in their name:\n  %s\n  %s", isolateHelpers[0].wantLine, isolateHelpers[1].wantLine)
+	}
+}
 
 func TestDisplayNames_AreBidiIsolated(t *testing.T) {
 	portal, index := bidiSources(t)
@@ -232,6 +267,35 @@ func TestDisplayNames_BidiGateCatchesRegressions(t *testing.T) {
 		}},
 		{"the dashboard declares textHTML (it renders no board)", "index.html declares textHTML 1 times, want exactly 0", true, func(s *bidiSrc) {
 			s.index += "\n  " + textHTMLWantLine + "\n"
+		}},
+		// R1#1 (review-5x 19): the declaration and write forms escDeclRe / escWriteRe
+		// catch for esc are caught for the isolating helpers too.
+		{"textHTML in a declarator list", "declares textHTML 2 times", false, func(s *bidiSrc) {
+			s.portal["pane-new.tmpl"] = "<script>const a = 1, textHTML = (s) => s;</script>"
+		}},
+		{"textHTML by destructuring", "declares textHTML 2 times", false, func(s *bidiSrc) {
+			s.portal["pane-new.tmpl"] = "<script>const {textHTML} = window.helpers;</script>"
+		}},
+		{"nameHTML in a declarator list", "declares nameHTML 2 times", false, func(s *bidiSrc) {
+			s.portal["pane-new.tmpl"] = "<script>let a = 1, nameHTML = (s) => s;</script>"
+		}},
+		{"textHTML is reassigned", "never reassigned", true, func(s *bidiSrc) {
+			s.portal["pane-new.tmpl"] = "<script>textHTML = (s) => s;</script>"
+		}},
+		{"textHTML is reassigned with ||=", "never reassigned", true, func(s *bidiSrc) {
+			s.portal["pane-new.tmpl"] = "<script>textHTML ||= (s) => s;</script>"
+		}},
+		{"nameHTML is reassigned", "never reassigned", true, func(s *bidiSrc) {
+			s.portal["pane-new.tmpl"] = "<script>nameHTML = esc;</script>"
+		}},
+		{"textHTML is written as a property", "never reassigned", true, func(s *bidiSrc) {
+			s.portal["pane-new.tmpl"] = "<script>window.textHTML = (s) => s;</script>"
+		}},
+		{"textHTML is written through defineProperty", "never reassigned", true, func(s *bidiSrc) {
+			s.portal["pane-new.tmpl"] = "<script>Object.defineProperty(window, 'textHTML', { value: (s) => s });</script>"
+		}},
+		{"nameHTML is written through Object.assign", "never reassigned", true, func(s *bidiSrc) {
+			s.portal["pane-new.tmpl"] = "<script>Object.assign(window, { 'nameHTML': (s) => s });</script>"
 		}},
 		// The floor, alone: the name is reached through an alias, which the scan
 		// cannot see, so only the lower bound notices that a site is missing.

@@ -59,25 +59,30 @@ func TestBoardSubject_SweepEveryCodePoint(t *testing.T) {
 
 // TestBoardSubject_AgreesWithDisplayNameTable: on every row of the display-name
 // table (cases.yaml, the shared case list) the subject predicate answers as the
-// display-name predicate does once the metacharacters are taken out of the
-// input. This is the "reuse" half: one table, no second list of inputs.
+// display-name predicate does once each metacharacter is REPLACED by a neutral
+// letter "x". Replaced, not deleted: deleting one would join its neighbours (a
+// ZWJ that sat next to a metacharacter could end up between two emoji). The
+// premise is that "x" is neither an emoji nor a Cc / Cf character, so it changes
+// nothing about the rest of the row. This is the "reuse" half: one table, no
+// second list of inputs.
 func TestBoardSubject_AgreesWithDisplayNameTable(t *testing.T) {
 	rule := loadNameRule(t)
-	strip := strings.NewReplacer(splitPairs(rule.Meta)...)
+	neutral := strings.NewReplacer(metaToX(rule.Meta)...)
 	for _, c := range loadNameParityCases(t) {
 		in := c.input()
 		t.Run(c.Note, func(t *testing.T) {
-			if got, want := inlineTextHasForbidden(in), displayNameHasForbidden(strip.Replace(in)); got != want {
-				t.Fatalf("inlineTextHasForbidden(%+q) = %v, displayNameHasForbidden(without metacharacters) = %v", in, got, want)
+			if got, want := inlineTextHasForbidden(in), displayNameHasForbidden(neutral.Replace(in)); got != want {
+				t.Fatalf("inlineTextHasForbidden(%+q) = %v, displayNameHasForbidden(metacharacters replaced) = %v", in, got, want)
 			}
 		})
 	}
 }
 
-func splitPairs(chars string) []string {
+// metaToX is the argument list of a Replacer that turns each character of chars into "x".
+func metaToX(chars string) []string {
 	var out []string
 	for _, c := range chars {
-		out = append(out, string(c), "")
+		out = append(out, string(c), "x")
 	}
 	return out
 }
