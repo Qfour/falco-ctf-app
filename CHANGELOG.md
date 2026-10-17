@@ -34,6 +34,8 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
   を正規形 `<seat>@<EXPECTED_EMAIL_DOMAIN>` だけで上書きして返す。
 - `/healthz` (auth-policy) に `roster_seats` / `roster_external` (件数のみ)。
 - scoreboard の `EXPECTED_EMAIL_DOMAIN` (chart: `env.expectedEmailDomain`)。
+- scoreboard: 起動時 (store を開いた直後、serve の前) に、保存済みの表示名のうち現在の規則 (Cc / Cf / C1・HTML の metachar・32 文字) を通らないものを数え、件数と seat を Warn で 1 行出す (0 件なら Info)。規則は書き込み時にしか効かないので、規則が厳しくなる前 (app#331 / #381) に保存された名前は再検証されず公開 board に出続けるため (app#403)。名前の値はログに出さない (規則が拒む文字を含みうる)。自動では書き換えない。
+  - **Upgrade note**: Warn が出たら、その seat に admin が `POST /api/admin/users/{user}/profile-reset` を打つ (表示名と絵柄が seat の既定に戻る)。seat 一覧は 50 件で打ち切り、件数は全件。
 
 ### Changed
 
