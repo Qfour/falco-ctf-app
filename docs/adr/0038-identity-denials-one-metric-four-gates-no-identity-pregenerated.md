@@ -1,6 +1,6 @@
 # ADR-0038: identity を理由にした拒否は 4 つの gate (strict・self_or_admin・authenticated・portal) で 1 つの metric `scoreboard_identity_denials_total{gate, reason}` と 1 種類の間引きログに記録し、`no_identity` の事前生成と「健全な本番で 0」を platform との契約にする
 
-- Status: **Proposed** (2026-10-17 起草)。Accepted 化は VP が実装 PR (PR-B) の merge と同じセッションの docs PR で行う (workspace `ORGANIZATION.md` §4 の Class-2 条件 (f))。クロスリポ契約表に行を 1 つ新設するので architect 合意 + VP 承認 (ORGANIZATION.md §4)。新 image・新サービス・Hard Invariant の変更は無いので CEO 判断を要さない。
+- Status: **Accepted (2026-10-18、実装 = app#424、`a5fe952`)**。実装との差分は末尾手前の「Accepted 時の追補」に記録した (Decision 本文は書き換えていない)。起草は 2026-10-17 (Proposed)。Accepted 化は VP が実装 PR (PR-B) の merge と同じセッションの docs PR で行う (workspace `ORGANIZATION.md` §4 の Class-2 条件 (f))。クロスリポ契約表に行を 1 つ新設するので architect 合意 + VP 承認 (ORGANIZATION.md §4)。新 image・新サービス・Hard Invariant の変更は無いので CEO 判断を要さない。
 - Date / Deciders: 2026-10-17 / VP (承認) + architect (起草・契約表の新設行への同意) + security-engineer (D4 の field 規則・log 流量のレビュー) / 実装: software-engineer (PR-B)、qa-engineer (V1〜V8 の derived test と変異 test)、sre-engineer (platform#244 の verify)
 - 関連: Issue #404 (#398 review-5x R4#3)、PR #398 (`c7ac02c`、app#387)、platform#244 (sre の判断 2026-10-17)・platform#231、#397 (board の 2 bucket)、#393 / PR #409 (Authz の identity 出所の表、open)、ADR-0023、ADR-0034 (I8)、ADR-0037 (Proposed)。フェーズ: 非該当
 - 読み方: app は origin/main `eb76f22` (#405 を含む。`d118788` から api.go の行が +12 ずれている)、platform は origin/main `e126fff`。`conventions` は `.claude/rules/falco-ctf-app-conventions.md`、`api.go` は `internal/scoreboard/api/api.go`、`0037:N` は `docs/adr/0037-*.md` の行。
@@ -221,6 +221,16 @@
   - `MiddlewareStrict` に nil の observer を渡す (組み立て時の失敗)。
 - **この検査が見ないもの**: 実クラスタで ingress が header を落としたときに本当に数が増えるか (実機でのみ確認可。platform#244 の verify と次の stand-up で見る)、Prometheus の評価、Alertmanager。
 
+## Accepted 時の追補 (2026-10-18、実装 = app#424。architect が app#424 review-5x R4#3 で指定)
+
+Decision 本文は書き換えず、実装との差分をここに足す。本文と食い違う場合は、下記 (a)〜(e) が優先する。
+
+- **(a) D2 の portal の例外**: `GET /portal` は 200 のまま `gate="portal"` で記録する。admin と canonical seat は記録しない。identity を理由に「拒否」する gate ではないので、`identityobs.Record` の doc もこの例外を明記している。
+- **(b) V9 (新設) 契約表の検査**: D6 の契約表の行と、metric 名・label・reason の値の一致を `make test` で検査する (`internal/scoreboard/identityobs/contract_test.go`。`.dockerignore` の rules 1 file の例外として読む)。reason を足すときは契約表の行への追記が要る。これは D6 の「gate と reason の値を足すのは app 単独でよい」の範囲 (architect 合意)。
+- **(c) Consequences の追加**: ADR-0037 S1a で、V4 と #424 の閉包 COPY 検査 (collector / auth-policy / ttyd-proxy) を、`dependency_boundary_test.go` 側の 1 本の表駆動 test にまとめる。
+- **(d) V8 の文言を実装に合わせる**: 変異 test は 13 + 3 本。「事前生成を外す変異」「`DenialsTotal` の直接参照」「内側の gate のみ (外側を通さない)」の検査を含む。V8 の列挙は例であり、実装の変異の数と名前が正。
+- **(e) D6 の契約行の platform の読み方を置換**: 原文 (累計の値を読む) に代えて、platform は「**前回 verify / stand-up baseline からの増分**が 0 でなければ WARN」と読む。Pod UID が変わったら (Recreate で counter が 0 に戻る) baseline を reset する。triage は log の `identity gate denied` の `remote_addr` から行う。理由: 累計を読むと、一度の事故で WARN が latch して、その後の健全な状態を見分けられない。契約の (3) 「Pod の起動からの累計」は counter の性質の記述として変わらない。
+
 ## Advice (受けた助言。非拘束でも記録する)
 
 - **Issue #404 (#398 review-5x R4#3、2026-10-17)**: 3 gate と portal が同じ metric・間引き・field 規則を使う。gate = strict | read | board、reason、portal は canary、platform が読む前に形を決める。→ すべて採用し、語の名前だけ D2 で改めた。
@@ -238,6 +248,7 @@
 - **sre-engineer (platform#244、2026-10-17)**: platform が依存するのは名前・label・`no_identity`・0 起点の事前生成の 3 点で、bucket は表示用。WARN で読み FAIL にはしない。系列が無ければ判定不能として扱い、これが改名の検出器にもなる。行は最終形の PR に同梱する。platform の PR は app の main と pin の後。`monitoring.enabled` は false のまま。→ D6 と D7 にそのまま入れた。label 名は `outcome` から `reason` に変わるが、platform はまだ実装していない。`non_canonical` を読むかどうかは sre が判断する (契約の変更は要らない)。
 - **ADR-0037 D8 (architect、#397)**: board を strict に揃える。→ 本 ADR はどちらの結論でも成り立つ (D7)。
 - **security-engineer**: 未受領。PR-B のレビューで次を受け、ここに追記する。
+  - **2026-10-18 追記**: `mismatch` の帰属を諦めることの可否は #426 で判断する (本 ADR では結論を出さない)。
   - D4 の field の集合。
   - `mismatch` の帰属を諦めることの可否。
   - 間引き key が固定であること。
