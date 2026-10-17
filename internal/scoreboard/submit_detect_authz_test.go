@@ -7,17 +7,16 @@ package scoreboard_test
 // that branch had no legitimate caller. submit-detect is now plain
 // self-or-admin (identity header REQUIRED, exact canonical match per ADR-0034
 // S2) and the self-or-admin-write VOCABULARY — constant, spec value, gate
-// function — is deleted. This file pins both halves: the route's behaviour,
-// and that the vocabulary stays gone.
+// function — is deleted. This file pins the route's behaviour. That the
+// vocabulary cannot come back as dead words is not pinned here by name: it is
+// the general form in internal/apispec/authz_vocabulary_test.go (every Authz
+// constant is used by a Route and appears in a spec; every spec value is a
+// constant) plus specparity.ClaimedIdentityForwardViolations on each
+// service's Routes() (app#376).
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -73,110 +72,5 @@ func TestSubmitDetect_RequiresProvenIdentity(t *testing.T) {
 				t.Fatalf("403 body is not the {\"error\": ...} shape: %s", w.Body)
 			}
 		})
-	}
-}
-
-// --- the vocabulary stays deleted ------------------------------------------
-
-// The identifiers/values are assembled at run time so this file itself never
-// spells them out as one literal.
-var (
-	removedGateIdent = "selfOrAdmin" + "Write"
-	removedConstName = "AuthzSelfOrAdmin" + "Write"
-	removedAuthzVal  = "self-or-admin" + "-write"
-)
-
-// goSourceViolations parses src (named file) and reports every identifier
-// equal to removedGateIdent / removedConstName and every string literal equal
-// to removedAuthzVal — comments are deliberately ignored (history may be
-// recorded in prose; code may not use the vocabulary).
-func goSourceViolations(t *testing.T, file string, src any) []string {
-	t.Helper()
-	f, err := parser.ParseFile(token.NewFileSet(), file, src, parser.SkipObjectResolution)
-	if err != nil {
-		t.Fatalf("parse %s: %v", file, err)
-	}
-	var out []string
-	ast.Inspect(f, func(n ast.Node) bool {
-		switch x := n.(type) {
-		case *ast.Ident:
-			if x.Name == removedGateIdent || x.Name == removedConstName {
-				out = append(out, file+": identifier "+x.Name)
-			}
-		case *ast.BasicLit:
-			if x.Kind == token.STRING && strings.Contains(x.Value, removedAuthzVal) {
-				out = append(out, file+": string literal "+x.Value)
-			}
-		}
-		return true
-	})
-	return out
-}
-
-// TestAuthz_SelfOrAdminWriteVocabularyIsGone: 0 declarations, 0 calls, 0
-// route declarations, 0 spec values — in every non-test Go file under
-// internal/ and cmd/ and in every docs/openapi-*.yaml.
-//
-// Scope: non-test .go files and docs/openapi-*.yaml ONLY. Templates and docs
-// (including comments in them) are out of scope; a human fixes those.
-func TestAuthz_SelfOrAdminWriteVocabularyIsGone(t *testing.T) {
-	root := filepath.Join("..", "..")
-	var violations []string
-	parsed := 0
-	for _, dir := range []string{"internal", "cmd"} {
-		err := filepath.WalkDir(filepath.Join(root, dir), func(p string, d os.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() || !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
-				return nil
-			}
-			parsed++
-			violations = append(violations, goSourceViolations(t, p, nil)...)
-			return nil
-		})
-		if err != nil {
-			t.Fatalf("walk %s: %v", dir, err)
-		}
-	}
-	// non-vacuous: the walk really saw the api package (an empty walk is "0 violations").
-	if parsed < 20 {
-		t.Fatalf("parsed only %d non-test Go files under internal/ cmd/ — the walk is broken", parsed)
-	}
-	specs, err := filepath.Glob(filepath.Join(root, "docs", "openapi-*.yaml"))
-	if err != nil || len(specs) != 3 {
-		t.Fatalf("expected 3 docs/openapi-*.yaml, got %v (err %v)", specs, err)
-	}
-	for _, p := range specs {
-		b, err := os.ReadFile(p)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Contains(string(b), removedAuthzVal) {
-			violations = append(violations, p+": mentions the removed x-ctf-authz value")
-		}
-	}
-	if len(violations) > 0 {
-		t.Fatalf("the self-or-admin-write vocabulary was reintroduced (app#346: header-less claimed-identity allow has no legitimate caller):\n  %s", strings.Join(violations, "\n  "))
-	}
-}
-
-// The detector is not vacuous: a source that declares/calls the removed gate,
-// or declares a route with the removed value, is flagged.
-func TestAuthz_SelfOrAdminWriteVocabularyDetectorCatchesReintroduction(t *testing.T) {
-	for name, src := range map[string]string{
-		"gate declaration": "package p\nfunc (h *H) " + removedGateIdent + "() bool { return true }\n",
-		"gate call":        "package p\nfunc f(h *H) { h." + removedGateIdent + "() }\n",
-		"constant":         "package p\nvar _ = apispec." + removedConstName + "\n",
-		"string value":     "package p\nvar _ = \"" + removedAuthzVal + "\"\n",
-	} {
-		t.Run(name, func(t *testing.T) {
-			if v := goSourceViolations(t, "synthetic.go", src); len(v) == 0 {
-				t.Fatalf("%s was not flagged", name)
-			}
-		})
-	}
-	if v := goSourceViolations(t, "clean.go", "package p\n// prose may mention "+removedGateIdent+" (history)\nfunc g() {}\n"); len(v) != 0 {
-		t.Fatalf("a comment-only mention was flagged: %v", v)
 	}
 }
