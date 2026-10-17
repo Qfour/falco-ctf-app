@@ -497,15 +497,18 @@ func TestSharedHelpers_GateCatchesRegressions(t *testing.T) {
 }
 
 // errorFieldRe finds a read of a response's `error` field: `x.error`, `x?.error`,
-// `x['error']`. console.error is a call, not a read of a response (the one allowed
-// receiver, see checkErrorFieldReads).
-var errorFieldRe = regexp.MustCompile(`([\w$\])]*)\??\.\s*error\b|\[\s*['"` + "`" + `]error['"` + "`" + `]\s*\]`)
+// `x['error']`, and a destructuring that takes it (`const { error } = ...`, a parameter
+// `({ error }) => ...`). console.error is a call, not a read of a response (the one
+// allowed receiver, see checkErrorFieldReads).
+var errorFieldRe = regexp.MustCompile(`([\w$\])]*)\??\.\s*error\b` +
+	`|\[\s*['"` + "`" + `]error['"` + "`" + `]\s*\]` +
+	`|\b(?:const|let|var)\b[^;\n]*\{[^}\n]*\berror\b[^}\n]*\}\s*=[^=]` +
+	`|\(\s*\{[^})\n]*\berror\b[^})\n]*\}\s*[,)]`)
 
 // checkErrorFieldReads returns every file (a portal partial or index.html) that reads the
-// server's `error` field itself instead of calling serverErrorText: a failed response is read
-// in ONE place, core-util.tmpl's pinned line (and index.html's byte-identical copy of it),
-// so a path cannot show `d.error` of a body that was not JSON, or lose the HTTP-status
-// fallback, on its own (app#415). Comments are stripped and every pinned line is cut out.
+// response's `error` field other than through serverErrorText. That is the property it
+// checks: the field is read in ONE place, core-util.tmpl's pinned line (and index.html's
+// byte-identical copy of it). Comments are stripped and every pinned line is cut out.
 func checkErrorFieldReads(portal map[string]string, index string, pinned string) []error {
 	files := map[string]string{"index.html": index}
 	for n, b := range portal {
@@ -585,6 +588,15 @@ func TestErrorFieldReads_OnlyServerErrorTextReadsIt(t *testing.T) {
 		}, nil},
 		{"index.html's reset handler reads the field", "index.html reads", func(_ map[string]string, idx *string) {
 			*idx += "\n<script>alert('Reset failed: ' + (await r.json()).error);</script>"
+		}, nil},
+		{"a path destructures {error}", "reads \"const { error } =\"", func(p map[string]string, _ *string) {
+			p["pane-board.tmpl"] += "\n<script>const { error } = await r.json();</script>"
+		}, nil},
+		{"a path destructures {error} in a parameter", "reads \"({ error })\"", func(p map[string]string, _ *string) {
+			p["pane-me.tmpl"] += "\n<script>r.json().then(({ error }) => alert(error));</script>"
+		}, nil},
+		{"a destructuring of other fields is not a read of error", "", func(p map[string]string, _ *string) {
+			p["pane-me.tmpl"] += "\n<script>const { id, state } = await r.json(); const o = { error: 1 };</script>"
 		}, nil},
 		{"console.error is not a read of a response", "", func(p map[string]string, _ *string) {
 			p["pane-me.tmpl"] += "\n<script>console.error(e);</script>"

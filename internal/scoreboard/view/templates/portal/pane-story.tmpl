@@ -875,6 +875,8 @@
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const cid = form.dataset.cid;
+        // trim() on purpose, not trimName: a flag is pasted, so being lenient about an edge
+        // U+FEFF / NEL is harmless here, and the server compares the flag itself.
         const flag = document.getElementById('pane-journey-flag-input').value.trim();
         const msg = document.getElementById('pane-journey-submit-msg');
         // setMsg paints the message now AND stores it so the polling re-render

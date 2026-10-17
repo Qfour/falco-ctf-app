@@ -59,8 +59,8 @@ const textHTML = (s) => '<bdi>' + esc(s) + '</bdi>';
 // U+205F, U+3000. String.prototype.trim is NOT that set: it also strips U+FEFF (which the
 // server keeps, and refuses as Cf) and does not strip U+0085 (which the server strips),
 // so trim() would refuse "Alice" + NEL where the server stores "Alice". It is the one
-// trim for every name the portal sends: the Profile form (pane-me.tmpl), the admin
-// rename (pane-scoreboard.tmpl) and a new board thread's subject (pane-board.tmpl).
+// trim for every string the server trims with strings.TrimSpace (a name, a board subject,
+// a board message body): use it, not trim(), whenever the portal sends such a string.
 // portal_nameproblem_test.go runs it against Go's table
 // and pins that no other partial defines it. templates/index.html does not load this
 // partial and carries a byte-identical copy of trimName and serverErrorText until the

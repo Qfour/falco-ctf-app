@@ -359,16 +359,24 @@ var document = {
   querySelector: function () { return { value: 'all' }; },
   getElementById: function (id) { return els[id]; },
 };
+// A Response body is ONE-SHOT, as in Fetch: a second json() rejects (bodyUsed).
+function resp(status, ok, parse) {
+  var bodyUsed = false;
+  return { status: status, ok: ok, get bodyUsed() { return bodyUsed; }, json: function () {
+    if (bodyUsed) return Promise.reject(new TypeError('Body has already been consumed.'));
+    bodyUsed = true; return parse();
+  } };
+}
 var fetch = function (url, opts) {
   calls.push({ url: url, body: JSON.parse(opts.body) });
-  if (mode === 'bad') return Promise.resolve({ status: 400, ok: false, json: function () { return Promise.resolve({ error: '<img src=x onerror=alert(1)>' }); } });
-  return Promise.resolve({ status: 200, ok: true, json: function () { return Promise.resolve({ id: 't1' }); } });
+  if (mode === 'bad') return Promise.resolve(resp(400, false, function () { return Promise.resolve({ error: '<img src=x onerror=alert(1)>' }); }));
+  return Promise.resolve(resp(200, true, function () { return Promise.resolve({ id: 't1' }); }));
 };
-function run(subject, body, m) {
+function run(subject, body, m, keep) {
   mode = m || 'ok'; calls.length = 0; selectedTid = null; rendered.length = 0;
   els['board-new-subject'] = { value: subject };
   els['board-new-body'] = { value: body };
-  els['board-new-msg'] = { textContent: '', className: '' };
+  if (!keep) els['board-new-msg'] = { textContent: '', className: 'submit-msg' };
   return onCreateSubmit({ preventDefault: function () {} }).then(function () {
     return { calls: calls.slice(), msg: els['board-new-msg'].textContent, cls: els['board-new-msg'].className, rendered: rendered.length, busy: busy };
   });
@@ -380,7 +388,12 @@ run('a\tb', 'hello').then(function (r) { out.tab = r; return run('\uFEFFhi', 'he
   .then(function (r) { out.padded = r; return run('word\u200D', 'hello'); })
   .then(function (r) { out.zwj = r; return run('fine', '   '); })
   .then(function (r) { out.noBody = r; return run('fine', 'hello', 'bad'); })
-  .then(function (r) { out.bad = r; });
+  .then(function (r) { out.bad = r; return run('fine', '  hello\u0085'); })
+  .then(function (r) { out.bodyNel = r; return run('fine', '\uFEFFhello'); })
+  .then(function (r) { out.bodyBom = r; return run('fine', ' \u0085 \u3000'); })
+  .then(function (r) { out.bodyEmpty = r; return run('a\tb', 'hello'); })
+  .then(function () { return run('fine', 'hello', 'ok', true); })
+  .then(function (r) { out.recovered = r; });
 `
 	type result struct {
 		Calls []struct {
@@ -417,5 +430,20 @@ run('a\tb', 'hello').then(function (r) { out.tab = r; return run('\uFEFFhi', 'he
 	}
 	if b := got["bad"]; len(b.Calls) != 1 || b.Msg != "<img src=x onerror=alert(1)>" || !strings.Contains(b.Cls, "err") || b.Busy {
 		t.Errorf("a failed response must show the server's sentence as text and release busy: %+v", b)
+	}
+	// The body is trimmed with trimName like the subject (app#415): a trailing NEL goes
+	// (the server strips it), a leading U+FEFF stays (the server keeps it), a body of only
+	// server-whitespace sends nothing and asks for the body.
+	if r := got["bodyNel"]; len(r.Calls) != 1 || r.Calls[0].Body["body"] != "hello" {
+		t.Errorf("a trailing NEL must be trimmed from the body: %+v", r)
+	}
+	if r := got["bodyBom"]; len(r.Calls) != 1 || r.Calls[0].Body["body"] != "\uFEFFhello" {
+		t.Errorf("a leading U+FEFF must be kept in the body: %+v", r)
+	}
+	if r := got["bodyEmpty"]; len(r.Calls) != 0 || r.Msg != "Enter the message body." || !strings.Contains(r.Cls, "err") {
+		t.Errorf("a body of only server-whitespace sends nothing and asks for the body: %+v", r)
+	}
+	if r := got["recovered"]; len(r.Calls) != 1 || r.Msg != "" || r.Cls != "submit-msg" {
+		t.Errorf("a thread sent after a refusal must clear the refusal (text and err class): %+v", r)
 	}
 }

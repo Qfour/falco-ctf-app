@@ -425,6 +425,10 @@
           return;
         }
         const d = await r.json().catch(() => ({}));
+        // A sent message leaves no refusal of an earlier attempt behind (an error text and
+        // its red class would otherwise outlive the success).
+        msgEl.textContent = '';
+        msgEl.className = 'submit-msg';
         // Reentrancy guard: only jump into the new thread if the
         // participant is still on the list view they submitted from.
         // Either way the new thread surfaces on the next list load
@@ -557,6 +561,10 @@
           return;
         }
         const d = await r.json().catch(() => ({}));
+        // A sent message leaves no refusal of an earlier attempt behind (an error text and
+        // its red class would otherwise outlive the success).
+        msgEl.textContent = '';
+        msgEl.className = 'submit-msg';
         bodyEl.value = '';
         if (selectedTid === tid) renderThread(d);
       } catch (e) {
@@ -845,6 +853,10 @@
           return;
         }
         const d = await r.json().catch(() => ({}));
+        // A sent message leaves no refusal of an earlier attempt behind (an error text and
+        // its red class would otherwise outlive the success).
+        msgEl.textContent = '';
+        msgEl.className = 'submit-msg';
         // The shell (this SAME reply form) stays mounted across a
         // same-tid repaint, so clear the textarea explicitly rather than
         // relying on a full-page rebuild to do it.
