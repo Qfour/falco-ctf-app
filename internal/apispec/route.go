@@ -120,7 +120,14 @@ const (
 	// IdentityClaimed: the identity comes from the path, the body or the
 	// event payload and is never proven.
 	IdentityClaimed IdentitySource = "claimed"
-	// IdentityNone: the route reads no caller identity.
+	// IdentityNone: the access decision does not use the caller's identity,
+	// and neither does the choice of whose data is read or written. A none
+	// route may read the proven header as a display hint only (GET /portal
+	// renders the role and the username from it, which is why that shell is
+	// Cache-Control: no-store). It never takes an identity from its path
+	// either, even to read: an anonymous request that picks whose data comes
+	// back is a self-scope bypass (why the collector does not forward GET
+	// /api/users/{user}/me).
 	IdentityNone IdentitySource = "none"
 )
 
@@ -137,9 +144,12 @@ const (
 //	claimed | claimed-identity,                    | specparity.ClaimedIdentityForwardViolations: each
 //	        | internal-claimed-identity            | claimed word needs its own rule; every service pins
 //	        |                                      | its claimed routes as a literal set
-//	none    | none                                 | ClaimedIdentityForwardViolations: no {user} in the
-//	        |                                      | Pattern; every service pins its none routes as a
-//	        |                                      | literal set. NOT caught: identity read from the body
+//	none    | none                                 | ClaimedIdentityForwardViolations: no path parameter
+//	        |                                      | outside the non-identity set ({asset}); every
+//	        |                                      | service pins its none routes as a literal set.
+//	        |                                      | NOT caught: an identity read from the body, the
+//	        |                                      | query string or a header other than X-Auth-Request-*
+//	        |                                      | (the literal-set pin makes such a route a named diff)
 //
 // A word missing from this map is a violation wherever it is read
 // (ClaimedIdentityForwardViolations runs on every service's Routes();
@@ -156,7 +166,7 @@ func AuthzIdentitySources() map[Authz]IdentitySource {
 	}
 }
 
-// IdentitySourceOf looks a up in AuthzIdentitySources. ok is false for a word
+// IdentitySourceOf looks a word up in AuthzIdentitySources. ok is false for a word
 // the map does not classify; every caller treats that as a violation.
 func IdentitySourceOf(a Authz) (src IdentitySource, ok bool) {
 	src, ok = AuthzIdentitySources()[a]

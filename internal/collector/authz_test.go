@@ -122,7 +122,11 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 	var proven, none, claimed []string
 	for _, rt := range h.Routes() {
 		rt := rt
-		switch src, _ := apispec.IdentitySourceOf(rt.Authz); src {
+		src, ok := apispec.IdentitySourceOf(rt.Authz)
+		if !ok {
+			t.Errorf("%s: Authz %q is not classified in apispec.AuthzIdentitySources", rt.MuxPattern(), rt.Authz)
+		}
+		switch src {
 		case apispec.IdentityProven:
 			proven = append(proven, string(rt.Authz)+" "+rt.MuxPattern())
 		case apispec.IdentityNone:

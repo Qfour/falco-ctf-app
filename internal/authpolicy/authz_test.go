@@ -120,7 +120,11 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 		case apispec.AuthzRostered:
 			rosteredGated++
 		}
-		switch src, _ := apispec.IdentitySourceOf(rt.Authz); src {
+		src, ok := apispec.IdentitySourceOf(rt.Authz)
+		if !ok {
+			t.Errorf("%s: Authz %q is not classified in apispec.AuthzIdentitySources", rt.MuxPattern(), rt.Authz)
+		}
+		switch src {
 		case apispec.IdentityNone:
 			none = append(none, rt.MuxPattern())
 		case apispec.IdentityClaimed:
@@ -191,12 +195,8 @@ func TestAuthz_EveryProvenRouteRejectsUnproven(t *testing.T) {
 					continue
 				}
 				words[rt.Authz] = true
-				r := httptest.NewRequest(rt.Method, authzTarget(rt), nil)
-				r.Header.Set("Cookie", "_oauth2_proxy=fake-session")
-				w := httptest.NewRecorder()
-				h.ServeHTTP(w, r)
-				if w.Code != tc.want {
-					t.Errorf("%s: status=%d body=%s, want %d (Authz: %s is classified proven)", rt.MuxPattern(), w.Code, w.Body, tc.want, rt.Authz)
+				if v := unprovenViolation(h, rt, tc.want); v != "" {
+					t.Error(v)
 				}
 			}
 			want := map[apispec.Authz]bool{apispec.AuthzAdmin: true, apispec.AuthzSelfOrAdmin: true, apispec.AuthzRostered: true}
@@ -204,6 +204,37 @@ func TestAuthz_EveryProvenRouteRejectsUnproven(t *testing.T) {
 				t.Fatalf("proven words exercised = %v, want %v (the derivation is broken, or a word changed class)", words, want)
 			}
 		})
+	}
+}
+
+// unprovenViolation sends rt's request with a session cookie (so the handler
+// asks oauth2-proxy, whose answer the test fixes) and reports any status but
+// want.
+func unprovenViolation(h http.Handler, rt apispec.Route, want int) string {
+	r := httptest.NewRequest(rt.Method, authzTarget(rt), nil)
+	r.Header.Set("Cookie", "_oauth2_proxy=fake-session")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != want {
+		return fmt.Sprintf("%s: status=%d body=%s, want %d (Authz: %s is classified proven)", rt.MuxPattern(), w.Code, w.Body, want, rt.Authz)
+	}
+	return ""
+}
+
+// The detector is not vacuous (ADR-0005 V8, as scoreboard's
+// TestAuthz_HeaderlessDetectorCatchesClaimedFallback): a proven route whose
+// handler answers 200 without asking oauth2-proxy is flagged for both
+// unproven answers.
+func TestAuthz_UnprovenDetectorCatchesUngatedRoute(t *testing.T) {
+	rt := apispec.Route{Method: "GET", Pattern: "/check-participant-audit", Authz: apispec.AuthzRostered,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK) // BUG: never asks oauth2-proxy.
+		})}
+	mux, _ := apispec.NewMux([]apispec.Route{rt})
+	for _, want := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		if v := unprovenViolation(mux, rt, want); v == "" {
+			t.Errorf("a 200 on a proven route was not flagged (want %d)", want)
+		}
 	}
 }
 

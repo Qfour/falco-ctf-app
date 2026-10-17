@@ -246,7 +246,7 @@ func authzCheck(t *testing.T, srv http.Handler, rt apispec.Route) string {
 		// gate performs NO username match against a {user} path segment —
 		// any proven identity, related or not, may proceed. A mismatched
 		// (but valid) identity like authzMismatchedEmail must NEVER be
-		// 403'd here; TestAuthz_AuthenticatedGate_MissingHeaderDenied below
+		// 403'd here; TestAuthz_EveryProvenRouteRejectsHeaderless below
 		// is this case's other half (missing header -> 403), which this
 		// helper cannot express since it always sends an identity header.
 		if w.Code == http.StatusForbidden {
@@ -279,7 +279,11 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 		case apispec.AuthzAuthenticated:
 			authenticatedGated++
 		}
-		switch src, _ := apispec.IdentitySourceOf(rt.Authz); src {
+		src, ok := apispec.IdentitySourceOf(rt.Authz)
+		if !ok {
+			t.Errorf("%s: Authz %q is not classified in apispec.AuthzIdentitySources", rt.MuxPattern(), rt.Authz)
+		}
+		switch src {
 		case apispec.IdentityNone:
 			none = append(none, rt.MuxPattern())
 		case apispec.IdentityClaimed:
@@ -310,7 +314,7 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 	// internal-claimed-identity class: 9 + 6 + 1 + 8 + 6 = 30; closing the
 	// browser path of POST /falco/events and POST /internal/exfil/{cid} moves
 	// both out of the none/claimed-identity bucket (their Authz was
-	// claimed-identity, which openGated counts with none) into
+	// claimed-identity, counted with none at the time) into
 	// internal-claimed-identity: 9 + 6 + 3 + 6 + 6 = 30; ADR-0034 S1 then removed
 	// the participant display-name route (internal-claimed-identity 3 -> 2) and
 	// added the two profile routes (+1 admin, +1 self-or-admin):

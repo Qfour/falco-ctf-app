@@ -9,7 +9,8 @@ import (
 
 // claimedIdentityBaseline is a clean table covering every legitimate shape:
 // a forwarded claimed-identity route, the internal-only webhook, a proven
-// route with {user} in its path, and a none route without one.
+// route with {user} in its path, and none routes with no path parameter or
+// only a non-identity one ({asset}, and the {$} anchor).
 func claimedIdentityBaseline() []apispec.Route {
 	return []apispec.Route{
 		{Method: "POST", Pattern: "/api/challenges/{cid}/submit", Audience: apispec.AudienceParticipant, Authz: apispec.AuthzClaimedIdentity, CollectorForward: true},
@@ -18,6 +19,7 @@ func claimedIdentityBaseline() []apispec.Route {
 		{Method: "POST", Pattern: "/api/challenges/{cid}/submit-detect", Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdmin},
 		{Method: "GET", Pattern: "/api/users/{user}/me", Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdmin},
 		{Method: "GET", Pattern: "/healthz", Audience: apispec.AudienceInfra, Authz: apispec.AuthzNone},
+		{Method: "GET", Pattern: "/static/{asset}/{$}", Audience: apispec.AudienceParticipant, Authz: apispec.AuthzNone},
 	}
 }
 
@@ -91,11 +93,16 @@ func TestClaimedIdentityForwardViolations_Mutations(t *testing.T) {
 		// path, declared none instead of claimed-identity.
 		{"a none route with {user} in its path (a claimed identity declared as none)", func(rs []apispec.Route) []apispec.Route {
 			return append(rs, apispec.Route{Method: "POST", Pattern: "/api/users/{user}/display-name", Audience: apispec.AudienceParticipant, Authz: apispec.AuthzNone})
-		}, "Authz=none with {user} in the Pattern", nil},
+		}, "Authz=none with path parameter {user}", nil},
 		{"a none route with a {user...} wildcard", func(rs []apispec.Route) []apispec.Route {
 			rs[5].Pattern = "/files/{user...}"
 			return rs
-		}, "Authz=none with {user} in the Pattern", nil},
+		}, "Authz=none with path parameter {user}", nil},
+		// The rule is an allowlist, so renaming the identity parameter does
+		// not get past it.
+		{"a none route whose identity parameter is renamed ({seat})", func(rs []apispec.Route) []apispec.Route {
+			return append(rs, apispec.Route{Method: "GET", Pattern: "/api/seats/{seat}/journey", Audience: apispec.AudienceParticipant, Authz: apispec.AuthzNone})
+		}, "Authz=none with path parameter {seat}", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			table := apispec.AuthzIdentitySources()

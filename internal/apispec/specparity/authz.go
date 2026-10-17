@@ -1,6 +1,7 @@
 package specparity
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -32,16 +33,23 @@ import (
 //     routes to: the falcosidekick webhook POST /falco/events, and the
 //     collector->scoreboard /internal/exfil/{cid} leg. It requires
 //     Audience=internal.
-//   - none: the Pattern has no {user}. A route that takes the identity from
-//     its path reads a claimed identity, whatever it declares. LIMIT: a
-//     route that reads the identity from the BODY and declares none is not
-//     caught here; each service's authz test pins its none routes as a
-//     literal set, so such a route is at least a named diff in review.
+//   - none (the access decision, and whose data is used, do not depend on the
+//     caller; a display hint from the proven header is allowed, see
+//     apispec.IdentityNone): every path parameter is in nonIdentityPathParam.
+//     A route that takes an identity from its path reads a claimed identity,
+//     whatever it declares, and the set is an allowlist so the identity
+//     parameter cannot get past it under another name ({seat} as well as
+//     {user}). LIMIT: an identity read from the BODY, the QUERY STRING or a
+//     header other than X-Auth-Request-* is not caught here; each service's
+//     authz test pins its none routes as a literal set, so such a route is
+//     at least a named diff in review.
 //   - proven: nothing structural; the behaviour (no identity -> refused) is
 //     tested per service from the same table.
 //
-// The checks run on each service's live Routes() (parity_coverage_test.go
-// requires the caller in every mux-owning package). Together with
+// The checks run on each service's live Routes(): parity_coverage_test.go
+// requires a test of the calling name in every mux-owning package (that the
+// test calls this function on the live Routes() is held by review, not by a
+// check). Together with
 // authz_vocabulary_test.go (c) (every constant is in a spec) and V1 / V3b
 // (every spec operation is a live route with the same x-ctf-authz), every
 // declared word is on some live route this function reads, so the
@@ -67,8 +75,10 @@ func claimedIdentityViolations(routes []apispec.Route, sources map[apispec.Authz
 		switch src {
 		case apispec.IdentityProven:
 		case apispec.IdentityNone:
-			if strings.Contains(rt.Pattern, "{user}") || strings.Contains(rt.Pattern, "{user...}") {
-				violations = append(violations, head+" with {user} in the Pattern — the route takes an identity from its path, which is a claimed identity declared as none (app#393)")
+			for _, m := range pathParam.FindAllStringSubmatch(rt.Pattern, -1) {
+				if name := strings.TrimSuffix(m[1], "..."); name != "$" && !nonIdentityPathParam(name) {
+					violations = append(violations, head+" with path parameter {"+name+"}, which is not a known non-identity parameter — a path parameter can select whose data is used, which is a claimed identity declared as none (app#393)")
+				}
 			}
 		case apispec.IdentityClaimed:
 			checked++
@@ -94,4 +104,21 @@ func claimedIdentityViolations(routes []apispec.Route, sources map[apispec.Authz
 		}
 	}
 	return checked, violations
+}
+
+// pathParam matches one http.ServeMux path wildcard: {name}, {name...} or
+// the {$} end anchor.
+var pathParam = regexp.MustCompile(`\{([^}]*)\}`)
+
+// nonIdentityPathParam reports whether a path parameter name is known never
+// to name a caller. It is the one set the none rule reads, and an allowlist
+// on purpose: {user}, or the same thing renamed, is not in it. Adding a name
+// is a reviewed claim that the parameter never selects whose data is read or
+// written.
+func nonIdentityPathParam(name string) bool {
+	switch name {
+	case "asset": // GET /static/{asset}: a content-hashed file name (ADR-0028)
+		return true
+	}
+	return false
 }

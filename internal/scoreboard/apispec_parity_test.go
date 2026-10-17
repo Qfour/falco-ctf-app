@@ -357,9 +357,11 @@ func TestAPISpec_V4_ResetDirtyNeverForwarded(t *testing.T) {
 // TestAPISpec_ClaimedIdentityImpliesForwardOrInternal is the route-table
 // property behind app#346 / #376 on scoreboard's live Routes():
 // claimed-identity => CollectorForward=true (Audience does not exempt it),
-// internal-claimed-identity => Audience=internal, none => no {user} in the
-// Pattern, and a word apispec.AuthzIdentitySources does not classify is a
-// violation (app#393). It is derived from the tables, not from route names. The scoreboard declares claimed-identity routes, so checked must be > 0.
+// internal-claimed-identity => Audience=internal, none => no path parameter
+// that could name a caller, and a word apispec.AuthzIdentitySources does not
+// classify is a violation (app#393). It is derived from the tables, not from
+// route names.
+// The scoreboard declares claimed-identity routes, so checked must be > 0.
 func TestAPISpec_ClaimedIdentityImpliesForwardOrInternal(t *testing.T) {
 	f := newSpecFixture(t)
 	routes := f.srv.Routes()
