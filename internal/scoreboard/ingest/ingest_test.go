@@ -85,8 +85,8 @@ func postFalcoEventWithHeader(t *testing.T, url, rule, sharedSecretHeader string
 		"rule":     rule,
 		"priority": "Warning",
 		"output_fields": map[string]any{
-			"k8s.ns.name":                 "ctf-alice",
-			"k8s.pod.name":                "workspace",
+			"k8s.ns.name":                "ctf-alice",
+			"k8s.pod.name":               "workspace",
 			"container.image.repository": "falco-ctf/challenge",
 		},
 	}
