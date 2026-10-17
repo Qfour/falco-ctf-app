@@ -16,8 +16,8 @@
   | 〃 | `participant_action` | identity。header 無しは limiter が 403 (strict) | 1/s / 10 | `:360` | `:523` | steps/check・hints・reset-dirty・profile (`:670-725`) |
   | 〃 | `detect` | identity (strict) | 1/s / 10 | `:361` | `:524` | submit-detect (`:627-631`) |
   | 〃 | in-flight (global) | — | 5 (`DefaultDetectInflightCap`、`:303`) | `:345-352` | handler の中 (`:1413-1422`) | submit-detect |
-  | 〃 | `board_post` | identity。header 無しは client IP (`boardIdentityKeyed`、`:875-883`) | 1/10s / 3 | `:377` | `:535` | threads・messages (`:758-773`) |
-  | 〃 | `board_like` | 〃 | 1/s / 10 | `:383` | `:536` | like・unlike (`:782-797`) |
+  | 〃 | `board_post` | identity (strict。header 無しは limiter が 403)。`Handler.boardPostLimiter` = `MiddlewareStrict(boardPostBucket, IdentityKeyed)` (#397 (a)、app#417) | 1/10s / 3 | `New` の `boardPostLimiter` | `Routes()` の `boardPostMW` | threads・messages |
+  | 〃 | `board_like` | 〃 (`Handler.boardLikeLimiter`、`boardLikeMW`) | 1/s / 10 | `New` の `boardLikeLimiter` | `Routes()` の `boardLikeMW` | like・unlike |
   | scoreboard / view | `csp_report` | client IP | 5/s / 50 | `internal/scoreboard/view/csp_report.go:315-317` | `view.go:285` | csp-report |
   | scoreboard / ingest | (observation / scoring) | event の namespace (参加者) | 20/s / 100 → 429、100/s / 400 → taint して 200 | `internal/scoreboard/ingest/ingest.go:106-111, 172-176` | handler の中 | falco/events |
   | collector | (無名) | RemoteAddr | 1/s / 10 | `internal/collector/collector.go:101` | `:142` | submit・exfil (`:162-180`)。**2 route が 1 つの limiter を共有する** |
@@ -78,7 +78,7 @@ Route.RateLimit = 明示の none | 1 つ以上の Bucket / Inflight
 
 - **zero 値は「未宣言」で fail**。none の既定値にしない (ADR-0005 の「欠落は fail」の Go 側)。none は明示の構築子でだけ作る。
 - **語彙 (閉じた集合。`route.go` だけが定義する。どの宣言も使わない語は置かない)**:
-  - `KeyKind`: `ip` (`ratelimit.ClientIP`: CF-Connecting-IP → X-Forwarded-For の左端 → RemoteAddr。ingress / Cloudflare か collector の後ろでだけ信用できる、ADR-0023) / `remote-addr` (TCP の相手だけを見て転送ヘッダを見ない。collector) / `identity-strict` (`X-Auth-Request-Email`。header 無しは limiter が 403 を返し、token を使わない) / `identity-fallback` (header 無しは client IP で数える。#397 が (b) のときだけ残る) / `participant` (event の namespace。handler の中で効く。ingest)
+  - `KeyKind`: `ip` (`ratelimit.ClientIP`: CF-Connecting-IP → X-Forwarded-For の左端 → RemoteAddr。ingress / Cloudflare か collector の後ろでだけ信用できる、ADR-0023) / `remote-addr` (TCP の相手だけを見て転送ヘッダを見ない。collector) / `identity-strict` (`X-Auth-Request-Email`。header 無しは limiter が 403 を返し、token を使わない) / `participant` (event の namespace。handler の中で効く。ingest)
   - `Applies`: `all` / `observation-rules` (どの課題も forbid も expect もしない rule) / `scoring-rules` (いずれかの課題が forbid か expect する rule)
   - `OnLimit`: `reject-429` / `accept-and-taint` (200 で返し、通常の taint 述語だけを当てる。`Grader.TaintOnOverflow`、`conventions:381`)
   - `InflightScope`: `global` (#341 が入ったら `per-identity`)
@@ -88,7 +88,7 @@ Route.RateLimit = 明示の none | 1 つ以上の Bucket / Inflight
 - **型はすべて `route.go` に置く** (C6)。`internal/apispec` に 2 つ目の non-test file を作らない。
 
 ### D2. 権威と描画の向き = Go → spec
-- 宣言の権威は Go。limiter・middleware・in-flight の semaphore は宣言の値から作る。production code に数値を literal で渡す `ratelimit.New(…)` を残さない。キー種別から middleware を選ぶ処理は `ratelimit` に 1 つ置く (collector の `remoteIP` (`collector.go:278`) と `boardIdentityKeyed` (`api.go:875-883`) はそこへ移す)。handler の中で効く種別 (`participant`) に middleware を求めたら起動時に失敗する。
+- 宣言の権威は Go。limiter・middleware・in-flight の semaphore は宣言の値から作る。production code に数値を literal で渡す `ratelimit.New(…)` を残さない。キー種別から middleware を選ぶ処理は `ratelimit` に 1 つ置く (collector の `remoteIP` (`collector.go:278`) と board の `boardPostLimiter` / `boardLikeLimiter` (= `MiddlewareStrict(bucket, IdentityKeyed)`。`boardIdentityKeyed` は #417 で削除済み) はそこへ寄せる)。handler の中で効く種別 (`participant`) に middleware を求めたら起動時に失敗する。
 - spec の operation の `x-ctf-rate-limit` は、その route の宣言を描画 (render) した正準形で、`make test` が意味で比べる。
 - この向きにする理由: (a) ADR-0005 は middleware の宣言を「`Routes()` が正、spec はそれと機械比較」に分類し (`0005:223-237, 340-352`、regen-openapi `SKILL.md:22-27`)、spec → code の生成は型だけにした (`0005:397-402`)。rate-limit は origin-guard と同じ類。(b) 宣言と強制を同じ値にできるのは、組み立てる側に権威があるときだけ。(c) spec → Go にすると、生成物の鮮度を `make test` に別に持たなければならない (`gen-diff-check` は required でない)。
 - **writer (`make gen-ratelimit`) は作らない。** (a) 保証は等価検査が持ち、writer は保証を足さない。(b) writer は canon (spec) に書き込む 2 本目の経路で、Docker の中で回すための Dockerfile (Class-2 の面) を足す。(c) operation の値は、operation を書くときに他の `x-ctf-*` と一緒に人が書く。赤い test は正しい正準形をそのまま出す (貼れば直る)。再訪は Signpost 4。
@@ -115,7 +115,7 @@ x-ctf-rate-limit:
 OriginGuarded / Authz と同じ「宣言 + 導出の挙動 test」の型 (`route.go:131-140`)。PR #395 の手書きの表 (`identity_bucket_test.go:57-91` の `identityBuckets` と `submitIPBucket`) は宣言からの導出に置き換えて消す。性質と検出器の test (Properties・ShareExactlyTheirRow・SharingDetectorCatchesMismatch・PropertyDetectorCatchesPassThrough・NoneMeansNoLimiter・og → limiter の順序) は、導出した表の上に移す。
 
 ### D5. 集約は保存しない
-bucket ごとの members、client IP を使う route の一覧 (ADR-0023 C2)、運用の数値の表 (platform `docs/operations.md` §7.5) は手で書かない。必要な view は spec の grep (`key: ip` など) か test の出力から得る。ADR-0023 の C2 と platform の §7.5 には「spec の `x-ctf-rate-limit` が正」という導線だけを置く (C2 は 2026-08-28 時点の記録として残す)。
+bucket ごとの members、client IP を使う route の一覧 (ADR-0023 C2)、運用の数値の表 (platform `docs/operations.md` §7.5) は手で書かない。必要な view は spec の grep (`key: ip` など) か test の出力から得る。ADR-0023 の C2 と platform の §7.5 には「spec の `x-ctf-rate-limit` が正」という導線だけを置く (C2 は 2026-08-28 時点の記録として残す)。C2 の導線は #417 で実行済み (C2 の表に追補 1 文)。
 
 ### D6. 移行 (各段は単独で緑。HTTP の挙動は変えない)
 - **issue #390 の暫定 (「次に spec を触る PR で bucket 名に書き直す」) は行わない。** S2 が同じ 15 行をもう一度書き直す。`route.go:169-170` の誤りだけは本 ADR の PR で直す (コメント。「残りは ADR-0037 (Proposed) の V5 が閉じる」)。
@@ -133,8 +133,8 @@ bucket ごとの members、client IP を使う route の一覧 (ADR-0023 C2)、�
   | `:587` | POST /api/challenges/{cid}/submit-detect | `detect` (identity-strict, 1/1s, 10) + `detect_grader` (in-flight, global, 5) |
   | `:671` | POST /internal/exfil/{cid} | `none` (「collector の前段で制限」は description へ) |
   | `:850,917,986,1056` | steps/check・hints・reset-dirty・profile | `participant_action` (identity-strict, 1/1s, 10) |
-  | `:1162,1276` | board の threads・messages | `board_post` (#397 (a) なら identity-strict、(b) なら identity-fallback。1/10s, 3) |
-  | `:1334,1387` | board の like・unlike | `board_like` (同上。1/1s, 10) |
+  | `:1162,1276` | board の threads・messages | `board_post` (identity-strict。1/10s, 3) |
+  | `:1334,1387` | board の like・unlike | `board_like` (identity-strict。1/1s, 10) |
   | collector `:90,167` | exfil・submit | `forward` (remote-addr, 1/1s, 10)。2 route の共有を初めて書く |
 
 - **大きさ (1 PR 400 行 / 15 file)**: S1a 約 400 行 / 12 file、S1b 約 350 行 / 6 file、S2 約 400 行 / 14 file の見込み。S1a が超えるなら V2〜V4 の静的検査を S1b に回す (S1a の挙動は #395 の test が引き続き見る)。
@@ -149,7 +149,7 @@ ADR-0009 は V3b を I14 の外とした (`0009:13-17`)。ここで改める理�
 
 ### D8. 周辺との関係
 - **PR #395 (main)**: S1b の土台。S1b が手書きの表・`TableMatchesRoutes` の lenient の pin (`identity_bucket_test.go:154-157`)・`ClosedVocabulary` の文字列分類 (`:447-476`)・`submitIPBucket` を不要にする。
-- **#397 (board の 2 bucket)**: 本 ADR はどちらの結論も表せる。**architect の助言は (a) strict に揃える。** (1) fallback の key に届くのは header 無しの要求だけで、board の route はどれも handler の `requireAuthenticated` で 403 にする。fallback を必要とする呼び手が無い (参加者の ingress は auth-policy が header を必ず上書きし、collector は board を転送しない)。(2) 1 つの token map に identity と IP の 2 つの key 空間を混ぜる唯一の bucket で、そのためだけに語彙が 1 語増える。(3) strict にすると spec の 403 (`docs/openapi-scoreboard.yaml:1205,1305,1353,1403`) がそのまま真になり、「identity の bucket はすべて header 無しで 403・token を使わない」を 1 つの性質 test で言える。外から見える変化は、header 無しの flood が IP の burst を越えたときに 429 ではなく 403 になることと、`IdentityRequestsTotal{bucket="board_post"|"board_like"}` の系列が増えること (足すだけ)。(a) を S1a より先に入れれば `identity-fallback` は語彙に生まれない。後なら #397 の PR で消える (V3 が使われない語を落とす)。(b) を採るなら理由を `route.go` の語彙の doc に書き、「新しい identity bucket は strict」を守るために members の pin (= 例外リスト。#395 の lenient の pin と同じもの) が残る。どちらの場合も ADR-0023 C2 の行は手で直さず、D5 の導線にする。
+- **#397 (board の 2 bucket)**: **(a) strict で決着 (app#417、2026-10-18)。識別子 `identity-fallback` は不要** (board の 2 bucket は `MiddlewareStrict` になり、fallback 型の identity bucket は本番に無い。語彙に生まれない)。以下は決着前の検討の記録。本 ADR はどちらの結論も表せる。**architect の助言は (a) strict に揃える。** (1) fallback の key に届くのは header 無しの要求だけで、board の route はどれも handler の `requireAuthenticated` で 403 にする。fallback を必要とする呼び手が無い (参加者の ingress は auth-policy が header を必ず上書きし、collector は board を転送しない)。(2) 1 つの token map に identity と IP の 2 つの key 空間を混ぜる唯一の bucket で、そのためだけに語彙が 1 語増える。(3) strict にすると spec の 403 (`docs/openapi-scoreboard.yaml:1205,1305,1353,1403`) がそのまま真になり、「identity の bucket はすべて header 無しで 403・token を使わない」を 1 つの性質 test で言える。外から見える変化は、header 無しの flood が IP の burst を越えたときに 429 ではなく 403 になることと、`IdentityRequestsTotal{bucket="board_post"|"board_like"}` の系列が増えること (足すだけ)。(a) を S1a より先に入れれば `identity-fallback` は語彙に生まれない。後なら #397 の PR で消える (V3 が使われない語を落とす)。(b) を採るなら理由を `route.go` の語彙の doc に書き、「新しい identity bucket は strict」を守るために members の pin (= 例外リスト。#395 の lenient の pin と同じもの) が残る。どちらの場合も ADR-0023 C2 の行は手で直さず、D5 の導線にする。
 - **#393**: 分類表が入ったら V7 を「header 無しで届く route (分類が claimed / none) は `identity-strict` を持たない」に一般化する。
 - **#341**: `InflightScope` に `per-identity` を足す (そのとき語彙に入る)。
 
@@ -178,7 +178,7 @@ ADR-0009 は V3b を I14 の外とした (`0009:13-17`)。ここで改める理�
 - **V3 語彙 (S1a)**: `KeyKind`・`Applies`・`OnLimit`・`InflightScope` の定数は `route.go` にだけあり、どれも non-test code の宣言で 1 回以上使われる。`internal/apispec/authz_vocabulary_test.go` の型検査による走査を、語彙の型ごとに当てる。
 - **V4 組み立ての一本化 (S1a、静的)**: production code の `ratelimit.New(` は `internal/scoreboard/ratelimit` の中だけ (応答に効かないログの間引きは別の構築子にして区別する)。in-flight の semaphore の容量は `Inflight.Max` から作る。あわせて `internal/apispec` の non-test file の集合が、`collector/Dockerfile` と `auth-policy/Dockerfile` が COPY する集合と一致する (collector の image build は required でないので、ここで落とす)。
 - **V5 宣言 ↔ 強制 (S1b、挙動、`Routes()` から導出)**: 名前は `TestRateLimit_DeclaredLimitsEnforced`、`requiredParityTestFuncs` に足す (limit を 1 つも持たない auth-policy でも走る)。
-  - middleware で効くキー種別 (`ip`・`remote-addr`・`identity-*`) の bucket について、それを名指す**全 route** で: (a) 満杯から通るのがちょうど `Burst` 件。(b) `Per/Tokens` ちょうどで 1 token 戻り、その 1ms 前には戻らない。(c) キー種別どおりの keying (identity: 同じ IP の別 identity は満杯のまま。ip: 別の client IP は満杯、同じ IP の別 identity は共有。remote-addr: 1 つの接続から X-Forwarded-For / CF-Connecting-IP / X-Real-IP を変えても新しい bucket にならない)。(d) header 無しの挙動 (`identity-strict`: 毎回 limiter 自身の 403 で、`no_identity` の counter が送った数だけ動き、どの identity の token も減らない。`identity-fallback`: 通らず、IP で数える)。(e) limiter の 429 は `{"error":"rate limit exceeded"}` と Retry-After を返す。
+  - middleware で効くキー種別 (`ip`・`remote-addr`・`identity-*`) の bucket について、それを名指す**全 route** で: (a) 満杯から通るのがちょうど `Burst` 件。(b) `Per/Tokens` ちょうどで 1 token 戻り、その 1ms 前には戻らない。(c) キー種別どおりの keying (identity: 同じ IP の別 identity は満杯のまま。ip: 別の client IP は満杯、同じ IP の別 identity は共有。remote-addr: 1 つの接続から X-Forwarded-For / CF-Connecting-IP / X-Real-IP を変えても新しい bucket にならない)。(d) header 無しの挙動 (`identity-strict`: 毎回 limiter 自身の 403 で、`no_identity` の counter が送った数だけ動き、どの identity の token も減らない)。(e) limiter の 429 は `{"error":"rate limit exceeded"}` と Retry-After を返す。
   - 共有: binary の中の、middleware で制限された route の順序対すべてについて、新しい handler で A を使い切ってから B を 1 回送る。limiter の 429 が返る ⇔ 同じ bucket 名。
   - `none` の route: 通る identity で十分な数を送っても limiter の 429 に当たらない (#395 の NoneMeansNoLimiter)。
   - handler の中で効く limit (`participant`・in-flight): limit の名前を key にした test 側の driver が、宣言されたものすべてに揃っていること (欠けたら fail)。driver は数値を宣言から読む (ingest: 時計を止めて observation の rule を `Burst+1` 件 → 最後が 429。forbid された rule を `Burst+1` 件 → 最後も 200 で taint され、overflow の counter が動く。`Applies` どおり 2 つの bucket が独立。in-flight: grade を `Max` 件止めた状態で次が 429)。
