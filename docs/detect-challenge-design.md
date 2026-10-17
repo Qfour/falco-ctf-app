@@ -126,8 +126,8 @@ Key design points:
   per 10s, the rest counted in `suppressed`; the identity value and the URL path are never logged)
   says where from; and the chart's `ScoreboardNoIdentityDenials` alert (warning, >10 in 5m per
   bucket, rendered only with `monitoring.enabled`) fires on a sustained rate. Scope: POSTs that
-  reach an identity-keyed route (actionBucket / detectBucket) with no header; the read gates
-  (`selfOrAdmin` / `requireAuthenticated`, non-sampled Warn, no metric) are not included (unifying
+  reach an identity-keyed route (every MiddlewareStrict bucket in `internal/scoreboard/api`) with no header; the read gates
+  (`selfOrAdmin`, and `requireAuthenticated` on the board GET routes; non-sampled Warn, no metric) are not included (unifying
   the three gates into one observation point is a follow-up). Triage by `remote_addr`:
   ingress-nginx Pod IP = the I8 premise (auth-url / auth-response-headers) broke; collector Pod IP =
   the forward table grew onto an identity-keyed route (ADR-0034 D12, needs an ADR); anything else =
