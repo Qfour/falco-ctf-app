@@ -92,6 +92,9 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
   共有していた。ヒント / step 確認 / reset-dirty の bucket とは別なので、将来 portal に Grade ボタンが付いたときも (現時点で呼び出し元は無い)、その連打でそれらが 429 にならない (逆も同じ)。
   認証ヘッダーの無い要求は 403 で拒否し、bucket を消費せず handler (body の読み取り) にも入らない。
   route 表・OpenAPI の `x-ctf-rate-limit` と /submit 側の「(shared with submit-detect)」も実挙動に合わせた (#328)。
+- 掲示板 (board) の 2 つの rate limit (`board_post` = スレッド作成と返信、`board_like` = like / unlike) を、認証ヘッダーの email 単位のまま fail-closed (他の identity bucket と同じ `MiddlewareStrict`) にした。
+  認証ヘッダーの無い要求・空の要求は、これまで IP を key にした bucket で token を消費し、その IP の burst を超えると 403 ではなく 429 になっていた。今は limiter が 403 で答え、token を消費しない。
+  board の route はもともと認証ヘッダー必須なので、正当な呼び手 (ブラウザ経由の参加者) への影響はない。`ratelimit_identity_requests_total{bucket="board_post"|"board_like"}` に `no_identity` が出るようになる。OpenAPI の board 4 route に同じ記述を追加し、unlike の 403 / 429 の記述の抜けを直した (#397)。
 - 表示名の検証が Unicode の Cf (U+200B 零幅スペース・U+202E bidi 上書きなど) と C1 制御文字 (U+0080〜009F) を通していたのを拒否にした。
   bidi 制御・ゼロ幅 (Cf)・C1 制御の拒否に限る (ADR-0026 D5-1 の Cf 拒否と同じ方針)。他の席への見た目のなりすましを防ぐものではない。プロフィール route (`POST /api/users/{user}/profile` の `display_name`) と admin 用 display-name route の両方で同じ検証。
   ZWJ (U+200D) で連結する絵文字は 2 つの絵文字に挟まれたときだけ通す。日本語・絵文字・結合文字の名前は従来どおり通る。**例外**: 地域旗の絵文字 (イングランド・スコットランド・ウェールズ = U+1F3F4 + tag 文字 U+E0020〜E007F) は tag 文字が Cf なので server・form とも拒否になる (受け入れる判断。`api.go` のコメントと case 表の行で固定) (#331)。
