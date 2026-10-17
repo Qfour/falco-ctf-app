@@ -43,7 +43,8 @@ var ClientIPSourceTotal = promauto.NewCounterVec(
 // bucket (Limiter.MiddlewareStrict, app#315), labelled by:
 //
 //	bucket:  which bucket — a fixed set of constants at the call sites
-//	         (e.g. "participant_action" for steps/check + hints + reset-dirty).
+//	         (e.g. "participant_action" for steps/check + hints + reset-dirty,
+//	         "detect" for submit-detect).
 //	         Distinguishes these from the IP-keyed submit bucket, whose own
 //	         counter is ClientIPSourceTotal{caller="submit"}.
 //	outcome: "allowed" | "limited" (429) | "no_identity" (403, no token consumed)

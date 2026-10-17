@@ -148,6 +148,11 @@ const triggerDetectWindowSeconds = 60
 // fixed constant: it is a metric label.
 const actionBucket = "participant_action"
 
+// detectBucket is the same label for Handler.detectLimiter (submit-detect
+// only, app#328). Separate from actionBucket so a burst of grader submissions
+// (each one a replay Job) cannot 429 a participant's hint open or step tick.
+const detectBucket = "detect"
+
 // JourneyConfig carries the /journey UI inputs into the api handler:
 // narrative content, the mission progression order, and the docs-site origin.
 // All are optional — the handler applies safe defaults (see New).
@@ -185,6 +190,10 @@ type Handler struct {
 	// attempt route joins this bucket via actionMW. POST /api/users/{user}/profile
 	// (ADR-0034 D8) joins it too.
 	actionLimiter *ratelimit.Limiter
+	// detectLimiter is submit-detect's own IDENTITY-keyed bucket (app#328):
+	// same shape as actionLimiter (1 req/s, burst 10) but a separate token
+	// map, so grading does not spend the hint/step/reset budget.
+	detectLimiter *ratelimit.Limiter
 	adminSet      map[string]struct{}
 	// emailDomain is IdentityConfig.ExpectedEmailDomain (lower-cased, trimmed).
 	// Read-only after New.
@@ -268,8 +277,11 @@ type DetectConfig struct {
 
 // DefaultDetectInflightCap bounds concurrent grader executions globally. A
 // per-submission grader (docker/Job) is the net-new amplification vector; this
-// hard cap (rejected past it with 429, never queued) plus the per-IP submit
-// limiter keeps a flood from spawning unbounded work (design §3.3).
+// hard cap (rejected past it with 429, never queued) plus the identity-keyed
+// detect bucket (detectMW, burst 10, 1 req/s per identity) keeps a flood from
+// spawning unbounded work (design §3.3). The cap is shared by every identity;
+// a per-identity concurrency limit is tracked in #341 (do not enable
+// DETECT_RUNNER=k8s for an event before it lands).
 const DefaultDetectInflightCap = 5
 
 // DetectGradeTimeout bounds a single detect grade end-to-end (compile gate +
@@ -328,6 +340,7 @@ func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *sl
 		now:            now,
 		submitLimiter:  ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now),
 		actionLimiter:  ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now),
+		detectLimiter:  ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now),
 		adminSet:       adminSet,
 		emailDomain:    strings.ToLower(strings.TrimSpace(ic.ExpectedEmailDomain)),
 		hiddenSet:      hiddenSet,
@@ -487,7 +500,10 @@ func (h *Handler) Routes() []apispec.Route {
 	// that is browser-only by design. The handlers behind actionMW use
 	// selfOrAdmin (header REQUIRED) and their Authz is declared
 	// self-or-admin accordingly; actionMW is a second layer, not the only one.
+	// app#328 moved submit-detect (the route that attaches a SOLVE) onto the
+	// same gate with its OWN bucket (detectMW), so it is header-REQUIRED too.
 	actionMW := h.actionLimiter.MiddlewareStrict(actionBucket, ratelimit.IdentityKeyed)
+	detectMW := h.detectLimiter.MiddlewareStrict(detectBucket, ratelimit.IdentityKeyed)
 	// app#292 Phase 2: identity-keyed (never client-IP-keyed) — a board
 	// thread/message is attributed to the caller's OWN proven identity, so
 	// the rate-limit bucket should track that identity too, not the NAT/
@@ -568,29 +584,33 @@ func (h *Handler) Routes() []apispec.Route {
 			Method: "POST", Pattern: "/api/challenges/{cid}/submit",
 			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzClaimedIdentity,
 			OriginGuarded: false, CollectorForward: true,
-			RateLimit: "per-IP 1 req/s burst 10 (shared with submit-detect)",
+			RateLimit: "per-IP 1 req/s burst 10",
 			Handler:   submitMW(http.HandlerFunc(h.submit)),
 		},
 		{
-			// Detect grading shares the per-IP submit bucket with /submit but
-			// NOT its trust model: this route is gated by selfOrAdmin (identity
-			// header REQUIRED), /submit is claimed-identity (keying this bucket
-			// by identity is app#328). A global in-flight cap is enforced inside the
-			// handler (429 past it, never queued). Unlike /submit above, this
-			// route has only ONE caller: the journey UI's browser fetch (the
-			// "Grade" button on a detect mission's condition textarea —
-			// docs/detect-challenge-design.md §6). The collector's forward
-			// allowlist (internal/collector/collector.go — "Routes fronted") does
-			// NOT include submit-detect, so there is no server-to-server curl
-			// caller to protect against a fail-closed gate here — same reasoning
-			// as steps/{idx}/check and hints/{idx} below. Origin-guarded, and
-			// gated by selfOrAdmin (identity header REQUIRED: a header-less
-			// request is 403, app#346).
+			// Detect grading is rate-limited on its own identity-keyed bucket
+			// (app#328; it used to share /submit's per-IP bucket, and is kept
+			// apart from the hint/step/reset bucket) plus a global
+			// in-flight cap enforced inside the handler (429 past it, never
+			// queued). Unlike /submit above, this route has NO caller today (no detect
+			// challenge ships yet). The planned caller is the portal's Grade
+			// button on a detect mission's condition textarea
+			// (docs/detect-challenge-design.md §6); it does not ship before the
+			// P14-C revisit (REFACTORING 2026-08-31 "not doing"). The
+			// browser-only premise below is about that planned caller.
+			// The collector's forward allowlist (internal/collector/collector.go
+			// — "Routes fronted") does NOT include submit-detect, so there is no
+			// server-to-server curl caller to protect against a fail-closed gate
+			// here — same reasoning as steps/{idx}/check and hints/{idx} below.
+			// Origin-guarded, then detectMW (no identity header -> 403, no token
+			// consumed), then submitDetect's selfOrAdmin (identity header
+			// REQUIRED, app#346). Do NOT add this path to the collector's forward
+			// allowlist.
 			Method: "POST", Pattern: "/api/challenges/{cid}/submit-detect",
 			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdmin,
 			OriginGuarded: true, CollectorForward: false,
-			RateLimit: "per-IP 1 req/s burst 10 + global in-flight grader cap (5)",
-			Handler:   h.og(submitMW(http.HandlerFunc(h.submitDetect))),
+			RateLimit: "identity 1 req/s burst 10 (own bucket, separate from steps/check, hints, reset-dirty, profile and submit) + global in-flight grader cap (5)",
+			Handler:   h.og(detectMW(http.HandlerFunc(h.submitDetect))),
 		},
 		{
 			// Exfil is an internal-only endpoint reached solely by the collector
@@ -632,7 +652,7 @@ func (h *Handler) Routes() []apispec.Route {
 			Method: "POST", Pattern: "/api/users/{user}/challenges/{cid}/steps/{idx}/check",
 			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdmin,
 			OriginGuarded: true, CollectorForward: false,
-			RateLimit: "identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit)",
+			RateLimit: "identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit and submit-detect)",
 			Handler:   h.og(actionMW(http.HandlerFunc(h.stepCheck))),
 		},
 		{
@@ -642,7 +662,7 @@ func (h *Handler) Routes() []apispec.Route {
 			Method: "POST", Pattern: "/api/users/{user}/challenges/{cid}/hints/{idx}",
 			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdmin,
 			OriginGuarded: true, CollectorForward: false,
-			RateLimit: "identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit)",
+			RateLimit: "identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit and submit-detect)",
 			Handler:   h.og(actionMW(http.HandlerFunc(h.openHint))),
 		},
 		{
@@ -669,7 +689,7 @@ func (h *Handler) Routes() []apispec.Route {
 			Method: "POST", Pattern: "/api/users/{user}/challenges/{cid}/reset-dirty",
 			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdmin,
 			OriginGuarded: true, CollectorForward: false,
-			RateLimit: "identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit)",
+			RateLimit: "identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit and submit-detect)",
 			Handler:   h.og(actionMW(http.HandlerFunc(h.resetDirty))),
 		},
 		{
@@ -683,7 +703,7 @@ func (h *Handler) Routes() []apispec.Route {
 			Method: "POST", Pattern: "/api/users/{user}/profile",
 			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelfOrAdmin,
 			OriginGuarded: true, CollectorForward: false,
-			RateLimit: "identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit)",
+			RateLimit: "identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit and submit-detect)",
 			Handler:   h.og(actionMW(http.HandlerFunc(h.setProfile))),
 		},
 		{
@@ -949,10 +969,27 @@ func emailMatchesUser(email, user, domain string) bool {
 // admin hosts are auth-proxied and inject X-Auth-Request-Email; the
 // cluster-internal Service path (workspace pods, collector, Falco) injects no
 // such header and is therefore denied here. This is the minimal safe signal —
-// the scoreboard need not know the hostname, and the header cannot be forged
-// from inside the cluster because the internal Service path never sets it and
-// ingress strips/overwrites any client-supplied copy (auth-request headers are
-// set by oauth2-proxy, not passed through from the client).
+// the scoreboard need not know the hostname. The header is a PROOF of identity
+// only while three things outside this file hold (it is not unforgeable by
+// itself). These three conditions are the premise of I8 (canonical source: I8 in
+// .claude/rules/falco-ctf-app-conventions.md; machine checks: V12 / V13;
+// NetworkPolicy: charts/scoreboard/templates/networkpolicy.yaml):
+// (1) the scoreboard ingresses keep their auth-url pointed at
+// auth-policy (/check-participant, /check-admin) and keep the
+// `auth-response-headers` annotation pinned, so ingress-nginx overwrites a
+// client-supplied copy of exactly those listed headers (not every
+// X-Auth-Request-*; the scoreboard trusts -Email only) with auth-policy's
+// response. For a participant seat auth-policy stamps the canonical
+// `<seat>@<domain>` form (stampCanonical), which is why one seat maps to one
+// identity (and one rate-limit bucket); only an ADMIN_EMAILS identity is passed
+// through verbatim as oauth2-proxy reported it, and the scoreboard lower-cases
+// it on the reading side (see the ToLower below); (2) the scoreboard
+// NetworkPolicy keeps participant-controlled workloads (workspaces) off the
+// Service: it admits the falco and ingress-nginx namespaces and the namespace
+// labelled for the collector, so the only senders that can reach it are
+// platform components, and only with a CNI that enforces NetworkPolicy;
+// (3) the collector forwards only its allowlisted routes (submit-detect is not
+// one of them) and strips every inbound X-Auth-Request-* (ADR-0034 D6).
 func (h *Handler) selfOrAdmin(w http.ResponseWriter, r *http.Request, user string) bool {
 	email := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Auth-Request-Email")))
 	if email == "" {
@@ -1199,8 +1236,10 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 // --- submit-detect ----------------------------------------------------------
 
 // submitDetect grades a participant-authored Falco condition for a detect-type
-// challenge. It reuses /submit's per-IP rate limiter middleware and adds two
-// detect-specific controls:
+// challenge. It is browser-only (origin-guarded, not in the collector's
+// forward allowlist) and, since app#328, is gated by detectMW (identity-keyed
+// rate limit, 403 without the X-Auth-Request-Email header) then selfOrAdmin
+// (header REQUIRED). It adds two detect-specific controls:
 //
 //   - self-scope: the identity header is REQUIRED (selfOrAdmin; app#346). The
 //     claimed body user must equal the proven identity's canonical form
@@ -1208,6 +1247,10 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 //     with no X-Auth-Request-Email — the cluster-internal Service path, which
 //     has no legitimate caller for this route (the collector does not forward
 //     it and NetworkPolicy keeps workspaces off it) — is 403.
+//     The header is trusted only while the conditions on selfOrAdmin hold (the
+//     ingress auth-response-headers pin, the scoreboard NetworkPolicy, and the
+//     collector NOT forwarding this route while stripping X-Auth-Request-*):
+//     do not add submit-detect to the collector's forward allowlist.
 //   - global in-flight cap: a per-submission grader (docker/Job) is the net-new
 //     DoS lever, so past detectInflight's capacity the request is REJECTED with
 //     429 (never queued) — a flood cannot spawn unbounded grader work.
