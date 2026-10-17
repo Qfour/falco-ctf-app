@@ -173,3 +173,30 @@ func TestBoardSubject_Table(t *testing.T) {
 		})
 	}
 }
+
+// TestBoardSubject_ClientIsNeverStricter: the table never records a form that refuses a
+// subject the server accepts, and the one documented difference (form accepts, server
+// refuses) is only ever on a row holding U+200D, and still exists. The "client-only reject = 0"
+// half of the contract (as TestDisplayNameParity_ClientIsNeverStricter); the view test checks
+// that the form really answers the table.
+func TestBoardSubject_ClientIsNeverStricter(t *testing.T) {
+	var clientOnlyReject, serverOnlyReject int
+	for _, c := range loadBoardSubjectCases(t) {
+		switch {
+		case c.Client == "reject" && c.Server == "accept":
+			clientOnlyReject++
+			t.Errorf("%s: the form refuses a subject the server accepts (%+q)", c.Note, c.input())
+		case c.Client == "accept" && c.Server == "reject":
+			serverOnlyReject++
+			if !strings.ContainsRune(c.input(), zeroWidthJoiner) {
+				t.Errorf("%s: only a ZWJ may be accepted by the form and refused by the server (%+q)", c.Note, c.input())
+			}
+		}
+	}
+	if clientOnlyReject != 0 {
+		t.Fatalf("client-only rejects = %d, want 0", clientOnlyReject)
+	}
+	if serverOnlyReject == 0 {
+		t.Fatal("the table has no ZWJ row the server refuses and the form lets through; the documented difference is gone")
+	}
+}

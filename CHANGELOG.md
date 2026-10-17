@@ -40,6 +40,7 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
 
 - board: 件名 (thread の subject) が control (Cc: C0/C1、改行・tab を含む) と format (Cf: U+202E などの bidi 制御、ゼロ幅文字) の文字を含むと `POST /api/board/threads` が 400 になる (固定文 `subject contains forbidden characters`、入力は返さない)。表示名 (#331) と同じ規則で、ZWJ は絵文字の間だけ許可。`' " & < >` は散文なので許可のまま。portal は件名を `<bdi>` で隔離して表示する (#377)。
   - **Upgrade note**: すでに保存された件名は再検証されない。そのような件名も portal の `<bdi>` で表示は安全。本文 (body) の規則は変えていない。
+- portal: 新規スレッドの件名を、送信前に form が検査する (app#408)。空・120 文字超・control / 不可視の format 文字 (tab・改行・ゼロ幅文字・bidi 制御など) を含むとき、server の固定文 (どの文字か分からない) の代わりに「tab・改行・不可視文字を取り除いて送り直す」旨を出す。form は server より厳しくならない (件名は散文なので `< > & " '` は通し、U+200D は絵文字の外でも form は通して server に判定させる)。件名の入力欄の `maxlength` は外した (UTF-16 で数えるため絵文字が 60 文字で止まっていた。上限は code point の 120)。server の API と規則は変えない。共有の検査表は `internal/scoreboard/api/testdata/board-subject/cases.yaml` (server と form の test が同じ行を読む)。
 - portal: 進行位置にない (`locked`) 課題の見出しを `PREVIEW · LOCKED` から `UPCOMING MISSION` に変更
   (`locked` は「案内上の未到達」で、ヒントは減点つきで開ける: ADR-0027 D5)。`status` が `current` でなく
   禁止ルールの記録も無い evade の「検知状態」は、「クリーンです / このまま提出できます / クリーンな attempt を確認」

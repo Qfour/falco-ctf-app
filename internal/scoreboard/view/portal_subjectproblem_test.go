@@ -3,7 +3,9 @@ package view
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode"
@@ -287,8 +289,127 @@ func TestSubjectForm_UsesThePrecheckAndShowsTheServerSentenceAsText(t *testing.T
 			t.Errorf("onCreateSubmit contains %q: the server's sentence and the pre-check's must stay text", bad)
 		}
 	}
-	// One definition of the class: the board declares neither its own regexp nor its own copy.
-	if strings.Contains(pane, `\p{Cc}`) || strings.Contains(pane, "hasHiddenChar =") {
-		t.Error("pane-board.tmpl restates the Cc/Cf class; use hasHiddenChar from core-util.tmpl")
+}
+
+var subjectInputRe = regexp.MustCompile(`<input\b[^>]*\bid="board-new-subject"[^>]*>`)
+var maxlengthRe = regexp.MustCompile(`\bmaxlength="(\d+)"`)
+
+// TestSubjectForm_InputHasNoShortMaxlength: the `client` column of the shared table is the
+// form's WHOLE pre-check, DOM attributes included. maxlength counts UTF-16 code units of the
+// untrimmed value, so maxlength="120" stops an emoji subject at 60 characters, stricter than
+// the server's 120 runes (the "120 astral runes: client accept" row would be false in the
+// real form). So: no maxlength at all, or one that cannot cut below 120 runes (>= 2x).
+func TestSubjectForm_InputHasNoShortMaxlength(t *testing.T) {
+	pane := partialBody(portalPartials(t), "pane-board.tmpl")
+	tag := subjectInputRe.FindString(pane)
+	if tag == "" {
+		t.Fatal(`pane-board.tmpl: <input id="board-new-subject"> not found`)
+	}
+	m := maxlengthRe.FindStringSubmatch(tag)
+	if m == nil {
+		return
+	}
+	n, _ := strconv.Atoi(m[1])
+	if n < 2*120 {
+		t.Errorf("the subject input has maxlength=%d (UTF-16 units): it would cut an emoji subject below the server's 120 runes; drop it or use >= %d", n, 2*120)
+	}
+}
+
+// onCreateSubmitJS cuts the handler out of pane-board.tmpl (4-space indent, async).
+func onCreateSubmitJS(t *testing.T) string {
+	t.Helper()
+	pane := partialBody(portalPartials(t), "pane-board.tmpl")
+	const head = "\n    async function onCreateSubmit("
+	start := strings.Index(pane, head)
+	if start < 0 {
+		t.Fatal("pane-board.tmpl: onCreateSubmit not found")
+	}
+	end := strings.Index(pane[start+1:], "\n    }\n")
+	if end < 0 {
+		t.Fatal("pane-board.tmpl: the end of onCreateSubmit not found")
+	}
+	return pane[start+1 : start+1+end+len("\n    }")]
+}
+
+// TestSubjectForm_RunsThePrecheckBeforeTheRequest RUNS onCreateSubmit in goja with a fake
+// document and fetch: a refused subject sends nothing and says why, an accepted one is sent
+// as trimName left it, a ZWJ outside emoji is passed to the server (it decides), an empty body
+// sends nothing, and a failed response shows the server's sentence as text. A static order check
+// would pass a mutation that deletes the `return` after the refusal; this does not.
+func TestSubjectForm_RunsThePrecheckBeforeTheRequest(t *testing.T) {
+	parts := portalPartials(t)
+	util, pane := partialBody(parts, "core-util.tmpl"), partialBody(parts, "pane-board.tmpl")
+	var rules strings.Builder
+	rules.WriteString(subjectRulesJS(t) + "\n")
+	rules.WriteString(extractJSConst(t, util, "serverErrorText") + "\n")
+	rules.WriteString(extractJSConst(t, pane, "MAX_BODY_BYTES") + "\n")
+	rules.WriteString(extractJSFunc(t, pane, "bodyByteLen") + "\n")
+	rules.WriteString(onCreateSubmitJS(t) + "\n")
+	driver := `
+var TextEncoder = function () { this.encode = function (s) { var n = 0; for (var ch of s) { var c = ch.codePointAt(0); n += c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4; } return { length: n }; }; };
+var busy = false, selectedTid = null, lastMySig = 'x', lastPublicSig = 'x', rendered = [], calls = [], mode = 'ok', els = {};
+function renderThread(d) { rendered.push(d); }
+var document = {
+  querySelector: function () { return { value: 'all' }; },
+  getElementById: function (id) { return els[id]; },
+};
+var fetch = function (url, opts) {
+  calls.push({ url: url, body: JSON.parse(opts.body) });
+  if (mode === 'bad') return Promise.resolve({ status: 400, ok: false, json: function () { return Promise.resolve({ error: '<img src=x onerror=alert(1)>' }); } });
+  return Promise.resolve({ status: 200, ok: true, json: function () { return Promise.resolve({ id: 't1' }); } });
+};
+function run(subject, body, m) {
+  mode = m || 'ok'; calls.length = 0; selectedTid = null; rendered.length = 0;
+  els['board-new-subject'] = { value: subject };
+  els['board-new-body'] = { value: body };
+  els['board-new-msg'] = { textContent: '', className: '' };
+  return onCreateSubmit({ preventDefault: function () {} }).then(function () {
+    return { calls: calls.slice(), msg: els['board-new-msg'].textContent, cls: els['board-new-msg'].className, rendered: rendered.length, busy: busy };
+  });
+}
+var out = {};
+run('a\tb', 'hello').then(function (r) { out.tab = r; return run('\uFEFFhi', 'hello'); })
+  .then(function (r) { out.bom = r; return run('   ', 'hello'); })
+  .then(function (r) { out.empty = r; return run('  hello \t', 'hello'); })
+  .then(function (r) { out.padded = r; return run('word\u200D', 'hello'); })
+  .then(function (r) { out.zwj = r; return run('fine', '   '); })
+  .then(function (r) { out.noBody = r; return run('fine', 'hello', 'bad'); })
+  .then(function (r) { out.bad = r; });
+`
+	type result struct {
+		Calls []struct {
+			URL  string            `json:"url"`
+			Body map[string]string `json:"body"`
+		} `json:"calls"`
+		Msg      string `json:"msg"`
+		Cls      string `json:"cls"`
+		Rendered int    `json:"rendered"`
+		Busy     bool   `json:"busy"`
+	}
+	var got map[string]result
+	runJS(t, rules.String(), driver, nil, &got)
+	for _, k := range []string{"tab", "bom", "empty", "noBody"} {
+		r, ok := got[k]
+		if !ok {
+			t.Fatalf("%s: the scenario did not finish", k)
+		}
+		if len(r.Calls) != 0 {
+			t.Errorf("%s: a refused submit sent %d request(s)", k, len(r.Calls))
+		}
+		if r.Msg == "" || !strings.Contains(r.Cls, "err") {
+			t.Errorf("%s: a refusal must say why in an err message, got %q / %q", k, r.Msg, r.Cls)
+		}
+	}
+	if !strings.Contains(got["tab"].Msg, "tab") || !strings.Contains(got["bom"].Msg, "invisible") {
+		t.Errorf("hidden-character refusals must name the kind: %q / %q", got["tab"].Msg, got["bom"].Msg)
+	}
+	if p := got["padded"]; len(p.Calls) != 1 || p.Calls[0].URL != "/api/board/threads" || p.Calls[0].Body["subject"] != "hello" || p.Calls[0].Body["audience"] != "all" || p.Rendered != 1 || p.Busy {
+		t.Errorf("an accepted subject must be sent once, as trimName leaves it (hello), and the thread shown: %+v", p)
+	}
+	if z := got["zwj"]; len(z.Calls) != 1 || z.Calls[0].Body["subject"] != "word\u200D" {
+		t.Errorf("a ZWJ outside emoji is passed to the server (it decides), got %+v", z)
+	}
+	if b := got["bad"]; len(b.Calls) != 1 || b.Msg != "<img src=x onerror=alert(1)>" || !strings.Contains(b.Cls, "err") || b.Busy {
+		t.Errorf("a failed response must show the server's sentence as text and release busy: %+v", b)
 	}
 }

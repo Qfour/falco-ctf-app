@@ -59,8 +59,9 @@ const textHTML = (s) => '<bdi>' + esc(s) + '</bdi>';
 // U+205F, U+3000. String.prototype.trim is NOT that set: it also strips U+FEFF (which the
 // server keeps, and refuses as Cf) and does not strip U+0085 (which the server strips),
 // so trim() would refuse "Alice" + NEL where the server stores "Alice". It is the one
-// trim for every name the portal sends: the Profile form (pane-me.tmpl) and the admin
-// rename (pane-scoreboard.tmpl). portal_nameproblem_test.go runs it against Go's table
+// trim for every name the portal sends: the Profile form (pane-me.tmpl), the admin
+// rename (pane-scoreboard.tmpl) and a new board thread's subject (pane-board.tmpl).
+// portal_nameproblem_test.go runs it against Go's table
 // and pins that no other partial defines it. templates/index.html does not load this
 // partial and carries a byte-identical copy of trimName and serverErrorText until the
 // dashboard's rendering is merged into the portal (#378). The list of what index.html
@@ -83,8 +84,12 @@ const serverErrorText = async (r) => { try { const j = await r.json(); if (j && 
 // display-name-parity), and the one definition for both users: the Profile display name
 // (nameProblem, pane-me.tmpl, which adds the metacharacters < > & " ') and a new board
 // thread's subject (subjectProblem, pane-board.tmpl, which is prose and does not).
-// portal_nameproblem_test.go sweeps every code point against rule.yaml.
-const hasHiddenChar = (s) => /(?!\u200D)[\p{Cc}\p{Cf}]/u.test(s);
+// portal_nameproblem_test.go and portal_subjectproblem_test.go sweep every code point against
+// rule.yaml. The class is built with new RegExp inside a try, not as a regexp literal: an
+// engine that cannot parse \p{..} (or the u flag) would otherwise throw a SyntaxError that
+// stops this whole script, i.e. every pane. Without the class the helper answers false (the
+// form pre-checks nothing and the server decides), the side that is never stricter than the server.
+const hasHiddenChar = (() => { let re = null; try { re = new RegExp('(?!\\u200D)[\\p{Cc}\\p{Cf}]', 'u'); } catch (_) { /* no \\p{..}: never refuse, the server decides */ } return (s) => re !== null && re.test(s); })();
 
 // ---- Accessibility helpers (P28-0a (4)). Declared AFTER esc on purpose (see the
 // TDZ note above). textContent only, no markup.

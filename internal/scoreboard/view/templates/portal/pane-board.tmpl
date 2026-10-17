@@ -70,6 +70,11 @@
   // character as 2; count Unicode code points via the spread operator
   // instead so the client-side cap matches the server's unit exactly.
   const MAX_SUBJECT_RUNES = 120;
+  // The subject <input> has NO maxlength on purpose: the attribute counts UTF-16 code
+  // units (an astral character, an emoji, counts 2) of the UNtrimmed value, so
+  // maxlength="120" would stop an emoji subject at 60 characters, stricter than the server's
+  // 120 runes. The limit is subjectProblem()'s code point count alone
+  // (portal_subjectproblem_test.go pins the absence).
   function runeLen(s) { return Array.from(s).length; }
   // The new-thread form's pre-check of the subject, in the server's order
   // (validBoardSubject, internal/scoreboard/api/board.go: trim, empty, 120 runes,
@@ -222,7 +227,7 @@
                   <div class="dest-guide">ターミナル操作・環境トラブル・一般的な Falco/Linux の質問はこちら。全参加者に公開されます。flag 値や解答手順は書かないでください。</div>
                 </label>
               </div>
-              <input type="text" id="board-new-subject" placeholder="Subject" maxlength="120" autocomplete="off">
+              <input type="text" id="board-new-subject" placeholder="Subject" autocomplete="off">
               <textarea id="board-new-body" placeholder="質問の内容を書いてください…" rows="4" maxlength="4096"></textarea>
               <button type="submit" class="btn">Send</button>
               <div class="submit-msg" id="board-new-msg"></div>
