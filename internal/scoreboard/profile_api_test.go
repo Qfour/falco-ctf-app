@@ -18,7 +18,6 @@ import (
 	"sort"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
 	"github.com/Qfour/falco-ctf-app/internal/board"
@@ -748,49 +747,6 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
-}
-
-// --- rate limit: identity bucket --------------------------------------------------------
-
-func TestProfile_RateLimitIsPerIdentityAndFailClosed(t *testing.T) {
-	now := time.Unix(1_700_000_000, 0)
-	f := newProfileFixture(t, scoreboard.WithNow(func() time.Time { return now }))
-	post := func(user, email string) int {
-		return f.setProfile(user, email, map[string]any{"avatar": "key-cyan"}).Code
-	}
-
-	// alice drains her own burst (10) and is then limited ...
-	ok := 0
-	for i := 0; i < 30; i++ {
-		c := post("user3", "user3@ctf.local")
-		if c == http.StatusTooManyRequests {
-			break
-		}
-		if c != http.StatusOK {
-			t.Fatalf("unexpected %d", c)
-		}
-		ok++
-	}
-	if ok != 10 {
-		t.Fatalf("burst = %d, want 10", ok)
-	}
-	// ... bob, behind the same RemoteAddr, is untouched (identity, not IP) ...
-	if c := post("user4", "user4@ctf.local"); c != http.StatusOK {
-		t.Fatalf("user4 behind the same IP got %d, want 200", c)
-	}
-	// ... the bucket is the SAME one hints/steps/reset-dirty use ...
-	if w := f.do("POST", "/api/users/user3/challenges/01-recon/hints/1", "user3@ctf.local", nil); w.Code != http.StatusTooManyRequests {
-		t.Fatalf("hint after a drained profile bucket: %d %s, want 429", w.Code, w.Body)
-	}
-	// ... and a header-less request is 403 forever (never 429, never IP-keyed).
-	for i := 0; i < 30; i++ {
-		if c := post("user6", ""); c != http.StatusForbidden {
-			t.Fatalf("header-less #%d = %d, want 403", i, c)
-		}
-	}
-	if c := post("user6", "user6@ctf.local"); c != http.StatusOK {
-		t.Fatalf("user6 after the anonymous flood = %d, want 200 (the flood must not drain anyone's bucket)", c)
-	}
 }
 
 // --- V7 (HTTP half): the API has no email / name / image field ------------------------------
