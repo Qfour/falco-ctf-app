@@ -314,7 +314,7 @@ func TestCountFires(t *testing.T) {
 	stdout := strings.Join([]string{
 		fireLine(rule),
 		`{"rule": "participant_detect","output":"spaced colon"}`, // tolerate space after colon
-		`{"rule":"some_other_rule"}`,                              // different rule, not counted
+		`{"rule":"some_other_rule"}`,                             // different rule, not counted
 		"plain log line, not json",
 	}, "\n")
 	if n := countFires(stdout, rule); n != 2 {

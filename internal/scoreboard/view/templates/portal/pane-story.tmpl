@@ -271,7 +271,7 @@
       const num = (m.id.split('-')[0] || '');
       const unlockCls = (m.id === justUnlockedId) ? ' just-unlocked' : '';
       const viewedCls = (m.id === viewedId) ? ' viewed' : '';
-      return `<li class="${cls}${unlockCls}${viewedCls}" data-mission="${esc(m.id)}">
+      return `<li class="${esc(cls)}${unlockCls}${viewedCls}" data-mission="${esc(m.id)}">
         <span class="ico">${ico}</span>
         <span style="min-width:0">
           <span class="mtitle">${esc(m.title || m.id)}</span><br>

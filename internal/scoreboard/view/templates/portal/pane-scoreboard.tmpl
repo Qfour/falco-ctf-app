@@ -232,7 +232,7 @@
         return `<div class="challenge clickable${full}" data-cid="${esc(c.id)}" role="button" tabindex="0" title="View this mission's leaderboard">
           <div class="head">
             <span class="num">MISSION ${esc(num)}</span>
-            <span class="badge badge-${c.type}">${c.type}</span>
+            <span class="badge badge-${esc(c.type)}">${esc(c.type)}</span>
           </div>
           <div class="name">${esc(slug)}</div>
           <div class="rule">${esc(prefix + rule)}</div>
@@ -339,7 +339,7 @@
     if (!c) { goHome(); return; }
     const rule = c.expectedRules[0] || c.forbiddenRules[0] || '';
     document.getElementById('pane-scoreboard-detail-title').innerHTML =
-      esc(c.id) + ' <span class="badge badge-' + c.type + '">' + c.type + '</span>';
+      esc(c.id) + ' <span class="badge badge-' + esc(c.type) + '">' + esc(c.type) + '</span>';
     document.getElementById('pane-scoreboard-detail-meta').textContent =
       c.solver_details.length + ' solved' + (rule ? ' · ' + rule : '');
     const body = document.getElementById('pane-scoreboard-detail-body');

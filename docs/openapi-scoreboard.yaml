@@ -523,7 +523,7 @@ paths:
       x-ctf-authz: claimed-identity
       x-ctf-origin-guard: false
       x-ctf-collector-forward: true
-      x-ctf-rate-limit: per-IP 1 req/s burst 10 (shared with submit-detect)
+      x-ctf-rate-limit: per-IP 1 req/s burst 10
       description: |
         TWO callers: the portal's browser fetch AND the collector's verbatim
         forward of the participant's `curl` (internal/collector). Identity is
@@ -584,7 +584,7 @@ paths:
       x-ctf-authz: self-or-admin
       x-ctf-origin-guard: true
       x-ctf-collector-forward: false
-      x-ctf-rate-limit: per-IP 1 req/s burst 10 + global in-flight grader cap (5)
+      x-ctf-rate-limit: identity 1 req/s burst 10 (own bucket, separate from steps/check, hints, reset-dirty, profile and submit) + global in-flight grader cap (5)
       description: |
         Grade a participant-authored Falco `condition:`. It is wrapped into a
         fixed rule and replayed against the mission's evasion + benign
@@ -596,10 +596,16 @@ paths:
         caller is the portal's Grade button (docs/detect-challenge-design.md
         §6); the origin guard and the required identity header assume that
         browser-only caller, and the collector does not forward this route.
-        Authz is `self-or-admin`: a request that gets past the feature /
-        catalog / body checks (see 503, 404, 400) is `403` when it carries no
-        `X-Auth-Request-Email` (app#346; there is no claimed-identity
-        fallback), and `403` when the body `user` is not the proven identity's
+        Authz is `self-or-admin`. A request that carries no (or a blank)
+        `X-Auth-Request-Email` is `403` FIRST: the identity-keyed rate limiter
+        (app#328) turns it away before a token is consumed and before the
+        handler runs (it is counted only by the metric
+        `ratelimit_identity_requests_total{bucket="detect",outcome="no_identity"}`;
+        there is no log line for it), so that 403 is returned ahead of the 503 (feature off),
+        404 (unknown challenge) and 400 (bad body) answers below (app#346;
+        there is no claimed-identity fallback). A request that has an identity
+        and passes the feature / catalog / body checks (see 503, 404, 400) is
+        `403` when the body `user` is not the proven identity's
         canonical form (an admin may grade any user). Past the global in-flight
         cap the request is REJECTED with 429, never queued (a per-submission grader Job is the net-new DoS
         lever). With no runner configured the route answers 503 (feature off),
@@ -623,7 +629,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "403":
-          description: origin guard denied, no identity header, or caller is neither `{user}` nor an admin
+          description: origin guard denied, no identity header (denied before the rate limit; no token is consumed), or caller is neither `{user}` nor an admin
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -634,10 +640,11 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "429":
           description: |
-            per-IP rate limit OR the global in-flight grader cap — two
-            different writers (internal/scoreboard/ratelimit and this
-            handler), both JSON since Issue #159 unified ratelimit onto
-            httpx.WriteJSON.
+            per-identity rate limit (keyed by the caller's X-Auth-Request-Email,
+            not the client IP, so other participants behind the same NAT are
+            unaffected) OR the global in-flight grader cap — two different
+            writers (internal/scoreboard/ratelimit and this handler), both JSON
+            since Issue #159 unified ratelimit onto httpx.WriteJSON.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -840,7 +847,7 @@ paths:
       x-ctf-authz: self-or-admin
       x-ctf-origin-guard: true
       x-ctf-collector-forward: false
-      x-ctf-rate-limit: identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit)
+      x-ctf-rate-limit: identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit and submit-detect)
       description: |
         Purely presentational: journey `steps` are an info-only checklist with
         no auto-detection, so a tick never affects a solve verdict — it lets a
@@ -907,7 +914,7 @@ paths:
       x-ctf-authz: self-or-admin
       x-ctf-origin-guard: true
       x-ctf-collector-forward: false
-      x-ctf-rate-limit: identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit)
+      x-ctf-rate-limit: identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit and submit-detect)
       description: |
         Hints open in order: opening `idx` N requires N-1 already open (409
         otherwise), so participants approach the answer progressively instead of
@@ -976,7 +983,7 @@ paths:
       x-ctf-authz: self-or-admin
       x-ctf-origin-guard: true
       x-ctf-collector-forward: false
-      x-ctf-rate-limit: identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit)
+      x-ctf-rate-limit: identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit and submit-detect)
       description: |
         The ONLY way an evade challenge returns to clean once a forbidden Falco
         rule fired while it was the participant's current mission (ADR-0003
@@ -1046,7 +1053,7 @@ paths:
       x-ctf-authz: self-or-admin
       x-ctf-origin-guard: true
       x-ctf-collector-forward: false
-      x-ctf-rate-limit: identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit)
+      x-ctf-rate-limit: identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit and submit-detect)
       description: |
         ADR-0034 D8. The participant's profile is exactly two cosmetic things: a
         display name and one avatar id picked from the prepared table

@@ -372,13 +372,19 @@ func TestOriginGuard_SubmitBypassesGuard(t *testing.T) {
 func TestOriginGuard_SubmitDetectRequiresOrigin(t *testing.T) {
 	srv := newOriginFixture(t, []string{allowedOrigin})
 
-	w := ogReq(t, srv, "POST", "/api/challenges/02-evade/submit-detect", "", "", "",
+	// Send a proven identity but neither Origin nor Referer: detectMW answers
+	// 403 for a request with NO identity header too, so an identity-less probe
+	// would pass even if the origin guard were removed. With an identity, the
+	// 403 below can only come from the guard.
+	w := ogReq(t, srv, "POST", "/api/challenges/02-evade/submit-detect", "", "", "alice@ctf.local",
 		strings.NewReader(`{"user":"alice","condition":"x"}`))
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("submit-detect without Origin/Referer: status=%d body=%s, want 403 (no collector caller to protect, must be origin-gated)", w.Code, w.Body)
 	}
 
-	w = ogReq(t, srv, "POST", "/api/challenges/02-evade/submit-detect", allowedOrigin, "", "",
+	// app#328: a proven identity is required past the guard (detectMW), so send
+	// one — otherwise the 403 below would be detectMW's, not the guard's.
+	w = ogReq(t, srv, "POST", "/api/challenges/02-evade/submit-detect", allowedOrigin, "", "alice@ctf.local",
 		strings.NewReader(`{"user":"alice","condition":"x"}`))
 	// No DetectRunner is wired in this fixture, so the handler itself returns
 	// 503 (feature off) — the point here is only that a same-origin request

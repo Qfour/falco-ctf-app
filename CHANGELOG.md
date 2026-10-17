@@ -86,6 +86,10 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
   これまではヘッダー無しでも (許可された Origin を付ければ) 通っていた。
 - 上記 3 ルートの認可を self-or-admin (認証ヘッダー必須) に揃えた。route 表・OpenAPI の `x-ctf-authz` も実挙動に合わせて更新 (#315)。
   `ratelimit_identity_requests_total{bucket,outcome}` で bucket 別の allowed / limited / no_identity を見られる。
+- 検知条件の採点 (submit-detect) も identity キーの専用 bucket (`detect`、1 req/s・burst 10) に載せた。これまでは submit の IP 単位 bucket を
+  共有していた。ヒント / step 確認 / reset-dirty の bucket とは別なので、将来 portal に Grade ボタンが付いたときも (現時点で呼び出し元は無い)、その連打でそれらが 429 にならない (逆も同じ)。
+  認証ヘッダーの無い要求は 403 で拒否し、bucket を消費せず handler (body の読み取り) にも入らない。
+  route 表・OpenAPI の `x-ctf-rate-limit` と /submit 側の「(shared with submit-detect)」も実挙動に合わせた (#328)。
 
 ### Security
 - **`POST /api/challenges/{cid}/submit-detect` は `X-Auth-Request-Email` 必須になった (app#346)**。ヘッダ無しは 403 (以前は origin-guard を通れば claimed identity で通っていた)。body の `user` は identity の正規形 `<seat>@<EXPECTED_EMAIL_DOMAIN>` との完全一致 (admin は例外)。合わせて `x-ctf-authz: self-or-admin-write` の語彙 (spec・`apispec.AuthzSelfOrAdminWrite`・ゲート関数) を廃止した。collector はこの route を元々転送せず workspace からも届かないので、外部クライアントへの実害は想定していない。`docs/RELEASING.md` の bump 基準 (公開 contract の破壊的変更 = MAJOR に当たらない、認可の厳格化) では **minor** 扱い。
