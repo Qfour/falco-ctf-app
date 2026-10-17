@@ -45,7 +45,7 @@ func TestParseAdmonitionHeader(t *testing.T) {
 		{`!!! tip "使い方"`, "使い方", true},
 		{`!!! warning "検知される読み方 / されない読み方"`, "検知される読み方 / されない読み方", true},
 		{`not an admonition`, "", false},
-		{`!!! tip`, "", false},        // no title at all
+		{`!!! tip`, "", false}, // no title at all
 		{`!!! tip notquoted`, "", false},
 	}
 	for _, tc := range cases {

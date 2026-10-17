@@ -109,9 +109,9 @@ func TestJobName_Bounded(t *testing.T) {
 
 func TestSanitizeLabel(t *testing.T) {
 	cases := map[string]string{
-		"04-detect":       "04-detect",
-		"04_Detect":       "04-detect",     // uppercase folded, `_` → `-`
-		"a/b:c d":         "a-b-c-d",        // metachars mapped to dash
+		"04-detect":        "04-detect",
+		"04_Detect":        "04-detect",     // uppercase folded, `_` → `-`
+		"a/b:c d":          "a-b-c-d",       // metachars mapped to dash
 		"--leading-trail-": "leading-trail", // trimmed of surrounding dashes
 	}
 	for in, want := range cases {
