@@ -84,7 +84,9 @@ FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cab
 #   curl/libcurl 8.22.0-r0 (2026-09-03: alpine 3.24 リポジトリから 8.21.0-r0 が
 #     既に外れ apk resolve が failing していたため再 pin。`apk policy curl` 実測
 #     で 3.24/main の唯一の提供版が 8.22.0-r0 であることを確認済み)
-#   vim/vim-common/xxd 9.2.1178-r0 (2026-10-14: 3.24/community から 9.2.1091-r0 が
+#   vim/vim-common/xxd 9.2.1202-r0 (2026-10-17: 9.2.1178-r0 が index から外れ再 pin
+#     (app#382)。drift 履歴 1091 → 1178 (#354、10-14) → 1202 (10-17) と 4 日で 3 回目。
+#     以下は 2026-10-14 時点の記録: 3.24/community から 9.2.1091-r0 が
 #     外れ apk resolve が failing していたため再 pin。`apk policy vim vim-common
 #     xxd` 実測 (base digest 294b683c) で唯一の提供版。2026-10-05 は 9.2.1014-r0 →
 #     9.2.1091-r0 だった。3.24/community は版が短期間で入れ替わる — 再発時は
@@ -115,9 +117,9 @@ RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 zlib=1.3.2
         netcat-openbsd \
         jq \
         less \
-        vim=9.2.1178-r0 \
-        vim-common=9.2.1178-r0 \
-        xxd=9.2.1178-r0 \
+        vim=9.2.1202-r0 \
+        vim-common=9.2.1202-r0 \
+        xxd=9.2.1202-r0 \
         util-linux=2.42.3-r1 \
         procps \
         grep \
