@@ -61,6 +61,11 @@ cases:
   - {name: "\U0001F469\u200D",      server: reject, client: accept, note: "ZWJ after an emoji with nothing after it"}
   - {name: "A\u200D\U0001F4BB",     server: reject, client: accept, note: "ZWJ between a letter and an emoji"}
   - {name: "\u200D",                server: reject, client: accept, note: "ZWJ alone"}
+  - {name: "\U0001F469\u200DA",      server: reject, client: accept, note: "ZWJ after an emoji, then a LETTER: the base-side of the rule alone cannot let it through (isEmojiBase on the next rune)"}
+  - {name: "\U0001F469\u200D1",      server: reject, client: accept, note: "ZWJ after an emoji, then a DIGIT"}
+  # ---- ZWJ next to another Cf: the ZWJ exception does not let a neighbouring format char through ----
+  - {name: "\U0001F469\u200D\u202E\U0001F4BB", server: reject, client: reject, note: "ZWJ then RLO (U+202E) before the emoji"}
+  - {name: "\U0001F469\u200D\U0001F4BB\u202E", server: reject, client: reject, note: "ZWJ sequence then a trailing RLO"}
   # ---- server: accept, client: accept ----
   - {name: "Alice",                 server: accept, client: accept, note: "ascii"}
   - {name: "Alice \u2605 B-2",      server: accept, client: accept, note: "ascii with spaces and a symbol"}
