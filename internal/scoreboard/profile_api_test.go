@@ -20,7 +20,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Qfour/falco-ctf-app/internal/apispec"
 	"github.com/Qfour/falco-ctf-app/internal/board"
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard"
@@ -170,77 +169,10 @@ func TestProfile_V1_HeaderlessWithAllowedOriginIs403(t *testing.T) {
 	f.wantProfile("user3", "user3", avatar.Default("user3"))
 }
 
-// V1: "Routes() から self-or-admin の全 route を導出してヘッダ無しの 403を確かめる".
-// The existing derivation (TestAuthz_AllDeclaredGatesEnforced) only fires with a
-// MISMATCHED identity, which a header-less-allowing handler also rejects, so it
-// cannot tell the two gates apart. This one sends NO header, with an allowed
-// Origin (so the origin guard cannot be the thing that answered 403).
-func headerlessViolation(srv http.Handler, rt apispec.Route) string {
-	target := authzConcretePath(rt)
-	var body io.Reader
-	if rt.Method != http.MethodGet {
-		body = strings.NewReader(authzGenericBody)
-	}
-	r := httptest.NewRequest(rt.Method, target, body)
-	if body != nil {
-		r.Header.Set("Content-Type", "application/json")
-	}
-	r.Header.Set("Origin", allowedOrigin)
-	w := httptest.NewRecorder()
-	srv.ServeHTTP(w, r)
-	if w.Code != http.StatusForbidden {
-		return fmt.Sprintf("%s: header-less status=%d body=%s, want 403 (Authz: %s requires the identity header)", rt.MuxPattern(), w.Code, w.Body, rt.Authz)
-	}
-	return ""
-}
-
-func TestProfile_V1_EverySelfOrAdminRouteRejectsHeaderless(t *testing.T) {
-	srv := newAuthzFixture(t)
-	var checked []string
-	for _, rt := range srv.Routes() {
-		if rt.Authz != apispec.AuthzSelfOrAdmin {
-			continue
-		}
-		checked = append(checked, rt.MuxPattern())
-		rt := rt
-		t.Run(rt.MuxPattern(), func(t *testing.T) {
-			if v := headerlessViolation(srv, rt); v != "" {
-				t.Fatal(v)
-			}
-		})
-	}
-	sort.Strings(checked)
-	// non-vacuous: the 2 reads + steps/check + hints + reset-dirty + profile
-	// + submit-detect (app#346: it used to be self-or-admin-write).
-	if len(checked) != 7 {
-		t.Fatalf("derived %d self-or-admin routes %v, want 7 (the derivation is broken, or a route changed gate)", len(checked), checked)
-	}
-	found := false
-	for _, c := range checked {
-		found = found || c == "POST /api/users/{user}/profile"
-	}
-	if !found {
-		t.Fatalf("POST /api/users/{user}/profile is not declared self-or-admin: %v", checked)
-	}
-}
-
-// The detector is not vacuous: a self-or-admin route backed by a handler that
-// falls back to claimed-identity (the removed selfOrAdminWrite's shape) is flagged.
-func TestProfile_V1_HeaderlessDetectorCatchesClaimedIdentityFallback(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/users/{user}/profile", func(w http.ResponseWriter, r *http.Request) {
-		// the removed self-or-admin-write gate's header-less branch: no header -> allow.
-		if r.Header.Get("X-Auth-Request-Email") == "" {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		w.WriteHeader(http.StatusForbidden)
-	})
-	rt := apispec.Route{Method: "POST", Pattern: "/api/users/{user}/profile", Authz: apispec.AuthzSelfOrAdmin}
-	if v := headerlessViolation(mux, rt); v == "" {
-		t.Fatal("a header-less 200 on a self-or-admin route was not flagged")
-	}
-}
+// V1's "Routes() から self-or-admin の全 route を導出してヘッダ無しの 403を確かめる"
+// is TestAuthz_EveryProvenRouteRejectsHeaderless (authz_test.go), which since
+// app#393 derives every proven route (self-or-admin, admin, authenticated)
+// from apispec.AuthzIdentitySources.
 
 func TestProfile_V1_OtherParticipantIs403AndWritesNothing(t *testing.T) {
 	f := newProfileFixture(t)
