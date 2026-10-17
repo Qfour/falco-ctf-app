@@ -113,6 +113,7 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
   Portal のプロフィール form の検査も同じ規則にした。form は server より厳しくならない (U+200D は常に通し、絵文字の間かどうかは server が判定する)。両端の空白は server の `strings.TrimSpace` と同じ集合 (U+0085 を含み U+FEFF は含まない) で落とす。名前を変えたときだけ検査するので、保存済みの名前のまま絵柄だけ変える保存は止まらない。共有の case 表 `internal/scoreboard/api/testdata/display-name-parity/cases.yaml` を server (`validDisplayName`) と form の両方に流して固定 (#343)。
 
 ### Security
+- **`POST /api/challenges/{cid}/submit` と `POST /internal/exfil/{cid}` は body の `user` を username slug (`^[a-z0-9][a-z0-9-]{0,62}$`) で検査する (app#428)**。文法外は 400 `{"error":"invalid user"}` (入力は返さない) で、solve も receipt も保存しない。運営画面の mission card の `first_solver` の描画は `nameHTML` (`<bdi>`) 経由にした。claimed identity の前提 (collector は `user` を verbatim で転送する) は変わらない。
 - **`POST /api/challenges/{cid}/submit-detect` は `X-Auth-Request-Email` 必須になった (app#346)**。ヘッダ無しは 403 (以前は origin-guard を通れば claimed identity で通っていた)。body の `user` は identity の正規形 `<seat>@<EXPECTED_EMAIL_DOMAIN>` との完全一致 (admin は例外)。合わせて `x-ctf-authz: self-or-admin-write` の語彙 (spec・`apispec.AuthzSelfOrAdminWrite`・ゲート関数) を廃止した。collector はこの route を元々転送せず workspace からも届かないので、外部クライアントへの実害は想定していない。`docs/RELEASING.md` の bump 基準 (公開 contract の破壊的変更 = MAJOR に当たらない、認可の厳格化) では **minor** 扱い。
 - challenge image の `/opt/ctf/missions/` は `<id>/fixtures/**` だけ、という条件を **deploy 時にも検査する** (ADR-0026 V4、不変条件 I16)。
   `deploy-user.sh` が `helm upgrade --wait` の直後に呼ぶ `assert-flag-isolation.sh` の check 3-8 を、scenario に加えて

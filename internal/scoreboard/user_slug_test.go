@@ -19,8 +19,8 @@ import (
 var nonSlugUsers = []struct{ name, user string }{
 	{"upper case", "Alice"},
 	{"inner space", "user 1"},
-	{"right-to-left override U+202E", "user‮1"},
-	{"zero width space U+200B", "user​1"},
+	{"right-to-left override U+202E", "user\u202e1"},
+	{"zero width space U+200B", "user\u200b1"},
 	{"markup", "<b>x</b>"},
 	{"64 characters (one over the limit)", "a" + strings.Repeat("b", 63)},
 	{"leading hyphen", "-alice"},
@@ -65,13 +65,25 @@ func TestSubmit_SlugUserIsAcceptedAsBefore(t *testing.T) {
 	}
 }
 
-// A wrong flag from a non-slug user is still a 400 about the user (the user is
-// checked before the flag is graded), so the response does not depend on the flag.
+// A non-slug user is a 400 about the user BEFORE the flag is graded, so the
+// response is byte-identical for a wrong and for the correct flag.
 func TestSubmit_UserSlugIsCheckedBeforeTheFlag(t *testing.T) {
-	f := newFixture(t, nil)
-	w := f.do("POST", "/api/challenges/02-evade/submit", map[string]any{"user": "Alice", "flag": "WRONG"})
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("status=%d body=%s, want 400", w.Code, w.Body)
+	var first string
+	for i, flag := range []string{"WRONG", "FALCO{ok}"} {
+		f := newFixture(t, nil)
+		w := f.do("POST", "/api/challenges/02-evade/submit", map[string]any{"user": "Alice", "flag": flag})
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("flag=%q: status=%d body=%s, want 400", flag, w.Code, w.Body)
+		}
+		got := strings.TrimSpace(w.Body.String())
+		if got != `{"error":"invalid user"}` {
+			t.Fatalf("flag=%q: body=%s, want the fixed {\"error\":\"invalid user\"}", flag, got)
+		}
+		if i == 0 {
+			first = got
+		} else if got != first {
+			t.Fatalf("response depends on the flag: %q vs %q", got, first)
+		}
 	}
 }
 
@@ -88,6 +100,11 @@ func TestExfil_UserMustBeASlug_NotStored(t *testing.T) {
 			}
 			if f.st.HasExfilAny(c.user, "03-exfil") {
 				t.Fatalf("an exfil receipt was stored for %q despite the 400", c.user)
+			}
+			// Not only the receipt keyed by the input: NO receipt at all (a later
+			// normalisation of the key must not be able to hide a stored row).
+			if n := len(f.st.PendingExfilSolves()); n != 0 {
+				t.Fatalf("%d exfil receipt(s) stored despite the 400", n)
 			}
 		})
 	}
