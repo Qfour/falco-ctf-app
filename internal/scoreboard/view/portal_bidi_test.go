@@ -64,11 +64,14 @@ const nameEdgeClass = `\t\n\v\f\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u2
 // BODIES are one); the dashboard has its own esc, so its own nameHTML next to it, and
 // no textHTML (it renders no board). trimName is the server's trim set for a name the
 // portal sends, serverErrorText reads the server's {"error"} as a string (app#401).
+// hasHiddenChar is the Cc / Cf class (minus U+200D) both the Profile name and a new
+// board thread's subject pre-check with (app#408); index.html has no such form.
 var sharedHelpers = []sharedHelper{
 	{"nameHTML", `const nameHTML = (s) => '<bdi>' + esc(s) + '</bdi>';`, 1, 1},
 	{"textHTML", `const textHTML = (s) => '<bdi>' + esc(s) + '</bdi>';`, 1, 0},
 	{"trimName", `const trimName = (raw) => String(raw).replace(/^[` + nameEdgeClass + `]+|[` + nameEdgeClass + `]+$/g, '');`, 1, 1},
 	{"serverErrorText", `const serverErrorText = async (r) => { try { const j = await r.json(); if (j && typeof j.error === 'string') return j.error; } catch (_) { /* no body */ } return ''; };`, 1, 1},
+	{"hasHiddenChar", `const hasHiddenChar = (s) => /(?!\u200D)[\p{Cc}\p{Cf}]/u.test(s);`, 1, 0},
 }
 
 // isolateHelpers are the two bidi-isolating rows of sharedHelpers.
