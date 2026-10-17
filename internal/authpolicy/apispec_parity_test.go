@@ -62,8 +62,9 @@ func TestAPISpec_V1_RouteSetMatchesSpec(t *testing.T) {
 // TestAPISpec_ClaimedIdentityImpliesForwardOrInternal is the route-table
 // property behind app#346 / #376 on auth-policy's live Routes():
 // claimed-identity => CollectorForward=true (Audience does not exempt it),
-// internal-claimed-identity => Audience=internal. It is derived from the
-// table, not from route names. auth-policy declares neither word today (it
+// internal-claimed-identity => Audience=internal, none => no {user} in the
+// Pattern, and a word apispec.AuthzIdentitySources does not classify is a
+// violation (app#393). It is derived from the tables, not from route names. auth-policy declares neither word today (it
 // authorises from the ingress subrequest headers, never from a claimed
 // identity), so checked == 0 is the expected result; the test stays wired —
 // and is required by parity_coverage_test.go — so a future claimed-identity

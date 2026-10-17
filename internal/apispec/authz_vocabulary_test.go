@@ -13,6 +13,9 @@ package apispec
 //	(a) every Authz constant is used by at least one Route in non-test code
 //	(b) every x-ctf-authz value in every spec is a declared constant
 //	(c) every declared constant appears in some spec (no dead vocabulary)
+//	(d) AuthzIdentitySources (app#393) classifies exactly the declared
+//	    constants: the table is a fourth place the vocabulary is written, so
+//	    it agrees with the other three like they agree with each other
 //
 // "Declared" is decided by the TYPE CHECKER, not by the spelling of a
 // declaration: every const or var whose type is apispec.Authz is found
@@ -28,9 +31,14 @@ package apispec
 // plus: the spec files scanned are exactly the ones the mux-owning binaries
 // (mux_ownership_test.go) are derived to need, and nothing is scanned empty.
 //
+// "Used by a Route" in (a) is decided by the type checker too (app#393): a
+// composite literal counts only when its type is apispec.Route, so a struct of
+// another type with an Authz field (a table row, a helper) cannot keep a dead
+// word alive.
+//
 // What the general form deliberately does NOT do: forbid a word by name. A
-// new word that is declared, used by a Route and written in a spec is a
-// deliberate, reviewed vocabulary change, not drift.
+// new word that is declared, used by a Route, written in a spec and
+// classified is a deliberate, reviewed vocabulary change, not drift.
 
 import (
 	"go/ast"
@@ -130,7 +138,11 @@ func (l *srcLoader) checkDir(path, dir string) *checkedPkg {
 
 func (l *srcLoader) check(path string, files []*ast.File) *checkedPkg {
 	l.t.Helper()
-	c := &checkedPkg{files: files, info: &types.Info{Defs: map[*ast.Ident]types.Object{}}}
+	c := &checkedPkg{files: files, info: &types.Info{
+		Defs:  map[*ast.Ident]types.Object{},
+		Uses:  map[*ast.Ident]types.Object{},
+		Types: map[ast.Expr]types.TypeAndValue{},
+	}}
 	l.checks[path] = c // registered before Check: a module import cycle cannot recurse forever
 	conf := types.Config{Importer: l, FakeImportC: true, Error: func(err error) { c.errs = append(c.errs, err) }}
 	name := ""
@@ -154,14 +166,20 @@ func authzType(t *testing.T, apispec *checkedPkg) *types.Named {
 	for _, err := range apispec.errs {
 		t.Errorf("internal/apispec does not type-check (it imports only the stdlib, so this is a broken scan, not a tolerated gap): %v", err)
 	}
-	obj := apispec.pkg.Scope().Lookup("Authz")
+	return namedType(t, apispec, "Authz")
+}
+
+// namedType returns the defined type name out of the checked apispec package.
+func namedType(t *testing.T, apispec *checkedPkg, name string) *types.Named {
+	t.Helper()
+	obj := apispec.pkg.Scope().Lookup(name)
 	tn, ok := obj.(*types.TypeName)
 	if !ok {
-		t.Fatalf("internal/apispec declares no type Authz (found %v) — the declaration scan is broken", obj)
+		t.Fatalf("internal/apispec declares no type %s (found %v) — the declaration scan is broken", name, obj)
 	}
 	named, ok := tn.Type().(*types.Named)
 	if !ok {
-		t.Fatalf("apispec.Authz is %v, not a defined type", tn.Type())
+		t.Fatalf("apispec.%s is %v, not a defined type", name, tn.Type())
 	}
 	return named
 }
@@ -209,55 +227,99 @@ func authzDeclsIn(c *checkedPkg, fset *token.FileSet, authz *types.Named, home b
 	return consts, bad
 }
 
-// authzUsesInSource counts, per constant name, the Route literals in src whose
-// Authz field is set to apispec.<Name> (the import is resolved by path, so an
-// aliased import counts). An Authz field set to anything else — a string
-// literal, a variable, a call — is reported in bad: that form cannot be
-// matched to a constant, and an unmatched use must fail, not vanish.
-func authzUsesInSource(t *testing.T, file string, src any) (uses map[string]int, bad []string) {
-	t.Helper()
-	f, err := parser.ParseFile(token.NewFileSet(), file, src, parser.SkipObjectResolution)
-	if err != nil {
-		t.Fatalf("parse %s: %v", file, err)
-	}
-	names := importNames(f)
+// authzUsesIn counts, per constant name, the composite literals of type
+// apispec.Route in one type-checked package whose Authz field is an
+// apispec.Authz constant (resolved by the checker, so an aliased import or a
+// bare name inside internal/apispec counts the same). A literal of any other
+// type is not a use (app#393: a table row with an Authz field is not a
+// Route). Reported in bad, so an unmatched use fails instead of vanishing: a
+// Route whose Authz is anything but a constant (a string literal, a
+// variable, a call), a Route with positional fields, and a literal with an
+// Authz key whose type the checker could not work out (it cannot be shown
+// not to be a Route).
+func authzUsesIn(c *checkedPkg, fset *token.FileSet, route, authz *types.Named) (uses map[string]int, bad []string) {
 	uses = map[string]int{}
-	ast.Inspect(f, func(n ast.Node) bool {
-		kv, ok := n.(*ast.KeyValueExpr)
-		if !ok {
-			return true
-		}
-		if k, ok := kv.Key.(*ast.Ident); !ok || k.Name != "Authz" {
-			return true
-		}
-		if sel, ok := kv.Value.(*ast.SelectorExpr); ok {
-			if x, ok := sel.X.(*ast.Ident); ok && names[x.Name] == apispecImportPath {
-				uses[sel.Sel.Name]++
+	for _, f := range c.files {
+		ast.Inspect(f, func(n ast.Node) bool {
+			lit, ok := n.(*ast.CompositeLit)
+			if !ok {
 				return true
 			}
-		}
-		bad = append(bad, file+": Route Authz is not an apispec.Authz* constant reference")
-		return true
-	})
+			where := fset.Position(lit.Pos()).String()
+			var value ast.Expr
+			positional := false
+			for _, el := range lit.Elts {
+				kv, ok := el.(*ast.KeyValueExpr)
+				if !ok {
+					positional = true
+					continue
+				}
+				if k, ok := kv.Key.(*ast.Ident); ok && k.Name == "Authz" {
+					value = kv.Value
+				}
+			}
+			typ := c.info.Types[lit].Type
+			if typ == nil || typ == types.Typ[types.Invalid] {
+				if value != nil {
+					bad = append(bad, where+": a literal with an Authz key has no type the checker could work out — it cannot be shown not to be an apispec.Route")
+				}
+				return true
+			}
+			if p, ok := typ.(*types.Pointer); ok {
+				typ = p.Elem() // an elided &T{} in a []*T is recorded as *T
+			}
+			if !types.Identical(typ, route) {
+				return true
+			}
+			if positional {
+				bad = append(bad, where+": apispec.Route literal with positional fields — its Authz cannot be read")
+				return true
+			}
+			if value == nil {
+				return true // no Authz: the empty word fails V3b against the spec
+			}
+			id, _ := value.(*ast.Ident)
+			if sel, ok := value.(*ast.SelectorExpr); ok {
+				id = sel.Sel
+			}
+			if id != nil {
+				if k, ok := c.info.Uses[id].(*types.Const); ok && k.Pkg() != nil && k.Pkg().Path() == apispecImportPath && types.Identical(k.Type(), authz) {
+					uses[k.Name()]++
+					return true
+				}
+			}
+			bad = append(bad, where+": Route Authz is not an apispec.Authz* constant reference")
+			return true
+		})
+	}
 	return uses, bad
 }
 
 // repoAuthzSources reads the real vocabulary: the constants declared in
 // internal/apispec (type-checked), every Authz-typed declaration elsewhere
 // under internal/ and cmd/ (all reported in bad), and the Route uses in every
-// non-test Go file there. parsed is how many files the use scan covered and
-// packages how many packages the declaration scan type-checked.
+// type-checked package there. parsed is how many files the use scan covered
+// and packages how many packages the scans type-checked.
 func repoAuthzSources(t *testing.T, root string) (consts map[string]string, uses map[string]int, parsed, packages int, bad []string) {
 	t.Helper()
 	l := newSrcLoader(t, root)
 	apispecDir := filepath.Join(root, "internal", "apispec")
 	home := l.checkDir(apispecImportPath, apispecDir)
-	authz := authzType(t, home)
+	authz, route := authzType(t, home), namedType(t, home, "Route")
 	consts, b := authzDeclsIn(home, l.fset, authz, true)
 	bad = append(bad, b...)
-	packages++
-
 	uses = map[string]int{}
+	scanUses := func(c *checkedPkg) {
+		u, b := authzUsesIn(c, l.fset, route, authz)
+		for k, n := range u {
+			uses[k] += n
+		}
+		bad = append(bad, b...)
+		parsed += len(c.files)
+		packages++
+	}
+	scanUses(home)
+
 	for _, dir := range []string{"internal", "cmd"} {
 		err := filepath.WalkDir(filepath.Join(root, dir), func(p string, d os.DirEntry, err error) error {
 			if err != nil {
@@ -273,18 +335,8 @@ func repoAuthzSources(t *testing.T, root string) (consts map[string]string, uses
 				c := l.checkDir(modulePrefix+filepath.ToSlash(rel), p)
 				_, b := authzDeclsIn(c, l.fset, authz, false)
 				bad = append(bad, b...)
-				packages++
-				return nil
+				scanUses(c)
 			}
-			if !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
-				return nil
-			}
-			parsed++
-			u, b := authzUsesInSource(t, p, nil)
-			for k, n := range u {
-				uses[k] += n
-			}
-			bad = append(bad, b...)
 			return nil
 		})
 		if err != nil {
@@ -365,9 +417,10 @@ func repoSpecAuthzValues(t *testing.T, root string) (values map[string][]string,
 	return values, files, ops
 }
 
-// authzVocabularyViolations is the pure comparison (a)-(c); every input is a
+// authzVocabularyViolations is the pure comparison (a)-(d); every input is a
 // plain map so the mutation tests below can feed it synthetic vocabularies.
-func authzVocabularyViolations(consts map[string]string, uses map[string]int, specValues map[string][]string) []string {
+// classified is AuthzIdentitySources as word value -> source.
+func authzVocabularyViolations(consts map[string]string, uses map[string]int, specValues map[string][]string, classified map[string]string) []string {
 	var out []string
 	declaredValues := map[string]string{}
 	for name, v := range consts {
@@ -379,6 +432,14 @@ func authzVocabularyViolations(consts map[string]string, uses map[string]int, sp
 		}
 		if len(specValues[consts[name]]) == 0 {
 			out = append(out, "(c) apispec."+name+" ("+strconv.Quote(consts[name])+") appears in no docs/openapi-*.yaml x-ctf-authz — dead vocabulary")
+		}
+		if _, ok := classified[consts[name]]; !ok {
+			out = append(out, "(d) apispec."+name+" ("+strconv.Quote(consts[name])+") has no identity source in AuthzIdentitySources — classify it proven / claimed / none")
+		}
+	}
+	for _, v := range sortedKeys(classified) {
+		if _, ok := declaredValues[v]; !ok {
+			out = append(out, "(d) AuthzIdentitySources classifies "+strconv.Quote(v)+", which is not a declared Authz constant")
 		}
 	}
 	for _, name := range sortedKeys(uses) {
@@ -426,8 +487,37 @@ func TestAuthzVocabulary_ConstantsRoutesAndSpecsAgree(t *testing.T) {
 	for _, b := range bad {
 		t.Error(b)
 	}
-	for _, v := range authzVocabularyViolations(consts, uses, specValues) {
+	classified := map[string]string{}
+	for w, src := range AuthzIdentitySources() {
+		classified[string(w)] = string(src)
+	}
+	for _, v := range authzVocabularyViolations(consts, uses, specValues, classified) {
 		t.Error(v)
+	}
+}
+
+// TestAuthzVocabulary_ClassificationReachesEveryServiceRoute pins the links
+// that make the per-service wiring enough (app#393): (c) puts every constant
+// in a spec; the scanned specs are exactly the mux owners' (the test below);
+// every mux owner must run V1 and V3b (each spec operation is a live route
+// with the same x-ctf-authz) and the identity-source property on its live
+// Routes() (TestParityTestsExistForEverySpec). So every word is on a live
+// route that specparity.ClaimedIdentityForwardViolations reads, and that
+// property fails a word the table does not classify. Dropping any of the
+// three from requiredParityTestFuncs breaks the chain, so it is red here.
+func TestAuthzVocabulary_ClassificationReachesEveryServiceRoute(t *testing.T) {
+	required := map[string]bool{}
+	for _, fn := range requiredParityTestFuncs {
+		required[fn] = true
+	}
+	for _, fn := range []string{
+		"TestAPISpec_V1_RouteSetMatchesSpec",
+		"TestAPISpec_V3b_StringExtParity",
+		"TestAPISpec_ClaimedIdentityImpliesForwardOrInternal",
+	} {
+		if !required[fn] {
+			t.Errorf("requiredParityTestFuncs lost %s: a service could skip it, and a word would no longer be forced through the identity-source table on that service's routes", fn)
+		}
 	}
 }
 
@@ -465,15 +555,16 @@ func TestAuthzVocabulary_ScannedSpecsAreTheMuxOwnersSpecs(t *testing.T) {
 
 // --- the detector is not vacuous: V8 mutations ------------------------------
 
-func baselineVocabulary() (map[string]string, map[string]int, map[string][]string) {
+func baselineVocabulary() (map[string]string, map[string]int, map[string][]string, map[string]string) {
 	return map[string]string{"AuthzNone": "none", "AuthzAdmin": "admin"},
 		map[string]int{"AuthzNone": 3, "AuthzAdmin": 1},
-		map[string][]string{"none": {"s.yaml: GET /healthz"}, "admin": {"s.yaml: POST /api/admin/reset"}}
+		map[string][]string{"none": {"s.yaml: GET /healthz"}, "admin": {"s.yaml: POST /api/admin/reset"}},
+		map[string]string{"none": "none", "admin": "proven"}
 }
 
 func TestAuthzVocabularyDetector_CleanBaselineIsClean(t *testing.T) {
-	c, u, s := baselineVocabulary()
-	if v := authzVocabularyViolations(c, u, s); len(v) != 0 {
+	c, u, s, cl := baselineVocabulary()
+	if v := authzVocabularyViolations(c, u, s, cl); len(v) != 0 {
 		t.Fatalf("clean baseline flagged: %v", v)
 	}
 }
@@ -483,28 +574,36 @@ func TestAuthzVocabularyDetector_CleanBaselineIsClean(t *testing.T) {
 func TestAuthzVocabularyDetector_CatchesMutations(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
-		mutate func(c map[string]string, u map[string]int, s map[string][]string)
+		mutate func(c map[string]string, u map[string]int, s map[string][]string, cl map[string]string)
 		want   string
 	}{
-		{"fictional constant: declared, used by a Route, in no spec", func(c map[string]string, u map[string]int, s map[string][]string) {
+		{"fictional constant: declared, used by a Route, in no spec", func(c map[string]string, u map[string]int, s map[string][]string, cl map[string]string) {
 			c["AuthzGhost"] = "ghost"
 			u["AuthzGhost"] = 1
 		}, "(c) apispec.AuthzGhost"},
-		{"fictional spec value: a spec writes a word no constant declares (the self-or-admin-write shape)", func(c map[string]string, u map[string]int, s map[string][]string) {
+		{"fictional spec value: a spec writes a word no constant declares (the self-or-admin-write shape)", func(c map[string]string, u map[string]int, s map[string][]string, cl map[string]string) {
 			s["self-or-admin-write"] = []string{"s.yaml: POST /api/challenges/{cid}/submit-detect"}
 		}, "(b) x-ctf-authz: \"self-or-admin-write\""},
-		{"unused constant: declared and in a spec, no Route uses it", func(c map[string]string, u map[string]int, s map[string][]string) {
+		{"unused constant: declared and in a spec, no Route uses it", func(c map[string]string, u map[string]int, s map[string][]string, cl map[string]string) {
 			c["AuthzOrphan"] = "orphan"
 			s["orphan"] = []string{"s.yaml: GET /x"}
 		}, "(a) apispec.AuthzOrphan"},
-		{"a Route uses a constant that is not declared", func(c map[string]string, u map[string]int, s map[string][]string) {
+		{"a Route uses a constant that is not declared", func(c map[string]string, u map[string]int, s map[string][]string, cl map[string]string) {
 			u["AuthzUndeclared"] = 1
 		}, "(a) a Route uses apispec.AuthzUndeclared"},
+		{"unclassified constant: declared, used, in a spec, absent from AuthzIdentitySources", func(c map[string]string, u map[string]int, s map[string][]string, cl map[string]string) {
+			c["AuthzFresh"] = "fresh"
+			u["AuthzFresh"] = 1
+			s["fresh"] = []string{"s.yaml: POST /x"}
+		}, "(d) apispec.AuthzFresh"},
+		{"the table classifies a word no constant declares", func(c map[string]string, u map[string]int, s map[string][]string, cl map[string]string) {
+			cl["phantom"] = "claimed"
+		}, "(d) AuthzIdentitySources classifies \"phantom\""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			c, u, s := baselineVocabulary()
-			tc.mutate(c, u, s)
-			v := authzVocabularyViolations(c, u, s)
+			c, u, s, cl := baselineVocabulary()
+			tc.mutate(c, u, s, cl)
+			v := authzVocabularyViolations(c, u, s, cl)
 			if len(v) == 0 {
 				t.Fatalf("mutation not detected")
 			}
@@ -542,6 +641,11 @@ func f() {
 }
 
 var AuthzVar = Authz("v") // a var is never a word
+
+type Route struct {
+	Method, Pattern string
+	Authz           Authz
+}
 `
 
 func TestAuthzVocabularyExtractors_SeePlantedForms(t *testing.T) {
@@ -599,17 +703,37 @@ func f() { const local ap.Authz = "z"; _ = local }
 		}
 	}
 
-	uses, bad := authzUsesInSource(t, "planted.go", `package p
-import ap "github.com/Qfour/falco-ctf-app/internal/apispec"
+	// The use scan counts Route literals only, by type (app#393 (4)). A
+	// look-alike Route in another module package resolves and is not ours.
+	route := namedType(t, home, "Route")
+	l.check(modulePrefix+"internal/lookalike", []*ast.File{mustParse(t, l.fset, "lookalike.go", "package lookalike\n\ntype Route struct{ Authz string }\n")})
+	used := l.check(modulePrefix+"internal/planteduse", []*ast.File{mustParse(t, l.fset, "use.go", `package p
+
+import (
+	ap "`+apispecImportPath+`"
+	"`+modulePrefix+`internal/lookalike"
+	foreign "example.com/other/apispec"
+)
+
+type row struct{ Authz ap.Authz } // has an Authz field, is not a Route
+type R = ap.Route                 // an alias is the same type
+
 var _ = []ap.Route{{Authz: ap.AuthzA}, {Authz: ap.AuthzA}, {Authz: "none"}}
-`)
-	if uses["AuthzA"] != 2 || len(bad) != 1 {
-		t.Fatalf("uses=%v bad=%v: want AuthzA x2 through the alias and the string-literal Authz flagged", uses, bad)
+var _ = []*R{{Authz: ap.AuthzB}}
+var _ = []row{{Authz: ap.AuthzC}}
+var _ = map[ap.Authz]int{ap.AuthzD: 1}
+var _ = lookalike.Route{Authz: "x"}
+var _ = ap.Route{"GET", "/p", ap.AuthzF}
+var _ = foreign.Route{Authz: foreign.AuthzG}
+`)})
+	uses, bad := authzUsesIn(used, l.fset, route, authz)
+	if !reflect.DeepEqual(uses, map[string]int{"AuthzA": 2, "AuthzB": 1}) {
+		t.Fatalf("uses = %v, want AuthzA x2 (through the alias import) and AuthzB x1 (through the type alias); the row struct, the map key, the look-alike and the positional literal are not uses", uses)
 	}
-	// A look-alike package named apispec at another path is not ours.
-	uses, _ = authzUsesInSource(t, "other.go", "package p\nimport \"example.com/other/apispec\"\nvar _ = apispec.Route{Authz: apispec.AuthzA}\n")
-	if uses["AuthzA"] != 0 {
-		t.Fatalf("a foreign apispec package was counted: %v", uses)
+	sort.Strings(bad)
+	if len(bad) != 3 || !strings.Contains(bad[0], "is not an apispec.Authz* constant") ||
+		!strings.Contains(bad[1], "positional fields") || !strings.Contains(bad[2], "no type the checker could work out") {
+		t.Fatalf("bad = %v, want the string-literal Authz, the positional Route and the unresolvable foreign literal", bad)
 	}
 
 	vals, ops := specAuthzValuesInYAML(t, "p.yaml", []byte(`paths:

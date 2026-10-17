@@ -104,6 +104,65 @@ const (
 	AuthzRostered Authz = "rostered"
 )
 
+// IdentitySource is where an Authz word takes the caller's identity from. It
+// belongs to the WORD, not to a route, so it is declared once, here, and the
+// properties that depend on it read AuthzIdentitySources instead of naming
+// words (app#393: a property that lists its words misses a word with the same
+// meaning under another name).
+type IdentitySource string
+
+const (
+	// IdentityProven: the identity is proven by oauth2-proxy and required.
+	// scoreboard reads it from X-Auth-Request-Email (the ingress sets it, the
+	// client cannot); auth-policy from the /oauth2/auth subrequest. Without
+	// it the request is refused.
+	IdentityProven IdentitySource = "proven"
+	// IdentityClaimed: the identity comes from the path, the body or the
+	// event payload and is never proven.
+	IdentityClaimed IdentitySource = "claimed"
+	// IdentityNone: the route reads no caller identity.
+	IdentityNone IdentitySource = "none"
+)
+
+// AuthzIdentitySources is the one classification of the vocabulary: every
+// Authz word and its IdentitySource. It is read-only (a new map per call) and
+// changes no behaviour; nothing in production reads it. What holds each row:
+//
+//	source  | words                                | checked by
+//	--------|--------------------------------------|----------------------------------------
+//	proven  | admin, self-or-admin, authenticated, | scoreboard: no identity header -> 403
+//	        | rostered                             | (TestAuthz_EveryProvenRouteRejectsHeaderless);
+//	        |                                      | auth-policy: no proven identity -> 401/403
+//	        |                                      | (TestAuthz_EveryProvenRouteRejectsUnproven)
+//	claimed | claimed-identity,                    | specparity.ClaimedIdentityForwardViolations: each
+//	        | internal-claimed-identity            | claimed word needs its own rule; every service pins
+//	        |                                      | its claimed routes as a literal set
+//	none    | none                                 | ClaimedIdentityForwardViolations: no {user} in the
+//	        |                                      | Pattern; every service pins its none routes as a
+//	        |                                      | literal set. NOT caught: identity read from the body
+//
+// A word missing from this map is a violation wherever it is read
+// (ClaimedIdentityForwardViolations runs on every service's Routes();
+// authz_vocabulary_test.go (d) compares it with the declared constants).
+func AuthzIdentitySources() map[Authz]IdentitySource {
+	return map[Authz]IdentitySource{
+		AuthzAdmin:                   IdentityProven,
+		AuthzSelfOrAdmin:             IdentityProven,
+		AuthzAuthenticated:           IdentityProven,
+		AuthzRostered:                IdentityProven,
+		AuthzClaimedIdentity:         IdentityClaimed,
+		AuthzInternalClaimedIdentity: IdentityClaimed,
+		AuthzNone:                    IdentityNone,
+	}
+}
+
+// IdentitySourceOf looks a up in AuthzIdentitySources. ok is false for a word
+// the map does not classify; every caller treats that as a violation.
+func IdentitySourceOf(a Authz) (src IdentitySource, ok bool) {
+	src, ok = AuthzIdentitySources()[a]
+	return src, ok
+}
+
 // Route is one row of a service's declarative route table — the single
 // artifact that BOTH drives http.ServeMux registration (via NewMux, below)
 // AND is what the ADR-0005 parity tests compare against docs/openapi-*.yaml.

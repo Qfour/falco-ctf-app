@@ -57,8 +57,9 @@ func newParityFixtureHandler(t *testing.T) *Handler {
 // TestAPISpec_ClaimedIdentityImpliesForwardOrInternal is the route-table
 // property behind app#346 / #376 on collector's live Routes():
 // claimed-identity => CollectorForward=true (Audience does not exempt it),
-// internal-claimed-identity => Audience=internal. It is derived from the
-// table, not from route names. The collector forwards claimed-identity routes, so checked must be > 0.
+// internal-claimed-identity => Audience=internal, none => no {user} in the
+// Pattern, and a word apispec.AuthzIdentitySources does not classify is a
+// violation (app#393). It is derived from the tables, not from route names. The collector forwards claimed-identity routes, so checked must be > 0.
 func TestAPISpec_ClaimedIdentityImpliesForwardOrInternal(t *testing.T) {
 	h := newParityFixtureHandler(t)
 	routes := h.Routes()
