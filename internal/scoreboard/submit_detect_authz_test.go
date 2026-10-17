@@ -16,8 +16,9 @@ package scoreboard_test
 // specparity.ClaimedIdentityForwardViolations on each service's Routes()
 // (app#376). A re-introduced word of the same shape is not red by itself;
 // adding a word to the vocabulary is the architect's call (ADR-0034 判定).
-// The generic "no identity header => 403" guard for every self-or-admin route
-// is TestProfile_V1_EverySelfOrAdminRouteRejectsHeaderless, not this file.
+// The generic "no identity header => 403" guard for every proven route
+// (apispec.AuthzIdentitySources) is TestAuthz_EveryProvenRouteRejectsHeaderless,
+// not this file.
 
 import (
 	"net/http"
