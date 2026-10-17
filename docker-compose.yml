@@ -5,6 +5,11 @@
 #   curl -X POST http://localhost:8000/falco/events -H 'content-type: application/json' \
 #     -d '{"rule":"Read sensitive file untrusted","priority":"Warning","output_fields":{"k8s.ns.name":"ctf-user1","container.image.repository":"falco-ctf/challenge"}}'
 #   curl http://localhost:8000/api/state | jq
+#
+# The local compose has no oauth2-proxy / auth-policy. To try routes that require an identity header
+# (submit-detect, profile, hints, steps/check, reset-dirty) with curl, add
+# -H 'X-Auth-Request-Email: user1@ctf.local' (seat = user1 from scripts/dev-roster.yaml; the canonical form is
+# "<seat>@<EXPECTED_EMAIL_DOMAIN>", so it follows EXPECTED_EMAIL_DOMAIN).
 
 services:
   scoreboard:
