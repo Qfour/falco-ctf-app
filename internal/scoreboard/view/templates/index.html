@@ -280,6 +280,13 @@
   // A participant-chosen name goes into markup as esc() inside a <bdi>, so a right-to-left
   // character in it cannot reorder the text around it (app#343).
   const nameHTML = (s) => '<bdi>' + esc(s) + '</bdi>';
+  // The admin rename below trims and reports like the portal's (pane-scoreboard.tmpl). This page
+  // does not load the portal's core-util.tmpl, so these two lines are COPIES of its trimName /
+  // serverErrorText (byte-identical: the sharedHelpers table in portal_bidi_test.go pins both) until
+  // the dashboard's rendering is merged into the portal (#378, which deletes them).
+  // String.prototype.trim is not the server's trim set.
+  const trimName = (raw) => String(raw).replace(/^[\t\n\v\f\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+|[\t\n\v\f\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+$/g, '');
+  const serverErrorText = async (r) => { try { const j = await r.json(); if (j && typeof j.error === 'string') return j.error; } catch (_) { /* no body */ } return ''; };
   // Progress as one segment per mission; `done` of `total` lit.
   function segs(done, total) {
     let h = '';
@@ -509,7 +516,7 @@
     const user = btn.dataset.user;
     const name = prompt('Scoreboard name for ' + user + ' (blank cancels):');
     if (name === null) return;
-    const trimmed = name.trim();
+    const trimmed = trimName(name);   // same set as core-util.tmpl: the server's trim set, not String.prototype.trim
     if (!trimmed) return;
     try {
       const r = await fetch('/api/admin/users/' + encodeURIComponent(user) + '/display-name', {
@@ -517,7 +524,14 @@
         body: JSON.stringify({ name: trimmed }),
       });
       if (r.ok) { await refresh(); }
-      else { alert('Rename failed (HTTP ' + r.status + '). Admin only / invalid name (1-32 chars, no <>&"\').'); }
+      else {
+        // The server's own words (a 400 says which rule the name broke; a 403 says admin only),
+        // as TEXT: alert() shows a string and never parses markup. The rule is NOT written out
+        // here: it lives in the server (validDisplayName) and rule.yaml, so a rule that grows
+        // (app#381) cannot leave this message stale.
+        const why = await serverErrorText(r);
+        alert('Rename failed (HTTP ' + r.status + ')' + (why ? ': ' + why : '.'));
+      }
     } catch (err) { alert('Rename request error: ' + err); }
   });
 

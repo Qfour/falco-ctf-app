@@ -3,6 +3,7 @@ package view
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -39,20 +40,88 @@ var inlineTextLocals = []string{"displayName"}
 // inline text": x.<field> for a field above, or a bare local above.
 var inlineTextArg = `(?:[A-Za-z_$][\w$]*\.(?:` + strings.Join(inlineTextFields, "|") + `)\b|(?:` + strings.Join(inlineTextLocals, "|") + `)\b)`
 
-// isolateHelpers are the two helpers that isolate it (the same one-liner, see
-// core-util.tmpl), each with its pinned declaration. They stay two names on
-// purpose (nameHTML for a name, textHTML for prose; a later difference, such as an
-// aria-label for a name, must not touch the other), and
-// TestDisplayNames_IsolationHelpersAreTheSameLine pins that the BODIES are one. The portal declares each once
-// (core-util.tmpl); the dashboard has its own esc, so its own copy of nameHTML next
-// to it, and no textHTML (it renders no board).
-var isolateHelpers = []struct {
+// sharedHelper is a helper declared once in the portal (core-util.tmpl) with its pinned
+// declaration line, and how many times the admin dashboard (index.html, a separate
+// document that does not load core-util.tmpl) declares it.
+type sharedHelper struct {
 	name, wantLine string
 	portalDecls    int
 	indexDecls     int
-}{
+}
+
+// nameEdgeClass is the character class of Go's strings.TrimSpace (unicode.IsSpace),
+// as a JS regexp class. String.prototype.trim is not that set (app#401).
+const nameEdgeClass = `\t\n\v\f\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000`
+
+// sharedHelpers is THE list of the helpers core-util.tmpl declares once for the
+// portal, each with its pinned declaration. indexDecls 1 means index.html carries a
+// byte-identical COPY (the dashboard does not load core-util.tmpl), so the rows with
+// indexDecls 1 are the whole list of what the dashboard duplicates, i.e. #378's work
+// list: when the dashboard's rendering is merged into the portal they go to 0 and the
+// copies are deleted. nameHTML / textHTML isolate a participant-written string (the
+// same one-liner, see core-util.tmpl; two names on purpose: nameHTML for a name,
+// textHTML for prose, and TestDisplayNames_IsolationHelpersAreTheSameLine pins that the
+// BODIES are one); the dashboard has its own esc, so its own nameHTML next to it, and
+// no textHTML (it renders no board). trimName is the server's trim set for a name the
+// portal sends, serverErrorText reads the server's {"error"} as a string (app#401).
+var sharedHelpers = []sharedHelper{
 	{"nameHTML", `const nameHTML = (s) => '<bdi>' + esc(s) + '</bdi>';`, 1, 1},
 	{"textHTML", `const textHTML = (s) => '<bdi>' + esc(s) + '</bdi>';`, 1, 0},
+	{"trimName", `const trimName = (raw) => String(raw).replace(/^[` + nameEdgeClass + `]+|[` + nameEdgeClass + `]+$/g, '');`, 1, 1},
+	{"serverErrorText", `const serverErrorText = async (r) => { try { const j = await r.json(); if (j && typeof j.error === 'string') return j.error; } catch (_) { /* no body */ } return ''; };`, 1, 1},
+}
+
+// isolateHelpers are the two bidi-isolating rows of sharedHelpers.
+var isolateHelpers = sharedHelpers[:2]
+
+// checkSharedHelpers returns every violation of the one-declaration rule of helpers
+// in the portal partials (name -> body) and the dashboard source: each is declared
+// exactly portalDecls times across the partials and indexDecls times in index.html,
+// as its pinned line (declRe finds the declaration forms, a shadow in a declarator
+// list or by destructuring included), and never written to (writeRe).
+func checkSharedHelpers(portal map[string]string, index string, helpers []sharedHelper) []error {
+	var errs []error
+	files := map[string]string{"index.html": index}
+	for n, b := range portal {
+		files[n] = b
+	}
+	names := make([]string, 0, len(files))
+	for n := range files {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	portalDecls := map[string]int{}
+	indexDecls := map[string]int{}
+	for _, name := range names {
+		body := stripEscComments(files[name])
+		for _, h := range helpers {
+			dre := declRe(h.name)
+			d := len(dre.FindAllString(body, -1))
+			// What is left once the pinned line and every declaration are cut out
+			// can only be a write to the helper.
+			rest := dre.ReplaceAllString(strings.ReplaceAll(body, h.wantLine, ""), "")
+			for _, m := range writeRe(h.name).FindAllString(rest, -1) {
+				errs = append(errs, fmt.Errorf("%s: found %q — %s must be declared once, as the pinned line, and never reassigned (a write swaps the helper for every pane)", name, strings.TrimSpace(m), h.name))
+			}
+			if name == "index.html" {
+				indexDecls[h.name] += d
+			} else {
+				portalDecls[h.name] += d
+			}
+			if d > 0 && !strings.Contains(body, h.wantLine) {
+				errs = append(errs, fmt.Errorf("%s declares %s, but not as the pinned line %q", name, h.name, h.wantLine))
+			}
+		}
+	}
+	for _, h := range helpers {
+		if portalDecls[h.name] != h.portalDecls {
+			errs = append(errs, fmt.Errorf("the portal declares %s %d times, want exactly %d (core-util.tmpl)", h.name, portalDecls[h.name], h.portalDecls))
+		}
+		if indexDecls[h.name] != h.indexDecls {
+			errs = append(errs, fmt.Errorf("index.html declares %s %d times, want exactly %d", h.name, indexDecls[h.name], h.indexDecls))
+		}
+	}
+	return errs
 }
 
 var (
@@ -114,8 +183,6 @@ func checkBidiNames(portal map[string]string, index string, floors map[string]in
 		}
 	}
 	sites := 0
-	portalDecls := map[string]int{}
-	indexDecls := map[string]int{}
 	for name, raw := range files {
 		body := stripEscComments(raw)
 		for _, m := range bareEscRe.FindAllString(body, -1) {
@@ -129,36 +196,13 @@ func checkBidiNames(portal map[string]string, index string, floors map[string]in
 		if floor, ok := floors[name]; ok && n < floor {
 			errs = append(errs, fmt.Errorf("%s: %d nameHTML/textHTML(<participant inline text>) sites, want at least %d (a site moved or stopped matching the scan)", name, n, floor))
 		}
-		for _, h := range isolateHelpers {
-			dre := declRe(h.name)
-			d := len(dre.FindAllString(body, -1))
-			// What is left once the pinned line and every declaration are cut out
-			// can only be a write to the helper.
-			rest := dre.ReplaceAllString(strings.ReplaceAll(body, h.wantLine, ""), "")
-			for _, m := range writeRe(h.name).FindAllString(rest, -1) {
-				errs = append(errs, fmt.Errorf("%s: found %q — %s must be declared once, as the pinned line, and never reassigned (a write swaps the isolation for every pane)", name, strings.TrimSpace(m), h.name))
-			}
-			if name == "index.html" {
-				indexDecls[h.name] += d
-			} else {
-				portalDecls[h.name] += d
-			}
-			if d > 0 && !strings.Contains(body, h.wantLine) {
-				errs = append(errs, fmt.Errorf("%s declares %s, but not as the pinned line %q", name, h.name, h.wantLine))
-			}
-		}
 	}
 	if sites == 0 {
 		errs = append(errs, fmt.Errorf("the scan found no nameHTML/textHTML(<participant inline text>) site at all: the gate would pass on nothing"))
 	}
-	for _, h := range isolateHelpers {
-		if portalDecls[h.name] != h.portalDecls {
-			errs = append(errs, fmt.Errorf("the portal declares %s %d times, want exactly %d (core-util.tmpl)", h.name, portalDecls[h.name], h.portalDecls))
-		}
-		if indexDecls[h.name] != h.indexDecls {
-			errs = append(errs, fmt.Errorf("index.html declares %s %d times, want exactly %d", h.name, indexDecls[h.name], h.indexDecls))
-		}
-	}
+	// The declarations of nameHTML / textHTML (shared with trimName and serverErrorText
+	// in sharedHelpers; the whole table is checked by TestSharedHelpers_*).
+	errs = append(errs, checkSharedHelpers(portal, index, isolateHelpers)...)
 	return errs
 }
 
@@ -343,6 +387,97 @@ func TestDisplayNames_BidiGateCatchesRegressions(t *testing.T) {
 					found = true
 				} else if c.only {
 					t.Errorf("unexpected error (this case must produce only %q): %v", c.want, err)
+				}
+			}
+			if !found {
+				t.Errorf("no error contains %q; got %v", c.want, errs)
+			}
+		})
+	}
+}
+
+// TestSharedHelpers_OneDefinitionAndTheIndexCopy runs checkSharedHelpers over the real
+// source: every row of sharedHelpers is declared once in the portal (core-util.tmpl) and
+// the dashboard carries exactly the copies the table lists, as the pinned lines.
+func TestSharedHelpers_OneDefinitionAndTheIndexCopy(t *testing.T) {
+	portal, index := bidiSources(t)
+	for _, err := range checkSharedHelpers(portal, index, sharedHelpers) {
+		t.Error(err)
+	}
+}
+
+// TestSharedHelpers_GateCatchesRegressions applies each edit that would split a shared
+// helper (a shadow, a second definition, a write, a drifted or missing copy) to the real
+// source and requires the gate to name it.
+func TestSharedHelpers_GateCatchesRegressions(t *testing.T) {
+	line := func(name string) string {
+		for _, h := range sharedHelpers {
+			if h.name == name {
+				return h.wantLine
+			}
+		}
+		t.Fatalf("no sharedHelpers row %s", name)
+		return ""
+	}
+	type src struct {
+		portal map[string]string
+		index  string
+	}
+	cases := []struct {
+		name   string
+		want   string
+		mutate func(s *src)
+	}{
+		{"pane-me declares its own trimName again", "the portal declares trimName 2 times", func(s *src) {
+			s.portal["pane-me.tmpl"] += "\n<script>  function trimName(raw) { return String(raw).trim(); }</script>"
+		}},
+		{"trimName in a declarator list (a shadow)", "the portal declares trimName 2 times", func(s *src) {
+			s.portal["pane-new.tmpl"] = "<script>const a = 1, trimName = (s) => s.trim();</script>"
+		}},
+		{"serverErrorText by destructuring", "the portal declares serverErrorText 2 times", func(s *src) {
+			s.portal["pane-new.tmpl"] = "<script>const {serverErrorText} = window.helpers;</script>"
+		}},
+		{"trimName is reassigned", "never reassigned", func(s *src) {
+			s.portal["pane-new.tmpl"] = "<script>trimName = (s) => s.trim();</script>"
+		}},
+		{"serverErrorText is written through defineProperty", "never reassigned", func(s *src) {
+			s.portal["pane-new.tmpl"] = "<script>Object.defineProperty(window, 'serverErrorText', { value: () => '' });</script>"
+		}},
+		{"the trimName definition is gone", "the portal declares trimName 0 times", func(s *src) {
+			s.portal["core-util.tmpl"] = strings.Replace(s.portal["core-util.tmpl"], line("trimName"), "", 1)
+		}},
+		{"core-util's trimName drifts from the pinned line", "not as the pinned line", func(s *src) {
+			s.portal["core-util.tmpl"] = strings.Replace(s.portal["core-util.tmpl"], line("trimName"), "const trimName = (raw) => String(raw).trim();", 1)
+		}},
+		{"index.html's trimName drifts (String.prototype.trim)", "index.html declares trimName, but not as the pinned line", func(s *src) {
+			s.index = strings.Replace(s.index, line("trimName"), "const trimName = (raw) => String(raw).trim();", 1)
+		}},
+		{"index.html's serverErrorText drifts", "index.html declares serverErrorText, but not as the pinned line", func(s *src) {
+			s.index = strings.Replace(s.index, line("serverErrorText"), "const serverErrorText = async (r) => (await r.text());", 1)
+		}},
+		{"index.html loses its serverErrorText copy", "index.html declares serverErrorText 0 times", func(s *src) {
+			s.index = strings.Replace(s.index, line("serverErrorText"), "", 1)
+		}},
+		{"index.html declares trimName twice", "index.html declares trimName 2 times", func(s *src) {
+			s.index += "\n  " + line("trimName") + "\n"
+		}},
+	}
+	basePortal, baseIndex := bidiSources(t)
+	if errs := checkSharedHelpers(basePortal, baseIndex, sharedHelpers); len(errs) != 0 {
+		t.Fatalf("the unmodified source must pass the gate first: %v", errs)
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := src{portal: map[string]string{}, index: baseIndex}
+			for k, v := range basePortal {
+				m.portal[k] = v
+			}
+			c.mutate(&m)
+			errs := checkSharedHelpers(m.portal, m.index, sharedHelpers)
+			found := false
+			for _, err := range errs {
+				if strings.Contains(err.Error(), c.want) {
+					found = true
 				}
 			}
 			if !found {

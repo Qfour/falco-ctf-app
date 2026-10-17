@@ -17,7 +17,8 @@ import (
 // The Profile form's display-name check (nameProblem / trimName / planSave in
 // pane-me.tmpl), RUN, not string-matched (app#331, app#343).
 //
-// The functions and constants are cut out of the SOURCE partial the way
+// The functions and constants are cut out of the SOURCE partials (pane-me.tmpl, and
+// core-util.tmpl for the shared trimName, app#401) the way
 // scripts/check-portal-render.sh does it (a function from "\n  function name("
 // to the next "\n  }\n"; a constant is one "  const NAME = ...;" line) and run
 // in goja, a pure-Go ECMAScript engine (a test-only dependency: go.sum pins it,
@@ -63,23 +64,27 @@ func extractJSFunc(t *testing.T, src, name string) string {
 
 func extractJSConst(t *testing.T, src, name string) string {
 	t.Helper()
-	m := regexp.MustCompile(`(?m)^  const ` + name + ` = .*;$`).FindString(src)
+	// Indented by 2 inside pane-me's IIFE, at column 0 in core-util.tmpl.
+	m := regexp.MustCompile(`(?m)^(?:  )?const ` + name + ` = .*;$`).FindString(src)
 	if m == "" {
-		t.Fatalf("pane-me.tmpl: single-line const %s not found", name)
+		t.Fatalf("single-line const %s not found (the test cuts it out of the source)", name)
 	}
 	return m
 }
 
-// nameRulesJS is the form's rule, cut out of pane-me.tmpl.
+// nameRulesJS is the form's rule: the shared trim (trimName) cut out of core-util.tmpl,
+// the rest out of pane-me.tmpl.
 func nameRulesJS(t *testing.T) string {
 	t.Helper()
-	src := partialBody(portalPartials(t), "pane-me.tmpl")
+	parts := portalPartials(t)
+	util, pane := partialBody(parts, "core-util.tmpl"), partialBody(parts, "pane-me.tmpl")
 	var b strings.Builder
-	for _, c := range []string{"NAME_EDGE_SPACE", "NAME_HTML_META", "NAME_HIDDEN"} {
-		b.WriteString(extractJSConst(t, src, c) + "\n")
+	b.WriteString(extractJSConst(t, util, "trimName") + "\n")
+	for _, c := range []string{"NAME_HTML_META", "NAME_HIDDEN"} {
+		b.WriteString(extractJSConst(t, pane, c) + "\n")
 	}
-	for _, f := range []string{"trimName", "nameProblem", "planSave"} {
-		b.WriteString(extractJSFunc(t, src, f) + "\n")
+	for _, f := range []string{"nameProblem", "planSave"} {
+		b.WriteString(extractJSFunc(t, pane, f) + "\n")
 	}
 	return b.String()
 }
@@ -396,7 +401,7 @@ func TestNameProblem_ServerMessageStaysText(t *testing.T) {
 	pane := partialBody(portalPartials(t), "pane-me.tmpl")
 	for _, want := range []string{
 		`failureSentence(r)`,
-		`typeof j.error === 'string'`,
+		`await serverErrorText(r)`,
 		`msgEl.textContent = text`,
 		`planSave(nameInput.value, serverName, chosen, serverAvatar)`,
 	} {
@@ -405,10 +410,135 @@ func TestNameProblem_ServerMessageStaysText(t *testing.T) {
 		}
 	}
 	// The pre-app#331 class and String.trim() must not come back: trim() is not
-	// strings.TrimSpace (it keeps U+0085 and strips U+FEFF).
+	// strings.TrimSpace (it keeps U+0085 and strips U+FEFF). That pane-me does not
+	// declare its own trimName is the sharedHelpers table's (portal_bidi_test.go).
 	for _, bad := range []string{`\x00-\x1f`, `nameInput.value.trim()`} {
 		if strings.Contains(pane, bad) {
 			t.Errorf("pane-me.tmpl still has %s", bad)
+		}
+	}
+}
+
+// The admin rename (pane-scoreboard.tmpl, and the dashboard templates/index.html,
+// which does not load the portal's core-util.tmpl) used to trim with
+// String.prototype.trim and to answer a 400 with the rule written out by hand
+// ("invalid name (1-32 chars, no <>&\"')"), which goes stale when the rule grows
+// (app#381) and trims a different set from the server (app#401). Now: one trimName
+// and one reader of the server's {"error"}, declared once in core-util.tmpl; that
+// index.html's copies are byte-identical is the sharedHelpers table's
+// (portal_bidi_test.go).
+var renameSources = []string{"pane-scoreboard.tmpl", "index.html"}
+
+func renameSource(t *testing.T, name string) string {
+	t.Helper()
+	if name == "index.html" {
+		return indexHTML
+	}
+	return partialBody(portalPartials(t), name)
+}
+
+// renameHandler cuts the admin rename handler out of src: from its prompt() (code, not
+// a comment) to the reset handler that follows it.
+func renameHandler(t *testing.T, name, src string) string {
+	t.Helper()
+	start := strings.Index(src, "prompt('Scoreboard name for '")
+	if start < 0 {
+		t.Fatalf("%s: the admin rename prompt (\"prompt('Scoreboard name for '\") was not found", name)
+	}
+	end := strings.Index(src[start:], "const resetBtn")
+	if end < 0 {
+		t.Fatalf("%s: the end of the rename handler (const resetBtn) was not found", name)
+	}
+	return src[start : start+end]
+}
+
+var renameAlertRe = regexp.MustCompile(`(?m)^\s*alert\((\x27Rename failed \(HTTP .*)\);$`)
+
+// TestAdminRename_ShowsTheServersSentenceAsText pins the display of a failed rename:
+// the server's error is read as a string (serverErrorText) and put in alert(), never
+// in markup, and the rule is not written out in the page.
+func TestAdminRename_ShowsTheServersSentenceAsText(t *testing.T) {
+	for _, name := range renameSources {
+		h := renameHandler(t, name, renameSource(t, name))
+		if !strings.Contains(h, "await serverErrorText(r)") {
+			t.Errorf("%s: the rename failure branch lacks await serverErrorText(r)", name)
+		}
+		if !strings.Contains(h, "trimName(name)") || strings.Contains(h, ".trim()") {
+			t.Errorf("%s: the admin rename must trim with trimName(name), not String.prototype.trim", name)
+		}
+		// The sentence must not reach a markup sink, and the rule must not be hand-written.
+		for _, bad := range []string{"innerHTML", "insertAdjacentHTML", "outerHTML", "document.write", "invalid name (1-32", "no <>&"} {
+			if strings.Contains(h, bad) {
+				t.Errorf("%s: the rename handler contains %q", name, bad)
+			}
+		}
+		if len(renameAlertRe.FindAllStringSubmatch(h, -1)) != 1 {
+			t.Errorf("%s: want exactly one alert('Rename failed (HTTP ' ...) line in the rename handler", name)
+		}
+	}
+}
+
+// TestAdminRename_AlertSentence RUNS the alert argument of both handlers (cut out of the
+// source) for the three answers the server gives: a 400 with its sentence (shown after a
+// colon), a 403 with no body (status and a full stop) and a payload (kept as text).
+func TestAdminRename_AlertSentence(t *testing.T) {
+	cases := []struct {
+		status int
+		why    string
+		want   string
+	}{
+		{400, "invalid name: it cannot contain < > &", "Rename failed (HTTP 400): invalid name: it cannot contain < > &"},
+		{403, "", "Rename failed (HTTP 403)."},
+		{400, "<img src=x onerror=alert(1)>", "Rename failed (HTTP 400): <img src=x onerror=alert(1)>"},
+	}
+	for _, name := range renameSources {
+		m := renameAlertRe.FindStringSubmatch(renameHandler(t, name, renameSource(t, name)))
+		if m == nil {
+			t.Fatalf("%s: the alert line was not found", name)
+		}
+		for _, c := range cases {
+			var got string
+			driver := "var out = " + m[1] + ";"
+			runJS(t, "var r = {status: "+fmt.Sprint(c.status)+"}; var why = "+jsString(c.why)+";", driver, nil, &got)
+			if got != c.want {
+				t.Errorf("%s: status %d, why %q: alert shows %q, want %q", name, c.status, c.why, got, c.want)
+			}
+		}
+	}
+}
+
+func jsString(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+// TestServerErrorText_IsAStringNotMarkup runs the shared reader in goja: a payload in
+// the server's error stays a string; no body, a non-string error and a thrown json()
+// give the empty string.
+func TestServerErrorText_IsAStringNotMarkup(t *testing.T) {
+	util := partialBody(portalPartials(t), "core-util.tmpl")
+	rules := extractJSConst(t, util, "serverErrorText")
+	payload := `<img src=x onerror=alert(1)>`
+	driver := `
+var out = {};
+var cases = {
+  text: { json: () => Promise.resolve({ error: ` + "`" + payload + "`" + ` }) },
+  nonString: { json: () => Promise.resolve({ error: 42 }) },
+  noField: { json: () => Promise.resolve({ ok: true }) },
+  notJSON: { json: () => Promise.reject(new SyntaxError('x')) },
+  nullBody: { json: () => Promise.resolve(null) },
+};
+Object.keys(cases).forEach(k => serverErrorText(cases[k]).then(v => { out[k] = [typeof v, v]; }));
+`
+	var got map[string][2]string
+	runJS(t, rules, driver, nil, &got)
+	want := map[string][2]string{
+		"text": {"string", payload}, "nonString": {"string", ""}, "noField": {"string", ""},
+		"notJSON": {"string", ""}, "nullBody": {"string", ""},
+	}
+	for k, w := range want {
+		if got[k] != w {
+			t.Errorf("serverErrorText(%s) = %q, want %q", k, got[k], w)
 		}
 	}
 }

@@ -202,12 +202,9 @@
   // display-name-parity/cases.yaml, run through both sides, pins this
   // (portal_nameproblem_test.go, api/display_name_parity_test.go).
   //
-  // Trim: the server uses Go's strings.TrimSpace = unicode.IsSpace: ASCII
-  // whitespace, U+0085 NEL, U+00A0, U+1680, U+2000-200A, U+2028, U+2029, U+202F,
-  // U+205F, U+3000. String.prototype.trim is NOT that set: it also strips U+FEFF
-  // (which the server keeps, and refuses as Cf) and does not strip U+0085 (which
-  // the server strips). Trimming with trim() would refuse "Alice" + NEL here
-  // while the server stores "Alice". So: our own set, same as Go's.
+  // Trim: trimName() (core-util.tmpl, one definition shared with the admin rename in
+  // pane-scoreboard) is Go's strings.TrimSpace set, not String.prototype.trim; the
+  // reason is written there.
   //
   // Refused: < > & " ' (NAME_HTML_META), and \p{Cc} (C0, DEL, C1) or \p{Cf}
   // (zero-width characters, bidi controls such as U+202E, U+FEFF, soft hyphen)
@@ -215,10 +212,8 @@
   // here: the server accepts it only between two emoji (what makes a ZWJ emoji
   // sequence one glyph) and refuses it elsewhere with its own sentence, so the
   // emoji-adjacency rule lives in one place, the server.
-  const NAME_EDGE_SPACE = /^[\t\n\v\f\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+|[\t\n\v\f\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+$/g;
   const NAME_HTML_META = /[<>&"']/;
   const NAME_HIDDEN = /(?!\u200D)[\p{Cc}\p{Cf}]/u;
-  function trimName(raw) { return String(raw).replace(NAME_EDGE_SPACE, ''); }
   // Returns a sentence, or '' when the (already trimmed) name is fine.
   function nameProblem(name) {
     if (!name) return 'Enter a display name of 1 to 32 characters.';
@@ -248,8 +243,7 @@
   // own words (JSON {"error": ...}) are appended to a 400 and set with
   // textContent, never as markup.
   async function failureSentence(r) {
-    let detail = '';
-    try { const j = await r.json(); if (j && typeof j.error === 'string') detail = j.error; } catch (_) { /* no body */ }
+    const detail = await serverErrorText(r);   // core-util.tmpl: the server's {"error"} as a string, '' if none
     if (r.status === 400) return 'Not saved: the server did not accept that' + (detail ? ' (' + detail + ')' : '') + '. Use 1 to 32 characters for the name and pick an avatar from the grid.';
     if (r.status === 403) return 'Not saved: you can only change your own profile. If your sign-in expired, reload the portal and sign in again.';
     if (r.status === 429) {
