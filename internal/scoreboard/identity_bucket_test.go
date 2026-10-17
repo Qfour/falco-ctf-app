@@ -44,11 +44,18 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/identityobs"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/ratelimit"
 )
 
+// strictObs is the observer a synthetic MiddlewareStrict is wired with: the same
+// identityobs one api.Routes() hands it (MiddlewareStrict requires one).
+func strictObs() ratelimit.NoIdentityObserver {
+	return identityobs.New(nil, nil).StrictNoIdentity
+}
+
 type rateBucket struct {
-	name    string        // the bucket; for an identity row, its ratelimit.IdentityRequestsTotal label
+	name    string        // the bucket; for an identity row, its ratelimit.IdentityRequestsTotal bucket label
 	burst   int           // requests that pass from a full bucket
 	refill  time.Duration // time for one token to come back
 	members []string      // MuxPattern of every route on the bucket
@@ -164,10 +171,13 @@ func bucketPropertyViolation(t *testing.T, srv http.Handler, clock *testClock, r
 		return fmt.Sprintf("%s: bob (same IP) got burst %d after alice drained hers, want %d: the bucket is not identity-keyed", p, n, b.burst)
 	}
 	// A 403 alone cannot tell the limiter's answer from the handler's gate, so
-	// the limiter's own no_identity counter must move by exactly the number of
-	// header-less requests sent.
+	// the strict gate's own no_identity counter
+	// (scoreboard_identity_denials_total{gate="strict",reason="no_identity"},
+	// app#404) must move by exactly the number of header-less requests sent. The
+	// counter has no bucket label; the requests are sent one bucket at a time, so
+	// the delta is this bucket's.
 	noIdentity := func() float64 {
-		return testutil.ToFloat64(ratelimit.IdentityRequestsTotal.WithLabelValues(b.name, "no_identity"))
+		return testutil.ToFloat64(identityobs.DenialsTotal.WithLabelValues(string(identityobs.GateStrict), string(identityobs.ReasonNoIdentity)))
 	}
 	before := noIdentity()
 	sent := 3*b.burst + 1
@@ -183,7 +193,7 @@ func bucketPropertyViolation(t *testing.T, srv http.Handler, clock *testClock, r
 		return fmt.Sprintf("%s: header-less request #%d (X-Auth-Request-Email %q): status=%d body=%s, want 403 every time (no token taken, never an IP-keyed 429)", p, i, blank, w.Code, w.Body)
 	}
 	if got := noIdentity() - before; got != float64(sent) {
-		return fmt.Sprintf("%s: the limiter answered %v of %d header-less requests itself (ratelimit_identity_requests_total{bucket=%q,outcome=\"no_identity\"}); the other 403s came from behind it, so the bucket is not MiddlewareStrict", p, got, sent, b.name)
+		return fmt.Sprintf("%s: the limiter answered %v of %d header-less requests itself (scoreboard_identity_denials_total{gate=\"strict\",reason=\"no_identity\"}); the other 403s came from behind it, so the bucket is not MiddlewareStrict", p, got, sent)
 	}
 	if n := burstOf(t, srv, rt, "carol"); n != b.burst {
 		return fmt.Sprintf("%s: carol's burst after a header-less flood = %d, want %d (the flood spent an identity's tokens)", p, n, b.burst)
@@ -252,7 +262,7 @@ func TestIdentityBuckets_PropertyDetectorCatchesPassThrough(t *testing.T) {
 		wantFlags bool
 	}{
 		{"MiddlewareStrict", func(l *ratelimit.Limiter, bucket string) http.Handler {
-			return l.MiddlewareStrict(bucket, ratelimit.IdentityKeyed)(gate403())
+			return l.MiddlewareStrict(bucket, ratelimit.IdentityKeyed, strictObs())(gate403())
 		}, false},
 		{"empty-key pass-through Middleware behind a 403 gate", func(l *ratelimit.Limiter, _ string) http.Handler {
 			return l.Middleware(identityOrEmpty)(gate403())
@@ -405,8 +415,8 @@ func TestIdentityBuckets_SharingDetectorCatchesMismatch(t *testing.T) {
 				lb = ratelimit.New(1, 10).WithNow(newTestClock().now)
 			}
 			ra, rb := a, b
-			ra.Handler = la.MiddlewareStrict("a", ratelimit.IdentityKeyed)(syntheticOK())
-			rb.Handler = lb.MiddlewareStrict("b", ratelimit.IdentityKeyed)(syntheticOK())
+			ra.Handler = la.MiddlewareStrict("a", ratelimit.IdentityKeyed, strictObs())(syntheticOK())
+			rb.Handler = lb.MiddlewareStrict("b", ratelimit.IdentityKeyed, strictObs())(syntheticOK())
 			return syntheticMux(ra, rb)
 		}
 	}

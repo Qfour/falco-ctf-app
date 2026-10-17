@@ -600,12 +600,13 @@ paths:
         `X-Auth-Request-Email` is `403` FIRST: the identity-keyed rate limiter
         (app#328) turns it away before a token is consumed and before the
         handler runs (every such denial is counted by the metric
-        `ratelimit_identity_requests_total{bucket="detect",outcome="no_identity"}`;
-        at most one per bucket per 10 s also writes a sampled Warn log line
-        `identity-keyed route denied: no identity` with bucket, route pattern,
-        remote_addr, reason and a suppressed count, never the identity value or
-        the URL path; the chart alert `ScoreboardNoIdentityDenials` watches the
-        metric and renders only when `monitoring.enabled`; app#387), so that 403 is returned ahead of the 503 (feature off),
+        `scoreboard_identity_denials_total{gate="strict",reason="no_identity"}`
+        and, at most once per (gate, reason) per 10 s, writes a sampled Warn
+        log line `identity gate denied` with gate, reason, route pattern,
+        remote_addr, header state (absent|blank|present) and a suppressed
+        count, never the identity value or the URL path; the chart alert
+        `ScoreboardIdentityDenials` watches the metric and renders only when
+        `monitoring.enabled`; app#404, ADR-0038), so that 403 is returned ahead of the 503 (feature off),
         404 (unknown challenge) and 400 (bad body) answers below (app#346;
         there is no claimed-identity fallback). A request that has an identity
         and passes the feature / catalog / body checks (see 503, 404, 400) is

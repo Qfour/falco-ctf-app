@@ -624,7 +624,7 @@ func TestOriginGuardRunsBeforeRateLimiter_DetectorCatchesSwappedOrder(t *testing
 		t.Run(tc.name, func(t *testing.T) {
 			fresh := func() http.Handler {
 				og := originguard.New([]string{allowedOrigin}, slog.New(slog.NewTextHandler(io.Discard, nil))).Middleware
-				lim := ratelimit.New(1, 10).WithNow(newTestClock().now).MiddlewareStrict("example", ratelimit.IdentityKeyed)
+				lim := ratelimit.New(1, 10).WithNow(newTestClock().now).MiddlewareStrict("example", ratelimit.IdentityKeyed, strictObs())
 				r := rt
 				r.Handler = tc.wire(og, lim)
 				return syntheticMux(r)

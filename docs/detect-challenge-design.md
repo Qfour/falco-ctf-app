@@ -119,22 +119,23 @@ Key design points:
   `detect` bucket (`detectMW`; 403 without the header, before a token is consumed), no longer on
   `/submit`'s per-IP bucket nor the hint/step/reset-dirty one, plus the global in-flight cap. A
   request that reaches the handler is audit-logged. A header-less 403 is observable three ways
-  (app#387): the metric `ratelimit_identity_requests_total{bucket="detect",outcome="no_identity"}`
-  counts every denial (the series are pre-created at 0, so `increase()` sees the first one); a
-  sampled Warn line `identity-keyed route denied: no identity` (fields `bucket`, `route` pattern,
-  `remote_addr`, `reason` = `no_identity`|`empty_identity`, `suppressed`; at most one per bucket
-  per 10s, the rest counted in `suppressed`; the identity value and the URL path are never logged)
-  says where from; and the chart's `ScoreboardNoIdentityDenials` alert (warning, >10 in 5m per
-  bucket, rendered only with `monitoring.enabled`) fires on a sustained rate. Scope: POSTs that
-  reach an identity-keyed route (every MiddlewareStrict bucket in `internal/scoreboard/api`) with no header; the read gates
-  (`selfOrAdmin`, and `requireAuthenticated` on the board GET routes; non-sampled Warn, no metric) are not included (unifying
-  the three gates into one observation point is a follow-up). Triage by `remote_addr`:
+  (app#404, ADR-0038; it replaced app#387's per-bucket metric): the metric
+  `scoreboard_identity_denials_total{gate="strict",reason="no_identity"}` counts every denial (the
+  series of all four gates are pre-created at 0, so `increase()` sees the first one); a sampled Warn
+  line `identity gate denied` (fields `gate`, `reason`, `route` pattern, `remote_addr`, `header` =
+  `absent`|`blank`|`present`, `suppressed`; at most one per (gate, reason) per 10s, the rest counted in
+  `suppressed`; the identity value and the URL path are never logged) says where from; and the chart's
+  `ScoreboardIdentityDenials` alert (warning, `> 0` in 5m for `reason` = `no_identity` or
+  `non_canonical`, any gate, rendered only with `monitoring.enabled`) fires on the first one. The
+  same metric and line cover all four identity gates: `strict` (every MiddlewareStrict bucket in
+  `internal/scoreboard/api`), `self_or_admin`, `authenticated` (the board routes) and `portal` (a
+  GET /portal shell served with no usable identity; still a 200). Triage by `remote_addr`:
   ingress-nginx Pod IP = the I8 premise (auth-url / auth-response-headers) broke; collector Pod IP =
-  the forward table grew onto an identity-keyed route (ADR-0034 D12, needs an ADR); anything else =
+  the forward table grew onto an identity route (ADR-0034 D12, needs an ADR); anything else =
   NetworkPolicy not enforcing, or probing. A collector strip gap is NOT visible here (a forged
-  header that gets through is `outcome="allowed"`; V12/V13 are the preventive controls). This is
-  the ADR-0023 V5 style "leave a trace an operator can follow" applied to the identity header. No
-  claimed-user path.
+  header that gets through is `outcome="allowed"` on `ratelimit_identity_requests_total`; V12/V13 are
+  the preventive controls). This is the ADR-0023 V5 style "leave a trace an operator can follow"
+  applied to the identity header. No claimed-user path.
 - **No attacker-supplied time**, no forbidden-window — detect grading is purely a
   function of the (static capture, submitted condition) pair, so it is deterministic and
   replay-stable across scoreboard restarts (I1).

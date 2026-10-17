@@ -40,6 +40,7 @@ import (
 
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/identityobs"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/ratelimit"
 )
 
@@ -175,6 +176,12 @@ type Handler struct {
 	// cmd/scoreboard/main.go's PORTAL_TTYD_SUFFIX doc.
 	ttydSuffix string
 	logger     *slog.Logger
+	// denials records a portal shell served to a caller with no usable
+	// identity (gate=portal, app#404 / ADR-0038): the shell is public by design
+	// and stays a 200, but a fresh page load without the header leaves every
+	// identity pane empty and sends no further request, so this is the only
+	// signal of it.
+	denials *identityobs.Observer
 	// cspReportLimiter (Issue #95) is the per-source-IP token bucket POST
 	// /csp-report is wrapped in — see csp_report.go's newCSPReportLimiter
 	// doc for why this route's rate limit is distinct from every other
@@ -197,6 +204,7 @@ func New(isAdmin func(*http.Request) bool, deriveUser func(*http.Request) string
 		deriveUser:       deriveUser,
 		ttydSuffix:       ttydSuffix,
 		logger:           logger,
+		denials:          identityobs.New(logger, nil),
 		cspReportLimiter: newCSPReportLimiter(),
 	}
 }
@@ -360,6 +368,14 @@ func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
 // portal serves the unified admin/participant shell (P23-1). See portal.go
 // for renderPortal / the security rationale of the role+user injection.
 func (h *Handler) portal(w http.ResponseWriter, r *http.Request) {
+	// Still a 200 either way (the shell is public by design; see renderPortal's
+	// point 3). A caller who is neither an admin nor a canonical seat gets an
+	// empty shell, and on a fresh page load that is the only trace of it:
+	// Observer.Portal judges absent / blank (no_identity) versus anything else
+	// (non_canonical) from the header.
+	if role, user := portalViewer(r, h.isAdmin, h.deriveUser); role != "admin" && user == "" {
+		h.denials.Portal(r)
+	}
 	if err := renderPortal(w, r, h.isAdmin, h.deriveUser, h.ttydSuffix); err != nil {
 		if h.logger != nil {
 			h.logger.Error("portal render failed", "err", err)

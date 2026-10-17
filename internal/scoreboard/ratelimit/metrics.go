@@ -39,24 +39,27 @@ var ClientIPSourceTotal = promauto.NewCounterVec(
 	[]string{"caller", "source"},
 )
 
-// IdentityRequestsTotal counts requests that went through an identity-keyed
-// bucket (Limiter.MiddlewareStrict, app#315), labelled by:
+// IdentityRequestsTotal counts requests that reached an identity-keyed bucket
+// and were let through or limited (Limiter.MiddlewareStrict, app#315), labelled
+// by:
 //
 //	bucket:  which bucket — a fixed set of constants at the call sites
 //	         (e.g. "participant_action" for steps/check + hints + reset-dirty,
 //	         "detect" for submit-detect).
 //	         Distinguishes these from the IP-keyed submit bucket, whose own
 //	         counter is ClientIPSourceTotal{caller="submit"}.
-//	outcome: "allowed" | "limited" (429) | "no_identity" (403, no token consumed)
+//	outcome: "allowed" | "limited" (429)
 //
-// A sustained "no_identity" rate means something reaches an authenticated
-// route without the ingress-injected header (a header-less caller that got
-// past the origin guard, or an ingress change dropping the header).
+// A request with no usable identity never reaches the bucket: MiddlewareStrict
+// answers it 403 without consuming a token, and that refusal is counted in
+// scoreboard_identity_denials_total{gate="strict",reason="no_identity"}
+// (internal/scoreboard/identityobs), not here (app#404, ADR-0038 D1): one
+// refusal, one metric, and "requests that reached the bucket" stays exact.
 var IdentityRequestsTotal = promauto.NewCounterVec(
 	prometheus.CounterOpts{
 		Namespace: "ratelimit",
 		Name:      "identity_requests_total",
-		Help:      "Requests through an identity-keyed rate-limit bucket, by bucket and outcome (allowed|limited|no_identity). no_identity requests are denied 403 without consuming a token.",
+		Help:      "Requests through an identity-keyed rate-limit bucket, by bucket and outcome (allowed|limited). Requests with no usable identity are refused before the bucket and counted in scoreboard_identity_denials_total{gate=\"strict\"}.",
 	},
 	[]string{"bucket", "outcome"},
 )

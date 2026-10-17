@@ -48,6 +48,7 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/avatar"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/detect"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/identityobs"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/metrics"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/oapi"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/originguard"
@@ -213,11 +214,15 @@ type JourneyConfig struct {
 }
 
 type Handler struct {
-	cat           catalog.Catalog
-	store         *store.Store
-	grader        *scoring.Grader
-	logger        *slog.Logger
-	now           func() time.Time
+	cat    catalog.Catalog
+	store  *store.Store
+	grader *scoring.Grader
+	logger *slog.Logger
+	now    func() time.Time
+	// denials is the one observation point for identity refusals (app#404,
+	// ADR-0038): selfOrAdmin, requireAuthenticated / boardIdentity and the strict
+	// middlewares all record here, and only here.
+	denials       *identityobs.Observer
 	submitLimiter *ratelimit.Limiter
 	// actionLimiter is the IDENTITY-keyed bucket (app#315, ADR-0027
 	// Consequences, ADR-0032 D3) shared by the browser-only participant
@@ -376,9 +381,10 @@ func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *sl
 		grader:         grader,
 		logger:         logger,
 		now:            now,
+		denials:        identityobs.New(logger, now),
 		submitLimiter:  ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now),
-		actionLimiter:  ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now).WithLogger(logger),
-		detectLimiter:  ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now).WithLogger(logger),
+		actionLimiter:  ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now),
+		detectLimiter:  ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now),
 		adminSet:       adminSet,
 		emailDomain:    strings.ToLower(strings.TrimSpace(ic.ExpectedEmailDomain)),
 		hiddenSet:      hiddenSet,
@@ -394,13 +400,13 @@ func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *sl
 		// and follow-up messages (identity-keyed, MiddlewareStrict), so
 		// a spammer cannot dodge the bucket by spreading posts across many
 		// thread ids. Mirrors P25's old questionLimiter rate exactly.
-		boardPostLimiter: ratelimit.New(0.1 /* one every 10s */, 3 /* burst */).WithNow(now).WithLogger(logger),
+		boardPostLimiter: ratelimit.New(0.1 /* one every 10s */, 3 /* burst */).WithNow(now),
 		// Likes are lower-stakes and clicked more casually than a written
 		// post, so this bucket is looser — 1/s refill, burst 10 (matches
 		// submitLimiter's shape), still identity-keyed and separate from the
 		// post bucket so a burst of likes can never starve a participant's
 		// ability to open a thread or reply.
-		boardLikeLimiter: ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now).WithLogger(logger),
+		boardLikeLimiter: ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now),
 	}
 }
 
@@ -540,8 +546,8 @@ func (h *Handler) Routes() []apispec.Route {
 	// self-or-admin accordingly; actionMW is a second layer, not the only one.
 	// app#328 moved submit-detect (the route that attaches a SOLVE) onto the
 	// same gate with its OWN bucket (detectMW), so it is header-REQUIRED too.
-	actionMW := h.actionLimiter.MiddlewareStrict(actionBucket, ratelimit.IdentityKeyed)
-	detectMW := h.detectLimiter.MiddlewareStrict(detectBucket, ratelimit.IdentityKeyed)
+	actionMW := h.actionLimiter.MiddlewareStrict(actionBucket, ratelimit.IdentityKeyed, h.denials.StrictNoIdentity)
+	detectMW := h.detectLimiter.MiddlewareStrict(detectBucket, ratelimit.IdentityKeyed, h.denials.StrictNoIdentity)
 	// app#292 Phase 2 / app#397: identity-keyed and FAIL-CLOSED, the same
 	// MiddlewareStrict shape as actionMW/detectMW. A board thread/message is
 	// attributed to the caller's OWN proven identity, so the bucket tracks that
@@ -551,8 +557,8 @@ func (h *Handler) Routes() []apispec.Route {
 	// header-less request spend a token and, past the IP key's burst, answer
 	// 429 instead of 403. Every board route also runs requireAuthenticated
 	// (header REQUIRED), so no legitimate caller is affected.
-	boardPostMW := h.boardPostLimiter.MiddlewareStrict(boardPostBucket, ratelimit.IdentityKeyed)
-	boardLikeMW := h.boardLikeLimiter.MiddlewareStrict(boardLikeBucket, ratelimit.IdentityKeyed)
+	boardPostMW := h.boardPostLimiter.MiddlewareStrict(boardPostBucket, ratelimit.IdentityKeyed, h.denials.StrictNoIdentity)
+	boardLikeMW := h.boardLikeLimiter.MiddlewareStrict(boardLikeBucket, ratelimit.IdentityKeyed, h.denials.StrictNoIdentity)
 	return []apispec.Route{
 		{
 			Method: "GET", Pattern: "/api/state",
@@ -895,7 +901,7 @@ func (h *Handler) Routes() []apispec.Route {
 func (h *Handler) requireAuthenticated(w http.ResponseWriter, r *http.Request) (string, bool) {
 	email := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Auth-Request-Email")))
 	if email == "" {
-		h.logger.Warn("board: denied, missing identity", "remote_addr", r.RemoteAddr)
+		h.denials.Record(r, identityobs.GateAuthenticated, identityobs.ReasonNoIdentity)
 		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
 		return "", false
 	}
@@ -919,7 +925,7 @@ func (h *Handler) boardIdentity(w http.ResponseWriter, r *http.Request) (string,
 	}
 	user := UsernameFromEmail(email, h.emailDomain)
 	if user == "" {
-		h.logger.Warn("board: denied, unusable identity", "remote_addr", r.RemoteAddr)
+		h.denials.Record(r, identityobs.GateAuthenticated, identityobs.ReasonNonCanonical)
 		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
 		return "", false
 	}
@@ -1009,7 +1015,7 @@ func (h *Handler) selfOrAdmin(w http.ResponseWriter, r *http.Request, user strin
 	email := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Auth-Request-Email")))
 	if email == "" {
 		// fail-closed: no proven identity → deny (do not fall back to {user}).
-		h.logger.Warn("read gate denied: missing identity", "remote_addr", r.RemoteAddr, "user", user)
+		h.denials.Record(r, identityobs.GateSelfOrAdmin, identityobs.ReasonNoIdentity)
 		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
 		return false
 	}
@@ -1019,7 +1025,16 @@ func (h *Handler) selfOrAdmin(w http.ResponseWriter, r *http.Request, user strin
 	if emailMatchesUser(email, user, h.emailDomain) {
 		return true
 	}
-	h.logger.Warn("read gate denied: identity mismatch", "remote_addr", r.RemoteAddr, "user", user, "email", email)
+	// The gate judges the reason, the observer only records it (ADR-0038 D2):
+	// a header that is not a canonical <seat>@<domain> is a configuration fault
+	// (non_canonical, also when EXPECTED_EMAIL_DOMAIN is empty); a canonical
+	// identity for another seat is the participant's own doing (mismatch). The
+	// caller's email and the {user} path value are not logged (D4).
+	reason := identityobs.ReasonMismatch
+	if UsernameFromEmail(email, h.emailDomain) == "" {
+		reason = identityobs.ReasonNonCanonical
+	}
+	h.denials.Record(r, identityobs.GateSelfOrAdmin, reason)
 	httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
 	return false
 }
