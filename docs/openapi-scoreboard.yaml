@@ -560,7 +560,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "404":
-          description: unknown challenge id
+          description: unknown challenge id (or an id outside the `cid` grammar); fixed body, the id is not echoed
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -639,7 +639,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "404":
-          description: unknown challenge id
+          description: unknown challenge id (or an id outside the `cid` grammar); fixed body, the id is not echoed
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -720,7 +720,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "404":
-          description: unknown challenge id
+          description: unknown challenge id (or an id outside the `cid` grammar); fixed body, the id is not echoed
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1034,7 +1034,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "404":
-          description: unknown challenge id
+          description: unknown challenge id (or an id outside the `cid` grammar); fixed body, the id is not echoed
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1877,8 +1877,13 @@ components:
       in: path
       name: cid
       required: true
-      schema: { type: string }
-      description: challenge id / catalog key (e.g. `03-stealth-read`)
+      schema: { type: string, pattern: "^[A-Za-z0-9._-]{1,64}$" }
+      description: >-
+        challenge id / catalog key (e.g. `03-stealth-read`). An id outside the
+        grammar `^[A-Za-z0-9._-]{1,64}$`, or not in the catalog, is answered
+        with the same fixed 404 (`unknown challenge`); the input is never
+        echoed back, logged, or used as a metric label (all such ids share one
+        `_unknown` label value).
     Tid:
       in: path
       name: tid
