@@ -72,16 +72,14 @@ func extractJSConst(t *testing.T, src, name string) string {
 	return m
 }
 
-// nameRulesJS is the form's rule: the shared trim (NAME_EDGE_SPACE, trimName) cut
-// out of core-util.tmpl, the rest out of pane-me.tmpl.
+// nameRulesJS is the form's rule: the shared trim (trimName) cut out of core-util.tmpl,
+// the rest out of pane-me.tmpl.
 func nameRulesJS(t *testing.T) string {
 	t.Helper()
 	parts := portalPartials(t)
 	util, pane := partialBody(parts, "core-util.tmpl"), partialBody(parts, "pane-me.tmpl")
 	var b strings.Builder
-	for _, c := range []string{"NAME_EDGE_SPACE", "trimName"} {
-		b.WriteString(extractJSConst(t, util, c) + "\n")
-	}
+	b.WriteString(extractJSConst(t, util, "trimName") + "\n")
 	for _, c := range []string{"NAME_HTML_META", "NAME_HIDDEN"} {
 		b.WriteString(extractJSConst(t, pane, c) + "\n")
 	}
@@ -412,8 +410,9 @@ func TestNameProblem_ServerMessageStaysText(t *testing.T) {
 		}
 	}
 	// The pre-app#331 class and String.trim() must not come back: trim() is not
-	// strings.TrimSpace (it keeps U+0085 and strips U+FEFF).
-	for _, bad := range []string{`\x00-\x1f`, `nameInput.value.trim()`, `function trimName`, `NAME_EDGE_SPACE =`} {
+	// strings.TrimSpace (it keeps U+0085 and strips U+FEFF). That pane-me does not
+	// declare its own trimName is the sharedHelpers table's (portal_bidi_test.go).
+	for _, bad := range []string{`\x00-\x1f`, `nameInput.value.trim()`} {
 		if strings.Contains(pane, bad) {
 			t.Errorf("pane-me.tmpl still has %s", bad)
 		}
@@ -425,11 +424,10 @@ func TestNameProblem_ServerMessageStaysText(t *testing.T) {
 // String.prototype.trim and to answer a 400 with the rule written out by hand
 // ("invalid name (1-32 chars, no <>&\"')"), which goes stale when the rule grows
 // (app#381) and trims a different set from the server (app#401). Now: one trimName
-// and one reader of the server's {"error"}, shared through core-util.tmpl.
-var renameSources = []struct{ name, helperHome string }{
-	{"pane-scoreboard.tmpl", "core-util.tmpl"},
-	{"index.html", "its own copy (pinned equal to core-util.tmpl)"},
-}
+// and one reader of the server's {"error"}, declared once in core-util.tmpl; that
+// index.html's copies are byte-identical is the sharedHelpers table's
+// (portal_bidi_test.go).
+var renameSources = []string{"pane-scoreboard.tmpl", "index.html"}
 
 func renameSource(t *testing.T, name string) string {
 	t.Helper()
@@ -439,81 +437,79 @@ func renameSource(t *testing.T, name string) string {
 	return partialBody(portalPartials(t), name)
 }
 
-// lineOf returns the one line of src that starts (after indentation) with prefix.
-func lineOf(t *testing.T, src, where, prefix string) string {
+// renameHandler cuts the admin rename handler out of src: from its prompt() (code, not
+// a comment) to the reset handler that follows it.
+func renameHandler(t *testing.T, name, src string) string {
 	t.Helper()
-	var hit []string
-	for _, l := range strings.Split(src, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(l), prefix) {
-			hit = append(hit, strings.TrimSpace(l))
-		}
+	start := strings.Index(src, "prompt('Scoreboard name for '")
+	if start < 0 {
+		t.Fatalf("%s: the admin rename prompt (\"prompt('Scoreboard name for '\") was not found", name)
 	}
-	if len(hit) != 1 {
-		t.Fatalf("%s: %d lines start with %q, want exactly 1", where, len(hit), prefix)
+	end := strings.Index(src[start:], "const resetBtn")
+	if end < 0 {
+		t.Fatalf("%s: the end of the rename handler (const resetBtn) was not found", name)
 	}
-	return hit[0]
+	return src[start : start+end]
 }
+
+var renameAlertRe = regexp.MustCompile(`(?m)^\s*alert\((\x27Rename failed \(HTTP .*)\);$`)
 
 // TestAdminRename_ShowsTheServersSentenceAsText pins the display of a failed rename:
 // the server's error is read as a string (serverErrorText) and put in alert(), never
 // in markup, and the rule is not written out in the page.
 func TestAdminRename_ShowsTheServersSentenceAsText(t *testing.T) {
-	for _, src := range renameSources {
-		body := renameSource(t, src.name)
-		start := strings.Index(body, "'/display-name'")
-		if start < 0 {
-			t.Fatalf("%s: the admin rename fetch was not found", src.name)
+	for _, name := range renameSources {
+		h := renameHandler(t, name, renameSource(t, name))
+		if !strings.Contains(h, "await serverErrorText(r)") {
+			t.Errorf("%s: the rename failure branch lacks await serverErrorText(r)", name)
 		}
-		end := strings.Index(body[start:], "const resetBtn")
-		if end < 0 {
-			t.Fatalf("%s: the end of the rename handler (const resetBtn) was not found", src.name)
-		}
-		h := body[start : start+end]
-		for _, want := range []string{"await serverErrorText(r)", "alert('Rename failed (HTTP ' + r.status + ')'"} {
-			if !strings.Contains(h, want) {
-				t.Errorf("%s: the rename failure branch lacks %s", src.name, want)
-			}
+		if !strings.Contains(h, "trimName(name)") || strings.Contains(h, ".trim()") {
+			t.Errorf("%s: the admin rename must trim with trimName(name), not String.prototype.trim", name)
 		}
 		// The sentence must not reach a markup sink, and the rule must not be hand-written.
 		for _, bad := range []string{"innerHTML", "insertAdjacentHTML", "outerHTML", "document.write", "invalid name (1-32", "no <>&"} {
 			if strings.Contains(h, bad) {
-				t.Errorf("%s: the rename handler contains %q", src.name, bad)
+				t.Errorf("%s: the rename handler contains %q", name, bad)
 			}
 		}
-		// The trim, earlier in the same handler, is the shared one.
-		pre := body[:start]
-		tail := pre[strings.LastIndex(pre, "Admin rename"):]
-		if strings.Contains(tail, ".trim()") || !strings.Contains(tail, "trimName(name)") {
-			t.Errorf("%s: the admin rename must trim with trimName(name), not String.prototype.trim", src.name)
+		if len(renameAlertRe.FindAllStringSubmatch(h, -1)) != 1 {
+			t.Errorf("%s: want exactly one alert('Rename failed (HTTP ' ...) line in the rename handler", name)
 		}
 	}
 }
 
-// TestTrimName_OneDefinition pins that the portal defines the server-matching trim
-// once (core-util.tmpl), that no other partial redefines it, and that the dashboard's
-// copy (index.html is a separate document) is byte-identical until #378 merges them.
-func TestTrimName_OneDefinition(t *testing.T) {
-	parts := portalPartials(t)
-	util := partialBody(parts, "core-util.tmpl")
-	for _, p := range parts {
-		for _, name := range []string{"NAME_EDGE_SPACE", "trimName", "serverErrorText"} {
-			n := len(regexp.MustCompile(`(?m)^\s*(?:const|let|var|function)\s+`+name+`\b`).FindAllString(p.body, -1))
-			want := 0
-			if p.name == "core-util.tmpl" {
-				want = 1
-			}
-			if n != want {
-				t.Errorf("%s declares %s %d times, want %d (one definition, in core-util.tmpl)", p.name, name, n, want)
+// TestAdminRename_AlertSentence RUNS the alert argument of both handlers (cut out of the
+// source) for the three answers the server gives: a 400 with its sentence (shown after a
+// colon), a 403 with no body (status and a full stop) and a payload (kept as text).
+func TestAdminRename_AlertSentence(t *testing.T) {
+	cases := []struct {
+		status int
+		why    string
+		want   string
+	}{
+		{400, "invalid name: it cannot contain < > &", "Rename failed (HTTP 400): invalid name: it cannot contain < > &"},
+		{403, "", "Rename failed (HTTP 403)."},
+		{400, "<img src=x onerror=alert(1)>", "Rename failed (HTTP 400): <img src=x onerror=alert(1)>"},
+	}
+	for _, name := range renameSources {
+		m := renameAlertRe.FindStringSubmatch(renameHandler(t, name, renameSource(t, name)))
+		if m == nil {
+			t.Fatalf("%s: the alert line was not found", name)
+		}
+		for _, c := range cases {
+			var got string
+			driver := "var out = " + m[1] + ";"
+			runJS(t, "var r = {status: "+fmt.Sprint(c.status)+"}; var why = "+jsString(c.why)+";", driver, nil, &got)
+			if got != c.want {
+				t.Errorf("%s: status %d, why %q: alert shows %q, want %q", name, c.status, c.why, got, c.want)
 			}
 		}
 	}
-	for _, prefix := range []string{"const NAME_EDGE_SPACE =", "const trimName =", "const serverErrorText ="} {
-		a := lineOf(t, util, "core-util.tmpl", prefix)
-		b := lineOf(t, indexHTML, "index.html", prefix)
-		if a != b {
-			t.Errorf("index.html's copy of %q differs from core-util.tmpl's:\n  core-util: %s\n  index:     %s", prefix, a, b)
-		}
-	}
+}
+
+func jsString(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
 }
 
 // TestServerErrorText_IsAStringNotMarkup runs the shared reader in goja: a payload in
