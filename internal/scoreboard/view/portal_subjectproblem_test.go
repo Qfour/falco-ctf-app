@@ -315,20 +315,26 @@ func TestSubjectForm_InputHasNoShortMaxlength(t *testing.T) {
 	}
 }
 
-// onCreateSubmitJS cuts the handler out of pane-board.tmpl (4-space indent, async).
-func onCreateSubmitJS(t *testing.T) string {
+// boardHandlerJS cuts one async handler (4-space indent) out of pane-board.tmpl.
+func boardHandlerJS(t *testing.T, name string) string {
 	t.Helper()
 	pane := partialBody(portalPartials(t), "pane-board.tmpl")
-	const head = "\n    async function onCreateSubmit("
+	head := "\n    async function " + name + "("
 	start := strings.Index(pane, head)
 	if start < 0 {
-		t.Fatal("pane-board.tmpl: onCreateSubmit not found")
+		t.Fatalf("pane-board.tmpl: %s not found", name)
 	}
 	end := strings.Index(pane[start+1:], "\n    }\n")
 	if end < 0 {
-		t.Fatal("pane-board.tmpl: the end of onCreateSubmit not found")
+		t.Fatalf("pane-board.tmpl: the end of %s not found", name)
 	}
 	return pane[start+1 : start+1+end+len("\n    }")]
+}
+
+// onCreateSubmitJS cuts the new-thread handler out of pane-board.tmpl.
+func onCreateSubmitJS(t *testing.T) string {
+	t.Helper()
+	return boardHandlerJS(t, "onCreateSubmit")
 }
 
 // TestSubjectForm_RunsThePrecheckBeforeTheRequest RUNS onCreateSubmit in goja with a fake

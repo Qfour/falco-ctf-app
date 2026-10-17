@@ -381,7 +381,13 @@
       const msgEl = document.getElementById('board-new-msg');
       const audience = destEl ? destEl.value : 'admin';
       const subject = trimName(subjectEl.value);
-      const body = bodyEl.value.trim();
+      // The body is trimmed with trimName (core-util.tmpl) like the subject: String.prototype.trim
+      // would strip U+FEFF (which the server keeps) and keep a trailing U+0085 (which the server
+      // strips), so its emptiness / length verdict could differ from the server's. UNLIKE the
+      // subject there is no hasHiddenChar pre-check on a body: it is shown as a block (its
+      // direction cannot leak out of it) and may hold line breaks, so the server's own rules
+      // (the 400 sentence, read below) are the only judge.
+      const body = trimName(bodyEl.value);
       const subjectWhy = subjectProblem(subject);
       if (subjectWhy) {
         msgEl.textContent = subjectWhy;
@@ -521,7 +527,7 @@
       ev.preventDefault();
       const bodyEl = document.getElementById('board-append-body');
       const msgEl = document.getElementById('board-append-msg');
-      const body = bodyEl.value.trim();
+      const body = trimName(bodyEl.value);   // the server's trim set (see onCreateSubmit)
       if (!body) {
         msgEl.textContent = 'Message required.';
         msgEl.className = 'submit-msg err';
@@ -544,12 +550,13 @@
           msgEl.className = 'submit-msg err';
           return;
         }
-        const d = await r.json().catch(() => ({}));
         if (!r.ok) {
-          msgEl.textContent = d.error || ('Could not send (HTTP ' + r.status + ').');
+          // The server's own sentence as a string, textContent (serverErrorText, core-util.tmpl).
+          msgEl.textContent = (await serverErrorText(r)) || ('Could not send (HTTP ' + r.status + ').');
           msgEl.className = 'submit-msg err';
           return;
         }
+        const d = await r.json().catch(() => ({}));
         bodyEl.value = '';
         if (selectedTid === tid) renderThread(d);
       } catch (e) {
@@ -814,7 +821,7 @@
       ev.preventDefault();
       const bodyEl = document.getElementById('board-admin-reply-body');
       const msgEl = document.getElementById('board-admin-reply-msg');
-      const body = bodyEl.value.trim();
+      const body = trimName(bodyEl.value);   // the server's trim set (see onCreateSubmit)
       if (!body) {
         msgEl.textContent = 'Reply text required.';
         msgEl.className = 'submit-msg err';
@@ -832,12 +839,12 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ body }),
         });
-        const d = await r.json().catch(() => ({}));
         if (!r.ok) {
-          msgEl.textContent = d.error || ('Could not send (HTTP ' + r.status + ').');
+          msgEl.textContent = (await serverErrorText(r)) || ('Could not send (HTTP ' + r.status + ').');
           msgEl.className = 'submit-msg err';
           return;
         }
+        const d = await r.json().catch(() => ({}));
         // The shell (this SAME reply form) stays mounted across a
         // same-tid repaint, so clear the textarea explicitly rather than
         // relying on a full-page rebuild to do it.

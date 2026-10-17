@@ -496,6 +496,142 @@ func TestSharedHelpers_GateCatchesRegressions(t *testing.T) {
 	}
 }
 
+// errorFieldRe finds a read of a response's `error` field: `x.error`, `x?.error`,
+// `x['error']`. console.error is a call, not a read of a response (the one allowed
+// receiver, see checkErrorFieldReads).
+var errorFieldRe = regexp.MustCompile(`([\w$\])]*)\??\.\s*error\b|\[\s*['"` + "`" + `]error['"` + "`" + `]\s*\]`)
+
+// checkErrorFieldReads returns every file (a portal partial or index.html) that reads the
+// server's `error` field itself instead of calling serverErrorText: a failed response is read
+// in ONE place, core-util.tmpl's pinned line (and index.html's byte-identical copy of it),
+// so a path cannot show `d.error` of a body that was not JSON, or lose the HTTP-status
+// fallback, on its own (app#415). Comments are stripped and every pinned line is cut out.
+func checkErrorFieldReads(portal map[string]string, index string, pinned string) []error {
+	files := map[string]string{"index.html": index}
+	for n, b := range portal {
+		files[n] = b
+	}
+	names := make([]string, 0, len(files))
+	for n := range files {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	var errs []error
+	for _, n := range names {
+		body := strings.ReplaceAll(stripEscComments(files[n]), pinned, "")
+		for _, m := range errorFieldRe.FindAllStringSubmatch(body, -1) {
+			if m[1] == "console" {
+				continue
+			}
+			errs = append(errs, fmt.Errorf("%s reads %q: the server's {\"error\"} is read by serverErrorText (core-util.tmpl) only, as a string, so every path shows it the same way and falls back the same way", n, strings.TrimSpace(m[0])))
+		}
+	}
+	return errs
+}
+
+// checkBoardBodyTrim returns every String.prototype.trim call in pane-board.tmpl: the
+// board's strings (subject and body) are trimmed with trimName (core-util.tmpl), the server's
+// trim set. trim() strips U+FEFF (the server keeps it) and keeps a trailing U+0085 (the server
+// strips it), so a form using it disagrees with the server about "empty" and "too long".
+func checkBoardBodyTrim(portal map[string]string) []error {
+	pane, ok := portal["pane-board.tmpl"]
+	if !ok {
+		return []error{fmt.Errorf("pane-board.tmpl is not among the scanned partials (renamed? move this gate with it)")}
+	}
+	var errs []error
+	for _, m := range regexp.MustCompile(`\.trim(?:Start|End|Left|Right)?\s*\(`).FindAllString(stripEscComments(pane), -1) {
+		errs = append(errs, fmt.Errorf("pane-board.tmpl calls %q: trim a board string with trimName (core-util.tmpl), the server's trim set, not String.prototype.trim", strings.TrimSpace(m)))
+	}
+	return errs
+}
+
+func sharedHelperLine(t *testing.T, name string) string {
+	t.Helper()
+	for _, h := range sharedHelpers {
+		if h.name == name {
+			return h.wantLine
+		}
+	}
+	t.Fatalf("no sharedHelpers row %s", name)
+	return ""
+}
+
+// TestErrorFieldReads_OnlyServerErrorTextReadsIt runs both new gates over the real source
+// and requires them to see the edits that would bring the old behaviour back: a handler that
+// reads d.error (or a bracket form) itself, a trim() in pane-board, in either spelling.
+func TestErrorFieldReads_OnlyServerErrorTextReadsIt(t *testing.T) {
+	portal, index := bidiSources(t)
+	pinned := sharedHelperLine(t, "serverErrorText")
+	for _, err := range checkErrorFieldReads(portal, index, pinned) {
+		t.Error(err)
+	}
+	for _, err := range checkBoardBodyTrim(portal) {
+		t.Error(err)
+	}
+	cases := []struct {
+		name   string
+		want   string
+		mutate func(p map[string]string, idx *string)
+		gate   func(p map[string]string, idx string) []error
+	}{
+		{"a board path reads d.error again", "reads \"d.error\"", func(p map[string]string, _ *string) {
+			p["pane-board.tmpl"] = strings.Replace(p["pane-board.tmpl"], "(await serverErrorText(r)) ||", "d.error ||", 1)
+		}, nil},
+		{"a path reads the bracket form", "reads \"['error']\"", func(p map[string]string, _ *string) {
+			p["pane-me.tmpl"] += "\n<script>const w = j['error'];</script>"
+		}, nil},
+		{"index.html reads j?.error", "reads \"j?.error\"", func(_ map[string]string, idx *string) {
+			*idx += "\n<script>const w = j?.error;</script>"
+		}, nil},
+		{"index.html's reset handler reads the field", "index.html reads", func(_ map[string]string, idx *string) {
+			*idx += "\n<script>alert('Reset failed: ' + (await r.json()).error);</script>"
+		}, nil},
+		{"console.error is not a read of a response", "", func(p map[string]string, _ *string) {
+			p["pane-me.tmpl"] += "\n<script>console.error(e);</script>"
+		}, nil},
+		{"a second copy of the pinned line is still cut out (the declaration count is the other gate's)", "", func(p map[string]string, _ *string) {
+			p["pane-me.tmpl"] += "\n<script>" + pinned + "</script>"
+		}, nil},
+		{"pane-board trims a body with trim()", "calls \".trim(\"", func(p map[string]string, _ *string) {
+			p["pane-board.tmpl"] = strings.Replace(p["pane-board.tmpl"], "trimName(bodyEl.value)", "bodyEl.value.trim()", 1)
+		}, func(p map[string]string, _ string) []error { return checkBoardBodyTrim(p) }},
+		{"pane-board trims with trimEnd()", "calls \".trimEnd (\"", func(p map[string]string, _ *string) {
+			p["pane-board.tmpl"] += "\n<script>const q = x.trimEnd ();</script>"
+		}, func(p map[string]string, _ string) []error { return checkBoardBodyTrim(p) }},
+		{"pane-board is gone", "not among the scanned", func(p map[string]string, _ *string) {
+			delete(p, "pane-board.tmpl")
+		}, func(p map[string]string, _ string) []error { return checkBoardBodyTrim(p) }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := map[string]string{}
+			for k, v := range portal {
+				p[k] = v
+			}
+			idx := index
+			c.mutate(p, &idx)
+			var errs []error
+			if c.gate != nil {
+				errs = c.gate(p, idx)
+			} else {
+				errs = checkErrorFieldReads(p, idx, pinned)
+			}
+			if c.want == "" {
+				if len(errs) != 0 {
+					t.Errorf("must pass, got %v", errs)
+				}
+				return
+			}
+			for _, err := range errs {
+				if strings.Contains(err.Error(), c.want) {
+					return
+				}
+			}
+			t.Errorf("no error contains %q; got %v", c.want, errs)
+		})
+	}
+}
+
 // checkHiddenCharClass returns every file (a portal partial or index.html) that writes the
 // Cc / Cf class itself instead of calling hasHiddenChar: the class has ONE definition,
 // core-util.tmpl's pinned line (app#408). Comments are stripped first (core-util's own doc

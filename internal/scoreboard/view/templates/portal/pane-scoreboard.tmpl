@@ -412,7 +412,11 @@
           await refresh();
           alert('Scoreboard reset — cleared ' + (d.cleared_solves ?? 0) + ' solve(s).');
         } else {
-          alert('Reset failed (HTTP ' + r.status + '). Admin only.');
+          // The server's own sentence (a 403 says admin only), as TEXT for alert() (serverErrorText:
+          // core-util.tmpl, the copy in index.html): no reason is written out here, so a rule
+          // that changes in the server cannot leave this message stale.
+          const why = await serverErrorText(r);
+          alert('Reset failed (HTTP ' + r.status + ')' + (why ? ': ' + why : '.'));
         }
       } catch (e) {
         alert('Reset request error: ' + e);
