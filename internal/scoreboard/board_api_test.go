@@ -2,7 +2,7 @@ package scoreboard_test
 
 // app#292 Phase 2 QA Board handler tests — the board-specific behavioural
 // assertions that TestAuthz_AllDeclaredGatesEnforced/
-// TestAuthz_AuthenticatedGate_MissingHeaderDenied (authz_test.go) and
+// TestAuthz_EveryProvenRouteRejectsHeaderless (authz_test.go) and
 // TestOriginGuard_AllProtectedRoutesEnforced (origin_guard_test.go) cannot
 // reach generically: audience-scoped visibility (public vs. private,
 // cross-user), the own-thread-only write boundary, admin-only reply, the

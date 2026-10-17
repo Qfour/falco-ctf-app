@@ -1,6 +1,6 @@
 # ADR-0035: portal の template に書いた JS の振る舞いは、Go のテストが goja (test 専用の pure Go の JS エンジン) で実行し、required の `make test` で固定する。test 専用の第三者 Go module には入口の条件を置く
 
-- Status: **Accepted** (2026-10-17。起草 2026-10-17、VP が承認: Proposed への objection が 1 往復で無かったとき VP が Accepted にできる委任の範囲 (workspace `ORGANIZATION.md:470-472`)。review-5x 16 回目 (app#381) の指摘の反映後)。本番の image と契約には効かないので CEO の判断は要らない。D3 (check-portal-render.sh の goja 移植) は Accepted の後の別 PR。
+- Status: **Accepted** (2026-10-17。起草 2026-10-17、VP が承認: Proposed への objection が 1 往復で無かったとき VP が Accepted にできる委任の範囲 (workspace `ORGANIZATION.md:470-472`)。review-5x 16 回目 (app#381) の指摘の反映後)。本番の image と契約には効かないので CEO の判断は要らない。D3 (check-portal-render.sh の goja 移植) は Accepted の後の別 PR。**追補 (2026-10-17、app#400): D4 (a)(b) の機械化と、`govulncheck -test` の限界の訂正は末尾の「追補」。受理時の文は変えていない。**
 - Date / Deciders: 2026-10-17 / VP (承認) + architect (起草) + security-engineer (#381 の監査: goja は採用可、条件 F1) / 実装: software-engineer (go.mod・境界の test・CI)、application-engineer (portal の test)
 - 関連: app#381 (`fix/display-name-reject-cf-c1`、#331・#343)、ADR-0031 (D1 (b)・V4・Advice (2))、ADR-0027 D6 / V7 (`scripts/check-portal-render.sh`)、ADR-0012 (`code` の追加。Proposed)、ADR-0036 (apk の pin の戦略。main 入り済み: 2a61724。本 ADR はその一次資料 (ADR-0031 と #382 / #384) だけでも読める)、workspace `ORGANIZATION.md` §8 の基準④、workspace issue #77 (基準④の運用の提案。CEO 判断)
 - 読み方: app の main は origin/main `037f29d` (2026-10-17)、#381 は `origin/fix/display-name-reject-cf-c1` (rebase 済み。security の F1・F2 と review-5x 16 回目の採用 findings を反映済み)。file:line は #381 の tip のもの。`0031:N` などは `docs/adr/` の各 ADR。security の指摘は #381 の security review (2026-10-17) の F 番号。「実測」は 2026-10-17 に colima-falco-build (aarch64) で使い捨ての container を回した結果
@@ -59,7 +59,7 @@
   - (d) 更新の経路を書く: tag があれば Dependabot、無ければ手動。手動の契機は (b) の finding・engine の不具合がテストに出たとき・version-watch の点検。
   - (e) 実行は secret の無い test の container の中だけ (`Dockerfile.test`、CI の go-test)。事実として、本番 image の builder (`images/ttyd-proxy/Dockerfile` ほか) も `go mod download` で go.mod の全 module (goja を含む) を取得する。link も実行もしないので binary には入らない ((a) の検査が見る)。後続の test 専用依存を判断するときはこの取得も入口の面として数える。
   - (f) テストの判定が library の意味に依存するなら、その意味を自己検査で固定する (`TestEngine_UnicodePropertyEscapes_SelfCheck`: `portal_nameproblem_test.go` の `TestEngine_UnicodePropertyEscapes_SelfCheck`)。
-- **D5 #381 の merge の条件。** #381 は次の表を満たす (PR 本文に貼る)。(a) の実 graph (V2) と (b) (V5) は follow-up とし、**app #400、期限 = 次の stand-up の前** (security は follow-up を可とした: F4・F5)。#400 が期限までに main に入らなければ、次の test 専用依存の PR と D3 の PR はどちらも出さない。
+- **D5 #381 の merge の条件。** #381 は次の表を満たす (PR 本文に貼る)。(a) の実 graph (V2) と (b) (V5) は follow-up とし、**app #400、期限 = 次の stand-up の前** (security は follow-up を可とした: F4・F5)。**追補 (2026-10-17): #400 で機械化済み (V2 / V5)。実装と、V5 の受理時の文への訂正は末尾の「追補」を見る。** #400 が期限までに main に入らなければ、次の test 専用依存の PR と D3 の PR はどちらも出さない。
 
   | D4 | #381 |
   |---|---|
@@ -96,6 +96,20 @@
 - **V5 脆弱性検査 (follow-up #400、D5)**: `.github/workflows/checks.yaml` に `govulncheck -test ./...` と `-tags e2e` の step がある。
 - **V6 D3 の完了**: `scripts/check-portal-render.sh` と Makefile の target が無く、ADR-0027 D6 の行列 (status × dirty × requireExfil × exfilReceived) が `make test` の goja のテストにある。
 - **機械の確認が無いもの**: D4 (c) の pin の出自 (network が要る)。PR 本文の記録と security の review で確かめる。
+
+## 追補 (2026-10-17、app#400)
+
+受理時の文 (D4・D5 の表・Signposts・Verification) は変えず、#400 で分かったことと足した条件をここに書く (ADR-0023 の追補と同じ形)。
+
+- **V2 は機械化済み。** 一覧は `internal/apispec/testdata/test-only-deps.txt` の 1 箇所で、`e2e_boundary_test.go` の静的 closure と `testonly_deps_test.go` の `go list -deps ./cmd/...` (既定 tag と `-tags e2e`) が同じ file を読む。一覧の entry は外部 module では module の path (org ではない)、module の中では package の path。一覧には本 ADR の対象 (chromedp・goja とその推移依存・`internal/e2e`) に加えて、V1 / V2 が `cmd/*` 全 6 本で禁じる test 専用 package の `internal/apispec/specparity` と `ingressparity` も入る (`dependency_boundary_test.go` の個別定数は残す。退役は follow-up)。
+- **一覧は両方向に検査される。** go.mod にも module にも無い entry は赤 (stale)。test が使い production が使わない module は、**その module そのもの、またはその下の path の entry** が無ければ赤 (complete。org の entry は兄弟 module を覆わない)。planted は実 toolchain (`go.mod`・`go.sum` を共有する使い捨ての module) で、goja を直接 / 非 test file の経由で import、goja の依存 3 つ、`internal/e2e/harness` を 2 hop、build tag e2e の chromedp を `-tags e2e` で build、test file だけが import する test 専用 module (complete が entry の有無で赤 / 緑、同じ import を `main.go` に移すと production 側に入る) のどれも期待どおり。
+- **`govulncheck -test` は in-package の test file の import を見ない。** 実測 (govulncheck v1.1.4 と v1.9.0、使い捨ての module): 脆弱な `golang.org/x/text v0.3.0` を `a_test.go` (`package t`) だけが import すると、`-test` は "No vulnerabilities found" で、scanned modules に x/text が出ない。同じ import を `package t_test` (外部 test package) に置くと報告される。goja は `portal_nameproblem_test.go` (in-package) から import されるので、`-test ./...` だけでは goja と推移依存 (regexp2・go-sourcemap・pprof) が scan の外にある。D5 の表 (b) にある security の手元の確認は、この限界の下の "No vulnerabilities found" だった。
+- **V5 は 2 面で満たす。** (1) `-test` / `-test -tags e2e` の step (外部 test package と、test だけの chromedp 側の経路は見える)。(2) `scripts/check-test-only-vuln.sh`: 一覧と `go list -test -tags e2e -deps ./...` から test 専用 module の package を引いて root にして govulncheck を走らせる。library の root は export された API が入口になるので、test でしか動かない code に対して保守的な scan になる。各 module が scanned modules に出ることまで確かめるので、scan が goja を見ていない状態は赤になる。3 step は `.github/workflows/checks.yaml` の別 job `go-vulncheck-test-only` (production の `go-vulncheck` とは別。どちらも非 required。job 名は既存の required に無い)。
+- **V5 の範囲。** 対象は test 専用 module (一覧の外部 entry) の package だけ。production module の中の test 専用 package (例: client-go の `fake`) が test から import されている場合は、`-test` も script も見ない (残余)。
+- **Signposts への読み替え。** Signpost 4 の信号は「`check-test-only-vuln.sh` が一覧の module に脆弱性を報告し、その symbol が test の呼び出し点から到達することを triage で確かめ、30 日以内に修正版へ上げられない」と読む (受理時の文の `govulncheck -test` は goja を見ていないため)。Signpost 5 を足す: **govulncheck の bump 後、`-test -show verbose` の scanned modules に goja が出る** → `check-test-only-vuln.sh` を退役し、V5 を `-test` に戻す。
+- **基準④との関係 (変えない)。** 新しい直接の test 専用依存は、workspace #77 が決まるまで依存ごとに ADR が要る (ORGANIZATION §8 基準④、上の「基準④との関係」)。完全性の検査が赤い間は、依存の追加 PR は ADR を伴う。承認済みの依存を更新して増えた推移依存は、暫定として一覧への追加と PR 本文の D4 の表で済ませてよい (VP 判断)。
+- **V5 の step が存在し続けることは `make test` では見えない** (`.dockerignore` が `.github` を除くので、test の container に workflow が無い)。step を消せば PR の diff に出る。
+- **follow-up**: 一覧を「禁止 root」と「付随 module」の 2 class に分け、D4 の対象を機械で限定する (書式の変更。architect、app issue #414)。
 
 ## Advice
 
