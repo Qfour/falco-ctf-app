@@ -87,7 +87,7 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
 - 上記 3 ルートの認可を self-or-admin (認証ヘッダー必須) に揃えた。route 表・OpenAPI の `x-ctf-authz` も実挙動に合わせて更新 (#315)。
   `ratelimit_identity_requests_total{bucket,outcome}` で bucket 別の allowed / limited / no_identity を見られる。
 - 検知条件の採点 (submit-detect) も identity キーの専用 bucket (`detect`、1 req/s・burst 10) に載せた。これまでは submit の IP 単位 bucket を
-  共有していた。ヒント / step 確認 / reset-dirty の bucket とは別なので、Grade の連打でそれらが 429 にならない (逆も同じ)。
+  共有していた。ヒント / step 確認 / reset-dirty の bucket とは別なので、将来 portal に Grade ボタンが付いたときも (現時点で呼び出し元は無い)、その連打でそれらが 429 にならない (逆も同じ)。
   認証ヘッダーの無い要求は 403 で拒否し、bucket を消費せず handler (body の読み取り) にも入らない。
   route 表・OpenAPI の `x-ctf-rate-limit` と /submit 側の「(shared with submit-detect)」も実挙動に合わせた (#328)。
 

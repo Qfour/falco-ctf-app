@@ -117,8 +117,10 @@ Key design points:
   canonical `<seat>@<EXPECTED_EMAIL_DOMAIN>` exactly, admin is the one exception; no header is 403,
   app#346), behind the origin guard. Since app#328 it is rate-limited on its own identity-keyed
   `detect` bucket (`detectMW`; 403 without the header, before a token is consumed), no longer on
-  `/submit`'s per-IP bucket nor the hint/step/reset-dirty one, plus the global in-flight cap, and it
-  is audit-logged. No claimed-user path.
+  `/submit`'s per-IP bucket nor the hint/step/reset-dirty one, plus the global in-flight cap. A
+  request that reaches the handler is audit-logged; a header-less 403 is recorded only by the
+  metric `ratelimit_identity_requests_total{bucket="detect",outcome="no_identity"}` (no log line
+  and no alert yet; tracked in #387). No claimed-user path.
 - **No attacker-supplied time**, no forbidden-window — detect grading is purely a
   function of the (static capture, submitted condition) pair, so it is deterministic and
   replay-stable across scoreboard restarts (I1).
@@ -183,6 +185,8 @@ would extend I5 to **7 images**, a documented convention change, see §7 risk). 
   shared with `/submit`'s per-IP bucket, app#328), PLUS a global
   cap on in-flight grader Jobs (queue/reject beyond N) so a flood can't spawn unbounded
   pods. This is the main net-new DoS lever and must be in the threat model review.
+  The in-flight cap is global, shared by every identity. A per-identity concurrency limit is
+  tracked in #341; **do not enable `DETECT_RUNNER=k8s` for an event until #341 has landed.**
 - **Capture provenance:** captures are operator-produced fixtures (§5), read-only,
   never participant-supplied — the participant only supplies the *condition*.
 

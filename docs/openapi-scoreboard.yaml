@@ -599,7 +599,9 @@ paths:
         Authz is `self-or-admin`. A request that carries no (or a blank)
         `X-Auth-Request-Email` is `403` FIRST: the identity-keyed rate limiter
         (app#328) turns it away before a token is consumed and before the
-        handler runs, so that 403 is returned ahead of the 503 (feature off),
+        handler runs (it is counted only by the metric
+        `ratelimit_identity_requests_total{bucket="detect",outcome="no_identity"}`;
+        there is no log line for it), so that 403 is returned ahead of the 503 (feature off),
         404 (unknown challenge) and 400 (bad body) answers below (app#346;
         there is no claimed-identity fallback). A request that has an identity
         and passes the feature / catalog / body checks (see 503, 404, 400) is

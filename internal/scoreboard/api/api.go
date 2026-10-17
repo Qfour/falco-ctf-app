@@ -280,8 +280,8 @@ type DetectConfig struct {
 // hard cap (rejected past it with 429, never queued) plus the identity-keyed
 // detect bucket (detectMW, burst 10, 1 req/s per identity) keeps a flood from
 // spawning unbounded work (design §3.3). The cap is shared by every identity;
-// a per-identity concurrency limit is tracked separately (security review of
-// app#379, M1).
+// a per-identity concurrency limit is tracked in #341 (do not enable
+// DETECT_RUNNER=k8s for an event before it lands).
 const DefaultDetectInflightCap = 5
 
 // DetectGradeTimeout bounds a single detect grade end-to-end (compile gate +
@@ -592,9 +592,12 @@ func (h *Handler) Routes() []apispec.Route {
 			// (app#328; it used to share /submit's per-IP bucket, and is kept
 			// apart from the hint/step/reset bucket) plus a global
 			// in-flight cap enforced inside the handler (429 past it, never
-			// queued). Unlike /submit above, this route has only ONE caller: the
-			// journey UI's browser fetch (the "Grade" button on a detect
-			// mission's condition textarea — docs/detect-challenge-design.md §6).
+			// queued). Unlike /submit above, this route has NO caller today (no detect
+			// challenge ships yet). The planned caller is the portal's Grade
+			// button on a detect mission's condition textarea
+			// (docs/detect-challenge-design.md §6); it does not ship before the
+			// P14-C revisit (REFACTORING 2026-08-31 "not doing"). The
+			// browser-only premise below is about that planned caller.
 			// The collector's forward allowlist (internal/collector/collector.go
 			// — "Routes fronted") does NOT include submit-detect, so there is no
 			// server-to-server curl caller to protect against a fail-closed gate
@@ -968,7 +971,10 @@ func emailMatchesUser(email, user, domain string) bool {
 // such header and is therefore denied here. This is the minimal safe signal —
 // the scoreboard need not know the hostname. The header is a PROOF of identity
 // only while three things outside this file hold (it is not unforgeable by
-// itself): (1) the scoreboard ingresses keep their auth-url pointed at
+// itself). These three conditions are the premise of I8 (canonical source: I8 in
+// .claude/rules/falco-ctf-app-conventions.md; machine checks: V12 / V13;
+// NetworkPolicy: charts/scoreboard/templates/networkpolicy.yaml):
+// (1) the scoreboard ingresses keep their auth-url pointed at
 // auth-policy (/check-participant, /check-admin) and keep the
 // `auth-response-headers` annotation pinned, so ingress-nginx overwrites a
 // client-supplied copy of exactly those listed headers (not every
@@ -976,7 +982,8 @@ func emailMatchesUser(email, user, domain string) bool {
 // response. For a participant seat auth-policy stamps the canonical
 // `<seat>@<domain>` form (stampCanonical), which is why one seat maps to one
 // identity (and one rate-limit bucket); only an ADMIN_EMAILS identity is passed
-// through as oauth2-proxy reported it (lower-cased); (2) the scoreboard
+// through verbatim as oauth2-proxy reported it, and the scoreboard lower-cases
+// it on the reading side (see the ToLower below); (2) the scoreboard
 // NetworkPolicy keeps participant-controlled workloads (workspaces) off the
 // Service: it admits the falco and ingress-nginx namespaces and the namespace
 // labelled for the collector, so the only senders that can reach it are
