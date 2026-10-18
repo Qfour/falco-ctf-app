@@ -29,6 +29,12 @@ node 総数の食い違いは `make test` の `TestAPISpec_TextOriginDeclared` �
 `participant-*` の 3 語は node ごとに JSON pointer で pin されている
 (`internal/apispec/specparity/textorigin_specs_test.go`)。**`participant-*` を足す・
 外す・付け替える PR は security-engineer のレビューを通す。**
+語と node の形の規則も `make test` が検査する (ADR-0039 D3 (d)(e)(h)): `participant-opaque` は
+response に届かない、`operator` は operator / internal で collector が forward しない
+operation の request にだけ、`enum` 語 ⇔ `enum` / `const` (これらを持つ node は `type` 必須)、
+`participant-inline` / `-block` は `$ref` でなく property に inline で書く、`$ref` の隣に書けるのは
+`description` / `summary` だけ。collector が forward する route の request body を写して書く場合は、
+scoreboard 側 (`x-ctf-forward-target`) と語・`pattern` / `maxLength` などの受理 keyword・`required` を揃える。
 
 ## 0b. ルートを追加/削除する場合は先にコードを直す
 

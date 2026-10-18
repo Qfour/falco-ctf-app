@@ -446,3 +446,617 @@ paths:
 		t.Fatalf("pointer not escaped as RFC 6901, got:\n%s", all)
 	}
 }
+
+// ---- ADR-0039 S1b: D3 (d) static rules, D3 (h), D3 (e) ----
+
+func mutateOnce(t *testing.T, doc, from, to string) string {
+	t.Helper()
+	if n := strings.Count(doc, from); n != 1 {
+		t.Fatalf("test bug: %q occurs %d times, want exactly 1", from, n)
+	}
+	return strings.Replace(doc, from, to, 1)
+}
+
+// withComponent adds a component entry (YAML text, already indented for its
+// section) at the top of `section`.
+func withComponent(t *testing.T, doc, section, entry string) string {
+	t.Helper()
+	return mutateOnce(t, doc, "\n  "+section+":\n", "\n  "+section+":\n"+entry)
+}
+
+// TestTextOrigin_StaticRules_Mutations is ADR-0039 V2's S1b half: each case
+// breaks one rule between a word and where its node sits (or D3 (h), or a
+// $ref shape) and must go red naming the pointer.
+func TestTextOrigin_StaticRules_Mutations(t *testing.T) {
+	const link = `link: {$ref: "#/components/schemas/Other"}`
+	cases := []struct {
+		name     string
+		setup    func(t *testing.T, doc string) string // optional: extra components before the edit
+		from, to string
+		want     []string
+	}{
+		{
+			name: "participant-opaque reachable from a response",
+			from: `name: {type: string, x-ctf-text-origin: participant-inline}`,
+			to:   `name: {type: string, x-ctf-text-origin: participant-opaque}`,
+			want: []string{"/components/schemas/Thing/properties/name: `participant-opaque` is reachable from a response"},
+		},
+		{
+			name: "participant-opaque reachable from a response through a chain of $ref aliases",
+			setup: func(t *testing.T, d string) string {
+				d = mutateOnce(t, d, `Other: {type: string, x-ctf-text-origin: operator}`, `Other: {type: string, x-ctf-text-origin: participant-opaque}`)
+				return withComponent(t, d, "schemas", "    Alias2: {$ref: \"#/components/schemas/Other\"}\n    Alias: {$ref: \"#/components/schemas/Alias2\"}\n")
+			},
+			from: link, to: `link: {$ref: "#/components/schemas/Alias"}`,
+			want: []string{"/components/schemas/Other: `participant-opaque` is reachable from a response"},
+		},
+		{
+			name: "operator text in a participant operation's request body",
+			from: `note: {type: string, x-ctf-text-origin: participant-block}`,
+			to:   `note: {type: string, x-ctf-text-origin: operator}`,
+			want: []string{"properties/note: `operator` text in the request of POST /a/{id}"},
+		},
+		{
+			name: "operator text in a participant operation's parameter",
+			from: `schema: {type: string, x-ctf-text-origin: token}
+      requestBody:`,
+			to: `schema: {type: string, x-ctf-text-origin: operator}
+      requestBody:`,
+			want: []string{"/paths/~1a~1{id}/post/parameters/1/schema: `operator` text in the request of POST /a/{id}"},
+		},
+		{
+			name: "operator text in the request of a component a participant operation reaches by $ref",
+			setup: func(t *testing.T, d string) string {
+				return withComponent(t, d, "parameters", "    Opr:\n      in: query\n      name: o\n      schema: {type: string, x-ctf-text-origin: operator}\n")
+			},
+			from: `- $ref: "#/components/parameters/Id"`, to: `- $ref: "#/components/parameters/Opr"`,
+			want: []string{"/components/parameters/Opr/schema: `operator` text in the request of POST /a/{id}"},
+		},
+		{
+			name: "operator text in a participant request through a chain of parameter aliases",
+			setup: func(t *testing.T, d string) string {
+				d = withComponent(t, d, "parameters", "    OprAlias: {$ref: \"#/components/parameters/Opr\"}\n")
+				return withComponent(t, d, "parameters", "    Opr:\n      in: query\n      name: o\n      schema: {type: string, x-ctf-text-origin: operator}\n")
+			},
+			from: `- $ref: "#/components/parameters/Id"`, to: `- $ref: "#/components/parameters/OprAlias"`,
+			want: []string{"/components/parameters/Opr/schema: `operator` text in the request of POST /a/{id}"},
+		},
+		{
+			name: "a node with enum declared token",
+			from: `kind: {type: string, enum: [a, b], x-ctf-text-origin: enum}`,
+			to:   `kind: {type: string, enum: [a, b], x-ctf-text-origin: token}`,
+			want: []string{"/components/schemas/Thing/properties/kind: has `enum`/`const` but declares \"token\""},
+		},
+		{
+			name: "the enum word on a node without enum or const",
+			from: `kind: {type: string, enum: [a, b], x-ctf-text-origin: enum}`,
+			to:   `kind: {type: string, x-ctf-text-origin: enum}`,
+			want: []string{"/components/schemas/Thing/properties/kind: declared `enum` but has neither"},
+		},
+		{
+			name: "participant-inline in an array's items of a response",
+			from: `items: {type: string, x-ctf-text-origin: operator}`,
+			to:   `items: {type: string, x-ctf-text-origin: participant-inline}`,
+			want: []string{`/components/schemas/Thing/properties/tags/items: "participant-inline" in a response must be a named property`},
+		},
+		{
+			name: "participant-inline in an array's items through a $ref alias",
+			setup: func(t *testing.T, d string) string {
+				d = mutateOnce(t, d, `Other: {type: string, x-ctf-text-origin: operator}`, `Other: {type: string, x-ctf-text-origin: participant-inline}`)
+				return withComponent(t, d, "schemas", "    Alias: {$ref: \"#/components/schemas/Other\"}\n")
+			},
+			from: `items: {type: string, x-ctf-text-origin: operator}`, to: `items: {$ref: "#/components/schemas/Alias"}`,
+			want: []string{`/components/schemas/Other: "participant-inline" in a response must be a named property`},
+		},
+		{
+			name: "participant-inline in additionalProperties of a response",
+			from: `additionalProperties: {type: string, x-ctf-text-origin: operator}`,
+			to:   `additionalProperties: {type: string, x-ctf-text-origin: participant-block}`,
+			want: []string{`/components/schemas/Thing/properties/extra/additionalProperties: "participant-block" in a response must be a named property`},
+		},
+		{
+			name: "participant-inline in a combinator branch of a response property",
+			from: `- {type: string, x-ctf-text-origin: token}
+        either:`,
+			to: `- {type: string, x-ctf-text-origin: participant-inline}
+        either:`,
+			want: []string{`/components/schemas/Thing/properties/both/allOf/0: "participant-inline" in a response must be a named property`},
+		},
+		{
+			name: "participant-inline in a response header",
+			from: `schema: {type: string, x-ctf-text-origin: operator}
+          content:`,
+			to: `schema: {type: string, x-ctf-text-origin: participant-inline}
+          content:`,
+			want: []string{`/paths/~1a~1{id}/post/responses/200/headers/X-Out/schema: "participant-inline" in a response must be a named property`},
+		},
+		{
+			name: "participant-inline in a header whose NAME is `properties` is not read as a named property",
+			from: `X-Out:
+              schema: {type: string, x-ctf-text-origin: operator}`,
+			to: `properties:
+              schema: {type: string, x-ctf-text-origin: participant-inline}`,
+			want: []string{`/paths/~1a~1{id}/post/responses/200/headers/properties/schema: "participant-inline" in a response must be a named property`},
+		},
+		{
+			name: "a participant-* property name reused for an operator string in a response",
+			from: link,
+			to: link + `
+        nested:
+          type: object
+          properties:
+            name: {type: string, x-ctf-text-origin: operator}`,
+			want: []string{
+				`/components/schemas/Thing/properties/nested/properties/name: used from a response property named "name", which is a participant-text name there, but this node is declared operator`,
+				`/components/schemas/Thing/properties/name: used from a response property named "name"`,
+			},
+		},
+		{
+			name: "a token component used from a participant-named property through a $ref (use-site name)",
+			setup: func(t *testing.T, d string) string {
+				return withComponent(t, d, "schemas", "    Tok: {type: string, x-ctf-text-origin: token}\n")
+			},
+			from: link,
+			to: link + `
+        nested:
+          type: object
+          properties:
+            name: {$ref: "#/components/schemas/Tok"}`,
+			want: []string{`/components/schemas/Tok: used from a response property named "name", which is a participant-text name there, but this node is declared token`},
+		},
+		{
+			name: "a participant-inline component referenced through a $ref",
+			setup: func(t *testing.T, d string) string {
+				return mutateOnce(t, d, `Other: {type: string, x-ctf-text-origin: operator}`, `Other: {type: string, x-ctf-text-origin: participant-inline}`)
+			},
+			from: `x: x`, to: `x: x`, // no edit: the component is already referenced by `link`
+			want: []string{`/components/schemas/Other: "participant-inline" is referenced through a ` + "`$ref`" + `; participant-inline / -block are written inline`},
+		},
+		{
+			name: "a participant-block component referenced from a request",
+			setup: func(t *testing.T, d string) string {
+				d = withComponent(t, d, "parameters", "    Shared:\n      in: query\n      name: s\n      schema: {$ref: \"#/components/schemas/Blk\"}\n")
+				return withComponent(t, d, "schemas", "    Blk: {type: string, x-ctf-text-origin: participant-block}\n")
+			},
+			from: `- $ref: "#/components/parameters/Id"`, to: `- $ref: "#/components/parameters/Shared"`,
+			want: []string{`/components/schemas/Blk: "participant-block" is referenced through a ` + "`$ref`"},
+		},
+		{
+			name: "a $ref with a sibling schema keyword",
+			from: link,
+			to:   `link: {$ref: "#/components/schemas/Other", nullable: true}`,
+			want: []string{"/components/schemas/Thing/properties/link: a $ref with sibling keywords nullable"},
+		},
+		{
+			name: "enum without type",
+			from: link,
+			to: link + `
+        loose: {enum: [a, b]}`,
+			want: []string{"/components/schemas/Thing/properties/loose: a Schema Object with enum/const and no `type`"},
+		},
+		{
+			name: "const without type",
+			from: link,
+			to: link + `
+        loose: {const: a}`,
+			want: []string{"/components/schemas/Thing/properties/loose: a Schema Object with enum/const and no `type`"},
+		},
+		{
+			name: "enum without type in a position the walk does not descend (not:)",
+			from: link,
+			to: link + `
+        constrained:
+          type: object
+          not: {enum: [a, b]}`,
+			want: []string{"/components/schemas/Thing/properties/constrained/not: a Schema Object with enum/const and no `type`"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := textOriginBase
+			if tc.setup != nil {
+				doc = tc.setup(t, doc)
+			}
+			if tc.from != "x: x" {
+				doc = mutateOnce(t, doc, tc.from, tc.to)
+			}
+			rep := specFromYAML(t, doc).TextOrigin()
+			if len(rep.Violations) == 0 {
+				t.Fatalf("the mutation was not detected (a gate that cannot go red is not a gate)")
+			}
+			all := strings.Join(rep.Violations, "\n")
+			for _, w := range tc.want {
+				if !strings.Contains(all, w) {
+					t.Errorf("violations do not contain %q; got:\n%s", w, all)
+				}
+			}
+		})
+	}
+}
+
+// TestTextOrigin_StaticRules_AllowedShapes: the same words are fine where
+// ADR-0039 D2 allows them, so the rules above are not just "always red". A
+// case that must fail names the part of the violation text it must carry.
+func TestTextOrigin_StaticRules_AllowedShapes(t *testing.T) {
+	const link = `link: {$ref: "#/components/schemas/Other"}`
+	const noteOperator = `note: {type: string, x-ctf-text-origin: operator}`
+	const noteBlock = `note: {type: string, x-ctf-text-origin: participant-block}`
+	postOps := func(t *testing.T, d, ext string) string {
+		return mutateOnce(t, d, "    post:\n      parameters:", "    post:\n"+ext+"      parameters:")
+	}
+	cases := []struct {
+		name    string
+		edit    func(t *testing.T, doc string) string
+		wantSub string // "" = must be clean
+	}{
+		{"operator in the request of an operator-audience operation the collector does not forward", func(t *testing.T, d string) string {
+			return mutateOnce(t, postOps(t, d, "      x-ctf-audience: operator\n      x-ctf-collector-forward: false\n"), noteBlock, noteOperator)
+		}, ""},
+		{"operator in the request of an operator-audience operation with no forward flag (fail-closed)", func(t *testing.T, d string) string {
+			return mutateOnce(t, postOps(t, d, "      x-ctf-audience: operator\n"), noteBlock, noteOperator)
+		}, "properties/note: `operator` text in the request of POST /a/{id}"},
+		{"operator in the request of an operator-audience operation the collector forwards", func(t *testing.T, d string) string {
+			return mutateOnce(t, postOps(t, d, "      x-ctf-audience: operator\n      x-ctf-collector-forward: true\n"), noteBlock, noteOperator)
+		}, "properties/note: `operator` text in the request of POST /a/{id}"},
+		{"operator in the request of an internal operation the collector does not forward", func(t *testing.T, d string) string {
+			return mutateOnce(t, postOps(t, d, "      x-ctf-audience: internal\n      x-ctf-collector-forward: false\n"), noteBlock, noteOperator)
+		}, ""},
+		{"operator in the request of an internal operation the collector forwards", func(t *testing.T, d string) string {
+			return mutateOnce(t, postOps(t, d, "      x-ctf-audience: internal\n      x-ctf-collector-forward: true\n"), noteBlock, noteOperator)
+		}, "properties/note: `operator` text in the request of POST /a/{id}"},
+		{"operator in the request of an internal operation with no forward flag (fail-closed)", func(t *testing.T, d string) string {
+			return mutateOnce(t, postOps(t, d, "      x-ctf-audience: internal\n"), noteBlock, noteOperator)
+		}, "properties/note: `operator` text in the request of POST /a/{id}"},
+		{"operator in the request of a participant-audience operation", func(t *testing.T, d string) string {
+			return mutateOnce(t, postOps(t, d, "      x-ctf-audience: participant\n      x-ctf-collector-forward: false\n"), noteBlock, noteOperator)
+		}, "properties/note: `operator` text in the request of POST /a/{id}"},
+		{"operator in a path-item level parameter of a participant operation", func(t *testing.T, d string) string {
+			return mutateOnce(t, d, `schema: {type: string, x-ctf-text-origin: participant-opaque}
+    post:`, `schema: {type: string, x-ctf-text-origin: operator}
+    post:`)
+		}, "/paths/~1a~1{id}/parameters/0/schema: `operator` text in the request of POST /a/{id}"},
+		{"participant-opaque in a component no operation reaches", func(t *testing.T, d string) string { return d }, ""},
+		{"a component reached from both a request and a response is judged on both sides", func(t *testing.T, d string) string {
+			d = withComponent(t, d, "schemas", "    Both: {type: string, x-ctf-text-origin: operator}\n")
+			d = mutateOnce(t, d, link, link+"\n        both2: {$ref: \"#/components/schemas/Both\"}")
+			return mutateOnce(t, d, `- $ref: "#/components/parameters/Id"`, `- {in: query, name: b, schema: {$ref: "#/components/schemas/Both"}}`)
+		}, "/components/schemas/Both: `operator` text in the request of POST /a/{id}"},
+		{"a string reached only through components.responses and components.requestBodies is walked", func(t *testing.T, d string) string {
+			d = mutateOnce(t, d, `"200":
+          description: ok`, `"200": {$ref: "#/components/responses/Gone"}
+        "201":
+          description: ok`)
+			return mutateOnce(t, d, `x-ctf-text-origin: operator}
+  requestBodies:`, `x-ctf-text-origin: participant-opaque}
+  requestBodies:`)
+		}, "/components/responses/Gone/content/text~1plain/schema: `participant-opaque` is reachable from a response"},
+		{"a participant-inline named property used by two response schemas", func(t *testing.T, d string) string {
+			return mutateOnce(t, d, link, link+`
+        other:
+          type: object
+          properties:
+            name: {type: string, x-ctf-text-origin: participant-inline}`)
+		}, ""},
+		{"a $ref with only a description beside it", func(t *testing.T, d string) string {
+			return mutateOnce(t, d, link, `link: {$ref: "#/components/schemas/Other", description: shared}`)
+		}, ""},
+		{"a property merely NAMED enum or const is no keyword", func(t *testing.T, d string) string {
+			return mutateOnce(t, d, link, link+`
+        enum: {type: string, x-ctf-text-origin: operator}
+        const: {type: string, x-ctf-text-origin: operator}`)
+		}, ""},
+		{"a recursive schema does not hang the walk", func(t *testing.T, d string) string {
+			return mutateOnce(t, d, link, link+`
+        self: {$ref: "#/components/schemas/Thing"}`)
+		}, ""},
+		{"a $ref cycle holds no string and does not hang the walk", func(t *testing.T, d string) string {
+			d = withComponent(t, d, "schemas", "    CycA: {$ref: \"#/components/schemas/CycB\"}\n    CycB: {$ref: \"#/components/schemas/CycA\"}\n")
+			return mutateOnce(t, d, link, link+"\n        cyc: {$ref: \"#/components/schemas/CycA\"}")
+		}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rep := specFromYAML(t, tc.edit(t, textOriginBase)).TextOrigin()
+			all := strings.Join(rep.Violations, "\n")
+			switch {
+			case tc.wantSub == "" && len(rep.Violations) != 0:
+				t.Fatalf("must be clean, got:\n%s", all)
+			case tc.wantSub != "" && len(rep.Violations) == 0:
+				t.Fatalf("must be a violation containing %q, got none", tc.wantSub)
+			case tc.wantSub != "" && !strings.Contains(all, tc.wantSub):
+				t.Fatalf("violation does not contain %q; got:\n%s", tc.wantSub, all)
+			}
+		})
+	}
+}
+
+// TestInlineNodesNotReached proves the two-walk invariant is checkable: the
+// real walk and the reachability walk agree on the base document, and a
+// node the reachability walk never visited is reported.
+func TestInlineNodesNotReached(t *testing.T) {
+	s := specFromYAML(t, textOriginBase)
+	nodes := s.walkSchemas().nodes
+	rs := s.reachability()
+	if got := inlineNodesNotReached(nodes, rs); len(got) != 0 {
+		t.Fatalf("the walks disagree on the base document: %v", got)
+	}
+	inline := 0
+	for _, n := range nodes {
+		if strings.HasPrefix(n.Pointer, "/paths/") {
+			inline++
+		}
+	}
+	if inline == 0 {
+		t.Fatal("no inline node under /paths/ in the base document: the invariant would be vacuous")
+	}
+	fake := append([]StringNode{{Pointer: "/paths/~1x/get/parameters/0/schema"}}, nodes...)
+	got := inlineNodesNotReached(fake, rs)
+	if len(got) != 1 || got[0] != "/paths/~1x/get/parameters/0/schema" {
+		t.Fatalf("a node outside the reachability walk must be reported, got %v", got)
+	}
+}
+
+const forwardTarget = `
+openapi: 3.1.0
+paths:
+  /internal/x/{cid}:
+    post:
+      x-ctf-audience: internal
+      x-ctf-collector-forward: false
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/Req"}
+components:
+  schemas:
+    Req:
+      type: object
+      required: [user, flag]
+      properties:
+        user: {type: string, pattern: '^[a-z]+$', maxLength: 63, x-ctf-text-origin: token}
+        flag: {type: string, x-ctf-text-origin: participant-opaque}
+`
+
+const forwardCopy = `
+openapi: 3.1.0
+paths:
+  /api/x/{cid}:
+    post:
+      x-ctf-audience: participant
+      x-ctf-collector-forward: true
+      x-ctf-forward-target: "POST /internal/x/{cid}"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user, flag]
+              properties:
+                user: {type: string, pattern: '^[a-z]+$', maxLength: 63, x-ctf-text-origin: token}
+                flag: {type: string, x-ctf-text-origin: participant-opaque}
+`
+
+func TestCollectorCopy_BaselineAgrees(t *testing.T) {
+	v, n := CollectorCopyViolations(specFromYAML(t, forwardCopy), specFromYAML(t, forwardTarget))
+	if len(v) != 0 {
+		t.Fatalf("baseline must agree, got:\n%s", strings.Join(v, "\n"))
+	}
+	if n != 2 {
+		t.Fatalf("compared %d string nodes, want 2 (user, flag): a comparison of 0 is not agreement", n)
+	}
+}
+
+// TestCollectorCopy_Mutations: ADR-0039 V2's collector rows, one change to the
+// copy (or the target) each.
+func TestCollectorCopy_Mutations(t *testing.T) {
+	cases := []struct {
+		name     string
+		onTarget bool // mutate the target instead of the copy
+		from, to string
+		want     []string
+	}{
+		{"the copy's class differs from the target's", false,
+			`flag: {type: string, x-ctf-text-origin: participant-opaque}`, `flag: {type: string, x-ctf-text-origin: operator}`,
+			[]string{"requestBody/properties/flag vs POST /internal/x/{cid}: x-ctf-text-origin differs: copy operator, target participant-opaque"}},
+		{"the copy's pattern differs by one character", false,
+			`pattern: '^[a-z]+$', maxLength: 63, x-ctf-text-origin: token}
+                flag`, `pattern: '^[a-y]+$', maxLength: 63, x-ctf-text-origin: token}
+                flag`,
+			[]string{"properties/user vs POST /internal/x/{cid}: pattern differs"}},
+		{"the copy's pattern is missing", false,
+			`pattern: '^[a-z]+$', maxLength: 63, x-ctf-text-origin: token}
+                flag`, `maxLength: 63, x-ctf-text-origin: token}
+                flag`,
+			[]string{"pattern differs: copy (absent), target ^[a-z]+$"}},
+		{"the copy's maxLength is missing", false,
+			`pattern: '^[a-z]+$', maxLength: 63, x-ctf-text-origin: token}
+                flag`, `pattern: '^[a-z]+$', x-ctf-text-origin: token}
+                flag`,
+			[]string{"maxLength differs: copy (absent), target 63"}},
+		{"the copy's required drops flag", false,
+			`required: [user, flag]
+              properties:`, `required: [user]
+              properties:`,
+			[]string{"properties/flag vs POST /internal/x/{cid}: required differs: copy false, target true"}},
+		{"the copy gains a minLength", false,
+			`maxLength: 63, x-ctf-text-origin: token}
+                flag`, `maxLength: 63, minLength: 1, x-ctf-text-origin: token}
+                flag`,
+			[]string{"minLength differs: copy 1, target (absent)"}},
+		{"the copy gains a format", false,
+			`flag: {type: string, x-ctf-text-origin: participant-opaque}`, `flag: {type: string, format: byte, x-ctf-text-origin: participant-opaque}`,
+			[]string{"properties/flag vs POST /internal/x/{cid}: format differs"}},
+		{"the copy gains a string property the target lacks", false,
+			`flag: {type: string, x-ctf-text-origin: participant-opaque}`, `flag: {type: string, x-ctf-text-origin: participant-opaque}
+                extra: {type: string, x-ctf-text-origin: participant-opaque}`,
+			[]string{"properties/extra vs POST /internal/x/{cid}: the copy has a string node the target does not"}},
+		{"the target gains a string property the copy lacks", true,
+			`flag: {type: string, x-ctf-text-origin: participant-opaque}`, `flag: {type: string, x-ctf-text-origin: participant-opaque}
+        more: {type: string, x-ctf-text-origin: token}`,
+			[]string{"properties/more vs POST /internal/x/{cid}: the target has a string node the copy lacks"}},
+		{"the target's maxLength changes", true,
+			`maxLength: 63`, `maxLength: 64`,
+			[]string{"maxLength differs: copy 63, target 64"}},
+		{"the forward target names no operation", false,
+			`x-ctf-forward-target: "POST /internal/x/{cid}"`, `x-ctf-forward-target: "POST /internal/y/{cid}"`,
+			[]string{`x-ctf-forward-target "POST /internal/y/{cid}" is not an operation of the target spec`}},
+		{"the forward target is missing", false,
+			`      x-ctf-forward-target: "POST /internal/x/{cid}"
+`, ``,
+			[]string{"writes a request schema but has no x-ctf-forward-target"}},
+		{"the copy $refs outside the document", false,
+			`schema:
+              type: object
+              required: [user, flag]
+              properties:
+                user: {type: string, pattern: '^[a-z]+$', maxLength: 63, x-ctf-text-origin: token}
+                flag: {type: string, x-ctf-text-origin: participant-opaque}`, `schema: {$ref: "scoreboard.yaml#/components/schemas/Req"}`,
+			[]string{`$ref "scoreboard.yaml#/components/schemas/Req" does not name an existing`}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cdoc, tdoc := forwardCopy, forwardTarget
+			if tc.onTarget {
+				tdoc = mutateOnce(t, tdoc, tc.from, tc.to)
+			} else {
+				cdoc = mutateOnce(t, cdoc, tc.from, tc.to)
+			}
+			v, _ := CollectorCopyViolations(specFromYAML(t, cdoc), specFromYAML(t, tdoc))
+			if len(v) == 0 {
+				t.Fatal("the mutation was not detected")
+			}
+			all := strings.Join(v, "\n")
+			for _, w := range tc.want {
+				if !strings.Contains(all, w) {
+					t.Errorf("violations do not contain %q; got:\n%s", w, all)
+				}
+			}
+		})
+	}
+}
+
+// TestCollectorCopy_NoSchemaWrittenIsNothingToCompare: a forwarded operation
+// whose body is "{}" (submit) is skipped, and a spec with no comparable copy at
+// all reports compared == 0 so the real-spec test can refuse that.
+func TestCollectorCopy_NoSchemaWrittenIsNothingToCompare(t *testing.T) {
+	doc := mutateOnce(t, forwardCopy, `            schema:
+              type: object
+              required: [user, flag]
+              properties:
+                user: {type: string, pattern: '^[a-z]+$', maxLength: 63, x-ctf-text-origin: token}
+                flag: {type: string, x-ctf-text-origin: participant-opaque}`, `            {}`)
+	v, n := CollectorCopyViolations(specFromYAML(t, doc), specFromYAML(t, forwardTarget))
+	if len(v) != 0 || n != 0 {
+		t.Fatalf("got violations %v, compared %d; want none and 0", v, n)
+	}
+}
+
+// copyBodyInline is forwardCopy's request schema, as written in the base.
+const copyBodyInline = `            schema:
+              type: object
+              required: [user, flag]
+              properties:
+                user: {type: string, pattern: '^[a-z]+$', maxLength: 63, x-ctf-text-origin: token}
+                flag: {type: string, x-ctf-text-origin: participant-opaque}`
+
+// copyWithRequestBodyComponent moves the copy's whole requestBody into
+// components.requestBodies and points the operation at it with a $ref.
+func copyWithRequestBodyComponent(t *testing.T) string {
+	t.Helper()
+	d := mutateOnce(t, forwardCopy, `      requestBody:
+        content:
+          application/json:
+`+copyBodyInline, `      requestBody: {$ref: "#/components/requestBodies/ExfilBody"}`)
+	return d + `components:
+  requestBodies:
+    ExfilBody:
+      content:
+        application/json:
+` + copyBodyInline + "\n"
+}
+
+// TestCollectorCopy_RequestBodyRef: a request body that is a $ref to
+// components.requestBodies is resolved before it is read, on either side (a
+// copy hidden behind one must not read as "nothing to compare").
+func TestCollectorCopy_RequestBodyRef(t *testing.T) {
+	t.Run("the copy behind a requestBodies $ref is compared", func(t *testing.T) {
+		v, n := CollectorCopyViolations(specFromYAML(t, copyWithRequestBodyComponent(t)), specFromYAML(t, forwardTarget))
+		if len(v) != 0 || n != 2 {
+			t.Fatalf("want clean and 2 compared, got %d compared, violations:\n%s", n, strings.Join(v, "\n"))
+		}
+	})
+	t.Run("a pattern difference behind a requestBodies $ref is caught", func(t *testing.T) {
+		d := mutateOnce(t, copyWithRequestBodyComponent(t), `pattern: '^[a-z]+$'`, `pattern: '^[a-y]+$'`)
+		v, _ := CollectorCopyViolations(specFromYAML(t, d), specFromYAML(t, forwardTarget))
+		if !strings.Contains(strings.Join(v, "\n"), "properties/user vs POST /internal/x/{cid}: pattern differs") {
+			t.Fatalf("not caught, got:\n%s", strings.Join(v, "\n"))
+		}
+	})
+	t.Run("the target behind a requestBodies $ref is compared", func(t *testing.T) {
+		tgt := mutateOnce(t, forwardTarget, `      requestBody:
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/Req"}`, `      requestBody: {$ref: "#/components/requestBodies/TBody"}`)
+		tgt += `  requestBodies:
+    TBody:
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Req"}
+`
+		v, n := CollectorCopyViolations(specFromYAML(t, forwardCopy), specFromYAML(t, tgt))
+		if len(v) != 0 || n != 2 {
+			t.Fatalf("want clean and 2 compared, got %d compared, violations:\n%s", n, strings.Join(v, "\n"))
+		}
+	})
+	t.Run("an unresolvable requestBody $ref is a violation, not a skip", func(t *testing.T) {
+		d := mutateOnce(t, forwardCopy, `      requestBody:
+        content:
+          application/json:
+`+copyBodyInline, `      requestBody: {$ref: "#/components/requestBodies/Nope"}`)
+		v, _ := CollectorCopyViolations(specFromYAML(t, d), specFromYAML(t, forwardTarget))
+		if !strings.Contains(strings.Join(v, "\n"), "its requestBody is not readable") {
+			t.Fatalf("got:\n%s", strings.Join(v, "\n"))
+		}
+	})
+	t.Run("a schema written only under another media type is a violation", func(t *testing.T) {
+		d := mutateOnce(t, forwardCopy, "application/json:\n"+copyBodyInline, "text/plain:\n"+copyBodyInline)
+		v, _ := CollectorCopyViolations(specFromYAML(t, d), specFromYAML(t, forwardTarget))
+		if !strings.Contains(strings.Join(v, "\n"), "only under text/plain, not application/json") {
+			t.Fatalf("got:\n%s", strings.Join(v, "\n"))
+		}
+	})
+	t.Run("a target with no request schema is a violation", func(t *testing.T) {
+		tgt := mutateOnce(t, forwardTarget, `      requestBody:
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/Req"}
+`, ``)
+		v, _ := CollectorCopyViolations(specFromYAML(t, forwardCopy), specFromYAML(t, tgt))
+		if !strings.Contains(strings.Join(v, "\n"), "has no application/json request schema") {
+			t.Fatalf("got:\n%s", strings.Join(v, "\n"))
+		}
+	})
+	t.Run("a target whose body cannot be read is a violation naming the target", func(t *testing.T) {
+		tgt := mutateOnce(t, forwardTarget, `      requestBody:
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/Req"}`, `      requestBody: {$ref: "#/components/requestBodies/Nope"}`)
+		v, _ := CollectorCopyViolations(specFromYAML(t, forwardCopy), specFromYAML(t, tgt))
+		if !strings.Contains(strings.Join(v, "\n"), "its target POST /internal/x/{cid}: its requestBody is not readable") {
+			t.Fatalf("got:\n%s", strings.Join(v, "\n"))
+		}
+	})
+	t.Run("a recursive $ref in the copy is a violation, not a hang", func(t *testing.T) {
+		d := mutateOnce(t, forwardCopy, copyBodyInline, `            schema: {$ref: "#/components/schemas/Rec"}`) + `components:
+  schemas:
+    Rec:
+      type: object
+      properties:
+        self: {$ref: "#/components/schemas/Rec"}
+`
+		v, _ := CollectorCopyViolations(specFromYAML(t, d), specFromYAML(t, forwardTarget))
+		if !strings.Contains(strings.Join(v, "\n"), "recursive $ref") {
+			t.Fatalf("got:\n%s", strings.Join(v, "\n"))
+		}
+	})
+}

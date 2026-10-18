@@ -39,11 +39,15 @@ package specparity
 // file is declared" for shapes the YAML decoder hands over as something other
 // than map[string]any / []any: those are rejected, not interpreted.
 //
-// What it deliberately does NOT do (S1b, #454): the static rules between
-// a word and the node's shape (enum <=> enum/const, participant-* only as
-// named response properties, opaque/operator placement, ...) and the
-// collector-copy comparison. Later stages (S2+) add the portal gate, the
-// route probes and the response-flow check.
+// S1b (#454) adds, in textorigin_static.go and textorigin_forward.go: the
+// static rules between a word and the node's shape (D3 (d): opaque never in a
+// response, operator in a request only where D2 allows it, enum <=>
+// enum/const, participant-* only as named response properties and those
+// names not reused for another class), `type` on every enum/const (D3 (h)),
+// and the collector's forward copy against its target (D3 (e)). A $ref takes
+// no sibling keyword but description / summary, and participant-inline /
+// -block are never behind a $ref (textorigin_static.go). Later stages
+// (S2+) add the portal gate, the route probes and the response-flow check.
 
 import (
 	"fmt"
@@ -92,6 +96,8 @@ type StringNode struct {
 	Pointer string
 	// Raw is the node's value of TextOriginKey (nil when absent).
 	Raw any
+	// HasEnum is true when the node carries `enum` or `const`.
+	HasEnum bool
 }
 
 // TextOriginReport is the result of checking one spec.
@@ -159,6 +165,25 @@ func (s *Spec) TextOrigin() TextOriginReport {
 			viol = append(viol, fmt.Sprintf("%s: %s on a node that is not a string Schema Object (it belongs on the definition with `type: string`, not on an object, a $ref site or an operation)", p, TextOriginKey))
 		}
 	}
+	typeless := map[string]bool{}
+	for _, p := range walk.typelessEnum {
+		typeless[p] = true
+	}
+	for _, p := range scan.typelessEnum {
+		typeless[p] = true
+	}
+	typelessList := make([]string, 0, len(typeless))
+	for p := range typeless {
+		typelessList = append(typelessList, p)
+	}
+	sort.Strings(typelessList)
+	for _, p := range typelessList {
+		viol = append(viol, fmt.Sprintf("%s: a Schema Object with enum/const and no `type` (ADR-0039 D3 (h)): it is no string node, so neither the declaration check nor the enum rule would see it; write `type`. (Anywhere in the document: a constraint position such as `not:` is no exception.)", p))
+	}
+	for _, r := range scan.refSiblings {
+		viol = append(viol, fmt.Sprintf("%s: a $ref with sibling keywords %s (only description/summary may sit next to a $ref: the walks follow the $ref and would ignore the rest, and the two walks must read one meaning)", r.pointer, r.ref))
+	}
+	viol = append(viol, s.staticRuleViolations(nodes)...)
 	for _, r := range walk.refs {
 		if !refInSection(r.ref, r.section) {
 			viol = append(viol, fmt.Sprintf("%s: a $ref in a %s position must be #/components/%s/<Name>, got %q (the derivations in later stages follow only that shape, like resolve())", r.pointer, componentSectionNoun[r.section], r.section, r.ref))
@@ -258,6 +283,54 @@ func isStringType(m map[string]any) bool {
 	return false
 }
 
+// schemaChild is one child Schema Object of a Schema Object, found by
+// schemaChildren. Every walker that descends into a Schema Object
+// (walkSchemas, the reachability walk, the copy comparison) uses this one
+// list, so a keyword added here is seen by all of them at once.
+type schemaChild struct {
+	segs     []string // keyword path below the parent, e.g. ["properties","name"], ["items"], ["allOf","0"]
+	node     any
+	property string // the property name, only when the child is entered through `properties`
+	named    bool   // true exactly when property is meaningful
+}
+
+// schemaChildren lists m's child Schema Objects in a fixed order:
+// properties/<name> (sorted), items, additionalProperties, allOf|anyOf|oneOf/<i>.
+func schemaChildren(m map[string]any) []schemaChild {
+	var out []schemaChild
+	if props, ok := asMap(m["properties"]); ok {
+		keys := make([]string, 0, len(props))
+		for k := range props {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			out = append(out, schemaChild{segs: []string{"properties", k}, node: props[k], property: k, named: true})
+		}
+	}
+	for _, kw := range []string{"items", "additionalProperties"} {
+		if sub, ok := asMap(m[kw]); ok {
+			out = append(out, schemaChild{segs: []string{kw}, node: sub})
+		}
+	}
+	for _, kw := range []string{"allOf", "anyOf", "oneOf"} {
+		if list, ok := m[kw].([]any); ok {
+			for i, el := range list {
+				out = append(out, schemaChild{segs: []string{kw, fmt.Sprint(i)}, node: el})
+			}
+		}
+	}
+	return out
+}
+
+// childPtr is ptr extended by a schemaChild's keyword path.
+func childPtr(ptr string, c schemaChild) string {
+	for _, seg := range c.segs {
+		ptr = childPointer(ptr, seg)
+	}
+	return ptr
+}
+
 // stringNodes is the structured walk (ADR-0039 C3's counting rule): string
 // Schema Objects under components.{schemas,parameters,responses,requestBodies,
 // headers} and under every operation's (and path item's) inline parameters,
@@ -274,7 +347,13 @@ type positionedRef struct{ pointer, ref, section string }
 type schemaWalk struct {
 	nodes []StringNode
 	refs  []positionedRef
+	// typelessEnum: Schema Objects with `enum` or `const` and no `type`
+	// (ADR-0039 D3 (h)): they are no string node, so no declaration check
+	// and no enum <=> enum/const rule would ever see them.
+	typelessEnum []string
 }
+
+func hasKey(m map[string]any, k string) bool { _, ok := m[k]; return ok }
 
 func (s *Spec) walkSchemas() schemaWalk {
 	var w schemaWalk
@@ -294,25 +373,14 @@ func (s *Spec) walkSchemas() schemaWalk {
 		if !ok {
 			return
 		}
+		hasEnum := hasKey(m, "enum") || hasKey(m, "const")
 		if isStringType(m) {
-			*out = append(*out, StringNode{Pointer: ptr, Raw: m[TextOriginKey]})
+			*out = append(*out, StringNode{Pointer: ptr, Raw: m[TextOriginKey], HasEnum: hasEnum})
+		} else if hasEnum && !hasKey(m, "type") {
+			w.typelessEnum = append(w.typelessEnum, ptr)
 		}
-		if props, ok := asMap(m["properties"]); ok {
-			for k, pv := range props {
-				schema(pv, childPointer(childPointer(ptr, "properties"), k))
-			}
-		}
-		for _, kw := range []string{"items", "additionalProperties"} {
-			if sub, ok := asMap(m[kw]); ok {
-				schema(sub, childPointer(ptr, kw))
-			}
-		}
-		for _, kw := range []string{"allOf", "anyOf", "oneOf"} {
-			if list, ok := m[kw].([]any); ok {
-				for i, el := range list {
-					schema(el, childPointer(childPointer(ptr, kw), fmt.Sprint(i)))
-				}
-			}
+		for _, c := range schemaChildren(m) {
+			schema(c.node, childPtr(ptr, c))
 		}
 	}
 
@@ -399,6 +467,7 @@ func (s *Spec) walkSchemas() schemaWalk {
 	}
 
 	sort.Slice(w.nodes, func(i, j int) bool { return w.nodes[i].Pointer < w.nodes[j].Pointer })
+	sort.Strings(w.typelessEnum)
 	return w
 }
 
@@ -408,6 +477,13 @@ type documentScan struct {
 	stringTyped []string  // maps with type string, anywhere in the document
 	originKeyed []string  // maps carrying TextOriginKey, anywhere
 	refs        []refSite // every `$ref` string, anywhere
+	// refSiblings: $ref sites with a sibling key other than description /
+	// summary; refSite.ref holds the sibling names, sorted.
+	refSiblings []refSite
+	// typelessEnum: maps with an `enum` list or a scalar `const` and no
+	// `type`, anywhere (a property that is merely NAMED enum / const holds a
+	// map, so it is not mistaken for the keyword).
+	typelessEnum []string
 	// pointers of mappings with a non-string key (map[any]any); not descended
 	nonStringKeys []string
 }
@@ -428,6 +504,25 @@ func scanDocument(root any) documentScan {
 			}
 			if ref, ok := t["$ref"].(string); ok {
 				sc.refs = append(sc.refs, refSite{pointer: ptr, ref: ref})
+				var extra []string
+				for k := range t {
+					if k != "$ref" && k != "description" && k != "summary" {
+						extra = append(extra, k)
+					}
+				}
+				if len(extra) > 0 {
+					sort.Strings(extra)
+					sc.refSiblings = append(sc.refSiblings, refSite{pointer: ptr, ref: strings.Join(extra, ", ")})
+				}
+			}
+			if !hasKey(t, "type") && !hasKey(t, "$ref") {
+				_, enumList := t["enum"].([]any)
+				c, hasConst := t["const"]
+				_, constIsMap := c.(map[string]any)
+				_, constIsList := c.([]any)
+				if enumList || (hasConst && !constIsMap && !constIsList) {
+					sc.typelessEnum = append(sc.typelessEnum, ptr)
+				}
 			}
 			for k, ev := range t {
 				walk(ev, childPointer(ptr, k))
@@ -442,6 +537,8 @@ func scanDocument(root any) documentScan {
 	}
 	walk(root, "")
 	sort.Strings(sc.nonStringKeys)
+	sort.Strings(sc.typelessEnum)
+	sort.Slice(sc.refSiblings, func(i, j int) bool { return sc.refSiblings[i].pointer < sc.refSiblings[j].pointer })
 	sort.Strings(sc.stringTyped)
 	sort.Strings(sc.originKeyed)
 	return sc

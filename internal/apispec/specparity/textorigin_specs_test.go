@@ -262,3 +262,29 @@ func TestAPISpec_TextOriginDeclared(t *testing.T) {
 		t.Fatal("0 string nodes checked across all specs: the walk is broken")
 	}
 }
+
+// TestAPISpec_TextOriginCollectorCopyMatchesTarget is ADR-0039 D3 (e) on the
+// real specs: the collector's forwarded exfil body (an inline copy, since a
+// spec cannot $ref across documents) accepts exactly what the scoreboard's
+// target operation accepts: same words, same acceptance keywords, same
+// required. The pairing is the collector operation's x-ctf-forward-target.
+func TestAPISpec_TextOriginCollectorCopyMatchesTarget(t *testing.T) {
+	docs := filepath.Join("..", "..", "..", "docs")
+	collector, err := LoadSpec(filepath.Join(docs, "openapi-collector.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	scoreboard, err := LoadSpec(filepath.Join(docs, "openapi-scoreboard.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, compared := CollectorCopyViolations(collector, scoreboard)
+	if len(v) > 0 {
+		t.Fatalf("the collector's request-body copy and its forward target disagree (ADR-0039 D3 (e)):\n  %s", strings.Join(v, "\n  "))
+	}
+	// exfil's {user, flag}. 0 or fewer would mean the comparison silently
+	// found nothing to compare.
+	if compared < 2 {
+		t.Fatalf("compared %d string nodes, want at least 2 (exfil's user and flag): the check found nothing to compare", compared)
+	}
+}
