@@ -24,7 +24,8 @@ import (
 // same rows. The contract between them: the form is never stricter than the
 // server, so a row may never be `client: reject` with `server: accept`; the only
 // allowed difference is `client: accept, server: reject` on a U+200D (ZWJ),
-// whose emoji-adjacency rule the form leaves to the server.
+// whose emoji-adjacency rule the form leaves to the server, or on a flag SHAPE
+// (flagShapePattern, app#402), a pattern rule the form leaves to the server too.
 //
 // The view test carries its own copy of the row struct and loader: the two
 // packages share the file, not code (a shared test-only package would be one more
@@ -103,7 +104,7 @@ func TestDisplayNameParity_ServerMatchesTable(t *testing.T) {
 
 // TestDisplayNameParity_ClientIsNeverStricter: the table itself never records a
 // form that refuses what the server accepts, and the one documented difference
-// (form accepts, server refuses) is only ever on a ZWJ. This is the
+// (form accepts, server refuses) is only ever on a ZWJ or a flag shape. This is the
 // "client-only reject = 0" half of the contract; the view test checks that the
 // form really answers the table.
 func TestDisplayNameParity_ClientIsNeverStricter(t *testing.T) {
@@ -115,8 +116,8 @@ func TestDisplayNameParity_ClientIsNeverStricter(t *testing.T) {
 			t.Errorf("%s: the form refuses a name the server accepts (%+q)", c.Note, c.input())
 		case c.Client == "accept" && c.Server == "reject":
 			serverOnlyReject++
-			if !strings.ContainsRune(c.input(), zeroWidthJoiner) {
-				t.Errorf("%s: only a ZWJ may be accepted by the form and refused by the server (%+q)", c.Note, c.input())
+			if !strings.ContainsRune(c.input(), zeroWidthJoiner) && !flagShapePattern.MatchString(c.input()) {
+				t.Errorf("%s: only a ZWJ or a flag shape may be accepted by the form and refused by the server (%+q)", c.Note, c.input())
 			}
 		}
 	}

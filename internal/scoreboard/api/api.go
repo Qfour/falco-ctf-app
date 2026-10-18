@@ -30,6 +30,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -169,6 +170,10 @@ const (
 	// rejection text — deliberately does not echo back the offending text
 	// (which would just re-display the very value being rejected).
 	errMsgFlagShapeRejected = "message body must not contain a flag-shaped value"
+	// errMsgDisplayNameFlagShape is the same gate for a display name (app#402): a
+	// name is shown to every participant on the board and the scoreboard, so it must
+	// not be a way around the subject / body gate. Fixed text, never the input.
+	errMsgDisplayNameFlagShape = "display name must not contain a flag-shaped value"
 	// Board-specific stable, non-leaking text (Issue #113's discipline,
 	// applied to app#292 Phase 2 — see the const block above this one for
 	// the full rationale).
@@ -1151,7 +1156,8 @@ func hasForbiddenRune(s string, class *regexp.Regexp) bool {
 
 // validDisplayName trims + validates a display name: 1..32 runes, no HTML/shell
 // metachars, no control (C0/C1) or format (Cf) characters (app#331; a ZWJ
-// between emoji is the one allowed Cf). Shared by the participant profile
+// between emoji is the one allowed Cf), and no flag shape (flagShapePattern,
+// app#402). Shared by the participant profile
 // route (profile.go) and the admin set-display-name endpoint, so both reject
 // the same names.
 //
@@ -1177,6 +1183,15 @@ func validDisplayName(raw string) (string, error) {
 	}
 	if displayNameHasForbidden(name) {
 		return "", fmt.Errorf("name contains forbidden characters")
+	}
+	// app#402: flagShapePattern (app#292) gates every other free text a participant
+	// shows to the others (a board subject and body); a name is shown to everyone too
+	// (the board's author, the leaderboard), so it is gated by the same SHAPE. It is
+	// a pattern rule, not a character class: it is pinned by cases.yaml and
+	// display_name_flag_shape_test.go, not by the code-point sweep (rule.yaml), and
+	// the form leaves it to the server (a form is never stricter than the server).
+	if flagShapePattern.MatchString(name) {
+		return "", errors.New(errMsgDisplayNameFlagShape)
 	}
 	return name, nil
 }
