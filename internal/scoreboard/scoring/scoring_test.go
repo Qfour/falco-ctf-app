@@ -1760,3 +1760,64 @@ func TestTaintOnOverflow_PersistFailureReturned_ThenRetryWrites(t *testing.T) {
 		t.Fatalf("retry did not persist: %v", got)
 	}
 }
+
+// --- user slug precondition (app#439) --------------------------------------
+
+var nonSlugUsers = []string{"", "Alice", "bad user", "-lead", "a_b", "evil\u202euser", strings.Repeat("a", 64)}
+
+// The Grader refuses a non-slug user on both write paths with ErrInvalidUser and
+// stores nothing, whatever the handler in front of it did.
+func TestGrader_NonSlugUserIsRefused(t *testing.T) {
+	fs := newFakeStore()
+	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
+	for _, u := range nonSlugUsers {
+		if _, err := g.RecordExfil(u, "03-exfil", "FALCO{boss}"); !errors.Is(err, scoring.ErrInvalidUser) {
+			t.Errorf("RecordExfil(%q) err = %v, want ErrInvalidUser", u, err)
+		}
+		if _, err := g.SubmitEvade(u, "03-exfil", "FALCO{boss}"); !errors.Is(err, scoring.ErrInvalidUser) {
+			t.Errorf("SubmitEvade(%q) err = %v, want ErrInvalidUser", u, err)
+		}
+	}
+	if len(fs.exfil) != 0 || len(fs.solved) != 0 || fs.markSolvedCalls != 0 {
+		t.Fatalf("a refused user left state behind: exfil=%v solved=%v markSolved=%d", fs.exfil, fs.solved, fs.markSolvedCalls)
+	}
+}
+
+// A receipt already stored under a non-slug key (written by a release without
+// the slug check) is never swept into a solve; a slug user's receipt beside it
+// still is.
+func TestSweep_NonSlugUserReceiptIsSkipped(t *testing.T) {
+	fs := newFakeStore()
+	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
+	for _, u := range nonSlugUsers { // straight into the store, as an older release did
+		if err := fs.RecordExfil(u, "03-exfil", "FALCO{boss}", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := g.RecordExfil("alice", "03-exfil", "FALCO{boss}"); err != nil {
+		t.Fatal(err)
+	}
+	solved, err := g.Sweep()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(solved) != 1 || solved[0].User != "alice" {
+		t.Fatalf("sweep solved %+v, want only alice", solved)
+	}
+	if len(fs.solved) != 1 || fs.markSolvedCalls != 1 {
+		t.Fatalf("solved=%v markSolved=%d: a non-slug receipt was solved", fs.solved, fs.markSolvedCalls)
+	}
+}
+
+func TestValidUser(t *testing.T) {
+	for _, u := range []string{"user1", "a", "0", "a-b", strings.Repeat("a", 63)} {
+		if !scoring.ValidUser(u) {
+			t.Errorf("ValidUser(%q) = false", u)
+		}
+	}
+	for _, u := range nonSlugUsers {
+		if scoring.ValidUser(u) {
+			t.Errorf("ValidUser(%q) = true", u)
+		}
+	}
+}

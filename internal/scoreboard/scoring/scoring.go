@@ -140,12 +140,28 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"regexp"
 	"slices"
 	"time"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/store"
 )
+
+// validUser mirrors internal/scoreboard/api's validUser (the username slug
+// every scoring write is keyed by). scoring cannot import api, so the
+// expression is copied here; one shared definition is app#440.
+var validUser = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+
+// ValidUser reports whether user is a username slug, the only shape the Grader
+// accepts as a solve / receipt key.
+func ValidUser(user string) bool { return validUser.MatchString(user) }
+
+// ErrInvalidUser is returned by SubmitEvade and RecordExfil for a user that is
+// not a username slug. The HTTP handlers check the slug first, so the Grader
+// refuses it as a second, independent gate (fail-closed): a solve or receipt
+// is never written under a non-slug key.
+var ErrInvalidUser = errors.New("scoring: user is not a username slug")
 
 // ScoreStore is the repository port the Grader depends on. It is the minimal
 // slice of the persistence layer the solve rules need; *store.Store implements
@@ -683,10 +699,17 @@ type EvadeOutcome struct {
 //     EvadeExfilRequired)
 //  7. record the solve → EvadeSolved.
 //
+// `user` must be a username slug (ValidUser), else ErrInvalidUser is returned
+// before any gate: a non-slug user is never solved for. The returned
+// EvadeOutcome is only meaningful when err == nil.
+//
 // `flag` is expected pre-trimmed by the adapter (the handler trims user input),
 // matching the prior behaviour where the comparison and the exfil lookup both
 // used the trimmed value.
 func (g *Grader) SubmitEvade(user, cid, flag string) (EvadeOutcome, error) {
+	if !ValidUser(user) {
+		return EvadeOutcome{}, ErrInvalidUser
+	}
 	ch, ok := g.cat[cid]
 	if !ok {
 		return EvadeOutcome{Status: EvadeUnknownChallenge}, nil
@@ -765,8 +788,10 @@ const (
 // later at SubmitEvade time via HasExfil (a wrong value simply fails the gate),
 // exactly as before.
 //
-// `user` and `flag` are expected pre-trimmed / pre-validated (non-empty) by the
-// adapter, matching prior handler behaviour.
+// `user` must be a username slug (ValidUser), else ErrInvalidUser is returned
+// and nothing is stored: a receipt under a non-slug key would otherwise be
+// swept into a solve. `flag` is expected pre-trimmed / non-empty by the adapter,
+// matching prior handler behaviour.
 //
 // The returned ExfilStatus is only meaningful when err == nil (standard Go
 // convention: when err != nil the other return values are undefined). On a
@@ -774,6 +799,9 @@ const (
 // persisted — callers must branch on err first and never trust the status
 // when err is non-nil.
 func (g *Grader) RecordExfil(user, cid, flag string) (ExfilStatus, error) {
+	if !ValidUser(user) {
+		return ExfilRecorded, ErrInvalidUser
+	}
 	ch, ok := g.cat[cid]
 	if !ok {
 		return ExfilUnknownChallenge, nil
@@ -945,6 +973,12 @@ func (g *Grader) Sweep() ([]SweepResult, error) {
 	var solved []SweepResult
 	var errs []error
 	for _, r := range g.store.PendingExfilSolves() {
+		if !ValidUser(r.User) {
+			// A receipt stored before the slug check existed. Never solved for
+			// (fail-closed); counted once at boot (cmd/scoreboard warnStoredUsers),
+			// not on every tick.
+			continue
+		}
 		ch, ok := g.cat[r.Challenge]
 		if !ok {
 			continue // challenge left the catalog since the receipt was recorded
