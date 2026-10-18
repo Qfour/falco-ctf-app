@@ -171,7 +171,7 @@ func TestManifestVerifiedClean_RuleExplainPanels(t *testing.T) {
 	}
 	checked := 0
 	for _, e := range entries {
-		if !e.IsDir() || !ChallengeDirRe.MatchString(e.Name()) {
+		if !e.IsDir() || !IsChallengeDir(e.Name()) {
 			continue
 		}
 		explainPath := filepath.Join(chalDir, e.Name(), RuleExplainFilename)

@@ -2,6 +2,8 @@
 
 各 `<NN>-<slug>/` は 1 課題。scoreboard がここを直接読み込むため、課題の正典はこのディレクトリ。
 
+**directory 名 = challenge id は `^[0-9]{2}-[a-z0-9-]{1,60}$`** (2 桁の番号、`-`、小文字の slug)。外れた名前の directory があると scoreboard は起動しない (正典は `internal/catalog/challengeid`)。
+
 ## ファイル別の所有区分
 
 | ファイル | 所有 | 役割 |

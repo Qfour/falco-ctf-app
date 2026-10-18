@@ -12,6 +12,9 @@
 //   - No catalog, no flags, no persistence. The collector holds no CTF state;
 //     it is a thin, allowlisted forwarder. Solve/exfil truth lives in the
 //     scoreboard (HasExfil at submit time is the only scoring gate).
+//     The one thing it knows about challenge ids is their grammar
+//     (internal/catalog/challengeid, standard library only): that is syntax, not
+//     a catalog, and it keeps yaml.v3 and the catalog parser out of this image.
 //   - net/http only (repo convention — no chi/echo).
 //   - Per-IP rate limit identical to /submit (1 req/s, burst 10). A workspace
 //     that scraped another flag must not be able to flood submit/exfil.
@@ -58,6 +61,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
+	"github.com/Qfour/falco-ctf-app/internal/catalog/challengeid"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/ratelimit"
 )
@@ -262,7 +266,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // so a crafted path can't be reflected into the upstream URL.
 func (h *Handler) exfil(w http.ResponseWriter, r *http.Request) {
 	cid := r.PathValue("cid")
-	if !validCID.MatchString(cid) {
+	// Guards the value reflected into the upstream /internal/exfil/{cid} path.
+	if !challengeid.Valid(cid) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid challenge id"})
 		return
 	}

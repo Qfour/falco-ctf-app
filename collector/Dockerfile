@@ -9,6 +9,9 @@ RUN go mod download
 
 COPY cmd/collector ./cmd/collector
 COPY internal/collector ./internal/collector
+# The challenge-id grammar: ONE stdlib-only leaf (app#437). NOT internal/catalog, which
+# parses YAML (gopkg.in/yaml.v3): TestCollectorLinksTheChallengeIDLeafNotTheCatalog.
+COPY internal/catalog/challengeid ./internal/catalog/challengeid
 COPY internal/serverutil ./internal/serverutil
 # The collector reuses the scoreboard's httpx + ratelimit helpers (no fork).
 COPY internal/scoreboard/httpx ./internal/scoreboard/httpx

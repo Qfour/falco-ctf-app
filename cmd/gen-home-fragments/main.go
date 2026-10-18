@@ -36,6 +36,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Qfour/falco-ctf-app/internal/catalog/challengeid"
 	"github.com/Qfour/falco-ctf-app/internal/homefragments"
 )
 
@@ -117,11 +118,11 @@ func renderRuleExplainPanels(root string) ([]panel, error) {
 		if !e.IsDir() {
 			continue
 		}
-		// homefragments.ChallengeDirRe is shared with
-		// internal/homefragments/manifest_verified_test.go so the directory-
-		// scan shape has one definition, not two that could drift.
-		m := homefragments.ChallengeDirRe.FindStringSubmatch(e.Name())
-		if m == nil {
+		// The directory-scan shape has one definition (challengeid, shared with
+		// internal/homefragments/manifest_verified_test.go via IsChallengeDir),
+		// not two that could drift; NN is the only way the number is taken out.
+		nn, ok := challengeid.NN(e.Name())
+		if !ok {
 			continue
 		}
 		explainPath := filepath.Join(chalDir, e.Name(), homefragments.RuleExplainFilename)
@@ -142,7 +143,7 @@ func renderRuleExplainPanels(root string) ([]panel, error) {
 			ID:     goIdent("rule_explain_" + e.Name()),
 			Label:  homefragments.RuleExplainLabel,
 			HTML:   html,
-			ChalNN: m[1],
+			ChalNN: nn,
 		})
 	}
 	return panels, nil

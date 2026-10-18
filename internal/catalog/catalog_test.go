@@ -86,36 +86,44 @@ expectedFlag: "FALCO{abc}"
 	}
 }
 
+// wantLoadError fails unless err is non-nil and its text contains want. The
+// directory names in the negative tests below are inside the challenge-id
+// grammar on purpose: a name outside it is refused for THAT reason (app#437), which
+// would make every one of these tests pass without testing what it names.
+func wantLoadError(t *testing.T, err error, want string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("expected an error containing %q, got nil", want)
+	}
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("error %q does not contain %q (refused for another reason?)", err, want)
+	}
+}
+
 func TestLoad_TypeRequired(t *testing.T) {
 	dir := t.TempDir()
 	// no `type:` field — must return an error (inference was removed)
-	writeChallenge(t, dir, "a", `expectedRules: ["X"]`)
+	writeChallenge(t, dir, "01-a", `expectedRules: ["X"]`)
 	_, err := catalog.Load(dir)
-	if err == nil {
-		t.Fatal("expected error for missing type:, got nil")
-	}
+	wantLoadError(t, err, "type must be")
 }
 
 func TestLoad_UnknownTypeError(t *testing.T) {
 	dir := t.TempDir()
-	writeChallenge(t, dir, "a", `type: unknown
+	writeChallenge(t, dir, "01-a", `type: unknown
 expectedRules: ["X"]`)
 	_, err := catalog.Load(dir)
-	if err == nil {
-		t.Fatal("expected error for unknown type value, got nil")
-	}
+	wantLoadError(t, err, "unknown type")
 }
 
 func TestLoad_InvalidFlag(t *testing.T) {
 	dir := t.TempDir()
-	writeChallenge(t, dir, "bad-flag", `
+	writeChallenge(t, dir, "01-bad-flag", `
 type: evade
 expectedFlag: "invalid-flag-format"
 `)
 	_, err := catalog.Load(dir)
-	if err == nil {
-		t.Fatal("expected error for invalid expectedFlag format, got nil")
-	}
+	wantLoadError(t, err, "expectedFlag must match")
 }
 
 // TestLoad_RequireExpectedRuleFire_LoadsAndValidates is ADR-0008 Decision (3):
@@ -152,15 +160,13 @@ expectedFlag: "FALCO{abc}"
 // existing trigger-type validation (TestLoad_TypeRequired's sibling).
 func TestLoad_RequireExpectedRuleFire_RequiresExpectedRules(t *testing.T) {
 	dir := t.TempDir()
-	writeChallenge(t, dir, "bad", `
+	writeChallenge(t, dir, "01-bad", `
 type: evade
 requireExpectedRuleFire: true
 expectedFlag: "FALCO{abc}"
 `)
 	_, err := catalog.Load(dir)
-	if err == nil {
-		t.Fatal("expected error for requireExpectedRuleFire=true with empty expectedRules, got nil")
-	}
+	wantLoadError(t, err, "requireExpectedRuleFire is true")
 }
 
 func TestLoad_IDFallbackToDirName(t *testing.T) {

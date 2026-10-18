@@ -1,0 +1,5 @@
+flags:
+  03-stealth-read: FALCO{dev-parity-a}
+  05-silent-search: FALCO{dev-parity-b}
+  10-final-exfil: FALCO{dev-parity-c}
+  a1b2c3d4e5f6a7b8c9d0e1f2: FALCO{dev-parity-d}

@@ -251,6 +251,8 @@ while IFS=$'\t' read -r pfile pgo pshell pnote; do
     reject:1)
       if grep -qE 'FALCO\{dev-|parity-|dev-decoy' "${WORK}/err" "${WORK}/out"; then
         fail "${label}: rejected, but file content was printed"
+      elif grep -qiE 'echo-probe|echo_probe|echo\.probe|a1b2c3d4e5f6a7b8c9d0e1f2|eeeeeeeeeeeeeeeeeeee' "${WORK}/err" "${WORK}/out"; then
+        fail "${label}: rejected, but a key outside the challenge-id grammar was echoed (app#437)"
       elif [[ -s "${WORK}/out" ]]; then
         fail "${label}: rejected, but still wrote pairs to stdout"
       else
@@ -262,7 +264,7 @@ while IFS=$'\t' read -r pfile pgo pshell pnote; do
       ;;
   esac
 done < "${PARITY}/cases.tsv"
-if [[ "${PARITY_CASES}" -lt 73 ]]; then
+if [[ "${PARITY_CASES}" -lt 79 ]]; then
   fail "only ${PARITY_CASES} parity case(s) read from ${PARITY}/cases.tsv"
 fi
 

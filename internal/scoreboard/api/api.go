@@ -45,6 +45,7 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
 	"github.com/Qfour/falco-ctf-app/internal/board"
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
+	"github.com/Qfour/falco-ctf-app/internal/catalog/challengeid"
 	"github.com/Qfour/falco-ctf-app/internal/identity"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/avatar"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/detect"
@@ -62,16 +63,15 @@ import (
 // auth-policy enforces on incoming /check-workspace?host=… so the two sides agree.
 var validUser = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
-// validCID is the grammar of a catalog challenge id as it may appear in a
-// {cid} path segment: the same character set the flags file accepts for a
-// challengeId (internal/catalog flagIDRE) plus a length cap. It is checked
-// before any catalog lookup so an id outside the grammar is never used as a
-// metric label, logged, or reflected in a response.
-var validCID = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
-
 // unknownCIDLabel is the single metric-label / log value every cid that is not
-// a catalog key is folded into, so the label set stays the closed catalog.
-const unknownCIDLabel = "_unknown"
+// a catalog key is folded into, so the label set stays the closed catalog. It is
+// challengeid.Unknown, which is outside the challenge-id grammar.
+//
+// The grammar of a {cid} path segment is challengeid.Valid (app#437: the one
+// definition catalog.Load, the flags file, the collector and the generators share).
+// It is checked before any catalog lookup so an id outside the grammar is never
+// used as a metric label, logged, or reflected in a response.
+const unknownCIDLabel = challengeid.Unknown
 
 // challenge resolves a {cid} path value once, at the top of a handler. It
 // checks the grammar first, then the catalog. It returns the catalog entry,
@@ -85,7 +85,7 @@ const unknownCIDLabel = "_unknown"
 // A static test (cid_label_static_test.go) keeps the raw value out of
 // WithLabelValues.
 func (h *Handler) challenge(cid string) (ch catalog.Challenge, label string, ok bool) {
-	if !validCID.MatchString(cid) {
+	if !challengeid.Valid(cid) {
 		return catalog.Challenge{}, unknownCIDLabel, false
 	}
 	ch, ok = h.cat[cid]

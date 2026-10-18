@@ -21,6 +21,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/gen-tutorial-fragments/ ./cmd/gen-tutorial-fragments/
 COPY internal/homefragments/ ./internal/homefragments/
+# internal/homefragments imports the challenge-id grammar (app#437), a stdlib-only leaf.
+COPY internal/catalog/challengeid/ ./internal/catalog/challengeid/
 COPY internal/scoreboard/view/ ./internal/scoreboard/view/
 COPY docs-site/docs/ ./docs-site/docs/
 COPY docs-site/tutorial/ ./docs-site/tutorial/
