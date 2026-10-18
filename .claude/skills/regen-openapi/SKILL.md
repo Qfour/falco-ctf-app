@@ -18,7 +18,19 @@ parity gate が食い違ったら、gate が正しく手順が誤り。
 - レスポンス構造 / エンドポイントを追加・削除した
 - `docs/openapi-*.yaml` を手で編集した（逆方向の同期）
 
-## 0. ルートを追加/削除する場合は先にコードを直す
+## 0. 新しい `type: string` の node には出所を 1 語書く
+
+spec に `type: string` の Schema Object (property・配列の `items`・parameter・
+response header の `schema` を含む。`$ref` の節点は除く) を足すときは、その node に
+`x-ctf-text-origin: <語>` を書く (ADR-0039)。語は `participant-inline` /
+`participant-block` / `participant-opaque` / `operator` / `token` / `enum` の 6 つで、
+意味は `docs/openapi-scoreboard.yaml` の `info.description` にある。欠落・語彙外・
+node 総数の食い違いは `make test` の `TestAPISpec_TextOriginDeclared` が落とす。
+`participant-*` の 3 語は node ごとに JSON pointer で pin されている
+(`internal/apispec/specparity/textorigin_specs_test.go`)。**`participant-*` を足す・
+外す・付け替える PR は security-engineer のレビューを通す。**
+
+## 0b. ルートを追加/削除する場合は先にコードを直す
 
 spec を先に書いてから型を生成する（spec → code）向きは維持するが、**ルート集合
 そのもの**は各サービスの `Routes()`（`internal/scoreboard/api/api.go` /
@@ -107,6 +119,9 @@ git add internal/scoreboard/oapi/types.gen.go \
 
 ## チェックリスト
 
+- [ ] 新しい `type: string` の node に `x-ctf-text-origin` を 1 語書いた
+      (`participant-*` を足す・外す・付け替えた場合は pin を動かし、
+      security-engineer レビューを通した)
 - [ ] ルートを追加/削除した場合、対応する `Routes()` と spec の両方に
       5 つの `x-ctf-*` extension をすべて書いた
 - [ ] `x-ctf-origin-guard` / `x-ctf-collector-forward` を変えた場合、
