@@ -157,11 +157,15 @@ paths:
               persistent evade-taint write failed; the request 500s.
           - `scoreboard_solves_total{challenge_id, kind}`
               kind in {trigger, evade, detect}
+              challenge_id in the catalog's ids, plus the single value
+              `_unknown` (see the `Cid` parameter).
           - `scoreboard_api_submissions_total{challenge_id, outcome}`
               outcome in {solved, wrong_flag, not_evaded, not_exfiltrated,
                           unknown_challenge, not_evade, not_detect,
                           detect_invalid, detect_missed,
                           detect_false_positive, bad_request, rate_limited}
+              challenge_id in the catalog's ids, plus the single value
+              `_unknown` for an id that is not a catalog key.
           - `scoreboard_http_request_duration_seconds{route, method, status}`
               route = the Go 1.22 ServeMux pattern that matched.
           - `scoreboard_csp_violation_reports_total{outcome}` (Issue #95)
@@ -895,7 +899,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "404":
-          description: unknown challenge id, or no journey content for it
+          description: unknown challenge id (or an id outside the `cid` grammar; fixed body, the id is not echoed), or no journey content for it
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -959,7 +963,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "404":
-          description: unknown challenge id, or the mission has no hints
+          description: unknown challenge id (or an id outside the `cid` grammar; fixed body, the id is not echoed), or the mission has no hints
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

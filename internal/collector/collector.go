@@ -101,6 +101,13 @@ func New(upstream string, logger *slog.Logger, opts ...Option) (*Handler, error)
 	h.limiter = ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(h.now)
 
 	h.proxy = httputil.NewSingleHostReverseProxy(u)
+	// Explicit upstream transport: the default one's 90s idle-connection time
+	// would be longer than some server idle deadlines. Idle upstream connections
+	// are closed after 30s, shorter than the scoreboard's IdleTimeout
+	// (serverutil), so the collector side closes first.
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.IdleConnTimeout = 30 * time.Second
+	h.proxy.Transport = tr
 	// Strip participant-controlled forwarding headers before forwarding. The
 	// workspace connects directly (no trusted ingress-nginx in front), so any
 	// inbound X-Forwarded-For / X-Real-IP / CF-Connecting-IP is
@@ -165,7 +172,7 @@ func New(upstream string, logger *slog.Logger, opts ...Option) (*Handler, error)
 			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzClaimedIdentity,
 			OriginGuarded: false, CollectorForward: true,
 			RateLimit: "per-IP (RemoteAddr) 1 req/s burst 10",
-			Handler:   rl(http.HandlerFunc(h.submit)),
+			Handler:   rl(h.proxy),
 		},
 		{
 			// Exfil drop → rewrite to the scoreboard's internal-only sink (see
@@ -246,18 +253,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	forwardDuration.
 		WithLabelValues(route, r.Method, strconv.Itoa(sw.status)).
 		Observe(h.now().Sub(start).Seconds())
-}
-
-// submit forwards the participant flag submission verbatim, after checking that
-// {cid} is a challenge-id slug (the same grammar as exfil). An id outside the
-// grammar is answered here with a fixed 404 and never forwarded, so it cannot
-// reach the scoreboard's metric labels or logs. The body is not inspected.
-func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
-	if !validCID.MatchString(r.PathValue("cid")) {
-		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"error": "unknown challenge"})
-		return
-	}
-	h.proxy.ServeHTTP(w, r)
 }
 
 // exfil rewrites the participant drop POST /api/challenges/{cid}/exfil to the

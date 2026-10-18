@@ -61,7 +61,11 @@ func SplitCSV(s string) []string {
 
 // IdleTimeout puts a deadline on a keep-alive connection while it waits for the
 // next request. It does not apply once a connection is hijacked (WebSocket).
-const IdleTimeout = 60 * time.Second
+// It is longer than the 90s idle time of Go's default HTTP client transport, so
+// a client that reuses its connections is not closed under it; a Go client that
+// talks to a service built on this package (the collector's proxy) sets its own
+// shorter IdleConnTimeout so the client side closes first.
+const IdleTimeout = 120 * time.Second
 
 // MaxHeaderBytes caps the request line plus headers every service accepts.
 // net/http answers an oversized request with 431 before the handler runs. The

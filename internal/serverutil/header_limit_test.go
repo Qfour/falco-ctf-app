@@ -19,8 +19,8 @@ func TestNewServer_OversizedHeaderIs431(t *testing.T) {
 	if srv.MaxHeaderBytes != 64<<10 {
 		t.Fatalf("MaxHeaderBytes = %d, want %d", srv.MaxHeaderBytes, 64<<10)
 	}
-	if srv.IdleTimeout != 60*time.Second {
-		t.Fatalf("IdleTimeout = %v, want 60s", srv.IdleTimeout)
+	if srv.IdleTimeout != 120*time.Second {
+		t.Fatalf("IdleTimeout = %v, want 120s", srv.IdleTimeout)
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

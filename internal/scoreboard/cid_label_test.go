@@ -13,9 +13,11 @@ import (
 	"unicode/utf8"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard"
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/metrics"
 	"github.com/Qfour/falco-ctf-app/internal/store"
 )
 
@@ -70,6 +72,11 @@ func outOfGrammarCIDs(n int) []string {
 	return out
 }
 
+// submissions reads one challenge_id/outcome series of the submissions counter.
+func submissions(cid, outcome string) float64 {
+	return testutil.ToFloat64(metrics.SubmissionsTotal.WithLabelValues(cid, outcome))
+}
+
 func assertFixedUnknownBody(t *testing.T, label string, code int, body string, cid string) {
 	t.Helper()
 	if code != http.StatusNotFound {
@@ -89,6 +96,7 @@ func assertFixedUnknownBody(t *testing.T, label string, code int, body string, c
 func TestSubmitUnknownCIDIsFoldedIntoOneLabelValue(t *testing.T) {
 	f := newSDFixture(t)
 	before := submissionLabelValues(t)
+	unknownBefore := submissions("_unknown", "unknown_challenge")
 
 	cids := outOfGrammarCIDs(50)
 	for i, cid := range cids {
@@ -118,8 +126,8 @@ func TestSubmitUnknownCIDIsFoldedIntoOneLabelValue(t *testing.T) {
 			t.Fatalf("a new challenge_id label value %q appeared (len %d); only \"_unknown\" may", clip(v), len(v))
 		}
 	}
-	if !after["_unknown"] {
-		t.Fatal("the \"_unknown\" label value was never recorded, the requests did not reach the handler")
+	if got, want := submissions("_unknown", "unknown_challenge")-unknownBefore, float64(2*len(cids)); got != want {
+		t.Fatalf("_unknown/unknown_challenge rose by %v, want %v (every request must reach the handler and fold)", got, want)
 	}
 }
 
@@ -127,10 +135,14 @@ func TestSubmitUnknownCIDIsFoldedIntoOneLabelValue(t *testing.T) {
 // same fixed body as an id outside the grammar.
 func TestSubmitUnknownButWellFormedCIDIsFolded(t *testing.T) {
 	f := newFixture(t, nil)
+	unknownBefore := submissions("_unknown", "unknown_challenge")
 	w := f.do("POST", "/api/challenges/99-nope/submit", map[string]any{"user": "user1", "flag": "FALCO{x}"})
 	assertFixedUnknownBody(t, "99-nope", w.Code, w.Body.String(), "99-nope")
 	if submissionLabelValues(t)["99-nope"] {
 		t.Fatal("an id that is not a catalog key was used as a label value")
+	}
+	if got := submissions("_unknown", "unknown_challenge") - unknownBefore; got != 1 {
+		t.Fatalf("_unknown/unknown_challenge rose by %v, want 1", got)
 	}
 }
 
@@ -146,9 +158,10 @@ func TestExfilInternalUnknownCIDFixedBody(t *testing.T) {
 // A catalog key still labels its own series (the fold must not hide real ids).
 func TestSubmitKnownCIDKeepsItsOwnLabel(t *testing.T) {
 	f := newFixture(t, nil)
+	before := submissions("02-evade", "wrong_flag")
 	f.do("POST", "/api/challenges/02-evade/submit", map[string]any{"user": "user1", "flag": "FALCO{wrong}"})
-	if !submissionLabelValues(t)["02-evade"] {
-		t.Fatal("a catalog id was not recorded under its own label")
+	if got := submissions("02-evade", "wrong_flag") - before; got != 1 {
+		t.Fatalf("02-evade/wrong_flag rose by %v, want 1 (a catalog id keeps its own label)", got)
 	}
 }
 
@@ -195,4 +208,42 @@ func clip(s string) string {
 		return s[:40] + "..."
 	}
 	return s
+}
+
+// Every route that takes a {cid} answers an id outside the grammar, and a
+// well-formed id that is not in the catalog, with the same fixed 404 and does
+// not reflect the input.
+func TestUnknownCIDFixedBodyOnEveryCIDRoute(t *testing.T) {
+	f := newSDFixture(t)
+	// {u} is a distinct seat per request, so no per-identity rate limiter can
+	// turn a request away before the handler.
+	routes := []struct {
+		name, tmpl string
+		withEmail  bool
+		body       func(u string) map[string]any
+	}{
+		{"submit", "/api/challenges/{cid}/submit", true, func(u string) map[string]any { return map[string]any{"user": u, "flag": "FALCO{x}"} }},
+		{"submit-detect", "/api/challenges/{cid}/submit-detect", true, func(u string) map[string]any {
+			return map[string]any{"user": u, "condition": "evt.type=open"}
+		}},
+		{"exfil-internal", "/internal/exfil/{cid}", false, func(u string) map[string]any { return map[string]any{"user": u, "flag": "FALCO{x}"} }},
+		{"steps-check", "/api/users/{u}/challenges/{cid}/steps/0/check", true, func(string) map[string]any { return map[string]any{"checked": true} }},
+		{"hints", "/api/users/{u}/challenges/{cid}/hints/0", true, func(string) map[string]any { return map[string]any{} }},
+		{"reset-dirty", "/api/users/{u}/challenges/{cid}/reset-dirty", true, func(string) map[string]any { return map[string]any{} }},
+	}
+	ids := []string{"99-nope", outOfGrammarCIDs(1)[0], "bad%20id", "%ff%fe"}
+	n := 0
+	for _, rt := range routes {
+		for i, cid := range ids {
+			n++
+			u := fmt.Sprintf("user%d", n)
+			email := ""
+			if rt.withEmail {
+				email = u + "@ctf.local"
+			}
+			target := strings.NewReplacer("{cid}", cid, "{u}", u).Replace(rt.tmpl)
+			w := f.do(target, email, rt.body(u))
+			assertFixedUnknownBody(t, fmt.Sprintf("%s #%d", rt.name, i), w.Code, w.Body.String(), cid)
+		}
+	}
 }

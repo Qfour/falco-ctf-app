@@ -190,7 +190,7 @@ paths:
           content:
             application/json: {}
         "404":
-          description: unknown challenge — relayed from the scoreboard, or answered by the collector (fixed body, not forwarded) when `{cid}` is outside the id slug grammar
+          description: relayed scoreboard error (unknown challenge)
           content:
             application/json: {}
         "429":
