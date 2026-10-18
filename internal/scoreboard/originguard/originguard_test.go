@@ -1,10 +1,12 @@
 package originguard
 
 import (
+	"bytes"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -174,5 +176,31 @@ func TestMiddleware_PortMismatchDenied(t *testing.T) {
 	w := serve(g, "POST", "/x", "https://a.example.com:8443", "")
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("code=%d want 403 (port-only mismatch must not be allowed)", w.Code)
+	}
+}
+
+// The deny log names the matched route pattern, not the raw path: a caller-chosen
+// path segment must not be copied into the log.
+func TestDenyLogRecordsRoutePatternNotRawPath(t *testing.T) {
+	var logs bytes.Buffer
+	g := New([]string{"https://a.example.com"}, slog.New(slog.NewTextHandler(&logs, nil)))
+	mux := http.NewServeMux()
+	mux.Handle("POST /api/challenges/{cid}/submit-detect", g.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})))
+	segment := "seg" + strings.Repeat("q", 2000)
+	r := httptest.NewRequest("POST", "/api/challenges/"+segment+"/submit-detect", nil)
+	r.Header.Set("Origin", "https://b.example.com")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("code=%d want 403", w.Code)
+	}
+	out := logs.String()
+	if strings.Contains(out, segment) || strings.Contains(out, "seg") {
+		t.Fatalf("deny log contains the raw path segment: %.200s", out)
+	}
+	if !strings.Contains(out, "/api/challenges/{cid}/submit-detect") {
+		t.Fatalf("deny log does not name the route pattern: %.200s", out)
 	}
 }

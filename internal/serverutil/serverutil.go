@@ -59,6 +59,10 @@ func SplitCSV(s string) []string {
 	return out
 }
 
+// IdleTimeout puts a deadline on a keep-alive connection while it waits for the
+// next request. It does not apply once a connection is hijacked (WebSocket).
+const IdleTimeout = 60 * time.Second
+
 // MaxHeaderBytes caps the request line plus headers every service accepts.
 // net/http answers an oversized request with 431 before the handler runs. The
 // default (1 MiB) is far above anything the portal, ingress or workspaces send.
@@ -71,6 +75,7 @@ func newServer(addr string, h http.Handler) *http.Server {
 		Addr:              addr,
 		Handler:           h,
 		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       IdleTimeout,
 		MaxHeaderBytes:    MaxHeaderBytes,
 	}
 }
