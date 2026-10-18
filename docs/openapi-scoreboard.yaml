@@ -69,10 +69,26 @@ info:
                              RFC 3339 time (printable ASCII only), whoever chooses it
         enum                 a closed set (`enum` / `const`)
 
-    A missing key, an unknown word, or a changed per-word count is a
-    `make test` failure (internal/apispec/specparity, no exclusion list). This
-    is a declaration only: it changes no HTTP behaviour and generated code
-    ignores it.
+    The word follows the STORAGE, not the author: a value goes in the same
+    place whoever wrote it, and that place takes the rule of its least trusted
+    writer. An admin's rename (`DisplayNameRequest.name`) lands where a
+    participant's display name does, so it is `participant-inline`; an admin's
+    reply (`PostReplyRequest.body`) is `participant-block`. Staff-written free
+    text that a participant can see is therefore still participant-*.
+
+    Rules between a word and the node's shape (machine-checked from ADR-0039
+    S1b, #454; declared here so they are not tribal): `participant-opaque`
+    never reaches a response; `operator` is allowed in a request only on an
+    `operator`-audience operation or an `internal` one the collector does not
+    forward; `enum` if and only if the node has `enum` / `const`.
+
+    A missing key, an unknown word, a node total that differs from the pin, or
+    a participant-inline / -block / -opaque node that is added, removed or
+    re-labelled (pinned by JSON pointer, so a swap cannot hide in a balanced
+    count) is a `make test` failure (internal/apispec/specparity, no exclusion
+    list). A pointer moving there is the signal for a security-engineer review.
+    This is a declaration only: it changes no HTTP behaviour and generated
+    code ignores it.
 
     Why origin-guard is a spec field and not a comment: the guard's presence is
     ASYMMETRIC on purpose (submit / internal-exfil are excluded
