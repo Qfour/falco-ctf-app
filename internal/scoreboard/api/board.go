@@ -161,9 +161,7 @@ func (h *Handler) boardCreateThread(w http.ResponseWriter, r *http.Request) {
 	// thread (audience=all threads are PUBLIC), so a flag pasted into the
 	// subject leaks exactly as badly as one pasted into the body — this gate
 	// must not be body-only.
-	if flagShapePattern.MatchString(subject) {
-		h.logFlagShapeRefused(r, author, flagFieldSubject)
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": errMsgFlagShapeRejected})
+	if h.refuseFlagShape(w, r, author, flagFieldSubject, subject) {
 		return
 	}
 	body, err := validBoardBody(req.Body)
@@ -171,9 +169,7 @@ func (h *Handler) boardCreateThread(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
-	if flagShapePattern.MatchString(body) {
-		h.logFlagShapeRefused(r, author, flagFieldBody)
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": errMsgFlagShapeRejected})
+	if h.refuseFlagShape(w, r, author, flagFieldBody, body) {
 		return
 	}
 
@@ -261,9 +257,7 @@ func (h *Handler) boardAppendMessage(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
-	if flagShapePattern.MatchString(body) {
-		h.logFlagShapeRefused(r, author, flagFieldBody)
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": errMsgFlagShapeRejected})
+	if h.refuseFlagShape(w, r, author, flagFieldBody, body) {
 		return
 	}
 	at := h.now().UTC().Format(time.RFC3339Nano)
@@ -476,9 +470,7 @@ func (h *Handler) boardAdminReply(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
-	if flagShapePattern.MatchString(body) {
-		h.logFlagShapeRefused(r, boardStaffAuthor, flagFieldBody)
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": errMsgFlagShapeRejected})
+	if h.refuseFlagShape(w, r, boardStaffAuthor, flagFieldBody, body) {
 		return
 	}
 	at := h.now().UTC().Format(time.RFC3339Nano)

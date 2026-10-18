@@ -14,17 +14,19 @@ import (
 type displayNameRoute struct {
 	name   string
 	target string
+	// pattern is the mux pattern of the route (r.Pattern), as the logs name it.
+	pattern string
 	// send posts a display name to the route and returns the whole response.
 	send func(f *fixture, target, name string) *httptest.ResponseRecorder
 }
 
 var displayNameRoutes = []displayNameRoute{
-	{"participant POST /api/users/{user}/profile", "/api/users/alice/profile",
+	{"participant POST /api/users/{user}/profile", "/api/users/alice/profile", "POST /api/users/{user}/profile",
 		func(f *fixture, target, name string) *httptest.ResponseRecorder {
 			// the profile route's field is display_name.
 			return f.doUser("POST", target, "alice", map[string]any{"display_name": name})
 		}},
-	{"admin POST /api/admin/users/{user}/display-name", "/api/admin/users/alice/display-name",
+	{"admin POST /api/admin/users/{user}/display-name", "/api/admin/users/alice/display-name", "POST /api/admin/users/{user}/display-name",
 		func(f *fixture, target, name string) *httptest.ResponseRecorder {
 			return f.doAdmin("POST", target, map[string]any{"name": name})
 		}},
