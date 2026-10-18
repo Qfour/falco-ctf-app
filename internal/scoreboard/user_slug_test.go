@@ -124,3 +124,46 @@ func TestExfil_SlugUserIsAcceptedAsBefore(t *testing.T) {
 		})
 	}
 }
+
+// The server trims the body's user BEFORE it checks the slug (strings.TrimSpace),
+// so surrounding whitespace is accepted and the stored key is the trimmed slug;
+// an all-whitespace user is "missing", not "invalid". This pins that order.
+func TestSubmit_UserIsTrimmedThenChecked(t *testing.T) {
+	f := newFixture(t, nil)
+	w := f.do("POST", "/api/challenges/02-evade/submit", map[string]any{"user": " user1 ", "flag": "FALCO{ok}"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s, want 200", w.Code, w.Body)
+	}
+	if !f.st.IsSolved("user1", "02-evade") || f.st.IsSolved(" user1 ", "02-evade") {
+		t.Fatal("the solve must be stored under the trimmed slug \"user1\"")
+	}
+
+	g := newFixture(t, nil)
+	w = g.do("POST", "/api/challenges/02-evade/submit", map[string]any{"user": "   ", "flag": "FALCO{ok}"})
+	if w.Code != http.StatusBadRequest || strings.TrimSpace(w.Body.String()) != `{"error":"user required"}` {
+		t.Fatalf("status=%d body=%s, want 400 {\"error\":\"user required\"}", w.Code, w.Body)
+	}
+	if g.st.SolvedCount() != 0 {
+		t.Fatal("a solve was stored for a blank user")
+	}
+}
+
+func TestExfil_UserIsTrimmedThenChecked(t *testing.T) {
+	f := newFixture(t, nil)
+	w := f.do("POST", "/internal/exfil/03-exfil", map[string]any{"user": " user1 ", "flag": "FALCO{boss}"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s, want 200", w.Code, w.Body)
+	}
+	if !f.st.HasExfilAny("user1", "03-exfil") || f.st.HasExfilAny(" user1 ", "03-exfil") {
+		t.Fatal("the receipt must be stored under the trimmed slug \"user1\"")
+	}
+
+	g := newFixture(t, nil)
+	w = g.do("POST", "/internal/exfil/03-exfil", map[string]any{"user": "   ", "flag": "FALCO{boss}"})
+	if w.Code != http.StatusBadRequest || strings.TrimSpace(w.Body.String()) != `{"error":"user and flag required"}` {
+		t.Fatalf("status=%d body=%s, want 400 {\"error\":\"user and flag required\"}", w.Code, w.Body)
+	}
+	if n := len(g.st.PendingExfilSolves()); n != 0 {
+		t.Fatalf("%d receipt(s) stored for a blank user", n)
+	}
+}

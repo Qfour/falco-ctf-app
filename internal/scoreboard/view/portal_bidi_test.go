@@ -159,10 +159,11 @@ func writeRe(helper string) *regexp.Regexp {
 }
 
 // bidiFloors are the numbers of isolated sites (nameHTML / textHTML on participant
-// inline text) when this was written: scoreboard 5 (leaderboard row, activity, pod,
-// challenge board, solver list, first_solver of a mission card), board 11 (6 names: public list, thread header,
-// message authors, admin list and header; 5 subjects: my list, public list, thread
-// header, admin list and header), Me 1, admin dashboard 6 (5 + the mission card's first_solver).
+// inline text) when this was written: scoreboard 6 (leaderboard row, activity, pod,
+// challenge board, solver list, first_solver of a mission card), board 11 (6 names:
+// public list, thread header, message authors, admin list and header; 5 subjects: my
+// list, public list, thread header, admin list and header), Me 1, admin dashboard 6
+// (5 + the mission card's first_solver).
 var bidiFloors = map[string]int{
 	"pane-scoreboard.tmpl": 6,
 	"pane-board.tmpl":      11,

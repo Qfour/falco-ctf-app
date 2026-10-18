@@ -434,7 +434,7 @@ type ExfilReceipt struct {
 type ExfilRequest struct {
 	Flag string `json:"flag"`
 
-	// User CLAIMED identity — must be a username slug (400 otherwise; nothing is stored)
+	// User CLAIMED identity — must be a username slug (400 otherwise; nothing is stored); surrounding whitespace is dropped by the server before the check
 	User string `json:"user"`
 }
 
@@ -1087,7 +1087,7 @@ type SubmitDetectVerdictStatus string
 type SubmitFlagRequest struct {
 	Flag string `json:"flag"`
 
-	// User CLAIMED identity — never proven on this route. Must be a username slug (400 otherwise; nothing is stored)
+	// User CLAIMED identity — never proven on this route. Must be a username slug (400 otherwise; nothing is stored); surrounding whitespace is dropped by the server before the check
 	User string `json:"user"`
 }
 

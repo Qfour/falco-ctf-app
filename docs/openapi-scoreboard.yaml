@@ -2037,7 +2037,7 @@ components:
           type: string
           pattern: '^[a-z0-9][a-z0-9-]{0,62}$'
           maxLength: 63
-          description: CLAIMED identity — never proven on this route. Must be a username slug (400 otherwise; nothing is stored)
+          description: CLAIMED identity — never proven on this route. Must be a username slug (400 otherwise; nothing is stored); surrounding whitespace is dropped by the server before the check
         flag: { type: string }
 
     SubmitFlagVerdict:
@@ -2081,7 +2081,10 @@ components:
       type: object
       required: [user, condition]
       properties:
-        user: { type: string }
+        user:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{0,62}$'
+          maxLength: 63
         condition:
           type: string
           description: the Falco condition to grade (<= 4 KiB)
@@ -2114,7 +2117,7 @@ components:
           type: string
           pattern: '^[a-z0-9][a-z0-9-]{0,62}$'
           maxLength: 63
-          description: CLAIMED identity — must be a username slug (400 otherwise; nothing is stored)
+          description: CLAIMED identity — must be a username slug (400 otherwise; nothing is stored); surrounding whitespace is dropped by the server before the check
         flag: { type: string }
 
     ExfilReceipt:
