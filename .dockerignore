@@ -5,10 +5,9 @@
 # Claude Code settings
 .claude
 # Exception: the conventions file holds the cross-repo contract table, and
-# internal/scoreboard/identityobs/contract_test.go (app#404, ADR-0038) and
-# internal/scoreboard/metrics/contract_test.go (app#412) compare its
-# "identity 拒否の観測" / "Webhook 流量制限" rows with the metrics the process
-# exposes. The
+# internal/contractmetrics/contract_test.go (ADR-0040; it replaced the per-row
+# tests of app#404 and app#412) compares its `<family>{<labels>}` code spans with the
+# metrics the owning binary exposes at start. The
 # `COPY . .` builds receive it: Dockerfile.test (the one that runs the test),
 # Dockerfile.tidy and Dockerfile.e2e (no effect on them, but editing this file
 # now invalidates their `COPY . .` layer cache). No pushed image copies the repo
