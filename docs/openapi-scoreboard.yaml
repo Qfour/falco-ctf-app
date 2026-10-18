@@ -1304,7 +1304,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "404":
-          description: unknown thread id, wrong-audience, or moderated away
+          description: unknown thread id (or a `{tid}` that is not a 32-hex thread id; fixed body, not echoed), wrong-audience, or moderated away
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1357,7 +1357,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "404":
-          description: unknown thread id, or it does not belong to the caller
+          description: unknown thread id (or a `{tid}` that is not a 32-hex thread id; fixed body, not echoed), or it does not belong to the caller
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1405,7 +1405,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "404":
-          description: unknown thread id, `audience:admin`, or moderated away
+          description: unknown thread id (or a `{tid}` that is not a 32-hex thread id; fixed body, not echoed), `audience:admin`, or moderated away
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1449,6 +1449,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/LikeResult" }
+        "404":
+          description: "`{tid}` is not a 32-hex thread id (fixed body, the value is not echoed). A well-formed id for a thread that does not exist is still 200 (see above)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "403":
           description: origin guard denied, or the request carries no `X-Auth-Request-Email` identity (denied by the rate limiter before any token is consumed), or an identity that is not the canonical `<seat>@<EXPECTED_EMAIL_DOMAIN>` form (the handler's 403, after the bucket)
           content:
@@ -1721,7 +1726,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "404":
-          description: unknown thread id
+          description: unknown thread id (or a `{tid}` that is not a 32-hex thread id; fixed body, not echoed)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1781,7 +1786,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "404":
-          description: unknown thread id
+          description: unknown thread id (or a `{tid}` that is not a 32-hex thread id; fixed body, not echoed)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1834,7 +1839,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "404":
-          description: unknown thread id
+          description: unknown thread id (or a `{tid}` that is not a 32-hex thread id; fixed body, not echoed)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1941,7 +1946,10 @@ components:
         capability token: participant routes still enforce the audience/
         ownership/moderation-state entitlement check server-side; this
         value's randomness is defense-in-depth on top of that check, not a
-        substitute for it.
+        substitute for it. A `{tid}` that is not exactly 32 lower-case hex
+        characters is answered with the same fixed 404 as an unknown thread
+        before any lookup, and is never echoed (so `LikeResult.tid` is always
+        a well-formed id) or logged.
     Mid:
       in: path
       name: mid

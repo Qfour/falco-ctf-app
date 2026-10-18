@@ -72,6 +72,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -237,6 +238,13 @@ func sqliteDSN(path string) string {
 
 // Close closes the underlying database handle.
 func (s *Store) Close() error { return s.db.Close() }
+
+// idRE is the shape of every thread id newID produces: 32 lower-case hex chars.
+var idRE = regexp.MustCompile(`^[0-9a-f]{32}$`)
+
+// ValidID reports whether id has the shape of a thread id. A {tid} path value
+// that does not is "not found" without a lookup, and is never echoed or logged.
+func ValidID(id string) bool { return idRE.MatchString(id) }
 
 // newID returns a 32-hex-char (16 random bytes) id: URL-path safe, and
 // non-enumerable — defense in depth ON TOP OF the ownership/audience check
