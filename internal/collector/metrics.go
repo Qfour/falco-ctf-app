@@ -1,15 +1,9 @@
 package collector
 
 import (
-	"regexp"
-
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
-
-// validCID matches a challenge id slug (e.g. "10-final-exfil"). Guards the
-// value reflected into the upstream /internal/exfil/{cid} path.
-var validCID = regexp.MustCompile(`^[0-9]{2}-[a-z0-9-]{1,60}$`)
 
 // forwardDuration observes collector request latency by route/method/status.
 // Route label uses the matched ServeMux pattern (bounded cardinality), never

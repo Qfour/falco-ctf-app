@@ -6,21 +6,17 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"regexp"
 	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Qfour/falco-ctf-app/internal/catalog/challengeid"
 )
 
 // ErrFlagOverrides wraps every rejection of a flags file, so the caller can
 // tell "the flags file is unusable" apart from a catalog/scenario load error.
 var ErrFlagOverrides = errors.New("flag overrides rejected")
-
-// flagIDRE is the shape of a challengeId as it may appear as a key in a flags
-// file. A key outside this shape is never echoed in an error (a line with key
-// and value swapped would otherwise put a flag value in the log).
-var flagIDRE = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 // Scored is the catalog a scoreboard instance scores, plus the scenario it
 // was scoped to.
@@ -261,7 +257,10 @@ func readFlagsFile(path string) ([]flagEntry, error) {
 	entries := make([]flagEntry, 0, len(flags.Content)/2)
 	for i := 0; i+1 < len(flags.Content); i += 2 {
 		k, v := flags.Content[i], flags.Content[i+1]
-		if k.Kind != yaml.ScalarNode || !flagIDRE.MatchString(k.Value) {
+		// A key outside the challenge-id grammar (challengeid.Valid, app#437) is never
+		// echoed: a line with key and value swapped would otherwise put a flag value
+		// in the log.
+		if k.Kind != yaml.ScalarNode || !challengeid.Valid(k.Value) {
 			return nil, fmt.Errorf("line %d: malformed entry (key is not a challengeId)", k.Line)
 		}
 		id := k.Value

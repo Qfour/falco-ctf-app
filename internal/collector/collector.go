@@ -58,6 +58,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
+	"github.com/Qfour/falco-ctf-app/internal/catalog/challengeid"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/ratelimit"
 )
@@ -262,7 +263,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // so a crafted path can't be reflected into the upstream URL.
 func (h *Handler) exfil(w http.ResponseWriter, r *http.Request) {
 	cid := r.PathValue("cid")
-	if !validCID.MatchString(cid) {
+	// Guards the value reflected into the upstream /internal/exfil/{cid} path.
+	if !challengeid.Valid(cid) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid challenge id"})
 		return
 	}

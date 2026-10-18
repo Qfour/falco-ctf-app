@@ -1,14 +1,17 @@
 package homefragments
 
-import "regexp"
+import "github.com/Qfour/falco-ctf-app/internal/catalog/challengeid"
 
-// ChallengeDirRe matches the canonical <NN>-<slug> challenge directory name
-// shape (mirrors internal/catalog.Load / LoadJourneys' own discovery
-// pattern). Exported so both cmd/gen-home-fragments (directory scan) and
+// IsChallengeDir reports whether name is a canonical <NN>-<slug> challenge
+// directory name: challengeid.Valid, the one definition internal/catalog.Load
+// enforces (app#437). Exported so both cmd/gen-home-fragments (directory scan) and
 // this package's own tests (manifest_verified_test.go, re-scanning the same
 // challenges/ tree to verify real rule-explain.md content) use a single
 // definition instead of two copies that could drift.
-var ChallengeDirRe = regexp.MustCompile(`^(\d\d)-[a-z0-9-]+$`)
+func IsChallengeDir(name string) bool { return challengeid.Valid(name) }
+
+// ChallengeNN is the two-digit number of a directory name IsChallengeDir accepts.
+func ChallengeNN(name string) string { return name[:2] }
 
 // StaticPanel is one non-per-challenge Home panel (intro/cheatsheet in
 // docs-site/home-fragments.yaml — the `story` panel was removed 2026-08-17,

@@ -117,11 +117,10 @@ func renderRuleExplainPanels(root string) ([]panel, error) {
 		if !e.IsDir() {
 			continue
 		}
-		// homefragments.ChallengeDirRe is shared with
+		// homefragments.IsChallengeDir is shared with
 		// internal/homefragments/manifest_verified_test.go so the directory-
-		// scan shape has one definition, not two that could drift.
-		m := homefragments.ChallengeDirRe.FindStringSubmatch(e.Name())
-		if m == nil {
+		// scan shape has one definition (challengeid.Valid), not two that could drift.
+		if !homefragments.IsChallengeDir(e.Name()) {
 			continue
 		}
 		explainPath := filepath.Join(chalDir, e.Name(), homefragments.RuleExplainFilename)
@@ -142,7 +141,7 @@ func renderRuleExplainPanels(root string) ([]panel, error) {
 			ID:     goIdent("rule_explain_" + e.Name()),
 			Label:  homefragments.RuleExplainLabel,
 			HTML:   html,
-			ChalNN: m[1],
+			ChalNN: homefragments.ChallengeNN(e.Name()),
 		})
 	}
 	return panels, nil

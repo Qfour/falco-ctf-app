@@ -47,6 +47,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Qfour/falco-ctf-app/internal/catalog/challengeid"
 )
 
 var flagRE = regexp.MustCompile(`^FALCO\{[A-Za-z0-9_-]+\}$`)
@@ -150,6 +152,12 @@ func Load(dir string) (Catalog, error) {
 		info, statErr := os.Stat(path)
 		if statErr != nil || info.IsDir() {
 			continue
+		}
+		// app#437: a challenge's id is its directory name, and the id has ONE grammar
+		// (internal/catalog/challengeid). A directory outside it would start, show up
+		// in /api/state, and then 404 on every submit; refuse to start instead.
+		if !challengeid.Valid(e.Name()) {
+			return nil, fmt.Errorf("challenge directory %q is not a valid challenge id (want %s)", e.Name(), challengeid.Pattern)
 		}
 		ch, err := parseFile(path, e.Name())
 		if err != nil {

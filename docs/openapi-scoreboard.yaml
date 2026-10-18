@@ -1929,7 +1929,7 @@ components:
       in: path
       name: cid
       required: true
-      schema: { type: string, pattern: "^[A-Za-z0-9._-]{1,64}$", x-ctf-text-origin: token }
+      schema: { type: string, pattern: "^[0-9]{2}-[a-z0-9-]{1,60}$", x-ctf-text-origin: token }
       description: >-
         challenge id / catalog key (e.g. `03-stealth-read`). An id outside the
         grammar `^[A-Za-z0-9._-]{1,64}$`, or not in the catalog, is answered
