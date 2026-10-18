@@ -272,12 +272,16 @@ scenario_challenge_ids() {
 # break out of the generated script's quoting. The existing check below only
 # verifies "is this an id with a matching challenges/<id> directory" — it
 # does not constrain the id's character set. Reject anything outside the
-# allowed charset here, fail-closed, BEFORE the directory-existence check
+# challenge-id grammar here, fail-closed, BEFORE the directory-existence check
 # (which would otherwise also need to double as a de-facto charset gate).
+# app#437: the grammar is the one internal/catalog/challengeid.Pattern (a
+# challenge's id is its directory name, `<NN>-<slug>`); this is a shell copy of
+# it (no test pins it equal to the Go pattern yet; it is
+# listed in app#472 with the Helm ones). The rejected id is NOT echoed.
 # Mirrored, independently, by a Helm `regexMatch`+`fail` render-time guard in
 # charts/ctf-user/templates/pod.yaml (defense-in-depth for callers that
 # `helm template`/`helm upgrade` directly, bypassing this script).
-CHALLENGE_ID_CHARSET_RE='^[A-Za-z0-9._-]+$'
+CHALLENGE_ID_RE='^[0-9]{2}-[a-z0-9-]{1,60}$'
 
 SCENARIO_ERRORS=""
 while IFS= read -r sdir; do
@@ -292,12 +296,10 @@ while IFS= read -r sdir; do
   while IFS= read -r cid; do
     [ -z "${cid}" ] && continue
     scount=$((scount + 1))
-    case "${cid}" in
-      *[!A-Za-z0-9._-]*)
-        SCENARIO_ERRORS="${SCENARIO_ERRORS}scenario '${sid}' references challenge id '${cid}' with characters outside the allowed charset ${CHALLENGE_ID_CHARSET_RE} (app#207: rejected to close a shell-metacharacter injection vector in the generated missions-scope initContainer script — letters, digits, '.', '_', '-' only)\n"
-        continue
-        ;;
-    esac
+    if ! [[ "${cid}" =~ ${CHALLENGE_ID_RE} ]]; then
+      SCENARIO_ERRORS="${SCENARIO_ERRORS}scenario '${sid}': challenge #${scount} is not a valid challenge id (${CHALLENGE_ID_RE}; the value is not echoed — app#207 shell-metacharacter guard, app#437 grammar)\n"
+      continue
+    fi
     if [ ! -d "${cid}" ]; then
       SCENARIO_ERRORS="${SCENARIO_ERRORS}scenario '${sid}' references unknown challenge '${cid}' (no such directory under challenges/)\n"
     fi

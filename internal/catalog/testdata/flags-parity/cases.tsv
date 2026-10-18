@@ -79,3 +79,9 @@ entry-tab-after-value.yaml	accept	reject	tab after a value
 entry-ls-after-value.yaml	reject	reject	U+2028 after a value
 entry-nel-after-colon.yaml	reject	reject	U+0085 between key and value
 entry-ls-inside-value.yaml	reject	reject	U+2028 inside a value
+key-uppercase.yaml	reject	reject	a key in the old charset but not <NN>-<slug> (upper case)
+key-hex.yaml	reject	reject	a value-shaped hex key
+key-underscore.yaml	reject	reject	a key with an underscore
+key-dot.yaml	reject	reject	a key with a dot
+key-too-long.yaml	reject	reject	a key over 63 characters
+key-no-number.yaml	reject	reject	a key without the NN- prefix

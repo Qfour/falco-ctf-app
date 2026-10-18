@@ -246,12 +246,17 @@ done < <(LC_ALL=C awk '
     next
   }
   !seen { printf "E\t%d\n", NR; next }
-  /^ +[A-Za-z0-9._-]+: +[^ ]/ {
+  # A key is a challenge id: <NN>-<slug>, at most 63 characters (app#437, the
+  # grammar internal/catalog/challengeid.Pattern). A line whose key is outside
+  # it falls through to the E record below, so a malformed or value-looking key
+  # is reported by line number only, never printed.
+  /^ +[0-9][0-9]-[a-z0-9-]+: +[^ ]/ {
     match($0, /^ +/)
     if (indent < 0) indent = RLENGTH
     if (RLENGTH != indent) { printf "E\t%d\n", NR; next }
     line = substr($0, RLENGTH + 1)
     idx = index(line, ":"); k = substr(line, 1, idx - 1); v = substr(line, idx + 1)
+    if (length(k) > 63) { printf "E\t%d\n", NR; next }
     gsub(/^ +| +$/, "", v)
     n = length(v)
     if (n >= 2 && ((substr(v, 1, 1) == "\"" && substr(v, n, 1) == "\"") || (substr(v, 1, 1) == "\047" && substr(v, n, 1) == "\047"))) {

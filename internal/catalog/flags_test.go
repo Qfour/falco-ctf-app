@@ -493,12 +493,19 @@ func TestFlagsFileParity(t *testing.T) {
 				if strings.Contains(err.Error(), "FALCO{dev-") || strings.Contains(err.Error(), "parity-") || strings.Contains(err.Error(), "dev-decoy") {
 					t.Fatalf("error text leaks flag-file content: %q", err)
 				}
+				// The key-grammar cases (key-*.yaml) put a distinctive key in the
+				// file; a key outside <NN>-<slug> is never echoed (app#437).
+				for _, k := range []string{"echo-probe", "echo_probe", "echo.probe", "a1b2c3d4e5f6a7b8c9d0e1f2", "eeeeeeeeeeeeeeeeeeee"} {
+					if strings.Contains(strings.ToLower(err.Error()), k) {
+						t.Fatalf("error text echoes a key outside the challenge-id grammar (%q): %q", k, err)
+					}
+				}
 			default:
 				t.Fatalf("cases.tsv: unknown verdict %q", goWant)
 			}
 		})
 	}
-	if cases < 73 {
+	if cases < 79 {
 		t.Fatalf("only %d parity cases read; the manifest was truncated", cases)
 	}
 	// The pre-check must never be the more permissive side: a file it lets
