@@ -40,3 +40,14 @@ func TestUnknownIsNotAnID(t *testing.T) {
 		t.Fatalf("Unknown = %q is inside the grammar %s: a real challenge could collide with the folded label", Unknown, Pattern)
 	}
 }
+
+func TestNN(t *testing.T) {
+	if nn, ok := NN("03-stealth-read"); !ok || nn != "03" {
+		t.Errorf("NN(03-stealth-read) = %q, %v", nn, ok)
+	}
+	for _, bad := range []string{"", "3-x", "ab-x", "01-Upper", Unknown, "../01-a"} {
+		if nn, ok := NN(bad); ok || nn != "" {
+			t.Errorf("NN(%q) = %q, %v; want no number", bad, nn, ok)
+		}
+	}
+}

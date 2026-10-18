@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -66,8 +67,8 @@ func outOfGrammarCIDs(n int) []string {
 			out = append(out, fmt.Sprintf("%04d", i)+strings.Repeat("a", 4096))
 		case 1: // characters outside the grammar
 			out = append(out, fmt.Sprintf("bad%%20id%%2B%d", i))
-		default: // inside the character set but over the length cap
-			out = append(out, strings.Repeat("0", 65)+fmt.Sprint(i))
+		default: // the shape of the grammar (NN-slug), only longer than it allows
+			out = append(out, "00-"+strings.Repeat("a", 61)+fmt.Sprint(i))
 		}
 	}
 	return out
@@ -244,5 +245,36 @@ func TestUnknownCIDFixedBodyOnEveryCIDRoute(t *testing.T) {
 			w := f.do(target, email, body)
 			assertFixedUnknownBody(t, fmt.Sprintf("%s %s #%d", rt.Method, rt.Pattern, i), w.Code, w.Body.String(), cid)
 		}
+	}
+}
+
+// A catalog key that an older release's {cid} expression accepted but the
+// challenge-id grammar does not (upper case, a dot) is no challenge: its path is
+// the fixed 404 and its label is "_unknown", exactly like an id that is not in
+// the catalog. (internal/catalog.Load never produces such a key; this holds the
+// handler to the one grammar if a catalog is built by hand.)
+func TestSubmitCatalogKeyOutsideTheGrammarIsStillUnknown(t *testing.T) {
+	cat := catalog.Catalog{
+		"AB.c":     {ID: "AB.c", Type: "evade", ForbiddenRules: []string{"r"}, ExpectedFlag: "FALCO{ok}"},
+		"02-evade": {ID: "02-evade", Type: "evade", ForbiddenRules: []string{"r"}, ExpectedFlag: "FALCO{ok}"},
+	}
+	st, err := store.Open(filepath.Join(t.TempDir(), "g.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	srv := scoreboard.NewHandler(cat, st, slog.New(slog.NewTextHandler(io.Discard, nil)),
+		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain))
+	before := submissions("_unknown", "unknown_challenge")
+	r := httptest.NewRequest("POST", "/api/challenges/AB.c/submit", strings.NewReader(`{"user":"user1","flag":"FALCO{x}"}`))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, r)
+	assertFixedUnknownBody(t, "AB.c", w.Code, w.Body.String(), "AB.c")
+	if got := submissions("_unknown", "unknown_challenge") - before; got != 1 {
+		t.Fatalf("_unknown/unknown_challenge rose by %v, want 1", got)
+	}
+	if submissionLabelValues(t)["AB.c"] {
+		t.Fatal("a key outside the grammar was used as a label value")
 	}
 }

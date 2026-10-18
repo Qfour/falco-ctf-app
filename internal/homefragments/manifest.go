@@ -10,9 +10,6 @@ import "github.com/Qfour/falco-ctf-app/internal/catalog/challengeid"
 // definition instead of two copies that could drift.
 func IsChallengeDir(name string) bool { return challengeid.Valid(name) }
 
-// ChallengeNN is the two-digit number of a directory name IsChallengeDir accepts.
-func ChallengeNN(name string) string { return name[:2] }
-
 // StaticPanel is one non-per-challenge Home panel (intro/cheatsheet in
 // docs-site/home-fragments.yaml — the `story` panel was removed 2026-08-17,
 // see that file's header note). Source is a repo-root-relative path;

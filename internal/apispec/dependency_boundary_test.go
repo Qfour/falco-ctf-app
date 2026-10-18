@@ -398,10 +398,27 @@ func TestCollectorLinksTheChallengeIDLeafNotTheCatalog(t *testing.T) {
 			t.Errorf("cmd/collector's closure includes %s: it parses YAML, which has no place in the collector's SBOM; import internal/catalog/challengeid (stdlib only) instead", banned)
 		}
 	}
-	for _, imp := range thirdPartyImportsInClosure(t, root, start) {
-		if imp == "gopkg.in/yaml.v3" {
-			t.Errorf("cmd/collector's closure compiles in gopkg.in/yaml.v3")
-		}
+}
+
+// collectorThirdPartyImports is the exact set of third-party packages
+// cmd/collector may compile in: the prometheus trio is the metrics endpoint every
+// service serves, and nothing else. It is pinned (not a list of banned names) so
+// that any new dependency, yaml.v3 included, changes the SBOM of the image that
+// participants' workspaces talk to and must be a reviewed change to this list.
+var collectorThirdPartyImports = []string{
+	"github.com/prometheus/client_golang/prometheus",
+	"github.com/prometheus/client_golang/prometheus/promauto",
+	"github.com/prometheus/client_golang/prometheus/promhttp",
+}
+
+func TestCollectorThirdPartyImportsArePinned(t *testing.T) {
+	root := repoRoot(t)
+	got := thirdPartyImportsInClosure(t, root, modulePrefix+"cmd/collector")
+	if len(got) == 0 {
+		t.Fatal("cmd/collector's closure has no third-party imports — extraction is broken (it serves a prometheus /metrics), not clean")
+	}
+	if strings.Join(got, "\n") != strings.Join(collectorThirdPartyImports, "\n") {
+		t.Fatalf("cmd/collector's third-party imports = %v, want exactly %v: adding a dependency to the collector binary is a security-reviewed change — update collectorThirdPartyImports and collector/Dockerfile together", got, collectorThirdPartyImports)
 	}
 }
 

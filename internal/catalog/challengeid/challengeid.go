@@ -9,6 +9,11 @@
 // Its users are catalog.Load (which refuses to start on a directory outside the
 // grammar), the scoreboard's {cid} check, the collector's {cid} check, the flags
 // file's challengeId key, and the Home-fragment generator's directory scan.
+//
+// Scope: this is the ONE definition in Go. Copies in other languages (the shell
+// validators and gen-values.sh, the Helm chart's regexMatch guards, platform's
+// key reader) are separate and tracked in app#472; a spec's `pattern` is held
+// equal to Pattern by a test, not generated from it.
 package challengeid
 
 import "regexp"
@@ -20,6 +25,16 @@ var re = regexp.MustCompile(Pattern)
 
 // Valid reports whether id is a challenge id.
 func Valid(id string) bool { return re.MatchString(id) }
+
+// NN returns the two-digit number of a challenge id, and false when id is not
+// one. It is the only way to take the number out of an id, so no caller slices
+// a string it has not checked.
+func NN(id string) (string, bool) {
+	if !re.MatchString(id) {
+		return "", false
+	}
+	return id[:2], true
+}
 
 // Unknown is the single metric-label / log value every id that is not a catalog
 // key is folded into (the scoreboard's closed label set). It must stay OUTSIDE the
