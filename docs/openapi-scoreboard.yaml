@@ -1890,7 +1890,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "404":
-          description: unknown message id
+          description: unknown message id (or a `{mid}` that is not a 32-hex message id; fixed body, not echoed)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1958,7 +1958,9 @@ components:
       description: |
         QA Board message id (app#292) — same shape/generation as `Tid`
         above, scoped to one message within a thread rather than the
-        thread itself.
+        thread itself. A `{mid}` that is not 32 lower-case hex characters is
+        answered with the same fixed 404 as an unknown message, before any
+        lookup, and is not logged.
 
   schemas:
     Error:

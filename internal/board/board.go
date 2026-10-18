@@ -239,11 +239,16 @@ func sqliteDSN(path string) string {
 // Close closes the underlying database handle.
 func (s *Store) Close() error { return s.db.Close() }
 
-// idRE is the shape of every thread id newID produces: 32 lower-case hex chars.
-var idRE = regexp.MustCompile(`^[0-9a-f]{32}$`)
+// idBytes is the number of random bytes in an id; idRE is the shape that gives:
+// 2 * idBytes lower-case hex chars. Both thread ids and message ids come from
+// newID, so they share it. (id_internal_test.go pins that newID and idRE agree.)
+const idBytes = 16
 
-// ValidID reports whether id has the shape of a thread id. A {tid} path value
-// that does not is "not found" without a lookup, and is never echoed or logged.
+var idRE = regexp.MustCompile(fmt.Sprintf(`^[0-9a-f]{%d}$`, 2*idBytes))
+
+// ValidID reports whether id has the shape of a board id (a thread or a message
+// id). A {tid} / {mid} path value that does not is "not found" without a lookup,
+// and is never echoed or logged.
 func ValidID(id string) bool { return idRE.MatchString(id) }
 
 // newID returns a 32-hex-char (16 random bytes) id: URL-path safe, and
@@ -251,7 +256,7 @@ func ValidID(id string) bool { return idRE.MatchString(id) }
 // every method performs, never a substitute for it (same rationale as
 // internal/qa.newID).
 func newID() (string, error) {
-	b := make([]byte, 16)
+	b := make([]byte, idBytes)
 	if _, err := rand.Read(b); err != nil {
 		return "", fmt.Errorf("generate board id: %w", err)
 	}

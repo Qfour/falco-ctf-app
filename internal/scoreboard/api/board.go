@@ -593,6 +593,12 @@ func (h *Handler) boardAdminSetMessageState(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	mid := r.PathValue("mid")
+	if !board.ValidID(mid) {
+		// Same fixed 404 as an unknown message, before any lookup or log line:
+		// the value is caller-chosen text (admin only, but still not logged).
+		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"error": errMsgBoardMsgNotFound})
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxBoardRequestBytes)
 	var req oapi.BoardAdminSetMessageStateJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
