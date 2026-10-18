@@ -19,18 +19,28 @@ package specparity
 //   - every string node has the key, and the value is in the vocabulary;
 //   - the key appears on no node that is not a string node (an object, a
 //     $ref site, an operation);
-//   - every $ref resolves inside the document (specparity's resolve() turns
-//     an outside $ref into nil silently; here an unresolvable $ref is a
-//     failure so a node cannot vanish from the check behind one);
+//   - every $ref is a component reference of the shape
+//     #/components/<section>/<Name> that exists in this document
+//     (specparity's resolve() turns an outside $ref into nil silently; here
+//     any other $ref is a failure so a node cannot vanish from the check
+//     behind one);
+//   - no mapping has a non-string key (yaml.v3 decodes an unquoted `200:`
+//     as a map[any]any, which neither walk below descends into, so strings
+//     under it would be unchecked: that is a failure, not a skip);
 //   - the structured walk (the places ADR-0039 C3 enumerates) reaches
 //     exactly the string nodes a blind whole-document scan finds, so a new
 //     location the walk does not know about fails instead of being skipped;
 //   - a spec that yields zero string nodes is a failure, not a pass.
 //
-// What it deliberately does NOT do (later ADR-0039 stages): the static rules
-// between a word and the node's shape (enum <=> enum/const, participant-* only
-// as named response properties, ...), the collector-copy comparison, the
-// portal gate, the route probes and the response-flow check.
+// The guarantee is exactly that list. It is not "every string schema in the
+// file is declared" for shapes the YAML decoder hands over as something other
+// than map[string]any / []any: those are rejected, not interpreted.
+//
+// What it deliberately does NOT do (S1b, #454): the static rules between
+// a word and the node's shape (enum <=> enum/const, participant-* only as
+// named response properties, opaque/operator placement, ...) and the
+// collector-copy comparison. Later stages (S2+) add the portal gate, the
+// route probes and the response-flow check.
 
 import (
 	"fmt"
@@ -145,9 +155,12 @@ func (s *Spec) TextOrigin() TextOriginReport {
 			viol = append(viol, fmt.Sprintf("%s: %s on a node that is not a string Schema Object (it belongs on the definition with `type: string`, not on an object, a $ref site or an operation)", p, TextOriginKey))
 		}
 	}
+	for _, p := range scan.nonStringKeys {
+		viol = append(viol, fmt.Sprintf("non-string mapping key at %s (quote it, e.g. \"200\":; the walk does not descend into such a mapping, so anything under it would go unchecked)", p))
+	}
 	for _, r := range scan.refs {
 		if !s.refResolves(r.ref) {
-			viol = append(viol, fmt.Sprintf("%s: $ref %q does not resolve inside this document (an outside or missing target would let nodes vanish from the check)", r.pointer, r.ref))
+			viol = append(viol, fmt.Sprintf("%s: $ref %q is not a reference to an existing #/components/<section>/<Name> in this document (an outside, missing or deeper target would let nodes vanish from the check)", r.pointer, r.ref))
 		}
 	}
 
@@ -156,28 +169,39 @@ func (s *Spec) TextOrigin() TextOriginReport {
 	return rep
 }
 
-// refResolves reports whether a "#/a/b/c" JSON-pointer $ref names an existing
-// value in this document. Anything not starting with "#/" (an external file
-// or URL) does not resolve here by design.
+// componentSections are the components sections a $ref may point into: the
+// ones the structured walk below visits.
+var componentSections = map[string]bool{
+	"schemas": true, "parameters": true, "responses": true,
+	"requestBodies": true, "headers": true,
+}
+
+// refResolves reports whether ref is exactly #/components/<section>/<Name>
+// (section in componentSections, Name one non-empty segment) and that entry
+// exists in this document. Everything else (an external file or URL, a
+// pointer into paths, a deeper pointer such as
+// #/components/schemas/X/properties/y, an unknown section) is not resolved
+// here by design: the walk visits components entries, so only a reference to
+// one keeps a node inside the check.
 func (s *Spec) refResolves(ref string) bool {
 	if !strings.HasPrefix(ref, "#/") {
 		return false
 	}
-	var cur any = s.raw
-	for _, seg := range strings.Split(ref[2:], "/") {
-		seg = strings.ReplaceAll(strings.ReplaceAll(seg, "~1", "/"), "~0", "~")
-		switch c := cur.(type) {
-		case map[string]any:
-			next, ok := c[seg]
-			if !ok {
-				return false
-			}
-			cur = next
-		default:
-			return false
-		}
+	segs := strings.Split(ref[2:], "/")
+	if len(segs) != 3 || segs[0] != "components" || !componentSections[segs[1]] || segs[2] == "" {
+		return false
 	}
-	return cur != nil
+	comp, ok := asMap(s.raw["components"])
+	if !ok {
+		return false
+	}
+	section, ok := asMap(comp[segs[1]])
+	if !ok {
+		return false
+	}
+	name := strings.ReplaceAll(strings.ReplaceAll(segs[2], "~1", "/"), "~0", "~")
+	v, ok := section[name]
+	return ok && v != nil
 }
 
 func escapePointerSegment(seg string) string {
@@ -186,6 +210,9 @@ func escapePointerSegment(seg string) string {
 
 func childPointer(parent, seg string) string { return parent + "/" + escapePointerSegment(seg) }
 
+// asMap returns v as a string-keyed mapping. A map[any]any (yaml.v3's result
+// for a mapping with a non-string key) is deliberately NOT converted: it is
+// reported by scanDocument as a violation instead of being interpreted.
 func asMap(v any) (map[string]any, bool) {
 	m, ok := v.(map[string]any)
 	return m, ok
@@ -331,6 +358,8 @@ type documentScan struct {
 	stringTyped []string  // maps with type string, anywhere in the document
 	originKeyed []string  // maps carrying TextOriginKey, anywhere
 	refs        []refSite // every `$ref` string, anywhere
+	// pointers of mappings with a non-string key (map[any]any); not descended
+	nonStringKeys []string
 }
 
 // scanDocument is the blind whole-document scan the structured walk is
@@ -353,6 +382,8 @@ func scanDocument(root any) documentScan {
 			for k, ev := range t {
 				walk(ev, childPointer(ptr, k))
 			}
+		case map[any]any:
+			sc.nonStringKeys = append(sc.nonStringKeys, ptr)
 		case []any:
 			for i, ev := range t {
 				walk(ev, childPointer(ptr, fmt.Sprint(i)))
@@ -360,6 +391,7 @@ func scanDocument(root any) documentScan {
 		}
 	}
 	walk(root, "")
+	sort.Strings(sc.nonStringKeys)
 	sort.Strings(sc.stringTyped)
 	sort.Strings(sc.originKeyed)
 	return sc

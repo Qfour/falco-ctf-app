@@ -2,7 +2,7 @@ package specparity
 
 // ADR-0039 S1 / ADR-0005 V8: the walker is proven fail-closed against small
 // synthetic specs (never the real docs/openapi-*.yaml: those are exercised by
-// internal/apispec's TestAPISpec_TextOriginDeclared). Each case mutates one
+// TestAPISpec_TextOriginDeclared in textorigin_specs_test.go). Each case mutates one
 // thing in an otherwise valid document and names the JSON pointer the
 // failure must point at; the baseline case proves the mutations are the only
 // reason for red.
@@ -285,19 +285,49 @@ func TestTextOrigin_Mutations(t *testing.T) {
 			name: "a $ref outside the document",
 			from: `link: {$ref: "#/components/schemas/Other"}`,
 			to:   `link: {$ref: "other.yaml#/components/schemas/Other"}`,
-			want: []string{`/components/schemas/Thing/properties/link: $ref "other.yaml#/components/schemas/Other" does not resolve`},
+			want: []string{`/components/schemas/Thing/properties/link: $ref "other.yaml#/components/schemas/Other" is not a reference to an existing`},
 		},
 		{
 			name: "a $ref to a missing schema",
 			from: `link: {$ref: "#/components/schemas/Other"}`,
 			to:   `link: {$ref: "#/components/schemas/Nope"}`,
-			want: []string{`$ref "#/components/schemas/Nope" does not resolve`},
+			want: []string{`$ref "#/components/schemas/Nope" is not a reference to an existing`},
 		},
 		{
 			name: "a $ref to a missing parameter",
 			from: `- $ref: "#/components/parameters/Id"`,
 			to:   `- $ref: "#/components/parameters/Gone"`,
-			want: []string{`/paths/~1a~1{id}/post/parameters/0: $ref "#/components/parameters/Gone" does not resolve`},
+			want: []string{`/paths/~1a~1{id}/post/parameters/0: $ref "#/components/parameters/Gone" is not a reference to an existing`},
+		},
+		{
+			name: "an unquoted integer key (yaml.v3 gives map[any]any) over a response",
+			from: `"200":`,
+			to:   `200:`,
+			want: []string{"non-string mapping key at /paths/~1a~1{id}/post/responses"},
+		},
+		{
+			name: "an integer key among the properties",
+			from: `kind: {type: string, enum: [a, b], x-ctf-text-origin: enum}`,
+			to:   `1: {type: string}`,
+			want: []string{"non-string mapping key at /components/schemas/Thing/properties"},
+		},
+		{
+			name: "a $ref into paths",
+			from: `link: {$ref: "#/components/schemas/Other"}`,
+			to:   `link: {$ref: "#/paths/~1a~1{id}/post/requestBody"}`,
+			want: []string{`/components/schemas/Thing/properties/link: $ref "#/paths/~1a~1{id}/post/requestBody" is not a reference to an existing`},
+		},
+		{
+			name: "a $ref deeper than a component",
+			from: `link: {$ref: "#/components/schemas/Other"}`,
+			to:   `link: {$ref: "#/components/schemas/Thing/properties/name"}`,
+			want: []string{`$ref "#/components/schemas/Thing/properties/name" is not a reference to an existing`},
+		},
+		{
+			name: "a $ref into a components section the walk does not visit",
+			from: `link: {$ref: "#/components/schemas/Other"}`,
+			to:   `link: {$ref: "#/components/examples/Other"}`,
+			want: []string{`$ref "#/components/examples/Other" is not a reference to an existing`},
 		},
 		{
 			name: "a string schema in a place the walk does not know",
