@@ -461,8 +461,9 @@ var (
 	// async / generator), `const|let|var|class esc`, a declarator list
 	// `const a = x, esc = ...` or a destructuring `const {esc} = ...`.
 	// Derived from the one definition of the forms (portal_gates_test.go declRe), which
-	// the sharedHelpers gate uses for every other helper: esc is the first row, not a
-	// second copy of the patterns.
+	// the sharedHelpers gate uses for every helper in its table. esc is the first user of
+	// declRe / writeRe, not a row of sharedHelpers: the one-definition, TDZ and call-order
+	// gates for esc are in this file.
 	escDeclRe = declRe("esc")
 
 	// A write to esc that is not a declaration: bare `esc = ...` (also

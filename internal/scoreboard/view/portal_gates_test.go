@@ -9,7 +9,8 @@ import (
 )
 
 // The portal's source gates that are not about bidi isolation (they were in
-// portal_bidi_test.go, which they outgrew; the tests are moved unchanged). One
+// portal_bidi_test.go, which they outgrew; test names and assertions are unchanged, only the
+// files collection and the pinned-line lookup became the helpers below). One
 // declaration of each shared helper (sharedHelpers), the server's {"error"} read in
 // one place (errorFieldReads), the board's strings trimmed with trimName (bodyTrim),
 // the Cc / Cf class defined once (hiddenCharClass). portal_bidi_test.go keeps the
@@ -22,9 +23,10 @@ import (
 // of the partials). escDeclRe / escWriteRe there are declRe("esc") / writeRe("esc"), so the
 // forms are defined once; a new shared helper is a row in sharedHelpers, not a new gate.
 
-// scannedSources is every file the gates scan: the portal partials by name plus the
-// admin dashboard as "index.html", and the names sorted (a stable error order). The one
-// place that merges the two sources; a gate that needs the files calls this.
+// scannedSources is every file the gates in this file and in portal_bidi_test.go scan: the
+// portal partials by name plus the admin dashboard as "index.html", and the names sorted (a
+// stable error order). The one place those gates merge the two sources. (The esc gate in
+// portal_partials_test.go reads the partials only and does not use it.)
 func scannedSources(portal map[string]string, index string) (map[string]string, []string) {
 	files := map[string]string{"index.html": index}
 	for n, b := range portal {
@@ -59,7 +61,8 @@ const nameEdgeClass = `\t\n\v\f\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u2
 // copies are deleted. nameHTML / textHTML isolate a participant-written string (the
 // same one-liner, see core-util.tmpl; two names on purpose: nameHTML for a name,
 // textHTML for prose, and TestDisplayNames_IsolationHelpersAreTheSameLine pins that the
-// BODIES are one); the dashboard has its own esc, so its own nameHTML next to it, and
+// BODIES are one; rows 0 and 1 stay nameHTML and textHTML, portal_bidi_test.go reads them
+// by position as isolateHelpers); the dashboard has its own esc, so its own nameHTML next to it, and
 // no textHTML (it renders no board). trimName is the server's trim set for a name the
 // portal sends, serverErrorText reads the server's {"error"} as a string (app#401).
 // hasHiddenChar is the Cc / Cf class (minus U+200D) both the Profile name and a new
@@ -138,6 +141,8 @@ func writeRe(helper string) *regexp.Regexp {
 		"|\\b(?:defineProperty|defineProperties|assign|set)\\s*\\([^;\\n]*['\"`]" + helper + "['\"`]")
 }
 
+// portalSources is the real source in the shape those gates take: portalPartials by name
+// (the portal map) and indexHTML (the dashboard).
 func portalSources(t *testing.T) (map[string]string, string) {
 	t.Helper()
 	portal := map[string]string{}
