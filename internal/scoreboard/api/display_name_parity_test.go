@@ -86,27 +86,36 @@ func loadNameParityCases(t *testing.T) []nameParityCase {
 // of the shared table as the table says, and stores the trimmed name it lists.
 func TestDisplayNameParity_ServerMatchesTable(t *testing.T) {
 	for _, c := range loadNameParityCases(t) {
-		in := c.input()
 		t.Run(c.Note, func(t *testing.T) {
-			got, err := validDisplayName(in)
-			if c.Server == "reject" {
-				if err == nil {
-					t.Fatalf("validDisplayName(%+q) = %q, nil; the table says reject", in, got)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("validDisplayName(%+q) = error %v; the table says accept", in, err)
-			}
-			want := in
-			if c.Stored != nil {
-				want = *c.Stored
-			}
-			if got != want {
-				t.Fatalf("validDisplayName(%+q) stored %+q; the table says %+q", in, got, want)
+			if p := serverRowProblem(c); p != "" {
+				t.Fatal(p)
 			}
 		})
 	}
+}
+
+// serverRowProblem is how validDisplayName departs from one row of the table
+// ("" when it answers as the row says, storing the trimmed name it lists).
+func serverRowProblem(c nameParityCase) string {
+	in := c.input()
+	got, err := validDisplayName(in)
+	if c.Server == "reject" {
+		if err == nil {
+			return fmt.Sprintf("validDisplayName(%+q) = %q, nil; the table says reject", in, got)
+		}
+		return ""
+	}
+	if err != nil {
+		return fmt.Sprintf("validDisplayName(%+q) = error %v; the table says accept", in, err)
+	}
+	want := in
+	if c.Stored != nil {
+		want = *c.Stored
+	}
+	if got != want {
+		return fmt.Sprintf("validDisplayName(%+q) stored %+q; the table says %+q", in, got, want)
+	}
+	return ""
 }
 
 // TestDisplayNameParity_ClientIsNeverStricter: the table itself never records a
@@ -115,30 +124,9 @@ func TestDisplayNameParity_ServerMatchesTable(t *testing.T) {
 // "client-only reject = 0" half of the contract; the view test checks that the
 // form really answers the table.
 func TestDisplayNameParity_ClientIsNeverStricter(t *testing.T) {
-	var clientOnlyReject, zwjOnly, flagShapeOnly int
-	for _, c := range loadNameParityCases(t) {
-		switch {
-		case c.Client == "reject" && c.Server == "accept":
-			clientOnlyReject++
-			t.Errorf("%s: the form refuses a name the server accepts (%+q)", c.Note, c.input())
-		case c.Client == "accept" && c.Server == "reject":
-			if c.Reason == reasonFlagShape {
-				// The form leaves the flag shape to the server, and the refusal must BE
-				// the flag-shape one: the input passed the length and character checks.
-				flagShapeOnly++
-				if _, err := validDisplayName(c.input()); err == nil || err.Error() != errMsgDisplayNameFlagShape {
-					t.Errorf("%s: a reason: %s row must be refused with %q, got %v (%+q)", c.Note, reasonFlagShape, errMsgDisplayNameFlagShape, err, c.input())
-				}
-				continue
-			}
-			zwjOnly++
-			if !strings.ContainsRune(c.input(), zeroWidthJoiner) {
-				t.Errorf("%s: a server-only reject needs either a ZWJ or `reason: %s` (%+q)", c.Note, reasonFlagShape, c.input())
-			}
-		}
-	}
-	if clientOnlyReject != 0 {
-		t.Fatalf("client-only rejects = %d, want 0", clientOnlyReject)
+	problems, zwjOnly, flagShapeOnly := neverStricterProblems(loadNameParityCases(t))
+	for _, p := range problems {
+		t.Error(p)
 	}
 	// Each documented difference keeps its own floor, so deleting one family cannot hide behind the other.
 	if zwjOnly == 0 {
@@ -147,6 +135,32 @@ func TestDisplayNameParity_ClientIsNeverStricter(t *testing.T) {
 	if flagShapeOnly < minFlagShapeRows {
 		t.Fatalf("the table has %d flag-shape rows (reason: %s), want at least %d", flagShapeOnly, reasonFlagShape, minFlagShapeRows)
 	}
+}
+
+// neverStricterProblems checks the "form is never stricter" half of the contract on
+// the rows, and counts the two families of server-only refusal.
+func neverStricterProblems(cases []nameParityCase) (problems []string, zwjOnly, flagShapeOnly int) {
+	for _, c := range cases {
+		switch {
+		case c.Client == "reject" && c.Server == "accept":
+			problems = append(problems, fmt.Sprintf("%s: the form refuses a name the server accepts (%+q)", c.Note, c.input()))
+		case c.Client == "accept" && c.Server == "reject":
+			if c.Reason == reasonFlagShape {
+				// The form leaves the flag shape to the server, and the refusal must BE
+				// the flag-shape one: the input passed the length and character checks.
+				flagShapeOnly++
+				if _, err := validDisplayName(c.input()); err == nil || err.Error() != errMsgDisplayNameFlagShape {
+					problems = append(problems, fmt.Sprintf("%s: a reason: %s row must be refused with %q, got %v (%+q)", c.Note, reasonFlagShape, errMsgDisplayNameFlagShape, err, c.input()))
+				}
+				continue
+			}
+			zwjOnly++
+			if !strings.ContainsRune(c.input(), zeroWidthJoiner) {
+				problems = append(problems, fmt.Sprintf("%s: a server-only reject needs either a ZWJ or `reason: %s` (%+q)", c.Note, reasonFlagShape, c.input()))
+			}
+		}
+	}
+	return problems, zwjOnly, flagShapeOnly
 }
 
 // minFlagShapeRows is the floor of `reason: flag-shape` rows in cases.yaml.

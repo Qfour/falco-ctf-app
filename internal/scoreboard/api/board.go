@@ -162,6 +162,7 @@ func (h *Handler) boardCreateThread(w http.ResponseWriter, r *http.Request) {
 	// subject leaks exactly as badly as one pasted into the body — this gate
 	// must not be body-only.
 	if flagShapePattern.MatchString(subject) {
+		h.logFlagShapeRefused(r, author, flagFieldSubject)
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": errMsgFlagShapeRejected})
 		return
 	}
@@ -171,6 +172,7 @@ func (h *Handler) boardCreateThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if flagShapePattern.MatchString(body) {
+		h.logFlagShapeRefused(r, author, flagFieldBody)
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": errMsgFlagShapeRejected})
 		return
 	}
@@ -260,6 +262,7 @@ func (h *Handler) boardAppendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if flagShapePattern.MatchString(body) {
+		h.logFlagShapeRefused(r, author, flagFieldBody)
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": errMsgFlagShapeRejected})
 		return
 	}
@@ -474,6 +477,7 @@ func (h *Handler) boardAdminReply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if flagShapePattern.MatchString(body) {
+		h.logFlagShapeRefused(r, boardStaffAuthor, flagFieldBody)
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": errMsgFlagShapeRejected})
 		return
 	}

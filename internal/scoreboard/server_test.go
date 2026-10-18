@@ -31,6 +31,12 @@ type fixture struct {
 
 func newFixture(t *testing.T, now func() time.Time) *fixture {
 	t.Helper()
+	return newFixtureLogged(t, now, io.Discard)
+}
+
+// newFixtureLogged is newFixture with the handler's logger writing to logSink (JSON lines).
+func newFixtureLogged(t *testing.T, now func() time.Time, logSink io.Writer) *fixture {
+	t.Helper()
 	cat := catalog.Catalog{
 		"01-read-shadow": catalog.Challenge{
 			ID:            "01-read-shadow",
@@ -56,7 +62,7 @@ func newFixture(t *testing.T, now func() time.Time) *fixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := slog.New(slog.NewJSONHandler(logSink, nil))
 	if now == nil {
 		now = time.Now
 	}

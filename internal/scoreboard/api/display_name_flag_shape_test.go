@@ -7,38 +7,22 @@ import (
 
 // app#402: a display name is shown to the others next to a participant's posts (the
 // author of an audience=all board thread) and on the operator's screens, so it is
-// gated by the same flag SHAPE (flagShapePattern, app#292) as a board subject and body. The shape is a pattern rule, not a character class,
-// so rule.yaml's code-point sweep does not cover it: cases.yaml has the rows, and
-// this file pins the boundary by name and proves the rule is load-bearing.
+// gated by the same flag SHAPE (flagShapePattern, app#292) as a board subject and
+// body. The shape is a pattern rule, not a character class, so rule.yaml's code-point
+// sweep does not cover it: the rows are in cases.yaml (`reason: flag-shape`, run by
+// TestDisplayNameParity_*). This file holds only what that table cannot: the one
+// shape scripts/check-flags.sh does not let testdata carry (empty braces), the fixed
+// sentence, and the mutation that proves the table depends on the rule.
 
-var flagShapeRejectedNames = []string{"FALCO{x}", "FALCO{}", "Alice FALCO{x}", "  FALCO{x}  ", "FALCO{ab}}"}
+// emptyBraceShape is a flag shape with nothing between the braces. check-flags.sh
+// rejects it in any tracked non-_test.go file, so it cannot be a cases.yaml row.
+const emptyBraceShape = "FALCO{}"
 
-// Not the shape: bare word, unclosed, no opening brace, braces alone, lower / mixed
-// case (the pattern is case-sensitive: see flagShapePattern).
-var flagShapeAcceptedNames = []string{"FALCO", "{}", "FALCO{", "FALCO{x", "FALCO x}", "falco{x}", "Falco{x}", "FALCO {x}"}
-
-// flagShapeNameProblems is every way validDisplayName disagrees with the two lists.
-func flagShapeNameProblems() []string {
-	var out []string
-	for _, n := range flagShapeRejectedNames {
-		_, err := validDisplayName(n)
-		if err == nil {
-			out = append(out, "accepted "+n)
-		} else if err.Error() != errMsgDisplayNameFlagShape {
-			out = append(out, "wrong sentence for "+n+": "+err.Error())
+func TestDisplayName_EmptyBraceFlagShapeIsRefused(t *testing.T) {
+	for _, in := range []string{emptyBraceShape, "Alice " + emptyBraceShape, "  " + emptyBraceShape + "  "} {
+		if _, err := validDisplayName(in); err == nil || err.Error() != errMsgDisplayNameFlagShape {
+			t.Errorf("validDisplayName(%q) = %v, want %q", in, err, errMsgDisplayNameFlagShape)
 		}
-	}
-	for _, n := range flagShapeAcceptedNames {
-		if _, err := validDisplayName(n); err != nil {
-			out = append(out, "rejected "+n+": "+err.Error())
-		}
-	}
-	return out
-}
-
-func TestDisplayName_FlagShapeBoundary(t *testing.T) {
-	if p := flagShapeNameProblems(); len(p) != 0 {
-		t.Fatalf("validDisplayName and the flag-shape boundary disagree: %v", p)
 	}
 }
 
@@ -53,13 +37,34 @@ func TestDisplayName_FlagShapeSentenceDoesNotEchoTheInput(t *testing.T) {
 	}
 }
 
-// Mutation: with the rejection gone (the pattern can never match) the boundary
-// check above goes red, so it does depend on the rule in validDisplayName.
-func TestDisplayName_FlagShapeMutationGoesRed(t *testing.T) {
+// Mutation: with flagShapePattern taken out (it can never match) the table checks go
+// red on every `reason: flag-shape` row: the server accepts what the table says it
+// refuses, and the never-stricter check no longer finds the flag-shape sentence. So the
+// table does depend on the rule in validDisplayName.
+func TestDisplayName_FlagShapeMutationGoesRedOnTheTable(t *testing.T) {
 	orig := flagShapePattern
 	t.Cleanup(func() { flagShapePattern = orig })
 	flagShapePattern = regexp.MustCompile(`a^`)
-	if p := flagShapeNameProblems(); len(p) != len(flagShapeRejectedNames) {
-		t.Fatalf("with the gate removed, %d names were reported, want all %d rejected names: %v", len(p), len(flagShapeRejectedNames), p)
+
+	cases := loadNameParityCases(t)
+	var rows, serverRed int
+	for _, c := range cases {
+		if c.Reason != reasonFlagShape {
+			continue
+		}
+		rows++
+		if serverRowProblem(c) != "" {
+			serverRed++
+		}
+	}
+	if rows < minFlagShapeRows {
+		t.Fatalf("only %d reason: %s rows in the table, want at least %d", rows, reasonFlagShape, minFlagShapeRows)
+	}
+	if serverRed != rows {
+		t.Fatalf("with the gate removed, ServerMatchesTable is red on %d of %d flag-shape rows, want all", serverRed, rows)
+	}
+	problems, _, _ := neverStricterProblems(cases)
+	if len(problems) < rows {
+		t.Fatalf("with the gate removed, ClientIsNeverStricter reports %d problems, want at least %d (one per flag-shape row)", len(problems), rows)
 	}
 }
