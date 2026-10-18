@@ -195,6 +195,9 @@ type AdminResetResult struct {
 // default image, not fail.
 type AvatarId string
 
+// BoardID A board thread or message id (32 lower-case hex characters).
+type BoardID = string
+
 // BoardList defines model for BoardList.
 type BoardList struct {
 	Threads []BoardSummary `json:"threads"`
@@ -242,8 +245,10 @@ type BoardMessage struct {
 	AuthorRole    BoardMessageAuthorRole `json:"author_role"`
 	Body          string                 `json:"body"`
 	CreatedAt     time.Time              `json:"created_at"`
-	Id            string                 `json:"id"`
-	State         BoardMessageState      `json:"state"`
+
+	// Id A board thread or message id (32 lower-case hex characters).
+	Id    BoardID           `json:"id"`
+	State BoardMessageState `json:"state"`
 }
 
 // BoardMessageAuthorRole defines model for BoardMessage.AuthorRole.
@@ -259,15 +264,17 @@ type BoardSummary struct {
 	Author   string               `json:"author"`
 
 	// AuthorDisplay same server-resolved display name as BoardThread.authorDisplay — always the thread's opening participant.
-	AuthorDisplay string            `json:"authorDisplay"`
-	CreatedAt     time.Time         `json:"created_at"`
-	Id            string            `json:"id"`
-	LikeCount     int               `json:"like_count"`
-	Liked         bool              `json:"liked"`
-	MessageCount  int               `json:"message_count"`
-	Pinned        bool              `json:"pinned"`
-	State         BoardSummaryState `json:"state"`
-	Subject       string            `json:"subject"`
+	AuthorDisplay string    `json:"authorDisplay"`
+	CreatedAt     time.Time `json:"created_at"`
+
+	// Id A board thread or message id (32 lower-case hex characters).
+	Id           BoardID           `json:"id"`
+	LikeCount    int               `json:"like_count"`
+	Liked        bool              `json:"liked"`
+	MessageCount int               `json:"message_count"`
+	Pinned       bool              `json:"pinned"`
+	State        BoardSummaryState `json:"state"`
+	Subject      string            `json:"subject"`
 
 	// UpdatedAt the latest message's created_at (or created_at itself, for a thread with only its opening message)
 	UpdatedAt time.Time `json:"updated_at"`
@@ -304,8 +311,10 @@ type BoardThread struct {
 	// display name was ever set.
 	AuthorDisplay string    `json:"authorDisplay"`
 	CreatedAt     time.Time `json:"created_at"`
-	Id            string    `json:"id"`
-	LikeCount     int       `json:"like_count"`
+
+	// Id A board thread or message id (32 lower-case hex characters).
+	Id        BoardID `json:"id"`
+	LikeCount int     `json:"like_count"`
 
 	// Liked whether the CALLER (the viewer this response was built for) has liked this thread
 	Liked    bool             `json:"liked"`
@@ -438,7 +447,7 @@ type ExfilReceipt struct {
 type ExfilRequest struct {
 	Flag string `json:"flag"`
 
-	// User A seat: the username slug of a participant's workspace (`user7`), the `<user>` in `<user>@<EXPECTED_EMAIL_DOMAIN>`. Lower-case letters, digits and `-`, the first a letter or digit, at most 63 characters.
+	// User A seat: the username slug of a participant's workspace (`user7`), the `<user>` in `<user>@<EXPECTED_EMAIL_DOMAIN>`. Lower-case letters, digits and `-`, the first a letter or digit, at most 63 characters. Having this shape does not prove who sent it: whether the caller is proven is the route's `x-ctf-authz`.
 	User Seat `json:"user"`
 }
 
@@ -649,10 +658,12 @@ type LegacyCSPReport struct {
 
 // LikeResult the like/unlike routes' small result shape — a full thread refetch is unnecessary for a toggle.
 type LikeResult struct {
-	LikeCount int    `json:"like_count"`
-	Liked     bool   `json:"liked"`
-	Ok        bool   `json:"ok"`
-	Tid       string `json:"tid"`
+	LikeCount int  `json:"like_count"`
+	Liked     bool `json:"liked"`
+	Ok        bool `json:"ok"`
+
+	// Tid A board thread or message id (32 lower-case hex characters).
+	Tid BoardID `json:"tid"`
 }
 
 // Me `GET /api/users/{user}/me`. Self-scoped: `rank`/`score` are the caller's
@@ -716,7 +727,8 @@ type MessageStateRequestState string
 
 // MessageStateResult defines model for MessageStateResult.
 type MessageStateResult struct {
-	Mid   string                  `json:"mid"`
+	// Mid A board thread or message id (32 lower-case hex characters).
+	Mid   BoardID                 `json:"mid"`
 	Ok    bool                    `json:"ok"`
 	State MessageStateResultState `json:"state"`
 }
@@ -989,7 +1001,7 @@ type RuleFire struct {
 	Rule string  `json:"rule"`
 }
 
-// Seat A seat: the username slug of a participant's workspace (`user7`), the `<user>` in `<user>@<EXPECTED_EMAIL_DOMAIN>`. Lower-case letters, digits and `-`, the first a letter or digit, at most 63 characters.
+// Seat A seat: the username slug of a participant's workspace (`user7`), the `<user>` in `<user>@<EXPECTED_EMAIL_DOMAIN>`. Lower-case letters, digits and `-`, the first a letter or digit, at most 63 characters. Having this shape does not prove who sent it: whether the caller is proven is the route's `x-ctf-authz`.
 type Seat = string
 
 // SolveEntry defines model for SolveEntry.
@@ -1070,7 +1082,7 @@ type SubmitDetectRequest struct {
 	// Condition the Falco condition to grade (<= 4 KiB)
 	Condition string `json:"condition"`
 
-	// User A seat: the username slug of a participant's workspace (`user7`), the `<user>` in `<user>@<EXPECTED_EMAIL_DOMAIN>`. Lower-case letters, digits and `-`, the first a letter or digit, at most 63 characters.
+	// User A seat: the username slug of a participant's workspace (`user7`), the `<user>` in `<user>@<EXPECTED_EMAIL_DOMAIN>`. Lower-case letters, digits and `-`, the first a letter or digit, at most 63 characters. Having this shape does not prove who sent it: whether the caller is proven is the route's `x-ctf-authz`.
 	User Seat `json:"user"`
 }
 
@@ -1096,7 +1108,7 @@ type SubmitDetectVerdictStatus string
 type SubmitFlagRequest struct {
 	Flag string `json:"flag"`
 
-	// User A seat: the username slug of a participant's workspace (`user7`), the `<user>` in `<user>@<EXPECTED_EMAIL_DOMAIN>`. Lower-case letters, digits and `-`, the first a letter or digit, at most 63 characters.
+	// User A seat: the username slug of a participant's workspace (`user7`), the `<user>` in `<user>@<EXPECTED_EMAIL_DOMAIN>`. Lower-case letters, digits and `-`, the first a letter or digit, at most 63 characters. Having this shape does not prove who sent it: whether the caller is proven is the route's `x-ctf-authz`.
 	User Seat `json:"user"`
 }
 
@@ -1152,13 +1164,13 @@ type Asset = string
 // Cid defines model for Cid.
 type Cid = string
 
-// Mid defines model for Mid.
-type Mid = string
+// Mid A board thread or message id (32 lower-case hex characters).
+type Mid = BoardID
 
-// Tid defines model for Tid.
-type Tid = string
+// Tid A board thread or message id (32 lower-case hex characters).
+type Tid = BoardID
 
-// User A seat: the username slug of a participant's workspace (`user7`), the `<user>` in `<user>@<EXPECTED_EMAIL_DOMAIN>`. Lower-case letters, digits and `-`, the first a letter or digit, at most 63 characters.
+// User A seat: the username slug of a participant's workspace (`user7`), the `<user>` in `<user>@<EXPECTED_EMAIL_DOMAIN>`. Lower-case letters, digits and `-`, the first a letter or digit, at most 63 characters. Having this shape does not prove who sent it: whether the caller is proven is the route's `x-ctf-authz`.
 type User = Seat
 
 // BoardAdminListThreadsParams defines parameters for BoardAdminListThreads.

@@ -16,11 +16,19 @@ import (
 	"sort"
 )
 
-// Grammar is one identifier's Go-side definition: a name for messages and the
-// pattern string a spec must repeat.
+// Grammar is one identifier's Go-side definition: a name for messages, the
+// pattern string a spec must repeat, and WHERE it must be repeated: per spec
+// file, exactly this many sites (nodes carrying the pattern). Exactly one is the
+// norm: a spec writes a grammar once (a component, or the one inline copy a
+// document that cannot $ref across files keeps), so a node that lost its pattern
+// is a site that vanished and a new inline copy is a second site, both red,
+// without a list of nodes.
 type Grammar struct {
 	Name    string
 	Pattern string
+	// Sites maps a spec file name to the exact number of nodes that carry
+	// Pattern there. A spec not listed must carry none.
+	Sites map[string]int
 }
 
 // PatternSites returns, for every `pattern` keyword with a string value
@@ -71,6 +79,37 @@ func PatternParityViolations(specs map[string]map[string][]string, grammars []Gr
 			viol = append(viol, fmt.Sprintf("grammars %q and %q have the same pattern %q: the table must name each grammar once", prev, g.Name, g.Pattern))
 		}
 		byPattern[g.Pattern] = g.Name
+	}
+
+	// Where each grammar must appear, exactly.
+	for _, g := range grammars {
+		if g.Pattern == "" {
+			continue
+		}
+		if len(g.Sites) == 0 {
+			viol = append(viol, fmt.Sprintf("grammar %q lists no expected site: say in which spec and how many times it is repeated", g.Name))
+		}
+		files := make([]string, 0, len(specs))
+		for f := range specs {
+			files = append(files, f)
+		}
+		for f := range g.Sites {
+			if _, listed := specs[f]; !listed {
+				files = append(files, f)
+			}
+		}
+		sort.Strings(files)
+		done := map[string]bool{}
+		for _, f := range files {
+			if done[f] {
+				continue
+			}
+			done[f] = true
+			got := specs[f][g.Pattern]
+			if want := g.Sites[f]; len(got) != want {
+				viol = append(viol, fmt.Sprintf("grammar %q (%q): %s has %d site(s) %v, want exactly %d: a node lost its pattern, a copy was added, or the pattern moved to another document", g.Name, g.Pattern, f, len(got), got, want))
+			}
+		}
 	}
 
 	total := 0

@@ -1937,7 +1937,7 @@ components:
       in: path
       name: tid
       required: true
-      schema: { type: string, pattern: "^[0-9a-f]{32}$", x-ctf-text-origin: token }
+      schema: { $ref: "#/components/schemas/BoardID" }
       description: |
         QA Board thread id (app#292) — a 32-hex-char, server-generated,
         non-enumerable value (`internal/board.Store`'s newID). Not a
@@ -1953,7 +1953,7 @@ components:
       in: path
       name: mid
       required: true
-      schema: { type: string, pattern: "^[0-9a-f]{32}$", x-ctf-text-origin: token }
+      schema: { $ref: "#/components/schemas/BoardID" }
       description: |
         QA Board message id (app#292) — same shape/generation as `Tid`
         above, scoped to one message within a thread rather than the
@@ -1979,7 +1979,19 @@ components:
       description: >-
         A seat: the username slug of a participant's workspace (`user7`), the `<user>`
         in `<user>@<EXPECTED_EMAIL_DOMAIN>`. Lower-case letters, digits and `-`, the
-        first a letter or digit, at most 63 characters.
+        first a letter or digit, at most 63 characters. Having this shape does not
+        prove who sent it: whether the caller is proven is the route's `x-ctf-authz`.
+
+    # The one place this spec writes the board id grammar (a thread or message id: 32
+    # lower-case hex characters, server-generated and non-enumerable). The Tid / Mid
+    # parameters and every node that echoes an id $ref it. The one Go definition is
+    # board.IDPattern; a test holds every `pattern` in the specs equal to the set of Go
+    # grammars and each grammar to exactly one site per spec (specparity).
+    BoardID:
+      type: string
+      x-ctf-text-origin: token
+      pattern: "^[0-9a-f]{32}$"
+      description: A board thread or message id (32 lower-case hex characters).
 
     Error:
       type: object
@@ -2894,7 +2906,7 @@ components:
         does not by itself prove the author is staff — `author_role` does.
       required: [id, author_role, author, authorDisplay, authorAvatar, body, created_at, state]
       properties:
-        id: { type: string, pattern: "^[0-9a-f]{32}$", x-ctf-text-origin: token }
+        id: { $ref: "#/components/schemas/BoardID" }
         author_role:
           type: string
           x-ctf-text-origin: enum
@@ -2931,7 +2943,7 @@ components:
         use ONE shape for "here is the thread after my action" everywhere.
       required: [id, author, authorDisplay, audience, subject, created_at, pinned, answered, state, messages, like_count, liked]
       properties:
-        id: { type: string, pattern: "^[0-9a-f]{32}$", x-ctf-text-origin: token }
+        id: { $ref: "#/components/schemas/BoardID" }
         author: { type: string, x-ctf-text-origin: token }
         authorDisplay:
           type: string
@@ -2976,7 +2988,7 @@ components:
         One row of a QA Board thread LISTING — never the message bodies.
       required: [id, author, authorDisplay, audience, subject, created_at, updated_at, pinned, answered, state, message_count, like_count, liked]
       properties:
-        id: { type: string, pattern: "^[0-9a-f]{32}$", x-ctf-text-origin: token }
+        id: { $ref: "#/components/schemas/BoardID" }
         author: { type: string, x-ctf-text-origin: token }
         authorDisplay:
           type: string
@@ -3090,7 +3102,7 @@ components:
       required: [ok, tid, liked, like_count]
       properties:
         ok: { type: boolean }
-        tid: { type: string, pattern: "^[0-9a-f]{32}$", x-ctf-text-origin: token }
+        tid: { $ref: "#/components/schemas/BoardID" }
         liked: { type: boolean }
         like_count: { type: integer }
 
@@ -3099,7 +3111,7 @@ components:
       required: [ok, mid, state]
       properties:
         ok: { type: boolean }
-        mid: { type: string, pattern: "^[0-9a-f]{32}$", x-ctf-text-origin: token }
+        mid: { $ref: "#/components/schemas/BoardID" }
         state:
           type: string
           x-ctf-text-origin: enum

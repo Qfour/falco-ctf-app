@@ -7,7 +7,6 @@ package specparity
 
 import (
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 
@@ -17,13 +16,21 @@ import (
 )
 
 // identifierGrammars is THE table: every identifier grammar that a spec repeats
-// as `pattern`, with its one Go definition. Add a row when a spec gains a new
-// identifier pattern; the test fails until you do.
+// as `pattern`, with its one Go definition and the exact number of sites per
+// spec (one each: the scoreboard writes the seat once as components.schemas.Seat
+// and the board id once as components.schemas.BoardID, the cid once as the Cid
+// parameter; the collector and auth-policy documents, which cannot $ref across
+// files, keep one inline copy). Add a row when a spec gains a new identifier
+// pattern; the test fails until you do. A node that loses its pattern, or a new
+// inline copy, changes a site count and is red, with no list of nodes.
 func identifierGrammars() []Grammar {
 	return []Grammar{
-		{Name: "seat (identity.SeatPattern)", Pattern: identity.SeatPattern},
-		{Name: "challenge id (challengeid.Pattern)", Pattern: challengeid.Pattern},
-		{Name: "board id (board.IDPattern)", Pattern: board.IDPattern()},
+		{Name: "seat (identity.SeatPattern)", Pattern: identity.SeatPattern,
+			Sites: map[string]int{"openapi-scoreboard.yaml": 1, "openapi-collector.yaml": 1, "openapi-auth-policy.yaml": 1}},
+		{Name: "challenge id (challengeid.Pattern)", Pattern: challengeid.Pattern,
+			Sites: map[string]int{"openapi-scoreboard.yaml": 1, "openapi-collector.yaml": 1}},
+		{Name: "board id (board.IDPattern)", Pattern: board.IDPattern(),
+			Sites: map[string]int{"openapi-scoreboard.yaml": 1}},
 	}
 }
 
@@ -47,34 +54,15 @@ func TestSpecPatternsAreExactlyTheGoGrammars(t *testing.T) {
 	if v := PatternParityViolations(specs, identifierGrammars()); len(v) > 0 {
 		t.Fatalf("a spec `pattern` and the Go grammar definitions disagree:\n  %s", strings.Join(v, "\n  "))
 	}
-
-	// Every grammar is repeated at the places it must be (not merely somewhere):
-	// the seat in all three specs, the challenge id in scoreboard and collector,
-	// the board id in the scoreboard. A node that lost its pattern is caught here
-	// without a list of nodes.
-	where := map[string][]string{
-		identity.SeatPattern: {"openapi-auth-policy.yaml", "openapi-collector.yaml", "openapi-scoreboard.yaml"},
-		challengeid.Pattern:  {"openapi-collector.yaml", "openapi-scoreboard.yaml"},
-		board.IDPattern():    {"openapi-scoreboard.yaml"},
-	}
-	for pattern, files := range where {
-		var got []string
-		for f, sites := range specs {
-			if len(sites[pattern]) > 0 {
-				got = append(got, f)
-			}
-		}
-		sort.Strings(got)
-		if strings.Join(got, ",") != strings.Join(files, ",") {
-			t.Errorf("pattern %q is in %v, want exactly %v", pattern, got, files)
-		}
-	}
 }
 
 func TestPatternParity_Mutations(t *testing.T) {
-	grammars := []Grammar{{"seat", `^[a-z]+$`}, {"cid", `^[0-9]{2}$`}}
+	grammars := []Grammar{
+		{Name: "seat", Pattern: `^[a-z]+$`, Sites: map[string]int{"a.yaml": 1}},
+		{Name: "cid", Pattern: `^[0-9]{2}$`, Sites: map[string]int{"b.yaml": 1}},
+	}
 	ok := map[string]map[string][]string{
-		"a.yaml": {`^[a-z]+$`: {"/p1", "/p2"}},
+		"a.yaml": {`^[a-z]+$`: {"/p1"}},
 		"b.yaml": {`^[0-9]{2}$`: {"/q"}},
 	}
 	if v := PatternParityViolations(ok, grammars); len(v) != 0 {
@@ -93,7 +81,7 @@ func TestPatternParity_Mutations(t *testing.T) {
 			map[string]map[string][]string{"a.yaml": {`^[a-y]+$`: {"/p"}}, "b.yaml": {`^[0-9]{2}$`: {"/q"}}}, grammars,
 			`grammar "seat" ("^[a-z]+$") appears in no spec`},
 		{"a grammar in the table that no spec repeats",
-			ok, append(append([]Grammar{}, grammars...), Grammar{"extra", `^x$`}),
+			ok, append(append([]Grammar{}, grammars...), Grammar{Name: "extra", Pattern: `^x$`, Sites: map[string]int{"a.yaml": 1}}),
 			`grammar "extra" ("^x$") appears in no spec`},
 		{"a spec pattern with no Go definition",
 			map[string]map[string][]string{"a.yaml": {`^[a-z]+$`: {"/p"}, `^new$`: {"/n"}}, "b.yaml": {`^[0-9]{2}$`: {"/q"}}}, grammars,
@@ -101,13 +89,25 @@ func TestPatternParity_Mutations(t *testing.T) {
 		{"nothing extracted",
 			map[string]map[string][]string{"a.yaml": {}}, grammars,
 			"no `pattern` found in any spec"},
+		{"a node lost its pattern (one site fewer)",
+			map[string]map[string][]string{"a.yaml": {}, "b.yaml": {`^[0-9]{2}$`: {"/q"}}}, grammars,
+			`grammar "seat" ("^[a-z]+$"): a.yaml has 0 site(s) [], want exactly 1`},
+		{"a second inline copy of a grammar",
+			map[string]map[string][]string{"a.yaml": {`^[a-z]+$`: {"/p1", "/p2"}}, "b.yaml": {`^[0-9]{2}$`: {"/q"}}}, grammars,
+			`a.yaml has 2 site(s) [/p1 /p2], want exactly 1`},
+		{"the pattern moved to another document",
+			map[string]map[string][]string{"a.yaml": {}, "b.yaml": {`^[0-9]{2}$`: {"/q"}, `^[a-z]+$`: {"/moved"}}}, grammars,
+			`grammar "seat" ("^[a-z]+$"): b.yaml has 1 site(s) [/moved], want exactly 0`},
+		{"a grammar that names no expected site",
+			ok, []Grammar{{Name: "seat", Pattern: `^[a-z]+$`}, grammars[1]},
+			`grammar "seat" lists no expected site`},
 		{"an empty table",
 			ok, nil, "the table of Go grammars is empty"},
 		{"two grammars with one pattern",
-			ok, []Grammar{{"seat", `^[a-z]+$`}, {"cid", `^[0-9]{2}$`}, {"dup", `^[a-z]+$`}},
+			ok, append(append([]Grammar{}, grammars...), Grammar{Name: "dup", Pattern: `^[a-z]+$`, Sites: map[string]int{"a.yaml": 1}}),
 			`grammars "seat" and "dup" have the same pattern`},
 		{"an empty grammar pattern",
-			ok, []Grammar{{"seat", `^[a-z]+$`}, {"cid", `^[0-9]{2}$`}, {"blank", ""}},
+			ok, append(append([]Grammar{}, grammars...), Grammar{Name: "blank", Pattern: ""}),
 			`grammar "blank" has an empty pattern`},
 	}
 	for _, tc := range cases {

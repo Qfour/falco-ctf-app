@@ -52,7 +52,7 @@ var participantWords = []string{OriginParticipantInline, OriginParticipantBlock,
 // TestSpecExistsForEveryMuxOwningBinary (ADR-0005 V6) keeps "every
 // mux-owning binary has a spec" complete.
 var textOriginPins = map[string]textOriginPin{
-	"openapi-scoreboard.yaml": {total: 156, participant: map[string][]string{
+	"openapi-scoreboard.yaml": {total: 150, participant: map[string][]string{
 		OriginParticipantInline: {
 			"/components/schemas/BoardMessage/properties/authorDisplay",
 			"/components/schemas/BoardSummary/properties/authorDisplay",
