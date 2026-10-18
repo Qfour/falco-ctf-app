@@ -1,6 +1,6 @@
 # ADR-0040: 契約表で名指しした metric family は所有 binary の起動直後から存在させる (family が無いことは「改名か旧 image」で、0 とは読まない)。事前生成の置き場は package を link する binary の数で決め、契約表から導いた表駆動の test 1 本で確かめる
 
-- Status: **Proposed** (2026-10-19 起草)。
+- Status: **Accepted** (2026-10-19、VP 承認。S1 = app PR の merge 前に昇格)。2026-10-19 起草。
   - Accepted 化は VP が行う (時限承認: workspace `ORGANIZATION.md:470-472`。S1 の merge より前)。
   - クロスリポ契約表に、全行に効く一般則 (D1) と metric の名指し方 (D3) を足し、「Rate-limit client-IP ヘッダ」の行の metric 名を訂正する (D5)。だから architect 合意 + VP 承認が要る (`ORGANIZATION.md` §4)。
   - HTTP の status と body は変えない。`/metrics` に 0 の系列が 6 本増えるだけ (D5)。
