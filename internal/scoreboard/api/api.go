@@ -568,10 +568,10 @@ func (h *Handler) og(next http.Handler) http.Handler {
 // it was removed rather than documented as test-only, since it had no test
 // either.
 func (h *Handler) Routes() []apispec.Route {
-	// ADR-0023 V5 caller labels (ratelimit.ClientIPKeyed): these three route
-	// families ARE Cloudflare-fronted (unlike ingest's /falco/events, see
+	// ADR-0023 V5 caller label (ratelimit.ClientIPKeyed): this route family
+	// IS Cloudflare-fronted (unlike ingest's /falco/events, see
 	// that package's ClientIPKeyed call), so a sustained non-cf_connecting_ip
-	// clientIPSource rate under these labels is the ADR-0023 Signpost 2 drift
+	// clientIPSource rate under this label is the ADR-0023 Signpost 2 drift
 	// signal — see internal/scoreboard/ratelimit/metrics.go's doc.
 	submitMW := h.submitLimiter.Middleware(ratelimit.ClientIPKeyed("submit"))
 	// app#315: identity-keyed, FAIL-CLOSED (MiddlewareStrict: no proven

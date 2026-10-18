@@ -1,6 +1,7 @@
 # ADR-0038: identity を理由にした拒否は 4 つの gate (strict・self_or_admin・authenticated・portal) で 1 つの metric `scoreboard_identity_denials_total{gate, reason}` と 1 種類の間引きログに記録し、`no_identity` の事前生成と「健全な本番で 0」を platform との契約にする
 
 - Status: **Accepted (2026-10-18、実装 = app#424、`a5fe952`)**。実装との差分は末尾手前の「Accepted 時の追補」に記録した (Decision 本文は書き換えていない)。起草は 2026-10-17 (Proposed)。Accepted 化は VP が実装 PR (PR-B) の merge と同じセッションの docs PR で行う (workspace `ORGANIZATION.md` §4 の Class-2 条件 (f))。クロスリポ契約表に行を 1 つ新設するので architect 合意 + VP 承認 (ORGANIZATION.md §4)。新 image・新サービス・Hard Invariant の変更は無いので CEO 判断を要さない。
+- 追記 (2026-10-19): V9 の契約表の検査 (`internal/scoreboard/identityobs/contract_test.go`) は、ADR-0040 で `internal/contractmetrics` の表駆動の 1 本に置き換わった (app #482)。本文と V9 の記述は書き換えない。
 - Date / Deciders: 2026-10-17 / VP (承認) + architect (起草・契約表の新設行への同意) + security-engineer (D4 の field 規則・log 流量のレビュー) / 実装: software-engineer (PR-B)、qa-engineer (V1〜V8 の derived test と変異 test)、sre-engineer (platform#244 の verify)
 - 関連: Issue #404 (#398 review-5x R4#3)、PR #398 (`c7ac02c`、app#387)、platform#244 (sre の判断 2026-10-17)・platform#231、#397 (board の 2 bucket)、#393 / PR #409 (Authz の identity 出所の表、open)、ADR-0023、ADR-0034 (I8)、ADR-0037 (Proposed)。フェーズ: 非該当
 - 読み方: app は origin/main `eb76f22` (#405 を含む。`d118788` から api.go の行が +12 ずれている)、platform は origin/main `e126fff`。`conventions` は `.claude/rules/falco-ctf-app-conventions.md`、`api.go` は `internal/scoreboard/api/api.go`、`0037:N` は `docs/adr/0037-*.md` の行。

@@ -215,20 +215,30 @@ func (l *Limiter) Middleware(keyFn func(*http.Request) string) func(http.Handler
 // fixed.
 func clientIP(r *http.Request) (ip, source string) {
 	if cf := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); cf != "" && net.ParseIP(cf) != nil {
-		return cf, "cf_connecting_ip"
+		return cf, sourceCFConnectingIP
 	}
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		if i := strings.Index(xff, ","); i > 0 {
-			return strings.TrimSpace(xff[:i]), "x_forwarded_for"
+			return strings.TrimSpace(xff[:i]), sourceXForwardedFor
 		}
-		return strings.TrimSpace(xff), "x_forwarded_for"
+		return strings.TrimSpace(xff), sourceXForwardedFor
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr, "remote_addr"
+		return r.RemoteAddr, sourceRemoteAddr
 	}
-	return host, "remote_addr"
+	return host, sourceRemoteAddr
 }
+
+// The values of ClientIPSourceTotal's source label: which header tier clientIP used.
+// ClientIPKeyed creates all three at 0 for its caller when it is assembled.
+const (
+	sourceCFConnectingIP = "cf_connecting_ip"
+	sourceXForwardedFor  = "x_forwarded_for"
+	sourceRemoteAddr     = "remote_addr"
+)
+
+var clientIPSources = [...]string{sourceCFConnectingIP, sourceXForwardedFor, sourceRemoteAddr}
 
 // ClientIP extracts the remote IP for rate-limit keying (ADR-0023) without
 // recording it to ClientIPSourceTotal. Use this when the IP value is needed but a
@@ -266,7 +276,18 @@ func ClientIP(r *http.Request) string {
 // increment happens exactly once per incoming HTTP request (inside the
 // Middleware's keyFn), never once per downstream log line or loop
 // iteration.
+//
+// Assembling the keyFn creates the caller's three source series at 0 (no Inc), so
+// ratelimit_client_ip_source_total{caller, source} is in /metrics from the start of
+// the binary that wires it, and the first real fallback is an increase from an
+// existing 0 that Prometheus' increase() counts (app#387, ADR-0040 D2). The creation is
+// here, at assembly, not in the package's init: the collector links this package but
+// never calls ClientIPKeyed, and its /metrics must not carry a 0 that would read as
+// "no fallback happened" (ADR-0040 C4).
 func ClientIPKeyed(caller string) func(*http.Request) string {
+	for _, s := range clientIPSources {
+		ClientIPSourceTotal.WithLabelValues(caller, s)
+	}
 	return func(r *http.Request) string {
 		ip, source := clientIP(r)
 		ClientIPSourceTotal.WithLabelValues(caller, source).Inc()

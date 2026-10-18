@@ -8,11 +8,11 @@ import (
 // ClientIPSourceTotal counts which header a rate-limit Middleware's ClientIPKeyed
 // keyFn used to key a request (ADR-0023 V5), labelled by:
 //
-//	caller: which route family called ClientIPKeyed — e.g. "submit" |
-//	        "display_name" | "questions" | "csp_report"
-//	        (see each ClientIPKeyed call site for the exact names in use).
-//	        "falco_events" is no longer emitted: POST /falco/events is keyed by
-//	        participant, not client IP (app#359), so it has no IP source.
+//	caller: which route family called ClientIPKeyed. The set of values is not a
+//	        contract (each call site names its own; ClientIPKeyed creates that
+//	        caller's three source series at 0 when it is assembled, ADR-0040).
+//	        POST /falco/events is not a caller: it is keyed by participant, not
+//	        client IP (app#359), so it has no IP source.
 //	source: "cf_connecting_ip" | "x_forwarded_for" | "remote_addr"
 //
 // Only "cf_connecting_ip" is the trusted, Cloudflare-set value ADR-0023
@@ -27,9 +27,11 @@ import (
 //
 // This is intentionally package-scoped (not gated to the scoreboard binary)
 // since ClientIPKeyed itself is package-scoped — it is safe to import from
-// any binary that links this package; it simply stays at zero if that
-// binary never calls ClientIPKeyed (e.g. collector, which deliberately keys
-// its own limiter on RemoteAddr — see collector.go's remoteIP doc).
+// any binary that links this package. The family has NO series until a binary
+// calls ClientIPKeyed (which creates the caller's three source series at 0 when it
+// is assembled, ADR-0040 D2); the collector, which deliberately keys its own limiter
+// on RemoteAddr (see collector.go's remoteIP doc), never does, so it does not
+// expose this family at all.
 var ClientIPSourceTotal = promauto.NewCounterVec(
 	prometheus.CounterOpts{
 		Namespace: "ratelimit",
