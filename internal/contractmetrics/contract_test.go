@@ -33,6 +33,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
+	"github.com/Qfour/falco-ctf-app/internal/contractmetrics"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/identityobs"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/metrics"
@@ -59,24 +60,41 @@ type owned struct {
 	// rowTokens are values the family's row of the contract table must name as code
 	// spans because platform reads them (the identity reasons).
 	rowTokens []string
+	// pkg is the module-relative package whose initialisation creates the children
+	// (placement "init"); assembledBy is the function whose call creates them
+	// (placement "assembly"). They are what the placement check (V2) derives from.
+	pkg, assembledBy string
 }
 
-func ownedTable() []owned {
+func ownedTable() []owned { return ownedTableFor(identityobs.Declared()) }
+
+// ownedTableFor builds the table with the identity family's children and reason tokens
+// taken from declared (identityobs.Declared() in production): the reasons platform
+// reads are the reasons the code declares, not a second list (ADR-0038 V9 (b)).
+func ownedTableFor(declared []identityobs.Pair) []owned {
 	var identity [][]string
-	for _, p := range identityobs.Declared() {
+	reasons := map[string]bool{}
+	for _, p := range declared {
 		identity = append(identity, []string{string(p.Gate), string(p.Reason)})
+		reasons[string(p.Reason)] = true
 	}
+	var reasonTokens []string
+	for r := range reasons {
+		reasonTokens = append(reasonTokens, r)
+	}
+	sort.Strings(reasonTokens)
 	var clientIP [][]string
 	for _, caller := range []string{"submit", "csp_report"} {
 		for _, src := range []string{"cf_connecting_ip", "x_forwarded_for", "remote_addr"} {
 			clientIP = append(clientIP, []string{caller, src})
 		}
 	}
+	const metricsPkg = "internal/scoreboard/metrics"
 	return []owned{
-		{"scoreboard_identity_denials_total", []string{"gate", "reason"}, "scoreboard", placeInit, identity, []string{"no_identity", "non_canonical", "mismatch"}},
-		{"scoreboard_ingest_falco_events_scoring_overflow_total", []string{"ns"}, "scoreboard", placeInit, [][]string{{metrics.OtherNS}}, nil},
-		{"scoreboard_ingest_falco_events_rate_limited_total", []string{"ns"}, "scoreboard", placeInit, [][]string{{metrics.OtherNS}}, nil},
-		{"ratelimit_client_ip_source_total", []string{"caller", "source"}, "scoreboard", placeAssembly, clientIP, []string{"cf_connecting_ip", "x_forwarded_for", "remote_addr"}},
+		{"scoreboard_identity_denials_total", []string{"gate", "reason"}, "scoreboard", placeInit, identity, reasonTokens, "internal/scoreboard/identityobs", ""},
+		{"scoreboard_ingest_falco_events_scoring_overflow_total", []string{"ns"}, "scoreboard", placeInit, [][]string{{metrics.OtherNS}}, nil, metricsPkg, ""},
+		{"scoreboard_ingest_falco_events_rate_limited_total", []string{"ns"}, "scoreboard", placeInit, [][]string{{metrics.OtherNS}}, nil, metricsPkg, ""},
+		{"ratelimit_client_ip_source_total", []string{"caller", "source"}, "scoreboard", placeAssembly, clientIP, []string{"cf_connecting_ip", "x_forwarded_for", "remote_addr"}, "", "ClientIPKeyed"},
 	}
 }
 
@@ -88,7 +106,10 @@ type span struct {
 	labels []string // sorted
 }
 
-var spanRe = regexp.MustCompile("`([a-z][a-z0-9_]*)\\{([a-z_, ]*)\\}`")
+// A family and label name as Prometheus allows them (family `[a-zA-Z_:][a-zA-Z0-9_:]*`,
+// label `[a-zA-Z_][a-zA-Z0-9_]*`), so a span with an upper-case letter or a colon is not
+// skipped silently.
+var spanRe = regexp.MustCompile("`([a-zA-Z_:][a-zA-Z0-9_:]*)\\{([a-zA-Z0-9_, ]*)\\}`")
 
 // contractSpans returns the `family{labels}` code spans of the table rows under the
 // "Cross-repo 契約" heading of doc, de-duplicated.
@@ -189,8 +210,8 @@ func tableProblems(spans []span, table []owned) []string {
 
 // children gathers g and returns, for the family name, its label names (sorted) and
 // its children as "v1\x00v2" keys (values in label-name order of `labels`) with their
-// values. found=false when the family is not exposed.
-func children(t *testing.T, g prometheus.Gatherer, name string, labels []string) (found bool, gotLabels []string, vals map[string]float64) {
+// values, and its metric type. found=false when the family is not exposed.
+func children(t *testing.T, g prometheus.Gatherer, name string, labels []string) (found bool, typ string, gotLabels []string, vals map[string]float64) {
 	t.Helper()
 	mfs, err := g.Gather()
 	if err != nil {
@@ -201,6 +222,7 @@ func children(t *testing.T, g prometheus.Gatherer, name string, labels []string)
 			continue
 		}
 		found = true
+		typ = mf.GetType().String()
 		vals = map[string]float64{}
 		lset := map[string]bool{}
 		for _, m := range mf.GetMetric() {
@@ -220,18 +242,21 @@ func children(t *testing.T, g prometheus.Gatherer, name string, labels []string)
 		}
 		sort.Strings(gotLabels)
 	}
-	return found, gotLabels, vals
+	return found, typ, gotLabels, vals
 }
 
 // startProblems is how the family o departs from "exposed, with the span's labels and
 // exactly the declared children, every one at 0".
 func startProblems(t *testing.T, g prometheus.Gatherer, o owned) []string {
 	t.Helper()
-	found, labels, vals := children(t, g, o.name, o.labels)
+	found, typ, labels, vals := children(t, g, o.name, o.labels)
 	if !found {
 		return []string{o.name + " is not exposed: a family that is absent at start reads as renamed or an older image (ADR-0040 D1)"}
 	}
 	var out []string
+	if typ != "COUNTER" {
+		out = append(out, fmt.Sprintf("%s is a %s, want a COUNTER (the contract's families are counters; children are read as counters)", o.name, typ))
+	}
 	if strings.Join(labels, ",") != strings.Join(o.labels, ",") {
 		out = append(out, fmt.Sprintf("%s has labels {%s}, want {%s}", o.name, strings.Join(labels, ", "), strings.Join(o.labels, ", ")))
 	}
@@ -265,7 +290,7 @@ func beforeProblems(t *testing.T, g prometheus.Gatherer, table []owned) []string
 		if o.placement != placeAssembly {
 			continue
 		}
-		if found, _, vals := children(t, g, o.name, o.labels); found && len(vals) > 0 {
+		if found, _, _, vals := children(t, g, o.name, o.labels); found && len(vals) > 0 {
 			out = append(out, fmt.Sprintf("%s has %d child(ren) before %s is assembled, but its placement is %q: a package init created them (ADR-0040 D2, C4)", o.name, len(vals), o.binary, o.placement))
 		}
 	}
@@ -316,18 +341,97 @@ func assembleScoreboard(t *testing.T) {
 		scoreboard.WithAllowedOrigins([]string{"https://scoreboard.ctf.local"}))
 }
 
+// --- placement (ADR-0040 D2, V2) -------------------------------------------
+
+// placementProblems derives the V2 check from the owning table, not from a hand-written
+// list of binaries or packages (D4 step 5):
+//   - an "init" family's package must be in the owner's closure and in NO other
+//     binary's closure (every cmd/* directory, the gen-* ones included): its init would
+//     otherwise create children, as 0, in a binary that never counts them;
+//   - an "assembly" family's constructor must be called somewhere in the owner's
+//     closure and nowhere in another binary's closure: that is what backs the contract
+//     row's "the collector does not expose this family".
+//
+// The walk is contractmetrics.Closure / CallsIn, which read source text with the
+// standard library only (this package is where it lives so this test can call it).
+func placementProblems(root string, table []owned) []string {
+	bins, err := contractmetrics.Binaries(root)
+	if err != nil || len(bins) == 0 {
+		return []string{fmt.Sprintf("no binary found under %s/cmd (%v): the derivation would check nothing", root, err)}
+	}
+	closures := map[string]map[string]bool{}
+	for _, b := range bins {
+		c, err := contractmetrics.Closure(root, b)
+		if err != nil {
+			return []string{err.Error()}
+		}
+		closures[b] = c
+	}
+	var out []string
+	for _, o := range table {
+		owner := "cmd/" + o.binary
+		oc, ok := closures[owner]
+		if !ok {
+			out = append(out, fmt.Sprintf("%s: the owner %s is not a binary under cmd/", o.name, owner))
+			continue
+		}
+		switch o.placement {
+		case placeInit:
+			if !oc[o.pkg] {
+				out = append(out, fmt.Sprintf("%s: %s does not link %s (the family's init package): the check would pass on nothing", o.name, owner, o.pkg))
+			}
+			for _, b := range bins {
+				if b != owner && closures[b][o.pkg] {
+					out = append(out, fmt.Sprintf("%s: %s links %s, whose init pre-creates the children: that binary would expose them as 0 without counting (ADR-0040 D2)", o.name, b, o.pkg))
+				}
+			}
+		case placeAssembly:
+			called, err := contractmetrics.CallsIn(root, oc, o.assembledBy)
+			if err != nil {
+				out = append(out, err.Error())
+			} else if !called {
+				out = append(out, fmt.Sprintf("%s: %s never calls %s: nothing creates the children", o.name, owner, o.assembledBy))
+			}
+			for _, b := range bins {
+				if b == owner {
+					continue
+				}
+				if called, err := contractmetrics.CallsIn(root, closures[b], o.assembledBy); err != nil {
+					out = append(out, err.Error())
+				} else if called {
+					out = append(out, fmt.Sprintf("%s: %s calls %s: it would expose a family the contract says only %s owns", o.name, b, o.assembledBy, o.binary))
+				}
+			}
+		default:
+			out = append(out, fmt.Sprintf("%s: unknown placement %q", o.name, o.placement))
+		}
+	}
+	return out
+}
+
+// assembled is set by the first run of the real check: beforeProblems needs a process
+// in which no scoreboard has been assembled yet.
+var assembled bool
+
 // TestContractMetricFamiliesExistFromStart is the one real check. It must stay the only
 // test in this package that touches the default registry.
 func TestContractMetricFamiliesExistFromStart(t *testing.T) {
+	if assembled {
+		t.Skip("a scoreboard was already assembled in this process (go test -count>1): the before-assembly check needs a fresh process; the first run did the check")
+	}
 	table := ownedTable()
 	doc := readConventions(t)
 	p := append(tableProblems(contractSpans(doc), table), rowTokenProblems(doc, table)...)
 	if len(p) != 0 {
 		t.Fatalf("the contract table and the owning table disagree:\n  %s", strings.Join(p, "\n  "))
 	}
+	if p := placementProblems(moduleRoot(t), table); len(p) != 0 {
+		t.Fatalf("a family is in the wrong place (ADR-0040 D2):\n  %s", strings.Join(p, "\n  "))
+	}
 	if p := beforeProblems(t, prometheus.DefaultGatherer, table); len(p) != 0 {
 		t.Fatalf("%s", strings.Join(p, "\n"))
 	}
+	assembled = true
 	assembleScoreboard(t)
 	for _, o := range table {
 		if o.binary != "scoreboard" {
@@ -391,7 +495,7 @@ func TestContractCheck_CatchesDriftInTheTable(t *testing.T) {
 		})
 	}
 	t.Run("the owning table has a family the contract table does not name", func(t *testing.T) {
-		extra := append(append([]owned(nil), table...), owned{"scoreboard_new_total", []string{"x"}, "scoreboard", placeInit, nil, nil})
+		extra := append(append([]owned(nil), table...), owned{name: "scoreboard_new_total", labels: []string{"x"}, binary: "scoreboard", placement: placeInit})
 		if p := tableProblems(spans, extra); len(p) == 0 {
 			t.Fatal("an extra owned family was not flagged")
 		}
@@ -407,7 +511,7 @@ func TestContractCheck_CatchesDriftInTheTable(t *testing.T) {
 }
 
 func TestContractCheck_CatchesDriftInTheRegistry(t *testing.T) {
-	o := owned{"x_total", []string{"a", "b"}, "scoreboard", placeInit, [][]string{{"p", "q"}, {"r", "s"}}, nil}
+	o := owned{name: "x_total", labels: []string{"a", "b"}, binary: "scoreboard", placement: placeInit, children: [][]string{{"p", "q"}, {"r", "s"}}}
 	if p := startProblems(t, synthetic(t, o, o.children, 0), o); len(p) != 0 {
 		t.Fatalf("a correct family is flagged: %v", p)
 	}
@@ -442,7 +546,7 @@ func TestContractCheck_CatchesDriftInTheRegistry(t *testing.T) {
 }
 
 func TestContractCheck_CatchesAnAssemblyFamilyCreatedAtInit(t *testing.T) {
-	o := owned{"x_total", []string{"a"}, "scoreboard", placeAssembly, [][]string{{"p"}}, nil}
+	o := owned{name: "x_total", labels: []string{"a"}, binary: "scoreboard", placement: placeAssembly, children: [][]string{{"p"}}}
 	if p := beforeProblems(t, synthetic(t, o, nil, 0), []owned{o}); len(p) != 0 {
 		t.Fatalf("a family with no child before assembly is flagged: %v", p)
 	}
@@ -454,4 +558,111 @@ func TestContractCheck_CatchesAnAssemblyFamilyCreatedAtInit(t *testing.T) {
 	if p := beforeProblems(t, synthetic(t, o, o.children, 0), []owned{o}); len(p) != 0 {
 		t.Fatalf("an init family is flagged: %v", p)
 	}
+}
+
+func TestContractCheck_CatchesAReasonTheRowDoesNotName(t *testing.T) {
+	doc := readConventions(t)
+	real := identityobs.Declared()
+	if p := rowTokenProblems(doc, ownedTableFor(real)); len(p) != 0 {
+		t.Fatalf("the real row is already flagged: %v", p)
+	}
+	// The code declares one more reason than the row names: platform would not be told.
+	plus := append(append([]identityobs.Pair(nil), real...), identityobs.Pair{Gate: real[0].Gate, Reason: "new_reason"})
+	if p := rowTokenProblems(doc, ownedTableFor(plus)); len(p) == 0 {
+		t.Fatal("a reason declared in code but absent from the row was not flagged")
+	}
+	// The code renames a reason: the row still names the old one.
+	renamed := append([]identityobs.Pair(nil), real...)
+	renamed[0].Reason = "renamed_reason"
+	if p := rowTokenProblems(doc, ownedTableFor(renamed)); len(p) == 0 {
+		t.Fatal("a reason renamed in code was not flagged")
+	}
+}
+
+func TestContractCheck_CatchesAFamilyThatIsNotACounter(t *testing.T) {
+	o := owned{name: "x_total", labels: []string{"a"}, binary: "scoreboard", placement: placeInit, children: [][]string{{"p"}}}
+	reg := prometheus.NewRegistry()
+	g := prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: o.name, Help: "synthetic"}, o.labels)
+	reg.MustRegister(g)
+	g.WithLabelValues("p")
+	if p := startProblems(t, reg, o); len(p) == 0 {
+		t.Fatal("a gauge in place of the counter was not flagged")
+	}
+}
+
+// writeModule makes a throwaway module with cmd/scoreboard and cmd/fakebin for the
+// placement mutations.
+func writeModule(t *testing.T, files map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+	files["go.mod"] = "module example.test/m\n\ngo 1.26\n"
+	for name, body := range files {
+		p := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+func TestContractCheck_PlacementIsDerivedAndCatchesDrift(t *testing.T) {
+	initFam := owned{name: "x_total", labels: []string{"a"}, binary: "scoreboard", placement: placeInit, pkg: "internal/own"}
+	asmFam := owned{name: "y_total", labels: []string{"a"}, binary: "scoreboard", placement: placeAssembly, assembledBy: "Build"}
+	base := map[string]string{
+		"cmd/scoreboard/main.go": "package main\nimport (\n _ \"example.test/m/internal/own\"\n \"example.test/m/internal/shared\"\n)\nfunc main() { shared.Build() }\n",
+		"cmd/fakebin/main.go":    "package main\nimport _ \"example.test/m/internal/shared\"\nfunc main() {}\n",
+		"internal/own/o.go":      "package own\n",
+		"internal/shared/s.go":   "package shared\nfunc Build() {}\n",
+	}
+	// The reference layout: the owner links the init package and calls the constructor,
+	// the other binary links the shared package but calls neither.
+	base["internal/shared/s.go"] = "package shared\nfunc Build() {}\n"
+	good := writeModule(t, copyMap(base))
+	if p := placementProblems(good, []owned{initFam, asmFam}); len(p) != 0 {
+		t.Fatalf("the reference layout is flagged: %v", p)
+	}
+	t.Run("a second binary links the init package", func(t *testing.T) {
+		m := copyMap(base)
+		m["cmd/fakebin/main.go"] = "package main\nimport _ \"example.test/m/internal/own\"\nfunc main() {}\n"
+		if p := placementProblems(writeModule(t, m), []owned{initFam}); len(p) == 0 {
+			t.Fatal("not flagged")
+		}
+	})
+	t.Run("a second binary calls the assembly constructor", func(t *testing.T) {
+		m := copyMap(base)
+		m["cmd/fakebin/main.go"] = "package main\nimport \"example.test/m/internal/shared\"\nfunc main() { shared.Build() }\n"
+		if p := placementProblems(writeModule(t, m), []owned{asmFam}); len(p) == 0 {
+			t.Fatal("not flagged")
+		}
+	})
+	t.Run("the owner no longer links the init package", func(t *testing.T) {
+		m := copyMap(base)
+		m["cmd/scoreboard/main.go"] = "package main\nfunc main() {}\n"
+		if p := placementProblems(writeModule(t, m), []owned{initFam}); len(p) == 0 {
+			t.Fatal("not flagged")
+		}
+	})
+	t.Run("the owner no longer calls the constructor", func(t *testing.T) {
+		m := copyMap(base)
+		m["cmd/scoreboard/main.go"] = "package main\nfunc main() {}\n"
+		if p := placementProblems(writeModule(t, m), []owned{asmFam}); len(p) == 0 {
+			t.Fatal("not flagged")
+		}
+	})
+	t.Run("no binary at all", func(t *testing.T) {
+		if p := placementProblems(writeModule(t, map[string]string{}), []owned{initFam}); len(p) == 0 {
+			t.Fatal("an empty cmd/ was not flagged")
+		}
+	})
+}
+
+func copyMap(m map[string]string) map[string]string {
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
