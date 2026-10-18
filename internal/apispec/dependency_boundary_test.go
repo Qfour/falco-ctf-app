@@ -375,3 +375,47 @@ import _ "example.com/new/dependency"
 		t.Fatalf("thirdPartyImportsInClosure = %v, want exactly [example.com/new/dependency]", got)
 	}
 }
+
+// challengeidImportPath / catalogImportPath: app#437. The challenge-id grammar is
+// one definition in the stdlib-only leaf internal/catalog/challengeid, so the
+// collector (a distroless image) can use it WITHOUT linking internal/catalog, which
+// parses YAML (gopkg.in/yaml.v3): the leaf is in the collector's closure, the parent
+// and yaml.v3 are not. collector/Dockerfile COPYs the leaf by name for the same reason.
+const (
+	challengeidImportPath = modulePrefix + "internal/catalog/challengeid"
+	catalogImportPath     = modulePrefix + "internal/catalog"
+)
+
+func TestCollectorLinksTheChallengeIDLeafNotTheCatalog(t *testing.T) {
+	root := repoRoot(t)
+	start := modulePrefix + "cmd/collector"
+	closure := transitiveModuleImports(t, root, start)
+	if !closure[challengeidImportPath] {
+		t.Fatalf("cmd/collector's closure lacks %s: the collector's {cid} check must use the one grammar (app#437)", challengeidImportPath)
+	}
+	for _, banned := range []string{catalogImportPath, modulePrefix + "internal/homefragments"} {
+		if closure[banned] {
+			t.Errorf("cmd/collector's closure includes %s: it parses YAML, which has no place in the collector's SBOM; import internal/catalog/challengeid (stdlib only) instead", banned)
+		}
+	}
+	for _, imp := range thirdPartyImportsInClosure(t, root, start) {
+		if imp == "gopkg.in/yaml.v3" {
+			t.Errorf("cmd/collector's closure compiles in gopkg.in/yaml.v3")
+		}
+	}
+}
+
+// The check is not vacuous: a collector that imported the catalog parent is found.
+func TestCollectorLinksTheChallengeIDLeaf_CatchesTheCatalogImport(t *testing.T) {
+	root := t.TempDir()
+	mustWriteGoFile(t, filepath.Join(root, "cmd", "fakebin"), "main.go",
+		`package main
+
+import _ "`+catalogImportPath+`"
+
+func main() {}
+`)
+	if !transitiveModuleImports(t, root, modulePrefix+"cmd/fakebin")[catalogImportPath] {
+		t.Fatal("the synthetic cmd/fakebin -> internal/catalog import was not found")
+	}
+}
