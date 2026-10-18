@@ -1,7 +1,10 @@
 // Package metrics defines the Prometheus metrics exposed by scoreboard.
 //
 // Cardinality discipline:
-//   - No per-user labels (CTFs grow, user labels are unbounded).
+//   - No per-user labels (CTFs grow, user labels are unbounded). The one
+//     exception is the ns label of the two ingest counters below: it only ever
+//     carries a value that went through ingest.nsLabel, so its number of distinct
+//     values is capped (maxNSLabels, then OtherNS).
 //   - challenge_id is bounded by `challenges/` directory contents plus the single
 //     value "_unknown": an id that is not a catalog key (or is outside the {cid}
 //     grammar) is folded into it by the API handlers before it is used as a label.
@@ -56,7 +59,8 @@ const OtherNS = "_other"
 // start. A reader that sums the family (a pre-event verify, a teardown gate)
 // can then tell "no event was counted" (0) from "the metric does not exist"
 // (renamed, or an older image). It adds no cardinality: OtherNS is a value the
-// counter can already carry. It takes the Registerer so a test can check this
+// counter can already carry. The ns label values must come from ingest.nsLabel.
+// It takes the Registerer so a test can check this
 // on a fresh registry.
 func newNSCounterVec(reg prometheus.Registerer, opts prometheus.CounterOpts) *prometheus.CounterVec {
 	v := promauto.With(reg).NewCounterVec(opts, []string{"ns"})

@@ -14,6 +14,7 @@ package metrics_test
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -63,8 +64,8 @@ func contractRow(t *testing.T, doc string) string {
 // family is one exposed metric family as the default registry gathers it.
 type family struct {
 	name   string
-	labels []string
-	zero   bool // has an ns="_other" series at 0
+	labels []string // label names, as a set (sorted, de-duplicated)
+	zero   bool     // the ns="_other" series exists and is 0
 }
 
 // exposed returns the families whose name ends in suffix, gathered (not read
@@ -82,14 +83,19 @@ func exposed(t *testing.T, suffixes ...string) map[string]family {
 				continue
 			}
 			f := family{name: mf.GetName()}
+			lset := map[string]bool{}
 			for _, m := range mf.GetMetric() {
 				for _, lp := range m.GetLabel() {
-					f.labels = append(f.labels, lp.GetName())
+					lset[lp.GetName()] = true
 					if lp.GetName() == "ns" && lp.GetValue() == metrics.OtherNS && m.GetCounter().GetValue() == 0 {
 						f.zero = true
 					}
 				}
 			}
+			for k := range lset {
+				f.labels = append(f.labels, k)
+			}
+			sort.Strings(f.labels)
 			out[suf] = f
 		}
 	}
@@ -173,5 +179,21 @@ func TestContractCheckCatchesDrift(t *testing.T) {
 	}
 	if v := contractViolations(row, map[string]family{}, suffixes); len(v) == 0 {
 		t.Fatal("families that are not exposed at start were not flagged")
+	}
+	// Synthetic exposed families: a renamed label, and a missing 0 series.
+	real := fams[suffixes[0]]
+	for _, tc := range []struct {
+		name string
+		f    family
+	}{
+		{"label renamed in code", family{name: real.name, labels: []string{"namespace"}, zero: true}},
+		{"no ns=_other series at 0", family{name: real.name, labels: []string{"ns"}, zero: false}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := map[string]family{suffixes[0]: tc.f, suffixes[1]: fams[suffixes[1]]}
+			if v := contractViolations(row, m, suffixes); len(v) == 0 {
+				t.Fatalf("an exposed family with %s was not flagged", tc.name)
+			}
+		})
 	}
 }
