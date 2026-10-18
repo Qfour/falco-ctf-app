@@ -1915,12 +1915,9 @@ components:
       in: path
       name: user
       required: true
-      schema:
-        type: string
-        x-ctf-text-origin: token
-        pattern: "^[a-z0-9][a-z0-9-]{0,62}$"
+      schema: { $ref: "#/components/schemas/Seat" }
       description: |
-        auth-derived username slug — the same shape auth-policy enforces on
+        auth-derived username slug (`Seat`) — the same shape auth-policy enforces on
         `/check-workspace?host=` (and the roster enforces on a seat), so the
         boundaries agree (conventions I8). A blank
         segment (`/api/users//...`) is answered 400 before routing, never
@@ -1965,6 +1962,25 @@ components:
         lookup, and is not logged.
 
   schemas:
+    # The one place this spec writes the seat grammar: the {user} path parameter and
+    # the `user` of SubmitFlagRequest, SubmitDetectRequest and ExfilRequest $ref it.
+    # The one Go definition is identity.SeatPattern (internal/identity), and a test
+    # (internal/apispec/specparity) holds every `pattern` in the three specs equal to
+    # the set of Go grammars. docs/openapi-collector.yaml and
+    # docs/openapi-auth-policy.yaml are other documents and cannot $ref here; they
+    # repeat the same pattern (tied back by that test, and by ADR-0039 D3 (e) for the
+    # collector's forward copy). The response nodes that echo a seat (Me.user,
+    # LeaderboardEntry.user, ...) are `token` without a pattern.
+    Seat:
+      type: string
+      x-ctf-text-origin: token
+      pattern: '^[a-z0-9][a-z0-9-]{0,62}$'
+      maxLength: 63
+      description: >-
+        A seat: the username slug of a participant's workspace (`user7`), the `<user>`
+        in `<user>@<EXPECTED_EMAIL_DOMAIN>`. Lower-case letters, digits and `-`, the
+        first a letter or digit, at most 63 characters.
+
     Error:
       type: object
       description: |
@@ -2103,10 +2119,7 @@ components:
       required: [user, flag]
       properties:
         user:
-          type: string
-          x-ctf-text-origin: token
-          pattern: '^[a-z0-9][a-z0-9-]{0,62}$'
-          maxLength: 63
+          $ref: "#/components/schemas/Seat"
           description: CLAIMED identity — never proven on this route. Must be a username slug (400 otherwise; nothing is stored); surrounding whitespace is dropped by the server before the check
         flag: { type: string, x-ctf-text-origin: participant-opaque }
 
@@ -2151,11 +2164,7 @@ components:
       type: object
       required: [user, condition]
       properties:
-        user:
-          type: string
-          x-ctf-text-origin: token
-          pattern: '^[a-z0-9][a-z0-9-]{0,62}$'
-          maxLength: 63
+        user: { $ref: "#/components/schemas/Seat" }
         condition:
           type: string
           x-ctf-text-origin: participant-opaque
@@ -2187,10 +2196,7 @@ components:
       required: [user, flag]
       properties:
         user:
-          type: string
-          x-ctf-text-origin: token
-          pattern: '^[a-z0-9][a-z0-9-]{0,62}$'
-          maxLength: 63
+          $ref: "#/components/schemas/Seat"
           description: CLAIMED identity — must be a username slug (400 otherwise; nothing is stored); surrounding whitespace is dropped by the server before the check
         flag: { type: string, x-ctf-text-origin: participant-opaque }
 

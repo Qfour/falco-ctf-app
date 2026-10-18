@@ -438,8 +438,8 @@ type ExfilReceipt struct {
 type ExfilRequest struct {
 	Flag string `json:"flag"`
 
-	// User CLAIMED identity — must be a username slug (400 otherwise; nothing is stored); surrounding whitespace is dropped by the server before the check
-	User string `json:"user"`
+	// User A seat: the username slug of a participant's workspace (`user7`), the `<user>` in `<user>@<EXPECTED_EMAIL_DOMAIN>`. Lower-case letters, digits and `-`, the first a letter or digit, at most 63 characters.
+	User Seat `json:"user"`
 }
 
 // FalcoEvent falcosidekick customWebhook payload (the subset we consume)
@@ -989,6 +989,9 @@ type RuleFire struct {
 	Rule string  `json:"rule"`
 }
 
+// Seat A seat: the username slug of a participant's workspace (`user7`), the `<user>` in `<user>@<EXPECTED_EMAIL_DOMAIN>`. Lower-case letters, digits and `-`, the first a letter or digit, at most 63 characters.
+type Seat = string
+
 // SolveEntry defines model for SolveEntry.
 type SolveEntry struct {
 	At        time.Time `json:"at"`
@@ -1066,7 +1069,9 @@ type StepCheckResult struct {
 type SubmitDetectRequest struct {
 	// Condition the Falco condition to grade (<= 4 KiB)
 	Condition string `json:"condition"`
-	User      string `json:"user"`
+
+	// User A seat: the username slug of a participant's workspace (`user7`), the `<user>` in `<user>@<EXPECTED_EMAIL_DOMAIN>`. Lower-case letters, digits and `-`, the first a letter or digit, at most 63 characters.
+	User Seat `json:"user"`
 }
 
 // SubmitDetectVerdict 200 verdict for `POST /api/challenges/{cid}/submit-detect`. `status` is
@@ -1091,8 +1096,8 @@ type SubmitDetectVerdictStatus string
 type SubmitFlagRequest struct {
 	Flag string `json:"flag"`
 
-	// User CLAIMED identity — never proven on this route. Must be a username slug (400 otherwise; nothing is stored); surrounding whitespace is dropped by the server before the check
-	User string `json:"user"`
+	// User A seat: the username slug of a participant's workspace (`user7`), the `<user>` in `<user>@<EXPECTED_EMAIL_DOMAIN>`. Lower-case letters, digits and `-`, the first a letter or digit, at most 63 characters.
+	User Seat `json:"user"`
 }
 
 // SubmitFlagVerdict 200 verdict for `POST /api/challenges/{cid}/submit`. Which keys appear
@@ -1153,8 +1158,8 @@ type Mid = string
 // Tid defines model for Tid.
 type Tid = string
 
-// User defines model for User.
-type User = string
+// User A seat: the username slug of a participant's workspace (`user7`), the `<user>` in `<user>@<EXPECTED_EMAIL_DOMAIN>`. Lower-case letters, digits and `-`, the first a letter or digit, at most 63 characters.
+type User = Seat
 
 // BoardAdminListThreadsParams defines parameters for BoardAdminListThreads.
 type BoardAdminListThreadsParams struct {
