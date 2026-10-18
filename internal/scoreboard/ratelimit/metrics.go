@@ -8,11 +8,11 @@ import (
 // ClientIPSourceTotal counts which header a rate-limit Middleware's ClientIPKeyed
 // keyFn used to key a request (ADR-0023 V5), labelled by:
 //
-//	caller: which route family called ClientIPKeyed — e.g. "submit" |
-//	        "display_name" | "questions" | "csp_report"
-//	        (see each ClientIPKeyed call site for the exact names in use).
-//	        "falco_events" is no longer emitted: POST /falco/events is keyed by
-//	        participant, not client IP (app#359), so it has no IP source.
+//	caller: which route family called ClientIPKeyed. The set of values is not a
+//	        contract (each call site names its own; ClientIPKeyed creates that
+//	        caller's three source series at 0 when it is assembled, ADR-0040).
+//	        POST /falco/events is not a caller: it is keyed by participant, not
+//	        client IP (app#359), so it has no IP source.
 //	source: "cf_connecting_ip" | "x_forwarded_for" | "remote_addr"
 //
 // Only "cf_connecting_ip" is the trusted, Cloudflare-set value ADR-0023
