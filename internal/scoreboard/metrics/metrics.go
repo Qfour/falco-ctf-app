@@ -1,7 +1,10 @@
 // Package metrics defines the Prometheus metrics exposed by scoreboard.
 //
 // Cardinality discipline:
-//   - No per-user labels (CTFs grow, user labels are unbounded).
+//   - No per-user labels (CTFs grow, user labels are unbounded). The one
+//     exception is the ns label of the two ingest counters below: it only ever
+//     carries a value that went through ingest.nsLabel, so its number of distinct
+//     values is capped (maxNSLabels, then OtherNS).
 //   - challenge_id is bounded by `challenges/` directory contents plus the single
 //     value "_unknown": an id that is not a catalog key (or is outside the {cid}
 //     grammar) is folded into it by the API handlers before it is used as a label.
@@ -46,6 +49,25 @@ var FalcoEventsReceived = promauto.NewCounterVec(
 	[]string{"outcome"},
 )
 
+// OtherNS is the ns label value ingest uses once its distinct-ns cap is reached
+// (ingest.nsLabel). It is also the series the two ns-labelled ingest counters
+// below start with, at 0.
+const OtherNS = "_other"
+
+// newNSCounterVec registers a counter vec labelled only by ns on reg and
+// creates its OtherNS series at 0, so the family is in /metrics from process
+// start. A reader that sums the family (a pre-event verify, a teardown gate)
+// can then tell "no event was counted" (0) from "the metric does not exist"
+// (renamed, or an older image). It adds no cardinality: OtherNS is a value the
+// counter can already carry. The ns label values must come from ingest.nsLabel.
+// It takes the Registerer so a test can check this
+// on a fresh registry.
+func newNSCounterVec(reg prometheus.Registerer, opts prometheus.CounterOpts) *prometheus.CounterVec {
+	v := promauto.With(reg).NewCounterVec(opts, []string{"ns"})
+	v.WithLabelValues(OtherNS)
+	return v
+}
+
 // FalcoEventsRateLimited counts POST /falco/events requests answered 429
 // because the participant's (ns's) OBSERVATION bucket was empty (app#359).
 // Only events that never affect scoring (their rule is in no challenge's
@@ -55,16 +77,14 @@ var FalcoEventsReceived = promauto.NewCounterVec(
 // FalcoEventsScoringOverflow == 0, not this.
 //
 //	ns: the participant's namespace (bounded: see ingest.nsLabel; "_other"
-//	    past the cap so a forged ns cannot grow the series set)
-var FalcoEventsRateLimited = promauto.NewCounterVec(
-	prometheus.CounterOpts{
-		Namespace: "scoreboard",
-		Subsystem: "ingest",
-		Name:      "falco_events_rate_limited_total",
-		Help:      "POST /falco/events requests answered 429 (observation-only rule over its per-participant bucket), by participant namespace.",
-	},
-	[]string{"ns"},
-)
+//	    past the cap so a forged ns cannot grow the series set). The "_other"
+//	    series exists at 0 from process start (see newNSCounterVec).
+var FalcoEventsRateLimited = newNSCounterVec(prometheus.DefaultRegisterer, prometheus.CounterOpts{
+	Namespace: "scoreboard",
+	Subsystem: "ingest",
+	Name:      "falco_events_rate_limited_total",
+	Help:      "POST /falco/events requests answered 429 (observation-only rule over its per-participant bucket), by participant namespace.",
+})
 
 // FalcoEventsScoringOverflow counts scoring-relevant events (their rule is in
 // some challenge's forbidden or expected rules) that exceeded the
@@ -76,15 +96,12 @@ var FalcoEventsRateLimited = promauto.NewCounterVec(
 // should require 0.
 //
 //	ns: as FalcoEventsRateLimited
-var FalcoEventsScoringOverflow = promauto.NewCounterVec(
-	prometheus.CounterOpts{
-		Namespace: "scoreboard",
-		Subsystem: "ingest",
-		Name:      "falco_events_scoring_overflow_total",
-		Help:      "Scoring-relevant /falco/events over the per-participant bucket: tainted if the current evade mission forbids the rule (fail-closed), else skipped; never answered 429. By participant namespace.",
-	},
-	[]string{"ns"},
-)
+var FalcoEventsScoringOverflow = newNSCounterVec(prometheus.DefaultRegisterer, prometheus.CounterOpts{
+	Namespace: "scoreboard",
+	Subsystem: "ingest",
+	Name:      "falco_events_scoring_overflow_total",
+	Help:      "Scoring-relevant /falco/events over the per-participant bucket: tainted if the current evade mission forbids the rule (fail-closed), else skipped; never answered 429. By participant namespace.",
+})
 
 // FalcoEventsSecretMismatch counts POST /falco/events requests whose
 // X-Falco-Shared-Secret header failed the ADR-WS-0006 Layer 2 constant-time
