@@ -93,8 +93,7 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
 
 ### Fixed
 
-- scoreboard / collector: `ratelimit.Limiter` の bucket map が無制限に増えていたのを直した (app#463)。削除は refill 後の token 数で判定 (従来は保存値で、部分的に使った bucket が消えなかった)、期限順の list で O(1) に (従来は 1024 件超で Allow ごとに全件走査)、件数に上限 (既定 10000) を設け、満杯なら最も長く使われていない bucket を追い出す (新しい key は拒否しない: app#359 の「採点 rule は落とさない」を守る。追い出された key は満杯の bucket から再開する)。HTTP の応答は変わらない。
-
+- scoreboard / collector: `ratelimit.Limiter` の bucket map が無制限に増えていたのを直した (app#463、#366)。削除は refill 後の token 数で判定 (従来は保存値で、部分的に使った bucket が消えなかった)、期限順の list で O(1) に (従来は 1024 件超で Allow ごとに全件走査)、件数に上限 (10000) を設け、満杯なら最も長く使われていない bucket を追い出す (新しい key は拒否しない: app#359 の「採点 rule は落とさない」を守る。追い出された key は満杯の bucket から再開する)。HTTP の応答は、上限 (10000 key) 未満では変わらない。
 - board の運営の操作 (pin / answered / hide / delete) と Like が失敗したとき、server の文をそのまま (text として) 出す。運営の操作は HTTP の失敗をすべて「connection error」と表示し、Like は失敗を黙って捨てていた (#425 の統一から抜けていた 2 箇所、#432)。
 - portal の失敗表示と trim を揃えた (#411 の admin rename、#415 の board の返信・運営の返信・reset)。失敗した応答は server の文をそのまま (text として) 出し、本文・件名・表示名は server と同じ trim 集合 (`strings.TrimSpace`) で空判定・長さ判定する (#425)。
 - 手順確認 (steps/check)・ヒント開封・やり直し (reset-dirty) の rate limit を、提出 (submit) の

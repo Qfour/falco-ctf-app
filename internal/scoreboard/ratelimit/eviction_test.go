@@ -72,7 +72,9 @@ func TestEviction_CapIsNeverExceededAndEvictsLeastRecentlyUsed(t *testing.T) {
 	l.Allow("hot")
 	for i := 0; i < 1000; i++ {
 		l.Allow(fmt.Sprintf("k%d", i))
-		l.Allow("hot") // keeps "hot" the most recently used
+		if l.Allow("hot") { // keeps "hot" the most recently used; its single token is spent
+			t.Fatalf("iteration %d: hot was evicted and handed a fresh token", i)
+		}
 		if got := l.Len(); got > max {
 			t.Fatalf("Len = %d after %d keys, cap is %d", got, i+1, max)
 		}
@@ -120,21 +122,41 @@ func TestEviction_BelowTheCapBehaviourIsUnchanged(t *testing.T) {
 	}
 }
 
-// 100k distinct keys through a small cap: with the old per-call scan of the map
-// this is on the order of 5e8 iterations; the test passes in milliseconds only
-// if Allow no longer scans.
+// 100k distinct keys through a small cap. The old code scanned the whole map
+// on every call once it held more than 1024 buckets (here ~5000 per call, ~5e8
+// in total); the work now is bounded per call, and this counts it
+// (Limiter.Examined, test build only) instead of timing it, so the bound does
+// not depend on the machine: each Allow examines at most one live bucket plus
+// the ones it removes, and every bucket is removed at most once.
 func TestEviction_ManyKeysThroughASmallCapDoNotScan(t *testing.T) {
 	c := newClock()
 	l := ratelimit.New(0.1, 1).WithNow(c.now).WithMaxBuckets(5000)
-	start := time.Now()
-	for i := 0; i < 100000; i++ {
+	const calls = 100000
+	for i := 0; i < calls; i++ {
 		l.Allow(fmt.Sprintf("ip-%d", i))
 	}
 	if l.Len() != 5000 {
 		t.Fatalf("Len = %d, want 5000", l.Len())
 	}
-	if d := time.Since(start); d > 5*time.Second {
-		t.Fatalf("100k Allow calls took %s: the map is being scanned per call", d)
+	if got, limit := l.Examined(), uint64(3*calls); got > limit {
+		t.Fatalf("examined %d buckets over %d calls (limit %d): Allow is scanning the map", got, calls, limit)
+	}
+}
+
+// Several buckets expire together: one Allow drops all of them, not one per call.
+func TestEviction_ManyExpiredBucketsAreDroppedByOneCall(t *testing.T) {
+	c := newClock()
+	l := ratelimit.New(1, 2).WithNow(c.now)
+	for _, k := range []string{"a", "b", "c", "d"} {
+		l.Allow(k)
+	}
+	if l.Len() != 4 {
+		t.Fatalf("Len = %d, want 4", l.Len())
+	}
+	c.advance(6 * time.Minute) // all four idle past the TTL and refilled
+	l.Allow("e")
+	if got := l.Len(); got != 1 {
+		t.Fatalf("Len = %d after one call past the TTL, want 1: expired buckets are dropped one per call", got)
 	}
 }
 

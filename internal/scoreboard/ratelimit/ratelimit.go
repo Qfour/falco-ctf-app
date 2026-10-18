@@ -10,7 +10,7 @@
 //
 // The state is bounded (app#463): a bucket whose tokens have refilled to the
 // burst and that has been idle past the eviction TTL is dropped, and the map
-// never holds more than the configured maximum number of buckets. Past that
+// never holds more than the maximum number of buckets (defaultMaxBuckets). Past that
 // maximum the LEAST RECENTLY USED bucket is evicted to make room, never the new
 // key refused: refusing a new key would let anyone who can mint keys (a forged
 // ns on /falco/events, a forged X-Forwarded-For) lock honest participants out,
@@ -34,11 +34,15 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
 )
 
-// DefaultMaxBuckets is the bucket-count cap a Limiter starts with. Each bucket
-// is on the order of 100 bytes, so the cap bounds the state at roughly a
-// megabyte while being far above the key population of a real event (a few
-// hundred participants).
-const DefaultMaxBuckets = 10000
+// defaultMaxBuckets is the cap on the number of buckets a Limiter holds. The
+// estimate behind it assumes SHORT keys (an IP, an email, a slug): a few
+// hundred bytes per bucket including the map and list overhead, so about a few
+// megabytes at the cap, and far above the key population of a real event (a few
+// hundred participants). It bounds the NUMBER of buckets, not the size of a
+// key; a bound on key length is a follow-up (app#470). It is deliberately not
+// configurable in production: if a caller ever needs another value, add a field
+// to the ADR-0037 D1 declaration rather than a setter here.
+const defaultMaxBuckets = 10000
 
 // Limiter implements per-key token-bucket rate limiting. Buckets evict
 // themselves once unused for the eviction TTL (and refilled); keep that larger
@@ -48,6 +52,9 @@ type Limiter struct {
 	burst      float64       // bucket capacity
 	eviction   time.Duration // idle time after which a refilled bucket is dropped
 	maxBuckets int           // hard cap on len(buckets)
+	// examined counts the buckets the expiry sweep and the cap eviction looked
+	// at, so a test can bound the work per Allow without a clock (export_test.go).
+	examined uint64
 
 	now func() time.Time
 
@@ -69,7 +76,7 @@ func New(rate, burst float64) *Limiter {
 		rate:       rate,
 		burst:      burst,
 		eviction:   5 * time.Minute,
-		maxBuckets: DefaultMaxBuckets,
+		maxBuckets: defaultMaxBuckets,
 		now:        time.Now,
 		buckets:    make(map[string]*list.Element),
 		order:      list.New(),
@@ -80,29 +87,6 @@ func New(rate, burst float64) *Limiter {
 func (l *Limiter) WithNow(now func() time.Time) *Limiter {
 	l.now = now
 	return l
-}
-
-// WithMaxBuckets sets the cap on the number of buckets (n < 1 is treated as 1:
-// a limiter must be able to hold the bucket it is using).
-func (l *Limiter) WithMaxBuckets(n int) *Limiter {
-	if n < 1 {
-		n = 1
-	}
-	l.maxBuckets = n
-	return l
-}
-
-// WithEviction sets the idle TTL after which a refilled bucket is dropped.
-func (l *Limiter) WithEviction(d time.Duration) *Limiter {
-	l.eviction = d
-	return l
-}
-
-// Len is the number of buckets currently held (for tests and diagnostics).
-func (l *Limiter) Len() int {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return len(l.buckets)
 }
 
 // refilled is the bucket's token count at `now`, capped at the burst. The
@@ -137,6 +121,7 @@ func (l *Limiter) Allow(key string) bool {
 	// O(1) amortized, no scan of the map. (A not-yet-refilled bucket at the back
 	// can shield a newer expired one, but the cap below bounds the map anyway.)
 	for e := l.order.Back(); e != nil; e = l.order.Back() {
+		l.examined++
 		if !l.expired(e.Value.(*bucket), now) {
 			break
 		}
@@ -153,6 +138,7 @@ func (l *Limiter) Allow(key string) bool {
 		// Make room by evicting the least recently used bucket; never refuse a
 		// new key (see the package doc).
 		for len(l.buckets) >= l.maxBuckets {
+			l.examined++
 			l.remove(l.order.Back())
 		}
 		b = &bucket{key: key, tokens: l.burst, last: now}
