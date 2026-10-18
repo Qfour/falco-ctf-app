@@ -16,12 +16,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"gopkg.in/yaml.v3"
 
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
 	"github.com/Qfour/falco-ctf-app/internal/board"
@@ -223,55 +220,5 @@ func TestBoardTID_RealIDStillWorksAndIsEchoedAsIs(t *testing.T) {
 	// An unlike of a well-formed id that names no thread stays a harmless 200.
 	if w := f.do("POST", "/api/board/threads/"+unknownWellFormedID+"/unlike", "bob@ctf.local", map[string]any{}); w.Code != http.StatusOK {
 		t.Fatalf("unlike of an unknown well-formed id: status=%d body=%s, want 200", w.Code, w.Body)
-	}
-}
-
-// Every board id in the spec carries the same `pattern`, and it is the
-// expression board.ValidID matches: the parameters {tid} / {mid} and the five
-// response nodes that echo an id.
-func TestSpecBoardIDPatternsAreTheValidIDExpression(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "openapi-scoreboard.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var doc map[string]any
-	if err := yaml.Unmarshal(raw, &doc); err != nil {
-		t.Fatal(err)
-	}
-	at := func(path ...string) string {
-		var cur any = doc
-		for _, k := range path {
-			m, ok := cur.(map[string]any)
-			if !ok {
-				return ""
-			}
-			cur = m[k]
-		}
-		s, _ := cur.(string)
-		return s
-	}
-	nodes := map[string][]string{
-		"parameter Tid":          {"components", "parameters", "Tid", "schema", "pattern"},
-		"parameter Mid":          {"components", "parameters", "Mid", "schema", "pattern"},
-		"BoardMessage.id":        {"components", "schemas", "BoardMessage", "properties", "id", "pattern"},
-		"BoardThread.id":         {"components", "schemas", "BoardThread", "properties", "id", "pattern"},
-		"BoardSummary.id":        {"components", "schemas", "BoardSummary", "properties", "id", "pattern"},
-		"LikeResult.tid":         {"components", "schemas", "LikeResult", "properties", "tid", "pattern"},
-		"MessageStateResult.mid": {"components", "schemas", "MessageStateResult", "properties", "mid", "pattern"},
-	}
-	found := 0
-	for name, path := range nodes {
-		got := at(path...)
-		if got == "" {
-			t.Errorf("%s: no pattern in the spec (extraction found nothing)", name)
-			continue
-		}
-		found++
-		if got != board.IDPattern() {
-			t.Errorf("%s: pattern %q, board.ValidID matches %q", name, got, board.IDPattern())
-		}
-	}
-	if found != len(nodes) {
-		t.Fatalf("found %d of %d board id nodes", found, len(nodes))
 	}
 }

@@ -140,19 +140,13 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"regexp"
 	"slices"
 	"time"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
+	"github.com/Qfour/falco-ctf-app/internal/identity"
 	"github.com/Qfour/falco-ctf-app/internal/store"
 )
-
-// validUser mirrors internal/scoreboard/api's validUser (the username slug
-// every scoring write is keyed by). scoring cannot import api, so the
-// expression is copied here; api's user_slug_parity_test pins the copies equal,
-// and one shared definition is app#440.
-var validUser = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 // ErrInvalidUser is returned by SubmitEvade and RecordExfil for a user that is
 // not a username slug, and Sweep skips a stored receipt keyed by one: these
@@ -161,8 +155,9 @@ var validUser = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 //
 // Scope: only those three. OnRuleFire, TaintOnOverflow and SubmitDetect rely on
 // their adapter's check (ingest's namespace parse, the submit-detect handler's
-// identity check); making the Grader the single owner of the slug precondition
-// is app#440.
+// identity check). The seat grammar they all use is identity.SeatPattern (the
+// one definition, app#440); closing the remaining entries in the Grader or the
+// Store is app#479.
 var ErrInvalidUser = errors.New("scoring: user is not a username slug")
 
 // CountNonSlugStoredUsers returns how many stored solves and how many stored
@@ -171,12 +166,12 @@ var ErrInvalidUser = errors.New("scoring: user is not a username slug")
 // key stays until a reset (app#439). It returns counts only, never a user.
 func CountNonSlugStoredUsers(st *store.Store) (solved, exfil int) {
 	for k := range st.Snapshot().Solved {
-		if !validUser.MatchString(k.User) {
+		if !identity.ValidSeat(k.User) {
 			solved++
 		}
 	}
 	for _, u := range st.ExfilUsers() {
-		if !validUser.MatchString(u) {
+		if !identity.ValidSeat(u) {
 			exfil++
 		}
 	}
@@ -719,7 +714,7 @@ type EvadeOutcome struct {
 //     EvadeExfilRequired)
 //  7. record the solve → EvadeSolved.
 //
-// `user` must be a username slug (ValidUser), else ErrInvalidUser is returned
+// `user` must be a username slug (identity.ValidSeat), else ErrInvalidUser is returned
 // before any gate: a non-slug user is never solved for. The returned
 // EvadeOutcome is only meaningful when err == nil.
 //
@@ -727,7 +722,7 @@ type EvadeOutcome struct {
 // matching the prior behaviour where the comparison and the exfil lookup both
 // used the trimmed value.
 func (g *Grader) SubmitEvade(user, cid, flag string) (EvadeOutcome, error) {
-	if !validUser.MatchString(user) {
+	if !identity.ValidSeat(user) {
 		return EvadeOutcome{}, ErrInvalidUser
 	}
 	ch, ok := g.cat[cid]
@@ -822,7 +817,7 @@ const (
 // persisted — callers must branch on err first and never trust the status
 // when err is non-nil.
 func (g *Grader) RecordExfil(user, cid, flag string) (ExfilStatus, error) {
-	if !validUser.MatchString(user) {
+	if !identity.ValidSeat(user) {
 		return ExfilInvalidUser, ErrInvalidUser
 	}
 	ch, ok := g.cat[cid]
@@ -996,7 +991,7 @@ func (g *Grader) Sweep() ([]SweepResult, error) {
 	var solved []SweepResult
 	var errs []error
 	for _, r := range g.store.PendingExfilSolves() {
-		if !validUser.MatchString(r.User) {
+		if !identity.ValidSeat(r.User) {
 			// A receipt stored before the slug check existed. Never solved for
 			// (fail-closed); counted once at boot (CountNonSlugStoredUsers),
 			// not on every tick.

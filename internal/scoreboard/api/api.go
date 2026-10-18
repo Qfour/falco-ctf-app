@@ -59,10 +59,6 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/store"
 )
 
-// validUser matches the auth-derived identity username slug — same shape
-// auth-policy enforces on incoming /check-workspace?host=… so the two sides agree.
-var validUser = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
-
 // unknownCIDLabel is the single metric-label / log value every cid that is not
 // a catalog key is folded into, so the label set stays the closed catalog. It is
 // challengeid.Unknown, which is outside the challenge-id grammar.
@@ -469,7 +465,7 @@ func newAdminSet(adminEmails []string) map[string]struct{} {
 
 // newHiddenSet normalises the HIDDEN_USERS allowlist into a lookup set
 // (trimmed, lower-cased, blanks dropped — usernames are already
-// lower-case-only per validUser, but normalising defensively costs nothing
+// lower-case-only per identity.SeatPattern, but normalising defensively costs nothing
 // and matches newAdminSet's shape). Empty input = empty set = nobody hidden.
 func newHiddenSet(hiddenUsers []string) map[string]struct{} {
 	set := make(map[string]struct{}, len(hiddenUsers))
@@ -513,7 +509,7 @@ func UsernameFromEmail(email, domain string) string {
 		return ""
 	}
 	user := email[:at]
-	if !validUser.MatchString(user) {
+	if !identity.ValidSeat(user) {
 		return ""
 	}
 	return user
@@ -1214,7 +1210,7 @@ func (h *Handler) adminSetDisplayName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := strings.TrimSpace(r.PathValue("user"))
-	if !validUser.MatchString(user) {
+	if !identity.ValidSeat(user) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
 		return
 	}
@@ -1304,8 +1300,8 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 	}
 	// The body's user is claimed (the collector forwards it verbatim), but it
 	// is STORED and later shown as first_solver, so it must at least be a slug
-	// (validUser). Fixed text, the input is not echoed (#428).
-	if !validUser.MatchString(user) {
+	// (identity.ValidSeat). Fixed text, the input is not echoed (#428).
+	if !identity.ValidSeat(user) {
 		metrics.SubmissionsTotal.WithLabelValues(label, "bad_request").Inc()
 		auditLog("bad_request", "reason", "invalid user")
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
@@ -1318,8 +1314,8 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 	// the Grader (App-H3) — the handler never passes attacker-supplied time.
 	outcome, err := h.grader.SubmitEvade(user, cid, flag)
 	if errors.Is(err, scoring.ErrInvalidUser) {
-		// The Grader's own slug gate; unreachable while validUser above agrees
-		// with it (user_slug_parity_test), but never a 500 if they ever differ.
+		// The Grader's own slug gate; unreachable while identity.ValidSeat above agrees
+		// with it (identity.SeatPattern is the one definition), but never a 500 if they ever differ.
 		metrics.SubmissionsTotal.WithLabelValues(label, "bad_request").Inc()
 		auditLog("bad_request")
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
@@ -1489,7 +1485,7 @@ func (h *Handler) submitDetect(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "user required"})
 		return
 	}
-	if !validUser.MatchString(user) {
+	if !identity.ValidSeat(user) {
 		metrics.SubmissionsTotal.WithLabelValues(label, "bad_request").Inc()
 		auditLog("bad_request", "reason", "invalid user")
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
@@ -1663,7 +1659,7 @@ func (h *Handler) exfilInternal(w http.ResponseWriter, r *http.Request) {
 	}
 	// Same slug rule as /submit: this user is stored in the receipt and is what
 	// the grader later joins to a solve (#428). Fixed text, input not echoed.
-	if !validUser.MatchString(user) {
+	if !identity.ValidSeat(user) {
 		auditLog("bad_request", "reason", "invalid user")
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
 		return
@@ -1708,7 +1704,7 @@ func (h *Handler) exfilInternal(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) stepCheck(w http.ResponseWriter, r *http.Request) {
 	user := strings.TrimSpace(r.PathValue("user"))
 	cid := r.PathValue("cid")
-	if !validUser.MatchString(user) {
+	if !identity.ValidSeat(user) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
 		return
 	}
@@ -1764,7 +1760,7 @@ func (h *Handler) stepCheck(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) openHint(w http.ResponseWriter, r *http.Request) {
 	user := strings.TrimSpace(r.PathValue("user"))
 	cid := r.PathValue("cid")
-	if !validUser.MatchString(user) {
+	if !identity.ValidSeat(user) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
 		return
 	}
@@ -1873,7 +1869,7 @@ func nonNilStrings(s []string) []string {
 func (h *Handler) resetDirty(w http.ResponseWriter, r *http.Request) {
 	user := strings.TrimSpace(r.PathValue("user"))
 	cid := r.PathValue("cid")
-	if !validUser.MatchString(user) {
+	if !identity.ValidSeat(user) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
 		return
 	}
@@ -1924,7 +1920,7 @@ const errMsgUnsupportedMediaType = "content type must be application/json"
 // requires that participants cannot enumerate each other's progress.
 func (h *Handler) userMe(w http.ResponseWriter, r *http.Request) {
 	user := strings.TrimSpace(r.PathValue("user"))
-	if !validUser.MatchString(user) {
+	if !identity.ValidSeat(user) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
 		return
 	}
@@ -2059,7 +2055,7 @@ func (h *Handler) userMe(w http.ResponseWriter, r *http.Request) {
 // participants depend on for scoring.
 func (h *Handler) journey(w http.ResponseWriter, r *http.Request) {
 	user := strings.TrimSpace(r.PathValue("user"))
-	if !validUser.MatchString(user) {
+	if !identity.ValidSeat(user) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
 		return
 	}

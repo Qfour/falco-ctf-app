@@ -8,18 +8,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
+	"github.com/Qfour/falco-ctf-app/internal/identity"
 )
-
-// UserPattern is the username shape the scoreboard accepts. It mirrors
-// validUser in internal/scoreboard/api/api.go; seed_test.go reads that file and
-// fails when the two drift. `make e2e-serve AS=` accepts nothing else, so the
-// identity e-mail it builds can never be a surprising one.
-var UserPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 // IdentityDomain is the reserved-TLD domain of every synthetic identity
 // (ADR-0031 V8: a `.test` name, so no IdP can hold such an address). It is
@@ -34,8 +28,8 @@ const TtydSuffix = "e2e.test"
 // EmailFor returns the synthetic identity e-mail of user, or an error when user
 // is not a valid scoreboard username.
 func EmailFor(user string) (string, error) {
-	if !UserPattern.MatchString(user) {
-		return "", fmt.Errorf("harness: %q is not a valid username (want %s)", user, UserPattern)
+	if !identity.ValidSeat(user) {
+		return "", fmt.Errorf("harness: %q is not a valid username (want %s)", user, identity.SeatPattern)
 	}
 	return user + "@" + IdentityDomain, nil
 }
@@ -312,7 +306,7 @@ func (s *Seeder) Seed(ctx context.Context, name, user string) error {
 	if !ok {
 		return fmt.Errorf("unknown seed %q (have %s)", name, strings.Join(SeedNames(), ", "))
 	}
-	if !UserPattern.MatchString(user) {
+	if !identity.ValidSeat(user) {
 		return errors.New("invalid user")
 	}
 	return fn(ctx, s, user)
