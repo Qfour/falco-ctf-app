@@ -2,9 +2,10 @@
 //
 // Cardinality discipline:
 //   - No per-user labels (CTFs grow, user labels are unbounded). The one
-//     exception is the ns label of the two ingest counters below: it only ever
-//     carries a value that went through ingest.nsLabel, so its number of distinct
-//     values is capped (maxNSLabels, then OtherNS).
+//     exception is the ns label of the two ingest counters below. They are
+//     NSCounters: the CounterVec is unexported and the only way to count is
+//     Inc(ns), which applies the cap itself (at most MaxNSLabels distinct
+//     values per counter, then OtherNS), so no caller can bypass it (app#463).
 //   - challenge_id is bounded by `challenges/` directory contents plus the single
 //     value "_unknown": an id that is not a catalog key (or is outside the {cid}
 //     grammar) is folded into it by the API handlers before it is used as a label.
@@ -12,6 +13,8 @@
 package metrics
 
 import (
+	"sync"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
@@ -49,23 +52,76 @@ var FalcoEventsReceived = promauto.NewCounterVec(
 	[]string{"outcome"},
 )
 
-// OtherNS is the ns label value ingest uses once its distinct-ns cap is reached
-// (ingest.nsLabel). It is also the series the two ns-labelled ingest counters
-// below start with, at 0.
+// OtherNS is the ns label value an NSCounter uses once its distinct-ns cap is
+// reached (or for an ns that can never be a label). It is also the series the
+// two ns-labelled ingest counters below start with, at 0.
 const OtherNS = "_other"
+
+// MaxNSLabels bounds the ns label cardinality of an NSCounter: a forged event
+// (shared secret off) could otherwise mint unlimited series.
+const MaxNSLabels = 1024
+
+// maxNSLength is the longest ns that can be a label (a Kubernetes namespace
+// name is at most 63 bytes).
+const maxNSLength = 63
 
 // newNSCounterVec registers a counter vec labelled only by ns on reg and
 // creates its OtherNS series at 0, so the family is in /metrics from process
 // start. A reader that sums the family (a pre-event verify, a teardown gate)
 // can then tell "no event was counted" (0) from "the metric does not exist"
 // (renamed, or an older image). It adds no cardinality: OtherNS is a value the
-// counter can already carry. The ns label values must come from ingest.nsLabel.
-// It takes the Registerer so a test can check this
-// on a fresh registry.
+// counter can already carry. It takes the Registerer so a test can check this
+// on a fresh registry. Only newNSCounter may call it (nscap_test.go).
 func newNSCounterVec(reg prometheus.Registerer, opts prometheus.CounterOpts) *prometheus.CounterVec {
 	v := promauto.With(reg).NewCounterVec(opts, []string{"ns"})
 	v.WithLabelValues(OtherNS)
 	return v
+}
+
+// NSCounter is a counter labelled by participant namespace whose label
+// cardinality is capped inside the type: the CounterVec is unexported, and
+// Inc is the only way to count, so there is no way to hand it an uncapped
+// label. The set of ns values already used as a label lives here, with the
+// counter it guards (it used to be in ingest.Handler, which only held for one
+// Handler per process: app#463).
+type NSCounter struct {
+	vec  *prometheus.CounterVec
+	max  int
+	mu   sync.Mutex          // guards seen
+	seen map[string]struct{} // ns values that have their own series
+}
+
+func newNSCounter(reg prometheus.Registerer, opts prometheus.CounterOpts) *NSCounter {
+	return newNSCounterMax(reg, opts, MaxNSLabels)
+}
+
+// newNSCounterMax is newNSCounter with an explicit cap, for tests.
+func newNSCounterMax(reg prometheus.Registerer, opts prometheus.CounterOpts, max int) *NSCounter {
+	return &NSCounter{vec: newNSCounterVec(reg, opts), max: max, seen: make(map[string]struct{})}
+}
+
+// label is the series ns is counted under: ns itself while there is room (or
+// it already has a series), else OtherNS. An ns over maxNSLength bytes, or the
+// reserved OtherNS value itself, never takes a slot.
+func (c *NSCounter) label(ns string) string {
+	if ns == OtherNS || len(ns) > maxNSLength {
+		return OtherNS
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.seen[ns]; ok {
+		return ns
+	}
+	if len(c.seen) >= c.max {
+		return OtherNS
+	}
+	c.seen[ns] = struct{}{}
+	return ns
+}
+
+// Inc counts one event for ns (under OtherNS once the cap is reached).
+func (c *NSCounter) Inc(ns string) {
+	c.vec.WithLabelValues(c.label(ns)).Inc()
 }
 
 // FalcoEventsRateLimited counts POST /falco/events requests answered 429
@@ -76,10 +132,11 @@ func newNSCounterVec(reg prometheus.Registerer, opts prometheus.CounterOpts) *pr
 // ingest path lost nothing that matters" should require
 // FalcoEventsScoringOverflow == 0, not this.
 //
-//	ns: the participant's namespace (bounded: see ingest.nsLabel; "_other"
-//	    past the cap so a forged ns cannot grow the series set). The "_other"
-//	    series exists at 0 from process start (see newNSCounterVec).
-var FalcoEventsRateLimited = newNSCounterVec(prometheus.DefaultRegisterer, prometheus.CounterOpts{
+//	ns: the participant's namespace (bounded by NSCounter: at most MaxNSLabels
+//	    distinct values, "_other" past the cap so a forged ns cannot grow the
+//	    series set). The "_other" series exists at 0 from process start (see
+//	    newNSCounterVec).
+var FalcoEventsRateLimited = newNSCounter(prometheus.DefaultRegisterer, prometheus.CounterOpts{
 	Namespace: "scoreboard",
 	Subsystem: "ingest",
 	Name:      "falco_events_rate_limited_total",
@@ -96,7 +153,7 @@ var FalcoEventsRateLimited = newNSCounterVec(prometheus.DefaultRegisterer, prome
 // should require 0.
 //
 //	ns: as FalcoEventsRateLimited
-var FalcoEventsScoringOverflow = newNSCounterVec(prometheus.DefaultRegisterer, prometheus.CounterOpts{
+var FalcoEventsScoringOverflow = newNSCounter(prometheus.DefaultRegisterer, prometheus.CounterOpts{
 	Namespace: "scoreboard",
 	Subsystem: "ingest",
 	Name:      "falco_events_scoring_overflow_total",

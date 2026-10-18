@@ -18,7 +18,6 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
@@ -114,10 +113,6 @@ const (
 // docs/openapi-scoreboard.yaml must carry the same text (StringExtParity).
 const RateLimitDescription = "per-participant (ns) bucket - observation rules 20 req/s burst 100 then 429, scoring rules 100 req/s burst 400 then fail-closed taint if forbidden (never 429)"
 
-// maxNSLabels bounds the ns label cardinality of the rate-limit metrics: a
-// forged event (shared secret off) could otherwise mint unlimited series.
-const maxNSLabels = 1024
-
 // validUser mirrors internal/scoreboard/api's validUser (the auth-derived
 // username slug auth-policy also enforces). The ns of an event is
 // sender-supplied JSON; it becomes a limiter key, a store key and a metric
@@ -138,10 +133,6 @@ type Handler struct {
 	observeLimiter *ratelimit.Limiter
 	scoringLimiter *ratelimit.Limiter
 	auditLimiter   *ratelimit.Limiter
-	// nsSeen is the set of ns values already used as a metric label (guarded
-	// by nsMu); past maxNSLabels new ones are labelled "_other".
-	nsMu   sync.Mutex
-	nsSeen map[string]struct{}
 	// sharedSecret / secretMode are ADR-WS-0006's Layer 2 shared-secret
 	// verification config. See SecretMode's doc for the 3 states.
 	sharedSecret string
@@ -161,7 +152,6 @@ func New(grader *scoring.Grader, s *store.Store, logger *slog.Logger, now func()
 		grader:       grader,
 		logger:       logger,
 		now:          now,
-		nsSeen:       make(map[string]struct{}),
 		sharedSecret: sharedSecret,
 		secretMode:   secretMode,
 	}).WithLimits(observationRate, observationBurst, scoringRate, scoringBurst)
@@ -174,21 +164,6 @@ func (h *Handler) WithLimits(observeRate, observeBurst, scoreRate, scoreBurst fl
 	h.scoringLimiter = ratelimit.New(scoreRate, scoreBurst).WithNow(h.now)
 	h.auditLimiter = ratelimit.New(0.1, 1).WithNow(h.now)
 	return h
-}
-
-// nsLabel returns ns as a metric label, or "_other" once maxNSLabels distinct
-// values have been used (or ns is implausibly long).
-func (h *Handler) nsLabel(ns string) string {
-	h.nsMu.Lock()
-	defer h.nsMu.Unlock()
-	if _, ok := h.nsSeen[ns]; ok {
-		return ns
-	}
-	if len(ns) > 63 || len(h.nsSeen) >= maxNSLabels {
-		return metrics.OtherNS
-	}
-	h.nsSeen[ns] = struct{}{}
-	return ns
 }
 
 // audit logs a rate-limit event (sampled per class+participant, see
@@ -373,7 +348,7 @@ func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else if !h.observeLimiter.Allow(user) {
-		metrics.FalcoEventsRateLimited.WithLabelValues(h.nsLabel(ns)).Inc()
+		metrics.FalcoEventsRateLimited.Inc(ns)
 		metrics.FalcoEventsReceived.WithLabelValues("rate_limited").Inc()
 		h.audit("observation_dropped", ns, ev.Rule, "")
 		w.Header().Set("Retry-After", "1")
@@ -481,7 +456,7 @@ func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 // was actually tainted. Answered like an accepted event; a failed taint write is
 // the same 500 + taint_error as the normal path.
 func (h *Handler) scoringOverflow(w http.ResponseWriter, ns, user, rule string) {
-	metrics.FalcoEventsScoringOverflow.WithLabelValues(h.nsLabel(ns)).Inc()
+	metrics.FalcoEventsScoringOverflow.Inc(ns)
 	tainted, err := h.grader.TaintOnOverflow(user, rule)
 	if err != nil {
 		h.audit("scoring_overflow", ns, rule, tainted)
