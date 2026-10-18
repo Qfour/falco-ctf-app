@@ -4,7 +4,8 @@
 # gen-pages.py renders one page per challenge from it — no committed duplication).
 #   docker build --platform linux/amd64 -t <reg>/docs:<tag> -f images/docs/Dockerfile .
 #
-# Supply chain (P12/#227): both base digests below bumped 2026-08-28 (index
+# Supply chain (P12/#227): the serve stage's base was replaced by alpine-slim in app#442
+# (see the comment above its FROM); the build stage's digest below was bumped 2026-08-28 (index
 # digest re-resolved via `docker buildx imagetools inspect <image>:<tag>` — the
 # tag itself did not move, but upstream re-published a new index digest under
 # it, which is the mechanism that actually carries package-level CVE fixes
@@ -33,78 +34,34 @@ RUN for mode in participant admin; do \
 # ── serve ───────────────────────────────────────────────────────────
 # nginx-unprivileged listens on 8080 as a non-root user (uid 101) — fits
 # runAsNonRoot without extra config.
-# nginx 1.30.6 (index digest 782bb897、2026-10-18 に 1.30-alpine tag から実測。alpine 3.24.2)
-FROM nginxinc/nginx-unprivileged:1.30-alpine@sha256:782bb89768cc87b7f95c18b95baa1af250e5d451f26794f59363540161147c01
+#
+# The `alpine-slim` variant (app#442), not `alpine`: docs-site/nginx.conf is
+# a static file server (no load_module, no xslt / njs / image-filter / geoip directive),
+# and the `alpine` variant adds dynamic modules and curl on top of nginx. Those layers
+# pulled libxml2 (xslt), libexpat (fontconfig, via image-filter) and libx11 into the image
+# for nothing the site uses, and each new CVE in them was a forced Class-2 bump (#227,
+# #339, #436, libx11 / app#471). `apk info -v` of this base (nginx 1.30.6, alpine 3.24.2,
+# measured 2026-10-19) is 21 packages: alpine-baselayout(-data), alpine-keys,
+# alpine-release, apk-tools / libapk, busybox(-binsh), ca-certificates-bundle,
+# gettext-envsubst / libintl, libcrypto3 / libssl3, musl(-utils), nginx, pcre2, scanelf,
+# ssl_client, tzdata, zlib. There is NO libexpat, libxml2, libx11, fontconfig, libxslt
+# or curl, and /usr/lib/nginx/modules is empty, so nothing is removed here with
+# `apk del`, and the HTTP probes (charts/docs/templates/deployment.yaml) do not need curl.
+# nginx 1.30.6 — the tag and 1.30.6-alpine-slim resolve to the same index digest
+# (`docker buildx imagetools inspect`, 2026-10-19).
+# This removes a source of forced bumps from an image that app#293 (A-3) retires
+# altogether; it does not change #293's decision.
+FROM nginxinc/nginx-unprivileged:1.30-alpine-slim@sha256:4ac59c85c8c46d9e91eaabd2122cda4923ba380cf11f4138e389f069bcdc77a3
 
-# apk upgrade (#227 follow-up, 2026-08-28): PR #228 CI (build (docs) / scan)
-# measured 21 High CVEs surviving the digest bump above, ALL attributed to
-# this serve stage (Sysdig COMPONENT table: libcrypto3/libssl3/libxml2, all
-# `Package/os` type — i.e. Alpine packages baked into nginx-unprivileged, not
-# the python:3.12-slim/debian build stage discarded above; that stage
-# contributed zero findings, so the earlier hypothesis that debian packages
-# were the residue was wrong).
-#
-# nginxinc/nginx-unprivileged:1.30-alpine is itself built FROM alpine:3.24
-# (not 3.22 — confirmed via nginxinc/docker-nginx's stable/alpine-slim/Dockerfile
-# on 2026-08-28), so its installed libssl3/libcrypto3 (3.5.7-r0) predates the
-# same 3.5.8-r0 fix as challenge/ttyd (CVE-2026-63072..63076/-54874/-18798/
-# -14456/-14457, High; plus -75803) but must be pinned against v3.24's own APKINDEX, not
-# v3.22's. **Exact version pin** (same discipline as challenge/ttyd/
-# detect-grader — untraced `apk upgrade` breaks bit-identical builds, #227).
-# 3.5.8-r0 confirmed present in
-# https://dl-cdn.alpinelinux.org/alpine/v3.24/{main,community}/x86_64/APKINDEX.tar.gz
-# (measured 2026-08-28) and matches Sysdig's suggested fix version exactly.
-# Re-pinned 3.5.8-r0 -> 3.5.9-r0 on 2026-10-05: v3.24/main dropped 3.5.8-r0
-# (`apk add` failed with "unable to select packages"); `apk policy libssl3
-# libcrypto3` inside this base shows 3.5.9-r0 as the only version served.
-# 3.5.9 carries the 3.5.8 fixes listed above cumulatively (confirmed against
-# upstream CHANGES.md and aports in the 5x R1 review, not inferred from the
-# version number) and fixes further CVEs of its own (High: CVE-2026-84782).
-#
-# libxml2 (installed 2.13.9-r2, 3 High CVEs) is NOT pinned here: v3.24's live
-# APKINDEX still only serves 2.13.9-r2 (identical to installed — no newer
-# build exists yet in either v3.22 or v3.24 stable), so Sysdig's suggested
-# fix (2.15.2, a MINOR-version jump) is not resolvable via `apk add =<ver>`
-# today regardless of Sysdig's own fixable/not-fixable classification per
-# CVE. Residual — same "Alpine hasn't backported yet" category as challenge's
-# libxml2 finding (CVE-2026-11979 among the 3 has no upstream fix released at
-# all; the other two have a fix release but not yet an Alpine package build).
-# Tracked by the #227 re-check triggers already recorded in that Issue.
-#
-# security-engineer BLOCKING review (2026-08-28): this base's `Config.User` is
-# `101` (confirmed via `GET /v2/nginxinc/nginx-unprivileged/blobs/<config
-# digest>` on the registry — non-root already, no explicit USER line needed
-# it before this change). `apk` writes to /lib/apk/db (root-owned, 0755), so
-# running the upgrade as 101 fails with a permission error. Wrap it in
-# `USER root` / `USER 101` so the apk write happens as root but the final
-# image still executes as 101, preserving nginx-unprivileged's non-root
-# model (no regression vs. before this Dockerfile even touched apk).
-#
-# 2026-10-13 (CI scan 全 PR 赤の追跡): base digest を 56b8272e (3.24.2、libssl3 3.5.9 /
-# curl 8.22.0 / libexpat 2.8.5 / pcre2 10.49 / tiff 4.7.2 / libuuid 2.42.3 /
-# nghttp2 1.70.0 を既に含む) へ更新した。残りの 2 件:
-#   - zlib: base は 1.3.2-r0、3.24/main の 1.3.2-r1 へ明示 pin upgrade
-#   - libxml2 2.13.9-r2: 3.24 / edge/main とも fix apk 無し (`apk policy` 実測) なので
-#     上の「pin できない」状況は変わらない。ただし引き込み元は nginx-module-xslt /
-#     libxslt / nginx-module-njs の 3 つのみ (`apk info -r libxml2` 実測) で、docs-site/
-#     nginx.conf は load_module も xslt/njs の directive も使わない静的配信。
-#     この 3 つを `apk del` して libxml2 ごと image から除く (残存 High を除去で実解消、
-#     例外で握り潰さない)。nginx 本体は pcre2 を使うので pcre2 は残る。
-#
-# 2026-10-18 (#436): base digest を 56b8272e から 782bb897 (nginx 1.30.6、alpine 3.24.2)
-# へ上げた (nginx 本体の security fix を取り込む)。新 base の `apk info -v` 実測:
-# libssl3 / libcrypto3 3.5.9-r0 は pin と同版になったので pin を外した (ADR-0036 D3 の出口)。
-# zlib は base が 1.3.2-r0 のままなので 1.3.2-r1 の pin を残す。
-# libexpat は 782bb897 でも 2.8.5-r0 のままで、CVE-2026-77214 / CVE-2026-102633 (High、
-# fix は 2.9.0) が残る。そこで `libexpat=2.9.0-r0` を pin upgrade する。これは
-# 「base に既にある package を上げる pin」 (ADR-0036 D2 (b)、Proposed。既存運用の ADR-0002 exact pin
-# の延長) で、出口条件は「base の digest が libexpat >= 2.9.0-r0 を持ったら外す (D3)」。
-# `apk policy libexpat` 実測で 3.24/main の唯一の提供版が 2.9.0-r0 (Sysdig の suggested fix と一致)。
-# 引き込み元は fontconfig (nginx-module-image-filter 系)。pin 版が 3.24/main から外れて
-# apk resolve が failing したら、`apk policy libexpat` を実測して上げる。
+# The one pin that is left (a package the base already has, raised to the fixed build;
+# a pin like this is dropped as soon as the base carries that version): zlib 1.3.2-r0 in the base, 1.3.2-r1 is what v3.24/main serves
+# (`apk policy zlib`, 2026-10-19). libssl3 / libcrypto3 (3.5.9-r0) and pcre2 are at
+# the version v3.24/main serves, so they need no pin. Exit condition: drop this
+# line when the base digest carries zlib >= 1.3.2-r1.
+# apk writes /lib/apk/db as root; the base's Config.User is 101 (non-root), so wrap
+# the apk call in USER root / USER 101 and the image still runs as 101.
 USER root
-RUN apk add --no-cache --upgrade zlib=1.3.2-r1 libexpat=2.9.0-r0 \
- && apk del --no-cache nginx-module-xslt nginx-module-njs libxslt libxml2
+RUN apk add --no-cache --upgrade zlib=1.3.2-r1
 USER 101
 
 # --chmod: the non-root nginx user (uid 101) must read the config regardless of
