@@ -68,6 +68,9 @@ info:
     docs/openapi-scoreboard.yaml. `x-ctf-authz: rostered` (new) means "an
     `ADMIN_EMAILS` member, or an identity the roster resolves to a seat".
 
+    Every `type: string` Schema Object carries `x-ctf-text-origin` (vocabulary
+    and meaning: docs/openapi-scoreboard.yaml, ADR-0039).
+
     Generated code: `internal/authpolicy/oapi/types.gen.go` (`make gen`,
     api/cfg-auth-policy.yaml). Never hand-edit the generated file.
 
@@ -104,9 +107,10 @@ paths:
                 required: [ok, oauth2_proxy, domain, admin_count, roster_seats, roster_external]
                 properties:
                   ok: { type: boolean, const: true }
-                  oauth2_proxy: { type: string }
+                  oauth2_proxy: { type: string, x-ctf-text-origin: operator }
                   domain:
                     type: string
+                    x-ctf-text-origin: operator
                     description: EXPECTED_EMAIL_DOMAIN
                   admin_count:
                     type: integer
@@ -204,6 +208,7 @@ paths:
           required: true
           schema:
             type: string
+            x-ctf-text-origin: token
             pattern: "^[a-z0-9][a-z0-9-]{0,62}$"
           description: |
             expected seat (== the first label of the workspace ingress host).
@@ -211,11 +216,11 @@ paths:
             and the roster enforces on `seat`, so the boundaries agree.
         - in: header
           name: Cookie
-          schema: { type: string }
+          schema: { type: string, x-ctf-text-origin: participant-opaque }
           description: forwarded to oauth2-proxy
         - in: header
           name: Authorization
-          schema: { type: string }
+          schema: { type: string, x-ctf-text-origin: participant-opaque }
           description: forwarded to oauth2-proxy (if present)
       responses:
         "200":
@@ -226,11 +231,11 @@ paths:
             nothing the IdP returned.
           headers:
             X-Auth-Request-Email:
-              schema: { type: string }
+              schema: { type: string, x-ctf-text-origin: token }
             X-Auth-Request-User:
-              schema: { type: string }
+              schema: { type: string, x-ctf-text-origin: token }
             X-Auth-Request-Preferred-Username:
-              schema: { type: string }
+              schema: { type: string, x-ctf-text-origin: token }
         "400":
           description: missing or malformed `host` query parameter
           content:
@@ -288,11 +293,11 @@ paths:
       parameters:
         - in: header
           name: Cookie
-          schema: { type: string }
+          schema: { type: string, x-ctf-text-origin: participant-opaque }
           description: forwarded to oauth2-proxy
         - in: header
           name: Authorization
-          schema: { type: string }
+          schema: { type: string, x-ctf-text-origin: participant-opaque }
           description: forwarded to oauth2-proxy (if present)
       responses:
         "200":
@@ -301,11 +306,11 @@ paths:
             are the canonical `<seat>@<EXPECTED_EMAIL_DOMAIN>` / `<seat>`.
           headers:
             X-Auth-Request-Email:
-              schema: { type: string }
+              schema: { type: string, x-ctf-text-origin: token }
             X-Auth-Request-User:
-              schema: { type: string }
+              schema: { type: string, x-ctf-text-origin: token }
             X-Auth-Request-Preferred-Username:
-              schema: { type: string }
+              schema: { type: string, x-ctf-text-origin: token }
         "401":
           description: unauthenticated — ingress should redirect to /oauth2/start
           content:
@@ -346,22 +351,22 @@ paths:
       parameters:
         - in: header
           name: Cookie
-          schema: { type: string }
+          schema: { type: string, x-ctf-text-origin: participant-opaque }
           description: forwarded to oauth2-proxy
         - in: header
           name: Authorization
-          schema: { type: string }
+          schema: { type: string, x-ctf-text-origin: participant-opaque }
           description: forwarded to oauth2-proxy (if present)
       responses:
         "200":
           description: caller is an admin; identity headers propagated
           headers:
             X-Auth-Request-Email:
-              schema: { type: string }
+              schema: { type: string, x-ctf-text-origin: token }
             X-Auth-Request-User:
-              schema: { type: string }
+              schema: { type: string, x-ctf-text-origin: token }
             X-Auth-Request-Preferred-Username:
-              schema: { type: string }
+              schema: { type: string, x-ctf-text-origin: token }
         "401":
           description: unauthenticated — ingress should redirect to /oauth2/start
           content:

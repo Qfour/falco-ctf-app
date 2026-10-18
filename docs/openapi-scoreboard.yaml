@@ -49,6 +49,31 @@ info:
                               true; see docs/openapi-collector.yaml.
       x-ctf-rate-limit        the bucket applied, or "none".
 
+    Per-string-node extension (ALL are mandatory; ADR-0039)
+    -------------------------------------------------------
+    Every Schema Object that says `type: string` (a component property, an
+    array `items`, a parameter's `schema`, a response header's `schema`; a
+    `$ref` site is not one: the definition it points at carries the key once)
+    declares WHO can choose its bytes and HOW it is shown, with one of:
+
+      x-ctf-text-origin: participant-inline | participant-block |
+                         participant-opaque | operator | token | enum
+
+        participant-inline   participant free text, shown inline next to other text
+        participant-block    participant free text, shown in a block of its own
+        participant-opaque   participant-chosen but never in any response
+                             (flag, Falco condition, CSP report, credential header)
+        operator             chosen by staff or the server (repo content, catalog,
+                             configuration, server prose, falcosidekick events)
+        token                a closed grammar: seat / challenge slug, hex id,
+                             RFC 3339 time (printable ASCII only), whoever chooses it
+        enum                 a closed set (`enum` / `const`)
+
+    A missing key, an unknown word, or a changed per-word count is a
+    `make test` failure (internal/apispec/specparity, no exclusion list). This
+    is a declaration only: it changes no HTTP behaviour and generated code
+    ignores it.
+
     Why origin-guard is a spec field and not a comment: the guard's presence is
     ASYMMETRIC on purpose (submit / internal-exfil are excluded
     because the collector forwards them with no browser Origin), and that
@@ -826,7 +851,7 @@ paths:
         - in: query
           name: mission
           required: false
-          schema: { type: string }
+          schema: { type: string, x-ctf-text-origin: participant-opaque }
           description: |
             mission id whose `detail` to return instead of `current`. Any id in
             `missions[]` is valid; unknown/blank values fall back to `current`.
@@ -1615,7 +1640,7 @@ paths:
         - name: sort
           in: query
           required: false
-          schema: { type: string, enum: [likes, recent] }
+          schema: { type: string, enum: [likes, recent], x-ctf-text-origin: enum }
           description: sort order hint for the operator moderation UI; default is pinned-first then most-recently-active
       responses:
         "200":
@@ -1860,7 +1885,7 @@ components:
       in: path
       name: asset
       required: true
-      schema: { type: string }
+      schema: { type: string, x-ctf-text-origin: token }
       description: |
         content-hash asset name, `<stem>.<hash><ext>` (ADR-0028). One path
         segment; only names the server's registry produced are served.
@@ -1870,6 +1895,7 @@ components:
       required: true
       schema:
         type: string
+        x-ctf-text-origin: token
         pattern: "^[a-z0-9][a-z0-9-]{0,62}$"
       description: |
         auth-derived username slug — the same shape auth-policy enforces on
@@ -1881,7 +1907,7 @@ components:
       in: path
       name: cid
       required: true
-      schema: { type: string, pattern: "^[A-Za-z0-9._-]{1,64}$" }
+      schema: { type: string, pattern: "^[A-Za-z0-9._-]{1,64}$", x-ctf-text-origin: token }
       description: >-
         challenge id / catalog key (e.g. `03-stealth-read`). An id outside the
         grammar `^[A-Za-z0-9._-]{1,64}$`, or not in the catalog, is answered
@@ -1892,7 +1918,7 @@ components:
       in: path
       name: tid
       required: true
-      schema: { type: string }
+      schema: { type: string, x-ctf-text-origin: token }
       description: |
         QA Board thread id (app#292) — a 32-hex-char, server-generated,
         non-enumerable value (`internal/board.Store`'s newID). Not a
@@ -1904,7 +1930,7 @@ components:
       in: path
       name: mid
       required: true
-      schema: { type: string }
+      schema: { type: string, x-ctf-text-origin: token }
       description: |
         QA Board message id (app#292) — same shape/generation as `Tid`
         above, scoped to one message within a thread rather than the
@@ -1920,7 +1946,7 @@ components:
         defect against this schema, not an alternative contract.
       required: [error]
       properties:
-        error: { type: string }
+        error: { type: string, x-ctf-text-origin: operator }
 
     LegacyCSPReport:
       type: object
@@ -1935,13 +1961,13 @@ components:
         csp-report:
           type: object
           properties:
-            document-uri: { type: string }
-            violated-directive: { type: string }
-            effective-directive: { type: string }
-            disposition: { type: string }
-            blocked-uri: { type: string }
-            source-file: { type: string }
-            script-sample: { type: string }
+            document-uri: { type: string, x-ctf-text-origin: participant-opaque }
+            violated-directive: { type: string, x-ctf-text-origin: participant-opaque }
+            effective-directive: { type: string, x-ctf-text-origin: participant-opaque }
+            disposition: { type: string, x-ctf-text-origin: participant-opaque }
+            blocked-uri: { type: string, x-ctf-text-origin: participant-opaque }
+            source-file: { type: string, x-ctf-text-origin: participant-opaque }
+            script-sample: { type: string, x-ctf-text-origin: participant-opaque }
 
     ReportsAPIEntry:
       type: object
@@ -1956,16 +1982,17 @@ components:
       properties:
         type:
           type: string
+          x-ctf-text-origin: participant-opaque
           description: entries whose type is present and not "csp-violation" are ignored
         body:
           type: object
           properties:
-            documentURL: { type: string }
-            effectiveDirective: { type: string }
-            disposition: { type: string }
-            blockedURL: { type: string }
-            sourceFile: { type: string }
-            sample: { type: string }
+            documentURL: { type: string, x-ctf-text-origin: participant-opaque }
+            effectiveDirective: { type: string, x-ctf-text-origin: participant-opaque }
+            disposition: { type: string, x-ctf-text-origin: participant-opaque }
+            blockedURL: { type: string, x-ctf-text-origin: participant-opaque }
+            sourceFile: { type: string, x-ctf-text-origin: participant-opaque }
+            sample: { type: string, x-ctf-text-origin: participant-opaque }
 
     Health:
       type: object
@@ -1974,10 +2001,11 @@ components:
         ok: { type: boolean, const: true }
         challenges:
           type: array
-          items: { type: string }
+          items: { type: string, x-ctf-text-origin: operator }
           description: catalog ids (sorted)
         db:
           type: string
+          x-ctf-text-origin: operator
           description: path to the SQLite file inside the pod
         solved_loaded:
           type: integer
@@ -1990,15 +2018,18 @@ components:
       properties:
         rule:
           type: string
+          x-ctf-text-origin: operator
           description: Falco rule name (matched against catalog `expectedRules` / `forbiddenRules`)
         priority:
           type: string
+          x-ctf-text-origin: operator
           description: |
             Falco priority (e.g. Notice, Warning, Critical). Optional. Events
             explicitly at Debug/Informational/Info are ignored; a
             missing/unknown priority passes through for compatibility.
         time:
           type: string
+          x-ctf-text-origin: token
           format: date-time
           description: |
             Falco-side detection time. Optional; retained as a LOG FIELD only —
@@ -2014,17 +2045,17 @@ components:
             are answered 200 ignored.
           additionalProperties: {}
           properties:
-            k8s.ns.name: { type: string }
-            k8s.pod.name: { type: string }
-            container.image.repository: { type: string }
+            k8s.ns.name: { type: string, x-ctf-text-origin: operator }
+            k8s.pod.name: { type: string, x-ctf-text-origin: operator }
+            container.image.repository: { type: string, x-ctf-text-origin: operator }
 
     IngestAccepted:
       type: object
       required: [accepted, user, rule]
       properties:
         accepted: { type: boolean, const: true }
-        user: { type: string }
-        rule: { type: string }
+        user: { type: string, x-ctf-text-origin: token }
+        rule: { type: string, x-ctf-text-origin: operator }
 
     IngestIgnored:
       type: object
@@ -2033,6 +2064,7 @@ components:
         ignored: { type: boolean, const: true }
         reason:
           type: string
+          x-ctf-text-origin: enum
           enum:
             - not a ctf workspace event
             - not a challenge container
@@ -2044,10 +2076,11 @@ components:
       properties:
         user:
           type: string
+          x-ctf-text-origin: token
           pattern: '^[a-z0-9][a-z0-9-]{0,62}$'
           maxLength: 63
           description: CLAIMED identity — never proven on this route. Must be a username slug (400 otherwise; nothing is stored); surrounding whitespace is dropped by the server before the check
-        flag: { type: string }
+        flag: { type: string, x-ctf-text-origin: participant-opaque }
 
     SubmitFlagVerdict:
       type: object
@@ -2082,9 +2115,9 @@ components:
             either).
         exfiltrated: { type: boolean }
         solved: { type: boolean, const: true }
-        user: { type: string }
-        display_name: { type: string }
-        reason: { type: string }
+        user: { type: string, x-ctf-text-origin: token }
+        display_name: { type: string, x-ctf-text-origin: participant-inline }
+        reason: { type: string, x-ctf-text-origin: operator }
 
     SubmitDetectRequest:
       type: object
@@ -2092,10 +2125,12 @@ components:
       properties:
         user:
           type: string
+          x-ctf-text-origin: token
           pattern: '^[a-z0-9][a-z0-9-]{0,62}$'
           maxLength: 63
         condition:
           type: string
+          x-ctf-text-origin: participant-opaque
           description: the Falco condition to grade (<= 4 KiB)
 
     SubmitDetectVerdict:
@@ -2110,13 +2145,14 @@ components:
       properties:
         status:
           type: string
+          x-ctf-text-origin: enum
           enum: [invalid, missed, false-positive, solved]
         solved: { type: boolean }
         evasion_fires: { type: integer }
         benign_fires: { type: integer }
-        user: { type: string }
-        display_name: { type: string }
-        reason: { type: string }
+        user: { type: string, x-ctf-text-origin: token }
+        display_name: { type: string, x-ctf-text-origin: participant-inline }
+        reason: { type: string, x-ctf-text-origin: operator }
 
     ExfilRequest:
       type: object
@@ -2124,19 +2160,21 @@ components:
       properties:
         user:
           type: string
+          x-ctf-text-origin: token
           pattern: '^[a-z0-9][a-z0-9-]{0,62}$'
           maxLength: 63
           description: CLAIMED identity — must be a username slug (400 otherwise; nothing is stored); surrounding whitespace is dropped by the server before the check
-        flag: { type: string }
+        flag: { type: string, x-ctf-text-origin: participant-opaque }
 
     ExfilReceipt:
       type: object
       required: [received, user, note]
       properties:
         received: { type: boolean, const: true }
-        user: { type: string }
+        user: { type: string, x-ctf-text-origin: token }
         note:
           type: string
+          x-ctf-text-origin: operator
           description: display prose — do not parse
 
     StepCheckRequest:
@@ -2150,8 +2188,8 @@ components:
       required: [ok, user, cid, idx, checked]
       properties:
         ok: { type: boolean, const: true }
-        user: { type: string }
-        cid: { type: string }
+        user: { type: string, x-ctf-text-origin: token }
+        cid: { type: string, x-ctf-text-origin: token }
         idx: { type: integer }
         checked: { type: boolean }
 
@@ -2160,16 +2198,17 @@ components:
       required: [ok, user, cid, idx, hint, total, newly, kind, ruleRefs, cheatsheetRef]
       properties:
         ok: { type: boolean, const: true }
-        user: { type: string }
-        cid: { type: string }
+        user: { type: string, x-ctf-text-origin: token }
+        cid: { type: string, x-ctf-text-origin: token }
         idx: { type: integer, description: 1-based }
-        hint: { type: string, description: hint copy from journey.yaml (JourneyHint.text) }
+        hint: { type: string, description: hint copy from journey.yaml (JourneyHint.text), x-ctf-text-origin: operator }
         total: { type: integer, description: hint count for this mission }
         newly:
           type: boolean
           description: false when the hint was already open (idempotent re-open)
         kind:
           type: string
+          x-ctf-text-origin: operator
           description: |
             display label for this hint's staging (unified hints Phase 1:
             Hint1=Rule+link / Hint2=Command+link / Hint3=想定解). One of
@@ -2181,13 +2220,14 @@ components:
             point-cost tier, which stays keyed to `idx`.
         ruleRefs:
           type: array
-          items: { type: string }
+          items: { type: string, x-ctf-text-origin: operator }
           description: |
             Falco rule names from THIS mission's rule.yaml/falco-rule.yaml
             the portal may render as links. Always `[]`, never omitted/null,
             when the hint carries no rule link.
         cheatsheetRef:
           type: string
+          x-ctf-text-origin: operator
           description: |
             optional cheatsheet anchor/id the portal may render as a link.
             Empty string, never omitted/null, when the hint carries no
@@ -2198,8 +2238,8 @@ components:
       required: [ok, user, cid, dirty]
       properties:
         ok: { type: boolean, const: true }
-        user: { type: string }
-        cid: { type: string }
+        user: { type: string, x-ctf-text-origin: token }
+        cid: { type: string, x-ctf-text-origin: token }
         dirty: { type: boolean, const: false }
 
     DisplayNameRequest:
@@ -2208,6 +2248,7 @@ components:
       properties:
         name:
           type: string
+          x-ctf-text-origin: participant-inline
           description: |
             The display name. THE rule (the profile route, the 400 descriptions
             and `ProfileRequest.display_name` point here; `CreateThreadRequest.subject`
@@ -2239,11 +2280,12 @@ components:
       required: [ok, user, display_name]
       properties:
         ok: { type: boolean, const: true }
-        user: { type: string }
-        display_name: { type: string }
+        user: { type: string, x-ctf-text-origin: token }
+        display_name: { type: string, x-ctf-text-origin: participant-inline }
 
     AvatarId:
       type: string
+      x-ctf-text-origin: enum
       description: |
         A prepared avatar (ADR-0034 D9): `<glyph>-<color>`, 8 glyphs x 6 colours =
         48 ids, ordered glyph-outer / colour-inner. The 48th, `flame-slate`, is the
@@ -2318,6 +2360,7 @@ components:
       properties:
         display_name:
           type: string
+          x-ctf-text-origin: participant-inline
           description: "The rule is `DisplayNameRequest.name`'s"
         avatar: { $ref: "#/components/schemas/AvatarId" }
 
@@ -2327,9 +2370,10 @@ components:
       required: [ok, user, display_name, avatar]
       properties:
         ok: { type: boolean, const: true }
-        user: { type: string }
+        user: { type: string, x-ctf-text-origin: token }
         display_name:
           type: string
+          x-ctf-text-origin: participant-inline
           description: falls back to `user` when unset
         avatar: { $ref: "#/components/schemas/AvatarId" }
 
@@ -2344,7 +2388,7 @@ components:
       type: object
       required: [rule, at]
       properties:
-        rule: { type: string }
+        rule: { type: string, x-ctf-text-origin: operator }
         at:
           type: number
           description: unix seconds as a FLOAT (not RFC3339 — this feed differs from every other `at`)
@@ -2353,8 +2397,8 @@ components:
       type: object
       required: [challenge, at]
       properties:
-        challenge: { type: string }
-        at: { type: string, format: date-time }
+        challenge: { type: string, x-ctf-text-origin: token }
+        at: { type: string, format: date-time, x-ctf-text-origin: token }
 
     Me:
       type: object
@@ -2366,9 +2410,10 @@ components:
         [user, display_name, avatar, solved, solved_count, total_challenges,
          next_unsolved, recent_rule_fires, events, score, rank, hint_penalty, now]
       properties:
-        user: { type: string }
+        user: { type: string, x-ctf-text-origin: token }
         display_name:
           type: string
+          x-ctf-text-origin: participant-inline
           description: falls back to `user` when unset
         avatar:
           $ref: "#/components/schemas/AvatarId"
@@ -2380,6 +2425,7 @@ components:
         total_challenges: { type: integer }
         next_unsolved:
           type: string
+          x-ctf-text-origin: token
           nullable: true
           description: |
             next unsolved challenge id by catalog order. **null** when
@@ -2407,23 +2453,26 @@ components:
             representative figure = the cost of revealing HINT1. The portal uses
             the per-mission `Journey.detail.hints.penalty` instead; this field is
             kept for API back-compat.
-        now: { type: string, format: date-time }
+        now: { type: string, format: date-time, x-ctf-text-origin: token }
 
     MissionSummary:
       type: object
       description: one row of the journey mission map
       required: [id, title, tagline, type, status, hasJourney, bridge, docsUrl]
       properties:
-        id: { type: string }
+        id: { type: string, x-ctf-text-origin: token }
         title:
           type: string
+          x-ctf-text-origin: operator
           description: journey.yaml title, falling back to the challenge id
-        tagline: { type: string }
+        tagline: { type: string, x-ctf-text-origin: operator }
         type:
           type: string
+          x-ctf-text-origin: enum
           enum: [trigger, evade, detect]
         status:
           type: string
+          x-ctf-text-origin: enum
           enum: [solved, current, locked]
           description: |
             guided progression: everything after `current` is `locked`. A
@@ -2435,9 +2484,11 @@ components:
           description: false = no journey.yaml; the UI shows "ブリーフィング準備中" (fail-soft)
         bridge:
           type: string
+          x-ctf-text-origin: operator
           description: narrative teaser toward the next mission, shown in the CLEARED overlay (#47)
         docsUrl:
           type: string
+          x-ctf-text-origin: operator
           description: absolutised against the docs origin when one is configured
 
     Step:
@@ -2445,8 +2496,8 @@ components:
       required: [idx, label, detail, checked]
       properties:
         idx: { type: integer, description: 0-based }
-        label: { type: string }
-        detail: { type: string }
+        label: { type: string, x-ctf-text-origin: operator }
+        detail: { type: string, x-ctf-text-origin: operator }
         checked:
           type: boolean
           description: the tick the store holds for this step, whatever the mission's status
@@ -2456,9 +2507,10 @@ components:
       required: [idx, text, kind, ruleRefs, cheatsheetRef]
       properties:
         idx: { type: integer, description: 1-based }
-        text: { type: string }
+        text: { type: string, x-ctf-text-origin: operator }
         kind:
           type: string
+          x-ctf-text-origin: operator
           description: |
             display label for this hint's staging (unified hints Phase 1),
             same contract as OpenHintResult.kind — opaque display string, not
@@ -2466,12 +2518,13 @@ components:
             scalar-string journey.yaml hint (0→rule, 1→command, 2+→solution).
         ruleRefs:
           type: array
-          items: { type: string }
+          items: { type: string, x-ctf-text-origin: operator }
           description: |
             Falco rule names from this mission's rule.yaml/falco-rule.yaml;
             `[]` (never omitted/null) when the hint carries no rule link.
         cheatsheetRef:
           type: string
+          x-ctf-text-origin: operator
           description: |
             optional cheatsheet anchor/id; empty string (never omitted/null)
             when the hint carries no cheatsheet link.
@@ -2506,30 +2559,30 @@ components:
       type: object
       required: [name, items]
       properties:
-        name: { type: string }
+        name: { type: string, x-ctf-text-origin: operator }
         items:
           type: array
-          items: { type: string }
+          items: { type: string, x-ctf-text-origin: operator }
 
     FalcoMacroItem:
       type: object
       required: [name, condition]
       properties:
-        name: { type: string }
-        condition: { type: string }
+        name: { type: string, x-ctf-text-origin: operator }
+        condition: { type: string, x-ctf-text-origin: operator }
 
     FalcoRuleItem:
       type: object
       required: [name, desc, condition, output, priority, tags]
       properties:
-        name: { type: string }
-        desc: { type: string }
-        condition: { type: string }
-        output: { type: string }
-        priority: { type: string }
+        name: { type: string, x-ctf-text-origin: operator }
+        desc: { type: string, x-ctf-text-origin: operator }
+        condition: { type: string, x-ctf-text-origin: operator }
+        output: { type: string, x-ctf-text-origin: operator }
+        priority: { type: string, x-ctf-text-origin: operator }
         tags:
           type: array
-          items: { type: string }
+          items: { type: string, x-ctf-text-origin: operator }
 
     FalcoRuleExcerpt:
       type: object
@@ -2563,20 +2616,23 @@ components:
          expectedRuleFired, expectedRules, detectedRules,
          dirty, dirtyRules, steps, falcoRule, hasFalcoRule, hints]
       properties:
-        id: { type: string }
+        id: { type: string, x-ctf-text-origin: token }
         status:
           type: string
+          x-ctf-text-origin: enum
           enum: [solved, current, locked]
-        title: { type: string }
-        tagline: { type: string }
-        briefing: { type: string }
+        title: { type: string, x-ctf-text-origin: operator }
+        tagline: { type: string, x-ctf-text-origin: operator }
+        briefing: { type: string, x-ctf-text-origin: operator }
         leadIn:
           type: string
+          x-ctf-text-origin: operator
           description: previous mission's `bridge`; empty for the first mission (#47)
         type:
           type: string
+          x-ctf-text-origin: enum
           enum: [trigger, evade, detect]
-        docsUrl: { type: string }
+        docsUrl: { type: string, x-ctf-text-origin: operator }
         hasJourney: { type: boolean }
         requireExfil:
           type: boolean
@@ -2608,14 +2664,14 @@ components:
             trigger missions only (empty array otherwise) — the Falco rules
             whose fire auto-solves this mission. Rule NAMES only, already public
             in the operator view and the docs excerpts.
-          items: { type: string }
+          items: { type: string, x-ctf-text-origin: operator }
         detectedRules:
           type: array
           description: |
             expectedRules intersected with this user's rule fires in the last
             60s. UI-display-only live cue; the solve itself is recorded by
             ingest the instant the rule fires, independent of this window.
-          items: { type: string }
+          items: { type: string, x-ctf-text-origin: operator }
         dirty:
           type: boolean
           description: |
@@ -2624,7 +2680,7 @@ components:
         dirtyRules:
           type: array
           description: forbidden Falco rule names that tainted this attempt (names only, never a flag)
-          items: { type: string }
+          items: { type: string, x-ctf-text-origin: operator }
         steps:
           type: array
           items: { $ref: "#/components/schemas/Step" }
@@ -2641,8 +2697,8 @@ components:
         projection (polled every 2s). Display-only.
       required: [user, display_name, avatar, solved_count, total, current, missions, detail, score, hint_penalty, now]
       properties:
-        user: { type: string }
-        display_name: { type: string }
+        user: { type: string, x-ctf-text-origin: token }
+        display_name: { type: string, x-ctf-text-origin: participant-inline }
         avatar: { $ref: "#/components/schemas/AvatarId" }
         solved_count: { type: integer }
         total:
@@ -2650,6 +2706,7 @@ components:
           description: missions in this run's order (catalog-filtered)
         current:
           type: string
+          x-ctf-text-origin: token
           nullable: true
           description: |
             first unsolved mission id. **null** when every mission is solved
@@ -2669,14 +2726,14 @@ components:
         hint_penalty:
           type: integer
           description: representative HINT1 cost; the per-mission figure is `detail.hints.penalty`
-        now: { type: string, format: date-time }
+        now: { type: string, format: date-time, x-ctf-text-origin: token }
 
     LeaderboardEntry:
       type: object
       required: [user, display_name, avatar, solved, score, earliest, events, rank]
       properties:
-        user: { type: string }
-        display_name: { type: string }
+        user: { type: string, x-ctf-text-origin: token }
+        display_name: { type: string, x-ctf-text-origin: participant-inline }
         avatar: { $ref: "#/components/schemas/AvatarId" }
         solved: { type: integer }
         score:
@@ -2684,6 +2741,7 @@ components:
           description: base award per solve minus hint penalties, clamped at 0
         earliest:
           type: string
+          x-ctf-text-origin: token
           description: |
             RFC3339 timestamp of the user's MOST RECENT solve (field name kept
             for API stability; semantics changed 2026-09-03 CEO decision — see
@@ -2701,36 +2759,38 @@ components:
       type: object
       required: [user, display_name, avatar, at]
       properties:
-        user: { type: string }
-        display_name: { type: string }
+        user: { type: string, x-ctf-text-origin: token }
+        display_name: { type: string, x-ctf-text-origin: participant-inline }
         avatar: { $ref: "#/components/schemas/AvatarId" }
-        at: { type: string, format: date-time }
+        at: { type: string, format: date-time, x-ctf-text-origin: token }
 
     ChallengeStat:
       type: object
       required: [id, type, expectedRules, forbiddenRules, solved_count, solvers, solver_details, first_solver]
       properties:
-        id: { type: string }
+        id: { type: string, x-ctf-text-origin: token }
         type:
           type: string
+          x-ctf-text-origin: enum
           enum: [trigger, evade, detect]
         expectedRules:
           type: array
-          items: { type: string }
+          items: { type: string, x-ctf-text-origin: operator }
         forbiddenRules:
           type: array
-          items: { type: string }
+          items: { type: string, x-ctf-text-origin: operator }
         solved_count: { type: integer }
         solvers:
           type: array
           description: solver usernames ranked by solve time
-          items: { type: string }
+          items: { type: string, x-ctf-text-origin: token }
         solver_details:
           type: array
           description: solvers ranked by solve time — powers the per-challenge leaderboard
           items: { $ref: "#/components/schemas/ChallengeSolver" }
         first_solver:
           type: string
+          x-ctf-text-origin: token
           nullable: true
           description: first solver's username; **null** when nobody solved it (key always present)
 
@@ -2738,11 +2798,11 @@ components:
       type: object
       required: [user, display_name, avatar, challenge, at]
       properties:
-        user: { type: string }
-        display_name: { type: string }
+        user: { type: string, x-ctf-text-origin: token }
+        display_name: { type: string, x-ctf-text-origin: participant-inline }
         avatar: { $ref: "#/components/schemas/AvatarId" }
-        challenge: { type: string }
-        at: { type: string, format: date-time }
+        challenge: { type: string, x-ctf-text-origin: token }
+        at: { type: string, format: date-time, x-ctf-text-origin: token }
 
     State:
       type: object
@@ -2778,7 +2838,7 @@ components:
         events_per_user:
           type: object
           additionalProperties: { type: integer }
-        now: { type: string, format: date-time }
+        now: { type: string, format: date-time, x-ctf-text-origin: token }
 
     BoardMessage:
       type: object
@@ -2800,13 +2860,15 @@ components:
         does not by itself prove the author is staff — `author_role` does.
       required: [id, author_role, author, authorDisplay, authorAvatar, body, created_at, state]
       properties:
-        id: { type: string }
+        id: { type: string, x-ctf-text-origin: token }
         author_role:
           type: string
+          x-ctf-text-origin: enum
           enum: [participant, admin]
-        author: { type: string }
+        author: { type: string, x-ctf-text-origin: token }
         authorDisplay:
           type: string
+          x-ctf-text-origin: participant-inline
           description: |
             Server-resolved display name for `author` (app#292 Phase 3
             review). An `admin`-authored message always resolves to the
@@ -2817,10 +2879,11 @@ components:
             never fails or omits this field, it only ever falls back to
             the slug.
         authorAvatar: { $ref: "#/components/schemas/AvatarId" }
-        body: { type: string }
-        created_at: { type: string, format: date-time }
+        body: { type: string, x-ctf-text-origin: participant-block }
+        created_at: { type: string, format: date-time, x-ctf-text-origin: token }
         state:
           type: string
+          x-ctf-text-origin: enum
           enum: [visible, hidden, deleted]
 
     BoardThread:
@@ -2834,10 +2897,11 @@ components:
         use ONE shape for "here is the thread after my action" everywhere.
       required: [id, author, authorDisplay, audience, subject, created_at, pinned, answered, state, messages, like_count, liked]
       properties:
-        id: { type: string }
-        author: { type: string }
+        id: { type: string, x-ctf-text-origin: token }
+        author: { type: string, x-ctf-text-origin: token }
         authorDisplay:
           type: string
+          x-ctf-text-origin: participant-inline
           description: |
             Server-resolved display name for `author` (app#292 Phase 3
             review) — always the participant who opened the thread, so
@@ -2846,10 +2910,11 @@ components:
             display name was ever set.
         audience:
           type: string
+          x-ctf-text-origin: enum
           enum: [admin, all]
           description: fixed at creation; no operation in this API ever changes it
-        subject: { type: string }
-        created_at: { type: string, format: date-time }
+        subject: { type: string, x-ctf-text-origin: participant-inline }
+        created_at: { type: string, format: date-time, x-ctf-text-origin: token }
         pinned: { type: boolean }
         answered:
           type: boolean
@@ -2861,6 +2926,7 @@ components:
             question, this isn't answered yet").
         state:
           type: string
+          x-ctf-text-origin: enum
           enum: [visible, hidden, deleted]
         messages:
           type: array
@@ -2876,24 +2942,28 @@ components:
         One row of a QA Board thread LISTING — never the message bodies.
       required: [id, author, authorDisplay, audience, subject, created_at, updated_at, pinned, answered, state, message_count, like_count, liked]
       properties:
-        id: { type: string }
-        author: { type: string }
+        id: { type: string, x-ctf-text-origin: token }
+        author: { type: string, x-ctf-text-origin: token }
         authorDisplay:
           type: string
+          x-ctf-text-origin: participant-inline
           description: same server-resolved display name as BoardThread.authorDisplay — always the thread's opening participant.
         audience:
           type: string
+          x-ctf-text-origin: enum
           enum: [admin, all]
-        subject: { type: string }
-        created_at: { type: string, format: date-time }
+        subject: { type: string, x-ctf-text-origin: participant-inline }
+        created_at: { type: string, format: date-time, x-ctf-text-origin: token }
         updated_at:
           type: string
+          x-ctf-text-origin: token
           format: date-time
           description: the latest message's created_at (or created_at itself, for a thread with only its opening message)
         pinned: { type: boolean }
         answered: { type: boolean }
         state:
           type: string
+          x-ctf-text-origin: enum
           enum: [visible, hidden, deleted]
         message_count: { type: integer }
         like_count: { type: integer }
@@ -2918,6 +2988,7 @@ components:
       properties:
         audience:
           type: string
+          x-ctf-text-origin: participant-opaque
           description: |
             `admin` (private) or `all` (public). Any OTHER value —
             including empty/absent — is treated as `admin` server-side
@@ -2928,9 +2999,11 @@ components:
             before the handler's own fail-closed coercion ever runs.
         subject:
           type: string
+          x-ctf-text-origin: participant-inline
           description: "1..120 runes after trimming; rejected 400 if it matches the flag shape FALCO{...} (same shape check as body — a public audience=all thread's subject is rendered to every participant just like its body); rejected 400 if it contains a control (Cc) or format (Cf: bidi controls such as U+202E, zero-width characters) character, with the display-name rule's one ZWJ-between-emoji exception (see `DisplayNameRequest.name`) — but unlike a name, ' \" & < > are allowed (the 400 sentence is fixed and never echoes the subject)"
         body:
           type: string
+          x-ctf-text-origin: participant-block
           description: "1..4096 bytes after trimming; rejected 400 if it matches the flag shape FALCO{...}"
 
     PostMessageRequest:
@@ -2940,6 +3013,7 @@ components:
       properties:
         body:
           type: string
+          x-ctf-text-origin: participant-block
           description: "1..4096 bytes after trimming; rejected 400 if it matches the flag shape FALCO{...}"
 
     PostReplyRequest:
@@ -2949,6 +3023,7 @@ components:
       properties:
         body:
           type: string
+          x-ctf-text-origin: participant-block
           description: "1..4096 bytes after trimming; rejected 400 if it matches the flag shape FALCO{...}"
 
     ThreadStateRequest:
@@ -2963,6 +3038,7 @@ components:
         answered: { type: boolean }
         state:
           type: string
+          x-ctf-text-origin: enum
           enum: [visible, hidden, deleted]
 
     MessageStateRequest:
@@ -2971,6 +3047,7 @@ components:
       properties:
         state:
           type: string
+          x-ctf-text-origin: enum
           enum: [visible, hidden, deleted]
 
     LikeResult:
@@ -2979,7 +3056,7 @@ components:
       required: [ok, tid, liked, like_count]
       properties:
         ok: { type: boolean }
-        tid: { type: string }
+        tid: { type: string, x-ctf-text-origin: token }
         liked: { type: boolean }
         like_count: { type: integer }
 
@@ -2988,7 +3065,8 @@ components:
       required: [ok, mid, state]
       properties:
         ok: { type: boolean }
-        mid: { type: string }
+        mid: { type: string, x-ctf-text-origin: token }
         state:
           type: string
+          x-ctf-text-origin: enum
           enum: [visible, hidden, deleted]
