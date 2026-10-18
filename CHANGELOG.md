@@ -38,6 +38,7 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
   - **Upgrade note**: Warn が出たら、運営 dashboard の admin display-name (同じ validator) で名前だけ直す。表示名と絵柄を seat の既定に戻すなら `POST /api/admin/users/{user}/profile-reset` (origin-guard 付きなので admin session と許可 Origin が要る)。`seats` は 50 件で打ち切り、件数は全件。直した後に scoreboard を再起動すると残りが出る。
 ### Changed
 
+- **`scoreboard_ingest_falco_events_scoring_overflow_total{ns}` と `scoreboard_ingest_falco_events_rate_limited_total{ns}` の family を起動直後から出す (#412)。** `ns="_other"` の 0 を事前生成する (`_other` は ingest が ns の種類の上限に達したときに既に使う値で、series は増えない)。これまでは最初の increment まで family が無く、platform の verify / teardown gate は「family 無し」を 0 とも改名とも判定できなかった。今後 family 無し = 改名か旧 image であり、platform は「family 無し」を判定不能 (FAIL) に戻せる (platform #245 / #247 の最低 app ref はこの commit になる)。契約表の「Webhook 流量制限 (app#359)」行に明記し、`internal/scoreboard/metrics/contract_test.go` で名前・label・「起動直後から存在する」を固定した。
 - **identity を理由にした拒否の観測を 1 つにした (#404、ADR-0038)。** metric `scoreboard_identity_denials_total{gate, reason}` を新設し、4 つの gate が拒否を 1 要求につき 1 回、拒否した gate で数える。
   - `gate` = `strict` (identity 単位の rate-limit bucket) / `self_or_admin` / `authenticated` (board) / `portal` (識別できない呼び手に返した `GET /portal` の shell。200 のまま)。`reason` = `no_identity` (header が無いか空) / `non_canonical` (header はあるが `<seat>@<EXPECTED_EMAIL_DOMAIN>` でも admin でもない) / `mismatch` (正規形の別 seat。`self_or_admin` だけ)。
   - 起動時に 8 組を 0 で作る。健全な本番では `no_identity` と `non_canonical` は 0。platform が読む接点は契約表の「identity 拒否の観測」行。

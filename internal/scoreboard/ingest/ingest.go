@@ -185,7 +185,7 @@ func (h *Handler) nsLabel(ns string) string {
 		return ns
 	}
 	if len(ns) > 63 || len(h.nsSeen) >= maxNSLabels {
-		return "_other"
+		return metrics.OtherNS
 	}
 	h.nsSeen[ns] = struct{}{}
 	return ns
