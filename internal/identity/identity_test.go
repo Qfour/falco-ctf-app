@@ -121,8 +121,8 @@ func TestValidSeat(t *testing.T) {
 		{"a b", false},
 		{"a@b", false},
 		{"a\n", false}, // a trailing newline is not accepted
-		{"a‮b", false},
-		{"üser", false},
+		{"a\u202eb", false},
+		{"\u00fcser", false},
 	} {
 		if got := ValidSeat(c.s); got != c.want {
 			t.Errorf("ValidSeat(%q) = %v, want %v", c.s, got, c.want)

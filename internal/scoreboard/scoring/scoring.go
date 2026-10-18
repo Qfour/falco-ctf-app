@@ -157,7 +157,7 @@ import (
 // their adapter's check (ingest's namespace parse, the submit-detect handler's
 // identity check). The seat grammar they all use is identity.SeatPattern (the
 // one definition, app#440); closing the remaining entries in the Grader or the
-// Store is a separate decision.
+// Store is app#479.
 var ErrInvalidUser = errors.New("scoring: user is not a username slug")
 
 // CountNonSlugStoredUsers returns how many stored solves and how many stored
