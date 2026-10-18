@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Qfour/falco-ctf-app/internal/identity"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/avatar"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/oapi"
@@ -109,7 +110,7 @@ func parseProfileBody(body io.Reader) (displayName, avatarID *string, err error)
 // leave only one of them updated either.
 func (h *Handler) setProfile(w http.ResponseWriter, r *http.Request) {
 	user := strings.TrimSpace(r.PathValue("user"))
-	if !validUser.MatchString(user) {
+	if !identity.ValidSeat(user) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
 		return
 	}
@@ -179,7 +180,7 @@ func (h *Handler) adminResetProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := strings.TrimSpace(r.PathValue("user"))
-	if !validUser.MatchString(user) {
+	if !identity.ValidSeat(user) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
 		return
 	}

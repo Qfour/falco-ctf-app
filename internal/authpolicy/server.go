@@ -29,7 +29,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"regexp"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -37,12 +36,6 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
 	"github.com/Qfour/falco-ctf-app/internal/identity"
 )
-
-// validHost matches the username slugs Dex / oauth2-proxy emit. Restricting
-// the `host` query param to this shape rejects garbled inputs (containing
-// `@`, `/`, whitespace, etc.) before they reach the upstream-status branch
-// and avoids confusing metrics labels.
-var validHost = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 type Config struct {
 	OAuth2ProxyURL      string
@@ -298,7 +291,7 @@ func (h *Handler) checkWorkspace(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing ?host= query param", http.StatusBadRequest)
 		return
 	}
-	if !validHost.MatchString(host) {
+	if !identity.ValidSeat(host) {
 		count("bad_request")
 		http.Error(w, "invalid ?host= value", http.StatusBadRequest)
 		return
