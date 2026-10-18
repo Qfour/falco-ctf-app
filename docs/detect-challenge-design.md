@@ -290,7 +290,7 @@ version bumps (capture format & field semantics can change).
 ## 8. Feasibility spike — RESULT (mission 3, `/proc/self/root` evasion)
 
 Run locally on colima (Docker 29.2.1, kernel 6.8 + BTF), **prod untouched** (ephemeral
-containers/volumes only, all cleaned up). Falco image: `falcosecurity/falco:0.43.1`.
+containers/volumes only, all cleaned up). Falco image: `falcosecurity/falco:0.44.1`.
 
 ### 8.1 Findings
 

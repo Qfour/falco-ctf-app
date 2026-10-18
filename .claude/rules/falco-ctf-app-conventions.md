@@ -63,8 +63,8 @@
 | ttyd | (single-stage) | `alpine:3.24` |
 | ttyd-proxy | `golang:1.26-alpine` | `gcr.io/distroless/static-debian13:nonroot` |
 | challenge | `alpine:3.24` (`missions-builder`: `challenges/` 全体を読み、`<id>/fixtures/**` と `answers.yaml` だけを組み立てる。ADR-0026) | `alpine:3.24` (builder と同一 digest。`/opt/ctf/missions/` は `<id>/fixtures/**` だけ。`make check-image-hygiene` が V1-V3 で機械検査) |
-| docs | `python:3.12-slim` (mkdocs-material + pandoc + weasyprint) | `nginxinc/nginx-unprivileged:1.30-alpine` |
-| detect-grader | (single-stage) | `falcosecurity/falco:0.43.1` (wolfi/apko base; digest pin。非 root 65532 ユーザを build 時に追加) |
+| docs | `python:3.12-slim` (mkdocs-material + pandoc + weasyprint) | `nginxinc/nginx-unprivileged:1.30-alpine-slim` (動的 module / curl 無し。app#442) |
+| detect-grader | (single-stage) | `falcosecurity/falco:0.44.1` (wolfi/apko base; digest pin。非 root 65532 ユーザを build 時に追加) |
 
 - alpine の cycle は次の 3 条件を満たす **最古の supported cycle** を選ぶ
   (「リリース後 ~1 年経過」という月数基準は 2026-08 に廃止 — ADR-0002, Accepted):
@@ -140,8 +140,8 @@ docker buildx imagetools inspect golang:1.26-alpine --format '{{.Manifest.MediaT
 #                                       Dockerfile.e2e (serve stage。`make e2e-serve` のイメージ)、
 #     alpine:3.24                     = images/{ttyd,challenge}、
 #     python:3.12-slim                = images/docs (build stage)、
-#     nginx-unprivileged:1.30-alpine  = images/docs (serve stage)、
-#     falcosecurity/falco:0.43.1      = images/detect-grader (Falco 版 bump 時は
+#     nginx-unprivileged:1.30-alpine-slim = images/docs (serve stage)、
+#     falcosecurity/falco:0.44.1      = images/detect-grader (Falco 版 bump 時は
 #                                       digest 再解決 + capture 再録画をセットで。§5))
 
 # 3. 検証: 実ビルド + 鮮度 + テスト
