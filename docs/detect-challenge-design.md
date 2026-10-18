@@ -157,7 +157,7 @@ participant ──POST /submit-detect──▶ scoreboard (Grader.SubmitDetect)
                                           │  DetectRunner port
                                           ▼
                             create a per-submission K8s Job:
-                              image = falco-ctf-detect-grader (falco 0.43.1 + captures baked)
+                              image = falco-ctf-detect-grader (falco 0.44.1 + captures baked)
                               args  = mission id + condition (via a file, not argv)
                               Job runs: falco -V (validate) then two `engine.kind: replay`
                               passes; writes {evasionFires,benignFires,invalid} to a result
@@ -177,7 +177,7 @@ Why a **per-submission Job** over the alternatives:
 New image `falco-ctf-detect-grader` (owned by app-lead, follows the Dockerfile conventions
 & digest-pin/I5 rules — built at the same git SHA as the other 6 in a follow-up; this
 would extend I5 to **7 images**, a documented convention change, see §7 risk). Contents:
-- Falco 0.43.1 (pinned by digest);
+- Falco 0.44.1 (pinned by digest; `images/detect-grader/Dockerfile` is the source of truth);
 - the mission captures baked in (or mounted read-only from a ConfigMap/PVC — see §5);
 - a tiny entrypoint that: writes the participant condition into a fixed rule skeleton,
   runs `falco -V` (reject on non-zero), then two `engine.kind: replay` passes, and emits
@@ -290,7 +290,12 @@ version bumps (capture format & field semantics can change).
 ## 8. Feasibility spike — RESULT (mission 3, `/proc/self/root` evasion)
 
 Run locally on colima (Docker 29.2.1, kernel 6.8 + BTF), **prod untouched** (ephemeral
-containers/volumes only, all cleaned up). Falco image: `falcosecurity/falco:0.44.1`.
+containers/volumes only, all cleaned up). Falco image: `falcosecurity/falco:0.43.1`.
+
+> 2026-10-19: the shipped grader image is falco 0.44.1 (`images/detect-grader/Dockerfile`, the source
+> of truth for the version). What was checked on 0.44.1 is the config parse and the startup only;
+> §8.2 / §8.3 below were NOT re-run and are the record of the 0.43.1 spike. On a version bump,
+> re-record and re-verify per §5.
 
 ### 8.1 Findings
 

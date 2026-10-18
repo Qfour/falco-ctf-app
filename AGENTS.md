@@ -98,8 +98,8 @@ detect:
 ### Dockerfile 規約
 
 - scoreboard / auth-policy / collector は multi-stage: builder = `golang:1.26-alpine`、最終 = `gcr.io/distroless/static-debian13:nonroot`
-- ttyd / challenge は `alpine:3.22` 単段
-- docs は `python:3.12-slim` (mkdocs-material + pandoc + weasyprint) builder → `nginxinc/nginx-unprivileged:1.30-alpine-slim`
+- ttyd / challenge は `alpine:3.24` 単段
+- docs は `python:3.12-slim` (mkdocs-material) builder → `nginxinc/nginx-unprivileged:1.30-alpine-slim`
 - detect-grader は `falcosecurity/falco:0.44.1` 単段 (capture-replay 採点。非 root 65532 ユーザを build 時に追加)
 - 全 base image は digest pin (`image:tag@sha256:...`)
 - Go ビルドは `CGO_ENABLED=0 -ldflags="-s -w" -trimpath` で static binary

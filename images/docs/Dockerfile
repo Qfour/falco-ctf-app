@@ -4,7 +4,8 @@
 # gen-pages.py renders one page per challenge from it — no committed duplication).
 #   docker build --platform linux/amd64 -t <reg>/docs:<tag> -f images/docs/Dockerfile .
 #
-# Supply chain (P12/#227): both base digests below bumped 2026-08-28 (index
+# Supply chain (P12/#227): the serve stage's base was replaced by alpine-slim in app#442
+# (see the comment above its FROM); the build stage's digest below was bumped 2026-08-28 (index
 # digest re-resolved via `docker buildx imagetools inspect <image>:<tag>` — the
 # tag itself did not move, but upstream re-published a new index digest under
 # it, which is the mechanism that actually carries package-level CVE fixes
@@ -34,7 +35,7 @@ RUN for mode in participant admin; do \
 # nginx-unprivileged listens on 8080 as a non-root user (uid 101) — fits
 # runAsNonRoot without extra config.
 #
-# The `alpine-slim` variant (app#442, ADR-0036), not `alpine`: docs-site/nginx.conf is
+# The `alpine-slim` variant (app#442), not `alpine`: docs-site/nginx.conf is
 # a static file server (no load_module, no xslt / njs / image-filter / geoip directive),
 # and the `alpine` variant adds dynamic modules and curl on top of nginx. Those layers
 # pulled libxml2 (xslt), libexpat (fontconfig, via image-filter) and libx11 into the image
@@ -48,12 +49,14 @@ RUN for mode in participant admin; do \
 # `apk del`, and the HTTP probes (charts/docs/templates/deployment.yaml) do not need curl.
 # nginx 1.30.6 — the tag and 1.30.6-alpine-slim resolve to the same index digest
 # (`docker buildx imagetools inspect`, 2026-10-19).
+# This removes a source of forced bumps from an image that app#293 (A-3) retires
+# altogether; it does not change #293's decision.
 FROM nginxinc/nginx-unprivileged:1.30-alpine-slim@sha256:4ac59c85c8c46d9e91eaabd2122cda4923ba380cf11f4138e389f069bcdc77a3
 
-# The one pin that is left (ADR-0036 D2 (b): a package the base already has, raised to
-# the fixed build): zlib 1.3.2-r0 in the base, 1.3.2-r1 is what v3.24/main serves
+# The one pin that is left (a package the base already has, raised to the fixed build;
+# a pin like this is dropped as soon as the base carries that version): zlib 1.3.2-r0 in the base, 1.3.2-r1 is what v3.24/main serves
 # (`apk policy zlib`, 2026-10-19). libssl3 / libcrypto3 (3.5.9-r0) and pcre2 are at
-# the version v3.24/main serves, so they need no pin. Exit condition (D3): drop this
+# the version v3.24/main serves, so they need no pin. Exit condition: drop this
 # line when the base digest carries zlib >= 1.3.2-r1.
 # apk writes /lib/apk/db as root; the base's Config.User is 101 (non-root), so wrap
 # the apk call in USER root / USER 101 and the image still runs as 101.
