@@ -619,3 +619,158 @@ func TestTextOrigin_StaticRules_AllowedShapes(t *testing.T) {
 		})
 	}
 }
+
+const forwardTarget = `
+openapi: 3.1.0
+paths:
+  /internal/x/{cid}:
+    post:
+      x-ctf-audience: internal
+      x-ctf-collector-forward: false
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/Req"}
+components:
+  schemas:
+    Req:
+      type: object
+      required: [user, flag]
+      properties:
+        user: {type: string, pattern: '^[a-z]+$', maxLength: 63, x-ctf-text-origin: token}
+        flag: {type: string, x-ctf-text-origin: participant-opaque}
+`
+
+const forwardCopy = `
+openapi: 3.1.0
+paths:
+  /api/x/{cid}:
+    post:
+      x-ctf-audience: participant
+      x-ctf-collector-forward: true
+      x-ctf-forward-target: "POST /internal/x/{cid}"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user, flag]
+              properties:
+                user: {type: string, pattern: '^[a-z]+$', maxLength: 63, x-ctf-text-origin: token}
+                flag: {type: string, x-ctf-text-origin: participant-opaque}
+`
+
+func TestCollectorCopy_BaselineAgrees(t *testing.T) {
+	v, n := CollectorCopyViolations(specFromYAML(t, forwardCopy), specFromYAML(t, forwardTarget))
+	if len(v) != 0 {
+		t.Fatalf("baseline must agree, got:\n%s", strings.Join(v, "\n"))
+	}
+	if n != 2 {
+		t.Fatalf("compared %d string nodes, want 2 (user, flag): a comparison of 0 is not agreement", n)
+	}
+}
+
+// TestCollectorCopy_Mutations: ADR-0039 V2's collector rows, one change to the
+// copy (or the target) each.
+func TestCollectorCopy_Mutations(t *testing.T) {
+	cases := []struct {
+		name     string
+		onTarget bool // mutate the target instead of the copy
+		from, to string
+		want     []string
+	}{
+		{"the copy's class differs from the target's", false,
+			`flag: {type: string, x-ctf-text-origin: participant-opaque}`, `flag: {type: string, x-ctf-text-origin: operator}`,
+			[]string{"requestBody/properties/flag vs POST /internal/x/{cid}: x-ctf-text-origin differs: copy operator, target participant-opaque"}},
+		{"the copy's pattern differs by one character", false,
+			`pattern: '^[a-z]+$', maxLength: 63, x-ctf-text-origin: token}
+                flag`, `pattern: '^[a-y]+$', maxLength: 63, x-ctf-text-origin: token}
+                flag`,
+			[]string{"properties/user vs POST /internal/x/{cid}: pattern differs"}},
+		{"the copy's pattern is missing", false,
+			`pattern: '^[a-z]+$', maxLength: 63, x-ctf-text-origin: token}
+                flag`, `maxLength: 63, x-ctf-text-origin: token}
+                flag`,
+			[]string{"pattern differs: copy (absent), target ^[a-z]+$"}},
+		{"the copy's maxLength is missing", false,
+			`pattern: '^[a-z]+$', maxLength: 63, x-ctf-text-origin: token}
+                flag`, `pattern: '^[a-z]+$', x-ctf-text-origin: token}
+                flag`,
+			[]string{"maxLength differs: copy (absent), target 63"}},
+		{"the copy's required drops flag", false,
+			`required: [user, flag]
+              properties:`, `required: [user]
+              properties:`,
+			[]string{"properties/flag vs POST /internal/x/{cid}: required differs: copy false, target true"}},
+		{"the copy gains a minLength", false,
+			`maxLength: 63, x-ctf-text-origin: token}
+                flag`, `maxLength: 63, minLength: 1, x-ctf-text-origin: token}
+                flag`,
+			[]string{"minLength differs: copy 1, target (absent)"}},
+		{"the copy gains a format", false,
+			`flag: {type: string, x-ctf-text-origin: participant-opaque}`, `flag: {type: string, format: byte, x-ctf-text-origin: participant-opaque}`,
+			[]string{"properties/flag vs POST /internal/x/{cid}: format differs"}},
+		{"the copy gains a string property the target lacks", false,
+			`flag: {type: string, x-ctf-text-origin: participant-opaque}`, `flag: {type: string, x-ctf-text-origin: participant-opaque}
+                extra: {type: string, x-ctf-text-origin: participant-opaque}`,
+			[]string{"properties/extra vs POST /internal/x/{cid}: the copy has a string node the target does not"}},
+		{"the target gains a string property the copy lacks", true,
+			`flag: {type: string, x-ctf-text-origin: participant-opaque}`, `flag: {type: string, x-ctf-text-origin: participant-opaque}
+        more: {type: string, x-ctf-text-origin: token}`,
+			[]string{"properties/more vs POST /internal/x/{cid}: the target has a string node the copy lacks"}},
+		{"the target's maxLength changes", true,
+			`maxLength: 63`, `maxLength: 64`,
+			[]string{"maxLength differs: copy 63, target 64"}},
+		{"the forward target names no operation", false,
+			`x-ctf-forward-target: "POST /internal/x/{cid}"`, `x-ctf-forward-target: "POST /internal/y/{cid}"`,
+			[]string{`x-ctf-forward-target "POST /internal/y/{cid}" is not an operation of the target spec`}},
+		{"the forward target is missing", false,
+			`      x-ctf-forward-target: "POST /internal/x/{cid}"
+`, ``,
+			[]string{"writes a request schema but has no x-ctf-forward-target"}},
+		{"the copy $refs outside the document", false,
+			`schema:
+              type: object
+              required: [user, flag]
+              properties:
+                user: {type: string, pattern: '^[a-z]+$', maxLength: 63, x-ctf-text-origin: token}
+                flag: {type: string, x-ctf-text-origin: participant-opaque}`, `schema: {$ref: "scoreboard.yaml#/components/schemas/Req"}`,
+			[]string{`$ref "scoreboard.yaml#/components/schemas/Req" does not name an existing`}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cdoc, tdoc := forwardCopy, forwardTarget
+			if tc.onTarget {
+				tdoc = mutateOnce(t, tdoc, tc.from, tc.to)
+			} else {
+				cdoc = mutateOnce(t, cdoc, tc.from, tc.to)
+			}
+			v, _ := CollectorCopyViolations(specFromYAML(t, cdoc), specFromYAML(t, tdoc))
+			if len(v) == 0 {
+				t.Fatal("the mutation was not detected")
+			}
+			all := strings.Join(v, "\n")
+			for _, w := range tc.want {
+				if !strings.Contains(all, w) {
+					t.Errorf("violations do not contain %q; got:\n%s", w, all)
+				}
+			}
+		})
+	}
+}
+
+// TestCollectorCopy_NoSchemaWrittenIsNothingToCompare: a forwarded operation
+// whose body is "{}" (submit) is skipped, and a spec with no comparable copy at
+// all reports compared == 0 so the real-spec test can refuse that.
+func TestCollectorCopy_NoSchemaWrittenIsNothingToCompare(t *testing.T) {
+	doc := mutateOnce(t, forwardCopy, `            schema:
+              type: object
+              required: [user, flag]
+              properties:
+                user: {type: string, pattern: '^[a-z]+$', maxLength: 63, x-ctf-text-origin: token}
+                flag: {type: string, x-ctf-text-origin: participant-opaque}`, `            {}`)
+	v, n := CollectorCopyViolations(specFromYAML(t, doc), specFromYAML(t, forwardTarget))
+	if len(v) != 0 || n != 0 {
+		t.Fatalf("got violations %v, compared %d; want none and 0", v, n)
+	}
+}
