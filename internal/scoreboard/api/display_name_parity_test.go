@@ -24,11 +24,15 @@ import (
 // same rows. The contract between them: the form is never stricter than the
 // server, so a row may never be `client: reject` with `server: accept`; the only
 // allowed difference is `client: accept, server: reject` on a U+200D (ZWJ),
-// whose emoji-adjacency rule the form leaves to the server.
+// whose emoji-adjacency rule the form leaves to the server, or on a flag SHAPE
+// (flagShapePattern, app#402), a pattern rule the form leaves to the server too.
 //
 // The view test carries its own copy of the row struct and loader: the two
 // packages share the file, not code (a shared test-only package would be one more
 // import edge for a table this small).
+
+// reasonFlagShape is the `reason` of a row the server refuses for its flag SHAPE.
+const reasonFlagShape = "flag-shape"
 
 type nameParityCase struct {
 	Name   string  `yaml:"name"`
@@ -36,6 +40,7 @@ type nameParityCase struct {
 	Server string  `yaml:"server"`
 	Client string  `yaml:"client"`
 	Stored *string `yaml:"stored"`
+	Reason string  `yaml:"reason"`
 	Note   string  `yaml:"note"`
 }
 
@@ -70,6 +75,9 @@ func loadNameParityCases(t *testing.T) []nameParityCase {
 		if c.Stored != nil && c.Server != "accept" {
 			t.Fatalf("cases.yaml row %d (%s): stored only makes sense on a server: accept row", i, c.Note)
 		}
+		if c.Reason != "" && (c.Reason != reasonFlagShape || c.Server != "reject" || c.Client != "accept") {
+			t.Fatalf("cases.yaml row %d (%s): reason is only `%s`, on a server: reject, client: accept row", i, c.Note, reasonFlagShape)
+		}
 	}
 	return f.Cases
 }
@@ -103,30 +111,46 @@ func TestDisplayNameParity_ServerMatchesTable(t *testing.T) {
 
 // TestDisplayNameParity_ClientIsNeverStricter: the table itself never records a
 // form that refuses what the server accepts, and the one documented difference
-// (form accepts, server refuses) is only ever on a ZWJ. This is the
+// (form accepts, server refuses) is only ever on a ZWJ or a flag shape. This is the
 // "client-only reject = 0" half of the contract; the view test checks that the
 // form really answers the table.
 func TestDisplayNameParity_ClientIsNeverStricter(t *testing.T) {
-	var clientOnlyReject, serverOnlyReject int
+	var clientOnlyReject, zwjOnly, flagShapeOnly int
 	for _, c := range loadNameParityCases(t) {
 		switch {
 		case c.Client == "reject" && c.Server == "accept":
 			clientOnlyReject++
 			t.Errorf("%s: the form refuses a name the server accepts (%+q)", c.Note, c.input())
 		case c.Client == "accept" && c.Server == "reject":
-			serverOnlyReject++
+			if c.Reason == reasonFlagShape {
+				// The form leaves the flag shape to the server, and the refusal must BE
+				// the flag-shape one: the input passed the length and character checks.
+				flagShapeOnly++
+				if _, err := validDisplayName(c.input()); err == nil || err.Error() != errMsgDisplayNameFlagShape {
+					t.Errorf("%s: a reason: %s row must be refused with %q, got %v (%+q)", c.Note, reasonFlagShape, errMsgDisplayNameFlagShape, err, c.input())
+				}
+				continue
+			}
+			zwjOnly++
 			if !strings.ContainsRune(c.input(), zeroWidthJoiner) {
-				t.Errorf("%s: only a ZWJ may be accepted by the form and refused by the server (%+q)", c.Note, c.input())
+				t.Errorf("%s: a server-only reject needs either a ZWJ or `reason: %s` (%+q)", c.Note, reasonFlagShape, c.input())
 			}
 		}
 	}
 	if clientOnlyReject != 0 {
 		t.Fatalf("client-only rejects = %d, want 0", clientOnlyReject)
 	}
-	if serverOnlyReject == 0 {
+	// Each documented difference keeps its own floor, so deleting one family cannot hide behind the other.
+	if zwjOnly == 0 {
 		t.Fatal("the table has no ZWJ row the server refuses and the form lets through; the documented difference is gone")
 	}
+	if flagShapeOnly < minFlagShapeRows {
+		t.Fatalf("the table has %d flag-shape rows (reason: %s), want at least %d", flagShapeOnly, reasonFlagShape, minFlagShapeRows)
+	}
 }
+
+// minFlagShapeRows is the floor of `reason: flag-shape` rows in cases.yaml.
+const minFlagShapeRows = 10
 
 // nameRule is testdata/display-name-parity/rule.yaml: the character class both
 // sweeps (this package's and the form's, in internal/scoreboard/view) compare to.
