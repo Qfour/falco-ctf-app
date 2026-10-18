@@ -140,10 +140,17 @@ func originOf(referer string) (string, bool) {
 }
 
 func (g *Guard) deny(w http.ResponseWriter, r *http.Request, field, value string) {
+	// The matched route pattern, never the raw request path: a path segment is
+	// caller-chosen and must not reach the log. "-" when the guard runs outside
+	// a ServeMux (no pattern).
+	route := r.Pattern
+	if route == "" {
+		route = "-"
+	}
 	g.logger.Warn("origin guard denied",
 		"remote_addr", r.RemoteAddr,
 		"method", r.Method,
-		"path", r.URL.Path,
+		"route", route,
 		field, value,
 	)
 	httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})

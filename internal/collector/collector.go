@@ -101,6 +101,13 @@ func New(upstream string, logger *slog.Logger, opts ...Option) (*Handler, error)
 	h.limiter = ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(h.now)
 
 	h.proxy = httputil.NewSingleHostReverseProxy(u)
+	// Explicit upstream transport: the default one's 90s idle-connection time
+	// would be longer than some server idle deadlines. Idle upstream connections
+	// are closed after 30s, shorter than the scoreboard's IdleTimeout
+	// (serverutil), so the collector side closes first.
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.IdleConnTimeout = 30 * time.Second
+	h.proxy.Transport = tr
 	// Strip participant-controlled forwarding headers before forwarding. The
 	// workspace connects directly (no trusted ingress-nginx in front), so any
 	// inbound X-Forwarded-For / X-Real-IP / CF-Connecting-IP is
