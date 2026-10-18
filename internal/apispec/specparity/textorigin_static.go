@@ -2,23 +2,33 @@ package specparity
 
 // ADR-0039 S1b, D3 (d): the static rules between a word and where its node
 // sits. They need to know, for each string node, whether an operation's
-// request or response reaches it (following $ref into components) and, for a
-// request, whether the operation may carry operator-chosen text.
+// request or response reaches it (following $ref into components, however
+// long the chain) and, for a request, whether the operation may carry
+// operator-chosen text.
 //
 //   - participant-opaque is promised never to be echoed: a node a response
 //     reaches must not be opaque.
-//   - operator text goes in a request only where the operation's audience is
-//     operator, or internal and not forwarded by the collector (falcosidekick's
-//     webhook is the example). An operation a participant can reach has no
-//     operator-chosen request field; this is what keeps "operator" from being
-//     used to launder a participant's bytes as staff text.
+//   - operator text goes in a request only where the operation is an
+//     operator-audience or internal one that the collector does not forward
+//     (falcosidekick's webhook is the example). An operation a participant
+//     can reach has no operator-chosen request field; this is what keeps
+//     "operator" from being used to launder a participant's bytes as staff
+//     text. NOTE the approximation: this is derived from audience and the
+//     forward flag, not from who can really connect. auth-policy's /check-*
+//     operations are `internal` and not forwarded, yet a participant's
+//     browser reaches them through the ingress; so "operator" there is a
+//     statement about the declaration, and widening what the request-side
+//     operator nodes are is a D3 (g) pin question (ADR rev4), not decided here.
 //   - `enum` if and only if the node has `enum` or `const`.
-//   - a participant-inline / participant-block node a response reaches is a
-//     NAMED property (not items / additionalProperties / a parameter or
-//     header schema): the portal's derivation (S2) finds participant text by
-//     property name, so an unnamed one would be invisible to it.
-//   - a participant-* property name is not reused, in responses, by a string
-//     node of another class: the same derivation matches by name.
+//   - participant-inline / participant-block are written INLINE: the string
+//     schema sits at the property that uses it, never behind a `$ref` to a
+//     shared definition (VP decision on review-5x 40). The portal derivation
+//     (S2) matches participant text by the name of the property that uses it
+//     and a pointer into a component would be invisible to a name rule.
+//   - a participant-inline / -block node a response reaches is a NAMED
+//     property (not items / additionalProperties / a parameter or header
+//     schema / a combinator branch), and that use-site property name is not
+//     reused, in responses, by a string node of another class.
 //
 // A component reached from both a request and a response is subject to both
 // sides' rules. A component no operation reaches is subject to the enum rule
@@ -31,142 +41,166 @@ import (
 )
 
 // operatorCapable reports whether an operation's request may carry
-// `operator` text (ADR-0039 D2's operator row). A missing or unreadable
-// extension is NOT capable: fail-closed.
+// `operator` text (ADR-0039 D2's operator row): an operator- or
+// internal-audience operation, AND explicitly not forwarded by the
+// collector. A missing or unreadable extension is NOT capable: fail-closed.
 func operatorCapable(op map[string]any) bool {
 	aud, _ := StringExt(op, "x-ctf-audience")
-	if aud == "operator" {
-		return true
-	}
 	fwd, ok := BoolExt(op, "x-ctf-collector-forward")
-	return aud == "internal" && ok && !fwd
+	return (aud == "operator" || aud == "internal") && ok && !fwd
 }
 
-// reachSets is which string nodes the operations' responses and (non
-// operator-capable) requests reach.
+// use is one place a string node is used from: the property that names the
+// use site (when the node was entered through `properties`, possibly across
+// $ref hops) and whether the node itself was reached through a `$ref`.
+type use struct {
+	ptr      string // the string node's defining pointer
+	property string // use-site property name, "" when the node is not a named property
+	viaRef   bool   // the string node itself is behind a `$ref` (a shared definition)
+}
+
+// reachSets is which string nodes the operations' responses and requests
+// reach.
 type reachSets struct {
-	resp           map[string]bool
+	respUses       []use               // every use of a string node from a response (deduplicated, sorted)
+	reqAny         map[string]bool     // pointers any request reaches (operator-capable operations too)
+	respAny        map[string]bool     // pointers any response reaches
 	reqParticipant map[string][]string // node pointer -> operations whose request reaches it and may not carry operator text
+	reqViaRef      map[string]bool     // node pointer -> reached from a request through a `$ref` at the node itself
+	respViaRef     map[string]bool     // the same for responses
 }
 
-// derefComponent follows a `$ref` of the shape #/components/<section>/<Name>
-// to its entry, returning the entry and its pointer. Any other node is
-// returned unchanged with the given pointer. An unresolvable $ref returns
-// (nil, "") (TextOrigin reports it separately).
-func (s *Spec) derefComponent(v any, ptr string) (any, string) {
-	m, ok := asMap(v)
-	if !ok {
-		return v, ptr
+// derefAll follows `$ref` (any #/components/<section>/<Name>) until the node
+// is not a reference, returning the entry, its pointer and how many hops it
+// took. A reference that does not resolve, or a cycle, returns (nil, "", n):
+// TextOrigin reports the first; a cycle holds no string node.
+func (s *Spec) derefAll(v any, ptr string) (any, string, int) {
+	seen := map[string]bool{}
+	hops := 0
+	for {
+		m, ok := asMap(v)
+		if !ok {
+			return v, ptr, hops
+		}
+		ref, ok := m["$ref"].(string)
+		if !ok {
+			return v, ptr, hops
+		}
+		if !s.refResolves(ref) || seen[ref] {
+			return nil, "", hops
+		}
+		seen[ref] = true
+		segs := strings.Split(ref[2:], "/")
+		comp, _ := asMap(s.raw["components"])
+		section, _ := asMap(comp[segs[1]])
+		name := strings.ReplaceAll(strings.ReplaceAll(segs[2], "~1", "/"), "~0", "~")
+		v, ptr = section[name], childPointer(childPointer("/components", segs[1]), name)
+		hops++
 	}
-	ref, ok := m["$ref"].(string)
-	if !ok {
-		return v, ptr
-	}
-	if !s.refResolves(ref) {
-		return nil, ""
-	}
-	segs := strings.Split(ref[2:], "/")
-	comp, _ := asMap(s.raw["components"])
-	section, _ := asMap(comp[segs[1]])
-	name := strings.ReplaceAll(strings.ReplaceAll(segs[2], "~1", "/"), "~0", "~")
-	return section[name], childPointer(childPointer("/components", segs[1]), name)
 }
 
 func (s *Spec) reachability() reachSets {
-	rs := reachSets{resp: map[string]bool{}, reqParticipant: map[string][]string{}}
+	rs := reachSets{
+		reqAny: map[string]bool{}, respAny: map[string]bool{},
+		reqParticipant: map[string][]string{}, reqViaRef: map[string]bool{}, respViaRef: map[string]bool{},
+	}
+	respUse := map[use]bool{}
 
 	// schema descends one Schema Object, following $ref, calling visit for
-	// each string node. seen stops a recursive schema.
-	var schema func(v any, ptr string, seen map[string]bool, visit func(string))
-	schema = func(v any, ptr string, seen map[string]bool, visit func(string)) {
-		v, ptr = s.derefComponent(v, ptr)
+	// each string node. property is the use-site name carried in from the
+	// parent when this node was entered through `properties` (it survives
+	// $ref hops); seen stops recursion.
+	var schema func(v any, ptr, property string, seen map[string]bool, visit func(use))
+	schema = func(v any, ptr, property string, seen map[string]bool, visit func(use)) {
+		v, ptr, hops := s.derefAll(v, ptr)
 		m, ok := asMap(v)
-		if !ok || seen[ptr] {
+		if !ok {
 			return
 		}
-		seen[ptr] = true
+		key := ptr + "\x00" + property
+		if seen[key] {
+			return
+		}
+		seen[key] = true
 		if isStringType(m) {
-			visit(ptr)
+			visit(use{ptr: ptr, property: property, viaRef: hops > 0})
 		}
-		if props, ok := asMap(m["properties"]); ok {
-			for k, pv := range props {
-				schema(pv, childPointer(childPointer(ptr, "properties"), k), seen, visit)
+		for _, c := range schemaChildren(m) {
+			name := ""
+			if c.named {
+				name = c.property
 			}
-		}
-		for _, kw := range []string{"items", "additionalProperties"} {
-			schema(m[kw], childPointer(ptr, kw), seen, visit)
-		}
-		for _, kw := range []string{"allOf", "anyOf", "oneOf"} {
-			if list, ok := m[kw].([]any); ok {
-				for i, el := range list {
-					schema(el, childPointer(childPointer(ptr, kw), fmt.Sprint(i)), seen, visit)
-				}
-			}
+			schema(c.node, childPtr(ptr, c), name, seen, visit)
 		}
 	}
-	media := func(v any, ptr string, seen map[string]bool, visit func(string)) {
-		v, ptr = s.derefComponent(v, ptr)
+	media := func(v any, ptr string, seen map[string]bool, visit func(use)) {
+		v, ptr, _ = s.derefAll(v, ptr)
 		m, ok := asMap(v)
 		if !ok {
 			return
 		}
 		if content, ok := asMap(m["content"]); ok {
-			for mt, mv := range content {
-				if mm, ok := asMap(mv); ok {
-					schema(mm["schema"], childPointer(childPointer(childPointer(ptr, "content"), mt), "schema"), seen, visit)
+			for _, mt := range sortedAnyKeys(content) {
+				if mm, ok := asMap(content[mt]); ok {
+					schema(mm["schema"], childPointer(childPointer(childPointer(ptr, "content"), mt), "schema"), "", seen, visit)
 				}
 			}
 		}
 	}
-	parameter := func(v any, ptr string, seen map[string]bool, visit func(string)) {
-		v, ptr = s.derefComponent(v, ptr)
+	parameter := func(v any, ptr string, seen map[string]bool, visit func(use)) {
+		v, ptr, _ = s.derefAll(v, ptr)
 		m, ok := asMap(v)
 		if !ok {
 			return
 		}
-		schema(m["schema"], childPointer(ptr, "schema"), seen, visit)
+		schema(m["schema"], childPointer(ptr, "schema"), "", seen, visit)
 		media(m, ptr, seen, visit)
 	}
-	response := func(v any, ptr string, seen map[string]bool, visit func(string)) {
-		v, ptr = s.derefComponent(v, ptr)
+	response := func(v any, ptr string, seen map[string]bool, visit func(use)) {
+		v, ptr, _ = s.derefAll(v, ptr)
 		media(v, ptr, seen, visit)
 		if m, ok := asMap(v); ok {
 			if hs, ok := asMap(m["headers"]); ok {
-				for hk, hv := range hs {
-					parameter(hv, childPointer(childPointer(ptr, "headers"), hk), seen, visit)
+				for _, hk := range sortedAnyKeys(hs) {
+					parameter(hs[hk], childPointer(childPointer(ptr, "headers"), hk), seen, visit)
 				}
 			}
 		}
 	}
 
 	paths, _ := asMap(s.raw["paths"])
-	for p, pv := range paths {
-		item, ok := asMap(pv)
+	for _, p := range sortedAnyKeys(paths) {
+		item, ok := asMap(paths[p])
 		if !ok {
 			continue
 		}
 		pp := childPointer("/paths", p)
-		for method, ov := range item {
+		for _, method := range sortedAnyKeys(item) {
 			if !httpMethods[strings.ToLower(method)] {
 				continue
 			}
-			op, ok := asMap(ov)
+			op, ok := asMap(item[method])
 			if !ok {
 				continue
 			}
 			opKey := strings.ToUpper(method) + " " + p
 			op0 := childPointer(pp, method)
+			capable := operatorCapable(op)
 
-			reqVisit := func(ptr string) {}
-			if !operatorCapable(op) {
-				reqVisit = func(ptr string) {
-					for _, k := range rs.reqParticipant[ptr] {
-						if k == opKey {
-							return
-						}
-					}
-					rs.reqParticipant[ptr] = append(rs.reqParticipant[ptr], opKey)
+			reqVisit := func(u use) {
+				rs.reqAny[u.ptr] = true
+				if u.viaRef {
+					rs.reqViaRef[u.ptr] = true
 				}
+				if capable {
+					return
+				}
+				for _, k := range rs.reqParticipant[u.ptr] {
+					if k == opKey {
+						return
+					}
+				}
+				rs.reqParticipant[u.ptr] = append(rs.reqParticipant[u.ptr], opKey)
 			}
 			reqSeen := map[string]bool{}
 			for _, lp := range []struct {
@@ -183,30 +217,63 @@ func (s *Spec) reachability() reachSets {
 
 			respSeen := map[string]bool{}
 			if rm, ok := asMap(op["responses"]); ok {
-				for code, rv := range rm {
-					response(rv, childPointer(childPointer(op0, "responses"), code), respSeen, func(ptr string) { rs.resp[ptr] = true })
+				for _, code := range sortedAnyKeys(rm) {
+					response(rm[code], childPointer(childPointer(op0, "responses"), code), respSeen, func(u use) {
+						rs.respAny[u.ptr] = true
+						if u.viaRef {
+							rs.respViaRef[u.ptr] = true
+						}
+						respUse[u] = true
+					})
 				}
 			}
 		}
 	}
+	for u := range respUse {
+		rs.respUses = append(rs.respUses, u)
+	}
+	sort.Slice(rs.respUses, func(i, j int) bool {
+		a, b := rs.respUses[i], rs.respUses[j]
+		if a.ptr != b.ptr {
+			return a.ptr < b.ptr
+		}
+		if a.property != b.property {
+			return a.property < b.property
+		}
+		return !a.viaRef && b.viaRef
+	})
 	for _, ops := range rs.reqParticipant {
 		sort.Strings(ops)
 	}
 	return rs
 }
 
-// propertyName returns the property name when a node's pointer ends in
-// /properties/<name> (unescaped), and false for any other position.
-func propertyName(ptr string) (string, bool) {
-	segs := strings.Split(ptr, "/")
-	if len(segs) < 3 || segs[len(segs)-2] != "properties" {
-		return "", false
+func sortedAnyKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
 	}
-	return strings.ReplaceAll(strings.ReplaceAll(segs[len(segs)-1], "~1", "/"), "~0", "~"), true
+	sort.Strings(keys)
+	return keys
 }
 
 func isParticipantText(word string) bool {
 	return word == OriginParticipantInline || word == OriginParticipantBlock
+}
+
+// inlineNodesNotReached lists string nodes written inline under an operation
+// (pointer under /paths/) that the reachability walk never visited from
+// either side. It must be empty: the two walks share schemaChildren and the
+// same entry points, so a non-empty answer means one of them was changed
+// without the other and the (d) rules would silently skip those nodes.
+func inlineNodesNotReached(nodes []StringNode, rs reachSets) []string {
+	var out []string
+	for _, n := range nodes {
+		if strings.HasPrefix(n.Pointer, "/paths/") && !rs.reqAny[n.Pointer] && !rs.respAny[n.Pointer] {
+			out = append(out, n.Pointer)
+		}
+	}
+	return out
 }
 
 // staticRuleViolations checks D3 (d) for the already-walked string nodes.
@@ -216,59 +283,88 @@ func (s *Spec) staticRuleViolations(nodes []StringNode) []string {
 	var viol []string
 	rs := s.reachability()
 
-	type named struct{ ptr, word string }
-	byName := map[string][]named{}
+	for _, p := range inlineNodesNotReached(nodes, rs) {
+		viol = append(viol, fmt.Sprintf("%s: an inline string node under /paths/ that the request/response reachability walk never visited (the walks disagree: the (d) rules would skip it)", p))
+	}
 
+	words := map[string]string{} // pointer -> word, valid declarations only
+	hasEnum := map[string]bool{}
 	for _, n := range nodes {
 		word, ok := n.Raw.(string)
 		if !ok || !inVocabulary(word) {
 			continue
 		}
+		words[n.Pointer] = word
+		hasEnum[n.Pointer] = n.HasEnum
 		switch {
 		case word == OriginEnum && !n.HasEnum:
 			viol = append(viol, fmt.Sprintf("%s: declared `enum` but has neither `enum` nor `const` (the word names a closed set)", n.Pointer))
 		case word != OriginEnum && n.HasEnum:
 			viol = append(viol, fmt.Sprintf("%s: has `enum`/`const` but declares %q (a closed set is `enum`)", n.Pointer, word))
 		}
+	}
 
-		if ops := rs.reqParticipant[n.Pointer]; word == OriginOperator && len(ops) > 0 {
-			viol = append(viol, fmt.Sprintf("%s: `operator` text in the request of %s, which is neither operator-audience nor internal-and-not-forwarded (a participant can reach it, so the bytes are not operator's)", n.Pointer, strings.Join(ops, ", ")))
-		}
-
-		if !rs.resp[n.Pointer] {
+	for _, n := range nodes {
+		word, ok := words[n.Pointer]
+		if !ok {
 			continue
 		}
-		if word == OriginParticipantOpaque {
-			viol = append(viol, fmt.Sprintf("%s: `participant-opaque` is reachable from a response (opaque is promised never to be echoed; if it is shown it is participant-inline or -block)", n.Pointer))
+		if ops := rs.reqParticipant[n.Pointer]; word == OriginOperator && len(ops) > 0 {
+			viol = append(viol, fmt.Sprintf("%s: `operator` text in the request of %s, which is not an operator/internal operation that the collector leaves unforwarded (a participant can reach it, so the bytes are not operator's)", n.Pointer, strings.Join(ops, ", ")))
 		}
-		name, isProp := propertyName(n.Pointer)
-		if isParticipantText(word) && !isProp {
-			viol = append(viol, fmt.Sprintf("%s: %q in a response must be a named property (not items / additionalProperties / a parameter or header schema): the portal derivation finds participant text by property name", n.Pointer, word))
-		}
-		if isProp {
-			byName[name] = append(byName[name], named{n.Pointer, word})
+		if isParticipantText(word) && (rs.reqViaRef[n.Pointer] || rs.respViaRef[n.Pointer]) {
+			viol = append(viol, fmt.Sprintf("%s: %q is referenced through a `$ref`; participant-inline / -block are written inline at the property that uses them (a shared definition hides the use-site name the portal derivation matches by)", n.Pointer, word))
 		}
 	}
 
-	for name, list := range byName {
+	type named struct{ ptr, word string }
+	byName := map[string][]named{}
+	for _, u := range rs.respUses {
+		word, ok := words[u.ptr]
+		if !ok {
+			continue
+		}
+		if word == OriginParticipantOpaque {
+			viol = append(viol, fmt.Sprintf("%s: `participant-opaque` is reachable from a response (opaque is promised never to be echoed; if it is shown it is participant-inline or -block)", u.ptr))
+		}
+		if isParticipantText(word) && u.property == "" {
+			viol = append(viol, fmt.Sprintf("%s: %q in a response must be a named property (not items / additionalProperties / a parameter or header schema / a combinator branch): the portal derivation finds participant text by property name", u.ptr, word))
+		}
+		if u.property != "" {
+			byName[u.property] = append(byName[u.property], named{u.ptr, word})
+		}
+	}
+
+	names := make([]string, 0, len(byName))
+	for name := range byName {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		list := byName[name]
 		participant := false
-		words := map[string]bool{}
+		classes := map[string]bool{}
 		for _, e := range list {
-			words[e.word] = true
+			classes[e.word] = true
 			if isParticipantText(e.word) {
 				participant = true
 			}
 		}
-		if !participant || len(words) < 2 {
+		if !participant || len(classes) < 2 {
 			continue
 		}
 		var ws []string
-		for w := range words {
+		for w := range classes {
 			ws = append(ws, w)
 		}
 		sort.Strings(ws)
+		seen := map[string]bool{}
 		for _, e := range list {
-			viol = append(viol, fmt.Sprintf("%s: property name %q is a participant-text name in responses but is also declared %s there (classes seen: %s); the portal derivation matches by name, so use a different name", e.ptr, name, e.word, strings.Join(ws, ", ")))
+			if seen[e.ptr] {
+				continue
+			}
+			seen[e.ptr] = true
+			viol = append(viol, fmt.Sprintf("%s: used from a response property named %q, which is a participant-text name there, but this node is declared %s (classes seen under that name: %s); the portal derivation matches by name, so use a different property name", e.ptr, name, e.word, strings.Join(ws, ", ")))
 		}
 	}
 	return viol

@@ -37,14 +37,40 @@ type copyLeaf struct {
 	required bool
 }
 
-// requestJSONSchema returns an operation's application/json request schema
-// (nil when it writes none).
-func requestJSONSchema(op map[string]any) map[string]any {
-	rb, _ := asMap(op["requestBody"])
-	content, _ := asMap(rb["content"])
-	media, _ := asMap(content["application/json"])
-	sch, _ := asMap(media["schema"])
-	return sch
+// requestJSONSchema returns an operation's application/json request schema.
+// The request body may itself be a `$ref` (#/components/requestBodies/<Name>),
+// which is resolved first. (nil, "") means the operation writes no schema:
+// no request body, or an application/json media with no `schema` (the
+// collector's submit says `application/json: {}`). A body that cannot be
+// read, or a schema only under another media type, is a problem, never a
+// silent "nothing to compare".
+func (s *Spec) requestJSONSchema(op map[string]any) (map[string]any, string) {
+	raw, present := op["requestBody"]
+	if !present {
+		return nil, ""
+	}
+	rb, _, _ := s.derefAll(raw, "")
+	rbm, ok := asMap(rb)
+	if !ok {
+		return nil, "its requestBody is not readable (an unresolvable $ref or a non-mapping)"
+	}
+	content, _ := asMap(rbm["content"])
+	if media, ok := asMap(content["application/json"]); ok {
+		if _, has := media["schema"]; !has {
+			return nil, ""
+		}
+		sch, ok := asMap(media["schema"])
+		if !ok {
+			return nil, "its application/json schema is not a mapping"
+		}
+		return sch, ""
+	}
+	for _, mt := range sortedAnyKeys(content) {
+		if mm, ok := asMap(content[mt]); ok && hasKey(mm, "schema") {
+			return nil, fmt.Sprintf("it writes a schema only under %s, not application/json (the comparison reads application/json)", mt)
+		}
+	}
+	return nil, ""
 }
 
 // copyLeaves lists the string nodes of schema, keyed by their position
@@ -85,28 +111,20 @@ func (s *Spec) copyLeaves(schema map[string]any) (leaves map[string]copyLeaf, pr
 			}
 			leaves[rel] = copyLeaf{word: m[TextOriginKey], keywords: kw, required: required}
 		}
-		if props, ok := asMap(m["properties"]); ok {
-			reqd := map[string]bool{}
-			if list, ok := m["required"].([]any); ok {
-				for _, e := range list {
-					if name, ok := e.(string); ok {
-						reqd[name] = true
-					}
+		reqd := map[string]bool{}
+		if list, ok := m["required"].([]any); ok {
+			for _, e := range list {
+				if name, ok := e.(string); ok {
+					reqd[name] = true
 				}
 			}
-			for k, pv := range props {
-				walk(pv, rel+"/properties/"+escapePointerSegment(k), reqd[k], onPath)
-			}
 		}
-		for _, kwd := range []string{"items", "additionalProperties"} {
-			walk(m[kwd], rel+"/"+kwd, false, onPath)
-		}
-		for _, kwd := range []string{"allOf", "anyOf", "oneOf"} {
-			if list, ok := m[kwd].([]any); ok {
-				for i, el := range list {
-					walk(el, fmt.Sprintf("%s/%s/%d", rel, kwd, i), false, onPath)
-				}
+		for _, c := range schemaChildren(m) {
+			childRel := rel
+			for _, seg := range c.segs {
+				childRel += "/" + escapePointerSegment(seg)
 			}
+			walk(c.node, childRel, c.named && reqd[c.property], onPath)
 		}
 	}
 	walk(schema, "", false, map[string]bool{})
@@ -132,7 +150,11 @@ func CollectorCopyViolations(collector, target *Spec) (violations []string, comp
 		if fwd, ok := BoolExt(op, "x-ctf-collector-forward"); !ok || !fwd {
 			continue
 		}
-		copySchema := requestJSONSchema(op)
+		copySchema, problem := collector.requestJSONSchema(op)
+		if problem != "" {
+			violations = append(violations, fmt.Sprintf("collector %s: %s", key, problem))
+			continue
+		}
 		if copySchema == nil {
 			continue // the collector does not write the body out: nothing to copy
 		}
@@ -146,7 +168,11 @@ func CollectorCopyViolations(collector, target *Spec) (violations []string, comp
 			violations = append(violations, fmt.Sprintf("collector %s: x-ctf-forward-target %q is not an operation of the target spec", key, tkey))
 			continue
 		}
-		tSchema := requestJSONSchema(top)
+		tSchema, tproblem := target.requestJSONSchema(top)
+		if tproblem != "" {
+			violations = append(violations, fmt.Sprintf("collector %s: its target %s: %s", key, tkey, tproblem))
+			continue
+		}
 		if tSchema == nil {
 			violations = append(violations, fmt.Sprintf("collector %s: writes a request schema but its target %s has no application/json request schema", key, tkey))
 			continue
