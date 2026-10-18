@@ -39,11 +39,13 @@ package specparity
 // file is declared" for shapes the YAML decoder hands over as something other
 // than map[string]any / []any: those are rejected, not interpreted.
 //
-// What it deliberately does NOT do (S1b, #454): the static rules between
-// a word and the node's shape (enum <=> enum/const, participant-* only as
-// named response properties, opaque/operator placement, ...) and the
-// collector-copy comparison. Later stages (S2+) add the portal gate, the
-// route probes and the response-flow check.
+// S1b (#454) adds, in textorigin_static.go and textorigin_forward.go: the
+// static rules between a word and the node's shape (D3 (d): opaque never in a
+// response, operator in a request only where D2 allows it, enum <=>
+// enum/const, participant-* only as named response properties and those
+// names not reused for another class), `type` on every enum/const (D3 (h)),
+// and the collector's forward copy against its target (D3 (e)). Later stages
+// (S2+) add the portal gate, the route probes and the response-flow check.
 
 import (
 	"fmt"
@@ -92,6 +94,8 @@ type StringNode struct {
 	Pointer string
 	// Raw is the node's value of TextOriginKey (nil when absent).
 	Raw any
+	// HasEnum is true when the node carries `enum` or `const`.
+	HasEnum bool
 }
 
 // TextOriginReport is the result of checking one spec.
@@ -159,6 +163,10 @@ func (s *Spec) TextOrigin() TextOriginReport {
 			viol = append(viol, fmt.Sprintf("%s: %s on a node that is not a string Schema Object (it belongs on the definition with `type: string`, not on an object, a $ref site or an operation)", p, TextOriginKey))
 		}
 	}
+	for _, p := range walk.typelessEnum {
+		viol = append(viol, fmt.Sprintf("%s: a Schema Object with enum/const and no `type` (ADR-0039 D3 (h)): it is no string node, so neither the declaration check nor the enum rule would see it; write `type`", p))
+	}
+	viol = append(viol, s.staticRuleViolations(nodes)...)
 	for _, r := range walk.refs {
 		if !refInSection(r.ref, r.section) {
 			viol = append(viol, fmt.Sprintf("%s: a $ref in a %s position must be #/components/%s/<Name>, got %q (the derivations in later stages follow only that shape, like resolve())", r.pointer, componentSectionNoun[r.section], r.section, r.ref))
@@ -274,7 +282,13 @@ type positionedRef struct{ pointer, ref, section string }
 type schemaWalk struct {
 	nodes []StringNode
 	refs  []positionedRef
+	// typelessEnum: Schema Objects with `enum` or `const` and no `type`
+	// (ADR-0039 D3 (h)): they are no string node, so no declaration check
+	// and no enum <=> enum/const rule would ever see them.
+	typelessEnum []string
 }
+
+func hasKey(m map[string]any, k string) bool { _, ok := m[k]; return ok }
 
 func (s *Spec) walkSchemas() schemaWalk {
 	var w schemaWalk
@@ -294,8 +308,11 @@ func (s *Spec) walkSchemas() schemaWalk {
 		if !ok {
 			return
 		}
+		hasEnum := hasKey(m, "enum") || hasKey(m, "const")
 		if isStringType(m) {
-			*out = append(*out, StringNode{Pointer: ptr, Raw: m[TextOriginKey]})
+			*out = append(*out, StringNode{Pointer: ptr, Raw: m[TextOriginKey], HasEnum: hasEnum})
+		} else if hasEnum && !hasKey(m, "type") {
+			w.typelessEnum = append(w.typelessEnum, ptr)
 		}
 		if props, ok := asMap(m["properties"]); ok {
 			for k, pv := range props {
@@ -399,6 +416,7 @@ func (s *Spec) walkSchemas() schemaWalk {
 	}
 
 	sort.Slice(w.nodes, func(i, j int) bool { return w.nodes[i].Pointer < w.nodes[j].Pointer })
+	sort.Strings(w.typelessEnum)
 	return w
 }
 
