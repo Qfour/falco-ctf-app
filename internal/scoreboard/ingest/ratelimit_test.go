@@ -130,6 +130,7 @@ func TestRateLimit_ForbiddenRuleOverflow_TaintsWithRealRuleNeverDrops(t *testing
 	srv, s := newRateLimitFixture(t, evadeOnlyCatalog(), true)
 	over := nsCount(t, overflowFamily, "ctf-over")
 	rl := nsCount(t, rateLimitedFamily, "ctf-over")
+	overTotal, rlTotal := nsTotal(t, overflowFamily), nsTotal(t, rateLimitedFamily)
 	tainted := testutil.ToFloat64(metrics.FalcoEventsReceived.WithLabelValues("overflow_tainted"))
 
 	// Exhaust the scoring bucket with proof fires (current evade does not
@@ -150,8 +151,17 @@ func TestRateLimit_ForbiddenRuleOverflow_TaintsWithRealRuleNeverDrops(t *testing
 	if d := nsCount(t, overflowFamily, "ctf-over") - over; d != 1 {
 		t.Fatalf("scoring_overflow delta = %v, want 1", d)
 	}
+	if !nsExists(t, overflowFamily, "ctf-over") {
+		t.Fatal("the overflow was counted, but not under its own ns series")
+	}
+	if d := nsTotal(t, overflowFamily) - overTotal; d != 1 {
+		t.Fatalf("scoring_overflow family total delta = %v, want 1 (the per-ns series and _other together)", d)
+	}
 	if d := nsCount(t, rateLimitedFamily, "ctf-over") - rl; d != 0 {
 		t.Fatalf("rate_limited delta = %v, want 0 (scoring events are never 429)", d)
+	}
+	if d := nsTotal(t, rateLimitedFamily) - rlTotal; d != 0 {
+		t.Fatalf("rate_limited family total delta = %v, want 0 (a count folded into _other would show here)", d)
 	}
 	if d := testutil.ToFloat64(metrics.FalcoEventsReceived.WithLabelValues("overflow_tainted")) - tainted; d != 1 {
 		t.Fatalf("overflow_tainted outcome delta = %v, want 1", d)
@@ -203,6 +213,7 @@ func TestRateLimit_OverflowWhileTriggerCurrent_NoTaintNoSolve(t *testing.T) {
 func TestRateLimit_ObservationOverBucket_429AndCountedPerNamespace(t *testing.T) {
 	srv, _ := newRateLimitFixture(t, evadeOnlyCatalog(), true)
 	before := nsCount(t, rateLimitedFamily, "ctf-noisy")
+	beforeTotal := nsTotal(t, rateLimitedFamily)
 	var statuses []int
 	for i := 0; i < tinyBurst+2; i++ {
 		statuses = append(statuses, post(t, srv.URL, "ctf-noisy", observationRule, nil).StatusCode)
@@ -213,6 +224,12 @@ func TestRateLimit_ObservationOverBucket_429AndCountedPerNamespace(t *testing.T)
 	}
 	if d := nsCount(t, rateLimitedFamily, "ctf-noisy") - before; d != 2 {
 		t.Fatalf("rate_limited delta = %v, want 2", d)
+	}
+	if !nsExists(t, rateLimitedFamily, "ctf-noisy") {
+		t.Fatal("the 429s were counted, but not under their own ns series")
+	}
+	if d := nsTotal(t, rateLimitedFamily) - beforeTotal; d != 2 {
+		t.Fatalf("rate_limited family total delta = %v, want 2", d)
 	}
 	if resp := post(t, srv.URL, "ctf-quiet", observationRule, nil); resp.StatusCode != http.StatusOK {
 		t.Fatalf("other participant's observation event: status %d, want 200", resp.StatusCode)
@@ -311,6 +328,7 @@ func TestRateLimit_PreDecodeGatesReturnBeforeTheLimiter(t *testing.T) {
 		return resp.StatusCode
 	}
 	over := nsCount(t, overflowFamily, "ctf-pin")
+	overTotal := nsTotal(t, overflowFamily)
 	ok := map[string]string{ingest.SharedSecretHeader: secret}
 	for i := 0; i < 5*tinyBurst; i++ {
 		if got := send("application/json", map[string]string{ingest.SharedSecretHeader: secret, "X-Auth-Request-Email": "u@ctf.local"}); got != http.StatusForbidden {
@@ -328,6 +346,9 @@ func TestRateLimit_PreDecodeGatesReturnBeforeTheLimiter(t *testing.T) {
 	}
 	if d := nsCount(t, overflowFamily, "ctf-pin") - over; d != 0 {
 		t.Fatalf("scoring_overflow delta = %v, want 0: a pre-decode gate spent the participant's bucket", d)
+	}
+	if d := nsTotal(t, overflowFamily) - overTotal; d != 0 {
+		t.Fatalf("scoring_overflow family total delta = %v, want 0 (a count folded into _other would show here)", d)
 	}
 	if got := s.DirtyRules("pin", rlEvadeChallenge); !slices.Equal(got, []string{forbiddenRule}) {
 		t.Fatalf("dirtyRules = %v, want exactly [%q]", got, forbiddenRule)
