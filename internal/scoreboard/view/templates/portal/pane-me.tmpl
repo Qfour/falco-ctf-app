@@ -209,6 +209,8 @@
   // Refused: < > & " ' (NAME_HTML_META), and hasHiddenChar() (core-util.tmpl, the one
   // definition shared with the board's subject: \p{Cc} or \p{Cf} EXCEPT U+200D, which is
   // always let through here and refused outside emoji by the server alone).
+  // A flag shape (FALCO{...}, app#402) is refused by the server only: the form lets it
+  // through and shows the server's fixed sentence.
   const NAME_HTML_META = /[<>&"']/;
   // Returns a sentence, or '' when the (already trimmed) name is fine.
   function nameProblem(name) {

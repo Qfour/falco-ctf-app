@@ -48,6 +48,7 @@
       は `cmd/auth-policy`/`cmd/collector` のみを検査 (scoreboard の Dockerfile が `internal/` を
       全体 COPY するため narrow-COPY によるトリップワイヤが無い。import BFS も対象外。
       2026-08-21 review-5x R1 指摘)
+  - **→ ADR-0039 (2026-10-18、Accepted)**: operation に付く `x-ctf-*` 5 つに加え、string の schema node ごとに必須の `x-ctf-text-origin` (閉じた 6 語、既定値なし、除外リストなし) を置き、`internal/apispec/specparity` の `TestAPISpec_TextOriginDeclared` (`make test`) が検査する。本 ADR の Decision / Verification は変えない (ADR-0039 は supersede しない)。
 - Date / Deciders: 2026-08-19 / architect (起案) + VP (承認) + software-engineer (実装) + qa-engineer (parity test) + security-engineer (origin-guard 契約のレビュー)
 - 関連: Issue **#115** (spec が実ルートの 43-47% しか覆っていない — 本 ADR はその設計決定部分)、
   Issue **#113** (`err.Error()` 漏出 + エラー契約の不在。本 ADR は §Decision 5 で**形の契約だけ**を決め、

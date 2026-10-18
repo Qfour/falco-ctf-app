@@ -2,6 +2,7 @@ package scoreboard_test
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -10,18 +11,28 @@ import (
 // one — go through the same validDisplayName, so a Unicode Cf / C1 character is
 // a 400 on either, and a rejected request does not change the stored name.
 
-var displayNameRoutes = []struct {
+type displayNameRoute struct {
 	name   string
 	target string
-	do     func(f *fixture, target string, body any) int
-}{
+	// send posts a display name to the route and returns the whole response.
+	send func(f *fixture, target, name string) *httptest.ResponseRecorder
+}
+
+var displayNameRoutes = []displayNameRoute{
 	{"participant POST /api/users/{user}/profile", "/api/users/alice/profile",
-		func(f *fixture, target string, body any) int {
-			// body is {"name": n}; the profile route's field is display_name.
-			return f.doUser("POST", target, "alice", map[string]any{"display_name": body.(map[string]any)["name"]}).Code
+		func(f *fixture, target, name string) *httptest.ResponseRecorder {
+			// the profile route's field is display_name.
+			return f.doUser("POST", target, "alice", map[string]any{"display_name": name})
 		}},
 	{"admin POST /api/admin/users/{user}/display-name", "/api/admin/users/alice/display-name",
-		func(f *fixture, target string, body any) int { return f.doAdmin("POST", target, body).Code }},
+		func(f *fixture, target, name string) *httptest.ResponseRecorder {
+			return f.doAdmin("POST", target, map[string]any{"name": name})
+		}},
+}
+
+// do is send's status code, for the tests that need only that.
+func (rt displayNameRoute) do(f *fixture, target string, body any) int {
+	return rt.send(f, target, body.(map[string]any)["name"].(string)).Code
 }
 
 func TestDisplayName_RejectsFormatAndC1OnBothRoutes(t *testing.T) {

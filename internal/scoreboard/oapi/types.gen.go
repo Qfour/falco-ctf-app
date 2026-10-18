@@ -402,7 +402,11 @@ type DisplayNameRequest struct {
 	//   server alone decides this; the Profile form lets every U+200D
 	//   through and shows the server's sentence on a 400. A subdivision
 	//   flag (England, Scotland, Wales: U+1F3F4 + tag characters) is
-	//   refused, because tag characters are Cf.
+	//   refused, because tag characters are Cf;
+	// - refused: a flag SHAPE, `FALCO{...}` (the same case-sensitive pattern
+	//   that gates a board subject and body, app#292; never a comparison
+	//   with a real flag). The 400 sentence is fixed text and does not
+	//   echo the input. The Profile form leaves this to the server.
 	// A form is never stricter than this rule.
 	Name string `json:"name"`
 }
@@ -925,7 +929,7 @@ type ProfileRequest struct {
 	// default image, not fail.
 	Avatar *AvatarId `json:"avatar,omitempty"`
 
-	// DisplayName The rule is `DisplayNameRequest.name`'s (trim, 1..32 runes, no metacharacters / control / format characters)
+	// DisplayName The rule is `DisplayNameRequest.name`'s
 	DisplayName *string `json:"display_name,omitempty"`
 }
 
