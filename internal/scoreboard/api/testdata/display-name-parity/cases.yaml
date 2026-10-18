@@ -15,6 +15,8 @@
 #   client  accept | reject : what the form's check answers (nothing is sent on reject)
 #   stored  accept rows only, optional: the trimmed name both sides must produce
 #           (default: the name itself)
+#   reason  optional: `flag-shape` on a `server: reject, client: accept` row whose refusal is
+#           flagShapePattern (app#402); the server test requires THAT sentence for it
 #   note    why the row is here
 #
 # The contract: the form is NEVER stricter than the server, so no row may be
@@ -71,17 +73,20 @@ cases:
   - {name: "\U0001F469\u200D1",      server: reject, client: accept, note: "ZWJ after an emoji, then a DIGIT"}
   # ---- server: reject, client: ACCEPT -- a flag SHAPE (app#402, flagShapePattern `FALCO\{[^}]*\}`) ----
   # A pattern rule, not a character class: the form leaves it to the server (a form is never stricter
-  # than the server), so these rows are `client: accept` and are NOT swept by rule.yaml.
-  - {name: "FALCO{x}",              server: reject, client: accept, note: "flag shape: FALCO{...}"}
-  - {name: "FALCO{dev-flag}",       server: reject, client: accept, note: "flag shape with a placeholder-looking body"}
-  - {name: "FALCO{}",               server: reject, client: accept, note: "flag shape, empty braces (still the shape)"}
-  - {name: "Alice FALCO{x}",        server: reject, client: accept, note: "flag shape after other text"}
-  - {name: "FALCO{x} Alice",        server: reject, client: accept, note: "flag shape before other text"}
-  - {name: "AFALCO{x}B",            server: reject, client: accept, note: "flag shape with letters glued on both sides"}
-  - {name: "FALCO{\u5C71\u7530}",    server: reject, client: accept, note: "flag shape with a non-ASCII body"}
-  - {name: "FALCO{ab}}",            server: reject, client: accept, note: "flag shape followed by a stray brace"}
-  - {name: "FALCO{FALCO{x}",        server: reject, client: accept, note: "nested open brace: the inner FALCO{x} is a shape"}
-  - {name: "FALCO{a b}",            server: reject, client: accept, note: "flag shape with a space inside the braces"}
+  # than the server), so these rows are `client: accept` and are NOT swept by rule.yaml. Each one carries
+  # `reason: flag-shape`: the server's refusal must be THAT sentence (not a length or character-class
+  # refusal), and the bodies use the gate's synthetic form (dev-...) so scripts/check-flags.sh stays clean.
+  - {name: "FALCO{dev-x}", server: reject, client: accept, reason: flag-shape, note: "flag shape"}
+  - {name: "FALCO{dev-flag}", server: reject, client: accept, reason: flag-shape, note: "flag shape with a longer body"}
+  - {name: "Alice FALCO{dev-x}", server: reject, client: accept, reason: flag-shape, note: "flag shape after other text"}
+  - {name: "FALCO{dev-x} Alice", server: reject, client: accept, reason: flag-shape, note: "flag shape before other text"}
+  - {name: "AFALCO{dev-x}B", server: reject, client: accept, reason: flag-shape, note: "flag shape with letters glued on both sides"}
+  - {name: "FALCO{dev-\u5C71\u7530}", server: reject, client: accept, reason: flag-shape, note: "flag shape with a non-ASCII body"}
+  - {name: "FALCO{dev-ab}}", server: reject, client: accept, reason: flag-shape, note: "flag shape followed by a stray closing brace"}
+  - {name: "FALCO{dev-FALCO{dev-x}", server: reject, client: accept, reason: flag-shape, note: "flag shape whose body holds another opening"}
+  - {name: "FALCO{dev-a b}", server: reject, client: accept, reason: flag-shape, note: "flag shape with a space inside the braces"}
+  - {name: "FALCO{dev-}", server: reject, client: accept, reason: flag-shape, note: "flag shape with an empty slug"}
+  - {name: "FALCO{dev-a}FALCO{dev-b}", server: reject, client: accept, reason: flag-shape, note: "two flag shapes in a row"}
   # ---- ZWJ next to another Cf: the ZWJ exception does not let a neighbouring format char through ----
   - {name: "\U0001F469\u200D\u202E\U0001F4BB", server: reject, client: reject, note: "ZWJ then RLO (U+202E) before the emoji"}
   - {name: "\U0001F469\u200D\U0001F4BB\u202E", server: reject, client: reject, note: "ZWJ sequence then a trailing RLO"}
@@ -106,16 +111,16 @@ cases:
   - {name: "12345678901234567890123456789012", server: accept, client: accept, note: "exactly 32 runes"}
   - {name: "a", repeat: 32,         server: accept, client: accept, note: "32 runes, repeated"}
   - {name: "\U0001F98A", repeat: 32, server: accept, client: accept, note: "32 emoji, each 2 UTF-16 units"}
-  # ---- flag-shape boundaries that are NOT the shape (flagShapePattern is case-sensitive and needs `FALCO{` ... `}` adjacent) ----
-  - {name: "FALCO",                 server: accept, client: accept, note: "FALCO alone is a word, not a flag shape"}
-  - {name: "{}",                    server: accept, client: accept, note: "braces alone"}
-  - {name: "FALCO{",                server: accept, client: accept, note: "unclosed: no closing brace, not the shape"}
-  - {name: "FALCO{x",               server: accept, client: accept, note: "unclosed with a body"}
-  - {name: "FALCO x}",              server: accept, client: accept, note: "no opening brace after FALCO"}
-  - {name: "falco{x}",              server: accept, client: accept, note: "lower case: the pattern is case-sensitive"}
-  - {name: "Falco{x}",              server: accept, client: accept, note: "mixed case: the pattern is case-sensitive"}
-  - {name: "FALCO {x}",             server: accept, client: accept, note: "a space between FALCO and the brace: not adjacent"}
-  - {name: "FALCO}{x{",             server: accept, client: accept, note: "braces in the wrong order"}
+  # ---- flag-shape boundaries that are NOT the shape (the pattern is case-sensitive and needs FALCO and the opening brace adjacent, then a closing brace) ----
+  - {name: "FALCO", server: accept, client: accept, note: "FALCO alone is a word, not a flag shape"}
+  - {name: "{}", server: accept, client: accept, note: "braces alone"}
+  - {name: "FALCO{dev-", server: accept, client: accept, note: "unclosed: no closing brace, not the shape"}
+  - {name: "FALCO{dev-x", server: accept, client: accept, note: "unclosed with a body"}
+  - {name: "FALCO x}", server: accept, client: accept, note: "no opening brace after FALCO"}
+  - {name: "falco{x}", server: accept, client: accept, note: "lower case: the pattern is case-sensitive"}
+  - {name: "Falco{x}", server: accept, client: accept, note: "mixed case: the pattern is case-sensitive"}
+  - {name: "FALCO {x}", server: accept, client: accept, note: "a space between FALCO and the brace: not adjacent"}
+  - {name: "FALCO}{x{", server: accept, client: accept, note: "braces in the wrong order"}
   # ---- trim parity: the form trims with the SAME set as strings.TrimSpace, not String.trim ----
   - {name: "\u0085Alice",           server: accept, client: accept, stored: "Alice", note: "leading NEL: Go trims it, String.trim would not (and the form would wrongly refuse it as C1)"}
   - {name: "\uFEFFAlice",           server: reject, client: reject, note: "leading U+FEFF: Go keeps it (Cf, refused), String.trim would strip it and send Alice"}

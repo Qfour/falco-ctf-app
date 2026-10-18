@@ -5,9 +5,9 @@ import (
 	"testing"
 )
 
-// app#402: a display name is shown to every participant (the board's author, the
-// leaderboard), so it is gated by the same flag SHAPE (flagShapePattern, app#292)
-// as a board subject and body. The shape is a pattern rule, not a character class,
+// app#402: a display name is shown to the others next to a participant's posts (the
+// author of an audience=all board thread) and on the operator's screens, so it is
+// gated by the same flag SHAPE (flagShapePattern, app#292) as a board subject and body. The shape is a pattern rule, not a character class,
 // so rule.yaml's code-point sweep does not cover it: cases.yaml has the rows, and
 // this file pins the boundary by name and proves the rule is load-bearing.
 

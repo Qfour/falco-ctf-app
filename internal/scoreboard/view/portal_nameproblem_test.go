@@ -117,6 +117,7 @@ type nameParityCase struct {
 	Server string  `yaml:"server" json:"-"`
 	Client string  `yaml:"client" json:"-"`
 	Stored *string `yaml:"stored" json:"-"`
+	Reason string  `yaml:"reason" json:"-"`
 	Note   string  `yaml:"note" json:"-"`
 }
 

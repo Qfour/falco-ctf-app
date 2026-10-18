@@ -171,8 +171,9 @@ const (
 	// (which would just re-display the very value being rejected).
 	errMsgFlagShapeRejected = "message body must not contain a flag-shaped value"
 	// errMsgDisplayNameFlagShape is the same gate for a display name (app#402): a
-	// name is shown to every participant on the board and the scoreboard, so it must
-	// not be a way around the subject / body gate. Fixed text, never the input.
+	// participant's name is shown next to their posts on the public board (audience=all
+	// threads) and on the operator's screens, so it must not be a way around the
+	// subject / body gate. Fixed text, never the input.
 	errMsgDisplayNameFlagShape = "display name must not contain a flag-shaped value"
 	// Board-specific stable, non-leaking text (Issue #113's discipline,
 	// applied to app#292 Phase 2 — see the const block above this one for
@@ -1185,8 +1186,9 @@ func validDisplayName(raw string) (string, error) {
 		return "", fmt.Errorf("name contains forbidden characters")
 	}
 	// app#402: flagShapePattern (app#292) gates every other free text a participant
-	// shows to the others (a board subject and body); a name is shown to everyone too
-	// (the board's author, the leaderboard), so it is gated by the same SHAPE. It is
+	// shows to the others (a board subject and body); a name is shown to the others too
+	// (the author of an audience=all board thread, read from the store at display time,
+	// and the operator's projected dashboard), so it is gated by the same SHAPE. It is
 	// a pattern rule, not a character class: it is pinned by cases.yaml and
 	// display_name_flag_shape_test.go, not by the code-point sweep (rule.yaml), and
 	// the form leaves it to the server (a form is never stricter than the server).
