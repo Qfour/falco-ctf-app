@@ -539,3 +539,58 @@ func TestMiddlewareStrict_PrecreatesOutcomeSeriesAtZero(t *testing.T) {
 		t.Errorf("series for bucket %q = %v, want exactly allowed and limited", bucket, seen)
 	}
 }
+
+// ADR-0040 D2: assembling ClientIPKeyed(caller) creates that caller's three source
+// series at 0 (no request needed), and nothing for another caller. The package's
+// init creates none (the collector links this package and must not expose 0s).
+func TestClientIPKeyed_PreCreatesTheCallersSourcesAtZero(t *testing.T) {
+	const caller = "precreate_probe"
+	sources := []string{"cf_connecting_ip", "x_forwarded_for", "remote_addr"}
+	for _, s := range sources {
+		if hasSeries(t, caller, s) {
+			t.Fatalf("a %s/%s series exists before ClientIPKeyed was called", caller, s)
+		}
+	}
+	_ = ratelimit.ClientIPKeyed(caller)
+	for _, s := range sources {
+		if !hasSeries(t, caller, s) {
+			t.Errorf("no %s/%s series after ClientIPKeyed(%q)", caller, s, caller)
+			continue
+		}
+		if v := testutil.ToFloat64(ratelimit.ClientIPSourceTotal.WithLabelValues(caller, s)); v != 0 {
+			t.Errorf("%s/%s starts at %v, want 0", caller, s, v)
+		}
+	}
+	if hasSeries(t, "never_assembled", "remote_addr") {
+		t.Error("a series exists for a caller that was never assembled")
+	}
+}
+
+// hasSeries reports whether the default registry exposes the (caller, source) series.
+func hasSeries(t *testing.T, caller, source string) bool {
+	t.Helper()
+	mfs, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mf := range mfs {
+		if mf.GetName() != "ratelimit_client_ip_source_total" {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			var c, s string
+			for _, lp := range m.GetLabel() {
+				switch lp.GetName() {
+				case "caller":
+					c = lp.GetValue()
+				case "source":
+					s = lp.GetValue()
+				}
+			}
+			if c == caller && s == source {
+				return true
+			}
+		}
+	}
+	return false
+}

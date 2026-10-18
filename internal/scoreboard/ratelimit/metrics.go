@@ -27,9 +27,11 @@ import (
 //
 // This is intentionally package-scoped (not gated to the scoreboard binary)
 // since ClientIPKeyed itself is package-scoped — it is safe to import from
-// any binary that links this package; it simply stays at zero if that
-// binary never calls ClientIPKeyed (e.g. collector, which deliberately keys
-// its own limiter on RemoteAddr — see collector.go's remoteIP doc).
+// any binary that links this package. The family has NO series until a binary
+// calls ClientIPKeyed (which creates the caller's three source series at 0 when it
+// is assembled, ADR-0040 D2); the collector, which deliberately keys its own limiter
+// on RemoteAddr (see collector.go's remoteIP doc), never does, so it does not
+// expose this family at all.
 var ClientIPSourceTotal = promauto.NewCounterVec(
 	prometheus.CounterOpts{
 		Namespace: "ratelimit",
