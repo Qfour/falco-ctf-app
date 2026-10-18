@@ -2001,7 +2001,7 @@ components:
         ok: { type: boolean, const: true }
         challenges:
           type: array
-          items: { type: string, x-ctf-text-origin: operator }
+          items: { type: string, x-ctf-text-origin: token }
           description: catalog ids (sorted)
         db:
           type: string

@@ -39,8 +39,8 @@ var textOriginPins = map[string]textOriginPin{
 		OriginParticipantInline: 17,
 		OriginParticipantBlock:  4,
 		OriginParticipantOpaque: 19,
-		OriginOperator:          47,
-		OriginToken:             54,
+		OriginOperator:          46,
+		OriginToken:             55,
 		OriginEnum:              18,
 	}},
 	"openapi-collector.yaml": {total: 4, byWord: map[string]int{
