@@ -90,6 +90,7 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
 
 ### Fixed
 
+- board の運営の操作 (pin / answered / hide / delete) と Like が失敗したとき、server の文をそのまま (text として) 出す。運営の操作は HTTP の失敗をすべて「connection error」と表示し、Like は失敗を黙って捨てていた (#425 の統一から抜けていた 2 箇所、#432)。
 - portal の失敗表示と trim を揃えた (#411 の admin rename、#415 の board の返信・運営の返信・reset)。失敗した応答は server の文をそのまま (text として) 出し、本文・件名・表示名は server と同じ trim 集合 (`strings.TrimSpace`) で空判定・長さ判定する (#425)。
 - 手順確認 (steps/check)・ヒント開封・やり直し (reset-dirty) の rate limit を、提出 (submit) の
   IP 単位 bucket から切り離し、認証ヘッダーの email 単位 (1 req/s・burst 10) にした。
