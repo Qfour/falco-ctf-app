@@ -1277,7 +1277,7 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 	// is STORED and later shown as first_solver, so it must at least be a slug
 	// (validUser). Fixed text, the input is not echoed (#428).
 	if !validUser.MatchString(user) {
-		metrics.SubmissionsTotal.WithLabelValues(cid, "bad_request").Inc()
+		metrics.SubmissionsTotal.WithLabelValues(h.cidLabel(cid), "bad_request").Inc()
 		auditLog("bad_request", "reason", "invalid user")
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
 		return
