@@ -151,6 +151,9 @@ var invalidInlineText = regexp.MustCompile(`[` + forbiddenInvisible + `]`)
 // intent. The empty-brace shape (FALCO with a bare "{}" pair) is still rejected;
 // bare "FALCO" with no braces at all is NOT (a participant should still be
 // able to say "I'm on the FALCO mission" in a support thread).
+//
+// Consumers: the board's subject and body (board.go), and a display name
+// (validDisplayName, app#402; its shape rows are in display-name-parity/cases.yaml).
 var flagShapePattern = regexp.MustCompile(`FALCO\{[^}]*\}`)
 
 // Stable, non-leaking response-body text (Issue #113). Never put err.Error()

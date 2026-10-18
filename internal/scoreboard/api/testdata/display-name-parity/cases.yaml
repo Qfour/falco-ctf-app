@@ -20,14 +20,18 @@
 #   note    why the row is here
 #
 # The contract: the form is NEVER stricter than the server, so no row may be
-# `client: reject` with `server: accept`. The one allowed difference is
-# `client: accept` with `server: reject`, and only for U+200D (ZERO WIDTH
-# JOINER): the server accepts it only between two emoji, the form lets every ZWJ
-# through and leaves that rule to the server (whose own sentence is then shown).
-# Both tests fail on any other difference.
+# `client: reject` with `server: accept`. The allowed differences are
+# `client: accept` with `server: reject`, and only of two families: the position
+# rule of U+200D (ZERO WIDTH JOINER: the server accepts it only between two emoji)
+# and a flag shape (`reason: flag-shape`, app#402). The form lets both through and
+# leaves them to the server (whose own sentence is then shown). Both tests fail on
+# any other difference.
 #
 # This table is the ONLY list of validDisplayName's accept / reject inputs (the former
-# api/display_name_test.go was folded in: app#381 review-5x R3#4). The character class is swept
+# api/display_name_test.go was folded in: app#381 review-5x R3#4), with one exception: the
+# empty-brace flag shape is not a row here, because scripts/check-flags.sh does not let
+# testdata carry that form; it is pinned in internal/scoreboard/api/display_name_flag_shape_test.go.
+# The character class is swept
 # separately over every code point (rule.yaml).
 # The trim rows at the end pin the form's trim to strings.TrimSpace.
 

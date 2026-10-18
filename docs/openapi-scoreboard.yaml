@@ -2318,7 +2318,7 @@ components:
       properties:
         display_name:
           type: string
-          description: "The rule is `DisplayNameRequest.name`'s (trim, 1..32 runes, no metacharacters / control / format characters)"
+          description: "The rule is `DisplayNameRequest.name`'s"
         avatar: { $ref: "#/components/schemas/AvatarId" }
 
     ProfileResult:

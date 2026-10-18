@@ -929,7 +929,7 @@ type ProfileRequest struct {
 	// default image, not fail.
 	Avatar *AvatarId `json:"avatar,omitempty"`
 
-	// DisplayName The rule is `DisplayNameRequest.name`'s (trim, 1..32 runes, no metacharacters / control / format characters)
+	// DisplayName The rule is `DisplayNameRequest.name`'s
 	DisplayName *string `json:"display_name,omitempty"`
 }
 
