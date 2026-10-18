@@ -101,3 +101,31 @@ func TestCanonical(t *testing.T) {
 		t.Fatalf("Canonical = %q", got)
 	}
 }
+
+func TestValidSeat(t *testing.T) {
+	for _, c := range []struct {
+		s    string
+		want bool
+	}{
+		{"user1", true},
+		{"a", true},
+		{"0", true},
+		{"u-2", true},
+		{"a" + strings.Repeat("b", 62), true},  // 63: the limit
+		{"a" + strings.Repeat("b", 63), false}, // 64
+		{"", false},
+		{"-x", false},
+		{"User1", false},
+		{"user_1", false},
+		{"user.1", false},
+		{"a b", false},
+		{"a@b", false},
+		{"a\n", false}, // a trailing newline is not accepted
+		{"a\u202eb", false},
+		{"\u00fcser", false},
+	} {
+		if got := ValidSeat(c.s); got != c.want {
+			t.Errorf("ValidSeat(%q) = %v, want %v", c.s, got, c.want)
+		}
+	}
+}

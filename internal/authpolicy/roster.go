@@ -183,8 +183,8 @@ func parseRoster(data []byte, domain string, admins []string, folded []string) (
 		if !identity.IsPlainASCII(row.Seat) {
 			return nil, fmt.Errorf("roster: seats[%d]: seat: %w", i, identity.ErrNotASCII)
 		}
-		if !validHost.MatchString(row.Seat) {
-			return nil, fmt.Errorf("roster: seats[%d]: seat must match %s", i, validHost)
+		if !identity.ValidSeat(row.Seat) {
+			return nil, fmt.Errorf("roster: seats[%d]: seat must match %s", i, identity.SeatPattern)
 		}
 		if first, dup := seatIndex[row.Seat]; dup {
 			return nil, fmt.Errorf("roster: seats[%d]: duplicate seat (same as seats[%d])", i, first)

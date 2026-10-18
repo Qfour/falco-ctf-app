@@ -16,11 +16,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
+	"github.com/Qfour/falco-ctf-app/internal/identity"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/metrics"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/oapi"
@@ -112,14 +112,6 @@ const (
 // RateLimitDescription is the x-ctf-rate-limit string for POST /falco/events;
 // docs/openapi-scoreboard.yaml must carry the same text (StringExtParity).
 const RateLimitDescription = "per-participant (ns) bucket - observation rules 20 req/s burst 100 then 429, scoring rules 100 req/s burst 400 then fail-closed taint if forbidden (never 429)"
-
-// validUser mirrors internal/scoreboard/api's validUser (the auth-derived
-// username slug auth-policy also enforces). The ns of an event is
-// sender-supplied JSON; it becomes a limiter key, a store key and a metric
-// label, so it is validated at attribution time and an event whose ns does not
-// fit is "ignored" like any non-workspace event. Duplicated, not imported: api
-// is not a dependency of ingest. Keep the two in step.
-var validUser = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 type Handler struct {
 	store  *store.Store
@@ -295,7 +287,11 @@ func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 		pod = *ev.OutputFields.K8sPodName
 	}
 
-	if !strings.HasPrefix(ns, "ctf-") || !validUser.MatchString(strings.TrimPrefix(ns, "ctf-")) || pod != "workspace" {
+	// The ns is sender-supplied JSON; it becomes a limiter key, a store key and a
+	// metric label, so it must be `ctf-<seat>` with <seat> inside the seat
+	// grammar (identity.SeatPattern); anything else is "ignored" like any
+	// non-workspace event.
+	if !strings.HasPrefix(ns, "ctf-") || !identity.ValidSeat(strings.TrimPrefix(ns, "ctf-")) || pod != "workspace" {
 		metrics.FalcoEventsReceived.WithLabelValues("ignored").Inc()
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"ignored": true, "reason": "not a ctf workspace event"})
 		return

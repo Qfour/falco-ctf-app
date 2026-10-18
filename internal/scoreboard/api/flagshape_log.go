@@ -45,7 +45,7 @@ func (h *Handler) refuseFlagShape(w http.ResponseWriter, r *http.Request, seat, 
 // five attributes are:
 //
 //	seat         where the refused text WOULD HAVE BEEN STORED: a seat slug
-//	             (validUser) or, for an admin board reply, the fixed author "staff";
+//	             (identity.ValidSeat) or, for an admin board reply, the fixed author "staff";
 //	             never an email. Same direction as ADR-0039 D1's storage target.
 //	actor        who wrote it: "self" or "admin" (flagActor*). An operator who renames
 //	             a seat, or sets a seat's profile, has seat = that seat and actor = admin.

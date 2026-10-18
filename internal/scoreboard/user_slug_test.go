@@ -10,7 +10,7 @@ import (
 // POST /internal/exfil/{cid} is claimed (the collector forwards it verbatim; that
 // is the known claimed-identity premise), but it is STORED and later shown as a
 // mission's first_solver on the operator's screens. It must therefore be a
-// username slug (the shape validUser pins: ^[a-z0-9][a-z0-9-]{0,62}$), or the
+// username slug (identity.SeatPattern: ^[a-z0-9][a-z0-9-]{0,62}$), or the
 // request is a 400 and nothing is stored, with a fixed message that does not
 // echo the input.
 

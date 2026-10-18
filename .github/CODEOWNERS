@@ -36,6 +36,8 @@
 /auth-policy/                   @Qfour
 /internal/authpolicy/           @Qfour
 /internal/scoreboard/ingest/    @Qfour
+/internal/scoreboard/scoring/   @Qfour
+/internal/identity/             @Qfour
 /scoreboard/Dockerfile          @Qfour
 /auth-policy/Dockerfile         @Qfour
 /collector/Dockerfile           @Qfour
