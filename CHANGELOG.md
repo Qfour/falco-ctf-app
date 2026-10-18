@@ -113,9 +113,13 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
   Portal のプロフィール form の検査も同じ規則にした。form は server より厳しくならない (U+200D は常に通し、絵文字の間かどうかは server が判定する)。両端の空白は server の `strings.TrimSpace` と同じ集合 (U+0085 を含み U+FEFF は含まない) で落とす。名前を変えたときだけ検査するので、保存済みの名前のまま絵柄だけ変える保存は止まらない。共有の case 表 `internal/scoreboard/api/testdata/display-name-parity/cases.yaml` を server (`validDisplayName`) と form の両方に流して固定 (#343)。
 
 ### Security
+<<<<<<< HEAD
 - **`POST /api/challenges/{cid}/submit` と `POST /internal/exfil/{cid}` は body の `user` を username slug (`^[a-z0-9][a-z0-9-]{0,62}$`) で検査する (app#428)**。文法外は 400 `{"error":"invalid user"}` (入力は返さない) で、solve も receipt も保存しない。運営画面の mission card の `first_solver` の描画は `nameHTML` (`<bdi>`) 経由にした。claimed identity の前提 (collector は `user` を verbatim で転送する) は変わらない。
   - **Upgrade note**: 修正前に保存された非 slug の `user` (solved / exfil の行) は自動では書き換えない。`first_solver` は `nameHTML` で隔離して表示する。開場前の DB は新規 PVC か admin reset の前提 (reset は両表を全行消す)。
   - **bump 区分**: `docs/RELEASING.md` の基準では **minor**。公開 API の入力の厳格化 (後方互換の機能追加でも MAJOR 級の contract 破壊でもない)。非 slug の `user` を送る外部 client は無い前提 (ingest は元から slug の ns しか受けない)。
+=======
+- docs image の `libexpat` を 2.8.5-r0 から 2.9.0-r0 へ pin upgrade した (Sysdig の CVE フィード更新で High 2 件、app#436)。base の digest を上げても 2.8.5-r0 のままなので、他の package と同じ exact pin にした (ADR-0036 D)。他の image には libexpat が入っていない。
+>>>>>>> 963f79d (fix(images): docs image の libexpat を 2.9.0-r0 に (High 2、feed drift、#436))
 - **`POST /api/challenges/{cid}/submit-detect` は `X-Auth-Request-Email` 必須になった (app#346)**。ヘッダ無しは 403 (以前は origin-guard を通れば claimed identity で通っていた)。body の `user` は identity の正規形 `<seat>@<EXPECTED_EMAIL_DOMAIN>` との完全一致 (admin は例外)。合わせて `x-ctf-authz: self-or-admin-write` の語彙 (spec・`apispec.AuthzSelfOrAdminWrite`・ゲート関数) を廃止した。collector はこの route を元々転送せず workspace からも届かないので、外部クライアントへの実害は想定していない。`docs/RELEASING.md` の bump 基準 (公開 contract の破壊的変更 = MAJOR に当たらない、認可の厳格化) では **minor** 扱い。
 - challenge image の `/opt/ctf/missions/` は `<id>/fixtures/**` だけ、という条件を **deploy 時にも検査する** (ADR-0026 V4、不変条件 I16)。
   `deploy-user.sh` が `helm upgrade --wait` の直後に呼ぶ `assert-flag-isolation.sh` の check 3-8 を、scenario に加えて

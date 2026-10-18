@@ -89,8 +89,17 @@ FROM nginxinc/nginx-unprivileged:1.30-alpine@sha256:56b8272e43a0525f67aed68d1e07
 #     nginx.conf は load_module も xslt/njs の directive も使わない静的配信。
 #     この 3 つを `apk del` して libxml2 ごと image から除く (残存 High を除去で実解消、
 #     例外で握り潰さない)。nginx 本体は pcre2 を使うので pcre2 は残る。
+#
+# 2026-10-18 (#436): libexpat 2.8.5-r0 -> 2.9.0-r0 を pin upgrade。base digest を
+# 現行の 1.30-alpine index (782bb897、alpine 3.24.2) へ上げても libexpat は
+# 2.8.5-r0 のままで解消しない (`apk info -v` 実測) ため、digest は 56b8272e に
+# 据え置き、他の版感応 package と同じ exact pin にした (ADR-0036 D)。
+# `apk policy libexpat` 実測で 3.24/main の唯一の提供版が 2.9.0-r0 (Sysdig の
+# suggested fix と一致)。引き込み元は fontconfig (nginx-module-image-filter 系)。
+# pin 版が 3.24/main から外れると apk resolve が failing するので、その時は
+# `apk policy libexpat` を実測して上げる。
 USER root
-RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 zlib=1.3.2-r1 \
+RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 zlib=1.3.2-r1 libexpat=2.9.0-r0 \
  && apk del --no-cache nginx-module-xslt nginx-module-njs libxslt libxml2
 USER 101
 
