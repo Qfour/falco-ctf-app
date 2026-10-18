@@ -317,6 +317,61 @@ S1 (platform の S1 PR。private 正典 `docs/falco-detection-conditions.md` §7
     または回収に欠けがある) → C (app で観測の発火を数える) (iii) P28 で観測の発火を app で表示・集計したくなる → C (iv) Falco pod 1 つあたりの INFO の行が 1 イベントで 03 の開始回数の 10 倍を超える
     (観測用の rule 以外の INFO が読み込まれている) → 無効化を直し、2 回続くなら C (v) `falco.rules` を D12 の外の目的で使いたい要求が出る (rev2.1) → 例外を広げず、Key Guard そのものを見直す ADR を書く
 
+## Decision の追加 (2026-10-18): D13 upstream の ruleset の同一性は priority に依らない常設の規律にする (D9 (k) を閉じる)
+
+決定: 2026-10-18 / VP (決定。platform #233 の review-5x 34 回目の R4#1 を受けて) + architect (同意。「yes, if」、条件は D13 (4)) + security-engineer (platform #233 のレビュー: APPROVE with comments 2026-10-14、
+LOW 3 件は 13b4808 で反映。D13 (4) と下の Verification 5・6 を足した後の再確認が #233 の merge 条件)。ADR を要する trigger は ORGANIZATION.md:490 の ①③ (Key Guard の例外の範囲、採点の真正性)。
+行番号: app は a56f0a5、platform は #233 の head 13b4808 (scripts・values・Key Guard・`CLAUDE.md` の該当行は、main e126fff に rebase した e5a7c7e でも同じ。D13 (4) の修正を入れると動く)。
+**既存の D9 (k) (:282-286)・D12 (6) (:310-313)・Verification の「機械で守るもの」(5) (:257-258)・実装状況の注記 (:259)・Advice (:345) の文は書き換えない。食い違うところはこの追加が優先する。** D1〜D12 と同格の決定で、行番号を保つためにここに置く。
+
+- **D13 (1) 決定: upstream の ruleset の凍結とその照合は、`priority` に依らず常に保つ。** 凍結 = falcoctl の install の ref (`ghcr.io/falcosecurity/rules/falco-rules@sha256:…`。今は falco-rules 5.2.0) を digest に pin し、
+  follow を止めるか同じ digest にし、values に pin 由来の期待 hash (`## pin-expect:`) を digest と対で commit すること。照合 = 全 Falco pod の upstream の rule ファイルの hash を pin-expect と比べること (Verification)。
+  `notice` のままの回も凍結し、開催中に rule の集合を変えない。D9 (k) の未決 (:285-286) は広げる側 (architect の推奨) で閉じ、D12 (6) の「`priority` を `notice` 未満にする間は」(:310) の条件を外す。
+  **理由**: pin と pin-expect は「その回の採点に使った ruleset の同一性」そのもので、`priority` は検知の閾値であって同一性とは独立である。D9 (k) の前提は版ごとの性質で (:284-285)、follow や pod の再起動で版が変わる経路は
+  `notice` でも同じで、打ち消しはログに出ない (:286)。05・10 の softlock と 13 の solve 不能 (:284) は `priority` に依らず起きうる。
+- **D13 (2) `priority` に縛られたままのもの。** D12 (1)・(4)・(5) と同意の条件 (e) (:303) は変えない: `falco.rules` の disable (Key Guard の例外)、pin の版の INFO の rule が disable に全部載っていることの検査 (D13 (4) (d))、
+  観測用の rule の層の検査 ((o1)〜(o4)・(o6)。中身が `priority` で決まる)。`priority` を `notice` に戻すとき (S1' の退避。private 正典 §11-5) に外すのは観測用の rule と `falco.rules` だけで、**pin・follow の停止・`## pin-expect:` は外さない**。
+- **D13 (3) Key Guard との関係。** digest pin は rule の override ではないので、D13 は platform の Key Guard「Falco ruleset の override は customRules 経由のみ」の例外ではない (例外は D12 (1) の `falco.rules` の disable だけのまま)。
+  D13 は下の Verification を持つので、platform の Key Guard に上げてよい (ORGANIZATION.md:488)。
+- **D13 (4) architect の同意の条件 (yes, if)。層ごとに範囲が違うまま merge しない。** (a) この追加を app の docs PR で入れる (platform #233 と相互リンク)
+  (b) 静的 gate を揃える: (o5) (platform `scripts/lib/rule-correspondence.sh:590-624`) の `low = 1` の条件 (`:592`) を外し、`rc_pin_expectation` (`:999`。ネットワーク不要) を `proof_rule_gate` (`:920-941`) に足して、
+  preflight §11b と standup の課金前 gate を同じ判定にする (R4#3)
+  (c) platform の文言を常設に直す: Key Guard の例外文 (`.claude/rules/falco-ctf-conventions.md:21`。凍結を例外の文から出して D13 を名指す行にし、「`notice` に戻すときに外す」の対象を `falco.rules` に限る)、
+  values のコメント (`helmfile/releases/falco/values.yaml.gotmpl:86` の「`priority` を下げている間」)、`CLAUDE.md:151-166` (凍結を「priority を下げた代償と対策」の外に出し、:159 の退避に「pin と pin-expect は外さない」を足す)、
+  `scripts/verify.sh:46,710` のコメント (「notice+ では通す」)。`CLAUDE.md` は統治文書なので、その変更は CEO の merge で承認する
+  (d) (この追加の起草で判明) `scripts/check-falco-rules-pin.sh` の「pin の INFO ⊆ disable」の判定 (disable が空なら exit 1 の `:67-68` と、`:116-122`・`:161`) を `priority` が `notice` 未満のときだけにする。
+  このスクリプトは `priority` を読まず、(o4) は `notice` 以上なら `falco.rules` が無いことを求める (`scripts/lib/rule-correspondence.sh:583-587`) ので、退避の形 (`notice`・`falco.rules` 無し・pin あり) は 2 つを同時に満たせない。
+  下の Verification 5 でこのスクリプトを課金前の hard gate にすると、文書化された退避が課金前に止まる。pin-expect と layer の照合は常設のまま
+- **Verification (D13。どれも `priority` を見ない)**:
+  1. platform `scripts/verify.sh` の観測層 (`:726` から): 全 Falco pod の hash を pin-expect と常に照合する (`rc_hash_check_pin`、`:820`)。期待値は commit 済みの values から読む (`:802-819`。VP 査定で `git show HEAD:` から読む形にする)。
+     記録はこの照合が通った後にだけ書き (`:853`)、commit 済みで不変であることを求める (`:836-848`)
+  2. 静的 gate (o5) (`low = 1` を外した後): install の rules の ref はすべて digest に pin され、follow は無効か同じ digest。`proof_rule_gate` の `rc_pin_expectation`: values の pin の digest がちょうど 1 つで、pin-expect がその digest と対で 1 行
+  3. preflight §11b (`scripts/preflight-event.sh:451-462`): 2. と同じ判定
+  4. preflight §11c (`:464-475`) = `scripts/check-falco-rules-pin.sh`: pin-expect を ghcr の layer から計算し直して突合し、manifest と layer の digest も確かめる (ネットワークが要る。届かなければ rc 2)
+  5. standup の課金前 hard gate (`scripts/standup.sh:676-677` の flags gate・証明 rule gate と同じ位置): 2. と 4. を通す。4. は rc 0 / 10 だけを通し、rc 1 は止める。rc 2 は理由つきの明示の opt-out が無ければ止める (VP 査定の R1#1)
+  6. teardown の hash gate (`scripts/teardown.sh:772`。既定で照合し、記録が無い・未 commit・不一致なら destroy を止める。続けるなら明示の opt-out で、出力に残る): 合否の基準は go/no-go の記録の pin (stand-up の時点)。
+     HEAD の pin が記録の pin と違えば「repo の pin が stand-up 後に動いた」を別に出し、両方の結果を表示する (VP 査定の R2#1 = R4#2)。不一致の回は Verification (5) (:258) のとおり go/no-go の記録に残す
+  - テストで固定する (platform の selftest。platform の CI は課金ホールドで動かないので、PR 本文にローカルの結果を貼る): `priority: notice` の values で pin・follow・pin-expect のどれかが欠けると 2.・3.・5. が FAIL する
+    (`low = 1` を戻した mutant で赤)。退避の形の values で 2.〜5. が通る (D13 (4) (d))。記録の pin = A・HEAD の pin = B・pod = A で teardown が通り、警告を出す
+  - 実機 (未実施。次の stand-up): step 5・8 と teardown で 1. が全 pod で通ること、pod に `falco_rules.local.yaml` が無いこと
+- **実装状況 (2026-10-18 注記。:259 の「hash の初回信頼 (TOFU) は follow-up platform#224」の部分を置き換える。同じ注記の他の文はそのまま有効)**: TOFU は platform #233 で解消する。期待値の正は values の `## pin-expect:`
+  (`helmfile/releases/falco/values.yaml.gotmpl:111`。digest = `:120,125` と同じ commit で更新する)。go/no-go の記録 (`<event-dir>/falco-rules.sha256`) は補助で、pod の hash が pin-expect と一致した後にだけ書き、commit 済みで不変であることを求める。
+  **記録には pin の digest も残す** (D12 (6) の「凍結した版は go / no-go の記録に残す」の機械化)。13b4808 の時点で入っているのは Verification 1・4 と 6 の既定の照合で、2・3・5、6 の基準 (記録の pin)、記録の digest、D13 (4) (d) は
+  VP 査定 (review-5x 34 回目) とこの追加で #233 に足す。**この追加を含む app の docs PR は platform #233 の merge と同時か後に merge する** (先に入れると、入っていない照合を ADR が実装済みと書く)。
+- **残余**: (1) version-watch (ADR-WS-0003) への digest と pin-expect の登録 (platform #224 の 5) は未完。新しい版は preflight §11c の WARN (exit 10) でしか分からず、digest と pin-expect を同時に差し替える手順が増えた
+  (2) chart の版 (`helmfile/helmfile.yaml.gotmpl:259` の `~8.0.0`) は pin していない。`falco_rules.local.yaml=absent` は chart 8.0.5 が `/etc/falco` を emptyDir で覆う挙動に依存する (R4#7)。chart の pin は platform の別 issue (#261)。
+  Falco の image の版は chart に従い、D13 は image を pin しない (pin するのは ruleset の artifact) (3) app の `scripts/check-challenge-rules.sh:44` の `FALCO_RULES_REF` (必須 CI check `challenge-rules` が既知の rule 名を取る版) は
+  pin と同じ版でなければならない (app#323、`:13-22`)。一致は手動の規律で、機械の照合は無い (2026-10-18 に、この check が取る `falco_rules.yaml` の sha256 が pin-expect の値と同じことを実測)
+  (4) 課金前 gate が確かめるのは pin-expect が pin の layer と一致することで、pin の版を既定ブランチの版に限らない (R1#1 の (b) は採っていない)。別の正規の版へ動かした未 review の commit は通り、その版の fire / no-fire は stand-up のゲート (platform#207) が確かめる。
+- **覆す信号**: (i) 開催中に upstream の ruleset の更新を当てる必要 (検知漏れ・誤検知の修正) が 1 件でも出る → 凍結は緩めず、開催中の re-pin の手順 (digest と pin-expect の commit → 全 pod の照合 → platform#207 の fire / no-fire →
+  go/no-go の記録の取り直し) を新 ADR で決める (ii) ghcr.io に届かず、課金前 gate を理由つきの opt-out で通した回が 2 回続く → artifact を自前の registry に mirror して pin の参照先を移す (新 ADR。pin-expect の意味は変えない)
+  (iii) ruleset の配り方が変わる (falcoctl の artifact をやめる、または chart が `/etc/falco` を覆わなくなり pod に `falco_rules.local.yaml` が見える) → hash を取るファイルと pin の対象を作り直す (新 ADR。#261 の chart の pin が前段)
+  (iv) step 8 か teardown の照合が正当な repo の移動 (pin の更新の merge、別の clone) で止まり、明示の opt-out で抜けた回が 2 回続く → 記録の pin を基準にする設計 (Verification 6) が効いていない。基準の置き方を見直す。
+- **助言 (Advice)**: architect (2026-10-18、review-5x 34 回目の R4#1 で「yes, if」(a)〜(c)): 範囲を広げない場合の代わりは verify.sh の pin 照合を `priority` が `notice` 未満のときだけにして (o5) と揃えることで、VP は広げる側を採った。
+  architect (同日、この追加の起草): (d) を足した (退避と hard gate を両立させる)。review-5x 34 回目 (T3、platform #233): R1#1 (課金前 gate で ghcr から計算し直す)・R2#1 = R4#2 (teardown の基準は記録の pin)・R4#3 (`rc_pin_expectation` を課金前 gate へ)・
+  R4#4 (実装状況の注記)・R4#7 (chart の pin)・R5#4 (version-watch)。security-engineer: platform #233 を APPROVE with comments (2026-10-14)。課金前 gate の追加と記録の基準の変更の後に再確認する。
+  未確認: 全 pod の hash が pin-expect と一致すること、`/etc/falco` の emptyDir で pod に local が無いこと (次の stand-up)。
+
 ## Advice
 
 - content-engineer (2026-10-05): 10 の証明は A を推奨 (B・C は不採用、D は epoch の実装形の 1 つ)。記録は「10 に限り」attempt スコープ、が推奨だった。architect は 05 も揃える案を出し、CEO が採った。
