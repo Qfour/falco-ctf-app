@@ -1310,6 +1310,14 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 	// metric + audit line. The window is evaluated against server time inside
 	// the Grader (App-H3) — the handler never passes attacker-supplied time.
 	outcome, err := h.grader.SubmitEvade(user, cid, flag)
+	if errors.Is(err, scoring.ErrInvalidUser) {
+		// The Grader's own slug gate; unreachable while validUser above agrees
+		// with it (user_slug_parity_test), but never a 500 if they ever differ.
+		metrics.SubmissionsTotal.WithLabelValues(label, "bad_request").Inc()
+		auditLog("bad_request")
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
+		return
+	}
 	if err != nil {
 		// Fail closed: a store error must never surface as a silent empty 200.
 		// EvadeUnknownChallenge (=0) has no switch case, so returning the
@@ -1658,7 +1666,11 @@ func (h *Handler) exfilInternal(w http.ResponseWriter, r *http.Request) {
 	// receipt timestamp) is the Grader's job; the guards above have already
 	// short-circuited the unknown / not-required cases, so here the Grader
 	// returns ExfilRecorded (or a store error).
-	if _, err := h.grader.RecordExfil(user, cid, flag); err != nil {
+	if _, err := h.grader.RecordExfil(user, cid, flag); errors.Is(err, scoring.ErrInvalidUser) {
+		auditLog("bad_request")
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
+		return
+	} else if err != nil {
 		h.logger.Error("record exfil", "err", err, "user", user, "cid", cid)
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": "could not record exfil"})
 		return

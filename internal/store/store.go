@@ -668,6 +668,19 @@ type ExfilReceipt struct {
 	Flag      string
 }
 
+// ExfilUsers returns the user of every recorded exfil receipt (one entry per
+// receipt, so a user with two receipts appears twice), unsorted. It exposes no
+// flag value; it exists for the boot-time check of stored user keys.
+func (s *Store) ExfilUsers() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, 0, len(s.exfil))
+	for k := range s.exfil {
+		out = append(out, k.User)
+	}
+	return out
+}
+
 // PendingExfilSolves returns every recorded exfil receipt whose (user,
 // challenge) pair has NOT been solved yet. It is the sweeper's work queue: the
 // scoring layer re-applies the RequireExfil / evade-type filter (catalog is the

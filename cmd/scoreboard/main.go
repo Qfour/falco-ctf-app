@@ -237,6 +237,9 @@ func main() {
 	// app#403: the display-name rule is enforced on write only; surface rows
 	// saved before it tightened (count + seats, never the value).
 	warnStoredDisplayNames(logger, st)
+	// app#439: the user slug is enforced on write only (app#433); count solves
+	// and receipts keyed by anything else (counts only).
+	warnStoredUsers(logger, st)
 
 	// QA Board (app#292 — destination model, replaces P25's per-user QA
 	// ticket chat wholesale as of Phase 2): a second SQLite file in the SAME

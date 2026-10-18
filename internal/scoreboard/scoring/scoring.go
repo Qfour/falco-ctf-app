@@ -140,12 +140,48 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"regexp"
 	"slices"
 	"time"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/store"
 )
+
+// validUser mirrors internal/scoreboard/api's validUser (the username slug
+// every scoring write is keyed by). scoring cannot import api, so the
+// expression is copied here; api's user_slug_parity_test pins the copies equal,
+// and one shared definition is app#440.
+var validUser = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+
+// ErrInvalidUser is returned by SubmitEvade and RecordExfil for a user that is
+// not a username slug, and Sweep skips a stored receipt keyed by one: these
+// three never write a solve or receipt under a non-slug key. The HTTP handlers
+// check the slug first, so this is a second, independent gate (fail-closed).
+//
+// Scope: only those three. OnRuleFire, TaintOnOverflow and SubmitDetect rely on
+// their adapter's check (ingest's namespace parse, the submit-detect handler's
+// identity check); making the Grader the single owner of the slug precondition
+// is app#440.
+var ErrInvalidUser = errors.New("scoring: user is not a username slug")
+
+// CountNonSlugStoredUsers returns how many stored solves and how many stored
+// exfil receipts are keyed by a user that is not a username slug. Sweep never
+// turns such a receipt into a solve; a solve row already stored under such a
+// key stays until a reset (app#439). It returns counts only, never a user.
+func CountNonSlugStoredUsers(st *store.Store) (solved, exfil int) {
+	for k := range st.Snapshot().Solved {
+		if !validUser.MatchString(k.User) {
+			solved++
+		}
+	}
+	for _, u := range st.ExfilUsers() {
+		if !validUser.MatchString(u) {
+			exfil++
+		}
+	}
+	return solved, exfil
+}
 
 // ScoreStore is the repository port the Grader depends on. It is the minimal
 // slice of the persistence layer the solve rules need; *store.Store implements
@@ -683,10 +719,17 @@ type EvadeOutcome struct {
 //     EvadeExfilRequired)
 //  7. record the solve → EvadeSolved.
 //
+// `user` must be a username slug (ValidUser), else ErrInvalidUser is returned
+// before any gate: a non-slug user is never solved for. The returned
+// EvadeOutcome is only meaningful when err == nil.
+//
 // `flag` is expected pre-trimmed by the adapter (the handler trims user input),
 // matching the prior behaviour where the comparison and the exfil lookup both
 // used the trimmed value.
 func (g *Grader) SubmitEvade(user, cid, flag string) (EvadeOutcome, error) {
+	if !validUser.MatchString(user) {
+		return EvadeOutcome{}, ErrInvalidUser
+	}
 	ch, ok := g.cat[cid]
 	if !ok {
 		return EvadeOutcome{Status: EvadeUnknownChallenge}, nil
@@ -757,6 +800,9 @@ const (
 	ExfilNotRequired
 	// ExfilRecorded: the receipt was stored (last-write-wins per user/challenge).
 	ExfilRecorded
+	// ExfilInvalidUser: user is not a username slug; nothing was stored (the
+	// error is ErrInvalidUser).
+	ExfilInvalidUser
 )
 
 // RecordExfil stores a collector exfil receipt for the boss capstone, applying
@@ -765,8 +811,10 @@ const (
 // later at SubmitEvade time via HasExfil (a wrong value simply fails the gate),
 // exactly as before.
 //
-// `user` and `flag` are expected pre-trimmed / pre-validated (non-empty) by the
-// adapter, matching prior handler behaviour.
+// `user` must be a username slug (a-z, 0-9, "-"; at most 63), else ErrInvalidUser is returned
+// (with status ExfilInvalidUser) and nothing is stored: a receipt under a non-slug key would otherwise be
+// swept into a solve. `flag` is expected pre-trimmed / non-empty by the adapter,
+// matching prior handler behaviour.
 //
 // The returned ExfilStatus is only meaningful when err == nil (standard Go
 // convention: when err != nil the other return values are undefined). On a
@@ -774,6 +822,9 @@ const (
 // persisted — callers must branch on err first and never trust the status
 // when err is non-nil.
 func (g *Grader) RecordExfil(user, cid, flag string) (ExfilStatus, error) {
+	if !validUser.MatchString(user) {
+		return ExfilInvalidUser, ErrInvalidUser
+	}
 	ch, ok := g.cat[cid]
 	if !ok {
 		return ExfilUnknownChallenge, nil
@@ -945,6 +996,12 @@ func (g *Grader) Sweep() ([]SweepResult, error) {
 	var solved []SweepResult
 	var errs []error
 	for _, r := range g.store.PendingExfilSolves() {
+		if !validUser.MatchString(r.User) {
+			// A receipt stored before the slug check existed. Never solved for
+			// (fail-closed); counted once at boot (CountNonSlugStoredUsers),
+			// not on every tick.
+			continue
+		}
 		ch, ok := g.cat[r.Challenge]
 		if !ok {
 			continue // challenge left the catalog since the receipt was recorded

@@ -1760,3 +1760,87 @@ func TestTaintOnOverflow_PersistFailureReturned_ThenRetryWrites(t *testing.T) {
 		t.Fatalf("retry did not persist: %v", got)
 	}
 }
+
+// --- user slug precondition (app#439) --------------------------------------
+
+var nonSlugUsers = []string{"", "Alice", "bad user", "-lead", "a_b", "evil\u202euser", strings.Repeat("a", 64)}
+
+// The Grader refuses a non-slug user on both write paths with ErrInvalidUser and
+// stores nothing, whatever the handler in front of it did.
+func TestGrader_NonSlugUserIsRefused(t *testing.T) {
+	fs := newFakeStore()
+	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
+	for _, u := range nonSlugUsers {
+		st, err := g.RecordExfil(u, "03-exfil", "FALCO{boss}")
+		if !errors.Is(err, scoring.ErrInvalidUser) || st != scoring.ExfilInvalidUser {
+			t.Errorf("RecordExfil(%q) = (%v, %v), want (ExfilInvalidUser, ErrInvalidUser)", u, st, err)
+		}
+		if _, err := g.SubmitEvade(u, "03-exfil", "FALCO{boss}"); !errors.Is(err, scoring.ErrInvalidUser) {
+			t.Errorf("SubmitEvade(%q) err = %v, want ErrInvalidUser", u, err)
+		}
+	}
+	if len(fs.exfil) != 0 || len(fs.solved) != 0 || fs.markSolvedCalls != 0 {
+		t.Fatalf("a refused user left state behind: exfil=%v solved=%v markSolved=%d", fs.exfil, fs.solved, fs.markSolvedCalls)
+	}
+}
+
+// A receipt already stored under a non-slug key (written by a release without
+// the slug check) is never swept into a solve; a slug user's receipt beside it
+// still is.
+func TestSweep_NonSlugUserReceiptIsSkipped(t *testing.T) {
+	fs := newFakeStore()
+	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
+	for _, u := range nonSlugUsers { // straight into the store, as an older release did
+		if err := fs.RecordExfil(u, "03-exfil", "FALCO{boss}", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := g.RecordExfil("alice", "03-exfil", "FALCO{boss}"); err != nil {
+		t.Fatal(err)
+	}
+	solved, err := g.Sweep()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(solved) != 1 || solved[0].User != "alice" {
+		t.Fatalf("sweep solved %+v, want only alice", solved)
+	}
+	if len(fs.solved) != 1 || fs.markSolvedCalls != 1 {
+		t.Fatalf("solved=%v markSolved=%d: a non-slug receipt was solved", fs.solved, fs.markSolvedCalls)
+	}
+}
+
+// The Grader accepts a slug user on both write paths (the other half of the
+// refusals above).
+func TestGrader_SlugUserIsAccepted(t *testing.T) {
+	for _, u := range []string{"user1", "a", "0", "a-b", strings.Repeat("a", 63)} {
+		fs := newFakeStore()
+		g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
+		if st, err := g.RecordExfil(u, "03-exfil", "FALCO{boss}"); err != nil || st != scoring.ExfilRecorded {
+			t.Errorf("RecordExfil(%q) = (%v, %v), want (ExfilRecorded, nil)", u, st, err)
+		}
+	}
+}
+
+// CountNonSlugStoredUsers counts solves and receipts (not users) keyed by a
+// non-slug user, read from a real store.
+func TestCountNonSlugStoredUsers(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.db")
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range []string{"user1", "Bad User"} {
+		if _, err := st.MarkSolved(u, "03-exfil", "2026-10-01T00:00:00Z"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, c := range []struct{ u, cid string }{{"user1", "03-exfil"}, {"BAD", "03-exfil"}, {"BAD", "04-x"}, {"x_y", "03-exfil"}} {
+		if err := st.RecordExfil(c.u, c.cid, "FALCO{x}", "2026-10-01T00:00:00Z"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if solved, exfil := scoring.CountNonSlugStoredUsers(st); solved != 1 || exfil != 3 {
+		t.Fatalf("counts = (%d, %d), want (1, 3)", solved, exfil)
+	}
+}
