@@ -36,6 +36,7 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
 - scoreboard の `EXPECTED_EMAIL_DOMAIN` (chart: `env.expectedEmailDomain`)。
 - scoreboard: 起動時 (store を開いた直後、serve の前) に、保存済みの表示名のうち現在の書き込み経路が保存する値と一致しないもの (規則 = Cc / Cf / C1・HTML の metachar・32 文字を通らない、または端に空白・NEL・LF がある) を数え、件数と seat を Warn で 1 行出す (app#403)。規則は書き込み時にしか効かないので、規則が厳しくなる前 (app#331 / #381) に保存された名前は再検証されず公開 board に出続けるため。Info (0 件) と Warn は同じ msg `stored display name check` で、件数は `violations`、対処の案内は `remedy`。名前の値はログに出さない (規則が拒む文字を含みうる)。自動では書き換えない。
   - **Upgrade note**: Warn が出たら、運営 dashboard の admin display-name (同じ validator) で名前だけ直す。表示名と絵柄を seat の既定に戻すなら `POST /api/admin/users/{user}/profile-reset` (origin-guard 付きなので admin session と許可 Origin が要る)。`seats` は 50 件で打ち切り、件数は全件。直した後に scoreboard を再起動すると残りが出る。
+- spec の string node (3 spec で 181 本) に出所の宣言 `x-ctf-text-origin` (6 語) を必須に (ADR-0039 S1、test gate)。欠落・語彙外・件数の drift は `make test` が止める。HTTP 挙動の変更なし。
 ### Changed
 
 - **`scoreboard_ingest_falco_events_scoring_overflow_total{ns}` と `scoreboard_ingest_falco_events_rate_limited_total{ns}` の family を起動直後から出す (#412)。** `ns="_other"` の 0 を事前生成する (`_other` は ingest が ns の種類の上限に達したときに既に使う値で、series は増えない)。これまでは最初の increment まで family が無く、platform の verify / teardown gate は「family 無し」を 0 とも改名とも判定できなかった。今後 family 無し = 改名か旧 image であり、platform は「family 無し」を判定不能 (FAIL) に戻せる (platform #245 / #247 の最低 app ref は #448 の merge 後の main の SHA (squash merge) になる)。契約表の「Webhook 流量制限 (app#359)」行に明記し、`internal/scoreboard/metrics/contract_test.go` で名前・label・「起動直後から存在する」を固定した。

@@ -1,0 +1,395 @@
+package specparity
+
+// ADR-0039 S1 / ADR-0005 V8: the walker is proven fail-closed against small
+// synthetic specs (never the real docs/openapi-*.yaml: those are exercised by
+// internal/apispec's TestAPISpec_TextOriginDeclared). Each case mutates one
+// thing in an otherwise valid document and names the JSON pointer the
+// failure must point at; the baseline case proves the mutations are the only
+// reason for red.
+
+import (
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+)
+
+func specFromYAML(t *testing.T, doc string) *Spec {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "spec.yaml")
+	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := LoadSpec(path)
+	if err != nil {
+		t.Fatalf("LoadSpec: %v", err)
+	}
+	return s
+}
+
+// textOriginBase is a valid document exercising every place the walk must
+// reach: a component property, an array items, additionalProperties, allOf /
+// anyOf / oneOf, a `type: [string, "null"]`, a component parameter, an inline
+// parameter, a requestBody, a response, a response header and
+// components.{responses,requestBodies,headers}. 17 string nodes.
+const textOriginBase = `
+openapi: 3.1.0
+paths:
+  /a/{id}:
+    parameters:
+      - in: query
+        name: q
+        schema: {type: string, x-ctf-text-origin: participant-opaque}
+    post:
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - in: header
+          name: X-H
+          schema: {type: string, x-ctf-text-origin: token}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: {type: string, x-ctf-text-origin: participant-block}
+      responses:
+        "200":
+          description: ok
+          headers:
+            X-Out:
+              schema: {type: string, x-ctf-text-origin: operator}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Thing"}
+components:
+  parameters:
+    Id:
+      in: path
+      name: id
+      schema: {type: string, pattern: "^[a-z]+$", x-ctf-text-origin: token}
+  schemas:
+    Thing:
+      type: object
+      properties:
+        name: {type: string, x-ctf-text-origin: participant-inline}
+        maybe: {type: [string, "null"], x-ctf-text-origin: operator}
+        tags:
+          type: array
+          items: {type: string, x-ctf-text-origin: operator}
+        extra:
+          type: object
+          additionalProperties: {type: string, x-ctf-text-origin: operator}
+        kind: {type: string, enum: [a, b], x-ctf-text-origin: enum}
+        both:
+          allOf:
+            - {type: string, x-ctf-text-origin: token}
+        either:
+          anyOf:
+            - {type: string, x-ctf-text-origin: token}
+            - {type: integer}
+        one:
+          oneOf:
+            - {type: string, x-ctf-text-origin: token}
+            - {type: boolean}
+        link: {$ref: "#/components/schemas/Other"}
+    Other: {type: string, x-ctf-text-origin: operator}
+  responses:
+    Gone:
+      description: gone
+      content:
+        text/plain:
+          schema: {type: string, x-ctf-text-origin: operator}
+  requestBodies:
+    Form:
+      content:
+        application/json:
+          schema: {type: string, x-ctf-text-origin: participant-opaque}
+  headers:
+    Rate:
+      schema: {type: string, x-ctf-text-origin: operator}
+`
+
+const textOriginBaseNodes = 17
+
+func TestTextOrigin_BaselineIsGreenAndCounted(t *testing.T) {
+	rep := specFromYAML(t, textOriginBase).TextOrigin()
+	if len(rep.Violations) != 0 {
+		t.Fatalf("baseline must be clean, got:\n%s", strings.Join(rep.Violations, "\n"))
+	}
+	if len(rep.Nodes) != textOriginBaseNodes {
+		t.Fatalf("baseline has %d string nodes, want %d (the walk dropped or invented one): %v", len(rep.Nodes), textOriginBaseNodes, rep.Nodes)
+	}
+	want := map[string]int{
+		OriginParticipantInline: 1,
+		OriginParticipantBlock:  1,
+		OriginParticipantOpaque: 2,
+		OriginOperator:          7,
+		OriginToken:             5,
+		OriginEnum:              1,
+	}
+	if !reflect.DeepEqual(rep.Counts, want) {
+		t.Fatalf("counts = %v, want %v", rep.Counts, want)
+	}
+}
+
+func TestTextOrigin_Mutations(t *testing.T) {
+	cases := []struct {
+		name string
+		from string // substring of the baseline to replace
+		to   string
+		last bool // replace the LAST occurrence of from (it is not unique)
+		// want: every substring must appear in the Violations text
+		want []string
+	}{
+		{
+			name: "a property without the key",
+			from: `name: {type: string, x-ctf-text-origin: participant-inline}`,
+			to:   `name: {type: string}`,
+			want: []string{"/components/schemas/Thing/properties/name: string node without x-ctf-text-origin"},
+		},
+		{
+			name: "array items without the key",
+			from: `items: {type: string, x-ctf-text-origin: operator}`,
+			to:   `items: {type: string}`,
+			want: []string{"/components/schemas/Thing/properties/tags/items: string node without"},
+		},
+		{
+			name: "additionalProperties without the key",
+			from: `additionalProperties: {type: string, x-ctf-text-origin: operator}`,
+			to:   `additionalProperties: {type: string}`,
+			want: []string{"/components/schemas/Thing/properties/extra/additionalProperties: string node without"},
+		},
+		{
+			name: "allOf member without the key",
+			from: `- {type: string, x-ctf-text-origin: token}
+        either:`,
+			to: `- {type: string}
+        either:`,
+			want: []string{"/components/schemas/Thing/properties/both/allOf/0: string node without"},
+		},
+		{
+			name: "type list containing string without the key",
+			from: `maybe: {type: [string, "null"], x-ctf-text-origin: operator}`,
+			to:   `maybe: {type: [string, "null"]}`,
+			want: []string{"/components/schemas/Thing/properties/maybe: string node without"},
+		},
+		{
+			name: "component parameter without the key",
+			from: `schema: {type: string, pattern: "^[a-z]+$", x-ctf-text-origin: token}`,
+			to:   `schema: {type: string, pattern: "^[a-z]+$"}`,
+			want: []string{"/components/parameters/Id/schema: string node without"},
+		},
+		{
+			name: "path-level parameter without the key",
+			from: `schema: {type: string, x-ctf-text-origin: participant-opaque}
+    post:`,
+			to: `schema: {type: string}
+    post:`,
+			want: []string{"/paths/~1a~1{id}/parameters/0/schema: string node without"},
+		},
+		{
+			name: "inline operation parameter without the key",
+			from: `schema: {type: string, x-ctf-text-origin: token}
+      requestBody:`,
+			to: `schema: {type: string}
+      requestBody:`,
+			want: []string{"/paths/~1a~1{id}/post/parameters/1/schema: string node without"},
+		},
+		{
+			name: "requestBody property without the key",
+			from: `note: {type: string, x-ctf-text-origin: participant-block}`,
+			to:   `note: {type: string}`,
+			want: []string{"/paths/~1a~1{id}/post/requestBody/content/application~1json/schema/properties/note: string node without"},
+		},
+		{
+			name: "response header without the key",
+			from: `schema: {type: string, x-ctf-text-origin: operator}
+          content:`,
+			to: `schema: {type: string}
+          content:`,
+			want: []string{"/paths/~1a~1{id}/post/responses/200/headers/X-Out/schema: string node without"},
+		},
+		{
+			name: "components.responses string without the key",
+			from: `text/plain:
+          schema: {type: string, x-ctf-text-origin: operator}`,
+			to: `text/plain:
+          schema: {type: string}`,
+			want: []string{"/components/responses/Gone/content/text~1plain/schema: string node without"},
+		},
+		{
+			name: "components.requestBodies string without the key",
+			from: `schema: {type: string, x-ctf-text-origin: participant-opaque}
+  headers:`,
+			to: `schema: {type: string}
+  headers:`,
+			want: []string{"/components/requestBodies/Form/content/application~1json/schema: string node without"},
+		},
+		{
+			name: "components.headers string without the key",
+			from: `schema: {type: string, x-ctf-text-origin: operator}
+`,
+			to: `schema: {type: string}
+`,
+			last: true,
+			want: []string{"/components/headers/Rate/schema: string node without"},
+		},
+		{
+			name: "a word outside the vocabulary",
+			from: `name: {type: string, x-ctf-text-origin: participant-inline}`,
+			to:   `name: {type: string, x-ctf-text-origin: participant}`,
+			want: []string{`/components/schemas/Thing/properties/name: x-ctf-text-origin: "participant" is not in the vocabulary`},
+		},
+		{
+			name: "a word with different case",
+			from: `name: {type: string, x-ctf-text-origin: participant-inline}`,
+			to:   `name: {type: string, x-ctf-text-origin: Token}`,
+			want: []string{`"Token" is not in the vocabulary`},
+		},
+		{
+			name: "a non-string value (list)",
+			from: `name: {type: string, x-ctf-text-origin: participant-inline}`,
+			to:   `name: {type: string, x-ctf-text-origin: [token]}`,
+			want: []string{"/components/schemas/Thing/properties/name: x-ctf-text-origin must be a string"},
+		},
+		{
+			name: "a null value",
+			from: `name: {type: string, x-ctf-text-origin: participant-inline}`,
+			to:   `name: {type: string, x-ctf-text-origin: null}`,
+			want: []string{"/components/schemas/Thing/properties/name: string node without x-ctf-text-origin"},
+		},
+		{
+			name: "the key on an object node",
+			from: `Thing:
+      type: object`,
+			to: `Thing:
+      x-ctf-text-origin: operator
+      type: object`,
+			want: []string{"/components/schemas/Thing: x-ctf-text-origin on a node that is not a string Schema Object"},
+		},
+		{
+			name: "the key on a $ref site",
+			from: `link: {$ref: "#/components/schemas/Other"}`,
+			to:   `link: {$ref: "#/components/schemas/Other", x-ctf-text-origin: operator}`,
+			want: []string{"/components/schemas/Thing/properties/link: x-ctf-text-origin on a node that is not a string Schema Object"},
+		},
+		{
+			name: "the key on an integer node",
+			from: `- {type: integer}`,
+			to:   `- {type: integer, x-ctf-text-origin: token}`,
+			want: []string{"/components/schemas/Thing/properties/either/anyOf/1: x-ctf-text-origin on a node that is not a string Schema Object"},
+		},
+		{
+			name: "a $ref outside the document",
+			from: `link: {$ref: "#/components/schemas/Other"}`,
+			to:   `link: {$ref: "other.yaml#/components/schemas/Other"}`,
+			want: []string{`/components/schemas/Thing/properties/link: $ref "other.yaml#/components/schemas/Other" does not resolve`},
+		},
+		{
+			name: "a $ref to a missing schema",
+			from: `link: {$ref: "#/components/schemas/Other"}`,
+			to:   `link: {$ref: "#/components/schemas/Nope"}`,
+			want: []string{`$ref "#/components/schemas/Nope" does not resolve`},
+		},
+		{
+			name: "a $ref to a missing parameter",
+			from: `- $ref: "#/components/parameters/Id"`,
+			to:   `- $ref: "#/components/parameters/Gone"`,
+			want: []string{`/paths/~1a~1{id}/post/parameters/0: $ref "#/components/parameters/Gone" does not resolve`},
+		},
+		{
+			name: "a string schema in a place the walk does not know",
+			from: `components:
+  parameters:`,
+			to: `components:
+  callbacks:
+    cb:
+      schema: {type: string}
+  parameters:`,
+			want: []string{"/components/callbacks/cb/schema: a string Schema Object that the walk"},
+		},
+		{
+			name: "a string schema hidden under a vendor key",
+			from: `    Other: {type: string, x-ctf-text-origin: operator}`,
+			to: `    Other: {type: string, x-ctf-text-origin: operator}
+    Hidden:
+      x-extra: {type: string}`,
+			want: []string{"/components/schemas/Hidden/x-extra: a string Schema Object that the walk"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := textOriginBase
+			if strings.Count(doc, tc.from) < 1 {
+				t.Fatalf("test bug: %q not found in the baseline", tc.from)
+			}
+			if tc.last {
+				doc = replaceLast(doc, tc.from, tc.to)
+			} else {
+				if n := strings.Count(doc, tc.from); n != 1 {
+					t.Fatalf("test bug: %q occurs %d times in the baseline, want exactly 1", tc.from, n)
+				}
+				doc = strings.Replace(doc, tc.from, tc.to, 1)
+			}
+			rep := specFromYAML(t, doc).TextOrigin()
+			if len(rep.Violations) == 0 {
+				t.Fatalf("the mutation was not detected (a gate that cannot go red is not a gate)")
+			}
+			all := strings.Join(rep.Violations, "\n")
+			for _, w := range tc.want {
+				if !strings.Contains(all, w) {
+					t.Errorf("violations do not contain %q; got:\n%s", w, all)
+				}
+			}
+		})
+	}
+}
+
+func replaceLast(s, from, to string) string {
+	i := strings.LastIndex(s, from)
+	if i < 0 {
+		return s
+	}
+	return s[:i] + to + s[i+len(from):]
+}
+
+// TestTextOrigin_ZeroStringNodesFails: an empty extraction must read as a
+// broken gate, never as "nothing to declare" (ADR-0005 V8-2).
+func TestTextOrigin_ZeroStringNodesFails(t *testing.T) {
+	rep := specFromYAML(t, "openapi: 3.1.0\npaths: {}\ncomponents:\n  schemas:\n    N: {type: integer}\n").TextOrigin()
+	if len(rep.Violations) != 1 || !strings.Contains(rep.Violations[0], "no string Schema Object found at all") {
+		t.Fatalf("zero string nodes must be a violation, got %v", rep.Violations)
+	}
+}
+
+// TestTextOrigin_VocabularyIsExactlySixDistinctWords pins the closed set: a
+// change here is an ADR-0039 D2 change, not a drive-by edit.
+func TestTextOrigin_VocabularyIsExactlySixDistinctWords(t *testing.T) {
+	want := []string{"participant-inline", "participant-block", "participant-opaque", "operator", "token", "enum"}
+	if !reflect.DeepEqual(TextOriginVocabulary, want) {
+		t.Fatalf("vocabulary = %v, want %v (a change here is an ADR-0039 D2 change)", TextOriginVocabulary, want)
+	}
+}
+
+// TestTextOrigin_PointerEscaping: '/' and '~' in a path or property name are
+// escaped per RFC 6901 so the pointer in a failure line is followable.
+func TestTextOrigin_PointerEscaping(t *testing.T) {
+	doc := `
+openapi: 3.1.0
+paths:
+  /x/{a~b}:
+    get:
+      parameters:
+        - in: query
+          name: q
+          schema: {type: string}
+      responses: {}
+`
+	rep := specFromYAML(t, doc).TextOrigin()
+	all := strings.Join(rep.Violations, "\n")
+	if !strings.Contains(all, "/paths/~1x~1{a~0b}/get/parameters/0/schema: string node without") {
+		t.Fatalf("pointer not escaped as RFC 6901, got:\n%s", all)
+	}
+}
