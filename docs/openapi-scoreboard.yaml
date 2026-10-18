@@ -1436,9 +1436,10 @@ paths:
       x-ctf-collector-forward: false
       x-ctf-rate-limit: identity 1 req/s burst 10 (shared with boardLikeThread)
       description: |
-        Idempotent, unconditional delete (`internal/board.Store.Unlike`) —
-        a no-op for a thread the caller never liked, or one that was never
-        likeable at all. There is nothing to leak by allowing this
+        For a well-formed `{tid}` (32 lower-case hex; anything else is a fixed
+        404 before any lookup), an idempotent, unconditional delete
+        (`internal/board.Store.Unlike`) — a no-op for a thread the caller
+        never liked, or one that was never likeable at all. There is nothing to leak by allowing this
         unconditionally, unlike the like path's insert (see that
         operation's own description).
       parameters:
@@ -1449,13 +1450,13 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/LikeResult" }
-        "404":
-          description: "`{tid}` is not a 32-hex thread id (fixed body, the value is not echoed). A well-formed id for a thread that does not exist is still 200 (see above)."
+        "403":
+          description: origin guard denied, or the request carries no `X-Auth-Request-Email` identity (denied by the rate limiter before any token is consumed), or an identity that is not the canonical `<seat>@<EXPECTED_EMAIL_DOMAIN>` form (the handler's 403, after the bucket)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-        "403":
-          description: origin guard denied, or the request carries no `X-Auth-Request-Email` identity (denied by the rate limiter before any token is consumed), or an identity that is not the canonical `<seat>@<EXPECTED_EMAIL_DOMAIN>` form (the handler's 403, after the bucket)
+        "404":
+          description: "`{tid}` is not a 32-hex thread id (fixed body, the value is not echoed). A well-formed id for a thread that does not exist is still 200 (see above)."
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1939,7 +1940,7 @@ components:
       in: path
       name: tid
       required: true
-      schema: { type: string, x-ctf-text-origin: token }
+      schema: { type: string, pattern: "^[0-9a-f]{32}$", x-ctf-text-origin: token }
       description: |
         QA Board thread id (app#292) — a 32-hex-char, server-generated,
         non-enumerable value (`internal/board.Store`'s newID). Not a
@@ -1947,14 +1948,15 @@ components:
         ownership/moderation-state entitlement check server-side; this
         value's randomness is defense-in-depth on top of that check, not a
         substitute for it. A `{tid}` that is not exactly 32 lower-case hex
-        characters is answered with the same fixed 404 as an unknown thread
-        before any lookup, and is never echoed (so `LikeResult.tid` is always
-        a well-formed id) or logged.
+        characters (`pattern`) is answered, before any lookup, with the same
+        fixed 404 body that the routes which 404 an unknown thread give (unlike
+        answers 200 for a well-formed id that names no thread); it is never
+        echoed (so `LikeResult.tid` is always a well-formed id) or logged.
     Mid:
       in: path
       name: mid
       required: true
-      schema: { type: string, x-ctf-text-origin: token }
+      schema: { type: string, pattern: "^[0-9a-f]{32}$", x-ctf-text-origin: token }
       description: |
         QA Board message id (app#292) — same shape/generation as `Tid`
         above, scoped to one message within a thread rather than the
@@ -2886,7 +2888,7 @@ components:
         does not by itself prove the author is staff — `author_role` does.
       required: [id, author_role, author, authorDisplay, authorAvatar, body, created_at, state]
       properties:
-        id: { type: string, x-ctf-text-origin: token }
+        id: { type: string, pattern: "^[0-9a-f]{32}$", x-ctf-text-origin: token }
         author_role:
           type: string
           x-ctf-text-origin: enum
@@ -2923,7 +2925,7 @@ components:
         use ONE shape for "here is the thread after my action" everywhere.
       required: [id, author, authorDisplay, audience, subject, created_at, pinned, answered, state, messages, like_count, liked]
       properties:
-        id: { type: string, x-ctf-text-origin: token }
+        id: { type: string, pattern: "^[0-9a-f]{32}$", x-ctf-text-origin: token }
         author: { type: string, x-ctf-text-origin: token }
         authorDisplay:
           type: string
@@ -2968,7 +2970,7 @@ components:
         One row of a QA Board thread LISTING — never the message bodies.
       required: [id, author, authorDisplay, audience, subject, created_at, updated_at, pinned, answered, state, message_count, like_count, liked]
       properties:
-        id: { type: string, x-ctf-text-origin: token }
+        id: { type: string, pattern: "^[0-9a-f]{32}$", x-ctf-text-origin: token }
         author: { type: string, x-ctf-text-origin: token }
         authorDisplay:
           type: string
@@ -3082,7 +3084,7 @@ components:
       required: [ok, tid, liked, like_count]
       properties:
         ok: { type: boolean }
-        tid: { type: string, x-ctf-text-origin: token }
+        tid: { type: string, pattern: "^[0-9a-f]{32}$", x-ctf-text-origin: token }
         liked: { type: boolean }
         like_count: { type: integer }
 
@@ -3091,7 +3093,7 @@ components:
       required: [ok, mid, state]
       properties:
         ok: { type: boolean }
-        mid: { type: string, x-ctf-text-origin: token }
+        mid: { type: string, pattern: "^[0-9a-f]{32}$", x-ctf-text-origin: token }
         state:
           type: string
           x-ctf-text-origin: enum

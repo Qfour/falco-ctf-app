@@ -112,8 +112,8 @@ func authzConcretePath(rt apispec.Route) string {
 		"user": authzSelfUser,
 		"cid":  authzCID(rt),
 		"idx":  "0",
-		"tid":  "deadbeef",
-		"mid":  "deadbeef",
+		"tid":  "00000000000000000000000000000000",
+		"mid":  "00000000000000000000000000000000",
 	}
 	return pathParamPattern.ReplaceAllStringFunc(rt.Pattern, func(seg string) string {
 		name := seg[1 : len(seg)-1]

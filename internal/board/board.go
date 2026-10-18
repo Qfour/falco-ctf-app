@@ -246,6 +246,10 @@ const idBytes = 16
 
 var idRE = regexp.MustCompile(fmt.Sprintf(`^[0-9a-f]{%d}$`, 2*idBytes))
 
+// IDPattern is the expression ValidID matches, for tests that compare it with the
+// spec's `pattern` for a board id.
+func IDPattern() string { return idRE.String() }
+
 // ValidID reports whether id has the shape of a board id (a thread or a message
 // id). A {tid} / {mid} path value that does not is "not found" without a lookup,
 // and is never echoed or logged.

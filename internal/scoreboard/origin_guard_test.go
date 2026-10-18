@@ -217,8 +217,8 @@ var pathParamValues = map[string]string{
 	"user": "alice",
 	"cid":  "02-evade",
 	"idx":  "0",
-	"tid":  "deadbeef",
-	"mid":  "deadbeef",
+	"tid":  "00000000000000000000000000000000",
+	"mid":  "00000000000000000000000000000000",
 }
 
 var pathParamPattern = regexp.MustCompile(`\{([^}]+)\}`)

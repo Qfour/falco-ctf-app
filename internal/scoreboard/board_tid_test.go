@@ -16,15 +16,23 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
+	"github.com/Qfour/falco-ctf-app/internal/apispec"
 	"github.com/Qfour/falco-ctf-app/internal/board"
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard"
 	"github.com/Qfour/falco-ctf-app/internal/store"
 )
+
+// unknownWellFormedID has the shape of a board id but names no thread: it passes
+// the shape check and reaches the store, which answers "not found".
+var unknownWellFormedID = strings.Repeat("0", 32)
 
 const boardTIDNotFoundBody = `{"error":"thread not found"}`
 
@@ -41,37 +49,67 @@ func badTIDs() []string {
 	}
 }
 
+// idRoute is one route of the live route table whose pattern carries a board id.
+type idRoute struct {
+	rt    apispec.Route
+	param string // "tid" or "mid"
+}
+
+// boardIDRoutes derives, from the route table the mux actually serves, every
+// route with a {tid} or {mid} path parameter, so a new such route is covered
+// without anyone editing a list. The set must be non-empty and at least the 8
+// known at the time of writing.
+func boardIDRoutes(t *testing.T, h *scoreboard.Handler) []idRoute {
+	t.Helper()
+	var out []idRoute
+	for _, rt := range h.Routes() {
+		for _, p := range []string{"tid", "mid"} {
+			if strings.Contains(rt.Pattern, "{"+p+"}") {
+				out = append(out, idRoute{rt, p})
+			}
+		}
+	}
+	if len(out) < 8 {
+		t.Fatalf("derived only %d board id routes from Routes(), want at least 8: %v", len(out), out)
+	}
+	return out
+}
+
+// seatFor returns the identity to call a route with: the admin for an admin
+// route, else a distinct seat (so a per-identity rate limiter never turns the
+// request away before the handler).
+func seatFor(rt apispec.Route, n int) string {
+	if rt.Authz == apispec.AuthzAdmin {
+		return boardFixtureAdmin
+	}
+	return fmt.Sprintf("p%d@ctf.local", n)
+}
+
+func fillID(pattern, param, id string) string {
+	return strings.Replace(pattern, "{"+param+"}", id, 1)
+}
+
+func notFoundBodyFor(param string) string {
+	if param == "mid" {
+		return `{"error":"message not found"}`
+	}
+	return boardTIDNotFoundBody
+}
+
 func TestBoardTID_BadShapeIsTheFixed404OnEveryRoute(t *testing.T) {
 	f := newBoardFixture(t)
-	routes := []struct {
-		name, method, tmpl, email string
-		body                      any
-	}{
-		{"get", "GET", "/api/board/threads/%s", "alice@ctf.local", nil},
-		{"append", "POST", "/api/board/threads/%s/messages", "alice@ctf.local", map[string]any{"body": "hello"}},
-		{"like", "POST", "/api/board/threads/%s/like", "alice@ctf.local", map[string]any{}},
-		{"unlike", "POST", "/api/board/threads/%s/unlike", "alice@ctf.local", map[string]any{}},
-		{"admin get", "GET", "/api/admin/board/threads/%s", boardFixtureAdmin, nil},
-		{"admin reply", "POST", "/api/admin/board/threads/%s/reply", boardFixtureAdmin, map[string]any{"body": "hello"}},
-		{"admin state", "POST", "/api/admin/board/threads/%s/state", boardFixtureAdmin, map[string]any{"pinned": true}},
-	}
 	n := 0
-	for _, rt := range routes {
-		for _, tid := range badTIDs() {
-			email := rt.email
-			if email != boardFixtureAdmin {
-				// A distinct seat per request keeps the per-identity rate limiter
-				// from turning a request away before the handler.
-				n++
-				email = fmt.Sprintf("user%d@ctf.local", n)
+	for _, ir := range boardIDRoutes(t, f.srv) {
+		for _, id := range badTIDs() {
+			n++
+			var body any
+			if ir.rt.Method != "GET" {
+				body = map[string]any{}
 			}
-			w := f.do(rt.method, strings.Replace(rt.tmpl, "%s", tid, 1), email, rt.body)
-			if w.Code != http.StatusNotFound {
-				t.Errorf("%s tid=%.30q: status=%d body=%.120s, want 404", rt.name, tid, w.Code, w.Body)
-				continue
-			}
-			if strings.TrimSpace(w.Body.String()) != boardTIDNotFoundBody {
-				t.Errorf("%s tid=%.30q: body=%.120s, want the fixed %s", rt.name, tid, w.Body, boardTIDNotFoundBody)
+			w := f.do(ir.rt.Method, fillID(ir.rt.Pattern, ir.param, id), seatFor(ir.rt, n), body)
+			want := notFoundBodyFor(ir.param)
+			if w.Code != http.StatusNotFound || strings.TrimSpace(w.Body.String()) != want {
+				t.Errorf("%s %s id=%.30q: status=%d body=%.120s, want 404 %s", ir.rt.Method, ir.rt.Pattern, id, w.Code, w.Body, want)
 			}
 		}
 	}
@@ -135,41 +173,25 @@ func TestBoardTID_BadShapeNeverReachesTheStoreNorTheLog(t *testing.T) {
 
 	marker := "zzprobe" + strings.Repeat("q", 25) // 32 chars, not hex
 	ids := []string{marker, marker + "%E2%80%AE", "%E2%80%AE" + marker}
-	routes := []struct {
-		name, method, tmpl, email string
-		body                      any
-		rawBody                   bool // also send a malformed body
-	}{
-		{"get", "GET", "/api/board/threads/%s", "u1@ctf.local", nil, false},
-		{"append", "POST", "/api/board/threads/%s/messages", "u2@ctf.local", map[string]any{"body": "hello"}, true},
-		{"like", "POST", "/api/board/threads/%s/like", "u3@ctf.local", map[string]any{}, false},
-		{"unlike", "POST", "/api/board/threads/%s/unlike", "u4@ctf.local", map[string]any{}, false},
-		{"admin get", "GET", "/api/admin/board/threads/%s", boardFixtureAdmin, nil, false},
-		{"admin reply", "POST", "/api/admin/board/threads/%s/reply", boardFixtureAdmin, map[string]any{"body": "hello"}, true},
-		{"admin state", "POST", "/api/admin/board/threads/%s/state", boardFixtureAdmin, map[string]any{"pinned": true}, true},
-		{"admin message state", "POST", "/api/admin/board/messages/%s/state", boardFixtureAdmin, map[string]any{"state": "hidden"}, true},
-	}
 	n := 0
-	for _, rt := range routes {
-		want := boardTIDNotFoundBody
-		if rt.name == "admin message state" {
-			want = `{"error":"message not found"}`
-		}
+	for _, ir := range boardIDRoutes(t, f.srv) {
+		want := notFoundBodyFor(ir.param)
 		for _, id := range ids {
-			email := rt.email
-			if email != boardFixtureAdmin {
-				n++
-				email = fmt.Sprintf("p%d@ctf.local", n) // distinct seat: no rate limiter in the way
-			}
-			target := strings.Replace(rt.tmpl, "%s", id, 1)
+			n++
+			email := seatFor(ir.rt, n)
+			target := fillID(ir.rt.Pattern, ir.param, id)
 			check := func(what string, w *httptest.ResponseRecorder) {
 				if w.Code != http.StatusNotFound || strings.TrimSpace(w.Body.String()) != want {
-					t.Errorf("%s %s id=%.40q: status=%d body=%.100s, want 404 %s (the store was reached?)", rt.name, what, id, w.Code, w.Body, want)
+					t.Errorf("%s %s %s id=%.40q: status=%d body=%.100s, want 404 %s (the store was reached?)", ir.rt.Method, ir.rt.Pattern, what, id, w.Code, w.Body, want)
 				}
 			}
-			check("", f.do(rt.method, target, email, rt.body))
-			if rt.rawBody {
-				check("(malformed body)", f.doRaw(rt.method, target, email, "{not json"))
+			var body any
+			if ir.rt.Method != "GET" {
+				body = map[string]any{}
+			}
+			check("", f.do(ir.rt.Method, target, email, body))
+			if ir.rt.Method != "GET" {
+				check("(malformed body)", f.doRaw(ir.rt.Method, target, email, "{not json"))
 			}
 		}
 	}
@@ -199,7 +221,57 @@ func TestBoardTID_RealIDStillWorksAndIsEchoedAsIs(t *testing.T) {
 		}
 	}
 	// An unlike of a well-formed id that names no thread stays a harmless 200.
-	if w := f.do("POST", "/api/board/threads/"+strings.Repeat("0", 32)+"/unlike", "bob@ctf.local", map[string]any{}); w.Code != http.StatusOK {
+	if w := f.do("POST", "/api/board/threads/"+unknownWellFormedID+"/unlike", "bob@ctf.local", map[string]any{}); w.Code != http.StatusOK {
 		t.Fatalf("unlike of an unknown well-formed id: status=%d body=%s, want 200", w.Code, w.Body)
+	}
+}
+
+// Every board id in the spec carries the same `pattern`, and it is the
+// expression board.ValidID matches: the parameters {tid} / {mid} and the five
+// response nodes that echo an id.
+func TestSpecBoardIDPatternsAreTheValidIDExpression(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "openapi-scoreboard.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	at := func(path ...string) string {
+		var cur any = doc
+		for _, k := range path {
+			m, ok := cur.(map[string]any)
+			if !ok {
+				return ""
+			}
+			cur = m[k]
+		}
+		s, _ := cur.(string)
+		return s
+	}
+	nodes := map[string][]string{
+		"parameter Tid":          {"components", "parameters", "Tid", "schema", "pattern"},
+		"parameter Mid":          {"components", "parameters", "Mid", "schema", "pattern"},
+		"BoardMessage.id":        {"components", "schemas", "BoardMessage", "properties", "id", "pattern"},
+		"BoardThread.id":         {"components", "schemas", "BoardThread", "properties", "id", "pattern"},
+		"BoardSummary.id":        {"components", "schemas", "BoardSummary", "properties", "id", "pattern"},
+		"LikeResult.tid":         {"components", "schemas", "LikeResult", "properties", "tid", "pattern"},
+		"MessageStateResult.mid": {"components", "schemas", "MessageStateResult", "properties", "mid", "pattern"},
+	}
+	found := 0
+	for name, path := range nodes {
+		got := at(path...)
+		if got == "" {
+			t.Errorf("%s: no pattern in the spec (extraction found nothing)", name)
+			continue
+		}
+		found++
+		if got != board.IDPattern() {
+			t.Errorf("%s: pattern %q, board.ValidID matches %q", name, got, board.IDPattern())
+		}
+	}
+	if found != len(nodes) {
+		t.Fatalf("found %d of %d board id nodes", found, len(nodes))
 	}
 }

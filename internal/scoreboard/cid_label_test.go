@@ -15,6 +15,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/Qfour/falco-ctf-app/internal/apispec"
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/metrics"
@@ -215,35 +216,33 @@ func clip(s string) string {
 // not reflect the input.
 func TestUnknownCIDFixedBodyOnEveryCIDRoute(t *testing.T) {
 	f := newSDFixture(t)
-	// {u} is a distinct seat per request, so no per-identity rate limiter can
-	// turn a request away before the handler.
-	routes := []struct {
-		name, tmpl string
-		withEmail  bool
-		body       func(u string) map[string]any
-	}{
-		{"submit", "/api/challenges/{cid}/submit", true, func(u string) map[string]any { return map[string]any{"user": u, "flag": "FALCO{x}"} }},
-		{"submit-detect", "/api/challenges/{cid}/submit-detect", true, func(u string) map[string]any {
-			return map[string]any{"user": u, "condition": "evt.type=open"}
-		}},
-		{"exfil-internal", "/internal/exfil/{cid}", false, func(u string) map[string]any { return map[string]any{"user": u, "flag": "FALCO{x}"} }},
-		{"steps-check", "/api/users/{u}/challenges/{cid}/steps/0/check", true, func(string) map[string]any { return map[string]any{"checked": true} }},
-		{"hints", "/api/users/{u}/challenges/{cid}/hints/0", true, func(string) map[string]any { return map[string]any{} }},
-		{"reset-dirty", "/api/users/{u}/challenges/{cid}/reset-dirty", true, func(string) map[string]any { return map[string]any{} }},
+	// The routes come from the table the mux actually serves, so a new {cid}
+	// route is covered without anyone editing a list.
+	var routes []apispec.Route
+	for _, rt := range f.srv.Routes() {
+		if strings.Contains(rt.Pattern, "{cid}") {
+			routes = append(routes, rt)
+		}
+	}
+	if len(routes) < 6 {
+		t.Fatalf("derived only %d {cid} routes from Routes(), want at least 6: %v", len(routes), routes)
 	}
 	ids := []string{"99-nope", outOfGrammarCIDs(1)[0], "bad%20id", "%ff%fe"}
 	n := 0
 	for _, rt := range routes {
 		for i, cid := range ids {
+			// A distinct seat per request, so no per-identity rate limiter can
+			// turn a request away before the handler.
 			n++
 			u := fmt.Sprintf("user%d", n)
 			email := ""
-			if rt.withEmail {
+			if rt.Authz == apispec.AuthzAuthenticated || rt.Authz == apispec.AuthzSelfOrAdmin {
 				email = u + "@ctf.local"
 			}
-			target := strings.NewReplacer("{cid}", cid, "{u}", u).Replace(rt.tmpl)
-			w := f.do(target, email, rt.body(u))
-			assertFixedUnknownBody(t, fmt.Sprintf("%s #%d", rt.name, i), w.Code, w.Body.String(), cid)
+			target := strings.NewReplacer("{cid}", cid, "{user}", u, "{idx}", "0").Replace(rt.Pattern)
+			body := map[string]any{"user": u, "flag": "FALCO{x}", "condition": "evt.type=open", "checked": true}
+			w := f.do(target, email, body)
+			assertFixedUnknownBody(t, fmt.Sprintf("%s %s #%d", rt.Method, rt.Pattern, i), w.Code, w.Body.String(), cid)
 		}
 	}
 }
