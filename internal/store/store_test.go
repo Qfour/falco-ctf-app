@@ -2,6 +2,8 @@ package store_test
 
 import (
 	"path/filepath"
+	"reflect"
+	"sort"
 	"testing"
 
 	"github.com/Qfour/falco-ctf-app/internal/store"
@@ -774,5 +776,25 @@ func TestResetProfile_ClearsBothAndIsIdempotent(t *testing.T) {
 	t.Cleanup(func() { _ = s2.Close() })
 	if s2.DisplayName("user3") != "user3" || s2.Avatar("user3") != "" {
 		t.Fatalf("reset did not reach the DB: %q / %q", s2.DisplayName("user3"), s2.Avatar("user3"))
+	}
+}
+
+// ExfilUsers lists the user of every receipt: a user with two receipts appears
+// twice, and no flag value is exposed.
+func TestExfilUsers_OneEntryPerReceipt(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "s.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	for _, c := range []struct{ u, cid string }{{"alice", "03-x"}, {"alice", "04-y"}, {"bob", "03-x"}} {
+		if err := st.RecordExfil(c.u, c.cid, "FALCO{x}", "2026-10-01T00:00:00Z"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := st.ExfilUsers()
+	sort.Strings(got)
+	if !reflect.DeepEqual(got, []string{"alice", "alice", "bob"}) {
+		t.Fatalf("ExfilUsers = %v, want [alice alice bob]", got)
 	}
 }

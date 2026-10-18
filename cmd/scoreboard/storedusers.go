@@ -8,14 +8,20 @@ import (
 )
 
 // storedUserCheckMsg is the message of BOTH the Info (clean) and the Warn
-// (violations) record, as for the stored display name check; a reader greps one
-// string and reads the `solved_violations` / `exfil_violations` attributes.
+// (violations) record, so a reader greps one string and reads the
+// `solved_violations` / `exfil_violations` attributes; the operator's next step
+// is the separate `remedy` attribute. The platform runbook (platform#257) and
+// ADR-0039 Signpost 3 read this msg and those two attribute names: change any of
+// them only together with the readers.
 const storedUserCheckMsg = "stored user slug check"
 
-// storedUserRemedy is what an operator can run before the event.
-const storedUserRemedy = "these rows are never scored (the sweeper skips a receipt whose user is not a " +
-	"username slug); before the event start from a new PVC, or POST /api/admin/reset (admin session, " +
-	"allowed Origin) to clear solves and receipts."
+// storedUserRemedy says what each kind of stored row means and what an operator
+// can do, before and after the event opens.
+const storedUserRemedy = "an exfil receipt under such a user is not turned into a solve (the sweeper skips it); " +
+	"a solved row under such a user is already a solve and stays on the leaderboard and in State " +
+	"(score, rank, first_solver, recent_solves) until a reset. Before the event: start from a new PVC, or " +
+	"POST /api/admin/reset (admin session, allowed Origin) to clear solves and receipts. After the event " +
+	"opened: do not reset (it removes every participant's solves); review the scoring by hand."
 
 // warnStoredUsers reports, once at boot, how many stored solves and exfil
 // receipts are keyed by a user that is not a username slug (app#439). The slug
@@ -25,17 +31,7 @@ const storedUserRemedy = "these rows are never scored (the sweeper skips a recei
 // It logs COUNTS only: the user value is caller-chosen text, not a seat, so
 // neither the value nor a list of them is written to the log.
 func warnStoredUsers(logger *slog.Logger, st *store.Store) {
-	var solved, exfil int
-	for k := range st.Snapshot().Solved {
-		if !scoring.ValidUser(k.User) {
-			solved++
-		}
-	}
-	for _, u := range st.ExfilUsers() {
-		if !scoring.ValidUser(u) {
-			exfil++
-		}
-	}
+	solved, exfil := scoring.CountNonSlugStoredUsers(st)
 	if solved == 0 && exfil == 0 {
 		logger.Info(storedUserCheckMsg, "solved_violations", 0, "exfil_violations", 0)
 		return

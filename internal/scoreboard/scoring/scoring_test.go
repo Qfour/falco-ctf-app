@@ -1771,8 +1771,9 @@ func TestGrader_NonSlugUserIsRefused(t *testing.T) {
 	fs := newFakeStore()
 	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
 	for _, u := range nonSlugUsers {
-		if _, err := g.RecordExfil(u, "03-exfil", "FALCO{boss}"); !errors.Is(err, scoring.ErrInvalidUser) {
-			t.Errorf("RecordExfil(%q) err = %v, want ErrInvalidUser", u, err)
+		st, err := g.RecordExfil(u, "03-exfil", "FALCO{boss}")
+		if !errors.Is(err, scoring.ErrInvalidUser) || st != scoring.ExfilInvalidUser {
+			t.Errorf("RecordExfil(%q) = (%v, %v), want (ExfilInvalidUser, ErrInvalidUser)", u, st, err)
 		}
 		if _, err := g.SubmitEvade(u, "03-exfil", "FALCO{boss}"); !errors.Is(err, scoring.ErrInvalidUser) {
 			t.Errorf("SubmitEvade(%q) err = %v, want ErrInvalidUser", u, err)
@@ -1809,15 +1810,37 @@ func TestSweep_NonSlugUserReceiptIsSkipped(t *testing.T) {
 	}
 }
 
-func TestValidUser(t *testing.T) {
+// The Grader accepts a slug user on both write paths (the other half of the
+// refusals above).
+func TestGrader_SlugUserIsAccepted(t *testing.T) {
 	for _, u := range []string{"user1", "a", "0", "a-b", strings.Repeat("a", 63)} {
-		if !scoring.ValidUser(u) {
-			t.Errorf("ValidUser(%q) = false", u)
+		fs := newFakeStore()
+		g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
+		if st, err := g.RecordExfil(u, "03-exfil", "FALCO{boss}"); err != nil || st != scoring.ExfilRecorded {
+			t.Errorf("RecordExfil(%q) = (%v, %v), want (ExfilRecorded, nil)", u, st, err)
 		}
 	}
-	for _, u := range nonSlugUsers {
-		if scoring.ValidUser(u) {
-			t.Errorf("ValidUser(%q) = true", u)
+}
+
+// CountNonSlugStoredUsers counts solves and receipts (not users) keyed by a
+// non-slug user, read from a real store.
+func TestCountNonSlugStoredUsers(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.db")
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range []string{"user1", "Bad User"} {
+		if _, err := st.MarkSolved(u, "03-exfil", "2026-10-01T00:00:00Z"); err != nil {
+			t.Fatal(err)
 		}
+	}
+	for _, c := range []struct{ u, cid string }{{"user1", "03-exfil"}, {"BAD", "03-exfil"}, {"BAD", "04-x"}, {"x_y", "03-exfil"}} {
+		if err := st.RecordExfil(c.u, c.cid, "FALCO{x}", "2026-10-01T00:00:00Z"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if solved, exfil := scoring.CountNonSlugStoredUsers(st); solved != 1 || exfil != 3 {
+		t.Fatalf("counts = (%d, %d), want (1, 3)", solved, exfil)
 	}
 }

@@ -13,15 +13,16 @@ import (
 )
 
 // bootUsersLog opens a fresh store, seeds solves and receipts straight into it
-// (bypassing the API's write-time slug check, as an older release did), runs the
-// boot check and returns the raw output and decoded records.
+// (bypassing the API's write-time slug check, as an older release did), closes
+// it and opens the same file again (the rows come back from SQLite, as after a
+// restart), runs the boot check and returns the raw output and decoded records.
 func bootUsersLog(t *testing.T, solvedUsers, exfilUsers []string) (string, []map[string]any) {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "scoreboard.db"))
+	path := filepath.Join(t.TempDir(), "scoreboard.db")
+	st, err := store.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { st.Close() })
 	for _, u := range solvedUsers {
 		if _, err := st.MarkSolved(u, "10-final-exfil", "2026-10-01T00:00:00Z"); err != nil {
 			t.Fatal(err)
@@ -32,6 +33,14 @@ func bootUsersLog(t *testing.T, solvedUsers, exfilUsers []string) (string, []map
 			t.Fatal(err)
 		}
 	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	st, err = store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
 	var buf bytes.Buffer
 	warnStoredUsers(slog.New(slog.NewJSONHandler(&buf, nil)), st)
 	var recs []map[string]any
@@ -60,7 +69,7 @@ func TestWarnStoredUsers_CountsOnlyAndNeverTheValue(t *testing.T) {
 		t.Fatalf("counts = solved %v exfil %v, want 1 and 3: %s", r["solved_violations"], r["exfil_violations"], out)
 	}
 	remedy, _ := r["remedy"].(string)
-	for _, must := range []string{"new PVC", "/api/admin/reset"} {
+	for _, must := range []string{"new PVC", "/api/admin/reset", "leaderboard", "do not reset", "by hand"} {
 		if !strings.Contains(remedy, must) {
 			t.Errorf("remedy lacks %q: %q", must, remedy)
 		}
@@ -75,6 +84,25 @@ func TestWarnStoredUsers_CountsOnlyAndNeverTheValue(t *testing.T) {
 		if _, has := r[k]; has {
 			t.Errorf("record carries %q: %s", k, out)
 		}
+	}
+}
+
+// The remedy does not call stored rows "never scored": a solved row under a
+// non-slug user IS a solve and stays on the leaderboard until a reset.
+func TestWarnStoredUsers_SolvedOnlyRemedyDoesNotSayNeverScored(t *testing.T) {
+	_, recs := bootUsersLog(t, []string{"Bad User"}, nil)
+	if len(recs) != 1 || recs[0]["level"] != "WARN" {
+		t.Fatalf("want one WARN, got %v", recs)
+	}
+	if recs[0]["solved_violations"] != float64(1) || recs[0]["exfil_violations"] != float64(0) {
+		t.Fatalf("counts = %v / %v, want 1 / 0", recs[0]["solved_violations"], recs[0]["exfil_violations"])
+	}
+	remedy, _ := recs[0]["remedy"].(string)
+	if strings.Contains(remedy, "never scored") {
+		t.Errorf("remedy says the rows are never scored: %q", remedy)
+	}
+	if !strings.Contains(remedy, "leaderboard") {
+		t.Errorf("remedy does not say a solved row stays on the leaderboard: %q", remedy)
 	}
 }
 
