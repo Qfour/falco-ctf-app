@@ -460,7 +460,11 @@ var (
 	// `{`, in a comma list, indented inside an IIFE): `function esc` (also
 	// async / generator), `const|let|var|class esc`, a declarator list
 	// `const a = x, esc = ...` or a destructuring `const {esc} = ...`.
-	escDeclRe = regexp.MustCompile(`\b(?:function\*?|const|let|var|class)\s+esc\b|\b(?:const|let|var)\b[^;\n]*\besc\b\s*(?:=|[,}\]])`)
+	// Derived from the one definition of the forms (portal_gates_test.go declRe), which
+	// the sharedHelpers gate uses for every helper in its table. esc is the first user of
+	// declRe / writeRe, not a row of sharedHelpers: the one-definition, TDZ and call-order
+	// gates for esc are in this file.
+	escDeclRe = declRe("esc")
 
 	// A write to esc that is not a declaration: bare `esc = ...` (also
 	// `esc ||= ...`, `esc += ...`; not ==, ===, =>), a property write
@@ -472,9 +476,7 @@ var (
 	// False positive by design: the `set(` branch also matches a legitimate
 	// call such as `keys.set('esc', back)` (a Map keyed by the string "esc").
 	// Rename the key or the variable rather than loosening this pattern.
-	escWriteRe = regexp.MustCompile("(?m)(?:^|[^\\w$.])esc\\s*(?:\\*\\*|<<|>>>?|&&|\\|\\||\\?\\?|[-+*/%&|^])?=(?:[^=>]|$)" +
-		"|(?:\\.\\s*esc\\b|\\[\\s*['\"`]esc['\"`]\\s*\\])\\s*(?:\\*\\*|<<|>>>?|&&|\\|\\||\\?\\?|[-+*/%&|^])?=(?:[^=>]|$)" +
-		"|\\b(?:defineProperty|defineProperties|assign|set)\\s*\\([^;\\n]*['\"`]esc['\"`]")
+	escWriteRe = writeRe("esc") // portal_gates_test.go writeRe; the false-positive note above applies
 
 	// A use of esc: a call `esc(` or a reference such as `.map(esc)` — not a
 	// property (`x.esc`), an object key (`esc:`) or part of a longer name.

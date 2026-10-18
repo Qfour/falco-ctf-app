@@ -410,7 +410,7 @@ func TestNameProblem_ServerMessageStaysText(t *testing.T) {
 	}
 	// The pre-app#331 class and String.trim() must not come back: trim() is not
 	// strings.TrimSpace (it keeps U+0085 and strips U+FEFF). That pane-me does not
-	// declare its own trimName is the sharedHelpers table's (portal_bidi_test.go).
+	// declare its own trimName is the sharedHelpers table's (portal_gates_test.go).
 	for _, bad := range []string{`\x00-\x1f`, `nameInput.value.trim()`} {
 		if strings.Contains(pane, bad) {
 			t.Errorf("pane-me.tmpl still has %s", bad)
@@ -425,7 +425,7 @@ func TestNameProblem_ServerMessageStaysText(t *testing.T) {
 // (app#381) and trims a different set from the server (app#401). Now: one trimName
 // and one reader of the server's {"error"}, declared once in core-util.tmpl; that
 // index.html's copies are byte-identical is the sharedHelpers table's
-// (portal_bidi_test.go).
+// (portal_gates_test.go).
 var renameSources = []string{"pane-scoreboard.tmpl", "index.html"}
 
 func renameSource(t *testing.T, name string) string {

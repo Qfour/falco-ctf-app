@@ -282,7 +282,7 @@
   const nameHTML = (s) => '<bdi>' + esc(s) + '</bdi>';
   // The admin rename below trims and reports like the portal's (pane-scoreboard.tmpl). This page
   // does not load the portal's core-util.tmpl, so these two lines are COPIES of its trimName /
-  // serverErrorText (byte-identical: the sharedHelpers table in portal_bidi_test.go pins both) until
+  // serverErrorText (byte-identical: the sharedHelpers table, TestSharedHelpers_OneDefinitionAndTheIndexCopy, pins both) until
   // the dashboard's rendering is merged into the portal (#378, which deletes them).
   // String.prototype.trim is not the server's trim set.
   const trimName = (raw) => String(raw).replace(/^[\t\n\v\f\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+|[\t\n\v\f\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+$/g, '');

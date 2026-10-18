@@ -351,7 +351,7 @@ func TestSubjectForm_RunsThePrecheckBeforeTheRequest(t *testing.T) {
 	rules.WriteString(extractJSConst(t, pane, "MAX_BODY_BYTES") + "\n")
 	rules.WriteString(extractJSFunc(t, pane, "bodyByteLen") + "\n")
 	rules.WriteString(onCreateSubmitJS(t) + "\n")
-	driver := `
+	driver := oneShotResponseJS + `
 var TextEncoder = function () { this.encode = function (s) { var n = 0; for (var ch of s) { var c = ch.codePointAt(0); n += c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4; } return { length: n }; }; };
 var busy = false, selectedTid = null, lastMySig = 'x', lastPublicSig = 'x', rendered = [], calls = [], mode = 'ok', els = {};
 function renderThread(d) { rendered.push(d); }
@@ -359,14 +359,6 @@ var document = {
   querySelector: function () { return { value: 'all' }; },
   getElementById: function (id) { return els[id]; },
 };
-// A Response body is ONE-SHOT, as in Fetch: a second json() rejects (bodyUsed).
-function resp(status, ok, parse) {
-  var bodyUsed = false;
-  return { status: status, ok: ok, get bodyUsed() { return bodyUsed; }, json: function () {
-    if (bodyUsed) return Promise.reject(new TypeError('Body has already been consumed.'));
-    bodyUsed = true; return parse();
-  } };
-}
 var fetch = function (url, opts) {
   calls.push({ url: url, body: JSON.parse(opts.body) });
   if (mode === 'bad') return Promise.resolve(resp(400, false, function () { return Promise.resolve({ error: '<img src=x onerror=alert(1)>' }); }));
