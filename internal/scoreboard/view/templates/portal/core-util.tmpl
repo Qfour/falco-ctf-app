@@ -65,7 +65,7 @@ const textHTML = (s) => '<bdi>' + esc(s) + '</bdi>';
 // and pins that no other partial defines it. templates/index.html does not load this
 // partial and carries a byte-identical copy of trimName and serverErrorText until the
 // dashboard's rendering is merged into the portal (#378). The list of what index.html
-// copies is the sharedHelpers table in portal_bidi_test.go (pinned declaration lines,
+// copies is the sharedHelpers table in portal_gates_test.go (pinned declaration lines,
 // one definition in the portal, one copy in index.html): that table is #378's work list.
 const trimName = (raw) => String(raw).replace(/^[\t\n\v\f\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+|[\t\n\v\f\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+$/g, '');
 

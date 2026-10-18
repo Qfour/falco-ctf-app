@@ -14,6 +14,13 @@ import (
 // one place (errorFieldReads), the board's strings trimmed with trimName (bodyTrim),
 // the Cc / Cf class defined once (hiddenCharClass). portal_bidi_test.go keeps the
 // isolation gate and uses the helper table and the source collection from here.
+//
+// Where a gate lives: the one-declaration rule of every helper in sharedHelpers is here
+// (declRe / writeRe are its forms). The one-definition gate of esc is NOT: it stays in
+// portal_partials_test.go, because it also checks what a declaration-and-write scan cannot
+// (the pinned line verbatim, TDZ: the definition before the first pane, and the call order
+// of the partials). escDeclRe / escWriteRe there are declRe("esc") / writeRe("esc"), so the
+// forms are defined once; a new shared helper is a row in sharedHelpers, not a new gate.
 
 // scannedSources is every file the gates scan: the portal partials by name plus the
 // admin dashboard as "index.html", and the names sorted (a stable error order). The one
@@ -110,15 +117,15 @@ func checkSharedHelpers(portal map[string]string, index string, helpers []shared
 	return errs
 }
 
-// declRe finds a declaration of helper wherever on the line it sits, in the
-// forms portal_partials_test.go's escDeclRe finds for esc: `function|const|let|
+// declRe finds a declaration of helper wherever on the line it sits, in these forms
+// (the esc gate's escDeclRe in portal_partials_test.go is declRe("esc")): `function|const|let|
 // var|class helper`, a declarator list `const a = x, helper = ...` and a
 // destructuring `const {helper} = ...`. The pinned line is one such match.
 func declRe(helper string) *regexp.Regexp {
 	return regexp.MustCompile(`\b(?:function\*?|const|let|var|class)\s+` + helper + `\b|\b(?:const|let|var)\b[^;\n]*\b` + helper + `\b\s*(?:=|[,}\]])`)
 }
 
-// writeRe finds a write to helper that is not a declaration (escWriteRe's
+// writeRe finds a write to helper that is not a declaration (the esc gate's escWriteRe = writeRe("esc")
 // forms): bare `helper = ...` (also `||=`, `+=`; not ==, ===, =>), a property
 // write `x.helper = ...` / `self['helper'] = ...`, and defineProperty /
 // defineProperties / assign / set naming 'helper'. The scan runs on a body with

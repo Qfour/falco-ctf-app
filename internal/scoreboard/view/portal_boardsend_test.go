@@ -23,6 +23,31 @@ import (
 // loop (the poll interleaving with a send), dialogs and the DOM are the e2e harness's
 // (ADR-0031); a fake handler test shows the handler's own logic, not the page.
 
+// oneShotResponseJS is the fake Response the board handler drivers share (goja has no
+// fetch): a body is ONE-SHOT, as in Fetch, so a second json() rejects (bodyUsed). A handler
+// that reads the body before the status check leaves serverErrorText with nothing to read.
+// resp(status, ok, parse): parse() returns the promise json() resolves or rejects with.
+const oneShotResponseJS = `
+function resp(status, ok, parse) {
+  var bodyUsed = false;
+  return { status: status, ok: ok, get bodyUsed() { return bodyUsed; }, json: function () {
+    if (bodyUsed) return Promise.reject(new TypeError('Body has already been consumed.'));
+    bodyUsed = true; return parse();
+  } };
+}
+`
+
+// readBodyBeforeStatusCheck is the mutation the one-shot fake must catch: the handler's
+// source with r.json() read BEFORE its `if (!r.ok) {` check (the shape app#425 removed).
+func readBodyBeforeStatusCheck(t *testing.T, js string) string {
+	t.Helper()
+	const gate = "if (!r.ok) {"
+	if strings.Count(js, gate) != 1 {
+		t.Fatalf("want exactly one %q in the handler to mutate", gate)
+	}
+	return strings.Replace(js, gate, "await r.json().catch(() => ({}));\n        "+gate, 1)
+}
+
 // boardSendResult is what the driver reports after one run of a handler.
 type boardSendResult struct {
 	Calls []struct {
@@ -49,20 +74,11 @@ func runBoardSend(t *testing.T, appendJS, replyJS string) map[string]boardSendRe
 	rules.WriteString(extractJSConst(t, pane, "MAX_BODY_BYTES") + "\n")
 	rules.WriteString(extractJSFunc(t, pane, "bodyByteLen") + "\n")
 	rules.WriteString(appendJS + "\n" + replyJS + "\n")
-	driver := `
+	driver := oneShotResponseJS + `
 var TextEncoder = function () { this.encode = function (s) { var n = 0; for (var ch of s) { var c = ch.codePointAt(0); n += c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4; } return { length: n }; }; };
 var busy = false, selectedTid = 't1', rendered = [], calls = [], mode = 'ok', els = {};
 function renderThread(d) { rendered.push(d); }
 var document = { getElementById: function (id) { return els[id]; } };
-// A Response body is ONE-SHOT, as in Fetch: a second json() rejects (bodyUsed). A handler
-// that reads the body before the status check leaves serverErrorText with nothing to read.
-function resp(status, ok, parse) {
-  var bodyUsed = false;
-  return { status: status, ok: ok, get bodyUsed() { return bodyUsed; }, json: function () {
-    if (bodyUsed) return Promise.reject(new TypeError('Body has already been consumed.'));
-    bodyUsed = true; return parse();
-  } };
-}
 var fetch = function (url, opts) {
   calls.push({ url: url, body: JSON.parse(opts.body) });
   if (mode === 'bad') return Promise.resolve(resp(400, false, function () { return Promise.resolve({ error: '<img src=x onerror=alert(1)>' }); }));
@@ -154,15 +170,8 @@ func TestBoardReplyPaths_TrimLikeTheServerAndShowTheServerSentence(t *testing.T)
 // this PR removed) leaves serverErrorText nothing: the server's sentence is lost and the
 // 'bad' scenario goes red. The mutation is applied to the real source of each handler.
 func TestBoardReplyPaths_MockCatchesTheBodyReadBeforeTheStatusCheck(t *testing.T) {
-	mutate := func(js string) string {
-		const gate = "if (!r.ok) {"
-		if strings.Count(js, gate) != 1 {
-			t.Fatalf("want exactly one %q in the handler to mutate", gate)
-		}
-		return strings.Replace(js, gate, "await r.json().catch(() => ({}));\n        "+gate, 1)
-	}
 	appendJS, replyJS := boardHandlerJS(t, "onAppendSubmit"), boardHandlerJS(t, "onReplySubmit")
-	got := runBoardSend(t, mutate(appendJS), mutate(replyJS))
+	got := runBoardSend(t, readBodyBeforeStatusCheck(t, appendJS), readBodyBeforeStatusCheck(t, replyJS))
 	for _, w := range []string{"append", "admin"} {
 		if b := got[w+".bad"]; b.Msg == "<img src=x onerror=alert(1)>" {
 			t.Errorf("%s: the mutated handler (body read before the status check) still shows the server's sentence: the mock does not enforce one read", w)
@@ -200,7 +209,7 @@ func runBoardAction(t *testing.T, moderateJS, likeJS string) map[string]boardAct
 	rules.WriteString(extractJSConst(t, util, "serverErrorText") + "\n")
 	rules.WriteString(extractJSFunc(t, pane, "showActionMsg") + "\n")
 	rules.WriteString(moderateJS + "\n" + likeJS + "\n")
-	driver := `
+	driver := oneShotResponseJS + `
 var selectedTid = 't1', builtView = 'thread:t1', currentTh = { id: 't1' }, lastListSig = 'x', lastPublicSig = 'x';
 var rendered = 0, reloads = 0, urls = [], mode = 'ok';
 var updatedEl = { textContent: '' };
@@ -210,14 +219,6 @@ var document = { getElementById: function (id) { return id === 'pane-board-actio
 function renderThread() { rendered++; }
 function loadThread() { reloads++; return Promise.resolve(); }
 function loadList() { reloads++; return Promise.resolve(); }
-// A Response body is ONE-SHOT, as in Fetch (see runBoardSend).
-function resp(status, ok, parse) {
-  var bodyUsed = false;
-  return { status: status, ok: ok, get bodyUsed() { return bodyUsed; }, json: function () {
-    if (bodyUsed) return Promise.reject(new TypeError('Body has already been consumed.'));
-    bodyUsed = true; return parse();
-  } };
-}
 var fetch = function (url) {
   urls.push(url);
   // The operator opens another thread while the request is in flight.
@@ -340,14 +341,7 @@ func TestBoardActions_ShowTheServerSentenceAndClearItOnSuccess(t *testing.T) {
 // handler that reads r.json() BEFORE `if (!r.ok)` leaves serverErrorText nothing to read,
 // and the mock's one-shot Response turns that into a lost sentence.
 func TestBoardActions_MockCatchesTheBodyReadBeforeTheStatusCheck(t *testing.T) {
-	mutate := func(js string) string {
-		const gate = "if (!r.ok) {"
-		if strings.Count(js, gate) != 1 {
-			t.Fatalf("want exactly one %q in the handler to mutate", gate)
-		}
-		return strings.Replace(js, gate, "await r.json().catch(() => ({}));\n        "+gate, 1)
-	}
-	got := runBoardAction(t, mutate(boardHandlerJS(t, "onModerate")), mutate(boardHandlerJS(t, "onToggleLike")))
+	got := runBoardAction(t, readBodyBeforeStatusCheck(t, boardHandlerJS(t, "onModerate")), readBodyBeforeStatusCheck(t, boardHandlerJS(t, "onToggleLike")))
 	for _, w := range []string{"moderate", "like"} {
 		if f := got[w+".forbidden"]; f.Msg == "<img src=x onerror=alert(1)>" {
 			t.Errorf("%s: the mutated handler (body read before the status check) still shows the server's sentence: the mock does not enforce one read", w)
