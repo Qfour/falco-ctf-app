@@ -1240,6 +1240,15 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "user required"})
 		return
 	}
+	// The body's user is claimed (the collector forwards it verbatim), but it
+	// is STORED and later shown as first_solver, so it must at least be a slug
+	// (validUser). Fixed text, the input is not echoed (#428).
+	if !validUser.MatchString(user) {
+		metrics.SubmissionsTotal.WithLabelValues(cid, "bad_request").Inc()
+		auditLog("bad_request", "reason", "invalid user")
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
+		return
+	}
 
 	// Solve decision (flag match → evade window → exfil gate → record) is the
 	// Grader's. This handler only translates the outcome into a response +
@@ -1579,6 +1588,13 @@ func (h *Handler) exfilInternal(w http.ResponseWriter, r *http.Request) {
 	if user == "" || flag == "" {
 		auditLog("bad_request", "reason", "missing user or flag")
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "user and flag required"})
+		return
+	}
+	// Same slug rule as /submit: this user is stored in the receipt and is what
+	// the grader later joins to a solve (#428). Fixed text, input not echoed.
+	if !validUser.MatchString(user) {
+		auditLog("bad_request", "reason", "invalid user")
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
 		return
 	}
 

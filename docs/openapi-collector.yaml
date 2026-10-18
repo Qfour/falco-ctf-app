@@ -120,7 +120,10 @@ paths:
               type: object
               required: [user, flag]
               properties:
-                user: { type: string }
+                user:
+                  type: string
+                  pattern: '^[a-z0-9][a-z0-9-]{0,62}$'
+                  maxLength: 63
                 flag: { type: string }
       responses:
         "200":
@@ -130,7 +133,7 @@ paths:
           content:
             application/json: {}
         "400":
-          description: "`{cid}` is not a valid challenge slug (rejected by the collector itself)"
+          description: "`{cid}` is not a valid challenge slug (rejected by the collector itself), or a relayed scoreboard 400 (not an exfil challenge, malformed body, missing `user`/`flag`, or `user` not a username slug — the scoreboard checks it and does not echo the input; see `POST /internal/exfil/{cid}`)"
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

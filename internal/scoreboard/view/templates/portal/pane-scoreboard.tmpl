@@ -239,7 +239,7 @@
           <div class="dots">${dots}</div>
           <div class="footer">
             <span class="status">${status}</span>
-            <span><span class="solved-count">${c.solved_count}</span> / ${totalUsers || '?'} · ${c.first_solver ? '🏆 ' + esc(c.first_solver) : '—'}</span>
+            <span><span class="solved-count">${c.solved_count}</span> / ${totalUsers || '?'} · ${c.first_solver ? '🏆 ' + nameHTML(c.first_solver) : '—'}</span>
           </div>
         </div>`;
       }).join('');

@@ -555,7 +555,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/SubmitFlagVerdict" }
         "400":
-          description: "`{cid}` is not an evade challenge, malformed body, or missing `user`"
+          description: "`{cid}` is not an evade challenge, malformed body, or `user` missing or not a username slug (`^[a-z0-9][a-z0-9-]{0,62}$`; nothing is stored)"
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -710,7 +710,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ExfilReceipt" }
         "400":
-          description: "`{cid}` does not accept exfil, malformed body, or missing `user`/`flag`"
+          description: "`{cid}` does not accept exfil, malformed body, missing `user`/`flag`, or `user` not a username slug (`^[a-z0-9][a-z0-9-]{0,62}$`; nothing is stored)"
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -2035,7 +2035,9 @@ components:
       properties:
         user:
           type: string
-          description: CLAIMED identity — never proven on this route
+          pattern: '^[a-z0-9][a-z0-9-]{0,62}$'
+          maxLength: 63
+          description: CLAIMED identity — never proven on this route. Must be a username slug (400 otherwise; nothing is stored); surrounding whitespace is dropped by the server before the check
         flag: { type: string }
 
     SubmitFlagVerdict:
@@ -2079,7 +2081,10 @@ components:
       type: object
       required: [user, condition]
       properties:
-        user: { type: string }
+        user:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{0,62}$'
+          maxLength: 63
         condition:
           type: string
           description: the Falco condition to grade (<= 4 KiB)
@@ -2108,7 +2113,11 @@ components:
       type: object
       required: [user, flag]
       properties:
-        user: { type: string }
+        user:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{0,62}$'
+          maxLength: 63
+          description: CLAIMED identity — must be a username slug (400 otherwise; nothing is stored); surrounding whitespace is dropped by the server before the check
         flag: { type: string }
 
     ExfilReceipt:
