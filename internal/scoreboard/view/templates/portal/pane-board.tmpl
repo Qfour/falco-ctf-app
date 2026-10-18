@@ -38,11 +38,6 @@
     </div>
   </header>
 
-  <!-- A refused Like / moderation click (onToggleLike, onModerate) says why here: the
-       server's own sentence, set with textContent by showActionMsg(). Outside
-       #pane-board-page so a view change does not rebuild it; hidden while empty. -->
-  <div class="submit-msg" id="pane-board-action-msg" hidden></div>
-
   <div id="pane-board-page"></div>
 
 <script nonce="{{.Nonce}}">
@@ -109,14 +104,23 @@
   const role = window.__PORTAL_ROLE__ || 'participant';
   const page = document.getElementById('pane-board-page');
   const updatedEl = document.getElementById('pane-board-updated');
-  const actionMsgEl = document.getElementById('pane-board-action-msg');
   // showActionMsg shows (text) or clears ('') the refusal of the last Like / moderation
-  // click. A refusal is red like the reply forms' (submit-msg err); a success or a view
-  // change leaves none behind.
+  // click in #pane-board-action-msg. Every view's SHELL that has such a click carries
+  // one element with that id (the list's Public Timeline panel, a participant thread's
+  // Like row, an admin thread's moderation row), looked up on each call like the reply
+  // forms' message, so its life is the shell's: a view change takes the message with it.
+  // A refusal is red like the reply forms' (submit-msg err).
+  //
+  // Where a failed click is told: a transport failure (both handlers) and a Like's 429 on
+  // the status line (#pane-board-updated), a Like's 409 (self-like guard) nowhere, any other
+  // non-ok response here (an operator's 429 included: it has the server's sentence). Each
+  // click starts by clearing this message, so no earlier refusal outlives the next attempt.
   function showActionMsg(text) {
-    actionMsgEl.textContent = text;
-    actionMsgEl.className = text ? 'submit-msg err' : 'submit-msg';
-    actionMsgEl.hidden = !text;
+    const el = document.getElementById('pane-board-action-msg');
+    if (!el) return;
+    el.textContent = text;
+    el.className = text ? 'submit-msg err' : 'submit-msg';
+    el.hidden = !text;
   }
 
   if (!user) {
@@ -259,6 +263,7 @@
                 <button type="button" class="btn btn-sm" data-sort="likes">Likes</button>
               </div>
             </div>
+            <div class="submit-msg" id="pane-board-action-msg" hidden></div>
             <div id="board-public-list-wrap"></div>
           </section>
         `;
@@ -471,7 +476,6 @@
       const isOwn = th.author === user;
       const canLike = th.audience === 'all' && !isOwn;
       if (builtView !== shellKey) {
-        showActionMsg('');
         page.innerHTML = `
           <button type="button" class="btn btn-back" id="board-detail-back">← Back to Board</button>
           <section class="panel">
@@ -480,7 +484,7 @@
               <span id="board-detail-badges"></span>
             </div>
             <div class="thread-messages" id="board-detail-messages"></div>
-            ${canLike ? '<div class="mod-actions"><button type="button" class="btn like-btn" id="board-detail-like"></button></div>' : ''}
+            ${canLike ? '<div class="mod-actions"><button type="button" class="btn like-btn" id="board-detail-like"></button></div><div class="submit-msg" id="pane-board-action-msg" hidden></div>' : ''}
           </section>
           ${isOwn ? `
           <section class="panel">
@@ -496,7 +500,6 @@
         if (back) back.addEventListener('click', () => {
           selectedTid = null;
           builtView = null;
-          showActionMsg('');
           loadList().catch(() => { updatedEl.textContent = 'connection error'; });
         });
         const appendForm = document.getElementById('board-append-form');
@@ -596,6 +599,8 @@
     // click (so we know like vs unlike), read from the caller's own
     // closure/attribute at click time.
     async function onToggleLike(tid, liked) {
+      showActionMsg('');
+      const view = builtView;   // the view the click was made in (see the refusal below)
       try {
         const r = await fetch('/api/board/threads/' + encodeURIComponent(tid) + (liked ? '/unlike' : '/like'), { method: 'POST' });
         if (r.status === 429) {
@@ -609,10 +614,13 @@
         }
         if (!r.ok) {
           // The server's own sentence as a string, textContent (serverErrorText, core-util.tmpl).
-          showActionMsg((await serverErrorText(r)) || ('Could not update the like (HTTP ' + r.status + ').'));
+          // Shown only if the view the click was made in is still the one open: the message
+          // element is the open shell's, and a reply that arrives after a view change is not
+          // that view's news.
+          const why = (await serverErrorText(r)) || ('Could not update the like (HTTP ' + r.status + ').');
+          if (builtView === view) showActionMsg(why);
           return;
         }
-        showActionMsg('');
         // Refresh whichever view is showing this thread's like state.
         if (selectedTid === tid) {
           await loadThread(tid);
@@ -757,7 +765,6 @@
     function renderThread(th) {
       const shellKey = 'thread:' + th.id;
       if (builtView !== shellKey) {
-        showActionMsg('');
         page.innerHTML = `
           <button type="button" class="btn btn-back" id="board-admin-back">← Back to all threads</button>
           <section class="panel">
@@ -772,6 +779,7 @@
               <button type="button" class="btn btn-sm" id="board-admin-hide"></button>
               <button type="button" class="btn btn-sm btn-danger" id="board-admin-delete">Delete</button>
             </div>
+            <div class="submit-msg" id="pane-board-action-msg" hidden></div>
           </section>
           <section class="panel">
             <div class="panel-header"><h2>Reply</h2></div>
@@ -786,7 +794,6 @@
         if (back) back.addEventListener('click', () => {
           selectedTid = null;
           builtView = null;
-          showActionMsg('');
           loadList().catch(() => { updatedEl.textContent = 'connection error'; });
         });
         const replyForm = document.getElementById('board-admin-reply-form');
@@ -833,6 +840,8 @@
     }
 
     async function onModerate(patch) {
+      showActionMsg('');
+      const view = builtView;   // the view the click was made in (see the refusal below)
       try {
         const r = await fetch('/api/admin/board/threads/' + encodeURIComponent(currentTh.id) + '/state', {
           method: 'POST',
@@ -842,11 +851,12 @@
         if (!r.ok) {
           // The server's own sentence (a 403 says admin only) as a string, textContent
           // (serverErrorText, core-util.tmpl); read before r.json(), a body is read once.
-          showActionMsg((await serverErrorText(r)) || ('Could not update the thread (HTTP ' + r.status + ').'));
+          // Shown only while the view the click was made in is still open (see onToggleLike).
+          const why = (await serverErrorText(r)) || ('Could not update the thread (HTTP ' + r.status + ').');
+          if (builtView === view) showActionMsg(why);
           return;
         }
         const d = await r.json();
-        showActionMsg('');
         if (selectedTid === d.id) renderThread(d);
         lastListSig = null; // force the moderation-queue list to repaint next poll
       } catch (e) {

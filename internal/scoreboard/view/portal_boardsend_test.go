@@ -187,6 +187,7 @@ type boardActionResult struct {
 	Updated  string `json:"updated"`
 	Rendered int    `json:"rendered"`
 	Reloads  int    `json:"reloads"`
+	SigReset bool   `json:"sigReset"`
 }
 
 // runBoardAction runs the two handlers' source (moderateJS, likeJS: the real text, or a
@@ -200,10 +201,12 @@ func runBoardAction(t *testing.T, moderateJS, likeJS string) map[string]boardAct
 	rules.WriteString(extractJSFunc(t, pane, "showActionMsg") + "\n")
 	rules.WriteString(moderateJS + "\n" + likeJS + "\n")
 	driver := `
-var selectedTid = 't1', currentTh = { id: 't1' }, lastListSig = 'x', lastPublicSig = 'x';
+var selectedTid = 't1', builtView = 'thread:t1', currentTh = { id: 't1' }, lastListSig = 'x', lastPublicSig = 'x';
 var rendered = 0, reloads = 0, urls = [], mode = 'ok';
 var updatedEl = { textContent: '' };
+// The message element is the open shell's: one per view, found by id on each call.
 var actionMsgEl = { textContent: '', className: 'submit-msg', hidden: true };
+var document = { getElementById: function (id) { return id === 'pane-board-action-msg' ? actionMsgEl : null; } };
 function renderThread() { rendered++; }
 function loadThread() { reloads++; return Promise.resolve(); }
 function loadList() { reloads++; return Promise.resolve(); }
@@ -217,6 +220,8 @@ function resp(status, ok, parse) {
 }
 var fetch = function (url) {
   urls.push(url);
+  // The operator opens another thread while the request is in flight.
+  if (mode === 'switched') { selectedTid = 't2'; builtView = 'thread:t2'; return Promise.resolve(resp(403, false, function () { return Promise.resolve({ error: 'admin only' }); })); }
   if (mode === 'forbidden') return Promise.resolve(resp(403, false, function () { return Promise.resolve({ error: '<img src=x onerror=alert(1)>' }); }));
   if (mode === 'server') return Promise.resolve(resp(500, false, function () { return Promise.resolve({ error: 'internal error' }); }));
   if (mode === 'nobody') return Promise.resolve(resp(403, false, function () { return Promise.reject(new Error('not json')); }));
@@ -227,13 +232,17 @@ var fetch = function (url) {
 var paths = {
   moderate: function () { return onModerate({ pinned: true }); },
   like:     function () { return onToggleLike('t1', false); },
+  unlike:   function () { return onToggleLike('t1', true); },
+  // The Public Timeline's inline button: the list view is open, no thread is selected.
+  likeList: function () { selectedTid = null; builtView = 'list'; lastPublicSig = 'x'; return onToggleLike('t1', false); },
 };
 // keep: the earlier attempt's message stays on screen (the element is never rebuilt).
 function run(which, m, keep) {
   mode = m; rendered = 0; reloads = 0; urls.length = 0; updatedEl.textContent = '';
+  selectedTid = 't1'; builtView = 'thread:t1';
   if (!keep) { actionMsgEl.textContent = ''; actionMsgEl.className = 'submit-msg'; actionMsgEl.hidden = true; }
   return paths[which]().then(function () {
-    return { url: urls[0], msg: actionMsgEl.textContent, cls: actionMsgEl.className, hidden: actionMsgEl.hidden, updated: updatedEl.textContent, rendered: rendered, reloads: reloads };
+    return { url: urls[0], msg: actionMsgEl.textContent, cls: actionMsgEl.className, hidden: actionMsgEl.hidden, updated: updatedEl.textContent, rendered: rendered, reloads: reloads, sigReset: lastPublicSig === null };
   });
 }
 var out = {};
@@ -245,7 +254,18 @@ var chain = Promise.resolve();
     .then(function () { return run(w, 'nobody'); }).then(function (r) { out[w + '.nobody'] = r; })
     .then(function () { return run(w, 'rate'); }).then(function (r) { out[w + '.rate'] = r; })
     .then(function () { return run(w, 'down'); }).then(function (r) { out[w + '.down'] = r; })
+    .then(function () { return run(w, 'switched'); }).then(function (r) { out[w + '.switched'] = r; })
+    // Each click starts by clearing the earlier refusal, whatever it ends with.
     .then(function () { return run(w, 'forbidden'); })
+    .then(function () { return run(w, 'rate', true); }).then(function (r) { out[w + '.rateAfterRefusal'] = r; })
+    .then(function () { return run(w, 'forbidden'); })
+    .then(function () { return run(w, 'down', true); }).then(function (r) { out[w + '.downAfterRefusal'] = r; })
+    .then(function () { return run(w, 'forbidden'); })
+    .then(function () { return run(w, 'ok', true); }).then(function (r) { out[w + '.recovered'] = r; });
+});
+['unlike', 'likeList'].forEach(function (w) {
+  chain = chain
+    .then(function () { return run(w, 'forbidden'); }).then(function (r) { out[w + '.forbidden'] = r; })
     .then(function () { return run(w, 'ok', true); }).then(function (r) { out[w + '.recovered'] = r; });
 });
 `
@@ -261,7 +281,7 @@ func TestBoardActions_ShowTheServerSentenceAndClearItOnSuccess(t *testing.T) {
 		{"like", "/api/board/threads/t1/like", "Could not update the like (HTTP 403)."},
 	} {
 		t.Run(w.name, func(t *testing.T) {
-			for _, k := range []string{"forbidden", "server", "nobody", "rate", "down", "recovered"} {
+			for _, k := range []string{"forbidden", "server", "nobody", "rate", "down", "switched", "rateAfterRefusal", "downAfterRefusal", "recovered"} {
 				if _, ok := got[w.name+"."+k]; !ok {
 					t.Fatalf("%s: the scenario did not finish", k)
 				}
@@ -278,10 +298,36 @@ func TestBoardActions_ShowTheServerSentenceAndClearItOnSuccess(t *testing.T) {
 			if d := got[w.name+".down"]; d.Updated != "connection error" || d.Msg != "" {
 				t.Errorf("a transport failure keeps the connection-error status line and puts nothing in the action message: %+v", d)
 			}
+			if sw := got[w.name+".switched"]; sw.Msg != "" || !sw.Hidden {
+				t.Errorf("a refusal that arrives after the operator moved to another view is dropped (the element now belongs to that view): %+v", sw)
+			}
+			ks := []string{"downAfterRefusal"}
+			if w.name == "like" { // an operator's 429 is a refusal with the server's sentence, shown here
+				ks = append(ks, "rateAfterRefusal")
+			}
+			for _, k := range ks {
+				if r := got[w.name+"."+k]; r.Msg != "" || r.Cls != "submit-msg" || !r.Hidden {
+					t.Errorf("%s: a click starts by clearing the earlier refusal, so a 429 / transport failure leaves none behind: %+v", k, r)
+				}
+			}
 			if r := got[w.name+".recovered"]; r.Msg != "" || r.Cls != "submit-msg" || !r.Hidden || r.Rendered+r.Reloads != 1 {
 				t.Errorf("a click that works after a refusal must clear the refusal (text, err class, shown) and repaint once: %+v", r)
 			}
 		})
+	}
+	// The Unlike button and the list view's inline Like use the same handler: the other
+	// URL, and the list is what is repainted.
+	if u := got["unlike.forbidden"]; u.URL != "/api/board/threads/t1/unlike" || u.Msg != "<img src=x onerror=alert(1)>" || !strings.Contains(u.Cls, "err") {
+		t.Errorf("an Unlike refused with a 403 shows the server's sentence: %+v", u)
+	}
+	if r := got["unlike.recovered"]; r.Msg != "" || !r.Hidden || r.Reloads != 1 || r.SigReset {
+		t.Errorf("an Unlike that works clears the refusal and reloads the open thread, not the list: %+v", r)
+	}
+	if l := got["likeList.forbidden"]; l.URL != "/api/board/threads/t1/like" || l.Msg != "<img src=x onerror=alert(1)>" || !strings.Contains(l.Cls, "err") || l.Hidden {
+		t.Errorf("a Like refused on the list view shows the server's sentence: %+v", l)
+	}
+	if r := got["likeList.recovered"]; r.Msg != "" || !r.Hidden || r.Reloads != 1 || !r.SigReset {
+		t.Errorf("a Like that works on the list view clears the refusal and repaints the list (signature reset): %+v", r)
 	}
 	// A like that hits the rate limit keeps its own status-line sentence; the action
 	// message is for the refusals that had none.
