@@ -2,7 +2,9 @@
 //
 // Cardinality discipline:
 //   - No per-user labels (CTFs grow, user labels are unbounded).
-//   - challenge_id is bounded by `challenges/` directory contents.
+//   - challenge_id is bounded by `challenges/` directory contents plus the single
+//     value "_unknown": an id that is not a catalog key (or is outside the {cid}
+//     grammar) is folded into it by the API handlers before it is used as a label.
 //   - result/outcome labels are small enumerated sets.
 package metrics
 
@@ -108,7 +110,7 @@ var FalcoEventsSecretMismatch = promauto.NewCounterVec(
 
 // SolvesTotal counts solves recorded (trigger or evade path).
 //
-//	challenge_id: catalog id
+//	challenge_id: catalog id, or "_unknown" (never an id that is not a catalog key)
 //	kind:         "trigger" | "evade"
 var SolvesTotal = promauto.NewCounterVec(
 	prometheus.CounterOpts{
@@ -121,6 +123,7 @@ var SolvesTotal = promauto.NewCounterVec(
 
 // SubmissionsTotal counts evade-challenge flag submissions.
 //
+//	challenge_id: catalog id, or "_unknown" (never an id that is not a catalog key)
 //	outcome: "solved" | "wrong_flag" | "not_evaded" | "unknown_challenge" |
 //	         "not_evade" | "bad_request"
 var SubmissionsTotal = promauto.NewCounterVec(
