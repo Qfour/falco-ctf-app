@@ -330,6 +330,29 @@ func TestTextOrigin_Mutations(t *testing.T) {
 			want: []string{`$ref "#/components/examples/Other" is not a reference to an existing`},
 		},
 		{
+			name: "a Schema Object $ref into components.parameters",
+			from: `link: {$ref: "#/components/schemas/Other"}`,
+			to:   `link: {$ref: "#/components/parameters/Id"}`,
+			want: []string{`/components/schemas/Thing/properties/link: a $ref in a Schema Object position must be #/components/schemas/<Name>, got "#/components/parameters/Id"`},
+		},
+		{
+			name: "a parameter $ref into components.schemas",
+			from: `- $ref: "#/components/parameters/Id"`,
+			to:   `- $ref: "#/components/schemas/Thing"`,
+			want: []string{`/paths/~1a~1{id}/post/parameters/0: a $ref in a parameter position must be #/components/parameters/<Name>, got "#/components/schemas/Thing"`},
+		},
+		{
+			name: "a response $ref into components.schemas",
+			from: `        "200":
+          description: ok
+          headers:`,
+			to: `        "200": {$ref: "#/components/schemas/Thing"}
+        "201":
+          description: ok
+          headers:`,
+			want: []string{`/paths/~1a~1{id}/post/responses/200: a $ref in a response position must be #/components/responses/<Name>, got "#/components/schemas/Thing"`},
+		},
+		{
 			name: "a string schema in a place the walk does not know",
 			from: `components:
   parameters:`,

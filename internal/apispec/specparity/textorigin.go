@@ -23,7 +23,10 @@ package specparity
 //     #/components/<section>/<Name> that exists in this document
 //     (specparity's resolve() turns an outside $ref into nil silently; here
 //     any other $ref is a failure so a node cannot vanish from the check
-//     behind one);
+//     behind one), and by position: a Schema Object takes
+//     #/components/schemas/<Name> only, a parameter #/components/parameters/,
+//     a response #/components/responses/, a request body
+//     #/components/requestBodies/, a header #/components/headers/;
 //   - no mapping has a non-string key (yaml.v3 decodes an unquoted `200:`
 //     as a map[any]any, which neither walk below descends into, so strings
 //     under it would be unchecked: that is a failure, not a skip);
@@ -114,7 +117,8 @@ func (s *Spec) TextOrigin() TextOriginReport {
 	}
 	var viol []string
 
-	nodes := s.stringNodes()
+	walk := s.walkSchemas()
+	nodes := walk.nodes
 	rep.Nodes = nodes
 	if len(nodes) == 0 {
 		viol = append(viol, "no string Schema Object found at all: the walk or the spec is broken (0 nodes must never read as \"nothing to declare\")")
@@ -155,6 +159,11 @@ func (s *Spec) TextOrigin() TextOriginReport {
 			viol = append(viol, fmt.Sprintf("%s: %s on a node that is not a string Schema Object (it belongs on the definition with `type: string`, not on an object, a $ref site or an operation)", p, TextOriginKey))
 		}
 	}
+	for _, r := range walk.refs {
+		if !refInSection(r.ref, r.section) {
+			viol = append(viol, fmt.Sprintf("%s: a $ref in a %s position must be #/components/%s/<Name>, got %q (the derivations in later stages follow only that shape, like resolve())", r.pointer, componentSectionNoun[r.section], r.section, r.ref))
+		}
+	}
 	for _, p := range scan.nonStringKeys {
 		viol = append(viol, fmt.Sprintf("non-string mapping key at %s (quote it, e.g. \"200\":; the walk does not descend into such a mapping, so anything under it would go unchecked)", p))
 	}
@@ -174,6 +183,21 @@ func (s *Spec) TextOrigin() TextOriginReport {
 var componentSections = map[string]bool{
 	"schemas": true, "parameters": true, "responses": true,
 	"requestBodies": true, "headers": true,
+}
+
+// componentSectionNoun names the kind of object a section holds, for messages.
+var componentSectionNoun = map[string]string{
+	"schemas": "Schema Object", "parameters": "parameter", "responses": "response",
+	"requestBodies": "request body", "headers": "header",
+}
+
+// refInSection reports whether ref is exactly #/components/<section>/<Name>
+// (Name one non-empty segment). For "schemas" this is the same predicate
+// resolve() (spec.go) follows, so the $ref shapes this check lets through
+// are the ones the later derivations can walk.
+func refInSection(ref, section string) bool {
+	segs := strings.Split(strings.TrimPrefix(ref, "#/"), "/")
+	return strings.HasPrefix(ref, "#/") && len(segs) == 3 && segs[0] == "components" && segs[1] == section && segs[2] != ""
 }
 
 // refResolves reports whether ref is exactly #/components/<section>/<Name>
@@ -239,17 +263,39 @@ func isStringType(m map[string]any) bool {
 // headers} and under every operation's (and path item's) inline parameters,
 // requestBody and responses, descending through properties, items,
 // additionalProperties and allOf|anyOf|oneOf. A `$ref` site is not a node.
-func (s *Spec) stringNodes() []StringNode {
-	var out []StringNode
+func (s *Spec) stringNodes() []StringNode { return s.walkSchemas().nodes }
+
+// positionedRef is a `$ref` found where the walk expects a Schema Object, a
+// parameter, a response, a request body or a header: the section the
+// reference must point into is fixed by that position.
+type positionedRef struct{ pointer, ref, section string }
+
+// schemaWalk is what the structured walk collects.
+type schemaWalk struct {
+	nodes []StringNode
+	refs  []positionedRef
+}
+
+func (s *Spec) walkSchemas() schemaWalk {
+	var w schemaWalk
+	out := &w.nodes
+	note := func(v any, ptr, section string) {
+		if m, ok := asMap(v); ok {
+			if ref, ok := m["$ref"].(string); ok {
+				w.refs = append(w.refs, positionedRef{pointer: ptr, ref: ref, section: section})
+			}
+		}
+	}
 
 	var schema func(v any, ptr string)
 	schema = func(v any, ptr string) {
+		note(v, ptr, "schemas")
 		m, ok := asMap(v)
 		if !ok {
 			return
 		}
 		if isStringType(m) {
-			out = append(out, StringNode{Pointer: ptr, Raw: m[TextOriginKey]})
+			*out = append(*out, StringNode{Pointer: ptr, Raw: m[TextOriginKey]})
 		}
 		if props, ok := asMap(m["properties"]); ok {
 			for k, pv := range props {
@@ -283,7 +329,7 @@ func (s *Spec) stringNodes() []StringNode {
 			}
 		}
 	}
-	parameter := func(v any, ptr string) { // parameter / header
+	paramBody := func(v any, ptr string) { // parameter / header
 		m, ok := asMap(v)
 		if !ok {
 			return
@@ -291,12 +337,16 @@ func (s *Spec) stringNodes() []StringNode {
 		schema(m["schema"], childPointer(ptr, "schema"))
 		media(m, ptr)
 	}
+	parameter := func(v any, ptr string) { note(v, ptr, "parameters"); paramBody(v, ptr) }
+	header := func(v any, ptr string) { note(v, ptr, "headers"); paramBody(v, ptr) }
+	requestBody := func(v any, ptr string) { note(v, ptr, "requestBodies"); media(v, ptr) }
 	response := func(v any, ptr string) {
+		note(v, ptr, "responses")
 		media(v, ptr)
 		if m, ok := asMap(v); ok {
 			if hs, ok := asMap(m["headers"]); ok {
 				for hk, hv := range hs {
-					parameter(hv, childPointer(childPointer(ptr, "headers"), hk))
+					header(hv, childPointer(childPointer(ptr, "headers"), hk))
 				}
 			}
 		}
@@ -321,8 +371,8 @@ func (s *Spec) stringNodes() []StringNode {
 		each(comp["schemas"], childPointer(base, "schemas"), schema)
 		each(comp["parameters"], childPointer(base, "parameters"), parameter)
 		each(comp["responses"], childPointer(base, "responses"), response)
-		each(comp["requestBodies"], childPointer(base, "requestBodies"), media)
-		each(comp["headers"], childPointer(base, "headers"), parameter)
+		each(comp["requestBodies"], childPointer(base, "requestBodies"), requestBody)
+		each(comp["headers"], childPointer(base, "headers"), header)
 	}
 	if paths, ok := asMap(s.raw["paths"]); ok {
 		for p, pv := range paths {
@@ -342,14 +392,14 @@ func (s *Spec) stringNodes() []StringNode {
 				}
 				op0 := childPointer(pp, method)
 				parameterList(op["parameters"], childPointer(op0, "parameters"))
-				media(op["requestBody"], childPointer(op0, "requestBody"))
+				requestBody(op["requestBody"], childPointer(op0, "requestBody"))
 				each(op["responses"], childPointer(op0, "responses"), response)
 			}
 		}
 	}
 
-	sort.Slice(out, func(i, j int) bool { return out[i].Pointer < out[j].Pointer })
-	return out
+	sort.Slice(w.nodes, func(i, j int) bool { return w.nodes[i].Pointer < w.nodes[j].Pointer })
+	return w
 }
 
 type refSite struct{ pointer, ref string }
