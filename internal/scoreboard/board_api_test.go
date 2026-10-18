@@ -390,7 +390,7 @@ func TestBoard_AdminGetThread_NonAdminForbidden(t *testing.T) {
 // route's existence).
 func TestBoard_AdminGetThread_UnknownTid404(t *testing.T) {
 	f := newBoardFixture(t)
-	w := f.do("GET", "/api/admin/board/threads/does-not-exist", boardFixtureAdmin, nil)
+	w := f.do("GET", "/api/admin/board/threads/"+unknownWellFormedID, boardFixtureAdmin, nil)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status=%d body=%s, want 404", w.Code, w.Body)
 	}
@@ -432,18 +432,22 @@ func TestBoard_OwnThreadOnly_CrossUserMessage404(t *testing.T) {
 }
 
 // TestBoard_UnknownTid404 proves an unknown id behaves identically across
-// every id-addressed route.
+// every id-addressed route. The id is WELL-FORMED (32 hex) on purpose: an
+// ill-formed one is turned away by the shape check before any lookup
+// (board_tid_test.go), and this test is what keeps the store's
+// ErrNotFound -> 404 branch covered at the HTTP layer.
 func TestBoard_UnknownTid404(t *testing.T) {
 	f := newBoardFixture(t)
 	cases := []struct {
 		method, target, email string
 		body                  any
 	}{
-		{"GET", "/api/board/threads/does-not-exist", "alice@ctf.local", nil},
-		{"POST", "/api/board/threads/does-not-exist/messages", "alice@ctf.local", map[string]any{"body": "x"}},
-		{"POST", "/api/admin/board/threads/does-not-exist/reply", boardFixtureAdmin, map[string]any{"body": "x"}},
-		{"POST", "/api/admin/board/threads/does-not-exist/state", boardFixtureAdmin, map[string]any{"pinned": true}},
-		{"POST", "/api/admin/board/messages/does-not-exist/state", boardFixtureAdmin, map[string]any{"state": "hidden"}},
+		{"GET", "/api/board/threads/" + unknownWellFormedID, "alice@ctf.local", nil},
+		{"POST", "/api/board/threads/" + unknownWellFormedID + "/messages", "alice@ctf.local", map[string]any{"body": "x"}},
+		{"POST", "/api/admin/board/threads/" + unknownWellFormedID + "/reply", boardFixtureAdmin, map[string]any{"body": "x"}},
+		{"POST", "/api/admin/board/threads/" + unknownWellFormedID + "/state", boardFixtureAdmin, map[string]any{"pinned": true}},
+		{"POST", "/api/admin/board/messages/" + unknownWellFormedID + "/state", boardFixtureAdmin, map[string]any{"state": "hidden"}},
+		{"POST", "/api/board/threads/" + unknownWellFormedID + "/like", "bob@ctf.local", map[string]any{}},
 	}
 	for _, c := range cases {
 		t.Run(c.method+" "+c.target, func(t *testing.T) {
@@ -452,6 +456,17 @@ func TestBoard_UnknownTid404(t *testing.T) {
 				t.Fatalf("status=%d body=%s, want 404", w.Code, w.Body)
 			}
 		})
+	}
+}
+
+// Unlike is an unconditional, idempotent delete: a well-formed id that names no
+// thread is a harmless 200 (spec: "like removed (or already absent)"), unlike
+// like's 404 above.
+func TestBoard_UnknownTid_UnlikeIsA200NoOp(t *testing.T) {
+	f := newBoardFixture(t)
+	w := f.do("POST", "/api/board/threads/"+unknownWellFormedID+"/unlike", "bob@ctf.local", map[string]any{})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s, want 200", w.Code, w.Body)
 	}
 }
 

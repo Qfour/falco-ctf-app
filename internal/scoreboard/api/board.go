@@ -200,6 +200,21 @@ func (h *Handler) boardCreateThread(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
+// boardTID reads the {tid} path value and checks it has the shape of a thread
+// id (board.ValidID). One that does not gets the same fixed 404 as an unknown
+// thread, before any lookup: the value is never echoed in a response nor written
+// to a log, and the unlike route (an unconditional delete, so it never looks the
+// thread up) cannot return a caller-chosen string as LikeResult.tid. It is called
+// after the caller's identity / admin check, so a 403 is unchanged.
+func (h *Handler) boardTID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	tid := r.PathValue("tid")
+	if !board.ValidID(tid) {
+		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"error": errMsgBoardThreadNotFound})
+		return "", false
+	}
+	return tid, true
+}
+
 // --- participant: thread / follow-up ----------------------------------------
 
 // boardGetThread serves GET /api/board/threads/{tid}. The
@@ -212,7 +227,10 @@ func (h *Handler) boardGetThread(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	tid := r.PathValue("tid")
+	tid, ok := h.boardTID(w, r)
+	if !ok {
+		return
+	}
 	th, err := h.board.GetThread(viewer, false, tid)
 	if err != nil {
 		if errors.Is(err, board.ErrNotFound) {
@@ -244,7 +262,10 @@ func (h *Handler) boardAppendMessage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	tid := r.PathValue("tid")
+	tid, ok := h.boardTID(w, r)
+	if !ok {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxBoardRequestBytes)
 	var req oapi.BoardAppendMessageJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -293,7 +314,10 @@ func (h *Handler) boardLike(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	tid := r.PathValue("tid")
+	tid, ok := h.boardTID(w, r)
+	if !ok {
+		return
+	}
 	at := h.now().UTC().Format(time.RFC3339Nano)
 	if err := h.board.Like(user, tid, at); err != nil {
 		switch {
@@ -322,7 +346,10 @@ func (h *Handler) boardUnlike(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	tid := r.PathValue("tid")
+	tid, ok := h.boardTID(w, r)
+	if !ok {
+		return
+	}
 	if err := h.board.Unlike(user, tid); err != nil {
 		h.logger.Error("board unlike", "err", err, "user", user, "tid", tid)
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgBoardUnlikeFailed})
@@ -421,7 +448,10 @@ func (h *Handler) boardAdminGetThread(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "admin only"})
 		return
 	}
-	tid := r.PathValue("tid")
+	tid, ok := h.boardTID(w, r)
+	if !ok {
+		return
+	}
 	th, err := h.board.GetThread(adminEmail, true, tid)
 	if err != nil {
 		if errors.Is(err, board.ErrNotFound) {
@@ -457,7 +487,10 @@ func (h *Handler) boardAdminReply(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "admin only"})
 		return
 	}
-	tid := r.PathValue("tid")
+	tid, ok := h.boardTID(w, r)
+	if !ok {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxBoardRequestBytes)
 	var req oapi.BoardAdminReplyJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -506,7 +539,10 @@ func (h *Handler) boardAdminSetThreadState(w http.ResponseWriter, r *http.Reques
 		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "admin only"})
 		return
 	}
-	tid := r.PathValue("tid")
+	tid, ok := h.boardTID(w, r)
+	if !ok {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxBoardRequestBytes)
 	var req oapi.BoardAdminSetThreadStateJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -557,6 +593,12 @@ func (h *Handler) boardAdminSetMessageState(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	mid := r.PathValue("mid")
+	if !board.ValidID(mid) {
+		// Same fixed 404 as an unknown message, before any lookup or log line:
+		// the value is caller-chosen text (admin only, but still not logged).
+		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"error": errMsgBoardMsgNotFound})
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxBoardRequestBytes)
 	var req oapi.BoardAdminSetMessageStateJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
