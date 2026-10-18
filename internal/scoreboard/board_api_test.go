@@ -43,6 +43,12 @@ type boardFixture struct {
 
 func newBoardFixture(t *testing.T, extra ...scoreboard.Option) *boardFixture {
 	t.Helper()
+	return newBoardFixtureLogged(t, io.Discard, extra...)
+}
+
+// newBoardFixtureLogged is newBoardFixture with the handler's logger writing to logSink (JSON lines).
+func newBoardFixtureLogged(t *testing.T, logSink io.Writer, extra ...scoreboard.Option) *boardFixture {
+	t.Helper()
 	cat := catalog.Catalog{
 		"02-evade": {ID: "02-evade", Type: "evade", ForbiddenRules: []string{"r"}, ExpectedFlag: "FALCO{ok}"},
 	}
@@ -56,7 +62,7 @@ func newBoardFixture(t *testing.T, extra ...scoreboard.Option) *boardFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { boardSt.Close() }) //nolint:errcheck // double-close after a test's own fault-injection Close is fine, error discarded either way
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := slog.New(slog.NewJSONHandler(logSink, nil))
 	opts := append([]scoreboard.Option{
 		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 		scoreboard.WithAdminEmails([]string{boardFixtureAdmin}),

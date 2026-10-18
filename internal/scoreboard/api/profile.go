@@ -137,6 +137,9 @@ func (h *Handler) setProfile(w http.ResponseWriter, r *http.Request) {
 	if rawName != nil {
 		n, err := validDisplayName(*rawName)
 		if err != nil {
+			if errors.Is(err, errDisplayNameFlagShape) {
+				h.logFlagShapeRefused(r, user, flagFieldDisplayName)
+			}
 			// Self-crafted validation message (validDisplayName), not an
 			// internal/store error — safe to return verbatim.
 			httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})

@@ -1158,6 +1158,10 @@ func hasForbiddenRune(s string, class *regexp.Regexp) bool {
 	return false
 }
 
+// errDisplayNameFlagShape is validDisplayName's refusal of a flag shape, a sentinel so
+// a caller can tell it from the other refusals and log it (logFlagShapeRefused).
+var errDisplayNameFlagShape = errors.New(errMsgDisplayNameFlagShape)
+
 // validDisplayName trims + validates a display name: 1..32 runes, no HTML/shell
 // metachars, no control (C0/C1) or format (Cf) characters (app#331; a ZWJ
 // between emoji is the one allowed Cf), and no flag shape (flagShapePattern,
@@ -1196,7 +1200,7 @@ func validDisplayName(raw string) (string, error) {
 	// display_name_flag_shape_test.go, not by the code-point sweep (rule.yaml), and
 	// the form leaves it to the server (a form is never stricter than the server).
 	if flagShapePattern.MatchString(name) {
-		return "", errors.New(errMsgDisplayNameFlagShape)
+		return "", errDisplayNameFlagShape
 	}
 	return name, nil
 }
@@ -1225,6 +1229,9 @@ func (h *Handler) adminSetDisplayName(w http.ResponseWriter, r *http.Request) {
 	}
 	name, err := validDisplayName(req.Name)
 	if err != nil {
+		if errors.Is(err, errDisplayNameFlagShape) {
+			h.logFlagShapeRefused(r, user, flagFieldDisplayName)
+		}
 		// Self-crafted validation message (validDisplayName), not an
 		// internal/store error — safe to return verbatim.
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})

@@ -29,7 +29,6 @@ package identityobs
 import (
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -38,6 +37,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/ratelimit"
 )
 
@@ -280,10 +280,7 @@ func (o *Observer) log(r *http.Request, p Pair) {
 	if route == "" {
 		route = "-"
 	}
-	remote := r.RemoteAddr
-	if host, _, err := net.SplitHostPort(remote); err == nil {
-		remote = host
-	}
+	remote := httpx.PeerHost(r)
 	logger := o.logger
 	if logger == nil {
 		logger = slog.Default()

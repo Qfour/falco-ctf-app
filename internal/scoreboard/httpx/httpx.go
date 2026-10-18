@@ -4,9 +4,21 @@ package httpx
 import (
 	"encoding/json"
 	"mime"
+	"net"
 	"net/http"
 	"strings"
 )
+
+// PeerHost is the request's peer address without the port (r.RemoteAddr is
+// "host:port"); a RemoteAddr that has no host:port shape is returned as it is. The
+// scoreboard's closed-attribute observation lines (identityobs, the flag-shape
+// refusal) log this one form, so a log reader can join them on remote_addr.
+func PeerHost(r *http.Request) string {
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
+}
 
 // WriteJSON sets Content-Type and encodes body as JSON.
 func WriteJSON(w http.ResponseWriter, status int, body any) {
