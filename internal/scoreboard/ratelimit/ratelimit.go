@@ -1,13 +1,29 @@
 // Package ratelimit provides a small in-memory token-bucket limiter keyed
-// by an arbitrary string (the requester's IP, or a proven identity). Defense-in-depth
-// against /submit brute-forcing — the primary controls are per-IP ingress-nginx
-// rate limits, but a per-pod fallback here keeps the scoreboard responsive even
-// if those upstream controls drift. /falco/events is NOT keyed by IP: its single
-// sender would make one shared bucket, so internal/scoreboard/ingest keys by
-// participant (app#359).
+// by an arbitrary string (the requester's IP, or a proven identity).
+//
+// What this is, honestly: a per-pod limiter, and the only rate control this
+// repository itself configures (no chart sets an ingress-nginx rate-limit
+// annotation). Any edge limit in front of it (ingress-nginx, Cloudflare) is a
+// deployment setting that lives outside this repo and is not relied on here.
+// /falco/events is NOT keyed by IP: its single sender would make one shared
+// bucket, so internal/scoreboard/ingest keys by participant (app#359).
+//
+// The state is bounded (app#463): a bucket whose tokens have refilled to the
+// burst and that has been idle past the eviction TTL is dropped, and the map
+// never holds more than the configured maximum number of buckets. Past that
+// maximum the LEAST RECENTLY USED bucket is evicted to make room, never the new
+// key refused: refusing a new key would let anyone who can mint keys (a forged
+// ns on /falco/events, a forged X-Forwarded-For) lock honest participants out,
+// and on the scoring path would drop a real forbidden-rule fire (app#359 "a
+// scoring rule is never dropped"). The cost of evicting instead is bounded and
+// fail-open for the evicted key only: it restarts with a full bucket, so a
+// flood of more than the maximum distinct keys can reset other keys' buckets to
+// their burst. That is the price of never denying a new key; it does not let
+// anyone exceed the burst allowance of their own bucket by more than the reset.
 package ratelimit
 
 import (
+	"container/list"
 	"math"
 	"net"
 	"net/http"
@@ -18,21 +34,30 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
 )
 
+// DefaultMaxBuckets is the bucket-count cap a Limiter starts with. Each bucket
+// is on the order of 100 bytes, so the cap bounds the state at roughly a
+// megabyte while being far above the key population of a real event (a few
+// hundred participants).
+const DefaultMaxBuckets = 10000
+
 // Limiter implements per-key token-bucket rate limiting. Buckets evict
-// themselves once unused for the eviction TTL; keep this larger than the
-// fill interval so legitimate clients aren't reset between calls.
+// themselves once unused for the eviction TTL (and refilled); keep that larger
+// than the fill interval so legitimate clients aren't reset between calls.
 type Limiter struct {
-	rate     float64       // tokens per second
-	burst    float64       // bucket capacity
-	eviction time.Duration // bucket TTL once `tokens == burst`
+	rate       float64       // tokens per second
+	burst      float64       // bucket capacity
+	eviction   time.Duration // idle time after which a refilled bucket is dropped
+	maxBuckets int           // hard cap on len(buckets)
 
 	now func() time.Time
 
 	mu      sync.Mutex
-	buckets map[string]*bucket
+	buckets map[string]*list.Element // key -> element of order, Value is *bucket
+	order   *list.List               // front = most recently used, back = least
 }
 
 type bucket struct {
+	key    string
 	tokens float64
 	last   time.Time
 }
@@ -41,11 +66,13 @@ type bucket struct {
 // refills at `rate` tokens per second.
 func New(rate, burst float64) *Limiter {
 	return &Limiter{
-		rate:     rate,
-		burst:    burst,
-		eviction: 5 * time.Minute,
-		now:      time.Now,
-		buckets:  make(map[string]*bucket),
+		rate:       rate,
+		burst:      burst,
+		eviction:   5 * time.Minute,
+		maxBuckets: DefaultMaxBuckets,
+		now:        time.Now,
+		buckets:    make(map[string]*list.Element),
+		order:      list.New(),
 	}
 }
 
@@ -55,6 +82,49 @@ func (l *Limiter) WithNow(now func() time.Time) *Limiter {
 	return l
 }
 
+// WithMaxBuckets sets the cap on the number of buckets (n < 1 is treated as 1:
+// a limiter must be able to hold the bucket it is using).
+func (l *Limiter) WithMaxBuckets(n int) *Limiter {
+	if n < 1 {
+		n = 1
+	}
+	l.maxBuckets = n
+	return l
+}
+
+// WithEviction sets the idle TTL after which a refilled bucket is dropped.
+func (l *Limiter) WithEviction(d time.Duration) *Limiter {
+	l.eviction = d
+	return l
+}
+
+// Len is the number of buckets currently held (for tests and diagnostics).
+func (l *Limiter) Len() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.buckets)
+}
+
+// refilled is the bucket's token count at `now`, capped at the burst. The
+// stored count is only updated on a use, so "full" must be judged on this
+// value, not on b.tokens (judging on the stale stored value is what kept a
+// partly-drained, long-idle bucket in the map forever: app#463).
+func (l *Limiter) refilled(b *bucket, now time.Time) float64 {
+	return math.Min(l.burst, b.tokens+now.Sub(b.last).Seconds()*l.rate)
+}
+
+// expired reports whether b can be dropped without changing any answer: it has
+// been idle past the TTL and would be full again anyway, so a fresh bucket for
+// the key behaves identically.
+func (l *Limiter) expired(b *bucket, now time.Time) bool {
+	return now.Sub(b.last) > l.eviction && l.refilled(b, now) >= l.burst
+}
+
+func (l *Limiter) remove(e *list.Element) {
+	delete(l.buckets, e.Value.(*bucket).key)
+	l.order.Remove(e)
+}
+
 // Allow consumes one token from `key`'s bucket and returns whether the
 // request should be permitted.
 func (l *Limiter) Allow(key string) bool {
@@ -62,24 +132,31 @@ func (l *Limiter) Allow(key string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	b, ok := l.buckets[key]
-	if !ok {
-		b = &bucket{tokens: l.burst, last: now}
-		l.buckets[key] = b
-	} else {
-		delta := now.Sub(b.last).Seconds()
-		b.tokens = math.Min(l.burst, b.tokens+delta*l.rate)
-		b.last = now
+	// Drop expired buckets from the cold end. The list is ordered by last use,
+	// so this stops at the first bucket that is still live or not yet refilled:
+	// O(1) amortized, no scan of the map. (A not-yet-refilled bucket at the back
+	// can shield a newer expired one, but the cap below bounds the map anyway.)
+	for e := l.order.Back(); e != nil; e = l.order.Back() {
+		if !l.expired(e.Value.(*bucket), now) {
+			break
+		}
+		l.remove(e)
 	}
 
-	// Evict full buckets older than the TTL so the map doesn't grow unbounded
-	// on bursty traffic from many distinct keys.
-	if len(l.buckets) > 1024 {
-		for k, v := range l.buckets {
-			if v.tokens >= l.burst && now.Sub(v.last) > l.eviction {
-				delete(l.buckets, k)
-			}
+	var b *bucket
+	if e, ok := l.buckets[key]; ok {
+		b = e.Value.(*bucket)
+		b.tokens = l.refilled(b, now)
+		b.last = now
+		l.order.MoveToFront(e)
+	} else {
+		// Make room by evicting the least recently used bucket; never refuse a
+		// new key (see the package doc).
+		for len(l.buckets) >= l.maxBuckets {
+			l.remove(l.order.Back())
 		}
+		b = &bucket{key: key, tokens: l.burst, last: now}
+		l.buckets[key] = l.order.PushFront(b)
 	}
 
 	if b.tokens < 1 {
