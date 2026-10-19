@@ -173,7 +173,7 @@ cycle 自体を上げる場合 (例: alpine 3.23→3.24) は tag も一緒に変
   人間レビュー → CEO merge で行う (G3 で導入)。CI-free prod 方針 (image 手動 build/push)
   とは直交** — Dependabot は依存更新 PR を開くだけで、prod deploy 経路には触れない。
   auto-merge は使わない (更新は必ず人間レビュー → CEO merge を経る)。platform `SUPPLY-CHAIN.md`
-  と同一方針。**例外リスト (mutable で許容する参照)**:
+  と同じ例外表の規則。ただし SHA pin の範囲は非対称 (下の箇条)。**例外リスト (mutable で許容する参照)**:
   | action | 用途 |
   |---|---|
   | `actions/checkout@v4` | repo チェックアウト (GitHub 公式) |
