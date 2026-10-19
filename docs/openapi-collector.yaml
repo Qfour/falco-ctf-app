@@ -104,8 +104,11 @@ paths:
         it is a coordinated change across this spec, the mission brief and the
         docs site.**
 
-        `{cid}` is validated as a `NN-slug` here (not just downstream) so a
-        crafted path cannot be reflected into the upstream URL.
+        `{cid}` is checked here against the challenge-id grammar (the `Cid`
+        parameter's `pattern`; one definition, ADR-0041) so a crafted path
+        cannot be reflected into the upstream URL. Outside the grammar the
+        collector answers `404 {"error":"unknown challenge"}` itself and
+        forwards nothing; `submit` answers the same way.
 
         The scoreboard sink is collector-only (`internal-claimed-identity`
         there): the collector adds no `X-Auth-Request-*` header and passes
@@ -137,7 +140,16 @@ paths:
           content:
             application/json: {}
         "400":
-          description: "`{cid}` is not a valid challenge slug (rejected by the collector itself), or a relayed scoreboard 400 (not an exfil challenge, malformed body, missing `user`/`flag`, or `user` not a username slug — the scoreboard checks it and does not echo the input; see `POST /internal/exfil/{cid}`)"
+          description: "relayed scoreboard 400 (not an exfil challenge, malformed body, missing `user`/`flag`, or `user` not a username slug — the scoreboard checks it and does not echo the input; see `POST /internal/exfil/{cid}`)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: |
+            `{cid}` is outside the challenge-id grammar: the collector answers
+            `{"error":"unknown challenge"}` itself and does not forward (was
+            `400 invalid challenge id` before ADR-0041), or a relayed scoreboard
+            404 (an id inside the grammar that is not a challenge).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -163,7 +175,7 @@ paths:
 
   /api/challenges/{cid}/submit:
     post:
-      summary: Flag submission (transparent forward to the scoreboard)
+      summary: Flag submission (forward to the scoreboard)
       operationId: forwardSubmit
       tags: [participant]
       x-ctf-audience: participant
@@ -173,8 +185,16 @@ paths:
       x-ctf-forward-target: "POST /api/challenges/{cid}/submit"
       x-ctf-rate-limit: per-IP (RemoteAddr) 1 req/s burst 10
       description: |
-        Verbatim reverse-proxy of the scoreboard's identically-named route
-        (docs/openapi-scoreboard.yaml owns the request/response contract). Under
+        Reverse-proxy of the scoreboard's identically-named route
+        (docs/openapi-scoreboard.yaml owns the request/response contract),
+        forwarded VERBATIM once `{cid}` is inside the challenge-id grammar (the
+        `Cid` parameter's `pattern`). A `{cid}` outside the grammar is answered
+        by the collector itself with `404 {"error":"unknown challenge"}` and is
+        not forwarded. A `{cid}` inside the grammar is forwarded whether or not
+        it names a challenge: the collector holds no catalog, so for an id that
+        is not a challenge the 404 is the scoreboard's. The platform's verify
+        probe `99-verify-probe` is inside the grammar and not a challenge, so it
+        reaches the scoreboard and reads that 404 (ADR-0041). Under
         egress lockdown this is the PRIMARY flag-submission path, which is
         exactly why the scoreboard's copy of this route must stay
         `x-ctf-origin-guard: false`: a workspace `curl` sends no Origin.
@@ -194,9 +214,14 @@ paths:
           content:
             application/json: {}
         "404":
-          description: relayed scoreboard error (unknown challenge)
+          description: |
+            unknown challenge: the collector's own answer for a `{cid}` outside
+            the grammar (not forwarded), or the relayed scoreboard 404 for an id
+            inside it that is not a challenge. Both are
+            `{"error":"unknown challenge"}`.
           content:
-            application/json: {}
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "429":
           description: rate limited by the collector, or relayed from the scoreboard (`text/plain`)
           content:
@@ -265,7 +290,11 @@ components:
         type: string
         x-ctf-text-origin: token
         pattern: "^[0-9]{2}-[a-z0-9-]{1,60}$"
-      description: challenge id slug, validated by the collector before any upstream rewrite
+      description: |
+        challenge id (`NN-slug`). ONE grammar for the collector, the scoreboard
+        and the platform's verify probe (ADR-0041); in Go it is
+        `challengeid.Pattern`, held equal to this `pattern` by a test. Outside
+        it the collector answers 404 and does not forward.
 
   schemas:
     Error:

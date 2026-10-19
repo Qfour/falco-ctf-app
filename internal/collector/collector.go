@@ -39,7 +39,7 @@
 // Routes fronted (method + path → upstream):
 //
 //	POST /api/challenges/{cid}/exfil       → scoreboard POST /internal/exfil/{cid}
-//	POST /api/challenges/{cid}/submit      → scoreboard (transparent)
+//	POST /api/challenges/{cid}/submit      → scoreboard (verbatim once {cid} is inside the grammar)
 //	GET  /healthz                          collector liveness (local)
 //	GET  /metrics                          collector Prometheus exposition
 //
@@ -142,7 +142,9 @@ func New(upstream string, logger *slog.Logger, opts ...Option) (*Handler, error)
 	// Fail closed on upstream errors: a proxy dial failure must not leak a
 	// Go default 502 body or the upstream address into the participant shell.
 	h.proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		h.logger.Error("upstream forward failed", "path", r.URL.Path, "err", err)
+		// r.Pattern, not r.URL.Path: the path carries the participant-chosen
+		// {cid} (and, on exfil, was rewritten), the pattern is a constant.
+		h.logger.Error("upstream forward failed", "pattern", r.Pattern, "err", err)
 		httpx.WriteJSON(w, http.StatusBadGateway, map[string]any{"error": "scoreboard unavailable"})
 	}
 
@@ -176,7 +178,7 @@ func New(upstream string, logger *slog.Logger, opts ...Option) (*Handler, error)
 			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzClaimedIdentity,
 			OriginGuarded: false, CollectorForward: true,
 			RateLimit: "per-IP (RemoteAddr) 1 req/s burst 10",
-			Handler:   rl(h.proxy),
+			Handler:   rl(http.HandlerFunc(h.submit)),
 		},
 		{
 			// Exfil drop → rewrite to the scoreboard's internal-only sink (see
@@ -259,16 +261,46 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Observe(h.now().Sub(start).Seconds())
 }
 
+// unknownChallengeBody is the one body the collector answers an id outside the
+// grammar with. It is byte-for-byte the scoreboard's answer for an id it does
+// not know (docs/openapi-scoreboard.yaml, the `404` of every {cid} route): one
+// rule for the participant, "an id that is not a challenge is 404". The input
+// is never echoed.
+const unknownChallengeBody = "unknown challenge"
+
+// rejectUnknownCID answers 404 and reports true when cid is outside the
+// challenge-id grammar; the caller must then not forward (ADR-0041).
+func rejectUnknownCID(w http.ResponseWriter, cid string) bool {
+	if challengeid.Valid(cid) {
+		return false
+	}
+	httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"error": unknownChallengeBody})
+	return true
+}
+
+// submit forwards POST /api/challenges/{cid}/submit verbatim once {cid} is
+// inside the challenge-id grammar. An id outside it is answered here (404) and
+// never reaches the scoreboard. An id inside it is forwarded even when the
+// scoreboard has no such challenge: the collector holds no catalog, so the
+// scoreboard's 404 is what answers it (platform verify (a-2) relies on this
+// with the probe id 99-verify-probe).
+func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
+	if rejectUnknownCID(w, r.PathValue("cid")) {
+		return
+	}
+	h.proxy.ServeHTTP(w, r)
+}
+
 // exfil rewrites the participant drop POST /api/challenges/{cid}/exfil to the
 // scoreboard's POST /internal/exfil/{cid} and forwards the body unchanged. The
 // collector does not parse or validate the payload — the scoreboard owns the
-// receipt and HasExfil is the only scoring gate. {cid} is validated as a slug
-// so a crafted path can't be reflected into the upstream URL.
+// receipt and HasExfil is the only scoring gate. {cid} is checked against the
+// challenge-id grammar so a crafted path can't be reflected into the upstream
+// URL; outside it the answer is the same 404 as submit's (ADR-0041).
 func (h *Handler) exfil(w http.ResponseWriter, r *http.Request) {
 	cid := r.PathValue("cid")
 	// Guards the value reflected into the upstream /internal/exfil/{cid} path.
-	if !challengeid.Valid(cid) {
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid challenge id"})
+	if rejectUnknownCID(w, cid) {
 		return
 	}
 	r.URL.Path = "/internal/exfil/" + cid
