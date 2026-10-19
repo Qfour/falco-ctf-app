@@ -164,6 +164,7 @@ cycle 自体を上げる場合 (例: alpine 3.23→3.24) は tag も一緒に変
 - **platform が本リポの reusable workflow (`shellcheck.yaml` / `actionlint.yaml`) を
   consume する際も同 SHA-pin ポリシーを適用する** (app が reusable の一次配布元。
   `Qfour/falco-ctf-app/.github/workflows/<name>.yaml@<40-hex>` で pin し `@main` 禁止)。
+  platform は 2026-10-19 から self-hosted 切替のため一時的に inline (platform #267)。終状態 = 本 repo の再利用 workflow に `runs-on` input を足す (platform#268)。
 - **サードパーティ action の `@vN` メジャータグは許容例外**。SHA pin しない。
   根拠: (1) いずれも広く使われる信頼済み提供元 (GitHub 公式 `actions/*`・
   `azure/*`・`aws-actions/*`・`anthropics/*)、(2) メジャータグは提供元が
@@ -185,6 +186,7 @@ cycle 自体を上げる場合 (例: alpine 3.23→3.24) は tag も一緒に変
 - **この例外表は各リポの実 workflow に固有** (共通なのは pin ポリシーであって
   action 集合ではない。集合は各リポの `uses:` に従属する)。platform 表と件数/内容が
   一致する必要はない。
+- **platform との非対称 (意図的、platform `SUPPLY-CHAIN.md` と同文)**: self-hosted runner に載りうる workflow は全 action を SHA pin + 版コメント (platform の ci.yaml / smoke)。app には self-hosted に載る workflow が無いので例外表のみ。platform と「同じ方針」ではなく、この非対称を両 repo の正典に同文で置く (platform #267 / #268)。
 - **`github/codeql-action/*` は SHA pin (例外表に載せない)。bump は Dependabot
   github-actions group が担う** (codeql.yml の init/autobuild/analyze を同一 SHA に揃える)。
 - **G5-2 検査 job (`checks.yaml` / `freshness.yaml`) の方針**: 新規サードパーティ
