@@ -133,16 +133,79 @@ func TestExfil_ForwardAddsNoProxyIdentity(t *testing.T) {
 	}
 }
 
-func TestExfil_InvalidCID_Rejected(t *testing.T) {
-	c, up := newTestCollector(t)
-	// Path-traversal attempt must not reach the upstream at all.
-	resp := do(t, "POST", c.URL+"/api/challenges/..%2f..%2finternal/exfil", `{}`)
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusBadRequest && resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("status = %d, want 400/404", resp.StatusCode)
+// outOfGrammarCIDs are path segments outside the challenge-id grammar that a
+// client can still put in a URL (percent-encoded where needed).
+func outOfGrammarCIDs() map[string]string {
+	return map[string]string{
+		"4096 characters":   strings.Repeat("a", 4096),
+		"upper case":        "01-Recon",
+		"dot":               "01-a.b",
+		"encoded space":     "01-a%20b",
+		"no digits":         "verify-probe",
+		"one digit":         "9-verify-probe",
+		"61-char slug":      "01-" + strings.Repeat("a", 61),
+		"path traversal":    "..%2f..%2finternal",
+		"encoded slash":     "01-a%2fb",
+		"non-UTF-8 bytes":   "%ff%fe",
+		"trailing newline":  "01-a%0a",
+		"internal prefix":   "internal",
+		"unrelated segment": "%00",
 	}
-	if up.last() != "" {
-		t.Fatalf("upstream should not have been called, got %q", up.last())
+}
+
+// assertFixedUnknown holds the collector's own answer for an id outside the
+// grammar: 404 and the fixed body, nothing of the input echoed.
+func assertFixedUnknown(t *testing.T, name string, resp *http.Response) {
+	t.Helper()
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("%s: status = %d body=%.120s, want 404", name, resp.StatusCode, b)
+	}
+	if got, want := strings.TrimSpace(string(b)), `{"error":"unknown challenge"}`; got != want {
+		t.Fatalf("%s: body = %.120s, want the fixed %s", name, got, want)
+	}
+}
+
+// An id outside the grammar is answered 404 by the collector and never reaches
+// the scoreboard, on exfil as on submit (ADR-0041: one rule for both).
+func TestExfil_OutOfGrammarCID_Fixed404NotForwarded(t *testing.T) {
+	for name, cid := range outOfGrammarCIDs() {
+		// A collector per case: the per-IP budget (burst 10) must not turn a
+		// later case into a 429 that hides what is being pinned.
+		c, up := newTestCollector(t)
+		assertFixedUnknown(t, "exfil "+name, do(t, "POST", c.URL+"/api/challenges/"+cid+"/exfil", `{}`))
+		if up.last() != "" {
+			t.Fatalf("exfil %s: upstream should not have been called, got %q", name, up.last())
+		}
+	}
+}
+
+func TestSubmit_OutOfGrammarCID_Fixed404NotForwarded(t *testing.T) {
+	for name, cid := range outOfGrammarCIDs() {
+		// A collector per case: the per-IP budget (burst 10) must not turn a
+		// later case into a 429 that hides what is being pinned.
+		c, up := newTestCollector(t)
+		assertFixedUnknown(t, "submit "+name, do(t, "POST", c.URL+"/api/challenges/"+cid+"/submit", `{"user":"user1","flag":"FALCO{x}"}`))
+		if up.last() != "" {
+			t.Fatalf("submit %s: upstream should not have been called, got %q", name, up.last())
+		}
+	}
+}
+
+// verifyProbeCID is the id platform's verify (a-2) submits through the
+// collector: inside the grammar, not a challenge. The collector holds no
+// catalog, so it must FORWARD it and let the scoreboard answer 404 (ADR-0041,
+// platform #264). If this stops being forwarded, the gate would read the
+// collector's own 404 and go green without ever reaching the scoreboard.
+const verifyProbeCID = "99-verify-probe"
+
+func TestSubmit_VerifyProbeIsForwarded(t *testing.T) {
+	c, up := newTestCollector(t)
+	resp := do(t, "POST", c.URL+"/api/challenges/"+verifyProbeCID+"/submit", `{}`)
+	resp.Body.Close()
+	if got, want := up.last(), "POST /api/challenges/"+verifyProbeCID+"/submit"; got != want {
+		t.Fatalf("upstream call = %q, want %q (a grammar-valid id that is not a challenge must be forwarded)", got, want)
 	}
 }
 
