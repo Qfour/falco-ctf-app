@@ -9,9 +9,10 @@
 // collector would be a self-scope bypass (P18).
 //
 // Design constraints (see REFACTORING.md P11.5):
-//   - No catalog, no flags, no persistence. The collector holds no CTF state;
-//     it is a thin, allowlisted forwarder. Solve/exfil truth lives in the
-//     scoreboard (HasExfil at submit time is the only scoring gate).
+//   - No catalog, no flags, no persistence. The collector holds no CTF state
+//     (catalog / flags / DB); it is an allowlisted forwarder that checks one
+//     thing itself, the challenge-id grammar (ADR-0041). Solve/exfil truth
+//     lives in the scoreboard (HasExfil at submit time is the only scoring gate).
 //     The one thing it knows about challenge ids is their grammar
 //     (internal/catalog/challengeid, standard library only): that is syntax, not
 //     a catalog, and it keeps yaml.v3 and the catalog parser out of this image.
@@ -154,8 +155,10 @@ func New(upstream string, logger *slog.Logger, opts ...Option) (*Handler, error)
 	// (which trusts XFF; correct only behind ingress-nginx, i.e. the scoreboard).
 	rl := h.limiter.Middleware(remoteIP)
 
-	// Transparent participant WRITE routes — forwarded verbatim to the
-	// scoreboard — plus the exfil-drop rewrite and this binary's own local
+	// Participant WRITE routes — forwarded to the scoreboard once {cid} is
+	// inside the challenge-id grammar (outside it the collector itself answers
+	// 404 and stops, ADR-0041; it still holds no CTF state) — plus the
+	// exfil-drop rewrite and this binary's own local
 	// liveness/metrics, as a declarative table (ADR-0005 V2). NOTE: the
 	// progress READ route (GET /api/users/{user}/me) is deliberately NOT in
 	// this table. An anonymous, client-chosen {user} read through the

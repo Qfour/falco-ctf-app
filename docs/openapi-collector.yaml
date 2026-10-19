@@ -14,7 +14,9 @@ info:
     The participant-facing front for a CTF workspace (P11.5 "full one-pipe").
     Once ctf-user egress lockdown is on, a workspace pod can reach ONLY the
     collector — never the scoreboard directly. The collector holds NO CTF state
-    (no catalog, no flags, no DB): it is a thin, allowlisted forwarder. Solve
+    (no catalog, no flags, no DB): it is an allowlisted forwarder that checks one
+    thing itself, the challenge-id grammar (a `{cid}` outside it is answered 404
+    and not forwarded, ADR-0041). Solve
     truth stays in the scoreboard.
 
     Default-deny routing is part of the contract
@@ -162,9 +164,10 @@ paths:
           content:
             application/json: {}
         "429":
-          description: rate limited (`text/plain`)
+          description: rate limited by the collector
           content:
-            text/plain: {}
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "502":
           description: |
             upstream forward failed. Fail-closed body — never the Go default 502
@@ -223,9 +226,10 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "429":
-          description: rate limited by the collector, or relayed from the scoreboard (`text/plain`)
+          description: rate limited by the collector, or relayed from the scoreboard
           content:
-            text/plain: {}
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "500":
           description: relayed scoreboard error
           content:
@@ -291,10 +295,13 @@ components:
         x-ctf-text-origin: token
         pattern: "^[0-9]{2}-[a-z0-9-]{1,60}$"
       description: |
-        challenge id (`NN-slug`). ONE grammar for the collector, the scoreboard
-        and the platform's verify probe (ADR-0041); in Go it is
-        `challengeid.Pattern`, held equal to this `pattern` by a test. Outside
-        it the collector answers 404 and does not forward.
+        challenge id (`NN-slug`). In Go the grammar is ONE definition,
+        `challengeid.Pattern`; this `pattern` and the scoreboard spec's are held
+        equal to it by `internal/apispec/specparity` (identifier_patterns_test).
+        The platform holds no copy: that its verify probe id is inside the
+        grammar and not a catalog key is held by this repo's tests (ADR-0041
+        V2, V3, V5). Shell copies are not yet pinned (app#472). Outside the
+        grammar the collector answers 404 and does not forward.
 
   schemas:
     Error:
