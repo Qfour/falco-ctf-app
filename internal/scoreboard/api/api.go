@@ -303,7 +303,11 @@ type Handler struct {
 	// released after, so a flood of submissions is REJECTED with 429 past the cap
 	// rather than queued (design §3.3 — the net-new DoS lever). Its capacity is
 	// the hard global in-flight grader cap.
-	detectRunner   scoring.DetectRunner
+	detectRunner scoring.DetectRunner
+	// gradeDetect is grader.SubmitDetect. A field only so a test can make the
+	// Grader's second seat gate answer ErrInvalidUser for a body user the handler's
+	// own gate accepted (app#479): over real HTTP that branch is unreachable.
+	gradeDetect    func(ctx context.Context, runner scoring.DetectRunner, user, cid, condition string) (scoring.DetectOutcome, error)
 	detectInflight chan struct{}
 
 	// board is the QA Board store (app#292 — destination model, supersedes
@@ -418,6 +422,7 @@ func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *sl
 		cat:            cat,
 		store:          s,
 		grader:         grader,
+		gradeDetect:    grader.SubmitDetect,
 		logger:         logger,
 		now:            now,
 		denials:        identityobs.New(logger, now),
@@ -1532,7 +1537,7 @@ func (h *Handler) submitDetect(w http.ResponseWriter, r *http.Request) {
 	// (~20s) so an infra timeout surfaces as a 500 (fail-closed), never a solve.
 	ctx, cancel := context.WithTimeout(r.Context(), DetectGradeTimeout)
 	defer cancel()
-	outcome, err := h.grader.SubmitDetect(ctx, h.detectRunner, user, cid, condition)
+	outcome, err := h.gradeDetect(ctx, h.detectRunner, user, cid, condition)
 	if errors.Is(err, scoring.ErrInvalidUser) {
 		// The Grader's own seat gate (before any Job); unreachable while the
 		// identity.ValidSeat check above agrees with it. Never a 500.

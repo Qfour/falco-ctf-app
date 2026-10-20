@@ -27,7 +27,7 @@ func (c *countingDetectRunner) Grade(_ context.Context, _, _ string) (int, int, 
 func TestSubmitDetect_NonSeatBodyUserIs400BeforeTheRunner(t *testing.T) {
 	runner := &countingDetectRunner{}
 	srv := newAuthzFixtureRunner(t, runner)
-	for _, user := range []string{"Alice", "bad user", "a_b", "-lead", "evil‮user", strings.Repeat("a", 64), "alice@ctf.local"} {
+	for _, user := range []string{"Alice", "bad user", "a_b", "-lead", "evil\u202euser", strings.Repeat("a", 64), "alice@ctf.local"} {
 		t.Run(user, func(t *testing.T) {
 			body, err := json.Marshal(map[string]string{"user": user, "condition": "evt.type=execve"})
 			if err != nil {

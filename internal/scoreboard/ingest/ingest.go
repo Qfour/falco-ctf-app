@@ -114,9 +114,19 @@ const (
 // docs/openapi-scoreboard.yaml must carry the same text (StringExtParity).
 const RateLimitDescription = "per-participant (ns) bucket - observation rules 20 req/s burst 100 then 429, scoring rules 100 req/s burst 400 then fail-closed taint if forbidden (never 429)"
 
+// ruleFireGrader is the part of *scoring.Grader that receive uses. It is an
+// interface only so a test can make the Grader's second seat gate answer
+// ErrInvalidUser for a namespace the first gate accepted (app#479): over real
+// HTTP that branch is unreachable, so without this seam it would be untested.
+type ruleFireGrader interface {
+	AffectsScoring(rule string) bool
+	OnRuleFire(user, rule string) (scoring.RuleFireOutcome, error)
+	TaintOnOverflow(user, rule string) (tainted string, err error)
+}
+
 type Handler struct {
 	store  *store.Store
-	grader *scoring.Grader
+	grader ruleFireGrader
 	logger *slog.Logger
 	now    func() time.Time
 	// observeLimiter / scoringLimiter are keyed by participant (ns without the
@@ -462,6 +472,11 @@ func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 // runbook). Reaching it means receive's gate was lost, so it also logs one
 // fixed-field Warn (httpx.LogGraderRefused), through auditLimiter under a
 // constant key (the refused value is not a key) so it is at most 1 line / 10 s.
+//
+// What it guarantees is about the four scoring tables: the Grader wrote none of
+// them. It does NOT undo what receive did before calling the Grader: when the
+// first (ns) gate was lost, store.RecordRuleFire has already put the event in the
+// rule_fires feed (and the per-user event count) under the refused user.
 func (h *Handler) graderRefused(w http.ResponseWriter, r *http.Request, entry string) {
 	if h.auditLimiter.Allow("grader_refused") {
 		httpx.LogGraderRefused(h.logger, r, entry)
