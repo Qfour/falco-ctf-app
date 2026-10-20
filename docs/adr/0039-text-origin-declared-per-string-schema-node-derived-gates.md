@@ -9,6 +9,7 @@
 - 改訂: rev2 (2026-10-18) は app#433 の review-5x (30 回目) の R4#1〜R4#4 と、security-engineer の 2 つの判断 (#429、#433 の review) の反映。変えた節: Status・関連・読み方・C1〜C3・C5・C6 と O2 (行のみ)・D2 (seat の値は token)・D3 (e) (受理の keyword まで比べる)・D4 (first_solver の扱いと floor の数え方)・D5 (規則の file・probe・赤の組)・D6 (S3a-1 / S3a-2、保存済みの値)・D7 (ii) の注記・D8 (表と段の外の follow-up)・D9 (行のみ)・Consequences・Signpost 2 / 3・V2 / V4 / V5 / V6 / V8・見ないもの・Advice。Decision (O1) と D1 は変えていない。
 - 改訂 (rev3、2026-10-18): app#452 (S1) の review-5x (37 回目) の VP 査定と、app#449 の review-5x (38 回目) の R4#1 の反映。決定文は書き換えず、「(rev3)」の印を付けた追記と実測の数値の更新に限った。VP が指示した 3 か所 (D2 の `operator` の例、D8 の S1 行、D8 末尾の app#440 の注記) は取り消し線で旧文を残して差し替えた。変えた節: Status・Date・関連・読み方・C1 (4 回目の例)・C3・D2 (request の列、Falco の event の注記、flag 形の class の下限)・D3 (見出しの置き場、(b)・(c)・(g) の追記、(h) の新設、置き場と列挙)・D5 (導出の実測、falco/events の driver、flag 形の probe)・D8 (S1 行、S1b 行、S2 / S3b / S4 の前提、S1b の項、文書、app#440 の注記)・Consequences・Signpost 3・V1・V2・V5・Advice。ADR-0005 の Status block に導線を足した。
 - 改訂 (rev4、2026-10-18): app#460 (S1b) の review-5x (40 回目) の VP 査定と、#454 の VP 決定 1〜5、#407 の rev4 の材料の反映。決定文は書き換えず、「(rev4)」の印を付けた追記と実測の更新に限った (旧文を差し替えたのは D8 の S1b 行の前提の欄だけで、取り消し線で残した)。変えた節: Status・Date・関連・読み方・D2 (`type` の無い leaf の段)・D3 ((b)・(c)・(d)・(e)・(g)・(h) の追記、実装の形)・D4 (S2 の導出の作り方)・D8 (S1b 行、S1b の項、S3b 行)・D9 (機構の test 名)・Consequences・Signpost 1・V1・V2・V4・Advice。
+- 導線 (2026-10-20、app#487): Signpost 3 の「起動時 Warn」(app#439 の `stored user slug check`) の msg・属性名・level は platform の `scripts/verify.sh` が読む契約で、`.claude/rules/falco-ctf-app-conventions.md` の契約表の行「scoreboard の起動ログ」に載った。決定文は変えていない。
 
 ## Context
 

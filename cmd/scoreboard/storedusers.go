@@ -12,7 +12,9 @@ import (
 // `solved_violations` / `exfil_violations` attributes; the operator's next step
 // is the separate `remedy` attribute. The platform runbook (platform#257) and
 // ADR-0039 Signpost 3 read this msg and those two attribute names: change any of
-// them only together with the readers.
+// them only together with the readers. The contract-table row "scoreboard の起動ログ"
+// in .claude/rules/falco-ctf-app-conventions.md lists them all; the literal golden is
+// bootlog_contract_test.go.
 const storedUserCheckMsg = "stored user slug check"
 
 // storedUserRemedy says what each kind of stored row means and what an operator
