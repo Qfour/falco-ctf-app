@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -268,7 +269,7 @@ func TestMeRead_NotForwarded(t *testing.T) {
 // TestDefaultDeny_BlockedRoutes ensures the collector never forwards the
 // ingest, admin, internal, or state surface of the scoreboard.
 func TestDefaultDeny_BlockedRoutes(t *testing.T) {
-	c, up := newTestCollector(t)
+	h, up := newMethodHandler(t)
 	blocked := []struct {
 		method, path string
 	}{
@@ -280,11 +281,14 @@ func TestDefaultDeny_BlockedRoutes(t *testing.T) {
 		{"GET", "/api/users/alice/me"},            // progress read is not fronted (P18)
 		{"POST", "/api/users/alice/display-name"}, // setname's forward, removed in ADR-0034 S1
 	}
-	for _, b := range blocked {
-		resp := do(t, b.method, c.URL+b.path, "")
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusMethodNotAllowed {
-			t.Errorf("%s %s: status = %d, want 404/405 (default-deny)", b.method, b.path, resp.StatusCode)
+	for i, b := range blocked {
+		// One connection address per entry: the default-deny surface has a per-IP
+		// budget (burst 10), and this test is about what is refused, not about how
+		// many refusals fit in the burst. Sharing one address would turn an 11th
+		// entry into a 429 and fail with an unrelated message.
+		w := serve(h, b.method, b.path, fmt.Sprintf("10.70.0.%d", i+1))
+		if w.Code != http.StatusNotFound && w.Code != http.StatusMethodNotAllowed {
+			t.Errorf("%s %s: status = %d, want 404/405 (default-deny)", b.method, b.path, w.Code)
 		}
 	}
 	if up.last() != "" {
