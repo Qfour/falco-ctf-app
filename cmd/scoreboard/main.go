@@ -172,8 +172,9 @@ func main() {
 	catCfg, scored, err := scoredFromEnv(serverutil.Env)
 	challengesDir, scenarioFile, flagsFile := catCfg.challengesDir, catCfg.scenarioFile, catCfg.flagsFile
 	if err != nil {
+		// The next branch's record is read by platform scripts/verify.sh (msg only): contract-table row
+		// "scoreboard の起動ログ". bootlog_contract_test.go pins the line order below.
 		if errors.Is(err, catalog.ErrFlagOverrides) {
-			// Read by platform scripts/verify.sh (msg only): contract-table row "scoreboard の起動ログ".
 			logger.Error("flag overrides failed", "file", flagsFile, "err", err)
 		} else {
 			logger.Error("catalog load failed", "dir", challengesDir, "scenario_file", scenarioFile, "err", err)

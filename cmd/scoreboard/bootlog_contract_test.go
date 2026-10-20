@@ -53,7 +53,13 @@ func TestBootLogContract_StoredUserSlugCheck_GoldenLiterals(t *testing.T) {
 			t.Errorf("warn record lacks the literal %s: %s", want, warn)
 		}
 	}
-	assertKeys(t, "warn slug record", wrecs[0], "time", "level", "msg", "solved_violations", "exfil_violations", "remedy")
+	// `remedy` is a helper for the operator that verify.sh does not read: adding or
+	// dropping it must not turn this red, only the contract keys are required.
+	for _, k := range []string{"time", "level", "msg", "solved_violations", "exfil_violations"} {
+		if _, has := wrecs[0][k]; !has {
+			t.Errorf("warn slug record lacks the key %q: %s", k, warn)
+		}
+	}
 }
 
 func TestBootLogContract_StoredDisplayNameCheck_GoldenLiterals(t *testing.T) {
@@ -96,16 +102,49 @@ func TestBootLogContract_StoredDisplayNameCheck_GoldenLiterals(t *testing.T) {
 
 // main() exits on an unusable flags file with this record; verify.sh greps the
 // bare text `flag overrides failed` (no JSON key), and its selftest feeds it at
-// level ERROR. The exit path cannot run in a unit test, so the literal and its
-// level are pinned in the source the way the other main.go wiring tests do.
+// level ERROR. The exit path cannot run in a unit test, so the call is pinned in
+// the source: the Error call must be the line right after the
+// `errors.Is(err, catalog.ErrFlagOverrides)` branch opens. A source-string test
+// does not pin that the branch runs (only its text and order), which is why the
+// call is tied to that `if` line instead of just counted.
 func TestBootLogContract_FlagOverridesFailed_GoldenLiteral(t *testing.T) {
 	src, err := os.ReadFile("main.go")
 	if err != nil {
 		t.Fatal(err)
 	}
+	lines := strings.Split(string(src), "\n")
+	const branch = `if errors.Is(err, catalog.ErrFlagOverrides) {`
 	const call = `logger.Error("flag overrides failed",`
-	if c := strings.Count(string(src), call); c != 1 {
-		t.Fatalf("%s appears %d time(s) in main.go, want exactly 1 (msg and level are read by platform scripts/verify.sh)", call, c)
+	found := 0
+	for i, l := range lines {
+		if strings.Contains(l, `"flag overrides failed"`) {
+			found++
+			if i == 0 || strings.TrimSpace(lines[i-1]) != branch || !strings.HasPrefix(strings.TrimSpace(l), call) {
+				t.Errorf("main.go:%d: %q must be %s on the line right after %s (msg and level are read by platform scripts/verify.sh)", i+1, strings.TrimSpace(l), call, branch)
+			}
+		}
+	}
+	if found != 1 {
+		t.Fatalf("main.go has %d lines with \"flag overrides failed\", want exactly 1", found)
+	}
+}
+
+// The records are serialized by slog.NewJSONHandler with nil options on stdout;
+// verify.sh matches that text. Replacing the handler (TextHandler, a ReplaceAttr
+// that renames level / msg) changes every record at once, so pin the one
+// construction. Source-string test: it pins the text, not that logger is the one
+// passed to the checks (the TestMain*Check* wiring tests pin the calls).
+func TestBootLogContract_LoggerIsJSONHandlerWithNilOptions(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `slog.New(slog.NewJSONHandler(os.Stdout, nil))`
+	if c := strings.Count(string(src), want); c != 1 {
+		t.Fatalf("%s appears %d time(s) in main.go, want exactly 1 (the boot log is read as slog JSONHandler text by platform scripts/verify.sh)", want, c)
+	}
+	if c := strings.Count(string(src), "slog.New("); c != 1 {
+		t.Fatalf("slog.New( appears %d time(s) in main.go, want exactly 1", c)
 	}
 }
 
