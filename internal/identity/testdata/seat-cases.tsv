@@ -2,8 +2,10 @@
 #
 # A seat is the workspace / participant name (the `<seat>` in
 # `<seat>@<EXPECTED_EMAIL_DOMAIN>`, `ctf-<seat>`, the Helm release name). The
-# grammar has ONE Go definition, identity.SeatPattern; every other
-# implementation of it is a copy that this table holds equal:
+# grammar has ONE Go definition, identity.SeatPattern; every implementation
+# registered below is a copy that this table holds equal (the `make e2e-serve AS=`
+# check in the Makefile is an approximation and is NOT registered: the e2e
+# harness re-checks the name in Go):
 #   - Go:    internal/identity (seat_cases_test.go) reads this file.
 #   - shell: charts/ctf-user/deploy-user.sh (its SEAT_PATTERN), run row by row
 #            by scripts/check-seat-grammar.sh (make check-flags; CI flag-guard).
@@ -24,6 +26,11 @@
 #     every reader: {LF} = U+000A, {U+202E} = RIGHT-TO-LEFT OVERRIDE
 #     (a bidi control), {U+00FC} = u-umlaut, {U+00EF} = i-diaeresis (a non-ASCII
 #     letter); the file itself stays ASCII
+#   - the set of placeholders is closed. After decoding, a row whose input still
+#     contains `{` or `}` is an error of the READER (an unknown placeholder, or a
+#     reader that lacks one), not a verdict: the reader fails. Otherwise a reader
+#     that forgot a decoder would test the literal text, reject it, and stay green
+#     without ever trying the input the row stands for. No seat row spells a brace.
 #
 # Rows marked (B) are the ones whose verdict changes when the grammar is
 # tightened to the set a workspace can actually be deployed with (1..53

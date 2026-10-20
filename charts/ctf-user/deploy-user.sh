@@ -171,10 +171,12 @@ CHALLENGE_ID="${2:?${USAGE_MSG}}"
 # scripts/check-seat-grammar.sh runs the shared case table
 # (internal/identity/testdata/seat-cases.tsv) through this check. C locale so
 # `a-z` is the ASCII range whatever the operator's LANG is; the printed value is
-# %q-escaped so a control or bidi character cannot reach the terminal raw.
+# %q-escaped in the C locale (every byte >= 0x80 becomes an octal escape whatever
+# the shell's version or LANG), so a control or bidi character cannot reach the
+# terminal raw.
 SEAT_PATTERN='^[a-z0-9][a-z0-9-]{0,62}$'
 if ! (export LC_ALL=C; [[ "${USERNAME}" =~ ${SEAT_PATTERN} ]]); then
-  printf 'invalid username (a seat): %q does not match %s\n' "${USERNAME}" "${SEAT_PATTERN}" >&2
+  (export LC_ALL=C; printf 'invalid username (a seat): %q does not match %s\n' "${USERNAME}" "${SEAT_PATTERN}") >&2
   echo "  (ADR-0034 D2; nothing was deployed)" >&2
   exit 2
 fi

@@ -15,10 +15,15 @@
 # also pins the text of SEAT_PATTERN to identity.SeatPattern). Platform's roster
 # tooling reads it in its paired PR.
 #
+# Also: a rejected seat is stopped before kubectl on the --egress-lockdown path
+# (which runs a kubectl before anything else), not only on the plain one.
+#
 # Self-test: the same table is run against copies of deploy-user.sh whose
-# SEAT_PATTERN is broken three ways (accepts anything / one character too wide /
-# one character too narrow); each must produce failures, or this check proves
-# nothing and fails.
+# SEAT_PATTERN is broken five ways (accepts anything / one character too wide /
+# one too narrow / no end anchor / no start anchor); each must fail the table row
+# that the break is about, or this check proves nothing and fails. A row with a
+# placeholder the reader does not know makes the reader fail (the table's closed
+# placeholder set).
 #
 # Every expectation is an exit status or an exact string, never "some output
 # appeared". Usage: ./scripts/check-seat-grammar.sh   (make check-flags; CI flag-guard)
@@ -78,27 +83,33 @@ cat > "${STUB_BIN}/kubectl" <<'STUB'
 printf 'kubectl' >> "${CALLS_LOG}"
 printf ' %s' "$@" >> "${CALLS_LOG}"
 printf '\n' >> "${CALLS_LOG}"
+case " $* " in
+  *" get svc kubernetes "*) printf '10.96.0.1'; exit 0 ;;
+esac
 cat >/dev/null 2>&1 < /dev/stdin || true
 exit 0
 STUB
 chmod +x "${STUB_BIN}/helm" "${STUB_BIN}/kubectl"
 
-# run_deploy <deploy script> <username> -> sets DEPLOY_STATUS
+# run_deploy <deploy script> <username> [extra deploy-user.sh flags...] -> sets DEPLOY_STATUS
 run_deploy() {
+  local script="$1" user="$2"
+  shift 2
   : > "${CALLS}"
   set +e
   PATH="${STUB_BIN}:${PATH}" CALLS_LOG="${CALLS}" \
-    "$1" --challenges-dir "${CHALLENGES}" -- "$2" all \
+    "${script}" --challenges-dir "${CHALLENGES}" ${1+"$@"} -- "${user}" all \
     >"${WORK}/deploy.out" 2>"${WORK}/deploy.err" </dev/null
   DEPLOY_STATUS=$?
   set -e
 }
 
-# check_row <deploy script> <line no> <verdict> <username> -> 0 if the script
-# behaves as the row says, else prints why on stderr and returns 1.
+# check_row <deploy script> <line no> <verdict> <username> [extra flags...] -> 0
+# if the script behaves as the row says, else prints why on stderr and returns 1.
 check_row() {
   local script="$1" lineno="$2" verdict="$3" user="$4"
-  run_deploy "${script}" "${user}"
+  shift 4
+  run_deploy "${script}" "${user}" ${1+"$@"}
   if [[ "${verdict}" == accept ]]; then
     if [[ "${DEPLOY_STATUS}" -ne 97 ]]; then
       echo "    seat-cases.tsv:${lineno}: accept, but exit ${DEPLOY_STATUS} (want 97 = reached helm upgrade): $(tr '\n' ' ' < "${WORK}/deploy.err" | cut -c1-200)" >&2
@@ -131,29 +142,37 @@ check_row() {
   return 0
 }
 
-# run_table <deploy script> -> sets ROWS, ACCEPTED, REJECTED, BAD (rows that disagree)
+# run_table <deploy script> [table] -> sets ROWS, ACCEPTED, REJECTED, BAD (rows
+# that disagree) and BAD_LINES (" n n " : their line numbers in the table).
 run_table() {
-  local script="$1" line lineno=0 input verdict user
-  ROWS=0 ACCEPTED=0 REJECTED=0 BAD=0
+  local script="$1" table="${2:-${TABLE}}" line lineno=0 input verdict user
+  ROWS=0 ACCEPTED=0 REJECTED=0 BAD=0 BAD_LINES=" "
   while IFS= read -r line || [[ -n "${line}" ]]; do
     lineno=$((lineno + 1))
     case "${line}" in ''|'#'*) continue ;; esac
     # First tab only (an empty input makes the line start with a tab).
     if [[ "${line}" != *$'\t'* ]]; then
-      echo "    seat-cases.tsv:${lineno}: no tab" >&2; BAD=$((BAD + 1)); continue
+      echo "    seat-cases.tsv:${lineno}: no tab" >&2; BAD=$((BAD + 1)); BAD_LINES="${BAD_LINES}${lineno} "; continue
     fi
     input="${line%%$'\t'*}"
     verdict="${line#*$'\t'}"
     case "${verdict}" in
       accept) ACCEPTED=$((ACCEPTED + 1)) ;;
       reject) REJECTED=$((REJECTED + 1)) ;;
-      *) echo "    seat-cases.tsv:${lineno}: verdict must be accept|reject" >&2; BAD=$((BAD + 1)); continue ;;
+      *) echo "    seat-cases.tsv:${lineno}: verdict must be accept|reject" >&2; BAD=$((BAD + 1)); BAD_LINES="${BAD_LINES}${lineno} "; continue ;;
     esac
     ROWS=$((ROWS + 1))
     decode "${input}"
     user="${DECODED}"
-    check_row "${script}" "${lineno}" "${verdict}" "${user}" || BAD=$((BAD + 1))
-  done < "${TABLE}"
+    # The placeholder set is closed (the table's header): a brace left after
+    # decoding is an unknown placeholder, an error of this reader, not a verdict.
+    case "${user}" in
+      *'{'*|*'}'*)
+        echo "    seat-cases.tsv:${lineno}: a brace is left after decoding: an unknown placeholder" >&2
+        BAD=$((BAD + 1)); BAD_LINES="${BAD_LINES}${lineno} "; continue ;;
+    esac
+    check_row "${script}" "${lineno}" "${verdict}" "${user}" || { BAD=$((BAD + 1)); BAD_LINES="${BAD_LINES}${lineno} "; }
+  done < "${table}"
 }
 
 echo "==> deploy-user.sh against the shared seat-case table"
@@ -166,8 +185,33 @@ else
   pass "all ${ROWS} rows (${ACCEPTED} accept / ${REJECTED} reject) behave as the table says"
 fi
 
-echo "==> self-test: a broken SEAT_PATTERN must be caught"
-mutate() { # <label> <replacement pattern>
+echo "==> the check comes before kubectl on the --egress-lockdown path too"
+LOCKDOWN=(--egress-lockdown --api-server-cidr 10.0.0.1/32)
+# An accepted seat reaches helm upgrade with the flags (so the stub setup works
+# and a reject below is not an artefact of a broken lockdown path) ...
+if check_row "${DEPLOY}" 0 accept user1 "${LOCKDOWN[@]}" && grep -qF 'kubectl get svc kubernetes' "${CALLS}"; then
+  pass "user1 with --egress-lockdown reaches helm upgrade (the ClusterIP lookup ran)"
+else
+  fail "user1 with --egress-lockdown did not reach helm upgrade as expected"
+fi
+# ... and a rejected one stops before the ClusterIP lookup: not one call.
+for u in 'user1,username=x' 'User1' 'a=b'; do
+  if check_row "${DEPLOY}" 0 reject "${u}" "${LOCKDOWN[@]}"; then
+    pass "'${u}' with --egress-lockdown: exit 2, no kubectl / helm call"
+  else
+    fail "'${u}' with --egress-lockdown was not stopped before kubectl"
+  fi
+done
+
+echo "==> self-test: a broken SEAT_PATTERN must be caught, on the row that breaks"
+# line_of <awk condition on $1 (input) and $2 (verdict)> -> the table line number
+line_of() {
+  local n
+  n="$(awk -F'\t' "$1 { print NR; exit }" "${TABLE}")"
+  [[ -n "${n}" ]] || { echo "FAIL: no table row matches $1" >&2; exit 1; }
+  printf '%s' "${n}"
+}
+mutate() { # <label> <replacement pattern> <expected failing line>
   local dir="${WORK}/mut-$1/charts/ctf-user"
   mkdir -p "${dir}"
   cp "${REPO_ROOT}"/charts/ctf-user/*.sh "${dir}/"
@@ -185,15 +229,26 @@ mutate() { # <label> <replacement pattern>
   mv "${dir}/deploy-user.sh.new" "${dir}/deploy-user.sh"
   chmod +x "${dir}/deploy-user.sh"
   run_table "${dir}/deploy-user.sh" 2>"${WORK}/mut-$1.err"
-  if [[ "${BAD}" -eq 0 ]]; then
-    fail "self-test $1: the table did not notice SEAT_PATTERN='$2'"
-  else
-    pass "self-test $1: ${BAD} row(s) disagree with SEAT_PATTERN='$2'"
-  fi
+  case "${BAD_LINES}" in
+    *" $3 "*) pass "self-test $1: SEAT_PATTERN='$2' fails table line $3 (${BAD} row(s) in all)" ;;
+    *) fail "self-test $1: SEAT_PATTERN='$2' did not fail table line $3 (failing lines:${BAD_LINES})" ;;
+  esac
 }
-mutate any '^.*$'
-mutate wide '^[a-z0-9][a-z0-9-]{0,63}$'
-mutate narrow '^[a-z0-9][a-z0-9-]{0,61}$'
+mutate any '^.*$' "$(line_of '$1 == "user1,username=x"')"
+mutate wide '^[a-z0-9][a-z0-9-]{0,63}$' "$(line_of 'length($1) == 64 && $2 == "reject"')"
+mutate narrow '^[a-z0-9][a-z0-9-]{0,61}$' "$(line_of 'length($1) == 63 && $2 == "accept"')"
+mutate no-dollar '^[a-z0-9][a-z0-9-]{0,62}' "$(line_of '$1 == "user1{LF}"')"
+mutate no-caret '[a-z0-9][a-z0-9-]{0,62}$' "$(line_of '$1 == "-user1"')"
+
+echo "==> self-test: an unknown placeholder makes the reader fail"
+BADTABLE="${WORK}/unknown-placeholder.tsv"
+printf 'user1\taccept\nuser{U+2028}1\treject\nuser1{LF\treject\n' > "${BADTABLE}"
+run_table "${DEPLOY}" "${BADTABLE}" 2>"${WORK}/unknown.err"
+if [[ "${BAD_LINES}" == " 2 3 " ]]; then
+  pass "rows with an unknown / unclosed placeholder fail the reader (lines 2 and 3), the plain row does not"
+else
+  fail "an unknown placeholder did not fail the reader exactly on lines 2 and 3 (failing lines:${BAD_LINES})"
+fi
 
 if [[ "${RC}" -ne 0 ]]; then
   echo "seat grammar check FAILED" >&2

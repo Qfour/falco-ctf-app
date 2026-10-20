@@ -52,7 +52,15 @@ func parseSeatCases(name, raw string) ([]seatCase, error) {
 		if strings.ContainsAny(in, "\n\r") {
 			return nil, fmt.Errorf("%s:%d: input spells a line break literally; use {LF}", name, i+1)
 		}
-		rows = append(rows, seatCase{line: i + 1, input: seatPlaceholders.Replace(in), accept: verdict == "accept"})
+		decoded := seatPlaceholders.Replace(in)
+		// The placeholder set is closed (the table's header). A brace left after
+		// decoding is an unknown placeholder: fail the reader instead of testing
+		// the literal text, which a reject row would pass without trying the
+		// input it stands for.
+		if strings.ContainsAny(decoded, "{}") {
+			return nil, fmt.Errorf("%s:%d: %q still contains a brace after decoding: an unknown placeholder", name, i+1, in)
+		}
+		rows = append(rows, seatCase{line: i + 1, input: decoded, accept: verdict == "accept"})
 	}
 	return rows, nil
 }
@@ -94,7 +102,8 @@ func TestValidSeat_SharedCaseTable(t *testing.T) {
 }
 
 func TestSeatCaseTable_ReaderFailsOnAMalformedRow(t *testing.T) {
-	for _, bad := range []string{"user1", "user1\tmaybe", "user1\taccept\textra", "user1\t", "user1\r\taccept"} {
+	for _, bad := range []string{"user1", "user1\tmaybe", "user1\taccept\textra", "user1\t", "user1\r\taccept",
+		"user{U+2028}\treject", "{LF\treject", "user}\treject", "{lf}user1\treject"} {
 		if _, err := parseSeatCases("x", bad+"\n"); err == nil {
 			t.Errorf("%q was read as a valid row", bad)
 		}

@@ -26,13 +26,25 @@ import "regexp"
 // each grammar at exactly the expected number of sites per spec
 // (internal/apispec/specparity, identifier_patterns_test.go).
 //
+// There is exactly one copy of the grammar outside Go that is checked against
+// this definition: SEAT_PATTERN in charts/ctf-user/deploy-user.sh (it must stop a
+// bad username before any kubectl / helm call, and cannot import Go). Two checks
+// hold it equal: TestDeployUserShellPatternIsTheGoPattern pins its text to
+// SeatPattern, and scripts/check-seat-grammar.sh runs the shared case table,
+// internal/identity/testdata/seat-cases.tsv, through the script (ValidSeat reads
+// the same table: TestValidSeat_SharedCaseTable). Platform's roster tooling (a
+// private repo) reads the same table in its paired PR. The grammar is therefore
+// changed in one go: SeatPattern, the table's rows, SEAT_PATTERN, the three
+// specs' `pattern` (make gen) and platform's readers, in the same PR group.
+// The `make e2e-serve AS=` check in the Makefile is only an approximation and is
+// not registered with the table; the e2e harness re-checks the name in Go.
+//
 // Every Go user of the seat grammar imports this and keeps no copy: the
 // scoreboard API (path `{user}` and the three request bodies), the /falco/events
 // namespace parse, the Grader's slug gate and the boot-time stored-user count,
 // auth-policy (the roster's seats and the `host` query parameter) and the e2e
 // harness. users_test.go checks that (the files import this, and no other
-// non-test file spells the pattern). The shell check in the Makefile cannot
-// import Go and is an approximation.
+// non-test Go file spells the pattern).
 const SeatPattern = `^[a-z0-9][a-z0-9-]{0,62}$`
 
 var seatRE = regexp.MustCompile(SeatPattern)
