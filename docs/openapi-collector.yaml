@@ -34,6 +34,9 @@ info:
     own, the same 1 req/s burst 10 keyed on `RemoteAddr` as submit/exfil but a
     separate bucket: past it the answer is `429` (`{"error": ...}`), so probing
     the wrong URL neither spends nor is spent by the submit budget (app#485).
+    This budget covers ONLY those unmatched requests: `/healthz`, `/metrics` and
+    the redirect net/http answers for a path it cleans are outside it, so it is
+    not a cap on the collector's total request volume.
 
     `POST /api/users/{user}/display-name` is NOT fronted any more (ADR-0034
     D12, S1). It used to be the third forward, reached by the workspace's

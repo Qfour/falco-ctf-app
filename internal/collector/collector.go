@@ -21,7 +21,10 @@
 //     that scraped another flag must not be able to flood submit/exfil.
 //   - The default-deny surface (a request no route matches: 404 / 405) has its
 //     own per-IP bucket of the same size, keyed on RemoteAddr, and the request
-//     duration metric's method label is a closed set (app#485).
+//     duration metric's method label is a closed set (app#485). That budget
+//     covers ONLY such requests: /healthz, /metrics and the normalising
+//     redirect are outside it, so it is not a cap on the collector's total
+//     request volume.
 //   - Default-deny routing: only the explicitly-listed participant routes are
 //     forwarded. /internal/*, /api/admin/*, /metrics, /falco/events are never
 //     reachable through the collector.
@@ -53,6 +56,7 @@
 package collector
 
 import (
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -69,6 +73,18 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/ratelimit"
 )
+
+// The per-IP budget of the submit/exfil routes and of the default-deny surface:
+// one pair, so the two limiters and docs/openapi-collector.yaml (`x-ctf-rate-limit`,
+// compared by the ADR-0005 parity test and by TestRateLimitConstantsMatchSpec)
+// cannot drift apart.
+const (
+	budgetRate  = 1  // sustained requests per second
+	budgetBurst = 10 // bucket size
+)
+
+// rateLimitDesc is the `x-ctf-rate-limit` text of the two rate-limited routes.
+var rateLimitDesc = fmt.Sprintf("per-IP (RemoteAddr) %d req/s burst %d", budgetRate, budgetBurst)
 
 // Handler fronts the participant HTTP surface and forwards to the scoreboard.
 type Handler struct {
@@ -111,8 +127,8 @@ func New(upstream string, logger *slog.Logger, opts ...Option) (*Handler, error)
 	}
 	// Same per-IP budget as /submit — the collector is now the only place a
 	// workspace can flood submit/exfil, so the limit must live here.
-	h.limiter = ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(h.now)
-	h.denyLimiter = ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(h.now)
+	h.limiter = ratelimit.New(budgetRate, budgetBurst).WithNow(h.now)
+	h.denyLimiter = ratelimit.New(budgetRate, budgetBurst).WithNow(h.now)
 
 	h.proxy = httputil.NewSingleHostReverseProxy(u)
 	// Explicit upstream transport: the default one's 90s idle-connection time
@@ -189,7 +205,7 @@ func New(upstream string, logger *slog.Logger, opts ...Option) (*Handler, error)
 			Method: "POST", Pattern: "/api/challenges/{cid}/submit",
 			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzClaimedIdentity,
 			OriginGuarded: false, CollectorForward: true,
-			RateLimit: "per-IP (RemoteAddr) 1 req/s burst 10",
+			RateLimit: rateLimitDesc,
 			Handler:   rl(http.HandlerFunc(h.submit)),
 		},
 		{
@@ -200,7 +216,7 @@ func New(upstream string, logger *slog.Logger, opts ...Option) (*Handler, error)
 			Method: "POST", Pattern: "/api/challenges/{cid}/exfil",
 			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzClaimedIdentity,
 			OriginGuarded: false, CollectorForward: true,
-			RateLimit: "per-IP (RemoteAddr) 1 req/s burst 10",
+			RateLimit: rateLimitDesc,
 			Handler:   rl(http.HandlerFunc(h.exfil)),
 		},
 		{

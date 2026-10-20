@@ -1,10 +1,12 @@
 package collector
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -37,6 +39,12 @@ func durationSeries(t *testing.T) map[string]uint64 {
 }
 
 func newMethodHandler(t *testing.T) (*Handler, *upstreamRecorder) {
+	h, up, _ := newMethodHandlerClock(t)
+	return h, up
+}
+
+// newMethodHandlerClock also returns a function that advances the handler's clock.
+func newMethodHandlerClock(t *testing.T) (*Handler, *upstreamRecorder, func(time.Duration)) {
 	t.Helper()
 	up := &upstreamRecorder{}
 	upSrv := httptest.NewServer(up.handler())
@@ -46,7 +54,7 @@ func newMethodHandler(t *testing.T) (*Handler, *upstreamRecorder) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	return h, up
+	return h, up, func(d time.Duration) { now = now.Add(d) }
 }
 
 // serve runs one request through ServeHTTP. The request is built by hand
@@ -106,12 +114,14 @@ func TestMethodLabel(t *testing.T) {
 func TestRequestDurationMethodIsFoldedIntoOneLabelValue(t *testing.T) {
 	surfaces := []struct {
 		name, path string
-		wantStatus int
+		lo, hi     int // the status must be in [lo, hi)
 	}{
-		{"default-deny path (404)", "/api/state", http.StatusNotFound},
-		{"known GET path, other method (405)", "/healthz", http.StatusMethodNotAllowed},
-		{"known POST route, other method (405)", "/api/challenges/10-final-exfil/submit", http.StatusMethodNotAllowed},
-		{"a path net/http would redirect, other method (307)", "//healthz", http.StatusTemporaryRedirect},
+		{"default-deny path (404)", "/api/state", 404, 405},
+		{"known GET path, other method (405)", "/healthz", 405, 406},
+		{"known POST route, other method (405)", "/api/challenges/10-final-exfil/submit", 405, 406},
+		// net/http's redirect for a cleaned path: which 3xx it is depends on the
+		// method and on the Go version, so the test takes the class.
+		{"a path net/http would redirect, other method (3xx)", "//healthz", 300, 400},
 	}
 	for k, s := range surfaces {
 		tag := strings.Repeat("T", k)
@@ -122,8 +132,8 @@ func TestRequestDurationMethodIsFoldedIntoOneLabelValue(t *testing.T) {
 				// A distinct connection address per request keeps the default-deny
 				// limiter out of the way: this test is about the label.
 				w := serve(h, m, s.path, fmt.Sprintf("10.20.%d.%d", i/250, i%250+1))
-				if w.Code != s.wantStatus {
-					t.Fatalf("%.12q %s: status=%d body=%.80s, want %d", m, s.path, w.Code, w.Body.String(), s.wantStatus)
+				if w.Code < s.lo || w.Code >= s.hi {
+					t.Fatalf("%.12q %s: status=%d body=%.80s, want [%d, %d)", m, s.path, w.Code, w.Body.String(), s.lo, s.hi)
 				}
 			}
 			after := durationSeries(t)
@@ -172,7 +182,7 @@ func TestRequestDurationDeclaredMethodsKeepTheirLabels(t *testing.T) {
 // forging X-Forwarded-For does not help, another address is unaffected, and it
 // does not spend the submit budget (nor does submit spend it).
 func TestDefaultDeny_PerIPLimit(t *testing.T) {
-	h, _ := newMethodHandler(t)
+	h, _, advance := newMethodHandlerClock(t)
 	const ip = "10.40.0.1"
 	for i := 0; i < 10; i++ {
 		if w := serve(h, "GET", "/api/state", ip); w.Code != http.StatusNotFound {
@@ -184,6 +194,21 @@ func TestDefaultDeny_PerIPLimit(t *testing.T) {
 		if w.Code != http.StatusTooManyRequests || w.Header().Get("Retry-After") == "" {
 			t.Fatalf("%s past the burst: status=%d Retry-After=%q body=%.80s, want 429", m, w.Code, w.Header().Get("Retry-After"), w.Body.String())
 		}
+		var body map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || body["error"] == nil || len(body) != 1 {
+			t.Fatalf("%s past the burst: body=%.80s (err=%v), want the one-key {\"error\": ...} JSON", m, w.Body.String(), err)
+		}
+		if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+			t.Fatalf("%s past the burst: Content-Type=%q, want application/json", m, ct)
+		}
+	}
+	// The bucket refills at the sustained rate: one second later, one request passes.
+	advance(time.Second)
+	if w := serve(h, "GET", "/api/state", ip); w.Code != http.StatusNotFound {
+		t.Fatalf("one second after the burst: status=%d, want 404 (one token refilled)", w.Code)
+	}
+	if w := serve(h, "GET", "/api/state", ip); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("second request in that second: status=%d, want 429", w.Code)
 	}
 	// A forged forwarding header is not the key.
 	r := &http.Request{Method: "GET", URL: &url.URL{Path: "/api/state"}, Host: "collector",
@@ -219,5 +244,34 @@ func TestDefaultDeny_RateLimitedMethodStaysFolded(t *testing.T) {
 		if _, ok := before[k]; !ok && !strings.HasPrefix(k, "|other|") {
 			t.Fatalf("a new series %.60q appeared; only method=other may", k)
 		}
+	}
+}
+
+// The default-deny budget and the submit/exfil budget are one pair of constants,
+// and docs/openapi-collector.yaml says so: each rate-limited route declares
+// that text (the ADR-0005 parity test compares it with the spec), and the
+// spec's prose states the same numbers.
+func TestRateLimitConstantsMatchSpec(t *testing.T) {
+	h, _ := newMethodHandler(t)
+	want := fmt.Sprintf("per-IP (RemoteAddr) %d req/s burst %d", budgetRate, budgetBurst)
+	n := 0
+	for _, rt := range h.Routes() {
+		if rt.RateLimit == "none" {
+			continue
+		}
+		n++
+		if rt.RateLimit != want {
+			t.Fatalf("%s %s: RateLimit=%q, want %q", rt.Method, rt.Pattern, rt.RateLimit, want)
+		}
+	}
+	if n != 2 {
+		t.Fatalf("%d rate-limited routes, want the 2 forward routes", n)
+	}
+	spec, err := os.ReadFile("../../docs/openapi-collector.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(spec), "the same "+fmt.Sprintf("%d req/s burst %d", budgetRate, budgetBurst)) {
+		t.Fatal("the spec's default-deny prose does not state the budget constants")
 	}
 }

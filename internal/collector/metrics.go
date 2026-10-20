@@ -28,8 +28,9 @@ const otherMethod = "other"
 // route declares ("POST /api/..." -> "POST"), or otherMethod. route is the
 // pattern ServeMux.Handler reports, "" when nothing matched (404 and 405). The
 // declared method comes from the pattern, not from the request: a request can
-// carry any method and still be answered by a 301 for a cleaned path, so the
-// request's own value proves nothing. HEAD on a GET route keeps its own value
+// carry any method and still be answered by net/http's redirect for a path it
+// cleans (301 for GET / HEAD, 307 for any other method), so the request's own
+// value proves nothing. HEAD on a GET route keeps its own value
 // (net/http serves it from the GET pattern), as before this fold.
 func methodLabel(route, method string) string {
 	declared, _, ok := strings.Cut(route, " ")
