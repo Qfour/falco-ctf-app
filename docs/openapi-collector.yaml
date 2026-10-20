@@ -287,7 +287,8 @@ paths:
               default-deny surface. method = the method the matched route
               declares (plus `HEAD` on a `GET` route), else `other`: the label
               is a closed set, a request's own method is never a label value
-              (app#485).
+              (app#485; the same definition as the scoreboard's,
+              `httpx.MethodLabel`, app#491).
         Plus the default Go runtime metrics.
       responses:
         "200":

@@ -208,7 +208,11 @@ paths:
               challenge_id in the catalog's ids, plus the single value
               `_unknown` for an id that is not a catalog key.
           - `scoreboard_http_request_duration_seconds{route, method, status}`
-              route = the Go 1.22 ServeMux pattern that matched.
+              route = the Go 1.22 ServeMux pattern that matched. method = the
+              method the matched route declares (plus `HEAD` on a `GET` route),
+              else `other`: the label is a closed set, a request's own method is
+              never a label value (app#491; the same definition as the
+              collector's, `httpx.MethodLabel`).
           - `scoreboard_csp_violation_reports_total{outcome}` (Issue #95)
               outcome in {accepted, bad_content_type, too_large, decode_error}
       responses:
