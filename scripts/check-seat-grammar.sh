@@ -5,7 +5,7 @@
 # on PATH only record their invocations.
 #
 #   accept row -> deploy-user.sh gets as far as `helm upgrade` (the stub exits 97
-#                 there) carrying `--set username=<seat>` verbatim.
+#                 there) carrying `--set-string username=<seat>` verbatim.
 #   reject row -> exit 2 with the reason on stderr and NOT ONE helm / kubectl
 #                 call (an empty seat is the usage error, exit 1, same rule).
 #                 The seat is never echoed raw: a bidi control in the row must
@@ -19,8 +19,8 @@
 # (which runs a kubectl before anything else), not only on the plain one.
 #
 # Self-test: the same table is run against copies of deploy-user.sh whose
-# SEAT_PATTERN is broken five ways (accepts anything / one character too wide /
-# one too narrow / no end anchor / no start anchor); each must fail the table row
+# SEAT_PATTERN is broken six ways (accepts anything / one character too wide /
+# one too narrow / a trailing hyphen allowed / no end anchor / no start anchor); each must fail the table row
 # that the break is about, or this check proves nothing and fails. A row with a
 # placeholder the reader does not know makes the reader fail (the table's closed
 # placeholder set).
@@ -115,8 +115,8 @@ check_row() {
       echo "    seat-cases.tsv:${lineno}: accept, but exit ${DEPLOY_STATUS} (want 97 = reached helm upgrade): $(tr '\n' ' ' < "${WORK}/deploy.err" | cut -c1-200)" >&2
       return 1
     fi
-    if ! grep -E '^helm upgrade ' "${CALLS}" | grep -qF -- " --set username=${user} "; then
-      echo "    seat-cases.tsv:${lineno}: accept, but helm upgrade did not carry --set username=<seat> verbatim" >&2
+    if ! grep -E '^helm upgrade ' "${CALLS}" | grep -qF -- " --set-string username=${user} "; then
+      echo "    seat-cases.tsv:${lineno}: accept, but helm upgrade did not carry --set-string username=<seat> verbatim" >&2
       return 1
     fi
     return 0
@@ -235,10 +235,11 @@ mutate() { # <label> <replacement pattern> <expected failing line>
   esac
 }
 mutate any '^.*$' "$(line_of '$1 == "user1,username=x"')"
-mutate wide '^[a-z0-9][a-z0-9-]{0,63}$' "$(line_of 'length($1) == 64 && $2 == "reject"')"
-mutate narrow '^[a-z0-9][a-z0-9-]{0,61}$' "$(line_of 'length($1) == 63 && $2 == "accept"')"
-mutate no-dollar '^[a-z0-9][a-z0-9-]{0,62}' "$(line_of '$1 == "user1{LF}"')"
-mutate no-caret '[a-z0-9][a-z0-9-]{0,62}$' "$(line_of '$1 == "-user1"')"
+mutate wide '^[a-z0-9]([a-z0-9-]{0,52}[a-z0-9])?$' "$(line_of 'length($1) == 54 && $2 == "reject"')"
+mutate narrow '^[a-z0-9]([a-z0-9-]{0,50}[a-z0-9])?$' "$(line_of 'length($1) == 53 && $2 == "accept"')"
+mutate trailing-dash '^[a-z0-9][a-z0-9-]{0,52}$' "$(line_of '$1 == "a-"')"
+mutate no-dollar '^[a-z0-9]([a-z0-9-]{0,51}[a-z0-9])?' "$(line_of '$1 == "user1{LF}"')"
+mutate no-caret '[a-z0-9]([a-z0-9-]{0,51}[a-z0-9])?$' "$(line_of '$1 == "-user1"')"
 
 echo "==> self-test: an unknown placeholder makes the reader fail"
 BADTABLE="${WORK}/unknown-placeholder.tsv"
