@@ -844,7 +844,7 @@ const (
 // later at SubmitEvade time via HasExfil (a wrong value simply fails the gate),
 // exactly as before.
 //
-// `user` must be a username slug (a-z, 0-9, "-"; at most 63), else ErrInvalidUser is returned
+// `user` must be a username slug (a-z, 0-9, "-"; 1 to 53, ending in a letter or digit), else ErrInvalidUser is returned
 // (with status ExfilInvalidUser) and nothing is stored: a receipt under a non-slug key would otherwise be
 // swept into a solve. `flag` is expected pre-trimmed / non-empty by the adapter,
 // matching prior handler behaviour.

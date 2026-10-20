@@ -81,8 +81,8 @@ func TestSeatImportCheck_CatchesAMissingImport(t *testing.T) {
 // seatShaped matches a regexp literal spelling a seat-like grammar. Two shapes,
 // both caught so tightening the grammar cannot blind the detector (app#480):
 //
-//	[a-z0-9][a-z0-9-]{0,N}                   the current one (a trailing "-" allowed)
-//	[a-z0-9]([a-z0-9-]{0,N}[a-z0-9])?        the one that must end in a letter or digit
+//	[a-z0-9][a-z0-9-]{0,N}                   the previous one (a trailing "-" allowed)
+//	[a-z0-9]([a-z0-9-]{0,N}[a-z0-9])?        the current one (ends in a letter or digit)
 var seatShaped = regexp.MustCompile(`\[a-z0-9\](?:\[a-z0-9-\]\{0,\d+\}|\(\[a-z0-9-\]\{0,\d+\}\[a-z0-9\]\)\?)`)
 
 // otherGrammars are the literals that look like a seat but are a different
