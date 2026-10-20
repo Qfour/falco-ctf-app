@@ -1,6 +1,11 @@
 package httpx
 
-import "testing"
+import (
+	"go/parser"
+	"go/token"
+	"strings"
+	"testing"
+)
 
 func TestMethodLabel(t *testing.T) {
 	tests := []struct {
@@ -29,5 +34,25 @@ func TestMethodLabel(t *testing.T) {
 				t.Fatalf("MethodLabel(%q, %q) = %q, want %q", tc.route, tc.method, got, tc.want)
 			}
 		})
+	}
+}
+
+// The leaf is standard library only, so the collector (a distroless image whose
+// SBOM carries only what runs) imports it without taking a dependency with it.
+// (internal/apispec/dependency_boundary_test.go checks the collector's closure and
+// its Dockerfile COPY; this fixes the file itself.)
+func TestMethodLabelLeafImportsOnlyTheStandardLibrary(t *testing.T) {
+	f, err := parser.ParseFile(token.NewFileSet(), "methodlabel.go", nil, parser.ImportsOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Imports) == 0 {
+		t.Fatal("the leaf imports nothing; the check would pass on nothing")
+	}
+	for _, imp := range f.Imports {
+		path := strings.Trim(imp.Path.Value, `"`)
+		if first, _, _ := strings.Cut(path, "/"); strings.Contains(first, ".") {
+			t.Errorf("methodlabel.go imports %q: the leaf may import the standard library only", path)
+		}
 	}
 }

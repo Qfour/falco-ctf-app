@@ -10,7 +10,7 @@ const OtherMethod = "other"
 // matched route declares ("POST /api/..." -> "POST"), the method of a HEAD that
 // net/http serves from a GET pattern, or OtherMethod. It is the ONE definition
 // the collector and the scoreboard share (app#491; a copy in each binary is the
-// drift TestMethodLabelHasOneDefinition forbids): a caller picks the method of
+// drift internal/apispec's TestNoOtherMethodLabelFoldInTheProgram forbids): a caller picks the method of
 // its request freely, and a label built from it is one series per distinct
 // value on any surface the request reaches before a route answers it (404 /
 // 405 from outside the cluster).
