@@ -235,8 +235,11 @@ func TestGraderWriteEntries_Scan_AcrossFiles(t *testing.T) {
 	}
 }
 
-// storeWriteCalls returns "<line>: <call>" for each call in src of a store write
-// that is not the Grader's own same-named RecordExfil (receiver `grader`).
+// storeWriteCalls returns "<line>: <call>" for each reference in src to a store
+// write (a call, or a method value such as `f := st.MarkSolved`) that is not the
+// Grader's own same-named RecordExfil (receiver `grader`). A method value counts
+// because the api handler holds Grader.RecordExfil / SubmitEvade as fields, test
+// seams (app#486), and `recordExfil: grader.RecordExfil` is no call.
 func storeWriteCalls(t *testing.T, name, src string) (violations []string, writes int) {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -245,11 +248,7 @@ func storeWriteCalls(t *testing.T, name, src string) (violations []string, write
 		t.Fatal(err)
 	}
 	ast.Inspect(f, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
+		sel, ok := n.(*ast.SelectorExpr)
 		if !ok || !slices.Contains(storeWrites, sel.Sel.Name) {
 			return true
 		}
@@ -257,7 +256,7 @@ func storeWriteCalls(t *testing.T, name, src string) (violations []string, write
 		if sel.Sel.Name == "RecordExfil" && lastName(sel.X) == "grader" {
 			return true // Grader.RecordExfil, the entry itself
 		}
-		violations = append(violations, fset.Position(call.Pos()).String()+": "+sel.Sel.Name)
+		violations = append(violations, fset.Position(sel.Pos()).String()+": "+sel.Sel.Name)
 		return true
 	})
 	return violations, writes
@@ -331,6 +330,9 @@ func TestStoreWriteCalls_Scan(t *testing.T) {
 		{"MarkDirty", "s.MarkDirty(u, c, r, t)", 1},
 		{"RecordExpectedRuleFire", "s.RecordExpectedRuleFire(u, c, r, t)", 1},
 		{"a read", "s.IsSolved(u, c)", 0},
+		{"the Grader's RecordExfil as a method value is the door", "h.recordExfil = grader.RecordExfil", 0},
+		{"a store write as a method value is not", "w := h.store.MarkSolved", 1},
+		{"a store RecordExfil as a method value is not", "h.recordExfil = store.RecordExfil", 1},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
