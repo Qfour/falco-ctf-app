@@ -1,6 +1,6 @@
 # ADR-0034: identity はロスター 1 表で seat に解決し、正規形だけを後段に渡す (I8 の置き換え・Google ログインの前提)。プロフィールは表示名と用意した絵柄の id に限る
 
-- Status: **Accepted** (2026-10-16。実装: app S1 = app#372、platform #217。S2 = app `feat/adr-0034-s2-identity-roster` / platform `feat/adr-0034-s2-identity-platform` は次)。
+- Status: **Accepted** (2026-10-16。**D2 の seat の文法の 1 文 (`^[a-z0-9][a-z0-9-]{0,62}$`) は ADR-0042 が置き換えた** (1〜53 文字、両端が英数字。それ以外の D2 は変わらない)。実装: app S1 = app#372、platform #217。S2 = app `feat/adr-0034-s2-identity-roster` / platform `feat/adr-0034-s2-identity-platform` は次)。
   旧 Proposed の記述: Accepted への昇格は CEO が行う (S1 の実装 PR の merge と同時、別 commit)。S2・S3 の D は各段の merge まで効力を持たない (「段階」)。
   I8 の表の書き換えは S2 の実装 PR で、V9〜V13 と同一 PR に限る。
 - Date / Deciders: 2026-10-12 / CEO (2026-10-12 の要望。brief D1〜D7 の判断) + VP + architect (起草) + product-engineer (brief) +
