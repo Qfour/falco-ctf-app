@@ -30,6 +30,11 @@ info:
     attack surface; it requires an ADR (see ADR-0005 Consequences) and, for a
     destructive route, is forbidden — `reset-dirty` must never be fronted.**
 
+    A request no route matches (the 404 / 405 above) has a per-IP budget of its
+    own, the same 1 req/s burst 10 keyed on `RemoteAddr` as submit/exfil but a
+    separate bucket: past it the answer is `429` (`{"error": ...}`), so probing
+    the wrong URL neither spends nor is spent by the submit budget (app#485).
+
     `POST /api/users/{user}/display-name` is NOT fronted any more (ADR-0034
     D12, S1). It used to be the third forward, reached by the workspace's
     `setname`; both are removed. A participant now sets display name and
@@ -276,7 +281,10 @@ paths:
           - `collector_request_duration_seconds{route, method, status}`
               route = the matched ServeMux pattern; an unrouted request records
               the empty pattern, so a spike there means somebody is probing the
-              default-deny surface.
+              default-deny surface. method = the method the matched route
+              declares (plus `HEAD` on a `GET` route), else `other`: the label
+              is a closed set, a request's own method is never a label value
+              (app#485).
         Plus the default Go runtime metrics.
       responses:
         "200":
