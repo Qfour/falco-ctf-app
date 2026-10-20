@@ -19,6 +19,9 @@
 //   - net/http only (repo convention — no chi/echo).
 //   - Per-IP rate limit identical to /submit (1 req/s, burst 10). A workspace
 //     that scraped another flag must not be able to flood submit/exfil.
+//   - The default-deny surface (a request no route matches: 404 / 405) has its
+//     own per-IP bucket of the same size, keyed on RemoteAddr, and the request
+//     duration metric's method label is a closed set (app#485).
 //   - Default-deny routing: only the explicitly-listed participant routes are
 //     forwarded. /internal/*, /api/admin/*, /metrics, /falco/events are never
 //     reachable through the collector.
@@ -73,7 +76,12 @@ type Handler struct {
 	mux     *http.ServeMux
 	proxy   *httputil.ReverseProxy
 	limiter *ratelimit.Limiter
-	now     func() time.Time
+	// denyLimiter is the per-IP budget of the default-deny surface (a request no
+	// declared route matched: 404 / 405). A separate Limiter, so that probing
+	// the wrong URL cannot spend the submit/exfil budget of the same pod (and
+	// the reverse); the same rate and key (remoteIP).
+	denyLimiter *ratelimit.Limiter
+	now         func() time.Time
 	// routes is the declarative route table (ADR-0005 V2) this Handler
 	// registers onto mux. Stored so Routes() can hand it back to the
 	// ADR-0005 parity tests unchanged from what New() actually installed.
@@ -104,6 +112,7 @@ func New(upstream string, logger *slog.Logger, opts ...Option) (*Handler, error)
 	// Same per-IP budget as /submit — the collector is now the only place a
 	// workspace can flood submit/exfil, so the limit must live here.
 	h.limiter = ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(h.now)
+	h.denyLimiter = ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(h.now)
 
 	h.proxy = httputil.NewSingleHostReverseProxy(u)
 	// Explicit upstream transport: the default one's 90s idle-connection time
@@ -258,9 +267,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_, route := h.mux.Handler(r)
 	sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 	start := h.now()
-	h.mux.ServeHTTP(sw, r)
+	var next http.Handler = h.mux
+	if route == "" {
+		// No declared route matched: the default-deny surface answers 404 / 405
+		// and sits outside every route's limiter, so it gets the per-IP budget
+		// here (app#485). The 429 is recorded like any answer: route "", method
+		// "other", status 429.
+		next = h.denyLimiter.Middleware(remoteIP)(h.mux)
+	}
+	next.ServeHTTP(sw, r)
 	forwardDuration.
-		WithLabelValues(route, r.Method, strconv.Itoa(sw.status)).
+		WithLabelValues(route, methodLabel(route, r.Method), strconv.Itoa(sw.status)).
 		Observe(h.now().Sub(start).Seconds())
 }
 
