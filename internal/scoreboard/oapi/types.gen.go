@@ -447,7 +447,7 @@ type ExfilReceipt struct {
 type ExfilRequest struct {
 	Flag string `json:"flag"`
 
-	// User A seat: the username slug of a participant's workspace (`user7`), the `<user>` in `<user>@<EXPECTED_EMAIL_DOMAIN>`. Lower-case letters, digits and `-`, the first a letter or digit, at most 63 characters. Having this shape does not prove who sent it: whether the caller is proven is the route's `x-ctf-authz`.
+	// User A seat: the username slug of a participant's workspace (`user7`), the `<user>` in `<user>@<EXPECTED_EMAIL_DOMAIN>`. Lower-case letters, digits and `-`, the first and the last a letter or digit, 1 to 53 characters (the set a workspace can be deployed with: ADR-0042). Having this shape does not prove who sent it: whether the caller is proven is the route's `x-ctf-authz`.
 	User Seat `json:"user"`
 }
 
@@ -1001,7 +1001,7 @@ type RuleFire struct {
 	Rule string  `json:"rule"`
 }
 
-// Seat A seat: the username slug of a participant's workspace (`user7`), the `<user>` in `<user>@<EXPECTED_EMAIL_DOMAIN>`. Lower-case letters, digits and `-`, the first a letter or digit, at most 63 characters. Having this shape does not prove who sent it: whether the caller is proven is the route's `x-ctf-authz`.
+// Seat A seat: the username slug of a participant's workspace (`user7`), the `<user>` in `<user>@<EXPECTED_EMAIL_DOMAIN>`. Lower-case letters, digits and `-`, the first and the last a letter or digit, 1 to 53 characters (the set a workspace can be deployed with: ADR-0042). Having this shape does not prove who sent it: whether the caller is proven is the route's `x-ctf-authz`.
 type Seat = string
 
 // SolveEntry defines model for SolveEntry.
@@ -1082,7 +1082,7 @@ type SubmitDetectRequest struct {
 	// Condition the Falco condition to grade (<= 4 KiB)
 	Condition string `json:"condition"`
 
-	// User A seat: the username slug of a participant's workspace (`user7`), the `<user>` in `<user>@<EXPECTED_EMAIL_DOMAIN>`. Lower-case letters, digits and `-`, the first a letter or digit, at most 63 characters. Having this shape does not prove who sent it: whether the caller is proven is the route's `x-ctf-authz`.
+	// User A seat: the username slug of a participant's workspace (`user7`), the `<user>` in `<user>@<EXPECTED_EMAIL_DOMAIN>`. Lower-case letters, digits and `-`, the first and the last a letter or digit, 1 to 53 characters (the set a workspace can be deployed with: ADR-0042). Having this shape does not prove who sent it: whether the caller is proven is the route's `x-ctf-authz`.
 	User Seat `json:"user"`
 }
 
@@ -1108,7 +1108,7 @@ type SubmitDetectVerdictStatus string
 type SubmitFlagRequest struct {
 	Flag string `json:"flag"`
 
-	// User A seat: the username slug of a participant's workspace (`user7`), the `<user>` in `<user>@<EXPECTED_EMAIL_DOMAIN>`. Lower-case letters, digits and `-`, the first a letter or digit, at most 63 characters. Having this shape does not prove who sent it: whether the caller is proven is the route's `x-ctf-authz`.
+	// User A seat: the username slug of a participant's workspace (`user7`), the `<user>` in `<user>@<EXPECTED_EMAIL_DOMAIN>`. Lower-case letters, digits and `-`, the first and the last a letter or digit, 1 to 53 characters (the set a workspace can be deployed with: ADR-0042). Having this shape does not prove who sent it: whether the caller is proven is the route's `x-ctf-authz`.
 	User Seat `json:"user"`
 }
 
@@ -1170,7 +1170,7 @@ type Mid = BoardID
 // Tid A board thread or message id (32 lower-case hex characters).
 type Tid = BoardID
 
-// User A seat: the username slug of a participant's workspace (`user7`), the `<user>` in `<user>@<EXPECTED_EMAIL_DOMAIN>`. Lower-case letters, digits and `-`, the first a letter or digit, at most 63 characters. Having this shape does not prove who sent it: whether the caller is proven is the route's `x-ctf-authz`.
+// User A seat: the username slug of a participant's workspace (`user7`), the `<user>` in `<user>@<EXPECTED_EMAIL_DOMAIN>`. Lower-case letters, digits and `-`, the first and the last a letter or digit, 1 to 53 characters (the set a workspace can be deployed with: ADR-0042). Having this shape does not prove who sent it: whether the caller is proven is the route's `x-ctf-authz`.
 type User = Seat
 
 // BoardAdminListThreadsParams defines parameters for BoardAdminListThreads.

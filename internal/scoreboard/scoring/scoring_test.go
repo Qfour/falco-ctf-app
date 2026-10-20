@@ -1928,7 +1928,7 @@ func TestSweep_NonSlugUserReceiptIsSkipped(t *testing.T) {
 // way, writes at least once for a seat (the other half of the refusals above).
 func TestGrader_SlugUserIsAccepted(t *testing.T) {
 	for _, e := range graderEntries {
-		for _, u := range []string{"user1", "a", "0", "a-b", strings.Repeat("a", 63)} {
+		for _, u := range []string{"user1", "a", "0", "a-b", strings.Repeat("a", 53)} {
 			t.Run(e.name+"/"+u, func(t *testing.T) {
 				fs := newFakeStore()
 				runner := &fakeDetectRunner{evasionFires: 2}

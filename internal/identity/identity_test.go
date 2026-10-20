@@ -111,8 +111,12 @@ func TestValidSeat(t *testing.T) {
 		{"a", true},
 		{"0", true},
 		{"u-2", true},
-		{"a" + strings.Repeat("b", 62), true},  // 63: the limit
-		{"a" + strings.Repeat("b", 63), false}, // 64
+		{"a" + strings.Repeat("b", 52), true},  // 53: the limit (Helm's release name)
+		{"a" + strings.Repeat("b", 53), false}, // 54
+		{"a" + strings.Repeat("b", 62), false}, // 63: the previous limit
+		{"a-", false},                          // a trailing "-"
+		{"user1-", false},
+		{"a--b", true},
 		{"", false},
 		{"-x", false},
 		{"User1", false},
