@@ -43,6 +43,7 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/api"
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/scoring"
 	"github.com/Qfour/falco-ctf-app/internal/store"
 )
 
@@ -142,6 +143,12 @@ func (noopDetectRunner) Grade(_ context.Context, _, _ string) (int, int, bool, e
 
 func newAuthzFixture(t *testing.T) *scoreboard.Handler {
 	t.Helper()
+	return newAuthzFixtureRunner(t, noopDetectRunner{})
+}
+
+// newAuthzFixtureRunner is newAuthzFixture with the given grader Job runner.
+func newAuthzFixtureRunner(t *testing.T, runner scoring.DetectRunner) *scoreboard.Handler {
+	t.Helper()
 	cat := catalog.Catalog{
 		"02-evade":  {ID: "02-evade", Type: "evade", ForbiddenRules: []string{"r"}, ExpectedFlag: "FALCO{ok}"},
 		"03-detect": {ID: "03-detect", Type: "detect"},
@@ -161,7 +168,7 @@ func newAuthzFixture(t *testing.T) *scoreboard.Handler {
 		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain),
 		scoreboard.WithAdminEmails([]string{authzAdminEmail}),
 		scoreboard.WithAllowedOrigins([]string{allowedOrigin}),
-		scoreboard.WithDetect(api.DetectConfig{Runner: noopDetectRunner{}}),
+		scoreboard.WithDetect(api.DetectConfig{Runner: runner}),
 		scoreboard.WithBoard(boardSt),
 	)
 }

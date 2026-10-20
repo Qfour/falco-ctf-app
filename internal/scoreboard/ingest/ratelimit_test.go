@@ -281,8 +281,12 @@ func TestRateLimit_InvalidNamespace_IsIgnored(t *testing.T) {
 			t.Fatalf("ns %q: status %d body %v, want 200 ignored", ns, resp.StatusCode, body)
 		}
 	}
-	if got := s.DirtyRules("", rlEvadeChallenge); len(got) != 0 {
-		t.Fatalf("an invalid ns reached the store: %v", got)
+	// Look under the seat part of each ns that was tried (what a gate-less
+	// ingest would have used as the user), not under "" (app#479).
+	for _, ns := range []string{"ctf-", "ctf-Alice", "ctf-a_b", "ctf--x", "ctf-a b", "ctf-a/b", long} {
+		if got := s.DirtyRules(strings.TrimPrefix(ns, "ctf-"), rlEvadeChallenge); len(got) != 0 {
+			t.Fatalf("ns %q reached the store: %v", ns, got)
+		}
 	}
 }
 

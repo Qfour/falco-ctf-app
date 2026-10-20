@@ -50,7 +50,10 @@ type fakeStore struct {
 	// continue-on-error fan-out).
 	markDirtyErrFor map[string]error
 
-	markSolvedCalls int
+	// Calls to each of the four scoring-table writes (app#479). Counted on entry,
+	// before any scripted error, so "the Grader never reached the store" is
+	// checkable even for a write the fake would have refused.
+	markSolvedCalls, markDirtyCalls, recordExpectedRuleFireCalls, recordExfilCalls int
 
 	// recordExpectedRuleFireErr, if set, makes RecordExpectedRuleFire return it
 	// for every call (ADR-0008's fail-closed error-propagation test).
@@ -64,6 +67,17 @@ func newFakeStore() *fakeStore {
 		expectedFire: map[string][]string{},
 		exfil:        map[string]string{},
 	}
+}
+
+// mustFire is OnRuleFire for a seat user: the entry only errors for a non-seat
+// one (TestGrader_NonSlugUserIsRefused covers that), so any error is a bug.
+func mustFire(t *testing.T, g *scoring.Grader, user, rule string) scoring.RuleFireOutcome {
+	t.Helper()
+	res, err := g.OnRuleFire(user, rule)
+	if err != nil {
+		t.Fatalf("OnRuleFire(%q, %q) = %v, want nil", user, rule, err)
+	}
+	return res
 }
 
 func key(user, challenge string) string { return user + "|" + challenge }
@@ -108,6 +122,7 @@ func (f *fakeStore) DirtyRules(user, challenge string) []string {
 // MarkDirty mirrors the real store's write: additive, idempotent per
 // (user, challenge, rule), no expiry.
 func (f *fakeStore) MarkDirty(user, challenge, rule, _ string) error {
+	f.markDirtyCalls++
 	if f.markDirtyErr != nil {
 		return f.markDirtyErr
 	}
@@ -133,6 +148,7 @@ func (f *fakeStore) HasExpectedRuleFire(user, challenge string) bool {
 }
 
 func (f *fakeStore) RecordExpectedRuleFire(user, challenge, rule, _ string) error {
+	f.recordExpectedRuleFireCalls++
 	if f.recordExpectedRuleFireErr != nil {
 		return f.recordExpectedRuleFireErr
 	}
@@ -152,6 +168,7 @@ func (f *fakeStore) HasExfil(user, challenge, flag string) bool {
 }
 
 func (f *fakeStore) RecordExfil(user, challenge, flag, _ string) error {
+	f.recordExfilCalls++
 	if f.recordExfilErr != nil {
 		return f.recordExfilErr
 	}
@@ -262,7 +279,7 @@ func TestOnRuleFire_SolvesMatchingTriggerChallenge(t *testing.T) {
 	fs := newFakeStore()
 	g := scoring.New(testCatalog(), fs, fixedClock(time.Unix(1000, 0).UTC()))
 
-	res := g.OnRuleFire("alice", "Read sensitive file untrusted")
+	res := mustFire(t, g, "alice", "Read sensitive file untrusted")
 	if res.TaintErr != nil || res.TriggerErr != nil {
 		t.Fatalf("taintErr=%v triggerErr=%v", res.TaintErr, res.TriggerErr)
 	}
@@ -276,7 +293,7 @@ func TestOnRuleFire_SolvesMatchingTriggerChallenge(t *testing.T) {
 	// solved now, so current has advanced to 02-evade — this second fire
 	// taints 02-evade instead, per attempt scope; the TRIGGER side stays
 	// idempotent regardless).
-	res = g.OnRuleFire("alice", "Read sensitive file untrusted")
+	res = mustFire(t, g, "alice", "Read sensitive file untrusted")
 	if res.TaintErr != nil {
 		t.Fatal(res.TaintErr)
 	}
@@ -289,7 +306,7 @@ func TestOnRuleFire_NonMatchingRuleSolvesNothing(t *testing.T) {
 	fs := newFakeStore()
 	g := scoring.New(testCatalog(), fs, fixedClock(time.Unix(1000, 0).UTC()))
 
-	res := g.OnRuleFire("alice", "Unrelated rule")
+	res := mustFire(t, g, "alice", "Unrelated rule")
 	if res.TaintErr != nil || res.TriggerErr != nil {
 		t.Fatalf("taintErr=%v triggerErr=%v", res.TaintErr, res.TriggerErr)
 	}
@@ -308,7 +325,7 @@ func TestOnRuleFire_EvadeRuleDoesNotAutoSolve(t *testing.T) {
 	// 02-evade lists this rule as *forbidden*, not expected; a fire must not
 	// auto-solve an evade challenge (it may TAINT it — irrelevant here since
 	// current is 01-trigger, not 02-evade, so this fire is exempt either way).
-	res := g.OnRuleFire("alice", "Read sensitive file untrusted")
+	res := mustFire(t, g, "alice", "Read sensitive file untrusted")
 	if res.TaintErr != nil || res.TriggerErr != nil {
 		t.Fatalf("taintErr=%v triggerErr=%v", res.TaintErr, res.TriggerErr)
 	}
@@ -451,7 +468,7 @@ func TestOnRuleFire_AttemptScope_OnlyTaintsCurrentChallenge(t *testing.T) {
 	// 01-trigger's REQUIRED expectedRule: it must solve 01-trigger and taint
 	// NEITHER 02-evade NOR 03-exfil, even though both forbid this exact rule
 	// name — they have not been reached yet.
-	res := g.OnRuleFire("alice", rule)
+	res := mustFire(t, g, "alice", rule)
 	if res.TaintErr != nil {
 		t.Fatal(res.TaintErr)
 	}
@@ -468,7 +485,7 @@ func TestOnRuleFire_AttemptScope_OnlyTaintsCurrentChallenge(t *testing.T) {
 	// current(alice) is now 02-evade. The SAME rule fired again now taints
 	// it (it IS current, and it forbids this rule) — but NOT its sibling
 	// 03-exfil, which is still not current.
-	res = g.OnRuleFire("alice", rule)
+	res = mustFire(t, g, "alice", rule)
 	if res.TaintErr != nil {
 		t.Fatal(res.TaintErr)
 	}
@@ -489,7 +506,7 @@ func TestOnRuleFire_AttemptScope_OnlyTaintsCurrentChallenge(t *testing.T) {
 	// current(alice) is now 03-exfil. The same rule fired a third time taints
 	// IT — proving the fan-out follows current as it advances, rather than
 	// being pinned to whichever challenge happened to be first.
-	res = g.OnRuleFire("alice", rule)
+	res = mustFire(t, g, "alice", rule)
 	if res.TaintErr != nil {
 		t.Fatal(res.TaintErr)
 	}
@@ -498,7 +515,7 @@ func TestOnRuleFire_AttemptScope_OnlyTaintsCurrentChallenge(t *testing.T) {
 	}
 
 	// An unrelated rule taints nothing, for anyone, regardless of current.
-	res = g.OnRuleFire("bob", "Some unrelated rule")
+	res = mustFire(t, g, "bob", "Some unrelated rule")
 	if res.TaintErr != nil {
 		t.Fatal(res.TaintErr)
 	}
@@ -521,7 +538,7 @@ func TestOnRuleFire_AttemptScope_IsIdempotent(t *testing.T) {
 	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
 
 	for i := 0; i < 3; i++ {
-		if res := g.OnRuleFire("alice", rule); res.TaintErr != nil {
+		if res := mustFire(t, g, "alice", rule); res.TaintErr != nil {
 			t.Fatal(res.TaintErr)
 		}
 	}
@@ -548,7 +565,7 @@ func TestOnRuleFire_TaintErrorDoesNotBlockTriggerSolve(t *testing.T) {
 	fs.markDirtyErrFor = map[string]error{"02-evade": errors.New("boom")}
 	g := scoring.New(cat, fs, fixedClock(time.Now()))
 
-	res := g.OnRuleFire("alice", rule)
+	res := mustFire(t, g, "alice", rule)
 	if res.TaintErr == nil {
 		t.Fatal("the current evade challenge's MarkDirty error must propagate as TaintErr")
 	}
@@ -602,7 +619,7 @@ func TestDirtyFlag_SurvivesStoreRestart(t *testing.T) {
 	// not yet 02-evade/03-exfil); then a clean submit of 02-evade (still
 	// current's predecessor at that point) solves it and advances current to
 	// 03-exfil.
-	if res := g.OnRuleFire("alice", rule); res.TaintErr != nil {
+	if res := mustFire(t, g, "alice", rule); res.TaintErr != nil {
 		t.Fatal(res.TaintErr)
 	}
 	if out, err := g.SubmitEvade("alice", "02-evade", "FALCO{ok}"); err != nil || out.Status != scoring.EvadeSolved {
@@ -613,7 +630,7 @@ func TestDirtyFlag_SurvivesStoreRestart(t *testing.T) {
 	// evade-type and forbids this rule), and the collector delivers the boss
 	// flag — exactly the state a real attacker-then-caught-then-restarted
 	// scoreboard would be in.
-	if res := g.OnRuleFire("alice", rule); res.TaintErr != nil {
+	if res := mustFire(t, g, "alice", rule); res.TaintErr != nil {
 		t.Fatal(res.TaintErr)
 	}
 	if _, err := g.RecordExfil("alice", "03-exfil", "FALCO{boss}"); err != nil {
@@ -751,7 +768,7 @@ func TestSubmitEvade_ExpectedRuleFireRequired_AfterFire_Solves(t *testing.T) {
 	fs := newFakeStore()
 	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
 
-	res := g.OnRuleFire("alice", "Shell Redirected Private Key Read")
+	res := mustFire(t, g, "alice", "Shell Redirected Private Key Read")
 	if res.TaintErr != nil || res.ExpectedFireErr != nil || res.TriggerErr != nil {
 		t.Fatalf("taintErr=%v expectedFireErr=%v triggerErr=%v", res.TaintErr, res.ExpectedFireErr, res.TriggerErr)
 	}
@@ -781,7 +798,7 @@ func TestOnRuleFire_ExpectedRuleFire_TypeGuard(t *testing.T) {
 	// "Read sensitive file untrusted" is 01-trigger's (type=trigger)
 	// expectedRule, not 05-proof's. Firing it must solve 01-trigger but must
 	// NOT register as proof for any RequireExpectedRuleFire mission.
-	res := g.OnRuleFire("alice", "Read sensitive file untrusted")
+	res := mustFire(t, g, "alice", "Read sensitive file untrusted")
 	if res.ExpectedFireErr != nil {
 		t.Fatal(res.ExpectedFireErr)
 	}
@@ -798,7 +815,7 @@ func TestOnRuleFire_ExpectedRuleFire_NotAttemptScoped(t *testing.T) {
 	fs := newFakeStore()
 	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
 	// current(alice) is 01-trigger — 05-proof is nowhere close to current.
-	res := g.OnRuleFire("alice", "Shell Redirected Private Key Read")
+	res := mustFire(t, g, "alice", "Shell Redirected Private Key Read")
 	if res.ExpectedFireErr != nil {
 		t.Fatal(res.ExpectedFireErr)
 	}
@@ -816,7 +833,7 @@ func TestOnRuleFire_ExpectedRuleFireErrorPropagates(t *testing.T) {
 	fs.recordExpectedRuleFireErr = errors.New("boom")
 	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
 
-	res := g.OnRuleFire("alice", "Shell Redirected Private Key Read")
+	res := mustFire(t, g, "alice", "Shell Redirected Private Key Read")
 	if res.ExpectedFireErr == nil {
 		t.Fatal("expected a non-nil ExpectedFireErr")
 	}
@@ -857,7 +874,7 @@ func TestOnRuleFire_TriggerStoreErrorPropagates(t *testing.T) {
 	fs.markSolvedErr = errors.New("boom")
 	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
 
-	res := g.OnRuleFire("alice", "Read sensitive file untrusted")
+	res := mustFire(t, g, "alice", "Read sensitive file untrusted")
 	if res.TriggerErr == nil {
 		t.Fatal("MarkSolved error must propagate as TriggerErr from OnRuleFire")
 	}
@@ -889,7 +906,7 @@ func TestOnRuleFire_TriggerContinueOnError(t *testing.T) {
 	fs.markSolvedErrFor = map[string]error{"01a-trigger": errors.New("boom")}
 	g := scoring.New(cat, fs, fixedClock(time.Now()))
 
-	res := g.OnRuleFire("alice", rule)
+	res := mustFire(t, g, "alice", rule)
 	if res.TaintErr != nil {
 		t.Fatalf("no evade challenge exists; TaintErr must stay nil, got %v", res.TaintErr)
 	}
@@ -1365,7 +1382,7 @@ func TestOnRuleFire_RealCatalog_AttemptScope_TwinMissionsStayClean(t *testing.T)
 		switch ch.Type {
 		case "trigger":
 			for _, rule := range ch.ExpectedRules {
-				res := g.OnRuleFire("alice", rule)
+				res := mustFire(t, g, "alice", rule)
 				if res.TaintErr != nil || res.TriggerErr != nil {
 					t.Fatalf("%s: fire %q: taintErr=%v triggerErr=%v", cid, rule, res.TaintErr, res.TriggerErr)
 				}
@@ -1392,7 +1409,7 @@ func TestOnRuleFire_RealCatalog_AttemptScope_TwinMissionsStayClean(t *testing.T)
 			// catalog_test.go's TestCustomFalcoRules_EachNameOwnedByExactlyOneChallenge).
 			if ch.RequireExpectedRuleFire {
 				for _, rule := range ch.ExpectedRules {
-					res := g.OnRuleFire("alice", rule)
+					res := mustFire(t, g, "alice", rule)
 					if res.TaintErr != nil || res.ExpectedFireErr != nil || res.TriggerErr != nil {
 						t.Fatalf("%s: prove-technique fire %q: taintErr=%v expectedFireErr=%v triggerErr=%v",
 							cid, rule, res.TaintErr, res.ExpectedFireErr, res.TriggerErr)
@@ -1489,7 +1506,7 @@ func TestSweep_Capstone10_RequiresProofAsWellAsExfil(t *testing.T) {
 
 	// The proof rule fires. It is recorded as 10's proof and, not being one
 	// of 10's forbidden rules, must not taint the pair.
-	res := g.OnRuleFire("alice", ch.ExpectedRules[0])
+	res := mustFire(t, g, "alice", ch.ExpectedRules[0])
 	if res.TaintErr != nil || res.ExpectedFireErr != nil || res.TriggerErr != nil {
 		t.Fatalf("proof fire: taintErr=%v expectedFireErr=%v triggerErr=%v", res.TaintErr, res.ExpectedFireErr, res.TriggerErr)
 	}
@@ -1523,7 +1540,7 @@ func TestSweep_Capstone10_ProofDoesNotOverrideTaint(t *testing.T) {
 
 	forbidden := ch.ForbiddenRules[0]
 	for _, rule := range []string{forbidden, ch.ExpectedRules[0]} {
-		res := g.OnRuleFire("alice", rule)
+		res := mustFire(t, g, "alice", rule)
 		if res.TaintErr != nil || res.ExpectedFireErr != nil || res.TriggerErr != nil {
 			t.Fatalf("fire %q: taintErr=%v expectedFireErr=%v triggerErr=%v", rule, res.TaintErr, res.ExpectedFireErr, res.TriggerErr)
 		}
@@ -1597,7 +1614,7 @@ func TestSubmitEvade_SevenForbiddenRules_ResetRequiresFreshExfil(t *testing.T) {
 
 	// 10-boss is the sole (hence always-current) mission: any one of the
 	// seven forbidden rules firing must dirty it.
-	res := g.OnRuleFire("alice", "r4")
+	res := mustFire(t, g, "alice", "r4")
 	if res.TaintErr != nil {
 		t.Fatal(res.TaintErr)
 	}
@@ -1607,7 +1624,7 @@ func TestSubmitEvade_SevenForbiddenRules_ResetRequiresFreshExfil(t *testing.T) {
 
 	// The participant also fires the proof rule and delivers the exfil
 	// receipt — neither may solve the pair while it is dirty.
-	res = g.OnRuleFire("alice", proof)
+	res = mustFire(t, g, "alice", proof)
 	if res.TaintErr != nil || res.ExpectedFireErr != nil {
 		t.Fatalf("proof fire: taintErr=%v expectedFireErr=%v", res.TaintErr, res.ExpectedFireErr)
 	}
@@ -1714,7 +1731,7 @@ func TestTaintOnOverflow_SamePredicateAsOnRuleFire_RealRuleName(t *testing.T) {
 	}
 
 	// Solve 01 -> current = 02-evade (evade).
-	g.OnRuleFire("alice", forbidden)
+	mustFire(t, g, "alice", forbidden)
 
 	// M1: a rule the current evade mission does NOT forbid (here another
 	// mission's proof rule) must not taint, however often it overflows.
@@ -1746,7 +1763,7 @@ func TestTaintOnOverflow_PersistFailureReturned_ThenRetryWrites(t *testing.T) {
 	const forbidden = "Read sensitive file untrusted"
 	fs := newFakeStore()
 	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
-	g.OnRuleFire("alice", forbidden) // current -> 02-evade
+	mustFire(t, g, "alice", forbidden) // current -> 02-evade
 	fs.markDirtyErr = errors.New("disk full")
 	if _, err := g.TaintOnOverflow("alice", forbidden); err == nil {
 		t.Fatal("a failed overflow-taint write must surface (fail-closed), got nil")
@@ -1765,22 +1782,119 @@ func TestTaintOnOverflow_PersistFailureReturned_ThenRetryWrites(t *testing.T) {
 
 var nonSlugUsers = []string{"", "Alice", "bad user", "-lead", "a_b", "evil\u202euser", strings.Repeat("a", 64)}
 
-// The Grader refuses a non-slug user on both write paths with ErrInvalidUser and
-// stores nothing, whatever the handler in front of it did.
+// graderEntry is one row of the Grader's entry table: a public method that takes
+// a `user` and can write a scoring table, called so that it WOULD write for a
+// seat. `method` is the Grader method's name (TestGrader_EntryTableIsComplete
+// compares the set of them with the methods the source has); `seed` puts the
+// store where the call writes (a solved predecessor, so a rule fire has a mission
+// to taint); `wrote` says which write the fake saw.
+type graderEntry struct {
+	name   string
+	method string
+	seed   func(fs *fakeStore, u string)
+	call   func(g *scoring.Grader, u string, runner *fakeDetectRunner) error
+	wrote  func(fs *fakeStore) bool
+}
+
+const (
+	forbiddenRule = "Read sensitive file untrusted" // trigger of 01, forbidden for 02 / 03
+	proofRule     = "Shell Redirected Private Key Read"
+)
+
+var graderEntries = []graderEntry{
+	{
+		name: "OnRuleFire/trigger solve", method: "OnRuleFire",
+		call: func(g *scoring.Grader, u string, _ *fakeDetectRunner) error {
+			_, err := g.OnRuleFire(u, forbiddenRule)
+			return err
+		},
+		wrote: func(fs *fakeStore) bool { return fs.markSolvedCalls > 0 },
+	},
+	{
+		name: "OnRuleFire/taint", method: "OnRuleFire",
+		seed: func(fs *fakeStore, u string) { fs.solved[key(u, "01-trigger")] = "t" }, // current is 02-evade
+		call: func(g *scoring.Grader, u string, _ *fakeDetectRunner) error {
+			_, err := g.OnRuleFire(u, forbiddenRule)
+			return err
+		},
+		wrote: func(fs *fakeStore) bool { return fs.markDirtyCalls > 0 },
+	},
+	{
+		name: "OnRuleFire/proof", method: "OnRuleFire",
+		seed: func(fs *fakeStore, u string) { // current is 05-proof
+			for _, c := range []string{"01-trigger", "02-evade", "03-exfil", "04-detect"} {
+				fs.solved[key(u, c)] = "t"
+			}
+		},
+		call: func(g *scoring.Grader, u string, _ *fakeDetectRunner) error {
+			_, err := g.OnRuleFire(u, proofRule)
+			return err
+		},
+		wrote: func(fs *fakeStore) bool { return fs.recordExpectedRuleFireCalls > 0 },
+	},
+	{
+		name: "TaintOnOverflow", method: "TaintOnOverflow",
+		seed: func(fs *fakeStore, u string) { fs.solved[key(u, "01-trigger")] = "t" },
+		call: func(g *scoring.Grader, u string, _ *fakeDetectRunner) error {
+			_, err := g.TaintOnOverflow(u, forbiddenRule)
+			return err
+		},
+		wrote: func(fs *fakeStore) bool { return fs.markDirtyCalls > 0 },
+	},
+	{
+		name: "SubmitDetect", method: "SubmitDetect",
+		call: func(g *scoring.Grader, u string, r *fakeDetectRunner) error {
+			_, err := g.SubmitDetect(context.Background(), r, u, "04-detect", "evt.type=open")
+			return err
+		},
+		wrote: func(fs *fakeStore) bool { return fs.markSolvedCalls > 0 },
+	},
+	{
+		name: "SubmitEvade", method: "SubmitEvade",
+		call: func(g *scoring.Grader, u string, _ *fakeDetectRunner) error {
+			_, err := g.SubmitEvade(u, "02-evade", "FALCO{ok}")
+			return err
+		},
+		wrote: func(fs *fakeStore) bool { return fs.markSolvedCalls > 0 },
+	},
+	{
+		name: "RecordExfil", method: "RecordExfil",
+		call: func(g *scoring.Grader, u string, _ *fakeDetectRunner) error {
+			_, err := g.RecordExfil(u, "03-exfil", "FALCO{boss}")
+			return err
+		},
+		wrote: func(fs *fakeStore) bool { return fs.recordExfilCalls > 0 },
+	},
+}
+
+// Every Grader entry that writes a scoring table refuses a non-slug user with
+// ErrInvalidUser before touching the store or the grader Job runner, whatever
+// the adapter in front of it did (app#439, app#479). Each row is seeded so that
+// the same call WOULD write for a seat (TestGrader_SlugUserIsAccepted is the
+// other half), so a refusal is never an empty negative.
 func TestGrader_NonSlugUserIsRefused(t *testing.T) {
-	fs := newFakeStore()
-	g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
-	for _, u := range nonSlugUsers {
-		st, err := g.RecordExfil(u, "03-exfil", "FALCO{boss}")
-		if !errors.Is(err, scoring.ErrInvalidUser) || st != scoring.ExfilInvalidUser {
-			t.Errorf("RecordExfil(%q) = (%v, %v), want (ExfilInvalidUser, ErrInvalidUser)", u, st, err)
+	for _, e := range graderEntries {
+		for _, u := range nonSlugUsers {
+			t.Run(e.name+"/"+strings.ReplaceAll(u, "/", "_"), func(t *testing.T) {
+				fs := newFakeStore()
+				runner := &fakeDetectRunner{evasionFires: 2}
+				if e.seed != nil {
+					e.seed(fs, u)
+				}
+				seeded := len(fs.solved)
+				g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
+				if err := e.call(g, u, runner); !errors.Is(err, scoring.ErrInvalidUser) {
+					t.Fatalf("%s(%q) err = %v, want ErrInvalidUser", e.name, u, err)
+				}
+				if fs.markSolvedCalls+fs.markDirtyCalls+fs.recordExpectedRuleFireCalls+fs.recordExfilCalls != 0 || runner.calls != 0 {
+					t.Fatalf("a refused user reached the store or the runner: solved=%d dirty=%d proof=%d exfil=%d runner=%d",
+						fs.markSolvedCalls, fs.markDirtyCalls, fs.recordExpectedRuleFireCalls, fs.recordExfilCalls, runner.calls)
+				}
+				if len(fs.exfil) != 0 || len(fs.expectedFire) != 0 || len(fs.dirty) != 0 || len(fs.solved) != seeded {
+					t.Fatalf("a refused user left state behind: exfil=%v proof=%v dirty=%v solved=%v", fs.exfil, fs.expectedFire, fs.dirty, fs.solved)
+				}
+			})
 		}
-		if _, err := g.SubmitEvade(u, "03-exfil", "FALCO{boss}"); !errors.Is(err, scoring.ErrInvalidUser) {
-			t.Errorf("SubmitEvade(%q) err = %v, want ErrInvalidUser", u, err)
-		}
-	}
-	if len(fs.exfil) != 0 || len(fs.solved) != 0 || fs.markSolvedCalls != 0 {
-		t.Fatalf("a refused user left state behind: exfil=%v solved=%v markSolved=%d", fs.exfil, fs.solved, fs.markSolvedCalls)
 	}
 }
 
@@ -1810,14 +1924,25 @@ func TestSweep_NonSlugUserReceiptIsSkipped(t *testing.T) {
 	}
 }
 
-// The Grader accepts a slug user on both write paths (the other half of the
-// refusals above).
+// The Grader accepts a slug user on every entry: each row's call, seeded the same
+// way, writes at least once for a seat (the other half of the refusals above).
 func TestGrader_SlugUserIsAccepted(t *testing.T) {
-	for _, u := range []string{"user1", "a", "0", "a-b", strings.Repeat("a", 63)} {
-		fs := newFakeStore()
-		g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
-		if st, err := g.RecordExfil(u, "03-exfil", "FALCO{boss}"); err != nil || st != scoring.ExfilRecorded {
-			t.Errorf("RecordExfil(%q) = (%v, %v), want (ExfilRecorded, nil)", u, st, err)
+	for _, e := range graderEntries {
+		for _, u := range []string{"user1", "a", "0", "a-b", strings.Repeat("a", 63)} {
+			t.Run(e.name+"/"+u, func(t *testing.T) {
+				fs := newFakeStore()
+				runner := &fakeDetectRunner{evasionFires: 2}
+				if e.seed != nil {
+					e.seed(fs, u)
+				}
+				g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
+				if err := e.call(g, u, runner); err != nil {
+					t.Fatalf("%s(%q) err = %v, want nil", e.name, u, err)
+				}
+				if !e.wrote(fs) {
+					t.Fatalf("%s(%q) wrote nothing: the row does not exercise its write", e.name, u)
+				}
+			})
 		}
 	}
 }
