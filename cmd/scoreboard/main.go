@@ -173,6 +173,7 @@ func main() {
 	challengesDir, scenarioFile, flagsFile := catCfg.challengesDir, catCfg.scenarioFile, catCfg.flagsFile
 	if err != nil {
 		if errors.Is(err, catalog.ErrFlagOverrides) {
+			// Read by platform scripts/verify.sh (msg only): contract-table row "scoreboard の起動ログ".
 			logger.Error("flag overrides failed", "file", flagsFile, "err", err)
 		} else {
 			logger.Error("catalog load failed", "dir", challengesDir, "scenario_file", scenarioFile, "err", err)

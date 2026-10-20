@@ -15,7 +15,8 @@ const maxLoggedSeats = 50
 // (violations) record, so a reader greps one string and reads the `violations`
 // attribute; the operator's next step is the separate `remedy` attribute. The
 // platform runbook (platform issue #248) reads this msg and `violations`: change
-// either only together with it.
+// either only together with it (contract-table row "scoreboard の起動ログ" in
+// .claude/rules/falco-ctf-app-conventions.md; literal golden: bootlog_contract_test.go).
 const storedNameCheckMsg = "stored display name check"
 
 // storedNameRemedy is what an operator can actually run for a listed seat.
