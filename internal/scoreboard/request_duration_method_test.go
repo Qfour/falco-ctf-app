@@ -139,7 +139,7 @@ func TestRequestDurationDeclaredMethodsKeepTheirLabels(t *testing.T) {
 func TestRequestDurationUndeclaredStandardMethodsAreNotLabels(t *testing.T) {
 	f := newFixture(t, nil)
 	for _, m := range []string{"CONNECT", "TRACE", "PATCH", "DELETE", "OPTIONS", "PUT"} {
-		for _, path := range []string{"/healthz", "/api/no-such-route", "/api/challenges/02-evade/submit", "/static/x/", "/a b/"} {
+		for _, path := range []string{"/healthz", "/api/no-such-route", "/api/challenges/02-evade/submit", "/static/x/", "/a b/", "/a b", "/zz", "/static"} {
 			f.serveRaw(m, path)
 		}
 	}

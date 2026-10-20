@@ -12,8 +12,6 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-
-	"github.com/Qfour/falco-ctf-app/internal/apispec"
 )
 
 // durationSeries returns the series of collector_request_duration_seconds as
@@ -260,7 +258,7 @@ func TestRequestDurationUndeclaredStandardMethodsAreNotLabels(t *testing.T) {
 	h, _ := newMethodHandler(t)
 	i := 0
 	for _, m := range []string{"CONNECT", "TRACE", "PATCH", "DELETE", "OPTIONS", "PUT"} {
-		for _, path := range []string{"/healthz", "/api/state", "/api/challenges/10-final-exfil/submit", "/x/", "/a b/"} {
+		for _, path := range []string{"/healthz", "/api/state", "/api/challenges/10-final-exfil/submit", "/x/", "/a b/", "/a b", "/zz", "/api"} {
 			i++
 			serve(h, m, path, fmt.Sprintf("10.80.0.%d", i))
 		}
@@ -277,42 +275,5 @@ func TestRequestDurationUndeclaredStandardMethodsAreNotLabels(t *testing.T) {
 		if strings.Contains(parts[0], "a b") || strings.HasPrefix(parts[0], "/") {
 			t.Fatalf("series %.60q: the route label carries a request-derived path", k)
 		}
-	}
-}
-
-// subtreePatterns lists the declared patterns that end in "/": a subtree
-// pattern. For a CONNECT request net/http does not clean the path, and when a
-// subtree pattern matches path+"/" it answers with a trailing-slash redirect and
-// reports the REQUEST's path as the pattern, so the route label (one series per
-// path) would be request-chosen again. httpx.MethodLabel does not trust such a
-// pattern, but the route label still would: the table has none.
-func subtreePatterns(routes []apispec.Route) []string {
-	var out []string
-	for _, rt := range routes {
-		if strings.HasSuffix(rt.Pattern, "/") {
-			out = append(out, rt.MuxPattern())
-		}
-	}
-	return out
-}
-
-func TestDeclaredRoutesAreNeverSubtreePatterns(t *testing.T) {
-	h, _ := newMethodHandler(t)
-	routes := h.Routes()
-	if len(routes) < 4 {
-		t.Fatalf("%d routes, want the collector's 4: the check would pass on nothing", len(routes))
-	}
-	if sub := subtreePatterns(routes); len(sub) != 0 {
-		t.Fatalf("subtree patterns %v in the collector's route table: a CONNECT request would make the route label request-derived (app#491); declare an exact path", sub)
-	}
-}
-
-func TestSubtreePatternsCheck_CatchesOne(t *testing.T) {
-	routes := []apispec.Route{
-		{Method: "GET", Pattern: "/healthz"},
-		{Method: "GET", Pattern: "/files/"},
-	}
-	if sub := subtreePatterns(routes); len(sub) != 1 || sub[0] != "GET /files/" {
-		t.Fatalf("subtreePatterns = %v, want [GET /files/]", sub)
 	}
 }
