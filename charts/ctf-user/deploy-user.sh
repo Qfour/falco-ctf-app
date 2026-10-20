@@ -162,6 +162,23 @@ USAGE_MSG='usage: deploy-user.sh [--challenges-dir <path>] [--scenarios-dir <pat
 USERNAME="${1:?${USAGE_MSG}}"
 CHALLENGE_ID="${2:?${USAGE_MSG}}"
 
+# The username is the seat: the Helm release name, the `ctf-<seat>` namespace,
+# label values and the workspace host's first label (app#480, ADR-0034 D2). It is
+# checked here, before any kubectl / helm call, because `--set "username=..."`
+# below would read a `,` as the start of another key and `=` as another
+# assignment. SEAT_PATTERN is a copy of identity.SeatPattern (Go): a test holds
+# the text equal (internal/identity/seat_cases_test.go) and
+# scripts/check-seat-grammar.sh runs the shared case table
+# (internal/identity/testdata/seat-cases.tsv) through this check. C locale so
+# `a-z` is the ASCII range whatever the operator's LANG is; the printed value is
+# %q-escaped so a control or bidi character cannot reach the terminal raw.
+SEAT_PATTERN='^[a-z0-9][a-z0-9-]{0,62}$'
+if ! (export LC_ALL=C; [[ "${USERNAME}" =~ ${SEAT_PATTERN} ]]); then
+  printf 'invalid username (a seat): %q does not match %s\n' "${USERNAME}" "${SEAT_PATTERN}" >&2
+  echo "  (ADR-0034 D2; nothing was deployed)" >&2
+  exit 2
+fi
+
 # Egress lockdown (P11.5) requires the apiserver CIDR — without it the chart
 # omits the API-server allow and ttyd's `kubectl exec` into the workspace
 # breaks. Fail fast here (mirrors platform deploy-event-workspaces.sh), so a
