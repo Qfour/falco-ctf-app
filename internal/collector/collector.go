@@ -319,7 +319,7 @@ func rejectUnknownCID(w http.ResponseWriter, cid string) bool {
 // never reaches the scoreboard. An id inside it is forwarded even when the
 // scoreboard has no such challenge: the collector holds no catalog, so the
 // scoreboard's 404 is what answers it (platform verify (a-2) relies on this
-// with the probe id 99-verify-probe).
+// with the verify probe id of ADR-0041).
 func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 	if rejectUnknownCID(w, r.PathValue("cid")) {
 		return
