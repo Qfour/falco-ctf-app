@@ -1316,6 +1316,7 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, scoring.ErrInvalidUser) {
 		// The Grader's own slug gate; unreachable while identity.ValidSeat above agrees
 		// with it (identity.SeatPattern is the one definition), but never a 500 if they ever differ.
+		httpx.LogGraderRefused(h.logger, r, scoring.EntrySubmitEvade)
 		metrics.SubmissionsTotal.WithLabelValues(label, "bad_request").Inc()
 		auditLog("bad_request")
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
@@ -1532,6 +1533,15 @@ func (h *Handler) submitDetect(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), DetectGradeTimeout)
 	defer cancel()
 	outcome, err := h.grader.SubmitDetect(ctx, h.detectRunner, user, cid, condition)
+	if errors.Is(err, scoring.ErrInvalidUser) {
+		// The Grader's own seat gate (before any Job); unreachable while the
+		// identity.ValidSeat check above agrees with it. Never a 500.
+		httpx.LogGraderRefused(h.logger, r, scoring.EntrySubmitDetect)
+		metrics.SubmissionsTotal.WithLabelValues(label, "bad_request").Inc()
+		auditLog("bad_request")
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
+		return
+	}
 	if err != nil {
 		// Fail closed: a runner infra error is a 500, never a silent solve.
 		h.logger.Error("grade detect", "err", err, "cid", cid, "user", user)
@@ -1670,6 +1680,7 @@ func (h *Handler) exfilInternal(w http.ResponseWriter, r *http.Request) {
 	// short-circuited the unknown / not-required cases, so here the Grader
 	// returns ExfilRecorded (or a store error).
 	if _, err := h.grader.RecordExfil(user, cid, flag); errors.Is(err, scoring.ErrInvalidUser) {
+		httpx.LogGraderRefused(h.logger, r, scoring.EntryRecordExfil)
 		auditLog("bad_request")
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
 		return

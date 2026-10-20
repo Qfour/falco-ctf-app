@@ -13,6 +13,7 @@ package ingest
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -340,7 +341,7 @@ func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 	// a participant's bucket or force an overflow taint.
 	if h.grader.AffectsScoring(ev.Rule) {
 		if !h.scoringLimiter.Allow(user) {
-			h.scoringOverflow(w, ns, user, ev.Rule)
+			h.scoringOverflow(w, r, ns, user, ev.Rule)
 			return
 		}
 	} else if !h.observeLimiter.Allow(user) {
@@ -372,7 +373,19 @@ func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 	// forbidden for it (App-H2 + attempt-scope persistent dirty flag), and
 	// THEN evaluates any trigger solve — that exact order is what makes the
 	// twin-mission pairs (02→03, 04→05) work; see scoring package doc.
-	res := h.grader.OnRuleFire(user, ev.Rule)
+	res, err := h.grader.OnRuleFire(user, ev.Rule)
+	if errors.Is(err, scoring.ErrInvalidUser) {
+		h.graderRefused(w, r, scoring.EntryOnRuleFire)
+		return
+	}
+	if err != nil {
+		// Unreachable today (ErrInvalidUser is the only error OnRuleFire
+		// returns); fail closed rather than read a zero outcome as "clean".
+		h.logger.Error("on rule fire", "err", err)
+		metrics.FalcoEventsReceived.WithLabelValues("store_error").Inc()
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgRecordRuleFire})
+		return
+	}
 
 	// app#124 5x review (R1 + R2 converged, R4 finding F4): bump the
 	// per-newly-solved trigger metric BEFORE the TaintErr check below, not
@@ -442,6 +455,21 @@ func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"accepted": true, "user": user, "rule": ev.Rule})
 }
 
+// graderRefused answers an event the Grader refused as a non-seat user
+// (scoring.ErrInvalidUser) exactly as the namespace gate in receive answers the
+// same event: 200 ignored, FalcoEventsReceived{ignored}, and NO taint (there is
+// no seat to taint, and a 500 / taint_error would read as lost data to the
+// runbook). Reaching it means receive's gate was lost, so it also logs one
+// fixed-field Warn (httpx.LogGraderRefused), through auditLimiter under a
+// constant key (the refused value is not a key) so it is at most 1 line / 10 s.
+func (h *Handler) graderRefused(w http.ResponseWriter, r *http.Request, entry string) {
+	if h.auditLimiter.Allow("grader_refused") {
+		httpx.LogGraderRefused(h.logger, r, entry)
+	}
+	metrics.FalcoEventsReceived.WithLabelValues("ignored").Inc()
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ignored": true, "reason": "not a ctf workspace event"})
+}
+
 // scoringOverflow handles a scoring-relevant event over the participant's
 // scoring bucket (app#359): fail-closed instead of a drop. Grader.TaintOnOverflow
 // applies the normal taint predicate (current evade mission forbids this rule)
@@ -451,9 +479,14 @@ func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 // (an event was not fully processed); the outcome label says whether a mission
 // was actually tainted. Answered like an accepted event; a failed taint write is
 // the same 500 + taint_error as the normal path.
-func (h *Handler) scoringOverflow(w http.ResponseWriter, ns, user, rule string) {
-	metrics.FalcoEventsScoringOverflow.Inc(ns)
+func (h *Handler) scoringOverflow(w http.ResponseWriter, r *http.Request, ns, user, rule string) {
 	tainted, err := h.grader.TaintOnOverflow(user, rule)
+	if errors.Is(err, scoring.ErrInvalidUser) {
+		// Not an overflow of a seat's bucket: nothing is counted or tainted.
+		h.graderRefused(w, r, scoring.EntryTaintOnOverflow)
+		return
+	}
+	metrics.FalcoEventsScoringOverflow.Inc(ns)
 	if err != nil {
 		h.audit("scoring_overflow", ns, rule, tainted)
 		h.logger.Error("mark dirty on overflow", "err", err)

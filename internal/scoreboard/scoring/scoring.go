@@ -148,17 +148,36 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/store"
 )
 
-// ErrInvalidUser is returned by SubmitEvade and RecordExfil for a user that is
-// not a username slug, and Sweep skips a stored receipt keyed by one: these
-// three never write a solve or receipt under a non-slug key. The HTTP handlers
-// check the slug first, so this is a second, independent gate (fail-closed).
+// ErrInvalidUser is returned by every Grader entry that takes a `user` and can
+// write a scoring table (SubmitEvade, RecordExfil, OnRuleFire, TaintOnOverflow,
+// SubmitDetect) for a user that is not a seat slug, and Sweep skips a stored
+// receipt keyed by one: the Grader never writes a solve, taint, proof or
+// receipt under a non-slug key (app#459 for the first three, app#479 for the
+// rest). The adapters check the slug first (ingest's namespace parse, the
+// handlers' identity checks), so this is a second, independent gate
+// (fail-closed): the first protects what the Grader cannot (ingest's limiter
+// key, metric label and feed), this one the scoring tables whoever calls.
 //
-// Scope: only those three. OnRuleFire, TaintOnOverflow and SubmitDetect rely on
-// their adapter's check (ingest's namespace parse, the submit-detect handler's
-// identity check). The seat grammar they all use is identity.SeatPattern (the
-// one definition, app#440); closing the remaining entries in the Grader or the
-// Store is app#479.
+// The grammar is identity.SeatPattern (the one definition, app#440). Writes to
+// the Store that do not go through the Grader are gated by their route's
+// {user} (ADR-0039 Signpost 3 names them as the remaining destination).
+//
+// An adapter maps it to its first gate's answer, not to a persistence failure:
+// ingest to 200 ignored (no taint), submit / submit-detect / exfil to 400
+// "invalid user". Reaching it from an adapter means the first gate was lost,
+// so the adapter also logs one fixed-field Warn (httpx.LogGraderRefused).
 var ErrInvalidUser = errors.New("scoring: user is not a username slug")
+
+// The Grader entries that refuse a non-seat user with ErrInvalidUser: a closed
+// set of fixed words (the method names) an adapter puts in the one Warn it logs
+// when this second gate fires (httpx.LogGraderRefused). Never a value.
+const (
+	EntryOnRuleFire      = "OnRuleFire"
+	EntryTaintOnOverflow = "TaintOnOverflow"
+	EntrySubmitDetect    = "SubmitDetect"
+	EntrySubmitEvade     = "SubmitEvade"
+	EntryRecordExfil     = "RecordExfil"
+)
 
 // CountNonSlugStoredUsers returns how many stored solves and how many stored
 // exfil receipts are keyed by a user that is not a username slug. Sweep never
@@ -296,7 +315,13 @@ func (g *Grader) AffectsScoring(rule string) bool {
 // "already dirty" short-circuit: MarkDirty is an idempotent INSERT OR IGNORE,
 // and a skip based on in-memory state would also skip the RETRY of a write
 // that failed earlier.
+//
+// `user` must be a seat slug (identity.ValidSeat), else ErrInvalidUser is
+// returned and nothing is tainted.
 func (g *Grader) TaintOnOverflow(user, rule string) (tainted string, err error) {
+	if !identity.ValidSeat(user) {
+		return "", ErrInvalidUser
+	}
 	cur, ok := g.taintTarget(user, rule)
 	if !ok {
 		return "", nil
@@ -630,7 +655,14 @@ type RuleFireOutcome struct {
 //     a call-site convention instead of a structural guarantee; OnRuleFire
 //     makes it a fact the type system enforces: taint first, trigger second,
 //     every time, with no way to call them the other way around.
-func (g *Grader) OnRuleFire(user, rule string) RuleFireOutcome {
+//
+// `user` must be a seat slug (identity.ValidSeat), else ErrInvalidUser is
+// returned before any of the three writes; the RuleFireOutcome is only
+// meaningful when err == nil.
+func (g *Grader) OnRuleFire(user, rule string) (RuleFireOutcome, error) {
+	if !identity.ValidSeat(user) {
+		return RuleFireOutcome{}, ErrInvalidUser
+	}
 	taintErr := g.markDirtyOnRuleFire(user, rule)
 	// ADR-0008's positive-proof write. Order relative to the taint write
 	// above is free (the two never interact — see recordExpectedRuleFire's
@@ -645,7 +677,7 @@ func (g *Grader) OnRuleFire(user, rule string) RuleFireOutcome {
 		TaintErr:        taintErr,
 		ExpectedFireErr: expectedFireErr,
 		TriggerErr:      triggerErr,
-	}
+	}, nil
 }
 
 // EvadeStatus enumerates the outcome of an evade-challenge submission. The
@@ -914,12 +946,19 @@ type DetectOutcome struct {
 //  6. else (evasionFires > 0 && benignFires == 0) → record the solve via the
 //     EXISTING store.MarkSolved (I1 single writer) → DetectSolved
 //
-// A runner infrastructure error (err != nil) is returned unrecorded so the
+// `user` must be a seat slug (identity.ValidSeat), else ErrInvalidUser is
+// returned before any gate. A runner infrastructure error (err != nil) is returned unrecorded so the
 // handler fails closed (500) and never solves. The verdict is a pure function
 // of (static capture pair, submitted condition) — deterministic and replay
 // -stable across scoreboard restarts, and it references no attacker-supplied
 // time (I1).
 func (g *Grader) SubmitDetect(ctx context.Context, runner DetectRunner, user, cid, condition string) (DetectOutcome, error) {
+	// Before the catalog lookup and, above all, before runner.Grade: a refused
+	// user must not start a grader Job (app#479). The outcome is only meaningful
+	// when err == nil.
+	if !identity.ValidSeat(user) {
+		return DetectOutcome{}, ErrInvalidUser
+	}
 	ch, ok := g.cat[cid]
 	if !ok {
 		return DetectOutcome{Status: DetectUnknownChallenge}, nil
