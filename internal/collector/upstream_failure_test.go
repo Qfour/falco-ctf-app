@@ -17,10 +17,18 @@ import (
 )
 
 func TestUpstreamDown_Answers502WithFixedBodyAndLogsThePattern(t *testing.T) {
-	// A closed upstream: the address was valid and nothing listens on it now.
-	dead := httptest.NewServer(http.NotFoundHandler())
+	// An upstream that drops every connection without a response (hijack, close):
+	// the proxy's round trip fails the same way a down scoreboard does, and unlike
+	// a closed port there is no race with another process taking the port.
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			return
+		}
+		conn.Close()
+	}))
+	t.Cleanup(dead.Close)
 	deadURL := dead.URL
-	dead.Close()
 	hostPort := strings.TrimPrefix(deadURL, "http://")
 
 	var logs bytes.Buffer
@@ -54,7 +62,7 @@ func TestUpstreamDown_Answers502WithFixedBodyAndLogsThePattern(t *testing.T) {
 				t.Fatalf("body = %v, want exactly {\"error\": \"scoreboard unavailable\"}", body)
 			}
 			raw, _ := json.Marshal(body)
-			for _, leak := range []string{hostPort, "127.0.0.1", "dial", "refused", cid} {
+			for _, leak := range []string{hostPort, "127.0.0.1", "dial", "EOF", "reset", cid} {
 				if strings.Contains(string(raw), leak) {
 					t.Fatalf("the body names %q: %s", leak, raw)
 				}

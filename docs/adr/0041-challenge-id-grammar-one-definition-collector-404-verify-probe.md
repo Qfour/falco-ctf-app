@@ -4,6 +4,7 @@
   - クロスリポ契約 (collector の局所応答と platform verify (a-2) の probe) に触れるので、Class-2。architect 合意 (review-5x 52 回目 R4、yes-if の条件は本 PR で満たした) + security-engineer APPROVE (R1) + VP 承認 (`ORGANIZATION.md` §4・§5) を経て、本 PR 内で Accepted にした。
   - HTTP の status は 1 つ変わる (collector の exfil: `400 invalid challenge id` → `404 unknown challenge`)。参加者の正規の経路 (正しい id) には影響しない。
   - 新 image・Dockerfile・Hard Invariant に触れない。
+- 追補 (2026-10-20、app#486、決定文は不変): V1〜V3 の test は `internal/collector/unknown_challenge_contract_test.go` の `TestVerifyProbeContract` (V1 / V2 / V3 の subtest) に集約し、probe の id は契約表の行 `challenge id の文法と collector の 404` から読む。下の Verification の V1〜V3 の test 名・置き場は集約前の原文。
 - Date / Deciders: 2026-10-19 / 起草: software-engineer。承認: architect (review-5x R4)・VP
 - 関連:
   - Issue #445 (発注元。#441 review-5x の HIGH から切り出し)、#437 / #468 (文法の 1 定義)、#478 (`specparity` の識別子 pattern の表)
@@ -43,7 +44,9 @@
 
 ## Verification (すべて `make test` = required の `test` に載せる)
 
-- **V1 / V2 / V3** `internal/collector/unknown_challenge_contract_test.go` `TestVerifyProbeContract` (app#486: 3 つの test を 1 つに集め、probe の id は契約表の行 `challenge id の文法と collector の 404` の `POST /api/challenges/<probe>/submit` から読む。写しを test に置かない。collector の spec が同じ id を名指すことも見る): (V2) `99-verify-probe` が文法内、旧 `verify-probe` が文法外。(V3) 実 `challenges/` の catalog の key でない。(V1) collector が `submit` を upstream に転送する。(V3) scoreboard が 404 と `{"error":"unknown challenge` で始まる固定 body で答え、id を echo しない。
+- **V1** `internal/collector/collector_test.go` `TestSubmit_VerifyProbeIsForwarded`: `99-verify-probe` の `submit` が upstream に転送される。
+- **V2** `internal/catalog/challengeid/challengeid_test.go` `TestVerifyProbeIsInsideTheGrammar`: `99-verify-probe` が文法内、旧 `verify-probe` が文法外。
+- **V3** `internal/scoreboard/cid_label_test.go` `TestVerifyProbeCIDIsGrammarValidNotInCatalogAndAnsweredWithFixed404`: 文法内・実 `challenges/` の catalog の key でない・scoreboard が 404 と `{"error":"unknown challenge` で始まる固定 body で答える (既存の `AB.c` の 404 の test の隣)。
 - **V4** `internal/collector/collector_test.go` `TestSubmit_OutOfGrammarCID_Fixed404NotForwarded` / `TestExfil_OutOfGrammarCID_Fixed404NotForwarded`: 文法外 (4096 文字・大文字・`.`・`%20`・桁違い・path traversal・非 UTF-8 ほか) は 404 と固定 body で、upstream を呼ばない。
 - **V5** `internal/collector/unknown_challenge_contract_test.go` `TestUnknownChallenge404_CollectorAndScoreboardAreByteIdentical`: collector.New を、実 `challenges/` の catalog で作った実 scoreboard handler の前に置く。(i) 文法外 id (`AB.c`・`verify-probe`) は collector の 404 で、upstream の呼び出しは 0 回。(ii) `99-verify-probe` は転送され (呼び出し 1 回)、scoreboard が 404 で答える。(iii) (i) と (ii) の status・Content-Type・body が byte 単位で一致する。collector の局所 404 と scoreboard の 404 は本番では別々の定義なので、「同じ bytes」を保つのはこの test だけ。test だけの import で、collector の production closure は変わらない。
 - **依存境界** `internal/apispec/dependency_boundary_test.go` `TestCollectorLinksTheChallengeIDLeafNotTheCatalog`: collector の closure に `challengeid` の leaf があり、`internal/catalog` と yaml.v3 が無い (D2 の「catalog を持たない」を機械で固定する既存の検査)。
