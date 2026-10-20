@@ -78,9 +78,12 @@ func TestSeatImportCheck_CatchesAMissingImport(t *testing.T) {
 	}
 }
 
-// seatShaped matches a regexp literal spelling a seat-like grammar: the
-// character-class pair a seat is built from, followed by a bounded repeat.
-var seatShaped = regexp.MustCompile(`\[a-z0-9\]\[a-z0-9-\]\{0,\d+\}`)
+// seatShaped matches a regexp literal spelling a seat-like grammar. Two shapes,
+// both caught so tightening the grammar cannot blind the detector (app#480):
+//
+//	[a-z0-9][a-z0-9-]{0,N}                   the current one (a trailing "-" allowed)
+//	[a-z0-9]([a-z0-9-]{0,N}[a-z0-9])?        the one that must end in a letter or digit
+var seatShaped = regexp.MustCompile(`\[a-z0-9\](?:\[a-z0-9-\]\{0,\d+\}|\(\[a-z0-9-\]\{0,\d+\}\[a-z0-9\]\)\?)`)
 
 // otherGrammars are the literals that look like a seat but are a different
 // grammar on purpose, named by exact value so any other shape is still red.
@@ -155,14 +158,22 @@ func TestNoOtherFileSpellsTheSeatGrammar(t *testing.T) {
 }
 
 func TestSeatLiteralCheck_CatchesACopy(t *testing.T) {
-	copyOf := "package x\nimport \"regexp\"\nvar v = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)\n"
-	if lits, err := seatLiterals("x.go", copyOf); err != nil || len(lits) != 1 {
-		t.Fatalf("a copy of the seat grammar was not found: %v, %v", lits, err)
-	}
-	// a drifted copy is still caught (it would be a second, different definition)
-	drifted := strings.Replace(copyOf, "{0,62}", "{0,50}", 1)
-	if lits, _ := seatLiterals("x.go", drifted); len(lits) != 1 {
-		t.Fatalf("a drifted copy was not found: %v", lits)
+	// Both shapes of the grammar, and a drifted copy of each (it would be a
+	// second, different definition), are found.
+	for name, copyOf := range map[string]string{
+		"current shape":      "package x\nimport \"regexp\"\nvar v = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)\n",
+		"end-anchored shape": "package x\nimport \"regexp\"\nvar v = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,51}[a-z0-9])?$`)\n",
+	} {
+		if lits, err := seatLiterals("x.go", copyOf); err != nil || len(lits) != 1 {
+			t.Fatalf("%s: a copy of the seat grammar was not found: %v, %v", name, lits, err)
+		}
+		drifted := strings.Replace(strings.Replace(copyOf, "{0,62}", "{0,50}", 1), "{0,51}", "{0,40}", 1)
+		if drifted == copyOf {
+			t.Fatalf("%s: the drift did not change the copy; the mutation tests nothing", name)
+		}
+		if lits, _ := seatLiterals("x.go", drifted); len(lits) != 1 {
+			t.Fatalf("%s: a drifted copy was not found: %v", name, lits)
+		}
 	}
 	// the named other grammar is not a seat
 	seed := "package x\nvar v = `^[a-z0-9][a-z0-9-]{0,31}$`\n"
