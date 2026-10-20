@@ -249,6 +249,7 @@
 2. **class の規則に field ごとの例外が要る** (inline で TAB を許したい、block で LF を拒みたい等)、または **block の規則で正当な投稿が 400 になった** (RTL の言語の U+200E / U+200F / U+061C、マラヤーラム語の旧式 chillu など。#429 が見直しのきっかけに挙げた) → 語を 1 つ足すか、class の `allow` / `exempt` を変えて表に規則を書く。field の例外のリストは作らない。
 3. **route が class の規則より弱い述語を当てているのに probe を通った** (review で見つかった)、**request の decode がすべて生成型を通るようになった** (#115 F2)、**文法の外の seat の値が保存されていた** (app#439 の起動時 Warn が開場前の DB で非 0)、または **seat を保存する経路が route (body と path) と ingest の ns の外に増えた** → 述語を route の外へ移す。class は生成型に載せて decode の層で当てる (O2)。seat の文法は Grader / Store の入口で当てる (#433 review-5x R1#2 (b))。
    - (rev3。app#449 review-5x R4#1) flag 形 (D2 の class の下限) の検査を持たない participant-* の request field が増えた (review・監査・本番で見つかった)、または S3b が flag 形の probe を持たずに landing した、も同じ信号とする。後者のときは、flag 形の probe が入るまで S4 (I18 の昇格) を上げない。
+   - (rev5。app#479) Grader の公開入口 (`OnRuleFire`・`TaintOnOverflow`・`SubmitDetect`・`SubmitEvade`・`RecordExfil`、`Sweep` は保存済みの受領) はすべて seat の文法を当てる (`scoring.ErrInvalidUser`)。route と ingest の ns の gate は先頭に残る (2 枚目の gate)。この信号で残る行き先は、Store のうち Grader を通らない書き込み。決定文は変えていない。
 4. **`x-ctf-text-origin` を app の test 以外が読み始めた** (docs site、platform、外の道具) → extension の JSON Schema と版を定める (ADR-0005 Signpost 5、ADR-0037 Signpost 1)。
 
 ## Verification (V3 を除き `make test` = required の `test / go-test` に載せ、exit status で判定する)
