@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/Qfour/falco-ctf-app/internal/apispec"
 )
 
 // durationSeries returns the series of collector_request_duration_seconds as
@@ -82,30 +84,6 @@ func fiftyMethods(tag string) []string {
 		ms = append(ms, fmt.Sprintf("FOO%d%s", i, tag))
 	}
 	return append(ms, "LONG"+tag+strings.Repeat("X", 4096), "メソッド"+tag, "\xff\xfe"+tag)
-}
-
-func TestMethodLabel(t *testing.T) {
-	tests := []struct {
-		name, route, method, want string
-	}{
-		{"declared POST", "POST /api/challenges/{cid}/submit", "POST", "POST"},
-		{"declared GET", "GET /healthz", "GET", "GET"},
-		{"HEAD is served from a GET pattern and keeps its value", "GET /healthz", "HEAD", "HEAD"},
-		{"a method the route does not declare", "GET /healthz", "FOO1", "other"},
-		{"POST on a GET route (405)", "GET /healthz", "POST", "other"},
-		{"HEAD on a POST route", "POST /api/challenges/{cid}/submit", "HEAD", "other"},
-		{"nothing matched", "", "POST", "other"},
-		{"nothing matched, invented method", "", "FOO1", "other"},
-		{"invalid UTF-8 never reaches a label", "", "\xff\xfe", "other"},
-		{"a pattern without a method is not trusted", "/healthz", "GET", "other"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := methodLabel(tc.route, tc.method); got != tc.want {
-				t.Fatalf("methodLabel(%q, %q) = %q, want %q", tc.route, tc.method, got, tc.want)
-			}
-		})
-	}
 }
 
 // Fifty-odd distinct methods, on the default-deny surface (404), on a known path
@@ -273,5 +251,68 @@ func TestRateLimitConstantsMatchSpec(t *testing.T) {
 	}
 	if !strings.Contains(string(spec), "the same "+fmt.Sprintf("%d req/s burst %d", budgetRate, budgetBurst)) {
 		t.Fatal("the spec's default-deny prose does not state the budget constants")
+	}
+}
+
+// Real methods the surface does not declare (CONNECT included: net/http answers
+// it without cleaning the path) never become a label value of their own.
+func TestRequestDurationUndeclaredStandardMethodsAreNotLabels(t *testing.T) {
+	h, _ := newMethodHandler(t)
+	i := 0
+	for _, m := range []string{"CONNECT", "TRACE", "PATCH", "DELETE", "OPTIONS", "PUT"} {
+		for _, path := range []string{"/healthz", "/api/state", "/api/challenges/10-final-exfil/submit", "/x/", "/a b/"} {
+			i++
+			serve(h, m, path, fmt.Sprintf("10.80.0.%d", i))
+		}
+	}
+	for k := range durationSeries(t) {
+		parts := strings.Split(k, "|")
+		if len(parts) != 3 {
+			t.Fatalf("series key %.60q is not route|method|status", k)
+		}
+		switch parts[1] {
+		case "CONNECT", "TRACE", "PATCH", "DELETE", "OPTIONS", "PUT":
+			t.Fatalf("series %.60q: an undeclared method became a label value", k)
+		}
+		if strings.Contains(parts[0], "a b") || strings.HasPrefix(parts[0], "/") {
+			t.Fatalf("series %.60q: the route label carries a request-derived path", k)
+		}
+	}
+}
+
+// subtreePatterns lists the declared patterns that end in "/": a subtree
+// pattern. For a CONNECT request net/http does not clean the path, and when a
+// subtree pattern matches path+"/" it answers with a trailing-slash redirect and
+// reports the REQUEST's path as the pattern, so the route label (one series per
+// path) would be request-chosen again. httpx.MethodLabel does not trust such a
+// pattern, but the route label still would: the table has none.
+func subtreePatterns(routes []apispec.Route) []string {
+	var out []string
+	for _, rt := range routes {
+		if strings.HasSuffix(rt.Pattern, "/") {
+			out = append(out, rt.MuxPattern())
+		}
+	}
+	return out
+}
+
+func TestDeclaredRoutesAreNeverSubtreePatterns(t *testing.T) {
+	h, _ := newMethodHandler(t)
+	routes := h.Routes()
+	if len(routes) < 4 {
+		t.Fatalf("%d routes, want the collector's 4: the check would pass on nothing", len(routes))
+	}
+	if sub := subtreePatterns(routes); len(sub) != 0 {
+		t.Fatalf("subtree patterns %v in the collector's route table: a CONNECT request would make the route label request-derived (app#491); declare an exact path", sub)
+	}
+}
+
+func TestSubtreePatternsCheck_CatchesOne(t *testing.T) {
+	routes := []apispec.Route{
+		{Method: "GET", Pattern: "/healthz"},
+		{Method: "GET", Pattern: "/files/"},
+	}
+	if sub := subtreePatterns(routes); len(sub) != 1 || sub[0] != "GET /files/" {
+		t.Fatalf("subtreePatterns = %v, want [GET /files/]", sub)
 	}
 }

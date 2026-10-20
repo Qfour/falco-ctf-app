@@ -336,7 +336,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	h.mux.ServeHTTP(sw, r)
 	metrics.HTTPRequestDuration.
-		WithLabelValues(route, r.Method, strconv.Itoa(sw.status)).
+		WithLabelValues(route, httpx.MethodLabel(route, r.Method), strconv.Itoa(sw.status)).
 		Observe(time.Since(start).Seconds())
 }
 

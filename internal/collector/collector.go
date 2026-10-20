@@ -293,7 +293,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	next.ServeHTTP(sw, r)
 	forwardDuration.
-		WithLabelValues(route, methodLabel(route, r.Method), strconv.Itoa(sw.status)).
+		WithLabelValues(route, httpx.MethodLabel(route, r.Method), strconv.Itoa(sw.status)).
 		Observe(h.now().Sub(start).Seconds())
 }
 
