@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -19,7 +18,6 @@ import (
 
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
-	"github.com/Qfour/falco-ctf-app/internal/catalog/challengeid"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/metrics"
 	"github.com/Qfour/falco-ctf-app/internal/store"
@@ -278,55 +276,5 @@ func TestSubmitCatalogKeyOutsideTheGrammarIsStillUnknown(t *testing.T) {
 	}
 	if submissionLabelValues(t)["AB.c"] {
 		t.Fatal("a key outside the grammar was used as a label value")
-	}
-}
-
-// verifyProbeCID is the challenge id platform's verify (a-2) submits through the
-// collector (platform #264, ADR-0041): inside the id grammar, so the collector
-// forwards it, and not a challenge, so the scoreboard answers it. The gate reads
-// this answer: HTTP 404 and a body that starts with {"error":"unknown challenge.
-const verifyProbeCID = "99-verify-probe"
-
-// The probe is inside the grammar, is not a key of the REAL catalog
-// (challenges/), and the scoreboard answers it with 404 and the fixed body
-// whose prefix verify.sh (a-2) matches. Any of the three moving breaks the
-// gate silently, so all three are fixed here, next to the AB.c case.
-func TestVerifyProbeCIDIsGrammarValidNotInCatalogAndAnsweredWithFixed404(t *testing.T) {
-	if !challengeid.Valid(verifyProbeCID) {
-		t.Fatalf("%s is outside the grammar %s: the collector would answer it itself and the gate would never reach the scoreboard", verifyProbeCID, challengeid.Pattern)
-	}
-	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
-		t.Fatalf("repo root not found at %s: %v", root, err)
-	}
-	real, err := catalog.Load(filepath.Join(root, "challenges"))
-	if err != nil {
-		t.Fatalf("catalog.Load(challenges): %v", err)
-	}
-	if len(real) == 0 {
-		t.Fatal("the real catalog is empty: the not-a-key check below would prove nothing")
-	}
-	if _, ok := real[verifyProbeCID]; ok {
-		t.Fatalf("%s is a challenge in challenges/: the gate's probe would be a real id", verifyProbeCID)
-	}
-
-	st, err := store.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { st.Close() })
-	srv := scoreboard.NewHandler(real, st, slog.New(slog.NewTextHandler(io.Discard, nil)),
-		scoreboard.WithExpectedEmailDomain(fixtureEmailDomain))
-	// What the gate sends: header-less, no Origin (a workspace curl via the collector).
-	r := httptest.NewRequest("POST", "/api/challenges/"+verifyProbeCID+"/submit", strings.NewReader(`{}`))
-	r.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	srv.ServeHTTP(w, r)
-	assertFixedUnknownBody(t, verifyProbeCID, w.Code, w.Body.String(), verifyProbeCID)
-	if !strings.HasPrefix(w.Body.String(), `{"error":"unknown challenge`) {
-		t.Fatalf("body %q lacks the prefix verify.sh (a-2) matches", w.Body.String())
 	}
 }

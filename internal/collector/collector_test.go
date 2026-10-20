@@ -194,22 +194,6 @@ func TestSubmit_OutOfGrammarCID_Fixed404NotForwarded(t *testing.T) {
 	}
 }
 
-// verifyProbeCID is the id platform's verify (a-2) submits through the
-// collector: inside the grammar, not a challenge. The collector holds no
-// catalog, so it must FORWARD it and let the scoreboard answer 404 (ADR-0041,
-// platform #264). If this stops being forwarded, the gate would read the
-// collector's own 404 and go green without ever reaching the scoreboard.
-const verifyProbeCID = "99-verify-probe"
-
-func TestSubmit_VerifyProbeIsForwarded(t *testing.T) {
-	c, up := newTestCollector(t)
-	resp := do(t, "POST", c.URL+"/api/challenges/"+verifyProbeCID+"/submit", `{}`)
-	resp.Body.Close()
-	if got, want := up.last(), "POST /api/challenges/"+verifyProbeCID+"/submit"; got != want {
-		t.Fatalf("upstream call = %q, want %q (a grammar-valid id that is not a challenge must be forwarded)", got, want)
-	}
-}
-
 func TestSubmit_ForwardedTransparently(t *testing.T) {
 	c, up := newTestCollector(t)
 	resp := do(t, "POST", c.URL+"/api/challenges/10-final-exfil/submit", `{"user":"alice","flag":"FALCO{x}"}`)

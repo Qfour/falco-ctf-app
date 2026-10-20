@@ -4,6 +4,7 @@
   - クロスリポ契約 (collector の局所応答と platform verify (a-2) の probe) に触れるので、Class-2。architect 合意 (review-5x 52 回目 R4、yes-if の条件は本 PR で満たした) + security-engineer APPROVE (R1) + VP 承認 (`ORGANIZATION.md` §4・§5) を経て、本 PR 内で Accepted にした。
   - HTTP の status は 1 つ変わる (collector の exfil: `400 invalid challenge id` → `404 unknown challenge`)。参加者の正規の経路 (正しい id) には影響しない。
   - 新 image・Dockerfile・Hard Invariant に触れない。
+- 追補 (2026-10-20、app#486、決定文は不変): V1〜V3 の test は `internal/collector/unknown_challenge_contract_test.go` の `TestVerifyProbeContract` (V1 / V2 / V3 の subtest) に集約し、probe の id は契約表の行 `challenge id の文法と collector の 404` から読む。下の Verification の V1〜V3 の test 名・置き場は集約前の原文。
 - Date / Deciders: 2026-10-19 / 起草: software-engineer。承認: architect (review-5x R4)・VP
 - 関連:
   - Issue #445 (発注元。#441 review-5x の HIGH から切り出し)、#437 / #468 (文法の 1 定義)、#478 (`specparity` の識別子 pattern の表)
