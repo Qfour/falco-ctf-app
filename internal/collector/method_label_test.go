@@ -84,30 +84,6 @@ func fiftyMethods(tag string) []string {
 	return append(ms, "LONG"+tag+strings.Repeat("X", 4096), "メソッド"+tag, "\xff\xfe"+tag)
 }
 
-func TestMethodLabel(t *testing.T) {
-	tests := []struct {
-		name, route, method, want string
-	}{
-		{"declared POST", "POST /api/challenges/{cid}/submit", "POST", "POST"},
-		{"declared GET", "GET /healthz", "GET", "GET"},
-		{"HEAD is served from a GET pattern and keeps its value", "GET /healthz", "HEAD", "HEAD"},
-		{"a method the route does not declare", "GET /healthz", "FOO1", "other"},
-		{"POST on a GET route (405)", "GET /healthz", "POST", "other"},
-		{"HEAD on a POST route", "POST /api/challenges/{cid}/submit", "HEAD", "other"},
-		{"nothing matched", "", "POST", "other"},
-		{"nothing matched, invented method", "", "FOO1", "other"},
-		{"invalid UTF-8 never reaches a label", "", "\xff\xfe", "other"},
-		{"a pattern without a method is not trusted", "/healthz", "GET", "other"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := methodLabel(tc.route, tc.method); got != tc.want {
-				t.Fatalf("methodLabel(%q, %q) = %q, want %q", tc.route, tc.method, got, tc.want)
-			}
-		})
-	}
-}
-
 // Fifty-odd distinct methods, on the default-deny surface (404), on a known path
 // with the wrong method (405) and on a known route with a method the route does
 // not declare, add at most one series each: all of them fold into "other".
@@ -273,5 +249,31 @@ func TestRateLimitConstantsMatchSpec(t *testing.T) {
 	}
 	if !strings.Contains(string(spec), "the same "+fmt.Sprintf("%d req/s burst %d", budgetRate, budgetBurst)) {
 		t.Fatal("the spec's default-deny prose does not state the budget constants")
+	}
+}
+
+// Real methods the surface does not declare (CONNECT included: net/http answers
+// it without cleaning the path) never become a label value of their own.
+func TestRequestDurationUndeclaredStandardMethodsAreNotLabels(t *testing.T) {
+	h, _ := newMethodHandler(t)
+	i := 0
+	for _, m := range []string{"CONNECT", "TRACE", "PATCH", "DELETE", "OPTIONS", "PUT"} {
+		for _, path := range []string{"/healthz", "/api/state", "/api/challenges/10-final-exfil/submit", "/x/", "/a b/", "/a b", "/zz", "/api"} {
+			i++
+			serve(h, m, path, fmt.Sprintf("10.80.0.%d", i))
+		}
+	}
+	for k := range durationSeries(t) {
+		parts := strings.Split(k, "|")
+		if len(parts) != 3 {
+			t.Fatalf("series key %.60q is not route|method|status", k)
+		}
+		switch parts[1] {
+		case "CONNECT", "TRACE", "PATCH", "DELETE", "OPTIONS", "PUT":
+			t.Fatalf("series %.60q: an undeclared method became a label value", k)
+		}
+		if strings.Contains(parts[0], "a b") || strings.HasPrefix(parts[0], "/") {
+			t.Fatalf("series %.60q: the route label carries a request-derived path", k)
+		}
 	}
 }

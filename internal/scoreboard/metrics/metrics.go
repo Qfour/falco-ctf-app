@@ -234,7 +234,8 @@ var CSPViolationReports = promauto.NewCounterVec(
 // HTTPRequestDuration measures handler latency per route.
 //
 //	route:  Go 1.22 ServeMux pattern (e.g. "POST /falco/events")
-//	method: HTTP method
+//	method: the matched route's declared method (plus HEAD on a GET route), else
+//	        "other" (httpx.MethodLabel, app#491)
 //	status: response status code as string
 var HTTPRequestDuration = promauto.NewHistogramVec(
 	prometheus.HistogramOpts{

@@ -31,9 +31,11 @@ import (
 //   - TestAPISpec_V1_RouteSetMatchesSpec — bidirectional route-set match
 //     (mux Routes() <-> spec operations). The core "spec isn't lying about
 //     what exists" check.
+//
 //   - TestAPISpec_V3b_StringExtParity — x-ctf-audience / x-ctf-authz /
 //     x-ctf-rate-limit string parity. The core "spec isn't lying about who
 //     can call this" check.
+//
 //   - TestAPISpec_IdentitySourceProperty — the entry point that forces every
 //     Authz word to be classified, on every service: it runs
 //     specparity.IdentitySourceViolations on the service's live Routes(),
@@ -44,6 +46,11 @@ import (
 //     route (checked == 0 is allowed there), so a route declared later is
 //     covered the moment it appears. Named
 //     TestAPISpec_ClaimedIdentityImpliesForwardOrInternal until app#413.
+//
+//   - TestAPISpec_RouteLabelIsClosed — specparity.RouteLabelViolations on the
+//     service's live Routes(): the `route` label of a request-duration
+//     histogram is a closed set (no CONNECT-matching subtree pattern, app#491).
+//     Required everywhere so a service added later is held to it.
 //
 // Deliberately NOT included, with reasons that must hold for as long as
 // they're excluded (re-evaluate if either premise changes):
@@ -67,6 +74,7 @@ var requiredParityTestFuncs = []string{
 	"TestAPISpec_V1_RouteSetMatchesSpec",
 	"TestAPISpec_V3b_StringExtParity",
 	"TestAPISpec_IdentitySourceProperty",
+	"TestAPISpec_RouteLabelIsClosed",
 }
 
 // testFuncNames returns the set of top-level (non-method) function names

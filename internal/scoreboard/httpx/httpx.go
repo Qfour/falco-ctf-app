@@ -1,4 +1,10 @@
 // Package httpx provides shared HTTP helpers for scoreboard sub-handlers.
+//
+// The collector imports this package too (WriteJSON, PeerHost, MethodLabel), so
+// it uses the standard library only: the collector is a distroless image whose
+// SBOM carries only what runs, and collector/Dockerfile COPYs this directory by
+// name. A third-party import here would change that image
+// (internal/apispec's TestCollectorThirdPartyImportsArePinned is the tripwire).
 package httpx
 
 import (

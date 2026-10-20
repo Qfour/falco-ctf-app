@@ -436,3 +436,24 @@ func main() {}
 		t.Fatal("the synthetic cmd/fakebin -> internal/catalog import was not found")
 	}
 }
+
+// methodLabelImportPath: app#491. The method label's closed set is one stdlib-only
+// definition in internal/scoreboard/httpx (MethodLabel), called by the collector
+// and the scoreboard. The collector's image COPYs that directory by name, so a
+// missing COPY is red here, at `make test` time, and not only in the image build.
+const methodLabelImportPath = modulePrefix + "internal/scoreboard/httpx"
+
+func TestCollectorLinksTheMethodLabelLeafAndItsImageCopiesIt(t *testing.T) {
+	root := repoRoot(t)
+	closure := transitiveModuleImports(t, root, modulePrefix+"cmd/collector")
+	if !closure[methodLabelImportPath] {
+		t.Fatalf("cmd/collector's closure lacks %s: the method label must use the one definition (app#491)", methodLabelImportPath)
+	}
+	b, err := os.ReadFile(filepath.Join(root, "collector", "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "COPY internal/scoreboard/httpx ./internal/scoreboard/httpx") {
+		t.Fatal("collector/Dockerfile does not COPY internal/scoreboard/httpx: the image build fails with an undefined httpx.MethodLabel")
+	}
+}
