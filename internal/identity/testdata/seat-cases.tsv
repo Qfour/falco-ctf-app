@@ -1,0 +1,96 @@
+# The seat grammar's shared case table (app#480, ADR-0034 D2).
+#
+# A seat is the workspace / participant name (the `<seat>` in
+# `<seat>@<EXPECTED_EMAIL_DOMAIN>`, `ctf-<seat>`, the Helm release name). The
+# grammar has ONE Go definition, identity.SeatPattern; every implementation
+# registered below is a copy that this table holds equal (the `make e2e-serve AS=`
+# check in the Makefile is an approximation and is NOT registered: the e2e
+# harness re-checks the name in Go):
+#   - Go:    internal/identity (seat_cases_test.go) reads this file.
+#   - shell: charts/ctf-user/deploy-user.sh (its SEAT_PATTERN), run row by row
+#            by scripts/check-seat-grammar.sh (make check-flags; CI flag-guard).
+#   - platform (private repo): scripts/lib/roster.sh, policy/key-guards.rego and
+#            scripts/preflight-identity.sh read the SAME rows (their PR is the
+#            paired one; until it lands they are not checked against this file).
+# A row is never dropped to make an implementation pass: the implementation
+# that disagrees is the bug. A change to the grammar changes the rows in the
+# same commit.
+#
+# Format (tab-separated, two columns: `input<TAB>accept|reject`):
+#   - blank lines and lines starting with `#` are ignored
+#   - split each line on its FIRST tab only. `input` may be empty (the line then
+#     starts with a tab) and contains neither a tab nor a newline literally
+#   - do NOT read it with `IFS=$'\t' read` (a tab is IFS whitespace there, so an
+#     empty first column collapses)
+#   - characters that cannot be written literally are placeholders, decoded by
+#     every reader: {LF} = U+000A, {U+202E} = RIGHT-TO-LEFT OVERRIDE
+#     (a bidi control), {U+00FC} = u-umlaut, {U+00EF} = i-diaeresis (a non-ASCII
+#     letter); the file itself stays ASCII
+#   - the set of placeholders is closed. After decoding, a row whose input still
+#     contains `{` or `}` is an error of the READER (an unknown placeholder, or a
+#     reader that lacks one), not a verdict: the reader fails. Otherwise a reader
+#     that forgot a decoder would test the literal text, reject it, and stay green
+#     without ever trying the input the row stands for. No seat row spells a brace.
+#
+# Rows marked (B) are the ones whose verdict changes when the grammar is
+# tightened to the set a workspace can actually be deployed with (1..53
+# characters, ending in a letter or digit: app#480); they pin today's verdict.
+
+# --- baseline: what the roster actually holds
+user1	accept
+user7	accept
+user40	accept
+test1	accept
+# --- shape
+a	accept
+0	accept
+1a	accept
+a1	accept
+a-b	accept
+u-2	accept
+a--b	accept
+# --- length (B): today up to 63 characters; Helm accepts a release name of at most 53
+abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	accept
+abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	accept
+abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	accept
+abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	accept
+abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	reject
+# --- a trailing '-' (B): accepted today; a Helm release name must end in a letter or digit
+a-	accept
+user1-	accept
+# --- empty, leading '-', case
+	reject
+-	reject
+-x	reject
+-user1	reject
+User1	reject
+USER1	reject
+uSer1	reject
+# --- characters outside [a-z0-9-]
+user_1	reject
+user.1	reject
+user 1	reject
+ user1	reject
+user1 	reject
+user,1	reject
+user=1	reject
+a,b=c	reject
+user1,username=x	reject
+user@1	reject
+a@b	reject
+user/1	reject
+user:1	reject
+user;1	reject
+user*	reject
+user$1	reject
+user\1	reject
+ctf-user1.example	reject
+{U+00FC}ser1	reject
+user{U+00EF}	reject
+# --- control and bidi characters ({LF}: a trailing newline is not accepted; $ is not a line anchor here)
+user1{LF}	reject
+{LF}user1	reject
+user{LF}1	reject
+user{U+202E}1	reject
+{U+202E}user1	reject
+user1{U+202E}	reject
