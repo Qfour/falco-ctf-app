@@ -26,10 +26,10 @@ side. ctf-user IS a falco-ctf-common consumer for `falco-ctf-common.image`
 */}}
 {{- define "ctf-user.labels" -}}
 app.kubernetes.io/name: ctf-user
-app.kubernetes.io/instance: {{ .Values.username }}
+app.kubernetes.io/instance: {{ .Values.username | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 app.kubernetes.io/part-of: falco-ctf
-falco-ctf/username: {{ .Values.username }}
+falco-ctf/username: {{ .Values.username | quote }}
 {{- /* P27-1: challengeId is "scenario:<name>" in scenario mode — ':' is not
        a valid k8s label-value character, so sanitize just for this label
        (deploy-user.sh's own `kubectl label namespace` call does the same
@@ -45,7 +45,7 @@ Selector labels — subset of common labels used in matchLabels (immutable).
 */}}
 {{- define "ctf-user.selectorLabels" -}}
 app.kubernetes.io/name: ctf-user
-app.kubernetes.io/instance: {{ .Values.username }}
+app.kubernetes.io/instance: {{ .Values.username | quote }}
 {{- end -}}
 
 {{/*
