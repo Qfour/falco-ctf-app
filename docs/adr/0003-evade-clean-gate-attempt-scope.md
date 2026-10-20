@@ -332,6 +332,8 @@ A1 の順序 (taint → trigger) を内部に閉じ込める。`MarkDirtyOnRuleF
 規律ではなく **パッケージ境界による静的な事実**にする。**順序そのものの強制はテスト** —
 強制手段の内訳は A1 の表を見よ)。ingest handler は `OnRuleFire` のみを呼ぶ。
 
+(app#479 の追補。決定文は不変) 戻り値は `(RuleFireOutcome, error)`。seat の文法の外の `user` は `scoring.ErrInvalidUser` で、3 つの書き込みの前に返る。
+
 **戻り値は単一 `error` ではなく struct にする** (実装 = `internal/scoreboard/scoring/scoring.go:394`):
 
 ```go

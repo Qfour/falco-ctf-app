@@ -158,9 +158,15 @@ import (
 // (fail-closed): the first protects what the Grader cannot (ingest's limiter
 // key, metric label and feed), this one the scoring tables whoever calls.
 //
-// The grammar is identity.SeatPattern (the one definition, app#440). Writes to
-// the Store that do not go through the Grader are gated by their route's
-// {user} (ADR-0039 Signpost 3 names them as the remaining destination).
+// The grammar is identity.SeatPattern (the one definition, app#440). The claim
+// is about ADDING to the four scoring tables (solved / evade_dirty /
+// expected_rule_fire / exfil): the Grader is the only caller of their four
+// insert / upsert Store methods (singledoor_test.go checks it). Three Store
+// writes deliberately stay outside the Grader, behind their route's gate: the
+// participant's ResetDirty and the admin's Reset (deletes, gated by the route's
+// {user} seat check / the admin gate) and RecordHintView (a hint reveal, a score
+// input; gated by the route's {user} seat check). ADR-0039 Signpost 3 names them
+// as the remaining destination.
 //
 // An adapter maps it to its first gate's answer, not to a persistence failure:
 // ingest to 200 ignored (no taint), submit / submit-detect / exfil to 400

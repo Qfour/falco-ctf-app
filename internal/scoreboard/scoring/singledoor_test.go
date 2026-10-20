@@ -13,17 +13,36 @@ import (
 	"testing"
 )
 
-// The Grader is the only door to the four scoring tables (solved / evade_dirty /
-// expected_rule_fire / exfil), and every public entry through it applies the seat
-// grammar (app#479, ADR-0039 Signpost 3). Two static guards hold that without
-// trusting a caller's promise:
+// The Grader is the only door for ADDING to the four scoring tables (solved /
+// evade_dirty / expected_rule_fire / exfil): the four insert / upsert methods
+// below (MarkSolved, MarkDirty, RecordExpectedRuleFire, RecordExfil) are called
+// from the Grader and nowhere else, and every public Grader entry that reaches
+// one applies the seat grammar (app#479, ADR-0039 Signpost 3). Two static guards
+// hold that without trusting a caller's promise:
 //
-//   - TestGrader_EntryTableIsComplete: the Grader entries a source has (the
-//     exported methods that reach a store write) are exactly the rows of the
-//     behavioural table in scoring_test.go (graderEntries) plus Sweep, so a new
-//     entry cannot land without a negative test.
+//   - TestGrader_EntryTableIsComplete: the Grader entries the package has (the
+//     exported methods, in ANY non-test file of package scoring, that reach a
+//     store write) are exactly the rows of the behavioural table in
+//     scoring_test.go (graderEntries) plus Sweep, so a new entry cannot land
+//     without a negative test.
 //   - TestScoringTables_OnlyTheGraderWrites: no non-test file outside
 //     internal/store and internal/scoreboard/scoring calls a store write.
+//
+// What the claim does NOT cover, on purpose (review-5x 57 回目, VP 決定): writes
+// that REMOVE or are not an adding write to a scoring table, which sit outside the
+// Grader behind their route's gate, not behind the Grader's:
+//   - Store.ResetDirty (a participant's reset-dirty, deletes from evade_dirty and
+//     exfil) and Store.Reset (the admin reset, wipes the tables): gated by the
+//     route's {user} seat check / the admin gate (and the origin guard);
+//   - Store.RecordHintView (a hint reveal, a score INPUT through the penalty, not a
+//     solve): gated by the route's {user} seat check and selfOrAdmin.
+//
+// They are not excluded by name from the scan; the scan simply looks for the four
+// methods above. A new direct write belongs in the Grader, or in this list with
+// its gate. Known limits of the scan: it follows `g.method` / `g.store.write`
+// references (calls and method values) through the receiver by name; an alias of
+// the receiver, or a Grader method reached through a function value or an
+// interface, is not followed.
 
 // storeWrites are the ScoreStore methods that write a scoring table.
 var storeWrites = []string{"MarkSolved", "MarkDirty", "RecordExpectedRuleFire", "RecordExfil"}
@@ -36,16 +55,25 @@ const sweepEntry = "Sweep"
 // store write: directly (g.store.<write>) or through other Grader methods
 // (g.<method>), however deep. It sorts nothing out by name or by a `user`
 // parameter, so an entry that takes its seat under another name is still found.
-func graderWriteEntries(t *testing.T, src string) []string {
+func graderWriteEntries(t *testing.T, srcs map[string]string) []string {
 	t.Helper()
-	f, err := parser.ParseFile(token.NewFileSet(), "scoring.go", src, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	calls := map[string][]string{} // method -> Grader methods it calls
-	writes := map[string]bool{}    // method -> calls a store write itself
+	calls := map[string][]string{} // method -> Grader methods it references
+	writes := map[string]bool{}    // method -> references a store write itself
 	var exported []string
-	for _, d := range f.Decls {
+	names := make([]string, 0, len(srcs))
+	for n := range srcs {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	var decls []ast.Decl
+	for _, n := range names {
+		f, err := parser.ParseFile(token.NewFileSet(), n, srcs[n], 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decls = append(decls, f.Decls...)
+	}
+	for _, d := range decls {
 		fd, ok := d.(*ast.FuncDecl)
 		if !ok || fd.Recv == nil || fd.Body == nil || len(fd.Recv.List) != 1 || len(fd.Recv.List[0].Names) != 1 {
 			continue
@@ -58,21 +86,19 @@ func graderWriteEntries(t *testing.T, src string) []string {
 		if fd.Name.IsExported() {
 			exported = append(exported, name)
 		}
+		// Every selector, not only a CallExpr.Fun: a method value (`f := g.store.MarkSolved`,
+		// `go g.help`) reaches the same method.
 		ast.Inspect(fd.Body, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			sel, ok := call.Fun.(*ast.SelectorExpr)
+			sel, ok := n.(*ast.SelectorExpr)
 			if !ok {
 				return true
 			}
 			switch x := sel.X.(type) {
-			case *ast.Ident: // g.method(...)
+			case *ast.Ident: // g.method
 				if x.Name == recv {
 					calls[name] = append(calls[name], sel.Sel.Name)
 				}
-			case *ast.SelectorExpr: // g.store.write(...)
+			case *ast.SelectorExpr: // g.store.write
 				if isIdent(x.X, recv) && x.Sel.Name == "store" && slices.Contains(storeWrites, sel.Sel.Name) {
 					writes[name] = true
 				}
@@ -128,14 +154,33 @@ func tableMethods() []string {
 	return out
 }
 
-func TestGrader_EntryTableIsComplete(t *testing.T) {
-	src, err := os.ReadFile("scoring.go")
+// packageSources reads every non-test .go file of this package.
+func packageSources(t *testing.T) map[string]string {
+	t.Helper()
+	ents, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := graderWriteEntries(t, string(src))
-	if len(got) < 5 { // fail closed: an extractor that sees nothing proves nothing
-		t.Fatalf("found only %v in scoring.go; the scan is not seeing the Grader", got)
+	srcs := map[string]string{}
+	for _, e := range ents {
+		n := e.Name()
+		if e.IsDir() || !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		srcs[n] = string(b)
+	}
+	return srcs
+}
+
+func TestGrader_EntryTableIsComplete(t *testing.T) {
+	srcs := packageSources(t)
+	got := graderWriteEntries(t, srcs)
+	if len(srcs) < 2 || len(got) < 5 { // fail closed: an extractor that sees nothing proves nothing
+		t.Fatalf("found %v in %d files of package scoring; the scan is not seeing the Grader", got, len(srcs))
 	}
 	if want := tableMethods(); !slices.Equal(got, want) {
 		t.Fatalf("Grader entries that reach a store write = %v, but graderEntries (+ Sweep) = %v: "+
@@ -154,6 +199,9 @@ func TestGraderWriteEntries_Scan(t *testing.T) {
 		want []string
 	}{
 		{"direct write", head + "func (g *Grader) A(user string) { g.store.MarkSolved(user, \"c\", \"t\") }", []string{"A"}},
+		{"write as a method value", head + "func (g *Grader) A(user string) { f := g.store.MarkSolved; f(user, \"c\", \"t\") }", []string{"A"}},
+		{"helper reached as a method value", head +
+			"func (g *Grader) A(user string) { f := g.help; f(user) }\nfunc (g *Grader) help(user string) { g.store.MarkDirty(user, \"c\", \"r\", \"t\") }", []string{"A"}},
 		{"write through an unexported helper", head +
 			"func (g *Grader) A(user string) { g.help(user) }\nfunc (g *Grader) help(user string) { g.store.RecordExfil(user, \"c\", \"f\", \"t\") }", []string{"A"}},
 		{"write through two exported hops", head +
@@ -165,10 +213,25 @@ func TestGraderWriteEntries_Scan(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := graderWriteEntries(t, c.src); !slices.Equal(got, c.want) {
+			if got := graderWriteEntries(t, map[string]string{"scoring.go": c.src}); !slices.Equal(got, c.want) {
 				t.Fatalf("entries = %v, want %v", got, c.want)
 			}
 		})
+	}
+}
+
+// An entry defined in ANOTHER file of the package, or reaching its write through a
+// helper defined there, is found: the guard does not read scoring.go alone.
+func TestGraderWriteEntries_Scan_AcrossFiles(t *testing.T) {
+	const head = "package scoring\n"
+	srcs := map[string]string{
+		"scoring.go": head + "type Grader struct{ store ScoreStore }\nfunc (g *Grader) Old(user string) { g.store.MarkSolved(user, \"c\", \"t\") }",
+		"replay.go":  head + "func (g *Grader) Replay(who string) { g.write(who) }",
+		"helper.go":  head + "func (g *Grader) write(who string) { g.store.RecordExfil(who, \"c\", \"f\", \"t\") }",
+		"reads.go":   head + "func (g *Grader) Peek(user string) bool { return g.store.IsSolved(user, \"c\") }",
+	}
+	if got, want := graderWriteEntries(t, srcs), []string{"Old", "Replay"}; !slices.Equal(got, want) {
+		t.Fatalf("entries = %v, want %v", got, want)
 	}
 }
 
