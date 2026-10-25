@@ -69,6 +69,7 @@
 #         has no apk, or the parser's `apk add` count differs from the text's
 #       2 Docker or network trouble (not a verdict about the pins; a verdict of 1 wins)
 set -uo pipefail
+SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"   # absolute: the selftest re-enters this script after the cd below
 cd "$(dirname "$0")/.." || exit 2
 
 # --- parse ------------------------------------------------------------------------------
@@ -432,7 +433,7 @@ selftest() {
     local name="$1" want="$2" must="$3" f
     shift 3
     n=$((n + 1))
-    "$0" --lint "$tmp/tree/images/a/Dockerfile" "$tmp/tree/images/b/Dockerfile" "$@" >"$tmp/out" 2>&1; rc=$?
+    "$SELF" --lint "$tmp/tree/images/a/Dockerfile" "$tmp/tree/images/b/Dockerfile" "$@" >"$tmp/out" 2>&1; rc=$?
     if [ "$rc" -ne "$want" ]; then
       echo "FAIL: selftest: --lint '$name' exited $rc, wanted $want"; cat "$tmp/out"; return 1
     fi
@@ -449,7 +450,7 @@ selftest() {
   # no pin at all: the tree is only bare names (the stand-in tree's own pins left out)
   printf '%s\n' 'FROM alpine:3.24@sha256:aaaa' 'RUN apk add --no-cache vim jq' >"$tmp/lint-nopin"
   n=$((n + 1))
-  "$0" --lint "$tmp/lint-nopin" >"$tmp/out" 2>&1; rc=$?
+  "$SELF" --lint "$tmp/lint-nopin" >"$tmp/out" 2>&1; rc=$?
   if [ "$rc" -ne 1 ] || ! grep -qF 'no apk exact pin found in 1 file(s)' "$tmp/out"; then
     echo "FAIL: selftest: --lint with no pin exited $rc"; cat "$tmp/out"; return 1
   fi
@@ -458,7 +459,7 @@ selftest() {
   lintcase "a parser coverage mismatch (apk add in a heredoc) in one added file" 1 "the text has 5 'apk add' occurrence(s) but the parser read 4" "$tmp/lint-cover" || return 1
   # a missing file is not a pass
   n=$((n + 1))
-  "$0" --lint "$tmp/does-not-exist" >"$tmp/out" 2>&1; rc=$?
+  "$SELF" --lint "$tmp/does-not-exist" >"$tmp/out" 2>&1; rc=$?
   [ "$rc" -eq 1 ] && grep -q 'not found' "$tmp/out" || { echo "FAIL: selftest: --lint on a missing file exited $rc"; cat "$tmp/out"; return 1; }
   echo "  lint (a missing file): exit $rc — not a pass"
 
