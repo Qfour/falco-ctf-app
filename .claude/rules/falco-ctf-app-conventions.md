@@ -96,7 +96,7 @@
 
 - **apk の版の書き方と drift 検知 (ADR-0036 D1・D5、機械強制)**: `apk add` の版の指定は exact
   (`name=version`) だけ。範囲 (`>=` `>` `<` `~`)・`@edge` の tag・`--repository` / `-X`・
-  `--allow-untrusted`・`/etc/apk/repositories` と `/etc/apk/keys` への書き込み (RUN の読み取り以外・COPY / ADD)
+  `--keys-dir`・`--allow-untrusted`・`/etc/apk` 以下への書き込み (RUN の読み取り以外・COPY / ADD・`--mount`)
   は使わない (ADR-0031 D5 を全 Dockerfile に広げた。後ろ 4 つは版を書かない package の出所と署名検証を
   守る、security の条件 4 = app#382 F4。版を書かない `apk add name` は可)。Alpine の index は
   各 package の最新 1 版しか持たないので、upstream の security release の日に base に無い版の pin は
@@ -109,8 +109,8 @@
   `apk-pin-drift` の Issue を 1 本だけ開く / 更新する (PR では回さない: PR の build が drift を
   捕まえる)。文法と parser は offline の `--selftest` (`make check-apk-pins-selftest`) が flag-guard で
   固定する。`check-e2e-pins.sh` は `Dockerfile.e2e` 用の wrapper。pin の版を上げる PR は、
-  `make check-apk-pins` の出力を貼る。**どの package に exact pin を許すか (D2-D4) は ADR-0036 の
-  Accepted まで未適用** (今の pin は ADR-0002 のまま)。
+  `make check-apk-pins` の出力を貼る。**どの package に exact pin を許すか (D2〜D4) は D2 の実装 PR まで
+  未適用** (今の pin は ADR-0002 の運用のまま)。
 
 - docs イメージの build context = repo root (`challenges/` を読んで gen-pages.sh が
   ミッションページを生成。`README.md` の H1 をタイトル、`fixtures/welcome.txt` を

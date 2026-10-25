@@ -17,7 +17,7 @@
 #
 # Pins (ADR-0031 D5). Alpine's index keeps ONE version of each package, so an
 # exact pin stops building the day Alpine ships a new Chromium. That is
-# deliberate (fail closed); .github/workflows/e2e-pins.yaml checks every day
+# deliberate (fail closed); .github/workflows/apk-pins.yaml checks every day
 # whether the pins below still match the index. To bump:
 #   1. docker run --rm <the golang image below> sh -c \
 #        'apk update >/dev/null && apk policy chromium font-wqy-zenhei'

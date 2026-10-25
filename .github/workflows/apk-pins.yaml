@@ -44,7 +44,6 @@ on:
 
 permissions:
   contents: read
-  issues: write
 
 concurrency:
   group: ${{ github.workflow }}
@@ -54,6 +53,10 @@ jobs:
   apk-pins:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # issues: write only here, on the one job that files the Issue.
+    permissions:
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@v7
       - name: every apk pin is in its base image's index, and apk add uses only exact pins

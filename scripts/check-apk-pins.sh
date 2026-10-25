@@ -20,14 +20,30 @@
 #
 # Grammar (D1 + security condition F4, app#382): the only version syntax is exact
 # `name=version`, and the packages come from the repositories and keys the base ships.
-# Fails on a range (`>=` `>` `<` `<=` `~`), a repository tag (`name@edge`), `--repository` /
-# `-X` / `--repositories-file`, `--allow-untrusted`, a write to /etc/apk/repositories or
-# /etc/apk/keys (a RUN command that names the path and is not a plain read — cat grep head
-# tail wc ls stat test diff — or has a `>`; any COPY / ADD naming it), and on a version or
-# package taken from a shell variable (not checkable). A bare `apk add name` is allowed.
-# The path rule is a net, not a proof: `cd /etc/apk && echo x > repositories` is not seen. Reads: `\` continuations, quotes, several commands in one RUN
-# (`apk del ... && apk add ...`), `--upgrade`, `RUN ["apk","add",...]`, apk in a
-# non-first stage, `FROM <stage>` inheritance. It does NOT read heredoc RUNs.
+# Fails on
+#   - a range (`>=` `>` `<` `<=` `~` `=~`), a repository tag (`name@edge`);
+#   - another repository: `--repository` / `--repositories-file` (also `=` attached), `-X`
+#     (also attached `-Xurl` and in a short cluster such as `-uX`);
+#   - `--keys-dir` (also `=` attached): another key directory;
+#   - `--allow-untrusted`;
+#   - a write to apk's configuration: any name containing `/etc/apk` (so `/etc/apk`,
+#     `/etc/apk/`, `.../repositories`, `.../keys`, `.../world`) in a RUN command that is not a
+#     plain read (cat grep head tail wc ls stat test diff, after a leading if/then/do/!) or
+#     that redirects into it, or in a `--mount` of a RUN; any COPY / ADD naming it;
+#   - a version or package taken from a shell variable (not checkable), `name=` with no version.
+# A bare `apk add name` is allowed. `--root` / `--cache-dir` are allowed for now (they move
+# apk's root or its package cache, not its trust); that call waits for security (R1) to
+# confirm (#505 review-5x 65).
+#
+# What it does NOT see (a net, not a proof; review sees these): `COPY rootfs/ /` (a source
+# tree that carries /etc/apk/...), a write inside a heredoc RUN (also `apk add` there: the
+# coverage cross-check turns that into exit 1), `cd /etc/apk && echo x > repositories` (the
+# path is never one token), a path built from a variable, `sh -c "..."` (same coverage check),
+# an ENV / ARG that apk reads.
+#
+# Reads: `\` continuations, quotes, several commands in one RUN (`apk del ... && apk add ...`),
+# `--upgrade`, `RUN ["apk","add",...]`, apk in a non-first stage, `FROM <stage>` inheritance,
+# an indented FROM. It does NOT read heredoc RUNs.
 #
 #   scripts/check-apk-pins.sh               every tracked *Dockerfile* (derived)
 #   scripts/check-apk-pins.sh FILE...       just these (the planted fixtures under
@@ -65,6 +81,7 @@ parse() {
         (name == "" ? "-" : name), (version == "" ? "-" : version), upgrade
     }
     function from_instr(s,    n, t, i, ref, alias) {
+      sub(/^[ \t]+/, "", s)
       n = split(s, t, /[ \t]+/); ref = ""; alias = ""
       for (i = 2; i <= n; i++) {
         if (t[i] == "" || substr(t[i], 1, 2) == "--") continue
@@ -79,21 +96,24 @@ parse() {
       stage = (alias == "" ? "#" nstage : alias)
       if (alias != "") alias_base[alias] = base
     }
-    # apk options that change where packages come from or whether they are verified:
-    # called on t[k]; returns how many following tokens it consumed.
+    # apk options that change where packages come from, which keys are trusted, or whether
+    # signatures are checked: called on t[k]; returns how many following tokens it consumed.
+    # Not flagged on purpose: --root / --cache-dir (see the header).
     function apk_opt(k,    p) {
       p = t[k]
       if (p == "--allow-untrusted") { emit("untrusted", "-", p, 0); return 0 }
-      if (p == "-X" || p == "--repository" || p == "--repositories-file") { emit("repo", "-", p " " t[k + 1], 0); return 1 }
-      if (p ~ /^--repository=/ || p ~ /^--repositories-file=/) { emit("repo", "-", p, 0); return 0 }
+      if (p == "--repository" || p == "--repositories-file" || p ~ /^-[A-Za-z]*X$/) { emit("repo", "-", p " " t[k + 1], 0); return 1 }
+      if (p ~ /^--repository=/ || p ~ /^--repositories-file=/ || p ~ /^-[A-Za-z]*X./) { emit("repo", "-", p, 0); return 0 }
+      if (p == "--keys-dir") { emit("keysfile", "-", p " " t[k + 1], 0); return 1 }
+      if (p ~ /^--keys-dir=/) { emit("keysfile", "-", p, 0); return 0 }
       return 0
     }
-    # A command (segment) that mentions apk'"'"'s repository list or key directory and is not a
-    # plain read is a write to it: echo/printf/sed -i/tee/cp/mv/wget/curl/... or any `>`.
+    # A command (segment) that names a path under /etc/apk and is not a plain read is a write
+    # to apk'"'"'s configuration: echo/printf/sed -i/tee/cp/mv/ln/wget/curl/..., or a redirect
+    # into it, or a --mount of it.
     function seg_flush() {
-      if (sr != "" && (!(sf in ro) || sg)) emit("reposfile", "-", sr, 0)
-      if (sk != "" && (!(sf in ro) || sg)) emit("keysfile", "-", sk, 0)
-      sf = ""; sg = 0; sr = ""; sk = ""
+      if (sp != "" && (!(sf in ro) || sw)) emit((sp ~ /\/etc\/apk\/keys/ ? "keysfile" : "reposfile"), "-", sp, 0)
+      sf = ""; sw = 0; sp = ""; sprev = ""
     }
     function run_instr(s,    i, j, k, mode, upgrade, apk_seen, p, q, tok) {
       sub(/^[ \t]*[Rr][Uu][Nn][ \t]*/, "", s)
@@ -109,7 +129,7 @@ parse() {
             # global options, then the sub-command
             j = i + 1
             while (j <= n && (t[j] == "" || substr(t[j], 1, 1) == "-")) {
-              if (t[j] == "-p" || t[j] == "--root" || t[j] == "--arch" || t[j] == "--keys-dir" || \
+              if (t[j] == "-p" || t[j] == "--root" || t[j] == "--arch" || \
                   t[j] == "--cache-dir" || t[j] == "--wait" || t[j] == "--cache-max-age") j++
               else j += apk_opt(j)
               j++
@@ -139,16 +159,21 @@ parse() {
         if (q == 1 || q == length(p)) { emit("bad", "-", p, 0); continue }
         emit("pin", substr(p, 1, q - 1), substr(p, q + 1), upgrade)
       }
-      # second pass over the same tokens: writes to apk'"'"'s repository list / keys
-      sf = ""; sg = 0; sr = ""; sk = ""
+      # second pass over the same tokens: writes under /etc/apk
+      sf = ""; sw = 0; sp = ""; sprev = ""
       for (k = 1; k <= n + 1; k++) {
         tok = (k <= n ? t[k] : ";")
         if (tok == "") continue
         if (tok == ";") { seg_flush(); continue }
-        if (sf == "") sf = tok
-        if (index(tok, ">") > 0) sg = 1
-        if (index(tok, "/etc/apk/repositories") > 0) sr = tok
-        if (index(tok, "/etc/apk/keys") > 0) sk = tok
+        if (sf == "") {
+          if (tok in kw || tok ~ /^--(mount|network|security)/) { if (tok ~ /^--mount/ && index(tok, "/etc/apk") > 0) { sf = tok; sw = 1; sp = tok } ; continue }
+          sf = tok
+        }
+        if (index(tok, "/etc/apk") > 0) {
+          sp = tok
+          if (index(tok, ">") > 0 || sprev ~ /^[0-9&]*>+$/ || tok ~ /^--mount/) sw = 1
+        }
+        sprev = tok
       }
     }
     function instr_done(s,    w) {
@@ -156,11 +181,14 @@ parse() {
       if (w == "FROM") from_instr(s)
       else if (w == "RUN") run_instr(s)
       else if (w == "COPY" || w == "ADD") {                        # also a way to write them
-        if (index(s, "/etc/apk/repositories") > 0) emit("reposfile", "-", w " ... /etc/apk/repositories", 0)
         if (index(s, "/etc/apk/keys") > 0) emit("keysfile", "-", w " ... /etc/apk/keys", 0)
+        else if (index(s, "/etc/apk") > 0) emit("reposfile", "-", w " ... /etc/apk", 0)
       }
     }
-    BEGIN { split("cat grep head tail wc ls stat test [ diff", ro_words, " "); for (w in ro_words) ro[ro_words[w]] = 1 }
+    BEGIN {
+      split("cat grep head tail wc ls stat test [ diff", ro_words, " "); for (w in ro_words) ro[ro_words[w]] = 1
+      split("if then else elif while until do ! { (", kw_words, " "); for (w in kw_words) kw[kw_words[w]] = 1
+    }
     FNR == 1 { buf = ""; ln0 = 0; nstage = 0; stage = "#0"; base = "NOFROM"; delete alias_base }
     {
       sub(/\r$/, "")
@@ -177,12 +205,15 @@ parse() {
 # An independent count: `apk ... add` occurrences in the non-comment text (grep, not the
 # awk above). If the parser saw fewer `apk add` commands than the text contains, it has a
 # blind spot, and a blind spot is a silent green. Prints "<text count> <parsed count>".
+# The regex follows parse()'s rule: `apk`, then options (those that take an argument bring it
+# along: `-p dir`, `--root dir`, `-X url` ...), then `add`.
+apk_add_re='apk([[:space:]]+(-p|--root|--arch|--cache-dir|--wait|--cache-max-age|--keys-dir|--repository|--repositories-file|-[A-Za-z]*X)[[:space:]]+[^[:space:]]+|[[:space:]]+-[^[:space:]]+)*[[:space:]]+add([[:space:]]|$)'
 coverage() { # rows-file, files...
   local rows="$1" text parsed f
   shift
   text=0
   for f in "$@"; do
-    text=$((text + $({ grep -vE '^[[:space:]]*#' "$f" | grep -oE 'apk[[:space:]]+(-[^[:space:]]+[[:space:]]+)*add([[:space:]]|$)' || true; } | wc -l)))
+    text=$((text + $({ grep -vE '^[[:space:]]*#' "$f" | grep -oE "$apk_add_re" || true; } | wc -l)))
   done
   parsed="$(awk -F'\t' '$5 == "addcmd"' "$rows" | wc -l | tr -d ' ')"
   echo "$text $parsed"
@@ -242,7 +273,7 @@ check_files() {
       edge)  echo "FAIL: $file:$line [$stage] '$version' — a repository tag (@edge etc.) is not allowed (ADR-0036 D1)"; status=1 ;;
       repo)  echo "FAIL: $file:$line [$stage] '$version' — another repository is not allowed (ADR-0036 D1)"; status=1 ;;
       untrusted) echo "FAIL: $file:$line [$stage] '$version' — turns off signature verification (ADR-0036 security condition F4)"; status=1 ;;
-      reposfile) echo "FAIL: $file:$line [$stage] '$version' — writes apk's repository list, which decides where every unpinned package comes from (ADR-0036 security condition F4)"; status=1 ;;
+      reposfile) echo "FAIL: $file:$line [$stage] '$version' — writes apk's configuration under /etc/apk; the repository list decides where every unpinned package comes from (ADR-0036 security condition F4)"; status=1 ;;
       keysfile)  echo "FAIL: $file:$line [$stage] '$version' — writes apk's trusted keys (ADR-0036 security condition F4)"; status=1 ;;
       var)   echo "FAIL: $file:$line [$stage] '$version' — a shell variable in apk add cannot be checked against the index"; status=1 ;;
       bad)   echo "FAIL: $file:$line [$stage] '$version' — name= with no version (or no name)"; status=1 ;;
@@ -314,7 +345,8 @@ selftest() {
   POLICY_TEXT="$(printf '%s\n' \
     'vim policy:' '  9.2.1202-r0:' '    https://dl-cdn.alpinelinux.org/alpine/v3.24/community' \
     'zlib policy:' '  1.3.2-r0:' '    lib/apk/db/installed' '  1.3.2-r1:' '    https://dl-cdn.alpinelinux.org/alpine/v3.24/main' \
-    'chromium policy:' '  155.0.8059.84-r0:' '    https://dl-cdn.alpinelinux.org/alpine/v3.24/community')"
+    'chromium policy:' '  155.0.8059.84-r0:' '    https://dl-cdn.alpinelinux.org/alpine/v3.24/community' \
+    'font-wqy-zenhei policy:' '  0.9.46-r0:' '    https://dl-cdn.alpinelinux.org/alpine/v3.24/community')"
   query_index() { printf '%s\n' "$POLICY_TEXT"; return 0; }
 
   # planted: the text goes through check_files with the stub index
@@ -397,6 +429,39 @@ RUN [\"apk\", \"add\", \"vim=9.2.1202-r0\"]" || return 1
     "2${T}x${T}$B${T}pin${T}vim${T}9.2.1202-r0${T}0" \
     "FROM --platform=linux/amd64 $B AS x
 RUN apk add --virtual .build-deps vim=9.2.1202-r0 2>/dev/null" || return 1
+  # every violation kind is pinned by the table (what the parser emits, not only what the verdict says)
+  table "every violation kind and a pin, one per line" \
+    "2${T}final${T}$B${T}range${T}-${T}vim>=9.2${T}0
+3${T}final${T}$B${T}edge${T}-${T}vim@edge${T}0
+4${T}final${T}$B${T}repo${T}-${T}-X https://m.example/c${T}0
+5${T}final${T}$B${T}var${T}-${T}vim=\${V}${T}0
+6${T}final${T}$B${T}bad${T}-${T}vim=${T}0
+7${T}final${T}$B${T}untrusted${T}-${T}--allow-untrusted${T}0
+8${T}final${T}$B${T}pin${T}chromium${T}155.0.8059.84-r0${T}0
+9${T}final${T}$B${T}reposfile${T}-${T}COPY ... /etc/apk${T}0
+10${T}final${T}$B${T}keysfile${T}-${T}/etc/apk/keys/${T}0" \
+    "$A
+RUN apk add 'vim>=9.2'
+RUN apk add vim@edge
+RUN apk add -X https://m.example/c vim
+RUN apk add vim=\${V}
+RUN apk add vim=
+RUN apk add --allow-untrusted vim
+RUN apk add chromium=155.0.8059.84-r0
+COPY conf /etc/apk/
+RUN cp k.pub /etc/apk/keys/" || return 1
+  table "an option with an argument before add (-p dir) and a redirect: one pin, no violation" \
+    "2${T}final${T}$B${T}pin${T}vim${T}9.2.1202-r0${T}0" \
+    "$A
+RUN apk -p /sysroot add vim=9.2.1202-r0 2>/dev/null" || return 1
+  table "a read of /etc/apk/repositories under if grep (and 2>/dev/null) is not a write" \
+    "2${T}final${T}$B${T}pin${T}vim${T}9.2.1202-r0${T}0" \
+    "$A
+RUN if grep -q x /etc/apk/repositories 2>/dev/null; then apk add vim=9.2.1202-r0; fi" || return 1
+  table "an indented FROM and RUN" \
+    "2${T}x${T}$B${T}pin${T}vim${T}9.2.1202-r0${T}0" \
+    "  FROM $B AS x
+  RUN apk add vim=9.2.1202-r0" || return 1
 
   # planted defects: each one alone must be red (and the clean case must be green)
   planted "a pin that is in the base's index passes" 0 "$A
@@ -408,18 +473,23 @@ RUN apk add --no-cache vim=9.2.1100-r0" || return 1
   planted "the vanished version is on a \\ continuation line, a good one before it" 1 "$A
 RUN apk add --no-cache chromium=155.0.8059.84-r0 \\
     vim=1.0.0-r0" || return 1
+  # D1: each fixture carries a good pin (G), so none of them is red for 'no pin', and each
+  # must be red for the intended reason (the message names it).
+  G=chromium=155.0.8059.84-r0
   planted "a version range >=" 1 "$A
-RUN apk add --no-cache 'vim>=9.2'" || return 1
+RUN apk add --no-cache $G 'vim>=9.2'" "a version range" || return 1
   planted "a version range ~" 1 "$A
-RUN apk add --no-cache vim~9.2" || return 1
+RUN apk add --no-cache $G vim~9.2" "a version range" || return 1
   planted "a version range =~ (fuzzy)" 1 "$A
-RUN apk add --no-cache vim=~9.2" || return 1
+RUN apk add --no-cache $G vim=~9.2" "a version range" || return 1
   planted "@edge tag" 1 "$A
-RUN apk add --no-cache vim@edge" || return 1
+RUN apk add --no-cache $G vim@edge" "a repository tag" || return 1
   planted "--repository" 1 "$A
-RUN apk add --no-cache --repository https://dl-cdn.alpinelinux.org/alpine/edge/community vim" || return 1
+RUN apk add --no-cache $G --repository https://dl-cdn.alpinelinux.org/alpine/edge/community vim" "another repository" || return 1
   planted "a version from a shell variable" 1 "$A
-RUN apk add --no-cache vim=\${VIM_VERSION}" || return 1
+RUN apk add --no-cache $G vim=\${VIM_VERSION}" "shell variable" || return 1
+  planted "name= with no version" 1 "$A
+RUN apk add --no-cache $G vim=" "with no version" || return 1
   planted "no pin at all (bare names only): looked at nothing" 1 "$A
 RUN apk add --no-cache vim jq" || return 1
   planted "no apk at all in the file" 1 "FROM $B
@@ -461,11 +531,74 @@ RUN wget -O /etc/apk/keys/x.rsa.pub https://mirror.example/x.rsa.pub && apk add 
   planted "ADD onto /etc/apk/keys" 1 "$A
 ADD https://mirror.example/x.rsa.pub /etc/apk/keys/x.rsa.pub
 RUN apk add vim=9.2.1202-r0" "trusted keys" || return 1
+  planted "-X attached to its URL" 1 "$A
+RUN apk add --no-cache $G -Xhttps://dl-cdn.alpinelinux.org/alpine/edge/community vim" "another repository" || return 1
+  planted "-X inside a short cluster (-uX url)" 1 "$A
+RUN apk add --no-cache $G -uX https://dl-cdn.alpinelinux.org/alpine/edge/community vim" "another repository" || return 1
+  planted "--repository=URL attached" 1 "$A
+RUN apk add --no-cache $G --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community vim" "another repository" || return 1
+  planted "--repositories-file=FILE attached" 1 "$A
+RUN apk add --no-cache $G --repositories-file=/tmp/r vim" "another repository" || return 1
+  planted "--keys-dir DIR" 1 "$A
+RUN apk --keys-dir /tmp/keys add --no-cache $G" "trusted keys" || return 1
+  planted "--keys-dir=DIR attached" 1 "$A
+RUN apk --keys-dir=/tmp/keys add --no-cache $G" "trusted keys" || return 1
+  planted "COPY onto /etc/apk itself" 1 "$A
+COPY conf /etc/apk
+RUN apk add $G" "repository list" || return 1
+  planted "COPY into /etc/apk/ (trailing slash)" 1 "$A
+COPY conf/ /etc/apk/
+RUN apk add $G" "repository list" || return 1
+  planted "cp -r onto /etc/apk" 1 "$A
+RUN cp -r conf /etc/apk && apk add $G" "repository list" || return 1
+  planted "RUN --mount of /etc/apk" 1 "$A
+RUN --mount=type=bind,source=conf,target=/etc/apk apk add $G" "repository list" || return 1
+  planted "a redirect into /etc/apk/repositories by a command that normally only reads (cat >)" 1 "$A
+RUN cat extra > /etc/apk/repositories && apk add $G" "repository list" || return 1
   planted "a plain read of /etc/apk/repositories is not a write" 0 "$A
 RUN cat /etc/apk/repositories && apk add vim=9.2.1202-r0" || return 1
+  planted "if grep on /etc/apk/repositories with 2>/dev/null is not a write" 0 "$A
+RUN if grep -q x /etc/apk/repositories 2>/dev/null; then apk add vim=9.2.1202-r0; fi" || return 1
+  planted "apk -p DIR add (an option with an argument) is read and passes the coverage check" 0 "$A
+RUN apk -p /sysroot add vim=9.2.1202-r0" || return 1
+  planted "apk --root DIR add passes the coverage check" 0 "$A
+RUN apk --root /sysroot add vim=9.2.1202-r0" || return 1
+  # a form the parser does not read must not become a silent green (the coverage cross-check)
+  planted "apk add inside a heredoc RUN" 1 "$A
+RUN apk add $G
+RUN <<EOF
+apk add vim=9.2.1202-r0
+EOF" "parser read" || return 1
+  planted "apk add inside sh -c" 1 "$A
+RUN apk add $G
+RUN sh -c \"apk add vim=9.2.1202-r0\"" "parser read" || return 1
+
+  # ADR-0031 V9: the two planted-bad fixtures keep their meaning (two pins each, the bad one red)
+  for fx in e2e-pin-BAD e2e-pin-BAD-continued; do
+    n=$((n + 1))
+    got="$(parse "scripts/testdata/$fx.txt" | awk -F'\t' '$5 == "pin" { print $6 "=" $7 }' | sort | tr '\n' ' ')"
+    [ "$got" = "chromium=1.0.0-r0 font-wqy-zenhei=0.9.46-r0 " ] || { echo "FAIL: selftest: fixture $fx parses to '$got'"; return 1; }
+    check_files "scripts/testdata/$fx.txt" >"$tmp/out" 2>&1; rc=$?
+    if [ "$rc" -ne 1 ] || ! grep -q 'chromium=1.0.0-r0 is not in the index' "$tmp/out" || ! grep -q 'bump the pin' "$tmp/out"; then
+      echo "FAIL: selftest: fixture $fx exited $rc"; cat "$tmp/out"; return 1
+    fi
+    echo "  fixture ($fx): 2 pins read, chromium=1.0.0-r0 red, exit 1"
+  done
+  # the wrapper without an argument checks Dockerfile.e2e only (a stand-in docker that prints nothing: every pin is 'gone')
+  n=$((n + 1))
+  mkdir -p "$tmp/bin"; printf '#!/bin/sh\nexit 0\n' >"$tmp/bin/docker"; chmod +x "$tmp/bin/docker"
+  PATH="$tmp/bin:$PATH" ./scripts/check-e2e-pins.sh >"$tmp/out" 2>&1; rc=$?
+  if [ "$rc" -ne 1 ] || ! grep -q '^FAIL: Dockerfile.e2e:' "$tmp/out" || grep -q 'images/' "$tmp/out"; then
+    echo "FAIL: selftest: check-e2e-pins.sh without an argument did not check Dockerfile.e2e alone (exit $rc)"; cat "$tmp/out"; return 1
+  fi
+  echo "  wrapper (check-e2e-pins.sh, no argument): Dockerfile.e2e only, exit 1"
   # the stub index is per base only in the sense that it returns the same text; per-base
   # attribution is covered by the parse tables above.
 
+  # a base without apk is a verdict (exit 1), not trouble
+  query_index() { return 3; }
+  planted "the base has no apk (query_index rc 3)" 1 "$A
+RUN apk add vim=9.2.1202-r0" "has no apk" || return 1
   # the stand-in for 'docker is missing' must be exit 2, not a pass
   query_index() { echo "docker is not installed (stub)" >&2; return 2; }
   planted "docker/network trouble is exit 2, not 0" 2 "$A

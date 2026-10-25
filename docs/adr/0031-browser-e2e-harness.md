@@ -270,6 +270,8 @@ dialog で止まり、要求の網羅を見られず、作り手の自己申告�
 | V8 | 済 | `TestE2EServePublishesOnlyToHostLoopback` (`--network host` も拒む: `e2e_boundary_test.go:547-596`)・`TestCheckChildEnv_RejectsPlantedViolations`・proxy の拒否 (D6 (2))。proxy の bind は container の中で `0.0.0.0` (D6 (1)) |
 | V9 | 未実施 | `e2e-pins.yaml` の `workflow_dispatch` で `scripts/testdata/e2e-pin-BAD.txt` と `e2e-pin-BAD-continued.txt` を選んで赤を確かめ (`.github/workflows/e2e-pins.yaml:18-27`)、H0 の PR か V7 の記録に貼る。2026-10-15 09:00 JST の時点で `E2E pins` の run は 0 件 (定期の初回は同日 14:30 JST = 05:30 UTC) |
 
+(V9 の導線: workflow は現在 `.github/workflows/apk-pins.yaml` (`file` 入力で 2 つの fixture を選ぶ)。ADR-0036 D5。)
+
 - **V1 最初の 4 シナリオ** (実 catalog + `nimbusbreach-full`、user1。各シナリオは守る性質を故意に壊した変更で赤になることを PR 本文に出力で示す):
   - **E1 (ADR-0027 V6)**: 01〜04 を solve して current = 05。地図で 06 を開くと、`?mission=06` の詳細が `locked` のまま「ヒント 1」の開封と減点 10 を出す。押すと dialog の文に 10 点が出る。
     取消なら書き込み 0、承認なら `POST …/06-web-rce-shell/hints/1` が 1 回で、本文 (catalog から読む) と次の減点 30 が出る。
@@ -371,6 +373,7 @@ D1〜D5 と同格の決定で、D1 (b) の 4 つの役割・D2 の対象・D3 �
   周期そのものが破る。そこで (1) bump の所要は、定期 job が初めて赤になった run の時刻から数える (人が気づいた時刻からは数えない) (2) index の更新 (pin が index から消えた) による `e2e` の赤は、
   D1 (c) の「取得の失敗が run の 2%」に数えず、bump の所要で測る (3) 週次より速く人に届ける経路として、赤の run で Issue を起票する step (`GITHUB_TOKEN` の `issues: write` で足り、新しい action
   は要らない) を、D1 (c) の観測期間の開始までに置くことを推奨する (要判断: VP)。
+  (D10 の導線: 現在は `.github/workflows/apk-pins.yaml`。週次の確認は `apk pins` の job と、赤で開く label `apk-pin-drift` の Issue を見る。ADR-0036 D5。)
 - **H1 (g) の結果。** `--network=none` の下で loopback は使える (E1〜E4 が BuildKit の `RUN` の中で緑。CI の ubuntu-latest と Colima の両方)。BuildKit の `/dev/shm` (64MiB) は
   `--disable-dev-shm-usage` で避けた (`chromeflags.go:28`)。base は `golang:1.26.9-alpine` (Alpine v3.24。`Dockerfile.test` に揃えた)。chromedp の既定の flag は使わない (D7 (2))。Reporting API の
   report と Chrome の Local Network Access は記録が無い (未確認)。判定は `securitypolicyviolation` で集め (`browser.go:102-134`)、E4 で iframe の要求が stub に届くので、どちらも判定を左右していない。
