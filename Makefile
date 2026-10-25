@@ -17,7 +17,7 @@ SYSDIG_URL   ?= https://app.au1.sysdig.com
 # host repo are not shared into the VM.
 GO_IMAGE ?= golang:1.26-alpine
 
-.PHONY: help dev dev-down build push load-colima deploy-local helm-dep-build lint check-seccomp check-flag-isolation check-namespace-ownership check-image-hygiene check-image-hygiene-selftest test e2e e2e-serve check-e2e-verdict tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-template-hex check-portal-render check-rules check-freshness check-adr check-dockerignore check-go-base-digest clean scan
+.PHONY: help dev dev-down build push load-colima deploy-local helm-dep-build lint check-seccomp check-flag-isolation check-namespace-ownership check-image-hygiene check-image-hygiene-selftest test e2e e2e-serve check-e2e-verdict tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-template-hex check-portal-render check-rules check-freshness check-adr check-dockerignore check-go-base-digest check-apk-pins check-apk-pins-selftest clean scan
 
 help:
 	@echo "Targets:"
@@ -51,6 +51,8 @@ help:
 	@echo "  check-freshness — fail if a Dockerfile base image cycle is past EOL (needs network)"
 	@echo "  check-dockerignore — fail if .dockerignore stops excluding decrypted/credential files (*.dec.yaml, *.dec.json, kubeconfig*, *.secret.*) or a tracked file matches them (app#322)"
 	@echo "  check-go-base-digest — fail unless every golang:<tag>@sha256:<digest> in the Dockerfiles and workflows is the same value (app#499; + selftest)"
+	@echo "  check-apk-pins  — fail if an apk exact pin in any Dockerfile is no longer in its stage's base image index, or apk add uses a range / @edge / --repository (ADR-0036 D1+D5; absorbs check-e2e-pins; needs docker + network; also run daily by apk-pins.yaml)"
+	@echo "  check-apk-pins-selftest — offline: planted defects (vanished version, range, @edge, --repository, no pin) must fail, the real tree's grammar must pass (ADR-0036 V1)"
 	@echo "  check-adr       — fail on ADR number collisions, filename/header drift, or docs/adr/README.md index gaps (#181); prints the next free ADR number on success"
 	@echo "  scan            — sysdig-cli-scanner on all built images (SYSDIG_SECURE_API_TOKEN required)"
 	@echo "  clean           — remove built images locally"
@@ -286,6 +288,14 @@ check-dockerignore:
 check-go-base-digest:
 	./scripts/check-go-base-digest.sh
 	./scripts/check-go-base-digest.sh --selftest
+
+# ADR-0036 D1 + D5: needs docker and network (the pins are compared with the index inside
+# each stage's base image). The selftest is offline and also runs in the flag-guard job.
+check-apk-pins:
+	./scripts/check-apk-pins.sh
+
+check-apk-pins-selftest:
+	./scripts/check-apk-pins.sh --selftest
 
 scan: build
 	@command -v sysdig-cli-scanner >/dev/null 2>&1 || \
