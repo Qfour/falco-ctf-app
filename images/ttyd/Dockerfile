@@ -14,6 +14,8 @@ ARG KUBECTL_VERSION=v1.35.9
 # **受け入れの期限と解除条件 (2026-10-13)**: release-1.35 の .go-version が 1.26.9 以上
 # (v1.35.10 以降) になった時点で bump する。それまで build (ttyd)/scan は赤のまま
 # (required check ではない)。追跡: app#338。
+# 再点検 (2026-10-25): stable-1.35.txt は v1.35.9 のまま (v1.35.10 の kubectl.sha256 は 404)。
+# release-1.35 branch の .go-version は既に 1.26.10 なので、次の patch で解除条件を満たす見込み。
 # sha256 は https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/<arch>/kubectl.sha256
 # の実値を焼き込み。KUBECTL_VERSION を上げたら両方更新すること。
 #
@@ -58,8 +60,10 @@ ARG KUBECTL_SHA256_ARM64=39c98bca82875d9a9ddfb6f3c5ab17c3f78ea0801230683e538a67d
 #   既に外れ apk resolve が failing していたため再 pin。`apk policy curl` 実測
 #   で 3.24/main の唯一の提供版が 8.22.0-r0 であることを確認済み)
 #   bash 5.3.9-r1 (3.23 の 5.3.3-r1 から 3.24 側で上がった版に追随、念のため厳密 pin)
-#   ca-certificates 20260909-r0 (2026-10-05: 3.24/main から 20260611-r0 が外れた
-#     ため再 pin。`apk policy ca-certificates` 実測で唯一の提供版。base 由来の
+#   ca-certificates 20261020-r0 (ca-certificates drift: 20260909-r0 -> 20261020-r0
+#     (2026-10-25, 3.24/main から 20260909-r0 が外れ `apk add` が `unable to select
+#     packages` で落ちた。`apk policy ca-certificates` 実測で唯一の提供版)。
+#     前回 drift 2026-10-05: 3.24/main から 20260611-r0 が外れたため再 pin。base 由来の
 #     ca-certificates-bundle 20260611-r0 は pin 外で同居するが、bundle の中身は
 #     ビルド時に新データで再生成される (5x R2 実測: 119→121 件、TLS 動作確認済み))
 # ttyd / tini の版数は 3.23→3.24 で不変 (live APKINDEX 実測、2026-09-01。
@@ -73,7 +77,7 @@ RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 zlib=1.3.2
  && apk add --no-cache \
         "ttyd=1.7.7-r0" \
         "bash=5.3.9-r1" \
-        "ca-certificates=20260909-r0" \
+        "ca-certificates=20261020-r0" \
         "curl=8.22.0-r0" \
         "tini=0.19.0-r3" \
  && ARCH="$(uname -m)" \

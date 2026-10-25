@@ -4,7 +4,7 @@
 # The challenges/ catalog + scenarios/ manifests are baked into the image
 # (read at startup; scenarios/ selects an event composition via SCENARIO_FILE).
 # Local dev overlays challenges/ via a volume mount in docker-compose.yml.
-FROM golang:1.26.9-alpine@sha256:3082400e369fa24d5fc60bca20edab3f6d604e0c5a690ec66b295eff4dd87ade AS build
+FROM golang:1.26.10-alpine@sha256:27f2d3b83cfc5803c8078f8e730af0f7c431bf067afaec8f60a36fb763187cba AS build
 WORKDIR /src
 
 COPY go.mod go.sum ./
