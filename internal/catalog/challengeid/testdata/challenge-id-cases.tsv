@@ -1,0 +1,91 @@
+# pattern: ^[0-9]{2}-[a-z0-9-]{1,60}$
+# The challenge id grammar's shared case table (app#494, ADR-0041).
+#
+# A challenge id is a directory name under challenges/, `NN-slug`. The grammar has
+# ONE Go definition, challengeid.Pattern; the copies this table holds equal:
+#   - Go:    internal/catalog/challengeid (shell_cases_test.go) reads this file.
+#   - shell: charts/ctf-user/deploy-user.sh (its CHALLENGE_ID_PATTERN, the single
+#            challenge mode), run row by row by scripts/check-deploy-user-ids.sh
+#            (make check-flags; CI flag-guard).
+# The other shell / Helm copies (gen-values.sh, scripts/*.sh, the chart's
+# regexMatch guards) are NOT registered yet: app#472.
+# A row is never dropped to make an implementation pass: the implementation that
+# disagrees is the bug. A change to the grammar changes the rows in the same commit.
+#
+# Format: the same as internal/identity/testdata/seat-cases.tsv (see its header):
+# `input<TAB>accept|reject`, split on the FIRST tab, `#` and blank lines ignored,
+# the closed placeholder set {LF} {U+202E} {U+00FC} {U+00EF}; line 1 is the
+# canonical `# pattern: ` literal. The table stays ASCII.
+#
+# `all` and `scenario:<name>` are deploy-user.sh's other two modes, not challenge
+# ids: they are not rows here (challengeid.Valid("all") is false), and
+# scenario:<name> has its own table (charts/ctf-user/testdata/scenario-name-cases.tsv).
+# An empty input is the usage error of deploy-user.sh (exit 1), not a grammar verdict
+# the script prints.
+
+# --- baseline: the real challenges and the verify probe
+00-tutorial	accept
+01-initial-recon	accept
+10-final-exfil	accept
+13-archive-loot	accept
+99-verify-probe	accept
+# --- shape: two digits, a hyphen, a slug of at least one character
+00-a	accept
+00-0	accept
+12-a-b	accept
+12-a--b	accept
+12--a	accept
+# a trailing hyphen is inside the grammar (ADR-0041): the case table says what the grammar is
+12-a-	accept
+# --- length: the slug is 1 to 60 characters
+12-	reject
+12-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	accept
+12-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	reject
+# --- the number: exactly two digits
+1-a	reject
+001-a	reject
+a1-a	reject
+1a-a	reject
+-a	reject
+01a	reject
+0a-b	reject
+# --- the slug: lower-case letters, digits, hyphen only
+01-A	reject
+01-Foo	reject
+01_a	reject
+01-a_b	reject
+01-a.b	reject
+01-.	reject
+01-..	reject
+01-a b	reject
+01-a,b=c	reject
+01-a;b	reject
+01-a'b	reject
+01-a"b	reject
+01-$(x)	reject
+01-`x`	reject
+01-a\b	reject
+01-a%b	reject
+01-a*	reject
+01-{U+00FC}	reject
+# --- not an id at all: path traversal, absolute paths, the other mode's word
+.	reject
+..	reject
+../01-a	reject
+01-a/..	reject
+01-a/b	reject
+01/../a	reject
+/01-a	reject
+/etc/passwd	reject
+-01-a	reject
+--01-a	reject
+ALL	reject
+All	reject
+# --- control and bidi characters, a trailing newline
+01-a{LF}	reject
+01-a{LF}01-b	reject
+{LF}01-a	reject
+01-a{U+202E}	reject
+{U+202E}01-a	reject
+# --- the empty id (usage error)
+	reject
