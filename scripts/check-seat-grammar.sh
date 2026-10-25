@@ -30,7 +30,9 @@
 # one too narrow / a trailing hyphen allowed / no end anchor / no start anchor),
 # and the derivation of the release name / namespace from the seat two ways (a
 # prefix on RELEASE / another namespace); each must fail the table row that the
-# break is about, or this check proves nothing and fails. A row with a
+# break is about, parse (bash -n) and leave its control rows as they were (app#522:
+# a copy broken everywhere also fails that row), or this check proves nothing and
+# fails. A row with a
 # placeholder the reader does not know makes the reader fail (the table's closed
 # placeholder set: scripts/test-casetable-lib.sh).
 #
@@ -148,19 +150,31 @@ done
 echo "==> self-test: a broken SEAT_PATTERN must be caught, on the row that breaks"
 run_mutant() { ct_run_table "${TABLE}" check_row "$1"; }
 line_of() { ct_line_of "${TABLE}" "$1" || true; }
-mutate_line() { ct_mutate_line "$1" "${DEPLOY_REL}" "$2" "$3" "$4" run_mutant; }
-mutate() { # <label> <replacement pattern> <expected failing line>
-  mutate_line "$1" "SEAT_PATTERN='" "SEAT_PATTERN='$2'" "$3"
+# mutate_line <label> <line prefix> <replacement line> <expected failing line> [ct_mutate_line options...]
+mutate_line() {
+  local label="$1" prefix="$2" repl="$3" want="$4"
+  shift 4
+  ct_mutate_line ${1+"$@"} "${label}" "${DEPLOY_REL}" "${prefix}" "${repl}" "${want}" run_mutant
 }
-mutate any '^.*$' "$(line_of '$1 == "user1,username=x"')"
+mutate() { # <label> <replacement pattern> <expected failing line> [ct_mutate_line options...]
+  local label="$1" pat="$2" want="$3"
+  shift 3
+  mutate_line "${label}" "SEAT_PATTERN='" "SEAT_PATTERN='${pat}'" "${want}" ${1+"$@"}
+}
+# A break that flips every reject row by design (accepts anything) is held by an accept
+# row only; one that flips many has a reject control it must leave alone (the other anchor).
+mutate any '^.*$' "$(line_of '$1 == "user1,username=x"')" --control accept
 mutate wide '^[a-z0-9]([a-z0-9-]{0,52}[a-z0-9])?$' "$(line_of 'length($1) == 54 && $2 == "reject"')"
 mutate narrow '^[a-z0-9]([a-z0-9-]{0,50}[a-z0-9])?$' "$(line_of 'length($1) == 53 && $2 == "accept"')"
 mutate trailing-dash '^[a-z0-9][a-z0-9-]{0,52}$' "$(line_of '$1 == "a-"')"
-mutate no-dollar '^[a-z0-9]([a-z0-9-]{0,51}[a-z0-9])?' "$(line_of '$1 == "user1{LF}"')"
-mutate no-caret '[a-z0-9]([a-z0-9-]{0,51}[a-z0-9])?$' "$(line_of '$1 == "-user1"')"
+mutate no-dollar '^[a-z0-9]([a-z0-9-]{0,51}[a-z0-9])?' "$(line_of '$1 == "user1{LF}"')" --control accept --control "$(line_of '$1 == "-user1"')"
+mutate no-caret '[a-z0-9]([a-z0-9-]{0,51}[a-z0-9])?$' "$(line_of '$1 == "-user1"')" --control accept --control "$(line_of '$1 == "user1{LF}"')"
 # The derivation of the release name and the namespace from the seat (deploy-user.sh
-# RELEASE= / NS=) is held by the accept rows' exact comparison of the recorded calls.
-mutate_line release-prefix 'RELEASE="' 'RELEASE="x-${USERNAME}"' "$(line_of '$1 == "user1" && $2 == "accept"')"
-mutate_line namespace-changed 'NS="' 'NS="ctfx-${USERNAME}"' "$(line_of '$1 == "user1" && $2 == "accept"')"
+# RELEASE= / NS=) is held by the accept rows' exact comparison of the recorded calls. Every
+# accept row breaks, so the control is a reject row and the reason is the one named.
+mutate_line release-prefix 'RELEASE="' 'RELEASE="x-${USERNAME}"' "$(line_of '$1 == "user1" && $2 == "accept"')" \
+  --control reject --must 'the release is not the seat'
+mutate_line namespace-changed 'NS="' 'NS="ctfx-${USERNAME}"' "$(line_of '$1 == "user1" && $2 == "accept"')" \
+  --control reject --must 'the release namespace is not ctf-<seat>'
 
 ct_finish "seat grammar check"

@@ -28,7 +28,8 @@
 # broken (accepts anything / one character too wide / too narrow / a trailing hyphen
 # or an end anchor missing / the old charset `[A-Za-z0-9._-]` that let `.` and `..`
 # through) and whose `--set-string challengeId=` is `--set`; each must fail the table
-# row the break is about, or this check proves nothing and fails. A row with a
+# row the break is about, parse (bash -n) and leave its control rows as they were
+# (app#522), or this check proves nothing and fails. A row with a
 # placeholder the reader does not know makes the reader fail (the closed set:
 # scripts/test-casetable-lib.sh).
 #
@@ -47,7 +48,8 @@
 # and with NO ` --set ` token in the call but the one boolean the script writes itself
 # (networkPolicy.egress.enabled=true); a reject row is exit 2, `invalid <name>` on stderr,
 # not one helm / kubectl call. Its self-test breaks each pattern, the length bound and
-# each check, and turns each --set-string back into --set.
+# each check, and turns each --set-string back into --set (each mutant runs its own row and
+# its control rows only: ct_run_mutant_rows).
 #
 # Every expectation is an exit status or an exact string, never "some output
 # appeared". Usage: ./scripts/check-deploy-user-ids.sh   (make check-flags; CI flag-guard)
@@ -170,10 +172,22 @@ run_scn_mutant() { ct_run_table "${SCN_TABLE}" scn_row "$1"; }
 line_of() {
   if [[ "$1" == cid ]]; then ct_line_of "${CID_TABLE}" "$2" || true; else ct_line_of "${SCN_TABLE}" "$2" || true; fi
 }
-cid_mutate() { ct_mutate_line "cid-$1" "${DEPLOY_REL}" "CHALLENGE_ID_PATTERN='" "CHALLENGE_ID_PATTERN='$2'" "$3" run_cid_mutant; }
-scn_mutate() { ct_mutate_line "scn-$1" "${DEPLOY_REL}" "SCENARIO_PATTERN='" "SCENARIO_PATTERN='$2'" "$3" run_scn_mutant; }
+# <cid|scn>_mutate <name> <broken pattern> <failing line> [ct_mutate_line options...]
+cid_mutate() {
+  local name="$1" pat="$2" want="$3"
+  shift 3
+  ct_mutate_line ${1+"$@"} "cid-${name}" "${DEPLOY_REL}" "CHALLENGE_ID_PATTERN='" "CHALLENGE_ID_PATTERN='${pat}'" "${want}" run_cid_mutant
+}
+scn_mutate() {
+  local name="$1" pat="$2" want="$3"
+  shift 3
+  ct_mutate_line ${1+"$@"} "scn-${name}" "${DEPLOY_REL}" "SCENARIO_PATTERN='" "SCENARIO_PATTERN='${pat}'" "${want}" run_scn_mutant
+}
 
-cid_mutate any '^.*$' "$(line_of cid '$1 == "01-a,b=c"')"
+# A break that flips every reject row by design (accepts anything, a check removed) is held by
+# an accept row only; one that flips many reject rows names a reject row it must leave alone;
+# one that flips every accept row (--set) names a reject row and the reason (--must).
+cid_mutate any '^.*$' "$(line_of cid '$1 == "01-a,b=c"')" --control accept
 cid_mutate old-charset '^[0-9]{2}-[A-Za-z0-9._-]{1,60}$' "$(line_of cid '$1 == "01-.."')"
 cid_mutate wide '^[0-9]{2}-[a-z0-9-]{1,61}$' "$(line_of cid 'length($1) == 64 && $2 == "reject"')"
 cid_mutate narrow '^[0-9]{2}-[a-z0-9-]{1,59}$' "$(line_of cid 'length($1) == 63 && $2 == "accept"')"
@@ -181,17 +195,18 @@ cid_mutate empty-slug '^[0-9]{2}-[a-z0-9-]{0,60}$' "$(line_of cid '$1 == "12-"')
 cid_mutate one-digit '^[0-9]{1,2}-[a-z0-9-]{1,60}$' "$(line_of cid '$1 == "1-a"')"
 cid_mutate no-dollar '^[0-9]{2}-[a-z0-9-]{1,60}' "$(line_of cid '$1 == "01-a{LF}"')"
 cid_mutate no-caret '[0-9]{2}-[a-z0-9-]{1,60}$' "$(line_of cid '$1 == "../01-a"')"
-scn_mutate any '^.*$' "$(line_of scn '$1 == "a,b=c"')"
-scn_mutate old-charset '^[A-Za-z0-9._-]+$' "$(line_of scn '$1 == ".."')"
-scn_mutate slash '^[a-z0-9/-]+$' "$(line_of scn '$1 == "a/b"')"
+scn_mutate any '^.*$' "$(line_of scn '$1 == "a,b=c"')" --control accept
+scn_mutate old-charset '^[A-Za-z0-9._-]+$' "$(line_of scn '$1 == ".."')" --control accept --control "$(line_of scn '$1 == "a/b"')"
+scn_mutate slash '^[a-z0-9/-]+$' "$(line_of scn '$1 == "a/b"')" --control accept --control "$(line_of scn '$1 == ".."')"
 scn_mutate wide '^[a-z0-9]([a-z0-9-]{0,53}[a-z0-9])?$' "$(line_of scn 'length($1) == 55 && $2 == "reject"')"
 scn_mutate narrow '^[a-z0-9]([a-z0-9-]{0,51}[a-z0-9])?$' "$(line_of scn 'length($1) == 54 && $2 == "accept"')"
 scn_mutate trailing-dash '^[a-z0-9][a-z0-9-]{0,53}$' "$(line_of scn '$1 == "a-"')"
-scn_mutate empty '^[a-z0-9-]*$' "$(line_of scn '$1 == "" && $2 == "reject"')"
+scn_mutate empty '^[a-z0-9-]*$' "$(line_of scn '$1 == "" && $2 == "reject"')" --control accept --control "$(line_of scn '$1 == ".."')"
 scn_mutate no-dollar '^[a-z0-9]([a-z0-9-]{0,52}[a-z0-9])?' "$(line_of scn '$1 == "a{LF}"')"
 scn_mutate no-caret '[a-z0-9]([a-z0-9-]{0,52}[a-z0-9])?$' "$(line_of scn '$1 == "-a"')"
 # --set-string -> --set: helm would type the value and read `,` / `=` in it.
-ct_mutate_line cid-set-not-set-string "${DEPLOY_REL}" '  --set-string "challengeId=' '  --set "challengeId=${CHALLENGE_ID}" \' "$(line_of cid '$1 == "00-tutorial"')" run_cid_mutant
+ct_mutate_line --control reject --must 'did not carry --set-string challengeId=<id> verbatim' \
+  cid-set-not-set-string "${DEPLOY_REL}" '  --set-string "challengeId=' '  --set "challengeId=${CHALLENGE_ID}" \' "$(line_of cid '$1 == "00-tutorial"')" run_cid_mutant
 
 # ============================================================================
 # app#510: the other operator inputs (--dns-suffix, FALCO_CTF_REGISTRY,
@@ -306,37 +321,19 @@ op_all_good() {
 if op_all_good; then pass "four good values together: every one is --set-string, the only --set is networkPolicy.egress.enabled=true"; else fail "four good values together did not produce the expected helm call"; fi
 
 echo "==> self-test (app#510): a broken pattern, a removed check, or --set instead of --set-string, must be caught on the row that breaks it"
-# op_mutate <kind> <label> <line prefix> <replacement line> <failing line> <control: accept|reject>:
-# ct_mutate_line on deploy-user.sh. The runner runs the ONE row at <failing line> (not the whole
-# table: 64 mutants), which must disagree, and the control row (the first accept / reject row of
-# the table), which must still agree: a copy that is broken everywhere would fail the first for
-# the wrong reason and prove nothing. A control that fails is reported as the failing line
-# CONTROL-<n> (so ct_mutate_line fails the self-test, naming it).
+# op_mutate <kind> <label> <line prefix> <replacement line> <failing line> [ct_mutate_line options...]:
+# ct_mutate_line on deploy-user.sh. The runner walks only the row at <failing line> and the
+# control rows (ct_run_mutant_rows: 53 mutants, not 53 whole tables); ct_mutate_line judges
+# them (the failing row disagrees, every control row still agrees).
 op_mutate() {
-  OP_KIND="$1" OP_WANT="$5" OP_CONTROL="$6"
-  ct_mutate_line "$2" "${DEPLOY_REL}" "$3" "$4" "$5" op_mutant_runner
+  local kind="$1" label="$2" prefix="$3" repl="$4" want="$5"
+  shift 5
+  OP_KIND="${kind}"
+  ct_mutate_line ${1+"$@"} "${label}" "${DEPLOY_REL}" "${prefix}" "${repl}" "${want}" op_mutant_runner
 }
-# op_row_at <line no> -> DECODED (the row's input), OP_VERDICT
-op_row_at() {
-  local raw
-  raw="$(sed -n "$1p" "${OP_TABLE}")"
-  OP_VERDICT="${raw#*$'\t'}"
-  ct_decode "${raw%%$'\t'*}"
-}
-# shellcheck disable=SC2034  # BAD / BAD_LINES are what ct_mutate_line reads back
 op_mutant_runner() { # <mutant script>
-  local cl cv ctl
-  BAD=0 BAD_LINES=" "
   op_conf "${OP_KIND}"
-  op_row_at "${OP_WANT}"
-  if ! op_row "${OP_KIND}" "${OP_WANT}" "${OP_VERDICT}" "${DECODED}" "${OP_KIND}" "$1"; then
-    BAD=1 BAD_LINES=" ${OP_WANT} "
-  fi
-  cl="$(awk -F'\t' -v v="${OP_CONTROL}" '!/^#/ && NF >= 2 && $2 == v { print NR; exit }' "${OP_TABLE}")"
-  op_row_at "${cl}"; cv="${DECODED}"; ctl="${OP_VERDICT}"
-  if ! op_row "${OP_KIND}" "${cl}" "${ctl}" "${cv}" "${OP_KIND}" "$1" 2>/dev/null; then
-    BAD=1 BAD_LINES=" CONTROL-${cl} "
-  fi
+  ct_run_mutant_rows "${OP_TABLE}" op_row "${OP_KIND}" "$1"
 }
 # op_line <kind> <awk condition on $1 (input) and $2 (verdict)> -> the line number of the first
 # matching row (empty if none: op_mutate then fails the self-test; no exit inside $(...)).
@@ -344,27 +341,31 @@ op_line() {
   op_conf "$1"
   awk -F'\t' "$2 { print NR; exit }" "${OP_TABLE}"
 }
-# <kind>_mutate <name> <broken pattern> <failing line> [control: accept (default) | reject]:
-# a narrowing break rejects a good row, so its control is a reject row.
-dns_mutate() { op_mutate dns "dns-$1" "DNS_SUFFIX_PATTERN='" "DNS_SUFFIX_PATTERN='$2'" "$3" "${4:-accept}"; }
-reg_mutate() { op_mutate reg "reg-$1" "REGISTRY_PATTERN='" "REGISTRY_PATTERN='$2'" "$3" "${4:-accept}"; }
-tag_mutate() { op_mutate tag "tag-$1" "IMAGE_TAG_PATTERN='" "IMAGE_TAG_PATTERN='$2'" "$3" "${4:-accept}"; }
-cidr_mutate() { op_mutate cidr "cidr-$1" "API_SERVER_CIDR_PATTERN='" "API_SERVER_CIDR_PATTERN='$2'" "$3" "${4:-accept}"; }
+# op_set_mutate <kind> <label> <line prefix> <replacement line> <failing line> <key>: the
+# `--set-string <key>=` of the line turned back into --set. Every accept row loses that token,
+# so the control is a reject row and the failing row must be red for that token.
+op_set_mutate() { op_mutate "$1" "$2" "$3" "$4" "$5" --control reject --must "lacks the token ' --set-string $6="; }
+# <kind>_mutate <name> <broken pattern> <failing line> [ct_mutate_line options...]
+dns_mutate() { local n="$1" p="$2" w="$3"; shift 3; op_mutate dns "dns-${n}" "DNS_SUFFIX_PATTERN='" "DNS_SUFFIX_PATTERN='${p}'" "${w}" ${1+"$@"}; }
+reg_mutate() { local n="$1" p="$2" w="$3"; shift 3; op_mutate reg "reg-${n}" "REGISTRY_PATTERN='" "REGISTRY_PATTERN='${p}'" "${w}" ${1+"$@"}; }
+tag_mutate() { local n="$1" p="$2" w="$3"; shift 3; op_mutate tag "tag-${n}" "IMAGE_TAG_PATTERN='" "IMAGE_TAG_PATTERN='${p}'" "${w}" ${1+"$@"}; }
+cidr_mutate() { local n="$1" p="$2" w="$3"; shift 3; op_mutate cidr "cidr-${n}" "API_SERVER_CIDR_PATTERN='" "API_SERVER_CIDR_PATTERN='${p}'" "${w}" ${1+"$@"}; }
 
 DNS_LABEL='[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?'
-dns_mutate any '^.*$' "$(op_line dns '$1 == "a,b=c"')"
-dns_mutate no-dollar "^${DNS_LABEL}(\\.${DNS_LABEL})*" "$(op_line dns '$1 == "a.com{LF}"')"
-dns_mutate no-caret "${DNS_LABEL}(\\.${DNS_LABEL})*\$" "$(op_line dns '$1 == "{LF}a.com"')"
+dns_mutate any '^.*$' "$(op_line dns '$1 == "a,b=c"')" --control accept
+dns_mutate no-dollar "^${DNS_LABEL}(\\.${DNS_LABEL})*" "$(op_line dns '$1 == "a.com{LF}"')" --control accept --control "$(op_line dns '$1 == "{LF}a.com"')"
+dns_mutate no-caret "${DNS_LABEL}(\\.${DNS_LABEL})*\$" "$(op_line dns '$1 == "{LF}a.com"')" --control accept --control "$(op_line dns '$1 == "a.com{LF}"')"
 dns_mutate upper "^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\$" "$(op_line dns '$1 == "A.com"')"
 dns_mutate leading-hyphen "^[a-z0-9-]([a-z0-9-]{0,61}[a-z0-9])?(\\.${DNS_LABEL})*\$" "$(op_line dns '$1 == "-a.com"')"
 dns_mutate trailing-dot "^${DNS_LABEL}(\\.${DNS_LABEL})*\\.?\$" "$(op_line dns '$1 == "example.com."')"
 dns_mutate underscore "^[a-z0-9_]([a-z0-9_-]{0,61}[a-z0-9_])?(\\.[a-z0-9_]([a-z0-9_-]{0,61}[a-z0-9_])?)*\$" "$(op_line dns '$1 == "a_b.com"')"
-dns_mutate label-wide "^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?)*\$" "$(op_line dns 'length($1) == 64 && $2 == "reject"')"
+dns_mutate label-wide "^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?)*\$" "$(op_line dns 'length($1) == 64 && $2 == "reject"')" \
+  --control accept --control "$(op_line dns 'length($1) == 254 && $2 == "reject"')"
 dns_mutate label-narrow "^[a-z0-9]([a-z0-9-]{0,60}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,60}[a-z0-9])?)*\$" "$(op_line dns 'length($1) == 63 && $2 == "accept"')"
 dns_mutate empty-label "^${DNS_LABEL}(\\.+${DNS_LABEL})*\$" "$(op_line dns '$1 == "a..b"')"
-op_mutate dns dns-len-wide "DNS_SUFFIX_MAX_LEN='" "DNS_SUFFIX_MAX_LEN='254'" "$(op_line dns 'length($1) == 254 && $2 == "reject"')" accept
-op_mutate dns dns-len-narrow "DNS_SUFFIX_MAX_LEN='" "DNS_SUFFIX_MAX_LEN='252'" "$(op_line dns 'length($1) == 253 && $2 == "accept"')" accept
-op_mutate dns dns-check-removed '[[ -z "${DNS_SUFFIX}" ]] || check_operator_input' ':' "$(op_line dns '$1 == "a,b=c"')" accept
+op_mutate dns dns-len-wide "DNS_SUFFIX_MAX_LEN='" "DNS_SUFFIX_MAX_LEN='254'" "$(op_line dns 'length($1) == 254 && $2 == "reject"')"
+op_mutate dns dns-len-narrow "DNS_SUFFIX_MAX_LEN='" "DNS_SUFFIX_MAX_LEN='252'" "$(op_line dns 'length($1) == 253 && $2 == "accept"')"
+op_mutate dns dns-check-removed '[[ -z "${DNS_SUFFIX}" ]] || check_operator_input' ':' "$(op_line dns '$1 == "a,b=c"')" --control accept
 
 # The registry pattern, in pieces, so each break changes one thing. REG_TAIL is the ingest
 # filter's part (the last component is falco-ctf); the other three are the shape.
@@ -372,7 +373,7 @@ REG_HOST='[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*'
 REG_PORT='(:[0-9]{1,5})?'
 REG_PATH='(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)*'
 REG_TAIL='/falco-ctf'
-reg_mutate any '^.*$' "$(op_line reg '$1 == "a,b=c/falco-ctf"')"
+reg_mutate any '^.*$' "$(op_line reg '$1 == "a,b=c/falco-ctf"')" --control accept
 reg_mutate no-dollar "^${REG_HOST}${REG_PORT}${REG_PATH}${REG_TAIL}" "$(op_line reg '$1 == "a.com/falco-ctf{LF}"')"
 reg_mutate no-caret "${REG_HOST}${REG_PORT}${REG_PATH}${REG_TAIL}\$" "$(op_line reg '$1 == "{LF}a.com/falco-ctf"')"
 reg_mutate old-charset '^[a-z0-9.-]+(:[0-9]+)?(/[a-z0-9._-]+)*/falco-ctf$' "$(op_line reg '$1 == "../falco-ctf"')"
@@ -384,40 +385,43 @@ reg_mutate upper "^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\\.[a-zA-Z0-9]([a-zA-Z
 reg_mutate host-underscore "^[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*${REG_PORT}${REG_PATH}${REG_TAIL}\$" "$(op_line reg '$1 == "a_b/falco-ctf"')"
 # The ingest filter's part: without the `/falco-ctf` tail a registry the scoreboard would
 # silently drop (every event of the workspace) is accepted.
-reg_mutate no-ingest-tail "^${REG_HOST}${REG_PORT}${REG_PATH}\$" "$(op_line reg '$1 == "registry.local"')"
-op_mutate reg reg-check-removed '[[ -z "${FALCO_CTF_REGISTRY:-}" ]] || check_operator_input' ':' "$(op_line reg '$1 == "a,b=c/falco-ctf"')" accept
+reg_mutate no-ingest-tail "^${REG_HOST}${REG_PORT}${REG_PATH}\$" "$(op_line reg '$1 == "registry.local"')" \
+  --control accept --control "$(op_line reg '$1 == "a.com/../falco-ctf"')"
+op_mutate reg reg-check-removed '[[ -z "${FALCO_CTF_REGISTRY:-}" ]] || check_operator_input' ':' "$(op_line reg '$1 == "a,b=c/falco-ctf"')" --control accept
 
-tag_mutate any '^.*$' "$(op_line tag '$1 == "a,b=c"')"
-tag_mutate no-dollar '^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}' "$(op_line tag '$1 == "a{LF}"')"
-tag_mutate no-caret '[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$' "$(op_line tag '$1 == "{LF}a"')"
-tag_mutate wide '^[A-Za-z0-9_][A-Za-z0-9._-]{0,128}$' "$(op_line tag 'length($1) == 129 && $2 == "reject"')"
+tag_mutate any '^.*$' "$(op_line tag '$1 == "a,b=c"')" --control accept
+tag_mutate no-dollar '^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}' "$(op_line tag '$1 == "a{LF}"')" --control accept --control "$(op_line tag '$1 == "{LF}a"')"
+tag_mutate no-caret '[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$' "$(op_line tag '$1 == "{LF}a"')" --control accept --control "$(op_line tag '$1 == "a{LF}"')"
+tag_mutate wide '^[A-Za-z0-9_][A-Za-z0-9._-]{0,128}$' "$(op_line tag 'length($1) == 129 && $2 == "reject"')" --control accept --control "$(op_line tag '$1 == ".a"')"
 tag_mutate narrow '^[A-Za-z0-9_][A-Za-z0-9._-]{0,126}$' "$(op_line tag 'length($1) == 128 && $2 == "accept"')"
 tag_mutate leading-dot '^[A-Za-z0-9_.][A-Za-z0-9._-]{0,127}$' "$(op_line tag '$1 == ".a"')"
 tag_mutate leading-hyphen '^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$' "$(op_line tag '$1 == "-a"')"
 tag_mutate colon '^[A-Za-z0-9_][A-Za-z0-9._:-]{0,127}$' "$(op_line tag '$1 == "sha256:0123"')"
 tag_mutate slash '^[A-Za-z0-9_][A-Za-z0-9._/-]{0,127}$' "$(op_line tag '$1 == "a/b"')"
-op_mutate tag tag-check-removed '[[ -z "${FALCO_CTF_IMAGE_TAG:-}" ]] || check_operator_input' ':' "$(op_line tag '$1 == "a,b=c"')" accept
+op_mutate tag tag-check-removed '[[ -z "${FALCO_CTF_IMAGE_TAG:-}" ]] || check_operator_input' ':' "$(op_line tag '$1 == "a,b=c"')" --control accept
 
-cidr_mutate any '^.*$' "$(op_line cidr '$1 == "10.0.0.1/32,10.0.0.2/32"')"
+cidr_mutate any '^.*$' "$(op_line cidr '$1 == "10.0.0.1/32,10.0.0.2/32"')" --control accept
 cidr_mutate no-dollar '^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-2]|[12]?[0-9])' "$(op_line cidr '$1 == "10.0.0.1/32{LF}"')"
-cidr_mutate no-caret '((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-2]|[12]?[0-9])$' "$(op_line cidr '$1 == "{LF}10.0.0.1/32"')"
-cidr_mutate octet-999 '^(([0-9]{1,3})\.){3}([0-9]{1,3})/(3[0-2]|[12]?[0-9])$' "$(op_line cidr '$1 == "256.0.0.1/32"')"
+cidr_mutate no-caret '((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-2]|[12]?[0-9])$' "$(op_line cidr '$1 == "{LF}10.0.0.1/32"')" \
+  --control accept --control "$(op_line cidr '$1 == "10.0.0.1/32{LF}"')"
+cidr_mutate octet-999 '^(([0-9]{1,3})\.){3}([0-9]{1,3})/(3[0-2]|[12]?[0-9])$' "$(op_line cidr '$1 == "256.0.0.1/32"')" --control accept --control "$(op_line cidr '$1 == "10.0.0.1/33"')"
 cidr_mutate prefix-wide '^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-9]|[12]?[0-9])$' "$(op_line cidr '$1 == "10.0.0.1/33"')"
-cidr_mutate prefix-narrow '^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-1]|[12]?[0-9])$' "$(op_line cidr '$1 == "255.255.255.255/32"')" reject
+cidr_mutate prefix-narrow '^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-1]|[12]?[0-9])$' "$(op_line cidr '$1 == "255.255.255.255/32"')" \
+  --control "$(op_line cidr '$1 == "199.199.199.199/31"')" --control reject
 cidr_mutate leading-zero '^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|0?[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|0?[1-9]?[0-9])/(3[0-2]|[12]?[0-9])$' "$(op_line cidr '$1 == "010.0.0.1/32"')"
 cidr_mutate no-prefix '^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(/(3[0-2]|[12]?[0-9]))?$' "$(op_line cidr '$1 == "10.0.0.1"')"
 cidr_mutate three-octets '^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){2,3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-2]|[12]?[0-9])$' "$(op_line cidr '$1 == "10.0.0/24"')"
-op_mutate cidr cidr-check-removed '[[ -z "${API_SERVER_CIDR}" ]] || check_operator_input' ':' "$(op_line cidr '$1 == "10.0.0.1/32,10.0.0.2/32"')" accept
+op_mutate cidr cidr-check-removed '[[ -z "${API_SERVER_CIDR}" ]] || check_operator_input' ':' "$(op_line cidr '$1 == "10.0.0.1/32,10.0.0.2/32"')" --control accept
 
 # --set-string -> --set: helm would type the value (`null` deletes the key) and read `,` / `=` in it.
-op_mutate dns dns-set-not-set-string '  DNS_SUFFIX_ARGS+=(' '  DNS_SUFFIX_ARGS+=(--set "dnsSuffix=${DNS_SUFFIX}")' "$(op_line dns '$1 == "null"')" reject
-op_mutate cidr cidr-set-not-set-string '  EGRESS_ARGS+=(--set-string "networkPolicy.egress.apiServerCidr=' '  EGRESS_ARGS+=(--set "networkPolicy.egress.apiServerCidr=${API_SERVER_CIDR}")' "$(op_line cidr '$1 == "10.100.0.1/32"')" reject
-op_mutate reg reg-set-not-set-string-ttyd '  IMAGE_ARGS+=(--set-string "ttyd.image.repository=' '  IMAGE_ARGS+=(--set "ttyd.image.repository=${FALCO_CTF_REGISTRY}/ttyd")' "$(op_line reg '$1 == "docker.io/falco-ctf"')" reject
-op_mutate reg reg-set-not-set-string-proxy '  IMAGE_ARGS+=(--set-string "ttyd.proxy.image.repository=' '  IMAGE_ARGS+=(--set "ttyd.proxy.image.repository=${FALCO_CTF_REGISTRY}/ttyd-proxy")' "$(op_line reg '$1 == "docker.io/falco-ctf"')" reject
-op_mutate reg reg-set-not-set-string-challenge '  IMAGE_ARGS+=(--set-string "challenge.image.repository=' '  IMAGE_ARGS+=(--set "challenge.image.repository=${FALCO_CTF_REGISTRY}/challenge")' "$(op_line reg '$1 == "docker.io/falco-ctf"')" reject
-op_mutate tag tag-set-not-set-string-ttyd '  IMAGE_ARGS+=(--set-string "ttyd.image.tag=' '  IMAGE_ARGS+=(--set "ttyd.image.tag=${FALCO_CTF_IMAGE_TAG}")' "$(op_line tag '$1 == "null"')" reject
-op_mutate tag tag-set-not-set-string-proxy '  IMAGE_ARGS+=(--set-string "ttyd.proxy.image.tag=' '  IMAGE_ARGS+=(--set "ttyd.proxy.image.tag=${FALCO_CTF_IMAGE_TAG}")' "$(op_line tag '$1 == "null"')" reject
-op_mutate tag tag-set-not-set-string-challenge '  IMAGE_ARGS+=(--set-string "challenge.image.tag=' '  IMAGE_ARGS+=(--set "challenge.image.tag=${FALCO_CTF_IMAGE_TAG}")' "$(op_line tag '$1 == "null"')" reject
+op_set_mutate dns dns-set-not-set-string '  DNS_SUFFIX_ARGS+=(' '  DNS_SUFFIX_ARGS+=(--set "dnsSuffix=${DNS_SUFFIX}")' "$(op_line dns '$1 == "null"')" dnsSuffix
+op_set_mutate cidr cidr-set-not-set-string '  EGRESS_ARGS+=(--set-string "networkPolicy.egress.apiServerCidr=' '  EGRESS_ARGS+=(--set "networkPolicy.egress.apiServerCidr=${API_SERVER_CIDR}")' "$(op_line cidr '$1 == "10.100.0.1/32"')" networkPolicy.egress.apiServerCidr
+op_set_mutate reg reg-set-not-set-string-ttyd '  IMAGE_ARGS+=(--set-string "ttyd.image.repository=' '  IMAGE_ARGS+=(--set "ttyd.image.repository=${FALCO_CTF_REGISTRY}/ttyd")' "$(op_line reg '$1 == "docker.io/falco-ctf"')" ttyd.image.repository
+op_set_mutate reg reg-set-not-set-string-proxy '  IMAGE_ARGS+=(--set-string "ttyd.proxy.image.repository=' '  IMAGE_ARGS+=(--set "ttyd.proxy.image.repository=${FALCO_CTF_REGISTRY}/ttyd-proxy")' "$(op_line reg '$1 == "docker.io/falco-ctf"')" ttyd.proxy.image.repository
+op_set_mutate reg reg-set-not-set-string-challenge '  IMAGE_ARGS+=(--set-string "challenge.image.repository=' '  IMAGE_ARGS+=(--set "challenge.image.repository=${FALCO_CTF_REGISTRY}/challenge")' "$(op_line reg '$1 == "docker.io/falco-ctf"')" challenge.image.repository
+op_set_mutate tag tag-set-not-set-string-ttyd '  IMAGE_ARGS+=(--set-string "ttyd.image.tag=' '  IMAGE_ARGS+=(--set "ttyd.image.tag=${FALCO_CTF_IMAGE_TAG}")' "$(op_line tag '$1 == "null"')" ttyd.image.tag
+op_set_mutate tag tag-set-not-set-string-proxy '  IMAGE_ARGS+=(--set-string "ttyd.proxy.image.tag=' '  IMAGE_ARGS+=(--set "ttyd.proxy.image.tag=${FALCO_CTF_IMAGE_TAG}")' "$(op_line tag '$1 == "null"')" ttyd.proxy.image.tag
+op_set_mutate tag tag-set-not-set-string-challenge '  IMAGE_ARGS+=(--set-string "challenge.image.tag=' '  IMAGE_ARGS+=(--set "challenge.image.tag=${FALCO_CTF_IMAGE_TAG}")' "$(op_line tag '$1 == "null"')" challenge.image.tag
 
 
 ct_finish "deploy-user.sh id grammar check"
