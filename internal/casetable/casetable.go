@@ -4,9 +4,11 @@
 // internal/catalog's scenario-name-cases.tsv (app#494). It is imported from test
 // files only: no production binary links it.
 //
-// The format is the one the seat table's header spells out, and a shell reader
-// (scripts/check-seat-grammar.sh, scripts/check-deploy-user-ids.sh) decodes the same
-// closed placeholder set, so a row means the same input to every reader.
+// The format is the one the seat table's header spells out, and the shell reader
+// (scripts/lib/casetable.sh, which scripts/check-seat-grammar.sh and
+// scripts/check-deploy-user-ids.sh source: app#509) decodes the same closed
+// placeholder set, so a row means the same input to every reader.
+// TestShellPlaceholdersAreTheGoPlaceholders holds the two sets equal.
 package casetable
 
 import (
@@ -28,12 +30,14 @@ type Row struct {
 // reader, never a verdict: otherwise a reader that lacked a decoder would test
 // the literal text, reject it, and stay green without trying the input the row
 // stands for.
-var placeholders = strings.NewReplacer(
+var placeholderPairs = []string{
 	"{LF}", "\n",
 	"{U+202E}", "\u202e",
 	"{U+00FC}", "ü",
 	"{U+00EF}", "ï",
-)
+}
+
+var placeholders = strings.NewReplacer(placeholderPairs...)
 
 // Parse reads the table text. It fails on any line that is not
 // `input<TAB>accept|reject`, so a malformed row is red, not skipped.

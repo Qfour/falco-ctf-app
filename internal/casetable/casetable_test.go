@@ -1,6 +1,13 @@
 package casetable
 
-import "testing"
+import (
+	"os"
+	"slices"
+	"sort"
+	"strconv"
+	"strings"
+	"testing"
+)
 
 func TestParse_PlaceholdersAndTheEmptyFirstColumn(t *testing.T) {
 	rows, err := Parse("x", "# c\n\n\treject\nab{LF}\treject\nab{U+202E}\treject\n{U+00FC}{U+00EF}\treject\nab\taccept\n")
@@ -56,5 +63,53 @@ func TestShellAssign(t *testing.T) {
 		if _, found := ShellAssign(src, "NAME"); found {
 			t.Errorf("%s: read as a single definition", name)
 		}
+	}
+}
+
+// The shell reader (scripts/lib/casetable.sh, app#509) decodes the same closed
+// placeholder set. If the two sets drifted, a row would stand for one input in Go and
+// another in shell, or be a verdict in one reader and an unknown-placeholder error in
+// the other. The shell side is read as text: CT_PLACEHOLDERS lists the names on one
+// line, and ct_decode must hold one substitution per name (test-casetable-lib.sh
+// holds what each decodes to, in bytes).
+func TestShellPlaceholdersAreTheGoPlaceholders(t *testing.T) {
+	raw, err := os.ReadFile("../../scripts/lib/casetable.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(raw)
+	list, ok := ShellAssign(src, "CT_PLACEHOLDERS")
+	if !ok {
+		t.Fatal("scripts/lib/casetable.sh has no single-quoted CT_PLACEHOLDERS='...' line of its own")
+	}
+	shell := strings.Fields(list)
+	var goNames []string
+	for i := 0; i < len(placeholderPairs); i += 2 {
+		name, value := placeholderPairs[i], placeholderPairs[i+1]
+		goNames = append(goNames, name)
+		// A {U+XXXX} name is the code point it says: the table's own spelling.
+		if hex, ok := strings.CutPrefix(strings.TrimSuffix(name, "}"), "{U+"); ok {
+			cp, err := strconv.ParseUint(hex, 16, 32)
+			if err != nil || value != string(rune(cp)) {
+				t.Errorf("%s decodes to %q in Go, not the code point it names", name, value)
+			}
+		}
+	}
+	sort.Strings(goNames)
+	sortedShell := append([]string(nil), shell...)
+	sort.Strings(sortedShell)
+	if !slices.Equal(goNames, sortedShell) {
+		t.Fatalf("placeholder sets differ: Go %v, scripts/lib/casetable.sh CT_PLACEHOLDERS %v", goNames, sortedShell)
+	}
+	// ct_decode has exactly one substitution per name (a name listed but not
+	// decoded would be left as a brace and read as an unknown placeholder).
+	for _, name := range shell {
+		sub := `DECODED="${DECODED//` + strings.NewReplacer("{", `\{`, "}", `\}`).Replace(name) + `/`
+		if strings.Count(src, sub) != 1 {
+			t.Errorf("ct_decode has %d substitutions for %s, want 1", strings.Count(src, sub), name)
+		}
+	}
+	if n := strings.Count(src, "DECODED=\"${DECODED//"); n != len(shell) {
+		t.Errorf("ct_decode has %d substitutions, CT_PLACEHOLDERS lists %d names", n, len(shell))
 	}
 }

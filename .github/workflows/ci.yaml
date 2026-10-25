@@ -181,6 +181,10 @@ jobs:
         run: ./scripts/check-flags.sh
       - name: flags-file validation is fail-closed (deploy-user.sh --flags-file, no cluster)
         run: ./scripts/check-flags-file-validation.sh
+      - name: the shared shell case-table reader (scripts/lib/casetable.sh) can fail — decode, header, walk, mutate_line (app#509 self-test)
+        run: ./scripts/test-casetable-lib.sh
+      - name: the deploy-user.sh stub harness (scripts/lib/deploy-user-harness.sh) can fail — stubs, exit 97, reject / accept verdicts (app#509 self-test)
+        run: ./scripts/test-deploy-user-harness.sh
       - name: deploy-user.sh checks the seat grammar against the shared case table before any kubectl/helm call (app#480, ADR-0034 D2; self-test included)
         run: ./scripts/check-seat-grammar.sh
       - name: deploy-user.sh checks the challenge id and the scenario name against their shared case tables before any kubectl/helm call (app#494; self-test included)
