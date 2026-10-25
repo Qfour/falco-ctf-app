@@ -1,7 +1,13 @@
 # ttyd container — serves a Web terminal that kubectl-exec's into the challenge
 # container of the same Pod. Intended to run as a non-root user with a SA that
 # has only `pods/exec` on this Pod's name.
-FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+# --- Stage 1: kubectl (build only) ---------------------------------------------
+# kubectl の取得と sha256 検証は、この build stage だけで行う。runtime に持ち込むのは
+# 検証済みの 1 ファイルだけ (COPY --from)。取得に使う道具 (busybox wget) は alpine base
+# に標準で入っており、apk add は 1 つも要らない (= 新しい pin が増えない)。runtime stage
+# に curl / libcurl が残らない (ADR-0036 F6 / app#504: ttyd は pods/exec の SA token を
+# 持つコンテナなので、使わない package は置かない)。
+FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 AS kubectl
 
 ARG KUBECTL_VERSION=v1.35.9
 # v1.35.8 -> v1.35.9 (2026-10-13, CI scan 全 PR 赤の追跡): v1.35.9 が公開された
@@ -43,7 +49,26 @@ ARG KUBECTL_VERSION=v1.35.9
 # go1.26.6 ベースのパッチが出る / cluster_version が再確定する)。
 ARG KUBECTL_SHA256_AMD64=3cfeaf80be482b435b0aa214aff6e0b2c312ee23c0ff20810c75517b6004c6eb
 ARG KUBECTL_SHA256_ARM64=39c98bca82875d9a9ddfb6f3c5ab17c3f78ea0801230683e538a67d5c053308d
+RUN ARCH="$(uname -m)" \
+ && case "${ARCH}" in \
+        aarch64) ARCH=arm64; SHA256="${KUBECTL_SHA256_ARM64}" ;; \
+        x86_64)  ARCH=amd64; SHA256="${KUBECTL_SHA256_AMD64}" ;; \
+        *) echo "unsupported arch: ${ARCH}" >&2; exit 1 ;; \
+    esac \
+ && wget -q -O /kubectl \
+      "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH}/kubectl" \
+ && echo "${SHA256}  /kubectl" | sha256sum -c - \
+ && chmod 0755 /kubectl
 
+# --- Stage 2: runtime ----------------------------------------------------------
+# runtime に入る package は ttyd / tini / ca-certificates (+ libssl3 / libcrypto3 / zlib の
+# 明示 upgrade) だけ。bash と curl / libcurl は **無い** (app#504): bash は
+# `kubectl exec -c challenge ... /bin/bash -l` の引数で challenge container 側で動き、
+# curl は readinessProbe だったが busybox wget に替えた (charts/ctf-user/templates/pod.yaml)。
+FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+
+# (2026-10-26, app#504: 下の履歴のうち curl / libcurl と bash の pin は runtime から外れて
+# 無くなった。履歴として残す。)
 # alpine 3.23→3.24 re-bump (#227 2026-09-01 続報、workspace#31):
 # 3.23 bump 後の scan で curl/libcurl だけ drift した — pin 時点 (2026-09-01 午前)
 # は 8.20.0-r0 が fix だったが、Sysdig の CVE フィードが同日中に 8.21.0 要求へ
@@ -80,21 +105,11 @@ ARG KUBECTL_SHA256_ARM64=39c98bca82875d9a9ddfb6f3c5ab17c3f78ea0801230683e538a67d
 RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 zlib=1.3.2-r1 \
  && apk add --no-cache \
         "ttyd=1.7.7-r0" \
-        "bash=5.3.9-r1" \
         "ca-certificates=20261020-r0" \
-        "curl=8.22.0-r0" \
         "tini=0.19.0-r3" \
- && ARCH="$(uname -m)" \
- && case "${ARCH}" in \
-        aarch64) ARCH=arm64; SHA256="${KUBECTL_SHA256_ARM64}" ;; \
-        x86_64)  ARCH=amd64; SHA256="${KUBECTL_SHA256_AMD64}" ;; \
-        *) echo "unsupported arch: ${ARCH}" >&2; exit 1 ;; \
-    esac \
- && curl -fsSL -o /usr/local/bin/kubectl \
-      "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH}/kubectl" \
- && echo "${SHA256}  /usr/local/bin/kubectl" | sha256sum -c - \
- && chmod 0755 /usr/local/bin/kubectl \
  && adduser -D -u 1000 ttyd
+
+COPY --from=kubectl --chmod=0755 /kubectl /usr/local/bin/kubectl
 
 USER 1000:1000
 
