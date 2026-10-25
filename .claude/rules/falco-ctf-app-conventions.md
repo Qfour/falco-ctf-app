@@ -60,7 +60,7 @@
 | scoreboard | `golang:1.26-alpine` | `gcr.io/distroless/static-debian13:nonroot` |
 | auth-policy | `golang:1.26-alpine` | `gcr.io/distroless/static-debian13:nonroot` |
 | collector | `golang:1.26-alpine` | `gcr.io/distroless/static-debian13:nonroot` |
-| ttyd | (single-stage) | `alpine:3.24` |
+| ttyd | `alpine:3.24` (`kubectl` stage: busybox wget で取得し、焼き込んだ sha256 と照合する。`apk add` 無し = pin 無し。app#504) | `alpine:3.24` (builder と同一 digest。検証済みの kubectl を `COPY --from` で受ける。curl / bash は置かない: build 時の assert) |
 | ttyd-proxy | `golang:1.26-alpine` | `gcr.io/distroless/static-debian13:nonroot` |
 | challenge | `alpine:3.24` (`missions-builder`: `challenges/` 全体を読み、`<id>/fixtures/**` と `answers.yaml` だけを組み立てる。ADR-0026) | `alpine:3.24` (builder と同一 digest。`/opt/ctf/missions/` は `<id>/fixtures/**` だけ。`make check-image-hygiene` が V1-V3 で機械検査) |
 | docs | `python:3.12-slim` (mkdocs-material) | `nginxinc/nginx-unprivileged:1.30-alpine-slim` (動的 module / curl 無し。app#442) |
@@ -157,7 +157,8 @@ docker buildx imagetools inspect golang:1.26-alpine --format '{{.Manifest.MediaT
 #                                       app#78/#87/#88/#499 で発覚)、
 #     distroless static-debian13:nonroot = scoreboard/auth-policy、
 #                                       Dockerfile.e2e (serve stage。`make e2e-serve` のイメージ)、
-#     alpine:3.24                     = images/{ttyd,challenge}、
+#     alpine:3.24                     = images/{ttyd,challenge} (どちらの Dockerfile も FROM が 2 本。
+#                                       2 本とも同じ digest に揃える)、
 #     python:3.12-slim                = images/docs (build stage)、
 #     nginx-unprivileged:1.30-alpine-slim = images/docs (serve stage)、
 #     falcosecurity/falco:0.44.1      = images/detect-grader (Falco 版 bump 時は

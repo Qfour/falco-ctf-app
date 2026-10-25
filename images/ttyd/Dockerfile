@@ -5,7 +5,7 @@
 # kubectl の取得と sha256 検証は、この build stage だけで行う。runtime に持ち込むのは
 # 検証済みの 1 ファイルだけ (COPY --from)。取得に使う道具 (busybox wget) は alpine base
 # に標準で入っており、apk add は 1 つも要らない (= 新しい pin が増えない)。runtime stage
-# に curl / libcurl が残らない (ADR-0036 F6 / app#504: ttyd は pods/exec の SA token を
+# に curl / libcurl が残らない (app#382 の security 同意コメント (2026-10-25) の F6 / app#504: ttyd は pods/exec の SA token を
 # 持つコンテナなので、使わない package は置かない)。
 FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 AS kubectl
 
@@ -67,8 +67,6 @@ RUN ARCH="$(uname -m)" \
 # curl は readinessProbe だったが busybox wget に替えた (charts/ctf-user/templates/pod.yaml)。
 FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 
-# (2026-10-26, app#504: 下の履歴のうち curl / libcurl と bash の pin は runtime から外れて
-# 無くなった。履歴として残す。)
 # alpine 3.23→3.24 re-bump (#227 2026-09-01 続報、workspace#31):
 # 3.23 bump 後の scan で curl/libcurl だけ drift した — pin 時点 (2026-09-01 午前)
 # は 8.20.0-r0 が fix だったが、Sysdig の CVE フィードが同日中に 8.21.0 要求へ
@@ -85,10 +83,6 @@ FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cab
 #     含まれる — 上流 CHANGES.md の 3.5.7→3.5.8 節が 3.5.9 に残ることを aports と
 #     併せて確認済み (5x R1)。3.5.9 自体も追加の CVE 修正を含む
 #     (High は CVE-2026-84782))
-#   curl/libcurl 8.22.0-r0 (2026-09-03: alpine 3.24 リポジトリから 8.21.0-r0 が
-#   既に外れ apk resolve が failing していたため再 pin。`apk policy curl` 実測
-#   で 3.24/main の唯一の提供版が 8.22.0-r0 であることを確認済み)
-#   bash 5.3.9-r1 (3.23 の 5.3.3-r1 から 3.24 側で上がった版に追随、念のため厳密 pin)
 #   ca-certificates 20261020-r0 (ca-certificates drift: 20260909-r0 -> 20261020-r0
 #     (2026-10-25, 3.24/main から 20260909-r0 が外れ `apk add` が `unable to select
 #     packages` で落ちた。`apk policy ca-certificates` 実測で唯一の提供版)。
@@ -107,7 +101,14 @@ RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 zlib=1.3.2
         "ttyd=1.7.7-r0" \
         "ca-certificates=20261020-r0" \
         "tini=0.19.0-r3" \
- && adduser -D -u 1000 ttyd
+ && adduser -D -u 1000 ttyd \
+ && command -v wget >/dev/null \
+ && ! command -v curl >/dev/null \
+ && ! command -v bash >/dev/null
+# 上の 3 行は build 時の assert (失敗なら build が落ちる)。chart の ttyd readinessProbe
+# (charts/ctf-user/templates/pod.yaml) が busybox wget に依存し、curl / bash は runtime に
+# 置かない (#504)。誰かが apk add に curl / bash を戻す (または curl を引き込む package を
+# 足す) と、ここで止まる。
 
 COPY --from=kubectl --chmod=0755 /kubectl /usr/local/bin/kubectl
 
