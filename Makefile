@@ -17,7 +17,7 @@ SYSDIG_URL   ?= https://app.au1.sysdig.com
 # host repo are not shared into the VM.
 GO_IMAGE ?= golang:1.26-alpine
 
-.PHONY: help dev dev-down build push load-colima deploy-local helm-dep-build lint check-seccomp check-flag-isolation check-namespace-ownership check-image-hygiene check-image-hygiene-selftest test e2e e2e-serve check-e2e-verdict tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-template-hex check-portal-render check-rules check-freshness check-adr check-dockerignore check-go-base-digest check-apk-pins check-apk-pins-selftest clean scan
+.PHONY: help dev dev-down build push load-colima deploy-local helm-dep-build lint check-seccomp check-flag-isolation check-namespace-ownership check-image-hygiene check-image-hygiene-selftest test e2e e2e-serve check-e2e-verdict tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-template-hex check-portal-render check-rules check-freshness check-adr check-dockerignore check-build-context check-go-base-digest check-apk-pins check-apk-pins-selftest clean scan
 
 help:
 	@echo "Targets:"
@@ -50,6 +50,7 @@ help:
 	@echo "  check-rules     — fail if a challenge references a non-existent Falco rule"
 	@echo "  check-freshness — fail if a Dockerfile base image cycle is past EOL (needs network)"
 	@echo "  check-dockerignore — fail if .dockerignore stops excluding decrypted/credential files (*.dec.yaml, *.dec.json, kubeconfig*, *.secret.*) or a tracked file matches them (app#322)"
+	@echo "  check-build-context — fail if a git-tracked file is not in the repo-root Docker build context (.dockerignore evaluated by docker; needs docker; app#501)"
 	@echo "  check-go-base-digest — fail unless every golang:<tag>@sha256:<digest> in the Dockerfiles and workflows is the same value (app#499; + selftest)"
 	@echo "  check-apk-pins  — fail if an apk exact pin in any Dockerfile is no longer in its stage's base image index, or apk add uses a range / @edge / --repository (ADR-0036 D1+D5; absorbs check-e2e-pins; needs docker + network; also run daily by apk-pins.yaml)"
 	@echo "  check-apk-pins-selftest — offline: planted defects (vanished version, range, @edge, --repository, no pin) must fail, the real tree's grammar must pass (ADR-0036 V1)"
@@ -281,6 +282,14 @@ check-adr:
 check-dockerignore:
 	./scripts/check-dockerignore.sh
 	./scripts/check-dockerignore.sh --selftest
+
+# app#501: the build context (what .dockerignore lets into `make test`) must hold
+# every tracked file, or a test inside the build cannot read it. Evaluated by
+# docker itself; --selftest proves a dropped tracked file and an empty context
+# fail. See scripts/check-build-context.sh.
+check-build-context:
+	./scripts/check-build-context.sh
+	./scripts/check-build-context.sh --selftest
 
 # app#499: the Go builder is written in every Dockerfile and in checks.yaml's
 # container.image; one lagging copy scans or builds with another Go. The set is

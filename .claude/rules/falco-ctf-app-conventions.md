@@ -272,6 +272,7 @@ challenge コンテナは UID 表のとおり **root (0) が意図的** (CTF rea
   `DO` + `NOT` + `COMMIT` マーカー (大小文字・`-`/`_` variant 可) を付ける運用。
   `make check-flags` がこのマーカーを含む tracked file を検出し fail-closed で block
   (このスクリプト自身と本ファイルは自己言及のため除外)。
+- **tracked file (Docker 経路では build context の全 file) に生の bidi 制御文字 (U+202A〜U+202E / U+2066〜U+2069) を置かない (Trojan Source、app#501)。** 攻撃データは escape で書く (Go の `"` + 4 桁 hex の u escape、case 表の `{U+202E}`、散文の `U+202E`)。`internal/sourcehygiene` の test (`make test` = required check `test`) が、拡張子の閉集合 (`binaryExt`、今は `.woff2` と untracked の `.tgz`) 以外の全 file を byte で走査して落とす (NUL を含む file は binary 扱いにせず、閉集合の外なら problem)。build context が tracked file を欠かないことは `scripts/check-build-context.sh` (`make check-build-context`、flag-guard) が `git ls-files` と突き合わせる。手元で untracked の file に落ちたら、その file を消すか `.dockerignore` で除く。例外は `internal/sourcehygiene/testdata/bidi-allowlist.txt` の閉集合 (1 行 = 完全一致の path + TAB + 理由、追加は security レビュー、生の文字が無い行は dead として落ちる)。今は 0 行。許容の判断を test の側に書き足さない。
 - 課題用ダミー値 (`P@ssw0rd`) は LOW 扱い、明確にダミーと示す
 - `git add .` / `git add -A` 禁止 (明示パス指定のみ)
 
