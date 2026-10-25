@@ -1,6 +1,8 @@
-# Version control and CI
+# Version control. (.github is NOT excluded: internal/sourcehygiene's scan of raw
+# bidi controls (app#501) reads the workflows in the build context, and a workflow
+# file is where a Trojan Source line does the most harm. Public files; no image
+# copies the repo root.)
 .git
-.github
 
 # Claude Code settings
 .claude
@@ -16,6 +18,15 @@
 # root, and the file is a public markdown document. Verified to take effect with
 # `docker build -f Dockerfile.test` (the test fails without this line).
 !.claude/rules/falco-ctf-app-conventions.md
+# Same reason for the rest of the tracked .claude files (agents, commands, rules,
+# skills, settings.json; all public): internal/sourcehygiene scans every file of
+# the context, and an agent or rule file is text an AI agent obeys. The untracked
+# local state (settings.local.json, last-test-commit, worktrees/) stays excluded.
+!.claude/agents/
+!.claude/commands/
+!.claude/rules/
+!.claude/skills/
+!.claude/settings.json
 
 # Helm charts — not needed by most image builds. Exception: Dockerfile.test
 # needs charts/scoreboard (+ its local file://../falco-ctf-common chart

@@ -1,0 +1,19 @@
+# Raw bidi control characters in tracked files (app#501, Trojan Source).
+#
+# internal/sourcehygiene/bidi_test.go fails when a tracked text file holds a RAW
+# (encoded) U+202A-U+202E or U+2066-U+2069. Write the character as an escape
+# instead: "\u202e" in Go, \u202E in YAML/JSON, {U+202E} in a case table, or
+# U+202E in prose. An escape is ASCII and is never flagged. Attack data does not
+# need a raw character: the repo's fixtures and test expectations all use escapes.
+#
+# This list is the exception, and it is a CLOSED SET:
+#   - one entry per line: <path><TAB><reason>. The path is exact (no glob, no
+#     directory, slash-separated, relative to the repo root). The reason is
+#     required: what the raw character is for, and why an escape cannot do it.
+#   - an entry whose file holds no raw bidi character is a FAILURE (a dead entry
+#     would hide the next one), as is an entry for a file that is absent, binary
+#     (a file with a NUL byte is not scanned) or listed twice.
+#   - adding a line needs review (security-engineer, review-5x R1). Do not add a
+#     line to make a red test green: change the file to use an escape.
+#
+# Lines starting with # and blank lines are ignored. There is no entry today.
