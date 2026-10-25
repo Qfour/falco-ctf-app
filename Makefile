@@ -44,7 +44,7 @@ help:
 	@echo "  gen-tutorial-fragments — regenerate Portal Tutorial tab HTML fragments (docs-site/tutorial-chapters.yaml)"
 	@echo "  gen-values      — regenerate challenge values.yaml / values-all.yaml / values-scenario-<name>.yaml from plant.sh + scenarios/"
 	@echo "  gen-attack      — regenerate ATT&CK Navigator layer + coverage table from falco-rule.yaml attack: blocks"
-	@echo "  check-flags     — fail if real flags leak into tracked files or values are stale; + deploy-user.sh --flags-file validation tests + deploy-time missions allowlist (ADR-0026 V4, 3-8) selftest; + deploy-user.sh seat-grammar check against the shared case table (app#480); + deploy-user.sh challenge-id / scenario-name grammar check against their shared case tables (app#494); + fail on any tracked email outside the reserved domains (ADR-0034 V17)"
+	@echo "  check-flags     — fail if real flags leak into tracked files or values are stale; + deploy-user.sh --flags-file validation tests + deploy-time missions allowlist (ADR-0026 V4, 3-8) selftest; + self-tests of the shared shell case-table reader scripts/lib/casetable.sh and the deploy-user.sh stub harness scripts/lib/deploy-user-harness.sh (app#509); + deploy-user.sh seat-grammar check against the shared case table (app#480); + deploy-user.sh challenge-id / scenario-name grammar check against their shared case tables (app#494); + fail on any tracked email outside the reserved domains (ADR-0034 V17)"
 	@echo "  check-template-hex — fail if a raw hex color literal appears under view/templates/ (recursive: index.html + portal/*.tmpl; app#116 — single design-token source is static/tokens.css)"
 	@echo "  check-portal-render — (macOS, optional; not in CI) run the portal evade-card render functions under jsc and assert ADR-0027 D6 (no clean claim for a non-current evade; dirty always shown; escaping)"
 	@echo "  check-rules     — fail if a challenge references a non-existent Falco rule"
@@ -254,6 +254,8 @@ gen-attack:
 check-flags:
 	./scripts/check-flags.sh
 	./scripts/check-flags-file-validation.sh
+	./scripts/test-casetable-lib.sh
+	./scripts/test-deploy-user-harness.sh
 	./scripts/check-seat-grammar.sh
 	./scripts/check-deploy-user-ids.sh
 	./scripts/check-missions-allowlist-assert.sh
