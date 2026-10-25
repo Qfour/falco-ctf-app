@@ -1,0 +1,74 @@
+# pattern: ^[a-z0-9]([a-z0-9-]{0,52}[a-z0-9])?$
+# The scenario name grammar's shared case table (app#494).
+#
+# A scenario name is a directory under scenarios/ (scenarios/<name>/scenario.yaml),
+# the middle of challenges/values-scenario-<name>.yaml, and, as `scenario-<name>`,
+# the value of the falco-ctf/challenge-id namespace label (deploy-user.sh). It has
+# no Go definition; the grammar is: 1 to 54 characters of [a-z0-9-], the first and
+# the last a letter or digit. 54 because a label value is at most 63 characters and
+# the prefix `scenario-` is 9. The copies this table holds equal:
+#   - Go:    internal/catalog (scenario_name_test.go) reads this file, and checks
+#            that every real scenarios/<name>/ is accepted.
+#   - shell: charts/ctf-user/deploy-user.sh (its SCENARIO_PATTERN), run row by row
+#            as `scenario:<input>` by scripts/check-deploy-user-ids.sh
+#            (make check-flags; CI flag-guard).
+# A row is never dropped to make an implementation pass: the implementation that
+# disagrees is the bug.
+#
+# Format: the same as internal/identity/testdata/seat-cases.tsv (see its header):
+# `input<TAB>accept|reject`, the closed placeholder set {LF} {U+202E} {U+00FC}
+# {U+00EF}, line 1 the canonical `# pattern: ` literal. The table stays ASCII.
+# The input is the name AFTER `scenario:`; an empty name is a reject like any other
+# (exit 2, `scenario:` alone).
+
+# --- baseline: the real scenarios
+nimbusbreach-full	accept
+nimbusbreach-with-tutorial	accept
+tutorial-intro	accept
+# --- shape
+a	accept
+0	accept
+1a	accept
+a1	accept
+a-b	accept
+a--b	accept
+# --- the first and the last are a letter or digit
+-a	reject
+a-	reject
+-	reject
+--	reject
+# --- length: 54 is the longest (scenario- + 54 = 63, a label value)
+abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	accept
+abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	reject
+# --- the alphabet: lower-case letters, digits, hyphen only
+A	reject
+Nimbusbreach-full	reject
+a_b	reject
+a.b	reject
+a b	reject
+a,b=c	reject
+a;b	reject
+a'b	reject
+a"b	reject
+$(x)	reject
+a`b	reject
+a%b	reject
+a:b	reject
+scenario:a	reject
+{U+00FC}	reject
+# --- path traversal: the name is a path component
+.	reject
+..	reject
+../a	reject
+a/..	reject
+a/b	reject
+/a	reject
+/etc/passwd	reject
+# --- control and bidi characters, a trailing newline
+a{LF}	reject
+a{LF}b	reject
+{LF}a	reject
+a{U+202E}	reject
+{U+202E}a	reject
+# --- the empty name (`scenario:` alone)
+	reject

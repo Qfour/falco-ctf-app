@@ -183,6 +183,8 @@ jobs:
         run: ./scripts/check-flags-file-validation.sh
       - name: deploy-user.sh checks the seat grammar against the shared case table before any kubectl/helm call (app#480, ADR-0034 D2; self-test included)
         run: ./scripts/check-seat-grammar.sh
+      - name: deploy-user.sh checks the challenge id and the scenario name against their shared case tables before any kubectl/helm call (app#494; self-test included)
+        run: ./scripts/check-deploy-user-ids.sh
       - name: deploy-time missions allowlist assert (ADR-0026 V4, check 3-8) accepts a clean image and rejects each violation (stub kubectl, no cluster)
         run: ./scripts/check-missions-allowlist-assert.sh
       - name: no email outside the reserved domains in tracked files (ADR-0034 V17)

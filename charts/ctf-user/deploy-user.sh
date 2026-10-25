@@ -17,7 +17,9 @@
 #                  <username> <challenge-id>
 #
 # <challenge-id> is one of three modes (P27-1, REFACTORING.md, added the
-# third):
+# third). Anything else exits 2 before any kubectl / helm call (app#494):
+# <NN-slug> must match challengeid.Pattern, a scenario name must match
+# SCENARIO_PATTERN (both literals are below, next to the checks).
 #   all               — every challenge's plant/fixtures (challenges/values-all.yaml).
 #   <NN-slug>          — a single challenge (challenges/<id>/values.yaml if present).
 #   scenario:<name>    — ONLY the challenges listed in
@@ -185,6 +187,43 @@ if ! (export LC_ALL=C; [[ "${USERNAME}" =~ ${SEAT_PATTERN} ]]); then
   exit 2
 fi
 
+# The challenge id is the `--set-string challengeId=` value below and, in the other two
+# modes, a path (${CHALLENGES_DIR}/<id>, ${SCENARIOS_DIR}/<name>/scenario.yaml,
+# values-scenario-<name>.yaml) and a namespace label value. Until app#494 a single
+# id was only tested for existing as a directory, so a `,` or `=` in it reached
+# helm's --set parser as another key / assignment, and a `..` walked out of the
+# challenges dir. Checked here, before any kubectl / helm call, like the seat.
+#
+# CHALLENGE_ID_PATTERN is a copy of challengeid.Pattern (Go, ADR-0041); a test
+# holds the text equal (internal/catalog/challengeid/shell_cases_test.go).
+# SCENARIO_PATTERN has no Go definition: a scenario name is a directory under
+# scenarios/ and, as `scenario-<name>`, the value of the falco-ctf/challenge-id
+# namespace label, so 1 to 54 characters of [a-z0-9-], the first and the last a
+# letter or digit (a label value is at most 63 characters, `scenario-` is 9). A
+# test (internal/catalog/scenario_name_test.go) holds the text equal to the table
+# header and every real scenarios/<name>/ accepted. scripts/check-deploy-user-ids.sh
+# runs both case tables (internal/catalog/challengeid/testdata/challenge-id-cases.tsv,
+# internal/catalog/testdata/scenario-name-cases.tsv) through this script.
+# `all` is the one fixed word, `scenario:` the one fixed prefix; there is no
+# other form (`ALL`, `scenario:` + nothing, `scenario:a:b` are rejected).
+CHALLENGE_ID_PATTERN='^[0-9]{2}-[a-z0-9-]{1,60}$'
+SCENARIO_PATTERN='^[a-z0-9]([a-z0-9-]{0,52}[a-z0-9])?$'
+case "${CHALLENGE_ID}" in
+  all) ;;
+  scenario:*)
+    if ! (export LC_ALL=C; [[ "${CHALLENGE_ID#scenario:}" =~ ${SCENARIO_PATTERN} ]]); then
+      (export LC_ALL=C; printf 'invalid scenario name: %q does not match %s\n' "${CHALLENGE_ID#scenario:}" "${SCENARIO_PATTERN}") >&2
+      echo "  (app#494; nothing was deployed)" >&2
+      exit 2
+    fi ;;
+  *)
+    if ! (export LC_ALL=C; [[ "${CHALLENGE_ID}" =~ ${CHALLENGE_ID_PATTERN} ]]); then
+      (export LC_ALL=C; printf 'invalid challenge id: %q does not match %s\n' "${CHALLENGE_ID}" "${CHALLENGE_ID_PATTERN}") >&2
+      echo "  (ADR-0041 / app#494; nothing was deployed)" >&2
+      exit 2
+    fi ;;
+esac
+
 # Egress lockdown (P11.5) requires the apiserver CIDR — without it the chart
 # omits the API-server allow and ttyd's `kubectl exec` into the workspace
 # breaks. Fail fast here (mirrors platform deploy-event-workspaces.sh), so a
@@ -283,7 +322,6 @@ if [[ "${ALL_MODE}" -eq 1 ]]; then
   info "using challenges dir: ${CHALLENGES_DIR} (all-missions mode)"
   VALUES_ARGS=(-f "${ALL_VALUES}")
 elif [[ "${SCENARIO_MODE}" -eq 1 ]]; then
-  [[ -n "${SCENARIO_NAME}" ]] || { echo "scenario name is empty (usage: <username> scenario:<name>)" >&2; exit 2; }
   # Precedence: --scenarios-dir > default sibling repo (no env override — the
   # platform passthrough this needs is P27-1's own follow-up, see this
   # script's usage comment; unlike --challenges-dir there is no existing
@@ -515,7 +553,7 @@ info "[3/${LAST_STEP}] helm upgrade --install ${RELEASE} (challenge=${CHALLENGE_
 helm upgrade --install "${RELEASE}" "${CHART_DIR}" \
   -n "${NS}" --create-namespace \
   --set-string "username=${USERNAME}" \
-  --set "challengeId=${CHALLENGE_ID}" \
+  --set-string "challengeId=${CHALLENGE_ID}" \
   ${DNS_SUFFIX:+--set dnsSuffix="${DNS_SUFFIX}"} \
   ${IMAGE_ARGS:+"${IMAGE_ARGS[@]}"} \
   ${FRAME_ANCESTORS_ARGS:+"${FRAME_ANCESTORS_ARGS[@]}"} \
