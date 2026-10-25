@@ -3,7 +3,7 @@ module github.com/Qfour/falco-ctf-app
 go 1.26.0
 
 require (
-	github.com/chromedp/cdproto v0.157.9
+	github.com/chromedp/cdproto v0.158.2
 	github.com/chromedp/chromedp v0.21.0
 	github.com/dop251/goja v0.0.0-20261001121453-e1fc788e4f41
 	github.com/prometheus/client_golang v1.25.0
