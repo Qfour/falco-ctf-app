@@ -1,6 +1,6 @@
 # ADR-0042: seat の文法は deploy できる集合 (1〜53 文字、両端が英数字、`^[a-z0-9]([a-z0-9-]{0,51}[a-z0-9])?$`) に締める。ADR-0034 D2 の seat の文法の 1 文だけを置き換える
 
-- Status: **Proposed** (2026-10-20。architect の合意 (yes, if) と VP の承認は Issue #480 のコメントにある。**Accepted への昇格条件**: (1) B (本 PR = app#496) と platform の対の PR (platform#282) の**両方が main に入る**、(2) **両リポの表の照合が緑** (app: `make test` と `make check-flags`、platform: `scripts/test-seat-grammar-parity.sh` が app の `seat-cases.tsv` を読んで緑)。events の `app.ref` の pin bump は昇格の条件にしない (「platform の対の PR」節の follow-up))。
+- Status: **Accepted** (2026-10-25。昇格条件を満たした: (1) B = app#496 (squash d3fc27c) と platform の対の PR = platform#282 (squash ca0572a) の両方が main に入った、(2) 両リポの表の照合が緑 — app は #496 の `make test` / `make check-flags`、platform は `scripts/test-seat-grammar-parity.sh` が app main d3fc27c の `seat-cases.tsv` (header 一致) で 51 行一致 + `--selftest` mutation 10 検出。Proposed は 2026-10-20、architect の合意 (yes, if) と VP の承認は Issue #480 のコメント。events の `app.ref` の pin bump は昇格の条件にしない (「platform の対の PR」節の follow-up = CEO の release tag の後))。
   - クロスリポ契約 (ADR-0034 D2 の seat の文法) の変更なので Class-2。**ADR-0034 は書き換えない**: D2 の「`seat` は `^[a-z0-9][a-z0-9-]{0,62}$`」の 1 文だけを本 ADR が置き換える (ADR-0034 の Status に導線を置いた)。D2 のそれ以外 (ロスターの形・正規化・解決・起動検査) は変えない。
   - 受理集合を**狭める**変更なので原則は破壊的だが、影響する既存の値は 0 (Consequences)。
   - Dockerfile・image・Hard Invariant の追加・変更は無い。I8 の「seat」の定義が狭まる (機械強制の列は本 PR で契約表に追記した)。
