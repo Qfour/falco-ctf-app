@@ -1780,7 +1780,10 @@ func TestTaintOnOverflow_PersistFailureReturned_ThenRetryWrites(t *testing.T) {
 
 // --- user slug precondition (app#439) --------------------------------------
 
-var nonSlugUsers = []string{"", "Alice", "bad user", "-lead", "a_b", "evil\u202euser", strings.Repeat("a", 64)}
+// "user1-" and the 54-character value were valid before app#480 / ADR-0042 (a
+// trailing hyphen, and up to 63 characters); both are refused now.
+var nonSlugUsers = []string{"", "Alice", "bad user", "-lead", "a_b", "evil\u202euser", strings.Repeat("a", 64),
+	"a" + strings.Repeat("b", 53), "user1-"}
 
 // graderEntry is one row of the Grader's entry table: a public method that takes
 // a `user` and can write a scoring table, called so that it WOULD write for a
@@ -1955,17 +1958,22 @@ func TestCountNonSlugStoredUsers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, u := range []string{"user1", "Bad User"} {
+	// "user1-" and a 63-character name were valid seats before app#480 /
+	// ADR-0042 and may be in a store written by an older release: they are
+	// counted now (a slug beside them, user1 and a 53-character name, is not).
+	oldValid := "a" + strings.Repeat("b", 62)
+	for _, u := range []string{"user1", "Bad User", "user1-", oldValid, "a" + strings.Repeat("b", 52)} {
 		if _, err := st.MarkSolved(u, "03-exfil", "2026-10-01T00:00:00Z"); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for _, c := range []struct{ u, cid string }{{"user1", "03-exfil"}, {"BAD", "03-exfil"}, {"BAD", "04-x"}, {"x_y", "03-exfil"}} {
+	for _, c := range []struct{ u, cid string }{{"user1", "03-exfil"}, {"BAD", "03-exfil"}, {"BAD", "04-x"}, {"x_y", "03-exfil"},
+		{"user1-", "03-exfil"}, {oldValid, "03-exfil"}, {"a" + strings.Repeat("b", 52), "03-exfil"}} {
 		if err := st.RecordExfil(c.u, c.cid, "FALCO{x}", "2026-10-01T00:00:00Z"); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if solved, exfil := scoring.CountNonSlugStoredUsers(st); solved != 1 || exfil != 3 {
-		t.Fatalf("counts = (%d, %d), want (1, 3)", solved, exfil)
+	if solved, exfil := scoring.CountNonSlugStoredUsers(st); solved != 3 || exfil != 5 {
+		t.Fatalf("counts = (%d, %d), want (3, 5)", solved, exfil)
 	}
 }

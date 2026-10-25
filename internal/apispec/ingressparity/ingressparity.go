@@ -11,6 +11,13 @@
 //     annotation passthroughs
 //   - the scoreboard's NetworkPolicy sources and pod selection (ADR-0034 V12,
 //     I8's other premise): netpol.go
+//   - the names a seat becomes in charts/ctf-user (ADR-0042 V4, app#480): the
+//     `ctf-<seat>` namespace, label values and host label, rendered for the edges
+//     of the seat grammar and checked with the Kubernetes validators:
+//     seat_render_test.go. The release name (= seat) and the namespace's
+//     derivation from the seat are NOT read here (the test calls `helm template
+//     <seat>` itself); scripts/check-seat-grammar.sh (ADR-0042 V2) pins them on
+//     deploy-user.sh's real helm / kubectl calls, and this test assumes them
 //
 // A new rendered-chart invariant belongs here, with the ADR that owns it named
 // beside it. (If this set keeps growing, the package name — which is still the

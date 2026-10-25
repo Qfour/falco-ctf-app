@@ -10,6 +10,12 @@ package ingressparity
 // prefixed) name from the seat, this goes red and the grammar is to be revisited
 // (ADR-0042 Signpost 1).
 //
+// What this test does NOT hold: that the release name is the seat and the
+// namespace is `ctf-<seat>`. It calls `helm template <seat>` itself, so it only
+// sees the names the CHART builds. That derivation is pinned by V2
+// (scripts/check-seat-grammar.sh), on deploy-user.sh's recorded helm / kubectl
+// calls; this test is written on that premise.
+//
 // Like ADR-0034 V12 (authurl_test.go) it FAILS when helm is missing: a skipped
 // derivation test would be a silently-green "every seat can be deployed".
 

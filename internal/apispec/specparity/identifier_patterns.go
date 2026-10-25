@@ -29,6 +29,11 @@ type Grammar struct {
 	// Sites maps a spec file name to the exact number of nodes that carry
 	// Pattern there. A spec not listed must carry none.
 	Sites map[string]int
+	// MaxLength, when > 0, is the `maxLength` every site that carries Pattern
+	// must also carry, exactly (a seat's 53, which the pattern's own bound
+	// repeats): a site with no maxLength, or another one, is a violation. 0
+	// means the grammar has no maxLength to hold (its pattern carries the bound).
+	MaxLength int
 }
 
 // PatternSites returns, for every `pattern` keyword with a string value
@@ -57,6 +62,88 @@ func (s *Spec) PatternSites() map[string][]string {
 		sort.Strings(ptrs)
 	}
 	return out
+}
+
+// PatternMaxLengths returns, for every `pattern` keyword with a string value
+// anywhere in the document, the `maxLength` of the same node: pattern value ->
+// pointer -> maxLength, or -1 for a node that has none (or whose maxLength is not
+// an integer). It walks the same nodes as PatternSites.
+func (s *Spec) PatternMaxLengths() map[string]map[string]int {
+	out := map[string]map[string]int{}
+	var walk func(v any, ptr string)
+	walk = func(v any, ptr string) {
+		switch t := v.(type) {
+		case map[string]any:
+			if p, ok := t["pattern"].(string); ok {
+				if out[p] == nil {
+					out[p] = map[string]int{}
+				}
+				out[p][ptr] = -1
+				switch n := t["maxLength"].(type) {
+				case int:
+					out[p][ptr] = n
+				case int64:
+					out[p][ptr] = int(n)
+				case uint64:
+					out[p][ptr] = int(n)
+				case float64:
+					if n == float64(int(n)) {
+						out[p][ptr] = int(n)
+					}
+				}
+			}
+			for k, ev := range t {
+				walk(ev, childPointer(ptr, k))
+			}
+		case []any:
+			for i, ev := range t {
+				walk(ev, childPointer(ptr, fmt.Sprint(i)))
+			}
+		}
+	}
+	walk(s.raw, "")
+	return out
+}
+
+// MaxLengthViolations checks, for every grammar with MaxLength > 0, that every
+// site carrying its pattern in every spec (spec file name -> PatternMaxLengths)
+// also carries exactly that maxLength. A site that is missing one, or has
+// another, is named by file and pointer. A grammar with MaxLength > 0 that is
+// found at no site at all is a violation too (nothing was compared).
+func MaxLengthViolations(specs map[string]map[string]map[string]int, grammars []Grammar) []string {
+	var viol []string
+	files := make([]string, 0, len(specs))
+	for f := range specs {
+		files = append(files, f)
+	}
+	sort.Strings(files)
+	for _, g := range grammars {
+		if g.MaxLength <= 0 {
+			continue
+		}
+		compared := 0
+		for _, f := range files {
+			ptrs := make([]string, 0, len(specs[f][g.Pattern]))
+			for ptr := range specs[f][g.Pattern] {
+				ptrs = append(ptrs, ptr)
+			}
+			sort.Strings(ptrs)
+			for _, ptr := range ptrs {
+				compared++
+				switch got := specs[f][g.Pattern][ptr]; {
+				case got < 0:
+					viol = append(viol, fmt.Sprintf("grammar %q: %s %s carries the pattern but no maxLength, want maxLength: %d", g.Name, f, ptr, g.MaxLength))
+				case got != g.MaxLength:
+					viol = append(viol, fmt.Sprintf("grammar %q: %s %s has maxLength: %d, want %d", g.Name, f, ptr, got, g.MaxLength))
+				}
+			}
+		}
+		if compared == 0 {
+			viol = append(viol, fmt.Sprintf("grammar %q has MaxLength %d but no spec site carries its pattern: nothing was compared", g.Name, g.MaxLength))
+		}
+	}
+	sort.Strings(viol)
+	return viol
 }
 
 // PatternParityViolations compares the patterns found in the specs (spec file

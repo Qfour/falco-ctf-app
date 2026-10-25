@@ -1,3 +1,4 @@
+# pattern: ^[a-z0-9]([a-z0-9-]{0,51}[a-z0-9])?$
 # The seat grammar's shared case table (app#480, ADR-0042; ADR-0034 D2 before it).
 #
 # A seat is the workspace / participant name (the `<seat>` in
@@ -17,7 +18,11 @@
 # same commit.
 #
 # Format (tab-separated, two columns: `input<TAB>accept|reject`):
-#   - blank lines and lines starting with `#` are ignored
+#   - blank lines and lines starting with `#` are ignored. The one exception to "ignored" is
+#     line 1, `# pattern: <regex>`: the canonical literal of the grammar (the first line, exactly
+#     `# pattern: ` followed by the regex). Readers outside this repo (platform's parity test) read
+#     the grammar from it, so the text of an app Go source file is not a contract surface; a Go
+#     test pins it equal to identity.SeatPattern (TestSeatCaseTable_HeaderIsTheGoPattern)
 #   - split each line on its FIRST tab only. `input` may be empty (the line then
 #     starts with a tab) and contains neither a tab nor a newline literally
 #   - do NOT read it with `IFS=$'\t' read` (a tab is IFS whitespace there, so an

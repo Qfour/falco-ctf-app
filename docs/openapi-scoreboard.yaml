@@ -604,7 +604,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/SubmitFlagVerdict" }
         "400":
-          description: "`{cid}` is not an evade challenge, malformed body, or `user` missing or not a username slug (`^[a-z0-9]([a-z0-9-]{0,51}[a-z0-9])?$`; nothing is stored)"
+          description: "`{cid}` is not an evade challenge, malformed body, or `user` missing or not a username slug (the `Seat` schema, `components.schemas.Seat`; nothing is stored)"
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -759,7 +759,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ExfilReceipt" }
         "400":
-          description: "`{cid}` does not accept exfil, malformed body, missing `user`/`flag`, or `user` not a username slug (`^[a-z0-9]([a-z0-9-]{0,51}[a-z0-9])?$`; nothing is stored)"
+          description: "`{cid}` does not accept exfil, malformed body, missing `user`/`flag`, or `user` not a username slug (the `Seat` schema, `components.schemas.Seat`; nothing is stored)"
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

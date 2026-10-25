@@ -163,19 +163,21 @@ USERNAME="${1:?${USAGE_MSG}}"
 CHALLENGE_ID="${2:?${USAGE_MSG}}"
 
 # The username is the seat: the Helm release name, the `ctf-<seat>` namespace,
-# label values and the workspace host's first label (app#480, ADR-0034 D2). It is
-# checked here, before any kubectl / helm call, because `--set-string "username=..."`
-# below would read a `,` as the start of another key and `=` as another
-# assignment. (--set-string, not --set: --set types a seat such as 0, 1e3 or true
-# as a number / boolean, and the chart would then build `ctf-1000` for `1e3`; the
-# chart also quotes the label values, which are YAML scalars.) SEAT_PATTERN is a copy of identity.SeatPattern (Go): a test holds
-# the text equal (internal/identity/seat_cases_test.go) and
-# scripts/check-seat-grammar.sh runs the shared case table
-# (internal/identity/testdata/seat-cases.tsv) through this check. C locale so
-# `a-z` is the ASCII range whatever the operator's LANG is; the printed value is
-# %q-escaped in the C locale (every byte >= 0x80 becomes an octal escape whatever
-# the shell's version or LANG), so a control or bidi character cannot reach the
-# terminal raw.
+# label values and the workspace host's first label (app#480, ADR-0034 D2,
+# ADR-0042). It is checked here, before any kubectl / helm call, because
+# `--set-string "username=..."` below would read a `,` as the start of another key
+# and `=` as another assignment. (--set-string, not --set: --set types a seat such
+# as 0, 1e3 or true as a number / boolean, and the chart would then build
+# `ctf-1000` for `1e3`; the chart also quotes the label values, which are YAML
+# scalars.)
+#
+# SEAT_PATTERN is a copy of identity.SeatPattern (Go). A test holds the text equal
+# (internal/identity/seat_cases_test.go) and scripts/check-seat-grammar.sh runs the
+# shared case table (internal/identity/testdata/seat-cases.tsv) through this check.
+# C locale so `a-z` is the ASCII range whatever the operator's LANG is; the printed
+# value is %q-escaped in the C locale (every byte >= 0x80 becomes an octal escape
+# whatever the shell's version or LANG), so a control or bidi character cannot
+# reach the terminal raw.
 SEAT_PATTERN='^[a-z0-9]([a-z0-9-]{0,51}[a-z0-9])?$'
 if ! (export LC_ALL=C; [[ "${USERNAME}" =~ ${SEAT_PATTERN} ]]); then
   (export LC_ALL=C; printf 'invalid username (a seat): %q does not match %s\n' "${USERNAME}" "${SEAT_PATTERN}") >&2
