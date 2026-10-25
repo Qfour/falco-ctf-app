@@ -63,6 +63,12 @@ var canaryFiles = []string{
 	".claude/rules/dev-flow.md",
 	".claude/skills/falco-go/SKILL.md",
 	".claude/settings.json",
+	// app#511: one per directory of what an AI agent reads (invisible.go).
+	"AGENTS.md",
+	"CLAUDE.md",
+	"challenges/00-tutorial/journey.yaml",
+	"docs/adr/0001-flag-plant-initcontainer-not-challenge-env.md",
+	invisibleAllowlistFile,
 }
 
 // binaryExt is the closed set of file extensions that are binary and not
@@ -193,9 +199,19 @@ type report struct {
 	skipped  []string        // not regular (symlink, submodule) or absent from disk
 }
 
-// checkTree scans root against allow. Every problem is a line "<path>:<line>:<col>
-// U+XXXX NAME ..." or a sentence naming the allowlist entry; none is empty.
-func checkTree(root string, allow map[string]string) (*report, error) {
+// fileScanner is a second rule applied in the same walk (app#511: invisible
+// characters). The walk, the file set, binaryExt, symlinks and the NUL problem stay
+// those of checkTree, so two rules can never look at two different sets of files.
+type fileScanner interface {
+	path(rel string) []string              // every listed path, scanned or not
+	file(rel string, data []byte) []string // the bytes of a scanned text file
+	finish(r *report) []string             // after the walk: dead allowlist entries
+}
+
+// checkTree scans root against allow, and runs every extra scanner on the same files.
+// Every problem is a line "<path>:<line>:<col> U+XXXX NAME ..." or a sentence naming
+// the allowlist entry; none is empty.
+func checkTree(root string, allow map[string]string, extra ...fileScanner) (*report, error) {
 	files, err := listFiles(root)
 	if err != nil {
 		return nil, err
@@ -206,6 +222,9 @@ func checkTree(root string, allow map[string]string) (*report, error) {
 	r := &report{scanned: map[string]bool{}}
 	hit := map[string]bool{} // allowlisted files that did hold a raw character
 	for _, rel := range files {
+		for _, x := range extra {
+			r.problems = append(r.problems, x.path(rel)...)
+		}
 		abs := filepath.Join(root, filepath.FromSlash(rel))
 		fi, err := os.Lstat(abs)
 		if errors.Is(err, fs.ErrNotExist) || (err == nil && !fi.Mode().IsRegular()) {
@@ -226,6 +245,9 @@ func checkTree(root string, allow map[string]string) (*report, error) {
 		r.scanned[rel] = true
 		if bytes.IndexByte(data, 0) >= 0 {
 			r.problems = append(r.problems, fmt.Sprintf("%s: holds a NUL byte but its extension is not in binaryExt, so it cannot be told from a text file that hides something (remove the NUL, or add the extension to binaryExt with a reason)", rel))
+		}
+		for _, x := range extra {
+			r.problems = append(r.problems, x.file(rel, data)...)
 		}
 		found := scanBytes(data)
 		if len(found) == 0 {
@@ -256,6 +278,9 @@ func checkTree(root string, allow map[string]string) (*report, error) {
 		}
 		r.problems = append(r.problems, fmt.Sprintf("%s: dead allowlist entry %q: %s; delete the line", allowlistFile, p, why))
 	}
+	for _, x := range extra {
+		r.problems = append(r.problems, x.finish(r)...)
+	}
 	return r, nil
 }
 
@@ -271,8 +296,10 @@ func repoRoot(t *testing.T) string {
 	return root
 }
 
-// TestTrackedFilesHoldNoRawBidiControl is the gate.
-func TestTrackedFilesHoldNoRawBidiControl(t *testing.T) {
+// TestTrackedFilesHoldNoRawBidiOrInvisibleCharacter is the gate: ONE walk of the
+// tree, two rules (bidi controls here, invisible characters in invisible.go) and the
+// path-name rule, over the same files.
+func TestTrackedFilesHoldNoRawBidiOrInvisibleCharacter(t *testing.T) {
 	root := repoRoot(t)
 	text, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(allowlistFile)))
 	if err != nil {
@@ -282,10 +309,7 @@ func TestTrackedFilesHoldNoRawBidiControl(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := checkTree(root, allow)
-	if err != nil {
-		t.Fatal(err)
-	}
+	r, inv := checkRealTree(t, root, allow)
 	for _, c := range canaryFiles {
 		if !r.scanned[c] {
 			t.Errorf("canary %s was not scanned: the file set is smaller than the repo (a .dockerignore line, a wrong root, or a failed listing)", c)
@@ -294,8 +318,8 @@ func TestTrackedFilesHoldNoRawBidiControl(t *testing.T) {
 	for _, p := range r.problems {
 		t.Error(p)
 	}
-	t.Logf("scanned %d text files; %d binary (not scanned); %d not regular or absent; %d allowlist entries",
-		len(r.scanned), len(r.binary), len(r.skipped), len(allow))
+	t.Logf("scanned %d text files; %d binary (not scanned); %d not regular or absent; %d bidi allowlist entries; %d invisible allowlist entries",
+		len(r.scanned), len(r.binary), len(r.skipped), len(allow), len(inv))
 }
 
 // ---- selftest: the checks run on planted trees ----------------------------
