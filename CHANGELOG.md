@@ -209,6 +209,7 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
   または上記の形に合わない場合、この版に上げた scoreboard は再起動時に起動を拒否する
   (ログは `flag overrides failed`)。上げる前に flags ファイルを確認すること。
 - `falco-rule.yaml` の `expectedFlag` も `FALCO{...} (only A-Za-z0-9_- inside the braces)` に制限 (従来は `}` 以外の任意文字)。
+- **tracked file の生の不可視文字と、印字可能 ASCII でない tracked path を `make test` で禁止した (app#511、#508 の続き、PATCH、挙動の変更なし)**。`internal/sourcehygiene/invisible.go` の表 (`invisibleRanges` = Cf ∪ Default_Ignorable ∪ C0 / C1 ∪ U+2028 / U+2029 ∪ 単独の CR) と文脈規則 (非 ASCII の So の直後の U+FE0F、絵文字列の内側の U+200D、先頭の BOM、CRLF は可) を、bidi と同じ 1 回の walk・同じ file 集合・canary (AGENTS.md、CLAUDE.md、journey.yaml、ADR を追加) で適用する。例外は `testdata/invisible-allowlist.txt` の閉集合 (code point 単位、今は `flags-parity` の fixture 10 行、理由付き)。表の被覆 (Cf / Variation_Selector / Other_Default_Ignorable の全 rune) は meta test が固定し、Go の Unicode の版が上がって増えれば赤になる。`bidi-allowlist.txt` のヘッダの「NUL は走査しない」を実装 (NUL があっても走査する) に合わせて直した。
 
 <!--
   compare リンク参照定義。リリース時に vX.Y.Z を最新タグへ更新すること

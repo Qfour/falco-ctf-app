@@ -12,7 +12,8 @@
 #     required: what the raw character is for, and why an escape cannot do it.
 #   - an entry whose file holds no raw bidi character is a FAILURE (a dead entry
 #     would hide the next one), as is an entry for a file that is absent, binary
-#     (a file with a NUL byte is not scanned) or listed twice.
+#     (a binaryExt extension: such a file is not scanned; a NUL byte does NOT make
+#     a file binary, a file with one is scanned and reported) or listed twice.
 #   - adding a line needs review (security-engineer, review-5x R1). Do not add a
 #     line to make a red test green: change the file to use an escape.
 #

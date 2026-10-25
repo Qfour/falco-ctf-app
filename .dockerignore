@@ -1,6 +1,7 @@
 # Version control. (.github is NOT excluded: internal/sourcehygiene's scan of raw
-# bidi controls (app#501) reads the workflows in the build context, and a workflow
-# file is where a Trojan Source line does the most harm. Public files; no image
+# bidi controls (app#501), invisible characters and path names (app#511) reads the
+# workflows in the build context, and a workflow file is where a Trojan Source line
+# does the most harm. Public files; no image
 # copies the repo root.)
 .git
 
@@ -8,8 +9,8 @@
 # names); every tracked .claude path is in the build context. Readers:
 # internal/contractmetrics, internal/collector and internal/contracttable read the
 # conventions file's contract table (ADR-0040, app#486), and internal/sourcehygiene
-# (app#501) scans every file for raw bidi controls, an agent or rule file being text
-# an AI agent obeys. All tracked .claude files are public and no pushed image copies
+# (app#501, app#511) scans every file for raw bidi controls and invisible characters
+# (and every path name), an agent or rule file being text an AI agent obeys. All tracked .claude files are public and no pushed image copies
 # the repo root. scripts/check-build-context.sh proves the context holds every
 # tracked file, so a new .claude path cannot be silently left out.
 .claude/settings.local.json

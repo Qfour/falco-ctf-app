@@ -1,0 +1,42 @@
+# Raw invisible characters in tracked files (app#511, after the bidi rule of app#501).
+#
+# internal/sourcehygiene/invisible_test.go (the gate is in bidi_test.go) fails when a
+# tracked text file holds a RAW (encoded) character of invisibleRanges
+# (internal/sourcehygiene/invisible.go): Tag characters, zero-width and word-joining
+# characters, variation selectors, Cf formatting characters, C0 / C1 controls, U+2028 /
+# U+2029, a lone CR; a U+FE0F that does not follow a non-ASCII symbol, a U+200D that is
+# not inside an emoji sequence, a U+FEFF that is not the first character of the file.
+# Write the character as an escape instead: a backslash and u with four hex digits in Go
+# and YAML, {U+200B} in a case table, or U+200B in prose. An escape is ASCII and is never
+# flagged. The bidi controls are not here: their exceptions go in bidi-allowlist.txt.
+#
+# This list is the exception, and it is a CLOSED SET:
+#   - one entry per line: <path><TAB><U+XXXX[,U+XXXX...]><TAB><reason>. The path is
+#     exact (no glob, no directory, slash-separated, relative to the repo root). The code
+#     points are upper-case hex, strictly ascending, each one a row of invisibleRanges.
+#     The reason is required: what the raw character is for, and why an escape cannot do it.
+#   - ONLY the listed code points are allowed in that file. Any other forbidden character
+#     in it is a failure (a path-wide grant would let the file carry anything).
+#   - an entry whose file holds none of its code points raw is a FAILURE, and so is a
+#     listed code point the file does not hold (a dead entry would hide the next one),
+#     as is an entry for a file that is absent, binary or listed twice. Occurrences that
+#     the context rules already allow (a U+FE0F after a symbol, a leading BOM, CRLF) are
+#     not findings, so listing them is a dead entry.
+#   - adding a line needs review (security-engineer, review-5x R1). Do not add a line to
+#     make a red test green: change the file to use an escape.
+#
+# Lines starting with # and blank lines are ignored.
+#
+# Today: the internal/catalog/testdata/flags-parity corpus. internal/catalog (Go) and
+# charts/ctf-user/validate-flags-file.sh (shell) read the same files, and the raw bytes
+# are the input both validators must reject (.gitattributes marks them -text).
+internal/catalog/testdata/flags-parity/comment-with-control-char.yaml	U+0001	flags-parity shared case (cases.tsv: U+0001 inside a comment): the raw U+0001 is the input both validators must reject; an escape would be a different input
+internal/catalog/testdata/flags-parity/comment-with-c1-control.yaml	U+0084	flags-parity shared case (cases.tsv: U+0084 inside a comment): the raw U+0084 is the input both validators must reject; an escape would be a different input
+internal/catalog/testdata/flags-parity/comment-with-nel.yaml	U+0085	flags-parity shared case (cases.tsv: U+0085 inside a comment): the raw U+0085 is the input both validators must reject; an escape would be a different input
+internal/catalog/testdata/flags-parity/entry-nel-after-colon.yaml	U+0085	flags-parity shared case (cases.tsv: U+0085 between key and value): the raw U+0085 is the input both validators must reject; an escape would be a different input
+internal/catalog/testdata/flags-parity/comment-ls-hidden-entry.yaml	U+2028	flags-parity shared case (cases.tsv: an entry after U+2028 inside a comment): the raw U+2028 is the input both validators must reject; an escape would be a different input
+internal/catalog/testdata/flags-parity/comment-with-ls.yaml	U+2028	flags-parity shared case (cases.tsv: U+2028 inside a comment): the raw U+2028 is the input both validators must reject; an escape would be a different input
+internal/catalog/testdata/flags-parity/entry-ls-after-value.yaml	U+2028	flags-parity shared case (cases.tsv: U+2028 after a value): the raw U+2028 is the input both validators must reject; an escape would be a different input
+internal/catalog/testdata/flags-parity/entry-ls-inside-value.yaml	U+2028	flags-parity shared case (cases.tsv: U+2028 inside a value): the raw U+2028 is the input both validators must reject; an escape would be a different input
+internal/catalog/testdata/flags-parity/comment-with-ps.yaml	U+2029	flags-parity shared case (cases.tsv: U+2029 inside a comment): the raw U+2029 is the input both validators must reject; an escape would be a different input
+internal/catalog/testdata/flags-parity/comment-cr-hidden-entry.yaml	U+000D	flags-parity shared case (cases.tsv: an entry after a bare CR inside a comment): the raw U+000D is the input both validators must reject; an escape would be a different input
