@@ -203,17 +203,18 @@ spec:
       # the container's own loopback — so a tcpSocket probe against
       # 127.0.0.1-bound ttyd would connect from outside the netns and fail
       # (kubelet's probe is not itself inside the container's network
-      # namespace the way an exec probe is). Use an exec probe instead: curl
+      # namespace the way an exec probe is). Use an exec probe instead: wget
       # runs inside the ttyd container's netns, so 127.0.0.1 resolves to
-      # ttyd's own loopback correctly. curl is already installed (see the
-      # Dockerfile's apk add list).
+      # ttyd's own loopback correctly. wget is busybox's (alpine base, no
+      # package) — the ttyd image carries no curl (app#504); do not add one back
+      # for this probe. busybox wget exits 0 on 200 and non-zero on a refused
+      # connection or an HTTP error status.
       readinessProbe:
         exec:
           command:
-            - curl
-            - --fail
-            - --silent
-            - --output
+            - wget
+            - -q
+            - -O
             - /dev/null
             - http://127.0.0.1:{{ .Values.ttyd.upstreamPort }}/
         initialDelaySeconds: 2
