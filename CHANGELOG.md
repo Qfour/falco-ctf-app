@@ -107,6 +107,7 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
   (これまでは任意ドメインの `<user>@` 前方一致)。`EXPECTED_EMAIL_DOMAIN` が未設定の scoreboard は誰も self と
   みなさない (参加者は締め出される。fail-closed)。platform は auth-policy と scoreboard に同じ値を渡すこと。
 - 403 の本文から email を除いた (固定文字列 `forbidden`)。
+- **`charts/ctf-user` は username が文字列でなければ描画で fail する (ADR-0042 C4、PATCH、chart の入力契約、app#503)**。`ctf-user.username` (`_helpers.tpl`) が `.Values.username` の型を検査し、string でない (`--set username=0` / `123` は整数、`true` は真偽値、`null` は nil、values file の数値) か空なら `username must be a non-empty string ... pass it with --set-string username=<seat> (ADR-0042 C4)` で `helm template` / `helm upgrade` を止める。namespace・label・selector label・Ingress host (`tpl` の前)・auth-url・Pod の `FALCO_CTF_USER` env の全てがこの 1 define を通る。これまで `0` などは namespace が `ctf-0` / `ctf-` になるか label が裸のスカラーになり、Kubernetes が拒否するか黙って食い違っていた。`deploy-user.sh` は既に `--set-string` で渡すので、既存の seat (`user1`..`userN`、`test1`) の描画は変わらず upgrade note はない。ADR-0034 V12 の render recipe (`ingressparity.Recipes()`) も `--set-string username=` に揃えた。`internal/apispec/ingressparity/seat_render_test.go` に負の case (`--set username=0` / `123` / `true` / `null` / 空、values file の `123` `1e3` `true` は fail、同じ値の `--set-string` は成功)。既定値 `user1` を空 + required にする案は platform の呼び手に username を渡す変更が要るため採らない (platform の呼び手は username を `--set` しない: PR 本文)。
 
 ### Removed
 

@@ -29,7 +29,7 @@ metadata:
     # roster (seat == this workspace's username). ALWAYS rendered: there is no
     # switch that produces a workspace Ingress without an auth gate (the former
     # `auth.enabled: false` did), and the endpoint is fixed here, not a value.
-    nginx.ingress.kubernetes.io/auth-url: "http://auth-policy.auth-policy.svc.cluster.local:80/check-workspace?host={{ .Values.username | urlquery }}"
+    nginx.ingress.kubernetes.io/auth-url: "http://auth-policy.auth-policy.svc.cluster.local:80/check-workspace?host={{ include "ctf-user.username" . | urlquery }}"
     nginx.ingress.kubernetes.io/auth-signin: {{ tpl .Values.auth.authSignin . | quote }}
     nginx.ingress.kubernetes.io/auth-response-headers: "X-Auth-Request-User,X-Auth-Request-Email,X-Auth-Request-Preferred-Username"
 spec:

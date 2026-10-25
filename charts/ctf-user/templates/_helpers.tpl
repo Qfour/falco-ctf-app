@@ -1,8 +1,27 @@
 {{/*
+The seat (workspace name), checked. EVERY use of the username in this chart goes
+through this define (namespace, labels, selector labels, the Ingress host, the
+auth-url, the Pod's env), so a render that gets past it has a string seat.
+
+Helm's `--set username=0` reads an integer, `--set username=true` a boolean and
+`--set username=null` removes the key (nil): `ctf-<nil>` as a namespace, or a
+label written as a bare scalar that Kubernetes refuses (ADR-0042 C4). deploy-user.sh
+passes `--set-string`; this check is the chart's own guard for any other caller
+(`helm template`, a values file, a different script). An empty string is refused
+too: it would render the namespace `ctf-`. A `fail` anywhere aborts the whole render.
+*/}}
+{{- define "ctf-user.username" -}}
+{{- if or (not (kindIs "string" .Values.username)) (eq .Values.username "") -}}
+{{- fail (printf "username must be a non-empty string, got %s (%v): pass it with --set-string username=<seat> (ADR-0042 C4)" (kindOf .Values.username) .Values.username) -}}
+{{- end -}}
+{{- .Values.username -}}
+{{- end -}}
+
+{{/*
 Render the namespace name (`ctf-<username>`) consistently across templates.
 */}}
 {{- define "ctf-user.namespace" -}}
-ctf-{{ .Values.username }}
+ctf-{{ include "ctf-user.username" . }}
 {{- end -}}
 
 {{/*
@@ -26,10 +45,10 @@ side. ctf-user IS a falco-ctf-common consumer for `falco-ctf-common.image`
 */}}
 {{- define "ctf-user.labels" -}}
 app.kubernetes.io/name: ctf-user
-app.kubernetes.io/instance: {{ .Values.username | quote }}
+app.kubernetes.io/instance: {{ include "ctf-user.username" . | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 app.kubernetes.io/part-of: falco-ctf
-falco-ctf/username: {{ .Values.username | quote }}
+falco-ctf/username: {{ include "ctf-user.username" . | quote }}
 {{- /* P27-1: challengeId is "scenario:<name>" in scenario mode — ':' is not
        a valid k8s label-value character, so sanitize just for this label
        (deploy-user.sh's own `kubectl label namespace` call does the same
@@ -45,12 +64,14 @@ Selector labels — subset of common labels used in matchLabels (immutable).
 */}}
 {{- define "ctf-user.selectorLabels" -}}
 app.kubernetes.io/name: ctf-user
-app.kubernetes.io/instance: {{ .Values.username | quote }}
+app.kubernetes.io/instance: {{ include "ctf-user.username" . | quote }}
 {{- end -}}
 
 {{/*
 Render the ingress host with `tpl` so users can use `{{ .Values.username }}` etc.
 */}}
 {{- define "ctf-user.ingressHost" -}}
+{{- /* the host template reads .Values.username directly: check it first */ -}}
+{{- $_ := include "ctf-user.username" . -}}
 {{ tpl .Values.ingress.host . }}
 {{- end -}}

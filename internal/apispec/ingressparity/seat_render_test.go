@@ -20,10 +20,10 @@ package ingressparity
 // derivation test would be a silently-green "every seat can be deployed".
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -35,10 +35,9 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/identity"
 )
 
-// renderSeat runs `helm template <seat> charts/ctf-user --set-string username=<seat>`:
-// release name = seat, as in charts/ctf-user/deploy-user.sh. It returns the
-// decoded manifests and helm's combined output.
-func renderSeat(t *testing.T, seat string) ([]map[string]any, string, error) {
+// helmTemplateCtfUser runs `helm template <release> charts/ctf-user <args...>` from the
+// repo root and returns helm's combined output. helm missing is a failure, not a skip.
+func helmTemplateCtfUser(t *testing.T, release string, args ...string) (string, error) {
 	t.Helper()
 	if _, err := exec.LookPath("helm"); err != nil {
 		t.Fatal("helm is not on PATH: the seat derivation test renders charts/ctf-user and may not be skipped (Dockerfile.test installs helm; a local run needs it too)")
@@ -47,14 +46,22 @@ func renderSeat(t *testing.T, seat string) ([]map[string]any, string, error) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("helm", "template", seat, filepath.Join("charts", "ctf-user"),
-		"--set-string", "username="+seat, "--set", "dnsSuffix=ctf.example.invalid")
+	cmd := exec.Command("helm", append([]string{"template", release, filepath.Join("charts", "ctf-user")}, args...)...)
 	cmd.Dir = root
 	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// renderSeat runs `helm template <seat> charts/ctf-user --set-string username=<seat>`:
+// release name = seat, as in charts/ctf-user/deploy-user.sh. It returns the
+// decoded manifests and helm's combined output.
+func renderSeat(t *testing.T, seat string) ([]map[string]any, string, error) {
+	t.Helper()
+	out, err := helmTemplateCtfUser(t, seat, "--set-string", "username="+seat, "--set", "dnsSuffix=ctf.example.invalid")
 	if err != nil {
-		return nil, string(out), err
+		return nil, out, err
 	}
-	dec := yaml.NewDecoder(bytes.NewReader(out))
+	dec := yaml.NewDecoder(strings.NewReader(out))
 	var docs []map[string]any
 	for {
 		var d map[string]any
@@ -68,7 +75,7 @@ func renderSeat(t *testing.T, seat string) ([]map[string]any, string, error) {
 			docs = append(docs, d)
 		}
 	}
-	return docs, string(out), nil
+	return docs, out, nil
 }
 
 // seatDerived is every name the rendered chart builds from the seat.
@@ -210,6 +217,55 @@ func TestSeatGrammar_EverySeatInTheGrammarRendersWithValidNames(t *testing.T) {
 			}
 			for _, viol := range seatViolations(seat, d) {
 				t.Errorf("seat %q: %s", seat, viol)
+			}
+		})
+	}
+}
+
+// ADR-0042 C4: the chart guards the type of the seat itself. Helm's `--set` types
+// the value (`0` `123` an integer, `true` a boolean, `null` removes the key), and a
+// namespace `ctf-<nil>` or a label written as a bare scalar is a render that is
+// either refused by Kubernetes or silently wrong. deploy-user.sh passes
+// --set-string; any other caller (helm template, a values file) gets the chart's
+// `fail`, which names the way out. The same value through --set-string is a seat.
+func TestSeatGuard_AUsernameThatIsNotAStringIsRefusedByTheChart(t *testing.T) {
+	for _, c := range []struct{ name, set, kind string }{
+		{"integer 0", "username=0", "int64"},
+		{"integer 123", "username=123", "int64"},
+		{"boolean", "username=true", "bool"},
+		{"null", "username=null", "invalid"},
+		{"empty", "username=", "string"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			out, err := helmTemplateCtfUser(t, "x", "--set", c.set, "--set", "dnsSuffix=ctf.example.invalid")
+			if err == nil {
+				t.Fatalf("helm template --set %s rendered (%d bytes): the chart does not guard the type of username", c.set, len(out))
+			}
+			for _, want := range []string{"username must be a non-empty string", "got " + c.kind, "--set-string", "ADR-0042 C4"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("helm refused --set %s, but the message lacks %q: %s", c.set, want, out)
+				}
+			}
+		})
+	}
+	// A values file types the same way (YAML: 123 is an int, 1e3 a float, true a bool).
+	for name, yamlValue := range map[string]string{"values file int": "123", "values file float": "1e3", "values file bool": "true"} {
+		t.Run(name, func(t *testing.T) {
+			f := filepath.Join(t.TempDir(), "values.yaml")
+			if err := os.WriteFile(f, []byte("username: "+yamlValue+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			out, err := helmTemplateCtfUser(t, "x", "-f", f, "--set", "dnsSuffix=ctf.example.invalid")
+			if err == nil || !strings.Contains(out, "username must be a non-empty string") {
+				t.Fatalf("username: %s in a values file was not refused by the chart: err=%v (%d bytes of output)", yamlValue, err, len(out))
+			}
+		})
+	}
+	// The same values as strings render: the guard refuses a type, not a seat.
+	for _, seat := range []string{"0", "123", "true", "null"} {
+		t.Run("string "+seat, func(t *testing.T) {
+			if out, err := helmTemplateCtfUser(t, seat, "--set-string", "username="+seat, "--set", "dnsSuffix=ctf.example.invalid"); err != nil {
+				t.Fatalf("--set-string username=%s was refused: %v\n%s", seat, err, out)
 			}
 		})
 	}
