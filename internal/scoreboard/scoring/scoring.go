@@ -171,12 +171,12 @@ import (
 // An adapter maps it to its first gate's answer, not to a persistence failure:
 // ingest to 200 ignored (no taint), submit / submit-detect / exfil to 400
 // "invalid user". Reaching it from an adapter means the first gate was lost,
-// so the adapter also logs one fixed-field Warn (httpx.LogGraderRefused).
+// so the adapter also logs one fixed-field Warn (identityobs.LogGraderRefused).
 var ErrInvalidUser = errors.New("scoring: user is not a username slug")
 
 // The Grader entries that refuse a non-seat user with ErrInvalidUser: a closed
 // set of fixed words (the method names) an adapter puts in the one Warn it logs
-// when this second gate fires (httpx.LogGraderRefused). Never a value.
+// when this second gate fires (identityobs.LogGraderRefused). Never a value.
 const (
 	EntryOnRuleFire      = "OnRuleFire"
 	EntryTaintOnOverflow = "TaintOnOverflow"

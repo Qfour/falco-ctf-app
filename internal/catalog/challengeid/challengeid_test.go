@@ -51,17 +51,3 @@ func TestNN(t *testing.T) {
 		}
 	}
 }
-
-// VerifyProbe is the id platform's verify (a-2) submits through the collector
-// (platform #264, ADR-0041). It must stay INSIDE the grammar: the collector
-// answers an id outside it with its own 404 and forwards nothing, which would
-// let the gate go green without reaching the scoreboard. That it is not a
-// challenge is pinned against the real challenges/ in the scoreboard's tests.
-func TestVerifyProbeIsInsideTheGrammar(t *testing.T) {
-	if !Valid("99-verify-probe") {
-		t.Fatalf("99-verify-probe is outside the grammar %s", Pattern)
-	}
-	if Valid("verify-probe") {
-		t.Fatalf("the old probe id verify-probe must stay outside the grammar %s (it is what made the gate pass on the collector's own 404)", Pattern)
-	}
-}

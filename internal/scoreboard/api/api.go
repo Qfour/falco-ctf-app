@@ -309,6 +309,12 @@ type Handler struct {
 	// own gate accepted (app#479): over real HTTP that branch is unreachable.
 	gradeDetect    func(ctx context.Context, runner scoring.DetectRunner, user, cid, condition string) (scoring.DetectOutcome, error)
 	detectInflight chan struct{}
+	// gradeEvade / recordExfil are grader.SubmitEvade / grader.RecordExfil, fields
+	// for the same reason as gradeDetect (app#486): submit's and exfilInternal's own
+	// identity.ValidSeat answers first, so their mapping of the Grader's second seat
+	// gate is unreachable over real HTTP and a test needs a fake to hold it.
+	gradeEvade  func(user, cid, flag string) (scoring.EvadeOutcome, error)
+	recordExfil func(user, cid, flag string) (scoring.ExfilStatus, error)
 
 	// board is the QA Board store (app#292 — destination model, supersedes
 	// P25's per-user QA ticket chat wholesale as of Phase 2). nil is possible
@@ -423,6 +429,8 @@ func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *sl
 		store:          s,
 		grader:         grader,
 		gradeDetect:    grader.SubmitDetect,
+		gradeEvade:     grader.SubmitEvade,
+		recordExfil:    grader.RecordExfil,
 		logger:         logger,
 		now:            now,
 		denials:        identityobs.New(logger, now),
@@ -1317,14 +1325,12 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 	// Grader's. This handler only translates the outcome into a response +
 	// metric + audit line. The window is evaluated against server time inside
 	// the Grader (App-H3) — the handler never passes attacker-supplied time.
-	outcome, err := h.grader.SubmitEvade(user, cid, flag)
+	outcome, err := h.gradeEvade(user, cid, flag)
 	if errors.Is(err, scoring.ErrInvalidUser) {
-		// The Grader's own slug gate; unreachable while identity.ValidSeat above agrees
-		// with it (identity.SeatPattern is the one definition), but never a 500 if they ever differ.
-		httpx.LogGraderRefused(h.logger, r, scoring.EntrySubmitEvade)
-		metrics.SubmissionsTotal.WithLabelValues(label, "bad_request").Inc()
-		auditLog("bad_request")
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
+		h.refuseGraderUser(w, r, scoring.EntrySubmitEvade, func() {
+			metrics.SubmissionsTotal.WithLabelValues(label, "bad_request").Inc()
+			auditLog("bad_request")
+		})
 		return
 	}
 	if err != nil {
@@ -1539,12 +1545,10 @@ func (h *Handler) submitDetect(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	outcome, err := h.gradeDetect(ctx, h.detectRunner, user, cid, condition)
 	if errors.Is(err, scoring.ErrInvalidUser) {
-		// The Grader's own seat gate (before any Job); unreachable while the
-		// identity.ValidSeat check above agrees with it. Never a 500.
-		httpx.LogGraderRefused(h.logger, r, scoring.EntrySubmitDetect)
-		metrics.SubmissionsTotal.WithLabelValues(label, "bad_request").Inc()
-		auditLog("bad_request")
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
+		h.refuseGraderUser(w, r, scoring.EntrySubmitDetect, func() {
+			metrics.SubmissionsTotal.WithLabelValues(label, "bad_request").Inc()
+			auditLog("bad_request")
+		})
 		return
 	}
 	if err != nil {
@@ -1684,10 +1688,8 @@ func (h *Handler) exfilInternal(w http.ResponseWriter, r *http.Request) {
 	// receipt timestamp) is the Grader's job; the guards above have already
 	// short-circuited the unknown / not-required cases, so here the Grader
 	// returns ExfilRecorded (or a store error).
-	if _, err := h.grader.RecordExfil(user, cid, flag); errors.Is(err, scoring.ErrInvalidUser) {
-		httpx.LogGraderRefused(h.logger, r, scoring.EntryRecordExfil)
-		auditLog("bad_request")
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
+	if _, err := h.recordExfil(user, cid, flag); errors.Is(err, scoring.ErrInvalidUser) {
+		h.refuseGraderUser(w, r, scoring.EntryRecordExfil, func() { auditLog("bad_request") })
 		return
 	} else if err != nil {
 		h.logger.Error("record exfil", "err", err, "user", user, "cid", cid)
@@ -1703,6 +1705,20 @@ func (h *Handler) exfilInternal(w http.ResponseWriter, r *http.Request) {
 		"note": "collector received the data. Now submit the flag (the run must still be clean — " +
 			"no forbidden rule may have fired since your last reset).",
 	})
+}
+
+// refuseGraderUser answers a Grader entry that refused the body's user with
+// scoring.ErrInvalidUser: the Grader's SECOND seat gate (app#479). The handler's
+// own identity.ValidSeat answered first, so reaching this means the handler lost
+// that check; the answer is still the first gate's, 400 {"error": "invalid user"}
+// (never a 500, the refused value is not echoed), plus the one fixed-field Warn.
+// record is the caller's metric / audit line for the refusal, run before the
+// answer. The three Grader entries a body user reaches (SubmitEvade, SubmitDetect,
+// RecordExfil) share this one block.
+func (h *Handler) refuseGraderUser(w http.ResponseWriter, r *http.Request, entry string, record func()) {
+	identityobs.LogGraderRefused(h.logger, r, entry)
+	record()
+	httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid user"})
 }
 
 // --- Journey step self-check ------------------------------------------------

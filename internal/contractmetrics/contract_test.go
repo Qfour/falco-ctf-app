@@ -34,13 +34,14 @@ import (
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/contractmetrics"
+	"github.com/Qfour/falco-ctf-app/internal/contracttable"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/identityobs"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/metrics"
 	"github.com/Qfour/falco-ctf-app/internal/store"
 )
 
-const conventionsPath = ".claude/rules/falco-ctf-app-conventions.md"
+const conventionsPath = contracttable.Path
 
 const (
 	placeInit     = "init"     // created by the package's initialisation (one binary links it)
@@ -114,17 +115,13 @@ var spanRe = regexp.MustCompile("`([a-zA-Z_:][a-zA-Z0-9_:]*)\\{([a-zA-Z0-9_, ]*)
 // contractSpans returns the `family{labels}` code spans of the table rows under the
 // "Cross-repo 契約" heading of doc, de-duplicated.
 func contractSpans(doc string) []span {
-	_, after, ok := strings.Cut(doc, "\n## Cross-repo 契約")
-	if !ok {
+	rows := contracttable.Rows(doc)
+	if rows == nil {
 		return nil
 	}
-	section, _, _ := strings.Cut(after, "\n## ")
 	seen := map[string]bool{}
 	var out []span
-	for _, ln := range strings.Split(section, "\n") {
-		if !strings.HasPrefix(ln, "|") {
-			continue
-		}
+	for _, ln := range rows {
 		for _, m := range spanRe.FindAllStringSubmatch(ln, -1) {
 			var labels []string
 			for _, l := range strings.Split(m[2], ",") {
@@ -146,17 +143,7 @@ func contractSpans(doc string) []span {
 // rowOf returns the table row of doc that names the family (the first row holding
 // `name{`), or "".
 func rowOf(doc, name string) string {
-	_, after, ok := strings.Cut(doc, "\n## Cross-repo 契約")
-	if !ok {
-		return ""
-	}
-	section, _, _ := strings.Cut(after, "\n## ")
-	for _, ln := range strings.Split(section, "\n") {
-		if strings.HasPrefix(ln, "|") && strings.Contains(ln, "`"+name+"{") {
-			return ln
-		}
-	}
-	return ""
+	return contracttable.RowWhere(doc, func(row string) bool { return strings.Contains(row, "`"+name+"{") })
 }
 
 // rowTokenProblems: each value the owning table says platform reads must be a code
