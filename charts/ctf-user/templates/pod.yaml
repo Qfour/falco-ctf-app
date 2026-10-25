@@ -278,7 +278,7 @@ spec:
       command: ["sleep", "infinity"]
       env:
         - name: FALCO_CTF_USER
-          value: "{{ .Values.username }}"
+          value: "{{ include "ctf-user.username" . }}"
         - name: FALCO_CTF_CHALLENGE
           value: "{{ .Values.challengeId }}"
         # P11.5 full one-pipe: the workspace reaches the scoreboard ONLY via the

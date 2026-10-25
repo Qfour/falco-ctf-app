@@ -51,6 +51,8 @@ type Recipe struct {
 
 // Recipes returns the render recipes. ctf-user is rendered with two usernames
 // so the `host=` query cannot be a constant that merely happens to match one.
+// The username is passed with --set-string, as deploy-user.sh does: the chart refuses
+// a username that is not a string (ADR-0042 C4).
 func Recipes() []Recipe {
 	return []Recipe{
 		{Chart: "scoreboard", Args: []string{
@@ -59,8 +61,8 @@ func Recipes() []Recipe {
 			"--set", "ingress.journeyHost=app.example.invalid",
 		}},
 		{Chart: "docs", Args: []string{"--set", "ingress.adminHost=app.example.invalid"}},
-		{Chart: "ctf-user", Username: "user7", Args: []string{"--set", "username=user7", "--set", "dnsSuffix=ctf.example.invalid"}},
-		{Chart: "ctf-user", Username: "user42", Args: []string{"--set", "username=user42", "--set", "dnsSuffix=ctf.example.invalid"}},
+		{Chart: "ctf-user", Username: "user7", Args: []string{"--set-string", "username=user7", "--set", "dnsSuffix=ctf.example.invalid"}},
+		{Chart: "ctf-user", Username: "user42", Args: []string{"--set-string", "username=user42", "--set", "dnsSuffix=ctf.example.invalid"}},
 		{Chart: "auth-policy"},
 		{Chart: "collector"},
 	}
