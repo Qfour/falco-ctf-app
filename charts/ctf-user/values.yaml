@@ -20,7 +20,8 @@ dnsSuffix: "ctf-event.dev"
 ttyd:
   image:
     # Registry placeholder (public repo). Real registry (ECR) is supplied at
-    # deploy time via helmfile / deploy-user.sh --set ttyd.image.repository=...
+    # deploy time via the FALCO_CTF_REGISTRY / FALCO_CTF_IMAGE_TAG env of deploy-user.sh
+    # (checked against a closed grammar there, passed with --set-string; app#510).
     # NOTE: repo path uses `/` not `-` so the scoreboard ingest substring
     # check (`falco-ctf/challenge`) on the challenge sibling image matches.
     repository: docker.io/falco-ctf/ttyd

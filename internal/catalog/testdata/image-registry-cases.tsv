@@ -1,0 +1,138 @@
+# pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:[0-9]{1,5})?(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)*/falco-ctf$
+# The FALCO_CTF_REGISTRY grammar's shared case table (app#510, #507 review-5x R1#1).
+#
+# FALCO_CTF_REGISTRY is the `<registry>/<repository prefix>` that deploy-user.sh
+# appends `/ttyd`, `/ttyd-proxy` and `/challenge` to (the chart's
+# `*.image.repository`). The grammar is an OCI `host[:port]/path`: the host is DNS
+# labels of [a-z0-9-] (lower case), an optional `:<1 to 5 digits>`, then path
+# components that follow the OCI distribution grammar (alphanumerics joined by `.`,
+# `_`, `__` or hyphens). A tag, a digest, a scheme and any `,` `=` are not in it.
+# The LAST path component must be `falco-ctf`: the scoreboard ingest
+# (internal/scoreboard/ingest/ingest.go) ignores every Falco event whose
+# container.image.repository contains neither `falco-ctf/challenge` nor
+# `falco-ctf-challenge`, and `${REGISTRY}/challenge` can only contain the first, so a
+# registry that does not end in `falco-ctf` would deploy a workspace whose detections
+# are silently never scored. (Stricter than the ingest's substring on purpose: a
+# registry ending in `my-falco-ctf` would pass the ingest and is a reject here.)
+# The grammar says a registry is SHAPED right, not that it exists or that the port is
+# <= 65535 (the kubelet is the judge of that). There is no length bound: an
+# over-long reference fails at the container runtime, it is not an injection.
+# The grammar has NO Go definition: the shell literal is the definition. The readers:
+#   - Go:    internal/catalog (deploy_operator_inputs_test.go) pins the header to the
+#            shell literal, runs every row, and holds the `falco-ctf/challenge`
+#            substring to the one in ingest.go.
+#   - shell: charts/ctf-user/deploy-user.sh, run row by row as the env
+#            FALCO_CTF_REGISTRY=<input> by scripts/check-deploy-user-ids.sh
+#            (make check-flags; CI flag-guard).
+# An empty value has no row: an empty FALCO_CTF_REGISTRY means "not set" (the chart
+# default is kept), as it always has.
+# The account id in the second baseline row is the all-zero placeholder, not a real one.
+# Every shape-reject row ends in `/falco-ctf` (or is the `falco-ctf` part itself), so it
+# is the SHAPE that rejects it, and the self-test can tell the two checks apart.
+# Format: the same as internal/identity/testdata/seat-cases.tsv (see its header):
+# `input<TAB>accept|reject`, the closed placeholder set {LF} {U+202E} {U+00FC}
+# {U+00EF}, line 1 the canonical `# pattern: ` literal. The table stays ASCII.
+# The input is the value as the operator gives it, with the one exception that an
+# empty value has no row (see below). A row is never dropped to make an
+# implementation pass: the implementation that disagrees is the bug.
+
+# --- baseline: the shapes a stand-up uses (synthetic values: the table is public)
+docker.io/falco-ctf	accept
+000000000000.dkr.ecr.us-east-1.amazonaws.com/falco-ctf	accept
+registry.example.com/falco-ctf	accept
+ghcr.io/example/falco-ctf	accept
+localhost:5000/falco-ctf	accept
+# --- shape (every accept row ends in /falco-ctf: see the next block)
+localhost/falco-ctf	accept
+a/falco-ctf	accept
+a/b/falco-ctf	accept
+h:5/falco-ctf	accept
+h:65535/falco-ctf	accept
+reg.example.com:5000/a/falco-ctf	accept
+a/b_c/d__e/f.g-h--i/falco-ctf	accept
+host-1.example.com/p0/p-1/falco-ctf	accept
+a/falco-ctf/falco-ctf	accept
+# --- the last component must be falco-ctf: the scoreboard ingest drops an event whose image repository does not contain falco-ctf/challenge, and ${REGISTRY}/challenge only contains it then
+registry.local	reject
+localhost:5000	reject
+a	reject
+a/b	reject
+example.com/other	reject
+docker.io/falco-ctf/x	reject
+docker.io/falco-ctf-x	reject
+a.com/my-falco-ctf	reject
+a.com/falco-ctf_	reject
+a.com/falco-ctf-challenge	reject
+a.com/falco-ctf/	reject
+falco-ctf	reject
+a.com/Falco-ctf	reject
+a.com/falco-ctf:tag	reject
+a.com/falco-ctf@sha256:0123	reject
+# --- a registry host: labels of [a-z0-9-], the first and the last a letter or digit
+-a.com/falco-ctf	reject
+a-.com/falco-ctf	reject
+a.-b.com/falco-ctf	reject
+a..b/falco-ctf	reject
+../falco-ctf	reject
+./falco-ctf	reject
+.a.com/falco-ctf	reject
+a.com./falco-ctf	reject
+A.com/falco-ctf	reject
+a_b/falco-ctf	reject
+# --- a port: digits only, at most 5, one
+a.com:/falco-ctf	reject
+a.com:x/falco-ctf	reject
+a.com:123456/falco-ctf	reject
+a.com:5000:6000/falco-ctf	reject
+a.com:5000//falco-ctf	reject
+:5000/falco-ctf	reject
+# --- a path component: alphanumerics joined by `.`, `_`, `__` or hyphens (the OCI distribution grammar)
+a.com/../falco-ctf	reject
+a.com/./falco-ctf	reject
+a.com//falco-ctf	reject
+a.com/x//falco-ctf	reject
+/falco-ctf	reject
+a.com/x___y/falco-ctf	reject
+a.com/x..y/falco-ctf	reject
+a.com/x-/falco-ctf	reject
+a.com/-x/falco-ctf	reject
+a.com/.x/falco-ctf	reject
+a.com/x./falco-ctf	reject
+a.com/_x/falco-ctf	reject
+a.com/X/falco-ctf	reject
+a.com/x/Y/falco-ctf	reject
+# --- what belongs to another value or to no value: a tag, a digest, a scheme, a query
+a.com/x:tag/falco-ctf	reject
+a.com/x@sha256/falco-ctf	reject
+a.com/x@sha256:0123/falco-ctf	reject
+http://a.com/falco-ctf	reject
+a.com/x?y/falco-ctf	reject
+a.com/x#y/falco-ctf	reject
+a.com/x\/falco-ctf	reject
+a.com/x y/falco-ctf	reject
+ a.com/falco-ctf	reject
+a.com/falco-ctf 	reject
+$(id)/falco-ctf	reject
+a;b/falco-ctf	reject
+a|b/falco-ctf	reject
+`id`/falco-ctf	reject
+a.com/x*/falco-ctf	reject
+# --- helm --set syntax: a `,` starts another key, `=` another assignment
+a,b=c/falco-ctf	reject
+a.com/x,y=z/falco-ctf	reject
+a.com/x=y/falco-ctf	reject
+a.com/x,ttyd.image.tag=evil/falco-ctf	reject
+a.com,/falco-ctf	reject
+a.com/falco-ctf,	reject
+,a.com/falco-ctf	reject
+a.com/x\,y/falco-ctf	reject
+a.com/falco-ctf=a.com/falco-ctf	reject
+a.com/falco-ctf,ttyd.image.tag=x	reject
+# --- line breaks, a bidi control, a non-ASCII letter
+a.com/falco-ctf{LF}	reject
+{LF}a.com/falco-ctf	reject
+a.com/x{LF}y/falco-ctf	reject
+a.com{U+202E}/falco-ctf	reject
+a.com/x{U+202E}/falco-ctf	reject
+a.com/x{U+00FC}y/falco-ctf	reject
+ex{U+00EF}mple.com/falco-ctf	reject

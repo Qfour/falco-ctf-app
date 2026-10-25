@@ -1,0 +1,88 @@
+# pattern: ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$
+# The `--dns-suffix <suffix>` grammar's shared case table (app#510, #507 review-5x R1#1).
+#
+# The workspace host is `<seat>.<suffix>` (chart `dnsSuffix`, `ingress.host`, the
+# `auth.<suffix>` default, the FALCO_CTF_DNS_SUFFIX env). The grammar is an RFC 1123
+# subdomain, lower case (an Ingress host must be): labels of [a-z0-9-], the first and
+# the last a letter or digit, 1 to 63 characters, joined by `.`, no leading or trailing
+# dot, 253 characters in all. The 253 is deploy-user.sh's DNS_SUFFIX_MAX_LEN (a regex
+# cannot count the whole), checked after the pattern; this table's rows hold it.
+# The grammar has NO Go definition: the shell literal is the definition. The readers:
+#   - Go:    internal/catalog (deploy_operator_inputs_test.go) pins the header to the
+#            shell literal, DNS_SUFFIX_MAX_LEN to 253, and runs every row.
+#   - shell: charts/ctf-user/deploy-user.sh, run row by row as `--dns-suffix <input>` by
+#            scripts/check-deploy-user-ids.sh (make check-flags; CI flag-guard).
+# An empty value has no row: `--dns-suffix ""` is the flag parser's usage error (exit 1).
+# Format: the same as internal/identity/testdata/seat-cases.tsv (see its header):
+# `input<TAB>accept|reject`, the closed placeholder set {LF} {U+202E} {U+00FC}
+# {U+00EF}, line 1 the canonical `# pattern: ` literal. The table stays ASCII.
+# The input is the value as the operator gives it, with the one exception that an
+# empty value has no row (see below). A row is never dropped to make an
+# implementation pass: the implementation that disagrees is the bug.
+
+# --- baseline: what is deployed
+ctf-event.dev	accept
+ctf.192.168.64.2.nip.io	accept
+ctf.example.com	accept
+localhost	accept
+# --- shape
+a	accept
+0	accept
+a-b.c	accept
+a--b.c	accept
+xn--bcher-kva.example	accept
+1.2.3.4	accept
+a.b.c.d.e.f	accept
+# --- a value helm or YAML would type: valid DNS labels, which is why the value goes in with --set-string
+1e3	accept
+true	accept
+null	accept
+007	accept
+# --- length: a label is at most 63, the whole at most 253
+abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	accept
+abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	reject
+abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.a	accept
+abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.a	reject
+abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	accept
+abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	reject
+# --- each label starts and ends with a letter or digit
+-a.com	reject
+a-.com	reject
+a.-b.com	reject
+a.b-.com	reject
+-	reject
+--	reject
+# --- no empty label, no leading or trailing dot
+.example.com	reject
+example.com.	reject
+a..b	reject
+..	reject
+.	reject
+a...b	reject
+# --- lower case ASCII letters, digits and hyphen only
+A.com	reject
+a.COM	reject
+a_b.com	reject
+a b.com	reject
+ a.com	reject
+a.com 	reject
+*.example.com	reject
+a.com/path	reject
+a.com:8080	reject
+http://a.com	reject
+a.com\	reject
+# --- helm --set syntax: a `,` starts another key, `=` another assignment
+a,b=c	reject
+a.com,ingress.host=x	reject
+ctf.example.com=1	reject
+a.com,	reject
+,a.com	reject
+a\,b.com	reject
+a.com,networkPolicy.egress.apiServerCidr=0.0.0.0/0	reject
+# --- line breaks, a bidi control, a non-ASCII letter
+a.com{LF}	reject
+{LF}a.com	reject
+a{LF}b.com	reject
+a{U+202E}.com	reject
+ex{U+00FC}mple.com	reject
+ex{U+00EF}mple.com	reject
