@@ -211,7 +211,9 @@ jobs:
         run: |
           ./scripts/check-go-base-digest.sh
           ./scripts/check-go-base-digest.sh --selftest
-      - name: apk pin checker parses every form, rejects a vanished version / range / @edge / --repository / no pin, and the real tree's grammar holds (ADR-0036 V1, offline selftest; the index comparison is the daily apk-pins.yaml)
+      - name: apk pins lint (real tree, offline)
+        run: ./scripts/check-apk-pins.sh --lint
+      - name: apk pin checker parses every form, rejects a vanished version / range / @edge / --repository / no pin, and --lint goes red on a planted defect (ADR-0036 V1, offline selftest; the real tree is the lint step above, the index comparison is the daily apk-pins.yaml)
         run: ./scripts/check-apk-pins.sh --selftest
       - name: browser E2E verdict is fail-closed (ADR-0031 V6, planted-defect fixtures)
         run: ./scripts/check-e2e-verdict.sh

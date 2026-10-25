@@ -107,8 +107,10 @@
   index にも base の installed にも無い版を列挙して落ちる (対象を列挙しない。0 件は fail、docker 無しは
   skip でなく exit 2)。**毎日 `.github/workflows/apk-pins.yaml` が回し**、赤 (exit 1) なら label
   `apk-pin-drift` の Issue を 1 本だけ開く / 更新する (PR では回さない: PR の build が drift を
-  捕まえる)。文法と parser は offline の `--selftest` (`make check-apk-pins-selftest`) が flag-guard で
-  固定する。`check-e2e-pins.sh` は `Dockerfile.e2e` 用の wrapper。pin の版を上げる PR は、
+  捕まえる)。実ツリーの文法 (D1 + 条件 4)・pin 0 件・parser の coverage は offline の `--lint`
+  (`make check-apk-pins-lint`、required の flag-guard の独立 step) が、checker 自身が赤くなれること
+  (planted fixture と parse table) は `--selftest` が固定する。毎日の index 照合 (`apk-pins.yaml`) と
+  合わせて 3 層。`check-e2e-pins.sh` は `Dockerfile.e2e` 用の wrapper。pin の版を上げる PR は、
   `make check-apk-pins` の出力を貼る。**どの package に exact pin を許すか (D2〜D4) は D2 の実装 PR まで
   未適用** (今の pin は ADR-0002 の運用のまま)。
 
