@@ -61,8 +61,9 @@ RUN ARCH="$(uname -m)" \
  && chmod 0755 /kubectl
 
 # --- Stage 2: runtime ----------------------------------------------------------
-# runtime に入る package は ttyd / tini / ca-certificates (+ libssl3 / libcrypto3 / zlib の
-# 明示 upgrade) だけ。bash と curl / libcurl は **無い** (app#504): bash は
+# runtime に入る package は ttyd / tini (+ libssl3 / libcrypto3 / zlib の
+# 明示 upgrade) だけ (ca-certificates も入れない: app#517、下のコメント)。
+# bash と curl / libcurl は **無い** (app#504): bash は
 # `kubectl exec -c challenge ... /bin/bash -l` の引数で challenge container 側で動き、
 # curl は readinessProbe だったが busybox wget に替えた (charts/ctf-user/templates/pod.yaml)。
 FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
@@ -83,12 +84,17 @@ FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cab
 #     含まれる — 上流 CHANGES.md の 3.5.7→3.5.8 節が 3.5.9 に残ることを aports と
 #     併せて確認済み (5x R1)。3.5.9 自体も追加の CVE 修正を含む
 #     (High は CVE-2026-84782))
-#   ca-certificates 20261020-r0 (ca-certificates drift: 20260909-r0 -> 20261020-r0
-#     (2026-10-25, 3.24/main から 20260909-r0 が外れ `apk add` が `unable to select
-#     packages` で落ちた。`apk policy ca-certificates` 実測で唯一の提供版)。
-#     前回 drift 2026-10-05: 3.24/main から 20260611-r0 が外れたため再 pin。base 由来の
-#     ca-certificates-bundle 20260611-r0 は pin 外で同居するが、bundle の中身は
-#     ビルド時に新データで再生成される (5x R2 実測: 119→121 件、TLS 動作確認済み))
+#   ca-certificates は **入れない** (app#517、2026-10-26。以前は 20261020-r0 を pin
+#     していたが、10-05 と 10-25 の drift 2 回の原因だった)。runtime に消費者が無い:
+#     (a) kubectl は in-cluster config の CAFile に SA の ca.crt を使い system の CA store を
+#     見ない (entrypoint.sh:16-17。charts/ctf-user/templates/pod.yaml の ttyd-sa-token
+#     volume (:405-415、kube-root-ca.crt の ca.crt の投影) を ttyd container が
+#     /var/run/secrets/kubernetes.io/serviceaccount に mount する (:235))、(b) ttyd は loopback の plain HTTP (--ssl なし、TTYD_INTERFACE=127.0.0.1)、
+#     (c) readinessProbe の busybox wget も http://127.0.0.1。build stage の dl.k8s.io (https)
+#     は stage 1 の base の ca-certificates-bundle で足りる。runtime の base にも
+#     ca-certificates-bundle は標準で入っている (alpine の既定。外れるのは
+#     `ca-certificates` package だけで、bundle の更新は base digest の引き上げで行う)。
+#     runtime で外向き TLS が要る道具を足すときは、その道具の消費者をここに書いてから戻す)
 # ttyd / tini の版数は 3.23→3.24 で不変 (live APKINDEX 実測、2026-09-01。
 # 2026-10-05 の `apk policy` 再実測でも 1.7.7-r0 / 0.19.0-r3 のまま)。
 # zlib 1.3.2-r1 (2026-10-13: base digest を 3.24 の最新 294b683c へ更新。base に
@@ -99,16 +105,17 @@ FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cab
 RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 zlib=1.3.2-r1 \
  && apk add --no-cache \
         "ttyd=1.7.7-r0" \
-        "ca-certificates=20261020-r0" \
         "tini=0.19.0-r3" \
  && adduser -D -u 1000 ttyd \
  && command -v wget >/dev/null \
  && ! command -v curl >/dev/null \
- && ! command -v bash >/dev/null
-# 上の 3 行は build 時の assert (失敗なら build が落ちる)。chart の ttyd readinessProbe
-# (charts/ctf-user/templates/pod.yaml) が busybox wget に依存し、curl / bash は runtime に
-# 置かない (#504)。誰かが apk add に curl / bash を戻す (または curl を引き込む package を
-# 足す) と、ここで止まる。
+ && ! command -v bash >/dev/null \
+ && ! apk info -e ca-certificates >/dev/null
+# 上の 4 行は build 時の assert (失敗なら build が落ちる)。chart の ttyd readinessProbe
+# (charts/ctf-user/templates/pod.yaml) が busybox wget に依存し (wget あり)、curl / bash は
+# runtime に置かない (#504)、ca-certificates package も置かない (#517。base の
+# ca-certificates-bundle は残る)。誰かが apk add に curl / bash / ca-certificates を戻す
+# (または引き込む package を足す) と、ここで止まる。
 
 COPY --from=kubectl --chmod=0755 /kubectl /usr/local/bin/kubectl
 
