@@ -7,7 +7,9 @@
 # Exception: the conventions file holds the cross-repo contract table, and
 # internal/contractmetrics/contract_test.go (ADR-0040; it replaced the per-row
 # tests of app#404 and app#412) compares its `<family>{<labels>}` code spans with the
-# metrics the owning binary exposes at start. The
+# metrics the owning binary exposes at start, and
+# internal/collector/unknown_challenge_contract_test.go (app#486) reads the verify
+# probe id from its row (a second reader, through internal/contracttable). The
 # `COPY . .` builds receive it: Dockerfile.test (the one that runs the test),
 # Dockerfile.tidy and Dockerfile.e2e (no effect on them, but editing this file
 # now invalidates their `COPY . .` layer cache). No pushed image copies the repo

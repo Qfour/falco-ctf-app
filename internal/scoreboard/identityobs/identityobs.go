@@ -11,6 +11,13 @@
 //   - authenticated: api.requireAuthenticated / api.boardIdentity;
 //   - portal:        GET /portal, which answers 200 with an empty shell.
 //
+// One more line lives in this package but is NOT one of the four gates: the Warn
+// the Grader's second seat gate logs (LogGraderRefused, graderrefused.go, app#486).
+// It sits here because it is an observation log, and httpx is a transport helper
+// the collector links. It is outside the metric contract: it is not counted in
+// scoreboard_identity_denials_total and adds no gate or reason to its vocabulary
+// (that vocabulary is the contract with platform).
+//
 // A refusal is counted once, by the gate that refused it, in
 // scoreboard_identity_denials_total{gate, reason}, and sampled into one Warn
 // line per (gate, reason) per 10 seconds. The metric is the contract with

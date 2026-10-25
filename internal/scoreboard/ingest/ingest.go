@@ -23,6 +23,7 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
 	"github.com/Qfour/falco-ctf-app/internal/identity"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/identityobs"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/metrics"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/oapi"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/ratelimit"
@@ -470,7 +471,7 @@ func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 // same event: 200 ignored, FalcoEventsReceived{ignored}, and NO taint (there is
 // no seat to taint, and a 500 / taint_error would read as lost data to the
 // runbook). Reaching it means receive's gate was lost, so it also logs one
-// fixed-field Warn (httpx.LogGraderRefused), through auditLimiter under a
+// fixed-field Warn (identityobs.LogGraderRefused), through auditLimiter under a
 // constant key (the refused value is not a key) so it is at most 1 line / 10 s.
 //
 // What it guarantees is about the four scoring tables: the Grader wrote none of
@@ -479,7 +480,7 @@ func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 // rule_fires feed (and the per-user event count) under the refused user.
 func (h *Handler) graderRefused(w http.ResponseWriter, r *http.Request, entry string) {
 	if h.auditLimiter.Allow("grader_refused") {
-		httpx.LogGraderRefused(h.logger, r, entry)
+		identityobs.LogGraderRefused(h.logger, r, entry)
 	}
 	metrics.FalcoEventsReceived.WithLabelValues("ignored").Inc()
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ignored": true, "reason": "not a ctf workspace event"})
