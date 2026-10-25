@@ -51,16 +51,25 @@
 #                                           Dockerfiles, so the derivation never sees them)
 #   scripts/check-apk-pins.sh --parse [FILE...]   print the parse table (TSV) and exit 0;
 #                                           offline, for fixtures and for later checks
-#   scripts/check-apk-pins.sh --selftest    offline: planted defects must fail, the real
-#                                           tree's grammar must pass
+#   scripts/check-apk-pins.sh --lint [FILE...]   offline, no docker: the real tree's gate.
+#                                           Grammar (D1 + F4), at least one pin, and the
+#                                           parser read every `apk add`; one file:line per
+#                                           violation; exit 0 / 1. The flag-guard job runs it
+#                                           as its own step. ADR-0036 V2 (the D2 class check)
+#                                           is added to it (lint_rows), not to --selftest.
+#   scripts/check-apk-pins.sh --selftest    offline: the checker's own test only. Planted
+#                                           defects must fail (and --lint must go red on them),
+#                                           parse tables must be exact; it does not look at
+#                                           the real tree, so a red here means the checker broke
 #
-# Needs Docker and network (not --parse / --selftest). No Docker is a FAIL (exit 2) with
+# Needs Docker and network (not --parse / --lint / --selftest). No Docker is a FAIL (exit 2) with
 # the reason, never a skip: a check that did not run must not look like a pass.
 # Exit: 0 every pin is in its base's index (or installed), the grammar holds
 #       1 a pin is gone, a grammar violation, no pin found at all (fail-closed), the base
 #         has no apk, or the parser's `apk add` count differs from the text's
 #       2 Docker or network trouble (not a verdict about the pins; a verdict of 1 wins)
 set -uo pipefail
+SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"   # absolute: the selftest re-enters this script after the cd below
 cd "$(dirname "$0")/.." || exit 2
 
 # --- parse ------------------------------------------------------------------------------
@@ -255,18 +264,20 @@ versions() {
     in_pkg && /^  [^ ].*:$/ { sub(/^  /, ""); sub(/:$/, ""); print }'
 }
 
-# --- the check --------------------------------------------------------------------------
-# check_files FILE... : prints findings, returns 0 / 1 / 2 (see the header).
-check_files() {
-  local rows tmp status infra files_n pins_n cov text_n parsed_n base names policy qrc
-  local file line stage kind name version listed bases_n bases idx
-  status=0; infra=0
+# --- lint (offline, the real-tree gate) -------------------------------------------------
+# lint_rows ROWS FILE... : the verdict that needs no index: grammar (ADR-0036 D1 + security
+# condition F4), at least one pin, and the parser read every `apk add` the text contains.
+# Prints one FAIL line per finding (file:line), returns 0 / 1, sets LINT_PINS_N. Used by
+# `--lint` and, first, by check_files, so the two never disagree about the grammar.
+# ADR-0036 V2 (the D2 class check: allow-list names, `--upgrade` syntax, allow-list rows
+# without a pin) is added HERE, as a further check over the same rows, not to --selftest.
+LINT_PINS_N=0
+lint_rows() {
+  local rows="$1" status=0 files_n cov text_n parsed_n
+  local file line stage kind version
+  shift
   files_n=$#
-  tmp="$(mktemp -d)" || return 2
-  rows="$tmp/rows"
-  parse "$@" >"$rows" || { echo "FAIL: the parser failed" >&2; rm -rf "$tmp"; return 2; }
-
-  # grammar (D1)
+  # grammar (D1 + F4)
   while IFS=$'\t' read -r file line stage _ kind _ version _; do
     case "$kind" in
       range) echo "FAIL: $file:$line [$stage] '$version' — a version range; the only version syntax is exact name=version (ADR-0036 D1)"; status=1 ;;
@@ -281,8 +292,8 @@ check_files() {
   done <"$rows"
 
   # fail-closed: a check that looked at nothing is not a pass
-  pins_n="$(awk -F'\t' '$5 == "pin"' "$rows" | wc -l | tr -d ' ')"
-  if [ "$pins_n" -eq 0 ]; then
+  LINT_PINS_N="$(awk -F'\t' '$5 == "pin"' "$rows" | wc -l | tr -d ' ')"
+  if [ "$LINT_PINS_N" -eq 0 ]; then
     echo "FAIL: no apk exact pin found in $files_n file(s) (a check that looked at nothing is not a pass)"
     status=1
   fi
@@ -292,6 +303,36 @@ check_files() {
     echo "FAIL: the text has $text_n 'apk add' occurrence(s) but the parser read $parsed_n; a form it does not read can hide a pin — extend parse() in $0"
     status=1
   fi
+  return "$status"
+}
+
+# lint_files FILE... : parse, then lint_rows. Offline: no docker, no network.
+lint_files() {
+  local tmp rc
+  tmp="$(mktemp -d)" || return 2
+  parse "$@" >"$tmp/rows" || { echo "FAIL: the parser failed" >&2; rm -rf "$tmp"; return 2; }
+  lint_rows "$tmp/rows" "$@"; rc=$?
+  if [ "$rc" -eq 0 ]; then
+    echo "ok: lint — $LINT_PINS_N pin(s) in $# file(s), grammar clean, every apk add read (offline; the index comparison is check-apk-pins / apk-pins.yaml)"
+  fi
+  rm -rf "$tmp"
+  return "$rc"
+}
+
+# --- the check --------------------------------------------------------------------------
+# check_files FILE... : prints findings, returns 0 / 1 / 2 (see the header).
+check_files() {
+  local rows tmp status infra files_n pins_n base names policy qrc
+  local file line stage name version listed bases_n bases idx
+  status=0; infra=0
+  files_n=$#
+  tmp="$(mktemp -d)" || return 2
+  rows="$tmp/rows"
+  parse "$@" >"$rows" || { echo "FAIL: the parser failed" >&2; rm -rf "$tmp"; return 2; }
+
+  # grammar (D1 + F4), no pin at all, coverage: the same report `--lint` gives (lint_rows)
+  lint_rows "$rows" "$@" || status=1
+  pins_n="$LINT_PINS_N"
 
   # index (D5): one docker run per distinct base image
   bases_n=0
@@ -337,7 +378,7 @@ tracked() { git ls-files '*Dockerfile*'; }
 
 # --- selftest ---------------------------------------------------------------------------
 selftest() {
-  local tmp n rc realfiles cov f
+  local tmp n rc
   tmp="$(mktemp -d)" || return 2
   trap 'rm -rf "$tmp"' RETURN
   n=0
@@ -378,19 +419,49 @@ selftest() {
   A='FROM alpine:3.24@sha256:aaaa AS final'
   B='alpine:3.24@sha256:aaaa'
 
-  # the real tree: grammar holds, something was found, the parser sees every `apk add`
-  # (offline: the index is the stub, so only the vanished-version rows may be red)
-  realfiles=()
-  while IFS= read -r f; do realfiles+=("$f"); done < <(tracked)
-  [ "${#realfiles[@]}" -gt 0 ] || { echo "FAIL: selftest: no tracked Dockerfile"; return 1; }
-  parse "${realfiles[@]}" >"$tmp/real"
-  if awk -F'\t' '$5 ~ /^(range|edge|repo|var|bad|untrusted|reposfile|keysfile)$/' "$tmp/real" | grep -q .; then
-    echo "FAIL: selftest: the real tree has a grammar violation"; awk -F'\t' '$5 ~ /^(range|edge|repo|var|bad|untrusted|reposfile|keysfile)$/' "$tmp/real"; return 1
+  # `--lint` (the real-tree gate) can go red, through the real entry point. The tree here is a
+  # clean stand-in (two Dockerfiles, multi-stage, pins), so this test does not depend on the
+  # real tree: a violation in the real tree fails the `--lint` step, never this one.
+  # Each planted file is added to the stand-in tree alone and `--lint` must exit 1 for the
+  # intended reason; the unplanted tree must exit 0.
+  mkdir -p "$tmp/tree/images/a" "$tmp/tree/images/b"
+  printf '%s\n' 'FROM alpine:3.24@sha256:aaaa AS base' 'RUN apk add --no-cache vim=9.2.1202-r0 jq' \
+    'FROM base AS final' 'RUN apk add --no-cache --upgrade zlib=1.3.2-r1' >"$tmp/tree/images/a/Dockerfile"
+  printf '%s\n' 'FROM python:3.12-slim@sha256:bbbb AS build' 'RUN pip install x' \
+    'FROM alpine:3.24@sha256:aaaa' 'RUN apk del --no-cache curl && apk add chromium=155.0.8059.84-r0' >"$tmp/tree/images/b/Dockerfile"
+  lintcase() { # name, wanted exit, must-contain ("" = none), extra files to add to the tree...
+    local name="$1" want="$2" must="$3" f
+    shift 3
+    n=$((n + 1))
+    "$SELF" --lint "$tmp/tree/images/a/Dockerfile" "$tmp/tree/images/b/Dockerfile" "$@" >"$tmp/out" 2>&1; rc=$?
+    if [ "$rc" -ne "$want" ]; then
+      echo "FAIL: selftest: --lint '$name' exited $rc, wanted $want"; cat "$tmp/out"; return 1
+    fi
+    if [ -n "$must" ] && ! grep -qF -- "$must" "$tmp/out"; then
+      echo "FAIL: selftest: --lint '$name' exited $rc but not for the intended reason ('$must' missing)"; cat "$tmp/out"; return 1
+    fi
+    echo "  lint ($name): exit $rc — $( { grep -m1 '^FAIL' "$tmp/out" || grep -m1 '^ok' "$tmp/out" || echo '(no output)'; } | sed "s|$tmp/||" | cut -c1-140)"
+  }
+  lintcase "the stand-in tree is clean" 0 "ok: lint — 3 pin(s) in 2 file(s)" || return 1
+  printf '%s\n' 'FROM alpine:3.24@sha256:aaaa' 'RUN apk add --no-cache vim=9.2.1202-r0 jq' 'RUN apk add --no-cache "curl>=8.0"' >"$tmp/lint-grammar"
+  lintcase "a grammar violation (a range) in one added file" 1 "lint-grammar:3 [#1] 'curl>=8.0' — a version range" "$tmp/lint-grammar" || return 1
+  printf '%s\n' 'FROM alpine:3.24@sha256:aaaa' 'RUN apk add --no-cache vim=9.2.1202-r0' 'RUN echo https://m.example >> /etc/apk/repositories' >"$tmp/lint-etcapk"
+  lintcase "a write to /etc/apk/repositories (F4) in one added file" 1 "lint-etcapk:3 [#1]" "$tmp/lint-etcapk" || return 1
+  # no pin at all: the tree is only bare names (the stand-in tree's own pins left out)
+  printf '%s\n' 'FROM alpine:3.24@sha256:aaaa' 'RUN apk add --no-cache vim jq' >"$tmp/lint-nopin"
+  n=$((n + 1))
+  "$SELF" --lint "$tmp/lint-nopin" >"$tmp/out" 2>&1; rc=$?
+  if [ "$rc" -ne 1 ] || ! grep -qF 'no apk exact pin found in 1 file(s)' "$tmp/out"; then
+    echo "FAIL: selftest: --lint with no pin exited $rc"; cat "$tmp/out"; return 1
   fi
-  [ "$(awk -F'\t' '$5 == "pin"' "$tmp/real" | wc -l | tr -d ' ')" -gt 0 ] || { echo "FAIL: selftest: the real tree yields no pin"; return 1; }
-  cov="$(coverage "$tmp/real" "${realfiles[@]}")"
-  [ "${cov% *}" = "${cov#* }" ] || { echo "FAIL: selftest: the real tree: text has ${cov% *} apk add, parser read ${cov#* }"; return 1; }
-  echo "  real tree: $(awk -F'\t' '$5 == "pin"' "$tmp/real" | wc -l | tr -d ' ') pin(s) in $(awk -F'\t' '{print $1}' "$tmp/real" | sort -u | wc -l | tr -d ' ') file(s), grammar clean, ${cov% *} apk add read"
+  echo "  lint (no pin at all): exit $rc — $(grep -m1 '^FAIL' "$tmp/out" | cut -c1-140)"
+  printf '%s\n' 'FROM alpine:3.24@sha256:aaaa' 'RUN apk add --no-cache vim=9.2.1202-r0' 'RUN <<EOF' 'apk add jq' 'EOF' >"$tmp/lint-cover"
+  lintcase "a parser coverage mismatch (apk add in a heredoc) in one added file" 1 "the text has 5 'apk add' occurrence(s) but the parser read 4" "$tmp/lint-cover" || return 1
+  # a missing file is not a pass
+  n=$((n + 1))
+  "$SELF" --lint "$tmp/does-not-exist" >"$tmp/out" 2>&1; rc=$?
+  [ "$rc" -eq 1 ] && grep -q 'not found' "$tmp/out" || { echo "FAIL: selftest: --lint on a missing file exited $rc"; cat "$tmp/out"; return 1; }
+  echo "  lint (a missing file): exit $rc — not a pass"
 
   # parse tables (ADR-0036 V1): each form, exact
   table "plain, one line" "2${T}final${T}$B${T}pin${T}vim${T}9.2.1202-r0${T}0" \
@@ -603,13 +674,25 @@ RUN apk add vim=9.2.1202-r0" "has no apk" || return 1
   query_index() { echo "docker is not installed (stub)" >&2; return 2; }
   planted "docker/network trouble is exit 2, not 0" 2 "$A
 RUN apk add vim=9.2.1202-r0" || return 1
-  echo "ok: selftest — $n checks (parse tables, planted defects red, clean cases green, real tree grammar clean)"
+  echo "ok: selftest — $n checks (parse tables, planted defects red, clean cases green, --lint goes red on a planted grammar / no-pin / coverage defect)"
   return 0
 }
 
 # --- entry ------------------------------------------------------------------------------
 case "${1:-}" in
   --selftest) selftest; exit $? ;;
+  --lint)
+    shift
+    if [ "$#" -eq 0 ]; then
+      files=(); while IFS= read -r f; do files+=("$f"); done < <(tracked)
+      [ "${#files[@]}" -gt 0 ] || { echo "FAIL: no tracked Dockerfile (a check that looked at nothing is not a pass)"; exit 1; }
+    else
+      for f in "$@"; do [ -f "$f" ] || { echo "FAIL: check-apk-pins --lint: $f not found"; exit 1; }; done
+      files=("$@")
+    fi
+    lint_files "${files[@]}"; rc=$?
+    [ "$rc" -eq 2 ] && exit 2
+    exit "$rc" ;;
   --parse)
     shift
     if [ "$#" -eq 0 ]; then
@@ -621,7 +704,7 @@ case "${1:-}" in
       parse "$@"
     fi
     exit $? ;;
-  -*) echo "usage: $0 [--parse|--selftest] [FILE...]" >&2; exit 2 ;;
+  -*) echo "usage: $0 [--parse|--lint|--selftest] [FILE...]" >&2; exit 2 ;;
 esac
 
 if [ "$#" -gt 0 ]; then
