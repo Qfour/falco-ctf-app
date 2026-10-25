@@ -130,12 +130,13 @@ docker buildx imagetools inspect golang:1.26-alpine --format '{{.Manifest.MediaT
 
 # 2. 該当 Dockerfile の FROM を `image:tag@sha256:<新digest>` に差し替える
 #    (同一 image を使う複数 Dockerfile は同じ digest に揃える。現状:
-#     golang:1.26-alpine              = scoreboard/auth-policy/Dockerfile.{test,gen,tidy,e2e}
-#                                       + .github/workflows/checks.yaml の go-vulncheck /
-#                                       gen-diff-check job の container.image (#88 — Dockerfile 群だけ
-#                                       bump して checks.yaml の container を旧 digest で残すと
-#                                       go-vulncheck/gen-diff-check が旧イメージで回り CVE ゲートが
-#                                       赤のまま漏れる。app#78/#87 で発覚)、
+#     golang:1.26.N-alpine            = 検査 `scripts/check-go-base-digest.sh` (`make
+#                                       check-go-base-digest`、flag-guard job) が全箇所を
+#                                       `git ls-files '*Dockerfile*'` と `.github/workflows/*.y*ml`
+#                                       から導出して照合する。一覧は持たない。異なる値が 2 つ以上、
+#                                       digest 無し、一致 0 件は fail (checks.yaml の container.image
+#                                       だけ旧 digest で残ると go-vulncheck が別の Go で回る。
+#                                       app#78/#87/#88/#499 で発覚)、
 #     distroless static-debian13:nonroot = scoreboard/auth-policy、
 #                                       Dockerfile.e2e (serve stage。`make e2e-serve` のイメージ)、
 #     alpine:3.24                     = images/{ttyd,challenge}、
@@ -147,6 +148,7 @@ docker buildx imagetools inspect golang:1.26-alpine --format '{{.Manifest.MediaT
 # 3. 検証: 実ビルド + 鮮度 + テスト
 make build TAG=local      # digest が pull でき build が通ること
 make check-freshness      # cycle が EOL でないこと
+make check-go-base-digest # golang の tag@digest が全箇所で同一であること
 make test                 # Go build/test (Dockerfile.test) が通ること
 ```
 

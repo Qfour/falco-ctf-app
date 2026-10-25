@@ -10,6 +10,7 @@
 
 - **C1 Signpost 4 は受理から 44 日で 4 回発火した。** ADR-0002 Signpost 4 は「exact pin の再解決が年 2 回以上」(`0002:135-136`)。受理 (2026-09-01) の後、既存の pin の版を変えた commit は 4 本で、4 本とも pin した版が index から消えたため:
   d53cb4f #296 (09-03、curl / libcurl)、2572090 #307 (10-05、libssl3 / libcrypto3・util-linux・vim 系・ttyd の ca-certificates)、ca1c5bc #354 (10-14、vim 系)、4b233dc #384 (10-17、vim 系・chromium)。数え方は Signpost 1。
+  **追記 (2026-10-25、app#499 / #500)**: 5 回目。ttyd の `ca-certificates` 20260909-r0 → 20261020-r0 と `Dockerfile.e2e` の `chromium` 155.0.8059.39 → 155.0.8059.84 が同じ日に index から消え、`build (ttyd) / build` と `e2e` が赤になった (1 commit = 1 回。名前で数えると 2)。赤は 4 日間誰にも届かず (review-5x 64 回目の査定)、platform の本番 pin v2026.10.19 からは ttyd image を build できない (C6 の release の確率が実際に起きた例)。
   #266 (dfa0a0a、09-01) は cycle の bump で、challenge の参加者の道具 (bash・curl・libcurl・vim・vim-common・xxd・util-linux) に exact pin を足した commit (それまで challenge には版の指定が無かった: `0002:59`)。4 回とも #266 が足した pin を含む (#307 は base の引き上げと ttyd の ca-certificates も、#384 は chromium も)。
   VP の数え (#307 / #354 / #382 + #266) とは #296 の有無と #266 の扱いが違う。#266 は cycle の bump なので数えない。
 - **C2 仕組み。** Alpine の index は各 package の最新の 1 版だけを載せる (`0031:41`。実測: `apk policy vim chromium` はそれぞれ 1 版)。exact pin を満たせるのは index にある版か base image に入っている版だけ (実測: base に入っている版と同じ pin は index に無くても通る (rc 0)。どちらにも無い版は `breaks: world[...]` で落ちる (rc 3))。だから **base に無い package の exact pin は、upstream が版を上げるたびに build を止める**。
@@ -95,7 +96,7 @@
    git log --first-parent origin/main --since=<日付> --date=short --format='%h %ad %s' \
      -G '[a-z0-9][a-z0-9._+-]*=[0-9][^[:space:]"\\]*-r[0-9]+' -- $(git ls-files '*Dockerfile*')
    ```
-   で pin の行を変えた commit を出し、その commit の前後の Dockerfile で同じ名前の pin の版が変わったものを 1 回と数える (pin の追加と削除は数えない。1 commit で複数の名前が動いても 1 回)。2026-10-17 の値: 09-01 以後 4 回 (C1)。**I5 の image で 30 日に 2 回を超えたら** D2 の分け方を見直す (その package は本当に version-sensitive か、base の digest を上げれば消える (b) か)。`Dockerfile.e2e` の Chromium は ADR-0031 Signpost 3 (月 4 回) で見る。
+   で pin の行を変えた commit を出し、その commit の前後の Dockerfile で同じ名前の pin の版が変わったものを 1 回と数える (pin の追加と削除は数えない。1 commit で複数の名前が動いても 1 回)。2026-10-17 の値: 09-01 以後 4 回 (C1)。2026-10-25 の値 (`scripts/check-repin-count.sh` で測定): 09-01 以後 5 回、直近 30 日 (09-25〜10-25) で 4 回 (10-05・10-14・10-17・10-25。うち 10-25 は ttyd と e2e の 2 名)。**I5 の image で 30 日に 2 回を超えたら** D2 の分け方を見直す (その package は本当に version-sensitive か、base の digest を上げれば消える (b) か)。`Dockerfile.e2e` の Chromium は ADR-0031 Signpost 3 (月 4 回) で見る。
 2. **stand-up か開催中の hotfix で、pin の drift のために image を build できなかったことが 1 回** → release の image を tag の時に 1 回 build して保管し、stand-up は digest で deploy する手順 (registry の寿命・費用) を platform で起こす (Option 4 の芯)。
 3. **版を書かない package の更新で mission・verify・e2e が壊れた (版を戻すと直る) ことが 1 回** → その package を D2 (a) に移す。
 4. **Alpine の stable branch で改ざんされた package が公開されたと報告される、または image を版を残す配布 (Wolfi・apko の lock: C4) に移す判断が出る** → 前者は報告が片付くまで全 package を exact pin にする (一時)。後者は全 package を lock に切り替える (drift が起きないので exact pin の費用が消える)。

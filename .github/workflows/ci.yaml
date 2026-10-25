@@ -166,7 +166,9 @@ jobs:
   # + .dockerignore credential-file exclusions (app#322 — *.dec.yaml,
   # *.dec.json, kubeconfig*, *.secret.* must stay excluded from build
   # contexts) + the browser E2E harness's fail-closed verdict and image scope
-  # (ADR-0031 V6 / D1 (b): Dockerfile.e2e is never an I5 image). These checks
+  # (ADR-0031 V6 / D1 (b): Dockerfile.e2e is never an I5 image) + the Go builder's
+  # `golang:<tag>@sha256:<digest>` being one value across every Dockerfile and
+  # workflow (app#499; a lagging copy builds or scans with another Go). These checks
   # share this job for CI-job-count economy and because it's already a
   # required check, not because they're the same risk category.
   # Branch protection check: "flag-guard"
@@ -195,6 +197,10 @@ jobs:
         run: |
           ./scripts/check-dockerignore.sh
           ./scripts/check-dockerignore.sh --selftest
+      - name: every golang base (tag@digest) in the Dockerfiles and workflows is the same value (app#499, selftest included)
+        run: |
+          ./scripts/check-go-base-digest.sh
+          ./scripts/check-go-base-digest.sh --selftest
       - name: browser E2E verdict is fail-closed (ADR-0031 V6, planted-defect fixtures)
         run: ./scripts/check-e2e-verdict.sh
       - name: the browser E2E images stay out of the I5 build matrix (ADR-0031 D1 (b), fail-closed + selftest)

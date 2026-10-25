@@ -17,7 +17,7 @@ SYSDIG_URL   ?= https://app.au1.sysdig.com
 # host repo are not shared into the VM.
 GO_IMAGE ?= golang:1.26-alpine
 
-.PHONY: help dev dev-down build push load-colima deploy-local helm-dep-build lint check-seccomp check-flag-isolation check-namespace-ownership check-image-hygiene check-image-hygiene-selftest test e2e e2e-serve check-e2e-verdict tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-template-hex check-portal-render check-rules check-freshness check-adr check-dockerignore clean scan
+.PHONY: help dev dev-down build push load-colima deploy-local helm-dep-build lint check-seccomp check-flag-isolation check-namespace-ownership check-image-hygiene check-image-hygiene-selftest test e2e e2e-serve check-e2e-verdict tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-template-hex check-portal-render check-rules check-freshness check-adr check-dockerignore check-go-base-digest clean scan
 
 help:
 	@echo "Targets:"
@@ -50,6 +50,7 @@ help:
 	@echo "  check-rules     — fail if a challenge references a non-existent Falco rule"
 	@echo "  check-freshness — fail if a Dockerfile base image cycle is past EOL (needs network)"
 	@echo "  check-dockerignore — fail if .dockerignore stops excluding decrypted/credential files (*.dec.yaml, *.dec.json, kubeconfig*, *.secret.*) or a tracked file matches them (app#322)"
+	@echo "  check-go-base-digest — fail unless every golang:<tag>@sha256:<digest> in the Dockerfiles and workflows is the same value (app#499; + selftest)"
 	@echo "  check-adr       — fail on ADR number collisions, filename/header drift, or docs/adr/README.md index gaps (#181); prints the next free ADR number on success"
 	@echo "  scan            — sysdig-cli-scanner on all built images (SYSDIG_SECURE_API_TOKEN required)"
 	@echo "  clean           — remove built images locally"
@@ -277,6 +278,14 @@ check-adr:
 check-dockerignore:
 	./scripts/check-dockerignore.sh
 	./scripts/check-dockerignore.sh --selftest
+
+# app#499: the Go builder is written in every Dockerfile and in checks.yaml's
+# container.image; one lagging copy scans or builds with another Go. The set is
+# derived from `git ls-files`, so there is no list to keep. See
+# scripts/check-go-base-digest.sh.
+check-go-base-digest:
+	./scripts/check-go-base-digest.sh
+	./scripts/check-go-base-digest.sh --selftest
 
 scan: build
 	@command -v sysdig-cli-scanner >/dev/null 2>&1 || \

@@ -64,7 +64,7 @@ jobs:
   go-vulncheck:
     runs-on: ubuntu-latest
     container:
-      image: golang:1.26.9-alpine@sha256:3082400e369fa24d5fc60bca20edab3f6d604e0c5a690ec66b295eff4dd87ade
+      image: golang:1.26.10-alpine@sha256:27f2d3b83cfc5803c8078f8e730af0f7c431bf067afaec8f60a36fb763187cba
     steps:
       # govulncheck は go.mod 起点で module graph / source を解析するだけで git を要さない
       # (gen-diff-check は git diff を使うため git 必須で対照的)。checkout は git 非在時に
@@ -96,7 +96,7 @@ jobs:
   go-vulncheck-test-only:
     runs-on: ubuntu-latest
     container:
-      image: golang:1.26.9-alpine@sha256:3082400e369fa24d5fc60bca20edab3f6d604e0c5a690ec66b295eff4dd87ade
+      image: golang:1.26.10-alpine@sha256:27f2d3b83cfc5803c8078f8e730af0f7c431bf067afaec8f60a36fb763187cba
     steps:
       - uses: actions/checkout@v7
       - name: install govulncheck
@@ -146,7 +146,7 @@ jobs:
   gen-diff-check:
     runs-on: ubuntu-latest
     container:
-      image: golang:1.26.9-alpine@sha256:3082400e369fa24d5fc60bca20edab3f6d604e0c5a690ec66b295eff4dd87ade
+      image: golang:1.26.10-alpine@sha256:27f2d3b83cfc5803c8078f8e730af0f7c431bf067afaec8f60a36fb763187cba
     steps:
       - name: install git + python3 (checkout / diff / gen-attack 前提)
         run: apk add --no-cache git python3
