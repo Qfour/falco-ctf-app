@@ -1,5 +1,7 @@
 # ADR-0002: alpine の cycle 選定基準を「リリース後 ~1 年」から「安定性実績 + EOL runway + CVE fix 到達性」に置き換え、3.22 → 3.23 へ bump する
 
+> **pin 戦略の部分 (Signpost 4・exact pin の前提) は [ADR-0036](0036-apk-exact-pin-scope-and-daily-drift-checker.md) を参照** (ADR-0036 の Status が正)。cycle 選定の 3 条件は変わらない。
+
 - Status: **Accepted** (2026-09-01, VP merge = 承認。Decision 自体は 2026-08-18 に
   VP が承認済みだったが Status 昇格が漏れ Proposed のまま放置され、まさに本 ADR が
   警告した「同じ議論の再発」が app#266 の 3.23→3.24 即日 re-bump として現実化した

@@ -1,0 +1,121 @@
+name: apk pins
+
+# ADR-0036 D5 (advisory): every `apk add name=version` in every Dockerfile must still
+# be in the index of the base image its RUN builds from. Alpine's index keeps only the
+# newest version of a package, so a pin vanishes the day upstream ships a security
+# release and the next `docker build` fails (fail closed, on purpose). This job finds
+# that within a day instead of on the next PR, and a red run opens ONE Issue.
+#
+# It generalizes e2e-pins.yaml (ADR-0031 D5 / D10 (3): Dockerfile.e2e only). The set of
+# Dockerfiles is derived by scripts/check-apk-pins.sh from `git ls-files`, never listed.
+#
+# Same shape as freshness.yaml: it needs the network, so it is scheduled and
+# dispatchable, never run per PR (a PR's own image build already catches a drifted pin),
+# and it is not a required check.
+#
+# workflow_dispatch can run the checker against the planted-bad fixtures (ADR-0031 V9,
+# ADR-0036 V3): those runs must be RED, and they never open an Issue. `dry_run` runs
+# the real tree and prints the Issue body to the job summary instead of filing it
+# (ADR-0036 V4).
+#
+# Exit status of the script: 0 green / 1 a pin is gone, the grammar is violated, or the
+# checker looked at nothing / 2 docker or network trouble. Only 1 opens an Issue (2 is
+# not a verdict about the pins, so it turns the job red without an Issue).
+
+on:
+  schedule:
+    # every day 05:30 UTC
+    - cron: "30 5 * * *"
+  workflow_dispatch:
+    inputs:
+      file:
+        description: "What to check: 'all' = every tracked Dockerfile (a red run files the Issue unless dry_run). A fixture must turn the job red and never files an Issue."
+        type: choice
+        default: all
+        options:
+          - all
+          - Dockerfile.e2e
+          - scripts/testdata/e2e-pin-BAD.txt
+          - scripts/testdata/e2e-pin-BAD-continued.txt
+      dry_run:
+        description: "Print the Issue body to the job summary instead of opening or updating the Issue."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  apk-pins:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # issues: write only here, on the one job that files the Issue.
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: every apk pin is in its base image's index, and apk add uses only exact pins
+        id: check
+        env:
+          PIN_FILE: ${{ inputs.file }}
+        run: |
+          # The status is read, not swallowed: the next steps decide on it and the last one
+          # fails the job with it.
+          set +e
+          if [ -z "$PIN_FILE" ] || [ "$PIN_FILE" = all ]; then
+            ./scripts/check-apk-pins.sh >"$RUNNER_TEMP/apk-pins.out" 2>&1
+          else
+            ./scripts/check-apk-pins.sh "$PIN_FILE" >"$RUNNER_TEMP/apk-pins.out" 2>&1
+          fi
+          rc=$?
+          set -e
+          cat "$RUNNER_TEMP/apk-pins.out"
+          echo "rc=$rc" >>"$GITHUB_OUTPUT"
+      - name: open or update the Issue (red = a pin is gone or the grammar is violated)
+        if: ${{ steps.check.outputs.rc == '1' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          FILE_ISSUE: ${{ (github.event_name == 'schedule' || (inputs.file == 'all' && !inputs.dry_run)) && 'true' || 'false' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          label=apk-pin-drift
+          body="$RUNNER_TEMP/issue-body.md"
+          {
+            echo "The daily apk pin checker (\`scripts/check-apk-pins.sh\`, ADR-0036 D5) is red."
+            echo
+            echo "Run: $RUN_URL (commit \`$SHA\`)"
+            echo
+            echo "Each line is \`file:line [stage] name=version\`, the version the base image's index lists, and the base. Bump the pin in a PR that changes only the version (ADR-0036 D6); this Issue's body is rewritten by every red run and stays open until a person closes it."
+            echo
+            echo '~~~'
+            grep -E '^(FAIL|ERROR)' "$RUNNER_TEMP/apk-pins.out" || echo "(no FAIL line; see the run log)"
+            echo '~~~'
+          } >"$body"
+          cat "$body" >>"$GITHUB_STEP_SUMMARY"
+          if [ "$FILE_ISSUE" != true ]; then
+            echo "not filing an Issue (dry run, or a fixture run); the body is in the job summary"
+            exit 0
+          fi
+          gh label create "$label" --description "apk exact pin left the index or broke the grammar (ADR-0036 D5)" --color B60205 --force
+          n="$(gh issue list --label "$label" --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$n" ]; then
+            gh issue edit "$n" --body-file "$body"
+            echo "updated Issue #$n"
+          else
+            gh issue create --label "$label" --title "apk exact pin drifted out of the index (daily checker)" --body-file "$body"
+          fi
+      - name: the job is red when the checker was (1 = a pin, 2 = docker or network trouble)
+        if: ${{ steps.check.outputs.rc != '0' }}
+        env:
+          RC: ${{ steps.check.outputs.rc }}
+        run: |
+          echo "::error::scripts/check-apk-pins.sh exited $RC"
+          exit 1
