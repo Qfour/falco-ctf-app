@@ -12,8 +12,9 @@
 #     byte what check-flags-file-validation.sh's own per-argument writer produced
 #   - the shared verdicts: reached-upgrade, reject (exit 2 / 1 for an empty arg, no
 #     call, the stderr marker), and a raw bidi control in the output
-#   - a caller (check-flags-file-validation.sh) goes red under a broken stub: it
-#     has no copy of its own (app#521)
+#   - no *.sh outside scripts/lib/ holds a stub copy (static, with a planted copy
+#     shown red), and the callers (check-flags-file-validation.sh, check-seat-grammar.sh)
+#     go red under a broken stub (app#521)
 # Usage: ./scripts/test-deploy-user-harness.sh   (make check-flags; CI flag-guard)
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -145,39 +146,99 @@ ct_run bash -c "printf '\\342\\200\\255 ok \\303\\274'"
 t_status "...but not a neighbouring code point (U+202D) or a plain non-ASCII letter" 0 ct_no_bidi_output w
 t_group "verdicts"
 
+echo "==> a stub copy is not allowed outside scripts/lib/ (static)"
+# What a stub copy looks like: a `helm upgrade` exit, a write to the call log, a
+# `printf 'helm %s'` record. Searched in every *.sh but this harness, this self-test
+# (it holds the patterns) and scripts/check-missions-allowlist-assert.sh, whose kubectl
+# stub is NOT a copy: it runs the probe `kubectl exec` carries against a fake root (no
+# call log, no helm, no exit 97). Named, not pattern-excluded.
+T_STUB_RE='upgrade\) *exit|>> *"?\$\{?(CALLS_LOG|CT_CALLS)|printf .(helm|kubectl) %s'
+# t_find_stub_copies <root>: prints file:line:text for each hit
+t_find_stub_copies() {
+  local f
+  while IFS= read -r f; do
+    case "${f}" in
+      ./scripts/lib/* | ./scripts/test-deploy-user-harness.sh | ./scripts/check-missions-allowlist-assert.sh) continue ;;
+    esac
+    { grep -nE "${T_STUB_RE}" "$1/${f}" || true; } | sed "s|^|${f#./}:|"
+  done < <(cd "$1" && find . -name '*.sh' -not -path './.git/*' -not -path './node_modules/*' | sort)
+}
+t_eq "no *.sh outside scripts/lib/ writes a stub" "" "$(t_find_stub_copies "${REPO_ROOT}")"
+# The detector itself: plant the old check-flags-file-validation.sh stub (per-argument
+# writer + exit 97) in a scratch tree; it must be listed with file:line, and the same
+# text under scripts/lib/ must not be.
+PLANT="${WORK}/plant"
+mkdir -p "${PLANT}/scripts/lib"
+cat > "${PLANT}/scripts/check-planted.sh" <<'PLANTED'
+#!/usr/bin/env bash
+cat > "${STUB_BIN}/helm" <<'STUB'
+printf 'helm' >> "${CALLS_LOG}"
+case "${a}" in
+    upgrade) exit 97 ;;
+STUB
+PLANTED
+cp "${PLANT}/scripts/check-planted.sh" "${PLANT}/scripts/lib/ok.sh"
+FOUND="$(t_find_stub_copies "${PLANT}")"
+t_eq "a planted stub copy is listed (file:line), the one under scripts/lib/ is not" \
+  "scripts/check-planted.sh:3:printf 'helm' >> \"\${CALLS_LOG}\"${NL}scripts/check-planted.sh:5:    upgrade) exit 97 ;;" "${FOUND}"
+echo "    planted -> $(printf '%s' "${FOUND}" | tr '\n' ';' | cut -c1-160)"
+t_group "static"
+
 echo "==> a caller stands on the harness's stubs (a broken stub turns it red)"
 # scripts/check-flags-file-validation.sh had its own stub copy until app#521; a copy
-# would stay green under a broken harness, so these mutants are what keeps it moved.
-# check-seat-grammar.sh and check-deploy-user-ids.sh are the same by construction
-# (they have no stub of their own) and are slower, so they are not re-run here.
-# t_caller_red <label> <harness text to replace> <replacement> <stderr marker>
+# would stay green under a broken harness, so these mutants show the callers stand on
+# it (the static check above is what stops a copy coming back). check-deploy-user-ids.sh
+# is the same by construction and slow (54 s), so it is not re-run here.
+# t_replace_once <file> <text to replace> <replacement>: rewrites the ONE line that
+# contains the text (line by line, like ct_mutate_line: ${x/"a"/"b"} keeps the quotes
+# around the replacement under bash 3.2); rc 1 unless exactly one line matches
+t_replace_once() {
+  local file="$1" from="$2" to="$3" l n=0
+  while IFS= read -r l; do
+    case "${l}" in
+      *"${from}"*) printf '%s%s%s\n' "${l%%"${from}"*}" "${to}" "${l#*"${from}"}"; n=$((n + 1)) ;;
+      *) printf '%s\n' "${l}" ;;
+    esac
+  done < "${file}" > "${file}.new"
+  [[ "${n}" -eq 1 ]] || { rm -f "${file}.new"; return 1; }
+  cat "${file}.new" > "${file}"
+  rm -f "${file}.new"
+}
+printf '%s\n' 'a' '  printf '"'"'helm %s\n'"'"' "$*" >> "${CALLS_LOG}"' 'b' > "${WORK}/rep.txt"
+t_replace_once "${WORK}/rep.txt" 'printf '"'"'helm %s\n'"'"' "$*"' ': ' || fail "t_replace_once: no single match"
+t_eq "t_replace_once: quotes, a backslash and \$* are replaced as written (bash 3.2 = 5)" \
+  'a|  :  >> "${CALLS_LOG}"|b' "$(tr '\n' '|' < "${WORK}/rep.txt" | sed 's/|$//')"
+# t_caller_red <label> <caller script> <harness text to replace> <replacement> <stderr marker>
 t_caller_red() {
-  local label="$1" from="$2" to="$3" marker="$4" root="${WORK}/caller-${1}" lib text rc
+  local label="$1" caller="$2" from="$3" to="$4" marker="$5" root="${WORK}/caller-${1}" rc
   mkdir -p "${root}"
   cp -R "${REPO_ROOT}/scripts" "${root}/scripts"
   for d in charts internal challenges scenarios; do ln -s "${REPO_ROOT}/${d}" "${root}/${d}"; done
-  lib="${root}/scripts/lib/deploy-user-harness.sh"
-  text="$(cat "${lib}")"
-  if [[ "${text}" != *"${from}"* ]]; then
-    fail "caller mutant ${label}: '${from}' is not in the harness"
+  if ! t_replace_once "${root}/scripts/lib/deploy-user-harness.sh" "${from}" "${to}"; then
+    fail "caller mutant ${label}: '${from}' is not on exactly one line of the harness"
     return 0
   fi
-  printf '%s\n' "${text/"${from}"/"${to}"}" > "${lib}"
   set +e
-  "${root}/scripts/check-flags-file-validation.sh" >/dev/null 2>"${root}/err"
+  "${root}/scripts/${caller}" >/dev/null 2>"${root}/err"
   rc=$?
   set -e
   T_N=$((T_N + 1))
   if [[ "${rc}" -eq 0 ]]; then
-    fail "caller mutant ${label}: check-flags-file-validation.sh stayed green"
+    fail "caller mutant ${label}: ${caller} stayed green"
   elif ! grep -qF -- "${marker}" "${root}/err"; then
     fail "caller mutant ${label}: red, but not for '${marker}': $(tr '\n' ' ' < "${root}/err" | cut -c1-200)"
   else
-    echo "    mutant ${label}: exit ${rc}, '$(grep -F -- "${marker}" "${root}/err" | head -n 1 | sed 's/^ *//' | cut -c1-110)'"
+    echo "    mutant ${label} (${caller}): exit ${rc}, '$(grep -F -- "${marker}" "${root}/err" | head -n 1 | sed 's/^ *//' | cut -c1-110)'"
   fi
 }
-t_caller_red upgrade-exit 'upgrade) exit 97' 'upgrade) exit 96' 'did not reach helm upgrade'
-t_caller_red no-record 'printf '"'"'helm %s\n'"'"' "$*" >> "${CALLS_LOG}"' ': ' "no 'helm upgrade' call was recorded"
+t_caller_red upgrade-exit check-flags-file-validation.sh 'upgrade) exit 97' 'upgrade) exit 96' 'did not reach helm upgrade'
+t_caller_red helm-no-record check-flags-file-validation.sh 'printf '"'"'helm %s\n'"'"' "$*" >> "${CALLS_LOG}"' ': ' "no 'helm upgrade' call was recorded"
+# kubectl's record: flags-file never reads a kubectl line, the seat check does (the
+# namespace the script creates), and a reject row's "no call" is vacuous without it
+t_caller_red kubectl-no-record check-seat-grammar.sh 'printf '"'"'kubectl %s\n'"'"' "$*" >> "${CALLS_LOG}"' ': ' 'the namespace the script creates is not exactly ctf-<seat>'
+# ...so the reject verdict itself is checked against a run that DID call kubectl
+ct_run bash -c 'echo "invalid thing" >&2; kubectl get pods; exit 2'
+t_status "a reject that called kubectl is caught (the stub's record is what makes 'no call' mean something)" 1 ct_check_reject w "x" "invalid thing"
 t_group "callers"
 
 ct_finish "deploy-user harness self-test"

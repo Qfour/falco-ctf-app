@@ -11,7 +11,9 @@
 # helm / kubectl to record calls and tells `helm upgrade` by exit 97 is a copy of this
 # file and belongs here. scripts/check-missions-allowlist-assert.sh's kubectl stub is not
 # one: it runs the probe `kubectl exec` carries against a fake root (no call log, no
-# helm, no CT_UPGRADE_EXIT), so there is nothing to share.
+# helm, no CT_UPGRADE_EXIT), so there is nothing to share. A copy coming back is stopped
+# by the static check in the self-test; the callers going red under a broken stub is
+# shown by its caller mutants.
 # Self-test: scripts/test-deploy-user-harness.sh (touches no docker or
 # helm: the stubs are the point).
 #
