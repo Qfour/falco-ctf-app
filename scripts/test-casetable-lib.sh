@@ -293,6 +293,14 @@ t_eq "...and the mutant is not run" "no" "$([[ -s "${WORK}/mut-s1.err" ]] && gre
 printf '%s\n' '#!/usr/bin/env bash' "T='1'" > "${MR}/charts/x/tool"
 t_red "a file named without .sh but with a #! bash line is a script too -> FAIL (bash -n)" "does not parse (bash -n)" gmut s2 charts/x/tool "T='" "T='9" 7 mutant_runner charts/x '*'
 t_rc "a yaml file with the same unclosed quote is not a script: no bash -n -> pass" 0 gmut s3 charts/x/templates/p.yaml "pattern: '" "pattern: '^b" 7 mutant_runner charts/x/templates '*'
+# ...nor is a file without .sh whose #! names another interpreter: bash -n does not run,
+# the runner does (it walks the table: rc 0), though the same quote would not parse as bash.
+printf '%s\n' '#!/usr/bin/env python3' "P='1'" > "${MR}/charts/x/pytool"
+printf '%s\n' '#!/bin/zsh' "Q='1'" > "${MR}/charts/x/zshtool"
+t_rc "a #!/usr/bin/env python3 file without .sh is not a script: no bash -n, the runner runs -> pass" 0 gmut s4 charts/x/pytool "P='" "P='9" 7 mutant_runner charts/x '*'
+t_eq "...(the runner got the mutant)" "#!/usr/bin/env python3${NL}P='9" "$(cat "${GOT}")"
+t_rc "a #!/bin/zsh file without .sh is not a script: no bash -n, the runner runs -> pass" 0 gmut s5 charts/x/zshtool "Q='" "Q='9" 7 mutant_runner charts/x '*'
+t_eq "...(the runner got the mutant)" "#!/bin/zsh${NL}Q='9" "$(cat "${GOT}")"
 
 # A replacement that breaks every row of a verdict: the expected line fails, for no reason
 # of its own. The control rows catch it.

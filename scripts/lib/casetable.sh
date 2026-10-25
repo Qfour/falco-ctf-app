@@ -70,6 +70,10 @@
 #                                       the other verdict only, and says why with --must;
 #                                    4. --must: the expected line's reason (`<label>:<line>:
 #                                       ...` on the runner's stderr) carries <text>.
+#                                    What it guarantees: without --must, that the expected
+#                                    line fails and the control rows hold, not WHY the line
+#                                    fails (a pattern mutant's reason is a generic `reject,
+#                                    but exit 97`). The intended reason only with --must.
 #   ct_run_mutant_rows <tsv> <row fn> [extra args...]
 #                                    ct_run_table inside a ct_mutate_line runner, for the
 #                                    expected line and the control rows only (resolved by
