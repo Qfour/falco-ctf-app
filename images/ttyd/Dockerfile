@@ -10,12 +10,16 @@ ARG KUBECTL_VERSION=v1.35.9
 # (v1.35.8 は 1.26.5)。sha256 は dl.k8s.io/release/v1.35.9/bin/linux/<arch>/kubectl.sha256
 # の実値。**残存**: Sysdig の fix は Go 1.26.9 / golang.org/x/net v0.60.0 (GO-2026-6617)
 # だが、kubectl は v1.35.9 (go1.26.8, x/net v0.56.0) / v1.36.5 (go1.26.8, x/net v0.56.0) /
-# v1.37.1 (go1.26.8, x/net v0.57.0) のいずれも未達 — upstream の patch 待ち
-# **受け入れの期限と解除条件 (2026-10-13)**: release-1.35 の .go-version が 1.26.9 以上
-# (v1.35.10 以降) になった時点で bump する。それまで build (ttyd)/scan は赤のまま
-# (required check ではない)。追跡: app#338。
+# v1.37.1 (go1.26.8, x/net v0.57.0) のいずれも未達 — upstream の patch 待ち。
+# 2026-10-25 に **GO-2026-6809** (crypto/x509、fix = go1.26.10) が加わった (v1.35.9 の
+# go1.26.8 は未達)。
+# **受け入れの期限と解除条件 (2026-10-25 更新、2026-10-13 起点)**: release-1.35 の
+# .go-version が 1.26.10 以上、かつ kubectl の x/net が v0.60.0 以上になった時点
+# (v1.35.10 以降の見込み) で bump する。**再点検の期限は次の stand-up の前**。それまで
+# build (ttyd)/scan は赤のまま (required check ではない)。追跡: app#338。
 # 再点検 (2026-10-25): stable-1.35.txt は v1.35.9 のまま (v1.35.10 の kubectl.sha256 は 404)。
-# release-1.35 branch の .go-version は既に 1.26.10 なので、次の patch で解除条件を満たす見込み。
+# release-1.35 branch の .go-version は既に 1.26.10 (1 条件目は次の patch で満たす見込み)
+# だが、同 branch の go.mod の x/net は v0.56.0 のまま (2 条件目は未達)。
 # sha256 は https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/<arch>/kubectl.sha256
 # の実値を焼き込み。KUBECTL_VERSION を上げたら両方更新すること。
 #
