@@ -39,7 +39,8 @@
 #   call (exit 2, `invalid <name>: ...`; app#510) and passed to helm with --set-string.
 #   The literals and what each accepts are next to the checks (DNS_SUFFIX_PATTERN,
 #   REGISTRY_PATTERN, IMAGE_TAG_PATTERN, API_SERVER_CIDR_PATTERN): a DNS subdomain
-#   (<= 253 characters, lower case), an OCI host[:port]/path, an OCI tag, an IPv4 a.b.c.d/n.
+#   (<= 253 characters, lower case), an OCI host[:port]/path ending in /falco-ctf (the
+#   scoreboard ingest filter), an OCI tag, an IPv4 a.b.c.d/n.
 #
 # --scenarios-dir <path>: where scenario:<name> resolves <name>/scenario.yaml
 #   from. Defaults to the sibling `scenarios/` dir at the repo root (this
@@ -239,9 +240,9 @@ esac
 # NOT change that (it only stops the typing: with --set, `null` deletes the key, so a tag
 # `null` renders the image `ttyd:` and a dns suffix `null` the host `<seat>.`; measured with
 # helm 4.1.3), so the grammar check is what closes the injection and --set-string is what
-# closes the typing. Both are needed. The trust boundary is the operator (the caller is platform's
-# deploy-event-workspaces.sh), not a participant; this is the same closed-grammar rule
-# the seat and the challenge id already follow.
+# closes the typing. Both are needed. The trust boundary is the operator (the caller is
+# platform's deploy-event-workspaces.sh), not a participant; this is the same
+# closed-grammar rule the seat and the challenge id already follow.
 #
 # The four patterns have NO Go definition (an operator input is read by this script
 # only): these literals are the definitions. A test (internal/catalog,
@@ -249,15 +250,27 @@ esac
 # case table (internal/catalog/testdata/{dns-suffix,image-registry,image-tag,
 # api-server-cidr}-cases.tsv) and runs every row through it; scripts/check-deploy-user-ids.sh
 # runs every row through this script. Platform derives the registry and the tag from its
-# env file (platform#285) but holds NO grammar: this script is the one place that checks.
+# env file (platform#285, open: until it merges the operator passes them) but holds NO
+# grammar: this script is the one place that checks. If platform#285 is not merged this
+# sentence is to be reverted.
+# --frame-ancestors and --app-host are already --set-string but have NO grammar check
+# yet: app#520 (the first is a cross-repo contract and needs architect's agreement).
 #   DNS_SUFFIX       RFC 1123 subdomain: labels of [a-z0-9-] (the first and the last a letter
 #                    or digit, 1 to 63 characters) joined by `.`, no leading / trailing dot,
 #                    at most DNS_SUFFIX_MAX_LEN (253) characters in all. Lower case only
-#                    (an Ingress host must be).
-#   REGISTRY         an OCI `host[:port]/path` prefix: the `<registry>/<repository prefix>`
-#                    the three images are appended to. Path components follow the OCI
+#                    (an Ingress host must be). 253 bounds the suffix ALONE: the host
+#                    `<seat>.<suffix>` is longer, and whether that fits is judged by helm /
+#                    the apiserver, not here.
+#   REGISTRY         an OCI `host[:port]/path` ending in `/falco-ctf`: the
+#                    `<registry>/<repository prefix>` the three images are appended to. Path components follow the OCI
 #                    distribution grammar (`.`, `_`, `__`, `-+` between alphanumerics), so
-#                    `..`, `//`, a trailing `/` and any `,` `=` `:` `@` are out.
+#                    `..`, `//`, a trailing `/` and any `,` `=` `:` `@` are out. The LAST
+#                    component must be `falco-ctf`: the scoreboard ingest drops every event
+#                    whose container.image.repository does not contain `falco-ctf/challenge`
+#                    (internal/scoreboard/ingest/ingest.go:321-324, which also accepts
+#                    `falco-ctf-challenge`; `${REGISTRY}/challenge` can only produce the
+#                    first), so a registry without it would deploy a workspace whose
+#                    detections are silently never scored. Fail-closed here.
 #   IMAGE_TAG        an OCI tag, `[A-Za-z0-9_][A-Za-z0-9._-]{0,127}`.
 #   API_SERVER_CIDR  IPv4 `a.b.c.d/n`: each octet 0..255 with no leading zero, n 0..32.
 #                    (IPv6 is not accepted: the chart's rule and the stand-up's apiserver
@@ -270,7 +283,7 @@ esac
 # cannot reach the terminal raw.
 DNS_SUFFIX_PATTERN='^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$'
 DNS_SUFFIX_MAX_LEN='253'
-REGISTRY_PATTERN='^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:[0-9]{1,5})?(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)*$'
+REGISTRY_PATTERN='^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:[0-9]{1,5})?(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)*/falco-ctf$'
 IMAGE_TAG_PATTERN='^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$'
 API_SERVER_CIDR_PATTERN='^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-2]|[12]?[0-9])$'
 

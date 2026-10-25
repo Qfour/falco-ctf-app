@@ -58,6 +58,10 @@ CIDR_TABLE="${REPO_ROOT}/internal/catalog/testdata/api-server-cidr-cases.tsv"
 WORK="$(mktemp -d)"
 trap 'rm -rf "${WORK}"' EXIT
 
+# The real FALCO_CTF_* of the operator running this check must not reach any row (before
+# run_deploy is defined, so no run of deploy-user.sh below can see them).
+unset FALCO_CTF_REGISTRY FALCO_CTF_IMAGE_TAG
+
 RC=0
 fail() { echo "  FAIL: $1" >&2; RC=1; }
 pass() { echo "  ok:   $1"; }
@@ -340,9 +344,6 @@ fi
 # FALCO_CTF_IMAGE_TAG, --api-server-cidr). New functions only: they reuse decode,
 # run_deploy and the stubs above and change none of them.
 # ============================================================================
-# The real FALCO_CTF_* of the operator running this check must not reach a row.
-unset FALCO_CTF_REGISTRY FALCO_CTF_IMAGE_TAG
-
 # The one ` --set ` token a helm call may carry: a boolean the script writes itself.
 OP_ALLOWED_SET=' --set networkPolicy.egress.enabled=true'
 
@@ -475,7 +476,7 @@ op_expect_table() {
 
 echo "==> deploy-user.sh against the operator-input case tables (app#510)"
 op_expect_table dns  "dns-suffix-cases.tsv"      50 15 30
-op_expect_table reg  "image-registry-cases.tsv"  70 15 45
+op_expect_table reg  "image-registry-cases.tsv"  80 14 60
 op_expect_table tag  "image-tag-cases.tsv"       50 15 25
 op_expect_table cidr "api-server-cidr-cases.tsv" 65 15 45
 
@@ -582,17 +583,26 @@ op_mutate dns dns-len-wide "DNS_SUFFIX_MAX_LEN='" "DNS_SUFFIX_MAX_LEN='254'" "$(
 op_mutate dns dns-len-narrow "DNS_SUFFIX_MAX_LEN='" "DNS_SUFFIX_MAX_LEN='252'" "$(op_line dns 'length($1) == 253 && $2 == "accept"')" accept
 op_mutate dns dns-check-removed '[[ -z "${DNS_SUFFIX}" ]] || check_operator_input' ':' "$(op_line dns '$1 == "a,b=c"')" accept
 
-reg_mutate any '^.*$' "$(op_line reg '$1 == "a,b=c"')"
-reg_mutate no-dollar '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:[0-9]{1,5})?(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)*' "$(op_line reg '$1 == "a.com/x{LF}y"')"
-reg_mutate no-caret '[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:[0-9]{1,5})?(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)*$' "$(op_line reg '$1 == "{LF}a.com/x"')"
-reg_mutate old-charset '^[a-z0-9.-]+(:[0-9]+)?(/[a-z0-9._-]+)*$' "$(op_line reg '$1 == ".."')"
-reg_mutate dotdot-path '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:[0-9]{1,5})?(/[a-z0-9.]+((\.|_|__|-+)[a-z0-9]+)*)*$' "$(op_line reg '$1 == "a.com/../x"')"
-reg_mutate trailing-slash '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:[0-9]{1,5})?(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)*/?$' "$(op_line reg '$1 == "a.com/"')"
-reg_mutate port-wide '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:[0-9]+)?(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)*$' "$(op_line reg '$1 == "a.com:123456"')"
-reg_mutate colon-in-path '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:[0-9]{1,5})?(/[a-z0-9]+((\.|_|__|-+|:)[a-z0-9]+)*)*$' "$(op_line reg '$1 == "a.com/x:tag"')"
-reg_mutate upper '^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*(:[0-9]{1,5})?(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)*$' "$(op_line reg '$1 == "A.com/x"')"
-reg_mutate host-underscore '^[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:[0-9]{1,5})?(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)*$' "$(op_line reg '$1 == "a_b/x"')"
-op_mutate reg reg-check-removed '[[ -z "${FALCO_CTF_REGISTRY:-}" ]] || check_operator_input' ':' "$(op_line reg '$1 == "a,b=c"')" accept
+# The registry pattern, in pieces, so each break changes one thing. REG_TAIL is the ingest
+# filter's part (the last component is falco-ctf); the other three are the shape.
+REG_HOST='[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*'
+REG_PORT='(:[0-9]{1,5})?'
+REG_PATH='(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)*'
+REG_TAIL='/falco-ctf'
+reg_mutate any '^.*$' "$(op_line reg '$1 == "a,b=c/falco-ctf"')"
+reg_mutate no-dollar "^${REG_HOST}${REG_PORT}${REG_PATH}${REG_TAIL}" "$(op_line reg '$1 == "a.com/falco-ctf{LF}"')"
+reg_mutate no-caret "${REG_HOST}${REG_PORT}${REG_PATH}${REG_TAIL}\$" "$(op_line reg '$1 == "{LF}a.com/falco-ctf"')"
+reg_mutate old-charset '^[a-z0-9.-]+(:[0-9]+)?(/[a-z0-9._-]+)*/falco-ctf$' "$(op_line reg '$1 == "../falco-ctf"')"
+reg_mutate dotdot-path "^${REG_HOST}${REG_PORT}(/[a-z0-9.]+((\\.|_|__|-+)[a-z0-9]+)*)*${REG_TAIL}\$" "$(op_line reg '$1 == "a.com/../falco-ctf"')"
+reg_mutate trailing-slash "^${REG_HOST}${REG_PORT}${REG_PATH}${REG_TAIL}/?\$" "$(op_line reg '$1 == "a.com/falco-ctf/"')"
+reg_mutate port-wide "^${REG_HOST}(:[0-9]+)?${REG_PATH}${REG_TAIL}\$" "$(op_line reg '$1 == "a.com:123456/falco-ctf"')"
+reg_mutate colon-in-path "^${REG_HOST}${REG_PORT}(/[a-z0-9]+((\\.|_|__|-+|:)[a-z0-9]+)*)*${REG_TAIL}\$" "$(op_line reg '$1 == "a.com/x:tag/falco-ctf"')"
+reg_mutate upper "^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*${REG_PORT}${REG_PATH}${REG_TAIL}\$" "$(op_line reg '$1 == "A.com/falco-ctf"')"
+reg_mutate host-underscore "^[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*${REG_PORT}${REG_PATH}${REG_TAIL}\$" "$(op_line reg '$1 == "a_b/falco-ctf"')"
+# The ingest filter's part: without the `/falco-ctf` tail a registry the scoreboard would
+# silently drop (every event of the workspace) is accepted.
+reg_mutate no-ingest-tail "^${REG_HOST}${REG_PORT}${REG_PATH}\$" "$(op_line reg '$1 == "registry.local"')"
+op_mutate reg reg-check-removed '[[ -z "${FALCO_CTF_REGISTRY:-}" ]] || check_operator_input' ':' "$(op_line reg '$1 == "a,b=c/falco-ctf"')" accept
 
 tag_mutate any '^.*$' "$(op_line tag '$1 == "a,b=c"')"
 tag_mutate no-dollar '^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}' "$(op_line tag '$1 == "a{LF}"')"

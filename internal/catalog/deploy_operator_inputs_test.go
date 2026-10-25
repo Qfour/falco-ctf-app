@@ -39,7 +39,7 @@ type operatorGrammar struct {
 
 var operatorGrammars = []operatorGrammar{
 	{"dns-suffix-cases.tsv", "DNS_SUFFIX_PATTERN", dnsSuffixMaxLen, 50, 15, 30},
-	{"image-registry-cases.tsv", "REGISTRY_PATTERN", 0, 70, 15, 45},
+	{"image-registry-cases.tsv", "REGISTRY_PATTERN", 0, 80, 14, 60},
 	{"image-tag-cases.tsv", "IMAGE_TAG_PATTERN", 0, 50, 15, 25},
 	{"api-server-cidr-cases.tsv", "API_SERVER_CIDR_PATTERN", 0, 65, 15, 45},
 }
@@ -160,5 +160,39 @@ func TestDeployUserOperatorInputs_ChartDefaultsAreAccepted(t *testing.T) {
 		if !tag.MatchString(strings.Trim(r[1], `"'`)) {
 			t.Errorf("chart default image tag %q does not pass deploy-user.sh's FALCO_CTF_IMAGE_TAG grammar", r[1])
 		}
+	}
+}
+
+// FALCO_CTF_REGISTRY must end in `falco-ctf`: the three images are `${REGISTRY}/<name>`, and
+// the scoreboard ingest ignores a Falco event whose container.image.repository does not
+// contain `falco-ctf/challenge`, so a registry that fails the filter deploys a workspace
+// whose detections are silently never scored. Two pins: the ingest still filters on that
+// substring (if it changes, this grammar is stale), and every accepted registry gives a
+// challenge repository the filter accepts.
+func TestDeployUserRegistryGrammarMatchesTheIngestFilter(t *testing.T) {
+	ingest, err := os.ReadFile(filepath.Join("..", "scoreboard", "ingest", "ingest.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const filter = `strings.Contains(imageRepo, "falco-ctf/challenge")`
+	if !strings.Contains(string(ingest), filter) {
+		t.Fatalf("internal/scoreboard/ingest/ingest.go no longer has %s: deploy-user.sh's REGISTRY_PATTERN (last component falco-ctf) is stale, update both", filter)
+	}
+	rows, err := casetable.Read(filepath.Join("testdata", "image-registry-cases.tsv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked := 0
+	for _, r := range rows {
+		if !r.Accept {
+			continue
+		}
+		checked++
+		if repo := r.Input + "/challenge"; !strings.Contains(repo, "falco-ctf/challenge") {
+			t.Errorf("image-registry-cases.tsv:%d: accepted %q gives the challenge repository %q, which the scoreboard ingest would ignore", r.Line, r.Input, repo)
+		}
+	}
+	if checked < 10 {
+		t.Fatalf("only %d accept rows checked: the table was misread", checked)
 	}
 }
