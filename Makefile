@@ -53,7 +53,8 @@ help:
 	@echo "  check-build-context — fail if a git-tracked file is not in the repo-root Docker build context (.dockerignore evaluated by docker; needs docker; app#501)"
 	@echo "  check-go-base-digest — fail unless every golang:<tag>@sha256:<digest> in the Dockerfiles and workflows is the same value (app#499; + selftest)"
 	@echo "  check-apk-pins  — fail if an apk exact pin in any Dockerfile is no longer in its stage's base image index, or apk add uses a range / @edge / --repository (ADR-0036 D1+D5; absorbs check-e2e-pins; needs docker + network; also run daily by apk-pins.yaml)"
-	@echo "  check-apk-pins-selftest — offline: planted defects (vanished version, range, @edge, --repository, no pin) must fail, the real tree's grammar must pass (ADR-0036 V1)"
+	@echo "  check-apk-pins-lint — offline: the real tree's grammar (D1 + F4), at least one pin, and the parser read every apk add; file:line per violation (ADR-0036 V1; V2 goes here; own step in flag-guard)"
+	@echo "  check-apk-pins-selftest — offline: the checker's own test: planted defects (vanished version, range, @edge, --repository, no pin) must fail and --lint must go red on them (ADR-0036 V1)"
 	@echo "  check-adr       — fail on ADR number collisions, filename/header drift, or docs/adr/README.md index gaps (#181); prints the next free ADR number on success"
 	@echo "  scan            — sysdig-cli-scanner on all built images (SYSDIG_SECURE_API_TOKEN required)"
 	@echo "  clean           — remove built images locally"
@@ -302,9 +303,14 @@ check-go-base-digest:
 	./scripts/check-go-base-digest.sh --selftest
 
 # ADR-0036 D1 + D5: needs docker and network (the pins are compared with the index inside
-# each stage's base image). The selftest is offline and also runs in the flag-guard job.
+# each stage's base image). --lint (the real tree's grammar, pin count and coverage) and
+# --selftest (the checker's own test) are offline and run as two steps in the flag-guard job.
 check-apk-pins:
 	./scripts/check-apk-pins.sh
+
+.PHONY: check-apk-pins-lint
+check-apk-pins-lint:
+	./scripts/check-apk-pins.sh --lint
 
 check-apk-pins-selftest:
 	./scripts/check-apk-pins.sh --selftest
