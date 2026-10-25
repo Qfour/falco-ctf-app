@@ -87,8 +87,9 @@ FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cab
 #   ca-certificates は **入れない** (app#517、2026-10-26。以前は 20261020-r0 を pin
 #     していたが、10-05 と 10-25 の drift 2 回の原因だった)。runtime に消費者が無い:
 #     (a) kubectl は in-cluster config の CAFile に SA の ca.crt を使い system の CA store を
-#     見ない (entrypoint.sh:16-17、charts/ctf-user/templates/pod.yaml の ttyd-sa-token の
-#     ca.crt)、(b) ttyd は loopback の plain HTTP (--ssl なし、TTYD_INTERFACE=127.0.0.1)、
+#     見ない (entrypoint.sh:16-17。charts/ctf-user/templates/pod.yaml の ttyd-sa-token
+#     volume (:405-415、kube-root-ca.crt の ca.crt の投影) を ttyd container が
+#     /var/run/secrets/kubernetes.io/serviceaccount に mount する (:235))、(b) ttyd は loopback の plain HTTP (--ssl なし、TTYD_INTERFACE=127.0.0.1)、
 #     (c) readinessProbe の busybox wget も http://127.0.0.1。build stage の dl.k8s.io (https)
 #     は stage 1 の base の ca-certificates-bundle で足りる。runtime の base にも
 #     ca-certificates-bundle は標準で入っている (alpine の既定。外れるのは
@@ -108,11 +109,13 @@ RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 zlib=1.3.2
  && adduser -D -u 1000 ttyd \
  && command -v wget >/dev/null \
  && ! command -v curl >/dev/null \
- && ! command -v bash >/dev/null
-# 上の 3 行は build 時の assert (失敗なら build が落ちる)。chart の ttyd readinessProbe
-# (charts/ctf-user/templates/pod.yaml) が busybox wget に依存し、curl / bash は runtime に
-# 置かない (#504)。誰かが apk add に curl / bash を戻す (または curl を引き込む package を
-# 足す) と、ここで止まる。
+ && ! command -v bash >/dev/null \
+ && ! apk info -e ca-certificates >/dev/null
+# 上の 4 行は build 時の assert (失敗なら build が落ちる)。chart の ttyd readinessProbe
+# (charts/ctf-user/templates/pod.yaml) が busybox wget に依存し (wget あり)、curl / bash は
+# runtime に置かない (#504)、ca-certificates package も置かない (#517。base の
+# ca-certificates-bundle は残る)。誰かが apk add に curl / bash / ca-certificates を戻す
+# (または引き込む package を足す) と、ここで止まる。
 
 COPY --from=kubectl --chmod=0755 /kubectl /usr/local/bin/kubectl
 
