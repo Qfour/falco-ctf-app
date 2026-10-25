@@ -167,6 +167,7 @@ dialog で止まり、要求の網羅を見られず、作り手の自己申告�
   - 直すのは pin の更新だけ。unpin・版の範囲指定・別の repository への切替で緑に戻さない。
   - 検知: freshness 型の定期 job (`.github/workflows/freshness.yaml:3-16` と同じ形。network を使うので PR では回さず、advisory) を毎日と `workflow_dispatch` で回し、pin した base image の中で
     `apk policy` を引いて、`Dockerfile.e2e` の apk の pin のどれかが index の版と違えば赤にする。rev2: `.github/workflows/e2e-pins.yaml` と `scripts/check-e2e-pins.sh` (`\` の継続行も読む)。赤の扱いは D10。
+    (ADR-0036 D5 の実装: workflow は `.github/workflows/apk-pins.yaml`、script は `scripts/check-apk-pins.sh` に一般化され、全 Dockerfile の pin を見る。`scripts/check-e2e-pins.sh` は `Dockerfile.e2e` 用の wrapper として残り、`e2e-pin-BAD*.txt` の 2 fixture は同じ形で赤になる。V9 の `workflow_dispatch` は `apk-pins.yaml` の `file` 入力で選ぶ。)
   - bump: 担当は software-engineer (Dockerfile の担当)。Chromium を上げる PR では chromedp と cdproto の版も見直し、上げるなら同じ PR で上げる。Dependabot は apk を上げないので、Dependabot の
     chromedp の PR は `e2e` が緑のときだけ merge する。PR に `apk policy` の出力と `make e2e` の判定を貼る。
   - `Dockerfile.e2e` を digest の bump の一覧 (`conventions:129-141` の `golang:1.26-alpine` の行) に足す (H1。rev2: 済 = `conventions:133,140`)。package は `chromium` を使い、同じ版の `chromium-headless-shell` (旧 headless の
