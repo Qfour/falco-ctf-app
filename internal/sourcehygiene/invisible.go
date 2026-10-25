@@ -1,9 +1,12 @@
 // Package sourcehygiene holds the rules for what a tracked source file may contain
 // that a reviewer cannot see (app#511, after the bidi rule of app#501).
 //
-// The rule is one table (invisibleRanges) and one scanner (Invisible), so a later
-// consumer (hintleak, ADR-0026 D5) imports the same table and the same context rules
-// instead of keeping a copy.
+// The rule is one table (invisibleRanges) and one scanner (Invisible), so a consumer
+// outside this package imports the same table and the same context rules instead of
+// keeping a copy. Hidden is the one entry point that covers both sets (these rows and
+// the nine bidi controls of chars.go). Today the only candidate consumer, hintleak,
+// decides with unicode.Cf alone (ADR-0026 D5); moving it onto this table needs the
+// ADR-0026 D5 wording and the ADR-0029 D1 import closure revised first (issue #526).
 //
 // What is forbidden raw: the union of Unicode's Default_Ignorable_Code_Point and
 // General_Category Cf (what a renderer is told to draw as nothing), plus the C0 / C1
@@ -24,9 +27,11 @@
 //   - U+FEFF: only as the first rune of the file (a byte order mark);
 //   - U+000D: only directly before LF (CRLF).
 //
-// A hidden payload can then ride only on one visible symbol per invisible rune, which
-// the diff shows. "Allowed in this file" by path is not used: it would let that file
-// carry anything.
+// A hidden payload can then ride only on one visible symbol per invisible rune: the
+// capacity is bounded by the number of visible symbols. The diff does NOT show whether
+// a symbol carries a variation selector or a ZWJ, so that residue is accepted, not
+// prevented. "Allowed in this file" by path is not used: it would let that file carry
+// anything.
 package sourcehygiene
 
 import (
@@ -123,11 +128,19 @@ func isNonASCIISymbol(r rune) bool { return r >= 0x80 && unicode.Is(unicode.So, 
 func isSkinTone(r rune) bool       { return r >= 0x1F3FB && r <= 0x1F3FF }
 func isVS(r rune) bool             { return (r >= 0xFE00 && r <= 0xFE0F) || (r >= 0xE0100 && r <= 0xE01EF) }
 
-// Invisible returns every forbidden raw rune of text, in order. text is decoded rune
-// by rune: an invalid UTF-8 byte is one rune outside the table and the scan goes on.
-// It reports U+0000 like any other C0 control; a caller that already reports NUL
-// bytes (checkTree does) drops it.
-func Invisible(text []byte) []Finding {
+// Invisible returns every forbidden raw rune of text that invisibleRanges holds, in
+// order. text is decoded rune by rune: an invalid UTF-8 byte is one rune outside the
+// table and the scan goes on. It reports U+0000 like any other C0 control; a caller
+// that already reports NUL bytes (checkTree does) drops it. The bidi controls are not
+// reported here (the gate has a rule of its own for them): see Hidden.
+func Invisible(text []byte) []Finding { return scan(text, false) }
+
+// Hidden is Invisible plus the nine bidi controls (bidiControls), in one pass and one
+// order: every rune that must not appear raw in a file a reader trusts. Context rules
+// apply as in Invisible.
+func Hidden(text []byte) []Finding { return scan(text, true) }
+
+func scan(text []byte, withBidi bool) []Finding {
 	var out []Finding
 	line, col := 1, 1
 	var prev rune = -1     // the previous rune, -1 at the start of the file
@@ -138,7 +151,9 @@ func Invisible(text []byte) []Finding {
 			r = -2 // an invalid byte: no table row, no symbol
 		}
 		allowedVS := false
-		if name, rule, ok := lookup(r); ok {
+		if bname, isBidi := bidiControls[r]; withBidi && isBidi {
+			out = append(out, Finding{line, col, r, bname, ""})
+		} else if name, rule, ok := lookup(r); ok {
 			why, bad := "", false
 			switch rule {
 			case always:
@@ -153,9 +168,12 @@ func Invisible(text []byte) []Finding {
 					bad, why = true, fmt.Sprintf("U+%04X not directly after a non-ASCII symbol (So)", r)
 				}
 			case zwjInEmoji:
-				next, _ := utf8.DecodeRune(text[i+w:])
+				// The next rune must be a real non-ASCII symbol: the end of the file (width 0)
+				// and an invalid byte (RuneError, width 1) are not one.
+				next, nw := utf8.DecodeRune(text[i+w:])
+				nextIsSymbol := nw > 0 && !(next == utf8.RuneError && nw == 1) && isNonASCIISymbol(next)
 				before := isNonASCIISymbol(prev) || isSkinTone(prev) || (prev == 0xFE0F && prevAllowedVS)
-				if !before || !isNonASCIISymbol(next) {
+				if !before || !nextIsSymbol {
 					bad, why = true, "U+200D not between two pictographic symbols"
 				}
 			case bomAtStart:

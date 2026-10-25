@@ -336,6 +336,9 @@ func TestInvisible_Table(t *testing.T) {
 		{"flag + VS16 + ZWJ + rainbow is green", cps(flag, vs16, zwj, rain), nil},
 		{"ZWJ between letters is red", "a" + cps(zwj) + "b", []string{"1:2 U+200D"}},
 		{"ZWJ after a symbol but before a letter is red", cps(woman, zwj) + "b", []string{"1:2 U+200D"}},
+		{"ZWJ after a symbol at the end of the file is red (nothing follows)", cps(woman, zwj), []string{"1:2 U+200D"}},
+		{"ZWJ after a symbol before an invalid byte is red (RuneError is not a symbol)", cps(woman, zwj) + "\xff", []string{"1:2 U+200D"}},
+		{"ZWJ after a symbol before a written U+FFFD (a real So) is green", cps(woman, zwj, 0xFFFD), nil},
 		{"ZWJ after a letter and before a symbol is red", "a" + cps(zwj, lap), []string{"1:2 U+200D"}},
 		{"two ZWJ in a row are both red", cps(woman, zwj, zwj, lap), []string{"1:2 U+200D", "1:3 U+200D"}},
 		{"ZWJ after VS15 is red (only an allowed VS16 may precede it)", cps(so, vs15, zwj, lap), []string{"1:3 U+200D"}},
@@ -432,6 +435,9 @@ func TestCheckTree_Invisible(t *testing.T) {
 		{name: "a non-ASCII path name is red",
 			files: map[string]string{"docs/" + cps(0x3042) + ".md": "x\n"},
 			want:  []string{"path name is not printable ASCII"}},
+		{name: "a non-ASCII name of a binaryExt file is red too (the path rule runs before the binary skip)",
+			files: map[string]string{"fonts/" + cps(0x3042) + ".woff2": "\x00\x01"},
+			want:  []string{"path name is not printable ASCII"}},
 		{name: "a path with a space is red",
 			files: map[string]string{"docs/a b.md": "x\n"},
 			want:  []string{"path name is not printable ASCII"}},
@@ -472,6 +478,48 @@ func TestCheckTree_Invisible(t *testing.T) {
 				t.Errorf("a NUL must be reported by the NUL rule only, got:\n%s", joined)
 			}
 		})
+	}
+}
+
+func TestCheckTree_Invisible_ANonASCIISymlinkNameIsRed(t *testing.T) {
+	root := plant(t, map[string]string{"real.txt": "x\n"})
+	link := "link-" + cps(0x3042) + ".txt"
+	if err := os.Symlink(filepath.Join(root, "real.txt"), filepath.Join(root, link)); err != nil {
+		t.Skipf("no symlinks here: %v", err)
+	}
+	r, err := checkTree(root, nil, newInvisibleScanner(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.problems) != 1 || !strings.Contains(r.problems[0], "path name is not printable ASCII") {
+		t.Errorf("the symlink's name must be the one problem, got %v", r.problems)
+	}
+	if len(r.skipped) != 1 || r.skipped[0] != link {
+		t.Errorf("the symlink is skipped (not followed) but its name is still checked, got skipped=%v", r.skipped)
+	}
+}
+
+// TestHidden_CoversBothSets: Hidden is Invisible plus the nine bidi controls, in order;
+// Invisible alone never reports a bidi control (the gate reports those by its own rule).
+func TestHidden_CoversBothSets(t *testing.T) {
+	text := []byte("a" + cps(0x202E) + "b" + cps(0x200B) + "c" + cps(0x2069))
+	var inv, all []string
+	for _, f := range Invisible(text) {
+		inv = append(inv, at(f))
+	}
+	for _, f := range Hidden(text) {
+		all = append(all, at(f))
+	}
+	if strings.Join(inv, ",") != "1:4 U+200B" {
+		t.Errorf("Invisible = %v, want only the ZWSP", inv)
+	}
+	if strings.Join(all, ",") != "1:2 U+202E,1:4 U+200B,1:6 U+2069" {
+		t.Errorf("Hidden = %v, want RLO, ZWSP, PDI in order", all)
+	}
+	for cp := range bidiControls {
+		if got := Hidden([]byte("a" + string(cp) + "b")); len(got) != 1 || got[0].CP != cp || got[0].Name != bidiControls[cp] {
+			t.Errorf("Hidden of U+%04X = %v", cp, got)
+		}
 	}
 }
 

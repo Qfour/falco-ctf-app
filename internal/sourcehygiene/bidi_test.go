@@ -81,19 +81,6 @@ var binaryExt = map[string]string{
 	".tgz": "helm dependency archive (untracked build output present in the Docker path)",
 }
 
-// bidiControls is the one list of what is forbidden raw.
-var bidiControls = map[rune]string{
-	0x202A: "LEFT-TO-RIGHT EMBEDDING",
-	0x202B: "RIGHT-TO-LEFT EMBEDDING",
-	0x202C: "POP DIRECTIONAL FORMATTING",
-	0x202D: "LEFT-TO-RIGHT OVERRIDE",
-	0x202E: "RIGHT-TO-LEFT OVERRIDE",
-	0x2066: "LEFT-TO-RIGHT ISOLATE",
-	0x2067: "RIGHT-TO-LEFT ISOLATE",
-	0x2068: "FIRST STRONG ISOLATE",
-	0x2069: "POP DIRECTIONAL ISOLATE",
-}
-
 type finding struct {
 	line, col int // 1-based; col counts characters (an invalid byte counts as one)
 	cp        rune
