@@ -6,9 +6,12 @@
 # `ct_init`). A check that does not run deploy-user.sh (the chart's regexMatch,
 # gen-values.sh) sources the reader layer only.
 #
-# Users: scripts/check-seat-grammar.sh and scripts/check-deploy-user-ids.sh. Any other
-# script that stubs helm / kubectl and tells `helm upgrade` by exit 97 is a copy of
-# this file and belongs here (scripts/check-flags-file-validation.sh: app#521).
+# Users: scripts/check-seat-grammar.sh, scripts/check-deploy-user-ids.sh and
+# scripts/check-flags-file-validation.sh (part B, app#521). Any other script that stubs
+# helm / kubectl to record calls and tells `helm upgrade` by exit 97 is a copy of this
+# file and belongs here. scripts/check-missions-allowlist-assert.sh's kubectl stub is not
+# one: it runs the probe `kubectl exec` carries against a fake root (no call log, no
+# helm, no CT_UPGRADE_EXIT), so there is nothing to share.
 # Self-test: scripts/test-deploy-user-harness.sh (touches no docker or
 # helm: the stubs are the point).
 #

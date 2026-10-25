@@ -20,6 +20,10 @@
 #      no --flags-file behaves as before (no validation, no challenge.flags
 #      override).
 #
+# Part B's stub helm / kubectl, the runner and the "reached `helm upgrade`" status
+# are scripts/lib/deploy-user-harness.sh (app#521: this script held the third copy
+# of them), shared with scripts/check-seat-grammar.sh and check-deploy-user-ids.sh.
+#
 # Every expectation is on an exit status or an exact string/count, never on
 # "some output appeared". Flag values here are synthetic FALCO{dev-...}
 # strings (public repo; scripts/check-flags.sh allows only that form).
@@ -28,19 +32,19 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 REPO_ROOT="$(pwd)"
+# shellcheck source=lib/casetable.sh
+source "${REPO_ROOT}/scripts/lib/casetable.sh"
+# shellcheck source=lib/deploy-user-harness.sh
+source "${REPO_ROOT}/scripts/lib/deploy-user-harness.sh"
 
 VALIDATE="${REPO_ROOT}/charts/ctf-user/validate-flags-file.sh"
 DEPLOY="${REPO_ROOT}/charts/ctf-user/deploy-user.sh"
 CHALLENGES="${REPO_ROOT}/challenges"
 SCENARIOS="${REPO_ROOT}/scenarios"
 
-WORK="$(mktemp -d)"
-trap 'rm -rf "${WORK}"' EXIT
+ct_init "${REPO_ROOT}"
 
-RC=0
 CASES=0
-fail() { echo "  FAIL: $1" >&2; RC=1; }
-pass() { echo "  ok:   $1"; }
 
 # Synthetic per-event values (distinct from every default).
 V03='FALCO{dev-rotated-for-test-03}'
@@ -277,42 +281,11 @@ printf 'flags:\n  # a\000b\n  03-stealth-read: %s\n  05-silent-search: %s\n  10-
 expect_validate reject "all: NUL byte inside a comment" 'the file contains NUL bytes' "${NULFILE}" "${CHALLENGES}" all
 
 echo "==> B. deploy-user.sh --flags-file (stub helm/kubectl)"
-STUB_BIN="${WORK}/bin"
-CALLS="${WORK}/calls.log"
-mkdir -p "${STUB_BIN}"
-# helm stub: `status` -> 1 (no stray release); `upgrade` -> record argv, exit
-# 97 so deploy-user.sh (set -e) stops right there with a recognisable status.
-cat > "${STUB_BIN}/helm" <<'STUB'
-#!/usr/bin/env bash
-printf 'helm' >> "${CALLS_LOG}"
-printf ' %s' "$@" >> "${CALLS_LOG}"
-printf '\n' >> "${CALLS_LOG}"
-for a in "$@"; do
-  case "${a}" in
-    status) exit 1 ;;
-    upgrade) exit 97 ;;
-  esac
-done
-exit 0
-STUB
-cat > "${STUB_BIN}/kubectl" <<'STUB'
-#!/usr/bin/env bash
-printf 'kubectl' >> "${CALLS_LOG}"
-printf ' %s' "$@" >> "${CALLS_LOG}"
-printf '\n' >> "${CALLS_LOG}"
-cat >/dev/null 2>&1 < /dev/stdin || true
-exit 0
-STUB
-chmod +x "${STUB_BIN}/helm" "${STUB_BIN}/kubectl"
+ct_init_stubs
 
-# run_deploy <deploy-user.sh args...> -> sets DEPLOY_STATUS, refreshes CALLS
+# run_deploy <deploy-user.sh args...> -> sets RUN_STATUS, refreshes CT_CALLS
 run_deploy() {
-  : > "${CALLS}"
-  set +e
-  PATH="${STUB_BIN}:${PATH}" CALLS_LOG="${CALLS}" \
-    "${DEPLOY}" "$@" >"${WORK}/deploy.out" 2>"${WORK}/deploy.err" </dev/null
-  DEPLOY_STATUS=$?
-  set -e
+  ct_run "${DEPLOY}" "$@"
 }
 
 # expect_deploy_rejected <label> <stderr-must-contain> <deploy-user.sh args...>
@@ -321,23 +294,23 @@ expect_deploy_rejected() {
   shift 2
   CASES=$((CASES + 1))
   run_deploy "$@"
-  if [[ "${DEPLOY_STATUS}" -eq 0 || "${DEPLOY_STATUS}" -eq 97 ]]; then
-    fail "${label}: expected a non-zero exit before helm upgrade, got ${DEPLOY_STATUS}"
+  if [[ "${RUN_STATUS}" -eq 0 || "${RUN_STATUS}" -eq "${CT_UPGRADE_EXIT}" ]]; then
+    fail "${label}: expected a non-zero exit before helm upgrade, got ${RUN_STATUS}"
     return
   fi
-  if [[ -s "${CALLS}" ]]; then
-    fail "${label}: helm/kubectl was called although the flags file was rejected: $(cut -d' ' -f1-4 "${CALLS}" | tr '\n' ';' | cut -c1-200)"
+  if [[ -s "${CT_CALLS}" ]]; then
+    fail "${label}: helm/kubectl was called although the flags file was rejected: $(cut -d' ' -f1-4 "${CT_CALLS}" | tr '\n' ';' | cut -c1-200)"
     return
   fi
-  if ! grep -qF -- "${needle}" "${WORK}/deploy.err"; then
+  if ! grep -qF -- "${needle}" "${CT_RUN_ERR}"; then
     fail "${label}: stderr does not carry the reason '${needle}'"
     return
   fi
-  if leaks_value "${WORK}/deploy.out" "${WORK}/deploy.err"; then
+  if leaks_value "${CT_RUN_OUT}" "${CT_RUN_ERR}"; then
     fail "${label}: a flag value was printed in the output"
     return
   fi
-  pass "${label} (exit ${DEPLOY_STATUS}, no helm/kubectl call)"
+  pass "${label} (exit ${RUN_STATUS}, no helm/kubectl call)"
 }
 
 # expect_deploy_reaches_helm <label> <expected id=value pairs, one per line, '' for none> <deploy-user.sh args...>
@@ -348,14 +321,14 @@ expect_deploy_reaches_helm() {
   shift 2
   CASES=$((CASES + 1))
   run_deploy "$@"
-  if [[ "${DEPLOY_STATUS}" -ne 97 ]]; then
-    fail "${label}: expected to reach helm upgrade (stub exit 97), got ${DEPLOY_STATUS}: $(tr '\n' ' ' < "${WORK}/deploy.err" | cut -c1-300)"
+  if ! ct_check_reached_upgrade "${label}"; then
+    fail "${label}: did not reach helm upgrade"
     return
   fi
   local upgrade_line got_flags want_flags=0 pair
-  upgrade_line="$(grep -E '^helm upgrade ' "${CALLS}" || true)"
+  upgrade_line="$(ct_upgrade_call)"
   if [[ -z "${upgrade_line}" ]]; then
-    fail "${label}: exit 97 but no 'helm upgrade' call was recorded"
+    fail "${label}: exit ${CT_UPGRADE_EXIT} but no 'helm upgrade' call was recorded"
     return
   fi
   while IFS= read -r pair; do
