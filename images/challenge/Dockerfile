@@ -81,9 +81,11 @@ FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cab
 #     含まれる — 上流 CHANGES.md の 3.5.7→3.5.8 節が 3.5.9 に残ることを aports と
 #     併せて確認済み (5x R1)。3.5.9 自体も追加の CVE 修正を含む
 #     (High は CVE-2026-84782))
-#   curl/libcurl 8.22.0-r0 (2026-09-03: alpine 3.24 リポジトリから 8.21.0-r0 が
-#     既に外れ apk resolve が failing していたため再 pin。`apk policy curl` 実測
-#     で 3.24/main の唯一の提供版が 8.22.0-r0 であることを確認済み)
+#   curl/libcurl 8.23.0-r0 (2026-10-26: 3.24/main から 8.22.0-r0 が外れ `apk add` が
+#     failing していたため再 pin (app#515)。`apk policy curl libcurl` 実測 (base digest
+#     294b683c) で唯一の提供版が 8.23.0-r0。8.23.0 は CVE-2026-92392 (High、HTTP/2 upload の
+#     use-after-free、影響 8.12.0〜8.22.0) の fix 版。re-pin 履歴: 09-03 (#296、8.21.0 →
+#     8.22.0) / 10-26 (#515、8.22.0 → 8.23.0))
 #   vim/vim-common/xxd 9.2.1202-r0 (2026-10-17: 9.2.1178-r0 が index から外れ再 pin
 #     (app#382)。re-pin 履歴: 10-05 (#307) / 10-14 (#354、1091 → 1178) / 10-17 (#382、→ 1202)。12 日で 3 回。
 #     以下は 2026-10-14 時点の記録: 3.24/community から 9.2.1091-r0 が
@@ -112,8 +114,8 @@ RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 zlib=1.3.2
         bash=5.3.9-r1 \
         coreutils \
         busybox-extras \
-        curl=8.22.0-r0 \
-        libcurl=8.22.0-r0 \
+        curl=8.23.0-r0 \
+        libcurl=8.23.0-r0 \
         netcat-openbsd \
         jq \
         less \
