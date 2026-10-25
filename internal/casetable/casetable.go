@@ -1,7 +1,7 @@
 // Package casetable reads the shared grammar case tables (`input<TAB>accept|reject`)
 // that every implementation of a grammar runs: internal/identity's seat-cases.tsv
 // (app#480), internal/catalog/challengeid's challenge-id-cases.tsv (app#494) and
-// charts/ctf-user's scenario-name-cases.tsv (app#494). It is imported from test
+// internal/catalog's scenario-name-cases.tsv (app#494). It is imported from test
 // files only: no production binary links it.
 //
 // The format is the one the seat table's header spells out, and a shell reader

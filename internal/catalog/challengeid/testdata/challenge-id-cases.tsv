@@ -19,7 +19,7 @@
 #
 # `all` and `scenario:<name>` are deploy-user.sh's other two modes, not challenge
 # ids: they are not rows here (challengeid.Valid("all") is false), and
-# scenario:<name> has its own table (charts/ctf-user/testdata/scenario-name-cases.tsv).
+# scenario:<name> has its own table (internal/catalog/testdata/scenario-name-cases.tsv).
 # An empty input is the usage error of deploy-user.sh (exit 1), not a grammar verdict
 # the script prints.
 

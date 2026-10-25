@@ -203,7 +203,7 @@ fi
 # test (internal/catalog/scenario_name_test.go) holds the text equal to the table
 # header and every real scenarios/<name>/ accepted. scripts/check-deploy-user-ids.sh
 # runs both case tables (internal/catalog/challengeid/testdata/challenge-id-cases.tsv,
-# charts/ctf-user/testdata/scenario-name-cases.tsv) through this script.
+# internal/catalog/testdata/scenario-name-cases.tsv) through this script.
 # `all` is the one fixed word, `scenario:` the one fixed prefix; there is no
 # other form (`ALL`, `scenario:` + nothing, `scenario:a:b` are rejected).
 CHALLENGE_ID_PATTERN='^[0-9]{2}-[a-z0-9-]{1,60}$'
@@ -322,7 +322,6 @@ if [[ "${ALL_MODE}" -eq 1 ]]; then
   info "using challenges dir: ${CHALLENGES_DIR} (all-missions mode)"
   VALUES_ARGS=(-f "${ALL_VALUES}")
 elif [[ "${SCENARIO_MODE}" -eq 1 ]]; then
-  [[ -n "${SCENARIO_NAME}" ]] || { echo "scenario name is empty (usage: <username> scenario:<name>)" >&2; exit 2; }
   # Precedence: --scenarios-dir > default sibling repo (no env override — the
   # platform passthrough this needs is P27-1's own follow-up, see this
   # script's usage comment; unlike --challenges-dir there is no existing

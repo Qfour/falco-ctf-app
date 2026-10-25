@@ -134,6 +134,63 @@ func TestNoProductionBinaryImportsIngressParity(t *testing.T) {
 	}
 }
 
+// casetableImportPath is internal/casetable's own module-qualified import path
+// (app#494): the reader of the shared grammar case tables, imported from test
+// files only. A production binary linking it would carry a test-support package
+// for zero runtime benefit.
+const casetableImportPath = modulePrefix + "internal/casetable"
+
+// TestNoProductionBinaryImportsCasetable checks EVERY binary under cmd/ (not a
+// fixed list: a new binary is covered the day it is added). nonTestGoFiles-based
+// like the two tests above, so a *_test.go import (identity, challengeid and
+// catalog read their tables that way) is correctly invisible.
+func TestNoProductionBinaryImportsCasetable(t *testing.T) {
+	root := repoRoot(t)
+	entries, err := os.ReadDir(filepath.Join(root, "cmd"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		n++
+		t.Run(e.Name(), func(t *testing.T) {
+			closure := transitiveModuleImports(t, root, modulePrefix+"cmd/"+e.Name())
+			if closure[casetableImportPath] {
+				t.Fatalf("cmd/%s's module-internal import closure includes %s: a production binary must never import the test-only grammar case-table reader (app#494)", e.Name(), casetableImportPath)
+			}
+		})
+	}
+	if n < 6 {
+		t.Fatalf("found %d binaries under cmd/, want at least 6: the walk looked in the wrong place", n)
+	}
+}
+
+// TestNoProductionBinaryImportsCasetable_CatchesTransitiveImport is its mutation
+// proof: a two-hop synthetic chain cmd/fakebin -> internal/fixture-a ->
+// internal/casetable is found in the closure.
+func TestNoProductionBinaryImportsCasetable_CatchesTransitiveImport(t *testing.T) {
+	root := t.TempDir()
+	mustWriteGoFile(t, filepath.Join(root, "cmd", "fakebin"), "main.go",
+		`package main
+
+import _ "`+modulePrefix+`internal/fixture-a"
+
+func main() {}
+`)
+	mustWriteGoFile(t, filepath.Join(root, "internal", "fixture-a"), "a.go",
+		`package fixturea
+
+import _ "`+casetableImportPath+`"
+`)
+	closure := transitiveModuleImports(t, root, modulePrefix+"cmd/fakebin")
+	if !closure[casetableImportPath] {
+		t.Fatalf("expected the synthetic cmd/fakebin -> internal/fixture-a -> %s chain to be found in the closure, got %v", casetableImportPath, closure)
+	}
+}
+
 // mustWriteGoFile creates dir (and parents) and writes a .go file named name
 // with the given content — a minimal synthetic-package builder for the
 // mutation-proof tests below. The written file is never actually built by

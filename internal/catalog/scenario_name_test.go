@@ -4,7 +4,7 @@ package catalog_test
 // charts/ctf-user/deploy-user.sh) has no Go definition: deploy-user.sh is the only
 // code that takes one from an operator, and it checks it with SCENARIO_PATTERN
 // before any kubectl / helm call. This test holds that shell literal equal to the
-// header of the shared case table (charts/ctf-user/testdata/scenario-name-cases.tsv),
+// header of the shared case table (internal/catalog/testdata/scenario-name-cases.tsv),
 // runs every row through it, and requires every real scenarios/<name>/ to be
 // accepted, so a grammar tightened past a shipped scenario is red here and not at a
 // stand-up. scripts/check-deploy-user-ids.sh runs the same rows through the script.
@@ -21,7 +21,7 @@ import (
 const minScenarioCases = 40
 
 func TestScenarioNameGrammar_SharedCaseTable(t *testing.T) {
-	table := filepath.Join("..", "..", "charts", "ctf-user", "testdata", "scenario-name-cases.tsv")
+	table := filepath.Join("testdata", "scenario-name-cases.tsv")
 	raw, err := os.ReadFile(table)
 	if err != nil {
 		t.Fatal(err)

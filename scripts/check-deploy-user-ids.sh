@@ -2,7 +2,7 @@
 # The shell copies of the challenge id grammar and the scenario name grammar
 # (app#494): runs every row of
 #   internal/catalog/challengeid/testdata/challenge-id-cases.tsv  (<NN-slug>)
-#   charts/ctf-user/testdata/scenario-name-cases.tsv              (scenario:<name>)
+#   internal/catalog/testdata/scenario-name-cases.tsv             (scenario:<name>)
 # through charts/ctf-user/deploy-user.sh and checks the verdict. No cluster, no
 # helm, no docker: stub `helm` / `kubectl` on PATH only record their invocations.
 #
@@ -37,7 +37,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 REPO_ROOT="$(pwd)"
 CID_TABLE="${REPO_ROOT}/internal/catalog/challengeid/testdata/challenge-id-cases.tsv"
-SCN_TABLE="${REPO_ROOT}/charts/ctf-user/testdata/scenario-name-cases.tsv"
+SCN_TABLE="${REPO_ROOT}/internal/catalog/testdata/scenario-name-cases.tsv"
 DEPLOY="${REPO_ROOT}/charts/ctf-user/deploy-user.sh"
 
 WORK="$(mktemp -d)"
