@@ -1,0 +1,115 @@
+# pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:[0-9]{1,5})?(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)*$
+# The FALCO_CTF_REGISTRY grammar's shared case table (app#510, #507 review-5x R1#1).
+#
+# FALCO_CTF_REGISTRY is the `<registry>/<repository prefix>` that deploy-user.sh
+# appends `/ttyd`, `/ttyd-proxy` and `/challenge` to (the chart's
+# `*.image.repository`). The grammar is an OCI `host[:port]/path`: the host is DNS
+# labels of [a-z0-9-] (lower case), an optional `:<1 to 5 digits>`, then path
+# components that follow the OCI distribution grammar (alphanumerics joined by `.`,
+# `_`, `__` or hyphens). A tag, a digest, a scheme and any `,` `=` are not in it. The
+# grammar says a registry is SHAPED right, not that it exists or that the port is
+# <= 65535 (the kubelet is the judge of that). There is no length bound: an
+# over-long reference fails at the container runtime, it is not an injection.
+# The grammar has NO Go definition: the shell literal is the definition. The readers:
+#   - Go:    internal/catalog (deploy_operator_inputs_test.go) pins the header to the
+#            shell literal, and runs every row.
+#   - shell: charts/ctf-user/deploy-user.sh, run row by row as the env
+#            FALCO_CTF_REGISTRY=<input> by scripts/check-deploy-user-ids.sh
+#            (make check-flags; CI flag-guard).
+# An empty value has no row: an empty FALCO_CTF_REGISTRY means "not set" (the chart
+# default is kept), as it always has.
+# The account id in the second baseline row is the all-zero placeholder, not a real one.
+# Format: the same as internal/identity/testdata/seat-cases.tsv (see its header):
+# `input<TAB>accept|reject`, the closed placeholder set {LF} {U+202E} {U+00FC}
+# {U+00EF}, line 1 the canonical `# pattern: ` literal. The table stays ASCII.
+# The input is the value as the operator gives it, with the one exception that an
+# empty value has no row (see below). A row is never dropped to make an
+# implementation pass: the implementation that disagrees is the bug.
+
+# --- baseline: the shapes a stand-up uses (synthetic values: the table is public)
+docker.io/falco-ctf	accept
+000000000000.dkr.ecr.us-east-1.amazonaws.com/falco-ctf	accept
+registry.example.com/falco-ctf	accept
+ghcr.io/example/falco-ctf	accept
+localhost:5000/falco-ctf	accept
+# --- shape
+localhost:5000	accept
+registry.local	accept
+a	accept
+a/b	accept
+a/b/c	accept
+h:5	accept
+h:65535	accept
+reg.example.com:5000/a/b	accept
+a/b_c/d__e/f.g-h--i	accept
+host-1.example.com/p0/p-1	accept
+# --- a registry host: labels of [a-z0-9-], the first and the last a letter or digit
+-a.com/x	reject
+a-.com/x	reject
+a.-b.com/x	reject
+a..b/x	reject
+..	reject
+.	reject
+.a.com/x	reject
+a.com./x	reject
+A.com/x	reject
+a_b/x	reject
+# --- a port: digits only, at most 5, one
+a.com:	reject
+a.com:x	reject
+a.com:123456	reject
+a.com:5000:6000	reject
+a.com:5000/	reject
+:5000/x	reject
+# --- a path component: alphanumerics joined by `.`, `_`, `__` or hyphens (the OCI distribution grammar)
+a.com/../x	reject
+a.com/./x	reject
+a.com//x	reject
+a.com/	reject
+/a	reject
+/	reject
+a.com/x/	reject
+a.com/x___y	reject
+a.com/x..y	reject
+a.com/x-	reject
+a.com/-x	reject
+a.com/.x	reject
+a.com/x.	reject
+a.com/_x	reject
+a.com/X	reject
+a.com/x/Y	reject
+# --- what belongs to another value or to no value: a tag, a digest, a scheme, a query
+a.com/x:tag	reject
+a.com/x@sha256	reject
+a.com/x@sha256:0123	reject
+http://a.com/x	reject
+a.com/x?y	reject
+a.com/x#y	reject
+a.com/x\	reject
+a.com/x y	reject
+ a.com/x	reject
+a.com/x 	reject
+$(id)	reject
+a;b	reject
+a|b	reject
+`id`	reject
+a.com/x*	reject
+# --- helm --set syntax: a `,` starts another key, `=` another assignment
+a,b=c	reject
+a.com/x,y=z	reject
+a.com/x=y	reject
+a.com/x,ttyd.image.tag=evil	reject
+a.com,/x	reject
+a.com/x,	reject
+,a.com/x	reject
+a.com/x\,y	reject
+a.com/x=a.com/y	reject
+# --- line breaks, a bidi control, a non-ASCII letter
+{LF}	reject
+a.com/x{LF}	reject
+{LF}a.com/x	reject
+a.com/x{LF}y	reject
+a.com{U+202E}/x	reject
+a.com/x{U+202E}	reject
+a.com/x{U+00FC}y	reject
+ex{U+00EF}mple.com/x	reject

@@ -31,6 +31,17 @@
 # row the break is about, or this check proves nothing and fails. A row with a
 # placeholder the reader does not know makes the reader fail (the closed set).
 #
+# app#510 adds the four other operator inputs, each with its own case table in
+# internal/catalog/testdata/ (dns-suffix-cases.tsv, image-registry-cases.tsv,
+# image-tag-cases.tsv, api-server-cidr-cases.tsv; the section at the end of this file):
+# `--dns-suffix <input>`, the env FALCO_CTF_REGISTRY=<input>, FALCO_CTF_IMAGE_TAG=<input>
+# and `--egress-lockdown --api-server-cidr <input>`. An accept row reaches `helm upgrade`
+# with every value that came from the input as `--set-string <key>=<value>` (exact tokens),
+# and with NO ` --set ` token in the call but the one boolean the script writes itself
+# (networkPolicy.egress.enabled=true); a reject row is exit 2, `invalid <name>` on stderr,
+# not one helm / kubectl call. Its self-test breaks each pattern, the length bound and
+# each check, and turns each --set-string back into --set.
+#
 # Every expectation is an exit status or an exact string, never "some output
 # appeared". Usage: ./scripts/check-deploy-user-ids.sh   (make check-flags; CI flag-guard)
 set -euo pipefail
@@ -39,6 +50,10 @@ REPO_ROOT="$(pwd)"
 CID_TABLE="${REPO_ROOT}/internal/catalog/challengeid/testdata/challenge-id-cases.tsv"
 SCN_TABLE="${REPO_ROOT}/internal/catalog/testdata/scenario-name-cases.tsv"
 DEPLOY="${REPO_ROOT}/charts/ctf-user/deploy-user.sh"
+DNS_TABLE="${REPO_ROOT}/internal/catalog/testdata/dns-suffix-cases.tsv"
+REG_TABLE="${REPO_ROOT}/internal/catalog/testdata/image-registry-cases.tsv"
+TAG_TABLE="${REPO_ROOT}/internal/catalog/testdata/image-tag-cases.tsv"
+CIDR_TABLE="${REPO_ROOT}/internal/catalog/testdata/api-server-cidr-cases.tsv"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "${WORK}"' EXIT
@@ -47,7 +62,7 @@ RC=0
 fail() { echo "  FAIL: $1" >&2; RC=1; }
 pass() { echo "  ok:   $1"; }
 
-for f in "${CID_TABLE}" "${SCN_TABLE}" "${DEPLOY}"; do
+for f in "${CID_TABLE}" "${SCN_TABLE}" "${DEPLOY}" "${DNS_TABLE}" "${REG_TABLE}" "${TAG_TABLE}" "${CIDR_TABLE}"; do
   [[ -f "${f}" ]] || { echo "FAIL: ${f} not found" >&2; exit 1; }
 done
 
@@ -319,6 +334,297 @@ if [[ "${BAD_LINES}" == " 2 3 " ]]; then
 else
   fail "an unknown placeholder did not fail the reader exactly on lines 2 and 3 (failing lines:${BAD_LINES})"
 fi
+
+# ============================================================================
+# app#510: the other operator inputs (--dns-suffix, FALCO_CTF_REGISTRY,
+# FALCO_CTF_IMAGE_TAG, --api-server-cidr). New functions only: they reuse decode,
+# run_deploy and the stubs above and change none of them.
+# ============================================================================
+# The real FALCO_CTF_* of the operator running this check must not reach a row.
+unset FALCO_CTF_REGISTRY FALCO_CTF_IMAGE_TAG
+
+# The one ` --set ` token a helm call may carry: a boolean the script writes itself.
+OP_ALLOWED_SET=' --set networkPolicy.egress.enabled=true'
+
+# op_conf <dns|reg|tag|cidr> -> OP_TABLE, OP_MSG (the stderr marker of a rejection).
+op_conf() {
+  case "$1" in
+    dns)  OP_TABLE="${DNS_TABLE}";  OP_MSG="invalid --dns-suffix" ;;
+    reg)  OP_TABLE="${REG_TABLE}";  OP_MSG="invalid FALCO_CTF_REGISTRY" ;;
+    tag)  OP_TABLE="${TAG_TABLE}";  OP_MSG="invalid FALCO_CTF_IMAGE_TAG" ;;
+    cidr) OP_TABLE="${CIDR_TABLE}"; OP_MSG="invalid --api-server-cidr" ;;
+    *) echo "FAIL: op_conf: unknown kind $1" >&2; exit 1 ;;
+  esac
+}
+
+# op_run <script> <kind> <value> -> DEPLOY_STATUS. The value goes in the way the real
+# caller passes it: a flag (dns, cidr) or the environment (reg, tag), next to a valid
+# challenge id whose directory exists, so a reject can only be the grammar.
+op_run() {
+  local script="$1" kind="$2" value="$3"
+  case "${kind}" in
+    dns)  run_deploy "${script}" 00-tutorial 1 --dns-suffix "${value}" ;;
+    cidr) run_deploy "${script}" 00-tutorial 1 --egress-lockdown --api-server-cidr "${value}" ;;
+    reg)  FALCO_CTF_REGISTRY="${value}" run_deploy "${script}" 00-tutorial 1 ;;
+    tag)  FALCO_CTF_IMAGE_TAG="${value}" run_deploy "${script}" 00-tutorial 1 ;;
+  esac
+}
+
+# op_expected_tokens <kind> <value> -> the exact ` --set-string key=value ` tokens an
+# accepted value must produce, one per line.
+op_expected_tokens() {
+  local kind="$1" v="$2"
+  case "${kind}" in
+    dns)  printf ' --set-string dnsSuffix=%s \n' "${v}" ;;
+    cidr) printf ' --set-string networkPolicy.egress.apiServerCidr=%s \n' "${v}" ;;
+    reg)  printf ' --set-string ttyd.image.repository=%s/ttyd \n --set-string ttyd.proxy.image.repository=%s/ttyd-proxy \n --set-string challenge.image.repository=%s/challenge \n' "${v}" "${v}" "${v}" ;;
+    tag)  printf ' --set-string ttyd.image.tag=%s \n --set-string ttyd.proxy.image.tag=%s \n --set-string challenge.image.tag=%s \n' "${v}" "${v}" "${v}" ;;
+  esac
+}
+
+# op_check_row <label> <script> <line no> <kind> <verdict> <value> -> 0 if deploy-user.sh
+# behaves as the row says, else the reason on stderr and 1.
+op_check_row() {
+  local label="$1" script="$2" lineno="$3" kind="$4" verdict="$5" value="$6" tok call stray
+  op_conf "${kind}"
+  op_run "${script}" "${kind}" "${value}"
+  if [[ "${verdict}" == accept ]]; then
+    if [[ "${DEPLOY_STATUS}" -ne 97 ]]; then
+      echo "    ${label}:${lineno}: accept, but exit ${DEPLOY_STATUS} (want 97 = reached helm upgrade): $(tr '\n' ' ' < "${WORK}/deploy.err" | cut -c1-200)" >&2
+      return 1
+    fi
+    call="$(grep -E '^helm upgrade ' "${CALLS}" || true) "
+    while IFS= read -r tok; do
+      [[ -n "${tok}" ]] || continue
+      case "${call}" in
+        *"${tok}"*) ;;
+        *) echo "    ${label}:${lineno}: accept, but helm upgrade lacks the token '${tok}': $(printf '%s' "${call}" | cut -c1-240)" >&2; return 1 ;;
+      esac
+    done < <(op_expected_tokens "${kind}" "${value}")
+    # Not one ` --set ` (typed, `,` / `=` parsed) besides the boolean the script writes.
+    stray="$(printf '%s' "${call}" | grep -oE ' --set [^ ]*' | grep -vxF "${OP_ALLOWED_SET}" || true)"
+    if [[ -n "${stray}" ]]; then
+      echo "    ${label}:${lineno}: accept, but helm upgrade carries a bare --set:$(printf '%s' "${stray}" | tr '\n' ';')" >&2
+      return 1
+    fi
+    return 0
+  fi
+  # (No table has an empty row: an empty flag value is the flag parser's usage error and an
+  # empty env value means "not set"; neither is a verdict of the grammar.)
+  if [[ "${DEPLOY_STATUS}" -ne 2 ]]; then
+    echo "    ${label}:${lineno}: reject, but exit ${DEPLOY_STATUS} (want 2)" >&2
+    return 1
+  fi
+  if [[ -s "${CALLS}" ]]; then
+    echo "    ${label}:${lineno}: reject, but helm/kubectl was called: $(cut -d' ' -f1-3 "${CALLS}" | tr '\n' ';' | cut -c1-160)" >&2
+    return 1
+  fi
+  if ! grep -qF "${OP_MSG}" "${WORK}/deploy.err"; then
+    echo "    ${label}:${lineno}: reject, but stderr does not carry '${OP_MSG}'" >&2
+    return 1
+  fi
+  if grep -qF -- "${BIDI}" "${WORK}/deploy.err" "${WORK}/deploy.out"; then
+    echo "    ${label}:${lineno}: a raw bidi control reached the output" >&2
+    return 1
+  fi
+  return 0
+}
+
+# op_run_table <kind> <script> -> ROWS, ACCEPTED, REJECTED, BAD, BAD_LINES (as run_table).
+op_run_table() {
+  local kind="$1" script="$2" line lineno=0 input verdict label
+  op_conf "${kind}"
+  label="$(basename "${OP_TABLE}")"
+  ROWS=0 ACCEPTED=0 REJECTED=0 BAD=0 BAD_LINES=" "
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    lineno=$((lineno + 1))
+    case "${line}" in ''|'#'*) continue ;; esac
+    if [[ "${line}" != *$'\t'* ]]; then
+      echo "    ${label}:${lineno}: no tab" >&2; BAD=$((BAD + 1)); BAD_LINES="${BAD_LINES}${lineno} "; continue
+    fi
+    input="${line%%$'\t'*}"
+    verdict="${line#*$'\t'}"
+    case "${verdict}" in
+      accept) ACCEPTED=$((ACCEPTED + 1)) ;;
+      reject) REJECTED=$((REJECTED + 1)) ;;
+      *) echo "    ${label}:${lineno}: verdict must be accept|reject" >&2; BAD=$((BAD + 1)); BAD_LINES="${BAD_LINES}${lineno} "; continue ;;
+    esac
+    ROWS=$((ROWS + 1))
+    decode "${input}"
+    case "${DECODED}" in
+      *'{'*|*'}'*)
+        echo "    ${label}:${lineno}: a brace is left after decoding: an unknown placeholder" >&2
+        BAD=$((BAD + 1)); BAD_LINES="${BAD_LINES}${lineno} "; continue ;;
+    esac
+    op_check_row "${label}" "${script}" "${lineno}" "${kind}" "${verdict}" "${DECODED}" \
+      || { BAD=$((BAD + 1)); BAD_LINES="${BAD_LINES}${lineno} "; }
+  done < "${OP_TABLE}"
+}
+
+op_expect_table() {
+  local kind="$1" label="$2"
+  op_run_table "${kind}" "${DEPLOY}"
+  if [[ "${ROWS}" -lt "$3" || "${ACCEPTED}" -lt "$4" || "${REJECTED}" -lt "$5" ]]; then
+    fail "${label}: the table was misread or truncated: ${ROWS} rows (${ACCEPTED} accept / ${REJECTED} reject)"
+  elif [[ "${BAD}" -ne 0 ]]; then
+    fail "${label}: ${BAD} of ${ROWS} rows disagree with deploy-user.sh"
+  else
+    pass "${label}: all ${ROWS} rows (${ACCEPTED} accept / ${REJECTED} reject) behave as the table says"
+  fi
+}
+
+echo "==> deploy-user.sh against the operator-input case tables (app#510)"
+op_expect_table dns  "dns-suffix-cases.tsv"      50 15 30
+op_expect_table reg  "image-registry-cases.tsv"  70 15 45
+op_expect_table tag  "image-tag-cases.tsv"       50 15 25
+op_expect_table cidr "api-server-cidr-cases.tsv" 65 15 45
+
+echo "==> a bad --api-server-cidr is refused without --egress-lockdown too (a set value is never ignored quietly)"
+for u in '10.0.0.1/33' 'a,b=c' '10.0.0.1/32,10.0.0.2/32'; do
+  run_deploy "${DEPLOY}" 00-tutorial 1 --api-server-cidr "${u}"
+  if [[ "${DEPLOY_STATUS}" -eq 2 && ! -s "${CALLS}" ]] && grep -qF 'invalid --api-server-cidr' "${WORK}/deploy.err"; then
+    pass "'${u}' without --egress-lockdown: exit 2, no kubectl / helm call"
+  else
+    fail "'${u}' without --egress-lockdown was not refused before kubectl (exit ${DEPLOY_STATUS})"
+  fi
+done
+
+echo "==> all four good together: the helm call carries every value as --set-string and no other --set"
+op_all_good() {
+  FALCO_CTF_REGISTRY='000000000000.dkr.ecr.us-east-1.amazonaws.com/falco-ctf' FALCO_CTF_IMAGE_TAG='0123456789abcdef0123456789abcdef01234567' \
+    run_deploy "${DEPLOY}" 00-tutorial 1 --dns-suffix ctf.192.168.64.2.nip.io --egress-lockdown --api-server-cidr 10.100.0.1/32
+  local c k
+  [[ "${DEPLOY_STATUS}" -eq 97 ]] || { echo "    exit ${DEPLOY_STATUS}, want 97" >&2; return 1; }
+  c="$(grep -E '^helm upgrade ' "${CALLS}" || true) "
+  for k in ' --set-string dnsSuffix=ctf.192.168.64.2.nip.io ' \
+           ' --set-string networkPolicy.egress.apiServerCidr=10.100.0.1/32 ' \
+           ' --set-string ttyd.image.repository=000000000000.dkr.ecr.us-east-1.amazonaws.com/falco-ctf/ttyd ' \
+           ' --set-string ttyd.proxy.image.tag=0123456789abcdef0123456789abcdef01234567 ' \
+           ' --set-string username=user1 ' ' --set-string challengeId=00-tutorial '; do
+    case "${c}" in *"${k}"*) ;; *) echo "    helm upgrade lacks '${k}'" >&2; return 1 ;; esac
+  done
+  [[ -z "$(printf '%s' "${c}" | grep -oE ' --set [^ ]*' | grep -vxF "${OP_ALLOWED_SET}" || true)" ]] || { echo "    a bare --set is in the call" >&2; return 1; }
+}
+if op_all_good; then pass "four good values together: every one is --set-string, the only --set is networkPolicy.egress.enabled=true"; else fail "four good values together did not produce the expected helm call"; fi
+
+echo "==> self-test (app#510): a broken pattern, a removed check, or --set instead of --set-string, must be caught on the row that breaks it"
+# op_line_of <table> <awk condition> -> line number (the awk of line_of, kept as is).
+# op_mutate <kind> <label> <line prefix> <replacement line> <failing line> <control: accept|reject>:
+# a copy of deploy-user.sh whose ONE line starting with <line prefix> is replaced. The row at
+# <failing line> must disagree, and the control row (the first accept / reject row of the
+# table) must still agree: a copy that is broken everywhere would fail the first for the
+# wrong reason and prove nothing.
+op_mutate() {
+  local kind="$1" label="$2" prefix="$3" repl="$4" want="$5" control="$6" dir="${WORK}/opmut-$2/charts/ctf-user" l n=0 cl cv ctl
+  if [[ ! "${want}" =~ ^[0-9]+$ ]]; then
+    fail "self-test ${label}: no table row matches the condition for the row it is about"
+    return
+  fi
+  mkdir -p "${dir}"
+  cp "${REPO_ROOT}"/charts/ctf-user/*.sh "${dir}/"
+  while IFS= read -r l; do
+    case "${l}" in
+      "${prefix}"*) printf '%s\n' "${repl}"; n=$((n + 1)) ;;
+      *) printf '%s\n' "${l}" ;;
+    esac
+  done < "${dir}/deploy-user.sh" > "${dir}/deploy-user.sh.new"
+  if [[ "${n}" -ne 1 ]]; then
+    fail "self-test ${label}: deploy-user.sh has ${n} lines starting with '${prefix}' (want exactly 1 to mutate)"
+    return
+  fi
+  mv "${dir}/deploy-user.sh.new" "${dir}/deploy-user.sh"
+  chmod +x "${dir}/deploy-user.sh"
+  op_conf "${kind}"
+  op_row_at() { # <line no> -> prints "<input decoded>"; sets OP_VERDICT
+    local raw
+    raw="$(sed -n "$1p" "${OP_TABLE}")"
+    OP_VERDICT="${raw#*$'\t'}"
+    decode "${raw%%$'\t'*}"
+  }
+  op_row_at "${want}"
+  if op_check_row "${label}" "${dir}/deploy-user.sh" "${want}" "${kind}" "${OP_VERDICT}" "${DECODED}" 2>"${WORK}/opmut-${label}.err"; then
+    fail "self-test ${label}: '${repl}' did not fail table line ${want}"
+    return
+  fi
+  cl="$(awk -F'\t' -v v="${control}" '!/^#/ && NF >= 2 && $2 == v { print NR; exit }' "${OP_TABLE}")"
+  op_row_at "${cl}"; cv="${DECODED}"; ctl="${OP_VERDICT}"
+  if ! op_check_row "${label}" "${dir}/deploy-user.sh" "${cl}" "${kind}" "${ctl}" "${cv}" 2>"${WORK}/opmut-${label}-control.err"; then
+    fail "self-test ${label}: the mutated copy also fails its control row (line ${cl}): it is broken everywhere, not on the row that matters"
+    return
+  fi
+  pass "self-test ${label}: '$(printf '%s' "${repl}" | cut -c1-90)' fails table line ${want}: $(sed 's/^ *//' "${WORK}/opmut-${label}.err" | head -n 1 | cut -c1-140)"
+}
+# op_line <kind> <awk condition on $1 (input) and $2 (verdict)> -> the line number of the first
+# matching row (empty if none: op_mutate then fails the self-test; no exit inside $(...)).
+op_line() {
+  op_conf "$1"
+  awk -F'\t' "$2 { print NR; exit }" "${OP_TABLE}"
+}
+# <kind>_mutate <name> <broken pattern> <failing line> [control: accept (default) | reject]:
+# a narrowing break rejects a good row, so its control is a reject row.
+dns_mutate() { op_mutate dns "dns-$1" "DNS_SUFFIX_PATTERN='" "DNS_SUFFIX_PATTERN='$2'" "$3" "${4:-accept}"; }
+reg_mutate() { op_mutate reg "reg-$1" "REGISTRY_PATTERN='" "REGISTRY_PATTERN='$2'" "$3" "${4:-accept}"; }
+tag_mutate() { op_mutate tag "tag-$1" "IMAGE_TAG_PATTERN='" "IMAGE_TAG_PATTERN='$2'" "$3" "${4:-accept}"; }
+cidr_mutate() { op_mutate cidr "cidr-$1" "API_SERVER_CIDR_PATTERN='" "API_SERVER_CIDR_PATTERN='$2'" "$3" "${4:-accept}"; }
+
+DNS_LABEL='[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?'
+dns_mutate any '^.*$' "$(op_line dns '$1 == "a,b=c"')"
+dns_mutate no-dollar "^${DNS_LABEL}(\\.${DNS_LABEL})*" "$(op_line dns '$1 == "a.com{LF}"')"
+dns_mutate no-caret "${DNS_LABEL}(\\.${DNS_LABEL})*\$" "$(op_line dns '$1 == "{LF}a.com"')"
+dns_mutate upper "^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\$" "$(op_line dns '$1 == "A.com"')"
+dns_mutate leading-hyphen "^[a-z0-9-]([a-z0-9-]{0,61}[a-z0-9])?(\\.${DNS_LABEL})*\$" "$(op_line dns '$1 == "-a.com"')"
+dns_mutate trailing-dot "^${DNS_LABEL}(\\.${DNS_LABEL})*\\.?\$" "$(op_line dns '$1 == "example.com."')"
+dns_mutate underscore "^[a-z0-9_]([a-z0-9_-]{0,61}[a-z0-9_])?(\\.[a-z0-9_]([a-z0-9_-]{0,61}[a-z0-9_])?)*\$" "$(op_line dns '$1 == "a_b.com"')"
+dns_mutate label-wide "^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?)*\$" "$(op_line dns 'length($1) == 64 && $2 == "reject"')"
+dns_mutate label-narrow "^[a-z0-9]([a-z0-9-]{0,60}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,60}[a-z0-9])?)*\$" "$(op_line dns 'length($1) == 63 && $2 == "accept"')"
+dns_mutate empty-label "^${DNS_LABEL}(\\.+${DNS_LABEL})*\$" "$(op_line dns '$1 == "a..b"')"
+op_mutate dns dns-len-wide "DNS_SUFFIX_MAX_LEN='" "DNS_SUFFIX_MAX_LEN='254'" "$(op_line dns 'length($1) == 254 && $2 == "reject"')" accept
+op_mutate dns dns-len-narrow "DNS_SUFFIX_MAX_LEN='" "DNS_SUFFIX_MAX_LEN='252'" "$(op_line dns 'length($1) == 253 && $2 == "accept"')" accept
+op_mutate dns dns-check-removed '[[ -z "${DNS_SUFFIX}" ]] || check_operator_input' ':' "$(op_line dns '$1 == "a,b=c"')" accept
+
+reg_mutate any '^.*$' "$(op_line reg '$1 == "a,b=c"')"
+reg_mutate no-dollar '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:[0-9]{1,5})?(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)*' "$(op_line reg '$1 == "a.com/x{LF}y"')"
+reg_mutate no-caret '[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:[0-9]{1,5})?(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)*$' "$(op_line reg '$1 == "{LF}a.com/x"')"
+reg_mutate old-charset '^[a-z0-9.-]+(:[0-9]+)?(/[a-z0-9._-]+)*$' "$(op_line reg '$1 == ".."')"
+reg_mutate dotdot-path '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:[0-9]{1,5})?(/[a-z0-9.]+((\.|_|__|-+)[a-z0-9]+)*)*$' "$(op_line reg '$1 == "a.com/../x"')"
+reg_mutate trailing-slash '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:[0-9]{1,5})?(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)*/?$' "$(op_line reg '$1 == "a.com/"')"
+reg_mutate port-wide '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:[0-9]+)?(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)*$' "$(op_line reg '$1 == "a.com:123456"')"
+reg_mutate colon-in-path '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:[0-9]{1,5})?(/[a-z0-9]+((\.|_|__|-+|:)[a-z0-9]+)*)*$' "$(op_line reg '$1 == "a.com/x:tag"')"
+reg_mutate upper '^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*(:[0-9]{1,5})?(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)*$' "$(op_line reg '$1 == "A.com/x"')"
+reg_mutate host-underscore '^[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:[0-9]{1,5})?(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)*$' "$(op_line reg '$1 == "a_b/x"')"
+op_mutate reg reg-check-removed '[[ -z "${FALCO_CTF_REGISTRY:-}" ]] || check_operator_input' ':' "$(op_line reg '$1 == "a,b=c"')" accept
+
+tag_mutate any '^.*$' "$(op_line tag '$1 == "a,b=c"')"
+tag_mutate no-dollar '^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}' "$(op_line tag '$1 == "a{LF}"')"
+tag_mutate no-caret '[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$' "$(op_line tag '$1 == "{LF}a"')"
+tag_mutate wide '^[A-Za-z0-9_][A-Za-z0-9._-]{0,128}$' "$(op_line tag 'length($1) == 129 && $2 == "reject"')"
+tag_mutate narrow '^[A-Za-z0-9_][A-Za-z0-9._-]{0,126}$' "$(op_line tag 'length($1) == 128 && $2 == "accept"')"
+tag_mutate leading-dot '^[A-Za-z0-9_.][A-Za-z0-9._-]{0,127}$' "$(op_line tag '$1 == ".a"')"
+tag_mutate leading-hyphen '^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$' "$(op_line tag '$1 == "-a"')"
+tag_mutate colon '^[A-Za-z0-9_][A-Za-z0-9._:-]{0,127}$' "$(op_line tag '$1 == "sha256:0123"')"
+tag_mutate slash '^[A-Za-z0-9_][A-Za-z0-9._/-]{0,127}$' "$(op_line tag '$1 == "a/b"')"
+op_mutate tag tag-check-removed '[[ -z "${FALCO_CTF_IMAGE_TAG:-}" ]] || check_operator_input' ':' "$(op_line tag '$1 == "a,b=c"')" accept
+
+cidr_mutate any '^.*$' "$(op_line cidr '$1 == "10.0.0.1/32,10.0.0.2/32"')"
+cidr_mutate no-dollar '^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-2]|[12]?[0-9])' "$(op_line cidr '$1 == "10.0.0.1/32{LF}"')"
+cidr_mutate no-caret '((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-2]|[12]?[0-9])$' "$(op_line cidr '$1 == "{LF}10.0.0.1/32"')"
+cidr_mutate octet-999 '^(([0-9]{1,3})\.){3}([0-9]{1,3})/(3[0-2]|[12]?[0-9])$' "$(op_line cidr '$1 == "256.0.0.1/32"')"
+cidr_mutate prefix-wide '^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-9]|[12]?[0-9])$' "$(op_line cidr '$1 == "10.0.0.1/33"')"
+cidr_mutate prefix-narrow '^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-1]|[12]?[0-9])$' "$(op_line cidr '$1 == "255.255.255.255/32"')" reject
+cidr_mutate leading-zero '^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|0?[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|0?[1-9]?[0-9])/(3[0-2]|[12]?[0-9])$' "$(op_line cidr '$1 == "010.0.0.1/32"')"
+cidr_mutate no-prefix '^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(/(3[0-2]|[12]?[0-9]))?$' "$(op_line cidr '$1 == "10.0.0.1"')"
+cidr_mutate three-octets '^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){2,3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-2]|[12]?[0-9])$' "$(op_line cidr '$1 == "10.0.0/24"')"
+op_mutate cidr cidr-check-removed '[[ -z "${API_SERVER_CIDR}" ]] || check_operator_input' ':' "$(op_line cidr '$1 == "10.0.0.1/32,10.0.0.2/32"')" accept
+
+# --set-string -> --set: helm would type the value (`null` deletes the key) and read `,` / `=` in it.
+op_mutate dns dns-set-not-set-string '  DNS_SUFFIX_ARGS+=(' '  DNS_SUFFIX_ARGS+=(--set "dnsSuffix=${DNS_SUFFIX}")' "$(op_line dns '$1 == "null"')" reject
+op_mutate cidr cidr-set-not-set-string '  EGRESS_ARGS+=(--set-string "networkPolicy.egress.apiServerCidr=' '  EGRESS_ARGS+=(--set "networkPolicy.egress.apiServerCidr=${API_SERVER_CIDR}")' "$(op_line cidr '$1 == "10.100.0.1/32"')" reject
+op_mutate reg reg-set-not-set-string-ttyd '  IMAGE_ARGS+=(--set-string "ttyd.image.repository=' '  IMAGE_ARGS+=(--set "ttyd.image.repository=${FALCO_CTF_REGISTRY}/ttyd")' "$(op_line reg '$1 == "docker.io/falco-ctf"')" reject
+op_mutate reg reg-set-not-set-string-proxy '  IMAGE_ARGS+=(--set-string "ttyd.proxy.image.repository=' '  IMAGE_ARGS+=(--set "ttyd.proxy.image.repository=${FALCO_CTF_REGISTRY}/ttyd-proxy")' "$(op_line reg '$1 == "docker.io/falco-ctf"')" reject
+op_mutate reg reg-set-not-set-string-challenge '  IMAGE_ARGS+=(--set-string "challenge.image.repository=' '  IMAGE_ARGS+=(--set "challenge.image.repository=${FALCO_CTF_REGISTRY}/challenge")' "$(op_line reg '$1 == "docker.io/falco-ctf"')" reject
+op_mutate tag tag-set-not-set-string-ttyd '  IMAGE_ARGS+=(--set-string "ttyd.image.tag=' '  IMAGE_ARGS+=(--set "ttyd.image.tag=${FALCO_CTF_IMAGE_TAG}")' "$(op_line tag '$1 == "null"')" reject
+op_mutate tag tag-set-not-set-string-proxy '  IMAGE_ARGS+=(--set-string "ttyd.proxy.image.tag=' '  IMAGE_ARGS+=(--set "ttyd.proxy.image.tag=${FALCO_CTF_IMAGE_TAG}")' "$(op_line tag '$1 == "null"')" reject
+op_mutate tag tag-set-not-set-string-challenge '  IMAGE_ARGS+=(--set-string "challenge.image.tag=' '  IMAGE_ARGS+=(--set "challenge.image.tag=${FALCO_CTF_IMAGE_TAG}")' "$(op_line tag '$1 == "null"')" reject
 
 if [[ "${RC}" -ne 0 ]]; then
   echo "deploy-user.sh id grammar check FAILED" >&2

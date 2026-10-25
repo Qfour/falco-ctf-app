@@ -10,6 +10,7 @@
 # <id>/fixtures/**; ADR-0026 / I16).
 #
 # Usage:
+#   [FALCO_CTF_REGISTRY=<registry>/<prefix>] [FALCO_CTF_IMAGE_TAG=<tag>] \
 #   deploy-user.sh [--challenges-dir <path>] [--scenarios-dir <path>] \
 #                  [--flags-file <path>] [--dns-suffix <suffix>] \
 #                  [--frame-ancestors <csp-value>] [--app-host <host>] \
@@ -32,6 +33,13 @@
 #                        scenarios/<name>/scenario.yaml). An id NOT in that
 #                        list is unreachable — no flag, no fixtures, no
 #                        README — regardless of what "all" mode would plant.
+#
+# --dns-suffix <suffix>, --api-server-cidr <cidr>, and the env FALCO_CTF_REGISTRY /
+#   FALCO_CTF_IMAGE_TAG are checked against a closed grammar before any kubectl / helm
+#   call (exit 2, `invalid <name>: ...`; app#510) and passed to helm with --set-string.
+#   The literals and what each accepts are next to the checks (DNS_SUFFIX_PATTERN,
+#   REGISTRY_PATTERN, IMAGE_TAG_PATTERN, API_SERVER_CIDR_PATTERN): a DNS subdomain
+#   (<= 253 characters, lower case), an OCI host[:port]/path, an OCI tag, an IPv4 a.b.c.d/n.
 #
 # --scenarios-dir <path>: where scenario:<name> resolves <name>/scenario.yaml
 #   from. Defaults to the sibling `scenarios/` dir at the repo root (this
@@ -223,6 +231,68 @@ case "${CHALLENGE_ID}" in
       exit 2
     fi ;;
 esac
+
+# The other operator inputs (app#510, #507 review-5x R1#1): --dns-suffix,
+# FALCO_CTF_REGISTRY, FALCO_CTF_IMAGE_TAG and --api-server-cidr. Each is a helm value
+# below (a host, an image reference, a NetworkPolicy ipBlock). helm's --set parser reads
+# a `,` as the start of another key and `=` as another assignment, and --set-string does
+# NOT change that (it only stops the typing: with --set, `null` deletes the key, so a tag
+# `null` renders the image `ttyd:` and a dns suffix `null` the host `<seat>.`; measured with
+# helm 4.1.3), so the grammar check is what closes the injection and --set-string is what
+# closes the typing. Both are needed. The trust boundary is the operator (the caller is platform's
+# deploy-event-workspaces.sh), not a participant; this is the same closed-grammar rule
+# the seat and the challenge id already follow.
+#
+# The four patterns have NO Go definition (an operator input is read by this script
+# only): these literals are the definitions. A test (internal/catalog,
+# deploy_operator_inputs_test.go) holds each equal to the `# pattern: ` header of its
+# case table (internal/catalog/testdata/{dns-suffix,image-registry,image-tag,
+# api-server-cidr}-cases.tsv) and runs every row through it; scripts/check-deploy-user-ids.sh
+# runs every row through this script. Platform derives the registry and the tag from its
+# env file (platform#285) but holds NO grammar: this script is the one place that checks.
+#   DNS_SUFFIX       RFC 1123 subdomain: labels of [a-z0-9-] (the first and the last a letter
+#                    or digit, 1 to 63 characters) joined by `.`, no leading / trailing dot,
+#                    at most DNS_SUFFIX_MAX_LEN (253) characters in all. Lower case only
+#                    (an Ingress host must be).
+#   REGISTRY         an OCI `host[:port]/path` prefix: the `<registry>/<repository prefix>`
+#                    the three images are appended to. Path components follow the OCI
+#                    distribution grammar (`.`, `_`, `__`, `-+` between alphanumerics), so
+#                    `..`, `//`, a trailing `/` and any `,` `=` `:` `@` are out.
+#   IMAGE_TAG        an OCI tag, `[A-Za-z0-9_][A-Za-z0-9._-]{0,127}`.
+#   API_SERVER_CIDR  IPv4 `a.b.c.d/n`: each octet 0..255 with no leading zero, n 0..32.
+#                    (IPv6 is not accepted: the chart's rule and the stand-up's apiserver
+#                    endpoint are IPv4.)
+# An empty FALCO_CTF_REGISTRY / FALCO_CTF_IMAGE_TAG means "not set" (the chart default
+# is kept), as it always has; an empty --dns-suffix / --api-server-cidr is the usage
+# error of the flag parser above. A set value is checked even when the thing it feeds is
+# off (--api-server-cidr without --egress-lockdown): a bad value is not ignored quietly.
+# C locale, %q-escaped output, like the seat and the id: a control or bidi character
+# cannot reach the terminal raw.
+DNS_SUFFIX_PATTERN='^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$'
+DNS_SUFFIX_MAX_LEN='253'
+REGISTRY_PATTERN='^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:[0-9]{1,5})?(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)*$'
+IMAGE_TAG_PATTERN='^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$'
+API_SERVER_CIDR_PATTERN='^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(3[0-2]|[12]?[0-9])$'
+
+# check_operator_input <name> <value> <pattern> [<max length>]: exit 2 on a miss.
+check_operator_input() {
+  local name="$1" value="$2" pattern="$3" max="${4:-}"
+  if ! (export LC_ALL=C; [[ "${value}" =~ ${pattern} ]]); then
+    (export LC_ALL=C; printf 'invalid %s: %q does not match %s\n' "${name}" "${value}" "${pattern}") >&2
+    echo "  (app#510; nothing was deployed)" >&2
+    exit 2
+  fi
+  # After the pattern, so the value is ASCII and ${#value} counts bytes.
+  if [[ -n "${max}" && "${#value}" -gt "${max}" ]]; then
+    echo "invalid ${name}: ${#value} characters, at most ${max} allowed" >&2
+    echo "  (app#510; nothing was deployed)" >&2
+    exit 2
+  fi
+}
+[[ -z "${DNS_SUFFIX}" ]] || check_operator_input "--dns-suffix" "${DNS_SUFFIX}" "${DNS_SUFFIX_PATTERN}" "${DNS_SUFFIX_MAX_LEN}"
+[[ -z "${FALCO_CTF_REGISTRY:-}" ]] || check_operator_input "FALCO_CTF_REGISTRY" "${FALCO_CTF_REGISTRY}" "${REGISTRY_PATTERN}"
+[[ -z "${FALCO_CTF_IMAGE_TAG:-}" ]] || check_operator_input "FALCO_CTF_IMAGE_TAG" "${FALCO_CTF_IMAGE_TAG}" "${IMAGE_TAG_PATTERN}"
+[[ -z "${API_SERVER_CIDR}" ]] || check_operator_input "--api-server-cidr" "${API_SERVER_CIDR}" "${API_SERVER_CIDR_PATTERN}"
 
 # Egress lockdown (P11.5) requires the apiserver CIDR — without it the chart
 # omits the API-server allow and ttyd's `kubectl exec` into the workspace
@@ -502,16 +572,26 @@ kubectl -n "${NS}" delete pod workspace --ignore-not-found --wait=true >/dev/nul
 # to pull ttyd/ttyd-proxy/challenge from ECR (I5: same SHA tag across all
 # images). The challenge repo must keep the `falco-ctf/challenge` substring
 # (scoreboard ingest filter).
+# --set-string, not --set (app#510): `null` is a valid OCI tag and a valid DNS label,
+# and --set would read it as "delete the key" (an empty tag); the values were
+# grammar-checked above, so a `,` or `=` is not in them either.
 IMAGE_ARGS=()
 if [[ -n "${FALCO_CTF_REGISTRY:-}" ]]; then
-  IMAGE_ARGS+=(--set "ttyd.image.repository=${FALCO_CTF_REGISTRY}/ttyd")
-  IMAGE_ARGS+=(--set "ttyd.proxy.image.repository=${FALCO_CTF_REGISTRY}/ttyd-proxy")
-  IMAGE_ARGS+=(--set "challenge.image.repository=${FALCO_CTF_REGISTRY}/challenge")
+  IMAGE_ARGS+=(--set-string "ttyd.image.repository=${FALCO_CTF_REGISTRY}/ttyd")
+  IMAGE_ARGS+=(--set-string "ttyd.proxy.image.repository=${FALCO_CTF_REGISTRY}/ttyd-proxy")
+  IMAGE_ARGS+=(--set-string "challenge.image.repository=${FALCO_CTF_REGISTRY}/challenge")
 fi
 if [[ -n "${FALCO_CTF_IMAGE_TAG:-}" ]]; then
-  IMAGE_ARGS+=(--set "ttyd.image.tag=${FALCO_CTF_IMAGE_TAG}")
-  IMAGE_ARGS+=(--set "ttyd.proxy.image.tag=${FALCO_CTF_IMAGE_TAG}")
-  IMAGE_ARGS+=(--set "challenge.image.tag=${FALCO_CTF_IMAGE_TAG}")
+  IMAGE_ARGS+=(--set-string "ttyd.image.tag=${FALCO_CTF_IMAGE_TAG}")
+  IMAGE_ARGS+=(--set-string "ttyd.proxy.image.tag=${FALCO_CTF_IMAGE_TAG}")
+  IMAGE_ARGS+=(--set-string "challenge.image.tag=${FALCO_CTF_IMAGE_TAG}")
+fi
+
+# --dns-suffix: the workspace host is `<seat>.<dnsSuffix>`. Same --set-string rationale
+# as IMAGE_ARGS above, and the same array form as the ones below.
+DNS_SUFFIX_ARGS=()
+if [[ -n "${DNS_SUFFIX}" ]]; then
+  DNS_SUFFIX_ARGS+=(--set-string "dnsSuffix=${DNS_SUFFIX}")
 fi
 
 # P23-3: CSP frame-ancestors for the ttyd-proxy sidecar. Omit to keep the
@@ -536,8 +616,11 @@ fi
 # ctf-user egress NetworkPolicy and pin the apiserver CIDR (validated above).
 EGRESS_ARGS=()
 if [[ "${EGRESS_LOCKDOWN}" -eq 1 ]]; then
+  # The one --set left: a boolean the script itself writes (a constant, not an operator
+  # input), and the chart tests it as a boolean. scripts/check-deploy-user-ids.sh requires
+  # this to be the ONLY ` --set ` token in the helm call.
   EGRESS_ARGS+=(--set "networkPolicy.egress.enabled=true")
-  EGRESS_ARGS+=(--set "networkPolicy.egress.apiServerCidr=${API_SERVER_CIDR}")
+  EGRESS_ARGS+=(--set-string "networkPolicy.egress.apiServerCidr=${API_SERVER_CIDR}")
   # ADR-WS-0005 enforcement fix — see the derivation + fail-fast check above.
   EGRESS_ARGS+=(--set-string "networkPolicy.egress.apiServerClusterIP=${API_SERVER_CLUSTER_IP}/32")
 fi
@@ -554,7 +637,7 @@ helm upgrade --install "${RELEASE}" "${CHART_DIR}" \
   -n "${NS}" --create-namespace \
   --set-string "username=${USERNAME}" \
   --set-string "challengeId=${CHALLENGE_ID}" \
-  ${DNS_SUFFIX:+--set dnsSuffix="${DNS_SUFFIX}"} \
+  ${DNS_SUFFIX_ARGS:+"${DNS_SUFFIX_ARGS[@]}"} \
   ${IMAGE_ARGS:+"${IMAGE_ARGS[@]}"} \
   ${FRAME_ANCESTORS_ARGS:+"${FRAME_ANCESTORS_ARGS[@]}"} \
   ${APP_HOST_ARGS:+"${APP_HOST_ARGS[@]}"} \
