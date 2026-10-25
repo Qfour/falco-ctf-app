@@ -199,6 +199,10 @@ jobs:
         run: |
           ./scripts/check-dockerignore.sh
           ./scripts/check-dockerignore.sh --selftest
+      - name: the repo-root Docker build context holds every git-tracked file (app#501; docker evaluates .dockerignore, selftest included)
+        run: |
+          ./scripts/check-build-context.sh
+          ./scripts/check-build-context.sh --selftest
       - name: every golang base (tag@digest) in the Dockerfiles and workflows is the same value (app#499, selftest included)
         run: |
           ./scripts/check-go-base-digest.sh

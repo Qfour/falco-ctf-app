@@ -13,17 +13,24 @@ package sourcehygiene
 // In that check the tree is the Docker build context (Dockerfile.test copies it;
 // .dockerignore leaves out .git), so the file set is "git ls-files" where there is
 // a .git and "every file on disk" where there is not (hintleak does the same).
-// canaryFiles makes a context that dropped a directory red instead of unscanned.
+// "Tracked file" in the Docker path therefore means every file of the build
+// context. scripts/check-build-context.sh (flag-guard) proves that set equals
+// `git ls-files`; canaryFiles is the in-test tripwire for the same thing. If the
+// test is red on an UNTRACKED file in your working tree (it is in the context
+// although git ignores it), delete the file or exclude it in .dockerignore.
 //
 // Scope: the nine code points above. U+200E / U+200F (LRM / RLM) are not in the
 // set: they only set the direction of neutral characters, cannot embed or
 // override a run, and are the legitimate way to write Arabic / Hebrew prose; the
 // tree has none today and the set is one table (bidiControls) if that changes.
-// What is scanned: every regular file with no NUL byte. A file with a NUL is
-// binary (fonts, a fixture that is a NUL on purpose) and is not scanned; a raw
-// byte sequence inside a font is chance, not an attack. Invalid UTF-8 does NOT
-// exempt a file (that would let one stray byte switch the check off): the search
-// is on bytes. Symlinks and submodules are not followed.
+// What is scanned: every regular file except those whose extension is in
+// binaryExt, a closed set (a raw byte sequence inside a font is chance, not an
+// attack). A NUL byte does NOT make a file binary: an attacker can put one in a
+// .md or .yaml to skip a "has a NUL" test. A file outside binaryExt that holds a
+// NUL is scanned all the same and is also a problem ("cannot decide"); a new
+// binary format must be added to binaryExt with a reason. Invalid UTF-8 does NOT
+// exempt a file either: the search is on bytes. Symlinks and submodules are not
+// followed.
 
 import (
 	"bytes"
@@ -44,13 +51,28 @@ const allowlistFile = "internal/sourcehygiene/testdata/bidi-allowlist.txt"
 
 // canaryFiles must be among the scanned files of the real tree. They are the
 // files whose absence means the test is looking at less than the repo: a build
-// context that dropped a directory, or a walk that listed nothing.
+// context that dropped a directory, or a walk that listed nothing. One per
+// directory that .dockerignore once excluded.
 var canaryFiles = []string{
 	"go.mod",
 	"internal/sourcehygiene/bidi_test.go",
-	".github/workflows/ci.yaml",    // .dockerignore must not exclude .github
-	".claude/rules/dev-flow.md",    // .dockerignore re-includes .claude/rules/
 	allowlistFile,
+	".github/workflows/ci.yaml",
+	".claude/agents/architect.md",
+	".claude/commands/commit.md",
+	".claude/rules/dev-flow.md",
+	".claude/skills/falco-go/SKILL.md",
+	".claude/settings.json",
+}
+
+// binaryExt is the closed set of file extensions that are binary and not
+// scanned, each with its reason. Adding one needs the same review as an
+// allowlist line.
+var binaryExt = map[string]string{
+	".woff2": "WOFF2 font (compressed bytes; a 3-byte match is chance)",
+	// Not tracked: `helm dependency build` writes charts/*/charts/*.tgz, and
+	// Dockerfile.test runs it after COPY, before this test. git ignores them.
+	".tgz": "helm dependency archive (untracked build output present in the Docker path)",
 }
 
 // bidiControls is the one list of what is forbidden raw.
@@ -75,8 +97,11 @@ func (f finding) String() string {
 	return fmt.Sprintf("%d:%d U+%04X %s", f.line, f.col, f.cp, bidiControls[f.cp])
 }
 
-// isBinary: a NUL byte. The one rule that decides "text".
-func isBinary(data []byte) bool { return bytes.IndexByte(data, 0) >= 0 }
+// isBinary: the extension is in binaryExt. Not the content: see the header.
+func isBinary(rel string) bool {
+	_, ok := binaryExt[strings.ToLower(filepath.Ext(rel))]
+	return ok
+}
 
 // scanBytes finds the raw controls in data. It searches bytes, not decoded
 // runes, so a file that is not valid UTF-8 is scanned all the same: U+202x is
@@ -164,7 +189,7 @@ func listFiles(root string) ([]string, error) {
 type report struct {
 	problems []string
 	scanned  map[string]bool // text files that were read and scanned
-	binary   []string        // regular files with a NUL, not scanned
+	binary   []string        // regular files with a binaryExt extension, not scanned
 	skipped  []string        // not regular (symlink, submodule) or absent from disk
 }
 
@@ -190,15 +215,18 @@ func checkTree(root string, allow map[string]string) (*report, error) {
 		if err != nil {
 			return nil, err
 		}
+		if isBinary(rel) {
+			r.binary = append(r.binary, rel)
+			continue
+		}
 		data, err := os.ReadFile(abs)
 		if err != nil {
 			return nil, err
 		}
-		if isBinary(data) {
-			r.binary = append(r.binary, rel)
-			continue
-		}
 		r.scanned[rel] = true
+		if bytes.IndexByte(data, 0) >= 0 {
+			r.problems = append(r.problems, fmt.Sprintf("%s: holds a NUL byte but its extension is not in binaryExt, so it cannot be told from a text file that hides something (remove the NUL, or add the extension to binaryExt with a reason)", rel))
+		}
 		found := scanBytes(data)
 		if len(found) == 0 {
 			continue
@@ -222,7 +250,7 @@ func checkTree(root string, allow map[string]string) (*report, error) {
 		why := "the file holds no raw bidi character"
 		switch {
 		case slices.Contains(r.binary, p):
-			why = "the file is binary (has a NUL byte) and is not scanned"
+			why = "the file has a binaryExt extension and is not scanned"
 		case !r.scanned[p]:
 			why = "the file is not a tracked regular file"
 		}
@@ -321,10 +349,10 @@ func TestCheckTree_PlantedTrees(t *testing.T) {
 			want:  []string{`dead allowlist entry "gone.txt": the file is not a tracked regular file`},
 		},
 		{
-			name:  "a listed binary file is a dead entry (a NUL file is not scanned)",
-			files: map[string]string{"font.bin": "\x00" + rlo},
-			allow: map[string]string{"font.bin": "attack fixture"},
-			want:  []string{`dead allowlist entry "font.bin": the file is binary`},
+			name:  "a listed binaryExt file is a dead entry (such a file is not scanned)",
+			files: map[string]string{"font.woff2": "\x00" + rlo},
+			allow: map[string]string{"font.woff2": "attack fixture"},
+			want:  []string{`dead allowlist entry "font.woff2": the file has a binaryExt extension`},
 		},
 		{
 			name: "escapes of every kind are green",
@@ -336,8 +364,21 @@ func TestCheckTree_PlantedTrees(t *testing.T) {
 			},
 		},
 		{
-			name:  "a binary file is not scanned",
-			files: map[string]string{"font.woff2": "\x00\x01" + rlo + "\x02"},
+			name: "a binaryExt file is not scanned, whatever its case",
+			files: map[string]string{
+				"font.woff2": "\x00\x01" + rlo + "\x02",
+				"Font.WOFF2": "\x00\x01" + rlo + "\x02",
+			},
+		},
+		{
+			name:  "a NUL does not make a .md binary: the raw RLO is found and the NUL is a problem",
+			files: map[string]string{"hide.md": "a\x00b\n" + rlo + "\n"},
+			want:  []string{"hide.md:2:1 U+202E", "hide.md: holds a NUL byte but its extension is not in binaryExt"},
+		},
+		{
+			name:  "a NUL file outside binaryExt is a problem even with no bidi character",
+			files: map[string]string{"blob.bin": "\x00\x01\x02"},
+			want:  []string{"blob.bin: holds a NUL byte but its extension is not in binaryExt"},
 		},
 		{
 			name:  "invalid UTF-8 elsewhere in the file does not switch the check off",

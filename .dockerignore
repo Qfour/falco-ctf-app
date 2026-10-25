@@ -4,29 +4,17 @@
 # copies the repo root.)
 .git
 
-# Claude Code settings
-.claude
-# Exception: the conventions file holds the cross-repo contract table, and
-# internal/contractmetrics/contract_test.go (ADR-0040; it replaced the per-row
-# tests of app#404 and app#412) compares its `<family>{<labels>}` code spans with the
-# metrics the owning binary exposes at start, and
-# internal/collector/unknown_challenge_contract_test.go (app#486) reads the verify
-# probe id from its row (a second reader, through internal/contracttable). The
-# `COPY . .` builds receive it: Dockerfile.test (the one that runs the test),
-# Dockerfile.tidy and Dockerfile.e2e (no effect on them, but editing this file
-# now invalidates their `COPY . .` layer cache). No pushed image copies the repo
-# root, and the file is a public markdown document. Verified to take effect with
-# `docker build -f Dockerfile.test` (the test fails without this line).
-!.claude/rules/falco-ctf-app-conventions.md
-# Same reason for the rest of the tracked .claude files (agents, commands, rules,
-# skills, settings.json; all public): internal/sourcehygiene scans every file of
-# the context, and an agent or rule file is text an AI agent obeys. The untracked
-# local state (settings.local.json, last-test-commit, worktrees/) stays excluded.
-!.claude/agents/
-!.claude/commands/
-!.claude/rules/
-!.claude/skills/
-!.claude/settings.json
+# Claude Code: only the LOCAL state is excluded (the same three paths .gitignore
+# names); every tracked .claude path is in the build context. Readers:
+# internal/contractmetrics, internal/collector and internal/contracttable read the
+# conventions file's contract table (ADR-0040, app#486), and internal/sourcehygiene
+# (app#501) scans every file for raw bidi controls, an agent or rule file being text
+# an AI agent obeys. All tracked .claude files are public and no pushed image copies
+# the repo root. scripts/check-build-context.sh proves the context holds every
+# tracked file, so a new .claude path cannot be silently left out.
+.claude/settings.local.json
+.claude/last-test-commit
+.claude/worktrees/
 
 # Helm charts — not needed by most image builds. Exception: Dockerfile.test
 # needs charts/scoreboard (+ its local file://../falco-ctf-common chart
