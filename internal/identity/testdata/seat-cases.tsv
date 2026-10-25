@@ -1,4 +1,5 @@
-# The seat grammar's shared case table (app#480, ADR-0034 D2).
+# pattern: ^[a-z0-9]([a-z0-9-]{0,51}[a-z0-9])?$
+# The seat grammar's shared case table (app#480, ADR-0042; ADR-0034 D2 before it).
 #
 # A seat is the workspace / participant name (the `<seat>` in
 # `<seat>@<EXPECTED_EMAIL_DOMAIN>`, `ctf-<seat>`, the Helm release name). The
@@ -17,7 +18,11 @@
 # same commit.
 #
 # Format (tab-separated, two columns: `input<TAB>accept|reject`):
-#   - blank lines and lines starting with `#` are ignored
+#   - blank lines and lines starting with `#` are ignored. The one exception to "ignored" is
+#     line 1, `# pattern: <regex>`: the canonical literal of the grammar (the first line, exactly
+#     `# pattern: ` followed by the regex). Readers outside this repo (platform's parity test) read
+#     the grammar from it, so the text of an app Go source file is not a contract surface; a Go
+#     test pins it equal to identity.SeatPattern (TestSeatCaseTable_HeaderIsTheGoPattern)
 #   - split each line on its FIRST tab only. `input` may be empty (the line then
 #     starts with a tab) and contains neither a tab nor a newline literally
 #   - do NOT read it with `IFS=$'\t' read` (a tab is IFS whitespace there, so an
@@ -32,9 +37,8 @@
 #     that forgot a decoder would test the literal text, reject it, and stay green
 #     without ever trying the input the row stands for. No seat row spells a brace.
 #
-# Rows marked (B) are the ones whose verdict changes when the grammar is
-# tightened to the set a workspace can actually be deployed with (1..53
-# characters, ending in a letter or digit: app#480); they pin today's verdict.
+# The grammar these rows hold is ADR-0042's (app#480): 1 to 53 characters of
+# [a-z0-9-], the first and the last a letter or digit.
 
 # --- baseline: what the roster actually holds
 user1	accept
@@ -49,15 +53,15 @@ a1	accept
 a-b	accept
 u-2	accept
 a--b	accept
-# --- length (B): today up to 63 characters; Helm accepts a release name of at most 53
+# --- length: 53 is the longest a Helm release name (= the seat) can be
 abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	accept
 abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	accept
-abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	accept
-abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	accept
+abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	reject
+abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	reject
 abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	reject
-# --- a trailing '-' (B): accepted today; a Helm release name must end in a letter or digit
-a-	accept
-user1-	accept
+# --- a trailing '-': a Helm release name must end in a letter or digit
+a-	reject
+user1-	reject
 # --- empty, leading '-', case
 	reject
 -	reject

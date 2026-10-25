@@ -101,6 +101,33 @@ func TestValidSeat_SharedCaseTable(t *testing.T) {
 	}
 }
 
+// seatPatternHeader is the first line of the table: `# pattern: ` and the regex.
+// Platform's parity test reads the grammar from it, so it is the canonical
+// literal of the grammar for every reader outside this repo.
+const seatPatternHeader = "# pattern: "
+
+func TestSeatCaseTable_HeaderIsTheGoPattern(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "seat-cases.tsv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _, _ := strings.Cut(string(raw), "\n")
+	got, ok := strings.CutPrefix(first, seatPatternHeader)
+	if !ok {
+		t.Fatalf("seat-cases.tsv line 1 must be %q followed by the regex, got %q", seatPatternHeader, first)
+	}
+	if got != SeatPattern {
+		t.Errorf("seat-cases.tsv header pattern = %q, want identity.SeatPattern %q", got, SeatPattern)
+	}
+	// The header is a comment to the row reader, and no row is lost to it.
+	if _, err := parseSeatCases("x", first+"\nuser1\taccept\n"); err != nil {
+		t.Errorf("the header line is not read as a comment: %v", err)
+	}
+	if rows, _ := parseSeatCases("x", first+"\nuser1\taccept\n"); len(rows) != 1 {
+		t.Errorf("header + one row read as %d rows, want 1", len(rows))
+	}
+}
+
 func TestSeatCaseTable_ReaderFailsOnAMalformedRow(t *testing.T) {
 	for _, bad := range []string{"user1", "user1\tmaybe", "user1\taccept\textra", "user1\t", "user1\r\taccept",
 		"user{U+2028}\treject", "{LF\treject", "user}\treject", "{lf}user1\treject"} {

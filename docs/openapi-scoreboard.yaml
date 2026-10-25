@@ -604,7 +604,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/SubmitFlagVerdict" }
         "400":
-          description: "`{cid}` is not an evade challenge, malformed body, or `user` missing or not a username slug (`^[a-z0-9][a-z0-9-]{0,62}$`; nothing is stored)"
+          description: "`{cid}` is not an evade challenge, malformed body, or `user` missing or not a username slug (the `Seat` schema, `components.schemas.Seat`; nothing is stored)"
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -759,7 +759,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ExfilReceipt" }
         "400":
-          description: "`{cid}` does not accept exfil, malformed body, missing `user`/`flag`, or `user` not a username slug (`^[a-z0-9][a-z0-9-]{0,62}$`; nothing is stored)"
+          description: "`{cid}` does not accept exfil, malformed body, missing `user`/`flag`, or `user` not a username slug (the `Seat` schema, `components.schemas.Seat`; nothing is stored)"
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1978,12 +1978,13 @@ components:
     Seat:
       type: string
       x-ctf-text-origin: token
-      pattern: '^[a-z0-9][a-z0-9-]{0,62}$'
-      maxLength: 63
+      pattern: '^[a-z0-9]([a-z0-9-]{0,51}[a-z0-9])?$'
+      maxLength: 53
       description: >-
         A seat: the username slug of a participant's workspace (`user7`), the `<user>`
         in `<user>@<EXPECTED_EMAIL_DOMAIN>`. Lower-case letters, digits and `-`, the
-        first a letter or digit, at most 63 characters. Having this shape does not
+        first and the last a letter or digit, 1 to 53 characters (the set a workspace can be
+        deployed with: ADR-0042). Having this shape does not
         prove who sent it: whether the caller is proven is the route's `x-ctf-authz`.
 
     # The one place this spec writes the board id grammar (a thread or message id: 32

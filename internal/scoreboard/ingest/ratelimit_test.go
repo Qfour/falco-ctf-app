@@ -271,7 +271,7 @@ func TestRateLimit_UnattributedEvents_AreNeverRateLimited(t *testing.T) {
 func TestRateLimit_InvalidNamespace_IsIgnored(t *testing.T) {
 	srv, s := newRateLimitFixture(t, evadeOnlyCatalog(), true)
 	long := "ctf-" + strings.Repeat("a", 64)
-	for _, ns := range []string{"ctf-", "ctf-Alice", "ctf-a_b", "ctf--x", "ctf-a b", "ctf-a/b", long} {
+	for _, ns := range []string{"ctf-", "ctf-Alice", "ctf-a_b", "ctf--x", "ctf-x-", "ctf-a b", "ctf-a/b", "ctf-" + strings.Repeat("a", 54), long} {
 		resp := post(t, srv.URL, ns, forbiddenRule, nil)
 		var body map[string]any
 		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {

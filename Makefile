@@ -204,7 +204,7 @@ E2E_PORT ?= 8787
 E2E_USER := $(if $(filter command line,$(origin AS)),$(AS),user1)
 e2e-serve:
 	@case "$(SEED)" in ''|*[!a-z0-9-]*|-*) echo "error: SEED=<name> is required ([a-z0-9-]); see internal/e2e/harness/seed.go (fresh, clean-05, dirty-05)" >&2; exit 2;; esac
-	@case "$(E2E_USER)" in ''|*[!a-z0-9-]*|-*) echo "error: AS must match ^[a-z0-9][a-z0-9-]{0,62}$$" >&2; exit 2;; esac
+	@case "$(E2E_USER)" in ''|*[!a-z0-9-]*|-*|*-|??????????????????????????????????????????????????????*) echo "error: AS must match ^[a-z0-9]([a-z0-9-]{0,51}[a-z0-9])?$$ (a seat: 1 to 53 characters, ending in a letter or digit)" >&2; exit 2;; esac
 	@case "$(E2E_PORT)" in ''|*[!0-9]*) echo "error: E2E_PORT must be a number >= 1024" >&2; exit 2;; esac
 	docker build -f Dockerfile.e2e --target serve -t falco-ctf/e2e-serve:local .
 	docker run --rm --name falco-ctf-e2e-serve \

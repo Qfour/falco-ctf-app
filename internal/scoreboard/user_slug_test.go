@@ -10,7 +10,7 @@ import (
 // POST /internal/exfil/{cid} is claimed (the collector forwards it verbatim; that
 // is the known claimed-identity premise), but it is STORED and later shown as a
 // mission's first_solver on the operator's screens. It must therefore be a
-// username slug (identity.SeatPattern: ^[a-z0-9][a-z0-9-]{0,62}$), or the
+// username slug (identity.SeatPattern: ^[a-z0-9]([a-z0-9-]{0,51}[a-z0-9])?$), or the
 // request is a 400 and nothing is stored, with a fixed message that does not
 // echo the input.
 
@@ -22,15 +22,17 @@ var nonSlugUsers = []struct{ name, user string }{
 	{"right-to-left override U+202E", "user\u202e1"},
 	{"zero width space U+200B", "user\u200b1"},
 	{"markup", "<b>x</b>"},
-	{"64 characters (one over the limit)", "a" + strings.Repeat("b", 63)},
+	{"54 characters (one over the limit)", "a" + strings.Repeat("b", 53)},
+	{"63 characters (the previous limit)", "a" + strings.Repeat("b", 62)},
+	{"trailing hyphen", "alice-"},
 	{"leading hyphen", "-alice"},
 	{"underscore", "user_1"},
 	{"inner newline", "user\n1"},
 	{"email-shaped", "alice@ctf.local"},
 }
 
-// slugUsers are values the slug rule accepts; the 63-character one is the longest.
-var slugUsers = []string{"user1", "team-a", "0day", "a" + strings.Repeat("b", 62)}
+// slugUsers are values the slug rule accepts; the 53-character one is the longest.
+var slugUsers = []string{"user1", "team-a", "0day", "a--b", "a" + strings.Repeat("b", 52)}
 
 func TestSubmit_UserMustBeASlug_NotStored(t *testing.T) {
 	for _, c := range nonSlugUsers {

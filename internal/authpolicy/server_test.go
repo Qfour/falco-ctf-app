@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -308,14 +309,29 @@ func TestCheckAdmin_CaseInsensitive(t *testing.T) {
 
 // App-M4: garbled `host` values (containing @, /, whitespace) must 400 before
 // the request is even forwarded to oauth2-proxy.
+//
+// "user1-" (a trailing hyphen) and a 54-character name were valid hosts before
+// app#480 / ADR-0042; both are 400 now, and the upstream is never called for any
+// of them (a counting upstream, not an unreachable URL: an unreachable one would
+// answer 502 and still show "not 200" to a test that only checks the status).
 func TestCheck_InvalidHost_Returns400(t *testing.T) {
-	h := newHandler("http://example.invalid")
-	for _, host := range []string{"alice@evil", "alice/admin", "alice space", "ALICE", "../etc"} {
+	var upstreamCalls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalls.Add(1)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer upstream.Close()
+	h := newHandler(upstream.URL)
+	for _, host := range []string{"alice@evil", "alice/admin", "alice space", "ALICE", "../etc",
+		"user1-", "a" + strings.Repeat("b", 53)} {
 		target := "/check-workspace?host=" + url.QueryEscape(host)
-		resp := do(t, h, target, nil)
+		resp := do(t, h, target, map[string]string{"Cookie": "_oauth2_proxy=foo"})
 		if resp.StatusCode != http.StatusBadRequest {
 			t.Errorf("host=%q must 400, got %d", host, resp.StatusCode)
 		}
+	}
+	if n := upstreamCalls.Load(); n != 0 {
+		t.Errorf("the upstream was called %d time(s) for an invalid host, want 0", n)
 	}
 }
 

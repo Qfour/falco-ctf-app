@@ -63,6 +63,8 @@ func TestParseRoster_OneDefectPerCase(t *testing.T) {
 		{name: "seat with leading hyphen", doc: "seats:\n  - seat: -user1\n", wantErr: "must match"},
 		{name: "seat with a space", doc: "seats:\n  - seat: \"user 1\"\n", wantErr: "non-ASCII"},
 		{name: "seat longer than 63", doc: "seats:\n  - seat: " + strings.Repeat("a", 64) + "\n", wantErr: "must match"},
+		{name: "seat with a trailing hyphen (valid before app#480)", doc: "seats:\n  - seat: user1-\n", wantErr: "must match"},
+		{name: "seat of 54 characters (one over the 53 limit)", doc: "seats:\n  - seat: a" + strings.Repeat("b", 53) + "\n", wantErr: "must match"},
 		{name: "empty seat", doc: "seats:\n  - seat: \"\"\n", wantErr: "must match"},
 		{name: "seat missing", doc: "seats:\n  - external: a@p.example\n", wantErr: "must match"},
 		{name: "non-ASCII seat (Kelvin sign)", doc: "seats:\n  - seat: \"mar\u212a\"\n", wantErr: "non-ASCII"},
