@@ -55,6 +55,15 @@
 // `deploy-user.sh --frame-ancestors` (ctf-user is not a platform helmfile
 // release); the platform's deploy-event-workspaces.sh passes the real portal
 // origin through to that same flag, and its grammar is ADR-0044 (below).
+//
+// # WebSocket Upgrade Origin (ADR-0048)
+//
+// An Upgrade request is served only when its Origin is exactly "https://" + the
+// request's Host (the seat's own origin; the ttyd page inside the portal's iframe
+// opens its socket from there). Anything else is 403, and a missing Origin is not
+// an exemption: fail-closed. Other requests are untouched. The check sits here,
+// next to the CSP, because this proxy is the one consumer in front of ttyd.
+// Detail and the Host assumption: docs/adr/0048-*.md; platform#297.
 package ttydproxy
 
 import (
@@ -64,6 +73,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"regexp"
+	"strings"
 
 	"github.com/Qfour/falco-ctf-app/internal/dnsname"
 )
@@ -171,11 +181,87 @@ func New(upstream string, frameAncestors string, logger *slog.Logger) (*Handler,
 	return h, nil
 }
 
-// ServeHTTP forwards every request to ttyd, including WebSocket Upgrade
-// requests used by the terminal session — httputil.ReverseProxy tunnels
-// Upgrade transparently, so no special handling is needed here.
+// ServeHTTP forwards every request to ttyd. httputil.ReverseProxy tunnels
+// WebSocket Upgrade requests transparently; this method only refuses the ones
+// whose Origin is not the seat's own (ADR-0048, fail-closed) before they get there.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if isUpgrade(r) && !originIsSeat(r) {
+		h.rejectUpgrade(w, r)
+		return
+	}
 	h.proxy.ServeHTTP(w, r)
+}
+
+// isUpgrade reports whether httputil.ReverseProxy would tunnel r as a protocol
+// upgrade: a `Connection` token "upgrade" (any case, in any of the header lines or in
+// a comma list) and a non-empty `Upgrade`. It is deliberately not limited to the
+// value "websocket": the proxy tunnels any upgrade type, so a narrower test would
+// leave a variant that the proxy still tunnels (ADR-0048 D3).
+func isUpgrade(r *http.Request) bool {
+	if !headerHasToken(r.Header.Values("Connection"), "upgrade") {
+		return false
+	}
+	for _, v := range r.Header.Values("Upgrade") {
+		if strings.TrimSpace(v) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func headerHasToken(values []string, token string) bool {
+	for _, v := range values {
+		for _, t := range strings.Split(v, ",") {
+			if strings.EqualFold(strings.TrimSpace(t), token) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// originIsSeat is the whole acceptance set (ADR-0048 D2): exactly one Origin header
+// whose value is byte-for-byte "https://" + r.Host. No normalisation (case, default
+// port, trailing dot, a path), so no value is accepted that the browser would not
+// itself have written. An empty Host never matches (it would equal a bare "https://").
+func originIsSeat(r *http.Request) bool {
+	origins := r.Header.Values("Origin")
+	return r.Host != "" && len(origins) == 1 && origins[0] == "https://"+r.Host
+}
+
+// rejectUpgrade answers 403 and logs without the raw Origin (it is a request-supplied
+// string): only whether it was present, its length, and a scheme if it has the plain
+// lower-case form.
+func (h *Handler) rejectUpgrade(w http.ResponseWriter, r *http.Request) {
+	origins := r.Header.Values("Origin")
+	h.logger.Warn("ttyd websocket upgrade rejected: origin is not the seat's own (ADR-0048)",
+		"path", r.URL.Path, "origin_headers", len(origins), "origin_len", totalLen(origins), "origin_scheme", schemeOf(origins))
+	w.Header().Set("Content-Security-Policy", "frame-ancestors "+h.frameAncestors)
+	w.WriteHeader(http.StatusForbidden)
+}
+
+func totalLen(vs []string) int {
+	n := 0
+	for _, v := range vs {
+		n += len(v)
+	}
+	return n
+}
+
+// schemeOf returns "http" or "https" when the single Origin starts with that scheme and
+// "://", else "other" (or "none" when absent). Nothing else of the value is returned.
+func schemeOf(origins []string) string {
+	if len(origins) == 0 {
+		return "none"
+	}
+	if len(origins) == 1 {
+		for _, s := range []string{"https", "http"} {
+			if strings.HasPrefix(origins[0], s+"://") {
+				return s
+			}
+		}
+	}
+	return "other"
 }
 
 // validateFrameAncestors rejects a value outside FrameAncestorsPattern or longer
