@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/Qfour/falco-ctf-app/internal/ttydproxy"
 )
 
 // app#440: the seat grammar has ONE Go definition (SeatPattern / ValidSeat). Each
@@ -90,6 +92,13 @@ var seatShaped = regexp.MustCompile(`\[a-z0-9\](?:\[a-z0-9-\]\{0,\d+\}|\(\[a-z0-
 var otherGrammars = map[string]string{
 	// internal/e2e/serve: the name of a seed (31 characters), not a seat.
 	"^[a-z0-9][a-z0-9-]{0,31}$": "e2e seed name",
+	// internal/ttydproxy: ADR-0044 D2, the FRAME_ANCESTORS grammar ('none' or https://<host>).
+	// Its host part is the RFC 1123 label of --dns-suffix / --app-host, which has the same
+	// shape as a seat's but is a different grammar (labels of 1 to 63, joined by `.`). The
+	// key IS the constant (not a copy of its text), so this entry cannot drift from it; the
+	// constant itself is held equal to deploy-user.sh's literal and the case table's header
+	// by internal/ttydproxy/frame_ancestors_grammar_test.go.
+	ttydproxy.FrameAncestorsPattern: "FRAME_ANCESTORS (ADR-0044)",
 }
 
 // seatLiterals returns the string literals of src that spell a seat-shaped

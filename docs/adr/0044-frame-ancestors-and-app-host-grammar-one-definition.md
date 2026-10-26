@@ -1,0 +1,49 @@
+# ADR-0044: deploy-user.sh の --frame-ancestors と --app-host を閉じた文法にし、frame-ancestors の 1 定義を ttydproxy の Go に置く
+- Status: Proposed (app PR の merge と同じセッションで Accepted。platform#290 は pin bump と同時か後)
+- Date / Deciders: 2026-10-26 / VP + architect (起草) + security-engineer (CSP / iframe)
+- 関連: app#520 (PR app#531)、platform#290 (対の issue: D6 / V4 / 適用順序の実装)、app#532 (PORTAL_TTYD_SUFFIX の検査)、app#533 (RFC 1123 host 文法の Go 1 定義)、app#534 (auth.authSignin の https 化)、#518 (app#510)、app#270、app#99、platform#54 (P19-2a)、ADR-0013、ADR-0028 (chart と image の同時 pin)、ADR-0033 (古い app ref を止める gate の先例)、ADR-0041 / 0042 (文法の 1 定義の先例)
+## Context
+- C1. deploy-user.sh:134-141 は 2 つの値を受け取り、文法検査が無い (:256-257)。値は --set-string で渡す (:613-616, :622-625) が、helm は `,` で別の key として読む (:238-243)。
+- C2. 描画: pod.yaml:266-267 は quote 無しの "…" で、`"` や改行で manifest が壊れる。values.yaml:196 の authSignin は `http://<appHost>/oauth2/start…` (ingress.yaml:33 は tpl + quote)。
+- C3. 消費者: ttydproxy.go:99-109 / :155-170 は制御文字だけ拒否し、:125 / :141 で CSP に連結する。:129-133 は 'none' のときだけ XFO DENY を付ける。
+- C4. platform: deploy-event-workspaces.sh:333-354 (`^https?://[A-Za-z0-9.-]+(:[0-9]+)?$`) と :367-387 (`^[A-Za-z0-9.-]+$`) で検査し、:458 で sibling app clone の deploy-user.sh に渡す (:134-135。版は appImageTag の pin: check-app-pin.sh)。
+- C5. 値の形: scoreboard の allowedOrigins = "https://<appHost>" (platform releases/scoreboard/values.yaml.gotmpl:131)。appHost は env file ごとに小文字・port 無し。operations.md:560 / :1347 の用例は "https://<appHost>"。
+- C6. originguard.originOf (originguard.go:134-140) は url.Parse の正規化で、閉じた文法ではない。
+- C7. cookie は Secure + SameSite=None (conventions:419)。http の親ページでは session が成り立たない。origin は 1 つ (ADR-0013)。
+- C8. 今 deploy-user.sh を直接呼ぶと、CSP に `*` を足せる (root shell の clickjacking)、別の helm key に注入できる、sign-in の redirect を外部 host に向けられる、annotation に nginx の `$` 変数を入れられる。信頼境界は運用者だが (:243-245)、他の運用者入力と同じ閉じた文法の規則を適用する。
+## Options
+1. shell の literal を正典にする (#518 の 4 値と同じ型)。ttydproxy は変えない。コスト: 小さい (Go の変更は無く、写しは shell の literal と表の 2 つ)。リスク: deploy-user.sh 以外の経路 (values file・helm の直接実行) で入った値は制御文字の検査しか受けず、そのまま CSP に連結される。可逆 (後から Option 2 を足せる)。効き始め: 即時。ただし効くのは deploy-user.sh を通る値だけ。
+2. Go の ttydproxy.FrameAncestorsPattern を正典にし、New が起動時に拒否する。shell の literal と case 表の header をそれに固定する (ADR-0042 の型)。app-host は shell だけで、DNS_SUFFIX_PATTERN を使い回す。コスト: 文法外の値では ttyd-proxy が起動しない (端末が落ちる)。今使われている 'none' と https://app.<suffix> は受理されるので影響は無い。写しは Go・shell・表の 3 つ。リスク: chart と image の pin がずれると、新しい image が旧 chart の検査されていない値で CrashLoop しうる (Consequences の適用手順で防ぐ)。可逆 (New の検査を外せば Option 1 に戻る)。効き始め: 即時 (shell は deploy の度、Go は ttyd-proxy の起動の度)。
+3. originguard.originOf を正典にする。コスト: 新しい literal が要らない。リスク: C6 のとおり受理集合が広がる (どの scheme も通り、userinfo と path は捨てて通す)。しかも正規化後の値が入力と一致しないので shell の literal と同じ集合にならず、表で両者を固定できない。可逆。効き始め: 即時。受理集合が広がるので却下。
+- 検討して外した構造: --frame-ancestors をやめ、chart か deploy-user.sh が --app-host から `https://<app-host>` を導く。D3 の不一致は構造上消えるが、次の理由で外した。(i) app-host が空のとき chart は auth.<dnsSuffix> に落ちる (charts/ctf-user/values.yaml:196-197)。導出すると、既定の 'none' (fail-safe) が「compat host から囲める」に変わる。(ii) platform#54 以来の --frame-ancestors の passthrough (両リポの CLI 契約) を変えることになる。(iii) chart を直接使う経路の最後の検査点 (ttyd-proxy の文法) は、どのみち要る。導出は文法を置き換えず上に足すだけなので、同じ不一致は D3 の機械検査で止める。2 値が常に同じ出所から作られる (platform が --frame-ancestors を手で受けなくなる) なら再検討する。
+## Decision
+Option 2。CSP を連結する消費者 (ttyd-proxy) 自身が frame-ancestors の最後の検査点になり、chart を直接使う経路でも frame-ancestors は閉じるため (app-host と D3 は deploy-user.sh だけの検査。D8)。
+- D1. app-host = DNS_SUFFIX_PATTERN + DNS_SUFFIX_MAX_LEN。
+- D2. frame-ancestors = ちょうど 1 つで、'none' か https://<D1 の host>。≤ 261。'self'・*・*.・scheme だけ・http・port・path・`/`・query・userinfo・大文字・複数 (空白 / `,` / `;`)・他のキーワード・素の none は不可。
+- D3. 両方を渡し、frame-ancestors が 'none' でなければ、frame-ancestors == "https://" + app-host。不一致は exit 2 (conventions:403 の「手で揃える運用規律」を機械の検査にする)。
+- D4. frame-ancestors の 1 定義 = ttydproxy.FrameAncestorsPattern (+ FrameAncestorsMaxLen)。deploy-user.sh の FRAME_ANCESTORS_PATTERN と internal/ttydproxy/testdata/frame-ancestors-cases.tsv の 1 行目 (header) がこれと一致する。New は文法外を拒否する (空は 'none' のまま)。host 部分の権威は、現状は deploy-user.sh の DNS_SUFFIX_PATTERN (+ DNS_SUFFIX_MAX_LEN。#518 の行) にある。Go の定数の host 部分はそれを合成した写しで、internal/ttydproxy/frame_ancestors_grammar_test.go が DNS_SUFFIX_PATTERN の anchor の内側との一致を固定する。このため DNS_SUFFIX_PATTERN / DNS_SUFFIX_MAX_LEN を変えると --app-host と --frame-ancestors も変わり、狭める変更も両リポ同時 PR になる (D7)。host 文法を Go の 1 定義に移すのは app#533。
+- D5. pod.yaml の FRAME_ANCESTORS env を `| quote` で描画する。
+- D6. platform は文法を持たない (pattern を自分では書かず、sibling app clone の表から読む。読む面は表の 1 行目だけで、app の Go / shell ソースの字面は読まない)。platform#290 で次の 4 つを入れる。(a) 版の gate: 名簿の前に 1 回、clone に internal/ttydproxy/testdata/frame-ancestors-cases.tsv があり、その 1 行目が `# pattern: ` で始まることを確かめる。無ければ (本 ADR より古い app ref)、local 以外の target には何も払い出さない。ADR-0033 Decision 9 (b) の「local 以外で app の検証器が無い (本 ADR より前の ref) ときは、何も払い出さない」と同じ形で、local は env が local かつ kube context が local 系のときだけ通す。(b) 名簿の前の 1 回の検査: 渡された 2 値を clone の 2 表 (frame-ancestors-cases.tsv と internal/catalog/testdata/dns-suffix-cases.tsv) の 1 行目の pattern に、deploy-user.sh と同じ LC_ALL=C の bash `=~` で当てる。外れたら seat に進まずに止める。最大長と D3 は seat ごとの deploy-user.sh が判定する。権威はこちらで、名簿の前の検査は早くエラーを出すためのもの。(c) V4 の test。(d) deploy-event-workspaces.sh の旧 2 正規表現は、deploy の app pin (env file の appImageTag と events の versions.yaml) が本 ADR の app commit 以降になってから消す (Consequences の順序)。(a) があるので、「どちらも検査しない」窓はできない。
+- D7. 狭めるのも広げるのも両リポ同時 PR。広げる (port・2 つ目の origin・http) のは ADR。platform が読む 2 表について、path の rename・移動と 1 行目 (header) の書式の変更も両リポ同時 PR (ADR-0042 の seat の表と同じ)。
+- D8. スコープ: chart を直接使う経路 (values file・helm の直接実行) で閉じるのは frame-ancestors だけ。app-host (auth.authSignin の host) と D3 の一致は deploy-user.sh の検査で、chart の render 時 guard は持たない。iframe の対の入力である scoreboard の PORTAL_TTYD_SUFFIX (portal の CSP の frame-src と iframe src。internal/scoreboard/view/csp.go) は本 ADR の対象外 (app#532)。
+## Consequences
+- 諦めたもの: http・port・複数 origin・'self'。名簿の前の 1 回のエラーは諦めない (D6 (b) が clone の表で保つ。seat ごとの exit 2 は最大長と D3 の分だけ残る)。
+- 文法外の値では ttyd-proxy が CrashLoop になる (fail-closed)。runbook: operations.md の用例はこの形のまま変えなくてよい。
+- merge と deploy の順序: (1) app PR (app#531) を merge する。(2) platform#290 の PR で、APP_PIN を app の squash SHA に上げ、V4 の test と D6 (a)(b) を入れる。(3) 旧 2 正規表現は、deploy の pin (env file の appImageTag と events の versions.yaml) が本 ADR の commit 以降になってから消す。release tag を切るのは CEO。(2) までは platform の旧検査の方が広く、受理集合は app が決める。
+- 適用 (pin bump) の手順。(1) image tag (appImageTag) と chart の pin (app clone の checkout) を同時に上げる (ADR-0028 V8 と同じ扱い)。新しい image に旧 chart を組み合わせると、旧 deploy-user.sh が検査しない文法外の値で ttyd-proxy が CrashLoop する。旧 image に新しい chart なら、最後の検査点が無い。(2) bump の前に、env file の appHost から作る 2 値 (`https://<appHost>` と `<appHost>`) が新しい pin の 2 表の pattern で受理されることを preflight で確かめる (platform#290)。(3) CrashLoop したら、旧 image tag と旧 chart pin を同時に戻す。片方だけは戻さない。
+- 受け入れた残余: (a) sign-in redirect の最初の 1 hop は http のまま (ctf-user の auth.authSignin 既定値、charts/ctf-user/values.yaml:197。app#534)。prod では TLS Ingress の転送で緩和している。deploy-user.sh の D3 の注記 (「the one the sign-in redirect returns to」) が言う同一性は host についてで、scheme は違う。(b) 整形な別 host は運用者を信頼して受理する。D3 が効くのは 2 値を両方渡したときだけで、片方だけならその値の文法だけを検査する (software-engineer の実装判断。deploy-user.sh:335-338)。
+## Signposts
+1. ttyd を埋め込む 2 つ目の origin (docs・admin を別 host にする等) か http の local 経路が要る、または ADR-0013 の単一 origin を戻す決定が出る → 広げる ADR を書く (空白区切りで ≤ 2、https 限定の見直し)。
+2. 443 以外の port で app を出す substrate (P20 の local 等) を採る → app-host 用の literal と表を DNS_SUFFIX_PATTERN / dns-suffix-cases.tsv から分ける (dns-suffix は port を持たない)。そのうえで app-host と frame-ancestors の両方に :port を同じ PR で足し、frame_ancestors_grammar_test.go の合成 test (host 部分 == DNS_SUFFIX_PATTERN の本体) を書き換える。
+3. host 文法の写しがもう 1 つ要る (例: app#532 で scoreboard の PORTAL_TTYD_SUFFIX を起動時に検査する) → RFC 1123 host 文法を Go の 1 定義に移し (app#533)、FrameAncestorsPattern と DNS_SUFFIX_PATTERN をその写しとして固定する。D4 の host 部分の権威が変わるので、本 ADR を supersede する。
+4. stand-up で ttyd-proxy が文法を理由に起動しない → 出所 (env file / 手入力) の形がずれている。文法ではなく出所を直す。
+## Verification
+- V1 (Go, make test): Go の pattern == deploy-user.sh の literal == case 表の header。host 部分 == DNS_SUFFIX_PATTERN の本体。case 表の全行が期待どおり。chart の既定値 'none' と noneAncestors が受理される。New は全ての拒否行で error、全ての受理行で成功する。
+- V2 (shell, check-deploy-user-ids.sh): frame-ancestors の表を --frame-ancestors で、dns-suffix の表を --app-host で全行通す。受理なら helm の呼び出しに --set-string ttyd.frameAncestors=<v> / auth.appHost=<v> が完全一致で入る。D3 の不一致行は exit 2。pattern を壊す・検査を外す・一致検査を外す mutant がそれぞれ赤になる。
+- V3 (make test = required check `test`: internal/apispec/ingressparity/frame_ancestors_render_test.go の TestFrameAncestorsEnv_IsRenderedQuoted。helm が無ければ skip せず fail): `"` を含む値を helm template しても描画が壊れない (quote が効いている)。
+- V4 (platform、platform#290。実装 PR が merge されるまで機械の確認は無い): env file の appHost から作る 2 値 (`https://<appHost>` と `<appHost>`) が、APP_PIN の app の internal/ttydproxy/testdata/frame-ancestors-cases.tsv と internal/catalog/testdata/dns-suffix-cases.tsv の 1 行目 (`# pattern: ` + regex) の pattern で受理される。D6 (a) の版の gate が、frame-ancestors-cases.tsv の無い clone で local 以外の target を止める (selftest)。D6 (d) の後は、deploy-event-workspaces.sh にこの 2 つの文法の literal が無い。表の path の rename・移動と header の書式の変更は両リポ同時 PR (D7)。
+- V5: 実機でのみ確認可。Terminal タブの iframe が表示され、ttyd の応答が `frame-ancestors https://<appHost>` を持つ。
+## Advice
+- VP brief (2026-10-26)。
+- review-5x 81 (T3、2026-10-26)。採否は VP が決め、本文に反映した。R1 (security-engineer、APPROVE with comments): sign-in redirect の http の 1 hop と、片方だけ渡したときに整形な別 host を受理する点を残余として記録 (Consequences、app#534)。R4 (architecture): 契約表の platform 側を未実装の形に直し、V4 が読む面を固定 / DNS_SUFFIX_PATTERN の変更規則の食い違いと host 部分の権威 (D4、app#533) / D6 の「どちらも検査しない」窓と版の gate (D6 (a)) / スコープの境界 (D8、app#532) / 相互リンクと順序 / Options の書式と導出案。R5 (cross-repo & ops): chart と image の同時 pin・preflight・同時 rollback。R3: platform の対 issue との相互リンク。
+- 経緯: platform#54 (P19-2a) の検査と、app#270 (app#99 に対する security MEDIUM)。

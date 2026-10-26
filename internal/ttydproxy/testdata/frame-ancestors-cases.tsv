@@ -1,0 +1,124 @@
+# pattern: ^('none'|https://[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*)$
+# The `--frame-ancestors <source>` grammar's shared case table (app#520, ADR-0044).
+#
+# FRAME_ANCESTORS is the CSP `frame-ancestors` source list the ttyd-proxy sidecar stamps on
+# every ttyd response: the origins that may put the root-shell terminal in an <iframe>. The
+# grammar is EXACTLY ONE source: the quoted lower-case keyword 'none' (nobody may frame it:
+# the chart's default), or `https://` and one host of the same RFC 1123 grammar as
+# `--app-host` (internal/catalog/testdata/dns-suffix-cases.tsv: lower case, labels of 1 to 63,
+# no port, no trailing dot). The whole value is at most 261 characters (`https://` and 253);
+# a regex cannot count the whole, so each reader checks the length after the pattern
+# (ttydproxy.FrameAncestorsMaxLen, FRAME_ANCESTORS_MAX_LEN in deploy-user.sh).
+# Out, and why: 'self' (ttyd's own origin only frames itself: no use), `*` and `*.` (anyone may
+# frame a root shell), a scheme alone and `http://` (the session cookie is Secure +
+# SameSite=None: an http parent has no session), a port, a path, a trailing `/`, a query,
+# userinfo, an upper-case letter (one canonical form), more than one source (a space, `,` or
+# `;`: ADR-0013 made the origin a single one), any other keyword, nonce or hash, and a bare
+# `none` (a host named none: a misconfiguration that reads as safe).
+# The one definition is the Go constant ttydproxy.FrameAncestorsPattern. The readers:
+#   - Go:    internal/ttydproxy (frame_ancestors_grammar_test.go) pins this header, the shell
+#            literal and the constant equal, the host part to DNS_SUFFIX_PATTERN's body, runs
+#            every row through the constant and through New (a refusal to start).
+#   - shell: charts/ctf-user/deploy-user.sh, run row by row as `--frame-ancestors <input>` by
+#            scripts/check-deploy-user-ids.sh (make check-flags; CI flag-guard).
+# An empty value has no row: `--frame-ancestors ""` is the flag parser's usage error (exit 1)
+# and an empty FRAME_ANCESTORS env is New's default, 'none'. The pairing with --app-host
+# (D3) is not a row of this table: it is two inputs, and check-deploy-user-ids.sh holds it.
+# Format: the same as internal/identity/testdata/seat-cases.tsv (see its header):
+# `input<TAB>accept|reject`, the closed placeholder set {LF} {U+202E} {U+00FC} {U+00EF},
+# line 1 the canonical `# pattern: ` literal. The table stays ASCII. A row is never dropped to
+# make an implementation pass: the implementation that disagrees is the bug.
+
+# --- baseline: what is deployed (a synthetic host of the shape platform passes: https://<appHost>)
+'none'	accept
+https://app.x.example	accept
+https://app.192.168.64.2.nip.io	accept
+https://ctf-event.example.com	accept
+# --- shape
+https://a	accept
+https://localhost	accept
+https://a-b.c	accept
+https://a--b.c	accept
+https://xn--bcher-kva.example	accept
+https://1.2.3.4	accept
+https://a.b.c.d.e.f	accept
+# --- length: a label is at most 63, the whole value at most 261 (https:// and a 253-character host)
+https://abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	accept
+https://abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	reject
+https://abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.a	accept
+https://abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.a	reject
+https://abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	accept
+https://abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	reject
+# --- the keyword: exactly 'none', quoted, lower case, alone
+'NONE'	reject
+'None'	reject
+none	reject
+"none"	reject
+'none	reject
+none'	reject
+''none''	reject
+'none'{LF}	reject
+{LF}'none'	reject
+ 'none'	reject
+'none' 	reject
+'none';	reject
+'none' https://a.example	reject
+https://a.example 'none'	reject
+'none' 'self'	reject
+# --- not a source this deployment allows: 'self', a wildcard, a scheme alone, another keyword, nonce or hash
+'self'	reject
+self	reject
+*	reject
+*.x.example	reject
+https://*	reject
+https://*.x.example	reject
+https://a.*	reject
+https:	reject
+http:	reject
+https://	reject
+data:	reject
+wss://a.example	reject
+'strict-dynamic'	reject
+'nonce-abc'	reject
+'sha256-abc'	reject
+# --- https only, one canonical form: no http, no upper case, no port, path, `/`, query, fragment or userinfo
+http://app.x.example	reject
+HTTPS://a.example	reject
+Https://a.example	reject
+https://APP.x.example	reject
+https://app.x.example:8443	reject
+https://app.x.example:443	reject
+https://[::1]	reject
+https://app.x.example/	reject
+https://app.x.example/path	reject
+https://app.x.example?x=1	reject
+https://app.x.example#x	reject
+https://u@a.example	reject
+https://u:p@a.example	reject
+https://a.example\	reject
+# --- the host: RFC 1123 labels, no empty label, no trailing dot, no underscore
+https://a.example.	reject
+https://.a.example	reject
+https://a..example	reject
+https://-a.example	reject
+https://a-.example	reject
+https://a_b.example	reject
+https://a b.example	reject
+# --- one source only: a second origin, a `,` (helm --set syntax: another key), a `;` (another CSP directive)
+https://a.example https://b.example	reject
+https://a.example,https://b.example	reject
+https://a.example,ttyd.x=y	reject
+https://a.example,	reject
+https://a.example;script-src *	reject
+https://a.example;	reject
+https://a.example 'self'	reject
+https://a.example *	reject
+https://a.example=1	reject
+# --- line breaks, a bidi control, a non-ASCII letter
+https://a.example{LF}	reject
+{LF}https://a.example	reject
+https://a.example{LF}X-Injected: 1	reject
+https://a{U+202E}.example	reject
+{U+202E}'none'	reject
+https://ex{U+00FC}mple.example	reject
+https://ex{U+00EF}mple.example	reject

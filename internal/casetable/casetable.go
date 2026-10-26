@@ -1,7 +1,9 @@
 // Package casetable reads the shared grammar case tables (`input<TAB>accept|reject`)
 // that every implementation of a grammar runs: internal/identity's seat-cases.tsv
-// (app#480), internal/catalog/challengeid's challenge-id-cases.tsv (app#494) and
-// internal/catalog's scenario-name-cases.tsv (app#494). It is imported from test
+// (app#480), internal/catalog/challengeid's challenge-id-cases.tsv (app#494),
+// internal/catalog's scenario-name-cases.tsv (app#494) and the operator-input tables
+// beside it (dns-suffix, image-registry, image-tag, api-server-cidr: app#510), and
+// internal/ttydproxy's frame-ancestors-cases.tsv (app#520, ADR-0044). It is imported from test
 // files only: no production binary links it.
 //
 // The format is the one the seat table's header spells out, and the shell reader
@@ -96,4 +98,33 @@ func ShellAssign(src, name string) (string, bool) {
 		return "", false
 	}
 	return m[0][1], true
+}
+
+// dqEscape is a backslash before one of the four characters bash unescapes inside
+// double quotes.
+var dqEscape = regexp.MustCompile(`\\[$"\\` + "`" + `]`)
+
+// ShellAssignDouble is ShellAssign for a grammar that contains a single quote (a CSP
+// keyword such as 'none'), which a single-quoted shell literal cannot hold: the
+// assignment `NAME="..."` that must stand exactly once, on a line of its own, in src.
+// It returns the text between the quotes only when bash would give that text back
+// unchanged: no backtick, no `\` before `$` `"` `\` or a backtick, and no `$` except
+// as the last character (a regex's end anchor, which bash keeps; a `\` before any other
+// character, as in `\.`, is kept too). Anything bash would expand or unescape is "not
+// found" (false), so a literal that reads differently to bash than to this test is red;
+// that includes a value ending in a backslash (it would escape the closing quote).
+func ShellAssignDouble(src, name string) (string, bool) {
+	re := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(name) + `="([^"\n]*)"$`)
+	m := re.FindAllStringSubmatch(src, -1)
+	if len(m) != 1 {
+		return "", false
+	}
+	v := m[0][1]
+	// A value ending in `\` makes the closing quote an escaped one: bash reads on, so the
+	// line is not the assignment this regexp saw (a trailing `\\` is caught by dqEscape).
+	if strings.HasSuffix(v, `\`) || strings.ContainsAny(v, "`") || strings.Contains(strings.TrimSuffix(v, "$"), "$") ||
+		dqEscape.MatchString(v) {
+		return "", false
+	}
+	return v, true
 }

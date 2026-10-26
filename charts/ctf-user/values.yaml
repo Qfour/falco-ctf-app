@@ -36,8 +36,9 @@ ttyd:
   # mitigation). ttyd binds 127.0.0.1:<upstreamPort> and is unreachable except
   # via the ttyd-proxy sidecar on .Values.ttyd.port.
   upstreamPort: 7682
-  # frameAncestors = the CSP `frame-ancestors` source list ttyd-proxy stamps
-  # on every ttyd response. Fail-safe default "'none'" (I7: env-agnostic
+  # frameAncestors = the CSP `frame-ancestors` source ttyd-proxy stamps on
+  # every ttyd response: exactly one source, "'none'" or https://<host>
+  # (ADR-0044; ttyd-proxy refuses to start on anything else). Fail-safe default "'none'" (I7: env-agnostic
   # default). ctf-user is NOT a platform helmfile release (it's deployed via
   # deploy-user.sh, not helmfile), so there is no helmfile values layer to
   # supply the real portal origin. Override today via

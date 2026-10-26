@@ -13,7 +13,7 @@
 #   [FALCO_CTF_REGISTRY=<registry>/<prefix>] [FALCO_CTF_IMAGE_TAG=<tag>] \
 #   deploy-user.sh [--challenges-dir <path>] [--scenarios-dir <path>] \
 #                  [--flags-file <path>] [--dns-suffix <suffix>] \
-#                  [--frame-ancestors <csp-value>] [--app-host <host>] \
+#                  [--frame-ancestors <'none'|https://host>] [--app-host <host>] \
 #                  [--egress-lockdown --api-server-cidr <cidr>] \
 #                  <username> <challenge-id>
 #
@@ -56,15 +56,20 @@
 #   the cluster. Only the in-scope entries are passed to helm.
 #   Omit for local dev (dev placeholders are used, nothing is validated).
 #
-# --frame-ancestors <value>: CSP `frame-ancestors` source list the ttyd-proxy
+# --frame-ancestors <value>: CSP `frame-ancestors` source the ttyd-proxy
 #   sidecar (P23-3) stamps on every ttyd response. Set this to the portal's
 #   OWN origin (P23-4 embeds ttyd in the portal's Terminal tab via iframe),
-#   e.g. "https://journey.<dns-suffix>" locally (the participant host serving
-#   /portal); prod's real value collapses to a single origin once P19 lands.
-#   Omit to keep the chart's fail-safe default ('none' — nobody may frame
-#   ttyd), which is correct if the portal is not deployed/reachable yet.
+#   e.g. "https://app.<dns-suffix>" (the participant host serving /portal).
+#   Exactly one source: "'none'" (with its quotes) or https://<host> (lower case,
+#   no port or path; at most 261 characters), else exit 2 before any kubectl /
+#   helm call (ADR-0044). With --app-host, a value other than 'none' must be
+#   exactly https://<app-host>. Omit to keep the chart's fail-safe default
+#   ('none' — nobody may frame ttyd), which is correct if the portal is not
+#   deployed/reachable yet.
 #
-# --app-host <host>: bare host (no scheme) of the single-origin participant
+# --app-host <host>: bare host (no scheme; the --dns-suffix grammar: lower case
+#   RFC 1123 name, no port or path, at most 253 characters; else exit 2, ADR-0044)
+#   of the single-origin participant
 #   app (P19-2b, e.g. "app.<dns-suffix>") that fronts oauth2-proxy's
 #   /oauth2/start sign-in page. Used ONLY to build the unauthenticated ttyd
 #   Ingress's `auth-signin` redirect target (chart's `auth.authSignin`) — it
@@ -253,8 +258,8 @@ esac
 # env file (platform#285, open: until it merges the operator passes them) but holds NO
 # grammar: this script is the one place that checks. If platform#285 is not merged this
 # sentence is to be reverted.
-# --frame-ancestors and --app-host are already --set-string but have NO grammar check
-# yet: app#520 (the first is a cross-repo contract and needs architect's agreement).
+# --app-host and --frame-ancestors (app#520, ADR-0044) are checked below with the same
+# helper, and are not part of the four: see "--frame-ancestors / --app-host" after them.
 #   DNS_SUFFIX       RFC 1123 subdomain: labels of [a-z0-9-] (the first and the last a letter
 #                    or digit, 1 to 63 characters) joined by `.`, no leading / trailing dot,
 #                    at most DNS_SUFFIX_MAX_LEN (253) characters in all. Lower case only
@@ -306,6 +311,44 @@ check_operator_input() {
 [[ -z "${FALCO_CTF_REGISTRY:-}" ]] || check_operator_input "FALCO_CTF_REGISTRY" "${FALCO_CTF_REGISTRY}" "${REGISTRY_PATTERN}"
 [[ -z "${FALCO_CTF_IMAGE_TAG:-}" ]] || check_operator_input "FALCO_CTF_IMAGE_TAG" "${FALCO_CTF_IMAGE_TAG}" "${IMAGE_TAG_PATTERN}"
 [[ -z "${API_SERVER_CIDR}" ]] || check_operator_input "--api-server-cidr" "${API_SERVER_CIDR}" "${API_SERVER_CIDR_PATTERN}"
+
+# --frame-ancestors / --app-host (app#520, ADR-0044; the cross-repo contract: the value
+# comes from platform, the grammar is here and in Go). Both end up in the chart: the first
+# as the ttyd-proxy's CSP `frame-ancestors` source (the origins that may frame a root-shell
+# terminal), the second as the host of the unauthenticated ttyd Ingress's sign-in redirect
+# (auth.authSignin). A `*`, a second source, a `,` (helm reads it as another key) or a path
+# would each widen one of them, and --set-string does not stop any of it.
+#   APP_HOST         the SAME grammar as --dns-suffix: DNS_SUFFIX_PATTERN and
+#                    DNS_SUFFIX_MAX_LEN above (no new literal): a lower case RFC 1123 name, so no
+#                    scheme, port, path, userinfo, trailing dot or IPv6.
+#   FRAME_ANCESTORS  exactly one source: the quoted keyword 'none', or `https://` and one host
+#                    of the APP_HOST grammar, at most FRAME_ANCESTORS_MAX_LEN (`https://` and
+#                    253) characters. Not 'self', `*`, `*.`, a scheme alone, `http:`, a port, a
+#                    path, several sources, a bare `none`. THE DEFINITION is the Go constant
+#                    ttydproxy.FrameAncestorsPattern: this literal is a copy of it, held equal
+#                    (with the case table's header and the host part against DNS_SUFFIX_PATTERN)
+#                    by internal/ttydproxy/frame_ancestors_grammar_test.go; ttyd-proxy refuses
+#                    to start on a value outside it, so a chart used without this script is
+#                    closed too. Double quoted, not single: the grammar holds a single quote,
+#                    and the test reads the assignment only where bash gives its text back
+#                    unchanged.
+# The pairing (D3): given both, and the frame-ancestors not 'none', it must be exactly
+# https://<app-host>: the one origin that serves the portal is the one that frames ttyd and
+# the one the sign-in redirect returns to (the HOST: the scheme differs, auth.authSignin's
+# default is http, app#534). Until now only an operator's discipline kept them
+# equal. Either alone is checked against its own grammar only. Table rows:
+# internal/ttydproxy/testdata/frame-ancestors-cases.tsv and
+# internal/catalog/testdata/dns-suffix-cases.tsv (as --app-host), run by
+# scripts/check-deploy-user-ids.sh.
+FRAME_ANCESTORS_PATTERN="^('none'|https://[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*)$"
+FRAME_ANCESTORS_MAX_LEN='261'
+[[ -z "${APP_HOST}" ]] || check_operator_input "--app-host" "${APP_HOST}" "${DNS_SUFFIX_PATTERN}" "${DNS_SUFFIX_MAX_LEN}"
+[[ -z "${FRAME_ANCESTORS}" ]] || check_operator_input "--frame-ancestors" "${FRAME_ANCESTORS}" "${FRAME_ANCESTORS_PATTERN}" "${FRAME_ANCESTORS_MAX_LEN}"
+if [[ -n "${APP_HOST}" && -n "${FRAME_ANCESTORS}" && "${FRAME_ANCESTORS}" != "'none'" && "${FRAME_ANCESTORS}" != "https://${APP_HOST}" ]]; then
+  (export LC_ALL=C; printf 'invalid --frame-ancestors: %q is not https://%q (the --app-host)\n' "${FRAME_ANCESTORS}" "${APP_HOST}") >&2
+  echo "  (ADR-0044 D3; nothing was deployed)" >&2
+  exit 2
+fi
 
 # Egress lockdown (P11.5) requires the apiserver CIDR — without it the chart
 # omits the API-server allow and ttyd's `kubectl exec` into the workspace

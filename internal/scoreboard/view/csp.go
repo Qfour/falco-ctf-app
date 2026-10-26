@@ -197,12 +197,13 @@ func portalCSP(nonce, ttydSuffix string) string {
 
 // validateTtydSuffix rejects a PORTAL_TTYD_SUFFIX value containing CR, LF,
 // or any other control character before it is concatenated into the CSP
-// header (mirrors internal/ttydproxy.validateFrameAncestors's rationale:
-// this is an operator-supplied deploy-time value, not participant input,
-// but it still ends up directly inside an HTTP header value, so a
-// misconfiguration must fail loudly at first-use rather than silently
-// producing a malformed header net/http would otherwise just refuse to
-// write). Called from writeSecurityHeaders on every request rather than
+// header. This is an operator-supplied deploy-time value, not participant
+// input, but it still ends up directly inside an HTTP header value, so a
+// control character must fail loudly at first-use. It is the ONLY check on
+// this value: unlike ttyd-proxy's FRAME_ANCESTORS, which internal/ttydproxy
+// checks against a closed grammar (FrameAncestorsPattern, ADR-0044), the
+// suffix has no grammar here yet (app#532). Called from writeSecurityHeaders
+// on every request rather than
 // once at startup because view.Handler has no explicit "boot" hook to wire
 // a one-time check into today — the cost of re-checking a short, static
 // string per-request is negligible.

@@ -18,6 +18,9 @@
 //     derivation from the seat are NOT read here (the test calls `helm template
 //     <seat>` itself); scripts/check-seat-grammar.sh (ADR-0042 V2) pins them on
 //     deploy-user.sh's real helm / kubectl calls, and this test assumes them
+//   - the ttyd-proxy's FRAME_ANCESTORS env (ADR-0044 D5 / V3, app#520): rendered
+//     with `quote`, so a value outside the grammar cannot break the manifest or
+//     become another field of it: frame_ancestors_render_test.go
 //
 // A new rendered-chart invariant belongs here, with the ADR that owns it named
 // beside it. (If this set keeps growing, the package name — which is still the
