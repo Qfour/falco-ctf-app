@@ -4,9 +4,10 @@
 // The rule is one table (invisibleRanges) and one scanner (Invisible), so a consumer
 // outside this package imports the same table and the same context rules instead of
 // keeping a copy. Hidden is the one entry point that covers both sets (these rows and
-// the nine bidi controls of chars.go). Today the only candidate consumer, hintleak,
-// decides with unicode.Cf alone (ADR-0026 D5); moving it onto this table needs the
-// ADR-0026 D5 wording and the ADR-0029 D1 import closure revised first (issue #526).
+// the nine bidi controls of chars.go). hintleak decides with Hidden too (ADR-0043,
+// issue #526), one item at a time, so a change to the table, the context rules or
+// chars.go is a change to the n-gram check of ADR-0026 D5 (I16) and needs a
+// security-engineer review.
 //
 // What is forbidden raw: the union of Unicode's Default_Ignorable_Code_Point and
 // General_Category Cf (what a renderer is told to draw as nothing), plus the C0 / C1
