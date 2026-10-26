@@ -19,6 +19,13 @@ func TestNewServer_OversizedHeaderIs431(t *testing.T) {
 	if srv.MaxHeaderBytes != 64<<10 {
 		t.Fatalf("MaxHeaderBytes = %d, want %d", srv.MaxHeaderBytes, 64<<10)
 	}
+	// No Protocols: HTTP/1.1 only on a plain listener (unencrypted HTTP/2 stays off).
+	// ttyd-proxy's WebSocket Origin check (ADR-0048, Signpost 3) reads the HTTP/1.1
+	// Upgrade headers; an h2c listener would carry an extended CONNECT that this
+	// check does not see, so enabling it needs that ADR revisited first.
+	if srv.Protocols != nil {
+		t.Fatalf("Protocols = %v, want nil (HTTP/1.1 only, no unencrypted HTTP/2; ADR-0048 Signpost 3)", srv.Protocols)
+	}
 	if srv.IdleTimeout != 120*time.Second {
 		t.Fatalf("IdleTimeout = %v, want 120s", srv.IdleTimeout)
 	}
