@@ -1,5 +1,5 @@
 # ADR-0045: 不可視文字の表を data file として書き出し、参照 scanner を app に 1 本だけ置く。platform と workspace は scanner を走らせるだけにする
-- Status: Proposed (app 実装 PR の merge と同じセッションで Accepted (実装 SHA で昇格)。platform / workspace の消費者 PR は APP_PIN bump と同時か後)
+- Status: **Accepted** (2026-10-26。実装: app#536 = cf34518。review-5x 83 (T3) R1 APPROVE with comments (security)、HIGH 2 は MED に下げて反映済み。消費者 = platform#294 / ws#89 (未 merge。APP_PIN bump と同時か後))
 - Date / Deciders: 2026-10-26 / VP + architect (起草) + security-engineer (R1)
 - 関連: app#511 (security 仕様 F2)、#501 (bidi の gate)、#525 (表と scanner を sourcehygiene の非 test package に置いた)、#529 (= c8b9e0c、ADR-0043 の実装) / ADR-0043 (Option 3・Signpost 3)、ws#86 (review-5x の T2 下限に `internal/sourcehygiene/`)、platform#294 (platform の消費者 PR: wrapper・selftest・CI step・APP_PIN の bump)、ws#89 (workspace の消費者 PR: wrapper・`check-agent-skills.sh` への接続)、app#537 (walk と allowlist の signature 検査と、否定例の共有 data。follow-up)、platform#290 (ADR-0044。同じ APP_PIN の行を触る)、先例 ADR-0042 / ADR-0044 (app の表を platform が sibling clone から読む)
 
