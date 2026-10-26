@@ -1,5 +1,5 @@
 # ADR-0043: hintleak の不可視文字の判定を unicode.Cf から sourcehygiene.Hidden (表と文脈規則) に替え、ADR-0026 D5-1 の Cf の一文を限定 supersede する
-- Status: Proposed (実装 PR の merge と同じセッションの docs PR で Accepted)
+- Status: **Accepted** (2026-10-26。実装: app#529 = c8b9e0c。review-5x 79 (T3) 5 観点 APPROVE with comments、security = R1。V-a 4271 rune × 両側 / V-e 実 tree 全 4 スコープ 0 violation)
 - Date / Deciders: 2026-10-26 / VP + architect (起草) + security-engineer (R1)
 - 関連: app#526、#511 (security 仕様 F1)、#382 F1、#525 (9291799)、ADR-0026 D5 / V6 / 残余 3、ADR-0029 D1 / I17 (a) / V1、ADR-0030 C8 / D4、#511 F2 (ADR-0045 として起票予定)
 ## Context

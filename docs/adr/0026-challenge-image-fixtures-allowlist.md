@@ -1,7 +1,7 @@
 # ADR-0026: challenge image の `/opt/ctf/missions/` を fixtures allowlist にし、hints・想定解・採点メタを同梱しない
 
 - Status: **Accepted** (2026-10-14。実装: app#318 / #319、platform#203、3/3 = deploy 時検査 (V4)・V8・I16 昇格 (本 PR)。先例は ADR-0033)
-- 限定 supersede (2026-10-26): D5-1 の Cf の判定 (「ヒント項目と fixtures 項目に Unicode General Category Cf の code point …」の一文)、同じ段落の「Cf 以外の不可視文字 (異体字セレクタ等) は捕まえない (残余 3)」、V6 の「ヒント項目か fixtures 項目に Cf の code point (U+200B 等) を挟むと error (赤)」を [ADR-0043](0043-hintleak-invisible-predicate-is-sourcehygiene-hidden.md) が置き換える。実装時の解釈 6 の「ヒント項目と fixtures 項目の Cf を error とする」の Cf も同様に ADR-0043 D1 が置き換える。ADR-0043 が Accepted になるまでは本文の文言が有効。他の Decision と I16 の文言は変わらない
+- 限定 supersede (2026-10-26): D5-1 の Cf の判定 (「ヒント項目と fixtures 項目に Unicode General Category Cf の code point …」の一文)、同じ段落の「Cf 以外の不可視文字 (異体字セレクタ等) は捕まえない (残余 3)」、V6 の「ヒント項目か fixtures 項目に Cf の code point (U+200B 等) を挟むと error (赤)」を [ADR-0043](0043-hintleak-invisible-predicate-is-sourcehygiene-hidden.md) が置き換える。実装時の解釈 6 の「ヒント項目と fixtures 項目の Cf を error とする」の Cf も同様に ADR-0043 D1 が置き換える。ADR-0043 は 2026-10-26 に Accepted (app#529 = c8b9e0c)。他の Decision と I16 の文言は変わらない
 - Date / Deciders: 2026-10-05 / CEO (2026-10-04「2026-06 の guided 方針を解除し、撤去する」) + VP + architect (起草) +
   security-engineer・qa-engineer (独立レビュー 2026-10-05。指摘は本版に反映済み、再確認待ち)
 - 関連: workspace `REFACTORING.md` P28-0d / P22 (2026-08-14 CEO 決定) / P27-1、ADR-0001 (監査 LOW「plant.sh の同梱」・I12)、
