@@ -189,7 +189,7 @@ auth:
   # don't set it by hand — see falco-ctf-app-conventions.md's Cross-repo
   # 契約 table once wired). Empty default falls back to the legacy
   # `auth.<dnsSuffix>` compat-bridge host (app#99 follow-up target for
-  # removal) so unconfigured/local deploys keep working unchanged — this is
+  # removal) so unconfigured/local deploys keep working (the scheme is https, app#534) — this is
   # fail-soft UX only (a stale sign-in redirect just 404s/misdirects), it
   # does NOT touch the auth-policy roster check the Ingress's fixed auth-url
   # makes (I8 unaffected).
@@ -200,7 +200,10 @@ auth:
   # https://<app-host>; oauth2-proxy's redirect_url and cookie_secure are https), so the
   # first hop of the sign-in redirect is https too. An environment that can only serve
   # http overrides this whole value (values file or `--set-string auth.authSignin=...`);
-  # none in the platform's helmfile needs to (the local env's workspace Ingress is TLS).
+  # none in the platform's current envs needs to. What this depends on is the TLS
+  # termination of the redirect TARGET (platform's oauth2-proxy Ingress: appHost and the
+  # `auth.<dnsSuffix>` compat bridge, app#99), not on this workspace Ingress: whoever
+  # adds a substrate or removes the bridge must keep that target served over https.
   authSignin: 'https://{{ .Values.auth.appHost | default (printf "auth.%s" .Values.dnsSuffix) }}/oauth2/start?rd=$scheme://$host$escaped_request_uri'
 
 networkPolicy:
