@@ -74,6 +74,7 @@ A。新しい toolchain を足さず、sourcehygiene の非 test package を広�
   - (c) `binary-ext.tsv`
     - 行の形は `<.ext><TAB><reason>`。`binaryExt` (bidi_test.go:77-82) の書き出しで、小文字、昇順、重複無し。
     - `.pdf` を足す (C4)。
+    - 追記 (2026-10-27、app#537): 行の形は 3 列の `<.ext><TAB><reason><TAB><signature>` になった。`<signature>` は file の先頭 bytes の大文字 hex (2 byte 以上): `.pdf` = `255044462D` (`%PDF-`)、`.woff2` = `774F4632` (`wOF2`)、`.tgz` = `1F8B` (gzip)。file は拡張子と signature の両方が合うときだけ走査から外し、合わなければ text として走査する。data の書式は D8 により面ではないので、scanner・Go の test・data を同じ PR で変えた (app 単独 PR + security)。
   - (d) cases の placeholder
     - `{U+XXXX}` (4-6 桁の大文字 hex) は、その code point を UTF-8 にした byte 列になる。`{xHH}` (80-FF) は、生の 1 byte (不正な UTF-8) になる。
     - placeholder を取り除いた残りに `{` か `}` が残る行は、reader の誤り = FAIL にする (`{` は `{U+007B}` と書く)。
@@ -98,6 +99,7 @@ A。新しい toolchain を足さず、sourcehygiene の非 test package を広�
     - path は印字可能な ASCII だけ。判定は `re.fullmatch` で行う (`$` は末尾の LF を通す)。
     - lstat の `FileNotFoundError` だけを「無い」とし、ほかの OSError と、`os.walk` の列挙の失敗は FAIL にする (読めない subtree を黙って飛ばさない)。dir を指す symlink も列挙して path の規則をかける (Go の WalkDir と同じ集合)。
     - allowlist は closed set。列にある code point だけを許し、dead entry は FAIL。
+  - 追記 (2026-10-27、app#537): 上の「walk と allowlist の signature 検査」と「否定例の共有 data」は app#537 で解消した。walk は signature 検査を持ち (D1 (c) の追記)、reader と walk の否定例は `internal/sourcehygiene/testdata/negatives/` の「1 dir = 1 否定例」(`expect.txt` + 入力 1 つ。形式は `negatives_test.go` の先頭) に置き、Go の `TestSharedNegatives` と scanner の `--selftest` が同じ dir 群を同じに判定する。共有しないもの (scanner の `--selftest` だけが固定する): ranges の reader (Go は読まずに Go の表と比べる)、binary だけの tree、bidi の allowlist、git mode、`--also-untracked`、symlink、列挙できない dir、command line。
   - 出力は path、line、col、code point、名前、理由だけにする。file の中身は出さない。
   - 終了コードは、0 = 違反なし、1 = 違反、data が読めない、走査が 0 件、2 = 使い方の誤り。
 - **D5. app の CI**
@@ -136,6 +138,7 @@ A。新しい toolchain を足さず、sourcehygiene の非 test package を広�
   - B の完全な同一性。parity は cases 表と、app tree の実 file の走査で見る。
   - 消費者ごとの binary 拡張子。`.pdf` を app の表に足すので、app の gate も今後 `.pdf` を走査しない。app には今 `.pdf` は無く、`TestTrackedFilesHoldNoRawBidiOrInvisibleCharacter` が「tracked の binary は `.woff2` と `.tgz` だけ」を固定する。PDF の描画内容は文字の規則の対象外で、受け入れる残余とする。
   - `*.pdf` と名付けた text file は、拡張子だけで判定するので走査されずに素通りする。中身が PDF であることの signature 検査は app#537 に残す。
+    - 追記 (2026-10-27、app#537): signature 検査で解消した。`*.pdf` と名付けた text file は、先頭が `%PDF-` でなければ text として走査される (`.woff2` と `.tgz` も同じ)。残る残余は、本物の PDF の描画内容が文字の規則の対象外であることだけ。
 - 新しく守るもの:
   - 3 file が Go の値と一致すること (V1)。
   - scanner が data を自分の checkout からだけ読むこと。
