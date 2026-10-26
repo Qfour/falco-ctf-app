@@ -97,3 +97,29 @@ func ShellAssign(src, name string) (string, bool) {
 	}
 	return m[0][1], true
 }
+
+// dqEscape is a backslash before one of the four characters bash unescapes inside
+// double quotes.
+var dqEscape = regexp.MustCompile(`\\[$"\\` + "`" + `]`)
+
+// ShellAssignDouble is ShellAssign for a grammar that contains a single quote (a CSP
+// keyword such as 'none'), which a single-quoted shell literal cannot hold: the
+// assignment `NAME="..."` that must stand exactly once, on a line of its own, in src.
+// It returns the text between the quotes only when bash would give that text back
+// unchanged: no backtick, no `\` before `$` `"` `\` or a backtick, and no `$` except
+// as the last character (a regex's end anchor, which bash keeps; a `\` before any other
+// character, as in `\.`, is kept too). Anything bash would expand or unescape is "not
+// found" (false), so a literal that reads differently to bash than to this test is red.
+func ShellAssignDouble(src, name string) (string, bool) {
+	re := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(name) + `="([^"\n]*)"$`)
+	m := re.FindAllStringSubmatch(src, -1)
+	if len(m) != 1 {
+		return "", false
+	}
+	v := m[0][1]
+	if strings.ContainsAny(v, "`") || strings.Contains(strings.TrimSuffix(v, "$"), "$") ||
+		dqEscape.MatchString(v) {
+		return "", false
+	}
+	return v, true
+}

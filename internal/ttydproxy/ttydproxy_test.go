@@ -154,12 +154,25 @@ func TestFrameAncestorsControlCharRejected(t *testing.T) {
 }
 
 // TestFrameAncestorsPlainValueAccepted is the control for the case above —
-// ordinary source-expression values (no control characters) must still work.
+// the two forms of the grammar (ADR-0044) must still work.
 func TestFrameAncestorsPlainValueAccepted(t *testing.T) {
 	up := htmlUpstream(t)
-	for _, v := range []string{"'none'", "'self'", "https://ctf-event.example.com"} {
+	for _, v := range []string{"'none'", "https://ctf-event.example.com"} {
 		if _, err := New(up.URL, v, testLogger()); err != nil {
 			t.Errorf("New(%q): unexpected error: %v", v, err)
+		}
+	}
+}
+
+// TestFrameAncestorsOutsideTheGrammarRefusesToStart: a value that widens who may frame the
+// root-shell terminal is an error at start, not a CSP (ADR-0044 D4). The full table is
+// frame_ancestors_grammar_test.go; these are the ones the issue is about.
+func TestFrameAncestorsOutsideTheGrammarRefusesToStart(t *testing.T) {
+	up := htmlUpstream(t)
+	for _, v := range []string{"*", "'self'", "https://a.example *", "https://a.example https://b.example",
+		"https://a.example;script-src *", "http://a.example", "https://a.example:8443", "none"} {
+		if _, err := New(up.URL, v, testLogger()); err == nil {
+			t.Errorf("New(%q): want error (outside the FRAME_ANCESTORS grammar), got nil", v)
 		}
 	}
 }

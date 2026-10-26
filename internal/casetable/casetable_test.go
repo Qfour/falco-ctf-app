@@ -66,6 +66,34 @@ func TestShellAssign(t *testing.T) {
 	}
 }
 
+func TestShellAssignDouble(t *testing.T) {
+	ok := "x\nNAME=\"^('none'|a\\.b)$\"\ny\n"
+	if got, found := ShellAssignDouble(ok, "NAME"); !found || got != `^('none'|a\.b)$` {
+		t.Fatalf("a faithful assignment was not read back: %q, %v", got, found)
+	}
+	for name, src := range map[string]string{
+		"missing":           "x\n",
+		"twice":             ok + ok,
+		"indented":          "  NAME=\"^a$\"\n",
+		"single quoted":     "NAME='^a$'\n",
+		"unquoted":          "NAME=^a$\n",
+		"in a line":         "echo NAME=\"^a$\"\n",
+		"other":             "OTHER_NAME=\"^a$\"\n",
+		"suffix":            "NAME=\"^a$\" # c\n",
+		"expansion":         "NAME=\"^a$HOME\"\n",
+		"command subst":     "NAME=\"^a$(id)\"\n",
+		"dollar mid":        "NAME=\"^a$|b$\"\n",
+		"backtick":          "NAME=\"^a`id`$\"\n",
+		"escaped dollar":    "NAME=\"^a\\$\"\n",
+		"escaped quote":     "NAME=\"^a\\\"b$\"\n",
+		"escaped backslash": "NAME=\"^a\\\\.b$\"\n",
+	} {
+		if _, found := ShellAssignDouble(src, "NAME"); found {
+			t.Errorf("%s: read as a single definition bash would give back unchanged", name)
+		}
+	}
+}
+
 // The shell reader (scripts/lib/casetable.sh, app#509) decodes the same closed
 // placeholder set. If the two sets drifted, a row would stand for one input in Go and
 // another in shell, or be a verdict in one reader and an unknown-placeholder error in

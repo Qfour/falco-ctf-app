@@ -90,6 +90,12 @@ var seatShaped = regexp.MustCompile(`\[a-z0-9\](?:\[a-z0-9-\]\{0,\d+\}|\(\[a-z0-
 var otherGrammars = map[string]string{
 	// internal/e2e/serve: the name of a seed (31 characters), not a seat.
 	"^[a-z0-9][a-z0-9-]{0,31}$": "e2e seed name",
+	// internal/ttydproxy: ADR-0044 D2, the FRAME_ANCESTORS grammar ('none' or https://<host>).
+	// Its host part is the RFC 1123 label of --dns-suffix / --app-host, which has the same
+	// shape as a seat's but is a different grammar (labels of 1 to 63, joined by `.`). The
+	// text is held equal to deploy-user.sh's and the case table's header by
+	// internal/ttydproxy/frame_ancestors_grammar_test.go.
+	`^('none'|https://[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*)$`: "FRAME_ANCESTORS (ADR-0044)",
 }
 
 // seatLiterals returns the string literals of src that spell a seat-shaped

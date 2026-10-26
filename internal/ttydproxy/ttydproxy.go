@@ -64,12 +64,32 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"unicode"
+	"regexp"
 )
 
 // noneAncestors is the fail-safe default: no origin (including same-origin)
 // may frame the proxied ttyd response.
 const noneAncestors = "'none'"
+
+// FrameAncestorsPattern is the ONE definition of the FRAME_ANCESTORS grammar
+// (ADR-0044 D2, app#520): exactly one source, either the quoted lower-case keyword
+// 'none' or `https://` and one host, the same RFC 1123 host grammar as
+// deploy-user.sh's --app-host (DNS_SUFFIX_PATTERN). Out: 'self', `*` and `*.`, a
+// scheme alone (`https:`), `http://`, a port, a path, a trailing `/`, a query,
+// userinfo, an upper-case letter, more than one source (a space, `,` or `;`), any
+// other keyword, nonce or hash, and a bare `none` (a host named none, a misconfiguration
+// that reads as safe). The whole value is at most FrameAncestorsMaxLen characters; a
+// regex cannot count the whole, so New checks the length after the pattern.
+//
+// charts/ctf-user/deploy-user.sh holds this text as FRAME_ANCESTORS_PATTERN and
+// internal/ttydproxy/testdata/frame-ancestors-cases.tsv as its `# pattern: ` header;
+// frame_ancestors_grammar_test.go holds the three equal and runs every row.
+const FrameAncestorsPattern = `^('none'|https://[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*)$`
+
+// FrameAncestorsMaxLen is `https://` (8) and the 253 characters of a whole RFC 1123 name.
+const FrameAncestorsMaxLen = 261
+
+var frameAncestorsRE = regexp.MustCompile(FrameAncestorsPattern)
 
 // Handler reverse-proxies to a local ttyd instance and stamps every response
 // with a Content-Security-Policy: frame-ancestors directive (see package
@@ -88,14 +108,15 @@ type Handler struct {
 //
 // frameAncestors is operator-supplied (env var, ultimately a chart value)
 // rather than participant-controlled, but it still ends up concatenated
-// directly into an HTTP response header value, so New rejects it outright if
-// it contains CR, LF, or any other control character (validateFrameAncestors)
-// — fail-closed on a malformed operator input rather than attempting to
-// sanitise it. net/http's header writer already refuses to write a header
-// value containing CR/LF (it would otherwise enable response-splitting), so
-// this check does not change what ever reaches the wire; it turns a
-// same-class mistake into an explicit startup error instead of a silent
-// per-request net/http failure discovered only once traffic arrives.
+// directly into an HTTP response header value (and is a CSP source list, so a
+// `*` or a second origin widens who may frame a root shell). New therefore
+// rejects anything outside FrameAncestorsPattern (ADR-0044 D4) — fail-closed on
+// a malformed operator input rather than attempting to sanitise it. This is the
+// last check point: it also closes the paths that do not go through
+// deploy-user.sh (a values file, a direct helm run). net/http's header writer
+// already refuses CR/LF (response splitting), so the grammar changes nothing
+// that reaches the wire for those; it turns every other bad value into an
+// explicit startup error instead of a widened policy.
 func New(upstream string, frameAncestors string, logger *slog.Logger) (*Handler, error) {
 	u, err := url.Parse(upstream)
 	if err != nil {
@@ -152,19 +173,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.proxy.ServeHTTP(w, r)
 }
 
-// validateFrameAncestors rejects a CSP frame-ancestors value containing CR,
-// LF, or any other Unicode control character. It is deliberately strict
-// (reject-on-any-control-char rather than trying to enumerate "safe"
-// control characters) because the only legitimate values are ASCII source
-// expressions (`'none'`, `'self'`, `https://host[:port]`) — none of which
-// ever need a control character, so any that appear indicate a
-// misconfiguration (or a copy-paste/env-injection accident) rather than a
-// legitimate value New should try to accommodate.
+// validateFrameAncestors rejects a value outside FrameAncestorsPattern or longer
+// than FrameAncestorsMaxLen. The value is %q-escaped in the error, so a control or
+// bidi character in it cannot reach a log raw.
 func validateFrameAncestors(v string) error {
-	for _, r := range v {
-		if unicode.IsControl(r) {
-			return fmt.Errorf("ttydproxy: FRAME_ANCESTORS contains a control character (%q); refusing to start", v)
-		}
+	if len(v) > FrameAncestorsMaxLen || !frameAncestorsRE.MatchString(v) {
+		return fmt.Errorf("ttydproxy: FRAME_ANCESTORS %q is not 'none' or one https://<host> origin (ADR-0044, at most %d characters); refusing to start", v, FrameAncestorsMaxLen)
 	}
 	return nil
 }
