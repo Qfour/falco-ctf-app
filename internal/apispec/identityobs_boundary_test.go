@@ -100,28 +100,51 @@ func uncopiedPackages(dockerfile string, closure map[string]bool) []string {
 	return missing
 }
 
-// Every module-internal package the collector links is COPYed by directory in
-// collector/Dockerfile: the other half of "nothing here builds on the host only".
-func TestCollectorDockerfileCopiesItsWholeClosure(t *testing.T) {
+// distrolessImages are the images that COPY the packages their binary links by
+// directory name (a whole-tree COPY, as the scoreboard does, needs no check). Each
+// row: the binary, its Dockerfile, one COPY line whose removal must be reported and
+// the one package it must report. `build (<image>)` is not a required check, so a
+// package added to a binary's imports without its COPY would be green on the host
+// and in `make test` and break only the image build (ADR-0047 V6, app#533).
+var distrolessImages = []struct {
+	cmd, dockerfile string
+	dropLine        string // a COPY line of the Dockerfile
+	dropPkg         string // the package that line COPYs
+}{
+	{"collector", "collector/Dockerfile", "COPY internal/scoreboard/ratelimit ./internal/scoreboard/ratelimit", "internal/scoreboard/ratelimit"},
+	{"auth-policy", "auth-policy/Dockerfile", "COPY internal/identity ./internal/identity", "internal/identity"},
+	{"ttyd-proxy", "images/ttyd-proxy/Dockerfile", "COPY internal/dnsname ./internal/dnsname", "internal/dnsname"},
+}
+
+// Every module-internal package a distroless binary links is COPYed by directory in
+// its Dockerfile: the other half of "nothing here builds on the host only".
+func TestDistrolessDockerfilesCopyTheirWholeClosure(t *testing.T) {
 	root := repoRoot(t)
-	closure := transitiveModuleImports(t, root, modulePrefix+"cmd/collector")
-	b, err := os.ReadFile(filepath.Join(root, "collector", "Dockerfile"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	df := string(b)
-	if len(copiedDirs(df)) < 5 {
-		t.Fatalf("parsed COPY sources %v from collector/Dockerfile: the parse is broken", copiedDirs(df))
-	}
-	if missing := uncopiedPackages(df, closure); len(missing) > 0 {
-		t.Fatalf("collector/Dockerfile does not COPY %v, which cmd/collector links: the image build breaks while the host build is green", missing)
-	}
-	// Not vacuous: dropping ratelimit's COPY line is reported.
-	broken := strings.ReplaceAll(df, "COPY internal/scoreboard/ratelimit ./internal/scoreboard/ratelimit", "")
-	if broken == df {
-		t.Fatal("the mutation (dropping ratelimit's COPY) changed nothing: the Dockerfile's line moved")
-	}
-	if missing := uncopiedPackages(broken, closure); len(missing) != 1 || missing[0] != "internal/scoreboard/ratelimit" {
-		t.Fatalf("with ratelimit's COPY dropped the check reported %v, want [internal/scoreboard/ratelimit]", missing)
+	for _, img := range distrolessImages {
+		t.Run(img.cmd, func(t *testing.T) {
+			closure := transitiveModuleImports(t, root, modulePrefix+"cmd/"+img.cmd)
+			b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(img.dockerfile)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			df := string(b)
+			if len(copiedDirs(df)) < 4 {
+				t.Fatalf("parsed COPY sources %v from %s: the parse is broken", copiedDirs(df), img.dockerfile)
+			}
+			if !closure[modulePrefix+img.dropPkg] {
+				t.Fatalf("cmd/%s's closure lacks %s: the mutation below would test nothing", img.cmd, img.dropPkg)
+			}
+			if missing := uncopiedPackages(df, closure); len(missing) > 0 {
+				t.Fatalf("%s does not COPY %v, which cmd/%s links: the image build breaks while the host build is green", img.dockerfile, missing, img.cmd)
+			}
+			// Not vacuous: dropping one COPY line is reported, and only that package.
+			broken := strings.ReplaceAll(df, img.dropLine, "")
+			if broken == df {
+				t.Fatalf("the mutation (dropping %q) changed nothing: the Dockerfile's line moved", img.dropLine)
+			}
+			if missing := uncopiedPackages(broken, closure); len(missing) != 1 || missing[0] != img.dropPkg {
+				t.Fatalf("with %q dropped the check reported %v, want [%s]", img.dropLine, missing, img.dropPkg)
+			}
+		})
 	}
 }

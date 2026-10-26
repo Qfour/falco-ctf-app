@@ -7,9 +7,11 @@
 # the last a letter or digit, 1 to 63 characters, joined by `.`, no leading or trailing
 # dot, 253 characters in all. The 253 is deploy-user.sh's DNS_SUFFIX_MAX_LEN (a regex
 # cannot count the whole), checked after the pattern; this table's rows hold it.
-# The grammar has NO Go definition: the shell literal is the definition. The readers:
-#   - Go:    internal/catalog (deploy_operator_inputs_test.go) pins the header to the
-#            shell literal, DNS_SUFFIX_MAX_LEN to 253, and runs every row.
+# The one Go definition of the grammar is internal/dnsname (ADR-0047); deploy-user.sh's
+# DNS_SUFFIX_PATTERN / DNS_SUFFIX_MAX_LEN are a copy of it. The readers:
+#   - Go:    internal/dnsname (dnsname_test.go) pins this header, the shell literal and
+#            dnsname.Pattern equal, DNS_SUFFIX_MAX_LEN to dnsname.MaxLen = 253, and runs
+#            every row through dnsname.Valid.
 #   - shell: charts/ctf-user/deploy-user.sh, run row by row as `--dns-suffix <input>` by
 #            scripts/check-deploy-user-ids.sh (make check-flags; CI flag-guard).
 # An empty value has no row: `--dns-suffix ""` is the flag parser's usage error (exit 1).

@@ -5,13 +5,16 @@ package catalog_test
 // FALCO_CTF_IMAGE_TAG and --api-server-cidr. Each is checked against a closed grammar
 // before any kubectl / helm call and passed to helm with --set-string.
 //
-// None of the four has a Go definition (an operator input is read by deploy-user.sh
-// only, and platform holds no grammar: it derives the registry and the tag from its env
-// file and hands them to this script), so the shell literal IS the definition. This test
-// holds it equal to the `# pattern: ` header of the shared case table (the form
+// --dns-suffix has a Go definition since ADR-0047 (app#533): internal/dnsname, which
+// dnsname_test.go holds equal to deploy-user.sh's DNS_SUFFIX_PATTERN / DNS_SUFFIX_MAX_LEN
+// and to dns-suffix-cases.tsv (a table that stays here: platform reads its first line).
+// The other three have none (an operator input is read by deploy-user.sh only, and
+// platform holds no grammar: it derives the registry and the tag from its env file and
+// hands them to this script), so the shell literal IS the definition. This test holds
+// each of the three equal to the `# pattern: ` header of its shared case table (the form
 // scenario_name_test.go uses), runs every row through the literal, and requires the
 // values the chart ships with to be accepted. scripts/check-deploy-user-ids.sh runs the
-// same rows through deploy-user.sh itself.
+// same rows through deploy-user.sh itself, dns-suffix included.
 
 import (
 	"os"
@@ -23,25 +26,18 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/casetable"
 )
 
-// dnsSuffixMaxLen is RFC 1123's limit on a whole name. A regex cannot count the whole,
-// so deploy-user.sh checks DNS_SUFFIX_MAX_LEN after DNS_SUFFIX_PATTERN; this constant
-// is the pin, and the table's rows hold the behaviour at 253 / 254.
-const dnsSuffixMaxLen = 253
-
 type operatorGrammar struct {
 	table     string // file under testdata/
 	shellVar  string // the NAME='...' assignment in deploy-user.sh
-	maxLen    int    // 0 = no bound beyond the pattern
 	minRows   int
 	minAccept int
 	minReject int
 }
 
 var operatorGrammars = []operatorGrammar{
-	{"dns-suffix-cases.tsv", "DNS_SUFFIX_PATTERN", dnsSuffixMaxLen, 50, 15, 30},
-	{"image-registry-cases.tsv", "REGISTRY_PATTERN", 0, 80, 14, 60},
-	{"image-tag-cases.tsv", "IMAGE_TAG_PATTERN", 0, 50, 15, 25},
-	{"api-server-cidr-cases.tsv", "API_SERVER_CIDR_PATTERN", 0, 65, 15, 45},
+	{"image-registry-cases.tsv", "REGISTRY_PATTERN", 80, 14, 60},
+	{"image-tag-cases.tsv", "IMAGE_TAG_PATTERN", 50, 15, 25},
+	{"api-server-cidr-cases.tsv", "API_SERVER_CIDR_PATTERN", 65, 15, 45},
 }
 
 func readDeployUser(t *testing.T) string {
@@ -96,7 +92,7 @@ func TestDeployUserOperatorInputs_SharedCaseTables(t *testing.T) {
 				} else {
 					rejected++
 				}
-				got := re.MatchString(r.Input) && (g.maxLen == 0 || len(r.Input) <= g.maxLen)
+				got := re.MatchString(r.Input)
 				if got != r.Accept {
 					t.Errorf("%s:%d: %q is accepted = %v, want %v", g.table, r.Line, r.Input, got, r.Accept)
 				}
@@ -105,18 +101,6 @@ func TestDeployUserOperatorInputs_SharedCaseTables(t *testing.T) {
 				t.Fatalf("%s has %d accept / %d reject rows: too few of one kind to hold the grammar", g.table, accepted, rejected)
 			}
 		})
-	}
-}
-
-// DNS_SUFFIX_MAX_LEN is a shell literal beside the pattern: pin its text to RFC 1123's
-// 253, so a loosened bound is red even where no row sits at the new edge.
-func TestDeployUserDNSSuffixMaxLenIs253(t *testing.T) {
-	got, ok := casetable.ShellAssign(readDeployUser(t), "DNS_SUFFIX_MAX_LEN")
-	if !ok {
-		t.Fatal("deploy-user.sh must define DNS_SUFFIX_MAX_LEN='...' exactly once on its own line")
-	}
-	if got != "253" {
-		t.Errorf("deploy-user.sh DNS_SUFFIX_MAX_LEN = %q, want %q (RFC 1123)", got, "253")
 	}
 }
 
@@ -131,15 +115,6 @@ func TestDeployUserOperatorInputs_ChartDefaultsAreAccepted(t *testing.T) {
 		t.Fatal(err)
 	}
 	values := string(raw)
-
-	dns := shellPattern(t, script, "DNS_SUFFIX_PATTERN")
-	m := regexp.MustCompile(`(?m)^dnsSuffix:\s*"([^"\n]*)"\s*$`).FindStringSubmatch(values)
-	if m == nil {
-		t.Fatal("values.yaml has no top-level dnsSuffix: \"...\" line: the test's reader is stale")
-	}
-	if !dns.MatchString(m[1]) || len(m[1]) > dnsSuffixMaxLen {
-		t.Errorf("chart default dnsSuffix %q does not pass deploy-user.sh's --dns-suffix grammar", m[1])
-	}
 
 	reg := shellPattern(t, script, "REGISTRY_PATTERN")
 	tag := shellPattern(t, script, "IMAGE_TAG_PATTERN")

@@ -17,7 +17,7 @@
 # `none` (a host named none: a misconfiguration that reads as safe).
 # The one definition is the Go constant ttydproxy.FrameAncestorsPattern. The readers:
 #   - Go:    internal/ttydproxy (frame_ancestors_grammar_test.go) pins this header, the shell
-#            literal and the constant equal, the host part to DNS_SUFFIX_PATTERN's body, runs
+#            literal and the constant equal, the host part composed from dnsname.Body (ADR-0047), runs
 #            every row through the constant and through New (a refusal to start).
 #   - shell: charts/ctf-user/deploy-user.sh, run row by row as `--frame-ancestors <input>` by
 #            scripts/check-deploy-user-ids.sh (make check-flags; CI flag-guard).
