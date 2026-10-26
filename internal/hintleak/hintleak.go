@@ -13,9 +13,13 @@
 //     must stay clean: for ADR-0026, every fixture file (all challenges, NOT
 //     narrowed to S). Items are read as UTF-8; a
 //     non-UTF-8 item is an error. So is a hint item or target item containing
-//     an invisible format character (Unicode category Cf: U+200B, U+FEFF,
-//     U+00AD, U+2060, ...): it is not White_Space, so it would silently split a
-//     copied run and let it through. The normalisation below is unchanged.
+//     a rune that [sourcehygiene.Hidden] reports (ADR-0043 D1: the invisible
+//     table, Cf ∪ Default_Ignorable ∪ C0/C1 ∪ LS/PS ∪ a lone CR, and the nine
+//     bidi controls, minus the runes that are legitimate in their context): it
+//     is not White_Space, so it would silently split a copied run and let it
+//     through. Each item is one "file" for Hidden, so a BOM is judged at the
+//     start of the item. Free items are not checked. The normalisation below is
+//     unchanged.
 //  2. Normalise. Remove every rune for which [unicode.IsSpace] is true. Nothing
 //     else changes: no NFC/NFKC, no case folding, no punctuation stripping.
 //  3. n-gram. n = [GramRunes] runes, cut PER ITEM (items are never joined, so a
@@ -34,6 +38,8 @@ import (
 	"sort"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/Qfour/falco-ctf-app/internal/sourcehygiene"
 )
 
 // GramRunes is n of ADR-0026 D5: one above the noise knee (n=9 still matches
@@ -66,14 +72,16 @@ type Violation struct {
 var ErrEmptyInput = errors.New("hintleak: no hint items or no target items to scan")
 
 // ErrFormatChar is returned (wrapped) when a hint item or a target item
-// contains a Unicode Cf (format) code point.
-var ErrFormatChar = errors.New("hintleak: item contains an invisible format character (Unicode Cf)")
+// contains a rune that [sourcehygiene.Hidden] reports (ADR-0043). The name is
+// kept from the time the rule was Unicode Cf alone, so that callers of errors.Is and the tests stay stable. Renaming it is for P28-1, together with the import-closure test (ADR-0029 V1).
+var ErrFormatChar = errors.New("hintleak: item contains an invisible character (sourcehygiene.Hidden: invisible table or bidi control)")
 
 // Check applies the rule to in and returns the violations, sorted by
 // (Target, Gram). It returns [ErrEmptyInput] (wrapped) when in has no hint
 // item or no target item, an error naming the item when any item is not valid
-// UTF-8, and [ErrFormatChar] (wrapped, naming the item and code point) when a
-// hint or target item contains a Cf code point.
+// UTF-8, and [ErrFormatChar] (wrapped, naming the item, the position, the code
+// point, its name and the context rule it broke) when a hint or target item
+// contains a rune that [sourcehygiene.Hidden] reports.
 func Check(in Input) ([]Violation, error) {
 	if len(in.Hints) == 0 || len(in.Targets) == 0 {
 		return nil, fmt.Errorf("%w (hints=%d targets=%d)", ErrEmptyInput, len(in.Hints), len(in.Targets))
@@ -88,10 +96,10 @@ func Check(in Input) ([]Violation, error) {
 
 	for _, group := range [][]Item{in.Hints, in.Targets} {
 		for _, it := range group {
-			for _, r := range it.Text {
-				if unicode.Is(unicode.Cf, r) {
-					return nil, fmt.Errorf("%w: %s has U+%04X", ErrFormatChar, it.Source, r)
-				}
+			// One item is one "file" for Hidden (ADR-0043 D1). The text is already
+			// known to be valid UTF-8 (checked above).
+			if found := sourcehygiene.Hidden([]byte(it.Text)); len(found) > 0 {
+				return nil, fmt.Errorf("%w: %s has %s (%d hidden rune(s) in the item)", ErrFormatChar, it.Source, found[0], len(found))
 			}
 		}
 	}

@@ -38,7 +38,7 @@
   端末から読める。scoreboard の image には `challenges/` が丸ごと入る (`scoreboard/Dockerfile:24-25`。起動時の検査は README.md と rule-explain.md を読める)。本 ADR の
   開示境界は「portal がいつ何を出すか」であって、秘密の保持ではない。
 - **C7 prod は CI-free** (image は手で build する: `REFACTORING.md:24-27`)。required check を通っていない tree からも image を作れる。
-- **C8 `hintleak.Check` は範囲全体で error を返す。** 守る文か対象に Cf (不可視の書式文字) が 1 つある、どれかの項目が非 UTF-8、守る文か対象が 0 件、のどれでも、
+- **C8 `hintleak.Check` は範囲全体で error を返す。** 守る文か対象に不可視の rune (`sourcehygiene.Hidden` が報告するもの: ADR-0043 D1。起草時は Cf だけ) が 1 つある、どれかの項目が非 UTF-8、守る文か対象が 0 件、のどれでも、
   違反の一覧ではなく範囲全体の error を返す (`internal/hintleak/hintleak.go:77-97`、branch `feat/hintleak-ngram-check` の 6f52615)。
 - **C9 yaml.v3 (v3.0.1: `go.mod:9`) の挙動。** `Node.Decode` は新しい decoder を作り、`KnownFields` を引き継がない (`yaml.go` の `Node.Decode`)。string のフィールドには
   数値と真偽値の scalar を文字列にして入れる (`decode.go` の `scalar` の `reflect.String`)。repo に `KnownFields` の前例は無い (c5e0761)。entry ごとの厳格な decode は、
@@ -134,8 +134,8 @@
     (対象の項目, 異なる n-gram)。除外リストを作らず、Quest 側の言い換えで消す。
   - **起動時も同じ検査を回す** (C7: 検査を通っていない tree から作った image でも、未 solve の解法を出さない)。入力が欠けると守る文が縮んで緩む側に倒れ、Check は
     範囲全体で error を返す (C8) ので、起動時は次の順にする。(0) 範囲の各課題に `README.md` と journey があることを確かめる (rule-explain.md は 4 本だけなので要求しない)
-    (1) Quest の各 entry を先に UTF-8 と Cf で検査し、駄目な entry を破棄する (2) Check の違反に当たった entry を破棄し、他は残す (3) (0) が欠けているか Check が error
-    なら (守る文か無料表示の側の Cf・非 UTF-8、守る文が 0 件)、Quest の文をすべて破棄して Quest を無効にする (`quest_enabled` = 0)。log を出して文を残すことはしない
+    (1) Quest の各 entry を先に UTF-8 と、hintleak の Check と同じ不可視文字の述語 (ADR-0043 D1。hintleak が公開する 1 関数を使い、quest で写さない) で検査し、駄目な entry を破棄する (2) Check の違反に当たった entry を破棄し、他は残す (3) (0) が欠けているか Check が error
+    なら (守る文の側の不可視の rune、守る文か無料表示の側の非 UTF-8、守る文が 0 件)、Quest の文をすべて破棄して Quest を無効にする (`quest_enabled` = 0)。log を出して文を残すことはしない
     (開示が fail-open になる) (4) 対象が 0 件なら何もしない。(2)・(3) の破棄は counter の kind `ngram` に数え、preflight は 1 件以上を no-go 相当の信号として扱う
     (ADR-0029 D9)。CI では (0)・(1)・(3)・(4) も fail。
 - **D5 CI と起動時の分担。** CI (`make test`、full catalog と全 scenario) では fail、起動時は warn と entry の破棄 (ADR-0029 D3)。(1) quest.yaml の
@@ -208,7 +208,7 @@ counter は前後の差分で assert する (metric はプロセスで共有さ�
   (REFACTORING §5 の名指し) / 03 の rule-explain の文を「Read sensitive file untrusted」の sight に混ぜると赤 / 03 の README の文を 10 の skill に混ぜると
   赤 / 自課題の hints の文を自課題の skill に置くと、他課題の守る文に同じ並びが無ければ緑 / 自課題の想定解の文でも、他課題の守る文にだけある並びを含めば赤 (03 の
   skill に、10 の守る文と重なる 03 の想定解の行を書く) / 無料表示にある文は緑 / 範囲で結果が変わる例がその範囲でだけ赤。起動時: 違反した entry だけが破棄され
-  他は残る / Cf を含む entry は破棄され他は残る / 守る文の側の Cf で Check が error → Quest の文がすべて破棄され `quest_enabled` = 0 / 範囲の課題の README.md か
+  他は残る / 不可視の rune (ADR-0043 D1 の `sourcehygiene.Hidden`) を含む entry は破棄され他は残る / 守る文の側の不可視の rune で Check が error (故意違反は Cf 以外の類 = U+034F・U+FE00・U+3164・C0 制御を最低 1 つずつ植える) → Quest の文がすべて破棄され `quest_enabled` = 0 / 範囲の課題の README.md か
   journey を消した tree → 同じ (fail-closed) / 対象 0 件 → 起動時は何もしない、CI は fail / 破棄が kind `ngram` に数えられる。合成 fixture は software、実 tree は content。
 - **V3 否定** (受け入れ条件 5。HTTP の性質なので `make test` = required に置き、ADR-0031 D2 により `make e2e` には置かない): `TestQuest_NegativeDisclosure_AllBodies`。
   実 catalog と nimbusbreach-full で、状態 = 10 だけ solve / 1 課題だけ solve (課題ごと) / X 以外を全部 solve (X = 03・05・10)。QuestBook・journey (全課題の
@@ -222,7 +222,7 @@ counter は前後の差分で assert する (metric はプロセスで共有さ�
   key と文の pin、禁止語の逐語の検査、content のファイルに `FALCO{` が無い。
 - **V6 rule-explain**: `HomeFragments` に `ChalNN` が空でない entry が 0 件 (生成物を作り直した PR で)。
 - **V7 単一実装**: 無料表示と守る文の項目を組む関数は `internal/catalog` の 1 つで、ADR-0026 の検査・起動時・CI がそれを呼ぶ (3 者が同じ集合を得ることを test で確かめる)。
-- **V8 レビューの規律**: dev-flow のゲート表に、3 ファイルと D7 のコードの経路を security 必須として載せる (ADR-0026 V8 の行に足す)。
+- **V8 レビューの規律**: dev-flow のゲート表に、3 ファイルと D7 のコードの経路を security 必須として載せる (3 ファイルはパターン C の V8 の行 = ADR-0026 V8 の行に、D7 のコードはパターン A の /security-audit の行に足す)。
 - **機械で守れないもの**: 言い換えによる漏えい、IP の境界、private の条件との突き合わせ (D3 の「人」の欄)。
 
 ## Advice

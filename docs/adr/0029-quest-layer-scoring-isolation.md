@@ -57,8 +57,8 @@
 HTTP 境界も増やさない。
 
 - **D1 依存の向き (I17 (a))。**
-  - quest 側は**許可リスト**で決める: `internal/quest` (配下を含む) の module 内 import 閉包は、`internal/quest` 配下と `internal/hintleak` (ADR-0030 D4。module 内の
-    import は無い) の外を含まない。catalog も許さない (catalog の型を持てば C7 の参照を持ちうる)。catalog 由来の事実は D2 の入力型で受け取る。Quest content の型と
+  - quest 側は**許可リスト**で決める: `internal/quest` (配下を含む) の module 内 import 閉包は、`internal/quest` 配下・`internal/hintleak` (ADR-0030 D4)・`internal/sourcehygiene` (hintleak が import する不可視文字の表と文脈規則: ADR-0043 D1。hintleak の module 内
+    import は sourcehygiene だけ、sourcehygiene は持たない。起草時の注記「hintleak は module 内の import を持たない」は ADR-0043 で訂正) の外を含まない。許可リストの葉 2 つは、公開の package レベル var を error 型以外に持たない (quest が書ける共有状態を作らない)。quest 配下の非 test の module 内の直接 import は、quest 配下と `internal/hintleak` だけ (`internal/sourcehygiene` は hintleak 経由の閉包にだけ現れる)。catalog も許さない (catalog の型を持てば C7 の参照を持ちうる)。catalog 由来の事実は D2 の入力型で受け取る。Quest content の型と
     loader は quest に置く。
   - core 側: `internal/store`・`internal/scoreboard/{scoring,ingest,detect}` の閉包は `internal/quest` (配下を含む) と `internal/board` を含まない (board の逆向きを
     吸収する: REFACTORING §4)。catalog は scoring の閉包の中にあるので、catalog が quest を import すれば同じ検査で落ちる。
@@ -138,7 +138,7 @@ HTTP 境界も増やさない。
 ### I17 (提案。未昇格)
 
 > **I17 (採点非干渉)**: (a) `internal/store`・`internal/scoreboard/{scoring,ingest,detect}` の module 内 import 閉包は `internal/quest` (配下を含む) と `internal/board` を
-> 含まない。`internal/quest` (配下を含む) の閉包は、`internal/quest` 配下と `internal/hintleak` の外を含まない。(b) Quest の状態にかかわらず、同じ core の状態に対する
+> 含まない。`internal/quest` (配下を含む) の閉包は、`internal/quest` 配下・`internal/hintleak`・`internal/sourcehygiene` の外を含まない。(b) Quest の状態にかかわらず、同じ core の状態に対する
 > `GET /api/state` の `leaderboard` と `GET /api/users/{user}/me` の `rank`・`score` は byte で一致し、P28 の前に固定した期待値と一致する。(c) Quest を nil にしても、常に
 > error・panic・encode に失敗する値の返却・入力の書き換えをする実装に替えても、`scoreboard.Handler.Routes()` の全 route の status・Content-Type・JSON の body と Sweep の
 > 結果は変わらない。Quest を有効にしても、Quest の面 (D8) の外は変わらない。例外・除外リストを持たない。
@@ -192,10 +192,10 @@ metric はプロセスで共有されるので、counter は前後の差分で a
   - `TestCoreClosure_ExcludesQuestAndBoard`: 出発点 (store・scoring・ingest・detect) ごとに、ディレクトリがあり非 test の .go が 1 本以上あることを先に確かめる (C2 の
     葉の扱いで黙って緑にしない)。
   - `TestQuestClosure_WithinAllowlist`: `internal/quest` 配下をディレクトリで歩いて列挙し (`testdata` と、`_`・`.` で始まるディレクトリは除く。build tag は無視して多めに
-    拾う)、0 件は fail。各 package の閉包が D1 の許可リストの外を含まない。
+    拾う)、0 件は fail。各 package の閉包が D1 の許可リストの外を含まない。許可リストの各葉が実際に閉包に入っていること (`internal/sourcehygiene` ∈ hintleak の閉包。dead な許可を残さない) と、葉 2 つの公開 package レベル var が error 型だけであること (go/ast + 型情報) も確かめる。`internal/quest` 配下の非 test の module 内の直接 import が、quest 配下と `internal/hintleak` だけであることも確かめる。
   - `TestQuest_NoGoroutinesNoPackageState`: `internal/quest` の非 test の .go に、`go` 文、名前が `AfterFunc`・`Go` の selector の呼び出し (`time.AfterFunc`・
     `sync.WaitGroup.Go`)、package レベルの var (型が `error` のものと `_` を除く。型情報で判定) が無い (go/ast。床であって完全ではない)。
-  - 故意違反: t.TempDir() の 2 段の鎖 (core → fixture → quest、quest → fixture → store、quest → catalog)、出発点のディレクトリを消した tree、`go` 文か package レベルの
+  - 故意違反: t.TempDir() の 2 段の鎖 (core → fixture → quest、quest → fixture → store、quest → catalog、quest → hintleak の写し → sourcehygiene の写し → catalog)、出発点のディレクトリを消した tree、quest から `internal/sourcehygiene` を直接 import するファイル (直接 import の検査が赤になる)、`go` 文か package レベルの
     map の var を足したファイルが、それぞれ赤になる (`:163-181` と同じ形)。
 - **V2 (I17 (b))**:
   - (i) **P28 前の期待値**: P28-1 より前に main で入れる `TestLeaderboard_Golden_PreP28` (qa)。期待値はリテラルで持つ (ファイルの golden と再生成の仕組みは使わない。

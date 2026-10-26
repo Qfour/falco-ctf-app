@@ -156,27 +156,146 @@ func TestHintLeakChecker_Mutation(t *testing.T) {
 		}
 	})
 
-	t.Run("an invisible format character (Unicode Cf) in a hint or target is an error", func(t *testing.T) {
-		// Cf is not White_Space, so a ZWSP between two runes of a copied run would
-		// split every window across it and let the copy through silently. Refuse
-		// instead. (The normalisation itself still removes only White_Space.)
-		for _, r := range []rune{0x200B, 0xFEFF, 0x00AD, 0x2060, 0x200D} {
-			cf := string(r)
-			inHint := hintleak.Input{Hints: one("B hints[1]", "abcde"+cf+"fghijklm"), Targets: one("A/fixtures/f", "abcdefghijklm")}
-			inTarget := hintleak.Input{Hints: one("B hints[1]", "abcdefghijklm"), Targets: one("A/fixtures/f", "abcde"+cf+"fghijklm")}
-			for name, in := range map[string]hintleak.Input{"hint": inHint, "target": inTarget} {
-				_, err := hintleak.Check(in)
-				if !errors.Is(err, hintleak.ErrFormatChar) {
-					t.Errorf("U+%04X in a %s: err = %v, want ErrFormatChar", r, name, err)
-				} else if want := fmt.Sprintf("U+%04X", r); !strings.Contains(err.Error(), want) {
-					t.Errorf("U+%04X in a %s: error does not name the code point: %v", r, name, err)
-				}
+	// --- ADR-0043 D1: the predicate is sourcehygiene.Hidden ---------------------
+	// A rune that is not White_Space but is invisible would split every window
+	// across it and let a verbatim copy through. Every case builds its rune with
+	// string(rune(...)): the test file itself carries no raw invisible character.
+	hiddenIn := func(side string, r rune) hintleak.Input {
+		with, without := "abcde"+string(r)+"fghijklm", "abcdefghijklm"
+		if side == "hint" {
+			return hintleak.Input{Hints: one("B hints[1]", with), Targets: one("A/fixtures/f", without)}
+		}
+		return hintleak.Input{Hints: one("B hints[1]", without), Targets: one("A/fixtures/f", with)}
+	}
+	wantHidden := func(t *testing.T, side string, r rune) {
+		t.Helper()
+		_, err := hintleak.Check(hiddenIn(side, r))
+		if !errors.Is(err, hintleak.ErrFormatChar) {
+			t.Errorf("U+%04X in a %s: err = %v, want ErrFormatChar", r, side, err)
+		} else if want := fmt.Sprintf("U+%04X", r); !strings.Contains(err.Error(), want) {
+			t.Errorf("U+%04X in a %s: error does not name the code point: %v", r, side, err)
+		}
+	}
+
+	t.Run("V-a: every Cf, Variation_Selector, Other_Default_Ignorable, bidi, Cc (but TAB and LF) and Zl/Zp rune in a hint or target is an error", func(t *testing.T) {
+		set := []rune{0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 0x2066, 0x2067, 0x2068, 0x2069}
+		for r := rune(0); r <= unicode.MaxRune; r++ {
+			switch {
+			case r == '\t' || r == '\n': // the only controls a text may carry
+			case unicode.Is(unicode.Cf, r), unicode.Is(unicode.Variation_Selector, r), unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r),
+				unicode.Is(unicode.Cc, r), unicode.Is(unicode.Zl, r), unicode.Is(unicode.Zp, r): // a CR is placed alone, so it is not "before LF"
+				set = append(set, r)
 			}
 		}
-		// Free items are not subject to the rule (they only ever REMOVE violations).
-		free := hintleak.Input{Hints: one("B hints[1]", "abcdefghijklm"), Free: one("A briefing", "x\u200by"), Targets: one("A/fixtures/f", "abcdefghijklm")}
-		if _, err := hintleak.Check(free); err != nil {
-			t.Errorf("Cf in a free item: err = %v, want none", err)
+		seen := map[rune]bool{}
+		n := 0
+		for _, r := range set {
+			if seen[r] {
+				continue
+			}
+			seen[r] = true
+			n++
+			wantHidden(t, "hint", r)
+			wantHidden(t, "target", r)
+		}
+		if n == 0 {
+			t.Fatal("checked 0 runes: the set is empty, so this test proves nothing")
+		}
+		t.Logf("V-a: %d distinct runes, each as a hint and as a target (%d Check calls)", n, 2*n)
+	})
+
+	t.Run("V-b: the runes named in #511 are errors", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			r    rune
+		}{
+			{"U+034F COMBINING GRAPHEME JOINER", 0x034F},
+			{"U+FE00 VARIATION SELECTOR-1 after a letter", 0xFE00},
+			{"U+FE0F after a letter", 0xFE0F},
+			{"U+3164 HANGUL FILLER", 0x3164},
+			{"U+115F HANGUL CHOSEONG FILLER", 0x115F},
+			{"U+FFA0 HALFWIDTH HANGUL FILLER", 0xFFA0},
+			{"U+E0041 TAG LATIN CAPITAL LETTER A", 0xE0041},
+			{"U+E0100 VARIATION SELECTOR-17", 0xE0100},
+			{"U+202E RIGHT-TO-LEFT OVERRIDE", 0x202E},
+			{"U+2066 LEFT-TO-RIGHT ISOLATE", 0x2066},
+			{"U+0001 START OF HEADING (C0)", 0x0001},
+			{"U+001B ESCAPE (C0)", 0x001B},
+			{"U+007F DELETE", 0x007F},
+			{"U+009B CONTROL SEQUENCE INTRODUCER (C1)", 0x009B},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				wantHidden(t, "hint", tc.r)
+				wantHidden(t, "target", tc.r)
+			})
+		}
+	})
+
+	t.Run("V-c: a context-legitimate rune is not an error and its window is not skipped", func(t *testing.T) {
+		warn := string(rune(0x26A0)) + string(rune(0xFE0F)) // a non-ASCII So + one U+FE0F
+		sameText := "注意" + warn + "ここから先は読まない"
+		vs, err := hintleak.Check(hintleak.Input{Hints: one("B hints[1]", sameText), Targets: one("A/fixtures/f", sameText)})
+		if err != nil {
+			t.Fatalf("U+26A0 U+FE0F in a hint and a fixture: err = %v, want none", err)
+		}
+		windowSeen := false
+		for _, v := range vs {
+			if strings.Contains(v.Gram, warn) {
+				windowSeen = true
+			}
+		}
+		if len(vs) == 0 || !windowSeen {
+			t.Errorf("the identical sentence must be reported, and a window must cover U+26A0 U+FE0F (the rune is not skipped): violations=%d windowSeen=%v", len(vs), windowSeen)
+		}
+
+		// A ZWJ between two non-ASCII So (a symbol need not be an emoji) is allowed in
+		// context (ADR-0043 D2: it is accepted residue). Its window is still scanned.
+		zwj := string(rune(0x2603)) + string(rune(0x200D)) + string(rune(0x2605))
+		zwjText := "注意" + zwj + "ここから先は読まない"
+		vs, err = hintleak.Check(hintleak.Input{Hints: one("B hints[1]", zwjText), Targets: one("A/fixtures/f", zwjText)})
+		if err != nil {
+			t.Fatalf("So + U+200D + So in a hint and a fixture: err = %v, want none", err)
+		}
+		zwjSeen := false
+		for _, v := range vs {
+			if strings.Contains(v.Gram, string(rune(0x200D))) {
+				zwjSeen = true
+			}
+		}
+		if len(vs) == 0 || !zwjSeen {
+			t.Errorf("the identical sentence must be reported, and a violating n-gram must carry U+200D: violations=%d zwjSeen=%v", len(vs), zwjSeen)
+		}
+
+		const hint = "abcdefghijklm"
+		// A hint item that starts with U+FEFF: the BOM is judged at the start of the item.
+		vs, err = hintleak.Check(hintleak.Input{Hints: one("B hints[1]", string(rune(0xFEFF))+hint), Targets: one("A/fixtures/f", hint)})
+		if err != nil {
+			t.Errorf("a leading U+FEFF in a hint item: err = %v, want none", err)
+		} else if len(vs) == 0 {
+			t.Errorf("a leading U+FEFF in a hint item: the copied run must be reported, got no violation")
+		}
+
+		for name, fixture := range map[string]string{
+			"a leading U+FEFF (BOM) in a fixture": string(rune(0xFEFF)) + hint,
+			"CRLF in a fixture":                   "abcde\r\nfghijklm",
+		} {
+			vs, err := hintleak.Check(hintleak.Input{Hints: one("B hints[1]", hint), Targets: one("A/fixtures/f", fixture)})
+			if err != nil {
+				t.Errorf("%s: err = %v, want none", name, err)
+			} else if len(vs) == 0 {
+				t.Errorf("%s: the copied run must be reported, got no violation", name)
+			}
+		}
+	})
+
+	t.Run("V-d: free items are not subject to the rule", func(t *testing.T) {
+		// Free items only ever REMOVE violations (a stricter scan of them would
+		// only add errors for no gain), so they stay out of scope (ADR-0043 D1).
+		for _, r := range []rune{0x200B, 0x034F} {
+			free := hintleak.Input{Hints: one("B hints[1]", "abcdefghijklm"), Free: one("A briefing", "x"+string(r)+"y"), Targets: one("A/fixtures/f", "abcdefghijklm")}
+			if _, err := hintleak.Check(free); err != nil {
+				t.Errorf("U+%04X in a free item: err = %v, want none", r, err)
+			}
 		}
 	})
 
