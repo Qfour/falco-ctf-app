@@ -1,5 +1,6 @@
 # ADR-0044: deploy-user.sh の --frame-ancestors と --app-host を閉じた文法にし、frame-ancestors の 1 定義を ttydproxy の Go に置く
 - Status: **Accepted** (2026-10-26。実装: app#531 = e47669f。review-5x 81 (T3) 5 観点 APPROVE with comments、security = R1。platform 側 = platform#290 (版の gate / V4 / 旧検査の削除、pin bump と同時か後))
+- 限定 supersede (2026-10-27): Consequences の「runbook: operations.md の用例はこの形のまま変えなくてよい。」と、受け入れた残余 (b) の「D3 が効くのは 2 値を両方渡したときだけで、」の範囲を、platform の名簿の経路について [ADR-0046](0046-platform-roster-derives-ttyd-origin-values-from-env-file.md) が置き換える (platform の経路は 2 値を env file の appHost から導き、local で appHost が空の場合を除き常に両方渡す)。Options の「検討して外した構造」は無変更で、その再検討の結果を ADR-0046 D6 が記録する。ADR-0046 は Proposed で、Accepted になるまで元の文言が有効 (Accepted 時にこの行へ日付と実装 SHA を足す)。
 - Date / Deciders: 2026-10-26 / VP + architect (起草) + security-engineer (CSP / iframe)
 - 関連: app#520 (PR app#531)、platform#290 (対の issue: D6 / V4 / 適用順序の実装)、app#532 (PORTAL_TTYD_SUFFIX の検査)、app#533 (RFC 1123 host 文法の Go 1 定義)、app#534 (auth.authSignin の https 化)、#518 (app#510)、app#270、app#99、platform#54 (P19-2a)、ADR-0013、ADR-0028 (chart と image の同時 pin)、ADR-0033 (古い app ref を止める gate の先例)、ADR-0041 / 0042 (文法の 1 定義の先例)
 ## Context
