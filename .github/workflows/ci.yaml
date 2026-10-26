@@ -221,6 +221,12 @@ jobs:
         run: |
           ./scripts/check-e2e-image-scope.sh
           ./scripts/check-e2e-image-scope.sh --selftest
+      - name: the reference scanner (scripts/sourcehygiene-scan.py) agrees with sourcehygiene.Hidden on the shared cases, its mutants are caught, and the app tree is clean (ADR-0045)
+        run: |
+          python3 scripts/sourcehygiene-scan.py --selftest
+          python3 scripts/sourcehygiene-scan.py . --allowlist internal/sourcehygiene/testdata/invisible-allowlist.txt
+      - name: the reference scanner's --selftest can fail — mutants of its code and data files, unreadable data, exit statuses (ADR-0045 self-test)
+        run: ./scripts/test-sourcehygiene-scan.sh --selftest
 
   # ------------------------------------------------------------------
   # Shell hygiene: shellcheck (-S warning) over every shell script in the repo.
