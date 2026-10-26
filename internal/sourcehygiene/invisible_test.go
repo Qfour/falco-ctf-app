@@ -300,79 +300,10 @@ func TestInvisible_EveryRuneAndOnlyThose(t *testing.T) {
 
 func at(f Finding) string { return fmt.Sprintf("%d:%d U+%04X", f.Line, f.Col, f.CP) }
 
-func TestInvisible_Table(t *testing.T) {
-	const (
-		so    = 0x26A0 // WARNING SIGN (So)
-		vs16  = 0xFE0F
-		vs15  = 0xFE0E
-		zwj   = 0x200D
-		zwsp  = 0x200B
-		bom   = 0xFEFF
-		woman = 0x1F469
-		tone  = 0x1F3FD
-		lap   = 0x1F4BB
-		flag  = 0x1F3F3
-		rain  = 0x1F308
-	)
-	tests := []struct {
-		name string
-		in   string
-		want []string
-	}{
-		{"nothing to find", "plain text, tab\there\nline two\n", nil},
-		{"Tag characters hiding ASCII: every one is reported", "x" + cps(0xE0001, 0xE0049, 0xE0047) + "y", []string{"1:2 U+E0001", "1:3 U+E0049", "1:4 U+E0047"}},
-		{"a variation selector supplement after a Han character", cps(0x6F22, 0xE0100), []string{"1:2 U+E0100"}},
-		{"ZWSP inside a word", "hel" + cps(zwsp) + "lo", []string{"1:4 U+200B"}},
-		{"ZWNJ, LRM, RLM, WORD JOINER, SOFT HYPHEN, CGJ, Hangul filler", cps(0x200C, 0x200E, 0x200F, 0x2060, 0xAD, 0x34F, 0x3164), []string{"1:1 U+200C", "1:2 U+200E", "1:3 U+200F", "1:4 U+2060", "1:5 U+00AD", "1:6 U+034F", "1:7 U+3164"}},
-		{"warning sign + VS16 is green", cps(so, vs16) + " careful", nil},
-		{"a second VS16 on the same base is red", cps(so, vs16, vs16), []string{"1:3 U+FE0F"}},
-		{"VS16 after a letter is red", "a" + cps(vs16), []string{"1:2 U+FE0F"}},
-		{"VS15 after a symbol is green", cps(so, vs15), nil},
-		{"keycap: VS16 after ASCII is red (the base is not a symbol)", "#" + cps(vs16, 0x20E3), []string{"1:2 U+FE0F"}},
-		{"VS16 at the start of the file is red", cps(vs16), []string{"1:1 U+FE0F"}},
-		{"VS16 after ZWJ is red", cps(woman, zwj, vs16), []string{"1:2 U+200D", "1:3 U+FE0F"}},
-		{"VS1 after a symbol is red (only 15 and 16 are context-allowed)", cps(so, 0xFE00), []string{"1:2 U+FE00"}},
-		{"woman + skin tone + ZWJ + laptop is green", cps(woman, tone, zwj, lap), nil},
-		{"flag + VS16 + ZWJ + rainbow is green", cps(flag, vs16, zwj, rain), nil},
-		{"ZWJ between letters is red", "a" + cps(zwj) + "b", []string{"1:2 U+200D"}},
-		{"ZWJ after a symbol but before a letter is red", cps(woman, zwj) + "b", []string{"1:2 U+200D"}},
-		{"ZWJ after a symbol at the end of the file is red (nothing follows)", cps(woman, zwj), []string{"1:2 U+200D"}},
-		{"ZWJ after a symbol before an invalid byte is red (RuneError is not a symbol)", cps(woman, zwj) + "\xff", []string{"1:2 U+200D"}},
-		{"ZWJ after a symbol before a written U+FFFD (a real So) is green", cps(woman, zwj, 0xFFFD), nil},
-		{"ZWJ after a letter and before a symbol is red", "a" + cps(zwj, lap), []string{"1:2 U+200D"}},
-		{"two ZWJ in a row are both red", cps(woman, zwj, zwj, lap), []string{"1:2 U+200D", "1:3 U+200D"}},
-		{"ZWJ after VS15 is red (only an allowed VS16 may precede it)", cps(so, vs15, zwj, lap), []string{"1:3 U+200D"}},
-		{"BOM at byte 0 is green", cps(bom) + "a: 1\n", nil},
-		{"BOM after the first byte is red", "a" + cps(bom), []string{"1:2 U+FEFF"}},
-		{"two BOMs at the start: the second is red", cps(bom, bom) + "a", []string{"1:2 U+FEFF"}},
-		{"BOM at the start of the second line is red", "a\n" + cps(bom), []string{"2:1 U+FEFF"}},
-		{"CRLF is green", "a\r\nb\r\n", nil},
-		{"a lone CR in the middle is red", "ab\rcd\n", []string{"1:3 U+000D"}},
-		{"a CR at the end of the file is red", "ab\r", []string{"1:3 U+000D"}},
-		{"CR CR LF: the first is red", "a\r\r\nb", []string{"1:2 U+000D"}},
-		{"ESC (a terminal escape) is red", "x\x1b[2Ky", []string{"1:2 U+001B"}},
-		{"DEL, NEL, LS and PS are red", "a\x7f" + cps(0x85, 0x2028, 0x2029), []string{"1:2 U+007F", "1:3 U+0085", "1:4 U+2028", "1:5 U+2029"}},
-		{"VT and FF are red; TAB and LF are not", "\v\f\t\n", []string{"1:1 U+000B", "1:2 U+000C"}},
-		{"NUL is a C0 control to the scanner", "a\x00b", []string{"1:2 U+0000"}},
-		{"only escapes: green", bs + "U0000200B " + bs + "u200b " + bs + "U000E0041 {U+200B} &#x200B; &#8203; " + bs + "xe2" + bs + "x80" + bs + "x8b U+200B", nil},
-		{"after an invalid UTF-8 byte the scan goes on and the column counts it as one", "\xff\xfeab" + cps(zwsp), []string{"1:5 U+200B"}},
-		{"a U+FFFD that was really written is an ordinary rune", cps(0xFFFD) + "a", nil},
-		{"the line number counts LF", "a\nb\n" + cps(zwsp), []string{"3:1 U+200B"}},
-		{"Hangul, Khmer and Mongolian invisibles", cps(0x115F, 0x1160, 0xFFA0, 0x17B4, 0x17B5, 0x180B, 0x180E), []string{"1:1 U+115F", "1:2 U+1160", "1:3 U+FFA0", "1:4 U+17B4", "1:5 U+17B5", "1:6 U+180B", "1:7 U+180E"}},
-		{"the visible neighbours are not in the set: NBSP, EN SPACE, IDEOGRAPHIC SPACE, BRAILLE BLANK, tag-like text", cps(0xA0, 0x2000, 0x3000, 0x2800) + "U+E0041", nil},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			var got []string
-			for _, f := range Invisible([]byte(tc.in)) {
-				got = append(got, at(f))
-			}
-			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
-				t.Errorf("findings = %v, want %v", got, tc.want)
-			}
-		})
-	}
-}
+// TestInvisible_Table moved to testdata/hidden-cases.tsv (ADR-0045): the same inputs, the
+// same expected findings and the same names, now shared with scripts/sourcehygiene-scan.py.
+// TestHidden_SharedCases (exported_table_test.go) runs every row against Hidden AND
+// against Invisible (= Hidden without the bidi controls), so no coverage is lost.
 
 // ---- the walk, the allowlist, the path rule --------------------------------
 
@@ -432,6 +363,9 @@ func TestCheckTree_Invisible(t *testing.T) {
 		{name: "a ZWSP in a path name is red, and the path is shown escaped",
 			files: map[string]string{"agents/rev" + zwsp + "iew.md": "x\n"},
 			want:  []string{`"agents/rev` + bs + `u200biew.md": path name is not printable ASCII`}},
+		{name: "a path name that ends in LF is red (an end-anchored regexp that lets a final LF through would miss it)",
+			files: map[string]string{"docs/a.md\n": "x\n"},
+			want:  []string{"path name is not printable ASCII"}},
 		{name: "a non-ASCII path name is red",
 			files: map[string]string{"docs/" + cps(0x3042) + ".md": "x\n"},
 			want:  []string{"path name is not printable ASCII"}},

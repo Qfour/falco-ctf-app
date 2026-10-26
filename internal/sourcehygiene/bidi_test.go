@@ -75,6 +75,9 @@ var canaryFiles = []string{
 // scanned, each with its reason. Adding one needs the same review as an
 // allowlist line.
 var binaryExt = map[string]string{
+	// Not scanned here either (ADR-0045): the reference scanner's binary-ext.tsv is this
+	// map, and platform tracks event decks as PDFs. app tracks none.
+	".pdf":   "PDF (compressed streams; a byte match is chance). platform tracks event decks (ADR-0045)",
 	".woff2": "WOFF2 font (compressed bytes; a 3-byte match is chance)",
 	// Not tracked: `helm dependency build` writes charts/*/charts/*.tgz, and
 	// Dockerfile.test runs it after COPY, before this test. git ignores them.
@@ -300,6 +303,14 @@ func TestTrackedFilesHoldNoRawBidiOrInvisibleCharacter(t *testing.T) {
 	for _, c := range canaryFiles {
 		if !r.scanned[c] {
 			t.Errorf("canary %s was not scanned: the file set is smaller than the repo (a .dockerignore line, a wrong root, or a failed listing)", c)
+		}
+	}
+	// app tracks no PDF: .pdf is in binaryExt for the reference scanner's sake (ADR-0045,
+	// platform tracks event decks). A tracked file skipped as binary here must be one of the
+	// two kinds app really has, so the skip cannot quietly cover a text file named *.pdf.
+	for _, b := range r.binary {
+		if ext := strings.ToLower(filepath.Ext(b)); ext != ".woff2" && ext != ".tgz" {
+			t.Errorf("%s is skipped as binary but app tracks only .woff2 and untracked .tgz files; a new binary kind needs a reason in binaryExt and in testdata/binary-ext.tsv (ADR-0045)", b)
 		}
 	}
 	for _, p := range r.problems {
