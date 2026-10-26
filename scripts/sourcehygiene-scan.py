@@ -48,6 +48,7 @@ Standard library only; python3 3.9 or later; ASCII only.
 import bisect
 import os
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -105,7 +106,7 @@ def fmt_cp(cp):
 
 
 def parse_cp(tok, where):
-    m = re.match(r"^U\+([0-9A-F]{4,6})$", tok)
+    m = re.fullmatch(r"U\+([0-9A-F]{4,6})", tok)
     if not m or fmt_cp(int(m.group(1), 16)) != tok or int(m.group(1), 16) > 0x10FFFF:
         raise Fail("%s: %r is not a code point written U+%%04X (upper-case hex, at least 4 digits, within Unicode)" % (where, tok))
     return int(m.group(1), 16)
@@ -140,12 +141,12 @@ class Table:
 def parse_ranges(lines, label="hidden-ranges.tsv"):
     if len(lines) < 4:
         raise Fail("%s: shorter than its three header lines and a row" % label)
-    m = re.match(r"^# unicode: ([0-9]+\.[0-9]+\.[0-9]+)$", lines[0])
+    m = re.fullmatch(r"# unicode: ([0-9]+\.[0-9]+\.[0-9]+)", lines[0])
     if not m:
         raise Fail("%s:1: line 1 must be '# unicode: <version>', got %r" % (label, lines[0]))
     ranges = []
     for n, key in ((1, "skin-tone"), (2, "variation-selector")):
-        mm = re.match(r"^# %s: (U\+[0-9A-F]{4,6}-U\+[0-9A-F]{4,6}(,U\+[0-9A-F]{4,6}-U\+[0-9A-F]{4,6})*)$" % key, lines[n])
+        mm = re.fullmatch(r"# %s: (U\+[0-9A-F]{4,6}-U\+[0-9A-F]{4,6}(,U\+[0-9A-F]{4,6}-U\+[0-9A-F]{4,6})*)" % key, lines[n])
         if not mm:
             raise Fail("%s:%d: line %d must be '# %s: U+LLLL-U+HHHH[,...]', got %r" % (label, n + 1, n + 1, key, lines[n]))
         ranges.append(parse_cp_ranges(mm.group(1), "%s:%d" % (label, n + 1)))
@@ -172,7 +173,7 @@ def parse_ranges(lines, label="hidden-ranges.tsv"):
 
 
 PLACEHOLDER = re.compile(r"\{(U\+[0-9A-F]{4,6}|x[89A-F][0-9A-F])\}")
-EXPECTED = re.compile(r"^[0-9]+:[0-9]+ U\+[0-9A-F]{4,6}(,[0-9]+:[0-9]+ U\+[0-9A-F]{4,6})*$")
+EXPECTED = re.compile(r"[0-9]+:[0-9]+ U\+[0-9A-F]{4,6}(,[0-9]+:[0-9]+ U\+[0-9A-F]{4,6})*")
 
 
 def decode_input(s):
@@ -223,7 +224,7 @@ def parse_cases(lines, label="hidden-cases.tsv"):
             data = decode_input(raw)
         except Fail as e:
             raise Fail("%s: %s (a reader error, not a verdict)" % (where, e))
-        if exp != "none" and not EXPECTED.match(exp):
+        if exp != "none" and not EXPECTED.fullmatch(exp):
             raise Fail("%s: expected must be 'none' or '<line>:<col> U+XXXX' joined by commas, got %r" % (where, exp))
         rows.append((n, name, raw, data, exp))
     return rows
@@ -235,7 +236,7 @@ def parse_binary_ext(lines, label="binary-ext.tsv"):
         if not is_data_row(line):
             continue
         cols = line.split("\t")
-        if len(cols) != 2 or not re.match(r"^\.[a-z0-9]+$", cols[0]) or not cols[1]:
+        if len(cols) != 2 or not re.fullmatch(r"\.[a-z0-9]+", cols[0]) or not cols[1]:
             raise Fail("%s:%d: want <.ext><TAB><reason> (lower case), got %r" % (label, n, line))
         if exts and cols[0] <= exts[-1]:
             raise Fail("%s:%d: extensions must be ascending and not repeat (%r after %r)" % (label, n, cols[0], exts[-1]))
@@ -371,6 +372,14 @@ def coverage_problems(cases, table):
         for cp in (lo, hi):
             if cp not in flagged:
                 out.append("no case has a finding at %s (an edge of %r)" % (fmt_cp(cp), name))
+    # ...and the rune just outside each row is not hidden: "a<rune>b" with the expected none.
+    inputs = {data: exp for _, _, _, data, exp in cases}
+    for lo, hi, _, name in table.rows:
+        for cp in (lo - 1, hi + 1):
+            if cp < 0x20 or cp > 0x10FFFF or 0xD800 <= cp <= 0xDFFF or table.lookup(cp) is not None:
+                continue
+            if inputs.get(b"a" + chr(cp).encode("utf-8") + b"b") != "none":
+                out.append("no case 'a<%s>b' with expected none (the rune next to %r)" % (fmt_cp(cp), name))
     return out
 
 
@@ -423,6 +432,7 @@ def reader_negatives(table_lines):
         ("{U+D800} (a surrogate)", "n\t{U+D800}\tnone"),
         ("{U+110000} (beyond Unicode)", "n\t{U+110000}\tnone"),
         ("{U+0041} (a printable ASCII character as a placeholder)", "n\t{U+0041}\tnone"),
+        ("{U+0041 } (a space inside)", "n\t{U+0041 }\tnone"),
         ("an input that decodes to nothing", "n\t\tnone"),
         ("two columns", "n\tabc"),
         ("four columns", "n\tabc\tnone\tx"),
@@ -430,6 +440,7 @@ def reader_negatives(table_lines):
         ("a name that starts with #", "#n\tabc\tnone"),
         ("an expected that is neither none nor a list", "n\tabc\tmaybe"),
         ("an expected with a lower-case code point", "n\tabc\t1:1 U+00ad"),
+        ("an expected with a trailing comma", "n\tabc\t1:1 U+00AD,"),
     ):
         neg.append(("cases: " + what, lambda line=line: parse_cases([line])))
     neg.append(("cases: a name used twice", lambda: parse_cases(["n\tabc\tnone", "n\tabd\tnone"])))
@@ -455,15 +466,16 @@ def walk_negatives(me):
                 subprocess.run(["git", "-C", d, "add", "-A", "--", "."], check=True)
             return d
 
-        def run(what, args, want, must):
+        def run(what, args, want, must, must_not=None):
             res = subprocess.run([sys.executable, me] + args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
             text = (res.stdout + res.stderr).decode("utf-8", "replace")
-            ok = res.returncode == want and must in text
-            results.append((what, ok, "exit %d, want %d; %r in output: %s" % (res.returncode, want, must, must in text)))
+            ok = res.returncode == want and must in text and (must_not is None or must_not not in text)
+            results.append((what, ok, "exit %d, want %d; %r in output: %s; %r absent: %s" % (
+                res.returncode, want, must, must in text, must_not, must_not is None or must_not not in text)))
 
         empty = plant("empty", {})
         run("an empty directory", [empty], 1, "no file listed")
-        run("a directory that does not exist", [os.path.join(tmp, "nope")], 1, "no file listed")
+        run("a directory that does not exist (a walk error is a FAIL, not an empty tree)", [os.path.join(tmp, "nope")], 1, "cannot list")
         d = plant("zwsp", {"a.md": "ab" + zwsp + "\n"})
         run("a raw U+200B", [d], 1, "a.md:1:3 U+200B ZERO WIDTH SPACE: raw invisible character")
         d = plant("tag", {"a.md": "x\n\ngo" + tag + "\n"})
@@ -475,9 +487,28 @@ def walk_negatives(me):
         d = plant("bom", {"a.md": b"\xef\xbb\xbfkey: 1\r\nb: 2\r\n"})
         run("a leading BOM and CRLF are clean", [d], 0, "OK sourcehygiene-scan")
         d = plant("nul", {"n.txt": b"a\x00b\n"})
-        run("a NUL byte is one problem and no U+0000 finding", [d], 1, "n.txt: holds a NUL byte")
+        run("a NUL byte is one problem and no U+0000 finding", [d], 1, "n.txt: holds a NUL byte", must_not="U+0000")
         d = plant("nonascii", {"caf" + chr(0xE9) + ".md": "x\n"})
         run("a path that is not printable ASCII", [d], 1, "path name is not printable ASCII")
+        d = plant("lf-name", {"a.md\n": "x\n"})
+        run("a file name that ends in LF is not printable ASCII (no walk, no git)", [d], 1, "path name is not printable ASCII")
+        d = plant("lf-name-git", {"a.md\n": "x\n"}, git=True)
+        run("a file name that ends in LF is not printable ASCII (git ls-files)", [d], 1, "path name is not printable ASCII")
+        d = plant("symlinks", {"a.md": "x\n", "real/b.md": "y\n"})
+        os.symlink("real", os.path.join(d, "link"))
+        run("a symlink to a directory is listed and not followed", [d], 0, "OK sourcehygiene-scan")
+        os.symlink("real", os.path.join(d, "caf" + chr(0xE9)))
+        run("a symlink to a directory whose name is not printable ASCII is a problem", [d], 1, "path name is not printable ASCII")
+        d = plant("noperm", {"ok.md": "x\n", "sub/f.md": "y\n"})
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            results.append(("a directory that cannot be listed is a FAIL (skipped: running as root)", True, ""))
+        else:
+            os.chmod(os.path.join(d, "sub"), 0)
+            try:
+                run("a directory that cannot be listed is a FAIL, not a skipped subtree", [d], 1, "cannot list")
+                run("--also-untracked of a directory that cannot be listed is a FAIL", [d, "--also-untracked", "sub"], 1, "cannot list")
+            finally:
+                os.chmod(os.path.join(d, "sub"), 0o755)
         d = plant("pdf", {"a.pdf": "x" + zwsp + "y", "b.md": "clean\n"})
         run("a file with an extension of binary-ext.tsv is not scanned", [d], 0, "1 binary")
         d = plant("onlybin", {"a.pdf": "x"})
@@ -512,6 +543,8 @@ def walk_negatives(me):
         run("git: --also-untracked reaches it", [g, "--also-untracked", ".claude"], 1, ".claude/x.md:1:2 U+202E")
         run("git: --also-untracked of a path that does not exist", [g, "--also-untracked", "nope"], 1, "does not exist")
         run("git: --also-untracked wants a clean relative path", [g, "--also-untracked", "../x"], 1, "clean relative path")
+        run("git: --also-untracked of .. is refused", [g, "--also-untracked", ".."], 1, "clean relative path")
+        run("git: --also-untracked of a/../b is refused", [g, "--also-untracked", "a/../b"], 1, "clean relative path")
         run("--selftest with a directory is a usage error", ["--selftest", g], 2, "usage:")
         run("no argument is a usage error", [], 2, "usage:")
         run("an unknown option is a usage error", [g, "--nope"], 2, "usage:")
@@ -596,7 +629,23 @@ def parse_allowlist(path, table):
 
 def show(path):
     """A path for a message: printable ASCII as it is, anything else escaped (a path may hide too)."""
-    return path if re.match(r"^[!-~]+$", path) else ascii(path)
+    return path if re.fullmatch(r"[!-~]+", path) else ascii(path)
+
+
+def walk_dir(base, root, skip_git=False):
+    """The paths (relative to root, slash-separated) of everything under base that is not a
+    directory: regular files, and symlinks even when they point at a directory (Go's WalkDir
+    lists those too). A directory that cannot be listed is a FAIL: a silent skip is a hole."""
+    def onerror(e):
+        raise Fail("cannot list %s: %s" % (ascii(str(e.filename)), e.strerror or e))
+    out = []
+    for d, dirs, files in os.walk(base, onerror=onerror):
+        if skip_git:
+            dirs[:] = [x for x in dirs if x != ".git"]
+        dirs.sort()
+        names = list(files) + [x for x in dirs if os.path.islink(os.path.join(d, x))]
+        out += [os.path.relpath(os.path.join(d, f), root).replace(os.sep, "/") for f in sorted(names)]
+    return out
 
 
 def list_files(root):
@@ -609,26 +658,24 @@ def list_files(root):
         if res.returncode != 0:
             raise Fail("git ls-files in %s failed: %s" % (root, res.stderr.decode("utf-8", "replace").strip()))
         return sorted(p.decode("utf-8", "surrogateescape") for p in res.stdout.split(b"\0") if p)
-    out = []
-    for d, dirs, files in os.walk(root):
-        dirs.sort()
-        out += [os.path.relpath(os.path.join(d, f), root).replace(os.sep, "/") for f in sorted(files)]
-    return sorted(out)
+    return sorted(walk_dir(root, root))
 
 
 def untracked_files(root, rels):
     out = []
     for rel in rels:
-        if (rel == "" or os.path.isabs(rel) or os.path.normpath(rel) != rel or rel == "." or rel.startswith("../")
-                or "\\" in rel):
+        if (rel == "" or os.path.isabs(rel) or os.path.normpath(rel) != rel or rel == "." or rel == ".."
+                or rel.startswith("../") or "\\" in rel):
             raise Fail("--also-untracked %r: want a clean relative path" % rel)
         p = os.path.join(root, rel)
-        if not os.path.lexists(p):
+        try:
+            st = os.lstat(p)
+        except FileNotFoundError:
             raise Fail("--also-untracked %s: the path does not exist" % rel)
-        if os.path.isdir(p) and not os.path.islink(p):
-            for d, dirs, files in os.walk(p):
-                dirs[:] = sorted(x for x in dirs if x != ".git")
-                out += [os.path.relpath(os.path.join(d, f), root).replace(os.sep, "/") for f in sorted(files)]
+        except OSError as e:
+            raise Fail("--also-untracked %s: cannot stat it: %s" % (rel, e.strerror))
+        if stat.S_ISDIR(st.st_mode):
+            out += walk_dir(p, root, skip_git=True)
         else:
             out.append(rel)
     return out
@@ -644,16 +691,26 @@ def scan_tree(root, allowlist, also, data):
     scanned, binary, skipped = set(), set(), 0
     seen = {}
     for rel in files:
-        if not re.match(r"^[!-~]+$", rel):
+        if not re.fullmatch(r"[!-~]+", rel):
             problems.append("%s: path name is not printable ASCII (U+0021-007E, no space)" % ascii(rel))
         p = os.path.join(root, rel)
-        if not os.path.lexists(p) or os.path.islink(p) or not os.path.isfile(p):
-            skipped += 1  # absent, a symlink or a submodule: not followed
+        try:
+            st = os.lstat(p)
+        except FileNotFoundError:
+            skipped += 1  # absent (listed by git, deleted on disk)
+            continue
+        except OSError as e:
+            raise Fail("cannot stat %s: %s" % (show(rel), e.strerror))
+        if not stat.S_ISREG(st.st_mode):
+            skipped += 1  # a symlink or a submodule: not followed
             continue
         if os.path.splitext(rel)[1].lower() in data.binary_ext:
             binary.add(rel)
             continue
-        content = Path(p).read_bytes()
+        try:
+            content = Path(p).read_bytes()
+        except OSError as e:
+            raise Fail("cannot read %s: %s" % (show(rel), e.strerror))
         scanned.add(rel)
         if b"\x00" in content:
             problems.append("%s: holds a NUL byte but its extension is not in binary-ext.tsv, so it cannot be told from a text "

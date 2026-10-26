@@ -139,6 +139,18 @@ mutate bom-rule-dropped "${SCAN_REL}" '            elif rule == "bomAtStart":' \
   '            elif rule == "bomAtStart" and False:' 'BOM after the first byte is red: scan gives none, the file says 1:2 U+FEFF'
 mutate range-half-open "${SCAN_REL}" '        if i >= 0 and cp <= self.rows[i][1]:' \
   '        if i >= 0 and cp < self.rows[i][1]:' 'scan gives none, the file says'
+# The walk (review-5x of #536): an end-anchored path rule, a walk that skips what it cannot list,
+# symlinks to directories left out of the listing, `..` accepted by --also-untracked.
+mutate path-rule-end-anchored "${SCAN_REL}" '        if not re.fullmatch(r"[!-~]+", rel):' \
+  '        if not re.match(r"^[!-~]+$", rel):' "walk 'a file name that ends in LF is not printable ASCII (no walk, no git)'"
+mutate symlinked-dirs-not-listed "${SCAN_REL}" '        names = list(files) + [x for x in dirs if os.path.islink(os.path.join(d, x))]' \
+  '        names = list(files)' "walk 'a symlink to a directory whose name is not printable ASCII is a problem'"
+mutate also-untracked-dotdot "${SCAN_REL}" '        if (rel == "" or os.path.isabs(rel) or os.path.normpath(rel) != rel or rel == "." or rel == ".."' \
+  '        if (rel == "" or os.path.isabs(rel) or os.path.normpath(rel) != rel or rel == "."' "walk 'git: --also-untracked of .. is refused'"
+if [[ "$(id -u)" -ne 0 ]]; then # a root user can list a mode-000 directory: that mutant is not observable
+  mutate walk-errors-skipped "${SCAN_REL}" '    for d, dirs, files in os.walk(base, onerror=onerror):' \
+    '    for d, dirs, files in os.walk(base):' "walk 'a directory that cannot be listed is a FAIL, not a skipped subtree'"
+fi
 mutate fe0f-always-in-table "${RANGES_REL}" 'U+FE0E'"${TAB}"'U+FE0F'"${TAB}" \
   'U+FE0E'"${TAB}"'U+FE0E'"${TAB}"'vsAfterSymbol'"${TAB}"'VARIATION SELECTOR-15'$'\n''U+FE0F'"${TAB}"'U+FE0F'"${TAB}"'always'"${TAB}"'VARIATION SELECTOR-16' \
   'warning sign + VS16 is green: scan gives 1:2 U+FE0F, the file says none'
