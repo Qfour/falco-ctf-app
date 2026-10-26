@@ -340,7 +340,7 @@ func TestWebSocketUpgradeOrigin(t *testing.T) {
 		// accepted: the seat's own origin
 		{"own origin", append([]string{"Host: " + host, "Origin: https://" + host}, upgrade...), 101},
 		{"own origin, port in Host", append([]string{"Host: " + host + ":8443", "Origin: https://" + host + ":8443"}, upgrade...), 101},
-		{"Connection is a list, lower case", []string{"Host: " + host, "Origin: https://" + host, "Upgrade: WebSocket", "Connection: keep-alive, upgrade"}, 101},
+		{"Connection is a list, own origin", []string{"Host: " + host, "Origin: https://" + host, "Upgrade: WebSocket", "Connection: keep-alive, upgrade"}, 101},
 		// refused: fail-closed
 		{"no Origin", append([]string{"Host: " + host}, upgrade...), 403},
 		{"other origin", append([]string{"Host: " + host, "Origin: https://evil.example"}, upgrade...), 403},
@@ -356,6 +356,11 @@ func TestWebSocketUpgradeOrigin(t *testing.T) {
 		{"two Origin lines, both the seat's", append([]string{"Host: " + host, "Origin: https://" + host, "Origin: https://" + host}, upgrade...), 403},
 		{"empty Host and a bare https://", append([]string{"Host:", "Origin: https://"}, upgrade...), 403},
 		{"another upgrade type is checked too", []string{"Host: " + host, "Upgrade: h2c", "Connection: Upgrade"}, 403},
+		// the forms real clients and ingress-nginx send: each of these is refused on its own,
+		// so each one is what pins one part of the Connection token comparison
+		{"ingress-nginx form: lower-case tokens, no Origin", []string{"Host: " + host, "Upgrade: websocket", "Connection: upgrade"}, 403},
+		{"Firefox form: Connection is a list, other origin", []string{"Host: " + host, "Origin: https://evil.example", "Upgrade: websocket", "Connection: keep-alive, Upgrade"}, 403},
+		{"upper-case Connection token, other origin", []string{"Host: " + host, "Origin: https://evil.example", "Upgrade: websocket", "Connection: UPGRADE"}, 403},
 		{"Connection split over two lines", []string{"Host: " + host, "Upgrade: websocket", "Connection: keep-alive", "Connection: Upgrade"}, 403},
 		// not an upgrade: untouched, no Origin needed
 		{"plain GET without Origin", []string{"Host: " + host, "Connection: close"}, 200},
@@ -405,6 +410,9 @@ func TestWebSocketUpgradeRefusalLogsNoRawOrigin(t *testing.T) {
 	if got := rec.Header().Get("Content-Security-Policy"); got != "frame-ancestors https://app.ctf.example.com" {
 		t.Errorf("CSP on the refusal = %q", got)
 	}
+	if got := rec.Header().Get("X-Frame-Options"); got != "" {
+		t.Errorf("XFO on the refusal = %q, want absent when a portal origin is configured", got)
+	}
 	logged := logBuf.String()
 	if strings.Contains(logged, "secret-marker") || strings.Contains(logged, "evil.example") {
 		t.Errorf("the log carries the raw Origin: %s", logged)
@@ -413,5 +421,59 @@ func TestWebSocketUpgradeRefusalLogsNoRawOrigin(t *testing.T) {
 		if !strings.Contains(logged, want) {
 			t.Errorf("the log lacks %q: %s", want, logged)
 		}
+	}
+}
+
+// With the default 'none' the 403 and the 502 carry the same framing headers as a proxied
+// response (one stampFrameHeaders for all three).
+func TestRefusalAndBadGatewayCarryXFOWhenNone(t *testing.T) {
+	h, err := New("http://127.0.0.1:1", "'none'", testLogger())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	refused := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/ws", nil)
+	req.Host = "seat1.ctf.example.com"
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	h.ServeHTTP(refused, req)
+	badGateway := httptest.NewRecorder()
+	h.ServeHTTP(badGateway, httptest.NewRequest(http.MethodGet, "/", nil))
+	for name, rec := range map[string]*httptest.ResponseRecorder{"403": refused, "502": badGateway} {
+		if got := rec.Header().Get("X-Frame-Options"); got != "DENY" {
+			t.Errorf("%s: XFO = %q, want DENY", name, got)
+		}
+		if got := rec.Header().Get("Content-Security-Policy"); got != "frame-ancestors 'none'" {
+			t.Errorf("%s: CSP = %q", name, got)
+		}
+	}
+	if refused.Code != http.StatusForbidden || badGateway.Code != http.StatusBadGateway {
+		t.Errorf("codes = %d, %d, want 403, 502", refused.Code, badGateway.Code)
+	}
+}
+
+// A control or bidi character in the path of a refused request does not reach the log raw.
+func TestWebSocketUpgradeRefusalLogsPathEscaped(t *testing.T) {
+	up, _ := countingUpstream(t)
+	var logBuf bytes.Buffer
+	h, err := New(up.URL, "'none'", slog.New(slog.NewTextHandler(&logBuf, nil)))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/ws%E2%80%AEevil%0Aforged=1", nil)
+	req.Host = "seat1.ctf.example.com"
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+	logged := logBuf.String()
+	if strings.ContainsRune(logged, '\u202e') || strings.Count(logged, "\n") != 1 {
+		t.Errorf("the log carries a raw bidi or line-break character from the path: %q", logged)
+	}
+	if !strings.Contains(logged, "u202e") {
+		t.Errorf("the log lacks the escaped path: %q", logged)
 	}
 }

@@ -2,7 +2,8 @@
 // inside the same workspace Pod (P23-3). It listens on the port the Ingress
 // reaches (default 7681, matching today's ttyd port so the ctf-user chart's
 // Service/Ingress wiring needs no change beyond retargeting ttyd itself to a
-// localhost-only port), forwards everything to ttyd on UPSTREAM_ADDR, and
+// localhost-only port), forwards to ttyd on UPSTREAM_ADDR (refusing a WebSocket Upgrade whose Origin is
+// not the seat's own, ADR-0048), and
 // stamps every response with Content-Security-Policy: frame-ancestors so a
 // malicious page cannot iframe ttyd's writable shell (clickjacking). See
 // internal/ttydproxy for the header semantics and WebSocket-tunnelling

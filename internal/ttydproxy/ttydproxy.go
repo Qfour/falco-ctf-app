@@ -18,7 +18,8 @@
 //
 // Why Go's net/http/httputil.ReverseProxy rather than nginx: ReverseProxy
 // already tunnels WebSocket Upgrade requests transparently (Go 1.12+), so
-// ttyd's terminal keeps working with zero special-casing, while giving this
+// ttyd's terminal keeps working (the one thing this package adds to an Upgrade
+// is the Origin check below), while giving this
 // package full control over response headers in plain Go (testable with
 // httptest, no separate nginx config to keep in sync with the Dockerfile).
 //
@@ -73,6 +74,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/Qfour/falco-ctf-app/internal/dnsname"
@@ -158,27 +160,32 @@ func New(upstream string, frameAncestors string, logger *slog.Logger) (*Handler,
 	// on a 101 is harmless (browsers don't apply frame-ancestors to it) and
 	// keeping the logic unconditional avoids special-casing status codes.
 	h.proxy.ModifyResponse = func(resp *http.Response) error {
-		resp.Header.Set("Content-Security-Policy", "frame-ancestors "+h.frameAncestors)
-		// See package doc "Header semantics": XFO cannot express "allow this
-		// one cross-origin portal", so it is only safe to add when it agrees
-		// with a fully-restrictive CSP (nobody may frame this response).
-		if h.frameAncestors == noneAncestors {
-			resp.Header.Set("X-Frame-Options", "DENY")
-		} else {
-			resp.Header.Del("X-Frame-Options")
-		}
+		h.stampFrameHeaders(resp.Header)
 		return nil
 	}
 
 	// Fail closed on upstream errors: a dial failure to ttyd must not leak a
 	// Go default 502 body/address to the participant's browser.
 	h.proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		h.logger.Error("ttyd upstream unreachable", "path", r.URL.Path, "err", err)
-		w.Header().Set("Content-Security-Policy", "frame-ancestors "+h.frameAncestors)
+		h.logger.Error("ttyd upstream unreachable", "path", strconv.Quote(r.URL.Path), "err", err)
+		h.stampFrameHeaders(w.Header())
 		w.WriteHeader(http.StatusBadGateway)
 	}
 
 	return h, nil
+}
+
+// stampFrameHeaders is the one place the framing headers are written, for a proxied
+// response, the 502 and the 403 alike. See package doc "Header semantics": XFO cannot
+// express "allow this one cross-origin portal", so it is only added when it agrees
+// with a fully-restrictive CSP (nobody may frame this response).
+func (h *Handler) stampFrameHeaders(hd http.Header) {
+	hd.Set("Content-Security-Policy", "frame-ancestors "+h.frameAncestors)
+	if h.frameAncestors == noneAncestors {
+		hd.Set("X-Frame-Options", "DENY")
+	} else {
+		hd.Del("X-Frame-Options")
+	}
 }
 
 // ServeHTTP forwards every request to ttyd. httputil.ReverseProxy tunnels
@@ -231,12 +238,13 @@ func originIsSeat(r *http.Request) bool {
 
 // rejectUpgrade answers 403 and logs without the raw Origin (it is a request-supplied
 // string): only whether it was present, its length, and a scheme if it has the plain
-// lower-case form.
+// lower-case form. The path is %q-escaped, so a control or bidi character in it
+// cannot reach a log raw.
 func (h *Handler) rejectUpgrade(w http.ResponseWriter, r *http.Request) {
 	origins := r.Header.Values("Origin")
 	h.logger.Warn("ttyd websocket upgrade rejected: origin is not the seat's own (ADR-0048)",
-		"path", r.URL.Path, "origin_headers", len(origins), "origin_len", totalLen(origins), "origin_scheme", schemeOf(origins))
-	w.Header().Set("Content-Security-Policy", "frame-ancestors "+h.frameAncestors)
+		"path", strconv.Quote(r.URL.Path), "origin_headers", len(origins), "origin_len", totalLen(origins), "origin_scheme", schemeOf(origins))
+	h.stampFrameHeaders(w.Header())
 	w.WriteHeader(http.StatusForbidden)
 }
 
