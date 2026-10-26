@@ -45,6 +45,7 @@ flowchart TD
 | make test | Stop 自動 | ✅ | `make test` |
 | make scan | build 後 (手動) | イメージ変更時 | `make scan TAG=local` |
 | /security-audit | PR 直前 | auth-policy/ingest 触れた時、または `internal/store` の `migrations` スライスに新規エントリを追加した時 (ADR-0020 — 採点真正性テーブルの防波堤) | `/security-audit` |
+| security-engineer レビュー | PR 直前 | `internal/sourcehygiene/**` または `internal/hintleak/**` (test と testdata を含む) を変える時 ✅ (ADR-0043。hintleak は I16 の n-gram 検査の本体で、述語は sourcehygiene の表を import する。表・文脈規則・bidi・test の変更は採点境界 V8 / I16 の変更。test を消す PR も I16 を弱める) | `/security-audit` (または `/review-5x` の R1) |
 | /review-code | PR 直前 | ✅ | `/review-code` |
 
 ---
@@ -91,7 +92,6 @@ flowchart TD
 | /api/state 確認 | 手動 | ✅ | `make dev` → curl /api/state |
 | /review-challenge | PR 直前 | ✅ | `/review-challenge` |
 | security-engineer レビュー | PR 直前 | `challenges/*/fixtures/**` または `journey.yaml` の `hints[]` を変える時 ✅ (ADR-0026 V8 / I16。n-gram 検査 `internal/hintleak` は逐語一致しか捕まえない。言い換えによるヒント漏えいは文面レビューだけが防ぐ) | `/security-audit` (または `/review-5x` の R1) |
-| security-engineer レビュー | PR 直前 | `internal/sourcehygiene` の非 test file (`invisible.go` / `chars.go`) を変える時 ✅ (ADR-0043。hintleak の述語がこの表を import するので、表・文脈規則・bidi の変更は採点境界 V8 / I16 の仕組みの変更) | `/security-audit` (または `/review-5x` の R1) |
 
 ---
 
@@ -131,7 +131,7 @@ flowchart TD
 | /review-code | ✅ 必須 | — | ✅ 必須 | — |
 | /review-manifests | — | ✅ 必須 | — | — |
 | /review-challenge | — | — | ✅ 必須 | — |
-| /security-audit | auth触れた時 | — | fixtures/ か `hints[]` を変えた時 ✅ (V8) | ✅ 必須 |
+| /security-audit | auth触れた時、`internal/hintleak/**` / `internal/sourcehygiene/**` (ADR-0043) | — | fixtures/ か `hints[]` を変えた時 ✅ (V8) | ✅ 必須 |
 
 ---
 

@@ -208,7 +208,7 @@ counter は前後の差分で assert する (metric はプロセスで共有さ�
   (REFACTORING §5 の名指し) / 03 の rule-explain の文を「Read sensitive file untrusted」の sight に混ぜると赤 / 03 の README の文を 10 の skill に混ぜると
   赤 / 自課題の hints の文を自課題の skill に置くと、他課題の守る文に同じ並びが無ければ緑 / 自課題の想定解の文でも、他課題の守る文にだけある並びを含めば赤 (03 の
   skill に、10 の守る文と重なる 03 の想定解の行を書く) / 無料表示にある文は緑 / 範囲で結果が変わる例がその範囲でだけ赤。起動時: 違反した entry だけが破棄され
-  他は残る / Cf を含む entry は破棄され他は残る / 守る文の側の Cf で Check が error → Quest の文がすべて破棄され `quest_enabled` = 0 / 範囲の課題の README.md か
+  他は残る / 不可視の rune (ADR-0043 D1 の `sourcehygiene.Hidden`) を含む entry は破棄され他は残る / 守る文の側の不可視の rune で Check が error (故意違反は Cf 以外の類 = U+034F・U+FE00・U+3164・C0 制御を最低 1 つずつ植える) → Quest の文がすべて破棄され `quest_enabled` = 0 / 範囲の課題の README.md か
   journey を消した tree → 同じ (fail-closed) / 対象 0 件 → 起動時は何もしない、CI は fail / 破棄が kind `ngram` に数えられる。合成 fixture は software、実 tree は content。
 - **V3 否定** (受け入れ条件 5。HTTP の性質なので `make test` = required に置き、ADR-0031 D2 により `make e2e` には置かない): `TestQuest_NegativeDisclosure_AllBodies`。
   実 catalog と nimbusbreach-full で、状態 = 10 だけ solve / 1 課題だけ solve (課題ごと) / X 以外を全部 solve (X = 03・05・10)。QuestBook・journey (全課題の
@@ -222,7 +222,7 @@ counter は前後の差分で assert する (metric はプロセスで共有さ�
   key と文の pin、禁止語の逐語の検査、content のファイルに `FALCO{` が無い。
 - **V6 rule-explain**: `HomeFragments` に `ChalNN` が空でない entry が 0 件 (生成物を作り直した PR で)。
 - **V7 単一実装**: 無料表示と守る文の項目を組む関数は `internal/catalog` の 1 つで、ADR-0026 の検査・起動時・CI がそれを呼ぶ (3 者が同じ集合を得ることを test で確かめる)。
-- **V8 レビューの規律**: dev-flow のゲート表に、3 ファイルと D7 のコードの経路を security 必須として載せる (ADR-0026 V8 の行に足す)。
+- **V8 レビューの規律**: dev-flow のゲート表に、3 ファイルと D7 のコードの経路を security 必須として載せる (3 ファイルはパターン C の V8 の行 = ADR-0026 V8 の行に、D7 のコードはパターン A の /security-audit の行に足す)。
 - **機械で守れないもの**: 言い換えによる漏えい、IP の境界、private の条件との突き合わせ (D3 の「人」の欄)。
 
 ## Advice
