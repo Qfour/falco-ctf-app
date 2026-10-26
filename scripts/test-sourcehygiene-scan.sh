@@ -11,7 +11,8 @@
 #     or the edge cases dropped, .pdf dropped from binary-ext.tsv: each makes `--selftest`
 #     exit 1 for the intended reason (a crash, or a failure for another reason, is not accepted);
 #   - the signature of a binary extension (app#537): a check that is dropped (any *.pdf is
-#     skipped) or that looks anywhere in the file and not at the start, a reader that lets the
+#     skipped) or that looks anywhere in the file and not at the start, a signature that skips
+#     a file whatever its extension, a dotfile that has an extension, a reader that lets the
 #     extensions out of order, an expect.txt that no longer matches, and a testdata/negatives
 #     cut down below its floor each make `--selftest` exit 1; the control run reports as many
 #     shared negatives as there are directories (so none is left out);
@@ -175,6 +176,10 @@ mutate signature-check-dropped "${SCAN_REL}" '        if sig is not None and con
   '        if sig is not None:' "shared negative 'walk-pdf-named-text'"
 mutate signature-anywhere-in-the-file "${SCAN_REL}" '        if sig is not None and content.startswith(sig):' \
   '        if sig is not None and sig in content:' "shared negative 'walk-pdf-signature-not-at-the-start'"
+mutate signature-without-the-extension "${SCAN_REL}" '        sig = data.binary_ext.get(os.path.splitext(rel)[1].lower())' \
+  '        sig = data.binary_ext.get(os.path.splitext(rel)[1].lower()) or b"%PDF-"' "shared negative 'walk-md-with-pdf-signature'"
+mutate dotfile-has-an-extension "${SCAN_REL}" '        sig = data.binary_ext.get(os.path.splitext(rel)[1].lower())' \
+  '        sig = data.binary_ext.get("." + os.path.basename(rel).rpartition(".")[2].lower())' "shared negative 'walk-dotfile-woff2-real-signature'"
 mutate binary-ext-order-not-checked "${SCAN_REL}" '        if cols[0] <= last:' \
   '        if False:' "shared negative 'reader-binext-not-ascending'"
 mutate negative-expectation-changed "${NEG_REL}/walk-raw-zwsp/expect.txt" 'exit:1' \

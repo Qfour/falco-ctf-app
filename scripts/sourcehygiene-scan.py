@@ -23,8 +23,11 @@ Usage:
 DIR: the files `git ls-files` lists when DIR/.git exists (a file is fine: a worktree), else
 every file under DIR. Symlinks and submodules are not followed. A file whose extension is
 in binary-ext.tsv is not scanned, but only when the file also starts with that extension's
-signature (a text file named *.pdf is scanned). --also-untracked REL adds the regular files under REL
-(a clean relative path to a file or a directory; it must exist), for an untracked file the
+signature (a text file named *.pdf is scanned). The extension is os.path.splitext's, lower
+case: a run of dots at the start of the name is not one (".woff2" has none). The signature
+guards against a wrong name, not a forgery: a text file that begins with it is not scanned
+either (the residual of ADR-0045). --also-untracked REL adds the regular files under REL (a
+clean relative path to a file or a directory; it must exist), for an untracked file the
 session reads all the same (a .claude/ the VCS ignores).
 
 The walk: a path that is not printable ASCII (U+0021-007E) is a problem; a NUL byte is one
@@ -46,6 +49,7 @@ differs (ADR-0045 D9).
 
 --selftest also runs the negatives of internal/sourcehygiene/testdata/negatives/: one
 directory each, read by Go's TestSharedNegatives too (the format is in negatives_test.go).
+Only --selftest reads that directory; a scan of a tree (<dir>) needs the three data files.
 
 Standard library only; python3 3.9 or later; ASCII only.
 """
@@ -69,7 +73,7 @@ BINARY_EXT_FILE = DATA / "binary-ext.tsv"
 # `bidi` for a row of bidiControls.
 RULES = ("always", "vsAfterSymbol", "zwjInEmoji", "bomAtStart", "loneCR", "bidi")
 MIN_CASES = 45  # a floor under hidden-cases.tsv (V1-c)
-MIN_NEGATIVES = 50  # a floor under testdata/negatives (the Go test has the same)
+MIN_NEGATIVES = 67  # the number of testdata/negatives today: a deletion shows in the diff (the Go test has the same)
 NEGATIVES = DATA / "negatives"
 INVALID = -2  # an invalid UTF-8 byte: no table row, no symbol (Go's RuneError of width 1)
 
@@ -551,6 +555,8 @@ def shared_negatives(me):
         if kind is None or have != want:
             raise Fail("%s: the files are %s, want %s (expect.txt and exactly one input; allowlist.txt only beside plant.tsv)" % (d, have, want))
         code, outs, nots = parse_expect(read_ascii(d / "expect.txt"), "%s/expect.txt" % name)
+        if kind == "plant.tsv" and code == 1 and not outs:
+            raise Fail("%s/expect.txt: a tree that must fail names why with an out: line (an exit:1 alone passes for any reason)" % name)
         lines = read_ascii(d / kind)
         got, out = 0, ""
         if kind == "cases.tsv":
@@ -568,6 +574,7 @@ def shared_negatives(me):
             with tempfile.TemporaryDirectory() as tmp:
                 tree = os.path.join(tmp, "tree")
                 os.mkdir(tree)
+                refused = None
                 for line in lines:
                     if not is_data_row(line):
                         continue
@@ -575,13 +582,22 @@ def shared_negatives(me):
                     if len(cols) != 2:
                         raise Fail("%s/plant.tsv: want <path><TAB><content>, got %r" % (name, line))
                     rel = decode_input(cols[0]).decode("utf-8")
-                    with open(os.path.join(tree, rel), "wb") as f:
+                    if "/" in rel or rel in (".", ".."):
+                        refused = "plant.tsv: path %r is not one path segment (no /, not . or ..)" % rel
+                        break
+                    dst = os.path.join(tree, rel)
+                    if os.path.dirname(os.path.realpath(dst)) != os.path.realpath(tree):
+                        raise Fail("%s/plant.tsv: %r would leave the tree" % (name, rel))
+                    with open(dst, "wb") as f:
                         f.write(decode_input(cols[1]) if cols[1] else b"")
-                args = [tree]
-                if "allowlist.txt" in have:
-                    args += ["--allowlist", str(d / "allowlist.txt")]
-                res = subprocess.run([sys.executable, me] + args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-                got, out = res.returncode, (res.stdout + res.stderr).decode("utf-8", "replace")
+                if refused is not None:
+                    got, out = 1, refused
+                else:
+                    args = [tree]
+                    if "allowlist.txt" in have:
+                        args += ["--allowlist", str(d / "allowlist.txt")]
+                    res = subprocess.run([sys.executable, me] + args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+                    got, out = res.returncode, (res.stdout + res.stderr).decode("utf-8", "replace")
         why = []
         if got != code:
             why.append("exit %d, want %d" % (got, code))

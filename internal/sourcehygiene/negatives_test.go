@@ -21,6 +21,12 @@ package sourcehygiene
 // print may be in an out: line (a path:line:col prefix, a sentence both share). A file that
 // is not in that set is an error, so a typo cannot turn a negative into nothing.
 //
+// Where a negative goes: a behaviour BOTH implementations have is a directory here. What
+// stays in Go's tables (bidi_test.go, invisible_test.go) is only what is not shared (the list
+// below) and the check of Go's own wording (a message, a field). A case added to either
+// side's own list instead of here is a copy that drifts again. A plant.tsv path is one path
+// segment (no /, not . or ..): a refusal, with an out: line, like any other negative.
+//
 // What is NOT shared (the scanner's --selftest holds it alone): the ranges reader (Go
 // compares the file with the Go tables instead of reading it), a tree that is only binary
 // files (Go's walk does not require a text file; the canaries do), the bidi allowlist, git
@@ -37,8 +43,8 @@ import (
 
 const (
 	negativesDir = "internal/sourcehygiene/testdata/negatives"
-	// minNegatives is a floor: a directory emptied out is not a pass.
-	minNegatives = 50
+	// minNegatives is the number of negatives today: a deletion shows in the diff.
+	minNegatives = 67
 )
 
 type negExpect struct {
@@ -86,6 +92,9 @@ func runPlant(t *testing.T, rows []string, allow string) (int, string) {
 		path, err := decodeCaseInput(cols[0])
 		if err != nil {
 			t.Fatalf("plant.tsv path %q: %v", cols[0], err)
+		}
+		if strings.Contains(string(path), "/") || string(path) == "." || string(path) == ".." {
+			return 1, fmt.Sprintf("plant.tsv: path %q is not one path segment (no /, not . or ..)", path)
 		}
 		var body []byte
 		if cols[1] != "" {
@@ -160,6 +169,9 @@ func TestSharedNegatives(t *testing.T) {
 			exp, err := parseExpect(expLines, e.Name()+"/expect.txt")
 			if err != nil {
 				t.Fatal(err)
+			}
+			if kind == "plant.tsv" && exp.exit == 1 && len(exp.out) == 0 {
+				t.Fatalf("a tree that must fail names why with an out: line (an exit:1 alone passes for any reason)")
 			}
 			lines, _ := read(kind)
 			var code int

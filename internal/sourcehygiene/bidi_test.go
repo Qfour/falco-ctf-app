@@ -102,11 +102,20 @@ func (f finding) String() string {
 	return fmt.Sprintf("%d:%d U+%04X %s", f.line, f.col, f.cp, bidiControls[f.cp])
 }
 
+// extOf is the extension of a path: lower case, and a run of dots at the start of the base
+// name is not an extension (".woff2", "..pdf" and "d/.tgz" have none), the rule of Python's
+// os.path.splitext, which the reference scanner uses (app#537, ADR-0045 D4).
+func extOf(rel string) string {
+	return strings.ToLower(filepath.Ext(strings.TrimLeft(filepath.Base(rel), ".")))
+}
+
 // isBinary: the extension is in binaryExt and data starts with that kind's signature.
 // Neither alone is enough (app#537): the extension is a name anyone can give a text file,
-// and the signature is the format, so a file that has only one of them is scanned.
+// and the signature is the format, so a file that has only one of them is scanned. The
+// signature is a guard against a wrong name, not against a forgery: a text file that begins
+// with it passes (the residual of ADR-0045).
 func isBinary(rel string, data []byte) bool {
-	k, ok := binaryExt[strings.ToLower(filepath.Ext(rel))]
+	k, ok := binaryExt[extOf(rel)]
 	return ok && bytes.HasPrefix(data, k.sig)
 }
 
@@ -317,10 +326,13 @@ func TestTrackedFilesHoldNoRawBidiOrInvisibleCharacter(t *testing.T) {
 		}
 	}
 	// app tracks no PDF: .pdf is in binaryExt for the reference scanner's sake (ADR-0045,
-	// platform tracks event decks). A tracked file skipped as binary here must be one of the
-	// two kinds app really has, so the skip cannot quietly cover a text file named *.pdf.
+	// platform tracks event decks). This loop is NOT redundant since the signature check
+	// (app#537): a file that starts with a signature is skipped whether or not it really is
+	// that format, and "%PDF-" and "wOF2" are printable ASCII, so a text file that begins
+	// with one and is named *.pdf / *.woff2 passes isBinary. What stops a forged .pdf in app
+	// is this check alone: every tracked binary extension is one of {.woff2, .tgz}.
 	for _, b := range r.binary {
-		if ext := strings.ToLower(filepath.Ext(b)); ext != ".woff2" && ext != ".tgz" {
+		if ext := extOf(b); ext != ".woff2" && ext != ".tgz" {
 			t.Errorf("%s is skipped as binary but app tracks only .woff2 and untracked .tgz files; a new binary kind needs a reason in binaryExt and in testdata/binary-ext.tsv (ADR-0045)", b)
 		}
 	}
