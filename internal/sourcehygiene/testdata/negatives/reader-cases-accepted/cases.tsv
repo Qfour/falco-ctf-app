@@ -1,0 +1,7 @@
+# what the reader must keep accepting
+n1	a	none
+n2	{U+007B}a{U+007D}	none
+n3	{xFF}	none
+n4	{U+0000}	1:1 U+0000
+n5	 #x 	none
+n6	{U+10FFFF}	none

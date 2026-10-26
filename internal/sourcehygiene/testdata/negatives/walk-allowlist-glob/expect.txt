@@ -1,0 +1,2 @@
+exit:1
+out:not an exact, clean, slash-separated file path

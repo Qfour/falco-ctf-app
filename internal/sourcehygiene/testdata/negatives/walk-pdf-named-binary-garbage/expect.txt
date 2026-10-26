@@ -1,0 +1,2 @@
+exit:1
+out:a.pdf: holds a NUL byte

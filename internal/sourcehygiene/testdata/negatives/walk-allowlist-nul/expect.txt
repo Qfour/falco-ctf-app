@@ -1,0 +1,2 @@
+exit:1
+out:U+0000 is the NUL rule

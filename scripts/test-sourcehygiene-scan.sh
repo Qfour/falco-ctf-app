@@ -10,6 +10,12 @@
 #     read as half-open; data mutants: U+FE0F always in the table, the bidi rows, the Tag row
 #     or the edge cases dropped, .pdf dropped from binary-ext.tsv: each makes `--selftest`
 #     exit 1 for the intended reason (a crash, or a failure for another reason, is not accepted);
+#   - the signature of a binary extension (app#537): a check that is dropped (any *.pdf is
+#     skipped) or that looks anywhere in the file and not at the start, a signature that skips
+#     a file whatever its extension, a dotfile that has an extension, a reader that lets the
+#     extensions out of order, an expect.txt that no longer matches, and a testdata/negatives
+#     cut down below its floor each make `--selftest` exit 1; the control run reports as many
+#     shared negatives as there are directories (so none is left out);
 #   - a data file that cannot be read is a FAIL (never a skip); a Unicode version that differs
 #     from the data header is a WARN, not a FAIL; a wrong command line is exit 2;
 #   - the app tree is clean outside invisible-allowlist.txt (what flag-guard runs too).
@@ -35,14 +41,18 @@ SCAN_REL="scripts/sourcehygiene-scan.py"
 RANGES_REL="internal/sourcehygiene/testdata/hidden-ranges.tsv"
 CASES_REL="internal/sourcehygiene/testdata/hidden-cases.tsv"
 BINEXT_REL="internal/sourcehygiene/testdata/binary-ext.tsv"
+NEG_REL="internal/sourcehygiene/testdata/negatives"
 
-# mk_checkout <dir>: the scanner and its three data files, at their repo-relative paths.
+# mk_checkout <dir>: the scanner, its three data files and the shared negatives, at their
+# repo-relative paths.
 mk_checkout() {
   local d="$1" f
   for f in "${SCAN_REL}" "${RANGES_REL}" "${CASES_REL}" "${BINEXT_REL}"; do
     mkdir -p "${d}/$(dirname "${f}")"
     cp -p "${REPO_ROOT}/${f}" "${d}/${f}"
   done
+  mkdir -p "${d}/${NEG_REL}"
+  cp -R "${REPO_ROOT}/${NEG_REL}/." "${d}/${NEG_REL}/"
 }
 
 # run_py <args...>: python3 <args>; OUT / ERR files and ST (the exit status), set -e safe.
@@ -80,6 +90,8 @@ CK="${WORK}/ck"
 mk_checkout "${CK}"
 SCAN="${CK}/${SCAN_REL}"
 expect "control: the unmodified copy passes --selftest" 0 "OK sourcehygiene-scan --selftest" -- "${SCAN}" --selftest
+NEGS="$(find "${REPO_ROOT}/${NEG_REL}" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')"
+expect "control: every entry of testdata/negatives is run (${NEGS})" 0 " walk checks, ${NEGS} shared negatives " -- "${SCAN}" --selftest
 
 # --- the mutants --------------------------------------------------------------
 # mutate <label> <file> <line prefix> <replacement line> <must text>
@@ -142,7 +154,7 @@ mutate range-half-open "${SCAN_REL}" '        if i >= 0 and cp <= self.rows[i][1
 # The walk (review-5x of #536): an end-anchored path rule, a walk that skips what it cannot list,
 # symlinks to directories left out of the listing, `..` accepted by --also-untracked.
 mutate path-rule-end-anchored "${SCAN_REL}" '        if not re.fullmatch(r"[!-~]+", rel):' \
-  '        if not re.match(r"^[!-~]+$", rel):' "walk 'a file name that ends in LF is not printable ASCII (no walk, no git)'"
+  '        if not re.match(r"^[!-~]+$", rel):' "shared negative 'walk-trailing-lf-name'"
 mutate symlinked-dirs-not-listed "${SCAN_REL}" '        names = list(files) + [x for x in dirs if os.path.islink(os.path.join(d, x))]' \
   '        names = list(files)' "walk 'a symlink to a directory whose name is not printable ASCII is a problem'"
 mutate also-untracked-dotdot "${SCAN_REL}" '        if (rel == "" or os.path.isabs(rel) or os.path.normpath(rel) != rel or rel == "." or rel == ".."' \
@@ -158,7 +170,24 @@ drop_lines table-without-bidi-lines "${RANGES_REL}" "${TAB}bidi${TAB}" "no row h
 drop_lines table-without-the-tag-row "${RANGES_REL}" "TAG CHARACTER" 'Tag characters hiding ASCII: every one is reported: scan gives none'
 drop_lines cases-without-the-edge-rows "${CASES_REL}" 'edge: ' 'no case has a finding at U+'
 drop_lines cases-cut-below-the-floor "${CASES_REL}" '{U+' 'fewer than the floor'
-drop_lines binary-ext-without-pdf "${BINEXT_REL}" '.pdf' "walk 'a file with an extension of binary-ext.tsv is not scanned'"
+drop_lines binary-ext-without-pdf "${BINEXT_REL}" '.pdf' "shared negative 'walk-pdf-real-signature'"
+# The signature of a binary extension (app#537) and the shared negatives.
+mutate signature-check-dropped "${SCAN_REL}" '        if sig is not None and content.startswith(sig):' \
+  '        if sig is not None:' "shared negative 'walk-pdf-named-text'"
+mutate signature-anywhere-in-the-file "${SCAN_REL}" '        if sig is not None and content.startswith(sig):' \
+  '        if sig is not None and sig in content:' "shared negative 'walk-pdf-signature-not-at-the-start'"
+mutate signature-without-the-extension "${SCAN_REL}" '        sig = data.binary_ext.get(os.path.splitext(rel)[1].lower())' \
+  '        sig = data.binary_ext.get(os.path.splitext(rel)[1].lower()) or b"%PDF-"' "shared negative 'walk-md-with-pdf-signature'"
+mutate dotfile-has-an-extension "${SCAN_REL}" '        sig = data.binary_ext.get(os.path.splitext(rel)[1].lower())' \
+  '        sig = data.binary_ext.get("." + os.path.basename(rel).rpartition(".")[2].lower())' "shared negative 'walk-dotfile-woff2-real-signature'"
+mutate binary-ext-order-not-checked "${SCAN_REL}" '        if cols[0] <= last:' \
+  '        if False:' "shared negative 'reader-binext-not-ascending'"
+mutate negative-expectation-changed "${NEG_REL}/walk-raw-zwsp/expect.txt" 'exit:1' \
+  'exit:0' "shared negative 'walk-raw-zwsp'"
+U="${WORK}/few-negatives"
+mk_checkout "${U}"
+rm -rf "${U}/${NEG_REL}"/walk-*
+expect "testdata/negatives cut below its floor: --selftest FAIL" 1 "fewer than the floor" -- "${U}/${SCAN_REL}" --selftest
 
 # --- a data file that cannot be read is a FAIL, never a skip ---------------------
 for f in "${RANGES_REL}" "${CASES_REL}" "${BINEXT_REL}"; do
