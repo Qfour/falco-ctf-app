@@ -334,7 +334,8 @@ check_operator_input() {
 #                    unchanged.
 # The pairing (D3): given both, and the frame-ancestors not 'none', it must be exactly
 # https://<app-host>: the one origin that serves the portal is the one that frames ttyd and
-# the one the sign-in redirect returns to. Until now only an operator's discipline kept them
+# the one the sign-in redirect returns to (the HOST: the scheme differs, auth.authSignin's
+# default is http, app#534). Until now only an operator's discipline kept them
 # equal. Either alone is checked against its own grammar only. Table rows:
 # internal/ttydproxy/testdata/frame-ancestors-cases.tsv and
 # internal/catalog/testdata/dns-suffix-cases.tsv (as --app-host), run by
