@@ -8,7 +8,8 @@ package sourcehygiene
 //     the variation-selector ranges that invisible.go holds as constants), then one row
 //     per range of invisibleRanges and per bidi control: U+LLLL TAB U+HHHH TAB rule TAB name;
 //   - hidden-cases.tsv: name TAB input TAB expected, the findings Hidden must give;
-//   - binary-ext.tsv: ext TAB reason, binaryExt (bidi_test.go): what is not scanned.
+//   - binary-ext.tsv: ext TAB reason TAB hex signature, binaryExt (bidi_test.go): what is not
+//     scanned, and only when the file starts with the signature (app#537).
 //
 // scripts/sourcehygiene-scan.py reads exactly these three files and re-implements the
 // context rules; its --selftest runs every row of the cases. The tests here keep the files
@@ -25,6 +26,8 @@ package sourcehygiene
 // test-only. This file is ASCII: every character the data holds is a placeholder.
 
 import (
+	"bytes"
+	"encoding/hex"
 	"fmt"
 	"go/parser"
 	"go/token"
@@ -255,29 +258,48 @@ func vocabulary() []string {
 
 // ---- (b) binary-ext.tsv = binaryExt ----------------------------------------
 
-func TestExportedBinaryExt_EqualsBinaryExt(t *testing.T) {
+var binaryExtRow = regexp.MustCompile(`^\.[a-z0-9]+$`)
+var signatureHex = regexp.MustCompile(`^([0-9A-F]{2}){2,}$`)
+
+// parseBinaryExt reads the lines of binary-ext.tsv: <.ext><TAB><reason><TAB><hex signature>.
+// The extension is lower case, ascending, no repeat; the signature is upper-case hex of at
+// least two bytes (app#537, ADR-0045 D1 (c)). It stops at the first row that is not that.
+func parseBinaryExt(lines []string, label string) (map[string]binaryKind, error) {
 	var prev string
-	got := map[string]string{}
-	for i, l := range readData(t, binaryExtFile) {
+	got := map[string]binaryKind{}
+	for i, l := range lines {
 		if !isDataRow(l) {
 			continue
 		}
-		ext, reason, ok := strings.Cut(l, "\t")
-		if !ok || !regexp.MustCompile(`^\.[a-z0-9]+$`).MatchString(ext) || reason == "" || strings.Contains(reason, "\t") {
-			t.Errorf("%s:%d: want <.ext><TAB><reason> (lower case), got %q", binaryExtFile, i+1, l)
-			continue
+		cols := strings.Split(l, "\t")
+		if len(cols) != 3 || !binaryExtRow.MatchString(cols[0]) || cols[1] == "" || !signatureHex.MatchString(cols[2]) {
+			return nil, fmt.Errorf("%s:%d: want <.ext><TAB><reason><TAB><signature: upper-case hex, 2 bytes or more> (ext in lower case), got %q", label, i+1, l)
 		}
-		if ext <= prev {
-			t.Errorf("%s:%d: %q is not after %q: ascending, no repeat", binaryExtFile, i+1, ext, prev)
+		if cols[0] <= prev {
+			return nil, fmt.Errorf("%s:%d: %q is not after %q: ascending, no repeat", label, i+1, cols[0], prev)
 		}
-		prev = ext
-		got[ext] = reason
+		prev = cols[0]
+		sig, _ := hex.DecodeString(cols[2])
+		got[cols[0]] = binaryKind{cols[1], sig}
 	}
-	for ext, reason := range binaryExt {
+	if len(got) == 0 {
+		return nil, fmt.Errorf("%s: no extension", label)
+	}
+	return got, nil
+}
+
+func TestExportedBinaryExt_EqualsBinaryExt(t *testing.T) {
+	got, err := parseBinaryExt(readData(t, binaryExtFile), binaryExtFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for ext, want := range binaryExt {
 		if g, ok := got[ext]; !ok {
 			t.Errorf("%s has no row for %s (in binaryExt)", binaryExtFile, ext)
-		} else if g != reason {
-			t.Errorf("%s: the reason of %s is %q, binaryExt says %q", binaryExtFile, ext, g, reason)
+		} else if g.reason != want.reason {
+			t.Errorf("%s: the reason of %s is %q, binaryExt says %q", binaryExtFile, ext, g.reason, want.reason)
+		} else if !bytes.Equal(g.sig, want.sig) {
+			t.Errorf("%s: the signature of %s is %X, binaryExt says %X", binaryExtFile, ext, g.sig, want.sig)
 		}
 	}
 	for ext := range got {
@@ -386,43 +408,11 @@ func formatFindings(fs []Finding) string {
 	return strings.Join(parts, ",")
 }
 
+// TestSharedCaseReader_RejectsMalformed: the cases reader's negatives (and the one list it
+// must keep accepting) are the dirs reader-cases-* of testdata/negatives, which the
+// reference scanner's --selftest reads too (negatives_test.go). What stays here is the file
+// level: a CR, a byte above 7F and a missing final newline cannot be written in a data file.
 func TestSharedCaseReader_RejectsMalformed(t *testing.T) {
-	good := []string{"n\ta\tnone", "n\t{U+007B}a{U+007D}\tnone", "n\t{xFF}\tnone", "n\t{U+0000}\t1:1 U+0000", "n\t #x \tnone", "n\t{U+10FFFF}\tnone"}
-	for _, l := range good {
-		if _, err := parseSharedCases([]string{l}); err != nil {
-			t.Errorf("%q must be accepted: %v", l, err)
-		}
-	}
-	bad := map[string]string{
-		"{U+12} (too few digits)":                  "n\t{U+12}\tnone",
-		"{u+200B} (lower-case u)":                  "n\t{u+200B}\tnone",
-		"{LF} (a placeholder of an earlier draft)": "n\ta{LF}\tnone",
-		"a lone }":                                    "n\ta}\tnone",
-		"a lone {":                                    "n\ta{\tnone",
-		"{x41} (a raw byte below 80)":                 "n\t{x41}\tnone",
-		"{xff} (lower-case hex)":                      "n\t{xff}\tnone",
-		"{U+D800} (a surrogate)":                      "n\t{U+D800}\tnone",
-		"{U+110000} (beyond Unicode)":                 "n\t{U+110000}\tnone",
-		"{U+0041} (printable ASCII as a placeholder)": "n\t{U+0041}\tnone",
-		"{U+0041 } (a space inside)":                  "n\t{U+0041 }\tnone",
-		"an input that decodes to nothing":            "n\t\tnone",
-		"two columns":                                 "n\tabc",
-		"four columns":                                "n\tabc\tnone\tx",
-		"an empty name":                               "\tabc\tnone",
-		"a name that starts with #":                   "#n\tabc\tnone",
-		"expected that is neither none nor a list":    "n\tabc\tmaybe",
-		"expected with a lower-case code point":       "n\tabc\t1:1 U+00ad",
-		"expected with a trailing comma":              "n\tabc\t1:1 U+00AD,",
-	}
-	for what, l := range bad {
-		if _, err := parseSharedCases([]string{l}); err == nil {
-			t.Errorf("%s: %q must be rejected (a reader that accepts it reads less than the contract)", what, l)
-		}
-	}
-	if _, err := parseSharedCases([]string{"n\tabc\tnone", "n\tabd\tnone"}); err == nil {
-		t.Error("a name used twice must be rejected")
-	}
-	// A whole file is checked too: a CR, a byte above 7F, a missing final newline.
 	for what, b := range map[string][]byte{"a CR": []byte("n\ta\tnone\r\n"), "a non-ASCII byte": []byte("n\ta\xc3\xa9\tnone\n"), "no final newline": []byte("n\ta\tnone")} {
 		if _, err := dataLines(b, "x"); err == nil {
 			t.Errorf("%s: dataLines must reject the file", what)

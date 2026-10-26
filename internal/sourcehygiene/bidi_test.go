@@ -25,7 +25,8 @@ package sourcehygiene
 // tree has none today and the set is one table (bidiControls) if that changes.
 // What is scanned: every regular file except those whose extension is in
 // binaryExt, a closed set (a raw byte sequence inside a font is chance, not an
-// attack). A NUL byte does NOT make a file binary: an attacker can put one in a
+// attack), AND that start with that extension's format signature (app#537: a text
+// file named *.pdf is scanned). A NUL byte does NOT make a file binary: an attacker can put one in a
 // .md or .yaml to skip a "has a NUL" test. A file outside binaryExt that holds a
 // NUL is scanned all the same and is also a problem ("cannot decide"); a new
 // binary format must be added to binaryExt with a reason. Invalid UTF-8 does NOT
@@ -71,17 +72,25 @@ var canaryFiles = []string{
 	invisibleAllowlistFile,
 }
 
-// binaryExt is the closed set of file extensions that are binary and not
-// scanned, each with its reason. Adding one needs the same review as an
-// allowlist line.
-var binaryExt = map[string]string{
+// binaryKind is one row of binaryExt: why the extension is binary, and the bytes a file of
+// that kind starts with.
+type binaryKind struct {
+	reason string
+	sig    []byte
+}
+
+// binaryExt is the closed set of file extensions that are binary and not scanned, each with
+// its reason and its format signature (app#537): a file is skipped only when its extension
+// is here AND it starts with the signature. A file that merely carries the extension (a text
+// file named *.pdf) is scanned as text. Adding one needs the same review as an allowlist line.
+var binaryExt = map[string]binaryKind{
 	// Not scanned here either (ADR-0045): the reference scanner's binary-ext.tsv is this
 	// map, and platform tracks event decks as PDFs. app tracks none.
-	".pdf":   "PDF (compressed streams; a byte match is chance). platform tracks event decks (ADR-0045)",
-	".woff2": "WOFF2 font (compressed bytes; a 3-byte match is chance)",
+	".pdf":   {"PDF (compressed streams; a byte match is chance). platform tracks event decks (ADR-0045)", []byte("%PDF-")},
+	".woff2": {"WOFF2 font (compressed bytes; a 3-byte match is chance)", []byte("wOF2")},
 	// Not tracked: `helm dependency build` writes charts/*/charts/*.tgz, and
 	// Dockerfile.test runs it after COPY, before this test. git ignores them.
-	".tgz": "helm dependency archive (untracked build output present in the Docker path)",
+	".tgz": {"helm dependency archive (untracked build output present in the Docker path)", []byte{0x1F, 0x8B}},
 }
 
 type finding struct {
@@ -93,10 +102,12 @@ func (f finding) String() string {
 	return fmt.Sprintf("%d:%d U+%04X %s", f.line, f.col, f.cp, bidiControls[f.cp])
 }
 
-// isBinary: the extension is in binaryExt. Not the content: see the header.
-func isBinary(rel string) bool {
-	_, ok := binaryExt[strings.ToLower(filepath.Ext(rel))]
-	return ok
+// isBinary: the extension is in binaryExt and data starts with that kind's signature.
+// Neither alone is enough (app#537): the extension is a name anyone can give a text file,
+// and the signature is the format, so a file that has only one of them is scanned.
+func isBinary(rel string, data []byte) bool {
+	k, ok := binaryExt[strings.ToLower(filepath.Ext(rel))]
+	return ok && bytes.HasPrefix(data, k.sig)
 }
 
 // scanBytes finds the raw controls in data. It searches bytes, not decoded
@@ -224,17 +235,17 @@ func checkTree(root string, allow map[string]string, extra ...fileScanner) (*rep
 		if err != nil {
 			return nil, err
 		}
-		if isBinary(rel) {
-			r.binary = append(r.binary, rel)
-			continue
-		}
 		data, err := os.ReadFile(abs)
 		if err != nil {
 			return nil, err
 		}
+		if isBinary(rel, data) {
+			r.binary = append(r.binary, rel)
+			continue
+		}
 		r.scanned[rel] = true
 		if bytes.IndexByte(data, 0) >= 0 {
-			r.problems = append(r.problems, fmt.Sprintf("%s: holds a NUL byte but its extension is not in binaryExt, so it cannot be told from a text file that hides something (remove the NUL, or add the extension to binaryExt with a reason)", rel))
+			r.problems = append(r.problems, fmt.Sprintf("%s: holds a NUL byte but its extension is not in binaryExt, so it cannot be told from a text file that hides something (remove the NUL, or add the extension to binaryExt with a reason; a binaryExt file is binary only when it also starts with the format signature)", rel))
 		}
 		for _, x := range extra {
 			r.problems = append(r.problems, x.file(rel, data)...)
@@ -372,7 +383,7 @@ func TestCheckTree_PlantedTrees(t *testing.T) {
 		},
 		{
 			name:  "a listed binaryExt file is a dead entry (such a file is not scanned)",
-			files: map[string]string{"font.woff2": "\x00" + rlo},
+			files: map[string]string{"font.woff2": "wOF2\x00" + rlo},
 			allow: map[string]string{"font.woff2": "attack fixture"},
 			want:  []string{`dead allowlist entry "font.woff2": the file has a binaryExt extension`},
 		},
@@ -388,8 +399,8 @@ func TestCheckTree_PlantedTrees(t *testing.T) {
 		{
 			name: "a binaryExt file is not scanned, whatever its case",
 			files: map[string]string{
-				"font.woff2": "\x00\x01" + rlo + "\x02",
-				"Font.WOFF2": "\x00\x01" + rlo + "\x02",
+				"font.woff2": "wOF2\x00\x01" + rlo + "\x02",
+				"Font.WOFF2": "wOF2\x00\x01" + rlo + "\x02",
 			},
 		},
 		{

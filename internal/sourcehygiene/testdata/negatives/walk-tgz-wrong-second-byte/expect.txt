@@ -1,0 +1,2 @@
+exit:1
+out:x.tgz: holds a NUL byte

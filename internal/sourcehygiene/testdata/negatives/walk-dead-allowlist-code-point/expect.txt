@@ -1,0 +1,2 @@
+exit:1
+out:dead allowlist code point U+2029

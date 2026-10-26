@@ -8,7 +8,8 @@ from its own position and never from the command line:
 
   internal/sourcehygiene/testdata/hidden-ranges.tsv   the table (range, rule, name)
   internal/sourcehygiene/testdata/hidden-cases.tsv    input and the findings expected
-  internal/sourcehygiene/testdata/binary-ext.tsv      the extensions that are not scanned
+  internal/sourcehygiene/testdata/binary-ext.tsv      the extensions that are not scanned, each
+                                                      with the signature its file starts with
 
 and re-implements the context rules of sourcehygiene.Hidden (invisible.go `scan`) and the
 walk of `make test` (bidi_test.go checkTree). The shared cases keep this file and the Go
@@ -21,7 +22,8 @@ Usage:
 
 DIR: the files `git ls-files` lists when DIR/.git exists (a file is fine: a worktree), else
 every file under DIR. Symlinks and submodules are not followed. A file whose extension is
-in binary-ext.tsv is not scanned. --also-untracked REL adds the regular files under REL
+in binary-ext.tsv is not scanned, but only when the file also starts with that extension's
+signature (a text file named *.pdf is scanned). --also-untracked REL adds the regular files under REL
 (a clean relative path to a file or a directory; it must exist), for an untracked file the
 session reads all the same (a .claude/ the VCS ignores).
 
@@ -41,6 +43,9 @@ If `unicodedata.unidata_version` differs from the header of hidden-ranges.tsv (t
 Unicode of Go's unicode.Version) a WARN goes to stderr and the exit status does not
 change: only whether a symbol assigned in between is a base for U+FE0E / U+FE0F / U+200D
 differs (ADR-0045 D9).
+
+--selftest also runs the negatives of internal/sourcehygiene/testdata/negatives/: one
+directory each, read by Go's TestSharedNegatives too (the format is in negatives_test.go).
 
 Standard library only; python3 3.9 or later; ASCII only.
 """
@@ -64,6 +69,8 @@ BINARY_EXT_FILE = DATA / "binary-ext.tsv"
 # `bidi` for a row of bidiControls.
 RULES = ("always", "vsAfterSymbol", "zwjInEmoji", "bomAtStart", "loneCR", "bidi")
 MIN_CASES = 45  # a floor under hidden-cases.tsv (V1-c)
+MIN_NEGATIVES = 50  # a floor under testdata/negatives (the Go test has the same)
+NEGATIVES = DATA / "negatives"
 INVALID = -2  # an invalid UTF-8 byte: no table row, no symbol (Go's RuneError of width 1)
 
 USAGE = """usage: sourcehygiene-scan.py --selftest
@@ -231,19 +238,23 @@ def parse_cases(lines, label="hidden-cases.tsv"):
 
 
 def parse_binary_ext(lines, label="binary-ext.tsv"):
-    exts = []
+    """{ext: signature bytes}: <.ext><TAB><reason><TAB><signature, upper-case hex of 2 bytes or more>."""
+    exts = {}
+    last = ""
     for n, line in enumerate(lines, 1):
         if not is_data_row(line):
             continue
         cols = line.split("\t")
-        if len(cols) != 2 or not re.fullmatch(r"\.[a-z0-9]+", cols[0]) or not cols[1]:
-            raise Fail("%s:%d: want <.ext><TAB><reason> (lower case), got %r" % (label, n, line))
-        if exts and cols[0] <= exts[-1]:
-            raise Fail("%s:%d: extensions must be ascending and not repeat (%r after %r)" % (label, n, cols[0], exts[-1]))
-        exts.append(cols[0])
+        if (len(cols) != 3 or not re.fullmatch(r"\.[a-z0-9]+", cols[0]) or not cols[1]
+                or not re.fullmatch(r"([0-9A-F]{2}){2,}", cols[2])):
+            raise Fail("%s:%d: want <.ext><TAB><reason><TAB><signature: upper-case hex, 2 bytes or more> (ext in lower case), got %r" % (label, n, line))
+        if cols[0] <= last:
+            raise Fail("%s:%d: extensions must be ascending and not repeat (%r after %r)" % (label, n, cols[0], last))
+        last = cols[0]
+        exts[cols[0]] = bytes.fromhex(cols[2])
     if not exts:
         raise Fail("%s: no extension" % label)
-    return tuple(exts)
+    return exts
 
 
 class Data:
@@ -396,7 +407,8 @@ def mutants(table):
 
 def reader_negatives(table_lines):
     """[(what, callable)] each of which must raise Fail: a reader that accepts one of these
-    reads less than the contract."""
+    reads less than the contract. The ranges reader and the file level only: the cases and
+    binary-ext readers' negatives are testdata/negatives (shared with Go)."""
     def ranges_with(i, text):
         lines = list(table_lines)
         lines[i] = text
@@ -414,42 +426,20 @@ def reader_negatives(table_lines):
         ("ranges: a rule never used", lambda: parse_ranges(head + [ok_row])),
         ("ranges: a bidi row of two code points", lambda: parse_ranges(head + ["U+202A\tU+202B\tbidi\tx"])),
         ("ranges: three columns", lambda: parse_ranges(head + ["U+0041\talways\tx"])),
-        ("binary-ext: a capital", lambda: parse_binary_ext([".PDF\tx"])),
-        ("binary-ext: not ascending", lambda: parse_binary_ext([".tgz\tx", ".pdf\ty"])),
-        ("binary-ext: no reason", lambda: parse_binary_ext([".pdf\t"])),
         ("non-ASCII file", lambda: check_ascii(("caf" + chr(0xE9) + "\n").encode("utf-8"), "x")),
         ("a CR in a file", lambda: check_ascii(b"a\r\n", "x")),
         ("no final newline", lambda: check_ascii(b"a", "x")),
     ]
-    for what, line in (
-        ("{U+12} (too few digits)", "n\t{U+12}\tnone"),
-        ("{u+200B} (lower-case u)", "n\t{u+200B}\tnone"),
-        ("{LF} (a placeholder of an earlier draft)", "n\ta{LF}\tnone"),
-        ("a lone }", "n\ta}\tnone"),
-        ("a lone {", "n\ta{\tnone"),
-        ("{x41} (a raw byte below 80)", "n\t{x41}\tnone"),
-        ("{xff} (lower-case hex)", "n\t{xff}\tnone"),
-        ("{U+D800} (a surrogate)", "n\t{U+D800}\tnone"),
-        ("{U+110000} (beyond Unicode)", "n\t{U+110000}\tnone"),
-        ("{U+0041} (a printable ASCII character as a placeholder)", "n\t{U+0041}\tnone"),
-        ("{U+0041 } (a space inside)", "n\t{U+0041 }\tnone"),
-        ("an input that decodes to nothing", "n\t\tnone"),
-        ("two columns", "n\tabc"),
-        ("four columns", "n\tabc\tnone\tx"),
-        ("an empty name", "\tabc\tnone"),
-        ("a name that starts with #", "#n\tabc\tnone"),
-        ("an expected that is neither none nor a list", "n\tabc\tmaybe"),
-        ("an expected with a lower-case code point", "n\tabc\t1:1 U+00ad"),
-        ("an expected with a trailing comma", "n\tabc\t1:1 U+00AD,"),
-    ):
-        neg.append(("cases: " + what, lambda line=line: parse_cases([line])))
-    neg.append(("cases: a name used twice", lambda: parse_cases(["n\tabc\tnone", "n\tabd\tnone"])))
     return neg
 
 
 def walk_negatives(me):
-    """Run this file on planted trees: [(what, args builder, want exit, text that must be in the output)]."""
-    zwsp, rlo, tag = chr(0x200B), chr(0x202E), chr(0xE0041)
+    """Run this file on planted trees that only this scanner has: [(what, ok, why)]. The trees
+    both implementations walk are testdata/negatives (shared_negatives): an empty tree, a raw
+    character, the path rule, a NUL, the allowlist and the signature of a binary extension.
+    What is here has no Go twin: a missing or an unlistable directory, symlinks, the bidi
+    allowlist, a tree of only binary files, git mode, --also-untracked and the command line."""
+    rlo = chr(0x202E)
     with tempfile.TemporaryDirectory() as tmp:
         results = []
 
@@ -473,25 +463,7 @@ def walk_negatives(me):
             results.append((what, ok, "exit %d, want %d; %r in output: %s; %r absent: %s" % (
                 res.returncode, want, must, must in text, must_not, must_not is None or must_not not in text)))
 
-        empty = plant("empty", {})
-        run("an empty directory", [empty], 1, "no file listed")
         run("a directory that does not exist (a walk error is a FAIL, not an empty tree)", [os.path.join(tmp, "nope")], 1, "cannot list")
-        d = plant("zwsp", {"a.md": "ab" + zwsp + "\n"})
-        run("a raw U+200B", [d], 1, "a.md:1:3 U+200B ZERO WIDTH SPACE: raw invisible character")
-        d = plant("tag", {"a.md": "x\n\ngo" + tag + "\n"})
-        run("a raw Tag character (line and column)", [d], 1, "a.md:3:3 U+E0041")
-        d = plant("bidi", {"a.md": "a" + rlo + "b\n"})
-        run("a raw bidi control", [d], 1, "a.md:1:2 U+202E")
-        d = plant("sofe0f", {"a.md": "x " + chr(0x26A0) + chr(0xFE0F) + " careful\n"})
-        run("So + U+FE0F is clean", [d], 0, "OK sourcehygiene-scan")
-        d = plant("bom", {"a.md": b"\xef\xbb\xbfkey: 1\r\nb: 2\r\n"})
-        run("a leading BOM and CRLF are clean", [d], 0, "OK sourcehygiene-scan")
-        d = plant("nul", {"n.txt": b"a\x00b\n"})
-        run("a NUL byte is one problem and no U+0000 finding", [d], 1, "n.txt: holds a NUL byte", must_not="U+0000")
-        d = plant("nonascii", {"caf" + chr(0xE9) + ".md": "x\n"})
-        run("a path that is not printable ASCII", [d], 1, "path name is not printable ASCII")
-        d = plant("lf-name", {"a.md\n": "x\n"})
-        run("a file name that ends in LF is not printable ASCII (no walk, no git)", [d], 1, "path name is not printable ASCII")
         d = plant("lf-name-git", {"a.md\n": "x\n"}, git=True)
         run("a file name that ends in LF is not printable ASCII (git ls-files)", [d], 1, "path name is not printable ASCII")
         d = plant("symlinks", {"a.md": "x\n", "real/b.md": "y\n"})
@@ -509,28 +481,12 @@ def walk_negatives(me):
                 run("--also-untracked of a directory that cannot be listed is a FAIL", [d, "--also-untracked", "sub"], 1, "cannot list")
             finally:
                 os.chmod(os.path.join(d, "sub"), 0o755)
-        d = plant("pdf", {"a.pdf": "x" + zwsp + "y", "b.md": "clean\n"})
-        run("a file with an extension of binary-ext.tsv is not scanned", [d], 0, "1 binary")
-        d = plant("onlybin", {"a.pdf": "x"})
+        d = plant("onlybin", {"a.pdf": "%PDF-1.7"})
         run("a tree of only binary files scans no text: FAIL", [d], 1, "no text file was scanned")
-        d = plant("allow", {"a.md": "x" + zwsp + "y\n"})
         al = os.path.join(tmp, "allow.txt")
         with open(al, "w") as f:
             f.write("# c\na.md\tU+200B\tthe raw U+200B is the input of a case\n")
-        run("the code point listed for the file is allowed", [d, "--allowlist", al], 0, "OK sourcehygiene-scan")
-        for what, line, must in (
-            ("a dead entry (the file holds none of it)", "a.md\tU+2029\tx\n", "dead allowlist entry 'a.md'"),
-            ("a dead code point", "a.md\tU+200B,U+2029\tx\n", "dead allowlist code point U+2029"),
-            ("a file that is not in the tree", "gone.md\tU+200B\tx\n", "the file is not a tracked regular file"),
-            ("a file listed twice", "a.md\tU+200B\tx\na.md\tU+200C\tx\n", "listed twice"),
-            ("NUL in the list", "a.md\tU+0000\tx\n", "U+0000 is the NUL rule"),
-            ("a code point outside the table", "a.md\tU+0041\tx\n", "is not in the table"),
-            ("no reason", "a.md\tU+200B\t\n", "has no reason"),
-            ("a glob", "a/*.md\tU+200B\tx\n", "not an exact, clean, slash-separated file path"),
-        ):
-            with open(al, "w") as f:
-                f.write(line)
-            run("the allowlist: " + what, [d, "--allowlist", al], 1, must)
+        d = plant("allow", {"a.md": "x" + chr(0x200B) + "y\n"})
         run("an allowlist that does not exist", [d, "--allowlist", os.path.join(tmp, "no-such-list")], 1, "the allowlist is unreadable")
         d = plant("bidiallow", {"a.md": "a" + rlo + "b\n"})
         with open(al, "w") as f:
@@ -549,6 +505,92 @@ def walk_negatives(me):
         run("no argument is a usage error", [], 2, "usage:")
         run("an unknown option is a usage error", [g, "--nope"], 2, "usage:")
         return results
+
+
+# ---- the negatives shared with Go (internal/sourcehygiene/negatives_test.go) -
+
+
+def parse_expect(lines, label):
+    """(exit, [out text], [not text]) of an expect.txt."""
+    code, outs, nots = None, [], []
+    for n, line in enumerate(lines, 1):
+        if not is_data_row(line):
+            continue
+        key, _, val = line.partition(":")
+        if line in ("exit:0", "exit:1") and code is None:
+            code = int(line[-1])
+        elif key == "out" and val:
+            outs.append(val)
+        elif key == "not" and val:
+            nots.append(val)
+        else:
+            raise Fail("%s:%d: want one exit:0|exit:1, out:<text> or not:<text>, got %r" % (label, n, line))
+    if code is None:
+        raise Fail("%s: no exit:0|exit:1 line" % label)
+    return code, outs, nots
+
+
+def shared_negatives(me):
+    """[(dir name, ok, why)]: every directory of testdata/negatives, judged the way Go's
+    TestSharedNegatives judges it. A reader is called in this process, a tree is planted and
+    this file is run on it."""
+    results = []
+    try:
+        names = sorted(os.listdir(NEGATIVES))
+    except OSError as e:
+        raise Fail("%s: cannot list the negatives: %s" % (NEGATIVES, e.strerror))
+    for name in names:
+        d = NEGATIVES / name
+        if not d.is_dir():
+            raise Fail("%s: only directories (one negative each)" % d)
+        have = sorted(os.listdir(d))
+        kind = next((k for k in ("cases.tsv", "binary-ext.tsv", "plant.tsv") if k in have), None)
+        want = {"cases.tsv": ["cases.tsv", "expect.txt"], "binary-ext.tsv": ["binary-ext.tsv", "expect.txt"],
+                "plant.tsv": ["expect.txt", "plant.tsv"] + (["allowlist.txt"] if "allowlist.txt" in have else [])}.get(kind)
+        want = sorted(want or [])
+        if kind is None or have != want:
+            raise Fail("%s: the files are %s, want %s (expect.txt and exactly one input; allowlist.txt only beside plant.tsv)" % (d, have, want))
+        code, outs, nots = parse_expect(read_ascii(d / "expect.txt"), "%s/expect.txt" % name)
+        lines = read_ascii(d / kind)
+        got, out = 0, ""
+        if kind == "cases.tsv":
+            reader = parse_cases
+        elif kind == "binary-ext.tsv":
+            reader = parse_binary_ext
+        else:
+            reader = None
+        if reader is not None:
+            try:
+                reader(lines)
+            except Fail as e:
+                got, out = 1, str(e)
+        else:
+            with tempfile.TemporaryDirectory() as tmp:
+                tree = os.path.join(tmp, "tree")
+                os.mkdir(tree)
+                for line in lines:
+                    if not is_data_row(line):
+                        continue
+                    cols = line.split("\t")
+                    if len(cols) != 2:
+                        raise Fail("%s/plant.tsv: want <path><TAB><content>, got %r" % (name, line))
+                    rel = decode_input(cols[0]).decode("utf-8")
+                    with open(os.path.join(tree, rel), "wb") as f:
+                        f.write(decode_input(cols[1]) if cols[1] else b"")
+                args = [tree]
+                if "allowlist.txt" in have:
+                    args += ["--allowlist", str(d / "allowlist.txt")]
+                res = subprocess.run([sys.executable, me] + args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+                got, out = res.returncode, (res.stdout + res.stderr).decode("utf-8", "replace")
+        why = []
+        if got != code:
+            why.append("exit %d, want %d" % (got, code))
+        why += ["the output has no %r" % w for w in outs if w not in out]
+        why += ["the output has %r" % w for w in nots if w in out]
+        results.append((name, not why, "%s; output: %s" % ("; ".join(why), out.strip()[:300])))
+    if len(results) < MIN_NEGATIVES:
+        raise Fail("%s holds %d negatives, fewer than the floor %d" % (NEGATIVES, len(results), MIN_NEGATIVES))
+    return results
 
 
 def selftest():
@@ -572,17 +614,22 @@ def selftest():
         except Fail:
             continue
         problems.append("reader negative '%s': the reader accepted it" % what)
-    walks = walk_negatives(os.path.realpath(__file__))
+    me = os.path.realpath(__file__)
+    walks = walk_negatives(me)
     for what, ok, why in walks:
         if not ok:
             problems.append("walk '%s': %s" % (what, why))
+    shared = shared_negatives(me)
+    for what, ok, why in shared:
+        if not ok:
+            problems.append("shared negative '%s': %s" % (what, why))
     for p in problems:
         sys.stderr.write("FAIL: %s\n" % p)
     if problems:
         raise Fail("selftest: %d problems" % len(problems))
     print("OK sourcehygiene-scan --selftest: %d table rows, %d cases agree, %d/3 mutants caught, %d reader negatives, "
-          "%d walk checks (data unicode %s)" % (len(data.table.rows), len(data.cases), caught, len(negatives), len(walks),
-                                                data.table.unicode_version))
+          "%d walk checks, %d shared negatives (data unicode %s)" % (len(data.table.rows), len(data.cases), caught, len(negatives),
+                                                                     len(walks), len(shared), data.table.unicode_version))
 
 
 # ---- the allowlist ---------------------------------------------------------
@@ -704,17 +751,21 @@ def scan_tree(root, allowlist, also, data):
         if not stat.S_ISREG(st.st_mode):
             skipped += 1  # a symlink or a submodule: not followed
             continue
-        if os.path.splitext(rel)[1].lower() in data.binary_ext:
-            binary.add(rel)
-            continue
         try:
             content = Path(p).read_bytes()
         except OSError as e:
             raise Fail("cannot read %s: %s" % (show(rel), e.strerror))
+        sig = data.binary_ext.get(os.path.splitext(rel)[1].lower())
+        # Binary only with BOTH the extension and the format's signature at the start (app#537):
+        # a text file named *.pdf is scanned.
+        if sig is not None and content.startswith(sig):
+            binary.add(rel)
+            continue
         scanned.add(rel)
         if b"\x00" in content:
             problems.append("%s: holds a NUL byte but its extension is not in binary-ext.tsv, so it cannot be told from a text "
-                            "file that hides something (remove the NUL, or add the extension with a reason)" % show(rel))
+                            "file that hides something (remove the NUL, or add the extension with a reason; a binary-ext.tsv file is binary only "
+                            "when it also starts with the format signature)" % show(rel))
         allowed = allow.get(rel, [])
         for line, col, cp, name, why in scan(content, table):
             if cp == 0:

@@ -1,0 +1,3 @@
+exit:1
+out:n.txt: holds a NUL byte
+not:U+0000
