@@ -488,10 +488,29 @@ func TestHidden_SharedCases(t *testing.T) {
 	}
 	// Every row of the table is exercised at both edges: a reader that drops the last row,
 	// reads a range as half-open or stops at the first rune is caught by the cases alone.
+	// The rune just outside each row is not hidden: "a<rune>b" with the expected none.
+	inputs := map[string]string{}
+	for _, c := range rows {
+		inputs[string(c.input)] = c.expected
+	}
 	for _, r := range goRows() {
 		for _, cp := range []rune{r.lo, r.hi} {
 			if !flagged[cp] {
 				t.Errorf("no case has a finding at U+%04X (an edge of %q)", cp, r.name)
+			}
+		}
+		for _, cp := range []rune{r.lo - 1, r.hi + 1} {
+			if cp < 0x20 || cp > unicode.MaxRune || (cp >= 0xD800 && cp <= 0xDFFF) {
+				continue
+			}
+			if _, _, in := lookup(cp); in {
+				continue
+			}
+			if _, isBidi := bidiControls[cp]; isBidi {
+				continue
+			}
+			if inputs["a"+string(cp)+"b"] != "none" {
+				t.Errorf("no case \"a<U+%04X>b\" with the expected none (the rune next to %q)", cp, r.name)
 			}
 		}
 	}
@@ -513,7 +532,7 @@ func TestNonTestFiles_ArePredicateOnly(t *testing.T) {
 	}
 	sort.Strings(files)
 	if got, want := strings.Join(files, ","), "chars.go,invisible.go"; got != want {
-		t.Errorf("the non-test files are %s, want %s: a walker, an allowlist reader or a CLI does not belong in this package (ADR-0043 Signpost 3: split the predicate into a leaf package first)", got, want)
+		t.Errorf("the non-test files are %s, want %s. If the new file is still predicates only (a table, a rule, a decision about a rune), add it to this list and keep the import set below. If it walks files, reads an allowlist or is a CLI, it does not belong in this package: split the predicate into a leaf package first (ADR-0043 Signpost 3, ADR-0045 D3)", got, want)
 	}
 	allowed := map[string]bool{"fmt": true, "sort": true, "unicode": true, "unicode/utf8": true}
 	for _, f := range files {
@@ -524,7 +543,7 @@ func TestNonTestFiles_ArePredicateOnly(t *testing.T) {
 		for _, imp := range af.Imports {
 			path, err := strconv.Unquote(imp.Path.Value)
 			if err != nil || !allowed[path] {
-				t.Errorf("%s imports %s: the closure of hintleak is {fmt, sort, unicode, unicode/utf8} (ADR-0043 / ADR-0045 D3)", f, imp.Path.Value)
+				t.Errorf("%s imports %s. The imports of this package's non-test files are the leaves of hintleak's import closure ({fmt, sort, unicode, unicode/utf8}; ADR-0043 / ADR-0045 D3). If the new import is another standard-library leaf that decides nothing about files or I/O, add it to the set here and in ADR-0045; if it reaches the file system or a process, the code belongs outside this package (ADR-0043 Signpost 3)", f, imp.Path.Value)
 			}
 		}
 	}

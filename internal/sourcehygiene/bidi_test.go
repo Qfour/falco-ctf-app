@@ -305,6 +305,14 @@ func TestTrackedFilesHoldNoRawBidiOrInvisibleCharacter(t *testing.T) {
 			t.Errorf("canary %s was not scanned: the file set is smaller than the repo (a .dockerignore line, a wrong root, or a failed listing)", c)
 		}
 	}
+	// app tracks no PDF: .pdf is in binaryExt for the reference scanner's sake (ADR-0045,
+	// platform tracks event decks). A tracked file skipped as binary here must be one of the
+	// two kinds app really has, so the skip cannot quietly cover a text file named *.pdf.
+	for _, b := range r.binary {
+		if ext := strings.ToLower(filepath.Ext(b)); ext != ".woff2" && ext != ".tgz" {
+			t.Errorf("%s is skipped as binary but app tracks only .woff2 and untracked .tgz files; a new binary kind needs a reason in binaryExt and in testdata/binary-ext.tsv (ADR-0045)", b)
+		}
+	}
 	for _, p := range r.problems {
 		t.Error(p)
 	}
