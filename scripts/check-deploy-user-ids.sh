@@ -51,6 +51,15 @@
 # each check, and turns each --set-string back into --set (each mutant runs its own row and
 # its control rows only: ct_run_mutant_rows).
 #
+# app#520 (ADR-0044) adds `--frame-ancestors` and `--app-host` (the last section): the
+# frame-ancestors table (internal/ttydproxy/testdata/frame-ancestors-cases.tsv) goes through
+# `--frame-ancestors <input>`, the dns-suffix table (the same grammar) through
+# `--app-host <input>`, each with the same exact-token and no-bare-`--set` verdicts, and a
+# table of (frame-ancestors, app-host) pairs holds D3: not 'none' means exactly
+# https://<app-host>, else exit 2 `ADR-0044 D3`, before any kubectl / helm call. Its
+# self-test breaks the pattern (anchors, http, 'self', a wildcard, a port, a path, case, a bare
+# none, several sources, a `,`), both bounds, each check, each --set-string and the pairing.
+#
 # Every expectation is an exit status or an exact string, never "some output
 # appeared". Usage: ./scripts/check-deploy-user-ids.sh   (make check-flags; CI flag-guard)
 set -euo pipefail
@@ -66,6 +75,7 @@ DNS_TABLE="${REPO_ROOT}/internal/catalog/testdata/dns-suffix-cases.tsv"
 REG_TABLE="${REPO_ROOT}/internal/catalog/testdata/image-registry-cases.tsv"
 TAG_TABLE="${REPO_ROOT}/internal/catalog/testdata/image-tag-cases.tsv"
 CIDR_TABLE="${REPO_ROOT}/internal/catalog/testdata/api-server-cidr-cases.tsv"
+FA_TABLE="${REPO_ROOT}/internal/ttydproxy/testdata/frame-ancestors-cases.tsv"
 DEPLOY="${REPO_ROOT}/charts/ctf-user/deploy-user.sh"
 DEPLOY_REL="charts/ctf-user/deploy-user.sh"
 
@@ -75,7 +85,7 @@ ct_init_stubs
 # run_deploy is defined, so no run of deploy-user.sh below can see them).
 unset FALCO_CTF_REGISTRY FALCO_CTF_IMAGE_TAG
 
-for f in "${CID_TABLE}" "${SCN_TABLE}" "${DEPLOY}" "${DNS_TABLE}" "${REG_TABLE}" "${TAG_TABLE}" "${CIDR_TABLE}"; do
+for f in "${CID_TABLE}" "${SCN_TABLE}" "${DEPLOY}" "${DNS_TABLE}" "${REG_TABLE}" "${TAG_TABLE}" "${CIDR_TABLE}" "${FA_TABLE}"; do
   [[ -f "${f}" ]] || { echo "FAIL: ${f} not found" >&2; exit 1; }
 done
 
@@ -216,13 +226,15 @@ ct_mutate_line --control reject --must 'did not carry --set-string challengeId=<
 # The one ` --set ` token a helm call may carry: a boolean the script writes itself.
 OP_ALLOWED_SET=' --set networkPolicy.egress.enabled=true'
 
-# op_conf <dns|reg|tag|cidr> -> OP_TABLE, OP_MSG (the stderr marker of a rejection).
+# op_conf <dns|reg|tag|cidr|fa|host> -> OP_TABLE, OP_MSG (the stderr marker of a rejection).
 op_conf() {
   case "$1" in
     dns)  OP_TABLE="${DNS_TABLE}";  OP_MSG="invalid --dns-suffix" ;;
     reg)  OP_TABLE="${REG_TABLE}";  OP_MSG="invalid FALCO_CTF_REGISTRY" ;;
     tag)  OP_TABLE="${TAG_TABLE}";  OP_MSG="invalid FALCO_CTF_IMAGE_TAG" ;;
     cidr) OP_TABLE="${CIDR_TABLE}"; OP_MSG="invalid --api-server-cidr" ;;
+    fa)   OP_TABLE="${FA_TABLE}";   OP_MSG="invalid --frame-ancestors" ;;
+    host) OP_TABLE="${DNS_TABLE}";  OP_MSG="invalid --app-host" ;;
     *) echo "FAIL: op_conf: unknown kind $1" >&2; exit 1 ;;
   esac
 }
@@ -237,6 +249,8 @@ op_run() {
     cidr) run_deploy "${script}" 00-tutorial 1 --egress-lockdown --api-server-cidr "${value}" ;;
     reg)  FALCO_CTF_REGISTRY="${value}" run_deploy "${script}" 00-tutorial 1 ;;
     tag)  FALCO_CTF_IMAGE_TAG="${value}" run_deploy "${script}" 00-tutorial 1 ;;
+    fa)   run_deploy "${script}" 00-tutorial 1 --frame-ancestors "${value}" ;;
+    host) run_deploy "${script}" 00-tutorial 1 --app-host "${value}" ;;
   esac
 }
 
@@ -249,6 +263,8 @@ op_expected_tokens() {
     cidr) printf ' --set-string networkPolicy.egress.apiServerCidr=%s \n' "${v}" ;;
     reg)  printf ' --set-string ttyd.image.repository=%s/ttyd \n --set-string ttyd.proxy.image.repository=%s/ttyd-proxy \n --set-string challenge.image.repository=%s/challenge \n' "${v}" "${v}" "${v}" ;;
     tag)  printf ' --set-string ttyd.image.tag=%s \n --set-string ttyd.proxy.image.tag=%s \n --set-string challenge.image.tag=%s \n' "${v}" "${v}" "${v}" ;;
+    fa)   printf ' --set-string ttyd.frameAncestors=%s \n' "${v}" ;;
+    host) printf ' --set-string auth.appHost=%s \n' "${v}" ;;
   esac
 }
 
@@ -423,5 +439,127 @@ op_set_mutate tag tag-set-not-set-string-ttyd '  IMAGE_ARGS+=(--set-string "ttyd
 op_set_mutate tag tag-set-not-set-string-proxy '  IMAGE_ARGS+=(--set-string "ttyd.proxy.image.tag=' '  IMAGE_ARGS+=(--set "ttyd.proxy.image.tag=${FALCO_CTF_IMAGE_TAG}")' "$(op_line tag '$1 == "null"')" ttyd.proxy.image.tag
 op_set_mutate tag tag-set-not-set-string-challenge '  IMAGE_ARGS+=(--set-string "challenge.image.tag=' '  IMAGE_ARGS+=(--set "challenge.image.tag=${FALCO_CTF_IMAGE_TAG}")' "$(op_line tag '$1 == "null"')" challenge.image.tag
 
+
+# ============================================================================
+# app#520 (ADR-0044): --frame-ancestors and --app-host. The same two layers as above (the
+# op_* functions take two more kinds: fa = the frame-ancestors table through --frame-ancestors,
+# host = the dns-suffix table through --app-host, the same grammar) plus the pairing rule D3.
+# ============================================================================
+echo "==> deploy-user.sh against the frame-ancestors table (--frame-ancestors) and the dns-suffix table (--app-host) (app#520)"
+ct_expect_table "frame-ancestors-cases.tsv" 70 10 50 "${FA_TABLE}" op_row fa "${DEPLOY}"
+ct_expect_table "dns-suffix-cases.tsv as --app-host" 50 15 30 "${DNS_TABLE}" op_row host "${DEPLOY}"
+
+# D3, as a table of its own (a pair is two inputs, so it is not a row of either grammar's
+# table): `<frame-ancestors> <app-host>` (neither holds a space) and the verdict. Both are
+# valid on their own in every row; only the pairing decides.
+PAIR_TABLE="${WORK}/frame-ancestors-app-host-pairs.tsv"
+{
+  echo "# pattern: n/a (pairs of --frame-ancestors and --app-host; ADR-0044 D3)"
+  printf '%s\t%s\n' \
+    "https://app.x.example app.x.example" accept \
+    "'none' app.x.example" accept \
+    "'none' a.b" accept \
+    "https://a a" accept \
+    "https://localhost localhost" accept \
+    "https://other.x.example app.x.example" reject \
+    "https://app.x.example other.x.example" reject \
+    "https://app.x.example x.example" reject \
+    "https://x.example app.x.example" reject \
+    "https://sub.app.x.example app.x.example" reject \
+    "https://app.x.example.y app.x.example" reject \
+    "https://app.x.example app.x.example.y" reject \
+    "https://localhost 1.2.3.4" reject
+} > "${PAIR_TABLE}"
+
+# pair_row <label> <line no> <verdict> <"<frame-ancestors> <app-host>"> <script> (a ct_run_table row function)
+pair_row() {
+  local label="$1" lineno="$2" verdict="$3" pair="$4" script="$5" fa host call tok
+  fa="${pair%% *}"; host="${pair#* }"
+  run_deploy "${script}" 00-tutorial 1 --frame-ancestors "${fa}" --app-host "${host}"
+  if [[ "${verdict}" == accept ]]; then
+    ct_check_reached_upgrade "${label}:${lineno}" || return 1
+    call="$(grep -E '^helm upgrade ' "${CT_CALLS}" || true) "
+    for tok in " --set-string ttyd.frameAncestors=${fa} " " --set-string auth.appHost=${host} "; do
+      case "${call}" in
+        *"${tok}"*) ;;
+        *) echo "    ${label}:${lineno}: accept, but helm upgrade lacks the token '${tok}': $(printf '%s' "${call}" | cut -c1-240)" >&2; return 1 ;;
+      esac
+    done
+    return 0
+  fi
+  ct_check_reject "${label}:${lineno}" "${fa}" "ADR-0044 D3"
+}
+echo "==> D3: given both, a frame-ancestors other than 'none' must be exactly https://<app-host>"
+ct_expect_table "frame-ancestors / app-host pairs" 13 5 8 "${PAIR_TABLE}" pair_row "${DEPLOY}"
+
+echo "==> D3 is checked before kubectl on the --egress-lockdown path too, and one flag alone is only held to its own grammar"
+run_deploy "${DEPLOY}" 00-tutorial 1 --egress-lockdown --api-server-cidr 10.0.0.1/32 --frame-ancestors https://other.x.example --app-host app.x.example
+if [[ "${RUN_STATUS}" -eq 2 && ! -s "${CT_CALLS}" ]] && grep -qF 'ADR-0044 D3' "${CT_RUN_ERR}"; then
+  pass "a mismatched pair with --egress-lockdown: exit 2, no kubectl / helm call"
+else
+  fail "a mismatched pair with --egress-lockdown was not stopped before kubectl (exit ${RUN_STATUS})"
+fi
+run_deploy "${DEPLOY}" 00-tutorial 1 --frame-ancestors https://other.x.example
+if [[ "${RUN_STATUS}" -eq 97 ]]; then pass "--frame-ancestors alone (not 'none') is held to its own grammar only"; else fail "--frame-ancestors alone was refused (exit ${RUN_STATUS})"; fi
+run_deploy "${DEPLOY}" 00-tutorial 1 --app-host app.x.example
+if [[ "${RUN_STATUS}" -eq 97 ]]; then pass "--app-host alone is held to its own grammar only"; else fail "--app-host alone was refused (exit ${RUN_STATUS})"; fi
+
+echo "==> self-test (app#520): a broken pattern, bound, check, --set-string or pairing must be caught on the row that breaks it"
+FA_NONE="'none'"
+FA_HOST='[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*'
+FA_NONE_COND="\$1 == \"${FA_NONE}\""
+# fa_mutate <name> <broken pattern> <failing line> [ct_mutate_line options...]. The literal is
+# double quoted (it holds a single quote), so the mutant line is too.
+fa_mutate() { local n="$1" p="$2" w="$3"; shift 3; op_mutate fa "fa-${n}" 'FRAME_ANCESTORS_PATTERN="' "FRAME_ANCESTORS_PATTERN=\"${p}\"" "${w}" ${1+"$@"}; }
+FA_ACC=(--control accept --control "$(op_line fa '$1 == "*"')")
+fa_mutate any '^.*$' "$(op_line fa '$1 == "*"')" --control accept
+fa_mutate no-dollar "^(${FA_NONE}|https://${FA_HOST})" "$(op_line fa '$1 == "https://a.example{LF}"')" "${FA_ACC[@]}"
+fa_mutate no-caret "(${FA_NONE}|https://${FA_HOST})\$" "$(op_line fa '$1 == "{LF}https://a.example"')" "${FA_ACC[@]}"
+fa_mutate http "^(${FA_NONE}|https?://${FA_HOST})\$" "$(op_line fa '$1 == "http://app.x.example"')" "${FA_ACC[@]}"
+fa_mutate scheme-alone "^(${FA_NONE}|https:(//${FA_HOST})?)\$" "$(op_line fa '$1 == "https:"')" "${FA_ACC[@]}"
+fa_mutate self "^(${FA_NONE}|'self'|https://${FA_HOST})\$" "$(op_line fa '$1 == "'"'self'"'"')" "${FA_ACC[@]}"
+fa_mutate wildcard "^(${FA_NONE}|https://[a-z0-9*]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9*]([a-z0-9-]{0,61}[a-z0-9])?)*)\$" "$(op_line fa '$1 == "https://*.x.example"')" "${FA_ACC[@]}"
+fa_mutate wildcard-alone "^(${FA_NONE}|\\*|https://${FA_HOST})\$" "$(op_line fa '$1 == "*"')" --control accept --control "$(op_line fa '$1 == "https://*.x.example"')"
+fa_mutate port "^(${FA_NONE}|https://${FA_HOST}(:[0-9]+)?)\$" "$(op_line fa '$1 == "https://app.x.example:8443"')" "${FA_ACC[@]}"
+fa_mutate path "^(${FA_NONE}|https://${FA_HOST}/?)\$" "$(op_line fa '$1 == "https://app.x.example/"')" "${FA_ACC[@]}"
+fa_mutate userinfo "^(${FA_NONE}|https://([a-z0-9]+@)?${FA_HOST})\$" "$(op_line fa '$1 == "https://u@a.example"')" "${FA_ACC[@]}"
+fa_mutate upper "^(${FA_NONE}|https://[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*)\$" "$(op_line fa '$1 == "https://APP.x.example"')" "${FA_ACC[@]}"
+fa_mutate none-upper "^('[nN][oO][nN][eE]'|https://${FA_HOST})\$" "$(op_line fa '$1 == "'"'NONE'"'"')" "${FA_ACC[@]}"
+fa_mutate none-bare "^(${FA_NONE}|none|https://${FA_HOST})\$" "$(op_line fa '$1 == "none"')" "${FA_ACC[@]}"
+fa_mutate two-sources "^(${FA_NONE}|https://${FA_HOST}( https://${FA_HOST})*)\$" "$(op_line fa '$1 == "https://a.example https://b.example"')" "${FA_ACC[@]}"
+fa_mutate comma "^(${FA_NONE}|https://${FA_HOST}(,.*)?)\$" "$(op_line fa '$1 == "https://a.example,ttyd.x=y"')" "${FA_ACC[@]}"
+fa_mutate semicolon "^(${FA_NONE}|https://${FA_HOST}(;.*)?)\$" "$(op_line fa '$1 == "https://a.example;script-src *"')" "${FA_ACC[@]}"
+fa_mutate label-wide "^(${FA_NONE}|https://[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?)*)\$" "$(op_line fa 'length($1) == 72 && $2 == "reject"')" "${FA_ACC[@]}"
+fa_mutate label-narrow "^(${FA_NONE}|https://[a-z0-9]([a-z0-9-]{0,60}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,60}[a-z0-9])?)*)\$" "$(op_line fa 'length($1) == 71 && $2 == "accept"')"
+fa_mutate trailing-dot "^(${FA_NONE}|https://${FA_HOST}\\.?)\$" "$(op_line fa '$1 == "https://a.example."')" "${FA_ACC[@]}"
+op_mutate fa fa-len-wide 'FRAME_ANCESTORS_MAX_LEN=' "FRAME_ANCESTORS_MAX_LEN='262'" "$(op_line fa 'length($1) == 262 && $2 == "reject"')"
+op_mutate fa fa-len-narrow 'FRAME_ANCESTORS_MAX_LEN=' "FRAME_ANCESTORS_MAX_LEN='260'" "$(op_line fa 'length($1) == 261 && $2 == "accept"')"
+op_mutate fa fa-check-removed '[[ -z "${FRAME_ANCESTORS}" ]] || check_operator_input' ':' "$(op_line fa '$1 == "*"')" --control accept
+op_mutate fa fa-len-removed '[[ -z "${FRAME_ANCESTORS}" ]] || check_operator_input' \
+  '[[ -z "${FRAME_ANCESTORS}" ]] || check_operator_input "--frame-ancestors" "${FRAME_ANCESTORS}" "${FRAME_ANCESTORS_PATTERN}"' "$(op_line fa 'length($1) == 262 && $2 == "reject"')"
+
+# --app-host reads the --dns-suffix literals (no new one): a check of its own that is wider, has no bound, or is gone is caught on the dns table's rows.
+op_mutate host host-check-removed '[[ -z "${APP_HOST}" ]] || check_operator_input' ':' "$(op_line host '$1 == "a,b=c"')" --control accept
+op_mutate host host-pattern-wide '[[ -z "${APP_HOST}" ]] || check_operator_input' \
+  '[[ -z "${APP_HOST}" ]] || check_operator_input "--app-host" "${APP_HOST}" '"'^.*\$'"' "${DNS_SUFFIX_MAX_LEN}"' "$(op_line host '$1 == "a,b=c"')" --control accept
+op_mutate host host-len-removed '[[ -z "${APP_HOST}" ]] || check_operator_input' \
+  '[[ -z "${APP_HOST}" ]] || check_operator_input "--app-host" "${APP_HOST}" "${DNS_SUFFIX_PATTERN}"' "$(op_line host 'length($1) == 254 && $2 == "reject"')"
+op_mutate host host-scheme-allowed '[[ -z "${APP_HOST}" ]] || check_operator_input' \
+  '[[ -z "${APP_HOST}" ]] || check_operator_input "--app-host" "${APP_HOST}" '"'^(https?://)?[a-z0-9.-]+\$'"' "${DNS_SUFFIX_MAX_LEN}"' "$(op_line host '$1 == "http://a.com"')" --control accept
+
+# --set-string -> --set: helm would type the value and read `,` / `=` in it.
+op_set_mutate fa fa-set-not-set-string '  FRAME_ANCESTORS_ARGS+=(' '  FRAME_ANCESTORS_ARGS+=(--set "ttyd.frameAncestors=${FRAME_ANCESTORS}")' "$(op_line fa "${FA_NONE_COND}")" ttyd.frameAncestors
+op_set_mutate host host-set-not-set-string '  APP_HOST_ARGS+=(' '  APP_HOST_ARGS+=(--set "auth.appHost=${APP_HOST}")' "$(op_line host '$1 == "null"')" auth.appHost
+
+# D3, on the pairs: no check, no exemption of 'none' wanted, the exemption too wide, a prefix compare, or a compare that
+# needs only one of the two (each is caught on the pair that breaks it).
+pair_line() { ct_line_of "${PAIR_TABLE}" "$1" || true; }
+pair_runner() { ct_run_mutant_rows "${PAIR_TABLE}" pair_row "$1"; }
+pair_mutate() { local n="$1" repl="$2" w="$3"; shift 3; ct_mutate_line ${1+"$@"} "d3-${n}" "${DEPLOY_REL}" 'if [[ -n "${APP_HOST}" && -n "${FRAME_ANCESTORS}" &&' "${repl}" "${w}" pair_runner; }
+pair_mutate removed 'if false; then' "$(pair_line '$1 == "https://other.x.example app.x.example"')" --control accept
+pair_mutate none-not-exempt 'if [[ -n "${APP_HOST}" && -n "${FRAME_ANCESTORS}" && "${FRAME_ANCESTORS}" != "https://${APP_HOST}" ]]; then' "$(pair_line '$1 == "'"'none'"' app.x.example"')" --control accept --control reject
+pair_mutate everything-exempt 'if [[ -n "${APP_HOST}" && -n "${FRAME_ANCESTORS}" && "${FRAME_ANCESTORS}" != "'"'none'"'" && "${FRAME_ANCESTORS}" != "https://${APP_HOST}" && 0 -eq 1 ]]; then' "$(pair_line '$1 == "https://other.x.example app.x.example"')" --control accept
+pair_mutate prefix-compare 'if [[ -n "${APP_HOST}" && -n "${FRAME_ANCESTORS}" && "${FRAME_ANCESTORS}" != "'"'none'"'" && "${FRAME_ANCESTORS}" != "https://${APP_HOST}"* ]]; then' "$(pair_line '$1 == "https://app.x.example.y app.x.example"')" --control accept --control reject
+pair_mutate host-only 'if [[ -n "${APP_HOST}" && -n "${FRAME_ANCESTORS}" && "${FRAME_ANCESTORS}" != "'"'none'"'" && "${FRAME_ANCESTORS}" != *"${APP_HOST}" ]]; then' "$(pair_line '$1 == "https://sub.app.x.example app.x.example"')" --control accept --control reject
 
 ct_finish "deploy-user.sh id grammar check"

@@ -264,7 +264,7 @@ spec:
         - name: UPSTREAM_ADDR
           value: "http://127.0.0.1:{{ .Values.ttyd.upstreamPort }}"
         - name: FRAME_ANCESTORS
-          value: "{{ .Values.ttyd.frameAncestors }}"
+          value: {{ .Values.ttyd.frameAncestors | quote }}
       resources:
         {{- toYaml .Values.ttyd.proxy.resources | nindent 8 }}
       readinessProbe:
