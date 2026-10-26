@@ -38,7 +38,7 @@
   端末から読める。scoreboard の image には `challenges/` が丸ごと入る (`scoreboard/Dockerfile:24-25`。起動時の検査は README.md と rule-explain.md を読める)。本 ADR の
   開示境界は「portal がいつ何を出すか」であって、秘密の保持ではない。
 - **C7 prod は CI-free** (image は手で build する: `REFACTORING.md:24-27`)。required check を通っていない tree からも image を作れる。
-- **C8 `hintleak.Check` は範囲全体で error を返す。** 守る文か対象に Cf (不可視の書式文字) が 1 つある、どれかの項目が非 UTF-8、守る文か対象が 0 件、のどれでも、
+- **C8 `hintleak.Check` は範囲全体で error を返す。** 守る文か対象に不可視の rune (`sourcehygiene.Hidden` が報告するもの: ADR-0043 D1。起草時は Cf だけ) が 1 つある、どれかの項目が非 UTF-8、守る文か対象が 0 件、のどれでも、
   違反の一覧ではなく範囲全体の error を返す (`internal/hintleak/hintleak.go:77-97`、branch `feat/hintleak-ngram-check` の 6f52615)。
 - **C9 yaml.v3 (v3.0.1: `go.mod:9`) の挙動。** `Node.Decode` は新しい decoder を作り、`KnownFields` を引き継がない (`yaml.go` の `Node.Decode`)。string のフィールドには
   数値と真偽値の scalar を文字列にして入れる (`decode.go` の `scalar` の `reflect.String`)。repo に `KnownFields` の前例は無い (c5e0761)。entry ごとの厳格な decode は、
@@ -134,8 +134,8 @@
     (対象の項目, 異なる n-gram)。除外リストを作らず、Quest 側の言い換えで消す。
   - **起動時も同じ検査を回す** (C7: 検査を通っていない tree から作った image でも、未 solve の解法を出さない)。入力が欠けると守る文が縮んで緩む側に倒れ、Check は
     範囲全体で error を返す (C8) ので、起動時は次の順にする。(0) 範囲の各課題に `README.md` と journey があることを確かめる (rule-explain.md は 4 本だけなので要求しない)
-    (1) Quest の各 entry を先に UTF-8 と Cf で検査し、駄目な entry を破棄する (2) Check の違反に当たった entry を破棄し、他は残す (3) (0) が欠けているか Check が error
-    なら (守る文か無料表示の側の Cf・非 UTF-8、守る文が 0 件)、Quest の文をすべて破棄して Quest を無効にする (`quest_enabled` = 0)。log を出して文を残すことはしない
+    (1) Quest の各 entry を先に UTF-8 と、hintleak の Check と同じ不可視文字の述語 (ADR-0043 D1。hintleak が公開する 1 関数を使い、quest で写さない) で検査し、駄目な entry を破棄する (2) Check の違反に当たった entry を破棄し、他は残す (3) (0) が欠けているか Check が error
+    なら (守る文の側の不可視の rune、守る文か無料表示の側の非 UTF-8、守る文が 0 件)、Quest の文をすべて破棄して Quest を無効にする (`quest_enabled` = 0)。log を出して文を残すことはしない
     (開示が fail-open になる) (4) 対象が 0 件なら何もしない。(2)・(3) の破棄は counter の kind `ngram` に数え、preflight は 1 件以上を no-go 相当の信号として扱う
     (ADR-0029 D9)。CI では (0)・(1)・(3)・(4) も fail。
 - **D5 CI と起動時の分担。** CI (`make test`、full catalog と全 scenario) では fail、起動時は warn と entry の破棄 (ADR-0029 D3)。(1) quest.yaml の
