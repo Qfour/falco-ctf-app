@@ -75,6 +75,9 @@ var canaryFiles = []string{
 // scanned, each with its reason. Adding one needs the same review as an
 // allowlist line.
 var binaryExt = map[string]string{
+	// Not scanned here either (ADR-0045): the reference scanner's binary-ext.tsv is this
+	// map, and platform tracks event decks as PDFs. app tracks none.
+	".pdf":   "PDF (compressed streams; a byte match is chance). platform tracks event decks (ADR-0045)",
 	".woff2": "WOFF2 font (compressed bytes; a 3-byte match is chance)",
 	// Not tracked: `helm dependency build` writes charts/*/charts/*.tgz, and
 	// Dockerfile.test runs it after COPY, before this test. git ignores them.

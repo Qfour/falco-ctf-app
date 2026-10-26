@@ -1,0 +1,3 @@
+.pdf	PDF (compressed streams; a byte match is chance). platform tracks event decks (ADR-0045)
+.tgz	helm dependency archive (untracked build output present in the Docker path)
+.woff2	WOFF2 font (compressed bytes; a 3-byte match is chance)

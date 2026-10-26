@@ -1,0 +1,192 @@
+# input and the findings Hidden (Go) and scripts/sourcehygiene-scan.py (Python) must both give (ADR-0045).
+# Row: <name><TAB><input><TAB><expected>. name: unique, not empty, does not start with #.
+# input: printable ASCII as it is; every other character is {U+XXXX} (4-6 upper-case hex digits) and an invalid UTF-8 byte is {xHH} (80-FF).
+#   A { or } is written {U+007B} / {U+007D}. Any other brace, a printable ASCII character written as {U+XXXX}, a surrogate and an empty input are reader errors.
+# expected: none, or <line>:<col> U+XXXX joined by commas (col counts runes; an invalid byte counts as one).
+# This file is ASCII only. The first rows moved here from TestInvisible_Table (invisible_test.go) with their names; the edge rows at the end are required by
+# exported_table_test.go: one row for the first and the last rune of every row of hidden-ranges.tsv, and the rune on each side that is not hidden.
+# --- moved from TestInvisible_Table ---
+nothing to find	plain text, tab{U+0009}here{U+000A}line two{U+000A}	none
+Tag characters hiding ASCII: every one is reported	x{U+E0001}{U+E0049}{U+E0047}y	1:2 U+E0001,1:3 U+E0049,1:4 U+E0047
+a variation selector supplement after a Han character	{U+6F22}{U+E0100}	1:2 U+E0100
+ZWSP inside a word	hel{U+200B}lo	1:4 U+200B
+ZWNJ, LRM, RLM, WORD JOINER, SOFT HYPHEN, CGJ, Hangul filler	{U+200C}{U+200E}{U+200F}{U+2060}{U+00AD}{U+034F}{U+3164}	1:1 U+200C,1:2 U+200E,1:3 U+200F,1:4 U+2060,1:5 U+00AD,1:6 U+034F,1:7 U+3164
+warning sign + VS16 is green	{U+26A0}{U+FE0F} careful	none
+a second VS16 on the same base is red	{U+26A0}{U+FE0F}{U+FE0F}	1:3 U+FE0F
+VS16 after a letter is red	a{U+FE0F}	1:2 U+FE0F
+VS15 after a symbol is green	{U+26A0}{U+FE0E}	none
+keycap: VS16 after ASCII is red (the base is not a symbol)	#{U+FE0F}{U+20E3}	1:2 U+FE0F
+VS16 at the start of the file is red	{U+FE0F}	1:1 U+FE0F
+VS16 after ZWJ is red	{U+1F469}{U+200D}{U+FE0F}	1:2 U+200D,1:3 U+FE0F
+VS1 after a symbol is red (only 15 and 16 are context-allowed)	{U+26A0}{U+FE00}	1:2 U+FE00
+woman + skin tone + ZWJ + laptop is green	{U+1F469}{U+1F3FD}{U+200D}{U+1F4BB}	none
+flag + VS16 + ZWJ + rainbow is green	{U+1F3F3}{U+FE0F}{U+200D}{U+1F308}	none
+ZWJ between letters is red	a{U+200D}b	1:2 U+200D
+ZWJ after a symbol but before a letter is red	{U+1F469}{U+200D}b	1:2 U+200D
+ZWJ after a symbol at the end of the file is red (nothing follows)	{U+1F469}{U+200D}	1:2 U+200D
+ZWJ after a symbol before an invalid byte is red (RuneError is not a symbol)	{U+1F469}{U+200D}{xFF}	1:2 U+200D
+ZWJ after a symbol before a written U+FFFD (a real So) is green	{U+1F469}{U+200D}{U+FFFD}	none
+ZWJ after a letter and before a symbol is red	a{U+200D}{U+1F4BB}	1:2 U+200D
+two ZWJ in a row are both red	{U+1F469}{U+200D}{U+200D}{U+1F4BB}	1:2 U+200D,1:3 U+200D
+ZWJ after VS15 is red (only an allowed VS16 may precede it)	{U+26A0}{U+FE0E}{U+200D}{U+1F4BB}	1:3 U+200D
+BOM at byte 0 is green	{U+FEFF}a: 1{U+000A}	none
+BOM after the first byte is red	a{U+FEFF}	1:2 U+FEFF
+two BOMs at the start: the second is red	{U+FEFF}{U+FEFF}a	1:2 U+FEFF
+BOM at the start of the second line is red	a{U+000A}{U+FEFF}	2:1 U+FEFF
+CRLF is green	a{U+000D}{U+000A}b{U+000D}{U+000A}	none
+a lone CR in the middle is red	ab{U+000D}cd{U+000A}	1:3 U+000D
+a CR at the end of the file is red	ab{U+000D}	1:3 U+000D
+CR CR LF: the first is red	a{U+000D}{U+000D}{U+000A}b	1:2 U+000D
+ESC (a terminal escape) is red	x{U+001B}[2Ky	1:2 U+001B
+DEL, NEL, LS and PS are red	a{U+007F}{U+0085}{U+2028}{U+2029}	1:2 U+007F,1:3 U+0085,1:4 U+2028,1:5 U+2029
+VT and FF are red; TAB and LF are not	{U+000B}{U+000C}{U+0009}{U+000A}	1:1 U+000B,1:2 U+000C
+NUL is a C0 control to the scanner	a{U+0000}b	1:2 U+0000
+only escapes: green	\U0000200B \u200b \U000E0041 {U+007B}U+200B{U+007D} &#x200B; &#8203; \xe2\x80\x8b U+200B	none
+after an invalid UTF-8 byte the scan goes on and the column counts it as one	{xFF}{xFE}ab{U+200B}	1:5 U+200B
+a U+FFFD that was really written is an ordinary rune	{U+FFFD}a	none
+the line number counts LF	a{U+000A}b{U+000A}{U+200B}	3:1 U+200B
+Hangul, Khmer and Mongolian invisibles	{U+115F}{U+1160}{U+FFA0}{U+17B4}{U+17B5}{U+180B}{U+180E}	1:1 U+115F,1:2 U+1160,1:3 U+FFA0,1:4 U+17B4,1:5 U+17B5,1:6 U+180B,1:7 U+180E
+the visible neighbours are not in the set: NBSP, EN SPACE, IDEOGRAPHIC SPACE, BRAILLE BLANK, tag-like text	{U+00A0}{U+2000}{U+3000}{U+2800}U+E0041	none
+# --- added: invalid UTF-8, the bidi controls one by one, small corners ---
+a second VS15 on the same base is red	{U+26A0}{U+FE0E}{U+FE0E}	1:3 U+FE0E
+a ZWJ alone is red	{U+200D}	1:1 U+200D
+a BOM alone at the start is green	{U+FEFF}	none
+a ZWJ before a symbol after VS16 that is itself red (the VS16 is not allowed, so it does not license the ZWJ)	a{U+FE0F}{U+200D}{U+1F4BB}	1:2 U+FE0F,1:3 U+200D
+an invalid byte pair then a letter, then U+200B: the columns count each bad byte	{xE2}{x80}a{U+200B}	1:4 U+200B
+a surrogate encoded as bytes is three invalid bytes	{xED}{xA0}{x80}a{U+200B}	1:5 U+200B
+a truncated 4-byte sequence is three invalid bytes	{xF0}{x90}{x80}a{U+200B}	1:5 U+200B
+an overlong 2-byte sequence is two invalid bytes	{xC0}{xAF}a{U+200B}	1:4 U+200B
+two blank lines then two U+200B on the third	a{U+000A}{U+000A}bc{U+200B}{U+200B}	3:3 U+200B,3:4 U+200B
+a hash sign at the start of an input is an ordinary character	#x{U+200B}	1:3 U+200B
+a left brace written as a placeholder is an ordinary character	{U+007B}{U+200B}	1:2 U+200B
+a bidi control in a word: U+202A	a{U+202A}b	1:2 U+202A
+a bidi control in a word: U+202B	a{U+202B}b	1:2 U+202B
+a bidi control in a word: U+202C	a{U+202C}b	1:2 U+202C
+a bidi control in a word: U+202D	a{U+202D}b	1:2 U+202D
+a bidi control in a word: U+202E	a{U+202E}b	1:2 U+202E
+a bidi control in a word: U+2066	a{U+2066}b	1:2 U+2066
+a bidi control in a word: U+2067	a{U+2067}b	1:2 U+2067
+a bidi control in a word: U+2068	a{U+2068}b	1:2 U+2068
+a bidi control in a word: U+2069	a{U+2069}b	1:2 U+2069
+all nine bidi controls in a row, each reported at its own column	{U+202A}{U+202B}{U+202C}{U+202D}{U+202E}{U+2066}{U+2067}{U+2068}{U+2069}	1:1 U+202A,1:2 U+202B,1:3 U+202C,1:4 U+202D,1:5 U+202E,1:6 U+2066,1:7 U+2067,1:8 U+2068,1:9 U+2069
+# --- range edges ---
+edge: the first rune of C0 CONTROL (U+0000)	a{U+0000}b	1:2 U+0000
+edge: the last rune of C0 CONTROL (U+0008)	a{U+0008}b	1:2 U+0008
+edge: the first rune of C0 CONTROL (VT, FF) (U+000B)	a{U+000B}b	1:2 U+000B
+edge: the last rune of C0 CONTROL (VT, FF) (U+000C)	a{U+000C}b	1:2 U+000C
+edge: the first rune of CARRIAGE RETURN (U+000D)	a{U+000D}b	1:2 U+000D
+edge: the first rune of C0 CONTROL (includes ESC) (U+000E)	a{U+000E}b	1:2 U+000E
+edge: the last rune of C0 CONTROL (includes ESC) (U+001F)	a{U+001F}b	1:2 U+001F
+edge: the first rune of DELETE (U+007F)	a{U+007F}b	1:2 U+007F
+edge: the first rune of C1 CONTROL (includes NEL) (U+0080)	a{U+0080}b	1:2 U+0080
+edge: the last rune of C1 CONTROL (includes NEL) (U+009F)	a{U+009F}b	1:2 U+009F
+edge: the first rune of SOFT HYPHEN (U+00AD)	a{U+00AD}b	1:2 U+00AD
+edge: the first rune of COMBINING GRAPHEME JOINER (U+034F)	a{U+034F}b	1:2 U+034F
+edge: the first rune of ARABIC NUMBER SIGN (Cf) (U+0600)	a{U+0600}b	1:2 U+0600
+edge: the last rune of ARABIC NUMBER SIGN (Cf) (U+0605)	a{U+0605}b	1:2 U+0605
+edge: the first rune of ARABIC LETTER MARK (U+061C)	a{U+061C}b	1:2 U+061C
+edge: the first rune of ARABIC END OF AYAH (U+06DD)	a{U+06DD}b	1:2 U+06DD
+edge: the first rune of SYRIAC ABBREVIATION MARK (U+070F)	a{U+070F}b	1:2 U+070F
+edge: the first rune of ARABIC POUND MARK ABOVE (Cf) (U+0890)	a{U+0890}b	1:2 U+0890
+edge: the last rune of ARABIC POUND MARK ABOVE (Cf) (U+0891)	a{U+0891}b	1:2 U+0891
+edge: the first rune of ARABIC DISPUTED END OF AYAH (U+08E2)	a{U+08E2}b	1:2 U+08E2
+edge: the first rune of HANGUL CHOSEONG / JUNGSEONG FILLER (U+115F)	a{U+115F}b	1:2 U+115F
+edge: the last rune of HANGUL CHOSEONG / JUNGSEONG FILLER (U+1160)	a{U+1160}b	1:2 U+1160
+edge: the first rune of KHMER INHERENT VOWEL (U+17B4)	a{U+17B4}b	1:2 U+17B4
+edge: the last rune of KHMER INHERENT VOWEL (U+17B5)	a{U+17B5}b	1:2 U+17B5
+edge: the first rune of MONGOLIAN FREE VARIATION SELECTOR / VOWEL SEPARATOR (U+180B)	a{U+180B}b	1:2 U+180B
+edge: the last rune of MONGOLIAN FREE VARIATION SELECTOR / VOWEL SEPARATOR (U+180F)	a{U+180F}b	1:2 U+180F
+edge: the first rune of ZERO WIDTH SPACE (U+200B)	a{U+200B}b	1:2 U+200B
+edge: the first rune of ZERO WIDTH NON-JOINER (U+200C)	a{U+200C}b	1:2 U+200C
+edge: the first rune of ZERO WIDTH JOINER (U+200D)	a{U+200D}b	1:2 U+200D
+edge: the first rune of LEFT-TO-RIGHT / RIGHT-TO-LEFT MARK (U+200E)	a{U+200E}b	1:2 U+200E
+edge: the last rune of LEFT-TO-RIGHT / RIGHT-TO-LEFT MARK (U+200F)	a{U+200F}b	1:2 U+200F
+edge: the first rune of LINE / PARAGRAPH SEPARATOR (U+2028)	a{U+2028}b	1:2 U+2028
+edge: the last rune of LINE / PARAGRAPH SEPARATOR (U+2029)	a{U+2029}b	1:2 U+2029
+edge: the first rune of LEFT-TO-RIGHT EMBEDDING (U+202A)	a{U+202A}b	1:2 U+202A
+edge: the first rune of RIGHT-TO-LEFT EMBEDDING (U+202B)	a{U+202B}b	1:2 U+202B
+edge: the first rune of POP DIRECTIONAL FORMATTING (U+202C)	a{U+202C}b	1:2 U+202C
+edge: the first rune of LEFT-TO-RIGHT OVERRIDE (U+202D)	a{U+202D}b	1:2 U+202D
+edge: the first rune of RIGHT-TO-LEFT OVERRIDE (U+202E)	a{U+202E}b	1:2 U+202E
+edge: the first rune of WORD JOINER / INVISIBLE OPERATOR (U+2060)	a{U+2060}b	1:2 U+2060
+edge: the last rune of WORD JOINER / INVISIBLE OPERATOR (U+2065)	a{U+2065}b	1:2 U+2065
+edge: the first rune of LEFT-TO-RIGHT ISOLATE (U+2066)	a{U+2066}b	1:2 U+2066
+edge: the first rune of RIGHT-TO-LEFT ISOLATE (U+2067)	a{U+2067}b	1:2 U+2067
+edge: the first rune of FIRST STRONG ISOLATE (U+2068)	a{U+2068}b	1:2 U+2068
+edge: the first rune of POP DIRECTIONAL ISOLATE (U+2069)	a{U+2069}b	1:2 U+2069
+edge: the first rune of DEPRECATED FORMAT CHARACTER (U+206A)	a{U+206A}b	1:2 U+206A
+edge: the last rune of DEPRECATED FORMAT CHARACTER (U+206F)	a{U+206F}b	1:2 U+206F
+edge: the first rune of HANGUL FILLER (U+3164)	a{U+3164}b	1:2 U+3164
+edge: the first rune of VARIATION SELECTOR-1..14 (U+FE00)	a{U+FE00}b	1:2 U+FE00
+edge: the last rune of VARIATION SELECTOR-1..14 (U+FE0D)	a{U+FE0D}b	1:2 U+FE0D
+edge: the first rune of VARIATION SELECTOR-15 / 16 (U+FE0E)	a{U+FE0E}b	1:2 U+FE0E
+edge: the last rune of VARIATION SELECTOR-15 / 16 (U+FE0F)	a{U+FE0F}b	1:2 U+FE0F
+edge: the first rune of ZERO WIDTH NO-BREAK SPACE (BOM) (U+FEFF)	a{U+FEFF}b	1:2 U+FEFF
+edge: the first rune of HALFWIDTH HANGUL FILLER (U+FFA0)	a{U+FFA0}b	1:2 U+FFA0
+edge: the first rune of UNASSIGNED (Default_Ignorable) (U+FFF0)	a{U+FFF0}b	1:2 U+FFF0
+edge: the last rune of UNASSIGNED (Default_Ignorable) (U+FFF8)	a{U+FFF8}b	1:2 U+FFF8
+edge: the first rune of INTERLINEAR ANNOTATION (U+FFF9)	a{U+FFF9}b	1:2 U+FFF9
+edge: the last rune of INTERLINEAR ANNOTATION (U+FFFB)	a{U+FFFB}b	1:2 U+FFFB
+edge: the first rune of KAITHI NUMBER SIGN (U+110BD)	a{U+110BD}b	1:2 U+110BD
+edge: the first rune of KAITHI NUMBER SIGN ABOVE (U+110CD)	a{U+110CD}b	1:2 U+110CD
+edge: the first rune of EGYPTIAN HIEROGLYPH FORMAT CONTROL (U+13430)	a{U+13430}b	1:2 U+13430
+edge: the last rune of EGYPTIAN HIEROGLYPH FORMAT CONTROL (U+1343F)	a{U+1343F}b	1:2 U+1343F
+edge: the first rune of SHORTHAND FORMAT CONTROL (U+1BCA0)	a{U+1BCA0}b	1:2 U+1BCA0
+edge: the last rune of SHORTHAND FORMAT CONTROL (U+1BCA3)	a{U+1BCA3}b	1:2 U+1BCA3
+edge: the first rune of MUSICAL SYMBOL FORMAT CONTROL (U+1D173)	a{U+1D173}b	1:2 U+1D173
+edge: the last rune of MUSICAL SYMBOL FORMAT CONTROL (U+1D17A)	a{U+1D17A}b	1:2 U+1D17A
+edge: the first rune of TAG CHARACTER / VARIATION SELECTOR SUPPLEMENT (plane 14) (U+E0000)	a{U+E0000}b	1:2 U+E0000
+edge: the last rune of TAG CHARACTER / VARIATION SELECTOR SUPPLEMENT (plane 14) (U+E0FFF)	a{U+E0FFF}b	1:2 U+E0FFF
+edge: U+0020, the rune after C0 CONTROL (includes ESC), is not hidden	a b	none
+edge: U+007E, the rune before DELETE, is not hidden	a~b	none
+edge: U+00A0, the rune after C1 CONTROL (includes NEL), is not hidden	a{U+00A0}b	none
+edge: U+00AC, the rune before SOFT HYPHEN, is not hidden	a{U+00AC}b	none
+edge: U+00AE, the rune after SOFT HYPHEN, is not hidden	a{U+00AE}b	none
+edge: U+034E, the rune before COMBINING GRAPHEME JOINER, is not hidden	a{U+034E}b	none
+edge: U+0350, the rune after COMBINING GRAPHEME JOINER, is not hidden	a{U+0350}b	none
+edge: U+05FF, the rune before ARABIC NUMBER SIGN (Cf), is not hidden	a{U+05FF}b	none
+edge: U+0606, the rune after ARABIC NUMBER SIGN (Cf), is not hidden	a{U+0606}b	none
+edge: U+061B, the rune before ARABIC LETTER MARK, is not hidden	a{U+061B}b	none
+edge: U+061D, the rune after ARABIC LETTER MARK, is not hidden	a{U+061D}b	none
+edge: U+06DC, the rune before ARABIC END OF AYAH, is not hidden	a{U+06DC}b	none
+edge: U+06DE, the rune after ARABIC END OF AYAH, is not hidden	a{U+06DE}b	none
+edge: U+070E, the rune before SYRIAC ABBREVIATION MARK, is not hidden	a{U+070E}b	none
+edge: U+0710, the rune after SYRIAC ABBREVIATION MARK, is not hidden	a{U+0710}b	none
+edge: U+088F, the rune before ARABIC POUND MARK ABOVE (Cf), is not hidden	a{U+088F}b	none
+edge: U+0892, the rune after ARABIC POUND MARK ABOVE (Cf), is not hidden	a{U+0892}b	none
+edge: U+08E1, the rune before ARABIC DISPUTED END OF AYAH, is not hidden	a{U+08E1}b	none
+edge: U+08E3, the rune after ARABIC DISPUTED END OF AYAH, is not hidden	a{U+08E3}b	none
+edge: U+115E, the rune before HANGUL CHOSEONG / JUNGSEONG FILLER, is not hidden	a{U+115E}b	none
+edge: U+1161, the rune after HANGUL CHOSEONG / JUNGSEONG FILLER, is not hidden	a{U+1161}b	none
+edge: U+17B3, the rune before KHMER INHERENT VOWEL, is not hidden	a{U+17B3}b	none
+edge: U+17B6, the rune after KHMER INHERENT VOWEL, is not hidden	a{U+17B6}b	none
+edge: U+180A, the rune before MONGOLIAN FREE VARIATION SELECTOR / VOWEL SEPARATOR, is not hidden	a{U+180A}b	none
+edge: U+1810, the rune after MONGOLIAN FREE VARIATION SELECTOR / VOWEL SEPARATOR, is not hidden	a{U+1810}b	none
+edge: U+200A, the rune before ZERO WIDTH SPACE, is not hidden	a{U+200A}b	none
+edge: U+2010, the rune after LEFT-TO-RIGHT / RIGHT-TO-LEFT MARK, is not hidden	a{U+2010}b	none
+edge: U+2027, the rune before LINE / PARAGRAPH SEPARATOR, is not hidden	a{U+2027}b	none
+edge: U+202F, the rune after RIGHT-TO-LEFT OVERRIDE, is not hidden	a{U+202F}b	none
+edge: U+205F, the rune before WORD JOINER / INVISIBLE OPERATOR, is not hidden	a{U+205F}b	none
+edge: U+2070, the rune after DEPRECATED FORMAT CHARACTER, is not hidden	a{U+2070}b	none
+edge: U+3163, the rune before HANGUL FILLER, is not hidden	a{U+3163}b	none
+edge: U+3165, the rune after HANGUL FILLER, is not hidden	a{U+3165}b	none
+edge: U+FDFF, the rune before VARIATION SELECTOR-1..14, is not hidden	a{U+FDFF}b	none
+edge: U+FE10, the rune after VARIATION SELECTOR-15 / 16, is not hidden	a{U+FE10}b	none
+edge: U+FEFE, the rune before ZERO WIDTH NO-BREAK SPACE (BOM), is not hidden	a{U+FEFE}b	none
+edge: U+FF00, the rune after ZERO WIDTH NO-BREAK SPACE (BOM), is not hidden	a{U+FF00}b	none
+edge: U+FF9F, the rune before HALFWIDTH HANGUL FILLER, is not hidden	a{U+FF9F}b	none
+edge: U+FFA1, the rune after HALFWIDTH HANGUL FILLER, is not hidden	a{U+FFA1}b	none
+edge: U+FFEF, the rune before UNASSIGNED (Default_Ignorable), is not hidden	a{U+FFEF}b	none
+edge: U+FFFC, the rune after INTERLINEAR ANNOTATION, is not hidden	a{U+FFFC}b	none
+edge: U+110BC, the rune before KAITHI NUMBER SIGN, is not hidden	a{U+110BC}b	none
+edge: U+110BE, the rune after KAITHI NUMBER SIGN, is not hidden	a{U+110BE}b	none
+edge: U+110CC, the rune before KAITHI NUMBER SIGN ABOVE, is not hidden	a{U+110CC}b	none
+edge: U+110CE, the rune after KAITHI NUMBER SIGN ABOVE, is not hidden	a{U+110CE}b	none
+edge: U+1342F, the rune before EGYPTIAN HIEROGLYPH FORMAT CONTROL, is not hidden	a{U+1342F}b	none
+edge: U+13440, the rune after EGYPTIAN HIEROGLYPH FORMAT CONTROL, is not hidden	a{U+13440}b	none
+edge: U+1BC9F, the rune before SHORTHAND FORMAT CONTROL, is not hidden	a{U+1BC9F}b	none
+edge: U+1BCA4, the rune after SHORTHAND FORMAT CONTROL, is not hidden	a{U+1BCA4}b	none
+edge: U+1D172, the rune before MUSICAL SYMBOL FORMAT CONTROL, is not hidden	a{U+1D172}b	none
+edge: U+1D17B, the rune after MUSICAL SYMBOL FORMAT CONTROL, is not hidden	a{U+1D17B}b	none
+edge: U+DFFFF, the rune before TAG CHARACTER / VARIATION SELECTOR SUPPLEMENT (plane 14), is not hidden	a{U+DFFFF}b	none
+edge: U+E1000, the rune after TAG CHARACTER / VARIATION SELECTOR SUPPLEMENT (plane 14), is not hidden	a{U+E1000}b	none
