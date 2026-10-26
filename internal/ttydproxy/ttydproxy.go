@@ -30,18 +30,18 @@
 // sources. X-Frame-Options (XFO) cannot express that: XFO's only values are
 // DENY, SAMEORIGIN, and the obsolete/unsupported-by-modern-browsers
 // ALLOW-FROM. There is no way to spell "allow this specific cross-origin
-// portal" in XFO. Once P23-4 wires FRAME_ANCESTORS to the real portal origin,
+// portal" in XFO. FRAME_ANCESTORS is wired to the real portal origin (the
+// platform's deploy-event-workspaces.sh passes it to deploy-user.sh), so
 // emitting XFO: SAMEORIGIN or DENY alongside the CSP would be actively wrong
 // — browsers that honour XFO (some still do, as a legacy fallback) would
 // block the very portal embedding this proxy exists to allow, breaking the
 // feature it protects. So this proxy's policy is:
 //
-//   - frame-ancestors == "'none'" (the fail-safe default, and today's
-//     reality since nothing embeds ttyd yet): also emit
+//   - frame-ancestors == "'none'" (the fail-safe default, and the value of a
+//     deployment that has not wired the portal origin): also emit
 //     X-Frame-Options: DENY. Both headers agree ("nobody may frame this"),
 //     so there is no legacy-browser gap and no conflict.
-//   - frame-ancestors names a real origin (P23-4, once the portal exists):
-//     emit CSP only. XFO is omitted entirely rather than set to SAMEORIGIN/
+//   - frame-ancestors names a real origin (the portal's, P23-4): emit CSP only. XFO is omitted entirely rather than set to SAMEORIGIN/
 //     DENY, because either value would contradict the CSP for the one
 //     legitimate embedder and there is no XFO spelling that doesn't.
 //
@@ -49,13 +49,12 @@
 //
 // FRAME_ANCESTORS defaults to "'none'" (nobody may frame ttyd at all) —
 // mirrors the ALLOWED_ORIGINS fail-closed pattern in
-// internal/scoreboard/originguard. Before the portal exists, nothing embeds
-// ttyd in an iframe, so a restrictive default changes no legitimate
-// behaviour (direct navigation to the ttyd URL is a top-level load, which
-// frame-ancestors does not affect). Set today via
+// internal/scoreboard/originguard. A deployment that does not set it keeps the
+// restrictive default (direct navigation to the ttyd URL is a top-level load,
+// which frame-ancestors does not affect). It is set via
 // `deploy-user.sh --frame-ancestors` (ctf-user is not a platform helmfile
-// release); once P23-4 lands, the platform's deploy-event-workspaces.sh is
-// expected to pass the real portal origin through to that same flag.
+// release); the platform's deploy-event-workspaces.sh passes the real portal
+// origin through to that same flag, and its grammar is ADR-0044 (below).
 package ttydproxy
 
 import (
@@ -113,10 +112,11 @@ type Handler struct {
 // rejects anything outside FrameAncestorsPattern (ADR-0044 D4) — fail-closed on
 // a malformed operator input rather than attempting to sanitise it. This is the
 // last check point: it also closes the paths that do not go through
-// deploy-user.sh (a values file, a direct helm run). net/http's header writer
-// already refuses CR/LF (response splitting), so the grammar changes nothing
-// that reaches the wire for those; it turns every other bad value into an
-// explicit startup error instead of a widened policy.
+// deploy-user.sh (a values file, a direct helm run). The grammar is the ONLY
+// thing that stops a value with a line break: net/http's header writer does not
+// refuse CR/LF, it replaces each with a space, so "https://a.example\nhttps://b.example"
+// would be sent as two sources, a widened policy rather than an error. Every bad
+// value is an explicit startup error instead.
 func New(upstream string, frameAncestors string, logger *slog.Logger) (*Handler, error) {
 	u, err := url.Parse(upstream)
 	if err != nil {

@@ -135,9 +135,9 @@ func TestInvalidUpstreamURLErrors(t *testing.T) {
 
 // TestFrameAncestorsControlCharRejected proves New fails closed (refuses to
 // start) rather than passing a CR/LF/control-character-laden FRAME_ANCESTORS
-// value through to a response header — see validateFrameAncestors's doc for
-// why this is checked explicitly instead of relying solely on net/http's own
-// header-writer guard against CR/LF.
+// value through to a response header. net/http does NOT refuse CR/LF in a
+// header value, it replaces each with a space, so a line break would reach the
+// wire as a separator (a second source); the grammar (ADR-0044) is the check.
 func TestFrameAncestorsControlCharRejected(t *testing.T) {
 	up := htmlUpstream(t)
 	cases := []string{

@@ -13,7 +13,7 @@
 #   [FALCO_CTF_REGISTRY=<registry>/<prefix>] [FALCO_CTF_IMAGE_TAG=<tag>] \
 #   deploy-user.sh [--challenges-dir <path>] [--scenarios-dir <path>] \
 #                  [--flags-file <path>] [--dns-suffix <suffix>] \
-#                  [--frame-ancestors <csp-value>] [--app-host <host>] \
+#                  [--frame-ancestors <'none'|https://host>] [--app-host <host>] \
 #                  [--egress-lockdown --api-server-cidr <cidr>] \
 #                  <username> <challenge-id>
 #

@@ -31,10 +31,10 @@ func main() {
 	addr := serverutil.Env("LISTEN_ADDR", ":7681")
 	// FRAME_ANCESTORS is the CSP frame-ancestors source: "'none'" or one
 	// https://<host> origin (e.g. "https://ctf-event.example.com"). Fail-safe default "'none'" — see
-	// ttydproxy package doc. Set today via `deploy-user.sh --frame-ancestors`
-	// (ctf-user is not a platform helmfile release); P23-4 plans a
-	// passthrough from the platform's deploy-event-workspaces.sh once the
-	// portal exists and needs to inject its real origin here.
+	// ttydproxy package doc. Set via `deploy-user.sh --frame-ancestors`
+	// (ctf-user is not a platform helmfile release); the platform's
+	// deploy-event-workspaces.sh passes the portal's origin to that flag, and
+	// the grammar is ADR-0044 (ttydproxy.FrameAncestorsPattern).
 	frameAncestors := serverutil.Env("FRAME_ANCESTORS", "'none'")
 
 	// New fails closed (returns an error, so this exits rather than starts)

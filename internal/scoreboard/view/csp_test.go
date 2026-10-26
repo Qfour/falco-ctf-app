@@ -352,9 +352,10 @@ func TestWriteSecurityHeaders_ThreadsTtydSuffixIntoFrameSrc(t *testing.T) {
 // TestWriteSecurityHeaders_RejectsControlCharInSuffix proves a malformed
 // PORTAL_TTYD_SUFFIX (containing CR/LF, which could otherwise attempt a
 // header-injection-shaped value) is rejected outright rather than silently
-// producing whatever net/http's header writer would do with it — mirrors
-// internal/ttydproxy.validateFrameAncestors's same fail-closed posture for
-// the analogous operator-supplied CSP value there.
+// producing whatever net/http's header writer would do with it. This is a
+// control-character check only: the suffix has no closed grammar yet (app#532),
+// unlike ttyd-proxy's FRAME_ANCESTORS (internal/ttydproxy.FrameAncestorsPattern,
+// ADR-0044).
 func TestWriteSecurityHeaders_RejectsControlCharInSuffix(t *testing.T) {
 	_, err := writeSecurityHeaders(httptest.NewRecorder(), "ctf-event.dev\r\nX-Injected: 1")
 	if err == nil {
