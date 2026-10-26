@@ -91,6 +91,7 @@ flowchart TD
 | /api/state 確認 | 手動 | ✅ | `make dev` → curl /api/state |
 | /review-challenge | PR 直前 | ✅ | `/review-challenge` |
 | security-engineer レビュー | PR 直前 | `challenges/*/fixtures/**` または `journey.yaml` の `hints[]` を変える時 ✅ (ADR-0026 V8 / I16。n-gram 検査 `internal/hintleak` は逐語一致しか捕まえない。言い換えによるヒント漏えいは文面レビューだけが防ぐ) | `/security-audit` (または `/review-5x` の R1) |
+| security-engineer レビュー | PR 直前 | `internal/sourcehygiene` の非 test file (`invisible.go` / `chars.go`) を変える時 ✅ (ADR-0043。hintleak の述語がこの表を import するので、表・文脈規則・bidi の変更は採点境界 V8 / I16 の仕組みの変更) | `/security-audit` (または `/review-5x` の R1) |
 
 ---
 
