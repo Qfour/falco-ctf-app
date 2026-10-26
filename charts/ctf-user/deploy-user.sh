@@ -249,17 +249,18 @@ esac
 # platform's deploy-event-workspaces.sh), not a participant; this is the same
 # closed-grammar rule the seat and the challenge id already follow.
 #
-# The four patterns have NO Go definition (an operator input is read by this script
-# only): these literals are the definitions. A test (internal/catalog,
+# Three patterns (registry / tag / CIDR) have NO Go definition (an operator input is read
+# by this script only): their literals are the definitions. A test (internal/catalog,
 # deploy_operator_inputs_test.go) holds each equal to the `# pattern: ` header of its
-# case table (internal/catalog/testdata/{dns-suffix,image-registry,image-tag,
-# api-server-cidr}-cases.tsv) and runs every row through it; scripts/check-deploy-user-ids.sh
-# runs every row through this script. Platform derives the registry and the tag from its
+# case table (internal/catalog/testdata/{image-registry,image-tag,api-server-cidr}-cases.tsv)
+# and runs every row through it. The fourth, dns-suffix, is a COPY of the Go definition
+# internal/dnsname (ADR-0047; see DNS_SUFFIX_PATTERN below), which dnsname_test.go holds
+# equal. scripts/check-deploy-user-ids.sh runs every row of all four through this script. Platform derives the registry and the tag from its
 # env file (platform#285, open: until it merges the operator passes them) but holds NO
 # grammar: this script is the one place that checks. If platform#285 is not merged this
 # sentence is to be reverted.
 # --app-host and --frame-ancestors (app#520, ADR-0044) are checked below with the same
-# helper, and are not part of the four: see "--frame-ancestors / --app-host" after them.
+# helper, and are not part of the four above: see "--frame-ancestors / --app-host" after them.
 #   DNS_SUFFIX       RFC 1123 subdomain: labels of [a-z0-9-] (the first and the last a letter
 #                    or digit, 1 to 63 characters) joined by `.`, no leading / trailing dot,
 #                    at most DNS_SUFFIX_MAX_LEN (253) characters in all. Lower case only
