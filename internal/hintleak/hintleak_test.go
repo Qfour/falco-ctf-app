@@ -177,10 +177,13 @@ func TestHintLeakChecker_Mutation(t *testing.T) {
 		}
 	}
 
-	t.Run("V-a: every Cf, Variation_Selector, Other_Default_Ignorable and bidi rune in a hint or target is an error", func(t *testing.T) {
+	t.Run("V-a: every Cf, Variation_Selector, Other_Default_Ignorable, bidi, Cc (but TAB and LF) and Zl/Zp rune in a hint or target is an error", func(t *testing.T) {
 		set := []rune{0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 0x2066, 0x2067, 0x2068, 0x2069}
 		for r := rune(0); r <= unicode.MaxRune; r++ {
-			if unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Variation_Selector, r) || unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r) {
+			switch {
+			case r == '\t' || r == '\n': // the only controls a text may carry
+			case unicode.Is(unicode.Cf, r), unicode.Is(unicode.Variation_Selector, r), unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r),
+				unicode.Is(unicode.Cc, r), unicode.Is(unicode.Zl, r), unicode.Is(unicode.Zp, r): // a CR is placed alone, so it is not "before LF"
 				set = append(set, r)
 			}
 		}
@@ -216,6 +219,10 @@ func TestHintLeakChecker_Mutation(t *testing.T) {
 			{"U+E0100 VARIATION SELECTOR-17", 0xE0100},
 			{"U+202E RIGHT-TO-LEFT OVERRIDE", 0x202E},
 			{"U+2066 LEFT-TO-RIGHT ISOLATE", 0x2066},
+			{"U+0001 START OF HEADING (C0)", 0x0001},
+			{"U+001B ESCAPE (C0)", 0x001B},
+			{"U+007F DELETE", 0x007F},
+			{"U+009B CONTROL SEQUENCE INTRODUCER (C1)", 0x009B},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				wantHidden(t, "hint", tc.r)
@@ -241,7 +248,33 @@ func TestHintLeakChecker_Mutation(t *testing.T) {
 			t.Errorf("the identical sentence must be reported, and a window must cover U+26A0 U+FE0F (the rune is not skipped): violations=%d windowSeen=%v", len(vs), windowSeen)
 		}
 
+		// A ZWJ between two non-ASCII So (a symbol need not be an emoji) is allowed in
+		// context (ADR-0043 D2: it is accepted residue). Its window is still scanned.
+		zwj := string(rune(0x2603)) + string(rune(0x200D)) + string(rune(0x2605))
+		zwjText := "注意" + zwj + "ここから先は読まない"
+		vs, err = hintleak.Check(hintleak.Input{Hints: one("B hints[1]", zwjText), Targets: one("A/fixtures/f", zwjText)})
+		if err != nil {
+			t.Fatalf("So + U+200D + So in a hint and a fixture: err = %v, want none", err)
+		}
+		zwjSeen := false
+		for _, v := range vs {
+			if strings.Contains(v.Gram, string(rune(0x200D))) {
+				zwjSeen = true
+			}
+		}
+		if len(vs) == 0 || !zwjSeen {
+			t.Errorf("the identical sentence must be reported, and a violating n-gram must carry U+200D: violations=%d zwjSeen=%v", len(vs), zwjSeen)
+		}
+
 		const hint = "abcdefghijklm"
+		// A hint item that starts with U+FEFF: the BOM is judged at the start of the item.
+		vs, err = hintleak.Check(hintleak.Input{Hints: one("B hints[1]", string(rune(0xFEFF))+hint), Targets: one("A/fixtures/f", hint)})
+		if err != nil {
+			t.Errorf("a leading U+FEFF in a hint item: err = %v, want none", err)
+		} else if len(vs) == 0 {
+			t.Errorf("a leading U+FEFF in a hint item: the copied run must be reported, got no violation")
+		}
+
 		for name, fixture := range map[string]string{
 			"a leading U+FEFF (BOM) in a fixture": string(rune(0xFEFF)) + hint,
 			"CRLF in a fixture":                   "abcde\r\nfghijklm",

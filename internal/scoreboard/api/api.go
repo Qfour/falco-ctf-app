@@ -103,8 +103,9 @@ func (h *Handler) challenge(cid string) (ch catalog.Challenge, label string, ok 
 //     (U+0080-009F, e.g. U+0085 NEL). The old class stopped at U+007F.
 //   - \p{Cf}: format characters — U+200B ZERO WIDTH SPACE, U+202E RIGHT-TO-LEFT
 //     OVERRIDE and the other bidi controls, U+2060 WORD JOINER, U+FEFF BOM,
-//     U+00AD SOFT HYPHEN, the tag characters, ... Aligns with ADR-0026 D5-1,
-//     which already treats Cf as an error.
+//     U+00AD SOFT HYPHEN, the tag characters, ... The display name rule is
+//     Cc ∪ Cf (ADR-0039). hintleak moved to sourcehygiene.Hidden in ADR-0043, so
+//     the two no longer match (intentional).
 //
 // One exception is carved out in displayNameHasForbidden (not here — a regexp
 // cannot look at neighbours): U+200D ZERO WIDTH JOINER between two emoji,

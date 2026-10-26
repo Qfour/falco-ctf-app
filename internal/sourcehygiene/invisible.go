@@ -13,7 +13,7 @@
 // General_Category Cf (what a renderer is told to draw as nothing), plus the C0 / C1
 // control characters, U+2028 / U+2029 and a lone CR (Tier B: they change what a reader
 // sees in a terminal or what a parser takes for a line). The nine bidi controls
-// (U+202A-202E, U+2066-2069) are NOT in this table: bidiControls (bidi_test.go) owns
+// (U+202A-202E, U+2066-2069) are NOT in this table: bidiControls (chars.go) owns
 // them, so one character is never reported twice. TestInvisibleTable_CoversCfAndDICP
 // proves the two tables together cover every Cf, Variation_Selector and
 // Other_Default_Ignorable_Code_Point rune of the Unicode version Go ships.

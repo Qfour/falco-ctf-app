@@ -73,7 +73,7 @@ var ErrEmptyInput = errors.New("hintleak: no hint items or no target items to sc
 
 // ErrFormatChar is returned (wrapped) when a hint item or a target item
 // contains a rune that [sourcehygiene.Hidden] reports (ADR-0043). The name is
-// kept from the time the rule was Unicode Cf alone (ADR-0030 C8 refers to it).
+// kept from the time the rule was Unicode Cf alone, so that callers of errors.Is and the tests stay stable. Renaming it is for P28-1, together with the import-closure test (ADR-0029 V1).
 var ErrFormatChar = errors.New("hintleak: item contains an invisible character (sourcehygiene.Hidden: invisible table or bidi control)")
 
 // Check applies the rule to in and returns the violations, sorted by
