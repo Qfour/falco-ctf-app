@@ -1,7 +1,7 @@
 # ADR-0045: 不可視文字の表を data file として書き出し、参照 scanner を app に 1 本だけ置く。platform と workspace は scanner を走らせるだけにする
-- Status: Proposed (app 実装 PR の merge と同じセッションで Accepted。platform / workspace の消費者 PR は APP_PIN bump と同時か後)
+- Status: Proposed (app 実装 PR の merge と同じセッションで Accepted (実装 SHA で昇格)。platform / workspace の消費者 PR は APP_PIN bump と同時か後)
 - Date / Deciders: 2026-10-26 / VP + architect (起草) + security-engineer (R1)
-- 関連: app#511 (security 仕様 F2)、#501 (bidi の gate)、#525 (表と scanner を sourcehygiene の非 test package に置いた)、#529 (= c8b9e0c、ADR-0043 の実装) / ADR-0043 (Option 3・Signpost 3)、ws#86 (review-5x の T2 下限に `internal/sourcehygiene/`)、platform の後続 PR (wrapper・selftest・CI step・APP_PIN の bump。番号未定)、workspace の後続 PR (wrapper・`check-agent-skills.sh` への接続。番号未定)、platform#290 (ADR-0044。同じ APP_PIN の行を触る)、先例 ADR-0042 / ADR-0044 (app の表を platform が sibling clone から読む)
+- 関連: app#511 (security 仕様 F2)、#501 (bidi の gate)、#525 (表と scanner を sourcehygiene の非 test package に置いた)、#529 (= c8b9e0c、ADR-0043 の実装) / ADR-0043 (Option 3・Signpost 3)、ws#86 (review-5x の T2 下限に `internal/sourcehygiene/`)、platform#294 (platform の消費者 PR: wrapper・selftest・CI step・APP_PIN の bump)、ws#89 (workspace の消費者 PR: wrapper・`check-agent-skills.sh` への接続)、app#537 (walk と allowlist の signature 検査と、否定例の共有 data。follow-up)、platform#290 (ADR-0044。同じ APP_PIN の行を触る)、先例 ADR-0042 / ADR-0044 (app の表を platform が sibling clone から読む)
 
 ## Context
 (file:line は app origin/main e47669f、platform origin/main ca0572a、workspace origin/main e97ed51 の版)
@@ -28,13 +28,14 @@
 - C7. workspace の入口。
   - VP が回す検査は `scripts/claude/check-agent-skills.sh` で、結果の判定は :354-359。
   - `.claude/settings.json` は untracked のまま、セッションに読まれる。auto-memory の dir は git の外にあり、次のセッションにそのまま読まれる。
+- C9. workspace は app を pin しない。REFACTORING.md の決定事項は「app の git SHA を 1 箇所で pin する」で、platform の APP_PIN がそれにあたる。workspace の検査は deploy の契約ではなく、VP の手元の衛生検査である。このため workspace には pin を適用せず、最新の規則を当てる (適用外。理由つき)。代わりに wrapper は、使った app の SHA を必ず出力する (ws#89)。
 - C8. ws#86 (open) は review-5x の T2 下限に `internal/sourcehygiene/` を入れる。本 ADR の app PR は `internal/sourcehygiene/testdata/` を触るので、その対象になる。
 
 ## Options
 1. **A: app が表を data file として書き出し、参照 scanner (Python 標準ライブラリだけ) も app に 1 本だけ置く**。
    - 変更点: Go の test が「data = Go の値」を固定する。app の flag-guard が、Python の scanner と `Hidden` の一致を共有 cases 表で確かめる。platform と workspace は、sibling clone の scanner を自分の tree に当てるだけにする。
    - コスト:
-     - 実装が Go と Python の 2 つになる。文脈規則の Python 版は約 40 行、scanner と selftest で約 300 行 (仮説)。
+     - 実装が Go と Python の 2 つになる。文脈規則は Go の `scan` が 60 行、Python 版が 48 行。実測の大きさは scanner が 800 行 (reader・walk・allowlist・selftest を含む)、Go の test が 550 行、shell の mutant test が 185 行。
      - data file は 3 本 (印字可能な ASCII)。消費者は python3 が要る (どちらにもある)。新しい image も依存も足さない。
    - リスクと可逆性:
      - cases 表に無い入力で、Go と Python がずれうる。flag-guard で app tree の実 file を両方に通すことで、これを補う。
@@ -90,11 +91,12 @@ A。新しい toolchain を足さず、sourcehygiene の非 test package を広�
 - **D4. 参照 scanner `scripts/sourcehygiene-scan.py`**
   - Python 標準ライブラリだけを使い、python3 は 3.9 以上。
   - data は、自分と同じ checkout の D1 の 3 file だけを、自分の位置からの相対 path で読む。data の場所を引数では受けない。
-  - 判定は `Hidden` と、`make test` の walk に揃える。
+  - 述語は `Hidden` と同じにする。機械で parity を見ているのは述語だけ (共有 cases。V1-c と `--selftest`)。walk と allowlist は、Python の `--selftest` が固定するだけで、Go の gate との機械の parity は無い。見ているのは、両 gate が app tree で緑であることだけで、allowlist は bidi の code point も書けるので意味自体が同じではない。walk と allowlist の signature 検査と、否定例の共有 data は app#537 に残す。walk の規則は次のとおり (`make test` の walk に倣う)。
     - file 集合: `<dir>/.git` があれば (file でも可) `git ls-files`、無ければ disk 上の全 file。`--also-untracked <rel>` は `<rel>` の下の通常 file を足す。
     - symlink と submodule は追わない。拡張子が `binary-ext.tsv` にある file は走査しない。
     - NUL は file ごとに 1 件。U+0000 は finding から外す。
-    - path は印字可能な ASCII だけ。
+    - path は印字可能な ASCII だけ。判定は `re.fullmatch` で行う (`$` は末尾の LF を通す)。
+    - lstat の `FileNotFoundError` だけを「無い」とし、ほかの OSError と、`os.walk` の列挙の失敗は FAIL にする (読めない subtree を黙って飛ばさない)。dir を指す symlink も列挙して path の規則をかける (Go の WalkDir と同じ集合)。
     - allowlist は closed set。列にある code point だけを許し、dead entry は FAIL。
   - 出力は path、line、col、code point、名前、理由だけにする。file の中身は出さない。
   - 終了コードは、0 = 違反なし、1 = 違反、data が読めない、走査が 0 件、2 = 使い方の誤り。
@@ -112,15 +114,18 @@ A。新しい toolchain を足さず、sourcehygiene の非 test package を広�
   - 取り出した scanner を、tracked file と untracked の `.claude/` に当てる。auto-memory の dir があれば、それにも当てる。
   - `check-agent-skills.sh` の結果判定の前から呼ぶ。SessionStart hook にするかは CEO 判断。
 - **D8. 消費者が読む面と、変更の規則**
-  - 読む面: scanner の path、CLI (`--selftest` / `<dir>` / `--allowlist <file>` / `--also-untracked <rel>`)、終了コード、出力行の書式、allowlist の書式。
+  - 読む面: bundle の配置、scanner の CLI (`--selftest` / `<dir>` / `--allowlist <file>` / `--also-untracked <rel>`)、終了コード、allowlist の書式、出力の接頭辞。
+    - bundle の配置 = `scripts/sourcehygiene-scan.py` と `internal/sourcehygiene/testdata/{hidden-ranges,hidden-cases,binary-ext}.tsv` の repo 相対の path。data の path の移動・rename は面の変更で、追加だけを許す (変えるなら新しい path)。
+    - 判定に使うのは終了コードだけ。安定を約束する出力は、finding 行の接頭辞 `<path>:<line>:<col> U+XXXX` と、要約行の接頭辞 `OK sourcehygiene-scan:` / `FAIL` だけで、ほかの文言は安定を保証しない。消費者の selftest は終了コードと接頭辞だけで判定する。
     - allowlist の書式は `invisible-allowlist.txt` と同じ。違いは bidi の code point も書けることだけ。
     - data file の書式は面にしない。
   - 変更の規則:
     - 表の行・case 行の追加 (= 狭める): app 単独 PR + security。
     - 行の削除、文脈規則の緩和: app 単独 PR + security + ADR。
     - `binary-ext.tsv` の行の追加: app 単独 PR + security。
+    - scanner と mutant harness (`scripts/sourcehygiene-scan.py` / `scripts/test-sourcehygiene-scan.sh`) のコードの変更: app 単独 PR + security。platform / workspace が同じ規則を当てる単一の実装なので、`internal/sourcehygiene/**` と同じ扱いにする。
     - data の書式と rule の語彙: app 単独 PR + security。scanner、Go の test、data を同じ PR で変える。
-    - 消費者が読む面: 追加だけを許す。意味を変えるなら新しい path にする。変えるときは app と platform の同時 PR にし、workspace は app の merge と同じセッションで追随する。
+    - 消費者が読む面: 追加だけを許す。意味を変えるなら新しい path にする。追加だけなので両リポ同時 PR は要らず、消費者 PR は後続でよい。意味を変えるときは app と platform の同時 PR にし、workspace は app の merge と同じセッションで追随する。
     - platform の APP_PIN の bump は対の PR にする。
 - **D9. Unicode の版**
   - scanner は `unicodedata.unidata_version` が header と違えば、WARN を 1 行出す (終了コードは変えない)。
@@ -129,11 +134,13 @@ A。新しい toolchain を足さず、sourcehygiene の非 test package を広�
 ## Consequences
 - 諦めたもの:
   - B の完全な同一性。parity は cases 表と、app tree の実 file の走査で見る。
-  - 消費者ごとの binary 拡張子。`.pdf` を app の表に足すので、app の gate も今後 `.pdf` を走査しない。app には今 `.pdf` は無い。PDF の描画内容は文字の規則の対象外で、受け入れる残余とする。
+  - 消費者ごとの binary 拡張子。`.pdf` を app の表に足すので、app の gate も今後 `.pdf` を走査しない。app には今 `.pdf` は無く、`TestTrackedFilesHoldNoRawBidiOrInvisibleCharacter` が「tracked の binary は `.woff2` と `.tgz` だけ」を固定する。PDF の描画内容は文字の規則の対象外で、受け入れる残余とする。
+  - `*.pdf` と名付けた text file は、拡張子だけで判定するので走査されずに素通りする。中身が PDF であることの signature 検査は app#537 に残す。
 - 新しく守るもの:
   - 3 file が Go の値と一致すること (V1)。
   - scanner が data を自分の checkout からだけ読むこと。
   - 非 test package が述語だけであること (V1-e)。
+- workspace は app を pin しない (C9)。VP の手元の衛生検査として最新の規則を当て、使った app の SHA を毎回出力する。platform は pin する消費者なので APP_PIN の対の PR を使う。
 - `bidi-allowlist.txt` に行が入ると、flag-guard の app tree の走査が赤になる。scanner は bidi を code point 単位の 1 つの allowlist で扱うからである。その時は、scanner に bidi の allowlist を読ませる変更を同じ PR に入れる (fail-closed)。
 - TestInvisible_Table (invisible_test.go:303-375) の行は `hidden-cases.tsv` に移す。test を消すのではなく移す。
   - V1-c が全行で「`Invisible` = `Hidden` − bidi」を確かめるので、被覆は落ちない。
@@ -151,6 +158,7 @@ A。新しい toolchain を足さず、sourcehygiene の非 test package を広�
 2. host と platform の runner の両方に Go が揃う → B を再評価する。
 3. Unicode 版の WARN が Go の更新 1 回分を超えて続く、または So の版の差で case か実 file の判定が割れる → 非 ASCII の So 集合を 4 本目の data file に書き出す (Go の test が固定する)。Python の版は pin しない。
 4. python3 を走らせられない消費者が現れる、または walker を Go の非 test コードに置く必要が出る → ADR-0043 Option 3 で切り出した後に B に移る。
+5. 消費者だけが持つ binary 形式の追加が 2 つ目になる → その形式は app の `binary-ext.tsv` に足さず、消費者側の closed set (自リポの allowlist と同じ review) に移す。
 
 ## Verification
 - V1 (Go、`make test` = required check `test`、`internal/sourcehygiene/exported_table_test.go`):
@@ -176,7 +184,7 @@ A。新しい toolchain を足さず、sourcehygiene の非 test package を広�
 
 ## Advice
 - architect の設計 (2026-10-26、「#511 F2 — 不可視文字 rule を workspace / platform に展開する設計」)。VP が案 A を承認した。
-- 本文での設計からの変更 (architect、2026-10-26。VP の承認待ち):
+- 本文での設計からの変更 (architect、2026-10-26。VP が 2026-10-26 に 7 点を承認した。architect の判定 = yes, if (条件 5 つ)):
   - rule の語彙を Go の識別子と `bidi` にした。
   - data file の書式を消費者の面から外し、app 単独で変えられるようにした。
   - `binary-ext.tsv` と `.pdf` を足した。
@@ -185,4 +193,4 @@ A。新しい toolchain を足さず、sourcehygiene の非 test package を広�
   - `--also-untracked` を足した。
   - TestInvisible_Table の行を cases に移すことにした。
 - security-engineer (#511 F2 の仕様): workspace と platform にも同じ規則を当てる。両リポとも今は U+26A0 U+FE0F 以外 0 件 (C4 で再実測した)。
-- review-5x: 未実施 (app 実装 PR で T2 以上、R1 = security)。
+- review-5x (app 実装 PR = #536、T3): R1 / R2 / R3 / R5 APPROVE with comments、R4 REQUEST CHANGES。採用した findings (契約行の現在形の訂正、scanner を security 必須 path に、path 規則の `$`、walk の fail-open、面の絞り込み、parity の主張の分離、workspace の pin) を同じ PR に反映した。
