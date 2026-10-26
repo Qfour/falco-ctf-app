@@ -64,6 +64,8 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"regexp"
+
+	"github.com/Qfour/falco-ctf-app/internal/dnsname"
 )
 
 // noneAncestors is the fail-safe default: no origin (including same-origin)
@@ -72,21 +74,24 @@ const noneAncestors = "'none'"
 
 // FrameAncestorsPattern is the ONE definition of the FRAME_ANCESTORS grammar
 // (ADR-0044 D2, app#520): exactly one source, either the quoted lower-case keyword
-// 'none' or `https://` and one host, the same RFC 1123 host grammar as
-// deploy-user.sh's --app-host (DNS_SUFFIX_PATTERN). Out: 'self', `*` and `*.`, a
-// scheme alone (`https:`), `http://`, a port, a path, a trailing `/`, a query,
-// userinfo, an upper-case letter, more than one source (a space, `,` or `;`), any
-// other keyword, nonce or hash, and a bare `none` (a host named none, a misconfiguration
-// that reads as safe). The whole value is at most FrameAncestorsMaxLen characters; a
-// regex cannot count the whole, so New checks the length after the pattern.
+// 'none' or `https://` and one host. The host is dnsname.Body (ADR-0047), the RFC 1123
+// grammar of deploy-user.sh's --app-host, so the two are the same set by construction.
+// Out: 'self', `*` and `*.`, a scheme alone (`https:`), `http://`, a port, a path, a
+// trailing `/`, a query, userinfo, an upper-case letter, more than one source (a space,
+// `,` or `;`), any other keyword, nonce or hash, and a bare `none` (a host named none,
+// a misconfiguration that reads as safe). The whole value is at most
+// FrameAncestorsMaxLen characters; a regex cannot count the whole, so New checks the
+// length after the pattern.
 //
 // charts/ctf-user/deploy-user.sh holds this text as FRAME_ANCESTORS_PATTERN and
 // internal/ttydproxy/testdata/frame-ancestors-cases.tsv as its `# pattern: ` header;
-// frame_ancestors_grammar_test.go holds the three equal and runs every row.
-const FrameAncestorsPattern = `^('none'|https://[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*)$`
+// frame_ancestors_grammar_test.go holds the three equal and runs every row. The host
+// part has no copy here: internal/dnsname holds it, and dnsname_test.go holds
+// deploy-user.sh's DNS_SUFFIX_PATTERN equal to it.
+const FrameAncestorsPattern = "^('none'|https://" + dnsname.Body + ")$"
 
 // FrameAncestorsMaxLen is `https://` (8) and the 253 characters of a whole RFC 1123 name.
-const FrameAncestorsMaxLen = 261
+const FrameAncestorsMaxLen = len("https://") + dnsname.MaxLen
 
 var frameAncestorsRE = regexp.MustCompile(FrameAncestorsPattern)
 

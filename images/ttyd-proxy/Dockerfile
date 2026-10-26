@@ -12,6 +12,7 @@ RUN go mod download
 
 COPY cmd/ttyd-proxy ./cmd/ttyd-proxy
 COPY internal/ttydproxy ./internal/ttydproxy
+COPY internal/dnsname ./internal/dnsname
 COPY internal/serverutil ./internal/serverutil
 
 RUN CGO_ENABLED=0 GOOS=linux go build \

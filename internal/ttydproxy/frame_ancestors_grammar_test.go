@@ -4,8 +4,9 @@ package ttydproxy_test
 // ttydproxy.FrameAncestorsPattern (and FrameAncestorsMaxLen); New refuses to start on a
 // value outside it. charts/ctf-user/deploy-user.sh holds the same text as
 // FRAME_ANCESTORS_PATTERN, and testdata/frame-ancestors-cases.tsv as its `# pattern: `
-// header; this file holds the three equal, the host part equal to DNS_SUFFIX_PATTERN's
-// body (the `--app-host` grammar), and runs every row through the constant and through
+// header; this file holds the three equal, the host part the composed dnsname.Body (the
+// `--app-host` grammar, ADR-0047: internal/dnsname holds it, and holds deploy-user.sh's
+// DNS_SUFFIX_PATTERN equal to it), and runs every row through the constant and through
 // New. scripts/check-deploy-user-ids.sh runs the same rows through deploy-user.sh itself.
 
 import (
@@ -14,10 +15,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
 	"testing"
 
 	"github.com/Qfour/falco-ctf-app/internal/casetable"
+	"github.com/Qfour/falco-ctf-app/internal/dnsname"
 	"github.com/Qfour/falco-ctf-app/internal/ttydproxy"
 )
 
@@ -38,7 +39,7 @@ func newWith(v string) error {
 }
 
 // The Go constant, the shell literal and the table's header are one text, and the host
-// part of it is the `--app-host` grammar: a change to one alone is red here.
+// part of it is dnsname.Body (the `--app-host` grammar): a change to one alone is red here.
 func TestFrameAncestorsGrammar_OneDefinition(t *testing.T) {
 	script := readFile(t, "..", "..", "charts", "ctf-user", "deploy-user.sh")
 	header, ok := casetable.Header(readFile(t, "testdata", casesFile))
@@ -56,30 +57,19 @@ func TestFrameAncestorsGrammar_OneDefinition(t *testing.T) {
 		t.Errorf("deploy-user.sh FRAME_ANCESTORS_PATTERN = %q, want ttydproxy.FrameAncestorsPattern %q", shell, ttydproxy.FrameAncestorsPattern)
 	}
 
-	// The host part: --app-host's DNS_SUFFIX_PATTERN, between its anchors.
-	dns, ok := casetable.ShellAssign(script, "DNS_SUFFIX_PATTERN")
-	if !ok {
-		t.Fatal("deploy-user.sh must define DNS_SUFFIX_PATTERN='...' exactly once on its own line")
-	}
-	body, okPrefix := strings.CutPrefix(dns, "^")
-	body, okSuffix := strings.CutSuffix(body, "$")
-	if !okPrefix || !okSuffix {
-		t.Fatalf("DNS_SUFFIX_PATTERN %q is not anchored ^...$: the host part cannot be cut out of it", dns)
-	}
-	if want := "^('none'|https://" + body + ")$"; ttydproxy.FrameAncestorsPattern != want {
-		t.Errorf("FrameAncestorsPattern = %q, want 'none' or https:// and DNS_SUFFIX_PATTERN's body: %q", ttydproxy.FrameAncestorsPattern, want)
+	// The host part: composed from the one DNS name grammar (ADR-0047), not copied. The
+	// shell's DNS_SUFFIX_PATTERN is held equal to dnsname.Pattern by internal/dnsname.
+	if want := "^('none'|https://" + dnsname.Body + ")$"; ttydproxy.FrameAncestorsPattern != want {
+		t.Errorf("FrameAncestorsPattern = %q, want 'none' or https:// and dnsname.Body: %q", ttydproxy.FrameAncestorsPattern, want)
 	}
 
-	// The bound: `https://` and DNS_SUFFIX_MAX_LEN's 253, in one literal beside the pattern.
+	// The bound: `https://` and dnsname.MaxLen's 253, in one literal beside the pattern.
 	maxLit, ok := casetable.ShellAssign(script, "FRAME_ANCESTORS_MAX_LEN")
 	if !ok {
 		t.Fatal("deploy-user.sh must define FRAME_ANCESTORS_MAX_LEN='...' exactly once on its own line")
 	}
-	if maxLit != "261" || ttydproxy.FrameAncestorsMaxLen != 261 {
-		t.Errorf("FRAME_ANCESTORS_MAX_LEN = %q, FrameAncestorsMaxLen = %d, want 261 (len(\"https://\") + 253)", maxLit, ttydproxy.FrameAncestorsMaxLen)
-	}
-	if dnsMax, _ := casetable.ShellAssign(script, "DNS_SUFFIX_MAX_LEN"); dnsMax != "253" {
-		t.Errorf("DNS_SUFFIX_MAX_LEN = %q, want 253: FrameAncestorsMaxLen is len(\"https://\") + it", dnsMax)
+	if want := len("https://") + dnsname.MaxLen; maxLit != "261" || ttydproxy.FrameAncestorsMaxLen != 261 || ttydproxy.FrameAncestorsMaxLen != want {
+		t.Errorf("FRAME_ANCESTORS_MAX_LEN = %q, FrameAncestorsMaxLen = %d, want 261 (len(\"https://\") + dnsname.MaxLen = %d)", maxLit, ttydproxy.FrameAncestorsMaxLen, want)
 	}
 }
 

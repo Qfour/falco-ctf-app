@@ -2,9 +2,10 @@
 // that every implementation of a grammar runs: internal/identity's seat-cases.tsv
 // (app#480), internal/catalog/challengeid's challenge-id-cases.tsv (app#494),
 // internal/catalog's scenario-name-cases.tsv (app#494) and the operator-input tables
-// beside it (dns-suffix, image-registry, image-tag, api-server-cidr: app#510), and
-// internal/ttydproxy's frame-ancestors-cases.tsv (app#520, ADR-0044). It is imported from test
-// files only: no production binary links it.
+// beside it (dns-suffix, image-registry, image-tag, api-server-cidr: app#510; dns-suffix's
+// Go definition is internal/dnsname, ADR-0047, which runs it), and internal/ttydproxy's
+// frame-ancestors-cases.tsv (app#520, ADR-0044). It is imported from test files only: no
+// production binary links it.
 //
 // The format is the one the seat table's header spells out, and the shell reader
 // (scripts/lib/casetable.sh, which scripts/check-seat-grammar.sh and

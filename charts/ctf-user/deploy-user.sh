@@ -286,6 +286,11 @@ esac
 # off (--api-server-cidr without --egress-lockdown): a bad value is not ignored quietly.
 # C locale, %q-escaped output, like the seat and the id: a control or bidi character
 # cannot reach the terminal raw.
+# DNS_SUFFIX_PATTERN / DNS_SUFFIX_MAX_LEN are a COPY of the Go definition (dnsname.Pattern /
+# dnsname.MaxLen, internal/dnsname, ADR-0047); internal/dnsname/dnsname_test.go holds both
+# equal, and the case table's header (internal/catalog/testdata/dns-suffix-cases.tsv) with
+# them. Change the Go definition first; the other three registry / tag / CIDR literals below
+# have no Go definition and are the definition.
 DNS_SUFFIX_PATTERN='^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$'
 DNS_SUFFIX_MAX_LEN='253'
 REGISTRY_PATTERN='^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:[0-9]{1,5})?(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)*/falco-ctf$'
@@ -326,8 +331,9 @@ check_operator_input() {
 #                    253) characters. Not 'self', `*`, `*.`, a scheme alone, `http:`, a port, a
 #                    path, several sources, a bare `none`. THE DEFINITION is the Go constant
 #                    ttydproxy.FrameAncestorsPattern: this literal is a copy of it, held equal
-#                    (with the case table's header and the host part against DNS_SUFFIX_PATTERN)
-#                    by internal/ttydproxy/frame_ancestors_grammar_test.go; ttyd-proxy refuses
+#                    (with the case table's header) by
+#                    internal/ttydproxy/frame_ancestors_grammar_test.go, whose host part is
+#                    dnsname.Body (a composition, ADR-0047); ttyd-proxy refuses
 #                    to start on a value outside it, so a chart used without this script is
 #                    closed too. Double quoted, not single: the grammar holds a single quote,
 #                    and the test reads the assignment only where bash gives its text back
