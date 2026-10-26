@@ -1,5 +1,5 @@
 # ADR-0048: ttyd-proxy は WebSocket Upgrade の Origin が自 seat の https://<Host> でなければ 403 にする (fail-closed。ADR-0044 / ADR-0046 の対の入力)
-- Status: Proposed (Accepted の条件: 実装 PR が main に入り V1〜V2 が緑。**V3 (実機) は Accepted 後の stand-up の go / no-go**。V4 は計画)
+- Status: **Accepted** (2026-10-27。実装: app#546 = de9bf9e。review-5x 91 (T3) R1 APPROVE with comments (security)、architect = R4 (yes, if、反映済み)。V1〜V2 緑。**V3 (実機: Terminal タブの WS が 101、production と同じ edge 経路) は stand-up の go / no-go = platform#300。platform の event pin にこの SHA 以降を載せる前に V3 を通す**)
 - Date / Deciders: 2026-10-27 / VP + application-engineer (起草) + architect (review-5x 91 R4、2026-10-27: yes, if = Status の型、契約表 419 / 403 行の追記、ingress controller 置換の Signpost) + security-engineer (review-5x 91 R1、APPROVE with comments)
 - 関連: app#544、platform#297 (private。詳細と、oauth2-proxy の SameSite の再評価はそこ)、ADR-0044 (frame-ancestors の文法)、ADR-0046 (portal origin の出所と Status の型)、ADR-0013 (単一 origin)、ADR-0047、conventions の「ttyd-proxy 配線」行 (403) と「Cookie `SameSite=None`」行 (419)
 ## Context
