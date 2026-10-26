@@ -194,7 +194,14 @@ auth:
   # does NOT touch the auth-policy roster check the Ingress's fixed auth-url
   # makes (I8 unaffected).
   appHost: ""
-  authSignin: 'http://{{ .Values.auth.appHost | default (printf "auth.%s" .Values.dnsSuffix) }}/oauth2/start?rd=$scheme://$host$escaped_request_uri'
+  # authSignin = the Ingress's `auth-signin` redirect target. https, not http
+  # (app#534 = ADR-0044 residual (a)): the app host is a TLS origin everywhere the
+  # workspace terminal works (deploy-user.sh D3 pins frame-ancestors to
+  # https://<app-host>; oauth2-proxy's redirect_url and cookie_secure are https), so the
+  # first hop of the sign-in redirect is https too. An environment that can only serve
+  # http overrides this whole value (values file or `--set-string auth.authSignin=...`);
+  # none in the platform's helmfile needs to (the local env's workspace Ingress is TLS).
+  authSignin: 'https://{{ .Values.auth.appHost | default (printf "auth.%s" .Values.dnsSuffix) }}/oauth2/start?rd=$scheme://$host$escaped_request_uri'
 
 networkPolicy:
   enabled: true
