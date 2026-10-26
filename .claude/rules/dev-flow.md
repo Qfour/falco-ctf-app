@@ -45,7 +45,7 @@ flowchart TD
 | make test | Stop 自動 | ✅ | `make test` |
 | make scan | build 後 (手動) | イメージ変更時 | `make scan TAG=local` |
 | /security-audit | PR 直前 | auth-policy/ingest 触れた時、または `internal/store` の `migrations` スライスに新規エントリを追加した時 (ADR-0020 — 採点真正性テーブルの防波堤) | `/security-audit` |
-| security-engineer レビュー | PR 直前 | `internal/dnsname/**` (test を含む。ADR-0047。CSP の `frame-ancestors` に連結される値と `--dns-suffix` / `--app-host` の文法の 1 定義で、変更は 3 つの入力を同時に変える。狭める変更も、2 つの表の 1 行目の byte が変わる変更も両リポ同時 PR) を変える時 ✅ | `/security-audit` (または `/review-5x` の R1) |
+| security-engineer レビュー | PR 直前 | `internal/dnsname/**` (test を含む。ADR-0047。CSP の `frame-ancestors` に連結される値と `--dns-suffix` / `--app-host` の文法の 1 定義。変更の規則は conventions の契約表「DNS 名の文法 (ADR-0047)」行) を変える時 ✅ | `/security-audit` (または `/review-5x` の R1) |
 | security-engineer レビュー | PR 直前 | `internal/sourcehygiene/**` または `internal/hintleak/**` (test と testdata を含む)、`scripts/sourcehygiene-scan.py` / `scripts/test-sourcehygiene-scan.sh` (ADR-0045。platform / workspace が同じ規則を当てる参照 scanner と mutant harness) を変える時 ✅ (ADR-0043。hintleak は I16 の n-gram 検査の本体で、述語は sourcehygiene の表を import する。表・文脈規則・bidi・test の変更は採点境界 V8 / I16 の変更。test を消す PR も I16 を弱める) | `/security-audit` (または `/review-5x` の R1) |
 | /review-code | PR 直前 | ✅ | `/review-code` |
 

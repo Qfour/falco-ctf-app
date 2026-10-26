@@ -1,5 +1,5 @@
 # ADR-0047: RFC 1123 の DNS 名の文法を Go の internal/dnsname に 1 定義で置き、FrameAncestorsPattern はそれを合成し、deploy-user.sh の DNS_SUFFIX_PATTERN はその写しとして固定する (ADR-0044 D4 の host 部分の権威を限定 supersede)
-- Status: Proposed (Accepted の条件: 実装 PR が main に入り、V1-V6 が緑)
+- Status: **Accepted** (2026-10-27。実装: app#543 = f50190b。review-5x 90 (T3) 5 観点 APPROVE with comments、security = R1。V1〜V6 緑。V5 の platform 側 (`scripts/test-frame-ancestors-parity.sh --app-dir`) は platform#291 の dd2ea2e で実行した。platform main への反映は platform#291 の merge 後に再確認する)
 - Date / Deciders: 2026-10-27 / VP + architect (起草) + security-engineer (CSP の入力の文法・Dockerfile、R1)
 - 関連: app#533、app#532、ADR-0044 D4 / V1 / Signpost 2 / 3、ADR-0042 (1 定義 + 共有 case 表 + shell の pin)、ADR-0041 (challengeid の葉)、#518 (app#510)、platform#291 (V4 parity)
 ## Context
@@ -10,8 +10,8 @@
 - C5. identity の検出器 seatShaped (users_test.go:88) は label の形に一致し、cmd/ と internal/ の test 以外の .go を走査する。新しい literal は、値で除外しない限り赤になる。
 ## Options
 1. 新しい葉 internal/dnsname を作る。変更点: literal は Label 1 つで、Body / Pattern / MaxLen / Valid は合成。ttydproxy は合成し、shell は写しとして固定し、表は動かさない。コスト: package +1、Dockerfile +1 行、除外表の key の付け替え。リスク: 低い。可逆。効き始め: 即時 (写しが 1 つ減り、app#532 は 5 つ目の写しを作らずに済む)。
-2. ttydproxy に HostPattern を公開し、scoreboard が import する。コスト: scoreboard が reverse proxy の package を link する。依存の向きが逆 (CSP の消費者が共有の文法を持つ)。
-3. internal/catalog/dnsname に置く。依存は中立だが、DNS 名は catalog の概念ではなく、境界が曖昧になる。
+2. ttydproxy に HostPattern を公開し、scoreboard が import する。変更点: host の literal は ttydproxy に残し、FrameAncestorsPattern と同じ package から HostPattern を公開する。コスト: scoreboard の binary が reverse proxy の package (internal/ttydproxy。net/http/httputil を引く) を link する。依存の向きが逆 (CSP の消費者の 1 つが共有の文法を持つ)。リスクと可逆性: internal/ttydproxy の変更の影響範囲が ttyd-proxy image から scoreboard の build と閉包に広がる。戻すには文法を再び外の package へ移すしかなく (= Option 1)、そのとき消費者の import を全部付け替える。効き始め: 即時 (app#532 は写しを作らずに済む) だが、ttyd-proxy 以外の消費者が増えるたびに逆向きの依存が 1 本増える。
+3. internal/catalog/dnsname に置く。変更点: Option 1 と同じ葉を catalog の下 (challengeid と同じ並び) に置く。コスト: Option 1 と同じ (package +1、Dockerfile +1 行、除外表の key の付け替え)。依存は中立 (葉なので yaml.v3 を引かない)。リスクと可逆性: DNS 名は catalog (課題の目録) の概念ではなく、境界が曖昧になる。課題を変える PR と CSP の入力の文法を変える PR が path で区別しにくくなり、security 必須の glob は internal/catalog/** の一部を切り出す形になる。可逆 (module 内の path の移動だけで、platform が読む表の path は変わらない)。効き始め: Option 1 と同じく即時。
 ## Decision
 Option 1。消費者が import するだけで同じ集合を得られ、ADR-0042 の型 (Go の 1 定義、shell と表はその写し) に揃うため。
 - D1. 1 定義 = internal/dnsname。literal は Label = `[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?` の 1 つだけ。Body = Label + `(\.` + Label + `)*`、Pattern = `^` + Body + `$`。MaxLen = 253。label の上限 63 は Label の {0,61} が決める (doc に書く)。Valid(s) = len(s) <= MaxLen かつ Pattern に一致。Valid("") は false。import は標準ライブラリだけで、module 内の package を import しない。
@@ -26,12 +26,13 @@ Option 1。消費者が import するだけで同じ集合を得られ、ADR-004
 - 新しく守るもの: 文法の新しい消費者は import する (写しを作らない)。internal/dnsname/** の変更は security 必須 (CSP に連結される値の文法)。dev-flow のゲート表に足す。
 - ttyd-proxy の Dockerfile に COPY internal/dnsname を足す (足し忘れは make test の閉包 test (V6) が赤にする。build (ttyd-proxy) は required ではない)。
 - 受理集合は変わらない。platform の parity (test-frame-ancestors-parity.sh) は影響を受けない。
+- 運用の手順 (旧 Signpost 3 / 4。Accepted 化の docs PR で Signposts から移した): (a) seat 形の検出器 (internal/identity の seatShaped) が別の package の label 形の literal で赤になったら、その package は dnsname を import する。別の文法なら、定数の値を key にして除外する (D5)。(b) platform 側を別の理由で触る PR (platform#290 (d) 等) が出たら、そのときに表の internal/dnsname/testdata への移動と platform の FAG_HOST_TABLE を同時 PR で行う (D4、ADR-0044 D7)。それまで表は internal/catalog/testdata に置く。
 - runbook への影響: 無し。
 ## Signposts
 1. 443 以外の port の substrate を採る (ADR-0044 Signpost 2) → dnsname は変えず、app-host と frame-ancestors の側で `dnsname.Body` + port を合成する。dns-suffix は port を持たない。
 2. Go 以外の 3 つ目の写しが要る (helm の regexMatch guard、platform 側の検査) → pin を増やさず、ADR-0045 の型で data file として書き出すことを検討する。
-3. seat 形の検出器が、別の package の label 形の literal で赤になる → その package は dnsname を import する。別の文法なら、定数の値を key にして除外する。
-4. platform 側を別の理由で触る PR (#290 (d) 等) が出る → そのときに、表の internal/dnsname/testdata への移動と platform の FAG_HOST_TABLE を同時 PR で行う。
+3. dns-suffix と別の host 文法を要る消費者が出る (IDN / punycode を受ける、大文字を正規化して受ける、末尾の `.` を許す等。port は Signpost 1 の合成で足りる) → dnsname を広げず、定義を分ける (dnsname は「deploy が受ける DNS 名」のまま。別の文法は別の定義と別の表にする)。dnsname を広げると --dns-suffix・--app-host・--frame-ancestors が同時に広がるため。
+4. 文法の消費者の多数が Go 以外になる (helm の regexMatch guard・platform の検査・shell の写しの数が Go の import の数を超える) → Go の定数を定義にするのをやめ、ADR-0045 の型で data file を定義にし、Go と shell はどちらもその読み手にする (新しい ADR で D1 / D3 を supersede)。Signpost 2 は Go を定義のまま data を書き出す段階で、こちらは定義の所在そのものを移す段階。
 ## Verification
 - V1 (make test): dnsname.Pattern == deploy-user.sh の DNS_SUFFIX_PATTERN == dns-suffix-cases.tsv の header。MaxLen == DNS_SUFFIX_MAX_LEN == 253。表の全行が Valid と一致する (件数の下限は今の値: 50 行 / 15 accept / 30 reject)。chart 既定の dnsSuffix が受理される。label 63 / 64 と全長 253 / 254 の行がある。Valid("") は false。
 - V2 (make test): FrameAncestorsPattern == "^('none'|https://" + dnsname.Body + ")$"、FrameAncestorsMaxLen == 8 + dnsname.MaxLen。既存の shell / header の固定、全行、New の検査は緑のまま。
@@ -42,3 +43,4 @@ Option 1。消費者が import するだけで同じ集合を得られ、ADR-004
 ## Advice
 - review-5x 81 (app#531、2026-10-26) R4#2 / R4#4 / R4#6: 写しが 4 つ、契約表 422 / 423 行の変更規則の食い違い、identity の除外表が 4 つ目の写し。
 - architect (2026-10-27): 葉の package にして literal を 1 つにする。表は動かさない (platform への波及を 0 にする)。
+- review-5x 90 (app#543、2026-10-27) R4#3 / R4#4 (LOW): Options 2 / 3 にリスクと可逆性・閾値が無い、Signpost 3 / 4 が覆す信号ではなく運用手順、README の 0044 行に本 ADR の限定 supersede が無い、契約表に DNS 名の文法の行が無く規則が 422 / 423 行・dev-flow・package doc に分散。architect が Accepted 化の docs PR で反映した (Options の補完、Signpost 3 / 4 の置き換えと運用手順の Consequences への移動、契約表の「DNS 名の文法 (ADR-0047)」行の新設と 422 / 423 行の参照化)。Decision と Verification は無変更。
