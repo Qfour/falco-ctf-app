@@ -10,7 +10,10 @@ import (
 // per-user labels. Alerts that sum over it without `by (endpoint)` keep working.
 //
 //	endpoint: "workspace" | "participant"
-//	result:   "ok" | "ok_admin" | "unauthenticated" | "forbidden" | "bad_request" | "upstream_error"
+//	result:   "ok" | "ok_admin" | "admin_refused" | "unauthenticated" | "forbidden" | "bad_request" | "upstream_error"
+//
+// "ok_admin" is /check-participant only; "admin_refused" is /check-workspace
+// only (ADR-0050: an ADMIN_EMAILS identity on a seat's host is refused).
 var checksTotal = promauto.NewCounterVec(
 	prometheus.CounterOpts{
 		Namespace: "auth_policy",

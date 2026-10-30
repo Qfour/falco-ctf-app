@@ -75,9 +75,14 @@ const (
 type Authz string
 
 const (
-	AuthzNone            Authz = "none"
-	AuthzAdmin           Authz = "admin"
-	AuthzSelfOrAdmin     Authz = "self-or-admin"
+	AuthzNone        Authz = "none"
+	AuthzAdmin       Authz = "admin"
+	AuthzSelfOrAdmin Authz = "self-or-admin"
+	// AuthzSelf (ADR-0050, auth-policy GET /check-workspace?host=): the proven
+	// identity must resolve to a seat that EQUALS the host exactly. Unlike
+	// AuthzSelfOrAdmin there is no admin override: an ADMIN_EMAILS identity is
+	// refused (403), so an operator's request never reaches the seat's Pod.
+	AuthzSelf            Authz = "self"
 	AuthzClaimedIdentity Authz = "claimed-identity"
 	// AuthzInternalClaimedIdentity: claimed identity (taken from the path, the
 	// body or the event payload, never proven) on the cluster-internal path
@@ -99,8 +104,8 @@ const (
 	// AuthzRostered (ADR-0034 D3, auth-policy GET /check-participant): the
 	// ingress subrequest answers 200 only for an ADMIN_EMAILS member or an
 	// identity the roster resolves to a seat; everything else is 403. There is
-	// no {user} to match against (that is AuthzSelfOrAdmin's workspace
-	// counterpart on /check-workspace?host=): this is the participant door.
+	// no {user} to match against (AuthzSelf is the workspace counterpart on
+	// /check-workspace?host=): this is the participant door.
 	AuthzRostered Authz = "rostered"
 )
 
@@ -137,8 +142,8 @@ const (
 //
 //	source  | words                                | checked by
 //	--------|--------------------------------------|----------------------------------------
-//	proven  | admin, self-or-admin, authenticated, | scoreboard: no identity header -> 403
-//	        | rostered                             | (TestAuthz_EveryProvenRouteRejectsHeaderless);
+//	proven  | admin, self, self-or-admin,          | scoreboard: no identity header -> 403
+//	        | authenticated, rostered              | (TestAuthz_EveryProvenRouteRejectsHeaderless);
 //	        |                                      | auth-policy: no proven identity -> 401/403
 //	        |                                      | (TestAuthz_EveryProvenRouteRejectsUnproven)
 //	claimed | claimed-identity,                    | specparity.IdentitySourceViolations (every
@@ -159,6 +164,7 @@ const (
 func AuthzIdentitySources() map[Authz]IdentitySource {
 	return map[Authz]IdentitySource{
 		AuthzAdmin:                   IdentityProven,
+		AuthzSelf:                    IdentityProven,
 		AuthzSelfOrAdmin:             IdentityProven,
 		AuthzAuthenticated:           IdentityProven,
 		AuthzRostered:                IdentityProven,

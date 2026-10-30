@@ -12,7 +12,13 @@
 //	  └ no auth at all                → 401
 //
 //	GET /check-workspace?host=<seat>  (per-seat ttyd workspace)
-//	  same, except a resolved seat must EQUAL host (exact match)
+//	  ├ email ∈ ADMIN_EMAILS          → 403 (ADR-0050: an operator request is
+//	  │                                 never passed to a seat's Pod; body
+//	  │                                 carries no email)
+//	  ├ email resolves to seat == host→ 200, headers REWRITTEN to the canonical
+//	  │                                 <seat>@<EXPECTED_EMAIL_DOMAIN>
+//	  ├ anything else                 → 403 (another seat, or not in the roster)
+//	  └ no auth at all                → 401
 //
 //	GET /check-admin                  (operator-only hosts)
 //	  ├ email ∈ ADMIN_EMAILS env → 200
@@ -46,8 +52,8 @@ type Config struct {
 	// accidentally expose admin endpoints.
 	AdminEmails []string
 	// Roster is the ADR-0034 D2 identity table. A nil Roster resolves nobody:
-	// participant and workspace routes answer 403 to everyone but admins
-	// (fail-closed). cmd/auth-policy refuses to start without one.
+	// the workspace route answers 403 to everyone and the participant route to
+	// everyone but admins (fail-closed). cmd/auth-policy refuses to start without one.
 	Roster *Roster
 }
 
@@ -107,7 +113,7 @@ func NewHandler(cfg Config, logger *slog.Logger) *Handler {
 		},
 		{
 			Method: "GET", Pattern: "/check-workspace",
-			Audience: apispec.AudienceInternal, Authz: apispec.AuthzSelfOrAdmin,
+			Audience: apispec.AudienceInternal, Authz: apispec.AuthzSelf,
 			OriginGuarded: false, CollectorForward: false, RateLimit: "none",
 			Handler: http.HandlerFunc(h.checkWorkspace),
 		},
@@ -281,8 +287,11 @@ func (h *Handler) countCheck(endpoint string) func(string) {
 	return func(result string) { checksTotal.WithLabelValues(endpoint, result).Inc() }
 }
 
-// checkWorkspace gates a per-seat workspace: admin, or the roster seat the
-// identity resolves to equals ?host= exactly.
+// checkWorkspace gates a per-seat workspace: only the roster seat the identity
+// resolves to equals ?host= exactly. ADMIN_EMAILS is NOT an exception here
+// (ADR-0050): the workspace Ingress hands the request to the seat's Pod only
+// when this answers 200, so an operator's request must not get a 200. The
+// operator's way into a seat is kubectl exec (operations.md 6.7).
 func (h *Handler) checkWorkspace(w http.ResponseWriter, r *http.Request) {
 	count := h.countCheck("workspace")
 	host := r.URL.Query().Get("host")
@@ -302,13 +311,13 @@ func (h *Handler) checkWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Admins reach any workspace (operator override). This is the one
-	// intentional exception to the roster binding below — gated by the same
-	// ADMIN_EMAILS allowlist as /check-admin (fail-closed when empty).
+	// ADR-0050 D1: an operator identity is refused on a workspace host, so the
+	// request never reaches the seat's Pod. 403, not 401 (no sign-in loop), and
+	// no identity in the body or the log (the operator is not a roster seat).
 	if h.isAdmin(up.email) {
-		propagateIdentity(w, up.headers)
-		count("ok_admin")
-		w.WriteHeader(http.StatusOK)
+		count("admin_refused")
+		h.logger.Warn("operator request refused at workspace", "endpoint", "workspace", "host", host)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 
