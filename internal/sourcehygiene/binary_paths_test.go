@@ -1,6 +1,6 @@
 package sourcehygiene
 
-// app#542 (ADR-0045 D1 (f), D4): the closed set of PATHS where a binary file may live.
+// app#542 (ADR-0051 D1, ADR-0045 D4): the closed set of PATHS where a binary file may live.
 //
 // A file is skipped as binary when its extension is in binaryExt and it starts with that
 // extension's signature (bidi_test.go isBinary). A signature is printable ASCII ("%PDF-",

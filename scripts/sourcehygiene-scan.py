@@ -30,7 +30,7 @@ either (the residual of ADR-0045). --also-untracked REL adds the regular files u
 clean relative path to a file or a directory; it must exist), for an untracked file the
 session reads all the same (a .claude/ the VCS ignores).
 
---binary-paths FILE (app#542) is the closed set of PATHS where a binary file may live,
+--binary-paths FILE (ADR-0051, app#542) is the closed set of PATHS where a binary file may live,
 `<.ext><TAB><directory prefix>` per row (binary-paths.tsv beside the data files is app's):
 a prefix is slash-terminated segments, each a literal name or a lone `*` (exactly one
 segment), and a file is under it at any depth. A file that is binary by the rule above (its

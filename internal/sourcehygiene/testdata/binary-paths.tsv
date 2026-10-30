@@ -1,4 +1,4 @@
-# The closed set of PATHS where a binary file may live (ADR-0045 D1 (f), app#542).
+# The closed set of PATHS where a binary file may live (ADR-0051 D1, app#542).
 # A file is binary when its extension is in binary-ext.tsv AND it starts with that extension's
 # signature; a signature is printable ASCII (or 2 bytes) and proves nothing about the rest, so a
 # file that is binary by that test is trusted only under a directory listed here. A binary file
