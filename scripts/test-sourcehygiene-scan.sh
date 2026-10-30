@@ -189,6 +189,9 @@ mutate dotfile-has-an-extension "${SCAN_REL}" '        sig = data.binary_ext.get
   '        sig = data.binary_ext.get("." + os.path.basename(rel).rpartition(".")[2].lower())' "shared negative 'walk-dotfile-woff2-real-signature'"
 mutate binary-ext-order-not-checked "${SCAN_REL}" '        if cols[0] <= last:' \
   '        if False:' "shared negative 'reader-binext-not-ascending'"
+# The path rule runs before the binary skip (review-5x 88 R4#3, moved to the shared negatives in app#542).
+mutate path-rule-skipped-for-a-binary-extension "${SCAN_REL}" '        if not re.fullmatch(r"[!-~]+", rel):' \
+  '        if not re.fullmatch(r"[!-~]+", rel) and os.path.splitext(rel)[1].lower() not in data.binary_ext:' "shared negative 'walk-nonascii-path-of-a-woff2'"
 # The closed set of binary paths (app#542).
 mutate binary-paths-check-dropped "${SCAN_REL}" '            if binpaths is not None and not in_binary_paths(rel, ext, binpaths):' \
   '            if False:' "shared negative 'walk-binpaths-pdf-outside-the-closed-set'"
