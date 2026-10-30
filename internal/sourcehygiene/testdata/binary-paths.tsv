@@ -1,0 +1,11 @@
+# The closed set of PATHS where a binary file may live (ADR-0051 D1, app#542).
+# A file is binary when its extension is in binary-ext.tsv AND it starts with that extension's
+# signature; a signature is printable ASCII (or 2 bytes) and proves nothing about the rest, so a
+# file that is binary by that test is trusted only under a directory listed here. A binary file
+# anywhere else is a FAIL (it is not scanned as text either): a forgery gets no place to hide.
+# Row: <.ext><TAB><directory prefix>. A prefix is slash-separated segments and ends with a slash;
+# a segment is a literal name or a lone * (exactly one segment). The file may be at any depth
+# below it. ascending by extension, then prefix; no row twice. Adding a row needs security review.
+# app tracks no .pdf; a consumer passes its own file with --binary-paths (platform: its decks).
+.tgz	charts/*/charts/
+.woff2	internal/scoreboard/view/vendor/fonts/

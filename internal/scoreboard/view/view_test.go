@@ -14,7 +14,7 @@ import (
 // ADR-0005 Decision 5 point 4 — this was one of the two documented non-2xx
 // deviations; ratelimit_test.go's TestMiddleware_Returns429JSON covers the
 // other). A ttydSuffix containing CR/LF fails writeSecurityHeaders'
-// validateTtydSuffix BEFORE any bytes are written to the ResponseWriter
+// ValidateTtydSuffix BEFORE any bytes are written to the ResponseWriter
 // (mirrors csp_test.go's TestWriteSecurityHeaders_RejectsControlCharInSuffix),
 // so the 500 path is exercised cleanly with no partial text/html body
 // already flushed ahead of it.

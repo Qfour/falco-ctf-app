@@ -1,0 +1,1 @@
+bin/f.woff2	U+200B	attack fixture
