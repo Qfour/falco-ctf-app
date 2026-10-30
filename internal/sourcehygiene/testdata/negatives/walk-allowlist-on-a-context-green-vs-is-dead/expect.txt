@@ -1,0 +1,3 @@
+exit:1
+out:dead allowlist entry
+out:holds none of the listed raw characters

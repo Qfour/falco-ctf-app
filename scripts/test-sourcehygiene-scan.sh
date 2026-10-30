@@ -16,6 +16,13 @@
 #     extensions out of order, an expect.txt that no longer matches, and a testdata/negatives
 #     cut down below its floor each make `--selftest` exit 1; the control run reports as many
 #     shared negatives as there are directories (so none is left out);
+#   - the closed set of binary paths (app#542): a check that is dropped, a --binary-paths flag
+#     that is read and ignored, a binary file outside the set that is also scanned as text, a
+#     prefix read as a string and not as segments, a * that is not exactly one segment, a row of
+#     one extension that covers another's files, a row for an extension that is no binary
+#     kind, an order or a `..` the reader lets through: each makes `--selftest` exit 1 for the
+#     intended reason (the shared negative that holds it). The app tree is clean under
+#     binary-paths.tsv, and red under an empty set (it tracks .woff2 files);
 #   - a data file that cannot be read is a FAIL (never a skip); a Unicode version that differs
 #     from the data header is a WARN, not a FAIL; a wrong command line is exit 2;
 #   - the app tree is clean outside invisible-allowlist.txt (what flag-guard runs too).
@@ -176,12 +183,35 @@ mutate signature-check-dropped "${SCAN_REL}" '        if sig is not None and con
   '        if sig is not None:' "shared negative 'walk-pdf-named-text'"
 mutate signature-anywhere-in-the-file "${SCAN_REL}" '        if sig is not None and content.startswith(sig):' \
   '        if sig is not None and sig in content:' "shared negative 'walk-pdf-signature-not-at-the-start'"
-mutate signature-without-the-extension "${SCAN_REL}" '        sig = data.binary_ext.get(os.path.splitext(rel)[1].lower())' \
-  '        sig = data.binary_ext.get(os.path.splitext(rel)[1].lower()) or b"%PDF-"' "shared negative 'walk-md-with-pdf-signature'"
-mutate dotfile-has-an-extension "${SCAN_REL}" '        sig = data.binary_ext.get(os.path.splitext(rel)[1].lower())' \
+mutate signature-without-the-extension "${SCAN_REL}" '        sig = data.binary_ext.get(ext)' \
+  '        sig = data.binary_ext.get(ext) or b"%PDF-"' "shared negative 'walk-md-with-pdf-signature'"
+mutate dotfile-has-an-extension "${SCAN_REL}" '        sig = data.binary_ext.get(ext)' \
   '        sig = data.binary_ext.get("." + os.path.basename(rel).rpartition(".")[2].lower())' "shared negative 'walk-dotfile-woff2-real-signature'"
 mutate binary-ext-order-not-checked "${SCAN_REL}" '        if cols[0] <= last:' \
   '        if False:' "shared negative 'reader-binext-not-ascending'"
+# The closed set of binary paths (app#542).
+mutate binary-paths-check-dropped "${SCAN_REL}" '            if binpaths is not None and not in_binary_paths(rel, ext, binpaths):' \
+  '            if False:' "shared negative 'walk-binpaths-pdf-outside-the-closed-set'"
+mutate binary-paths-flag-ignored "${SCAN_REL}" '                binary_paths = args[i + 1]' \
+  '                binary_paths = None' "shared negative 'walk-binpaths-pdf-outside-the-closed-set'"
+mutate binary-paths-outside-also-scanned "${SCAN_REL}" '            binary.add(rel)' \
+  '            binary.add(rel); problems.extend("%s:%d:%d %s" % (show(rel), l, c, fmt_cp(cp)) for l, c, cp, _n, _w in scan(content, table))' \
+  "shared negative 'walk-binpaths-forged-woff2-outside'"
+mutate binary-paths-prefix-as-a-string "${SCAN_REL}" '    return all(p != "" and (s == "*" or s == p) for s, p in zip(segs, parts))' \
+  '    return rel.startswith("/".join(s for s in segs if s != "*"))' "shared negative 'walk-binpaths-prefix-is-a-whole-segment'"
+mutate binary-paths-file-as-deep-as-the-prefix "${SCAN_REL}" '    if len(parts) <= len(segs):' \
+  '    if len(parts) < len(segs):' "shared negative 'walk-binpaths-file-named-like-the-directory'"
+mutate binary-paths-star-is-any-depth "${SCAN_REL}" '    return all(p != "" and (s == "*" or s == p) for s, p in zip(segs, parts))' \
+  '    return all(p != "" and (s == "*" or s == p) for s, p in zip(segs, parts)) or (segs[1:2] == ["*"] and parts[:1] == segs[:1] and parts[-2:-1] == segs[-1:])' \
+  "shared negative 'walk-binpaths-star-is-not-two-segments'"
+mutate binary-paths-extension-ignored "${SCAN_REL}" '    return any(e == ext and under_prefix(rel, segs) for e, _, segs in binpaths)' \
+  '    return any(under_prefix(rel, segs) for e, _, segs in binpaths)' "shared negative 'walk-binpaths-row-of-another-extension-does-not-cover'"
+mutate binary-paths-unknown-extension-accepted "${SCAN_REL}" '            if ext not in data.binary_ext:' \
+  '            if False:' "shared negative 'walk-binpaths-extension-not-in-binary-ext'"
+mutate binary-paths-order-not-checked "${SCAN_REL}" '        if key <= prev:' \
+  '        if False:' "shared negative 'reader-binpaths-not-ascending'"
+mutate binary-paths-dotdot-accepted "${SCAN_REL}" '        if any(s in (".", "..") for s in segs):' \
+  '        if False:' "shared negative 'reader-binpaths-parent-segment'"
 mutate negative-expectation-changed "${NEG_REL}/walk-raw-zwsp/expect.txt" 'exit:1' \
   'exit:0' "shared negative 'walk-raw-zwsp'"
 U="${WORK}/few-negatives"
@@ -208,7 +238,15 @@ expect "--selftest with a directory is exit 2" 2 "usage:" -- "${SCAN}" --selftes
 expect "no argument is exit 2" 2 "usage:" -- "${SCAN}"
 
 # --- the real tree, with the real allowlist ------------------------------------------
-expect "the app tree is clean outside invisible-allowlist.txt" 0 "0 problems" -- \
-  "${SCAN}" "${REPO_ROOT}" --allowlist "${REPO_ROOT}/internal/sourcehygiene/testdata/invisible-allowlist.txt"
+expect "the app tree is clean outside invisible-allowlist.txt, under binary-paths.tsv" 0 "0 problems" -- \
+  "${SCAN}" "${REPO_ROOT}" --allowlist "${REPO_ROOT}/internal/sourcehygiene/testdata/invisible-allowlist.txt" \
+  --binary-paths "${REPO_ROOT}/internal/sourcehygiene/testdata/binary-paths.tsv"
+printf '# no binary path\n' > "${WORK}/empty-binary-paths.tsv"
+expect "the app tree against an empty closed set of binary paths is red (it tracks .woff2 files)" 1 "outside the closed set of binary paths" -- \
+  "${SCAN}" "${REPO_ROOT}" --allowlist "${REPO_ROOT}/internal/sourcehygiene/testdata/invisible-allowlist.txt" \
+  --binary-paths "${WORK}/empty-binary-paths.tsv"
+expect "a named --binary-paths file that does not exist is a FAIL" 1 "the binary-paths file is unreadable" -- \
+  "${SCAN}" "${REPO_ROOT}" --binary-paths "${WORK}/no-such-binary-paths.tsv"
+expect "--binary-paths without a value is exit 2" 2 "needs a value" -- "${SCAN}" "${REPO_ROOT}" --binary-paths
 
 ct_finish "sourcehygiene-scan self-test"

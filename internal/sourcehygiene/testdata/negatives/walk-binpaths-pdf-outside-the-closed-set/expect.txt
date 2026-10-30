@@ -1,0 +1,2 @@
+exit:1
+out:a.pdf: binary file (.pdf) outside the closed set of binary paths

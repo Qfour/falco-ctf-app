@@ -1,0 +1,2 @@
+exit:1
+out:is not in binary-ext.tsv

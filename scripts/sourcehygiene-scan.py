@@ -18,7 +18,7 @@ code one definition: --selftest runs every row of them, and app's flag-guard job
 
 Usage:
   sourcehygiene-scan.py --selftest
-  sourcehygiene-scan.py DIR [--allowlist FILE] [--also-untracked REL]...
+  sourcehygiene-scan.py DIR [--allowlist FILE] [--also-untracked REL]... [--binary-paths FILE]
 
 DIR: the files `git ls-files` lists when DIR/.git exists (a file is fine: a worktree), else
 every file under DIR. Symlinks and submodules are not followed. A file whose extension is
@@ -29,6 +29,16 @@ guards against a wrong name, not a forgery: a text file that begins with it is n
 either (the residual of ADR-0045). --also-untracked REL adds the regular files under REL (a
 clean relative path to a file or a directory; it must exist), for an untracked file the
 session reads all the same (a .claude/ the VCS ignores).
+
+--binary-paths FILE (app#542) is the closed set of PATHS where a binary file may live,
+`<.ext><TAB><directory prefix>` per row (binary-paths.tsv beside the data files is app's):
+a prefix is slash-terminated segments, each a literal name or a lone `*` (exactly one
+segment), and a file is under it at any depth. A file that is binary by the rule above (its
+extension and its signature) but is not under a row of its own extension is a problem, and it
+is not scanned as text either: a signature is printable ASCII or two bytes, so it proves
+nothing, and a forged one gets no place to hide. Without the flag a binary file is trusted
+anywhere (as before). A consumer passes the closed set of its own repo. A named file that is
+unreadable or malformed is a FAIL, and so is a row whose extension is not in binary-ext.tsv.
 
 The walk: a path that is not printable ASCII (U+0021-007E) is a problem; a NUL byte is one
 problem per file (U+0000 is not reported as a finding); --allowlist FILE is a closed set,
@@ -73,12 +83,12 @@ BINARY_EXT_FILE = DATA / "binary-ext.tsv"
 # `bidi` for a row of bidiControls.
 RULES = ("always", "vsAfterSymbol", "zwjInEmoji", "bomAtStart", "loneCR", "bidi")
 MIN_CASES = 45  # a floor under hidden-cases.tsv (V1-c)
-MIN_NEGATIVES = 67  # the number of testdata/negatives today: a deletion shows in the diff (the Go test has the same)
+MIN_NEGATIVES = 107  # the number of testdata/negatives today: a deletion shows in the diff (the Go test has the same)
 NEGATIVES = DATA / "negatives"
 INVALID = -2  # an invalid UTF-8 byte: no table row, no symbol (Go's RuneError of width 1)
 
 USAGE = """usage: sourcehygiene-scan.py --selftest
-       sourcehygiene-scan.py DIR [--allowlist FILE] [--also-untracked REL]...
+       sourcehygiene-scan.py DIR [--allowlist FILE] [--also-untracked REL]... [--binary-paths FILE]
 (see the head of this file)
 """
 
@@ -259,6 +269,51 @@ def parse_binary_ext(lines, label="binary-ext.tsv"):
     if not exts:
         raise Fail("%s: no extension" % label)
     return exts
+
+
+BINPATH_EXT = re.compile(r"\.[a-z0-9]+")
+BINPATH_PREFIX = re.compile(r"(([A-Za-z0-9._+@-]+|\*)/)+")
+
+
+def parse_binary_paths(lines, label="binary-paths.tsv"):
+    """[(ext, prefix, segments)]: <.ext><TAB><directory prefix>. The extension is lower case;
+    the prefix is slash-terminated segments of [A-Za-z0-9._+@-] (not "." or "..") or a lone *.
+    Rows are strictly ascending by extension, then prefix. No row at all is fine: the closed set
+    of nothing, the strictest one."""
+    rows = []
+    prev = ""
+    for n, line in enumerate(lines, 1):
+        if not is_data_row(line):
+            continue
+        cols = line.split("\t")
+        if len(cols) != 2:
+            raise Fail("%s:%d: want <.ext><TAB><directory prefix>, got %r" % (label, n, line))
+        ext, prefix = cols
+        if not BINPATH_EXT.fullmatch(ext):
+            raise Fail("%s:%d: %r is not an extension (.[a-z0-9]+, lower case)" % (label, n, ext))
+        if not BINPATH_PREFIX.fullmatch(prefix):
+            raise Fail("%s:%d: %r is not a directory prefix (slash-terminated segments of [A-Za-z0-9._+@-] or a lone *)" % (label, n, prefix))
+        segs = prefix[:-1].split("/")
+        if any(s in (".", "..") for s in segs):
+            raise Fail("%s:%d: %r has a . or .. segment: not a directory prefix" % (label, n, prefix))
+        key = ext + "\t" + prefix
+        if key <= prev:
+            raise Fail("%s:%d: rows must be ascending and not repeat (%r after %r)" % (label, n, key, prev))
+        prev = key
+        rows.append((ext, prefix, segs))
+    return rows
+
+
+def under_prefix(rel, segs):
+    """rel is a file below the directory prefix segs, at any depth; a * is exactly one non-empty segment."""
+    parts = rel.split("/")
+    if len(parts) <= len(segs):
+        return False
+    return all(p != "" and (s == "*" or s == p) for s, p in zip(segs, parts))
+
+
+def in_binary_paths(rel, ext, binpaths):
+    return any(e == ext and under_prefix(rel, segs) for e, _, segs in binpaths)
 
 
 class Data:
@@ -548,12 +603,17 @@ def shared_negatives(me):
         if not d.is_dir():
             raise Fail("%s: only directories (one negative each)" % d)
         have = sorted(os.listdir(d))
-        kind = next((k for k in ("cases.tsv", "binary-ext.tsv", "plant.tsv") if k in have), None)
-        want = {"cases.tsv": ["cases.tsv", "expect.txt"], "binary-ext.tsv": ["binary-ext.tsv", "expect.txt"],
-                "plant.tsv": ["expect.txt", "plant.tsv"] + (["allowlist.txt"] if "allowlist.txt" in have else [])}.get(kind)
-        want = sorted(want or [])
+        # The input is plant.tsv, or else the one reader input; allowlist.txt and binary-paths.tsv
+        # are optional beside plant.tsv only (binary-paths.tsv is a reader input standing alone).
+        if "plant.tsv" in have:
+            kind = "plant.tsv"
+            want = ["expect.txt", "plant.tsv"] + [f for f in ("allowlist.txt", "binary-paths.tsv") if f in have]
+        else:
+            kind = next((k for k in ("cases.tsv", "binary-ext.tsv", "binary-paths.tsv") if k in have), None)
+            want = ["expect.txt", kind] if kind else []
+        want = sorted(want)
         if kind is None or have != want:
-            raise Fail("%s: the files are %s, want %s (expect.txt and exactly one input; allowlist.txt only beside plant.tsv)" % (d, have, want))
+            raise Fail("%s: the files are %s, want %s (expect.txt and exactly one input; allowlist.txt and binary-paths.tsv only beside plant.tsv)" % (d, have, want))
         code, outs, nots = parse_expect(read_ascii(d / "expect.txt"), "%s/expect.txt" % name)
         if kind == "plant.tsv" and code == 1 and not outs:
             raise Fail("%s/expect.txt: a tree that must fail names why with an out: line (an exit:1 alone passes for any reason)" % name)
@@ -563,6 +623,8 @@ def shared_negatives(me):
             reader = parse_cases
         elif kind == "binary-ext.tsv":
             reader = parse_binary_ext
+        elif kind == "binary-paths.tsv":
+            reader = parse_binary_paths
         else:
             reader = None
         if reader is not None:
@@ -582,11 +644,12 @@ def shared_negatives(me):
                     if len(cols) != 2:
                         raise Fail("%s/plant.tsv: want <path><TAB><content>, got %r" % (name, line))
                     rel = decode_input(cols[0]).decode("utf-8")
-                    if "/" in rel or rel in (".", ".."):
-                        refused = "plant.tsv: path %r is not one path segment (no /, not . or ..)" % rel
+                    if any(seg in ("", ".", "..") for seg in rel.split("/")):
+                        refused = "plant.tsv: path %r is not a clean relative path (no empty, . or .. segment)" % rel
                         break
                     dst = os.path.join(tree, rel)
-                    if os.path.dirname(os.path.realpath(dst)) != os.path.realpath(tree):
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    if not os.path.realpath(dst).startswith(os.path.realpath(tree) + os.sep):
                         raise Fail("%s/plant.tsv: %r would leave the tree" % (name, rel))
                     with open(dst, "wb") as f:
                         f.write(decode_input(cols[1]) if cols[1] else b"")
@@ -596,6 +659,8 @@ def shared_negatives(me):
                     args = [tree]
                     if "allowlist.txt" in have:
                         args += ["--allowlist", str(d / "allowlist.txt")]
+                    if "binary-paths.tsv" in have:
+                        args += ["--binary-paths", str(d / "binary-paths.tsv")]
                     res = subprocess.run([sys.executable, me] + args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
                     got, out = res.returncode, (res.stdout + res.stderr).decode("utf-8", "replace")
         why = []
@@ -744,8 +809,18 @@ def untracked_files(root, rels):
     return out
 
 
-def scan_tree(root, allowlist, also, data):
+def scan_tree(root, allowlist, also, data, binary_paths=None):
     table = data.table
+    binpaths = None
+    if binary_paths is not None:
+        try:
+            lines = check_ascii(Path(binary_paths).read_bytes(), str(binary_paths))
+        except OSError as e:
+            raise Fail("%s: the binary-paths file is unreadable (a named file must exist): %s" % (binary_paths, e.strerror))
+        binpaths = parse_binary_paths(lines, str(binary_paths))
+        for ext, _, _ in binpaths:
+            if ext not in data.binary_ext:
+                raise Fail("%s: %s is not in binary-ext.tsv, so no file of it is ever binary" % (binary_paths, ext))
     allow = parse_allowlist(allowlist, table) if allowlist else {}
     files = sorted(set(list_files(root)) | set(untracked_files(root, also)))
     if not files:
@@ -771,11 +846,19 @@ def scan_tree(root, allowlist, also, data):
             content = Path(p).read_bytes()
         except OSError as e:
             raise Fail("cannot read %s: %s" % (show(rel), e.strerror))
-        sig = data.binary_ext.get(os.path.splitext(rel)[1].lower())
+        ext = os.path.splitext(rel)[1].lower()
+        sig = data.binary_ext.get(ext)
         # Binary only with BOTH the extension and the format's signature at the start (app#537):
         # a text file named *.pdf is scanned.
         if sig is not None and content.startswith(sig):
             binary.add(rel)
+            # ...and, given a closed set of paths, only under a directory it lists for the
+            # extension (app#542): a signature proves nothing, so the place has to. Not scanned
+            # as text either: a problem.
+            if binpaths is not None and not in_binary_paths(rel, ext, binpaths):
+                problems.append("%s: binary file (%s) outside the closed set of binary paths: a signature is printable ASCII or two "
+                                "bytes and proves nothing about the rest, so a file with it is trusted only under a directory listed in "
+                                "binary-paths.tsv (put it there, or list its directory: a reviewed line)" % (show(rel), ext))
             continue
         scanned.add(rel)
         if b"\x00" in content:
@@ -820,16 +903,21 @@ def main(argv):
     if args == ["--selftest"]:
         selftest()
         return 0
-    allowlist, also, positional = None, [], []
+    allowlist, also, positional, binary_paths = None, [], [], None
     i = 0
     while i < len(args):
         a = args[i]
-        if a in ("--allowlist", "--also-untracked"):
+        if a in ("--allowlist", "--also-untracked", "--binary-paths"):
             if i + 1 >= len(args):
                 sys.stderr.write("%s needs a value\n%s" % (a, USAGE))
                 return 2
             if a == "--allowlist":
                 allowlist = args[i + 1]
+            elif a == "--binary-paths":
+                if binary_paths is not None:
+                    sys.stderr.write("--binary-paths twice\n%s" % USAGE)
+                    return 2
+                binary_paths = args[i + 1]
             else:
                 also.append(args[i + 1])
             i += 2
@@ -844,7 +932,7 @@ def main(argv):
         return 2
     data = Data()
     warn_unicode_version(data.table)
-    problems, n_scanned, n_binary = scan_tree(positional[0], allowlist, also, data)
+    problems, n_scanned, n_binary = scan_tree(positional[0], allowlist, also, data, binary_paths)
     for p in problems:
         print(p)
     summary = "sourcehygiene-scan: %d files, %d binary, %d problems (data unicode %s)" % (

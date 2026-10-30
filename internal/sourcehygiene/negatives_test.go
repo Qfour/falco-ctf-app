@@ -9,8 +9,12 @@ package sourcehygiene
 //
 //	cases.tsv        lines for the cases reader (hidden-cases.tsv rows)       -> parseSharedCases
 //	binary-ext.tsv   lines for the binary-ext reader (ext, reason, signature) -> parseBinaryExt
+//	binary-paths.tsv lines for the binary-paths reader (ext, directory prefix) -> parseBinaryPaths
 //	plant.tsv        a tree to walk: <path><TAB><content>, one file per row   -> checkTree
-//	                 (allowlist.txt, optional, only beside plant.tsv: the invisible allowlist)
+//	                 (allowlist.txt, optional, only beside plant.tsv: the invisible allowlist;
+//	                 binary-paths.tsv, optional, only beside plant.tsv: the closed set of binary
+//	                 paths the walk is given, as --binary-paths gives it to the scanner. Without
+//	                 it the walk trusts a binary file anywhere, as before)
 //
 // Paths and contents are written with the placeholders of hidden-cases.tsv ({U+XXXX}, {xHH}),
 // so a name with an LF or a non-ASCII character, a NUL and a raw byte need no such file in
@@ -24,13 +28,24 @@ package sourcehygiene
 // Where a negative goes: a behaviour BOTH implementations have is a directory here. What
 // stays in Go's tables (bidi_test.go, invisible_test.go) is only what is not shared (the list
 // below) and the check of Go's own wording (a message, a field). A case added to either
-// side's own list instead of here is a copy that drifts again. A plant.tsv path is one path
-// segment (no /, not . or ..): a refusal, with an out: line, like any other negative.
+// side's own list instead of here is a copy that drifts again. A plant.tsv path is a clean
+// relative path: slash-separated, no empty segment, no "." or ".." segment (a refusal, with an
+// out: line, like any other negative; app#542 allowed a directory so that a binary path can be
+// planted). The files the planted tree lays down are all under its root.
 //
 // What is NOT shared (the scanner's --selftest holds it alone): the ranges reader (Go
 // compares the file with the Go tables instead of reading it), a tree that is only binary
 // files (Go's walk does not require a text file; the canaries do), the bidi allowlist, git
 // mode, --also-untracked, symlinks, an unlistable directory and the command line.
+//
+// What stays in Go's own tables, each for a reason (app#542, review-5x 88 R4#3): the wording
+// of a Go message and the escape hint it prints (TestCheckTree_Invisible: the "write it as an
+// escape such as" text, the eight-digit hint, the QuoteToASCII display of a path), a path of the
+// Go gate (the journey.yaml hint, whose bytes are walk-raw-zwsp's), the bidi allowlist
+// (TestCheckTree_PlantedTrees and TestParseAllowlist: Go reads bidi-allowlist.txt, the scanner
+// takes bidi code points in the one allowlist), the escape forms a source file may hold
+// (TestCheckTree_PlantedTrees: Go, YAML and case-table escapes) and the Go table's own shape
+// (TestInvisibleTable_*). A case that is only a rule of both walks is a directory here.
 
 import (
 	"fmt"
@@ -44,7 +59,7 @@ import (
 const (
 	negativesDir = "internal/sourcehygiene/testdata/negatives"
 	// minNegatives is the number of negatives today: a deletion shows in the diff.
-	minNegatives = 67
+	minNegatives = 107
 )
 
 type negExpect struct {
@@ -78,7 +93,7 @@ func parseExpect(lines []string, label string) (negExpect, error) {
 
 // runPlant plants the rows of plant.tsv, applies allow (the text of allowlist.txt, or "") and
 // walks the tree the way the gate does. It returns the exit status and the output.
-func runPlant(t *testing.T, rows []string, allow string) (int, string) {
+func runPlant(t *testing.T, rows []string, allow string, binPaths []string, hasBinPaths bool) (int, string) {
 	t.Helper()
 	files := map[string]string{}
 	for _, l := range rows {
@@ -93,8 +108,10 @@ func runPlant(t *testing.T, rows []string, allow string) (int, string) {
 		if err != nil {
 			t.Fatalf("plant.tsv path %q: %v", cols[0], err)
 		}
-		if strings.Contains(string(path), "/") || string(path) == "." || string(path) == ".." {
-			return 1, fmt.Sprintf("plant.tsv: path %q is not one path segment (no /, not . or ..)", path)
+		for _, seg := range strings.Split(string(path), "/") {
+			if seg == "" || seg == "." || seg == ".." {
+				return 1, fmt.Sprintf("plant.tsv: path %q is not a clean relative path (no empty, . or .. segment)", path)
+			}
 		}
 		var body []byte
 		if cols[1] != "" {
@@ -108,7 +125,19 @@ func runPlant(t *testing.T, rows []string, allow string) (int, string) {
 	if err != nil {
 		return 1, err.Error()
 	}
-	r, err := checkTree(plant(t, files), nil, newInvisibleScanner(inv))
+	extra := []fileScanner{newInvisibleScanner(inv)}
+	if hasBinPaths {
+		brows, err := parseBinaryPaths(binPaths, "binary-paths.tsv")
+		if err != nil {
+			return 1, err.Error()
+		}
+		bpScan, err := newBinaryPathScanner(brows)
+		if err != nil {
+			return 1, err.Error()
+		}
+		extra = append(extra, bpScan)
+	}
+	r, err := checkTree(plant(t, files), nil, extra...)
 	if err != nil {
 		return 1, err.Error()
 	}
@@ -152,18 +181,31 @@ func TestSharedNegatives(t *testing.T) {
 				names = append(names, f.Name())
 			}
 			sort.Strings(names)
+			// The input is plant.tsv, or else the one reader input. allowlist.txt and
+			// binary-paths.tsv are optional beside plant.tsv only (binary-paths.tsv is a reader
+			// input when it stands alone).
+			_, isPlant := read("plant.tsv")
 			var kind string
-			for _, k := range []string{"cases.tsv", "binary-ext.tsv", "plant.tsv"} {
-				if _, ok := read(k); ok {
-					kind = k
+			wantFiles := []string{"expect.txt"}
+			if isPlant {
+				kind = "plant.tsv"
+				wantFiles = append(wantFiles, "plant.tsv")
+				for _, opt := range []string{"allowlist.txt", "binary-paths.tsv"} {
+					if _, ok := read(opt); ok {
+						wantFiles = append(wantFiles, opt)
+					}
 				}
+			} else {
+				for _, k := range []string{"cases.tsv", "binary-ext.tsv", "binary-paths.tsv"} {
+					if _, ok := read(k); ok {
+						kind = k
+					}
+				}
+				wantFiles = append(wantFiles, kind)
 			}
-			wantFiles := map[string]string{"cases.tsv": "cases.tsv expect.txt", "binary-ext.tsv": "binary-ext.tsv expect.txt", "plant.tsv": "expect.txt plant.tsv"}[kind]
-			if _, hasAllow := read("allowlist.txt"); hasAllow && kind == "plant.tsv" {
-				wantFiles = "allowlist.txt expect.txt plant.tsv"
-			}
-			if got := strings.Join(names, " "); kind == "" || got != wantFiles {
-				t.Fatalf("the files are %q, want %q (expect.txt and exactly one input; allowlist.txt only beside plant.tsv)", got, wantFiles)
+			sort.Strings(wantFiles)
+			if got := strings.Join(names, " "); kind == "" || got != strings.Join(wantFiles, " ") {
+				t.Fatalf("the files are %q, want %q (expect.txt and exactly one input; allowlist.txt and binary-paths.tsv only beside plant.tsv)", got, strings.Join(wantFiles, " "))
 			}
 			expLines, _ := read("expect.txt")
 			exp, err := parseExpect(expLines, e.Name()+"/expect.txt")
@@ -181,9 +223,12 @@ func TestSharedNegatives(t *testing.T) {
 				_, err = parseSharedCases(lines)
 			case "binary-ext.tsv":
 				_, err = parseBinaryExt(lines, "binary-ext.tsv")
+			case "binary-paths.tsv":
+				_, err = parseBinaryPaths(lines, "binary-paths.tsv")
 			default:
 				allow, _ := read("allowlist.txt")
-				code, out = runPlant(t, lines, strings.Join(allow, "\n"))
+				bp, hasBP := read("binary-paths.tsv")
+				code, out = runPlant(t, lines, strings.Join(allow, "\n"), bp, hasBP)
 			}
 			if kind != "plant.tsv" {
 				if err != nil {

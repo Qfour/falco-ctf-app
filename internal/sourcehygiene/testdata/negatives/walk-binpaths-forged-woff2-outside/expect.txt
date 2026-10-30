@@ -1,0 +1,3 @@
+exit:1
+out:static/a.woff2: binary file (.woff2) outside the closed set of binary paths
+not:U+200B
