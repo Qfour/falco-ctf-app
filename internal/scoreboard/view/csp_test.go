@@ -365,6 +365,23 @@ func TestWriteSecurityHeaders_RejectsControlCharInSuffix(t *testing.T) {
 	}
 }
 
+// The per-request check refuses a value outside the grammar too (upper case, a
+// port), and the 500 path still carries X-Frame-Options: DENY.
+func TestWriteSecurityHeaders_RejectsValuesOutsideTheGrammar(t *testing.T) {
+	for _, v := range []string{"Ctf-Event.dev", "ctf-event.dev:443"} {
+		w := httptest.NewRecorder()
+		if _, err := writeSecurityHeaders(w, v); err == nil {
+			t.Errorf("writeSecurityHeaders(%q) = nil error, want one", v)
+		}
+		if got := w.Header().Get("X-Frame-Options"); got != "DENY" {
+			t.Errorf("writeSecurityHeaders(%q): X-Frame-Options = %q, want DENY", v, got)
+		}
+		if csp := w.Header().Get("Content-Security-Policy"); csp != "" {
+			t.Errorf("writeSecurityHeaders(%q) set a CSP %q on the error path", v, csp)
+		}
+	}
+}
+
 // ADR-0047 D6 (app#532): every row of the shared DNS name case table
 // (internal/catalog/testdata/dns-suffix-cases.tsv, the table dnsname_test.go and
 // deploy-user.sh read) goes through ValidateTtydSuffix: the baseline names and

@@ -217,7 +217,7 @@ func ValidateTtydSuffix(v string) error {
 	if v == "" || dnsname.Valid(v) {
 		return nil
 	}
-	return fmt.Errorf("csp: PORTAL_TTYD_SUFFIX (%d characters) is not a DNS name (lower-case labels of letters, digits and '-', at most %d characters, no scheme, port, path or trailing '.'); refusing to render", len(v), dnsname.MaxLen)
+	return fmt.Errorf("csp: PORTAL_TTYD_SUFFIX (%d bytes) is not a DNS name (lower-case labels of letters, digits and '-', at most %d characters, no scheme, port, path or trailing '.'); refusing to render", len(v), dnsname.MaxLen)
 }
 
 // writeSecurityHeaders stamps the CSP (built from a freshly generated nonce
