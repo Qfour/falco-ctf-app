@@ -14,7 +14,7 @@ package sourcehygiene
 //	                 (allowlist.txt, optional, only beside plant.tsv: the invisible allowlist;
 //	                 binary-paths.tsv, optional, only beside plant.tsv: the closed set of binary
 //	                 paths the walk is given, as --binary-paths gives it to the scanner. Without
-//	                 it the walk trusts a binary file anywhere, as before)
+//	                 it the closed set is empty, as with no flag: any binary file is a problem)
 //
 // Paths and contents are written with the placeholders of hidden-cases.tsv ({U+XXXX}, {xHH}),
 // so a name with an LF or a non-ASCII character, a NUL and a raw byte need no such file in
@@ -59,7 +59,7 @@ import (
 const (
 	negativesDir = "internal/sourcehygiene/testdata/negatives"
 	// minNegatives is the number of negatives today: a deletion shows in the diff.
-	minNegatives = 107
+	minNegatives = 108
 )
 
 type negExpect struct {
@@ -93,7 +93,7 @@ func parseExpect(lines []string, label string) (negExpect, error) {
 
 // runPlant plants the rows of plant.tsv, applies allow (the text of allowlist.txt, or "") and
 // walks the tree the way the gate does. It returns the exit status and the output.
-func runPlant(t *testing.T, rows []string, allow string, binPaths []string, hasBinPaths bool) (int, string) {
+func runPlant(t *testing.T, rows []string, allow string, binPaths []string) (int, string) {
 	t.Helper()
 	files := map[string]string{}
 	for _, l := range rows {
@@ -125,18 +125,16 @@ func runPlant(t *testing.T, rows []string, allow string, binPaths []string, hasB
 	if err != nil {
 		return 1, err.Error()
 	}
-	extra := []fileScanner{newInvisibleScanner(inv)}
-	if hasBinPaths {
-		brows, err := parseBinaryPaths(binPaths, "binary-paths.tsv")
-		if err != nil {
-			return 1, err.Error()
-		}
-		bpScan, err := newBinaryPathScanner(brows)
-		if err != nil {
-			return 1, err.Error()
-		}
-		extra = append(extra, bpScan)
+	// No binary-paths.tsv is the empty closed set (the scanner's default with no flag).
+	brows, err := parseBinaryPaths(binPaths, "binary-paths.tsv")
+	if err != nil {
+		return 1, err.Error()
 	}
+	bpScan, err := newBinaryPathScanner(brows)
+	if err != nil {
+		return 1, err.Error()
+	}
+	extra := []fileScanner{newInvisibleScanner(inv), bpScan}
 	r, err := checkTree(plant(t, files), nil, extra...)
 	if err != nil {
 		return 1, err.Error()
@@ -227,8 +225,8 @@ func TestSharedNegatives(t *testing.T) {
 				_, err = parseBinaryPaths(lines, "binary-paths.tsv")
 			default:
 				allow, _ := read("allowlist.txt")
-				bp, hasBP := read("binary-paths.tsv")
-				code, out = runPlant(t, lines, strings.Join(allow, "\n"), bp, hasBP)
+				bp, _ := read("binary-paths.tsv")
+				code, out = runPlant(t, lines, strings.Join(allow, "\n"), bp)
 			}
 			if kind != "plant.tsv" {
 				if err != nil {

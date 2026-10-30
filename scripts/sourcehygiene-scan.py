@@ -36,9 +36,10 @@ a prefix is slash-terminated segments, each a literal name or a lone `*` (exactl
 segment), and a file is under it at any depth. A file that is binary by the rule above (its
 extension and its signature) but is not under a row of its own extension is a problem, and it
 is not scanned as text either: a signature is printable ASCII or two bytes, so it proves
-nothing, and a forged one gets no place to hide. Without the flag a binary file is trusted
-anywhere (as before). A consumer passes the closed set of its own repo. A named file that is
-unreadable or malformed is a FAIL, and so is a row whose extension is not in binary-ext.tsv.
+nothing, and a forged one gets no place to hide. Without the flag the closed set is EMPTY: a
+tree that holds any binary file is a FAIL (a tree with none is unaffected). A consumer passes
+the closed set of its own repo. A named file that is unreadable or malformed is a FAIL, and so
+is a row whose extension is not in binary-ext.tsv.
 
 The walk: a path that is not printable ASCII (U+0021-007E) is a problem; a NUL byte is one
 problem per file (U+0000 is not reported as a finding); --allowlist FILE is a closed set,
@@ -83,7 +84,7 @@ BINARY_EXT_FILE = DATA / "binary-ext.tsv"
 # `bidi` for a row of bidiControls.
 RULES = ("always", "vsAfterSymbol", "zwjInEmoji", "bomAtStart", "loneCR", "bidi")
 MIN_CASES = 45  # a floor under hidden-cases.tsv (V1-c)
-MIN_NEGATIVES = 107  # the number of testdata/negatives today: a deletion shows in the diff (the Go test has the same)
+MIN_NEGATIVES = 108  # the number of testdata/negatives today: a deletion shows in the diff (the Go test has the same)
 NEGATIVES = DATA / "negatives"
 INVALID = -2  # an invalid UTF-8 byte: no table row, no symbol (Go's RuneError of width 1)
 
@@ -811,7 +812,7 @@ def untracked_files(root, rels):
 
 def scan_tree(root, allowlist, also, data, binary_paths=None):
     table = data.table
-    binpaths = None
+    binpaths = []  # no --binary-paths: the closed set of nothing, so every binary file is a problem
     if binary_paths is not None:
         try:
             lines = check_ascii(Path(binary_paths).read_bytes(), str(binary_paths))
@@ -855,7 +856,7 @@ def scan_tree(root, allowlist, also, data, binary_paths=None):
             # ...and, given a closed set of paths, only under a directory it lists for the
             # extension (app#542): a signature proves nothing, so the place has to. Not scanned
             # as text either: a problem.
-            if binpaths is not None and not in_binary_paths(rel, ext, binpaths):
+            if not in_binary_paths(rel, ext, binpaths):
                 problems.append("%s: binary file (%s) outside the closed set of binary paths: a signature is printable ASCII or two "
                                 "bytes and proves nothing about the rest, so a file with it is trusted only under a directory listed in "
                                 "binary-paths.tsv (put it there, or list its directory: a reviewed line)" % (show(rel), ext))

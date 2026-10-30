@@ -332,6 +332,7 @@ func TestTrackedFilesHoldNoRawBidiOrInvisibleCharacter(t *testing.T) {
 	// already put a problem in r.problems (app#542). The signature alone proves nothing: "%PDF-"
 	// and "wOF2" are printable ASCII, so a text file that starts with one passes isBinary. What
 	// stops a forged .pdf, .woff2 or .tgz is the PLACE (ADR-0045 D4), not this skip.
+	checkAppBinaryFiles(t, root, r)
 	for _, p := range r.problems {
 		t.Error(p)
 	}

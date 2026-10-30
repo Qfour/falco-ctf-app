@@ -22,7 +22,8 @@
 #     one extension that covers another's files, a row for an extension that is no binary
 #     kind, an order or a `..` the reader lets through: each makes `--selftest` exit 1 for the
 #     intended reason (the shared negative that holds it). The app tree is clean under
-#     binary-paths.tsv, and red under an empty set (it tracks .woff2 files);
+#     binary-paths.tsv, and red under an empty set or with no flag (the default IS the empty
+#     set; app tracks .woff2 files), and a flag twice or a non-ASCII / CR file is refused;
 #   - a data file that cannot be read is a FAIL (never a skip); a Unicode version that differs
 #     from the data header is a WARN, not a FAIL; a wrong command line is exit 2;
 #   - the app tree is clean outside invisible-allowlist.txt (what flag-guard runs too).
@@ -193,10 +194,12 @@ mutate binary-ext-order-not-checked "${SCAN_REL}" '        if cols[0] <= last:' 
 mutate path-rule-skipped-for-a-binary-extension "${SCAN_REL}" '        if not re.fullmatch(r"[!-~]+", rel):' \
   '        if not re.fullmatch(r"[!-~]+", rel) and os.path.splitext(rel)[1].lower() not in data.binary_ext:' "shared negative 'walk-nonascii-path-of-a-woff2'"
 # The closed set of binary paths (app#542).
-mutate binary-paths-check-dropped "${SCAN_REL}" '            if binpaths is not None and not in_binary_paths(rel, ext, binpaths):' \
+mutate binary-paths-check-dropped "${SCAN_REL}" '            if not in_binary_paths(rel, ext, binpaths):' \
   '            if False:' "shared negative 'walk-binpaths-pdf-outside-the-closed-set'"
+mutate binary-paths-default-trusts "${SCAN_REL}" '            if not in_binary_paths(rel, ext, binpaths):' \
+  '            if binary_paths is not None and not in_binary_paths(rel, ext, binpaths):' "shared negative 'walk-binary-without-a-closed-set-is-refused'"
 mutate binary-paths-flag-ignored "${SCAN_REL}" '                binary_paths = args[i + 1]' \
-  '                binary_paths = None' "shared negative 'walk-binpaths-pdf-outside-the-closed-set'"
+  '                binary_paths = None' "shared negative 'walk-binpaths-woff2-inside'"
 mutate binary-paths-outside-also-scanned "${SCAN_REL}" '            binary.add(rel)' \
   '            binary.add(rel); problems.extend("%s:%d:%d %s" % (show(rel), l, c, fmt_cp(cp)) for l, c, cp, _n, _w in scan(content, table))' \
   "shared negative 'walk-binpaths-forged-woff2-outside'"
@@ -248,8 +251,27 @@ printf '# no binary path\n' > "${WORK}/empty-binary-paths.tsv"
 expect "the app tree against an empty closed set of binary paths is red (it tracks .woff2 files)" 1 "outside the closed set of binary paths" -- \
   "${SCAN}" "${REPO_ROOT}" --allowlist "${REPO_ROOT}/internal/sourcehygiene/testdata/invisible-allowlist.txt" \
   --binary-paths "${WORK}/empty-binary-paths.tsv"
+expect "the app tree with no --binary-paths is red: the closed set is empty, and app tracks .woff2 files" 1 "outside the closed set of binary paths" -- \
+  "${SCAN}" "${REPO_ROOT}" --allowlist "${REPO_ROOT}/internal/sourcehygiene/testdata/invisible-allowlist.txt"
+expect "--binary-paths twice is exit 2" 2 "usage:" -- "${SCAN}" "${REPO_ROOT}" \
+  --binary-paths "${REPO_ROOT}/internal/sourcehygiene/testdata/binary-paths.tsv" --binary-paths "${REPO_ROOT}/internal/sourcehygiene/testdata/binary-paths.tsv"
+printf '.pdf\tcaf\303\251/\n' > "${WORK}/nonascii-binary-paths.tsv"
+expect "a --binary-paths file with a non-ASCII byte is a FAIL" 1 "not printable ASCII" -- "${SCAN}" "${REPO_ROOT}" --binary-paths "${WORK}/nonascii-binary-paths.tsv"
+printf '.pdf\tdecks/\r\n' > "${WORK}/cr-binary-paths.tsv"
+expect "a --binary-paths file with a CR is a FAIL" 1 "not printable ASCII" -- "${SCAN}" "${REPO_ROOT}" --binary-paths "${WORK}/cr-binary-paths.tsv"
 expect "a named --binary-paths file that does not exist is a FAIL" 1 "the binary-paths file is unreadable" -- \
   "${SCAN}" "${REPO_ROOT}" --binary-paths "${WORK}/no-such-binary-paths.tsv"
 expect "--binary-paths without a value is exit 2" 2 "needs a value" -- "${SCAN}" "${REPO_ROOT}" --binary-paths
+
+# app tracks no .tgz (helm dependency build output is untracked; the Go gate cannot see this, it runs
+# in a Docker context with no .git), and the scan above reports its five .woff2 files (app#542).
+if [[ -n "$(git -C "${REPO_ROOT}" ls-files '*.tgz')" ]]; then
+  fail "a .tgz is tracked: app tracks none (git ls-files '*.tgz' must be empty)"
+else
+  pass "git mode: no .tgz is tracked"
+fi
+expect "git mode: the app tree holds exactly the five known binary files" 0 " 5 binary, 0 problems" -- \
+  "${SCAN}" "${REPO_ROOT}" --allowlist "${REPO_ROOT}/internal/sourcehygiene/testdata/invisible-allowlist.txt" \
+  --binary-paths "${REPO_ROOT}/internal/sourcehygiene/testdata/binary-paths.tsv"
 
 ct_finish "sourcehygiene-scan self-test"

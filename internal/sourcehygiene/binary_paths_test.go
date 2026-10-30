@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -139,6 +140,39 @@ func (s *binaryPathScanner) finish(r *report) []string {
 var appBinaryPaths = []string{
 	".tgz\tcharts/*/charts/",
 	".woff2\tinternal/scoreboard/view/vendor/fonts/",
+}
+
+// appBinaryFiles are the binary files app tracks, by name (app#542, review-5x 93 R1#2): the
+// closed set of paths says where a binary may live, this list says which ones are. A new binary
+// is a reviewed line in internal/sourcehygiene/**, not a file that happens to sit in a listed
+// directory. .tgz is not in the list: it is helm dependency build output, untracked.
+var appBinaryFiles = []string{
+	"internal/scoreboard/view/vendor/fonts/chakrapetch-500.woff2",
+	"internal/scoreboard/view/vendor/fonts/chakrapetch-600.woff2",
+	"internal/scoreboard/view/vendor/fonts/chakrapetch-700.woff2",
+	"internal/scoreboard/view/vendor/fonts/inter-var.woff2",
+	"internal/scoreboard/view/vendor/fonts/jetbrainsmono-var.woff2",
+}
+
+// checkAppBinaryFiles: the files the walk took for binary are exactly appBinaryFiles plus
+// .tgz files, and in a git checkout (where the walk lists tracked files) there is no .tgz.
+func checkAppBinaryFiles(t *testing.T, root string, r *report) {
+	t.Helper()
+	_, gitErr := os.Stat(filepath.Join(root, ".git"))
+	var got []string
+	for _, b := range r.binary {
+		if extOf(b) == ".tgz" {
+			if gitErr == nil {
+				t.Errorf("%s is a tracked .tgz: app tracks none (they are untracked helm dependency build output)", b)
+			}
+			continue
+		}
+		got = append(got, b)
+	}
+	sort.Strings(got)
+	if strings.Join(got, "\n") != strings.Join(appBinaryFiles, "\n") {
+		t.Errorf("the binary files are %q, app's known binary files (appBinaryFiles) are %q: a new binary file is a reviewed line in binary_paths_test.go", got, appBinaryFiles)
+	}
 }
 
 func TestBinaryPaths_FileIsTheClosedSetAppShips(t *testing.T) {
