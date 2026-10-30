@@ -26,7 +26,9 @@ package sourcehygiene
 // What is scanned: every regular file except those whose extension is in
 // binaryExt, a closed set (a raw byte sequence inside a font is chance, not an
 // attack), AND that start with that extension's format signature (app#537: a text
-// file named *.pdf is scanned). A NUL byte does NOT make a file binary: an attacker can put one in a
+// file named *.pdf is scanned), AND that lie under a directory binary-paths.tsv lists
+// for that extension (app#542: a signature is no proof; a binary-looking file elsewhere
+// is a problem, and is not scanned as text either). A NUL byte does NOT make a file binary: an attacker can put one in a
 // .md or .yaml to skip a "has a NUL" test. A file outside binaryExt that holds a
 // NUL is scanned all the same and is also a problem ("cannot decide"); a new
 // binary format must be added to binaryExt with a reason. Invalid UTF-8 does NOT
@@ -325,17 +327,12 @@ func TestTrackedFilesHoldNoRawBidiOrInvisibleCharacter(t *testing.T) {
 			t.Errorf("canary %s was not scanned: the file set is smaller than the repo (a .dockerignore line, a wrong root, or a failed listing)", c)
 		}
 	}
-	// app tracks no PDF: .pdf is in binaryExt for the reference scanner's sake (ADR-0045,
-	// platform tracks event decks). This loop is NOT redundant since the signature check
-	// (app#537): a file that starts with a signature is skipped whether or not it really is
-	// that format, and "%PDF-" and "wOF2" are printable ASCII, so a text file that begins
-	// with one and is named *.pdf / *.woff2 passes isBinary. What stops a forged .pdf in app
-	// is this check alone: every tracked binary extension is one of {.woff2, .tgz}.
-	for _, b := range r.binary {
-		if ext := extOf(b); ext != ".woff2" && ext != ".tgz" {
-			t.Errorf("%s is skipped as binary but app tracks only .woff2 and untracked .tgz files; a new binary kind needs a reason in binaryExt and in testdata/binary-ext.tsv (ADR-0045)", b)
-		}
-	}
+	// A file the walk took for binary (its extension and its signature) must be under a
+	// directory binary-paths.tsv lists for that extension, else checkRealTree's scanner has
+	// already put a problem in r.problems (app#542). The signature alone proves nothing: "%PDF-"
+	// and "wOF2" are printable ASCII, so a text file that starts with one passes isBinary. What
+	// stops a forged .pdf, .woff2 or .tgz is the PLACE (ADR-0045 D4), not this skip.
+	checkAppBinaryFiles(t, root, r)
 	for _, p := range r.problems {
 		t.Error(p)
 	}

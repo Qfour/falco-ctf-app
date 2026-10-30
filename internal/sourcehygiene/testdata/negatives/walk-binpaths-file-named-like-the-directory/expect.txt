@@ -1,0 +1,2 @@
+exit:1
+out:x.woff2: binary file (.woff2) outside the closed set of binary paths
