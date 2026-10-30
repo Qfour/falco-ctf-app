@@ -1,5 +1,5 @@
 # ADR-0047: RFC 1123 の DNS 名の文法を Go の internal/dnsname に 1 定義で置き、FrameAncestorsPattern はそれを合成し、deploy-user.sh の DNS_SUFFIX_PATTERN はその写しとして固定する (ADR-0044 D4 の host 部分の権威を限定 supersede)
-- Status: **Accepted** (2026-10-27。実装: app#543 = f50190b。review-5x 90 (T3) 5 観点 APPROVE with comments、security = R1。V1〜V6 緑。V5 の platform 側 (`scripts/test-frame-ancestors-parity.sh --app-dir`) は platform#291 の dd2ea2e で実行した。platform main への反映は platform#291 の merge 後に再確認する。D6 実装: app#532 (PR #552)。merge 後に SHA を足す)
+- Status: **Accepted** (2026-10-27。実装: app#543 = f50190b。review-5x 90 (T3) 5 観点 APPROVE with comments、security = R1。V1〜V6 緑。V5 の platform 側 (`scripts/test-frame-ancestors-parity.sh --app-dir`) は platform#291 の dd2ea2e で実行した。platform main への反映は platform#291 の merge 後に再確認する。D6 実装: app#532 (PR #552 = 40e7911))
 - Date / Deciders: 2026-10-27 / VP + architect (起草) + security-engineer (CSP の入力の文法・Dockerfile、R1)
 - 関連: app#533、app#532、ADR-0044 D4 / V1 / Signpost 2 / 3、ADR-0042 (1 定義 + 共有 case 表 + shell の pin)、ADR-0041 (challengeid の葉)、#518 (app#510)、platform#291 (V4 parity)
 ## Context
