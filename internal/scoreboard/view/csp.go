@@ -132,9 +132,11 @@ func newNonce() (string, error) {
 //     tried to frame something anyway.
 //   - frame-ancestors 'none' (app#326): the portal and the admin dashboard
 //     are never legitimately embedded by anyone, so no parent is allowed.
-//     Without this, oauth2-proxy's `cookie_samesite = "none"` (needed for
-//     P23-4's cross-origin ttyd iframe) let any third-party origin frame the
-//     logged-in participant's portal (clickjacking). DIRECTION, do not
+//     This does not depend on oauth2-proxy's cookie_samesite (ADR-0049: Lax
+//     since the iframe is cross-origin but same-site): a page on another
+//     same-site origin (another seat, dex) is still a parent that can frame
+//     the logged-in participant's portal (clickjacking), and SameSite=None
+//     would let any third-party origin do it. DIRECTION, do not
 //     confuse with frame-src above: frame-ancestors restricts who may embed
 //     THIS page; frame-src restricts what THIS page may embed. The portal
 //     embeds ttyd (frame-src), it is not embedded (frame-ancestors), so

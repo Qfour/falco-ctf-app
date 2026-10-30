@@ -2,17 +2,19 @@
 // the Origin (falling back to Referer) of browser-issued state-changing
 // requests against an explicit allowlist.
 //
-// Why (P23-2): the portal work (P23) plans to relax the oauth2-proxy session
-// cookie from SameSite=Lax to SameSite=None so it can be embedded in an
-// iframe (P23-4). SameSite=Lax already blocks the classic cross-site
-// form-POST CSRF for most state-changing routes today, but that protection
-// disappears once SameSite=None lands. Some routes need no request body at
-// all (e.g. POST /api/admin/reset) — an attacker can trigger those with a
-// bare auto-submitting <form> from any origin, which bypasses CORS
-// preflight entirely (no custom header, no non-simple content-type
-// required). This middleware closes that gap NOW, while SameSite=Lax still
-// covers the rest, so the guard is proven correct before the cookie
-// attribute changes. Cookies themselves are untouched here.
+// Why (P23-2, restated by ADR-0049): this guard does NOT depend on the
+// oauth2-proxy cookie's SameSite attribute, and must not be removed because
+// that attribute is Lax. SameSite is judged per SITE, not per origin: the
+// portal (appHost) and every seat host (<seat>.<dnsSuffix>), dex and the
+// auth. bridge are cross-origin but same-site, so a page on any of them can
+// still send a cookie-bearing state-changing request even under
+// SameSite=Lax. And if the attribute ever went back to None (it needs an
+// ADR), the cross-site form-POST CSRF would be open again. Some routes need
+// no request body at all (e.g. POST /api/admin/reset) — an attacker can
+// trigger those with a bare auto-submitting <form> from any origin, which
+// bypasses CORS preflight entirely (no custom header, no non-simple
+// content-type required). This middleware closes that gap whatever the
+// cookie attribute is. Cookies themselves are untouched here.
 //
 // Guard is fail-closed: Host / X-Forwarded-Host are never consulted (both
 // are attacker-controllable and would reintroduce the same-origin bypass
