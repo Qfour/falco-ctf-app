@@ -552,9 +552,10 @@ func burstOf(t *testing.T, srv http.Handler, rt apispec.Route, user string) int 
 // before the rate limiter", or "" when it does not. fresh must return a new
 // handler (full buckets, frozen clock) on every call.
 //
-// Cookies are SameSite=None, so another site's page can make a victim's
-// browser POST with the victim's identity header. The guard must 403 that
-// before the limiter spends a token; otherwise the flood drains the victim's
+// SameSite does not stop this (Lax still lets a page on another same-site
+// origin send it, None any site; ADR-0049 D3), so another origin's page can
+// make a victim's browser POST with the victim's identity header. The guard
+// must 403 that before the limiter spends a token; otherwise the flood drains the victim's
 // bucket and their own same-origin requests 429 (security review of app#379,
 // L1). The control burst (no flood) is measured first: a route that never
 // 429s cannot show the order either way, so that is a violation too.
