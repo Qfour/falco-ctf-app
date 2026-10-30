@@ -19,10 +19,10 @@ Option 1。消費者が import するだけで同じ集合を得られ、ADR-004
 - D3. deploy-user.sh の DNS_SUFFIX_PATTERN / DNS_SUFFIX_MAX_LEN は shell の写しで、internal/dnsname の test が固定する (固定の向きを逆にする)。FRAME_ANCESTORS_PATTERN / FRAME_ANCESTORS_MAX_LEN は、引き続き ttydproxy の test が固定する。
 - D4. 表 internal/catalog/testdata/dns-suffix-cases.tsv は、path も 1 行目 (header) の byte も変えない。header == dnsname.Pattern。凍結するのは 2 つの表の path と 1 行目、deploy-user.sh の 2 つの PATTERN literal (DNS_SUFFIX_PATTERN / FRAME_ANCESTORS_PATTERN) で、2 行目以降の説明コメントと case の行は凍結ではない (case の行は V1 / V2 の全行検査が固定する)。表を internal/dnsname/testdata に移すのは、両リポ同時 PR (ADR-0044 D7)。
 - D5. identity の検出器は、ttydproxy.FrameAncestorsPattern の代わりに dnsname.Label (定数の値) を除外する。除外表の key は、どれも走査で 1 回以上 literal として見つかること (見つからない除外は赤)。
-- D6. PORTAL_TTYD_SUFFIX の起動時検査 (app#532) は dnsname.Valid を使う (空は「未構成」のまま許す)。本 ADR の PR には入れない。
+- D6. PORTAL_TTYD_SUFFIX の起動時検査 (app#532) は dnsname.Valid を使う (空は「未構成」のまま許す)。本 ADR の PR には入れない。**app#532 で実装 (本 PR)**: `view.ValidateTtydSuffix` (空は nil、それ以外は `dnsname.Valid`。制御文字は文法の外なので別の検査は持たない) を `cmd/scoreboard` が起動時に呼び、文法外なら起動しない。`writeSecurityHeaders` の毎リクエストの呼び出しは残す (`view.New` を直に使う Handler への多層防御)。
 - D7 (ADR-0044 の限定 supersede): D4 の「host 部分の権威は、現状は deploy-user.sh の DNS_SUFFIX_PATTERN … 一致を固定する。」の 2 文、同じ段落の「host 文法を Go の 1 定義に移すのは app#533。」、V1 の「host 部分 == DNS_SUFFIX_PATTERN の本体。」、Signpost 2 の「frame_ancestors_grammar_test.go の合成 test (host 部分 == DNS_SUFFIX_PATTERN の本体) を書き換える」を、D1-D3 と V1-V2 で置き換える。ADR-0044 Signpost 3 は本 ADR で発火した。D4 のそれ以外 (frame-ancestors の 1 定義、変更が両リポ同時 PR になること) は変えない。
 ## Consequences
-- 変更の規則: dnsname を変えると --dns-suffix・--app-host・--frame-ancestors (app#532 の後は PORTAL_TTYD_SUFFIX も) が同時に変わる。狭める変更も両リポ同時 PR。2 つの表の 1 行目の byte が変わる変更は、同値でも両リポ同時 PR。
+- 変更の規則: dnsname を変えると --dns-suffix・--app-host・--frame-ancestors (PORTAL_TTYD_SUFFIX も: app#532) が同時に変わる。狭める変更も両リポ同時 PR。2 つの表の 1 行目の byte が変わる変更は、同値でも両リポ同時 PR。
 - 新しく守るもの: 文法の新しい消費者は import する (写しを作らない)。internal/dnsname/** の変更は security 必須 (CSP に連結される値の文法)。dev-flow のゲート表に足す。
 - ttyd-proxy の Dockerfile に COPY internal/dnsname を足す (足し忘れは make test の閉包 test (V6) が赤にする。build (ttyd-proxy) は required ではない)。
 - 受理集合は変わらない。platform の parity (test-frame-ancestors-parity.sh) は影響を受けない。
