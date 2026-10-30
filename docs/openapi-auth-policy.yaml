@@ -201,9 +201,8 @@ paths:
         `host=user1` and an external `user7@<anything>` is not user7 unless the
         roster says so (conventions I8). `x-ctf-authz: self` means exactly this:
         the proven identity's seat equals `host`, and there is no operator
-        override (ADR-0050). The workspace Ingress passes a request to the
-        seat's Pod only when this answers 200, so an `ADMIN_EMAILS` identity
-        gets 403 here (and 200 on `/check-participant` and `/check-admin`).
+        override (ADR-0050). An `ADMIN_EMAILS` identity gets 403 here (and 200
+        on `/check-participant` and `/check-admin`).
 
         Note the masking row: an unexpected oauth2-proxy status becomes a
         generic 502 on purpose — the upstream status and body must not leak

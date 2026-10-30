@@ -3,7 +3,7 @@
 - Status: **Accepted** (2026-10-16。**D2 の seat の文法の 1 文 (`^[a-z0-9][a-z0-9-]{0,62}$`) は ADR-0042 が置き換える** (1〜53 文字、両端が英数字。それ以外の D2 は変わらない。**ADR-0042 は Accepted (2026-10-25、app#496 + platform#282)**。D2 のこの 1 文の現行は ADR-0042 の D1 に書いてある)。実装: app S1 = app#372、platform #217。S2 = app `feat/adr-0034-s2-identity-roster` / platform `feat/adr-0034-s2-identity-platform` は次)。
   旧 Proposed の記述: Accepted への昇格は CEO が行う (S1 の実装 PR の merge と同時、別 commit)。S2・S3 の D は各段の merge まで効力を持たない (「段階」)。
   I8 の表の書き換えは S2 の実装 PR で、V9〜V13 と同一 PR に限る。
-  限定 supersede (2026-10-30): D7 の I8 の文言のうち ADMIN_EMAILS の範囲「任意の workspace と運営 route」を ADR-0050 が置き換える。Accepted 時に日付と SHA を足す。
+  限定 supersede (2026-10-30): /check-workspace の ADMIN_EMAILS の扱いを [ADR-0050](0050-operator-requests-never-reach-seat-pod-and-challenge-capabilities-minimised.md) が置き換える。範囲は 3 つ: D7 の I8 の文言のうち ADMIN_EMAILS の範囲「任意の workspace と運営 route」、D3 の「`ADMIN_EMAILS` なら 200 (現行どおり)」と「admin は現行どおり透過する」のうち /check-workspace の分 (/check-participant の透過は不変)、V9 の /check-workspace についての「admin は 200」。ADR-0050 は Proposed で、S1 の実装 PR の merge で Accepted にし、そのときこの行に日付と実装 SHA を足す。
 - Date / Deciders: 2026-10-12 / CEO (2026-10-12 の要望。brief D1〜D7 の判断) + VP + architect (起草) + product-engineer (brief) +
   qa-engineer (R2)・security-engineer (R1) の独立レビューを反映済み (Advice)
 - 関連: workspace の product brief「ログイン (Google) とプロフィール」(`docs/briefs/identity-and-profile.md`、2026-10-12、未 merge)、I8 (置き換え)・I1・I7・

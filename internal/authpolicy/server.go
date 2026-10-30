@@ -289,9 +289,8 @@ func (h *Handler) countCheck(endpoint string) func(string) {
 
 // checkWorkspace gates a per-seat workspace: only the roster seat the identity
 // resolves to equals ?host= exactly. ADMIN_EMAILS is NOT an exception here
-// (ADR-0050): the workspace Ingress hands the request to the seat's Pod only
-// when this answers 200, so an operator's request must not get a 200. The
-// operator's way into a seat is kubectl exec (operations.md 6.7).
+// (ADR-0050, least privilege: an operator identity is not passed to a seat).
+// The operator's way into a seat is kubectl exec (operations.md 6.7).
 func (h *Handler) checkWorkspace(w http.ResponseWriter, r *http.Request) {
 	count := h.countCheck("workspace")
 	host := r.URL.Query().Get("host")
