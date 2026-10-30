@@ -62,7 +62,11 @@ func TestV9_Resolution(t *testing.T) {
 		{"seat matches case-insensitively", "User7@CTF.local", "/check-workspace?host=user7", 200},
 
 		// admin
-		{"admin on any workspace", "admin@ctf.local", "/check-workspace?host=user7", 200},
+		// ADR-0050: ADMIN_EMAILS is no exception on a workspace host (an
+		// operator's request is never handed to a seat's Pod). It is still
+		// one on the participant and admin doors.
+		{"admin on a workspace is refused (ADR-0050)", "admin@ctf.local", "/check-workspace?host=user7", 403},
+		{"admin on a workspace is refused, capitals (ADR-0050)", "Admin@CTF.local", "/check-workspace?host=user8", 403},
 		{"admin on participant", "Admin@CTF.local", "/check-participant", 200},
 		{"admin on admin", "admin@ctf.local", "/check-admin", 200},
 		{"rostered seat is not admin", "user7@ctf.local", "/check-admin", 403},
@@ -208,7 +212,9 @@ func TestV9_CanonicalHeadersOverwriteUpstream(t *testing.T) {
 	}
 }
 
-// V9: an ADMIN_EMAILS member is passed through unchanged ("現行どおり透過").
+// V9: an ADMIN_EMAILS member is passed through unchanged on the participant and
+// admin doors ("現行どおり透過"). Not on /check-workspace: ADR-0050 refuses it
+// there (TestV9_AdminRefusedOnWorkspace).
 func TestV9_AdminHeadersPassThrough(t *testing.T) {
 	up := fakeUpstream(t, map[string]string{
 		"X-Auth-Request-Email":              "admin@ctf.local",
@@ -217,7 +223,7 @@ func TestV9_AdminHeadersPassThrough(t *testing.T) {
 	})
 	defer up.Close()
 	h := newAdminHandler(up.URL, fixtureAdmin)
-	for _, target := range []string{"/check-workspace?host=user7", "/check-participant", "/check-admin"} {
+	for _, target := range []string{"/check-participant", "/check-admin"} {
 		resp := do(t, h, target, cookie)
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("%s: got %d", target, resp.StatusCode)
@@ -225,6 +231,64 @@ func TestV9_AdminHeadersPassThrough(t *testing.T) {
 		if got := resp.Header.Get("X-Auth-Request-Email"); got != "admin@ctf.local" {
 			t.Errorf("%s: admin email header = %q", target, got)
 		}
+	}
+}
+
+// ADR-0050 D1 (V1): an ADMIN_EMAILS identity on /check-workspace is a 403 whose
+// body is the fixed string and whose headers carry NO identity (the ingress
+// hands the request to the seat's Pod only on a 200, and an operator's
+// identity must not travel with it), for every seat host, with or without
+// capitals; the participant and admin doors still answer 200 to the same
+// identity. Each refusal moves auth_policy_checks_total{workspace,
+// admin_refused} by exactly one and no other workspace result.
+func TestV9_AdminRefusedOnWorkspace(t *testing.T) {
+	up := fakeUpstream(t, map[string]string{
+		"X-Auth-Request-Email":              "admin@ctf.local",
+		"X-Auth-Request-User":               "admin",
+		"X-Auth-Request-Preferred-Username": "admin",
+	})
+	defer up.Close()
+	h := newAdminHandler(up.URL, fixtureAdmin)
+
+	refused := scrapeCheck(t, h, "workspace", "admin_refused")
+	okAdminWorkspace := scrapeCheck(t, h, "workspace", "ok_admin")
+	okAdminParticipant := scrapeCheck(t, h, "participant", "ok_admin")
+	forbidden := scrapeCheck(t, h, "workspace", "forbidden")
+
+	hosts := []string{"user7", "user8", "admin"}
+	for _, host := range hosts {
+		resp := do(t, h, "/check-workspace?host="+host, cookie)
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("host=%s: got %d (%s), want 403", host, resp.StatusCode, body)
+		}
+		if strings.TrimSpace(string(body)) != "forbidden" {
+			t.Errorf("host=%s: body = %q, want the fixed string \"forbidden\"", host, body)
+		}
+		for k, vs := range resp.Header {
+			for _, v := range vs {
+				if strings.HasPrefix(k, "X-Auth-Request-") || strings.Contains(strings.ToLower(v), "admin@") {
+					t.Errorf("host=%s: response header %s=%q carries an identity", host, k, v)
+				}
+			}
+		}
+	}
+	if got := scrapeCheck(t, h, "workspace", "admin_refused") - refused; got != float64(len(hosts)) {
+		t.Errorf("admin_refused moved by %v, want %d", got, len(hosts))
+	}
+	if got := scrapeCheck(t, h, "workspace", "ok_admin") - okAdminWorkspace; got != 0 {
+		t.Errorf("workspace ok_admin moved by %v, want 0 (the result is gone from this endpoint)", got)
+	}
+	if got := scrapeCheck(t, h, "workspace", "forbidden") - forbidden; got != 0 {
+		t.Errorf("workspace forbidden moved by %v, want 0 (an operator is counted as admin_refused)", got)
+	}
+
+	// The participant door is unchanged: same identity, 200, ok_admin.
+	if resp := do(t, h, "/check-participant", cookie); resp.StatusCode != http.StatusOK {
+		t.Fatalf("/check-participant: got %d, want 200", resp.StatusCode)
+	}
+	if got := scrapeCheck(t, h, "participant", "ok_admin") - okAdminParticipant; got != 1 {
+		t.Errorf("participant ok_admin moved by %v, want 1", got)
 	}
 }
 
@@ -239,6 +303,7 @@ func TestV9_ForbiddenBodiesCarryNoIdentity(t *testing.T) {
 		{"someone.private@stranger.example", "/check-admin"},
 		{"user7@ctf.local", "/check-workspace?host=user8"},
 		{"user7@ctf.local", "/check-admin"},
+		{"admin@ctf.local", "/check-workspace?host=user7"}, // ADR-0050
 		{"user7.ext@partner.example", "/check-workspace?host=user8"},
 		{"user7.ext@partner.example", "/check-admin"},
 	}
