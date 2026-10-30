@@ -34,6 +34,7 @@ Option 2。CSP の frame-ancestors を付ける消費者 (ttyd-proxy) 自身が�
 2. ttyd を埋め込む 2 つ目の origin か、直接の WebSocket 利用 (別 origin のツール) が要る → ADR-0044 Signpost 1 と同時に、受理集合を広げる ADR を書く。
 3. ttyd-proxy が HTTP/2 の WebSocket (RFC 8441 の extended CONNECT) を受ける構成になる → upgrade の判定 (D3) が別の形になるので、検査の入口を見直す。今は `serverutil.newServer` が Protocols を設定せず (unencrypted HTTP/2 は無効)、`internal/serverutil` の test が固定している。
 4. ingress controller を置き換える (ingress-nginx の後継、P20 の substrate、Gateway API) → Host の扱いが変わりうるので V3 をやり直す (両リポ同時 PR)。
+5. `/check-workspace` の後ろ (workspace Ingress の upstream) に ttyd-proxy 以外の WebSocket 消費者を足す → Origin の判断が ttyd-proxy の 1 か所で完結しなくなるので、検査点 (新しい消費者自身か、auth-policy か = Option 3 の再検討) を ADR で見直す (2026-10-30 追記。ADR-0049 / platform#297 の security 再評価 §3 から。決定は無変更)。
 ## Verification
 - V1 (make test): `TestWebSocketUpgradeOrigin` が表で固定する。
   - 正 (101 で upstream に届く): Origin = `https://<Host>`、port 付き Host、Connection が list のときの own origin。正の行は D2 の完全一致の証明で、Connection の token 比較の証明ではない (Go の `ReverseProxy` は自分でも upgrade を判定するので、検査が効かなくても 101 になる)。
