@@ -39,8 +39,9 @@ import (
 // authzSelfHost is the ?host= value every /check-workspace case in this file
 // uses. authzMismatchedEmail below is deliberately NEITHER a rostered
 // identity NOR in the admin allowlist, so it satisfies neither half of
-// /check-workspace's and /check-participant's disjunction (roster seat OR
-// admin override) and neither half of /check-admin's allowlist check.
+// /check-participant's disjunction (roster seat OR admin override), nor
+// /check-workspace's roster seat (which admits no admin, ADR-0050), nor
+// /check-admin's allowlist check.
 const authzSelfHost = "alice"
 
 // authzMismatchedEmail is what the fake oauth2-proxy upstream returns for

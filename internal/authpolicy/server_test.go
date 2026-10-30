@@ -84,6 +84,11 @@ func newHandler(upstreamURL string) *authpolicy.Handler {
 // newAdminHandler builds a handler over the fixture roster with the given
 // ADMIN_EMAILS.
 func newAdminHandler(upstreamURL string, admins ...string) *authpolicy.Handler {
+	return newAdminHandlerLogged(upstreamURL, quietLogger(), admins...)
+}
+
+// newAdminHandlerLogged is newAdminHandler with a caller-chosen logger.
+func newAdminHandlerLogged(upstreamURL string, logger *slog.Logger, admins ...string) *authpolicy.Handler {
 	r, err := authpolicy.ParseRoster([]byte(fixtureRoster), fixtureDomain, admins)
 	if err != nil {
 		panic(err)
@@ -95,7 +100,7 @@ func newAdminHandler(upstreamURL string, admins ...string) *authpolicy.Handler {
 		AdminEmails:         admins,
 		Roster:              r,
 	}
-	return authpolicy.NewHandler(cfg, quietLogger())
+	return authpolicy.NewHandler(cfg, logger)
 }
 
 func do(t *testing.T, h http.Handler, target string, headers map[string]string) *http.Response {

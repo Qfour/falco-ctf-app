@@ -164,6 +164,7 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
 
 ### Security
 - **`/check-workspace` は `ADMIN_EMAILS` の identity を 403 にする: 運営の資格情報を参加者の実行環境 (seat の Pod) に届けない (最小権限、app#551、ADR-0050 = Proposed、platform#301 (private)、PATCH だが挙動変更、auth 境界 = I8)**。これまで `ADMIN_EMAILS` の identity は任意の workspace host で 200 だった。今は 403 (body は固定文字列 `forbidden`、identity header なし。401 ではないので sign-in には戻らない)。`/check-participant` (`ok_admin`)・`/check-admin`・scoreboard の `self-or-admin` は不変。I8 の文言を改訂した (`ADMIN_EMAILS` の範囲から workspace を外す)。ADR-0034 D7 の I8 の文言を限定 supersede する。
+  - 区分は PATCH のまま: MAJOR の契約集合 (image 名 / path / payload / cookie domain) は不変で、auth 境界の 200 → 403 は fail-closed 側。
   - **運営の導線の変更 (Upgrade note)**: 運営がブラウザで参加者の seat host (Terminal) を開くと 403 になる。seat の中を見る・打つ経路は `kubectl exec` と operations.md 6.7 の汚染確認だけ。portal の admin 画面や scoreboard の運営画面は変わらない。
   - 適用順序: app を先に merge し、event の pin にこの SHA 以降を載せてから、platform の verify-auth (V3) を回す。逆順だと V3 が旧 image に対して赤になる。
   - test: `TestV9_AdminRefusedOnWorkspace` (403・body に identity なし・`admin_refused` が 1 増える)、`TestAuthz_SelfRoutesRefuseAdmin`、`internal/authpolicy/authz_test.go` の件数 pin (`self` 1 本、`self-or-admin` 0 本)。

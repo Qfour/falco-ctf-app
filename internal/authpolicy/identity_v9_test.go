@@ -4,8 +4,10 @@ package authpolicy_test
 // Every identity here is a synthetic reserved-domain address (D11).
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
@@ -29,8 +31,8 @@ type resolveCase struct {
 }
 
 // V9: an identity that is not in the roster is 403 on BOTH roster endpoints,
-// an external is its own seat and no other, admin passes both, and `/check`
-// no longer exists. This is the behavioural pin for "前方一致に戻す mutation で
+// an external is its own seat and no other, admin passes participant / admin
+// and is refused on workspace (ADR-0050), and `/check` no longer exists. This is the behavioural pin for "前方一致に戻す mutation で
 // 赤": with the old HasPrefix(email, host+"@") rule, case 1 and 2 below would be
 // 200.
 func TestV9_Resolution(t *testing.T) {
@@ -289,6 +291,55 @@ func TestV9_AdminRefusedOnWorkspace(t *testing.T) {
 	}
 	if got := scrapeCheck(t, h, "participant", "ok_admin") - okAdminParticipant; got != 1 {
 		t.Errorf("participant ok_admin moved by %v, want 1", got)
+	}
+}
+
+// ADR-0050: each refusal of an operator on a workspace leaves exactly one log
+// record, "operator request refused at workspace", whose only attributes are
+// endpoint and host: no value (message included) carries the operator's email
+// or the upstream's identity, so the log is not a second channel for it.
+func TestV9_AdminRefusedOnWorkspace_LogCarriesNoIdentity(t *testing.T) {
+	up := fakeUpstream(t, map[string]string{
+		"X-Auth-Request-Email":              "admin@ctf.local",
+		"X-Auth-Request-User":               "admin",
+		"X-Auth-Request-Preferred-Username": "admin",
+	})
+	defer up.Close()
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	h := newAdminHandlerLogged(up.URL, logger, fixtureAdmin)
+
+	hosts := []string{"user7", "user8"}
+	for _, host := range hosts {
+		if resp := do(t, h, "/check-workspace?host="+host, cookie); resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("host=%s: got %d, want 403", host, resp.StatusCode)
+		}
+	}
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != len(hosts) {
+		t.Fatalf("got %d log records, want %d (one per refusal): %q", len(lines), len(hosts), buf.String())
+	}
+	for i, line := range lines {
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("log line %q: %v", line, err)
+		}
+		if rec["msg"] != "operator request refused at workspace" {
+			t.Errorf("msg = %v", rec["msg"])
+		}
+		for k, v := range rec {
+			switch k {
+			case "time", "level", "msg", "endpoint", "host":
+			default:
+				t.Errorf("unexpected log attribute %q = %v (only endpoint and host are allowed)", k, v)
+			}
+		}
+		if rec["endpoint"] != "workspace" || rec["host"] != hosts[i] {
+			t.Errorf("endpoint/host = %v/%v, want workspace/%s", rec["endpoint"], rec["host"], hosts[i])
+		}
+		if low := strings.ToLower(line); strings.Contains(low, "admin@") || strings.Contains(low, "ctf.local") {
+			t.Errorf("log line carries an identity: %s", line)
+		}
 	}
 }
 

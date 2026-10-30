@@ -170,8 +170,8 @@ ingress:
 # templates/ingress.yaml; there is deliberately no value for it and no way to
 # render an Ingress without it): auth-policy forwards the cookie to oauth2-proxy
 # /oauth2/auth, resolves the identity to a seat through its roster, and returns
-# 200 only if that seat is this workspace's username (or the caller is an
-# ADMIN_EMAILS member).
+# 200 only if that seat is this workspace's username (ADR-0050: an ADMIN_EMAILS
+# member gets 403 here too).
 #
 # Why not point auth-url straight at oauth2-proxy? Because that lets any
 # logged-in user reach any workspace.

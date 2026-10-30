@@ -67,6 +67,8 @@ info:
     Per-operation extensions carry the same meaning as in
     docs/openapi-scoreboard.yaml. `x-ctf-authz: rostered` (new) means "an
     `ADMIN_EMAILS` member, or an identity the roster resolves to a seat".
+    `x-ctf-authz: self` (ADR-0050) means "the identity's roster seat equals
+    `host`", with no `ADMIN_EMAILS` override.
 
     Every `type: string` Schema Object carries `x-ctf-text-origin` (vocabulary
     and meaning: docs/openapi-scoreboard.yaml, ADR-0039).
