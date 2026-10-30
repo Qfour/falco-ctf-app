@@ -16,7 +16,8 @@ env:
   # otherwise, so an external IdP can never hold a verified email in this domain.
   expectedEmailDomain: "example.invalid"
   # Operator allowlist (comma-separated): /check-admin, and the admin override on
-  # /check-workspace and /check-participant. Empty = nobody (fail-closed). Every
+  # /check-participant. NOT /check-workspace: an operator's request is never
+  # handed to a seat's Pod (ADR-0050). Empty = nobody (fail-closed). Every
   # entry must be a reserved-domain static account and must NOT also be a roster
   # seat's canonical email or an `external` (checked at startup).
   adminEmails: ""

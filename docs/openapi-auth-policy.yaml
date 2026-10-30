@@ -67,6 +67,8 @@ info:
     Per-operation extensions carry the same meaning as in
     docs/openapi-scoreboard.yaml. `x-ctf-authz: rostered` (new) means "an
     `ADMIN_EMAILS` member, or an identity the roster resolves to a seat".
+    `x-ctf-authz: self` (ADR-0050) means "the identity's roster seat equals
+    `host`", with no `ADMIN_EMAILS` override.
 
     Every `type: string` Schema Object carries `x-ctf-text-origin` (vocabulary
     and meaning: docs/openapi-scoreboard.yaml, ADR-0039).
@@ -148,13 +150,15 @@ paths:
         Series (internal/authpolicy/metrics.go owns the label sets):
           - `auth_policy_checks_total{endpoint,result}`
               endpoint in {workspace, participant}
-              result in {ok, ok_admin, unauthenticated, forbidden, bad_request,
-                         upstream_error}
-              `ok_admin` = the ADMIN_EMAILS override matched (I8's one
-              intentional exception) rather than a roster seat. A rising
-              `ok_admin` during an event means operators are reaching
-              participant workspaces — expected during support, worth noticing
-              otherwise.
+              result in {ok, ok_admin, admin_refused, unauthenticated,
+                         forbidden, bad_request, upstream_error}
+              `ok_admin` (endpoint=participant only) = the ADMIN_EMAILS
+              override matched rather than a roster seat.
+              `admin_refused` (endpoint=workspace only, ADR-0050) = an
+              ADMIN_EMAILS identity asked for a seat's host and was answered
+              403. A rising `admin_refused` during an event means operators
+              are trying to open a seat in the browser; their way in is
+              kubectl exec (operations.md 6.7).
           - `auth_policy_admin_checks_total{result}`
               /check-admin decisions; result in {ok, unauthenticated, forbidden,
               upstream_error}
@@ -172,7 +176,7 @@ paths:
       operationId: checkWorkspace
       tags: [internal]
       x-ctf-audience: internal
-      x-ctf-authz: self-or-admin
+      x-ctf-authz: self
       x-ctf-origin-guard: false
       x-ctf-collector-forward: false
       x-ctf-rate-limit: none
@@ -185,7 +189,7 @@ paths:
         | upstream oauth2-proxy | identity | response |
         |---|---|---|
         | 401 | n/a | **401** — ingress redirects to /oauth2/start |
-        | 202 | in `ADMIN_EMAILS` | **200** — operator override (any host), headers passed through |
+        | 202 | in `ADMIN_EMAILS` | **403** — never handed to a seat's Pod (ADR-0050); no identity in the body |
         | 202 | resolves (roster) to seat == `host` | **200** — headers REWRITTEN to the canonical form |
         | 202 | resolves to another seat | **403** — cross-user, no redirect |
         | 202 | not in the roster (incl. empty / malformed / non-ASCII) | **403** |
@@ -195,9 +199,10 @@ paths:
         The match is an **exact** seat comparison against the roster's
         resolution — there is no prefix rule, so `user10` never satisfies
         `host=user1` and an external `user7@<anything>` is not user7 unless the
-        roster says so (conventions I8). The ADMIN_EMAILS override is I8's ONE
-        intentional exception, and it is the same allowlist /check-admin uses;
-        an empty allowlist grants nobody (fail-closed).
+        roster says so (conventions I8). `x-ctf-authz: self` means exactly this:
+        the proven identity's seat equals `host`, and there is no operator
+        override (ADR-0050). An `ADMIN_EMAILS` identity gets 403 here (and 200
+        on `/check-participant` and `/check-admin`).
 
         Note the masking row: an unexpected oauth2-proxy status becomes a
         generic 502 on purpose — the upstream status and body must not leak
@@ -226,9 +231,9 @@ paths:
       responses:
         "200":
           description: |
-            authorized (own workspace, or an admin override). Response headers
-            carry identity for the upstream backend: for a rostered seat they
-            are the canonical `<seat>@<EXPECTED_EMAIL_DOMAIN>` / `<seat>` and
+            authorized (the identity's own workspace; never an operator).
+            Response headers carry identity for the upstream backend: they are
+            the canonical `<seat>@<EXPECTED_EMAIL_DOMAIN>` / `<seat>` and
             nothing the IdP returned.
           headers:
             X-Auth-Request-Email:
@@ -247,11 +252,12 @@ paths:
             text/plain: {}
         "403":
           description: |
-            authenticated, but the identity is neither in ADMIN_EMAILS nor the
-            roster seat named by `host`. The body is the fixed string
-            `forbidden`: it never carries the caller's email or seat (the
-            operator reads the identity from the log, only for an identity that
-            is not in the roster at all).
+            authenticated, but the identity does not resolve to the roster seat
+            named by `host` (an `ADMIN_EMAILS` identity is refused here too,
+            ADR-0050). The body is the fixed string `forbidden`: it never
+            carries the caller's email or seat (the operator reads the identity
+            from the log, only for an identity that is not in the roster at
+            all; a refused operator is logged by host only).
           content:
             text/plain: {}
         "500":
