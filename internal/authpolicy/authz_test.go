@@ -39,13 +39,14 @@ import (
 // authzSelfHost is the ?host= value every /check-workspace case in this file
 // uses. authzMismatchedEmail below is deliberately NEITHER a rostered
 // identity NOR in the admin allowlist, so it satisfies neither half of
-// /check-workspace's and /check-participant's disjunction (roster seat OR
-// admin override) and neither half of /check-admin's allowlist check.
+// /check-participant's disjunction (roster seat OR admin override), nor
+// /check-workspace's roster seat (which admits no admin, ADR-0050), nor
+// /check-admin's allowlist check.
 const authzSelfHost = "alice"
 
 // authzMismatchedEmail is what the fake oauth2-proxy upstream returns for
 // every request this file issues. It must fail BOTH gates so every
-// Authz: admin / self-or-admin case in the derived table produces the same
+// Authz: admin / self / rostered case in the derived table produces the same
 // expected 403 without per-route bespoke identities.
 const authzMismatchedEmail = "mallory@ctf.local" // not in fixtureRoster
 
@@ -81,7 +82,7 @@ func authzCheck(t *testing.T, srv http.Handler, rt apispec.Route) string {
 	srv.ServeHTTP(w, r)
 
 	switch rt.Authz {
-	case apispec.AuthzAdmin, apispec.AuthzSelfOrAdmin, apispec.AuthzRostered:
+	case apispec.AuthzAdmin, apispec.AuthzSelf, apispec.AuthzRostered:
 		if w.Code != http.StatusForbidden {
 			return fmt.Sprintf("%s: status=%d body=%s, want 403 (Authz: %s — %s satisfies neither the roster (host=%s) nor the admin allowlist)",
 				rt.MuxPattern(), w.Code, w.Body, rt.Authz, authzMismatchedEmail, authzSelfHost)
@@ -108,15 +109,17 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 	defer upstream.Close()
 	h := newAdminHandler(upstream.URL, authzAdminAllowlist)
 
-	var adminGated, selfGated, rosteredGated int
+	var adminGated, selfGated, selfOrAdminGated, rosteredGated int
 	var none, claimed []string
 	for _, rt := range h.Routes() {
 		rt := rt
 		switch rt.Authz {
 		case apispec.AuthzAdmin:
 			adminGated++
-		case apispec.AuthzSelfOrAdmin:
+		case apispec.AuthzSelf:
 			selfGated++
+		case apispec.AuthzSelfOrAdmin:
+			selfOrAdminGated++
 		case apispec.AuthzRostered:
 			rosteredGated++
 		}
@@ -146,7 +149,13 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 		t.Fatalf("expected exactly 1 Authz: admin route (GET /check-admin), got %d", adminGated)
 	}
 	if selfGated != 1 {
-		t.Fatalf("expected exactly 1 Authz: self-or-admin route (GET /check-workspace), got %d", selfGated)
+		t.Fatalf("expected exactly 1 Authz: self route (GET /check-workspace), got %d", selfGated)
+	}
+	// ADR-0050: auth-policy has no self-or-admin route (the workspace door has
+	// no operator override). selfOrAdminGated is counted apart so a route that
+	// slips back to the old word fails here by name.
+	if selfOrAdminGated != 0 {
+		t.Fatalf("expected 0 Authz: self-or-admin routes (ADR-0050: /check-workspace admits no operator), got %d", selfOrAdminGated)
 	}
 	if rosteredGated != 1 {
 		t.Fatalf("expected exactly 1 Authz: rostered route (GET /check-participant), got %d", rosteredGated)
@@ -163,13 +172,48 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 	}
 }
 
+// TestAuthz_SelfRoutesRefuseAdmin pins what makes a route `self` and not
+// `self-or-admin` (ADR-0050): the ADMIN_EMAILS identity is refused with a 403
+// on every route classified self, with no identity header in the response.
+// The routes are derived from h.Routes(), so a second self route is covered
+// too, and a route that falls back to a 200 for the operator fails by name.
+func TestAuthz_SelfRoutesRefuseAdmin(t *testing.T) {
+	upstream := fakeOAuth2Proxy(t, func(*http.Request) (int, string) {
+		return http.StatusAccepted, authzAdminAllowlist
+	})
+	defer upstream.Close()
+	h := newAdminHandler(upstream.URL, authzAdminAllowlist)
+	n := 0
+	for _, rt := range h.Routes() {
+		if rt.Authz != apispec.AuthzSelf {
+			continue
+		}
+		n++
+		r := httptest.NewRequest(rt.Method, authzTarget(rt), nil)
+		r.Header.Set("Cookie", "_oauth2_proxy=fake-session")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != http.StatusForbidden {
+			t.Errorf("%s: status=%d body=%s, want 403 for an ADMIN_EMAILS identity (Authz: self has no operator override)", rt.MuxPattern(), w.Code, w.Body)
+		}
+		for k := range w.Header() {
+			if strings.HasPrefix(k, "X-Auth-Request-") {
+				t.Errorf("%s: refused response carries %s", rt.MuxPattern(), k)
+			}
+		}
+	}
+	if n != 1 {
+		t.Fatalf("self routes = %d, want 1 (GET /check-workspace)", n)
+	}
+}
+
 // TestAuthz_EveryProvenRouteRejectsUnproven is auth-policy's check of the
 // "proven" row of apispec.AuthzIdentitySources (app#393), the counterpart of
 // scoreboard's TestAuthz_EveryProvenRouteRejectsHeaderless. Here the proof is
 // the /oauth2/auth subrequest, so a route whose word is classified proven
 // answers 401 when oauth2-proxy authenticates nobody and 403 when it answers
 // 202 without an identity — never 2xx. The routes are selected by the table,
-// so rostered is covered with admin and self-or-admin, and so is any word
+// so rostered is covered with admin and self, and so is any word
 // classified proven later.
 func TestAuthz_EveryProvenRouteRejectsUnproven(t *testing.T) {
 	for _, tc := range []struct {
@@ -199,7 +243,7 @@ func TestAuthz_EveryProvenRouteRejectsUnproven(t *testing.T) {
 					t.Error(v)
 				}
 			}
-			want := map[apispec.Authz]bool{apispec.AuthzAdmin: true, apispec.AuthzSelfOrAdmin: true, apispec.AuthzRostered: true}
+			want := map[apispec.Authz]bool{apispec.AuthzAdmin: true, apispec.AuthzSelf: true, apispec.AuthzRostered: true}
 			if !reflect.DeepEqual(words, want) {
 				t.Fatalf("proven words exercised = %v, want %v (the derivation is broken, or a word changed class)", words, want)
 			}

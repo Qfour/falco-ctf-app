@@ -38,8 +38,9 @@ func configFromEnv(env func(key, fallback string) string) (authpolicy.Config, er
 		OAuth2ProxyURL:      env("OAUTH2_PROXY_AUTH_URL", "http://oauth2-proxy.oauth2-proxy.svc.cluster.local:80/oauth2/auth"),
 		ExpectedEmailDomain: idCfg.Domain,
 		UpstreamTimeout:     5 * time.Second,
-		// ADMIN_EMAILS is a comma-separated allowlist consulted by every check
-		// endpoint's admin override and by /check-admin. Empty / unset = nobody
+		// ADMIN_EMAILS is a comma-separated allowlist consulted by
+		// /check-participant's admin override and by /check-admin; on
+		// /check-workspace it is used to refuse (ADR-0050). Empty / unset = nobody
 		// is admin = fail-closed. Entries must be reserved-domain static
 		// accounts (identity.Validate).
 		AdminEmails: idCfg.Admins,

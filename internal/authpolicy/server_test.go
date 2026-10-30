@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -83,6 +84,11 @@ func newHandler(upstreamURL string) *authpolicy.Handler {
 // newAdminHandler builds a handler over the fixture roster with the given
 // ADMIN_EMAILS.
 func newAdminHandler(upstreamURL string, admins ...string) *authpolicy.Handler {
+	return newAdminHandlerLogged(upstreamURL, quietLogger(), admins...)
+}
+
+// newAdminHandlerLogged is newAdminHandler with a caller-chosen logger.
+func newAdminHandlerLogged(upstreamURL string, logger *slog.Logger, admins ...string) *authpolicy.Handler {
 	r, err := authpolicy.ParseRoster([]byte(fixtureRoster), fixtureDomain, admins)
 	if err != nil {
 		panic(err)
@@ -94,7 +100,7 @@ func newAdminHandler(upstreamURL string, admins ...string) *authpolicy.Handler {
 		AdminEmails:         admins,
 		Roster:              r,
 	}
-	return authpolicy.NewHandler(cfg, quietLogger())
+	return authpolicy.NewHandler(cfg, logger)
 }
 
 func do(t *testing.T, h http.Handler, target string, headers map[string]string) *http.Response {
@@ -183,17 +189,39 @@ func TestCheck_EmailPrefixBoundary(t *testing.T) {
 	}
 }
 
-// Admin override: an ADMIN_EMAILS member reaches ANY user's workspace host.
-func TestCheck_Admin_ReachesAnyHost_Returns200(t *testing.T) {
+// ADR-0050 D1: an ADMIN_EMAILS member does NOT reach a user's workspace host.
+// The operator gets 403 (not 401: no sign-in loop). This was a 200 before
+// ADR-0050 (the operator override).
+func TestCheck_Admin_WorkspaceHost_Returns403(t *testing.T) {
 	upstream := fakeOAuth2Proxy(t, func(_ *http.Request) (int, string) {
 		return http.StatusAccepted, "admin@ctf.local"
 	})
 	defer upstream.Close()
 	h := newAdminHandler(upstream.URL, "admin@ctf.local")
 	resp := do(t, h, "/check-workspace?host=user7", map[string]string{"Cookie": "_oauth2_proxy=foo"})
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("admin should reach any workspace, got %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("admin must be refused on a workspace host, got %d", resp.StatusCode)
 	}
+}
+
+// scrapeCheck reads auth_policy_checks_total{endpoint,result} from h's
+// /metrics (the counter is process-global, so callers compare before/after).
+// An absent series is 0.
+func scrapeCheck(t *testing.T, h http.Handler, endpoint, result string) float64 {
+	t.Helper()
+	resp := do(t, h, "/metrics", nil)
+	body, _ := io.ReadAll(resp.Body)
+	prefix := `auth_policy_checks_total{endpoint="` + endpoint + `",result="` + result + `"} `
+	for _, line := range strings.Split(string(body), "\n") {
+		if v, ok := strings.CutPrefix(line, prefix); ok {
+			f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+			if err != nil {
+				t.Fatalf("metric line %q: %v", line, err)
+			}
+			return f
+		}
+	}
+	return 0
 }
 
 // Non-admin still bound to their own host even when an allowlist exists.

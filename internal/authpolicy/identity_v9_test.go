@@ -4,8 +4,10 @@ package authpolicy_test
 // Every identity here is a synthetic reserved-domain address (D11).
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
@@ -29,8 +31,8 @@ type resolveCase struct {
 }
 
 // V9: an identity that is not in the roster is 403 on BOTH roster endpoints,
-// an external is its own seat and no other, admin passes both, and `/check`
-// no longer exists. This is the behavioural pin for "前方一致に戻す mutation で
+// an external is its own seat and no other, admin passes participant / admin
+// and is refused on workspace (ADR-0050), and `/check` no longer exists. This is the behavioural pin for "前方一致に戻す mutation で
 // 赤": with the old HasPrefix(email, host+"@") rule, case 1 and 2 below would be
 // 200.
 func TestV9_Resolution(t *testing.T) {
@@ -62,7 +64,11 @@ func TestV9_Resolution(t *testing.T) {
 		{"seat matches case-insensitively", "User7@CTF.local", "/check-workspace?host=user7", 200},
 
 		// admin
-		{"admin on any workspace", "admin@ctf.local", "/check-workspace?host=user7", 200},
+		// ADR-0050: ADMIN_EMAILS is no exception on a workspace host (an
+		// operator's request is never handed to a seat's Pod). It is still
+		// one on the participant and admin doors.
+		{"admin on a workspace is refused (ADR-0050)", "admin@ctf.local", "/check-workspace?host=user7", 403},
+		{"admin on a workspace is refused, capitals (ADR-0050)", "Admin@CTF.local", "/check-workspace?host=user8", 403},
 		{"admin on participant", "Admin@CTF.local", "/check-participant", 200},
 		{"admin on admin", "admin@ctf.local", "/check-admin", 200},
 		{"rostered seat is not admin", "user7@ctf.local", "/check-admin", 403},
@@ -208,7 +214,9 @@ func TestV9_CanonicalHeadersOverwriteUpstream(t *testing.T) {
 	}
 }
 
-// V9: an ADMIN_EMAILS member is passed through unchanged ("現行どおり透過").
+// V9: an ADMIN_EMAILS member is passed through unchanged on the participant and
+// admin doors ("現行どおり透過"). Not on /check-workspace: ADR-0050 refuses it
+// there (TestV9_AdminRefusedOnWorkspace).
 func TestV9_AdminHeadersPassThrough(t *testing.T) {
 	up := fakeUpstream(t, map[string]string{
 		"X-Auth-Request-Email":              "admin@ctf.local",
@@ -217,13 +225,120 @@ func TestV9_AdminHeadersPassThrough(t *testing.T) {
 	})
 	defer up.Close()
 	h := newAdminHandler(up.URL, fixtureAdmin)
-	for _, target := range []string{"/check-workspace?host=user7", "/check-participant", "/check-admin"} {
+	for _, target := range []string{"/check-participant", "/check-admin"} {
 		resp := do(t, h, target, cookie)
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("%s: got %d", target, resp.StatusCode)
 		}
 		if got := resp.Header.Get("X-Auth-Request-Email"); got != "admin@ctf.local" {
 			t.Errorf("%s: admin email header = %q", target, got)
+		}
+	}
+}
+
+// ADR-0050 D1 (V1): an ADMIN_EMAILS identity on /check-workspace is a 403 whose
+// body is the fixed string and whose headers carry NO identity (least
+// privilege: an operator identity is not passed to a seat), for every seat
+// host, with or without
+// capitals; the participant and admin doors still answer 200 to the same
+// identity. Each refusal moves auth_policy_checks_total{workspace,
+// admin_refused} by exactly one and no other workspace result.
+func TestV9_AdminRefusedOnWorkspace(t *testing.T) {
+	up := fakeUpstream(t, map[string]string{
+		"X-Auth-Request-Email":              "admin@ctf.local",
+		"X-Auth-Request-User":               "admin",
+		"X-Auth-Request-Preferred-Username": "admin",
+	})
+	defer up.Close()
+	h := newAdminHandler(up.URL, fixtureAdmin)
+
+	refused := scrapeCheck(t, h, "workspace", "admin_refused")
+	okAdminWorkspace := scrapeCheck(t, h, "workspace", "ok_admin")
+	okAdminParticipant := scrapeCheck(t, h, "participant", "ok_admin")
+	forbidden := scrapeCheck(t, h, "workspace", "forbidden")
+
+	hosts := []string{"user7", "user8", "admin"}
+	for _, host := range hosts {
+		resp := do(t, h, "/check-workspace?host="+host, cookie)
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("host=%s: got %d (%s), want 403", host, resp.StatusCode, body)
+		}
+		if strings.TrimSpace(string(body)) != "forbidden" {
+			t.Errorf("host=%s: body = %q, want the fixed string \"forbidden\"", host, body)
+		}
+		for k, vs := range resp.Header {
+			for _, v := range vs {
+				if strings.HasPrefix(k, "X-Auth-Request-") || strings.Contains(strings.ToLower(v), "admin@") {
+					t.Errorf("host=%s: response header %s=%q carries an identity", host, k, v)
+				}
+			}
+		}
+	}
+	if got := scrapeCheck(t, h, "workspace", "admin_refused") - refused; got != float64(len(hosts)) {
+		t.Errorf("admin_refused moved by %v, want %d", got, len(hosts))
+	}
+	if got := scrapeCheck(t, h, "workspace", "ok_admin") - okAdminWorkspace; got != 0 {
+		t.Errorf("workspace ok_admin moved by %v, want 0 (the result is gone from this endpoint)", got)
+	}
+	if got := scrapeCheck(t, h, "workspace", "forbidden") - forbidden; got != 0 {
+		t.Errorf("workspace forbidden moved by %v, want 0 (an operator is counted as admin_refused)", got)
+	}
+
+	// The participant door is unchanged: same identity, 200, ok_admin.
+	if resp := do(t, h, "/check-participant", cookie); resp.StatusCode != http.StatusOK {
+		t.Fatalf("/check-participant: got %d, want 200", resp.StatusCode)
+	}
+	if got := scrapeCheck(t, h, "participant", "ok_admin") - okAdminParticipant; got != 1 {
+		t.Errorf("participant ok_admin moved by %v, want 1", got)
+	}
+}
+
+// ADR-0050: each refusal of an operator on a workspace leaves exactly one log
+// record, "operator request refused at workspace", whose only attributes are
+// endpoint and host: no value (message included) carries the operator's email
+// or the upstream's identity, so the log is not a second channel for it.
+func TestV9_AdminRefusedOnWorkspace_LogCarriesNoIdentity(t *testing.T) {
+	up := fakeUpstream(t, map[string]string{
+		"X-Auth-Request-Email":              "admin@ctf.local",
+		"X-Auth-Request-User":               "admin",
+		"X-Auth-Request-Preferred-Username": "admin",
+	})
+	defer up.Close()
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	h := newAdminHandlerLogged(up.URL, logger, fixtureAdmin)
+
+	hosts := []string{"user7", "user8"}
+	for _, host := range hosts {
+		if resp := do(t, h, "/check-workspace?host="+host, cookie); resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("host=%s: got %d, want 403", host, resp.StatusCode)
+		}
+	}
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != len(hosts) {
+		t.Fatalf("got %d log records, want %d (one per refusal): %q", len(lines), len(hosts), buf.String())
+	}
+	for i, line := range lines {
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("log line %q: %v", line, err)
+		}
+		if rec["msg"] != "operator request refused at workspace" {
+			t.Errorf("msg = %v", rec["msg"])
+		}
+		for k, v := range rec {
+			switch k {
+			case "time", "level", "msg", "endpoint", "host":
+			default:
+				t.Errorf("unexpected log attribute %q = %v (only endpoint and host are allowed)", k, v)
+			}
+		}
+		if rec["endpoint"] != "workspace" || rec["host"] != hosts[i] {
+			t.Errorf("endpoint/host = %v/%v, want workspace/%s", rec["endpoint"], rec["host"], hosts[i])
+		}
+		if low := strings.ToLower(line); strings.Contains(low, "admin@") || strings.Contains(low, "ctf.local") {
+			t.Errorf("log line carries an identity: %s", line)
 		}
 	}
 }
@@ -239,6 +354,7 @@ func TestV9_ForbiddenBodiesCarryNoIdentity(t *testing.T) {
 		{"someone.private@stranger.example", "/check-admin"},
 		{"user7@ctf.local", "/check-workspace?host=user8"},
 		{"user7@ctf.local", "/check-admin"},
+		{"admin@ctf.local", "/check-workspace?host=user7"}, // ADR-0050
 		{"user7.ext@partner.example", "/check-workspace?host=user8"},
 		{"user7.ext@partner.example", "/check-admin"},
 	}
