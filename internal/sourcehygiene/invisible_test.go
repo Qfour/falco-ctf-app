@@ -201,8 +201,9 @@ func (r *report) scannedBinary(p string) bool {
 	return false
 }
 
-// checkRealTree runs the walk on root with the shipped invisible allowlist and returns
-// the report and that allowlist. bidiAllow is the bidi list.
+// checkRealTree runs the walk on root with the shipped invisible allowlist and the shipped
+// closed set of binary paths (binary-paths.tsv), and returns the report and that allowlist.
+// bidiAllow is the bidi list.
 func checkRealTree(t *testing.T, root string, bidiAllow map[string]string) (*report, map[string]invEntry) {
 	t.Helper()
 	text, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(invisibleAllowlistFile)))
@@ -213,7 +214,23 @@ func checkRealTree(t *testing.T, root string, bidiAllow map[string]string) (*rep
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := checkTree(root, bidiAllow, newInvisibleScanner(allow))
+	bp, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(binaryPathsFile)))
+	if err != nil {
+		t.Fatalf("the binary paths file is unreadable (it must exist, even with no row): %v", err)
+	}
+	lines, err := dataLines(bp, binaryPathsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := parseBinaryPaths(lines, binaryPathsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths, err := newBinaryPathScanner(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := checkTree(root, bidiAllow, newInvisibleScanner(allow), paths)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,12 +321,19 @@ func at(f Finding) string { return fmt.Sprintf("%d:%d U+%04X", f.Line, f.Col, f.
 // same expected findings and the same names, now shared with scripts/sourcehygiene-scan.py.
 // TestHidden_SharedCases (exported_table_test.go) runs every row against Hidden AND
 // against Invisible (= Hidden without the bidi controls), so no coverage is lost.
+//
+// Five cases of TestCheckTree_Invisible below moved to testdata/negatives/ (app#542, review-5x
+// 88 R4#3): they are rules of the walk and the allowlist that both implementations have, so
+// each is a directory there, judged by this package and by the scanner alike. They are
+// walk-allowlist-other-code-point-still-red, walk-allowlist-on-a-binary-file-is-dead,
+// walk-allowlist-on-a-context-green-vs-is-dead, walk-allowlist-grants-a-context-bad-use and
+// walk-nonascii-path-of-a-woff2. What stays below is Go's wording and a path of the Go gate
+// (see negatives_test.go).
 
 // ---- the walk, the allowlist, the path rule --------------------------------
 
 func TestCheckTree_Invisible(t *testing.T) {
 	zwsp := cps(0x200B)
-	ps := cps(0x2029)
 	warn := cps(0x26A0, 0xFE0F)
 	tests := []struct {
 		name  string
@@ -327,10 +351,6 @@ func TestCheckTree_Invisible(t *testing.T) {
 		{name: "the code point listed for the file is green",
 			files: map[string]string{"a/b.md": "x" + zwsp},
 			allow: "a/b.md\tU+200B\tattack fixture\n", none: true},
-		{name: "a code point that is not in the file's list is red even if another is listed",
-			files: map[string]string{"a/b.md": "x" + zwsp + ps},
-			allow: "a/b.md\tU+200B\tattack fixture\n",
-			want:  []string{"a/b.md:1:3 U+2029"}},
 		{name: "a listed code point that the file does not hold is a dead code point",
 			files: map[string]string{"a/b.md": "x" + zwsp},
 			allow: "a/b.md\tU+200B,U+2029\tattack fixture\n",
@@ -343,20 +363,9 @@ func TestCheckTree_Invisible(t *testing.T) {
 			files: map[string]string{"ok.md": "clean\n"},
 			allow: "gone.md\tU+200B\tattack fixture\n",
 			want:  []string{`dead allowlist entry "gone.md": the file is not a tracked regular file`}},
-		{name: "a listed binaryExt file is a dead entry",
-			files: map[string]string{"f.woff2": "wOF2\x00" + zwsp},
-			allow: "f.woff2\tU+200B\tattack fixture\n",
-			want:  []string{`dead allowlist entry "f.woff2": the file has a binaryExt extension`}},
-		{name: "a context-green occurrence is not a hit: listing it makes the entry dead",
-			files: map[string]string{"a.md": warn + " careful\n"},
-			allow: "a.md\tU+FE0F\tthe warning sign\n",
-			want:  []string{`dead allowlist entry "a.md"`}},
 		{name: "a context-green VS16 is green without a list, a bad one beside it is red",
 			files: map[string]string{"a.md": warn + " a" + cps(0xFE0F) + "\n"},
 			want:  []string{"a.md:1:5 U+FE0F", "not directly after a non-ASCII symbol (So)"}},
-		{name: "a listed code point also allows a context-bad use of it (the grant is per code point)",
-			files: map[string]string{"a.md": "a" + cps(0xFE0F)},
-			allow: "a.md\tU+FE0F\tfixture\n", none: true},
 		{name: "a ZWSP in a word of a journey.yaml hint is red",
 			files: map[string]string{"challenges/00-tutorial/journey.yaml": "hints:\n  - text: \"cat /etc/pa" + zwsp + "sswd\"\n"},
 			want:  []string{"challenges/00-tutorial/journey.yaml:2:23 U+200B"}},
@@ -368,9 +377,6 @@ func TestCheckTree_Invisible(t *testing.T) {
 			want:  []string{"path name is not printable ASCII"}},
 		{name: "a non-ASCII path name is red",
 			files: map[string]string{"docs/" + cps(0x3042) + ".md": "x\n"},
-			want:  []string{"path name is not printable ASCII"}},
-		{name: "a non-ASCII name of a binaryExt file is red too (the path rule runs before the binary skip)",
-			files: map[string]string{"fonts/" + cps(0x3042) + ".woff2": "wOF2\x00\x01"},
 			want:  []string{"path name is not printable ASCII"}},
 		{name: "a path with a space is red",
 			files: map[string]string{"docs/a b.md": "x\n"},

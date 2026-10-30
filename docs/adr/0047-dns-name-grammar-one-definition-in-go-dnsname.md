@@ -1,5 +1,5 @@
 # ADR-0047: RFC 1123 の DNS 名の文法を Go の internal/dnsname に 1 定義で置き、FrameAncestorsPattern はそれを合成し、deploy-user.sh の DNS_SUFFIX_PATTERN はその写しとして固定する (ADR-0044 D4 の host 部分の権威を限定 supersede)
-- Status: **Accepted** (2026-10-27。実装: app#543 = f50190b。review-5x 90 (T3) 5 観点 APPROVE with comments、security = R1。V1〜V6 緑。V5 の platform 側 (`scripts/test-frame-ancestors-parity.sh --app-dir`) は platform#291 の dd2ea2e で実行した。platform main への反映は platform#291 の merge 後に再確認する)
+- Status: **Accepted** (2026-10-27。実装: app#543 = f50190b。review-5x 90 (T3) 5 観点 APPROVE with comments、security = R1。V1〜V6 緑。V5 の platform 側 (`scripts/test-frame-ancestors-parity.sh --app-dir`) は platform#291 の dd2ea2e で実行した。platform main への反映は platform#291 の merge 後に再確認する。D6 実装: app#532 (PR #552 = 40e7911))
 - Date / Deciders: 2026-10-27 / VP + architect (起草) + security-engineer (CSP の入力の文法・Dockerfile、R1)
 - 関連: app#533、app#532、ADR-0044 D4 / V1 / Signpost 2 / 3、ADR-0042 (1 定義 + 共有 case 表 + shell の pin)、ADR-0041 (challengeid の葉)、#518 (app#510)、platform#291 (V4 parity)
 ## Context
@@ -22,12 +22,13 @@ Option 1。消費者が import するだけで同じ集合を得られ、ADR-004
 - D6. PORTAL_TTYD_SUFFIX の起動時検査 (app#532) は dnsname.Valid を使う (空は「未構成」のまま許す)。本 ADR の PR には入れない。
 - D7 (ADR-0044 の限定 supersede): D4 の「host 部分の権威は、現状は deploy-user.sh の DNS_SUFFIX_PATTERN … 一致を固定する。」の 2 文、同じ段落の「host 文法を Go の 1 定義に移すのは app#533。」、V1 の「host 部分 == DNS_SUFFIX_PATTERN の本体。」、Signpost 2 の「frame_ancestors_grammar_test.go の合成 test (host 部分 == DNS_SUFFIX_PATTERN の本体) を書き換える」を、D1-D3 と V1-V2 で置き換える。ADR-0044 Signpost 3 は本 ADR で発火した。D4 のそれ以外 (frame-ancestors の 1 定義、変更が両リポ同時 PR になること) は変えない。
 ## Consequences
-- 変更の規則: dnsname を変えると --dns-suffix・--app-host・--frame-ancestors (app#532 の後は PORTAL_TTYD_SUFFIX も) が同時に変わる。狭める変更も両リポ同時 PR。2 つの表の 1 行目の byte が変わる変更は、同値でも両リポ同時 PR。
+- 変更の規則: dnsname を変えると --dns-suffix・--app-host・--frame-ancestors (PORTAL_TTYD_SUFFIX も: app#532) が同時に変わる。狭める変更も両リポ同時 PR。2 つの表の 1 行目の byte が変わる変更は、同値でも両リポ同時 PR。
 - 新しく守るもの: 文法の新しい消費者は import する (写しを作らない)。internal/dnsname/** の変更は security 必須 (CSP に連結される値の文法)。dev-flow のゲート表に足す。
 - ttyd-proxy の Dockerfile に COPY internal/dnsname を足す (足し忘れは make test の閉包 test (V6) が赤にする。build (ttyd-proxy) は required ではない)。
 - 受理集合は変わらない。platform の parity (test-frame-ancestors-parity.sh) は影響を受けない。
 - 運用の手順 (旧 Signpost 3 / 4。Accepted 化の docs PR で Signposts から移した): (a) seat 形の検出器 (internal/identity の seatShaped) が別の package の label 形の literal で赤になったら、その package は dnsname を import する。別の文法なら、定数の値を key にして除外する (D5)。(b) platform 側を別の理由で触る PR (platform#290 (d) 等) が出たら、そのときに表の internal/dnsname/testdata への移動と platform の FAG_HOST_TABLE を同時 PR で行う (D4、ADR-0044 D7)。それまで表は internal/catalog/testdata に置く。
 - runbook への影響: 無し。
+- scoreboard は文法外の PORTAL_TTYD_SUFFIX で起動しない (D6、app#532)。replicas=1 なので、起動しない scoreboard は採点も止める。値の出所は platform の env の dnsSuffix で、事前検知は platform#296 (未 merge) の dnsSuffix の検査 (preflight / 課金前 gate / 名簿前検査が `dns-suffix-cases.tsv` の 1 行目の pattern で検査する。#291 までは appHost の 2 値のみ)。chart の values.schema.json は作らない (文法の写しになる)。
 ## Signposts
 1. 443 以外の port の substrate を採る (ADR-0044 Signpost 2) → dnsname は変えず、app-host と frame-ancestors の側で `dnsname.Body` + port を合成する。dns-suffix は port を持たない。
 2. Go 以外の 3 つ目の写しが要る (helm の regexMatch guard、platform 側の検査) → pin を増やさず、ADR-0045 の型で data file として書き出すことを検討する。
@@ -44,3 +45,4 @@ Option 1。消費者が import するだけで同じ集合を得られ、ADR-004
 - review-5x 81 (app#531、2026-10-26) R4#2 / R4#4 / R4#6: 写しが 4 つ、契約表 422 / 423 行の変更規則の食い違い、identity の除外表が 4 つ目の写し。
 - architect (2026-10-27): 葉の package にして literal を 1 つにする。表は動かさない (platform への波及を 0 にする)。
 - review-5x 90 (app#543、2026-10-27) R4#3 / R4#4 (LOW): Options 2 / 3 にリスクと可逆性・閾値が無い、Signpost 3 / 4 が覆す信号ではなく運用手順、README の 0044 行に本 ADR の限定 supersede が無い、契約表に DNS 名の文法の行が無く規則が 422 / 423 行・dev-flow・package doc に分散。architect が Accepted 化の docs PR で反映した (Options の補完、Signpost 3 / 4 の置き換えと運用手順の Consequences への移動、契約表の「DNS 名の文法 (ADR-0047)」行の新設と 422 / 423 行の参照化)。Decision と Verification は無変更。
+- review-5x 92 (app#552、2026-10-30) の助言として記録: D6 の実装で `GET /portal` ごとの検査を残した (`view.New` を直に使う Handler への多層防御。正規表現 1 回)。制御文字の別の検査は撤去した (制御文字は dnsname.Valid の文法の外)。エラー文は値を載せず、長さ (bytes) と「not a DNS name」だけを出す。起動時の呼び出しは `cmd/scoreboard` の配線 test が固定する。
