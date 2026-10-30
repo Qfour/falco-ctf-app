@@ -129,7 +129,17 @@ func main() {
 	//     script's flag doc covers the companion ttyd-proxy CSP knob P23-3
 	//     added, which the single-origin portal host must also be passed to
 	//     — see charts/ctf-user/values.yaml ttyd.frameAncestors).
-	portalTtydSuffix := serverutil.Env("PORTAL_TTYD_SUFFIX", "")
+	//
+	// Checked here, at boot, against the closed DNS name grammar
+	// (internal/dnsname via view.ValidateTtydSuffix, ADR-0047 D6, app#532): the
+	// value is concatenated into the portal's CSP frame-src and the iframe src,
+	// so a value outside the grammar refuses to start instead of being served.
+	// Empty stays valid ("not configured").
+	portalTtydSuffix, err := ttydSuffixFromEnv(serverutil.Env)
+	if err != nil {
+		logger.Error("refusing to start", "err", err)
+		os.Exit(1)
+	}
 	// FALCO_WEBHOOK_SHARED_SECRET / WEBHOOK_SECRET_MODE (ADR-WS-0006 Layer
 	// 2, "実装引き渡し (software-engineer)" section): a static shared-secret
 	// header falcosidekick's customHeaders config attaches to every
