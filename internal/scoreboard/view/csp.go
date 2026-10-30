@@ -5,7 +5,8 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/http"
-	"unicode"
+
+	"github.com/Qfour/falco-ctf-app/internal/dnsname"
 )
 
 // newNonce returns a fresh, per-request base64-encoded 128-bit random value
@@ -195,25 +196,28 @@ func portalCSP(nonce, ttydSuffix string) string {
 		"report-to csp-endpoint"
 }
 
-// validateTtydSuffix rejects a PORTAL_TTYD_SUFFIX value containing CR, LF,
-// or any other control character before it is concatenated into the CSP
-// header. This is an operator-supplied deploy-time value, not participant
-// input, but it still ends up directly inside an HTTP header value, so a
-// control character must fail loudly at first-use. It is the ONLY check on
-// this value: unlike ttyd-proxy's FRAME_ANCESTORS, which internal/ttydproxy
-// checks against a closed grammar (FrameAncestorsPattern, ADR-0044), the
-// suffix has no grammar here yet (app#532). Called from writeSecurityHeaders
-// on every request rather than
-// once at startup because view.Handler has no explicit "boot" hook to wire
-// a one-time check into today — the cost of re-checking a short, static
-// string per-request is negligible.
-func validateTtydSuffix(v string) error {
-	for _, r := range v {
-		if unicode.IsControl(r) {
-			return fmt.Errorf("csp: PORTAL_TTYD_SUFFIX contains a control character (%q); refusing to render", v)
-		}
+// ValidateTtydSuffix checks a PORTAL_TTYD_SUFFIX value against the closed DNS
+// name grammar (internal/dnsname, ADR-0047 D6, app#532) before it is
+// concatenated into the CSP header and the Terminal pane's iframe src. The
+// empty string is "not configured" (frame-src 'none', no iframe) and is
+// accepted. Anything else must be dnsname.Valid: lower-case labels, no scheme,
+// port, path, space, trailing dot or control character, at most dnsname.MaxLen
+// characters. A control character, CR and LF included, is outside the
+// grammar, so no separate check is kept for it.
+//
+// cmd/scoreboard calls it once at start-up and refuses to start on an error
+// (fail-closed: ADR-0044's principle that the consumer which concatenates a
+// value into a CSP is the last check on it). writeSecurityHeaders calls it
+// again on every GET /portal, as defence in depth for a Handler that was
+// built without that path (view.New is also used by tests): the cost is one
+// anchored match on a short string. The error carries the length, never the
+// value: the value is unvetted text and would reach the log, where a control
+// character or a bidirectional override must not.
+func ValidateTtydSuffix(v string) error {
+	if v == "" || dnsname.Valid(v) {
+		return nil
 	}
-	return nil
+	return fmt.Errorf("csp: PORTAL_TTYD_SUFFIX (%d characters) is not a DNS name (lower-case labels of letters, digits and '-', at most %d characters, no scheme, port, path or trailing '.'); refusing to render", len(v), dnsname.MaxLen)
 }
 
 // writeSecurityHeaders stamps the CSP (built from a freshly generated nonce
@@ -236,7 +240,7 @@ func writeSecurityHeaders(w http.ResponseWriter, ttydSuffix string) (string, err
 	// PORTAL_TTYD_SUFFIX, no entropy for the nonce) then carries it too, as
 	// do the 403 of GET / and the 200s, which are written after this call.
 	w.Header().Set("Cache-Control", "no-store")
-	if err := validateTtydSuffix(ttydSuffix); err != nil {
+	if err := ValidateTtydSuffix(ttydSuffix); err != nil {
 		// X-Frame-Options: DENY (app#326) — legacy twin of the CSP
 		// frame-ancestors 'none' in portalCSP. Stamped on BOTH failure
 		// returns as well as the success path below (the callers write a 500

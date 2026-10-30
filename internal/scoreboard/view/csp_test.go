@@ -5,9 +5,12 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/Qfour/falco-ctf-app/internal/casetable"
 )
 
 // TestNewNonce_UniquePerCall proves newNonce does not return a fixed or
@@ -352,14 +355,68 @@ func TestWriteSecurityHeaders_ThreadsTtydSuffixIntoFrameSrc(t *testing.T) {
 // TestWriteSecurityHeaders_RejectsControlCharInSuffix proves a malformed
 // PORTAL_TTYD_SUFFIX (containing CR/LF, which could otherwise attempt a
 // header-injection-shaped value) is rejected outright rather than silently
-// producing whatever net/http's header writer would do with it. This is a
-// control-character check only: the suffix has no closed grammar yet (app#532),
-// unlike ttyd-proxy's FRAME_ANCESTORS (internal/ttydproxy.FrameAncestorsPattern,
-// ADR-0044).
+// producing whatever net/http's header writer would do with it. cmd/scoreboard
+// refuses such a value at start-up (ValidateTtydSuffix, ADR-0047 D6, app#532);
+// this is the per-request twin for a Handler built without that path.
 func TestWriteSecurityHeaders_RejectsControlCharInSuffix(t *testing.T) {
 	_, err := writeSecurityHeaders(httptest.NewRecorder(), "ctf-event.dev\r\nX-Injected: 1")
 	if err == nil {
 		t.Fatal("expected an error for a ttydSuffix containing CR/LF, got nil")
+	}
+}
+
+// ADR-0047 D6 (app#532): every row of the shared DNS name case table
+// (internal/catalog/testdata/dns-suffix-cases.tsv, the table dnsname_test.go and
+// deploy-user.sh read) goes through ValidateTtydSuffix: the baseline names and
+// the nip.io form pass; upper case, a trailing dot, a port, a scheme, a space, a
+// line break, a bidi override, 254 characters and a label of 64 do not.
+func TestValidateTtydSuffix_SharedCaseTable(t *testing.T) {
+	rows, err := casetable.Read(filepath.Join("..", "..", "catalog", "testdata", "dns-suffix-cases.tsv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) < 50 {
+		t.Fatalf("the table has %d rows: it was truncated or misread", len(rows))
+	}
+	for _, r := range rows {
+		err := ValidateTtydSuffix(r.Input)
+		if r.Accept && err != nil {
+			t.Errorf("table line %d: %q is a DNS name but ValidateTtydSuffix refuses it: %v", r.Line, r.Input, err)
+		}
+		if !r.Accept && err == nil {
+			t.Errorf("table line %d: %q is not a DNS name but ValidateTtydSuffix accepts it", r.Line, r.Input)
+		}
+	}
+}
+
+// The empty string is "not configured" (frame-src 'none', no iframe), not an
+// error: a deploy that sets no PORTAL_TTYD_SUFFIX keeps starting. The shapes of
+// platform's environments (the chart default's form and the <ip>.nip.io form)
+// are in the table's baseline rows above; the values are written here as the
+// forms they take, none of them a real host.
+func TestValidateTtydSuffix_EmptyIsNotConfigured(t *testing.T) {
+	if err := ValidateTtydSuffix(""); err != nil {
+		t.Fatalf("ValidateTtydSuffix(\"\") = %v, want nil", err)
+	}
+	for _, v := range []string{"ctf-event.dev", "10.0.0.5.nip.io", "ctf.192.168.64.2.nip.io"} {
+		if err := ValidateTtydSuffix(v); err != nil {
+			t.Errorf("ValidateTtydSuffix(%q) = %v, want nil", v, err)
+		}
+	}
+}
+
+// The error names the length and the grammar, never the value: the value is
+// unvetted and goes to the log.
+func TestValidateTtydSuffix_ErrorDoesNotEchoTheValue(t *testing.T) {
+	for _, v := range []string{"Ctf-Event.dev", "evil.example\u202e", "a.example.\x00", "https://a.example"} {
+		err := ValidateTtydSuffix(v)
+		if err == nil {
+			t.Fatalf("ValidateTtydSuffix(%q) = nil, want an error", v)
+		}
+		msg := err.Error()
+		if strings.Contains(msg, v) || strings.ContainsAny(msg, "\u202e\x00") || !strings.Contains(msg, "not a DNS name") {
+			t.Errorf("ValidateTtydSuffix(%q) = %q: it must say \"not a DNS name\" and carry no part of the value", v, msg)
+		}
 	}
 }
 
