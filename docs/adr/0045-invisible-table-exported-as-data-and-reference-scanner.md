@@ -1,7 +1,7 @@
 # ADR-0045: 不可視文字の表を data file として書き出し、参照 scanner を app に 1 本だけ置く。platform と workspace は scanner を走らせるだけにする
 - Status: **Accepted** (2026-10-26。実装: app#536 = cf34518。review-5x 83 (T3) R1 APPROVE with comments (security)、HIGH 2 は MED に下げて反映済み。消費者 = platform#294 / ws#89 (未 merge。APP_PIN bump と同時か後))
 - Date / Deciders: 2026-10-26 / VP + architect (起草) + security-engineer (R1)
-- 関連: app#511 (security 仕様 F2)、#501 (bidi の gate)、#525 (表と scanner を sourcehygiene の非 test package に置いた)、#529 (= c8b9e0c、ADR-0043 の実装) / ADR-0043 (Option 3・Signpost 3)、ws#86 (review-5x の T2 下限に `internal/sourcehygiene/`)、platform#294 (platform の消費者 PR: wrapper・selftest・CI step・APP_PIN の bump)、ws#89 (workspace の消費者 PR: wrapper・`check-agent-skills.sh` への接続)、app#537 (walk と allowlist の signature 検査と、否定例の共有 data。follow-up)、app#542 (binary の path の閉集合と、Go だけにあった否定例の共有 dir への移動。#537 の follow-up)、platform#290 (ADR-0044。同じ APP_PIN の行を触る)、先例 ADR-0042 / ADR-0044 (app の表を platform が sibling clone から読む)
+- 関連: app#511 (security 仕様 F2)、#501 (bidi の gate)、#525 (表と scanner を sourcehygiene の非 test package に置いた)、#529 (= c8b9e0c、ADR-0043 の実装) / ADR-0043 (Option 3・Signpost 3)、ws#86 (review-5x の T2 下限に `internal/sourcehygiene/`)、platform#294 (platform の消費者 PR: wrapper・selftest・CI step・APP_PIN の bump)、ws#89 (workspace の消費者 PR: wrapper・`check-agent-skills.sh` への接続)、app#537 (walk と allowlist の signature 検査と、否定例の共有 data。follow-up)、platform#290 (ADR-0044。同じ APP_PIN の行を触る)、先例 ADR-0042 / ADR-0044 (app の表を platform が sibling clone から読む)
 
 ## Context
 (file:line は app origin/main e47669f、platform origin/main ca0572a、workspace origin/main e97ed51 の版)
@@ -83,7 +83,6 @@ A。新しい toolchain を足さず、sourcehygiene の非 test package を広�
       - サロゲート (U+D800-DFFF) を書いた行と、U+10FFFF を超える値を書いた行。
       - `{xHH}` で 80 未満を書いた行。
       - 列が 3 つでない行、name が空か重複している行、name が `#` で始まる行。
-  - (e) `binary-paths.tsv` (追記 2026-10-30、app#542): binary と判定した file を置いてよい場所の閉集合。書式と規則は ADR-0051 D1。
 - **D2. rule の語彙は、Go の識別子そのままの閉集合 `always` / `vsAfterSymbol` / `zwjInEmoji` / `bomAtStart` / `loneCR` に、`bidi` を足したもの。**
   - `bidi` は `ruleKind` ではない。`bidiControls` の行を表す。
   - 語彙は Go の識別子と 1 対 1 にし、別名の写像は持たない。
@@ -106,12 +105,6 @@ A。新しい toolchain を足さず、sourcehygiene の非 test package を広�
     - 走査しない条件 (上の「拡張子が `binary-ext.tsv` にある file は走査しない」) は、拡張子が表にあり**かつ**先頭が signature に一致する file に読み替える。拡張子は小文字で、base name の先頭の dot の並びは拡張子にしない (`.woff2` / `..pdf` / `d/.tgz` は拡張子を持たない)。Python の `os.path.splitext` の規則で、Go の gate は同じ規則の `extOf` で合わせる。
     - 置き場の規則: **両実装が持つ挙動の否定例は `testdata/negatives/` に置く**。Go の表に残すのは共有しないもの (上の列挙) と、Go の文言の確認だけにする。plant.tsv の path は 1 segment (`/` を含まない。`.` / `..` でない)。違えば reader の拒否で、`out:` 行を持つ否定例として書く。
     - `--selftest` は `testdata/negatives/` も読む。通常の走査 (`<dir>`) が読むのは 3 file だけで足りる。bundle を部分コピーする消費者を作らない (D8 の追記)。
-  - 追記 (2026-10-30、app#542):
-    - **binary の path の閉集合**: binary (拡張子と signature の両方が合う file) は、`--binary-paths <file>` (ADR-0051 D1) の自分の拡張子の行の prefix の下にあるときだけ走査から外す。下に無い binary は problem で、**text としては走査しない** (赤にする。偽造 signature の置き場を増やさないため)。渡さなければ空の閉集合で、binary は全部 problem。名前を付けた file が読めない、書式が違う、`binary-ext.tsv` に無い ext の行がある、は FAIL。
-    - app の gate は渡す。Go の `TestTrackedFilesHoldNoRawBidiOrInvisibleCharacter` は「tracked の binary 拡張子 ⊆ {.woff2, .tgz}」の tripwire を、`binary-paths.tsv` による同じ判定 (`checkRealTree` が walk の scanner として足す) に置き換えた。flag-guard の app tree の走査も渡す。閉集合の外の `.pdf` / `.woff2` / `.tgz` は赤になる。
-    - 閉集合の判定 (`*` は 1 segment、file は prefix の下、拡張子ごと) は Go と Python で同じ。共有の否定例 (`walk-binpaths-*` と `reader-binpaths-*`) が機械で見る。
-    - 置き場の規則の plant.tsv の path は、1 segment から clean な相対 path (`/` 区切り。空の segment と `.` / `..` の segment を含まない) に広げた。閉集合の下の path を置くため。違えば reader の拒否で、`out:` 行を持つ否定例のまま。
-    - Go の表に残すもの (review-5x 88 R4#3 の follow-up。`invisible_test.go` の `TestCheckTree_Invisible` の 5 case を共有 dir に移した後): Go の文言と escape hint の確認、Go の gate の path (journey.yaml の hint)、bidi の allowlist、source が持てる escape の形、Go の表の形。理由は `negatives_test.go` の header に列挙してある。
   - 出力は path、line、col、code point、名前、理由だけにする。file の中身は出さない。
   - 終了コードは、0 = 違反なし、1 = 違反、data が読めない、走査が 0 件、2 = 使い方の誤り。
 - **D5. app の CI**
@@ -133,7 +126,6 @@ A。新しい toolchain を足さず、sourcehygiene の非 test package を広�
     - 判定に使うのは終了コードだけ。安定を約束する出力は、finding 行の接頭辞 `<path>:<line>:<col> U+XXXX` と、要約行の接頭辞 `OK sourcehygiene-scan:` / `FAIL` だけで、ほかの文言は安定を保証しない。消費者の selftest は終了コードと接頭辞だけで判定する。
     - allowlist の書式は `invisible-allowlist.txt` と同じ。違いは bidi の code point も書けることだけ。
     - data file の書式は面にしない。
-    - 追記 (2026-10-30、app#542): CLI に `--binary-paths <file>` を足した (追加だけ。D8 の規則どおり app 単独 PR)。書式、既定 (渡さなければ空の閉集合 = binary は全部 FAIL)、変更の規則 (app の `binary-paths.tsv` の行と `appBinaryFiles` の追加は app 単独 PR + security) は ADR-0051 D1 が定める。この D8 の本文は変えていない。
     - 追記 (2026-10-27、app#537、review-5x 88、VP 承認 2026-10-27): bundle の単位を「`scripts/sourcehygiene-scan.py` + ディレクトリ `internal/sourcehygiene/testdata/` の全体」にする (3 file から広げる。ws#90 は既にこの単位で `git archive` する)。`--selftest` は `testdata/negatives/` も読み、通常の走査 (`<dir>`) は 3 file だけで足りる。bundle を部分コピーする消費者を作らない。file / dir の移動・rename は面の変更で、追加は許す。
   - 変更の規則:
     - 表の行・case 行の追加 (= 狭める): app 単独 PR + security。
@@ -153,7 +145,6 @@ A。新しい toolchain を足さず、sourcehygiene の非 test package を広�
   - 消費者ごとの binary 拡張子。`.pdf` を app の表に足すので、app の gate も今後 `.pdf` を走査しない。app には今 `.pdf` は無く、`TestTrackedFilesHoldNoRawBidiOrInvisibleCharacter` が「tracked の binary は `.woff2` と `.tgz` だけ」を固定する。PDF の描画内容は文字の規則の対象外で、受け入れる残余とする。
   - `*.pdf` と名付けた text file は、拡張子だけで判定するので走査されずに素通りする。中身が PDF であることの signature 検査は app#537 に残す。
     - 追記 (2026-10-27、app#537): signature 検査を足した。拡張子が表にあり、かつ先頭が signature に一致する file だけを走査しない。`*.pdf` と名付けただけで先頭が `%PDF-` でない text は走査される (`.woff2` と `.tgz` も同じ)。**残る残余: 拡張子が表にあり、先頭が signature に一致する file は、形式として正しいかを問わず (本物でも偽造でも) 走査しない。** signature は誤命名への対策で、偽造への対策ではない (`%PDF-` / `wOF2` は印字可能 ASCII、gzip は 2 byte。`wOF2` で始まる text を `*.woff2` と名付ければ Go と Python の両 gate を素通りする)。app で偽造 `.pdf` を止めるのは、`TestTrackedFilesHoldNoRawBidiOrInvisibleCharacter` の「tracked の binary 拡張子 ⊆ {.woff2, .tgz}」の検査だけで、偽造 `.woff2` / `.tgz` は止まらない。platform の 2 本の PDF の描画内容は文字の規則の対象外のまま。この残余の受容は review-5x 88 (2026-10-27) の R1 (security) が APPROVE with comments として記録した。
-    - 追記 (2026-10-30、app#542): **偽造 signature は、閉集合の外では止まる** (D4。problem で、text としては走査しない)。app は `.woff2` を `internal/scoreboard/view/vendor/fonts/` の下、`.tgz` を `charts/*/charts/` の下 (git mode では 0 件)、`.pdf` を 0 件に限るので、上の「app で偽造 `.pdf` を止めるのは tripwire の検査だけで、偽造 `.woff2` / `.tgz` は止まらない」は、**偽造 `.pdf` / `.woff2` / `.tgz` のどれも、閉集合の外では止まる**に変わった。**残る残余: 閉集合の中の偽造**。font の dir に `wOF2` で始まる text を `*.woff2` と名付けて置けば、素通りする (共有否定例 `walk-binpaths-forged-woff2-inside-is-the-residual` が、この残余を固定している)。入れるには、閉集合の中に binary 拡張子の file を足す diff が要り、レビューで見える。platform の 2 本の PDF の描画内容は文字の規則の対象外のまま。消費者は自リポの閉集合 (`--binary-paths`) を渡し、それ以外の場所の PDF / 偽造を止める。
 - 新しく守るもの:
   - 3 file が Go の値と一致すること (V1)。
   - scanner が data を自分の checkout からだけ読むこと。
@@ -177,7 +168,6 @@ A。新しい toolchain を足さず、sourcehygiene の非 test package を広�
 3. Unicode 版の WARN が Go の更新 1 回分を超えて続く、または So の版の差で case か実 file の判定が割れる → 非 ASCII の So 集合を 4 本目の data file に書き出す (Go の test が固定する)。Python の版は pin しない。
 4. python3 を走らせられない消費者が現れる、または walker を Go の非 test コードに置く必要が出る → ADR-0043 Option 3 で切り出した後に B に移る。
 5. 消費者だけが持つ binary 形式の追加が 2 つ目になる → その形式は app の `binary-ext.tsv` に足さず、消費者側の closed set (自リポの allowlist と同じ review) に移す。
-   - 追記 (2026-10-30、app#542): 状態は 1 つ目 (`.pdf`) のまま。2 つ目は出ていない。`.pdf` の**置き場**は app の `binary-paths.tsv` に無く (app は tracked しない)、消費者が自リポの `--binary-paths` file に持つ。`.pdf` の拡張子と signature は app の `binary-ext.tsv` のまま。2 つ目の形式が出たら、拡張子と signature も消費者側に移す。
 
 ## Verification
 - V1 (Go、`make test` = required check `test`、`internal/sourcehygiene/exported_table_test.go`):
@@ -189,8 +179,7 @@ A。新しい toolchain を足さず、sourcehygiene の非 test package を広�
   - 追記 (2026-10-27、app#537、review-5x 88):
     - (b) は reason に加えて signature も `binaryExt` と比べる (`parseBinaryExt` が 3 列の書式を読む)。
     - (d) は「D1 (d) の行の否定例」= `TestSharedNegatives` の `reader-cases-*` と `reader-binext-*`、「file 単位 (CR・非 ASCII・final newline)」= `TestSharedCaseReader_RejectsMalformed` の 2 つに分かれた。
-    - (f) `TestSharedNegatives` (`negatives_test.go`): `testdata/negatives/` の全 dir を `expect.txt` どおりに判定する (reader の拒否と受理、planted tree の exit と出力。tree の exit:1 は `out:` を 1 行以上持つ)。dir の file 構成が規則どおりでなければ error。件数が床 (実数。67。追記 2026-10-30、app#542: 108) 未満なら error。scanner の `--selftest` が同じ dir 群を同じに判定する。
-    - (g) (追記 2026-10-30、app#542) `binary_paths_test.go`: `TestBinaryPaths_FileIsTheClosedSetAppShips` (file = Go の `appBinaryPaths` の 2 行で、`.pdf` の行が無く、ext が `binaryExt` にある)、`TestBinaryPathRow_Covers` (`*` は 1 segment、prefix は segment 単位、file は prefix の下)、`TestRealGate_RejectsABinaryOutsideTheClosedSet` (gate = `checkRealTree` に閉集合の外の `.pdf` / `.woff2` / `.tgz` を planted すると赤、内側は緑。gate が閉集合に繋がっていることを、forgery の無い実 tree の代わりに固定する)。 `checkAppBinaryFiles` (gate は walk が binary と判定した file が `appBinaryFiles` = `internal/scoreboard/view/vendor/fonts/` の `.woff2` 5 本の名指しと一致することを固定する。git の checkout では tracked の `.tgz` が 0 件であることも見る。Docker の context には `.git` が無いので、後者は flag-guard の `test-sourcehygiene-scan.sh` も `git ls-files '*.tgz'` が空であることを見る)。新しい binary file の追加は `internal/sourcehygiene/**` の reviewed line になる。
+    - (f) `TestSharedNegatives` (`negatives_test.go`): `testdata/negatives/` の全 dir を `expect.txt` どおりに判定する (reader の拒否と受理、planted tree の exit と出力。tree の exit:1 は `out:` を 1 行以上持つ)。dir の file 構成が規則どおりでなければ error。件数が床 (実数。67) 未満なら error。scanner の `--selftest` が同じ dir 群を同じに判定する。
 - V2 (app の required check `flag-guard`):
   - `--selftest` が次を全部確かめる。
     - cases の全行が一致すること。
@@ -201,7 +190,6 @@ A。新しい toolchain を足さず、sourcehygiene の非 test package を広�
     - So + U+FE0F の file が exit 0 になること。
   - app tree の走査は exit 0。
   - 追記 (2026-10-27、app#537、review-5x 88): `--selftest` は `shared_negatives` (V1 (f) と同じ dir 群。件数が床 (実数) 以上) も判定する。`scripts/test-sourcehygiene-scan.sh` の mutant は、signature 検査を外す・signature を file の先頭でなくどこかで探す・拡張子を見ず signature だけで飛ばす・dotfile に拡張子を与える・binary-ext の昇順検査を外す・expect.txt の期待を書き換える (以上 6 本) と、negatives を床未満に削る case が、それぞれ意図した理由で赤になること。control は「negatives の数 = dir の数」を報告する。
-  - 追記 (2026-10-30、app#542): `scripts/test-sourcehygiene-scan.sh` の mutant に、閉集合の検査を外す・`--binary-paths` を読んで捨てる・閉集合の外の binary を text としても走査する・prefix を segment でなく文字列で見る・file が prefix と同じ深さで通る・`*` が 1 segment でない・他の拡張子の行が覆う・`binary-ext.tsv` に無い ext の行を通す・行の順序を見ない・`..` の segment を通す (以上 10 本) と、path 規則を binary の拡張子の file で飛ばす (移した `walk-nonascii-path-of-a-woff2` で赤) が足された。それぞれ意図した共有否定例で赤になる。control は「app tree が `binary-paths.tsv` の下で 0 件」と「空の閉集合では赤 (app は `.woff2` を tracked する)」を報告する。flag-guard の app tree の走査は `--binary-paths internal/sourcehygiene/testdata/binary-paths.tsv` を渡す。 既定 (`--binary-paths` なし) は空の閉集合で、binary は全部 FAIL にした (消費者が pin する前の変更。mutant `binary-paths-default-trusts` が `walk-binary-without-a-closed-set-is-refused` で赤にする)。control に、flag なしの app tree は赤、flag を 2 回は exit 2、非 ASCII / CR を含む `--binary-paths` file は FAIL、が加わった。
 - V3 (platform、後続 PR。merge されるまで機械の確認は無い): `identity-selftest` で `check-source-hygiene.sh` の本体と `--selftest` を回す。
   - selftest は、一時コピーに U+200B / U+E0041 / U+202E / 文字の直後の U+FE0F / 単独の CR を入れると FAIL になることを確かめる。
   - So + U+FE0F は PASS。scanner が無い、0 件、dead な allowlist 行は FAIL。

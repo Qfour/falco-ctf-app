@@ -9,7 +9,8 @@
 //
 //   - internal/ttydproxy: FrameAncestorsPattern composes Body (the host of the
 //     FRAME_ANCESTORS source, ADR-0044 D2);
-//   - the scoreboard's PORTAL_TTYD_SUFFIX start-up check (app#532, not yet): Valid;
+//   - the scoreboard's PORTAL_TTYD_SUFFIX start-up check (app#532): Valid, through
+//     view.ValidateTtydSuffix (the empty value is "not configured" and passes);
 //   - charts/ctf-user/deploy-user.sh: DNS_SUFFIX_PATTERN / DNS_SUFFIX_MAX_LEN, a shell
 //     copy of Pattern / MaxLen that dnsname_test.go holds equal (it is the grammar of
 //     --dns-suffix and --app-host).
