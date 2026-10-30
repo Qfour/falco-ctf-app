@@ -1,5 +1,5 @@
 # ADR-0050: 運営 (ADMIN_EMAILS) の要求は seat の Pod に渡さない (/check-workspace の admin 例外を外し I8 を締める)。challenge コンテナの capability は drop ALL + 監査した add にする
-- Status: Proposed (段階制。S1 = D1 / D4、S2 = D2。S1 の実装 PR の merge で Accepted にし、D2 は S2 の merge まで効力を持たない)
+- Status: **Accepted** (2026-10-30。S1 = D1 / D4 の実装 app#557 = 9368993。段階制: D2 は S2 の merge まで効力を持たない)
 - Date / Deciders: 2026-10-30 / VP + architect (起草) + security-engineer。運営の導線が変わるので CEO に報告する
 - 関連: app#551、platform#301 (private。判断の詳細はそこにあり、本 ADR には写さない)、ADR-0034 (D3 / D7 / V9 の /check-workspace の admin に関する文言を限定 supersede)、ADR-0049 (Proposed、app#556、未 merge)、ADR-0048、conventions I8 / SecurityContext 節、platform operations.md §6.7
 ## Context
