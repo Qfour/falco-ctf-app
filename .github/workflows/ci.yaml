@@ -307,15 +307,19 @@ jobs:
   #   token 無しで落ちるはずだった対象であり、範囲の拡大ではない。
   #
   #   実効的な CVE ゲートは 2 段: (1) は **detective** (post-merge alert)、
-  #   (2) が唯一の **preventive** ゲート:
+  #   (2) は PR 前の検査 (release の gate ではない。2026-10-25 に位置づけを
+  #   改めた。release の gate は platform の `scripts/scan-release-images.sh`、
+  #   ADR-WS-0010):
   #     1. merge 後の `push: branches: [main]` トリガで同じ build job が
   #        secrets 付きで再実行され、実スキャンが走る (このワークフロー内で
   #        既に成立している経路 — 新設ではない)。ただしこの時点で merge は
   #        既に完了しているため、ここでの scan 失敗は当該 commit が main に
   #        載ることを止められない (detective のみ)
-  #     2. dev-flow.md の既定どおり `make scan TAG=local` が prod deploy 前の
-  #        **唯一の preventive ゲート** (CI-free prod 方針。CI scan は「安全網」
-  #        と明記済み)
+  #     2. dev-flow.md の既定どおり `make scan TAG=local` は PR 前の検査
+  #        (CI-free prod 方針。CI scan は「安全網」と明記済み)。prod に出す
+  #        image の preventive ゲートは release の手順 (push する image を
+  #        scan し、不合格なら push しない: platform の
+  #        `scripts/scan-release-images.sh`、ADR-WS-0010)
   #   残余リスク: merge 直後〜(1) 完了までの短い窓で、未スキャンの commit が
   #   main に載る。security-engineer レビュー済み (2026-08-21, PASS with
   #   conditions)。
