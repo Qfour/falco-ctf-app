@@ -237,9 +237,9 @@ func TestV9_AdminHeadersPassThrough(t *testing.T) {
 }
 
 // ADR-0050 D1 (V1): an ADMIN_EMAILS identity on /check-workspace is a 403 whose
-// body is the fixed string and whose headers carry NO identity (the ingress
-// hands the request to the seat's Pod only on a 200, and an operator's
-// identity must not travel with it), for every seat host, with or without
+// body is the fixed string and whose headers carry NO identity (least
+// privilege: an operator identity is not passed to a seat), for every seat
+// host, with or without
 // capitals; the participant and admin doors still answer 200 to the same
 // identity. Each refusal moves auth_policy_checks_total{workspace,
 // admin_refused} by exactly one and no other workspace result.

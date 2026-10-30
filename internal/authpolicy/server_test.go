@@ -190,8 +190,7 @@ func TestCheck_EmailPrefixBoundary(t *testing.T) {
 }
 
 // ADR-0050 D1: an ADMIN_EMAILS member does NOT reach a user's workspace host.
-// The workspace Ingress hands a request to the seat's Pod only on a 200, so
-// the operator gets 403 (not 401: no sign-in loop). This was a 200 before
+// The operator gets 403 (not 401: no sign-in loop). This was a 200 before
 // ADR-0050 (the operator override).
 func TestCheck_Admin_WorkspaceHost_Returns403(t *testing.T) {
 	upstream := fakeOAuth2Proxy(t, func(_ *http.Request) (int, string) {
