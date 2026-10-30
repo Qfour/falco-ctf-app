@@ -1,0 +1,2 @@
+exit:1
+out:charts/charts/d.tgz: binary file (.tgz) outside the closed set of binary paths

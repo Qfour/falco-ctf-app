@@ -1,2 +1,2 @@
 exit:1
-out:one path segment
+out:clean relative path
