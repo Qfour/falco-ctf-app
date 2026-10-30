@@ -8,7 +8,7 @@ require (
 	github.com/dop251/goja v0.0.0-20261001121453-e1fc788e4f41
 	github.com/prometheus/client_golang v1.25.0
 	github.com/yuin/goldmark v1.8.6
-	golang.org/x/net v0.61.0
+	golang.org/x/net v0.62.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.37.1
 	k8s.io/apimachinery v0.37.1
