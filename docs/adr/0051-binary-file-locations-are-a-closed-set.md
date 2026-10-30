@@ -1,5 +1,5 @@
 # ADR-0051: binary と判定した file の置き場を閉集合にし、閉集合の外の binary は FAIL にする。閉集合を渡さない走査は空の閉集合 (strict) とする (ADR-0045 の D4 の走査しない条件・D8 の面と変更の規則・残余を限定 supersede)
-- Status: **Proposed** (2026-10-30。Accepted の条件: app#554 が main に入り、V1〜V4 が緑。V5 (消費者) は platform#294 と ws#92 (ws の follow-up issue) の merge で確かめる)
+- Status: **Accepted** (2026-10-30。実装: app#554 = 492af90。review-5x 93 (T3) R1 APPROVE with comments、architect = R4 (yes, if、反映済み)。V1〜V4 緑 (否定例 108 dir、mutant 12、app tree 5 binary 0 problems)。V5 (消費者) は platform#294 / ws#92 の merge で確かめる)
 - Date / Deciders: 2026-10-30 / VP + architect (起草) + security-engineer (R1)
 - 関連: app#542 (issue)、app#554 (実装 PR)、ADR-0045 (D1 (c)・D4・D8・Consequences・Signpost 5・V1 (f))、app#537 (= #541、signature 検査と共有否定例)、review-5x 88 (#541) / 93 (#554)、platform#294 (platform の消費者。未実装)、ws#89 / ws#90 (= 62dbc6e、workspace の消費者。実装済み)、ws#92 (ws の follow-up issue。自リポの閉集合と `.claude/worktrees/*/`)、ADR-0043 Signpost 3 (sourcehygiene の非 test package は述語だけ)
 
