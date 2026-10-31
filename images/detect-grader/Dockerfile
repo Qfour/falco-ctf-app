@@ -30,7 +30,7 @@ FROM falcosecurity/falco:0.44.1@sha256:d0cfe422d6ac0e0f20857798f46c7d7273210e1b0
 # 0.45.0 は 2026-09-21 に出ているが上げない: 上の通り Falco の版を上げるときは
 # captures の再録と cluster の Falco (platform の chart) との整合を同時に取る必要が
 # あり、CVE 修正のために単独で上げると grading が cluster の検知とずれる。追跡は
-# follow-up issue (detect-grader を falco 0.45.0 へ)。
+# app#344 (detect-grader を falco 0.45.0 へ)。この据え置き理由の見直しは app#567。
 # この base は wolfi/apko 由来で apk toolchain を持つ (usr/bin/apk + usr/lib/apk/db を
 # 確認済み)。libssl3/libcrypto3 3.6.3-r0 には CVE-2026-14456 (fix 3.6.3-r5) /
 # CVE-2026-54876 (fix 3.6.3-r4) があり、明示 upgrade で解消する。
@@ -55,20 +55,27 @@ FROM falcosecurity/falco:0.44.1@sha256:d0cfe422d6ac0e0f20857798f46c7d7273210e1b0
 #     upgrade すると curl の件と同じく OpenSSL 3 (libcrypto3 3.6.4) と 4 が同居する。
 #   - 実際に TLS の trust store として読まれる /etc/ssl/certs/ca-certificates.crt は
 #     ca-certificates-bundle 側の所有 (`apk info -W` で確認)。bundle は依存を持たない
-#     ので exact pin で単独 upgrade できる (上の pin)。
-# 他の pin (Sysdig suggested fix に厳密一致):
-#   ca-certificates-bundle  20260413-r0 -> 20260909-r3 (2026-10-31 から main CI の
-#                    `build (detect-grader) / scan` が赤: ca-certificates /
-#                    ca-certificates-bundle 20260413-r0、CRITICAL 1 / MEDIUM 1)。
+#     ので exact pin で単独 upgrade できる (下の pin)。
+# 他の pin (CI の scan / Sysdig の suggested fix 版に厳密一致):
+#   ca-certificates-bundle  20260413-r0 -> 20260909-r3 (CI の scan の fix 版)
 #   zlib             1.3.2-r3 -> 1.3.2.1_rc20260601-r0
 #   glibc / glibc-locale-posix / ld-linux / libcrypt1   2.43-r8 -> 2.43-r10
-#   libnghttp2-14    1.69.0-r0 -> 1.70.0-r0 (curl 除去後も残る場合のみ効く)
 RUN apk del --no-cache curl libcurl-openssl4 ca-certificates \
  && apk add --no-cache --upgrade \
         ca-certificates-bundle=20260909-r3 \
         libssl3=3.6.4-r0 libcrypto3=3.6.4-r0 \
         zlib=1.3.2.1_rc20260601-r0 \
-        glibc=2.43-r10 glibc-locale-posix=2.43-r10 ld-linux=2.43-r10 libcrypt1=2.43-r10
+        glibc=2.43-r10 glibc-locale-posix=2.43-r10 ld-linux=2.43-r10 libcrypt1=2.43-r10 \
+ && ! apk info -e curl >/dev/null \
+ && ! apk info -e libcurl-openssl4 >/dev/null \
+ && ! apk info -e ca-certificates >/dev/null \
+ && ! apk info -e openssl-4.0-libcrypto >/dev/null \
+ && ! ls /usr/lib/libcrypto.so.4* /lib/libcrypto.so.4* >/dev/null 2>&1
+# 上の 5 行は build 時の assert (失敗なら build が落ちる。ttyd の app#517 と同型)。curl /
+# libcurl-openssl4 / ca-certificates package は置かない。OpenSSL 4 の libcrypto
+# (package `openssl-4.0-libcrypto` / `libcrypto.so.4`) も置かない (OpenSSL 3 との同居を
+# 作らない)。誰かが apk add に ca-certificates / curl を戻す (または引き込む package を
+# 足す) と、ここで止まる。外向き TLS が要る道具を足すときは、先に消費者をここに書く。
 
 # Create the non-root grader user (the wolfi/apko base ships no 65532 user).
 # Done at build time as root; the container then runs as 65532 (USER below and
