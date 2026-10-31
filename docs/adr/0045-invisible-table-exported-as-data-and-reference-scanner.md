@@ -116,11 +116,14 @@ A。新しい toolchain を足さず、sourcehygiene の非 test package を広�
   - CI は `identity-selftest` の 1 step にする。ここが APP_PIN の唯一の置き場だからである (C5)。
   - clone に scanner が無ければ FAIL にする。
   - platform は文法も表も持たない。
+  - 追記 (2026-10-31、app#561。消費者の実名): platform の script は `scripts/check-source-hygiene.sh` ではなく `scripts/check-hidden-chars.sh` で、selftest は `scripts/test-check-hidden-chars.sh` になった (platform#306)。workspace は `scripts/claude/check-hidden-chars.sh` (ws#90 / ws#99) である。名前を 1 つに揃えるため、`check-source-hygiene.sh --selftest` と `source-hygiene-allowlist.txt` は使わなかった (allowlist の実名は platform が `scripts/sourcehygiene-allowlist.txt`、workspace が `scripts/claude/hidden-chars-allowlist.txt`)。
+  - 追記 (2026-10-31、app#561。SOPS 暗号文の除外、platform#306): 走査から外すのは、拡張子が SOPS の暗号文のもの (`.sops.yaml` など、tree に実在するものだけ) で、**かつ** top-level の `sops:` metadata と `ENC[` の両方を持つ file だけである。名前だけでは外さない (満たさない file は普通に走査する。fail-closed)。外した file は出力に並べる。残余 = SOPS YAML の key 名は平文なので、外した file の key 名に入った生の不可視文字は見ない。除外の条件を変えるのは security review である。
 - **D7. workspace**
   - `scripts/claude/check-hidden-chars.sh` が、app の `refs/remotes/origin/main` から `git archive` で scanner と testdata を一時 dir に取り出す。
   - 取り出すのを worktree の checkout からにしない。worktree は feature branch のことがあるため。
   - 取り出した scanner を、tracked file と untracked の `.claude/` に当てる。auto-memory の dir があれば、それにも当てる。
   - `check-agent-skills.sh` の結果判定の前から呼ぶ。SessionStart hook にするかは CEO 判断。
+  - 追記 (2026-10-31、app#561。ws#99、review-5x 98 R1 で確認): 実装は、untracked の走査を `.claude/` 直下の各要素のうち `worktrees` (dir のみ。同名の file は走査する) を除いて行い、tracked の file は `git ls-files` で従来どおり走査する (`.claude/worktrees/` の下の tracked file は走査される)。理由 = そこにあるのは別リポの checkout で、各リポ自身の gate が守る。残るリスク = worktree の checkout の中の、commit していない text は、どの gate からも走査されない。これは受け入れる (代替 = その checkout 自身の `--binary-paths` と allowlist で別に走査する)。
 - **D8. 消費者が読む面と、変更の規則**
   - 読む面: bundle の配置、scanner の CLI (`--selftest` / `<dir>` / `--allowlist <file>` / `--also-untracked <rel>`)、終了コード、allowlist の書式、出力の接頭辞。
     - bundle の配置 = `scripts/sourcehygiene-scan.py` と `internal/sourcehygiene/testdata/{hidden-ranges,hidden-cases,binary-ext}.tsv` の repo 相対の path。data の path の移動・rename は面の変更で、追加だけを許す (変えるなら新しい path)。
@@ -194,6 +197,7 @@ A。新しい toolchain を足さず、sourcehygiene の非 test package を広�
 - V3 (platform、後続 PR。merge されるまで機械の確認は無い): `identity-selftest` で `check-source-hygiene.sh` の本体と `--selftest` を回す。
   - selftest は、一時コピーに U+200B / U+E0041 / U+202E / 文字の直後の U+FE0F / 単独の CR を入れると FAIL になることを確かめる。
   - So + U+FE0F は PASS。scanner が無い、0 件、dead な allowlist 行は FAIL。
+  - 追記 (2026-10-31、app#561): 消費者の実名は D6 の追記を参照 (`check-hidden-chars.sh` 系。`check-source-hygiene.sh --selftest` は存在しない)。
 - V4 (workspace、後続 PR): 一時 file を混ぜると `check-hidden-chars.sh --selftest` が exit 1 を観測する。`origin/main` に scanner が無いときと、ref が無いときも exit 1 になる。`check-agent-skills.sh` は wrapper の非ゼロで FAIL する。workspace に CI は無いので、PR 本文に出力を貼る。
 - V5: セッションの開始時に workspace の検査が必ず走ることを確かめる機械は無い。hook 化は CEO 判断で、それまでは VP の運用規律である。
 
