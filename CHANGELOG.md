@@ -21,9 +21,12 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
 
 ### Security
 
-## [2026.11.01] - 2026-11-01
+- **detect-grader から `ca-certificates` package を除き、`ca-certificates-bundle` を 20260909-r3 に pin した (app#566、PATCH)**。main CI の `build (detect-grader) / scan` が 2026-10-31 から赤だった (`ca-certificates` / `ca-certificates-bundle` 20260413-r0、CRITICAL 1 / MEDIUM 1) のを解消する。base の `falcosecurity/falco:0.44.1` は digest 据え置き (tag の digest が変わっていない)。`ca-certificates` package は grader が使わず (update-ca-certificates / c_rehash と個別 .crt だけ。grader は falco replay のみで network 無し)、20260909-r2 以降は `libcrypto.so.4` に依存して OpenSSL 3 と 4 が同居するため、pin せず除去した。TLS の trust store (`/etc/ssl/certs/ca-certificates.crt`) は依存の無い `ca-certificates-bundle` の所有で、exact pin で単独 upgrade する。同じ RUN に build 時の不在 assert (curl / libcurl-openssl4 / ca-certificates / OpenSSL 4 の libcrypto) を足し、ttyd (app#517) と同型にした。
+  - **Upgrade note**: v2026.11.1 から build した detect-grader にはこの CVE が残る。stand-up は本変更を含む次の release tag で行うこと (tag は CEO)。
 
-> SemVer 区分 (`docs/RELEASING.md` の bump 基準): この版 (`v2026.10.25..v2026.11.01`、33 commit) は MAJOR の契約集合
+## [2026.11.1] - 2026-11-01
+
+> SemVer 区分 (`docs/RELEASING.md` の bump 基準): この版 (`v2026.10.25..v2026.11.1`、33 commit) は MAJOR の契約集合
 > (image 命名 / path / `/falco/events` payload / cookie domain) を変えない。下の ADR-0050 S1 (`/check-workspace` の admin 200 -> 403) と
 > ADR-0048 (cross-origin WebSocket Upgrade 403)、ADR-0044 / 0047 (運用者入力の受理集合の縮小) は fail-closed 側の変更で PATCH。
 
@@ -253,5 +256,5 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
   compare リンク参照定義。リリース時に vX.Y.Z を最新タグへ更新すること
   (docs/RELEASING.md の手順参照)。初期は最初のタグを打つまでプレースホルダ。
 -->
-[Unreleased]: https://github.com/Qfour/falco-ctf-app/compare/v2026.11.01...HEAD
-[2026.11.01]: https://github.com/Qfour/falco-ctf-app/compare/v2026.10.25...v2026.11.01
+[Unreleased]: https://github.com/Qfour/falco-ctf-app/compare/v2026.11.1...HEAD
+[2026.11.1]: https://github.com/Qfour/falco-ctf-app/compare/v2026.10.25...v2026.11.1
