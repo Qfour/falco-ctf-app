@@ -47,12 +47,25 @@ FROM falcosecurity/falco:0.44.1@sha256:d0cfe422d6ac0e0f20857798f46c7d7273210e1b0
 #   - curl 8.22.0 へ `--upgrade` すると依存 33 pkg が動き、openssl 4.0 の
 #     libcrypto/libssl と provider-legacy が新規に入って OpenSSL 3 と 4 が同居する。
 #     除去すれば curl/libcurl の High/Medium が丸ごと消え、この問題も起きない。
+# ca-certificates (package) は pin せず **除去**する (curl と同じ流儀、ttyd の app#517 と同型):
+#   - 同 package が持つのは update-ca-certificates / c_rehash と mozilla の個別 .crt だけ。
+#     grader はどれも呼ばない (grade.sh は falco replay のみ、network 無し)。他の package
+#     も依存していない (`apk info -r ca-certificates` = 空)。
+#   - 20260909-r2 以降の ca-certificates は `so:libcrypto.so.4` に依存する。pin して
+#     upgrade すると curl の件と同じく OpenSSL 3 (libcrypto3 3.6.4) と 4 が同居する。
+#   - 実際に TLS の trust store として読まれる /etc/ssl/certs/ca-certificates.crt は
+#     ca-certificates-bundle 側の所有 (`apk info -W` で確認)。bundle は依存を持たない
+#     ので exact pin で単独 upgrade できる (上の pin)。
 # 他の pin (Sysdig suggested fix に厳密一致):
+#   ca-certificates-bundle  20260413-r0 -> 20260909-r3 (2026-10-31 から main CI の
+#                    `build (detect-grader) / scan` が赤: ca-certificates /
+#                    ca-certificates-bundle 20260413-r0、CRITICAL 1 / MEDIUM 1)。
 #   zlib             1.3.2-r3 -> 1.3.2.1_rc20260601-r0
 #   glibc / glibc-locale-posix / ld-linux / libcrypt1   2.43-r8 -> 2.43-r10
 #   libnghttp2-14    1.69.0-r0 -> 1.70.0-r0 (curl 除去後も残る場合のみ効く)
-RUN apk del --no-cache curl libcurl-openssl4 \
+RUN apk del --no-cache curl libcurl-openssl4 ca-certificates \
  && apk add --no-cache --upgrade \
+        ca-certificates-bundle=20260909-r3 \
         libssl3=3.6.4-r0 libcrypto3=3.6.4-r0 \
         zlib=1.3.2.1_rc20260601-r0 \
         glibc=2.43-r10 glibc-locale-posix=2.43-r10 ld-linux=2.43-r10 libcrypt1=2.43-r10
