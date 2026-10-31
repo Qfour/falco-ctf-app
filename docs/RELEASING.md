@@ -42,6 +42,7 @@ CI は非稼働 (CI-free 恒久方針) だが、**リリース時には必ずタ
    git tag vX.Y.Z
    git push origin vX.Y.Z
    ```
+   > ⚠️ **タグ名は厳格 SemVer** (`release.yml` の検証: 各数字に leading zero 不可)。日付型なら `v2026.11.1` と書く。`v2026.11.01` は fail する (2026-11-01 に踏んだ)。
    > ⚠️ **タグ push は CEO のみ。** G1 の tag ruleset (`v*`) で非 CEO の作成/更新は拒否される。
 4. **Release は自動生成される (`.github/workflows/release.yml`)**
    `vX.Y.Z` タグを push すると `release.yml` ワークフローが発火し、Release を **自動生成する**。
