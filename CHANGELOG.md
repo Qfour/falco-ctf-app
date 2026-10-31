@@ -21,9 +21,9 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
 
 ### Security
 
-## [2026.11.01] - 2026-11-01
+## [2026.11.1] - 2026-11-01
 
-> SemVer 区分 (`docs/RELEASING.md` の bump 基準): この版 (`v2026.10.25..v2026.11.01`、33 commit) は MAJOR の契約集合
+> SemVer 区分 (`docs/RELEASING.md` の bump 基準): この版 (`v2026.10.25..v2026.11.1`、33 commit) は MAJOR の契約集合
 > (image 命名 / path / `/falco/events` payload / cookie domain) を変えない。下の ADR-0050 S1 (`/check-workspace` の admin 200 -> 403) と
 > ADR-0048 (cross-origin WebSocket Upgrade 403)、ADR-0044 / 0047 (運用者入力の受理集合の縮小) は fail-closed 側の変更で PATCH。
 
@@ -252,5 +252,5 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
   compare リンク参照定義。リリース時に vX.Y.Z を最新タグへ更新すること
   (docs/RELEASING.md の手順参照)。初期は最初のタグを打つまでプレースホルダ。
 -->
-[Unreleased]: https://github.com/Qfour/falco-ctf-app/compare/v2026.11.01...HEAD
-[2026.11.01]: https://github.com/Qfour/falco-ctf-app/compare/v2026.10.25...v2026.11.01
+[Unreleased]: https://github.com/Qfour/falco-ctf-app/compare/v2026.11.1...HEAD
+[2026.11.1]: https://github.com/Qfour/falco-ctf-app/compare/v2026.10.25...v2026.11.1
