@@ -47,9 +47,10 @@ Colima は host repo path を VM に共有しないため、**ホストの `go` 
 ## HTTP ハンドラの作法
 
 - レスポンスは `httpx.WriteJSON(w, status, body)`。ヘッダは body を書く**前**に確定させる
-- 入力検証は既存の狭い validator に倣う (seat は `identity.ValidSeat`、challenge id は
-  `challengeid.Valid`、board id は `board.ValidID`: それぞれ文法の 1 定義で、
-  `pattern` を自前で書かない)。サイズ上限と文字集合を明示する
+- 入力検証は既存の 1 定義 validator に倣う: seat は `identity.ValidSeat` / `identity.SeatPattern`、
+  challenge id は `challengeid.Valid` / `challengeid.Pattern` (app #468)、board id は `board.ValidID` (app #466)。
+  サイズ上限と文字集合を明示する。文法は 1 定義を import する。写しを作らない。
+  spec の `pattern` を足すときは `internal/apispec/specparity` の識別子 pattern の表に行を足す (app #478)
 - 認可は既存のゲート関数を通す (`isAdmin` / `selfOrAdmin` 系)。
   **ハンドラ内でメールアドレスを自前照合しない** (I8 の緩和になる)
 - oapi 生成型 (`internal/*/oapi`) を手書きしない。spec を変えて `make gen`
