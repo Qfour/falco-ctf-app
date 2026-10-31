@@ -2,6 +2,7 @@
 - Status: **Accepted** (2026-10-30。実装: app#554 = 492af90。review-5x 93 (T3) R1 APPROVE with comments、architect = R4 (yes, if、反映済み)。V1〜V4 緑 (否定例 108 dir、mutant 12、app tree 5 binary 0 problems)。V5 (消費者) は platform#294 / ws#92 の merge で確かめる)
 - Date / Deciders: 2026-10-30 / VP + architect (起草) + security-engineer (R1)
 - 関連: app#542 (issue)、app#554 (実装 PR)、ADR-0045 (D1 (c)・D4・D8・Consequences・Signpost 5・V1 (f))、app#537 (= #541、signature 検査と共有否定例)、review-5x 88 (#541) / 93 (#554)、platform#294 (platform の消費者。未実装)、ws#89 / ws#90 (= 62dbc6e、workspace の消費者。実装済み)、ws#92 (ws の follow-up issue。自リポの閉集合と `.claude/worktrees/*/`)、ADR-0043 Signpost 3 (sourcehygiene の非 test package は述語だけ)
+- 追記 (2026-10-31、app#561): V5 の消費者 = workspace は ws#99 (閉集合 `scripts/claude/hidden-chars-binary-paths.tsv`。単独の `*` の行は消費者の方針で拒み、行の健全性検査は消費者の bash で行い、app#562 で scanner に移す予定)、platform は platform#306 (閉集合 `scripts/sourcehygiene-binary-paths.tsv`)。C4 の workspace の記述 (`.claude/` の下を全部走査する) は ws#99 以降は古い (`.claude/worktrees/` の dir は走査しない。ADR-0045 D7 の追記を参照)。消費者の script 名の実名は ADR-0045 D6 の追記を参照。
 
 ## Context
 (file:line は app origin/main 05199fa、platform origin/main ca0572a、workspace origin/main 62dbc6e の版。app#554 の作業 tree は動いているので、名前で参照する)
@@ -75,7 +76,7 @@
   - git mode (`.git` のある checkout) では、tracked の `.tgz` を 0 件に固定する。Go の gate (`checkAppBinaryFiles`) は `.git` があれば見る。Docker の経路には `.git` が無いので、harness (`scripts/test-sourcehygiene-scan.sh`) が `git ls-files '*.tgz'` の空を確かめる。
   - 帰結: 閉集合の dir に binary を 1 本足す PR は、`internal/sourcehygiene/**` の reviewed line (= security 必須の path) になる。閉集合の中の偽造は、app では「新しい file 名を足す diff」が要る残余に縮む。
 - **D5. 消費者は自リポの閉集合を `--binary-paths` で渡す。**
-  - platform (platform#294。ADR-0045 D6 に足す): wrapper `scripts/check-source-hygiene.sh` は自リポの閉集合 file を `--binary-paths` で渡す。file が無ければ FAIL (scanner も、名前を付けた file が無ければ FAIL にする)。閉集合は deck の PDF 2 本の dir に限る (C4。`events/` のような浅い prefix にしない)。行の追加は自リポの allowlist と同じ security review。
+  - platform (platform#294。ADR-0045 D6 に足す): wrapper `scripts/check-source-hygiene.sh` は自リポの閉集合 file を `--binary-paths` で渡す。file が無ければ FAIL (scanner も、名前を付けた file が無ければ FAIL にする)。閉集合は deck の PDF 2 本の dir に限る (C4。`events/` のような浅い prefix にしない)。行の追加は自リポの allowlist と同じ security review。 (script の実名は ADR-0045 D6 の追記を参照。)
   - workspace (ADR-0045 D7 に足す。ws#92): 今は binary 0 件なので flag 無し (= 空の閉集合) で緑。binary を tracked するか、`.claude/worktrees/` に checkout を置く運用を始める前に、自リポの閉集合 file を `--binary-paths` で渡すか、`.claude/worktrees/*/` を走査の対象から外すかを、その issue で決める (外すなら ADR-0045 D7 の「.claude/ の下を全部」を変える決定になる)。
   - 消費者の selftest は、閉集合の外に置いた signature 付きの binary が exit 1 になることを観測する (V5)。
   - 消費者 PR の review-5x は、flag が渡っていることと、閉集合が過大でないこと (prefix が binary の dir より浅くないこと) を確かめる。
