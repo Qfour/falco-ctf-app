@@ -528,6 +528,71 @@ def seccomp_case_container_level_ok_does_not_hide_a_sibling(s):
     want_one_error(errors, "containers[b]", "Localhost")
 
 
+def seccomp_case_flow_mapping_security_context_is_a_failure(s):
+    text = pod_text(
+        POD_SC_OK
+        + "  containers:\n    - name: a\n      securityContext: {privileged: true, seccompProfile: {type: Unconfined}}\n"
+    )
+    errors, out = judge(s, text)
+    want_one_error(errors, "containers[a]", "securityContext is not a mapping")
+    assert "ok:" not in out, out
+
+
+def seccomp_case_flow_mapping_seccomp_profile_is_a_failure(s):
+    text = pod_text(
+        POD_SC_OK
+        + "  containers:\n    - name: a\n      securityContext:\n        seccompProfile: {type: Unconfined}\n"
+    )
+    errors, out = judge(s, text)
+    want_one_error(errors, "containers[a]", "malformed seccompProfile")
+    assert "ok:" not in out, out
+
+
+def seccomp_case_empty_flow_mapping_security_context_is_unset(s):
+    text = pod_text(POD_SC_OK + "  containers:\n    - name: a\n      securityContext: {}\n")
+    errors, out = judge(s, text)
+    assert errors == [], errors
+    assert "(source: pod (inherited))" in out, out
+
+
+def seccomp_case_pod_flow_mapping_security_context_is_a_failure(s):
+    text = pod_text(
+        "  securityContext: {seccompProfile: {type: RuntimeDefault}}\n  containers:\n    - name: a\n      image: x\n"
+    )
+    errors, _ = judge(s, text)
+    assert any("spec.securityContext is not a mapping" in e for e in errors), errors
+
+
+def seccomp_case_unnamed_container_is_a_failure(s):
+    for body in (
+        "    - image: x\n",
+        "    - name: \"\"\n      image: x\n",
+        "    - name:\n      image: x\n",
+    ):
+        errors, out = judge(s, pod_text(POD_SC_OK + "  containers:\n" + body))
+        want_one_error(errors, "containers entry has no usable name")
+        assert "ok:" not in out, (body, out)
+
+
+def seccomp_case_unnamed_init_container_is_a_failure(s):
+    text = pod_text(
+        POD_SC_OK + "  initContainers:\n    - image: x\n  containers:\n    - name: a\n      image: x\n"
+    )
+    errors, out = judge(s, text)
+    want_one_error(errors, "initContainers entry has no usable name")
+    assert "ok: containers[a]" in out, out
+
+
+def seccomp_case_effective_type_refuses_a_flow_mapping_security_context(s):
+    # effective_seccomp_type must not read an opaque securityContext as "unset"
+    # even when it is called without check_pod_spec in front of it.
+    try:
+        got = s.effective_seccomp_type({"securityContext": "{seccompProfile: {type: Unconfined}}"}, {})
+    except s.PodShapeError:
+        return
+    raise AssertionError(f"no PodShapeError, got {got!r}")
+
+
 SECCOMP_CASES = [(n[len("seccomp_case_"):], f) for n, f in sorted(globals().items()) if n.startswith("seccomp_case_")]
 
 
@@ -625,7 +690,7 @@ SECCOMP_MUTANTS = [
      'errors.append(f"{chart}: {label}: {item.msg}")',
      'pass'),
     ("the container-level seccompProfile is ignored",
-     'if isinstance(csc, dict) and "seccompProfile" in csc:',
+     'if "seccompProfile" in csc:',
      'if False:'),
     ("the Pod-level profile is trusted without reading its type",
      'return sp.get("type"), "pod (inherited)"',
@@ -633,6 +698,21 @@ SECCOMP_MUTANTS = [
     ("a malformed container seccompProfile is read as fine",
      'return None, "container (malformed seccompProfile)"',
      'return "RuntimeDefault", "container (malformed seccompProfile)"'),
+    ("a container securityContext that is not a mapping is not an error",
+     'errors.append(f"{chart}: {label}: {group}[{cname}] securityContext is not a mapping")',
+     'pass'),
+    ("a container securityContext that is not a mapping is read as unset",
+     '            csc = security_context(c)\n        except PodShapeError:',
+     '            csc = {}\n        except PodShapeError:'),
+    ("effective_seccomp_type reads the securityContext without the strict reader",
+     'csc = security_context(container)',
+     'csc = container.get("securityContext") if isinstance(container.get("securityContext"), dict) else {}'),
+    ("an unnamed container is not an error",
+     'errors.append(f"{chart}: {label}: {group} entry has no usable name: {cname!r}")',
+     'pass'),
+    ("an unnamed container check only looks for a missing key",
+     'if not isinstance(cname, str) or cname == "":',
+     'if "name" not in c:'),
     ("a Pod spec that is not a mapping is not an error",
      'errors.append(f"{chart}: {label}: pod spec missing or unparsable")',
      'pass'),

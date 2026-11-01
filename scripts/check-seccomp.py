@@ -38,6 +38,13 @@ chartparse.py, a minimal, intentionally *strict* YAML-subset reader shared
 with the other chart checks (its docstring lists what it does and does not
 support). Anything it cannot confidently parse raises YamlSubsetError, which
 is always treated as a FAIL — never a silent skip.
+
+FAIL-CLOSED READS
+-----------------
+A container's / Pod's `securityContext` is read through
+chartparse.security_context(): a value that is not a block mapping (and not
+`{}`) is a FAIL, and so is a container whose `name` is missing or not a
+non-empty string. Neither is judged as "unset".
 """
 import re
 import subprocess
@@ -54,10 +61,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
 
 from chartparse import (  # noqa: E402
     Container,
+    PodShapeError,
     YamlSubsetError,
     extract_pod_specs,
     load_all_documents,
     scan_containers,
+    security_context,
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -67,8 +76,10 @@ CHARTS_DIR = REPO_ROOT / "charts"
 def effective_seccomp_type(container: dict, pod_security_context):
     """Return (type_or_None, source_label) for the seccompProfile.type that
     actually applies to `container`, honoring k8s per-FIELD inheritance."""
-    csc = container.get("securityContext")
-    if isinstance(csc, dict) and "seccompProfile" in csc:
+    # security_context() raises PodShapeError for a securityContext that is not
+    # a mapping (fail-closed: the caller reports it, it is never read as "unset").
+    csc = security_context(container)
+    if "seccompProfile" in csc:
         sp = csc.get("seccompProfile")
         if not isinstance(sp, dict):
             return None, "container (malformed seccompProfile)"
@@ -87,10 +98,11 @@ def check_pod_spec(chart, label, pod_spec, errors):
         errors.append(f"{chart}: {label}: pod spec missing or unparsable")
         return
 
-    pod_sc = pod_spec.get("securityContext")
-    if pod_sc is not None and not isinstance(pod_sc, dict):
+    try:
+        pod_sc = security_context(pod_spec)
+    except PodShapeError:
         errors.append(f"{chart}: {label}: spec.securityContext is not a mapping")
-        pod_sc = None
+        pod_sc = {}
 
     if not isinstance(pod_spec.get("containers"), list) or not pod_spec.get("containers"):
         errors.append(f"{chart}: {label}: spec.containers missing/empty (unparsable pod spec)")
@@ -100,10 +112,19 @@ def check_pod_spec(chart, label, pod_spec, errors):
         if not isinstance(item, Container):
             errors.append(f"{chart}: {label}: {item.msg}")
             continue
-        group, cname, c = item
-        csc = c.get("securityContext")
+        group, _, c = item
+        cname = c.get("name")
+        if not isinstance(cname, str) or cname == "":
+            errors.append(f"{chart}: {label}: {group} entry has no usable name: {cname!r}")
+            continue
 
-        if isinstance(csc, dict) and str(csc.get("privileged")).strip().lower() == "true":
+        try:
+            csc = security_context(c)
+        except PodShapeError:
+            errors.append(f"{chart}: {label}: {group}[{cname}] securityContext is not a mapping")
+            continue
+
+        if str(csc.get("privileged")).strip().lower() == "true":
             errors.append(
                 f"{chart}: {label}: {group}[{cname}] sets privileged: true "
                 "(disables seccomp regardless of profile)"
