@@ -17,7 +17,7 @@ SYSDIG_URL   ?= https://app.au1.sysdig.com
 # host repo are not shared into the VM.
 GO_IMAGE ?= golang:1.26-alpine
 
-.PHONY: help dev dev-down build push load-colima deploy-local helm-dep-build lint check-seccomp check-flag-isolation check-namespace-ownership check-image-hygiene check-image-hygiene-selftest test e2e e2e-serve check-e2e-verdict tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-template-hex check-portal-render check-rules check-freshness check-adr check-dockerignore check-build-context check-go-base-digest check-apk-pins check-apk-pins-selftest clean scan check-apk-pins-lint
+.PHONY: help dev dev-down build push load-colima deploy-local helm-dep-build lint check-seccomp check-chartparse check-flag-isolation check-namespace-ownership check-image-hygiene check-image-hygiene-selftest test e2e e2e-serve check-e2e-verdict tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-template-hex check-portal-render check-rules check-freshness check-adr check-dockerignore check-build-context check-go-base-digest check-apk-pins check-apk-pins-selftest clean scan check-apk-pins-lint
 
 help:
 	@echo "Targets:"
@@ -28,8 +28,9 @@ help:
 	@echo "  load-colima     — load images into colima k3s containerd (local only)"
 	@echo "  deploy-local    — helm upgrade --install scoreboard + auth-policy charts (local)"
 	@echo "  helm-dep-build      — helm dependency build for every chart that declares one (P21 item 5: falco-ctf-common)"
-	@echo "  lint                — helm-dep-build + helm lint all charts/ + check-seccomp + check-flag-isolation + check-namespace-ownership"
+	@echo "  lint                — helm-dep-build + helm lint all charts/ + check-seccomp + check-chartparse + check-flag-isolation + check-namespace-ownership"
 	@echo "  check-seccomp       — fail if any rendered chart container's effective seccompProfile != RuntimeDefault"
+	@echo "  check-chartparse    — self-test of scripts/lib/chartparse.py, the shared rendered-chart reader check-seccomp.py imports (cases + real ctf-user render + mutants)"
 	@echo "  check-flag-isolation — fail if the ctf-user chart lets a flag reach the challenge container (ADR-0001 Verification 1)"
 	@echo "  check-namespace-ownership — fail if any chart (except ctf-user) renders its own kind: Namespace (ADR-0011)"
 	@echo "  check-image-hygiene — fail if the built challenge image's /opt/ctf/plant-seed/ snapshot carries flag/hash material or drifts from its real counterpart (ADR-0001 Verification 2-8), or if /opt/ctf/missions is not exactly <id>/fixtures/** (ADR-0026 V1-V3)"
@@ -127,7 +128,7 @@ helm-dep-build:
 	  fi \
 	done
 
-lint: helm-dep-build check-seccomp check-flag-isolation check-namespace-ownership
+lint: helm-dep-build check-seccomp check-chartparse check-flag-isolation check-namespace-ownership
 	@for c in charts/*; do echo "== $$c =="; helm lint "$$c"; done
 
 # Hard Invariant guard (see .claude/rules/falco-ctf-app-conventions.md
@@ -137,6 +138,14 @@ lint: helm-dep-build check-seccomp check-flag-isolation check-namespace-ownershi
 # regression (e.g. charts/ctf-user/templates/pod.yaml) would go undetected.
 check-seccomp:
 	python3 scripts/check-seccomp.py
+
+# Self-test of the reader check-seccomp.py (and later chart checks) share:
+# block/flow style, the three container groups, fail-closed on unsupported
+# syntax, the seccomp decision itself, and mutants of the reader and of
+# check-seccomp.py that the cases must turn red. Renders charts/ctf-user, so it
+# needs the vendored dependency (helm-dep-build).
+check-chartparse: helm-dep-build
+	python3 scripts/test-chartparse.py
 
 # ADR-0001 (Option B) Verification 1: allowlist-type static assert that no
 # flag ever reaches the `challenge` container (env/envFrom/volumeMount/Role)
