@@ -2,10 +2,11 @@
 
 Used by the chart checks under scripts/ (scripts/check-seccomp.py today); a
 check imports this module instead of carrying its own parser, so a rendered
-Pod is read the same way by every check. Extracted from check-seccomp.py with
-the parser unchanged (the only additions are the helpers below the Pod
-traversal: `scan_containers` / `containers` / `container_names` /
-`security_context` / `flow_list` / `as_list`).
+Pod is read the same way by every check. Extracted from check-seccomp.py, then
+extended with the helpers below the Pod traversal (`scan_containers` /
+`containers` / `container_names` / `security_context` / `flow_list` /
+`as_list`) and with block scalar support in the parser (a rendered Pod whose
+init container runs a `sh -c` script carries one).
 
 WHAT THIS IS, AND WHAT IT IS NOT
 ---------------------------------
@@ -20,13 +21,20 @@ adding installs for a lint check). It supports:
     resolution: `true`, `0`, `null` all stay strings),
   - `#` comments,
   - `---` document separators,
+  - block scalars: `|` (literal), `>` (folded), each with an optional chomping
+    indicator (`-` strip, `+` keep, none = clip) and indentation indicator
+    (1-9), as a mapping value or a sequence item. The body is taken verbatim
+    (a `#`, `:` or `-` in it is text) and returned as one `str`. Folding is
+    minimal: adjacent lines join with a space, blank lines become newlines,
+    more-indented lines keep their line breaks. A body line indented less than
+    the first one, and any other header form (`|+-`, `|0`, `>foo`), raise,
   - flow collections ("[...]" / "{...}") kept as OPAQUE scalar strings by
     the parser; `flow_list()` / `as_list()` / `security_context()` turn the
     forms listed there into values and raise on anything else.
 
 It does NOT support, and never interprets: anchors / aliases / tags (an
 inline `&a x` stays part of the scalar text; an anchor followed by a nested
-block raises), block scalars (`|` / `>`; raise), multi-line flow
+block raises), multi-line flow
 collections (raise), and nested flow collections inside
 `flow_list` (raise). Anything it cannot confidently read raises
 `YamlSubsetError` (or its subclass `PodShapeError` for a Pod whose shape is
@@ -89,10 +97,122 @@ def _strip_comment(line: str) -> str:
     return line.rstrip()
 
 
+class _BlockBody(str):
+    """The body of a block scalar, as one entry of the preprocessed line list
+    that directly follows its header line. `str(self)` is a placeholder so
+    that nothing mistakes it for content; the value is `.text`."""
+
+    def __new__(cls, text: str):
+        obj = super().__new__(cls, "<block scalar body>")
+        obj.text = text
+        return obj
+
+
+# `|` / `>` with an optional chomping (+ / -) and indentation (1-9) indicator
+# in either order, each at most once. Anything else that starts with `|` or
+# `>` where a value is expected is not a valid YAML scalar start, so it raises.
+_BLOCK_HEADER = re.compile(r"([|>])(?:([1-9])([+-])?|([+-])([1-9])?)?")
+
+
+def _block_header(content: str):
+    """If the (comment-stripped, stripped) line `content` ends in a block
+    scalar header, return (style, chomp, indent_indicator, n) where n is the
+    column offset of the parent node (the key, or the `-` of a scalar
+    sequence item) inside `content`; else None. Raises YamlSubsetError for a
+    value that starts with `|` / `>` but is not a supported header."""
+    off = 0
+    unit = None
+    rest = content
+    while rest.startswith("- "):
+        unit = off
+        rest = rest[2:]
+        off += 2
+        stripped = rest.lstrip(" ")
+        off += len(rest) - len(stripped)
+        rest = stripped
+    colon = _find_key_colon(rest)
+    if colon is not None:
+        value = rest[colon + 1:].strip()
+        n = off
+    else:
+        value = rest.strip()
+        n = unit
+    if not value or value[0] not in "|>":
+        return None
+    m = _BLOCK_HEADER.fullmatch(value)
+    if m is None:
+        raise YamlSubsetError(f"unsupported block scalar header {value!r} in {content!r}")
+    if n is None:
+        raise YamlSubsetError(f"block scalar with no parent key or sequence item: {content!r}")
+    style = m.group(1)
+    digit = m.group(2) or m.group(5)
+    chomp = m.group(3) or m.group(4) or ""
+    return style, chomp, int(digit) if digit else None, n
+
+
+def _fold(lines):
+    """Fold the body lines of a `>` scalar into (text, trailing blank count):
+    adjacent non-blank lines join with one space, k blank lines between two
+    lines become k newlines, and a line that starts with whitespace is kept on
+    its own line (YAML's "more-indented" rule)."""
+    out = ""
+    prev = None
+    blanks = 0
+    for line in lines:
+        if line == "":
+            blanks += 1
+            continue
+        if prev is None:
+            out += "\n" * blanks + line
+        else:
+            if line[0] in " \t" or prev[0] in " \t":
+                out += "\n" * (blanks + 1)
+            elif blanks:
+                out += "\n" * blanks
+            else:
+                out += " "
+            out += line
+        prev = line
+        blanks = 0
+    return out, blanks
+
+
+def _block_scalar_text(style: str, chomp: str, lines):
+    """The value of a block scalar from its de-indented body `lines` (blank
+    lines are ""). `|` keeps line breaks, `>` folds (see _fold); chomping:
+    "" = clip (one final newline), "-" = strip, "+" = keep trailing blanks."""
+    while lines and lines[-1] == "" and chomp != "+":
+        lines = lines[:-1]
+    if style == "|":
+        trailing = 0
+        body = lines
+        if chomp == "+":
+            while body and body[-1] == "":
+                body = body[:-1]
+                trailing += 1
+        text = "\n".join(body)
+    else:
+        text, trailing = _fold(lines)
+    if not text:
+        return "\n" * trailing if chomp == "+" else ""
+    if chomp == "-":
+        return text
+    if chomp == "+":
+        return text + "\n" + "\n" * trailing
+    return text + "\n"
+
+
 def _preprocess(doc_text: str):
-    """Return [(indent, content), ...] for non-blank, comment-stripped lines."""
+    """Return [(indent, content), ...] for non-blank, comment-stripped lines.
+    A block scalar header line is followed by one extra entry, a `_BlockBody`
+    at the body's indent, which carries the scalar's text: the body is taken
+    verbatim here (comments, blank lines, `:` and `-` in it are content)."""
     lines = []
-    for raw in doc_text.splitlines():
+    raws = doc_text.splitlines()
+    k = 0
+    while k < len(raws):
+        raw = raws[k]
+        k += 1
         code_part = raw.split("#", 1)[0]
         if "\t" in code_part:
             raise YamlSubsetError(f"tab character in indentation-sensitive line: {raw!r}")
@@ -100,7 +220,33 @@ def _preprocess(doc_text: str):
         if stripped.strip() == "":
             continue
         indent = len(stripped) - len(stripped.lstrip(" "))
-        lines.append((indent, stripped.strip()))
+        content = stripped.strip()
+        lines.append((indent, content))
+        header = _block_header(content)
+        if header is None:
+            continue
+        style, chomp, digit, n_off = header
+        n = indent + n_off
+        body = []  # (leading spaces, raw line) of non-blank lines, None for blank
+        block_indent = n + digit if digit else None
+        while k < len(raws):
+            line = raws[k]
+            if line.strip() == "":
+                body.append(None if len(line) <= (block_indent or 0) else line)
+                k += 1
+                continue
+            lead = len(line) - len(line.lstrip(" "))
+            if lead <= n:
+                break
+            if block_indent is None:
+                block_indent = lead
+            if lead < block_indent:
+                raise YamlSubsetError(f"block scalar line indented less than its first line: {line!r}")
+            body.append(line)
+            k += 1
+        bi = block_indent if block_indent is not None else n + 1
+        texts = ["" if ln is None else ln[bi:] for ln in body]
+        lines.append((bi, _BlockBody(_block_scalar_text(style, chomp, texts))))
     return lines
 
 
@@ -129,6 +275,13 @@ def _find_key_colon(content: str):
     return None
 
 
+def _take_block_body(lines, i):
+    """lines[i] is the _BlockBody that follows a header; return (text, i + 1)."""
+    if i >= len(lines) or not isinstance(lines[i][1], _BlockBody):
+        raise YamlSubsetError("block scalar header without its body")
+    return lines[i][1].text, i + 1
+
+
 def _parse_block(lines, i, indent0):
     """Parse the block starting at lines[i] (all at indent indent0) until
     indentation decreases. Returns (value, next_index)."""
@@ -136,10 +289,14 @@ def _parse_block(lines, i, indent0):
         got = lines[i] if i < len(lines) else "EOF"
         raise YamlSubsetError(f"expected block at indent {indent0}, got {got!r}")
     content = lines[i][1]
+    if isinstance(content, _BlockBody):
+        raise YamlSubsetError(f"block scalar body with no header at indent {indent0}")
     if content == "-" or content.startswith("- "):
         return _parse_sequence(lines, i, indent0)
     if _find_key_colon(content) is not None:
         return _parse_mapping(lines, i, indent0)
+    if _BLOCK_HEADER.fullmatch(content):  # `- |`: the item is a block scalar (its header was validated in _preprocess)
+        return _take_block_body(lines, i + 1)
     # Plain scalar occupying its own line (e.g. a bare-string sequence item
     # like `- Ingress`). Must be the only line in this block.
     if i + 1 < len(lines) and lines[i + 1][0] >= indent0:
@@ -194,6 +351,8 @@ def _parse_mapping(lines, i, indent0):
                 val, i = _parse_block(lines, i, lines[i][0])
             else:
                 val = None
+        elif _block_header(content) is not None:
+            val, i = _take_block_body(lines, i)
         else:
             val = _parse_scalar(rest)
         mapping[key] = val
