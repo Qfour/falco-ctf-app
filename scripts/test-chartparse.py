@@ -11,8 +11,8 @@ Three layers, all of which must hold (exit status is the verdict):
   2. REAL TREE: `helm template charts/ctf-user` (default values) is read
      through the reader (also with scenario.missions, whose render carries a
      block scalar) and the container names found must include the expected
-     ones. An empty / short result is a failure of the reader, not
-     "no violations".
+     ones; the `missions-scope` command is pinned line by line. An empty /
+     short result is a failure of the reader, not "no violations".
   3. MUTANTS: the module source is mutated one defect at a time (a group
      dropped, a fail-closed raise removed, a colon rule loosened ...) and the
      SAME CASES must go red for each. A mutant that stays green means the
@@ -22,14 +22,20 @@ Three layers, all of which must hold (exit status is the verdict):
 A fourth layer pins the seccomp decision itself (`check_pod_spec` in
 scripts/check-seccomp.py): synthetic Pods are read through the shared reader and
 judged, then check-seccomp.py is mutated branch by branch and the same cases must go
-red.
+red. Its extra ctf-user renders (scenario.missions, which is where `missions-scope`
+exists) are pinned with real `helm template` output: the container set includes
+`missions-scope`, and the same render rewritten to carry an Unconfined profile or
+`privileged: true` on it is a FAIL.
 
 The mutants load the mutated source with importlib on purpose: they are
 test inputs, not the module under test. The check scripts themselves import
 `chartparse` normally.
 """
+import contextlib
+import io
 import subprocess
 import sys
+import tempfile
 import types
 
 # The mutants are exec'd from source and the real module is read as text, so
@@ -731,6 +737,143 @@ def seccomp_case_explicit_null_security_context_is_a_failure(s):
     assert "(source: pod (inherited))" in out, out
 
 
+# --- extra renders of charts/ctf-user (scenario.missions) -----------------
+# These use real `helm template` output (ctf-user, with scenario.missions), because
+# `missions-scope` only exists there. `s.subprocess` is replaced for the duration
+# of a call so the render check can be fed a rewritten render (the module under
+# test is the only thing patched; the real subprocess module is untouched).
+
+_RENDER_CACHE = {}
+
+
+def helm_ctf_user(extra):
+    key = tuple(extra)
+    if key not in _RENDER_CACHE:
+        proc = subprocess.run(["helm", "template", str(REPO_ROOT / "charts" / "ctf-user"), *extra], capture_output=True, text=True)
+        assert proc.returncode == 0, proc.stderr
+        _RENDER_CACHE[key] = proc.stdout
+    return _RENDER_CACHE[key]
+
+
+def inject_into_missions_scope(text, block):
+    """Rewrite a real render: add `block` (container-level keys, indented 6) to
+    the missions-scope initContainer."""
+    marker = "    - name: missions-scope\n"
+    assert text.count(marker) == 1, text.count(marker)
+    return text.replace(marker, marker + block, 1)
+
+
+UNCONFINED = "      securityContext:\n        seccompProfile:\n          type: Unconfined\n"
+PRIVILEGED = "      securityContext:\n        privileged: true\n"
+
+
+def run_with_renders(s, fn, transform=None, rc=0, drop_extra_args=False):
+    """Call fn() with s.subprocess.run answering from real helm output. A call
+    with extra helm args (the extra renders) gets `transform(stdout)`, exit
+    status `rc`, or the default-values output (`drop_extra_args`); the default
+    pass is untouched. Returns (fn result, stdout, stderr)."""
+    real = subprocess.run
+
+    def fake(cmd, **kw):
+        extra = len(cmd) > 3
+        if extra and rc:
+            return subprocess.CompletedProcess(cmd, rc, "", "boom")
+        proc = real(cmd[:3] if (extra and drop_extra_args) else cmd, **kw)
+        if extra and transform is not None:
+            proc.stdout = transform(proc.stdout)
+        return proc
+
+    saved = s.subprocess
+    s.subprocess = types.SimpleNamespace(run=fake)
+    out, err = io.StringIO(), io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            result = fn()
+    finally:
+        s.subprocess = saved
+    return result, out.getvalue(), err.getvalue()
+
+
+def extra_errors(s, **kw):
+    errors = []
+    _, out, _ = run_with_renders(s, lambda: s.check_extra_renders(errors), **kw)
+    return errors, out
+
+
+def seccomp_case_missions_render_puts_missions_scope_in_the_checked_containers(s):
+    specs, problems = s.extra_render_specs()
+    assert problems == [], problems
+    assert len(specs) >= 2, specs  # the synthetic id + at least one values-scenario file
+    synthetic = [a for d, a in specs if a == ["--set-json", 'scenario.missions=["01-a"]']]
+    assert synthetic, specs
+    errors = []
+    with contextlib.redirect_stdout(io.StringIO()):
+        found = s.check_render("ctf-user", s.CHARTS_DIR / "ctf-user", errors, synthetic[0], 'scenario.missions=["01-a"]', s.EXTRA_REQUIRED)
+    assert errors == [], errors
+    assert ("initContainers", "missions-scope") in found, sorted(found)
+    assert {("containers", "challenge"), ("initContainers", "plant")} <= found, sorted(found)
+    # ... and the whole extra pass judges it (an `ok:` line per extra render)
+    errors, out = extra_errors(s)
+    assert errors == [], errors
+    ok_line = "ok: initContainers[missions-scope] seccompProfile.type=RuntimeDefault (source: pod (inherited))"
+    assert out.count(ok_line) == len(specs), (len(specs), out)
+    assert out.count("== ctf-user (") == len(specs), out
+
+
+def seccomp_case_missions_scope_unconfined_in_the_render_is_a_failure(s):
+    text = inject_into_missions_scope(helm_ctf_user(["--set-json", 'scenario.missions=["01-a"]']), UNCONFINED)
+    errors, _ = judge(s, text)
+    want_one_error(errors, "initContainers[missions-scope]", "'Unconfined'", "source: container")
+    # the extra-render pass applies the same judgement to every extra render
+    errors, _ = extra_errors(s, transform=lambda t: inject_into_missions_scope(t, UNCONFINED))
+    assert len(errors) == len(s.extra_render_specs()[0]) >= 2, errors
+    for e in errors:
+        assert e.startswith("ctf-user (") and "initContainers[missions-scope]" in e and "'Unconfined'" in e, e
+
+
+def seccomp_case_missions_scope_privileged_in_the_render_is_a_failure(s):
+    text = inject_into_missions_scope(helm_ctf_user(["--set-json", 'scenario.missions=["01-a"]']), PRIVILEGED)
+    errors, _ = judge(s, text)
+    want_one_error(errors, "initContainers[missions-scope]", "sets privileged: true")
+    errors, _ = extra_errors(s, transform=lambda t: inject_into_missions_scope(t, PRIVILEGED))
+    assert len(errors) == len(s.extra_render_specs()[0]) >= 2, errors
+    for e in errors:
+        assert "initContainers[missions-scope]" in e and "sets privileged: true" in e, e
+
+
+def seccomp_case_extra_render_without_missions_scope_is_a_failure(s):
+    # An extra render that no longer contains the container is not an empty pass.
+    errors, _ = extra_errors(s, drop_extra_args=True)
+    assert len(errors) == len(s.extra_render_specs()[0]) >= 2, errors
+    for e in errors:
+        assert "initContainers[missions-scope] not found" in e, e
+
+
+def seccomp_case_extra_render_helm_failure_is_a_failure(s):
+    errors, _ = extra_errors(s, rc=1)
+    assert len(errors) == len(s.extra_render_specs()[0]) >= 2, errors
+    for e in errors:
+        assert "`helm template` failed (exit 1)" in e and e.startswith("ctf-user ("), e
+
+
+def seccomp_case_no_scenario_values_files_is_a_failure(s):
+    with tempfile.TemporaryDirectory() as empty:
+        specs, problems = s.extra_render_specs(empty)
+        assert len(specs) == 1 and len(problems) == 1 and "values-scenario-*.yaml" in problems[0], (specs, problems)
+        errors = []
+        run_with_renders(s, lambda: s.check_extra_renders(errors, empty))
+        assert len(errors) == 1 and "no values-scenario-*.yaml" in errors[0], errors
+
+
+def seccomp_case_main_fails_on_a_violation_in_an_extra_render(s):
+    rc, out, err = run_with_renders(s, s.main, transform=lambda t: inject_into_missions_scope(t, UNCONFINED))
+    assert rc == 1, (rc, out, err)
+    assert "initContainers[missions-scope]" in err and "FAIL: seccomp invariant violated" in err, err
+    rc, out, err = run_with_renders(s, s.main)
+    assert rc == 0 and err == "", (rc, err)
+    assert out.count("== ctf-user (") >= 2, out
+
+
 SECCOMP_CASES = [(n[len("seccomp_case_"):], f) for n, f in sorted(globals().items()) if n.startswith("seccomp_case_")]
 
 
@@ -890,6 +1033,27 @@ SECCOMP_MUTANTS = [
     ("a Pod spec that is not a mapping is not an error",
      'errors.append(f"{chart}: {label}: pod spec missing or unparsable")',
      'pass'),
+    ("the synthetic scenario.missions render is dropped",
+     "specs = [('scenario.missions=[\"01-a\"]', list(SYNTHETIC_MISSIONS))]",
+     "specs = []"),
+    ("the values-scenario-*.yaml renders are dropped",
+     "    for f in files:",
+     "    for f in []:"),
+    ("the extra renders' errors are not put in errors",
+     'check_render("ctf-user", chart_dir, errors, args, desc, EXTRA_REQUIRED)',
+     'check_render("ctf-user", chart_dir, [], args, desc, EXTRA_REQUIRED)'),
+    ("main does not run the extra renders",
+     "    check_extra_renders(errors)\n\n    if errors:",
+     "    if errors:"),
+    ("a render without missions-scope is an empty pass",
+     'f"{where}: {group}[{name}] not found in the rendered Pod specs "',
+     'f"{where}: {group}[{name}] not found in the rendered Pod specs " if False else ""'),
+    ("a helm template failure of an extra render is not an error",
+     'f"{where}: `helm template` failed (exit {proc.returncode}): {proc.stderr.strip()}"',
+     '"" if True else ""'),
+    ("an empty values-scenario glob is not an error",
+     'problems.append(f"no values-scenario-*.yaml found under {challenges_dir}")',
+     'pass'),
     ("a malformed Pod securityContext is not reported",
      'errors.append(f"{chart}: {label}: spec.securityContext is not a mapping")',
      'pass'),
@@ -902,17 +1066,50 @@ SECCOMP_MUTANTS = [
 
 # The second render emits the missions-scope initContainer, whose `sh -c` script
 # is a `|` block scalar: this is the render the block scalar support is for.
+#
+# The missions-scope script is pinned line by line (review-5x 106 R2#1): the
+# reader must return the block scalar's text, and the three steps that make the
+# copy fail-fast and scoped to the synthetic id must all be there.
+MISSIONS_SCOPE_PINS = {
+    "missions-scope": {
+        "lines": ["set -eu", 'mkdir -p "/missions-seed/01-a"'],
+        "prefixes": ['cp -a "/opt/ctf/missions/01-a/."'],
+    },
+}
 REAL_RENDERS = (
     ("default values", [],
-     {"initContainers": {"plant"}, "containers": {"ttyd", "ttyd-proxy", "challenge"}}),
+     {"initContainers": {"plant"}, "containers": {"ttyd", "ttyd-proxy", "challenge"}}, {}),
     ("with scenario.missions", ["--set-json", 'scenario.missions=["01-a"]'],
-     {"initContainers": {"plant", "missions-scope"}, "containers": {"ttyd", "ttyd-proxy", "challenge"}}),
+     {"initContainers": {"plant", "missions-scope"}, "containers": {"ttyd", "ttyd-proxy", "challenge"}},
+     MISSIONS_SCOPE_PINS),
 )
+
+
+def pin_command(m, pod_spec, pins):
+    """Problems with the shell script of each container named in `pins`."""
+    problems = []
+    for cname, want in pins.items():
+        spec = [c for c in m.containers(pod_spec) if c.name == cname]
+        if len(spec) != 1:
+            problems.append(f"{cname}: expected exactly one container, found {len(spec)}")
+            continue
+        command = m.as_list(spec[0].spec.get("command"))
+        if len(command) != 3 or command[:2] != ["sh", "-c"]:
+            problems.append(f"{cname}: command is not [sh, -c, <script>]: {command!r}")
+            continue
+        lines = [ln.strip() for ln in str(command[2]).splitlines()]
+        for ln in want["lines"]:
+            if ln not in lines:
+                problems.append(f"{cname}: script has no line {ln!r}")
+        for pre in want["prefixes"]:
+            if not any(ln.startswith(pre) for ln in lines):
+                problems.append(f"{cname}: script has no line starting with {pre!r}")
+    return problems
 
 
 def real_tree(m):
     failures = []
-    for label, extra, expected in REAL_RENDERS:
+    for label, extra, expected, pins in REAL_RENDERS:
         proc = subprocess.run(
             ["helm", "template", str(REPO_ROOT / "charts" / "ctf-user")] + extra,
             capture_output=True, text=True,
@@ -931,6 +1128,7 @@ def real_tree(m):
         for group, want in expected.items():
             if not want <= names[group]:
                 failures.append(f"{label}: {group} missing {sorted(want - names[group])} (found {sorted(names[group])})")
+        failures += [f"{label}: {p}" for p in pin_command(m, pods[0][1], pins)]
         print(f"  {label}: " + "; ".join(f"{g}={sorted(n)}" for g, n in names.items() if n))
     return failures
 
