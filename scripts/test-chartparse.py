@@ -9,8 +9,9 @@ Three layers, all of which must hold (exit status is the verdict):
      unsupported syntax that must RAISE (fail-closed) instead of being
      skipped.
   2. REAL TREE: `helm template charts/ctf-user` (default values) is read
-     through the reader and the container names found must include the
-     expected ones. An empty / short result is a failure of the reader, not
+     through the reader (also with scenario.missions, whose render carries a
+     block scalar) and the container names found must include the expected
+     ones. An empty / short result is a failure of the reader, not
      "no violations".
   3. MUTANTS: the module source is mutated one defect at a time (a group
      dropped, a fail-closed raise removed, a colon rule loosened ...) and the
@@ -326,7 +327,15 @@ def case_strict_containers_raise_on_shape(m):
 def case_unsupported_syntax_raises(m):
     for label, text in (
         ("tab indentation", "a:\n\tb: 1\n"),
-        ("block scalar", "kind: ConfigMap\ndata:\n  x: |\n    hello\n"),
+        ("block scalar, unsupported chomping", "kind: ConfigMap\ndata:\n  x: |+-\n    hello\n"),
+        ("block scalar, indentation indicator 0", "x: |0\n  hello\n"),
+        ("block scalar, indentation indicator 10", "x: |10\n  hello\n"),
+        ("block scalar, header with trailing junk", "x: >foo\n  hello\n"),
+        ("block scalar, a line indented less than the first", "x: |\n    hello\n  bye\ny: 1\n"),
+        ("block scalar, a shallower comment line inside the body", "x: |\n    a\n  # c\n    b\ny: 1\n"),
+        ("block scalar, a shallower comment line after the body", "x: |\n    a\n  # c\ny: 1\n"),
+        ("block scalar, tab where indentation is", "x: |\n\thello\n"),
+        ("block scalar, header with no parent", "|\n  hello\n"),
         ("anchor then nested block", "a: &x\n  b: 1\n"),
         ("multi-line flow", "a: [\n  b,\n  c\n]\n"),
         ("sequence at mapping indent", "a:\n- b\n"),
@@ -335,6 +344,88 @@ def case_unsupported_syntax_raises(m):
         ("scalar followed by content", "- x\n  y: 1\n"),
     ):
         raises(m, "YamlSubsetError", lambda t=text: m.load_all_documents(t))
+
+
+def case_block_scalar_literal_clip(m):
+    doc = m.load_all_documents("a:\n  b: |\n    l1\n    l2\n  c: d\n")[0]
+    assert doc == {"a": {"b": "l1\nl2\n", "c": "d"}}, doc
+
+
+def case_block_scalar_literal_strip_and_keep(m):
+    assert m.load_all_documents("a: |-\n  x\n  y\n\n\nb: 1\n")[0] == {"a": "x\ny", "b": "1"}
+    assert m.load_all_documents("a: |+\n  x\n\n\nb: 1\n")[0] == {"a": "x\n\n\n", "b": "1"}
+    assert m.load_all_documents("a: |\n  x\n\n\nb: 1\n")[0] == {"a": "x\n", "b": "1"}  # clip drops trailing blanks
+
+
+def case_block_scalar_folded(m):
+    doc = m.load_all_documents("a: >\n  one\n  two\n\n  three\n    more\n  four\nb: 1\n")[0]
+    assert doc == {"a": "one two\nthree\n  more\nfour\n", "b": "1"}, doc
+    assert m.load_all_documents("a: >-\n  one\n  two\nb: 1\n")[0] == {"a": "one two", "b": "1"}
+    assert m.load_all_documents("a: >+\n  one\n\nb: 1\n")[0] == {"a": "one\n\n", "b": "1"}
+
+
+def case_block_scalar_indent_indicator(m):
+    # the indicator is relative to the parent key's column: key at 0, |2 -> content at column 2
+    doc = m.load_all_documents("a: |2\n    x\n   y\nb: 1\n")[0]
+    assert doc == {"a": "  x\n y\n", "b": "1"}, doc
+    # without it the first line sets the indent, so leading spaces would be lost
+    assert m.load_all_documents("a: |\n    x\n    y\n")[0] == {"a": "x\ny\n"}
+    assert m.load_all_documents("a: |1-\n  x\n")[0] == {"a": " x"}
+
+
+def case_block_scalar_body_is_verbatim(m):
+    body = "# not a comment\nk: v\n- item\nhttp://x:80/y\n  indented: more\n---\n"
+    text = "a: |\n" + "".join("  " + ln + "\n" for ln in body.splitlines()) + "b: 2 # real comment\n"
+    doc = m.load_all_documents(text)
+    assert doc == [{"a": body, "b": "2"}], doc
+
+
+def case_block_scalar_followed_by_keys_and_dedent(m):
+    text = "top:\n  inner:\n    s: |\n      text\n    t: u\n  other: v\nlast: w\n"
+    assert m.load_all_documents(text)[0] == {"top": {"inner": {"s": "text\n", "t": "u"}, "other": "v"}, "last": "w"}
+
+
+def case_block_scalar_in_sequences(m):
+    doc = m.load_all_documents("c:\n  - sh\n  - -c\n  - |\n    echo hi\n    ls\n  - tail\n")[0]
+    assert doc == {"c": ["sh", "-c", "echo hi\nls\n", "tail"]}, doc
+    doc = m.load_all_documents("c:\n  - name: x\n    s: |\n      body: 1\n    t: u\n  - name: y\n")[0]
+    assert doc == {"c": [{"name": "x", "s": "body: 1\n", "t": "u"}, {"name": "y"}]}, doc
+    assert m.load_all_documents("c:\n  - |\n    only\n")[0] == {"c": ["only\n"]}
+
+
+def case_block_scalar_empty_and_header_comment(m):
+    assert m.load_all_documents("a: |\nb: 1\n")[0] == {"a": "", "b": "1"}
+    assert m.load_all_documents("a: |\n")[0] == {"a": ""}
+    assert m.load_all_documents("a: |+\n\n\nb: 1\n")[0] == {"a": "\n\n", "b": "1"}
+    assert m.load_all_documents("a: | # why\n  x\n")[0] == {"a": "x\n"}
+
+
+def case_block_scalar_item_header_spacing_agrees_everywhere(m):
+    # the header is recognised once (in _preprocess) and the parser must agree with it
+    for dash in ("-", "-  ", "-   "):
+        doc = m.load_all_documents(f"c:\n  {dash} |\n    x\n  - y\n")[0]
+        assert doc == {"c": ["x\n", "y"]}, (dash, doc)
+
+
+def case_block_scalar_blank_lines_whitespace_and_nesting(m):
+    # a whitespace-only line shorter than the indent is an empty line; a longer one keeps its extra spaces
+    assert m.load_all_documents("a: |\n  x\n \n  y\n")[0] == {"a": "x\n\ny\n"}
+    assert m.load_all_documents("a: |\n  x\n    \n  y\n")[0] == {"a": "x\n  \ny\n"}
+    # a folded scalar keeps its leading blank line
+    assert m.load_all_documents("a: >\n\n  x\n  y\n")[0] == {"a": "\nx y\n"}
+    # a block scalar as the item of a nested sequence item
+    assert m.load_all_documents("c:\n  - - |\n      x\n  - y\n")[0] == {"c": [["x\n"], "y"]}
+
+
+def case_block_scalar_in_a_container_command(m):
+    text = pod_text(
+        "  containers:\n    - name: a\n      command:\n        - sh\n        - -c\n        - |\n"
+        "          set -eu\n          mkdir -p /x # kept\n      image: i\n"
+    )
+    c = m.containers(pod_spec_of(m, text))
+    assert [x.name for x in c] == ["a"], c
+    assert c[0].spec["command"] == ["sh", "-c", "set -eu\nmkdir -p /x # kept\n"], c[0].spec
+    assert c[0].spec["image"] == "i"
 
 
 def case_flow_collections_stay_opaque(m):
@@ -592,6 +683,39 @@ MUTANTS = [
     ("flow_list accepts an escaped or adjacent quote",
      'if quote in raw or "\\\\" in raw:',
      'if False:'),
+    ("block scalar: strip chomping is ignored",
+     'if chomp == "-":\n        return text',
+     'if False:\n        return text'),
+    ("block scalar: keep chomping drops the trailing blanks",
+     'return text + "\\n" + "\\n" * trailing',
+     'return text + "\\n"'),
+    ("block scalar: folded lines are joined with a newline",
+     'out += " "',
+     'out += "\\n"'),
+    ("block scalar: the body swallows the following keys",
+     'if lead <= n:\n                break',
+     'if False:\n                break'),
+    ("block scalar: the indentation indicator is ignored",
+     'block_indent = n + digit if digit else None',
+     'block_indent = None'),
+    ("block scalar: an unsupported header is accepted",
+     'if m is None:\n        raise',
+     'if False:\n        raise'),
+    ("block scalar: a less-indented body line no longer raises",
+     'if lead < block_indent:',
+     'if False:'),
+    ("block scalar: the parser re-reads an item header without stripping it",
+     'if _BLOCK_HEADER.fullmatch(content.strip()):',
+     'if _BLOCK_HEADER.fullmatch(content):'),
+    ("block scalar: a whitespace-only line ends the body",
+     'if line.strip() == "":\n                body.append(line)',
+     'if line == "":\n                body.append(line)'),
+    ("block scalar: a folded scalar loses its leading blank lines",
+     'out += "\\n" * blanks + line',
+     'out += line'),
+    ("block scalar: a sequence item header is not recognised",
+     'if _BLOCK_HEADER.fullmatch(content.strip()):',
+     'if False:'),
     ("CronJob pods are no longer found",
      'if kind == "CronJob":',
      'if False:'),
@@ -646,13 +770,13 @@ SECCOMP_MUTANTS = [
 # REAL TREE
 # ---------------------------------------------------------------------------
 
-# Only the default render: a render with scenario.missions emits a `|` block
-# scalar (the missions-scope script), which this reader does not support and
-# raises on (pinned by the "block scalar" case above). Do not add that render
-# here until the reader supports it.
+# The second render emits the missions-scope initContainer, whose `sh -c` script
+# is a `|` block scalar: this is the render the block scalar support is for.
 REAL_RENDERS = (
     ("default values", [],
      {"initContainers": {"plant"}, "containers": {"ttyd", "ttyd-proxy", "challenge"}}),
+    ("with scenario.missions", ["--set-json", 'scenario.missions=["01-a"]'],
+     {"initContainers": {"plant", "missions-scope"}, "containers": {"ttyd", "ttyd-proxy", "challenge"}}),
 )
 
 
