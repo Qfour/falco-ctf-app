@@ -28,7 +28,7 @@ help:
 	@echo "  load-colima     — load images into colima k3s containerd (local only)"
 	@echo "  deploy-local    — helm upgrade --install scoreboard + auth-policy charts (local)"
 	@echo "  helm-dep-build      — helm dependency build for every chart that declares one (P21 item 5: falco-ctf-common)"
-	@echo "  lint                — helm-dep-build + helm lint all charts/ + check-seccomp + check-flag-isolation + check-namespace-ownership"
+	@echo "  lint                — helm-dep-build + helm lint all charts/ + check-seccomp + check-chartparse + check-flag-isolation + check-namespace-ownership"
 	@echo "  check-seccomp       — fail if any rendered chart container's effective seccompProfile != RuntimeDefault"
 	@echo "  check-chartparse    — self-test of scripts/lib/chartparse.py, the shared rendered-chart reader check-seccomp.py imports (cases + real ctf-user render + mutants)"
 	@echo "  check-flag-isolation — fail if the ctf-user chart lets a flag reach the challenge container (ADR-0001 Verification 1)"
@@ -141,8 +141,10 @@ check-seccomp:
 
 # Self-test of the reader check-seccomp.py (and later chart checks) share:
 # block/flow style, the three container groups, fail-closed on unsupported
-# syntax, and mutants of the reader that the cases must turn red.
-check-chartparse:
+# syntax, the seccomp decision itself, and mutants of the reader and of
+# check-seccomp.py that the cases must turn red. Renders charts/ctf-user, so it
+# needs the vendored dependency (helm-dep-build).
+check-chartparse: helm-dep-build
 	python3 scripts/test-chartparse.py
 
 # ADR-0001 (Option B) Verification 1: allowlist-type static assert that no

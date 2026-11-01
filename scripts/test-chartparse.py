@@ -18,6 +18,11 @@ Three layers, all of which must hold (exit status is the verdict):
      cases do not pin that behavior. Each mutation must apply exactly once,
      or the test fails (a stale mutation proves nothing).
 
+A fourth layer pins the seccomp decision itself (`check_pod_spec` in
+scripts/check-seccomp.py): synthetic Pods are read through the shared reader and
+judged, then check-seccomp.py is mutated branch by branch and the same cases must go
+red.
+
 The mutants load the mutated source with importlib on purpose: they are
 test inputs, not the module under test. The check scripts themselves import
 `chartparse` normally.
@@ -34,12 +39,13 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
 LIB_PATH = HERE / "lib" / "chartparse.py"
+SECCOMP_PATH = HERE / "check-seccomp.py"
 
 
-def load_module(source: str, name: str = "chartparse_under_test"):
+def load_module(source: str, name: str = "chartparse_under_test", path: Path = LIB_PATH):
     mod = types.ModuleType(name)
-    mod.__file__ = str(LIB_PATH)
-    exec(compile(source, str(LIB_PATH), "exec"), mod.__dict__)
+    mod.__file__ = str(path)
+    exec(compile(source, str(path), "exec"), mod.__dict__)
     return mod
 
 
@@ -242,6 +248,12 @@ def case_flow_list_rejects_unsupported(m):
     raises(m, "YamlSubsetError", lambda: m.flow_list(["ONE"]))
 
 
+def case_flow_list_refuses_escapes_and_adjacent_quotes(m):
+    for bad in ('["a\\"b"]', '["a""b"]', "['a''b']", '["a\\nb"]', "['a\\b']"):
+        raises(m, "YamlSubsetError", lambda b=bad: m.flow_list(b))
+    assert m.flow_list("['a\"b']") == ['a"b']  # the other quote char is plain text
+
+
 def case_as_list_forms(m):
     assert m.as_list(None) == []
     assert m.as_list([]) == []
@@ -304,6 +316,9 @@ def case_strict_containers_raise_on_shape(m):
     raises(m, "PodShapeError", lambda: m.containers({"initContainers": "nope", "containers": []}))
     raises(m, "PodShapeError", lambda: m.containers({"containers": ["str"]}))
     raises(m, "PodShapeError", lambda: m.containers({"containers": [{"image": "x"}]}))  # unnamed
+    raises(m, "PodShapeError", lambda: m.containers({"containers": [{"name": ""}]}))
+    raises(m, "PodShapeError", lambda: m.containers({"containers": [{"name": None}]}))
+    raises(m, "PodShapeError", lambda: m.containers({"containers": [{"name": ["a"]}]}))
     raises(m, "PodShapeError", lambda: m.containers(None))
     raises(m, "PodShapeError", lambda: m.container_names("nope"))
 
@@ -334,10 +349,192 @@ def case_error_hierarchy(m):
 CASES = [(n[len("case_"):], f) for n, f in sorted(globals().items()) if n.startswith("case_")]
 
 
-def run_cases(m):
+# ---------------------------------------------------------------------------
+# SECCOMP CASES: the decision in scripts/check-seccomp.py (`check_pod_spec`).
+# Synthetic Pods go through load_all_documents -> extract_pod_specs ->
+# check_pod_spec. `s` is the check-seccomp module (real or mutated).
+# ---------------------------------------------------------------------------
+
+def pod_text(body: str) -> str:
+    return "kind: Pod\nmetadata:\n  name: p\nspec:\n" + body
+
+
+POD_SC_OK = "  securityContext:\n    seccompProfile:\n      type: RuntimeDefault\n"
+
+
+def judge(s, text, index=0):
+    """Return (errors, stdout) of check_pod_spec on the index-th pod in text."""
+    import contextlib
+    import io
+
+    specs = []
+    for d in s.load_all_documents(text):
+        specs.extend(s.extract_pod_specs(d))
+    assert len(specs) > index, f"no pod spec at index {index}"
+    errors = []
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        s.check_pod_spec("chart", specs[index][0], specs[index][1], errors)
+    return errors, buf.getvalue()
+
+
+def want_one_error(errors, *needles):
+    assert len(errors) == 1, errors
+    for n in needles:
+        assert n in errors[0], (n, errors[0])
+
+
+def seccomp_case_all_runtime_default_is_clean(s):
+    text = pod_text(POD_SC_OK + "  containers:\n    - name: a\n      image: x\n")
+    errors, out = judge(s, text)
+    assert errors == [], errors
+    assert "ok: containers[a] seccompProfile.type=RuntimeDefault (source: pod (inherited))" in out, out
+
+
+def seccomp_case_container_level_runtime_default_without_pod_level(s):
+    text = pod_text(
+        "  containers:\n    - name: a\n      securityContext:\n        seccompProfile:\n          type: RuntimeDefault\n"
+    )
+    errors, out = judge(s, text)
+    assert errors == [], errors
+    assert "(source: container)" in out, out
+
+
+def seccomp_case_no_seccomp_at_either_level(s):
+    errors, _ = judge(s, pod_text("  containers:\n    - name: a\n      image: x\n"))
+    want_one_error(errors, "containers[a]", "None", "none set at either level")
+
+
+def seccomp_case_container_unconfined_overrides_pod_level(s):
+    text = pod_text(
+        POD_SC_OK
+        + "  containers:\n    - name: a\n      securityContext:\n        seccompProfile:\n          type: Unconfined\n"
+    )
+    errors, _ = judge(s, text)
+    want_one_error(errors, "containers[a]", "Unconfined", "source: container")
+
+
+def seccomp_case_pod_level_unconfined_is_inherited(s):
+    text = pod_text(
+        "  securityContext:\n    seccompProfile:\n      type: Unconfined\n  containers:\n    - name: a\n      image: x\n"
+    )
+    errors, _ = judge(s, text)
+    want_one_error(errors, "containers[a]", "Unconfined", "pod (inherited)")
+
+
+def seccomp_case_malformed_container_seccomp_profile(s):
+    text = pod_text(
+        POD_SC_OK + "  containers:\n    - name: a\n      securityContext:\n        seccompProfile: Unconfined\n"
+    )
+    errors, _ = judge(s, text)
+    want_one_error(errors, "containers[a]", "malformed seccompProfile")
+
+
+def seccomp_case_privileged_true_fails_even_with_runtime_default(s):
+    text = pod_text(
+        POD_SC_OK + "  containers:\n    - name: a\n      securityContext:\n        privileged: true\n"
+    )
+    errors, out = judge(s, text)
+    want_one_error(errors, "containers[a]", "privileged: true")
+    assert "ok:" not in out, out
+
+
+def seccomp_case_privileged_is_matched_case_insensitively(s):
+    for v in ('"True"', "TRUE"):
+        text = pod_text(
+            POD_SC_OK + "  containers:\n    - name: a\n      securityContext:\n        privileged: " + v + "\n"
+        )
+        errors, _ = judge(s, text)
+        want_one_error(errors, "privileged: true")
+    errors, _ = judge(
+        s, pod_text(POD_SC_OK + "  containers:\n    - name: a\n      securityContext:\n        privileged: false\n")
+    )
+    assert errors == [], errors
+
+
+def seccomp_case_containers_not_a_list(s):
+    errors, _ = judge(s, pod_text(POD_SC_OK + "  containers: nope\n"))
+    want_one_error(errors, "spec.containers missing/empty")
+
+
+def seccomp_case_containers_missing_or_empty(s):
+    errors, _ = judge(s, pod_text(POD_SC_OK + "  initContainers:\n    - name: i\n"))
+    want_one_error(errors, "spec.containers missing/empty")
+    errors, _ = judge(s, pod_text(POD_SC_OK + "  containers: []\n"))
+    want_one_error(errors, "spec.containers missing/empty")
+
+
+def seccomp_case_other_group_not_a_list(s):
+    text = pod_text(POD_SC_OK + "  initContainers: nope\n  containers:\n    - name: a\n      image: x\n")
+    errors, out = judge(s, text)
+    want_one_error(errors, "initContainers is not a list")
+    assert "ok: containers[a]" in out, out  # the walk continues past the defect
+
+
+def seccomp_case_entry_not_a_mapping(s):
+    text = pod_text(POD_SC_OK + "  containers:\n    - name: a\n      image: x\n    - nope\n")
+    errors, _ = judge(s, text)
+    want_one_error(errors, "containers entry is not a mapping")
+
+
+def seccomp_case_init_container_violation(s):
+    text = pod_text(
+        POD_SC_OK
+        + "  initContainers:\n    - name: i\n      securityContext:\n        seccompProfile:\n          type: Unconfined\n"
+        + "  containers:\n    - name: a\n      image: x\n"
+    )
+    errors, out = judge(s, text)
+    want_one_error(errors, "initContainers[i]", "Unconfined")
+    assert "ok: containers[a]" in out, out
+
+
+def seccomp_case_ephemeral_container_violation(s):
+    text = pod_text(
+        POD_SC_OK
+        + "  containers:\n    - name: a\n      image: x\n"
+        + "  ephemeralContainers:\n    - name: e\n      securityContext:\n        privileged: true\n"
+    )
+    errors, _ = judge(s, text)
+    want_one_error(errors, "ephemeralContainers[e]", "privileged: true")
+
+
+def seccomp_case_every_violation_is_reported_in_order(s):
+    text = pod_text(
+        "  initContainers:\n    - name: i\n      image: x\n"
+        "  containers:\n    - name: a\n      image: x\n"
+        "  ephemeralContainers:\n    - name: e\n      image: x\n"
+    )
+    errors, _ = judge(s, text)
+    assert len(errors) == 3, errors
+    assert "initContainers[i]" in errors[0] and "containers[a]" in errors[1] and "ephemeralContainers[e]" in errors[2], errors
+
+
+def seccomp_case_pod_spec_missing_or_security_context_not_a_mapping(s):
+    errors = []
+    s.check_pod_spec("chart", "Pod/p", None, errors)
+    want_one_error(errors, "pod spec missing or unparsable")
+    errors, _ = judge(s, pod_text("  securityContext: nope\n  containers:\n    - name: a\n      image: x\n"))
+    assert any("spec.securityContext is not a mapping" in e for e in errors), errors
+    assert any("containers[a]" in e for e in errors), errors  # falls back to "no pod level", still judged
+
+
+def seccomp_case_container_level_ok_does_not_hide_a_sibling(s):
+    text = pod_text(
+        POD_SC_OK
+        + "  containers:\n    - name: a\n      securityContext:\n        seccompProfile:\n          type: RuntimeDefault\n"
+        + "    - name: b\n      securityContext:\n        seccompProfile:\n          type: Localhost\n"
+    )
+    errors, _ = judge(s, text)
+    want_one_error(errors, "containers[b]", "Localhost")
+
+
+SECCOMP_CASES = [(n[len("seccomp_case_"):], f) for n, f in sorted(globals().items()) if n.startswith("seccomp_case_")]
+
+
+def run_cases(m, cases=None):
     """Return [(case name, message)] for every failing case."""
     failures = []
-    for name, fn in CASES:
+    for name, fn in (CASES if cases is None else cases):
         try:
             fn(m)
         except Exception as e:  # any exception is a failed case
@@ -387,7 +584,13 @@ MUTANTS = [
      'out.append(ShapeProblem(f"{group} entry is not a mapping"))',
      'pass'),
     ("strict containers() lets an unnamed container through",
-     'if item.name == "<unnamed>":',
+     'if not isinstance(item.spec.get("name"), str) or item.spec["name"] == "":',
+     'if False:'),
+    ("strict containers() accepts an empty name",
+     'or item.spec["name"] == "":',
+     ':'),
+    ("flow_list accepts an escaped or adjacent quote",
+     'if quote in raw or "\\\\" in raw:',
      'if False:'),
     ("CronJob pods are no longer found",
      'if kind == "CronJob":',
@@ -398,6 +601,44 @@ MUTANTS = [
     ("--- no longer separates documents",
      'r"(?m)^---[ \\t]*$"',
      'r"(?m)^----[ \\t]*$"'),
+]
+
+
+# Mutants of scripts/check-seccomp.py (each `old` must occur exactly once).
+SECCOMP_MUTANTS = [
+    ("a non-RuntimeDefault type is accepted",
+     'if sc_type != "RuntimeDefault":',
+     'if False:'),
+    ("privileged: true is no longer an error",
+     'str(csc.get("privileged")).strip().lower() == "true"',
+     'str(csc.get("privileged")).strip().lower() == "never"'),
+    ("privileged is matched case-sensitively",
+     'str(csc.get("privileged")).strip().lower() == "true"',
+     'str(csc.get("privileged")).strip() == "true"'),
+    ("a privileged container is also judged as non-privileged",
+     '            )\n            continue\n\n        sc_type',
+     '            )\n\n        sc_type'),
+    ("an empty / non-list containers is not an error",
+     'if not isinstance(pod_spec.get("containers"), list) or not pod_spec.get("containers"):',
+     'if False:'),
+    ("a shape problem from the walk is dropped",
+     'errors.append(f"{chart}: {label}: {item.msg}")',
+     'pass'),
+    ("the container-level seccompProfile is ignored",
+     'if isinstance(csc, dict) and "seccompProfile" in csc:',
+     'if False:'),
+    ("the Pod-level profile is trusted without reading its type",
+     'return sp.get("type"), "pod (inherited)"',
+     'return "RuntimeDefault", "pod (inherited)"'),
+    ("a malformed container seccompProfile is read as fine",
+     'return None, "container (malformed seccompProfile)"',
+     'return "RuntimeDefault", "container (malformed seccompProfile)"'),
+    ("a Pod spec that is not a mapping is not an error",
+     'errors.append(f"{chart}: {label}: pod spec missing or unparsable")',
+     'pass'),
+    ("a malformed Pod securityContext is not reported",
+     'errors.append(f"{chart}: {label}: spec.securityContext is not a mapping")',
+     'pass'),
 ]
 
 
@@ -440,6 +681,31 @@ def real_tree(m):
     return failures
 
 
+def run_mutants(source, mutants, cases, path):
+    """Apply each mutation once, run `cases` on the result, and return the
+    problems (stale pattern, mutant that does not load, mutant that survives)."""
+    problems = []
+    for name, old, new in mutants:
+        count = source.count(old)
+        if count != 1:
+            problems.append(f"mutant '{name}': pattern occurs {count} times (want exactly 1), the mutation is stale")
+            print(f"  STALE {name}")
+            continue
+        try:
+            mm = load_module(source.replace(old, new, 1), "mutant_under_test", path)
+        except Exception as e:  # a mutant that does not even import is a broken mutant
+            problems.append(f"mutant '{name}': mutated module failed to load: {type(e).__name__}: {e}")
+            print(f"  BROKEN {name}")
+            continue
+        caught = run_cases(mm, cases)
+        if not caught:
+            problems.append(f"mutant '{name}' survived: no case went red")
+            print(f"  SURVIVED {name}")
+        else:
+            print(f"  killed   {name}  ({len(caught)} case(s): {', '.join(n for n, _ in caught[:3])}{' ...' if len(caught) > 3 else ''})")
+    return problems
+
+
 def main() -> int:
     source = LIB_PATH.read_text()
     problems = []
@@ -457,34 +723,36 @@ def main() -> int:
     print("== real tree (charts/ctf-user via helm template) ==")
     problems += real_tree(m)
 
-    print("== mutants (each must turn at least one case red) ==")
+    print("== seccomp decision (scripts/check-seccomp.py, check_pod_spec) ==")
+    sec_source = SECCOMP_PATH.read_text()
+    s = load_module(sec_source, "check_seccomp_real", SECCOMP_PATH)
+    if len(SECCOMP_CASES) < 12:
+        problems.append(f"only {len(SECCOMP_CASES)} seccomp cases are defined (<12): the case table was truncated")
+    sec_fails = run_cases(s, SECCOMP_CASES)
+    for name, _ in SECCOMP_CASES:
+        bad = [msg for n, msg in sec_fails if n == name]
+        print(f"  {'FAIL' if bad else 'ok  '} {name}" + (f"  -> {bad[0]}" if bad else ""))
+    problems += [f"seccomp case {n}: {msg}" for n, msg in sec_fails]
+
+    print("== mutants of chartparse.py (each must turn at least one case red) ==")
     if len(MUTANTS) < 3:
         problems.append("fewer than 3 mutants are defined")
-    for name, old, new in MUTANTS:
-        count = source.count(old)
-        if count != 1:
-            problems.append(f"mutant '{name}': pattern occurs {count} times (want exactly 1), the mutation is stale")
-            print(f"  STALE {name}")
-            continue
-        try:
-            mm = load_module(source.replace(old, new, 1), "chartparse_mutant")
-        except Exception as e:  # a mutant that does not even import is a broken mutant
-            problems.append(f"mutant '{name}': mutated module failed to load: {type(e).__name__}: {e}")
-            print(f"  BROKEN {name}")
-            continue
-        caught = run_cases(mm)
-        if not caught:
-            problems.append(f"mutant '{name}' survived: no case went red")
-            print(f"  SURVIVED {name}")
-        else:
-            print(f"  killed   {name}  ({len(caught)} case(s): {', '.join(n for n, _ in caught[:3])}{' ...' if len(caught) > 3 else ''})")
+    problems += run_mutants(source, MUTANTS, CASES, LIB_PATH)
+
+    print("== mutants of check-seccomp.py (each must turn at least one seccomp case red) ==")
+    if len(SECCOMP_MUTANTS) < 3:
+        problems.append("fewer than 3 seccomp mutants are defined")
+    problems += run_mutants(sec_source, SECCOMP_MUTANTS, SECCOMP_CASES, SECCOMP_PATH)
 
     if problems:
         print("\nFAIL: scripts/lib/chartparse.py self-test:", file=sys.stderr)
         for p in problems:
             print(f"  - {p}", file=sys.stderr)
         return 1
-    print(f"\nOK: {len(CASES)} cases, real tree, {len(MUTANTS)} mutants all killed.")
+    print(
+        f"\nOK: {len(CASES)} cases, real tree, {len(MUTANTS)} chartparse mutants killed; "
+        f"{len(SECCOMP_CASES)} seccomp cases, {len(SECCOMP_MUTANTS)} seccomp mutants killed."
+    )
     return 0
 
 

@@ -44,6 +44,10 @@ quoted "[one]" is indistinguishable from the flow form [one] once parsed.
 would reject a string where a list is required), so this is accepted rather
 than tracked with extra state.
 
+Scope (2026-11-01): this Python reader is the source of truth for the chart
+Hard Invariant checks in this repo; the conftest approach of app#67 is limited
+to the platform-side Key Guards.
+
 The self-test is scripts/test-chartparse.py (run by `make lint`).
 """
 import re
@@ -296,8 +300,8 @@ def containers(pod_spec):
     for item in scan_containers(pod_spec):
         if isinstance(item, ShapeProblem):
             raise PodShapeError(item.msg)
-        if item.name == "<unnamed>":
-            raise PodShapeError(f"{item.group} entry has no name")
+        if not isinstance(item.spec.get("name"), str) or item.spec["name"] == "":
+            raise PodShapeError(f"{item.group} entry has no usable name: {item.spec.get('name')!r}")
         found.append(item)
     return found
 
@@ -359,7 +363,7 @@ def flow_list(value):
     Raises YamlSubsetError for: a non-string, a string that is not wrapped in
     exactly one `[` ... `]`, a nested `[` / `{`, an empty element (`[a,,b]`,
     `[,]`; a single trailing comma `[a,]` is allowed as in YAML), or an
-    unterminated quote."""
+    unterminated quote, a backslash or a repeated quote char inside a quoted element."""
     if not isinstance(value, str):
         raise YamlSubsetError(f"flow sequence expected, got {type(value).__name__}: {value!r}")
     text = value.strip()
@@ -379,7 +383,13 @@ def flow_list(value):
         if raw[0] in "'\"":
             if len(raw) < 2 or raw[-1] != raw[0]:
                 raise YamlSubsetError(f"malformed quoted element in flow sequence: {value!r}")
+            quote = raw[0]
             raw = raw[1:-1]
+            # No escape handling here: a backslash, or the quote char again
+            # inside (an escaped or adjacent quote: "a\"b", "a""b", 'a''b'),
+            # is refused rather than guessed at.
+            if quote in raw or "\\" in raw:
+                raise YamlSubsetError(f"escaped or adjacent quote in flow sequence element is not supported: {value!r}")
         elif any(ch in raw for ch in "[]{}"):
             raise YamlSubsetError(f"nested flow collection is not supported: {value!r}")
         items.append(raw)
