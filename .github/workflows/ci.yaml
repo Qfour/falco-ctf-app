@@ -76,6 +76,8 @@ jobs:
           done
       - name: seccomp Hard Invariant (fail-closed)
         run: python3 scripts/check-seccomp.py
+      - name: chart reader self-test (scripts/lib/chartparse.py)
+        run: python3 scripts/test-chartparse.py
       - name: flag isolation Hard Invariant (ADR-0001 Verification 1, fail-closed)
         run: ./scripts/check-flag-isolation.sh
       - name: namespace ownership guard (ADR-0011, fail-closed)
