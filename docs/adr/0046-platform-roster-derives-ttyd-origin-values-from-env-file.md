@@ -1,5 +1,5 @@
 # ADR-0046: platform の名簿の経路は --frame-ancestors / --app-host / --dns-suffix を env file から導き、明示の値は 'none' か導出値と同じものだけを受ける
-- Status: Proposed (Accepted の条件: platform#292 が main に入り V1〜V3 が緑。security R1 APPROVE (済: review-5x 87 R1、APPROVE with comments)。V4 (実機) は次の stand-up)
+- Status: **Accepted** (2026-11-01。実装 = platform#296 (issue platform#292) = cdf0dc5、V1〜V3 緑、security R1 = review-5x 87 APPROVE with comments。V4 (実機) は次の stand-up の go / no-go = platform#300 と同じ回)
 - Date / Deciders: 2026-10-27 / VP + architect (起草) + security-engineer (review-5x 87 R1、APPROVE with comments。条件 = D3 の env / context 不一致の exit 2)
 - 関連: platform#292、platform#291 (#290)、ADR-0044 (Options「検討して外した構造」・Consequences・受け入れた残余 (b))、ADR-0013、契約表「ttyd-proxy 配線」「PORTAL_TTYD_SUFFIX⇔ctf-user.dnsSuffix」「--frame-ancestors / --app-host の文法」の 3 行、review-5x 82 R2#2 / R4#7、review-5x 87 (T2)
 ## Context
