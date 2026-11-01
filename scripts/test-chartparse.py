@@ -306,10 +306,15 @@ def case_shape_problems_are_reported_in_order(m):
     spec = {"initContainers": "nope", "containers": [{"name": "a"}, "str"], "ephemeralContainers": [{"image": "x"}]}
     items = m.scan_containers(spec)
     kinds = [type(i).__name__ for i in items]
-    assert kinds == ["ShapeProblem", "Container", "ShapeProblem", "Container"], kinds
+    assert kinds == ["ShapeProblem", "Container", "ShapeProblem", "ShapeProblem"], kinds
     assert items[0].msg == "initContainers is not a list", items[0]
     assert items[2].msg == "containers entry is not a mapping", items[2]
-    assert items[3].name == "<unnamed>", items[3]
+    assert items[3].msg == "ephemeralContainers entry has no usable name: None", items[3]
+    # an unusable name is a ShapeProblem in every form, never a Container
+    for bad, shown in (({"image": "x"}, "None"), ({"name": ""}, "''"), ({"name": None}, "None")):
+        got = m.scan_containers({"containers": [bad]})
+        assert [type(i).__name__ for i in got] == ["ShapeProblem"], got
+        assert got[0].msg == f"containers entry has no usable name: {shown}", got
 
 
 def case_strict_containers_raise_on_shape(m):
@@ -593,6 +598,48 @@ def seccomp_case_effective_type_refuses_a_flow_mapping_security_context(s):
     raise AssertionError(f"no PodShapeError, got {got!r}")
 
 
+def _privileged_pod(v):
+    return pod_text(
+        POD_SC_OK + "  containers:\n    - name: a\n      securityContext:\n        privileged: " + v + "\n"
+    )
+
+
+def seccomp_case_privileged_yaml_1_1_true_forms_are_privileged(s):
+    for v in ("yes", "Yes", "ON", "on", "y", "Y", '"yes"'):
+        errors, out = judge(s, _privileged_pod(v))
+        want_one_error(errors, "containers[a]", "privileged: true")
+        assert "ok:" not in out, (v, out)
+
+
+def seccomp_case_privileged_clear_false_forms_pass(s):
+    for v in ("false", "False", "no", "NO", "off", "Off", "n", "N"):
+        errors, out = judge(s, _privileged_pod(v))
+        assert errors == [], (v, errors)
+        assert "ok: containers[a]" in out, (v, out)
+
+
+def seccomp_case_privileged_not_a_clear_false_is_a_failure(s):
+    for v in ("maybe", "1", "0", '""', "null", "~", "[true]", "{a: b}"):
+        errors, out = judge(s, _privileged_pod(v))
+        want_one_error(errors, "containers[a]", "not a clear false")
+        assert "ok:" not in out, (v, out)
+    # the key is absent / the securityContext has no privileged key: not privileged
+    errors, _ = judge(s, pod_text(POD_SC_OK + "  containers:\n    - name: a\n      securityContext:\n        runAsUser: 1\n"))
+    assert errors == [], errors
+
+
+def seccomp_case_explicit_null_security_context_is_a_failure(s):
+    for v in ("null", "~"):
+        text = pod_text(POD_SC_OK + "  containers:\n    - name: a\n      securityContext: " + v + "\n")
+        errors, out = judge(s, text)
+        want_one_error(errors, "containers[a]", "securityContext is not a mapping")
+        assert "ok:" not in out, (v, out)
+    # the key with no value at all is "unset" (inherits the Pod level)
+    errors, out = judge(s, pod_text(POD_SC_OK + "  containers:\n    - name: a\n      securityContext:\n"))
+    assert errors == [], errors
+    assert "(source: pod (inherited))" in out, out
+
+
 SECCOMP_CASES = [(n[len("seccomp_case_"):], f) for n, f in sorted(globals().items()) if n.startswith("seccomp_case_")]
 
 
@@ -648,12 +695,15 @@ MUTANTS = [
     ("scan_containers skips a non-mapping entry silently",
      'out.append(ShapeProblem(f"{group} entry is not a mapping"))',
      'pass'),
-    ("strict containers() lets an unnamed container through",
-     'if not isinstance(item.spec.get("name"), str) or item.spec["name"] == "":',
+    ("scan_containers lets an unnamed entry through",
+     'if not isinstance(name, str) or name == "":',
      'if False:'),
-    ("strict containers() accepts an empty name",
-     'or item.spec["name"] == "":',
-     ':'),
+    ("scan_containers accepts an empty name",
+     'if not isinstance(name, str) or name == "":',
+     'if not isinstance(name, str):'),
+    ("scan_containers only looks for a missing name key",
+     'if not isinstance(name, str) or name == "":',
+     'if "name" not in c:'),
     ("flow_list accepts an escaped or adjacent quote",
      'if quote in raw or "\\\\" in raw:',
      'if False:'),
@@ -674,12 +724,18 @@ SECCOMP_MUTANTS = [
     ("a non-RuntimeDefault type is accepted",
      'if sc_type != "RuntimeDefault":',
      'if False:'),
-    ("privileged: true is no longer an error",
-     'str(csc.get("privileged")).strip().lower() == "true"',
-     'str(csc.get("privileged")).strip().lower() == "never"'),
+    ("privileged: true is no longer read as true",
+     'PRIVILEGED_TRUE = {"true", "yes", "on", "y"}',
+     'PRIVILEGED_TRUE = {"never"}'),
+    ("the YAML 1.1 forms yes / on / y are not read as true",
+     'PRIVILEGED_TRUE = {"true", "yes", "on", "y"}',
+     'PRIVILEGED_TRUE = {"true"}'),
     ("privileged is matched case-sensitively",
-     'str(csc.get("privileged")).strip().lower() == "true"',
-     'str(csc.get("privileged")).strip() == "true"'),
+     'word = value.strip().lower() if isinstance(value, str) else None',
+     'word = value.strip() if isinstance(value, str) else None'),
+    ("a privileged value that is not a clear false is read as false",
+     '    return "unclear"',
+     '    return "false"'),
     ("a privileged container is also judged as non-privileged",
      '            )\n            continue\n\n        sc_type',
      '            )\n\n        sc_type'),
@@ -707,12 +763,6 @@ SECCOMP_MUTANTS = [
     ("effective_seccomp_type reads the securityContext without the strict reader",
      'csc = security_context(container)',
      'csc = container.get("securityContext") if isinstance(container.get("securityContext"), dict) else {}'),
-    ("an unnamed container is not an error",
-     'errors.append(f"{chart}: {label}: {group} entry has no usable name: {cname!r}")',
-     'pass'),
-    ("an unnamed container check only looks for a missing key",
-     'if not isinstance(cname, str) or cname == "":',
-     'if "name" not in c:'),
     ("a Pod spec that is not a mapping is not an error",
      'errors.append(f"{chart}: {label}: pod spec missing or unparsable")',
      'pass'),
@@ -786,6 +836,46 @@ def run_mutants(source, mutants, cases, path):
     return problems
 
 
+def load_seccomp_with_lib(lib_source: str):
+    """check-seccomp.py with `chartparse` replaced by a mutated copy of the
+    shared reader (its `from chartparse import ...` resolves via sys.modules)."""
+    saved = sys.modules.get("chartparse")
+    sys.modules["chartparse"] = load_module(lib_source, "chartparse", LIB_PATH)
+    try:
+        return load_module(SECCOMP_PATH.read_text(), "check_seccomp_over_mutant_lib", SECCOMP_PATH)
+    finally:
+        if saved is None:
+            del sys.modules["chartparse"]
+        else:
+            sys.modules["chartparse"] = saved
+
+
+def run_shared_mutants(lib_source, mutants, cases):
+    """Each mutant is applied to the SHARED reader and judged through
+    check-seccomp.py (the consumer), so the fail-closed behaviour is pinned on
+    both sides of the import."""
+    problems = []
+    for name, old, new in mutants:
+        count = lib_source.count(old)
+        if count != 1:
+            problems.append(f"shared mutant '{name}': pattern occurs {count} times (want exactly 1), the mutation is stale")
+            print(f"  STALE {name}")
+            continue
+        try:
+            mm = load_seccomp_with_lib(lib_source.replace(old, new, 1))
+        except Exception as e:
+            problems.append(f"shared mutant '{name}': failed to load: {type(e).__name__}: {e}")
+            print(f"  BROKEN {name}")
+            continue
+        caught = run_cases(mm, cases)
+        if not caught:
+            problems.append(f"shared mutant '{name}' survived: no seccomp case went red")
+            print(f"  SURVIVED {name}")
+        else:
+            print(f"  killed   {name}  ({len(caught)} case(s): {', '.join(n for n, _ in caught[:3])}{' ...' if len(caught) > 3 else ''})")
+    return problems
+
+
 def main() -> int:
     source = LIB_PATH.read_text()
     problems = []
@@ -823,6 +913,12 @@ def main() -> int:
     if len(SECCOMP_MUTANTS) < 3:
         problems.append("fewer than 3 seccomp mutants are defined")
     problems += run_mutants(sec_source, SECCOMP_MUTANTS, SECCOMP_CASES, SECCOMP_PATH)
+
+    print("== mutants of chartparse.py seen through check-seccomp.py (each must turn at least one seccomp case red) ==")
+    shared = [m for m in MUTANTS if m[0].startswith("scan_containers") and "name" in m[0]]
+    if len(shared) < 3:
+        problems.append("fewer than 3 shared-reader name mutants are defined")
+    problems += run_shared_mutants(source, shared, SECCOMP_CASES)
 
     if problems:
         print("\nFAIL: scripts/lib/chartparse.py self-test:", file=sys.stderr)

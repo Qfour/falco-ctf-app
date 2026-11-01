@@ -44,7 +44,10 @@ FAIL-CLOSED READS
 A container's / Pod's `securityContext` is read through
 chartparse.security_context(): a value that is not a block mapping (and not
 `{}`) is a FAIL, and so is a container whose `name` is missing or not a
-non-empty string. Neither is judged as "unset".
+non-empty string. Neither is judged as "unset". An explicit `null` / `~`
+securityContext is also not a mapping (omit the key instead). `privileged` is
+judged as a YAML 1.1 boolean: a true (true/yes/on/y) or any value that is not a
+clear false (false/no/off/n) is a FAIL.
 """
 import re
 import subprocess
@@ -93,6 +96,27 @@ def effective_seccomp_type(container: dict, pod_security_context):
     return None, "none set at either level"
 
 
+# YAML 1.1 booleans (what a Kubernetes API server accepts for a bool field,
+# case-insensitively). Anything that is not one of these is not a clear false.
+PRIVILEGED_TRUE = {"true", "yes", "on", "y"}
+PRIVILEGED_FALSE = {"false", "no", "off", "n"}
+
+
+def privileged_state(csc: dict) -> str:
+    """"false" only when `privileged` is absent or a clear false; "true" for a
+    clear true; "unclear" for anything else (fail-closed: a value this check
+    cannot place is an error, not "not privileged")."""
+    if "privileged" not in csc:
+        return "false"
+    value = csc["privileged"]
+    word = value.strip().lower() if isinstance(value, str) else None
+    if word in PRIVILEGED_TRUE:
+        return "true"
+    if word in PRIVILEGED_FALSE:
+        return "false"
+    return "unclear"
+
+
 def check_pod_spec(chart, label, pod_spec, errors):
     if not isinstance(pod_spec, dict):
         errors.append(f"{chart}: {label}: pod spec missing or unparsable")
@@ -112,11 +136,7 @@ def check_pod_spec(chart, label, pod_spec, errors):
         if not isinstance(item, Container):
             errors.append(f"{chart}: {label}: {item.msg}")
             continue
-        group, _, c = item
-        cname = c.get("name")
-        if not isinstance(cname, str) or cname == "":
-            errors.append(f"{chart}: {label}: {group} entry has no usable name: {cname!r}")
-            continue
+        group, cname, c = item
 
         try:
             csc = security_context(c)
@@ -124,10 +144,17 @@ def check_pod_spec(chart, label, pod_spec, errors):
             errors.append(f"{chart}: {label}: {group}[{cname}] securityContext is not a mapping")
             continue
 
-        if str(csc.get("privileged")).strip().lower() == "true":
+        priv = privileged_state(csc)
+        if priv != "false":
+            if priv == "true":
+                problem = "sets privileged: true (disables seccomp regardless of profile)"
+            else:
+                problem = (
+                    f"has privileged={csc.get('privileged')!r}, which is not a clear false "
+                    "(privileged disables seccomp regardless of profile)"
+                )
             errors.append(
-                f"{chart}: {label}: {group}[{cname}] sets privileged: true "
-                "(disables seccomp regardless of profile)"
+                f"{chart}: {label}: {group}[{cname}] {problem}"
             )
             continue
 

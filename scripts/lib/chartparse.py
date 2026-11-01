@@ -257,8 +257,8 @@ def extract_pod_specs(doc):
 # ---------------------------------------------------------------------------
 
 # One element of a Pod spec's container groups, in document order. `spec` is
-# the container mapping itself; `name` is "<unnamed>" when the container has
-# no name (a checker should treat that as a defect, not skip it).
+# the container mapping itself; `name` is always a non-empty str (an entry
+# without a usable name is a ShapeProblem, never a Container).
 Container = namedtuple("Container", ["group", "name", "spec"])
 
 # A shape defect found while walking the groups (`msg` is the message text a
@@ -271,7 +271,8 @@ def scan_containers(pod_spec):
     and return an ordered list of `Container` and `ShapeProblem` items.
 
     A group that is absent (`None`) contributes nothing. A group that is not
-    a list, or an entry that is not a mapping, becomes a `ShapeProblem` and
+    a list, an entry that is not a mapping, or an entry whose `name` is not a
+    non-empty str (missing, empty, null) becomes a `ShapeProblem` and
     the walk continues, so a caller that reports every defect (check-seccomp
     does) sees all of them. `pod_spec` must be a mapping (caller checks)."""
     out = []
@@ -286,7 +287,11 @@ def scan_containers(pod_spec):
             if not isinstance(c, dict):
                 out.append(ShapeProblem(f"{group} entry is not a mapping"))
                 continue
-            out.append(Container(group, c.get("name", "<unnamed>"), c))
+            name = c.get("name")
+            if not isinstance(name, str) or name == "":
+                out.append(ShapeProblem(f"{group} entry has no usable name: {name!r}"))
+                continue
+            out.append(Container(group, name, c))
     return out
 
 
@@ -300,8 +305,6 @@ def containers(pod_spec):
     for item in scan_containers(pod_spec):
         if isinstance(item, ShapeProblem):
             raise PodShapeError(item.msg)
-        if not isinstance(item.spec.get("name"), str) or item.spec["name"] == "":
-            raise PodShapeError(f"{item.group} entry has no usable name: {item.spec.get('name')!r}")
         found.append(item)
     return found
 
@@ -320,9 +323,12 @@ def container_names(pod_spec):
 def security_context(obj):
     """The `securityContext` of a container (or of a Pod spec) as a dict.
 
-    Absent / null -> {}. The empty flow mapping `{}` -> {}. A block mapping
-    is returned as parsed. Anything else (a scalar, a list, a non-empty flow
-    mapping, which this reader does not expand) raises PodShapeError."""
+    Absent (the key, or the key with no value) -> {}. The empty flow mapping
+    `{}` -> {}. A block mapping is returned as parsed. Anything else (a
+    scalar, a list, a non-empty flow mapping, which this reader does not
+    expand) raises PodShapeError. That includes an explicit `null` / `~`:
+    the reader returns those as the strings "null" / "~", and a checker
+    must not read them as "unset" (omit the key instead)."""
     value = obj.get("securityContext")
     if value is None:
         return {}

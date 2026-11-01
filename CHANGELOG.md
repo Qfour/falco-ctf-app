@@ -21,7 +21,7 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
 
 ### Security
 
-- **seccomp 検査 (`scripts/check-seccomp.py`) を fail-closed に (PATCH)**: container / Pod の `securityContext` が mapping でない場合と、名前の無い container を FAIL にした (共有 parser `scripts/lib/chartparse.py` の `security_context()` 経由)。検査を強くする変更で、現行 chart の描画結果は変わらない。
+- **seccomp 検査 (`scripts/check-seccomp.py`) を fail-closed に (app#574、PATCH)**: container / Pod の `securityContext` が mapping でない場合と、名前の無い container を FAIL にした (共有 parser `scripts/lib/chartparse.py` の `security_context()` / `scan_containers()` 経由)。`securityContext` の明示的な `null` / `~` も mapping でないので FAIL (省くときは key ごと省く)。`privileged` は YAML 1.1 の真偽値として読み、true / yes / on / y に加え、明確な false (false / no / off / n) 以外の値も FAIL。検査を強くする変更で、現行 chart の描画結果は変わらない。
 - **detect-grader から `ca-certificates` package を除き、`ca-certificates-bundle` を 20260909-r3 に pin した (app#566、PATCH)**。main CI の `build (detect-grader) / scan` が 2026-10-31 から赤だった (`ca-certificates` / `ca-certificates-bundle` 20260413-r0、CRITICAL 1 / MEDIUM 1) のを解消する。base の `falcosecurity/falco:0.44.1` は digest 据え置き (tag の digest が変わっていない)。`ca-certificates` package は grader が使わず (update-ca-certificates / c_rehash と個別 .crt だけ。grader は falco replay のみで network 無し)、20260909-r2 以降は `libcrypto.so.4` に依存して OpenSSL 3 と 4 が同居するため、pin せず除去した。TLS の trust store (`/etc/ssl/certs/ca-certificates.crt`) は依存の無い `ca-certificates-bundle` の所有で、exact pin で単独 upgrade する。同じ RUN に build 時の不在 assert (curl / libcurl-openssl4 / ca-certificates / OpenSSL 4 の libcrypto) を足し、ttyd (app#517) と同型にした。
   - **Upgrade note**: v2026.11.1 から build した detect-grader にはこの CVE が残る。stand-up は本変更を含む次の release tag で行うこと (tag は CEO)。
 
