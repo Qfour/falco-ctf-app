@@ -9,6 +9,7 @@
 
 REGISTRY     ?= docker.io/falco-ctf
 TAG          ?= $(shell git rev-parse --short HEAD)
+# platform の release scan gate が読む。1 行のまま、継続行にしない (ADR-WS-0010 D8)
 IMAGES       := scoreboard auth-policy collector ttyd ttyd-proxy challenge docs detect-grader
 SYSDIG_URL   ?= https://app.au1.sysdig.com
 
