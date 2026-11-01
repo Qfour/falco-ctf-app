@@ -221,8 +221,11 @@ func (h *Handler) receive(w http.ResponseWriter, r *http.Request) {
 	// where oauth2-proxy always stamps the header — so any such header means the
 	// browser path and is refused 403 BEFORE the secret check, the body decode
 	// or anything that could record a fire or touch scoring. Without this a
-	// cross-site (SameSite=None) POST from an admin session could forge events
-	// (webhookSecretMode=warn lets a secret-less request through).
+	// cross-origin POST from an admin session could forge events
+	// (webhookSecretMode=warn lets a secret-less request through). SameSite
+	// does not decide this: under Lax a page on another same-site origin
+	// (another seat, dex) can still send it, and under None any site could
+	// (ADR-0049 D3).
 	if httpx.HasProxyIdentityHeader(r) {
 		h.logger.Warn("falco webhook denied: browser/proxy path not accepted", "remote_addr", r.RemoteAddr)
 		metrics.FalcoEventsReceived.WithLabelValues("forbidden").Inc()

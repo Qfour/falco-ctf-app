@@ -1,11 +1,11 @@
 # ADR-0048: ttyd-proxy は WebSocket Upgrade の Origin が自 seat の https://<Host> でなければ 403 にする (fail-closed。ADR-0044 / ADR-0046 の対の入力)
 - Status: **Accepted** (2026-10-27。実装: app#546 = de9bf9e。review-5x 91 (T3) R1 APPROVE with comments (security)、architect = R4 (yes, if、反映済み)。V1〜V2 緑。**V3 (実機: Terminal タブの WS が 101、production と同じ edge 経路) は stand-up の go / no-go = platform#300。platform の event pin にこの SHA 以降を載せる前に V3 を通す**)
 - Date / Deciders: 2026-10-27 / VP + application-engineer (起草) + architect (review-5x 91 R4、2026-10-27: yes, if = Status の型、契約表 419 / 403 行の追記、ingress controller 置換の Signpost) + security-engineer (review-5x 91 R1、APPROVE with comments)
-- 関連: app#544、platform#297 (private。詳細と、oauth2-proxy の SameSite の再評価はそこ)、ADR-0044 (frame-ancestors の文法)、ADR-0046 (portal origin の出所と Status の型)、ADR-0013 (単一 origin)、ADR-0047、conventions の「ttyd-proxy 配線」行 (403) と「Cookie `SameSite=None`」行 (419)
+- 関連: app#544、platform#297 (private。詳細と、oauth2-proxy の SameSite の再評価はそこ)、ADR-0044 (frame-ancestors の文法)、ADR-0046 (portal origin の出所と Status の型)、ADR-0013 (単一 origin)、ADR-0047、conventions の「ttyd-proxy 配線」行 (403) と「Cookie `SameSite=None`」行 (419。2026-10-30: ADR-0049 で Lax に置換。当時の記述)
 ## Context
 - C1. ttyd の端末は WebSocket で動く (ttyd は `--writable`。arbitrary command の shell)。ttyd-proxy は Ingress が到達する唯一のコンテナで、全 request を ttyd (loopback) に reverse proxy し、`httputil.ReverseProxy` が Upgrade をそのまま tunnel する (ttydproxy.go の package doc)。
 - C2. ADR-0044 は frame-ancestors (どの親ページが iframe に入れてよいか) を 1 origin に閉じた。これは HTML の描画の入力で、WebSocket の Upgrade は frame-ancestors の対象ではない。Upgrade の `Origin` は、ttyd・ttyd-proxy・Ingress・auth-policy のどこでも検査していない (platform#297)。
-- C3. oauth2-proxy の cookie は SameSite=None + Secure + Domain=.<dnsSuffix> (conventions の「Cookie `SameSite=None`」行)。portal は seat の ttyd を iframe で埋め込む (frame-ancestors = https://<appHost>)。この cookie の設定のもとで、Origin の検査が Upgrade の唯一の「どのページが開いたか」の入力になる。SameSite の要否の再評価は platform#297 (platform の値と本リポの契約表を揃える)。
+- C3. oauth2-proxy の cookie は SameSite=None + Secure + Domain=.<dnsSuffix> (conventions の「Cookie `SameSite=None`」行。2026-10-30: ADR-0049 で Lax に置換。当時の記述)。portal は seat の ttyd を iframe で埋め込む (frame-ancestors = https://<appHost>)。この cookie の設定のもとで、Origin の検査が Upgrade の唯一の「どのページが開いたか」の入力になる。SameSite の要否の再評価は platform#297 (platform の値と本リポの契約表を揃える)。
 - C4. portal の iframe 内の ttyd のページ (seat host `https://<seat>.<dnsSuffix>`) が開く WebSocket の Origin は、seat host 自身になる。Host は要求の Host ヘッダ (`<seat>.<dnsSuffix>`) で、`httputil.ReverseProxy` の server 側では `r.Host` に残る。ingress-nginx は既定で元の Host を upstream に渡すが、**platform の ingress-nginx は `use-forwarded-headers=true` なので、`X-Forwarded-Host` が Host になりうる** (review-5x 91 R2#2。実測は V3)。Host が client の Host と違うと、正しい Upgrade が 403 になる (fail-closed)。
 - C5. ttyd を別 origin のページから WebSocket で直接使う運用は無い (参加者の入口は portal の Terminal タブと、seat host の直接の top-level 表示だけ。どちらも Origin = seat host)。
 ## Options
@@ -34,6 +34,7 @@ Option 2。CSP の frame-ancestors を付ける消費者 (ttyd-proxy) 自身が�
 2. ttyd を埋め込む 2 つ目の origin か、直接の WebSocket 利用 (別 origin のツール) が要る → ADR-0044 Signpost 1 と同時に、受理集合を広げる ADR を書く。
 3. ttyd-proxy が HTTP/2 の WebSocket (RFC 8441 の extended CONNECT) を受ける構成になる → upgrade の判定 (D3) が別の形になるので、検査の入口を見直す。今は `serverutil.newServer` が Protocols を設定せず (unencrypted HTTP/2 は無効)、`internal/serverutil` の test が固定している。
 4. ingress controller を置き換える (ingress-nginx の後継、P20 の substrate、Gateway API) → Host の扱いが変わりうるので V3 をやり直す (両リポ同時 PR)。
+5. `/check-workspace` の後ろ (workspace Ingress の upstream) に ttyd-proxy 以外の WebSocket 消費者を足す → Origin の判断が ttyd-proxy の 1 か所で完結しなくなるので、検査点 (新しい消費者自身か、auth-policy か = Option 3 の再検討) を ADR で見直す (2026-10-30 追記。ADR-0049 / platform#297 の security 再評価 §3 から。決定は無変更)。
 ## Verification
 - V1 (make test): `TestWebSocketUpgradeOrigin` が表で固定する。
   - 正 (101 で upstream に届く): Origin = `https://<Host>`、port 付き Host、Connection が list のときの own origin。正の行は D2 の完全一致の証明で、Connection の token 比較の証明ではない (Go の `ReverseProxy` は自分でも upgrade を判定するので、検査が効かなくても 101 になる)。
