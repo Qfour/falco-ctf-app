@@ -744,6 +744,7 @@ def seccomp_case_explicit_null_security_context_is_a_failure(s):
 # test is the only thing patched; the real subprocess module is untouched).
 
 _RENDER_CACHE = {}
+_HELM_CACHE = {}
 
 
 def helm_ctf_user(extra):
@@ -772,7 +773,15 @@ def run_with_renders(s, fn, transform=None, rc=0, drop_extra_args=False):
     with extra helm args (the extra renders) gets `transform(stdout)`, exit
     status `rc`, or the default-values output (`drop_extra_args`); the default
     pass is untouched. Returns (fn result, stdout, stderr)."""
-    real = subprocess.run
+    def real(cmd, **kw):
+        # One helm run per distinct command line for the whole test run (the
+        # cases x mutants matrix would otherwise render the same chart hundreds
+        # of times); a copy is returned so a transform never touches the cache.
+        key = tuple(cmd)
+        if key not in _HELM_CACHE:
+            _HELM_CACHE[key] = subprocess.run(cmd, **kw)
+        c = _HELM_CACHE[key]
+        return subprocess.CompletedProcess(c.args, c.returncode, c.stdout, c.stderr)
 
     def fake(cmd, **kw):
         extra = len(cmd) > 3
@@ -1046,11 +1055,11 @@ SECCOMP_MUTANTS = [
      "    check_extra_renders(errors)\n\n    if errors:",
      "    if errors:"),
     ("a render without missions-scope is an empty pass",
-     'f"{where}: {group}[{name}] not found in the rendered Pod specs "',
-     'f"{where}: {group}[{name}] not found in the rendered Pod specs " if False else ""'),
+     'if (group, name) not in found:',
+     'if False:'),
     ("a helm template failure of an extra render is not an error",
-     'f"{where}: `helm template` failed (exit {proc.returncode}): {proc.stderr.strip()}"',
-     '"" if True else ""'),
+     'if proc.returncode != 0:',
+     'if False:'),
     ("an empty values-scenario glob is not an error",
      'problems.append(f"no values-scenario-*.yaml found under {challenges_dir}")',
      'pass'),
@@ -1105,6 +1114,58 @@ def pin_command(m, pod_spec, pins):
             if not any(ln.startswith(pre) for ln in lines):
                 problems.append(f"{cname}: script has no line starting with {pre!r}")
     return problems
+
+
+# The pin comparison itself: pods that must be reported (a script without
+# `set -eu`, a different `cp` prefix, a 2-element command, no such container) and
+# one that must be clean. `pin_command` is also mutated (PIN_MUTANTS) and these
+# cases must go red for each mutant.
+def _pin_pod(m, command_yaml):
+    text = (
+        "kind: Pod\nmetadata:\n  name: p\nspec:\n  containers:\n    - name: c\n      image: x\n"
+        "  initContainers:\n    - name: missions-scope\n      image: x\n" + command_yaml
+    )
+    return m.extract_pod_specs(m.load_all_documents(text)[0])[0][1]
+
+
+_PIN_SCRIPT_OK = (
+    "          set -eu\n"
+    '          mkdir -p "/missions-seed/01-a"\n'
+    '          cp -a "/opt/ctf/missions/01-a/." "/missions-seed/01-a/"\n'
+)
+_PIN_CMD = "      command:\n        - sh\n        - -c\n        - |\n"
+
+
+def pin_selftest(m, pin_fn):
+    """Expectation failures of `pin_fn` over synthetic pods (empty = it behaves)."""
+    pins = MISSIONS_SCOPE_PINS
+    bad = []
+
+    def expect(name, command_yaml, needle):
+        got = pin_fn(m, _pin_pod(m, command_yaml), pins)
+        if needle is None:
+            if got:
+                bad.append(f"{name}: expected no problems, got {got}")
+        elif not any(needle in g for g in got):
+            bad.append(f"{name}: expected a problem containing {needle!r}, got {got}")
+
+    expect("complete script", _PIN_CMD + _PIN_SCRIPT_OK, None)
+    expect("no set -eu", _PIN_CMD + _PIN_SCRIPT_OK.replace("set -eu", "set -u"), "no line 'set -eu'")
+    expect("no mkdir line", _PIN_CMD + _PIN_SCRIPT_OK.replace("mkdir -p", "mkdir"), "mkdir -p")
+    expect("different cp prefix", _PIN_CMD + _PIN_SCRIPT_OK.replace("cp -a", "cp -r"), "no line starting with")
+    expect("two-element command", "      command:\n        - sh\n        - -c\n", "not [sh, -c, <script>]")
+    r = pin_fn(m, _pin_pod(m, _PIN_CMD + _PIN_SCRIPT_OK), {"nope": {"lines": [], "prefixes": []}})
+    if not any("expected exactly one container" in g for g in r):
+        bad.append(f"absent container: got {r}")
+    return bad
+
+
+PIN_MUTANTS = [
+    ("a missing pinned line is not reported", "            if ln not in lines:", "            if False:"),
+    ("a missing pinned prefix is not reported", "            if not any(ln.startswith(pre) for ln in lines):", "            if False:"),
+    ("a command that is not [sh, -c, script] is accepted",
+     'if len(command) != 3 or command[:2] != ["sh", "-c"]:', "if False:"),
+]
 
 
 def real_tree(m):
@@ -1214,6 +1275,28 @@ def main() -> int:
 
     print("== real tree (charts/ctf-user via helm template) ==")
     problems += real_tree(m)
+
+    print("== missions-scope command pin (negative pods; each pin mutant must turn one red) ==")
+    import inspect
+    bad = pin_selftest(m, pin_command)
+    problems += [f"pin_command: {b}" for b in bad]
+    pin_src = inspect.getsource(pin_command)
+    for name, old, new in PIN_MUTANTS:
+        if pin_src.count(old) != 1:
+            problems.append(f"pin mutant '{name}': pattern occurs {pin_src.count(old)} times (want exactly 1)")
+            print(f"  STALE {name}")
+            continue
+        ns = {}
+        exec(compile(pin_src.replace(old, new, 1), "pin_command_mutant", "exec"), ns)
+        try:
+            caught = pin_selftest(m, ns["pin_command"])
+        except Exception as e:  # the mutant crashes on the shape it no longer guards
+            caught = [f"{type(e).__name__}: {e}"]
+        if caught:
+            print(f"  killed   {name}  ({len(caught)} expectation(s))")
+        else:
+            problems.append(f"pin mutant '{name}' survived")
+            print(f"  SURVIVED {name}")
 
     print("== seccomp decision (scripts/check-seccomp.py, check_pod_spec) ==")
     sec_source = SECCOMP_PATH.read_text()

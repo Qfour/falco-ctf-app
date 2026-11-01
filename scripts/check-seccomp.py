@@ -45,9 +45,10 @@ EXTRA RENDERS (scenario.missions)
 `scenario.missions` is non-empty, so a render with default values never contains
 it. After the default-values pass over every chart, ctf-user is therefore
 rendered again (a) with a synthetic `scenario.missions=["01-a"]` and (b) once
-per `challenges/values-scenario-*.yaml` (the values deploy-user.sh passes for a
-`scenario:<name>` challenge id), and `check_pod_spec` is applied to those Pods
-too. Each extra render must contain `initContainers[missions-scope]`: a render
+per `challenges/values-scenario-*.yaml` (passed with `-f` only: challengeId and
+username do not change the container set or any securityContext, so they are not
+passed; the source of the list of renders is currently that glob), and
+`check_pod_spec` is applied to those Pods too. Each extra render must contain `initContainers[missions-scope]`: a render
 that lacks it (the template stopped emitting it, or a values file lost
 `scenario.missions`) is a FAIL, not an empty pass, and so is a `helm template`
 failure or an empty `values-scenario-*.yaml` glob. Other charts are rendered
