@@ -39,6 +39,22 @@ with the other chart checks (its docstring lists what it does and does not
 support). Anything it cannot confidently parse raises YamlSubsetError, which
 is always treated as a FAIL — never a silent skip.
 
+EXTRA RENDERS (scenario.missions)
+----------------------------------
+`charts/ctf-user` renders a `missions-scope` initContainer only when
+`scenario.missions` is non-empty, so a render with default values never contains
+it. After the default-values pass over every chart, ctf-user is therefore
+rendered again (a) with a synthetic `scenario.missions=["01-a"]` and (b) once
+per `challenges/values-scenario-*.yaml` (passed with `-f` only: challengeId and
+username do not change the container set or any securityContext, so they are not
+passed; the source of the list of renders is currently that glob), and
+`check_pod_spec` is applied to those Pods too. Each extra render must contain `initContainers[missions-scope]`: a render
+that lacks it (the template stopped emitting it, or a values file lost
+`scenario.missions`) is a FAIL, not an empty pass, and so is a `helm template`
+failure or an empty `values-scenario-*.yaml` glob. Other charts are rendered
+with default values only. The lines of the default-values pass are unchanged;
+the extra renders follow them.
+
 FAIL-CLOSED READS
 -----------------
 A container's / Pod's `securityContext` is read through
@@ -74,6 +90,13 @@ from chartparse import (  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CHARTS_DIR = REPO_ROOT / "charts"
+CHALLENGES_DIR = REPO_ROOT / "challenges"
+
+# The renders of charts/ctf-user that carry scenario.missions (see the docstring).
+# `scenario.missions` renders a `missions-scope` initContainer; every extra render
+# must contain it, so an extraction that lost it is an error and not a pass.
+SYNTHETIC_MISSIONS = ["--set-json", 'scenario.missions=["01-a"]']
+EXTRA_REQUIRED = (("initContainers", "missions-scope"),)
 
 
 def effective_seccomp_type(container: dict, pod_security_context):
@@ -184,6 +207,71 @@ def is_library_chart(chart_dir: Path) -> bool:
     return bool(re.search(r"(?m)^type:\s*library\s*$", chart_yaml.read_text()))
 
 
+def check_render(chart, chart_dir, errors, extra_args=(), desc=None, require=()):
+    """`helm template chart_dir *extra_args`, then `check_pod_spec` on every Pod
+    spec of the output. `desc` names an extra render in the error prefix (the
+    default-values pass keeps the bare chart name). Every (group, name) in
+    `require` must be among the containers found in the rendered Pod specs.
+    Returns the set of (group, name) found (empty when the render failed)."""
+    where = chart if desc is None else f"{chart} ({desc})"
+    proc = subprocess.run(
+        ["helm", "template", str(chart_dir), *extra_args],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        errors.append(
+            f"{where}: `helm template` failed (exit {proc.returncode}): {proc.stderr.strip()}"
+        )
+        return set()
+
+    try:
+        docs = load_all_documents(proc.stdout)
+    except YamlSubsetError as e:
+        errors.append(f"{where}: could not parse rendered manifest (fail-closed): {e}")
+        return set()
+
+    found = set()
+    for doc in docs:
+        for label, pod_spec in extract_pod_specs(doc):
+            print(f"  {label}")
+            check_pod_spec(where, label, pod_spec, errors)
+            if isinstance(pod_spec, dict):
+                found.update((item.group, item.name) for item in scan_containers(pod_spec) if isinstance(item, Container))
+    for group, name in require:
+        if (group, name) not in found:
+            errors.append(
+                f"{where}: {group}[{name}] not found in the rendered Pod specs "
+                "(the extra render would not cover it)"
+            )
+    return found
+
+
+def extra_render_specs(challenges_dir=CHALLENGES_DIR):
+    """([(description, helm args)], [problem]) for the extra ctf-user renders:
+    the synthetic scenario.missions, then one per challenges/values-scenario-*.yaml.
+    An empty glob is a problem (a check over zero files would pass silently)."""
+    specs = [('scenario.missions=["01-a"]', list(SYNTHETIC_MISSIONS))]
+    problems = []
+    files = sorted(Path(challenges_dir).glob("values-scenario-*.yaml"))
+    if not files:
+        problems.append(f"no values-scenario-*.yaml found under {challenges_dir}")
+    for f in files:
+        specs.append((f"-f {f.name}", ["-f", str(f)]))
+    return specs, problems
+
+
+def check_extra_renders(errors, challenges_dir=CHALLENGES_DIR):
+    """Render charts/ctf-user with scenario.missions set and judge those Pods
+    (the `missions-scope` initContainer exists only in these renders)."""
+    chart_dir = CHARTS_DIR / "ctf-user"
+    specs, problems = extra_render_specs(challenges_dir)
+    errors.extend(f"ctf-user: {p}" for p in problems)
+    for desc, args in specs:
+        print(f"== ctf-user ({desc}) ==")
+        check_render("ctf-user", chart_dir, errors, args, desc, EXTRA_REQUIRED)
+
+
 def main() -> int:
     if not CHARTS_DIR.is_dir():
         print(f"FAIL: charts dir not found: {CHARTS_DIR}", file=sys.stderr)
@@ -201,27 +289,9 @@ def main() -> int:
             print(f"== {chart} == (type: library — not installable, skipping)")
             continue
         print(f"== {chart} ==")
-        proc = subprocess.run(
-            ["helm", "template", str(chart_dir)],
-            capture_output=True,
-            text=True,
-        )
-        if proc.returncode != 0:
-            errors.append(
-                f"{chart}: `helm template` failed (exit {proc.returncode}): {proc.stderr.strip()}"
-            )
-            continue
+        check_render(chart, chart_dir, errors)
 
-        try:
-            docs = load_all_documents(proc.stdout)
-        except YamlSubsetError as e:
-            errors.append(f"{chart}: could not parse rendered manifest (fail-closed): {e}")
-            continue
-
-        for doc in docs:
-            for label, pod_spec in extract_pod_specs(doc):
-                print(f"  {label}")
-                check_pod_spec(chart, label, pod_spec, errors)
+    check_extra_renders(errors)
 
     if errors:
         print("\nFAIL: seccomp invariant violated:", file=sys.stderr)

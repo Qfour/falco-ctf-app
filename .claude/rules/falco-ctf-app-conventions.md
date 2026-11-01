@@ -253,7 +253,8 @@ challenge コンテナは UID 表のとおり **root (0) が意図的** (CTF rea
   2. **`privileged: true`** を付ける (seccomp そのものを無効化する)
   3. **Pod レベルの `seccompProfile` 2 行を削除**する
      (機械強制: `make check-seccomp` / `scripts/check-seccomp.py`、
-     CI `chart-lint` job から呼ばれる)
+     CI `chart-lint` job から呼ばれる。検査は既定 values の描画と、
+     `scenario.missions` 付き / `values-scenario-*.yaml` の描画の両方に当たる)
 - **Pod レベルに置くのが最も堅牢な理由**: フィールド単位継承なので、現行
   3 コンテナだけでなく **将来の initContainer / ephemeralContainer
   (`kubectl debug` が追加するものを含む) にも自動適用され fail-closed**
