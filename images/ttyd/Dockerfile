@@ -10,50 +10,22 @@
 FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 AS kubectl
 
 ARG KUBECTL_VERSION=v1.35.10
-# v1.35.9 -> v1.35.10 (2026-11-01, main の build (ttyd)/scan 赤の追跡、app#291): 10-25 の
-# 再点検で未公開だった v1.35.10 が公開された (stable-1.35.txt = v1.35.10)。skew policy 内
-# (cluster 1.34 に対し 1.33-1.35) を維持したまま patch だけ上げる。v1.35.10 の
-# .go-version は 1.26.10 (v1.35.9 は 1.26.8) — 取得した binary の buildinfo でも go1.26.10
-# を確認済み (amd64 / arm64 とも)。Go toolchain / stdlib 由来の指摘 (GO-2026-6809
-# crypto/x509 など、fix が go1.26.10 以下のもの) はこれで解消する見込み。
-# **残存 (未達)**: golang.org/x/net は v0.56.0、golang.org/x/text は v0.39.0 のまま
-# (両 arch の buildinfo 実測。v1.35.10 / v1.34.13 / v1.36.6 の go.mod と release-1.35 の
-# head も同じ版)。Sysdig の x/net fix は v0.60.0 (GO-2026-6617) なので、x/net 由来の
-# 指摘 (Critical / High) と x/text の指摘は残る見込みで、build (ttyd)/scan は赤のままの見込み —
-# upstream の patch 待ち (下の解除条件)。skew policy 外の minor (1.36 系) へ上げても
-# 同じ x/net で解消しないため、版を動かさずに bump 条件の成立を待つ。
-# **受け入れの期限と解除条件 (2026-11-01 更新、2026-10-13 起点)**: kubectl の x/net が
-# v0.60.0 以上になった時点 (Go 側の 1 条件目 = release-1.35 の .go-version が 1.26.10
-# 以上は v1.35.10 で達成済み) で bump する。**再点検の期限は次の stand-up の前**。
-# それまで build (ttyd)/scan は赤のまま (required check ではない)。追跡: app#338。
-# sha256 は dl.k8s.io/release/v1.35.10/bin/linux/<arch>/kubectl.sha256 の実値で、
-# 取得した binary の shasum とも一致を確認した。
-#
-# v1.35.8 -> v1.35.9 (2026-10-13): v1.35.9 が公開された (v1.35.8 節で「404 で不存在」と
-# 確認した版)。v1.35.9 の .go-version は 1.26.8 (v1.35.8 は 1.26.5)、x/net v0.56.0。
-# 再点検 (2026-10-25): v1.35.10 の kubectl.sha256 は 404、release-1.35 の .go-version
-# は既に 1.26.10 だったが x/net は v0.56.0。
-# sha256 は https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/<arch>/kubectl.sha256
-# の実値を焼き込み。KUBECTL_VERSION を上げたら両方更新すること。
-#
-# v1.36.4 -> v1.35.8 (2026-09-01, workspace#33 続報): platform 側で EKS
-# extended support 終了 (1.30 は新規作成不可) が判明し、cluster_version を
-# 1.34 へ bump する方針に変更。kubectl 公式 skew policy
-# (https://kubernetes.io/releases/version-skew-policy/, apiserver ±1 minor)
-# 上、cluster 1.34 に対する in-policy kubectl は 1.33-1.35 — v1.36.4 は
-# skew+2 で NG になったため、範囲内の最新パッチ v1.35.8 (stable-1.35.txt
-# 実測、v1.35.9 は 404 で不存在確認済み) へ down-bump。
-#
-# Go toolチェーン High 7 件 (CVE-2026-56862/-56853/-56860/-56858/-56859/
-# -33818/-56864/-56865、fix = go1.26.6) は **本 bump では解消しない** —
-# v1.35.8 の .go-version は 1.26.5 のまま (v1.36.4 と同じ)。skew policy が
-# 1.33-1.35 に縛る一方、go1.26.6 を含む 1.35.x パッチはまだ存在しない
-# (1.35 系は 1.36 系より先にブランチしたため toolchain 更新が遅行する)。
-# x/net (v0.56.0) / x/text (v0.39.0) 由来の CVE-2026-46600/-39821/-56852
-# は v1.35.8 の go.mod 時点で既に解消済み (CHANGELOG-1.35.md 実測) — 残る
-# のは stdlib 本体 (crypto/tls 等) の 7 High のみ。skew policy 内で選べる
-# 最善が v1.35.8 であり、残 CVE は accept 継続 (再点検トリガ: 1.35 系に
-# go1.26.6 ベースのパッチが出る / cluster_version が再確定する)。
+# **現在の決定 (2026-11-01、v1.35.9 -> v1.35.10、追跡: app#338。経緯は app#291 と git log)**:
+# - 版: v1.35.10 (stable-1.35.txt。.go-version = 1.26.10、取得した binary の buildinfo も
+#   amd64 / arm64 とも go1.26.10)。skew policy (https://kubernetes.io/releases/version-skew-policy/,
+#   apiserver ±1 minor) 上、cluster 1.34 に対する in-policy kubectl は 1.33-1.35。v1.36 系は
+#   skew+2 で対象外。
+# - 解消: Go toolchain / stdlib 由来の指摘 (GO-2026-6809 crypto/x509 など) は PR CI の
+#   scan で消えたことを確認した。
+# - **残存 (実測、PR CI run 41298574014)**: golang.org/x/net v0.56.0 = Critical 1 / High 6
+#   (fix v0.60.0)、golang.org/x/text v0.39.0 = High 1 (fix v0.41.0)。v1.35.10 / v1.34.13 /
+#   v1.36.6 の go.mod も同じ版で、1.34 系や 1.36 系へ動かしても解消しない。このため
+#   build (ttyd)/scan は赤のまま (required check ではない)。
+# - **解除条件**: kubectl の x/net >= v0.60.0 **かつ** x/text >= v0.41.0 になった時点で bump
+#   する。**再点検の期限は次の stand-up の前**。
+# KUBECTL_VERSION を上げたら、下の sha256 を両 arch とも更新すること。
+# 取得元: https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/<arch>/kubectl.sha256 の実値
+# (v1.35.10 は取得した binary の shasum とも一致を確認した)。
 ARG KUBECTL_SHA256_AMD64=c49a28f1f4efc4d475ed05f47f2ce8e563bf7bef69ed77fe1b924ea6d83b6327
 ARG KUBECTL_SHA256_ARM64=283f1be6a46b3695b625e25030106b8ffe18bd0d3a900f5b65c259ca407f04f5
 RUN ARCH="$(uname -m)" \
