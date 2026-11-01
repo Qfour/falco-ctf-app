@@ -332,6 +332,8 @@ def case_unsupported_syntax_raises(m):
         ("block scalar, indentation indicator 10", "x: |10\n  hello\n"),
         ("block scalar, header with trailing junk", "x: >foo\n  hello\n"),
         ("block scalar, a line indented less than the first", "x: |\n    hello\n  bye\ny: 1\n"),
+        ("block scalar, a shallower comment line inside the body", "x: |\n    a\n  # c\n    b\ny: 1\n"),
+        ("block scalar, a shallower comment line after the body", "x: |\n    a\n  # c\ny: 1\n"),
         ("block scalar, tab where indentation is", "x: |\n\thello\n"),
         ("block scalar, header with no parent", "|\n  hello\n"),
         ("anchor then nested block", "a: &x\n  b: 1\n"),
@@ -396,6 +398,23 @@ def case_block_scalar_empty_and_header_comment(m):
     assert m.load_all_documents("a: |\n")[0] == {"a": ""}
     assert m.load_all_documents("a: |+\n\n\nb: 1\n")[0] == {"a": "\n\n", "b": "1"}
     assert m.load_all_documents("a: | # why\n  x\n")[0] == {"a": "x\n"}
+
+
+def case_block_scalar_item_header_spacing_agrees_everywhere(m):
+    # the header is recognised once (in _preprocess) and the parser must agree with it
+    for dash in ("-", "-  ", "-   "):
+        doc = m.load_all_documents(f"c:\n  {dash} |\n    x\n  - y\n")[0]
+        assert doc == {"c": ["x\n", "y"]}, (dash, doc)
+
+
+def case_block_scalar_blank_lines_whitespace_and_nesting(m):
+    # a whitespace-only line shorter than the indent is an empty line; a longer one keeps its extra spaces
+    assert m.load_all_documents("a: |\n  x\n \n  y\n")[0] == {"a": "x\n\ny\n"}
+    assert m.load_all_documents("a: |\n  x\n    \n  y\n")[0] == {"a": "x\n  \ny\n"}
+    # a folded scalar keeps its leading blank line
+    assert m.load_all_documents("a: >\n\n  x\n  y\n")[0] == {"a": "\nx y\n"}
+    # a block scalar as the item of a nested sequence item
+    assert m.load_all_documents("c:\n  - - |\n      x\n  - y\n")[0] == {"c": [["x\n"], "y"]}
 
 
 def case_block_scalar_in_a_container_command(m):
@@ -685,8 +704,17 @@ MUTANTS = [
     ("block scalar: a less-indented body line no longer raises",
      'if lead < block_indent:',
      'if False:'),
+    ("block scalar: the parser re-reads an item header without stripping it",
+     'if _BLOCK_HEADER.fullmatch(content.strip()):',
+     'if _BLOCK_HEADER.fullmatch(content):'),
+    ("block scalar: a whitespace-only line ends the body",
+     'if line.strip() == "":\n                body.append(line)',
+     'if line == "":\n                body.append(line)'),
+    ("block scalar: a folded scalar loses its leading blank lines",
+     'out += "\\n" * blanks + line',
+     'out += line'),
     ("block scalar: a sequence item header is not recognised",
-     'if _BLOCK_HEADER.fullmatch(content):',
+     'if _BLOCK_HEADER.fullmatch(content.strip()):',
      'if False:'),
     ("CronJob pods are no longer found",
      'if kind == "CronJob":',

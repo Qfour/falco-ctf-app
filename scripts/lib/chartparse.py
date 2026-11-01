@@ -27,7 +27,9 @@ adding installs for a lint check). It supports:
     (a `#`, `:` or `-` in it is text) and returned as one `str`. Folding is
     minimal: adjacent lines join with a space, blank lines become newlines,
     more-indented lines keep their line breaks. A body line indented less than
-    the first one, and any other header form (`|+-`, `|0`, `>foo`), raise,
+    the first one (this includes a comment line indented less than the body,
+    which YAML would take as the end of the scalar), and any other header form
+    (`|+-`, `|0`, `>foo`), raise,
   - flow collections ("[...]" / "{...}") kept as OPAQUE scalar strings by
     the parser; `flow_list()` / `as_list()` / `security_context()` turn the
     forms listed there into values and raise on anything else.
@@ -227,12 +229,12 @@ def _preprocess(doc_text: str):
             continue
         style, chomp, digit, n_off = header
         n = indent + n_off
-        body = []  # (leading spaces, raw line) of non-blank lines, None for blank
+        body = []  # the raw lines of the body, blank ones included
         block_indent = n + digit if digit else None
         while k < len(raws):
             line = raws[k]
             if line.strip() == "":
-                body.append(None if len(line) <= (block_indent or 0) else line)
+                body.append(line)  # a blank line is cut at the indent below: shorter -> "", longer keeps its extra spaces
                 k += 1
                 continue
             lead = len(line) - len(line.lstrip(" "))
@@ -245,7 +247,7 @@ def _preprocess(doc_text: str):
             body.append(line)
             k += 1
         bi = block_indent if block_indent is not None else n + 1
-        texts = ["" if ln is None else ln[bi:] for ln in body]
+        texts = [ln[bi:] for ln in body]
         lines.append((bi, _BlockBody(_block_scalar_text(style, chomp, texts))))
     return lines
 
@@ -295,7 +297,7 @@ def _parse_block(lines, i, indent0):
         return _parse_sequence(lines, i, indent0)
     if _find_key_colon(content) is not None:
         return _parse_mapping(lines, i, indent0)
-    if _BLOCK_HEADER.fullmatch(content):  # `- |`: the item is a block scalar (its header was validated in _preprocess)
+    if _BLOCK_HEADER.fullmatch(content.strip()):  # `- |` (any spacing after the dash): its header was validated in _preprocess
         return _take_block_body(lines, i + 1)
     # Plain scalar occupying its own line (e.g. a bare-string sequence item
     # like `- Ingress`). Must be the only line in this block.
