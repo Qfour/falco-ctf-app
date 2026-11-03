@@ -52,7 +52,7 @@ A。消費者が実行する code を、自リポで review した成果物に�
 - **D3. 取り出しと実行。**
   - 取り出すのは pin に載った path だけ。毎回新しい一時 dir に取り出し、実行の直前に全行を照合する。pin の file が無い・0 行・scanner の行が無い・書式違い・行の重複・digest の不一致・取り出せない path・取り出した path が regular file でない (symlink や directory) は FAIL で、scanner は実行しない。
   - 追跡 ref は「どこから取り出すか」の場所でしかなく、信頼の起点にしない。ref が別の commit を指していても bytes が pin と一致すれば実行してよく、一致しなければ止まる。
-  - interpreter は隔離のモード (`python3 -I`) で動かす。`-I` は呼び出し元の環境変数 (`PYTHON*`) と user site と script の dir を無視するので、呼び出し元の env や home が指す code は読まない。interpreter 自身の site-packages (の `.pth`) は走る。これは python3 本体と同じ信頼に乗るもので、pin の外にある。`-S` を足すかは security review の判断とし、Consequences に残す。
+  - interpreter は隔離のモード (**`python3 -I -S`**) で動かす。`-I` は呼び出し元の環境変数 (`PYTHON*`) と user site と script の dir を無視し、`-S` は interpreter 自身の site-packages (の `.pth` / `sitecustomize`) も読まない。scanner は標準ライブラリだけを使う。残るのは標準ライブラリと interpreter の install 自体で、これは python3 の binary と同じ信頼に乗る (pin の外)。
   - wrapper の ADR-0051 の祖先検査は、pin の更新のときに「pin の bytes が ADR-0051 以降の scanner であること」を確かめれば要らない。外すか、照合の前に移して「clone が古い」を先に案内する (workspace の実装の判断)。消費者の実装は「照合の前に移す」を採った (古い clone の利用者には、先に「取得し直す」が案内される)。
 - **D4. 通常の走査が読む file の集合 (read set) を、消費者が読む面に足す。部分の取り出しを、この集合に限って許す。**
   - read set = `scripts/sourcehygiene-scan.py` と `internal/sourcehygiene/testdata/{hidden-ranges,hidden-cases,binary-ext}.tsv`。
@@ -78,7 +78,7 @@ A。消費者が実行する code を、自リポで review した成果物に�
   - B の「bump なしで app の main に即時に追随する」こと。workspace は read set の変更ごとに対の PR を持ち、D5 の (3) から (5) の間は赤になる。
   - review の手間の少なさ。同じ bytes を workspace でもう一度見る (機械の一致確認と app の review の参照で済ませてよいかは security-engineer の判断)。
 - 残るもの:
-  - interpreter 自身の site-packages は pin の外で、python3 本体と同じ信頼に乗る (D3)。`-I` に `-S` を足すかは security review の判断。
+  - 標準ライブラリと interpreter の install 自体は pin の外で、python3 の binary と同じ信頼に乗る (D3)。
 - 新しく守るもの:
   - workspace は、pin に載っていない bytes の scanner と data を実行しない・読ませない (D2、D3)。
   - read set は面である (D4)。app が V1 で固定する。
@@ -103,7 +103,7 @@ A。消費者が実行する code を、自リポで review した成果物に�
 
 ## Verification
 - V1 (app、required check の `flag-guard`、`scripts/test-sourcehygiene-scan.sh`): read set の 4 file だけを空の一時 dir に置き (repo 相対の path を保つ)、通常の走査を clean な fixture に当てると exit 0、生の U+200B を 1 つ入れた fixture に当てると exit 1。data 3 file のどれか 1 つを除くと exit 1 (3 case)。「通常の走査は read set だけで足りる」(D4) を機械で固定し、read set を広げる変更はこの case を赤にする。
-- V2 (workspace、wrapper の `--selftest`。CI は無いので PR 本文に出力を貼る): (a) digest の違う scanner は実行されない。改ざんした stub が実行されたら作るはずの marker の file が無いことで観測する。(b) 照合を外す・照合を実行の後ろに移す・scanner の行の必須を外す・bundle の全体を取り出す・`-I` を外す、の mutant がそれぞれ赤になる。(c) selftest の各 case は、手元の clone の scanner を照合の前に実行しない (冒頭で pin と照合した bytes から selftest 専用の repo を作って使う)。
+- V2 (workspace、wrapper の `--selftest`。CI は無いので PR 本文に出力を貼る): (a) digest の違う scanner は実行されない。改ざんした stub が実行されたら作るはずの marker の file が無いことで観測する。(b) 照合を外す・照合を実行の後ろに移す・scanner の行の必須を外す・bundle の全体を取り出す・`-I` を外す・`-S` を外す (interpreter の site-packages の `.pth` が走る)、の mutant がそれぞれ赤になる。(c) selftest の各 case は、手元の clone の scanner を照合の前に実行しない (冒頭で pin と照合した bytes から selftest 専用の repo を作って使う)。
 - V3 (workspace、毎回の検査): 使った app の SHA と、pin の header の app の commit を出力する。不一致の FAIL は「clone を取得し直す」と「pin を更新する」の両方の手当てを示す。
 - D5 の対の PR の規則を app の側で機械で確かめる手段は無い (app から workspace は見えない)。違反は workspace の検査が赤になることで見える (fail-closed)。
 
