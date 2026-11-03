@@ -50,10 +50,10 @@ A。消費者が実行する code を、自リポで review した成果物に�
   - pin の file の変更は、workspace の review の最上位の下限と security review にかける。gate を緑にするための手段にしない。
   - data も pin する。data は実行されないが判定を決める (行が落ちれば検出が黙って緩む)。
 - **D3. 取り出しと実行。**
-  - 取り出すのは pin に載った path だけ。毎回新しい一時 dir に取り出し、実行の直前に全行を照合する。pin の file が無い・0 行・scanner の行が無い・書式違い・digest の不一致・取り出せない path は FAIL で、scanner は実行しない。
+  - 取り出すのは pin に載った path だけ。毎回新しい一時 dir に取り出し、実行の直前に全行を照合する。pin の file が無い・0 行・scanner の行が無い・書式違い・行の重複・digest の不一致・取り出せない path・取り出した path が regular file でない (symlink や directory) は FAIL で、scanner は実行しない。
   - 追跡 ref は「どこから取り出すか」の場所でしかなく、信頼の起点にしない。ref が別の commit を指していても bytes が pin と一致すれば実行してよく、一致しなければ止まる。
-  - interpreter は隔離のモード (`python3 -I`) で動かす。照合した bytes と標準ライブラリの外から code を読み込ませない。
-  - wrapper の ADR-0051 の祖先検査は、pin の更新のときに「pin の bytes が ADR-0051 以降の scanner であること」を確かめれば要らない。外すか、照合の前に移して「clone が古い」を先に案内する (workspace の実装の判断)。
+  - interpreter は隔離のモード (`python3 -I`) で動かす。`-I` は呼び出し元の環境変数 (`PYTHON*`) と user site と script の dir を無視するので、呼び出し元の env や home が指す code は読まない。interpreter 自身の site-packages (の `.pth`) は走る。これは python3 本体と同じ信頼に乗るもので、pin の外にある。`-S` を足すかは security review の判断とし、Consequences に残す。
+  - wrapper の ADR-0051 の祖先検査は、pin の更新のときに「pin の bytes が ADR-0051 以降の scanner であること」を確かめれば要らない。外すか、照合の前に移して「clone が古い」を先に案内する (workspace の実装の判断)。消費者の実装は「照合の前に移す」を採った (古い clone の利用者には、先に「取得し直す」が案内される)。
 - **D4. 通常の走査が読む file の集合 (read set) を、消費者が読む面に足す。部分の取り出しを、この集合に限って許す。**
   - read set = `scripts/sourcehygiene-scan.py` と `internal/sourcehygiene/testdata/{hidden-ranges,hidden-cases,binary-ext}.tsv`。
   - 通常の走査が新しい file を読むようにする変更と、read set の file の移動・rename は面の変更である。pin する消費者の全部と対の PR にし、ADR を要する。
@@ -77,6 +77,8 @@ A。消費者が実行する code を、自リポで review した成果物に�
 - 諦めたもの:
   - B の「bump なしで app の main に即時に追随する」こと。workspace は read set の変更ごとに対の PR を持ち、D5 の (3) から (5) の間は赤になる。
   - review の手間の少なさ。同じ bytes を workspace でもう一度見る (機械の一致確認と app の review の参照で済ませてよいかは security-engineer の判断)。
+- 残るもの:
+  - interpreter 自身の site-packages は pin の外で、python3 本体と同じ信頼に乗る (D3)。`-I` に `-S` を足すかは security review の判断。
 - 新しく守るもの:
   - workspace は、pin に載っていない bytes の scanner と data を実行しない・読ませない (D2、D3)。
   - read set は面である (D4)。app が V1 で固定する。
