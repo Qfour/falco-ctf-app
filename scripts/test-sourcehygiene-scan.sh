@@ -24,6 +24,11 @@
 #     intended reason (the shared negative that holds it). The app tree is clean under
 #     binary-paths.tsv, and red under an empty set or with no flag (the default IS the empty
 #     set; app tracks .woff2 files), and a flag twice or a non-ASCII / CR file is refused;
+#   - the read set (ADR-0053 D4 / V1): a scan of a tree (`<dir>`, no --selftest) needs the scanner
+#     and the three data files and nothing else. A copy that holds exactly those four files, at
+#     their repo-relative paths, scans a clean fixture (exit 0) and a fixture with a raw U+200B
+#     (exit 1); a copy without any one of the three data files is a FAIL; a scanner that starts
+#     to read one more file in a scan is a FAIL in that copy (the set stays four files);
 #   - a data file that cannot be read is a FAIL (never a skip); a Unicode version that differs
 #     from the data header is a WARN, not a FAIL; a wrong command line is exit 2;
 #   - the app tree is clean outside invisible-allowlist.txt (what flag-guard runs too).
@@ -224,6 +229,50 @@ U="${WORK}/few-negatives"
 mk_checkout "${U}"
 rm -rf "${U}/${NEG_REL}"/walk-*
 expect "testdata/negatives cut below its floor: --selftest FAIL" 1 "fewer than the floor" -- "${U}/${SCAN_REL}" --selftest
+
+# --- the read set: a scan of a tree needs the scanner and the three data files, nothing else (ADR-0053 V1) --
+# mk_readset <dir>: exactly the four files of the read set, at their repo-relative paths; no
+# testdata/negatives, nothing else.
+mk_readset() {
+  local d="$1" f
+  rm -rf "${d}"
+  for f in "${SCAN_REL}" "${RANGES_REL}" "${CASES_REL}" "${BINEXT_REL}"; do
+    mkdir -p "${d}/$(dirname "${f}")"
+    cp -p "${REPO_ROOT}/${f}" "${d}/${f}"
+  done
+}
+RSFIX="${WORK}/readset-fixture"
+mkdir -p "${RSFIX}/clean" "${RSFIX}/dirty"
+printf 'a clean line\n' > "${RSFIX}/clean/a.txt"
+printf 'a raw zero width space: \342\200\213 here\n' > "${RSFIX}/dirty/a.txt"
+RS="${WORK}/readset"
+mk_readset "${RS}"
+expect "read set: the four files alone scan a clean fixture" 0 "OK sourcehygiene-scan: 1 files, 0 binary, 0 problems" -- "${RS}/${SCAN_REL}" "${RSFIX}/clean"
+expect "read set: the four files alone find a raw U+200B" 1 "a.txt:1:" -- "${RS}/${SCAN_REL}" "${RSFIX}/dirty"
+for f in "${RANGES_REL}" "${CASES_REL}" "${BINEXT_REL}"; do
+  mk_readset "${RS}"
+  rm "${RS}/${f}"
+  expect "read set without ${f##*/}: the scan of a clean fixture is a FAIL" 1 "cannot read the data file" -- "${RS}/${SCAN_REL}" "${RSFIX}/clean"
+done
+# A scan that reads one more file than the read set is red in a copy that holds the four files only.
+mk_readset "${RS}"
+RSN=0
+while IFS= read -r l || [[ -n "${l}" ]]; do
+  case "${l}" in
+    '        self.binary_ext = parse_binary_ext(read_ascii(BINARY_EXT_FILE))')
+      printf '%s\n' "${l}"
+      printf '%s\n' '        read_ascii(NEGATIVES / "walk-raw-zwsp" / "expect.txt")'
+      RSN=$((RSN + 1)) ;;
+    *) printf '%s\n' "${l}" ;;
+  esac
+done < "${RS}/${SCAN_REL}" > "${RS}/${SCAN_REL}.new"
+if [[ "${RSN}" -ne 1 ]]; then
+  fail "read-set mutant: ${SCAN_REL} has ${RSN} lines that load binary-ext.tsv (want exactly 1)"
+else
+  cat "${RS}/${SCAN_REL}.new" > "${RS}/${SCAN_REL}"
+  rm -f "${RS}/${SCAN_REL}.new"
+  expect "read-set mutant: a scan that reads a fifth file is red in a copy of four files" 1 "cannot read the data file" -- "${RS}/${SCAN_REL}" "${RSFIX}/clean"
+fi
 
 # --- a data file that cannot be read is a FAIL, never a skip ---------------------
 for f in "${RANGES_REL}" "${CASES_REL}" "${BINEXT_REL}"; do
