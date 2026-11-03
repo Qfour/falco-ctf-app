@@ -1,5 +1,5 @@
 # ADR-0053: 参照 scanner の消費者は、実行する bytes を内容で固定する。workspace は scanner と、通常の走査が読む data 3 file の sha256 を自リポに pin し、一致しなければ実行しない。pin の更新は app の PR と対の PR にする (ADR-0045 の C9・D7・D4 と D8 の追記の 1 句・D8 の変更の規則の 1 句・Consequences の 1 文・順序 3 と、ADR-0051 D6 の workspace の 2 句を限定 supersede)
-- Status: **Proposed** (2026-11-03。Accepted の条件 = architect 合意と CTO 承認の記録 (private)、workspace の対の PR の security review、V1 と V2 が緑)
+- Status: **Accepted** (2026-11-03。条件の充足: architect 合意と CTO 承認の記録 (private)、workspace の対の PR ws#146 の merge (`6770213…`) と security review APPROVE、V1 (app の harness、app#585)・V2 (消費者の selftest)・V3 (実装) が緑)
 - Date / Deciders: 2026-11-03 / CTO (承認。読み替えを含む。記録 = private、ws#143 の決定ブロック 2026-11-03) + architect (起草・合意) + security-engineer (workspace の対の PR の R1)
 - 関連: ws#143 (workspace の実装 issue)、ws#144 (同じ issue の先行 PR の review。契約に触れない部分だけを分けて merge した)、ws#117 (判定の private な記録)、ADR-0045 (C9・D7・D4 と D8 の追記・D8 の変更の規則・Consequences・順序)、ADR-0051 (D6)、platform の `APP_PIN` (`.github/workflows/ci.yaml`)、app#536 / #541 / #554 (scanner と data の導入と変更)、workspace の `REFACTORING.md` の決定事項 (git SHA を 1 箇所でピン)
 
