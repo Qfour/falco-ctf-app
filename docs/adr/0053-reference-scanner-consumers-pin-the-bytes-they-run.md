@@ -1,6 +1,6 @@
 # ADR-0053: 参照 scanner の消費者は、実行する bytes を内容で固定する。workspace は scanner と、通常の走査が読む data 3 file の sha256 を自リポに pin し、一致しなければ実行しない。pin の更新は app の PR と対の PR にする (ADR-0045 の C9・D7・D4 と D8 の追記の 1 句・D8 の変更の規則の 1 句・Consequences の 1 文・順序 3 と、ADR-0051 D6 の workspace の 2 句を限定 supersede)
 - Status: **Proposed** (2026-11-03。Accepted の条件 = architect 合意と CTO 承認の記録 (private)、workspace の対の PR の security review、V1 と V2 が緑)
-- Date / Deciders: 2026-11-03 / CTO (承認。CoS が代行して記録) + architect (起草・合意) + security-engineer (workspace の対の PR の R1)
+- Date / Deciders: 2026-11-03 / CTO (承認。読み替えを含む。記録 = private、ws#143 の決定ブロック 2026-11-03) + architect (起草・合意) + security-engineer (workspace の対の PR の R1)
 - 関連: ws#143 (workspace の実装 issue)、ws#144 (同じ issue の先行 PR の review。契約に触れない部分だけを分けて merge した)、ws#117 (判定の private な記録)、ADR-0045 (C9・D7・D4 と D8 の追記・D8 の変更の規則・Consequences・順序)、ADR-0051 (D6)、platform の `APP_PIN` (`.github/workflows/ci.yaml`)、app#536 / #541 / #554 (scanner と data の導入と変更)、workspace の `REFACTORING.md` の決定事項 (git SHA を 1 箇所でピン)
 
 ## Context
@@ -63,14 +63,15 @@ A。消費者が実行する code を、自リポで review した成果物に�
 - **D5. 変更の規則 (内容を固定する消費者が 2 つになった後の形)。**
   - read set の bytes を変える app の PR は、app 側の review の区分 (app 単独 + security / + ADR。0045 D8、0051 D6) は変えずに、workspace の pin の bump を**対の PR** として持つ。PR 本文で相互にリンクする。platform の `APP_PIN` の bump は従来どおり対の PR。
   - 順序: (1) app の PR を開く。(2) workspace の pin の PR を、app の PR の head の bytes から計算して開き、並行して review する。(3) app の PR を merge する。(4) merge commit の bytes が pin と一致することを確かめる (digest の再計算と、GitHub の blob の SHA との照合)。(5) workspace の PR を、(3) と同じ作業のうちに merge する。
+  - 証跡: (2) の時点で workspace の pin の PR が貼るもの = app の PR の head から取り出した read set の bytes で走らせた消費者の selftest (V2) の結果と、その bytes から再計算した digest (pin file の行と一致すること)。(5) で貼るもの = app の merge の後に、消費者が通常の検査 (selftest ではない) を緑で通し、使った app の SHA を出力したこと。手順と式は、workspace 側の運用文書 (private な記録 ws#143 から辿る) と揃える。
   - app の PR が (2) の後に read set を変えたら、(2) を計算し直す (同じ path を触る app の PR は同時に 1 本なので、merge commit の bytes は head の bytes と一致する)。
-  - 赤の期間 = (3) から (5) まで。上限 = 同じ作業の中 (24 時間以内)。超えたら Signpost 2 に数える。
+  - 赤の期間 = (3) から (5) まで。上限 = 同じ作業の中 (24 時間以内)。超えたら Signpost 2 に数える。赤の期間中は workspace の他の PR の必須検査も赤になる (scanner を走らせる検査は fail-closed で止まる) ので、pin の PR を merge の queue の先頭に置き、他の PR は待つ。
   - 2 世代 (旧と新の両方の digest) を同時に受け入れる形は採らない。古い規則を受け入れ続ける窓と、旧 scanner と新 data のような review していない組み合わせを作るため (Signpost 2 で再訪)。
   - read set の外の app の変更 (`testdata/negatives/`、app 自身の allowlist と `binary-paths.tsv`、Go の test、harness) は workspace の対の PR を要しない。
   - ADR-0051 D6 の「pin しない workspace は、app の merge の前に自分の file を直す」(0051:92) は「workspace は、pin の bump の対の PR で自分の `--binary-paths` の file を同時に直す」(platform と同じ) に置き換える。ADR-0045 D8 (0045:140) と ADR-0051 D6 (0051:88) の「workspace は app の merge と同じセッションで追随する」は「workspace は pin の bump の対の PR で追随する」に置き換える。
 - **D6. REFACTORING の「1 箇所でピン」との関係。**
   - deploy の契約の pin は今までどおり platform の `APP_PIN` の 1 か所である。
-  - workspace の pin は deploy の契約ではなく、消費者が実行する code の完全性の pin で、workspace の中の 1 か所に置く。commit ではなく file の digest を固定し、`APP_PIN` の値を写さない。「1 箇所」は消費者と目的ごとに 1 つと読む。決定事項そのものは変えない。
+  - workspace の pin は deploy の契約ではなく、消費者が実行する code の完全性の pin で、workspace の中の 1 か所に置く。commit ではなく file の digest を固定し、`APP_PIN` の値を写さない。「1 箇所」は消費者と目的ごとに 1 つと読む。決定事項そのものは変えない。この読み替えは、workspace 側の対の PR で決定事項の置き場 (REFACTORING.md) に注記として残す。
 
 ## Consequences
 - 諦めたもの:
