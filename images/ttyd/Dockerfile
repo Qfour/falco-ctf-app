@@ -80,9 +80,10 @@ FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cab
 #   実測で index の提供版が 1.4-r0 (base に焼き込まれた zlib は 1.3.2-r0)。
 #   re-pin 履歴: 10-13 (base digest を 3.24 の最新 294b683c へ更新。base の zlib が 1.3.2-r0 の
 #   ままで Sysdig が High を出すため明示 upgrade。1.3.2-r1) / 11-10 (app#583、→ 1.4-r0))
+# musl-utils 1.2.6-r3 (2026-11-10: base の 1.2.6-r2 に Critical、Sysdig の suggested fix。app#583 / app#591)
 # kubectl (Go toolchain High) は本 alpine bump のスコープ外 — バージョン選定の
 # 経緯は上の ARG KUBECTL_VERSION 直下のコメント (workspace#33) を参照。
-RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 zlib=1.4-r0 \
+RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 zlib=1.4-r0 musl-utils=1.2.6-r3 \
  && apk add --no-cache \
         "ttyd=1.7.7-r0" \
         "tini=0.19.0-r3" \

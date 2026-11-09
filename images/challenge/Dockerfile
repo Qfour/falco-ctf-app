@@ -102,6 +102,7 @@ FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cab
 #   実測で index の提供版が 1.4-r0 (base の zlib は 1.3.2-r0)。re-pin 履歴: 10-13 (base digest を
 #   3.24 の最新 294b683c へ更新。base の zlib が 1.3.2-r0 のままで Sysdig が High を出すため
 #   明示 upgrade。1.3.2-r1) / 11-10 (app#583、→ 1.4-r0))
+# musl-utils 1.2.6-r3 (2026-11-10: base の 1.2.6-r2 に Critical、Sysdig の suggested fix。app#583 / app#591)
 # DNS ツール (2026-10-15): 旧 bind-tools は bind-libs 経由で libxml2 2.13.9-r2 (High) を
 #   引き込み、代替の drill/ldns 1.8.4-r1 も High (fix 1.9.1)。どちらも Alpine 3.24 に
 #   fix が無い (`apk policy` 実測。ldns 1.9.x は edge/main のみ) ため、DNS 調査は base
@@ -111,7 +112,7 @@ FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cab
 # jq は pin していないため 3.24/main の更新で 1.8.2-r0 (CVE-2026-49839 の fix 版、
 # `apk policy jq` 実測で唯一の提供版) へ自動で上がり、残存から外れた (2026-10-05)。
 # CVE feed の drift (pin 版が後から High 扱いになる) の追跡先は app#291。
-RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 zlib=1.4-r0 \
+RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 zlib=1.4-r0 musl-utils=1.2.6-r3 \
  && apk add --no-cache \
         bash=5.3.9-r1 \
         coreutils \
