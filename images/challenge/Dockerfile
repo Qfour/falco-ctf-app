@@ -86,8 +86,9 @@ FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cab
 #     294b683c) で唯一の提供版が 8.23.0-r0。8.23.0 は CVE-2026-92392 (High、HTTP/2 upload の
 #     use-after-free、影響 8.12.0〜8.22.0) の fix 版。re-pin 履歴: 09-03 (#296、8.21.0 →
 #     8.22.0) / 10-26 (#515、8.22.0 → 8.23.0))
-#   vim/vim-common/xxd 9.2.1202-r0 (2026-10-17: 9.2.1178-r0 が index から外れ再 pin
-#     (app#382)。re-pin 履歴: 10-05 (#307) / 10-14 (#354、1091 → 1178) / 10-17 (#382、→ 1202)。12 日で 3 回。
+#   vim/vim-common/xxd 9.2.1310-r0 (2026-11-10: 9.2.1202-r0 が index から外れ再 pin
+#     (app#583)。re-pin 履歴: 10-05 (#307) / 10-14 (#354、1091 → 1178) / 10-17 (#382、→ 1202) /
+#     11-10 (#583、→ 1310)。10-05 から 36 日で 4 回。
 #     以下は 2026-10-14 時点の記録: 3.24/community から 9.2.1091-r0 が
 #     外れ apk resolve が failing していたため再 pin。`apk policy vim vim-common
 #     xxd` 実測 (base digest 294b683c) で唯一の提供版。2026-10-05 は 9.2.1014-r0 →
@@ -97,9 +98,10 @@ FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cab
 #     `apk policy` 実測で唯一の提供版。secdb 上 2.42.3-r0/-r1 は CVE-2026-27456/
 #     -53612..53614/-76642/-78408..78410 の fix を含む)
 #   bash 5.3.9-r1 (3.23 の 5.3.3-r1 から 3.24 側で上がった版に追随、念のため厳密 pin)
-# zlib 1.3.2-r1 (2026-10-13: base digest を 3.24 の最新 294b683c へ更新。base の zlib は
-#   1.3.2-r0 のままで Sysdig が High を出すため明示 upgrade。`apk policy zlib` 実測で
-#   3.24/main が 1.3.2-r1 を提供)
+# zlib 1.4-r0 (2026-11-10: 3.24/main から 1.3.2-r1 が外れ再 pin (app#583)。`apk policy zlib`
+#   実測で index の提供版が 1.4-r0 (base の zlib は 1.3.2-r0)。re-pin 履歴: 10-13 (base digest を
+#   3.24 の最新 294b683c へ更新。base の zlib が 1.3.2-r0 のままで Sysdig が High を出すため
+#   明示 upgrade。1.3.2-r1) / 11-10 (app#583、→ 1.4-r0))
 # DNS ツール (2026-10-15): 旧 bind-tools は bind-libs 経由で libxml2 2.13.9-r2 (High) を
 #   引き込み、代替の drill/ldns 1.8.4-r1 も High (fix 1.9.1)。どちらも Alpine 3.24 に
 #   fix が無い (`apk policy` 実測。ldns 1.9.x は edge/main のみ) ため、DNS 調査は base
@@ -109,8 +111,6 @@ FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cab
 # jq は pin していないため 3.24/main の更新で 1.8.2-r0 (CVE-2026-49839 の fix 版、
 # `apk policy jq` 実測で唯一の提供版) へ自動で上がり、残存から外れた (2026-10-05)。
 # CVE feed の drift (pin 版が後から High 扱いになる) の追跡先は app#291。
-# zlib drift: 1.3.2-r1 -> 1.4-r0 (2026-11-10, app#583)
-# vim/xxd drift: 9.2.1202 -> 9.2.1310 (2026-11-10, app#583)
 RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 zlib=1.4-r0 \
  && apk add --no-cache \
         bash=5.3.9-r1 \
