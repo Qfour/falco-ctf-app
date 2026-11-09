@@ -58,10 +58,11 @@ FROM nginxinc/nginx-unprivileged:1.30-alpine-slim@sha256:4ac59c85c8c46d9e91eaabd
 # (`apk policy zlib`, 2026-10-19). libssl3 / libcrypto3 (3.5.9-r0) and pcre2 are at
 # the version v3.24/main serves, so they need no pin. Exit condition: drop this
 # line when the base digest carries zlib >= 1.3.2-r1.
+# zlib drift: 1.3.2-r1 -> 1.4-r0 (2026-11-10, app#583)
 # apk writes /lib/apk/db as root; the base's Config.User is 101 (non-root), so wrap
 # the apk call in USER root / USER 101 and the image still runs as 101.
 USER root
-RUN apk add --no-cache --upgrade zlib=1.3.2-r1
+RUN apk add --no-cache --upgrade zlib=1.4-r0
 USER 101
 
 # --chmod: the non-root nginx user (uid 101) must read the config regardless of

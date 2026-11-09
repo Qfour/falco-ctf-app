@@ -109,7 +109,9 @@ FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cab
 # jq は pin していないため 3.24/main の更新で 1.8.2-r0 (CVE-2026-49839 の fix 版、
 # `apk policy jq` 実測で唯一の提供版) へ自動で上がり、残存から外れた (2026-10-05)。
 # CVE feed の drift (pin 版が後から High 扱いになる) の追跡先は app#291。
-RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 zlib=1.3.2-r1 \
+# zlib drift: 1.3.2-r1 -> 1.4-r0 (2026-11-10, app#583)
+# vim/xxd drift: 9.2.1202 -> 9.2.1310 (2026-11-10, app#583)
+RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 zlib=1.4-r0 \
  && apk add --no-cache \
         bash=5.3.9-r1 \
         coreutils \
@@ -119,9 +121,9 @@ RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 zlib=1.3.2
         netcat-openbsd \
         jq \
         less \
-        vim=9.2.1202-r0 \
-        vim-common=9.2.1202-r0 \
-        xxd=9.2.1202-r0 \
+        vim=9.2.1310-r0 \
+        vim-common=9.2.1310-r0 \
+        xxd=9.2.1310-r0 \
         util-linux=2.42.3-r1 \
         procps \
         grep \
