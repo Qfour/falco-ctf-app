@@ -58,8 +58,9 @@ A。消費者が実行する code を、自リポで review した成果物に�
   - read set = `scripts/sourcehygiene-scan.py` と `internal/sourcehygiene/testdata/{hidden-ranges,hidden-cases,binary-ext}.tsv`。
   - 通常の走査が新しい file を読むようにする変更と、read set の file の移動・rename は面の変更である。pin する消費者の全部と対の PR にし、ADR を要する。
   - 「bundle を部分コピーする消費者を作らない」(0045:108、:133) に例外を 1 つ足す: 通常の走査だけをする消費者は、read set だけを、実行のたびに一時 dir に取り出してよい。その取り出しで `--selftest` を走らせない。自リポに残る写しを作らない。それ以外は従来どおり bundle (scanner + `testdata/` の全体) を単位にする。
-  - 理由: pin した path だけを取り出せば、通常の走査が pin していない file を読み始めたとき、file が無くて FAIL する (黙って緩まない)。bundle を取り出して 4 file だけを照合すると、新しく読まれる file が照合の外で読まれうる。
-  - V1 が read set を app の側で機械で固定する。
+  - 理由: pin した path だけを取り出せば、通常の走査が pin していない file を必須の読み込み (読めなければ FAIL する読み込み。scanner では `read_ascii`) で読み始めたとき、file が無くて FAIL する (黙って緩まない)。bundle を取り出して 4 file だけを照合すると、新しく読まれる file が照合の外で読まれうる。
+  - 部分の取り出しが FAIL にするのは必須の読み込みだけである。任意の読み込み (存在を確かめてから読む、読めない例外を握りつぶす) を足す変更は、取り出した dir に file が無くても緑で通り、消費者の側だけが「file が無い」ときの振る舞いに黙って変わる。この種の読み込みが足されていないことは機械では固定せず、pin の更新 (D5 の対の PR) の review の点検項目にする: read set の bytes の diff に、read set の外の path を読む code が足されていないかを見る (訂正 2026-11-10、app#586)。
+  - V1 が read set を、必須の読み込みについて app の側で機械で固定する。
 - **D5. 変更の規則 (内容を固定する消費者が 2 つになった後の形)。**
   - read set の bytes を変える app の PR は、app 側の review の区分 (app 単独 + security / + ADR。0045 D8、0051 D6) は変えずに、workspace の pin の bump を**対の PR** として持つ。PR 本文で相互にリンクする。platform の `APP_PIN` の bump は従来どおり対の PR。
   - 順序: (1) app の PR を開く。(2) workspace の pin の PR を、app の PR の head の bytes から計算して開き、並行して review する。(3) app の PR を merge する。(4) merge commit の bytes が pin と一致することを確かめる (digest の再計算と、GitHub の blob の SHA との照合)。(5) workspace の PR を、(3) と同じ作業のうちに merge する。
@@ -102,7 +103,7 @@ A。消費者が実行する code を、自リポで review した成果物に�
 4. scanner を実行する消費者が 3 つ目になる、または read set の変更 (D4) が 1 四半期に 2 回を超える → 消費者ごとの digest をやめ、app が scanner の bundle の manifest (digest の表) を release ごとに公開し、消費者がそれを pin する形に移る。
 
 ## Verification
-- V1 (app、required check の `flag-guard`、`scripts/test-sourcehygiene-scan.sh`): read set の 4 file だけを空の一時 dir に置き (repo 相対の path を保つ)、通常の走査を clean な fixture に当てると exit 0、生の U+200B を 1 つ入れた fixture に当てると exit 1。data 3 file のどれか 1 つを除くと exit 1 (3 case)。「通常の走査は read set だけで足りる」(D4) を機械で固定し、read set を広げる変更はこの case を赤にする。
+- V1 (app、required check の `flag-guard`、`scripts/test-sourcehygiene-scan.sh`): read set の 4 file だけを空の一時 dir に置き (repo 相対の path を保つ)、通常の走査を clean な fixture に当てると exit 0、生の U+200B を 1 つ入れた fixture に当てると exit 1。呼び出しの形は 3 つ: option なし、`--allowlist` と `--binary-paths` に fixture の中の最小の file を渡す形、`.git` を持つ fixture の git mode (追跡していない file は走査せずに exit 0、`--also-untracked` で足すとその file の U+200B で exit 1)。後の 2 つは消費者と同じ `python3 -I -S` で起動する。data 3 file のどれか 1 つを除くと exit 1 (3 case)。「通常の走査は read set だけで足りる」(D4) を機械で固定する。赤にするのは `read_ascii` による必須の読み込みを足す変更である (5 つ目の file をそう読む scanner の mutant が、4 file の copy で exit 1 になる)。任意の読み込み (存在を確かめてから読む・例外を握りつぶす) を足す変更はこの case では赤にならず、pin の更新の review の点検項目である (D4) (訂正 2026-11-10、app#586)。
 - V2 (workspace、wrapper の `--selftest`。CI は無いので PR 本文に出力を貼る): (a) digest の違う scanner は実行されない。改ざんした stub が実行されたら作るはずの marker の file が無いことで観測する。(b) 照合を外す・照合を実行の後ろに移す・scanner の行の必須を外す・bundle の全体を取り出す・`-I` を外す・`-S` を外す (interpreter の site-packages の `.pth` が走る)、の mutant がそれぞれ赤になる。(c) selftest の各 case は、手元の clone の scanner を照合の前に実行しない (冒頭で pin と照合した bytes から selftest 専用の repo を作って使う)。
 - V3 (workspace、毎回の検査): 使った app の SHA と、pin の header の app の commit を出力する。不一致の FAIL は「clone を取得し直す」と「pin を更新する」の両方の手当てを示す。
 - D5 の対の PR の規則を app の側で機械で確かめる手段は無い (app から workspace は見えない)。違反は workspace の検査が赤になることで見える (fail-closed)。
