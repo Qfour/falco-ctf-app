@@ -47,8 +47,8 @@
 
 - **D1. build 行の形 (契約)。**
   - `IMAGES :=` の各 name について、`Makefile` の全体で次の形の行がちょうど 1 行ある。`IMAGES :=` に無い name について、この形の行は無い。
-    `<空白 1 つ以上>docker build -t $(REGISTRY)/<name>:$(TAG)<空白 1 つ以上>-f<空白 1 つ以上><Dockerfile><空白 1 つ以上><context><行末までの空白>`
-  - `docker`・`build`・`-t`・`$(REGISTRY)/<name>:$(TAG)` の間は空白 1 つ。行にほかの引数を置かない。
+    `<空白 1 つ以上>docker build -t $(REGISTRY)/<name>:$(TAG)<空白 1 つ以上>-f<空白 1 つ以上><Dockerfile><空白 1 つ以上><context><行末>`
+  - `docker`・`build`・`-t`・`$(REGISTRY)/<name>:$(TAG)` の間は空白 1 つ。行にほかの引数を置かない。行末に空白を置かない (platform の読み手の形と同じ。桁揃えの空白は `$(TAG)` と `-f` の間に置く)。
   - release の build に渡るのは `<Dockerfile>` と `<context>` だけである。`-t` の値と、`build` の他の行 (`$(MAKE) check-image-hygiene` など) は release に効かない。
 - **D2. `<Dockerfile>` と `<context>` の規則 (契約)。**
   - 文字の集合と先頭 = `^[A-Za-z0-9._][A-Za-z0-9._/-]*$`。先頭の `/`、`$`、`~`、空白、引用符を含まない。
@@ -97,7 +97,7 @@
 ## Verification
 - V1 (app、`make test` = required の `test`)。`internal/contracttable` の test で次を確かめる。
   - (a) 実際の Makefile: `IMAGES :=` の各 name に D1 の行がちょうど 1 行あり、`IMAGES :=` に無い name の行は 0。読めた行の数 = `IMAGES` の数 (1 以上)。各行の 2 つの値が D2 の判定関数で OK。test の build context の中で、Dockerfile は通常の file で実行 bit なし、context は directory、どの要素にも symlink が無い。
-  - (b) 共有 case 表: 全行を Go の判定関数にかけて verdict と一致すること。OK と REJECT の両方を含み、行数が下限 (起草の案 = 20) 以上であること。表が無い・header が違う・列数が違う行は FAIL。REJECT の case には最低限次を入れる: 絶対 path、`..` の要素、`$(X)`、`~`、空白、`./x`、`x//y`、末尾の `/`、context の外の Dockerfile、context が `x` で Dockerfile が `xy/Dockerfile` (接頭辞の誤判定)。
+  - (b) 共有 case 表: 全行を Go の判定関数にかけて verdict と一致すること。OK と REJECT の両方を含み、行数が下限 (起草の案 = 20) 以上であること。表が無い・header が違う・列数が違う行は FAIL。REJECT の case には最低限次を入れる: 絶対 path、`..` の要素、`$(X)`、`~`、`./x`、`x//y`、末尾の `/`、context の外の Dockerfile、context が `x` で Dockerfile が `xy/Dockerfile` (接頭辞の誤判定)。空白・引用符など文字の集合の外の case は、共有の表を platform の test の表と byte 同一に保つため表には置かず、Go の負の表 (同じ test) で固定する。
   - (c) D1 の形の負の case (Go の表): `-f` の前に引数を足した行、行末に引数を足した行、同じ name の 2 行目、`IMAGES` に無い name の行、`IMAGES` の name の行が無いこと、path に `$(VAR)`。
   - (d) file system の負の case (一時 dir の fixture): symlink の Dockerfile、symlink の要素を持つ context、実行 bit 付きの Dockerfile、directory の Dockerfile。
   - (e) 契約表に本行が在り、`build-path-cases.tsv` と `release-scan.sh` を含むこと。
