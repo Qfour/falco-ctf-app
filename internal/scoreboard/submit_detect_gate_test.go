@@ -173,9 +173,11 @@ func (f *sdFixture) crossOrigin(target, email string, body map[string]any) *http
 
 // The route-specific half of og -> detectMW -> handler (security review of
 // app#379, L1; the order itself, for every guarded rate-limited route, is
-// TestOriginGuardRunsBeforeRateLimiter). Cookies are SameSite=None, so
-// another site's page can make a victim's browser POST with the victim's
-// identity header: that flood is 403 and never grades or solves anything.
+// TestOriginGuardRunsBeforeRateLimiter). SameSite does not stop this (Lax
+// still lets a page on another same-site origin send it, None any site;
+// ADR-0049 D3), so another origin's page can make a victim's browser POST
+// with the victim's identity header: that flood is 403 and never grades or
+// solves anything.
 func TestSubmitDetect_CrossOriginNeverReachesGrader(t *testing.T) {
 	f := newSDFixture(t)
 	for i := 0; i < 30; i++ { // far past the detect burst

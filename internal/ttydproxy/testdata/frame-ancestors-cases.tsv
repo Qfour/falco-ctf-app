@@ -10,8 +10,9 @@
 # a regex cannot count the whole, so each reader checks the length after the pattern
 # (ttydproxy.FrameAncestorsMaxLen, FRAME_ANCESTORS_MAX_LEN in deploy-user.sh).
 # Out, and why: 'self' (ttyd's own origin only frames itself: no use), `*` and `*.` (anyone may
-# frame a root shell), a scheme alone and `http://` (the session cookie is Secure +
-# SameSite=None: an http parent has no session), a port, a path, a trailing `/`, a query,
+# frame a root shell), a scheme alone and `http://` (the session cookie is Secure and
+# SameSite=Lax, ADR-0049: an http parent is a different site and has no session), a port,
+# a path, a trailing `/`, a query,
 # userinfo, an upper-case letter (one canonical form), more than one source (a space, `,` or
 # `;`: ADR-0013 made the origin a single one), any other keyword, nonce or hash, and a bare
 # `none` (a host named none: a misconfiguration that reads as safe).

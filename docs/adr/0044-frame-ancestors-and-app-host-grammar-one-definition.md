@@ -11,7 +11,7 @@
 - C4. platform: deploy-event-workspaces.sh:333-354 (`^https?://[A-Za-z0-9.-]+(:[0-9]+)?$`) と :367-387 (`^[A-Za-z0-9.-]+$`) で検査し、:458 で sibling app clone の deploy-user.sh に渡す (:134-135。版は appImageTag の pin: check-app-pin.sh)。
 - C5. 値の形: scoreboard の allowedOrigins = "https://<appHost>" (platform releases/scoreboard/values.yaml.gotmpl:131)。appHost は env file ごとに小文字・port 無し。operations.md:560 / :1347 の用例は "https://<appHost>"。
 - C6. originguard.originOf (originguard.go:134-140) は url.Parse の正規化で、閉じた文法ではない。
-- C7. cookie は Secure + SameSite=None (conventions:419)。http の親ページでは session が成り立たない。origin は 1 つ (ADR-0013)。
+- C7. cookie は Secure + SameSite=None (conventions:419。2026-10-30: cookie 属性は ADR-0049 で Lax に変更。決定は不変)。http の親ページでは session が成り立たない。origin は 1 つ (ADR-0013)。
 - C8. 今 deploy-user.sh を直接呼ぶと、CSP に `*` を足せる (root shell の clickjacking)、別の helm key に注入できる、sign-in の redirect を外部 host に向けられる、annotation に nginx の `$` 変数を入れられる。信頼境界は運用者だが (:243-245)、他の運用者入力と同じ閉じた文法の規則を適用する。
 ## Options
 1. shell の literal を正典にする (#518 の 4 値と同じ型)。ttydproxy は変えない。コスト: 小さい (Go の変更は無く、写しは shell の literal と表の 2 つ)。リスク: deploy-user.sh 以外の経路 (values file・helm の直接実行) で入った値は制御文字の検査しか受けず、そのまま CSP に連結される。可逆 (後から Option 2 を足せる)。効き始め: 即時。ただし効くのは deploy-user.sh を通る値だけ。

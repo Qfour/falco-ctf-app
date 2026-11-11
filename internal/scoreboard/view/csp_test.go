@@ -160,8 +160,9 @@ func TestPortalCSP_FullPolicyPin(t *testing.T) {
 // TestFrameProtection_OnPortalDashboardAndForbidden is the app#326
 // end-to-end pin: every HTML shell response (GET /portal 200, GET / 200,
 // GET / 403) and the 500 path carry BOTH CSP frame-ancestors 'none' and
-// X-Frame-Options: DENY, so oauth2-proxy's cookie_samesite=none cannot be
-// turned into a clickjacking surface.
+// X-Frame-Options: DENY, so no parent page can frame the portal whatever
+// oauth2-proxy's cookie_samesite is (Lax: another same-site origin such as a
+// seat can still be a parent; None: any site; ADR-0049 D3).
 func TestFrameProtection_OnPortalDashboardAndForbidden(t *testing.T) {
 	check := func(t *testing.T, name string, h http.Header) {
 		t.Helper()

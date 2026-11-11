@@ -1,12 +1,15 @@
 <!-- ===== Terminal pane (P23-4): iframe embed of the caller's own ttyd.
      src comes ONLY from the server-injected window.__PORTAL_TTYD_URL__ (see
      view.renderPortal / portal.ttydURLFor) — this pane never reads a
-     header/query/param to pick the host. Cross-origin cookie delivery into
-     the iframe additionally requires the platform's oauth2-proxy cookie to
-     be SameSite=None+Secure (P23-4 platform half, implemented in
-     falco-ctf-platform in parallel — see that repo's PR for status); until
-     both halves are live the iframe may render an in-ttyd login prompt
-     instead of a live shell, which is expected and not a regression here.
+     header/query/param to pick the host. The seat host is cross-ORIGIN but
+     same-SITE as the portal (both https, under the same <dnsSuffix>), so
+     the platform's oauth2-proxy cookie (SameSite=Lax+Secure, ADR-0049) is
+     sent on the iframe's document request and on the WebSocket it opens;
+     SameSite=None is not needed. That rests on the platform keeping the
+     same-site premise (ADR-0049 D2); if it breaks, the iframe renders an
+     in-ttyd login prompt instead of a live shell (fail-safe, not a
+     regression here). The cookie attribute is not a boundary: the
+     frame-ancestors on both sides and the Origin checks stay (ADR-0048).
      Per-user isolation (I8) is enforced independently by auth-policy's
      `/check-workspace?host=<user>` on the ttyd Ingress itself (the roster is
      one table; the caller's canonical `<seat>@<EXPECTED_EMAIL_DOMAIN>` must

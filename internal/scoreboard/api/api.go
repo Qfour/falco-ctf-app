@@ -1633,8 +1633,10 @@ func (h *Handler) exfilInternal(w http.ResponseWriter, r *http.Request) {
 	// Collector-only: the browser path (admin ingress catch-all ->
 	// oauth2-proxy) always carries X-Auth-Request-*, the collector never does.
 	// Refused before ANY other check so nothing (not even 404 / 400) varies with
-	// the request's content, and a cross-site (SameSite=None) POST from an admin
-	// session can neither record a receipt nor probe the catalog.
+	// the request's content, and a cross-origin POST from an admin session
+	// (same-site under SameSite=Lax, any site if the cookie went back to None;
+	// this refusal does not depend on the attribute, ADR-0049 D3) can neither
+	// record a receipt nor probe the catalog.
 	if httpx.HasProxyIdentityHeader(r) {
 		auditLog("browser_path_denied")
 		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
