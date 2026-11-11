@@ -71,6 +71,7 @@
 - **P28 用に予約した 0029 / 0030 / 0031 はすべて起草済み** (0029・0030 は Proposed、0031 は本索引の ADR-0031)。`make check-adr` の「Next free ADR number」は
   既存の最大 + 1 を返すだけで、予約や未 merge の番号を知らないので、採番前にこの索引と
   `git log --oneline --all -- 'docs/adr/*'` を確認する。
+- **0052 は予約** (seat Pod の securityContext と capability の正典 = ADR-0052。起草済み・未 push。`cap-policy.tsv` と `check-capabilities.py` は 0052 の実装待ちで main に無い)。0053 は 0052 を飛ばして採番した (2026-11-03)
 - CI (`flag-guard` job、`scripts/check-adr-numbers.sh`) が (a) 番号重複、
   (b) ファイル名とヘッダの不一致、(c) この索引への掲載漏れ、を機械的に
   検査し fail-closed で block する。この節冒頭の「ADR を新設したらこの
