@@ -209,6 +209,10 @@ jobs:
         run: |
           ./scripts/check-build-context.sh
           ./scripts/check-build-context.sh --selftest
+      - name: the tracked tree holds no symlink and no submodule (ADR-0054 D2 / V1 (g); selftest included)
+        run: |
+          ./scripts/check-no-tracked-links.sh
+          ./scripts/check-no-tracked-links.sh --selftest
       - name: every golang base (tag@digest) in the Dockerfiles and workflows is the same value (app#499, selftest included)
         run: |
           ./scripts/check-go-base-digest.sh
