@@ -53,15 +53,16 @@ RUN for mode in participant admin; do \
 # altogether; it does not change #293's decision.
 FROM nginxinc/nginx-unprivileged:1.30-alpine-slim@sha256:4ac59c85c8c46d9e91eaabd2122cda4923ba380cf11f4138e389f069bcdc77a3
 
-# The one pin that is left (a package the base already has, raised to the fixed build;
-# a pin like this is dropped as soon as the base carries that version): zlib 1.3.2-r0 in the base, 1.3.2-r1 is what v3.24/main serves
-# (`apk policy zlib`, 2026-10-19). libssl3 / libcrypto3 (3.5.9-r0) and pcre2 are at
-# the version v3.24/main serves, so they need no pin. Exit condition: drop this
-# line when the base digest carries zlib >= 1.3.2-r1.
+# The pins that are left (packages the base already has, raised to the fixed build;
+# a pin like this is dropped as soon as the base carries that version): zlib 1.3.2-r0 in the base, 1.4-r0 is what v3.24/main serves
+# (`apk policy zlib`, 2026-11-10, app#583; re-pinned from 1.3.2-r1, which the index dropped; 1.3.2-r1 was measured 2026-10-19). libssl3 / libcrypto3 (3.5.9-r0) and pcre2 are at
+# the version v3.24/main serves, so they need no pin. musl-utils 1.2.6-r3 (2026-11-10: the
+# base's 1.2.6-r2 carries a Critical, Sysdig's suggested fix; app#583 / app#591). Exit condition: drop
+# a pin from this line when the base digest carries that package's pinned version or newer.
 # apk writes /lib/apk/db as root; the base's Config.User is 101 (non-root), so wrap
 # the apk call in USER root / USER 101 and the image still runs as 101.
 USER root
-RUN apk add --no-cache --upgrade zlib=1.3.2-r1
+RUN apk add --no-cache --upgrade zlib=1.4-r0 musl-utils=1.2.6-r3
 USER 101
 
 # --chmod: the non-root nginx user (uid 101) must read the config regardless of
