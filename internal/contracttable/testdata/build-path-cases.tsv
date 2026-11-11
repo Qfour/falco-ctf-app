@@ -1,3 +1,5 @@
+# path-pattern: ^[A-Za-z0-9._][A-Za-z0-9._/-]*$
+# build-line-pattern: ^[[:space:]]+docker build -t \$\(REGISTRY\)/([a-z0-9][a-z0-9-]*):\$\(TAG\)[[:space:]]+-f[[:space:]]+([^[:space:]]+)[[:space:]]+([^[:space:]]+)$
 dockerfile	context	verdict
 scoreboard/Dockerfile	.	OK
 images/ttyd/Dockerfile	images/ttyd	OK
@@ -30,3 +32,11 @@ images/ttyd-proxy/Dockerfile	images/ttyd	REJECT
 images/ttyd/Dockerfile	images/ttyd/Dockerfile	REJECT
 scoreboard/Dockerfile	images/ttyd	REJECT
 images/ttyd	images/ttyd	REJECT
+a"b/Dockerfile	.	REJECT
+a'b/Dockerfile	.	REJECT
+a\b/Dockerfile	.	REJECT
+a*/Dockerfile	.	REJECT
+a:b/Dockerfile	.	REJECT
+-x/Dockerfile	.	REJECT
+-x/Dockerfile	-x	REJECT
+a"b/Dockerfile	a"b	REJECT

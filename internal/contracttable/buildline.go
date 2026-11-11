@@ -10,7 +10,9 @@ package contracttable
 // Everything in this file is a judgement on STRINGS. What a file system adds
 // (tracked, regular file, no symlink element) is checked by the tests, with
 // fixtures. The judgements mirror platform's shell one for one, and the shared
-// case table (testdata/build-path-cases.tsv) pins the path rules for both sides.
+// case table (testdata/build-path-cases.tsv) pins the path rules for both sides;
+// lines 1-2 of the table carry pathGrammar / buildLine as literals for other repos
+// (ADR-0054 D3).
 
 import (
 	"fmt"
@@ -28,9 +30,12 @@ type BuildArgs struct {
 
 // buildLineCandidate is what platform treats as "a build line" before it looks at
 // the form: a `docker build` (an optional make recipe prefix `@` `+` `-` is part of
-// the match) that names $(REGISTRY). A candidate that is not in the exact form is an
-// error, never skipped: skipping it would let a second, different line for the same
-// image sit in the Makefile unread.
+// the match) that names $(REGISTRY). Every line that matches buildLine is a
+// candidate (the form is a subset of the candidates), so it is never skipped. A
+// line that is not a candidate (`${REGISTRY}`, `@ docker` with a space after the
+// prefix, `$(DOCKER) build`, ...) is read by neither this function nor platform and
+// hands nothing to the release's build. `docker buildx build` is a candidate and is
+// outside the form, so it is an error.
 var buildLineCandidate = regexp.MustCompile(`^[[:space:]]*[@+-]*docker[[:space:]]+build`)
 
 // buildLine is the one accepted form (platform's RS_BUILD_LINE_RE): leading

@@ -9,10 +9,12 @@ package contracttable
 //	    the test build context the Dockerfile is a regular file without an execute
 //	    bit, the context is a directory and no path element is a symlink;
 //	(b) the shared case table (testdata/build-path-cases.tsv, read by platform's
-//	    test too): every row's verdict, and the table itself is held to a shape;
+//	    test too): lines 1-2 are pathGrammar / buildLine as literals, every row's
+//	    verdict holds, and the table itself is held to a shape;
 //	(c) D1 negatives (a Go table of Makefile texts);
 //	(d) file system negatives (fixtures in t.TempDir());
-//	(e) the contract table row exists and names the table and platform's script;
+//	(e) the contract table row exists and names the table, platform's script and
+//	    scripts/check-no-tracked-links.sh (V1 (g) is that script, run by CI);
 //	(f) dropping any one rule of the judgement turns a row of (b) red.
 //
 // A missing file or row FAILS, never skips (the Makefile, the conventions file and
@@ -33,6 +35,12 @@ const caseTablePath = "testdata/build-path-cases.tsv"
 
 const caseTableHeader = "dockerfile\tcontext\tverdict"
 
+// The first two lines of the table carry the two regular expressions as literals, so
+// that another repository can compare them as strings with its own (ADR-0054 D3).
+const pathPatternPrefix = "# path-pattern: "
+
+const buildLinePatternPrefix = "# build-line-pattern: "
+
 // minCaseRows is the floor on the table's rows: a table emptied down to a few rows
 // must not still pass.
 const minCaseRows = 20
@@ -44,58 +52,101 @@ type pathCase struct {
 	line       int
 }
 
-// parseCaseTable reads the shared case table: the header, then one row per line with
-// exactly three TAB-separated columns whose verdict is OK or REJECT. It is an error
-// for the table to have too few rows or to lack either verdict.
-func parseCaseTable(text string) ([]pathCase, error) {
+// caseTable is the parsed shared table: the two header values (the text after the
+// prefix up to the end of the line, not trimmed) and the rows.
+type caseTable struct {
+	pathPattern      string
+	buildLinePattern string
+	cases            []pathCase
+}
+
+// parseCaseTable reads the shared case table by position, skipping nothing: line 1
+// is `# path-pattern: ` + a value, line 2 is `# build-line-pattern: ` + a value,
+// line 3 is the header `dockerfile<TAB>context<TAB>verdict`, and every line after
+// that is one row with exactly three TAB-separated columns whose verdict is OK or
+// REJECT (no blank line and no `#` line among them). It is an error for the table
+// to have too few rows or to lack either verdict.
+func parseCaseTable(text string) (caseTable, error) {
+	var tbl caseTable
 	lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
-	if lines[0] != caseTableHeader {
-		return nil, fmt.Errorf("header is %q, want %q", lines[0], caseTableHeader)
+	if len(lines) < 3 {
+		return tbl, fmt.Errorf("%d lines, want the two pattern lines, the header and the rows", len(lines))
 	}
-	var cases []pathCase
+	pp, ok := strings.CutPrefix(lines[0], pathPatternPrefix)
+	if !ok {
+		return tbl, fmt.Errorf("line 1 is %q, want it to start with %q", lines[0], pathPatternPrefix)
+	}
+	bp, ok := strings.CutPrefix(lines[1], buildLinePatternPrefix)
+	if !ok {
+		return tbl, fmt.Errorf("line 2 is %q, want it to start with %q", lines[1], buildLinePatternPrefix)
+	}
+	if lines[2] != caseTableHeader {
+		return tbl, fmt.Errorf("line 3 (the header) is %q, want %q", lines[2], caseTableHeader)
+	}
+	tbl.pathPattern = pp
+	tbl.buildLinePattern = bp
 	nOK, nReject := 0, 0
-	for i, ln := range lines[1:] {
-		lineNo := i + 2
+	for i, ln := range lines[3:] {
+		lineNo := i + 4
+		if ln == "" || strings.HasPrefix(ln, "#") {
+			return tbl, fmt.Errorf("line %d is blank or a comment (%q): the rows are read without skipping any line", lineNo, ln)
+		}
 		cols := strings.Split(ln, "\t")
 		if len(cols) != 3 {
-			return nil, fmt.Errorf("line %d has %d columns, want 3: %q", lineNo, len(cols), ln)
+			return tbl, fmt.Errorf("line %d has %d columns, want 3: %q", lineNo, len(cols), ln)
 		}
-		ok := false
+		rowOK := false
 		switch cols[2] {
 		case "OK":
-			ok = true
+			rowOK = true
 			nOK++
 		case "REJECT":
 			nReject++
 		default:
-			return nil, fmt.Errorf("line %d: verdict %q is neither OK nor REJECT", lineNo, cols[2])
+			return tbl, fmt.Errorf("line %d: verdict %q is neither OK nor REJECT", lineNo, cols[2])
 		}
-		cases = append(cases, pathCase{dockerfile: cols[0], context: cols[1], ok: ok, line: lineNo})
+		tbl.cases = append(tbl.cases, pathCase{dockerfile: cols[0], context: cols[1], ok: rowOK, line: lineNo})
 	}
-	if len(cases) < minCaseRows {
-		return nil, fmt.Errorf("%d rows, want at least %d", len(cases), minCaseRows)
+	if len(tbl.cases) < minCaseRows {
+		return tbl, fmt.Errorf("%d rows, want at least %d", len(tbl.cases), minCaseRows)
 	}
 	if nOK == 0 || nReject == 0 {
-		return nil, fmt.Errorf("the table needs both verdicts (OK rows: %d, REJECT rows: %d)", nOK, nReject)
+		return tbl, fmt.Errorf("the table needs both verdicts (OK rows: %d, REJECT rows: %d)", nOK, nReject)
 	}
-	return cases, nil
+	return tbl, nil
 }
 
-func loadCaseTable(path string) ([]pathCase, error) {
+// headerMismatch is nil when the table's two header values are, as strings, the
+// patterns this package judges with.
+func headerMismatch(text string) error {
+	tbl, err := parseCaseTable(text)
+	if err != nil {
+		return err
+	}
+	if tbl.pathPattern != pathGrammar.String() {
+		return fmt.Errorf("the table's path-pattern is %q, pathGrammar is %q", tbl.pathPattern, pathGrammar.String())
+	}
+	if tbl.buildLinePattern != buildLine.String() {
+		return fmt.Errorf("the table's build-line-pattern is %q, buildLine is %q", tbl.buildLinePattern, buildLine.String())
+	}
+	return nil
+}
+
+func loadCaseTable(path string) (caseTable, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return caseTable{}, err
 	}
 	return parseCaseTable(string(b))
 }
 
-func mustLoadCaseTable(t *testing.T) []pathCase {
+func mustLoadCaseTable(t *testing.T) caseTable {
 	t.Helper()
-	cases, err := loadCaseTable(caseTablePath)
+	tbl, err := loadCaseTable(caseTablePath)
 	if err != nil {
 		t.Fatalf("%s: %v (is it in the test build context?)", caseTablePath, err)
 	}
-	return cases
+	return tbl
 }
 
 // tableMismatches returns the rows whose verdict differs from the judgement with
@@ -205,16 +256,45 @@ func TestBuildLines_RealMakefile(t *testing.T) {
 
 // (b)
 func TestBuildPathCases_SharedTable(t *testing.T) {
-	cases := mustLoadCaseTable(t)
-	for _, c := range tableMismatches(cases, "") {
+	tbl := mustLoadCaseTable(t)
+	for _, c := range tableMismatches(tbl.cases, "") {
 		t.Errorf("table line %d (-f %q, context %q): the table says ok=%v, the judgement says %v", c.line, c.dockerfile, c.context, c.ok, !c.ok)
+	}
+}
+
+// Lines 1-2 of the table are the patterns this package judges with, as strings. The
+// negative cases change one character of a real table's literal: a comparison that
+// could not fail (both sides read from the same place) would pass them.
+func TestBuildPathCases_HeaderIsTheGoPattern(t *testing.T) {
+	b, err := os.ReadFile(caseTablePath)
+	if err != nil {
+		t.Fatalf("%s: %v (is it in the test build context?)", caseTablePath, err)
+	}
+	text := string(b)
+	if err := headerMismatch(text); err != nil {
+		t.Fatalf("%s: %v", caseTablePath, err)
+	}
+	for _, c := range []struct {
+		name string
+		old  string
+		new  string
+	}{
+		{"one character of the path pattern changed", pathPatternPrefix + "^[A-Za-z", pathPatternPrefix + "^[A-Ya-z"},
+		{"one character of the build line pattern changed", "\\$\\(REGISTRY\\)", "\\$\\(REGISTRX\\)"},
+	} {
+		if !strings.Contains(text, c.old) {
+			t.Fatalf("%s: the real table has no %q to change", c.name, c.old)
+		}
+		if err := headerMismatch(strings.Replace(text, c.old, c.new, 1)); err == nil {
+			t.Errorf("%s: headerMismatch accepted it", c.name)
+		}
 	}
 }
 
 // The table must keep the rows the ADR names, so that emptying it of its sharp cases
 // is red even when the row count and both verdicts are still there.
 func TestBuildPathCases_TableKeepsTheNamedRows(t *testing.T) {
-	cases := mustLoadCaseTable(t)
+	cases := mustLoadCaseTable(t).cases
 	has := func(dockerfile, context string, ok bool) bool {
 		return slices.ContainsFunc(cases, func(c pathCase) bool {
 			return c.dockerfile == dockerfile && c.context == context && c.ok == ok
@@ -239,6 +319,14 @@ func TestBuildPathCases_TableKeepsTheNamedRows(t *testing.T) {
 		{"scoreboard/Dockerfile", "images/ttyd", false, "a Dockerfile outside the context"},
 		{"images/ttyd-proxy/Dockerfile", "images/ttyd", false, "a prefix of the context's name is not inside"},
 		{"images/ttyd", "images/ttyd", false, "the Dockerfile is the context"},
+		{"a\"b/Dockerfile", ".", false, "a double quote"},
+		{"a'b/Dockerfile", ".", false, "a single quote"},
+		{"a\\b/Dockerfile", ".", false, "a backslash"},
+		{"a*/Dockerfile", ".", false, "a glob character"},
+		{"a:b/Dockerfile", ".", false, "a colon"},
+		{"-x/Dockerfile", ".", false, "a leading dash (read as a flag)"},
+		{"-x/Dockerfile", "-x", false, "a leading dash on both paths, with the Dockerfile inside the context"},
+		{"a\"b/Dockerfile", "a\"b", false, "a double quote on both paths, with the Dockerfile inside the context"},
 	} {
 		if !has(w.dockerfile, w.context, w.ok) {
 			t.Errorf("the table has no row (-f %q, context %q, ok=%v): %s", w.dockerfile, w.context, w.ok, w.why)
@@ -246,8 +334,10 @@ func TestBuildPathCases_TableKeepsTheNamedRows(t *testing.T) {
 	}
 }
 
-// Strings the shared table has no row for (it holds paths a Makefile could carry;
-// these are the characters a path grammar must refuse), judged by the same rules.
+// Values the shared table cannot hold: platform's reader of the table
+// (`IFS=<TAB> read`) folds an empty column and cannot carry a TAB, and a space, a TAB
+// or a CR never sits inside one token of a build line (D1), so they are fixed here
+// and not in the table.
 func TestCheckBuildPaths_ExtraRejects(t *testing.T) {
 	for _, c := range []struct {
 		name       string
@@ -256,14 +346,9 @@ func TestCheckBuildPaths_ExtraRejects(t *testing.T) {
 	}{
 		{"a space in the Dockerfile", "a b/Dockerfile", "."},
 		{"a tab in the context", "a/Dockerfile", "a\t"},
-		{"a double quote", "a\"b/Dockerfile", "."},
-		{"a single quote", "a'b/Dockerfile", "."},
-		{"a backslash", "a\\b/Dockerfile", "."},
-		{"a leading dash would be read as a flag", "-x/Dockerfile", "."},
+		{"a carriage return in the Dockerfile", "a\r/Dockerfile", "."},
 		{"an empty Dockerfile", "", "."},
 		{"an empty context", "a/Dockerfile", ""},
-		{"a glob character", "a*/Dockerfile", "."},
-		{"a colon", "a:b/Dockerfile", "."},
 	} {
 		if err := CheckBuildPaths(c.dockerfile, c.context); err == nil {
 			t.Errorf("%s: (-f %q, context %q) passed", c.name, c.dockerfile, c.context)
@@ -278,8 +363,8 @@ func TestParseCaseTable_Shape(t *testing.T) {
 	row := func(i int, verdict string) string {
 		return fmt.Sprintf("d%d/Dockerfile\t.\t%s\n", i, verdict)
 	}
-	rows := func(nOK, nReject int) string {
-		s := caseTableHeader + "\n"
+	body := func(nOK, nReject int) string {
+		s := ""
 		for i := 0; i < nOK; i++ {
 			s += row(i, "OK")
 		}
@@ -288,7 +373,19 @@ func TestParseCaseTable_Shape(t *testing.T) {
 		}
 		return s
 	}
+	pathLine := pathPatternPrefix + "P\n"
+	buildLineLine := buildLinePatternPrefix + "B\n"
+	head := pathLine + buildLineLine + caseTableHeader + "\n"
+	rows := func(nOK, nReject int) string {
+		return head + body(nOK, nReject)
+	}
 	good := rows(10, 10)
+	if tbl, err := parseCaseTable(good); err != nil || tbl.pathPattern != "P" || tbl.buildLinePattern != "B" {
+		t.Fatalf("the good table: pathPattern %q, buildLinePattern %q, err %v", tbl.pathPattern, tbl.buildLinePattern, err)
+	}
+	if tbl, err := parseCaseTable(pathPatternPrefix + " P \n" + buildLineLine + caseTableHeader + "\n" + body(10, 10)); err != nil || tbl.pathPattern != " P " {
+		t.Fatalf("a header value is taken as it is, not trimmed: got %q, err %v", tbl.pathPattern, err)
+	}
 	cases := []struct {
 		name    string
 		text    string
@@ -299,6 +396,12 @@ func TestParseCaseTable_Shape(t *testing.T) {
 		{"empty", "", true},
 		{"a different header", strings.Replace(good, "verdict", "result", 1), true},
 		{"a header with the columns swapped", strings.Replace(good, "dockerfile\tcontext", "context\tdockerfile", 1), true},
+		{"the old format: the column header on line 1, no pattern lines", caseTableHeader + "\n" + body(10, 10), true},
+		{"the two pattern lines swapped", buildLineLine + pathLine + caseTableHeader + "\n" + body(10, 10), true},
+		{"a pattern line without its prefix", "path-pattern: P\n" + buildLineLine + caseTableHeader + "\n" + body(10, 10), true},
+		{"the column header before the pattern lines", caseTableHeader + "\n" + pathLine + buildLineLine + body(10, 10), true},
+		{"a comment line after the header", good + "# x\n", true},
+		{"a comment line among the rows", head + body(10, 0) + "# x\n" + body(0, 10), true},
 		{"a row with two columns", good + "a/Dockerfile\tOK\n", true},
 		{"a row with four columns", good + "a/Dockerfile\t.\tOK\textra\n", true},
 		{"an unknown verdict", good + "a/Dockerfile\t.\tMAYBE\n", true},
@@ -400,6 +503,7 @@ func TestBuildLines_FormNegatives(t *testing.T) {
 		{"an upper-case name", mkfile("a b", strings.Replace(lineA, "/a:", "/A:", 1), lineB)},
 		{"the ${} spelling is no build line, so the image has none", mkfile("a b", strings.Replace(lineA, "$(REGISTRY)", "${REGISTRY}", 1), lineB)},
 		{"a second IMAGES line", mkfile("a b", lineA, lineB) + "IMAGES += c\n"},
+		{"docker buildx build is a candidate and is outside the form", mkfile("a b", strings.Replace(lineA, "docker build", "docker buildx build", 1), lineB)},
 	}
 	for _, c := range cases {
 		if got, err := checkedBuildLines(c.makefile); err == nil {
@@ -505,7 +609,7 @@ func TestContractTable_HasTheBuildLineRow(t *testing.T) {
 	if row == "" {
 		t.Fatal("the contract table has no `| release build の build 行` row (ADR-0054)")
 	}
-	for _, want := range []string{"ADR-0054", "build-path-cases.tsv", "release-scan.sh"} {
+	for _, want := range []string{"ADR-0054", "build-path-cases.tsv", "release-scan.sh", "check-no-tracked-links.sh"} {
 		if !strings.Contains(row, want) {
 			t.Errorf("the build line row no longer names %q: %.200s", want, row)
 		}
@@ -516,7 +620,7 @@ func TestContractTable_HasTheBuildLineRow(t *testing.T) {
 // least one row of the shared table gets a verdict it must not have. A rule that no
 // row needs would be a rule whose removal nobody notices.
 func TestPathRules_EachRuleDecidesARow(t *testing.T) {
-	cases := mustLoadCaseTable(t)
+	cases := mustLoadCaseTable(t).cases
 	if bad := tableMismatches(cases, ""); len(bad) != 0 {
 		t.Fatalf("the production judgement already disagrees with the table on %d rows (first: line %d)", len(bad), bad[0].line)
 	}
