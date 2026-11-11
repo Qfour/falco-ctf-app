@@ -272,6 +272,8 @@ dialog で止まり、要求の網羅を見られず、作り手の自己申告�
 
 (V9 の導線: workflow は現在 `.github/workflows/apk-pins.yaml` (`file` 入力で 2 つの fixture を選ぶ)。ADR-0036 D5。)
 
+(V9 の実施記録、2026-10-25、app main `7915484`: `apk-pins.yaml` の `workflow_dispatch` で `e2e-pin-BAD.txt` → run 40190011596、`e2e-pin-BAD-continued.txt` → run 40190083330 (1 回目の 40190017065 は同時 dispatch の concurrency で cancelled)。どちらも exit 1 の赤で、Issue は開かない (fixture の run)。内容は ADR-0036 の Verification V3・V4。)
+
 - **V1 最初の 4 シナリオ** (実 catalog + `nimbusbreach-full`、user1。各シナリオは守る性質を故意に壊した変更で赤になることを PR 本文に出力で示す):
   - **E1 (ADR-0027 V6)**: 01〜04 を solve して current = 05。地図で 06 を開くと、`?mission=06` の詳細が `locked` のまま「ヒント 1」の開封と減点 10 を出す。押すと dialog の文に 10 点が出る。
     取消なら書き込み 0、承認なら `POST …/06-web-rce-shell/hints/1` が 1 回で、本文 (catalog から読む) と次の減点 30 が出る。

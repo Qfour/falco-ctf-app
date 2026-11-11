@@ -16,6 +16,7 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
 ### Added
 
 ### Changed
+- **ADR-0036 Accepted、契約表に release scan gate の読み取り面 (PATCH)**: apk の exact pin を「版が振る舞いに効く package」と「base を引き上げる一時的な pin」だけにする方針 (ADR-0036) を Accepted にした (security は条件付き同意。条件 1〜3 は platform#285 = ADR-WS-0010 の実装、条件 4 は app#505、条件 5 は本改訂)。契約表 (conventions) の Image naming 行に、platform の release scan gate が `Makefile` の `IMAGES :=` の 1 行 (継続行・行末コメント無し) を release の image 集合として読むことを足した。形式や意味を変える PR は両リポ同時。`internal/contracttable` の test が、その 1 行の形と、I5 の 8 image との一致を固定する。`dev-flow.md` と `ci.yaml` の「`make scan TAG=local` が唯一の preventive gate」は「PR 前の検査。release の gate は platform の `scripts/scan-release-images.sh`」に改めた。
 
 ### Fixed
 

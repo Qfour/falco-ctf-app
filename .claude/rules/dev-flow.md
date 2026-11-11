@@ -166,7 +166,7 @@ pipeline-only 環境では SysQL の findings API が空。
 | CVE scan | `make scan` — 主チェック | PR blocking |
 | image push | なし | main マージ・tag push のみ |
 
-ローカルの `make scan` が事実上の最終ゲート。CI scan は安全網。
+ローカルの `make scan` は PR 前の検査 (native arch の build を scan する。`--platform linux/amd64`・`--no-cache` の release の build ではない)。CI scan は安全網。**release の gate は platform の `scripts/scan-release-images.sh` (workspace ADR-WS-0010。push する image そのものを scan し、不合格なら push しない)。**
 
 ⚠ **`go test` 行の「Stop hook 自動」は `make test` (= `Dockerfile.test` でコンテナ実行、
 `falco-go` skill 参照) を指す。** ホストで素の `go test ./...` を直接叩く経路
