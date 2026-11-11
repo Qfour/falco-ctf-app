@@ -51,7 +51,7 @@
     `<空白 1 つ以上>docker build -t $(REGISTRY)/<name>:$(TAG)<空白 1 つ以上>-f<空白 1 つ以上><Dockerfile><空白 1 つ以上><context><行末>`
   - `docker`・`build`・`-t`・`$(REGISTRY)/<name>:$(TAG)` の間は空白 1 つ。行にほかの引数を置かない。行末に空白を置かない (platform の読み手の形と同じ。桁揃えの空白は `$(TAG)` と `-f` の間に置く)。
   - release の build に渡るのは `<Dockerfile>` と `<context>` だけである。`-t` の値と、`build` の他の行 (`$(MAKE) check-image-hygiene` など) は release に効かない。
-  - 行は LF で区切る。CR を含む build 行は形の外である (`[[:space:]]` に CR が入るので、両実装が拒否する)。`IMAGES :=` の行の CR は platform が拒否するが、Go の `MakefileImages` はまだ受理する (`strings.Fields`。app#596 で Go を拒否に揃える)。この食い違いでは platform が止める側になる (fail-closed)。
+  - 行は LF で区切る。行末に CR を持つ build 行 (CRLF) は形の外である (末尾の `([^[:space:]]+)$` が拒否する。両実装同じ)。区切りの `[[:space:]]+` は CR / VT / FF も受理する (定義 = `buildLine`。D3)。`IMAGES :=` の行の CR は platform が拒否するが、Go の `MakefileImages` はまだ受理する (`strings.Fields`。app#596 で Go を拒否に揃える)。この食い違いでは platform が止める側になる (fail-closed)。
 - **D2. `<Dockerfile>` と `<context>` の規則 (契約)。**
   - 文字の集合と先頭 = `^[A-Za-z0-9._][A-Za-z0-9._/-]*$`。先頭の `/`、`$`、`~`、空白、引用符を含まない。
   - `/` で分けた要素に、`..` と空の要素 (`//` や末尾の `/`) を持たない。要素 `.` は、context が `.` そのものである場合だけ許す (`./x` や `x/./y` は不可)。= 正規形にするので、「内側か」の判定は文字列で決まる。
@@ -123,6 +123,7 @@
   - 違反の case では build が 1 回も起きないこと (stub の呼び出しの記録で確かめる)。
   - selftest: header の literal を 1 文字変えた表、`RS_PATH_RE` を緩めた mutant、表の無い clone で、それぞれ FAIL になること。
 - 両リポの PR の順序 (D6) を機械で確かめる手段は無い。(3)〜(4) の食い違いは V2 が無い間は release の時点で、(5) の後は V2 の赤として見える (どちらも fail-closed)。
+- D5 のゲートの行 (`dev-flow.md`) の機械の下限 (review-5x の Tier に `Makefile` を足す) は workspace の follow-up (Qfour/falco-ctf-workspace#182) の機構 PR で入れる。それまで、`Makefile` だけを変える PR への security-engineer レビューは人が当てる規則である (Accepted の条件には含めない)。
 
 ## Advice
 - architect (2026-11-10、platform#318 の設計): D9 の判定 = yes, if。条件は (1) 契約表に 1 行、(2) 両リポ同時 PR と相互リンク、(3) Makefile は今の main のまま (`Makefile:70-77`) で、変えるのは platform 側の検査だけ、(4) CTO が承認し security-engineer が合意する (build の経路)。本 ADR は (1)(2)(3) を D3・D6 と V1 で満たし、(4) を Accepted の条件にした。起草で足した点は 3 つ: 規則を正規形にした (D2 の 2 つ目。platform の検査も同じ規則にする)、「Makefile の全体でちょうど 1 行」(今の platform の読み手は最初の 1 行だけを読み、2 行目以降は黙って捨てる)、共有 case 表 (先例 ADR-0042 / 0047)。
