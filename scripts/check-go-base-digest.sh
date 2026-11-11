@@ -70,7 +70,6 @@ tracked() {
 if [ "${1:-}" = "--selftest" ]; then
   tmp="$(mktemp -d)" || exit 2
   trap 'rm -rf "$tmp"' EXIT
-  D=sha256:27f2d3b83cfc5803c8078f8e730af0f7c431bf067afaec8f60a36fb763187cba
   OLD=sha256:3082400e369fa24d5fc60bca20edab3f6d604e0c5a690ec66b295eff4dd87ade
   files=()
   while IFS= read -r f; do files+=("$f"); done < <(tracked)
@@ -78,6 +77,17 @@ if [ "${1:-}" = "--selftest" ]; then
   # The real tree must pass, otherwise "a planted defect fails" proves nothing.
   collect "${files[@]}" | verdict >/dev/null || { echo "FAIL: selftest: the real tree does not pass"; exit 1; }
   real="$(collect "${files[@]}" | head -n 1 | cut -f2)"
+  # Derived from the real tree, never a literal: a constant here goes stale at the next
+  # Go bump and cases 3 and 5 would silently stop testing what their names say
+  # (review-5x R2#1 / R3#1 / R4#1 / R5#1). D = the real "sha256:<hex>"; TAG = the real tag.
+  D="${real#*@}"
+  TAG="${real%%@*}"; TAG="${TAG#golang:}"
+  # A digest one hex character different from the real one, by construction: the first
+  # hex character becomes 0, or 1 when it already is 0.
+  hex="${D#sha256:}"
+  if [ "${hex:0:1}" = 0 ]; then flipped="sha256:1${hex:1}"; else flipped="sha256:0${hex:1}"; fi
+  [ "$flipped" != "$D" ] && [ "${#flipped}" -eq "${#D}" ] \
+    || { echo "FAIL: selftest: could not derive a one-character-different digest"; exit 1; }
   n=0
   # No pipe into verdict here: a pipeline runs it in a subshell, where `n=` is lost and
   # an `exit 1` would not stop the selftest.
@@ -98,13 +108,13 @@ if [ "${1:-}" = "--selftest" ]; then
   printf '    container:\n      image: %s\n' "${real%%@*}@$OLD" > "$tmp/lag.yaml"
   plant "one workflow container.image keeps the old digest" 1 "$tmp/lag.yaml"
   # 3. same digest, different tag (the whole ref is compared, not just the digest)
-  printf 'FROM golang:1.26.9-alpine@%s AS build\n' "$D" > "$tmp/Dockerfile.tag"
+  printf 'FROM golang:%s-planted@%s AS build\n' "$TAG" "$D" > "$tmp/Dockerfile.tag"
   plant "same digest under another tag" 1 "$tmp/Dockerfile.tag"
   # 4. a golang FROM with no digest
   printf 'FROM golang:1.26-alpine AS build\n' > "$tmp/Dockerfile.nodigest"
   plant "golang FROM without a digest" 1 "$tmp/Dockerfile.nodigest"
   # 5. one digest character changed (still 64 hex)
-  printf 'FROM %s AS build\n' "${real%%@*}@sha256:0${D#sha256:?}" > "$tmp/Dockerfile.digit"
+  printf 'FROM %s AS build\n' "${real%%@*}@$flipped" > "$tmp/Dockerfile.digit"
   plant "one digest character changed" 1 "$tmp/Dockerfile.digit"
   # 6. nothing found (collect on the empty file only)
   : > "$tmp/Dockerfile.empty"

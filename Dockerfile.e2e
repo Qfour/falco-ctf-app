@@ -30,7 +30,7 @@
 # `chromium` (not chromium-headless-shell) so the browser is the one a
 # participant has. font-wqy-zenhei exists only so that CJK text in a failure
 # screenshot is readable.
-FROM golang:1.26.10-alpine@sha256:27f2d3b83cfc5803c8078f8e730af0f7c431bf067afaec8f60a36fb763187cba AS tools
+FROM golang:1.26.11-alpine@sha256:ae52b5bc6ed045a9ed26ab03dc19327a802a9cc9aa8b27ed57f5c6b60579b0bb AS tools
 # chromium drift: 152.0.7977.82 -> 155.0.8059.39 (2026-10-17, app#382)
 # chromium drift: 155.0.8059.39 -> 155.0.8059.84 (2026-10-25; same major, -r0 build only)
 # chromium drift: 155.0.8059.84 -> 156.0.8078.79 (2026-11-10, app#583; new major)
