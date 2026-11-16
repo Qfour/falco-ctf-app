@@ -13,6 +13,11 @@ type catalogEnv struct {
 	// flagsFile is FLAGS_FILE: real per-event flags over the FALCO{dev-...}
 	// placeholders baked into the public image. Empty = use placeholders.
 	flagsFile string
+	// answersFile is ANSWERS_FILE (ADR-0056 D8): the event edition's answers table
+	// of the investigate challenges. Empty = none. It is read here with the other
+	// catalog inputs and judged in one place, edition.Load (startEdition, edition.go):
+	// "the event mode" is flagsFile != "", so the two are decided together.
+	answersFile string
 }
 
 // scoredFromEnv reads the catalog configuration through getenv (key,
@@ -28,6 +33,7 @@ func scoredFromEnv(getenv func(key, fallback string) string) (catalogEnv, catalo
 		challengesDir: getenv("CHALLENGES_DIR", "/app/challenges"),
 		scenarioFile:  getenv("SCENARIO_FILE", ""),
 		flagsFile:     getenv("FLAGS_FILE", ""),
+		answersFile:   getenv("ANSWERS_FILE", ""),
 	}
 	scored, err := catalog.LoadScored(cfg.challengesDir, cfg.scenarioFile, cfg.flagsFile)
 	return cfg, scored, err

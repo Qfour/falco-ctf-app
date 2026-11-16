@@ -2,12 +2,11 @@
 // (ADR-0056, Proposed): the answers table, its checks (D10 T1-T8) and the Judge
 // that compares an input with a table value without keeping the value (D5 4).
 //
-// This is stage A2a: a pure package (ADR-0056 D19): it reads no environment and
-// no file, writes no log and ends no process. The caller hands Parse the bytes of
-// the file, and bounds its own read at MaxTableBytes+1 so that an unbounded file is
-// never loaded (A2b's edition.Load does the reading). Nothing in cmd/ or
-// internal/scoreboard calls it yet (A2b wires the start-up refusal and the log;
-// A4 adds the bundle checks B1-B9 and the renderer).
+// Stage A2a is pure (ADR-0056 D19): it reads no environment and no file, writes
+// no log and ends no process. Stage A2b adds exactly one door, Load (load.go),
+// which reads the answers file (at most MaxTableBytes+1 bytes) and is the only
+// caller of Parse and NewJudge; cmd/scoreboard is the only caller of Load and does
+// the logging and the exit (A4 adds the bundle checks B1-B9 and the renderer).
 //
 // Every rule that is decided here is decided ONCE and from the existing
 // definitions: the answer formats and their normalisation are

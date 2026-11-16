@@ -239,6 +239,17 @@ func main() {
 	}
 	logger.Info("catalog loaded", "dir", challengesDir, "challenges", cat.IDs(), "journeys", len(journeys), "falco_rule_excerpts", len(falcoRules), "docs_base_url", docsBaseURL, "portal_ttyd_suffix", portalTtydSuffix, "flag_overrides", flagsFile != "", "scenario", scenarioID, "webhook_secret_mode", string(webhookSecretMode), "webhook_secret_set", webhookSharedSecret != "")
 
+	// ADR-0056 (D8, D9, D16): the event edition's answers table of the investigate
+	// challenges. startEdition (edition.go) logs the refusal, which platform
+	// scripts/verify.sh reads (contract-table row "scoreboard の起動ログ"), and this
+	// exits right after it; nothing is logged when there is no table and none is
+	// needed. The Judge is held by the handler and is not used until the Grader takes
+	// it (A3a).
+	editionJudge, err := startEdition(logger, catCfg, cat)
+	if err != nil {
+		os.Exit(1)
+	}
+
 	st, err := store.Open(dbPath)
 	if err != nil {
 		logger.Error("store open failed", "path", dbPath, "err", err)
@@ -326,6 +337,7 @@ func main() {
 		scoreboard.WithTtydSuffix(portalTtydSuffix),
 		scoreboard.WithBoard(boardSt),
 		scoreboard.WithWebhookSecret(webhookSharedSecret, webhookSecretMode),
+		scoreboard.WithEditionJudge(editionJudge),
 	)
 
 	// Auto-solve sweeper (P16): re-derives exfil-delivered-but-unsolved evade
