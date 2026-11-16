@@ -157,6 +157,25 @@ flagsSecret:
   name: scoreboard-flags
   key: flags.yaml
 
+# ADR-0056 D8 / D13: the event edition's answers table of the investigate
+# challenges. When enabled, a Secret (created by the platform; the table is never
+# in this repo) is mounted readOnly into the scoreboard container ONLY and named by
+# ANSWERS_FILE; the scoreboard checks it at start-up (log: "edition check failed")
+# and keeps HMACs of its values, never the plaintext. Disabled (default) = no
+# table: every environment without an investigate challenge, and local.
+#   * needs flagsSecret.enabled: "the event mode" is FLAGS_FILE being set, and a
+#     table outside it is refused (render fails here, start-up refuses there);
+#   * env.detectGraderNamespace must not be this namespace: the detect-grader Job's
+#     namespace has Secret RBAC for the scoreboard ServiceAccount, so the table
+#     must not live there (render fails);
+#   * key is a file name (it is part of the ANSWERS_FILE path).
+# The platform's helmfile enables it when a scenario has an investigate challenge
+# (ADR-0055 D6 requirements.answers) and refuses to render without it outside local.
+answersSecret:
+  enabled: false
+  name: scoreboard-answers
+  key: answers.tsv
+
 # ADR-WS-0006 (webhook shared-secret, Layer 2 defense-in-depth behind the
 # ADR-WS-0005 NetworkPolicy): a static header falcosidekick's customHeaders
 # config attaches to every POST /falco/events, checked in constant time by

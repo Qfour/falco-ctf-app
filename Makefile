@@ -18,7 +18,7 @@ SYSDIG_URL   ?= https://app.au1.sysdig.com
 # host repo are not shared into the VM.
 GO_IMAGE ?= golang:1.26-alpine
 
-.PHONY: help dev dev-down build push load-colima deploy-local helm-dep-build lint check-seccomp check-chartparse check-flag-isolation check-namespace-ownership check-image-hygiene check-image-hygiene-selftest check-image-type-rule test e2e e2e-serve check-e2e-verdict tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-template-hex check-portal-render check-rules check-freshness check-adr check-dockerignore check-build-context check-go-base-digest check-apk-pins check-apk-pins-selftest clean scan check-apk-pins-lint
+.PHONY: help dev dev-down build push load-colima deploy-local helm-dep-build lint check-seccomp check-chartparse check-flag-isolation check-namespace-ownership check-answers-secret check-image-hygiene check-image-hygiene-selftest check-image-type-rule test e2e e2e-serve check-e2e-verdict tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-template-hex check-portal-render check-rules check-freshness check-adr check-dockerignore check-build-context check-go-base-digest check-apk-pins check-apk-pins-selftest clean scan check-apk-pins-lint
 
 help:
 	@echo "Targets:"
@@ -29,11 +29,12 @@ help:
 	@echo "  load-colima     — load images into colima k3s containerd (local only)"
 	@echo "  deploy-local    — helm upgrade --install scoreboard + auth-policy charts (local)"
 	@echo "  helm-dep-build      — helm dependency build for every chart that declares one (P21 item 5: falco-ctf-common)"
-	@echo "  lint                — helm-dep-build + helm lint all charts/ + check-seccomp + check-chartparse + check-flag-isolation + check-namespace-ownership"
+	@echo "  lint                — helm-dep-build + helm lint all charts/ + check-seccomp + check-chartparse + check-flag-isolation + check-namespace-ownership + check-answers-secret"
 	@echo "  check-seccomp       — fail if any rendered chart container's effective seccompProfile != RuntimeDefault"
 	@echo "  check-chartparse    — self-test of scripts/lib/chartparse.py, the shared rendered-chart reader check-seccomp.py imports (cases + real ctf-user render + mutants)"
 	@echo "  check-flag-isolation — fail if the ctf-user chart lets a flag reach the challenge container (ADR-0001 Verification 1)"
 	@echo "  check-namespace-ownership — fail if any chart (except ctf-user) renders its own kind: Namespace (ADR-0011)"
+	@echo "  check-answers-secret — fail if the scoreboard chart's answers Secret is reachable outside the scoreboard container, or the render allows a placement ADR-0056 D8 / D13 forbids"
 	@echo "  check-image-hygiene — fail if the built challenge image's /opt/ctf/plant-seed/ snapshot carries flag/hash material or drifts from its real counterpart (ADR-0001 Verification 2-8), or if /opt/ctf/missions is not exactly <id>/fixtures/** (ADR-0026 V1-V3)"
 	@echo "  check-image-hygiene-selftest — mutation test: derived images with one deliberate violation each must FAIL check-image-hygiene (ADR-0026 V6)"
 	@echo "  test            — go test ./... (runs in $(GO_IMAGE) container)"
@@ -129,7 +130,7 @@ helm-dep-build:
 	  fi \
 	done
 
-lint: helm-dep-build check-seccomp check-chartparse check-flag-isolation check-namespace-ownership
+lint: helm-dep-build check-seccomp check-chartparse check-flag-isolation check-namespace-ownership check-answers-secret
 	@for c in charts/*; do echo "== $$c =="; helm lint "$$c"; done
 
 # Hard Invariant guard (see .claude/rules/falco-ctf-app-conventions.md
@@ -161,6 +162,13 @@ check-flag-isolation:
 # scripts/check-namespace-ownership.sh and docs/adr/0011-namespace-bootstrap-single-owner.md.
 check-namespace-ownership:
 	./scripts/check-namespace-ownership.sh
+
+# ADR-0056 V2 / D13: the answers table's Secret (charts/scoreboard answersSecret) is
+# mounted into the scoreboard container only, and the render refuses the placements
+# D8 / D13 forbid. The default render never enables it, so without this the template
+# branch is never rendered in CI. Needs the vendored dependency (helm-dep-build).
+check-answers-secret: helm-dep-build
+	./scripts/check-answers-secret.sh
 
 # ADR-0001 Verification 2-8 / DoD 15: re-verify the challenge image's
 # /opt/ctf/plant-seed/ build-time snapshot at every build (fail-closed —

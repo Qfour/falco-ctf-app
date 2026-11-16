@@ -10,6 +10,32 @@
 {{- if gt (int .Values.replicas) 1 }}
 {{- fail "I1 違反: scoreboard は SQLite 単一 writer。replicas は 1 のみ (values.yaml のコメント参照)" }}
 {{- end }}
+{{- /*
+  ADR-0056 D8 / D13 (the answers table of the investigate challenges). The table
+  is a Secret that only this container may read, mounted readOnly and named by
+  ANSWERS_FILE. Two render-time refusals, the same fail-closed type as the replicas
+  guard above:
+    * answersSecret needs flagsSecret: "the event mode" is FLAGS_FILE being set
+      (D8), and cmd/scoreboard refuses a table outside it at start-up. Failing here
+      says so before anything is applied.
+    * the grader namespace must not be this namespace: the detect-grader Job's
+      namespace has Secret RBAC for the scoreboard SA (D13), so a table placed
+      where the grader lives would be reachable from the Job. Compared with the
+      release namespace and with the namespace the Deployment is rendered in.
+    * the key is a file name (it ends up in a path).
+*/}}
+{{- if .Values.answersSecret.enabled }}
+{{- if not .Values.flagsSecret.enabled }}
+{{- fail "ADR-0056 D8 違反: answersSecret.enabled は flagsSecret.enabled (イベントのモード) を要する。イベントのモードでない所に答え表を置かない" }}
+{{- end }}
+{{- $graderNs := toString .Values.env.detectGraderNamespace }}
+{{- if and (ne $graderNs "") (or (eq $graderNs .Release.Namespace) (eq $graderNs "scoreboard")) }}
+{{- fail "ADR-0056 D13 違反: answersSecret.enabled のとき env.detectGraderNamespace は scoreboard の namespace と別でなければならない (答え表が grader の namespace から読める)" }}
+{{- end }}
+{{- if not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._-]*$" (toString .Values.answersSecret.key)) }}
+{{- fail "answersSecret.key は file 名 (英数字と . _ -) でなければならない" }}
+{{- end }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -162,6 +188,10 @@ spec:
             - name: FLAGS_FILE
               value: /etc/ctf-flags/{{ .Values.flagsSecret.key }}
             {{- end }}
+            {{- if .Values.answersSecret.enabled }}
+            - name: ANSWERS_FILE
+              value: /etc/ctf-answers/{{ .Values.answersSecret.key }}
+            {{- end }}
             {{- /* ADR-WS-0006 Layer 2 (webhook shared-secret). The secret
                    value ALWAYS comes from the chart-owned Secret (see
                    templates/secret-webhook.yaml) — never rendered inline —
@@ -185,6 +215,11 @@ spec:
               mountPath: /etc/ctf-flags
               readOnly: true
             {{- end }}
+            {{- if .Values.answersSecret.enabled }}
+            - name: answers
+              mountPath: /etc/ctf-answers
+              readOnly: true
+            {{- end }}
           readinessProbe:
             httpGet: { path: /healthz, port: http }
             initialDelaySeconds: 2
@@ -203,4 +238,9 @@ spec:
         - name: flags
           secret:
             secretName: {{ .Values.flagsSecret.name }}
+        {{- end }}
+        {{- if .Values.answersSecret.enabled }}
+        - name: answers
+          secret:
+            secretName: {{ .Values.answersSecret.name }}
         {{- end }}
