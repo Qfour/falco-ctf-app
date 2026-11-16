@@ -209,7 +209,10 @@ func doorViolations(files map[string]string) (violations []string, counts map[st
 	return violations, counts
 }
 
-func TestAnswersTableHasOneDoor(t *testing.T) {
+// nonTestSources reads every non-test .go file of cmd/ and internal/ (slash path from
+// the repo root -> source).
+func nonTestSources(t *testing.T) map[string]string {
+	t.Helper()
 	files := map[string]string{}
 	for _, root := range []string{"cmd", "internal"} {
 		err := filepath.WalkDir(filepath.Join("..", "..", root), func(path string, d fs.DirEntry, err error) error {
@@ -237,6 +240,11 @@ func TestAnswersTableHasOneDoor(t *testing.T) {
 	if len(files) < 50 {
 		t.Fatalf("read only %d non-test files; the walk is not seeing the tree", len(files))
 	}
+	return files
+}
+
+func TestAnswersTableHasOneDoor(t *testing.T) {
+	files := nonTestSources(t)
 	violations, counts := doorViolations(files)
 	for _, v := range violations {
 		t.Error(v)
@@ -483,5 +491,151 @@ func TestPracticeJudgeIsOnlyReachedOutsideTheEventMode(t *testing.T) {
 	}
 	if _, _, err := practiceJudgeCalls("x.go", "package edition\n\nfunc other() {}\n"); err == nil {
 		t.Error("a file with no func Load was not reported")
+	}
+}
+
+// ADR-0056 D19 A4a-2 (review #630 R4#2): a Table is made in internal/edition/table.go
+// only, by Parse and by joinPractice (which re-checks what Parse guarantees of a
+// table: the run id and no repeated cell). Parse and NewJudge being called from one
+// place does not cover a Table that is built by hand elsewhere, so the sources are
+// scanned for the other ways to make one: a composite literal of the type, new(Table)
+// and a `var t Table`, in package edition (bare name) and anywhere else through an
+// import of it.
+
+// tableMakers are the functions of table.go that may make a Table.
+var tableMakers = []string{"Parse", "joinPractice"}
+
+// tableMakes returns the enclosing function ("" outside any) of each place in src
+// that makes a Table value.
+func tableMakes(file, src string) ([]string, error) {
+	f, err := parser.ParseFile(token.NewFileSet(), file, src, 0)
+	if err != nil {
+		return nil, err
+	}
+	inPackage := f.Name.Name == "edition" && strings.HasPrefix(file, "internal/edition/")
+	local := ""
+	var out []string
+	for _, imp := range f.Imports {
+		p, err := strconv.Unquote(imp.Path.Value)
+		if err != nil || p != editionImportPath {
+			continue
+		}
+		switch {
+		case imp.Name == nil:
+			local = "edition"
+		case imp.Name.Name == ".":
+			out = append(out, "(dot import)")
+		case imp.Name.Name != "_":
+			local = imp.Name.Name
+		}
+	}
+	isTable := func(e ast.Expr) bool {
+		switch x := e.(type) {
+		case *ast.Ident:
+			return inPackage && x.Name == "Table"
+		case *ast.SelectorExpr:
+			id, ok := x.X.(*ast.Ident)
+			return ok && local != "" && id.Name == local && x.Sel.Name == "Table"
+		}
+		return false
+	}
+	for _, d := range f.Decls {
+		fn := ""
+		if fd, ok := d.(*ast.FuncDecl); ok {
+			fn = fd.Name.Name
+		}
+		ast.Inspect(d, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.CompositeLit:
+				if x.Type != nil && isTable(x.Type) {
+					out = append(out, fn)
+				}
+			case *ast.ValueSpec:
+				if x.Type != nil && isTable(x.Type) {
+					out = append(out, fn)
+				}
+			case *ast.CallExpr:
+				if id, ok := x.Fun.(*ast.Ident); ok && id.Name == "new" && len(x.Args) == 1 && isTable(x.Args[0]) {
+					out = append(out, fn)
+				}
+			}
+			return true
+		})
+	}
+	return out, nil
+}
+
+// tableViolations judges every non-test file (slash path -> source): a Table made
+// anywhere but in table.go's tableMakers is a violation. counts is the positive side,
+// by "function".
+func tableViolations(files map[string]string) (violations []string, counts map[string]int) {
+	counts = map[string]int{}
+	paths := make([]string, 0, len(files))
+	for p := range files {
+		paths = append(paths, p)
+	}
+	slices.Sort(paths)
+	for _, p := range paths {
+		fns, err := tableMakes(p, files[p])
+		if err != nil {
+			violations = append(violations, p+": does not parse: "+err.Error())
+			continue
+		}
+		for _, fn := range fns {
+			if p == "internal/edition/table.go" && slices.Contains(tableMakers, fn) {
+				counts[fn]++
+				continue
+			}
+			violations = append(violations, p+" (func "+fn+"): makes an edition.Table outside Parse and joinPractice in table.go")
+		}
+	}
+	return violations, counts
+}
+
+func TestTableIsMadeOnlyInTableGo(t *testing.T) {
+	violations, counts := tableViolations(nonTestSources(t))
+	for _, v := range violations {
+		t.Error(v)
+	}
+	// Positive: the two makers are there, once each. A scan that finds nothing is not a pass.
+	if want := map[string]int{"Parse": 1, "joinPractice": 1}; !maps.Equal(counts, want) {
+		t.Errorf("Table makers found = %v, want %v", counts, want)
+	}
+
+	// The scan itself: the allowed shape passes, every other way to make a Table is seen.
+	const tableSrc = "package edition\n\nfunc Parse() *Table { return &Table{} }\n\nfunc joinPractice() *Table { return &Table{} }\n"
+	good := map[string]string{"internal/edition/table.go": tableSrc}
+	if v, c := tableViolations(good); len(v) != 0 || !maps.Equal(c, map[string]int{"Parse": 1, "joinPractice": 1}) {
+		t.Fatalf("the allowed shape: violations %v, counts %v", v, c)
+	}
+	cases := []struct {
+		name string
+		path string
+		src  string
+	}{
+		{"a literal in load.go", "internal/edition/load.go", "package edition\n\nfunc scopePracticeTable() *Table { return &Table{runID: PracticeRunID} }\n"},
+		{"a literal in another function of table.go", "internal/edition/table.go", tableSrc + "\nfunc other() *Table { return &Table{} }\n"},
+		{"a value literal", "internal/edition/load.go", "package edition\n\nfunc f() { _ = Table{} }\n"},
+		{"new(Table)", "internal/edition/load.go", "package edition\n\nfunc f() { _ = new(Table) }\n"},
+		{"var t Table in a function", "internal/edition/load.go", "package edition\n\nfunc f() { var t Table; _ = t }\n"},
+		{"a package-level var of the type", "internal/edition/load.go", "package edition\n\nvar t Table\n"},
+		{"a qualified literal elsewhere", "internal/scoreboard/x.go", "package scoreboard\n\nimport \"" + editionImportPath + "\"\n\nfunc f() { _ = edition.Table{} }\n"},
+		{"a qualified literal through an alias", "internal/scoreboard/x.go", "package scoreboard\n\nimport ed \"" + editionImportPath + "\"\n\nfunc f() { _ = &ed.Table{} }\n"},
+		{"a dot import", "internal/scoreboard/x.go", "package scoreboard\n\nimport . \"" + editionImportPath + "\"\n"},
+	}
+	for _, c := range cases {
+		files := map[string]string{"internal/edition/table.go": tableSrc, c.path: c.src}
+		if v, _ := tableViolations(files); len(v) == 0 {
+			t.Errorf("%s: no violation was reported", c.name)
+		}
+	}
+	// A Table type of another package, a method receiver and a parameter are not makers.
+	other := "package contracttable\n\ntype Table struct{}\n\nfunc f(t *Table) *Table { return &Table{} }\n"
+	if v, _ := tableViolations(map[string]string{"internal/contracttable/x.go": other}); len(v) != 0 {
+		t.Errorf("another package's Table was reported: %v", v)
+	}
+	recv := "package edition\n\nfunc (Table) String() string { return \"\" }\n\nfunc g(t *Table) *Table { return t }\n"
+	if v, _ := tableViolations(map[string]string{"internal/edition/judge.go": recv}); len(v) != 0 {
+		t.Errorf("a receiver or a parameter of the type was reported: %v", v)
 	}
 }

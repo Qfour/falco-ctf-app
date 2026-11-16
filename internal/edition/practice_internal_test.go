@@ -109,6 +109,45 @@ func TestLoadPractice_HoldsNormalisedValuesByFormat(t *testing.T) {
 	}
 }
 
+// joinPractice refuses what no single table could be: a cell that two tables both
+// have, and a table that does not carry the practice run id. (Review #630 R4#2.)
+func TestJoinPractice_RefusesADuplicateCellAndARunIDMismatch(t *testing.T) {
+	mk := func(runID string, rows ...row) *Table {
+		tb := &Table{runID: runID, index: map[cell]int{}}
+		for _, r := range rows {
+			tb.index[r.c] = len(tb.rows)
+			tb.rows = append(tb.rows, r)
+		}
+		return tb
+	}
+	a := row{line: 2, c: cell{seat: AnySeat, cid: "01-a", qid: "who"}, value: "x"}
+	b := row{line: 3, c: cell{seat: AnySeat, cid: "01-a", qid: "hx"}, value: "y"}
+	c := row{line: 2, c: cell{seat: AnySeat, cid: "02-c", qid: "who"}, value: "z"}
+
+	joined, err := joinPractice([]*Table{mk(PracticeRunID, a, b), mk(PracticeRunID, c)})
+	if err != nil || joined == nil || len(joined.rows) != 3 || joined.runID != PracticeRunID {
+		t.Fatalf("a join of disjoint tables: %v, %v; want 3 rows and the practice run id", joined, err)
+	}
+	if len(joined.index) != 3 {
+		t.Errorf("the joined index holds %d cells, want 3", len(joined.index))
+	}
+
+	for name, tables := range map[string][]*Table{
+		"the same cell in two tables": {mk(PracticeRunID, a, b), mk(PracticeRunID, a)},
+		"an event run id":             {mk(PracticeRunID, a), mk("0123456789abcdef0123456789abcdef", c)},
+		"a nil table":                 {mk(PracticeRunID, a), nil},
+	} {
+		got, err := joinPractice(tables)
+		if err == nil || got != nil {
+			t.Errorf("%s: joinPractice = %v, %v; want a refusal and no table", name, got, err)
+			continue
+		}
+		if v, ok := err.(*Violation); !ok || (v.Rule != RuleComplete && v.Rule != RuleShape) {
+			t.Errorf("%s: err = %v, want a T3 or T4 violation", name, err)
+		}
+	}
+}
+
 // missingPractice are the investigate challenges of cat (read from dir) that have no
 // edition/practice/answers.tsv, sorted.
 func missingPractice(dir string, cat catalog.Catalog) []string {

@@ -177,6 +177,32 @@ func Parse(data []byte) (*Table, error) {
 	return t, nil
 }
 
+// joinPractice is the other way a Table is made (D19 A4a-2): the practice tables of
+// several challenges, each one Parsed already, joined into ONE table for the practice
+// mode's Judge. It lives here, next to Parse, because a Table is made in this file
+// only (load_source_test.go: TestTableIsMadeOnlyInTableGo). What Parse guarantees of
+// one table is re-checked for the joined one, so a join cannot make what no single
+// table could be: every table carries the practice run id (T3), and no (seat, cid,
+// qid) occurs twice across them (T4). The rows keep the line numbers of their own
+// files. The result has the practice run id even when tables is empty; the caller
+// (Check, NewJudge) refuses a table with no row.
+func joinPractice(tables []*Table) (*Table, error) {
+	out := &Table{runID: PracticeRunID, index: make(map[cell]int)}
+	for _, src := range tables {
+		if src == nil || src.runID != PracticeRunID {
+			return nil, newViolation(RuleShape, "a practice table to join must carry the practice run id (all zeros)", 1, cell{}, nil)
+		}
+		for _, r := range src.rows {
+			if _, dup := out.index[r.c]; dup {
+				return nil, newViolation(RuleComplete, "duplicate row for the same seat, cid and qid across the practice tables", r.line, r.c, nil)
+			}
+			out.index[r.c] = len(out.rows)
+			out.rows = append(out.rows, r)
+		}
+	}
+	return out, nil
+}
+
 // lineAt is the 1-based line of byte offset i.
 func lineAt(data []byte, i int) int { return 1 + bytes.Count(data[:i], []byte{'\n'}) }
 

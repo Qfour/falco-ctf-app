@@ -129,20 +129,19 @@ func practiceJudge(cat catalog.Catalog, challengesDir string) (*Judge, string, e
 	return j, t.RunID(), nil
 }
 
-// scopePracticeTable joins the practice tables of the scope's challenges (cid -> the
-// table loadPractice read) into one table with the practice run id, in the order of
-// the sorted cids. A challenge of the scope that has no table is a T4 violation (all
-// of them are listed, bounded like Check's). Tables of challenges outside the scope
-// are not in the result: the Judge answers for the scope only. The rows keep the line
-// numbers of their own files, so a violation says the line of the file it is in, and
-// the cid says which.
+// scopePracticeTable picks the practice tables of the scope's challenges (cid -> the
+// table loadPractice read), in the order of the sorted cids, and joins them into one
+// table (joinPractice, in table.go: it makes no Table itself). A challenge of the
+// scope that has no table is a T4 violation (all of them are listed, bounded like
+// Check's). Tables of challenges outside the scope are not in the result: the Judge
+// answers for the scope only.
 func scopePracticeTable(scope Scope, tables map[string]*Table) (*Table, error) {
 	cids := make([]string, 0, len(scope))
 	for cid := range scope {
 		cids = append(cids, cid)
 	}
 	sort.Strings(cids)
-	out := &Table{runID: PracticeRunID, index: make(map[cell]int)}
+	var picked []*Table
 	var missing collector
 	for _, cid := range cids {
 		src, ok := tables[cid]
@@ -150,15 +149,12 @@ func scopePracticeTable(scope Scope, tables map[string]*Table) (*Table, error) {
 			missing.add(newViolation(RuleComplete, "an investigate challenge of the scope has no practice answers (edition/practice/answers.tsv)", 0, cell{cid: cid}, nil))
 			continue
 		}
-		for _, r := range src.rows {
-			out.index[r.c] = len(out.rows)
-			out.rows = append(out.rows, r)
-		}
+		picked = append(picked, src)
 	}
 	if err := missing.err(); err != nil {
 		return nil, err
 	}
-	return out, nil
+	return joinPractice(picked)
 }
 
 // readTable reads the answers file, at most MaxTableBytes+1 bytes (so that an
@@ -218,7 +214,8 @@ const (
 // Only normalised values are added to the set, keyed by the question's format. The
 // first defect is returned, wrapped with the challenge id; like every error of this
 // package it names a rule, a line and a seat / cid / qid, never a value. No file but
-// answers.tsv is opened, and no Judge is made from what is read.
+// answers.tsv is opened, and loadPractice itself makes no Judge: practiceJudge does,
+// from the tables it returns, and Load calls practiceJudge only when eventMode is false.
 //
 // Neither result is nil on success: no practice edition at all is the empty set and
 // no table.
