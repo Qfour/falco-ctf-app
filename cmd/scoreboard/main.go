@@ -243,8 +243,7 @@ func main() {
 	// challenges. startEdition (edition.go) logs the refusal, which platform
 	// scripts/verify.sh reads (contract-table row "scoreboard の起動ログ"), and this
 	// exits right after it; nothing is logged when there is no table and none is
-	// needed. The Judge is held by the handler and is not used until the Grader takes
-	// it (A3a).
+	// needed. The Judge goes to the handler, which hands it to the Grader (A3a).
 	editionJudge, err := startEdition(logger, catCfg, cat)
 	if err != nil {
 		os.Exit(1)

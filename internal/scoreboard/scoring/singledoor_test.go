@@ -45,12 +45,16 @@ import (
 // interface, is not followed.
 
 // storeWrites are the methods that write a scoring table: the four of ScoreStore,
-// and the two writes of the answer budget (ADR-0056 D7: answer_attempts), which
-// only the Grader calls as well.
+// and the two writes of the answer budget (AnswerStore, ADR-0056 D7:
+// answer_attempts), which only the Grader calls as well. They are reached through
+// the Grader's two port fields (storeFields).
 var storeWrites = []string{
 	"MarkSolved", "MarkDirty", "RecordExpectedRuleFire", "RecordExfil",
 	"TryAnswerAttempt", "MarkAnswerCorrect",
 }
+
+// storeFields are the Grader fields that hold a port with a write in storeWrites.
+var storeFields = []string{"store", "answers"}
 
 // sweepEntry reads stored receipts rather than taking a `user`; its refusal is
 // TestSweep_NonSlugUserReceiptIsSkipped, not a row of graderEntries.
@@ -103,8 +107,8 @@ func graderWriteEntries(t *testing.T, srcs map[string]string) []string {
 				if x.Name == recv {
 					calls[name] = append(calls[name], sel.Sel.Name)
 				}
-			case *ast.SelectorExpr: // g.store.write
-				if isIdent(x.X, recv) && x.Sel.Name == "store" && slices.Contains(storeWrites, sel.Sel.Name) {
+			case *ast.SelectorExpr: // g.store.write, g.answers.write
+				if isIdent(x.X, recv) && slices.Contains(storeFields, x.Sel.Name) && slices.Contains(storeWrites, sel.Sel.Name) {
 					writes[name] = true
 				}
 			}
@@ -212,6 +216,9 @@ func TestGraderWriteEntries_Scan(t *testing.T) {
 		{"write through two exported hops", head +
 			"func (g *Grader) A(u string) { g.B(u) }\nfunc (g *Grader) B(u string) { g.store.MarkDirty(u, \"c\", \"r\", \"t\") }", []string{"A", "B"}},
 		{"a seat under another name", head + "func (g *Grader) A(who string) { g.store.RecordExpectedRuleFire(who, \"c\", \"r\", \"t\") }", []string{"A"}},
+		{"a write of the answer budget", head + "func (g *Grader) A(user string) { g.answers.TryAnswerAttempt(user, \"c\", \"q\", 3) }", []string{"A"}},
+		{"marking a question answered", head + "func (g *Grader) A(user string) { g.answers.MarkAnswerCorrect(user, \"c\", \"q\") }", []string{"A"}},
+		{"a read of the answer budget", head + "func (g *Grader) A(user string) { g.answers.AnswerAttempts(user, \"c\") }", nil},
 		{"reads only", head + "func (g *Grader) A(user string) bool { return g.store.IsSolved(user, \"c\") }", nil},
 		{"a cycle terminates", head + "func (g *Grader) A() { g.B() }\nfunc (g *Grader) B() { g.A() }", nil},
 		{"unexported entry is not public", head + "func (g *Grader) a(user string) { g.store.MarkSolved(user, \"c\", \"t\") }", nil},
