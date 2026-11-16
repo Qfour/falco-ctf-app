@@ -162,7 +162,7 @@
   - `exfil`: スコープに exfil を採点に使う課題があるか。
   - `rules`: スコープの課題の `expectedRules ∪ forbiddenRules` の rule 名の集合。app は default ruleset と customRules の区別を持たない。名前が解決できるかの照合は platform が行う。
   - `plantMountDirs`。
-  - `answers`: ADR-0056 の型の課題 id。ADR-0056 が Accepted になってから足す。
+  - `answers`: ADR-0056 の型の課題 id。ADR-0056 の A1b (catalog の `investigate`) が merge されてから足す (CTO 代行 = CoS の決定、2026-11-16。ADR-0056 の Accepted は待たない)。
 - Lv の母数 (= `challenges` の数) と、合計時間 (D7 の C2 の左辺)。
 - solo course: module.yaml を持つ dir は、それ自体がモジュール単体のコースになる。生成器が `scenario.yaml` を出すので、course.yaml を宣言させない。
 
