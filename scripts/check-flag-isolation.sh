@@ -667,23 +667,39 @@ assert_role() { # 1-16 (required)
 # whitespace, so an empty field would collapse when read back).
 #   V <volume> <secretName>
 #   M <container> <volume> <mountPath> <readOnly>
+#   X <container> <list>   an item of containers / initContainers / a container's
+#       volumeMounts / volumes that does not start with `- name:` (or such a list
+#       written inline): the reader would skip it, so it is reported and
+#       assert_evidence_scope fails closed on it (a mountPath-first volumeMount
+#       must not slip past the checks)
 pod_records() {
   awk '
     function flush() {
       if (mname != "") printf "M\t%s\t%s\t%s\t%s\n", cont, mname, (mp == "" ? "-" : mp), (ro == "" ? "-" : ro)
       mname = ""; mp = ""; ro = ""
     }
-    /^  [A-Za-z]/ { flush(); sec = $0; sub(/^  /, "", sec); sub(/:.*$/, "", sec); invm = 0; next }
+    /^  [A-Za-z]/ {
+      flush(); sec = $0; sub(/^  /, "", sec); sub(/:.*$/, "", sec); invm = 0
+      if ($0 ~ /^  (volumes|containers|initContainers): *[^ ]/) printf "X\t-\t%s\n", sec
+      next
+    }
     sec == "initContainers" || sec == "containers" {
       if ($0 ~ /^    - name: /) { flush(); cont = $0; sub(/^    - name: /, "", cont); invm = 0; next }
-      if ($0 ~ /^      [A-Za-z]/) { flush(); invm = ($0 ~ /^      volumeMounts:/); next }
+      if ($0 ~ /^    - /) { flush(); invm = 0; printf "X\t%s\t%s\n", (cont == "" ? "-" : cont), sec; next }
+      if ($0 ~ /^      [A-Za-z]/) {
+        flush(); invm = ($0 ~ /^      volumeMounts:/)
+        if ($0 ~ /^      volumeMounts: *[^ ]/) printf "X\t%s\tvolumeMounts\n", cont
+        next
+      }
       if (invm && $0 ~ /^        - name: /) { flush(); mname = $0; sub(/^        - name: /, "", mname); next }
+      if (invm && $0 ~ /^        - /) { flush(); printf "X\t%s\tvolumeMounts\n", cont; next }
       if (invm && $0 ~ /^          mountPath: /) { mp = $0; sub(/^          mountPath: /, "", mp); gsub(/"/, "", mp); next }
       if (invm && $0 ~ /^          readOnly: /) { ro = $0; sub(/^          readOnly: /, "", ro); next }
       next
     }
     sec == "volumes" {
       if ($0 ~ /^    - name: /) { vname = $0; sub(/^    - name: /, "", vname); next }
+      if ($0 ~ /^    - /) { printf "X\t-\tvolumes\n"; next }
       if ($0 ~ /^        secretName: /) { sn = $0; sub(/^        secretName: /, "", sn); printf "V\t%s\t%s\n", vname, sn }
     }
     END { flush() }
@@ -712,6 +728,11 @@ assert_evidence_scope() { # $1=Pod doc (DOCS[] holds the scope's documents)
     violation E-scope "the Pod reader found no plant-seed mount in the plant initContainer (it read nothing: 'no evidence mount' would be vacuous)"
     return
   fi
+  while IFS=$'\t' read -r kind a b c e; do
+    [ "$kind" = "X" ] || continue
+    violation E-scope "an item of '${b}' (container '${a}') does not start with \`- name:\` or the list is inline, which the Pod reader cannot read: a volume mount written that way would escape the evidence checks"
+    bad=1
+  done <<<"$recs"
   for d in "${DOCS[@]}"; do
     if grep -qx 'kind: Secret' <<<"$d"; then
       nm="$(awk '/^  name: / { sub(/^  name: /, ""); print; exit }' <<<"$d")"
@@ -968,6 +989,14 @@ ev_mounts() { # <NN>... -> a values file whose plant.mounts has one evidence mou
   done
 }
 
+ev_plant_head() { # <seedScript, as YAML> -> the start of a values file's plant: block; ev_entry lines follow
+  printf 'plant:\n  seedScript: %s\n  mounts:\n' "$1"
+}
+
+ev_entry() { # <path> <evidence YAML value> <challenge YAML value> -> one plant.mounts entry, values verbatim
+  printf '    - path: %s\n      readOnly: true\n      evidence: %s\n      challenge: %s\n' "$1" "$2" "$3"
+}
+
 ev_big() { # <cid> <bytes> -> evidence.challenges.<cid> with one file of that many bytes
   printf '    "%s":\n      files:\n        "big.log": "' "$1"
   head -c "$2" /dev/zero | tr '\0' x
@@ -1009,7 +1038,11 @@ expect_red() {
   saved="$RC"
   RC=0
   out="$(mktemp "${EVIDENCE_FIXTURE_DIR}/red.XXXXXX")"
-  check_scope_manifest "mutant: ${label}" "$mutated" >"$out" 2>&1
+  # `|| true`: an assert that ends with a non-zero status (a `[ ... ] && ...` on its
+  # last line, say) must not stop the whole script under `set -e` with no diagnosis;
+  # the verdict is RC, which violation() sets. (Inside a `||` list `set -e` is off for
+  # the function body, so a failing command in it does not abort it either.)
+  check_scope_manifest "mutant: ${label}" "$mutated" >"$out" 2>&1 || true
   if [ "$RC" -eq 0 ]; then
     RC="$saved"
     violation V43 "mutant '${label}' was ACCEPTED by every assertion (the check cannot fail)"
@@ -1058,8 +1091,12 @@ run_evidence_fixtures() {
       '!d && /^ *cp "\/opt\/ctf\/evidence-src\// { sub(/cp "/, "cp -a \""); d = 1 } { print }' "$manifest"
     expect_red "a chmod mode changes" "does not end with exactly" \
       '!d && /^ *chmod 0444 / { sub(/0444/, "0777"); d = 1 } { print }' "$manifest"
-    expect_red "a copy line is dropped" "does not end with exactly" \
+    expect_red "the first chmod line is dropped (its cp stays)" "does not end with exactly" \
       '!d && /^ *chmod 0444 / { d = 1; next } { print }' "$manifest"
+    expect_red "the first cp line is dropped (its chmod stays)" "does not end with exactly" \
+      '!d && /^ *cp "\/opt\/ctf\/evidence-src\// { d = 1; next } { print }' "$manifest"
+    expect_red "challenge mounts an evidence Secret volume, mountPath first" "does not start with \`- name:\`" \
+      '/^    - name: / { cont = $0 } cont ~ /name: challenge$/ && !d && /^      volumeMounts:$/ { print; print "        - mountPath: /opt/ctf/evidence-src/40-ev"; print "          name: evidence-0"; print "          readOnly: true"; d = 1; next } { print }' "$manifest"
     expect_red "challenge mounts an evidence Secret volume" "mounts the evidence volume" \
       '/^    - name: / { cont = $0 } cont ~ /name: challenge$/ && !d && /^      volumeMounts:$/ { print; print "        - name: evidence-0"; print "          mountPath: /opt/ctf/evidence-src/40-ev"; print "          readOnly: true"; d = 1; next } { print }' "$manifest"
     expect_red "challenge takes an evidence Secret through envFrom" "outside a volume's secretName" \
@@ -1096,7 +1133,41 @@ run_evidence_fixtures() {
   printf 'evidence:\n  challenges:\n    "40-ev":\n      files:\n        "a.log": 123\n    "41-ev":\n      files:\n        "b.txt": "x"\n' >"${EVF_TMP}/num.yaml"
   expect_render_fail "a content that is not a string" "is not a string" "${base[@]}" -f "${EVF_TMP}/num.yaml"
   printf 'evidence:\n  challenges:\n    "40-ev":\n      files:\n        "a.log": "x"\n      mode: "0777"\n    "41-ev":\n      files:\n        "b.txt": "x"\n' >"${EVF_TMP}/extra.yaml"
-  expect_render_fail "a key beside files" "single key" "${base[@]}" -f "${EVF_TMP}/extra.yaml"
+  expect_render_fail "a key beside files" "must have the single key" "${base[@]}" -f "${EVF_TMP}/extra.yaml"
+
+  # One case per `fail` of ctf-user.evidence.check, each by a marker only that `fail`
+  # prints (the 2 MiB / 512 KiB / 65 files / file name / not-a-string / key-set /
+  # mount-path / start-with cases are above and below). The id-grammar `fail` on an
+  # evidence.challenges KEY has no case: the key set must equal the mounts' challenge
+  # ids, which the mount loop has already held to the same grammar, so it cannot be
+  # reached (defence in depth).
+  local ss='[sh, -c, "set -eu\n"]' one="${EVF_TMP}/one.yaml" cf
+  cf="${EVF_TMP}/case.yaml"
+  { ev_plant_head "$ss"; ev_entry /opt/fx/ev40 '"true"' 40-ev; } >"$cf"
+  expect_render_fail "plant.mounts evidence is the string \"true\"" "that is not the boolean true" --set challengeId=40-ev -f "$cf" -f "$one"
+  { ev_plant_head "$ss"; ev_entry /opt/fx/ev40 true 40; } >"$cf"
+  expect_render_fail "plant.mounts challenge is a number" "but has no string" --set challengeId=40-ev -f "$cf" -f "$one"
+  { ev_plant_head "$ss"; ev_entry /opt/fx/ev40 true BAD; } >"$cf"
+  expect_render_fail "plant.mounts challenge is not an id" 'challenge "BAD" is not a challenge id' --set challengeId=40-ev -f "$cf" -f "$one"
+  { ev_plant_head "$ss"; ev_entry /opt/fx/ev40 true 40-ev; ev_entry /opt/fx/ev41 true 40-ev; } >"$cf"
+  expect_render_fail "two evidence mounts for one challenge" "more than one evidence entry" --set challengeId=40-ev -f "$cf" -f "$one"
+  { ev_plant_head "$ss"; ev_entry 123 true 40-ev; } >"$cf"
+  expect_render_fail "plant.mounts path is a number" "has no string path" --set challengeId=40-ev -f "$cf" -f "$one"
+  ev_mounts 40 >"${EVF_TMP}/mounts1.yaml"
+  printf 'evidence:\n  challenges: "x"\n' >"$cf"
+  expect_render_fail "evidence.challenges is not a map" "must be a map of challenge id" --set challengeId=40-ev -f "${EVF_TMP}/mounts1.yaml" -f "$cf"
+  printf 'evidence:\n  challenges:\n    "40-ev": "x"\n' >"$cf"
+  expect_render_fail "a challenge's bundle is not a map" "must be a map with the single key" --set challengeId=40-ev -f "${EVF_TMP}/mounts1.yaml" -f "$cf"
+  printf 'evidence:\n  challenges:\n    "40-ev":\n      files: ["a.log"]\n' >"$cf"
+  expect_render_fail "files is not a map" "files must be a map of file name" --set challengeId=40-ev -f "${EVF_TMP}/mounts1.yaml" -f "$cf"
+  printf 'evidence:\n  challenges:\n    "40-ev":\n      files: {}\n' >"$cf"
+  expect_render_fail "a challenge with no files" "has 0 files" --set challengeId=40-ev -f "${EVF_TMP}/mounts1.yaml" -f "$cf"
+  { ev_plant_head '"set -eu"'; ev_entry /opt/fx/ev40 true 40-ev; } >"$cf"
+  expect_render_fail "seedScript is not a list" "must be a list" --set challengeId=40-ev -f "$cf" -f "$one"
+  { ev_plant_head '[sh, -c]'; ev_entry /opt/fx/ev40 true 40-ev; } >"$cf"
+  expect_render_fail "seedScript has two elements" "must have 3 elements" --set challengeId=40-ev -f "$cf" -f "$one"
+  { ev_plant_head '[bash, -c, "set -eu\n"]'; ev_entry /opt/fx/ev40 true 40-ev; } >"$cf"
+  expect_render_fail "seedScript does not start with sh" "elements must be sh, -c and a string" --set challengeId=40-ev -f "$cf" -f "$one"
   printf 'plant:\n  seedScript: [sh, -c, "set -eu\\n"]\n  mounts:\n    - path: "/opt/x$(id)"\n      readOnly: true\n      evidence: true\n      challenge: 40-ev\n' >"${EVF_TMP}/badpath.yaml"
   expect_render_fail "an evidence mount path with a command substitution" "is not an absolute path of" --set challengeId=40-ev -f "${EVF_TMP}/badpath.yaml" -f "${EVF_TMP}/one.yaml"
   printf 'plant:\n  seedScript: [sh, -c, "true"]\n  mounts:\n    - path: /opt/fx/ev\n      readOnly: true\n      evidence: true\n      challenge: 40-ev\n' >"${EVF_TMP}/badscript.yaml"

@@ -1684,13 +1684,25 @@ verify_claims_negative_tests() {
   # catalog's reservedMountRoots refuses the same three in Go)
   fx_plant "${root}/r1" 30-a /opt/fx/vault dir 'printf x > "${PLANT_SEED_ROOT}/opt/fx/vault/a"'
   fx_inv "${root}/r1" 40-ev "  evidence: {mountDir: ${EVIDENCE_SRC_ROOT}/40-ev}"
-  fx_expect_rejected "mountDir under the evidence source root" "${root}/r1" "ADR-0056 D11 (R) VIOLATION" || rc=1
+  # The marker names the root that was hit, so each case pins WHICH root's rule fired
+  # (a mountDir above two roots is checked against both).
+  fx_expect_rejected "mountDir under the evidence source root" "${root}/r1" "(R) VIOLATION: 40-ev evidence.mountDir '${EVIDENCE_SRC_ROOT}/40-ev' is equal to, inside or above the reserved root '${EVIDENCE_SRC_ROOT}'" || rc=1
   fx_plant "${root}/r2" 30-a /opt/fx/vault dir 'printf x > "${PLANT_SEED_ROOT}/opt/fx/vault/a"'
   fx_inv "${root}/r2" 40-ev "  evidence: {mountDir: ${EVIDENCE_SRC_ROOT}}"
-  fx_expect_rejected "mountDir is the evidence source root" "${root}/r2" "ADR-0056 D11 (R) VIOLATION" || rc=1
+  fx_expect_rejected "mountDir is the evidence source root" "${root}/r2" "above the reserved root '${EVIDENCE_SRC_ROOT}'" || rc=1
   fx_plant "${root}/r3" 30-a /opt/fx/vault dir 'printf x > "${PLANT_SEED_ROOT}/opt/fx/vault/a"'
   fx_inv "${root}/r3" 40-ev "  evidence: {mountDir: $(dirname "${EVIDENCE_SRC_ROOT}")}"
-  fx_expect_rejected "mountDir above the evidence source root" "${root}/r3" "ADR-0056 D11 (R) VIOLATION" || rc=1
+  fx_expect_rejected "mountDir above the evidence source root" "${root}/r3" "above the reserved root '${EVIDENCE_SRC_ROOT}'" || rc=1
+  fx_expect_rejected "the same mountDir above the snapshot root" "${root}/r3" "above the reserved root '${SNAPSHOT_ROOT}'" || rc=1
+  fx_plant "${root}/r4" 30-a /opt/fx/vault dir 'printf x > "${PLANT_SEED_ROOT}/opt/fx/vault/a"'
+  fx_inv "${root}/r4" 40-ev "  evidence: {mountDir: ${SEED_ROOT}}"
+  fx_expect_rejected "mountDir is the seed root" "${root}/r4" "above the reserved root '${SEED_ROOT}'" || rc=1
+  fx_plant "${root}/r5" 30-a /opt/fx/vault dir 'printf x > "${PLANT_SEED_ROOT}/opt/fx/vault/a"'
+  fx_inv "${root}/r5" 40-ev "  evidence: {mountDir: ${SEED_ROOT}/x}"
+  fx_expect_rejected "mountDir under the seed root" "${root}/r5" "above the reserved root '${SEED_ROOT}'" || rc=1
+  fx_plant "${root}/r6" 30-a /opt/fx/vault dir 'printf x > "${PLANT_SEED_ROOT}/opt/fx/vault/a"'
+  fx_inv "${root}/r6" 40-ev "  evidence: {mountDir: ${SNAPSHOT_ROOT}/x}"
+  fx_expect_rejected "mountDir under the snapshot root" "${root}/r6" "above the reserved root '${SNAPSHOT_ROOT}'" || rc=1
 
   # (c) two plant.sh write the same file (redirect + redirect, redirect + cp)
   fx_plant "${root}/c1" 30-a /opt/fx/vault dir 'printf x > "${PLANT_SEED_ROOT}/opt/fx/vault/a"'
@@ -1741,7 +1753,7 @@ cp /opt/ctf/plant-seed/x "${PLANT_SEED_ROOT}/opt/fx/other/"'
 
   rm -rf "${root}"
   if [ "${rc}" -eq 0 ]; then
-    echo "  ok: ADR-0056 A5a — mountDir / plant-write disjointness: the positive tree passes and each of the 23 deliberately-bad trees is rejected for its own reason"
+    echo "  ok: ADR-0056 A5a — mountDir / plant-write disjointness: the positive tree passes and each of the 26 deliberately-bad trees is rejected for its own reason"
   fi
   return "${rc}"
 }

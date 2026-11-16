@@ -164,13 +164,13 @@ Only ids, names and counts go into a message, never a value.
 {{- if $have -}}
 {{- $s := .Values.plant.seedScript -}}
 {{- if not (kindIs "slice" $s) -}}
-{{- fail "ADR-0056 D11: with evidence, plant.seedScript must be the list [sh, -c, <script>] gen-values.sh generates" -}}
+{{- fail "ADR-0056 D11: with evidence, plant.seedScript must be a list [sh, -c, <script>] as gen-values.sh generates it" -}}
 {{- end -}}
 {{- if ne (len $s) 3 -}}
-{{- fail "ADR-0056 D11: with evidence, plant.seedScript must be the list [sh, -c, <script>] gen-values.sh generates" -}}
+{{- fail (printf "ADR-0056 D11: with evidence, plant.seedScript must have 3 elements [sh, -c, <script>] as gen-values.sh generates it (got %d)" (len $s)) -}}
 {{- end -}}
 {{- if or (ne (index $s 0) "sh") (ne (index $s 1) "-c") (not (kindIs "string" (index $s 2))) -}}
-{{- fail "ADR-0056 D11: with evidence, plant.seedScript must be the list [sh, -c, <script>] gen-values.sh generates" -}}
+{{- fail "ADR-0056 D11: with evidence, plant.seedScript elements must be sh, -c and a string script as gen-values.sh generates it" -}}
 {{- end -}}
 {{- if not (hasPrefix "set -eu\n" (index $s 2)) -}}
 {{- fail "ADR-0056 D11: with evidence, the plant.seedScript script must start with `set -eu` as gen-values.sh generates it" -}}
