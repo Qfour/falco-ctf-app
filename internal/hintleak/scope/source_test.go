@@ -13,6 +13,8 @@ package scope_test
 //     sites to wantScopeCalls (the pin is not widened ahead of it).
 //   - TestNoSecondAssemblyInHintleakTests: no _test.go under internal/hintleak
 //     builds Hints or Free from catalog values by itself (see assemblyProblems).
+//     Only the _test.go files of internal/hintleak are scanned; extending the scan
+//     to the non-test code of internal/edition and cmd/scoreboard is A4e's.
 //   - TestHintleakCoreImportsNoCatalog: internal/hintleak stays a pure function
 //     over text; it imports neither the catalog nor this package.
 //
