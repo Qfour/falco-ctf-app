@@ -37,8 +37,10 @@
 #     referenced one is volume-mounted by `plant` only, readOnly, at
 #     /opt/ctf/evidence-src/<cid>, and named nowhere else (assert_evidence_scope).
 #     The repo's scopes reference none (no investigate challenge exists yet), so
-#     there it is "no such Secret, no such mount". The fixture also shows (V50) that
-#     no bundle content (a sentinel) is in a values file helm gets or in its output.
+#     there it is "no such Secret, no such mount". V50 (a bundle's content never
+#     reaches the Helm release record): a values file that carries content is
+#     refused without echoing it (the chart takes names only); a sentinel check on
+#     the fixture's own values and output is only a guard of how it is built.
 #   - the evidence fixture (run_evidence_fixtures): two investigate challenges'
 #     bundles are rendered, and the copy lines the CHART writes into the plant
 #     script are held to challenges/gen-values.sh's definitions by ASKING that
@@ -1065,7 +1067,8 @@ expect_red() {
   if [ "$RC" -eq 0 ]; then
     RC="$saved"
     violation V43 "mutant '${label}' was ACCEPTED by every assertion (the check cannot fail)"
-  elif ! grep -qF -- "$marker" "$out"; then
+  elif ! grep -F 'FAIL [' "$out" | grep -qF -- "$marker"; then
+    # only a `FAIL [` line counts: an `ok` line (always printed) must never satisfy a marker
     RC="$saved"
     violation V43 "mutant '${label}' was refused, but not for '${marker}':"$'\n'"$(grep -F 'FAIL' "$out" | head -5)"
   else
@@ -1110,18 +1113,21 @@ run_evidence_fixtures() {
     violation RENDER "helm template failed for the evidence fixture:"$'\n'"$manifest"
   else
     check_scope_manifest "evidence fixture (two investigate challenges)" "$manifest"
-    # V50: no bundle content in what helm was given (values files) or printed
+    # A regression guard of how this fixture is built, NOT the evidence for V50: the
+    # bundle's files are never handed to helm, so this cannot fail by itself. V50's
+    # evidence is the case below (a values file that carries content is refused, and the
+    # refusal does not echo it) and deploy-user.sh's V49 (A5c).
     if grep -rqF -- "$EVIDENCE_SENTINEL" "${EVF_TMP}/values.yaml" "${EVF_TMP}/files.yaml" || grep -qF -- "$EVIDENCE_SENTINEL" <<<"$manifest"; then
-      violation V50 "the bundle's sentinel appears in a values file given to helm or in the rendered manifest (a bundle's content must never reach the Helm release record)"
+      violation V50 "fixture guard: the bundle's sentinel appears in a values file given to helm or in the rendered manifest (the fixture was built wrongly, or a bundle's content reached the chart)"
     else
-      ok V50 "the bundle sentinel is in no values file given to helm and not in the rendered manifest (only file names are)"
+      ok V50 "fixture guard (not the V50 evidence): the bundle sentinel is in no values file given to helm and not in the rendered manifest"
     fi
     expect_red "the chart renders an evidence Secret" "the chart renders the Secret" \
       'BEGIN { d = 0 } { print } END { print "---"; print "apiVersion: v1"; print "kind: Secret"; print "metadata:"; print "  name: ctf-evidence-40-ev"; print "type: Opaque" }' "$manifest"
-    expect_red "an evidence volume is optional" "optional" \
+    expect_red "an evidence volume is optional" "has optional: " \
       '/^        secretName: ctf-evidence-/ && !d { print; print "        optional: true"; d = 1; next } { print }' "$manifest"
     # mutated renders: each must be refused, for its own reason
-    expect_red "a plain cp becomes cp -a" "is not exactly" \
+    expect_red "a plain cp becomes cp -a" "FAIL [E-2-7]: the plant script is rejected by" \
       '!d && /^ *cp "\/opt\/ctf\/evidence-src\// { sub(/cp "/, "cp -a \""); d = 1 } { print }' "$manifest"
     expect_red "a chmod mode changes" "does not end with exactly" \
       '!d && /^ *chmod 0444 / { sub(/0444/, "0777"); d = 1 } { print }' "$manifest"
@@ -1160,6 +1166,9 @@ run_evidence_fixtures() {
     { ev_header; ev_block 40-ev "$bad"; ev_block 41-ev b.txt; } >"${EVF_TMP}/badname.yaml"
     expect_render_fail "the file name '${bad}'" "has the file name" "${base[@]}" -f "${EVF_TMP}/badname.yaml"
   done
+  # the top of the name grammar: 63 characters render
+  { ev_header; ev_block 40-ev "${long%a}"; ev_block 41-ev b.txt; } >"${EVF_TMP}/name63.yaml"
+  expect_render_ok "a file name of 63 characters" "${base[@]}" -f "${EVF_TMP}/name63.yaml"
   { ev_header; ev_block 40-ev a.log a.log; ev_block 41-ev b.txt; } >"${EVF_TMP}/dupname.yaml"
   expect_render_fail "a file name listed twice" "lists the file name" "${base[@]}" -f "${EVF_TMP}/dupname.yaml"
   printf 'evidence:\n  challenges:\n    "40-ev":\n      names: [123]\n    "41-ev":\n      names: ["b.txt"]\n' >"${EVF_TMP}/num.yaml"
@@ -1211,6 +1220,10 @@ run_evidence_fixtures() {
   { ev_plant_head '[bash, -c, "set -eu\n"]'; ev_entry /opt/fx/ev40 true 40-ev; } >"$cf"
   expect_render_fail "seedScript does not start with sh" "elements must be sh, -c and a string" --set challengeId=40-ev -f "$cf" -f "$one"
   printf 'plant:\n  seedScript: [sh, -c, "set -eu\\n"]\n  mounts:\n    - path: "/opt/x$(id)"\n      readOnly: true\n      evidence: true\n      challenge: 40-ev\n' >"${EVF_TMP}/badpath.yaml"
+  { ev_plant_head "$ss"; ev_entry /opt/fx/../ev true 40-ev; } >"$cf"
+  expect_render_fail "an evidence mount path with a .. element" "is not an absolute path of" --set challengeId=40-ev -f "$cf" -f "$one"
+  { ev_plant_head "$ss"; ev_entry /opt/fx/./ev true 40-ev; } >"$cf"
+  expect_render_fail "an evidence mount path with a . element" "is not an absolute path of" --set challengeId=40-ev -f "$cf" -f "$one"
   expect_render_fail "an evidence mount path with a command substitution" "is not an absolute path of" --set challengeId=40-ev -f "${EVF_TMP}/badpath.yaml" -f "${EVF_TMP}/one.yaml"
   printf 'plant:\n  seedScript: [sh, -c, "true"]\n  mounts:\n    - path: /opt/fx/ev\n      readOnly: true\n      evidence: true\n      challenge: 40-ev\n' >"${EVF_TMP}/badscript.yaml"
   expect_render_fail "a seedScript that is not the generated one" "must start with" --set challengeId=40-ev -f "${EVF_TMP}/badscript.yaml" -f "${EVF_TMP}/one.yaml"

@@ -1513,8 +1513,9 @@ check_claims() { # $1=claims table $2=sensitive dir prefixes $3=sensitive file p
 
     if [ "${kind}" = "evidence" ]; then
       # (R) ADR-0056 D11 / V44: not equal to, inside or above the three roots this
-      # script owns (internal/catalog's reservedMountRoots holds the same three, and
-      # mountroots_parity_test.go ties them): a mountDir under EVIDENCE_SRC_ROOT would
+      # script owns. internal/catalog's reservedMountRoots has four: these three
+      # (mountroots_parity_test.go ties them to the constants here) and
+      # /opt/ctf/missions (I16), which only the Go side refuses. A mountDir under EVIDENCE_SRC_ROOT would
       # make 2-7(a)'s judgement of a copy source ambiguous, one over the seed root or
       # the snapshot would mount an evidence directory over the plant's own.
       for s in "${SEED_ROOT}" "${SNAPSHOT_ROOT}" "${EVIDENCE_SRC_ROOT}"; do
@@ -1681,7 +1682,7 @@ verify_claims_negative_tests() {
   fx_expect_rejected "two investigate challenges nested" "${root}/b3" "ADR-0056 D1 (b) VIOLATION" || rc=1
 
   # (R) mountDir equal to / inside / above a reserved root (ADR-0056 D11, V44: the
-  # catalog's reservedMountRoots refuses the same three in Go)
+  # catalog's reservedMountRoots refuses these three, and /opt/ctf/missions, in Go)
   fx_plant "${root}/r1" 30-a /opt/fx/vault dir 'printf x > "${PLANT_SEED_ROOT}/opt/fx/vault/a"'
   fx_inv "${root}/r1" 40-ev "  evidence: {mountDir: ${EVIDENCE_SRC_ROOT}/40-ev}"
   # The marker names the root that was hit, so each case pins WHICH root's rule fired
@@ -1940,6 +1941,12 @@ chmod 0444 \"\${PLANT_SEED_ROOT}/opt/fx/evidence-a/b-2.txt\""*) : ;;
   fx_expect_2_7 "a bundle file with an upper-case name through the renderer" "${seed}" "${m}" "${map}" || rc=1
   seed="$( cd "${root}/p" && init_plant_ids && EVIDENCE_FILES=("$(printf '%064d' 0 | tr 0 a)") && render_seed_body "${PLANT_IDS[@]}" )" || rc=1
   fx_expect_2_7 "a bundle file name of 64 characters through the renderer" "${seed}" "${m}" "${map}" || rc=1
+  # positive: the top of the grammar, 63 characters, is accepted
+  seed="$( cd "${root}/p" && init_plant_ids && EVIDENCE_FILES=("$(printf '%063d' 0 | tr 0 a)") && render_seed_body "${PLANT_IDS[@]}" )" || rc=1
+  if ! check_2_7 "${seed}" "fx-name63" "${map}" >/dev/null 2>&1; then
+    echo "ADR-0056 A5b VIOLATION: 2-7 rejected a bundle file name of 63 characters (the top of B2's grammar: the allowlist is too strict)" >&2
+    rc=1
+  fi
   # negative: a copy of the right SHAPE that does not match the mount's challenge
   # (the shape is allowed; whether this cid belongs to this directory is judged
   # against plant.mounts, here with the map)
