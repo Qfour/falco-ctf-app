@@ -64,6 +64,30 @@ func TestJudge_PracticeSeatAnswersForAnySeat(t *testing.T) {
 	}
 }
 
+// NewJudge is fail-closed on its own: a seat * answers for every seat, so it is
+// refused in a table with a real run id (an event table) and when mixed with seats.
+func TestNewJudge_RefusesAnUnsafeSeatStar(t *testing.T) {
+	star := [][]string{{"*", demoCID, "who", "practice-name"}}
+	mixed := [][]string{{"*", demoCID, "who", "practice-name"}, {"seat-a", demoCID, "who", sentinel + "-a"}}
+	cases := []struct {
+		name string
+		rows [][]string
+		run  string
+	}{
+		{"seat * with an event run id", star, runA},
+		{"seat * mixed with a seat, practice run id", mixed, edition.PracticeRunID},
+		{"seat * mixed with a seat, event run id", mixed, runA},
+	}
+	for _, c := range cases {
+		j, err := edition.NewJudge(mustParse(t, render(c.run, c.rows)))
+		if err == nil || j != nil {
+			t.Errorf("%s: NewJudge = (%v, %v), want an error and no Judge", c.name, j, err)
+			continue
+		}
+		noSecretIn(t, c.name, err.Error())
+	}
+}
+
 func TestJudge_OtherSeat(t *testing.T) {
 	j := newJudge(t, baseRows(), runA)
 	cases := []struct {

@@ -75,6 +75,22 @@ func TestCheck_AcceptsAPracticeTable(t *testing.T) {
 	}
 }
 
+// A table with rows but nothing to judge: every row is a cid outside the scope. An
+// empty Scope and a nil Scope behave the same (T4 only, no value in the error).
+func TestCheck_EmptyScopeRefusesEveryRow(t *testing.T) {
+	tb := mustParse(t, render(runA, baseRows()))
+	for name, sc := range map[string]edition.Scope{"empty scope": {}, "nil scope": nil} {
+		err := edition.Check(tb, sc, eventOpts())
+		if err == nil {
+			t.Fatalf("%s: Check accepted a table that has nothing to judge", name)
+		}
+		if got := rules(err); !slices.Equal(got, []string{"T4"}) {
+			t.Errorf("%s: rules = %v, want [T4]", name, got)
+		}
+		noSecret(t, name, err)
+	}
+}
+
 func TestCheck_NilTable(t *testing.T) {
 	if err := edition.Check(nil, demoScope, eventOpts()); !errors.Is(err, edition.ErrTableMissing) {
 		t.Errorf("Check(nil) = %v, want ErrTableMissing", err)
@@ -106,7 +122,9 @@ func TestCheck_Rejects(t *testing.T) {
 		{"seat with a trailing hyphen", runA, eventOpts(), rename(baseRows(), "seat-a", "seat-"), []string{"T4"}},
 		{"seat * in an event table", runA, eventOpts(), rename(baseRows(), "seat-a", "*"), []string{"T4"}},
 		{"practice table mixing * with a seat", "00000000000000000000000000000000", practiceMode, rename(baseRows(), "seat-a", "*"), []string{"T4"}},
-		{"cid outside the scope", runA, eventOpts(), set(baseRows(), 0, 1, "02-other"), []string{"T4"}},
+		{"practice table with ordinary seats only", "00000000000000000000000000000000", practiceMode, baseRows(), []string{"T4"}},
+		{"a complete table plus a row of a cid outside the scope", runA, eventOpts(), append(baseRows(), []string{"seat-a", "02-other", "who", sentinel + "-c"}), []string{"T4"}},
+		{"cid outside the scope",runA, eventOpts(), set(baseRows(), 0, 1, "02-other"), []string{"T4"}},
 		{"qid outside the challenge", runA, eventOpts(), set(baseRows(), 0, 2, "nope"), []string{"T4"}},
 		{"a seat is missing a row", runA, eventOpts(), without(baseRows(), 4), []string{"T4"}},
 		{"columns swapped: a value in the seat column", runA, eventOpts(), [][]string{{sentinel + "-a", demoCID, "who", "seat-a"}}, []string{"T4"}},

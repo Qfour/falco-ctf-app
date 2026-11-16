@@ -136,7 +136,8 @@ func (s Scope) HasInvestigate() bool { return len(s) > 0 }
 // (format -> the set of values). Loading them is A4 / A7; here it is an argument.
 type PracticeSet map[string]map[string]struct{}
 
-// Add records one practice answer.
+// Add records one practice answer. The set must be made (PracticeSet{}): Add on a
+// nil PracticeSet panics, and a nil one is "not supplied" to Check, not "empty".
 func (p PracticeSet) Add(format, value string) {
 	if p[format] == nil {
 		p[format] = make(map[string]struct{})
@@ -194,8 +195,8 @@ func (c *collector) err() error {
 // order: run id, then the rows in file order, then the missing rows by seat, cid,
 // qid). It does not stop at the first one.
 //
-// T4: a seat set that is not empty, every seat in ADR-0042's grammar (or * in a
-// practice table, and then alone), no seat * in an event table, no cid / qid outside
+// T4: a seat set that is not empty, every seat in ADR-0042's grammar (a practice
+// table, EventMode false, has the seat * and no other), no seat * in an event table, no cid / qid outside
 // the scope, and a row for every seat x every (cid, qid) of the scope. T5: the value
 // fits the format and is already normalised (answerformat.Canonical). T6 (event
 // mode): the value is not a practice answer of the same format. T7: the value holds
@@ -220,9 +221,6 @@ func Check(t *Table, scope Scope, opts Options) error {
 	if len(seats) == 0 {
 		c.add(newViolation(RuleComplete, "the table has no seat", 0, cell{}, nil))
 	}
-	if !opts.EventMode && len(seats) > 1 && t.hasSeat(AnySeat) {
-		c.add(newViolation(RuleComplete, "a practice table must not mix seat * with other seats", 0, cell{}, nil))
-	}
 
 	seen := make(map[valueKey]struct{}, len(t.rows))
 	for _, r := range t.rows {
@@ -234,6 +232,8 @@ func Check(t *Table, scope Scope, opts Options) error {
 		case !identity.ValidSeat(r.c.seat):
 			c.add(newViolation(RuleComplete, "seat is outside the seat grammar (ADR-0042)", r.line, r.c, nil))
 			continue
+		case !opts.EventMode:
+			c.add(newViolation(RuleComplete, "a practice table has only the seat *", r.line, r.c, nil))
 		}
 		qs, ok := scope[r.c.cid]
 		if !ok {

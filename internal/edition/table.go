@@ -2,9 +2,12 @@
 // (ADR-0056, Proposed): the answers table, its checks (D10 T1-T8) and the Judge
 // that compares an input with a table value without keeping the value (D5 4).
 //
-// This is stage A2a: a pure package. Nothing in cmd/ or internal/scoreboard
-// calls it yet (A2b wires the start-up refusal and the log; A4 adds the bundle
-// checks B1-B9 and the renderer).
+// This is stage A2a: a pure package (ADR-0056 D19): it reads no environment and
+// no file, writes no log and ends no process. The caller hands Parse the bytes of
+// the file, and bounds its own read at MaxTableBytes+1 so that an unbounded file is
+// never loaded (A2b's edition.Load does the reading). Nothing in cmd/ or
+// internal/scoreboard calls it yet (A2b wires the start-up refusal and the log;
+// A4 adds the bundle checks B1-B9 and the renderer).
 //
 // Every rule that is decided here is decided ONCE and from the existing
 // definitions: the answer formats and their normalisation are
@@ -23,7 +26,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"os"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -32,7 +34,8 @@ import (
 )
 
 const (
-	// MaxTableBytes bounds the file before it is parsed. A real table is a few hundred
+	// MaxTableBytes is the largest input Parse accepts (inclusive: this many bytes
+	// pass the size check, one more is refused). A real table is a few hundred
 	// seats x a few tens of questions x ~150 bytes (about 1 MiB); 4 MiB is far above
 	// that and still small enough to hold in memory twice. The limit exists so that an
 	// unbounded file cannot be loaded at start-up, not to describe a legal size.
@@ -113,21 +116,6 @@ func (Table) GoString() string { return redactedTable }
 
 // MarshalJSON: see Format.
 func (Table) MarshalJSON() ([]byte, error) { return []byte(`"` + redactedTable + `"`), nil }
-
-// ReadFile reads a table file of at most MaxTableBytes and parses it. The size is
-// bounded while reading, so a larger file is refused without being loaded.
-func ReadFile(path string) (*Table, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("open answers table: %w", err)
-	}
-	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, MaxTableBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("read answers table: %w", err)
-	}
-	return Parse(data)
-}
 
 // Parse is D10 T3 (and the duplicate-row rule of T4): the first line is
 // `# falco-ctf answers v1 run=<32 lower-case hex digits>`, then one row per line

@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -104,31 +102,22 @@ func TestTable_PrintsNoValue(t *testing.T) {
 	}
 }
 
-func TestReadFile(t *testing.T) {
-	dir := t.TempDir()
-	write := func(name string, data []byte) string {
-		p := filepath.Join(dir, name)
-		if err := os.WriteFile(p, data, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		return p
-	}
-	t.Run("a good file", func(t *testing.T) {
-		tb, err := edition.ReadFile(write("good.tsv", render(runA, baseRows())))
-		if err != nil || tb.RunID() != runA {
-			t.Fatalf("ReadFile = %v, %v", tb, err)
-		}
-	})
-	t.Run("a missing file", func(t *testing.T) {
-		if _, err := edition.ReadFile(filepath.Join(dir, "absent.tsv")); err == nil {
-			t.Error("ReadFile accepted a missing file")
-		}
-	})
-	t.Run("a file over the limit", func(t *testing.T) {
-		_, err := edition.ReadFile(write("big.tsv", bytes.Repeat([]byte("a"), edition.MaxTableBytes+10)))
+// The size limit is inclusive: MaxTableBytes bytes pass the size check (and are
+// refused later, for having no header newline: a violation with a line), and one
+// byte more is refused for its size (a violation with no line).
+func TestParse_SizeLimitBoundary(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		size     int
+		wantLine int
+	}{
+		{"exactly the limit", edition.MaxTableBytes, 1},
+		{"one byte over the limit", edition.MaxTableBytes + 1, 0},
+	} {
+		_, err := edition.Parse(bytes.Repeat([]byte("a"), c.size))
 		var v *edition.Violation
-		if !errors.As(err, &v) || v.Rule != "T3" {
-			t.Errorf("ReadFile(big) = %v, want a T3 violation", err)
+		if !errors.As(err, &v) || v.Rule != "T3" || v.Line != c.wantLine {
+			t.Errorf("%s: Parse = %v, want a T3 violation at line %d", c.name, err, c.wantLine)
 		}
-	})
+	}
 }

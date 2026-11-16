@@ -23,7 +23,9 @@ const flagOpen = "FALCO{"
 // flagRE. It is deliberately wider than flagRE: a flag is `flagOpen` plus a body
 // plus a closing brace, so every string flagRE matches contains flagOpen, and an
 // unterminated or out-of-grammar `flagOpen` counts as well; the comparison folds
-// ASCII case. (mentionsflag_test.go holds it wider than flagRE.)
+// ASCII case only: a look-alike letter outside ASCII is not folded (the answer
+// formats admit ASCII alone, so one cannot pass them). (mentionsflag_test.go holds
+// it wider than flagRE.)
 func MentionsFlag(s string) bool {
 	return strings.Contains(strings.Map(foldASCIIUpper, s), flagOpen)
 }

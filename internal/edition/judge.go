@@ -55,6 +55,18 @@ func newJudge(t *Table, key []byte) (*Judge, error) {
 	if t == nil || len(t.rows) == 0 {
 		return nil, errors.New("edition: a judge needs a table with at least one row")
 	}
+	// Fail-closed on its own, not only through Check: a seat * answers for EVERY
+	// seat, so it is legal only in a practice table (the zero run id), and alone. An
+	// event table that slipped a * row past Check would otherwise make one value
+	// correct for the whole room.
+	if t.hasSeat(AnySeat) {
+		if t.runID != PracticeRunID {
+			return nil, errors.New("edition: seat * is only for a table with the practice run id")
+		}
+		if len(t.Seats()) > 1 {
+			return nil, errors.New("edition: seat * must not be mixed with other seats")
+		}
+	}
 	j := &Judge{
 		key:        key,
 		exp:        make(map[cell][sha256.Size]byte, len(t.rows)),
