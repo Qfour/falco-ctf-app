@@ -129,6 +129,97 @@ func TestBootLogContract_FlagOverridesFailed_GoldenLiteral(t *testing.T) {
 	}
 }
 
+// ADR-0056 D16 items (4) and (5) of the same contract-table row: the answers
+// table's two records. verify.sh reads (4) by msg and level, and checks the shape
+// of the run_id of (5) and reports it; comparing it with the run id of the digests
+// the participants' bundles were paid out with is P1b (not implemented yet: the
+// digests come with A4 and P1b). Literals, for the same reason as above: edition.go's calls and the other
+// tests do not go through any constant, so a rename of the msg or of the attribute
+// turns only this test red.
+func TestBootLogContract_EditionRecords_GoldenLiterals(t *testing.T) {
+	cat := edInvestigateCatalog(t)
+
+	// (5) an accepted table: one INFO record, the run id only.
+	ok, text, recs, err := bootEdition(t, catalogEnv{flagsFile: "flags.yaml", answersFile: edAnswersFile(t, edRunID, edGoodRows)}, cat)
+	if err != nil || ok == nil {
+		t.Fatalf("accepted table: judge %v, err %v", ok, err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("accepted: want exactly 1 record, got %d: %s", len(recs), text)
+	}
+	for _, want := range []string{
+		`"level":"INFO"`,
+		`"msg":"edition loaded"`,
+		`"run_id":"` + edRunID + `"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("accepted record lacks the literal %s: %s", want, text)
+		}
+	}
+	assertKeys(t, "edition loaded record", recs[0], "time", "level", "msg", "run_id")
+
+	// (4) a refusal: one ERROR record, with the error (a rule, a line, a seat / cid /
+	// qid: never a value).
+	bad, text, recs, err := bootEdition(t, catalogEnv{flagsFile: "flags.yaml"}, cat)
+	if err == nil || bad != nil {
+		t.Fatalf("refusal: judge %v, err %v", bad, err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("refusal: want exactly 1 record, got %d: %s", len(recs), text)
+	}
+	for _, want := range []string{
+		`"level":"ERROR"`,
+		`"msg":"edition check failed"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("refusal record lacks the literal %s: %s", want, text)
+		}
+	}
+	assertKeys(t, "edition check failed record", recs[0], "time", "level", "msg", "err")
+}
+
+// The exit path cannot run in a unit test, so it is pinned in the source, as for
+// "flag overrides failed" above: main() calls startEdition once and exits at once
+// when it returns an error (the ERROR record is written inside startEdition, before
+// the return); each message is written by exactly one call, in edition.go only.
+func TestBootLogContract_EditionCheckFailed_ExitsRightAfter(t *testing.T) {
+	mainSrc, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(mainSrc), "\n")
+	calls := 0
+	for i, l := range lines {
+		if !strings.Contains(l, "startEdition(") {
+			continue
+		}
+		calls++
+		if i+2 >= len(lines) || strings.TrimSpace(lines[i+1]) != "if err != nil {" || strings.TrimSpace(lines[i+2]) != "os.Exit(1)" {
+			t.Errorf("main.go:%d: the startEdition call must be followed by `if err != nil {` and `os.Exit(1)` (the refusal is read by platform scripts/verify.sh)", i+1)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("main.go calls startEdition %d time(s), want exactly 1", calls)
+	}
+	edSrc, err := os.ReadFile("edition.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`logger.Error("edition check failed", "err", err)`,
+		`logger.Info("edition loaded", "run_id", runID)`,
+	} {
+		if c := strings.Count(string(edSrc), want); c != 1 {
+			t.Errorf("edition.go has %d call(s) %s, want exactly 1", c, want)
+		}
+	}
+	for _, msg := range []string{`"edition check failed"`, `"edition loaded"`} {
+		if c := strings.Count(string(mainSrc), msg); c != 0 {
+			t.Errorf("main.go writes %s itself %d time(s); only startEdition does", msg, c)
+		}
+	}
+}
+
 // The records are serialized by slog.NewJSONHandler with nil options on stdout;
 // verify.sh matches that text. Replacing the handler (TextHandler, a ReplaceAttr
 // that renames level / msg) changes every record at once, so pin the one

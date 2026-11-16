@@ -25,6 +25,7 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/apispec"
 	"github.com/Qfour/falco-ctf-app/internal/board"
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
+	"github.com/Qfour/falco-ctf-app/internal/edition"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/api"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/ingest"
@@ -77,6 +78,10 @@ type Handler struct {
 	// option reproduces today's behaviour.
 	webhookSharedSecret string
 	webhookSecretMode   ingest.SecretMode
+	// editionJudge is the ADR-0056 answers-table Judge (nil = no table) — see
+	// WithEditionJudge. A WIRING-TIME TRANSFER ONLY, like points above: NewHandler
+	// will pass it into the single Grader (A3a); nothing reads it at request time.
+	editionJudge *edition.Judge
 	// routes is the FULL, flattened route table this binary registers —
 	// this package's own /healthz + /metrics rows, plus ingest's, api's and
 	// view's Routes() (ADR-0005 V2). Stored so Routes() can return it to the
@@ -206,6 +211,15 @@ func WithWebhookSecret(secret string, mode ingest.SecretMode) Option {
 		h.webhookSharedSecret = secret
 		h.webhookSecretMode = mode
 	}
+}
+
+// WithEditionJudge hands the handler the Judge that edition.Load built from the
+// event edition's answers table (ADR-0056 D19 A2b). nil (the default, and every
+// environment without an investigate challenge) = no table. The Judge holds HMACs
+// of the table values under a per-process key, never a plaintext value. Stage A2b
+// only keeps it; the Grader that compares an answer with it is A3a.
+func WithEditionJudge(j *edition.Judge) Option {
+	return func(h *Handler) { h.editionJudge = j }
 }
 
 func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts ...Option) *Handler {
