@@ -275,7 +275,7 @@ func TestMainTakesCatalogOnlyFromScoredFromEnv(t *testing.T) {
 		// which takes the Scored itself; nothing in cmd/scoreboard reads those fields,
 		// so nothing it wires scores a challenge outside the scenario. And the Scored
 		// is never rebound after LoadScored returned it.
-		".FullCatalog", ".ChallengesDir", "\tscored=", "\tscored,err=",
+		".FullCatalog", ".ChallengesDir", "\tscored=", "\tscored,err=", "\tscored:=", "\tvarscored",
 	}
 	for _, b := range banned {
 		if strings.Contains(squashed, b) {

@@ -33,6 +33,10 @@ var (
 	// ErrTableOutsideEventMode is D8 (ii): an answers table without the event mode
 	// (the two signals disagree).
 	ErrTableOutsideEventMode = errors.New("edition: an answers table was given outside the event mode")
+	// ErrInconsistentScored: the catalog.Scored given to Load is not one that
+	// catalog.LoadScored returned (no full catalog or directory, or a scope that the
+	// tree does not hold). Refused, because the practice answers could not be read.
+	ErrInconsistentScored = errors.New("edition: the scored catalog does not match its tree")
 )
 
 // ModeCheck is D8 (i) and (ii), D10 T1 / T2, as a pure function of three facts.

@@ -23,7 +23,8 @@ import (
 //   - Scored.FullCatalog (the tree before the scenario restriction: it is for the
 //     practice answers, and nothing that scores may read it) is named in two files
 //     only: internal/catalog/flags.go (the field and LoadScored's value) and
-//     internal/edition/load.go (the one read, in loadPractice);
+//     internal/edition/load.go (read in loadPractice, and looked at by checkScored,
+//     which refuses a Scored without a tree: review #631);
 //   - cmd/scoreboard calls edition.Load once, with a parameter of type catalog.Scored
 //     as its first argument (startEdition's), not a field of it, a literal or a local
 //     variable; that startEdition is called with the variable scoredFromEnv returned
@@ -90,9 +91,16 @@ var wantLoadSigs = map[string][]string{
 // fullCatalogAllowed are the files that may name Scored.FullCatalog.
 var fullCatalogAllowed = []string{"internal/catalog/flags.go", "internal/edition/load.go"}
 
+// fullCatalogReaders are the functions of load.go that may read Scored.FullCatalog:
+// loadPractice (the one that uses the tree) and checkScored (which refuses a Scored
+// that has none).
+var fullCatalogReaders = []string{"loadPractice", "checkScored"}
+
 // loadInputViolations judges every non-test file (slash path -> source). fullReads is
-// how many times load.go reads the field through a selector (the positive side).
-func loadInputViolations(files map[string]string) (violations []string, fullReads int) {
+// how many times load.go reads the field through a selector, by function (the positive
+// side).
+func loadInputViolations(files map[string]string) (violations []string, fullReads map[string]int) {
+	fullReads = map[string]int{}
 	paths := make([]string, 0, len(files))
 	for p := range files {
 		paths = append(paths, p)
@@ -123,30 +131,39 @@ func loadInputViolations(files map[string]string) (violations []string, fullRead
 				}
 			}
 		}
-		ast.Inspect(f, func(n ast.Node) bool {
-			switch x := n.(type) {
-			case *ast.SelectorExpr:
-				if x.Sel.Name == "FullCatalog" {
-					if p == "internal/edition/load.go" {
-						fullReads++
-					}
-					if !slices.Contains(fullCatalogAllowed, p) {
-						violations = append(violations, p+": reads Scored.FullCatalog; only load.go's loadPractice may (nothing that scores reads the whole tree)")
-					}
-				}
-			case *ast.KeyValueExpr:
-				if id, ok := x.Key.(*ast.Ident); ok && id.Name == "FullCatalog" && !slices.Contains(fullCatalogAllowed, p) {
-					violations = append(violations, p+": sets Scored.FullCatalog; only catalog.LoadScored does")
-				}
-			case *ast.Field:
-				for _, id := range x.Names {
-					if id.Name == "FullCatalog" && !slices.Contains(fullCatalogAllowed, p) {
-						violations = append(violations, p+": declares a FullCatalog field")
-					}
-				}
+		for _, d := range f.Decls {
+			fn := ""
+			if fd, ok := d.(*ast.FuncDecl); ok {
+				fn = fd.Name.Name
 			}
-			return true
-		})
+			ast.Inspect(d, func(n ast.Node) bool {
+				switch x := n.(type) {
+				case *ast.SelectorExpr:
+					if x.Sel.Name == "FullCatalog" {
+						if p == "internal/edition/load.go" {
+							fullReads[fn]++
+						}
+						switch {
+						case !slices.Contains(fullCatalogAllowed, p):
+							violations = append(violations, p+": reads Scored.FullCatalog; only load.go's loadPractice and checkScored may (nothing that scores reads the whole tree)")
+						case p == "internal/edition/load.go" && !slices.Contains(fullCatalogReaders, fn):
+							violations = append(violations, p+" (func "+fn+"): reads Scored.FullCatalog; only loadPractice and checkScored may")
+						}
+					}
+				case *ast.KeyValueExpr:
+					if id, ok := x.Key.(*ast.Ident); ok && id.Name == "FullCatalog" && !slices.Contains(fullCatalogAllowed, p) {
+						violations = append(violations, p+": sets Scored.FullCatalog; only catalog.LoadScored does")
+					}
+				case *ast.Field:
+					for _, id := range x.Names {
+						if id.Name == "FullCatalog" && !slices.Contains(fullCatalogAllowed, p) {
+							violations = append(violations, p+": declares a FullCatalog field")
+						}
+					}
+				}
+				return true
+			})
+		}
 	}
 	return violations, fullReads
 }
@@ -227,8 +244,10 @@ func TestLoadTakesOneScoredInput(t *testing.T) {
 	for _, v := range violations {
 		t.Error(v)
 	}
-	if fullReads != 1 {
-		t.Errorf("load.go reads Scored.FullCatalog %d time(s), want exactly 1 (loadPractice); a scan that finds nothing is not a pass", fullReads)
+	// Positive: loadPractice reads the tree (once), and checkScored looks at it. A scan
+	// that finds nothing is not a pass.
+	if fullReads["loadPractice"] != 1 || fullReads["checkScored"] == 0 || len(fullReads) != 2 {
+		t.Errorf("load.go reads Scored.FullCatalog in %v, want loadPractice once and checkScored (nothing else)", fullReads)
 	}
 
 	violations, calls := loadCallViolations(files)
@@ -250,8 +269,13 @@ func TestLoadTakesOneScoredInput_ScanSeesAViolation(t *testing.T) {
 	base := func() map[string]string {
 		return map[string]string{"internal/edition/load.go": loadSrc, "internal/catalog/flags.go": flagsSrc}
 	}
-	if v, reads := loadInputViolations(base()); len(v) != 0 || reads != 1 {
-		t.Fatalf("the allowed shape: violations %v, reads %d; want none and 1", v, reads)
+	if v, reads := loadInputViolations(base()); len(v) != 0 || reads["loadPractice"] != 1 || len(reads) != 1 {
+		t.Fatalf("the allowed shape: violations %v, reads %v; want none and loadPractice once", v, reads)
+	}
+	withCheck := base()
+	withCheck["internal/edition/load.go"] = loadSrc + "\nfunc checkScored(s catalog.Scored) { _ = s.FullCatalog == nil }\n"
+	if v, reads := loadInputViolations(withCheck); len(v) != 0 || reads["checkScored"] != 1 {
+		t.Fatalf("the allowed checkScored: violations %v, reads %v; want none", v, reads)
 	}
 
 	cases := []struct {
@@ -277,11 +301,11 @@ func TestLoadTakesOneScoredInput_ScanSeesAViolation(t *testing.T) {
 			t.Errorf("%s: no violation was reported", c.name)
 		}
 	}
-	// FullCatalog read twice in load.go still counts (a second reader is a change to see).
-	twice := base()
-	twice["internal/edition/load.go"] = loadSrc + "\nfunc other(s catalog.Scored) { _ = s.FullCatalog }\n"
-	if _, reads := loadInputViolations(twice); reads != 2 {
-		t.Errorf("a second read in load.go counted %d, want 2", reads)
+	// A third reader inside load.go is a violation too (a change to see).
+	third := base()
+	third["internal/edition/load.go"] = loadSrc + "\nfunc other(s catalog.Scored) { _ = s.FullCatalog }\n"
+	if v, _ := loadInputViolations(third); len(v) == 0 {
+		t.Error("a read of FullCatalog in another function of load.go was not reported")
 	}
 
 	const imp = "import \"" + editionImportPath + "\"\n\n"

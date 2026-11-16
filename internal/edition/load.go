@@ -223,6 +223,11 @@ const (
 // Neither result is nil on success: no practice edition at all is the empty set and
 // no table.
 func loadPractice(scored catalog.Scored) (PracticeSet, map[string]*Table, error) {
+	// Fail-closed on the input itself (review #631 R1#1): a Scored without its tree
+	// would give the EMPTY practice set, and T6 would then compare nothing and pass.
+	if err := checkScored(scored); err != nil {
+		return nil, nil, err
+	}
 	// The whole tree, from the same value as the scope (A4a-3): scored.FullCatalog was
 	// read from scored.ChallengesDir by catalog.LoadScored.
 	full, challengesDir := scored.FullCatalog, scored.ChallengesDir
@@ -267,6 +272,35 @@ func loadPractice(scored catalog.Scored) (PracticeSet, map[string]*Table, error)
 		tables[id] = t
 	}
 	return set, tables, nil
+}
+
+// checkScored refuses a catalog.Scored that cannot be what catalog.LoadScored returns
+// (ADR-0056 A4a-3, review #631): no FullCatalog or no ChallengesDir (a zero value, or
+// a literal built by hand), or a challenge of the scope that the tree does not have
+// with the same type and directory. It is loadPractice's first step, so it runs on
+// every path that reads the practice answers (the event table's T6, and the practice
+// mode's Judge) and on no other: a start-up with nothing to judge (no investigate
+// challenge in scope, no table) reads no tree and is not asked for one. The error
+// names challenge ids only.
+func checkScored(s catalog.Scored) error {
+	switch {
+	case s.FullCatalog == nil:
+		return fmt.Errorf("%w: no full catalog", ErrInconsistentScored)
+	case s.ChallengesDir == "":
+		return fmt.Errorf("%w: no challenges directory", ErrInconsistentScored)
+	}
+	for _, id := range s.Catalog.IDs() {
+		got, want := s.Catalog[id], s.FullCatalog[id]
+		switch _, ok := s.FullCatalog[id]; {
+		case !ok:
+			return fmt.Errorf("%w: challenge %s of the scope is not in the full catalog", ErrInconsistentScored, id)
+		case got.Type != want.Type:
+			return fmt.Errorf("%w: challenge %s has another type in the full catalog", ErrInconsistentScored, id)
+		case got.Dir() != want.Dir():
+			return fmt.Errorf("%w: challenge %s has another directory in the full catalog", ErrInconsistentScored, id)
+		}
+	}
+	return nil
 }
 
 // practiceEntry reports whether path exists, and refuses what is not a directory

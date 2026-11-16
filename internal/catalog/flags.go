@@ -59,7 +59,12 @@ type Scored struct {
 	// that the scope (Catalog) and the tree the practice answers come from are one
 	// value and cannot be two different trees. NOTHING THAT SCORES may read it: the
 	// scoreboard scores Catalog only (a challenge outside the scenario is not scored).
-	// load_source_test.go (internal/edition) fixes the readers by reading the sources.
+	// Every challenge of Catalog is in FullCatalog with the same Type and Dir; only
+	// ExpectedFlag differs when a flags file was given (Catalog's is the event's value,
+	// FullCatalog's the repository default). edition.Load refuses a Scored where that
+	// does not hold, or that has no FullCatalog or ChallengesDir (ErrInconsistentScored).
+	// internal/edition/load_input_source_test.go (TestLoadTakesOneScoredInput) fixes
+	// the readers by reading the sources.
 	FullCatalog Catalog
 	// ChallengesDir is the directory FullCatalog was read from (the challengesDir
 	// LoadScored was given).

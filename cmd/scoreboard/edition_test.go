@@ -223,8 +223,8 @@ func TestStartEdition_InvestigateInScope(t *testing.T) {
 
 // ADR-0056 D8 (ii) for an investigate scope without the event mode: the table is
 // refused too (the two signals disagree); and without a table the practice answers
-// of the image are used (D8 (iv)): edInvestigateCatalog has none (and catalogEnv{} no
-// challengesDir), so the start-up is refused, with one ERROR record.
+// of the image are used (D8 (iv)): the tree of edInvestigateCatalog has none, so the
+// start-up is refused, with one ERROR record.
 func TestStartEdition_InvestigateWithoutTheEventMode(t *testing.T) {
 	cat := edInvestigateCatalog(t)
 	j, _, recs, err := bootEdition(t, catalogEnv{answersFile: edAnswersFile(t, edition.PracticeRunID, edGoodRows)}, cat)

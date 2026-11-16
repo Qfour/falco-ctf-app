@@ -14,7 +14,7 @@ import (
 )
 
 // ADR-0056 D19 A4a-1 / V34: edition.Load reads the practice answers of EVERY
-// challenge under challengesDir and hands them to T6. The trees are synthetic and
+// challenge of the Scored's tree (scoredOf: the tree at dir) and hands them to T6. The trees are synthetic and
 // written under t.TempDir(); every value is a made-up one.
 
 const (
