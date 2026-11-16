@@ -79,6 +79,13 @@ t_eq "...on stdout" "10.96.0.1" "$(cat "${CT_RUN_OUT}")"
 ct_run bash -c 'echo y | kubectl apply -f -; kubectl create namespace n --dry-run=client -o yaml | kubectl apply -f -'
 t_eq "kubectl apply reads and drops its stdin" 0 "${RUN_STATUS}"
 t_eq "...all three calls are recorded (the two stubs of a pipe run at once: compared sorted)" "kubectl apply -f -${NL}kubectl apply -f -${NL}kubectl create namespace n --dry-run=client -o yaml" "$(sort "${CT_CALLS}")"
+CT_KUBECTL_FAIL='label secret' ct_run kubectl -n ns label secret x a=b
+t_eq "CT_KUBECTL_FAIL makes a matching kubectl call exit 1" 1 "${RUN_STATUS}"
+t_eq "...and the call is recorded first" "kubectl -n ns label secret x a=b" "$(cat "${CT_CALLS}")"
+CT_KUBECTL_FAIL='label secret' ct_run kubectl -n ns get pods
+t_eq "...a call without the text still exits 0" 0 "${RUN_STATUS}"
+ct_run kubectl -n ns label secret x a=b
+t_eq "...and without the env nothing fails" 0 "${RUN_STATUS}"
 ct_run bash -c 'echo out; echo err >&2; exit 3'
 t_eq "ct_run reports the command's status" 3 "${RUN_STATUS}"
 t_eq "...its stdout" "out" "$(cat "${CT_RUN_OUT}")"

@@ -1,2 +1,3 @@
 internal/catalog/testdata/flags-parity/*.yaml -text
 internal/edition/testdata/bundle-digest/** -text
+internal/edition/testdata/digests-golden/** -text
