@@ -64,6 +64,17 @@
   // would otherwise wipe #submit-msg). Cleared on success or when the user moves
   // to a different mission. See restoreSubmitMsg / the submit handler below.
   let lastSubmit = null;
+  // Answer form (ADR-0056 A6, investigate missions). answerDrafts = what the
+  // participant has typed per question, answerMsgs = the last result line per
+  // question ({cls, text}); both keyed by answerKey(cid, qid) and kept OUTSIDE
+  // the DOM, so a repaint of #pane-journey-detail (a changed signature: a hint
+  // reveal, an answer that spent an attempt) puts the typed text and the
+  // result line back (answerRowHTML reads them). Anything new that a
+  // participant can type into must be added to the same two maps and to
+  // captureAnswerFocus / restoreAnswerFocus. Dropped when the viewed mission
+  // changes (pruneAnswerState).
+  const answerDrafts = {};
+  const answerMsgs = {};
   // viewedMission (P23 Story-as-docs, CEO decision: free mission browsing):
   // when set, the next refresh() requests ?mission=<id> instead of the
   // default "current" detail. null = follow current (the pre-existing
@@ -333,11 +344,17 @@
     const detailChanged = sig !== lastDetailSig;
 
     if (detailChanged) {
+      // Answer form (A6): drop the drafts / result lines of another mission
+      // BEFORE painting (the paint reads them), and remember which answer
+      // control has focus so the repaint can give it back.
+      pruneAnswerState(d.detail);
+      const answerFocus = captureAnswerFocus();
       const detailHTML = d.detail ? renderDetail(d.detail) : renderAllDone(solvedCount, total);
       const detailEl = document.getElementById('pane-journey-detail');
       detailEl.dataset.mission = viewedId || '';
       detailEl.innerHTML = detailHTML;
       wireDetail(d.detail);
+      restoreAnswerFocus(answerFocus);
       // Re-inject any sticky failure-mode submit result the polling
       // re-render just wiped. Drop it if the user has moved on to a
       // different mission.
@@ -513,6 +530,7 @@
         ${det.briefing ? `<div class="briefing">${esc(det.briefing)}</div>` : ''}
         ${det.type === 'trigger' ? triggerSection(det) : ''}
         ${steps ? `<div class="sec-title">Steps（自己チェック）</div><ul class="steps">${steps}</ul>` : ''}
+        ${answerSection(det)}
         ${hintsBlock}
         ${det.type === 'evade' ? evadeSection(det) : ''}
         ${renderFalcoRule(det)}
@@ -763,6 +781,196 @@
       <div class="submit-msg" id="pane-journey-submit-msg"></div>`;
   }
 
+  // ---- Answer form (ADR-0056 A6): an investigate mission's questions ----
+  // det.questions = [{id, prompt, format, attempts, remaining, correct}] from the
+  // journey API (empty for every other mission: nothing is drawn, the page is
+  // what it was). Display only: the grade, the attempt budget and the solve are
+  // the server's (one door); this layer shows what the API says and words each
+  // outcome itself (the server sends no prose). Every operator-written string
+  // (prompt) and every value put into markup goes through esc().
+
+  function answerKey(cid, qid) { return cid + '/' + qid; }
+
+  // answerFormatHint: what the question's format asks for, in the portal's own
+  // words (a closed set, ADR-0056 D2). Unknown format: no hint, never the raw value.
+  function answerFormatHint(format) {
+    switch (format) {
+      case 'path': return '絶対パス (例: /path/to/file)';
+      case 'name': return '英数字と . _ - の名前';
+      case 'hexid': return '16 進数 (小文字の 0-9, a-f)';
+      case 'timestamp': return 'UTC の時刻 (例: 2026-01-02T03:04:05Z)';
+      case 'technique': return 'ATT&CK の技法 ID (例: T1234 または T1234.567)';
+      case 'choice-set': return '選択肢の id をカンマ区切りで';
+      case 'sequence': return '設問の指示どおりの順序で';
+      default: return '';
+    }
+  }
+
+  // answerRowState: done = the mission is solved; retry = this question is
+  // answered but the mission is not solved yet (the solve write may have
+  // failed, ADR-0056 D5 step 5: the field STAYS ENABLED, a resubmission is what
+  // completes it); exhausted = no attempts left; open = anything else.
+  function answerRowState(q, solved) {
+    if (solved) return 'done';
+    if (q.correct) return 'retry';
+    if (!(q.remaining > 0)) return 'exhausted';
+    return 'open';
+  }
+
+  function answerRowHTML(cid, q, i, solved) {
+    const state = answerRowState(q, solved);
+    const key = answerKey(cid, q.id);
+    const draft = typeof answerDrafts[key] === 'string' ? answerDrafts[key] : '';
+    const sticky = answerMsgs[key] || null;
+    const rem = Number.isInteger(q.remaining) ? q.remaining : 0;
+    const att = Number.isInteger(q.attempts) ? q.attempts : 0;
+    const off = (state === 'done' || state === 'exhausted') ? ' disabled' : '';
+    const label = {
+      open: '',
+      retry: '✔ 正解済み (クリアに反映されていなければ、もう一度提出してください)',
+      done: '✔ 正解済み',
+      exhausted: '回数を使い切りました',
+    }[state];
+    const hint = answerFormatHint(q.format);
+    const meta = [hint ? '形式: ' + hint : '', label, '残り ' + rem + ' 回 / 全 ' + att + ' 回'].filter(Boolean).join(' · ');
+    return `<div class="autosolve" data-answer-state="${esc(state)}">
+      <div style="font-weight:600;white-space:pre-wrap;overflow-wrap:anywhere">設問 ${i + 1}: ${esc(q.prompt)}</div>
+      <div class="hint">${esc(meta)}</div>
+      <form class="submit-form" id="pane-journey-answer-form-${i}" autocomplete="off">
+        <input type="text" id="pane-journey-answer-input-${i}" aria-label="設問 ${i + 1} の回答" placeholder="${esc(hint)}" value="${esc(off ? '' : draft)}" autocomplete="off" spellcheck="false"${off}>
+        <button type="submit" class="btn btn-accent" id="pane-journey-answer-btn-${i}"${off}>提出</button>
+      </form>
+      <div class="submit-msg${sticky ? ' ' + esc(sticky.cls) : ''}" id="pane-journey-answer-msg-${i}">${sticky ? esc(sticky.text) : ''}</div>
+    </div>`;
+  }
+
+  // answerSection: '' unless the mission has questions (so every existing
+  // mission paints exactly as before). No status gate except solved: ADR-0027
+  // free browsing, a mission not yet reached can be answered too (ADR-0056 D18),
+  // the same as the evade flag form (evadeSection / submitForm, no status gate).
+  function answerSection(det) {
+    const qs = Array.isArray(det.questions) ? det.questions : [];
+    if (!qs.length) return '';
+    const solved = det.status === 'solved';
+    const done = qs.filter(q => q.correct).length;
+    const head = solved ? '設問 (全問正解・クリア済み)' : '設問 (' + done + ' / ' + qs.length + ' 問 正解)';
+    return `<div class="sec-title">${esc(head)}</div>${qs.map((q, i) => answerRowHTML(det.id, q, i, solved)).join('')}`;
+  }
+
+  // answerOutcome: the line shown for one submission, decided ONLY by the HTTP
+  // status and the four fields of AnswerResult (status / correct / solved /
+  // remaining); the server's own sentence is never used. httpStatus 0 = the
+  // request did not complete. cls = the .submit-msg modifier; changed = repaint
+  // from the journey (the counts moved, or may have); lock = nothing more can
+  // be submitted for this question.
+  function answerOutcome(httpStatus, d) {
+    if (httpStatus === 200) {
+      const wellFormed = d && typeof d === 'object' && Number.isInteger(d.remaining) && d.remaining >= 0
+        && typeof d.correct === 'boolean' && typeof d.solved === 'boolean';
+      const left = wellFormed ? '残り ' + d.remaining + ' 回' : '';
+      const said = (cls, text, lock) => ({ cls, text, changed: true, lock });
+      if (wellFormed) {
+        switch (d.status) {
+          case 'correct':
+            return said('ok', d.solved
+              ? '✔ 正解です。全問正解 — ミッションクリア！（' + left + '）'
+              : '✔ 正解です。残りの設問にも回答してください。（' + left + '）', d.solved);
+          case 'incorrect':
+            return said('err', '✗ 違います。' + left + 'です。', d.solved);
+          case 'exhausted':
+            return said('err', 'この設問の回答回数を使い切りました。（' + left + '）', true);
+          case 'already-correct':
+            return said('ok', d.solved
+              ? '✔ すでに正解済みで、ミッションはクリア済みです。（' + left + '）'
+              : '✔ すでに正解済みです。残りの設問にも回答してください。（' + left + '）', d.solved);
+        }
+      }
+      return said('warn', '応答を解釈できませんでした。ページを再読み込みして、状態を確認してください。', false);
+    }
+    const failed = (cls, text, changed) => ({ cls, text, changed, lock: false });
+    switch (httpStatus) {
+      case 0: return failed('err', '通信エラーです。しばらくしてから再試行してください。', false);
+      case 400: return failed('err', '回答の形式が正しくありません。入力を確認してください（回数は減っていません）。', false);
+      case 403: return failed('err', 'この操作は許可されていません。ページを再読み込みして、ログインし直してください。', false);
+      case 404: return failed('err', '設問が見つかりません。ページを再読み込みしてください。', false);
+      case 429: return failed('warn', '提出が多すぎます。少し待ってから、もう一度提出してください。', false);
+      // 500: the grade could not be made. ADR-0056 D5: a failure AFTER the attempt
+      // was counted leaves it spent, so this does not claim the count is intact;
+      // the repaint (changed) shows the real remaining.
+      case 500: return failed('err', '採点できませんでした。しばらくしてから、もう一度提出してください。残りの回数は上の表示で確認できます。', true);
+      default: return failed('err', '提出に失敗しました（HTTP ' + httpStatus + '）。しばらくしてから再試行してください。', false);
+    }
+  }
+
+  // The write path. A same-origin browser fetch with a JSON body: it carries
+  // Origin / Referer by itself (the route is origin-guarded and not collector-
+  // forwarded; a header-less script cannot reach it). busy keeps the 2s poll
+  // away while the request is in flight (and refuses a second submit); the
+  // refresh() AFTER the write is not blocked by it (busy is cleared first).
+  async function onAnswerSubmit(e, cid, q, i) {
+    e.preventDefault();
+    const input = document.getElementById('pane-journey-answer-input-' + i);
+    const btn = document.getElementById('pane-journey-answer-btn-' + i);
+    const msg = document.getElementById('pane-journey-answer-msg-' + i);
+    if (busy || !input || !msg) return;
+    const key = answerKey(cid, q.id);
+    const show = (o) => { msg.className = 'submit-msg ' + o.cls; msg.textContent = o.text; answerMsgs[key] = { cls: o.cls, text: o.text }; };
+    const answer = input.value.trim();
+    if (!answer) { show({ cls: 'err', text: '回答を入力してください。' }); return; }
+    // The button is NOT disabled while the request is in flight: a disabled control
+    // loses keyboard focus. busy already refuses a second submit.
+    busy = true;
+    delete answerMsgs[key];
+    msg.className = 'submit-msg';
+    msg.textContent = '提出中…';
+    let o;
+    try {
+      const r = await fetch('/api/users/' + encodeURIComponent(user) + '/challenges/' + encodeURIComponent(cid) + '/questions/' + encodeURIComponent(q.id) + '/answer',
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answer }) });
+      const d = r.status === 200 ? await r.json().catch(() => null) : null;
+      o = answerOutcome(r.status, d);
+    } catch (err) {
+      o = answerOutcome(0, null);
+    }
+    show(o);
+    if (o.lock) {
+      delete answerDrafts[key];
+      input.disabled = true;
+      if (btn) btn.disabled = true;
+    }
+    busy = false;
+    announce(o.text);
+    if (o.changed) await refresh();
+  }
+
+  // pruneAnswerState drops the drafts / result lines of every mission but the one
+  // now painted (none painted: all).
+  function pruneAnswerState(det) {
+    const prefix = det && det.id ? det.id + '/' : null;
+    [answerDrafts, answerMsgs].forEach(m => {
+      Object.keys(m).forEach(k => { if (!prefix || k.indexOf(prefix) !== 0) delete m[k]; });
+    });
+  }
+
+  // captureAnswerFocus / restoreAnswerFocus: a repaint replaces the nodes, so the
+  // focused answer control (and the caret in it) is read before and set after.
+  // The typed text itself is not read from the DOM: answerDrafts has it.
+  function captureAnswerFocus() {
+    const el = document.activeElement;
+    if (!el || typeof el.id !== 'string' || el.id.indexOf('pane-journey-answer-') !== 0) return null;
+    return { id: el.id, start: el.selectionStart, end: el.selectionEnd };
+  }
+
+  function restoreAnswerFocus(saved) {
+    if (!saved) return;
+    const el = document.getElementById(saved.id);
+    if (!el || el.disabled) return;
+    el.focus();
+    if (typeof saved.start === 'number' && typeof saved.end === 'number' && typeof el.setSelectionRange === 'function') {
+      try { el.setSelectionRange(saved.start, saved.end); } catch (_) { /* not a text control */ }
+    }
+  }
+
   function wireDetail(det) {
     // C1 fixup: explicit "戻る" button, shown only when browsing away from
     // current (backToCurrentHTML). Absent element = current-mission view, no-op.
@@ -868,6 +1076,18 @@
         busy = false;
       });
     }
+
+    // Answer form (A6): one form per question, rewired on every repaint like the
+    // rest of this function. The question comes from det (closure), never from
+    // the DOM; the input listener keeps answerDrafts current so a repaint can
+    // put the typed text back.
+    (Array.isArray(det.questions) ? det.questions : []).forEach((q, i) => {
+      const qForm = document.getElementById('pane-journey-answer-form-' + i);
+      if (!qForm) return;
+      qForm.addEventListener('submit', (e) => onAnswerSubmit(e, det.id, q, i));
+      const qInput = document.getElementById('pane-journey-answer-input-' + i);
+      if (qInput) qInput.addEventListener('input', () => { answerDrafts[answerKey(det.id, q.id)] = qInput.value; });
+    });
 
     // evade flag submit
     const form = document.getElementById('pane-journey-submit-form');
