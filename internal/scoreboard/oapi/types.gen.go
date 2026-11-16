@@ -194,7 +194,9 @@ type AdminResetResult struct {
 // AnswerRequest `POST /api/users/{user}/challenges/{cid}/questions/{qid}/answer`. Exactly
 // one key; no other key is accepted (400). JSON only.
 type AnswerRequest struct {
-	// Answer The participant's answer, as typed. It is normalised by the question's
+	// Answer The participant's answer, as typed: at most 256 BYTES of UTF-8 (`maxLength`
+	// counts characters, so for multibyte text the byte limit takes effect
+	// first; a longer one is 400 and costs nothing). It is normalised by the question's
 	// format (ADR-0056 D2) before it is compared, and it is never stored, shown
 	// or logged: no response of this route carries it, or a length of it.
 	Answer string `json:"answer"`
