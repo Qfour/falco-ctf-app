@@ -1,8 +1,11 @@
 package view
 
 import (
+	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/Qfour/falco-ctf-app/internal/catalog/answerformat"
 )
 
 // V40 (ADR-0056 A6): the participant portal's answer form for an investigate mission
@@ -58,6 +61,8 @@ func answerRules(t *testing.T, story string) string {
 		b.WriteString(extractJSFunc(t, story, f) + "\n")
 	}
 	b.WriteString(cutStoryBlock(t, story, "async function onAnswerSubmit(") + "\n")
+	// wireDetail's body mentions the word "function" in a comment, so it is cut by funcBody.
+	b.WriteString(funcBody(t, story, "wireDetail") + "\n")
 	return b.String()
 }
 
@@ -94,6 +99,7 @@ out.states = {
   solved: states([q({ correct: true })], 'solved'),
   multi: states([q({ id: 'q1', correct: true }), q({ id: 'q2', remaining: 0 }), q({ id: 'q3' })]),
   seven: states([q({ remaining: 7, attempts: 10 })]),
+  locked: states([q({})], 'locked'),
 };
 out.empty = section([]);
 out.absent = answerSection({ id: 'c1', status: 'current' });
@@ -161,6 +167,7 @@ out.detail = {
   withQ: renderDetail(Object.assign({}, det, { questions: [q({})] })),
   evadeNone: renderDetail(Object.assign({}, det, { type: 'evade' })),
   evadeEmpty: renderDetail(Object.assign({}, det, { type: 'evade', questions: [] })),
+  evadeLocked: renderDetail(Object.assign({}, det, { type: 'evade', status: 'locked' })),
 };
 
 // The write path.
@@ -200,6 +207,37 @@ async function main() {
   busy = true;
   out.sub.busy = await run('incorrect', '/x');
   busy = false;
+
+  // wireDetail's question part, RUN: a fake form / input that record their listeners.
+  clearState();
+  els = {};
+  document.querySelectorAll = function () { return []; };
+  function elWith(id) { var e = { id: id, value: '', disabled: false, className: '', textContent: '', l: {}, addEventListener: function (t, f) { this.l[t] = f; } }; els[id] = e; return e; }
+  els['pane-story'] = { querySelectorAll: function () { return []; } };
+  var f = elWith('pane-journey-answer-form-0'), inp = elWith('pane-journey-answer-input-0');
+  elWith('pane-journey-answer-btn-0'); elWith('pane-journey-answer-msg-0');
+  wireDetail({ id: 'c1', hints: { opened: [] }, questions: [q({})] });
+  inp.value = 'half-typed';
+  inp.l.input();
+  var draftAfterInput = answerDrafts['c1/q1'];
+  inp.value = '/etc/x';
+  fetchMode = 'incorrect'; fetchCalls.length = 0; refreshCalls = 0;
+  await f.l.submit({ preventDefault: function () {} });
+  out.wire = { hasSubmit: typeof f.l.submit === 'function', hasInput: typeof inp.l.input === 'function', draft: draftAfterInput, calls: fetchCalls.length, refreshes: refreshCalls };
+
+  // The repaint sequence render() runs, with the real helpers: prune, read the focus, paint, give it back.
+  clearState();
+  answerDrafts['c1/q1'] = 'keep me';
+  document.activeElement = { id: 'pane-journey-answer-input-0', selectionStart: 3, selectionEnd: 3 };
+  pruneAnswerState({ id: 'c1' });
+  var saved = captureAnswerFocus();
+  var htmlSame = section([q({ remaining: 2 })]);
+  var fresh = { disabled: false, focus: function () { this.got = true; }, setSelectionRange: function (a, b) { this.caret = [a, b]; } };
+  els = { 'pane-journey-answer-input-0': fresh };
+  restoreAnswerFocus(saved);
+  pruneAnswerState({ id: 'c2' });
+  var htmlOther = answerSection({ id: 'c2', status: 'current', questions: [q({})] });
+  out.through = { htmlSame: htmlSame, focused: fresh.got === true, caret: fresh.caret || null, htmlOther: htmlOther };
 }
 main();
 `
@@ -269,6 +307,23 @@ type answerDriverOut struct {
 	PruneAll      answerKeysJS               `json:"pruneAll"`
 	Detail        map[string]string          `json:"detail"`
 	Sub           map[string]answerSubmitJS  `json:"sub"`
+	Wire          answerWireJS               `json:"wire"`
+	Through       answerThroughJS            `json:"through"`
+}
+
+type answerWireJS struct {
+	HasSubmit bool   `json:"hasSubmit"`
+	HasInput  bool   `json:"hasInput"`
+	Draft     string `json:"draft"`
+	Calls     int    `json:"calls"`
+	Refreshes int    `json:"refreshes"`
+}
+
+type answerThroughJS struct {
+	HTMLSame  string `json:"htmlSame"`
+	Focused   bool   `json:"focused"`
+	Caret     []int  `json:"caret"`
+	HTMLOther string `json:"htmlOther"`
 }
 
 type journeyPollJS struct {
@@ -574,5 +629,96 @@ main();
 	}
 	if got.OK.Rendered != 1 || !strings.HasPrefix(got.OK.Updated, "updated ") {
 		t.Errorf("the next good poll repaints: %+v", got.OK)
+	}
+}
+
+// ADR-0027 free browsing / ADR-0056 D18: a mission not yet reached (locked) can be answered,
+// the same as the evade flag form (evadeSection has no status gate). Pinned so that a change
+// is a decision, not an accident.
+func TestPortalAnswer_UnreachedMissionStaysOpen(t *testing.T) {
+	got := runAnswerDriver(t, answerStory(t))
+	l := got.States["locked"]
+	if len(l.Input) != 1 || len(l.Btn) != 1 || l.Input[0] || l.Btn[0] {
+		t.Errorf("an open question of a locked mission must stay enabled: input %v button %v", l.Input, l.Btn)
+	}
+	if !strings.Contains(got.Detail["evadeLocked"], `id="pane-journey-flag-input"`) {
+		t.Error("the existing evade flag form is expected to be drawn for a locked mission (the precedent this behaviour follows)")
+	}
+}
+
+// The listeners wireDetail attaches to a question's form and input, RUN: typing updates
+// answerDrafts (what a repaint puts back), and a submit reaches onAnswerSubmit.
+func TestPortalAnswer_WiringKeepsTheDraftAndSubmits(t *testing.T) {
+	w := runAnswerDriver(t, answerStory(t)).Wire
+	if !w.HasSubmit || !w.HasInput {
+		t.Fatalf("wireDetail did not attach the question's submit / input listeners: %+v", w)
+	}
+	if w.Draft != "half-typed" {
+		t.Errorf("an input event must store the typed text in answerDrafts, got %q", w.Draft)
+	}
+	if w.Calls != 1 || w.Refreshes != 1 {
+		t.Errorf("a submit event must reach onAnswerSubmit (one POST, one repaint): %+v", w)
+	}
+}
+
+// The repaint sequence of render() (prune, read the focus, paint, give the focus back) with
+// the real helpers: the same mission keeps the typed text and the focus, another mission
+// starts empty. (That render() calls them in this order is checked in
+// TestPortalAnswer_RepaintKeepsWhatWasTyped.)
+func TestPortalAnswer_RepaintSequenceKeepsInputAndFocus(t *testing.T) {
+	th := runAnswerDriver(t, answerStory(t)).Through
+	if !strings.Contains(th.HTMLSame, `value="keep me"`) {
+		t.Errorf("the same mission's repaint must carry the typed text: %s", th.HTMLSame)
+	}
+	if !th.Focused || len(th.Caret) != 2 || th.Caret[0] != 3 || th.Caret[1] != 3 {
+		t.Errorf("the focused input is focused again with its caret: %+v", th)
+	}
+	if strings.Contains(th.HTMLOther, "keep me") || !strings.Contains(th.HTMLOther, `value=""`) {
+		t.Errorf("another mission's paint must start empty: %s", th.HTMLOther)
+	}
+}
+
+// answerFormatHint is a third copy of the closed format list (the spec's
+// MissionQuestion.format enum, answerformat.Formats()). A format without a hint, or a hint
+// for a format that does not exist, goes red here.
+func formatHints(t *testing.T, story string) map[string]string {
+	t.Helper()
+	var got map[string]string
+	runJS(t, extractJSFunc(t, story, "answerFormatHint"), `
+var out = {};
+for (var i = 0; i < FORMATS.length; i++) { out[FORMATS[i]] = answerFormatHint(FORMATS[i]); }
+`, map[string]any{"FORMATS": answerformat.Formats()}, &got)
+	return got
+}
+
+func TestPortalAnswer_FormatHintCoversTheClosedList(t *testing.T) {
+	story := answerStory(t)
+	formats := answerformat.Formats()
+	if len(formats) == 0 {
+		t.Fatal("answerformat.Formats() is empty")
+	}
+	hints := formatHints(t, story)
+	for _, f := range formats {
+		if hints[f] == "" {
+			t.Errorf("answerFormatHint has no hint for the format %q (a new format must get one)", f)
+		}
+	}
+	known := map[string]bool{}
+	for _, f := range formats {
+		known[f] = true
+	}
+	fn := extractJSFunc(t, story, "answerFormatHint")
+	for _, m := range regexp.MustCompile(`case '([^']+)':`).FindAllStringSubmatch(fn, -1) {
+		if !known[m[1]] {
+			t.Errorf("answerFormatHint has a case for %q, which is not in answerformat.Formats()", m[1])
+		}
+	}
+	// The mutation: one case removed from the real source goes red.
+	const line = "      case 'sequence': return '設問の指示どおりの順序で';\n"
+	if strings.Count(story, line) != 1 {
+		t.Fatal("want exactly one sequence case in answerFormatHint to mutate")
+	}
+	if h := formatHints(t, strings.Replace(story, line, "", 1)); h["sequence"] != "" {
+		t.Error("the mutated source (sequence case removed) still returns a hint: the check cannot fail")
 	}
 }

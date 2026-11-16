@@ -845,7 +845,9 @@
   }
 
   // answerSection: '' unless the mission has questions (so every existing
-  // mission paints exactly as before).
+  // mission paints exactly as before). No status gate except solved: ADR-0027
+  // free browsing, a mission not yet reached can be answered too (ADR-0056 D18),
+  // the same as the evade flag form (evadeSection / submitForm, no status gate).
   function answerSection(det) {
     const qs = Array.isArray(det.questions) ? det.questions : [];
     if (!qs.length) return '';
@@ -1088,7 +1090,7 @@
     });
 
     // evade flag submit
-    const form =document.getElementById('pane-journey-submit-form');
+    const form = document.getElementById('pane-journey-submit-form');
     if (form) {
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
