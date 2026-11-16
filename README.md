@@ -90,7 +90,7 @@ falco-ctf-app/
 │   └── detect-grader/  `type: detect` 課題の capture-replay 採点 (falco base + grade.sh)
 ├── challenges/<NN>-<slug>/
 │   ├── README.md       出題文 + 想定解 (operator/author 向け)
-│   ├── falco-rule.yaml scoreboard が読む期待ルール定義 (trigger/evade/detect)
+│   ├── falco-rule.yaml scoreboard が読む期待ルール定義 (trigger/evade/detect。調査型 `investigate` は ADR-0056 の実装中)
 │   ├── fixtures/       参加者向けファイル (challenge イメージに焼込)
 │   ├── plant.sh        (evade) フラグ仕込み単一ソース → make gen-values
 │   └── values.yaml     (生成物) ctf-user chart の postStart overlay

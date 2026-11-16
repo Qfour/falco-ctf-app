@@ -329,7 +329,6 @@ func TestCheckSpace_Boundaries(t *testing.T) {
 		{"6P3 = 120 passes at 1 attempt", "sequence", answerformat.Params{Labels: opts(6), Length: ip(3)}, 1, false},
 		{"6P3 = 120 is refused at 2 attempts", "sequence", answerformat.Params{Labels: opts(6), Length: ip(3)}, 2, true},
 		{"hexid 12 passes at 10 attempts", "hexid", pHex12, 10, false},
-		{"path is sized by the edition vocabulary, not here", "path", answerformat.Params{}, 10, false},
 		{"technique cannot be sized: refused", "technique", answerformat.Params{}, 1, true},
 	}
 	for _, c := range cases {
@@ -337,6 +336,20 @@ func TestCheckSpace_Boundaries(t *testing.T) {
 		if (err != nil) != c.wantErr {
 			t.Errorf("%s: CheckSpace err = %v, wantErr %v", c.name, err, c.wantErr)
 		}
+	}
+}
+
+// A vocabulary-sized format is never a silent nil: CheckSpace says so, and the
+// caller (the catalog) chooses to pass it (ADR-0056 D3 (a); the edition validator
+// sizes it).
+func TestCheckSpace_VocabularyFormatsReportItExplicitly(t *testing.T) {
+	for _, f := range []string{"path", "name"} {
+		if err := answerformat.CheckSpace(f, answerformat.Params{}, 10); !errors.Is(err, answerformat.ErrSpaceFromVocabulary) {
+			t.Errorf("CheckSpace(%s) err = %v, want ErrSpaceFromVocabulary", f, err)
+		}
+	}
+	if err := answerformat.CheckSpace("technique", answerformat.Params{}, 1); !errors.Is(err, answerformat.ErrSpaceUnavailable) {
+		t.Errorf("CheckSpace(technique) err = %v, want ErrSpaceUnavailable", err)
 	}
 }
 

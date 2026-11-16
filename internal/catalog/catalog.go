@@ -7,7 +7,7 @@
 //	               rejects the file (ADR-0026 interpretation 1; app#320). The
 //	               directory name is canonical: the challenge image builder,
 //	               journeys, fixtures paths and hint-leak check all key by it.
-//	type:          "trigger" | "evade" | "detect" (required)
+//	type:          "trigger" | "evade" | "detect" | "investigate" (required)
 //	expectedRules: []string  — solve when one of these rules fires
 //	forbiddenRules:[]string  — submission rejected once any of these has fired
 //	               for the participant DURING THIS CHALLENGE'S ATTEMPT (ADR-0003
@@ -36,6 +36,10 @@
 //	detect:        Detect — required for "detect"; the capture pair + rule
 //	               skeleton the participant's condition is graded against
 //	               (see Detect and the detect-challenge design doc).
+//	investigate:   Investigate — required for "investigate" (ADR-0056, Proposed):
+//	               the evidence mount and the questions' shape (id, format,
+//	               attempts, params). Decoded strictly; see investigate.go. The
+//	               "investigate" name is provisional (TypeInvestigate).
 package catalog
 
 import (
@@ -98,6 +102,9 @@ type Challenge struct {
 	// rule to prove would be unsatisfiable by construction.
 	RequireExpectedRuleFire bool    `yaml:"requireExpectedRuleFire"`
 	Detect                  *Detect `yaml:"detect"`
+	// Investigate is the block of an "investigate" challenge (ADR-0056, see
+	// investigate.go); nil for every other type.
+	Investigate *Investigate `yaml:"investigate"`
 	// NoHintPenalty exempts this challenge's revealed hints from the
 	// per-hint-index score penalty (scoring.Grader.UserScore). Intended for
 	// zero-stakes onboarding missions (00-tutorial) where hints should be
@@ -187,7 +194,13 @@ func parseFile(path, dirName string) (Challenge, error) {
 	}
 	ch.dir = dirName
 	if ch.Type == "" {
-		return Challenge{}, fmt.Errorf("challenge %q: type must be \"trigger\", \"evade\" or \"detect\"", ch.ID)
+		return Challenge{}, fmt.Errorf("challenge %q: type must be \"trigger\", \"evade\", \"detect\" or %q", ch.ID, TypeInvestigate)
+	}
+	// An investigate: block on any other type would be read by nothing; refuse it
+	// rather than leave a questions list that looks live (the existing types'
+	// decode is otherwise unchanged).
+	if ch.Type != TypeInvestigate && ch.Investigate != nil {
+		return Challenge{}, fmt.Errorf("challenge %q: an investigate block belongs to type %q only, not %q", ch.ID, TypeInvestigate, ch.Type)
 	}
 	switch ch.Type {
 	case "evade":
@@ -209,8 +222,12 @@ func parseFile(path, dirName string) (Challenge, error) {
 		if err := validateDetect(&ch); err != nil {
 			return Challenge{}, err
 		}
+	case TypeInvestigate:
+		if err := validateInvestigate(&ch); err != nil {
+			return Challenge{}, err
+		}
 	default:
-		return Challenge{}, fmt.Errorf("challenge %q: unknown type %q, must be \"trigger\", \"evade\" or \"detect\"", ch.ID, ch.Type)
+		return Challenge{}, fmt.Errorf("challenge %q: unknown type %q, must be \"trigger\", \"evade\", \"detect\" or %q", ch.ID, ch.Type, TypeInvestigate)
 	}
 	return ch, nil
 }

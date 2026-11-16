@@ -1,0 +1,343 @@
+package catalog_test
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/Qfour/falco-ctf-app/internal/catalog"
+)
+
+// ADR-0056 stage A1 (V10 and the catalog side of V6): the `investigate` type,
+// its strict block, and the load-time checks. Fixtures are written under
+// t.TempDir(); no challenge under challenges/ uses the type yet.
+
+const (
+	invMount = "/opt/ctf/evidence"
+	// one good question: a 16-digit hexid (space 16^16, attempts default 5)
+	invHexQ = "    - id: q1\n      format: hexid\n      params: {length: 16}\n"
+)
+
+// inv builds a falco-rule.yaml of an investigate challenge. extra is inserted
+// before the type line (top-level keys); evidence is the whole `evidence:` value.
+func inv(extra, evidence, questions string) string {
+	return extra + "type: " + catalog.TypeInvestigate + "\ninvestigate:\n  evidence: " + evidence + "\n  questions:\n" + questions
+}
+
+func evMount(dir string) string { return "{mountDir: " + dir + "}" }
+
+func TestLoad_Investigate_Valid(t *testing.T) {
+	dir := t.TempDir()
+	writeChallenge(t, dir, "14-ir-demo", inv("", evMount(invMount),
+		invHexQ+
+			"    - id: q-choice\n      format: choice-set\n      attempts: 10\n"+
+			"      params: {choices: [a1, a2, a3, a4, a5, a6, a7, a8, a9, a10]}\n"+
+			"    - id: q-window\n      format: timestamp\n      attempts: 3\n      params: {windowSeconds: 3600}\n"+
+			"    - id: q-path\n      format: path\n"+
+			"    - id: q-seq\n      format: sequence\n      attempts: 1\n"+
+			"      params: {labels: [a, b, c, d, e, f], length: 3}\n"))
+	cat, err := catalog.Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	ch := cat["14-ir-demo"]
+	if ch.Type != catalog.TypeInvestigate || ch.Investigate == nil {
+		t.Fatalf("type %q, block %v", ch.Type, ch.Investigate)
+	}
+	if ch.Investigate.Evidence.MountDir != invMount {
+		t.Errorf("mountDir = %q", ch.Investigate.Evidence.MountDir)
+	}
+	wantAttempts := map[string]int{"q1": catalog.DefaultAttempts, "q-choice": 10, "q-window": 3, "q-path": catalog.DefaultAttempts, "q-seq": 1}
+	qs := ch.Investigate.Questions
+	if len(qs) != len(wantAttempts) {
+		t.Fatalf("%d questions, want %d", len(qs), len(wantAttempts))
+	}
+	for _, q := range qs {
+		if q.Attempts != wantAttempts[q.ID] {
+			t.Errorf("question %q attempts = %d, want %d", q.ID, q.Attempts, wantAttempts[q.ID])
+		}
+	}
+	if qs[0].ID != "q1" || qs[4].ID != "q-seq" {
+		t.Errorf("question order changed: %v", qs)
+	}
+}
+
+// V10: every one of these is a load failure, for the reason named.
+func TestLoad_Investigate_RejectsMalformedBlocks(t *testing.T) {
+	ok := func(q string) string { return inv("", evMount(invMount), q) }
+	manyQs := strings.Repeat(invHexQ, 1)
+	for i := 2; i <= 9; i++ { // q1 plus q2..q9 = 9 questions
+		manyQs += strings.Replace(invHexQ, "q1", "q"+string(rune('0'+i)), 1)
+	}
+	cases := []struct {
+		name string
+		yaml string
+		want string
+	}{
+		// strict decode: an unknown key at any depth
+		{"unknown key under investigate", "type: " + catalog.TypeInvestigate + "\ninvestigate:\n  extra: 1\n  evidence: " + evMount(invMount) + "\n  questions:\n" + invHexQ, "field extra not found"},
+		{"unknown key under evidence", inv("", "{mountDir: "+invMount+", perm: 444}", invHexQ), "field perm not found"},
+		{"answer key under a question", ok(invHexQ + "      answer: deadbeef\n"), "field answer not found"},
+		{"unknown key under params", ok("    - id: q1\n      format: hexid\n      params: {length: 16, bogus: 1}\n"), "field bogus not found"},
+		{"attempts is not a number", ok("    - id: q1\n      format: hexid\n      attempts: five\n      params: {length: 16}\n"), "investigate block"},
+		// flag / rule keys must be empty
+		{"expectedFlag set", inv("expectedFlag: FALCO{abc}\n", evMount(invMount), invHexQ), "expectedFlag must be empty"},
+		{"expectedRules set", inv("expectedRules: [r]\n", evMount(invMount), invHexQ), "expectedRules/forbiddenRules must be empty"},
+		{"forbiddenRules set", inv("forbiddenRules: [r]\n", evMount(invMount), invHexQ), "expectedRules/forbiddenRules must be empty"},
+		{"requireExfil set", inv("requireExfil: true\n", evMount(invMount), invHexQ), "requireExfil"},
+		{"requireExpectedRuleFire set", inv("requireExpectedRuleFire: true\n", evMount(invMount), invHexQ), "requireExpectedRuleFire"},
+		{"detect block set", inv("detect: {evasionCapture: a.scap, benignCapture: b.scap}\n", evMount(invMount), invHexQ), "detect block must be absent"},
+		{"no investigate block", "type: " + catalog.TypeInvestigate + "\n", "investigate block is required"},
+		// questions
+		{"no questions", ok("    []\n"), "questions needs 1..8"},
+		{"nine questions", ok(manyQs), "questions needs 1..8"},
+		{"qid outside the grammar", ok(strings.Replace(invHexQ, "q1", "Q1", 1)), "outside ^[a-z]"},
+		{"qid duplicated", ok(invHexQ + invHexQ), "duplicate question id"},
+		{"format outside the list", ok("    - id: q1\n      format: regex\n"), "is not one of"},
+		{"format missing", ok("    - id: q1\n      params: {length: 16}\n"), "is not one of"},
+		{"params key of another format", ok("    - id: q1\n      format: hexid\n      params: {length: 16, windowSeconds: 5}\n"), "hexid takes only params.length"},
+		{"params on a format that takes none", ok("    - id: q1\n      format: path\n      params: {length: 3}\n"), "takes no params"},
+		{"hexid length out of range", ok("    - id: q1\n      format: hexid\n      params: {length: 8}\n"), "params.length in 12..64"},
+		{"attempts 0", ok(invHexQ + "      attempts: 0\n"), "attempts must be in 1..10"},
+		{"attempts -1", ok(invHexQ + "      attempts: -1\n"), "attempts must be in 1..10"},
+		{"attempts 11", ok(invHexQ + "      attempts: 11\n"), "attempts must be in 1..10"},
+		// D3 (a) / V6 (catalog side)
+		{"4-option choice-set (15 < 100 x 5)", ok("    - id: q1\n      format: choice-set\n      params: {choices: [a, b, c, d]}\n"), "below 100 x attempts"},
+		{"9-option choice-set at 6 attempts (511 < 600)", ok("    - id: q1\n      format: choice-set\n      attempts: 6\n      params: {choices: [a, b, c, d, e, f, g, h, i]}\n"), "below 100 x attempts"},
+		{"timestamp window 499 at the default 5 attempts", ok("    - id: q1\n      format: timestamp\n      params: {windowSeconds: 499}\n"), "below 100 x attempts"},
+		{"technique cannot be sized", ok("    - id: q1\n      format: technique\n"), "cannot be computed"},
+		// mountDir
+		{"mountDir empty", inv("", `{mountDir: ""}`, invHexQ), "must not be empty"},
+		{"mountDir missing", inv("", "{}", invHexQ), "must not be empty"},
+		{"mountDir relative", inv("", evMount("evidence"), invHexQ), "absolute, clean path"},
+		{"mountDir is /", inv("", evMount("/"), invHexQ), "absolute, clean path"},
+		{"mountDir trailing slash", inv("", evMount("/opt/ctf/evidence/"), invHexQ), "absolute, clean path"},
+		{"mountDir doubled slash", inv("", evMount("/opt//evidence"), invHexQ), "absolute, clean path"},
+		{"mountDir with ..", inv("", evMount("/opt/../etc"), invHexQ), "absolute, clean path"},
+		{"mountDir character outside the set", inv("", evMount("/opt/ctf/ev idence"), invHexQ), "outside [A-Za-z0-9._-]"},
+		{"mountDir is the missions dir", inv("", evMount("/opt/ctf/missions"), invHexQ), "overlaps /opt/ctf/missions"},
+		{"mountDir under the missions dir", inv("", evMount("/opt/ctf/missions/x"), invHexQ), "overlaps /opt/ctf/missions"},
+		{"mountDir above the missions dir", inv("", evMount("/opt/ctf"), invHexQ), "overlaps /opt/ctf/missions"},
+		{"mountDir is the seed root", inv("", evMount("/plant-seed"), invHexQ), "overlaps /plant-seed"},
+		{"mountDir under the seed root", inv("", evMount("/plant-seed/a"), invHexQ), "overlaps /plant-seed"},
+		{"mountDir under the snapshot root", inv("", evMount("/opt/ctf/plant-seed/a"), invHexQ), "overlaps /opt/ctf/plant-seed"},
+		// the block belongs to this type only
+		{"investigate block on a trigger", "type: trigger\nexpectedRules: [r]\ninvestigate:\n  evidence: " + evMount(invMount) + "\n  questions:\n" + invHexQ, "belongs to type"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeChallenge(t, dir, "14-ir-demo", c.yaml)
+			_, err := catalog.Load(dir)
+			wantLoadError(t, err, c.want)
+		})
+	}
+}
+
+func TestLoad_Investigate_AcceptsPlainMountDirs(t *testing.T) {
+	for _, m := range []string{"/opt/ctf/evidence", "/srv/ir/bundle", "/opt/ctf/missions-extra", "/var/lib/evidence.d"} {
+		dir := t.TempDir()
+		writeChallenge(t, dir, "14-ir-demo", inv("", evMount(m), invHexQ))
+		if _, err := catalog.Load(dir); err != nil {
+			t.Errorf("mountDir %s: %v", m, err)
+		}
+	}
+}
+
+// V6 (catalog): the boundary that the 4-option refusal sits next to.
+func TestLoad_Investigate_SpaceBoundary(t *testing.T) {
+	dir := t.TempDir()
+	// invHexQ is the per-seat question V20 needs, so only the choice-set is under test.
+	writeChallenge(t, dir, "14-ir-demo", inv("", evMount(invMount), invHexQ+invChoiceQ))
+	if _, err := catalog.Load(dir); err != nil {
+		t.Fatalf("n = 10 options at 10 attempts (1023 >= 1000) must load: %v", err)
+	}
+}
+
+const invChoiceQ = "    - id: q2\n      format: choice-set\n      attempts: 10\n" +
+	"      params: {choices: [a1, a2, a3, a4, a5, a6, a7, a8, a9, a10]}\n"
+
+const invSeqQ = "    - id: q3\n      format: sequence\n      attempts: 1\n" +
+	"      params: {labels: [a, b, c, d, e, f], length: 3}\n"
+
+// V20 (ADR-0056 D1): every investigate challenge has at least one question whose
+// format can vary per seat; fixed-answer questions alone could be solved by
+// sharing the answers on the Board.
+func TestLoad_Investigate_V20_NeedsAPerSeatQuestion(t *testing.T) {
+	dir := t.TempDir()
+	writeChallenge(t, dir, "14-ir-demo", inv("", evMount(invMount), invChoiceQ+invSeqQ))
+	_, err := catalog.Load(dir)
+	wantLoadError(t, err, "can vary per seat")
+
+	for name, q := range map[string]string{
+		"hexid":     invHexQ,
+		"timestamp": "    - id: q1\n      format: timestamp\n      params: {windowSeconds: 3600}\n",
+		"path":      "    - id: q1\n      format: path\n",
+		"name":      "    - id: q1\n      format: name\n",
+	} {
+		d := t.TempDir()
+		writeChallenge(t, d, "14-ir-demo", inv("", evMount(invMount), invChoiceQ+invSeqQ+q))
+		if _, err := catalog.Load(d); err != nil {
+			t.Errorf("fixed questions plus one %s question must load: %v", name, err)
+		}
+	}
+}
+
+// V21: path / name are sized by the edition vocabulary, not by the catalog, so
+// the catalog passes them (explicitly, on ErrSpaceFromVocabulary) even at the
+// largest attempts; technique stays refused (no ATT&CK table: ErrSpaceUnavailable).
+func TestLoad_Investigate_V21_VocabularySpaceIsDeferredTechniqueIsRefused(t *testing.T) {
+	for _, f := range []string{"path", "name"} {
+		dir := t.TempDir()
+		writeChallenge(t, dir, "14-ir-demo", inv("", evMount(invMount),
+			"    - id: q1\n      format: "+f+"\n      attempts: 10\n"))
+		if _, err := catalog.Load(dir); err != nil {
+			t.Errorf("%s at 10 attempts must load (sized by the edition validator): %v", f, err)
+		}
+	}
+	dir := t.TempDir()
+	writeChallenge(t, dir, "14-ir-demo", inv("", evMount(invMount),
+		invHexQ+"    - id: q2\n      format: technique\n"))
+	_, err := catalog.Load(dir)
+	wantLoadError(t, err, "cannot be computed")
+}
+
+// Only the investigate: block is strict. The rest of falco-rule.yaml, for this
+// type and every other, decodes as before (an unknown top-level key is ignored).
+func TestLoad_Investigate_StrictOnlyInsideTheBlock(t *testing.T) {
+	dir := t.TempDir()
+	writeChallenge(t, dir, "14-ir-demo", inv("futureKey: 1\n", evMount(invMount), invHexQ))
+	writeChallenge(t, dir, "01-a", "type: trigger\nexpectedRules: [r]\nfutureKey: 1\nattack: {tactic: x}\n")
+	if _, err := catalog.Load(dir); err != nil {
+		t.Fatalf("an unknown top-level key must still load: %v", err)
+	}
+}
+
+func TestLoad_UnknownTypeMessageNamesTheInvestigateType(t *testing.T) {
+	dir := t.TempDir()
+	writeChallenge(t, dir, "01-a", "type: quiz\n")
+	_, err := catalog.Load(dir)
+	wantLoadError(t, err, catalog.TypeInvestigate)
+}
+
+// Until A3 the scoreboard has no grader for the type, and every scoring path
+// treats an unknown type as "not mine": LoadScored (the only door cmd/scoreboard
+// uses) refuses instead of listing a mission nobody can solve.
+func TestLoadScored_RefusesAnInvestigateChallengeInScope(t *testing.T) {
+	dir := t.TempDir()
+	writeChallenge(t, dir, "14-ir-demo", inv("", evMount(invMount), invHexQ))
+	writeChallenge(t, dir, "01-a", "type: trigger\nexpectedRules: [r]\n")
+	if _, err := catalog.Load(dir); err != nil {
+		t.Fatalf("Load itself must accept the type: %v", err)
+	}
+	_, err := catalog.LoadScored(dir, "", "")
+	wantLoadError(t, err, "does not grade")
+
+	// out of scope: a scenario that does not list it is fine
+	sc := filepath.Join(t.TempDir(), "scenario.yaml")
+	if err := os.WriteFile(sc, []byte("id: only-a\ntitle: Only A\nchallenges: [01-a]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	scored, err := catalog.LoadScored(dir, sc, "")
+	if err != nil {
+		t.Fatalf("a scenario without the investigate challenge must load: %v", err)
+	}
+	if _, ok := scored.Catalog["14-ir-demo"]; ok {
+		t.Fatal("restricted catalog still holds the investigate challenge")
+	}
+}
+
+// Regression: the 14 real challenges and every real scenario load exactly as
+// before (none of them uses the new type or block).
+func TestRealTree_LoadsUnchangedByTheNewType(t *testing.T) {
+	cat, err := catalog.Load("../../challenges")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cat) != 14 {
+		t.Fatalf("%d challenges, want 14", len(cat))
+	}
+	for id, ch := range cat {
+		if ch.Type == catalog.TypeInvestigate || ch.Investigate != nil {
+			t.Errorf("%s unexpectedly uses the investigate type", id)
+		}
+	}
+	scenarios, err := filepath.Glob("../../scenarios/*/scenario.yaml")
+	if err != nil || len(scenarios) < 3 {
+		t.Fatalf("scenario glob: %v %v", scenarios, err)
+	}
+	for _, sc := range scenarios {
+		scored, err := catalog.LoadScored("../../challenges", sc, "")
+		if err != nil {
+			t.Errorf("LoadScored(%s): %v", sc, err)
+			continue
+		}
+		if _, err := catalog.LoadJourneys("../../challenges", scored.Catalog); err != nil {
+			t.Errorf("LoadJourneys(%s): %v", sc, err)
+		}
+	}
+}
+
+// ---- journey questions[] (ADR-0056 D1) ----
+
+func invCatalog(t *testing.T, questions string) catalog.Catalog {
+	t.Helper()
+	dir := t.TempDir()
+	writeChallenge(t, dir, "14-ir-demo", inv("", evMount(invMount), questions))
+	cat, err := catalog.Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	return cat
+}
+
+const invTwoQ = invHexQ + "    - id: q2\n      format: hexid\n      params: {length: 16}\n"
+
+func TestLoadJourneys_Questions_SetMustMatchTheCatalog(t *testing.T) {
+	cat := invCatalog(t, invTwoQ)
+	head := "challengeId: 14-ir-demo\ntitle: IR\nquestions:\n"
+	cases := []struct {
+		name string
+		yaml string
+		want string // "" = loads
+	}{
+		{"both questions, any order", head + "  - {id: q2, prompt: second}\n  - {id: q1, prompt: first}\n", ""},
+		{"a question missing", head + "  - {id: q1, prompt: first}\n", "1 of the challenge's 2"},
+		{"an id the catalog does not have", head + "  - {id: q1, prompt: a}\n  - {id: q3, prompt: c}\n", "not a question of the challenge"},
+		{"an id twice", head + "  - {id: q1, prompt: a}\n  - {id: q1, prompt: b}\n", "appears twice"},
+		{"an empty prompt", head + "  - {id: q1, prompt: a}\n  - {id: q2, prompt: '  '}\n", "empty prompt"},
+		{"an answer key", head + "  - {id: q1, prompt: a, answer: deadbeef}\n  - {id: q2, prompt: b}\n", "field answer not found"},
+		{"no questions at all", "challengeId: 14-ir-demo\ntitle: IR\n", "0 of the challenge's 2"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeJourney(t, dir, "14-ir-demo", c.yaml)
+			js, err := catalog.LoadJourneys(dir, cat)
+			if c.want == "" {
+				if err != nil {
+					t.Fatalf("LoadJourneys: %v", err)
+				}
+				if len(js["14-ir-demo"].Questions) != 2 {
+					t.Fatalf("questions = %v", js["14-ir-demo"].Questions)
+				}
+				return
+			}
+			wantLoadError(t, err, c.want)
+		})
+	}
+}
+
+func TestLoadJourneys_Questions_AnInvestigateChallengeNeedsAJourney(t *testing.T) {
+	cat := invCatalog(t, invHexQ)
+	_, err := catalog.LoadJourneys(t.TempDir(), cat)
+	wantLoadError(t, err, "has no journey.yaml")
+}
+
+func TestLoadJourneys_Questions_OtherTypesHaveNone(t *testing.T) {
+	dir := t.TempDir()
+	writeJourney(t, dir, "01-initial-recon", "title: t\nquestions:\n  - {id: q1, prompt: p}\n")
+	_, err := catalog.LoadJourneys(dir, journeyCatalog())
+	wantLoadError(t, err, "belongs to type")
+}
