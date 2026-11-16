@@ -173,6 +173,39 @@ func TestSelfGates_EmptyDomainIsNonCanonicalAtEachOwnGate(t *testing.T) {
 	}
 }
 
+// The refusal of a missing identity does not rest on newAdminSet dropping blanks: a
+// Handler whose admin set holds the empty string (built by hand, as newAdminSet never
+// would) still answers 403 / no_identity to an absent or blank header, at both gates.
+func TestSelfGates_MissingIdentityIsRefusedEvenIfTheAdminSetHoldsABlank(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		gate identityobs.Gate
+		run  func(h *Handler, w http.ResponseWriter, r *http.Request) bool
+	}{
+		{"self", identityobs.GateSelf, func(h *Handler, w http.ResponseWriter, r *http.Request) bool { return h.selfOnly(w, r, "alice") }},
+		{"self_or_admin", identityobs.GateSelfOrAdmin, func(h *Handler, w http.ResponseWriter, r *http.Request) bool { return h.selfOrAdmin(w, r, "alice") }},
+	} {
+		for _, hdr := range []struct {
+			name, value string
+			set         bool
+		}{{"absent", "", false}, {"blank", "   ", true}} {
+			t.Run(tc.name+"/"+hdr.name, func(t *testing.T) {
+				h := selfGateHandler()
+				h.adminSet = map[string]struct{}{"": {}}
+				before := selfGateCounts()
+				w := httptest.NewRecorder()
+				if tc.run(h, w, selfGateRequest(hdr.value, hdr.set)) || w.Code != http.StatusForbidden {
+					t.Fatalf("status=%d body=%s, want a 403 for a %s header", w.Code, w.Body, hdr.name)
+				}
+				want := identityobs.Pair{Gate: tc.gate, Reason: identityobs.ReasonNoIdentity}
+				if got := selfGateMoved(before); len(got) != 1 || got[want] != 1 {
+					t.Fatalf("series moved = %v, want exactly %v by 1", got, want)
+				}
+			})
+		}
+	}
+}
+
 // judgeSelf is the one core: it normalises the header and says why, and records nothing.
 func TestJudgeSelf_NormalisesAndClassifiesWithoutRecording(t *testing.T) {
 	h := selfGateHandler()

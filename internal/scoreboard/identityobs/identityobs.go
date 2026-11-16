@@ -137,7 +137,7 @@ func isDeclared(p Pair) bool {
 
 // DenialsTotal is scoreboard_identity_denials_total. Counted once per request,
 // by the gate that refused it: strict refuses before the handler runs, so a
-// request is never also counted by self_or_admin. No bucket, route or user
+// request is never also counted by self_or_admin or self. No bucket, route or user
 // label (metrics.go's rule: nothing per-participant; per-route 403s are in
 // scoreboard_http_request_duration_seconds). Process-global like every other
 // metric here; tests assert deltas.

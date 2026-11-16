@@ -1112,12 +1112,17 @@ func (h *Handler) selfOrAdmin(w http.ResponseWriter, r *http.Request, user strin
 	if ok {
 		return true
 	}
-	// The operator override: an ADMIN_EMAILS identity passes whatever {user} is.
-	// A missing identity never reaches here as an admin (the set holds no blank).
-	if _, isAdmin := h.adminSet[email]; isAdmin {
-		return true
+	// The operator override: an ADMIN_EMAILS identity passes whatever {user} is. It
+	// is looked up only when there IS an identity: a missing or blank header is
+	// refused here without consulting the set, so that refusal does not rest on the
+	// set holding no blank entry (newAdminSet drops blanks; this does not rely on it).
+	if reason != identityobs.ReasonNoIdentity {
+		if _, isAdmin := h.adminSet[email]; isAdmin {
+			return true
+		}
 	}
-	// fail-closed: no proven identity → deny (do not fall back to {user}).
+	// Any identity that is neither {user}'s nor an admin's, and no identity at all, is
+	// a 403 (fail-closed: do not fall back to {user}); the reason says which.
 	h.denials.Record(r, identityobs.GateSelfOrAdmin, reason)
 	httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
 	return false
