@@ -169,8 +169,10 @@ flagsSecret:
 #     namespace has Secret RBAC for the scoreboard ServiceAccount, so the table
 #     must not live there (render fails);
 #   * key is a file name (it is part of the ANSWERS_FILE path).
-# The platform's helmfile enables it when a scenario has an investigate challenge
-# (ADR-0055 D6 requirements.answers) and refuses to render without it outside local.
+# The platform's helmfile enables it when the event declares an answers table
+# (ADR-0056 P1b-1a). Refusing to render without it outside local, keyed on
+# ADR-0055 D6 requirements.answers, is P1b-1b and not implemented yet; until then the
+# fail-closed is the start-up refusal (edition check failed) and verify.sh.
 answersSecret:
   enabled: false
   name: scoreboard-answers

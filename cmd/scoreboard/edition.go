@@ -24,13 +24,17 @@ import (
 //
 // Nothing is logged when there is no table and none is needed (no investigate
 // challenge in scope, no ANSWERS_FILE): that is every environment that exists
-// before an investigate challenge does, and its boot log is unchanged.
+// before an investigate challenge does, and its boot log is unchanged. Outside the
+// event mode, with an investigate challenge in scope and no ANSWERS_FILE (the
+// practice mode, D8 (iv), A4a-2), edition.Load makes the Judge from the image's
+// practice answers: the same `edition loaded` record, with run_id all zeros, or the
+// refusal when a challenge of the scope has no (complete) practice edition.
 //
-// The returned Judge is nil when there is no table. It is held by the handler
-// (scoreboard.WithEditionJudge), which passes it to the Grader (A3a); the answer
-// route (A3b-1) is the one caller of the Grader's SubmitAnswer. With no table (the
-// practice mode, until A4a-2 makes its Judge) the Grader has no Judge and
-// SubmitAnswer answers ErrAnswersUnavailable (a 500, nothing spent).
+// The returned Judge is nil when there is nothing to judge (no investigate challenge
+// in scope). It is held by the handler (scoreboard.WithEditionJudge), which passes it
+// to the Grader (A3a); the answer route (A3b-1) is the one caller of the Grader's
+// SubmitAnswer. With no Judge the Grader answers ErrAnswersUnavailable (a 500,
+// nothing spent): that is left for a scope without an investigate challenge.
 //
 // cfg.challengesDir is CHALLENGES_DIR, the directory the catalog was read from:
 // edition.Load reads the practice answers of every challenge under it for T6

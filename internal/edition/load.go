@@ -6,52 +6,64 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/catalog/answerformat"
 )
 
-// Load is the ONE way the scoreboard obtains an answers table (ADR-0056 D8 (iii),
-// D19 A2b, A4a-1): it reads the file, Parses it, runs ModeCheck and Check, and hands
-// back a Judge. Parse and NewJudge are called from here and nowhere else in the
-// program (Parse also from loadPractice below, which only Load calls), and Load is
-// called from cmd/scoreboard once (load_source_test.go fixes all of it by reading
-// the sources, the way ADR-0033 D6 does for the flags file). The plaintext Table
-// never leaves this function: the caller gets the Judge (HMACs of the values under a
-// per-process key) and the run id (D9), nothing else.
+// Load is the ONE way the scoreboard obtains an answers table (ADR-0056 D8 (iii)
+// and (iv), D19 A2b, A4a-1, A4a-2): it reads the file, Parses it, runs ModeCheck and
+// Check, and hands back a Judge. Parse and NewJudge are called from here and nowhere
+// else in the program (Parse also from loadPractice below, NewJudge also from
+// practiceJudge below; Load is the only caller of practiceJudge, and calls it only
+// when eventMode is false), and Load is called from cmd/scoreboard once
+// (load_source_test.go fixes all of it by reading the sources, the way ADR-0033 D6
+// does for the flags file). The plaintext Table never leaves this function: the
+// caller gets the Judge (HMACs of the values under a per-process key) and the run id
+// (D9), nothing else.
 //
 // cat is the catalog the scoreboard scores (catalog.Scored.Catalog); its
 // investigate challenges are the scope the table must answer, and its evade
 // challenges' ExpectedFlag are the flag values of this event (T7: they were
 // already read, by catalog.LoadScored; this function does not read the flags file).
-// challengesDir is CHALLENGES_DIR: the practice answers of EVERY challenge under it
-// (not only the scope's) are read for T6, because the event table must differ from
-// whatever the image publishes. answersFile is ANSWERS_FILE ("" = not set).
-// eventMode is "FLAGS_FILE is not empty" (D8): the caller derives it, this function
-// does not read the environment.
+// challengesDir is CHALLENGES_DIR, and it must be the tree cat was read from: Load
+// does not check that (the scored catalog and the directory arrive separately,
+// review #628 R4#2); a challengesDir that is another tree would give the practice
+// answers of other challenges. The practice answers of EVERY challenge under it
+// (not only the scope's) are read, because the event table must differ from whatever
+// the image publishes (T6), and because the practice mode's Judge is made from them.
+// answersFile is ANSWERS_FILE ("" = not set). eventMode is "FLAGS_FILE is not empty"
+// (D8): the caller derives it, this function does not read the environment.
 //
 // Results:
-//   - (nil, "", nil): no table, and none is needed (not the event mode, or nothing
-//     to judge). The practice answers of the image are not read here (the practice
-//     mode's own Judge is A4a-2).
-//   - (judge, runID, nil): a table that every rule accepted, T6 included.
+//   - (nil, "", nil): no table, and none is needed: nothing to judge (no
+//     investigate challenge in the scope; the practice answers are not read).
+//   - (judge, runID, nil): a table that every rule accepted, T6 included (the event
+//     mode); or, with no ANSWERS_FILE, outside the event mode and with an
+//     investigate challenge in scope, the Judge of the practice answers of the
+//     scope's challenges, run id PracticeRunID (D8 (iv), practiceJudge).
 //   - an error: D8 (i) or (ii) (ErrTableMissing / ErrTableOutsideEventMode), an
-//     unreadable file, a practice edition that is broken (loadPractice), or a table
-//     a rule refused (a *Violation, or an errors.Join of them). An error names a
-//     rule, a line and a seat / cid / qid, never a value.
+//     unreadable file, a practice edition that is broken (loadPractice), a scope
+//     challenge that has no practice edition (the practice mode), or a table a rule
+//     refused (a *Violation, or an errors.Join of them). An error names a rule, a
+//     line and a seat / cid / qid, never a value.
 //
-// The practice answers are read only when a table is, and a table only reaches
-// that point in the event mode (ModeCheck refuses it otherwise). They are used for
-// T6 and for nothing else: no Judge is made from them (D8 (iii)). Check refuses to
-// run T6 in the event mode when the set is nil; loadPractice returns the empty set
-// (not nil) when the image has no practice edition: "there are none", not "not
-// supplied".
+// In the event mode the practice answers are read only when a table is, and they
+// are used for T6 and for nothing else: no Judge is made from them (D8 (iii)); the
+// one Judge made from them is practiceJudge's, reached only from the branch of Load
+// where eventMode is false. Check refuses to run T6 in the event mode when the set
+// is nil; loadPractice returns the empty set (not nil) when the image has no
+// practice edition: "there are none", not "not supplied".
 func Load(cat catalog.Catalog, challengesDir, answersFile string, eventMode bool) (*Judge, string, error) {
 	scope := ScopeOf(cat)
 	if err := ModeCheck(eventMode, scope.HasInvestigate(), answersFile != ""); err != nil {
 		return nil, "", err
 	}
 	if answersFile == "" {
+		if !eventMode && scope.HasInvestigate() {
+			return practiceJudge(cat, challengesDir)
+		}
 		return nil, "", nil
 	}
 	data, err := readTable(answersFile)
@@ -62,7 +74,7 @@ func Load(cat catalog.Catalog, challengesDir, answersFile string, eventMode bool
 	if err != nil {
 		return nil, "", fmt.Errorf("edition: answers table: %w", err)
 	}
-	practice, err := loadPractice(challengesDir)
+	practice, _, err := loadPractice(challengesDir)
 	if err != nil {
 		return nil, "", err
 	}
@@ -79,6 +91,74 @@ func Load(cat catalog.Catalog, challengesDir, answersFile string, eventMode bool
 		return nil, "", fmt.Errorf("edition: answers table: %w", err)
 	}
 	return j, t.RunID(), nil
+}
+
+// practiceJudge is the practice mode's Judge (ADR-0056 D8 (iv), D19 A4a-2): the
+// answers the image publishes for the investigate challenges of the scope, as ONE
+// table (scopePracticeTable) that goes through Check (EventMode false: run id all
+// zeros, seat * only, a row for every question of the scope) and NewJudge, like an
+// event table does. It is called by Load and by nothing else, and Load calls it only
+// when eventMode is false (D8 (iii): in the event mode no Judge is made from the
+// practice answers; load_source_test.go reads the source for that). It does not take
+// eventMode: the branch of Load is the guard, and a caller outside it is the thing
+// the source check refuses.
+//
+// A challenge of the scope that has no practice edition, or one that is broken (the
+// readers' own checks, loadPractice), is a refusal (T4): a scoreboard that cannot
+// grade a challenge in its scope does not start. Check lists the questions that have
+// no row. The result carries PracticeRunID, so the boot record (5) says all zeros.
+func practiceJudge(cat catalog.Catalog, challengesDir string) (*Judge, string, error) {
+	scope := ScopeOf(cat)
+	_, tables, err := loadPractice(challengesDir)
+	if err != nil {
+		return nil, "", err
+	}
+	t, err := scopePracticeTable(scope, tables)
+	if err != nil {
+		return nil, "", fmt.Errorf("edition: practice answers: %w", err)
+	}
+	// FlagValues: a practice answer must not hold this instance's flag either (T7).
+	// Practice is nil: T6 is the event table's rule.
+	if err := Check(t, scope, Options{EventMode: false, FlagValues: flagValues(cat)}); err != nil {
+		return nil, "", fmt.Errorf("edition: practice answers: %w", err)
+	}
+	j, err := NewJudge(t)
+	if err != nil {
+		return nil, "", fmt.Errorf("edition: practice answers: %w", err)
+	}
+	return j, t.RunID(), nil
+}
+
+// scopePracticeTable joins the practice tables of the scope's challenges (cid -> the
+// table loadPractice read) into one table with the practice run id, in the order of
+// the sorted cids. A challenge of the scope that has no table is a T4 violation (all
+// of them are listed, bounded like Check's). Tables of challenges outside the scope
+// are not in the result: the Judge answers for the scope only. The rows keep the line
+// numbers of their own files, so a violation says the line of the file it is in, and
+// the cid says which.
+func scopePracticeTable(scope Scope, tables map[string]*Table) (*Table, error) {
+	cids := make([]string, 0, len(scope))
+	for cid := range scope {
+		cids = append(cids, cid)
+	}
+	sort.Strings(cids)
+	out := &Table{runID: PracticeRunID, index: make(map[cell]int)}
+	var missing collector
+	for _, cid := range cids {
+		src, ok := tables[cid]
+		if !ok {
+			missing.add(newViolation(RuleComplete, "an investigate challenge of the scope has no practice answers (edition/practice/answers.tsv)", 0, cell{cid: cid}, nil))
+			continue
+		}
+		for _, r := range src.rows {
+			out.index[r.c] = len(out.rows)
+			out.rows = append(out.rows, r)
+		}
+	}
+	if err := missing.err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // readTable reads the answers file, at most MaxTableBytes+1 bytes (so that an
@@ -112,9 +192,13 @@ const (
 	practiceTable   = "answers.tsv"
 )
 
-// loadPractice is the practice answers of the image, as the set T6 compares an
-// event table with (ADR-0056 D8 (iii), D10 T6, D19 A4a-1). It is called by Load and
-// by nothing else (load_source_test.go), which is what lets it call Parse.
+// loadPractice is the practice answers of the image: the set T6 compares an event
+// table with (ADR-0056 D8 (iii), D10 T6, D19 A4a-1) and the parsed table of each
+// challenge that has one, keyed by challenge id (the practice mode's Judge is made
+// from those, D8 (iv), A4a-2). It is called by Load and by practiceJudge and by
+// nothing else (load_source_test.go), which is what lets it call Parse. The tables
+// hold plaintext values: the callers keep them only as long as they Check and, in
+// practiceJudge, build a Judge, and the event path discards them.
 //
 // It reads EVERY challenge under challengesDir, not the scoreboard's scope: the
 // event table must differ from every practice edition the image carries. For each
@@ -136,51 +220,54 @@ const (
 // package it names a rule, a line and a seat / cid / qid, never a value. No file but
 // answers.tsv is opened, and no Judge is made from what is read.
 //
-// The result is never nil: no practice edition at all is the empty set.
-func loadPractice(challengesDir string) (PracticeSet, error) {
+// Neither result is nil on success: no practice edition at all is the empty set and
+// no table.
+func loadPractice(challengesDir string) (PracticeSet, map[string]*Table, error) {
 	full, err := catalog.Load(challengesDir)
 	if err != nil {
-		return nil, fmt.Errorf("edition: practice answers: %w", err)
+		return nil, nil, fmt.Errorf("edition: practice answers: %w", err)
 	}
 	set := make(PracticeSet)
+	tables := make(map[string]*Table)
 	for _, id := range full.IDs() {
 		ch := full[id]
 		editionDir := filepath.Join(challengesDir, ch.Dir(), editionDirName)
 		ok, err := practiceEntry(editionDir, true)
 		if err != nil {
-			return nil, fmt.Errorf("edition: practice answers of %s: %w", id, err)
+			return nil, nil, fmt.Errorf("edition: practice answers of %s: %w", id, err)
 		}
 		if !ok {
 			continue
 		}
 		if ch.Type != catalog.TypeInvestigate {
-			return nil, fmt.Errorf("edition: practice answers of %s: an %s/ directory belongs to an investigate challenge only, not to type %q", id, editionDirName, ch.Type)
+			return nil, nil, fmt.Errorf("edition: practice answers of %s: an %s/ directory belongs to an investigate challenge only, not to type %q", id, editionDirName, ch.Type)
 		}
 		practiceDir := filepath.Join(editionDir, practiceDirName)
 		if ok, err = practiceEntry(practiceDir, true); err != nil {
-			return nil, fmt.Errorf("edition: practice answers of %s: %w", id, err)
+			return nil, nil, fmt.Errorf("edition: practice answers of %s: %w", id, err)
 		} else if !ok {
 			continue
 		}
 		path := filepath.Join(practiceDir, practiceTable)
 		if ok, err = practiceEntry(path, false); err != nil {
-			return nil, fmt.Errorf("edition: practice answers of %s: %w", id, err)
+			return nil, nil, fmt.Errorf("edition: practice answers of %s: %w", id, err)
 		} else if !ok {
 			continue
 		}
 		data, err := readTable(path)
 		if err != nil {
-			return nil, fmt.Errorf("edition: practice answers of %s: %w", id, err)
+			return nil, nil, fmt.Errorf("edition: practice answers of %s: %w", id, err)
 		}
 		t, err := Parse(data)
 		if err != nil {
-			return nil, fmt.Errorf("edition: practice answers of %s: %w", id, err)
+			return nil, nil, fmt.Errorf("edition: practice answers of %s: %w", id, err)
 		}
 		if err := addPractice(set, id, ch, t); err != nil {
-			return nil, fmt.Errorf("edition: practice answers of %s: %w", id, err)
+			return nil, nil, fmt.Errorf("edition: practice answers of %s: %w", id, err)
 		}
+		tables[id] = t
 	}
-	return set, nil
+	return set, tables, nil
 }
 
 // practiceEntry reports whether path exists, and refuses what is not a directory

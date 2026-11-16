@@ -62,7 +62,7 @@ func TestLoadPractice_NoneIsTheEmptyNonNilSet(t *testing.T) {
 		{"a practice table with no rows", practiceTree(t, map[string]string{"01-demo": "# falco-ctf answers v1 run=" + PracticeRunID + "\n"})},
 	}
 	for _, c := range cases {
-		set, err := loadPractice(c.dir)
+		set, _, err := loadPractice(c.dir)
 		if err != nil {
 			t.Errorf("%s: loadPractice: %v", c.name, err)
 			continue
@@ -80,7 +80,7 @@ func TestLoadPractice_HoldsNormalisedValuesByFormat(t *testing.T) {
 	const table = "# falco-ctf answers v1 run=" + PracticeRunID + "\n" +
 		"*\t01-demo\twho\tpractice-who\n" +
 		"*\t01-demo\thx\taaaaaaaaaaaa\n"
-	set, err := loadPractice(practiceTree(t, map[string]string{"01-demo": table, "02-other": ""}))
+	set, tables, err := loadPractice(practiceTree(t, map[string]string{"01-demo": table, "02-other": ""}))
 	if err != nil {
 		t.Fatalf("loadPractice: %v", err)
 	}
@@ -101,6 +101,11 @@ func TestLoadPractice_HoldsNormalisedValuesByFormat(t *testing.T) {
 	}
 	if got := len(set["hexid"]) + len(set["name"]); got != 2 || len(set) != 2 {
 		t.Errorf("the set holds %v, want exactly the two values of the table", set)
+	}
+	// The tables are keyed by challenge: the one that has an edition, and not the one
+	// that has none (the practice mode's Judge is made from these, A4a-2).
+	if len(tables) != 1 || tables["01-demo"] == nil {
+		t.Errorf("tables = %d entries (01-demo present: %v), want exactly 01-demo's", len(tables), tables["01-demo"] != nil)
 	}
 }
 
@@ -138,8 +143,19 @@ func TestPracticeEditions_EveryInvestigateChallengeHasOne(t *testing.T) {
 	if missing := missingPractice(realTree, cat); len(missing) != 0 {
 		t.Errorf("investigate challenges without edition/practice/answers.tsv: %v (ADR-0056 D19 A4a-1)", missing)
 	}
-	if _, err := loadPractice(realTree); err != nil {
+	if _, _, err := loadPractice(realTree); err != nil {
 		t.Errorf("the practice editions of the image do not load: %v", err)
+	}
+	// V47 (A4a-2): the whole tree as the scope, in the practice mode, is what a local
+	// scoreboard does. Load makes the practice Judge of every investigate challenge
+	// (T4: a row for every question), so a challenge whose practice edition lacks a
+	// question, not only one that has no file, is red here.
+	// The real tree has 0 investigate challenges today, so this passes on 0 (Load
+	// returns no Judge, no error). From A7 (the first investigate challenge) this test
+	// must also require a non-empty set: count the investigate challenges of cat and fail
+	// on 0, so that a tree that lost them all cannot pass.
+	if _, _, err := Load(cat, realTree, "", false); err != nil {
+		t.Errorf("the practice mode does not accept the image's own tree: %v", err)
 	}
 
 	// The check itself, on a tree with one edition and one without.

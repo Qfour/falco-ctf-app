@@ -219,7 +219,8 @@ func TestStartEdition_InvestigateInScope(t *testing.T) {
 
 // ADR-0056 D8 (ii) for an investigate scope without the event mode: the table is
 // refused too (the two signals disagree); and without a table the practice answers
-// of the image are used, which startEdition does not read.
+// of the image are used (D8 (iv)): edInvestigateCatalog has none (and catalogEnv{} no
+// challengesDir), so the start-up is refused, with one ERROR record.
 func TestStartEdition_InvestigateWithoutTheEventMode(t *testing.T) {
 	cat := edInvestigateCatalog(t)
 	j, _, recs, err := bootEdition(t, catalogEnv{answersFile: edAnswersFile(t, edition.PracticeRunID, edGoodRows)}, cat)
@@ -227,7 +228,7 @@ func TestStartEdition_InvestigateWithoutTheEventMode(t *testing.T) {
 		t.Errorf("a table without the event mode: judge %v, err %v, %d record(s); want ErrTableOutsideEventMode and one record", j, err, len(recs))
 	}
 	j, text, recs, err := bootEdition(t, catalogEnv{}, cat)
-	if err != nil || j != nil || len(recs) != 0 {
-		t.Errorf("no event mode, no table: judge %v, err %v, log %q; want nothing at all", j, err, text)
+	if err == nil || j != nil || len(recs) != 1 || recs[0]["msg"] != "edition check failed" || recs[0]["level"] != "ERROR" {
+		t.Errorf("no event mode, no table, no practice edition: judge %v, err %v, log %q; want a refusal and one ERROR record \"edition check failed\"", j, err, text)
 	}
 }

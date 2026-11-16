@@ -226,14 +226,23 @@ func TestLoad_RefusesALinkedPracticeTable(t *testing.T) {
 	}
 }
 
-// The practice answers are read when a table is, which is the event mode: without a
-// table (the practice mode, or nothing to judge) a broken edition changes nothing,
-// and the answer is still (nil, "", nil), as before A4a-1 (A4a-2 reads them for the
-// practice mode's own Judge).
-func TestLoad_WithoutATableThePracticeEditionIsNotRead(t *testing.T) {
+// Without a table, the practice edition is read only when an investigate challenge
+// is in scope (the practice mode, ADR-0056 D8 (iv)). With none in scope there is
+// nothing to judge, so a broken edition elsewhere in the tree changes nothing and the
+// answer is (nil, "", nil): every environment today starts as before. With one in
+// scope the same broken edition is a refusal (a T3 here, the file is not a table).
+func TestLoad_WithoutATableThePracticeEditionIsReadOnlyForAnInvestigateScope(t *testing.T) {
 	dir := writeTree(t, map[string]string{practicePath(demoCID): "not a table\n"})
+	evadeOnly := catalog.Catalog{"03-ev": {ID: "03-ev", Type: "evade", ExpectedFlag: plainFlag}}
+	for _, event := range []bool{false, true} {
+		j, runID, err := edition.Load(evadeOnly, dir, "", event)
+		if err != nil || j != nil || runID != "" {
+			t.Errorf("no investigate challenge in scope (event mode %v): Load = %v, %q, %v; want nil, \"\", nil", event, j, runID, err)
+		}
+	}
 	j, runID, err := edition.Load(scopeOf(t, dir, demoCID), dir, "", false)
-	if err != nil || j != nil || runID != "" {
-		t.Errorf("Load = %v, %q, %v; want nil, \"\", nil", j, runID, err)
+	var v *edition.Violation
+	if err == nil || j != nil || runID != "" || !errors.As(err, &v) || v.Rule != "T3" {
+		t.Errorf("an investigate challenge in scope, a broken practice edition: Load = %v, %q, %v; want a T3 refusal", j, runID, err)
 	}
 }

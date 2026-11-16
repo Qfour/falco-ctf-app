@@ -243,30 +243,171 @@ func TestBoot_InvestigateScope_EventTableRepeatingAPracticeAnswer_IsRefused(t *t
 	}
 }
 
-// (c) NOT the event mode, an investigate challenge in scope and no answers table (the
-// practice edition): TODAY the scoreboard starts, silently, with no Judge, and every
-// answer is a 500 that spends nothing. The practice mode's own Judge is A4a-2
-// (edition.Load: "The practice answers of the image are not read here"; A4a-1 reads
-// them for T6 only, in the event mode); until A4a-2 this is the pinned behaviour, and
-// no real challenge can be in this state before A7 (D19: A4a-2 is a prerequisite of
-// A7). When A4a-2 lands this test changes with it.
-func TestBoot_InvestigateScope_PracticeWithoutTable_StartsAndCannotGradeYet(t *testing.T) {
-	b := ibStart(t, map[string]string{"CHALLENGES_DIR": ibTree(t)})
-	if b.err != nil || b.judge != nil || len(b.recs) != 0 {
-		t.Fatalf("startEdition: judge %v, err %v, log %q; want no judge, no error, no record", b.judge, b.err, b.log)
+// The synthetic practice edition of edCID (ADR-0056 D8 (iv), A4a-2): the answers the
+// image publishes, run id all zeros, seat *. Made-up values.
+const (
+	ibPracticeWho = "practice-who"
+	ibPracticeHx  = "cccccccccccc"
+	ibZeroRunID   = "00000000000000000000000000000000" // spelled out, not edition.PracticeRunID: the boot record's value is the contract
+)
+
+// ibPracticeTable is a practice answers.tsv for edCID with the given rows (the header
+// is the practice run id).
+func ibPracticeTable(rows ...string) string {
+	// one "\n" per row: no rows is the header line alone (a Join + "\n" would add an empty line)
+	var b strings.Builder
+	b.WriteString("# falco-ctf answers v1 run=" + ibZeroRunID + "\n")
+	for _, r := range rows {
+		b.WriteString(r + "\n")
 	}
+	return b.String()
+}
+
+var ibPracticeRows = []string{
+	"*\t" + edCID + "\twho\t" + ibPracticeWho,
+	"*\t" + edCID + "\thx\t" + ibPracticeHx,
+}
+
+// ibWritePractice writes content as edCID's edition/practice/answers.tsv under dir.
+func ibWritePractice(t *testing.T, dir, content string) {
+	t.Helper()
+	pdir := filepath.Join(dir, edCID, "edition", "practice")
+	if err := os.MkdirAll(pdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pdir, "answers.tsv"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func noPracticeValueInLog(t *testing.T, what, text string) {
+	t.Helper()
+	for _, v := range []string{ibPracticeWho, ibPracticeHx} {
+		if strings.Contains(text, v) {
+			t.Errorf("%s: the boot log holds a practice value (%q): %s", what, v, text)
+		}
+	}
+}
+
+// (c) NOT the event mode, an investigate challenge in scope, no answers table, and the
+// image's practice edition (ADR-0056 D8 (iv), A4a-2; the reversal of the #622 test
+// "starts and cannot grade yet"): the scoreboard starts, logs `edition loaded` once
+// with the practice run id (all zeros), and a participant is graded from the image's
+// practice answers: a right answer is correct, a wrong one is incorrect and costs an
+// attempt, both questions right solve the challenge, and the seat * answers for every seat.
+func TestBoot_InvestigateScope_PracticeMode_GradesFromThePracticeEdition(t *testing.T) {
+	dir := ibTree(t)
+	ibWritePractice(t, dir, ibPracticeTable(ibPracticeRows...))
+	b := ibStart(t, map[string]string{"CHALLENGES_DIR": dir})
+	if b.err != nil || b.judge == nil {
+		t.Fatalf("startEdition: judge %v, err %v; want a judge", b.judge, b.err)
+	}
+	if len(b.recs) != 1 || b.recs[0]["msg"] != "edition loaded" || b.recs[0]["level"] != "INFO" || b.recs[0]["run_id"] != ibZeroRunID {
+		t.Errorf("want exactly one INFO record \"edition loaded\" with run_id %s, got %s", ibZeroRunID, b.log)
+	}
+	noPracticeValueInLog(t, "accepted", b.log)
+
 	h, st := ibHandler(t, b)
-	code, got := ibAnswer(t, h, ibSeatA, "who", edSentinel+"-a")
-	if code != http.StatusInternalServerError || len(got) != 1 || got["error"] != "could not grade the answer" {
-		t.Fatalf("an answer without a Judge: %d %v, want 500 {\"error\": \"could not grade the answer\"}", code, got)
+	code, first := ibAnswer(t, h, ibSeatA, "who", "wrong-answer-one")
+	if code != http.StatusOK || first["status"] != "incorrect" || first["correct"] != false || first["solved"] != false {
+		t.Fatalf("a wrong answer: %d %v, want 200 incorrect, not solved", code, first)
+	}
+	code, second := ibAnswer(t, h, ibSeatA, "who", "wrong-answer-two")
+	if code != http.StatusOK || second["status"] != "incorrect" {
+		t.Fatalf("a second wrong answer: %d %v, want 200 incorrect", code, second)
+	}
+	r1, ok1 := first["remaining"].(float64)
+	r2, ok2 := second["remaining"].(float64)
+	if !ok1 || !ok2 || r2 != r1-1 {
+		t.Errorf("remaining after the first wrong answer = %v, after the second = %v; want one fewer", first["remaining"], second["remaining"])
 	}
 	rows, err := st.AnswerAttempts(ibSeatA, edCID)
-	if err != nil || len(rows) != 0 {
-		t.Fatalf("attempts after an ungradable answer: %v (err %v), want none (nothing is spent)", rows, err)
+	// AnswerAttempts is by question id: both wrong answers were on `who`, so one entry
+	// whose count is 2 (not two entries), and it is not marked correct.
+	if st1, ok := rows["who"]; err != nil || len(rows) != 1 || !ok || st1.N != 2 || st1.Correct {
+		t.Fatalf("attempts after two wrong answers on who: %v (err %v), want {who: 2 attempts, not correct}", rows, err)
 	}
-	if st.IsSolved(ibSeatA, edCID) {
-		t.Fatal("solved without a table")
+	if code, got := ibAnswer(t, h, ibSeatA, "who", ibPracticeWho); code != http.StatusOK || got["status"] != "correct" || got["solved"] != false {
+		t.Fatalf("the practice answer: %d %v, want 200 correct, not solved yet", code, got)
 	}
+	if code, got := ibAnswer(t, h, ibSeatA, "hx", ibPracticeHx); code != http.StatusOK || got["status"] != "correct" || got["solved"] != true {
+		t.Fatalf("the last practice answer: %d %v, want 200 correct and solved", code, got)
+	}
+	if !st.IsSolved(ibSeatA, edCID) {
+		t.Fatal("not solved in the store after both practice answers")
+	}
+	// seat * answers for every seat: the practice edition is the same for the room
+	if code, got := ibAnswer(t, h, "seat-b", "who", ibPracticeWho); code != http.StatusOK || got["status"] != "correct" {
+		t.Fatalf("seat-b with the practice answer: %d %v, want 200 correct", code, got)
+	}
+}
+
+// (c2) The practice mode needs a practice edition for every investigate challenge in
+// scope (T4, D8 (iv)): without one, or with one that lacks a question or is not a
+// table, the scoreboard does not start, with one `edition check failed` record that
+// carries no value. The good tree is the one of (c); each case damages a copy of it.
+func TestBoot_InvestigateScope_PracticeMode_IncompletePracticeIsRefused(t *testing.T) {
+	cases := []struct {
+		name  string
+		build func(t *testing.T, dir string)
+		rule  string
+	}{
+		{"no practice edition at all", func(t *testing.T, dir string) {}, "T4"},
+		{"the practice table removed from a good tree", func(t *testing.T, dir string) {
+			ibWritePractice(t, dir, ibPracticeTable(ibPracticeRows...))
+			if err := os.Remove(filepath.Join(dir, edCID, "edition", "practice", "answers.tsv")); err != nil {
+				t.Fatal(err)
+			}
+		}, "T4"},
+		{"a practice table without the row of one question", func(t *testing.T, dir string) {
+			ibWritePractice(t, dir, ibPracticeTable(ibPracticeRows[0]))
+		}, "T4"},
+		{"a practice table without any row", func(t *testing.T, dir string) {
+			ibWritePractice(t, dir, ibPracticeTable())
+		}, "T4"},
+		{"a value that is not normalised", func(t *testing.T, dir string) {
+			ibWritePractice(t, dir, ibPracticeTable(ibPracticeRows[0], "*\t"+edCID+"\thx\tCCCCCCCCCCCC"))
+		}, "T5"},
+		{"not a table", func(t *testing.T, dir string) {
+			ibWritePractice(t, dir, "this is not a table\n")
+		}, "T3"},
+	}
+	for _, c := range cases {
+		dir := ibTree(t)
+		c.build(t, dir)
+		b := ibStart(t, map[string]string{"CHALLENGES_DIR": dir})
+		if b.err == nil || b.judge != nil {
+			t.Errorf("%s: judge %v, err %v; want a refusal and no judge", c.name, b.judge, b.err)
+			continue
+		}
+		if !strings.Contains(b.err.Error(), c.rule+":") {
+			t.Errorf("%s: err = %v, want it to name rule %s", c.name, b.err, c.rule)
+		}
+		if len(b.recs) != 1 || b.recs[0]["msg"] != "edition check failed" || b.recs[0]["level"] != "ERROR" {
+			t.Errorf("%s: want exactly one ERROR record \"edition check failed\", got %s", c.name, b.log)
+		}
+		noPracticeValueInLog(t, c.name, b.log)
+		noPracticeValueInLog(t, c.name, b.err.Error())
+	}
+}
+
+// (c3) D8 (iii): the event mode never grades from the practice edition. With the
+// image's practice edition present, the event mode and no ANSWERS_FILE is still
+// refused (D8 (i)), with no Judge and one ERROR record.
+func TestBoot_InvestigateScope_EventModeNeverUsesThePracticeEdition(t *testing.T) {
+	dir := ibTree(t)
+	ibWritePractice(t, dir, ibPracticeTable(ibPracticeRows...))
+	b := ibStart(t, map[string]string{
+		"CHALLENGES_DIR": dir,
+		"FLAGS_FILE":     writeFlagsFile(t, ibEvade, edFlag03),
+	})
+	if !errors.Is(b.err, edition.ErrTableMissing) || b.judge != nil {
+		t.Fatalf("startEdition: judge %v, err %v; want ErrTableMissing and no judge", b.judge, b.err)
+	}
+	if len(b.recs) != 1 || b.recs[0]["msg"] != "edition check failed" || b.recs[0]["level"] != "ERROR" {
+		t.Errorf("want exactly one ERROR record \"edition check failed\", got %s", b.log)
+	}
+	noPracticeValueInLog(t, "refused", b.log)
 }
 
 // The real catalog (no investigate challenge, no scenario, no table) starts exactly
