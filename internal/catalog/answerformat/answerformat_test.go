@@ -349,6 +349,31 @@ func TestCheckSpaceN(t *testing.T) {
 	}
 }
 
+// Fail-closed: an attempts that is not 1..MaxAttempts, and an n that is nil or
+// not positive, are refused (attempts 0 would make the floor 0 and pass anything).
+func TestCheckSpaceN_RefusesOutOfRangeInputs(t *testing.T) {
+	big1000 := big.NewInt(1000)
+	for _, attempts := range []int{0, -1, answerformat.MaxAttempts + 1} {
+		if err := answerformat.CheckSpaceN(big1000, attempts); err == nil {
+			t.Errorf("CheckSpaceN(1000, %d) was accepted", attempts)
+		}
+		// CheckSpace refuses it for every format, a vocabulary-sized one included.
+		for _, f := range []string{"path", "hexid"} {
+			if err := answerformat.CheckSpace(f, map[string]answerformat.Params{"path": {}, "hexid": pHex12}[f], attempts); err == nil {
+				t.Errorf("CheckSpace(%s, attempts %d) was accepted", f, attempts)
+			}
+		}
+	}
+	for name, n := range map[string]*big.Int{"nil": nil, "zero": big.NewInt(0), "negative": big.NewInt(-5)} {
+		if err := answerformat.CheckSpaceN(n, 1); err == nil {
+			t.Errorf("CheckSpaceN(%s, 1) was accepted", name)
+		}
+	}
+	if err := answerformat.CheckSpaceN(big1000, answerformat.MaxAttempts); err != nil {
+		t.Errorf("the upper bound itself must pass: %v", err)
+	}
+}
+
 func TestValidID(t *testing.T) {
 	for id, want := range map[string]bool{
 		"a": true, "first-tool": true, "q1": true, strings.Repeat("a", 31): true,

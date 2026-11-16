@@ -37,6 +37,8 @@ const (
 	MaxAnswerLen = 256
 	// SpaceFactor is D3 (a): the answer space must be at least SpaceFactor x attempts.
 	SpaceFactor = 100
+	// MaxAttempts is the largest attempt budget a question may declare (ADR-0056 D1).
+	MaxAttempts = 10
 	// MaxLabels bounds the declared option ids of a choice-set / sequence. It is a
 	// sanity bound on the params block (the ADR leaves n open); the space check is
 	// what makes small n unusable.
@@ -160,10 +162,27 @@ func Space(f string, p Params) (*big.Int, error) {
 
 // CheckSpaceN is D3 (a) on a known size: n must be >= SpaceFactor x attempts.
 // The edition validator (A4) calls it with the size of the renderer vocabulary.
+//
+// Fail-closed: attempts outside 1..MaxAttempts, a nil n and an n that is not
+// positive are errors (an attempts of 0 or less would make the floor 0 or
+// negative and pass anything). The messages carry no value of the caller's.
 func CheckSpaceN(n *big.Int, attempts int) error {
+	if err := checkAttempts(attempts); err != nil {
+		return err
+	}
+	if n == nil || n.Sign() <= 0 {
+		return errors.New("answer space is missing or not positive")
+	}
 	need := big.NewInt(int64(SpaceFactor) * int64(attempts))
 	if n.Cmp(need) < 0 {
 		return fmt.Errorf("answer space %s is below %d x attempts (%d x %d = %s)", n, SpaceFactor, SpaceFactor, attempts, need)
+	}
+	return nil
+}
+
+func checkAttempts(attempts int) error {
+	if attempts < 1 || attempts > MaxAttempts {
+		return fmt.Errorf("attempts must be in 1..%d", MaxAttempts)
 	}
 	return nil
 }
@@ -174,6 +193,11 @@ func CheckSpaceN(n *big.Int, attempts int) error {
 // applied to the vocabulary by the edition validator through CheckSpaceN. A
 // space that cannot be computed at all is an error (fail-closed).
 func CheckSpace(f string, p Params, attempts int) error {
+	// Before the vocabulary case returns nil: an out-of-range attempts is refused
+	// for every format.
+	if err := checkAttempts(attempts); err != nil {
+		return err
+	}
 	n, err := Space(f, p)
 	switch {
 	case errors.Is(err, ErrSpaceFromVocabulary):
