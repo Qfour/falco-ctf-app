@@ -3,7 +3,10 @@
 // participant can read for free (a challenge fixture). It is deliberately a
 // pure function over already-loaded text so that ADR-0030 (Quest content) can
 // reuse the SAME rule on its own inputs — the rule has exactly one
-// implementation, and callers only assemble [Input] for their own scope.
+// implementation, and callers only assemble [Input] for their own scope. For the
+// scopes of ADR-0026 and the event bundles of ADR-0056 the assembly of Hints and
+// Free is itself one definition, in the package internal/hintleak/scope (which
+// imports this package and the catalog; this package imports neither).
 //
 // The rule (ADR-0026 D5, one scope S at a time):
 //
@@ -20,7 +23,7 @@
 //     through. Each item is one "file" for Hidden, so a BOM is judged at the
 //     start of the item. Free items are not checked. The normalisation below is
 //     unchanged.
-//  2. Normalise. Remove every rune for which [unicode.IsSpace] is true. Nothing
+//  2. Normalise ([Normalize]). Remove every rune for which [unicode.IsSpace] is true. Nothing
 //     else changes: no NFC/NFKC, no case folding, no punctuation stripping.
 //  3. n-gram. n = [GramRunes] runes, cut PER ITEM (items are never joined, so a
 //     run of runes that straddles two items is not counted as appearing in
@@ -141,14 +144,31 @@ func Check(in Input) ([]Violation, error) {
 	return out, nil
 }
 
-// gramSet returns the distinct n-grams of one item (D5-2, D5-3).
-func gramSet(text string) map[string]struct{} {
+// Normalize is the normalisation of the rule (ADR-0026 D5-2): it returns the
+// runes of text with every rune for which [unicode.IsSpace] is true removed, in
+// order. Nothing else changes: no NFC/NFKC, no case folding, no punctuation
+// stripping. Windows of [GramRunes] runes (D5-3) are cut from the result.
+//
+// It is exported so that any other comparison that must agree with this rule on
+// what a "run of runes" is (ADR-0056 D10 B4: the 10-rune shingles of an event
+// bundle against a practice bundle) calls this function and keeps no second
+// definition of the normalisation. text is read as UTF-8; a byte that is not
+// valid UTF-8 becomes U+FFFD, as in a range over a string, so a caller that
+// needs an error for non-UTF-8 text checks [utf8.ValidString] first, as [Check]
+// does. The result is a new slice the caller may modify.
+func Normalize(text string) []rune {
 	runes := make([]rune, 0, len(text))
 	for _, r := range text {
 		if !unicode.IsSpace(r) {
 			runes = append(runes, r)
 		}
 	}
+	return runes
+}
+
+// gramSet returns the distinct n-grams of one item (D5-2, D5-3).
+func gramSet(text string) map[string]struct{} {
+	runes := Normalize(text)
 	set := map[string]struct{}{}
 	for i := 0; i+GramRunes <= len(runes); i++ {
 		set[string(runes[i:i+GramRunes])] = struct{}{}

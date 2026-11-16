@@ -5,7 +5,7 @@ package hintleak_test
 // are synthetic and in memory (meaningless words, no real challenge): the real
 // tree has no investigate challenge yet, so its own scopes carry 0 prompts and
 // must stay green (TestFixtures_CarryNoHintOnlyNgrams runs the same count check).
-// The scope is built by assembleScope, the function loadScope uses, so a change
+// The scope is built by scope.Assemble, the function loadScope uses, so a change
 // that stops adding prompts to Free turns these tests red.
 
 import (
@@ -15,6 +15,7 @@ import (
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/hintleak"
+	"github.com/Qfour/falco-ctf-app/internal/hintleak/scope"
 )
 
 // v24Hint exists only in the hint and in the fixture below; its 10-rune
@@ -40,7 +41,7 @@ func v24Scope(declared int, prompts []string) scopeData {
 	}
 	cat := catalog.Catalog{id: {ID: id, Type: catalog.TypeInvestigate, Investigate: &catalog.Investigate{Questions: qs}}}
 	fixtures := []hintleak.Item{{Source: id + "/fixtures/notes.txt", Text: "see " + v24Hint + " later"}}
-	in, want := assembleScope([]string{id}, cat, catalog.Journeys{id: j}, nil, fixtures)
+	in, want := scope.Assemble([]string{id}, cat, catalog.Journeys{id: j}, nil, fixtures)
 	return scopeData{name: "v24", ids: []string{id}, in: in, wantPrompts: want}
 }
 
@@ -89,7 +90,7 @@ func TestQuestionPrompts_AreFreeItems(t *testing.T) {
 		t.Helper()
 		var kept []hintleak.Item
 		for _, it := range s.in.Free {
-			if !isQuestionPromptSource(it.Source) {
+			if !scope.IsQuestionPromptSource(it.Source) {
 				kept = append(kept, it)
 			}
 		}
@@ -124,7 +125,7 @@ func TestQuestionPrompts_AreFreeItems(t *testing.T) {
 		s := v24Scope(2, carrying)
 		var got []string
 		for _, it := range s.in.Free {
-			if isQuestionPromptSource(it.Source) {
+			if scope.IsQuestionPromptSource(it.Source) {
 				got = append(got, it.Source)
 			}
 		}
@@ -133,7 +134,7 @@ func TestQuestionPrompts_AreFreeItems(t *testing.T) {
 			t.Fatalf("prompt item sources = %q, want %q", got, want)
 		}
 		for _, it := range s.in.Targets {
-			if isQuestionPromptSource(it.Source) {
+			if scope.IsQuestionPromptSource(it.Source) {
 				t.Fatalf("prompt item %q is in Targets: a prompt is Free, never a Target", it.Source)
 			}
 		}
@@ -165,8 +166,8 @@ func TestQuestionPrompts_CountMustMatchTheQuestions(t *testing.T) {
 	t.Run("a scope with no investigate challenge has 0 and 0 and passes", func(t *testing.T) {
 		const id = "01-synthetic"
 		cat := catalog.Catalog{id: {ID: id, Type: catalog.TypeTrigger}}
-		in, want := assembleScope([]string{id}, cat, catalog.Journeys{id: {ChallengeID: id, Title: "synthetic"}}, nil, nil)
-		if got := countPromptItems(in.Free); want != 0 || got != 0 {
+		in, want := scope.Assemble([]string{id}, cat, catalog.Journeys{id: {ChallengeID: id, Title: "synthetic"}}, nil, nil)
+		if got := scope.CountPromptItems(in.Free); want != 0 || got != 0 {
 			t.Fatalf("want 0 and 0, got want=%d got=%d (in.Free=%d)", want, got, len(in.Free))
 		}
 		if err := promptCountProblem(scopeData{name: "none", in: in, wantPrompts: want}); err != nil {

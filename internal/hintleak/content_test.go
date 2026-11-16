@@ -5,7 +5,10 @@ package hintleak_test
 // come from the production call sequence — catalog.LoadScored -> LoadJourneys
 // -> LoadNarrative + ApplyNarrativeOverrides -> LoadRuleExcerpts
 // (cmd/scoreboard/main.go) — so what is counted as "free" is what a participant
-// is actually shown, not what happens to be in a file. It is shared by the V5
+// is actually shown, not what happens to be in a file. The Hints and Free items
+// themselves are built by scope.Assemble (internal/hintleak/scope, ADR-0056 B5:
+// the one definition, also used by the event validator); this file only loads the
+// trees and calls it (V56). It is shared by the V5
 // test (fixtures_test.go) and the V6 mutation tests (hintleak_test.go), which
 // mutate a COPY of the tracked files in a temp dir and run the same loader.
 
@@ -25,6 +28,7 @@ import (
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/hintleak"
+	"github.com/Qfour/falco-ctf-app/internal/hintleak/scope"
 )
 
 // scopeData is one evaluation scope ("full" or "scenario/<name>").
@@ -34,7 +38,7 @@ type scopeData struct {
 	overrides map[string]bool // ids whose briefing/bridge the scenario's narrative.yaml replaces
 	in        hintleak.Input
 	// wantPrompts: questions declared by the scope's investigate challenges. The
-	// prompt items actually in Free are counted from in.Free (countPromptItems),
+	// prompt items actually in Free are counted from in.Free (scope.CountPromptItems),
 	// never from a value the assembler kept (ADR-0056 V24 / V35).
 	wantPrompts int
 }
@@ -139,37 +143,6 @@ func readFixtures(t *testing.T, root string) []hintleak.Item {
 	return items
 }
 
-// ruleItems turns the DISPLAYED parts of a parsed rule.yaml (what the Story
-// tab's Falco Rule panel shows) into free items. Comments and unknown keys in
-// the file are not shown, so they are not free.
-func ruleItems(id string, ex catalog.FalcoRuleExcerpt) []hintleak.Item {
-	var out []hintleak.Item
-	add := func(what, text string) {
-		out = append(out, hintleak.Item{Source: id + " rule.yaml " + what, Text: text})
-	}
-	for _, r := range ex.Rules {
-		add("rule "+r.Name+" name", r.Name)
-		add("rule "+r.Name+" desc", r.Desc)
-		add("rule "+r.Name+" condition", r.Condition)
-		add("rule "+r.Name+" output", r.Output)
-		add("rule "+r.Name+" priority", r.Priority)
-		for _, tag := range r.Tags {
-			add("rule "+r.Name+" tag", tag)
-		}
-	}
-	for _, m := range ex.Macros {
-		add("macro "+m.Name+" name", m.Name)
-		add("macro "+m.Name+" condition", m.Condition)
-	}
-	for _, l := range ex.Lists {
-		add("list "+l.Name+" name", l.Name)
-		for _, it := range l.Items {
-			add("list "+l.Name+" item", it)
-		}
-	}
-	return out
-}
-
 // loadScope runs the production sequence for one scope (scenarioFile "" = the
 // full catalog) and assembles the D5-1 inputs.
 func loadScope(t *testing.T, chalDir, name, scenarioFile string, fixtures []hintleak.Item) scopeData {
@@ -208,93 +181,14 @@ func loadScope(t *testing.T, chalDir, name, scenarioFile string, fixtures []hint
 	}
 
 	ids := scored.Order
-	in, wantPrompts := assembleScope(ids, cat, journeys, excerpts, fixtures)
+	in, wantPrompts := scope.Assemble(ids, cat, journeys, excerpts, fixtures)
 	return scopeData{name: name, ids: ids, overrides: overrides, in: in, wantPrompts: wantPrompts}
 }
 
-// A question prompt item's Source is "<challenge id> questions[<question id>].prompt".
-// questionPromptSource builds it and isQuestionPromptSource recognizes it from
-// the same two pieces, so the producer and the counter cannot drift apart.
-const (
-	questionPromptMid = " questions["
-	questionPromptEnd = "].prompt"
-)
-
-func questionPromptSource(id, qid string) string {
-	return id + questionPromptMid + qid + questionPromptEnd
-}
-
-func isQuestionPromptSource(src string) bool {
-	i := strings.Index(src, questionPromptMid)
-	return i > 0 && strings.HasSuffix(src, questionPromptEnd) && len(src) > i+len(questionPromptMid)+len(questionPromptEnd)
-}
-
-// countPromptItems counts the question prompt items that are really in free.
-func countPromptItems(free []hintleak.Item) int {
-	n := 0
-	for _, it := range free {
-		if isQuestionPromptSource(it.Source) {
-			n++
-		}
-	}
-	return n
-}
-
-// questionPromptItems turns the questions[] prompts of an investigate challenge's
-// journey into free items (ADR-0056 D1, A1e). A prompt is shown to every
-// participant before any hint is bought, exactly like a step label, so a hint
-// that repeats a prompt's words is not a leak of the hint. It is a Free item and
-// never a Target: the rule scans fixtures for hint-only n-grams, and a prompt is
-// not a file the rule guards. Source names the challenge and the question id.
-func questionPromptItems(id string, j catalog.Journey) []hintleak.Item {
-	var out []hintleak.Item
-	for _, q := range j.Questions {
-		out = append(out, hintleak.Item{Source: questionPromptSource(id, q.ID), Text: q.Prompt})
-	}
-	return out
-}
-
-// assembleScope is the ONE place the D5-1 inputs of a scope are built from the
-// loaded catalog, journeys and rule excerpts (production: loadScope; V24: an
-// in-memory scope). wantPrompts is the number of questions the scope's
-// investigate challenges declare. The number of prompt items in Free is NOT
-// returned: promptCountProblem counts in.Free itself.
-func assembleScope(ids []string, cat catalog.Catalog, journeys catalog.Journeys, excerpts catalog.FalcoRuleExcerpts, fixtures []hintleak.Item) (in hintleak.Input, wantPrompts int) {
-	in = hintleak.Input{Targets: fixtures}
-	for _, id := range ids {
-		if ch := cat[id]; ch.Type == catalog.TypeInvestigate && ch.Investigate != nil {
-			wantPrompts += len(ch.Investigate.Questions)
-		}
-		if j, ok := journeys[id]; ok {
-			for i, h := range j.Hints {
-				in.Hints = append(in.Hints, hintleak.Item{Source: fmt.Sprintf("%s hints[%d]", id, i+1), Text: h.Text})
-			}
-			// Free = what is shown without paying: briefing, step label/detail,
-			// the questions[] prompts of an investigate challenge (and rule.yaml
-			// below). title / tagline / bridge are deliberately NOT free (D5-1: the
-			// strict side).
-			in.Free = append(in.Free, hintleak.Item{Source: id + " briefing", Text: j.Briefing})
-			for i, st := range j.Steps {
-				in.Free = append(in.Free,
-					hintleak.Item{Source: fmt.Sprintf("%s steps[%d].label", id, i+1), Text: st.Label},
-					hintleak.Item{Source: fmt.Sprintf("%s steps[%d].detail", id, i+1), Text: st.Detail})
-			}
-			in.Free = append(in.Free, questionPromptItems(id, j)...)
-		}
-		in.Free = append(in.Free, ruleItems(id, excerpts[id])...)
-	}
-	return in, wantPrompts
-}
-
-// promptCountProblem is ADR-0056 V24's count check: the prompt items of a scope
-// equal the number of questions its investigate challenges declare. "Challenges
-// ask questions but no prompt reached Free" (0 of N) fails; a scope with no
-// investigate challenge has 0 and 0, which passes (the tree has none yet).
+// promptCountProblem is ADR-0056 V24's count check on one scope: a call of
+// scope.PromptCountProblem (the definition lives in internal/hintleak/scope).
 func promptCountProblem(s scopeData) error {
-	if got := countPromptItems(s.in.Free); s.wantPrompts != got {
-		return fmt.Errorf("scope %s: %d question prompt item(s) in Free, but its investigate challenges declare %d question(s)", s.name, got, s.wantPrompts)
-	}
-	return nil
+	return scope.PromptCountProblem(s.name, s.in.Free, s.wantPrompts)
 }
 
 // loadRepo builds every scope (full + each scenarios/*/scenario.yaml, D5-5) of

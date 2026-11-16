@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Qfour/falco-ctf-app/internal/hintleak"
+	"github.com/Qfour/falco-ctf-app/internal/hintleak/scope"
 )
 
 // independentFixtureCount counts fixture files by a path that does not share
@@ -61,7 +62,7 @@ func TestFixtures_CarryNoHintOnlyNgrams(t *testing.T) {
 				t.Fatalf("hintleak.Check: %v", err)
 			}
 			t.Logf("scope %s: %d hint items, %d free items (%d question prompts), fixture files scanned = %d (tracked = %d), %d violation(s)",
-				s.name, len(s.in.Hints), len(s.in.Free), countPromptItems(s.in.Free), r.fixtureCount, want, len(vs))
+				s.name, len(s.in.Hints), len(s.in.Free), scope.CountPromptItems(s.in.Free), r.fixtureCount, want, len(vs))
 			if len(vs) > 0 {
 				t.Fatalf("%d (fixture file, distinct n-gram) violation(s) in scope %s — reword the fixture (ADR-0026 D5; no exclusions):\n%s",
 					len(vs), s.name, describe(vs))
