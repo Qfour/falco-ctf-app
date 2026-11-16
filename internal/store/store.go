@@ -1025,30 +1025,44 @@ func (s *Store) SolvedCount() int {
 // solves were cleared. Display names and avatars are deliberately preserved
 // — they are participant identity/profile (ADR-0034 D10), not "results". Used by the admin reset endpoint to wipe a demo/test run
 // before the real event starts.
+//
+// ADR-0056 D7: it also clears answer_attempts (the answer counts), in the SAME
+// transaction as the solves. The deletes used to be separate statements; with
+// the answer budget in the set they are one transaction, committed only if all
+// succeed, and the in-memory mirrors are replaced only after Commit. A failure
+// midway therefore leaves the solves AND the counts as they were: a reset that
+// dropped the solves but kept the counts would leave a participant who is told
+// "start over" with no attempts left, and one that dropped the counts but kept
+// a solve would hand out fresh attempts on a solved challenge.
 func (s *Store) Reset() (clearedSolves int, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, err := s.db.Exec("DELETE FROM solved"); err != nil {
-		return 0, fmt.Errorf("reset solved: %w", err)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("reset begin: %w", err)
 	}
-	if _, err := s.db.Exec("DELETE FROM exfil"); err != nil {
-		return 0, fmt.Errorf("reset exfil: %w", err)
+	defer tx.Rollback() //nolint:errcheck // no-op once Commit succeeds
+	for _, table := range []string{
+		"solved",
+		"exfil",
+		"hint_views",
+		"step_checks",
+		"evade_dirty",
+		// ADR-0008 Decision (4): unlike ResetDirty (which deliberately leaves
+		// expected_rule_fire alone — see that function's doc), the admin's
+		// full-event wipe DOES clear it, symmetric with every other
+		// per-participant table above.
+		"expected_rule_fire",
+		// ADR-0056 D7: the answer counts. ResetDirty does not touch this table.
+		"answer_attempts",
+	} {
+		// table is one of the literals above, never external input.
+		if _, err := tx.Exec("DELETE FROM " + table); err != nil {
+			return 0, fmt.Errorf("reset %s: %w", table, err)
+		}
 	}
-	if _, err := s.db.Exec("DELETE FROM hint_views"); err != nil {
-		return 0, fmt.Errorf("reset hint_views: %w", err)
-	}
-	if _, err := s.db.Exec("DELETE FROM step_checks"); err != nil {
-		return 0, fmt.Errorf("reset step_checks: %w", err)
-	}
-	if _, err := s.db.Exec("DELETE FROM evade_dirty"); err != nil {
-		return 0, fmt.Errorf("reset evade_dirty: %w", err)
-	}
-	// ADR-0008 Decision (4): unlike ResetDirty (which deliberately leaves
-	// expected_rule_fire alone — see that function's doc), the admin's
-	// full-event wipe DOES clear it, symmetric with every other
-	// per-participant table above.
-	if _, err := s.db.Exec("DELETE FROM expected_rule_fire"); err != nil {
-		return 0, fmt.Errorf("reset expected_rule_fire: %w", err)
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("reset commit: %w", err)
 	}
 	clearedSolves = len(s.solved)
 	s.solved = make(map[SolveKey]string)

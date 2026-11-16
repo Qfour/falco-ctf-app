@@ -76,6 +76,13 @@ erDiagram
         TEXT rule PK "one forbidden rule name that fired"
         TEXT at
     }
+    answer_attempts {
+        TEXT user PK
+        TEXT challenge PK
+        TEXT question PK "question id of an investigate challenge"
+        INTEGER n "attempts spent; never the text of an answer"
+        INTEGER correct "0 or 1"
+    }
     ruleFires["ruleFires (in-memory only)"] {
         TEXT user PK
         TEXT rule
@@ -164,6 +171,37 @@ CREATE TABLE avatars (
   user   TEXT PRIMARY KEY,
   avatar TEXT NOT NULL,
   set_at TEXT NOT NULL
+);
+```
+
+### `answer_attempts`
+
+Added by migration 3 (ADR-0056 D7, Proposed). The attempt budget of one
+question of an investigate challenge for one participant: `n` attempts spent,
+and `correct` (0 or 1) once the question is answered. **It holds no answer**:
+not the text, not a hash of it, not a time (D13). The column set is closed and
+pinned by `TestMigrate_AnswerAttemptsTable_ColumnSetIsPinned`; `n >= 0` and
+`correct IN (0, 1)` are CHECKs, so a corrupt row is a failed write, not a free
+attempt.
+
+Unlike the solve tables it has no in-memory mirror: `Store.TryAnswerAttempt` is
+one transaction that checks the challenge is not solved, the question is not
+answered and `n` is below the limit (`catalog` `attempts`), and adds one
+(creating the row). The answer is compared only after that commits
+(`scoring.Grader.SubmitAnswer`, the only caller of the two writes,
+`TryAnswerAttempt` and `MarkAnswerCorrect`). `POST /api/admin/reset` clears it
+in the same transaction as the solves (the reset is one transaction over all
+its tables now); `ResetDirty` does not touch it. A question answered whose
+challenge was not solved (a failed write) is finished by the next submission.
+
+```sql
+CREATE TABLE answer_attempts (
+  user      TEXT NOT NULL,
+  challenge TEXT NOT NULL,
+  question  TEXT NOT NULL,
+  n         INTEGER NOT NULL DEFAULT 0 CHECK (n >= 0),
+  correct   INTEGER NOT NULL DEFAULT 0 CHECK (correct IN (0, 1)),
+  PRIMARY KEY (user, challenge, question)
 );
 ```
 
@@ -356,6 +394,7 @@ Test: `TestFalcoEvents_SolveTimestampUsesReceiptTime`.
 | v2      | 2026-08-18 | App-H2 (PR #124): `evade_dirty` added (persistent evade forbidden-rule taint), replacing the old in-memory `ruleFires`-windowed evade gate |
 | v2.1    | 2026-08-18 | ADR-0003 (attempt scope, same-day follow-up after PR #124 was found to block every regular participant — see the ADR): no schema change. `evade_dirty` writes are now scoped to the participant's CURRENT mission (was: unconditional fan-out to every evade challenge sharing the fired rule name — #124's regression). `ResetDirty` now also deletes the pair's `exfil` row (A2-2 enforce decision) |
 | `PRAGMA user_version` 2 | 2026-10-13 | ADR-0034 D10 (migration 2): `avatars (user PRIMARY KEY, avatar, set_at)` added; `display_names` unchanged. `POST /api/admin/reset` preserves it like `display_names`. Column set pinned by a test (no email / name / image column) |
+| `PRAGMA user_version` 3 | 2026-11-16 | ADR-0056 D7 (migration 3): `answer_attempts (user, challenge, question, n, correct)` added (the answer budget of an investigate challenge; no answer text). `POST /api/admin/reset` clears it and is now one transaction over all the tables it clears; `ResetDirty` leaves it alone. Rolling back to a build without migration 3 needs `PRAGMA user_version = 2` **and `DELETE FROM answer_attempts;`** (the table is additive and the older build never reads it, but its admin reset does not clear it: a re-upgrade after such a reset would keep answered rows while the solves are gone) |
 
 **Upgrade note (app#124 5x review, R1 LOW):** the `d24fe02` build (App-H2
 before ADR-0003's attempt scope landed) wrote `evade_dirty` rows with NO
