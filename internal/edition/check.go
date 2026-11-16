@@ -133,11 +133,17 @@ func ScopeOf(c catalog.Catalog) Scope {
 func (s Scope) HasInvestigate() bool { return len(s) > 0 }
 
 // PracticeSet is the answers of the practice editions, by format
-// (format -> the set of values). Loading them is A4 / A7; here it is an argument.
+// (format -> the set of values). Load makes it (loadPractice, from every practice
+// edition of the image, A4a-1); Check takes it as an argument.
 type PracticeSet map[string]map[string]struct{}
 
-// Add records one practice answer. The set must be made (PracticeSet{}): Add on a
-// nil PracticeSet panics, and a nil one is "not supplied" to Check, not "empty".
+// Add records one practice answer. The value must be in the format's NORMALISED
+// form already (answerformat.Canonical): Check compares it with event-table values,
+// which T5 requires to be normalised, so a value that normalisation would change
+// could never be equal to one and T6 would pass what it should refuse. loadPractice
+// is the one caller and refuses a table that has such a value; Add does not check.
+// The set must be made (make(PracticeSet)): Add on a nil PracticeSet panics, and a
+// nil one is "not supplied" to Check, not "empty".
 func (p PracticeSet) Add(format, value string) {
 	if p[format] == nil {
 		p[format] = make(map[string]struct{})

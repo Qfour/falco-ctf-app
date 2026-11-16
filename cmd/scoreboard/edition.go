@@ -29,10 +29,15 @@ import (
 // The returned Judge is nil when there is no table. It is held by the handler
 // (scoreboard.WithEditionJudge), which passes it to the Grader (A3a); the answer
 // route (A3b-1) is the one caller of the Grader's SubmitAnswer. With no table (the
-// practice edition, until A4a reads the image's practice answers) the Grader has no
-// Judge and SubmitAnswer answers ErrAnswersUnavailable (a 500, nothing spent).
+// practice mode, until A4a-2 makes its Judge) the Grader has no Judge and
+// SubmitAnswer answers ErrAnswersUnavailable (a 500, nothing spent).
+//
+// cfg.challengesDir is CHALLENGES_DIR, the directory the catalog was read from:
+// edition.Load reads the practice answers of every challenge under it for T6
+// (ADR-0056 A4a-1), so an event table that repeats a published practice answer is
+// refused here, at start-up.
 func startEdition(logger *slog.Logger, cfg catalogEnv, cat catalog.Catalog) (*edition.Judge, error) {
-	judge, runID, err := edition.Load(cat, cfg.answersFile, cfg.flagsFile != "")
+	judge, runID, err := edition.Load(cat, cfg.challengesDir, cfg.answersFile, cfg.flagsFile != "")
 	if err != nil {
 		logger.Error("edition check failed", "err", err)
 		return nil, err

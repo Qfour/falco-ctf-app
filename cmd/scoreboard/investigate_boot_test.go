@@ -195,12 +195,61 @@ func TestBoot_InvestigateScope_EventModeWithoutTable_IsRefused(t *testing.T) {
 	noValueInLog(t, "refused", b.log)
 }
 
+// (b2) ADR-0056 A4a-1 / V34 at start-up: startEdition hands CHALLENGES_DIR to
+// edition.Load, which reads the practice answers under it for T6. An event table that
+// repeats a published practice answer is refused (one ERROR record, no value in it);
+// the same tree with a practice edition of other values starts. The practice edition
+// here is synthetic (no investigate challenge, so no practice edition, is in the repo).
+func TestBoot_InvestigateScope_EventTableRepeatingAPracticeAnswer_IsRefused(t *testing.T) {
+	practice := func(hx string) string {
+		return "# falco-ctf answers v1 run=" + edition.PracticeRunID + "\n*\t" + edCID + "\thx\t" + hx + "\n"
+	}
+	cases := []struct {
+		name    string
+		hx      string
+		refused bool
+	}{
+		{"a practice answer equal to the event's (seat-a's hx)", "aaaaaaaaaaaa", true},
+		{"a practice answer that differs", "cccccccccccc", false},
+	}
+	for _, c := range cases {
+		name := c.name
+		dir := ibTree(t)
+		pdir := filepath.Join(dir, edCID, "edition", "practice")
+		if err := os.MkdirAll(pdir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(pdir, "answers.tsv"), []byte(practice(c.hx)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		b := ibStart(t, map[string]string{
+			"CHALLENGES_DIR": dir,
+			"FLAGS_FILE":     writeFlagsFile(t, ibEvade, edFlag03),
+			"ANSWERS_FILE":   edAnswersFile(t, edRunID, edGoodRows),
+		})
+		if !c.refused {
+			if b.err != nil || b.judge == nil {
+				t.Errorf("%s: judge %v, err %v; want a judge", name, b.judge, b.err)
+			}
+			continue
+		}
+		if b.err == nil || b.judge != nil || !strings.Contains(b.err.Error(), "T6") {
+			t.Errorf("%s: judge %v, err %v; want a T6 refusal and no judge", name, b.judge, b.err)
+		}
+		if len(b.recs) != 1 || b.recs[0]["msg"] != "edition check failed" || b.recs[0]["level"] != "ERROR" {
+			t.Errorf("%s: want exactly one ERROR record \"edition check failed\", got %s", name, b.log)
+		}
+		noValueInLog(t, name, b.log)
+	}
+}
+
 // (c) NOT the event mode, an investigate challenge in scope and no answers table (the
 // practice edition): TODAY the scoreboard starts, silently, with no Judge, and every
-// answer is a 500 that spends nothing. The practice answers of the image are A4a's
-// (edition.Load: "The practice answers of the image are not read here"); until A4a
-// this is the pinned behaviour, and no real challenge can be in this state before A7
-// (D19: A4a is a prerequisite of A7). When A4a lands this test changes with it.
+// answer is a 500 that spends nothing. The practice mode's own Judge is A4a-2
+// (edition.Load: "The practice answers of the image are not read here"; A4a-1 reads
+// them for T6 only, in the event mode); until A4a-2 this is the pinned behaviour, and
+// no real challenge can be in this state before A7 (D19: A4a-2 is a prerequisite of
+// A7). When A4a-2 lands this test changes with it.
 func TestBoot_InvestigateScope_PracticeWithoutTable_StartsAndCannotGradeYet(t *testing.T) {
 	b := ibStart(t, map[string]string{"CHALLENGES_DIR": ibTree(t)})
 	if b.err != nil || b.judge != nil || len(b.recs) != 0 {

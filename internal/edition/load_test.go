@@ -76,7 +76,7 @@ func writeTable(t *testing.T, data []byte) string {
 
 func TestLoad_AcceptsAnEventTable(t *testing.T) {
 	cat := loadCatalog(t)
-	j, runID, err := edition.Load(cat, writeTable(t, render(runA, loadRows())), true)
+	j, runID, err := edition.Load(cat, t.TempDir(), writeTable(t, render(runA, loadRows())), true)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestLoad_NoTableNoNeed(t *testing.T) {
 		{"nil catalog, not the event mode", nil, false},
 	}
 	for _, c := range cases {
-		j, runID, err := edition.Load(c.cat, "", c.event)
+		j, runID, err := edition.Load(c.cat, t.TempDir(), "", c.event)
 		if err != nil || j != nil || runID != "" {
 			t.Errorf("%s: Load = %v, %q, %v; want nil, \"\", nil", c.name, j, runID, err)
 		}
@@ -123,14 +123,14 @@ func TestLoad_RefusesTheModeMismatch(t *testing.T) {
 	cat := loadCatalog(t)
 	table := writeTable(t, render(runA, loadRows()))
 
-	if _, _, err := edition.Load(cat, "", true); !errors.Is(err, edition.ErrTableMissing) {
+	if _, _, err := edition.Load(cat, t.TempDir(), "", true); !errors.Is(err, edition.ErrTableMissing) {
 		t.Errorf("event mode, investigate in scope, no ANSWERS_FILE: err = %v, want ErrTableMissing", err)
 	}
 	// D8 (ii): the table, without the event mode. The file is not even read: a missing
 	// path must give the same answer.
 	paths := []string{table, filepath.Join(t.TempDir(), "nope")}
 	for _, path := range paths {
-		j, runID, err := edition.Load(cat, path, false)
+		j, runID, err := edition.Load(cat, t.TempDir(), path, false)
 		if !errors.Is(err, edition.ErrTableOutsideEventMode) || j != nil || runID != "" {
 			t.Errorf("no event mode, ANSWERS_FILE %q: Load = %v, %q, %v; want ErrTableOutsideEventMode and nothing else", filepath.Base(path), j, runID, err)
 		}
@@ -166,7 +166,7 @@ func TestLoad_RefusesADefectiveTable(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			j, runID, err := edition.Load(c.cat, writeTable(t, c.table), true)
+			j, runID, err := edition.Load(c.cat, t.TempDir(), writeTable(t, c.table), true)
 			if err == nil {
 				t.Fatal("Load accepted it")
 			}
@@ -186,7 +186,7 @@ func TestLoad_RefusesADefectiveTable(t *testing.T) {
 func TestLoad_ErrorDoesNotEchoAnEventFlagValue(t *testing.T) {
 	withFlag := loadCatalog(t)
 	withFlag["02-ev"] = catalog.Challenge{ID: "02-ev", Type: "evade", ExpectedFlag: plainFlag}
-	_, _, err := edition.Load(withFlag, writeTable(t, render(runA, set(loadRows(), 0, 3, sentinel+"-"+plainFlag))), true)
+	_, _, err := edition.Load(withFlag, t.TempDir(), writeTable(t, render(runA, set(loadRows(), 0, 3, sentinel+"-"+plainFlag))), true)
 	if err == nil {
 		t.Fatal("Load accepted a value that holds an event flag value")
 	}
@@ -199,21 +199,21 @@ func TestLoad_ErrorDoesNotEchoAnEventFlagValue(t *testing.T) {
 func TestLoad_FileProblems(t *testing.T) {
 	cat := loadCatalog(t)
 
-	_, _, err := edition.Load(cat, filepath.Join(t.TempDir(), "missing.tsv"), true)
+	_, _, err := edition.Load(cat, t.TempDir(), filepath.Join(t.TempDir(), "missing.tsv"), true)
 	if err == nil || errors.Is(err, edition.ErrTableMissing) {
 		t.Errorf("a missing file: err = %v, want a read error (not ErrTableMissing)", err)
 	}
-	if _, _, err := edition.Load(cat, t.TempDir(), true); err == nil {
+	if _, _, err := edition.Load(cat, t.TempDir(), t.TempDir(), true); err == nil {
 		t.Error("a directory was accepted as the answers file")
 	}
-	if _, _, err := edition.Load(cat, writeTable(t, nil), true); err == nil {
+	if _, _, err := edition.Load(cat, t.TempDir(), writeTable(t, nil), true); err == nil {
 		t.Error("an empty file was accepted")
 	}
 
 	// One byte over MaxTableBytes is refused as a size (the read stops there, so a
 	// larger file is never held in memory).
 	big := bytes.Repeat([]byte("a"), edition.MaxTableBytes+1)
-	_, _, err = edition.Load(cat, writeTable(t, big), true)
+	_, _, err = edition.Load(cat, t.TempDir(), writeTable(t, big), true)
 	var v *edition.Violation
 	if !errors.As(err, &v) || v.Rule != "T3" || v.Msg != "table is larger than the size limit" {
 		t.Errorf("MaxTableBytes+1 bytes: err = %v, want the T3 size violation", err)

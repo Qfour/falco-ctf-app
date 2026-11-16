@@ -5,6 +5,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -16,9 +17,15 @@ import (
 // ADR-0056 D8 (iii) and D19 A2b, fixed by reading the sources (ADR-0033 D6 does the
 // same for the flags file): the answers table has ONE door.
 //
-//   - edition.Parse and edition.NewJudge are called by edition.Load (internal/edition/
-//     load.go, func Load) and by nothing else in a non-test file;
-//   - edition.Load is called by cmd/scoreboard, exactly once, and by nothing else.
+//   - edition.NewJudge is called by edition.Load (internal/edition/load.go, func
+//     Load) and by nothing else in a non-test file: a Judge is never made from the
+//     practice answers (D8 (iii));
+//   - edition.Parse is called by edition.Load and by loadPractice, the unexported
+//     reader of the practice answers (A4a-1), in the same file; loadPractice is called
+//     by edition.Load and by nothing else, so the practice answers have one reader and
+//     it has one caller;
+//   - edition.Load is called by cmd/scoreboard, exactly once, and by nothing else;
+//   - load.go holds no PracticeSet literal (TestLoadHasNoPracticeLiteral).
 //
 // A second reader of the table would be a second place where the practice answers
 // could be read in the event mode, or where a value is parsed without Check.
@@ -26,7 +33,7 @@ import (
 const editionImportPath = "github.com/Qfour/falco-ctf-app/internal/edition"
 
 // doorGuarded are the names of this package that only the door may use.
-var doorGuarded = []string{"Parse", "NewJudge", "Load"}
+var doorGuarded = []string{"Parse", "NewJudge", "Load", "loadPractice"}
 
 // doorUse is one reference to a guarded name: the file (slash path from the repo
 // root), the enclosing function ("" outside any function), the name, and whether
@@ -126,8 +133,11 @@ func doorUses(file, src string) ([]doorUse, error) {
 }
 
 // doorViolations judges the uses of every non-test file of the program (the map is
-// slash path -> source) against the rule above, and reports what it found.
-func doorViolations(files map[string]string) (violations []string, parse, newJudge, load int) {
+// slash path -> source) against the rule above, and reports what it found: the
+// violations, and how many allowed calls there were, by "name@enclosing function"
+// (the positive side of the check: a scan that finds nothing is not a pass).
+func doorViolations(files map[string]string) (violations []string, counts map[string]int) {
+	counts = map[string]int{}
 	paths := make([]string, 0, len(files))
 	for p := range files {
 		paths = append(paths, p)
@@ -145,16 +155,26 @@ func doorViolations(files map[string]string) (violations []string, parse, newJud
 				where += " (func " + u.fn + ")"
 			}
 			switch u.name {
-			case "Parse", "NewJudge":
-				if p != "internal/edition/load.go" || u.fn != "Load" || !u.call {
-					violations = append(violations, where+": "+u.name+" is used outside a call in edition.Load")
+			case "Parse":
+				// Load, and loadPractice (the practice answers, A4a-1), which only Load calls.
+				if p != "internal/edition/load.go" || (u.fn != "Load" && u.fn != "loadPractice") || !u.call {
+					violations = append(violations, where+": Parse is used outside a call in edition.Load or loadPractice")
 					continue
 				}
-				if u.name == "Parse" {
-					parse++
-				} else {
-					newJudge++
+				counts["Parse@"+u.fn]++
+			case "NewJudge":
+				// A Judge is made from the event table only: never from the practice answers.
+				if p != "internal/edition/load.go" || u.fn != "Load" || !u.call {
+					violations = append(violations, where+": NewJudge is used outside a call in edition.Load")
+					continue
 				}
+				counts["NewJudge@Load"]++
+			case "loadPractice":
+				if p != "internal/edition/load.go" || u.fn != "Load" || !u.call {
+					violations = append(violations, where+": loadPractice is used outside a call in edition.Load (it is the one reader of the practice answers)")
+					continue
+				}
+				counts["loadPractice@Load"]++
 			case "Load":
 				if !strings.HasPrefix(p, "cmd/scoreboard/") {
 					violations = append(violations, where+": edition.Load is used outside cmd/scoreboard")
@@ -164,14 +184,14 @@ func doorViolations(files map[string]string) (violations []string, parse, newJud
 					violations = append(violations, where+": edition.Load is taken as a value; only a call expression is the door")
 					continue
 				}
-				load++
+				counts["Load@cmd/scoreboard"]++
 			}
 		}
 	}
-	if load > 1 {
+	if counts["Load@cmd/scoreboard"] > 1 {
 		violations = append(violations, "cmd/scoreboard calls edition.Load more than once; the door is one call")
 	}
-	return violations, parse, newJudge, load
+	return violations, counts
 }
 
 func TestAnswersTableHasOneDoor(t *testing.T) {
@@ -202,27 +222,90 @@ func TestAnswersTableHasOneDoor(t *testing.T) {
 	if len(files) < 50 {
 		t.Fatalf("read only %d non-test files; the walk is not seeing the tree", len(files))
 	}
-	violations, parse, newJudge, load := doorViolations(files)
+	violations, counts := doorViolations(files)
 	for _, v := range violations {
 		t.Error(v)
 	}
-	// Positive: the door is there, once. A scan that finds nothing is not a pass.
-	if parse != 1 || newJudge != 1 {
-		t.Errorf("edition.Load calls Parse %d time(s) and NewJudge %d time(s), want 1 and 1", parse, newJudge)
+	// Positive: the door is there, once, and so is the practice reader. A scan that
+	// finds nothing is not a pass.
+	if !maps.Equal(counts, wantDoorCounts) {
+		t.Errorf("calls found = %v, want %v", counts, wantDoorCounts)
 	}
-	if load != 1 {
-		t.Errorf("cmd/scoreboard calls edition.Load %d time(s), want exactly 1", load)
+}
+
+// wantDoorCounts is the whole of what the program may call: see the header.
+var wantDoorCounts = map[string]int{
+	"Parse@Load":          1,
+	"Parse@loadPractice":  1,
+	"NewJudge@Load":       1,
+	"loadPractice@Load":   1,
+	"Load@cmd/scoreboard": 1,
+}
+
+// ADR-0056 D19 A4a-1 / V34: the Options that Load hands to Check carry the practice
+// answers loadPractice read, never a literal PracticeSet (which would be "no practice
+// answers" written by hand: the T6 that never refuses). The check is on the syntax of
+// load.go: no composite literal of type PracticeSet anywhere in it.
+func practiceLiterals(file, src string) ([]string, error) {
+	f, err := parser.ParseFile(token.NewFileSet(), file, src, 0)
+	if err != nil {
+		return nil, err
+	}
+	var found []string
+	ast.Inspect(f, func(n ast.Node) bool {
+		cl, ok := n.(*ast.CompositeLit)
+		if !ok {
+			return true
+		}
+		switch ty := cl.Type.(type) {
+		case *ast.Ident:
+			if ty.Name == "PracticeSet" {
+				found = append(found, "PracticeSet{...}")
+			}
+		case *ast.SelectorExpr:
+			if ty.Sel.Name == "PracticeSet" {
+				found = append(found, "edition.PracticeSet{...}")
+			}
+		}
+		return true
+	})
+	return found, nil
+}
+
+func TestLoadHasNoPracticeLiteral(t *testing.T) {
+	b, err := os.ReadFile("load.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := practiceLiterals("internal/edition/load.go", string(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("load.go holds a PracticeSet literal %v; the set comes from loadPractice", got)
+	}
+	// The scan itself: the old shape, and a qualified one, are seen; make() is not a literal.
+	for name, src := range map[string]string{
+		"the old shape":   "package edition\n\nvar o = Options{Practice: PracticeSet{}}\n",
+		"a qualified one": "package x\n\nvar o = edition.Options{Practice: edition.PracticeSet{}}\n",
+	} {
+		if got, err := practiceLiterals("x.go", src); err != nil || len(got) != 1 {
+			t.Errorf("%s: found %v (err %v), want one literal", name, got, err)
+		}
+	}
+	if got, err := practiceLiterals("x.go", "package edition\n\nvar s = make(PracticeSet)\n"); err != nil || len(got) != 0 {
+		t.Errorf("make(PracticeSet) was reported: %v (err %v)", got, err)
 	}
 }
 
 // The scanner itself: a copy with one deliberate violation is reported, and the
 // shape that is allowed is not.
 func TestAnswersTableDoorScan_SeesAViolation(t *testing.T) {
-	const loadSrc = "package edition\n\nfunc Load() {\n\t_, _ = Parse(nil)\n\t_, _ = NewJudge(nil)\n}\n"
+	const loadSrc = "package edition\n\nfunc Load() {\n\t_, _ = Parse(nil)\n\t_, _ = NewJudge(nil)\n\t_, _ = loadPractice(\"\")\n}\n\nfunc loadPractice(string) (int, error) {\n\t_, _ = Parse(nil)\n\treturn 0, nil\n}\n"
 	const mainSrc = "package main\n\nimport \"" + editionImportPath + "\"\n\nfunc main() {\n\tedition.Load()\n}\n"
 	good := map[string]string{"internal/edition/load.go": loadSrc, "cmd/scoreboard/edition.go": mainSrc}
-	if v, p, n, l := doorViolations(good); len(v) != 0 || p != 1 || n != 1 || l != 1 {
-		t.Fatalf("the allowed shape: violations %v, parse %d, newJudge %d, load %d", v, p, n, l)
+	if v, c := doorViolations(good); len(v) != 0 || !maps.Equal(c, wantDoorCounts) {
+		t.Fatalf("the allowed shape: violations %v, calls %v, want none and %v", v, c, wantDoorCounts)
 	}
 
 	cases := []struct {
@@ -241,17 +324,23 @@ func TestAnswersTableDoorScan_SeesAViolation(t *testing.T) {
 		{"Parse called by another function of the package", "internal/edition/other.go", "package edition\n\nfunc other() { Parse(nil) }\n"},
 		{"Parse called by Load in another file", "internal/edition/other.go", "package edition\n\nfunc Load() { Parse(nil) }\n"},
 		{"Parse reached through a call chain", "internal/scoreboard/x.go", "package scoreboard\n\nimport \"" + editionImportPath + "\"\n\nfunc f() { _ = edition.Parse(nil).Seats() }\n"},
+		// The practice reader (A4a-1): it may Parse, and nothing else may call it or make a Judge in it.
+		{"NewJudge called by loadPractice", "internal/edition/load.go", "package edition\n\nfunc Load() {\n\t_, _ = loadPractice(\"\")\n}\n\nfunc loadPractice(string) (int, error) {\n\t_, _ = NewJudge(nil)\n\treturn 0, nil\n}\n"},
+		{"loadPractice called by another function", "internal/edition/other.go", "package edition\n\nfunc other() { _, _ = loadPractice(\"\") }\n"},
+		{"loadPractice taken as a value in Load", "internal/edition/other.go", "package edition\n\nfunc Load() { f := loadPractice; _ = f }\n"},
+		{"Parse called by loadPractice in another file", "internal/edition/other.go", "package edition\n\nfunc loadPractice(string) { Parse(nil) }\n"},
+		{"Parse called by a third function of load.go", "internal/edition/load.go", loadSrc + "\nfunc readMore() { _, _ = Parse(nil) }\n"},
 	}
 	for _, c := range cases {
 		files := map[string]string{"internal/edition/load.go": loadSrc, "cmd/scoreboard/edition.go": mainSrc, c.path: c.src}
-		if v, _, _, _ := doorViolations(files); len(v) == 0 {
+		if v, _ := doorViolations(files); len(v) == 0 {
 			t.Errorf("%s: no violation was reported", c.name)
 		}
 	}
 
 	// A method that is named Load or Parse on something else is not the door.
 	other := "package scoreboard\n\nfunc f(x interface{ Load(); Parse() }) { x.Load(); x.Parse() }\n"
-	if v, _, _, _ := doorViolations(map[string]string{"internal/scoreboard/x.go": other}); len(v) != 0 {
+	if v, _ := doorViolations(map[string]string{"internal/scoreboard/x.go": other}); len(v) != 0 {
 		t.Errorf("a method call on another type was reported: %v", v)
 	}
 }
