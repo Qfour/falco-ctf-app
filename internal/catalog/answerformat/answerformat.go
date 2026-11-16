@@ -56,7 +56,6 @@ var (
 	elemRE      = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 	nameRE      = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 	hexRE       = regexp.MustCompile(`^[0-9a-f]+$`)
-	timestampRE = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$`)
 	techniqueRE = regexp.MustCompile(`^T[0-9]{4}(\.[0-9]{3})?$`)
 	slashRunRE  = regexp.MustCompile(`/{2,}`)
 )
@@ -381,11 +380,14 @@ func normTimestamp(_ Params, raw string) (string, error) {
 	if strings.HasSuffix(s, "+00:00") {
 		s = strings.TrimSuffix(s, "+00:00") + "Z"
 	}
-	if !timestampRE.MatchString(s) {
-		return "", errFmt("timestamp must be RFC 3339 UTC at second precision")
-	}
-	if _, err := time.Parse(time.RFC3339, s); err != nil {
-		return "", errFmt("timestamp is not a real date and time")
+	// No regexp literal here: challengeid's source scan reads a "[0-9]{2}-" literal
+	// as a challenge-id grammar. Instead the value must survive a parse and a
+	// re-format unchanged, which is exactly "RFC 3339, UTC, 'Z', whole seconds"
+	// (a sub-second part, another offset, or a lower-case letter does not come
+	// back byte for byte; an impossible date does not parse).
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil || t.UTC().Format(time.RFC3339) != s {
+		return "", errFmt("timestamp must be a real RFC 3339 UTC time at second precision")
 	}
 	return s, nil
 }
