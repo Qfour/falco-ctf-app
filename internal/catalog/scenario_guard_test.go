@@ -1,5 +1,9 @@
 package catalog_test
 
+// The V39 half of this file (ADR-0056 A3b-5) is at the bottom: the placement rule
+// "no evade challenge after an investigate challenge", checked on every scenario
+// under scenarios/ and on the no-scenario order, with its negative cases.
+//
 // Scenario composition guard, I11 half (ADR-0055 (drafting) S1). The pair
 // "an evade challenge's forbiddenRules intersect an EARLIER trigger's
 // expectedRules" is what makes ADR-0003's attempt scope load-bearing, and it
@@ -10,6 +14,7 @@ package catalog_test
 // at the bottom can feed them synthetic input and show each failure mode is red.
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -261,4 +266,180 @@ func TestEvadePins_EveryScenarioInTheTreeIsChecked(t *testing.T) {
 	if problems := check(pinned); len(problems) != 0 {
 		t.Fatalf("fully pinned tree was reported: %v", problems)
 	}
+}
+
+// ---- V39 (ADR-0056 A3b-5): no evade challenge after an investigate challenge ----
+//
+// Why (ADR-0003 W2, extended to the investigate type by ADR-0056): the evade clean
+// gate taints only the CURRENT mission, and an investigate challenge has no forbidden
+// rule. A participant who leaves an investigate challenge unsolved keeps it current,
+// and while it is, a fire of a rule that a later evade challenge forbids taints nobody
+// (ingest/investigate_w2_test.go and scoreboard/investigate_inert_test.go fix that
+// behaviour). So a course puts every evade challenge before its first investigate
+// challenge. catalog.LoadScored refuses the other order at start-up (checkPlacement);
+// the tests below check the real scenarios/ tree with an independent computation, the
+// production check on the same input, and each failure mode on a synthetic tree.
+//
+// There is no investigate challenge under challenges/ yet (A7), so on the real tree
+// the rule holds vacuously today: the test is what turns red the day one is added
+// after an evade challenge.
+
+// evadesAfterInvestigate is the test's own computation of the rule (not catalog's):
+// the evade challenges of order that come after the first investigate challenge.
+func evadesAfterInvestigate(cat catalog.Catalog, order []string) ([]string, error) {
+	var late []string
+	seenInvestigate := false
+	for _, cid := range order {
+		ch, ok := cat[cid]
+		if !ok {
+			return nil, fmt.Errorf("order names challenge %q, which is not in the catalog", cid)
+		}
+		switch ch.Type {
+		case catalog.TypeInvestigate:
+			seenInvestigate = true
+		case catalog.TypeEvade:
+			if seenInvestigate {
+				late = append(late, cid)
+			}
+		}
+	}
+	return late, nil
+}
+
+func TestV39_RealTree_NoEvadeChallengeAfterAnInvestigateChallenge(t *testing.T) {
+	cat, err := catalog.Load("../../challenges")
+	if err != nil {
+		t.Fatalf("load catalog: %v", err)
+	}
+	scenarios, err := catalog.LoadScenarios("../../scenarios")
+	if err != nil {
+		t.Fatalf("load scenarios: %v", err)
+	}
+	if len(scenarios) < 3 {
+		t.Fatalf("loaded %d scenarios, want at least 3: the root is wrong or the tree moved", len(scenarios))
+	}
+	manifests, err := filepath.Glob("../../scenarios/*/scenario.yaml")
+	if err != nil || len(manifests) != len(scenarios) {
+		t.Fatalf("scenario manifests %v (err %v), want %d, one per loaded scenario", manifests, err, len(scenarios))
+	}
+	examined := 0
+	for _, sc := range scenarios {
+		late, err := evadesAfterInvestigate(cat, sc.Challenges)
+		if err != nil {
+			t.Fatalf("%s: %v", sc.ID, err)
+		}
+		if len(late) != 0 {
+			t.Errorf("scenario %s places evade challenge(s) %v after an investigate challenge (ADR-0003 W2 / ADR-0056 V39)", sc.ID, late)
+		}
+		examined += len(sc.Challenges)
+	}
+	if examined == 0 {
+		t.Fatal("no challenge of any scenario was examined")
+	}
+	// the production check, through the door the scoreboard uses, on the same input
+	for _, p := range manifests {
+		if _, err := catalog.LoadScored("../../challenges", p, ""); err != nil {
+			t.Errorf("LoadScored(%s): %v", p, err)
+		}
+	}
+	// and with no scenario: the order is the sorted ids of the whole catalog
+	if late, err := evadesAfterInvestigate(cat, cat.IDs()); err != nil || len(late) != 0 {
+		t.Errorf("the no-scenario order (sorted ids) places evade challenge(s) %v after an investigate challenge (err %v)", late, err)
+	}
+	if _, err := catalog.LoadScored("../../challenges", "", ""); err != nil {
+		t.Errorf("LoadScored with no scenario: %v", err)
+	}
+}
+
+// v39Tree writes a synthetic challenges/ tree: one trigger, two evade, two
+// investigate challenges. The order of a scenario is the scenario's own.
+func v39Tree(t *testing.T) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "challenges")
+	writeChallenge(t, dir, "01-recon", "type: trigger\nexpectedRules:\n  - \"r1\"\n")
+	writeChallenge(t, dir, "02-evade-a", "type: evade\nexpectedFlag: \"FALCO{dev-a}\"\nforbiddenRules:\n  - \"r2\"\n")
+	writeChallenge(t, dir, "03-evade-b", "type: evade\nexpectedFlag: \"FALCO{dev-b}\"\nforbiddenRules:\n  - \"r3\"\n")
+	writeChallenge(t, dir, "04-ir-a", inv("", evMount(invMount), invHexQ))
+	writeChallenge(t, dir, "05-ir-b", inv("", evMount(invMount), invHexQ))
+	return dir
+}
+
+func TestV39_PlacementRule_EachFailureModeIsRedAndEachControlIsGreen(t *testing.T) {
+	chalDir := v39Tree(t)
+	cat, err := catalog.Load(chalDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scnDir := filepath.Join(t.TempDir(), "scenarios")
+	cases := []struct {
+		name  string
+		order []string
+		late  []string // the evade challenges after the first investigate challenge; nil = allowed
+	}{
+		{"evade after an investigate challenge", []string{"01-recon", "04-ir-a", "02-evade-a"}, []string{"02-evade-a"}},
+		{"every evade after the first investigate, another investigate between", []string{"04-ir-a", "02-evade-a", "05-ir-b", "03-evade-b"}, []string{"02-evade-a", "03-evade-b"}},
+		{"evade directly after the only investigate challenge", []string{"04-ir-a", "03-evade-b"}, []string{"03-evade-b"}},
+		{"control: investigate challenge last", []string{"01-recon", "02-evade-a", "03-evade-b", "04-ir-a"}, nil},
+		{"control: a trigger and an investigate challenge after the evade ones", []string{"02-evade-a", "04-ir-a", "01-recon", "05-ir-b"}, nil},
+		{"control: no investigate challenge", []string{"01-recon", "02-evade-a", "03-evade-b"}, nil},
+		{"control: no evade challenge", []string{"04-ir-a", "01-recon", "05-ir-b"}, nil},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			name := fmt.Sprintf("case-%d", i)
+			writeGuardScenario(t, scnDir, name, tc.order...)
+			late, err := evadesAfterInvestigate(cat, tc.order)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !equalStrings(late, tc.late) {
+				t.Fatalf("the test's own computation = %v, want %v (the case is mis-written)", late, tc.late)
+			}
+			scored, err := catalog.LoadScored(chalDir, filepath.Join(scnDir, name, "scenario.yaml"), "")
+			if len(tc.late) == 0 {
+				if err != nil {
+					t.Fatalf("an allowed order was refused: %v", err)
+				}
+				if !equalStrings(scored.Order, tc.order) {
+					t.Fatalf("Order = %v, want the scenario's %v", scored.Order, tc.order)
+				}
+				return
+			}
+			if !errors.Is(err, catalog.ErrEvadeAfterInvestigate) {
+				t.Fatalf("LoadScored err = %v, want ErrEvadeAfterInvestigate", err)
+			}
+			for _, cid := range tc.late {
+				if !strings.Contains(err.Error(), cid) {
+					t.Fatalf("the refusal %q does not name %s", err, cid)
+				}
+			}
+		})
+	}
+}
+
+// With no scenario the order is the sorted ids, and the same rule applies to it: the
+// scoreboard's "current" is defined on that order too (cmd/scoreboard hands
+// Scored.Order to both the Grader and the Journey).
+func TestV39_PlacementRule_AlsoAppliesToTheNoScenarioOrder(t *testing.T) {
+	t.Run("evade sorts after the investigate challenge: refused", func(t *testing.T) {
+		dir := t.TempDir()
+		writeChallenge(t, dir, "01-ir", inv("", evMount(invMount), invHexQ))
+		writeChallenge(t, dir, "02-evade", "type: evade\nexpectedFlag: \"FALCO{dev-a}\"\nforbiddenRules:\n  - \"r2\"\n")
+		_, err := catalog.LoadScored(dir, "", "")
+		if !errors.Is(err, catalog.ErrEvadeAfterInvestigate) || !strings.Contains(err.Error(), "02-evade") {
+			t.Fatalf("LoadScored err = %v, want ErrEvadeAfterInvestigate naming 02-evade", err)
+		}
+	})
+	t.Run("control: evade sorts before the investigate challenge", func(t *testing.T) {
+		dir := t.TempDir()
+		writeChallenge(t, dir, "00-evade", "type: evade\nexpectedFlag: \"FALCO{dev-a}\"\nforbiddenRules:\n  - \"r2\"\n")
+		writeChallenge(t, dir, "01-ir", inv("", evMount(invMount), invHexQ))
+		scored, err := catalog.LoadScored(dir, "", "")
+		if err != nil {
+			t.Fatalf("an allowed order was refused: %v", err)
+		}
+		if !equalStrings(scored.Order, []string{"00-evade", "01-ir"}) {
+			t.Fatalf("Order = %v, want [00-evade 01-ir]", scored.Order)
+		}
+	})
 }

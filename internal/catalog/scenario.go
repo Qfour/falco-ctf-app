@@ -1,10 +1,12 @@
 package catalog
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -85,6 +87,56 @@ func LoadScenarios(root string) ([]Scenario, error) {
 		out = append(out, s)
 	}
 	return out, nil
+}
+
+// ErrEvadeAfterInvestigate wraps the refusal of a challenge order that puts an
+// evade challenge after an investigate challenge (ADR-0056 V39, A3b-5).
+var ErrEvadeAfterInvestigate = errors.New("an evade challenge is placed after an investigate challenge")
+
+// checkPlacement is the course placement rule (ADR-0056 A3b-5 / V39): in order,
+// no evade challenge comes after an investigate challenge.
+//
+// Why: the evade clean gate taints only the participant's CURRENT mission
+// (CurrentMission = the first unsolved id in order), and an investigate challenge
+// has no forbidden rule of its own. A participant who leaves an investigate
+// challenge unsolved (one question left) keeps it current, and while it is current
+// a fire of a rule that a LATER evade challenge forbids taints nobody (ADR-0003 W2,
+// which ADR-0056 extends to the investigate type). Putting every evade challenge
+// before the first investigate challenge means an unsolved investigate challenge
+// can never be current while an evade challenge is still ahead.
+//
+// order is the order the scoreboard walks: the scenario's explicit order, or the
+// sorted challenge ids when no scenario is pinned (LoadScored hands over the same
+// slice it returns as Scored.Order, so the rule is checked on the order that
+// defines "current"). An id of order that is not in cat is an error (fail-closed;
+// Restrict has refused it already for a scenario). Every offending evade challenge
+// is named.
+func checkPlacement(cat Catalog, order []string) error {
+	firstInvestigate := ""
+	var late []string
+	for _, id := range order {
+		ch, ok := cat[id]
+		if !ok {
+			return fmt.Errorf("placement check: challenge %q is not in the catalog", id)
+		}
+		switch ch.Type {
+		case TypeInvestigate:
+			if firstInvestigate == "" {
+				firstInvestigate = id
+			}
+		case TypeEvade:
+			if firstInvestigate != "" {
+				late = append(late, id)
+			}
+		}
+	}
+	if len(late) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: %s after the investigate challenge %q (ADR-0003 W2 / ADR-0056 V39: an investigate challenge "+
+		"has no forbidden rule, so while it is current a forbidden-rule fire taints no later evade challenge; "+
+		"put every evade challenge before the first investigate challenge)",
+		ErrEvadeAfterInvestigate, strings.Join(late, ", "), firstInvestigate)
 }
 
 // Restrict returns a new Catalog containing only the named challenges. It is
