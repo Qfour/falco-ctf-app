@@ -123,24 +123,6 @@ func TestPracticeOverlap_AcceptsAnEditionThatIsNotAPracticeEdition(t *testing.T)
 		name   string
 		mutate func(in *overlapInput) *Bundles
 	}{
-		{"no practice edition at all (there are none, which is not 'not supplied')", func(in *overlapInput) *Bundles {
-			in.Practice = practiceFiles{}
-			return nil
-		}},
-		{"a practice edition with a template and no bundle", func(in *overlapInput) *Bundles {
-			in.Practice["02-prac"].Evidence = nil
-			return nil
-		}},
-		{"a practice edition with a bundle and no template", func(in *overlapInput) *Bundles {
-			in.Practice["02-prac"].Template = nil
-			return nil
-		}},
-		{"a practice answer of a format that is not per seat, in the bundle", func(in *overlapInput) *Bundles {
-			return ovBundles(
-				ovBundle("seat-a", "01-demo", ovFile("notes.txt", ovRunes(1000, 40)+" ca,cb")),
-				ovBundle("seat-b", "01-demo", ovFile("notes.txt", ovRunes(1100, 40))),
-			)
-		}},
 		{"a practice name answer in another case (a name is case sensitive)", func(in *overlapInput) *Bundles {
 			return ovBundles(
 				ovBundle("seat-a", "01-demo", ovFile("notes.txt", ovRunes(1000, 40)+" PRACTICE-WHO")),
@@ -201,6 +183,23 @@ func TestPracticeOverlap_OneDefectNamesItsTerm(t *testing.T) {
 				ovBundle("seat-b", "01-demo", ovFile("a.txt", ovRunes(1100, 40)), ovFile("b.txt", "user practice-who")),
 			)
 		}, nil, OverlapTheta, "an answer of a practice edition appears in the bundle"},
+		// (b) answers of a format that is not per seat (reversed in A4c-2 review: the ADR does
+		// not restrict the formats, so the normalised value is searched as it is)
+		{"a practice choice-set answer in a bundle", func() *Bundles {
+			return ovBundles(
+				ovBundle("seat-a", "01-demo", ovFile("notes.txt", ovRunes(1000, 40)+" ca,cb")),
+				ovBundle("seat-b", "01-demo", ovFile("notes.txt", ovRunes(1100, 40))),
+			)
+		}, nil, OverlapTheta, "an answer of a practice edition appears in the bundle"},
+		{"a practice technique answer of one character in a bundle", func() *Bundles {
+			return ovBundles(
+				ovBundle("seat-a", "01-demo", ovFile("notes.txt", ovRunes(1000, 40)+" Z")),
+				ovBundle("seat-b", "01-demo", ovFile("notes.txt", ovRunes(1100, 40))),
+			)
+		}, func(in *overlapInput) { in.Answers["technique"] = map[string]struct{}{"Z": {}} }, OverlapTheta, "an answer of a practice edition appears in the bundle"},
+		{"an empty practice answer", nil, func(in *overlapInput) {
+			in.Answers["name"] = map[string]struct{}{"": {}}
+		}, OverlapTheta, "a practice answer is empty"},
 		// (c) shingles: the boundary is TestPracticeOverlap_ThetaBoundary
 		{"the outputs overlap", func() *Bundles {
 			return ovBundles(
@@ -221,6 +220,18 @@ func TestPracticeOverlap_OneDefectNamesItsTerm(t *testing.T) {
 		{"the practice answers were not supplied", nil, func(in *overlapInput) { in.Answers = nil }, OverlapTheta, "practice answers were not supplied"},
 		{"no event template was supplied", nil, func(in *overlapInput) { in.Templates = nil }, OverlapTheta, "no event template was supplied"},
 		{"no event bundle was supplied", func() *Bundles { return nil }, nil, OverlapTheta, "no event bundle was supplied"},
+		// a challenge with a bundle and no template: skipped without a word before A4c-2's review
+		{"a challenge that has a bundle has no event template", func() *Bundles {
+			return ovBundles(
+				ovBundle("seat-a", "01-demo", ovFile("notes.txt", ovRunes(1000, 40))),
+				ovBundle("seat-a", "02-other", ovFile("notes.txt", ovRunes(1300, 40))),
+			)
+		}, nil, OverlapTheta, "no event template was supplied for this challenge"},
+		// nothing to compare with: not a pass (reversed in A4c-2 review: it was accepted)
+		{"no practice edition at all", nil, func(in *overlapInput) { in.Practice = practiceFiles{} }, OverlapTheta, "no practice edition has a bundle"},
+		{"no practice edition at all (the template side)", nil, func(in *overlapInput) { in.Practice = practiceFiles{} }, OverlapTheta, "no practice edition has a template"},
+		{"practice editions with a template and no bundle", nil, func(in *overlapInput) { in.Practice["02-prac"].Evidence = nil }, OverlapTheta, "no practice edition has a bundle"},
+		{"practice editions with a bundle and no template", nil, func(in *overlapInput) { in.Practice["02-prac"].Template = nil }, OverlapTheta, "no practice edition has a template"},
 		// a set with no shingle: 0 / 0 is not a rate
 		{"a bundle whose files have no 10-rune sequence", func() *Bundles {
 			return ovBundles(
@@ -410,7 +421,7 @@ func TestPracticeOverlap_AReusedTemplateIsCaughtByTheTemplateComparison(t *testi
 func TestPracticeOverlap_TheReportHoldsTheLargestPair(t *testing.T) {
 	in := ovBaseInput()
 	in.Practice = practiceFiles{
-		"02-prac": {Evidence: []BundleFile{ovFile("notes.txt", ovRunes(0, 19))}},
+		"02-prac": {Evidence: []BundleFile{ovFile("notes.txt", ovRunes(0, 19))}, Template: []BundleFile{ovFile("page.txt", ovRunes(500, 40))}},
 		"03-prac": {Evidence: []BundleFile{ovFile("notes.txt", ovRunes(0, 26))}},
 		"04-prac": {Evidence: []BundleFile{ovFile("notes.txt", ovRunes(3000, 40))}},
 	}

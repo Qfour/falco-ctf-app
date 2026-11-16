@@ -9,12 +9,11 @@ package edition
 //   - digests: a file of an event bundle, or the bundle, has the digest of a file / a bundle
 //     of a practice edition (the same digest definitions as D9: sha256 of a file, BundleDigest
 //     of a bundle);
-//   - answers: a practice edition's answer appears in an event bundle (in any spelling that
-//     grading accepts, answerformat.Fold). Only the answers of the formats that vary per
-//     seat are looked for: a bundle is where a per-seat value is planted (D12), and the
-//     answers of the other formats are never in a bundle by design, so their absence says
-//     nothing and a short value of theirs in free text would be a false hit (a provisional
-//     reading of the ADR, see practiceAnswerFormats);
+//   - answers: a practice edition's answer, of any format, appears in an event bundle. ADR-0056
+//     D10 B4 does not restrict the formats; narrowing it is for an addendum to the ADR. A
+//     per-seat format is searched in every spelling that grading accepts (answerformat.Fold);
+//     the others have no fold and their normalised value is searched as it is (a short value
+//     can be a false hit, which is on the refusing side);
 //   - shingles: the 10-rune shingles (hintleak.GramRunes, cut from hintleak.Normalize, the
 //     rule of ADR-0026 D5 itself) of an event bundle against those of each practice bundle
 //     (1, the outputs), and of an event template against each practice template (2, with the
@@ -58,7 +57,9 @@ const RuleBundlePractice = "B4"
 const OverlapTheta = 0.5
 
 // slotMarkRE is a slot mark of a template, {{ctf:<slot>}} (D12). It is removed before the
-// shingles of a template are cut.
+// shingles of a template are cut. The owner of the mark's grammar is the renderer (A4d-2):
+// when it lands, its lexer is the one definition and this calls it, instead of keeping this
+// expression.
 var slotMarkRE = regexp.MustCompile(`\{\{ctf:[^{}]*\}\}`)
 
 // OverlapPair is the largest overlap of one comparison and the pair it is of.
@@ -87,24 +88,20 @@ type OverlapReport struct {
 // overlapInput is B4's input besides the event bundles.
 type overlapInput struct {
 	// Practice is the files of the image's practice editions (readPracticeFiles). nil is
-	// "not supplied" and a refusal; an empty map is "there are none".
+	// "not supplied" and a refusal. An empty map, or editions with no bundle / no template,
+	// is a refusal too whenever there is an event bundle / template to compare: B4 compared
+	// nothing, which is not "no overlap". An image with no investigate challenge has no event
+	// edition either, and the caller (A4e) does not call B4 for it.
 	Practice practiceFiles
 	// Answers is the practice editions' answers (loadPractice's PracticeSet). nil is "not
 	// supplied": the answers part of B4 cannot run, and that is a refusal.
 	Answers PracticeSet
 	// Templates is the event edition's template files, by challenge id. None at all is a
-	// refusal (the comparison (2) would compare nothing); so is a challenge whose files
-	// have no 10-rune shingle left once the slot marks are removed.
+	// refusal (the comparison (2) would compare nothing); so is a challenge that has a
+	// bundle and no entry here, and a challenge whose files have no 10-rune shingle left
+	// once the slot marks are removed.
 	Templates map[string][]BundleFile
 }
-
-// practiceAnswerFormats says which formats' practice answers B4 looks for in a bundle. The
-// ADR (D10 B4) says "a practice edition's answer appears in the bundle" without restricting
-// the formats; B6 and B9 are explicit that they mean the per-seat formats. B4 takes the same
-// reading, so a fixed answer (a technique id, a choice set, a sequence), which no bundle
-// carries, is not searched for as a substring of free text. It is one predicate so that a
-// different decision is one line.
-func practiceAnswerFormats(format string) bool { return answerformat.PerSeat(format) }
 
 // checkPracticeOverlap applies B4 to the event bundles with the given theta (the caller
 // passes OverlapTheta; the parameter is what lets a test show the refusal of an unset one).
@@ -136,9 +133,27 @@ func checkPracticeOverlap(c *collector, bundles *Bundles, in overlapInput, theta
 	}
 	if in.Answers == nil {
 		b4("the practice answers were not supplied, so the answer part of B4 cannot run", "", "")
+	} else {
+		checkEmptyPracticeAnswers(c, in.Answers)
+	}
+	nBundles := 0 // how many bundles have a file; withFiles is the challenges of those
+	withFiles := make(map[string]struct{})
+	for _, b := range bundles.All() {
+		if len(b.Files) > 0 {
+			withFiles[b.CID] = struct{}{}
+			nBundles++
+		}
 	}
 	if len(in.Templates) == 0 {
 		b4("no event template was supplied, so the template overlap (2) of B4 cannot run", "", "")
+	} else {
+		// every challenge that has a bundle needs its template: a challenge that is not in
+		// Templates would be skipped without a word, and a copied template would pass
+		for _, cid := range slices.Sorted(maps.Keys(withFiles)) {
+			if _, ok := in.Templates[cid]; !ok {
+				b4("no event template was supplied for this challenge, so its template overlap (2) cannot be computed", "", cid)
+			}
+		}
 	}
 
 	// What the image publishes, in byte order of the practice challenge id (a digest that
@@ -161,6 +176,16 @@ func checkPracticeOverlap(c *collector, bundles *Bundles, in overlapInput, theta
 		if len(ed.Template) > 0 {
 			templates.add(pid, shingleSet(ed.Template, true))
 		}
+	}
+	// Fail-closed: an event side with nothing to compare it with is not a pass. No practice
+	// edition (or none with a bundle / a template) makes (1) / (2) compare nothing, and that
+	// must not read as "no overlap". Whether to call B4 at all for an image with no
+	// investigate challenge is the caller's decision (A4e), not this function's.
+	if nBundles > 0 && len(outputs.ids) == 0 {
+		b4("no practice edition has a bundle, so the output overlap (1) of B4 compared nothing", "", "")
+	}
+	if len(in.Templates) > 0 && len(templates.ids) == 0 {
+		b4("no practice edition has a template, so the template overlap (2) of B4 compared nothing", "", "")
 	}
 
 	for _, b := range bundles.All() {
@@ -259,22 +284,34 @@ func setOnce(m map[string]string, k, v string) {
 	}
 }
 
-// holdsPracticeAnswer reports whether a file of b holds an answer of a practice edition, in
-// any spelling that grading accepts: the file is folded for the format of the answer
-// (answerformat.Fold) and the answer is searched in it as a substring. An empty value is
-// skipped (it could not be an answer, and it would match everything).
+// holdsPracticeAnswer reports whether a file of b holds an answer of a practice edition,
+// of any format (ADR-0056 D10 B4 does not restrict the formats). The answer, in its
+// normalised form, is searched in the file as a substring. For a format that varies per seat
+// the file is folded first (answerformat.Fold), so every spelling that grading accepts is
+// found; a format that does not (technique, choice-set, sequence) has no fold, and its
+// normalised value is searched in the file as it is. A short value of such a format can be a
+// false hit in free text; that is on the refusing side, and narrowing it is for an addendum
+// to the ADR, not for this function. An empty value is skipped here (it would match every
+// file); checkEmptyPracticeAnswers refuses it once, as an input defect.
+//
+// The error is Fold's, and only a per-seat format reaches Fold: it is ErrNoFold only for a
+// per-seat format that has no fold, which fold_test.go (every per-seat format has one) makes
+// unreachable today. It stays a returned error so that a format added without a fold is a
+// refusal and not a silent skip.
 func holdsPracticeAnswer(b *Bundle, answers PracticeSet) (bool, error) {
 	for _, format := range slices.Sorted(maps.Keys(answers)) {
-		if !practiceAnswerFormats(format) {
-			continue
-		}
+		perSeat := answerformat.PerSeat(format)
 		for _, f := range b.Files {
-			folded, err := answerformat.Fold(format, f.Data)
-			if err != nil {
-				return false, err
+			text := f.Data
+			if perSeat {
+				folded, err := answerformat.Fold(format, f.Data)
+				if err != nil {
+					return false, err
+				}
+				text = folded
 			}
 			for v := range answers[format] {
-				if v != "" && bytes.Contains(folded, []byte(v)) {
+				if v != "" && bytes.Contains(text, []byte(v)) {
 					return true, nil
 				}
 			}
@@ -283,11 +320,25 @@ func holdsPracticeAnswer(b *Bundle, answers PracticeSet) (bool, error) {
 	return false, nil
 }
 
+// checkEmptyPracticeAnswers refuses an empty practice answer, once: loadPractice's values
+// are canonical and so never empty, and an empty one would mean the answers were not read
+// as they should be (fail-closed: B4 cannot say that no practice answer is in a bundle).
+func checkEmptyPracticeAnswers(c *collector, answers PracticeSet) {
+	for _, format := range slices.Sorted(maps.Keys(answers)) {
+		if _, empty := answers[format][""]; empty {
+			c.add(newViolation(RuleBundlePractice, "a practice answer is empty, so the answer part of B4 cannot look for it", 0, cell{}, nil))
+			return
+		}
+	}
+}
+
 // shingleSet is the distinct 10-rune shingles of the files, each file cut by itself (a run
 // that straddles two files is in neither, as in hintleak.Check). With stripMarks the slot
 // marks {{ctf:...}} are removed first. The windows are hintleak's (hintleak.Normalize, then
 // windows of hintleak.GramRunes runes): there is no second definition of what a run of
-// runes is, only this loop over its result.
+// runes is, only this loop over its result. The loop cuts the windows the way hintleak's
+// gramSet does; a parity test that ties the two together is for the next change to
+// hintleak.
 func shingleSet(files []BundleFile, stripMarks bool) map[string]struct{} {
 	set := make(map[string]struct{})
 	for _, f := range files {
