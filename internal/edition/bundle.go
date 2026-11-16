@@ -111,7 +111,13 @@ func BundleDigest(files []BundleFile) string {
 type Bundles struct {
 	list  []*Bundle
 	index map[cell]*Bundle
+	seats []string
 }
+
+// Seats is every seat directory of the tree (a directory named like a seat), in byte
+// order, whether or not it holds a bundle: an empty seat directory is a seat of the tree
+// that B1 holds to the seat list.
+func (bs *Bundles) Seats() []string { return bs.seats }
 
 // All is every bundle, in byte order of (seat, cid).
 func (bs *Bundles) All() []*Bundle { return bs.list }
@@ -180,6 +186,7 @@ func readBundles(root string, c *collector) (*Bundles, error) {
 			c.add(entryViolation("a seat directory cannot be read", seat, "", ""))
 			continue
 		}
+		out.seats = append(out.seats, seat)
 		budget := &seatBudget{}
 		for _, ce := range cidEntries {
 			cid := ce.Name()

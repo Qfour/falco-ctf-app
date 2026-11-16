@@ -12,6 +12,7 @@ package edition
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"sort"
 	"unicode/utf8"
 
@@ -42,8 +43,15 @@ type BundleInput struct {
 	// Seats is `--seats`: the roster plus the spare seats. B1 holds the table's seats
 	// and the tree's seats equal to it.
 	Seats []string
-	// FlagValues are the values of this event's flags file (B3).
+	// FlagValues are the values of this event's flags file (B3). An empty string in it is
+	// a B3 violation.
 	FlagValues []string
+	// FlagChallenges is how many challenges of the scored catalog carry a flag (an
+	// ExpectedFlag: the evade ones): CountFlagChallenges(catalog.Scored.Catalog), the same
+	// set flagValues takes the values of Check's T7 from. B3 needs this event's flags, so
+	// FlagValues empty while this is above 0 is a B3 violation; an event with no such
+	// challenge has no flag to compare with and may leave both empty.
+	FlagChallenges int
 	// Hints and Free are hintleak's inputs for the scope: every hint text, and the
 	// texts a participant sees without paying (ADR-0026 D5-1; the questions' prompts
 	// are Free items). The caller assembles them once; this package does not know
@@ -67,7 +75,8 @@ type BundleInput struct {
 //     bundle. (An empty directory is not a bundle: the chart refuses a bundle with no file
 //     name, D11.)
 //   - B3: no file holds a flag shape (catalog.MentionsFlag: FALCO{, its dev placeholders
-//     and a flag regexp's matches) or one of FlagValues.
+//     and a flag regexp's matches) or one of FlagValues. FlagValues holding an empty string,
+//     or none while FlagChallenges is above 0, is a violation too (B3 would compare with nothing).
 //   - B6: the answer of every per-seat question appears in a file of its own seat's
 //     bundle (the least that shows the answer can be derived from it).
 //   - B5: hintleak.Check over the files, as Targets, finds no 10-rune sequence that is in
@@ -157,11 +166,13 @@ func checkSeatSet(c *collector, in BundleInput, bundles *Bundles) {
 			}
 		}
 	}
-	for _, b := range bundles.All() {
-		if _, ok := want[b.Seat]; !ok {
-			b1("the tree has a bundle of a seat that is not in the seat list", b.Seat, b.CID)
-			continue
+	// A seat directory of the tree that is not in the list, empty or not.
+	for _, s := range bundles.Seats() {
+		if _, ok := want[s]; !ok {
+			b1("the tree has a directory of a seat that is not in the seat list", s, "")
 		}
+	}
+	for _, b := range bundles.All() {
 		if _, ok := in.Scope[b.CID]; !ok {
 			b1("the tree has a bundle of a challenge that is not an investigate challenge of the scope", b.Seat, b.CID)
 		}
@@ -170,6 +181,13 @@ func checkSeatSet(c *collector, in BundleInput, bundles *Bundles) {
 
 // checkBundleFlags is B3.
 func checkBundleFlags(c *collector, in BundleInput, bundles *Bundles) {
+	b3 := func(msg string) { c.add(newViolation(RuleBundleFlag, msg, 0, cell{}, nil)) }
+	if slices.Contains(in.FlagValues, "") {
+		b3("an empty string is in FlagValues (it would match every file)")
+	}
+	if len(in.FlagValues) == 0 && in.FlagChallenges > 0 {
+		b3("this event's flags were not supplied although the scope has challenges with a flag, so B3 cannot compare with them")
+	}
 	for _, b := range bundles.All() {
 		for _, f := range b.Files {
 			text := string(f.Data)
@@ -260,7 +278,15 @@ func checkBundleHints(c *collector, in BundleInput, bundles *Bundles) {
 	}
 }
 
-// checkCorpus is B9.
+// CountFlagChallenges is BundleInput.FlagChallenges for the scored catalog: how many of its
+// challenges carry a flag (an ExpectedFlag; catalog.Load requires one of every evade
+// challenge). It counts the same challenges flagValues takes Check's FlagValues from.
+func CountFlagChallenges(cat catalog.Catalog) int { return len(flagValues(cat)) }
+
+// checkCorpus is B9. It looks for the NORMALISED value as bytes, nothing else: another
+// spelling that grading accepts (an upper-case hexid, a `+00:00` timestamp, ...) that is in
+// a public file is not found. That limit is known and not changed here; whether to widen
+// the definition is for an addendum to ADR-0056 (review #634 R2#2).
 func checkCorpus(c *collector, in BundleInput) {
 	if len(in.Corpus) == 0 {
 		c.add(newViolation(RuleBundleCorpus, "the image's challenges and scenarios were not supplied, so B9 cannot run", 0, cell{}, nil))

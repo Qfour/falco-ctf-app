@@ -15,9 +15,26 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/edition"
 	"github.com/Qfour/falco-ctf-app/internal/hintleak"
 )
+
+// B3's FlagChallenges: the challenges that carry a flag are the ones with an ExpectedFlag
+// (the evade ones), the same set Check's FlagValues come from.
+func TestCountFlagChallenges(t *testing.T) {
+	cat := catalog.Catalog{
+		"01-a": {ID: "01-a", Type: catalog.TypeEvade, ExpectedFlag: "FALCO{dev-x}"},
+		"02-b": {ID: "02-b", Type: catalog.TypeTrigger},
+		"03-c": {ID: "03-c", Type: catalog.TypeInvestigate},
+	}
+	if got := edition.CountFlagChallenges(cat); got != 1 {
+		t.Errorf("CountFlagChallenges = %d, want 1 (the evade challenge)", got)
+	}
+	if got := edition.CountFlagChallenges(catalog.Catalog{"02-b": cat["02-b"], "03-c": cat["03-c"]}); got != 0 {
+		t.Errorf("CountFlagChallenges without an evade challenge = %d, want 0", got)
+	}
+}
 
 const (
 	notesA   = "seat-a/01-demo/notes.txt"
@@ -102,6 +119,10 @@ func TestCheckBundles_AcceptsWhatTheRulesAllow(t *testing.T) {
 		{"a hint's text that is shown without paying", plus(goodBundleFiles(), kv(notesA, "user: "+sentinel+"-a\nid: aaaaaaaaaaaa\n"+hintText+"\n")), func(in *edition.BundleInput) {
 			in.Free = append(in.Free, hintleak.Item{Source: "01-demo step", Text: hintText})
 		}},
+		{"no flag values when no challenge has a flag", goodBundleFiles(), func(in *edition.BundleInput) {
+			in.FlagValues = nil
+			in.FlagChallenges = 0
+		}},
 		{"a shared answer (choice-set) that is in the corpus", goodBundleFiles(), func(in *edition.BundleInput) {
 			in.Corpus = edition.Corpus{[]byte("the shared answer ca,cb is public")}
 		}},
@@ -140,6 +161,18 @@ func TestCheckBundles_OneDefectNamesItsRule(t *testing.T) {
 		{"a bundle of a seat that is not in the list", func(t *testing.T, root string, in *edition.BundleInput) {
 			putFile(t, root, "seat-c/01-demo/notes.txt", "x")
 		}, edition.RuleBundleSet, "a seat that is not in the seat list"},
+		{"an empty directory of a seat that is not in the list", func(t *testing.T, root string, in *edition.BundleInput) {
+			if err := os.Mkdir(filepath.Join(root, "seat-z"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}, edition.RuleBundleSet, "a directory of a seat that is not in the seat list"},
+		{"an empty string in the flag values", func(t *testing.T, root string, in *edition.BundleInput) {
+			in.FlagValues = append(in.FlagValues, "")
+		}, edition.RuleBundleFlag, "an empty string is in FlagValues"},
+		{"no flag values although a challenge has a flag", func(t *testing.T, root string, in *edition.BundleInput) {
+			in.FlagValues = nil
+			in.FlagChallenges = 1
+		}, edition.RuleBundleFlag, "flags were not supplied"},
 		{"a bundle of a challenge that is not in the scope", func(t *testing.T, root string, in *edition.BundleInput) {
 			putFile(t, root, "seat-a/02-other/notes.txt", "x")
 		}, edition.RuleBundleSet, "not an investigate challenge of the scope"},
