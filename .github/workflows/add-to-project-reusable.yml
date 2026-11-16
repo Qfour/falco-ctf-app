@@ -48,7 +48,7 @@ jobs:
     # このジョブは GITHUB_TOKEN を使わない (PAT で認証) ため permissions は空。
     permissions: {}
     steps:
-      - uses: actions/add-to-project@5afcf98fcd03f1c2f92c3c83f58ae24323cc57fd # v2.0.0
+      - uses: actions/add-to-project@f2c1f1fa649a891be84948ea89b5dfba1526ef05 # v2.0.1
         with:
           project-url: ${{ inputs.project-url }}
           github-token: ${{ secrets.ADD_TO_PROJECT_PAT }}
