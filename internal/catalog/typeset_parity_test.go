@@ -22,6 +22,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Qfour/falco-ctf-app/internal/apispec/specparity"
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
 )
 
@@ -155,6 +156,123 @@ func TestTypeSet_ParityCheckFailsOnADriftedCopy(t *testing.T) {
 		if err := checkTypeSets(name, src, want); err == nil {
 			t.Errorf("%s source was accepted: an empty extraction must fail", name)
 		}
+	}
+}
+
+// ADR-0056 V23, A3b-2: the scoreboard spec carries the same closed set in four more
+// places, because a response now names an investigate challenge: the `type` enum of
+// MissionSummary, MissionDetail and ChallengeStat, and the `kind` of
+// scoreboard_solves_total in the /metrics description. A generated Go type and a
+// client switch follow the spec, so a copy that lacks a type is a response the
+// spec says cannot happen. Each is held to catalog.Types() as the shell copies are.
+
+var specTypeSetFile = filepath.Join("..", "..", "docs", "openapi-scoreboard.yaml")
+
+// specTypeEnumSchemas are the schemas whose `type` property is the challenge-type enum.
+var specTypeEnumSchemas = []string{"ChallengeStat", "MissionDetail", "MissionSummary"}
+
+// the metric's kind list in the /metrics description: kind in {a, b, c}
+var specKindRE = regexp.MustCompile(`kind in \{([a-z, ]+)\}`)
+
+// checkSpecTypeSets loads the spec at path and requires every copy above to equal
+// want (sorted). A copy that cannot be found is a failure, never "equal".
+func checkSpecTypeSets(path string, want []string) error {
+	spec, err := specparity.LoadSpec(path)
+	if err != nil {
+		return err
+	}
+	for _, name := range specTypeEnumSchemas {
+		sch := spec.SchemaByName(name)
+		if sch == nil {
+			return fmt.Errorf("%s: no components.schemas.%s", path, name)
+		}
+		raw, _ := spec.PropertySchema(sch, "type")["enum"].([]any)
+		if len(raw) == 0 {
+			return fmt.Errorf("%s: %s.type has no enum", path, name)
+		}
+		got := make([]string, 0, len(raw))
+		for _, v := range raw {
+			s, _ := v.(string)
+			got = append(got, s)
+		}
+		sort.Strings(got)
+		if !slices.Equal(got, want) {
+			return fmt.Errorf("%s: %s.type enum is %v, the catalog's types are %v", path, name, got, want)
+		}
+	}
+	desc, _ := spec.Operations()["GET /metrics"]["description"].(string)
+	lists := specKindRE.FindAllStringSubmatch(desc, -1)
+	if len(lists) != 1 {
+		return fmt.Errorf("%s: GET /metrics description has %d `kind in {...}` lists, want exactly 1 (scoreboard_solves_total)", path, len(lists))
+	}
+	var kinds []string
+	for _, k := range strings.Split(lists[0][1], ",") {
+		if k = strings.TrimSpace(k); k != "" {
+			kinds = append(kinds, k)
+		}
+	}
+	sort.Strings(kinds)
+	if !slices.Equal(kinds, want) {
+		return fmt.Errorf("%s: scoreboard_solves_total kind is %v, the catalog's types are %v", path, kinds, want)
+	}
+	return nil
+}
+
+func TestTypeSet_SpecCopiesMatchTheCatalog(t *testing.T) {
+	if err := checkSpecTypeSets(specTypeSetFile, wantTypes()); err != nil {
+		t.Error(err)
+	}
+}
+
+// The spec check must be able to fail: `investigate` removed from any one of the
+// four copies (a copy of the spec in a temp dir) is red, an extra type is red, and a
+// spec without the lists it looks for is red rather than "equal".
+func TestTypeSet_SpecParityCheckFailsOnADriftedCopy(t *testing.T) {
+	want := wantTypes()
+	raw, err := os.ReadFile(specTypeSetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(raw)
+	write := func(name, text string) string {
+		p := filepath.Join(t.TempDir(), name)
+		if err := os.WriteFile(p, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	// nth replaces the nth (0-based) occurrence of old in s and fails the test if
+	// there is none: a reworded spec must not turn this into a check of nothing.
+	nth := func(s, old, repl string, n int) string {
+		i := -1
+		for k := 0; k <= n; k++ {
+			j := strings.Index(s[i+1:], old)
+			if j < 0 {
+				t.Fatalf("occurrence %d of %q is not in the spec: update this negative test", n, old)
+			}
+			i += 1 + j
+		}
+		return s[:i] + repl + s[i+len(old):]
+	}
+	const enumLine = "enum: [trigger, evade, detect, investigate]"
+	if got := strings.Count(src, enumLine); got != len(specTypeEnumSchemas) {
+		t.Fatalf("the spec has %d `%s` lines, want %d (one per schema in specTypeEnumSchemas)", got, enumLine, len(specTypeEnumSchemas))
+	}
+	cases := map[string]string{}
+	for i := range specTypeEnumSchemas {
+		cases[fmt.Sprintf("investigate removed from enum copy %d", i)] = nth(src, enumLine, "enum: [trigger, evade, detect]", i)
+	}
+	cases["investigate removed from the metric's kind"] = nth(src, "kind in {trigger, evade, detect, investigate}", "kind in {trigger, evade, detect}", 0)
+	cases["an extra type in an enum"] = nth(src, enumLine, "enum: [trigger, evade, detect, investigate, bogus]", 0)
+	cases["an extra kind"] = nth(src, "kind in {trigger, evade, detect, investigate}", "kind in {trigger, evade, detect, investigate, bogus}", 0)
+	cases["no kind list at all"] = nth(src, "kind in {trigger, evade, detect, investigate}", "kinds are listed elsewhere", 0)
+	for name, text := range cases {
+		if err := checkSpecTypeSets(write("spec.yaml", text), want); err == nil {
+			t.Errorf("%s: the drifted copy was accepted", name)
+		}
+	}
+	if err := checkSpecTypeSets(write("empty.yaml", "openapi: 3.1.0\n"), want); err == nil {
+		t.Error("a spec with no schemas was accepted: an empty extraction must fail")
 	}
 }
 
