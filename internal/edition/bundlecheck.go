@@ -82,7 +82,8 @@ type BundleInput struct {
 //   - B5: hintleak.Check over the files, as Targets, finds no 10-rune sequence that is in
 //     a hint and in no free text (one violation per file, with the count). A hintleak
 //     input it cannot scan (no hint) is a violation too: a scan of nothing proves nothing.
-//   - B9: no per-seat answer appears in any file of the Corpus.
+//   - B9: no per-seat answer appears in any file of the Corpus, in any spelling that grading
+//     accepts (checkCorpus: the corpus is folded per format, answerformat.Fold).
 //
 // The final guard re-checks the digests against Seats x the scope (CheckDigestSet, V48):
 // B1 makes it unreachable, and it stays so that the one place that makes digests cannot
@@ -283,41 +284,68 @@ func checkBundleHints(c *collector, in BundleInput, bundles *Bundles) {
 // challenge). It counts the same challenges flagValues takes Check's FlagValues from.
 func CountFlagChallenges(cat catalog.Catalog) int { return len(flagValues(cat)) }
 
-// checkCorpus is B9. It looks for the NORMALISED value as bytes, nothing else: another
-// spelling that grading accepts (an upper-case hexid, a `+00:00` timestamp, ...) that is in
-// a public file is not found. That limit is known and not changed here; whether to widen
-// the definition is for an addendum to ADR-0056 (review #634 R2#2).
+// checkCorpus is B9 (ADR-0056 addendum 7 M4). It looks for the whole FAMILY of spellings
+// that grading accepts, not for the normalised value's bytes alone: each corpus file is
+// folded for the format of the answer (answerformat.Fold: a hexid's capitals, a path's runs
+// of slashes, a timestamp's +00:00), and the normalised value is searched in the folded text
+// as a substring. A per-seat answer that is in a public file in any accepted spelling is a
+// violation (a false hit is on the refusing side and is cured by a re-render).
+//
+// A corpus file is folded once per format that has an answer, not once per answer, and only
+// one folded copy is alive at a time: a fold that changes nothing is the file itself, and
+// one that does is a copy of at most maxCorpusFileBytes.
 func checkCorpus(c *collector, in BundleInput) {
 	if len(in.Corpus) == 0 {
 		c.add(newViolation(RuleBundleCorpus, "the image's challenges and scenarios were not supplied, so B9 cannot run", 0, cell{}, nil))
 		return
 	}
-	found := make(map[string]bool)
+	// The per-seat answers of the table, by format. The format is part of the key of a hit:
+	// the same text can be a name's answer and a hexid's, and each is searched in the corpus
+	// folded for its own format.
+	type answer struct{ format, value string }
+	byFormat := make(map[string]map[string]struct{})
 	for _, r := range in.Table.rows {
 		q, ok := findQuestion(in.Scope[r.c.cid], r.c.qid)
 		if !ok || !answerformat.PerSeat(q.Format) {
 			continue
 		}
-		hit, seen := found[r.value]
-		if !seen {
-			hit = corpusHolds(in.Corpus, r.value)
-			found[r.value] = hit
+		if byFormat[q.Format] == nil {
+			byFormat[q.Format] = make(map[string]struct{})
 		}
-		if hit {
+		byFormat[q.Format][r.value] = struct{}{}
+	}
+	formats := make([]string, 0, len(byFormat))
+	for f := range byFormat {
+		formats = append(formats, f)
+	}
+	sort.Strings(formats)
+
+	found := make(map[answer]bool)
+	for _, f := range formats {
+		for _, data := range in.Corpus {
+			folded, err := answerformat.Fold(f, data)
+			if err != nil {
+				// Not reachable for a PerSeat format (fold_test.go): if it ever is, B9 did not
+				// run for that format, which is a refusal and not a pass.
+				c.add(newViolation(RuleBundleCorpus, "the corpus cannot be folded for a per-seat format, so B9 cannot run", 0, cell{}, err))
+				return
+			}
+			for v := range byFormat[f] {
+				if !found[answer{f, v}] && bytes.Contains(folded, []byte(v)) {
+					found[answer{f, v}] = true
+				}
+			}
+		}
+	}
+	for _, r := range in.Table.rows {
+		q, ok := findQuestion(in.Scope[r.c.cid], r.c.qid)
+		if !ok || !answerformat.PerSeat(q.Format) {
+			continue
+		}
+		if found[answer{q.Format, r.value}] {
 			c.add(newViolation(RuleBundleCorpus, "a per-seat answer appears in a file of the image's challenges or scenarios", r.line, r.c, nil))
 		}
 	}
-}
-
-// corpusHolds reports whether a file of corpus contains value.
-func corpusHolds(corpus Corpus, value string) bool {
-	needle := []byte(value)
-	for _, data := range corpus {
-		if bytes.Contains(data, needle) {
-			return true
-		}
-	}
-	return false
 }
 
 // sortedCIDs is the challenge ids of s in byte order.
