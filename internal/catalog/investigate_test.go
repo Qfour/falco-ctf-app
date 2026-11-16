@@ -122,6 +122,9 @@ func TestLoad_Investigate_RejectsMalformedBlocks(t *testing.T) {
 		{"mountDir is the seed root", inv("", evMount("/plant-seed"), invHexQ), "overlaps /plant-seed"},
 		{"mountDir under the seed root", inv("", evMount("/plant-seed/a"), invHexQ), "overlaps /plant-seed"},
 		{"mountDir under the snapshot root", inv("", evMount("/opt/ctf/plant-seed/a"), invHexQ), "overlaps /opt/ctf/plant-seed"},
+		// V44 (ADR-0056 D11): where the plant initContainer sees the evidence Secrets
+		{"mountDir is the evidence source root", inv("", evMount("/opt/ctf/evidence-src"), invHexQ), "overlaps /opt/ctf/evidence-src"},
+		{"mountDir under the evidence source root", inv("", evMount("/opt/ctf/evidence-src/14-ir-demo"), invHexQ), "overlaps /opt/ctf/evidence-src"},
 		// the block belongs to this type only
 		{"investigate block on a trigger", "type: trigger\nexpectedRules: [r]\ninvestigate:\n  evidence: " + evMount(invMount) + "\n  questions:\n" + invHexQ, "belongs to type"},
 	}
@@ -136,7 +139,9 @@ func TestLoad_Investigate_RejectsMalformedBlocks(t *testing.T) {
 }
 
 func TestLoad_Investigate_AcceptsPlainMountDirs(t *testing.T) {
-	for _, m := range []string{"/opt/ctf/evidence", "/srv/ir/bundle", "/opt/ctf/missions-extra", "/var/lib/evidence.d"} {
+	// the sibling "/opt/ctf/evidence-srcx" shares the evidence source root's prefix
+	// but not its path element: it is plain, like "/opt/ctf/missions-extra"
+	for _, m := range []string{"/opt/ctf/evidence", "/srv/ir/bundle", "/opt/ctf/missions-extra", "/var/lib/evidence.d", "/opt/ctf/evidence-srcx"} {
 		dir := t.TempDir()
 		writeChallenge(t, dir, "14-ir-demo", inv("", evMount(m), invHexQ))
 		if _, err := catalog.Load(dir); err != nil {

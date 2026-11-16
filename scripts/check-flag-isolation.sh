@@ -28,6 +28,27 @@
 #       temporary values file), never as an edit to a committed chart or
 #       challenges/ file.
 #
+# ADR-0056 D11 / V2 / V43 (A5b): the evidence bundles' Secrets
+# `ctf-evidence-<cid>` (one per investigate challenge). Two things are checked
+# beyond the flag assertions above:
+#   - every scope: a `ctf-evidence-*` Secret is volume-mounted by `plant` only,
+#     readOnly, at /opt/ctf/evidence-src/<cid>, and referenced nowhere else
+#     (assert_evidence_scope). The repo's scopes carry none (no investigate
+#     challenge exists yet), so there it is "no such Secret, no such mount".
+#   - the evidence fixture (run_evidence_fixtures): two investigate challenges'
+#     bundles are rendered, and the copy lines the CHART writes into the plant
+#     script are held to challenges/gen-values.sh's definitions by ASKING that
+#     script (it is not sourceable): they must end with exactly what
+#     `gen-values.sh --render-evidence-copy` prints (the shape, byte for byte), and
+#     the script passes `--check-seed-script` (check_2_7 = rule 2-7(a)). The shape
+#     and the rule are defined there and not written a second time here. The
+#     fixture's `plant.mounts` and seed script come from gen-values.sh
+#     (`--emit-evidence-fixture`), so the contract between the two is exercised
+#     too. The mount allowlist of 1-4 / 1-18 gets the investigate challenges'
+#     directories from the same script (`--list-evidence-mount-dirs`: one
+#     derivation of what a mountDir is). Negative cases: the `fail`s of the
+#     chart, and mutated renders that must come out red.
+#
 # Exit status: 0 iff every assertion passes in every scope checked. Never
 # fail-open: every check below branches explicitly on a captured exit status
 # or string comparison, never on the exit status of a pipeline's non-final
@@ -47,6 +68,20 @@ RC=0
 # Read by assert_missions_scope() inside run_scope(); empty (the default)
 # in every non-scenario scope, which makes that assert a no-op there.
 EXPECTED_SCENARIO_MISSIONS=""
+# ADR-0056 A5b. challenges/gen-values.sh is asked, not sourced (see above).
+GEN_VALUES="challenges/gen-values.sh"
+# Set by run_evidence_fixtures() around its scopes, empty (the default) everywhere
+# else, which makes the checks they feed a "no evidence expected" check:
+#   EXPECTED_EVIDENCE_SECRETS  the Secret names the scope must render, space-joined
+#   EVIDENCE_FIXTURE_DIR       the dir `--emit-evidence-fixture` filled (its `map`)
+#   EVIDENCE_FIXTURE_FILES     "<cid> TAB <file names, space-joined>" per challenge:
+#                              the bundle the scope was rendered with
+#   EVIDENCE_TREE              the fixture's tree of investigate challenges, whose
+#                              mount directories join the 1-4 allowlist
+EXPECTED_EVIDENCE_SECRETS=""
+EVIDENCE_FIXTURE_DIR=""
+EVIDENCE_FIXTURE_FILES=""
+EVIDENCE_TREE=""
 
 # ---------------------------------------------------------------------------
 # output helpers — every violation is printed AND recorded (RC=1); nothing
@@ -105,6 +140,16 @@ plant_target_file_allowlist() {
     [ -z "$target" ] && continue
     [ "$type" = "file" ] && printf '%s\n' "$target"
   done | sort -u
+}
+
+# ADR-0056 D11 (A5b): the mount directories of the investigate challenges (their
+# `evidence.mountDir`, which has no plant.sh header to read). Asked of
+# challenges/gen-values.sh (`--list-evidence-mount-dirs`, the derivation its own
+# init_plant_ids uses): the type rule is not written a third time here. Over
+# $EVIDENCE_TREE when a fixture sets it, else over challenges/. Prints nothing when
+# there is no investigate challenge; a failure of the script is the caller's to see.
+evidence_mount_dir_allowlist() {
+  "$GEN_VALUES" --list-evidence-mount-dirs ${EVIDENCE_TREE:+"$EVIDENCE_TREE"}
 }
 
 # ADR-0007: mount directories whose bind mount must NOT be readOnly:true.
@@ -259,7 +304,15 @@ assert_challenge_env() { # 1-1, 1-2, 1-3
 assert_challenge_mounts() { # 1-4, 1-5, 1-18 (challenge side) — ADR-0007 granularity-neutral rewrite
   local block="$1"
   local -a allowlist=() file_targets=()
+  local ev_dirs
   while IFS= read -r t; do [ -n "$t" ] && allowlist+=("$t"); done < <(plant_mount_dir_allowlist)
+  # ADR-0056 A5b: an investigate challenge's mountDir is a declared mount directory too.
+  # Captured first (not inside the process substitution) so a failure is seen.
+  if ev_dirs="$(evidence_mount_dir_allowlist)"; then
+    while IFS= read -r t; do [ -n "$t" ] && allowlist+=("$t"); done <<<"$ev_dirs"
+  else
+    violation 1-4 "${GEN_VALUES} --list-evidence-mount-dirs failed, so the investigate challenges' mount directories are unknown"
+  fi
   while IFS= read -r t; do [ -n "$t" ] && file_targets+=("$t"); done < <(plant_target_file_allowlist)
 
   if grep -qF '/var/run/secrets/kubernetes.io/serviceaccount' <<<"$block"; then
@@ -464,14 +517,19 @@ assert_plant_block() { # 1-10, 1-14, 1-19 (plant side), 1-21
   [ "$bad21" -eq 0 ] && ok 1-21 "plant has no privileged/added-capabilities/hostPath"
 }
 
-assert_plant_seed_root_only() { # 1-18 (plant side): plant's own volumeMounts == exactly one entry, the seed root, no subPath
-  local block="$1"
-  local vm_block n
+assert_plant_seed_root_only() { # 1-18 (plant side): plant's own volumeMounts == exactly one entry, the seed root, no subPath (+ the evidence Secret volumes, which assert_evidence_scope judges)
+  local block="$1" pod_doc="$2"
+  local vm_block n evv name
   vm_block="$(block_of "$block" "      volumeMounts:")"
-  n=$(grep -c '^        - name: ' <<<"$vm_block" 2>/dev/null || true)
-  : "${n:=0}"
+  evv="$(evidence_volumes "$pod_doc")"
+  n=0
+  while IFS= read -r name; do
+    [ -z "$name" ] && continue
+    # a mount of a ctf-evidence-<cid> Secret's volume is not the seed root
+    if ! grep -qxF -- "$name" <<<"$evv"; then n=$((n + 1)); fi
+  done <<<"$(grep '^        - name: ' <<<"$vm_block" | sed -E 's/^        - name: //' || true)"
   if [ "$n" -ne 1 ]; then
-    violation 1-18 "plant has ${n} volumeMounts entries (want exactly 1: the plant-seed root)"
+    violation 1-18 "plant has ${n} volumeMounts entries besides its ctf-evidence-* Secret volumes (want exactly 1: the plant-seed root)"
     return
   fi
   if grep -q '^          subPath: ' <<<"$vm_block"; then
@@ -601,6 +659,195 @@ assert_role() { # 1-16 (required)
 }
 
 # ---------------------------------------------------------------------------
+# ADR-0056 D11 / V2 / V43 (A5b): the evidence Secrets `ctf-evidence-<cid>`.
+# ---------------------------------------------------------------------------
+
+# pod_records <Pod doc>: the Secret-backed volumes and the volumeMounts of every
+# container and initContainer, tab separated ("-" for an absent field: a tab is IFS
+# whitespace, so an empty field would collapse when read back).
+#   V <volume> <secretName>
+#   M <container> <volume> <mountPath> <readOnly>
+pod_records() {
+  awk '
+    function flush() {
+      if (mname != "") printf "M\t%s\t%s\t%s\t%s\n", cont, mname, (mp == "" ? "-" : mp), (ro == "" ? "-" : ro)
+      mname = ""; mp = ""; ro = ""
+    }
+    /^  [A-Za-z]/ { flush(); sec = $0; sub(/^  /, "", sec); sub(/:.*$/, "", sec); invm = 0; next }
+    sec == "initContainers" || sec == "containers" {
+      if ($0 ~ /^    - name: /) { flush(); cont = $0; sub(/^    - name: /, "", cont); invm = 0; next }
+      if ($0 ~ /^      [A-Za-z]/) { flush(); invm = ($0 ~ /^      volumeMounts:/); next }
+      if (invm && $0 ~ /^        - name: /) { flush(); mname = $0; sub(/^        - name: /, "", mname); next }
+      if (invm && $0 ~ /^          mountPath: /) { mp = $0; sub(/^          mountPath: /, "", mp); gsub(/"/, "", mp); next }
+      if (invm && $0 ~ /^          readOnly: /) { ro = $0; sub(/^          readOnly: /, "", ro); next }
+      next
+    }
+    sec == "volumes" {
+      if ($0 ~ /^    - name: /) { vname = $0; sub(/^    - name: /, "", vname); next }
+      if ($0 ~ /^        secretName: /) { sn = $0; sub(/^        secretName: /, "", sn); printf "V\t%s\t%s\n", vname, sn }
+    }
+    END { flush() }
+  ' <<<"$1"
+}
+
+evidence_volumes() { # $1=Pod doc -> the names of the volumes backed by a ctf-evidence-* Secret, one per line
+  pod_records "$1" | awk -F'\t' '$1 == "V" && index($3, "ctf-evidence-") == 1 { print $2 }'
+}
+
+norm_set() { printf '%s\n' "$@" | LC_ALL=C sort | tr '\n' ' '; }
+
+# V2 (A5b), every scope: the rendered ctf-evidence-* Secrets are exactly
+# EXPECTED_EVIDENCE_SECRETS (none outside the fixture), each is the secretName of one
+# volume, and that volume is mounted by `plant` only, readOnly, at
+# /opt/ctf/evidence-src/<cid>. No container but `plant` mounts anything under
+# /opt/ctf/evidence-src, and the string `ctf-evidence-` appears in the Pod's code
+# only as those secretName lines (so no envFrom / secretKeyRef / env reaches one).
+# The containers are read from the Pod (every initContainer and container), not
+# from a list of names: a container added later is judged too.
+assert_evidence_scope() { # $1=Pod doc (DOCS[] holds the scope's documents)
+  local pod_doc="$1" recs d nm have="" evv="" kind a b c e sn mcount="" n stray bad=0
+  recs="$(pod_records "$pod_doc")"
+  # the parser must have read plant's seed mount, or it read nothing and "no evidence mount" means nothing
+  if ! grep -qxF $'M\tplant\tplant-seed\t/plant-seed\t-' <<<"$recs"; then
+    violation E-scope "the Pod reader found no plant-seed mount in the plant initContainer (it read nothing: 'no evidence mount' would be vacuous)"
+    return
+  fi
+  for d in "${DOCS[@]}"; do
+    if grep -qx 'kind: Secret' <<<"$d"; then
+      nm="$(awk '/^  name: / { sub(/^  name: /, ""); print; exit }' <<<"$d")"
+      case "$nm" in ctf-evidence-*) have="${have} ${nm}" ;; esac
+    fi
+  done
+  # shellcheck disable=SC2086  # the names hold no blanks; split on purpose
+  if [ "$(norm_set $have)" != "$(norm_set $EXPECTED_EVIDENCE_SECRETS)" ]; then
+    violation E-scope "the rendered ctf-evidence-* Secrets [${have# }] are not the expected [${EXPECTED_EVIDENCE_SECRETS}]"
+    bad=1
+  fi
+  while IFS=$'\t' read -r kind a b c e; do
+    [ "$kind" = "V" ] || continue
+    case "$b" in
+      ctf-evidence-*)
+        evv="${evv} ${a}=${b}"
+        case " ${have} " in
+          *" ${b} "*) : ;;
+          *) violation E-scope "volume '${a}' references the Secret '${b}', which this render does not contain"; bad=1 ;;
+        esac
+        ;;
+    esac
+  done <<<"$recs"
+  for nm in $have; do
+    n="$(awk -F'\t' -v s="$nm" '$1 == "V" && $3 == s { n++ } END { print n + 0 }' <<<"$recs")"
+    if [ "$n" != "1" ]; then
+      violation E-scope "the Secret '${nm}' is the secretName of ${n} volumes (want exactly 1)"
+      bad=1
+    fi
+  done
+  while IFS=$'\t' read -r kind a b c e; do
+    [ "$kind" = "M" ] || continue
+    # a=container b=volume c=mountPath e=readOnly
+    case "$c" in
+      /opt/ctf/evidence-src|/opt/ctf/evidence-src/*)
+        if [ "$a" != "plant" ]; then
+          violation E-scope "container '${a}' mounts ${c} (the evidence Secrets are mounted in the plant initContainer only)"
+          bad=1
+        fi
+        ;;
+    esac
+    case " ${evv} " in
+      *" ${b}="*)
+        sn="${evv#* ${b}=}"
+        sn="${sn%% *}"
+        mcount="${mcount} ${b}"
+        if [ "$a" != "plant" ]; then
+          violation E-scope "container '${a}' mounts the evidence volume '${b}' (${sn}); only the plant initContainer may"
+          bad=1
+        else
+          if [ "$c" != "/opt/ctf/evidence-src/${sn#ctf-evidence-}" ]; then
+            violation E-scope "plant mounts '${b}' (${sn}) at '${c}', want /opt/ctf/evidence-src/${sn#ctf-evidence-}"
+            bad=1
+          fi
+          if [ "$e" != "true" ]; then
+            violation E-scope "plant mounts '${b}' (${sn}) with readOnly '${e}', want true"
+            bad=1
+          fi
+        fi
+        ;;
+    esac
+  done <<<"$recs"
+  for nm in $evv; do
+    b="${nm%%=*}"
+    # shellcheck disable=SC2086  # the volume names hold no blanks; split on purpose
+    n="$(printf '%s\n' $mcount | grep -cxF -- "$b" || true)"
+    if [ "$n" != "1" ]; then
+      violation E-scope "the evidence volume '${b}' is mounted ${n} times (want exactly 1, by plant)"
+      bad=1
+    fi
+  done
+  stray="$(grep -vE '^[[:space:]]*#' <<<"$pod_doc" | grep -n 'ctf-evidence-' | grep -vE '^[0-9]+:        secretName: ctf-evidence-' || true)"
+  if [ -n "$stray" ]; then
+    violation E-scope "ctf-evidence- appears in the Pod outside a volume's secretName (an envFrom / secretKeyRef / env door):"$'\n'"$stray"
+    bad=1
+  fi
+  [ "$bad" -eq 0 ] && ok E-scope "ctf-evidence-* Secrets [${have# }]: each is mounted in plant only, readOnly, at /opt/ctf/evidence-src/<cid>, and named nowhere else in the Pod"
+  return 0
+}
+
+# The `sh -c` script of the plant initContainer, unindented. Empty when its command is
+# not the literal-block form pod.yaml renders when there is evidence.
+plant_script_text() { # $1=the plant container's block
+  awk '
+    on && /^          / { sub(/^          /, ""); print; next }
+    on && /^ *$/ { print ""; next }
+    on { exit }
+    $0 == "        - |" { on = 1 }
+  ' <<<"$(block_of "$1" "      command:")"
+}
+
+# V43 (A5b), only in a scope that set EVIDENCE_FIXTURE_DIR: the copy lines the CHART
+# rendered. (1) the plant script passes gen-values.sh's check_2_7 (rule 2-7(a)) against
+# the scope's evidence map; (2) it ENDS with exactly the lines
+# `gen-values.sh --render-evidence-copy` prints for each challenge in id order, files in
+# byte order (LC_ALL=C sort here, the chart's sortAlpha there): the shape, the chmod and
+# the order, byte for byte. The expected text is never built here from a format string.
+assert_evidence_copy() { # $1=label $2=the plant container's block
+  [ -n "$EVIDENCE_FIXTURE_DIR" ] || return 0
+  local label="$1" script f out expected="" cid names sorted mdir piece
+  script="$(plant_script_text "$2")"
+  if [ -z "$script" ]; then
+    violation E-copy "no sh -c script (command: - sh / - -c / - |) could be read from the plant initContainer, so its copy lines were not judged"
+    return
+  fi
+  f="$(mktemp "${EVIDENCE_FIXTURE_DIR}/script.XXXXXX")"
+  printf '%s\n' "$script" >"$f"
+  if out="$("$GEN_VALUES" --check-seed-script "$label" "$f" "${EVIDENCE_FIXTURE_DIR}/map" 2>&1)"; then
+    ok E-2-7 "the plant script passes gen-values.sh's 2-7 (a copy source is /opt/ctf/evidence-src/<cid>/<plain file name>, no flag, into the mount of that challenge)"
+  else
+    violation E-2-7 "the plant script is rejected by ${GEN_VALUES} --check-seed-script:"$'\n'"$out"
+  fi
+  while IFS=$'\t' read -r cid names; do
+    [ -z "$cid" ] && continue
+    mdir="$(awk -F'\t' -v c="$cid" '$2 == c { print $1; exit }' "${EVIDENCE_FIXTURE_DIR}/map")"
+    # shellcheck disable=SC2086  # the names hold no blanks; split on purpose
+    sorted="$(printf '%s\n' $names | LC_ALL=C sort | tr '\n' ' ')"
+    # shellcheck disable=SC2086
+    if ! piece="$("$GEN_VALUES" --render-evidence-copy "$cid" "$mdir" $sorted)"; then
+      violation E-copy "${GEN_VALUES} --render-evidence-copy failed for ${cid} (mountDir '${mdir}')"
+      return
+    fi
+    expected="${expected}${piece}"$'\n'
+  done <<<"$EVIDENCE_FIXTURE_FILES"
+  expected="${expected%$'\n'}"
+  if [ -z "$expected" ]; then
+    violation E-copy "no expected copy line was built (EVIDENCE_FIXTURE_FILES is empty: the comparison would be vacuous)"
+    return
+  fi
+  case "$script" in
+    *$'\n'"$expected") ok E-copy "the plant script ends with exactly the copy lines render_evidence_copy prints for each challenge (byte order of ids and names)" ;;
+    *) violation E-copy "the plant script does not end with exactly the copy lines render_evidence_copy prints (expected tail, then the script's own tail):"$'\n'"$expected"$'\n'"-----"$'\n'"$(tail -n 8 <<<"$script")" ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
 # negative tests (template must FAIL): 1-12
 # ---------------------------------------------------------------------------
 assert_1_12() {
@@ -636,7 +883,14 @@ run_scope() { # $1=label, remaining args = helm template args (after $CHART_DIR)
     violation RENDER "helm template failed for scope '${label}':"$'\n'"$manifest"
     return
   fi
+  check_scope_manifest "$label" "$manifest"
+}
 
+# Every per-scope assertion over an already-rendered manifest (run_scope renders;
+# the evidence fixture also feeds it deliberately mutated renders, which must come
+# out red: expect_red below).
+check_scope_manifest() { # $1=label, $2=the rendered manifest text
+  local label="$1" manifest="$2"
   split_docs "$manifest"
   local pod_doc secret_doc role_doc non_secret_manifest="" d
   pod_doc="$(find_doc Pod || true)"
@@ -679,11 +933,183 @@ run_scope() { # $1=label, remaining args = helm template args (after $CHART_DIR)
   assert_secret_scope "$manifest" "${secret_doc:-}" "$non_secret_manifest"
   assert_pod_level "$pod_doc"
   assert_plant_block "$plant_block" "$pod_doc"
-  assert_plant_seed_root_only "$plant_block"
+  assert_plant_seed_root_only "$plant_block" "$pod_doc"
   assert_ttyd_argv "$ttyd_block"
   assert_no_overlay_noop "$plant_block" "$challenge_block"
   assert_role "${role_doc:-}"
   assert_missions_scope "$pod_doc" "$challenge_block"
+  assert_evidence_scope "$pod_doc"
+  assert_evidence_copy "$label" "$plant_block"
+}
+
+# ---------------------------------------------------------------------------
+# ADR-0056 V43 (A5b): the evidence fixture. Two investigate challenges (40-ev,
+# 41-ev; gen-values.sh generates their plant.mounts and seed script), bundled with
+# file names whose byte order is not the order of a locale's collation, rendered by
+# the chart. Positive: the Secrets, the mounts and the copy lines (check_scope_manifest
+# with EVIDENCE_*). Negative: the chart's `fail`s, and mutated renders that the same
+# assertions must turn red (a check that cannot fail proves nothing).
+# ---------------------------------------------------------------------------
+
+ev_header() { printf 'evidence:\n  challenges:\n'; }
+
+ev_block() { # <cid> <file name>... -> evidence.challenges.<cid> of a values file, every content "x"
+  local cid="$1" f
+  shift
+  printf '    "%s":\n      files:\n' "$cid"
+  for f in "$@"; do printf '        "%s": "x"\n' "$f"; done
+}
+
+ev_mounts() { # <NN>... -> a values file whose plant.mounts has one evidence mount per challenge <NN>-ev (a minimal seedScript)
+  local n
+  printf 'plant:\n  seedScript: [sh, -c, "set -eu\\n"]\n  mounts:\n'
+  for n in "$@"; do
+    printf '    - path: /opt/fx/ev%s\n      readOnly: true\n      evidence: true\n      challenge: %s-ev\n' "$n" "$n"
+  done
+}
+
+ev_big() { # <cid> <bytes> -> evidence.challenges.<cid> with one file of that many bytes
+  printf '    "%s":\n      files:\n        "big.log": "' "$1"
+  head -c "$2" /dev/zero | tr '\0' x
+  printf '"\n'
+}
+
+expect_render_fail() { # <label> <marker> <helm template args...>
+  local label="$1" marker="$2" out
+  shift 2
+  if out="$(helm template "$CHART_DIR" "$@" 2>&1)"; then
+    violation V43 "${label}: helm template ACCEPTED this input (want a template-time fail saying '${marker}')"
+  elif ! grep -qF -- "$marker" <<<"$out"; then
+    violation V43 "${label}: helm template failed, but not with '${marker}':"$'\n'"$(head -c 400 <<<"$out")"
+  else
+    ok V43 "${label}: refused (${marker})"
+  fi
+}
+
+expect_render_ok() { # <label> <helm template args...>
+  local label="$1" out
+  shift
+  if out="$(helm template "$CHART_DIR" "$@" 2>&1)"; then
+    ok V43 "${label}: renders"
+  else
+    violation V43 "${label}: helm template failed:"$'\n'"$(head -c 400 <<<"$out")"
+  fi
+}
+
+# <label> <marker> <awk program> <rendered manifest>: the program mutates the manifest
+# (a mutation that changes nothing is a failure of this case, not a pass), and
+# check_scope_manifest must then raise a violation that says <marker>.
+expect_red() {
+  local label="$1" marker="$2" prog="$3" manifest="$4" mutated saved out
+  mutated="$(awk "$prog" <<<"$manifest")"
+  if [ "$mutated" = "$manifest" ]; then
+    violation V43 "mutant '${label}': the mutation changed nothing (the render has no such line, so this case proves nothing)"
+    return
+  fi
+  saved="$RC"
+  RC=0
+  out="$(mktemp "${EVIDENCE_FIXTURE_DIR}/red.XXXXXX")"
+  check_scope_manifest "mutant: ${label}" "$mutated" >"$out" 2>&1
+  if [ "$RC" -eq 0 ]; then
+    RC="$saved"
+    violation V43 "mutant '${label}' was ACCEPTED by every assertion (the check cannot fail)"
+  elif ! grep -qF -- "$marker" "$out"; then
+    RC="$saved"
+    violation V43 "mutant '${label}' was refused, but not for '${marker}':"$'\n'"$(grep -F 'FAIL' "$out" | head -5)"
+  else
+    RC="$saved"
+    ok V43 "mutant '${label}' is refused (${marker})"
+  fi
+}
+
+run_evidence_fixtures() {
+  local -a base many
+  local manifest i long bad
+  EVF_TMP="$(mktemp -d)"
+  trap 'rm -rf "${EVF_TMP}"' EXIT
+  echo "== evidence fixture (ADR-0056 V43): two investigate challenges =="
+  if ! "$GEN_VALUES" --emit-evidence-fixture "$EVF_TMP"; then
+    violation V43 "${GEN_VALUES} --emit-evidence-fixture failed: no fixture to render"
+    return
+  fi
+  if [ "$(grep -c 'evidence: true' "${EVF_TMP}/values.yaml" || true)" != "2" ] || [ "$(grep -c . "${EVF_TMP}/map" || true)" != "2" ]; then
+    violation V43 "the generated fixture does not hold two evidence mounts and a two-line map (the contract with gen-values.sh changed, or the emit is broken)"
+    return
+  fi
+  base=(-f "${EVF_TMP}/values.yaml" --set challengeId=40-ev)
+
+  # positive. a_b.log / a.log / a-b.log / a1.log: byte order is a-b.log a.log a1.log a_b.log
+  {
+    ev_header
+    ev_block 40-ev a_b.log a.log a-b.log a1.log
+    ev_block 41-ev b.txt a.txt
+  } >"${EVF_TMP}/files.yaml"
+  EXPECTED_EVIDENCE_SECRETS="ctf-evidence-40-ev ctf-evidence-41-ev"
+  EVIDENCE_FIXTURE_DIR="$EVF_TMP"
+  EVIDENCE_FIXTURE_FILES="40-ev"$'\t'"a_b.log a.log a-b.log a1.log"$'\n'"41-ev"$'\t'"b.txt a.txt"
+  EVIDENCE_TREE="${EVF_TMP}/tree"
+  echo "   helm template ${CHART_DIR} ${base[*]} -f files.yaml"
+  if ! manifest="$(helm template "$CHART_DIR" "${base[@]}" -f "${EVF_TMP}/files.yaml" 2>&1)"; then
+    violation RENDER "helm template failed for the evidence fixture:"$'\n'"$manifest"
+  else
+    check_scope_manifest "evidence fixture (two investigate challenges)" "$manifest"
+    # mutated renders: each must be refused, for its own reason
+    expect_red "a plain cp becomes cp -a" "is not exactly" \
+      '!d && /^ *cp "\/opt\/ctf\/evidence-src\// { sub(/cp "/, "cp -a \""); d = 1 } { print }' "$manifest"
+    expect_red "a chmod mode changes" "does not end with exactly" \
+      '!d && /^ *chmod 0444 / { sub(/0444/, "0777"); d = 1 } { print }' "$manifest"
+    expect_red "a copy line is dropped" "does not end with exactly" \
+      '!d && /^ *chmod 0444 / { d = 1; next } { print }' "$manifest"
+    expect_red "challenge mounts an evidence Secret volume" "mounts the evidence volume" \
+      '/^    - name: / { cont = $0 } cont ~ /name: challenge$/ && !d && /^      volumeMounts:$/ { print; print "        - name: evidence-0"; print "          mountPath: /opt/ctf/evidence-src/40-ev"; print "          readOnly: true"; d = 1; next } { print }' "$manifest"
+    expect_red "challenge takes an evidence Secret through envFrom" "outside a volume's secretName" \
+      '/^    - name: challenge$/ && !d { print; print "      envFrom:"; print "        - secretRef:"; print "            name: ctf-evidence-40-ev"; d = 1; next } { print }' "$manifest"
+    expect_red "plant mounts an evidence Secret without readOnly" "with readOnly" \
+      '!d && /^          mountPath: \/opt\/ctf\/evidence-src\// { print; getline; if ($0 ~ /readOnly: true/) { d = 1; next } } { print }' "$manifest"
+  fi
+  EXPECTED_EVIDENCE_SECRETS=""
+  EVIDENCE_FIXTURE_DIR=""
+  EVIDENCE_FIXTURE_FILES=""
+  EVIDENCE_TREE=""
+
+  # negative: the chart's `fail`s (V8, V43)
+  { ev_header; ev_block 40-ev x.log; ev_block 42-xx y.log; } >"${EVF_TMP}/shifted.yaml"
+  expect_render_fail "a values key moved off its mount's challenge (41-ev -> 42-xx)" "are not the same set" "${base[@]}" -f "${EVF_TMP}/shifted.yaml"
+  { ev_header; ev_block 40-ev x.log; } >"${EVF_TMP}/one.yaml"
+  expect_render_fail "a mount with no bundle" "are not the same set" "${base[@]}" -f "${EVF_TMP}/one.yaml"
+  expect_render_fail "a bundle with no mount (plant.mounts empty)" "are not the same set" --set challengeId=02-credential-files -f "${EVF_TMP}/files.yaml"
+  many=()
+  for i in $(seq 1 65); do many+=("f${i}.log"); done
+  { ev_header; ev_block 40-ev "${many[@]:0:64}"; ev_block 41-ev b.txt; } >"${EVF_TMP}/n64.yaml"
+  { ev_header; ev_block 40-ev "${many[@]}"; ev_block 41-ev b.txt; } >"${EVF_TMP}/n65.yaml"
+  expect_render_ok "64 files in one challenge" "${base[@]}" -f "${EVF_TMP}/n64.yaml"
+  expect_render_fail "65 files in one challenge" "has 65 files" "${base[@]}" -f "${EVF_TMP}/n65.yaml"
+  { ev_header; ev_big 40-ev 524288; ev_block 41-ev b.txt; } >"${EVF_TMP}/b512.yaml"
+  { ev_header; ev_big 40-ev 524289; ev_block 41-ev b.txt; } >"${EVF_TMP}/b513.yaml"
+  expect_render_ok "512 KiB in one challenge" "${base[@]}" -f "${EVF_TMP}/b512.yaml"
+  expect_render_fail "512 KiB + 1 byte in one challenge" "524289 bytes" "${base[@]}" -f "${EVF_TMP}/b513.yaml"
+  long="$(printf '%064d' 0 | tr 0 a)"
+  for bad in 'A.log' '-a' '.a' '..' 'a b' 'a$b' 'a/b' "$long"; do
+    { ev_header; ev_block 40-ev "$bad"; ev_block 41-ev b.txt; } >"${EVF_TMP}/badname.yaml"
+    expect_render_fail "the file name '${bad}'" "has the file name" "${base[@]}" -f "${EVF_TMP}/badname.yaml"
+  done
+  printf 'evidence:\n  challenges:\n    "40-ev":\n      files:\n        "a.log": 123\n    "41-ev":\n      files:\n        "b.txt": "x"\n' >"${EVF_TMP}/num.yaml"
+  expect_render_fail "a content that is not a string" "is not a string" "${base[@]}" -f "${EVF_TMP}/num.yaml"
+  printf 'evidence:\n  challenges:\n    "40-ev":\n      files:\n        "a.log": "x"\n      mode: "0777"\n    "41-ev":\n      files:\n        "b.txt": "x"\n' >"${EVF_TMP}/extra.yaml"
+  expect_render_fail "a key beside files" "single key" "${base[@]}" -f "${EVF_TMP}/extra.yaml"
+  printf 'plant:\n  seedScript: [sh, -c, "set -eu\\n"]\n  mounts:\n    - path: "/opt/x$(id)"\n      readOnly: true\n      evidence: true\n      challenge: 40-ev\n' >"${EVF_TMP}/badpath.yaml"
+  expect_render_fail "an evidence mount path with a command substitution" "is not an absolute path of" --set challengeId=40-ev -f "${EVF_TMP}/badpath.yaml" -f "${EVF_TMP}/one.yaml"
+  printf 'plant:\n  seedScript: [sh, -c, "true"]\n  mounts:\n    - path: /opt/fx/ev\n      readOnly: true\n      evidence: true\n      challenge: 40-ev\n' >"${EVF_TMP}/badscript.yaml"
+  expect_render_fail "a seedScript that is not the generated one" "must start with" --set challengeId=40-ev -f "${EVF_TMP}/badscript.yaml" -f "${EVF_TMP}/one.yaml"
+  # the total over all challenges: 2 MiB (half of plant-seed's sizeLimit 4Mi). Each
+  # challenge is at most 512 KiB, so the limit takes several challenges: 4 x 512 KiB
+  # is exactly 2 MiB and renders, a fifth challenge of 1 byte makes it 2 MiB + 1
+  ev_mounts 40 41 42 43 >"${EVF_TMP}/mounts4.yaml"
+  ev_mounts 40 41 42 43 44 >"${EVF_TMP}/mounts5.yaml"
+  { ev_header; for i in 40 41 42 43; do ev_big "${i}-ev" 524288; done; } >"${EVF_TMP}/total4.yaml"
+  { ev_header; for i in 40 41 42 43; do ev_big "${i}-ev" 524288; done; ev_block 44-ev x.log; } >"${EVF_TMP}/total5.yaml"
+  expect_render_ok "4 challenges of 512 KiB (2 MiB in all)" --set challengeId=40-ev -f "${EVF_TMP}/mounts4.yaml" -f "${EVF_TMP}/total4.yaml"
+  expect_render_fail "2 MiB + 1 byte in all (5 challenges)" "2097153 bytes in all" --set challengeId=40-ev -f "${EVF_TMP}/mounts5.yaml" -f "${EVF_TMP}/total5.yaml"
 }
 
 # ---------------------------------------------------------------------------
@@ -784,6 +1210,9 @@ for sfile in scenarios/*/scenario.yaml; do
   EXPECTED_SCENARIO_MISSIONS=""
   echo
 done
+
+run_evidence_fixtures
+echo
 
 assert_1_12
 assert_1_13

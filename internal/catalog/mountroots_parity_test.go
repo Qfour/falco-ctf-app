@@ -1,11 +1,12 @@
 package catalog
 
-// ADR-0056 V28: reservedMountRoots (investigate.go) mirrors two constants of
+// ADR-0056 V28 / V44: reservedMountRoots (investigate.go) mirrors three constants of
 // challenges/gen-values.sh, SEED_ROOT (the seed volume as the `plant` initContainer
-// sees it) and SNAPSHOT_ROOT (the build-time snapshot baked into the challenge
-// image). A change to one of them in the script and not in Go would let an
-// evidence bundle be mounted over the new seed root, and nothing would say so until
-// a deploy. This test reads the script as text and holds both values to the list.
+// sees it), SNAPSHOT_ROOT (the build-time snapshot baked into the challenge image)
+// and EVIDENCE_SRC_ROOT (where the plant initContainer sees the evidence Secrets,
+// D11). A change to one of them in the script and not in Go would let an evidence
+// bundle be mounted over the new root, and nothing would say so until a deploy. This
+// test reads the script as text and holds all three values to the list.
 //
 // Same style as typeset_parity_test.go (the shell source is data to a Go test): an
 // extraction that finds nothing, or finds an assignment twice, is a failure, never
@@ -23,11 +24,15 @@ import (
 
 var genValuesPath = filepath.Join("..", "..", "challenges", "gen-values.sh")
 
-// a top-level assignment, single or double quoted: SEED_ROOT='/plant-seed'
-var mountRootAssignRE = regexp.MustCompile(`(?m)^(SEED_ROOT|SNAPSHOT_ROOT)=(?:'([^']*)'|"([^"]*)")[ \t]*(?:#.*)?$`)
+// the gen-values.sh constants reservedMountRoots must contain (mountRootAssignRE
+// names the same three)
+var mountRootNames = []string{"SEED_ROOT", "SNAPSHOT_ROOT", "EVIDENCE_SRC_ROOT"}
 
-// mountRootsInScript returns the value of each of the two assignments, and an error
-// unless each appears exactly once.
+// a top-level assignment, single or double quoted: SEED_ROOT='/plant-seed'
+var mountRootAssignRE = regexp.MustCompile(`(?m)^(SEED_ROOT|SNAPSHOT_ROOT|EVIDENCE_SRC_ROOT)=(?:'([^']*)'|"([^"]*)")[ \t]*(?:#.*)?$`)
+
+// mountRootsInScript returns the value of each of the assignments in mountRootNames,
+// and an error unless each appears exactly once.
 func mountRootsInScript(src string) (map[string]string, error) {
 	found := map[string][]string{}
 	for _, m := range mountRootAssignRE.FindAllStringSubmatch(src, -1) {
@@ -38,7 +43,7 @@ func mountRootsInScript(src string) (map[string]string, error) {
 		found[m[1]] = append(found[m[1]], v)
 	}
 	out := map[string]string{}
-	for _, name := range []string{"SEED_ROOT", "SNAPSHOT_ROOT"} {
+	for _, name := range mountRootNames {
 		vals := found[name]
 		switch {
 		case len(vals) == 0:
@@ -59,7 +64,7 @@ func checkMountRoots(src string, roots []string) error {
 	if err != nil {
 		return err
 	}
-	for _, name := range []string{"SEED_ROOT", "SNAPSHOT_ROOT"} {
+	for _, name := range mountRootNames {
 		if !slices.Contains(roots, vals[name]) {
 			return fmt.Errorf("gen-values.sh %s = %q is not in reservedMountRoots %v: an evidence bundle could be mounted over it", name, vals[name], roots)
 		}
@@ -78,7 +83,7 @@ func TestReservedMountRoots_MatchGenValues(t *testing.T) {
 }
 
 // The check itself must be able to fail: a copy of the real script with one of the
-// two values changed is red, an extraction that finds nothing is red, and so is an
+// three values changed is red, an extraction that finds nothing is red, and so is an
 // assignment that appears twice.
 func TestReservedMountRoots_ParityCheckFailsOnADriftedCopy(t *testing.T) {
 	raw, err := os.ReadFile(genValuesPath)
@@ -90,7 +95,7 @@ func TestReservedMountRoots_ParityCheckFailsOnADriftedCopy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"SEED_ROOT", "SNAPSHOT_ROOT"} {
+	for _, name := range mountRootNames {
 		old := name + "='" + vals[name] + "'"
 		if strings.Count(src, old) != 1 {
 			t.Fatalf("the negative test's text %q must occur exactly once in gen-values.sh (rewording the assignment makes this check vacuous: update it)", old)
@@ -114,8 +119,8 @@ func TestReservedMountRoots_ParityCheckFailsOnADriftedCopy(t *testing.T) {
 			t.Errorf("%s assigned twice was accepted", name)
 		}
 	}
-	// the Go side drifting is red too: drop each of the two roots from the list
-	for _, name := range []string{"SEED_ROOT", "SNAPSHOT_ROOT"} {
+	// the Go side drifting is red too: drop each of the three roots from the list
+	for _, name := range mountRootNames {
 		without := slices.DeleteFunc(slices.Clone(reservedMountRoots), func(r string) bool { return r == vals[name] })
 		if len(without) != len(reservedMountRoots)-1 {
 			t.Errorf("%s = %q is not in reservedMountRoots to begin with", name, vals[name])
@@ -125,7 +130,7 @@ func TestReservedMountRoots_ParityCheckFailsOnADriftedCopy(t *testing.T) {
 			t.Errorf("reservedMountRoots without %s was not detected", name)
 		}
 	}
-	for name, s := range map[string]string{"empty": "", "no assignments": "echo SEED_ROOT SNAPSHOT_ROOT\n"} {
+	for name, s := range map[string]string{"empty": "", "no assignments": "echo SEED_ROOT SNAPSHOT_ROOT EVIDENCE_SRC_ROOT\n"} {
 		if err := checkMountRoots(s, reservedMountRoots); err == nil {
 			t.Errorf("%s source was accepted: an empty extraction must fail", name)
 		}

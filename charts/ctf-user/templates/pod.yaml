@@ -64,6 +64,14 @@
 {{- fail (printf "app#207: .Values.scenario.missions contains %q, outside the allowed charset ^[A-Za-z0-9._-]+$ — rejected at render time to close a shell-injection vector in the missions-scope initContainer's generated sh -c script" .) }}
 {{- end }}
 {{- end }}
+{{- /* ADR-0056 D11 (A5b): the evidence bundles. The file names below are written
+       into the `plant` initContainer's sh script, so the render-time checks run
+       here too (the same named template as templates/ctf-evidence-secret.yaml:
+       this file does not rely on that one having run). $evCids = the challenges
+       that have a bundle, in byte order; empty (the default: no `evidence`) means
+       nothing below changes and the Pod renders exactly as before. */}}
+{{- include "ctf-user.evidence.check" . }}
+{{- $evCids := keys .Values.evidence.challenges | sortAlpha }}
 apiVersion: v1
 kind: Pod
 metadata:
@@ -110,7 +118,19 @@ spec:
       # so this initContainer never reads a sensitive path at runtime — it
       # has nothing to do with the Falco `sensitive_files` macro either way.
       command:
+        {{- if $evCids }}
+        {{- /* ADR-0056 D11 (A5b): the generated script, then one `cp` + `chmod
+               0444` per bundle file BY NAME (never -a, `.` or a glob), the shape
+               render_evidence_copy defines in challenges/gen-values.sh
+               (templates/_helpers.tpl: ctf-user.evidence.copyLines). The sources
+               are the ctf-evidence-<cid> Secrets mounted below. */}}
+        - sh
+        - -c
+        - |
+          {{- printf "%s%s" (index .Values.plant.seedScript 2 | trimSuffix "\n") (include "ctf-user.evidence.copyLines" .) | nindent 10 }}
+        {{- else }}
         {{- toYaml .Values.plant.seedScript | nindent 8 }}
+        {{- end }}
       # Flags ONLY reach this container, and only via the Secret (never a
       # plaintext `value:` — Verification 1-10). `challenge` below has no
       # envFrom, no secretKeyRef, and no CTF_FLAG_* env at all.
@@ -120,6 +140,17 @@ spec:
       volumeMounts:
         - name: plant-seed
           mountPath: /plant-seed
+        {{- /* ADR-0056 D11: each ctf-evidence-<cid> Secret, readOnly, in THIS
+               container only (the static check in scripts/check-flag-isolation.sh
+               fails if any other container mounts one). The volume is named by
+               its index in the byte order of the ids: a volume name is a DNS
+               label (63 characters) and `ctf-evidence-` plus a 63-character id
+               is longer. */}}
+        {{- range $i, $cid := $evCids }}
+        - name: evidence-{{ $i }}
+          mountPath: /opt/ctf/evidence-src/{{ $cid }}
+          readOnly: true
+        {{- end }}
       # ADR-0001 1-14: intentionally NO `restartPolicy` key here.
       # `restartPolicy: Always` on an initContainer makes it a native
       # sidecar that runs alongside `challenge` for the Pod's whole
@@ -387,6 +418,14 @@ spec:
     - name: plant-seed
       emptyDir:
         sizeLimit: 4Mi
+    {{- /* ADR-0056 D11 (A5b): one Secret volume per evidence bundle, mounted by
+           `plant` only (see its volumeMounts). No `optional`: a missing Secret
+           keeps the Pod from starting rather than planting an empty directory. */}}
+    {{- range $i, $cid := $evCids }}
+    - name: evidence-{{ $i }}
+      secret:
+        secretName: ctf-evidence-{{ $cid }}
+    {{- end }}
     {{- if .Values.scenario.missions }}
     # P27-1: scenario-scope copy target for `missions-scope` above — never
     # mounted whole into anywhere else, only at /opt/ctf/missions in

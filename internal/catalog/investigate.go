@@ -133,9 +133,10 @@ type attackBlock struct {
 }
 
 // reservedMountRoots are directories no evidence bundle may be mounted over or
-// above. They mirror challenges/gen-values.sh (SEED_ROOT, SNAPSHOT_ROOT) and the
-// I16 missions path; mountroots_parity_test.go (ADR-0056 V28) reads gen-values.sh
-// and fails if either constant is not in this list.
+// above. They mirror challenges/gen-values.sh (SEED_ROOT, SNAPSHOT_ROOT,
+// EVIDENCE_SRC_ROOT) and the I16 missions path; mountroots_parity_test.go
+// (ADR-0056 V28 / V44) reads gen-values.sh and fails if any of the three constants
+// is not in this list.
 var reservedMountRoots = []string{
 	// fixtures (I16)
 	"/opt/ctf/missions",
@@ -143,6 +144,10 @@ var reservedMountRoots = []string{
 	"/plant-seed",
 	// build-time snapshot root (gen-values.sh SNAPSHOT_ROOT)
 	"/opt/ctf/plant-seed",
+	// where the `plant` initContainer sees the per-challenge Secrets
+	// ctf-evidence-<cid> (gen-values.sh EVIDENCE_SRC_ROOT, ADR-0056 D11). A mountDir
+	// under it would make 2-7(a)'s judgement of a copy source ambiguous.
+	"/opt/ctf/evidence-src",
 }
 
 var mountElemRE = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)

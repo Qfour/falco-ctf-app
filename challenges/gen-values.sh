@@ -16,6 +16,12 @@
 #                             plant-target, or two plant.sh write the same
 #                             file (ADR-0056 D1 + ADR-0055 C4 (ii);
 #                             check_claims() below)
+#   ./gen-values.sh --check-seed-script | --render-evidence-copy |
+#       --list-evidence-mount-dirs | --emit-evidence-fixture ...
+#                             entry points for scripts/check-flag-isolation.sh
+#                             (ADR-0056 A5b): the definitions of the evidence
+#                             copy line and of its 2-7(a) rule live here only
+#                             (see "Entry points" before Main)
 #
 # ADR-0001 (Option B, Accepted): plant.sh no longer runs in the challenge
 # container and no longer writes to the real sensitive path. It runs in the
@@ -136,9 +142,12 @@ INVESTIGATE_IDS=()
 # investigate challenges. So the source of a copy is
 # ${EVIDENCE_SRC_ROOT}/<cid>/<name>, <cid> being a challenge id (CHALLENGE_ID_RE,
 # defined with the scenario checks below, the one existing grammar here) and
-# <name> matching EVIDENCE_NAME_RE.
+# <name> matching EVIDENCE_NAME_RE: ADR-0056 B2's file-name grammar (lower-case,
+# at most 63 characters, never starting with `.` or `-`), the same as the chart's
+# `fail` in charts/ctf-user/templates/_helpers.tpl (ctf-user.evidence.check). There
+# is no Go copy yet: the validator's B2 (A4b) adds its own and a parity test then.
 EVIDENCE_SRC_ROOT='/opt/ctf/evidence-src'
-EVIDENCE_NAME_RE='^[A-Za-z0-9][A-Za-z0-9._-]*$'
+EVIDENCE_NAME_RE='^[a-z0-9][a-z0-9._-]{0,62}$'
 EVIDENCE_FILES=()
 
 # The grammar of an investigate challenge's evidence.mountDir, as THIS script
@@ -1503,6 +1512,17 @@ check_claims() { # $1=claims table $2=sensitive dir prefixes $3=sensitive file p
     fi
 
     if [ "${kind}" = "evidence" ]; then
+      # (R) ADR-0056 D11 / V44: not equal to, inside or above the three roots this
+      # script owns (internal/catalog's reservedMountRoots holds the same three, and
+      # mountroots_parity_test.go ties them): a mountDir under EVIDENCE_SRC_ROOT would
+      # make 2-7(a)'s judgement of a copy source ambiguous, one over the seed root or
+      # the snapshot would mount an evidence directory over the plant's own.
+      for s in "${SEED_ROOT}" "${SNAPSHOT_ROOT}" "${EVIDENCE_SRC_ROOT}"; do
+        if claims_path_overlaps "${p}" "${s}"; then
+          echo "ADR-0056 D11 (R) VIOLATION: ${id} evidence.mountDir '${p}' is equal to, inside or above the reserved root '${s}' (the seed root, the build-time snapshot, or where the evidence Secrets are mounted in the plant initContainer)" >&2
+          rc=1
+        fi
+      done
       while IFS= read -r s; do
         [ -z "${s}" ] && continue
         if claims_path_overlaps "${p}" "${s}"; then
@@ -1624,6 +1644,8 @@ verify_claims_negative_tests() {
   fx_inv "${root}/ok" 40-ev '  evidence:
     mountDir: /opt/fx/evidence-a'
   fx_inv "${root}/ok" 41-ev '  evidence: {mountDir: /opt/fx/evidence-b}'
+  # a sibling of EVIDENCE_SRC_ROOT that shares its prefix but not its path element
+  fx_inv "${root}/ok" 42-ev '  evidence: {mountDir: /opt/ctf/evidence-srcx}'
   if ! fx_check "${root}/ok" >/dev/null 2>&1; then
     echo "ADR-0056 A5a VIOLATION: the disjoint positive fixture was REJECTED — the check is too strict or the extraction is broken:" >&2
     fx_check "${root}/ok" 2>&1 | sed 's/^/    /' >&2 || true
@@ -1657,6 +1679,18 @@ verify_claims_negative_tests() {
   fx_inv "${root}/b3" 40-ev '  evidence: {mountDir: /opt/fx/ev}'
   fx_inv "${root}/b3" 41-ev '  evidence: {mountDir: /opt/fx/ev/inner}'
   fx_expect_rejected "two investigate challenges nested" "${root}/b3" "ADR-0056 D1 (b) VIOLATION" || rc=1
+
+  # (R) mountDir equal to / inside / above a reserved root (ADR-0056 D11, V44: the
+  # catalog's reservedMountRoots refuses the same three in Go)
+  fx_plant "${root}/r1" 30-a /opt/fx/vault dir 'printf x > "${PLANT_SEED_ROOT}/opt/fx/vault/a"'
+  fx_inv "${root}/r1" 40-ev "  evidence: {mountDir: ${EVIDENCE_SRC_ROOT}/40-ev}"
+  fx_expect_rejected "mountDir under the evidence source root" "${root}/r1" "ADR-0056 D11 (R) VIOLATION" || rc=1
+  fx_plant "${root}/r2" 30-a /opt/fx/vault dir 'printf x > "${PLANT_SEED_ROOT}/opt/fx/vault/a"'
+  fx_inv "${root}/r2" 40-ev "  evidence: {mountDir: ${EVIDENCE_SRC_ROOT}}"
+  fx_expect_rejected "mountDir is the evidence source root" "${root}/r2" "ADR-0056 D11 (R) VIOLATION" || rc=1
+  fx_plant "${root}/r3" 30-a /opt/fx/vault dir 'printf x > "${PLANT_SEED_ROOT}/opt/fx/vault/a"'
+  fx_inv "${root}/r3" 40-ev "  evidence: {mountDir: $(dirname "${EVIDENCE_SRC_ROOT}")}"
+  fx_expect_rejected "mountDir above the evidence source root" "${root}/r3" "ADR-0056 D11 (R) VIOLATION" || rc=1
 
   # (c) two plant.sh write the same file (redirect + redirect, redirect + cp)
   fx_plant "${root}/c1" 30-a /opt/fx/vault dir 'printf x > "${PLANT_SEED_ROOT}/opt/fx/vault/a"'
@@ -1707,7 +1741,7 @@ cp /opt/ctf/plant-seed/x "${PLANT_SEED_ROOT}/opt/fx/other/"'
 
   rm -rf "${root}"
   if [ "${rc}" -eq 0 ]; then
-    echo "  ok: ADR-0056 A5a — mountDir / plant-write disjointness: the positive tree passes and each of the 20 deliberately-bad trees is rejected for its own reason"
+    echo "  ok: ADR-0056 A5a — mountDir / plant-write disjointness: the positive tree passes and each of the 23 deliberately-bad trees is rejected for its own reason"
   fi
   return "${rc}"
 }
@@ -1889,6 +1923,11 @@ chmod 0444 \"\${PLANT_SEED_ROOT}/opt/fx/evidence-a/b-2.txt\""*) : ;;
   fx_expect_2_7 "a bundle file named '../x' through the renderer" "${seed}" "${mf}" "${map}" || rc=1
   seed="$( cd "${root}/p" && init_plant_ids && EVIDENCE_FILES=('*') && render_seed_body "${PLANT_IDS[@]}" )" || rc=1
   fx_expect_2_7 "a bundle file named '*' through the renderer" "${seed}" "${mf}" "${map}" || rc=1
+  # B2's grammar is lower-case and at most 63 characters (the chart's `fail` says the same)
+  seed="$( cd "${root}/p" && init_plant_ids && EVIDENCE_FILES=('A.log') && render_seed_body "${PLANT_IDS[@]}" )" || rc=1
+  fx_expect_2_7 "a bundle file with an upper-case name through the renderer" "${seed}" "${m}" "${map}" || rc=1
+  seed="$( cd "${root}/p" && init_plant_ids && EVIDENCE_FILES=("$(printf '%064d' 0 | tr 0 a)") && render_seed_body "${PLANT_IDS[@]}" )" || rc=1
+  fx_expect_2_7 "a bundle file name of 64 characters through the renderer" "${seed}" "${m}" "${map}" || rc=1
   # negative: a copy of the right SHAPE that does not match the mount's challenge
   # (the shape is allowed; whether this cid belongs to this directory is judged
   # against plant.mounts, here with the map)
@@ -1952,10 +1991,80 @@ EOF" "fx-quoted-heredoc" >/dev/null 2>&1; then
 
   rm -rf "${root}"
   if [ "${rc}" -eq 0 ]; then
-    echo "  ok: ADR-0056 A5a-2 — plant derived from type (evade + investigate), investigate mount / copy shapes generated (per-challenge Secret ${EVIDENCE_SRC_ROOT}/<cid>), 2-7(a) accepts only ${EVIDENCE_SRC_ROOT}/<challenge id>/<plain file name>: the positive tree passes and each of the 43 deliberately-bad inputs is rejected for its own reason"
+    echo "  ok: ADR-0056 A5a-2 — plant derived from type (evade + investigate), investigate mount / copy shapes generated (per-challenge Secret ${EVIDENCE_SRC_ROOT}/<cid>), 2-7(a) accepts only ${EVIDENCE_SRC_ROOT}/<challenge id>/<plain file name>: the positive tree passes and each of the 45 deliberately-bad inputs is rejected for its own reason"
   fi
   return "${rc}"
 }
+
+# ---------------------------------------------------------------------------
+# Entry points for scripts/check-flag-isolation.sh (ADR-0056 A5b, V43).
+#
+# This script is not sourceable (it runs its checks at the top level), so the
+# chart check cannot import the definitions below; it asks this script for them
+# instead, and does not write them a second time: the SHAPE of an evidence copy
+# line (render_evidence_copy), the rule that judges it (check_2_7, 2-7(a)), what an
+# investigate challenge's mount directory is (investigate_mount_dir), and the tree
+# the two-challenge fixture is rendered from. Every mode takes ABSOLUTE paths (this
+# script cd's to its own directory first), and an unusable argument is exit 2,
+# never "ok".
+#   --check-seed-script <label> <script file> <map file>
+#       rc 0 iff check_2_7 accepts the script text; the map is the "<mountDir> TAB
+#       <challenge id>" lines of the scope (the same text evidence_map_for prints).
+#       An empty script file is a usage error: nothing was judged.
+#   --render-evidence-copy <cid> <mountDir> <file name>...
+#       the lines render_evidence_copy prints
+#   --list-evidence-mount-dirs [<tree>]
+#       the evidence.mountDir of every investigate challenge under <tree> (default:
+#       this directory), one per line, by the same derivation init_plant_ids uses
+#   --emit-evidence-fixture <existing dir>
+#       writes <dir>/tree (two investigate challenges, 40-ev and 41-ev, no plant.sh),
+#       <dir>/values.yaml (the `plant:` block this script generates for them) and
+#       <dir>/map (their evidence map)
+# ---------------------------------------------------------------------------
+
+entry_usage() {
+  echo "gen-values.sh $1: $2" >&2
+  exit 2
+}
+
+case "${1:-}" in
+  --check-seed-script)
+    [ "$#" -eq 4 ] || entry_usage "$1" "want <label> <script file> <map file>"
+    case "$3" in /*) : ;; *) entry_usage "$1" "the script file must be an absolute path" ;; esac
+    case "$4" in /*) : ;; *) entry_usage "$1" "the map file must be an absolute path" ;; esac
+    [ -s "$3" ] || entry_usage "$1" "the script file is missing or empty (nothing to judge)"
+    [ -f "$4" ] || entry_usage "$1" "the map file is missing"
+    if check_2_7 "$(cat "$3")" "$2" "$(cat "$4")"; then exit 0; else exit 1; fi
+    ;;
+  --render-evidence-copy)
+    [ "$#" -ge 4 ] || entry_usage "$1" "want <cid> <mountDir> <file name>..."
+    render_evidence_copy "${@:2}"
+    exit 0
+    ;;
+  --list-evidence-mount-dirs)
+    [ "$#" -le 2 ] || entry_usage "$1" "want [<tree>]"
+    cd "${2:-.}" || entry_usage "$1" "cannot enter the tree"
+    init_plant_ids
+    if [ "${#INVESTIGATE_IDS[@]}" -gt 0 ]; then
+      for id in "${INVESTIGATE_IDS[@]}"; do
+        investigate_mount_dir "${id}/falco-rule.yaml"
+      done
+    fi
+    exit 0
+    ;;
+  --emit-evidence-fixture)
+    [ "$#" -eq 2 ] || entry_usage "$1" "want <existing dir>"
+    case "$2" in /*) : ;; *) entry_usage "$1" "the directory must be an absolute path" ;; esac
+    [ -d "$2" ] || entry_usage "$1" "the directory does not exist"
+    fx_inv "$2/tree" 40-ev '  evidence: {mountDir: /opt/fx/evidence-a}'
+    fx_inv "$2/tree" 41-ev '  evidence: {mountDir: /opt/fx/evidence-b}'
+    cd "$2/tree"
+    init_plant_ids
+    render_plant_block "${PLANT_IDS[@]}" > "$2/values.yaml"
+    evidence_map_for "${PLANT_IDS[@]}" > "$2/map"
+    exit 0
+    ;;
+esac
 
 # ---------------------------------------------------------------------------
 # Main
