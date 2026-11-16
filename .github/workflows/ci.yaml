@@ -193,6 +193,8 @@ jobs:
         run: ./scripts/check-deploy-user-ids.sh
       - name: deploy-time missions allowlist assert (ADR-0026 V4, check 3-8) accepts a clean image and rejects each violation (stub kubectl, no cluster)
         run: ./scripts/check-missions-allowlist-assert.sh
+      - name: the challenge image's type rule (builder + check-image-hygiene V2) accepts type investigate and refuses near-misses, edition/** is in the V1 reference set (ADR-0056 V22, no docker)
+        run: ./scripts/test-check-image-hygiene.sh --type-rule-only
       - name: no email outside the reserved domains in tracked files (ADR-0034 V17)
         run: ./scripts/check-emails.sh
       - name: the email scan can fail (ADR-0034 V17 self-test)

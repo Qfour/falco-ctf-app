@@ -207,17 +207,46 @@ func TestLoad_Investigate_V21_VocabularySpaceIsDeferredTechniqueIsRefused(t *tes
 // strict too, so a key that looks like an answer cannot load and sit ignored in a
 // public file. The existing types keep their lenient decode.
 func TestLoad_Investigate_V25_TopLevelIsStrict(t *testing.T) {
-	for _, key := range []string{"futureKey: 1\n", "answer: deadbeef\n", "expectedFlg: FALCO{x}\n"} {
+	for _, c := range []struct{ key, name string }{
+		{"futureKey: 1\n", "futureKey"},
+		{"answer: deadbeef\n", "answer"},
+		{"expectedFlg: FALCO{x}\n", "expectedFlg"},
+	} {
 		dir := t.TempDir()
-		writeChallenge(t, dir, "14-ir-demo", inv(key, evMount(invMount), invHexQ))
+		writeChallenge(t, dir, "14-ir-demo", inv(c.key, evMount(invMount), invHexQ))
 		_, err := catalog.Load(dir)
-		wantLoadError(t, err, "not found in type catalog.Challenge")
+		wantLoadError(t, err, "field "+c.name+" not found")
 	}
 	// control: the same file without the key loads
 	ok := t.TempDir()
 	writeChallenge(t, ok, "14-ir-demo", inv("", evMount(invMount), invHexQ))
 	if _, err := catalog.Load(ok); err != nil {
 		t.Fatalf("the control file must load: %v", err)
+	}
+}
+
+const invAttack = "attack:\n  tactic: \"Discovery\"\n  techniqueId: \"T1083\"\n  techniqueName: \"File and Directory Discovery\"\n"
+
+// V25 and gen-attack-layer.py: every challenge carries a top-level `attack:` block
+// (make gen-attack refuses a challenge without it), so the strict schema of an
+// investigate challenge must accept it, or the type could not satisfy the catalog
+// and gen-attack at once. Inside the block the decode is strict as well.
+func TestLoad_Investigate_V25_AttackBlockIsAccepted(t *testing.T) {
+	ok := t.TempDir()
+	writeChallenge(t, ok, "14-ir-demo", inv(invAttack, evMount(invMount), invHexQ))
+	if _, err := catalog.Load(ok); err != nil {
+		t.Fatalf("an investigate challenge with a complete attack block must load: %v", err)
+	}
+	for _, c := range []struct{ name, extra, want string }{
+		{"unknown key inside attack", invAttack + "  subTechnique: x\n", "field subTechnique not found"},
+		{"answer inside attack", invAttack + "  answer: deadbeef\n", "field answer not found"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeChallenge(t, dir, "14-ir-demo", inv(c.extra, evMount(invMount), invHexQ))
+			_, err := catalog.Load(dir)
+			wantLoadError(t, err, c.want)
+		})
 	}
 }
 
@@ -400,6 +429,33 @@ func TestLoadJourneys_V25_TopLevelIsStrictForAnInvestigateChallenge(t *testing.T
 	writeJourney(t, lenient, "01-initial-recon", "title: t\nfutureKey: 1\n")
 	if _, err := catalog.LoadJourneys(lenient, journeyCatalog()); err != nil {
 		t.Fatalf("an unknown key in a trigger journey must still load: %v", err)
+	}
+}
+
+// V25: the mapping elements of hints[] are strict too for an investigate
+// challenge (JourneyHints decodes them leniently on its own, so an `answer:` key
+// there would otherwise sit ignored); the structured and the legacy scalar form
+// both still load, and a trigger journey keeps the lenient decode.
+func TestLoadJourneys_V25_HintElementsAreStrictForAnInvestigateChallenge(t *testing.T) {
+	cat := invCatalog(t, invTwoQ)
+	head := "challengeId: 14-ir-demo\ntitle: IR\nquestions:\n  - {id: q1, prompt: first}\n  - {id: q2, prompt: second}\n"
+
+	good := t.TempDir()
+	writeJourney(t, good, "14-ir-demo", head+"hints:\n  - a legacy scalar hint\n  - {kind: command, text: look at the log, ruleRefs: [r], cheatsheetRef: c}\n")
+	if _, err := catalog.LoadJourneys(good, cat); err != nil {
+		t.Fatalf("scalar and structured hints must load: %v", err)
+	}
+
+	bad := t.TempDir()
+	writeJourney(t, bad, "14-ir-demo", head+"hints:\n  - a legacy scalar hint\n  - {kind: command, text: look at the log, answer: deadbeef}\n")
+	_, err := catalog.LoadJourneys(bad, cat)
+	wantLoadError(t, err, "hints[1]")
+	wantLoadError(t, err, "field answer not found")
+
+	lenient := t.TempDir()
+	writeJourney(t, lenient, "01-initial-recon", "title: t\nhints:\n  - {kind: rule, text: x, future: 1}\n")
+	if _, err := catalog.LoadJourneys(lenient, journeyCatalog()); err != nil {
+		t.Fatalf("an unknown key in a trigger journey's hint must still load: %v", err)
 	}
 }
 

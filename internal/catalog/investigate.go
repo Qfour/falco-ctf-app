@@ -106,6 +106,31 @@ func decodeStrictBytes(data []byte, out any) error {
 	return dec.Decode(out)
 }
 
+// ruleFileKeys is the schema an investigate challenge's falco-rule.yaml is held to
+// when it is decoded strictly (ADR-0056 D1, V25): every top-level key that ANY
+// consumer of the file reads. The Go catalog reads Challenge's keys; the other
+// consumers are shell / python that match single lines (check-challenge-rules.sh,
+// validate-flags-file.sh, the image builder: all keys Challenge already has) and
+// scripts/gen-attack-layer.py, which requires the top-level `attack:` block of
+// every challenge (make gen-attack, a CI check). A strict schema that left `attack`
+// out would make an investigate challenge impossible to write: it could not satisfy
+// the catalog and gen-attack at once. TestStrictSchemas_CoverEveryRealFile decodes
+// every real falco-rule.yaml through this type, so a key a consumer needs and this
+// type lacks is red.
+type ruleFileKeys struct {
+	Challenge `yaml:",inline"`
+	Attack    *attackBlock `yaml:"attack"`
+}
+
+// attackBlock is the `attack:` block gen-attack-layer.py reads (all three keys
+// required by it). Decoded strictly like everything else of an investigate
+// challenge: an unknown key inside it is a load failure.
+type attackBlock struct {
+	Tactic        string `yaml:"tactic"`
+	TechniqueID   string `yaml:"techniqueId"`
+	TechniqueName string `yaml:"techniqueName"`
+}
+
 // reservedMountRoots are directories no evidence bundle may be mounted over or
 // above. They mirror challenges/gen-values.sh (SEED_ROOT, SNAPSHOT_ROOT) and the
 // I16 missions path; A5 (gen-values) is where a drift between the two is caught.

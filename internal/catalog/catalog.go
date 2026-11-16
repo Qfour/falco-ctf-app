@@ -193,6 +193,18 @@ func Load(dir string) (Catalog, error) {
 	return out, nil
 }
 
+// typeListText is the closed list of types as the load errors name it:
+// "trigger", "evade", "detect" or "investigate" (built from Types, so a new type
+// shows up in the message without a second edit).
+func typeListText() string {
+	ts := Types()
+	quoted := make([]string, len(ts))
+	for i, t := range ts {
+		quoted[i] = fmt.Sprintf("%q", t)
+	}
+	return strings.Join(quoted[:len(quoted)-1], ", ") + " or " + quoted[len(quoted)-1]
+}
+
 func parseFile(path, dirName string) (Challenge, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -215,13 +227,13 @@ func parseFile(path, dirName string) (Challenge, error) {
 	// that looks like an answer cannot sit ignored in a public file. Only this type:
 	// the decode of trigger / evade / detect stays as lenient as before.
 	if ch.Type == TypeInvestigate {
-		var strict Challenge
+		var strict ruleFileKeys
 		if err := decodeStrictBytes(data, &strict); err != nil {
 			return Challenge{}, fmt.Errorf("%s challenge %q: falco-rule.yaml: %w", TypeInvestigate, ch.ID, err)
 		}
 	}
 	if ch.Type == "" {
-		return Challenge{}, fmt.Errorf("challenge %q: type must be \"trigger\", \"evade\", \"detect\" or %q", ch.ID, TypeInvestigate)
+		return Challenge{}, fmt.Errorf("challenge %q: type must be %s", ch.ID, typeListText())
 	}
 	// An investigate: block on any other type would be read by nothing; refuse it
 	// rather than leave a questions list that looks live (the existing types'
@@ -254,7 +266,7 @@ func parseFile(path, dirName string) (Challenge, error) {
 			return Challenge{}, err
 		}
 	default:
-		return Challenge{}, fmt.Errorf("challenge %q: unknown type %q, must be \"trigger\", \"evade\", \"detect\" or %q", ch.ID, ch.Type, TypeInvestigate)
+		return Challenge{}, fmt.Errorf("challenge %q: unknown type %q, must be %s", ch.ID, ch.Type, typeListText())
 	}
 	return ch, nil
 }
