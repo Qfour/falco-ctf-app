@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Qfour/falco-ctf-app/internal/catalog"
+	"github.com/Qfour/falco-ctf-app/internal/catalog/answerformat"
 	"github.com/Qfour/falco-ctf-app/internal/edition"
 )
 
@@ -269,6 +271,8 @@ func TestParseSpec_RefusesTheFile(t *testing.T) {
 			with(slotWho, func(s *specSlot) { s.vocab = "&v " + specVocab(specWords("w", 200)) }).
 			with(slotOther, func(s *specSlot) { s.vocab = "*v" }).yaml()},
 		{"a second document", []byte(good + "---\nversion: 1\n")},
+		{"a merge key (an inline mapping, no anchor)", []byte(strings.Replace(good, "    role: answer\n", "    <<: {decoys: 4}\n    role: answer\n", 1))},
+		{"more keys in fixed than the limit", specGoodDoc().withFixed(specFixedKeys(edition.MaxFixed + 1)).yaml()},
 
 		// V61: the types.
 		{"slots is a string", []byte("version: 1\nslots: nope\n")},
@@ -492,5 +496,85 @@ func TestParseSpec_AViolationNamesItsPosition(t *testing.T) {
 	_, err = edition.ParseSpec(d.yaml())
 	if !errors.As(err, &v) || v.At != "slots[1].vocab[1]" {
 		t.Errorf("an empty list: at %q (%v), want slots[1].vocab[1]", v.At, err)
+	}
+}
+
+// specFixedKeys is a flow mapping of n keys (k1 .. kn), for the limit on fixed.
+func specFixedKeys(n int) string {
+	parts := make([]string, n)
+	for i := range parts {
+		parts[i] = fmt.Sprintf("k%d: x", i+1)
+	}
+	return "{" + strings.Join(parts, ", ") + "}"
+}
+
+// The four kinds of slot defect a reader most often fixes (a name, a length, a window, a
+// word) name the slot and the place.
+func TestParseSpec_RepresentativeViolationsNameTheirSlotAndPlace(t *testing.T) {
+	cases := []struct {
+		name     string
+		doc      specDoc
+		slot, at string
+	}{
+		{"a name used twice", specGoodDoc().with(slotOther, func(s *specSlot) { s.name = "who" }), "who", "slots[4]"},
+		{"a name too long for an answer", specGoodDoc().with(slotTag, func(s *specSlot) { s.name = strings.Repeat("a", edition.MaxAnswerSlotName+1) }),
+			strings.Repeat("a", edition.MaxAnswerSlotName+1), "slots[2]"},
+		{"a window with from equal to to", specGoodDoc().with(slotOther, func(s *specSlot) {
+			s.format, s.vocab, s.window = "timestamp", "", "{from: 5, to: 5}"
+		}), "other", "slots[4].window"},
+		{"a word with a slash, in the second list", specGoodDoc().with(slotWhere, func(s *specSlot) { s.vocab = specVocab("[opt]", "[a/b]") }), "where", "slots[1].vocab[1][0]"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := edition.ParseSpec(c.doc.yaml())
+			var v *edition.Violation
+			if !errors.As(err, &v) {
+				t.Fatalf("not a *Violation: %v", err)
+			}
+			if v.Rule != edition.RuleSpecShape || v.Slot != c.slot || v.At != c.at {
+				t.Errorf("violation = %s slot %q at %q, want E1 slot %q at %q", v.Rule, v.Slot, v.At, c.slot, c.at)
+			}
+		})
+	}
+}
+
+// V18: K = max(2 x attempts, 4), and the bounds that are derived from it.
+func TestDecoyKAndTheBoundsDerivedFromIt(t *testing.T) {
+	for attempts, want := range map[int]int{1: 4, 2: 4, 3: 6, 5: 10, 10: 20} {
+		if got := edition.DecoyK(attempts); got != want {
+			t.Errorf("DecoyK(%d) = %d, want %d", attempts, got, want)
+		}
+	}
+	if got := edition.DecoyK(answerformat.MaxAttempts); got != edition.MaxDecoys {
+		t.Errorf("DecoyK(MaxAttempts) = %d, MaxDecoys = %d: a slot could not declare as many decoys as the largest K", got, edition.MaxDecoys)
+	}
+	// The longest answer name with the longest decoy suffix is an id; one byte more is not.
+	suffix := fmt.Sprintf("-d%d", edition.MaxDecoys)
+	if name := strings.Repeat("a", edition.MaxAnswerSlotName) + suffix; !answerformat.ValidID(name) {
+		t.Errorf("a %d-byte name with the suffix %s (%d bytes) is not an id", edition.MaxAnswerSlotName, suffix, len(name))
+	}
+	if name := strings.Repeat("a", edition.MaxAnswerSlotName+1) + suffix; answerformat.ValidID(name) {
+		t.Errorf("a %d-byte name with the suffix is an id: MaxAnswerSlotName is not the longest", edition.MaxAnswerSlotName+1)
+	}
+	if edition.MaxFixed != catalog.MaxQuestions {
+		t.Errorf("MaxFixed = %d, catalog.MaxQuestions = %d", edition.MaxFixed, catalog.MaxQuestions)
+	}
+}
+
+func TestParseSpec_TheFixedLimitIsExact(t *testing.T) {
+	if _, err := edition.ParseSpec(specGoodDoc().withFixed(specFixedKeys(edition.MaxFixed)).yaml()); err != nil {
+		t.Errorf("%d keys in fixed were refused: %v", edition.MaxFixed, err)
+	}
+}
+
+// time.base may be written without quotes: yaml reads it as a timestamp, and the field
+// keeps the text.
+func TestParseSpec_AnUnquotedTimeBaseIsAccepted(t *testing.T) {
+	spec, err := edition.ParseSpec(specGoodDoc().withBase("2000-01-01T00:00:00Z").yaml())
+	if err != nil {
+		t.Fatalf("ParseSpec: %v", err)
+	}
+	if spec.Time.Base != "2000-01-01T00:00:00Z" {
+		t.Errorf("time.base = %q", spec.Time.Base)
 	}
 }

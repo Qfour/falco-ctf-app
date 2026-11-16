@@ -54,6 +54,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/catalog/answerformat"
 	"github.com/Qfour/falco-ctf-app/internal/sourcehygiene"
 )
@@ -69,11 +70,16 @@ const (
 	MaxSlots          = 512
 	MaxVocabPositions = 16
 	MaxVocabWords     = 1024
-	// MaxDecoys is the most decoys one answer slot may declare: the largest K.
-	MaxDecoys = 20
+	// MaxDecoys is the most decoys one answer slot may declare: the largest K, which is
+	// DecoyK(answerformat.MaxAttempts) = 2 x MaxAttempts. A test pins the two equal.
+	MaxDecoys = 2 * answerformat.MaxAttempts
 	// MaxAnswerSlotName keeps `<name>-d<i>` (i <= MaxDecoys) inside answerformat.IDPattern's
-	// 31 bytes.
+	// 31 bytes: 31 - len("-d") - 2 digits. A test pins it: the longest name with the
+	// longest suffix is an id, one byte more is not.
 	MaxAnswerSlotName = 27
+	// MaxFixed bounds the keys of `fixed`: one per question that cannot vary per seat, so
+	// at most the number of questions of a challenge (catalog.MaxQuestions).
+	MaxFixed = catalog.MaxQuestions
 	// SpecVersion is the one version of the schema.
 	SpecVersion = 1
 )
@@ -135,6 +141,12 @@ func newSpecViolation(rule, msg string, line int, cid, qid, slot, at string, err
 	return v
 }
 
+// DecoyK is K (D12): the number of decoys an answer slot must declare for a question of
+// this many attempts, max(2 x attempts, 4). With 2 x attempts, two seats that pool their
+// pages cannot try every candidate within their attempts. It is the one definition of K:
+// the largest declarable number, MaxDecoys, is derived from it.
+func DecoyK(attempts int) int { return max(2*attempts, 4) }
+
 // decoyName is the name of the j-th (1-based) implied decoy of answer slot name.
 func decoyName(name string, j int) string { return fmt.Sprintf("%s-d%d", name, j) }
 
@@ -144,8 +156,8 @@ func decoyName(name string, j int) string { return fmt.Sprintf("%s-d%d", name, j
 // the file). E1 is, in this order:
 //
 //   - UTF-8, no rune sourcehygiene.Hidden reports, at most MaxSpecBytes, one document, and
-//     no anchor and no alias (a decoy inherits its answer's vocabulary, so nothing needs
-//     to share one);
+//     no anchor, no alias and no merge key (a decoy inherits its answer's vocabulary, so
+//     nothing needs to share one), and at most MaxFixed keys in `fixed`;
 //   - strict: a key that is not in the schema, a repeated key and a value of the wrong
 //     type are refused at every depth (KnownFields(true), as the catalog's investigate
 //     block);
@@ -194,7 +206,12 @@ func ParseSpec(data []byte) (*Spec, error) {
 		return nil, shape("edition.yaml holds more than one document", 0)
 	}
 	if n := findAnchorOrAlias(&doc); n != nil {
-		return nil, shape("an anchor or an alias is not allowed", n.Line)
+		return nil, shape("an anchor, an alias or a merge key is not allowed", n.Line)
+	}
+	// Before the strict decode, whose repeated-key check costs the square of a mapping's
+	// size: the keys of `fixed`, counted on the nodes.
+	if line := fixedOverLimit(&doc); line > 0 {
+		return nil, shape(fmt.Sprintf("fixed has more than %d keys", MaxFixed), line)
 	}
 	// Second read: the strict decode, on the original bytes so that a line number is the
 	// file's own.
@@ -210,10 +227,26 @@ func ParseSpec(data []byte) (*Spec, error) {
 	return &spec, nil
 }
 
-// findAnchorOrAlias is the first node, in document order, that carries an anchor or is an
-// alias.
+// fixedOverLimit is the line of the top-level `fixed` mapping if it has more than MaxFixed
+// keys (counted as written, a repeated key included), or 0.
+func fixedOverLimit(doc *yaml.Node) int {
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
+		return 0
+	}
+	top := doc.Content[0].Content
+	for i := 0; i+1 < len(top); i += 2 {
+		if top[i].Value == "fixed" && top[i+1].Kind == yaml.MappingNode && len(top[i+1].Content)/2 > MaxFixed {
+			return top[i+1].Line
+		}
+	}
+	return 0
+}
+
+// findAnchorOrAlias is the first node, in document order, that carries an anchor, is an
+// alias, or is a merge key (yaml.v3 gives the plain scalar `<<` the tag !!merge, and
+// merges the mapping it points at, an inline one included).
 func findAnchorOrAlias(n *yaml.Node) *yaml.Node {
-	if n.Kind == yaml.AliasNode || n.Anchor != "" {
+	if n.Kind == yaml.AliasNode || n.Anchor != "" || (n.Kind == yaml.ScalarNode && n.ShortTag() == "!!merge") {
 		return n
 	}
 	for _, c := range n.Content {
