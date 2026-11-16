@@ -214,6 +214,11 @@ func LoadJourneys(dir string, cat Catalog) (Journeys, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
+			// A missing journey dir is the graceful degrade for every type but one:
+			// an investigate challenge cannot be asked without its prompts (ADR-0056 D1, #608).
+			if err := requireInvestigateJourneys(cat, out); err != nil {
+				return nil, err
+			}
 			return out, nil
 		}
 		return nil, fmt.Errorf("read journey dir %q: %w", dir, err)
@@ -249,6 +254,14 @@ func LoadJourneys(dir string, cat Catalog) (Journeys, error) {
 		if !ok {
 			continue
 		}
+		// ADR-0056 D1 (V25): for an investigate challenge the journey's top level
+		// is strict too (an answer-looking key must fail, not sit ignored in a
+		// public file). The other types keep the lenient decode.
+		if ch.Type == TypeInvestigate {
+			if err := checkJourneyStrict(path); err != nil {
+				return nil, fmt.Errorf("%s: %w", path, err)
+			}
+		}
 		// ADR-0056 D1: an investigate challenge's questions[] and the catalog's
 		// question ids are the same set (any other type has none).
 		if err := checkJourneyQuestions(j, ch); err != nil {
@@ -256,14 +269,35 @@ func LoadJourneys(dir string, cat Catalog) (Journeys, error) {
 		}
 		out[j.ChallengeID] = j
 	}
-	// An investigate challenge with no journey.yaml has no prompts, so it asks
-	// nothing: not the graceful degrade of a missing briefing but a content hole.
-	for _, id := range cat.IDs() {
-		if _, has := out[id]; !has && cat[id].Type == TypeInvestigate {
-			return nil, fmt.Errorf("investigate challenge %q has no journey.yaml: its questions[] prompts are required", id)
-		}
+	if err := requireInvestigateJourneys(cat, out); err != nil {
+		return nil, err
 	}
 	return out, nil
+}
+
+// requireInvestigateJourneys: an investigate challenge with no journey.yaml has
+// no prompts, so it asks nothing: not the graceful degrade of a missing briefing
+// but a content hole. It is also called on the "journey dir does not exist"
+// path, which returns before the directory loop (#608).
+func requireInvestigateJourneys(cat Catalog, got Journeys) error {
+	for _, id := range cat.IDs() {
+		if _, has := got[id]; !has && cat[id].Type == TypeInvestigate {
+			return fmt.Errorf("investigate challenge %q has no journey.yaml: its questions[] prompts are required", id)
+		}
+	}
+	return nil
+}
+
+// checkJourneyStrict decodes journey.yaml with KnownFields(true): an unknown
+// top-level key is an error. Nested sequences (steps, hints) keep their own
+// decoders and are not made strict here (ADR-0056 V25 names the top level).
+func checkJourneyStrict(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var j Journey
+	return decodeStrictBytes(data, &j)
 }
 
 func parseJourney(path, dirName string) (Journey, error) {

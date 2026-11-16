@@ -72,8 +72,9 @@ type Question struct {
 }
 
 // UnmarshalYAML decodes the block with KnownFields(true) at every depth: an
-// unknown key is an error. Only this block is strict; the rest of
-// falco-rule.yaml keeps decoding as before.
+// unknown key is an error. An investigate challenge's falco-rule.yaml top level
+// is strict as well (parseFile, decodeStrictBytes); trigger / evade / detect
+// keep decoding as before.
 func (i *Investigate) UnmarshalYAML(node *yaml.Node) error {
 	type plain Investigate // no methods: decoding into it does not recurse here
 	if err := decodeStrict(node, (*plain)(i)); err != nil {
@@ -91,6 +92,16 @@ func decodeStrict(node *yaml.Node, out any) error {
 		return err
 	}
 	dec := yaml.NewDecoder(bytes.NewReader(b))
+	dec.KnownFields(true)
+	return dec.Decode(out)
+}
+
+// decodeStrictBytes decodes a whole yaml document into out, refusing keys out
+// knows nothing about. It is the top-level counterpart of decodeStrict: an
+// investigate challenge's falco-rule.yaml and journey.yaml are read through it
+// (ADR-0056 D1, V25), and no other type's file is.
+func decodeStrictBytes(data []byte, out any) error {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	return dec.Decode(out)
 }

@@ -203,14 +203,30 @@ func TestLoad_Investigate_V21_VocabularySpaceIsDeferredTechniqueIsRefused(t *tes
 	wantLoadError(t, err, "cannot be computed")
 }
 
-// Only the investigate: block is strict. The rest of falco-rule.yaml, for this
-// type and every other, decodes as before (an unknown top-level key is ignored).
-func TestLoad_Investigate_StrictOnlyInsideTheBlock(t *testing.T) {
+// V25 (ADR-0056 D1): for an investigate challenge the falco-rule.yaml top level is
+// strict too, so a key that looks like an answer cannot load and sit ignored in a
+// public file. The existing types keep their lenient decode.
+func TestLoad_Investigate_V25_TopLevelIsStrict(t *testing.T) {
+	for _, key := range []string{"futureKey: 1\n", "answer: deadbeef\n", "expectedFlg: FALCO{x}\n"} {
+		dir := t.TempDir()
+		writeChallenge(t, dir, "14-ir-demo", inv(key, evMount(invMount), invHexQ))
+		_, err := catalog.Load(dir)
+		wantLoadError(t, err, "not found in type catalog.Challenge")
+	}
+	// control: the same file without the key loads
+	ok := t.TempDir()
+	writeChallenge(t, ok, "14-ir-demo", inv("", evMount(invMount), invHexQ))
+	if _, err := catalog.Load(ok); err != nil {
+		t.Fatalf("the control file must load: %v", err)
+	}
+}
+
+func TestLoad_V25_OtherTypesKeepTheLenientDecode(t *testing.T) {
 	dir := t.TempDir()
-	writeChallenge(t, dir, "14-ir-demo", inv("futureKey: 1\n", evMount(invMount), invHexQ))
 	writeChallenge(t, dir, "01-a", "type: trigger\nexpectedRules: [r]\nfutureKey: 1\nattack: {tactic: x}\n")
+	writeChallenge(t, dir, "02-b", "type: evade\nexpectedFlag: FALCO{dev-b}\nfutureKey: 1\n")
 	if _, err := catalog.Load(dir); err != nil {
-		t.Fatalf("an unknown top-level key must still load: %v", err)
+		t.Fatalf("an unknown top-level key must still load for the existing types: %v", err)
 	}
 }
 
@@ -248,15 +264,18 @@ func TestLoadScored_RefusesAnInvestigateChallengeInScope(t *testing.T) {
 	}
 }
 
-// Regression: the 14 real challenges and every real scenario load exactly as
-// before (none of them uses the new type or block).
+// Regression: the real challenges and every real scenario load exactly as before
+// (none of them uses the new type or block yet). V27: the number of real
+// challenges is not pinned (adding a mission must not turn this red); only "not
+// empty" and "no investigate challenge" are. A7 flips the second into "contains
+// the A7 challenge".
 func TestRealTree_LoadsUnchangedByTheNewType(t *testing.T) {
 	cat, err := catalog.Load("../../challenges")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if len(cat) != 14 {
-		t.Fatalf("%d challenges, want 14", len(cat))
+	if len(cat) == 0 {
+		t.Fatal("the real challenge tree loaded as empty: the path is wrong or the catalog was emptied")
 	}
 	for id, ch := range cat {
 		if ch.Type == catalog.TypeInvestigate || ch.Investigate != nil {
@@ -333,6 +352,55 @@ func TestLoadJourneys_Questions_AnInvestigateChallengeNeedsAJourney(t *testing.T
 	cat := invCatalog(t, invHexQ)
 	_, err := catalog.LoadJourneys(t.TempDir(), cat)
 	wantLoadError(t, err, "has no journey.yaml")
+}
+
+// V25 (#608): LoadJourneys returns early when the journey dir itself does not
+// exist (the graceful degrade of every other type); an investigate challenge must
+// still be refused on that path, not slip through as "no journeys".
+func TestLoadJourneys_V25_NoJourneyDirAtAllStillFailsAnInvestigateChallenge(t *testing.T) {
+	cat := invCatalog(t, invHexQ)
+	missing := filepath.Join(t.TempDir(), "no-such-journey-dir")
+	_, err := catalog.LoadJourneys(missing, cat)
+	wantLoadError(t, err, "has no journey.yaml")
+
+	// control: the same missing dir is still fine without an investigate challenge
+	js, err := catalog.LoadJourneys(missing, journeyCatalog())
+	if err != nil || len(js) != 0 {
+		t.Fatalf("a missing journey dir must stay graceful for the other types: %v %v", js, err)
+	}
+	// and a directory that exists but holds another challenge's journey only
+	other := t.TempDir()
+	writeJourney(t, other, "01-initial-recon", "title: t\n")
+	both := journeyCatalog()
+	for id, ch := range cat {
+		both[id] = ch
+	}
+	_, err = catalog.LoadJourneys(other, both)
+	wantLoadError(t, err, "14-ir-demo")
+}
+
+// V25: an investigate challenge's journey.yaml top level is strict. The existing
+// types keep the lenient decode (an unknown key is ignored, as before).
+func TestLoadJourneys_V25_TopLevelIsStrictForAnInvestigateChallenge(t *testing.T) {
+	cat := invCatalog(t, invTwoQ)
+	qs := "questions:\n  - {id: q1, prompt: first}\n  - {id: q2, prompt: second}\n"
+	for _, key := range []string{"answer: deadbeef\n", "futureKey: 1\n", "solution: x\n"} {
+		dir := t.TempDir()
+		writeJourney(t, dir, "14-ir-demo", "challengeId: 14-ir-demo\ntitle: IR\n"+key+qs)
+		_, err := catalog.LoadJourneys(dir, cat)
+		wantLoadError(t, err, "not found in type catalog.Journey")
+	}
+	ok := t.TempDir()
+	writeJourney(t, ok, "14-ir-demo", "challengeId: 14-ir-demo\ntitle: IR\n"+qs)
+	if _, err := catalog.LoadJourneys(ok, cat); err != nil {
+		t.Fatalf("the control journey must load: %v", err)
+	}
+
+	lenient := t.TempDir()
+	writeJourney(t, lenient, "01-initial-recon", "title: t\nfutureKey: 1\n")
+	if _, err := catalog.LoadJourneys(lenient, journeyCatalog()); err != nil {
+		t.Fatalf("an unknown key in a trigger journey must still load: %v", err)
+	}
 }
 
 func TestLoadJourneys_Questions_OtherTypesHaveNone(t *testing.T) {

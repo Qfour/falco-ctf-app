@@ -57,6 +57,24 @@ import (
 
 var flagRE = regexp.MustCompile(`^FALCO\{[A-Za-z0-9_-]+\}$`)
 
+// The `type:` values of a challenge. TypeInvestigate (investigate.go) is the 4th.
+// The set is also written out as shell `case` patterns in
+// images/challenge/Dockerfile (the missions-builder) and in
+// scripts/check-image-hygiene.sh (ADR-0026 V2): TestTypeSet_ShellCopiesMatchTheCatalog
+// holds those copies to Types.
+const (
+	TypeTrigger = "trigger"
+	TypeEvade   = "evade"
+	TypeDetect  = "detect"
+)
+
+// Types is the closed set of challenge types parseFile accepts. Adding a type
+// means adding it here, to parseFile's switch and to the two shell copies above;
+// the parity test is red until all of them agree.
+func Types() []string {
+	return []string{TypeTrigger, TypeEvade, TypeDetect, TypeInvestigate}
+}
+
 // DefaultDetectRuleName is the fixed rule name the participant condition is
 // wrapped into when detect.ruleName is unset. The grader greps fires of this
 // rule name across the two captures.
@@ -193,6 +211,15 @@ func parseFile(path, dirName string) (Challenge, error) {
 		return Challenge{}, fmt.Errorf("challenge %q lives in directory %q: challengeId must equal the directory name (omit it to default to the directory name)", ch.ID, dirName)
 	}
 	ch.dir = dirName
+	// ADR-0056 D1 (V25): an investigate challenge's top level is strict, so a key
+	// that looks like an answer cannot sit ignored in a public file. Only this type:
+	// the decode of trigger / evade / detect stays as lenient as before.
+	if ch.Type == TypeInvestigate {
+		var strict Challenge
+		if err := decodeStrictBytes(data, &strict); err != nil {
+			return Challenge{}, fmt.Errorf("%s challenge %q: falco-rule.yaml: %w", TypeInvestigate, ch.ID, err)
+		}
+	}
 	if ch.Type == "" {
 		return Challenge{}, fmt.Errorf("challenge %q: type must be \"trigger\", \"evade\", \"detect\" or %q", ch.ID, TypeInvestigate)
 	}
@@ -203,7 +230,7 @@ func parseFile(path, dirName string) (Challenge, error) {
 		return Challenge{}, fmt.Errorf("challenge %q: an investigate block belongs to type %q only, not %q", ch.ID, TypeInvestigate, ch.Type)
 	}
 	switch ch.Type {
-	case "evade":
+	case TypeEvade:
 		if ch.ExpectedFlag == "" {
 			return Challenge{}, fmt.Errorf("evade challenge %q: expectedFlag must not be empty", ch.ID)
 		}
@@ -214,11 +241,11 @@ func parseFile(path, dirName string) (Challenge, error) {
 		if ch.RequireExpectedRuleFire && len(ch.ExpectedRules) == 0 {
 			return Challenge{}, fmt.Errorf("evade challenge %q: requireExpectedRuleFire is true but expectedRules is empty", ch.ID)
 		}
-	case "trigger":
+	case TypeTrigger:
 		if len(ch.ExpectedRules) == 0 {
 			return Challenge{}, fmt.Errorf("trigger challenge %q: expectedRules must not be empty", ch.ID)
 		}
-	case "detect":
+	case TypeDetect:
 		if err := validateDetect(&ch); err != nil {
 			return Challenge{}, err
 		}

@@ -35,20 +35,26 @@ RUN set -eu; \
 # answers.yaml — editable template for batch submission (ADR-0026 D2: generated
 # here so falco-rule.yaml is read by this stage only). Auto-listed from the
 # EVADE missions (the only ones needing a flag); trigger missions are omitted.
+# An investigate mission (ADR-0056) is omitted as well: its answers are typed into
+# the portal's answer fields, never submitted from this file.
 # The `type:` rule is shared with scripts/check-image-hygiene.sh (V2): exactly
-# one top-level `type:` line, and it must be `type: trigger|evade|detect` (one
-# space, nothing after). Anything else (quoted value, trailing comment, ...)
+# one top-level `type:` line, and it must be `type: trigger|evade|detect|investigate`
+# (one space, nothing after). Anything else (quoted value, trailing comment, ...)
 # fails the build instead of being silently read differently by two parsers.
+# The set of types is the catalog's (catalog.Types): a Go test
+# (TestTypeSet_ShellCopiesMatchTheCatalog) reads the case patterns and the
+# message below, so a type added in one place only turns CI red.
 RUN set -eu; \
     { echo '# EVADE 課題で読み取ったフラグを記入し、submit-yaml で一括提出:'; \
       echo '#   sh /opt/ctf/submit-yaml.sh'; \
       echo '# trigger 課題は提出不要(Falco 発火で自動 solve)。'; \
+      echo '# 調査型 (investigate) の課題は portal の回答欄で答える (この file では提出できない)。'; \
       for f in /src/challenges/[0-9][0-9]-*/falco-rule.yaml; do \
         [ "$(grep -c '^type:' "$f")" = 1 ] || { echo "missions-builder: $f must have exactly one top-level type: line" >&2; exit 1; }; \
         case "$(grep '^type:' "$f")" in \
-          'type: trigger'|'type: detect') ;; \
+          'type: trigger'|'type: detect'|'type: investigate') ;; \
           'type: evade') id=$(awk '/^challengeId:/{print $2}' "$f"); echo "${id}: " ;; \
-          *) echo "missions-builder: $f: top-level type: must be exactly 'type: trigger|evade|detect'" >&2; exit 1 ;; \
+          *) echo "missions-builder: $f: top-level type: must be exactly 'type: trigger|evade|detect|investigate'" >&2; exit 1 ;; \
         esac; \
       done; } > /out/answers.yaml
 
