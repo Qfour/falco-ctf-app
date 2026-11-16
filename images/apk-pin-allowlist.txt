@@ -1,0 +1,23 @@
+# apk exact-pin allow-list (ADR-0036 D2 (a)): the only packages whose `apk add` may carry an
+# exact `name=version` outside an `apk add --upgrade` command.
+#
+# Everything else is added WITHOUT a version. Alpine's index keeps one version per package, so
+# a pinned version disappears the day upstream ships a security release and the next build
+# fails (ADR-0036 C1). A package belongs here only when its VERSION changes how the image
+# behaves (a protocol, PID 1, a browser API paired with a client library). "A CVE fix landed"
+# is not a reason: the CVE floor is the release scan (ADR-0036 Consequences).
+#
+# (b) base-upgrade pins (`apk add --upgrade name=version`, raising a package the base image
+# already ships to the fixed build) are NOT listed here. They are recognised by syntax, and the
+# daily index check verifies the base ships the package (ADR-0036 D2 (b), V3). Drop one when
+# the base digest carries that version or newer (D3).
+#
+# Format, one row per package (blank lines and `#` lines are ignored):
+#   <package name>  <reason: free text, required, rest of the line>
+# The name is a lower-case apk package name, with no version. A name may appear once. A row
+# whose package no Dockerfile pins any more must be deleted (scripts/check-apk-pins.sh --lint
+# fails on it, so the list cannot keep stale rows).
+ttyd             version-sensitive: ttyd is the participant terminal server and the protocol the ttyd-proxy fronts; a new upstream version is a behaviour change to review (ADR-0036 D2 (a))
+tini             version-sensitive: PID 1 (init) of the ttyd container (images/ttyd/Dockerfile ENTRYPOINT); a new version changes signal and zombie handling (ADR-0036 D2 (a))
+chromium         ADR-0031 D5: the browser the e2e harness drives; its version is paired with chromedp in go.mod, and the pin is never loosened to get green
+font-wqy-zenhei  ADR-0031 D5: installed in Dockerfile.e2e only so CJK text in a failure screenshot is readable; pinned together with chromium

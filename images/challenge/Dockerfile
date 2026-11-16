@@ -66,13 +66,16 @@ FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cab
 # を含む課題用途は busybox wget で動作確認済み (--no-check-certificate も honor)。
 # → 脆弱バイナリを除去 = Critical を実解消 (例外で握り潰さない、P13/#18 の CEO 条件)。
 #
-# alpine 3.23→3.24 re-bump (#227 2026-09-01 続報、workspace#31):
-# 3.23 bump 後の scan で curl/libcurl だけ drift した — pin 時点 (2026-09-01 午前)
-# は 8.20.0-r0 が fix だったが、Sysdig の CVE フィードが同日中に 8.21.0 要求へ
-# 更新され、8.20.0-r0 は再び High 扱いになった。3.23 リポジトリには 8.21.0-r0 が
-# 無いため cycle bump (3.23→3.24) でのみ解消できる。以下は
-# https://dl-cdn.alpinelinux.org/alpine/v3.24/main (community は vim 系) を
-# `docker run alpine@<digest> apk policy` で実測して確認した版数 (2026-09-01):
+# apk の版の書き方 (ADR-0036 D2〜D4): exact pin を書くのは、base に入っている package を
+# 修正版へ引き上げる `apk add --upgrade name=version` (D2 (b)。下の 1 本目の apk add) だけ。
+# 参加者の道具 (bash・curl・libcurl・vim・vim-common・xxd・util-linux ほか) は版を書かない:
+# index は各 package の最新 1 版しか持たず、pin すると upstream の security release の日に
+# build が止まる (受理から 53 日で 5 回、ADR-0036 C1)。版を書かない package の CVE の下限は
+# release の scan と image ごとの `apk info -v` の記録が守る (platform の release 手順)。
+# exact pin を足す前に ADR-0036 D2 と images/apk-pin-allowlist.txt を読むこと
+# (`make check-apk-pins-lint` が、許可表にも `--upgrade` にも当たらない pin を落とす)。
+# 以下は引き上げる package の実測 (`docker run alpine@<digest> apk policy`、
+# https://dl-cdn.alpinelinux.org/alpine/v3.24/main):
 #   libssl3/libcrypto3 3.5.9-r0 (2026-10-05: 3.24/main から 3.5.8-r0 が外れ apk
 #     resolve が failing していたため再 pin。`apk policy libssl3 libcrypto3` 実測で
 #     3.24/main の唯一の提供版が 3.5.9-r0。base に焼き込まれた 3.5.7-r0 からの
@@ -81,23 +84,6 @@ FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cab
 #     含まれる — 上流 CHANGES.md の 3.5.7→3.5.8 節が 3.5.9 に残ることを aports と
 #     併せて確認済み (5x R1)。3.5.9 自体も追加の CVE 修正を含む
 #     (High は CVE-2026-84782))
-#   curl/libcurl 8.23.0-r0 (2026-10-26: 3.24/main から 8.22.0-r0 が外れ `apk add` が
-#     failing していたため再 pin (app#515)。`apk policy curl libcurl` 実測 (base digest
-#     294b683c) で唯一の提供版が 8.23.0-r0。8.23.0 は CVE-2026-92392 (High、HTTP/2 upload の
-#     use-after-free、影響 8.12.0〜8.22.0) の fix 版。re-pin 履歴: 09-03 (#296、8.21.0 →
-#     8.22.0) / 10-26 (#515、8.22.0 → 8.23.0))
-#   vim/vim-common/xxd 9.2.1351-r0 (2026-11-16: 9.2.1310-r0 が index から外れ再 pin
-#     (app#600)。re-pin 履歴: 10-05 (#307) / 10-14 (#354、1091 → 1178) / 10-17 (#382、→ 1202) /
-#     11-10 (#583、→ 1310) / 11-16 (#600、→ 1351)。10-05 から 42 日で 5 回。
-#     以下は 2026-10-14 時点の記録: 3.24/community から 9.2.1091-r0 が
-#     外れ apk resolve が failing していたため再 pin。`apk policy vim vim-common
-#     xxd` 実測 (base digest 294b683c) で唯一の提供版。2026-10-05 は 9.2.1014-r0 →
-#     9.2.1091-r0 だった。3.24/community は版が短期間で入れ替わる — 再発時は
-#     `apk policy` を実測して上げる)
-#   util-linux 2.42.3-r1 (2026-10-05: 3.24/main から 2.42.1-r0 が外れたため再 pin。
-#     `apk policy` 実測で唯一の提供版。secdb 上 2.42.3-r0/-r1 は CVE-2026-27456/
-#     -53612..53614/-76642/-78408..78410 の fix を含む)
-#   bash 5.3.9-r1 (3.23 の 5.3.3-r1 から 3.24 側で上がった版に追随、念のため厳密 pin)
 # zlib 1.4-r0 (2026-11-10: 3.24/main から 1.3.2-r1 が外れ再 pin (app#583)。`apk policy zlib`
 #   実測で index の提供版が 1.4-r0 (base の zlib は 1.3.2-r0)。re-pin 履歴: 10-13 (base digest を
 #   3.24 の最新 294b683c へ更新。base の zlib が 1.3.2-r0 のままで Sysdig が High を出すため
@@ -114,18 +100,18 @@ FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cab
 # CVE feed の drift (pin 版が後から High 扱いになる) の追跡先は app#291。
 RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 zlib=1.4-r0 musl-utils=1.2.6-r3 \
  && apk add --no-cache \
-        bash=5.3.9-r1 \
+        bash \
         coreutils \
         busybox-extras \
-        curl=8.23.0-r0 \
-        libcurl=8.23.0-r0 \
+        curl \
+        libcurl \
         netcat-openbsd \
         jq \
         less \
-        vim=9.2.1351-r0 \
-        vim-common=9.2.1351-r0 \
-        xxd=9.2.1351-r0 \
-        util-linux=2.42.3-r1 \
+        vim \
+        vim-common \
+        xxd \
+        util-linux \
         procps \
         grep \
         findutils \

@@ -73,8 +73,9 @@
   3. **CVE fix 到達性**: 現在 open な High/Critical の fix version が
      その cycle の main/community に存在する (`apk policy <pkg>` で実測)
 
-  条件 1-3 を満たす cycle が複数あるときは最古を選ぶ (apk exact pin の再解決コストは
-  bump 毎に発生するため、無用に新しい cycle を追わない)。条件 3 を満たさない場合に限り
+  条件 1-3 を満たす cycle が複数あるときは最古を選ぶ (条件 1 の安定性実績が理由。pin の再解決の
+  頻度は cycle の新しさでなく upstream の security release で決まるので、古い cycle に寄せても
+  減らない: ADR-0036 C3)。条件 3 を満たさない場合に限り
   1 cycle 新しい側へ上げ、PR 本文に `apk policy` の実測出力と bump 後の残存 CVE を明記する。
 
   **CVE 緊急 bump の例外パス (正式な例外として明記)**: 選定済み cycle の運用中に scan の
@@ -111,8 +112,19 @@
   (`make check-apk-pins-lint`、required の flag-guard の独立 step) が、checker 自身が赤くなれること
   (planted fixture と parse table) は `--selftest` が固定する。毎日の index 照合 (`apk-pins.yaml`) と
   合わせて 3 層。`check-e2e-pins.sh` は `Dockerfile.e2e` 用の wrapper。pin の版を上げる PR は、
-  `make check-apk-pins` の出力を貼る。**どの package に exact pin を許すか (D2〜D4) は D2 の実装 PR まで
-  未適用** (今の pin は ADR-0002 の運用のまま)。
+  `make check-apk-pins` の出力を貼る。
+  **どの package に exact pin を許すか (ADR-0036 D2〜D4、機械強制)**: exact pin は次の 2 類だけで、
+  それ以外の package は **版を書かない** (`apk add name`)。(a) **version-sensitive** = 版が image の
+  振る舞い (protocol・PID 1・ブラウザの API と chromedp の組) を変える package。名前と理由を
+  `images/apk-pin-allowlist.txt` (1 行 = 名前と理由) に書く (今は `ttyd`・`tini`・`chromium`・
+  `font-wqy-zenhei`)。(b) **base-upgrade** = base image に入っている package を修正版へ引き上げる
+  `apk add --upgrade name=version` (構文で決まる。base に入っていることは毎日の index 照合が確かめ、
+  入っていなければ赤)。challenge の参加者の道具 (bash・curl・libcurl・vim・vim-common・xxd・util-linux) は
+  版を書かない (ADR-0036 D4)。許可表にも `--upgrade` にも当たらない pin、reason の無い行・重複・
+  pin されていない古い行は `make check-apk-pins-lint` (required の flag-guard) が落とす。
+  **(b) は base の digest を上げてその版以上が base に入った時点で外す** (D3。毎日の照合が「外せる」を
+  `note:` で出す。digest を上げられるなら、(b) を足す前に digest を上げる)。版を書かない package の
+  CVE の下限は PR の scan と release の scan (platform の release 手順) が守る。
 
 - docs イメージの build context = repo root (`challenges/` を読んで gen-pages.sh が
   ミッションページを生成。`README.md` の H1 をタイトル、`fixtures/welcome.txt` を
@@ -170,7 +182,9 @@ docker buildx imagetools inspect golang:1.26-alpine --format '{{.Manifest.MediaT
 make build TAG=local      # digest が pull でき build が通ること
 make check-freshness      # cycle が EOL でないこと
 make check-go-base-digest # golang の tag@digest が全箇所で同一であること
-make check-apk-pins       # 新しい digest の base に対して、全 Dockerfile の apk pin が index にあること
+make check-apk-pins       # 新しい digest の base に対して、全 Dockerfile の apk pin が index にあること。
+                          # 出力の `note: ... could be dropped` の base-upgrade の pin は、base がその版を
+                          # 持った印なので外す (ADR-0036 D3)
 make test                 # Go build/test (Dockerfile.test) が通ること
 ```
 

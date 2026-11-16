@@ -35,6 +35,17 @@
 # apk's root or its package cache, not its trust); that call waits for security (R1) to
 # confirm (#505 review-5x 65).
 #
+# Class (D2 + V2, offline, over the whole tree): an exact pin is one of two kinds only.
+#   (a) version-sensitive: the name is a row of images/apk-pin-allowlist.txt (name + reason);
+#   (b) base-upgrade: the pin is inside `apk add --upgrade` (decided by syntax here; that the
+#       base really ships the package is checked against the index, below).
+# Any other pin fails. The allow-list itself fails on a row with no reason, a malformed or
+# repeated name, no rows at all, a missing file, and on a row that no Dockerfile pins (a stale
+# row would silently widen what the next change may pin).
+# Index half (V3, docker + network): a `--upgrade` pin must be on a package the base has
+# installed (else it is not a base-upgrade: FAIL), and when the base's installed version
+# already is the pinned one the output says it can be dropped (D3; a note, never a gate).
+#
 # What it does NOT see (a net, not a proof; review sees these): `COPY rootfs/ /` (a source
 # tree that carries /etc/apk/...), a write inside a heredoc RUN (also `apk add` there: the
 # coverage cross-check turns that into exit 1), `cd /etc/apk && echo x > repositories` (the
@@ -55,8 +66,14 @@
 #                                           Grammar (D1 + F4), at least one pin, and the
 #                                           parser read every `apk add`; one file:line per
 #                                           violation; exit 0 / 1. The flag-guard job runs it
-#                                           as its own step. ADR-0036 V2 (the D2 class check)
-#                                           is added to it (lint_rows), not to --selftest.
+#                                           as its own step. With no FILE it also runs ADR-0036
+#                                           V2, the D2 class check (see below); with FILE it
+#                                           does only when --allowlist FILE is given.
+#   --allowlist FILE                        the D2 (a) allow-list to check against (default
+#                                           images/apk-pin-allowlist.txt, used only when no
+#                                           FILE is named: the "every row is pinned somewhere"
+#                                           half needs the whole tree). Works with --lint and
+#                                           with the check itself.
 #   scripts/check-apk-pins.sh --selftest    offline: the checker's own test only. Planted
 #                                           defects must fail (and --lint must go red on them),
 #                                           parse tables must be exact; it does not look at
@@ -264,14 +281,83 @@ versions() {
     in_pkg && /^  [^ ].*:$/ { sub(/^  /, ""); sub(/:$/, ""); print }'
 }
 
+# installed_version NAME — reads `apk policy` text on stdin, prints the version of NAME that the
+# base image already has installed (the one listed under `lib/apk/db/installed`), or nothing
+# when the base does not have NAME. A `--upgrade` pin is only a base-upgrade (ADR-0036 D2 (b))
+# when this is non-empty.
+installed_version() {
+  awk -v n="$1" '
+    $0 == n " policy:" { in_pkg = 1; next }
+    /^[^ ]/ { in_pkg = 0 }
+    in_pkg && /^  [^ ].*:$/ { cur = $0; sub(/^  /, "", cur); sub(/:$/, "", cur); next }
+    in_pkg && $0 ~ /^    lib\/apk\/db\/installed$/ && cur != "" { print cur; exit }'
+}
+
 # --- lint (offline, the real-tree gate) -------------------------------------------------
 # lint_rows ROWS FILE... : the verdict that needs no index: grammar (ADR-0036 D1 + security
 # condition F4), at least one pin, and the parser read every `apk add` the text contains.
 # Prints one FAIL line per finding (file:line), returns 0 / 1, sets LINT_PINS_N. Used by
 # `--lint` and, first, by check_files, so the two never disagree about the grammar.
-# ADR-0036 V2 (the D2 class check: allow-list names, `--upgrade` syntax, allow-list rows
-# without a pin) is added HERE, as a further check over the same rows, not to --selftest.
+# ADR-0036 V2 (the D2 class check) runs HERE too, over the same rows, when $ALLOWLIST is set:
+# lint_allowlist. It is not part of --selftest (which never looks at the real tree).
 LINT_PINS_N=0
+LINT_ALLOW_N=0
+ALLOWLIST=""
+# lint_allowlist ROWS : D2 / V2. Prints one FAIL line per finding, returns 0 / 1, sets LINT_ALLOW_N.
+#  - the allow-list file exists and has at least one row (an empty read is not a pass);
+#  - each row is `name reason`: a lower-case package name with no version, a non-empty reason,
+#    a name at most once;
+#  - every exact pin that is not inside `apk add --upgrade` names a row of the list;
+#  - every row is pinned by some Dockerfile (no stale row).
+lint_allowlist() {
+  local rows="$1" status=0 al="$ALLOWLIST" parsed tag a names n
+  local file line stage kind name version upgrade
+  LINT_ALLOW_N=0
+  if [ ! -f "$al" ]; then
+    echo "FAIL: $al — the exact-pin allow-list is missing or not a file (ADR-0036 D2); without it every exact pin would be unclassified"
+    return 1
+  fi
+  parsed="$(awk -v f="$al" '
+    { sub(/\r$/, "") }
+    /^[ \t]*#/ || /^[ \t]*$/ { next }
+    {
+      name = $1; reason = $0
+      sub(/^[ \t]*[^ \t]+[ \t]*/, "", reason)
+      if (name !~ /^[a-z0-9][a-z0-9._+-]*$/) { printf "E\t%s:%d — %s is not a bare lower-case package name (no version, no \"=\")\n", f, FNR, name; next }
+      if (reason == "") { printf "E\t%s:%d — %s has no reason; a row is a name and why its version matters (ADR-0036 D2 (a))\n", f, FNR, name; next }
+      if (name in seen) { printf "E\t%s:%d — %s is listed twice (first at line %d)\n", f, FNR, name, seen[name]; next }
+      seen[name] = FNR
+      printf "N\t%s\t%d\n", name, FNR
+    }' "$al")" || { echo "FAIL: could not read $al"; return 1; }
+  names=""
+  while IFS=$'\t' read -r tag a _; do
+    case "$tag" in
+      E) echo "FAIL: $a"; status=1 ;;
+      N) names="$names $a "; LINT_ALLOW_N=$((LINT_ALLOW_N + 1)) ;;
+    esac
+  done <<<"$parsed"
+  if [ "$LINT_ALLOW_N" -eq 0 ] && [ "$status" -eq 0 ]; then
+    echo "FAIL: $al — no row read (a list that looked at nothing is not a pass)"
+    status=1
+  fi
+  # class: a pin outside `apk add --upgrade` must be a row of the list
+  while IFS=$'\t' read -r file line stage _ kind name version upgrade; do
+    [ "$kind" = pin ] || continue
+    [ "$upgrade" = 1 ] && continue
+    case "$names" in
+      *" $name "*) ;;
+      *) echo "FAIL: $file:$line [$stage] $name=$version — an exact pin on a package that is not in $al and not inside 'apk add --upgrade'; add it WITHOUT a version (ADR-0036 D2, D4)"; status=1 ;;
+    esac
+  done <"$rows"
+  # stale rows: every listed name is pinned somewhere
+  for n in $names; do
+    if ! awk -F'\t' -v n="$n" '$5 == "pin" && $6 == n { f = 1 } END { exit !f }' "$rows"; then
+      echo "FAIL: $al — $n is listed but no Dockerfile pins it; delete the row (a stale row widens what the next change may pin)"
+      status=1
+    fi
+  done
+  return "$status"
+}
 lint_rows() {
   local rows="$1" status=0 files_n cov text_n parsed_n
   local file line stage kind version
@@ -290,6 +376,12 @@ lint_rows() {
       bad)   echo "FAIL: $file:$line [$stage] '$version' — name= with no version (or no name)"; status=1 ;;
     esac
   done <"$rows"
+
+  # class (D2 + V2): which packages may carry an exact pin at all
+  LINT_ALLOW_N=0
+  if [ -n "$ALLOWLIST" ]; then
+    lint_allowlist "$rows" || status=1
+  fi
 
   # fail-closed: a check that looked at nothing is not a pass
   LINT_PINS_N="$(awk -F'\t' '$5 == "pin"' "$rows" | wc -l | tr -d ' ')"
@@ -313,7 +405,11 @@ lint_files() {
   parse "$@" >"$tmp/rows" || { echo "FAIL: the parser failed" >&2; rm -rf "$tmp"; return 2; }
   lint_rows "$tmp/rows" "$@"; rc=$?
   if [ "$rc" -eq 0 ]; then
-    echo "ok: lint — $LINT_PINS_N pin(s) in $# file(s), grammar clean, every apk add read (offline; the index comparison is check-apk-pins / apk-pins.yaml)"
+    if [ -n "$ALLOWLIST" ]; then
+      echo "ok: lint — $LINT_PINS_N pin(s) in $# file(s), grammar clean, every apk add read, every pin is --upgrade or one of the $LINT_ALLOW_N allow-listed name(s) and every name is pinned (offline; the index comparison is check-apk-pins / apk-pins.yaml)"
+    else
+      echo "ok: lint — $LINT_PINS_N pin(s) in $# file(s), grammar clean, every apk add read (offline; the index comparison is check-apk-pins / apk-pins.yaml)"
+    fi
   fi
   rm -rf "$tmp"
   return "$rc"
@@ -323,7 +419,7 @@ lint_files() {
 # check_files FILE... : prints findings, returns 0 / 1 / 2 (see the header).
 check_files() {
   local rows tmp status infra files_n pins_n base names policy qrc
-  local file line stage name version listed bases_n bases idx
+  local file line stage name version upgrade listed inst hint bases_n bases idx
   status=0; infra=0
   files_n=$#
   tmp="$(mktemp -d)" || return 2
@@ -355,13 +451,23 @@ check_files() {
       echo "ERROR: could not query the index of $base (exit $qrc)"
       infra=1; continue
     fi
-    while IFS=$'\t' read -r file line stage _ _ name version _; do
+    while IFS=$'\t' read -r file line stage _ _ name version upgrade; do
       listed="$(printf '%s\n' "$policy" | versions "$name")"
-      if printf '%s\n' "$listed" | grep -Fxq -- "$version"; then
+      inst="$(printf '%s\n' "$policy" | installed_version "$name")"
+      if [ "$upgrade" = 1 ] && [ -z "$inst" ]; then
+        # D2 (b): a base-upgrade raises a package the base already ships. Not shipped = not (b).
+        echo "FAIL: $file:$line [$stage] $name=$version is pinned with --upgrade, but ${base%@*} does not have $name installed, so it is not a base-upgrade (ADR-0036 D2 (b)): drop the version, or list $name in the allow-list with a reason if its version matters"
+        status=1
+      elif printf '%s\n' "$listed" | grep -Fxq -- "$version"; then
         echo "ok:   $file:$line [$stage] $name=$version is in the index of ${base%@*}"
+        if [ "$upgrade" = 1 ] && [ "$inst" = "$version" ]; then
+          echo "note: $file:$line [$stage] $name=$version could be dropped: the base already has that version installed (ADR-0036 D3; not a failure)"
+        fi
       else
         idx="$(printf '%s' "$listed" | tr '\n' ' ' | sed 's/ $//')"
-        echo "FAIL: $file:$line [$stage] $name=$version is not in the index of $base (index has: ${idx:-nothing}) — bump the pin"
+        hint=""
+        if [ "$upgrade" = 1 ]; then hint=" (the base has $inst installed: if that is at least $version, drop the pin instead, ADR-0036 D3)"; fi
+        echo "FAIL: $file:$line [$stage] $name=$version is not in the index of $base (index has: ${idx:-nothing}) — bump the pin$hint"
         status=1
       fi
     done < <(awk -F'\t' -v b="$base" '$5 == "pin" && $4 == b' "$rows")
@@ -463,6 +569,74 @@ selftest() {
   [ "$rc" -eq 1 ] && grep -q 'not found' "$tmp/out" || { echo "FAIL: selftest: --lint on a missing file exited $rc"; cat "$tmp/out"; return 1; }
   echo "  lint (a missing file): exit $rc — not a pass"
 
+  # ADR-0036 V2, the D2 class check, through the real entry point on the stand-in tree
+  # (pins: vim and chromium without --upgrade, zlib and a --upgrade). The allow-list is a file
+  # in $tmp, so this does not depend on the real list: a bad real list fails the `--lint` step.
+  RUNNER="$SELF"
+  v2run() { # allow-list text ("MISSING" = no such file), extra files... -> sets RC and OUT
+    local text="$1" al
+    shift
+    n=$((n + 1)); al="$tmp/allow.$n"
+    if [ "$text" != MISSING ]; then printf '%s' "$text" >"$al"; fi
+    bash "$RUNNER" --lint --allowlist "$al" "$tmp/tree/images/a/Dockerfile" "$tmp/tree/images/b/Dockerfile" "$@" >"$tmp/out" 2>&1; RC=$?
+    OUT="$(cat "$tmp/out")"
+  }
+  v2case() { # name, wanted exit, must-contain ("" = none), allow-list text, extra files...
+    local name="$1" want="$2" must="$3" text="$4"
+    shift 4
+    v2run "$text" "$@"
+    if [ "$RC" -ne "$want" ]; then
+      echo "FAIL: selftest: V2 '$name' exited $RC, wanted $want"; printf '%s\n' "$OUT"; return 1
+    fi
+    if [ -n "$must" ] && ! printf '%s\n' "$OUT" | grep -qF -- "$must"; then
+      echo "FAIL: selftest: V2 '$name' exited $RC but not for the intended reason ('$must' missing)"; printf '%s\n' "$OUT"; return 1
+    fi
+    echo "  V2 ($name): exit $RC — $( { grep -m1 '^FAIL' <<<"$OUT" || grep -m1 '^ok' <<<"$OUT" || echo '(no output)'; } | sed "s|$tmp/||g" | cut -c1-140)"
+  }
+  OKLIST=$'vim reason one\nchromium reason two\n'
+  v2case "a list naming every non-upgrade pin: clean (zlib is --upgrade and needs no row)" 0 "allow-listed name(s)" "$OKLIST" || return 1
+  v2case "a comment, a blank line and extra spaces in the list are read" 0 "2 allow-listed name(s)" $'# header\n\n   vim    reason one\nchromium\treason two\n' || return 1
+  v2case "an exact pin on a package outside the list (vim)" 1 "tree/images/a/Dockerfile:2 [base] vim=9.2.1202-r0 — an exact pin on a package that is not in" $'chromium reason two\n' || return 1
+  printf '%s\n' 'FROM alpine:3.24@sha256:aaaa' 'RUN apk add --no-cache curl=8.23.0-r0 jq' >"$tmp/v2-newpin"
+  v2case "a new exact pin (curl) added to the tree, not in the list" 1 "v2-newpin:2 [#1] curl=8.23.0-r0 — an exact pin on a package that is not in" "$OKLIST" "$tmp/v2-newpin" || return 1
+  printf '%s\n' 'FROM alpine:3.24@sha256:aaaa' 'RUN apk add --no-cache --upgrade curl=8.23.0-r0' >"$tmp/v2-upg"
+  v2case "the same pin inside apk add --upgrade is class (b) offline (the index half checks the base ships it)" 0 "" "$OKLIST" "$tmp/v2-upg" || return 1
+  v2case "a list row that no Dockerfile pins (ttyd)" 1 "ttyd is listed but no Dockerfile pins it" $'vim reason one\nchromium reason two\nttyd reason three\n' || return 1
+  v2case "a row with no reason" 1 "vim has no reason" $'vim\nchromium reason two\n' || return 1
+  v2case "a name listed twice" 1 "vim is listed twice" $'vim reason one\nvim reason again\nchromium reason two\n' || return 1
+  v2case "a name that carries a version" 1 "is not a bare lower-case package name" $'vim=9.2.1202-r0 reason one\nchromium reason two\n' || return 1
+  v2case "a name in capitals" 1 "is not a bare lower-case package name" $'Vim reason one\nchromium reason two\n' || return 1
+  v2case "a list with only comments reads nothing" 1 "no row read" $'# nothing here\n\n' || return 1
+  v2case "a missing list file" 1 "is missing or not a file" MISSING || return 1
+  printf '%s\n' 'FROM alpine:3.24@sha256:aaaa' 'RUN apk add --no-cache "curl>=8.0" vim=9.2.1202-r0' >"$tmp/v2-range"
+  v2case "a version range is red with a clean list (grammar, D1)" 1 "v2-range:2 [#1] 'curl>=8.0' — a version range" "$OKLIST" "$tmp/v2-range" || return 1
+  # without --allowlist and with FILE arguments the class check is off (it needs the whole tree)
+  n=$((n + 1))
+  bash "$SELF" --lint "$tmp/tree/images/a/Dockerfile" "$tmp/tree/images/b/Dockerfile" >"$tmp/out" 2>&1; rc=$?
+  if [ "$rc" -ne 0 ] || grep -q 'allow-listed' "$tmp/out"; then echo "FAIL: selftest: --lint FILE... without --allowlist ran the class check (exit $rc)"; cat "$tmp/out"; return 1; fi
+  echo "  V2 (--lint FILE... without --allowlist): class check not run, exit $rc"
+  # mutants: the planted cases above must be able to catch the V2 check going dead. Each mutant
+  # is a copy of this script with one V2 line neutered; the matching planted case must then no
+  # longer be red for its reason (if it still is, the case tests nothing).
+  mutant() { # name, sed expression, wanted-red text the planted case looks for, allow-list text, extra files...
+    local name="$1" expr="$2" must="$3" text="$4" mut
+    shift 4
+    mut="$tmp/mut-$name.sh"
+    sed "$expr" "$SELF" >"$mut"
+    if cmp -s "$SELF" "$mut"; then echo "FAIL: selftest: mutant '$name' did not change the script (the sed expression no longer matches)"; return 1; fi
+    RUNNER="$mut"; v2run "$text" "$@"; RUNNER="$SELF"
+    if [ "$RC" -eq 1 ] && printf '%s\n' "$OUT" | grep -qF -- "$must"; then
+      echo "FAIL: selftest: mutant '$name' is still red for '$must': the planted case does not test that check"; printf '%s\n' "$OUT"; return 1
+    fi
+    echo "  V2 mutant ($name): the planted case is no longer red for its reason (exit $RC) — caught"
+  }
+  mutant "class check dead" 's/\[ "\$upgrade" = 1 \] && continue/continue/' "an exact pin on a package that is not in" $'chromium reason two\n' || return 1
+  mutant "stale-row check dead" 's/ && \$6 == n//' "is listed but no Dockerfile pins it" $'vim reason one\nchromium reason two\nttyd reason three\n' || return 1
+  mutant "reason check dead" 's/if (reason == "")/if (0)/' "has no reason" $'vim\nchromium reason two\n' || return 1
+  mutant "duplicate check dead" 's/if (name in seen)/if (0)/' "is listed twice" $'vim reason one\nvim reason again\nchromium reason two\n' || return 1
+  mutant "empty-list check dead" 's/\[ "\$LINT_ALLOW_N" -eq 0 \] && \[ "\$status" -eq 0 \]/false/' "no row read" $'# nothing\n' || return 1
+  mutant "name-shape check dead" 's/if (name !~ /if (0 \&\& name !~ /' "is not a bare lower-case package name" $'vim=9.2.1202-r0 reason one\nchromium reason two\n' || return 1
+
   # parse tables (ADR-0036 V1): each form, exact
   table "plain, one line" "2${T}final${T}$B${T}pin${T}vim${T}9.2.1202-r0${T}0" \
     "$A
@@ -538,7 +712,23 @@ RUN if grep -q x /etc/apk/repositories 2>/dev/null; then apk add vim=9.2.1202-r0
   planted "a pin that is in the base's index passes" 0 "$A
 RUN apk add --no-cache vim=9.2.1202-r0 chromium=155.0.8059.84-r0 jq" || return 1
   planted "the pinned version of the installed base package passes (zlib r0 is installed)" 0 "$A
-RUN apk add --no-cache --upgrade zlib=1.3.2-r0" || return 1
+RUN apk add --no-cache --upgrade zlib=1.3.2-r0" "could be dropped" || return 1
+  # ADR-0036 D2 (b) / D3, the index half (V3): a --upgrade pin must be on a package the base has
+  # installed; when the base already has the pinned version, say it can be dropped.
+  planted "a --upgrade pin in the index, newer than the installed one: green, nothing to drop" 0 "$A
+RUN apk add --no-cache --upgrade zlib=1.3.2-r1" "ok:   " || return 1
+  planted "a --upgrade pin on a package the base does not have installed (vim) is not a base-upgrade" 1 "$A
+RUN apk add --no-cache --upgrade vim=9.2.1202-r0" "not a base-upgrade" || return 1
+  planted "a --upgrade pin that left the index, with the base's own version named in the hint" 1 "$A
+RUN apk add --no-cache --upgrade zlib=1.3.2-r9" "the base has 1.3.2-r0 installed" || return 1
+  planted "a --upgrade pin with no such package anywhere is red, not a pass" 1 "$A
+RUN apk add --no-cache --upgrade nosuchpkg=1.0-r0" "not a base-upgrade" || return 1
+  # the same class check through check_files (the daily run's entry), with an allow-list that lacks vim
+  printf 'chromium reason\n' >"$tmp/allow.chk"
+  ALLOWLIST="$tmp/allow.chk"
+  planted "check_files runs the class check too (vim is not in the list)" 1 "$A
+RUN apk add --no-cache vim=9.2.1202-r0 chromium=155.0.8059.84-r0" "an exact pin on a package that is not in" || return 1
+  ALLOWLIST=""
   planted "a pinned version that left the index (vanished)" 1 "$A
 RUN apk add --no-cache vim=9.2.1100-r0" || return 1
   planted "the vanished version is on a \\ continuation line, a good one before it" 1 "$A
@@ -674,16 +864,31 @@ RUN apk add vim=9.2.1202-r0" "has no apk" || return 1
   query_index() { echo "docker is not installed (stub)" >&2; return 2; }
   planted "docker/network trouble is exit 2, not 0" 2 "$A
 RUN apk add vim=9.2.1202-r0" || return 1
-  echo "ok: selftest — $n checks (parse tables, planted defects red, clean cases green, --lint goes red on a planted grammar / no-pin / coverage defect)"
+  echo "ok: selftest — $n checks (parse tables, planted defects red, clean cases green, --lint goes red on a planted grammar / no-pin / coverage defect, the D2 class check goes red on each planted class / list defect and each of its checks is caught when mutated away)"
   return 0
 }
 
 # --- entry ------------------------------------------------------------------------------
+# `--allowlist FILE` may stand anywhere; the rest is the mode and the FILE list.
+args=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --allowlist)
+      [ "$#" -ge 2 ] || { echo "usage: --allowlist needs a FILE" >&2; exit 2; }
+      ALLOWLIST="$2"; shift 2 ;;
+    *) args+=("$1"); shift ;;
+  esac
+done
+set -- ${args[@]+"${args[@]}"}
+# Over the whole tree (no FILE) the D2 class check always runs, against the default list.
+default_allowlist() { [ -n "$ALLOWLIST" ] || ALLOWLIST="images/apk-pin-allowlist.txt"; }
+
 case "${1:-}" in
   --selftest) selftest; exit $? ;;
   --lint)
     shift
     if [ "$#" -eq 0 ]; then
+      default_allowlist
       files=(); while IFS= read -r f; do files+=("$f"); done < <(tracked)
       [ "${#files[@]}" -gt 0 ] || { echo "FAIL: no tracked Dockerfile (a check that looked at nothing is not a pass)"; exit 1; }
     else
@@ -711,6 +916,7 @@ if [ "$#" -gt 0 ]; then
   for f in "$@"; do [ -f "$f" ] || { echo "check-apk-pins: $f not found" >&2; exit 1; }; done
   check_files "$@"
 else
+  default_allowlist
   files=(); while IFS= read -r f; do files+=("$f"); done < <(tracked)
   [ "${#files[@]}" -gt 0 ] || { echo "FAIL: no tracked Dockerfile (a check that looked at nothing is not a pass)"; exit 1; }
   check_files "${files[@]}"
