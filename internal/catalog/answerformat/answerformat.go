@@ -188,21 +188,19 @@ func checkAttempts(attempts int) error {
 }
 
 // CheckSpace is D3 (a) for the catalog: the space computed from format and
-// params must be >= SpaceFactor x attempts. A vocabulary-sized format returns
-// nil here ON PURPOSE: the catalog has no vocabulary, and the same rule is
-// applied to the vocabulary by the edition validator through CheckSpaceN. A
-// space that cannot be computed at all is an error (fail-closed).
+// params must be >= SpaceFactor x attempts. A vocabulary-sized format (path,
+// name) has no space here and returns ErrSpaceFromVocabulary: the caller must
+// decide what that means (the catalog passes it on purpose, because the edition
+// validator applies the same rule to the vocabulary through CheckSpaceN; no
+// caller gets a silent nil). A space that cannot be computed at all returns
+// ErrSpaceUnavailable (fail-closed).
 func CheckSpace(f string, p Params, attempts int) error {
-	// Before the vocabulary case returns nil: an out-of-range attempts is refused
-	// for every format.
+	// Before the vocabulary case: an out-of-range attempts is refused for every format.
 	if err := checkAttempts(attempts); err != nil {
 		return err
 	}
 	n, err := Space(f, p)
-	switch {
-	case errors.Is(err, ErrSpaceFromVocabulary):
-		return nil
-	case err != nil:
+	if err != nil {
 		return err
 	}
 	return CheckSpaceN(n, attempts)

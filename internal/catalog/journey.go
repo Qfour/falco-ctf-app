@@ -32,6 +32,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -121,6 +122,61 @@ type Journey struct {
 	// mission clears (#47). Optional and display-only — empty means "no teaser".
 	Bridge  string `yaml:"bridge" json:"bridge"`
 	DocsURL string `yaml:"docsUrl" json:"docsUrl"`
+	// Questions holds the prompts of an investigate challenge (ADR-0056 D1); its
+	// id set must equal the catalog's question ids (LoadJourneys). Empty for every
+	// other type.
+	Questions []JourneyQuestion `yaml:"questions" json:"questions,omitempty"`
+}
+
+// JourneyQuestion is the participant-facing text of one question. The answer is
+// never here (ADR-0056 D1); the decode is strict so an `answer:` key written by
+// mistake fails the load instead of sitting, ignored, in a public file.
+type JourneyQuestion struct {
+	ID     string `yaml:"id" json:"id"`
+	Prompt string `yaml:"prompt" json:"prompt"`
+}
+
+// UnmarshalYAML decodes one questions[] entry with KnownFields(true).
+func (q *JourneyQuestion) UnmarshalYAML(node *yaml.Node) error {
+	type plain JourneyQuestion // no methods: decoding into it does not recurse here
+	return decodeStrict(node, (*plain)(q))
+}
+
+// checkJourneyQuestions is ADR-0056 D1's "journey の questions[] の id の集合は
+// catalog と完全に一致する": for an investigate challenge the set of journey ids
+// equals the set of catalog question ids, every prompt is non-empty and no id
+// repeats (order is free); for any other type there must be no questions[].
+func checkJourneyQuestions(j Journey, ch Challenge) error {
+	if ch.Type != TypeInvestigate {
+		if len(j.Questions) != 0 {
+			return fmt.Errorf("journey %q: questions[] belongs to type %q only, not %q", j.ChallengeID, TypeInvestigate, ch.Type)
+		}
+		return nil
+	}
+	if ch.Investigate == nil {
+		return fmt.Errorf("journey %q: challenge is type %q but has no investigate block", j.ChallengeID, TypeInvestigate)
+	}
+	want := make(map[string]struct{}, len(ch.Investigate.Questions))
+	for _, q := range ch.Investigate.Questions {
+		want[q.ID] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(j.Questions))
+	for i, q := range j.Questions {
+		if _, ok := want[q.ID]; !ok {
+			return fmt.Errorf("journey %q: questions[%d].id %q is not a question of the challenge", j.ChallengeID, i, q.ID)
+		}
+		if _, dup := seen[q.ID]; dup {
+			return fmt.Errorf("journey %q: question id %q appears twice", j.ChallengeID, q.ID)
+		}
+		if strings.TrimSpace(q.Prompt) == "" {
+			return fmt.Errorf("journey %q: question %q has an empty prompt", j.ChallengeID, q.ID)
+		}
+		seen[q.ID] = struct{}{}
+	}
+	if len(seen) != len(want) {
+		return fmt.Errorf("journey %q: questions[] has %d of the challenge's %d questions (the id sets must be equal)", j.ChallengeID, len(seen), len(want))
+	}
+	return nil
 }
 
 // Journeys maps challengeId -> Journey. Missing entries mean "no journey
@@ -189,10 +245,23 @@ func LoadJourneys(dir string, cat Catalog) (Journeys, error) {
 		}
 		// RESTRICT-OUT: the directory (= this challenge) is not in the active,
 		// possibly scenario-restricted catalog. Skip it, not part of this run.
-		if _, ok := cat[e.Name()]; !ok {
+		ch, ok := cat[e.Name()]
+		if !ok {
 			continue
 		}
+		// ADR-0056 D1: an investigate challenge's questions[] and the catalog's
+		// question ids are the same set (any other type has none).
+		if err := checkJourneyQuestions(j, ch); err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
 		out[j.ChallengeID] = j
+	}
+	// An investigate challenge with no journey.yaml has no prompts, so it asks
+	// nothing: not the graceful degrade of a missing briefing but a content hole.
+	for _, id := range cat.IDs() {
+		if _, has := out[id]; !has && cat[id].Type == TypeInvestigate {
+			return nil, fmt.Errorf("investigate challenge %q has no journey.yaml: its questions[] prompts are required", id)
+		}
 	}
 	return out, nil
 }
