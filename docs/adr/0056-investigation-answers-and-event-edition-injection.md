@@ -681,10 +681,10 @@ security の要件 3 は「起動拒否」と書いている。束の項目は�
 9. 席ごとの format を足す、または `Normalize` が受理する綴りを広げる → `answerformat.Fold` に同じ PR で族を足す (V55 の性質の test が、足し忘れを赤にする)。B9 の偽陽性による再 render が 1 イベントで 3 回を超える → fold の粒度を見直す。
 10. validator の入力の木を運用者以外 (CI の runner や共有の端末) が書ける形で使う → M2 の「運用者の所有」の前提が崩れる。読む前に木の写しを取ってから検査するよう、入口を設計し直す。
 11. 作者が decoy を answer と違う形で置きたい要求が出る (別の語彙の囮・別の時間帯の囮など) → `decoys: <n>` の暗黙の生成を、宣言の decoy (同一性を E2 で検査する形) に広げる。schema は `version: 2` にする。
+12. timestamp の窓では書けない時系列 (相対的な順序の制約、席ごとに伸び縮みする間隔) が content に要る → `time` に順序の制約を足す。窓の幅 = `windowSeconds` という空間の主張は保つ。
 13. name の設問で、B8 (b) が普通の語で満たされるのに、実際の参加者が少ない候補で当てている (誤答の分布が狭い) → name の候補の数え方を、文脈 (key=value の値の位置など) で絞る形に見直す。
 14. B4 の全 format の検索で、`fixed` の短い値 (technique の id・選択肢の id) による偽陽性が、1 イベントで 2 回を超えて文面の言い換えを強いる → 席ごとでない format を B4 から外すことを、CISO の同意を取って検討する。
 15. 席の list を追記だけに保てない運用 (roster の並べ替え、席の削除) が出る → U2 の割り当てを、前回の席の list を入力に取る形 (`--previous-seats`) にして、順序への依存を明示する。
-12. timestamp の窓では書けない時系列 (相対的な順序の制約、席ごとに伸び縮みする間隔) が content に要る → `time` に順序の制約を足す。窓の幅 = `windowSeconds` という空間の主張は保つ。
 7. 次のどれかが観測された → `answer_attempts` の in-memory の写し (write-through。`Reset` と自己修復で同時に更新する) に移る。
    - 開催中に、journey の 500 のうち「could not read the mission's questions」の log が 1 件でも出る。
    - `GET /journey` の p99 が 100 ms を超える。
