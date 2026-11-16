@@ -76,7 +76,7 @@ func Load(scored catalog.Scored, answersFile string, eventMode bool) (*Judge, st
 	if err != nil {
 		return nil, "", fmt.Errorf("edition: answers table: %w", err)
 	}
-	practice, _, err := loadPractice(scored)
+	practice, _, _, err := loadPractice(scored)
 	if err != nil {
 		return nil, "", err
 	}
@@ -112,7 +112,7 @@ func Load(scored catalog.Scored, answersFile string, eventMode bool) (*Judge, st
 func practiceJudge(scored catalog.Scored) (*Judge, string, error) {
 	cat := scored.Catalog
 	scope := ScopeOf(cat)
-	_, tables, err := loadPractice(scored)
+	_, tables, _, err := loadPractice(scored)
 	if err != nil {
 		return nil, "", err
 	}
@@ -220,58 +220,70 @@ const (
 // answers.tsv is opened, and loadPractice itself makes no Judge: practiceJudge does,
 // from the tables it returns, and Load calls practiceJudge only when eventMode is false.
 //
-// Neither result is nil on success: no practice edition at all is the empty set and
-// no table.
-func loadPractice(scored catalog.Scored) (PracticeSet, map[string]*Table, error) {
+// The third result is where the practice editions are, not what is in them (A4c-2, M2):
+// the edition/ directory of every challenge that has one, once it passed the checks above
+// (a directory, of an investigate challenge), whether or not it holds an answers.tsv.
+// loadPractice is the one function that reads Scored.FullCatalog, so it is the one that
+// knows which challenges have a practice edition and where; reading the practice bundle
+// and the template files from there is readPracticeFiles's (practicefiles.go), which only
+// the validator's path calls. The start-up path (Load) discards it, opens nothing under it
+// and so refuses nothing about it: a bundle or a template that is missing or broken does
+// not stop a scoreboard, which has no use for them.
+//
+// No result is nil on success: no practice edition at all is the empty set, no table and
+// no directory.
+func loadPractice(scored catalog.Scored) (PracticeSet, map[string]*Table, practiceDirs, error) {
 	// Fail-closed on the input itself (review #631 R1#1): a Scored without its tree
 	// would give the EMPTY practice set, and T6 would then compare nothing and pass.
 	if err := checkScored(scored); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	// The whole tree, from the same value as the scope (A4a-3): scored.FullCatalog was
 	// read from scored.ChallengesDir by catalog.LoadScored.
 	full, challengesDir := scored.FullCatalog, scored.ChallengesDir
 	set := make(PracticeSet)
 	tables := make(map[string]*Table)
+	dirs := make(practiceDirs)
 	for _, id := range full.IDs() {
 		ch := full[id]
 		editionDir := filepath.Join(challengesDir, ch.Dir(), editionDirName)
 		ok, err := practiceEntry(editionDir, true)
 		if err != nil {
-			return nil, nil, fmt.Errorf("edition: practice answers of %s: %w", id, err)
+			return nil, nil, nil, fmt.Errorf("edition: practice answers of %s: %w", id, err)
 		}
 		if !ok {
 			continue
 		}
 		if ch.Type != catalog.TypeInvestigate {
-			return nil, nil, fmt.Errorf("edition: practice answers of %s: an %s/ directory belongs to an investigate challenge only, not to type %q", id, editionDirName, ch.Type)
+			return nil, nil, nil, fmt.Errorf("edition: practice answers of %s: an %s/ directory belongs to an investigate challenge only, not to type %q", id, editionDirName, ch.Type)
 		}
+		dirs[id] = editionDir
 		practiceDir := filepath.Join(editionDir, practiceDirName)
 		if ok, err = practiceEntry(practiceDir, true); err != nil {
-			return nil, nil, fmt.Errorf("edition: practice answers of %s: %w", id, err)
+			return nil, nil, nil, fmt.Errorf("edition: practice answers of %s: %w", id, err)
 		} else if !ok {
 			continue
 		}
 		path := filepath.Join(practiceDir, practiceTable)
 		if ok, err = practiceEntry(path, false); err != nil {
-			return nil, nil, fmt.Errorf("edition: practice answers of %s: %w", id, err)
+			return nil, nil, nil, fmt.Errorf("edition: practice answers of %s: %w", id, err)
 		} else if !ok {
 			continue
 		}
 		data, err := readTable(path)
 		if err != nil {
-			return nil, nil, fmt.Errorf("edition: practice answers of %s: %w", id, err)
+			return nil, nil, nil, fmt.Errorf("edition: practice answers of %s: %w", id, err)
 		}
 		t, err := Parse(data)
 		if err != nil {
-			return nil, nil, fmt.Errorf("edition: practice answers of %s: %w", id, err)
+			return nil, nil, nil, fmt.Errorf("edition: practice answers of %s: %w", id, err)
 		}
 		if err := addPractice(set, id, ch, t); err != nil {
-			return nil, nil, fmt.Errorf("edition: practice answers of %s: %w", id, err)
+			return nil, nil, nil, fmt.Errorf("edition: practice answers of %s: %w", id, err)
 		}
 		tables[id] = t
 	}
-	return set, tables, nil
+	return set, tables, dirs, nil
 }
 
 // checkScored refuses a catalog.Scored that cannot be what catalog.LoadScored returns
