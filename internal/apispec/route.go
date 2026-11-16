@@ -81,7 +81,10 @@ const (
 	// AuthzSelf (ADR-0050, auth-policy GET /check-workspace?host=): the proven
 	// identity must resolve to a seat that EQUALS the host exactly. Unlike
 	// AuthzSelfOrAdmin there is no admin override: an ADMIN_EMAILS identity is
-	// refused (403), so an operator's request never reaches the seat's Pod.
+	// refused (403), so an operator's request never reaches the seat's Pod. The
+	// scoreboard uses it for the investigate answer route (ADR-0056 D4): the
+	// proven identity must be exactly {user}'s canonical form, and an operator's
+	// answer, which would spend the participant's attempts, is refused too.
 	AuthzSelf            Authz = "self"
 	AuthzClaimedIdentity Authz = "claimed-identity"
 	// AuthzInternalClaimedIdentity: claimed identity (taken from the path, the

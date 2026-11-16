@@ -218,8 +218,8 @@ func WithWebhookSecret(secret string, mode ingest.SecretMode) Option {
 // event edition's answers table (ADR-0056 D19 A2b). nil (the default, and every
 // environment without an investigate challenge) = no table. The Judge holds HMACs
 // of the table values under a per-process key, never a plaintext value. NewHandler
-// hands it to the Grader (A3a), the only caller of its comparison; no route reaches
-// that Grader entry until A3b.
+// hands it to the Grader (A3a), the only caller of its comparison; the answer route
+// (A3b-1) is the only route that reaches that Grader entry.
 func WithEditionJudge(j *edition.Judge) Option {
 	return func(h *Handler) { h.editionJudge = j }
 }
@@ -252,7 +252,8 @@ func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts .
 	// ADR-0056 D5 (A3a): the answers-table Judge goes into the one Grader. Only a
 	// non-nil Judge is passed, so a scoreboard started without a table leaves the
 	// Grader unwired and SubmitAnswer refuses (a nil *edition.Judge handed over as
-	// the interface would not be nil there). There is no route that calls it yet (A3b).
+	// the interface would not be nil there). Its one caller is the answer route's
+	// adapter (api/answer.go, A3b-1).
 	if h.editionJudge != nil {
 		grader.WithAnswers(s, h.editionJudge, logger)
 	}

@@ -29,6 +29,10 @@ info:
     --------------------------------------------------------------
       x-ctf-audience          participant | operator | internal | infra
       x-ctf-authz             none | admin | self-or-admin |
+                              self (the proven identity is EXACTLY `{user}`'s
+                              canonical form; ADMIN_EMAILS is NOT an override,
+                              unlike self-or-admin — ADR-0056 D4, the word of
+                              ADR-0050 — see the investigate answer operation) |
                               claimed-identity |
                               internal-claimed-identity (claimed identity on
                               the cluster-internal path ONLY — collector
@@ -1098,6 +1102,93 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /api/users/{user}/challenges/{cid}/questions/{qid}/answer:
+    post:
+      summary: Answer one question of an investigate challenge
+      operationId: submitAnswer
+      tags: [participant]
+      x-ctf-audience: participant
+      x-ctf-authz: self
+      x-ctf-origin-guard: true
+      x-ctf-collector-forward: false
+      x-ctf-rate-limit: identity 1 req/s burst 5 (own bucket, shared with no other route)
+      description: |
+        ADR-0056 D4-D7. One answer to one question of an `investigate` challenge.
+        The answer is compared with the value the event edition prepared for the
+        caller's OWN seat; the comparison, the per-question attempt budget and the
+        solve are the Grader's (one door), never this route's.
+
+        A wrong answer costs one attempt; so does a right one (the attempt is
+        counted and committed before the comparison). An answer that does not fit
+        the question's format is a 400 and costs nothing. Once a question is
+        answered, or its attempts are used up, or the challenge is solved, a
+        further answer is NOT compared: it is a 200 with `already-correct` or
+        `exhausted`. An answer to a question that is already correct is accepted
+        on purpose (200 `already-correct`): if the write that followed the correct
+        answer failed (500), that re-submission is what completes the solve.
+
+        **Authz is `self`, and that is the one place this service is stricter
+        than `self-or-admin`.** The proven `X-Auth-Request-Email` must be exactly
+        `{user}`'s canonical identity (`<user>@<EXPECTED_EMAIL_DOMAIN>`), and
+        `ADMIN_EMAILS` is NOT an override: an operator answering in a
+        participant's name would spend that participant's attempts and could
+        solve the challenge for them. The asymmetry is deliberate: do not
+        "align" it to `self-or-admin`. A missing or blank identity header, and any
+        other identity, is 403, answered before the rate limit is touched (no
+        token is consumed).
+
+        Origin-guarded and NOT in the collector's forward allowlist: a script in a
+        participant's terminal must not reach this route (the portal's answer
+        field is the only caller). The rate limit (1 req/s, burst 5, per proven
+        identity, a bucket of its own) is a DoS control; the brute-force defence
+        is the attempt budget.
+
+        Every non-2xx body is `{"error": <fixed text>}` and never echoes the
+        answer, the question id or the challenge id. The 200 body is the four
+        fields of `AnswerResult` and nothing else: where the answer is wrong,
+        what it should be, its length, and whether it matches another seat are
+        never returned.
+      parameters:
+        - $ref: "#/components/parameters/User"
+        - $ref: "#/components/parameters/Cid"
+        - $ref: "#/components/parameters/Qid"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AnswerRequest" }
+      responses:
+        "200":
+          description: the answer was graded (or not compared at all, `already-correct` or `exhausted`)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AnswerResult" }
+        "400":
+          description: invalid user, a challenge that is not an `investigate` one, a body that is not a JSON object with exactly the one key `answer` (a string of at most 256 characters), a request that is not `application/json`, or an answer that does not fit the question's format (no attempt was spent)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: origin guard denied, or the request carries no X-Auth-Request-Email identity, or the identity is not exactly `{user}`'s (an admin included); denied before the rate limit, no token is consumed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: unknown challenge id (or an id outside the `cid` grammar), or a question id that is not one of the challenge's (or is outside the `qid` grammar); fixed body, the id is not echoed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: rate limited (per-identity bucket, keyed by the caller's X-Auth-Request-Email, not the client IP)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: could not grade the answer (the store failed, no answers table is loaded, or the table has no row for this seat and question); nothing is compared when the attempt could not be counted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /api/users/{user}/profile:
     post:
       summary: Set the caller's own display name and/or avatar (profile)
@@ -1937,6 +2028,16 @@ components:
         with the same fixed 404 (`unknown challenge`); the input is never
         echoed back, logged, or used as a metric label (all such ids share one
         `_unknown` label value).
+    Qid:
+      in: path
+      name: qid
+      required: true
+      schema: { type: string, pattern: "^[a-z][a-z0-9-]{0,30}$", x-ctf-text-origin: token }
+      description: >-
+        question id of an `investigate` challenge (ADR-0056 D1), e.g.
+        `who-ran-it`. An id outside this parameter's `pattern`, or not a question
+        of the challenge, is answered with the same fixed 404 (`unknown question`);
+        the input is never echoed. It is logged only after it matched the `pattern`.
     Tid:
       in: path
       name: tid
@@ -2292,6 +2393,54 @@ components:
         user: { type: string, x-ctf-text-origin: token }
         cid: { type: string, x-ctf-text-origin: token }
         dirty: { type: boolean, const: false }
+
+    AnswerRequest:
+      type: object
+      description: |
+        `POST /api/users/{user}/challenges/{cid}/questions/{qid}/answer`. Exactly
+        one key; no other key is accepted (400). JSON only.
+      additionalProperties: false
+      required: [answer]
+      properties:
+        answer:
+          type: string
+          maxLength: 256
+          x-ctf-text-origin: participant-opaque
+          description: |
+            The participant's answer, as typed. It is normalised by the question's
+            format (ADR-0056 D2) before it is compared, and it is never stored, shown
+            or logged: no response of this route carries it, or a length of it.
+
+    AnswerResult:
+      type: object
+      description: |
+        The one 200 body of the answer route (ADR-0056 D6). All four fields are
+        always present. Nothing else is ever returned: where an answer is wrong,
+        what it should be, how long it is, and whether it equals another seat's
+        value are not part of this schema and never will be. There is no prose
+        field; the portal words each `status` itself.
+      required: [status, correct, solved, remaining]
+      properties:
+        status:
+          type: string
+          enum: [correct, incorrect, exhausted, already-correct]
+          x-ctf-text-origin: enum
+          description: |
+            `correct` / `incorrect`: the answer was compared (and one attempt spent).
+            `exhausted`: the question's attempts are used up; nothing was compared.
+            `already-correct`: the question was answered before, or the challenge is
+            already solved; nothing was compared and no attempt was spent. A closed
+            set: a value is never added later (a new fact would be a new field).
+        correct:
+          type: boolean
+          description: this question is answered (by this submission or an earlier one)
+        solved:
+          type: boolean
+          description: the challenge is solved (every one of its questions is answered)
+        remaining:
+          type: integer
+          minimum: 0
+          description: attempts left on this question
 
     DisplayNameRequest:
       type: object

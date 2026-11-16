@@ -237,10 +237,10 @@ func TestUnknownCIDFixedBodyOnEveryCIDRoute(t *testing.T) {
 			n++
 			u := fmt.Sprintf("user%d", n)
 			email := ""
-			if rt.Authz == apispec.AuthzAuthenticated || rt.Authz == apispec.AuthzSelfOrAdmin {
+			if rt.Authz == apispec.AuthzAuthenticated || rt.Authz == apispec.AuthzSelfOrAdmin || rt.Authz == apispec.AuthzSelf {
 				email = u + "@ctf.local"
 			}
-			target := strings.NewReplacer("{cid}", cid, "{user}", u, "{idx}", "0").Replace(rt.Pattern)
+			target := strings.NewReplacer("{cid}", cid, "{user}", u, "{idx}", "0", "{qid}", "q").Replace(rt.Pattern)
 			body := map[string]any{"user": u, "flag": "FALCO{x}", "condition": "evt.type=open", "checked": true}
 			w := f.do(target, email, body)
 			assertFixedUnknownBody(t, fmt.Sprintf("%s %s #%d", rt.Method, rt.Pattern, i), w.Code, w.Body.String(), cid)

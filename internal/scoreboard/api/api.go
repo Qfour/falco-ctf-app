@@ -10,6 +10,7 @@
 //	POST /api/users/{user}/challenges/{cid}/steps/{idx}/check
 //	POST /api/users/{user}/challenges/{cid}/hints/{idx}
 //	POST /api/users/{user}/challenges/{cid}/reset-dirty
+//	POST /api/users/{user}/challenges/{cid}/questions/{qid}/answer   (answer.go)
 //	POST /api/users/{user}/profile
 //	POST /api/admin/reset
 //	POST /api/admin/users/{user}/display-name
@@ -224,6 +225,12 @@ const actionBucket = "participant_action"
 // (each one a replay Job) cannot 429 a participant's hint open or step tick.
 const detectBucket = "detect"
 
+// answerBucket is the same label for Handler.answerLimiter (an investigate
+// answer, ADR-0056 D4). Its own bucket, shared with no other route: an answer is
+// the one write that spends a per-question attempt, and it must not draw on the
+// hint / step budget (nor they on it).
+const answerBucket = "answer"
+
 // boardPostBucket / boardLikeBucket are the same label for
 // Handler.boardPostLimiter (thread creation + follow-up messages) and
 // Handler.boardLikeLimiter (like + unlike), strict since app#397.
@@ -277,6 +284,10 @@ type Handler struct {
 	// same shape as actionLimiter (1 req/s, burst 10) but a separate token
 	// map, so grading does not spend the hint/step/reset budget.
 	detectLimiter *ratelimit.Limiter
+	// answerLimiter is the investigate answer route's own IDENTITY-keyed bucket
+	// (ADR-0056 D4: 1 req/s, burst 5). It is a DoS control only; the brute-force
+	// defence is the per-question attempt count in the Grader (D7).
+	answerLimiter *ratelimit.Limiter
 	adminSet      map[string]struct{}
 	// emailDomain is IdentityConfig.ExpectedEmailDomain (lower-cased, trimmed).
 	// Read-only after New.
@@ -316,6 +327,10 @@ type Handler struct {
 	// gate is unreachable over real HTTP and a test needs a fake to hold it.
 	gradeEvade  func(user, cid, flag string) (scoring.EvadeOutcome, error)
 	recordExfil func(user, cid, flag string) (scoring.ExfilStatus, error)
+	// gradeAnswer is grader.SubmitAnswer (ADR-0056 D5), a field for the same reason:
+	// a test makes the Grader answer each error the adapter maps (answer.go) without
+	// a store that fails on cue.
+	gradeAnswer func(ctx context.Context, user, cid, qid, rawInput string) (scoring.AnswerResult, error)
 
 	// board is the QA Board store (app#292 — destination model, supersedes
 	// P25's per-user QA ticket chat wholesale as of Phase 2). nil is possible
@@ -432,12 +447,14 @@ func New(cat catalog.Catalog, grader *scoring.Grader, s *store.Store, logger *sl
 		gradeDetect:    grader.SubmitDetect,
 		gradeEvade:     grader.SubmitEvade,
 		recordExfil:    grader.RecordExfil,
+		gradeAnswer:    grader.SubmitAnswer,
 		logger:         logger,
 		now:            now,
 		denials:        identityobs.New(logger, now),
 		submitLimiter:  ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now),
 		actionLimiter:  ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now),
 		detectLimiter:  ratelimit.New(1 /* req/s */, 10 /* burst */).WithNow(now),
+		answerLimiter:  ratelimit.New(1 /* req/s */, 5 /* burst */).WithNow(now),
 		adminSet:       adminSet,
 		emailDomain:    strings.ToLower(strings.TrimSpace(ic.ExpectedEmailDomain)),
 		hiddenSet:      hiddenSet,
@@ -601,6 +618,10 @@ func (h *Handler) Routes() []apispec.Route {
 	// same gate with its OWN bucket (detectMW), so it is header-REQUIRED too.
 	actionMW := h.actionLimiter.MiddlewareStrict(actionBucket, ratelimit.IdentityKeyed, h.denials.StrictNoIdentity)
 	detectMW := h.detectLimiter.MiddlewareStrict(detectBucket, ratelimit.IdentityKeyed, h.denials.StrictNoIdentity)
+	// ADR-0056 D4: the investigate answer route's own identity-keyed, fail-closed
+	// bucket (answer.go). Same MiddlewareStrict shape as the three above, behind
+	// the AuthzSelf front (selfFront) and the origin guard.
+	answerMW := h.answerLimiter.MiddlewareStrict(answerBucket, ratelimit.IdentityKeyed, h.denials.StrictNoIdentity)
 	// app#292 Phase 2 / app#397: identity-keyed and FAIL-CLOSED, the same
 	// MiddlewareStrict shape as actionMW/detectMW. A board thread/message is
 	// attributed to the caller's OWN proven identity, so the bucket tracks that
@@ -787,6 +808,23 @@ func (h *Handler) Routes() []apispec.Route {
 			OriginGuarded: true, CollectorForward: false,
 			RateLimit: "identity 1 req/s burst 10 (shared by steps/check, hints, reset-dirty, profile; separate from submit and submit-detect)",
 			Handler:   h.og(actionMW(http.HandlerFunc(h.resetDirty))),
+		},
+		{
+			// ADR-0056 D4: one answer to one question of an investigate
+			// challenge. The ONLY Authz: self route of this service (the
+			// auth-policy /check-workspace word, ADR-0050): the proven
+			// identity must be exactly {user}'s canonical form, and
+			// ADMIN_EMAILS is NOT an override (an operator's answer would spend
+			// the participant's attempts and could solve for them). Wire order:
+			// selfFront (a wrong identity is 403 before any token is spent) ->
+			// og -> answerMW (header-less is its strict 403) -> handler (full
+			// self check again, then the Grader). Browser-only, never in the
+			// collector's forward allowlist: a terminal script must not reach it.
+			Method: "POST", Pattern: "/api/users/{user}/challenges/{cid}/questions/{qid}/answer",
+			Audience: apispec.AudienceParticipant, Authz: apispec.AuthzSelf,
+			OriginGuarded: true, CollectorForward: false,
+			RateLimit: "identity 1 req/s burst 5 (own bucket, shared with no other route)",
+			Handler:   h.selfFront(h.og(answerMW(http.HandlerFunc(h.submitAnswer)))),
 		},
 		{
 			// ADR-0034 D8: the participant's own profile (display name + one

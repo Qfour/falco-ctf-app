@@ -59,7 +59,10 @@ const (
 	GateStrict Gate = "strict"
 	// GateSelfOrAdmin is api.selfOrAdmin: the {user}-scoped reads (me, journey)
 	// and the participant POSTs. It is named for the Authz class, not "read":
-	// it also guards writes.
+	// it also guards writes. api.selfOnly (Authz: self, the investigate answer
+	// route, ADR-0056 D4) records here too, with the same reasons: the series set
+	// is a contract the platform's alert reads, so the self gate has no label
+	// value of its own.
 	GateSelfOrAdmin Gate = "self_or_admin"
 	// GateAuthenticated is api.requireAuthenticated / boardIdentity: any proven
 	// identity, no {user} to match (the board routes).

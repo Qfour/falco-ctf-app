@@ -9,6 +9,14 @@ import (
 	"time"
 )
 
+// Defines values for AnswerResultStatus.
+const (
+	AlreadyCorrect AnswerResultStatus = "already-correct"
+	Correct        AnswerResultStatus = "correct"
+	Exhausted      AnswerResultStatus = "exhausted"
+	Incorrect      AnswerResultStatus = "incorrect"
+)
+
 // Defines values for AvatarId.
 const (
 	BugAmber        AvatarId = "bug-amber"
@@ -182,6 +190,45 @@ type AdminResetResult struct {
 	ClearedSolves int  `json:"cleared_solves"`
 	Ok            bool `json:"ok"`
 }
+
+// AnswerRequest `POST /api/users/{user}/challenges/{cid}/questions/{qid}/answer`. Exactly
+// one key; no other key is accepted (400). JSON only.
+type AnswerRequest struct {
+	// Answer The participant's answer, as typed. It is normalised by the question's
+	// format (ADR-0056 D2) before it is compared, and it is never stored, shown
+	// or logged: no response of this route carries it, or a length of it.
+	Answer string `json:"answer"`
+}
+
+// AnswerResult The one 200 body of the answer route (ADR-0056 D6). All four fields are
+// always present. Nothing else is ever returned: where an answer is wrong,
+// what it should be, how long it is, and whether it equals another seat's
+// value are not part of this schema and never will be. There is no prose
+// field; the portal words each `status` itself.
+type AnswerResult struct {
+	// Correct this question is answered (by this submission or an earlier one)
+	Correct bool `json:"correct"`
+
+	// Remaining attempts left on this question
+	Remaining int `json:"remaining"`
+
+	// Solved the challenge is solved (every one of its questions is answered)
+	Solved bool `json:"solved"`
+
+	// Status `correct` / `incorrect`: the answer was compared (and one attempt spent).
+	// `exhausted`: the question's attempts are used up; nothing was compared.
+	// `already-correct`: the question was answered before, or the challenge is
+	// already solved; nothing was compared and no attempt was spent. A closed
+	// set: a value is never added later (a new fact would be a new field).
+	Status AnswerResultStatus `json:"status"`
+}
+
+// AnswerResultStatus `correct` / `incorrect`: the answer was compared (and one attempt spent).
+// `exhausted`: the question's attempts are used up; nothing was compared.
+// `already-correct`: the question was answered before, or the challenge is
+// already solved; nothing was compared and no attempt was spent. A closed
+// set: a value is never added later (a new fact would be a new field).
+type AnswerResultStatus string
 
 // AvatarId A prepared avatar (ADR-0034 D9): `<glyph>-<color>`, 8 glyphs x 6 colours =
 // 48 ids, ordered glyph-outer / colour-inner. The 48th, `flame-slate`, is the
@@ -1167,6 +1214,9 @@ type Cid = string
 // Mid A board thread or message id (32 lower-case hex characters).
 type Mid = BoardID
 
+// Qid defines model for Qid.
+type Qid = string
+
 // Tid A board thread or message id (32 lower-case hex characters).
 type Tid = BoardID
 
@@ -1215,6 +1265,9 @@ type SubmitFlagJSONRequestBody = SubmitFlagRequest
 
 // SubmitDetectJSONRequestBody defines body for SubmitDetect for application/json ContentType.
 type SubmitDetectJSONRequestBody = SubmitDetectRequest
+
+// SubmitAnswerJSONRequestBody defines body for SubmitAnswer for application/json ContentType.
+type SubmitAnswerJSONRequestBody = AnswerRequest
 
 // SetStepCheckJSONRequestBody defines body for SetStepCheck for application/json ContentType.
 type SetStepCheckJSONRequestBody = StepCheckRequest
