@@ -14,6 +14,27 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/catalog/challengeid"
 )
 
+// flagOpen is the literal every flag begins with: flagRE is anchored on it.
+const flagOpen = "FALCO{"
+
+// MentionsFlag reports whether s holds anything shaped like a flag, anywhere in
+// it. It is the one definition of that question for callers outside this package
+// (ADR-0056 D10 T7 / B3, internal/edition) so none of them keeps a copy of
+// flagRE. It is deliberately wider than flagRE: a flag is `flagOpen` plus a body
+// plus a closing brace, so every string flagRE matches contains flagOpen, and an
+// unterminated or out-of-grammar `flagOpen` counts as well; the comparison folds
+// ASCII case. (mentionsflag_test.go holds it wider than flagRE.)
+func MentionsFlag(s string) bool {
+	return strings.Contains(strings.Map(foldASCIIUpper, s), flagOpen)
+}
+
+func foldASCIIUpper(r rune) rune {
+	if r >= 'a' && r <= 'z' {
+		return r - ('a' - 'A')
+	}
+	return r
+}
+
 // ErrFlagOverrides wraps every rejection of a flags file, so the caller can
 // tell "the flags file is unusable" apart from a catalog/scenario load error.
 var ErrFlagOverrides = errors.New("flag overrides rejected")
