@@ -61,7 +61,9 @@ func ModeCheck(eventMode, scopeHasInvestigate, tablePresent bool) error {
 // kept only if it is inside its own grammar, so a table whose columns are swapped
 // does not put a value in the message through the identifier columns. (A value that
 // is also grammatically a seat, in the seat column of a swapped row, can still be
-// named; that is the ADR's accepted identifier set.)
+// named; that is the ADR's accepted identifier set.) A bundle rule (B1-B9, A4b) may
+// also name a file: its name, as the file system holds it (bundle.go, shownName),
+// never its content.
 type Violation struct {
 	Rule string
 	Msg  string
@@ -69,6 +71,7 @@ type Violation struct {
 	Seat string
 	CID  string
 	QID  string
+	File string
 	err  error
 }
 
@@ -100,6 +103,9 @@ func (v *Violation) Error() string {
 	}
 	if v.QID != "" {
 		b.WriteString(" qid=" + v.QID)
+	}
+	if v.File != "" {
+		b.WriteString(" file=" + v.File)
 	}
 	// answerformat's errors describe the rule that failed and never the text.
 	if v.err != nil {

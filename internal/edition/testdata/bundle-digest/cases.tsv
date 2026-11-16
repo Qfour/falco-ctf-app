@@ -1,0 +1,37 @@
+# ADR-0056 D9 / V16: the shared case table of the canonical bundle digest. Every
+# implementation of the digest runs it: Go (internal/edition, bundle_digest_test.go)
+# and deploy-user.sh (A5c). Plain ASCII, TAB-separated, no quoting.
+#
+# A row is   case<TAB>digest<TAB>input   (the third column is absent for `empty`: its
+# input is no bytes at all, and its row has two columns).
+#
+#   case    the name of the directory beside this file that holds the bundle: its
+#           files, flat, named as in the B2 grammar. A case with no directory is the
+#           empty bundle, and `empty` is the only one (git holds no empty directory).
+#   input   the exact bytes the digest is the sha256 of, spelled for printf: \x00 is
+#           NUL and \n is LF, nothing else is escaped. The bytes are, for the files in
+#           byte order of their names,  name NUL hex(sha256(content)) LF  one after
+#           another (D9). An implementation derives them from the directory and
+#           compares the sha256 with the digest column; it need not read this column.
+#   digest  lower-case hex of the sha256 of those bytes.
+#
+# Anyone can check a row with no program of ours:
+#   printf '<input column>' | shasum -a 256        (the digest column is the hash)
+#   printf '<content of the file>' | shasum -a 256 (the hex inside the input column)
+# The input holds no percent sign, so the column is a safe printf format as it stands.
+#
+# The cases that differ by one byte from another case (the name: file-name-differs;
+# the content: content-differs, content-newline; the pairing of names and contents:
+# two-files-swapped) must all have different digests. byte-order puts four names whose
+# order is not the one a locale-aware sort gives (a-b, a.b, a0, ab: byte order is
+# 0x2d, 0x2e, 0x30, 0x62 after `a`), so a shell must sort with LC_ALL=C.
+empty	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+one-file	b71899f0e13a58405ecef8ed7b7e0930a32f40e799828f8716ea8ace8e8ca782	a\x002d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\n
+empty-file	84a0bc84a8906a8501a34e9aedb06be93452d06bc32b71d61f0b334cd5559d9b	a\x00e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n
+file-name-differs	e923ac72b7e6c0be743daeacea760eff97f3197fd49da2460230b4c0a2c0bc60	b\x002d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\n
+content-differs	e7f3f0ba7e2bb50135144c4d8382abef9ba3b8c2906353e82a74d3385fc8d059	a\x00a1fce4363854ff888cff4b8e7875d600c2682390412a8cf79b37d0b11148b0fa\n
+content-newline	1762b79de62448f88b17a17503a491c0ef99e0d3691e30067f628daa5ae34e48	a\x0073cb3858a687a8494ca3323053016282f3dad39d42cf62ca4e79dda2aac7d9ac\n
+two-files	0e42fc4fa5357509dffeb9febc168cfa041a5368a9ce7dbdd77bb9b3955b90a5	a\x002d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\nb\x00a1fce4363854ff888cff4b8e7875d600c2682390412a8cf79b37d0b11148b0fa\n
+two-files-swapped	a28a0f533a20f40872b813e7cd86ebc1dc36ca0e6028f3187042e2187b3c3a36	a\x00a1fce4363854ff888cff4b8e7875d600c2682390412a8cf79b37d0b11148b0fa\nb\x002d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\n
+byte-order	609324429b4fb1f026e7a567131d6756c338f5c3a415f335376ef6340ccf672b	a-b\x006b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b\na.b\x00d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35\na0\x004e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce\nab\x004b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a\n
+multi-line	c59f666d6f086bfb2867c1232008de8685de207b79fc19aee026e5cf520acb2b	notes.txt\x009060554863a62b9db5f726216876654e561896071d2e6480f2048b70e0fdadb9\n
