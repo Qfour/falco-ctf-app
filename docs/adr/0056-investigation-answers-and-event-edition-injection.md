@@ -215,11 +215,10 @@
    - `k_proc` は起動ごとに `crypto/rand` で作る 32 byte で、log に出さない。
    - 平文の表は HMAC にした後に捨てる。長さは漏れない。
    - 自分の席の行が無ければ 500 を返し、運営の log に残す (validator と予備の席で起きないはず)。
-5. 一致したら、設問を correct にする。全設問が correct なら `MarkSolved` を呼ぶ。
+5. 一致したら、設問を correct にする。全設問が correct なら `MarkSolved` を呼ぶ (ヒントの減点は既存と同じ)。この書き込みが失敗したら 500 を返し、solve しない (回数は消費済みのまま)。
    - **自己修復** (review #616 R4#2): 正解を記録した後に `MarkSolved` が失敗した場合 (500)、同じ設問への次の提出は 3 で 0 行になり、`already-correct` になる。このとき比較はせず、記録を読むだけで、全設問が正解済みなら solve を完了させる。
    - `AnswerResult` には Go だけの field `Newly` がある。その呼び出しが solve を記録したら true。API の 4 field (D6) には入らない。A3b の solve の metric はこれで数える。
    - 前提: A3b の route と A6 の portal は、「正解済みで未 solve」の設問に再提出の口を残す (正解済みの欄を無効にしない)。
-   - 元の文:全設問が correct なら `MarkSolved` を呼ぶ (ヒントの減点は既存と同じ)。この書き込みが失敗したら 500 を返し、solve しない (回数は消費済みのまま)。
 6. 一致しなければ、他の席の答え (HMAC から seat への map) と照らす。一致したら**運営だけの監査 log** に `answer matched another seat` (user, cid, qid, seat) を残す。応答と metrics には出さない。
 - `scoreboard_solves_total` の kind に `investigate` を足す。`scoreboard_api_submissions_total` の outcome に `answer_correct` / `answer_incorrect` / `answer_exhausted` / `answer_already_correct` / `answer_store_error` を足す。label に qid と seat は入れない。
 
