@@ -63,8 +63,10 @@ func expectedGate(t *testing.T, rt apispec.Route) identityobs.Gate {
 	}
 	switch rt.Authz {
 	case apispec.AuthzSelfOrAdmin, apispec.AuthzSelf:
-		// AuthzSelf (ADR-0056 D4) records at the same observation point as
-		// self-or-admin: the series set is a contract, the gate has no label of its own.
+		if rt.Authz == apispec.AuthzSelf {
+			// AuthzSelf (ADR-0056 D4) has its own gate label (A3b-4).
+			return identityobs.GateSelf
+		}
 		return identityobs.GateSelfOrAdmin
 	case apispec.AuthzAuthenticated:
 		return identityobs.GateAuthenticated
@@ -341,7 +343,7 @@ func TestIdentityDenials_LogCarriesNeitherIdentityNorPath(t *testing.T) {
 }
 
 // V3 (default registry): once the production handler is assembled the metric
-// has exactly the 8 declared series, and ratelimit_identity_requests_total has
+// has exactly the 11 declared series, and ratelimit_identity_requests_total has
 // no no_identity outcome at all. The pre-generation itself (every pair exists at
 // 0 right after registration, with a mutation that removes it) is checked in
 // identityobs on a fresh registry, which is the canonical test: this one only
@@ -378,8 +380,11 @@ func TestIdentityDenials_SeriesPregeneratedAndOldOutcomeGone(t *testing.T) {
 			}
 		}
 	}
-	if len(denials) != 8 {
-		t.Fatalf("scoreboard_identity_denials_total has %d series %v, want the 8 declared", len(denials), denials)
+	if len(denials) != 11 {
+		t.Fatalf("scoreboard_identity_denials_total has %d series %v, want the 11 declared", len(denials), denials)
+	}
+	if self := (identityobs.Pair{Gate: identityobs.GateSelf, Reason: identityobs.ReasonNoIdentity}); !denials[self] {
+		t.Errorf("series %v is missing before any request (ADR-0038 guarantee (2), ADR-0056 V38)", self)
 	}
 	for _, p := range identityobs.Declared() {
 		if !denials[p] {
@@ -403,8 +408,10 @@ func TestIdentityDenials_AnIdentifiedRequestIsCountedOnlyByTheInnerGate(t *testi
 		rt := routeByPattern(t, routes, b.members[0])
 		var inner identityobs.Gate
 		switch rt.Authz {
-		case apispec.AuthzSelfOrAdmin, apispec.AuthzSelf:
+		case apispec.AuthzSelfOrAdmin:
 			inner = identityobs.GateSelfOrAdmin
+		case apispec.AuthzSelf:
+			inner = identityobs.GateSelf
 		case apispec.AuthzAuthenticated:
 			inner = identityobs.GateAuthenticated
 		default:
@@ -414,7 +421,7 @@ func TestIdentityDenials_AnIdentifiedRequestIsCountedOnlyByTheInnerGate(t *testi
 			name, email string
 			reason      identityobs.Reason
 		}{{"another domain", "alice@evil.example", identityobs.ReasonNonCanonical}}
-		if inner == identityobs.GateSelfOrAdmin {
+		if inner == identityobs.GateSelfOrAdmin || inner == identityobs.GateSelf {
 			cases = append(cases, struct {
 				name, email string
 				reason      identityobs.Reason

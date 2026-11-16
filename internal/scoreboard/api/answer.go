@@ -61,31 +61,27 @@ const (
 // as that seat and no other. A missing or blank header, an empty
 // EXPECTED_EMAIL_DOMAIN, and any other identity are 403 (fail-closed).
 //
-// The refusals are counted at the same observation point as selfOrAdmin's
-// (scoreboard_identity_denials_total{gate="self_or_admin"}): that metric's series
-// set is a cross-repo contract (platform's alert reads it), so the self gate does
-// not add a gate label value of its own. The reason is judged here, the observer
-// only records it, and neither the caller's email nor {user} is logged. An
-// ADMIN_EMAILS identity that is refused is a mismatch, not non_canonical (see below).
+// The refusals are counted at the same observation point as selfOrAdmin's, under
+// their own gate: scoreboard_identity_denials_total{gate="self"} (the word ADR-0056
+// A3b-4 added to ADR-0038 D2's vocabulary), so a refusal here never moves the
+// gate="self_or_admin" series. The judgement (header, equality, reason) is
+// judgeSelf's, the one selfOrAdmin makes too; the observer only records the reason,
+// and neither the caller's email nor {user} is logged. An ADMIN_EMAILS identity that
+// is refused is a mismatch, not non_canonical (see below).
 func (h *Handler) selfOnly(w http.ResponseWriter, r *http.Request, user string) bool {
-	email := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Auth-Request-Email")))
-	if email == "" {
-		h.denials.Record(r, identityobs.GateSelfOrAdmin, identityobs.ReasonNoIdentity)
-		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
-		return false
-	}
-	if emailMatchesUser(email, user, h.emailDomain) {
+	email, reason, ok := h.judgeSelf(r, user)
+	if ok {
 		return true
 	}
 	// An ADMIN_EMAILS identity that is not {user}'s is an intended refusal, whatever
-	// its domain (an operator on another domain is not a canonical <seat>@<domain>):
-	// it is a mismatch, never non_canonical, which stays 0 in a healthy production
-	// (the platform's alert reads it).
-	reason := identityobs.ReasonMismatch
-	if _, isAdmin := h.adminSet[email]; !isAdmin && UsernameFromEmail(email, h.emailDomain) == "" {
-		reason = identityobs.ReasonNonCanonical
+	// its domain (an operator on another domain is not a canonical <seat>@<domain>,
+	// so judgeSelf calls it non_canonical): it is a mismatch, never non_canonical,
+	// which stays 0 in a healthy production (the ScoreboardIdentityDenials alert in
+	// charts/scoreboard selects it, by reason, whatever the gate).
+	if _, isAdmin := h.adminSet[email]; isAdmin && reason == identityobs.ReasonNonCanonical {
+		reason = identityobs.ReasonMismatch
 	}
-	h.denials.Record(r, identityobs.GateSelfOrAdmin, reason)
+	h.denials.Record(r, identityobs.GateSelf, reason)
 	httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
 	return false
 }

@@ -55,14 +55,14 @@ func sameSet(got map[Pair]bool, want []Pair) bool {
 	return true
 }
 
-func TestNewDenialsVecPregeneratesTheDeclaredEight(t *testing.T) {
+func TestNewDenialsVecPregeneratesTheDeclaredEleven(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	newDenialsVec(reg)
 	got := seriesOn(t, reg)
-	if len(declared) != 8 || !sameSet(got, declared) {
-		t.Fatalf("series on a fresh registry = %v, want exactly the 8 declared %v", got, declared)
+	if len(declared) != 11 || !sameSet(got, declared) {
+		t.Fatalf("series on a fresh registry = %v, want exactly the 11 declared %v", got, declared)
 	}
-	for _, g := range []Gate{GateStrict, GateSelfOrAdmin, GateAuthenticated, GatePortal} {
+	for _, g := range []Gate{GateStrict, GateSelfOrAdmin, GateSelf, GateAuthenticated, GatePortal} {
 		if !got[Pair{g, ReasonNoIdentity}] {
 			t.Errorf("gate %q has no no_identity series", g)
 		}
@@ -84,6 +84,6 @@ func TestPregenerationCheckCatchesAMissingLoop(t *testing.T) {
 		v.WithLabelValues(string(p.Gate), string(p.Reason))
 	}
 	if got := seriesOn(t, reg); sameSet(got, declared) {
-		t.Fatalf("7 of 8 series passed the check: %v", got)
+		t.Fatalf("10 of 11 series passed the check: %v", got)
 	}
 }

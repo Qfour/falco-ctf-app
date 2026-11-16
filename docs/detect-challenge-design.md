@@ -121,14 +121,15 @@ Key design points:
   request that reaches the handler is audit-logged. A header-less 403 is observable three ways
   (app#404, ADR-0038; it replaced app#387's per-bucket metric): the metric
   `scoreboard_identity_denials_total{gate="strict",reason="no_identity"}` counts every denial (the
-  series of all four gates are pre-created at 0, so `increase()` sees the first one); a sampled Warn
+  series of all five gates are pre-created at 0, so `increase()` sees the first one); a sampled Warn
   line `identity gate denied` (fields `gate`, `reason`, `route` pattern, `remote_addr`, `header` =
   `absent`|`blank`|`present`, `suppressed`; at most one per (gate, reason) per 10s, the rest counted in
   `suppressed`; the identity value and the URL path are never logged) says where from; and the chart's
   `ScoreboardIdentityDenials` alert (warning, `> 0` in 5m for `reason` = `no_identity` or
   `non_canonical`, any gate, rendered only with `monitoring.enabled`) fires on the first one. The
-  same metric and line cover all four identity gates: `strict` (every MiddlewareStrict bucket in
-  `internal/scoreboard/api`), `self_or_admin`, `authenticated` (the board routes) and `portal` (a
+  same metric and line cover all five identity gates: `strict` (every MiddlewareStrict bucket in
+  `internal/scoreboard/api`), `self_or_admin`, `self` (`selfOnly`, the investigate answer route,
+  ADR-0056 A3b-4), `authenticated` (the board routes) and `portal` (a
   GET /portal shell served with no usable identity; still a 200). Triage by `remote_addr`:
   ingress-nginx Pod IP = the I8 premise (auth-url / auth-response-headers) broke; collector Pod IP =
   the forward table grew onto an identity route (ADR-0034 D12, needs an ADR); anything else =

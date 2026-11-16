@@ -39,6 +39,9 @@ var wantDeclared = []identityobs.Pair{
 	{Gate: "self_or_admin", Reason: "no_identity"},
 	{Gate: "self_or_admin", Reason: "non_canonical"},
 	{Gate: "self_or_admin", Reason: "mismatch"},
+	{Gate: "self", Reason: "no_identity"},
+	{Gate: "self", Reason: "non_canonical"},
+	{Gate: "self", Reason: "mismatch"},
 	{Gate: "authenticated", Reason: "no_identity"},
 	{Gate: "authenticated", Reason: "non_canonical"},
 	{Gate: "portal", Reason: "no_identity"},
@@ -89,23 +92,23 @@ func count(g identityobs.Gate, r identityobs.Reason) float64 {
 	return testutil.ToFloat64(identityobs.DenialsTotal.WithLabelValues(string(g), string(r)))
 }
 
-// V3: the 8 series exist before anything was recorded, each a series (so
+// V3: the 11 series exist before anything was recorded, each a series (so
 // increase() sees the first denial) and in particular reason=no_identity for
 // every gate. Nothing else exists.
 func TestDeclaredSeriesExistAtStart(t *testing.T) {
 	if got, want := pairStrings(identityobs.Declared()), pairStrings(wantDeclared); !reflect.DeepEqual(got, want) {
-		t.Fatalf("Declared() = %v, want %v (ADR-0038 D2)", got, want)
+		t.Fatalf("Declared() = %v, want %v (ADR-0038 D2, with self from ADR-0056 A3b-4)", got, want)
 	}
 	got := gatheredPairs(t)
-	if len(got) != 8 {
-		t.Fatalf("%s has %d series %v, want exactly the 8 declared", metricName, len(got), got)
+	if len(got) != 11 {
+		t.Fatalf("%s has %d series %v, want exactly the 11 declared", metricName, len(got), got)
 	}
 	for _, p := range wantDeclared {
 		if _, ok := got[string(p.Gate)+"/"+string(p.Reason)]; !ok {
 			t.Errorf("series gate=%q reason=%q is missing at start", p.Gate, p.Reason)
 		}
 	}
-	for _, g := range []identityobs.Gate{identityobs.GateStrict, identityobs.GateSelfOrAdmin, identityobs.GateAuthenticated, identityobs.GatePortal} {
+	for _, g := range []identityobs.Gate{identityobs.GateStrict, identityobs.GateSelfOrAdmin, identityobs.GateSelf, identityobs.GateAuthenticated, identityobs.GatePortal} {
 		if _, ok := got[string(g)+"/no_identity"]; !ok {
 			t.Errorf("gate %q has no reason=\"no_identity\" series: a missing series would read as \"cannot judge\" to platform", g)
 		}
@@ -274,7 +277,7 @@ func TestSamplingKeyIsGateAndReason(t *testing.T) {
 
 // The log ceiling does not depend on traffic: every declared pair, hammered for
 // a minute of simulated time, writes at most one line per 10 seconds.
-func TestLogCeilingIsEightPairsPerWindow(t *testing.T) {
+func TestLogCeilingIsElevenPairsPerWindow(t *testing.T) {
 	var buf bytes.Buffer
 	clock := &fixedClock{time.Unix(1000, 0)}
 	o := newObs(&buf, clock)
@@ -286,8 +289,8 @@ func TestLogCeilingIsEightPairsPerWindow(t *testing.T) {
 			}
 		}
 	}
-	if n, max := len(lines(t, &buf)), 8*6; n != max {
-		t.Fatalf("%d lines for 60s of load on 8 pairs, want %d (one per pair per 10s)", n, max)
+	if n, max := len(lines(t, &buf)), 11*6; n != max {
+		t.Fatalf("%d lines for 60s of load on 11 pairs, want %d (one per pair per 10s)", n, max)
 	}
 }
 
@@ -382,8 +385,8 @@ func TestUndeclaredPairPanicsAndCreatesNothing(t *testing.T) {
 			o.Record(req("GET /p", "10.0.0.1:1", nil), p.Gate, p.Reason)
 		}()
 	}
-	if got := gatheredPairs(t); len(got) != 8 {
-		t.Fatalf("after rejected pairs the metric has %d series %v, want still the 8 declared", len(got), got)
+	if got := gatheredPairs(t); len(got) != 11 {
+		t.Fatalf("after rejected pairs the metric has %d series %v, want still the 11 declared", len(got), got)
 	}
 }
 

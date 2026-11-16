@@ -67,6 +67,7 @@ spec:
         # in ONE metric, scoreboard_identity_denials_total{gate, reason}:
         #   gate=strict         the identity-keyed rate-limit buckets (403, no token spent)
         #   gate=self_or_admin  selfOrAdmin (me / journey, the participant POSTs)
+        #   gate=self           selfOnly (the investigate answer route, ADR-0056 A3b-4)
         #   gate=authenticated  requireAuthenticated / boardIdentity (board)
         #   gate=portal         GET /portal served a shell (200) to a caller with
         #                       no usable identity: on a fresh page load this is
