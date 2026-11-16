@@ -127,6 +127,7 @@ app 側は `make push` も `check-image-hygiene` に依存させる。path は�
 6. D5 は入力 0 件・非 UTF-8・ヒント項目と fixtures 項目の Cf を error とする (D5-1)。数える単位は (fixtures ファイル, 異なる n-gram)。
 7. **`type:` 行は厳密な形だけ受け付ける**: top-level の `type:` がちょうど 1 本で `type: trigger|evade|detect|investigate` に完全一致 (builder と V2 が同じ規則)。**4 値目の `investigate` は ADR-0056 D1 で足された (ここが 3 値のままだったのを A3b-5 で直した)。** 集合の正典は `catalog.Types` で、この行の `type:` の列は `internal/catalog/typeset_parity_test.go` (`TestTypeSet_ADR0026ListMatchesTheCatalog`) が `catalog.Types` と突き合わせる。
    platform の読み方は緩いが、build が通る tree では同じ集合になる。
+   注記 (決定の本文は変えない): `type:` の許容集合は ADR-0056 A1d (#611) で 4 値 (`investigate` を含む) になった。
 8. **I16 の「同じ PR で昇格」は、すべての機構が main に揃う最後の PR で昇格する、と読む。** P28-0d の software は 3 PR に分割した:
    image と build 時の検査 (V1〜V3) = app#319 / n-gram の検査 (V5・V6) = app#318 / deploy 時の検査 (V4)・V8・I16 昇格 = 後続 PR (3/3。契約表 (D3) は platform#203 で main 済み)。
    merge 順は #319 → #318 → 後続。I16 の昇格は機構が揃う最後の PR (後続) で行う。V6 のうち `README.md` を足した派生 image の
