@@ -23,18 +23,19 @@ import (
 // caller gets the Judge (HMACs of the values under a per-process key) and the run id
 // (D9), nothing else.
 //
-// cat is the catalog the scoreboard scores (catalog.Scored.Catalog); its
-// investigate challenges are the scope the table must answer, and its evade
-// challenges' ExpectedFlag are the flag values of this event (T7: they were
+// scored is what catalog.LoadScored returned, and the ONLY input about the catalog
+// and the tree (ADR-0056 D19 A4a-3; there is no separate challenges directory
+// argument, so the scope and the tree the practice answers come from cannot be two
+// different trees, review #628 R4#2). scored.Catalog is the catalog the scoreboard
+// scores: its investigate challenges are the scope the table must answer, and its
+// evade challenges' ExpectedFlag are the flag values of this event (T7: they were
 // already read, by catalog.LoadScored; this function does not read the flags file).
-// challengesDir is CHALLENGES_DIR, and it must be the tree cat was read from: Load
-// does not check that (the scored catalog and the directory arrive separately,
-// review #628 R4#2); a challengesDir that is another tree would give the practice
-// answers of other challenges. The practice answers of EVERY challenge under it
-// (not only the scope's) are read, because the event table must differ from whatever
-// the image publishes (T6), and because the practice mode's Judge is made from them.
-// answersFile is ANSWERS_FILE ("" = not set). eventMode is "FLAGS_FILE is not empty"
-// (D8): the caller derives it, this function does not read the environment.
+// scored.FullCatalog and scored.ChallengesDir are the whole tree: the practice
+// answers of EVERY challenge under it (not only the scope's) are read, because the
+// event table must differ from whatever the image publishes (T6), and because the
+// practice mode's Judge is made from them. answersFile is ANSWERS_FILE ("" = not
+// set). eventMode is "FLAGS_FILE is not empty" (D8): the caller derives it, this
+// function does not read the environment.
 //
 // Results:
 //   - (nil, "", nil): no table, and none is needed: nothing to judge (no
@@ -55,14 +56,15 @@ import (
 // where eventMode is false. Check refuses to run T6 in the event mode when the set
 // is nil; loadPractice returns the empty set (not nil) when the image has no
 // practice edition: "there are none", not "not supplied".
-func Load(cat catalog.Catalog, challengesDir, answersFile string, eventMode bool) (*Judge, string, error) {
+func Load(scored catalog.Scored, answersFile string, eventMode bool) (*Judge, string, error) {
+	cat := scored.Catalog
 	scope := ScopeOf(cat)
 	if err := ModeCheck(eventMode, scope.HasInvestigate(), answersFile != ""); err != nil {
 		return nil, "", err
 	}
 	if answersFile == "" {
 		if !eventMode && scope.HasInvestigate() {
-			return practiceJudge(cat, challengesDir)
+			return practiceJudge(scored)
 		}
 		return nil, "", nil
 	}
@@ -74,7 +76,7 @@ func Load(cat catalog.Catalog, challengesDir, answersFile string, eventMode bool
 	if err != nil {
 		return nil, "", fmt.Errorf("edition: answers table: %w", err)
 	}
-	practice, _, err := loadPractice(challengesDir)
+	practice, _, err := loadPractice(scored)
 	if err != nil {
 		return nil, "", err
 	}
@@ -107,9 +109,10 @@ func Load(cat catalog.Catalog, challengesDir, answersFile string, eventMode bool
 // readers' own checks, loadPractice), is a refusal (T4): a scoreboard that cannot
 // grade a challenge in its scope does not start. Check lists the questions that have
 // no row. The result carries PracticeRunID, so the boot record (5) says all zeros.
-func practiceJudge(cat catalog.Catalog, challengesDir string) (*Judge, string, error) {
+func practiceJudge(scored catalog.Scored) (*Judge, string, error) {
+	cat := scored.Catalog
 	scope := ScopeOf(cat)
-	_, tables, err := loadPractice(challengesDir)
+	_, tables, err := loadPractice(scored)
 	if err != nil {
 		return nil, "", err
 	}
@@ -196,7 +199,7 @@ const (
 // hold plaintext values: the callers keep them only as long as they Check and, in
 // practiceJudge, build a Judge, and the event path discards them.
 //
-// It reads EVERY challenge under challengesDir, not the scoreboard's scope: the
+// It reads EVERY challenge of scored.FullCatalog, not the scoreboard's scope: the
 // event table must differ from every practice edition the image carries. For each
 // challenge that has an edition/ directory:
 //   - the challenge must be an investigate one (an edition/ under any other type is
@@ -219,11 +222,15 @@ const (
 //
 // Neither result is nil on success: no practice edition at all is the empty set and
 // no table.
-func loadPractice(challengesDir string) (PracticeSet, map[string]*Table, error) {
-	full, err := catalog.Load(challengesDir)
-	if err != nil {
-		return nil, nil, fmt.Errorf("edition: practice answers: %w", err)
+func loadPractice(scored catalog.Scored) (PracticeSet, map[string]*Table, error) {
+	// Fail-closed on the input itself (review #631 R1#1): a Scored without its tree
+	// would give the EMPTY practice set, and T6 would then compare nothing and pass.
+	if err := checkScored(scored); err != nil {
+		return nil, nil, err
 	}
+	// The whole tree, from the same value as the scope (A4a-3): scored.FullCatalog was
+	// read from scored.ChallengesDir by catalog.LoadScored.
+	full, challengesDir := scored.FullCatalog, scored.ChallengesDir
 	set := make(PracticeSet)
 	tables := make(map[string]*Table)
 	for _, id := range full.IDs() {
@@ -265,6 +272,35 @@ func loadPractice(challengesDir string) (PracticeSet, map[string]*Table, error) 
 		tables[id] = t
 	}
 	return set, tables, nil
+}
+
+// checkScored refuses a catalog.Scored that cannot be what catalog.LoadScored returns
+// (ADR-0056 A4a-3, review #631): no FullCatalog or no ChallengesDir (a zero value, or
+// a literal built by hand), or a challenge of the scope that the tree does not have
+// with the same type and directory. It is loadPractice's first step, so it runs on
+// every path that reads the practice answers (the event table's T6, and the practice
+// mode's Judge) and on no other: a start-up with nothing to judge (no investigate
+// challenge in scope, no table) reads no tree and is not asked for one. The error
+// names challenge ids only.
+func checkScored(s catalog.Scored) error {
+	switch {
+	case s.FullCatalog == nil:
+		return fmt.Errorf("%w: no full catalog", ErrInconsistentScored)
+	case s.ChallengesDir == "":
+		return fmt.Errorf("%w: no challenges directory", ErrInconsistentScored)
+	}
+	for _, id := range s.Catalog.IDs() {
+		got, want := s.Catalog[id], s.FullCatalog[id]
+		switch _, ok := s.FullCatalog[id]; {
+		case !ok:
+			return fmt.Errorf("%w: challenge %s of the scope is not in the full catalog", ErrInconsistentScored, id)
+		case got.Type != want.Type:
+			return fmt.Errorf("%w: challenge %s has another type in the full catalog", ErrInconsistentScored, id)
+		case got.Dir() != want.Dir():
+			return fmt.Errorf("%w: challenge %s has another directory in the full catalog", ErrInconsistentScored, id)
+		}
+	}
+	return nil
 }
 
 // practiceEntry reports whether path exists, and refuses what is not a directory

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/catalog/answerformat"
 	"github.com/Qfour/falco-ctf-app/internal/edition"
 )
@@ -24,6 +25,26 @@ const (
 var secrets = []string{sentinel, "aaaaaaaaaaaa", "bbbbbbbbbbbb", "ca,cb"}
 
 func ip(i int) *int { return &i }
+
+// scoredOf is the catalog.Scored of a scope cat over the tree at dir, as
+// catalog.LoadScored hands it to edition.Load (ADR-0056 A4a-3): Catalog is the scope,
+// FullCatalog is the whole tree (catalog.Load(dir), the repository defaults) and
+// ChallengesDir is dir. A challenge of cat that the tree at dir does not hold (a
+// synthetic catalog built elsewhere) is added to the full catalog, so that the value
+// is one Load's consistency check (checkScored) accepts, as LoadScored's always is.
+func scoredOf(t *testing.T, cat catalog.Catalog, dir string) catalog.Scored {
+	t.Helper()
+	full, err := catalog.Load(dir)
+	if err != nil {
+		t.Fatalf("catalog.Load(%s): %v", dir, err)
+	}
+	for id, ch := range cat {
+		if _, ok := full[id]; !ok {
+			full[id] = ch
+		}
+	}
+	return catalog.Scored{Catalog: cat, FullCatalog: full, ChallengesDir: dir}
+}
 
 // demoScope: one challenge with a per-seat name, a per-seat hexid and a choice-set
 // that is the same for every seat.

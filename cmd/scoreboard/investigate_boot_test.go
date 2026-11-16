@@ -91,7 +91,7 @@ func ibStart(t *testing.T, env map[string]string) ibBooted {
 	if b.rules, err = catalog.LoadRuleExcerpts(b.cfg.challengesDir, b.scored.Catalog); err != nil {
 		t.Fatalf("LoadRuleExcerpts: %v", err)
 	}
-	b.judge, b.log, b.recs, b.err = bootEdition(t, b.cfg, b.scored.Catalog)
+	b.judge, b.log, b.recs, b.err = bootEdition(t, b.cfg, b.scored)
 	return b
 }
 
@@ -195,8 +195,9 @@ func TestBoot_InvestigateScope_EventModeWithoutTable_IsRefused(t *testing.T) {
 	noValueInLog(t, "refused", b.log)
 }
 
-// (b2) ADR-0056 A4a-1 / V34 at start-up: startEdition hands CHALLENGES_DIR to
-// edition.Load, which reads the practice answers under it for T6. An event table that
+// (b2) ADR-0056 A4a-1 / V34 at start-up: startEdition hands the Scored that
+// scoredFromEnv returned (it carries CHALLENGES_DIR's tree, A4a-3) to edition.Load,
+// which reads the practice answers of that tree for T6. An event table that
 // repeats a published practice answer is refused (one ERROR record, no value in it);
 // the same tree with a practice edition of other values starts. The practice edition
 // here is synthetic (no investigate challenge, so no practice edition, is in the repo).
@@ -428,7 +429,7 @@ func TestBoot_RealCatalog_UnchangedByAcceptingTheInvestigateType(t *testing.T) {
 		if event {
 			c.flagsFile = "flags.yaml" // only "is it set" matters to startEdition
 		}
-		j, text, recs, err := bootEdition(t, c, scored.Catalog)
+		j, text, recs, err := bootEdition(t, c, scored)
 		if err != nil || j != nil || len(recs) != 0 {
 			t.Errorf("%s: judge %v, err %v, log %q; want nothing at all", name, j, err, text)
 		}

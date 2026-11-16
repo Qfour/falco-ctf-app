@@ -78,7 +78,7 @@ func noPracticeValue(t *testing.T, what string, err error) {
 func TestLoad_PracticeMode_JudgesTheScopeFromThePracticeEdition(t *testing.T) {
 	dir := writeTree(t, modeFiles())
 
-	j, runID, err := edition.Load(scopeOf(t, dir, demoCID), dir, "", false)
+	j, runID, err := edition.Load(scoredOf(t, scopeOf(t, dir, demoCID), dir), "", false)
 	if err != nil || j == nil {
 		t.Fatalf("Load = %v, %q, %v; want a judge", j, runID, err)
 	}
@@ -105,7 +105,7 @@ func TestLoad_PracticeMode_JudgesTheScopeFromThePracticeEdition(t *testing.T) {
 	}
 
 	// both in scope: both judged
-	j, _, err = edition.Load(scopeOf(t, dir, demoCID, otherCID), dir, "", false)
+	j, _, err = edition.Load(scoredOf(t, scopeOf(t, dir, demoCID, otherCID), dir), "", false)
 	if err != nil || j == nil {
 		t.Fatalf("Load with both in scope = %v, %v; want a judge", j, err)
 	}
@@ -154,7 +154,7 @@ func TestLoad_PracticeMode_RefusesWhatCannotBeGraded(t *testing.T) {
 			if c.plain {
 				cat["03-ev"] = catalog.Challenge{ID: "03-ev", Type: "evade", ExpectedFlag: plainFlag}
 			}
-			j, runID, err := edition.Load(cat, dir, "", false)
+			j, runID, err := edition.Load(scoredOf(t, cat, dir), "", false)
 			if err == nil {
 				t.Fatal("Load accepted a practice edition that cannot grade the scope")
 			}
@@ -193,7 +193,7 @@ func modeFiles0() [][]string {
 func TestLoad_PracticeMode_NoInvestigateInScopeReadsNothing(t *testing.T) {
 	dir := writeTree(t, map[string]string{practicePath(demoCID): "not a table\n"})
 	cat := catalog.Catalog{"03-ev": {ID: "03-ev", Type: "evade", ExpectedFlag: plainFlag}}
-	j, runID, err := edition.Load(cat, dir, "", false)
+	j, runID, err := edition.Load(scoredOf(t, cat, dir), "", false)
 	if err != nil || j != nil || runID != "" {
 		t.Errorf("Load = %v, %q, %v; want nil, \"\", nil", j, runID, err)
 	}
@@ -206,13 +206,13 @@ func TestLoad_EventMode_NeverJudgesFromThePracticeEdition(t *testing.T) {
 	cat := scopeOf(t, dir, demoCID)
 
 	// no ANSWERS_FILE: refused (D8 (i)), not graded from the image's answers
-	if j, runID, err := edition.Load(cat, dir, "", true); !errors.Is(err, edition.ErrTableMissing) || j != nil || runID != "" {
+	if j, runID, err := edition.Load(scoredOf(t, cat, dir), "", true); !errors.Is(err, edition.ErrTableMissing) || j != nil || runID != "" {
 		t.Errorf("event mode, no table, a complete practice edition: Load = %v, %q, %v; want ErrTableMissing and nothing else", j, runID, err)
 	}
 
 	// with the event table: the Judge is the table's. It knows the table's seats and
 	// not the seat *, and the practice answer is not an answer of any seat.
-	j, runID, err := edition.Load(cat, dir, eventTable(t), true)
+	j, runID, err := edition.Load(scoredOf(t, cat, dir), eventTable(t), true)
 	if err != nil || j == nil || runID != runA {
 		t.Fatalf("event mode with a table: Load = %v, %q, %v; want a judge and run id %s", j, runID, err, runA)
 	}
@@ -227,7 +227,7 @@ func TestLoad_EventMode_NeverJudgesFromThePracticeEdition(t *testing.T) {
 	}
 
 	// a table without the event mode is still the mismatch, whatever the image holds
-	if j, _, err := edition.Load(cat, dir, eventTable(t), false); !errors.Is(err, edition.ErrTableOutsideEventMode) || j != nil {
+	if j, _, err := edition.Load(scoredOf(t, cat, dir), eventTable(t), false); !errors.Is(err, edition.ErrTableOutsideEventMode) || j != nil {
 		t.Errorf("a table outside the event mode: Load = %v, %v; want ErrTableOutsideEventMode", j, err)
 	}
 }

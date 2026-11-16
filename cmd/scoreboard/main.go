@@ -244,7 +244,7 @@ func main() {
 	// scripts/verify.sh reads (contract-table row "scoreboard の起動ログ"), and this
 	// exits right after it; nothing is logged when there is no table and none is
 	// needed. The Judge goes to the handler, which hands it to the Grader (A3a).
-	editionJudge, err := startEdition(logger, catCfg, cat)
+	editionJudge, err := startEdition(logger, catCfg, scored)
 	if err != nil {
 		os.Exit(1)
 	}
