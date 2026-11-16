@@ -33,6 +33,10 @@ type scopeData struct {
 	ids       []string        // challenges in scope
 	overrides map[string]bool // ids whose briefing/bridge the scenario's narrative.yaml replaces
 	in        hintleak.Input
+	// wantPrompts / gotPrompts: questions declared by the scope's investigate
+	// challenges vs question prompt items put into in.Free (ADR-0056 V24).
+	wantPrompts int
+	gotPrompts  int
 }
 
 func (s scopeData) has(id string) bool {
@@ -204,25 +208,67 @@ func loadScope(t *testing.T, chalDir, name, scenarioFile string, fixtures []hint
 	}
 
 	ids := scored.Order
-	in := hintleak.Input{Targets: fixtures}
+	in, wantPrompts, gotPrompts := assembleScope(ids, cat, journeys, excerpts, fixtures)
+	return scopeData{name: name, ids: ids, overrides: overrides, in: in, wantPrompts: wantPrompts, gotPrompts: gotPrompts}
+}
+
+// questionPromptItems turns the questions[] prompts of an investigate challenge's
+// journey into free items (ADR-0056 D1, A1e). A prompt is shown to every
+// participant before any hint is bought, exactly like a step label, so a hint
+// that repeats a prompt's words is not a leak of the hint. It is a Free item and
+// never a Target: the rule scans fixtures for hint-only n-grams, and a prompt is
+// not a file the rule guards. Source names the challenge and the question id.
+func questionPromptItems(id string, j catalog.Journey) []hintleak.Item {
+	var out []hintleak.Item
+	for _, q := range j.Questions {
+		out = append(out, hintleak.Item{Source: fmt.Sprintf("%s questions[%s].prompt", id, q.ID), Text: q.Prompt})
+	}
+	return out
+}
+
+// assembleScope is the ONE place the D5-1 inputs of a scope are built from the
+// loaded catalog, journeys and rule excerpts (production: loadScope; V24: an
+// in-memory scope). wantPrompts is the number of questions the scope's
+// investigate challenges declare; gotPrompts is the number of prompt items that
+// were put into Free for them. promptCountProblem compares the two.
+func assembleScope(ids []string, cat catalog.Catalog, journeys catalog.Journeys, excerpts catalog.FalcoRuleExcerpts, fixtures []hintleak.Item) (in hintleak.Input, wantPrompts, gotPrompts int) {
+	in = hintleak.Input{Targets: fixtures}
 	for _, id := range ids {
+		if ch := cat[id]; ch.Type == catalog.TypeInvestigate && ch.Investigate != nil {
+			wantPrompts += len(ch.Investigate.Questions)
+		}
 		if j, ok := journeys[id]; ok {
 			for i, h := range j.Hints {
 				in.Hints = append(in.Hints, hintleak.Item{Source: fmt.Sprintf("%s hints[%d]", id, i+1), Text: h.Text})
 			}
-			// Free = what is shown without paying: briefing, step label/detail
-			// (and rule.yaml below). title / tagline / bridge are deliberately NOT
-			// free (D5-1: the strict side).
+			// Free = what is shown without paying: briefing, step label/detail,
+			// the questions[] prompts of an investigate challenge (and rule.yaml
+			// below). title / tagline / bridge are deliberately NOT free (D5-1: the
+			// strict side).
 			in.Free = append(in.Free, hintleak.Item{Source: id + " briefing", Text: j.Briefing})
 			for i, st := range j.Steps {
 				in.Free = append(in.Free,
 					hintleak.Item{Source: fmt.Sprintf("%s steps[%d].label", id, i+1), Text: st.Label},
 					hintleak.Item{Source: fmt.Sprintf("%s steps[%d].detail", id, i+1), Text: st.Detail})
 			}
+			prompts := questionPromptItems(id, j)
+			gotPrompts += len(prompts)
+			in.Free = append(in.Free, prompts...)
 		}
 		in.Free = append(in.Free, ruleItems(id, excerpts[id])...)
 	}
-	return scopeData{name: name, ids: ids, overrides: overrides, in: in}
+	return in, wantPrompts, gotPrompts
+}
+
+// promptCountProblem is ADR-0056 V24's count check: the prompt items of a scope
+// equal the number of questions its investigate challenges declare. "Challenges
+// ask questions but no prompt reached Free" (0 of N) fails; a scope with no
+// investigate challenge has 0 and 0, which passes (the tree has none yet).
+func promptCountProblem(s scopeData) error {
+	if s.wantPrompts != s.gotPrompts {
+		return fmt.Errorf("scope %s: %d question prompt item(s) in Free, but its investigate challenges declare %d question(s)", s.name, s.gotPrompts, s.wantPrompts)
+	}
+	return nil
 }
 
 // loadRepo builds every scope (full + each scenarios/*/scenario.yaml, D5-5) of
