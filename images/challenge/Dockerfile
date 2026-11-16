@@ -86,9 +86,9 @@ FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cab
 #     294b683c) で唯一の提供版が 8.23.0-r0。8.23.0 は CVE-2026-92392 (High、HTTP/2 upload の
 #     use-after-free、影響 8.12.0〜8.22.0) の fix 版。re-pin 履歴: 09-03 (#296、8.21.0 →
 #     8.22.0) / 10-26 (#515、8.22.0 → 8.23.0))
-#   vim/vim-common/xxd 9.2.1310-r0 (2026-11-10: 9.2.1202-r0 が index から外れ再 pin
-#     (app#583)。re-pin 履歴: 10-05 (#307) / 10-14 (#354、1091 → 1178) / 10-17 (#382、→ 1202) /
-#     11-10 (#583、→ 1310)。10-05 から 36 日で 4 回。
+#   vim/vim-common/xxd 9.2.1351-r0 (2026-11-16: 9.2.1310-r0 が index から外れ再 pin
+#     (app#600)。re-pin 履歴: 10-05 (#307) / 10-14 (#354、1091 → 1178) / 10-17 (#382、→ 1202) /
+#     11-10 (#583、→ 1310) / 11-16 (#600、→ 1351)。10-05 から 42 日で 5 回。
 #     以下は 2026-10-14 時点の記録: 3.24/community から 9.2.1091-r0 が
 #     外れ apk resolve が failing していたため再 pin。`apk policy vim vim-common
 #     xxd` 実測 (base digest 294b683c) で唯一の提供版。2026-10-05 は 9.2.1014-r0 →
@@ -122,9 +122,9 @@ RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 zlib=1.4-r
         netcat-openbsd \
         jq \
         less \
-        vim=9.2.1310-r0 \
-        vim-common=9.2.1310-r0 \
-        xxd=9.2.1310-r0 \
+        vim=9.2.1351-r0 \
+        vim-common=9.2.1351-r0 \
+        xxd=9.2.1351-r0 \
         util-linux=2.42.3-r1 \
         procps \
         grep \
