@@ -40,11 +40,13 @@
 #   (b) base-upgrade: the pin is inside `apk add --upgrade` (decided by syntax here; that the
 #       base really ships the package is checked against the index, below).
 # Any other pin fails. The allow-list itself fails on a row with no reason, a malformed or
-# repeated name, no rows at all, a missing file, and on a row that no Dockerfile pins (a stale
-# row would silently widen what the next change may pin).
+# repeated name, no rows at all, a missing file, and on a row that no Dockerfile pins
+# outside `apk add --upgrade` (a stale row would silently widen what the next change may pin).
 # Index half (V3, docker + network): a `--upgrade` pin must be on a package the base has
-# installed (else it is not a base-upgrade: FAIL), and when the base's installed version
-# already is the pinned one the output says it can be dropped (D3; a note, never a gate).
+# installed (else it is not a base-upgrade: FAIL), and when the base's installed version is the
+# pinned one or newer (`apk version -t`, one extra container per base) the output says the pin
+# can be dropped, naming both versions (D3; a `note:`, never a gate). Older in the base = the pin
+# works, nothing is said; an order that could not be compared is said too.
 #
 # What it does NOT see (a net, not a proof; review sees these): `COPY rootfs/ /` (a source
 # tree that carries /etc/apk/...), a write inside a heredoc RUN (also `apk add` there: the
@@ -273,6 +275,22 @@ query_index() {
   return 0
 }
 
+# version_orders BASE INST PIN [INST PIN]... prints one line per pair: the order apk itself gives
+# (`apk version -t INST PIN`): `<` INST is older than PIN, `=` same, `>` INST is newer. One
+# container for all the pairs of a base; no index is needed. Returns 0 ok / 2 trouble (the
+# caller then says the order is unknown: it never fails a pin on it). The selftest redefines it.
+version_orders() {
+  local base="$1" rc
+  shift
+  command -v docker >/dev/null 2>&1 || return 2
+  docker run --rm --user 0 --entrypoint sh "$base" -c '
+    command -v apk >/dev/null 2>&1 || exit 90
+    while [ "$#" -ge 2 ]; do apk version -t "$1" "$2" || exit 91; shift 2; done' sh "$@" 2>/dev/null </dev/null
+  rc=$?
+  [ "$rc" -eq 0 ] || return 2
+  return 0
+}
+
 # versions NAME  — reads `apk policy` text on stdin, prints the versions it lists for NAME.
 versions() {
   awk -v n="$1" '
@@ -308,7 +326,7 @@ ALLOWLIST=""
 #  - each row is `name reason`: a lower-case package name with no version, a non-empty reason,
 #    a name at most once;
 #  - every exact pin that is not inside `apk add --upgrade` names a row of the list;
-#  - every row is pinned by some Dockerfile (no stale row).
+#  - every row is pinned, outside `apk add --upgrade`, by some Dockerfile (no stale row).
 lint_allowlist() {
   local rows="$1" status=0 al="$ALLOWLIST" parsed tag a names n
   local file line stage kind name version upgrade
@@ -349,10 +367,11 @@ lint_allowlist() {
       *) echo "FAIL: $file:$line [$stage] $name=$version — an exact pin on a package that is not in $al and not inside 'apk add --upgrade'; add it WITHOUT a version (ADR-0036 D2, D4)"; status=1 ;;
     esac
   done <"$rows"
-  # stale rows: every listed name is pinned somewhere
+  # stale rows: every listed name is pinned somewhere (not only under --upgrade)
   for n in $names; do
-    if ! awk -F'\t' -v n="$n" '$5 == "pin" && $6 == n { f = 1 } END { exit !f }' "$rows"; then
-      echo "FAIL: $al — $n is listed but no Dockerfile pins it; delete the row (a stale row widens what the next change may pin)"
+    # only a pin outside `apk add --upgrade` (column 8 = 0) justifies a row: the list is for (a)
+    if ! awk -F'\t' -v n="$n" '$5 == "pin" && $6 == n && $8 == 0 { f = 1 } END { exit !f }' "$rows"; then
+      echo "FAIL: $al — $n is listed but no Dockerfile pins it outside 'apk add --upgrade'; delete the row (a stale row widens what the next change may pin)"
       status=1
     fi
   done
@@ -420,6 +439,7 @@ lint_files() {
 check_files() {
   local rows tmp status infra files_n pins_n base names policy qrc
   local file line stage name version upgrade listed inst hint bases_n bases idx
+  local pairs ops ord_rc pk op
   status=0; infra=0
   files_n=$#
   tmp="$(mktemp -d)" || return 2
@@ -451,6 +471,18 @@ check_files() {
       echo "ERROR: could not query the index of $base (exit $qrc)"
       infra=1; continue
     fi
+    # D3 order: for every --upgrade pin whose base version differs from the pin, ask apk which is
+    # newer, once per base (one container). The same rows, in the same order, are read twice, so
+    # the k-th answer belongs to the k-th such pin.
+    pairs=(); ops=""; ord_rc=0; pk=0
+    while IFS=$'\t' read -r _ _ _ _ _ name version upgrade; do
+      [ "$upgrade" = 1 ] || continue
+      inst="$(printf '%s\n' "$policy" | installed_version "$name")"
+      if [ -n "$inst" ] && [ "$inst" != "$version" ]; then pairs+=("$inst" "$version"); fi
+    done < <(awk -F'\t' -v b="$base" '$5 == "pin" && $4 == b' "$rows")
+    if [ "${#pairs[@]}" -gt 0 ]; then
+      ops="$(version_orders "$base" "${pairs[@]}")"; ord_rc=$?
+    fi
     while IFS=$'\t' read -r file line stage _ _ name version upgrade; do
       listed="$(printf '%s\n' "$policy" | versions "$name")"
       inst="$(printf '%s\n' "$policy" | installed_version "$name")"
@@ -460,15 +492,29 @@ check_files() {
         status=1
       elif printf '%s\n' "$listed" | grep -Fxq -- "$version"; then
         echo "ok:   $file:$line [$stage] $name=$version is in the index of ${base%@*}"
-        if [ "$upgrade" = 1 ] && [ "$inst" = "$version" ]; then
-          echo "note: $file:$line [$stage] $name=$version could be dropped: the base already has that version installed (ADR-0036 D3; not a failure)"
-        fi
       else
         idx="$(printf '%s' "$listed" | tr '\n' ' ' | sed 's/ $//')"
         hint=""
         if [ "$upgrade" = 1 ]; then hint=" (the base has $inst installed: if that is at least $version, drop the pin instead, ADR-0036 D3)"; fi
         echo "FAIL: $file:$line [$stage] $name=$version is not in the index of $base (index has: ${idx:-nothing}) — bump the pin$hint"
         status=1
+      fi
+      # D3 / V3: the base already has the pinned version or a newer one = the pin can go (a note,
+      # never a failure). Older in the base = the pin is doing its job: nothing to say.
+      if [ "$upgrade" = 1 ] && [ -n "$inst" ]; then
+        if [ "$inst" = "$version" ]; then
+          echo "note: $file:$line [$stage] $name=$version could be dropped: the base already has that version installed (ADR-0036 D3; not a failure)"
+        else
+          pk=$((pk + 1))
+          op=""
+          if [ "$ord_rc" -eq 0 ]; then op="$(printf '%s\n' "$ops" | sed -n "${pk}p")"; fi
+          case "$op" in
+            '>') echo "note: $file:$line [$stage] $name=$version could be dropped: the base has $inst installed, which is newer than the pin, so the pin raises nothing (and can pull the package back) (ADR-0036 D3; not a failure)" ;;
+            '=') echo "note: $file:$line [$stage] $name=$version could be dropped: the base's $inst is the same version by apk's order (ADR-0036 D3; not a failure)" ;;
+            '<') ;;
+            *)   echo "note: $file:$line [$stage] $name=$version: the base has $inst installed and the order of $inst against $version could not be compared here; if $inst is at least $version, drop the pin (ADR-0036 D3; not a failure)" ;;
+          esac
+        fi
       fi
     done < <(awk -F'\t' -v b="$base" '$5 == "pin" && $4 == b' "$rows")
   done <<<"$bases"
@@ -492,9 +538,26 @@ selftest() {
   POLICY_TEXT="$(printf '%s\n' \
     'vim policy:' '  9.2.1202-r0:' '    https://dl-cdn.alpinelinux.org/alpine/v3.24/community' \
     'zlib policy:' '  1.3.2-r0:' '    lib/apk/db/installed' '  1.3.2-r1:' '    https://dl-cdn.alpinelinux.org/alpine/v3.24/main' \
+    'musl-utils policy:' '  1.2.6-r2:' '    lib/apk/db/installed' '  1.2.6-r3:' '    https://dl-cdn.alpinelinux.org/alpine/v3.24/main' \
     'chromium policy:' '  155.0.8059.84-r0:' '    https://dl-cdn.alpinelinux.org/alpine/v3.24/community' \
     'font-wqy-zenhei policy:' '  0.9.46-r0:' '    https://dl-cdn.alpinelinux.org/alpine/v3.24/community')"
   query_index() { printf '%s\n' "$POLICY_TEXT"; return 0; }
+  # The stand-in for `apk version -t INST PIN` (ADR-0036 D3): a fixed table of the pairs the
+  # planted cases use, answering what apk would. VO_FAIL=1 makes it fail (docker trouble).
+  VO_FAIL=0
+  version_orders() {
+    shift
+    [ "$VO_FAIL" -eq 0 ] || return 2
+    while [ "$#" -ge 2 ]; do
+      case "$1 $2" in
+        "1.3.2-r0 1.3.2-r1"|"1.2.6-r2 1.2.6-r3") echo '<' ;;
+        "1.3.2-r0 1.3.2-r9") echo '<' ;;
+        "1.3.2-r0 1.3.1-r0") echo '>' ;;
+        *) echo "selftest stub: no answer for '$1' '$2'" >&2; return 2 ;;
+      esac
+      shift 2
+    done
+  }
 
   # planted: the text goes through check_files with the stub index
   planted() { # name, wanted exit, Dockerfile text, [text the output must contain: red for the intended reason]
@@ -635,7 +698,46 @@ selftest() {
   mutant "reason check dead" 's/if (reason == "")/if (0)/' "has no reason" $'vim\nchromium reason two\n' || return 1
   mutant "duplicate check dead" 's/if (name in seen)/if (0)/' "is listed twice" $'vim reason one\nvim reason again\nchromium reason two\n' || return 1
   mutant "empty-list check dead" 's/\[ "\$LINT_ALLOW_N" -eq 0 \] && \[ "\$status" -eq 0 \]/false/' "no row read" $'# nothing\n' || return 1
+  # a row is justified only by a pin OUTSIDE `apk add --upgrade` (zlib is pinned only under --upgrade here)
+  v2case "a row whose name is pinned only under --upgrade is stale" 1 "zlib is listed but no Dockerfile pins it outside" $'vim reason one\nchromium reason two\nzlib reason three\n' || return 1
+  mutant "upgrade pin counts as pinned" 's/ && \$8 == 0//' "zlib is listed but no Dockerfile pins it" $'vim reason one\nchromium reason two\nzlib reason three\n' || return 1
   mutant "name-shape check dead" 's/if (name !~ /if (0 \&\& name !~ /' "is not a bare lower-case package name" $'vim=9.2.1202-r0 reason one\nchromium reason two\n' || return 1
+
+  # The real tree's route: `--lint` with NO file and NO --allowlist derives the Dockerfiles from
+  # `git ls-files` and reads images/apk-pin-allowlist.txt by default. A stand-in repo (git init in
+  # $tmp, a copy of this script in scripts/, the stand-in Dockerfiles, a list) runs exactly that
+  # branch, so dropping the default-list call cannot leave CI green (review-5x R2#1).
+  repo="$tmp/repo"
+  mkdir -p "$repo/scripts" "$repo/images/a" "$repo/images/b" "$repo/images/c"
+  cp "$tmp/tree/images/a/Dockerfile" "$repo/images/a/Dockerfile"
+  cp "$tmp/tree/images/b/Dockerfile" "$repo/images/b/Dockerfile"
+  printf '%s' "$OKLIST" >"$repo/images/apk-pin-allowlist.txt"
+  git -C "$repo" init -q && git -C "$repo" add -- images || { echo "FAIL: selftest: could not set up the stand-in repo (git)"; return 1; }
+  repo_lint() { # script to copy in as scripts/check-apk-pins.sh -> sets RC and OUT
+    cp "$1" "$repo/scripts/check-apk-pins.sh" || return 1
+    ( cd "$repo" && bash scripts/check-apk-pins.sh --lint ) >"$tmp/out" 2>&1; RC=$?
+    OUT="$(cat "$tmp/out")"
+  }
+  repo_lint "$SELF" || return 1
+  if [ "$RC" -ne 0 ] || ! printf '%s\n' "$OUT" | grep -qF 'allow-listed name(s)'; then
+    echo "FAIL: selftest: the stand-in repo's --lint (no FILE) did not run the class check against the default list (exit $RC)"; printf '%s\n' "$OUT"; return 1
+  fi
+  echo "  repo (--lint, no FILE, stand-in git repo): exit $RC — the default allow-list was read ($(printf '%s\n' "$OUT" | grep -o '[0-9]* allow-listed name(s)'))"
+  printf '%s\n' 'FROM alpine:3.24@sha256:aaaa' 'RUN apk add --no-cache curl=8.23.0-r0 jq' >"$repo/images/c/Dockerfile"
+  git -C "$repo" add -- images/c/Dockerfile || return 1
+  repo_lint "$SELF" || return 1
+  if [ "$RC" -ne 1 ] || ! printf '%s\n' "$OUT" | grep -qF 'images/c/Dockerfile:2 [#1] curl=8.23.0-r0 — an exact pin on a package that is not in'; then
+    echo "FAIL: selftest: the stand-in repo's --lint (no FILE) let a pin outside the default list through (exit $RC)"; printf '%s\n' "$OUT"; return 1
+  fi
+  echo "  repo (--lint, no FILE): a curl pin outside the default list is red, exit $RC"
+  # mutant: the default-list call of the --lint branch removed; the same planted file must no longer be red
+  sed 's/^      default_allowlist$/      :/' "$SELF" >"$tmp/mut-default-list.sh"
+  if cmp -s "$SELF" "$tmp/mut-default-list.sh"; then echo "FAIL: selftest: mutant 'default list not read' did not change the script"; return 1; fi
+  repo_lint "$tmp/mut-default-list.sh" || return 1
+  if [ "$RC" -eq 1 ] && printf '%s\n' "$OUT" | grep -qF 'an exact pin on a package that is not in'; then
+    echo "FAIL: selftest: mutant 'default list not read' is still red: the stand-in repo does not test that call"; printf '%s\n' "$OUT"; return 1
+  fi
+  echo "  repo mutant (default allow-list call removed): the planted pin is no longer red (exit $RC) — caught"
 
   # parse tables (ADR-0036 V1): each form, exact
   table "plain, one line" "2${T}final${T}$B${T}pin${T}vim${T}9.2.1202-r0${T}0" \
@@ -717,6 +819,26 @@ RUN apk add --no-cache --upgrade zlib=1.3.2-r0" "could be dropped" || return 1
   # installed; when the base already has the pinned version, say it can be dropped.
   planted "a --upgrade pin in the index, newer than the installed one: green, nothing to drop" 0 "$A
 RUN apk add --no-cache --upgrade zlib=1.3.2-r1" "ok:   " || return 1
+  # D3 order (apk version -t, through the stand-in): the base's version older than the pin = the pin
+  # works, no note; newer = a note naming both; unknown order = a note that says so.
+  n=$((n + 1))
+  printf '%s\n' "$A" 'RUN apk add --no-cache --upgrade zlib=1.3.2-r1 musl-utils=1.2.6-r3' >"$tmp/Dockerfile.$n"
+  check_files "$tmp/Dockerfile.$n" >"$tmp/out" 2>&1; rc=$?
+  if [ "$rc" -ne 0 ] || grep -q '^note:' "$tmp/out"; then
+    echo "FAIL: selftest: --upgrade pins newer than the base's version exited $rc or printed a note"; cat "$tmp/out"; return 1
+  fi
+  echo "  planted (--upgrade pins newer than the base's own: the pin works): exit $rc — no note"
+  n=$((n + 1))
+  printf '%s\n' "$A" 'RUN apk add --no-cache --upgrade musl-utils=1.2.6-r3 zlib=1.3.1-r0' >"$tmp/Dockerfile.$n"
+  check_files "$tmp/Dockerfile.$n" >"$tmp/out" 2>&1; rc=$?
+  if [ "$rc" -ne 1 ] || ! grep -q '^note: .*zlib=1.3.1-r0 could be dropped: the base has 1.3.2-r0 installed, which is newer than the pin' "$tmp/out" || grep -q '^note: .*musl-utils' "$tmp/out"; then
+    echo "FAIL: selftest: the base's version newer than the pin (second of two pairs) exited $rc or the note is missing / on the wrong pin"; cat "$tmp/out"; return 1
+  fi
+  echo "  planted (the base's zlib 1.3.2-r0 is newer than the pin 1.3.1-r0, after a pair that is not): exit $rc — note on the right pin only"
+  VO_FAIL=1
+  planted "the order cannot be compared (docker trouble): a note, not a failure" 0 "$A
+RUN apk add --no-cache --upgrade zlib=1.3.2-r1" "could not be compared here" || return 1
+  VO_FAIL=0
   planted "a --upgrade pin on a package the base does not have installed (vim) is not a base-upgrade" 1 "$A
 RUN apk add --no-cache --upgrade vim=9.2.1202-r0" "not a base-upgrade" || return 1
   planted "a --upgrade pin that left the index, with the base's own version named in the hint" 1 "$A
