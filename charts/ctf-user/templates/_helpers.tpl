@@ -68,10 +68,15 @@ app.kubernetes.io/instance: {{ include "ctf-user.username" . | quote }}
 {{- end -}}
 
 {{/*
-ADR-0056 D11 (A5b): everything the chart refuses about the evidence bundles. Called by
-templates/ctf-evidence-secret.yaml and by templates/pod.yaml (which writes the file
-names into the `plant` initContainer's sh script, so it does not rely on the other
-template having run); a `fail` anywhere aborts the whole render. Renders nothing.
+ADR-0056 D11 / addendum 6 (A5b): everything the chart refuses about the evidence
+bundles. Called by templates/pod.yaml (which writes the file names into the `plant`
+initContainer's sh script); a `fail` aborts the whole render. Renders nothing.
+
+The chart does NOT render the bundles' Secrets and never sees a bundle's content:
+`deploy-user.sh` creates `ctf-evidence-<cid>` before helm (A5c), and the chart only
+references it by name, so a Helm release record carries file NAMES and nothing else.
+The size limits (512 KiB per challenge, 2 MiB in all) are therefore deploy-user's and
+the validator's, not checked here.
 
   - plant.mounts: an entry that has `evidence` has it as the boolean true, a challenge
     id (the one grammar, challengeid.Pattern) in `challenge` (once per challenge), and a
@@ -81,15 +86,12 @@ template having run); a `fail` anywhere aborts the whole render. Renders nothing
     would be a Secret nothing copies. With no evidence mount and no key (every
     deployment before an investigate challenge exists) the sets are equal and nothing
     below applies.
-  - per challenge, B2's rules (ADR-0056, the validator enforces the same): `files` only,
-    1..64 files, names ^[a-z0-9][a-z0-9._-]{0,62}$ (so never `..`, a slash, a space, a
-    glob or a `$`), string values, at most 512 KiB (524288 bytes) in all. Over all
-    challenges at most 2 MiB (2097152 bytes): the copies are written into the
-    plant-seed emptyDir (sizeLimit 4Mi in pod.yaml), and a Pod over the limit is
-    evicted at run time, so the render refuses it first.
+  - per challenge: `names` only, a list of 1..64 file names, no name twice, each
+    ^[a-z0-9][a-z0-9._-]{0,62}$ (ADR-0056 B2; so never `..`, a slash, a space, a glob or
+    a `$`: the names are written into the sh script).
   - with evidence: plant.seedScript is the [sh, -c, <script>] gen-values.sh generates
     (the copy lines are appended to that one script, so it must be that shape).
-Only ids, names and counts go into a message, never a value.
+Only ids and names go into a message.
 */}}
 {{- define "ctf-user.evidence.check" -}}
 {{- $mounted := list -}}
@@ -118,48 +120,43 @@ Only ids, names and counts go into a message, never a value.
 {{- end -}}
 {{- $ev := .Values.evidence.challenges -}}
 {{- if not (kindIs "map" $ev) -}}
-{{- fail "ADR-0056 D11: .Values.evidence.challenges must be a map of challenge id to {files: {<name>: <content>}}" -}}
+{{- fail "ADR-0056 D11: .Values.evidence.challenges must be a map of challenge id to {names: [<file name>, ...]}" -}}
 {{- end -}}
 {{- $have := keys $ev | sortAlpha -}}
 {{- $want := sortAlpha $mounted -}}
 {{- if ne (join "," $have) (join "," $want) -}}
 {{- fail (printf "ADR-0056 D11: the challenges of plant.mounts[evidence: true] [%s] and the keys of evidence.challenges [%s] are not the same set" (join "," $want) (join "," $have)) -}}
 {{- end -}}
-{{- $grand := 0 -}}
 {{- range $cid, $c := $ev -}}
 {{- if not (regexMatch "^[0-9]{2}-[a-z0-9-]{1,60}$" $cid) -}}
 {{- fail (printf "ADR-0056 D11: evidence.challenges key %q is not a challenge id (^[0-9]{2}-[a-z0-9-]{1,60}$)" $cid) -}}
 {{- end -}}
 {{- if not (kindIs "map" $c) -}}
-{{- fail (printf "ADR-0056 D11: evidence.challenges.%s must be a map with the single key `files`" $cid) -}}
+{{- fail (printf "ADR-0056 D11: evidence.challenges.%s must be a map with the single key `names`" $cid) -}}
 {{- end -}}
-{{- if ne (join "," (keys $c)) "files" -}}
-{{- fail (printf "ADR-0056 D11: evidence.challenges.%s must have the single key `files` (got [%s])" $cid (join "," (keys $c | sortAlpha))) -}}
+{{- if ne (join "," (keys $c)) "names" -}}
+{{- fail (printf "ADR-0056 D11: evidence.challenges.%s must have the single key `names` (got [%s]; a bundle's content is never passed to the chart)" $cid (join "," (keys $c | sortAlpha))) -}}
 {{- end -}}
-{{- if not (kindIs "map" $c.files) -}}
-{{- fail (printf "ADR-0056 D11: evidence.challenges.%s.files must be a map of file name to content" $cid) -}}
+{{- if not (kindIs "slice" $c.names) -}}
+{{- fail (printf "ADR-0056 D11: evidence.challenges.%s.names must be a list of file names" $cid) -}}
 {{- end -}}
-{{- $n := len $c.files -}}
+{{- $n := len $c.names -}}
 {{- if or (lt $n 1) (gt $n 64) -}}
-{{- fail (printf "ADR-0056 D11: evidence.challenges.%s.files has %d files (want 1..64)" $cid $n) -}}
+{{- fail (printf "ADR-0056 D11: evidence.challenges.%s.names has %d names (want 1..64)" $cid $n) -}}
 {{- end -}}
-{{- $total := 0 -}}
-{{- range $name, $v := $c.files -}}
+{{- $seen := list -}}
+{{- range $name := $c.names -}}
+{{- if not (kindIs "string" $name) -}}
+{{- fail (printf "ADR-0056 D11: evidence.challenges.%s.names has an entry that is not a string" $cid) -}}
+{{- end -}}
 {{- if not (regexMatch "^[a-z0-9][a-z0-9._-]{0,62}$" $name) -}}
-{{- fail (printf "ADR-0056 D11: evidence.challenges.%s.files has the file name %q (want ^[a-z0-9][a-z0-9._-]{0,62}$)" $cid $name) -}}
+{{- fail (printf "ADR-0056 D11: evidence.challenges.%s.names has the file name %q (want ^[a-z0-9][a-z0-9._-]{0,62}$)" $cid $name) -}}
 {{- end -}}
-{{- if not (kindIs "string" $v) -}}
-{{- fail (printf "ADR-0056 D11: evidence.challenges.%s.files.%s is not a string (pass it with --set-string or as a quoted YAML string)" $cid $name) -}}
+{{- if has $name $seen -}}
+{{- fail (printf "ADR-0056 D11: evidence.challenges.%s.names lists the file name %q twice" $cid $name) -}}
 {{- end -}}
-{{- $total = add $total (len $v) -}}
+{{- $seen = append $seen $name -}}
 {{- end -}}
-{{- if gt $total 524288 -}}
-{{- fail (printf "ADR-0056 D11: evidence.challenges.%s.files is %d bytes in all (want at most 524288 = 512 KiB)" $cid $total) -}}
-{{- end -}}
-{{- $grand = add $grand $total -}}
-{{- end -}}
-{{- if gt $grand 2097152 -}}
-{{- fail (printf "ADR-0056 D11: the evidence of all challenges is %d bytes in all (want at most 2097152 = 2 MiB: half of the plant-seed emptyDir's sizeLimit 4Mi, which the copies are written into; if more is needed, review the sizeLimit in templates/pod.yaml together with this limit)" $grand) -}}
 {{- end -}}
 {{- if $have -}}
 {{- $s := .Values.plant.seedScript -}}
@@ -182,7 +179,7 @@ Only ids, names and counts go into a message, never a value.
 The copy lines of the evidence bundles, appended to the plant script by pod.yaml
 (ADR-0056 D11). Their SHAPE is defined once, by render_evidence_copy in
 challenges/gen-values.sh; scripts/check-flag-isolation.sh holds this output to that
-function's. Challenges in byte order of their id, files in byte order of their name
+function's. Challenges in byte order of their id, names in byte order
 (sortAlpha sorts bytes), each file by name: cp, then chmod 0444. The output starts with
 a newline (it follows the script's last line) and does not end with one.
 */}}
@@ -195,7 +192,7 @@ a newline (it follows the script's last line) and does not end with one.
 {{- end -}}
 {{- range $cid := (keys .Values.evidence.challenges | sortAlpha) -}}
 {{- $path := get $mountOf $cid -}}
-{{- range $name := (keys (get (get $.Values.evidence.challenges $cid) "files") | sortAlpha) }}
+{{- range $name := (get (get $.Values.evidence.challenges $cid) "names" | sortAlpha) }}
 cp "/opt/ctf/evidence-src/{{ $cid }}/{{ $name }}" "${PLANT_SEED_ROOT}{{ $path }}/{{ $name }}"
 chmod 0444 "${PLANT_SEED_ROOT}{{ $path }}/{{ $name }}"
 {{- end -}}

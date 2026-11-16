@@ -66,10 +66,12 @@
 {{- end }}
 {{- /* ADR-0056 D11 (A5b): the evidence bundles. The file names below are written
        into the `plant` initContainer's sh script, so the render-time checks run
-       here too (the same named template as templates/ctf-evidence-secret.yaml:
-       this file does not rely on that one having run). $evCids = the challenges
-       that have a bundle, in byte order; empty (the default: no `evidence`) means
-       nothing below changes and the Pod renders exactly as before. */}}
+       here. The chart does not render the bundles' Secrets (ADDENDUM 6): the
+       deploy script creates `ctf-evidence-<cid>` before helm and the Pod only
+       references it by name, so a Helm release record holds file names, never
+       content. $evCids = the challenges that have a bundle, in byte order; empty
+       (the default: no `evidence`) means nothing below changes and the Pod renders
+       exactly as before. */}}
 {{- include "ctf-user.evidence.check" . }}
 {{- $evCids := keys .Values.evidence.challenges | sortAlpha }}
 apiVersion: v1
@@ -418,7 +420,8 @@ spec:
     - name: plant-seed
       emptyDir:
         sizeLimit: 4Mi
-    {{- /* ADR-0056 D11 (A5b): one Secret volume per evidence bundle, mounted by
+    {{- /* ADR-0056 D11 (A5b): one Secret volume per evidence bundle, a reference to
+           the Secret deploy-user.sh created (this chart renders none), mounted by
            `plant` only (see its volumeMounts). No `optional`: a missing Secret
            keeps the Pod from starting rather than planting an empty directory. */}}
     {{- range $i, $cid := $evCids }}

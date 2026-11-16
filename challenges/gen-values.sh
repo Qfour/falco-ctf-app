@@ -134,7 +134,7 @@ INVESTIGATE_IDS=()
 # ADR-0056 D11: the `plant` initContainer sees the per-seat Secret `ctf-evidence`
 # here (readOnly, plant only). The bundle's file names are unknown to this
 # script (the event edition supplies them at deploy time), so a real run
-# generates no copy line; the chart enumerates .Values.evidence.files by name in
+# generates no copy line; the chart enumerates .Values.evidence.challenges.<cid>.names in
 # the shape render_evidence_copy() defines. EVIDENCE_FILES is set only by the
 # internal fixtures, to show the generated shape and to feed check_2_7 (2-7(a)).
 # The Secret is one PER CHALLENGE (ctf-evidence-<cid>, ADR-0056 D11): a flat
