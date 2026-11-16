@@ -20,7 +20,6 @@ import (
 	"mime"
 	"net/http"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/catalog/answerformat"
@@ -32,12 +31,14 @@ import (
 )
 
 const (
-	// answerMaxRunes is AnswerRequest.answer's maxLength. A JSON Schema maxLength
-	// counts characters, so the check counts runes.
-	answerMaxRunes = 256
-	// answerBodyMax bounds the bytes read: 256 characters, every one a JSON \u
-	// escape pair (12 bytes) is 3 KiB, plus the object. A larger body is a
-	// malformed request, not something to parse.
+	// The answer's limit is answerformat.MaxAnswerLen BYTES of UTF-8, the one
+	// definition Normalize also enforces (so the adapter and the format never
+	// disagree; the spec's maxLength counts characters and is never the tighter
+	// one for multibyte text). Over it is a 400 that costs nothing.
+	//
+	// answerBodyMax bounds the bytes read: MaxAnswerLen bytes, each a JSON \u00XX
+	// escape (6 bytes), is 1.5 KiB, plus the object. A larger body is a malformed
+	// request, not something to parse.
 	answerBodyMax = 4 << 10
 
 	// Fixed 4xx / 5xx texts. None of them is built from the request, so no answer,
@@ -52,16 +53,19 @@ const (
 // selfOnly is the gate of Authz: self (ADR-0056 D4, the word of ADR-0050): the
 // proven X-Auth-Request-Email must be exactly {user}'s canonical identity,
 // `<user>@<EXPECTED_EMAIL_DOMAIN>` (I8). Unlike selfOrAdmin there is NO ADMIN_EMAILS
-// override: an operator who answers in a participant's name would spend that
-// participant's attempts and could solve the challenge for them, so an admin
-// identity is a 403 here whoever {user} is. A missing or blank header, an empty
-// EXPECTED_EMAIL_DOMAIN, and any other identity are 403 as well (fail-closed).
+// override: being an admin never lets anyone answer for ANOTHER {user} (an operator
+// who answers in a participant's name would spend that participant's attempts and
+// could solve the challenge for them). The only thing that passes is the equality,
+// so an admin whose address is itself `<seat>@<EXPECTED_EMAIL_DOMAIN>` may answer
+// as that seat and no other. A missing or blank header, an empty
+// EXPECTED_EMAIL_DOMAIN, and any other identity are 403 (fail-closed).
 //
 // The refusals are counted at the same observation point as selfOrAdmin's
 // (scoreboard_identity_denials_total{gate="self_or_admin"}): that metric's series
 // set is a cross-repo contract (platform's alert reads it), so the self gate does
 // not add a gate label value of its own. The reason is judged here, the observer
-// only records it, and neither the caller's email nor {user} is logged.
+// only records it, and neither the caller's email nor {user} is logged. An
+// ADMIN_EMAILS identity that is refused is a mismatch, not non_canonical (see below).
 func (h *Handler) selfOnly(w http.ResponseWriter, r *http.Request, user string) bool {
 	email := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Auth-Request-Email")))
 	if email == "" {
@@ -72,8 +76,12 @@ func (h *Handler) selfOnly(w http.ResponseWriter, r *http.Request, user string) 
 	if emailMatchesUser(email, user, h.emailDomain) {
 		return true
 	}
+	// An ADMIN_EMAILS identity that is not {user}'s is an intended refusal, whatever
+	// its domain (an operator on another domain is not a canonical <seat>@<domain>):
+	// it is a mismatch, never non_canonical, which stays 0 in a healthy production
+	// (the platform's alert reads it).
 	reason := identityobs.ReasonMismatch
-	if UsernameFromEmail(email, h.emailDomain) == "" {
+	if _, isAdmin := h.adminSet[email]; !isAdmin && UsernameFromEmail(email, h.emailDomain) == "" {
 		reason = identityobs.ReasonNonCanonical
 	}
 	h.denials.Record(r, identityobs.GateSelfOrAdmin, reason)
@@ -172,7 +180,7 @@ func (h *Handler) submitAnswer(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, answerBodyMax)
 	req, ok := decodeAnswerBody(r.Body)
-	if !ok || utf8.RuneCountInString(req.Answer) > answerMaxRunes {
+	if !ok || len(req.Answer) > answerformat.MaxAnswerLen {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": errMsgInvalidBody})
 		return
 	}

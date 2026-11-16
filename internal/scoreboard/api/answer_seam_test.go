@@ -37,6 +37,18 @@ const (
 // are Routes()' and are not under test here) with a Grader that answers res, gradeErr.
 func runAnswerSeam(t *testing.T, res scoring.AnswerResult, gradeErr error) (code int, body map[string]any, logs string) {
 	t.Helper()
+	code, body, logs, called := runAnswerSeamAs(t, "alice@ctf.local", nil, res, gradeErr)
+	if want := "alice|" + seamAnswerCID + "|who|" + seamAnswerTyped; called != want {
+		t.Fatalf("the Grader was called with %q, want %q (the path ids and the body's answer, once)", called, want)
+	}
+	return code, body, logs
+}
+
+// runAnswerSeamAs is runAnswerSeam for a caller with this X-Auth-Request-Email
+// (the path is alice's) and these ADMIN_EMAILS. called is what the Grader was
+// called with ("" when it was not called).
+func runAnswerSeamAs(t *testing.T, email string, admins []string, res scoring.AnswerResult, gradeErr error) (code int, body map[string]any, logs, called string) {
+	t.Helper()
 	s, err := store.Open(filepath.Join(t.TempDir(), "s.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -48,7 +60,7 @@ func runAnswerSeam(t *testing.T, res scoring.AnswerResult, gradeErr error) (code
 	var logBuf bytes.Buffer
 	now := func() time.Time { return time.Date(2026, 11, 16, 0, 0, 0, 0, time.UTC) }
 	h := New(cat, scoring.New(cat, s, now), s, slog.New(slog.NewJSONHandler(&logBuf, nil)), now,
-		nil, nil, nil, JourneyConfig{}, DetectConfig{}, BoardConfig{},
+		admins, nil, nil, JourneyConfig{}, DetectConfig{}, BoardConfig{},
 		IdentityConfig{ExpectedEmailDomain: "ctf.local"})
 	var gotInput string
 	h.gradeAnswer = func(_ context.Context, user, cid, qid, raw string) (scoring.AnswerResult, error) {
@@ -59,7 +71,9 @@ func runAnswerSeam(t *testing.T, res scoring.AnswerResult, gradeErr error) (code
 	target := "/api/users/alice/challenges/" + seamAnswerCID + "/questions/who/answer"
 	r := httptest.NewRequest(http.MethodPost, target, strings.NewReader(`{"answer":"`+seamAnswerTyped+`"}`))
 	r.Header.Set("Content-Type", "application/json")
-	r.Header.Set("X-Auth-Request-Email", "alice@ctf.local")
+	if email != "" {
+		r.Header.Set("X-Auth-Request-Email", email)
+	}
 	r.Pattern = "POST /api/users/{user}/challenges/{cid}/questions/{qid}/answer"
 	r.SetPathValue("user", "alice")
 	r.SetPathValue("cid", seamAnswerCID)
@@ -67,14 +81,40 @@ func runAnswerSeam(t *testing.T, res scoring.AnswerResult, gradeErr error) (code
 	r.RemoteAddr = "192.0.2.7:999"
 	w := httptest.NewRecorder()
 	h.submitAnswer(w, r)
-	if want := "alice|" + seamAnswerCID + "|who|" + seamAnswerTyped; gotInput != want {
-		t.Fatalf("the Grader was called with %q, want %q (the path ids and the body's answer, once)", gotInput, want)
-	}
 	body = map[string]any{}
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("body %q: %v", w.Body, err)
 	}
-	return w.Code, body, logBuf.String()
+	return w.Code, body, logBuf.String(), gotInput
+}
+
+// The handler runs the self gate again in full (defence in depth: Routes()' front is
+// not the only thing between a request and the Grader). Called directly, without the
+// front, a request that is not exactly alice is a 403 and the Grader is NOT called
+// (so no attempt can be spent), whoever it is: another seat, an ADMIN_EMAILS
+// identity (no override), another domain, no identity at all.
+func TestSubmitAnswer_HandlerRechecksSelfWithoutTheFront(t *testing.T) {
+	for _, tc := range []struct{ name, email string }{
+		{"another seat", "bob@ctf.local"},
+		{"an ADMIN_EMAILS identity on the seat domain", "admin@ctf.local"},
+		{"an ADMIN_EMAILS identity on another domain", "ops@staff.example"},
+		{"the same seat on another domain", "alice@evil.example"},
+		{"no identity header", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			admins := []string{"admin@ctf.local", "ops@staff.example"}
+			code, body, logs, called := runAnswerSeamAs(t, tc.email, admins, scoring.AnswerResult{Status: scoring.AnswerCorrect, Correct: true}, nil)
+			if code != http.StatusForbidden || len(body) != 1 || body["error"] != "forbidden" {
+				t.Fatalf("status %d body %v, want 403 {error: forbidden}", code, body)
+			}
+			if called != "" {
+				t.Fatalf("the Grader was called (%q) for a request the self gate refuses", called)
+			}
+			if strings.Contains(logs, seamAnswerTyped) {
+				t.Fatalf("the typed answer reached the log:\n%s", logs)
+			}
+		})
+	}
 }
 
 func logLines(logs, msg string) int {

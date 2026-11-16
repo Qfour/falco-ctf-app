@@ -32,6 +32,7 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/edition"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard"
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/identityobs"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/scoring"
 	"github.com/Qfour/falco-ctf-app/internal/store"
 )
@@ -131,7 +132,8 @@ type ansFixture struct {
 
 // newAnswerFixture: withJudge=false is a scoreboard started without an answers
 // table (no WithEditionJudge).
-func newAnswerFixture(t *testing.T, withJudge bool) *ansFixture {
+// extra options are applied last (e.g. another ADMIN_EMAILS).
+func newAnswerFixture(t *testing.T, withJudge bool, extra ...scoreboard.Option) *ansFixture {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "ans.db"))
 	if err != nil {
@@ -148,6 +150,7 @@ func newAnswerFixture(t *testing.T, withJudge bool) *ansFixture {
 	if withJudge {
 		opts = append(opts, scoreboard.WithEditionJudge(ansJudge(t)))
 	}
+	opts = append(opts, extra...)
 	f.srv = scoreboard.NewHandler(ansCatalog(t), st, slog.New(slog.NewTextHandler(f.logs, nil)), opts...)
 	return f
 }
@@ -270,6 +273,37 @@ func TestAnswerRoute_OnlyTheSeatItself(t *testing.T) {
 	}
 }
 
+// The recorded reason (scoreboard_identity_denials_total, which the platform's alert
+// reads): an ADMIN_EMAILS identity refused here is an intended refusal, a mismatch,
+// even when it is on another domain than the seats' (so it is not a canonical
+// <seat>@<domain>); non_canonical stays for a non-admin identity that is no seat's
+// form, which is a configuration fault and must stay 0 in a healthy production.
+func TestAnswerRoute_RefusedAdminIsAMismatchNotNonCanonical(t *testing.T) {
+	const staff = "ops@staff.example"
+	for _, tc := range []struct {
+		name, email string
+		want        identityobs.Reason
+	}{
+		{"an admin on another domain", staff, identityobs.ReasonMismatch},
+		{"an admin on the seat domain", ansAdmin, identityobs.ReasonMismatch},
+		{"another seat", ansBob + "@" + fixtureEmailDomain, identityobs.ReasonMismatch},
+		{"a non-admin on another domain", "carol@evil.example", identityobs.ReasonNonCanonical},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newAnswerFixture(t, true, scoreboard.WithAdminEmails([]string{ansAdmin, staff}))
+			before := denialCounts()
+			a := f.own(ansOne, "who", ansTyped)
+			a.email = tc.email
+			wantAnswerError(t, f.send(a), http.StatusForbidden, "forbidden")
+			got := moved(before, denialCounts())
+			want := identityobs.Pair{Gate: identityobs.GateSelfOrAdmin, Reason: tc.want}
+			if len(got) != 1 || got[want] != 1 {
+				t.Fatalf("series moved = %v, want exactly %v by 1 (a refused admin is a mismatch, never non_canonical)", got, want)
+			}
+		})
+	}
+}
+
 // D4: the identity gate answers BEFORE the rate limiter, so a wrong identity spends
 // no token. bob (a proven seat) names alice's path ten times, with the clock held (no
 // refill); he still has the whole burst of 5 on his own path afterwards, and the 6th
@@ -365,6 +399,13 @@ func TestAnswerRoute_BadRequestsAreFreeAnd400(t *testing.T) {
 		{"an array", "application/json", `["` + right + `"]`, invalid},
 		{"data after the object", "application/json", obj(right) + obj(right), invalid},
 		{"more than 256 characters", "application/json", obj(strings.Repeat("a", 257)), invalid},
+		// The limit is 256 BYTES of UTF-8 (answerformat.MaxAnswerLen, the format's
+		// own): at it, the adapter lets the answer through and the `name` format
+		// refuses it (the format message); one byte over, the adapter refuses it.
+		{"256 bytes of ASCII (the adapter passes it, the format refuses it)", "application/json", obj(strings.Repeat("a", 256)), format},
+		{"128 two-byte characters = 256 bytes (the same)", "application/json", obj(strings.Repeat("é", 128)), format},
+		{"129 two-byte characters = 258 bytes, only 129 characters", "application/json", obj(strings.Repeat("é", 129)), invalid},
+		{"86 three-byte characters = 258 bytes, only 86 characters", "application/json", obj(strings.Repeat("あ", 86)), invalid},
 		{"a body over the size cap", "application/json", `{"answer":"` + strings.Repeat("a", 8<<10) + `"}`, invalid},
 		{"form encoded, not JSON", "application/x-www-form-urlencoded", "answer=" + right, invalid},
 		{"no Content-Type", "", obj(right), invalid},

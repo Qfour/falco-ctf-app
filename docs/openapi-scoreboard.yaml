@@ -1130,9 +1130,11 @@ paths:
         **Authz is `self`, and that is the one place this service is stricter
         than `self-or-admin`.** The proven `X-Auth-Request-Email` must be exactly
         `{user}`'s canonical identity (`<user>@<EXPECTED_EMAIL_DOMAIN>`), and
-        `ADMIN_EMAILS` is NOT an override: an operator answering in a
-        participant's name would spend that participant's attempts and could
-        solve the challenge for them. The asymmetry is deliberate: do not
+        `ADMIN_EMAILS` is NOT an override: being an admin never allows an answer
+        for another `{user}` (an operator answering in a participant's name would
+        spend that participant's attempts and could solve the challenge for
+        them). An admin may answer only as their own seat, when their address is
+        itself `<seat>@<EXPECTED_EMAIL_DOMAIN>`. The asymmetry is deliberate: do not
         "align" it to `self-or-admin`. A missing or blank identity header, and any
         other identity, is 403, answered before the rate limit is touched (no
         token is consumed).
@@ -1164,7 +1166,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/AnswerResult" }
         "400":
-          description: invalid user, a challenge that is not an `investigate` one, a body that is not a JSON object with exactly the one key `answer` (a string of at most 256 characters), a request that is not `application/json`, or an answer that does not fit the question's format (no attempt was spent)
+          description: invalid user, a challenge that is not an `investigate` one, a body that is not a JSON object with exactly the one key `answer` (a string of at most 256 bytes of UTF-8), a request that is not `application/json`, or an answer that does not fit the question's format (no attempt was spent)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -2407,7 +2409,9 @@ components:
           maxLength: 256
           x-ctf-text-origin: participant-opaque
           description: |
-            The participant's answer, as typed. It is normalised by the question's
+            The participant's answer, as typed: at most 256 BYTES of UTF-8 (`maxLength`
+            counts characters, so for multibyte text the byte limit takes effect
+            first; a longer one is 400 and costs nothing). It is normalised by the question's
             format (ADR-0056 D2) before it is compared, and it is never stored, shown
             or logged: no response of this route carries it, or a length of it.
 

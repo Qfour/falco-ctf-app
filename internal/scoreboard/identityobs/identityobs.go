@@ -88,7 +88,10 @@ const (
 	ReasonNonCanonical Reason = "non_canonical"
 	// ReasonMismatch: a canonical identity for a different seat
 	// (self_or_admin only). A participant's own action (editing the URL), so it
-	// does not stay 0 and is not part of the alert.
+	// does not stay 0 and is not part of the alert. The self gate (api.selfOnly,
+	// ADR-0056 D4) also records here an ADMIN_EMAILS identity that is not {user}'s,
+	// whatever its domain: an operator refused on purpose is not a configuration
+	// fault, so it is never non_canonical.
 	ReasonMismatch Reason = "mismatch"
 )
 

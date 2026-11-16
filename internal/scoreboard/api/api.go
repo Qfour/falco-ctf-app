@@ -814,8 +814,10 @@ func (h *Handler) Routes() []apispec.Route {
 			// challenge. The ONLY Authz: self route of this service (the
 			// auth-policy /check-workspace word, ADR-0050): the proven
 			// identity must be exactly {user}'s canonical form, and
-			// ADMIN_EMAILS is NOT an override (an operator's answer would spend
-			// the participant's attempts and could solve for them). Wire order:
+			// ADMIN_EMAILS is NOT an override: being an admin never allows an
+			// answer for another {user} (it would spend that participant's
+			// attempts and could solve for them); an admin answers only as their
+			// own seat, if their address is one. Wire order:
 			// selfFront (a wrong identity is 403 before any token is spent) ->
 			// og -> answerMW (header-less is its strict 403) -> handler (full
 			// self check again, then the Grader). Browser-only, never in the
