@@ -4,10 +4,14 @@
 # with `answersSecret.enabled`, which the chart-lint job's default render never
 # exercises (the default is disabled):
 #
-#   * a SENTINEL secret name and key are rendered; each appears exactly once in the
-#     whole output, the name as the Deployment's volume `secretName` and the key in
-#     ANSWERS_FILE, and in no other document;
-#   * the Secret is mounted once, readOnly, and ANSWERS_FILE is set once;
+#   * a SENTINEL secret name and key are rendered, and the render is read by
+#     scripts/check-answers-secret.py (the shared reader scripts/lib/chartparse.py,
+#     by structure, not by counting strings): the sentinel name is the `secretName` of
+#     one Deployment volume and appears nowhere else; the volumeMounts naming that
+#     volume, over containers, initContainers and ephemeralContainers, are exactly
+#     one, in the container `scoreboard`, readOnly; the key appears only as the value
+#     of its ANSWERS_FILE. That python check is shown able to fail by its own
+#     `--selftest` (no helm; `make check-answers-secret-selftest`);
 #   * the default render (disabled) has neither;
 #   * the render FAILS, for the stated reason, when the table would be placed outside
 #     the event mode (flagsSecret disabled) or where the detect grader lives
@@ -38,11 +42,6 @@ count_of() {
   echo "$n"
 }
 
-# kinds_of TEXT NEEDLE: the `kind:` of the document of every line that contains NEEDLE.
-kinds_of() {
-  awk -v pat="$2" '/^---/ {kind=""} /^kind:/ {kind=$2} index($0, pat) {print kind}' <<<"$1"
-}
-
 positive=""
 if ! positive="$(helm template "$chart" --namespace scoreboard \
   --set flagsSecret.enabled=true \
@@ -56,33 +55,13 @@ if ! positive="$(helm template "$chart" --namespace scoreboard \
 fi
 
 echo "== answersSecret enabled =="
-for needle in "$sentinel_name" "$sentinel_key"; do
-  n="$(count_of "$positive" "$needle")"
-  if [ "$n" -ne 1 ]; then
-    fail "the sentinel ${needle} appears on ${n} line(s) of the render, want exactly 1"
-  fi
-  kinds="$(kinds_of "$positive" "$needle")"
-  if [ "$kinds" != "Deployment" ]; then
-    fail "the sentinel ${needle} appears in a document of kind '${kinds}', want only Deployment"
-  fi
-done
-if ! grep -qE "^[[:space:]]*secretName:[[:space:]]*${sentinel_name}[[:space:]]*$" <<<"$positive"; then
-  fail "the Secret name is not the Deployment volume's secretName"
-fi
-if ! grep -qE "^[[:space:]]*value:[[:space:]]*/etc/ctf-answers/${sentinel_key}[[:space:]]*$" <<<"$positive"; then
-  fail "ANSWERS_FILE is not /etc/ctf-answers/<key>"
-fi
-if [ "$(count_of "$positive" "name: ANSWERS_FILE")" -ne 1 ]; then
-  fail "ANSWERS_FILE is not set exactly once"
-fi
-if [ "$(count_of "$positive" "mountPath: /etc/ctf-answers")" -ne 1 ]; then
-  fail "the answers Secret is not mounted exactly once"
-fi
-# The two lines of the mount (mountPath, then readOnly). Not a pipe into grep -q:
-# under pipefail an early exit of the reader would read as a failure.
-mount_lines="$(grep -A1 -F "mountPath: /etc/ctf-answers" <<<"$positive" || true)"
-if ! grep -qE '^[[:space:]]*readOnly:[[:space:]]*true[[:space:]]*$' <<<"$mount_lines"; then
-  fail "the answers mount is not readOnly"
+structure=""
+if structure="$(python3 -I scripts/check-answers-secret.py check \
+  --sentinel-name "$sentinel_name" --sentinel-key "$sentinel_key" <<<"$positive" 2>&1)"; then
+  echo "  ok: the Secret is mounted into the scoreboard container only, readOnly"
+else
+  fail "the answers Secret is not confined to the scoreboard container:"
+  echo "$structure" >&2
 fi
 
 echo "== answersSecret disabled (default) =="

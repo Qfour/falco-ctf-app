@@ -13,7 +13,7 @@
 {{- /*
   ADR-0056 D8 / D13 (the answers table of the investigate challenges). The table
   is a Secret that only this container may read, mounted readOnly and named by
-  ANSWERS_FILE. Two render-time refusals, the same fail-closed type as the replicas
+  ANSWERS_FILE. Three render-time refusals, the same fail-closed type as the replicas
   guard above:
     * answersSecret needs flagsSecret: "the event mode" is FLAGS_FILE being set
       (D8), and cmd/scoreboard refuses a table outside it at start-up. Failing here
@@ -21,7 +21,9 @@
     * the grader namespace must not be this namespace: the detect-grader Job's
       namespace has Secret RBAC for the scoreboard SA (D13), so a table placed
       where the grader lives would be reachable from the Job. Compared with the
-      release namespace and with the namespace the Deployment is rendered in.
+      release namespace and with the namespace the Deployment is rendered in. An
+      EMPTY detectGraderNamespace is not refused: no grader is configured, so there
+      is no namespace the table could be reachable from (intended).
     * the key is a file name (it ends up in a path).
 */}}
 {{- if .Values.answersSecret.enabled }}

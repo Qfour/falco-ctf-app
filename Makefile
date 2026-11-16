@@ -18,7 +18,7 @@ SYSDIG_URL   ?= https://app.au1.sysdig.com
 # host repo are not shared into the VM.
 GO_IMAGE ?= golang:1.26-alpine
 
-.PHONY: help dev dev-down build push load-colima deploy-local helm-dep-build lint check-seccomp check-chartparse check-flag-isolation check-namespace-ownership check-answers-secret check-image-hygiene check-image-hygiene-selftest check-image-type-rule test e2e e2e-serve check-e2e-verdict tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-template-hex check-portal-render check-rules check-freshness check-adr check-dockerignore check-build-context check-go-base-digest check-apk-pins check-apk-pins-selftest clean scan check-apk-pins-lint
+.PHONY: help dev dev-down build push load-colima deploy-local helm-dep-build lint check-seccomp check-chartparse check-flag-isolation check-namespace-ownership check-answers-secret check-answers-secret-selftest check-image-hygienecheck-image-hygiene-selftest check-image-type-rule test e2e e2e-serve check-e2e-verdict tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-template-hex check-portal-render check-rules check-freshness check-adr check-dockerignore check-build-context check-go-base-digest check-apk-pins check-apk-pins-selftest clean scan check-apk-pins-lint
 
 help:
 	@echo "Targets:"
@@ -167,8 +167,14 @@ check-namespace-ownership:
 # mounted into the scoreboard container only, and the render refuses the placements
 # D8 / D13 forbid. The default render never enables it, so without this the template
 # branch is never rendered in CI. Needs the vendored dependency (helm-dep-build).
-check-answers-secret: helm-dep-build
+check-answers-secret: helm-dep-build check-answers-secret-selftest
 	./scripts/check-answers-secret.sh
+
+# The structural check of check-answers-secret.sh run against a hand-written good
+# render and deliberately wrong ones (a second container or an initContainer that
+# mounts the volume, no readOnly, ...): each must be refused. No helm needed.
+check-answers-secret-selftest:
+	python3 -I scripts/check-answers-secret.py --selftest
 
 # ADR-0001 Verification 2-8 / DoD 15: re-verify the challenge image's
 # /opt/ctf/plant-seed/ build-time snapshot at every build (fail-closed —
