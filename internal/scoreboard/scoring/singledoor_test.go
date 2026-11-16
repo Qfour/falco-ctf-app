@@ -44,8 +44,13 @@ import (
 // the receiver, or a Grader method reached through a function value or an
 // interface, is not followed.
 
-// storeWrites are the ScoreStore methods that write a scoring table.
-var storeWrites = []string{"MarkSolved", "MarkDirty", "RecordExpectedRuleFire", "RecordExfil"}
+// storeWrites are the methods that write a scoring table: the four of ScoreStore,
+// and the two writes of the answer budget (ADR-0056 D7: answer_attempts), which
+// only the Grader calls as well.
+var storeWrites = []string{
+	"MarkSolved", "MarkDirty", "RecordExpectedRuleFire", "RecordExfil",
+	"TryAnswerAttempt", "MarkAnswerCorrect",
+}
 
 // sweepEntry reads stored receipts rather than taking a `user`; its refusal is
 // TestSweep_NonSlugUserReceiptIsSkipped, not a row of graderEntries.
@@ -326,6 +331,9 @@ func TestStoreWriteCalls_Scan(t *testing.T) {
 	}{
 		{"the Grader's RecordExfil is the door", "h.grader.RecordExfil(u, c, f)", 0},
 		{"a store RecordExfil is not", "h.store.RecordExfil(u, c, f, t)", 1},
+		{"the answer budget's count is not", "st.TryAnswerAttempt(u, c, q, 3)", 1},
+		{"marking a question answered is not", "st.MarkAnswerCorrect(u, c, q)", 1},
+		{"reading the answer budget is", "st.AnswerAttempts(u, c)", 0},
 		{"MarkSolved", "st.MarkSolved(u, c, t)", 1},
 		{"MarkDirty", "s.MarkDirty(u, c, r, t)", 1},
 		{"RecordExpectedRuleFire", "s.RecordExpectedRuleFire(u, c, r, t)", 1},
