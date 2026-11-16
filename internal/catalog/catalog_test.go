@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 	"testing"
 
@@ -408,14 +407,19 @@ func TestScoredScenario_ExcludesTutorial(t *testing.T) {
 
 // TestEvadeForbiddenRules_IntersectPriorTriggerExpectedRules is ADR-0003
 // Verification (a)'s catalog-side contract test — "the required condition for
-// I11's candidate promotion". It reads the REAL challenges/ tree and the REAL
-// nimbusbreach-full scenario order (not a synthetic fixture) and, for every
-// evade challenge in the scored progression, computes:
+// I11's candidate promotion". It reads the REAL challenges/ tree and EVERY
+// REAL scenarios/*/scenario.yaml order (not a synthetic fixture; ADR-0055
+// (drafting) S1 widened it from nimbusbreach-full alone, so a new or reordered
+// scenario cannot take a shared fire past review) and, for every evade
+// challenge in each scenario's progression, computes:
 //
 //	forbiddenRules ∩ (expectedRules of every trigger challenge EARLIER in the
 //	                   progression order)
 //
-// A NON-EMPTY intersection is normal and expected (ADR-0003 C2's "twin
+// and requires it to equal the pin in evadePins (scenario_guard_test.go): one
+// row per scenario, no default. A scenario with no row, an evade challenge with
+// no entry, and a stale row all fail; the helpers' negative cases are in that
+// file. A NON-EMPTY intersection is normal and expected (ADR-0003 C2's "twin
 // mission" structure: 02's required rule fire IS 03's forbidden rule; same
 // for 04/05, and 10 forbids all seven of 01/02/04/06/07/08/09's expected
 // rules). The test's job is not to assert emptiness — it is to PIN the exact
@@ -425,65 +429,38 @@ func TestScoredScenario_ExcludesTutorial(t *testing.T) {
 // preceding trigger REQUIRES firing the very rule the evade forbids). Adding
 // a new challenge that changes this intersection must fail here until the
 // author confirms attempt scope (ADR-0003 §A1) still exempts the shared fire
-// and updates `want` below.
+// and updates the scenario's row in evadePins.
 func TestEvadeForbiddenRules_IntersectPriorTriggerExpectedRules(t *testing.T) {
 	cat, err := catalog.Load("../../challenges")
 	if err != nil {
 		t.Fatalf("load catalog: %v", err)
 	}
-	sc, err := catalog.LoadScenario("../../scenarios/nimbusbreach-full/scenario.yaml")
+	scenarios, err := catalog.LoadScenarios("../../scenarios")
 	if err != nil {
-		t.Fatalf("load scenario: %v", err)
+		t.Fatalf("load scenarios: %v", err)
 	}
-	order := sc.Challenges
-
-	want := map[string][]string{
-		"03-stealth-read":  {"Read sensitive file untrusted"},
-		"05-silent-search": {"Search Private Keys or Passwords"},
-		"10-final-exfil": {
-			"Contact K8S API Server From Container",
-			"Create Hardlink Over Sensitive Files",
-			"Drop and execute new binary in container",
-			"Read sensitive file untrusted",
-			"Redirect STDOUT/STDIN to Network Connection in Container",
-			"Run shell untrusted",
-			"Search Private Keys or Passwords",
-		},
+	if len(scenarios) < 3 {
+		t.Fatalf("loaded %d scenarios, want at least 3: the root is wrong or the tree moved", len(scenarios))
 	}
-
-	checked := 0
-	for i, cid := range order {
-		ch, ok := cat[cid]
-		if !ok || ch.Type != "evade" {
-			continue
-		}
-		priorExpected := make(map[string]struct{})
-		for _, priorID := range order[:i] {
-			if p, ok := cat[priorID]; ok && p.Type == "trigger" {
-				for _, r := range p.ExpectedRules {
-					priorExpected[r] = struct{}{}
-				}
+	seen := make(map[string]bool, len(scenarios))
+	for _, sc := range scenarios {
+		seen[sc.ID] = true
+		t.Run(sc.ID, func(t *testing.T) {
+			got, err := evadeIntersections(cat, sc.Challenges)
+			if err != nil {
+				t.Fatal(err)
 			}
-		}
-		var got []string
-		for _, r := range ch.ForbiddenRules {
-			if _, ok := priorExpected[r]; ok {
-				got = append(got, r)
+			for _, problem := range diffEvadePins(sc.ID, got, evadePins) {
+				t.Error(problem)
 			}
-		}
-		sort.Strings(got)
-		w := append([]string(nil), want[cid]...)
-		sort.Strings(w)
-		if !equalStrings(got, w) {
-			t.Errorf("%s: forbiddenRules ∩ prior expectedRules = %v, want %v "+
-				"(ADR-0003 attempt scope must keep this pair exempt — update this pin only "+
-				"after confirming attempt scope still exempts the shared required fire)", cid, got, w)
-		}
-		checked++
+		})
 	}
-	if checked != len(want) {
-		t.Fatalf("expected to check exactly %d evade challenges (%v), checked %d — a scenario reorder "+
-			"or challenge removal may have dropped one of the pinned pairs", len(want), want, checked)
+	// A pin row whose scenario is gone is stale, not harmless: it would
+	// silently excuse a future scenario that reuses the id.
+	for id := range evadePins {
+		if !seen[id] {
+			t.Errorf("evadePins has a row for scenario %q, but scenarios/ has no such scenario", id)
+		}
 	}
 }
 
