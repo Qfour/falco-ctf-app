@@ -755,7 +755,7 @@ check_2_5() {
 
 check_2_7() { # $1 = generated seed script text (unindented), $2 = label, $3 = evidence map ("<mountDir> TAB <challenge id>" lines of the scope; may be empty)
   local script="$1" label="$2" map="${3:-}" rc=0 hits p residue code offending ln
-  local cpout kind nr a b rest cid name dir evre
+  local cpout kind nr a b c rest cid name hitsu hitsf hitsm seedpre
 
   # All sub-checks below look at CODE only — full-comment lines (this
   # script's own documentation, and the prose plant.sh authors write above
@@ -774,19 +774,38 @@ check_2_7() { # $1 = generated seed script text (unindented), $2 = label, $3 = e
   # CHALLENGE_ID_RE, the name is EVIDENCE_NAME_RE: no `.`, `..`, `/`, glob, `$`,
   # space) with NO flag (so never `-a`). A source with a `..` element or a
   # glob / `$` / backtick, a `-t` / `--target-directory`, or a cp with fewer than
-  # two operands is rejected. Forms where `cp` is not the first word of a
-  # segment (`then cp`, `$(cp ...)`) are not parsed here: (f) rejects the
-  # command word that precedes them.
-  # awk (which has no interval expressions on every platform) prints
-  #   X TAB <line no> TAB <line>            a violation
-  #   E TAB <line no> TAB <source> TAB <line>   an evidence-root source, judged below
+  # two operands is rejected.
+  # Fail-closed on what the parser does not read: every word `cp` in the code
+  # (a heredoc body with an unquoted delimiter included, a quoted one excluded:
+  # it is not executed) is counted, and so is every `cp` the parser read in a
+  # command position (a segment's first word, or after `sh -c "`). A line with
+  # more of the first than the second (`x=$(cp ...)`, `echo $(cp ...)`, a
+  # backtick, `a & cp ...`, `then cp`, a `cp` in an unquoted heredoc) is a
+  # violation: a `cp` the parser did not see is never "allowed".
+  # An evidence-root source (a non-last operand under ${EVIDENCE_SRC_ROOT}/) is
+  # allowed in ONE shape only, and always judged against the mounts:
+  #   cp "<root>/<cid>/<name>" "${PLANT_SEED_ROOT}<mountDir>/<name>"
+  # (two double-quoted operands, no flag, no trailing slash); any other cp with
+  # an evidence source is a violation (F). One parser: awk reads the whole
+  # command, bash only judges the fields awk prints (no second regex over the
+  # line). awk has no interval expressions on every platform, so none is used.
+  #   X TAB <line no> TAB <line>                      cp copy-source rule
+  #   U TAB <line no> TAB <line>                      a cp the parser did not read
+  #   F TAB <line no> TAB <line>                      evidence source, not D11's shape
+  #   E TAB <line no> TAB <source> TAB <destination> TAB <line>   D11's shape, judged below
   cpout="$(printf '%s\n' "${code}" | awk -v snap="${SNAPSHOT_ROOT}" -v evs="${EVIDENCE_SRC_ROOT}" '
-    BEGIN { heredoc = 0 }
+    function cpwords(s,   n) {
+      n = 0
+      while (match(s, /(^|[^A-Za-z0-9_-])cp([ \t]|$)/)) { n++; s = substr(s, RSTART + RLENGTH) }
+      return n
+    }
+    BEGIN { heredoc = 0; hq = 0 }
     {
       line = $0
       if (heredoc) {
         chk = line; sub(/^[ \t]+/, "", chk)
         if (chk == delim) heredoc = 0
+        else if (!hq && cpwords(line) > 0) printf "U\t%d\t%s\n", NR, line
         next
       }
       t = line
@@ -794,9 +813,11 @@ check_2_7() { # $1 = generated seed script text (unindented), $2 = label, $3 = e
       if (t == "") next
       if (match(t, /<<-?[ \t]*['\''"]?[A-Za-z_][A-Za-z0-9_]*['\''"]?[ \t]*$/)) {
         d = substr(t, RSTART, RLENGTH)
+        hq = (d ~ /['\''"]/)
         gsub(/^<<-?[ \t]*['\''"]?/, "", d); gsub(/['\''"]?[ \t]*$/, "", d)
         delim = d; heredoc = 1
       }
+      tot = cpwords(t); parsed = 0
       nseg = split(t, segs, /(;|&&|\|\||\|)/)
       for (i = 1; i <= nseg; i++) {
         seg = segs[i]
@@ -806,6 +827,7 @@ check_2_7() { # $1 = generated seed script text (unindented), $2 = label, $3 = e
           sub(/["\047]$/, "", seg)
         }
         if (seg !~ /^cp([ \t]|$)/) continue
+        parsed++
         rest = substr(seg, 3)
         nops = 0; flags = ""; tflag = 0; endopt = 0
         while (match(rest, /^[ \t]+("[^"]*"|\047[^\047]*\047|[^ \t"\047]+)/)) {
@@ -818,35 +840,61 @@ check_2_7() { # $1 = generated seed script text (unindented), $2 = label, $3 = e
             if (tok ~ /^-[A-Za-z]*t/ || tok ~ /^--target/) tflag = 1
             continue
           }
+          nops++
+          q[nops] = substr(tok, 1, 1)
           gsub(/^["\047]|["\047]$/, "", tok)
-          ops[++nops] = tok
+          ops[nops] = tok
         }
         bad = 0
         if (rest !~ /^[ \t]*$/ || tflag || nops < 2) bad = 1
+        hasev = 0
         for (k = 1; !bad && k < nops; k++) {
-          src = ops[k]
-          if (src ~ /(^|\/)\.\.(\/|$)/ || src ~ /[*?$`]/ || index(src, "[") > 0) bad = 1
-          else if (index(src, snap "/") == 1) continue
-          else if (index(src, evs "/") == 1 && flags == "") printf "E\t%d\t%s\t%s\n", NR, src, line
-          else bad = 1
+          if (ops[k] == evs || index(ops[k], evs "/") == 1) hasev = 1
+        }
+        if (!bad && hasev) {
+          dest = ops[nops]; drel = substr(dest, 19)
+          if (flags == "" && nops == 2 && q[1] == "\"" && q[2] == "\"" \
+              && index(dest, "${PLANT_SEED_ROOT}/") == 1 \
+              && drel ~ /^(\/[A-Za-z0-9._-]+)+$/ && drel !~ /(^|\/)\.\.(\/|$)/) {
+            printf "E\t%d\t%s\t%s\t%s\n", NR, ops[1], dest, line
+          } else printf "F\t%d\t%s\n", NR, line
+        } else if (!bad) {
+          for (k = 1; !bad && k < nops; k++) {
+            src = ops[k]
+            if (src ~ /(^|\/)\.\.(\/|$)/ || src ~ /[*?$`]/ || index(src, "[") > 0) bad = 1
+            else if (index(src, snap "/") != 1) bad = 1
+          }
         }
         if (bad) printf "X\t%d\t%s\n", NR, line
       }
+      if (tot > parsed) printf "U\t%d\t%s\n", NR, line
     }
   ' || true)"
   hits=""
-  while IFS=$'\t' read -r kind nr a b; do
+  hitsu=""
+  hitsf=""
+  hitsm=""
+  while IFS=$'\t' read -r kind nr a b c; do
     [ -z "${kind}" ] && continue
     case "${kind}" in
-      X)
-        hits="${hits}${nr}:${a}"$'\n'
-        ;;
+      X) hits="${hits}${nr}:${a}"$'\n' ;;
+      U) hitsu="${hitsu}${nr}:${a}"$'\n' ;;
+      F) hitsf="${hitsf}${nr}:${a}"$'\n' ;;
       E)
+        # a = source, b = destination, c = the line
         rest="${a#"${EVIDENCE_SRC_ROOT}"/}"
         cid="${rest%%/*}"
         name="${rest#*/}"
         if [ "${rest}" = "${cid}" ] || ! [[ "${cid}" =~ ${CHALLENGE_ID_RE} ]] || ! [[ "${name}" =~ ${EVIDENCE_NAME_RE} ]]; then
-          hits="${hits}${nr}:${b}"$'\n'
+          hits="${hits}${nr}:${c}"$'\n'
+        else
+          # D11: the destination directory is the mountDir of the challenge the
+          # source directory belongs to, and the file keeps its name
+          seedpre='${PLANT_SEED_ROOT}'
+          rest="${b#"${seedpre}"}"
+          if [ "${rest##*/}" != "${name}" ] || ! printf '%s\n' "${map}" | grep -qxF "${rest%/*}"$'\t'"${cid}"; then
+            hitsm="${hitsm}${nr}:${c}"$'\n'
+          fi
         fi
         ;;
     esac
@@ -856,20 +904,21 @@ check_2_7() { # $1 = generated seed script text (unindented), $2 = label, $3 = e
     printf '%s' "${hits}" | sed 's/^/    /' >&2
     rc=1
   fi
-  # (a) an evidence copy line of exactly D11's shape must copy from the
-  # directory of the challenge whose plant.mounts entry (the map: "<mountDir>
-  # TAB <challenge id>") is the destination directory, under the same name
-  evre='^[[:space:]]*cp "'"${EVIDENCE_SRC_ROOT}"'/([^/"]+)/([^/"]+)" "\$\{PLANT_SEED_ROOT\}(/[^"]+)/([^/"]+)"[[:space:]]*$'
-  while IFS= read -r ln; do
-    [[ "${ln}" =~ ${evre} ]] || continue
-    cid="${BASH_REMATCH[1]}"
-    name="${BASH_REMATCH[2]}"
-    dir="${BASH_REMATCH[3]}"
-    if [ "${name}" != "${BASH_REMATCH[4]}" ] || ! printf '%s\n' "${map}" | grep -qxF "${dir}"$'\t'"${cid}"; then
-      echo "2-7(a) VIOLATION [${label}]: evidence copy '${ln}' does not match a plant.mounts entry {path: ${dir}, challenge: ${cid}} with the same file name" >&2
-      rc=1
-    fi
-  done <<< "${code}"
+  if [ -n "${hitsu}" ]; then
+    echo "2-7(a) VIOLATION [${label}]: a word cp the 2-7(a) parser did not read as a command (a cp in a substitution, a backtick, after a lone '&', in an unquoted heredoc, in an argument):" >&2
+    printf '%s' "${hitsu}" | sed 's/^/    /' >&2
+    rc=1
+  fi
+  if [ -n "${hitsf}" ]; then
+    echo "2-7(a) VIOLATION [${label}]: a cp from ${EVIDENCE_SRC_ROOT}/ is not exactly: cp \"${EVIDENCE_SRC_ROOT}/<cid>/<name>\" \"\${PLANT_SEED_ROOT}<mountDir>/<name>\" (one source, two double-quoted operands, no flag, no trailing slash, inside the seed root):" >&2
+    printf '%s' "${hitsf}" | sed 's/^/    /' >&2
+    rc=1
+  fi
+  if [ -n "${hitsm}" ]; then
+    echo "2-7(a) VIOLATION [${label}]: evidence copy does not match a plant.mounts entry {path: <destination directory>, challenge: <the source's challenge id>} with the same file name:" >&2
+    printf '%s' "${hitsm}" | sed 's/^/    /' >&2
+    rc=1
+  fi
 
   # (b) sensitive paths must not appear outside a safe (seed-relative)
   # prefix. Strip every safe occurrence from a copy of the text, then
@@ -1812,22 +1861,24 @@ chmod 0444 \"\${PLANT_SEED_ROOT}/opt/fx/evidence-a/b-2.txt\""*) : ;;
 
   # negative: 2-7(a), by hand-written lines
   local m='cp copy-source is not'
+  local mf='is not exactly'
+  local mu='a word cp the 2-7(a) parser did not read'
   local de='"${PLANT_SEED_ROOT}/opt/fx/evidence-a/"'
   fx_expect_2_7 "a copy-source outside both roots" "cp \"/etc/hostname\" ${dst}" "${m}" || rc=1
   fx_expect_2_7 "cp -a from outside both roots" "cp -a \"/etc/hostname\" ${dst}" "${m}" || rc=1
-  fx_expect_2_7 "cp -a from the evidence root" "cp -a \"${cs}/a.log\" ${dst}" "${m}" || rc=1
-  fx_expect_2_7 "cp -a of the evidence directory (.)" "cp -a \"${cs}/.\" ${de}" "${m}" || rc=1
-  fx_expect_2_7 "the evidence directory (.) without -a" "cp \"${cs}/.\" ${de}" "${m}" || rc=1
-  fx_expect_2_7 "a glob in the evidence directory" "cp \"${cs}/*\" ${de}" "${m}" || rc=1
+  fx_expect_2_7 "cp -a from the evidence root" "cp -a \"${cs}/a.log\" ${dst}" "${mf}" || rc=1
+  fx_expect_2_7 "cp -a of the evidence directory (.)" "cp -a \"${cs}/.\" ${de}" "${mf}" || rc=1
+  fx_expect_2_7 "the evidence directory (.) without -a" "cp \"${cs}/.\" ${de}" "${mf}" || rc=1
+  fx_expect_2_7 "a glob in the evidence directory" "cp \"${cs}/*\" ${de}" "${mf}" || rc=1
   fx_expect_2_7 "a '..' element" "cp \"${cs}/../../plant-seed/x\" ${dst}" "${m}" || rc=1
   fx_expect_2_7 "a file name with a space" "cp \"${cs}/a b\" ${dst}" "${m}" || rc=1
   fx_expect_2_7 "a sibling root (prefix without the slash)" "cp \"${src}x/40-ev/a\" ${dst}" "${m}" || rc=1
-  fx_expect_2_7 "a flag on a plain evidence copy" "cp -r \"${cs}/a.log\" ${dst}" "${m}" || rc=1
+  fx_expect_2_7 "a flag on a plain evidence copy" "cp -r \"${cs}/a.log\" ${dst}" "${mf}" || rc=1
   fx_expect_2_7 "a source with no challenge id level" "cp \"${src}/a.log\" ${dst}" "${m}" || rc=1
   fx_expect_2_7 "a challenge id level that is not a challenge id" "cp \"${src}/BAD/a.log\" ${dst}" "${m}" || rc=1
   fx_expect_2_7 "a nested name below the challenge id" "cp \"${cs}/sub/a.log\" ${dst}" "${m}" || rc=1
-  fx_expect_2_7 "a second source that is outside both roots" "cp \"${cs}/a.log\" \"/etc/hostname\" ${de}" "${m}" || rc=1
-  fx_expect_2_7 "a snapshot source then an evidence glob" "cp \"/opt/ctf/plant-seed/x\" \"${cs}/*\" ${de}" "${m}" || rc=1
+  fx_expect_2_7 "a second source that is outside both roots" "cp \"${cs}/a.log\" \"/etc/hostname\" ${de}" "${mf}" || rc=1
+  fx_expect_2_7 "a snapshot source then an evidence glob" "cp \"/opt/ctf/plant-seed/x\" \"${cs}/*\" ${de}" "${mf}" || rc=1
   fx_expect_2_7 "-t (the destination first)" "cp -t ${de} \"/etc/hostname\"" "${m}" || rc=1
   # only the --target-directory rule rejects this: the first operand is a snapshot
   # path, and the "last operand" would otherwise be taken for the destination
@@ -1835,9 +1886,9 @@ chmod 0444 \"\${PLANT_SEED_ROOT}/opt/fx/evidence-a/b-2.txt\""*) : ;;
   fx_expect_2_7 "the cp inside sh -c" "sh -c 'cp -a \"/etc/hostname\" ${dst}'" "${m}" || rc=1
   # negative: bad names reaching 2-7 through the real renderer (the renderer is not the gate)
   seed="$( cd "${root}/p" && init_plant_ids && EVIDENCE_FILES=('../x') && render_seed_body "${PLANT_IDS[@]}" )" || rc=1
-  fx_expect_2_7 "a bundle file named '../x' through the renderer" "${seed}" "${m}" "${map}" || rc=1
+  fx_expect_2_7 "a bundle file named '../x' through the renderer" "${seed}" "${mf}" "${map}" || rc=1
   seed="$( cd "${root}/p" && init_plant_ids && EVIDENCE_FILES=('*') && render_seed_body "${PLANT_IDS[@]}" )" || rc=1
-  fx_expect_2_7 "a bundle file named '*' through the renderer" "${seed}" "${m}" "${map}" || rc=1
+  fx_expect_2_7 "a bundle file named '*' through the renderer" "${seed}" "${mf}" "${map}" || rc=1
   # negative: a copy of the right SHAPE that does not match the mount's challenge
   # (the shape is allowed; whether this cid belongs to this directory is judged
   # against plant.mounts, here with the map)
@@ -1846,6 +1897,34 @@ chmod 0444 \"\${PLANT_SEED_ROOT}/opt/fx/evidence-a/b-2.txt\""*) : ;;
   fx_expect_2_7 "a copy into a directory no mount names" "cp \"${cs}/a.log\" \"\${PLANT_SEED_ROOT}/opt/fx/other/a.log\"" "${mm}" "${map}" || rc=1
   fx_expect_2_7 "a copy with no mount at all (empty map)" "cp \"${cs}/a.log\" \"\${PLANT_SEED_ROOT}/opt/fx/evidence-a/a.log\"" "${mm}" || rc=1
   fx_expect_2_7 "a copy that renames the file" "cp \"${cs}/a.log\" \"\${PLANT_SEED_ROOT}/opt/fx/evidence-a/b.log\"" "${mm}" "${map}" || rc=1
+  # negative: a cp the parser does not read as a command is never "allowed"
+  # (each of these was caught by the old line-wide grep)
+  fx_expect_2_7 "a cp in an assignment's substitution" "x=\$(cp -a \"/etc/hostname\" ${dst})" "${mu}" || rc=1
+  fx_expect_2_7 "a cp in the argument of an allowlisted command" "echo \$(cp -a \"/etc/hostname\" ${dst})" "${mu}" || rc=1
+  fx_expect_2_7 "a cp in backticks" "echo \`cp -a \"/etc/hostname\" ${dst}\`" "${mu}" || rc=1
+  fx_expect_2_7 "a cp after a lone &" "true & cp -a \"/etc/hostname\" ${dst}" "${mu}" || rc=1
+  fx_expect_2_7 "a cp in the body of an unquoted heredoc" "cat > \"\${PLANT_SEED_ROOT}/opt/fx/a\" <<EOF
+\$(cp -a \"/etc/hostname\" ${dst})
+EOF" "${mu}" || rc=1
+  # negative: an evidence copy of any other shape than D11's (judged by the one
+  # parser, so none of these can skip the match against plant.mounts)
+  fx_expect_2_7 "an unquoted source" "cp ${cs}/a.log \"\${PLANT_SEED_ROOT}/opt/fx/evidence-a/a.log\"" "${mf}" "${map}" || rc=1
+  fx_expect_2_7 "an unquoted destination" "cp \"${cs}/a.log\" \${PLANT_SEED_ROOT}/opt/fx/evidence-a/a.log" "${mf}" "${map}" || rc=1
+  fx_expect_2_7 "two evidence sources" "cp \"${cs}/a.log\" \"${cs}/b.log\" \"\${PLANT_SEED_ROOT}/opt/fx/evidence-a/a.log\"" "${mf}" "${map}" || rc=1
+  fx_expect_2_7 "a destination directory with a trailing slash" "cp \"${cs}/a.log\" \"\${PLANT_SEED_ROOT}/opt/fx/evidence-a/\"" "${mf}" "${map}" || rc=1
+  fx_expect_2_7 "a destination outside the seed root" "cp \"${cs}/a.log\" \"/opt/fx/evidence-a/a.log\"" "${mf}" "${map}" || rc=1
+  # positive: extra blanks are fine (one parser reads tokens), and a cp word in a
+  # QUOTED heredoc body (never executed) is not a violation
+  if ! check_2_7 "  cp   \"${cs}/a.log\"     \"\${PLANT_SEED_ROOT}/opt/fx/evidence-a/a.log\"   " "fx-blanks" "${map}" >/dev/null 2>&1; then
+    echo "ADR-0056 A5a-2 VIOLATION: 2-7 rejected a D11 copy with extra blanks (the parser is too strict)" >&2
+    rc=1
+  fi
+  if ! check_2_7 "cat > \"\${PLANT_SEED_ROOT}/opt/fx/a\" <<'EOF'
+then cp the file
+EOF" "fx-quoted-heredoc" >/dev/null 2>&1; then
+    echo "ADR-0056 A5a-2 VIOLATION: 2-7 rejected a cp word in a quoted heredoc body (never executed)" >&2
+    rc=1
+  fi
 
   # negative: the derivation itself
   fx_plant "${root}/e1" 30-a /opt/fx/vault dir 'printf x > "${PLANT_SEED_ROOT}/opt/fx/vault/a"'
@@ -1873,7 +1952,7 @@ chmod 0444 \"\${PLANT_SEED_ROOT}/opt/fx/evidence-a/b-2.txt\""*) : ;;
 
   rm -rf "${root}"
   if [ "${rc}" -eq 0 ]; then
-    echo "  ok: ADR-0056 A5a-2 — plant derived from type (evade + investigate), investigate mount / copy shapes generated (per-challenge Secret ${EVIDENCE_SRC_ROOT}/<cid>), 2-7(a) accepts only ${EVIDENCE_SRC_ROOT}/<challenge id>/<plain file name>: the positive tree passes and each of the 33 deliberately-bad inputs is rejected for its own reason"
+    echo "  ok: ADR-0056 A5a-2 — plant derived from type (evade + investigate), investigate mount / copy shapes generated (per-challenge Secret ${EVIDENCE_SRC_ROOT}/<cid>), 2-7(a) accepts only ${EVIDENCE_SRC_ROOT}/<challenge id>/<plain file name>: the positive tree passes and each of the 43 deliberately-bad inputs is rejected for its own reason"
   fi
   return "${rc}"
 }
