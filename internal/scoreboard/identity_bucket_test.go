@@ -2,7 +2,7 @@ package scoreboard_test
 
 // app#389: the scoreboard's rate-limit buckets as ONE table. A row of
 // identityBuckets is one identity-keyed limiter behind api.Routes() (actionMW,
-// detectMW, boardPostMW, boardLikeMW): its burst, its refill (one token per
+// detectMW, answerMW, boardPostMW, boardLikeMW): its burst, its refill (one token per
 // refill), whether it is fail-closed (MiddlewareStrict), and every route on
 // it. submitIPBucket is the per-IP bucket on POST /submit. The rows are
 // checked against Routes() (every route declaring an "identity ..." rate
@@ -74,6 +74,12 @@ var identityBuckets = []rateBucket{
 			"POST /api/users/{user}/challenges/{cid}/reset-dirty",
 			"POST /api/users/{user}/profile",
 		},
+	},
+	{
+		// ADR-0056 D4: the investigate answer route's own bucket (1 req/s, burst 5),
+		// shared with no other route; its identity gate is Authz: self.
+		name: "answer", burst: 5, refill: time.Second,
+		members: []string{"POST /api/users/{user}/challenges/{cid}/questions/{qid}/answer"},
 	},
 	{
 		name: "board_post", burst: 3, refill: 10 * time.Second,

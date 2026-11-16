@@ -59,7 +59,10 @@ const (
 	GateStrict Gate = "strict"
 	// GateSelfOrAdmin is api.selfOrAdmin: the {user}-scoped reads (me, journey)
 	// and the participant POSTs. It is named for the Authz class, not "read":
-	// it also guards writes.
+	// it also guards writes. api.selfOnly (Authz: self, the investigate answer
+	// route, ADR-0056 D4) records here too, with the same reasons: the series set
+	// is a contract the platform's alert reads, so the self gate has no label
+	// value of its own.
 	GateSelfOrAdmin Gate = "self_or_admin"
 	// GateAuthenticated is api.requireAuthenticated / boardIdentity: any proven
 	// identity, no {user} to match (the board routes).
@@ -85,7 +88,10 @@ const (
 	ReasonNonCanonical Reason = "non_canonical"
 	// ReasonMismatch: a canonical identity for a different seat
 	// (self_or_admin only). A participant's own action (editing the URL), so it
-	// does not stay 0 and is not part of the alert.
+	// does not stay 0 and is not part of the alert. The self gate (api.selfOnly,
+	// ADR-0056 D4) also records here an ADMIN_EMAILS identity that is not {user}'s,
+	// whatever its domain: an operator refused on purpose is not a configuration
+	// fault, so it is never non_canonical.
 	ReasonMismatch Reason = "mismatch"
 )
 

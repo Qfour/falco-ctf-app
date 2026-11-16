@@ -220,6 +220,24 @@ func authzCheck(t *testing.T, srv http.Handler, rt apispec.Route) string {
 			return fmt.Sprintf("%s: status=%d body=%s, want 403 (Authz: %s — %s does not satisfy it)",
 				rt.MuxPattern(), w.Code, w.Body, rt.Authz, authzMismatchedEmail)
 		}
+	case apispec.AuthzSelf:
+		// ADR-0056 D4 (the word of ADR-0050): the proven identity must be exactly
+		// {user}'s. The stranger's 403 above cannot tell this class from
+		// self-or-admin (both 403 a stranger), so the extra probes pin the
+		// difference: an ADMIN identity is refused here, which self-or-admin
+		// would let through, and the owner is NOT refused.
+		if w.Code != http.StatusForbidden {
+			return fmt.Sprintf("%s: status=%d body=%s, want 403 (Authz: %s — %s is not %s)",
+				rt.MuxPattern(), w.Code, w.Body, rt.Authz, authzMismatchedEmail, authzSelfUser)
+		}
+		if wa := authzDo(srv, rt, authzAdminEmail, true); wa.Code != http.StatusForbidden {
+			return fmt.Sprintf("%s: status=%d body=%s with X-Auth-Request-Email: %s, want 403 (Authz: %s — ADMIN_EMAILS is not an override; a 200 means the route fell back to a self-or-admin-shaped gate)",
+				rt.MuxPattern(), wa.Code, wa.Body, authzAdminEmail, rt.Authz)
+		}
+		if wo := authzDo(srv, rt, authzSelfUser+"@ctf.local", true); wo.Code == http.StatusForbidden {
+			return fmt.Sprintf("%s: status=%d body=%s for the owner %s@ctf.local, must NOT be 403 (Authz: %s — the owner is the one identity this class admits)",
+				rt.MuxPattern(), wo.Code, wo.Body, authzSelfUser, rt.Authz)
+		}
 	case apispec.AuthzInternalClaimedIdentity:
 		// Collector-only (ADR-0034 D12 S1): ANY X-Auth-Request-* header is
 		// refused, whoever it claims to be, and a header-less request is NOT
@@ -274,7 +292,7 @@ func authzCheck(t *testing.T, srv http.Handler, rt apispec.Route) string {
 func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 	srv := newAuthzFixture(t)
 
-	var adminGated, selfGated, authenticatedGated int
+	var adminGated, selfGated, selfOnlyGated, authenticatedGated int
 	var none, claimed []string
 	for _, rt := range srv.Routes() {
 		rt := rt
@@ -283,6 +301,8 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 			adminGated++
 		case apispec.AuthzSelfOrAdmin:
 			selfGated++
+		case apispec.AuthzSelf:
+			selfOnlyGated++
 		case apispec.AuthzAuthenticated:
 			authenticatedGated++
 		}
@@ -342,6 +362,11 @@ func TestAuthz_AllDeclaredGatesEnforced(t *testing.T) {
 	}
 	if selfGated != 7 {
 		t.Fatalf("expected exactly 7 Authz: self-or-admin routes (GET /api/users/{user}/me, GET /api/users/{user}/journey, POST /api/challenges/{cid}/submit-detect, POST /api/users/{user}/challenges/{cid}/steps/{idx}/check, POST /api/users/{user}/challenges/{cid}/hints/{idx}, POST /api/users/{user}/challenges/{cid}/reset-dirty, ADR-0034: POST /api/users/{user}/profile — P25's 4 QA self-or-admin(-write) routes are gone, cutover), got %d", selfGated)
+	}
+	// ADR-0056 D4: the investigate answer route is the one `self` route (no admin
+	// override); self-or-admin stays 7.
+	if selfOnlyGated != 1 {
+		t.Fatalf("expected exactly 1 Authz: self route (ADR-0056 D4: POST /api/users/{user}/challenges/{cid}/questions/{qid}/answer), got %d", selfOnlyGated)
 	}
 	// GET /static/{asset} is ADR-0028's single static route; POST
 	// /csp-report is Issue #95.
@@ -413,7 +438,7 @@ func TestAuthz_EveryProvenRouteRejectsHeaderless(t *testing.T) {
 	}
 	// Non-vacuous: every proven word the scoreboard declares was exercised
 	// (rostered is auth-policy's; per-word route counts are pinned above).
-	want := map[apispec.Authz]bool{apispec.AuthzAdmin: true, apispec.AuthzSelfOrAdmin: true, apispec.AuthzAuthenticated: true}
+	want := map[apispec.Authz]bool{apispec.AuthzAdmin: true, apispec.AuthzSelf: true, apispec.AuthzSelfOrAdmin: true, apispec.AuthzAuthenticated: true}
 	if !reflect.DeepEqual(words, want) {
 		t.Fatalf("proven words exercised = %v, want %v (the derivation is broken, or a word changed class)", words, want)
 	}

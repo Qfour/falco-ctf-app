@@ -216,8 +216,10 @@ func TestAPISpec_V1_RouteSetMatchesSpec(t *testing.T) {
 	// profile routes (POST /api/users/{user}/profile, POST
 	// /api/admin/users/{user}/profile-reset) and removes the participant POST
 	// /api/users/{user}/display-name (setname's collector forward): 30 + 2 - 1 = 31.
-	if len(routes) != 31 {
-		t.Errorf("expected 31 registered routes (30 + the 2 ADR-0034 profile routes - the participant display-name route), got %d: %v", len(routes), routes)
+	// ADR-0056 D4 then adds the investigate answer route (POST
+	// /api/users/{user}/challenges/{cid}/questions/{qid}/answer): 31 + 1 = 32.
+	if len(routes) != 32 {
+		t.Errorf("expected 32 registered routes (30 + the 2 ADR-0034 profile routes - the participant display-name route + the ADR-0056 answer route), got %d: %v", len(routes), routes)
 	}
 }
 
@@ -606,6 +608,8 @@ var v5Coverage = map[string]bool{
 	"POST /api/admin/board/threads/{tid}/reply":  true, // TestAPISpec_V5_BoardAdminThreadFieldsMatchSpec (reply branch)
 	"POST /api/admin/board/threads/{tid}/state":  true, // TestAPISpec_V5_BoardAdminThreadFieldsMatchSpec (state branch)
 	"POST /api/admin/board/messages/{mid}/state": true, // TestAPISpec_V5_BoardAdminSetMessageStateFieldsMatchSpec
+	// ADR-0056 D4 (the investigate answer route):
+	"POST /api/users/{user}/challenges/{cid}/questions/{qid}/answer": true, // TestAPISpec_V5_AnswerResultFieldsMatchSpec (answer_route_test.go)
 }
 
 // TestAPISpec_VA1_ResponseObjectCoverageBidirectional is ADR-0009
@@ -642,8 +646,9 @@ func TestAPISpec_VA1_ResponseObjectCoverageBidirectional(t *testing.T) {
 	// the count change itself gets reviewed instead of silently passing
 	// because the bidirectional diff above happened to stay empty.
 	// ADR-0034 S1 adds the two profile operations (ProfileResult x2) and drops the participant display-name one: 26.
-	if len(derived) != 26 {
-		t.Errorf("expected 26 response-object operations (ADR-0009 C2 + Decision A - P25-QA(7) + app#292-Board(10) + boardAdminGetThread(1) + ADR-0034 profile(2) - participant display-name(1)), got %d: %v", len(derived), derived)
+	// ADR-0056 D4 adds the answer route's operation (AnswerResult): 27.
+	if len(derived) != 27 {
+		t.Errorf("expected 27 response-object operations (ADR-0009 C2 + Decision A - P25-QA(7) + app#292-Board(10) + boardAdminGetThread(1) + ADR-0034 profile(2) - participant display-name(1) + ADR-0056 answer(1)), got %d: %v", len(derived), derived)
 	}
 }
 

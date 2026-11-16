@@ -7,9 +7,10 @@ package scoring
 // turns answers into a solve (judge_door_test.go in internal/edition fixes the first
 // by reading the sources, singledoor_test.go the second).
 //
-// There is no route yet (A3b adds it, and the metrics with it), and
-// catalog.LoadScored still refuses a scope that holds an investigate challenge, so
-// nothing reaches SubmitAnswer in a running scoreboard.
+// The route is the adapter in internal/scoreboard/api/answer.go (A3b-1); the
+// metrics come with A3b-2. catalog.LoadScored still refuses a scope that holds an
+// investigate challenge (until A3b-3), so nothing reaches SubmitAnswer in a running
+// scoreboard.
 
 import (
 	"context"

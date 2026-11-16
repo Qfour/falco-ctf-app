@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/Qfour/falco-ctf-app/internal/board"
+	"github.com/Qfour/falco-ctf-app/internal/catalog/answerformat"
 	"github.com/Qfour/falco-ctf-app/internal/catalog/challengeid"
 	"github.com/Qfour/falco-ctf-app/internal/identity"
 )
@@ -30,6 +31,9 @@ func identifierGrammars() []Grammar {
 		{Name: "challenge id (challengeid.Pattern)", Pattern: challengeid.Pattern,
 			Sites: map[string]int{"openapi-scoreboard.yaml": 1, "openapi-collector.yaml": 1}},
 		{Name: "board id (board.IDPattern)", Pattern: board.IDPattern(),
+			Sites: map[string]int{"openapi-scoreboard.yaml": 1}},
+		// ADR-0056 D1 / D4: the {qid} path parameter (components.parameters.Qid).
+		{Name: "question id (answerformat.IDPattern)", Pattern: answerformat.IDPattern,
 			Sites: map[string]int{"openapi-scoreboard.yaml": 1}},
 	}
 }

@@ -104,8 +104,10 @@ const allowedOrigin = "https://scoreboard.ctf.example.com"
 // boardUnlikeThread; operator: boardAdminReply, boardAdminSetThreadState,
 // boardAdminSetMessageState). 9 - 3 + 7 = 13. ADR-0034 S1 (D8) adds the two
 // profile routes — setProfile (participant) and adminResetProfile (operator),
-// both browser-only and both guarded: 13 + 2 = 15.
-const wantOriginGuardedRouteCount = 15
+// both browser-only and both guarded: 13 + 2 = 15. ADR-0056 D4 adds the
+// investigate answer route (submitAnswer, participant, browser-only, guarded):
+// 15 + 1 = 16.
+const wantOriginGuardedRouteCount = 16
 
 // TestOriginGuard_ResetFormCSRF is the mitigation's headline case: a
 // body-less POST /api/admin/reset (the route a CSRF <form> auto-submit can
@@ -302,7 +304,15 @@ func TestOriginGuard_AllProtectedRoutesEnforced(t *testing.T) {
 		case rt.OriginGuarded:
 			guarded++
 			t.Run("guarded/"+rt.MuxPattern(), func(t *testing.T) {
-				w := ogReq(t, srv, rt.Method, target, evilOrigin, "", "admin@ctf.local", strings.NewReader("{}"))
+				email := "admin@ctf.local"
+				if rt.Authz == apispec.AuthzSelf {
+					// Authz: self refuses an admin identity (ADR-0056 D4), so the
+					// admin's 403 would be the identity gate's and the route could
+					// lose its origin guard unseen. Send the {user}'s own identity,
+					// the one thing the gate admits: only the guard can 403 it.
+					email = pathParamValues["user"] + "@" + fixtureEmailDomain
+				}
+				w := ogReq(t, srv, rt.Method, target, evilOrigin, "", email, strings.NewReader("{}"))
 				if w.Code != http.StatusForbidden {
 					t.Fatalf("%s: status=%d body=%s, want 403 (OriginGuarded: true — cross-origin must be denied)", rt.MuxPattern(), w.Code, w.Body)
 				}

@@ -62,7 +62,9 @@ func expectedGate(t *testing.T, rt apispec.Route) identityobs.Gate {
 		}
 	}
 	switch rt.Authz {
-	case apispec.AuthzSelfOrAdmin:
+	case apispec.AuthzSelfOrAdmin, apispec.AuthzSelf:
+		// AuthzSelf (ADR-0056 D4) records at the same observation point as
+		// self-or-admin: the series set is a contract, the gate has no label of its own.
 		return identityobs.GateSelfOrAdmin
 	case apispec.AuthzAuthenticated:
 		return identityobs.GateAuthenticated
@@ -401,7 +403,7 @@ func TestIdentityDenials_AnIdentifiedRequestIsCountedOnlyByTheInnerGate(t *testi
 		rt := routeByPattern(t, routes, b.members[0])
 		var inner identityobs.Gate
 		switch rt.Authz {
-		case apispec.AuthzSelfOrAdmin:
+		case apispec.AuthzSelfOrAdmin, apispec.AuthzSelf:
 			inner = identityobs.GateSelfOrAdmin
 		case apispec.AuthzAuthenticated:
 			inner = identityobs.GateAuthenticated
