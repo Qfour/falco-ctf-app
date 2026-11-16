@@ -92,6 +92,12 @@ type AnswerResult struct {
 	Correct bool
 	// Solved: the challenge is solved.
 	Solved bool
+	// Newly: THIS call recorded the solve (MarkSolved's "newly", like
+	// EvadeOutcome.Newly). It is a Go-only field for the adapter's solve metric
+	// (A3b) and is not one of the four fields of the API's AnswerResult (D6): the
+	// adapter must not serialise it. It is true for at most one call per
+	// (user, challenge) until an admin reset.
+	Newly bool
 	// Remaining: attempts left on this question (>= 0).
 	Remaining int
 }
@@ -186,13 +192,16 @@ func (g *Grader) SubmitAnswer(ctx context.Context, user, cid, qid, rawInput stri
 	case store.AnswerAttemptCounted:
 		// fall through to the comparison below
 	case store.AnswerAttemptChallengeSolved:
+		// An investigate challenge is solved only when every one of its questions is
+		// answered (solveIfAllAnswered is the only way to solve it), so a solved
+		// challenge reads as answered, and Newly is false: this call did not solve it.
 		return AnswerResult{Status: AnswerAlreadyCorrect, Correct: true, Solved: true, Remaining: remaining}, nil
 	case store.AnswerAttemptAlreadyCorrect:
-		solved, err := g.solveIfAllAnswered(user, ch)
+		solved, newly, err := g.solveIfAllAnswered(user, ch)
 		if err != nil {
 			return AnswerResult{}, err
 		}
-		return AnswerResult{Status: AnswerAlreadyCorrect, Correct: true, Solved: solved, Remaining: remaining}, nil
+		return AnswerResult{Status: AnswerAlreadyCorrect, Correct: true, Solved: solved, Newly: newly, Remaining: remaining}, nil
 	case store.AnswerAttemptExhausted:
 		return AnswerResult{Status: AnswerExhausted, Solved: g.store.IsSolved(user, cid), Remaining: 0}, nil
 	default:
@@ -209,11 +218,11 @@ func (g *Grader) SubmitAnswer(ctx context.Context, user, cid, qid, rawInput stri
 		if err := g.answers.MarkAnswerCorrect(user, cid, qid); err != nil {
 			return AnswerResult{}, fmt.Errorf("scoring: mark answer correct: %w", err)
 		}
-		solved, err := g.solveIfAllAnswered(user, ch)
+		solved, newly, err := g.solveIfAllAnswered(user, ch)
 		if err != nil {
 			return AnswerResult{}, err
 		}
-		return AnswerResult{Status: AnswerCorrect, Correct: true, Solved: solved, Remaining: remaining}, nil
+		return AnswerResult{Status: AnswerCorrect, Correct: true, Solved: solved, Newly: newly, Remaining: remaining}, nil
 	}
 
 	if other, found := g.judge.OtherSeat(user, cid, qid, normalized); found {
@@ -224,24 +233,27 @@ func (g *Grader) SubmitAnswer(ctx context.Context, user, cid, qid, rawInput stri
 }
 
 // solveIfAllAnswered solves the challenge when every one of its questions is
-// recorded as answered, and reports whether it is solved. It reads what is
-// recorded; it compares nothing. A challenge with no question is never solved.
-func (g *Grader) solveIfAllAnswered(user string, ch catalog.Challenge) (bool, error) {
+// recorded as answered. It reports whether the challenge is solved and whether
+// this call recorded the solve (MarkSolved's "newly", as SubmitEvade's Newly).
+// It reads what is recorded; it compares nothing. A challenge with no question is
+// never solved.
+func (g *Grader) solveIfAllAnswered(user string, ch catalog.Challenge) (solved, newly bool, err error) {
 	if ch.Investigate == nil || len(ch.Investigate.Questions) == 0 {
-		return false, nil
+		return false, false, nil
 	}
 	state, err := g.answers.AnswerAttempts(user, ch.ID)
 	if err != nil {
-		return false, fmt.Errorf("scoring: read answers: %w", err)
+		return false, false, fmt.Errorf("scoring: read answers: %w", err)
 	}
 	for _, q := range ch.Investigate.Questions {
 		if !state[q.ID].Correct {
-			return false, nil
+			return false, false, nil
 		}
 	}
 	at := g.now().UTC().Format(time.RFC3339Nano)
-	if _, err := g.store.MarkSolved(user, ch.ID, at); err != nil {
-		return false, fmt.Errorf("scoring: solve: %w", err)
+	newly, err = g.store.MarkSolved(user, ch.ID, at)
+	if err != nil {
+		return false, false, fmt.Errorf("scoring: solve: %w", err)
 	}
-	return true, nil
+	return true, newly, nil
 }

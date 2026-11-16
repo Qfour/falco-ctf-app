@@ -143,6 +143,10 @@ type fakeAnswers struct {
 	tryErr  error
 	markErr error
 	readErr error
+
+	// forceOutcome, when set, is what TryAnswerAttempt returns whatever the rows say
+	// (a value the Grader does not know, to prove it refuses rather than compares).
+	forceOutcome *store.AnswerAttempt
 }
 
 func newFakeAnswers(fs *fakeStore, events *eventLog) *fakeAnswers {
@@ -160,6 +164,9 @@ func (f *fakeAnswers) TryAnswerAttempt(user, cid, q string, limit int) (store.An
 	f.events.add("count")
 	if f.tryErr != nil {
 		return 0, 0, f.tryErr
+	}
+	if f.forceOutcome != nil {
+		return *f.forceOutcome, 0, nil
 	}
 	k := answerKey(user, cid, q)
 	st := f.rows[k]
@@ -337,8 +344,8 @@ func TestSubmitAnswer_NothingIsComparedAfterTheLimitOrAfterTheAnswerOrTheSolve(t
 
 	// seat-b answers once and solves; after that nothing is compared either.
 	res, err := f.submit("seat-b", oneCID, "who", tableSecret+"-b")
-	if err != nil || res != (scoring.AnswerResult{Status: scoring.AnswerCorrect, Correct: true, Solved: true, Remaining: 2}) {
-		t.Fatalf("seat-b: %+v, %v, want correct and solved", res, err)
+	if err != nil || res != (scoring.AnswerResult{Status: scoring.AnswerCorrect, Correct: true, Solved: true, Newly: true, Remaining: 2}) {
+		t.Fatalf("seat-b: %+v, %v, want correct and newly solved", res, err)
 	}
 	before := f.spy.matchCalls.Load()
 	for _, in := range []string{tableSecret + "-b", "wrong-x"} {
@@ -391,7 +398,7 @@ func TestSubmitAnswer_SolvesWhenEveryQuestionIsAnswered(t *testing.T) {
 		t.Fatal("one answered question of two solved the challenge")
 	}
 	res, err = f.submit("seat-a", twoCID, "host", "host-a")
-	if err != nil || res != (scoring.AnswerResult{Status: scoring.AnswerCorrect, Correct: true, Solved: true, Remaining: 1}) {
+	if err != nil || res != (scoring.AnswerResult{Status: scoring.AnswerCorrect, Correct: true, Solved: true, Newly: true, Remaining: 1}) {
 		t.Fatalf("second question: %+v, %v, want correct and solved, 1 left", res, err)
 	}
 	if f.fs.markSolvedCalls != 1 || !f.fs.IsSolved("seat-a", twoCID) {
@@ -422,11 +429,16 @@ func TestSubmitAnswer_AFailedWriteDoesNotSolveAndTheNextSubmissionFinishesIt(t *
 		// and compares nothing.
 		f.fs.markSolvedErr = nil
 		res, err = f.submit("seat-a", oneCID, "who", "anything")
-		if err != nil || res != (scoring.AnswerResult{Status: scoring.AnswerAlreadyCorrect, Correct: true, Solved: true, Remaining: 2}) {
-			t.Fatalf("retry: %+v, %v, want already-correct and solved", res, err)
+		if err != nil || res != (scoring.AnswerResult{Status: scoring.AnswerAlreadyCorrect, Correct: true, Solved: true, Newly: true, Remaining: 2}) {
+			t.Fatalf("retry: %+v, %v, want already-correct and newly solved (the retry records the solve)", res, err)
 		}
 		if got := f.spy.matchCalls.Load(); got != 1 {
 			t.Fatalf("Match ran %d times, want 1 (the retry compares nothing)", got)
+		}
+		// Once solved, a further submission does not report a new solve.
+		res, err = f.submit("seat-a", oneCID, "who", "anything")
+		if err != nil || res.Newly || !res.Solved {
+			t.Fatalf("after the solve: %+v, %v, want solved and not newly", res, err)
 		}
 	})
 	t.Run("marking the question fails", func(t *testing.T) {
@@ -560,6 +572,49 @@ func TestSubmitAnswer_UnknownIdsAndOtherTypesSpendNothing(t *testing.T) {
 	}
 	if f.fs.answerStoreCalls != 0 || f.spy.matchCalls.Load() != 0 {
 		t.Fatalf("an unknown id reached the budget store (%d calls) or the judge", f.fs.answerStoreCalls)
+	}
+}
+
+// The Grader does not guess what a store outcome it does not know means: it is an
+// error, and nothing is compared or solved (fail-closed).
+func TestSubmitAnswer_AnUnknownStoreOutcomeIsAnErrorAndNothingIsCompared(t *testing.T) {
+	for _, outcome := range []store.AnswerAttempt{0, 99, -1} {
+		f := newInvFixture(t)
+		forced := outcome
+		f.fa.forceOutcome = &forced
+		res, err := f.submit("seat-a", oneCID, "who", tableSecret+"-a")
+		if err == nil || res != (scoring.AnswerResult{}) {
+			t.Fatalf("outcome %d: %+v, %v, want an error and the zero result", outcome, res, err)
+		}
+		if got := f.spy.matchCalls.Load(); got != 0 {
+			t.Fatalf("outcome %d: Match ran %d time(s), want 0", outcome, got)
+		}
+		if f.fs.markSolvedCalls != 0 || f.fa.state("seat-a", oneCID, "who") != (store.AnswerState{}) {
+			t.Fatalf("outcome %d: an unknown outcome led to a write", outcome)
+		}
+	}
+}
+
+// A question with no valid budget (a catalog the loader would have refused) is an
+// error before anything is spent or compared.
+func TestSubmitAnswer_AQuestionWithoutABudgetIsAnErrorAndSpendsNothing(t *testing.T) {
+	for _, attempts := range []int{0, -3} {
+		fs := newFakeStore()
+		events := &eventLog{}
+		fa := newFakeAnswers(fs, events)
+		spy := &spyJudge{inner: realJudge(t, answerRows()), events: events}
+		cat := catalog.Catalog{oneCID: catalog.Challenge{ID: oneCID, Type: catalog.TypeInvestigate, Investigate: &catalog.Investigate{
+			Questions: []catalog.Question{{ID: "who", Format: answerformat.Name, Attempts: attempts}},
+		}}}
+		g := scoring.New(cat, fs, fixedClock(time.Now())).
+			WithAnswers(fa, spy, slog.New(slog.NewJSONHandler(io.Discard, nil)))
+		res, err := g.SubmitAnswer(context.Background(), "seat-a", oneCID, "who", tableSecret+"-a")
+		if err == nil || res != (scoring.AnswerResult{}) {
+			t.Fatalf("attempts %d: %+v, %v, want an error and the zero result", attempts, res, err)
+		}
+		if fs.answerStoreCalls != 0 || spy.matchCalls.Load() != 0 || fs.markSolvedCalls != 0 {
+			t.Fatalf("attempts %d: the budget store (%d calls), the judge or MarkSolved was reached", attempts, fs.answerStoreCalls)
+		}
 	}
 }
 
@@ -729,10 +784,13 @@ func TestSubmitAnswer_ConcurrentCorrectAnswersAreBoundedAndSolveOnce(t *testing.
 	}
 	wg.Wait()
 
-	correct := 0
+	correct, newly := 0, 0
 	for i := range results {
 		if errs[i] != nil {
 			t.Fatalf("caller %d: %v", i, errs[i])
+		}
+		if results[i].Newly {
+			newly++
 		}
 		switch results[i].Status {
 		case scoring.AnswerCorrect:
@@ -753,6 +811,9 @@ func TestSubmitAnswer_ConcurrentCorrectAnswersAreBoundedAndSolveOnce(t *testing.
 	compared := int(spy.matchCalls.Load())
 	if compared < 1 || compared > 3 {
 		t.Fatalf("Match ran %d times, want between 1 and the limit 3", compared)
+	}
+	if newly != 1 {
+		t.Fatalf("%d calls reported the new solve, want exactly 1 (the solve metric counts it once)", newly)
 	}
 	if correct != compared {
 		t.Fatalf("%d calls were graded correct but Match ran %d times (every comparison here is a match)", correct, compared)
@@ -785,7 +846,7 @@ func TestSubmitAnswer_AdminResetGivesTheBudgetBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	res, err := g.SubmitAnswer(ctx, "seat-a", oneCID, "who", tableSecret+"-a")
-	if err != nil || res != (scoring.AnswerResult{Status: scoring.AnswerCorrect, Correct: true, Solved: true, Remaining: 2}) {
-		t.Fatalf("after the reset: %+v, %v, want a fresh budget and a solve", res, err)
+	if err != nil || res != (scoring.AnswerResult{Status: scoring.AnswerCorrect, Correct: true, Solved: true, Newly: true, Remaining: 2}) {
+		t.Fatalf("after the reset: %+v, %v, want a fresh budget and a new solve", res, err)
 	}
 }
