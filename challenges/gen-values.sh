@@ -109,10 +109,27 @@ sensitive_dir_prefixes() {
 
 # Evade challenges = directories that carry a plant.sh, in NN order.
 # (portable to bash 3.2 / macOS — no mapfile / no associative arrays)
+# MISSIONS is the plant.sh-only list: the plant.sh header checks below and the
+# plant.sh-specific checks use it. What the `plant` initContainer plants for is
+# derived from the TYPE instead (PLANT_IDS = evade plant.sh, or a challenge
+# whose falco-rule.yaml says `type: investigate`; init_plant_ids() below,
+# ADR-0056 D11 / A5a-2), which is what the rendering and the generated-script
+# checks iterate.
 MISSIONS=()
 while IFS= read -r m; do
   MISSIONS+=("$m")
 done < <(find . -maxdepth 2 -name plant.sh | sed 's|^\./||;s|/plant.sh$||' | sort)
+PLANT_IDS=()
+INVESTIGATE_IDS=()
+
+# ADR-0056 D11: the `plant` initContainer sees the per-seat Secret `ctf-evidence`
+# here (readOnly, plant only). The bundle's file names are unknown to this
+# script (the event edition supplies them at deploy time), so a real run
+# generates no copy line; the chart enumerates .Values.evidence.files by name in
+# the shape render_evidence_copy() defines. EVIDENCE_FILES is set only by the
+# internal fixtures, to show the generated shape and to feed check_2_7 (2-7(a)).
+EVIDENCE_SRC_ROOT='/opt/ctf/evidence-src'
+EVIDENCE_FILES=()
 
 # ---------------------------------------------------------------------------
 # plant.sh header parsing
@@ -384,13 +401,77 @@ is_mount_writable() { # $1=mount dir -> rc 0 iff some plant.sh declared plant-mo
 # 2-4)
 # ---------------------------------------------------------------------------
 
-unique_mount_dirs_for() { # $@ = mission ids -> unique mount-directory list, first-appearance order (2-2, ADR-0007)
-  local seen=() id type target mountdir found x
+is_investigate_id() { # $1=id -> rc 0 iff init_plant_ids() found it to be an investigate challenge
+  local x
+  if [ "${#INVESTIGATE_IDS[@]}" -gt 0 ]; then
+    for x in "${INVESTIGATE_IDS[@]}"; do
+      [ "${x}" = "$1" ] && return 0
+    done
+  fi
+  return 1
+}
+
+# init_plant_ids: derive, from the cwd tree, what the `plant` initContainer
+# plants for — the evade challenges (a plant.sh) AND the investigate
+# challenges (falco-rule.yaml `type: investigate`, no plant.sh: their evidence
+# bundle is copied in, ADR-0056 D11). Sorted by id (so, with no investigate
+# challenge, exactly MISSIONS). Fail-closed: an investigate challenge whose
+# mountDir cannot be read, or that also carries a plant.sh (two sources for
+# one challenge), stops the run.
+init_plant_ids() {
+  local f id
+  PLANT_IDS=()
+  INVESTIGATE_IDS=()
+  while IFS= read -r f; do
+    [ -z "${f}" ] && continue
+    id="$(basename "$(dirname "${f}")")"
+    is_investigate_file "${f}" || continue
+    if [ -z "$(investigate_mount_dir "${f}")" ]; then
+      echo "ADR-0056 A5a-2 VIOLATION: ${id} is 'type: ${INVESTIGATE_TYPE}' but no investigate.evidence.mountDir could be read from its falco-rule.yaml, so what to plant cannot be derived" >&2
+      exit 1
+    fi
+    if [ -f "$(dirname "${f}")/plant.sh" ]; then
+      echo "ADR-0056 A5a-2 VIOLATION: ${id} is 'type: ${INVESTIGATE_TYPE}' and also carries a plant.sh (an investigate challenge plants its evidence bundle only; the plant is derived from the type)" >&2
+      exit 1
+    fi
+    INVESTIGATE_IDS+=("${id}")
+  done < <(find . -maxdepth 2 -name falco-rule.yaml | sort)
+  while IFS= read -r id; do
+    [ -z "${id}" ] && continue
+    PLANT_IDS+=("${id}")
+  done < <({
+    find . -maxdepth 2 -name plant.sh | sed 's|^\./||;s|/plant.sh$||'
+    if [ "${#INVESTIGATE_IDS[@]}" -gt 0 ]; then printf '%s\n' "${INVESTIGATE_IDS[@]}"; fi
+  } | sort -u)
+}
+
+mount_dirs_of_id() { # $1=id -> the directory(ies) this id mounts into `challenge`, one per line (evade: from its plant-targets; investigate: evidence.mountDir)
+  local type target
+  if is_investigate_id "$1"; then
+    investigate_mount_dir "$1/falco-rule.yaml"
+    return 0
+  fi
+  type="$(plant_target_type "$1/plant.sh")"
+  while IFS= read -r target; do
+    [ -z "${target}" ] && continue
+    printf '%s\n' "$(mount_dir_for "${target}" "${type}")"
+  done < <(plant_targets "$1/plant.sh")
+}
+
+evidence_dirs_for() { # $@ = ids -> the evidence mountDir of each investigate id among them, one per line
+  local id
   for id in "$@"; do
-    type="$(plant_target_type "${id}/plant.sh")"
-    while IFS= read -r target; do
-      [ -z "${target}" ] && continue
-      mountdir="$(mount_dir_for "${target}" "${type}")"
+    if is_investigate_id "${id}"; then
+      investigate_mount_dir "${id}/falco-rule.yaml"
+    fi
+  done
+}
+
+unique_mount_dirs_for() { # $@ = ids -> unique mount-directory list, first-appearance order (2-2, ADR-0007)
+  local seen=() id mountdir found x
+  for id in "$@"; do
+    while IFS= read -r mountdir; do
+      [ -z "${mountdir}" ] && continue
       found=0
       if [ "${#seen[@]}" -gt 0 ]; then
         for x in "${seen[@]}"; do
@@ -401,24 +482,46 @@ unique_mount_dirs_for() { # $@ = mission ids -> unique mount-directory list, fir
         seen+=("${mountdir}")
         printf '%s\n' "${mountdir}"
       fi
-    done < <(plant_targets "${id}/plant.sh")
+    done < <(mount_dirs_of_id "${id}")
   done
 }
 
-# render_seed_body <mission-id>... -> the *unindented* initContainer script
+# render_evidence_copy <mount dir> <bundle file name>... -> ADR-0056 D11's copy
+# lines: each file by NAME (never `-a`, `.` or a glob), a plain file, then
+# read-only. Deliberately does not validate the names: check_2_7 (2-7(a)) is the
+# gate, so a bad name must reach it.
+render_evidence_copy() {
+  local rel f
+  rel="$(relpath "$1")"
+  shift
+  for f in "$@"; do
+    printf 'cp "%s/%s" "${PLANT_SEED_ROOT}/%s/%s"\n' "${EVIDENCE_SRC_ROOT}" "${f}" "${rel}" "${f}"
+    printf 'chmod 0444 "${PLANT_SEED_ROOT}/%s/%s"\n' "${rel}" "${f}"
+  done
+}
+
+# render_seed_body <id>... -> the *unindented* initContainer script
 # body (the ADR-0001/ADR-0007 seed script — this is exactly the text
 # Verification 2-7 statically checks).
 render_seed_body() {
-  local seeded=() id type target mountdir source found x rel
+  local seeded=() id mountdir source found x rel
   printf 'set -eu\n'
   printf 'PLANT_SEED_ROOT=%s\n' "${SEED_ROOT}"
   for id in "$@"; do
     printf '\n# ---- %s ----\n' "${id}"
-    type="$(plant_target_type "${id}/plant.sh")"
+    if is_investigate_id "${id}"; then
+      mountdir="$(investigate_mount_dir "${id}/falco-rule.yaml")"
+      rel="$(relpath "${mountdir}")"
+      printf '# evidence bundle (ADR-0056 D11): %s is where the bundle files are copied by name from %s/ (the ctf-evidence Secret, mounted in this initContainer only)\n' "${mountdir}" "${EVIDENCE_SRC_ROOT}"
+      printf 'mkdir -p "${PLANT_SEED_ROOT}/%s"\n' "${rel}"
+      if [ "${#EVIDENCE_FILES[@]}" -gt 0 ]; then
+        render_evidence_copy "${mountdir}" "${EVIDENCE_FILES[@]}"
+      fi
+      continue
+    fi
     source="$(plant_seed_source "${id}/plant.sh")"
-    while IFS= read -r target; do
-      [ -z "${target}" ] && continue
-      mountdir="$(mount_dir_for "${target}" "${type}")"
+    while IFS= read -r mountdir; do
+      [ -z "${mountdir}" ] && continue
       found=0
       if [ "${#seeded[@]}" -gt 0 ]; then
         for x in "${seeded[@]}"; do
@@ -434,12 +537,17 @@ render_seed_body() {
           printf 'cp -a "%s/." "${PLANT_SEED_ROOT}/%s/"\n' "${source}" "${rel}"
         fi
       fi
-    done < <(plant_targets "${id}/plant.sh")
+    done < <(mount_dirs_of_id "${id}")
     plant_body "${id}/plant.sh"
   done
 }
 
-render_plant_block() { # $@ = mission ids
+# An investigate challenge's mount carries `evidence: true` (after readOnly):
+# the chart (A5b) copies the bundle files, by name, into exactly those
+# directories. Evade mounts are rendered as before.
+render_plant_block() { # $@ = ids
+  local ev
+  ev="$(evidence_dirs_for "$@")"
   cat <<'HDR'
 plant:
   seedScript:
@@ -455,15 +563,25 @@ HDR
     else
       printf '    - path: %s\n      readOnly: true\n' "${d}"
     fi
+    if printf '%s\n' "${ev}" | grep -qxF "${d}"; then
+      printf '      evidence: true\n'
+    fi
   done
 }
 
 render_one() {
   local id="$1"
-  cat <<HEADER
+  if is_investigate_id "${id}"; then
+    cat <<HEADER
+# GENERATED from ${id}/falco-rule.yaml (type: ${INVESTIGATE_TYPE}) by gen-values.sh — DO NOT EDIT.
+# Run \`make gen-values\` after editing falco-rule.yaml.
+HEADER
+  else
+    cat <<HEADER
 # GENERATED from ${id}/plant.sh by gen-values.sh — DO NOT EDIT.
 # Run \`make gen-values\` after editing plant.sh.
 HEADER
+  fi
   render_plant_block "${id}"
 }
 
@@ -478,15 +596,15 @@ render_all() {
 # here. Mount directories (ADR-0007) are the enclosing directory of each
 # plant-target, not the plant-target itself when it is a file.
 HEADER
-  render_plant_block "${MISSIONS[@]}"
+  render_plant_block "${PLANT_IDS[@]}"
 }
 
 # scenario_all_ids <scenario dir> -> that scenario's full ordered
 # challenge-id list (scenario.yaml already validated above).
 scenario_all_ids() { scenario_challenge_ids "$1/scenario.yaml"; }
 
-# scenario_plant_ids <scenario dir> -> the subset of MISSIONS (global,
-# sorted — same "always MISSIONS sort order" discipline as render_all()/
+# scenario_plant_ids <scenario dir> -> the subset of PLANT_IDS (global,
+# sorted — same "always sort order" discipline as render_all()/
 # render_one(), 2-4) that this scenario's challenges: list also names. A
 # scenario listing ids out of MISSIONS order still renders a deterministic
 # seed script; an id with no plant.sh (trigger-only) simply never matches
@@ -497,7 +615,7 @@ scenario_plant_ids() {
     [ -z "${x}" ] && continue
     ids+=("${x}")
   done < <(scenario_all_ids "${dir}")
-  for m in "${MISSIONS[@]}"; do
+  for m in "${PLANT_IDS[@]}"; do
     found=0
     for x in "${ids[@]}"; do
       [ "${x}" = "${m}" ] && found=1 && break
@@ -567,7 +685,9 @@ check_2_5() {
 # talk to anything, at runtime. Best-effort static heuristic, documented as
 # such — see the (f) comment below for the one sub-check that is closer to
 # a real allowlist and the limits of the rest.
-#   (a) every `cp` copy-source is anchored under ${SNAPSHOT_ROOT}
+#   (a) every `cp` copy-source is anchored under ${SNAPSHOT_ROOT}, or is
+#       ${EVIDENCE_SRC_ROOT}/<plain file name> with no flag (ADR-0056 D11 /
+#       A5a-2: the one added root; never `-a`, `.`, a glob or `..`)
 #   (b) none of catalog's sensitive_file_names / sensitive dirs appear
 #       outside of a ${PLANT_SEED_ROOT}... or ${SNAPSHOT_ROOT}... token
 #   (c) grep / egrep / fgrep / find / ln are never invoked (enumerated —
@@ -614,6 +734,60 @@ check_2_7() { # $1 = generated seed script text (unindented), $2 = label
     | grep -vE "^${SNAPSHOT_ROOT}/" || true)"
   if [ -n "${hits}" ]; then
     echo "2-7(a) VIOLATION [${label}]: cp copy-source outside ${SNAPSHOT_ROOT}/:" >&2
+    printf '%s\n' "${hits}" | sed 's/^/    /' >&2
+    rc=1
+  fi
+  # (a) every `cp` (any flags, quoted or not; heredoc bodies skipped) names a
+  # source that is either under ${SNAPSHOT_ROOT}/ (the build-time snapshot), or
+  # ${EVIDENCE_SRC_ROOT}/<name> (ADR-0056 D11: the ctf-evidence Secret, the ONE
+  # added root) with NO flag (so never `-a`) and <name> a plain file name
+  # ([A-Za-z0-9][A-Za-z0-9._-]*: no `.`, `..`, `/`, glob, `$`, space). Any
+  # source with a `..` element or a glob / `$` / backtick is rejected too.
+  hits="$(printf '%s\n' "${code}" | awk -v snap="${SNAPSHOT_ROOT}" -v evs="${EVIDENCE_SRC_ROOT}" '
+    BEGIN { heredoc = 0 }
+    {
+      line = $0
+      if (heredoc) {
+        chk = line; sub(/^[ \t]+/, "", chk)
+        if (chk == delim) heredoc = 0
+        next
+      }
+      t = line
+      sub(/^[ \t]+/, "", t); sub(/[ \t]+$/, "", t)
+      if (t == "") next
+      if (match(t, /<<-?[ \t]*['\''"]?[A-Za-z_][A-Za-z0-9_]*['\''"]?[ \t]*$/)) {
+        d = substr(t, RSTART, RLENGTH)
+        gsub(/^<<-?[ \t]*['\''"]?/, "", d); gsub(/['\''"]?[ \t]*$/, "", d)
+        delim = d; heredoc = 1
+      }
+      nseg = split(t, segs, /(;|&&|\|\||\|)/)
+      for (i = 1; i <= nseg; i++) {
+        seg = segs[i]
+        gsub(/^[ \t]+/, "", seg); gsub(/[ \t]+$/, "", seg)
+        if (seg !~ /^cp([ \t]|$)/) continue
+        rest = substr(seg, 3)
+        flags = ""
+        while (match(rest, /^[ \t]+-[^ \t]*/)) {
+          flags = flags substr(rest, RSTART, RLENGTH)
+          rest = substr(rest, RSTART + RLENGTH)
+        }
+        ok = 0
+        if (match(rest, /^[ \t]+("[^"]*"|\047[^\047]*\047|[^ \t"\047]+)/)) {
+          src = substr(rest, RSTART, RLENGTH)
+          gsub(/^[ \t]+/, "", src); gsub(/^["\047]|["\047]$/, "", src)
+          if (src ~ /(^|\/)\.\.(\/|$)/ || src ~ /[*?$`]/ || index(src, "[") > 0) ok = 0
+          else if (index(src, snap "/") == 1) ok = 1
+          else if (index(src, evs "/") == 1 && flags == "") {
+            name = substr(src, length(evs) + 2)
+            ok = (name ~ /^[A-Za-z0-9][A-Za-z0-9._-]*$/)
+          }
+        }
+        if (!ok) { printf "%d:%s\n", NR, line; break }
+      }
+    }
+  ' || true)"
+  if [ -n "${hits}" ]; then
+    echo "2-7(a) VIOLATION [${label}]: cp copy-source is not ${SNAPSHOT_ROOT}/... or ${EVIDENCE_SRC_ROOT}/<plain file name> (no flag, no '-a', no '.', no glob, no '..'):" >&2
     printf '%s\n' "${hits}" | sed 's/^/    /' >&2
     rc=1
   fi
@@ -734,8 +908,8 @@ check_2_7() { # $1 = generated seed script text (unindented), $2 = label
 
 run_2_7_all_scopes() {
   local rc=0 id sdir sid m plant_ids
-  check_2_7 "$(render_seed_body "${MISSIONS[@]}")" "values-all" || rc=1
-  for id in "${MISSIONS[@]}"; do
+  check_2_7 "$(render_seed_body "${PLANT_IDS[@]}")" "values-all" || rc=1
+  for id in "${PLANT_IDS[@]}"; do
     check_2_7 "$(render_seed_body "${id}")" "${id}" || rc=1
   done
   # P27-1: scenario-scoped seed scripts get the exact same ADR-0001
@@ -845,7 +1019,7 @@ check_mount_granularity() { # $1=values file $2=label $3=allow_empty(0/1, defaul
 run_verification_1_all_scopes() {
   local rc=0 id sdir sid plant_ids m allow_empty
   check_mount_granularity <(render_all) "values-all (generated)" || rc=1
-  for id in "${MISSIONS[@]}"; do
+  for id in "${PLANT_IDS[@]}"; do
     check_mount_granularity <(render_one "${id}") "${id} (generated)" || rc=1
   done
   # P27-1: scenario-scoped plant.mounts get the same directory-granularity
@@ -1411,8 +1585,149 @@ cp /opt/ctf/plant-seed/x "${PLANT_SEED_ROOT}/opt/fx/other/"'
 }
 
 # ---------------------------------------------------------------------------
+# ADR-0056 A5a-2: the plant is derived from the TYPE (evade plant.sh, or
+# investigate), the investigate mount and copy shapes are generated, and 2-7(a)
+# accepts ${EVIDENCE_SRC_ROOT}/<plain file name> and nothing else new.
+# ADR-0007 V2's shape again: a positive tree passes and shows the generated
+# shape; each deliberately-bad input is rejected, for its own reason (the
+# marker), by the SAME functions the live run uses. No investigate challenge
+# exists in the tree yet, so this is where the shapes are exercised.
+# ---------------------------------------------------------------------------
+
+# $1=label $2=script text $3=expected marker -> rc 0 iff check_2_7() rejects the
+# text AND says why with the marker
+fx_expect_2_7() {
+  local label="$1" text="$2" marker="$3" out rc=0
+  out="$(mktemp)"
+  if check_2_7 "${text}" "fx" >"${out}" 2>&1; then
+    echo "ADR-0056 A5a-2 VIOLATION: the deliberately-bad script '${label}' was ACCEPTED by 2-7 — the check is vacuous" >&2
+    rc=1
+  elif ! grep -qF "${marker}" "${out}"; then
+    echo "ADR-0056 A5a-2 VIOLATION: the script '${label}' was rejected, but not for the expected reason '${marker}':" >&2
+    sed 's/^/    /' "${out}" >&2
+    rc=1
+  fi
+  rm -f "${out}"
+  return "${rc}"
+}
+
+# $1=label $2=root (a tree) $3=marker -> rc 0 iff init_plant_ids() stops on it with the marker
+fx_expect_derive_rejected() {
+  local label="$1" root="$2" marker="$3" out rc=0
+  out="$(mktemp)"
+  if ( cd "${root}" && init_plant_ids ) >"${out}" 2>&1; then
+    echo "ADR-0056 A5a-2 VIOLATION: the deliberately-bad tree '${label}' was ACCEPTED by init_plant_ids" >&2
+    rc=1
+  elif ! grep -qF "${marker}" "${out}"; then
+    echo "ADR-0056 A5a-2 VIOLATION: the tree '${label}' was rejected, but not for the expected reason '${marker}':" >&2
+    sed 's/^/    /' "${out}" >&2
+    rc=1
+  fi
+  rm -f "${out}"
+  return "${rc}"
+}
+
+verify_plant_derivation_tests() {
+  local root rc=0 got seed block want_ids
+  local dst='"${PLANT_SEED_ROOT}/opt/fx/evidence-a/x"'
+  local src="${EVIDENCE_SRC_ROOT}"
+  root="$(mktemp -d)"
+
+  # positive: an evade plant.sh, an investigate challenge with NO plant.sh, and a
+  # challenge that is neither (type: inspect) which must not be planted for
+  fx_plant "${root}/p" 30-a /opt/fx/vault dir 'printf x > "${PLANT_SEED_ROOT}/opt/fx/vault/a"'
+  fx_inv "${root}/p" 40-ev '  evidence: {mountDir: /opt/fx/evidence-a}'
+  mkdir -p "${root}/p/20-t"
+  printf 'challengeId: 20-t\ntype: inspect\n' > "${root}/p/20-t/falco-rule.yaml"
+  want_ids='30-a
+40-ev'
+  if ! got="$( cd "${root}/p" && init_plant_ids && printf '%s\n' "${PLANT_IDS[@]}" )" || [ "${got}" != "${want_ids}" ]; then
+    echo "ADR-0056 A5a-2 VIOLATION: the plant ids derived from the positive tree are '${got}', want '${want_ids}' (evade plant.sh + investigate; not a challenge of another type)" >&2
+    rc=1
+  fi
+  # the mounts: the investigate one is readOnly and marked evidence, the evade one is not
+  block="$( cd "${root}/p" && init_plant_ids && render_plant_block "${PLANT_IDS[@]}" )" || rc=1
+  want='    - path: /opt/fx/vault
+      readOnly: true
+    - path: /opt/fx/evidence-a
+      readOnly: true
+      evidence: true'
+  case "${block}" in
+    *"${want}") : ;;
+    *)
+      echo "ADR-0056 A5a-2 VIOLATION: the generated plant.mounts of the positive tree does not end with the expected mounts:" >&2
+      printf '%s\n' "${block}" | sed 's/^/    /' >&2
+      rc=1
+      ;;
+  esac
+  # a real run knows no file name: mkdir only, no copy line
+  case "${block}" in
+    *'mkdir -p "${PLANT_SEED_ROOT}/opt/fx/evidence-a"'*) : ;;
+    *) echo "ADR-0056 A5a-2 VIOLATION: the generated seed script has no mkdir for the evidence directory" >&2; rc=1 ;;
+  esac
+  case "${block}" in
+    *"cp \"${src}/"*) echo "ADR-0056 A5a-2 VIOLATION: a copy line was generated although no bundle file name is known to gen-values" >&2; rc=1 ;;
+  esac
+  # with names (fixture only): D11's shape, and 2-7 accepts it
+  seed="$( cd "${root}/p" && init_plant_ids && EVIDENCE_FILES=(a.log b-2.txt) && render_seed_body "${PLANT_IDS[@]}" )" || rc=1
+  case "${seed}" in
+    *"cp \"${src}/a.log\" \"\${PLANT_SEED_ROOT}/opt/fx/evidence-a/a.log\"
+chmod 0444 \"\${PLANT_SEED_ROOT}/opt/fx/evidence-a/a.log\"
+cp \"${src}/b-2.txt\" \"\${PLANT_SEED_ROOT}/opt/fx/evidence-a/b-2.txt\"
+chmod 0444 \"\${PLANT_SEED_ROOT}/opt/fx/evidence-a/b-2.txt\""*) : ;;
+    *)
+      echo "ADR-0056 A5a-2 VIOLATION: the generated copy lines are not D11's shape (cp by name, no -a, then chmod 0444):" >&2
+      printf '%s\n' "${seed}" | sed 's/^/    /' >&2
+      rc=1
+      ;;
+  esac
+  if ! check_2_7 "${seed}" "fx-positive" >/dev/null 2>&1; then
+    echo "ADR-0056 A5a-2 VIOLATION: 2-7 rejected the generated evidence copy lines (the allowlist is too strict):" >&2
+    check_2_7 "${seed}" "fx-positive" 2>&1 | sed 's/^/    /' >&2 || true
+    rc=1
+  fi
+  # the existing snapshot restore stays accepted
+  if ! check_2_7 'cp -a "/opt/ctf/plant-seed/etc/." "${PLANT_SEED_ROOT}/etc/"' "fx-snapshot" >/dev/null 2>&1; then
+    echo "ADR-0056 A5a-2 VIOLATION: 2-7 rejected the existing snapshot restore line" >&2
+    rc=1
+  fi
+
+  # negative: 2-7(a), by hand-written lines
+  local m='2-7(a) VIOLATION'
+  fx_expect_2_7 "a copy-source outside both roots" "cp \"/etc/hostname\" ${dst}" "${m}" || rc=1
+  fx_expect_2_7 "cp -a from the evidence root" "cp -a \"${src}/a.log\" ${dst}" "${m}" || rc=1
+  fx_expect_2_7 "cp -a of the evidence root directory (.)" "cp -a \"${src}/.\" \"\${PLANT_SEED_ROOT}/opt/fx/evidence-a/\"" "${m}" || rc=1
+  fx_expect_2_7 "a glob in the evidence root" "cp \"${src}/*\" \"\${PLANT_SEED_ROOT}/opt/fx/evidence-a/\"" "${m}" || rc=1
+  fx_expect_2_7 "a '..' element" "cp \"${src}/../plant-seed/x\" ${dst}" "${m}" || rc=1
+  fx_expect_2_7 "a file name with a space" "cp \"${src}/a b\" ${dst}" "${m}" || rc=1
+  fx_expect_2_7 "a sibling root (prefix without the slash)" "cp \"${src}x/a\" ${dst}" "${m}" || rc=1
+  fx_expect_2_7 "a flag on a plain evidence copy" "cp -r \"${src}/a.log\" ${dst}" "${m}" || rc=1
+  # negative: bad names reaching 2-7 through the real renderer (the renderer is not the gate)
+  seed="$( cd "${root}/p" && init_plant_ids && EVIDENCE_FILES=('../x') && render_seed_body "${PLANT_IDS[@]}" )" || rc=1
+  fx_expect_2_7 "a bundle file named '../x' through the renderer" "${seed}" "${m}" || rc=1
+  seed="$( cd "${root}/p" && init_plant_ids && EVIDENCE_FILES=('*') && render_seed_body "${PLANT_IDS[@]}" )" || rc=1
+  fx_expect_2_7 "a bundle file named '*' through the renderer" "${seed}" "${m}" || rc=1
+
+  # negative: the derivation itself
+  fx_plant "${root}/e1" 30-a /opt/fx/vault dir 'printf x > "${PLANT_SEED_ROOT}/opt/fx/vault/a"'
+  fx_inv "${root}/e1" 40-ev '  evidence: [/opt/fx/evidence-a]'
+  fx_expect_derive_rejected "an investigate challenge with no mountDir" "${root}/e1" "no investigate.evidence.mountDir could be read" || rc=1
+  fx_inv "${root}/e2" 40-ev '  evidence: {mountDir: /opt/fx/evidence-a}'
+  printf '# plant-target: /opt/fx/other\n# plant-target-type: dir\ntrue\n' > "${root}/e2/40-ev/plant.sh"
+  fx_expect_derive_rejected "an investigate challenge that also has a plant.sh" "${root}/e2" "also carries a plant.sh" || rc=1
+
+  rm -rf "${root}"
+  if [ "${rc}" -eq 0 ]; then
+    echo "  ok: ADR-0056 A5a-2 — plant derived from type (evade + investigate), investigate mount / copy shapes generated, 2-7(a) accepts only ${EVIDENCE_SRC_ROOT}/<plain file name>: the positive tree passes and each of the 12 deliberately-bad inputs is rejected for its own reason"
+  fi
+  return "${rc}"
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
+init_plant_ids
 
 if [ "${CHECK}" -eq 1 ]; then
   rc=0
@@ -1422,7 +1737,8 @@ if [ "${CHECK}" -eq 1 ]; then
   verify_negative_test || rc=1
   run_claims_check || rc=1
   verify_claims_negative_tests || rc=1
-  for id in "${MISSIONS[@]}"; do
+  verify_plant_derivation_tests || rc=1
+  for id in "${PLANT_IDS[@]}"; do
     if ! diff -u "${id}/values.yaml" <(render_one "${id}") >/dev/null 2>&1; then
       echo "DRIFT: ${id}/values.yaml is out of sync with ${id}/plant.sh" >&2
       rc=1
@@ -1450,8 +1766,9 @@ run_verification_1_all_scopes
 verify_negative_test
 run_claims_check
 verify_claims_negative_tests
+verify_plant_derivation_tests
 
-for id in "${MISSIONS[@]}"; do
+for id in "${PLANT_IDS[@]}"; do
   render_one "${id}" > "${id}/values.yaml"
   echo "wrote ${id}/values.yaml"
 done
