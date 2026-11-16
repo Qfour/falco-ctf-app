@@ -173,7 +173,7 @@
 | C1 | 参照の実在と一意: missions は全部 `challenges/` に実在する (Restrict と同じ fail-closed)。モジュールの中で課題が重複しない。コースの中で課題は 1 回だけ。2 つのモジュールに出る課題は `shared:` に書いた id に限り、先に現れた位置に残す。`shared:` に書いたのに重複していない id も fail。scenario の id = dir 名、全 scenario で一意 | CI (生成器) + 起動時 (生成物の重複を `LoadScenario` が拒否) | 重複の拒否と id は S1、`shared` は S2 |
 | C2 | 時間: 選んだ edition の Σ(handsOn + debrief) + intro + closing ≤ `timebox.minutes`。宣言した値どうしの検査で、実測ではない | CI | S3 |
 | C3 | `requires` の順序: 前提のモジュールがコースの中で先に置かれている | CI | S3 |
-| C4 | 同じ Pod に同居できる: (i) mount dir の属性の一致 (既存。プール全体、C6)、(ii) **plant の書き込み先の file が、プール全体の課題の間で互いに素** (新設。除外表は持たない)。プール全体で検査するので、どの組み合わせでも成り立つ。故意に違反させた fixture で赤になることを恒久 test にする (ADR-0007 V2 と同じ形) | CI (`gen-values --check`)、**R1** | S3 |
+| C4 | 同じ Pod に同居できる: (i) mount dir の属性の一致 (既存。プール全体、C6)、(ii) **plant の書き込み先の file が、プール全体の課題の間で互いに素** (新設。除外表は持たない)。プール全体で検査するので、どの組み合わせでも成り立つ。故意に違反させた fixture で赤になることを恒久 test にする (ADR-0007 V2 と同じ形)。**(ii) は ADR-0056 A5a-1 (app#619) の `check_claims` で実装済み。S3 で再実装しない** | CI (`gen-values --check`)、**R1** | (ii) は済み、(i) は既存 |
 | C5 | 採点の独立: I11 の交差 test を、生成した全 scenario に対し、scenario ごとの pin で回す。列挙が 0 件なら fail | CI (`make test`) | S1 |
 | C6 | flags は不変: module.yaml・course.yaml・生成物は flags の key を持たない (strict decode)。ADR-0033 D2 のスコープ = 生成物の `Restrict` 後の catalog (変更なし) | CI | S2 |
 | C7 | 必要な機能 ⊆ 環境: (起動時) スコープに detect があり `DETECT_RUNNER` が `k8s` でなければ、scoreboard は exit 1。(platform) `requirements.rules` の全名が「pin した Falco 版の default ruleset ∪ customRules」で解決する。`detect` なら detectRunner が有効。どちらも課金の前に止める | 起動時 + platform の verify | S3 |
@@ -251,7 +251,7 @@
 - **V3 (S1、platform)**: helmfile が無い / write-values が失敗 / 描画の形が合わない、の 3 つの case で `deploy-event-workspaces.sh` が非ゼロ終了し、払い出しを 1 つもしない。`--challenge` を明示すれば導出を経ない。
 - **V4 (S2)**: module.yaml / course.yaml / 生成物に未知の key があれば fail (testdata)。module.yaml と course.yaml を両方持つ dir、どちらも無い dir も fail。
 - **V5 (S2)**: `gen-scenarios --check` が required check の job で走る。生成物を 1 byte 手で直したコピーで赤になる。3 つの既存 scenario の `challenges` が、literal で pin した移行前の一覧と一致する。
-- **V6 (S3)**: C2・C3・C4 (ii) に、それぞれ故意の違反 1 件の負の case を置く。C4 (ii) は gen-values の `--check` の内部 fixture で検査する (ADR-0007 V2 と同じ)。
+- **V6 (S3)**: C2・C3・C4 (ii) に、それぞれ故意の違反 1 件の負の case を置く。C4 (ii) は gen-values の `--check` の内部 fixture で検査する (ADR-0007 V2 と同じ)。C4 (ii) の負の case は ADR-0056 A5a-1 (app#619) の `verify_claims_negative_tests` に既にある (ADR-0056 V42)。S3 で足すのは C2・C3 だけ。
 - **V7 (S3)**: detect を含む scenario で `DETECT_RUNNER=off` なら、scoreboard が非ゼロ終了する (test)。
 - **V8 (S3、platform)**: 生成物の `requirements.rules` から customRules の 1 名を消した環境で、verify が課金の前に止まる。`APP_PIN` の app に `requirements:` が無い ref でも止まる。platform の tree に rule 名の写しが無い (grep 0 件)。
 - **V9 (S4)**: 3 層の優先と丸ごとの置き換えの単体 test。範囲外を指す overlay と、外の課題を参照する文で赤になる。

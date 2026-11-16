@@ -1,7 +1,7 @@
 # ADR-0056: 調査型の課題を足す — 答えは閉じた形式の設問とし、scoreboard の Grader 1 点で「回数を加算してから比較」で判定する。イベント版の痕跡束 (席ごとの値と囮) は seat の Secret → plant → seed → 宣言した mount で、答え表は scoreboard の process だけに注入する。練習版は公開し、イベントのモード (`FLAGS_FILE`) では使わない
 
 - Status: **Proposed** (起草 2026-11-16)
-  - Accepted の条件: (1) 段階 A1〜A5 の app PR と P1 の platform PR が merge されている、(2) V1〜V6・V8〜V11・V15〜V35 (V15 の platform の部分を除く) が required check (`test` / `flag-guard` / `chart-lint`) の上で緑、(3) security-engineer の R1 の記録 (A1〜A5・P1。private) と CTO の承認の記録がある。
+  - Accepted の条件: (1) 段階 A1〜A5 の app PR と P1 の platform PR が merge されている、(2) V1〜V6・V8〜V11・V15〜V42 (V15 の platform の部分を除く) が required check (`test` / `flag-guard` / `chart-lint`) の上で緑、(3) security-engineer の R1 の記録 (A1〜A5・P1。private) と CTO の承認の記録がある。
   - D14 (detect の hold-out) は、本 ADR の Accepted を待たない独立の段階 (D1)。前提は #341 の merge と detect 有効化の R1。
 - Date / Deciders: 2026-11-16 / CEO (秘匿 = 版を分ける。回答型は ADR-0056。利用形態の順 = イベント → 研修 → 自習 → デモ。イベント後の公開は都度 CEO)、CTO 代行 = CoS (席ごとの値 + 囮の位置 K。detect の応答の区別を潰すのは hold-out の変種だけ。I6 の解釈 = イベント版は flags と同じ「イベントのデータ」)、security-engineer (CISO 直下。5 点とも条件付きで可、2026-11-16)、architect (起草)
 - 関連: product brief ws#185 (`docs/briefs/ir-scenario.md` §5.2・§5.3・§8)、ADR-0055 (Proposed、app#604。D6 の `requirements.answers`)、ADR-0001 / 0005 / 0007 / 0020 / 0026 / 0027 / 0029 / 0033 / 0037 / 0039 / 0042、`docs/detect-challenge-design.md`、REFACTORING.md の新フェーズ (番号は CoS が決める)、app#341
@@ -137,8 +137,11 @@
 - `mountDir` は次をすべて満たす。
   - 絶対 path である。
   - `/opt/ctf/missions/` (I16) と seed root の外にある。
-  - `sensitive_dir_prefixes` (`gen-values.sh:94`) の外にある。理由は、deploy が catalog の rule を発火させないため (I13b)。
-  - 他の plant-target と file が互いに素である (ADR-0055 C4 (ii))。
+  - (a) `sensitive_dir_prefixes` (`gen-values.sh:94`) のどの entry の内側にも、上 (祖先) にも無い。(a2) sensitive な file (`sensitive_paths()`) の dirname と等しくなく、その祖先でもない。理由は、deploy が catalog の rule を発火させないため (I13b)。(a)(a2) は調査型の痕跡にだけ効く (evade の plant-target は、意図して sensitive な場所に仕込む)。
+  - (b) 他の課題の mount dir・書き込みの file・痕跡の dir と、等しくもなく、入れ子 (内側 / 上) にもならない。束の file 名は gen-values の時点で分からないので、dir の共有を file の共有として扱う。(c) 同じ file を 2 つの plant.sh が書かない (dir の共有は可)。(c) が ADR-0055 C4 (ii) にあたる。
+  - fail-closed の規則: `PLANT_SEED_ROOT` に触れる plant.sh の行は、列挙した形のどれかでなければならない。次はすべて拒否する: shell の展開を含む書き込み先、認識できる書き込み先が 1 つも無い plant.sh、`mountDir` を抜き出せない調査型、`investigate:` block を持つのに type が `INVESTIGATE_TYPE` でない file、空の表、空の sensitive の一覧。比べる path はすべて絶対で clean。
+  - `INVESTIGATE_TYPE` (`gen-values.sh:1019`) は catalog の型の名前と parity の test で一致させる。
+  - 実装は `challenges/gen-values.sh` の `collect_claims` / `check_claims` (A5a-1 #619)。Go の catalog には写さない (`internal/catalog/investigate.go:115-119`)。ADR-0055 C4 (ii) は、これで実装済み。
 - **各課題に、席ごとに変えられる format (D2 の表で「可」) の設問を 1 つ以上置く。** 満たさなければ catalog の load で拒否する。判定は format だけで決まり edition を要らないので、A1b で検査する。
   - 理由: solve には全設問の正解が要るので、Board で共有した固定の答えだけでは solve できない (security-engineer、2026-11-16 の 2 回目)。
   - これで足りる条件は 2 つ。(i) 学習の要点 (L1 / L2) を、席ごとの設問の側に置く。(ii) 席ごとの設問の答えを、固定の設問の答えから導けないようにする。
@@ -202,6 +205,8 @@
 - `MissionDetail` に `questions` を足す (additive、key は 21 → 22)。
   - 形は `[{id, prompt, format, attempts, remaining, correct}]`。調査型でない課題では `[]`。
   - 生成型で組み立てる (Board / profile の型に倣う)。
+  - 読み方 (A3b-2 #621): 表示中の mission が調査型のときだけ、journey の polling (約 2 秒) のたびに `store.AnswerAttempts` を 1 回 SQL で読む (`internal/scoreboard/api/api.go:2546-2568`)。読めなければ journey 全体を 500 にする。回数と正解の表示を推測で出さない (fail-closed)。
+  - 代案は、`hintViews` (`internal/store/store.go:124`) のような in-memory の写しを write-through で持つ形。読みは 0 になるが、写しと table の 2 つの正ができ、`Reset`・migration・自己修復 (D5 の 5) との整合を別に守ることになる。今は採らない (Signpost 7)。
 
 ### D5 判定の 1 点と順序 (fail-closed)
 判定の場所は `internal/scoreboard/scoring` の Grader の `SubmitAnswer` だけ。比較を呼べるのも、solve を書けるのもここだけ (`detect-challenge-design.md:79-83` と同じ原則)。
@@ -251,7 +256,12 @@
 - **イベントのモードの定義**: scoreboard の process では「`FLAGS_FILE` が空でない」こと。ADR-0033 D9 (a) によって、local 以外の env は必ずこれを満たす。
   - (i) イベントのモードで、スコープに調査型があり、`ANSWERS_FILE` が無い → 起動を拒否する。
   - (ii) イベントのモードでないのに `ANSWERS_FILE` がある → 起動を拒否する (信号の食い違い)。
-  - (iii) イベントのモードでは、練習版の答えを読む code path に到達しない。表は `edition.Load(cat, answersFile, eventMode)` の 1 回の呼び出しでだけ得る (ADR-0033 D6 と同じく、ソースの検査で固定する)。
+  - (iii) イベントのモードでは、練習版の答えから Judge を作る code path に到達しない。練習版の答えは、T6 の比較のためにだけ読む (A4a-1)。表は `edition.Load` の 1 回の呼び出しでだけ得る (ADR-0033 D6 と同じく、ソースの検査で固定する)。
+  - (iv) **練習のモードの採点** (A4a-2): イベントのモードでなく `ANSWERS_FILE` が無く、スコープに調査型があるときは、`edition.Load` が image の練習版の表 (`challenges/<id>/edition/practice/answers.tsv`。run id は 32 桁の 0、seat は `*`) をスコープの分だけ 1 つにまとめ、`Check` (EventMode false) と `NewJudge` を通して Judge にする。
+    - `Load` の入口は 1 つのまま (引数に challengesDir を足す)。`Parse` / `NewJudge` を呼ぶのは load.go だけ。
+    - スコープの調査型に練習版が欠けていれば、起動を拒否する (T4、起動ログの (4))。
+    - 受理したときは (5) を run id 32 桁の 0 で出す。platform の verify は、イベントでこの値を見たら FAIL にする (P1b-2)。
+    - A4a-2 までは、今の挙動 (`Load` が `(nil, "", nil)`、提出は 500 で何も消費しない。#622 の test) のままにする。
 - **練習版を既定にするのは local だけ** (security HIGH)。
   - platform の helmfile は、env が local 以外で、生成物の `requirements.answers` が空でなく、`answersSecret` が無効なら、render で失敗する (`0033` D9 (a) と同じ型)。
   - workspace の払い出しでは、束の出所を 1 つ明示する。イベント版の dir と digest か、練習版 (env が local で、kube context も local 系のときだけ) のどちらか (D9 (b) と同じ型)。
@@ -435,7 +445,9 @@ security の要件 3 は「起動拒否」と書いている。束の項目は�
   - ADR-0026: D5 の新しい caller (束 = Target)。
   - ADR-0001 / I12: plant の 2 つ目の用途と、copy-source を 1 つ足すこと。
   - ADR-0033: D9 の (a)(b)(c)(g) の型を `ANSWERS_FILE` と束に延長する。Signpost 3 を版の検査に限って発火させる。
-  - ADR-0055: D6 の `answers`。
+  - ADR-0055: D6 の `answers`。C4 (ii) と V6 は ADR-0056 A5a-1 (#619) で実装済み (pointer)。
+  - ADR-0038: D2 の `gate` の閉じた語彙に `self` を足す (A3b-4。限定の supersede。ADR-0038 の Status に導線を足す)。宣言する組は `self` × {`no_identity`, `non_canonical`, `mismatch`}。`self` の `mismatch` には、`{user}` と一致しない `ADMIN_EMAILS` の identity を含める (意図した拒否なので、alert に数えない)。
+  - ADR-0003: W2 (`0003:221-243`) が調査型にも及ぶ。調査型が current に留まる間、その後ろの evade の clean gate は効かない。コースの配置の規則 (A3b-5、V39) で塞ぐ。I11 は変えない。
   - `docs/detect-challenge-design.md`: D14。
 - **参照**:
   - ADR-0005 (parity。operation が 1 つ増える)
@@ -455,11 +467,11 @@ security の要件 3 は「起動拒否」と書いている。束の項目は�
 |---|---|---|---|---|
 | A0 (#605) | 本 ADR (Proposed)、索引 | — | — | — |
 | A1a (#606) | `internal/catalog/answerformat` (D2 の列挙と正規化。D3 (a) のうち catalog で計算する 4 format。`path` / `name` は保留、`technique` は拒否) | 要 | — | V6 (catalog)、V21 (format) |
-| A1b (#607) | catalog の `investigate` (strict)、journey の `questions[]`、D1 の「席ごとの設問を 1 つ以上」。`catalog.LoadScored` は、調査型を含む scope を拒否する (A3b で外す。それまで調査型の課題は起動しない) | 要 | — | V10、V20、V21 (LoadScored) |
+| A1b (#607) | catalog の `investigate` (strict)、journey の `questions[]`、D1 の「席ごとの設問を 1 つ以上」。`catalog.LoadScored` による調査型を含む scope の拒否は、A3b-3 (#622) で外した | 要 | — | V10、V20、V21 |
 | A1c (任意) | ATT&CK v19 の technique の表を入れ、`technique` を有効にする。設問に `technique` を使うときだけ、A7 の前に入れる | — | — | V21 (technique) |
 | A1d (#611) | A1 の follow-up (#608): `type:` の許容集合に `investigate` を足す (`images/challenge/Dockerfile` の 2 か所、`scripts/check-image-hygiene.sh` の V2、`scripts/test-check-image-hygiene.sh` の case)。`answers.yaml` の注記。catalog と 3 か所の parity の Go test。調査型の top-level の strict と journey.yaml の必須 (journey の dir が無い場合を含む)。`CheckSpace` の test の強化。実課題の数の pin を外す | 要 (Dockerfile) | — | V22、V23、V25、V26、V27 |
 | A1e (#612) | `internal/hintleak` の scope に設問の prompt を Free として足す (D1) | 要 | — | V24 |
-| A1f | #608 の追記: prompt の数の検査を、組み立て側が数えた値ではなく Free の実体 (Source が `<cid> questions[<qid>].prompt` の形の item) で数える。A3b の前提 | 要 | — | V24、V35 (検証: CI の `make test`) |
+| A1f (#618) | #608 の追記: prompt の数の検査を、組み立て側が数えた値ではなく Free の実体 (Source が `<cid> questions[<qid>].prompt` の形の item) で数える | 要 | — | V24、V35 |
 | A2a (#610) | `internal/edition` の答え表: parser・T3〜T8・`ModeCheck` (T1 / T2 の判定。入力はイベントのモード・スコープの調査型の有無・`ANSWERS_FILE` の有無)・Judge。pure な package にする (env・file の読み・log・process の終了を持たない) | 要 | — | V1 (Judge と error の文)、V3 (T)、V15 (T3 の run id) |
 | A2b-go (#613) | `edition.Load` の 1 点、`cmd/scoreboard` の起動時の拒否、起動ログの (4)(5)。クロスリポ契約の「起動ログ」行 | 要 | 起動ログの行 ↔ P1a (platform#332、先に merge) | V1 (起動)、V13、V15 (起動ログ) |
 | A2b-chart (#614) | `charts/scoreboard` の `answersSecret` (scoreboard の container だけに mount)、render の拒否 3 つ | 要 | — (行は A4-0) | V2 (scoreboard) |
@@ -467,25 +479,31 @@ security の要件 3 は「起動拒否」と書いている。束の項目は�
 | A3a-1 (#615) | store: `answer_attempts` (migration 3)、`Reset` を 1 transaction に | 要 | — (rollback の runbook = platform#333) | V31、V5 (store の部分) |
 | A3a-2 (#616) | Grader の `SubmitAnswer` (加算 → 比較 → solve、自己修復、`Newly`)、比較の入口のソース検査 | 要 | — | V5、V1 (store・log)、V30 |
 | A3a (分割前の記述) | store の migration、Grader の `SubmitAnswer` (D5・D7)、admin reset | 要 | — | V5、V1 (store・log) |
-| A3b | **前提 (2026-11-16)**: merge 済みは A1d #611・A1e #612・A2b #613 / #614・A3a #615 / #616。残りは A1f と A5a-1 (V28・V29 が main で緑)。A5 の全体は要らない (調査型の課題は A7 まで無く、痕跡を注入する場面が無い)。D5 の自己修復のため、正解済みで未 solve の設問への再提出を route が受け付けること。route・spec・`self` の語彙と authz の test・og の pin 16・rate-limit・`MissionDetail.questions`・metrics。spec の type enum (3 つ) と kind に `investigate` を足す。A1b の `LoadScored` による調査型の拒否を外す。**前提: A1d・A1e・A2b・A5 が merge 済みで、V22〜V25・V28・V29 が main で緑** | 要 | — | V9、V1 (応答)、V21 (拒否を外した後の実 catalog)、V23 (spec まで広げる) |
+| A3b-1 (#620) | route (`submitAnswer`)、認可 `self`、og の pin 16、専用の rate-limit の bucket、spec の operation。正解済みで未 solve の設問への再提出を受け付ける (D5 の 5) | 要 | — | V9 (route・og・forward・I15・`self`)、V1 (応答) |
+| A3b-2 (#621) | `MissionDetail.questions` (H2 の読み方)、spec の type enum (3 つ) と kind、metrics の outcome | 要 | — | V9 (`MissionDetail` の 22 key)、V23 (spec まで)、V1 (metrics の label)、V41 |
+| A3b-3 (#622) | `LoadScored` の調査型の拒否を外す。前提は A1d #611・A1e #612・A1f #618・A2b #613 / #614・A3a #615 / #616・A5a-1 #619 で、すべて満たした。表が無いときの提出は 500 で、何も消費しない (A4a-2 まで) | 要 | — | V21 (反転)、V37 |
+| A3b-4 | identity_denials の `gate="self"` (H4 の ADR-0038)。`self` の系列の事前生成、`selfOnly` と `selfOrAdmin` の共通化 (#620 LOW)、`internal/scoreboard/api/answer.go` のコメントの訂正、契約表の「identity 拒否の観測」行の文言の修正 (app 単独。行が「gate の値を足すのは app 単独でよい」と定めているため) | 要 | — (platform はこの metric の gate を読まない) | V38 |
+| A3b-5 | scoring の follow-up: コースの配置の規則 (調査型より後ろに evade を置かない。H4 の ADR-0003)。調査型が current の状態での overflow の taint の test と、sweeper の test を handler の Grader 経由にすること (#622 LOW)。`docs/challenge-image-fixtures-allowlist.md` の規則 7 の `type:` を 4 値に (#621 LOW) | 要 | — | V39 |
 | A4-0 | 契約表に文面 1「答え表」(D16)。ADR-0026 決定 7 に「`type:` は ADR-0056 A1d で 4 値」の pointer (#608)。行の literal (`scoreboard-answers`・`answers.tsv`・`/etc/ctf-answers`) と chart の既定値の一致を `internal/contracttable` の test で固定する | 要 (contracttable) | P1b-1 と同時に open、A4-0 を先に merge | V33 (検証: CI) |
-| A4a | 練習版の読み込み: image の**全課題**の `challenges/<id>/edition/practice/` を読む (answers.tsv → PracticeSet。正規化済みの値だけを Add し、そうでなければ load で失敗する。束と template の file の集合は A4c 用)。`edition.Load` の `PracticeSet{}` をこれに替え、T6 が起動時に効く | 要 | — | V34、V3 (T6) (検証: CI) |
+| A4a-1 | 練習版の読み込み: image の**全課題**の `challenges/<id>/edition/practice/` を読む (answers.tsv → PracticeSet。正規化済みの値だけを Add し、そうでなければ load で失敗する。束と template の file の集合は A4c 用)。`edition.Load` の `PracticeSet{}` をこれに替え、T6 が起動時に効く。CI で「全調査型に練習版がある」を固定する | 要 | — | V34、V3 (T6) (検証: CI) |
+| A4a-2 | 練習のモードの採点 (D8 (iv)): `edition.Load` の中で、スコープの練習版の表から Judge を作る。練習版の欠けで起動を拒否する。(5) を 0 の run id で出す。契約表の「起動ログ」行の (5) に、練習版の表の run id が 32 桁の 0 であることを足す (app。platform の FAIL は P1b-2)。A4a-1 の後 | 要 | 行の (5) の追記 ↔ P1b-2 | V36 (検証: CI) |
 | A4b | 束の reader と B1・B2・B3・B5・B6・B9。束の digest の定義 (D9) と、共有の case 表 `internal/edition/testdata/bundle-digest/` (Go 側)。`catalog.MentionsFlag` と board の flag の判定の関係を両方の doc に 1 行ずつ (#608) | 要 | — | V3 (B1〜B3・B5・B6・B9)、V16 (Go)、V8 (validator の大きさ) (検証: CI) |
 | A4c | B4: 練習版との digest・答えの出現・shingle の (1) 出力同士と (2) テンプレート同士、θ = 0.5 の定数と未設定の拒否、重なり率の stderr。`internal/hintleak` から n-gram の正規化の関数を 1 つ export する | 要 (hintleak を含む) | — | V3 (B4)、V19 (検証: CI) |
 | A4d-1 | `edition.yaml` の parser (slot・role・vocab、strict)。`path` / `name` の語彙からの空間 (D3 (a)、B8 の (a)) | 要 | — | V6 (edition)、V21 (path / name) (検証: CI) |
 | A4d-2 | renderer: 印 `{{ctf:…}}`、長さ接頭辞の HMAC の DRBG、K = max(2 × attempts, 4) と decoy の同一性 (B7)、B8 (b)、練習版の golden の仕組み | 要 | — | V4、V6 (b)、V18、V11 (仕組み) (検証: CI) |
 | A4e | `scoreboard edition check|render` の subcommand: 引数、exit 0/1/2、stderr に値を出さない、`--digests-out` (run id と digest)、表と digests の run id の一致、HTTP の path から render に届かないソース検査。文面 2 の CLI の部分 | 要 | CLI ↔ P1b-2 | V3 (B の CLI)、V15 (check) (検証: Go は CI、`docker run` の経路は手元不可 = P1b-2 の stub の selftest だけ) |
 | A4 (分割前の記述) | `internal/edition` の束の検査 (B1〜B9)・renderer・`edition check|render` の subcommand・testdata | 要 | CLI ↔ P1b | V3 (B)、V4、V6 (b)、V11、V15 (check)、V16 (Go)、V18、V19 |
-| A5a-1 | gen-values の `--check` に `mountDir` の検査を入れる (sensitive_dir_prefixes の外であること、全 plant-target の書き込み先と file が互いに素であること。ADR-0055 C4 (ii) の実装を兼ね、1 つにする)。`reservedMountRoots` と SEED_ROOT / SNAPSHOT_ROOT の parity の test。A3b の前提 | 要 | — | V28、V29 (検証: CI) |
+| A5a-1 (#619) | gen-values の `--check` に `mountDir` の検査を入れた。規則は D1 の (a)(a2)(b)(c) と fail-closed の規則で、ADR の元の文面より厳しい。ADR-0055 C4 (ii) の実装を兼ねる。`reservedMountRoots` と SEED_ROOT / SNAPSHOT_ROOT の parity、`INVESTIGATE_TYPE` の parity の test | 要 | — | V28、V29、V42 |
 | A5a-2 | gen-values: plant の導出を type から行う (evade の plant.sh、または調査型)。痕跡の copy 行を生成する (key を名前で列挙、`cp` に `-a` を付けない、`chmod 0444`)。2-7(a) の allowlist に `/opt/ctf/evidence-src/` だけを足す。`plant.mounts` に `mountDir` | 要 | — | V8 (2-7(a))、gen-values の golden (検証: CI) |
 | A5b | chart: `ctf-evidence-secret.yaml` (`.Values.evidence.files`、helm の `fail` = key の文法・64 個・512 KiB)。plant に `/opt/ctf/evidence-src` を readOnly で、challenge に seed の subPath を mount。`scripts/check-flag-isolation.sh` に「`ctf-evidence` は plant にだけ mount される」の静的検査。A5a-2 の後 | 要 (pod.yaml・check-flag-isolation) | — | V2 (ctf-user の sentinel)、V8 (helm の `fail`) (検証: chart-lint / flag-guard の CI) |
 | A5c | `deploy-user.sh --evidence-dir --evidence-digests`: fail-closed (D11)、digest の shell 側 (A4b の case 表を読む)、Secret の値の受け渡し。文面 2 の痕跡束の部分。A4b・A5b の後 | 要 | 行 ↔ P1b-3 | V16 (shell)、V17 (検証: flag-guard の CI。helm / kubectl は stub) |
 | A5d | `assert-flag-isolation.sh` の 3-x (`mountDir` の中の symlink が 0 で通常 file だけ、seat の ns の Secret 名 = {ctf-flags, ctf-evidence})。A5b の後 | 要 | — | V8 (3-x)、V2 (Secret 名) (検証: stub の test は CI、実 cluster は実機でのみ) |
 | A5 (分割前の記述) | ctf-user の `ctf-evidence`、plant の一般化、gen-values の 2-7、3-x、deploy-user の `--evidence-*`、helm の `fail`、契約表の新しい行。gen-values の `--check` に `mountDir` の検査 (sensitive_dir_prefixes の外であること、全 plant-target の書き込み先と file が互いに素であること (ADR-0055 C4 (ii)。先に着地した側の検査を 1 つの実装として使う)) を入れる。`reservedMountRoots` と gen-values の SEED_ROOT / SNAPSHOT_ROOT の parity の test | 要 | 行 ↔ P1b | V2 (ctf-user)、V8、V16 (shell)、V17、V28、V29 |
-| A6 | portal の回答欄 (application-engineer) | — | — | 生成型と template の test |
-| A7 | **前提**: A1d (#611)・A1e (#612)・A1f・A3b・A4a〜A4e・A5a-1〜A5d・A6 (設問に `technique` を使うなら A1c も)。新しい課題の練習版 (content-engineer)。**前提: A1d・A1e・A3b・A4・A5・A6 が merge 済み** (設問に `technique` を使うなら A1c も) | 要 (fixtures と同じ扱い) | — | V11 (golden)、V3 を練習版で緑、V22 (実課題の `edition/**` が image に無い)、V27 を反転 |
+| A6 | portal の回答欄 (application-engineer)。前提は A3b-1〜3 (#620〜#622) で、満たした。範囲は次のとおり。prompt は `esc()` を通す。`status` (と `correct` / `solved` / `remaining`) だけで分岐し、文言は portal が持つ。正解済みで未 solve の設問には再提出の口を残す (D5 の 5)。400 (形式が違う、回数は減らない)・429・500 (採点できなかった、何も消費していない) をそれぞれ表示する。journey の 500 (H2) では、前の表示を残す。local で通しで確かめるには A4a-2 が要る | — | — | V40 (検証: 生成型と template の test、goja = ADR-0035) |
+| A7 | **前提**: merge 済みは A1d #611・A1e #612・A1f #618・A3b-1〜3 #620〜#622・A5a-1 #619。残りは A3b-5 (配置の規則)・A4a-1・A4a-2 (練習のモードの採点)・A4b〜A4e・A5a-2〜A5d・A6 (設問に `technique` を使うなら A1c も)。課題を置くコースは V39 を満たす (調査型の後ろに evade が無い)。新しい課題の練習版 (content-engineer) | 要 (fixtures と同じ扱い) | — | V11 (golden)、V3 を練習版で緑、V22 (実課題の `edition/**` が image に無い)、V27 を反転 |
 | P1a (platform#332) | `verify.sh` の `[flags]`: (4) があれば FAIL。(5) の最新の 1 行の `run_id` が 32 桁の小文字 hex でなければ FAIL、正しければ報告する。(5) が無いときは、Deployment に `ANSWERS_FILE` が無ければ「表が要らない起動」、あれば「未検証」、env を読めなければ「未検証」とし、失敗にはしない。digests の run id との照合は P1b-2 | 要 | app#613 と対 (P1a が先) | V32 |
-| P1b-1 | helmfile: `answersSecret` を有効にする条件と、local 以外で `requirements.answers` が空でないのに無効なら render を失敗させること (D8)。前提: ADR-0055 S3 の生成物の `requirements:` が app にあること (main にはまだ無い) | 要 | A4-0 と同時 | V12 (render の部分) |
+| P1b-1a | helmfile: イベントの設定で明示したときだけ `answersSecret` を有効にする (Secret 名と key は契約表の「答え表」の行)。ここでは render gate を持たない。調査型があるのに表が無い場合の fail-closed は、scoreboard の起動時の拒否 (D8 (i)) と P1a の (4) の FAIL が担う | 要 | A4-0 と同時 | V12 (有効化の部分) |
+| P1b-1b | helmfile: local 以外で `requirements.answers` が空でないのに `answersSecret` が無効なら、render を失敗させる (D8)。前提: ADR-0055 S3 の生成物の `requirements:` が app にあること (main にはまだ無い)。S3 の後に入れる | 要 | ADR-0055 S3 の app PR の後 | V12 (render gate) |
 | P1b-2 | 課金の前に `edition render` → `edition check` を行う (pin した scoreboard image、docker)。出力 (表・束・digests) の置き場 (sops)。表と digests の run id の照合。verify の (5) と digests の照合 | 要 | A4e と対 | V12 (gate)、V15 (platform) (検証: docker の経路は手元不可、stub の selftest) |
 | P1b-3 | 払い出しが seat ごとに `--evidence-dir --evidence-digests` を渡す。束の出所を明示する (D8) | 要 | A5c と対 | V12 (払い出し)、V17 (platform 側) |
 | P2 (platform#333、open) | rollback の runbook を DB の版 3 に対応させ、PVC の写しでリハーサルする | — | — | 実機でのみ確認可 (リハーサルの記録) |
@@ -493,10 +511,10 @@ security の要件 3 は「起動拒否」と書いている。束の項目は�
 | D1 | detect の hold-out (app + platform)。#341 の後 | 要 | detect-grader の行 | V7 |
 
 - 順序 (2026-11-16 時点)
-  - merge 済み: A0 #605 → A1a #606 → A1b #607 → A2a #610 → A1d #611 → A1e #612 → A2b-go #613 (P1a = platform#332 が先) → A2b-chart #614 → A3a-1 #615 → A3a-2 #616。
+  - merge 済み: A0 #605 → A1a #606 → A1b #607 → A2a #610 → A1d #611 → A1e #612 → A2b-go #613 (P1a = platform#332 が先) → A2b-chart #614 → A3a-1 #615 → A3a-2 #616 → 追補 3 #617 → A1f #618 → A5a-1 #619 → A3b-1 #620 → A3b-2 #621 → A3b-3 #622。
   - 残りは 3 列で進める (並列は WIP の枠と stacked の深さ 2 の範囲で)。
-    - (列 1) A1f → A5a-1 → A3b → A6。
-    - (列 2) A4-0 (+ P1b-1) → A4a → A4b → A4c。A4d-1 → A4d-2 → A4e (+ P1b-2)。
+    - (列 1) A6。並行して A3b-4 と A3b-5 (触る file が別)。
+    - (列 2) A4-0 (+ P1b-1a) → A4a-1 → A4a-2 → A4b → A4c。A4d-1 → A4d-2 → A4e (+ P1b-2)。
     - (列 3) A5a-2 → A5b → A5c (A4b の後、+ P1b-3) → A5d。
   - 最後に A7 → platform の `APP_PIN` の bump。A1c は `technique` を使うときだけ、A7 の前に入れる。
 - (分割前の順序): A1a → A1b → A1d / A1e (触る file が別なので並行してよい) → A2a → A2b (+ P1a) → A3a → A4 (+ P1b) → A5 (+ P1b) → A3b → A6 → A7 → platform の `APP_PIN` の bump。A1c は `technique` を使うときだけ、A7 の前に入れる。
@@ -509,7 +527,9 @@ security の要件 3 は「起動拒否」と書いている。束の項目は�
   - 束の内容の検査を scoreboard の起動時に行うこと (束を持たないため。validator と digest で代える)。
   - 4 択の設問 (D3 (a))。
   - 席ごとに変えられない format (`technique` / `choice-set` / `sequence`) の答えは Board で共有できる (残余。検出はしない)。D1 の「席ごとの設問を 1 つ以上」によって、固定の答えを共有しただけでは solve できない。
-  - 調査型の課題は A3b まで起動しない (A1b の `LoadScored` が拒否する)。`technique` は A1c まで使えない。
+  - 調査型の課題は、A3b-3 (#622) から、課題さえあれば提出から採点まで動く。ただし練習のモードでは、A4a-2 まで Judge が無く、提出は 500 になる (何も消費しない)。`technique` は A1c まで使えない。
+  - コースの中で、調査型の課題より後ろに evade を置けない (ADR-0003 W2 が調査型に及ぶため。V39)。
+  - journey の polling は、表示中の調査型について SQL を 1 回読み、読めなければ 500 になる (H2、Signpost 7)。
   - 公開していない過去のイベント版の再利用は検出しない。
   - 正解なのに設問の correct の書き込みが失敗すると、回数を 1 つ失う (fail-closed の代償)。correct を記録した後の `MarkSolved` の失敗は、次の提出で自己修復する (D5 の 5)。
 - **新たに守る規則**: D15 の候補 A〜D (昇格の前は ADR の規則)。
@@ -533,6 +553,10 @@ security の要件 3 は「起動拒否」と書いている。束の項目は�
 4. 設問の 20% 超で回数を使い切る参加者が出る (CPO の指標)、または候補の下限 R で content が書けない → attempts・R・K を CISO と CPO が再設定する。
 5. (補足) platform が evade の無いコースで flags を任意にする → 「イベントのモード」の指標を明示の `EVENT_ID` に替える。
 6. 初回のイベント版で validator が stderr に出した重なり率 (B4 の (1)(2)) が、正当なイベント版で θ = 0.5 に近いか超える、または流用したテンプレートが 0.5 未満で通る → CISO が θ を設定し直す (変えるのは定数と、その pin の test)。
+7. 次のどれかが観測された → `answer_attempts` の in-memory の写し (write-through。`Reset` と自己修復で同時に更新する) に移る。
+   - 開催中に、journey の 500 のうち「could not read the mission's questions」の log が 1 件でも出る。
+   - `GET /journey` の p99 が 100 ms を超える。
+   - 調査型の課題を 2 本以上同時に表示する UI が要る (読みが mission の数に比例する)。
 
 ## Verification (app は `make test` / `flag-guard` / `chart-lint` = required。exit status で判定。故意の違反で赤になる case を常設する)
 - **V1 (security 要件 1)**: sentinel の答え表で、誤答・上限超過・already-correct・store の失敗・起動拒否の各経路を通す。応答の body・log・metrics・error・store の行に sentinel が 0 件 (Go の test)。
@@ -558,7 +582,7 @@ security の要件 3 は「起動拒否」と書いている。束の項目は�
 - **V21 (A1 の事実)**
   - `technique` の設問は、A1c までは load が失敗する。
   - `path` / `name` の空間は catalog では計算しない (保留を test で固定する)。語彙の小さい edition は B8 が拒否する。
-  - A1b から A3b の直前までは、調査型を含む scope を `LoadScored` が拒否する。A3b でこの test を反転させ、実 catalog で起動できることを確かめる。
+  - A1b (#607) から A3b-3 (#622) の直前までは、調査型を含む scope を `LoadScored` が拒否した。#622 でこの test を反転させ、調査型を含む scope で起動できることを確かめる (V37)。
 - **V22 (A1d、型と image)**
   - `scripts/test-check-image-hygiene.sh` に `type: investigate` の課題を 1 つ持つ tree の case を足す。builder と V2 の両方が受理し、`answers.yaml` の key にその id が出ないこと (key = evade の id のまま)。
   - `type: investigat`・`type: "investigate"`・`type: investigate # c` では、builder と V2 の両方が赤になること。
@@ -567,7 +591,7 @@ security の要件 3 は「起動拒否」と書いている。束の項目は�
   - Go の test が、catalog の型の集合 (4 つ) と、`images/challenge/Dockerfile` と `scripts/check-image-hygiene.sh` の case の行から抜いた集合が一致することを確かめる。抜いた集合が空なら fail。
   - どれか 1 か所から `investigate` を消したコピーで赤になること。
   - A3b で、spec の type enum (3 つ) と kind の行も同じ集合に加える。
-- **V24 (A1e)**: hint にだけある 10 rune の n-gram を、prompt に置いた scope と置かない scope で比べる (fixture には両方とも置く)。prompt に置けば通り、置かなければ違反になること。調査型の scope では、prompt の item の数が設問の数と一致すること (0 件なら fail)。合成した in-memory の scope を `assembleScope` (`internal/hintleak/content_test.go:234`) に通して確かめる。prompt の数は、Free の実体のうち Source が `<cid> questions[<qid>].prompt` の形の item を数える。組み立て側が数えた値は使わない (A1f、#608)。
+- **V24 (A1e)**: hint にだけある 10 rune の n-gram を、prompt に置いた scope と置かない scope で比べる (fixture には両方とも置く)。prompt に置けば通り、置かなければ違反になること。調査型の scope では、prompt の item の数が設問の数と一致すること (0 件なら fail)。合成した in-memory の scope を `internal/hintleak` の test の関数 `assembleScope` に通して確かめる。`isQuestionPromptSource` の境界は table test で固定する (A4c、#618 LOW)。prompt の数は、Free の実体のうち Source が `<cid> questions[<qid>].prompt` の形の item を数える。組み立て側が数えた値は使わない (A1f、#608)。
 - **V25 (A1d、LOW)**: 調査型の課題で、`falco-rule.yaml` と `journey.yaml` の top-level に未知の key があれば load が失敗する。journey.yaml が無い場合と、journey の dir そのものが無い場合も失敗する (負の test。`LoadJourneys` が早期 return する経路を含む)。
 - **V26 (A1d、LOW)**: `TestCheckSpaceN_RefusesOutOfRangeInputs` の path の枝は、`ErrSpaceFromVocabulary` 以外の error を要求する。`CheckSpace` の先頭の attempts の検査を消したコピーで赤になること。
 - **V27 (A1d、LOW)**: 回帰 test は実課題の数を pin せず、「空でない」と「調査型が無い」だけを確かめる。A7 でこれを反転させ、「A7 の課題を含む」にする。
@@ -578,7 +602,14 @@ security の要件 3 は「起動拒否」と書いている。束の項目は�
 - **V32 (P1a、platform#332)**: `scripts/test-flags-gates.sh` の case。(4) で FAIL、(5) の run id の形の不正 7 通りで FAIL、record が無い場合 × `ANSWERS_FILE` の有無と読み取りの失敗で「表が要らない」/「未検証」。platform には required check が無いので、merge の時に人が確かめる。
 - **V33 (A4-0)**: `internal/contracttable` の test が、契約表の「答え表」の行の code span (`scoreboard-answers`・`answers.tsv`・`/etc/ctf-answers`) と、`charts/scoreboard/values.yaml` と `templates/deployment.yaml` の既定値が一致することを確かめる。どちらか片方だけを変えたコピーで赤になること。
 - **V34 (A4a)**: 練習版の読み込みは、スコープではなく image の全課題を読む。正規化されていない練習版の答え (normalize(v) ≠ v) は load で失敗する。練習版が無ければ空の集合になる。`internal/edition/load.go` に literal の `PracticeSet{}` が残らないこと (ソースの検査)。testdata の練習版の値と同じ値を持つイベント版の表を、起動時に T6 が拒否する。
-- **V35 (A1f)**: Free に prompt の item を入れず、組み立て側の数だけを設問の数に合わせたコピーで、V24 の数の検査が赤になること。
+- **V35 (A1f #618)**: Free に prompt の item を入れず、組み立て側の数だけを設問の数に合わせたコピーで、V24 の数の検査が赤になること。
+- **V36 (A4a-2)**: イベントのモードでなく `ANSWERS_FILE` も無い状態で、testdata の調査型 (練習版あり) を使う。正しい答えで solve し、誤った答えで incorrect になり回数が減る。#622 の「500 で何も消費しない」の test は、この PR で反転させる。スコープの調査型の練習版を 1 つ消したコピーでは、起動を拒否し (4) が出る。受理したときは (5) が run id 32 桁の 0 で出る。イベントのモードで練習版があり `ANSWERS_FILE` が無いときは `ErrTableMissing` で、練習版から Judge を作らない (ソースの検査: 練習版から Judge を作る呼び出しは、イベントのモードでない分岐の中だけ)。`Parse` / `NewJudge` を呼ぶ file は load.go だけのまま。
+- **V37 (A3b-3 #622)**: 調査型を含む scope で `LoadScored` と起動が通る。表が無いときの提出は 500 で、`answer_attempts` の行が増えない。
+- **V38 (A3b-4)**: `self` の route で、header が無い → `gate="self",reason="no_identity"` が +1。非正規形 → `non_canonical` が +1。`{user}` と違う正規形・`ADMIN_EMAILS` → `mismatch` が +1。`gate="self_or_admin"` の系列は、`self` の route では増えない。起動の直後に `{gate="self",reason="no_identity"}` が 0 で存在する (契約の保証 (2)。`internal/contractmetrics` の事前生成の検査に載る)。`self` を `self_or_admin` に戻したコピーで赤になること。
+- **V39 (A3b-5)**: 全 scenario (生成物を含む) について、調査型の課題より後ろに evade の課題があれば、test が赤になる。列挙が 0 件なら fail。違反する合成の scenario (testdata) で赤になること。調査型が current の状態で、forbidden rule の overflow の taint が後続の evade に付かないこと (W2 の現状) を test で固定し、規則が塞ぐ理由を残す。
+- **V40 (A6)**: template の test (goja)。prompt にある HTML の特殊文字が escape される。`status` の 4 値と 400 / 429 / 500 のそれぞれで表示が分かれる。`correct && !solved` の設問の欄は有効のまま。応答の `remaining` をそのまま表示する。
+- **V41 (A3b-2 #621)**: store の読みに失敗を注入すると、journey は 500 になる。body は `{"error": …}` の固定文で、部分的な `MissionDetail` を返さない。log には cid と remote_addr を出し、値は出さない。
+- **V42 (A5a-1 #619)**: `verify_claims_negative_tests` の fixture で、(a) sensitive な dir の祖先、(a2) sensitive な file の dirname と等しい場合とその祖先、(b) 他の課題の mount dir と等しい場合 / 入れ子、(c) 同じ file への 2 つの書き込み、認識できない書き込みの形、`INVESTIGATE_TYPE` の不一致のそれぞれで、`--check` が非ゼロになる。
 
 ## Advice
 - CEO (2026-11-16): 版を分けること、ADR-0056 として起草すること、利用形態の順、イベント後の公開は都度 CEO。
@@ -601,3 +632,11 @@ security の要件 3 は「起動拒否」と書いている。束の項目は�
   - ADR-0055 D6 の `answers` を「A1b が merge されてから」に詰める → D17、ADR-0055 D6。
 - review-5x (2026-11-16): #616 の R4#2 (自己修復) → D5 の 5、V30。#614 の R4#3 (契約表の行の答え表の半分) → D16 の文面 1、A4-0、V33。#608 の追記 4 件 → A1f・A4-0・A4a・A4b、V24・V34・V35。
 - CTO 代行 = CoS (2026-11-16、追補 3): 実際の分割 (A2b-go / A2b-chart、A3a-1 / A3a-2) と P1a の範囲を D19 に記録した。A4 / A5 を review できる大きさに分けた (architect の提案) → D19。
+- review-5x (2026-11-16、#619〜#622) と #608 の追記 2
+  - #622 R4#1 (練習版での採点) → D8 (iv)、A4a-2、V36。CoS の決定: それまでは今の挙動のまま、A7 の前提に入れる。
+  - #620 R4#2 (`self` の gate) → ADR-0038 の限定の supersede、A3b-4、V38。
+  - #621 R4#2 (journey の読み) → D4、Signpost 7、V41。
+  - #619 の規則 → D1、V42、ADR-0055 の pointer。
+  - #622 R1#1 (W2) → ADR-0003 の amend、A3b-5、V39。
+  - LOW 4 件 → A3b-4・A3b-5・A4c。
+- architect (2026-11-16、追補 4): P1b-1 を 1a / 1b に分ける (render gate は ADR-0055 S3 の後。本来の fail-closed は起動時の拒否と P1a)。
