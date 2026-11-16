@@ -239,6 +239,7 @@ clean(u,c) := DirtyRules(u,c) が空
 (`origin/main:internal/scoreboard/scoring/scoring.go:282`)、10 の窓は 30 秒
 (`origin/main:challenges/10-final-exfil/falco-rule.yaml:13`) なので **「全部騒がしくやって 31 秒待って exfil」** で
 同じ結果になる。本 ADR は W2 を**新たに作っていないし、閉じてもいない**。
+(navigational な pointer、2026-11-17) W2 は調査型の課題 (ADR-0056) にも及ぶ。調査型が current に留まる間は、その後ろの evade の clean gate が効かない。コースの配置の規則 (調査型より後ろに evade を置かない。ADR-0056 A3b-5 = app#625、CI と `LoadScored` の起動時の拒否) で塞いだ。本 ADR の判断は変えない。
 
 **W1 / W2 を閉じるのは attempt ごとの積極証明のみ (Issue #121)。** C5 の結論の系であり、
 **`#121` の scope に mission 10 を含めなければ capstone gate は inert のまま**である (Consequences 参照)。
