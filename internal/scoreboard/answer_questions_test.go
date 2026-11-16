@@ -216,6 +216,38 @@ func TestMissionDetail_QuestionsOfASolvedMission(t *testing.T) {
 	})
 }
 
+// remaining never goes below 0: a row whose count is over the catalog's budget (the
+// catalog's `attempts` was lowered after answers were spent) reads 0, not negative.
+// The rows are written with a larger limit than ansOne's 3 attempts.
+func TestMissionDetail_RemainingIsClampedAtZero(t *testing.T) {
+	f := qFixture(t, true)
+	for i := 0; i < 5; i++ {
+		if _, _, err := f.st.TryAnswerAttempt(ansAlice, ansOne, "who", 10); err != nil {
+			t.Fatal(err)
+		}
+	}
+	checkQuestions(t, f.detailAs(ansAlice, ansOne), []wantQ{{"who", qPromptWho, "name", 3, 0, false}})
+}
+
+// A question the journey carries no prompt for is projected with an empty prompt,
+// and the rest of it is intact. Unreachable on a started scoreboard
+// (catalog.LoadJourneys requires an investigate challenge's journey with an equal id
+// set); this holds the branch, so the projection never fails or invents text.
+func TestMissionDetail_QuestionWithoutAPrompt(t *testing.T) {
+	f := newAnswerFixture(t, true, scoreboard.WithJourneys(catalog.Journeys{
+		ansTwo: {
+			ChallengeID: ansTwo, Title: "two",
+			Questions: []catalog.JourneyQuestion{{ID: "who", Prompt: qPromptWho}}, // no prompt for `host`
+		},
+	}))
+	checkQuestions(t, f.detailAs(ansAlice, ansTwo), []wantQ{
+		{"who", qPromptWho, "name", 3, 3, false},
+		{"host", "", "name", 2, 2, false},
+	})
+	// no journey at all for ansOne
+	checkQuestions(t, f.detailAs(ansAlice, ansOne), []wantQ{{"who", "", "name", 3, 3, false}})
+}
+
 // Only the caller's own row: bob's answers move nothing in alice's detail, and what
 // bob reads is his own.
 func TestMissionDetail_QuestionsAreTheCallersOwn(t *testing.T) {
@@ -309,6 +341,9 @@ func TestMissionQuestionSpec_FormatEnumIsAnswerformat(t *testing.T) {
 		t.Errorf("MissionQuestion has %d required / %d properties, want 6 / 6 (ADR-0056 D4)", len(req), len(spec.PropertyNames(sch)))
 	}
 	attempts := spec.PropertySchema(sch, "attempts")
+	if attempts["maximum"] == nil || attempts["minimum"] == nil {
+		t.Fatalf("MissionQuestion.attempts declares no minimum / maximum (%v): the comparison would be vacuous", attempts)
+	}
 	if fmt.Sprint(attempts["maximum"]) != fmt.Sprint(answerformat.MaxAttempts) || fmt.Sprint(attempts["minimum"]) != "1" {
 		t.Errorf("MissionQuestion.attempts is %v..%v, want 1..%d", attempts["minimum"], attempts["maximum"], answerformat.MaxAttempts)
 	}

@@ -2569,6 +2569,10 @@ func (h *Handler) missionQuestions(user, cid string, ch catalog.Challenge, j cat
 	if err != nil {
 		return nil, fmt.Errorf("answer attempts of %s: %w", cid, err)
 	}
+	// A question the journey does not carry gets an empty prompt. That is
+	// unreachable on a started scoreboard: catalog.LoadJourneys requires an
+	// investigate challenge's journey and an equal id set (checkJourneyQuestions),
+	// and the empty-prompt case is held by TestMissionDetail_QuestionWithoutAPrompt.
 	prompts := make(map[string]string, len(j.Questions))
 	for _, q := range j.Questions {
 		prompts[q.ID] = q.Prompt

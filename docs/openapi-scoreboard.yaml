@@ -904,6 +904,18 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: |
+            the selected mission is an `investigate` challenge and the caller's
+            attempt budget (its `answer_attempts` rows, which `detail.questions`
+            reports) could not be read (ADR-0056 D4). Fail-closed: a `remaining`
+            that was not read is never guessed. No other mission type reads that
+            table, so only an `investigate` mission can answer this. The body is
+            the fixed text `could not read the mission`; the cause is in the
+            operator's log only.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/users/{user}/challenges/{cid}/steps/{idx}/check:
     post:
