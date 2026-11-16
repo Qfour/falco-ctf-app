@@ -19,8 +19,8 @@ import (
 //     The error names a rule, a line and a seat / cid / qid, never a table value
 //     (edition.Load's doc). The caller exits right after it (main: os.Exit(1)).
 //   - a table that was accepted: `msg="edition loaded"`, level INFO, once per
-//     start, with the run id only (D9: the platform compares it with the run id of
-//     the digests it paid out with).
+//     start, with the run id only (D9: the platform will compare it with the run id
+//     of the digests it paid out with; that is P1b, not implemented yet).
 //
 // Nothing is logged when there is no table and none is needed (no investigate
 // challenge in scope, no ANSWERS_FILE): that is every environment that exists

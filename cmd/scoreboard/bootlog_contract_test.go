@@ -130,9 +130,10 @@ func TestBootLogContract_FlagOverridesFailed_GoldenLiteral(t *testing.T) {
 }
 
 // ADR-0056 D16 items (4) and (5) of the same contract-table row: the answers
-// table's two records. verify.sh reads (4) by msg and level, and compares the run_id
-// of (5) with the run id of the digests the participants' bundles were paid out
-// with. Literals, for the same reason as above: edition.go's calls and the other
+// table's two records. verify.sh reads (4) by msg and level, and checks the shape
+// of the run_id of (5) and reports it; comparing it with the run id of the digests
+// the participants' bundles were paid out with is P1b (not implemented yet: the
+// digests come with A4 and P1b). Literals, for the same reason as above: edition.go's calls and the other
 // tests do not go through any constant, so a rename of the msg or of the attribute
 // turns only this test red.
 func TestBootLogContract_EditionRecords_GoldenLiterals(t *testing.T) {
