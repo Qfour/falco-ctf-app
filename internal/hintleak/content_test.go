@@ -33,10 +33,10 @@ type scopeData struct {
 	ids       []string        // challenges in scope
 	overrides map[string]bool // ids whose briefing/bridge the scenario's narrative.yaml replaces
 	in        hintleak.Input
-	// wantPrompts / gotPrompts: questions declared by the scope's investigate
-	// challenges vs question prompt items put into in.Free (ADR-0056 V24).
+	// wantPrompts: questions declared by the scope's investigate challenges. The
+	// prompt items actually in Free are counted from in.Free (countPromptItems),
+	// never from a value the assembler kept (ADR-0056 V24 / V35).
 	wantPrompts int
-	gotPrompts  int
 }
 
 func (s scopeData) has(id string) bool {
@@ -208,8 +208,36 @@ func loadScope(t *testing.T, chalDir, name, scenarioFile string, fixtures []hint
 	}
 
 	ids := scored.Order
-	in, wantPrompts, gotPrompts := assembleScope(ids, cat, journeys, excerpts, fixtures)
-	return scopeData{name: name, ids: ids, overrides: overrides, in: in, wantPrompts: wantPrompts, gotPrompts: gotPrompts}
+	in, wantPrompts := assembleScope(ids, cat, journeys, excerpts, fixtures)
+	return scopeData{name: name, ids: ids, overrides: overrides, in: in, wantPrompts: wantPrompts}
+}
+
+// A question prompt item's Source is "<challenge id> questions[<question id>].prompt".
+// questionPromptSource builds it and isQuestionPromptSource recognizes it from
+// the same two pieces, so the producer and the counter cannot drift apart.
+const (
+	questionPromptMid = " questions["
+	questionPromptEnd = "].prompt"
+)
+
+func questionPromptSource(id, qid string) string {
+	return id + questionPromptMid + qid + questionPromptEnd
+}
+
+func isQuestionPromptSource(src string) bool {
+	i := strings.Index(src, questionPromptMid)
+	return i > 0 && strings.HasSuffix(src, questionPromptEnd) && len(src) > i+len(questionPromptMid)+len(questionPromptEnd)
+}
+
+// countPromptItems counts the question prompt items that are really in free.
+func countPromptItems(free []hintleak.Item) int {
+	n := 0
+	for _, it := range free {
+		if isQuestionPromptSource(it.Source) {
+			n++
+		}
+	}
+	return n
 }
 
 // questionPromptItems turns the questions[] prompts of an investigate challenge's
@@ -221,7 +249,7 @@ func loadScope(t *testing.T, chalDir, name, scenarioFile string, fixtures []hint
 func questionPromptItems(id string, j catalog.Journey) []hintleak.Item {
 	var out []hintleak.Item
 	for _, q := range j.Questions {
-		out = append(out, hintleak.Item{Source: fmt.Sprintf("%s questions[%s].prompt", id, q.ID), Text: q.Prompt})
+		out = append(out, hintleak.Item{Source: questionPromptSource(id, q.ID), Text: q.Prompt})
 	}
 	return out
 }
@@ -229,9 +257,9 @@ func questionPromptItems(id string, j catalog.Journey) []hintleak.Item {
 // assembleScope is the ONE place the D5-1 inputs of a scope are built from the
 // loaded catalog, journeys and rule excerpts (production: loadScope; V24: an
 // in-memory scope). wantPrompts is the number of questions the scope's
-// investigate challenges declare; gotPrompts is the number of prompt items that
-// were put into Free for them. promptCountProblem compares the two.
-func assembleScope(ids []string, cat catalog.Catalog, journeys catalog.Journeys, excerpts catalog.FalcoRuleExcerpts, fixtures []hintleak.Item) (in hintleak.Input, wantPrompts, gotPrompts int) {
+// investigate challenges declare. The number of prompt items in Free is NOT
+// returned: promptCountProblem counts in.Free itself.
+func assembleScope(ids []string, cat catalog.Catalog, journeys catalog.Journeys, excerpts catalog.FalcoRuleExcerpts, fixtures []hintleak.Item) (in hintleak.Input, wantPrompts int) {
 	in = hintleak.Input{Targets: fixtures}
 	for _, id := range ids {
 		if ch := cat[id]; ch.Type == catalog.TypeInvestigate && ch.Investigate != nil {
@@ -251,13 +279,11 @@ func assembleScope(ids []string, cat catalog.Catalog, journeys catalog.Journeys,
 					hintleak.Item{Source: fmt.Sprintf("%s steps[%d].label", id, i+1), Text: st.Label},
 					hintleak.Item{Source: fmt.Sprintf("%s steps[%d].detail", id, i+1), Text: st.Detail})
 			}
-			prompts := questionPromptItems(id, j)
-			gotPrompts += len(prompts)
-			in.Free = append(in.Free, prompts...)
+			in.Free = append(in.Free, questionPromptItems(id, j)...)
 		}
 		in.Free = append(in.Free, ruleItems(id, excerpts[id])...)
 	}
-	return in, wantPrompts, gotPrompts
+	return in, wantPrompts
 }
 
 // promptCountProblem is ADR-0056 V24's count check: the prompt items of a scope
@@ -265,8 +291,8 @@ func assembleScope(ids []string, cat catalog.Catalog, journeys catalog.Journeys,
 // ask questions but no prompt reached Free" (0 of N) fails; a scope with no
 // investigate challenge has 0 and 0, which passes (the tree has none yet).
 func promptCountProblem(s scopeData) error {
-	if s.wantPrompts != s.gotPrompts {
-		return fmt.Errorf("scope %s: %d question prompt item(s) in Free, but its investigate challenges declare %d question(s)", s.name, s.gotPrompts, s.wantPrompts)
+	if got := countPromptItems(s.in.Free); s.wantPrompts != got {
+		return fmt.Errorf("scope %s: %d question prompt item(s) in Free, but its investigate challenges declare %d question(s)", s.name, got, s.wantPrompts)
 	}
 	return nil
 }
