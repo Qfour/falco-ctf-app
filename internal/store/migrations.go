@@ -142,6 +142,29 @@ var migrations = []migration{
 			return err
 		},
 	},
+	{
+		// ADR-0056 D7: how many answers a participant has spent on one question
+		// of an investigate challenge, and whether it is answered. The column set
+		// is closed on purpose (a test pins it): a count and a flag, NEVER the
+		// text of an answer, a hash of it or a timestamp of it (D13: the store
+		// holds no plaintext). The CHECKs make a corrupt row a failed write, not
+		// a free attempt.
+		version: 3,
+		name:    "answer_attempts (ADR-0056 D7)",
+		apply: func(tx *sql.Tx) error {
+			_, err := tx.Exec(`
+				CREATE TABLE IF NOT EXISTS answer_attempts (
+				  user      TEXT NOT NULL,
+				  challenge TEXT NOT NULL,
+				  question  TEXT NOT NULL,
+				  n         INTEGER NOT NULL DEFAULT 0 CHECK (n >= 0),
+				  correct   INTEGER NOT NULL DEFAULT 0 CHECK (correct IN (0, 1)),
+				  PRIMARY KEY (user, challenge, question)
+				);
+			`)
+			return err
+		},
+	},
 }
 
 // latestSchemaVersion is the highest version number in migrations, i.e. the
