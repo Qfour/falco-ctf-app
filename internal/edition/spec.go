@@ -50,6 +50,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
@@ -330,6 +331,8 @@ func validateSpec(spec *Spec) error {
 		one := int64(1)
 		if err := answerformat.Canonical(answerformat.Timestamp, answerformat.Params{WindowSeconds: &one}, base); err != nil {
 			top("time.base", "time.base is not an RFC 3339 UTC time at second precision", err)
+		} else {
+			checkWindowEnds(spec, base, &c)
 		}
 	}
 	if err := c.err(); err != nil {
@@ -347,6 +350,34 @@ func validateSpec(spec *Spec) error {
 		}
 	}
 	return nil
+}
+
+// lastTimestamp is the last second the timestamp format takes: answerformat's normal
+// form is what time.Parse and Format give back unchanged, and RFC 3339 has four digits of
+// year. A window that ends after it would make a value no answer can be typed as.
+var lastTimestamp = time.Date(9999, time.December, 31, 23, 59, 59, 0, time.UTC).Unix()
+
+// checkWindowEnds is E1's hold on the end of a window: the last value of
+// [base + from, base + to) is base + to - 1, and it must be a timestamp the format takes.
+// The comparison is on the seconds left after base, so no sum can overflow (to may be
+// near the largest int64). It is for the windows that are otherwise well formed; base is
+// already a canonical time.
+func checkWindowEnds(spec *Spec, base string, c *collector) {
+	t, err := time.Parse(time.RFC3339, base)
+	if err != nil {
+		return
+	}
+	left := lastTimestamp - t.Unix()
+	for i := range spec.Slots {
+		s := &spec.Slots[i]
+		w := s.Window
+		if w == nil || w.From == nil || w.To == nil || *w.From < 0 || *w.From >= *w.To {
+			continue
+		}
+		if *w.To-1 > left {
+			c.add(newSpecViolation(RuleSpecShape, "the window ends after the last second a timestamp can be written (year 9999)", 0, "", s.Question, s.Name, fmt.Sprintf("slots[%d].window", i), nil))
+		}
+	}
 }
 
 // validateSlot reports whether the slot needs time.base (it has a window).

@@ -213,3 +213,22 @@ func TestCheck_ListsAtMostTwentyViolations(t *testing.T) {
 		t.Errorf("listed %d errors, want 20 violations and 1 count of the rest", n)
 	}
 }
+
+// ADR-0056 V64: T6 looks at every format, those that cannot vary per seat included (a
+// fixed answer equal to a practice answer would let the public repository solve the
+// event). `pick` is a choice-set, the same for every seat.
+func TestCheck_T6AlsoRefusesAFormatThatCannotVaryPerSeat(t *testing.T) {
+	table := mustParse(t, render(runA, baseRows()))
+	practice := edition.PracticeSet{}
+	practice.Add(answerformat.ChoiceSet, "ca,cb")
+	err := edition.Check(table, demoScope, edition.Options{EventMode: true, Practice: practice})
+	if err == nil || !slices.Equal(rules(err), []string{"T6"}) {
+		t.Fatalf("a fixed choice-set answer equal to a practice answer: rules %v (%v), want [T6]", rules(err), err)
+	}
+	// The same text under another format is not the same answer.
+	other := edition.PracticeSet{}
+	other.Add(answerformat.Name, "ca,cb")
+	if err := edition.Check(table, demoScope, edition.Options{EventMode: true, Practice: other}); err != nil {
+		t.Errorf("a practice answer of another format was refused: %v", err)
+	}
+}
