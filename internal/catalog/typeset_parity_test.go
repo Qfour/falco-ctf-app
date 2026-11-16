@@ -312,3 +312,49 @@ func TestTypes_IsExactlyWhatParseFileAccepts(t *testing.T) {
 		t.Error("an unknown type loaded")
 	}
 }
+
+// ADR-0056 A3b-5 (the #621 LOW): rule 7 of ADR-0026 states the `type:` set in prose,
+// and it was left at three values when the fourth was added. The ADR is not a
+// shell source (it has no `case` line, so checkTypeSets does not apply), but its
+// `type: a|b|c` list is the same text form: held to catalog.Types by the same
+// extraction, and a doc without such a list is red rather than "equal".
+
+var adr0026Path = filepath.Join("..", "..", "docs", "adr", "0026-challenge-image-fixtures-allowlist.md")
+
+func checkTypeLists(name, src string, want []string) error {
+	_, lists := shellTypeSets(src)
+	if len(lists) == 0 {
+		return fmt.Errorf("%s: no `type: a|b|c` list was found: the extraction is broken or the rule moved", name)
+	}
+	for _, l := range lists {
+		if !slices.Equal(l, want) {
+			return fmt.Errorf("%s: a `type: a|b|c` list names %v, the catalog's types are %v", name, l, want)
+		}
+	}
+	return nil
+}
+
+func TestTypeSet_ADR0026ListMatchesTheCatalog(t *testing.T) {
+	raw, err := os.ReadFile(adr0026Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := wantTypes()
+	if err := checkTypeLists(adr0026Path, string(raw), want); err != nil {
+		t.Error(err)
+	}
+	// the check can fail: the list with `investigate` cut, an extra type, no list at all
+	src := string(raw)
+	if !strings.Contains(src, "|investigate") {
+		t.Fatal("ADR-0026 has no `|investigate` to cut: update this negative test")
+	}
+	for name, text := range map[string]string{
+		"investigate cut":   strings.ReplaceAll(src, "|investigate", ""),
+		"an extra type":     strings.ReplaceAll(src, "|investigate", "|investigate|bogus"),
+		"no list in the md": "rule 7 is written elsewhere\n",
+	} {
+		if err := checkTypeLists(name, text, want); err == nil {
+			t.Errorf("%s: the drifted copy was accepted", name)
+		}
+	}
+}

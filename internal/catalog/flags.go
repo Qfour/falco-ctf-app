@@ -60,7 +60,9 @@ type Scored struct {
 // the scenario restriction and the flag override cannot be wired in the wrong
 // order or against the wrong catalog by a caller.
 //
-// A flags-file rejection is wrapped in ErrFlagOverrides.
+// A flags-file rejection is wrapped in ErrFlagOverrides; a placement rejection
+// (an evade challenge after an investigate challenge in the order, A3b-5 / V39) in
+// ErrEvadeAfterInvestigate.
 func LoadScored(challengesDir, scenarioFile, flagsFile string) (Scored, error) {
 	full, err := Load(challengesDir)
 	if err != nil {
@@ -83,6 +85,14 @@ func LoadScored(challengesDir, scenarioFile, flagsFile string) (Scored, error) {
 		out.Order = ids
 	} else {
 		out.Order = out.Catalog.IDs()
+	}
+	// The course placement rule (ADR-0056 A3b-5 / V39), on the order the scoreboard
+	// walks, with or without a scenario: no evade challenge after an investigate one.
+	if err := checkPlacement(out.Catalog, out.Order); err != nil {
+		if scenarioFile != "" {
+			return Scored{}, fmt.Errorf("scenario %q: %w", scenarioFile, err)
+		}
+		return Scored{}, fmt.Errorf("challenges %q (no scenario: the order is the sorted ids): %w", challengesDir, err)
 	}
 	return out, nil
 }

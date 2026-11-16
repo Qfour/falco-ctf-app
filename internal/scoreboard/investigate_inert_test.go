@@ -234,6 +234,17 @@ func TestInvestigateInScope_NoOtherPathSolvesOrTaintsIt(t *testing.T) {
 	// rule solves the trigger challenge as it always does, and neither touches it
 	f.fire(inertRuleForb, ansAlice)
 	f.untouched("after a forbidden-rule fire", ansAlice)
+	// ADR-0003 W2 / ADR-0056 V39 (the reason a course must not put an evade challenge
+	// after an investigate challenge): the evade challenges that come LATER in this
+	// order are not tainted either, because only the current mission is tainted. This
+	// order is the shape LoadScored refuses; the Handler takes any order, so it is built
+	// here on purpose (investigate_w2_test.go in ingest fixes the same for the overflow
+	// path).
+	for _, cid := range []string{inertEvade, inertExfil} {
+		if d := f.st.DirtyRules(ansAlice, cid); len(d) != 0 {
+			t.Fatalf("%s is tainted by a fire while an investigate challenge is current: %v (W2 changed: revisit V39 and ADR-0003)", cid, d)
+		}
+	}
 	f.fire(inertRuleTrig, ansAlice)
 	if !f.st.IsSolved(ansAlice, inertTrig) {
 		t.Fatal("the trigger challenge was not solved by its rule: the ingest path is not live")
@@ -297,12 +308,19 @@ func TestInvestigateInScope_NoOtherPathSolvesOrTaintsIt(t *testing.T) {
 	if err := f.st.RecordExfil(ansAlice, ansTwo, "", "2026-01-01T00:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
-	solved, err := scoring.New(f.cat, f.st, f.clock.now).WithOrder(inertOrder).Sweep()
-	if err != nil {
-		t.Fatalf("Sweep: %v", err)
+	// The pass runs through the handler's own sweeper (Handler.Sweeper, the one
+	// cmd/scoreboard runs), so it is the handler's Grader that is swept, not a second
+	// Grader built here (#622 LOW). Sweeper.Run sweeps once on entry and only then
+	// looks at its context, and its tick (5 s) is far off: with the context already
+	// cancelled, Run does exactly one pass and returns.
+	if f.st.IsSolved(ansAlice, inertExfil) {
+		t.Fatal("the exfil challenge was already solved before the sweep: the sweep proves nothing")
 	}
-	if len(solved) != 1 || solved[0].User != ansAlice || solved[0].Challenge != inertExfil {
-		t.Fatalf("Sweep solved %v, want exactly alice / %s", solved, inertExfil)
+	sweepCtx, stopSweep := context.WithCancel(context.Background())
+	stopSweep()
+	f.srv.Sweeper().Run(sweepCtx)
+	if !f.st.IsSolved(ansAlice, inertExfil) {
+		t.Fatalf("the handler's sweeper did not solve the genuine exfil receipt of %s: the sweep is not live", inertExfil)
 	}
 	for _, cid := range []string{ansOne, ansTwo} {
 		if f.st.IsSolved(ansAlice, cid) {

@@ -28,8 +28,13 @@ import (
 const (
 	ibOrigin = "https://journey.ctf.local"
 	ibSeatA  = "seat-a"
-	ibEvade  = "02-evade"
 )
+
+// ibEvade is "00-...": it sorts BEFORE the investigate challenge (edCID, 01-demo). With
+// no scenario the order is the sorted ids, and catalog.LoadScored refuses an evade
+// challenge after an investigate one (ADR-0056 A3b-5 / V39), so the evade challenge
+// goes first.
+const ibEvade = "00-evade"
 
 // block form with quoted prompts: a flow mapping with a bare "?" in a value is not valid YAML.
 const ibJourney = "challengeId: " + edCID + "\ntitle: IR demo\nquestions:\n" +
@@ -143,8 +148,8 @@ func TestBoot_InvestigateScope_EventModeWithTable_StartsAndGrades(t *testing.T) 
 		t.Errorf("want exactly one INFO record \"edition loaded\" with run_id %s, got %s", edRunID, b.log)
 	}
 	noValueInLog(t, "accepted", b.log)
-	if got := strings.Join(b.scored.Order, ","); got != edCID+","+ibEvade {
-		t.Errorf("Order = %s, want %s,%s (the investigate challenge is first and current)", got, edCID, ibEvade)
+	if got := strings.Join(b.scored.Order, ","); got != ibEvade+","+edCID {
+		t.Errorf("Order = %s, want %s,%s (the evade challenge comes before the investigate one: V39)", got, ibEvade, edCID)
 	}
 
 	h, st := ibHandler(t, b)

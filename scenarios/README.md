@@ -75,6 +75,18 @@ scenarios** — `tutorial-intro` already deliberately runs `00,01,03` (skipping
 02), and new scenarios are free to pick whatever subset/order fits their own
 narrative.
 
+## Placement rule: no evade challenge after an investigate challenge (ADR-0056 V39)
+
+In a scenario's `challenges:` order, an `investigate` challenge must not come before
+an `evade` challenge: put every `evade` challenge first. The evade clean gate taints
+only the participant's *current* mission, and an investigate challenge has no
+forbidden rule, so while one is left unsolved and current, a fire of a rule that a
+later evade challenge forbids taints nobody (ADR-0003 W2). The scoreboard refuses to
+start on such an order (`catalog.LoadScored`, with or without `SCENARIO_FILE`: with
+no scenario the order is the sorted challenge ids), and
+`internal/catalog/scenario_guard_test.go` checks every `scenarios/*/scenario.yaml`.
+There is no investigate challenge yet; every scenario here satisfies the rule.
+
 ## How the scoreboard uses it
 
 The scoreboard bakes `scenarios/` into its image. `SCENARIO_FILE` (chart value
