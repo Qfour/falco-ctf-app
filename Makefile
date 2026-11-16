@@ -18,7 +18,7 @@ SYSDIG_URL   ?= https://app.au1.sysdig.com
 # host repo are not shared into the VM.
 GO_IMAGE ?= golang:1.26-alpine
 
-.PHONY: help dev dev-down build push load-colima deploy-local helm-dep-build lint check-seccomp check-chartparse check-flag-isolation check-namespace-ownership check-image-hygiene check-image-hygiene-selftest test e2e e2e-serve check-e2e-verdict tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-template-hex check-portal-render check-rules check-freshness check-adr check-dockerignore check-build-context check-go-base-digest check-apk-pins check-apk-pins-selftest clean scan check-apk-pins-lint
+.PHONY: help dev dev-down build push load-colima deploy-local helm-dep-build lint check-seccomp check-chartparse check-flag-isolation check-namespace-ownership check-image-hygiene check-image-hygiene-selftest check-image-type-rule test e2e e2e-serve check-e2e-verdict tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-template-hex check-portal-render check-rules check-freshness check-adr check-dockerignore check-build-context check-go-base-digest check-apk-pins check-apk-pins-selftest clean scan check-apk-pins-lint
 
 help:
 	@echo "Targets:"
@@ -270,8 +270,16 @@ check-flags:
 	./scripts/check-seat-grammar.sh
 	./scripts/check-deploy-user-ids.sh
 	./scripts/check-missions-allowlist-assert.sh
+	./scripts/test-check-image-hygiene.sh --type-rule-only
 	./scripts/check-emails.sh
 	./scripts/check-emails-selftest.sh
+
+# ADR-0056 V22, docker-free: the `type:` rule of the challenge image builder and of
+# check-image-hygiene.sh V2 (extracted from the real files, run on synthetic trees)
+# and the V1 reference set. The same step runs in CI's required flag-guard job; the
+# image-based part of the selftest stays in check-image-hygiene-selftest.
+check-image-type-rule:
+	./scripts/test-check-image-hygiene.sh --type-rule-only
 
 check-template-hex:
 	./scripts/check-template-hex.sh

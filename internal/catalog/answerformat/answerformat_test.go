@@ -371,9 +371,16 @@ func TestCheckSpaceN_RefusesOutOfRangeInputs(t *testing.T) {
 			t.Errorf("CheckSpaceN(1000, %d) was accepted", attempts)
 		}
 		// CheckSpace refuses it for every format, a vocabulary-sized one included.
+		// For path the refusal must be the attempts check itself: ErrSpaceFromVocabulary
+		// is also an error, so a bare "err != nil" would stay green with the attempts
+		// check at the top of CheckSpace removed (ADR-0056 V26).
 		for _, f := range []string{"path", "hexid"} {
-			if err := answerformat.CheckSpace(f, map[string]answerformat.Params{"path": {}, "hexid": pHex12}[f], attempts); err == nil {
+			err := answerformat.CheckSpace(f, map[string]answerformat.Params{"path": {}, "hexid": pHex12}[f], attempts)
+			if err == nil {
 				t.Errorf("CheckSpace(%s, attempts %d) was accepted", f, attempts)
+			}
+			if f == "path" && errors.Is(err, answerformat.ErrSpaceFromVocabulary) {
+				t.Errorf("CheckSpace(path, attempts %d) = %v: refused as a vocabulary space, not for its attempts", attempts, err)
 			}
 		}
 	}

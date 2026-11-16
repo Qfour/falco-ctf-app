@@ -72,8 +72,9 @@ type Question struct {
 }
 
 // UnmarshalYAML decodes the block with KnownFields(true) at every depth: an
-// unknown key is an error. Only this block is strict; the rest of
-// falco-rule.yaml keeps decoding as before.
+// unknown key is an error. An investigate challenge's falco-rule.yaml top level
+// is strict as well (parseFile, decodeStrictBytes); trigger / evade / detect
+// keep decoding as before.
 func (i *Investigate) UnmarshalYAML(node *yaml.Node) error {
 	type plain Investigate // no methods: decoding into it does not recurse here
 	if err := decodeStrict(node, (*plain)(i)); err != nil {
@@ -93,6 +94,41 @@ func decodeStrict(node *yaml.Node, out any) error {
 	dec := yaml.NewDecoder(bytes.NewReader(b))
 	dec.KnownFields(true)
 	return dec.Decode(out)
+}
+
+// decodeStrictBytes decodes a whole yaml document into out, refusing keys out
+// knows nothing about. It is the top-level counterpart of decodeStrict: an
+// investigate challenge's falco-rule.yaml and journey.yaml are read through it
+// (ADR-0056 D1, V25), and no other type's file is.
+func decodeStrictBytes(data []byte, out any) error {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	return dec.Decode(out)
+}
+
+// ruleFileKeys is the schema an investigate challenge's falco-rule.yaml is held to
+// when it is decoded strictly (ADR-0056 D1, V25): every top-level key that ANY
+// consumer of the file reads. The Go catalog reads Challenge's keys; the other
+// consumers are shell / python that match single lines (check-challenge-rules.sh,
+// validate-flags-file.sh, the image builder: all keys Challenge already has) and
+// scripts/gen-attack-layer.py, which requires the top-level `attack:` block of
+// every challenge (make gen-attack, a CI check). A strict schema that left `attack`
+// out would make an investigate challenge impossible to write: it could not satisfy
+// the catalog and gen-attack at once. TestStrictSchemas_CoverEveryRealFile decodes
+// every real falco-rule.yaml through this type, so a key a consumer needs and this
+// type lacks is red.
+type ruleFileKeys struct {
+	Challenge `yaml:",inline"`
+	Attack    *attackBlock `yaml:"attack"`
+}
+
+// attackBlock is the `attack:` block gen-attack-layer.py reads (all three keys
+// required by it). Decoded strictly like everything else of an investigate
+// challenge: an unknown key inside it is a load failure.
+type attackBlock struct {
+	Tactic        string `yaml:"tactic"`
+	TechniqueID   string `yaml:"techniqueId"`
+	TechniqueName string `yaml:"techniqueName"`
 }
 
 // reservedMountRoots are directories no evidence bundle may be mounted over or

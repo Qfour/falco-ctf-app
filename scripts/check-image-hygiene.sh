@@ -328,15 +328,19 @@ done <"$T/nonfixtures"
 : >"$T/evade-ids"
 while IFS= read -r rf; do
   # Same rule as the Dockerfile's missions-builder: exactly one top-level `type:`
-  # line, exactly `type: trigger|evade|detect`; anything else is a failure.
+  # line, exactly `type: trigger|evade|detect|investigate`; anything else is a
+  # failure. An investigate challenge (ADR-0056) has no flag, so like trigger and
+  # detect it adds no id to the evade ids (and no key to answers.yaml).
+  # The set is the catalog's: a Go test (TestTypeSet_ShellCopiesMatchTheCatalog)
+  # holds this case and the Dockerfile's to catalog.Types.
   tcount="$(grep -c '^type:' "$rf" || true)"
   tline="$(grep '^type:' "$rf" | head -n 1 || true)"
   if [ "$tcount" != 1 ]; then fail V2 "$rf: needs exactly one top-level type: line (found $tcount)"
   else
     case "$tline" in
-      'type: trigger'|'type: detect') ;;
+      'type: trigger'|'type: detect'|'type: investigate') ;;
       'type: evade') basename "$(dirname "$rf")" >>"$T/evade-ids" ;;
-      *) fail V2 "$rf: top-level type: must be exactly 'type: trigger|evade|detect'" ;;
+      *) fail V2 "$rf: top-level type: must be exactly 'type: trigger|evade|detect|investigate'" ;;
     esac
   fi
 done <"$T/rules"

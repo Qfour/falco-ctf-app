@@ -214,6 +214,11 @@ func LoadJourneys(dir string, cat Catalog) (Journeys, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
+			// A missing journey dir is the graceful degrade for every type but one:
+			// an investigate challenge cannot be asked without its prompts (ADR-0056 D1, #608).
+			if err := requireInvestigateJourneys(cat, out); err != nil {
+				return nil, err
+			}
 			return out, nil
 		}
 		return nil, fmt.Errorf("read journey dir %q: %w", dir, err)
@@ -230,7 +235,7 @@ func LoadJourneys(dir string, cat Catalog) (Journeys, error) {
 		if statErr != nil || info.IsDir() {
 			continue // no journey.yaml -> graceful degrade
 		}
-		j, err := parseJourney(path, e.Name())
+		j, raw, err := parseJourney(path, e.Name())
 		if err != nil {
 			return nil, fmt.Errorf("parse %s: %w", path, err)
 		}
@@ -249,6 +254,14 @@ func LoadJourneys(dir string, cat Catalog) (Journeys, error) {
 		if !ok {
 			continue
 		}
+		// ADR-0056 D1 (V25): for an investigate challenge the journey's top level
+		// is strict too (an answer-looking key must fail, not sit ignored in a
+		// public file). The other types keep the lenient decode.
+		if ch.Type == TypeInvestigate {
+			if err := checkJourneyStrict(raw); err != nil {
+				return nil, fmt.Errorf("%s: %w", path, err)
+			}
+		}
 		// ADR-0056 D1: an investigate challenge's questions[] and the catalog's
 		// question ids are the same set (any other type has none).
 		if err := checkJourneyQuestions(j, ch); err != nil {
@@ -256,32 +269,81 @@ func LoadJourneys(dir string, cat Catalog) (Journeys, error) {
 		}
 		out[j.ChallengeID] = j
 	}
-	// An investigate challenge with no journey.yaml has no prompts, so it asks
-	// nothing: not the graceful degrade of a missing briefing but a content hole.
-	for _, id := range cat.IDs() {
-		if _, has := out[id]; !has && cat[id].Type == TypeInvestigate {
-			return nil, fmt.Errorf("investigate challenge %q has no journey.yaml: its questions[] prompts are required", id)
-		}
+	if err := requireInvestigateJourneys(cat, out); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
 
-func parseJourney(path, dirName string) (Journey, error) {
+// requireInvestigateJourneys: an investigate challenge with no journey.yaml has
+// no prompts, so it asks nothing: not the graceful degrade of a missing briefing
+// but a content hole. It is also called on the "journey dir does not exist"
+// path, which returns before the directory loop (#608).
+func requireInvestigateJourneys(cat Catalog, got Journeys) error {
+	for _, id := range cat.IDs() {
+		if _, has := got[id]; !has && cat[id].Type == TypeInvestigate {
+			return fmt.Errorf("investigate challenge %q has no journey.yaml: its questions[] prompts are required", id)
+		}
+	}
+	return nil
+}
+
+// checkJourneyStrict decodes the bytes of an investigate challenge's journey.yaml
+// with KnownFields(true): an unknown top-level key is an error, and so is an
+// unknown key inside a mapping element of hints[] (JourneyHints decodes its
+// elements with a lenient decoder of its own, so they are checked here). The
+// keys are the ones the real journey files use (challengeId, title, tagline,
+// briefing, steps, hints, bridge, docsUrl, questions; hint: kind, text, ruleRefs,
+// cheatsheetRef): TestStrictSchemas_CoverEveryRealFile reads the real tree.
+// steps[] elements are not made strict (ADR-0056 V25 names the top level).
+func checkJourneyStrict(data []byte) error {
+	var j Journey
+	if err := decodeStrictBytes(data, &j); err != nil {
+		return err
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return err
+	}
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
+		return nil
+	}
+	top := doc.Content[0].Content
+	for i := 0; i+1 < len(top); i += 2 {
+		if top[i].Value != "hints" || top[i+1].Kind != yaml.SequenceNode {
+			continue
+		}
+		for n, item := range top[i+1].Content {
+			if item.Kind != yaml.MappingNode {
+				continue // the legacy scalar form has no keys
+			}
+			var h JourneyHint
+			if err := decodeStrict(item, &h); err != nil {
+				return fmt.Errorf("hints[%d]: %w", n, err)
+			}
+		}
+	}
+	return nil
+}
+
+// parseJourney returns the parsed journey and the bytes it was read from, so a
+// second (strict) decode does not read the file again.
+func parseJourney(path, dirName string) (Journey, []byte, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return Journey{}, err
+		return Journey{}, nil, err
 	}
 	var j Journey
 	if err := yaml.Unmarshal(data, &j); err != nil {
-		return Journey{}, err
+		return Journey{}, nil, err
 	}
 	if j.ChallengeID == "" {
 		j.ChallengeID = dirName
 	}
 	if j.Title == "" {
-		return Journey{}, fmt.Errorf("journey %q: title must not be empty", j.ChallengeID)
+		return Journey{}, nil, fmt.Errorf("journey %q: title must not be empty", j.ChallengeID)
 	}
-	return j, nil
+	return j, data, nil
 }
 
 // ValidateHintRuleRefs checks that every JourneyHint.RuleRefs entry names a
