@@ -195,6 +195,10 @@ jobs:
         run: ./scripts/check-seat-grammar.sh
       - name: deploy-user.sh checks the challenge id and the scenario name against their shared case tables before any kubectl/helm call (app#494; self-test included)
         run: ./scripts/check-deploy-user-ids.sh
+      - name: the shell digest of an evidence bundle equals the shared case table (ADR-0056 V16; self-test included)
+        run: ./scripts/check-evidence-digest.sh
+      - name: deploy-user.sh --evidence-dir / --evidence-digests is fail-closed before any kubectl/helm call and makes the Secrets by name (ADR-0056 V17 / V48 / V49 / V50; self-test included)
+        run: ./scripts/check-deploy-user-evidence.sh
       - name: deploy-time missions allowlist assert (ADR-0026 V4, check 3-8) accepts a clean image and rejects each violation (stub kubectl, no cluster)
         run: ./scripts/check-missions-allowlist-assert.sh
       - name: the challenge image's type rule (builder + check-image-hygiene V2) accepts type investigate and refuses near-misses, edition/** is in the V1 reference set (ADR-0056 V22, no docker)

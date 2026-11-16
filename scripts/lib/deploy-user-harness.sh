@@ -26,6 +26,9 @@
 #                                    stdin /dev/null; -> RUN_STATUS, CT_RUN_OUT, CT_RUN_ERR
 #                                    (the files), CT_CALLS truncated first; `set -e` is left
 #                                    as it was found
+#                                    The env CT_KUBECTL_FAIL=<text>, set for one ct_run, makes
+#                                    every kubectl call whose argv holds <text> exit 1 (after it
+#                                    is recorded): a failure the script under test must handle
 #   ct_upgrade_call                  prints the first recorded `helm upgrade ...` line
 #   ct_check_reached_upgrade <where> the run exited CT_UPGRADE_EXIT (the stub's `helm upgrade`)
 #   ct_check_reject <where> <arg as given> <stderr marker>
@@ -60,6 +63,8 @@ STUB
   cat > "${CT_STUB_BIN}/kubectl" <<'STUB'
 #!/usr/bin/env bash
 printf 'kubectl %s\n' "$*" >> "${CALLS_LOG}"
+# CT_KUBECTL_FAIL=<text>: a call whose argv holds the text fails (recorded first)
+if [[ -n "${CT_KUBECTL_FAIL:-}" && " $* " == *"${CT_KUBECTL_FAIL}"* ]]; then exit 1; fi
 case " $* " in
   *" get svc kubernetes "*) printf '10.96.0.1'; exit 0 ;;
 esac

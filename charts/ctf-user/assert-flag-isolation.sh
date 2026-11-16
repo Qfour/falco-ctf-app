@@ -9,7 +9,9 @@
 #   3-2  neither does PID 1's env (/proc/1/environ)
 #   3-3  the challenge container has no ServiceAccount token mounted
 #   3-4  the seed volume root (/plant-seed) is not visible from `challenge`
-#        (only individual plant-target subPath mounts are — F5)
+#        (only individual plant-target subPath mounts are — F5); likewise the
+#        evidence source root (/opt/ctf/evidence-src, where `plant` alone mounts
+#        the ctf-evidence-<cid> Secrets, ADR-0056 D11) is not visible from `challenge`
 #   3-5  the planted /etc/shadow contains exactly as many `FALCO{` lines as
 #        the missions actually in scope for this deploy declare (03/10)
 #   3-6  the planted /root/.ssh/id_rsa exists IF mission 05 is in scope —
@@ -419,6 +421,12 @@ then
   PLANT_SEED_ROOT_EXISTS=yes
 fi
 
+EVIDENCE_SRC_ROOT_EXISTS=no
+if [ -e /opt/ctf/evidence-src ]
+then
+  EVIDENCE_SRC_ROOT_EXISTS=yes
+fi
+
 SA_TOKEN_EXISTS=no
 if [ -e /var/run/secrets/kubernetes.io/serviceaccount/token ]
 then
@@ -527,6 +535,7 @@ then
 fi
 
 printf 'PLANT_SEED_ROOT_EXISTS=%s\n' "${PLANT_SEED_ROOT_EXISTS}"
+printf 'EVIDENCE_SRC_ROOT_EXISTS=%s\n' "${EVIDENCE_SRC_ROOT_EXISTS}"
 printf 'SA_TOKEN_EXISTS=%s\n' "${SA_TOKEN_EXISTS}"
 printf 'ENV_HAS_CTF_FLAG=%s\n' "${ENV_HAS_CTF_FLAG}"
 printf 'PROC1_HAS_CTF_FLAG=%s\n' "${PROC1_HAS_CTF_FLAG}"
@@ -564,6 +573,7 @@ fi
 # ---------------------------------------------------------------------------
 
 OBS_PLANT_SEED_ROOT_EXISTS=""
+OBS_EVIDENCE_SRC_ROOT_EXISTS=""
 OBS_SA_TOKEN_EXISTS=""
 OBS_ENV_HAS_CTF_FLAG=""
 OBS_PROC1_HAS_CTF_FLAG=""
@@ -578,6 +588,7 @@ while IFS='=' read -r key val
 do
   case "${key}" in
     PLANT_SEED_ROOT_EXISTS) OBS_PLANT_SEED_ROOT_EXISTS="${val}" ;;
+    EVIDENCE_SRC_ROOT_EXISTS) OBS_EVIDENCE_SRC_ROOT_EXISTS="${val}" ;;
     SA_TOKEN_EXISTS)        OBS_SA_TOKEN_EXISTS="${val}" ;;
     ENV_HAS_CTF_FLAG)       OBS_ENV_HAS_CTF_FLAG="${val}" ;;
     PROC1_HAS_CTF_FLAG)     OBS_PROC1_HAS_CTF_FLAG="${val}" ;;
@@ -599,7 +610,7 @@ VIOLATIONS=()
 # the value is replaced by a placeholder so it is never echoed or split.
 # MISSIONS_LIST is ids only; BAD / SUBBAD also carry '/', ':' and the
 # <bad-name> placeholder.
-for _v in OBS_PLANT_SEED_ROOT_EXISTS OBS_SA_TOKEN_EXISTS OBS_ENV_HAS_CTF_FLAG OBS_PROC1_HAS_CTF_FLAG \
+for _v in OBS_PLANT_SEED_ROOT_EXISTS OBS_EVIDENCE_SRC_ROOT_EXISTS OBS_SA_TOKEN_EXISTS OBS_ENV_HAS_CTF_FLAG OBS_PROC1_HAS_CTF_FLAG \
           OBS_SHADOW_FALCO_LINES OBS_SSH_KEY_EXISTS OBS_MISSIONS_LIST OBS_MISSIONS_BAD OBS_MISSIONS_SUBBAD OBS_PROBE_END
 do
   _val="${!_v}"
@@ -642,6 +653,11 @@ fi
 if [ "${OBS_PLANT_SEED_ROOT_EXISTS}" != "no" ]
 then
   VIOLATIONS+=("3-4: seed volume root (/plant-seed) is visible from challenge (expected: not exist)")
+fi
+
+if [ "${OBS_EVIDENCE_SRC_ROOT_EXISTS}" != "no" ]
+then
+  VIOLATIONS+=("3-4: the evidence source root (/opt/ctf/evidence-src, the plant initContainer's Secret mounts) is visible from challenge (expected: not exist; ADR-0056 D11)")
 fi
 
 if [ "${OBS_SHADOW_FALCO_LINES}" != "${EXPECTED_SHADOW_FALCO_LINES}" ]

@@ -69,6 +69,7 @@ payload="${payload//\/root\/.ssh/${FAKE_ROOT}/root/.ssh}"
 payload="${payload//\/var\/run\/secrets/${FAKE_ROOT}/var/run/secrets}"
 payload="${payload//\/proc\/1\/environ/${FAKE_ROOT}/proc1-environ}"
 payload="${payload//\/plant-seed/${FAKE_ROOT}/plant-seed}"
+payload="${payload//\/opt\/ctf\/evidence-src/${FAKE_ROOT}/opt/ctf/evidence-src}"
 if [[ -n "${FAKE_EXTRA_LINES:-}" ]]; then
   sh -c "${payload}"
   printf '%s\n' "${FAKE_EXTRA_LINES}"
@@ -277,6 +278,14 @@ else
   r="$(newroot real-short "${real_ids[@]:1}")"
   expect reject "real catalog: first id missing" "expected exactly [${real_ids[*]}]" "$r" "${WORK}/real-challenges" all
 fi
+
+echo "==> 3-4 (ADR-0056 D11, A5c): the evidence source root is not visible from challenge"
+r="$(newroot evidence-src-visible 01-alpha 02-beta 03-gamma)"
+mkdir -p "${r}/opt/ctf/evidence-src/01-alpha"
+expect reject "all: /opt/ctf/evidence-src exists in challenge" '3-4: the evidence source root' "$r" "${CH}" all
+r="$(newroot evidence-src-file 01-alpha 02-beta 03-gamma)"
+: >"${r}/opt/ctf/evidence-src"
+expect reject "all: /opt/ctf/evidence-src is a plain file in challenge (still visible)" '3-4: the evidence source root' "$r" "${CH}" all
 
 echo "==> 3-8 (ADR-0026 V4): scenario mode"
 r="$(newroot sc-good 01-alpha 02-beta)"

@@ -13,6 +13,7 @@
 #   [FALCO_CTF_REGISTRY=<registry>/<prefix>] [FALCO_CTF_IMAGE_TAG=<tag>] \
 #   deploy-user.sh [--challenges-dir <path>] [--scenarios-dir <path>] \
 #                  [--flags-file <path>] [--dns-suffix <suffix>] \
+#                  [--evidence-dir <dir> --evidence-digests <file>] \
 #                  [--frame-ancestors <'none'|https://host>] [--app-host <host>] \
 #                  [--egress-lockdown --api-server-cidr <cidr>] \
 #                  <username> <challenge-id>
@@ -55,6 +56,27 @@
 #   and from each other. Otherwise the script exits non-zero before touching
 #   the cluster. Only the in-scope entries are passed to helm.
 #   Omit for local dev (dev placeholders are used, nothing is validated).
+#
+# --evidence-dir <dir> --evidence-digests <file> (ADR-0056 D11, A5c): the event's evidence
+#   bundles of THIS seat, and the digests file `scoreboard edition check` wrote. <dir> holds
+#   one flat directory <cid>/ per investigate challenge of the scope (the challenges whose
+#   generated values mark a plant.mounts entry `evidence: true`), and nothing else. Fail-
+#   closed, before any kubectl / helm call (exit 2 for a missing / extra argument, 1 for
+#   the content): a scope with an investigate challenge needs BOTH arguments (--flags-file
+#   without them, one of the two alone, or neither: the practice-edition deploy is A5c-2's,
+#   not yet implemented); a scope without one takes neither; the <cid>/ set equals the scope;
+#   every file is a regular file named as B2 (EVIDENCE_NAME_PATTERN), at most
+#   EVIDENCE_MAX_FILES per challenge, EVIDENCE_MAX_BUNDLE_BYTES per challenge and
+#   EVIDENCE_MAX_SEAT_BYTES for the seat; the digests file (line 1 `# falco-ctf
+#   evidence-digests v1 run=<32 hex>`, then seat TAB cid TAB digest) has exactly one row
+#   per scope challenge for this seat and its digest is D9's digest of <cid>/. Then, before
+#   helm, the Secret ctf-evidence-<cid> is made from THOSE files (kubectl delete + create
+#   secret generic --from-file=<name>=<path>, then label; never `kubectl apply`), every
+#   other ctf-evidence-* of the namespace is deleted (label selector), and only the file
+#   NAMES go to helm (evidence.challenges.<cid>.names). A bundle's content never reaches
+#   a helm argument or a values file. The digest and the limits' literals: see below.
+#   --evidence-dir is a tree the operator owns: it must not be rewritten between the check
+#   and the Secret's creation (the same files are read twice, never copied).
 #
 # --frame-ancestors <value>: CSP `frame-ancestors` source the ttyd-proxy
 #   sidecar (P23-3) stamps on every ttyd response. Set this to the portal's
@@ -112,10 +134,15 @@ CHART_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${CHART_DIR}/../.." && pwd)"
 DEFAULT_CHALLENGES_DIR="${REPO_ROOT}/challenges"
 DEFAULT_SCENARIOS_DIR="${REPO_ROOT}/scenarios"
+# The digest of a bundle and the reader of a values file's investigate scope (ADR-0056 A5c).
+# shellcheck source=evidence-bundle.sh
+source "${CHART_DIR}/evidence-bundle.sh"
 
 CHALLENGES_DIR=""
 SCENARIOS_DIR=""
 FLAGS_FILE=""
+EVIDENCE_DIR=""
+EVIDENCE_DIGESTS=""
 DNS_SUFFIX=""
 FRAME_ANCESTORS=""
 APP_HOST=""
@@ -156,6 +183,14 @@ while [[ $# -gt 0 ]]; do
       FLAGS_FILE="${2:?--flags-file requires a path}"; shift 2 ;;
     --flags-file=*)
       FLAGS_FILE="${1#--flags-file=}"; shift ;;
+    --evidence-dir)
+      EVIDENCE_DIR="${2:?--evidence-dir requires a path}"; shift 2 ;;
+    --evidence-dir=*)
+      EVIDENCE_DIR="${1#--evidence-dir=}"; shift ;;
+    --evidence-digests)
+      EVIDENCE_DIGESTS="${2:?--evidence-digests requires a path}"; shift 2 ;;
+    --evidence-digests=*)
+      EVIDENCE_DIGESTS="${1#--evidence-digests=}"; shift ;;
     --egress-lockdown)
       EGRESS_LOCKDOWN=1; shift ;;
     --api-server-cidr)
@@ -381,16 +416,22 @@ fi
 # rationale as the check above: a silently-empty value would ship a broken
 # workspace.
 API_SERVER_CLUSTER_IP=""
-if [[ "${EGRESS_LOCKDOWN}" -eq 1 ]]; then
-  API_SERVER_CLUSTER_IP="$(kubectl get svc kubernetes -n default -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)"
-  if [[ -z "${API_SERVER_CLUSTER_IP}" ]]; then
-    echo "--egress-lockdown: could not read the 'kubernetes' Service ClusterIP in the 'default' namespace" >&2
-    echo "  (needed so the workspace egress NetworkPolicy allows the API server's" >&2
-    echo "   ClusterIP under NetworkPolicy enforcement — ADR-WS-0005 fix; check" >&2
-    echo "   kubectl context/access to the target cluster)" >&2
-    exit 2
+# A5c: this is the first kubectl call of the script, so it is a function that runs AFTER
+# the evidence checks below (they must stop before any kubectl / helm call, and need the
+# scope, which is resolved further down). With no evidence argument nothing else moves:
+# still before the namespace step, still before helm.
+derive_api_server_cluster_ip() {
+  if [[ "${EGRESS_LOCKDOWN}" -eq 1 ]]; then
+    API_SERVER_CLUSTER_IP="$(kubectl get svc kubernetes -n default -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)"
+    if [[ -z "${API_SERVER_CLUSTER_IP}" ]]; then
+      echo "--egress-lockdown: could not read the 'kubernetes' Service ClusterIP in the 'default' namespace" >&2
+      echo "  (needed so the workspace egress NetworkPolicy allows the API server's" >&2
+      echo "   ClusterIP under NetworkPolicy enforcement — ADR-WS-0005 fix; check" >&2
+      echo "   kubectl context/access to the target cluster)" >&2
+      exit 2
+    fi
   fi
-fi
+}
 
 # Precedence: --challenges-dir > $FALCO_CTF_CHALLENGES_DIR > default sibling repo.
 CHALLENGES_DIR="${CHALLENGES_DIR:-${FALCO_CTF_CHALLENGES_DIR:-${DEFAULT_CHALLENGES_DIR}}}"
@@ -540,8 +581,238 @@ if [[ -n "${FLAGS_FILE}" ]]; then
   # entries in scope, and a trigger-only deploy has none.
 fi
 
-# Total step count: namespace/rotate/upgrade/verify/assert.
-LAST_STEP=5
+# Evidence bundles (ADR-0056 D11, A5c; the arguments are described at the top). Everything
+# from here to derive_api_server_cluster_ip below runs before the first kubectl / helm call
+# and exits non-zero on the first violation: scoreboard's D8 (i) has no counterpart on the
+# deploy side except this, and the platform's V12 has no required check, so this script
+# is fail-closed by itself (security 1(c)).
+#
+# Literals (one assignment each; internal/edition/evidence_limits_test.go (V58, V52) holds
+# them equal to edition.MaxBundleFiles / MaxBundleBytes / MaxSeatBytes / NamePattern, the
+# Go definitions, by reading these lines):
+#   EVIDENCE_NAME_PATTERN        D10 B2's file name grammar
+#   EVIDENCE_MAX_FILES           files per (seat, challenge) bundle
+#   EVIDENCE_MAX_BUNDLE_BYTES    bytes per bundle, 512 KiB (also a Secret's size per challenge)
+#   EVIDENCE_MAX_SEAT_BYTES      bytes of the seat's bundles together, 2 MiB (half of plant-seed's
+#                                sizeLimit of 4Mi, pod.yaml)
+# This is NOT a copy of B2's content rules (UTF-8, hidden characters, hint leaks): the
+# validator applied them; here the bytes are only held to the digest the validator wrote.
+# A bundle with no file is refused here too (ADR-0056 D10 B1: every (seat, challenge) has a
+# bundle with a file, E1: the validator is the one definition; the chart's `names` is 1..64).
+# The tree is the operator's own (the validator's input): a file swapped between this check
+# and `create secret` is outside the threat model, as it is for the validator's reader.
+EVIDENCE_NAME_PATTERN='^[a-z0-9][a-z0-9._-]{0,62}$'
+EVIDENCE_MAX_FILES='64'
+EVIDENCE_MAX_BUNDLE_BYTES='524288'
+EVIDENCE_MAX_SEAT_BYTES='2097152'
+EVIDENCE_DIGESTS_HEADER_RE='^# falco-ctf evidence-digests v1 run=[0-9a-f]{32}$'
+EVIDENCE_DIGEST_RE='^[0-9a-f]{64}$'
+
+# evidence_reject <exit status> <message>: the message carries ids, names and line numbers
+# only, never a byte of a bundle.
+evidence_reject() {
+  printf 'deploy-user.sh: %s\n' "$2" >&2
+  echo "  (ADR-0056 D11; nothing was deployed)" >&2
+  exit "$1"
+}
+# evidence_shown <value>: the value %q-escaped in the C locale (a control or bidi character
+# cannot reach the terminal raw).
+evidence_shown() { (export LC_ALL=C; printf '%q' "$1"); }
+# evidence_match <value> <pattern>: C locale, like every other grammar check here.
+evidence_match() { (export LC_ALL=C; [[ "$1" =~ $2 ]]); }
+# evidence_in_scope <cid>
+evidence_in_scope() {
+  local c
+  for c in ${EVIDENCE_CIDS[@]+"${EVIDENCE_CIDS[@]}"}; do
+    if [[ "${c}" == "$1" ]]; then return 0; fi
+  done
+  return 1
+}
+
+# The investigate challenges of this scope: the plant.mounts entries marked `evidence: true`
+# of the values file helm is given (gen-values.sh writes it; none for a trigger-only or
+# evade-only scope).
+EVIDENCE_CIDS=()
+SCOPE_VALUES_FILE=""
+if [[ "${#VALUES_ARGS[@]}" -ge 2 ]]; then
+  SCOPE_VALUES_FILE="${VALUES_ARGS[1]}"
+fi
+if [[ -n "${SCOPE_VALUES_FILE}" ]]; then
+  if ! SCOPE_CIDS_OUT="$(evidence_scope_cids "${SCOPE_VALUES_FILE}")"; then
+    evidence_reject 1 "an evidence entry of $(evidence_shown "${SCOPE_VALUES_FILE}") is not in the form gen-values.sh writes; the investigate challenges of this scope cannot be read"
+  fi
+  if [[ -n "${SCOPE_CIDS_OUT}" ]]; then
+    SCOPE_CIDS_SORTED="$(set -o pipefail; printf '%s\n' "${SCOPE_CIDS_OUT}" | LC_ALL=C sort)" \
+      || evidence_reject 1 "could not sort the investigate challenges of this scope"
+    while IFS= read -r scope_cid; do
+      if ! evidence_match "${scope_cid}" "${CHALLENGE_ID_PATTERN}"; then
+        evidence_reject 1 "the investigate challenge id $(evidence_shown "${scope_cid}") of this scope is not a challenge id"
+      fi
+      if evidence_in_scope "${scope_cid}"; then
+        evidence_reject 1 "the investigate challenge ${scope_cid} is listed twice in the values of this scope"
+      fi
+      EVIDENCE_CIDS+=("${scope_cid}")
+    done <<< "${SCOPE_CIDS_SORTED}"
+  fi
+fi
+
+EVIDENCE_NAMES=()        # per EVIDENCE_CIDS entry: its file names, byte order, one per line
+EVIDENCE_NAMES_ARGS=()   # helm: the names only
+
+# evidence_verify: the tree, the limits, the digests (see the top of the file).
+evidence_verify() {
+  local cid name p size n bundle_bytes seat_bytes=0 root_ok idx
+  [[ -d "${EVIDENCE_DIR}" ]] || evidence_reject 1 "evidence dir not found: $(evidence_shown "${EVIDENCE_DIR}")"
+  [[ -f "${EVIDENCE_DIGESTS}" ]] || evidence_reject 1 "evidence digests file not found: $(evidence_shown "${EVIDENCE_DIGESTS}")"
+  EVIDENCE_DIR="$(cd "${EVIDENCE_DIR}" && pwd)" || evidence_reject 1 "cannot enter the evidence dir"
+
+  # 1. <dir> holds the <cid>/ of the scope and nothing else.
+  evidence_read_entries "${EVIDENCE_DIR}" || evidence_reject 1 "the evidence dir cannot be read"
+  for name in ${EVIDENCE_ENTRIES[@]+"${EVIDENCE_ENTRIES[@]}"}; do
+    evidence_in_scope "${name}" || evidence_reject 1 "an entry of the evidence dir is not an investigate challenge of this scope: $(evidence_shown "${name}")"
+    if [[ -L "${EVIDENCE_DIR}/${name}" || ! -d "${EVIDENCE_DIR}/${name}" ]]; then
+      evidence_reject 1 "${name} in the evidence dir is not a directory (a link is refused)"
+    fi
+  done
+  for cid in "${EVIDENCE_CIDS[@]}"; do
+    root_ok=0
+    for name in ${EVIDENCE_ENTRIES[@]+"${EVIDENCE_ENTRIES[@]}"}; do
+      if [[ "${name}" == "${cid}" ]]; then root_ok=1; fi
+    done
+    [[ "${root_ok}" -eq 1 ]] || evidence_reject 1 "no ${cid}/ directory in the evidence dir for the investigate challenge ${cid}"
+  done
+
+  # 2. Each bundle: count, names, regular files, bytes. Counted here, before any cluster call.
+  for cid in "${EVIDENCE_CIDS[@]}"; do
+    evidence_read_entries "${EVIDENCE_DIR}/${cid}" || evidence_reject 1 "the bundle ${cid} cannot be read"
+    n="${#EVIDENCE_ENTRIES[@]}"
+    [[ "${n}" -ge 1 ]] || evidence_reject 1 "the bundle ${cid} holds no file"
+    [[ "${n}" -le "${EVIDENCE_MAX_FILES}" ]] || evidence_reject 1 "the bundle ${cid} holds ${n} entries; at most ${EVIDENCE_MAX_FILES} files"
+    bundle_bytes=0
+    for name in "${EVIDENCE_ENTRIES[@]}"; do
+      p="${EVIDENCE_DIR}/${cid}/${name}"
+      evidence_match "${name}" "${EVIDENCE_NAME_PATTERN}" || evidence_reject 1 "the bundle ${cid} holds the file name $(evidence_shown "${name}"), outside ${EVIDENCE_NAME_PATTERN}"
+      if [[ -L "${p}" || ! -f "${p}" ]]; then
+        evidence_reject 1 "${cid}/${name} is not a regular file (a link or a directory is refused)"
+      fi
+      size="$(wc -c < "${p}")" || evidence_reject 1 "cannot size ${cid}/${name}"
+      size="${size//[[:space:]]/}"
+      evidence_match "${size}" '^[0-9]+$' || evidence_reject 1 "cannot size ${cid}/${name}"
+      bundle_bytes=$((bundle_bytes + 10#${size}))
+      if [[ "${bundle_bytes}" -gt "${EVIDENCE_MAX_BUNDLE_BYTES}" ]]; then
+        evidence_reject 1 "the bundle ${cid} is larger than ${EVIDENCE_MAX_BUNDLE_BYTES} bytes"
+      fi
+    done
+    seat_bytes=$((seat_bytes + bundle_bytes))
+    if [[ "${seat_bytes}" -gt "${EVIDENCE_MAX_SEAT_BYTES}" ]]; then
+      evidence_reject 1 "the bundles of this seat are larger than ${EVIDENCE_MAX_SEAT_BYTES} bytes together"
+    fi
+  done
+
+  # 3. The digests file: its shape, then this seat's rows against the scope, then each
+  # bundle's digest (D9's definition, evidence_bundle_digest) against its row.
+  evidence_check_digests
+  idx=0
+  for cid in "${EVIDENCE_CIDS[@]}"; do
+    EVIDENCE_NAMES[idx]="$(evidence_sorted_names "${EVIDENCE_DIR}/${cid}")" || evidence_reject 1 "the bundle ${cid} cannot be listed"
+    idx=$((idx + 1))
+  done
+}
+
+# evidence_check_digests: the digests file is `# falco-ctf evidence-digests v1 run=<32 hex,
+# not all zero>` and one `seat TAB cid TAB digest` row per line, nothing else (the shape
+# internal/edition.ParseDigests reads; a CR, a quote or a stray byte fails the column
+# grammars below). This seat must have exactly one row per challenge of the scope and none
+# for another challenge; a repeated (seat, cid) anywhere is refused.
+evidence_check_digests() {
+  local line="" lineno=0 seat cid rest digest key seen=$'\n' mine=$'\n' c got want rows
+  if ! (set -o pipefail; LC_ALL=C tr -d '\000' < "${EVIDENCE_DIGESTS}" | cmp -s - "${EVIDENCE_DIGESTS}"); then
+    evidence_reject 1 "the digests file holds a NUL byte or cannot be read"
+  fi
+  while IFS= read -r line; do
+    lineno=$((lineno + 1))
+    if [[ "${lineno}" -eq 1 ]]; then
+      evidence_match "${line}" "${EVIDENCE_DIGESTS_HEADER_RE}" || evidence_reject 1 "the digests file: line 1 is not the v1 header with a 32-digit lower-case hex run id"
+      if [[ "${line}" == "# falco-ctf evidence-digests v1 run=00000000000000000000000000000000" ]]; then
+        evidence_reject 1 "the digests file: the run id is all zeros (that is the practice edition's)"
+      fi
+      continue
+    fi
+    case "${line}" in
+      *$'\t'*$'\t'*) ;;
+      *) evidence_reject 1 "the digests file: line ${lineno} does not have three columns" ;;
+    esac
+    seat="${line%%$'\t'*}"
+    rest="${line#*$'\t'}"
+    cid="${rest%%$'\t'*}"
+    digest="${rest#*$'\t'}"
+    case "${digest}" in
+      *$'\t'*) evidence_reject 1 "the digests file: line ${lineno} has more than three columns" ;;
+    esac
+    evidence_match "${seat}" "${SEAT_PATTERN}" || evidence_reject 1 "the digests file: line ${lineno}: the seat is outside the seat grammar"
+    evidence_match "${cid}" "${CHALLENGE_ID_PATTERN}" || evidence_reject 1 "the digests file: line ${lineno}: the challenge id is outside its grammar"
+    evidence_match "${digest}" "${EVIDENCE_DIGEST_RE}" || evidence_reject 1 "the digests file: line ${lineno}: the digest is not 64 lower-case hex digits"
+    key="${seat}"$'\t'"${cid}"
+    case "${seen}" in
+      *$'\n'"${key}"$'\n'*) evidence_reject 1 "the digests file: line ${lineno}: the (seat, challenge) ${seat} ${cid} has a second row" ;;
+    esac
+    seen="${seen}${key}"$'\n'
+    if [[ "${seat}" == "${USERNAME}" ]]; then
+      mine="${mine}${cid}"$'\t'"${digest}"$'\n'
+    fi
+  done < "${EVIDENCE_DIGESTS}"
+  # a last line without its LF is left in ${line} by the failed read
+  [[ -z "${line}" ]] || evidence_reject 1 "the digests file does not end with a newline"
+  [[ "${lineno}" -ge 2 ]] || evidence_reject 1 "the digests file is empty or has no row"
+  rows=0
+  while IFS=$'\t' read -r cid digest; do
+    if [[ -z "${cid}" ]]; then continue; fi
+    evidence_in_scope "${cid}" || evidence_reject 1 "the digests file has a row for seat ${USERNAME} and ${cid}, which is not an investigate challenge of this scope"
+    rows=$((rows + 1))
+  done <<< "${mine}"
+  [[ "${rows}" -eq "${#EVIDENCE_CIDS[@]}" ]] || evidence_reject 1 "the digests file has ${rows} rows for seat ${USERNAME}; this scope has ${#EVIDENCE_CIDS[@]} investigate challenges"
+  for c in "${EVIDENCE_CIDS[@]}"; do
+    want=""
+    while IFS=$'\t' read -r cid digest; do
+      if [[ "${cid}" == "${c}" ]]; then want="${digest}"; fi
+    done <<< "${mine}"
+    [[ -n "${want}" ]] || evidence_reject 1 "the digests file has no row for seat ${USERNAME} and ${c}"
+    got="$(evidence_bundle_digest "${EVIDENCE_DIR}/${c}")" || evidence_reject 1 "the digest of the bundle ${c} cannot be computed"
+    [[ "${got}" == "${want}" ]] || evidence_reject 1 "the digest of the bundle ${c} is not the row of the digests file for seat ${USERNAME}"
+  done
+}
+
+if [[ "${#EVIDENCE_CIDS[@]}" -gt 0 ]]; then
+  if [[ -z "${EVIDENCE_DIR}" && -z "${EVIDENCE_DIGESTS}" ]]; then
+    if [[ -n "${FLAGS_FILE}" ]]; then
+      evidence_reject 2 "an event deploy (--flags-file) of a scope with investigate challenges needs --evidence-dir and --evidence-digests (both are required)"
+    fi
+    evidence_reject 2 "this scope has investigate challenges and none of --flags-file / --evidence-dir / --evidence-digests: the practice-edition deploy is implemented in A5c-2 (ADR-0056), not yet"
+  elif [[ -z "${EVIDENCE_DIR}" || -z "${EVIDENCE_DIGESTS}" ]]; then
+    evidence_reject 2 "--evidence-dir and --evidence-digests go together: one of them is missing"
+  fi
+  evidence_verify
+elif [[ -n "${EVIDENCE_DIR}" || -n "${EVIDENCE_DIGESTS}" ]]; then
+  evidence_reject 2 "--evidence-dir / --evidence-digests are given, but this scope has no investigate challenge"
+fi
+
+# The names, and only the names, go to helm (--set-string: a name such as `null` stays a
+# string, and EVIDENCE_NAME_PATTERN holds no `,` or `=`).
+evidence_idx=0
+for cid in ${EVIDENCE_CIDS[@]+"${EVIDENCE_CIDS[@]}"}; do
+  evidence_i=0
+  while IFS= read -r name; do
+    if [[ -z "${name}" ]]; then continue; fi
+    EVIDENCE_NAMES_ARGS+=(--set-string "evidence.challenges.${cid}.names[${evidence_i}]=${name}")
+    evidence_i=$((evidence_i + 1))
+  done <<< "${EVIDENCE_NAMES[evidence_idx]}"
+  evidence_idx=$((evidence_idx + 1))
+done
+
+derive_api_server_cluster_ip
+
+# Total step count: namespace/rotate/evidence/upgrade/verify/assert.
+LAST_STEP=6
 
 # Namespace ownership (platform#75 / ADR-0011-consistent single-owner pattern).
 #
@@ -629,6 +900,52 @@ info "[2/${LAST_STEP}] rotate workspace Pod (Pod fields are immutable across hel
 # Errors here would only mean the namespace doesn't exist yet, also fine.
 kubectl -n "${NS}" delete pod workspace --ignore-not-found --wait=true >/dev/null 2>&1 || true
 
+# ADR-0056 D11 (A5c, addendum 6 / L2): the evidence Secrets are made HERE, not by the chart,
+# so a Helm release record carries file names and nothing else. After the namespace exists
+# and the Pod that mounted the old ones is gone, before helm creates the Pod (which has no
+# `optional` on the volume: a missing Secret keeps it from starting). Always made again:
+# deleted by name, then `create secret generic` with every file listed BY NAME
+# (--from-file=<name>=<path>, never the directory) from the very files whose digest was
+# checked above; `kubectl apply` is not used (its last-applied annotation would hold the
+# whole object and hit the 256 KiB annotation limit). `create` has no label flag, so the
+# labels are set right after; if that fails the Secret is deleted again and the script
+# exits non-zero before helm (a failure of that delete too is said in the message). Every ctf-evidence-* of this
+# namespace that is not in the scope is deleted by label (also with no investigate
+# challenge in the scope: an earlier deploy's Secret must not stay).
+info "[3/${LAST_STEP}] evidence Secrets (${#EVIDENCE_CIDS[@]} challenge(s) in scope)"
+EVIDENCE_SELECTOR="app.kubernetes.io/managed-by=deploy-user,falco-ctf/evidence-of"
+if [[ "${#EVIDENCE_CIDS[@]}" -gt 0 ]]; then
+  EVIDENCE_IN_LIST=""
+  for cid in "${EVIDENCE_CIDS[@]}"; do
+    EVIDENCE_IN_LIST="${EVIDENCE_IN_LIST:+${EVIDENCE_IN_LIST},}${cid}"
+  done
+  EVIDENCE_SELECTOR="${EVIDENCE_SELECTOR},falco-ctf/evidence-of notin (${EVIDENCE_IN_LIST})"
+fi
+kubectl -n "${NS}" delete secret -l "${EVIDENCE_SELECTOR}" >/dev/null
+evidence_idx=0
+for cid in ${EVIDENCE_CIDS[@]+"${EVIDENCE_CIDS[@]}"}; do
+  FROM_FILE_ARGS=()
+  while IFS= read -r name; do
+    if [[ -z "${name}" ]]; then continue; fi
+    FROM_FILE_ARGS+=("--from-file=${name}=${EVIDENCE_DIR}/${cid}/${name}")
+  done <<< "${EVIDENCE_NAMES[evidence_idx]}"
+  kubectl -n "${NS}" delete secret "ctf-evidence-${cid}" --ignore-not-found >/dev/null
+  kubectl -n "${NS}" create secret generic "ctf-evidence-${cid}" "${FROM_FILE_ARGS[@]}" >/dev/null
+  if ! kubectl -n "${NS}" label secret "ctf-evidence-${cid}" --overwrite \
+    app.kubernetes.io/managed-by=deploy-user \
+    "falco-ctf/evidence-of=${cid}" >/dev/null; then
+    # a Secret without its labels would be missed by the label selector above: take it
+    # away again, and do not go on to helm
+    if kubectl -n "${NS}" delete secret "ctf-evidence-${cid}" --ignore-not-found >/dev/null; then
+      echo "deploy-user.sh: labelling the Secret ctf-evidence-${cid} failed; it was deleted again, helm was not run" >&2
+    else
+      echo "deploy-user.sh: labelling the Secret ctf-evidence-${cid} failed AND deleting it failed: it may remain in ${NS} without its labels (delete it by hand); helm was not run" >&2
+    fi
+    exit 1
+  fi
+  evidence_idx=$((evidence_idx + 1))
+done
+
 # Prod image override (chart default is docker.io/falco-ctf/*:dev for local). Set
 #   FALCO_CTF_REGISTRY  = <acct>.dkr.ecr.<region>.amazonaws.com/falco-ctf
 #   FALCO_CTF_IMAGE_TAG = <git SHA>
@@ -688,7 +1005,7 @@ if [[ "${EGRESS_LOCKDOWN}" -eq 1 ]]; then
   EGRESS_ARGS+=(--set-string "networkPolicy.egress.apiServerClusterIP=${API_SERVER_CLUSTER_IP}/32")
 fi
 
-info "[3/${LAST_STEP}] helm upgrade --install ${RELEASE} (challenge=${CHALLENGE_ID})"
+info "[4/${LAST_STEP}] helm upgrade --install ${RELEASE} (challenge=${CHALLENGE_ID})"
 # `${arr:+"${arr[@]}"}` lets these expand to nothing when empty under `set -u`.
 # `-n "${NS}"` keeps the release metadata in the same namespace as the
 # rendered resources (platform#75). `--create-namespace` is a harmless no-op
@@ -707,9 +1024,10 @@ helm upgrade --install "${RELEASE}" "${CHART_DIR}" \
   ${EGRESS_ARGS:+"${EGRESS_ARGS[@]}"} \
   ${VALUES_ARGS:+"${VALUES_ARGS[@]}"} \
   ${FLAG_ARGS:+"${FLAG_ARGS[@]}"} \
+  ${EVIDENCE_NAMES_ARGS:+"${EVIDENCE_NAMES_ARGS[@]}"} \
   --wait --timeout 2m
 
-info "[4/${LAST_STEP}] verify"
+info "[5/${LAST_STEP}] verify"
 kubectl -n "${NS}" wait pod/workspace --for=condition=Ready --timeout=60s
 HOST=$(kubectl -n "${NS}" get ingress ttyd -o jsonpath='{.spec.rules[0].host}')
 green "  ✓ ready — http://${HOST}/"
@@ -720,5 +1038,5 @@ green "  ✓ ready — http://${HOST}/"
 # script (Cross-repo 契約: deploy-user.sh's non-zero exit is a fail-closed
 # contract the caller must not swallow; deploy-event-workspaces.sh collects
 # per-user exit status on the platform side).
-info "[5/${LAST_STEP}] assert flag isolation (ADR-0001 Verification 3)"
+info "[6/${LAST_STEP}] assert flag isolation (ADR-0001 Verification 3)"
 "${CHART_DIR}/assert-flag-isolation.sh" "${NS}" "${CHALLENGES_DIR}" "${CHALLENGE_ID}" "${SCENARIOS_DIR}"

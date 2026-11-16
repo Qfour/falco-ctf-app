@@ -11,6 +11,9 @@ package edition_test
 //   - challenges/gen-values.sh: EVIDENCE_NAME_RE (a file name), and CHALLENGE_ID_RE (a
 //     challenge id) that it applies to the same copy-source path.
 //
+// The literal of deploy-user.sh (EVIDENCE_NAME_PATTERN, and its limits) is held to the Go
+// definitions by evidence_limits_test.go (V58), not here.
+//
 // A copy that drifts would let the chart or the generator accept a name the validator
 // refuses (or the other way round) and nothing would say so until a deploy. This test
 // reads the copies as text and holds each to the Go definition. The lines it reads are
