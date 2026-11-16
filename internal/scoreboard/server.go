@@ -80,7 +80,8 @@ type Handler struct {
 	webhookSecretMode   ingest.SecretMode
 	// editionJudge is the ADR-0056 answers-table Judge (nil = no table) — see
 	// WithEditionJudge. A WIRING-TIME TRANSFER ONLY, like points above: NewHandler
-	// will pass it into the single Grader (A3a); nothing reads it at request time.
+	// passes it into the single Grader (scoring.Grader.WithAnswers, A3a); nothing
+	// reads it at request time.
 	editionJudge *edition.Judge
 	// routes is the FULL, flattened route table this binary registers —
 	// this package's own /healthz + /metrics rows, plus ingest's, api's and
@@ -216,8 +217,9 @@ func WithWebhookSecret(secret string, mode ingest.SecretMode) Option {
 // WithEditionJudge hands the handler the Judge that edition.Load built from the
 // event edition's answers table (ADR-0056 D19 A2b). nil (the default, and every
 // environment without an investigate challenge) = no table. The Judge holds HMACs
-// of the table values under a per-process key, never a plaintext value. Stage A2b
-// only keeps it; the Grader that compares an answer with it is A3a.
+// of the table values under a per-process key, never a plaintext value. NewHandler
+// hands it to the Grader (A3a), the only caller of its comparison; no route reaches
+// that Grader entry until A3b.
 func WithEditionJudge(j *edition.Judge) Option {
 	return func(h *Handler) { h.editionJudge = j }
 }
@@ -246,6 +248,13 @@ func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts .
 	grader := scoring.New(cat, s, h.now).WithOrder(h.order)
 	if h.points != nil {
 		grader.WithPoints(*h.points)
+	}
+	// ADR-0056 D5 (A3a): the answers-table Judge goes into the one Grader. Only a
+	// non-nil Judge is passed, so a scoreboard started without a table leaves the
+	// Grader unwired and SubmitAnswer refuses (a nil *edition.Judge handed over as
+	// the interface would not be nil there). There is no route that calls it yet (A3b).
+	if h.editionJudge != nil {
+		grader.WithAnswers(s, h.editionJudge, logger)
 	}
 	// The sweeper bumps the same evade solve metric a manual submit would, so an
 	// auto-solve is indistinguishable from a manual one on the dashboard.

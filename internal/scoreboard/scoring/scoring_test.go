@@ -55,6 +55,10 @@ type fakeStore struct {
 	// checkable even for a write the fake would have refused.
 	markSolvedCalls, markDirtyCalls, recordExpectedRuleFireCalls, recordExfilCalls int
 
+	// answerStoreCalls counts the calls the Grader made to the answer-budget port
+	// (fakeAnswers in answers_test.go), so a refused user is shown never to reach it.
+	answerStoreCalls int
+
 	// recordExpectedRuleFireErr, if set, makes RecordExpectedRuleFire return it
 	// for every call (ADR-0008's fail-closed error-propagation test).
 	recordExpectedRuleFireErr error
@@ -1790,13 +1794,24 @@ var nonSlugUsers = []string{"", "Alice", "bad user", "-lead", "a_b", "evil\u202e
 // seat. `method` is the Grader method's name (TestGrader_EntryTableIsComplete
 // compares the set of them with the methods the source has); `seed` puts the
 // store where the call writes (a solved predecessor, so a rule fire has a mission
-// to taint); `wrote` says which write the fake saw.
+// to taint); `wrote` says which write the fake saw. `grader` builds the Grader for
+// an entry that needs more than the default (SubmitAnswer needs an investigate
+// challenge and the answer ports); nil is scoring.New(testCatalog(), fs, ...).
 type graderEntry struct {
 	name   string
 	method string
 	seed   func(fs *fakeStore, u string)
+	grader func(fs *fakeStore) *scoring.Grader
 	call   func(g *scoring.Grader, u string, runner *fakeDetectRunner) error
 	wrote  func(fs *fakeStore) bool
+}
+
+// newGrader is the Grader the entry's row is called on.
+func (e graderEntry) newGrader(fs *fakeStore) *scoring.Grader {
+	if e.grader != nil {
+		return e.grader(fs)
+	}
+	return scoring.New(testCatalog(), fs, fixedClock(time.Now()))
 }
 
 const (
@@ -1868,6 +1883,20 @@ var graderEntries = []graderEntry{
 		},
 		wrote: func(fs *fakeStore) bool { return fs.recordExfilCalls > 0 },
 	},
+	{
+		// ADR-0056 D5: the practice table's seat * answers for every seat, so the
+		// call WOULD record a solve for a seat; a refused user must reach neither the
+		// budget store nor the judge.
+		name: "SubmitAnswer", method: "SubmitAnswer",
+		grader: func(fs *fakeStore) *scoring.Grader {
+			return answerEntryGrader(fs)
+		},
+		call: func(g *scoring.Grader, u string, _ *fakeDetectRunner) error {
+			_, err := g.SubmitAnswer(context.Background(), u, oneCID, "who", "practice-name")
+			return err
+		},
+		wrote: func(fs *fakeStore) bool { return fs.markSolvedCalls > 0 && fs.answerStoreCalls > 0 },
+	},
 }
 
 // Every Grader entry that writes a scoring table refuses a non-slug user with
@@ -1885,13 +1914,13 @@ func TestGrader_NonSlugUserIsRefused(t *testing.T) {
 					e.seed(fs, u)
 				}
 				seeded := len(fs.solved)
-				g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
+				g := e.newGrader(fs)
 				if err := e.call(g, u, runner); !errors.Is(err, scoring.ErrInvalidUser) {
 					t.Fatalf("%s(%q) err = %v, want ErrInvalidUser", e.name, u, err)
 				}
-				if fs.markSolvedCalls+fs.markDirtyCalls+fs.recordExpectedRuleFireCalls+fs.recordExfilCalls != 0 || runner.calls != 0 {
-					t.Fatalf("a refused user reached the store or the runner: solved=%d dirty=%d proof=%d exfil=%d runner=%d",
-						fs.markSolvedCalls, fs.markDirtyCalls, fs.recordExpectedRuleFireCalls, fs.recordExfilCalls, runner.calls)
+				if fs.markSolvedCalls+fs.markDirtyCalls+fs.recordExpectedRuleFireCalls+fs.recordExfilCalls+fs.answerStoreCalls != 0 || runner.calls != 0 {
+					t.Fatalf("a refused user reached the store or the runner: solved=%d dirty=%d proof=%d exfil=%d answers=%d runner=%d",
+						fs.markSolvedCalls, fs.markDirtyCalls, fs.recordExpectedRuleFireCalls, fs.recordExfilCalls, fs.answerStoreCalls, runner.calls)
 				}
 				if len(fs.exfil) != 0 || len(fs.expectedFire) != 0 || len(fs.dirty) != 0 || len(fs.solved) != seeded {
 					t.Fatalf("a refused user left state behind: exfil=%v proof=%v dirty=%v solved=%v", fs.exfil, fs.expectedFire, fs.dirty, fs.solved)
@@ -1938,7 +1967,7 @@ func TestGrader_SlugUserIsAccepted(t *testing.T) {
 				if e.seed != nil {
 					e.seed(fs, u)
 				}
-				g := scoring.New(testCatalog(), fs, fixedClock(time.Now()))
+				g := e.newGrader(fs)
 				if err := e.call(g, u, runner); err != nil {
 					t.Fatalf("%s(%q) err = %v, want nil", e.name, u, err)
 				}

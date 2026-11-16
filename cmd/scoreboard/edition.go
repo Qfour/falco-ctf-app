@@ -27,7 +27,8 @@ import (
 // before an investigate challenge does, and its boot log is unchanged.
 //
 // The returned Judge is nil when there is no table. It is held by the handler
-// (scoreboard.WithEditionJudge) and is not used yet: the Grader takes it in A3a.
+// (scoreboard.WithEditionJudge), which passes it to the Grader (A3a); no route
+// reaches the Grader's SubmitAnswer until A3b.
 func startEdition(logger *slog.Logger, cfg catalogEnv, cat catalog.Catalog) (*edition.Judge, error) {
 	judge, runID, err := edition.Load(cat, cfg.answersFile, cfg.flagsFile != "")
 	if err != nil {

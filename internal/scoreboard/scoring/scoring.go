@@ -150,7 +150,7 @@ import (
 
 // ErrInvalidUser is returned by every Grader entry that takes a `user` and can
 // write a scoring table (SubmitEvade, RecordExfil, OnRuleFire, TaintOnOverflow,
-// SubmitDetect) for a user that is not a seat slug, and Sweep skips a stored
+// SubmitDetect, SubmitAnswer) for a user that is not a seat slug, and Sweep skips a stored
 // receipt keyed by one: the Grader never writes a solve, taint, proof or
 // receipt under a non-slug key (app#459 for the first three, app#479 for the
 // rest). The adapters check the slug first (ingest's namespace parse, the
@@ -183,6 +183,7 @@ const (
 	EntrySubmitDetect    = "SubmitDetect"
 	EntrySubmitEvade     = "SubmitEvade"
 	EntryRecordExfil     = "RecordExfil"
+	EntrySubmitAnswer    = "SubmitAnswer"
 )
 
 // CountNonSlugStoredUsers returns how many stored solves and how many stored
@@ -272,6 +273,13 @@ type Grader struct {
 	// A fire of one of these can change a score, so the ingest path must never
 	// silently drop it (app#359) — see AffectsScoring.
 	scoringRules map[string]struct{}
+	// answers, judge and answerLog are the investigate challenge's ports
+	// (ADR-0056 D5; answers.go): the attempt budget, the answers-table Judge and
+	// the operator log. All three are set together by WithAnswers at wiring time
+	// and are nil without it, in which case SubmitAnswer refuses (fail-closed).
+	answers   AnswerStore
+	judge     AnswerJudge
+	answerLog *slog.Logger
 }
 
 // New builds a Grader. `now` is injected (WithNow pattern) so tests drive a
