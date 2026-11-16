@@ -183,10 +183,13 @@ var FalcoEventsSecretMismatch = promauto.NewCounterVec(
 	[]string{"mode"},
 )
 
-// SolvesTotal counts solves recorded (trigger or evade path).
+// SolvesTotal counts solves recorded (trigger, evade, detect or investigate path).
 //
 //	challenge_id: catalog id, or "_unknown" (never an id that is not a catalog key)
-//	kind:         "trigger" | "evade"
+//	kind:         "trigger" | "evade" | "detect" | "investigate"
+//
+// "investigate" (ADR-0056 D5) is counted once per solve, on the answer whose
+// Grader result has Newly set.
 var SolvesTotal = promauto.NewCounterVec(
 	prometheus.CounterOpts{
 		Namespace: "scoreboard",
@@ -196,11 +199,16 @@ var SolvesTotal = promauto.NewCounterVec(
 	[]string{"challenge_id", "kind"},
 )
 
-// SubmissionsTotal counts evade-challenge flag submissions.
+// SubmissionsTotal counts evade-challenge flag submissions, detect submissions,
+// and investigate answers.
 //
 //	challenge_id: catalog id, or "_unknown" (never an id that is not a catalog key)
 //	outcome: "solved" | "wrong_flag" | "not_evaded" | "unknown_challenge" |
-//	         "not_evade" | "bad_request"
+//	         "not_evade" | "bad_request" | ...; the answer route's five
+//	         (ADR-0056 D5): "answer_correct" | "answer_incorrect" |
+//	         "answer_exhausted" | "answer_already_correct" | "answer_store_error".
+//	         The spec's /metrics description (docs/openapi-scoreboard.yaml) lists
+//	         the full set. The question id and the seat are never a label.
 var SubmissionsTotal = promauto.NewCounterVec(
 	prometheus.CounterOpts{
 		Namespace: "scoreboard",

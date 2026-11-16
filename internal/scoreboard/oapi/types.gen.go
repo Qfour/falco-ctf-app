@@ -110,9 +110,10 @@ const (
 
 // Defines values for ChallengeStatType.
 const (
-	ChallengeStatTypeDetect  ChallengeStatType = "detect"
-	ChallengeStatTypeEvade   ChallengeStatType = "evade"
-	ChallengeStatTypeTrigger ChallengeStatType = "trigger"
+	ChallengeStatTypeDetect      ChallengeStatType = "detect"
+	ChallengeStatTypeEvade       ChallengeStatType = "evade"
+	ChallengeStatTypeInvestigate ChallengeStatType = "investigate"
+	ChallengeStatTypeTrigger     ChallengeStatType = "trigger"
 )
 
 // Defines values for IngestIgnoredReason.
@@ -145,9 +146,21 @@ const (
 
 // Defines values for MissionDetailType.
 const (
-	MissionDetailTypeDetect  MissionDetailType = "detect"
-	MissionDetailTypeEvade   MissionDetailType = "evade"
-	MissionDetailTypeTrigger MissionDetailType = "trigger"
+	MissionDetailTypeDetect      MissionDetailType = "detect"
+	MissionDetailTypeEvade       MissionDetailType = "evade"
+	MissionDetailTypeInvestigate MissionDetailType = "investigate"
+	MissionDetailTypeTrigger     MissionDetailType = "trigger"
+)
+
+// Defines values for MissionQuestionFormat.
+const (
+	ChoiceSet MissionQuestionFormat = "choice-set"
+	Hexid     MissionQuestionFormat = "hexid"
+	Name      MissionQuestionFormat = "name"
+	Path      MissionQuestionFormat = "path"
+	Sequence  MissionQuestionFormat = "sequence"
+	Technique MissionQuestionFormat = "technique"
+	Timestamp MissionQuestionFormat = "timestamp"
 )
 
 // Defines values for MissionSummaryStatus.
@@ -159,9 +172,10 @@ const (
 
 // Defines values for MissionSummaryType.
 const (
-	Detect  MissionSummaryType = "detect"
-	Evade   MissionSummaryType = "evade"
-	Trigger MissionSummaryType = "trigger"
+	Detect      MissionSummaryType = "detect"
+	Evade       MissionSummaryType = "evade"
+	Investigate MissionSummaryType = "investigate"
+	Trigger     MissionSummaryType = "trigger"
 )
 
 // Defines values for SubmitDetectVerdictStatus.
@@ -848,6 +862,13 @@ type MissionDetail struct {
 	// LeadIn previous mission's `bridge`; empty for the first mission (#47)
 	LeadIn string `json:"leadIn"`
 
+	// Questions An `investigate` challenge's questions, in the catalog's order, each
+	// with the caller's own `remaining` and `correct` (ADR-0056 D4; the 22nd
+	// key, additive). `[]` (never omitted or null) for every other type.
+	// Like `hints`, it is a function of the store alone and does not
+	// depend on `status`. Reading it spends nothing.
+	Questions []MissionQuestion `json:"questions"`
+
 	// RequireExfil evade challenge that also requires a collector exfil receipt
 	RequireExfil bool `json:"requireExfil"`
 
@@ -867,6 +888,40 @@ type MissionDetailStatus string
 
 // MissionDetailType defines model for MissionDetail.Type.
 type MissionDetailType string
+
+// MissionQuestion One question of an `investigate` challenge, as `MissionDetail.questions`
+// projects it (ADR-0056 D4). The question's text, its closed answer format,
+// and this participant's own budget. The answer is never here, and neither
+// is anything about another seat, the table, or how far a typed answer was
+// from the right one (D13). `remaining` and `correct` are what the store
+// holds for the caller alone; they follow the answer route's counts and
+// change nothing by being read.
+type MissionQuestion struct {
+	// Attempts the question's whole budget (the challenge's `attempts`, default 5)
+	Attempts int `json:"attempts"`
+
+	// Correct this participant has answered this question
+	Correct bool `json:"correct"`
+
+	// Format the shape the answer must take (ADR-0056 D2): a closed set, equal to
+	// `answerformat.Formats()` (a test holds the two together). A new format
+	// is an amendment of the ADR, so a client may switch on it.
+	Format MissionQuestionFormat `json:"format"`
+
+	// Id the question id (`^[a-z][a-z0-9-]{0,30}$`), the `{qid}` of the answer route
+	Id string `json:"id"`
+
+	// Prompt the question's text, from the challenge's `journey.yaml` `questions[]`
+	Prompt string `json:"prompt"`
+
+	// Remaining attempts this participant has left (`attempts` when none is spent)
+	Remaining int `json:"remaining"`
+}
+
+// MissionQuestionFormat the shape the answer must take (ADR-0056 D2): a closed set, equal to
+// `answerformat.Formats()` (a test holds the two together). A new format
+// is an amendment of the ADR, so a client may switch on it.
+type MissionQuestionFormat string
 
 // MissionSummary one row of the journey mission map
 type MissionSummary struct {

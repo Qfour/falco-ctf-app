@@ -26,6 +26,7 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/identity"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/httpx"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/identityobs"
+	"github.com/Qfour/falco-ctf-app/internal/scoreboard/metrics"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/oapi"
 	"github.com/Qfour/falco-ctf-app/internal/scoreboard/scoring"
 )
@@ -191,9 +192,12 @@ func (h *Handler) submitAnswer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// res.Newly (this call recorded the solve) is deliberately NOT in the response.
-	// It is kept in the operator log line below, and A3b-2 counts
-	// scoreboard_solves_total{kind="investigate"} here, on res.Newly, so a solve is
-	// counted once however many answers follow it.
+	// It is kept in the operator log line below and it is what the solve is counted
+	// on: scoreboard_solves_total{kind="investigate"} moves only when this call
+	// recorded the solve, so a solve is counted once however many answers follow it
+	// (an already-correct answer that completes a solve whose write had failed is
+	// the one that records it, and is counted then).
+	h.countAnswer(label, res)
 	h.logger.Info("answer", "user", user, "cid", label, "qid", qid,
 		"status", string(res.Status), "newly", res.Newly, "remote_addr", r.RemoteAddr)
 	httpx.WriteJSON(w, http.StatusOK, oapi.AnswerResult{
@@ -204,6 +208,45 @@ func (h *Handler) submitAnswer(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// The route's own values of scoreboard_api_submissions_total{outcome} (ADR-0056
+// D5, spec /metrics). The label set is {challenge_id, outcome}: the question id
+// and the seat are never a label value (the series count stays bounded by the
+// catalog), and the audit line for an answer equal to another seat's value stays
+// in the operator's log.
+const (
+	outcomeAnswerCorrect        = "answer_correct"
+	outcomeAnswerIncorrect      = "answer_incorrect"
+	outcomeAnswerExhausted      = "answer_exhausted"
+	outcomeAnswerAlreadyCorrect = "answer_already_correct"
+	outcomeAnswerStoreError     = "answer_store_error"
+)
+
+// solveKindInvestigate is the `kind` of scoreboard_solves_total for an
+// investigate solve (spec /metrics).
+const solveKindInvestigate = "investigate"
+
+// countAnswer counts a graded answer: one outcome series for the Grader's status,
+// and, only when this call recorded the solve (res.Newly), the solve. label is the
+// resolved challenge label (Handler.challenge), never the raw {cid}. A status the
+// Grader does not have (a future value added without this switch) moves no outcome
+// series; the response still carries it, and the closed-enum test of the spec
+// catches the addition first.
+func (h *Handler) countAnswer(label string, res scoring.AnswerResult) {
+	switch res.Status {
+	case scoring.AnswerCorrect:
+		metrics.SubmissionsTotal.WithLabelValues(label, outcomeAnswerCorrect).Inc()
+	case scoring.AnswerIncorrect:
+		metrics.SubmissionsTotal.WithLabelValues(label, outcomeAnswerIncorrect).Inc()
+	case scoring.AnswerExhausted:
+		metrics.SubmissionsTotal.WithLabelValues(label, outcomeAnswerExhausted).Inc()
+	case scoring.AnswerAlreadyCorrect:
+		metrics.SubmissionsTotal.WithLabelValues(label, outcomeAnswerAlreadyCorrect).Inc()
+	}
+	if res.Newly {
+		metrics.SolvesTotal.WithLabelValues(label, solveKindInvestigate).Inc()
+	}
+}
+
 // answerRefused turns the Grader's error into the route's one error shape,
 // {"error": <fixed text>}. The mapping is the ADR-0056 D4 list:
 //
@@ -212,6 +255,13 @@ func (h *Handler) submitAnswer(w http.ResponseWriter, r *http.Request) {
 //	ErrInvalidUser                               400 invalid user + the one fixed-field Warn
 //	ErrAnswerCellMissing                         500 (the Grader logged it: ids only; not again)
 //	ErrAnswersUnavailable and anything else      500, one Error line with the operator's err
+//
+// Counting (scoreboard_api_submissions_total): both 500s are answer_store_error
+// (the one outcome for "the answer could not be graded": a store failure, no
+// answers table, a missing row). The 400s and 404s are not counted here: they are
+// a refusal of the request, free of any attempt, and show in the route's own
+// http_request_duration_seconds series by status; the Grader's four statuses are
+// counted by countAnswer.
 //
 // The 500 body never carries the error. err can name a store, a table, a file;
 // the Grader's errors carry no input, no expected value and no length (D13), so
@@ -230,9 +280,11 @@ func (h *Handler) answerRefused(w http.ResponseWriter, r *http.Request, label, q
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": errMsgAnswerFormat})
 	case errors.Is(err, scoring.ErrAnswerCellMissing):
 		// The Grader logged this once, with ids only; a second line is noise.
+		metrics.SubmissionsTotal.WithLabelValues(label, outcomeAnswerStoreError).Inc()
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgAnswerFailed})
 	default:
 		h.logger.Error("answer: could not grade", "err", err, "cid", label, "qid", qid, "remote_addr", r.RemoteAddr)
+		metrics.SubmissionsTotal.WithLabelValues(label, outcomeAnswerStoreError).Inc()
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgAnswerFailed})
 	}
 }

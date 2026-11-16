@@ -167,6 +167,9 @@ const (
 	errMsgUnknownChallenge     = "unknown challenge"
 	errMsgResetFailed          = "could not reset scoreboard"
 	errMsgSetDisplayNameFailed = "could not set display name"
+	// errMsgJourneyFailed is the journey read's 500 (ADR-0056 D4): only an
+	// investigate mission's questions can fail it (a store read).
+	errMsgJourneyFailed = "could not read the mission"
 	// errMsgFlagShapeRejected is flagShapePattern's stable, non-leaking
 	// rejection text — deliberately does not echo back the offending text
 	// (which would just re-display the very value being rejected).
@@ -2250,7 +2253,18 @@ func (h *Handler) journey(w http.ResponseWriter, r *http.Request) {
 	// to show at all — every mission solved AND no valid ?mission= override).
 	var detail any
 	if viewMission != "" {
-		detail = h.missionDetail(user, viewMission, statusOf[viewMission], leadIn, stepChecks[viewMission], hintViews[viewMission])
+		d, err := h.missionDetail(user, viewMission, statusOf[viewMission], leadIn, stepChecks[viewMission], hintViews[viewMission])
+		if err != nil {
+			// Only an investigate mission can get here (its questions are the one read of
+			// the store that can fail, ADR-0056 D4). The body is fixed text, because err
+			// can name a table; the Error line is the operator's. A wrong `remaining` is
+			// never shown instead: the response is a refusal, not a guess. viewMission is
+			// a catalog id, so it is safe as a log field.
+			h.logger.Error("journey: could not read the mission's questions", "err", err, "cid", viewMission, "remote_addr", r.RemoteAddr)
+			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"error": errMsgJourneyFailed})
+			return
+		}
+		detail = d
 	}
 
 	displayName := user
@@ -2322,7 +2336,11 @@ func (h *Handler) docsURL(rel string) string {
 // ADR-0027 (CEO decision 2026-08-17) a locked mission's hints were hidden
 // here and its steps were forced unchecked; CEO decision 2026-10-04 reversed
 // that. `hints.lockedCount` keeps its name and means "not opened yet".
-func (h *Handler) missionDetail(user, cid, status, leadIn string, checkedSteps, openedHints []int) map[string]any {
+//
+// The error is the one store read here that can fail: an investigate
+// mission's questions (missionQuestions). Every other key is read from memory
+// or from the catalog.
+func (h *Handler) missionDetail(user, cid, status, leadIn string, checkedSteps, openedHints []int) (map[string]any, error) {
 	ch := h.cat[cid]
 	j, hasJourney := h.journeys[cid]
 
@@ -2467,6 +2485,14 @@ func (h *Handler) missionDetail(user, cid, status, leadIn string, checkedSteps, 
 		dirtyRules = []string{}
 	}
 
+	// questions (ADR-0056 D4): an investigate challenge's questions with the
+	// caller's own remaining / correct; [] for every other type. ONE store read
+	// per call: this is on the journey's 2 s polling path.
+	questions, err := h.missionQuestions(user, cid, ch, j)
+	if err != nil {
+		return nil, err
+	}
+
 	return map[string]any{
 		"id":                      cid,
 		"status":                  status,
@@ -2513,7 +2539,56 @@ func (h *Handler) missionDetail(user, cid, status, leadIn string, checkedSteps, 
 				return h.grader.HintPenaltyFor(nextHint)
 			}(),
 		},
+		"questions": questions,
+	}, nil
+}
+
+// missionQuestions is MissionDetail.questions (ADR-0056 D4): for an
+// investigate challenge, its questions in the catalog's order as
+// []oapi.MissionQuestion; for every other type a non-nil empty slice (the
+// JSON is [], never null, so the portal can iterate it unconditionally).
+//
+// What it reads: the question's id, format and attempts from the catalog, its
+// prompt from the challenge's journey (a question the journey does not carry
+// has an empty prompt; catalog.LoadJourneys refuses that at startup), and the
+// caller's own row from store.AnswerAttempts, ONE read for the whole call
+// (not one per question). A question with no row has spent nothing:
+// remaining = attempts, correct = false. remaining never goes below 0. The
+// answer, the table, the seat and any other participant's row are not in
+// reach of this function, so none of them can be in its result (D13).
+//
+// A failed read is returned, not defaulted: showing remaining = attempts for a
+// row that could not be read would invite the participant to spend attempts
+// the budget has already taken. The caller answers 500 with fixed text.
+func (h *Handler) missionQuestions(user, cid string, ch catalog.Challenge, j catalog.Journey) ([]oapi.MissionQuestion, error) {
+	out := []oapi.MissionQuestion{}
+	if ch.Type != catalog.TypeInvestigate || ch.Investigate == nil || len(ch.Investigate.Questions) == 0 {
+		return out, nil
 	}
+	rows, err := h.store.AnswerAttempts(user, cid)
+	if err != nil {
+		return nil, fmt.Errorf("answer attempts of %s: %w", cid, err)
+	}
+	prompts := make(map[string]string, len(j.Questions))
+	for _, q := range j.Questions {
+		prompts[q.ID] = q.Prompt
+	}
+	for _, q := range ch.Investigate.Questions {
+		st := rows[q.ID] // the zero AnswerState (nothing spent, not answered) for a question with no row
+		remaining := q.Attempts - st.N
+		if remaining < 0 {
+			remaining = 0
+		}
+		out = append(out, oapi.MissionQuestion{
+			Id:        q.ID,
+			Prompt:    prompts[q.ID],
+			Format:    oapi.MissionQuestionFormat(q.Format),
+			Attempts:  q.Attempts,
+			Remaining: remaining,
+			Correct:   st.Correct,
+		})
+	}
+	return out, nil
 }
 
 func containsKey(m map[string]struct{}, k string) bool {

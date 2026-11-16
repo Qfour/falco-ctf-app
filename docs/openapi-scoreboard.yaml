@@ -201,14 +201,23 @@ paths:
               `taint_error` (ADR-0003 A5) = event otherwise accepted but the
               persistent evade-taint write failed; the request 500s.
           - `scoreboard_solves_total{challenge_id, kind}`
-              kind in {trigger, evade, detect}
+              kind in {trigger, evade, detect, investigate}
+              `investigate` (ADR-0056 D5) is counted once per solve, on the
+              answer that recorded it, however many answers follow.
               challenge_id in the catalog's ids, plus the single value
               `_unknown` (see the `Cid` parameter).
           - `scoreboard_api_submissions_total{challenge_id, outcome}`
               outcome in {solved, wrong_flag, not_evaded, not_exfiltrated,
                           unknown_challenge, not_evade, not_detect,
                           detect_invalid, detect_missed,
-                          detect_false_positive, bad_request, rate_limited}
+                          detect_false_positive, bad_request, rate_limited,
+                          answer_correct, answer_incorrect, answer_exhausted,
+                          answer_already_correct, answer_store_error}
+              The five `answer_*` outcomes (ADR-0056 D5) are the answer route's:
+              the Grader's four statuses, and a 500. A 400 / 403 / 404 of that
+              route is not counted here (see `http_request_duration_seconds`
+              and `scoreboard_identity_denials_total`). The question id and the
+              seat are never a label value.
               challenge_id in the catalog's ids, plus the single value
               `_unknown` for an id that is not a catalog key.
           - `scoreboard_http_request_duration_seconds{route, method, status}`
@@ -2673,7 +2682,7 @@ components:
         type:
           type: string
           x-ctf-text-origin: enum
-          enum: [trigger, evade, detect]
+          enum: [trigger, evade, detect, investigate]
         status:
           type: string
           x-ctf-text-origin: enum
@@ -2705,6 +2714,47 @@ components:
         checked:
           type: boolean
           description: the tick the store holds for this step, whatever the mission's status
+
+    MissionQuestion:
+      type: object
+      description: |
+        One question of an `investigate` challenge, as `MissionDetail.questions`
+        projects it (ADR-0056 D4). The question's text, its closed answer format,
+        and this participant's own budget. The answer is never here, and neither
+        is anything about another seat, the table, or how far a typed answer was
+        from the right one (D13). `remaining` and `correct` are what the store
+        holds for the caller alone; they follow the answer route's counts and
+        change nothing by being read.
+      required: [id, prompt, format, attempts, remaining, correct]
+      properties:
+        id:
+          type: string
+          x-ctf-text-origin: token
+          description: the question id (`^[a-z][a-z0-9-]{0,30}$`), the `{qid}` of the answer route
+        prompt:
+          type: string
+          x-ctf-text-origin: operator
+          description: the question's text, from the challenge's `journey.yaml` `questions[]`
+        format:
+          type: string
+          x-ctf-text-origin: enum
+          enum: [path, name, hexid, timestamp, technique, choice-set, sequence]
+          description: |
+            the shape the answer must take (ADR-0056 D2): a closed set, equal to
+            `answerformat.Formats()` (a test holds the two together). A new format
+            is an amendment of the ADR, so a client may switch on it.
+        attempts:
+          type: integer
+          minimum: 1
+          maximum: 10
+          description: the question's whole budget (the challenge's `attempts`, default 5)
+        remaining:
+          type: integer
+          minimum: 0
+          description: attempts this participant has left (`attempts` when none is spent)
+        correct:
+          type: boolean
+          description: this participant has answered this question
 
     OpenedHint:
       type: object
@@ -2818,7 +2868,7 @@ components:
         [id, status, title, tagline, briefing, leadIn, type, docsUrl,
          hasJourney, requireExfil, exfilReceived, requireExpectedRuleFire,
          expectedRuleFired, expectedRules, detectedRules,
-         dirty, dirtyRules, steps, falcoRule, hasFalcoRule, hints]
+         dirty, dirtyRules, steps, falcoRule, hasFalcoRule, hints, questions]
       properties:
         id: { type: string, x-ctf-text-origin: token }
         status:
@@ -2835,7 +2885,7 @@ components:
         type:
           type: string
           x-ctf-text-origin: enum
-          enum: [trigger, evade, detect]
+          enum: [trigger, evade, detect, investigate]
         docsUrl: { type: string, x-ctf-text-origin: operator }
         hasJourney: { type: boolean }
         requireExfil:
@@ -2893,6 +2943,15 @@ components:
           type: boolean
           description: false = no rule.yaml authored; the UI omits the panel
         hints: { $ref: "#/components/schemas/HintsBlock" }
+        questions:
+          type: array
+          description: |
+            An `investigate` challenge's questions, in the catalog's order, each
+            with the caller's own `remaining` and `correct` (ADR-0056 D4; the 22nd
+            key, additive). `[]` (never omitted or null) for every other type.
+            Like `hints`, it is a function of the store alone and does not
+            depend on `status`. Reading it spends nothing.
+          items: { $ref: "#/components/schemas/MissionQuestion" }
 
     Journey:
       type: object
@@ -2976,7 +3035,7 @@ components:
         type:
           type: string
           x-ctf-text-origin: enum
-          enum: [trigger, evade, detect]
+          enum: [trigger, evade, detect, investigate]
         expectedRules:
           type: array
           items: { type: string, x-ctf-text-origin: operator }
