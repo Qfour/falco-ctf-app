@@ -26,6 +26,11 @@ const flagOpen = "FALCO{"
 // ASCII case only: a look-alike letter outside ASCII is not folded (the answer
 // formats admit ASCII alone, so one cannot pass them). (mentionsflag_test.go holds
 // it wider than flagRE.)
+//
+// The board's flag-shape gate (flagShapePattern in internal/scoreboard/api, the
+// case-sensitive `FALCO\{[^}]*\}`) is a separate and narrower definition: whatever it
+// matches this matches too, but not the other way round (an unterminated or lower-case
+// `falco{` is caught here only), so the board accepts text that this refuses (ADR-0056 #608).
 func MentionsFlag(s string) bool {
 	return strings.Contains(strings.Map(foldASCIIUpper, s), flagOpen)
 }

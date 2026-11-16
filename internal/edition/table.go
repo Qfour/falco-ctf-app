@@ -8,12 +8,22 @@
 // caller of Parse and NewJudge; cmd/scoreboard is the only caller of Load and does
 // the logging and the exit (A4 adds the bundle checks B1-B9 and the renderer).
 //
+// A4b is the bundle side of the validator: bundle.go (the tree reader, B2, the
+// bundle digest of D9), bundlecheck.go (CheckBundles: B1, B2, B3, B5, B6, B9),
+// corpus.go (what B9 reads) and digests.go (the digests file, V48's Go side). They
+// read the evidence tree and the image's challenges and scenarios from disk, are
+// called by the validator (A4e) and by nothing in the scoreboard, and hold no table
+// of their own: the Table they check came from Parse, in Load or in the validator.
+//
 // Every rule that is decided here is decided ONCE and from the existing
 // definitions: the answer formats and their normalisation are
 // internal/catalog/answerformat, the seat grammar is identity.ValidSeat
 // (ADR-0042), the challenge-id grammar is challengeid.Valid, the flag shape is
 // catalog.MentionsFlag, and "no invisible character" is sourcehygiene.Hidden.
-// This package spells none of those grammars itself.
+// This package spells none of those grammars itself. The one grammar it does
+// define is B2's file name (NamePattern); the copies of it and of
+// challengeid.Pattern in the chart and in gen-values.sh are held equal to the
+// Go definitions by evidence_grammar_test.go (ADR-0056 V52).
 //
 // Nothing here ever returns, formats or logs a table value (ADR-0056 D13): an
 // error names a rule, a line, and a seat / cid / qid that is itself inside its
