@@ -296,9 +296,9 @@ func TestAnswerRoute_RefusedAdminIsAMismatchNotNonCanonical(t *testing.T) {
 			a.email = tc.email
 			wantAnswerError(t, f.send(a), http.StatusForbidden, "forbidden")
 			got := moved(before, denialCounts())
-			want := identityobs.Pair{Gate: identityobs.GateSelfOrAdmin, Reason: tc.want}
+			want := identityobs.Pair{Gate: identityobs.GateSelf, Reason: tc.want}
 			if len(got) != 1 || got[want] != 1 {
-				t.Fatalf("series moved = %v, want exactly %v by 1 (a refused admin is a mismatch, never non_canonical)", got, want)
+				t.Fatalf("series moved = %v, want exactly %v by 1 (gate=self only, never self_or_admin; a refused admin is a mismatch, never non_canonical)", got, want)
 			}
 		})
 	}

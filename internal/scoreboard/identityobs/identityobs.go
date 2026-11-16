@@ -2,16 +2,17 @@
 // refused (or, for the portal, served an empty shell) because the caller has no
 // usable proven identity" (app#404, ADR-0038).
 //
-// Four gates feed it, each calling Observer.Record (or one of the shorthands
-// below) at the moment it refuses:
+// Five gates feed it (ADR-0038 D2's four, and self, added by ADR-0056 A3b-4), each
+// calling Observer.Record (or one of the shorthands below) at the moment it refuses:
 //
 //   - strict:        ratelimit.MiddlewareStrict (identity-keyed buckets), through
 //     the observer it is handed at assembly time;
 //   - self_or_admin: api.selfOrAdmin;
+//   - self:          api.selfOnly (Authz: self, the investigate answer route);
 //   - authenticated: api.requireAuthenticated / api.boardIdentity;
 //   - portal:        GET /portal, which answers 200 with an empty shell.
 //
-// One more line lives in this package but is NOT one of the four gates: the Warn
+// One more line lives in this package but is NOT one of the five gates: the Warn
 // the Grader's second seat gate logs (LogGraderRefused, graderrefused.go, app#486).
 // It sits here because it is an observation log, and httpx is a transport helper
 // the collector links. It is outside the metric contract: it is not counted in
@@ -59,11 +60,13 @@ const (
 	GateStrict Gate = "strict"
 	// GateSelfOrAdmin is api.selfOrAdmin: the {user}-scoped reads (me, journey)
 	// and the participant POSTs. It is named for the Authz class, not "read":
-	// it also guards writes. api.selfOnly (Authz: self, the investigate answer
-	// route, ADR-0056 D4) records here too, with the same reasons: the series set
-	// is a contract the platform's alert reads, so the self gate has no label
-	// value of its own.
+	// it also guards writes. It does not count api.selfOnly's refusals (GateSelf).
 	GateSelfOrAdmin Gate = "self_or_admin"
+	// GateSelf is api.selfOnly: Authz: self (ADR-0056 D4, the investigate answer
+	// route): the proven identity must be exactly {user}'s canonical identity, with
+	// no ADMIN_EMAILS override. Same reasons as GateSelfOrAdmin; an ADMIN_EMAILS
+	// identity that is not {user}'s is a mismatch here (an intended refusal).
+	GateSelf Gate = "self"
 	// GateAuthenticated is api.requireAuthenticated / boardIdentity: any proven
 	// identity, no {user} to match (the board routes).
 	GateAuthenticated Gate = "authenticated"
@@ -87,8 +90,8 @@ const (
 	// form: I8), so a healthy production has 0 of these.
 	ReasonNonCanonical Reason = "non_canonical"
 	// ReasonMismatch: a canonical identity for a different seat
-	// (self_or_admin only). A participant's own action (editing the URL), so it
-	// does not stay 0 and is not part of the alert. The self gate (api.selfOnly,
+	// (self_or_admin and self only). A participant's own action (editing the URL), so
+	// it does not stay 0 and is not part of the alert. The self gate (api.selfOnly,
 	// ADR-0056 D4) also records here an ADMIN_EMAILS identity that is not {user}'s,
 	// whatever its domain: an operator refused on purpose is not a configuration
 	// fault, so it is never non_canonical.
@@ -111,6 +114,9 @@ var declared = []Pair{
 	{GateSelfOrAdmin, ReasonNoIdentity},
 	{GateSelfOrAdmin, ReasonNonCanonical},
 	{GateSelfOrAdmin, ReasonMismatch},
+	{GateSelf, ReasonNoIdentity},
+	{GateSelf, ReasonNonCanonical},
+	{GateSelf, ReasonMismatch},
 	{GateAuthenticated, ReasonNoIdentity},
 	{GateAuthenticated, ReasonNonCanonical},
 	{GatePortal, ReasonNoIdentity},
@@ -162,7 +168,7 @@ func newDenialsVec(reg prometheus.Registerer) *prometheus.CounterVec {
 // logInterval is the spacing of the log line per (gate, reason). The metric
 // counts every denial; the log points at it, so an anonymous flood (or a
 // header-less tab polling every 2 seconds) cannot flood the Recreate-lost pod
-// log. The key set is the 8 declared pairs, so the ceiling is 0.8 lines/second
+// log. The key set is the 11 declared pairs, so the ceiling is 1.1 lines/second
 // whatever the traffic.
 const logInterval = 10 * time.Second
 
@@ -210,7 +216,7 @@ func New(logger *slog.Logger, now func() time.Time) *Observer {
 // The gate decides the reason; this only records it. An undeclared pair is a
 // programming error and panics, like a wrong label count on the metric would:
 // the tests (every gate, every reason) are what catch it, and nothing outside
-// the 8 declared pairs may become a series or a sampling key.
+// the 11 declared pairs may become a series or a sampling key.
 func (o *Observer) Record(r *http.Request, gate Gate, reason Reason) {
 	if o == nil {
 		o = &fallback

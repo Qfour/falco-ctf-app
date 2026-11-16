@@ -1056,7 +1056,7 @@ func (h *Handler) isAdmin(r *http.Request) (string, bool) {
 //
 // This is a mirror of auth-policy's canonical form, not a shared import beyond
 // internal/identity's constants: auth-policy is a separate binary. The callers
-// (selfOrAdmin) lower-case the header before calling in; the
+// (judgeSelf) lower-case the header before calling in; the
 // domain is lower-cased at construction.
 func emailMatchesUser(email, user, domain string) bool {
 	if email == "" || user == "" || domain == "" {
@@ -1108,31 +1108,50 @@ func emailMatchesUser(email, user, domain string) bool {
 // (3) the collector forwards only its allowlisted routes (submit-detect is not
 // one of them) and strips every inbound X-Auth-Request-* (ADR-0034 D6).
 func (h *Handler) selfOrAdmin(w http.ResponseWriter, r *http.Request, user string) bool {
-	email := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Auth-Request-Email")))
-	if email == "" {
-		// fail-closed: no proven identity → deny (do not fall back to {user}).
-		h.denials.Record(r, identityobs.GateSelfOrAdmin, identityobs.ReasonNoIdentity)
-		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
-		return false
-	}
-	if _, ok := h.adminSet[email]; ok {
+	email, reason, ok := h.judgeSelf(r, user)
+	if ok {
 		return true
 	}
-	if emailMatchesUser(email, user, h.emailDomain) {
+	// The operator override: an ADMIN_EMAILS identity passes whatever {user} is.
+	// A missing identity never reaches here as an admin (the set holds no blank).
+	if _, isAdmin := h.adminSet[email]; isAdmin {
 		return true
 	}
-	// The gate judges the reason, the observer only records it (ADR-0038 D2):
-	// a header that is not a canonical <seat>@<domain> is a configuration fault
-	// (non_canonical, also when EXPECTED_EMAIL_DOMAIN is empty); a canonical
-	// identity for another seat is the participant's own doing (mismatch). The
-	// caller's email and the {user} path value are not logged (D4).
-	reason := identityobs.ReasonMismatch
-	if UsernameFromEmail(email, h.emailDomain) == "" {
-		reason = identityobs.ReasonNonCanonical
-	}
+	// fail-closed: no proven identity → deny (do not fall back to {user}).
 	h.denials.Record(r, identityobs.GateSelfOrAdmin, reason)
 	httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
 	return false
+}
+
+// judgeSelf is the judgement selfOrAdmin and selfOnly (answer.go) both make of the
+// proven identity header against {user}: the header is read once, trimmed and
+// lower-cased, and compared with {user}'s canonical identity by exact equality
+// (emailMatchesUser, I8). It returns the normalised email; ok when it IS {user}'s
+// canonical identity; otherwise the reason the refusal is recorded under
+// (ADR-0038 D2):
+//
+//   - no_identity: the header is absent or blank;
+//   - non_canonical: it is not a canonical <seat>@<EXPECTED_EMAIL_DOMAIN> at all (a
+//     configuration fault, also when EXPECTED_EMAIL_DOMAIN is empty);
+//   - mismatch: it is a canonical identity for ANOTHER seat (the participant's own
+//     doing).
+//
+// It records nothing and writes nothing, and it knows nothing of ADMIN_EMAILS: what
+// an admin may do is the caller's (selfOrAdmin lets an admin through; selfOnly
+// refuses one and counts it as a mismatch), so the two gates cannot drift apart on
+// the header's normalisation, the equality, or the reason. The caller's email and
+// the {user} path value are not logged (ADR-0038 D4).
+func (h *Handler) judgeSelf(r *http.Request, user string) (email string, reason identityobs.Reason, ok bool) {
+	email = strings.ToLower(strings.TrimSpace(r.Header.Get("X-Auth-Request-Email")))
+	switch {
+	case email == "":
+		return email, identityobs.ReasonNoIdentity, false
+	case emailMatchesUser(email, user, h.emailDomain):
+		return email, "", true
+	case UsernameFromEmail(email, h.emailDomain) == "":
+		return email, identityobs.ReasonNonCanonical, false
+	}
+	return email, identityobs.ReasonMismatch, false
 }
 
 // reset wipes the scoreboard results (solves + event counters), e.g. after a
