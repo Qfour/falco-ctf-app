@@ -79,10 +79,6 @@ func LoadScored(challengesDir, scenarioFile, flagsFile string) (Scored, error) {
 	if out.Catalog, err = full.scored(ids, flagsFile); err != nil {
 		return Scored{}, err
 	}
-	// ADR-0056 stage A1: an investigate challenge in scope has no grader yet.
-	if err := out.Catalog.refuseUngraded(); err != nil {
-		return Scored{}, err
-	}
 	if ids != nil {
 		out.Order = ids
 	} else {

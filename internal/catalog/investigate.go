@@ -18,9 +18,10 @@ package catalog
 //
 // Scope of this file (stage A1): the type, its strict decode, and the load-time
 // checks of ADR-0056 D1, D3 (a) and V10. Grading, the route, the store and the
-// edition (answers table, bundle) are later stages and are NOT reachable from
-// here: until A3 the scoreboard refuses to score an investigate challenge
-// (Catalog.refuseUngraded).
+// edition (answers table, bundle) are not reachable from here: they live in
+// internal/scoreboard and internal/edition. catalog.LoadScored accepts an
+// investigate challenge in scope (A3b-3); the answers table it needs in the event
+// mode is edition.Load's check (D8).
 
 import (
 	"bytes"
@@ -262,18 +263,4 @@ func requirePerSeatQuestion(ch *Challenge) error {
 		}
 	}
 	return fmt.Errorf("%s challenge %q: at least one question must use a format that can vary per seat (%s)", TypeInvestigate, ch.ID, strings.Join(perSeat, ", "))
-}
-
-// refuseUngraded is the one place that keeps an investigate challenge out of a
-// running scoreboard until stage A3 gives it a grader: today every scoring path
-// is gated by type and treats an unknown type as "not mine", so such a mission
-// would be listed, could never be solved, and would say nothing about it. LoadScored
-// (the only way cmd/scoreboard obtains its catalog) calls it; A3 removes it.
-func (c Catalog) refuseUngraded() error {
-	for _, id := range c.IDs() {
-		if c[id].Type == TypeInvestigate {
-			return fmt.Errorf("challenge %q is type %q, which this build does not grade yet (ADR-0056 stage A3): remove it from the scope", id, TypeInvestigate)
-		}
-	}
-	return nil
 }

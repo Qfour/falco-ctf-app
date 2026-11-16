@@ -8,9 +8,7 @@ package scoreboard_test
 // the latter on the Grader's Newly only. (3) The spec's closed format enum against
 // answerformat.
 //
-// The handler is handed the catalog directly, as answer_route_test.go does:
-// catalog.LoadScored still refuses an investigate scope at startup (A3b-3), so on a
-// real scoreboard `questions` is always [] and no `answer_*` series moves yet. The
+// The handler is handed the catalog directly, as answer_route_test.go does. The
 // challenges are 02-evade (current, since it sorts first and is unsolved), then
 // 90-ir-demo and 91-ir-two, both of them `locked` in the journey; a locked mission's
 // questions are projected like its hints are (the projection is a function of the
