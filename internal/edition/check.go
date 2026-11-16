@@ -72,7 +72,13 @@ type Violation struct {
 	CID  string
 	QID  string
 	File string
-	err  error
+	// Slot is the name of an edition.yaml slot (A4d-1), kept only if it is inside
+	// the slot-name grammar, like the other identifiers.
+	Slot string
+	// At is the position inside edition.yaml, made of key names and numbers only:
+	// `slots[3].vocab[1][4]` (the slot, the list, the word). Never a value.
+	At  string
+	err error
 }
 
 func newViolation(rule, msg string, line int, c cell, err error) *Violation {
@@ -106,6 +112,12 @@ func (v *Violation) Error() string {
 	}
 	if v.File != "" {
 		b.WriteString(" file=" + v.File)
+	}
+	if v.Slot != "" {
+		b.WriteString(" slot=" + v.Slot)
+	}
+	if v.At != "" {
+		b.WriteString(" at=" + v.At)
 	}
 	// answerformat's errors describe the rule that failed and never the text.
 	if v.err != nil {
