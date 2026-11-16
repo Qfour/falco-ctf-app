@@ -605,7 +605,14 @@ EVIDENCE_NAME_PATTERN='^[a-z0-9][a-z0-9._-]{0,62}$'
 EVIDENCE_MAX_FILES='64'
 EVIDENCE_MAX_BUNDLE_BYTES='524288'
 EVIDENCE_MAX_SEAT_BYTES='2097152'
+# The digests file's shape (internal/edition/digests.go: digestsHeaderPrefix, validRunID,
+# PracticeRunID, ValidDigest are the definitions; evidence_limits_test.go (V58) holds these
+# four literals to them by reading these lines and probing Go's functions, and the golden
+# internal/edition/testdata/digests-golden/digests.tsv, `WriteDigests`' output, is accepted
+# by scripts/check-deploy-user-evidence.sh):
+EVIDENCE_DIGESTS_PREFIX='# falco-ctf evidence-digests v1 run='
 EVIDENCE_DIGESTS_HEADER_RE='^# falco-ctf evidence-digests v1 run=[0-9a-f]{32}$'
+EVIDENCE_PRACTICE_RUN_ID='00000000000000000000000000000000'
 EVIDENCE_DIGEST_RE='^[0-9a-f]{64}$'
 
 # evidence_reject <exit status> <message>: the message carries ids, names and line numbers
@@ -733,7 +740,7 @@ evidence_check_digests() {
     lineno=$((lineno + 1))
     if [[ "${lineno}" -eq 1 ]]; then
       evidence_match "${line}" "${EVIDENCE_DIGESTS_HEADER_RE}" || evidence_reject 1 "the digests file: line 1 is not the v1 header with a 32-digit lower-case hex run id"
-      if [[ "${line}" == "# falco-ctf evidence-digests v1 run=00000000000000000000000000000000" ]]; then
+      if [[ "${line}" == "${EVIDENCE_DIGESTS_PREFIX}${EVIDENCE_PRACTICE_RUN_ID}" ]]; then
         evidence_reject 1 "the digests file: the run id is all zeros (that is the practice edition's)"
       fi
       continue

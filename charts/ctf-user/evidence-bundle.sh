@@ -91,8 +91,12 @@ evidence_bundle_digest() {
 # gen-values.sh writes an investigate challenge's mount as
 #       evidence: true
 #       challenge: <cid>
-# (render_plant_block). Anything else that carries an `evidence:` key is not understood,
-# and an unread entry would read as "no investigate challenge here": rc 3, fail-closed.
+# (render_plant_block; scripts/check-deploy-user-evidence.sh runs this reader over what
+# `gen-values.sh --emit-evidence-fixture` writes). Anything else that carries an `evidence`
+# KEY on a non-comment line (any indentation, quoted, in a flow mapping, another value) is
+# not understood, and an unread entry would read as "no investigate challenge here": rc 3,
+# fail-closed. The line after `evidence: true` must be the `challenge:` line, at the same
+# indentation, holding the id's shape (its length is deploy-user.sh's check).
 evidence_scope_cids() {
   LC_ALL=C awk '
     want {
@@ -100,7 +104,8 @@ evidence_scope_cids() {
       if ($0 ~ /^      challenge: [0-9][0-9]-[a-z0-9-]+$/) { sub(/^      challenge: /, ""); print; next }
       bad = 1
     }
-    /^ *evidence:/ {
+    /^[ \t]*#/ { next }
+    /evidence["\047[:space:]]*:/ {
       if ($0 == "      evidence: true") { want = 1 } else { bad = 1 }
       next
     }

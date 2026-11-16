@@ -361,12 +361,136 @@ case_limit_files
 case_limit_bundle
 case_limit_seat
 
+# --- the reader of the scope, tied to the generator (A5c-1 review R2#1) -------------------------
+echo "==> the scope reader against gen-values.sh's own output, and its fail-closed refusals"
+# gen-values.sh --emit-evidence-fixture renders, from two investigate challenges, the plant
+# block the real generator writes. evidence_scope_cids must read exactly those challenges,
+# and a deploy over that very file must reach helm.
+case_generated_scope() {
+  local fx="${WORK}/evfx" out want
+  rm -rf "${fx}"
+  mkdir -p "${fx}"
+  if ! "${REPO_ROOT}/challenges/gen-values.sh" --emit-evidence-fixture "${fx}" > /dev/null 2>&1; then
+    fail "gen-values.sh --emit-evidence-fixture failed: no generated values to read"
+    return 0
+  fi
+  out="$(evidence_scope_cids "${fx}/values.yaml")" || { fail "evidence_scope_cids refused gen-values.sh's own output"; return 0; }
+  want="$(cut -f2 "${fx}/map" | LC_ALL=C sort)"
+  if [[ -z "${want}" || "${out}" != "${want}" ]]; then
+    fail "evidence_scope_cids read [$(printf '%s' "${out}" | tr '\n' ' ')], the generator's evidence map holds [$(printf '%s' "${want}" | tr '\n' ' ')]"
+    return 0
+  fi
+  pass "the scope read from gen-values.sh's own output is its evidence map ($(printf '%s' "${out}" | tr '\n' ' '))"
+  good_setup
+  cp "${fx}/values.yaml" "${CDIR}/values-all.yaml"
+  set_evflags
+  check_reached "a deploy over gen-values.sh's own values reaches helm" "${EVFLAGS[@]}"
+}
+case_generated_scope
+# scope_bad <label> <lines...>: the reader refuses (rc 3). scope_ok <label> <expected output> <lines...>
+scope_bad() {
+  local label="$1" f="${WORK}/scope.yaml" rc=0
+  shift
+  printf '%s\n' "$@" > "${f}"
+  evidence_scope_cids "${f}" > /dev/null || rc=$?
+  if [[ "${rc}" -eq 3 ]]; then pass "scope reader refuses: ${label}"; else fail "scope reader: ${label}: rc ${rc}, want 3 (fail-closed)"; fi
+}
+scope_ok() {
+  local label="$1" want="$2" f="${WORK}/scope.yaml" out rc=0
+  shift 2
+  printf '%s\n' "$@" > "${f}"
+  out="$(evidence_scope_cids "${f}")" || rc=$?
+  if [[ "${rc}" -eq 0 && "${out}" == "${want}" ]]; then pass "scope reader reads: ${label}"; else fail "scope reader: ${label}: rc ${rc}, read [${out}], want [${want}]"; fi
+}
+EV='      evidence: true'
+CH='      challenge: 40-ev'
+scope_ok "one entry" '40-ev' '    - path: /x' '      readOnly: true' "${EV}" "${CH}"
+scope_ok "two entries" "40-ev${CT_LF}41-ev" "${EV}" "${CH}" "${EV}" '      challenge: 41-ev'
+scope_ok "an empty file" ''
+scope_ok "a commented-out key" '' '      # evidence: true' '# evidence: true'
+scope_ok "the seed script's own words (a comment, a path)" '' '      # evidence bundle (ADR-0056 D11): x' '      cp "/opt/ctf/evidence-src/40-ev/a" "x"'
+scope_bad "evidence: true and then another key" "${EV}" '      path: /x'
+scope_bad "evidence: true at the end of the file" "${EV}"
+scope_bad "evidence at 4 spaces" '    evidence: true' '    challenge: 40-ev'
+scope_bad "evidence at 8 spaces" '        evidence: true' '        challenge: 40-ev'
+scope_bad "evidence: \"true\"" '      evidence: "true"' "${CH}"
+scope_bad "evidence: true with a comment" '      evidence: true # c' "${CH}"
+scope_bad "evidence: True" '      evidence: True' "${CH}"
+scope_bad "evidence: false" '      evidence: false' "${CH}"
+scope_bad "a quoted key" '      "evidence": true' "${CH}"
+scope_bad "the key in a flow mapping" '    - {path: /x, evidence: true, challenge: 40-ev}'
+scope_bad "a top-level evidence key (the chart's values shape)" 'evidence:' '  challenges: {}'
+scope_bad "a comment between the two lines" "${EV}" '      # c' "${CH}"
+scope_bad "two evidence lines in a row" "${EV}" "${EV}" "${CH}"
+scope_bad "challenge: with an underscore" "${EV}" '      challenge: 40_ev'
+scope_bad "challenge: with a capital" "${EV}" '      challenge: 40-EV'
+scope_bad "challenge: without the two digits" "${EV}" '      challenge: 4-ev'
+scope_bad "challenge: at another indentation" "${EV}" '    challenge: 40-ev'
+scope_bad "challenge: with a comment" "${EV}" '      challenge: 40-ev # c'
+scope_bad "challenge: with a trailing space" "${EV}" '      challenge: 40-ev '
+
+# The refusals a deploy makes of what the reader returns (no kubectl / helm call).
+case_scope_malformed() {
+  good_setup
+  printf 'plant:\n  mounts:\n    - path: /x\n%s\n      path: /y\n' "${EV}" > "${CDIR}/values-all.yaml"
+  set_evflags
+  check_reject "a scope file with an evidence entry the reader cannot read" 1 'not in the form gen-values.sh writes' "${EVFLAGS[@]}"
+}
+case_scope_flow_form() {
+  good_setup
+  printf 'plant:\n  mounts:\n    - {path: /x, evidence: true, challenge: 40-ev}\n' > "${CDIR}/values-all.yaml"
+  set_evflags
+  check_reject "an evidence mount written as a flow mapping is not read as 'no investigate challenge'" 1 'not in the form gen-values.sh writes' "${EVFLAGS[@]}"
+}
+case_scope_duplicate() {
+  good_setup
+  write_values 40-ev 40-ev
+  set_evflags
+  check_reject "the same investigate challenge twice in the values" 1 'is listed twice' "${EVFLAGS[@]}"
+}
+case_scope_long_id() {
+  good_setup
+  write_values "40-$(printf '%061d' 0)"
+  set_evflags
+  check_reject "an investigate challenge id of 64 characters (outside the id grammar)" 1 'is not a challenge id' "${EVFLAGS[@]}"
+}
+case_scope_malformed
+case_scope_flow_form
+case_scope_duplicate
+case_scope_long_id
+
+# --- the golden digests file, and the lockdown order (A5c-1 review R4#2, R2#2) -------------------
+echo "==> the golden digests file is read by deploy-user.sh; the lockdown lookup stays behind the checks"
+# internal/edition/testdata/digests-golden/digests.tsv is WriteDigests' output (a Go test holds
+# the bytes). Its digests are placeholders, so a deploy cannot accept it; what it must do is get
+# PAST the shape checks (header, columns, seat / cid / digest grammars, both rows of user1) and
+# stop only at the comparison with the bundle.
+case_golden() {
+  good_setup
+  cp "${REPO_ROOT}/internal/edition/testdata/digests-golden/digests.tsv" "${DG}"
+  set_evflags
+  check_reject "the golden digests file passes every shape check and stops at the digest" 1 'is not the row of the digests file' "${EVFLAGS[@]}"
+}
+case_golden
+case_lockdown_digest() {
+  good_setup
+  m_content
+  set_evflags
+  check_reject "--egress-lockdown, a digest mismatch: not one kubectl call (the ClusterIP lookup is behind the checks)" 1 'is not the row of the digests file' --egress-lockdown --api-server-cidr 10.0.0.1/32 "${EVFLAGS[@]}"
+}
+case_lockdown_one_arg() {
+  good_setup
+  check_reject "--egress-lockdown, --evidence-dir alone: not one kubectl call" 2 'go together' --egress-lockdown --api-server-cidr 10.0.0.1/32 --evidence-dir "${EVD}"
+}
+case_lockdown_digest
+case_lockdown_one_arg
+
 # --- self-test ---------------------------------------------------------------------------
 echo "==> self-test: a deploy-user.sh with one guard removed turns its case red"
 # mutant <label> <text to replace> <replacement>: sets DEPLOY to the copy (next to the files
 # it needs), or fails when the text is not on exactly one line
 mutant_deploy() {
-  local label="$1" from="$2" to="$3" l n=0 root="${WORK}/mut-${1}"
+  local label="$1" from="$2" to="$3" file="${4:-deploy-user.sh}" l n=0 root="${WORK}/mut-${1}"
   mkdir -p "${root}/charts/ctf-user"
   cp -p "${REPO_ROOT}"/charts/ctf-user/*.sh "${REPO_ROOT}/charts/ctf-user/values.yaml" "${root}/charts/ctf-user/"
   while IFS= read -r l; do
@@ -374,13 +498,13 @@ mutant_deploy() {
       *"${from}"*) printf '%s%s%s\n' "${l%%"${from}"*}" "${to}" "${l#*"${from}"}"; n=$((n + 1)) ;;
       *) printf '%s\n' "${l}" ;;
     esac
-  done < "${REPO_ROOT}/charts/ctf-user/deploy-user.sh" > "${root}/charts/ctf-user/deploy-user.sh.new"
+  done < "${REPO_ROOT}/charts/ctf-user/${file}" > "${root}/charts/ctf-user/${file}.new"
   if [[ "${n}" -ne 1 ]]; then
-    fail "mutant ${label}: '${from}' is on ${n} lines of deploy-user.sh, want exactly 1"
+    fail "mutant ${label}: '${from}' is on ${n} lines of ${file}, want exactly 1"
     return 1
   fi
-  cat "${root}/charts/ctf-user/deploy-user.sh.new" > "${root}/charts/ctf-user/deploy-user.sh"
-  rm -f "${root}/charts/ctf-user/deploy-user.sh.new"
+  cat "${root}/charts/ctf-user/${file}.new" > "${root}/charts/ctf-user/${file}"
+  rm -f "${root}/charts/ctf-user/${file}.new"
   MUTANT="${root}/charts/ctf-user/deploy-user.sh"
 }
 # go_red <label> <case function>: with DEPLOY = the mutant, the case reports a failure
@@ -401,6 +525,8 @@ if mutant_deploy bytes "EVIDENCE_MAX_BUNDLE_BYTES='524288'" "EVIDENCE_MAX_BUNDLE
 if mutant_deploy files "EVIDENCE_MAX_FILES='64'" "EVIDENCE_MAX_FILES='65'"; then go_red files case_65; fi
 if mutant_deploy digest '[[ "${got}" == "${want}" ]] ||' 'true ||'; then go_red digest case_content; fi
 if mutant_deploy stale 'delete secret -l "${EVIDENCE_SELECTOR}"' 'get secret -l "${EVIDENCE_SELECTOR}"'; then go_red stale case_accept; fi
+if mutant_deploy scope-key '/evidence["\047[:space:]]*:/ {' '/^ *evidence:/ {' evidence-bundle.sh; then go_red scope-key case_scope_flow_form; fi
+if mutant_deploy early-lookup 'API_SERVER_CLUSTER_IP=""' 'API_SERVER_CLUSTER_IP=""; kubectl get svc kubernetes -n default > /dev/null' ; then go_red early-lookup case_lockdown_digest; fi
 if mutant_deploy label-cleanup 'if kubectl -n "${NS}" delete secret "ctf-evidence-${cid}" --ignore-not-found >/dev/null; then' 'if true; then'; then go_red label-cleanup case_label_fails; fi
 if mutant_deploy apply 'create secret generic "ctf-evidence-${cid}" "${FROM_FILE_ARGS[@]}"' 'create secret generic "ctf-evidence-${cid}" --from-file="${EVIDENCE_DIR}/${cid}"'; then go_red dir-argument case_accept; fi
 
