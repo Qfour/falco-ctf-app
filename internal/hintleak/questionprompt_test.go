@@ -40,8 +40,8 @@ func v24Scope(declared int, prompts []string) scopeData {
 	}
 	cat := catalog.Catalog{id: {ID: id, Type: catalog.TypeInvestigate, Investigate: &catalog.Investigate{Questions: qs}}}
 	fixtures := []hintleak.Item{{Source: id + "/fixtures/notes.txt", Text: "see " + v24Hint + " later"}}
-	in, want, got := assembleScope([]string{id}, cat, catalog.Journeys{id: j}, nil, fixtures)
-	return scopeData{name: "v24", ids: []string{id}, in: in, wantPrompts: want, gotPrompts: got}
+	in, want := assembleScope([]string{id}, cat, catalog.Journeys{id: j}, nil, fixtures)
+	return scopeData{name: "v24", ids: []string{id}, in: in, wantPrompts: want}
 }
 
 func mustCheck(t *testing.T, s scopeData) []hintleak.Violation {
@@ -83,11 +83,13 @@ func TestQuestionPrompts_AreFreeItems(t *testing.T) {
 		}
 	})
 
-	t.Run("an assembler that does not put the prompts into Free is caught", func(t *testing.T) {
-		s := v24Scope(2, carrying)
+	// withoutPrompts returns s with every prompt item removed from Free (what an
+	// assembler that forgot to add them would produce).
+	withoutPrompts := func(t *testing.T, s scopeData) scopeData {
+		t.Helper()
 		var kept []hintleak.Item
 		for _, it := range s.in.Free {
-			if !strings.Contains(it.Source, ".prompt") {
+			if !isQuestionPromptSource(it.Source) {
 				kept = append(kept, it)
 			}
 		}
@@ -95,8 +97,26 @@ func TestQuestionPrompts_AreFreeItems(t *testing.T) {
 			t.Fatal("the scope has no prompt item to remove")
 		}
 		s.in.Free = kept
+		return s
+	}
+
+	t.Run("removing the prompt items from Free turns the fixture into a violation", func(t *testing.T) {
+		s := withoutPrompts(t, v24Scope(2, carrying))
 		if vs := mustCheck(t, s); len(vs) == 0 {
 			t.Fatal("want violations once the prompts are not Free, got none")
+		}
+	})
+
+	// V35: the count check reads in.Free, not a number the assembler kept. A
+	// scope whose want-count matches the questions but whose Free holds no prompt
+	// item (an assembler that counted and forgot to append) must be red.
+	t.Run("V35: a count that matches the questions but no prompt item in Free fails the count check", func(t *testing.T) {
+		s := withoutPrompts(t, v24Scope(2, carrying))
+		if s.wantPrompts != 2 {
+			t.Fatalf("wantPrompts = %d, want 2 (the scope declares 2 questions)", s.wantPrompts)
+		}
+		if err := promptCountProblem(s); err == nil {
+			t.Fatal("promptCountProblem = nil, want an error: 2 questions are declared and 0 prompt items are in Free")
 		}
 	})
 
@@ -104,7 +124,7 @@ func TestQuestionPrompts_AreFreeItems(t *testing.T) {
 		s := v24Scope(2, carrying)
 		var got []string
 		for _, it := range s.in.Free {
-			if strings.Contains(it.Source, ".prompt") {
+			if isQuestionPromptSource(it.Source) {
 				got = append(got, it.Source)
 			}
 		}
@@ -113,7 +133,7 @@ func TestQuestionPrompts_AreFreeItems(t *testing.T) {
 			t.Fatalf("prompt item sources = %q, want %q", got, want)
 		}
 		for _, it := range s.in.Targets {
-			if strings.Contains(it.Source, ".prompt") {
+			if isQuestionPromptSource(it.Source) {
 				t.Fatalf("prompt item %q is in Targets: a prompt is Free, never a Target", it.Source)
 			}
 		}
@@ -145,11 +165,11 @@ func TestQuestionPrompts_CountMustMatchTheQuestions(t *testing.T) {
 	t.Run("a scope with no investigate challenge has 0 and 0 and passes", func(t *testing.T) {
 		const id = "01-synthetic"
 		cat := catalog.Catalog{id: {ID: id, Type: catalog.TypeTrigger}}
-		in, want, got := assembleScope([]string{id}, cat, catalog.Journeys{id: {ChallengeID: id, Title: "synthetic"}}, nil, nil)
-		if want != 0 || got != 0 {
+		in, want := assembleScope([]string{id}, cat, catalog.Journeys{id: {ChallengeID: id, Title: "synthetic"}}, nil, nil)
+		if got := countPromptItems(in.Free); want != 0 || got != 0 {
 			t.Fatalf("want 0 and 0, got want=%d got=%d (in.Free=%d)", want, got, len(in.Free))
 		}
-		if err := promptCountProblem(scopeData{name: "none", wantPrompts: want, gotPrompts: got}); err != nil {
+		if err := promptCountProblem(scopeData{name: "none", in: in, wantPrompts: want}); err != nil {
 			t.Fatal(err)
 		}
 	})
