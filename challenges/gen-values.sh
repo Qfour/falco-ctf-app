@@ -939,14 +939,20 @@ FIXTURE
 # Rules (check_claims):
 #   (a) an evidence dir is neither inside nor above a sensitive_dir_prefixes()
 #       entry (so a deploy cannot trip the catalog's own rule, I13b). The list
-#       is gen-values' own; it is NOT copied into Go.
+#       is gen-values' own; it is NOT copied into Go. (a2) Likewise for the
+#       directory of each sensitive FILE (sensitive_paths()): not equal to it
+#       and not above it. Both rules are for investigate evidence only; the
+#       evade plant-targets (03/05/10) plant into sensitive places on purpose.
 #   (b) an evidence dir does not overlap (equal / inside / above) any OTHER
 #       challenge's mount dir, write file or evidence dir. A bundle's file
 #       names are not known here, so any shared directory is treated as a
 #       shared file.
 #   (c) no file is written by two different plant.sh. Sharing a DIRECTORY is
 #       fine (03 and 10 write creds.recover and master.key into one dir).
-#   plus fail-closed guards: every compared path is absolute and clean, a
+#   plus fail-closed guards: every plant.sh LINE that mentions PLANT_SEED_ROOT
+#   must be one of the enumerated forms (plant_unrecognized_lines()), a
+#   falco-rule.yaml with an `investigate:` block / mountDir whose type is not
+#   INVESTIGATE_TYPE is rejected, every compared path is absolute and clean, a
 #   write destination with a shell expansion cannot be compared and is
 #   rejected, a plant.sh with no recognized write destination is rejected
 #   (an unrecognized write form must not read as "disjoint"), a `type:
@@ -968,8 +974,52 @@ plant_write_files() { # <plant.sh> -> absolute FILE paths it writes via redirect
   } | sort -u
 }
 
-is_investigate_file() { # <falco-rule.yaml> -> rc 0 iff its top-level type is investigate
-  grep -qE '^type:[[:space:]]*["'\'']?investigate["'\'']?[[:space:]]*(#.*)?$' "$1"
+# plant_unrecognized_lines <plant.sh> -> every non-comment line that mentions
+# PLANT_SEED_ROOT in a form NOT enumerated here, one per line. Fail-closed per
+# LINE (not per file): a recognized write elsewhere in the same plant.sh must
+# not let an unrecognized one (two redirects on one line, a brace-less
+# $PLANT_SEED_ROOT, a quote in another place, a cp into a directory, tee, ...)
+# slip through unseen. The forms are exactly the ones the plant.sh files use,
+# each with ONE "${PLANT_SEED_ROOT}/path" operand (path chars [A-Za-z0-9._/-],
+# no trailing slash):
+#   mkdir -p "${PLANT_SEED_ROOT}/dir"
+#   chmod MODE "${PLANT_SEED_ROOT}/path"
+#   <anything> > "${PLANT_SEED_ROOT}/file"   (also >>; also `cat > f <<EOF`)
+#   cp SRC "${PLANT_SEED_ROOT}/file"          (SRC without a variable, no flags)
+# Not detectable here: a cp whose destination is a directory with no trailing
+# slash (the shell decides at run time).
+plant_unrecognized_lines() {
+  local f="$1" line n
+  local re_path='"\$\{PLANT_SEED_ROOT\}/[A-Za-z0-9._/-]*[A-Za-z0-9._-]"'
+  local re_mkdir="^[[:space:]]*mkdir -p ${re_path}[[:space:]]*\$"
+  local re_chmod="^[[:space:]]*chmod [0-7]+ ${re_path}[[:space:]]*\$"
+  local re_redir=">>?[[:space:]]*${re_path}([[:space:]]|\$)"
+  local re_cp="^[[:space:]]*cp ([^[:space:]\"\$]+|\"[^\"\$]+\") ${re_path}[[:space:]]*\$"
+  while IFS= read -r line; do
+    case "${line}" in
+      *PLANT_SEED_ROOT*) ;;
+      *) continue ;;
+    esac
+    n="$(printf '%s\n' "${line}" | grep -o 'PLANT_SEED_ROOT' | grep -c . || true)"
+    if [ "${n}" -eq 1 ]; then
+      if [[ "${line}" =~ ${re_mkdir} ]] || [[ "${line}" =~ ${re_chmod} ]] \
+        || [[ "${line}" =~ ${re_redir} ]] || [[ "${line}" =~ ${re_cp} ]]; then
+        continue
+      fi
+    fi
+    printf '%s\n' "${line}"
+  done < <(plant_body "${f}" | grep -vE '^[[:space:]]*#' || true)
+}
+
+# The `type:` value of the 4th challenge type, as the catalog spells it
+# (catalog.TypeInvestigate). internal/catalog/investigate_type_parity_test.go
+# reads this assignment and holds it equal to the Go constant, so a rename in
+# Go that is missed here is red instead of silently dropping real investigate
+# challenges out of the rules above.
+INVESTIGATE_TYPE='investigate'
+
+is_investigate_file() { # <falco-rule.yaml> -> rc 0 iff its top-level type is INVESTIGATE_TYPE
+  grep -qE "^type:[[:space:]]*[\"']?${INVESTIGATE_TYPE}[\"']?[[:space:]]*(#.*)?\$" "$1"
 }
 
 # <falco-rule.yaml> -> investigate.evidence.mountDir (nothing if it cannot be
@@ -1015,13 +1065,22 @@ collect_claims() { # $1=challenges root -> the claims table (see above)
       [ -z "${w}" ] && continue
       printf '%s\twrite\t%s\n' "${id}" "${w}"
     done < <(plant_write_files "${f}")
+    while IFS= read -r w; do
+      [ -z "${w}" ] && continue
+      printf '%s\tunparsed\t%s\n' "${id}" "$(printf '%s' "${w}" | tr '\t' ' ')"
+    done < <(plant_unrecognized_lines "${f}")
   done < <(find "${root}" -maxdepth 2 -name plant.sh | sort)
   while IFS= read -r f; do
     [ -z "${f}" ] && continue
-    is_investigate_file "${f}" || continue
     id="$(basename "$(dirname "${f}")")"
-    mdir="$(investigate_mount_dir "${f}")"
-    printf '%s\tevidence\t%s\n' "${id}" "${mdir}"
+    if is_investigate_file "${f}"; then
+      mdir="$(investigate_mount_dir "${f}")"
+      printf '%s\tevidence\t%s\n' "${id}" "${mdir}"
+    elif grep -qE '^investigate:|^[^#]*mountDir:' "${f}"; then
+      # an investigate block / mountDir under a type this script does not
+      # recognize: it would silently escape rules (a)/(b) (fail-closed)
+      printf '%s\ttypemiss\t\n' "${id}"
+    fi
   done < <(find "${root}" -maxdepth 2 -name falco-rule.yaml | sort)
 }
 
@@ -1044,8 +1103,8 @@ claims_path_overlaps() { # $1 $2 -> rc 0 iff equal, or one is inside the other (
   return 1
 }
 
-check_claims() { # $1=claims table $2=sensitive dir prefixes (one per line) -> rc 0 iff every rule holds
-  local claims="$1" prefixes="$2" rc=0
+check_claims() { # $1=claims table $2=sensitive dir prefixes $3=sensitive file paths (one per line each) -> rc 0 iff every rule holds
+  local claims="$1" prefixes="$2" sfiles="$3" rc=0 d
   local ids=() kinds=() paths=() n=0 nwrite=0 id kind p i j s k reported="|"
   while IFS=$'\t' read -r id kind p; do
     [ -z "${id}" ] && continue
@@ -1065,6 +1124,10 @@ check_claims() { # $1=claims table $2=sensitive dir prefixes (one per line) -> r
     echo "ADR-0056 D1 VIOLATION: sensitive_dir_prefixes() is empty (the extraction from ${SENSITIVE_RULE_FILE} is broken; an empty list must never read as 'outside')" >&2
     return 1
   fi
+  if [ -z "${sfiles}" ]; then
+    echo "ADR-0056 D1 VIOLATION: sensitive_paths() is empty (the extraction from ${SENSITIVE_RULE_FILE} is broken; an empty list must never read as 'outside')" >&2
+    return 1
+  fi
 
   i=0
   while [ "${i}" -lt "${n}" ]; do
@@ -1072,6 +1135,18 @@ check_claims() { # $1=claims table $2=sensitive dir prefixes (one per line) -> r
     kind="${kinds[$i]}"
     p="${paths[$i]}"
 
+    if [ "${kind}" = "unparsed" ]; then
+      echo "ADR-0055 C4 (ii) VIOLATION: ${id}/plant.sh line '${p}' mentions \${PLANT_SEED_ROOT} in a form that is not one of the enumerated plant.sh forms (mkdir -p / chmod MODE / one '>' or '>>' redirect / cp SRC FILE, each with exactly one \"\${PLANT_SEED_ROOT}/path\" operand), so its write destination cannot be compared" >&2
+      rc=1
+      i=$((i + 1))
+      continue
+    fi
+    if [ "${kind}" = "typemiss" ]; then
+      echo "ADR-0056 D1 VIOLATION: ${id}/falco-rule.yaml has an 'investigate:' block or a 'mountDir:' but its top-level type is not '${INVESTIGATE_TYPE}' (this script's INVESTIGATE_TYPE; a mismatch would drop the challenge out of rules (a) and (b))" >&2
+      rc=1
+      i=$((i + 1))
+      continue
+    fi
     if [ "${kind}" = "evidence" ] && [ -z "${p}" ]; then
       echo "ADR-0056 D1 VIOLATION: ${id} is 'type: investigate' but no investigate.evidence.mountDir could be read from its falco-rule.yaml" >&2
       rc=1
@@ -1133,6 +1208,26 @@ check_claims() { # $1=claims table $2=sensitive dir prefixes (one per line) -> r
           rc=1
         fi
       done <<< "${prefixes}"
+      # (a2) the directory of every sensitive FILE (sensitive_paths(), from the
+      # same rule.yaml): the rule fires on fd.name in that list, so a bundle in
+      # the file's own directory (or in an ancestor, which mounts over it) is
+      # what the sensitive-file rule is about. Not applied to plant-targets:
+      # 03/05/10 are evade challenges that plant INTO sensitive places on purpose.
+      while IFS= read -r s; do
+        [ -z "${s}" ] && continue
+        d="$(dirname "${s}")"
+        if [ "${p}" = "${s}" ] || [ "${p}" = "${d}" ]; then
+          echo "ADR-0056 D1 (a2) VIOLATION: ${id} evidence.mountDir '${p}' is the sensitive file '${s}' or its directory (the deploy would trip the catalog's sensitive-file rule, I13b)" >&2
+          rc=1
+        else
+          case "${d}" in
+            "${p}"/*)
+              echo "ADR-0056 D1 (a2) VIOLATION: ${id} evidence.mountDir '${p}' is above the directory '${d}' of the sensitive file '${s}' (it would mount over it)" >&2
+              rc=1
+              ;;
+          esac
+        fi
+      done <<< "${sfiles}"
       j=0
       while [ "${j}" -lt "${n}" ]; do
         k="${kinds[$j]}"
@@ -1153,7 +1248,11 @@ check_claims() { # $1=claims table $2=sensitive dir prefixes (one per line) -> r
 run_claims_check() { # the live tree (the cwd is challenges/)
   local claims
   claims="$(collect_claims .)"
-  check_claims "${claims}" "$(sensitive_dir_prefixes)"
+  check_claims "${claims}" "$(sensitive_dir_prefixes)" "$(sensitive_paths)"
+}
+
+fx_check() { # $1=root -> check_claims over a synthetic tree with the live sensitive lists
+  check_claims "$(collect_claims "$1")" "$(sensitive_dir_prefixes)" "$(sensitive_paths)"
 }
 
 # Synthetic-tree builders for the fixtures below.
@@ -1176,7 +1275,7 @@ fx_inv() { # $1=root $2=id $3=the investigate.evidence lines, verbatim ("  evide
 fx_expect_rejected() {
   local label="$1" root="$2" marker="$3" out rc=0
   out="$(mktemp)"
-  if check_claims "$(collect_claims "${root}")" "$(sensitive_dir_prefixes)" >"${out}" 2>&1; then
+  if fx_check "${root}" >"${out}" 2>&1; then
     echo "ADR-0056 A5a VIOLATION: the deliberately-bad fixture '${label}' was ACCEPTED — the check is vacuous" >&2
     rc=1
   elif ! grep -qF "${marker}" "${out}"; then
@@ -1192,11 +1291,26 @@ fx_expect_rejected() {
 # deliberately-bad tree is rejected with its own message. Judged by exit
 # status; the marker only pins WHY.
 verify_claims_negative_tests() {
-  local root rc=0 sens
+  local root rc=0 sens sfdir="" f
   sens="$(sensitive_dir_prefixes)"
   sens="${sens%%$'\n'*}"   # the first entry (no `| head`: SIGPIPE under pipefail)
   if [ -z "${sens}" ]; then
     echo "ADR-0056 A5a VIOLATION: sensitive_dir_prefixes() is empty, so the sensitive-directory fixture cannot be built" >&2
+    return 1
+  fi
+  # the directory of the first sensitive file that is not directly under /
+  # element 1 (e.g. /etc/security), so its parent is a real directory too
+  while IFS= read -r f; do
+    [ -z "${f}" ] && continue
+    case "$(dirname "${f}")" in
+      /*/*)
+        sfdir="$(dirname "${f}")"
+        break
+        ;;
+    esac
+  done <<< "$(sensitive_paths)"
+  if [ -z "${sfdir}" ]; then
+    echo "ADR-0056 A5a VIOLATION: no sensitive file in sensitive_paths() lives two levels deep, so the sensitive-file-directory fixture cannot be built" >&2
     return 1
   fi
   root="$(mktemp -d)"
@@ -1208,9 +1322,9 @@ verify_claims_negative_tests() {
   fx_inv "${root}/ok" 40-ev '  evidence:
     mountDir: /opt/fx/evidence-a'
   fx_inv "${root}/ok" 41-ev '  evidence: {mountDir: /opt/fx/evidence-b}'
-  if ! check_claims "$(collect_claims "${root}/ok")" "$(sensitive_dir_prefixes)" >/dev/null 2>&1; then
+  if ! fx_check "${root}/ok" >/dev/null 2>&1; then
     echo "ADR-0056 A5a VIOLATION: the disjoint positive fixture was REJECTED — the check is too strict or the extraction is broken:" >&2
-    check_claims "$(collect_claims "${root}/ok")" "$(sensitive_dir_prefixes)" 2>&1 | sed 's/^/    /' >&2 || true
+    fx_check "${root}/ok" 2>&1 | sed 's/^/    /' >&2 || true
     rc=1
   fi
 
@@ -1221,6 +1335,14 @@ verify_claims_negative_tests() {
   fx_plant "${root}/a2" 30-a /opt/fx/vault dir 'printf x > "${PLANT_SEED_ROOT}/opt/fx/vault/a"'
   fx_inv "${root}/a2" 40-ev "  evidence: {mountDir: $(dirname "${sens}")}"
   fx_expect_rejected "mountDir above a sensitive dir" "${root}/a2" "ADR-0056 D1 (a) VIOLATION" || rc=1
+  # (a2) the directory of a sensitive FILE (a name from sensitive_paths(), not a
+  # dir prefix: sfdir does not overlap any sensitive_dir_prefixes entry); and above it
+  fx_plant "${root}/a3" 30-a /opt/fx/vault dir 'printf x > "${PLANT_SEED_ROOT}/opt/fx/vault/a"'
+  fx_inv "${root}/a3" 40-ev "  evidence: {mountDir: ${sfdir}}"
+  fx_expect_rejected "mountDir is the directory of a sensitive file" "${root}/a3" "ADR-0056 D1 (a2) VIOLATION" || rc=1
+  fx_plant "${root}/a4" 30-a /opt/fx/vault dir 'printf x > "${PLANT_SEED_ROOT}/opt/fx/vault/a"'
+  fx_inv "${root}/a4" 40-ev "  evidence: {mountDir: $(dirname "${sfdir}")}"
+  fx_expect_rejected "mountDir above the directory of a sensitive file" "${root}/a4" "ADR-0056 D1 (a2) VIOLATION" || rc=1
 
   # (b) mountDir overlaps another challenge's write file / mount dir / evidence dir
   fx_plant "${root}/b1" 30-a /opt/fx/vault dir 'printf x > "${PLANT_SEED_ROOT}/opt/fx/vault/a"'
@@ -1237,13 +1359,13 @@ verify_claims_negative_tests() {
   # (c) two plant.sh write the same file (redirect + redirect, redirect + cp)
   fx_plant "${root}/c1" 30-a /opt/fx/vault dir 'printf x > "${PLANT_SEED_ROOT}/opt/fx/vault/a"'
   fx_plant "${root}/c1" 31-b /opt/fx/vault dir 'printf y >> "${PLANT_SEED_ROOT}/opt/fx/vault/a"'
-  fx_expect_rejected "two plant.sh write one file" "${root}/c1" "ADR-0055 C4 (ii) VIOLATION" || rc=1
+  fx_expect_rejected "two plant.sh write one file" "${root}/c1" "both write the file" || rc=1
   fx_plant "${root}/c2" 30-a /opt/fx/vault dir 'printf x > "${PLANT_SEED_ROOT}/opt/fx/vault/a"'
   fx_plant "${root}/c2" 31-b /opt/fx/vault dir 'cp /opt/ctf/plant-seed/x "${PLANT_SEED_ROOT}/opt/fx/vault/a"'
-  fx_expect_rejected "a plant.sh redirects to a file another plant.sh cp's to" "${root}/c2" "ADR-0055 C4 (ii) VIOLATION" || rc=1
+  fx_expect_rejected "a plant.sh redirects to a file another plant.sh cp's to" "${root}/c2" "both write the file" || rc=1
   fx_plant "${root}/c3" 30-a /opt/fx/f file 'printf x > "${PLANT_SEED_ROOT}/opt/fx/f"'
   fx_plant "${root}/c3" 31-b /opt/fx/other dir 'printf y > "${PLANT_SEED_ROOT}/opt/fx/f"'
-  fx_expect_rejected "a file-type target is another plant.sh's write destination" "${root}/c3" "ADR-0055 C4 (ii) VIOLATION" || rc=1
+  fx_expect_rejected "a file-type target is another plant.sh's write destination" "${root}/c3" "both write the file" || rc=1
 
   # fail-closed guards
   fx_plant "${root}/g1" 30-a /opt/fx/vault dir 'printf x > "${PLANT_SEED_ROOT}/opt/fx/vault/a"'
@@ -1257,10 +1379,33 @@ verify_claims_negative_tests() {
   fx_expect_rejected "a plant.sh whose write form is not recognized" "${root}/g3" "has no recognized write destination" || rc=1
   fx_plant "${root}/g4" 30-a /opt/fx/vault dir 'printf x > "${PLANT_SEED_ROOT}/opt/fx/vault/$NAME"'
   fx_expect_rejected "a write destination with a shell expansion" "${root}/g4" "shell expansion or glob" || rc=1
+  # an investigate block under a type this script does not recognize
+  mkdir -p "${root}/g5/40-ev"
+  fx_plant "${root}/g5" 30-a /opt/fx/vault dir 'printf x > "${PLANT_SEED_ROOT}/opt/fx/vault/a"'
+  printf 'challengeId: 40-ev\ntype: inspect\ninvestigate:\n  evidence: {mountDir: /opt/fx/ev}\n' > "${root}/g5/40-ev/falco-rule.yaml"
+  fx_expect_rejected "an investigate block under another type name" "${root}/g5" "its top-level type is not" || rc=1
+
+  # per-LINE fail-closed: a recognized write in the same plant.sh must not hide
+  # an unrecognized one
+  local u="is not one of the enumerated plant.sh forms"
+  fx_plant "${root}/u1" 30-a /opt/fx/other dir 'printf x > "${PLANT_SEED_ROOT}/opt/fx/other/a"
+printf y | tee "${PLANT_SEED_ROOT}/opt/fx/other/b"'
+  fx_expect_rejected "a recognized write beside a tee" "${root}/u1" "${u}" || rc=1
+  fx_plant "${root}/u2" 30-a /opt/fx/other dir 'printf x > "${PLANT_SEED_ROOT}/opt/fx/other/a" > "${PLANT_SEED_ROOT}/opt/fx/other/b"'
+  fx_expect_rejected "two redirects on one line" "${root}/u2" "${u}" || rc=1
+  fx_plant "${root}/u3" 30-a /opt/fx/other dir 'printf x > "${PLANT_SEED_ROOT}/opt/fx/other/a"
+printf y > "$PLANT_SEED_ROOT/opt/fx/other/b"'
+  fx_expect_rejected "a recognized write beside a brace-less PLANT_SEED_ROOT" "${root}/u3" "${u}" || rc=1
+  fx_plant "${root}/u4" 30-a /opt/fx/other dir 'printf x > "${PLANT_SEED_ROOT}/opt/fx/other/a"
+printf y > "${PLANT_SEED_ROOT}"/opt/fx/other/b'
+  fx_expect_rejected "a recognized write beside a quote in another place" "${root}/u4" "${u}" || rc=1
+  fx_plant "${root}/u5" 30-a /opt/fx/other dir 'printf x > "${PLANT_SEED_ROOT}/opt/fx/other/a"
+cp /opt/ctf/plant-seed/x "${PLANT_SEED_ROOT}/opt/fx/other/"'
+  fx_expect_rejected "a recognized write beside a cp into a directory" "${root}/u5" "${u}" || rc=1
 
   rm -rf "${root}"
   if [ "${rc}" -eq 0 ]; then
-    echo "  ok: ADR-0056 A5a — mountDir / plant-write disjointness: the positive tree passes and each of the 12 deliberately-bad trees is rejected for its own reason"
+    echo "  ok: ADR-0056 A5a — mountDir / plant-write disjointness: the positive tree passes and each of the 20 deliberately-bad trees is rejected for its own reason"
   fi
   return "${rc}"
 }

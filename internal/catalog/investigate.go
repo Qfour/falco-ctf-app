@@ -133,7 +133,8 @@ type attackBlock struct {
 
 // reservedMountRoots are directories no evidence bundle may be mounted over or
 // above. They mirror challenges/gen-values.sh (SEED_ROOT, SNAPSHOT_ROOT) and the
-// I16 missions path; A5 (gen-values) is where a drift between the two is caught.
+// I16 missions path; mountroots_parity_test.go (ADR-0056 V28) reads gen-values.sh
+// and fails if either constant is not in this list.
 var reservedMountRoots = []string{
 	// fixtures (I16)
 	"/opt/ctf/missions",
