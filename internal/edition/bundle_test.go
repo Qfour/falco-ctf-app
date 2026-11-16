@@ -183,6 +183,16 @@ func TestReadBundles_B2(t *testing.T) {
 				t.Fatal(err)
 			}
 		}, "regular files only"},
+		{"a link to a directory in place of a seat", good, func(t *testing.T, root string) {
+			if err := os.Symlink(t.TempDir(), filepath.Join(root, "seat-b")); err != nil {
+				t.Fatal(err)
+			}
+		}, "seat entry of the evidence root is not a directory"},
+		{"a link to a directory in place of a challenge", good, func(t *testing.T, root string) {
+			if err := os.Symlink(t.TempDir(), filepath.Join(root, "seat-a", "02-link")); err != nil {
+				t.Fatal(err)
+			}
+		}, "challenge entry of a seat directory is not a directory"},
 		{"a directory in a bundle", plus(good, kv(onePath+"sub/x", sentinel)), nil, "flat"},
 		{"a dot-file name", plus(good, kv(onePath+".hidden", sentinel)), nil, "grammar"},
 		{"a name starting with a dash", plus(good, kv(onePath+"-x", sentinel)), nil, "grammar"},
@@ -261,6 +271,30 @@ func TestReadBundles_SeatLimitIsPerSeat(t *testing.T) {
 	}
 	if _, err := edition.ReadBundles(bundleTree(t, files)); err != nil {
 		t.Errorf("two seats of 2 MiB each: %v", err)
+	}
+}
+
+// Two seats that are each over 2 MiB are two violations, one per seat (not one for the
+// tree, and not one per bundle).
+func TestReadBundles_SeatLimitIsReportedOncePerSeat(t *testing.T) {
+	files := seatBundles(5, 500<<10)
+	for k, v := range seatBundles(5, 500<<10) {
+		files["seat-b"+strings.TrimPrefix(k, "seat-a")] = v
+	}
+	_, err := edition.ReadBundles(bundleTree(t, files))
+	if err == nil {
+		t.Fatal("no violation was reported")
+	}
+	if got := strings.Count(err.Error(), "bundles of this seat are larger than their limit together"); got != 2 {
+		t.Errorf("%d violations of the seat limit, want 2 (one per seat): %v", got, err)
+	}
+	if got := rules(err); !slices.Equal(got, []string{edition.RuleBundleShape}) {
+		t.Errorf("rules = %v, want only [B2]: %v", got, err)
+	}
+	for _, seat := range []string{"seat=seat-a", "seat=seat-b"} {
+		if !strings.Contains(err.Error(), seat) {
+			t.Errorf("the error does not name %s: %v", seat, err)
+		}
 	}
 }
 

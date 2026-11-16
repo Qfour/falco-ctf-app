@@ -76,7 +76,10 @@ type Bundle struct {
 	Files []BundleFile
 }
 
-// Digest is the canonical digest of the bundle (BundleDigest).
+// Digest is the canonical digest of the bundle (BundleDigest). Of a bundle that
+// ReadBundles returned with a non-nil error it is the digest of the files that were read
+// (a file over a limit or of a refused kind is not among them): never use it as a digest
+// of the tree.
 func (b *Bundle) Digest() string { return BundleDigest(b.Files) }
 
 // BundleDigest is the one definition of a bundle's digest (ADR-0056 D9). Sort the
@@ -108,7 +111,13 @@ func BundleDigest(files []BundleFile) string {
 type Bundles struct {
 	list  []*Bundle
 	index map[cell]*Bundle
+	seats []string
 }
+
+// Seats is every seat directory of the tree (a directory named like a seat), in byte
+// order, whether or not it holds a bundle: an empty seat directory is a seat of the tree
+// that B1 holds to the seat list.
+func (bs *Bundles) Seats() []string { return bs.seats }
 
 // All is every bundle, in byte order of (seat, cid).
 func (bs *Bundles) All() []*Bundle { return bs.list }
@@ -133,7 +142,9 @@ func (bs *Bundles) Get(seat, cid string) *Bundle { return bs.index[cell{seat: se
 // maxViolations listed, the rest counted) when the tree is readable, nil error when it
 // holds none; a root that cannot be read at all is (nil, error). A file with a content
 // violation is kept in the result (the caller still checks it) and so is a bundle that
-// holds no file: whether a bundle is complete is B1's, not B2's. The tree is the
+// holds no file: whether a bundle is complete is B1's, not B2's. When the error is not
+// nil the digests of the Bundles are of a subset (the files that were not read are
+// missing): they are not written to a digests file and not compared with one. The tree is the
 // validator's own input, not a participant's: the checks are of a tree that was made
 // wrong, not of one that is under attack while it is read.
 func ReadBundles(root string) (*Bundles, error) {
@@ -175,6 +186,7 @@ func readBundles(root string, c *collector) (*Bundles, error) {
 			c.add(entryViolation("a seat directory cannot be read", seat, "", ""))
 			continue
 		}
+		out.seats = append(out.seats, seat)
 		budget := &seatBudget{}
 		for _, ce := range cidEntries {
 			cid := ce.Name()

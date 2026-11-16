@@ -1,6 +1,7 @@
 # ADR-0056 D9 / V16: the shared case table of the canonical bundle digest. Every
 # implementation of the digest runs it: Go (internal/edition, bundle_digest_test.go)
-# and deploy-user.sh (A5c). Plain ASCII, TAB-separated, no quoting.
+# and deploy-user.sh (A5c). This table is plain ASCII, TAB-separated, no quoting; the
+# case files are not always (content-utf8 holds a word in UTF-8 and is hashed as bytes).
 #
 # A row is   case<TAB>digest<TAB>input   (the third column is absent for `empty`: its
 # input is no bytes at all, and its row has two columns).
@@ -35,3 +36,5 @@ two-files	0e42fc4fa5357509dffeb9febc168cfa041a5368a9ce7dbdd77bb9b3955b90a5	a\x00
 two-files-swapped	a28a0f533a20f40872b813e7cd86ebc1dc36ca0e6028f3187042e2187b3c3a36	a\x00a1fce4363854ff888cff4b8e7875d600c2682390412a8cf79b37d0b11148b0fa\nb\x002d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\n
 byte-order	609324429b4fb1f026e7a567131d6756c338f5c3a415f335376ef6340ccf672b	a-b\x006b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b\na.b\x00d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35\na0\x004e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce\nab\x004b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a\n
 multi-line	c59f666d6f086bfb2867c1232008de8685de207b79fc19aee026e5cf520acb2b	notes.txt\x009060554863a62b9db5f726216876654e561896071d2e6480f2048b70e0fdadb9\n
+content-utf8	794bd64eb1e6cccd188fb1001a6cebe88e106e5b7e85a9a2f2f6f1343c137e2a	notes.txt\x00bf94dc72b905a049e87240e55d01c911529e86e5f2d84af9d162bec24efad2bb\n
+content-crlf	77da5165a28507cd7ca8565107669c84ce21f6a5884962dbfa00fbaa7a300127	notes.txt\x006adc129c2038f41c45d1a27f913c4e7b7d97c46efa2f1d18f170478c15f9cbf4\n

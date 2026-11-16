@@ -152,6 +152,11 @@ var invalidInlineText = regexp.MustCompile(`[` + forbiddenInvisible + `]`)
 //
 // Consumers: the board's subject and body (board.go), and a display name
 // (validDisplayName, app#402; its shape rows are in display-name-parity/cases.yaml).
+//
+// catalog.MentionsFlag (internal/catalog/flags.go, which the edition's T7 / B3 use for
+// an answer value and an evidence bundle) is a separate and wider definition: it folds
+// ASCII case and needs no closing brace, so it matches everything this pattern matches and
+// more, and the board accepts text that MentionsFlag refuses (ADR-0056 #608).
 var flagShapePattern = regexp.MustCompile(`FALCO\{[^}]*\}`)
 
 // Stable, non-leaking response-body text (Issue #113). Never put err.Error()

@@ -144,8 +144,10 @@ INVESTIGATE_IDS=()
 # defined with the scenario checks below, the one existing grammar here) and
 # <name> matching EVIDENCE_NAME_RE: ADR-0056 B2's file-name grammar (lower-case,
 # at most 63 characters, never starting with `.` or `-`), the same as the chart's
-# `fail` in charts/ctf-user/templates/_helpers.tpl (ctf-user.evidence.check). There
-# is no Go copy yet: the validator's B2 (A4b) adds its own and a parity test then.
+# `fail` in charts/ctf-user/templates/_helpers.tpl (ctf-user.evidence.check). The Go
+# definition is edition.NamePattern (internal/edition/bundle.go), and
+# internal/edition/evidence_grammar_test.go (ADR-0056 V52) holds this line, CHALLENGE_ID_RE
+# and the chart's three literals equal to the Go definitions.
 EVIDENCE_SRC_ROOT='/opt/ctf/evidence-src'
 EVIDENCE_NAME_RE='^[a-z0-9][a-z0-9._-]{0,62}$'
 EVIDENCE_FILES=()
