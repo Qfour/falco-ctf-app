@@ -73,7 +73,7 @@ func TestLoadPractice_NoneIsTheEmptyNonNilSet(t *testing.T) {
 		{"a practice table with no rows", practiceTree(t, map[string]string{"01-demo": "# falco-ctf answers v1 run=" + PracticeRunID + "\n"})},
 	}
 	for _, c := range cases {
-		set, _, err := loadPractice(treeScored(t, c.dir))
+		set, _, _, err := loadPractice(treeScored(t, c.dir))
 		if err != nil {
 			t.Errorf("%s: loadPractice: %v", c.name, err)
 			continue
@@ -91,7 +91,7 @@ func TestLoadPractice_HoldsNormalisedValuesByFormat(t *testing.T) {
 	const table = "# falco-ctf answers v1 run=" + PracticeRunID + "\n" +
 		"*\t01-demo\twho\tpractice-who\n" +
 		"*\t01-demo\thx\taaaaaaaaaaaa\n"
-	set, tables, err := loadPractice(treeScored(t, practiceTree(t, map[string]string{"01-demo": table, "02-other": ""})))
+	set, tables, _, err := loadPractice(treeScored(t, practiceTree(t, map[string]string{"01-demo": table, "02-other": ""})))
 	if err != nil {
 		t.Fatalf("loadPractice: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestPracticeEditions_EveryInvestigateChallengeHasOne(t *testing.T) {
 	if missing := missingPractice(realTree, cat); len(missing) != 0 {
 		t.Errorf("investigate challenges without edition/practice/answers.tsv: %v (ADR-0056 D19 A4a-1)", missing)
 	}
-	if _, _, err := loadPractice(treeScored(t, realTree)); err != nil {
+	if _, _, _, err := loadPractice(treeScored(t, realTree)); err != nil {
 		t.Errorf("the practice editions of the image do not load: %v", err)
 	}
 	// V47 (A4a-2): the whole tree as the scope, in the practice mode, is what a local
