@@ -49,7 +49,11 @@ var edGoodRows = []string{
 // edValues are the table values of edGoodRows: none may appear in a log line.
 var edValues = []string{edSentinel, "aaaaaaaaaaaa", "bbbbbbbbbbbb"}
 
-func edInvestigateCatalog(t *testing.T) catalog.Catalog {
+// edInvestigateCatalog is the scored value of a tree with one investigate challenge
+// and no practice edition: the scope is the whole tree, as with no scenario (what
+// catalog.LoadScored returns, built by catalog.Load here so that no flags file is
+// needed). Its FullCatalog and ChallengesDir are that tree's.
+func edInvestigateCatalog(t *testing.T) catalog.Scored {
 	t.Helper()
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, edCID), 0o755); err != nil {
@@ -62,7 +66,7 @@ func edInvestigateCatalog(t *testing.T) catalog.Catalog {
 	if err != nil {
 		t.Fatalf("catalog.Load: %v", err)
 	}
-	return cat
+	return catalog.Scored{Catalog: cat, FullCatalog: cat, ChallengesDir: dir, Order: cat.IDs()}
 }
 
 func edAnswersFile(t *testing.T, runID string, rows []string) string {
@@ -77,10 +81,10 @@ func edAnswersFile(t *testing.T, runID string, rows []string) string {
 
 // bootEdition runs startEdition with a JSON logger on a buffer, as main() builds
 // it, and returns what it logged.
-func bootEdition(t *testing.T, cfg catalogEnv, cat catalog.Catalog) (*edition.Judge, string, []map[string]any, error) {
+func bootEdition(t *testing.T, cfg catalogEnv, scored catalog.Scored) (*edition.Judge, string, []map[string]any, error) {
 	t.Helper()
 	var buf bytes.Buffer
-	j, err := startEdition(slog.New(slog.NewJSONHandler(&buf, nil)), cfg, cat)
+	j, err := startEdition(slog.New(slog.NewJSONHandler(&buf, nil)), cfg, scored)
 	text := buf.String()
 	var recs []map[string]any
 	if strings.TrimSpace(text) != "" {
@@ -117,7 +121,7 @@ func TestStartEdition_NoInvestigateNoTable_ChangesNothing(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: scoredFromEnv: %v", name, err)
 		}
-		j, text, recs, err := bootEdition(t, cfg, scored.Catalog)
+		j, text, recs, err := bootEdition(t, cfg, scored)
 		if err != nil || j != nil || len(recs) != 0 {
 			t.Errorf("%s: judge %v, err %v, log %q; want nothing at all", name, j, err, text)
 		}
@@ -138,7 +142,7 @@ func TestStartEdition_RefusesAnAnswersFileThroughScoredFromEnv(t *testing.T) {
 	if cfg.answersFile != table {
 		t.Fatalf("ANSWERS_FILE was not read into the config: %q", cfg.answersFile)
 	}
-	j, text, recs, err := bootEdition(t, cfg, scored.Catalog)
+	j, text, recs, err := bootEdition(t, cfg, scored)
 	if err == nil || j != nil {
 		t.Fatalf("the event mode, an answers file and no investigate challenge: judge %v, err %v; want a refusal", j, err)
 	}
@@ -152,7 +156,7 @@ func TestStartEdition_RefusesAnAnswersFileThroughScoredFromEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("scoredFromEnv: %v", err)
 	}
-	j, text, recs, err = bootEdition(t, cfg, scored.Catalog)
+	j, text, recs, err = bootEdition(t, cfg, scored)
 	if !errors.Is(err, edition.ErrTableOutsideEventMode) || j != nil {
 		t.Fatalf("an answers file without the event mode: judge %v, err %v; want ErrTableOutsideEventMode", j, err)
 	}

@@ -36,12 +36,13 @@ import (
 // SubmitAnswer. With no Judge the Grader answers ErrAnswersUnavailable (a 500,
 // nothing spent): that is left for a scope without an investigate challenge.
 //
-// cfg.challengesDir is CHALLENGES_DIR, the directory the catalog was read from:
-// edition.Load reads the practice answers of every challenge under it for T6
-// (ADR-0056 A4a-1), so an event table that repeats a published practice answer is
-// refused here, at start-up.
-func startEdition(logger *slog.Logger, cfg catalogEnv, cat catalog.Catalog) (*edition.Judge, error) {
-	judge, runID, err := edition.Load(cat, cfg.challengesDir, cfg.answersFile, cfg.flagsFile != "")
+// scored is what scoredFromEnv returned (catalog.LoadScored's result, as it is: ADR-0056
+// A4a-3), the one input about the catalog and the tree: edition.Load reads the practice
+// answers of every challenge of the whole tree it carries (its full catalog and its
+// directory, which this package never reads itself) for T6 (A4a-1), so an event table that repeats a published practice answer is refused
+// here, at start-up. There is no separate directory argument to get wrong.
+func startEdition(logger *slog.Logger, cfg catalogEnv, scored catalog.Scored) (*edition.Judge, error) {
+	judge, runID, err := edition.Load(scored, cfg.answersFile, cfg.flagsFile != "")
 	if err != nil {
 		logger.Error("edition check failed", "err", err)
 		return nil, err

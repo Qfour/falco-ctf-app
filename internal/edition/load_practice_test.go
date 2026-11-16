@@ -116,7 +116,7 @@ func TestLoad_T6_UsesThePracticeAnswersOfTheImage(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			dir := writeTree(t, c.files)
-			j, runID, err := edition.Load(scopeOf(t, dir, c.scope...), dir, eventTable(t), true)
+			j, runID, err := edition.Load(scoredOf(t, scopeOf(t, dir, c.scope...), dir), eventTable(t), true)
 			if c.rules == nil {
 				if err != nil || j == nil || runID != runA {
 					t.Fatalf("Load = %v, %q, %v; want a judge and run id %s", j, runID, err, runA)
@@ -174,7 +174,7 @@ func TestLoad_RefusesABrokenPracticeEdition(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			dir := writeTree(t, c.files)
-			j, runID, err := edition.Load(scopeOf(t, dir, c.scope...), dir, eventTable(t), true)
+			j, runID, err := edition.Load(scoredOf(t, scopeOf(t, dir, c.scope...), dir), eventTable(t), true)
 			if err == nil {
 				t.Fatal("Load accepted a broken practice edition")
 			}
@@ -220,7 +220,7 @@ func TestLoad_RefusesALinkedPracticeTable(t *testing.T) {
 	if err := os.Symlink(filepath.Join(dir, "real.tsv"), link); err != nil {
 		t.Fatalf("symlink: %v", err)
 	}
-	_, _, err := edition.Load(scopeOf(t, dir, demoCID), dir, eventTable(t), true)
+	_, _, err := edition.Load(scoredOf(t, scopeOf(t, dir, demoCID), dir), eventTable(t), true)
 	if err == nil || !strings.Contains(err.Error(), "not a regular file") {
 		t.Errorf("a symlinked answers.tsv: err = %v, want a refusal (not a regular file)", err)
 	}
@@ -235,12 +235,12 @@ func TestLoad_WithoutATableThePracticeEditionIsReadOnlyForAnInvestigateScope(t *
 	dir := writeTree(t, map[string]string{practicePath(demoCID): "not a table\n"})
 	evadeOnly := catalog.Catalog{"03-ev": {ID: "03-ev", Type: "evade", ExpectedFlag: plainFlag}}
 	for _, event := range []bool{false, true} {
-		j, runID, err := edition.Load(evadeOnly, dir, "", event)
+		j, runID, err := edition.Load(scoredOf(t, evadeOnly, dir), "", event)
 		if err != nil || j != nil || runID != "" {
 			t.Errorf("no investigate challenge in scope (event mode %v): Load = %v, %q, %v; want nil, \"\", nil", event, j, runID, err)
 		}
 	}
-	j, runID, err := edition.Load(scopeOf(t, dir, demoCID), dir, "", false)
+	j, runID, err := edition.Load(scoredOf(t, scopeOf(t, dir, demoCID), dir), "", false)
 	var v *edition.Violation
 	if err == nil || j != nil || runID != "" || !errors.As(err, &v) || v.Rule != "T3" {
 		t.Errorf("an investigate challenge in scope, a broken practice edition: Load = %v, %q, %v; want a T3 refusal", j, runID, err)

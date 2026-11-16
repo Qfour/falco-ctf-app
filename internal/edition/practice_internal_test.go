@@ -24,6 +24,17 @@ investigate:
       params: {length: 12}
 `
 
+// treeScored is the catalog.Scored of the whole tree at dir with no scenario (the
+// scope is the tree), as catalog.LoadScored returns it (A4a-3).
+func treeScored(t *testing.T, dir string) catalog.Scored {
+	t.Helper()
+	full, err := catalog.Load(dir)
+	if err != nil {
+		t.Fatalf("catalog.Load(%s): %v", dir, err)
+	}
+	return catalog.Scored{Catalog: full, FullCatalog: full, ChallengesDir: dir}
+}
+
 // practiceTree writes one investigate challenge per entry of tables (cid -> the
 // content of its practice/answers.tsv; "" = the challenge has no practice edition).
 func practiceTree(t *testing.T, tables map[string]string) string {
@@ -62,7 +73,7 @@ func TestLoadPractice_NoneIsTheEmptyNonNilSet(t *testing.T) {
 		{"a practice table with no rows", practiceTree(t, map[string]string{"01-demo": "# falco-ctf answers v1 run=" + PracticeRunID + "\n"})},
 	}
 	for _, c := range cases {
-		set, _, err := loadPractice(c.dir)
+		set, _, err := loadPractice(treeScored(t, c.dir))
 		if err != nil {
 			t.Errorf("%s: loadPractice: %v", c.name, err)
 			continue
@@ -80,7 +91,7 @@ func TestLoadPractice_HoldsNormalisedValuesByFormat(t *testing.T) {
 	const table = "# falco-ctf answers v1 run=" + PracticeRunID + "\n" +
 		"*\t01-demo\twho\tpractice-who\n" +
 		"*\t01-demo\thx\taaaaaaaaaaaa\n"
-	set, tables, err := loadPractice(practiceTree(t, map[string]string{"01-demo": table, "02-other": ""}))
+	set, tables, err := loadPractice(treeScored(t, practiceTree(t, map[string]string{"01-demo": table, "02-other": ""})))
 	if err != nil {
 		t.Fatalf("loadPractice: %v", err)
 	}
@@ -182,7 +193,7 @@ func TestPracticeEditions_EveryInvestigateChallengeHasOne(t *testing.T) {
 	if missing := missingPractice(realTree, cat); len(missing) != 0 {
 		t.Errorf("investigate challenges without edition/practice/answers.tsv: %v (ADR-0056 D19 A4a-1)", missing)
 	}
-	if _, _, err := loadPractice(realTree); err != nil {
+	if _, _, err := loadPractice(treeScored(t, realTree)); err != nil {
 		t.Errorf("the practice editions of the image do not load: %v", err)
 	}
 	// V47 (A4a-2): the whole tree as the scope, in the practice mode, is what a local
@@ -193,7 +204,7 @@ func TestPracticeEditions_EveryInvestigateChallengeHasOne(t *testing.T) {
 	// returns no Judge, no error). From A7 (the first investigate challenge) this test
 	// must also require a non-empty set: count the investigate challenges of cat and fail
 	// on 0, so that a tree that lost them all cannot pass.
-	if _, _, err := Load(cat, realTree, "", false); err != nil {
+	if _, _, err := Load(treeScored(t, realTree), "", false); err != nil {
 		t.Errorf("the practice mode does not accept the image's own tree: %v", err)
 	}
 

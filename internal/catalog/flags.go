@@ -52,6 +52,18 @@ type Scored struct {
 	// Order is the mission sequence: the scenario's explicit order, or the
 	// catalog's sorted ids when no scenario is pinned.
 	Order []string
+	// FullCatalog is every challenge under ChallengesDir, before the scenario
+	// restriction, with the repository defaults (no flags file applied): what
+	// catalog.Load returned. It exists for edition.Load, which reads the practice
+	// answers of every challenge of the tree (ADR-0056 D8 (iii), D10 T6, A4a-3), so
+	// that the scope (Catalog) and the tree the practice answers come from are one
+	// value and cannot be two different trees. NOTHING THAT SCORES may read it: the
+	// scoreboard scores Catalog only (a challenge outside the scenario is not scored).
+	// load_source_test.go (internal/edition) fixes the readers by reading the sources.
+	FullCatalog Catalog
+	// ChallengesDir is the directory FullCatalog was read from (the challengesDir
+	// LoadScored was given).
+	ChallengesDir string
 }
 
 // LoadScored builds the catalog the scoreboard scores, in one step: load
@@ -68,7 +80,7 @@ func LoadScored(challengesDir, scenarioFile, flagsFile string) (Scored, error) {
 	if err != nil {
 		return Scored{}, fmt.Errorf("catalog load %q: %w", challengesDir, err)
 	}
-	var out Scored
+	out := Scored{FullCatalog: full, ChallengesDir: challengesDir}
 	var ids []string // nil = every challenge
 	if scenarioFile != "" {
 		sc, err := LoadScenario(scenarioFile)

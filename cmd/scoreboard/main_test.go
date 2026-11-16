@@ -246,6 +246,13 @@ func TestMainTakesCatalogOnlyFromScoredFromEnv(t *testing.T) {
 		"scoredFromEnv(serverutil.Env)",
 		"catCfg, scored, err := scoredFromEnv(serverutil.Env)",
 		"cat, scenarioID, order := scored.Catalog, scored.ScenarioID, scored.Order",
+		// ADR-0056 A4a-3 / V47: the edition door gets catalog.LoadScored's result as it
+		// is (scoredFromEnv returns that variable untouched, main hands it over), so
+		// the scope and the tree the practice answers come from are one value.
+		"scored, err := catalog.LoadScored(",
+		"return cfg, scored, err",
+		"startEdition(logger, catCfg, scored)",
+		`edition.Load(scored, cfg.answersFile, cfg.flagsFile != "")`,
 	}
 	for _, want := range exactlyOnce {
 		if c := strings.Count(code, want); c != 1 {
@@ -264,6 +271,11 @@ func TestMainTakesCatalogOnlyFromScoredFromEnv(t *testing.T) {
 	banned := []string{
 		"catalog.Load(", "catalog.LoadScenario(", ".Restrict(",
 		"\tcat=", "\tcat,err=", "\tcat,err:=", "\tcat:=", "scored.Catalog=", "scored.Catalog[",
+		// A4a-3: the whole tree (Scored.FullCatalog, ChallengesDir) is for edition.Load,
+		// which takes the Scored itself; nothing in cmd/scoreboard reads those fields,
+		// so nothing it wires scores a challenge outside the scenario. And the Scored
+		// is never rebound after LoadScored returned it.
+		".FullCatalog", ".ChallengesDir", "\tscored=", "\tscored,err=",
 	}
 	for _, b := range banned {
 		if strings.Contains(squashed, b) {

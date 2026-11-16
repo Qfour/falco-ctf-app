@@ -91,7 +91,7 @@ func ibStart(t *testing.T, env map[string]string) ibBooted {
 	if b.rules, err = catalog.LoadRuleExcerpts(b.cfg.challengesDir, b.scored.Catalog); err != nil {
 		t.Fatalf("LoadRuleExcerpts: %v", err)
 	}
-	b.judge, b.log, b.recs, b.err = bootEdition(t, b.cfg, b.scored.Catalog)
+	b.judge, b.log, b.recs, b.err = bootEdition(t, b.cfg, b.scored)
 	return b
 }
 
@@ -428,7 +428,7 @@ func TestBoot_RealCatalog_UnchangedByAcceptingTheInvestigateType(t *testing.T) {
 		if event {
 			c.flagsFile = "flags.yaml" // only "is it set" matters to startEdition
 		}
-		j, text, recs, err := bootEdition(t, c, scored.Catalog)
+		j, text, recs, err := bootEdition(t, c, scored)
 		if err != nil || j != nil || len(recs) != 0 {
 			t.Errorf("%s: judge %v, err %v, log %q; want nothing at all", name, j, err, text)
 		}
