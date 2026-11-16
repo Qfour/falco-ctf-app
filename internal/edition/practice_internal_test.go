@@ -62,7 +62,7 @@ func TestLoadPractice_NoneIsTheEmptyNonNilSet(t *testing.T) {
 		{"a practice table with no rows", practiceTree(t, map[string]string{"01-demo": "# falco-ctf answers v1 run=" + PracticeRunID + "\n"})},
 	}
 	for _, c := range cases {
-		set, err := loadPractice(c.dir)
+		set, _, err := loadPractice(c.dir)
 		if err != nil {
 			t.Errorf("%s: loadPractice: %v", c.name, err)
 			continue
@@ -80,7 +80,7 @@ func TestLoadPractice_HoldsNormalisedValuesByFormat(t *testing.T) {
 	const table = "# falco-ctf answers v1 run=" + PracticeRunID + "\n" +
 		"*\t01-demo\twho\tpractice-who\n" +
 		"*\t01-demo\thx\taaaaaaaaaaaa\n"
-	set, err := loadPractice(practiceTree(t, map[string]string{"01-demo": table, "02-other": ""}))
+	set, tables, err := loadPractice(practiceTree(t, map[string]string{"01-demo": table, "02-other": ""}))
 	if err != nil {
 		t.Fatalf("loadPractice: %v", err)
 	}
@@ -101,6 +101,50 @@ func TestLoadPractice_HoldsNormalisedValuesByFormat(t *testing.T) {
 	}
 	if got := len(set["hexid"]) + len(set["name"]); got != 2 || len(set) != 2 {
 		t.Errorf("the set holds %v, want exactly the two values of the table", set)
+	}
+	// The tables are keyed by challenge: the one that has an edition, and not the one
+	// that has none (the practice mode's Judge is made from these, A4a-2).
+	if len(tables) != 1 || tables["01-demo"] == nil {
+		t.Errorf("tables = %d entries (01-demo present: %v), want exactly 01-demo's", len(tables), tables["01-demo"] != nil)
+	}
+}
+
+// joinPractice refuses what no single table could be: a cell that two tables both
+// have, and a table that does not carry the practice run id. (Review #630 R4#2.)
+func TestJoinPractice_RefusesADuplicateCellAndARunIDMismatch(t *testing.T) {
+	mk := func(runID string, rows ...row) *Table {
+		tb := &Table{runID: runID, index: map[cell]int{}}
+		for _, r := range rows {
+			tb.index[r.c] = len(tb.rows)
+			tb.rows = append(tb.rows, r)
+		}
+		return tb
+	}
+	a := row{line: 2, c: cell{seat: AnySeat, cid: "01-a", qid: "who"}, value: "x"}
+	b := row{line: 3, c: cell{seat: AnySeat, cid: "01-a", qid: "hx"}, value: "y"}
+	c := row{line: 2, c: cell{seat: AnySeat, cid: "02-c", qid: "who"}, value: "z"}
+
+	joined, err := joinPractice([]*Table{mk(PracticeRunID, a, b), mk(PracticeRunID, c)})
+	if err != nil || joined == nil || len(joined.rows) != 3 || joined.runID != PracticeRunID {
+		t.Fatalf("a join of disjoint tables: %v, %v; want 3 rows and the practice run id", joined, err)
+	}
+	if len(joined.index) != 3 {
+		t.Errorf("the joined index holds %d cells, want 3", len(joined.index))
+	}
+
+	for name, tables := range map[string][]*Table{
+		"the same cell in two tables": {mk(PracticeRunID, a, b), mk(PracticeRunID, a)},
+		"an event run id":             {mk(PracticeRunID, a), mk("0123456789abcdef0123456789abcdef", c)},
+		"a nil table":                 {mk(PracticeRunID, a), nil},
+	} {
+		got, err := joinPractice(tables)
+		if err == nil || got != nil {
+			t.Errorf("%s: joinPractice = %v, %v; want a refusal and no table", name, got, err)
+			continue
+		}
+		if v, ok := err.(*Violation); !ok || (v.Rule != RuleComplete && v.Rule != RuleShape) {
+			t.Errorf("%s: err = %v, want a T3 or T4 violation", name, err)
+		}
 	}
 }
 
@@ -138,8 +182,19 @@ func TestPracticeEditions_EveryInvestigateChallengeHasOne(t *testing.T) {
 	if missing := missingPractice(realTree, cat); len(missing) != 0 {
 		t.Errorf("investigate challenges without edition/practice/answers.tsv: %v (ADR-0056 D19 A4a-1)", missing)
 	}
-	if _, err := loadPractice(realTree); err != nil {
+	if _, _, err := loadPractice(realTree); err != nil {
 		t.Errorf("the practice editions of the image do not load: %v", err)
+	}
+	// V47 (A4a-2): the whole tree as the scope, in the practice mode, is what a local
+	// scoreboard does. Load makes the practice Judge of every investigate challenge
+	// (T4: a row for every question), so a challenge whose practice edition lacks a
+	// question, not only one that has no file, is red here.
+	// The real tree has 0 investigate challenges today, so this passes on 0 (Load
+	// returns no Judge, no error). From A7 (the first investigate challenge) this test
+	// must also require a non-empty set: count the investigate challenges of cat and fail
+	// on 0, so that a tree that lost them all cannot pass.
+	if _, _, err := Load(cat, realTree, "", false); err != nil {
+		t.Errorf("the practice mode does not accept the image's own tree: %v", err)
 	}
 
 	// The check itself, on a tree with one edition and one without.

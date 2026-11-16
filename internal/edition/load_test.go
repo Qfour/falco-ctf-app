@@ -94,9 +94,11 @@ func TestLoad_AcceptsAnEventTable(t *testing.T) {
 	}
 }
 
-// No table and none needed: nothing to judge (an event with no investigate
-// challenge), or not the event mode. Nothing is returned and nothing fails; this is
-// every environment today.
+// No table and none needed: nothing to judge (no investigate challenge in scope), in
+// either mode. Nothing is returned and nothing fails; this is every environment today.
+// (Not the event mode with an investigate challenge in scope IS judged, from the
+// practice edition, ADR-0056 D8 (iv): load_practice_mode_test.go. With no practice
+// edition under the tree that is a refusal, case "no practice edition at all" there.)
 func TestLoad_NoTableNoNeed(t *testing.T) {
 	noInvestigate := catalog.Catalog{"02-ev": {ID: "02-ev", Type: "evade", ExpectedFlag: plainFlag}}
 	cases := []struct {
@@ -106,7 +108,6 @@ func TestLoad_NoTableNoNeed(t *testing.T) {
 	}{
 		{"event mode, nothing to judge", noInvestigate, true},
 		{"not the event mode, nothing to judge", noInvestigate, false},
-		{"not the event mode, investigate in scope", loadCatalog(t), false},
 		{"empty catalog, event mode", catalog.Catalog{}, true},
 		{"nil catalog, not the event mode", nil, false},
 	}

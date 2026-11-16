@@ -1,6 +1,7 @@
 package edition_test
 
 import (
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -18,12 +19,16 @@ import (
 // same for the flags file): the answers table has ONE door.
 //
 //   - edition.NewJudge is called by edition.Load (internal/edition/load.go, func
-//     Load) and by nothing else in a non-test file: a Judge is never made from the
-//     practice answers (D8 (iii));
+//     Load) and by practiceJudge (the practice mode's Judge, A4a-2, same file), and by
+//     nothing else in a non-test file;
+//   - practiceJudge is called by edition.Load and by nothing else, and only inside the
+//     body of an `if` whose condition has `!eventMode` (TestPracticeJudgeIsOnlyReached
+//     OutsideTheEventMode): in the event mode no Judge is made from the practice
+//     answers (D8 (iii), V36);
 //   - edition.Parse is called by edition.Load and by loadPractice, the unexported
 //     reader of the practice answers (A4a-1), in the same file; loadPractice is called
-//     by edition.Load and by nothing else, so the practice answers have one reader and
-//     it has one caller;
+//     by edition.Load (T6 in the event mode) and by practiceJudge and by nothing else,
+//     so the practice answers have one reader and it has two callers;
 //   - edition.Load is called by cmd/scoreboard, exactly once, and by nothing else;
 //   - load.go holds no PracticeSet literal (TestLoadHasNoPracticeLiteral).
 //
@@ -33,7 +38,7 @@ import (
 const editionImportPath = "github.com/Qfour/falco-ctf-app/internal/edition"
 
 // doorGuarded are the names of this package that only the door may use.
-var doorGuarded = []string{"Parse", "NewJudge", "Load", "loadPractice"}
+var doorGuarded = []string{"Parse", "NewJudge", "Load", "loadPractice", "practiceJudge"}
 
 // doorUse is one reference to a guarded name: the file (slash path from the repo
 // root), the enclosing function ("" outside any function), the name, and whether
@@ -163,18 +168,28 @@ func doorViolations(files map[string]string) (violations []string, counts map[st
 				}
 				counts["Parse@"+u.fn]++
 			case "NewJudge":
-				// A Judge is made from the event table only: never from the practice answers.
-				if p != "internal/edition/load.go" || u.fn != "Load" || !u.call {
-					violations = append(violations, where+": NewJudge is used outside a call in edition.Load")
+				// A Judge is made from the event table (Load) or, outside the event mode,
+				// from the practice answers of the scope (practiceJudge): never from
+				// loadPractice, the reader.
+				if p != "internal/edition/load.go" || (u.fn != "Load" && u.fn != "practiceJudge") || !u.call {
+					violations = append(violations, where+": NewJudge is used outside a call in edition.Load or practiceJudge")
 					continue
 				}
-				counts["NewJudge@Load"]++
+				counts["NewJudge@"+u.fn]++
 			case "loadPractice":
-				if p != "internal/edition/load.go" || u.fn != "Load" || !u.call {
-					violations = append(violations, where+": loadPractice is used outside a call in edition.Load (it is the one reader of the practice answers)")
+				if p != "internal/edition/load.go" || (u.fn != "Load" && u.fn != "practiceJudge") || !u.call {
+					violations = append(violations, where+": loadPractice is used outside a call in edition.Load or practiceJudge (it is the one reader of the practice answers)")
 					continue
 				}
-				counts["loadPractice@Load"]++
+				counts["loadPractice@"+u.fn]++
+			case "practiceJudge":
+				// The practice mode's Judge: Load is its only caller (and the branch it is
+				// called in is checked by practiceJudgeBranch).
+				if p != "internal/edition/load.go" || u.fn != "Load" || !u.call {
+					violations = append(violations, where+": practiceJudge is used outside a call in edition.Load")
+					continue
+				}
+				counts["practiceJudge@Load"]++
 			case "Load":
 				if !strings.HasPrefix(p, "cmd/scoreboard/") {
 					violations = append(violations, where+": edition.Load is used outside cmd/scoreboard")
@@ -194,7 +209,10 @@ func doorViolations(files map[string]string) (violations []string, counts map[st
 	return violations, counts
 }
 
-func TestAnswersTableHasOneDoor(t *testing.T) {
+// nonTestSources reads every non-test .go file of cmd/ and internal/ (slash path from
+// the repo root -> source).
+func nonTestSources(t *testing.T) map[string]string {
+	t.Helper()
 	files := map[string]string{}
 	for _, root := range []string{"cmd", "internal"} {
 		err := filepath.WalkDir(filepath.Join("..", "..", root), func(path string, d fs.DirEntry, err error) error {
@@ -222,6 +240,11 @@ func TestAnswersTableHasOneDoor(t *testing.T) {
 	if len(files) < 50 {
 		t.Fatalf("read only %d non-test files; the walk is not seeing the tree", len(files))
 	}
+	return files
+}
+
+func TestAnswersTableHasOneDoor(t *testing.T) {
+	files := nonTestSources(t)
 	violations, counts := doorViolations(files)
 	for _, v := range violations {
 		t.Error(v)
@@ -234,12 +257,17 @@ func TestAnswersTableHasOneDoor(t *testing.T) {
 }
 
 // wantDoorCounts is the whole of what the program may call: see the header.
+// A4a-2 added NewJudge@practiceJudge, loadPractice@practiceJudge and
+// practiceJudge@Load (the practice mode's Judge); the other five are as before.
 var wantDoorCounts = map[string]int{
-	"Parse@Load":          1,
-	"Parse@loadPractice":  1,
-	"NewJudge@Load":       1,
-	"loadPractice@Load":   1,
-	"Load@cmd/scoreboard": 1,
+	"Parse@Load":                 1,
+	"Parse@loadPractice":         1,
+	"NewJudge@Load":              1,
+	"NewJudge@practiceJudge":     1,
+	"loadPractice@Load":          1,
+	"loadPractice@practiceJudge": 1,
+	"practiceJudge@Load":         1,
+	"Load@cmd/scoreboard":        1,
 }
 
 // ADR-0056 D19 A4a-1 / V34: the Options that Load hands to Check carry the practice
@@ -301,7 +329,7 @@ func TestLoadHasNoPracticeLiteral(t *testing.T) {
 // The scanner itself: a copy with one deliberate violation is reported, and the
 // shape that is allowed is not.
 func TestAnswersTableDoorScan_SeesAViolation(t *testing.T) {
-	const loadSrc = "package edition\n\nfunc Load() {\n\t_, _ = Parse(nil)\n\t_, _ = NewJudge(nil)\n\t_, _ = loadPractice(\"\")\n}\n\nfunc loadPractice(string) (int, error) {\n\t_, _ = Parse(nil)\n\treturn 0, nil\n}\n"
+	const loadSrc = "package edition\n\nfunc Load(eventMode bool) {\n\t_, _ = Parse(nil)\n\t_, _ = NewJudge(nil)\n\t_, _ = loadPractice(\"\")\n\tif !eventMode {\n\t\t_, _ = practiceJudge()\n\t}\n}\n\nfunc loadPractice(string) (int, error) {\n\t_, _ = Parse(nil)\n\treturn 0, nil\n}\n\nfunc practiceJudge() (int, error) {\n\t_, _ = NewJudge(nil)\n\t_, _ = loadPractice(\"\")\n\treturn 0, nil\n}\n"
 	const mainSrc = "package main\n\nimport \"" + editionImportPath + "\"\n\nfunc main() {\n\tedition.Load()\n}\n"
 	good := map[string]string{"internal/edition/load.go": loadSrc, "cmd/scoreboard/edition.go": mainSrc}
 	if v, c := doorViolations(good); len(v) != 0 || !maps.Equal(c, wantDoorCounts) {
@@ -330,6 +358,14 @@ func TestAnswersTableDoorScan_SeesAViolation(t *testing.T) {
 		{"loadPractice taken as a value in Load", "internal/edition/other.go", "package edition\n\nfunc Load() { f := loadPractice; _ = f }\n"},
 		{"Parse called by loadPractice in another file", "internal/edition/other.go", "package edition\n\nfunc loadPractice(string) { Parse(nil) }\n"},
 		{"Parse called by a third function of load.go", "internal/edition/load.go", loadSrc + "\nfunc readMore() { _, _ = Parse(nil) }\n"},
+		// The practice mode's Judge (A4a-2): Load alone calls practiceJudge; the Judge is
+		// made in practiceJudge and in Load, in no third function; the reader has two callers.
+		{"practiceJudge called by another function", "internal/edition/other.go", "package edition\n\nfunc other() { _, _ = practiceJudge() }\n"},
+		{"practiceJudge called by Load in another file", "internal/edition/other.go", "package edition\n\nfunc Load() { _, _ = practiceJudge() }\n"},
+		{"practiceJudge taken as a value in Load", "internal/edition/other.go", "package edition\n\nfunc Load() { f := practiceJudge; _ = f }\n"},
+		{"NewJudge called by a third function of load.go", "internal/edition/load.go", loadSrc + "\nfunc readMore() { _, _ = NewJudge(nil) }\n"},
+		{"loadPractice called by a third function of load.go", "internal/edition/load.go", loadSrc + "\nfunc readMore() { _, _ = loadPractice(\"\") }\n"},
+		{"practiceJudge called by a third function of load.go", "internal/edition/load.go", loadSrc + "\nfunc readMore() { _, _ = practiceJudge() }\n"},
 	}
 	for _, c := range cases {
 		files := map[string]string{"internal/edition/load.go": loadSrc, "cmd/scoreboard/edition.go": mainSrc, c.path: c.src}
@@ -342,5 +378,264 @@ func TestAnswersTableDoorScan_SeesAViolation(t *testing.T) {
 	other := "package scoreboard\n\nfunc f(x interface{ Load(); Parse() }) { x.Load(); x.Parse() }\n"
 	if v, _ := doorViolations(map[string]string{"internal/scoreboard/x.go": other}); len(v) != 0 {
 		t.Errorf("a method call on another type was reported: %v", v)
+	}
+}
+
+// ADR-0056 D8 (iii) and D19 A4a-2 / V36: in the event mode no Judge is made from the
+// practice answers. practiceJudge is the one function that does, so it may be reached
+// from edition.Load only inside the body of an `if` whose condition cannot hold
+// unless eventMode is false.
+
+// impliesNotEventMode reports whether e cannot be true while eventMode is true:
+// `!eventMode`, in parentheses or as an operand of &&. A condition that lets the
+// branch be taken another way (an ||, a bare eventMode) does not count.
+func impliesNotEventMode(e ast.Expr) bool {
+	switch x := e.(type) {
+	case *ast.ParenExpr:
+		return impliesNotEventMode(x.X)
+	case *ast.UnaryExpr:
+		id, ok := x.X.(*ast.Ident)
+		return x.Op == token.NOT && ok && id.Name == "eventMode"
+	case *ast.BinaryExpr:
+		return x.Op == token.LAND && (impliesNotEventMode(x.X) || impliesNotEventMode(x.Y))
+	}
+	return false
+}
+
+// practiceJudgeCalls counts the calls to practiceJudge in the body of func Load of
+// src, and how many of them are not in the Body of an if that impliesNotEventMode
+// (the Else of such an if is the event mode's side, so it is not guarded).
+func practiceJudgeCalls(file, src string) (total, unguarded int, err error) {
+	f, err := parser.ParseFile(token.NewFileSet(), file, src, 0)
+	if err != nil {
+		return 0, 0, err
+	}
+	var load *ast.FuncDecl
+	for _, d := range f.Decls {
+		if fd, ok := d.(*ast.FuncDecl); ok && fd.Recv == nil && fd.Name.Name == "Load" {
+			load = fd
+		}
+	}
+	if load == nil || load.Body == nil {
+		return 0, 0, errors.New("func Load not found")
+	}
+	var walk func(n ast.Node, guarded bool)
+	walk = func(n ast.Node, guarded bool) {
+		ast.Inspect(n, func(x ast.Node) bool {
+			switch x := x.(type) {
+			case *ast.IfStmt:
+				if x.Init != nil {
+					walk(x.Init, guarded)
+				}
+				walk(x.Cond, guarded)
+				walk(x.Body, guarded || impliesNotEventMode(x.Cond))
+				if x.Else != nil {
+					walk(x.Else, guarded)
+				}
+				return false
+			case *ast.CallExpr:
+				if id, ok := x.Fun.(*ast.Ident); ok && id.Name == "practiceJudge" {
+					total++
+					if !guarded {
+						unguarded++
+					}
+				}
+			}
+			return true
+		})
+	}
+	walk(load.Body, false)
+	return total, unguarded, nil
+}
+
+func TestPracticeJudgeIsOnlyReachedOutsideTheEventMode(t *testing.T) {
+	b, err := os.ReadFile("load.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	total, unguarded, err := practiceJudgeCalls("load.go", string(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 {
+		t.Errorf("func Load calls practiceJudge %d time(s), want exactly 1 (a scan that finds nothing is not a pass)", total)
+	}
+	if unguarded != 0 {
+		t.Errorf("func Load calls practiceJudge %d time(s) outside an `if !eventMode` branch: in the event mode no Judge is made from the practice answers (D8 (iii))", unguarded)
+	}
+
+	// The scan itself: the allowed shapes pass, every other way to reach the call is seen.
+	cases := []struct {
+		name      string
+		body      string
+		total     int
+		unguarded int
+	}{
+		{"the branch", "if !eventMode {\n\t\t_, _ = practiceJudge()\n\t}", 1, 0},
+		{"the branch with another operand", "if !eventMode && x {\n\t\t_, _ = practiceJudge()\n\t}", 1, 0},
+		{"the branch in parentheses", "if (!eventMode) {\n\t\t_, _ = practiceJudge()\n\t}", 1, 0},
+		{"a nested if inside the branch", "if !eventMode {\n\t\tif x {\n\t\t\t_, _ = practiceJudge()\n\t\t}\n\t}", 1, 0},
+		{"no condition", "_, _ = practiceJudge()", 1, 1},
+		{"the else of the branch (the event mode)", "if !eventMode {\n\t\t_ = 1\n\t} else {\n\t\t_, _ = practiceJudge()\n\t}", 1, 1},
+		{"the condition without the negation", "if eventMode {\n\t\t_, _ = practiceJudge()\n\t}", 1, 1},
+		{"an or, which the event mode can satisfy", "if !eventMode || x {\n\t\t_, _ = practiceJudge()\n\t}", 1, 1},
+		{"another variable", "if !x {\n\t\t_, _ = practiceJudge()\n\t}", 1, 1},
+		{"no call at all", "_ = x", 0, 0},
+	}
+	for _, c := range cases {
+		src := "package edition\n\nfunc Load(eventMode, x bool) {\n\t" + c.body + "\n}\n"
+		gotTotal, gotUnguarded, err := practiceJudgeCalls("x.go", src)
+		if err != nil || gotTotal != c.total || gotUnguarded != c.unguarded {
+			t.Errorf("%s: total %d, unguarded %d, err %v; want %d and %d", c.name, gotTotal, gotUnguarded, err, c.total, c.unguarded)
+		}
+	}
+	if _, _, err := practiceJudgeCalls("x.go", "package edition\n\nfunc other() {}\n"); err == nil {
+		t.Error("a file with no func Load was not reported")
+	}
+}
+
+// ADR-0056 D19 A4a-2 (review #630 R4#2): a Table is made in internal/edition/table.go
+// only, by Parse and by joinPractice (which re-checks what Parse guarantees of a
+// table: the run id and no repeated cell). Parse and NewJudge being called from one
+// place does not cover a Table that is built by hand elsewhere, so the sources are
+// scanned for the other ways to make one: a composite literal of the type, new(Table)
+// and a `var t Table`, in package edition (bare name) and anywhere else through an
+// import of it.
+
+// tableMakers are the functions of table.go that may make a Table.
+var tableMakers = []string{"Parse", "joinPractice"}
+
+// tableMakes returns the enclosing function ("" outside any) of each place in src
+// that makes a Table value.
+func tableMakes(file, src string) ([]string, error) {
+	f, err := parser.ParseFile(token.NewFileSet(), file, src, 0)
+	if err != nil {
+		return nil, err
+	}
+	inPackage := f.Name.Name == "edition" && strings.HasPrefix(file, "internal/edition/")
+	local := ""
+	var out []string
+	for _, imp := range f.Imports {
+		p, err := strconv.Unquote(imp.Path.Value)
+		if err != nil || p != editionImportPath {
+			continue
+		}
+		switch {
+		case imp.Name == nil:
+			local = "edition"
+		case imp.Name.Name == ".":
+			out = append(out, "(dot import)")
+		case imp.Name.Name != "_":
+			local = imp.Name.Name
+		}
+	}
+	isTable := func(e ast.Expr) bool {
+		switch x := e.(type) {
+		case *ast.Ident:
+			return inPackage && x.Name == "Table"
+		case *ast.SelectorExpr:
+			id, ok := x.X.(*ast.Ident)
+			return ok && local != "" && id.Name == local && x.Sel.Name == "Table"
+		}
+		return false
+	}
+	for _, d := range f.Decls {
+		fn := ""
+		if fd, ok := d.(*ast.FuncDecl); ok {
+			fn = fd.Name.Name
+		}
+		ast.Inspect(d, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.CompositeLit:
+				if x.Type != nil && isTable(x.Type) {
+					out = append(out, fn)
+				}
+			case *ast.ValueSpec:
+				if x.Type != nil && isTable(x.Type) {
+					out = append(out, fn)
+				}
+			case *ast.CallExpr:
+				if id, ok := x.Fun.(*ast.Ident); ok && id.Name == "new" && len(x.Args) == 1 && isTable(x.Args[0]) {
+					out = append(out, fn)
+				}
+			}
+			return true
+		})
+	}
+	return out, nil
+}
+
+// tableViolations judges every non-test file (slash path -> source): a Table made
+// anywhere but in table.go's tableMakers is a violation. counts is the positive side,
+// by "function".
+func tableViolations(files map[string]string) (violations []string, counts map[string]int) {
+	counts = map[string]int{}
+	paths := make([]string, 0, len(files))
+	for p := range files {
+		paths = append(paths, p)
+	}
+	slices.Sort(paths)
+	for _, p := range paths {
+		fns, err := tableMakes(p, files[p])
+		if err != nil {
+			violations = append(violations, p+": does not parse: "+err.Error())
+			continue
+		}
+		for _, fn := range fns {
+			if p == "internal/edition/table.go" && slices.Contains(tableMakers, fn) {
+				counts[fn]++
+				continue
+			}
+			violations = append(violations, p+" (func "+fn+"): makes an edition.Table outside Parse and joinPractice in table.go")
+		}
+	}
+	return violations, counts
+}
+
+func TestTableIsMadeOnlyInTableGo(t *testing.T) {
+	violations, counts := tableViolations(nonTestSources(t))
+	for _, v := range violations {
+		t.Error(v)
+	}
+	// Positive: the two makers are there, once each. A scan that finds nothing is not a pass.
+	if want := map[string]int{"Parse": 1, "joinPractice": 1}; !maps.Equal(counts, want) {
+		t.Errorf("Table makers found = %v, want %v", counts, want)
+	}
+
+	// The scan itself: the allowed shape passes, every other way to make a Table is seen.
+	const tableSrc = "package edition\n\nfunc Parse() *Table { return &Table{} }\n\nfunc joinPractice() *Table { return &Table{} }\n"
+	good := map[string]string{"internal/edition/table.go": tableSrc}
+	if v, c := tableViolations(good); len(v) != 0 || !maps.Equal(c, map[string]int{"Parse": 1, "joinPractice": 1}) {
+		t.Fatalf("the allowed shape: violations %v, counts %v", v, c)
+	}
+	cases := []struct {
+		name string
+		path string
+		src  string
+	}{
+		{"a literal in load.go", "internal/edition/load.go", "package edition\n\nfunc scopePracticeTable() *Table { return &Table{runID: PracticeRunID} }\n"},
+		{"a literal in another function of table.go", "internal/edition/table.go", tableSrc + "\nfunc other() *Table { return &Table{} }\n"},
+		{"a value literal", "internal/edition/load.go", "package edition\n\nfunc f() { _ = Table{} }\n"},
+		{"new(Table)", "internal/edition/load.go", "package edition\n\nfunc f() { _ = new(Table) }\n"},
+		{"var t Table in a function", "internal/edition/load.go", "package edition\n\nfunc f() { var t Table; _ = t }\n"},
+		{"a package-level var of the type", "internal/edition/load.go", "package edition\n\nvar t Table\n"},
+		{"a qualified literal elsewhere", "internal/scoreboard/x.go", "package scoreboard\n\nimport \"" + editionImportPath + "\"\n\nfunc f() { _ = edition.Table{} }\n"},
+		{"a qualified literal through an alias", "internal/scoreboard/x.go", "package scoreboard\n\nimport ed \"" + editionImportPath + "\"\n\nfunc f() { _ = &ed.Table{} }\n"},
+		{"a dot import", "internal/scoreboard/x.go", "package scoreboard\n\nimport . \"" + editionImportPath + "\"\n"},
+	}
+	for _, c := range cases {
+		files := map[string]string{"internal/edition/table.go": tableSrc, c.path: c.src}
+		if v, _ := tableViolations(files); len(v) == 0 {
+			t.Errorf("%s: no violation was reported", c.name)
+		}
+	}
+	// A Table type of another package, a method receiver and a parameter are not makers.
+	other := "package contracttable\n\ntype Table struct{}\n\nfunc f(t *Table) *Table { return &Table{} }\n"
+	if v, _ := tableViolations(map[string]string{"internal/contracttable/x.go": other}); len(v) != 0 {
+		t.Errorf("another package's Table was reported: %v", v)
+	}
+	recv := "package edition\n\nfunc (Table) String() string { return \"\" }\n\nfunc g(t *Table) *Table { return t }\n"
+	if v, _ := tableViolations(map[string]string{"internal/edition/judge.go": recv}); len(v) != 0 {
+		t.Errorf("a receiver or a parameter of the type was reported: %v", v)
 	}
 }
