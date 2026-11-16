@@ -567,6 +567,46 @@ func TestParseSpec_TheFixedLimitIsExact(t *testing.T) {
 	}
 }
 
+// E1 holds the end of a window: base + to - 1, the last value, must be a second the
+// timestamp format takes (year 9999 at the latest), and the sum must not overflow.
+func TestParseSpec_AWindowMustEndWhereATimestampCanBeWritten(t *testing.T) {
+	window := func(to string) func(*specSlot) {
+		return func(s *specSlot) { s.window = "{from: 0, to: " + to + "}" }
+	}
+	cases := []struct {
+		name, base, to string
+		ok             bool
+	}{
+		{"the last second of year 9999 is the last value", `"9999-12-31T23:59:00Z"`, "60", true},
+		{"one second past it", `"9999-12-31T23:59:00Z"`, "61", false},
+		{"a base at the last second: a window of 1", `"9999-12-31T23:59:59Z"`, "1", true},
+		{"a base at the last second: a window of 2", `"9999-12-31T23:59:59Z"`, "2", false},
+		{"to at the largest int64 from an ordinary base", `"2000-01-01T00:00:00Z"`, "9223372036854775807", false},
+		{"to at the largest int64 from the last second", `"9999-12-31T23:59:59Z"`, "9223372036854775807", false},
+		// 8000 years from 2000-01-01 are 20 x 146097 days = 252455616000 seconds: the window
+		// of that width ends at 9999-12-31T23:59:59, one second more does not fit.
+		{"a window of exactly the 8000 years left from 2000", `"2000-01-01T00:00:00Z"`, "252455616000", true},
+		{"a window one second longer", `"2000-01-01T00:00:00Z"`, "252455616001", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			d := specGoodDoc().withBase(c.base).with(slotWhen, window(c.to))
+			_, err := edition.ParseSpec(d.yaml())
+			if c.ok {
+				if err != nil {
+					t.Fatalf("refused: %v", err)
+				}
+				return
+			}
+			specWantRules(t, err, edition.RuleSpecShape)
+			var v *edition.Violation
+			if !errors.As(err, &v) || v.At != "slots[3].window" || v.Slot != "when" {
+				t.Errorf("violation = %+v, want slot when at slots[3].window", v)
+			}
+		})
+	}
+}
+
 // time.base may be written without quotes: yaml reads it as a timestamp, and the field
 // keeps the text.
 func TestParseSpec_AnUnquotedTimeBaseIsAccepted(t *testing.T) {
