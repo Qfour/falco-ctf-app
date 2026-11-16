@@ -8,9 +8,8 @@ package scoring
 // by reading the sources, singledoor_test.go the second).
 //
 // The route is the adapter in internal/scoreboard/api/answer.go (A3b-1); the
-// metrics come with A3b-2. catalog.LoadScored still refuses a scope that holds an
-// investigate challenge (until A3b-3), so nothing reaches SubmitAnswer in a running
-// scoreboard.
+// metrics came with A3b-2. Since A3b-3 catalog.LoadScored accepts a scope that holds
+// an investigate challenge, so a running scoreboard can reach SubmitAnswer.
 
 import (
 	"context"

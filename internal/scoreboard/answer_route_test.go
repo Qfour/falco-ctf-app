@@ -4,9 +4,9 @@ package scoreboard_test
 // log): POST /api/users/{user}/challenges/{cid}/questions/{qid}/answer, through
 // scoreboard.NewHandler with a real store and a real answers-table Judge. The
 // catalog comes from catalog.Load (the real strict decode of an investigate
-// challenge), not from a literal; catalog.LoadScored, which still refuses an
-// investigate scope at startup (A3b-3), is not involved: the handler is handed
-// the catalog directly. Every value is synthetic. ansSecret is inside every table
+// challenge), not from a literal; catalog.LoadScored is not involved: the handler is
+// handed the catalog directly (cmd/scoreboard/investigate_boot_test.go starts the
+// scoreboard through it). Every value is synthetic. ansSecret is inside every table
 // value and ansTyped is what a participant types in the leak checks, so a body or a
 // log line that carries either shows up as a match.
 //

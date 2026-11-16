@@ -17,8 +17,8 @@ import (
 // ADR-0056 stage A2b at start-up (V1 start-up part, V13 behaviour, V15 start-up
 // part): startEdition against the real catalog wiring (scoredFromEnv) when there is
 // no investigate challenge, and against a catalog made by catalog.Load when there is
-// one (catalog.LoadScored refuses an investigate challenge in scope until A3b, so a
-// started scoreboard cannot have one yet). Every value is synthetic.
+// one (investigate_boot_test.go runs the whole start-up with one, since A3b-3). Every
+// value is synthetic.
 
 const (
 	edRunID    = "0123456789abcdef0123456789abcdef"
@@ -161,10 +161,9 @@ func TestStartEdition_RefusesAnAnswersFileThroughScoredFromEnv(t *testing.T) {
 	}
 }
 
-// An investigate challenge in scope (built by catalog.Load; a started scoreboard
-// cannot have one until A3b): the accepted table gives a judge and exactly one INFO
-// record carrying the run id; each refusal gives exactly one ERROR record and no
-// table value anywhere in the log.
+// An investigate challenge in scope (built by catalog.Load): the accepted table
+// gives a judge and exactly one INFO record carrying the run id; each refusal gives
+// exactly one ERROR record and no table value anywhere in the log.
 func TestStartEdition_InvestigateInScope(t *testing.T) {
 	cat := edInvestigateCatalog(t)
 	event := catalogEnv{flagsFile: "flags.yaml"} // only "is it set" matters to startEdition

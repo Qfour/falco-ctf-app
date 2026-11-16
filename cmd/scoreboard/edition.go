@@ -27,8 +27,10 @@ import (
 // before an investigate challenge does, and its boot log is unchanged.
 //
 // The returned Judge is nil when there is no table. It is held by the handler
-// (scoreboard.WithEditionJudge), which passes it to the Grader (A3a); no route
-// reaches the Grader's SubmitAnswer until A3b.
+// (scoreboard.WithEditionJudge), which passes it to the Grader (A3a); the answer
+// route (A3b-1) is the one caller of the Grader's SubmitAnswer. With no table (the
+// practice edition, until A4a reads the image's practice answers) the Grader has no
+// Judge and SubmitAnswer answers ErrAnswersUnavailable (a 500, nothing spent).
 func startEdition(logger *slog.Logger, cfg catalogEnv, cat catalog.Catalog) (*edition.Judge, error) {
 	judge, runID, err := edition.Load(cat, cfg.answersFile, cfg.flagsFile != "")
 	if err != nil {

@@ -266,25 +266,65 @@ func TestLoad_UnknownTypeMessageNamesTheInvestigateType(t *testing.T) {
 	wantLoadError(t, err, catalog.TypeInvestigate)
 }
 
-// Until A3 the scoreboard has no grader for the type, and every scoring path
-// treats an unknown type as "not mine": LoadScored (the only door cmd/scoreboard
-// uses) refuses instead of listing a mission nobody can solve.
-func TestLoadScored_RefusesAnInvestigateChallengeInScope(t *testing.T) {
+// ADR-0056 V21, reversed by A3b-3: the scoreboard now has a grader for the type
+// (Grader.SubmitAnswer behind the answer route), so LoadScored (the only door
+// cmd/scoreboard uses) accepts an investigate challenge in scope, whole catalog or a
+// scenario that lists it, with or without the event's flags file. The answers table
+// the event mode needs is edition.Load's check (D8), not the catalog's.
+func TestLoadScored_AcceptsAnInvestigateChallengeInScope(t *testing.T) {
 	dir := t.TempDir()
 	writeChallenge(t, dir, "14-ir-demo", inv("", evMount(invMount), invHexQ))
 	writeChallenge(t, dir, "01-a", "type: trigger\nexpectedRules: [r]\n")
+	writeChallenge(t, dir, "02-b", "type: evade\nexpectedFlag: FALCO{dev-b}\nforbiddenRules: [r]\n")
 	if _, err := catalog.Load(dir); err != nil {
 		t.Fatalf("Load itself must accept the type: %v", err)
 	}
-	_, err := catalog.LoadScored(dir, "", "")
-	wantLoadError(t, err, "does not grade")
 
-	// out of scope: a scenario that does not list it is fine
+	// no scenario: the whole catalog, ordered by id
+	scored, err := catalog.LoadScored(dir, "", "")
+	if err != nil {
+		t.Fatalf("LoadScored must accept an investigate challenge in scope: %v", err)
+	}
+	if ch, ok := scored.Catalog["14-ir-demo"]; !ok || ch.Type != catalog.TypeInvestigate || ch.Investigate == nil {
+		t.Fatalf("the scored catalog lost the investigate challenge: %+v (present=%v)", ch, ok)
+	}
+	if got := strings.Join(scored.Order, ","); got != "01-a,02-b,14-ir-demo" {
+		t.Fatalf("Order = %s, want 01-a,02-b,14-ir-demo", got)
+	}
+
+	// a scenario that lists it
 	sc := filepath.Join(t.TempDir(), "scenario.yaml")
+	if err := os.WriteFile(sc, []byte("id: ir\ntitle: IR\nchallenges: [01-a, 14-ir-demo]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	scored, err = catalog.LoadScored(dir, sc, "")
+	if err != nil {
+		t.Fatalf("a scenario with the investigate challenge must load: %v", err)
+	}
+	if got := strings.Join(scored.Order, ","); got != "01-a,14-ir-demo" || scored.Catalog["14-ir-demo"].Type != catalog.TypeInvestigate {
+		t.Fatalf("scenario order = %s, catalog = %v", got, scored.Catalog.IDs())
+	}
+
+	// the event mode (a flags file): the evade challenge outside the scope is
+	// validated and not applied; the investigate challenge has no flag and needs none
+	flags := filepath.Join(t.TempDir(), "flags.yaml")
+	if err := os.WriteFile(flags, []byte("flags:\n  02-b: FALCO{test-a3b3-b}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	scored, err = catalog.LoadScored(dir, sc, flags)
+	if err != nil {
+		t.Fatalf("a flags file with a scope of a trigger and an investigate challenge must load: %v", err)
+	}
+	if ch := scored.Catalog["14-ir-demo"]; ch.ExpectedFlag != "" {
+		t.Fatalf("the investigate challenge was given a flag: %q", ch.ExpectedFlag)
+	}
+
+	// out of scope: a scenario that does not list it is fine, as before
+	sc = filepath.Join(t.TempDir(), "scenario.yaml")
 	if err := os.WriteFile(sc, []byte("id: only-a\ntitle: Only A\nchallenges: [01-a]\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	scored, err := catalog.LoadScored(dir, sc, "")
+	scored, err = catalog.LoadScored(dir, sc, "")
 	if err != nil {
 		t.Fatalf("a scenario without the investigate challenge must load: %v", err)
 	}
