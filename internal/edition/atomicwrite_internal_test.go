@@ -73,8 +73,8 @@ func TestWriteFileAtomic_WritesTheFileWithModeAndLeavesNothing(t *testing.T) {
 		withUmask(t, mask, func() {
 			dir := t.TempDir()
 			dest := filepath.Join(dir, "digests.tsv")
-			if err := writeFileAtomic(dest, []byte("one line\n")); err != nil {
-				t.Fatalf("umask %#o: writeFileAtomic: %v", mask, err)
+			if left, err := writeFileAtomic(dest, []byte("one line\n")); err != nil || len(left) != 0 {
+				t.Fatalf("umask %#o: writeFileAtomic: (%v, %v), want no name left and no error", mask, left, err)
 			}
 			if got, err := os.ReadFile(dest); err != nil || string(got) != "one line\n" {
 				t.Errorf("umask %#o: the file holds (%q, %v)", mask, got, err)
@@ -104,8 +104,9 @@ func TestWriteFileAtomic_RefusesWhatExistsAndWritesNothing(t *testing.T) {
 	}
 	before := dirNames(t, dir)
 	for _, name := range []string{"file.tsv", "dir.tsv", "dangling.tsv"} {
-		if err := writeFileAtomic(filepath.Join(dir, name), []byte("new")); !errors.Is(err, ErrOutputExists) {
-			t.Errorf("%s: err = %v, want ErrOutputExists", name, err)
+		_, err := writeFileAtomic(filepath.Join(dir, name), []byte("new"))
+		if !errors.Is(err, ErrOutputExists) || !isInput(err) {
+			t.Errorf("%s: err = %v, want an *InputError of ErrOutputExists (exit 2)", name, err)
 		}
 	}
 	if got := dirNames(t, dir); !slices.Equal(got, before) {
@@ -175,12 +176,13 @@ func TestWriteFileAtomic_RefusesADestinationCreatedAfterTheCheck(t *testing.T) {
 			calls++
 			c.create(t, path)
 		})
-		err := writeFileAtomic(dest, []byte("new output"))
+		_, err := writeFileAtomic(dest, []byte("new output"))
 		if calls != 1 {
 			t.Fatalf("%s: the seam was called %d times, want once (after the check, before the put-in-place)", c.name, calls)
 		}
-		if !errors.Is(err, ErrOutputExists) {
-			t.Errorf("%s: err = %v, want ErrOutputExists (the destination made after the check is refused, not replaced)", c.name, err)
+		// V92: the EEXIST of the put-in-place itself is exit 2 (an *InputError), not 3.
+		if !errors.Is(err, ErrOutputExists) || !isInput(err) || isOutput(err) {
+			t.Errorf("%s: err = %v, want an *InputError of ErrOutputExists (the destination made after the check is refused, not replaced)", c.name, err)
 		}
 		c.check(t, dest)
 		if got := dirNames(t, dir); !slices.Equal(got, []string{"digests.tsv"}) {
@@ -191,7 +193,7 @@ func TestWriteFileAtomic_RefusesADestinationCreatedAfterTheCheck(t *testing.T) {
 
 func TestWriteFileAtomic_NoDirectoryNoOutput(t *testing.T) {
 	dest := filepath.Join(t.TempDir(), "missing-dir", "digests.tsv")
-	if err := writeFileAtomic(dest, []byte("x")); err == nil {
+	if _, err := writeFileAtomic(dest, []byte("x")); err == nil {
 		t.Fatal("a destination in a directory that does not exist was written")
 	}
 	if _, err := os.Lstat(filepath.Dir(dest)); !errors.Is(err, fs.ErrNotExist) {
@@ -253,8 +255,8 @@ func TestWriteTreeAtomic_RefusesWhatExistsAndWritesNothing(t *testing.T) {
 	before := dirNames(t, parent)
 	files := []outputFile{{Path: "a.txt", Data: []byte("a")}}
 	for _, name := range []string{"out", "file"} {
-		if err := writeTreeAtomic(filepath.Join(parent, name), files); !errors.Is(err, ErrOutputExists) {
-			t.Errorf("%s: err = %v, want ErrOutputExists", name, err)
+		if err := writeTreeAtomic(filepath.Join(parent, name), files); !errors.Is(err, ErrOutputExists) || !isInput(err) {
+			t.Errorf("%s: err = %v, want an *InputError of ErrOutputExists", name, err)
 		}
 	}
 	if got := dirNames(t, parent); !slices.Equal(got, before) {
@@ -316,21 +318,210 @@ func TestWriteTreeAtomic_RefusesBadPathsBeforeMakingAnything(t *testing.T) {
 
 // The mode is held after the creation: a umask that takes the owner's bits makes the write
 // fail and leave nothing, instead of leaving a file that the operator cannot use or that is
-// not the mode that was asked for.
+// not the mode that was asked for. The failure is the output's environment: an *OutputError
+// (exit 3), not an existing output.
 func TestWriteFileAtomic_AUmaskThatTakesTheOwnersBitsFailsAndLeavesNothing(t *testing.T) {
 	dir := t.TempDir() // made under the usual umask: only what the writer makes is under 0200
 	withUmask(t, 0o200, func() {
-		if err := writeFileAtomic(filepath.Join(dir, "out.tsv"), []byte("x")); err == nil {
+		if _, err := writeFileAtomic(filepath.Join(dir, "out.tsv"), []byte("x")); err == nil {
 			t.Error("a file of mode 0400 was left in place of one of 0600")
+		} else if !isOutput(err) || isInput(err) {
+			t.Errorf("the single file: err = %v, want an *OutputError (exit 3)", err)
 		}
 		if got := dirNames(t, dir); len(got) != 0 {
 			t.Errorf("the directory holds %v after the failure, want nothing", got)
 		}
 		if err := writeTreeAtomic(filepath.Join(dir, "out"), []outputFile{{Path: "a.txt", Data: []byte("x")}}); err == nil {
 			t.Error("a tree of directories of mode 0500 was left in place of ones of 0700")
+		} else if !isOutput(err) || isInput(err) {
+			t.Errorf("the tree: err = %v, want an *OutputError (exit 3)", err)
 		}
 		if got := dirNames(t, dir); len(got) != 0 {
 			t.Errorf("the directory holds %v after the failure, want nothing", got)
 		}
 	})
+}
+
+// ADR-0056 D20 (exit 3 and the commit point, amendment 13 as revised), V87 and V92: the failures
+// of the five steps of the seam writeFault (a write, the link, the rename, the two removes) are
+// made to happen through it, never through a permission (a test may run as root, which a mode
+// does not stop). A Sync or a Close that fails has no seam and no test; a temporary that cannot
+// be created and a mode the umask took a bit of are caused for real (the umask test above, and
+// the name over the limit of cmd/scoreboard's exit 3 test).
+
+// withWriteFault makes the steps of fail fail with their error for the length of the test.
+func withWriteFault(t *testing.T, fail map[string]error) {
+	t.Helper()
+	writeFault = func(step string) error { return fail[step] }
+	t.Cleanup(func() { writeFault = nil })
+}
+
+func isInput(err error) bool {
+	var in *InputError
+	return errors.As(err, &in)
+}
+
+func isOutput(err error) bool {
+	var out *OutputError
+	return errors.As(err, &out)
+}
+
+// leftOf is the names the *OutputError of err lists as left behind.
+func leftOf(err error) []string {
+	var out *OutputError
+	if errors.As(err, &out) {
+		return out.Left
+	}
+	return nil
+}
+
+// tempNames is the names in dir other than keep, as a message shows them (shownName).
+func tempNames(t *testing.T, dir, keep string) []string {
+	t.Helper()
+	var out []string
+	for _, n := range dirNames(t, dir) {
+		if n != keep {
+			out = append(out, shownName(n))
+		}
+	}
+	return out
+}
+
+// Before the commit point (the link), a failure of the write of the data or of the link itself
+// is an *OutputError (exit 3): nothing is at the destination and the temporary is removed.
+func TestWriteFileAtomic_AFailureBeforeTheLinkIsAnOutputErrorAndLeavesNothing(t *testing.T) {
+	for _, c := range []struct {
+		step string
+		err  error
+	}{
+		{faultWrite, syscall.ENOSPC},
+		{faultLink, syscall.EPERM}, // a file system that has no hard link
+	} {
+		dir := t.TempDir()
+		withWriteFault(t, map[string]error{c.step: c.err})
+		left, err := writeFileAtomic(filepath.Join(dir, "digests.tsv"), []byte("one line\n"))
+		if !isOutput(err) || isInput(err) || !errors.Is(err, c.err) || len(left) != 0 || len(leftOf(err)) != 0 {
+			t.Errorf("%s fails: (%v, %v), want an *OutputError of %v, no name left", c.step, left, err, c.err)
+		}
+		if got := dirNames(t, dir); len(got) != 0 {
+			t.Errorf("%s fails: the directory holds %v, want nothing (no output, no temporary)", c.step, got)
+		}
+	}
+}
+
+// Before the commit point, a cleanup that fails too: still exit 3, the destination is not made,
+// the temporary name that is left is listed (cut short, never a value), and the same write given
+// again succeeds (the name left is not the next one's).
+func TestWriteFileAtomic_ACleanupThatFailsBeforeTheLinkListsTheNameAndDoesNotStopTheNextRun(t *testing.T) {
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "digests.tsv")
+	withWriteFault(t, map[string]error{faultWrite: syscall.ENOSPC, faultRemove: syscall.EIO})
+	left, err := writeFileAtomic(dest, []byte("one line\n"))
+	if !isOutput(err) || isInput(err) || len(left) != 0 {
+		t.Fatalf("(%v, %v), want an *OutputError and no warning", left, err)
+	}
+	if _, err := os.Lstat(dest); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the destination is there after a failure: %v", err)
+	}
+	tmp := tempNames(t, dir, "")
+	if len(tmp) != 1 || !slices.Equal(leftOf(err), tmp) {
+		t.Errorf("the error lists %v as left, and the directory holds %v; want the one temporary name", leftOf(err), tmp)
+	}
+	if len(tmp) == 1 && (len(tmp[0]) > maxShownName+len(`""...`) || !strings.Contains(tmp[0], ".digests.tsv.tmp-")) {
+		t.Errorf("the name left is shown as %q, want the temporary name, quoted and cut short", tmp[0])
+	}
+
+	writeFault = nil
+	left, err = writeFileAtomic(dest, []byte("one line\n"))
+	if err != nil || len(left) != 0 {
+		t.Fatalf("the same write again: (%v, %v), want it to succeed", left, err)
+	}
+	if got, err := os.ReadFile(dest); err != nil || string(got) != "one line\n" {
+		t.Errorf("the destination holds (%q, %v)", got, err)
+	}
+}
+
+// After the commit point, a temporary name that cannot be removed is a warning, not an error:
+// the destination is the whole output, of mode 0600, and the name is given back.
+func TestWriteFileAtomic_ANameLeftAfterTheLinkIsAWarning(t *testing.T) {
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "digests.tsv")
+	withWriteFault(t, map[string]error{faultRemove: syscall.EIO})
+	left, err := writeFileAtomic(dest, []byte("one line\n"))
+	if err != nil {
+		t.Fatalf("err = %v, want none: the output is in place once the link succeeded", err)
+	}
+	if got, err := os.ReadFile(dest); err != nil || string(got) != "one line\n" {
+		t.Errorf("the destination holds (%q, %v), want the output", got, err)
+	}
+	if info, err := os.Lstat(dest); err != nil || info.Mode().Perm() != 0o600 {
+		t.Errorf("the destination is (%v, %v), want mode 0600", info, err)
+	}
+	if tmp := tempNames(t, dir, "digests.tsv"); len(tmp) != 1 || !slices.Equal(left, tmp) {
+		t.Errorf("the warning is %v and the directory holds the temporary names %v; want the one name", left, tmp)
+	}
+}
+
+// The EEXIST of the link with a cleanup that fails too: the kind is still the existing output's
+// (an *InputError, exit 2), and the name left is listed beside it.
+func TestWriteFileAtomic_AnExistingOutputWithACleanupThatFailsIsStillAnInputError(t *testing.T) {
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "digests.tsv")
+	withBeforeLink(t, func(path string) { filesWrite(t, path, "made by another process") })
+	withWriteFault(t, map[string]error{faultRemove: syscall.EIO})
+	left, err := writeFileAtomic(dest, []byte("new"))
+	if !isInput(err) || !errors.Is(err, ErrOutputExists) || len(left) != 0 {
+		t.Fatalf("(%v, %v), want an *InputError of ErrOutputExists", left, err)
+	}
+	if tmp := tempNames(t, dir, "digests.tsv"); len(tmp) != 1 || !slices.Equal(leftOf(err), tmp) {
+		t.Errorf("the error lists %v as left and the directory holds %v; want the one temporary name", leftOf(err), tmp)
+	}
+	if got, _ := os.ReadFile(dest); string(got) != "made by another process" {
+		t.Errorf("the other process's file was changed: %q", got)
+	}
+}
+
+// A tree: a failure of a write or of the rename (the commit point) is an *OutputError and
+// nothing is left; a RemoveAll that fails too lists the temporary tree, and the next run is not
+// stopped by it.
+func TestWriteTreeAtomic_AFailureBeforeTheRenameIsAnOutputError(t *testing.T) {
+	files := []outputFile{{Path: "answers.tsv", Data: []byte("a")}, {Path: "evidence/s1/01-demo/x.txt", Data: []byte("b")}}
+	for _, c := range []struct {
+		step string
+		err  error
+	}{
+		{faultWrite, syscall.ENOSPC},
+		{faultRename, syscall.EXDEV},
+	} {
+		parent := t.TempDir()
+		withWriteFault(t, map[string]error{c.step: c.err})
+		err := writeTreeAtomic(filepath.Join(parent, "out"), files)
+		if !isOutput(err) || isInput(err) || !errors.Is(err, c.err) || len(leftOf(err)) != 0 {
+			t.Errorf("%s fails: err = %v, want an *OutputError of %v and no name left", c.step, err, c.err)
+		}
+		if got := dirNames(t, parent); len(got) != 0 {
+			t.Errorf("%s fails: the parent holds %v, want nothing", c.step, got)
+		}
+	}
+
+	parent := t.TempDir()
+	dest := filepath.Join(parent, "out")
+	withWriteFault(t, map[string]error{faultWrite: syscall.ENOSPC, faultRemoveAll: syscall.EIO})
+	err := writeTreeAtomic(dest, files)
+	if !isOutput(err) || isInput(err) {
+		t.Fatalf("err = %v, want an *OutputError", err)
+	}
+	if _, err := os.Lstat(dest); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the output is there after a failure: %v", err)
+	}
+	if tmp := tempNames(t, parent, ""); len(tmp) != 1 || !slices.Equal(leftOf(err), tmp) {
+		t.Errorf("the error lists %v as left and the parent holds %v; want the one temporary tree", leftOf(err), tmp)
+	}
+	writeFault = nil
+	if err := writeTreeAtomic(dest, files); err != nil {
+		t.Fatalf("the same write again: %v, want it to succeed", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(dest, "answers.tsv")); err != nil || string(got) != "a" {
+		t.Errorf("the output holds (%q, %v)", got, err)
+	}
 }

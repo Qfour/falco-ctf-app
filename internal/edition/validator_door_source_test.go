@@ -137,7 +137,9 @@ var wantValidatorSigs = []struct {
 	want     sigWant
 }{
 	{"internal/edition/digests.go", "WriteDigests", sigWant{[]string{"io.Writer", "*CheckedEvent"}, []string{"error"}}},
-	{"internal/edition/digests.go", "WriteDigestsFile", sigWant{[]string{"string", "*CheckedEvent"}, []string{"error"}}},
+	// A4e-3a: the commit point of the write (ADR-0056 D20 exit 3, amendment 13 as revised) gives
+	// the temporary name that could not be removed AFTER the link as a warning, not an error.
+	{"internal/edition/digests.go", "WriteDigestsFile", sigWant{[]string{"string", "*CheckedEvent"}, []string{"[]string", "error"}}},
 	{"internal/edition/checkevent.go", "CheckEvent", sigWant{[]string{"CheckInput"}, []string{"*CheckedEvent", "CheckReport", "error"}}},
 	{"internal/edition/bundlecheck.go", "CheckBundles", sigWant{[]string{"string", "*CheckedTable", "BundleInput"}, []string{"*CheckedBundles", "error"}}},
 	{"internal/edition/load.go", "LoadEventTable", sigWant{[]string{"catalog.Scored", "string"}, []string{"*CheckedTable", "string", "error"}}},
@@ -269,8 +271,9 @@ func TestValidatorSignaturesCarryTheCheckedTypes(t *testing.T) {
 		{"WriteDigests taking a run id and rows", digestsFile, "func WriteDigests(w io.Writer, ev *CheckedEvent) error", "func WriteDigests(w io.Writer, runID string, rows []DigestRow) error"},
 		{"WriteDigests taking rows only", digestsFile, "func WriteDigests(w io.Writer, ev *CheckedEvent) error", "func WriteDigests(w io.Writer, rows []DigestRow) error"},
 		{"WriteDigests taking a *CheckedBundles again (V86, amendment 12)", digestsFile, "func WriteDigests(w io.Writer, ev *CheckedEvent) error", "func WriteDigests(w io.Writer, ev *CheckedBundles) error"},
-		{"WriteDigestsFile taking a *CheckedBundles", digestsFile, "func WriteDigestsFile(dest string, ev *CheckedEvent) error", "func WriteDigestsFile(dest string, ev *CheckedBundles) error"},
-		{"WriteDigestsFile taking the path and the rows", digestsFile, "func WriteDigestsFile(dest string, ev *CheckedEvent) error", "func WriteDigestsFile(dest string, rows []DigestRow) error"},
+		{"WriteDigestsFile taking a *CheckedBundles", digestsFile, "func WriteDigestsFile(dest string, ev *CheckedEvent) (left []string, err error)", "func WriteDigestsFile(dest string, ev *CheckedBundles) (left []string, err error)"},
+		{"WriteDigestsFile taking the path and the rows", digestsFile, "func WriteDigestsFile(dest string, ev *CheckedEvent) (left []string, err error)", "func WriteDigestsFile(dest string, rows []DigestRow) (left []string, err error)"},
+		{"WriteDigestsFile giving no warning of the commit point", digestsFile, "func WriteDigestsFile(dest string, ev *CheckedEvent) (left []string, err error)", "func WriteDigestsFile(dest string, ev *CheckedEvent) error"},
 		{"CheckEvent giving a *CheckedBundles", eventFile, "(*CheckedEvent, CheckReport, error) {\n\tvar report", "(*CheckedBundles, CheckReport, error) {\n\tvar report"},
 		{"CheckEvent giving no report", eventFile, "(*CheckedEvent, CheckReport, error) {\n\tvar report", "(*CheckedEvent, error) {\n\tvar report"},
 		{"LoadEventTable giving a *Table", loadFile, "(*CheckedTable, string, error) {\n\tif answersFile", "(*Table, string, error) {\n\tif answersFile"},

@@ -208,19 +208,21 @@ func dirNamesOf(t *testing.T, dir string) []string {
 	return out
 }
 
-// An event that every check accepted, whose digests file cannot be written: exit 2, no `ok` line,
-// nothing left in the output directory. The failure does not depend on a permission (a test may
-// run as root, for which chmod fails to refuse a write): the name of the output is 250 bytes, so
-// the output itself can be named (the check of the path passes) but the temporary name beside it
-// (a dot, the name, `.tmp-` and 16 hex digits: 272 bytes) is over the 255 bytes of a file name,
-// and the write fails when the temporary is made, after CheckEvent accepted the event.
-func TestEditionCheck_AnAcceptedEventWhoseDigestsCannotBeWrittenIsExit2(t *testing.T) {
+// An event that every check accepted, whose digests file cannot be written: exit 3 (ADR-0056 D20,
+// amendment 13: the failure of the output's environment after every check passed; V87 and V92
+// changed it from 2), no `ok` line, nothing left in the output directory. The failure does not
+// depend on a permission (a test may run as root, for which chmod fails to refuse a write): the
+// name of the output is 250 bytes, so the output itself can be named (the check of the path
+// passes) but the temporary name beside it (a dot, the name, `.tmp-` and 16 hex digits: 272
+// bytes) is over the 255 bytes of a file name, and the write fails when the temporary is made,
+// after CheckEvent accepted the event.
+func TestEditionCheck_AnAcceptedEventWhoseDigestsCannotBeWrittenIsExit3(t *testing.T) {
 	f := newEcFix(t)
 	out := f.path("out/" + strings.Repeat("d", 250))
 	args := append(without(f.args(), "--digests-out"), "--digests-out", out)
 	code, stdout, stderr := runEd(append([]string{"check"}, args...)...)
-	if code != exitUsage {
-		t.Errorf("exit %d, stdout %q, stderr %q; want exit 2", code, stdout, stderr)
+	if code != exitWriteFailed {
+		t.Errorf("exit %d, stdout %q, stderr %q; want exit 3", code, stdout, stderr)
 	}
 	if strings.Contains(stdout, "ok run=") || stdout != "" {
 		t.Errorf("stdout = %q; want no `ok` line for a digests file that was not written", stdout)
@@ -563,5 +565,80 @@ func TestPrintRefusal(t *testing.T) {
 	printRefusal(&out, &edition.InputError{Msg: "the seats file cannot be read", Err: errors.New("open x: no such file or directory")})
 	if got := out.String(); got != "the seats file cannot be read: open x: no such file or directory\n" {
 		t.Errorf("an input error printed %q", got)
+	}
+}
+
+// V92 (ADR-0056 D20, amendment 13 as revised): the exit code of each kind of error the library
+// gives, and of their mixes. A rule's refusal is 1 only when every leaf is one; an error of no
+// kind (the stub errors.New) is 2, never taken for a rule's refusal; a failure of the output's
+// environment after every check is 3; a mix of kinds is 2.
+func TestEditionExitCode(t *testing.T) {
+	v := &edition.Violation{Rule: "B7", Msg: "a rule"}
+	in := &edition.InputError{Msg: "an input"}
+	out := &edition.OutputError{Err: errors.New("no space left on the device")}
+	cases := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"no error", nil, exitAccepted},
+		{"a violation", v, exitRefused},
+		{"a join of violations and the count of the rest", errors.Join(v, &edition.Violation{Rule: "B8", Msg: "another"}, &edition.MoreViolations{N: 3}), exitRefused},
+		{"a wrapped join of violations", fmt.Errorf("edition: answers table: %w", errors.Join(v, v)), exitRefused},
+		{"a join of joins of violations", errors.Join(errors.Join(v), errors.Join(v, v)), exitRefused},
+		{"an input error", in, exitUsage},
+		{"an input error whose cause is a violation", &edition.InputError{Msg: "the previous digests file", Err: v}, exitUsage},
+		{"an error of no kind (a stub)", errors.New("something no reader classified"), exitUsage},
+		{"a wrapped error of no kind", fmt.Errorf("edition: practice answers of 01-demo: %w", errors.New("x")), exitUsage},
+		{"a violation joined with an input error", errors.Join(v, in), exitUsage},
+		{"a violation joined with an error of no kind", errors.Join(v, errors.New("x")), exitUsage},
+		{"an output error", out, exitWriteFailed},
+		{"a wrapped output error", fmt.Errorf("w: %w", out), exitWriteFailed},
+		{"an output error joined with an input error (an existing output and a name left)", errors.Join(in, out), exitUsage},
+		{"an output error joined with a violation", errors.Join(v, out), exitUsage},
+	}
+	for _, c := range cases {
+		if got := editionExitCode(c.err); got != c.want {
+			t.Errorf("%s: exit %d, want %d", c.name, got, c.want)
+		}
+	}
+}
+
+// The command's report of a refusal: the leaves, the temporary names an *edition.OutputError
+// lists as left (V92: exit 3 with the name on stderr; the library gives the name cut short and
+// quoted), and the code. The cases of the library that make the names (the seam writeFault of
+// internal/edition: a write that fails and a cleanup that fails, a link that succeeds and a
+// cleanup that fails) are atomicwrite_internal_test.go's: this package cannot reach the seam, so
+// the command's part is held here with the errors the library gives.
+func TestFinishRefusal_PrintsTheNamesLeftAndGivesTheCode(t *testing.T) {
+	const name = `".digests.tsv.tmp-0123456789abcdef"`
+	var b bytes.Buffer
+	code := finishRefusal(&b, &edition.OutputError{Err: errors.New("no space left on the device"), Left: []string{name}})
+	if code != exitWriteFailed || !strings.Contains(b.String(), "no space left on the device") || !strings.Contains(b.String(), "left beside the output (remove it): "+name+"\n") {
+		t.Errorf("exit %d, printed %q; want exit 3, the cause and the name left", code, b.String())
+	}
+	b.Reset()
+	joined := errors.Join(&edition.InputError{Msg: "the output", Err: edition.ErrOutputExists}, &edition.OutputError{Err: errors.New("x"), Left: []string{name}})
+	if code := finishRefusal(&b, joined); code != exitUsage || !strings.Contains(b.String(), "the output: ") || !strings.Contains(b.String(), name) {
+		t.Errorf("an existing output and a name left: exit %d, printed %q; want exit 2 and the name", code, b.String())
+	}
+	b.Reset()
+	if code := finishRefusal(&b, &edition.Violation{Rule: "B7", Msg: "a rule"}); code != exitRefused || b.String() != "B7: a rule\n" {
+		t.Errorf("a violation: exit %d, printed %q", code, b.String())
+	}
+}
+
+// After the commit point a name left is a warning: one line per name, and nothing else.
+func TestPrintLeftWarning(t *testing.T) {
+	var b bytes.Buffer
+	printLeftWarning(&b, "edition check", nil)
+	if b.Len() != 0 {
+		t.Errorf("no name printed %q", b.String())
+	}
+	printLeftWarning(&b, "edition check", []string{`"a"`, `"b"`})
+	want := "edition check: the output is in place; a temporary name beside it could not be removed (remove it): \"a\"\n" +
+		"edition check: the output is in place; a temporary name beside it could not be removed (remove it): \"b\"\n"
+	if b.String() != want {
+		t.Errorf("printed %q, want %q", b.String(), want)
 	}
 }
