@@ -758,6 +758,160 @@ func TestTheRenderIsWiredToTheExit(t *testing.T) {
 	}
 }
 
+// practiceWiringViolations judges the source of editioncmd.go (path p) for the wiring of
+// `edition render --practice` (ADR-0056 D20, V81, V92, A4e-3b), as writeWiringViolations does for
+// the write of --digests-out:
+//
+//   - runEditionRender hands every invocation with --practice to runEditionRenderPractice before
+//     it reads the event's arguments: its first statement is `if hasPracticeArg(args) { return
+//     runEditionRenderPractice(args, ...) }`;
+//   - in runEditionRenderPractice, both results of edition.RenderPracticeEdition are named
+//     (left, err), once;
+//   - after it, an `if err != nil` whose body returns finishRefusal(_, err): a failure goes to the
+//     exit code and to the names left (exit 3 for an *edition.OutputError);
+//   - after it, outside that if, printLeftWarning(_, _, left): the earlier practice/ moved aside
+//     that could not be removed after the commit point is printed, and the exit is 0;
+//   - no `return exitAccepted` comes before that if.
+func practiceWiringViolations(p, src string) []string {
+	f, err := parser.ParseFile(token.NewFileSet(), p, src, 0)
+	if err != nil {
+		return []string{p + ": does not parse: " + err.Error()}
+	}
+	var out []string
+	render := declNamed(f, "runEditionRender")
+	dispatched := false
+	if render != nil && len(render.Body.List) > 0 {
+		if s, ok := render.Body.List[0].(*ast.IfStmt); ok && s.Init == nil {
+			if c, ok := s.Cond.(*ast.CallExpr); ok && isIdent(c.Fun, "hasPracticeArg") && len(c.Args) == 1 && isIdent(c.Args[0], "args") &&
+				len(s.Body.List) == 1 {
+				if r, ok := s.Body.List[0].(*ast.ReturnStmt); ok && len(r.Results) == 1 {
+					if rc, ok := r.Results[0].(*ast.CallExpr); ok && isIdent(rc.Fun, "runEditionRenderPractice") && len(rc.Args) == 3 && isIdent(rc.Args[0], "args") {
+						dispatched = true
+					}
+				}
+			}
+		}
+	}
+	if !dispatched {
+		out = append(out, p+": the first statement of runEditionRender is not `if hasPracticeArg(args) { return runEditionRenderPractice(args, ...) }`")
+	}
+	run := declNamed(f, "runEditionRenderPractice")
+	if run == nil {
+		return append(out, p+": func runEditionRenderPractice is not found")
+	}
+	var assign *ast.AssignStmt
+	renders := 0
+	ast.Inspect(run.Body, func(n ast.Node) bool {
+		a, ok := n.(*ast.AssignStmt)
+		if !ok || len(a.Rhs) != 1 {
+			return true
+		}
+		if c, ok := a.Rhs[0].(*ast.CallExpr); ok && isSelector(c.Fun, "edition", "RenderPracticeEdition") {
+			renders++
+			assign = a
+		}
+		return true
+	})
+	if renders != 1 || len(assign.Lhs) != 2 {
+		return append(out, p+": runEditionRenderPractice does not take the two results of edition.RenderPracticeEdition once")
+	}
+	left, _ := assign.Lhs[0].(*ast.Ident)
+	errID, _ := assign.Lhs[1].(*ast.Ident)
+	if left == nil || left.Name == "_" || errID == nil || errID.Name == "_" {
+		return append(out, p+": a result of edition.RenderPracticeEdition is dropped (want the names left and the error)")
+	}
+	var guard *ast.IfStmt
+	ast.Inspect(run.Body, func(n ast.Node) bool {
+		s, ok := n.(*ast.IfStmt)
+		if !ok || guard != nil || s.Pos() < assign.End() {
+			return true
+		}
+		if b, ok := s.Cond.(*ast.BinaryExpr); ok && b.Op == token.NEQ && isIdent(b.X, errID.Name) && isIdent(b.Y, "nil") && returnsFinishRefusal(s.Body, errID.Name) {
+			guard = s
+		}
+		return true
+	})
+	if guard == nil {
+		return append(out, p+": the error of edition.RenderPracticeEdition does not reach `return finishRefusal(..., "+errID.Name+")` in an `if "+errID.Name+" != nil`")
+	}
+	warned := false
+	accepted := 0
+	ast.Inspect(run.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.CallExpr:
+			if isIdent(x.Fun, "printLeftWarning") && len(x.Args) == 3 && isIdent(x.Args[2], left.Name) && x.Pos() > guard.End() {
+				warned = true
+			}
+		case *ast.ReturnStmt:
+			if len(x.Results) == 1 && isIdent(x.Results[0], "exitAccepted") {
+				accepted++
+				if x.Pos() < guard.End() {
+					out = append(out, p+": runEditionRenderPractice returns exitAccepted before the error of edition.RenderPracticeEdition is tested")
+				}
+			}
+		}
+		return true
+	})
+	if !warned {
+		out = append(out, p+": the names left by edition.RenderPracticeEdition ("+left.Name+") are not given to printLeftWarning on the way to success")
+	}
+	if accepted == 0 {
+		out = append(out, p+": runEditionRenderPractice never returns exitAccepted: the scan does not see its success")
+	}
+	return out
+}
+
+// V81 / V92 for `edition render --practice`: the dispatch from `edition render`, the error of
+// RenderPracticeEdition to finishRefusal (exit 3 and the names left for an *edition.OutputError,
+// exit 1 and 2 for the others), the warning after the commit point, and nothing accepted before
+// the error is tested. A copy with each link cut is red.
+func TestThePracticeRenderIsWiredToTheExitAndTheWarning(t *testing.T) {
+	src := readNonTest(t)[cmdFile]
+	for _, v := range practiceWiringViolations(cmdFile, src) {
+		t.Error(v)
+	}
+	const (
+		warnLine = "\tprintLeftWarning(stderr, \"edition render --practice\", left)\n"
+		call     = "left, err := edition.RenderPracticeEdition(challenges, cid)\n"
+	)
+	cases := []struct {
+		name string
+		edit func(src string) string
+	}{
+		{"no dispatch", func(s string) string {
+			return replaceOnceSrc(t, s, "\tif hasPracticeArg(args) {\n\t\treturn runEditionRenderPractice(args, stdout, stderr)\n\t}\n", "")
+		}},
+		{"the dispatch after the event's arguments are read", func(s string) string {
+			s = replaceOnceSrc(t, s, "\tif hasPracticeArg(args) {\n\t\treturn runEditionRenderPractice(args, stdout, stderr)\n\t}\n\tin, err := parseRenderArgs(args)\n", "\tin, err := parseRenderArgs(args)\n\tif hasPracticeArg(args) {\n\t\treturn runEditionRenderPractice(args, stdout, stderr)\n\t}\n")
+			return s
+		}},
+		{"no warning", func(s string) string { return replaceOnceSrc(t, s, warnLine, "\t_ = left\n") }},
+		{"the names left dropped", func(s string) string {
+			return replaceOnceSrc(t, s, call, "_, err := edition.RenderPracticeEdition(challenges, cid)\n")
+		}},
+		{"the error dropped", func(s string) string {
+			return replaceOnceSrc(t, s, call, "left, _ := edition.RenderPracticeEdition(challenges, cid)\n")
+		}},
+		{"the error not tested", func(s string) string {
+			return replaceOnceSrc(t, s, call+"\tif err != nil {", call+"\tif err == nil {")
+		}},
+		{"the error not through finishRefusal", func(s string) string {
+			return replaceOnceSrc(t, s, "\t\treturn finishRefusal(stderr, err)\n\t}\n"+warnLine, "\t\treturn exitUsage\n\t}\n"+warnLine)
+		}},
+		{"accepted before the error is tested", func(s string) string {
+			return replaceOnceSrc(t, s, call, call+"\tif left == nil {\n\t\treturn exitAccepted\n\t}\n")
+		}},
+	}
+	for _, c := range cases {
+		if v := practiceWiringViolations(cmdFile, c.edit(src)); len(v) == 0 {
+			t.Errorf("%s: no violation was reported", c.name)
+		}
+	}
+	if v := practiceWiringViolations(cmdFile, "package main\n\nfunc other() {}\n"); len(v) == 0 {
+		t.Error("a file with no runEditionRenderPractice was not reported")
+	}
+}
+
 // switchKinds is the types (`*edition.X` as X) of the cases of the first type switch of the
 // function or method name of the source.
 func switchKinds(p, src, name string) ([]string, error) {

@@ -2,8 +2,9 @@ package edition
 
 // atomicwrite.go is how the validator and the renderer put an output where an operator reads
 // it (ADR-0056 D20, D19 A4e-1): all of it or none of it, never a half-written file or a tree
-// that is missing a part. The callers are `edition check` (--digests-out, one file) and
-// `edition render` (--out, a tree); this stage has the helpers and their tests only.
+// that is missing a part. The callers are `edition check` (--digests-out, one file),
+// `edition render` (--out, a tree) and `edition render --practice` (practice/, a tree that
+// replaces the earlier one: replaceTreeAtomic, at the end of this header).
 //
 //   - the output is made as a temporary sibling of its destination (the same directory, so
 //     the same file system, and the rename at the end is atomic), never at the destination;
@@ -49,11 +50,24 @@ package edition
 //     same directory and leave both names, and the next run would then refuse the output that is
 //     there (exit 2).
 //
-// writeFault is the seam that lets the tests make five steps fail (V87, V92) without a
+// writeFault is the seam that lets the tests make seven steps fail (V81, V87, V92) without a
 // permission (a test may run as root): the write of a file's data, the link, the rename and the
-// two removes. The other failures (a temporary that cannot be created, a mode the umask took a
-// bit of, a Sync or a Close that fails) have no seam: the tests cause the first two for real (a
-// name over the limit, a umask), and the last two are not caused by any test.
+// two removes, and the two renames of a replacement (below). The other failures (a temporary
+// that cannot be created, a mode the umask took a bit of, a Sync or a Close that fails) have no
+// seam: the tests cause the first two for real (a name over the limit, a umask), and the last two
+// are not caused by any test.
+//
+// The practice edition (D20 `edition render --practice`, A4e-3b) is the one tree that is put IN
+// PLACE OF an earlier one: replaceTreeAtomic writes the new tree as a temporary sibling of
+// practice/, moves the practice/ that is there aside (a second sibling name), renames the new
+// tree to practice/ (the COMMIT POINT) and removes what was moved aside. A failure before the
+// commit point moves the earlier practice/ back, so practice/ is as it was, byte for byte (V81),
+// and is an *OutputError (exit 3); an earlier practice/ that cannot be moved back is named in the
+// error's Left (it is the name beside practice/ that holds it). After the commit point, a moved
+// aside practice/ that cannot be removed is a warning (left), as for the single file. A practice
+// edition is the public repository's: its directories are 0755 and its files 0644 (D20), set
+// after the creation (fchmod of the open file, chmod of the directory just made) so that they do
+// not depend on the umask either, and held to that value.
 //
 // What this does not do:
 //   - A tree: os.Rename of a directory replaces an EMPTY directory that another process made
@@ -84,6 +98,11 @@ const (
 	// outputDirMode and outputFileMode are the modes of an output (D20): the operator only.
 	outputDirMode  fs.FileMode = 0o700
 	outputFileMode fs.FileMode = 0o600
+
+	// publicDirMode and publicFileMode are the modes of a practice edition (D20): a tree of the
+	// public repository, which git and the image read.
+	publicDirMode  fs.FileMode = 0o755
+	publicFileMode fs.FileMode = 0o644
 
 	// tempTries is how many random names are tried for the temporary before giving up.
 	tempTries = 8
@@ -134,8 +153,27 @@ const (
 	faultLink      = "link"       // the os.Link of the single file (the commit point)
 	faultRemove    = "remove"     // the os.Remove of the single file's temporary name
 	faultRename    = "rename"     // the os.Rename of a tree (the commit point)
-	faultRemoveAll = "remove-all" // the os.RemoveAll of a temporary tree
+	faultRemoveAll = "remove-all" // the os.RemoveAll of a temporary tree (or of a tree moved aside)
+	faultBackup    = "backup"     // the os.Rename that moves the earlier tree aside (a replacement)
+	faultRestore   = "restore"    // the os.Rename that moves it back after a failure (a replacement)
 )
+
+// treeModes are the permission bits of the directories and of the files of a tree, and whether
+// they are set after the creation (set: the public practice edition, whatever the umask) or only
+// held to after it (the operator's output, whose modes keep the owner's bits under any usual
+// umask, and which is refused, not widened, when the umask took one of them).
+type treeModes struct {
+	dir, file fs.FileMode
+	set       bool
+}
+
+// ownerTree is the modes of an operator's output (`edition render`'s --out), publicTree the
+// modes of a practice edition (`edition render --practice`).
+func ownerTree() treeModes { return treeModes{dir: outputDirMode, file: outputFileMode} }
+
+func publicTree() treeModes {
+	return treeModes{dir: publicDirMode, file: publicFileMode, set: true}
+}
 
 // injected is the failure writeFault gives for step, or nil.
 func injected(step string) error {
@@ -258,7 +296,7 @@ func writeTreeAtomic(dest string, files []outputFile) (err error) {
 	if err := refuseExisting(dest); err != nil {
 		return outputPathErr(err)
 	}
-	tmp, err := createTempDir(dest)
+	tmp, err := createTempDir(dest, ownerTree())
 	if err != nil {
 		return &OutputError{Err: err}
 	}
@@ -266,23 +304,12 @@ func writeTreeAtomic(dest string, files []outputFile) (err error) {
 		if err == nil {
 			return
 		}
-		rmErr := injected(faultRemoveAll)
-		if rmErr == nil {
-			rmErr = os.RemoveAll(tmp)
-		}
-		if rmErr != nil {
+		if rmErr := removeTree(tmp); rmErr != nil {
 			err = leftBehind(err, tmp, rmErr)
 		}
 	}()
-	made := map[string]struct{}{tmp: {}}
-	for _, of := range files {
-		full := filepath.Join(tmp, filepath.FromSlash(of.Path))
-		if err = mkdirOwner(filepath.Dir(full), made); err != nil {
-			return &OutputError{Err: err}
-		}
-		if err = writeNewFile(full, of.Data); err != nil {
-			return &OutputError{Err: err}
-		}
+	if err = writeTreeFiles(tmp, files, ownerTree()); err != nil {
+		return &OutputError{Err: err}
 	}
 	if err = refuseExisting(dest); err != nil {
 		return outputPathErr(err)
@@ -299,6 +326,144 @@ func writeTreeAtomic(dest string, files []outputFile) (err error) {
 		return &OutputError{Err: fmt.Errorf("edition: putting the output in place: %w", err)}
 	}
 	return nil
+}
+
+// replaceTreeAtomic writes files as a tree at dest, in place of the directory that is at dest
+// when there is one (a practice edition's practice/: D20 `edition render --practice`), as the
+// top of this file describes: the modes are publicTree's, the commit point is the os.Rename of
+// the new tree to dest, and before it dest is what it was. files is held to the rules of
+// writeTreeAtomic first (a plain error). A dest that is there and is not a directory (a file, or
+// a link, even to a directory) is an *InputError and nothing is made: what is replaced is a
+// directory, and a link is never followed. Every other failure before the commit point is an
+// *OutputError: the new tree is removed (a name of it that is left is in Left) and the earlier
+// directory is moved back to dest (when it cannot be, its name beside dest is in Left, and dest
+// does not exist). left is not empty only when err is nil: the new tree is at dest and the
+// earlier one, moved aside, could not be removed after the commit point (a warning).
+func replaceTreeAtomic(dest string, files []outputFile) (left []string, err error) {
+	if err := checkOutputPaths(files); err != nil {
+		return nil, err
+	}
+	had, err := replaceableDir(dest)
+	if err != nil {
+		return nil, err
+	}
+	modes := publicTree()
+	tmp, err := createTempDir(dest, modes)
+	if err != nil {
+		return nil, &OutputError{Err: err}
+	}
+	aside := ""
+	defer func() {
+		if err == nil {
+			return
+		}
+		if aside != "" {
+			if bErr := putBack(aside, dest); bErr != nil {
+				var oe *OutputError
+				if errors.As(err, &oe) {
+					oe.Err = errors.Join(oe.Err, fmt.Errorf("edition: the earlier output could not be moved back (it is the name left beside it): %w", bErr))
+					oe.Left = append(oe.Left, shownName(filepath.Base(aside)))
+				}
+			}
+		}
+		if rmErr := removeTree(tmp); rmErr != nil {
+			err = leftBehind(err, tmp, rmErr)
+		}
+	}()
+	if err = writeTreeFiles(tmp, files, modes); err != nil {
+		return nil, &OutputError{Err: err}
+	}
+	if had {
+		if aside, err = moveAside(dest); err != nil {
+			return nil, &OutputError{Err: err}
+		}
+	}
+	if err = injected(faultRename); err == nil {
+		err = os.Rename(tmp, dest)
+	}
+	if err != nil {
+		return nil, &OutputError{Err: fmt.Errorf("edition: putting the output in place: %w", err)}
+	}
+	// The commit point is passed: the new tree is dest. What was moved aside is the earlier one;
+	// one that cannot be removed is a warning for the operator.
+	if aside != "" {
+		if rmErr := removeTree(aside); rmErr != nil {
+			return []string{shownName(filepath.Base(aside))}, nil
+		}
+	}
+	return nil, nil
+}
+
+// replaceableDir reports whether dest is a directory that replaceTreeAtomic replaces (false: dest
+// does not exist). A dest of another kind (Lstat: a link is not followed) is an *InputError, and
+// a dest that cannot be looked at is an *OutputError (the output's environment).
+func replaceableDir(dest string) (bool, error) {
+	info, err := os.Lstat(dest)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return false, nil
+	case err != nil:
+		return false, &OutputError{Err: fmt.Errorf("edition: the output path: %w", err)}
+	case !info.IsDir():
+		return false, inputErr("the output that is replaced is not a directory (a link or a file is refused)")
+	}
+	return true, nil
+}
+
+// writeTreeFiles writes files under root (a directory that exists and holds nothing): the
+// directories above each file are made as they are needed, with the modes of m.
+func writeTreeFiles(root string, files []outputFile, m treeModes) error {
+	made := map[string]struct{}{root: {}}
+	for _, of := range files {
+		full := filepath.Join(root, filepath.FromSlash(of.Path))
+		if err := mkdirTree(filepath.Dir(full), made, m); err != nil {
+			return err
+		}
+		if err := writeNewFile(full, of.Data, m); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// removeTree removes a temporary tree, or a tree that was moved aside.
+func removeTree(p string) error {
+	if err := injected(faultRemoveAll); err != nil {
+		return err
+	}
+	return os.RemoveAll(p)
+}
+
+// moveAside renames the directory dest to a new sibling name (hidden, with a random part, that
+// did not exist) and returns that name.
+func moveAside(dest string) (string, error) {
+	for i := 0; i < tempTries; i++ {
+		aside, err := siblingName(dest, "old")
+		if err != nil {
+			return "", err
+		}
+		if _, err := os.Lstat(aside); err == nil {
+			continue
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf("edition: moving the earlier output aside: %w", err)
+		}
+		if err := injected(faultBackup); err != nil {
+			return "", fmt.Errorf("edition: moving the earlier output aside: %w", err)
+		}
+		if err := os.Rename(dest, aside); err != nil {
+			return "", fmt.Errorf("edition: moving the earlier output aside: %w", err)
+		}
+		return aside, nil
+	}
+	return "", errors.New("edition: no unused name to move the earlier output aside")
+}
+
+// putBack renames the directory moved aside back to dest.
+func putBack(aside, dest string) error {
+	if err := injected(faultRestore); err != nil {
+		return err
+	}
+	return os.Rename(aside, dest)
 }
 
 // refuseExisting is ErrOutputExists for a path that exists in any form (Lstat: a link is
@@ -342,12 +507,16 @@ func checkOutputPaths(files []outputFile) error {
 }
 
 // tempName is a sibling of dest: a hidden name that holds a random part.
-func tempName(dest string) (string, error) {
+func tempName(dest string) (string, error) { return siblingName(dest, "tmp") }
+
+// siblingName is a hidden sibling name of dest of the kind given (`tmp` for a temporary, `old`
+// for an earlier tree moved aside), with a random part.
+func siblingName(dest, kind string) (string, error) {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", fmt.Errorf("edition: no random name for the temporary output: %w", err)
 	}
-	return filepath.Join(filepath.Dir(dest), "."+filepath.Base(dest)+".tmp-"+hex.EncodeToString(b[:])), nil
+	return filepath.Join(filepath.Dir(dest), "."+filepath.Base(dest)+"."+kind+"-"+hex.EncodeToString(b[:])), nil
 }
 
 // createTempFile creates the temporary file beside dest (0600, O_CREAT|O_EXCL|O_NOFOLLOW).
@@ -369,22 +538,22 @@ func createTempFile(dest string) (string, *os.File, error) {
 	return "", nil, errors.New("edition: no unused name for the temporary output")
 }
 
-// createTempDir creates the temporary directory beside dest (0700; os.Mkdir does not reuse
-// an existing entry and does not follow a link), and holds its mode.
-func createTempDir(dest string) (string, error) {
+// createTempDir creates the temporary directory beside dest (m.dir; os.Mkdir does not reuse
+// an existing entry and does not follow a link), and sets (m.set) and holds its mode.
+func createTempDir(dest string, m treeModes) (string, error) {
 	for i := 0; i < tempTries; i++ {
 		tmp, err := tempName(dest)
 		if err != nil {
 			return "", err
 		}
-		err = os.Mkdir(tmp, outputDirMode)
+		err = os.Mkdir(tmp, m.dir)
 		if errors.Is(err, fs.ErrExist) {
 			continue
 		}
 		if err != nil {
 			return "", fmt.Errorf("edition: creating the temporary output: %w", err)
 		}
-		if err := assertDirMode(tmp); err != nil {
+		if err := setDirMode(tmp, m); err != nil {
 			_ = os.Remove(tmp)
 			return "", err
 		}
@@ -393,27 +562,40 @@ func createTempDir(dest string) (string, error) {
 	return "", errors.New("edition: no unused name for the temporary output")
 }
 
-// mkdirOwner makes dir and the directories above it that are not in made yet, each with
-// os.Mkdir (0700, an existing entry is an error) and held to 0700 after it is made. made
-// holds the directories of the temporary tree that exist, the root of it included.
-func mkdirOwner(dir string, made map[string]struct{}) error {
+// mkdirTree makes dir and the directories above it that are not in made yet, each with
+// os.Mkdir (m.dir, an existing entry is an error), its mode set (m.set) and held to m.dir after
+// it is made. made holds the directories of the temporary tree that exist, the root of it
+// included.
+func mkdirTree(dir string, made map[string]struct{}, m treeModes) error {
 	if _, ok := made[dir]; ok {
 		return nil
 	}
-	if err := mkdirOwner(filepath.Dir(dir), made); err != nil {
+	if err := mkdirTree(filepath.Dir(dir), made, m); err != nil {
 		return err
 	}
-	if err := os.Mkdir(dir, outputDirMode); err != nil {
+	if err := os.Mkdir(dir, m.dir); err != nil {
 		return fmt.Errorf("edition: creating a directory of the output: %w", err)
 	}
 	made[dir] = struct{}{}
-	return assertDirMode(dir)
+	return setDirMode(dir, m)
 }
 
-// writeNewFile creates the file at p (0600, O_CREAT|O_EXCL|O_NOFOLLOW), holds its mode,
-// writes data to it and syncs it before it is closed.
-func writeNewFile(p string, data []byte) (err error) {
-	f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, outputFileMode)
+// setDirMode sets the mode of the directory p that was just made to m.dir when m.set (the
+// directory is the process's own, made inside its temporary tree, so the path is not another
+// process's), and holds it to m.dir.
+func setDirMode(p string, m treeModes) error {
+	if m.set {
+		if err := os.Chmod(p, m.dir); err != nil {
+			return fmt.Errorf("edition: setting the mode of an output directory: %w", err)
+		}
+	}
+	return assertDirMode(p, m.dir)
+}
+
+// writeNewFile creates the file at p (m.file, O_CREAT|O_EXCL|O_NOFOLLOW), sets (m.set, on the
+// open descriptor) and holds its mode, writes data to it and syncs it before it is closed.
+func writeNewFile(p string, data []byte, m treeModes) (err error) {
+	f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, m.file)
 	if err != nil {
 		return fmt.Errorf("edition: creating a file of the output: %w", err)
 	}
@@ -422,7 +604,12 @@ func writeNewFile(p string, data []byte) (err error) {
 			err = fmt.Errorf("edition: closing a file of the output: %w", cerr)
 		}
 	}()
-	if err := assertMode(f, outputFileMode); err != nil {
+	if m.set {
+		if err := f.Chmod(m.file); err != nil {
+			return fmt.Errorf("edition: setting the mode of an output file: %w", err)
+		}
+	}
+	if err := assertMode(f, m.file); err != nil {
 		return err
 	}
 	if err := injected(faultWrite); err != nil {
@@ -449,8 +636,9 @@ func assertMode(f *os.File, want fs.FileMode) error {
 	return nil
 }
 
-// assertDirMode is an error unless the directory at p has exactly the permission bits 0700.
-func assertDirMode(p string) error {
+// assertDirMode is an error unless the directory at p (Lstat: not a link) has exactly the
+// permission bits want.
+func assertDirMode(p string, want fs.FileMode) error {
 	info, err := os.Lstat(p)
 	if err != nil {
 		return fmt.Errorf("edition: the mode of an output directory: %w", err)
@@ -458,8 +646,8 @@ func assertDirMode(p string) error {
 	if !info.IsDir() {
 		return errors.New("edition: an output directory is not a directory")
 	}
-	if got := info.Mode().Perm(); got != outputDirMode {
-		return fmt.Errorf("edition: an output directory has mode %#o, want %#o (the process's umask took a bit of it)", got, outputDirMode)
+	if got := info.Mode().Perm(); got != want {
+		return fmt.Errorf("edition: an output directory has mode %#o, want %#o (the process's umask took a bit of it)", got, want)
 	}
 	return nil
 }

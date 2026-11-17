@@ -213,29 +213,43 @@ func readEditions(root string, scope Scope) (map[string]*eventEdition, error) {
 	}
 	out := make(map[string]*eventEdition, len(scope))
 	for _, cid := range scope.sortedCIDs() {
-		dir := filepath.Join(root, cid)
-		spec, err := readCapped(filepath.Join(dir, SpecFileName), MaxSpecBytes+1)
-		if err != nil {
-			return nil, &InputError{Msg: "the " + SpecFileName + " of " + cid + " cannot be read", Err: err}
-		}
-		// An entry of the template directory that is not a regular file (a link, a directory, a
-		// special file) is an input that is not a file of its kind: exit 2 (D20), before the
-		// content of the files is held to B2.
-		if list, lerr := os.ReadDir(filepath.Join(dir, TemplateDirName)); lerr == nil {
-			for _, e := range list {
-				if !e.Type().IsRegular() {
-					return nil, inputErr("an entry of the " + TemplateDirName + " directory of " + cid + " is not a regular file (a link or a directory is refused)")
-				}
-			}
-		}
-		template, err := readFlatDir(cid, dir, TemplateDirName)
+		ed, err := readEditionFiles(cid, filepath.Join(root, cid))
 		if err != nil {
 			return nil, err
 		}
-		if len(template) == 0 {
-			return nil, inputErr("the " + TemplateDirName + " directory of " + cid + " is missing or has no file")
-		}
-		out[cid] = &eventEdition{specData: spec, template: template}
+		out[cid] = ed
 	}
 	return out, nil
+}
+
+// readEditionFiles reads the edition of the challenge cid at dir: dir/edition.yaml (as bytes) and
+// the files of dir/template/. It is the reader of an event edition (readEditions, the directory
+// <root>/<cid>) and of the image's edition that `edition render --practice` renders
+// (RenderPracticeEdition, the directory <challenges>/<cid>/edition), so the two are read alike.
+// An edition.yaml that cannot be read, an entry of the template directory that is not a regular
+// file and a template directory that is missing or has no file are an *InputError; the template
+// files are read as a bundle is (readFlatDir, B2).
+func readEditionFiles(cid, dir string) (*eventEdition, error) {
+	spec, err := readCapped(filepath.Join(dir, SpecFileName), MaxSpecBytes+1)
+	if err != nil {
+		return nil, &InputError{Msg: "the " + SpecFileName + " of " + cid + " cannot be read", Err: err}
+	}
+	// An entry of the template directory that is not a regular file (a link, a directory, a
+	// special file) is an input that is not a file of its kind: exit 2 (D20), before the
+	// content of the files is held to B2.
+	if list, lerr := os.ReadDir(filepath.Join(dir, TemplateDirName)); lerr == nil {
+		for _, e := range list {
+			if !e.Type().IsRegular() {
+				return nil, inputErr("an entry of the " + TemplateDirName + " directory of " + cid + " is not a regular file (a link or a directory is refused)")
+			}
+		}
+	}
+	template, err := readFlatDir(cid, dir, TemplateDirName)
+	if err != nil {
+		return nil, err
+	}
+	if len(template) == 0 {
+		return nil, inputErr("the " + TemplateDirName + " directory of " + cid + " is missing or has no file")
+	}
+	return &eventEdition{specData: spec, template: template}, nil
 }

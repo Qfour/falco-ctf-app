@@ -293,6 +293,14 @@ func TestRenderEvent_EveryRefusalWritesNothing(t *testing.T) {
 		{"a key in upper-case hex", func(f *rfFix) { f.tree.PlaceKey(keyRel, strings.ToUpper(hexKey)+"\n", 0o600) }, true, ""},
 		{"a key of two lines", func(f *rfFix) { f.tree.PlaceKey(keyRel, hexKey+"\n"+hexKey+"\n", 0o600) }, true, ""},
 		{"a key with no final newline", func(f *rfFix) { f.tree.PlaceKey(keyRel, hexKey, 0o600) }, true, ""},
+		// D20 / amendment 14: lower-case hex on one line and one final LF, nothing else.
+		{"a key that ends with CRLF", func(f *rfFix) { f.tree.PlaceKey(keyRel, hexKey+"\r\n", 0o600) }, true, ""},
+		{"a key with an empty second line", func(f *rfFix) { f.tree.PlaceKey(keyRel, hexKey+"\n\n", 0o600) }, true, ""},
+		{"a key with a second line of text", func(f *rfFix) { f.tree.PlaceKey(keyRel, hexKey+"\nsecond line\n", 0o600) }, true, ""},
+		{"a key with a space before it", func(f *rfFix) { f.tree.PlaceKey(keyRel, " "+hexKey+"\n", 0o600) }, true, ""},
+		{"a key with a space after it", func(f *rfFix) { f.tree.PlaceKey(keyRel, hexKey+" \n", 0o600) }, true, ""},
+		{"a key with a tab after it", func(f *rfFix) { f.tree.PlaceKey(keyRel, hexKey+"\t\n", 0o600) }, true, ""},
+		{"an empty key file", func(f *rfFix) { f.tree.PlaceKey(keyRel, "", 0o600) }, true, ""},
 		{"a key of mode 0644", func(f *rfFix) { f.tree.PlaceKey(keyRel, hexKey+"\n", 0o644) }, true, ""},
 		{"a key of mode 0640", func(f *rfFix) { f.tree.PlaceKey(keyRel, hexKey+"\n", 0o640) }, true, ""},
 		{"a key that is a link", func(f *rfFix) {

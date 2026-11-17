@@ -52,6 +52,9 @@ import (
 //     (CheckInput, CheckReport, InputError);
 //   - RenderEvent (ADR-0056 D20, V78, A4e-3a) is called by the `edition render` command and by
 //     nothing else: cmd/scoreboard/editioncmd.go, func runEditionRender, once;
+//   - RenderPracticeEdition (D20, V78, A4e-3b) is called by the `edition render --practice`
+//     command and by nothing else: cmd/scoreboard/editioncmd.go, func runEditionRenderPractice,
+//     once;
 //   - edition.Load is called by cmd/scoreboard, exactly once, and by nothing else;
 //   - load.go holds no PracticeSet literal (TestLoadHasNoPracticeLiteral).
 //
@@ -61,7 +64,7 @@ import (
 const editionImportPath = "github.com/Qfour/falco-ctf-app/internal/edition"
 
 // doorGuarded are the names of this package that only the door may use.
-var doorGuarded = []string{"Parse", "NewJudge", "Load", "loadPractice", "practiceJudge", "loadChecked", "LoadEventTable", "Check", "readPracticeFiles", "CheckEvent", "WriteDigestsFile", "checkAnswersData", "RenderEvent"}
+var doorGuarded = []string{"Parse", "NewJudge", "Load", "loadPractice", "practiceJudge", "loadChecked", "LoadEventTable", "Check", "readPracticeFiles", "CheckEvent", "WriteDigestsFile", "checkAnswersData", "RenderEvent", "RenderPracticeEdition"}
 
 // doorUse is one reference to a guarded name: the file (slash path from the repo
 // root), the enclosing function ("" outside any function), the name, and whether
@@ -217,6 +220,14 @@ func doorViolations(files map[string]string) (violations []string, counts map[st
 					continue
 				}
 				counts["RenderEvent@runEditionRender"]++
+			case "RenderPracticeEdition":
+				// The practice edition's entrance: the `edition render --practice` command's
+				// function, as a call, once (counted below).
+				if p != "cmd/scoreboard/editioncmd.go" || u.fn != "runEditionRenderPractice" || !u.call {
+					violations = append(violations, where+": RenderPracticeEdition is used outside a call in runEditionRenderPractice of cmd/scoreboard/editioncmd.go (the `edition render --practice` command is its one caller)")
+					continue
+				}
+				counts["RenderPracticeEdition@runEditionRenderPractice"]++
 			case "loadChecked":
 				// The two doors that read an answers file: the start-up's Load and the validator's
 				// LoadEventTable.
@@ -295,6 +306,9 @@ func doorViolations(files map[string]string) (violations []string, counts map[st
 	if counts["RenderEvent@runEditionRender"] > 1 {
 		violations = append(violations, "runEditionRender calls RenderEvent more than once; the command is one call")
 	}
+	if counts["RenderPracticeEdition@runEditionRenderPractice"] > 1 {
+		violations = append(violations, "runEditionRenderPractice calls RenderPracticeEdition more than once; the command is one call")
+	}
 	for _, fn := range []string{"loadChecked", "RenderEvent"} {
 		if counts["checkAnswersData@"+fn] > 1 {
 			violations = append(violations, fn+" calls checkAnswersData more than once")
@@ -360,7 +374,8 @@ func TestAnswersTableHasOneDoor(t *testing.T) {
 // (and the read of the practice answers for T6) out of loadChecked into checkAnswersData, which
 // loadChecked calls and the renderer's self check calls (Parse@loadChecked, Check@loadChecked and
 // loadPractice@loadChecked became the three @checkAnswersData), and added the renderer's
-// entrance, RenderEvent@runEditionRender.
+// entrance, RenderEvent@runEditionRender. A4e-3b added the practice edition's entrance,
+// RenderPracticeEdition@runEditionRenderPractice.
 var wantDoorCounts = map[string]int{
 	"Parse@checkAnswersData":           1,
 	"Parse@loadPractice":               1,
@@ -381,6 +396,8 @@ var wantDoorCounts = map[string]int{
 	"WriteDigestsFile@runEditionCheck": 1,
 	"RenderEvent@runEditionRender":     1,
 	"Load@cmd/scoreboard":              1,
+
+	"RenderPracticeEdition@runEditionRenderPractice": 1,
 }
 
 // ADR-0056 D19 A4a-1 / V34: the Options that Load hands to Check carry the practice
@@ -458,9 +475,10 @@ func TestAnswersTableDoorScan_SeesAViolation(t *testing.T) {
 	const eventSrc = "package edition\n\nfunc CheckEvent() {\n\t_, _, _ = LoadEventTable(nil, \"\")\n}\n"
 	// RenderEvent (A4e-3a) holds the bytes of the table it is about to write to checkAnswersData.
 	const renderEventSrc = "package edition\n\nfunc RenderEvent() {\n\t_, _, _, _ = checkAnswersData(nil, nil, true)\n}\n"
-	// The `edition check` command calls CheckEvent and WriteDigestsFile, once each, and the
-	// `edition render` command calls RenderEvent, once.
-	const cmdSrc = "package main\n\nimport \"" + editionImportPath + "\"\n\nfunc runEditionCheck() {\n\t_, _, _ = edition.CheckEvent(in)\n\t_ = edition.WriteDigestsFile(p, ev)\n}\n\nfunc runEditionRender() {\n\t_, _ = edition.RenderEvent(in)\n}\n"
+	// The `edition check` command calls CheckEvent and WriteDigestsFile, once each, the
+	// `edition render` command calls RenderEvent, once, and `edition render --practice` calls
+	// RenderPracticeEdition, once.
+	const cmdSrc = "package main\n\nimport \"" + editionImportPath + "\"\n\nfunc runEditionCheck() {\n\t_, _, _ = edition.CheckEvent(in)\n\t_ = edition.WriteDigestsFile(p, ev)\n}\n\nfunc runEditionRender() {\n\t_, _ = edition.RenderEvent(in)\n}\n\nfunc runEditionRenderPractice() {\n\t_, _ = edition.RenderPracticeEdition(c, id)\n}\n"
 	good := map[string]string{"internal/edition/load.go": loadSrc, "internal/edition/checkevent.go": eventSrc, "internal/edition/eventrender.go": renderEventSrc, "cmd/scoreboard/edition.go": mainSrc, "cmd/scoreboard/editioncmd.go": cmdSrc}
 	if v, c := doorViolations(good); len(v) != 0 || !maps.Equal(c, wantDoorCounts) {
 		t.Fatalf("the allowed shape: violations %v, calls %v, want none and %v", v, c, wantDoorCounts)
@@ -546,6 +564,13 @@ func TestAnswersTableDoorScan_SeesAViolation(t *testing.T) {
 		{"RenderEvent taken as a value", "cmd/scoreboard/y.go", "package main\n\nimport \"" + editionImportPath + "\"\n\nvar f = edition.RenderEvent\n"},
 		{"RenderEvent called from the scoreboard's server", "internal/scoreboard/x.go", "package scoreboard\n\nimport \"" + editionImportPath + "\"\n\nfunc f() { _, _ = edition.RenderEvent(in) }\n"},
 		{"RenderEvent called by another function of the package", "internal/edition/other.go", "package edition\n\nfunc other() { _, _ = RenderEvent(in) }\n"},
+		// RenderPracticeEdition: the `edition render --practice` command's function only, once (V78).
+		{"RenderPracticeEdition called from another file of cmd/scoreboard", "cmd/scoreboard/y.go", "package main\n\nimport \"" + editionImportPath + "\"\n\nfunc runEditionRenderPractice() { _, _ = edition.RenderPracticeEdition(c, id) }\n"},
+		{"RenderPracticeEdition called twice by the command", "cmd/scoreboard/editioncmd.go", "package main\n\nimport \"" + editionImportPath + "\"\n\nfunc runEditionRenderPractice() {\n\t_, _ = edition.RenderPracticeEdition(c, id)\n\t_, _ = edition.RenderPracticeEdition(c, id)\n}\n"},
+		{"RenderPracticeEdition called by the event's render function", "cmd/scoreboard/editioncmd.go", "package main\n\nimport \"" + editionImportPath + "\"\n\nfunc runEditionRender() { _, _ = edition.RenderPracticeEdition(c, id) }\n"},
+		{"RenderPracticeEdition taken as a value", "cmd/scoreboard/y.go", "package main\n\nimport \"" + editionImportPath + "\"\n\nvar f = edition.RenderPracticeEdition\n"},
+		{"RenderPracticeEdition called from the scoreboard's server", "internal/scoreboard/x.go", "package scoreboard\n\nimport \"" + editionImportPath + "\"\n\nfunc f() { _, _ = edition.RenderPracticeEdition(c, id) }\n"},
+		{"RenderPracticeEdition called by another function of the package", "internal/edition/other.go", "package edition\n\nfunc other() { _, _ = RenderPracticeEdition(c, id) }\n"},
 	}
 	for _, c := range cases {
 		files := map[string]string{"internal/edition/load.go": loadSrc, "cmd/scoreboard/edition.go": mainSrc, c.path: c.src}

@@ -29,18 +29,23 @@ import (
 //   - no non-test file of package edition outside the render files refers to an exported
 //     name a render file declares, or calls an unexported function a render file declares:
 //     Load, and so the scoreboard, cannot reach the renderer through the package either;
-//   - renderCallers is the ONE file that may: internal/edition/eventrender.go, the
-//     implementation of `edition render` (RenderEvent, ADR-0056 D20, D19 A4e-3a). It reads the
-//     key and the inputs, calls the renderer and writes its output, so it is not a render file
-//     (those read no file). The command of cmd/scoreboard does not refer to the renderer: it
-//     calls edition.RenderEvent, which is declared in eventrender.go (who calls RenderEvent, and
-//     where, is load_source_test.go's doorViolations: runEditionRender, once). `edition check`
-//     does not call the renderer, and no file of cmd/scoreboard (the server's wiring or the
-//     command) is in the list.
+//   - renderCallers are the TWO files that may: internal/edition/eventrender.go, the
+//     implementation of `edition render` (RenderEvent, ADR-0056 D20, D19 A4e-3a), and
+//     internal/edition/practiceedition.go, the implementation of `edition render --practice`
+//     (RenderPracticeEdition, D19 A4e-3b). Each reads its inputs, calls the renderer and writes
+//     its output, so neither is a render file (those read no file). The command of cmd/scoreboard
+//     does not refer to the renderer: it calls edition.RenderEvent and
+//     edition.RenderPracticeEdition, which are declared in those two files (who calls them, and
+//     where, is load_source_test.go's doorViolations: runEditionRender and
+//     runEditionRenderPractice, once each). `edition check` does not call the renderer, and no
+//     file of cmd/scoreboard (the server's wiring or the command) is in the list.
 //
 // A reference in a test file is not a use (nonTestSources reads no *_test.go).
 
-var renderCallers = map[string]bool{"internal/edition/eventrender.go": true}
+var renderCallers = map[string]bool{
+	"internal/edition/eventrender.go":     true,
+	"internal/edition/practiceedition.go": true,
+}
 
 // isRenderFile reports whether the slash path (from the repo root) is a file of the
 // renderer stage: internal/edition/render*.go, directly in the package's directory.
@@ -195,22 +200,29 @@ func TestRenderIsNotReachableFromTheScoreboard(t *testing.T) {
 			t.Errorf("renderCallers lists %s, which is not a file", p)
 		}
 	}
-	// The entry of the list is a caller (V78, A4e-3a): without it, the scan reports that file and
-	// no other. An entry for a file that does not reach the renderer would be a hole kept open
-	// for nothing.
+	// Every entry of the list is a caller (V78, A4e-3a and A4e-3b): without the list, the scan
+	// reports those files and no other, and each of them. An entry for a file that does not reach
+	// the renderer would be a hole kept open for nothing.
 	unlisted := renderReaches(t, files, nil)
 	if len(unlisted) == 0 {
-		t.Error("with no file allowed, the scan reports nothing: the listed caller does not reach the renderer")
+		t.Error("with no file allowed, the scan reports nothing: the listed callers do not reach the renderer")
 	}
+	reported := map[string]bool{}
 	for _, line := range unlisted {
 		listed := false
 		for p := range renderCallers {
 			if strings.HasPrefix(line, p+":") {
 				listed = true
+				reported[p] = true
 			}
 		}
 		if !listed {
-			t.Errorf("with no file allowed, the scan reports %q, a file that is not the listed caller", line)
+			t.Errorf("with no file allowed, the scan reports %q, a file that is not a listed caller", line)
+		}
+	}
+	for p := range renderCallers {
+		if !reported[p] {
+			t.Errorf("renderCallers lists %s, which does not reach the renderer", p)
 		}
 	}
 }

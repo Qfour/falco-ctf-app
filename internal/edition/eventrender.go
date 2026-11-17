@@ -37,8 +37,9 @@ package edition
 // 2), and the *OutputError of step 5 a failure of the output's environment after every check
 // passed (exit 3). Nothing here names a value, the key or a word of a vocabulary.
 //
-// Reach (D9, D13, V78): this file is the ONE file outside the render files that refers to what
-// they declare (render_reach_test.go's renderCallers), and RenderEvent is called by the
+// Reach (D9, D13, V78): this file is one of the TWO files outside the render files that refer to
+// what they declare (render_reach_test.go's renderCallers; the other is practiceedition.go, the
+// practice edition's, A4e-3b), and RenderEvent is called by the
 // command's runEditionRender and by nothing else (load_source_test.go). It is not named
 // render*.go because it reads files and the clockless, diskless rule of the render files is not
 // its rule (render_reach_test.go, TestRenderFilesAreDeterministicAndPure).

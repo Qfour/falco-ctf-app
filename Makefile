@@ -18,7 +18,7 @@ SYSDIG_URL   ?= https://app.au1.sysdig.com
 # host repo are not shared into the VM.
 GO_IMAGE ?= golang:1.26-alpine
 
-.PHONY: help dev dev-down build push load-colima deploy-local helm-dep-build lint check-seccomp check-chartparse check-flag-isolation check-namespace-ownership check-answers-secret check-answers-secret-selftest check-image-hygiene check-image-hygiene-selftest check-image-type-rule test e2e e2e-serve check-e2e-verdict tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-template-hex check-portal-render check-rules check-freshness check-adr check-dockerignore check-build-context check-go-base-digest check-apk-pins check-apk-pins-selftest clean scan check-apk-pins-lint fmt-check
+.PHONY: help dev dev-down build push load-colima deploy-local helm-dep-build lint check-seccomp check-chartparse check-flag-isolation check-namespace-ownership check-answers-secret check-answers-secret-selftest check-image-hygiene check-image-hygiene-selftest check-image-type-rule test e2e e2e-serve check-e2e-verdict tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-template-hex check-portal-render check-rules check-freshness check-adr check-dockerignore check-build-context check-go-base-digest check-apk-pins check-apk-pins-selftest clean scan check-apk-pins-lint fmt-check edition-practice
 
 help:
 	@echo "Targets:"
@@ -48,6 +48,7 @@ help:
 	@echo "  gen-tutorial-fragments — regenerate Portal Tutorial tab HTML fragments (docs-site/tutorial-chapters.yaml)"
 	@echo "  gen-values      — regenerate challenge values.yaml / values-all.yaml / values-scenario-<name>.yaml from plant.sh + scenarios/"
 	@echo "  gen-attack      — regenerate ATT&CK Navigator layer + coverage table from falco-rule.yaml attack: blocks"
+	@echo "  edition-practice — CID=<cid>: re-render challenges/<cid>/edition/practice/ from its edition.yaml + template/ with scoreboard edition render --practice in Dockerfile.edition-practice (no Go on the host; ADR-0056 D20); commits nothing"
 	@echo "  check-flags     — fail if real flags leak into tracked files or values are stale; + deploy-user.sh --flags-file validation tests + deploy-time missions allowlist (ADR-0026 V4, 3-8) selftest; + self-tests of the shared shell case-table reader scripts/lib/casetable.sh and the deploy-user.sh stub harness scripts/lib/deploy-user-harness.sh (app#509); + deploy-user.sh seat-grammar check against the shared case table (app#480); + deploy-user.sh challenge-id / scenario-name grammar check against their shared case tables (app#494); + the shell evidence-bundle digest against the shared case table and deploy-user.sh --evidence-dir / --evidence-digests with stub kubectl / helm (ADR-0056 V16 / V17 / V49 / V50); + fail on any tracked email outside the reserved domains (ADR-0034 V17)"
 	@echo "  check-template-hex — fail if a raw hex color literal appears under view/templates/ (recursive: index.html + portal/*.tmpl; app#116 — single design-token source is static/tokens.css)"
 	@echo "  check-portal-render — (macOS, optional; not in CI) run the portal evade-card render functions under jsc and assert ADR-0027 D6 (no clean claim for a non-current evade; dirty always shown; escaping)"
@@ -276,6 +277,26 @@ gen-tutorial-fragments:
 
 gen-values:
 	./challenges/gen-values.sh
+
+# ADR-0056 D20 (A4e-3b): the practice edition of one investigate challenge, rendered by
+# `scoreboard edition render --practice` inside Dockerfile.edition-practice (the export stage, as
+# `make gen` does; no Go on the host, no network in the build of the binary or in the render).
+# The export goes to a new temporary directory and not to `-o .`: an export is written over what
+# is there and removes nothing, so a file the new render no longer makes would stay behind in
+# practice/. Only after the build succeeded is the host's practice/ replaced by the exported one.
+# CID is checked here for an early, readable error; the command checks it again. Nothing is
+# committed: review `git diff`, then commit by hand.
+edition-practice:
+	@case "$(CID)" in ''|-*|*[!a-z0-9-]*) echo "error: CID=<challenge id> is required (an investigate challenge with challenges/<cid>/edition/)" >&2; exit 2;; esac
+	@test -d "challenges/$(CID)/edition" || { echo "error: challenges/$(CID)/edition/ does not exist" >&2; exit 2; }
+	@out="$$(mktemp -d)" || exit 1; \
+	trap 'rm -rf "$$out"' EXIT; \
+	docker build -f Dockerfile.edition-practice --target export --build-arg CID="$(CID)" -o "$$out" . || exit 1; \
+	new="$$out/challenges/$(CID)/edition/practice"; \
+	if [ ! -d "$$new" ] || [ -z "$$(ls -A "$$new")" ]; then echo "error: the export holds no practice/ of $(CID)" >&2; exit 1; fi; \
+	rm -rf "challenges/$(CID)/edition/practice" || exit 1; \
+	mv "$$new" "challenges/$(CID)/edition/practice" || { echo "error: practice/ was removed and the new one could not be moved in (git checkout -- challenges/$(CID)/edition/practice restores it)" >&2; exit 1; }; \
+	echo "== challenges/$(CID)/edition/practice/ is the new render: review git diff, then commit it =="
 
 # Regenerates challenges/attack-navigator-layer.json + challenges/ATTACK-COVERAGE.md
 # from the attack: blocks in challenges/*/falco-rule.yaml (single source). Idempotent.
