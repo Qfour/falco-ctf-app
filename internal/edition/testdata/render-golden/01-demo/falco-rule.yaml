@@ -1,0 +1,22 @@
+type: investigate
+investigate:
+  evidence: {mountDir: /opt/ctf/evidence}
+  questions:
+    - id: q1
+      format: name
+      attempts: 1
+    - id: q2
+      format: path
+      attempts: 1
+    - id: q3
+      format: hexid
+      attempts: 1
+      params: {length: 12}
+    - id: q4
+      format: timestamp
+      attempts: 1
+      params: {windowSeconds: 3600}
+    - id: q5
+      format: choice-set
+      attempts: 1
+      params: {choices: [c0, c1, c2, c3, c4, c5, c6, c7, c8, c9]}

@@ -1,0 +1,13 @@
+u={{ctf:who}}
+p={{ctf:where}}
+h={{ctf:tag}}
+t={{ctf:when}}
+o={{ctf:other}}
+u={{ctf:who-d1}}
+p={{ctf:where-d1}}
+h={{ctf:tag-d1}}
+t={{ctf:when-d1}}
+u={{ctf:who-d2}}
+p={{ctf:where-d2}}
+h={{ctf:tag-d2}}
+t={{ctf:when-d2}}
