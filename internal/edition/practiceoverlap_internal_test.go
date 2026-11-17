@@ -462,25 +462,113 @@ func TestShingleSet_IsHintleaksWindowOverTheNormalisedRunes(t *testing.T) {
 		"plain":      {ovFile("a", text)},
 		"whitespace": {ovFile("a", spaced)},
 	} {
-		if got := len(shingleSet(files, false)); got != 6 {
+		if got := len(ovShingleSet(t, files, false)); got != 6 {
 			t.Errorf("%s: %d shingles of %d runes, want 6", name, got, n+5)
 		}
 	}
 	// two files of GramRunes-1 runes: a run is not made of two files
 	short := ovRunes(0, n-1)
-	if got := len(shingleSet([]BundleFile{ovFile("a", short), ovFile("b", short)}, false)); got != 0 {
+	if got := len(ovShingleSet(t, []BundleFile{ovFile("a", short), ovFile("b", short)}, false)); got != 0 {
 		t.Errorf("two short files gave %d shingles, want 0 (a window is cut from one file)", got)
 	}
 	// the same file twice is the same shingles
-	if got := len(shingleSet([]BundleFile{ovFile("a", text), ovFile("b", text)}, false)); got != 6 {
+	if got := len(ovShingleSet(t, []BundleFile{ovFile("a", text), ovFile("b", text)}, false)); got != 6 {
 		t.Errorf("a file twice gave %d shingles, want 6 (a set)", got)
 	}
 	// marks: removed only when asked, and the text on both sides is joined
 	marked := ovRunes(0, 6) + "{{ctf:slot}}" + ovRunes(6, 6)
-	if got := len(shingleSet([]BundleFile{ovFile("a", marked)}, true)); got != 3 {
+	if got := len(ovShingleSet(t, []BundleFile{ovFile("a", marked)}, true)); got != 3 {
 		t.Errorf("a marked template gave %d shingles with the marks out, want 3 (12 runes)", got)
 	}
-	if got := len(shingleSet([]BundleFile{ovFile("a", marked)}, false)); got <= 3 {
+	if got := len(ovShingleSet(t, []BundleFile{ovFile("a", marked)}, false)); got <= 3 {
 		t.Errorf("the marks were removed when they were not to be: %d shingles", got)
+	}
+}
+
+// ovShingleSet is shingleSet for a case that holds no fault: a fault is a failure of the test.
+func ovShingleSet(t *testing.T, files []BundleFile, stripMarks bool) map[string]struct{} {
+	t.Helper()
+	set, fault := shingleSet(files, stripMarks)
+	if fault != nil {
+		t.Fatalf("shingleSet found a fault in a text that has none: %+v", *fault)
+	}
+	return set
+}
+
+// A `{{ctf:` that is not a mark (the lexer's grammar, slotmark.go) is a B4 violation, in an
+// event template and in a practice template: never text that is shingled with the mark left
+// in, never a mark taken out by a looser rule. The old regular expression took out any
+// `{{ctf:<no brace>}}`, and left `{{ctf:who}` as text; both are refused now. Only the rule, the
+// file and the line are named.
+func TestPracticeOverlap_AMarkOutsideTheGrammarIsRefused(t *testing.T) {
+	filler := ovRunes(2000, 40)
+	// each text has enough runes outside the bad mark: a refusal is the mark's, not a short file's
+	cases := []struct {
+		name, text string
+		line       int
+	}{
+		{"a slot name with a capital", filler + "\n{{ctf:Who}}\n", 2},
+		{"no slot name", "{{ctf:}}" + filler, 1},
+		{"a space inside", filler + "{{ctf: who}}", 1},
+		{"a mark that is not closed (one brace)", "a\nb\n{{ctf:who}\n" + filler, 3},
+		{"a mark that is cut by the end of the file", filler + "{{ctf:who", 1},
+		{"a bad mark after a good one", "{{ctf:who}} " + filler + "\n{{ctf:", 2},
+	}
+	for _, c := range cases {
+		t.Run("event template / "+c.name, func(t *testing.T) {
+			in := ovBaseInput()
+			in.Templates = map[string][]BundleFile{"01-demo": {ovFile("page.txt", c.text)}}
+			_, err := ovRun(ovBaseBundles(), in, OverlapTheta)
+			ovWantMarkRefusal(t, err, c.text, "page.txt", "01-demo", c.line, "the event template of this challenge")
+		})
+		t.Run("practice template / "+c.name, func(t *testing.T) {
+			in := ovBaseInput()
+			in.Practice["02-prac"].Template = []BundleFile{ovFile("page.txt", c.text)}
+			_, err := ovRun(ovBaseBundles(), in, OverlapTheta)
+			ovWantMarkRefusal(t, err, c.text, "page.txt", "", c.line, "a template of practice edition 02-prac")
+		})
+	}
+
+	// A good mark is still taken out (the refusal is not a refusal of every template).
+	in := ovBaseInput()
+	in.Templates = map[string][]BundleFile{"01-demo": {ovFile("page.txt", filler+"{{ctf:who}}"+ovRunes(3000, 12))}}
+	in.Practice["02-prac"].Template = []BundleFile{ovFile("page.txt", ovRunes(500, 40)+"{{ctf:who-d1}}")}
+	if _, err := ovRun(ovBaseBundles(), in, OverlapTheta); err != nil {
+		t.Errorf("B4 refused templates whose marks are all in the grammar: %v", err)
+	}
+}
+
+// ovWantMarkRefusal checks that err holds a B4 violation of a mark outside the grammar at the
+// file and line, with no byte of the text in the message.
+func ovWantMarkRefusal(t *testing.T, err error, text, file, cid string, line int, who string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("B4 accepted a template that holds a mark outside the grammar")
+	}
+	var found *Violation
+	var walk func(error)
+	walk = func(e error) {
+		if j, ok := e.(interface{ Unwrap() []error }); ok {
+			for _, x := range j.Unwrap() {
+				walk(x)
+			}
+			return
+		}
+		var v *Violation
+		if errors.As(e, &v) && v.Rule == RuleBundlePractice && strings.Contains(v.Msg, "that is not a mark") {
+			found = v
+		}
+	}
+	walk(err)
+	if found == nil {
+		t.Fatalf("no B4 violation about a mark outside the grammar: %v", err)
+	}
+	if !strings.Contains(found.Msg, who) || found.File != file || found.Line != line || found.CID != cid {
+		t.Errorf("violation = %+v, want B4 of %q at file %s, line %d, challenge %q", *found, who, file, line, cid)
+	}
+	for _, bad := range []string{ovRunes(2000, 10), ovRunes(500, 10), "who"} {
+		if strings.Contains(err.Error(), bad) {
+			t.Errorf("the error carries %q (content of a template): %v", bad, err)
+		}
 	}
 }

@@ -36,9 +36,9 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"maps"
-	"regexp"
 	"slices"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog/answerformat"
@@ -51,16 +51,26 @@ const RuleBundlePractice = "B4"
 
 // OverlapTheta is theta of B4 (D10, CISO 2026-11-16, provisional): an event bundle or
 // template whose shingle overlap with a practice edition is at or above it is refused.
-// practiceoverlap_test.go pins the value (V19) and its boundary; changing it is the CISO's
+// practiceoverlap_internal_test.go pins the value (V19) and its boundary; changing it is the CISO's
 // decision after the first event's measurements (Signpost 6), and changes this constant and
 // that pin together.
 const OverlapTheta = 0.5
 
-// slotMarkRE is a slot mark of a template, {{ctf:<slot>}} (D12). It is removed before the
-// shingles of a template are cut. The owner of the mark's grammar is the renderer (A4d-2):
-// when it lands, its lexer is the one definition and this calls it, instead of keeping this
-// expression.
-var slotMarkRE = regexp.MustCompile(`\{\{ctf:[^{}]*\}\}`)
+// markFault is the first `{{ctf:` of a template that is not a mark (slotmark.go, ScanMarks:
+// the one definition of the grammar of a mark): the file it is in and its line. B4 refuses
+// such a template; it neither leaves the text in nor takes it out. It holds no content.
+type markFault struct {
+	file string
+	line int
+}
+
+// markViolation is B4's violation for a markFault: the rule, a sentence, the line, and the
+// name of the file as the bundle rules show a name (never a byte of the template).
+func markViolation(msg string, c cell, f *markFault) *Violation {
+	v := newViolation(RuleBundlePractice, msg, f.line, c, nil)
+	v.File = shownName(f.file)
+	return v
+}
 
 // OverlapPair is the largest overlap of one comparison and the pair it is of.
 type OverlapPair struct {
@@ -171,10 +181,18 @@ func checkPracticeOverlap(c *collector, bundles *Bundles, in overlapInput, theta
 			for _, f := range ed.Evidence {
 				setOnce(fileDigests, fileDigest(f.Data), pid)
 			}
-			outputs.add(pid, shingleSet(ed.Evidence, false))
+			set, _ := shingleSet(ed.Evidence, false) // no marks are read in an output: no fault
+			outputs.add(pid, set)
 		}
 		if len(ed.Template) > 0 {
-			templates.add(pid, shingleSet(ed.Template, true))
+			set, fault := shingleSet(ed.Template, true)
+			if fault != nil {
+				// A practice template (a public file of the image) that the lexer cannot read is
+				// not indexed, and not compared by a guess: B4 refuses it.
+				c.add(markViolation("a template of practice edition "+practiceRef(pid)+" holds a "+MarkOpen+" that is not a mark, so B4 cannot read it", cell{}, fault))
+			} else {
+				templates.add(pid, set)
+			}
 		}
 	}
 	// Fail-closed: an event side with nothing to compare it with is not a pass. No practice
@@ -218,7 +236,7 @@ func checkPracticeOverlap(c *collector, bundles *Bundles, in overlapInput, theta
 		}
 
 		// the shingles, (1)
-		set := shingleSet(b.Files, false)
+		set, _ := shingleSet(b.Files, false) // no marks are read in an output: no fault
 		if len(set) == 0 {
 			b4("the bundle has no 10-rune sequence, so its overlap with the practice editions cannot be computed", b.Seat, b.CID)
 			continue
@@ -240,7 +258,13 @@ func checkPracticeOverlap(c *collector, bundles *Bundles, in overlapInput, theta
 			b4("the event template of this challenge has no file, so its overlap with the practice templates cannot be computed", "", cid)
 			continue
 		}
-		set := shingleSet(files, true)
+		set, fault := shingleSet(files, true)
+		if fault != nil {
+			// The event template reached the validator as it is (the validator does not trust
+			// the renderer): a `{{ctf:` that is not a mark is a refusal, not text to shingle.
+			c.add(markViolation("the event template of this challenge holds a "+MarkOpen+" that is not a mark, so its overlap with the practice templates cannot be computed", cell{cid: cid}, fault))
+			continue
+		}
 		if len(set) == 0 {
 			b4("the event template of this challenge has no 10-rune sequence outside its slot marks, so its overlap with the practice templates cannot be computed", "", cid)
 			continue
@@ -295,7 +319,7 @@ func setOnce(m map[string]string, k, v string) {
 // file); checkEmptyPracticeAnswers refuses it once, as an input defect.
 //
 // The error is Fold's, and only a per-seat format reaches Fold: it is ErrNoFold only for a
-// per-seat format that has no fold, which fold_test.go (every per-seat format has one) makes
+// per-seat format that has no fold, which internal/catalog/answerformat/fold_test.go (TestFold_IsDefinedForExactlyThePerSeatFormats: every per-seat format has one) makes
 // unreachable today. It stays a returned error so that a format added without a fold is a
 // refusal and not a silent skip.
 func holdsPracticeAnswer(b *Bundle, answers PracticeSet) (bool, error) {
@@ -334,24 +358,43 @@ func checkEmptyPracticeAnswers(c *collector, answers PracticeSet) {
 
 // shingleSet is the distinct 10-rune shingles of the files, each file cut by itself (a run
 // that straddles two files is in neither, as in hintleak.Check). With stripMarks the slot
-// marks {{ctf:...}} are removed first. The windows are hintleak's (hintleak.Normalize, then
-// windows of hintleak.GramRunes runes): there is no second definition of what a run of
-// runes is, only this loop over its result. The loop cuts the windows the way hintleak's
-// gramSet does; a parity test that ties the two together is for the next change to
-// hintleak.
-func shingleSet(files []BundleFile, stripMarks bool) map[string]struct{} {
+// marks are taken out first, and the file is read by the lexer of the marks (ScanMarks, the
+// one definition of a mark): the literal parts are joined and what the marks were is gone.
+// A `{{ctf:` that is not a mark makes the whole call fail (nil set and the first fault, in
+// the order of files): a template that cannot be read is never shingled with the text left
+// in or with the text guessed out. Without stripMarks the files are not scanned, and the
+// fault is always nil. The windows are hintleak's (hintleak.Normalize, then windows of
+// hintleak.GramRunes runes): there is no second definition of what a run of runes is, only
+// this loop over its result. The loop cuts the windows the way hintleak's gramSet does; a
+// parity test that ties the two together is for the next change to hintleak.
+func shingleSet(files []BundleFile, stripMarks bool) (map[string]struct{}, *markFault) {
 	set := make(map[string]struct{})
 	for _, f := range files {
 		text := string(f.Data)
 		if stripMarks {
-			text = slotMarkRE.ReplaceAllString(text, "")
+			parts, err := ScanMarks(f.Data)
+			if err != nil {
+				// A MarkError is the only error ScanMarks returns; without its line the fault
+				// is still a fault (line 0 is "not known").
+				var me *MarkError
+				line := 0
+				if errors.As(err, &me) {
+					line = me.Line
+				}
+				return nil, &markFault{file: f.Name, line: line}
+			}
+			var lits []byte
+			for _, p := range parts {
+				lits = append(lits, p.Lit...)
+			}
+			text = string(lits)
 		}
 		runes := hintleak.Normalize(text)
 		for i := 0; i+hintleak.GramRunes <= len(runes); i++ {
 			set[string(runes[i:i+hintleak.GramRunes])] = struct{}{}
 		}
 	}
-	return set
+	return set, nil
 }
 
 // shingleIndex maps a shingle to the practice editions that hold it, so that the overlap of
