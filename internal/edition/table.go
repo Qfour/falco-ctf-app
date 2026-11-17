@@ -18,8 +18,10 @@
 // A4e-1 adds the validator's side of the doors (ADR-0056 D20): LoadEventTable (load.go) reads
 // and checks the answers file through the function that Load shares, so the table the
 // scoreboard starts with and the table the validator accepts go through the same Check, and
-// hands back a *CheckedTable; CheckBundles takes that and gives a *CheckedBundles, which is
-// all WriteDigests accepts. The files of the validator's input are opened by one function
+// hands back a *CheckedTable; CheckBundles takes that and gives a *CheckedBundles, which is an
+// intermediate value of CheckEvent (A4e-2, checkevent.go): CheckEvent runs every check of D20 in
+// its order and is the one maker of the *CheckedEvent that WriteDigests accepts. The files of the
+// validator's input are opened by one function
 // (safeopen.go: O_NOFOLLOW, and the open descriptor's Stat held to the Lstat), an output is
 // written by one pair of functions (atomicwrite.go: a temporary sibling, 0700 / 0600, then a
 // rename) and the names of an edition's directory are defined once (practicelayout.go). The

@@ -6,11 +6,11 @@ package scope_test
 //
 //   - TestScopeFunctionsHaveTheExpectedCallers: every call of scope.Assemble and
 //     scope.PromptCountProblem in cmd/ and internal/ is one of the sites below.
-//     Today the callers are the tests of internal/hintleak only: content_test.go
-//     (the real tree, V5 / V6) and questionprompt_test.go (the in-memory V24
-//     scopes, which must use the same definition). ADR-0056 A4e adds the second
-//     caller, the `edition check` subcommand of cmd/scoreboard; that PR adds its
-//     sites to wantScopeCalls (the pin is not widened ahead of it).
+//     The callers are the tests of internal/hintleak (content_test.go: the real
+//     tree, V5 / V6; questionprompt_test.go: the in-memory V24 scopes, which must
+//     use the same definition) and the event validator: ADR-0056 A4e-2's
+//     internal/edition/checkevent.go (func hintInputs, which CheckEvent calls for
+//     B5's Hints and Free) calls both functions, once each.
 //   - TestNoSecondAssemblyInHintleakTests: no _test.go under internal/hintleak
 //     builds Hints or Free from catalog values by itself (see assemblyProblems).
 //     Only the _test.go files of internal/hintleak are scanned; extending the scan
@@ -176,8 +176,12 @@ func scopeCalls(files map[string]string) (counts map[string]int, problems []stri
 }
 
 // wantScopeCalls is the whole of what may call the scope functions: see the
-// header. A4e adds the cmd/scoreboard sites.
+// header.
 var wantScopeCalls = map[string]int{
+	"Assemble@internal/edition/checkevent.go (func hintInputs)": 1,
+
+	"PromptCountProblem@internal/edition/checkevent.go (func hintInputs)": 1,
+
 	"Assemble@internal/hintleak/content_test.go (func loadScope)": 1,
 
 	"PromptCountProblem@internal/hintleak/content_test.go (func promptCountProblem)": 1,
@@ -219,6 +223,8 @@ func TestScopeFunctionsHaveTheExpectedCallers(t *testing.T) {
 		src  string
 	}{
 		{"a call from a non-test file", "cmd/scoreboard/edition.go", imp + "func f() { scope.Assemble() }\n"},
+		{"a call from another function of checkevent.go", "internal/edition/checkevent.go", imp + "func g() { scope.Assemble() }\n"},
+		{"a second call in hintInputs", "internal/edition/checkevent.go", imp + "func hintInputs() { scope.Assemble(); scope.Assemble() }\n"},
 		{"a call from another test", "internal/hintleak/other_test.go", imp + "func f() { scope.Assemble() }\n"},
 		{"a call through an alias", "internal/hintleak/other_test.go", "package x\n\nimport sc \"" + scopeImportPath + "\"\n\nfunc f() { sc.Assemble() }\n"},
 		{"a second call in a known function", "a/a.go", imp + "func f() { scope.Assemble(); scope.Assemble() }\n"},

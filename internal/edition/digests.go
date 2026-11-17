@@ -72,27 +72,39 @@ func checkDigestRow(r DigestRow, line int) error {
 	return nil
 }
 
-// WriteDigests writes the digests file of a tree of bundles that went through the rules of
-// CheckBundles (B1, B2, B3, B5, B6 and B9): the header with the run id of the answers table the
-// tree was checked against (cb.RunID), then the rows in byte order of (seat, cid), so one set
-// of rows is one file. It takes a *CheckedBundles and nothing weaker (ADR-0056 D9 M2, D19
-// A4e-1): there is no way to write a digests file for rows that CheckBundles did not give, or
-// under another run id than the table's. That is all the type guarantees: the event's digests
-// may be written only when every check of D20's CheckEvent has passed (E1, E2, B4, B7, B8 and
-// B10 included), and that order and gate are CheckEvent's (A4e-2), not this function's. It
-// still refuses what it always refused, so that the one writer cannot make a file
-// the readers refuse: a run id that is not 32 lower-case hex digits or is all zeros (a
-// digests file exists only for an event: the practice mode has none), no row, a row that is
-// not in its grammar and a repeated (seat, cid); and a nil cb. Nothing is written when it
-// refuses.
-func WriteDigests(w io.Writer, cb *CheckedBundles) error {
-	if cb == nil {
-		return newViolation(RuleDigests, "there is no checked set of bundles to write the digests of", 0, cell{}, nil)
+// WriteDigests writes the digests file of an event that went through every check of D20
+// (ADR-0056 D9 M2, amendment 12): the header with the run id of the answers table the event
+// was checked against (ev.RunID), then the rows in byte order of (seat, cid), so one set of rows
+// is one file. It takes a *CheckedEvent and nothing weaker: CheckEvent makes one only when E1,
+// E2, B8 (a1) and (a2), B1 to B10 and the run id of the render record have all passed, so
+// there is no way to write a digests file for an event that a rule refused, or for rows that
+// CheckBundles did not give, or under another run id than the table's. It still refuses what it
+// always refused, so that the one writer cannot make a file the readers refuse: a run id that
+// is not 32 lower-case hex digits or is all zeros (a digests file exists only for an event: the
+// practice mode has none), no row, a row that is not in its grammar and a repeated (seat, cid);
+// and a nil ev. Nothing is written when it refuses.
+func WriteDigests(w io.Writer, ev *CheckedEvent) error {
+	if ev == nil {
+		return newViolation(RuleDigests, "there is no checked event to write the digests of", 0, cell{}, nil)
 	}
-	return writeDigestRows(w, cb.runID, cb.rows)
+	return writeDigestRows(w, ev.runID, ev.rows)
 }
 
-// writeDigestRows is WriteDigests's body: the rows and the run id of a CheckedBundles.
+// WriteDigestsFile writes the digests file of ev to dest (a path that does not exist, in a
+// directory that does) as one output: the bytes of WriteDigests go to a temporary file beside
+// dest (0600, synced), which is then linked to dest, so dest is all of the file or does not
+// exist, and an existing dest is refused (ErrOutputExists) and left as it was (atomicwrite.go).
+// It is what `edition check` writes `--digests-out` with, so the command opens and writes no
+// file by itself (D20: the readers and the writers are this package's).
+func WriteDigestsFile(dest string, ev *CheckedEvent) error {
+	var buf bytes.Buffer
+	if err := WriteDigests(&buf, ev); err != nil {
+		return err
+	}
+	return writeFileAtomic(dest, buf.Bytes())
+}
+
+// writeDigestRows is WriteDigests's body: the rows and the run id of a CheckedEvent.
 func writeDigestRows(w io.Writer, runID string, rows []DigestRow) error {
 	if !validRunID(runID) || runID == PracticeRunID {
 		return newViolation(RuleDigests, "the run id must be 32 lower-case hex digits and not all zeros", 0, cell{}, nil)
@@ -131,7 +143,7 @@ func writeDigestRows(w io.Writer, runID string, rows []DigestRow) error {
 // seat * and refuses everything else: those are the two things the event's WriteDigests
 // refuses, so a file of one cannot be written by the other. It also refuses no row, a cid
 // or a digest outside its grammar, and a cid twice. Nothing is written when it refuses.
-// (It is the practice edition's door; the event's, WriteDigests, takes a *CheckedBundles.
+// (It is the practice edition's door; the event's, WriteDigests, takes a *CheckedEvent.
 // Its reader, ParsePracticeDigests, is A5c-2's.)
 func WritePracticeDigests(w io.Writer, runID string, rows []DigestRow) error {
 	if runID != PracticeRunID {

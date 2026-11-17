@@ -265,7 +265,7 @@ func TestDigestDoors_NeitherAcceptsTheOthersInput(t *testing.T) {
 	}
 
 	var event bytes.Buffer
-	if err := edition.WriteDigests(&event, edition.CheckedBundlesForTest(runA, seat)); err != nil {
+	if err := edition.WriteDigests(&event, edition.CheckedEventForTest(runA, seat)); err != nil {
 		t.Fatalf("WriteDigests: %v", err)
 	}
 	if _, _, err := edition.ParseDigests(event.Bytes()); err != nil {
@@ -274,11 +274,11 @@ func TestDigestDoors_NeitherAcceptsTheOthersInput(t *testing.T) {
 
 	for name, f := range map[string]func(w *bytes.Buffer) error{
 		"WriteDigests with the practice run id and the seat *": func(w *bytes.Buffer) error {
-			return edition.WriteDigests(w, edition.CheckedBundlesForTest(edition.PracticeRunID, star))
+			return edition.WriteDigests(w, edition.CheckedEventForTest(edition.PracticeRunID, star))
 		},
-		"WriteDigests with an event run id and the seat *": func(w *bytes.Buffer) error { return edition.WriteDigests(w, edition.CheckedBundlesForTest(runA, star)) },
+		"WriteDigests with an event run id and the seat *": func(w *bytes.Buffer) error { return edition.WriteDigests(w, edition.CheckedEventForTest(runA, star)) },
 		"WriteDigests with the practice run id and a seat": func(w *bytes.Buffer) error {
-			return edition.WriteDigests(w, edition.CheckedBundlesForTest(edition.PracticeRunID, seat))
+			return edition.WriteDigests(w, edition.CheckedEventForTest(edition.PracticeRunID, seat))
 		},
 		"WritePracticeDigests with an event run id and the seat *": func(w *bytes.Buffer) error { return edition.WritePracticeDigests(w, runA, star) },
 		"WritePracticeDigests with an event run id and a seat":     func(w *bytes.Buffer) error { return edition.WritePracticeDigests(w, runA, seat) },

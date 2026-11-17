@@ -15,12 +15,13 @@
 //
 // Import direction: scope imports hintleak and catalog; neither imports scope.
 //
-// Callers. Today the only callers are the tests of internal/hintleak
-// (content_test.go: the V5 / V6 scopes of the real tree; questionprompt_test.go:
-// the in-memory V24 scopes). ADR-0056 A4e adds the second: the `edition check`
-// subcommand of cmd/scoreboard, which hands [Assemble] the catalog it loaded for
-// the event and the bundle files as targets. The source test of this package
-// (V56) pins the callers, so that a caller is added on purpose.
+// Callers. The tests of internal/hintleak (content_test.go: the V5 / V6 scopes of
+// the real tree; questionprompt_test.go: the in-memory V24 scopes) and, since
+// ADR-0056 A4e-2, the event validator: internal/edition's CheckEvent (checkevent.go,
+// hintInputs) hands [Assemble] the catalog it loaded for the event; B5 then holds the
+// files of each seat's bundle to the Hints and Free it returns (CheckBundles). The
+// source test of this package (V56) pins the callers, so that a caller is added on
+// purpose.
 package scope
 
 import (

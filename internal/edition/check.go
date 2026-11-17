@@ -213,9 +213,20 @@ func (c *collector) add(v *Violation) {
 
 func (c *collector) err() error {
 	if c.dropped > 0 {
-		c.errs = append(c.errs, fmt.Errorf("%d further violations are not listed", c.dropped))
+		c.errs = append(c.errs, &MoreViolations{N: c.dropped})
 	}
 	return errors.Join(c.errs...)
+}
+
+// MoreViolations is the last entry of a bounded list of violations: how many were found and
+// not listed (the collector lists at most maxViolations). It is a type of its own, with the
+// text the list always had, so that the command that prints a list (`edition check`, D20:
+// the first 20 and the count of the rest) can add the count to its own and not parse a
+// sentence for it.
+type MoreViolations struct{ N int }
+
+func (m *MoreViolations) Error() string {
+	return fmt.Sprintf("%d further violations are not listed", m.N)
 }
 
 // Check is D10 T3 (run id), T4-T8 for a parsed table against the scope. It

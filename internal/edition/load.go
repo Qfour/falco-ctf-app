@@ -182,9 +182,9 @@ const redactedChecked = "edition.CheckedTable{redacted}"
 //
 // The results are the *CheckedTable, the run id of the table (D9) and an error, which is
 // Load's error for the same defect (a rule, a line, a seat / cid / qid, never a value), or a
-// B2 violation of a practice edition's file, or the file's own. Its one caller is the `edition
-// check` command of cmd/scoreboard (A4e-2: today it has none; load_source_test.go fixes the
-// calls of it by reading the sources).
+// B2 violation of a practice edition's file, or the file's own. Its one caller is CheckEvent
+// (checkevent.go, step 2 of D20's `edition check`; the command calls CheckEvent, not this).
+// load_source_test.go fixes the calls of it by reading the sources.
 func LoadEventTable(scored catalog.Scored, answersFile string) (*CheckedTable, string, error) {
 	if answersFile == "" {
 		return nil, "", ErrTableMissing

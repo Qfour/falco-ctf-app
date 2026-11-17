@@ -9,11 +9,12 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/hintleak"
 )
 
-// ADR-0056 D20 and D19 A4e-1, through the exported names only: the chain the validator runs is
-// LoadEventTable, then CheckBundles with the *CheckedTable it gave, then WriteDigests with the
-// *CheckedBundles that gave. There is no other way to a digests file: the run id in it is the
-// table's, whatever else the caller holds. (The tests of what a CheckedTable carries, and of the
-// two doors' words, are load_event_table_internal_test.go's.)
+// ADR-0056 D20 and D19 A4e-1, through the exported names only: the first links of the chain the
+// validator runs are LoadEventTable, then CheckBundles with the *CheckedTable it gave; the
+// *CheckedEvent that WriteDigests takes is CheckEvent's (checkevent_test.go), after every other
+// check of D20 as well. The run id in the digests file is the table's, whatever else the caller
+// holds. (The tests of what a CheckedTable carries, and of the two doors' words, are
+// load_event_table_internal_test.go's.)
 func TestLoadEventTable_ThroughCheckBundlesToTheDigestsFile(t *testing.T) {
 	cat := loadCatalog(t)
 	ct, runID, err := edition.LoadEventTable(scoredOf(t, cat, t.TempDir()), writeTable(t, render(runA, loadRows())))
@@ -39,7 +40,7 @@ func TestLoadEventTable_ThroughCheckBundlesToTheDigestsFile(t *testing.T) {
 		t.Errorf("CheckedBundles = run id %q and %d rows, want %q and 2", cb.RunID(), len(cb.Rows()), runA)
 	}
 	var buf bytes.Buffer
-	if err := edition.WriteDigests(&buf, cb); err != nil {
+	if err := edition.WriteDigests(&buf, edition.CheckedEventForTest(cb.RunID(), cb.Rows())); err != nil {
 		t.Fatalf("WriteDigests: %v", err)
 	}
 	id, rows, err := edition.ParseDigests(buf.Bytes())

@@ -36,10 +36,10 @@ import (
 //     have one reader and it has two callers;
 //   - readPracticeFiles, the reader of the practice editions' bundles and templates, is
 //     called by LoadEventTable only: the start-up path reads none of it (A4c-2);
-//   - LoadEventTable has NO non-test caller today. Its one caller is the `edition check`
-//     command of cmd/scoreboard (A4e-2), which turns the case in doorViolations into a
-//     count ("LoadEventTable@cmd/scoreboard": 1) when it lands; the pin is not placed
-//     before the caller exists;
+//   - LoadEventTable is called by CheckEvent (internal/edition/checkevent.go, func CheckEvent:
+//     step 2 of D20's `edition check`, A4e-2) and by nothing else; CheckEvent's one caller, the
+//     `edition check` command of cmd/scoreboard, is pinned by that command's source test
+//     (editioncmd_source_test.go), and CheckEvent calls LoadEventTable once;
 //   - edition.Load is called by cmd/scoreboard, exactly once, and by nothing else;
 //   - load.go holds no PracticeSet literal (TestLoadHasNoPracticeLiteral).
 //
@@ -203,8 +203,13 @@ func doorViolations(files map[string]string) (violations []string, counts map[st
 				}
 				counts["readPracticeFiles@LoadEventTable"]++
 			case "LoadEventTable":
-				// No caller yet: A4e-2 adds the one in cmd/scoreboard (see the header).
-				violations = append(violations, where+": edition.LoadEventTable has no non-test caller yet (A4e-2 adds the one in cmd/scoreboard's `edition check`, and a count here with it)")
+				// The validator's door: CheckEvent's step 2, and nothing else (the command
+				// calls CheckEvent, not this).
+				if p != "internal/edition/checkevent.go" || u.fn != "CheckEvent" || !u.call {
+					violations = append(violations, where+": LoadEventTable is used outside a call in CheckEvent (D20: the command calls CheckEvent, which is the one caller)")
+					continue
+				}
+				counts["LoadEventTable@CheckEvent"]++
 			case "NewJudge":
 				// A Judge is made from the event table (Load) or, outside the event mode,
 				// from the practice answers of the scope (practiceJudge): never from
@@ -314,6 +319,7 @@ var wantDoorCounts = map[string]int{
 	"loadPractice@practiceJudge":       1,
 	"practiceJudge@Load":               1,
 	"readPracticeFiles@LoadEventTable": 1,
+	"LoadEventTable@CheckEvent":        1,
 	"Load@cmd/scoreboard":              1,
 }
 
@@ -386,7 +392,9 @@ func TestAnswersTableDoorScan_SeesAViolation(t *testing.T) {
 		"func loadPractice(string) (int, error) {\n\t_, _ = Parse(nil)\n\treturn 0, nil\n}\n\n" +
 		"func practiceJudge() (int, error) {\n\t_, _ = NewJudge(nil)\n\t_, _ = loadPractice(\"\")\n\t_ = Check(nil)\n\treturn 0, nil\n}\n"
 	const mainSrc = "package main\n\nimport \"" + editionImportPath + "\"\n\nfunc main() {\n\tedition.Load()\n}\n"
-	good := map[string]string{"internal/edition/load.go": loadSrc, "cmd/scoreboard/edition.go": mainSrc}
+	// CheckEvent (A4e-2) is the validator's one caller of LoadEventTable.
+	const eventSrc = "package edition\n\nfunc CheckEvent() {\n\t_, _, _ = LoadEventTable(nil, \"\")\n}\n"
+	good := map[string]string{"internal/edition/load.go": loadSrc, "internal/edition/checkevent.go": eventSrc, "cmd/scoreboard/edition.go": mainSrc}
 	if v, c := doorViolations(good); len(v) != 0 || !maps.Equal(c, wantDoorCounts) {
 		t.Fatalf("the allowed shape: violations %v, calls %v, want none and %v", v, c, wantDoorCounts)
 	}
@@ -439,8 +447,8 @@ func TestAnswersTableDoorScan_SeesAViolation(t *testing.T) {
 		{"readPracticeFiles called by Load (the start-up reads no bundle)", "internal/edition/load.go", strings.Replace(loadSrc, "_, _, _, _ = loadChecked(eventMode)", "_, _, _, _ = loadChecked(eventMode)\n\t_, _ = readPracticeFiles(nil)", 1)},
 		{"readPracticeFiles called by another function", "internal/edition/load.go", loadSrc + "\nfunc readMore() { _, _ = readPracticeFiles(nil) }\n"},
 		{"readPracticeFiles called from another file", "internal/edition/other.go", "package edition\n\nfunc LoadEventTable() { _, _ = readPracticeFiles(nil) }\n"},
-		// LoadEventTable has no non-test caller until A4e-2.
-		{"LoadEventTable called from cmd/scoreboard (the pin is A4e-2's)", "cmd/scoreboard/y.go", "package main\n\nimport \"" + editionImportPath + "\"\n\nfunc f() { _, _, _ = edition.LoadEventTable(s, \"\") }\n"},
+		// LoadEventTable has one caller, CheckEvent.
+		{"LoadEventTable called from cmd/scoreboard (the command calls CheckEvent)", "cmd/scoreboard/y.go", "package main\n\nimport \"" + editionImportPath + "\"\n\nfunc f() { _, _, _ = edition.LoadEventTable(s, \"\") }\n"},
 		{"LoadEventTable called from the scoreboard's server", "internal/scoreboard/x.go", "package scoreboard\n\nimport \"" + editionImportPath + "\"\n\nfunc f() { _, _, _ = edition.LoadEventTable(s, \"\") }\n"},
 		{"LoadEventTable called by another function of the package", "internal/edition/other.go", "package edition\n\nfunc other() { _, _, _ = LoadEventTable(s, \"\") }\n"},
 		{"LoadEventTable taken as a value", "cmd/scoreboard/y.go", "package main\n\nimport \"" + editionImportPath + "\"\n\nvar f = edition.LoadEventTable\n"},

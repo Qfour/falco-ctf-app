@@ -25,8 +25,9 @@ package edition
 //
 // Every reader of a file of the validator's input uses it: the answers table (readTable), the
 // files of a bundle, of a template and of the corpus (readCapped), and the practice answers
-// (loadPractice). The readers of the other files of D20 (the key, the seats, the previous
-// seats and digests) are A4e-2's and A4e-3's, and use it too.
+// (loadPractice), and, since A4e-2, the seats, the previous digests, the render record and the
+// event edition (editioninput.go). The readers of the key and of the previous seats are A4e-3's,
+// and use it too.
 //
 // The scoreboard's start-up does NOT use it for ANSWERS_FILE: the answers Secret is a
 // directory volume, and a file in one is a link (..data/<key>) by the way Kubernetes makes it
