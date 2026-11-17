@@ -7,16 +7,160 @@ package edition
 // the definitions: the answers table's header (table.go), the digests file's (digests.go), the
 // render record's (renderrecord.go) and the practice run id (table.go). A header that changed on
 // one side only would leave the guard looking for a header no file has: it is red here.
+//
+// Two more pins (#657 review): the script's ALLOWED_PATHS is exactly the list below (an entry
+// added is a file taken out of the scan, so it is a change of this test too, and reviewed as
+// one), and scripts/check-flags.sh (the CI flag-guard) runs the script's scan and its selftest
+// and sets its failure on either (a copy without one of them is red here).
 
 import (
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 )
 
-const flagGuardScript = "../../scripts/check-edition-headers.sh"
+const (
+	flagGuardScript = "../../scripts/check-edition-headers.sh"
+	checkFlagsPath  = "../../scripts/check-flags.sh"
+)
+
+// flagGuardAllowed is the whole of ALLOWED_PATHS: the golden of WriteDigests, which holds an
+// event's digests header on purpose.
+var flagGuardAllowed = []string{"internal/edition/testdata/digests-golden/digests.tsv"}
+
+// allowedPathsOf is the entries of the script's ALLOWED_PATHS=( ... ) block, one quoted path a
+// line, or nil and false when there is not exactly one such block or a line of it is not one
+// single-quoted entry.
+func allowedPathsOf(src string) ([]string, bool) {
+	blocks := regexp.MustCompile(`(?ms)^ALLOWED_PATHS=\(\n(.*?)^\)$`).FindAllStringSubmatch(src, -1)
+	if len(blocks) != 1 {
+		return nil, false
+	}
+	entry := regexp.MustCompile(`^  '([^']+)'$`)
+	var out []string
+	for _, ln := range strings.Split(strings.TrimSuffix(blocks[0][1], "\n"), "\n") {
+		m := entry.FindStringSubmatch(ln)
+		if m == nil {
+			return nil, false
+		}
+		out = append(out, m[1])
+	}
+	return out, true
+}
+
+// checkFlagsCalls are the two calls of the script that check-flags.sh must make, each as the
+// condition of an `if !` whose block sets rc=1.
+var checkFlagsCalls = []string{
+	"if ! bash ./scripts/check-edition-headers.sh; then",
+	"if ! bash ./scripts/check-edition-headers.sh --selftest; then",
+}
+
+// checkFlagsViolations judges the text of check-flags.sh: each call of checkFlagsCalls is a
+// line of its own exactly once, the lines of its block up to the `fi` hold `rc=1`, and the
+// script ends by `exit "$rc"`.
+func checkFlagsViolations(src string) []string {
+	lines := strings.Split(src, "\n")
+	var out []string
+	for _, call := range checkFlagsCalls {
+		at := -1
+		n := 0
+		for i, ln := range lines {
+			if ln == call {
+				at, n = i, n+1
+			}
+		}
+		if n != 1 {
+			out = append(out, "check-flags.sh has the line `"+call+"` "+strconv.Itoa(n)+" times, want once")
+			continue
+		}
+		sets := false
+		for _, ln := range lines[at+1:] {
+			if ln == "fi" {
+				break
+			}
+			if strings.TrimSpace(ln) == "rc=1" {
+				sets = true
+			}
+		}
+		if !sets {
+			out = append(out, "check-flags.sh does not set rc=1 when `"+call+"` fails")
+		}
+	}
+	if !slices.Contains(lines, `exit "$rc"`) {
+		out = append(out, "check-flags.sh does not end with `exit \"$rc\"`: a failure that sets rc is not its exit")
+	}
+	return out
+}
+
+func TestFlagGuardAllowedPathsAreTheOneFixture(t *testing.T) {
+	data, err := os.ReadFile(flagGuardScript)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(data)
+	got, ok := allowedPathsOf(src)
+	if !ok || !slices.Equal(got, flagGuardAllowed) {
+		t.Errorf("ALLOWED_PATHS of the script is %v (read: %v), want %v: an entry is a file taken out of the scan", got, ok, flagGuardAllowed)
+	}
+	// The reading itself: an entry added, changed or taken out, and no block, are seen.
+	line := "  '" + flagGuardAllowed[0] + "'\n"
+	if strings.Count(src, line) != 1 {
+		t.Fatalf("the script does not hold %q exactly once: the cases below do not test what they say", line)
+	}
+	for name, mutated := range map[string]string{
+		"an entry added":   strings.Replace(src, line, line+"  'internal/edition/testdata'\n", 1),
+		"an entry changed": strings.Replace(src, line, "  'internal/edition/testdata'\n", 1),
+		"no entry":         strings.Replace(src, line, "", 1),
+		"no block":         strings.Replace(src, "ALLOWED_PATHS=(", "ALLOWED=(", 1),
+	} {
+		if got, ok := allowedPathsOf(mutated); ok && slices.Equal(got, flagGuardAllowed) {
+			t.Errorf("%s: the copy still reads as %v", name, got)
+		}
+	}
+}
+
+func TestCheckFlagsRunsTheHeaderGuardAndItsSelftest(t *testing.T) {
+	data, err := os.ReadFile(checkFlagsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(data)
+	for _, v := range checkFlagsViolations(src) {
+		t.Error(v)
+	}
+	// The judgement itself: a copy without each call, without its rc=1, and with the call
+	// turned into one that cannot fail, is red.
+	for _, call := range checkFlagsCalls {
+		block := call + "\n"
+		if strings.Count(src, block) != 1 {
+			t.Fatalf("check-flags.sh does not hold %q exactly once", call)
+		}
+		removed := strings.Replace(src, block, "if false; then\n", 1)
+		if len(checkFlagsViolations(removed)) == 0 {
+			t.Errorf("a copy without `%s`: no violation was reported", call)
+		}
+		softened := strings.Replace(src, block, strings.Replace(call, "; then", " || true; then", 1)+"\n", 1)
+		if len(checkFlagsViolations(softened)) == 0 {
+			t.Errorf("a copy with `%s` that cannot fail: no violation was reported", call)
+		}
+		at := strings.Index(src, block)
+		rest := src[at+len(block):]
+		end := strings.Index(rest, "\nfi\n")
+		if end < 0 || !strings.Contains(rest[:end], "rc=1") {
+			t.Fatalf("the block of %q has no rc=1 before its fi: the case below does not test what it says", call)
+		}
+		noRC := src[:at+len(block)] + strings.Replace(rest[:end], "rc=1", ":", -1) + rest[end:]
+		if len(checkFlagsViolations(noRC)) == 0 {
+			t.Errorf("a copy whose block of `%s` does not set rc=1: no violation was reported", call)
+		}
+	}
+	if v := checkFlagsViolations(strings.Replace(src, `exit "$rc"`, "exit 0", 1)); len(v) == 0 {
+		t.Error("a copy that exits 0 whatever rc is: no violation was reported")
+	}
+}
 
 // flagGuardConstants are the script's constants and the definitions they copy.
 func flagGuardConstants() map[string]string {
