@@ -26,6 +26,13 @@ import (
 )
 
 func main() {
+	// `scoreboard edition ...` (ADR-0056 D20) is a subcommand, and only this word makes it one.
+	// It is the first thing main does and it ends the process, so nothing of the server is
+	// built or started for it, and nothing below can reach it (editioncmd_source_test.go).
+	if len(os.Args) > 1 && os.Args[1] == "edition" {
+		os.Exit(runEdition(os.Args[2:], os.Stdout, os.Stderr))
+	}
+
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
 	dbPath := serverutil.Env("SCOREBOARD_DB", "/var/lib/scoreboard/scoreboard.db")

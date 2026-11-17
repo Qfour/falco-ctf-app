@@ -1,0 +1,606 @@
+package main
+
+// ADR-0056 D20, D19 A4e-2: `scoreboard edition check` as a command (V79): the arguments, the
+// exit codes, what is printed, and that a refusal writes nothing. The rules themselves are
+// internal/edition's (checkevent_test.go breaks each one); here a few of them are broken to see
+// how the command reports them. The positive fixture is the renderer's own output, run in the
+// test over the practice edition of internal/edition/testdata/render-golden and an event edition
+// of its own (a key that is plainly a test key; every value a placeholder with no meaning).
+
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/Qfour/falco-ctf-app/internal/catalog"
+	"github.com/Qfour/falco-ctf-app/internal/edition"
+)
+
+const (
+	ecRunID  = "0123456789abcdef0123456789abcdef"
+	ecCID    = "01-demo"
+	ecEvade  = "00-evade"
+	ecFlag   = "FALCO{test-fixture-00}"
+	ecGolden = "../../internal/edition/testdata/render-golden/" + ecCID
+	ecTmpl   = "notes.txt"
+
+	ecJourney = "challengeId: 01-demo\ntitle: Fixture\nbriefing: plain placeholder briefing of the fixture\n" +
+		"hints:\n  - \"alpha bravo charlie delta echo foxtrot golf hotel india juliet\"\n" +
+		"questions:\n" +
+		"  - id: q1\n    prompt: \"first placeholder prompt\"\n" +
+		"  - id: q2\n    prompt: \"second placeholder prompt\"\n" +
+		"  - id: q3\n    prompt: \"third placeholder prompt\"\n" +
+		"  - id: q4\n    prompt: \"fourth placeholder prompt\"\n" +
+		"  - id: q5\n    prompt: \"fifth placeholder prompt\"\n"
+)
+
+// ecSpec and ecTemplate are the event edition: 9 decoys per answer slot (B8 (b) needs 10
+// candidates of each question), a vocabulary, a time base and a fixed answer of their own.
+func ecSpec() string {
+	words := make([]string, 100)
+	for i := range words {
+		words[i] = fmt.Sprintf("e%03d", i)
+	}
+	ten := func(p string) string {
+		w := make([]string, 10)
+		for i := range w {
+			w[i] = fmt.Sprintf("%s%d", p, i)
+		}
+		return "[" + strings.Join(w, ", ") + "]"
+	}
+	var b strings.Builder
+	b.WriteString("version: 1\ntime:\n  base: \"2001-01-01T00:00:00Z\"\nfixed:\n  q5: \"c2,c4\"\nslots:\n")
+	fmt.Fprintf(&b, "  - name: who\n    role: answer\n    question: q1\n    decoys: 9\n    vocab:\n      - [%s]\n", strings.Join(words, ", "))
+	fmt.Fprintf(&b, "  - name: where\n    role: answer\n    question: q2\n    decoys: 9\n    vocab:\n      - [srv]\n      - [y]\n      - %s\n      - %s\n      - %s\n", ten("d"), ten("e"), ten("f"))
+	b.WriteString("  - name: tag\n    role: answer\n    question: q3\n    decoys: 9\n")
+	b.WriteString("  - name: when\n    role: answer\n    question: q4\n    decoys: 9\n    window: {from: 0, to: 3600}\n")
+	b.WriteString("  - name: other\n    role: filler\n    format: name\n    vocab:\n      - [n0, n1, n2]\n")
+	return b.String()
+}
+
+func ecTemplate() string {
+	var b strings.Builder
+	b.WriteString("fixture record, placeholder text only\n")
+	for _, s := range []string{"who", "where", "tag", "when"} {
+		fmt.Fprintf(&b, "%s-answer = {{ctf:%s}}\n", s, s)
+		for j := 1; j <= 9; j++ {
+			fmt.Fprintf(&b, "%s-candidate-%d = {{ctf:%s-d%d}}\n", s, j, s, j)
+		}
+	}
+	b.WriteString("side-note = {{ctf:other}}\n")
+	return b.String()
+}
+
+// ecFix is one event on disk: the root of everything, and the answers the renderer drew (none
+// may be printed).
+type ecFix struct {
+	t      *testing.T
+	root   string
+	values []string
+}
+
+func (f *ecFix) path(rel string) string { return filepath.Join(f.root, filepath.FromSlash(rel)) }
+
+func (f *ecFix) put(rel, content string) {
+	f.t.Helper()
+	p := f.path(rel)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		f.t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+func newEcFix(t *testing.T) *ecFix {
+	t.Helper()
+	f := &ecFix{t: t, root: t.TempDir()}
+	seats := []string{"seat-a", "seat-b", "seat-c"}
+
+	// the image's tree: an evade challenge, and the investigate challenge with its practice edition
+	f.put("challenges/"+ecEvade+"/falco-rule.yaml", "type: evade\nexpectedFlag: FALCO{dev-fixture}\nforbiddenRules: [r]\n")
+	err := filepath.WalkDir(ecGolden, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		sub, err := filepath.Rel(ecGolden, p)
+		if err != nil {
+			return err
+		}
+		f.put("challenges/"+ecCID+"/"+filepath.ToSlash(sub), string(b))
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.put("challenges/"+ecCID+"/journey.yaml", ecJourney)
+	f.put("scenario/scenario.yaml", "id: fixture\ntitle: Fixture\nchallenges: ["+ecEvade+", "+ecCID+"]\n")
+	f.put("flags/flags.yaml", "flags:\n  "+ecEvade+": "+ecFlag+"\n")
+	f.put("corpus/public.txt", "placeholder text of the image's public files\n")
+	f.put("edition-root/"+ecCID+"/edition.yaml", ecSpec())
+	f.put("edition-root/"+ecCID+"/template/"+ecTmpl, ecTemplate())
+	f.put("seats.txt", "# falco-ctf seats v1\n"+strings.Join(seats, "\n")+"\n")
+	if err := os.MkdirAll(f.path("out"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// the renderer's output
+	key, err := edition.NewMasterKey(bytes.Repeat([]byte("test-only-key-"), 4))
+	if err != nil {
+		t.Fatal(err)
+	}
+	scored, err := catalog.LoadScored(f.path("challenges"), f.path("scenario/scenario.yaml"), f.path("flags/flags.yaml"))
+	if err != nil {
+		t.Fatalf("catalog.LoadScored: %v", err)
+	}
+	spec, err := edition.ParseSpec([]byte(ecSpec()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := edition.Render(edition.RenderInput{
+		CID:       ecCID,
+		Questions: edition.ScopeOf(scored.Catalog)[ecCID],
+		Spec:      spec,
+		Template:  []edition.BundleFile{{Name: ecTmpl, Data: []byte(ecTemplate())}},
+		Key:       key,
+		Seats:     seats,
+		Previous:  edition.NoPreviousSeats(),
+	})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	var table, record bytes.Buffer
+	if err := edition.WriteAnswers(&table, ecRunID, r.Rows); err != nil {
+		t.Fatal(err)
+	}
+	if err := edition.WriteRenderRecord(&record, ecRunID, key); err != nil {
+		t.Fatal(err)
+	}
+	f.put("answers.tsv", table.String())
+	f.put("render-record.tsv", record.String())
+	for _, b := range r.Bundles {
+		for _, file := range b.Files {
+			f.put("evidence/"+b.Seat+"/"+b.CID+"/"+file.Name, string(file.Data))
+		}
+	}
+	for _, row := range r.Rows {
+		f.values = append(f.values, row.Value)
+	}
+	return f
+}
+
+// args are the arguments of a good `edition check` (the first check: --no-previous).
+func (f *ecFix) args() []string {
+	return []string{
+		"--challenges", f.path("challenges"),
+		"--scenario", f.path("scenario/scenario.yaml"),
+		"--flags-file", f.path("flags/flags.yaml"),
+		"--answers", f.path("answers.tsv"),
+		"--render-record", f.path("render-record.tsv"),
+		"--evidence-root", f.path("evidence"),
+		"--seats", f.path("seats.txt"),
+		"--edition-root", f.path("edition-root"),
+		"--no-previous",
+		"--corpus", f.path("corpus"),
+		"--digests-out", f.path("out/digests.tsv"),
+	}
+}
+
+// runEd runs `edition <args>` and returns the exit code and the two streams.
+func runEd(args ...string) (code int, stdout, stderr string) {
+	var out, errOut bytes.Buffer
+	code = runEdition(args, &out, &errOut)
+	return code, out.String(), errOut.String()
+}
+
+func (f *ecFix) noValue(what string, texts ...string) {
+	f.t.Helper()
+	for _, text := range texts {
+		for _, v := range f.values {
+			if strings.Contains(text, v) {
+				f.t.Errorf("%s: the output holds a value of the render (%q)", what, v)
+			}
+		}
+	}
+}
+
+func (f *ecFix) digestsOutExists() bool {
+	_, err := os.Lstat(f.path("out/digests.tsv"))
+	return !errors.Is(err, fs.ErrNotExist)
+}
+
+// without is args with the flag name (and its value, unless it is --no-previous) removed.
+func without(args []string, name string) []string {
+	var out []string
+	for i := 0; i < len(args); i++ {
+		if args[i] == name {
+			if name != "--no-previous" {
+				i++
+			}
+			continue
+		}
+		out = append(out, args[i])
+	}
+	return out
+}
+
+func TestEditionCheck_Accepts(t *testing.T) {
+	f := newEcFix(t)
+	code, stdout, stderr := runEd(append([]string{"check"}, f.args()...)...)
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q; want 0", code, stderr)
+	}
+	if want := "ok run=" + ecRunID + " seats=3 challenges=1\n"; stdout != want {
+		t.Errorf("stdout = %q, want exactly %q", stdout, want)
+	}
+	if !strings.Contains(stderr, "B4 overlap (outputs): rate=") || !strings.Contains(stderr, "B4 overlap (templates): rate=") {
+		t.Errorf("stderr = %q; want B4's two overlap lines even for an accepted event (D20)", stderr)
+	}
+	f.noValue("an accepted event", stdout, stderr)
+	data, err := os.ReadFile(f.path("out/digests.tsv"))
+	if err != nil {
+		t.Fatalf("the digests file: %v", err)
+	}
+	id, rows, err := edition.ParseDigests(data)
+	if err != nil || id != ecRunID || len(rows) != 3 {
+		t.Errorf("the digests file reads back as (%q, %d rows, %v); want the run id and one row per seat", id, len(rows), err)
+	}
+	if info, err := os.Stat(f.path("out/digests.tsv")); err != nil || info.Mode().Perm() != 0o600 {
+		t.Errorf("the digests file: %v, %v; want mode 0600", info, err)
+	}
+	if names := dirNamesOf(t, f.path("out")); !slices.Equal(names, []string{"digests.tsv"}) {
+		t.Errorf("the output directory holds %v; want the digests file only", names)
+	}
+}
+
+func dirNamesOf(t *testing.T, dir string) []string {
+	t.Helper()
+	list, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, e := range list {
+		out = append(out, e.Name())
+	}
+	slices.Sort(out)
+	return out
+}
+
+// An event that every check accepted, whose digests file cannot be written: exit 2, no `ok` line,
+// nothing left in the output directory. The failure does not depend on a permission (a test may
+// run as root, for which chmod fails to refuse a write): the name of the output is 250 bytes, so
+// the output itself can be named (the check of the path passes) but the temporary name beside it
+// (a dot, the name, `.tmp-` and 16 hex digits: 272 bytes) is over the 255 bytes of a file name,
+// and the write fails when the temporary is made, after CheckEvent accepted the event.
+func TestEditionCheck_AnAcceptedEventWhoseDigestsCannotBeWrittenIsExit2(t *testing.T) {
+	f := newEcFix(t)
+	out := f.path("out/" + strings.Repeat("d", 250))
+	args := append(without(f.args(), "--digests-out"), "--digests-out", out)
+	code, stdout, stderr := runEd(append([]string{"check"}, args...)...)
+	if code != exitUsage {
+		t.Errorf("exit %d, stdout %q, stderr %q; want exit 2", code, stdout, stderr)
+	}
+	if strings.Contains(stdout, "ok run=") || stdout != "" {
+		t.Errorf("stdout = %q; want no `ok` line for a digests file that was not written", stdout)
+	}
+	if !strings.Contains(stderr, "the digests file was not written") {
+		t.Errorf("stderr = %q; want it to say that the digests file was not written", stderr)
+	}
+	if !strings.Contains(stderr, "B4 overlap (outputs)") {
+		t.Errorf("stderr = %q; want B4's numbers: the event was checked and accepted", stderr)
+	}
+	if names := dirNamesOf(t, f.path("out")); len(names) != 0 {
+		t.Errorf("the output directory holds %v; want nothing (no digests file, no temporary)", names)
+	}
+	f.noValue("a failed write", stdout, stderr)
+}
+
+// The first check writes the digests; a second check of the same event, with those digests as
+// the previous ones (`--previous-digests`), is accepted.
+func TestEditionCheck_APreviousDigestsFileInsteadOfNoPrevious(t *testing.T) {
+	f := newEcFix(t)
+	if code, _, stderr := runEd(append([]string{"check"}, f.args()...)...); code != 0 {
+		t.Fatalf("the first check: exit %d, %q", code, stderr)
+	}
+	second := append(without(f.args(), "--no-previous"), "--previous-digests", f.path("out/digests.tsv"))
+	second = slices.Concat(without(second, "--digests-out"), []string{"--digests-out", f.path("out/second.tsv")})
+	code, stdout, stderr := runEd(append([]string{"check"}, second...)...)
+	if code != 0 || !strings.HasPrefix(stdout, "ok run=") {
+		t.Errorf("exit %d, stdout %q, stderr %q; want an accepted event", code, stdout, stderr)
+	}
+}
+
+// V79: every usage error is exit 2 with nothing on stdout, nothing written, and a message that
+// names the argument. None of them opens a file (the paths are those of a good event, but the
+// arguments are wrong before any file is read: the digests output is the check).
+func TestEditionCheck_UsageErrorsAreExit2(t *testing.T) {
+	f := newEcFix(t)
+	good := f.args()
+	required := []string{"--challenges", "--scenario", "--flags-file", "--answers", "--render-record", "--evidence-root", "--seats", "--edition-root", "--corpus", "--digests-out"}
+	type tc struct {
+		name string
+		args []string
+		want string // a word the message holds
+	}
+	var cases []tc
+	for _, name := range required {
+		cases = append(cases, tc{"without " + name, without(good, name), name})
+	}
+	cases = append(cases,
+		tc{"neither --previous-digests nor --no-previous", without(good, "--no-previous"), "exactly one"},
+		tc{"both --previous-digests and --no-previous", append(slices.Clone(good), "--previous-digests", f.path("out/digests.tsv")), "exactly one"},
+		tc{"an unknown argument", append(slices.Clone(good), "--surprise", "x"), "unknown"},
+		tc{"a positional argument", append(slices.Clone(good), "stray"), "positional"},
+		tc{"a repeated argument", append(slices.Clone(good), "--seats", f.path("seats.txt")), "twice"},
+		tc{"--no-previous twice", append(slices.Clone(good), "--no-previous"), "twice"},
+		tc{"--no-previous with a value", append(without(good, "--no-previous"), "--no-previous=yes"), "no value"},
+		tc{"a value that is missing at the end", append(slices.Clone(good), "--corpus"), "needs a value"},
+		tc{"a value that is the next flag", append(without(good, "--seats"), "--seats", "--corpus"), "needs a value"},
+		tc{"an empty value", append(without(good, "--seats"), "--seats="), "empty"},
+		tc{"no arguments", nil, "required"},
+	)
+	for _, c := range cases {
+		code, stdout, stderr := runEd(append([]string{"check"}, c.args...)...)
+		if code != exitUsage || stdout != "" || !strings.Contains(stderr, c.want) {
+			t.Errorf("%s: exit %d, stdout %q, stderr %q; want exit 2, no stdout and %q in the message", c.name, code, stdout, stderr, c.want)
+		}
+		if f.digestsOutExists() {
+			t.Fatalf("%s: a digests file was written", c.name)
+		}
+	}
+	// the other words of the command line
+	for name, args := range map[string][]string{
+		"no subcommand":      nil,
+		"an unknown one":     {"explode"},
+		"render (not built)": {"render", "--challenges", "x"},
+	} {
+		if code, stdout, stderr := runEd(args...); code != exitUsage || stdout != "" || stderr == "" {
+			t.Errorf("%s: exit %d, stdout %q, stderr %q; want exit 2 and a message", name, code, stdout, stderr)
+		}
+	}
+}
+
+// `--name=value` is the same as `--name value`.
+func TestParseCheckArgs_EqualsForm(t *testing.T) {
+	args := []string{
+		"--challenges=a=b", "--scenario=s", "--flags-file=f", "--answers=an", "--render-record=r",
+		"--evidence-root=e", "--seats=se", "--edition-root=er", "--previous-digests=p",
+		"--corpus=c1", "--corpus", "c2", "--digests-out=o",
+	}
+	in, err := parseCheckArgs(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if in.Challenges != "a=b" || in.PreviousDigestsFile != "p" || in.NoPrevious || !slices.Equal(in.CorpusDirs, []string{"c1", "c2"}) || in.DigestsOut != "o" {
+		t.Errorf("parsed %+v", in)
+	}
+}
+
+// An output that already exists is exit 2, and it is left as it was.
+func TestEditionCheck_AnExistingDigestsOutIsExit2(t *testing.T) {
+	f := newEcFix(t)
+	f.put("out/digests.tsv", "already here\n")
+	code, stdout, stderr := runEd(append([]string{"check"}, f.args()...)...)
+	if code != exitUsage || stdout != "" {
+		t.Errorf("exit %d, stdout %q, stderr %q; want exit 2", code, stdout, stderr)
+	}
+	if b, err := os.ReadFile(f.path("out/digests.tsv")); err != nil || string(b) != "already here\n" {
+		t.Errorf("the existing output is now (%q, %v)", b, err)
+	}
+	f.noValue("an existing output", stderr)
+}
+
+// V72: a catalog with no investigate challenge is exit 2 and B4 is not called (nothing about it
+// is printed).
+func TestEditionCheck_NoInvestigateChallengeIsExit2AndB4IsNotCalled(t *testing.T) {
+	f := newEcFix(t)
+	f.put("scenario/evade-only.yaml", "id: evade-only\ntitle: Evade only\nchallenges: ["+ecEvade+"]\n")
+	args := append(without(f.args(), "--scenario"), "--scenario", f.path("scenario/evade-only.yaml"))
+	code, stdout, stderr := runEd(append([]string{"check"}, args...)...)
+	if code != exitUsage || stdout != "" || strings.Contains(stderr, "B4 overlap") {
+		t.Errorf("exit %d, stdout %q, stderr %q; want exit 2 and nothing of B4", code, stdout, stderr)
+	}
+	if f.digestsOutExists() {
+		t.Error("a digests file was written")
+	}
+}
+
+// V79: a rule broken in the event is exit 1; the message names the rule; no value of the render
+// is printed; nothing is written, and the overlap numbers are still printed.
+func TestEditionCheck_ARuleOfD10IsExit1(t *testing.T) {
+	cases := []struct {
+		name string
+		brk  func(f *ecFix)
+		rule string
+	}{
+		{"B3: a flag shape in a bundle", func(f *ecFix) {
+			p := f.path("evidence/seat-a/" + ecCID + "/" + ecTmpl)
+			b, err := os.ReadFile(p)
+			if err != nil {
+				f.t.Fatal(err)
+			}
+			if err := os.WriteFile(p, append(b, "FALCO{leak}\n"...), 0o644); err != nil {
+				f.t.Fatal(err)
+			}
+		}, "B3:"},
+		{"B1: a seat has no bundle", func(f *ecFix) {
+			if err := os.RemoveAll(f.path("evidence/seat-c")); err != nil {
+				f.t.Fatal(err)
+			}
+		}, "B1:"},
+		{"the render record is of another run", func(f *ecFix) {
+			f.put("render-record.tsv", "# falco-ctf render-record v1\nrun-id\tfedcba9876543210fedcba9876543210\nkey-fingerprint\t"+strings.Repeat("ab", 32)+"\n")
+		}, "T3:"},
+		{"E2: decoys below K", func(f *ecFix) {
+			f.put("edition-root/"+ecCID+"/edition.yaml", strings.ReplaceAll(ecSpec(), "decoys: 9", "decoys: 3"))
+		}, "E2:"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newEcFix(t)
+			c.brk(f)
+			code, stdout, stderr := runEd(append([]string{"check"}, f.args()...)...)
+			if code != exitRefused || stdout != "" {
+				t.Errorf("exit %d, stdout %q, stderr %q; want exit 1 and no stdout", code, stdout, stderr)
+			}
+			if !strings.Contains(stderr, c.rule) {
+				t.Errorf("stderr = %q; want the rule %s named", stderr, c.rule)
+			}
+			f.noValue(c.name, stderr)
+			if f.digestsOutExists() {
+				t.Error("a digests file was written for a refused event")
+			}
+		})
+	}
+}
+
+// The form of an input file that is wrong is exit 2 (D20: "the form of a file"), not a rule's
+// refusal: a render record that is not a record, a template directory with a link in it.
+func TestEditionCheck_ABadFormOfAnInputFileIsExit2(t *testing.T) {
+	cases := []struct {
+		name string
+		brk  func(f *ecFix)
+	}{
+		{"a render record that is not a record", func(f *ecFix) { f.put("render-record.tsv", "not a render record\n") }},
+		{"a render record with a run id of all zeros", func(f *ecFix) {
+			f.put("render-record.tsv", "# falco-ctf render-record v1\nrun-id\t"+edition.PracticeRunID+"\nkey-fingerprint\t"+strings.Repeat("ab", 32)+"\n")
+		}},
+		{"a link in the template directory", func(f *ecFix) {
+			dir := f.path("edition-root/" + ecCID + "/template")
+			if err := os.Symlink(filepath.Join(dir, ecTmpl), filepath.Join(dir, "link.txt")); err != nil {
+				f.t.Fatal(err)
+			}
+		}},
+		{"a seats file with a repeated seat", func(f *ecFix) { f.put("seats.txt", "# falco-ctf seats v1\nseat-a\nseat-a\n") }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newEcFix(t)
+			c.brk(f)
+			code, stdout, stderr := runEd(append([]string{"check"}, f.args()...)...)
+			if code != exitUsage || stdout != "" || stderr == "" {
+				t.Errorf("exit %d, stdout %q, stderr %q; want exit 2 and a message", code, stdout, stderr)
+			}
+			f.noValue(c.name, stderr)
+			if f.digestsOutExists() {
+				t.Error("a digests file was written")
+			}
+		})
+	}
+}
+
+// B10: a previous digests file that has a pair this render does not have (here: a file of
+// another event, with no pair in common) is exit 1 and names B10, the seat and the challenge.
+func TestEditionCheck_APreviousFileOfAnotherEventIsExit1(t *testing.T) {
+	f := newEcFix(t)
+	f.put("previous.tsv", "# falco-ctf evidence-digests v1 run=fedcba9876543210fedcba9876543210\nother-seat\t"+ecCID+"\t"+strings.Repeat("1", 64)+"\n")
+	args := append(without(f.args(), "--no-previous"), "--previous-digests", f.path("previous.tsv"))
+	code, stdout, stderr := runEd(append([]string{"check"}, args...)...)
+	if code != exitRefused || stdout != "" {
+		t.Fatalf("exit %d, stdout %q, stderr %q; want exit 1 and no stdout", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "B10: ") || !strings.Contains(stderr, "seat=other-seat") || !strings.Contains(stderr, "cid="+ecCID) {
+		t.Errorf("stderr = %q; want B10 naming the seat and the challenge", stderr)
+	}
+	if !strings.Contains(stderr, "B4 overlap (outputs)") {
+		t.Errorf("stderr = %q; want B4's numbers with a B10 refusal too", stderr)
+	}
+	f.noValue("B10", stderr)
+	if f.digestsOutExists() {
+		t.Error("a digests file was written for a refused event")
+	}
+}
+
+// V79: B4's numbers are printed when B4 itself refuses.
+func TestEditionCheck_TheOverlapIsPrintedWhenB4Refuses(t *testing.T) {
+	f := newEcFix(t)
+	f.put("challenges/"+ecCID+"/edition/template/a.txt", ecTemplate())
+	code, stdout, stderr := runEd(append([]string{"check"}, f.args()...)...)
+	if code != exitRefused || stdout != "" || !strings.Contains(stderr, "B4:") {
+		t.Fatalf("exit %d, stdout %q, stderr %q; want exit 1 and B4", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "B4 overlap (templates): rate=1.000 event="+ecCID+" practice="+ecCID) {
+		t.Errorf("stderr = %q; want the template overlap line with the ids of the pair", stderr)
+	}
+	f.noValue("B4", stderr)
+}
+
+// V79: 21 or more violations print the first 20 and the count of the rest. 25 files with a
+// name outside the grammar are 25 B2 violations: the library lists 20 and says 5 more.
+func TestEditionCheck_MoreThanTwentyViolationsAreCounted(t *testing.T) {
+	f := newEcFix(t)
+	for i := 0; i < 25; i++ {
+		f.put(fmt.Sprintf("evidence/seat-a/%s/BAD%02d.TXT", ecCID, i), "x\n")
+	}
+	code, stdout, stderr := runEd(append([]string{"check"}, f.args()...)...)
+	if code != exitRefused || stdout != "" {
+		t.Fatalf("exit %d, stdout %q; want exit 1", code, stdout)
+	}
+	lines := strings.Split(strings.TrimSpace(stderr), "\n")
+	b2 := 0
+	for _, ln := range lines {
+		if strings.HasPrefix(ln, "B2: ") {
+			b2++
+		}
+	}
+	if b2 != maxListedViolations || lines[len(lines)-1] != "5 further violations are not listed" {
+		t.Errorf("%d B2 lines and the last line %q; want %d and the count 5 (stderr %q)", b2, lines[len(lines)-1], maxListedViolations, stderr)
+	}
+}
+
+// The printing on its own: the first 20 leaves, the notes of bounded lists added to the count,
+// a wrap of a join flattened, and any other error one entry.
+func TestPrintRefusal(t *testing.T) {
+	leaf := func(i int) error { return fmt.Errorf("leaf %02d", i) }
+	var many []error
+	for i := 0; i < 30; i++ {
+		many = append(many, leaf(i))
+	}
+	many = append(many, &edition.MoreViolations{N: 4})
+	var out bytes.Buffer
+	printRefusal(&out, fmt.Errorf("edition: answers table: %w", errors.Join(many...)))
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != maxListedViolations+1 || lines[0] != "leaf 00" || lines[maxListedViolations-1] != "leaf 19" || lines[maxListedViolations] != "14 further violations are not listed" {
+		t.Errorf("printed %q; want leaves 00 to 19 and 14 further (10 leaves and the note's 4)", out.String())
+	}
+	// an *InputError whose cause is a Join is printed as itself (its message), alone and inside a
+	// plain wrap (the case in which the flattening used to drop it and print the cause only); a
+	// *Violation inside a plain wrap is printed with its rule's name
+	cause := errors.Join(leaf(1), leaf(2))
+	for name, err := range map[string]error{
+		"alone":         &edition.InputError{Msg: "the previous digests file", Err: cause},
+		"inside a wrap": fmt.Errorf("wrapped: %w", &edition.InputError{Msg: "the previous digests file", Err: cause}),
+	} {
+		out.Reset()
+		printRefusal(&out, err)
+		if got := out.String(); !strings.HasPrefix(got, "the previous digests file: ") || strings.Count(got, "leaf") != 2 {
+			t.Errorf("an input error with a join as its cause, %s, printed %q; want its message", name, got)
+		}
+	}
+	out.Reset()
+	printRefusal(&out, fmt.Errorf("wrapped: %w", errors.Join(&edition.Violation{Rule: "B7", Msg: "a rule"}, leaf(3))))
+	if got := out.String(); got != "B7: a rule\nleaf 03\n" {
+		t.Errorf("a violation inside a wrapped join printed %q; want its rule and the other leaf", got)
+	}
+	out.Reset()
+	printRefusal(&out, errors.Join(leaf(1), leaf(2)))
+	if got := out.String(); got != "leaf 01\nleaf 02\n" {
+		t.Errorf("two leaves printed %q", got)
+	}
+	out.Reset()
+	printRefusal(&out, &edition.InputError{Msg: "the seats file cannot be read", Err: errors.New("open x: no such file or directory")})
+	if got := out.String(); got != "the seats file cannot be read: open x: no such file or directory\n" {
+		t.Errorf("an input error printed %q", got)
+	}
+}
