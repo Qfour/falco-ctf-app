@@ -39,10 +39,12 @@ import (
 //   - LoadEventTable is called by CheckEvent (internal/edition/checkevent.go, func CheckEvent:
 //     step 2 of D20's `edition check`, A4e-2) and by nothing else, once;
 //   - CheckEvent and WriteDigestsFile are called by the `edition check` command and by nothing
-//     else: cmd/scoreboard/editioncmd.go, func runEditionCheck, once each. This test holds the
-//     PLACE of the callers (nothing else in cmd/ or internal/ names them); the structure inside
-//     cmd/scoreboard (main's first statement, the server's files, the command's imports) is
-//     cmd/scoreboard/editioncmd_source_test.go's;
+//     else: cmd/scoreboard/editioncmd.go, func runEditionCheck, once each. THIS test is the one
+//     place that holds who calls them, where and how many times (doorViolations and
+//     wantDoorCounts). cmd/scoreboard/editioncmd_source_test.go holds the rest of the command's
+//     structure only: main's first statement, the server's files not naming the subcommand, the
+//     command's imports, and that only the command names the types of the check's surface
+//     (CheckInput, CheckReport, InputError);
 //   - edition.Load is called by cmd/scoreboard, exactly once, and by nothing else;
 //   - load.go holds no PracticeSet literal (TestLoadHasNoPracticeLiteral).
 //

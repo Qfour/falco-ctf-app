@@ -223,11 +223,18 @@ func printRefusal(w io.Writer, err error) {
 }
 
 // collectLeaves flattens err: an errors.Join (anything with `Unwrap() []error`) into its
-// parts, and a single wrap whose inner error is one of those (the prefix of a wrap such as
-// "edition: answers table: ..." says nothing the violations do not) into the parts of the inner
-// error. Any other error is one leaf, with its whole message.
+// parts, and a plain single wrap whose inner error is one of those (the prefix of a wrap such
+// as "edition: answers table: ..." says nothing the violations do not) into the parts of the
+// inner error. A *edition.Violation and an *edition.InputError are never flattened away, whatever
+// their cause is: the rule's name and the usage error's message are what is printed. Any other
+// error is one leaf, with its whole message.
 func collectLeaves(err error, out *[]error) {
 	if err == nil {
+		return
+	}
+	switch err.(type) {
+	case *edition.Violation, *edition.InputError:
+		*out = append(*out, err)
 		return
 	}
 	if m, ok := err.(interface{ Unwrap() []error }); ok {

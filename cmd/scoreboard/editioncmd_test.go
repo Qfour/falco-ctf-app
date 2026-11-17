@@ -277,6 +277,35 @@ func dirNamesOf(t *testing.T, dir string) []string {
 	return out
 }
 
+// An event that every check accepted, whose digests file cannot be written: exit 2, no `ok` line,
+// nothing left in the output directory. The failure does not depend on a permission (a test may
+// run as root, for which chmod fails to refuse a write): the name of the output is 250 bytes, so
+// the output itself can be named (the check of the path passes) but the temporary name beside it
+// (a dot, the name, `.tmp-` and 16 hex digits: 272 bytes) is over the 255 bytes of a file name,
+// and the write fails when the temporary is made, after CheckEvent accepted the event.
+func TestEditionCheck_AnAcceptedEventWhoseDigestsCannotBeWrittenIsExit2(t *testing.T) {
+	f := newEcFix(t)
+	out := f.path("out/" + strings.Repeat("d", 250))
+	args := append(without(f.args(), "--digests-out"), "--digests-out", out)
+	code, stdout, stderr := runEd(append([]string{"check"}, args...)...)
+	if code != exitUsage {
+		t.Errorf("exit %d, stdout %q, stderr %q; want exit 2", code, stdout, stderr)
+	}
+	if strings.Contains(stdout, "ok run=") || stdout != "" {
+		t.Errorf("stdout = %q; want no `ok` line for a digests file that was not written", stdout)
+	}
+	if !strings.Contains(stderr, "the digests file was not written") {
+		t.Errorf("stderr = %q; want it to say that the digests file was not written", stderr)
+	}
+	if !strings.Contains(stderr, "B4 overlap (outputs)") {
+		t.Errorf("stderr = %q; want B4's numbers: the event was checked and accepted", stderr)
+	}
+	if names := dirNamesOf(t, f.path("out")); len(names) != 0 {
+		t.Errorf("the output directory holds %v; want nothing (no digests file, no temporary)", names)
+	}
+	f.noValue("a failed write", stdout, stderr)
+}
+
 // The first check writes the digests; a second check of the same event, with those digests as
 // the previous ones (`--previous-digests`), is accepted.
 func TestEditionCheck_APreviousDigestsFileInsteadOfNoPrevious(t *testing.T) {
@@ -544,6 +573,25 @@ func TestPrintRefusal(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
 	if len(lines) != maxListedViolations+1 || lines[0] != "leaf 00" || lines[maxListedViolations-1] != "leaf 19" || lines[maxListedViolations] != "14 further violations are not listed" {
 		t.Errorf("printed %q; want leaves 00 to 19 and 14 further (10 leaves and the note's 4)", out.String())
+	}
+	// an *InputError whose cause is a Join is printed as itself (its message), alone and inside a
+	// plain wrap (the case in which the flattening used to drop it and print the cause only); a
+	// *Violation inside a plain wrap is printed with its rule's name
+	cause := errors.Join(leaf(1), leaf(2))
+	for name, err := range map[string]error{
+		"alone":         &edition.InputError{Msg: "the previous digests file", Err: cause},
+		"inside a wrap": fmt.Errorf("wrapped: %w", &edition.InputError{Msg: "the previous digests file", Err: cause}),
+	} {
+		out.Reset()
+		printRefusal(&out, err)
+		if got := out.String(); !strings.HasPrefix(got, "the previous digests file: ") || strings.Count(got, "leaf") != 2 {
+			t.Errorf("an input error with a join as its cause, %s, printed %q; want its message", name, got)
+		}
+	}
+	out.Reset()
+	printRefusal(&out, fmt.Errorf("wrapped: %w", errors.Join(&edition.Violation{Rule: "B7", Msg: "a rule"}, leaf(3))))
+	if got := out.String(); got != "B7: a rule\nleaf 03\n" {
+		t.Errorf("a violation inside a wrapped join printed %q; want its rule and the other leaf", got)
 	}
 	out.Reset()
 	printRefusal(&out, errors.Join(leaf(1), leaf(2)))

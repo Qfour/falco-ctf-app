@@ -3,9 +3,10 @@ package main
 // ADR-0056 D20 (the reach of the commands) and V78, fixed by reading the sources (the way
 // main_test.go fixes the catalog's wiring and internal/edition's source tests fix the doors):
 //
-//   - the one caller of edition.CheckEvent, in the whole of cmd/ and internal/, is the
-//     `edition check` command: editioncmd.go, func runEditionCheck. The rest of the check's surface
-//     (WriteDigestsFile, CheckInput, CheckReport, InputError) is named by that file only;
+//   - the types of the check's surface (CheckInput, CheckReport, InputError) are named by
+//     editioncmd.go only. (Who calls edition.CheckEvent and edition.WriteDigestsFile, where and
+//     how many times, is internal/edition/load_source_test.go's doorViolations, the one place
+//     that holds it: runEditionCheck, once each);
 //   - `scoreboard edition ...` is a subcommand that never starts the server: the first statement
 //     of main() is `if len(os.Args) > 1 && os.Args[1] == "edition" { os.Exit(runEdition(...)) }`,
 //     and runEdition is called there and nowhere else, so the server's path (everything after
@@ -38,8 +39,9 @@ const (
 	cmdMainFile      = "cmd/scoreboard/main.go"
 )
 
-// checkSurface is what only the `edition check` command may name of package edition.
-var checkSurface = []string{"CheckEvent", "WriteDigestsFile", "CheckInput", "CheckReport", "InputError"}
+// checkSurface is the types of the check that only the `edition check` command may name. (The
+// callers of CheckEvent and WriteDigestsFile are held by internal/edition's doorViolations.)
+var checkSurface = []string{"CheckInput", "CheckReport", "InputError"}
 
 // readNonTest reads the non-test .go files under cmd/ and internal/ (slash path from the repo
 // root -> source).
@@ -139,65 +141,61 @@ func surfaceRefs(files map[string]string, names []string) (refs map[string]int, 
 	return refs, problems
 }
 
-func TestEditionCheckHasOneCallerAndOnlyTheCommandNamesItsSurface(t *testing.T) {
-	refs, problems := surfaceRefs(readNonTest(t), checkSurface)
-	for _, p := range problems {
-		t.Error(p)
-	}
-	// Positive: the command is there and names what it must, once each in its function. A scan
-	// that finds nothing is not a pass.
-	for _, name := range []string{"CheckEvent", "WriteDigestsFile"} {
-		key := name + "@" + cmdFile + " (func runEditionCheck)"
-		if refs[key] != 1 {
-			t.Errorf("%s: %d reference(s), want exactly 1", key, refs[key])
+// surfaceViolations is the rule of the test below: the types of the check's surface are named by
+// the command's file and by no other non-test file of cmd/ and internal/ outside package edition
+// (a dot import is a problem of its own, and a file that does not parse is reported).
+func surfaceViolations(files map[string]string) []string {
+	refs, problems := surfaceRefs(files, checkSurface)
+	out := slices.Clone(problems)
+	for _, key := range slices.Sorted(maps.Keys(refs)) {
+		if !strings.Contains(key, "@"+cmdFile+" (func ") {
+			out = append(out, key+": the surface of `edition check` is named outside the command")
 		}
 	}
-	for key := range refs {
-		if !strings.Contains(key, "@"+cmdFile+" (func ") {
-			t.Errorf("%s: the surface of `edition check` is named outside the command", key)
+	return out
+}
+
+// The place and the number of the callers of CheckEvent and WriteDigestsFile are held by ONE
+// test, internal/edition's doorViolations (load_source_test.go). This one holds the types of
+// the check's surface (CheckInput, CheckReport, InputError): only the command names them.
+func TestOnlyTheCommandNamesTheSurfaceOfEditionCheck(t *testing.T) {
+	files := readNonTest(t)
+	for _, v := range surfaceViolations(files) {
+		t.Error(v)
+	}
+	// Positive: the command names each type. A scan that finds nothing is not a pass.
+	refs, _ := surfaceRefs(files, checkSurface)
+	for _, name := range checkSurface {
+		found := false
+		for key := range refs {
+			if strings.HasPrefix(key, name+"@"+cmdFile+" (func ") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s is not named by %s: the scan does not see the command", name, cmdFile)
 		}
 	}
 
-	// The scan itself.
+	// The scan itself: the same function, on copies.
 	const imp = "package main\n\nimport \"" + cmdEditionImport + "\"\n\n"
-	base := map[string]string{cmdFile: imp + "func runEditionCheck() { edition.CheckEvent(); edition.WriteDigestsFile() }\n"}
-	want := map[string]int{
-		"CheckEvent@" + cmdFile + " (func runEditionCheck)":       1,
-		"WriteDigestsFile@" + cmdFile + " (func runEditionCheck)": 1,
-	}
-	if r, p := surfaceRefs(base, checkSurface); len(p) != 0 || !maps.Equal(r, want) {
-		t.Fatalf("the allowed shape: refs %v, problems %v", r, p)
+	base := map[string]string{cmdFile: imp + "func parse() (edition.CheckInput, error) { return edition.CheckInput{}, nil }\n\nfunc print(r edition.CheckReport, e *edition.InputError) {}\n"}
+	if v := surfaceViolations(base); len(v) != 0 {
+		t.Fatalf("the allowed shape: %v", v)
 	}
 	cases := []struct{ name, path, src string }{
-		{"a second caller in the server's wiring", "cmd/scoreboard/server.go", imp + "func f() { edition.CheckEvent() }\n"},
-		{"a caller in the handler", "internal/scoreboard/x.go", "package scoreboard\n\nimport \"" + cmdEditionImport + "\"\n\nfunc f() { edition.CheckEvent() }\n"},
-		{"a caller through an alias", "internal/scoreboard/x.go", "package scoreboard\n\nimport ed \"" + cmdEditionImport + "\"\n\nfunc f() { ed.CheckEvent() }\n"},
-		{"the function as a value", "cmd/scoreboard/server.go", imp + "var f = edition.CheckEvent\n"},
-		{"the writer in the server's wiring", "cmd/scoreboard/server.go", imp + "func f() { edition.WriteDigestsFile() }\n"},
-		{"the input type elsewhere", "cmd/scoreboard/server.go", imp + "var in edition.CheckInput\n"},
-		{"a second call in the command's own function", cmdFile, imp + "func runEditionCheck() { edition.CheckEvent(); edition.CheckEvent(); edition.WriteDigestsFile() }\n"},
-		{"a call in another function of the command's file", cmdFile, imp + "func runEditionCheck() { edition.CheckEvent(); edition.WriteDigestsFile() }\n\nfunc other() { edition.CheckEvent() }\n"},
+		{"the input type in the server's wiring", "cmd/scoreboard/server.go", imp + "var in edition.CheckInput\n"},
+		{"the report type in the handler", "internal/scoreboard/x.go", "package scoreboard\n\nimport \"" + cmdEditionImport + "\"\n\nvar r edition.CheckReport\n"},
+		{"the error type through an alias", "internal/scoreboard/x.go", "package scoreboard\n\nimport ed \"" + cmdEditionImport + "\"\n\nvar e *ed.InputError\n"},
 		{"a dot import", "cmd/scoreboard/server.go", "package main\n\nimport . \"" + cmdEditionImport + "\"\n"},
+		{"a file that does not parse", "cmd/scoreboard/x.go", "package main\n\nfunc ("},
 	}
 	for _, c := range cases {
 		files := maps.Clone(base)
 		files[c.path] = c.src
-		r, p := surfaceRefs(files, checkSurface)
-		// the real test's rule, applied to the copy: every reference is in the command's one
-		// function, once
-		bad := len(p) > 0
-		for key, n := range r {
-			if !strings.Contains(key, "@"+cmdFile+" (func runEditionCheck)") || n != 1 {
-				bad = true
-			}
+		if v := surfaceViolations(files); len(v) == 0 {
+			t.Errorf("%s: no violation was reported", c.name)
 		}
-		if !bad {
-			t.Errorf("%s: nothing was reported", c.name)
-		}
-	}
-	// a file that does not parse is reported
-	if _, p := surfaceRefs(map[string]string{"cmd/scoreboard/x.go": "package main\n\nfunc ("}, checkSurface); len(p) == 0 {
-		t.Error("a file that does not parse was not reported")
 	}
 }
 
