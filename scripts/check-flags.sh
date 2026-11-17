@@ -3,7 +3,11 @@
 #   1. any tracked file carries a real FALCO{...} flag literal,
 #   2. generated challenge values are out of sync with plant.sh, or
 #   3. any tracked file carries a "DO NOT COMMIT" tripwire marker
-#      (scratch/PoC files accidentally staged and committed).
+#      (scratch/PoC files accidentally staged and committed), or
+#   4. any tracked file carries the header of an EVENT's render output (an answers
+#      table or a digests file whose run id is not the practice one, or a render
+#      record): scripts/check-edition-headers.sh (ADR-0056 V84), whose self-test
+#      runs here too, so the guard is shown able to fail on every run.
 #
 # Allowed flag forms (these are not secrets):
 #   FALCO{dev-<slug>}   local-dev / test placeholders
@@ -55,6 +59,16 @@ if [ -n "$bad" ]; then
   rc=1
 else
   echo "  ok: only FALCO{dev-...} / FALCO{...} placeholders present"
+fi
+
+# ADR-0056 V84: an event's render output never enters the public repository. The script is
+# run through bash so that its file mode does not decide whether the guard runs.
+if ! bash ./scripts/check-edition-headers.sh; then
+  rc=1
+fi
+if ! bash ./scripts/check-edition-headers.sh --selftest; then
+  echo "FAIL: the self-test of check-edition-headers.sh: the guard is not shown able to fail" >&2
+  rc=1
 fi
 
 echo "==> checking generated challenge values are in sync"
