@@ -43,8 +43,7 @@ func (e *MarkError) Error() string {
 // isTokenByte is a byte of a TOKEN (ADR-0056 D10 B7, amendment 10): a maximal run of
 // [A-Za-z0-9._:/-], which is every byte a value of the per-seat formats (a name, a path, a
 // hexid, a timestamp) is made of. Everything else separates two tokens. This is the one
-// place that spells it; B7 and B8 (b) (they land in A4d-2c, in a file that is not a render
-// file; its name is not fixed) count tokens, and the renderer
+// place that spells it; B7 and B8 (b) (spread.go, which is not a render file) count tokens, and the renderer
 // (E3) needs a mark of an answer or a decoy to be a token of its own.
 func isTokenByte(c byte) bool {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
