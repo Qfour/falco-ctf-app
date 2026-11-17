@@ -64,6 +64,10 @@ RUN for c in charts/*; do \
       fi; \
     done
 
+# ADR-0056 F-fmt (V88): an unformatted Go file fails the required test job (the list is printed);
+# the second RUN proves the check can fail. Both are POSIX sh: this image has no make.
+RUN sh scripts/fmt-check.sh .
+RUN sh scripts/test-fmt-check.sh
 RUN go vet ./...
 # ADR-0031: the browser E2E code (build tag e2e, chromedp) is only COMPILED here —
 # `make e2e` (Dockerfile.e2e) is what runs it. internal/apispec's
