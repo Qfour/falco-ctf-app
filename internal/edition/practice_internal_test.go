@@ -51,11 +51,11 @@ func practiceTree(t *testing.T, tables map[string]string) string {
 		if table == "" {
 			continue
 		}
-		pdir := filepath.Join(cdir, editionDirName, practiceDirName)
+		pdir := filepath.Join(cdir, EditionDirName, PracticeDirName)
 		if err := os.MkdirAll(pdir, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(pdir, practiceTable), []byte(table), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(pdir, PracticeAnswersFileName), []byte(table), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -168,7 +168,7 @@ func missingPractice(dir string, cat catalog.Catalog) []string {
 		if ch.Type != catalog.TypeInvestigate {
 			continue
 		}
-		info, err := os.Lstat(filepath.Join(dir, ch.Dir(), editionDirName, practiceDirName, practiceTable))
+		info, err := os.Lstat(filepath.Join(dir, ch.Dir(), EditionDirName, PracticeDirName, PracticeAnswersFileName))
 		if err != nil || !info.Mode().IsRegular() {
 			out = append(out, id)
 		}

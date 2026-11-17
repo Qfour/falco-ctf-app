@@ -51,10 +51,16 @@ func goodBundleFiles() map[string]string {
 	)
 }
 
+// goodTable is the answers table that goodBundleInput's bundles are held to (CheckBundles
+// takes it as a *CheckedTable of its own: the table is no longer a field of BundleInput).
+func goodTable(t *testing.T) *edition.CheckedTable {
+	t.Helper()
+	return mustChecked(t, render(runA, baseRows()))
+}
+
 func goodBundleInput(t *testing.T) edition.BundleInput {
 	t.Helper()
 	return edition.BundleInput{
-		Table:      mustParse(t, render(runA, baseRows())),
 		Scope:      demoScope,
 		Seats:      []string{"seat-a", "seat-b"},
 		FlagValues: []string{eventFlg},
@@ -78,9 +84,13 @@ func putFile(t *testing.T, root, rel, content string) {
 func TestCheckBundles_AcceptsAndGivesTheDigests(t *testing.T) {
 	files := goodBundleFiles()
 	in := goodBundleInput(t)
-	rows, err := edition.CheckBundles(bundleTree(t, files), in)
+	cb, err := edition.CheckBundles(bundleTree(t, files), goodTable(t), in)
 	if err != nil {
 		t.Fatalf("CheckBundles: %v", err)
+	}
+	rows := cb.Rows()
+	if cb.RunID() != runA {
+		t.Errorf("run id = %q, want the table's %q", cb.RunID(), runA)
 	}
 	digest := func(rel string) string {
 		return edition.BundleDigest([]edition.BundleFile{{Name: "notes.txt", Data: []byte(files[rel])}})
@@ -96,7 +106,7 @@ func TestCheckBundles_AcceptsAndGivesTheDigests(t *testing.T) {
 		t.Errorf("the rows are not the seats x the scope: %v", err)
 	}
 	var buf bytes.Buffer
-	if err := edition.WriteDigests(&buf, runA, rows); err != nil {
+	if err := edition.WriteDigests(&buf, cb); err != nil {
 		t.Fatal(err)
 	}
 	if id, got, err := edition.ParseDigests(buf.Bytes()); err != nil || id != runA || !slices.Equal(got, want) {
@@ -133,7 +143,7 @@ func TestCheckBundles_AcceptsWhatTheRulesAllow(t *testing.T) {
 			if c.mutate != nil {
 				c.mutate(&in)
 			}
-			if _, err := edition.CheckBundles(bundleTree(t, c.files), in); err != nil {
+			if _, err := edition.CheckBundles(bundleTree(t, c.files), goodTable(t), in); err != nil {
 				t.Errorf("a bundle that meets every rule was refused: %v", err)
 			}
 		})
@@ -233,12 +243,12 @@ func TestCheckBundles_OneDefectNamesItsRule(t *testing.T) {
 			root := bundleTree(t, goodBundleFiles())
 			in := goodBundleInput(t)
 			c.mutate(t, root, &in)
-			rows, err := edition.CheckBundles(root, in)
+			cb, err := edition.CheckBundles(root, goodTable(t), in)
 			if err == nil {
 				t.Fatal("no violation was reported")
 			}
-			if rows != nil {
-				t.Errorf("digest rows were returned with a violation: %v", rows)
+			if cb != nil {
+				t.Errorf("digest rows were returned with a violation: %v", cb.Rows())
 			}
 			if got := rules(err); !slices.Equal(got, []string{c.want}) {
 				t.Errorf("rules = %v, want only [%s]: %v", got, c.want, err)
@@ -260,7 +270,7 @@ func TestCheckBundles_OneDefectNamesItsRule(t *testing.T) {
 func TestCheckBundles_ViolationsNameTheirPlace(t *testing.T) {
 	root := bundleTree(t, goodBundleFiles())
 	putFile(t, root, "seat-a/01-demo/more.txt", "x FALCO{dev-x} y")
-	_, err := edition.CheckBundles(root, goodBundleInput(t))
+	_, err := edition.CheckBundles(root, goodTable(t), goodBundleInput(t))
 	var v *edition.Violation
 	if !errors.As(err, &v) {
 		t.Fatalf("err = %v, want a violation", err)
@@ -274,7 +284,7 @@ func TestCheckBundles_ViolationsNameTheirPlace(t *testing.T) {
 
 	root = bundleTree(t, goodBundleFiles())
 	putFile(t, root, notesB, "user: "+sentinel+"-b\nid: cccccccccccc\n")
-	_, err = edition.CheckBundles(root, goodBundleInput(t))
+	_, err = edition.CheckBundles(root, goodTable(t), goodBundleInput(t))
 	if !errors.As(err, &v) || v.Rule != edition.RuleBundleAnswer || v.Seat != "seat-b" || v.QID != "hx" {
 		t.Errorf("violation = %+v (%v), want B6 at seat-b, question hx", v, err)
 	}
@@ -295,7 +305,7 @@ func TestCheckBundles_ListsEveryRuleInOrder(t *testing.T) {
 	// B9: a per-seat answer that is in the corpus.
 	in := goodBundleInput(t)
 	in.Corpus = edition.Corpus{[]byte("aaaaaaaaaaaa")}
-	_, err := edition.CheckBundles(root, in)
+	_, err := edition.CheckBundles(root, goodTable(t), in)
 	if err == nil {
 		t.Fatal("no violation was reported")
 	}
@@ -324,9 +334,9 @@ func TestCheckBundles_GivesNoDigestRowForATreeThatWasNotFullyRead(t *testing.T) 
 		t.Fatal("ReadBundles reported no violation for a file over the limit")
 	}
 	subset := bs.Get("seat-a", demoCID).Digest()
-	rows, err := edition.CheckBundles(root, goodBundleInput(t))
-	if err == nil || rows != nil {
-		t.Fatalf("CheckBundles = (%v, %v), want no row and a violation", rows, err)
+	cb, err := edition.CheckBundles(root, goodTable(t), goodBundleInput(t))
+	if err == nil || cb != nil {
+		t.Fatalf("CheckBundles = (%v, %v), want no row and a violation", cb, err)
 	}
 	if got := rules(err); !slices.Equal(got, []string{edition.RuleBundleShape}) {
 		t.Errorf("rules = %v, want only [B2]: %v", got, err)
@@ -342,14 +352,17 @@ func TestCheckBundles_GivesNoDigestRowForATreeThatWasNotFullyRead(t *testing.T) 
 }
 
 func TestCheckBundles_RefusesWhatItCannotRun(t *testing.T) {
-	if _, err := edition.CheckBundles(bundleTree(t, goodBundleFiles()), edition.BundleInput{}); !errors.Is(err, edition.ErrTableMissing) {
+	if _, err := edition.CheckBundles(bundleTree(t, goodBundleFiles()), nil, edition.BundleInput{}); !errors.Is(err, edition.ErrTableMissing) {
 		t.Errorf("a nil table: err = %v, want ErrTableMissing", err)
 	}
+	if _, err := edition.CheckBundles(bundleTree(t, goodBundleFiles()), edition.CheckedTableForTest(nil), edition.BundleInput{}); !errors.Is(err, edition.ErrTableMissing) {
+		t.Errorf("a checked table with no table: err = %v, want ErrTableMissing", err)
+	}
 	in := goodBundleInput(t)
-	rows, err := edition.CheckBundles(filepath.Join(t.TempDir(), "missing"), in)
+	cb, err := edition.CheckBundles(filepath.Join(t.TempDir(), "missing"), goodTable(t), in)
 	var v *edition.Violation
-	if err == nil || rows != nil || errors.As(err, &v) {
-		t.Errorf("an unreadable root: (%v, %v), want an I/O error and no rows", rows, err)
+	if err == nil || cb != nil || errors.As(err, &v) {
+		t.Errorf("an unreadable root: (%v, %v), want an I/O error and no rows", cb, err)
 	}
 }
 

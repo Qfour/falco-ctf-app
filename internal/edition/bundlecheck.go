@@ -33,11 +33,9 @@ const (
 	RuleBundleCorpus = "B9"
 )
 
-// BundleInput is what the bundle checks need besides the tree.
+// BundleInput is what the bundle checks need besides the tree and the answers table (the
+// *CheckedTable, a parameter of CheckBundles: B6 and B9 read its per-seat values).
 type BundleInput struct {
-	// Table is the parsed answers table (Parse, then Check, by the caller: a table
-	// that Check refused is not given here). B6 and B9 read its per-seat values.
-	Table *Table
 	// Scope is the investigate challenges of the event (ScopeOf).
 	Scope Scope
 	// Seats is `--seats`: the roster plus the spare seats. B1 holds the table's seats
@@ -62,12 +60,33 @@ type BundleInput struct {
 	Corpus Corpus
 }
 
+// CheckedBundles is the digest of every bundle of a tree that CheckBundles accepted, and the
+// run id of the answers table it was checked against (ADR-0056 D9 M2, D20, D19 A4e-1). It is
+// made by CheckBundles and by nothing else (its fields are unexported, and
+// validator_door_source_test.go fixes that no other non-test file builds one): WriteDigests
+// takes it and nothing weaker, so a digests file is written only for a tree that went through
+// B1 to B9's checks, and carries the run id of the table the tree was held to (D9: a digests
+// file whose run id is not the table's is a table and a bundle from two different renders).
+type CheckedBundles struct {
+	runID string
+	rows  []DigestRow
+}
+
+// RunID is the run id of the answers table the bundles were checked against.
+func (cb *CheckedBundles) RunID() string { return cb.runID }
+
+// Rows is a copy of the digest of every bundle, in byte order of (seat, cid).
+func (cb *CheckedBundles) Rows() []DigestRow { return slices.Clone(cb.rows) }
+
 // CheckBundles reads the tree under root (<root>/<seat>/<cid>/<file>, ReadBundles) and
-// applies D10 B1, B2, B3, B5, B6 and B9. It returns the digest of every bundle, in byte
-// order of (seat, cid), only when every rule is met; otherwise it returns an
+// applies D10 B1, B2, B3, B5, B6 and B9, against the answers table t (a *CheckedTable: the
+// table went through Check, in LoadEventTable, so a table that was only Parsed cannot be
+// given here, which a bare *Table argument allowed; validator_door_source_test.go fixes the
+// parameter's type). It returns the digest of every bundle, in byte order of (seat, cid), as a
+// *CheckedBundles carrying t's run id, only when every rule is met; otherwise it returns an
 // errors.Join of *Violation, at most maxViolations listed in this order (the rest
-// counted), and no rows. It does not stop at the first violation. A root that cannot be
-// read is (nil, error) with no violation.
+// counted), and no *CheckedBundles. It does not stop at the first violation. A root that
+// cannot be read is (nil, error) with no violation, and a nil t is ErrTableMissing.
 //
 //   - B2: the tree's shape and limits (ReadBundles), in the order of the tree.
 //   - B1: the seats of the table and of the tree are exactly `Seats`; every (seat,
@@ -88,20 +107,21 @@ type BundleInput struct {
 // The final guard re-checks the digests against Seats x the scope (CheckDigestSet, V48):
 // B1 makes it unreachable, and it stays so that the one place that makes digests cannot
 // make a set that deploy-user would refuse.
-func CheckBundles(root string, in BundleInput) ([]DigestRow, error) {
-	if in.Table == nil {
+func CheckBundles(root string, t *CheckedTable, in BundleInput) (*CheckedBundles, error) {
+	if t == nil || t.table == nil {
 		return nil, ErrTableMissing
 	}
+	tb := t.table
 	var c collector
 	bundles, err := readBundles(root, &c)
 	if err != nil {
 		return nil, err
 	}
-	checkSeatSet(&c, in, bundles)
+	checkSeatSet(&c, tb, in, bundles)
 	checkBundleFlags(&c, in, bundles)
-	checkAnswersInBundles(&c, in, bundles)
+	checkAnswersInBundles(&c, tb, in, bundles)
 	checkBundleHints(&c, in, bundles)
-	checkCorpus(&c, in)
+	checkCorpus(&c, tb, in)
 	if err := c.err(); err != nil {
 		return nil, err
 	}
@@ -109,7 +129,7 @@ func CheckBundles(root string, in BundleInput) ([]DigestRow, error) {
 	if err := CheckDigestSet(rows, in.Seats, in.Scope); err != nil {
 		return nil, err
 	}
-	return rows, nil
+	return &CheckedBundles{runID: tb.runID, rows: rows}, nil
 }
 
 // digestRows is the digest of every bundle, in the order of All.
@@ -124,7 +144,7 @@ func (bs *Bundles) digestRows() []DigestRow {
 // checkSeatSet is B1. A bundle with no file is reported here, as B1's "every (seat,
 // investigate challenge of the scope) has a bundle" (an empty directory is not a bundle:
 // the chart needs 1 to 64 names, D11). B2 only bounds the other side, at most 64 files.
-func checkSeatSet(c *collector, in BundleInput, bundles *Bundles) {
+func checkSeatSet(c *collector, tb *Table, in BundleInput, bundles *Bundles) {
 	b1 := func(msg string, seat, cid string) {
 		c.add(newViolation(RuleBundleSet, msg, 0, cell{seat: seat, cid: cid}, nil))
 	}
@@ -144,7 +164,7 @@ func checkSeatSet(c *collector, in BundleInput, bundles *Bundles) {
 	}
 
 	inTable := make(map[string]struct{})
-	for _, s := range in.Table.Seats() {
+	for _, s := range tb.Seats() {
 		inTable[s] = struct{}{}
 		if _, ok := want[s]; !ok {
 			b1("a seat of the answers table is not in the seat list", s, "")
@@ -200,7 +220,7 @@ func checkBundleFlags(c *collector, in BundleInput, bundles *Bundles) {
 }
 
 // checkAnswersInBundles is B6. A bundle with no file is B1's, not reported again here.
-func checkAnswersInBundles(c *collector, in BundleInput, bundles *Bundles) {
+func checkAnswersInBundles(c *collector, tb *Table, in BundleInput, bundles *Bundles) {
 	for _, b := range bundles.All() {
 		if len(b.Files) == 0 {
 			continue
@@ -210,11 +230,11 @@ func checkAnswersInBundles(c *collector, in BundleInput, bundles *Bundles) {
 				continue
 			}
 			k := cell{seat: b.Seat, cid: b.CID, qid: q.ID}
-			i, ok := in.Table.index[k]
+			i, ok := tb.index[k]
 			if !ok {
 				continue // no row for it: T4's (Check), not B6's
 			}
-			if !bundleHolds(b, in.Table.rows[i].value) {
+			if !bundleHolds(b, tb.rows[i].value) {
 				c.add(newViolation(RuleBundleAnswer, "the answer of a per-seat question does not appear in the bundle of its seat", 0, k, nil))
 			}
 		}
@@ -294,7 +314,7 @@ func CountFlagChallenges(cat catalog.Catalog) int { return len(flagValues(cat)) 
 // A corpus file is folded once per format that has an answer, not once per answer, and only
 // one folded copy is alive at a time: a fold that changes nothing is the file itself, and
 // one that does is a copy of at most maxCorpusFileBytes.
-func checkCorpus(c *collector, in BundleInput) {
+func checkCorpus(c *collector, tb *Table, in BundleInput) {
 	if len(in.Corpus) == 0 {
 		c.add(newViolation(RuleBundleCorpus, "the image's challenges and scenarios were not supplied, so B9 cannot run", 0, cell{}, nil))
 		return
@@ -304,7 +324,7 @@ func checkCorpus(c *collector, in BundleInput) {
 	// folded for its own format.
 	type answer struct{ format, value string }
 	byFormat := make(map[string]map[string]struct{})
-	for _, r := range in.Table.rows {
+	for _, r := range tb.rows {
 		q, ok := findQuestion(in.Scope[r.c.cid], r.c.qid)
 		if !ok || !answerformat.PerSeat(q.Format) {
 			continue
@@ -337,7 +357,7 @@ func checkCorpus(c *collector, in BundleInput) {
 			}
 		}
 	}
-	for _, r := range in.Table.rows {
+	for _, r := range tb.rows {
 		q, ok := findQuestion(in.Scope[r.c.cid], r.c.qid)
 		if !ok || !answerformat.PerSeat(q.Format) {
 			continue

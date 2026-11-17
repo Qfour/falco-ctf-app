@@ -82,10 +82,16 @@ func funcSigs(f *ast.File) map[string]funcSig {
 }
 
 // wantLoadSigs are the parameter types the functions of load.go must have.
+//
+// A4e-1 added the validator's door, LoadEventTable (Scored and the answers file: the event
+// mode is its own), and the function the two doors share, loadChecked (Scored, the answers
+// file, the event mode and how the file is opened): the same single Scored input.
 var wantLoadSigs = map[string][]string{
-	"Load":          {"catalog.Scored", "string", "bool"},
-	"practiceJudge": {"catalog.Scored"},
-	"loadPractice":  {"catalog.Scored"},
+	"Load":           {"catalog.Scored", "string", "bool"},
+	"LoadEventTable": {"catalog.Scored", "string"},
+	"loadChecked":    {"catalog.Scored", "string", "bool", "fileOpener"},
+	"practiceJudge":  {"catalog.Scored"},
+	"loadPractice":   {"catalog.Scored"},
 }
 
 // fullCatalogAllowed are the files that may name Scored.FullCatalog.
@@ -263,6 +269,8 @@ func TestLoadTakesOneScoredInput(t *testing.T) {
 func TestLoadTakesOneScoredInput_ScanSeesAViolation(t *testing.T) {
 	const loadSrc = "package edition\n\n" +
 		"func Load(scored catalog.Scored, answersFile string, eventMode bool) {}\n\n" +
+		"func LoadEventTable(scored catalog.Scored, answersFile string) {}\n\n" +
+		"func loadChecked(scored catalog.Scored, answersFile string, eventMode bool, open fileOpener) {}\n\n" +
 		"func practiceJudge(scored catalog.Scored) {}\n\n" +
 		"func loadPractice(scored catalog.Scored) { _ = scored.FullCatalog }\n"
 	const flagsSrc = "package catalog\n\ntype Scored struct{ FullCatalog Catalog }\n\nfunc LoadScored() { _ = Scored{FullCatalog: nil} }\n"
@@ -289,6 +297,11 @@ func TestLoadTakesOneScoredInput_ScanSeesAViolation(t *testing.T) {
 		{"loadPractice taking a directory", "internal/edition/load.go", strings.Replace(loadSrc, "func loadPractice(scored catalog.Scored)", "func loadPractice(scored catalog.Scored, dir string)", 1)},
 		{"practiceJudge taking a catalog and a directory", "internal/edition/load.go", strings.Replace(loadSrc, "func practiceJudge(scored catalog.Scored)", "func practiceJudge(cat catalog.Catalog, dir string)", 1)},
 		{"practiceJudge missing", "internal/edition/load.go", strings.Replace(loadSrc, "func practiceJudge(scored catalog.Scored) {}\n\n", "", 1)},
+		{"LoadEventTable with a challengesDir argument", "internal/edition/load.go", strings.Replace(loadSrc, "func LoadEventTable(scored catalog.Scored, answersFile string)", "func LoadEventTable(scored catalog.Scored, challengesDir, answersFile string)", 1)},
+		{"LoadEventTable taking the catalog only", "internal/edition/load.go", strings.Replace(loadSrc, "func LoadEventTable(scored catalog.Scored, answersFile string)", "func LoadEventTable(cat catalog.Catalog, answersFile string)", 1)},
+		{"loadChecked taking a directory", "internal/edition/load.go", strings.Replace(loadSrc, "func loadChecked(scored catalog.Scored, answersFile string, eventMode bool, open fileOpener)", "func loadChecked(scored catalog.Scored, dir, answersFile string, eventMode bool, open fileOpener)", 1)},
+		{"loadChecked without the opener", "internal/edition/load.go", strings.Replace(loadSrc, "func loadChecked(scored catalog.Scored, answersFile string, eventMode bool, open fileOpener)", "func loadChecked(scored catalog.Scored, answersFile string, eventMode bool)", 1)},
+		{"LoadEventTable missing", "internal/edition/load.go", strings.Replace(loadSrc, "func LoadEventTable(scored catalog.Scored, answersFile string) {}\n\n", "", 1)},
 		{"a challengesDir parameter in another file of the package", "internal/edition/other.go", "package edition\n\nfunc f(challengesDir string) {}\n"},
 		{"FullCatalog read by the scoreboard package", "internal/scoreboard/x.go", "package scoreboard\n\nfunc f(s catalog.Scored) { _ = s.FullCatalog }\n"},
 		{"FullCatalog set by a literal elsewhere", "cmd/scoreboard/y.go", "package main\n\nvar s = catalog.Scored{FullCatalog: nil}\n"},

@@ -256,7 +256,7 @@ func TestDigestsGolden_WriteDigestsOutputIsTheGoldenFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
-	if err := edition.WriteDigests(&buf, goldenRunID, goldenRows()); err != nil {
+	if err := edition.WriteDigests(&buf, edition.CheckedBundlesForTest(goldenRunID, goldenRows())); err != nil {
 		t.Fatal(err)
 	}
 	if buf.String() != string(want) {
@@ -274,14 +274,14 @@ func TestDigestsGolden_WriteDigestsOutputIsTheGoldenFile(t *testing.T) {
 // goWritesRunID reports whether WriteDigests takes runID.
 func goWritesRunID(runID string) bool {
 	var buf bytes.Buffer
-	return edition.WriteDigests(&buf, runID, []edition.DigestRow{{Seat: "user1", CID: "40-ev", Digest: hex64a}}) == nil
+	return edition.WriteDigests(&buf, edition.CheckedBundlesForTest(runID, []edition.DigestRow{{Seat: "user1", CID: "40-ev", Digest: hex64a}})) == nil
 }
 
 // goHeaderPrefix is the header's text before the run id, as WriteDigests writes it.
 func goHeaderPrefix(t *testing.T) string {
 	t.Helper()
 	var buf bytes.Buffer
-	if err := edition.WriteDigests(&buf, goldenRunID, goldenRows()); err != nil {
+	if err := edition.WriteDigests(&buf, edition.CheckedBundlesForTest(goldenRunID, goldenRows())); err != nil {
 		t.Fatal(err)
 	}
 	first, _, _ := strings.Cut(buf.String(), "\n")

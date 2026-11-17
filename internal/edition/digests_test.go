@@ -42,7 +42,7 @@ const digestsHeader = "# falco-ctf evidence-digests v1 run=" + runA
 
 func TestWriteDigests_WritesTheCanonicalFile(t *testing.T) {
 	var buf bytes.Buffer
-	if err := edition.WriteDigests(&buf, runA, digestRows()); err != nil {
+	if err := edition.WriteDigests(&buf, edition.CheckedBundlesForTest(runA, digestRows())); err != nil {
 		t.Fatalf("WriteDigests: %v", err)
 	}
 	want := digestsHeader + "\n" +
@@ -52,14 +52,14 @@ func TestWriteDigests_WritesTheCanonicalFile(t *testing.T) {
 	if buf.String() != want {
 		t.Errorf("file =\n%q\nwant (rows in byte order of seat, cid)\n%q", buf.String(), want)
 	}
-	// What is written is what is read, and the caller's slice is not reordered.
-	rows := digestRows()
+	// What is written is what is read, and the rows of the CheckedBundles are not reordered.
+	cb := edition.CheckedBundlesForTest(runA, digestRows())
 	var again bytes.Buffer
-	if err := edition.WriteDigests(&again, runA, rows); err != nil || again.String() != want {
+	if err := edition.WriteDigests(&again, cb); err != nil || again.String() != want {
 		t.Errorf("a second write: %v %q", err, again.String())
 	}
-	if rows[0].Seat != "seat-b" {
-		t.Error("WriteDigests reordered the caller's rows")
+	if cb.Rows()[0].Seat != "seat-b" {
+		t.Error("WriteDigests reordered the rows it was given")
 	}
 	id, got, err := edition.ParseDigests(buf.Bytes())
 	if err != nil {
@@ -97,7 +97,7 @@ func TestWriteDigests_Refuses(t *testing.T) {
 	}
 	for _, c := range cases {
 		var buf bytes.Buffer
-		err := edition.WriteDigests(&buf, c.runID, c.rows)
+		err := edition.WriteDigests(&buf, edition.CheckedBundlesForTest(c.runID, c.rows))
 		var v *edition.Violation
 		if !errors.As(err, &v) || v.Rule != edition.RuleDigests {
 			t.Errorf("%s: err = %v, want a D9 violation", c.name, err)
@@ -105,6 +105,12 @@ func TestWriteDigests_Refuses(t *testing.T) {
 		if buf.Len() != 0 {
 			t.Errorf("%s: %d bytes were written although the call refused", c.name, buf.Len())
 		}
+	}
+	// No *CheckedBundles at all is refused the same way.
+	var buf bytes.Buffer
+	var v *edition.Violation
+	if err := edition.WriteDigests(&buf, nil); !errors.As(err, &v) || v.Rule != edition.RuleDigests || buf.Len() != 0 {
+		t.Errorf("a nil CheckedBundles: err = %v, %d bytes written; want a D9 violation and nothing written", err, buf.Len())
 	}
 }
 

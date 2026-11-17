@@ -113,6 +113,13 @@ func mustParse(t *testing.T, data []byte) *edition.Table {
 	return tb
 }
 
+// mustChecked is the *CheckedTable of a table that Parse read (export_test.go: Check has not
+// run on it, as in the tests of CheckBundles before the type existed).
+func mustChecked(t *testing.T, data []byte) *edition.CheckedTable {
+	t.Helper()
+	return edition.CheckedTableForTest(mustParse(t, data))
+}
+
 func eventOpts() edition.Options {
 	return edition.Options{EventMode: true, Practice: edition.PracticeSet{}}
 }

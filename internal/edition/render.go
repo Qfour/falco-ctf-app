@@ -149,19 +149,27 @@ type RenderInput struct {
 // PreviousSeats is the seat list of the previous render, or the statement that there is
 // none. It is a type of its own, not a nil slice, so that a caller that forgot the argument
 // (the zero value) is refused instead of passing as a first render: the first render has to
-// be written down (NoPreviousSeats, which an empty `--previous-seats` file is), as
-// edition.yaml's `version` has to be written (Spec.VersionDeclared).
+// be written down, and the only way to write it down is NoPreviousSeats (the command's
+// `--no-previous`), as edition.yaml's `version` has to be written (Spec.VersionDeclared). A
+// previous list that is empty is not a first render but a list that was lost (a file cut
+// short), so it is "not given" (PreviousSeatsOf).
 type PreviousSeats struct {
 	given bool
 	seats []string
 }
 
-// NoPreviousSeats is the first render of an event: there is no previous list.
+// NoPreviousSeats is the first render of an event: there is no previous list. It is the only
+// way to say so.
 func NoPreviousSeats() PreviousSeats { return PreviousSeats{given: true} }
 
-// PreviousSeatsOf is the previous render's seat list (copied). An empty list is the first
-// render, like NoPreviousSeats.
+// PreviousSeatsOf is the previous render's seat list (copied). An empty list is NOT the first
+// render: it is the zero value, "not given", and Render refuses it (E3; ADR-0056 D20,
+// V74), so that a seat list that was cut short is never read as "there was none". The first
+// render is NoPreviousSeats and nothing else.
 func PreviousSeatsOf(seats []string) PreviousSeats {
+	if len(seats) == 0 {
+		return PreviousSeats{}
+	}
 	return PreviousSeats{given: true, seats: slices.Clone(seats)}
 }
 

@@ -59,10 +59,15 @@ func foldBundles() map[string]string {
 	)
 }
 
+// foldTable is the answers table that foldInput's bundles are held to.
+func foldTable(t *testing.T) *edition.CheckedTable {
+	t.Helper()
+	return mustChecked(t, render(runA, foldRows()))
+}
+
 func foldInput(t *testing.T, corpus edition.Corpus) edition.BundleInput {
 	t.Helper()
 	return edition.BundleInput{
-		Table:      mustParse(t, render(runA, foldRows())),
 		Scope:      foldScope(),
 		Seats:      []string{"seat-a", "seat-b"},
 		FlagValues: []string{eventFlg},
@@ -101,12 +106,12 @@ func TestCheckBundles_B9FindsEveryAcceptedSpellingInTheCorpus(t *testing.T) {
 			if plain != c.byteComparer {
 				t.Fatalf("a byte comparison finds %q in the corpus: %v, the case says %v: the case does not tell a fold from a byte comparison", c.value, plain, c.byteComparer)
 			}
-			rows, err := edition.CheckBundles(bundleTree(t, foldBundles()), foldInput(t, c.corpus))
+			cb, err := edition.CheckBundles(bundleTree(t, foldBundles()), foldTable(t), foldInput(t, c.corpus))
 			if err == nil {
 				t.Fatal("B9 did not refuse a per-seat answer that is in the corpus")
 			}
-			if rows != nil {
-				t.Errorf("digest rows were returned with a violation: %v", rows)
+			if cb != nil {
+				t.Errorf("digest rows were returned with a violation: %v", cb.Rows())
 			}
 			if got := rules(err); !slices.Equal(got, []string{edition.RuleBundleCorpus}) {
 				t.Errorf("rules = %v, want only [B9]: %v", got, err)
@@ -145,7 +150,7 @@ func TestCheckBundles_B9AcceptsACorpusWithoutAnySpellingOfAnAnswer(t *testing.T)
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if _, err := edition.CheckBundles(bundleTree(t, foldBundles()), foldInput(t, c.corpus)); err != nil {
+			if _, err := edition.CheckBundles(bundleTree(t, foldBundles()), foldTable(t), foldInput(t, c.corpus)); err != nil {
 				t.Errorf("B9 refused a corpus that holds no spelling of an answer: %v", err)
 			}
 		})
@@ -162,8 +167,8 @@ func TestCheckBundles_B9FoldsPerFormat(t *testing.T) {
 		{"seat-b", demoCID, "nm", "abcdef012346"},
 	}
 	files := kv(notesA, "name abcdef012345\n", notesB, "name abcdef012346\n")
+	table := mustChecked(t, render(runA, rows))
 	in := edition.BundleInput{
-		Table:      mustParse(t, render(runA, rows)),
 		Scope:      edition.Scope{demoCID: {{ID: "nm", Format: answerformat.Name, Attempts: 5}}},
 		Seats:      []string{"seat-a", "seat-b"},
 		FlagValues: []string{eventFlg},
@@ -171,11 +176,11 @@ func TestCheckBundles_B9FoldsPerFormat(t *testing.T) {
 		Free:       []hintleak.Item{{Source: "01-demo briefing", Text: "plain words only"}},
 		Corpus:     edition.Corpus{[]byte("ABCDEF012345 and ABCDEF012346")},
 	}
-	if _, err := edition.CheckBundles(bundleTree(t, files), in); err != nil {
+	if _, err := edition.CheckBundles(bundleTree(t, files), table, in); err != nil {
 		t.Errorf("a name answer was found in a corpus that holds its capitals (a name is not folded): %v", err)
 	}
 	in.Corpus = edition.Corpus{[]byte("name abcdef012345")}
-	if _, err := edition.CheckBundles(bundleTree(t, files), in); err == nil {
+	if _, err := edition.CheckBundles(bundleTree(t, files), table, in); err == nil {
 		t.Error("a name answer that is in the corpus as it is was not found")
 	}
 }

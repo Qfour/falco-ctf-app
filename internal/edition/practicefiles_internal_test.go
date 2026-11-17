@@ -76,7 +76,7 @@ func TestReadPracticeFiles_ReadsTheBundleAndTheTemplate(t *testing.T) {
 	if got := slices.Sorted(maps.Keys(dirs)); !slices.Equal(got, []string{"01-demo", "02-bare"}) {
 		t.Fatalf("the practice directories are %v, want those of the two challenges that have an edition/", got)
 	}
-	if want := filepath.Join(dir, "01-demo", editionDirName); dirs["01-demo"] != want {
+	if want := filepath.Join(dir, "01-demo", EditionDirName); dirs["01-demo"] != want {
 		t.Errorf("the directory of 01-demo is %q, want %q", dirs["01-demo"], want)
 	}
 
@@ -103,7 +103,7 @@ func TestReadPracticeFiles_ReadsTheBundleAndTheTemplate(t *testing.T) {
 	}
 	// the answers.tsv is not part of the bundle: it never reaches a seat
 	for _, f := range demo.Evidence {
-		if f.Name == practiceTable {
+		if f.Name == PracticeAnswersFileName {
 			t.Error("the answers table is in the practice bundle")
 		}
 	}
