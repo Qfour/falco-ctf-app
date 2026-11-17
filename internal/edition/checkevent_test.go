@@ -122,13 +122,13 @@ func TestCheckEvent_EachCheckBrokenAloneRefusesTheEvent(t *testing.T) {
 		{name: "B8 (a2): 51 seats for a space of 100", brk: func(f *cevFix) {
 			f.put("seats.txt", cevSeatsText(seatsList(51)))
 		}, wantRules: []string{"B8"}, onlyRules: true, wantSubstr: "(51)"},
-		{name: "the render record has another run id", brk: func(f *cevFix) {
+		{name: "B11: the render record has another run id", brk: func(f *cevFix) {
 			var b bytes.Buffer
 			if err := edition.WriteRenderRecord(&b, "fedcba9876543210fedcba9876543210", f.key); err != nil {
 				f.t.Fatal(err)
 			}
 			f.put("render-record.tsv", b.String())
-		}, wantRules: []string{"T3"}, onlyRules: true},
+		}, wantRules: []string{edition.RuleRunID}, onlyRules: true},
 		{name: "T8: two seats share a per-seat value", brk: func(f *cevFix) {
 			f.rewrite("answers.tsv", func(s string) string {
 				return strings.Replace(s, "seat-b\t"+demoCID+"\tq1\t"+f.answers["seat-b/q1"], "seat-b\t"+demoCID+"\tq1\t"+f.answers["seat-a/q1"], 1)
@@ -268,6 +268,60 @@ func TestCheckEvent_ABadMarkInTheTemplateIsE3(t *testing.T) {
 	if isInputErr(err) || !slices.Equal(cevRuleSet(err), []string{"E3"}) || report.OverlapRan {
 		t.Errorf("rules %v, report %+v, err %v; want E3 only, before B4", cevRuleSet(err), report, err)
 	}
+}
+
+// V89 (A4e-2c): B5 holds the bundles to what the server shows, and the server shows the
+// scenario's narrative overrides (catalog.LoadHintInputs is the one reader of both). A narrative
+// override can only replace a briefing and a bridge; the briefing is free text and the bridge is
+// shown to no hint check (hlscope.Assemble), so an override can take a free copy of a hint away.
+// The fixture: the journey's own briefing repeats the hint, so a bundle that holds words of the
+// hint is accepted (they are shown without paying). With a narrative.yaml beside the scenario
+// that replaces the briefing with other words, the participant is no longer shown them for
+// free, and the same bundle is refused by B5. A CheckEvent that read the journeys without the
+// override would accept it, and this test would be red. The bundle's words of the hint replace
+// the template's first line, token for token (five tokens for five), so the bundle keeps the
+// template's layout and the later steps (B7, B8 (b)) see what they saw before.
+func TestCheckEvent_B5HoldsTheBundlesToTheNarrativeOverride(t *testing.T) {
+	const (
+		hint      = "alpha bravo charlie delta echo foxtrot golf hotel india juliet"
+		firstLine = "fixture record, placeholder text only\n"
+		hintWords = "alpha bravo charlie delta echo\n"
+	)
+	build := func(t *testing.T, override bool) *cevFix {
+		t.Helper()
+		f := newGoodCevFix(t)
+		f.rewrite("challenges/"+demoCID+"/journey.yaml", func(s string) string {
+			const local = "briefing: plain placeholder briefing of the fixture\n"
+			if !strings.Contains(s, local) {
+				t.Fatalf("the fixture's journey has no briefing line %q", local)
+			}
+			return strings.Replace(s, local, "briefing: \""+hint+"\"\n", 1)
+		})
+		if override {
+			f.put("scenario/narrative.yaml", "overrides:\n  "+demoCID+":\n    briefing: plain placeholder briefing of the scenario\n")
+		}
+		f.rewrite("evidence/seat-a/"+demoCID+"/"+cevTemplateName, func(s string) string {
+			if !strings.HasPrefix(s, firstLine) {
+				t.Fatalf("the bundle does not start with the template's first line %q", firstLine)
+			}
+			return hintWords + strings.TrimPrefix(s, firstLine)
+		})
+		return f
+	}
+
+	t.Run("the journey's own briefing shows the hint: accepted", func(t *testing.T) {
+		f := build(t, false)
+		if ev, _, err := f.check(); err != nil || ev == nil {
+			t.Fatalf("CheckEvent = (%v, _, %v); want the event (the hint is shown for free by the briefing)", ev, err)
+		}
+	})
+	t.Run("the narrative replaces the briefing: B5", func(t *testing.T) {
+		f := build(t, true)
+		err, report := f.refused("a hint that only the replaced briefing showed")
+		if isInputErr(err) || !slices.Contains(cevRuleSet(err), edition.RuleBundleHint) || report.OverlapRan {
+			t.Errorf("rules %v, report %+v, err %v; want B5 among them, before B4", cevRuleSet(err), report, err)
+		}
+	})
 }
 
 // V86 (the report): B4's numbers come back with a refusal that is B4's own.
@@ -412,6 +466,18 @@ func TestCheckEvent_UsageErrorsAndUnreadableInputs(t *testing.T) {
 				f.t.Fatal(err)
 			}
 			if err := os.Symlink(f.path("real-spec.yaml"), spec); err != nil {
+				f.t.Fatal(err)
+			}
+		}},
+		// D20 (amendment 13's revision): an entry of the edition root named like a challenge id
+		// that is not a directory is exit 2, not E2 (TestCheckEvent_TheEditionRootHoldsExactly
+		// TheScope has the set's E2).
+		{"a file named like a challenge id in the edition root", func(f *cevFix) { f.put("edition-root/02-other", "x\n") }},
+		{"the challenge's entry of the edition root is a link to its directory", func(f *cevFix) {
+			if err := os.Rename(f.path("edition-root/"+demoCID), f.path("real-edition")); err != nil {
+				f.t.Fatal(err)
+			}
+			if err := os.Symlink(f.path("real-edition"), f.path("edition-root/"+demoCID)); err != nil {
 				f.t.Fatal(err)
 			}
 		}},

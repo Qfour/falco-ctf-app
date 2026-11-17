@@ -10,7 +10,8 @@ package edition
 //
 // Two kinds of defect, as in checkevent.go: a file that cannot be read (missing, a link, not a
 // regular file), or whose form is wrong (a seats file, a previous digests file, a render record),
-// is an *InputError (exit 2); an edition root whose set of challenges is not the scope's, and a
+// and an entry of the edition root named like a challenge id that is not a directory, is an
+// *InputError (exit 2); an edition root whose set of challenges is not the scope's, and a
 // defect of the content of a template file (B2), are a rule's violation (exit 1). A message
 // names a line or a challenge, never a byte of a file.
 
@@ -171,10 +172,13 @@ type eventEdition struct {
 
 // readEditions reads the event edition of every challenge of the scope. The set of directories
 // of the root must be the scope's (a directory of another challenge, a name that is not a
-// challenge id, a link or a file, and a challenge with no directory are violations of E2, which
-// lists every one before it stops). A directory's edition.yaml that cannot be read, and a
-// template directory that has no file, are an *InputError; the template files are read as a
-// bundle is (readFlatDir, B2: a defect of one is a B2 violation).
+// challenge id, and a challenge with no directory are violations of E2, which lists every one
+// before it stops). An entry named like a challenge id that is not a directory (a file, or a
+// link, even to a directory) is an input that is not of its kind, an *InputError (exit 2,
+// D20 as amendment 13 revised it: not E2), returned as soon as it is seen. A directory's
+// edition.yaml that cannot be read, and a template directory that has no file, are an
+// *InputError; the template files are read as a bundle is (readFlatDir, B2: a defect of one is
+// a B2 violation).
 func readEditions(root string, scope Scope) (map[string]*eventEdition, error) {
 	entries, err := os.ReadDir(root)
 	if err != nil {
@@ -188,7 +192,9 @@ func readEditions(root string, scope Scope) (map[string]*eventEdition, error) {
 		case !challengeid.Valid(name):
 			c.add(newBundleViolation(RuleSpecQuestion, "an entry of the edition root is not named like a challenge id", cell{}, name))
 		case !e.IsDir():
-			c.add(newViolation(RuleSpecQuestion, "a challenge entry of the edition root is not a directory (a link or a file is refused)", 0, cell{cid: name}, nil))
+			// os.ReadDir reports the entry's own type (it does not follow a link), so a link to a
+			// directory is not a directory here.
+			return nil, inputErr("the entry " + name + " of the edition root is not a directory (a link or a file is refused)")
 		case !inScope:
 			c.add(newViolation(RuleSpecQuestion, "the edition root has a directory of a challenge that is not an investigate challenge of the scope", 0, cell{cid: name}, nil))
 		default:
