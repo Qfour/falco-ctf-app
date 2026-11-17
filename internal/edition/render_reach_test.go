@@ -16,8 +16,11 @@ import (
 //
 // Every file of the renderer stage is named internal/edition/render*.go (a non-test file).
 // What they declare is the renderer: the master key and the render functions, and what the
-// later files of the stage add (the answers writer, B7 and B8 (b)): all of it holds or
-// produces the event's answers. The rule:
+// later files of the stage add (the answers writer): all of it holds or produces the
+// event's answers. B7 and B8 (b) of the validator (A4d-2c) are NOT of the stage: they hold
+// no key and no answer, so they are put in files that are not named render*.go (the file
+// name is for A4d-2c to choose), and `edition check` reaches them as it reaches any other
+// check of the package. The rule:
 //
 //   - no file of cmd/ or internal/ outside internal/edition refers to an EXPORTED name a
 //     render file declares, through the import of the package, whatever name it is
@@ -26,8 +29,9 @@ import (
 //   - no non-test file of package edition outside the render files refers to an exported
 //     name a render file declares, or calls an unexported function a render file declares:
 //     Load, and so the scoreboard, cannot reach the renderer through the package either;
-//   - renderCallers is EMPTY today. A4e adds the `edition render` and `edition check`
-//     commands of cmd/scoreboard, and with them their file here, and nothing else. A file
+//   - renderCallers is EMPTY today. A4e adds the `edition render` command of cmd/scoreboard,
+//     and with it its ONE file here, and nothing else (`edition check` does not call the
+//     renderer, so it is not in the list, ADR-0056 D19 A4e). A file
 //     in cmd/scoreboard that is not that one (the server's wiring) is not in the list.
 //
 // A reference in a test file is not a use (nonTestSources reads no *_test.go).

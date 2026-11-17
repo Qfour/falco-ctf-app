@@ -51,7 +51,7 @@ const RuleBundlePractice = "B4"
 
 // OverlapTheta is theta of B4 (D10, CISO 2026-11-16, provisional): an event bundle or
 // template whose shingle overlap with a practice edition is at or above it is refused.
-// practiceoverlap_test.go pins the value (V19) and its boundary; changing it is the CISO's
+// practiceoverlap_internal_test.go pins the value (V19) and its boundary; changing it is the CISO's
 // decision after the first event's measurements (Signpost 6), and changes this constant and
 // that pin together.
 const OverlapTheta = 0.5
@@ -319,7 +319,7 @@ func setOnce(m map[string]string, k, v string) {
 // file); checkEmptyPracticeAnswers refuses it once, as an input defect.
 //
 // The error is Fold's, and only a per-seat format reaches Fold: it is ErrNoFold only for a
-// per-seat format that has no fold, which fold_test.go (every per-seat format has one) makes
+// per-seat format that has no fold, which internal/catalog/answerformat/fold_test.go (TestFold_IsDefinedForExactlyThePerSeatFormats: every per-seat format has one) makes
 // unreachable today. It stays a returned error so that a format added without a fold is a
 // refusal and not a silent skip.
 func holdsPracticeAnswer(b *Bundle, answers PracticeSet) (bool, error) {

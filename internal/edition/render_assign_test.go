@@ -345,7 +345,7 @@ func TestKeyFingerprintAndRenderRecord(t *testing.T) {
 	if err := edition.WriteRenderRecord(&buf, runA, a); err != nil {
 		t.Fatalf("WriteRenderRecord: %v", err)
 	}
-	want := "run-id\t" + runA + "\nkey-fingerprint\t" + a.Fingerprint() + "\n"
+	want := "# falco-ctf render-record v1\nrun-id\t" + runA + "\nkey-fingerprint\t" + a.Fingerprint() + "\n"
 	if buf.String() != want {
 		t.Errorf("the record is %q, want %q", buf.String(), want)
 	}

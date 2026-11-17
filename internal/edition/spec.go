@@ -105,6 +105,9 @@ type Spec struct {
 	// slots and then of their numbers. A decoy shares its answer's Vocab and Window
 	// (read-only: never write through them) and has no Role and no Format of its own.
 	ImpliedDecoys []Slot `yaml:"-"`
+	// parsed is true in a Spec that ParseSpec returned (E1 held): the renderer refuses a Spec
+	// made by hand, whose Version and ImpliedDecoys could be written to look like one.
+	parsed bool
 }
 
 // SpecTime is `time:`.
@@ -225,6 +228,7 @@ func ParseSpec(data []byte) (*Spec, error) {
 	if err := validateSpec(&spec); err != nil {
 		return nil, err
 	}
+	spec.parsed = true
 	return &spec, nil
 }
 

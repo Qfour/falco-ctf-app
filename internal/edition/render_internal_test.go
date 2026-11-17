@@ -8,11 +8,15 @@ import (
 	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Qfour/falco-ctf-app/internal/catalog/answerformat"
 )
 
 const (
@@ -65,6 +69,167 @@ func TestNewDRBG_SeedIsTheHMACOfTheADRsInput(t *testing.T) {
 	d := newDRBG(drbgTestMasterKey(t), drbgSeat, drbgCID, "who")
 	if !bytes.Equal(d.seed[:], want) {
 		t.Errorf("the seed is not the HMAC of the length-prefixed input")
+	}
+}
+
+// R2#2: known values, computed BY HAND from the text of renderdrbg.go's header and ADR-0056 D12
+// (not from the Go code), so that a change of the counter's start, of its byte order, of the
+// width of a length prefix or of the order of the fields is a red test and not a silent change
+// of every value an event has been given. The key is drbgTestKey, the seat seat-a, the
+// challenge 01-demo and the slot who. Recompute them with (standard library only):
+//
+//	python3 -I -c "
+//	import hmac, hashlib, struct
+//	key = b'not-a-secret-test-key-0123456789abcdef'
+//	def lp(s):
+//	    b = s.encode(); return struct.pack('>I', len(b)) + b
+//	msg = lp('falco-ctf/edition/v1') + lp('seat-a') + lp('01-demo') + lp('who')
+//	seed = hmac.new(key, msg, hashlib.sha256).digest()
+//	b0 = hmac.new(seed, struct.pack('>I', 0), hashlib.sha256).digest()
+//	b1 = hmac.new(seed, struct.pack('>I', 1), hashlib.sha256).digest()
+//	print(seed.hex()); print(b0.hex()); print(b1.hex())"
+const (
+	drbgKnownSeed   = "cf9a01c3b7416d89a4fbb2ad5c4875d732b17ab632588d20fef89601cc8b40ef"
+	drbgKnownBlock0 = "8b6a003b18f96295c7cbe7e0cf3b1c79e58c9b3b481fda027a50a44d4bdecef5"
+	drbgKnownBlock1 = "1f25f2adb1d4b2a9f5b0637e43ef9045abe40505cb1c65241ea3ee7e60980bb1"
+)
+
+func TestNewDRBG_KnownSeed(t *testing.T) {
+	d := newDRBG(drbgTestMasterKey(t), drbgSeat, drbgCID, "who")
+	if got := hex.EncodeToString(d.seed[:]); got != drbgKnownSeed {
+		t.Errorf("seed = %s, want %s (HMAC-SHA256(key, be32 len || label, seat, cid, slot))", got, drbgKnownSeed)
+	}
+}
+
+func TestDRBG_KnownBlocks(t *testing.T) {
+	d := newDRBG(drbgTestMasterKey(t), drbgSeat, drbgCID, "who")
+	got, err := d.bytes(64)
+	if err != nil {
+		t.Fatalf("bytes(64): %v", err)
+	}
+	if b0 := hex.EncodeToString(got[:32]); b0 != drbgKnownBlock0 {
+		t.Errorf("block(0) = %s, want %s (HMAC-SHA256(seed, be32(0)))", b0, drbgKnownBlock0)
+	}
+	if b1 := hex.EncodeToString(got[32:]); b1 != drbgKnownBlock1 {
+		t.Errorf("block(1) = %s, want %s (HMAC-SHA256(seed, be32(1)))", b1, drbgKnownBlock1)
+	}
+}
+
+// The mapping from a stream to a value of each format, pinned as it is NOW (the output of the
+// implementation, not an independent computation): a change of how a word, a path position, a
+// hexid digit or a second is drawn changes every value an event has, and must be a decision.
+//
+// CoS: the expected values are empty on purpose. Run this test once in docker; each failure
+// prints the value drawn ("got"); put it into `want` below, run again, and commit. A test that
+// is skipped or has no value pinned pins nothing, so an empty `want` is a red test.
+func TestRenderSlot_KnownValuesOfEachFormat(t *testing.T) {
+	key := drbgTestMasterKey(t)
+	base := time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
+	hexLen := 16
+	cases := []struct {
+		slot string
+		rs   *renderSlot
+		want string // CoS fills (see above)
+	}{
+		{"who", &renderSlot{name: "who", format: answerformat.Name, vocab: [][]string{{"alpha", "bravo", "charlie", "delta", "echo", "foxtrot"}}}, "foxtrot"},
+		{"where", &renderSlot{name: "where", format: answerformat.Path, vocab: [][]string{{"opt", "srv"}, {"a1", "b2", "c3"}, {"x", "y", "z", "w"}}}, "/srv/b2/w"},
+		{"tag", &renderSlot{name: "tag", format: answerformat.HexID, params: answerformat.Params{Length: &hexLen}}, "b74674be944b9154"},
+		{"when", &renderSlot{name: "when", format: answerformat.Timestamp, from: 0, to: 86400}, "2000-01-01T10:32:53Z"},
+	}
+	for _, c := range cases {
+		got, err := c.rs.draw(newDRBG(key, drbgSeat, drbgCID, c.slot), base)
+		if err != nil {
+			t.Errorf("%s: draw: %v", c.slot, err)
+			continue
+		}
+		if c.want == "" {
+			t.Errorf("%s: no value is pinned yet; got %q (CoS: put it into want)", c.slot, got)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("%s: drew %q, want %q (the mapping of the stream to a %s changed)", c.slot, got, c.want, c.rs.format)
+		}
+	}
+}
+
+// R4#3: slotmark.go's Layout assumes that the value of a per-seat format is ONE token (every
+// byte of it is an isTokenByte), so that a mark of an answer or a decoy keeps the token count
+// of the text. Nothing checked it. For every format that varies per seat (answerformat.PerSeat,
+// not a list written here), a representative canonical value must be one token, and so must
+// every value the format's own grammar takes that differs from it by one byte: for each byte
+// 0..255, put it in place of each byte, and insert it before each byte and at the end, and if
+// answerformat.Canonical still accepts the result it must be one token. A per-seat format that
+// has no representative here is a failure (the same fail-closed shape as ErrNoFold: a format
+// added without the check is a refusal, not a silent skip).
+func TestPerSeatFormatValuesAreOneToken(t *testing.T) {
+	hexLen, window := 12, int64(3600)
+	longHex := 64
+	type rep struct {
+		params answerformat.Params
+		values []string
+	}
+	// Each set of values is made to use every kind of byte the grammar names: letters of both
+	// cases, digits, '.', '_', '-' (a name, a path element), '/' (a path), a lower-case hex digit
+	// (hexid), ':' 'T' 'Z' (a timestamp).
+	reps := map[string]rep{
+		answerformat.Name:      {answerformat.Params{}, []string{"a", "aZ09._-x", strings.Repeat("N", 64)}},
+		answerformat.Path:      {answerformat.Params{}, []string{"/", "/a", "/aZ09._-x/B.c_d-e", "/opt/x/a1/b2/c3"}},
+		answerformat.HexID:     {answerformat.Params{Length: &hexLen}, []string{"0123456789ab", "abcdef012345"}},
+		answerformat.Timestamp: {answerformat.Params{WindowSeconds: &window}, []string{"2000-01-01T00:00:00Z", "9999-12-31T23:59:59Z"}},
+	}
+	// hexid of the longest length is its own params.
+	reps["hexid-64"] = rep{answerformat.Params{Length: &longHex}, []string{strings.Repeat("0123456789abcdef", 4)}}
+
+	oneToken := func(v string) bool {
+		spans := tokenSpans([]byte(v))
+		return len(spans) == 1 && spans[0] == [2]int{0, len(v)}
+	}
+	seen := map[string]bool{}
+	for key, r := range reps {
+		format := strings.TrimSuffix(key, "-64")
+		seen[format] = true
+		if !answerformat.PerSeat(format) {
+			t.Errorf("%s has representative values but is not a per-seat format: remove them", key)
+			continue
+		}
+		for _, v := range r.values {
+			if err := answerformat.Canonical(format, r.params, v); err != nil {
+				t.Errorf("%s: the representative value %q is not canonical (%v): fix the test", key, v, err)
+				continue
+			}
+			if !oneToken(v) {
+				t.Errorf("%s: the canonical value %q is not one token: Layout's assumption does not hold", key, v)
+			}
+			for pos := 0; pos <= len(v); pos++ {
+				for b := 0; b < 256; b++ {
+					variants := []string{v[:pos] + string([]byte{byte(b)}) + v[pos:]}
+					if pos < len(v) {
+						variants = append(variants, v[:pos]+string([]byte{byte(b)})+v[pos+1:])
+					}
+					for _, w := range variants {
+						if answerformat.Canonical(format, r.params, w) == nil && !oneToken(w) {
+							t.Errorf("%s: the grammar takes %q, which is not one token (byte %#x at %d)", key, w, b, pos)
+						}
+					}
+				}
+			}
+		}
+	}
+	for _, f := range answerformat.Formats() {
+		if answerformat.PerSeat(f) && !seen[f] {
+			t.Errorf("the per-seat format %s has no representative value in this test: add one (a format added without the check is a refusal)", f)
+		}
+	}
+	// The set of the per-seat formats is read, not written, but a test that finds none passes
+	// nothing.
+	n := 0
+	for _, f := range answerformat.Formats() {
+		if answerformat.PerSeat(f) {
+			n++
+		}
+	}
+	if n == 0 || !slices.Contains(answerformat.Formats(), answerformat.Timestamp) {
+		t.Errorf("%d per-seat formats were found: the scan does not see answerformat", n)
 	}
 }
 

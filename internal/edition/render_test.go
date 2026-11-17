@@ -446,6 +446,12 @@ func TestRender_RefusesWhatItCannotRender(t *testing.T) {
 	noSpec.Spec = nil
 	handSpec := rdInput(t, "seat-a")
 	handSpec.Spec = &edition.Spec{Slots: []edition.Slot{{Name: "who", Role: edition.RoleFiller}}}
+	// A Spec made by hand that carries Version 1 and the slots of a parsed one, with no
+	// implied decoy: it would render with no decoy at all if Version were all that is read.
+	parsed := rdSpec(t, rdDoc())
+	handV1 := rdInput(t, "seat-a")
+	handV1.Spec = &edition.Spec{Version: edition.SpecVersion, Time: parsed.Time, Fixed: parsed.Fixed, Slots: parsed.Slots}
+	handV1.Template = rdTemplate(parsed)
 	// E2 holds the spec to the questions first: decoys K - 1.
 	fewDecoys := rdInput(t, "seat-a")
 	fewDecoys.Spec = rdSpec(t, rdDoc().with(slotWho, func(s *specSlot) { s.decoys = "3" }))
@@ -465,6 +471,7 @@ func TestRender_RefusesWhatItCannotRender(t *testing.T) {
 		{"a cid that is not a challenge id", badCID, []string{"E3"}},
 		{"no spec", noSpec, []string{"E3"}},
 		{"a spec that did not come from ParseSpec", handSpec, []string{"E3"}},
+		{"a spec made by hand with Version 1 and no implied decoy", handV1, []string{"E3"}},
 		{"decoys below K (E2 first)", fewDecoys, []string{"E2"}},
 	}
 	for _, c := range cases {

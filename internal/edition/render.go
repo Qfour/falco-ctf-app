@@ -38,8 +38,8 @@ package edition
 // Reach (D9, D13): the renderer is not a part of the scoreboard's HTTP side. Every file of
 // this stage is named render*.go, and render_reach_test.go fixes by reading the sources
 // that nothing outside those files, and no file of cmd/ or internal/ outside this
-// package, refers to what they declare (A4e adds the one caller, the `edition render` and
-// `edition check` commands of cmd/scoreboard).
+// package, refers to what they declare (A4e adds the one caller, the `edition render` command
+// of cmd/scoreboard; `edition check` does not call the renderer).
 
 import (
 	"bytes"
@@ -259,7 +259,7 @@ func render(in RenderInput) (*Rendered, error) {
 	if !challengeid.Valid(in.CID) {
 		return nil, newViolation(RuleSpecRender, "cid is not a challenge id", 0, cell{}, nil)
 	}
-	if in.Spec == nil || in.Spec.Version != SpecVersion {
+	if in.Spec == nil || in.Spec.Version != SpecVersion || !in.Spec.parsed {
 		return nil, newViolation(RuleSpecRender, "the spec did not come from ParseSpec", 0, cell{cid: in.CID}, nil)
 	}
 	if err := in.Spec.CheckQuestions(in.CID, in.Questions); err != nil {
