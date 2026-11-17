@@ -26,7 +26,7 @@ type specSlot struct {
 // specDoc is an edition.yaml as text. A version, base or fixed that is "" is not written.
 type specDoc struct {
 	version, base, fixed string
-	slots               []specSlot
+	slots                []specSlot
 }
 
 func (d specDoc) yaml() []byte {

@@ -18,7 +18,7 @@ SYSDIG_URL   ?= https://app.au1.sysdig.com
 # host repo are not shared into the VM.
 GO_IMAGE ?= golang:1.26-alpine
 
-.PHONY: help dev dev-down build push load-colima deploy-local helm-dep-build lint check-seccomp check-chartparse check-flag-isolation check-namespace-ownership check-answers-secret check-answers-secret-selftest check-image-hygiene check-image-hygiene-selftest check-image-type-rule test e2e e2e-serve check-e2e-verdict tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-template-hex check-portal-render check-rules check-freshness check-adr check-dockerignore check-build-context check-go-base-digest check-apk-pins check-apk-pins-selftest clean scan check-apk-pins-lint
+.PHONY: help dev dev-down build push load-colima deploy-local helm-dep-build lint check-seccomp check-chartparse check-flag-isolation check-namespace-ownership check-answers-secret check-answers-secret-selftest check-image-hygiene check-image-hygiene-selftest check-image-type-rule test e2e e2e-serve check-e2e-verdict tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-template-hex check-portal-render check-rules check-freshness check-adr check-dockerignore check-build-context check-go-base-digest check-apk-pins check-apk-pins-selftest clean scan check-apk-pins-lint fmt-check
 
 help:
 	@echo "Targets:"
@@ -38,6 +38,7 @@ help:
 	@echo "  check-image-hygiene — fail if the built challenge image's /opt/ctf/plant-seed/ snapshot carries flag/hash material or drifts from its real counterpart (ADR-0001 Verification 2-8), or if /opt/ctf/missions is not exactly <id>/fixtures/** (ADR-0026 V1-V3)"
 	@echo "  check-image-hygiene-selftest — mutation test: derived images with one deliberate violation each must FAIL check-image-hygiene (ADR-0026 V6)"
 	@echo "  test            — go test ./... (runs in $(GO_IMAGE) container)"
+	@echo "  fmt-check       - fail if a Go file is not gofmt-formatted (scripts/fmt-check.sh; needs gofmt on the host; make test runs it in the container; ADR-0056 V88)"
 	@echo "  e2e             — browser E2E (ADR-0031): real scoreboard + real Chromium in Dockerfile.e2e; verdict made on the host, needs python3 (advisory CI job: e2e)"
 	@echo "  e2e-serve       — SEED=<name> [AS=user1] [E2E_PORT=8787]: seeded portal with injected identity on 127.0.0.1 only (ADR-0031 D1 (a))"
 	@echo "  check-e2e-verdict — planted-defect fixtures for the e2e verdict (ADR-0031 V6)"
@@ -194,6 +195,11 @@ check-image-hygiene-selftest:
 
 test:
 	docker build -f Dockerfile.test --progress=plain -t falco-ctf/gotest:local .
+
+# ADR-0056 F-fmt (V88): fail if a Go file is not gofmt-formatted. Needs gofmt on the
+# host; where there is none, `make test` runs the same check in its container.
+fmt-check:
+	./scripts/fmt-check.sh .
 
 # Browser E2E (ADR-0031). Not part of `make test`: that only COMPILES the
 # e2e-tagged code (`go vet -tags e2e`). The scenarios run inside a BuildKit RUN

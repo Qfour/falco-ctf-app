@@ -124,7 +124,7 @@ func TestCheck_Rejects(t *testing.T) {
 		{"practice table mixing * with a seat", "00000000000000000000000000000000", practiceMode, rename(baseRows(), "seat-a", "*"), []string{"T4"}},
 		{"practice table with ordinary seats only", "00000000000000000000000000000000", practiceMode, baseRows(), []string{"T4"}},
 		{"a complete table plus a row of a cid outside the scope", runA, eventOpts(), append(baseRows(), []string{"seat-a", "02-other", "who", sentinel + "-c"}), []string{"T4"}},
-		{"cid outside the scope",runA, eventOpts(), set(baseRows(), 0, 1, "02-other"), []string{"T4"}},
+		{"cid outside the scope", runA, eventOpts(), set(baseRows(), 0, 1, "02-other"), []string{"T4"}},
 		{"qid outside the challenge", runA, eventOpts(), set(baseRows(), 0, 2, "nope"), []string{"T4"}},
 		{"a seat is missing a row", runA, eventOpts(), without(baseRows(), 4), []string{"T4"}},
 		{"columns swapped: a value in the seat column", runA, eventOpts(), [][]string{{sentinel + "-a", demoCID, "who", "seat-a"}}, []string{"T4"}},

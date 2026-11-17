@@ -127,7 +127,9 @@ type overlapInput struct {
 // 0 / 0: nothing can be said of it, and fail-closed is a refusal.
 func checkPracticeOverlap(c *collector, bundles *Bundles, in overlapInput, theta float64) OverlapReport {
 	var rep OverlapReport
-	b4 := func(msg, seat, cid string) { c.add(newViolation(RuleBundlePractice, msg, 0, cell{seat: seat, cid: cid}, nil)) }
+	b4 := func(msg, seat, cid string) {
+		c.add(newViolation(RuleBundlePractice, msg, 0, cell{seat: seat, cid: cid}, nil))
+	}
 
 	thetaSet := theta > 0 && theta <= 1 // false for NaN
 	if !thetaSet {
