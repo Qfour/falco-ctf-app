@@ -7,6 +7,11 @@ package edition_test
 // one thing in a tree that is otherwise what a real render and its operator would give. Every
 // value is a placeholder with no meaning.
 //
+// The tree the fixture is laid out in (the image's tree, the event edition, the seats, the
+// corpus, the key's bytes) is internal/edition/editiontest's, which cmd/scoreboard's tests
+// share (ADR-0056 A4e-2d, V91): that package never calls the renderer. The call of the
+// renderer, and what is made of its output, stay here.
+//
 // The image's tree (challenges/) is built from internal/edition/testdata/render-golden/01-demo
 // (the practice edition) plus an evade challenge (a flags file needs one) and a journey.yaml
 // (an investigate challenge needs one). The EVENT edition (edition-root/) is another edition
@@ -17,33 +22,19 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"io/fs"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/edition"
+	"github.com/Qfour/falco-ctf-app/internal/edition/editiontest"
 )
 
 const (
-	cevEvade = "00-evade"
-	cevFlag  = "FALCO{test-fixture-00}"
-	cevGold  = "testdata/render-golden/01-demo"
-
-	// cevJourney: the prompts are placeholders; the hint has words that no bundle holds.
-	cevJourney = "challengeId: 01-demo\ntitle: Fixture\nbriefing: plain placeholder briefing of the fixture\n" +
-		"hints:\n  - \"alpha bravo charlie delta echo foxtrot golf hotel india juliet\"\n" +
-		"questions:\n" +
-		"  - id: q1\n    prompt: \"first placeholder prompt\"\n" +
-		"  - id: q2\n    prompt: \"second placeholder prompt\"\n" +
-		"  - id: q3\n    prompt: \"third placeholder prompt\"\n" +
-		"  - id: q4\n    prompt: \"fourth placeholder prompt\"\n" +
-		"  - id: q5\n    prompt: \"fifth placeholder prompt\"\n"
-
-	cevTemplateName = "notes.txt"
+	cevEvade        = editiontest.Evade
+	cevGold         = "testdata/render-golden/01-demo"
+	cevTemplateName = editiontest.TemplateName
 )
 
 // cevOpts are the two knobs of the event edition that cases turn: the words of the name
@@ -55,53 +46,16 @@ type cevOpts struct {
 }
 
 // cevSpec is the edition.yaml of the event edition.
-func cevSpec(o cevOpts) string {
-	words := make([]string, o.nameWords)
-	for i := range words {
-		words[i] = fmt.Sprintf("e%03d", i)
-	}
-	ten := func(p string) string {
-		w := make([]string, 10)
-		for i := range w {
-			w[i] = fmt.Sprintf("%s%d", p, i)
-		}
-		return "[" + strings.Join(w, ", ") + "]"
-	}
-	var b strings.Builder
-	b.WriteString("version: 1\ntime:\n  base: \"2001-01-01T00:00:00Z\"\nfixed:\n  q5: \"c2,c4\"\nslots:\n")
-	fmt.Fprintf(&b, "  - name: who\n    role: answer\n    question: q1\n    decoys: %d\n    vocab:\n      - [%s]\n", o.decoys, strings.Join(words, ", "))
-	fmt.Fprintf(&b, "  - name: where\n    role: answer\n    question: q2\n    decoys: %d\n    vocab:\n      - [srv]\n      - [y]\n      - %s\n      - %s\n      - %s\n", o.decoys, ten("d"), ten("e"), ten("f"))
-	fmt.Fprintf(&b, "  - name: tag\n    role: answer\n    question: q3\n    decoys: %d\n", o.decoys)
-	fmt.Fprintf(&b, "  - name: when\n    role: answer\n    question: q4\n    decoys: %d\n    window: {from: 0, to: 3600}\n", o.decoys)
-	b.WriteString("  - name: other\n    role: filler\n    format: name\n    vocab:\n      - [n0, n1, n2]\n")
-	return b.String()
-}
-
-// cevTemplate is the template of the event edition: one line per slot, the mark alone as a
-// token (a space before it, a line break after it).
-func cevTemplate(decoys int) string {
-	var b strings.Builder
-	b.WriteString("fixture record, placeholder text only\n")
-	for _, s := range []string{"who", "where", "tag", "when"} {
-		fmt.Fprintf(&b, "%s-answer = {{ctf:%s}}\n", s, s)
-		for j := 1; j <= decoys; j++ {
-			fmt.Fprintf(&b, "%s-candidate-%d = {{ctf:%s-d%d}}\n", s, j, s, j)
-		}
-	}
-	b.WriteString("side-note = {{ctf:other}}\n")
-	return b.String()
-}
+func cevSpec(o cevOpts) string { return editiontest.SpecText(o.nameWords, o.decoys) }
 
 // cevSeatsText is a seats file of the given seats.
-func cevSeatsText(seats []string) string {
-	return "# falco-ctf seats v1\n" + strings.Join(seats, "\n") + "\n"
-}
+func cevSeatsText(seats []string) string { return editiontest.SeatsText(seats) }
 
 // cevFix is one event: its paths (in is what CheckEvent is given), the answers the renderer
 // drew (values: none may be in any message) and the key.
 type cevFix struct {
 	t       *testing.T
-	root    string
+	tree    *editiontest.Tree
 	in      edition.CheckInput
 	seats   []string
 	key     edition.MasterKey
@@ -111,26 +65,16 @@ type cevFix struct {
 	tmpl    string
 }
 
-func (f *cevFix) path(rel string) string { return filepath.Join(f.root, filepath.FromSlash(rel)) }
+func (f *cevFix) path(rel string) string { return f.tree.Path(rel) }
 
 func (f *cevFix) put(rel, content string) {
 	f.t.Helper()
-	p := f.path(rel)
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		f.t.Fatal(err)
-	}
-	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
-		f.t.Fatal(err)
-	}
+	f.tree.Put(rel, content)
 }
 
 func (f *cevFix) read(rel string) string {
 	f.t.Helper()
-	b, err := os.ReadFile(f.path(rel))
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	return string(b)
+	return f.tree.Read(rel)
 }
 
 // rewrite replaces the file's text with fn's result.
@@ -139,60 +83,25 @@ func (f *cevFix) rewrite(rel string, fn func(string) string) {
 	f.put(rel, fn(f.read(rel)))
 }
 
-// copyTree copies the tree under the testdata directory src to rel of the fixture.
-func (f *cevFix) copyTree(src, rel string) {
-	f.t.Helper()
-	err := filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		b, err := os.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		sub, err := filepath.Rel(src, p)
-		if err != nil {
-			return err
-		}
-		f.put(rel+"/"+filepath.ToSlash(sub), string(b))
-		return nil
-	})
-	if err != nil {
-		f.t.Fatal(err)
-	}
-}
-
 // newCevFix builds the event: the image's tree, the event edition, and the renderer's output
 // for three seats (seat-a, seat-b, seat-c), with run id runA. It writes nothing to the
 // repository: everything is under t.TempDir().
 func newCevFix(t *testing.T, o cevOpts) *cevFix {
 	t.Helper()
-	f := &cevFix{t: t, root: t.TempDir(), seats: []string{"seat-a", "seat-b", "seat-c"}, answers: map[string]string{}}
-	f.spec, f.tmpl = cevSpec(o), cevTemplate(o.decoys)
+	f := &cevFix{t: t, tree: editiontest.NewTree(t), seats: editiontest.Seats(), answers: map[string]string{}}
+	f.spec, f.tmpl = cevSpec(o), editiontest.TemplateText(o.decoys)
 
-	// the image's tree
-	f.put("challenges/"+cevEvade+"/falco-rule.yaml", "type: evade\nexpectedFlag: FALCO{dev-fixture}\nforbiddenRules: [r]\n")
-	f.copyTree(cevGold, "challenges/"+demoCID)
-	f.put("challenges/"+demoCID+"/journey.yaml", cevJourney)
-	f.put("scenario/scenario.yaml", "id: fixture\ntitle: Fixture\nchallenges: ["+cevEvade+", "+demoCID+"]\n")
-	f.put("flags/flags.yaml", "flags:\n  "+cevEvade+": "+cevFlag+"\n")
-	f.put("corpus/public.txt", "placeholder text of the image's public files\n")
-
-	// the event edition, the seats and the key
-	f.put("edition-root/"+demoCID+"/"+edition.SpecFileName, f.spec)
-	f.put("edition-root/"+demoCID+"/"+edition.TemplateDirName+"/"+cevTemplateName, f.tmpl)
-	f.put("seats.txt", cevSeatsText(f.seats))
-	if err := os.MkdirAll(f.path("out"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	key, err := edition.NewMasterKey(bytes.Repeat([]byte("test-only-key-"), 4))
+	// the image's tree, the event edition, the seats and the output directory
+	f.tree.PlaceInputs(editiontest.Inputs{Golden: cevGold, Spec: f.spec, Template: f.tmpl, Seats: f.seats})
+	key, err := edition.NewMasterKey(editiontest.KeyBytes())
 	if err != nil {
 		t.Fatalf("NewMasterKey: %v", err)
 	}
 	f.key = key
 
 	// the renderer's output
-	scored, err := catalog.LoadScored(f.path("challenges"), f.path("scenario/scenario.yaml"), f.path("flags/flags.yaml"))
+	p := f.tree.Paths()
+	scored, err := catalog.LoadScored(p.Challenges, p.Scenario, p.Flags)
 	if err != nil {
 		t.Fatalf("catalog.LoadScored: %v", err)
 	}
@@ -219,11 +128,10 @@ func newCevFix(t *testing.T, o cevOpts) *cevFix {
 	if err := edition.WriteRenderRecord(&record, runA, key); err != nil {
 		t.Fatalf("WriteRenderRecord: %v", err)
 	}
-	f.put("answers.tsv", table.String())
-	f.put("render-record.tsv", record.String())
+	f.tree.PlaceAnswers(table.String(), record.String())
 	for _, b := range r.Bundles {
 		for _, file := range b.Files {
-			f.put("evidence/"+b.Seat+"/"+b.CID+"/"+file.Name, string(file.Data))
+			f.tree.PlaceBundleFile(b.Seat, b.CID, file.Name, file.Data)
 		}
 	}
 	for _, row := range r.Rows {
@@ -232,23 +140,25 @@ func newCevFix(t *testing.T, o cevOpts) *cevFix {
 	}
 
 	f.in = edition.CheckInput{
-		Challenges:       f.path("challenges"),
-		ScenarioFile:     f.path("scenario/scenario.yaml"),
-		FlagsFile:        f.path("flags/flags.yaml"),
-		AnswersFile:      f.path("answers.tsv"),
-		RenderRecordFile: f.path("render-record.tsv"),
-		EvidenceRoot:     f.path("evidence"),
-		SeatsFile:        f.path("seats.txt"),
-		EditionRoot:      f.path("edition-root"),
+		Challenges:       p.Challenges,
+		ScenarioFile:     p.Scenario,
+		FlagsFile:        p.Flags,
+		AnswersFile:      p.Answers,
+		RenderRecordFile: p.RenderRecord,
+		EvidenceRoot:     p.Evidence,
+		SeatsFile:        p.Seats,
+		EditionRoot:      p.EditionRoot,
 		NoPrevious:       true,
-		CorpusDirs:       []string{f.path("corpus")},
-		DigestsOut:       f.path("out/digests.tsv"),
+		CorpusDirs:       []string{p.Corpus},
+		DigestsOut:       p.DigestsOut,
 	}
 	return f
 }
 
 // newGoodCevFix is the event that every check accepts.
-func newGoodCevFix(t *testing.T) *cevFix { return newCevFix(t, cevOpts{nameWords: 100, decoys: 9}) }
+func newGoodCevFix(t *testing.T) *cevFix {
+	return newCevFix(t, cevOpts{nameWords: editiontest.GoodNameWords, decoys: editiontest.GoodDecoys})
+}
 
 func (f *cevFix) check() (*edition.CheckedEvent, edition.CheckReport, error) {
 	return edition.CheckEvent(f.in)
