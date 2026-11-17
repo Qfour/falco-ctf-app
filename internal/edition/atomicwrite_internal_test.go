@@ -318,18 +318,23 @@ func TestWriteTreeAtomic_RefusesBadPathsBeforeMakingAnything(t *testing.T) {
 
 // The mode is held after the creation: a umask that takes the owner's bits makes the write
 // fail and leave nothing, instead of leaving a file that the operator cannot use or that is
-// not the mode that was asked for.
+// not the mode that was asked for. The failure is the output's environment: an *OutputError
+// (exit 3), not an existing output.
 func TestWriteFileAtomic_AUmaskThatTakesTheOwnersBitsFailsAndLeavesNothing(t *testing.T) {
 	dir := t.TempDir() // made under the usual umask: only what the writer makes is under 0200
 	withUmask(t, 0o200, func() {
 		if _, err := writeFileAtomic(filepath.Join(dir, "out.tsv"), []byte("x")); err == nil {
 			t.Error("a file of mode 0400 was left in place of one of 0600")
+		} else if !isOutput(err) || isInput(err) {
+			t.Errorf("the single file: err = %v, want an *OutputError (exit 3)", err)
 		}
 		if got := dirNames(t, dir); len(got) != 0 {
 			t.Errorf("the directory holds %v after the failure, want nothing", got)
 		}
 		if err := writeTreeAtomic(filepath.Join(dir, "out"), []outputFile{{Path: "a.txt", Data: []byte("x")}}); err == nil {
 			t.Error("a tree of directories of mode 0500 was left in place of ones of 0700")
+		} else if !isOutput(err) || isInput(err) {
+			t.Errorf("the tree: err = %v, want an *OutputError (exit 3)", err)
 		}
 		if got := dirNames(t, dir); len(got) != 0 {
 			t.Errorf("the directory holds %v after the failure, want nothing", got)
@@ -338,8 +343,11 @@ func TestWriteFileAtomic_AUmaskThatTakesTheOwnersBitsFailsAndLeavesNothing(t *te
 }
 
 // ADR-0056 D20 (exit 3 and the commit point, amendment 13 as revised), V87 and V92: the failures
-// of the output's environment are made to happen through the seam writeFault, never through a
-// permission (a test may run as root, which a mode does not stop).
+// of the five steps of the seam writeFault (a write, the link, the rename, the two removes) are
+// made to happen through it, never through a permission (a test may run as root, which a mode
+// does not stop). A Sync or a Close that fails has no seam and no test; a temporary that cannot
+// be created and a mode the umask took a bit of are caused for real (the umask test above, and
+// the name over the limit of cmd/scoreboard's exit 3 test).
 
 // withWriteFault makes the steps of fail fail with their error for the length of the test.
 func withWriteFault(t *testing.T, fail map[string]error) {
@@ -379,9 +387,8 @@ func tempNames(t *testing.T, dir, keep string) []string {
 	return out
 }
 
-// Before the commit point (the link), a failure of a write, of the sync's environment or of the
-// link itself is an *OutputError (exit 3): nothing is at the destination and the temporary is
-// removed.
+// Before the commit point (the link), a failure of the write of the data or of the link itself
+// is an *OutputError (exit 3): nothing is at the destination and the temporary is removed.
 func TestWriteFileAtomic_AFailureBeforeTheLinkIsAnOutputErrorAndLeavesNothing(t *testing.T) {
 	for _, c := range []struct {
 		step string

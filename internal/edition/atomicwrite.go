@@ -49,8 +49,11 @@ package edition
 //     same directory and leave both names, and the next run would then refuse the output that is
 //     there (exit 2).
 //
-// writeFault is the seam that lets the tests make each step fail (V87, V92) without a
-// permission (a test may run as root).
+// writeFault is the seam that lets the tests make five steps fail (V87, V92) without a
+// permission (a test may run as root): the write of a file's data, the link, the rename and the
+// two removes. The other failures (a temporary that cannot be created, a mode the umask took a
+// bit of, a Sync or a Close that fails) have no seam: the tests cause the first two for real (a
+// name over the limit, a umask), and the last two are not caused by any test.
 //
 // What this does not do:
 //   - A tree: os.Rename of a directory replaces an EMPTY directory that another process made
@@ -118,8 +121,8 @@ func (e *OutputError) Unwrap() error { return e.Err }
 var beforeLink func(dest string)
 
 // writeFault is a seam for the tests of exit 3 (ADR-0056 V87, V92): when it is not nil, the
-// writers call it (through injected) at each step below that can fail for a reason of the
-// output's environment, before the operating system's call of that step, and an error it returns
+// writers call it (through injected) at each of the steps listed below (not at every step that
+// can fail: see the top of this file), before the operating system's call of that step, and an error it returns
 // is the failure of the step, the call not being made. Like beforeLink, nothing but a test file
 // assigns it (safeopen_source_test.go), it is nil in every build of the program, and a test
 // that sets it does not run in parallel with another one.

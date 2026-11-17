@@ -1,18 +1,18 @@
 package main
 
 // editioncmd.go is `scoreboard edition ...` (ADR-0056 D20, D19 A4e-2 and A4e-3): the arguments
-// of `edition check` and `edition render`, the call of edition.CheckEvent and of
-// edition.RenderEvent, the exit code and what is printed. main() reaches it only when
+// of `edition check`, the call of edition.CheckEvent, the exit code and what is printed
+// (`edition render` is not in this build: a usage error). main() reaches it only when
 // os.Args[1] is `edition`, before anything of the server is built, so a subcommand never starts
 // the server and the server's path never reaches this file (editioncmd_source_test.go fixes
 // both by reading the sources).
 //
 // Layers (D20): this file reads no file and writes none (it imports no `os`): the readers and
-// the writers are internal/edition's, the guard of `--out` included, and it is given the two
+// the writers are internal/edition's, and it is given the two
 // output streams. It prints identifiers only: a rule, a seat, a challenge, a question, a file
 // name, a position's number, a line number, B4's overlap numbers, a temporary name that was
-// left (cut short by the library) and, on the one line of success, the run id and the key's
-// fingerprint. No value, key, vocabulary or bundle content is in any error the library returns,
+// left (cut short by the library) and, on the one line of success, the run id. No value, key,
+// vocabulary or bundle content is in any error the library returns,
 // and nothing here adds one.
 //
 // Exit codes (D20, amendment 13 as revised; editionExitCode): 0 = accepted (the output is
@@ -22,7 +22,8 @@ package main
 // its form, an output that already exists, an error of no kind the library gives, or a mix of
 // kinds (nothing is written), 3 = every check passed and the output could not be put in place
 // (the output's environment; nothing is at the output, and the same input can be given again).
-// `edition render --practice` is A4e-3b: until it lands it is a usage error.
+// `edition render` (the event's and --practice) is the next change: until it lands it is a usage
+// error.
 
 import (
 	"errors"

@@ -543,7 +543,7 @@ func TestTheWriteFaultSeamIsAssignedByTestsOnly(t *testing.T) {
 	for name, c := range map[string]struct{ path, src string }{
 		"an assignment in another file":   {"internal/edition/other.go", "package edition\n\nfunc f() { writeFault = nil }\n"},
 		"a read in another file":          {"internal/edition/other.go", "package edition\n\nfunc f() { _ = writeFault }\n"},
-		"a call in the renderer's file":   {"internal/edition/eventrender.go", "package edition\n\nfunc f() { _ = writeFault(\"x\") }\n"},
+		"a call in safeopen.go":           {safeopenFilePath, "package edition\n\nfunc f() { _ = writeFault(\"x\") }\n"},
 		"an assignment in atomicwrite.go": {atomicwriteFilePath, writeSrc + "\nfunc g() { writeFault = func(string) error { return nil } }\n"},
 		"an assignment inside a literal":  {atomicwriteFilePath, writeSrc + "\nvar _ = func() int { writeFault = nil; return 0 }()\n"},
 		"a file that does not parse":      {"internal/edition/other.go", "package edition\n\nfunc ("},

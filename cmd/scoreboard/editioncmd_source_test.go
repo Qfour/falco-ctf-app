@@ -20,6 +20,7 @@ package main
 // A reference in a test file is not a use (only non-test files are read).
 
 import (
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -31,6 +32,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/Qfour/falco-ctf-app/internal/edition"
 )
 
 const (
@@ -472,5 +475,284 @@ func TestTheCommandOpensAndWritesNoFile(t *testing.T) {
 	}
 	if v := commandImportViolations(cmdFile, "package main\n"); len(v) == 0 {
 		t.Error("a file with no import was not reported")
+	}
+}
+
+// declNamed is the function or method of f named name (the first one), or nil.
+func declNamed(f *ast.File, name string) *ast.FuncDecl {
+	for _, d := range f.Decls {
+		if fd, ok := d.(*ast.FuncDecl); ok && fd.Name.Name == name && fd.Body != nil {
+			return fd
+		}
+	}
+	return nil
+}
+
+// within reports whether n is inside the block b.
+func within(n ast.Node, b *ast.BlockStmt) bool {
+	return b != nil && n.Pos() >= b.Pos() && n.End() <= b.End()
+}
+
+// returnsFinishRefusal reports whether the block has `return finishRefusal(_, name)`.
+func returnsFinishRefusal(b *ast.BlockStmt, name string) bool {
+	for _, s := range b.List {
+		r, ok := s.(*ast.ReturnStmt)
+		if !ok || len(r.Results) != 1 {
+			continue
+		}
+		if c, ok := r.Results[0].(*ast.CallExpr); ok && isIdent(c.Fun, "finishRefusal") && len(c.Args) == 2 && isIdent(c.Args[1], name) {
+			return true
+		}
+	}
+	return false
+}
+
+// writeWiringViolations judges the source of editioncmd.go (path p) for the wiring of the write
+// of --digests-out (ADR-0056 D20 exit 3 and the commit point, V92), which the tests of the
+// command cannot reach through the library's seam:
+//
+//   - in runEditionCheck, both results of edition.WriteDigestsFile are named (left, err), once;
+//   - after it, an `if err != nil` whose body returns finishRefusal(_, err): a failure before the
+//     commit point goes to the exit code and to the names left;
+//   - after it, outside that if (on the way to success), printLeftWarning(_, _, left): the names
+//     left after the commit point are printed, and the exit is 0;
+//   - finishRefusal hands its error to leftNamesOf (the names printed) and returns
+//     editionExitCode of it (exit 3 for an *edition.OutputError).
+func writeWiringViolations(p, src string) []string {
+	f, err := parser.ParseFile(token.NewFileSet(), p, src, 0)
+	if err != nil {
+		return []string{p + ": does not parse: " + err.Error()}
+	}
+	run := declNamed(f, "runEditionCheck")
+	if run == nil {
+		return []string{p + ": func runEditionCheck is not found"}
+	}
+	var out []string
+	var assign *ast.AssignStmt
+	writes := 0
+	ast.Inspect(run.Body, func(n ast.Node) bool {
+		a, ok := n.(*ast.AssignStmt)
+		if !ok || len(a.Rhs) != 1 {
+			return true
+		}
+		if c, ok := a.Rhs[0].(*ast.CallExpr); ok && isSelector(c.Fun, "edition", "WriteDigestsFile") {
+			writes++
+			assign = a
+		}
+		return true
+	})
+	if writes != 1 || len(assign.Lhs) != 2 {
+		return append(out, p+": runEditionCheck does not take the two results of edition.WriteDigestsFile once")
+	}
+	left, _ := assign.Lhs[0].(*ast.Ident)
+	errID, _ := assign.Lhs[1].(*ast.Ident)
+	if left == nil || left.Name == "_" || errID == nil || errID.Name == "_" {
+		return append(out, p+": a result of edition.WriteDigestsFile is dropped (want the names left and the error)")
+	}
+	var guard *ast.IfStmt
+	ast.Inspect(run.Body, func(n ast.Node) bool {
+		s, ok := n.(*ast.IfStmt)
+		if !ok || guard != nil || s.Pos() < assign.End() {
+			return true
+		}
+		if b, ok := s.Cond.(*ast.BinaryExpr); ok && b.Op == token.NEQ && isIdent(b.X, errID.Name) && isIdent(b.Y, "nil") && returnsFinishRefusal(s.Body, errID.Name) {
+			guard = s
+		}
+		return true
+	})
+	if guard == nil {
+		out = append(out, p+": the error of edition.WriteDigestsFile does not reach `return finishRefusal(..., "+errID.Name+")` in an `if "+errID.Name+" != nil`")
+	}
+	warned := false
+	ast.Inspect(run.Body, func(n ast.Node) bool {
+		c, ok := n.(*ast.CallExpr)
+		if ok && isIdent(c.Fun, "printLeftWarning") && len(c.Args) == 3 && isIdent(c.Args[2], left.Name) && c.Pos() > assign.End() && (guard == nil || !within(c, guard.Body)) {
+			warned = true
+		}
+		return true
+	})
+	if !warned {
+		out = append(out, p+": the names left by edition.WriteDigestsFile ("+left.Name+") are not given to printLeftWarning on the way to success")
+	}
+	fin := declNamed(f, "finishRefusal")
+	if fin == nil || fin.Type.Params == nil || len(fin.Type.Params.List) == 0 || len(fin.Type.Params.List[len(fin.Type.Params.List)-1].Names) != 1 {
+		return append(out, p+": func finishRefusal(w, err) is not found")
+	}
+	param := fin.Type.Params.List[len(fin.Type.Params.List)-1].Names[0].Name
+	names, exits := false, false
+	ast.Inspect(fin.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.CallExpr:
+			if isIdent(x.Fun, "leftNamesOf") && len(x.Args) == 1 && isIdent(x.Args[0], param) {
+				names = true
+			}
+		case *ast.ReturnStmt:
+			if len(x.Results) == 1 {
+				if c, ok := x.Results[0].(*ast.CallExpr); ok && isIdent(c.Fun, "editionExitCode") && len(c.Args) == 1 && isIdent(c.Args[0], param) {
+					exits = true
+				}
+			}
+		}
+		return true
+	})
+	if !names {
+		out = append(out, p+": finishRefusal does not print the names left (leftNamesOf of its error)")
+	}
+	if !exits {
+		out = append(out, p+": finishRefusal does not return editionExitCode of its error")
+	}
+	return out
+}
+
+// V92 (ADR-0056 D20, amendment 13 as revised): the command's part of exit 3 and of the warning
+// after the commit point. The library's failures are caused through its seam, which this
+// package cannot reach (and no seam is added to the command), so the wiring is held by reading
+// the source: a copy with each link of it cut is red.
+func TestTheWriteOfTheDigestsFileIsWiredToTheExitAndTheWarning(t *testing.T) {
+	src := readNonTest(t)[cmdFile]
+	for _, v := range writeWiringViolations(cmdFile, src) {
+		t.Error(v)
+	}
+	const (
+		warnLine = "\tprintLeftWarning(stderr, \"edition check\", left)\n"
+		failLine = "\t\tfmt.Fprintln(stderr, \"edition check: the digests file was not written\")\n"
+	)
+	cases := []struct {
+		name string
+		edit func(src string) string
+	}{
+		{"no warning", func(s string) string { return replaceOnceSrc(t, s, warnLine, "\t_ = left\n") }},
+		{"a warning of nothing", func(s string) string {
+			return replaceOnceSrc(t, s, warnLine, "\tprintLeftWarning(stderr, \"edition check\", nil)\n")
+		}},
+		{"the names left dropped", func(s string) string {
+			return replaceOnceSrc(t, s, "left, err := edition.WriteDigestsFile(", "_, err := edition.WriteDigestsFile(")
+		}},
+		{"the warning on the failure only", func(s string) string {
+			return replaceOnceSrc(t, replaceOnceSrc(t, s, warnLine, "\t_ = left\n"), failLine, failLine+"\t\tprintLeftWarning(stderr, \"edition check\", left)\n")
+		}},
+		{"the failure not through finishRefusal", func(s string) string {
+			return replaceOnceSrc(t, s, failLine+"\t\treturn finishRefusal(stderr, err)\n", failLine+"\t\treturn exitUsage\n")
+		}},
+		{"the failure not tested", func(s string) string {
+			return replaceOnceSrc(t, s, "edition.WriteDigestsFile(in.DigestsOut, ev)\n\tif err != nil {", "edition.WriteDigestsFile(in.DigestsOut, ev)\n\tif err == nil {")
+		}},
+		{"finishRefusal prints no name", func(s string) string { return replaceOnceSrc(t, s, "leftNamesOf(err)", "leftNamesOf(nil)") }},
+		{"finishRefusal gives no exit code of the error", func(s string) string {
+			return replaceOnceSrc(t, s, "\treturn editionExitCode(err)\n", "\treturn exitUsage\n")
+		}},
+	}
+	for _, c := range cases {
+		if v := writeWiringViolations(cmdFile, c.edit(src)); len(v) == 0 {
+			t.Errorf("%s: no violation was reported", c.name)
+		}
+	}
+	if v := writeWiringViolations(cmdFile, "package main\n\nfunc other() {}\n"); len(v) == 0 {
+		t.Error("a file with no runEditionCheck was not reported")
+	}
+}
+
+// switchKinds is the types (`*edition.X` as X) of the cases of the first type switch of the
+// function or method name of the source.
+func switchKinds(p, src, name string) ([]string, error) {
+	f, err := parser.ParseFile(token.NewFileSet(), p, src, 0)
+	if err != nil {
+		return nil, err
+	}
+	fd := declNamed(f, name)
+	if fd == nil {
+		return nil, errors.New("func " + name + " is not found")
+	}
+	var out []string
+	found := false
+	ast.Inspect(fd.Body, func(n ast.Node) bool {
+		ts, ok := n.(*ast.TypeSwitchStmt)
+		if !ok || found {
+			return true
+		}
+		found = true
+		for _, s := range ts.Body.List {
+			for _, e := range s.(*ast.CaseClause).List {
+				if st, ok := e.(*ast.StarExpr); ok && isSelectorOf(st.X, "edition") {
+					out = append(out, st.X.(*ast.SelectorExpr).Sel.Name)
+				}
+			}
+		}
+		return false
+	})
+	slices.Sort(out)
+	return out, nil
+}
+
+// isSelectorOf reports whether e is pkg.<anything>.
+func isSelectorOf(e ast.Expr, pkg string) bool {
+	sel, ok := e.(*ast.SelectorExpr)
+	return ok && isIdent(sel.X, pkg)
+}
+
+// The two walks of the library's error tree in editioncmd.go (leafKinds.count for the exit code,
+// collectLeaves for what is printed) each have a type switch of the library's kinds; a kind
+// added to one of them and not to the other would print one thing and exit by another. The
+// probe table holds every kind with the exit code it gives: each probe (with a cause that is a
+// join, so that a kind the walks did not stop at would be taken apart) is one leaf of its kind for
+// both walks; and the cases of the two switches are the probe table's kinds (collectLeaves needs
+// no case for a kind that wraps nothing: it is a leaf anyway).
+func TestTheTwoWalksOfTheErrorTreeKnowTheSameKinds(t *testing.T) {
+	cause := errors.Join(errors.New("first cause"), errors.New("second cause"))
+	probes := []struct {
+		kind string
+		err  error
+		exit int
+	}{
+		{"Violation", &edition.Violation{Rule: "B7", Msg: "a rule"}, exitRefused},
+		{"MoreViolations", &edition.MoreViolations{N: 2}, exitRefused},
+		{"InputError", &edition.InputError{Msg: "an input", Err: cause}, exitUsage},
+		{"OutputError", &edition.OutputError{Err: cause}, exitWriteFailed},
+	}
+	var all, wrapping []string
+	for _, p := range probes {
+		all = append(all, p.kind)
+		if _, ok := p.err.(interface{ Unwrap() error }); ok {
+			wrapping = append(wrapping, p.kind)
+		}
+		var leaves []error
+		collectLeaves(p.err, &leaves)
+		if len(leaves) != 1 || leaves[0] != p.err {
+			t.Errorf("%s: collectLeaves gives %v, want the probe as one leaf", p.kind, leaves)
+		}
+		var k leafKinds
+		k.count(p.err)
+		if k.violation+k.output+k.other != 1 {
+			t.Errorf("%s: leafKinds counts %+v, want one leaf", p.kind, k)
+		}
+		if got := editionExitCode(p.err); got != p.exit {
+			t.Errorf("%s: exit %d, want %d", p.kind, got, p.exit)
+		}
+	}
+	slices.Sort(all)
+	slices.Sort(wrapping)
+
+	src := readNonTest(t)[cmdFile]
+	check := func(src string) []string {
+		var v []string
+		if got, err := switchKinds(cmdFile, src, "count"); err != nil || !slices.Equal(got, all) {
+			v = append(v, "the switch of leafKinds.count has "+strings.Join(got, ",")+", want the probes' "+strings.Join(all, ","))
+		}
+		if got, err := switchKinds(cmdFile, src, "collectLeaves"); err != nil || !slices.Equal(got, wrapping) {
+			v = append(v, "the switch of collectLeaves has "+strings.Join(got, ",")+", want the probes' that wrap "+strings.Join(wrapping, ","))
+		}
+		return v
+	}
+	for _, v := range check(src) {
+		t.Error(v)
+	}
+	// The scan itself: a kind added to one switch only, or taken out of one, is red.
+	for name, mutated := range map[string]string{
+		"a kind added to the exit's switch only": replaceOnceSrc(t, src, "case *edition.Violation, *edition.MoreViolations:", "case *edition.Violation, *edition.MoreViolations, *edition.CheckedEvent:"),
+		"a kind taken out of the printing's":     replaceOnceSrc(t, src, "case *edition.Violation, *edition.InputError, *edition.OutputError:", "case *edition.Violation, *edition.InputError:"),
+	} {
+		if len(check(mutated)) == 0 {
+			t.Errorf("%s: no violation was reported", name)
+		}
 	}
 }
