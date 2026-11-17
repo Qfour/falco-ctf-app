@@ -221,6 +221,41 @@ func TestCheckEvent_EachCheckBrokenAloneRefusesTheEvent(t *testing.T) {
 	}
 }
 
+// Steps 6, 7 and 8 do not depend on each other, so an event that breaks B4, B7 and B10 at once
+// gets all three rules back together (and B8 (b) is checked in the same step as B7).
+func TestCheckEvent_StepsSixToEightAreAllRun(t *testing.T) {
+	f := newGoodCevFix(t)
+	first, _, err := f.check()
+	if err != nil {
+		t.Fatalf("the first check: %v", err)
+	}
+	// B10: a previous digest that differs
+	rows := first.Rows()
+	rows[0].Digest = strings.Repeat("0", 64)
+	var prev bytes.Buffer
+	if err := edition.WriteDigests(&prev, edition.CheckedEventForTest("fedcba9876543210fedcba9876543210", rows)); err != nil {
+		t.Fatal(err)
+	}
+	f.put("previous.tsv", prev.String())
+	f.in.NoPrevious, f.in.PreviousDigestsFile = false, f.path("previous.tsv")
+	// B4: the event template is the practice template
+	f.put("challenges/"+demoCID+"/edition/template/a.txt", f.tmpl)
+	// B7: two seats hold the same token at a decoy's position
+	a := strings.Split(f.read("evidence/seat-a/"+demoCID+"/"+cevTemplateName), "\n")
+	b := strings.Split(f.read("evidence/seat-b/"+demoCID+"/"+cevTemplateName), "\n")
+	for i, ln := range a {
+		if strings.HasPrefix(ln, "who-candidate-1 = ") {
+			b[i] = ln
+		}
+	}
+	f.put("evidence/seat-b/"+demoCID+"/"+cevTemplateName, strings.Join(b, "\n"))
+
+	err, report := f.refused("B4, B7 and B10 together")
+	if got := cevRuleSet(err); !slices.Equal(got, []string{"B10", "B4", "B7"}) || !report.OverlapRan {
+		t.Errorf("rules %v, report %+v; want B10, B4 and B7 together and B4's numbers (err: %v)", got, report, err)
+	}
+}
+
 // A mark outside the grammar in the event template is E3 (the renderer's lexer, V69), and the
 // validator's name for the rule is the renderer's.
 func TestCheckEvent_ABadMarkInTheTemplateIsE3(t *testing.T) {
@@ -289,6 +324,17 @@ func TestCheckEvent_ContinuityWithThePreviousDigests(t *testing.T) {
 	writePrev(first.Rows()[:2])
 	if ev, _, err := f.check(); err != nil || ev == nil {
 		t.Errorf("a seat the previous render does not have: (%v, %v), want the event", ev, err)
+	}
+	// a previous file of another event (no pair in common) and one with a pair that this render
+	// does not have are B10, not a pass
+	other := []edition.DigestRow{{Seat: "other-seat", CID: demoCID, Digest: strings.Repeat("1", 64)}}
+	writePrev(other)
+	if ev, _, err := f.check(); ev != nil || err == nil || isInputErr(err) || !slices.Equal(cevRuleSet(err), []string{"B10"}) {
+		t.Errorf("a previous file with no pair in common: (%v, %v), want B10 and no event", ev, err)
+	}
+	writePrev(append(first.Rows()[:1:1], other...))
+	if ev, _, err := f.check(); ev != nil || err == nil || !slices.Equal(cevRuleSet(err), []string{"B10"}) {
+		t.Errorf("a previous pair that this render does not have: (%v, %v), want B10 and no event", ev, err)
 	}
 	// a header alone is not a first check: it is a usage error, never read as --no-previous
 	f.put("previous.tsv", "# falco-ctf evidence-digests v1 run="+prevID+"\n")

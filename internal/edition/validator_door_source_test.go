@@ -27,9 +27,10 @@ import (
 //     that every check of D20 accepted, and not the tree of bundles that CheckBundles
 //     accepted), CheckEvent gives a *CheckedEvent, LoadEventTable gives a *CheckedTable;
 //   - the callers of LoadEventTable and of Check are load_source_test.go's (doorViolations):
-//     LoadEventTable is called by CheckEvent and by nothing else; the one caller of CheckEvent,
-//     the `edition check` command of cmd/scoreboard, is pinned by that command's own source
-//     test (editioncmd_source_test.go);
+//     LoadEventTable is called by CheckEvent and by nothing else; CheckEvent and
+//     WriteDigestsFile have no non-test caller yet. The `edition check` command of
+//     cmd/scoreboard (the next change) adds the one caller of each, and a count of exactly
+//     one in place of "none";
 //   - hintleak's `scope` package, which CheckEvent imports to assemble B5's input, is imported
 //     under the name hlscope (edition.Scope is a type of this package): any import of it in
 //     this package under another name is refused.

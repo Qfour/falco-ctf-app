@@ -9,9 +9,10 @@ package edition
 //
 // The order (D20 `edition check`, the numbers are D20's):
 //
-//	(0) the arguments, and the inputs whose defect is a usage error (the seat list, the
-//	    previous digests): all of them before any rule, so that a usage error is never hidden
-//	    by a rule's refusal;
+//	(0) the arguments, the seat list and the previous digests: the usage errors that are
+//	    looked at first, before any rule. A defect of any other input (the render record, the
+//	    edition root, the evidence root, the corpus) comes out in the step that reads that
+//	    input, so a rule's refusal in an earlier step can come before it;
 //	1.  catalog.LoadScored; a scope with no investigate challenge is a usage error and B4 is not
 //	    called (V72);
 //	2.  LoadEventTable: T3 to T8, T6 against the practice answers, the practice files;
@@ -248,8 +249,9 @@ func CheckEvent(in CheckInput) (*CheckedEvent, CheckReport, error) {
 		return nil, report, err
 	}
 	if recordRunID != runID {
-		// ADR-0056 has no rule name for this comparison (D20 step 3, D9). T3 is used for now,
-		// to be fixed by the next amendment; the message says what it is.
+		// ADR-0056 has no rule name for this comparison (D20 step 3, D9). T3 is used for now;
+		// the next amendment of ADR-0056 fixes the name (tracked in app#608). The message says
+		// what it is.
 		return nil, report, newViolation(RuleShape, "the run id of the render record is not the answers table's (the table and the record are of two renders)", 0, cell{}, nil)
 	}
 
@@ -407,15 +409,17 @@ func checkSpreads(scope Scope, editions map[string]*eventEdition, read *Bundles)
 	return errors.Join(errs...)
 }
 
-// checkContinuity is D10 B10 (step 8): every (seat, cid) that the previous digests and the
-// current ones both have has the same digest. With the same key and a seat list that only grew,
-// the bundle of a seat that was there before is byte for byte the same, so a digest that
-// differs is a bundle that was rendered again with another key, another edition or another
-// list. A (seat, cid) that the previous digests do not have (a seat added at the end of the
-// list) is not compared, and neither is one that only the previous digests have (the seat list
-// being a prefix of the new one is the renderer's E3, not B10's). havePrevious is false for a first check (`--no-previous`): nothing is
-// compared. When there is a previous file and it holds no row, it is refused here too (the
-// reader of the file refuses it already): comparing with nothing would pass every bundle.
+// checkContinuity is D10 B10 (step 8): the (seat, cid) pairs of the previous digests are a subset
+// of the current ones, and each has the same digest. The seat list only grows and the scope's
+// investigate challenges do not change within an event, so every pair of the previous render is
+// in this one: a pair that only the previous digests have is a violation (it also refuses a
+// previous file of another event, which shares no pair with this one, so nothing is compared and
+// nothing passes). With the same key and a seat list that only grew, the bundle of a pair that
+// was there before is byte for byte the same, so a digest that differs is a bundle rendered
+// again with another key, another edition or another list. A pair that only the current digests
+// have (a seat added at the end of the list) is not compared. havePrevious is false for a first
+// check (`--no-previous`): nothing is compared. A previous file that holds no row is refused too
+// (its reader refuses it already). The messages name the seat and the challenge, never a value.
 func checkContinuity(current, previous []DigestRow, havePrevious bool) error {
 	if !havePrevious {
 		return nil
@@ -425,13 +429,17 @@ func checkContinuity(current, previous []DigestRow, havePrevious bool) error {
 		c.add(newViolation(RuleContinuity, "the previous digests hold no row, so the continuity would compare nothing (the first check is --no-previous)", 0, cell{}, nil))
 		return c.err()
 	}
-	before := make(map[cell]string, len(previous))
-	for _, r := range previous {
-		before[cell{seat: r.Seat, cid: r.CID}] = r.Digest
-	}
+	now := make(map[cell]string, len(current))
 	for _, r := range current {
+		now[cell{seat: r.Seat, cid: r.CID}] = r.Digest
+	}
+	for _, r := range previous {
 		k := cell{seat: r.Seat, cid: r.CID}
-		if d, ok := before[k]; ok && d != r.Digest {
+		d, ok := now[k]
+		switch {
+		case !ok:
+			c.add(newViolation(RuleContinuity, "the previous digests have this seat and challenge and this render does not (the seat list only grows and the scope does not change within an event; a previous file of another event is refused here)", 0, k, nil))
+		case d != r.Digest:
 			c.add(newViolation(RuleContinuity, "the bundle of this seat and challenge is not the one of the previous render (the digest differs: same key and a seat list that only grew give the same bundle)", 0, k, nil))
 		}
 	}

@@ -37,9 +37,10 @@ import (
 //   - readPracticeFiles, the reader of the practice editions' bundles and templates, is
 //     called by LoadEventTable only: the start-up path reads none of it (A4c-2);
 //   - LoadEventTable is called by CheckEvent (internal/edition/checkevent.go, func CheckEvent:
-//     step 2 of D20's `edition check`, A4e-2) and by nothing else; CheckEvent's one caller, the
-//     `edition check` command of cmd/scoreboard, is pinned by that command's source test
-//     (editioncmd_source_test.go), and CheckEvent calls LoadEventTable once;
+//     step 2 of D20's `edition check`, A4e-2) and by nothing else, once;
+//   - CheckEvent and WriteDigestsFile have NO non-test caller today (doorViolations reports any).
+//     The `edition check` command of cmd/scoreboard (the next change) adds the one caller of
+//     each, and turns those cases into a count of exactly one;
 //   - edition.Load is called by cmd/scoreboard, exactly once, and by nothing else;
 //   - load.go holds no PracticeSet literal (TestLoadHasNoPracticeLiteral).
 //
@@ -49,7 +50,7 @@ import (
 const editionImportPath = "github.com/Qfour/falco-ctf-app/internal/edition"
 
 // doorGuarded are the names of this package that only the door may use.
-var doorGuarded = []string{"Parse", "NewJudge", "Load", "loadPractice", "practiceJudge", "loadChecked", "LoadEventTable", "Check", "readPracticeFiles"}
+var doorGuarded = []string{"Parse", "NewJudge", "Load", "loadPractice", "practiceJudge", "loadChecked", "LoadEventTable", "Check", "readPracticeFiles", "CheckEvent", "WriteDigestsFile"}
 
 // doorUse is one reference to a guarded name: the file (slash path from the repo
 // root), the enclosing function ("" outside any function), the name, and whether
@@ -210,6 +211,11 @@ func doorViolations(files map[string]string) (violations []string, counts map[st
 					continue
 				}
 				counts["LoadEventTable@CheckEvent"]++
+			case "CheckEvent", "WriteDigestsFile":
+				// The validator's entrance and its one writer: no non-test caller yet. The
+				// `edition check` command of cmd/scoreboard (the next change, A4e-2 (ii)) adds
+				// the one caller of each, and turns this case into a count of exactly one.
+				violations = append(violations, where+": "+u.name+" has no non-test caller yet (the `edition check` command adds the one, and a count here with it)")
 			case "NewJudge":
 				// A Judge is made from the event table (Load) or, outside the event mode,
 				// from the practice answers of the scope (practiceJudge): never from
@@ -449,6 +455,13 @@ func TestAnswersTableDoorScan_SeesAViolation(t *testing.T) {
 		{"readPracticeFiles called from another file", "internal/edition/other.go", "package edition\n\nfunc LoadEventTable() { _, _ = readPracticeFiles(nil) }\n"},
 		// LoadEventTable has one caller, CheckEvent.
 		{"LoadEventTable called from cmd/scoreboard (the command calls CheckEvent)", "cmd/scoreboard/y.go", "package main\n\nimport \"" + editionImportPath + "\"\n\nfunc f() { _, _, _ = edition.LoadEventTable(s, \"\") }\n"},
+		// CheckEvent and WriteDigestsFile have no caller until the command lands.
+		{"CheckEvent called from cmd/scoreboard (the command adds it later)", "cmd/scoreboard/y.go", "package main\n\nimport \"" + editionImportPath + "\"\n\nfunc f() { _, _, _ = edition.CheckEvent(in) }\n"},
+		{"CheckEvent called from the scoreboard's server", "internal/scoreboard/x.go", "package scoreboard\n\nimport \"" + editionImportPath + "\"\n\nfunc f() { _, _, _ = edition.CheckEvent(in) }\n"},
+		{"CheckEvent called by another function of the package", "internal/edition/other.go", "package edition\n\nfunc other() { _, _, _ = CheckEvent(in) }\n"},
+		{"CheckEvent taken as a value", "cmd/scoreboard/y.go", "package main\n\nimport \"" + editionImportPath + "\"\n\nvar f = edition.CheckEvent\n"},
+		{"WriteDigestsFile called from cmd/scoreboard", "cmd/scoreboard/y.go", "package main\n\nimport \"" + editionImportPath + "\"\n\nfunc f() { _ = edition.WriteDigestsFile(p, ev) }\n"},
+		{"WriteDigestsFile called by another function of the package", "internal/edition/other.go", "package edition\n\nfunc other() { _ = WriteDigestsFile(p, ev) }\n"},
 		{"LoadEventTable called from the scoreboard's server", "internal/scoreboard/x.go", "package scoreboard\n\nimport \"" + editionImportPath + "\"\n\nfunc f() { _, _, _ = edition.LoadEventTable(s, \"\") }\n"},
 		{"LoadEventTable called by another function of the package", "internal/edition/other.go", "package edition\n\nfunc other() { _, _, _ = LoadEventTable(s, \"\") }\n"},
 		{"LoadEventTable taken as a value", "cmd/scoreboard/y.go", "package main\n\nimport \"" + editionImportPath + "\"\n\nvar f = edition.LoadEventTable\n"},
