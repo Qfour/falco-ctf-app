@@ -1,0 +1,45 @@
+version: 1
+time:
+  base: "2000-01-01T00:00:00Z"
+fixed:
+  q5: "c1,c3"
+slots:
+  - name: who
+    role: answer
+    question: q1
+    decoys: 4
+    vocab:
+      - [w000, w001, w002, w003, w004, w005, w006, w007, w008, w009,
+         w010, w011, w012, w013, w014, w015, w016, w017, w018, w019,
+         w020, w021, w022, w023, w024, w025, w026, w027, w028, w029,
+         w030, w031, w032, w033, w034, w035, w036, w037, w038, w039,
+         w040, w041, w042, w043, w044, w045, w046, w047, w048, w049,
+         w050, w051, w052, w053, w054, w055, w056, w057, w058, w059,
+         w060, w061, w062, w063, w064, w065, w066, w067, w068, w069,
+         w070, w071, w072, w073, w074, w075, w076, w077, w078, w079,
+         w080, w081, w082, w083, w084, w085, w086, w087, w088, w089,
+         w090, w091, w092, w093, w094, w095, w096, w097, w098, w099]
+  - name: where
+    role: answer
+    question: q2
+    decoys: 4
+    vocab:
+      - [opt]
+      - [x]
+      - [a0, a1, a2, a3, a4, a5, a6, a7, a8, a9]
+      - [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9]
+      - [c0, c1, c2, c3, c4, c5, c6, c7, c8, c9]
+  - name: tag
+    role: answer
+    question: q3
+    decoys: 4
+  - name: when
+    role: answer
+    question: q4
+    decoys: 4
+    window: {from: 0, to: 3600}
+  - name: other
+    role: filler
+    format: name
+    vocab:
+      - [n0, n1, n2]
