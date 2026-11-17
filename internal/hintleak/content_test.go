@@ -2,10 +2,11 @@ package hintleak_test
 
 // content_test.go assembles hintleak.Input for each scope from the REAL
 // challenges/ and scenarios/ trees (ADR-0026 D5-1 / D5-5). Free-display items
-// come from the production call sequence — catalog.LoadScored -> LoadJourneys
-// -> LoadNarrative + ApplyNarrativeOverrides -> LoadRuleExcerpts
-// (cmd/scoreboard/main.go) — so what is counted as "free" is what a participant
-// is actually shown, not what happens to be in a file. The Hints and Free items
+// come from the production call sequence (catalog.LoadScored -> LoadHintInputs:
+// the journeys, the narrative overrides and the rule excerpts; the one reader
+// cmd/scoreboard/main.go shows and the event validator's B5 checks, ADR-0056
+// A4e-2c), so what is counted as "free" is what a participant is actually
+// shown, not what happens to be in a file. The Hints and Free items
 // themselves are built by scope.Assemble (internal/hintleak/scope, ADR-0056 B5:
 // the one definition, also used by the event validator); this file only loads the
 // trees and calls it (V56). It is shared by the V5
@@ -157,31 +158,20 @@ func loadScope(t *testing.T, chalDir, name, scenarioFile string, fixtures []hint
 			t.Fatalf("challenge %q lives in directory %q: challengeId must equal the directory name (journeys are keyed by directory, so it would silently drop out of this check)", id, cat[id].Dir())
 		}
 	}
-	journeys, err := catalog.LoadJourneys(chalDir, cat)
+	// The journeys with the scenario's narrative overrides (D5-1: an override REPLACES the
+	// briefing, never appends) and the rule excerpts, read by the reader the scoreboard's
+	// start-up and the event validator use (ADR-0056 A4e-2c, V89).
+	shown, err := catalog.LoadHintInputs(chalDir, scenarioFile, cat)
 	if err != nil {
-		t.Fatalf("scope %s: catalog.LoadJourneys: %v", name, err)
+		t.Fatalf("scope %s: catalog.LoadHintInputs: %v", name, err)
 	}
 	overrides := map[string]bool{}
-	if scenarioFile != "" {
-		nar, err := catalog.LoadNarrative(filepath.Join(filepath.Dir(scenarioFile), "narrative.yaml"))
-		if err != nil {
-			t.Fatalf("scope %s: catalog.LoadNarrative: %v", name, err)
-		}
-		// D5-1: a narrative override REPLACES the briefing (never appends).
-		if err := catalog.ApplyNarrativeOverrides(journeys, nar); err != nil {
-			t.Fatalf("scope %s: catalog.ApplyNarrativeOverrides: %v", name, err)
-		}
-		for id := range nar.Overrides {
-			overrides[id] = true
-		}
-	}
-	excerpts, err := catalog.LoadRuleExcerpts(chalDir, cat)
-	if err != nil {
-		t.Fatalf("scope %s: catalog.LoadRuleExcerpts: %v", name, err)
+	for _, id := range shown.Overridden {
+		overrides[id] = true
 	}
 
 	ids := scored.Order
-	in, wantPrompts := scope.Assemble(ids, cat, journeys, excerpts, fixtures)
+	in, wantPrompts := scope.Assemble(ids, cat, shown.Journeys, shown.Excerpts, fixtures)
 	return scopeData{name: name, ids: ids, overrides: overrides, in: in, wantPrompts: wantPrompts}
 }
 

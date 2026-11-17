@@ -16,8 +16,10 @@ package edition
 //	1.  catalog.LoadScored; a scope with no investigate challenge is a usage error and B4 is not
 //	    called (V72);
 //	2.  LoadEventTable: T3 to T8, T6 against the practice answers, the practice files;
-//	3.  the run id of the render record is the table's;
-//	4.  per challenge: E1 (ParseSpec), E2 and B8 (a1) (CheckQuestions), B8 (a2) (CheckSeatSpace,
+//	3.  B11: the run id of the render record is the table's;
+//	4.  the set of the challenge directories of the edition root (E2; an entry named like a
+//	    challenge id that is not a directory, or is a link, is a usage error), then per
+//	    challenge: E1 (ParseSpec), E2 and B8 (a1) (CheckQuestions), B8 (a2) (CheckSeatSpace,
 //	    on the seats given), and the template read and run through the lexer of the marks;
 //	5.  CheckBundles (B1, B2, B3, B5, B6, B9); B5's Hints and Free are hlscope.Assemble's;
 //	6.  B4 (checkPracticeOverlap, OverlapTheta);
@@ -42,7 +44,6 @@ package edition
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -54,6 +55,12 @@ import (
 
 // RuleContinuity is D10 B10: the continuity with the previous render.
 const RuleContinuity = "B10"
+
+// RuleRunID is D10 B11 (amendment 13): the run id of the render record is the answers table's,
+// so the table and the bundles are of one render. It is the validator's only (D20 step 3). A
+// render record whose form is wrong is an *InputError, not B11, and T3, the form of a table
+// (which the scoreboard's start-up applies too), is not used for this comparison.
+const RuleRunID = "B11"
 
 // RuleTemplateMark is D10 E3 as the validator names it: a template with a mark outside the
 // grammar (V69: the validator refuses with the renderer's own lexer, ScanMarks). It is the value
@@ -182,7 +189,7 @@ type CheckReport struct {
 }
 
 // CheckedEvent is an event edition that every check of D20 accepted (ADR-0056 amendment 12): E1,
-// E2, B8 (a1) and (a2), B1 to B10 and the run id of the render record. It carries what the
+// E2, E3, B8 (a1) and (a2), B1 to B10 and B11 (the run id of the render record). It carries what the
 // digests file and the command's one line need: the run id of the answers table, the digest of
 // every bundle, and how many seats and challenges were checked. It is made by CheckEvent and by
 // nothing else (its fields are unexported, and validator_door_source_test.go fixes that no other
@@ -249,10 +256,8 @@ func CheckEvent(in CheckInput) (*CheckedEvent, CheckReport, error) {
 		return nil, report, err
 	}
 	if recordRunID != runID {
-		// ADR-0056 has no rule name for this comparison (D20 step 3, D9). T3 is used for now;
-		// the next amendment of ADR-0056 fixes the name (tracked in app#608). The message says
-		// what it is.
-		return nil, report, newViolation(RuleShape, "the run id of the render record is not the answers table's (the table and the record are of two renders)", 0, cell{}, nil)
+		// D10 B11 (ADR-0056 amendment 13; A4e-2c gave it its name, which was T3 before).
+		return nil, report, newViolation(RuleRunID, "the run id of the render record is not the answers table's (the table and the record are of two renders)", 0, cell{}, nil)
 	}
 
 	// 4. The event edition of every challenge of the scope.
@@ -349,31 +354,22 @@ func checkTemplateMarks(cid string, template []BundleFile) error {
 	return c.err()
 }
 
-// hintInputs is B5's Hints and Free for the scope: the production sequence of cmd/scoreboard's
-// start-up (LoadJourneys, the scenario's narrative overrides, LoadRuleExcerpts) and then
-// hlscope.Assemble, the one definition of what is a hint and what is shown without paying. The
-// targets are not given here: B5 holds the files of the bundles to these inputs (CheckBundles).
-// The count of the question prompts among the free texts is checked, as the tests of
-// internal/hintleak check it (V24).
+// hintInputs is B5's Hints and Free for the scope: catalog.LoadHintInputs, the one reader of the
+// journeys, the scenario's narrative overrides and the rule excerpts that cmd/scoreboard's
+// start-up shows (ADR-0056 A4e-2c, V89), and then hlscope.Assemble, the one definition of what
+// is a hint and what is shown without paying. The targets are not given here: B5 holds the files
+// of the bundles to these inputs (CheckBundles). The count of the question prompts among the
+// free texts is checked, as the tests of internal/hintleak check it (V24). A failure of the
+// reader is a *catalog.HintInputsError, which names its step ("journeys: ...", "narrative: ...",
+// "narrative overrides: ...", "rule excerpts: ...").
 func hintInputs(scenarioFile string, scored catalog.Scored) (hints, free []hintleak.Item, err error) {
 	scopeCat := scored.Catalog
 	// The tree is the one LoadScored read (Scored.ChallengesDir): there is no second path.
-	journeys, err := catalog.LoadJourneys(scored.ChallengesDir, scopeCat)
+	shown, err := catalog.LoadHintInputs(scored.ChallengesDir, scenarioFile, scopeCat)
 	if err != nil {
-		return nil, nil, fmt.Errorf("journeys: %w", err)
+		return nil, nil, err
 	}
-	narrative, err := catalog.LoadNarrative(filepath.Join(filepath.Dir(scenarioFile), "narrative.yaml"))
-	if err != nil {
-		return nil, nil, fmt.Errorf("narrative: %w", err)
-	}
-	if err := catalog.ApplyNarrativeOverrides(journeys, narrative); err != nil {
-		return nil, nil, fmt.Errorf("narrative overrides: %w", err)
-	}
-	excerpts, err := catalog.LoadRuleExcerpts(scored.ChallengesDir, scopeCat)
-	if err != nil {
-		return nil, nil, fmt.Errorf("rule excerpts: %w", err)
-	}
-	built, wantPrompts := hlscope.Assemble(scored.Order, scopeCat, journeys, excerpts, nil)
+	built, wantPrompts := hlscope.Assemble(scored.Order, scopeCat, shown.Journeys, shown.Excerpts, nil)
 	if err := hlscope.PromptCountProblem("event", built.Free, wantPrompts); err != nil {
 		return nil, nil, newViolation(RuleBundleHint, "the question prompts of the scope are not all among the texts shown without paying, so B5 cannot run", 0, cell{}, err)
 	}

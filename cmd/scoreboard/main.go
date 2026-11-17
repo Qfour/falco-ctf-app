@@ -202,40 +202,29 @@ func main() {
 	// explicit challenge order when one is pinned, otherwise the catalog's
 	// sorted ids (NN- prefixes sort into 01..10 sequence).
 	cat, scenarioID, order := scored.Catalog, scored.ScenarioID, scored.Order
-	// Journey UI content (title/tagline/briefing/steps/hints/docsUrl). Optional
-	// per challenge; a missing journey.yaml just yields no briefing for that
-	// mission and the UI degrades gracefully ("ブリーフィング準備中").
-	journeys, err := catalog.LoadJourneys(challengesDir, cat)
+	// What the participant is shown of the journeys and the rules, read by
+	// catalog.LoadHintInputs (ADR-0056 A4e-2c, V89): the one reader, which the
+	// event validator's B5 also uses, so B5 checks what this server shows.
+	//   - Journey UI content (title/tagline/briefing/steps/hints/docsUrl).
+	//     Optional per challenge; a missing journey.yaml just yields no briefing
+	//     for that mission and the UI degrades gracefully (the portal's
+	//     "briefing in preparation" placeholder).
+	//   - ADR-0014: a scenario may additively override briefing/bridge per
+	//     challengeId via scenarios/<name>/narrative.yaml, sitting alongside
+	//     scenario.yaml. Optional; absent file (the common case) is a no-op, and
+	//     no scenario (SCENARIO_FILE empty) reads no narrative.
+	//   - Falco rule excerpts (display-only, Story tab's "Falco Rule" panel, P23
+	//     Story-as-docs). Same source challenges/<NN>-<slug>/rule.yaml the old
+	//     docs-site has always rendered; fail-soft per challenge (missing file =
+	//     no panel), loud error on malformed YAML (content mistake, see
+	//     catalog.LoadRuleExcerpts doc).
+	// A failure is logged with the record of its step (logHintInputsFailure).
+	shown, err := catalog.LoadHintInputs(challengesDir, scenarioFile, cat)
 	if err != nil {
-		logger.Error("journey load failed", "dir", challengesDir, "err", err)
+		logHintInputsFailure(logger, err)
 		os.Exit(1)
 	}
-	// ADR-0014: a scenario may additively override briefing/bridge per
-	// challengeId via scenarios/<name>/narrative.yaml, sitting alongside
-	// scenario.yaml. Optional; absent file (the common case) is a no-op so
-	// scenarios with no narrative.yaml (all of them today) are unaffected.
-	if scenarioFile != "" {
-		narrativeFile := filepath.Join(filepath.Dir(scenarioFile), "narrative.yaml")
-		narrative, err := catalog.LoadNarrative(narrativeFile)
-		if err != nil {
-			logger.Error("narrative load failed", "file", narrativeFile, "err", err)
-			os.Exit(1)
-		}
-		if err := catalog.ApplyNarrativeOverrides(journeys, narrative); err != nil {
-			logger.Error("narrative override failed", "file", narrativeFile, "err", err)
-			os.Exit(1)
-		}
-	}
-	// Falco rule excerpts (display-only, Story tab's "Falco Rule" panel — P23
-	// Story-as-docs). Same source challenges/<NN>-<slug>/rule.yaml the old
-	// docs-site has always rendered; fail-soft per challenge (missing file =
-	// no panel), loud error on malformed YAML (content mistake, see
-	// catalog.LoadRuleExcerpts doc).
-	falcoRules, err := catalog.LoadRuleExcerpts(challengesDir, cat)
-	if err != nil {
-		logger.Error("falco rule excerpt load failed", "dir", challengesDir, "err", err)
-		os.Exit(1)
-	}
+	journeys, falcoRules := shown.Journeys, shown.Excerpts
 	// Unified hints Phase 1: advisory validation of JourneyHint.RuleRefs
 	// against this mission's rule.yaml / falco-rule.yaml rule names. Warn-only
 	// (fail-soft) — a bad ref is a content typo in display copy, not a
@@ -370,6 +359,31 @@ func main() {
 	if err != nil {
 		logger.Error("listen failed", "err", err)
 		os.Exit(1)
+	}
+}
+
+// logHintInputsFailure writes the boot record of a catalog.LoadHintInputs failure: the
+// record of its step, with the path that step read and the loader's own error, as each
+// step was logged when main read the three inputs itself (ADR-0056 A4e-2c moved the reads
+// into catalog.LoadHintInputs and kept the records). An error that is not a
+// *catalog.HintInputsError (LoadHintInputs returns none) still gets a record.
+func logHintInputsFailure(logger *slog.Logger, err error) {
+	var he *catalog.HintInputsError
+	if !errors.As(err, &he) {
+		logger.Error("hint inputs load failed", "err", err)
+		return
+	}
+	switch he.Stage {
+	case catalog.HintStageJourneys:
+		logger.Error("journey load failed", "dir", he.Path, "err", he.Err)
+	case catalog.HintStageNarrative:
+		logger.Error("narrative load failed", "file", he.Path, "err", he.Err)
+	case catalog.HintStageNarrativeOverrides:
+		logger.Error("narrative override failed", "file", he.Path, "err", he.Err)
+	case catalog.HintStageRuleExcerpts:
+		logger.Error("falco rule excerpt load failed", "dir", he.Path, "err", he.Err)
+	default:
+		logger.Error("hint inputs load failed", "err", err)
 	}
 }
 

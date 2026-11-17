@@ -351,9 +351,10 @@ func TestEditionCheck_NoInvestigateChallengeIsExit2AndB4IsNotCalled(t *testing.T
 // is printed; nothing is written, and the overlap numbers are still printed.
 func TestEditionCheck_ARuleOfD10IsExit1(t *testing.T) {
 	cases := []struct {
-		name string
-		brk  func(f *ecFix)
-		rule string
+		name    string
+		brk     func(f *ecFix)
+		rule    string
+		notRule string // a rule name that must not be in stderr ("" for none)
 	}{
 		{"B3: a flag shape in a bundle", func(f *ecFix) {
 			p := f.path("evidence/seat-a/" + ecCID + "/" + ecTmpl)
@@ -364,18 +365,33 @@ func TestEditionCheck_ARuleOfD10IsExit1(t *testing.T) {
 			if err := os.WriteFile(p, append(b, "FALCO{leak}\n"...), 0o644); err != nil {
 				f.t.Fatal(err)
 			}
-		}, "B3:"},
+		}, "B3:", ""},
 		{"B1: a seat has no bundle", func(f *ecFix) {
 			if err := os.RemoveAll(f.path("evidence/seat-c")); err != nil {
 				f.t.Fatal(err)
 			}
-		}, "B1:"},
-		{"the render record is of another run", func(f *ecFix) {
+		}, "B1:", ""},
+		// V90: the run id of the render record that is not the table's is B11 (amendment 13),
+		// not T3 (the form of a table, which the scoreboard's start-up applies too).
+		{"B11: the render record is of another run", func(f *ecFix) {
 			f.put("render-record.tsv", "# falco-ctf render-record v1\nrun-id\tfedcba9876543210fedcba9876543210\nkey-fingerprint\t"+strings.Repeat("ab", 32)+"\n")
-		}, "T3:"},
+		}, "B11:", "T3:"},
 		{"E2: decoys below K", func(f *ecFix) {
 			f.put("edition-root/"+ecCID+"/edition.yaml", strings.ReplaceAll(ecSpec(), "decoys: 9", "decoys: 3"))
-		}, "E2:"},
+		}, "E2:", ""},
+		// V90: the set of the challenge directories of --edition-root is E2, both ways.
+		{"E2: an extra challenge directory in the edition root", func(f *ecFix) {
+			f.put("edition-root/02-other/edition.yaml", "x\n")
+		}, "E2:", ""},
+		{"E2: no directory for the challenge in the edition root", func(f *ecFix) {
+			if err := os.RemoveAll(f.path("edition-root/" + ecCID)); err != nil {
+				f.t.Fatal(err)
+			}
+		}, "E2:", ""},
+		// V90: a failure of the lexer of the marks in the event template is E3.
+		{"E3: a mark outside the grammar in the template", func(f *ecFix) {
+			f.put("edition-root/"+ecCID+"/template/"+ecTmpl, ecTemplate()+"broken {{ctf: mark\n")
+		}, "E3:", ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -387,6 +403,9 @@ func TestEditionCheck_ARuleOfD10IsExit1(t *testing.T) {
 			}
 			if !strings.Contains(stderr, c.rule) {
 				t.Errorf("stderr = %q; want the rule %s named", stderr, c.rule)
+			}
+			if c.notRule != "" && strings.Contains(stderr, c.notRule) {
+				t.Errorf("stderr = %q; the rule %s must not be named", stderr, c.notRule)
 			}
 			f.noValue(c.name, stderr)
 			if f.digestsOutExists() {
@@ -414,6 +433,17 @@ func TestEditionCheck_ABadFormOfAnInputFileIsExit2(t *testing.T) {
 			}
 		}},
 		{"a seats file with a repeated seat", func(f *ecFix) { f.put("seats.txt", "# falco-ctf seats v1\nseat-a\nseat-a\n") }},
+		// V90: an entry of --edition-root named like a challenge id that is a file or a link is
+		// exit 2, not E2 (D20 as amendment 13 revised it).
+		{"a file named like a challenge id in the edition root", func(f *ecFix) { f.put("edition-root/02-other", "x\n") }},
+		{"the challenge's entry of the edition root is a link to its directory", func(f *ecFix) {
+			if err := os.Rename(f.path("edition-root/"+ecCID), f.path("real-edition")); err != nil {
+				f.t.Fatal(err)
+			}
+			if err := os.Symlink(f.path("real-edition"), f.path("edition-root/"+ecCID)); err != nil {
+				f.t.Fatal(err)
+			}
+		}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

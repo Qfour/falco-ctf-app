@@ -106,9 +106,11 @@ bridge: "local bridge that must not survive"
 // ships no narrative.yaml at all (the common case — this was true of every
 // scenario when ADR-0014 landed; as of P27-2 both nimbusbreach-full and
 // tutorial-intro ship one, but new scenarios still start with none) must
-// see zero behavior change. A zero-value Narrative (what LoadNarrative
-// returns for a missing file) must leave every journey byte-for-byte as
-// LoadJourneys produced it.
+// see zero behavior change. A scenario with no narrative.yaml beside it must
+// leave every journey byte-for-byte as LoadJourneys produced it. Since ADR-0056
+// A4e-2c the wiring is catalog.LoadHintInputs (the one place that reads the
+// narrative and applies it; hintinputs_source_test.go), so that is what this
+// test runs.
 func TestApplyNarrativeOverrides_NoOverride_ExistingScenariosUnaffected(t *testing.T) {
 	dir := t.TempDir()
 	writeJourney(t, dir, "03-stealth-read", `
@@ -135,19 +137,21 @@ briefing: "recon briefing"
 		before[k] = v
 	}
 
-	// Simulate main.go's wiring for a scenario with no narrative.yaml: read
-	// a nonexistent path (LoadNarrative degrades to a zero Narrative), then
-	// apply it.
-	n, err := catalog.LoadNarrative(filepath.Join(t.TempDir(), "narrative.yaml"))
+	// The start-up's wiring for a scenario with no narrative.yaml beside it:
+	// the missing file degrades to a zero Narrative, and nothing is overridden.
+	shown, err := catalog.LoadHintInputs(dir, filepath.Join(t.TempDir(), "scenario.yaml"), cat)
 	if err != nil {
-		t.Fatalf("LoadNarrative on missing file must not error: %v", err)
+		t.Fatalf("LoadHintInputs with no narrative.yaml must not error: %v", err)
 	}
-	if err := catalog.ApplyNarrativeOverrides(js, n); err != nil {
-		t.Fatalf("ApplyNarrativeOverrides with empty overlay must not error: %v", err)
+	if len(shown.Overridden) != 0 {
+		t.Fatalf("no narrative.yaml, yet overridden: %v", shown.Overridden)
+	}
+	if len(shown.Journeys) != len(before) {
+		t.Fatalf("LoadHintInputs gave %d journeys, LoadJourneys %d", len(shown.Journeys), len(before))
 	}
 
 	for id, want := range before {
-		got := js[id]
+		got := shown.Journeys[id]
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("journey %q changed with no narrative overlay applied:\nbefore: %+v\nafter:  %+v", id, want, got)
 		}
@@ -262,8 +266,8 @@ title: 潜入
 //     scenarios/tutorial-intro/narrative.yaml (now kept for its `bridge: ""`
 //     clear rather than to fix a briefing contradiction — see that file's
 //     header comment), sees no "Mission 02" reference either, once main.go's
-//     wiring (LoadScenario -> Restrict -> LoadJourneys -> LoadNarrative ->
-//     ApplyNarrativeOverrides) is replayed end-to-end, and
+//     wiring (LoadScenario -> Restrict -> LoadHintInputs, which reads the
+//     journeys and applies the narrative) is replayed end-to-end, and
 //   - scenario `nimbusbreach-full`, which as of P27-2 ships its own
 //     scenarios/nimbusbreach-full/narrative.yaml, uses the ADR-0014
 //     mechanism in the opposite direction from tutorial-intro: it restores
@@ -288,19 +292,13 @@ func TestNimbusbreachFullNarrative_RestoresMission02Callback(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Restrict(%s): %v", scenarioPath, err)
 		}
-		journeys, err := catalog.LoadJourneys("../../challenges", restricted)
+		// The journeys with the scenario's narrative applied, by the one reader
+		// the start-up uses (ADR-0056 A4e-2c).
+		shown, err := catalog.LoadHintInputs("../../challenges", scenarioPath, restricted)
 		if err != nil {
-			t.Fatalf("LoadJourneys(%s): %v", scenarioPath, err)
+			t.Fatalf("LoadHintInputs(%s): %v", scenarioPath, err)
 		}
-		narrativePath := filepath.Join(filepath.Dir(scenarioPath), "narrative.yaml")
-		n, err := catalog.LoadNarrative(narrativePath)
-		if err != nil {
-			t.Fatalf("LoadNarrative(%s): %v", narrativePath, err)
-		}
-		if err := catalog.ApplyNarrativeOverrides(journeys, n); err != nil {
-			t.Fatalf("ApplyNarrativeOverrides(%s): %v", scenarioPath, err)
-		}
-		return journeys
+		return shown.Journeys
 	}
 
 	// Sanity check the premise: the challenge-local fallback (as loaded with
