@@ -32,7 +32,8 @@ package edition
 //
 // B7, D12, amendment 10 (as revised): the renderer gives every position of every seat a value
 // of its own (U2), and B7 does not trust it: it checks, per seat, that the positions of the
-// answer's decoys hold K values that fit (O(seats x bundle)), and, per position of an
+// answer's decoys hold K different values that fit and differ from the seat's own answer
+// (O(seats x bundle)), and, per position of an
 // answer or a decoy, that no two seats hold the same token (O(seats x slots)). Together
 // they make "every pair of seats differs at K positions that could hold the answer" a
 // checked property; the pair-wise comparison itself stays in the renderer's tests. The
@@ -67,12 +68,6 @@ const (
 	CandidateFactor = 10
 )
 
-// SpreadSeat is the output of one challenge for one seat: the files of its bundle.
-type SpreadSeat struct {
-	Seat  string
-	Files []BundleFile
-}
-
 // fileTokens is the tokens of one file, in order.
 func fileTokens(data []byte) []string {
 	spans := tokenSpans(data)
@@ -83,28 +78,13 @@ func fileTokens(data []byte) []string {
 	return out
 }
 
-// fitsFormat reports whether the token (not empty) is a value of the question's format in
-// normalised form. The first tests only keep the regular expressions of answerformat for
-// the tokens that can fit: they do not decide anything Canonical would not.
+// fitsFormat reports whether the token is a value of the question's format in normalised
+// form: answerformat.Canonical decides, and nothing here repeats its rules.
 func fitsFormat(q catalog.Question, tok string) bool {
-	switch q.Format {
-	case answerformat.Path:
-		if tok[0] != '/' {
-			return false
-		}
-	case answerformat.HexID:
-		if q.Params.Length == nil || len(tok) != *q.Params.Length {
-			return false
-		}
-	case answerformat.Timestamp:
-		if len(tok) != len("2000-01-01T00:00:00Z") {
-			return false
-		}
-	}
 	return answerformat.Canonical(q.Format, q.Params, tok) == nil
 }
 
-// spreadSeat is a SpreadSeat read once: its files in byte order of the names, and the tokens
+// spreadSeat is a Bundle read once: its files in byte order of the names, and the tokens
 // of each.
 type spreadSeat struct {
 	seat   string
@@ -126,18 +106,20 @@ func spreadViolation(rule, msg, seat, cid, qid string) *Violation {
 	return newViolation(rule, msg, 0, cell{seat: seat, cid: cid, qid: qid}, nil)
 }
 
-// prepareSpread reads the seats and picks the per-seat questions (the formats that can vary
-// per seat). It refuses what the two rules cannot be run on: no seat, a seat outside the
-// seat grammar (the practice seat * too) or repeated, no per-seat question, and a per-seat
-// question whose attempts are outside 1..answerformat.MaxAttempts (a floor of 0 would pass
-// anything). The seats are read in byte order of their names, so which seat of two that
-// share a token is named does not depend on the order the caller listed them in.
-func prepareSpread(cid string, qs []catalog.Question, seats []SpreadSeat) ([]spreadSeat, []catalog.Question, error) {
+// prepareSpread reads the bundles of one challenge and picks the per-seat questions (the
+// formats that can vary per seat). It refuses what the two rules cannot be run on, under the
+// rule of the caller (B7 or B8): no bundle, a missing bundle, a bundle of another challenge
+// than cid, a seat outside the seat grammar (the practice seat * too) or repeated, no
+// per-seat question, and a per-seat question whose attempts are outside
+// 1..answerformat.MaxAttempts (a floor of 0 would pass anything). The bundles are read in byte
+// order of their seats, so which seat of two that share a token is named does not depend on
+// the order the caller listed them in.
+func prepareSpread(rule, cid string, qs []catalog.Question, bundles []*Bundle) ([]spreadSeat, []catalog.Question, error) {
 	if !challengeid.Valid(cid) {
-		return nil, nil, newViolation(RuleDecoySpread, "cid is not a challenge id", 0, cell{}, nil)
+		return nil, nil, newViolation(rule, "cid is not a challenge id", 0, cell{}, nil)
 	}
-	if len(seats) == 0 {
-		return nil, nil, newViolation(RuleDecoySpread, "there is no seat to check", 0, cell{cid: cid}, nil)
+	if len(bundles) == 0 {
+		return nil, nil, newViolation(rule, "there is no bundle to check", 0, cell{cid: cid}, nil)
 	}
 	var per []catalog.Question
 	for _, q := range qs {
@@ -146,25 +128,36 @@ func prepareSpread(cid string, qs []catalog.Question, seats []SpreadSeat) ([]spr
 		}
 	}
 	if len(per) == 0 {
-		return nil, nil, newViolation(RuleDecoySpread, "the challenge has no question that can vary per seat", 0, cell{cid: cid}, nil)
+		return nil, nil, newViolation(rule, "the challenge has no question that can vary per seat", 0, cell{cid: cid}, nil)
 	}
 	var c collector
 	for _, q := range per {
 		if q.Attempts < 1 || q.Attempts > answerformat.MaxAttempts {
-			c.add(spreadViolation(RuleDecoySpread, "the attempts of the question are outside 1..MaxAttempts, so K and R x attempts cannot be set", "", cid, q.ID))
+			c.add(spreadViolation(rule, "the attempts of the question are outside 1..MaxAttempts, so K and R x attempts cannot be set", "", cid, q.ID))
 		}
 	}
-	sorted := slices.Clone(seats)
-	slices.SortStableFunc(sorted, func(a, b SpreadSeat) int { return strings.Compare(a.Seat, b.Seat) })
+	sorted := make([]*Bundle, 0, len(bundles))
+	for _, b := range bundles {
+		if b == nil {
+			c.add(spreadViolation(rule, "a bundle is missing (nil)", "", cid, ""))
+			continue
+		}
+		sorted = append(sorted, b)
+	}
+	slices.SortStableFunc(sorted, func(a, b *Bundle) int { return strings.Compare(a.Seat, b.Seat) })
 	out := make([]spreadSeat, 0, len(sorted))
 	seen := make(map[string]struct{}, len(sorted))
 	for _, s := range sorted {
+		if s.CID != cid {
+			c.add(spreadViolation(rule, "the bundle is of another challenge than the one checked", s.Seat, s.CID, ""))
+			continue
+		}
 		if !identity.ValidSeat(s.Seat) {
-			c.add(spreadViolation(RuleDecoySpread, "a seat is outside the seat grammar (ADR-0042); a practice edition is not checked", s.Seat, cid, ""))
+			c.add(spreadViolation(rule, "a seat is outside the seat grammar (ADR-0042); a practice edition is not checked", s.Seat, cid, ""))
 			continue
 		}
 		if _, dup := seen[s.Seat]; dup {
-			c.add(spreadViolation(RuleDecoySpread, "a seat is listed twice", s.Seat, cid, ""))
+			c.add(spreadViolation(rule, "a seat is listed twice", s.Seat, cid, ""))
 			continue
 		}
 		seen[s.Seat] = struct{}{}
@@ -183,11 +176,12 @@ func prepareSpread(cid string, qs []catalog.Question, seats []SpreadSeat) ([]spr
 	return out, per, nil
 }
 
-// CheckOutputSpace is D10 B8 (b), D3 (b): see the header. It lists every seat and question
-// that is short (bounded like Check's list), with the number of tokens it has and the
-// number it needs.
-func CheckOutputSpace(cid string, qs []catalog.Question, seats []SpreadSeat) error {
-	prep, per, err := prepareSpread(cid, qs, seats)
+// CheckOutputSpace is D10 B8 (b), D3 (b): see the header. bundles are the bundles of the
+// challenge cid, one per seat (a bundle of another challenge is refused, as B8, like every
+// input it cannot run on). It lists every seat and question that is short (bounded like
+// Check's list), with the number of tokens it has and the number it needs.
+func CheckOutputSpace(cid string, qs []catalog.Question, bundles []*Bundle) error {
+	prep, per, err := prepareSpread(RuleVocabSpace, cid, qs, bundles)
 	if err != nil {
 		return err
 	}
@@ -281,19 +275,29 @@ func templateLayout(spec *Spec, template []BundleFile) (names []string, counts [
 // position (the token of a file at the index the template says):
 //
 //   - per seat and per-seat question: the DISTINCT tokens at the positions of the question's
-//     decoys that fit the question are at least K = DecoyK(attempts) (a decoy that repeats
-//     another one in the seat is not another candidate to try);
+//     decoys that fit the question and are not the seat's own answer's token are at least
+//     K = DecoyK(attempts). A decoy that repeats another one is not another candidate to try,
+//     and a decoy that holds the answer's token is not a decoy (the validator does not rely on
+//     the renderer to have kept the two apart in a seat): it is not counted, and its position
+//     is a violation of its own, naming the slot and the file, so that the one that is wrong
+//     is found without reading a count;
 //   - per position of an answer or a decoy: no two seats hold the same token. The validator
 //     does not trust the renderer's assignment, so it checks what the assignment is for. A
 //     filler is not looked at. With one seat there is no pair and this part is empty (no one
 //     to collude with, so not a fail-open); the per-seat part is checked all the same.
 //
-// spec must be a Spec that ParseSpec returned (a Spec made by hand is refused). A bundle whose
-// files or number of tokens differ from the template's cannot be read by position and is a
-// violation, and is left out of the second part. It lists every seat and question that is
-// short, bounded like Check's list. The cost is O(seats x bundle).
-func CheckDecoySpread(cid string, spec *Spec, qs []catalog.Question, template []BundleFile, seats []SpreadSeat) error {
-	prep, per, err := prepareSpread(cid, qs, seats)
+// bundles are the bundles of the challenge cid, one per seat (a bundle of another challenge is
+// refused). spec must be a Spec that ParseSpec returned (a Spec made by hand is refused).
+//
+// A template whose mark of an answer or a decoy is buried in a token (a byte glued to it) is
+// refused as a whole: its positions cannot be located, so the rule cannot be run on it. This
+// is stronger than ADR-0056 V69's first item, which says such a position is "short of K" and
+// red; the ADR's wording is for the next addendum to bring in line with this. A bundle whose
+// files or number of tokens differ from the template's was not made from it and cannot be read
+// by position: a violation, left out of the second part. The result lists every seat and
+// question that is short, bounded like Check's list. The cost is O(seats x bundle).
+func CheckDecoySpread(cid string, spec *Spec, qs []catalog.Question, template []BundleFile, bundles []*Bundle) error {
+	prep, per, err := prepareSpread(RuleDecoySpread, cid, qs, bundles)
 	if err != nil {
 		return err
 	}
@@ -317,12 +321,30 @@ func CheckDecoySpread(cid string, spec *Spec, qs []catalog.Question, template []
 			continue
 		}
 		for _, q := range per {
+			answers := make(map[string]struct{})
+			for _, p := range positions {
+				if p.qid == q.ID && !p.decoy {
+					answers[s.tokens[p.file][p.token]] = struct{}{}
+				}
+			}
 			got := make(map[string]struct{})
 			for _, p := range positions {
 				if p.qid != q.ID || !p.decoy {
 					continue
 				}
-				if tok := s.tokens[p.file][p.token]; fitsFormat(q, tok) {
+				tok := s.tokens[p.file][p.token]
+				if _, isAnswer := answers[tok]; isAnswer {
+					v := spreadViolation(RuleDecoySpread,
+						fmt.Sprintf("a decoy holds the same token as the answer of the same question in the seat (token %d of the file), so it is not a decoy", p.token),
+						s.seat, cid, p.qid)
+					if answerformat.ValidID(p.slot) {
+						v.Slot = p.slot
+					}
+					v.File = shownName(p.fileName)
+					c.add(v)
+					continue
+				}
+				if fitsFormat(q, tok) {
 					got[tok] = struct{}{}
 				}
 			}

@@ -33,7 +33,7 @@ func TestSpreadIsNotARenderFileAndDoesNotReachTheRenderer(t *testing.T) {
 		t.Errorf("%s is counted as a file of the renderer: B7 and B8 (b) hold no key and no answer, and must not be named render*.go", spreadPath)
 	}
 	exported, unexported := renderDeclarations(t, files)
-	for _, name := range []string{"CheckDecoySpread", "CheckOutputSpace", "SpreadSeat", "RuleDecoySpread", "CandidateFactor"} {
+	for _, name := range []string{"CheckDecoySpread", "CheckOutputSpace", "RuleDecoySpread", "CandidateFactor"} {
 		if exported[name] {
 			t.Errorf("a render file declares %s, which is B7 / B8 (b)'s", name)
 		}

@@ -5,7 +5,8 @@ package edition_test
 // of every seat a value of its own, so the pairs follow); the hand-made bundles give its
 // exact boundary (K and K - 1), the renders show it on the renderer's own output, and the
 // pairs of seats are compared in render_assign_test.go. A token is a maximal run of
-// [A-Za-z0-9._:/-]; the hex values below are made-up numbers.
+// [A-Za-z0-9._:/-]; the hex values below are made-up numbers. Both rules take the bundles
+// of one challenge (`[]*edition.Bundle`, the type ReadBundles gives).
 
 import (
 	"fmt"
@@ -42,14 +43,15 @@ func rdHexSpec(t *testing.T) (*edition.Spec, []edition.BundleFile) {
 	return spec, []edition.BundleFile{{Name: "a.txt", Data: []byte(b.String())}}
 }
 
-// rdHexSeat is a seat's bundle of one file, a.txt, in the layout of rdHexSpec's template.
-func rdHexSeat(seat, answer string, decoys ...string) edition.SpreadSeat {
+// rdHexSeat is a seat's bundle of the challenge demoCID, one file, a.txt, in the layout of
+// rdHexSpec's template.
+func rdHexSeat(seat, answer string, decoys ...string) *edition.Bundle {
 	var b strings.Builder
 	fmt.Fprintf(&b, "a=%s\n", answer)
 	for i, d := range decoys {
 		fmt.Fprintf(&b, "d%d=%s\n", i, d)
 	}
-	return edition.SpreadSeat{Seat: seat, Files: []edition.BundleFile{{Name: "a.txt", Data: []byte(b.String())}}}
+	return &edition.Bundle{Seat: seat, CID: demoCID, Files: []edition.BundleFile{{Name: "a.txt", Data: []byte(b.String())}}}
 }
 
 // rdHexRange is the hex values from, from+1, ..., from+n-1.
@@ -57,14 +59,6 @@ func rdHexRange(from, n int) []string {
 	out := make([]string, n)
 	for i := range out {
 		out[i] = rdHex(from + i)
-	}
-	return out
-}
-
-func rdSpreadSeats(r *edition.Rendered) []edition.SpreadSeat {
-	var out []edition.SpreadSeat
-	for _, b := range r.Bundles {
-		out = append(out, edition.SpreadSeat{Seat: b.Seat, Files: b.Files})
 	}
 	return out
 }
@@ -102,7 +96,7 @@ func TestCheckDecoySpread_KPassesAndKMinusOneDoesNot(t *testing.T) {
 	spec, tmpl := rdHexSpec(t)
 	cases := []struct {
 		name string
-		seat edition.SpreadSeat
+		seat *edition.Bundle
 		want bool // accepted
 		have int  // the count the message gives, when it is refused
 	}{
@@ -115,7 +109,7 @@ func TestCheckDecoySpread_KPassesAndKMinusOneDoesNot(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			err := edition.CheckDecoySpread(demoCID, spec, rdHexQ, tmpl, []edition.SpreadSeat{c.seat})
+			err := edition.CheckDecoySpread(demoCID, spec, rdHexQ, tmpl, []*edition.Bundle{c.seat})
 			if c.want {
 				if err != nil {
 					t.Fatalf("CheckDecoySpread: %v", err)
@@ -139,22 +133,70 @@ func TestCheckDecoySpread_KPassesAndKMinusOneDoesNot(t *testing.T) {
 	}
 }
 
+// A decoy that holds the answer's token (of the same seat and question) is not a decoy: it is
+// not counted towards K, and its position is a violation of its own. With K - 1 other decoys
+// that is two violations, the position and the count; with more than K decoys it is the
+// position alone.
+func TestCheckDecoySpread_ADecoyThatIsTheAnswerIsNotACandidate(t *testing.T) {
+	spec, tmpl := rdHexSpec(t)
+	// 3 different decoys and one that is the answer (the 4th line, ans-d4).
+	seat := rdHexSeat("seat-a", rdHex(1), rdHex(10), rdHex(11), rdHex(12), rdHex(1))
+	err := edition.CheckDecoySpread(demoCID, spec, rdHexQ, tmpl, []*edition.Bundle{seat})
+	specWantRules(t, err, "B7")
+	vs := rdViolations(err)
+	if len(vs) != 2 {
+		t.Fatalf("violations = %+v, want two: the decoy that is the answer, and 3 distinct decoys of K = 4", vs)
+	}
+	var position, count *edition.Violation
+	for _, v := range vs {
+		if v.Slot == "ans-d4" {
+			position = v
+		} else {
+			count = v
+		}
+	}
+	if position == nil || position.Seat != "seat-a" || position.QID != "hx" || position.File != "a.txt" ||
+		!strings.Contains(position.Msg, "same token as the answer") {
+		t.Errorf("the violation of the position is %+v, want seat-a, hx, slot ans-d4, a.txt, 'same token as the answer'", position)
+	}
+	if count == nil || !strings.Contains(count.Msg, "holds 3 distinct decoy tokens") {
+		t.Errorf("the violation of the count is %+v, want 3 distinct decoy tokens", count)
+	}
+	if strings.Contains(err.Error(), rdHex(1)) || strings.Contains(err.Error(), rdHex(10)) {
+		t.Errorf("the message holds a value: %v", err)
+	}
+	// The answer's value does not make a decoy count even when K others are there: 5 decoys of a
+	// render, one of them the answer, are 4 = K candidates, and the one position is the violation.
+	r := rdRender(t, rdInput(t, "seat-000"))
+	rspec := rdSpec(t, rdDoc())
+	own := rdBundle(t, r, "seat-000")
+	v := rdValues(t, own)
+	bad := rdWithValues(own, map[string]string{"who-d2": v["who"]})
+	err = edition.CheckDecoySpread(demoCID, rspec, rdQuestions(), rdTemplate(rspec), []*edition.Bundle{bad})
+	specWantRules(t, err, "B7")
+	vs = rdViolations(err)
+	if len(vs) != 1 || vs[0].Slot != "who-d2" || vs[0].QID != "q1" || !strings.Contains(vs[0].Msg, "same token as the answer") {
+		t.Errorf("violations = %+v, want one: slot who-d2, q1, 'same token as the answer'", vs)
+	}
+	rdNoLeak(t, "a decoy that is the answer", err, rdSecretValues(r))
+}
+
 // Each seat is checked on its own: the seat that is short is named, the other is not, and one
 // seat alone is checked too (the check does not need a pair).
 func TestCheckDecoySpread_EverySeatIsChecked(t *testing.T) {
 	spec, tmpl := rdHexSpec(t)
 	ok := rdHexSeat("seat-a", rdHex(1), rdHexRange(10, 4)...)
 	short := rdHexSeat("seat-b", rdHex(2), rdHex(20), rdHex(21), rdHex(22), "zz")
-	err := edition.CheckDecoySpread(demoCID, spec, rdHexQ, tmpl, []edition.SpreadSeat{short, ok})
+	err := edition.CheckDecoySpread(demoCID, spec, rdHexQ, tmpl, []*edition.Bundle{short, ok})
 	if vs := rdViolations(err); len(vs) != 1 || vs[0].Seat != "seat-b" {
 		t.Errorf("violations = %+v (err %v), want only seat-b", vs, err)
 	}
-	if err := edition.CheckDecoySpread(demoCID, spec, rdHexQ, tmpl, []edition.SpreadSeat{ok}); err != nil {
+	if err := edition.CheckDecoySpread(demoCID, spec, rdHexQ, tmpl, []*edition.Bundle{ok}); err != nil {
 		t.Errorf("one seat that is fine: %v", err)
 	}
 	// Two seats that are fine: nothing is asked of the pair.
 	two := rdHexSeat("seat-b", rdHex(2), rdHexRange(20, 4)...)
-	if err := edition.CheckDecoySpread(demoCID, spec, rdHexQ, tmpl, []edition.SpreadSeat{ok, two}); err != nil {
+	if err := edition.CheckDecoySpread(demoCID, spec, rdHexQ, tmpl, []*edition.Bundle{ok, two}); err != nil {
 		t.Errorf("two seats that are fine: %v", err)
 	}
 }
@@ -166,8 +208,8 @@ func TestCheckDecoySpread_ALayoutThatDiffersIsAViolation(t *testing.T) {
 	moreTokens := rdHexSeat("seat-a", rdHex(1), rdHexRange(10, 5)...)
 	otherName := rdHexSeat("seat-a", rdHex(1), rdHexRange(10, 4)...)
 	otherName.Files[0].Name = "b.txt"
-	for name, s := range map[string]edition.SpreadSeat{"another number of tokens": moreTokens, "another file name": otherName} {
-		err := edition.CheckDecoySpread(demoCID, spec, rdHexQ, tmpl, []edition.SpreadSeat{s})
+	for name, s := range map[string]*edition.Bundle{"another number of tokens": moreTokens, "another file name": otherName} {
+		err := edition.CheckDecoySpread(demoCID, spec, rdHexQ, tmpl, []*edition.Bundle{s})
 		specWantRules(t, err, "B7")
 		if !strings.Contains(err.Error(), "layout") {
 			t.Errorf("%s: the message does not say it is the layout: %v", name, err)
@@ -175,14 +217,18 @@ func TestCheckDecoySpread_ALayoutThatDiffersIsAViolation(t *testing.T) {
 	}
 }
 
-// What the rules cannot be run on is refused, not passed. A practice edition (the seat *, which
-// is public) is not checked: the seat grammar refuses it.
+// What the rules cannot be run on is refused, not passed, under the name of the rule that was
+// asked (B7 for CheckDecoySpread, B8 for CheckOutputSpace). A practice edition (the seat *, which
+// is public) is not checked: the seat grammar refuses it. A bundle of another challenge than the
+// one asked about is refused too, and so is a nil bundle.
 func TestSpreadRules_RefuseWhatTheyCannotRunOn(t *testing.T) {
 	spec, tmpl := rdHexSpec(t)
 	a := rdHexSeat("seat-a", rdHex(1), rdHexRange(10, 4)...)
 	b := rdHexSeat("seat-b", rdHex(2), rdHexRange(20, 4)...)
 	badSeat := rdHexSeat("Seat_B", rdHex(2), rdHexRange(20, 4)...)
 	starSeat := rdHexSeat("*", rdHex(2), rdHexRange(20, 4)...)
+	otherCID := rdHexSeat("seat-b", rdHex(2), rdHexRange(20, 4)...)
+	otherCID.CID = "02-other"
 	choiceOnly := []catalog.Question{{ID: "pick", Format: answerformat.ChoiceSet, Params: answerformat.Params{Choices: []string{"ca", "cb"}}, Attempts: 2}}
 	badTemplate := []edition.BundleFile{{Name: "a.txt", Data: []byte("a={{ctf:}}\n")}}
 
@@ -192,14 +238,16 @@ func TestSpreadRules_RefuseWhatTheyCannotRunOn(t *testing.T) {
 		spec  *edition.Spec
 		qs    []catalog.Question
 		tmpl  []edition.BundleFile
-		seats []edition.SpreadSeat
+		seats []*edition.Bundle
 	}{
-		{"no seat", demoCID, spec, rdHexQ, tmpl, nil},
-		{"a cid that is not a challenge id", "nope", spec, rdHexQ, tmpl, []edition.SpreadSeat{a, b}},
-		{"no question that can vary per seat", demoCID, spec, choiceOnly, tmpl, []edition.SpreadSeat{a, b}},
-		{"a seat outside the grammar", demoCID, spec, rdHexQ, tmpl, []edition.SpreadSeat{a, badSeat}},
-		{"the practice seat", demoCID, spec, rdHexQ, tmpl, []edition.SpreadSeat{starSeat}},
-		{"a seat twice", demoCID, spec, rdHexQ, tmpl, []edition.SpreadSeat{a, a}},
+		{"no bundle", demoCID, spec, rdHexQ, tmpl, nil},
+		{"a cid that is not a challenge id", "nope", spec, rdHexQ, tmpl, []*edition.Bundle{a, b}},
+		{"no question that can vary per seat", demoCID, spec, choiceOnly, tmpl, []*edition.Bundle{a, b}},
+		{"a seat outside the grammar", demoCID, spec, rdHexQ, tmpl, []*edition.Bundle{a, badSeat}},
+		{"the practice seat", demoCID, spec, rdHexQ, tmpl, []*edition.Bundle{starSeat}},
+		{"a seat twice", demoCID, spec, rdHexQ, tmpl, []*edition.Bundle{a, a}},
+		{"a bundle of another challenge", demoCID, spec, rdHexQ, tmpl, []*edition.Bundle{a, otherCID}},
+		{"a nil bundle", demoCID, spec, rdHexQ, tmpl, []*edition.Bundle{a, nil}},
 	}
 	for _, c := range cases {
 		for rule, run := range map[string]func() error{
@@ -211,16 +259,21 @@ func TestSpreadRules_RefuseWhatTheyCannotRunOn(t *testing.T) {
 				t.Errorf("%s (%s): accepted", c.name, rule)
 				continue
 			}
-			if got := rules(err); len(got) != 1 || got[0] != "B7" {
-				t.Errorf("%s (%s): rules = %v, want [B7] (the rule that could not run)", c.name, rule, got)
+			if got := rules(err); len(got) != 1 || got[0] != rule {
+				t.Errorf("%s (%s): rules = %v, want [%s] (the rule that could not run)", c.name, rule, got, rule)
 			}
 		}
 	}
+	// A bundle of another challenge names the bundle's challenge and says why.
+	err := edition.CheckOutputSpace(demoCID, rdHexQ, []*edition.Bundle{a, otherCID})
+	if vs := rdViolations(err); len(vs) != 1 || vs[0].CID != "02-other" || vs[0].Seat != "seat-b" || !strings.Contains(vs[0].Msg, "another challenge") {
+		t.Errorf("violations = %+v (err %v), want one: seat-b of 02-other, 'another challenge'", vs, err)
+	}
 	// B7 alone: no spec, and a template with a mark outside the grammar.
-	if err := edition.CheckDecoySpread(demoCID, nil, rdHexQ, tmpl, []edition.SpreadSeat{a}); err == nil {
+	if err := edition.CheckDecoySpread(demoCID, nil, rdHexQ, tmpl, []*edition.Bundle{a}); err == nil {
 		t.Error("a missing spec was accepted")
 	}
-	if err := edition.CheckDecoySpread(demoCID, spec, rdHexQ, badTemplate, []edition.SpreadSeat{a}); err == nil {
+	if err := edition.CheckDecoySpread(demoCID, spec, rdHexQ, badTemplate, []*edition.Bundle{a}); err == nil {
 		t.Error("a template with a mark outside the grammar was accepted")
 	}
 }
@@ -230,7 +283,7 @@ func TestSpreadRules_RefuseWhatTheyCannotRunOn(t *testing.T) {
 func TestCheckOutputSpace_RTimesAttemptsAndOneLess(t *testing.T) {
 	cases := []struct {
 		name string
-		seat edition.SpreadSeat
+		seat *edition.Bundle
 		want bool
 		have int // the count the message gives, when it is refused
 	}{
@@ -244,7 +297,7 @@ func TestCheckOutputSpace_RTimesAttemptsAndOneLess(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			err := edition.CheckOutputSpace(demoCID, rdHexQ, []edition.SpreadSeat{c.seat})
+			err := edition.CheckOutputSpace(demoCID, rdHexQ, []*edition.Bundle{c.seat})
 			if c.want {
 				if err != nil {
 					t.Fatalf("CheckOutputSpace: %v", err)
@@ -267,7 +320,7 @@ func TestCheckOutputSpace_RTimesAttemptsAndOneLess(t *testing.T) {
 	// Each seat is counted on its own: a seat that is short is named, the other is not.
 	short := rdHexSeat("seat-b", rdHex(2), rdHexRange(100, 5)...)
 	ok := rdHexSeat("seat-a", rdHex(1), rdHexRange(10, 19)...)
-	err := edition.CheckOutputSpace(demoCID, rdHexQ, []edition.SpreadSeat{ok, short})
+	err := edition.CheckOutputSpace(demoCID, rdHexQ, []*edition.Bundle{ok, short})
 	if vs := rdViolations(err); len(vs) != 1 || vs[0].Seat != "seat-b" {
 		t.Errorf("violations = %+v (err %v), want only seat-b", vs, err)
 	}
@@ -280,11 +333,11 @@ func TestCheckOutputSpace_RTimesAttemptsAndOneLess(t *testing.T) {
 func TestCheckOutputSpace_OnARender(t *testing.T) {
 	seats := []string{"seat-a", "seat-b", "seat-c"}
 	wide := rdRender(t, rdWideInput(t, "19", seats...))
-	if err := edition.CheckOutputSpace(demoCID, rdQuestions(), rdSpreadSeats(wide)); err != nil {
+	if err := edition.CheckOutputSpace(demoCID, rdQuestions(), wide.Bundles); err != nil {
 		t.Errorf("19 decoys: %v", err)
 	}
 	narrow := rdRender(t, rdWideInput(t, "18", seats...))
-	err := edition.CheckOutputSpace(demoCID, rdQuestions(), rdSpreadSeats(narrow))
+	err := edition.CheckOutputSpace(demoCID, rdQuestions(), narrow.Bundles)
 	specWantRules(t, err, "B8")
 	if got := rdQIDs(err); !slices.Equal(got, []string{"q2", "q3", "q4"}) {
 		t.Errorf("the questions that are short are %v, want q2, q3 and q4", got)
@@ -302,18 +355,19 @@ func TestCheckDecoySpread_OnARender(t *testing.T) {
 	r := rdRender(t, rdInput(t, rdSeatNames(8)...))
 	spec := rdSpec(t, rdDoc())
 	tmpl := rdTemplate(spec)
-	if err := edition.CheckDecoySpread(demoCID, spec, rdQuestions(), tmpl, rdSpreadSeats(r)); err != nil {
+	if err := edition.CheckDecoySpread(demoCID, spec, rdQuestions(), tmpl, r.Bundles); err != nil {
 		t.Fatalf("CheckDecoySpread on a render of 8 seats: %v", err)
 	}
 	one := rdRender(t, rdInput(t, "seat-a"))
-	if err := edition.CheckDecoySpread(demoCID, spec, rdQuestions(), tmpl, rdSpreadSeats(one)); err != nil {
+	if err := edition.CheckDecoySpread(demoCID, spec, rdQuestions(), tmpl, one.Bundles); err != nil {
 		t.Errorf("one seat: %v", err)
 	}
 }
 
 // V69: the validator does not trust the renderer. A template that glues a byte to the mark of
-// an answer or a decoy (E3 in the renderer) cannot be located by position, so B7 is red on it
-// (the bundles are the ones the unglued template renders: only the template is not trusted).
+// an answer or a decoy (E3 in the renderer) cannot be located by position, so the template is
+// refused as a whole (stronger than the ADR's "K is short": see CheckDecoySpread). The bundles
+// are the ones the unglued template renders: only the template is not trusted.
 func TestCheckDecoySpread_ATemplateWithAGluedMarkIsAViolation(t *testing.T) {
 	spec := rdSpec(t, rdDoc())
 	tmpl := rdTemplate(spec)
@@ -323,7 +377,7 @@ func TestCheckDecoySpread_ATemplateWithAGluedMarkIsAViolation(t *testing.T) {
 		for i := range files {
 			files[i].Data = []byte(strings.ReplaceAll(string(files[i].Data), "{{ctf:"+slot+"}}", "x{{ctf:"+slot+"}}y"))
 		}
-		err := edition.CheckDecoySpread(demoCID, spec, rdQuestions(), files, rdSpreadSeats(out))
+		err := edition.CheckDecoySpread(demoCID, spec, rdQuestions(), files, out.Bundles)
 		specWantRules(t, err, "B7")
 		if !strings.Contains(err.Error(), "token of its own") {
 			t.Errorf("%s glued: the message is %v", slot, err)
@@ -334,7 +388,7 @@ func TestCheckDecoySpread_ATemplateWithAGluedMarkIsAViolation(t *testing.T) {
 	for i := range files {
 		files[i].Data = []byte(strings.ReplaceAll(string(files[i].Data), "{{ctf:other}}", "x{{ctf:other}}y"))
 	}
-	if err := edition.CheckDecoySpread(demoCID, spec, rdQuestions(), files, rdSpreadSeats(out)); err != nil {
+	if err := edition.CheckDecoySpread(demoCID, spec, rdQuestions(), files, out.Bundles); err != nil {
 		t.Errorf("a glued filler mark made B7 red: %v", err)
 	}
 }
@@ -346,13 +400,13 @@ func TestCheckDecoySpread_TwoSeatsWithOneTokenAtAPositionAreAViolation(t *testin
 	a := rdHexSeat("seat-a", rdHex(1), rdHexRange(10, 4)...)
 	for _, c := range []struct {
 		name string
-		b    edition.SpreadSeat
+		b    *edition.Bundle
 		slot string
 	}{
 		{"a decoy in common", rdHexSeat("seat-b", rdHex(2), rdHex(10), rdHex(21), rdHex(22), rdHex(23)), "ans-d1"},
 		{"the answer in common", rdHexSeat("seat-b", rdHex(1), rdHexRange(20, 4)...), "ans"},
 	} {
-		err := edition.CheckDecoySpread(demoCID, spec, rdHexQ, tmpl, []edition.SpreadSeat{c.b, a})
+		err := edition.CheckDecoySpread(demoCID, spec, rdHexQ, tmpl, []*edition.Bundle{c.b, a})
 		specWantRules(t, err, "B7")
 		vs := rdViolations(err)
 		if len(vs) != 1 || vs[0].Seat != "seat-b" || vs[0].QID != "hx" || vs[0].Slot != c.slot || vs[0].File != "a.txt" {
@@ -366,17 +420,18 @@ func TestCheckDecoySpread_TwoSeatsWithOneTokenAtAPositionAreAViolation(t *testin
 	}
 	// Each of the two alone is fine, and so are two that differ everywhere.
 	b := rdHexSeat("seat-b", rdHex(2), rdHexRange(20, 4)...)
-	for _, seats := range [][]edition.SpreadSeat{{a}, {b}, {a, b}} {
+	for _, seats := range [][]*edition.Bundle{{a}, {b}, {a, b}} {
 		if err := edition.CheckDecoySpread(demoCID, spec, rdHexQ, tmpl, seats); err != nil {
 			t.Errorf("%d seats that differ everywhere: %v", len(seats), err)
 		}
 	}
 }
 
-// rdWithValues is a seat's bundle (a render's, one `slot=value` line each) with the value of
-// some slots replaced: a bundle that the renderer did not make, as the validator may be given.
-func rdWithValues(b *edition.Bundle, repl map[string]string) edition.SpreadSeat {
-	out := edition.SpreadSeat{Seat: b.Seat}
+// rdWithValues is a copy of a seat's bundle (a render's, one `slot=value` line each) with the
+// value of some slots replaced: a bundle that the renderer did not make, as the validator may
+// be given.
+func rdWithValues(b *edition.Bundle, repl map[string]string) *edition.Bundle {
+	out := &edition.Bundle{Seat: b.Seat, CID: b.CID}
 	for _, f := range b.Files {
 		lines := strings.Split(strings.TrimSuffix(string(f.Data), "\n"), "\n")
 		for i, ln := range lines {
@@ -391,9 +446,9 @@ func rdWithValues(b *edition.Bundle, repl map[string]string) edition.SpreadSeat 
 	return out
 }
 
-// rdSwapSeat is seats with the bundle of the seat replaced by s.
-func rdSwapSeat(seats []edition.SpreadSeat, s edition.SpreadSeat) []edition.SpreadSeat {
-	out := slices.Clone(seats)
+// rdSwapSeat is bundles with the bundle of the seat of s replaced by s.
+func rdSwapSeat(bundles []*edition.Bundle, s *edition.Bundle) []*edition.Bundle {
+	out := slices.Clone(bundles)
 	for i := range out {
 		if out[i].Seat == s.Seat {
 			out[i] = s
@@ -410,7 +465,7 @@ func TestCheckDecoySpread_OneSharedTokenOnARenderIsRed(t *testing.T) {
 	r := rdRender(t, rdInput(t, rdSeatNames(8)...))
 	spec := rdSpec(t, rdDoc())
 	tmpl := rdTemplate(spec)
-	seats := rdSpreadSeats(r)
+	seats := r.Bundles
 	if err := edition.CheckDecoySpread(demoCID, spec, rdQuestions(), tmpl, seats); err != nil {
 		t.Fatalf("the render itself: %v", err)
 	}
@@ -444,23 +499,31 @@ func TestCheckDecoySpread_OneSeatOnARenderKAndKMinusOne(t *testing.T) {
 	tmpl := rdTemplate(spec)
 	own := rdBundle(t, r, "seat-000")
 	v := rdValues(t, own)
-	if err := edition.CheckDecoySpread(demoCID, spec, rdQuestions(), tmpl, rdSpreadSeats(r)); err != nil {
+	if err := edition.CheckDecoySpread(demoCID, spec, rdQuestions(), tmpl, r.Bundles); err != nil {
 		t.Fatalf("the render of one seat: %v", err)
 	}
 	// 6 decoys of which 4 are different: K.
 	four := rdWithValues(own, map[string]string{"who-d5": v["who-d4"], "who-d6": v["who-d4"]})
-	if err := edition.CheckDecoySpread(demoCID, spec, rdQuestions(), tmpl, []edition.SpreadSeat{four}); err != nil {
+	if err := edition.CheckDecoySpread(demoCID, spec, rdQuestions(), tmpl, []*edition.Bundle{four}); err != nil {
 		t.Errorf("4 different decoys (K): %v", err)
 	}
 	// 6 decoys of which 3 are different: K - 1.
 	three := rdWithValues(own, map[string]string{"who-d4": v["who-d3"], "who-d5": v["who-d3"], "who-d6": v["who-d3"]})
-	err := edition.CheckDecoySpread(demoCID, spec, rdQuestions(), tmpl, []edition.SpreadSeat{three})
+	err := edition.CheckDecoySpread(demoCID, spec, rdQuestions(), tmpl, []*edition.Bundle{three})
 	specWantRules(t, err, "B7")
 	vs := rdViolations(err)
 	if len(vs) != 1 || vs[0].Seat != "seat-000" || vs[0].QID != "q1" || !strings.Contains(vs[0].Msg, "holds 3 distinct decoy tokens") {
 		t.Errorf("violations = %+v, want one: seat-000, q1, 3 distinct decoy tokens", vs)
 	}
 	rdNoLeak(t, "K - 1 on a render", err, rdSecretValues(r))
+	// 3 different decoys and the answer's value as a 4th: still K - 1 candidates, and the
+	// position that holds the answer is named.
+	answerAsDecoy := rdWithValues(own, map[string]string{"who-d4": v["who"], "who-d5": v["who-d3"], "who-d6": v["who-d3"]})
+	err = edition.CheckDecoySpread(demoCID, spec, rdQuestions(), tmpl, []*edition.Bundle{answerAsDecoy})
+	specWantRules(t, err, "B7")
+	if got := len(rdViolations(err)); got != 2 {
+		t.Errorf("%d violations, want 2 (the decoy that is the answer, and the 3 candidates of K = 4): %v", got, err)
+	}
 }
 
 // V4, V68: B7 is what the assignment is for. 100 seats rendered together (S = 200 = 2N) pass; the
@@ -471,13 +534,13 @@ func TestCheckDecoySpread_SeatsDrawnWithoutTheAssignmentAreRed(t *testing.T) {
 	spec := rdSpec(t, rdDoc())
 	tmpl := rdTemplate(spec)
 	together := rdRender(t, rdInput(t, seats...))
-	if err := edition.CheckDecoySpread(demoCID, spec, rdQuestions(), tmpl, rdSpreadSeats(together)); err != nil {
+	if err := edition.CheckDecoySpread(demoCID, spec, rdQuestions(), tmpl, together.Bundles); err != nil {
 		t.Fatalf("100 seats rendered together: %v", err)
 	}
-	var alone []edition.SpreadSeat
+	var alone []*edition.Bundle
 	for _, seat := range seats {
 		one := rdRender(t, rdInput(t, seat))
-		alone = append(alone, rdSpreadSeats(one)...)
+		alone = append(alone, one.Bundles...)
 	}
 	err := edition.CheckDecoySpread(demoCID, spec, rdQuestions(), tmpl, alone)
 	specWantRules(t, err, "B7")
@@ -488,7 +551,8 @@ func TestCheckDecoySpread_SeatsDrawnWithoutTheAssignmentAreRed(t *testing.T) {
 }
 
 // V69: a practice edition (the seat *, rendered with the public key) is not checked by B7 or by
-// B8 (b): both refuse it (the caller, A4e, does not pass one), and neither passes it.
+// B8 (b): both refuse it, each under its own rule (the caller, A4e, does not pass one), and
+// neither passes it.
 func TestSpreadRules_APracticeRenderIsNotChecked(t *testing.T) {
 	spec := rdSpec(t, rdDoc())
 	tmpl := rdTemplate(spec)
@@ -496,21 +560,20 @@ func TestSpreadRules_APracticeRenderIsNotChecked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RenderPractice: %v", err)
 	}
-	seats := rdSpreadSeats(p)
-	if len(seats) != 1 || seats[0].Seat != edition.AnySeat {
-		t.Fatalf("a practice render is %+v, want the one seat *", seats)
+	if len(p.Bundles) != 1 || p.Bundles[0].Seat != edition.AnySeat {
+		t.Fatalf("a practice render is %+v, want the one seat *", p.Bundles)
 	}
 	for rule, run := range map[string]func() error{
-		"B7":     func() error { return edition.CheckDecoySpread(demoCID, spec, rdQuestions(), tmpl, seats) },
-		"B8 (b)": func() error { return edition.CheckOutputSpace(demoCID, rdQuestions(), seats) },
+		"B7": func() error { return edition.CheckDecoySpread(demoCID, spec, rdQuestions(), tmpl, p.Bundles) },
+		"B8": func() error { return edition.CheckOutputSpace(demoCID, rdQuestions(), p.Bundles) },
 	} {
 		err := run()
 		if err == nil {
 			t.Errorf("%s: a practice render was accepted", rule)
 			continue
 		}
-		if got := rules(err); len(got) != 1 || got[0] != "B7" || !strings.Contains(err.Error(), "practice edition is not checked") {
-			t.Errorf("%s: rules = %v, err = %v; want the refusal of the seat *", rule, got, err)
+		if got := rules(err); len(got) != 1 || got[0] != rule || !strings.Contains(err.Error(), "practice edition is not checked") {
+			t.Errorf("%s: rules = %v, err = %v; want the refusal of the seat * under %s", rule, got, err, rule)
 		}
 	}
 }
@@ -521,7 +584,7 @@ func TestSpreadRules_APracticeRenderIsNotChecked(t *testing.T) {
 // anything) are refused.
 func TestSpreadRules_RefuseInputsTheyCannotTrust(t *testing.T) {
 	spec, tmpl := rdHexSpec(t)
-	seats := []edition.SpreadSeat{rdHexSeat("seat-a", rdHex(1), rdHexRange(10, 4)...)}
+	seats := []*edition.Bundle{rdHexSeat("seat-a", rdHex(1), rdHexRange(10, 4)...)}
 
 	hand := &edition.Spec{Version: edition.SpecVersion, Fixed: spec.Fixed, Slots: spec.Slots}
 	err := edition.CheckDecoySpread(demoCID, hand, rdHexQ, tmpl, seats)
@@ -539,8 +602,8 @@ func TestSpreadRules_RefuseInputsTheyCannotTrust(t *testing.T) {
 
 	noAttempts := []catalog.Question{{ID: "hx", Format: answerformat.HexID, Params: answerformat.Params{Length: ip(12)}, Attempts: 0}}
 	for rule, run := range map[string]func() error{
-		"B7":     func() error { return edition.CheckDecoySpread(demoCID, spec, noAttempts, tmpl, seats) },
-		"B8 (b)": func() error { return edition.CheckOutputSpace(demoCID, noAttempts, seats) },
+		"B7": func() error { return edition.CheckDecoySpread(demoCID, spec, noAttempts, tmpl, seats) },
+		"B8": func() error { return edition.CheckOutputSpace(demoCID, noAttempts, seats) },
 	} {
 		if err := run(); err == nil || !strings.Contains(err.Error(), "attempts") {
 			t.Errorf("%s: a question with no attempts: %v", rule, err)
@@ -554,7 +617,7 @@ func TestCheckDecoySpread_TheLaterSeatInByteOrderIsNamedWhateverTheListOrder(t *
 	spec, tmpl := rdHexSpec(t)
 	a := rdHexSeat("seat-a", rdHex(1), rdHexRange(10, 4)...)
 	b := rdHexSeat("seat-b", rdHex(1), rdHexRange(20, 4)...)
-	for _, seats := range [][]edition.SpreadSeat{{a, b}, {b, a}} {
+	for _, seats := range [][]*edition.Bundle{{a, b}, {b, a}} {
 		vs := rdViolations(edition.CheckDecoySpread(demoCID, spec, rdHexQ, tmpl, seats))
 		if len(vs) != 1 || vs[0].Seat != "seat-b" {
 			t.Errorf("violations = %+v, want one, of seat-b, for the order %s, %s", vs, seats[0].Seat, seats[1].Seat)
