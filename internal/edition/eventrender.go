@@ -12,7 +12,10 @@ package edition
 //	    that is not in a git worktree (no .git, a directory or a file, in the directory of the
 //	    output or above it, the links of the directory resolved) and not in the challenges
 //	    tree. The guard is of the path the operator gives: a public repository must not get a
-//	    rendered event by a mistake of a path. --practice (A4e-3b) has none of this;
+//	    rendered event by a mistake of a path. It sees the paths the process sees and nothing
+//	    else: run in a container whose parent of --out is a bind mount, it does not see a git
+//	    worktree on the host's side of the mount, and the guard of that way is the platform's
+//	    (a check on the host, ADR-0056 V83). --practice (A4e-3b) has none of this;
 //	1.  the inputs: the seats, the previous seats, the key, catalog.LoadScored (a scope with no
 //	    investigate challenge is a usage error), the event edition of every challenge (the set
 //	    of the directories is E2), and per challenge E1 (ParseSpec), E2 and B8 (a1)
@@ -171,9 +174,16 @@ func pathWithin(base, p string) bool {
 
 // readKeyFile reads `--key-file` (D20): a regular file opened by openRegular (no link is
 // followed), whose group and others have no permission bit (the mode of the open descriptor),
-// of one line that is an even number of lower-case hex digits, at least 2 x MinMasterKeyBytes.
-// Every defect is an *InputError whose message names no byte of the file (controlText names a
-// line, never a byte), and the bytes read are cleared before it returns.
+// of one line that is an even number of lower-case hex digits, at least 2 x MinMasterKeyBytes,
+// ending with a newline, and at most maxKeyFileBytes. Every defect is an *InputError whose
+// message names no byte of the file.
+//
+// The copies of the key: the file is read into one buffer of maxKeyFileBytes+1 bytes (no
+// growing buffer leaves an earlier copy behind), its form is checked on those bytes (no string
+// is made of them), and they are decoded into a second buffer; both are cleared before it
+// returns. What is left is the copy NewMasterKey makes, which the MasterKey holds for the render
+// (and which nothing clears: it lives until the garbage collector frees it), and whatever the
+// kernel and the file system keep of the file.
 func readKeyFile(path string) (MasterKey, error) {
 	bad := func(msg string) error { return inputErr("the key file (--key-file) " + msg) }
 	f, err := openRegular(path)
@@ -188,30 +198,37 @@ func readKeyFile(path string) (MasterKey, error) {
 	if perm := info.Mode().Perm(); perm&keyFileOthersBits != 0 {
 		return MasterKey{}, bad(fmt.Sprintf("has mode %#o: its group and others must have no permission on it (0600 or 0400)", perm))
 	}
-	data, err := io.ReadAll(io.LimitReader(f, maxKeyFileBytes+1))
-	defer clear(data)
-	if err != nil {
+	buf := make([]byte, maxKeyFileBytes+1)
+	defer clear(buf)
+	n, err := io.ReadFull(f, buf)
+	switch {
+	case err == nil:
+		return MasterKey{}, bad("is larger than its limit")
+	case err != io.EOF && err != io.ErrUnexpectedEOF:
 		return MasterKey{}, &InputError{Msg: "the key file (--key-file) cannot be read", Err: err}
 	}
-	if len(data) > maxKeyFileBytes {
-		return MasterKey{}, bad("is larger than its limit")
-	}
-	text, err := controlText(data)
+	data := buf[:n]
 	switch {
-	case err != nil:
-		return MasterKey{}, bad("is not in its form: " + err.Error())
-	case strings.Contains(text, "\n"):
-		return MasterKey{}, bad("is more than one line")
-	case len(text)%2 != 0:
-		return MasterKey{}, bad("has an odd number of hex digits")
-	case len(text) < 2*MinMasterKeyBytes:
-		return MasterKey{}, bad(fmt.Sprintf("is shorter than %d hex digits (%d bytes)", 2*MinMasterKeyBytes, MinMasterKeyBytes))
-	case !lowerHex(text):
-		return MasterKey{}, bad("is not lower-case hex digits only")
+	case len(data) == 0:
+		return MasterKey{}, bad("is empty")
+	case data[len(data)-1] != '\n':
+		return MasterKey{}, bad("must end with a newline")
 	}
-	raw, err := hex.DecodeString(text)
+	digits := data[:len(data)-1]
+	switch {
+	case bytes.IndexByte(digits, '\n') >= 0:
+		return MasterKey{}, bad("is more than one line")
+	case !lowerHex(digits):
+		// a carriage return, a byte that is not UTF-8 and an invisible rune are refused here too
+		return MasterKey{}, bad("is not lower-case hex digits only")
+	case len(digits)%2 != 0:
+		return MasterKey{}, bad("has an odd number of hex digits")
+	case len(digits) < 2*MinMasterKeyBytes:
+		return MasterKey{}, bad(fmt.Sprintf("is shorter than %d hex digits (%d bytes)", 2*MinMasterKeyBytes, MinMasterKeyBytes))
+	}
+	raw := make([]byte, len(digits)/2)
 	defer clear(raw)
-	if err != nil {
+	if _, err := hex.Decode(raw, digits); err != nil {
 		return MasterKey{}, bad("is not lower-case hex digits only")
 	}
 	key, err := NewMasterKey(raw)
@@ -221,24 +238,14 @@ func readKeyFile(path string) (MasterKey, error) {
 	return key, nil
 }
 
-// lowerHex reports whether s is lower-case hex digits only.
-func lowerHex(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if c := s[i]; (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return false
-		}
-	}
-	return true
-}
-
 // newRunID is step 2: 32 lower-case hex digits of crypto/rand, never the practice run id.
 func newRunID() (string, error) {
 	for i := 0; i < runIDTries; i++ {
-		var b [16]byte
-		if _, err := rand.Read(b[:]); err != nil {
+		b := make([]byte, runIDLen/2) // the run id's length is the table's (runIDLen hex digits)
+		if _, err := rand.Read(b); err != nil {
 			return "", fmt.Errorf("edition: no random run id: %w", err)
 		}
-		if id := hex.EncodeToString(b[:]); id != PracticeRunID {
+		if id := hex.EncodeToString(b); validRunID(id) && id != PracticeRunID {
 			return id, nil
 		}
 	}

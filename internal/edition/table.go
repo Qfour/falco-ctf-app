@@ -228,13 +228,14 @@ func joinPractice(tables []*Table) (*Table, error) {
 // lineAt is the 1-based line of byte offset i.
 func lineAt(data []byte, i int) int { return 1 + bytes.Count(data[:i], []byte{'\n'}) }
 
-func validRunID(s string) bool {
-	if len(s) != runIDLen {
-		return false
-	}
+func validRunID(s string) bool { return len(s) == runIDLen && lowerHex(s) }
+
+// lowerHex reports whether s is lower-case hex digits only (an empty s is). It is the one
+// definition of the digits of a run id, of a digest (ValidDigest) and of the key file of
+// `edition render` (readKeyFile, which checks the bytes it read without making a string of them).
+func lowerHex[T string | []byte](s T) bool {
 	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+		if c := s[i]; (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 			return false
 		}
 	}

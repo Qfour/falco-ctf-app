@@ -249,6 +249,10 @@ func TestEditionRender_RefusalsWriteNothing(t *testing.T) {
 			f.tree.Put(tmplRel, editiontest.TemplateText(4))
 			return f.out()
 		}, exitRefused, "B8:"},
+		{"the self check, T6: the fixed answer is the practice edition's", func(f *erFix) string {
+			f.tree.Put(editiontest.EditionRootRel+"/"+ecCID+"/"+edition.SpecFileName, strings.Replace(ecSpec(), `q5: "c2,c4"`, `q5: "c1,c3"`, 1))
+			return f.out()
+		}, exitRefused, "T6:"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

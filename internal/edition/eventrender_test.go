@@ -367,6 +367,13 @@ func TestRenderEvent_EveryRefusalWritesNothing(t *testing.T) {
 			f.tree.Put(editiontest.EditionRootRel+"/"+editiontest.CID+"/"+edition.SpecFileName, editiontest.SpecText(editiontest.GoodNameWords, 4))
 			f.tree.Put(editiontest.EditionRootRel+"/"+editiontest.CID+"/"+edition.TemplateDirName+"/"+editiontest.TemplateName, editiontest.TemplateText(4))
 		}, false, "B8"},
+		// The self check of the answers table (checkAnswersData: Parse and Check in the event
+		// mode, with the practice answers): the fixed answer of q5 is the one the practice edition
+		// publishes (render-golden's c1,c3). Only T6 refuses it: nothing before the self check
+		// compares an event with the practice edition.
+		{"the self check, T6: the fixed answer is the practice edition's", func(f *rfFix) {
+			f.tree.Put(editiontest.EditionRootRel+"/"+editiontest.CID+"/"+edition.SpecFileName, strings.Replace(editiontest.GoodSpec(), `q5: "c2,c4"`, `q5: "c1,c3"`, 1))
+		}, false, "T6"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -402,6 +409,49 @@ func TestRenderEvent_EveryRefusalWritesNothing(t *testing.T) {
 
 // existingOut is the name of the case of an --out that is there before the render.
 const existingOut = "an --out that exists"
+
+// V80, the edges: a key of exactly 2 x MinMasterKeyBytes hex digits is accepted, and one of
+// 2 x MinMasterKeyBytes - 2 is not (the refusal's case above); a key file at the limit of its
+// size is read, one byte over it is refused; a .git right in the directory of --out (not only
+// above it) is refused.
+func TestRenderEvent_TheEdgesOfTheKeyAndOfTheGuard(t *testing.T) {
+	hexKey := strings.TrimSuffix(editiontest.KeyText(), "\n")
+	if len(hexKey) < 2*edition.MinMasterKeyBytes {
+		t.Fatalf("the fixture's key has %d hex digits, fewer than the edge", len(hexKey))
+	}
+	f := newRfFix(t)
+	f.tree.PlaceKey(editiontest.KeyRel, hexKey[:2*edition.MinMasterKeyBytes]+"\n", 0o600)
+	if ev, err := edition.RenderEvent(f.in); err != nil || ev == nil {
+		t.Errorf("a key of exactly %d hex digits: (%v, %v), want it rendered", 2*edition.MinMasterKeyBytes, ev, err)
+	}
+
+	// The limit of the file is 4 KiB. The digits are an even number, so the largest file of a
+	// good form under it is 4094 digits and a newline (4095 bytes), and the next one, 4096 digits
+	// and a newline (4097 bytes), is over it.
+	f = newRfFix(t)
+	f.tree.PlaceKey(editiontest.KeyRel, strings.Repeat("ab", 2047)+"\n", 0o600)
+	if ev, err := edition.RenderEvent(f.in); err != nil || ev == nil {
+		t.Errorf("a key file of 4095 bytes: (%v, %v), want it rendered", ev, err)
+	}
+	f = newRfFix(t)
+	f.tree.PlaceKey(editiontest.KeyRel, strings.Repeat("ab", 2048)+"\n", 0o600)
+	if ev, err := edition.RenderEvent(f.in); ev != nil || !isInputErr(err) || !strings.Contains(err.Error(), "larger than its limit") {
+		t.Errorf("a key file of 4097 bytes: (%v, %v), want an *InputError of its size", ev, err)
+	}
+	f.nothingWritten("a key file over its limit")
+
+	f = newRfFix(t)
+	f.tree.Put(editiontest.OutRel+"/.git", "gitdir: elsewhere\n")
+	if ev, err := edition.RenderEvent(f.in); ev != nil || !isInputErr(err) || !strings.Contains(err.Error(), "git worktree") {
+		t.Errorf("a .git in the directory of --out: (%v, %v), want an *InputError of the guard", ev, err)
+	}
+	if _, err := os.Lstat(f.in.Out); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("--out is there after the refusal: %v", err)
+	}
+	if names := listNames(t, f.tree.Path(editiontest.OutRel)); !slices.Equal(names, []string{".git"}) {
+		t.Errorf("the directory of --out holds %v, want the .git only", names)
+	}
+}
 
 // V80: an E3 of the SECOND challenge refuses the render as a whole: the output of the first,
 // which rendered, is not written either. The image's tree gets a second investigate challenge
