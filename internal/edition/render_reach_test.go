@@ -18,8 +18,8 @@ import (
 // What they declare is the renderer: the master key and the render functions, and what the
 // later files of the stage add (the answers writer): all of it holds or produces the
 // event's answers. B7 and B8 (b) of the validator (A4d-2c) are NOT of the stage: they hold
-// no key and no answer, so they are put in files that are not named render*.go (the file
-// name is for A4d-2c to choose), and `edition check` reaches them as it reaches any other
+// no key and no answer, so they are in spread.go, which is not named render*.go
+// (spread_source_test.go fixes that), and `edition check` reaches them as it reaches any other
 // check of the package. The rule:
 //
 //   - no file of cmd/ or internal/ outside internal/edition refers to an EXPORTED name a
