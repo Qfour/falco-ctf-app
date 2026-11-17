@@ -11,7 +11,8 @@ import "slices"
 // is where the doors are (validator_door_source_test.go).
 //
 // The tests of the doors themselves do not use it: load_event_table_test.go calls
-// LoadEventTable, and the tests that want a *CheckedBundles of a real tree call CheckBundles.
+// LoadEventTable, the tests that want a *CheckedBundles of a real tree call CheckBundles, and
+// checkevent_test.go runs CheckEvent for the *CheckedEvent of a real event.
 
 // CheckedTableForTest is a *CheckedTable around a table that Parse read, WITHOUT Check having
 // run on it (the tests of CheckBundles check the bundle rules, and several of them give a
@@ -19,9 +20,10 @@ import "slices"
 // carries no practice answers and no practice files.
 func CheckedTableForTest(t *Table) *CheckedTable { return &CheckedTable{table: t} }
 
-// CheckedBundlesForTest is a *CheckedBundles of the given run id and rows, whatever they are:
+// CheckedEventForTest is a *CheckedEvent of the given run id and rows, whatever they are:
 // WriteDigests holds them to the digests file's grammar itself, and its tests give it rows and
-// run ids that CheckBundles would never return.
-func CheckedBundlesForTest(runID string, rows []DigestRow) *CheckedBundles {
-	return &CheckedBundles{runID: runID, rows: slices.Clone(rows)}
+// run ids that CheckEvent would never return. (The one other way to a *CheckedEvent is
+// CheckEvent, which makes one only after every check of D20.)
+func CheckedEventForTest(runID string, rows []DigestRow) *CheckedEvent {
+	return &CheckedEvent{runID: runID, rows: slices.Clone(rows)}
 }

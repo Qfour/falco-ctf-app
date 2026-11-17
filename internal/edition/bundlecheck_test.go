@@ -106,7 +106,10 @@ func TestCheckBundles_AcceptsAndGivesTheDigests(t *testing.T) {
 		t.Errorf("the rows are not the seats x the scope: %v", err)
 	}
 	var buf bytes.Buffer
-	if err := edition.WriteDigests(&buf, cb); err != nil {
+	// WriteDigests takes a *CheckedEvent, which only CheckEvent makes after every check of D20
+	// (checkevent_test.go runs that path); this test is of CheckBundles's rows, so it gives
+	// WriteDigests the event of the same run id and rows through the test-only door.
+	if err := edition.WriteDigests(&buf, edition.CheckedEventForTest(cb.RunID(), cb.Rows())); err != nil {
 		t.Fatal(err)
 	}
 	if id, got, err := edition.ParseDigests(buf.Bytes()); err != nil || id != runA || !slices.Equal(got, want) {

@@ -63,22 +63,24 @@ type BundleInput struct {
 // CheckedBundles is the digest of every bundle of a tree that CheckBundles accepted, and the
 // run id of the answers table it was checked against (ADR-0056 D9 M2, D20, D19 A4e-1). It is
 // made by CheckBundles and by nothing else (its fields are unexported, and
-// validator_door_source_test.go fixes that no other non-test file builds one): WriteDigests
-// takes it and nothing weaker, so the digests are written only for a tree that went through the
-// rules of CheckBundles (B1, B2, B3, B5, B6 and B9), and carry the run id of the table the tree
-// was held to (D9: a digests file whose run id is not the table's is a table and a bundle from
-// two different renders).
-//
-// That is all the type says. It does NOT say that the event was accepted: B4 (the practice
-// editions), B7 and B8 (the decoys and the spaces of the values) and B10 (the continuity with
-// the previous digests) are other functions' rules, and E1 and E2 are the edition files'. The
-// event's digests may be written only when every check of D20's `CheckEvent` has passed (E1,
-// E2, B4, B7, B8 and B10 included, in the order D20 gives), and the order and that gate are
-// `CheckEvent`'s (A4e-2), not this type's: a caller that has a *CheckedBundles and has not run
-// them has digests that no rule other than CheckBundles's has accepted.
+// validator_door_source_test.go fixes that no other non-test file builds one). It is an
+// INTERMEDIATE value of CheckEvent (checkevent.go), and WriteDigests does NOT take it (ADR-0056
+// amendment 12): it says that the tree went through the rules of CheckBundles (B1, B2, B3, B5,
+// B6 and B9) and carries the run id of the table the tree was held to (D9: a digests file whose
+// run id is not the table's is a table and a bundle from two different renders), and that is
+// all it says. It does NOT say that the event was accepted: B4 (the practice editions), B7 and
+// B8 (the decoys and the spaces of the values) and B10 (the continuity with the previous
+// digests) are other functions' rules, and E1 and E2 are the edition files'. The digests of an
+// event may be written only for the *CheckedEvent that CheckEvent gives once every check of
+// D20 has passed, and a caller that has a *CheckedBundles has digests that no rule other than
+// CheckBundles's has accepted.
 type CheckedBundles struct {
 	runID string
 	rows  []DigestRow
+	// bundles is the tree that CheckBundles read and accepted, so that CheckEvent's later
+	// checks (B4, B7, B8 (b)) look at the very bytes the digests are of, and not at a second
+	// read of the tree.
+	bundles *Bundles
 }
 
 // RunID is the run id of the answers table the bundles were checked against.
@@ -138,7 +140,7 @@ func CheckBundles(root string, t *CheckedTable, in BundleInput) (*CheckedBundles
 	if err := CheckDigestSet(rows, in.Seats, in.Scope); err != nil {
 		return nil, err
 	}
-	return &CheckedBundles{runID: tb.runID, rows: rows}, nil
+	return &CheckedBundles{runID: tb.runID, rows: rows, bundles: bundles}, nil
 }
 
 // digestRows is the digest of every bundle, in the order of All.

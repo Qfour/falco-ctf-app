@@ -16,25 +16,30 @@ import (
 // load_source_test.go fixes the door of the answers table): the validator's types and the
 // signatures that carry them.
 //
-//   - a *CheckedTable is built only by LoadEventTable (internal/edition/load.go), and a
-//     *CheckedBundles only by CheckBundles (internal/edition/bundlecheck.go): no other non-test
-//     file has a composite literal, a new(...) or a `var x T` of either type. A test file may
+//   - a *CheckedTable is built only by LoadEventTable (internal/edition/load.go), a
+//     *CheckedBundles only by CheckBundles (internal/edition/bundlecheck.go) and a *CheckedEvent
+//     only by CheckEvent (internal/edition/checkevent.go): no other non-test file has a
+//     composite literal, a new(...) or a `var x T` of any of the three types. A test file may
 //     (export_test.go does), because a _test.go file is not in a build of the program;
 //   - the signatures are what the types are for: CheckBundles takes a *CheckedTable (and not a
 //     *Table, which Parse alone makes) and gives a *CheckedBundles, BundleInput has no table,
-//     WriteDigests takes a *CheckedBundles and nothing weaker, LoadEventTable gives a
-//     *CheckedTable;
-//   - the callers of LoadEventTable and of Check are load_source_test.go's (doorViolations).
-//     `edition check` (A4e-2) adds the one caller of LoadEventTable and of CheckBundles; its pin
-//     is added with it and is not placed before the caller exists;
-//   - hintleak's `scope` package, which A4e-2 imports to assemble B5's input, is imported under
-//     the name hlscope (edition.Scope is a type of this package): any import of it in this
-//     package under another name is refused, so the name is settled before the first import.
+//     WriteDigests takes a *CheckedEvent and nothing weaker (ADR-0056 amendment 12: the event
+//     that every check of D20 accepted, and not the tree of bundles that CheckBundles
+//     accepted), CheckEvent gives a *CheckedEvent, LoadEventTable gives a *CheckedTable;
+//   - the callers of LoadEventTable and of Check are load_source_test.go's (doorViolations):
+//     LoadEventTable is called by CheckEvent and by nothing else; CheckEvent and
+//     WriteDigestsFile have no non-test caller yet. The `edition check` command of
+//     cmd/scoreboard (the next change) adds the one caller of each, and a count of exactly
+//     one in place of "none";
+//   - hintleak's `scope` package, which CheckEvent imports to assemble B5's input, is imported
+//     under the name hlscope (edition.Scope is a type of this package): any import of it in
+//     this package under another name is refused.
 
 // checkedMakers is where a value of each type may be made: the file and the function.
 var checkedMakers = map[string]struct{ file, fn string }{
 	"CheckedTable":   {"internal/edition/load.go", "LoadEventTable"},
 	"CheckedBundles": {"internal/edition/bundlecheck.go", "CheckBundles"},
+	"CheckedEvent":   {"internal/edition/checkevent.go", "CheckEvent"},
 }
 
 // checkedViolations judges every non-test file (slash path -> source): a CheckedTable or a
@@ -70,15 +75,16 @@ func TestCheckedValuesAreMadeOnlyByTheirDoors(t *testing.T) {
 		t.Error(v)
 	}
 	// Positive: each maker is there, once. A scan that finds nothing is not a pass.
-	if want := map[string]int{"CheckedTable@LoadEventTable": 1, "CheckedBundles@CheckBundles": 1}; !maps.Equal(counts, want) {
+	if want := map[string]int{"CheckedTable@LoadEventTable": 1, "CheckedBundles@CheckBundles": 1, "CheckedEvent@CheckEvent": 1}; !maps.Equal(counts, want) {
 		t.Errorf("makers found = %v, want %v", counts, want)
 	}
 
 	// The scan itself: the allowed shape passes, every other way to make a value is seen.
 	const loadSrc = "package edition\n\nfunc LoadEventTable() *CheckedTable { return &CheckedTable{} }\n"
 	const bundleSrc = "package edition\n\nfunc CheckBundles() *CheckedBundles { return &CheckedBundles{} }\n"
-	base := map[string]string{"internal/edition/load.go": loadSrc, "internal/edition/bundlecheck.go": bundleSrc}
-	if v, c := checkedViolations(base); len(v) != 0 || !maps.Equal(c, map[string]int{"CheckedTable@LoadEventTable": 1, "CheckedBundles@CheckBundles": 1}) {
+	const eventSrc = "package edition\n\nfunc CheckEvent() *CheckedEvent { return &CheckedEvent{} }\n"
+	base := map[string]string{"internal/edition/load.go": loadSrc, "internal/edition/bundlecheck.go": bundleSrc, "internal/edition/checkevent.go": eventSrc}
+	if v, c := checkedViolations(base); len(v) != 0 || !maps.Equal(c, map[string]int{"CheckedTable@LoadEventTable": 1, "CheckedBundles@CheckBundles": 1, "CheckedEvent@CheckEvent": 1}) {
 		t.Fatalf("the allowed shape: violations %v, counts %v", v, c)
 	}
 	cases := []struct{ name, path, src string }{
@@ -94,6 +100,14 @@ func TestCheckedValuesAreMadeOnlyByTheirDoors(t *testing.T) {
 		{"a qualified CheckedTable literal elsewhere", "internal/scoreboard/x.go", "package scoreboard\n\nimport \"" + editionImportPath + "\"\n\nfunc f() { _ = &edition.CheckedTable{} }\n"},
 		{"a qualified CheckedBundles literal through an alias", "cmd/scoreboard/x.go", "package main\n\nimport ed \"" + editionImportPath + "\"\n\nfunc f() { _ = ed.CheckedBundles{} }\n"},
 		{"a dot import", "cmd/scoreboard/x.go", "package main\n\nimport . \"" + editionImportPath + "\"\n"},
+		// A *CheckedEvent is the proof that every check of D20 passed (amendment 12): CheckEvent
+		// makes it and nothing else does.
+		{"a CheckedEvent literal in another function of checkevent.go", "internal/edition/checkevent.go", eventSrc + "\nfunc other() *CheckedEvent { return &CheckedEvent{} }\n"},
+		{"a CheckedEvent literal in digests.go", "internal/edition/digests.go", "package edition\n\nfunc WriteDigestsFile() { _ = &CheckedEvent{} }\n"},
+		{"a CheckedEvent value literal elsewhere in the package", "internal/edition/other.go", "package edition\n\nfunc f() { _ = CheckedEvent{} }\n"},
+		{"new(CheckedEvent)", "internal/edition/other.go", "package edition\n\nfunc f() { _ = new(CheckedEvent) }\n"},
+		{"var e CheckedEvent in a function", "internal/edition/other.go", "package edition\n\nfunc f() { var e CheckedEvent; _ = e }\n"},
+		{"a qualified CheckedEvent literal in the command", "cmd/scoreboard/x.go", "package main\n\nimport \"" + editionImportPath + "\"\n\nfunc f() { _ = &edition.CheckedEvent{} }\n"},
 	}
 	for _, c := range cases {
 		files := rdCopyFiles(base)
@@ -123,7 +137,9 @@ var wantValidatorSigs = []struct {
 	file, fn string
 	want     sigWant
 }{
-	{"internal/edition/digests.go", "WriteDigests", sigWant{[]string{"io.Writer", "*CheckedBundles"}, []string{"error"}}},
+	{"internal/edition/digests.go", "WriteDigests", sigWant{[]string{"io.Writer", "*CheckedEvent"}, []string{"error"}}},
+	{"internal/edition/digests.go", "WriteDigestsFile", sigWant{[]string{"string", "*CheckedEvent"}, []string{"error"}}},
+	{"internal/edition/checkevent.go", "CheckEvent", sigWant{[]string{"CheckInput"}, []string{"*CheckedEvent", "CheckReport", "error"}}},
 	{"internal/edition/bundlecheck.go", "CheckBundles", sigWant{[]string{"string", "*CheckedTable", "BundleInput"}, []string{"*CheckedBundles", "error"}}},
 	{"internal/edition/load.go", "LoadEventTable", sigWant{[]string{"catalog.Scored", "string"}, []string{"*CheckedTable", "string", "error"}}},
 }
@@ -240,6 +256,7 @@ func TestValidatorSignaturesCarryTheCheckedTypes(t *testing.T) {
 		digestsFile = "internal/edition/digests.go"
 		bundleFile  = "internal/edition/bundlecheck.go"
 		loadFile    = "internal/edition/load.go"
+		eventFile   = "internal/edition/checkevent.go"
 	)
 	cases := []struct {
 		name            string
@@ -250,8 +267,13 @@ func TestValidatorSignaturesCarryTheCheckedTypes(t *testing.T) {
 		{"CheckBundles giving rows", bundleFile, "in BundleInput) (*CheckedBundles, error)", "in BundleInput) ([]DigestRow, error)"},
 		{"BundleInput with a *Table field", bundleFile, "type BundleInput struct {", "type BundleInput struct {\n\tTable *Table"},
 		{"BundleInput with a Table field", bundleFile, "type BundleInput struct {", "type BundleInput struct {\n\tTable Table"},
-		{"WriteDigests taking a run id and rows", digestsFile, "func WriteDigests(w io.Writer, cb *CheckedBundles) error", "func WriteDigests(w io.Writer, runID string, rows []DigestRow) error"},
-		{"WriteDigests taking rows only", digestsFile, "func WriteDigests(w io.Writer, cb *CheckedBundles) error", "func WriteDigests(w io.Writer, rows []DigestRow) error"},
+		{"WriteDigests taking a run id and rows", digestsFile, "func WriteDigests(w io.Writer, ev *CheckedEvent) error", "func WriteDigests(w io.Writer, runID string, rows []DigestRow) error"},
+		{"WriteDigests taking rows only", digestsFile, "func WriteDigests(w io.Writer, ev *CheckedEvent) error", "func WriteDigests(w io.Writer, rows []DigestRow) error"},
+		{"WriteDigests taking a *CheckedBundles again (V86, amendment 12)", digestsFile, "func WriteDigests(w io.Writer, ev *CheckedEvent) error", "func WriteDigests(w io.Writer, ev *CheckedBundles) error"},
+		{"WriteDigestsFile taking a *CheckedBundles", digestsFile, "func WriteDigestsFile(dest string, ev *CheckedEvent) error", "func WriteDigestsFile(dest string, ev *CheckedBundles) error"},
+		{"WriteDigestsFile taking the path and the rows", digestsFile, "func WriteDigestsFile(dest string, ev *CheckedEvent) error", "func WriteDigestsFile(dest string, rows []DigestRow) error"},
+		{"CheckEvent giving a *CheckedBundles", eventFile, "(*CheckedEvent, CheckReport, error) {\n\tvar report", "(*CheckedBundles, CheckReport, error) {\n\tvar report"},
+		{"CheckEvent giving no report", eventFile, "(*CheckedEvent, CheckReport, error) {\n\tvar report", "(*CheckedEvent, error) {\n\tvar report"},
 		{"LoadEventTable giving a *Table", loadFile, "(*CheckedTable, string, error) {\n\tif answersFile", "(*Table, string, error) {\n\tif answersFile"},
 		{"LoadEventTable taking a third argument", loadFile, "func LoadEventTable(scored catalog.Scored, answersFile string)", "func LoadEventTable(scored catalog.Scored, answersFile string, eventMode bool)"},
 	}
