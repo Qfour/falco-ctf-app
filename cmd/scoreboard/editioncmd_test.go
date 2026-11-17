@@ -5,7 +5,10 @@ package main
 // internal/edition's (checkevent_test.go breaks each one); here a few of them are broken to see
 // how the command reports them. The positive fixture is the renderer's own output, run in the
 // test over the practice edition of internal/edition/testdata/render-golden and an event edition
-// of its own (a key that is plainly a test key; every value a placeholder with no meaning).
+// of its own (a key that is plainly a test key; every value a placeholder with no meaning). The
+// tree it is laid out in is internal/edition/editiontest's (ADR-0056 A4e-2d, V91), which
+// internal/edition's checkevent tests share and which never calls the renderer: the call of the
+// renderer stays in this file.
 
 import (
 	"bytes"
@@ -20,126 +23,54 @@ import (
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/edition"
+	"github.com/Qfour/falco-ctf-app/internal/edition/editiontest"
 )
 
 const (
 	ecRunID  = "0123456789abcdef0123456789abcdef"
-	ecCID    = "01-demo"
-	ecEvade  = "00-evade"
-	ecFlag   = "FALCO{test-fixture-00}"
+	ecCID    = editiontest.CID
+	ecEvade  = editiontest.Evade
 	ecGolden = "../../internal/edition/testdata/render-golden/" + ecCID
-	ecTmpl   = "notes.txt"
-
-	ecJourney = "challengeId: 01-demo\ntitle: Fixture\nbriefing: plain placeholder briefing of the fixture\n" +
-		"hints:\n  - \"alpha bravo charlie delta echo foxtrot golf hotel india juliet\"\n" +
-		"questions:\n" +
-		"  - id: q1\n    prompt: \"first placeholder prompt\"\n" +
-		"  - id: q2\n    prompt: \"second placeholder prompt\"\n" +
-		"  - id: q3\n    prompt: \"third placeholder prompt\"\n" +
-		"  - id: q4\n    prompt: \"fourth placeholder prompt\"\n" +
-		"  - id: q5\n    prompt: \"fifth placeholder prompt\"\n"
+	ecTmpl   = editiontest.TemplateName
 )
 
 // ecSpec and ecTemplate are the event edition: 9 decoys per answer slot (B8 (b) needs 10
 // candidates of each question), a vocabulary, a time base and a fixed answer of their own.
-func ecSpec() string {
-	words := make([]string, 100)
-	for i := range words {
-		words[i] = fmt.Sprintf("e%03d", i)
-	}
-	ten := func(p string) string {
-		w := make([]string, 10)
-		for i := range w {
-			w[i] = fmt.Sprintf("%s%d", p, i)
-		}
-		return "[" + strings.Join(w, ", ") + "]"
-	}
-	var b strings.Builder
-	b.WriteString("version: 1\ntime:\n  base: \"2001-01-01T00:00:00Z\"\nfixed:\n  q5: \"c2,c4\"\nslots:\n")
-	fmt.Fprintf(&b, "  - name: who\n    role: answer\n    question: q1\n    decoys: 9\n    vocab:\n      - [%s]\n", strings.Join(words, ", "))
-	fmt.Fprintf(&b, "  - name: where\n    role: answer\n    question: q2\n    decoys: 9\n    vocab:\n      - [srv]\n      - [y]\n      - %s\n      - %s\n      - %s\n", ten("d"), ten("e"), ten("f"))
-	b.WriteString("  - name: tag\n    role: answer\n    question: q3\n    decoys: 9\n")
-	b.WriteString("  - name: when\n    role: answer\n    question: q4\n    decoys: 9\n    window: {from: 0, to: 3600}\n")
-	b.WriteString("  - name: other\n    role: filler\n    format: name\n    vocab:\n      - [n0, n1, n2]\n")
-	return b.String()
-}
+func ecSpec() string { return editiontest.GoodSpec() }
 
-func ecTemplate() string {
-	var b strings.Builder
-	b.WriteString("fixture record, placeholder text only\n")
-	for _, s := range []string{"who", "where", "tag", "when"} {
-		fmt.Fprintf(&b, "%s-answer = {{ctf:%s}}\n", s, s)
-		for j := 1; j <= 9; j++ {
-			fmt.Fprintf(&b, "%s-candidate-%d = {{ctf:%s-d%d}}\n", s, j, s, j)
-		}
-	}
-	b.WriteString("side-note = {{ctf:other}}\n")
-	return b.String()
-}
+func ecTemplate() string { return editiontest.GoodTemplate() }
 
-// ecFix is one event on disk: the root of everything, and the answers the renderer drew (none
-// may be printed).
+// ecFix is one event on disk: its tree, and the answers the renderer drew (none may be
+// printed).
 type ecFix struct {
 	t      *testing.T
-	root   string
+	tree   *editiontest.Tree
 	values []string
 }
 
-func (f *ecFix) path(rel string) string { return filepath.Join(f.root, filepath.FromSlash(rel)) }
+func (f *ecFix) path(rel string) string { return f.tree.Path(rel) }
 
 func (f *ecFix) put(rel, content string) {
 	f.t.Helper()
-	p := f.path(rel)
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		f.t.Fatal(err)
-	}
-	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
-		f.t.Fatal(err)
-	}
+	f.tree.Put(rel, content)
 }
 
 func newEcFix(t *testing.T) *ecFix {
 	t.Helper()
-	f := &ecFix{t: t, root: t.TempDir()}
-	seats := []string{"seat-a", "seat-b", "seat-c"}
+	f := &ecFix{t: t, tree: editiontest.NewTree(t)}
+	seats := editiontest.Seats()
 
-	// the image's tree: an evade challenge, and the investigate challenge with its practice edition
-	f.put("challenges/"+ecEvade+"/falco-rule.yaml", "type: evade\nexpectedFlag: FALCO{dev-fixture}\nforbiddenRules: [r]\n")
-	err := filepath.WalkDir(ecGolden, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		b, err := os.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		sub, err := filepath.Rel(ecGolden, p)
-		if err != nil {
-			return err
-		}
-		f.put("challenges/"+ecCID+"/"+filepath.ToSlash(sub), string(b))
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.put("challenges/"+ecCID+"/journey.yaml", ecJourney)
-	f.put("scenario/scenario.yaml", "id: fixture\ntitle: Fixture\nchallenges: ["+ecEvade+", "+ecCID+"]\n")
-	f.put("flags/flags.yaml", "flags:\n  "+ecEvade+": "+ecFlag+"\n")
-	f.put("corpus/public.txt", "placeholder text of the image's public files\n")
-	f.put("edition-root/"+ecCID+"/edition.yaml", ecSpec())
-	f.put("edition-root/"+ecCID+"/template/"+ecTmpl, ecTemplate())
-	f.put("seats.txt", "# falco-ctf seats v1\n"+strings.Join(seats, "\n")+"\n")
-	if err := os.MkdirAll(f.path("out"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	// the image's tree (an evade challenge, and the investigate challenge with its practice
+	// edition), the event edition, the seats and the output directory
+	f.tree.PlaceInputs(editiontest.Inputs{Golden: ecGolden, Spec: ecSpec(), Template: ecTemplate(), Seats: seats})
 
 	// the renderer's output
-	key, err := edition.NewMasterKey(bytes.Repeat([]byte("test-only-key-"), 4))
+	key, err := edition.NewMasterKey(editiontest.KeyBytes())
 	if err != nil {
 		t.Fatal(err)
 	}
-	scored, err := catalog.LoadScored(f.path("challenges"), f.path("scenario/scenario.yaml"), f.path("flags/flags.yaml"))
+	p := f.tree.Paths()
+	scored, err := catalog.LoadScored(p.Challenges, p.Scenario, p.Flags)
 	if err != nil {
 		t.Fatalf("catalog.LoadScored: %v", err)
 	}
@@ -166,11 +97,10 @@ func newEcFix(t *testing.T) *ecFix {
 	if err := edition.WriteRenderRecord(&record, ecRunID, key); err != nil {
 		t.Fatal(err)
 	}
-	f.put("answers.tsv", table.String())
-	f.put("render-record.tsv", record.String())
+	f.tree.PlaceAnswers(table.String(), record.String())
 	for _, b := range r.Bundles {
 		for _, file := range b.Files {
-			f.put("evidence/"+b.Seat+"/"+b.CID+"/"+file.Name, string(file.Data))
+			f.tree.PlaceBundleFile(b.Seat, b.CID, file.Name, file.Data)
 		}
 	}
 	for _, row := range r.Rows {
@@ -181,18 +111,19 @@ func newEcFix(t *testing.T) *ecFix {
 
 // args are the arguments of a good `edition check` (the first check: --no-previous).
 func (f *ecFix) args() []string {
+	p := f.tree.Paths()
 	return []string{
-		"--challenges", f.path("challenges"),
-		"--scenario", f.path("scenario/scenario.yaml"),
-		"--flags-file", f.path("flags/flags.yaml"),
-		"--answers", f.path("answers.tsv"),
-		"--render-record", f.path("render-record.tsv"),
-		"--evidence-root", f.path("evidence"),
-		"--seats", f.path("seats.txt"),
-		"--edition-root", f.path("edition-root"),
+		"--challenges", p.Challenges,
+		"--scenario", p.Scenario,
+		"--flags-file", p.Flags,
+		"--answers", p.Answers,
+		"--render-record", p.RenderRecord,
+		"--evidence-root", p.Evidence,
+		"--seats", p.Seats,
+		"--edition-root", p.EditionRoot,
 		"--no-previous",
-		"--corpus", f.path("corpus"),
-		"--digests-out", f.path("out/digests.tsv"),
+		"--corpus", p.Corpus,
+		"--digests-out", p.DigestsOut,
 	}
 }
 
