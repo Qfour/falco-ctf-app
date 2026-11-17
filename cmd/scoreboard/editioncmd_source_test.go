@@ -652,6 +652,112 @@ func TestTheWriteOfTheDigestsFileIsWiredToTheExitAndTheWarning(t *testing.T) {
 	}
 }
 
+// renderWiringViolations judges the source of editioncmd.go (path p) for the wiring of
+// `edition render` (ADR-0056 D20, V92), the same way as writeWiringViolations does for the write
+// of --digests-out: in runEditionRender, both results of edition.RenderEvent are named, once;
+// after it, an `if err != nil` whose body returns finishRefusal(_, err) (the exit code, and the
+// temporary names an *edition.OutputError lists as left: finishRefusal's own wiring is held by
+// writeWiringViolations); and no `return exitAccepted` comes before that if. A render has no
+// warning after its commit point (the rename leaves no name), so there is no left to wire.
+func renderWiringViolations(p, src string) []string {
+	f, err := parser.ParseFile(token.NewFileSet(), p, src, 0)
+	if err != nil {
+		return []string{p + ": does not parse: " + err.Error()}
+	}
+	run := declNamed(f, "runEditionRender")
+	if run == nil {
+		return []string{p + ": func runEditionRender is not found"}
+	}
+	var assign *ast.AssignStmt
+	renders := 0
+	ast.Inspect(run.Body, func(n ast.Node) bool {
+		a, ok := n.(*ast.AssignStmt)
+		if !ok || len(a.Rhs) != 1 {
+			return true
+		}
+		if c, ok := a.Rhs[0].(*ast.CallExpr); ok && isSelector(c.Fun, "edition", "RenderEvent") {
+			renders++
+			assign = a
+		}
+		return true
+	})
+	if renders != 1 || len(assign.Lhs) != 2 {
+		return []string{p + ": runEditionRender does not take the two results of edition.RenderEvent once"}
+	}
+	ev, _ := assign.Lhs[0].(*ast.Ident)
+	errID, _ := assign.Lhs[1].(*ast.Ident)
+	if ev == nil || ev.Name == "_" || errID == nil || errID.Name == "_" {
+		return []string{p + ": a result of edition.RenderEvent is dropped (want the event and the error)"}
+	}
+	var out []string
+	var guard *ast.IfStmt
+	ast.Inspect(run.Body, func(n ast.Node) bool {
+		s, ok := n.(*ast.IfStmt)
+		if !ok || guard != nil || s.Pos() < assign.End() {
+			return true
+		}
+		if b, ok := s.Cond.(*ast.BinaryExpr); ok && b.Op == token.NEQ && isIdent(b.X, errID.Name) && isIdent(b.Y, "nil") && returnsFinishRefusal(s.Body, errID.Name) {
+			guard = s
+		}
+		return true
+	})
+	if guard == nil {
+		return append(out, p+": the error of edition.RenderEvent does not reach `return finishRefusal(..., "+errID.Name+")` in an `if "+errID.Name+" != nil`")
+	}
+	accepted := 0
+	ast.Inspect(run.Body, func(n ast.Node) bool {
+		r, ok := n.(*ast.ReturnStmt)
+		if !ok || len(r.Results) != 1 || !isIdent(r.Results[0], "exitAccepted") {
+			return true
+		}
+		accepted++
+		if r.Pos() < guard.End() {
+			out = append(out, p+": runEditionRender returns exitAccepted before the error of edition.RenderEvent is tested")
+		}
+		return true
+	})
+	if accepted == 0 {
+		out = append(out, p+": runEditionRender never returns exitAccepted: the scan does not see its success")
+	}
+	return out
+}
+
+// V92 for `edition render`: the error of RenderEvent goes to finishRefusal (exit 3 and the names
+// left for an *edition.OutputError, exit 1 and 2 for the others), and nothing is accepted before
+// it is tested. A copy with each link cut is red.
+func TestTheRenderIsWiredToTheExit(t *testing.T) {
+	src := readNonTest(t)[cmdFile]
+	for _, v := range renderWiringViolations(cmdFile, src) {
+		t.Error(v)
+	}
+	const failLine = "\t\tfmt.Fprintln(stderr, \"edition render: nothing was put at --out\")\n"
+	cases := []struct {
+		name string
+		edit func(src string) string
+	}{
+		{"the error not through finishRefusal", func(s string) string {
+			return replaceOnceSrc(t, s, failLine+"\t\treturn finishRefusal(stderr, err)\n", failLine+"\t\treturn exitUsage\n")
+		}},
+		{"the error not tested", func(s string) string {
+			return replaceOnceSrc(t, s, "edition.RenderEvent(in)\n\tif err != nil {", "edition.RenderEvent(in)\n\tif err == nil {")
+		}},
+		{"the error dropped", func(s string) string {
+			return replaceOnceSrc(t, s, "ev, err := edition.RenderEvent(in)", "ev, _ := edition.RenderEvent(in)")
+		}},
+		{"accepted before the error is tested", func(s string) string {
+			return replaceOnceSrc(t, s, "ev, err := edition.RenderEvent(in)\n", "ev, err := edition.RenderEvent(in)\n\tif ev != nil {\n\t\treturn exitAccepted\n\t}\n")
+		}},
+	}
+	for _, c := range cases {
+		if v := renderWiringViolations(cmdFile, c.edit(src)); len(v) == 0 {
+			t.Errorf("%s: no violation was reported", c.name)
+		}
+	}
+	if v := renderWiringViolations(cmdFile, "package main\n\nfunc other() {}\n"); len(v) == 0 {
+		t.Error("a file with no runEditionRender was not reported")
+	}
+}
+
 // switchKinds is the types (`*edition.X` as X) of the cases of the first type switch of the
 // function or method name of the source.
 func switchKinds(p, src, name string) ([]string, error) {

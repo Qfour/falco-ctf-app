@@ -24,6 +24,7 @@
 package editiontest
 
 import (
+	"encoding/hex"
 	"fmt"
 	"io/fs"
 	"os"
@@ -90,7 +91,51 @@ const (
 
 	// EvidenceRel is the root of the bundles, <seat>/<challenge>/<file> under it.
 	EvidenceRel = "evidence"
+
+	// KeyRel is the key file of `edition render` (A4e-3a): one line of hex, mode 0600.
+	KeyRel = "key.hex"
+
+	// PreviousSeatsRel is a previous seats file of `edition render` (--previous-seats).
+	PreviousSeatsRel = "previous-seats.txt"
+
+	// RenderOutRel is the --out of `edition render`, under the empty directory OutRel: it does
+	// not exist until a render puts it there.
+	RenderOutRel = "out/render"
 )
+
+// KeyText is the key file of the fixture's key (KeyBytes): its lower-case hex, one line.
+func KeyText() string { return hex.EncodeToString(KeyBytes()) + "\n" }
+
+// PlaceKey writes the key file at rel with the given text and the permission bits mode (set
+// after the write, so the umask does not change them). A test of a key file of another form or
+// mode gives its own text and mode.
+func (tr *Tree) PlaceKey(rel, text string, mode fs.FileMode) {
+	tr.T.Helper()
+	tr.Put(rel, text)
+	if err := os.Chmod(tr.Path(rel), mode); err != nil {
+		tr.T.Fatal(err)
+	}
+}
+
+// RenderPaths are the OS paths of the inputs and of the output of a good `edition render` of
+// the fixture (PlaceInputs and PlaceKey(KeyRel, KeyText(), 0o600) lay them out).
+type RenderPaths struct {
+	Challenges, Scenario, Flags, EditionRoot, Seats, PreviousSeatsFile, Key, Out string
+}
+
+// RenderPaths is where the inputs of a good render are in the tree, and where its output goes.
+func (tr *Tree) RenderPaths() RenderPaths {
+	return RenderPaths{
+		Challenges:        tr.Path(ChallengesRel),
+		Scenario:          tr.Path(ScenarioRel),
+		Flags:             tr.Path(FlagsRel),
+		EditionRoot:       tr.Path(EditionRootRel),
+		Seats:             tr.Path(SeatsRel),
+		PreviousSeatsFile: tr.Path(PreviousSeatsRel),
+		Key:               tr.Path(KeyRel),
+		Out:               tr.Path(RenderOutRel),
+	}
+}
 
 // EvadeRule is the falco-rule.yaml of the evade challenge: a placeholder flag, and a rule name.
 const EvadeRule = "type: evade\nexpectedFlag: FALCO{dev-fixture}\nforbiddenRules: [r]\n"

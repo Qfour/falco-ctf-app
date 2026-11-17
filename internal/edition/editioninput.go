@@ -6,7 +6,9 @@ package edition
 // Every file is opened by openRegular through readCapped (safeopen.go: O_NOFOLLOW, O_NONBLOCK
 // and the open descriptor's Stat held to the Lstat), never by a function of its own, and a
 // directory is listed with os.ReadDir (the guarantee is the last element of a path, D9). The
-// key's reader is A4e-3's.
+// key's reader is eventrender.go's (readKeyFile, A4e-3a: it makes a key, which only that file
+// outside the render files may), and `edition render` reads its seats and its previous seats
+// with readSeatsFile below.
 //
 // Two kinds of defect, as in checkevent.go: a file that cannot be read (missing, a link, not a
 // regular file), or whose form is wrong (a seats file, a previous digests file, a render record),

@@ -15,7 +15,7 @@ import (
 // Load is the ONE way the scoreboard obtains an answers table (ADR-0056 D8 (iii)
 // and (iv), D19 A2b, A4a-1, A4a-2): it reads the file, Parses it, runs ModeCheck and
 // Check, and hands back a Judge. Parse and NewJudge are called from here and nowhere
-// else in the program (Parse also from loadChecked and loadPractice below, NewJudge also
+// else in the program (Parse also from checkAnswersData and loadPractice below, NewJudge also
 // from practiceJudge below; Load is the only caller of practiceJudge, and calls it only
 // when eventMode is false), and Load is called from cmd/scoreboard once
 // (load_source_test.go fixes all of it by reading the sources, the way ADR-0033 D6
@@ -96,8 +96,7 @@ func Load(scored catalog.Scored, answersFile string, eventMode bool) (*Judge, st
 // and the flag values of scored.Catalog, in the event mode when eventMode says so. Its
 // callers are Load (the start-up: eventMode as the environment gives it, openFollowing) and
 // LoadEventTable (the validator: the event mode, openRegular), and nothing else
-// (load_source_test.go); Parse and Check are called from here and from loadPractice /
-// practiceJudge only.
+// (load_source_test.go). What it does with the bytes it read is checkAnswersData's.
 //
 // It returns the table (plaintext values: the caller keeps it only as long as it needs it),
 // the practice set T6 used and where the practice editions are (loadPractice's results, for
@@ -106,11 +105,24 @@ func Load(scored catalog.Scored, answersFile string, eventMode bool) (*Judge, st
 // answers table: ...", and loadPractice's as they are. An error names a rule, a line and a
 // seat / cid / qid, never a value.
 func loadChecked(scored catalog.Scored, answersFile string, eventMode bool, open fileOpener) (*Table, PracticeSet, practiceDirs, error) {
-	cat := scored.Catalog
 	data, err := readTable(answersFile, open)
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	return checkAnswersData(scored, data, eventMode)
+}
+
+// checkAnswersData is the bytes of an answers table turned into a table that Check accepted:
+// Parse, the practice answers of the image (loadPractice) and Check with the scope and the flag
+// values of scored.Catalog, in the event mode when eventMode says so. It is the ONE place that
+// Parses and Checks an answers table (ADR-0056 D20: one Check for the table the scoreboard
+// starts with, the one the validator accepts and the one the renderer writes), and its callers
+// are loadChecked (the start-up and the validator, which read a file) and RenderEvent (the self
+// check of `edition render`, D20 step 4, on the bytes it is about to write), and nothing else
+// (load_source_test.go). Parse and Check are called from here and from loadPractice /
+// practiceJudge only. The results and the errors are loadChecked's.
+func checkAnswersData(scored catalog.Scored, data []byte, eventMode bool) (*Table, PracticeSet, practiceDirs, error) {
+	cat := scored.Catalog
 	t, err := Parse(data)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("edition: answers table: %w", err)

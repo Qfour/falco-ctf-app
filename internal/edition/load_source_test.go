@@ -25,14 +25,19 @@ import (
 //     body of an `if` whose condition has `!eventMode` (TestPracticeJudgeIsOnlyReached
 //     OutsideTheEventMode): in the event mode no Judge is made from the practice
 //     answers (D8 (iii), V36);
-//   - edition.Parse is called by loadChecked (the one function that reads, Parses and
-//     Checks an answers file: ADR-0056 D20, A4e-1) and by loadPractice, the unexported
-//     reader of the practice answers (A4a-1), in the same file; edition.Check is called by
-//     loadChecked and by practiceJudge, and by nothing else: the table the scoreboard
-//     starts with and the table the validator accepts are held to the same Check;
+//   - edition.Parse is called by checkAnswersData (the one function that Parses and Checks
+//     the bytes of an answers table: ADR-0056 D20, A4e-1, and A4e-3a, which moved it out of
+//     loadChecked so that the renderer's self check goes through it too) and by loadPractice,
+//     the unexported reader of the practice answers (A4a-1), in the same file; edition.Check
+//     is called by checkAnswersData and by practiceJudge, and by nothing else: the table the
+//     scoreboard starts with, the table the validator accepts and the table the renderer
+//     writes are held to the same Check;
+//   - checkAnswersData is called by loadChecked (load.go) and by RenderEvent
+//     (internal/edition/eventrender.go: step 4 of D20's `edition render`), once each, and by
+//     nothing else;
 //   - loadChecked is called by edition.Load (the start-up) and by LoadEventTable (the
-//     validator's door), and by nothing else; loadPractice is called by loadChecked (T6 in
-//     the event mode) and by practiceJudge and by nothing else, so the practice answers
+//     validator's door), and by nothing else; loadPractice is called by checkAnswersData (T6
+//     in the event mode) and by practiceJudge and by nothing else, so the practice answers
 //     have one reader and it has two callers;
 //   - readPracticeFiles, the reader of the practice editions' bundles and templates, is
 //     called by LoadEventTable only: the start-up path reads none of it (A4c-2);
@@ -45,6 +50,8 @@ import (
 //     structure only: main's first statement, the server's files not naming the subcommand, the
 //     command's imports, and that only the command names the types of the check's surface
 //     (CheckInput, CheckReport, InputError);
+//   - RenderEvent (ADR-0056 D20, V78, A4e-3a) is called by the `edition render` command and by
+//     nothing else: cmd/scoreboard/editioncmd.go, func runEditionRender, once;
 //   - edition.Load is called by cmd/scoreboard, exactly once, and by nothing else;
 //   - load.go holds no PracticeSet literal (TestLoadHasNoPracticeLiteral).
 //
@@ -54,7 +61,7 @@ import (
 const editionImportPath = "github.com/Qfour/falco-ctf-app/internal/edition"
 
 // doorGuarded are the names of this package that only the door may use.
-var doorGuarded = []string{"Parse", "NewJudge", "Load", "loadPractice", "practiceJudge", "loadChecked", "LoadEventTable", "Check", "readPracticeFiles", "CheckEvent", "WriteDigestsFile"}
+var doorGuarded = []string{"Parse", "NewJudge", "Load", "loadPractice", "practiceJudge", "loadChecked", "LoadEventTable", "Check", "readPracticeFiles", "CheckEvent", "WriteDigestsFile", "checkAnswersData", "RenderEvent"}
 
 // doorUse is one reference to a guarded name: the file (slash path from the repo
 // root), the enclosing function ("" outside any function), the name, and whether
@@ -177,21 +184,39 @@ func doorViolations(files map[string]string) (violations []string, counts map[st
 			}
 			switch u.name {
 			case "Parse":
-				// loadChecked (the read of an answers file, which only Load and LoadEventTable
-				// call), and loadPractice (the practice answers, A4a-1).
-				if p != "internal/edition/load.go" || (u.fn != "loadChecked" && u.fn != "loadPractice") || !u.call {
-					violations = append(violations, where+": Parse is used outside a call in loadChecked or loadPractice")
+				// checkAnswersData (the bytes of an answers table, which loadChecked and the
+				// renderer's self check give it), and loadPractice (the practice answers, A4a-1).
+				if p != "internal/edition/load.go" || (u.fn != "checkAnswersData" && u.fn != "loadPractice") || !u.call {
+					violations = append(violations, where+": Parse is used outside a call in checkAnswersData or loadPractice")
 					continue
 				}
 				counts["Parse@"+u.fn]++
 			case "Check":
-				// One Check for the table the scoreboard starts with and the one the validator
-				// accepts: loadChecked's, and the practice mode's (practiceJudge).
-				if p != "internal/edition/load.go" || (u.fn != "loadChecked" && u.fn != "practiceJudge") || !u.call {
-					violations = append(violations, where+": Check is used outside a call in loadChecked or practiceJudge")
+				// One Check for the table the scoreboard starts with, the one the validator
+				// accepts and the one the renderer writes: checkAnswersData's, and the practice
+				// mode's (practiceJudge).
+				if p != "internal/edition/load.go" || (u.fn != "checkAnswersData" && u.fn != "practiceJudge") || !u.call {
+					violations = append(violations, where+": Check is used outside a call in checkAnswersData or practiceJudge")
 					continue
 				}
 				counts["Check@"+u.fn]++
+			case "checkAnswersData":
+				// The two that hand it bytes: loadChecked (a file it read) and the renderer's self
+				// check (the table it is about to write, A4e-3a).
+				okCaller := (p == "internal/edition/load.go" && u.fn == "loadChecked") || (p == "internal/edition/eventrender.go" && u.fn == "RenderEvent")
+				if !okCaller || !u.call {
+					violations = append(violations, where+": checkAnswersData is used outside a call in loadChecked (load.go) or RenderEvent (eventrender.go)")
+					continue
+				}
+				counts["checkAnswersData@"+u.fn]++
+			case "RenderEvent":
+				// The renderer's entrance: the `edition render` command's function, as a call,
+				// once (counted below).
+				if p != "cmd/scoreboard/editioncmd.go" || u.fn != "runEditionRender" || !u.call {
+					violations = append(violations, where+": RenderEvent is used outside a call in runEditionRender of cmd/scoreboard/editioncmd.go (the `edition render` command is its one caller)")
+					continue
+				}
+				counts["RenderEvent@runEditionRender"]++
 			case "loadChecked":
 				// The two doors that read an answers file: the start-up's Load and the validator's
 				// LoadEventTable.
@@ -233,8 +258,8 @@ func doorViolations(files map[string]string) (violations []string, counts map[st
 				}
 				counts["NewJudge@"+u.fn]++
 			case "loadPractice":
-				if p != "internal/edition/load.go" || (u.fn != "loadChecked" && u.fn != "practiceJudge") || !u.call {
-					violations = append(violations, where+": loadPractice is used outside a call in loadChecked or practiceJudge (it is the one reader of the practice answers)")
+				if p != "internal/edition/load.go" || (u.fn != "checkAnswersData" && u.fn != "practiceJudge") || !u.call {
+					violations = append(violations, where+": loadPractice is used outside a call in checkAnswersData or practiceJudge (it is the one reader of the practice answers)")
 					continue
 				}
 				counts["loadPractice@"+u.fn]++
@@ -265,6 +290,14 @@ func doorViolations(files map[string]string) (violations []string, counts map[st
 	for _, name := range []string{"CheckEvent", "WriteDigestsFile"} {
 		if counts[name+"@runEditionCheck"] > 1 {
 			violations = append(violations, "runEditionCheck calls "+name+" more than once; the command is one call")
+		}
+	}
+	if counts["RenderEvent@runEditionRender"] > 1 {
+		violations = append(violations, "runEditionRender calls RenderEvent more than once; the command is one call")
+	}
+	for _, fn := range []string{"loadChecked", "RenderEvent"} {
+		if counts["checkAnswersData@"+fn] > 1 {
+			violations = append(violations, fn+" calls checkAnswersData more than once")
 		}
 	}
 	return violations, counts
@@ -323,23 +356,30 @@ func TestAnswersTableHasOneDoor(t *testing.T) {
 // out of Load into loadChecked, which the validator's LoadEventTable shares: Parse@Load and
 // loadPractice@Load became Parse@loadChecked and loadPractice@loadChecked, and the two
 // Check calls, loadChecked@Load, loadChecked@LoadEventTable and readPracticeFiles@
-// LoadEventTable are the new door.
+// LoadEventTable are the new door. A4e-3a moved the Parse and the Check of the bytes of a table
+// (and the read of the practice answers for T6) out of loadChecked into checkAnswersData, which
+// loadChecked calls and the renderer's self check calls (Parse@loadChecked, Check@loadChecked and
+// loadPractice@loadChecked became the three @checkAnswersData), and added the renderer's
+// entrance, RenderEvent@runEditionRender.
 var wantDoorCounts = map[string]int{
-	"Parse@loadChecked":                1,
+	"Parse@checkAnswersData":           1,
 	"Parse@loadPractice":               1,
-	"Check@loadChecked":                1,
+	"Check@checkAnswersData":           1,
 	"Check@practiceJudge":              1,
 	"NewJudge@Load":                    1,
 	"NewJudge@practiceJudge":           1,
 	"loadChecked@Load":                 1,
 	"loadChecked@LoadEventTable":       1,
-	"loadPractice@loadChecked":         1,
+	"checkAnswersData@loadChecked":     1,
+	"checkAnswersData@RenderEvent":     1,
+	"loadPractice@checkAnswersData":    1,
 	"loadPractice@practiceJudge":       1,
 	"practiceJudge@Load":               1,
 	"readPracticeFiles@LoadEventTable": 1,
 	"LoadEventTable@CheckEvent":        1,
 	"CheckEvent@runEditionCheck":       1,
 	"WriteDigestsFile@runEditionCheck": 1,
+	"RenderEvent@runEditionRender":     1,
 	"Load@cmd/scoreboard":              1,
 }
 
@@ -402,21 +442,26 @@ func TestLoadHasNoPracticeLiteral(t *testing.T) {
 // The scanner itself: a copy with one deliberate violation is reported, and the
 // shape that is allowed is not.
 func TestAnswersTableDoorScan_SeesAViolation(t *testing.T) {
-	// The shape of load.go since A4e-1: Load and LoadEventTable read the answers file through
-	// loadChecked, which Parses it, reads the practice answers and Checks; the practice mode's
-	// Judge is practiceJudge's; only LoadEventTable reads the practice editions' files.
+	// The shape of load.go since A4e-3a: Load and LoadEventTable read the answers file through
+	// loadChecked, which hands its bytes to checkAnswersData, which Parses them, reads the
+	// practice answers and Checks; the practice mode's Judge is practiceJudge's; only
+	// LoadEventTable reads the practice editions' files.
 	const loadSrc = "package edition\n\n" +
 		"func Load(eventMode bool) {\n\t_, _, _, _ = loadChecked(eventMode)\n\t_, _ = NewJudge(nil)\n\tif !eventMode {\n\t\t_, _ = practiceJudge()\n\t}\n}\n\n" +
 		"func LoadEventTable() {\n\t_, _, _, _ = loadChecked(true)\n\t_, _ = readPracticeFiles(nil)\n}\n\n" +
-		"func loadChecked(eventMode bool) (int, int, int, error) {\n\t_, _ = Parse(nil)\n\t_, _ = loadPractice(\"\")\n\t_ = Check(nil)\n\treturn 0, 0, 0, nil\n}\n\n" +
+		"func loadChecked(eventMode bool) (int, int, int, error) {\n\treturn checkAnswersData(nil, nil, eventMode)\n}\n\n" +
+		"func checkAnswersData(s, d []int, eventMode bool) (int, int, int, error) {\n\t_, _ = Parse(nil)\n\t_, _ = loadPractice(\"\")\n\t_ = Check(nil)\n\treturn 0, 0, 0, nil\n}\n\n" +
 		"func loadPractice(string) (int, error) {\n\t_, _ = Parse(nil)\n\treturn 0, nil\n}\n\n" +
 		"func practiceJudge() (int, error) {\n\t_, _ = NewJudge(nil)\n\t_, _ = loadPractice(\"\")\n\t_ = Check(nil)\n\treturn 0, nil\n}\n"
 	const mainSrc = "package main\n\nimport \"" + editionImportPath + "\"\n\nfunc main() {\n\tedition.Load()\n}\n"
 	// CheckEvent (A4e-2) is the validator's one caller of LoadEventTable.
 	const eventSrc = "package edition\n\nfunc CheckEvent() {\n\t_, _, _ = LoadEventTable(nil, \"\")\n}\n"
-	// The `edition check` command calls CheckEvent and WriteDigestsFile, once each.
-	const cmdSrc = "package main\n\nimport \"" + editionImportPath + "\"\n\nfunc runEditionCheck() {\n\t_, _, _ = edition.CheckEvent(in)\n\t_ = edition.WriteDigestsFile(p, ev)\n}\n"
-	good := map[string]string{"internal/edition/load.go": loadSrc, "internal/edition/checkevent.go": eventSrc, "cmd/scoreboard/edition.go": mainSrc, "cmd/scoreboard/editioncmd.go": cmdSrc}
+	// RenderEvent (A4e-3a) holds the bytes of the table it is about to write to checkAnswersData.
+	const renderEventSrc = "package edition\n\nfunc RenderEvent() {\n\t_, _, _, _ = checkAnswersData(nil, nil, true)\n}\n"
+	// The `edition check` command calls CheckEvent and WriteDigestsFile, once each, and the
+	// `edition render` command calls RenderEvent, once.
+	const cmdSrc = "package main\n\nimport \"" + editionImportPath + "\"\n\nfunc runEditionCheck() {\n\t_, _, _ = edition.CheckEvent(in)\n\t_ = edition.WriteDigestsFile(p, ev)\n}\n\nfunc runEditionRender() {\n\t_, _ = edition.RenderEvent(in)\n}\n"
+	good := map[string]string{"internal/edition/load.go": loadSrc, "internal/edition/checkevent.go": eventSrc, "internal/edition/eventrender.go": renderEventSrc, "cmd/scoreboard/edition.go": mainSrc, "cmd/scoreboard/editioncmd.go": cmdSrc}
 	if v, c := doorViolations(good); len(v) != 0 || !maps.Equal(c, wantDoorCounts) {
 		t.Fatalf("the allowed shape: violations %v, calls %v, want none and %v", v, c, wantDoorCounts)
 	}
@@ -484,6 +529,23 @@ func TestAnswersTableDoorScan_SeesAViolation(t *testing.T) {
 		{"LoadEventTable called from the scoreboard's server", "internal/scoreboard/x.go", "package scoreboard\n\nimport \"" + editionImportPath + "\"\n\nfunc f() { _, _, _ = edition.LoadEventTable(s, \"\") }\n"},
 		{"LoadEventTable called by another function of the package", "internal/edition/other.go", "package edition\n\nfunc other() { _, _, _ = LoadEventTable(s, \"\") }\n"},
 		{"LoadEventTable taken as a value", "cmd/scoreboard/y.go", "package main\n\nimport \"" + editionImportPath + "\"\n\nvar f = edition.LoadEventTable\n"},
+		// The one Parse and Check of the bytes of a table (A4e-3a): checkAnswersData, which
+		// loadChecked and RenderEvent call, once each.
+		{"Parse called by loadChecked itself, not through checkAnswersData", "internal/edition/load.go", strings.Replace(loadSrc, "\treturn checkAnswersData(nil, nil, eventMode)\n", "\t_, _ = Parse(nil)\n\treturn 0, 0, 0, nil\n", 1)},
+		{"Check called by loadChecked itself, not through checkAnswersData", "internal/edition/load.go", strings.Replace(loadSrc, "\treturn checkAnswersData(nil, nil, eventMode)\n", "\t_ = Check(nil)\n\treturn 0, 0, 0, nil\n", 1)},
+		{"loadPractice called by loadChecked itself", "internal/edition/load.go", strings.Replace(loadSrc, "\treturn checkAnswersData(nil, nil, eventMode)\n", "\t_, _ = loadPractice(\"\")\n\treturn 0, 0, 0, nil\n", 1)},
+		{"checkAnswersData called by a third function of load.go", "internal/edition/load.go", loadSrc + "\nfunc readMore() { _, _, _, _ = checkAnswersData(nil, nil, true) }\n"},
+		{"checkAnswersData called by RenderEvent in another file", "internal/edition/other.go", "package edition\n\nfunc RenderEvent() { _, _, _, _ = checkAnswersData(nil, nil, true) }\n"},
+		{"checkAnswersData called by another function of eventrender.go", "internal/edition/eventrender.go", renderEventSrc + "\nfunc other() { _, _, _, _ = checkAnswersData(nil, nil, true) }\n"},
+		{"checkAnswersData called twice by RenderEvent", "internal/edition/eventrender.go", "package edition\n\nfunc RenderEvent() {\n\t_, _, _, _ = checkAnswersData(nil, nil, true)\n\t_, _, _, _ = checkAnswersData(nil, nil, true)\n}\n"},
+		{"checkAnswersData taken as a value", "internal/edition/eventrender.go", "package edition\n\nfunc RenderEvent() { f := checkAnswersData; _ = f }\n"},
+		// RenderEvent: the `edition render` command's function only, once (V78).
+		{"RenderEvent called from another file of cmd/scoreboard", "cmd/scoreboard/y.go", "package main\n\nimport \"" + editionImportPath + "\"\n\nfunc runEditionRender() { _, _ = edition.RenderEvent(in) }\n"},
+		{"RenderEvent called twice by the command", "cmd/scoreboard/editioncmd.go", "package main\n\nimport \"" + editionImportPath + "\"\n\nfunc runEditionRender() {\n\t_, _ = edition.RenderEvent(in)\n\t_, _ = edition.RenderEvent(in)\n}\n"},
+		{"RenderEvent called by the check command's function", "cmd/scoreboard/editioncmd.go", "package main\n\nimport \"" + editionImportPath + "\"\n\nfunc runEditionCheck() { _, _ = edition.RenderEvent(in) }\n"},
+		{"RenderEvent taken as a value", "cmd/scoreboard/y.go", "package main\n\nimport \"" + editionImportPath + "\"\n\nvar f = edition.RenderEvent\n"},
+		{"RenderEvent called from the scoreboard's server", "internal/scoreboard/x.go", "package scoreboard\n\nimport \"" + editionImportPath + "\"\n\nfunc f() { _, _ = edition.RenderEvent(in) }\n"},
+		{"RenderEvent called by another function of the package", "internal/edition/other.go", "package edition\n\nfunc other() { _, _ = RenderEvent(in) }\n"},
 	}
 	for _, c := range cases {
 		files := map[string]string{"internal/edition/load.go": loadSrc, "cmd/scoreboard/edition.go": mainSrc, c.path: c.src}

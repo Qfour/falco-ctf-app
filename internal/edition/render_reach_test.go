@@ -29,14 +29,18 @@ import (
 //   - no non-test file of package edition outside the render files refers to an exported
 //     name a render file declares, or calls an unexported function a render file declares:
 //     Load, and so the scoreboard, cannot reach the renderer through the package either;
-//   - renderCallers is EMPTY today. A4e adds the `edition render` command of cmd/scoreboard,
-//     and with it its ONE file here, and nothing else (`edition check` does not call the
-//     renderer, so it is not in the list, ADR-0056 D19 A4e). A file
-//     in cmd/scoreboard that is not that one (the server's wiring) is not in the list.
+//   - renderCallers is the ONE file that may: internal/edition/eventrender.go, the
+//     implementation of `edition render` (RenderEvent, ADR-0056 D20, D19 A4e-3a). It reads the
+//     key and the inputs, calls the renderer and writes its output, so it is not a render file
+//     (those read no file). The command of cmd/scoreboard does not refer to the renderer: it
+//     calls edition.RenderEvent, which is declared in eventrender.go (who calls RenderEvent, and
+//     where, is load_source_test.go's doorViolations: runEditionRender, once). `edition check`
+//     does not call the renderer, and no file of cmd/scoreboard (the server's wiring or the
+//     command) is in the list.
 //
 // A reference in a test file is not a use (nonTestSources reads no *_test.go).
 
-var renderCallers = map[string]bool{}
+var renderCallers = map[string]bool{"internal/edition/eventrender.go": true}
 
 // isRenderFile reports whether the slash path (from the repo root) is a file of the
 // renderer stage: internal/edition/render*.go, directly in the package's directory.
@@ -189,6 +193,24 @@ func TestRenderIsNotReachableFromTheScoreboard(t *testing.T) {
 	for p := range renderCallers {
 		if _, ok := files[p]; !ok {
 			t.Errorf("renderCallers lists %s, which is not a file", p)
+		}
+	}
+	// The entry of the list is a caller (V78, A4e-3a): without it, the scan reports that file and
+	// no other. An entry for a file that does not reach the renderer would be a hole kept open
+	// for nothing.
+	unlisted := renderReaches(t, files, nil)
+	if len(unlisted) == 0 {
+		t.Error("with no file allowed, the scan reports nothing: the listed caller does not reach the renderer")
+	}
+	for _, line := range unlisted {
+		listed := false
+		for p := range renderCallers {
+			if strings.HasPrefix(line, p+":") {
+				listed = true
+			}
+		}
+		if !listed {
+			t.Errorf("with no file allowed, the scan reports %q, a file that is not the listed caller", line)
 		}
 	}
 }
