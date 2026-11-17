@@ -43,18 +43,7 @@ type DigestRow struct {
 }
 
 // ValidDigest reports whether s is a digest: 64 lower-case hex digits.
-func ValidDigest(s string) bool {
-	if len(s) != digestHexLen {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return false
-		}
-	}
-	return true
-}
+func ValidDigest(s string) bool { return len(s) == digestHexLen && lowerHex(s) }
 
 // checkDigestRow is the shape of one row: a seat (never the practice seat *), a
 // challenge id and a digest, each in its own grammar. line is 0 for a row that was not

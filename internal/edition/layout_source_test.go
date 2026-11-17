@@ -25,6 +25,12 @@ import (
 // "practice" (ADR-0056 D12), which is the name of a directory by coincidence. It is exempt BY
 // NAME, in that file only, so that a second literal "practice" in render.go, or the same
 // constant in another file, is still seen.
+//
+// The names under an event's `--out` (answers.tsv, evidence/, render-record.tsv: D20, A4e-3a)
+// are practicelayout.go's too, as constants of their own (eventLayoutNames): another contract
+// than the practice directory's, so two of them are spelled as two practice names are. The scan
+// guards their spellings the same way, and practicelayout.go holds one literal per constant of
+// both lists.
 
 const layoutPath = "internal/edition/practicelayout.go"
 
@@ -38,6 +44,18 @@ var layoutNames = []string{
 	edition.PracticeEvidenceDirName,
 	edition.PracticeAnswersFileName,
 	edition.PracticeDigestsFileName,
+}
+
+// eventLayoutNames are the names under an event's `--out` (D20), from the package's constants.
+var eventLayoutNames = []string{
+	edition.EventAnswersFileName,
+	edition.EventEvidenceDirName,
+	edition.EventRenderRecordFileName,
+}
+
+// isLayoutName reports whether v is a name of either layout.
+func isLayoutName(v string) bool {
+	return slices.Contains(layoutNames, v) || slices.Contains(eventLayoutNames, v)
 }
 
 // layoutExempt are the constants that may hold the text of a name: file -> constant names.
@@ -89,7 +107,7 @@ func layoutLiteralsIn(p, src string) (found []string, n int) {
 			found = append(found, p+": a string literal that does not unquote")
 			return true
 		}
-		if !slices.Contains(layoutNames, v) {
+		if !isLayoutName(v) {
 			return true
 		}
 		n++
@@ -127,11 +145,14 @@ func TestLayoutNamesAreDefinedOnlyInPracticelayout(t *testing.T) {
 	if !ok {
 		t.Fatalf("%s is not there", layoutPath)
 	}
-	if _, n := layoutLiteralsIn(layoutPath, src); n != len(layoutNames) {
-		t.Errorf("practicelayout.go has %d literals of the layout, want %d (one per name)", n, len(layoutNames))
+	if _, n := layoutLiteralsIn(layoutPath, src); n != len(layoutNames)+len(eventLayoutNames) {
+		t.Errorf("practicelayout.go has %d literals of the layouts, want %d (one per constant of the practice layout and of the event's --out)", n, len(layoutNames)+len(eventLayoutNames))
 	}
 	if got := len(slices.Compact(slices.Sorted(slices.Values(layoutNames)))); got != len(layoutNames) {
 		t.Errorf("the layout names are not distinct (%d of %d): a literal could not be told to which constant it belongs", got, len(layoutNames))
+	}
+	if got := len(slices.Compact(slices.Sorted(slices.Values(eventLayoutNames)))); got != len(eventLayoutNames) {
+		t.Errorf("the names of the event's --out are not distinct (%d of %d)", got, len(eventLayoutNames))
 	}
 	n := 0
 	for p := range files {
@@ -161,7 +182,7 @@ func TestLayoutNamesAreDefinedOnlyInPracticelayout(t *testing.T) {
 		t.Fatalf("the allowed shape was reported: %v", v)
 	}
 	cases := []struct{ name, src string }{}
-	for _, name := range layoutNames {
+	for _, name := range slices.Concat(layoutNames, eventLayoutNames) {
 		cases = append(cases,
 			struct{ name, src string }{"the name " + name + " in a string", "package edition\n\nvar p = filepath.Join(dir, " + strconv.Quote(name) + ")\n"},
 			struct{ name, src string }{"the name " + name + " in a raw string", "package edition\n\nvar p = `" + name + "`\n"},

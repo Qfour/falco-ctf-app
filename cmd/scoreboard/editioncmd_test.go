@@ -296,7 +296,7 @@ func TestEditionCheck_UsageErrorsAreExit2(t *testing.T) {
 	for name, args := range map[string][]string{
 		"no subcommand":      nil,
 		"an unknown one":     {"explode"},
-		"render (not built)": {"render", "--challenges", "x"},
+		"render (too short)": {"render", "--challenges", "x"},
 	} {
 		if code, stdout, stderr := runEd(args...); code != exitUsage || stdout != "" || stderr == "" {
 			t.Errorf("%s: exit %d, stdout %q, stderr %q; want exit 2 and a message", name, code, stdout, stderr)

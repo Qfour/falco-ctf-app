@@ -17,11 +17,16 @@ package edition
 // to this layout (ADR-0056 V85, A4e-4 / A5c-2 / A5d) has one place to read it from.
 //
 // The three Practice* names are the names of the files INSIDE the practice directory of an
-// image's edition. The files that `edition render` writes under an event's `--out` (D20:
-// answers.tsv, evidence/<seat>/<cid>/<file>, render-record.tsv) happen to be spelled the same
-// way for the first two, but these constants are not their definition: whether A4e-3 uses the
-// same constants for the event's output or defines its own is A4e-3's decision, and the
-// "Practice" in the names is why it must decide, not assume.
+// image's edition. The files that `edition render` writes under an event's `--out` are another
+// contract (D20) and have constants of their own, the Event* ones (A4e-3a):
+//
+//	<--out>/
+//	    answers.tsv                     EventAnswersFileName
+//	    evidence/<seat>/<cid>/<file>    EventEvidenceDirName (the --evidence-root of `edition check`)
+//	    render-record.tsv               EventRenderRecordFileName
+//
+// Two of them are spelled as two Practice* names are, and are not those constants: a rename of
+// one layout is not a rename of the other.
 //
 // The names are exported so that the tests that check the committed practice editions (the
 // golden of V67, which is an external test) use the definition and not a copy of it. They are
@@ -45,4 +50,16 @@ const (
 	// PracticeDigestsFileName is edition/practice/digests.tsv: the digest of the practice
 	// bundle (WritePracticeDigests).
 	PracticeDigestsFileName = "digests.tsv"
+)
+
+// The names under an event's `--out` (D20 `edition render`, the event's). No digests file is
+// among them: the event's digests are written by `edition check` (--digests-out) only.
+const (
+	// EventAnswersFileName is <--out>/answers.tsv: the answers table of the render (WriteAnswers).
+	EventAnswersFileName = "answers.tsv"
+	// EventEvidenceDirName is <--out>/evidence/: the bundles, <seat>/<cid>/<file> under it.
+	EventEvidenceDirName = "evidence"
+	// EventRenderRecordFileName is <--out>/render-record.tsv: the record of the render
+	// (WriteRenderRecord): the run id and the key's fingerprint, no key and no value.
+	EventRenderRecordFileName = "render-record.tsv"
 )
