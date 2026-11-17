@@ -30,6 +30,28 @@ package edition
 //   - when anything fails, the temporary file or tree is removed and nothing is left at the
 //     destination or beside it.
 //
+// The errors are of the kinds the commands turn into exit codes (D20, amendment 13 as revised):
+//
+//   - a destination that already exists, whether it is seen by the check before anything is
+//     made or by the put-in-place itself (EEXIST), is an *InputError that wraps ErrOutputExists
+//     (exit 2): the input of the command names an output that is there;
+//   - any other failure before the COMMIT POINT is an *OutputError (exit 3: every check passed,
+//     and the output's environment failed: no space, no hard link, a name that is too long, a
+//     mode the umask took a bit of). The destination does not exist. The temporary is removed
+//     as far as it can be (best effort): a temporary name that could not be removed is listed in
+//     the error's Left, as a message shows a file name (shownName: cut short, never a value), so
+//     the command can tell the operator; it is a name of its own (O_EXCL, a random part), so it
+//     does not stand in the way of the next run;
+//   - the commit point is the os.Link of the single file and the os.Rename of a tree. After it
+//     the output is in place, whole and synced: a temporary name of the single file that cannot
+//     be removed then is NOT an error but a warning (writeFileAtomic's left), which the command
+//     prints before it exits 0. Undoing the output instead would fail for the same reason in the
+//     same directory and leave both names, and the next run would then refuse the output that is
+//     there (exit 2).
+//
+// writeFault is the seam that lets the tests make each step fail (V87, V92) without a
+// permission (a test may run as root).
+//
 // What this does not do:
 //   - A tree: os.Rename of a directory replaces an EMPTY directory that another process made
 //     at the destination between the check and the rename (it refuses a file, a link and a
@@ -67,12 +89,89 @@ const (
 // ErrOutputExists is the refusal of a destination that already exists.
 var ErrOutputExists = errors.New("edition: the output path already exists")
 
+// OutputError is the failure to put an output in place after every check of the command passed
+// (ADR-0056 D20, exit 3, amendment 13): the destination was not made, and the input is one that
+// can be given again as it is once the output's environment is fixed. Err is the cause (the
+// operating system's reason; never a byte of the output). Left are the temporary names beside
+// the destination that could not be removed, as a message shows a file name (cut short and
+// quoted: shownName), for the command to print.
+type OutputError struct {
+	Err  error
+	Left []string
+}
+
+func (e *OutputError) Error() string {
+	msg := "the output was not put in place (every check passed: the output's environment failed)"
+	if e.Err != nil {
+		msg += ": " + e.Err.Error()
+	}
+	return msg
+}
+
+func (e *OutputError) Unwrap() error { return e.Err }
+
 // beforeLink is a seam for the tests of the single file's put-in-place: when it is not nil,
 // writeFileAtomic calls it between its last check of the destination and the os.Link, which is
 // where another process would create the destination. Nothing but a test file assigns it
 // (safeopen_source_test.go reads the sources for that), it is nil in every build of the
 // program, and a test that sets it does not run in parallel with another one.
 var beforeLink func(dest string)
+
+// writeFault is a seam for the tests of exit 3 (ADR-0056 V87, V92): when it is not nil, the
+// writers call it (through injected) at each step below that can fail for a reason of the
+// output's environment, before the operating system's call of that step, and an error it returns
+// is the failure of the step, the call not being made. Like beforeLink, nothing but a test file
+// assigns it (safeopen_source_test.go), it is nil in every build of the program, and a test
+// that sets it does not run in parallel with another one.
+var writeFault func(step string) error
+
+// The steps writeFault is called at.
+const (
+	faultWrite     = "write"      // the write of a file's data (ENOSPC, for one)
+	faultLink      = "link"       // the os.Link of the single file (the commit point)
+	faultRemove    = "remove"     // the os.Remove of the single file's temporary name
+	faultRename    = "rename"     // the os.Rename of a tree (the commit point)
+	faultRemoveAll = "remove-all" // the os.RemoveAll of a temporary tree
+)
+
+// injected is the failure writeFault gives for step, or nil.
+func injected(step string) error {
+	if writeFault == nil {
+		return nil
+	}
+	return writeFault(step)
+}
+
+// outputPathErr is the kind of a refusal of refuseExisting while the output is written: a
+// destination that exists is the command's input naming one (an *InputError, exit 2), and
+// anything else is the output's environment (an *OutputError).
+func outputPathErr(err error) error {
+	if errors.Is(err, ErrOutputExists) {
+		return &InputError{Msg: "the output", Err: err}
+	}
+	return &OutputError{Err: err}
+}
+
+// leftBehind is err with the temporary name tmp, which could not be removed, recorded: in err's
+// *OutputError when it has one, and otherwise in an *OutputError joined to it (the kind of err,
+// an *InputError for one, is what the exit code is made of: a join with an *InputError is 2).
+func leftBehind(err error, tmp string, rmErr error) error {
+	name := shownName(filepath.Base(tmp))
+	var oe *OutputError
+	if errors.As(err, &oe) {
+		oe.Left = append(oe.Left, name)
+		return err
+	}
+	return errors.Join(err, &OutputError{Err: fmt.Errorf("edition: a temporary output could not be removed: %w", rmErr), Left: []string{name}})
+}
+
+// removeTemp removes the single file's temporary name.
+func removeTemp(tmp string) error {
+	if err := injected(faultRemove); err != nil {
+		return err
+	}
+	return os.Remove(tmp)
+}
 
 // outputFile is one file of a tree that writeTreeAtomic writes: Path is slash-separated,
 // relative, with no `.`, `..` or empty element (fs.ValidPath), and the directories above the
@@ -83,90 +182,118 @@ type outputFile struct {
 }
 
 // writeFileAtomic writes data to dest (a path that does not exist, in a directory that does)
-// as described at the top of this file.
-func writeFileAtomic(dest string, data []byte) (err error) {
+// as described at the top of this file. The error is an *InputError (dest exists) or an
+// *OutputError (the output's environment), and dest does not exist then. left is not empty
+// only when err is nil: the output is in place (the commit point, os.Link, was passed) and its
+// temporary name could not be removed after it (a warning, never an error).
+func writeFileAtomic(dest string, data []byte) (left []string, err error) {
 	if err := refuseExisting(dest); err != nil {
-		return err
+		return nil, outputPathErr(err)
 	}
 	tmp, f, err := createTempFile(dest)
 	if err != nil {
-		return err
+		return nil, &OutputError{Err: err}
 	}
 	defer func() {
-		if err != nil {
-			_ = f.Close() // closed already on the paths below that close it: a second Close is an error we do not read
-			_ = os.Remove(tmp)
+		if err == nil {
+			return
+		}
+		_ = f.Close() // closed already on the paths below that close it: a second Close is an error we do not read
+		if rmErr := removeTemp(tmp); rmErr != nil {
+			err = leftBehind(err, tmp, rmErr)
 		}
 	}()
 	if err = assertMode(f, outputFileMode); err != nil {
-		return err
+		return nil, &OutputError{Err: err}
+	}
+	if err = injected(faultWrite); err != nil {
+		return nil, &OutputError{Err: fmt.Errorf("edition: writing the output: %w", err)}
 	}
 	if _, err = f.Write(data); err != nil {
-		return fmt.Errorf("edition: writing the output: %w", err)
+		return nil, &OutputError{Err: fmt.Errorf("edition: writing the output: %w", err)}
 	}
 	if err = f.Sync(); err != nil {
-		return fmt.Errorf("edition: syncing the output: %w", err)
+		return nil, &OutputError{Err: fmt.Errorf("edition: syncing the output: %w", err)}
 	}
 	if err = f.Close(); err != nil {
-		return fmt.Errorf("edition: closing the output: %w", err)
+		return nil, &OutputError{Err: fmt.Errorf("edition: closing the output: %w", err)}
 	}
 	if beforeLink != nil {
 		beforeLink(dest)
 	}
 	// os.Link is the check and the put-in-place in one step: it fails with EEXIST when anything
 	// is at dest (a file, a directory, a link, a dangling link: link(2) does not follow one).
-	if err = os.Link(tmp, dest); err != nil {
+	if err = injected(faultLink); err == nil {
+		err = os.Link(tmp, dest)
+	}
+	if err != nil {
 		if errors.Is(err, fs.ErrExist) {
-			return ErrOutputExists
+			return nil, &InputError{Msg: "the output", Err: ErrOutputExists}
 		}
-		return fmt.Errorf("edition: putting the output in place: %w", err)
+		return nil, &OutputError{Err: fmt.Errorf("edition: putting the output in place: %w", err)}
 	}
-	// The output is in place and whole. Its temporary name is a second name of the same file;
-	// when it cannot be removed it is an error, so that nothing is left beside the destination
-	// without the operator being told (the deferred cleanup tries to remove it once more).
-	if err = os.Remove(tmp); err != nil {
-		return fmt.Errorf("edition: the output is in place, but its temporary name could not be removed: %w", err)
+	// The commit point is passed: the output is in place, whole and synced. Its temporary name
+	// is a second name of the same file; one that cannot be removed is a warning for the
+	// operator (the top of this file says why it is not an error).
+	if rmErr := removeTemp(tmp); rmErr != nil {
+		return []string{shownName(filepath.Base(tmp))}, nil
 	}
-	return nil
+	return nil, nil
 }
 
 // writeTreeAtomic writes files as a tree at dest (a path that does not exist, in a directory
 // that does) as described at the top of this file. files is not empty, the paths are valid
 // and distinct, and no path is a directory of another (a file `a` and a file `a/b`): they are
-// held to that before anything is made.
+// held to that before anything is made (a plain error: a caller's mistake, not the output's
+// environment). Otherwise the error is an *InputError (dest exists) or an *OutputError, and
+// dest does not exist then. The commit point is the os.Rename: after it there is nothing left to
+// remove.
 func writeTreeAtomic(dest string, files []outputFile) (err error) {
 	if err := checkOutputPaths(files); err != nil {
 		return err
 	}
 	if err := refuseExisting(dest); err != nil {
-		return err
+		return outputPathErr(err)
 	}
 	tmp, err := createTempDir(dest)
 	if err != nil {
-		return err
+		return &OutputError{Err: err}
 	}
 	defer func() {
-		if err != nil {
-			if rmErr := os.RemoveAll(tmp); rmErr != nil {
-				err = errors.Join(err, fmt.Errorf("edition: removing the temporary output: %w", rmErr))
-			}
+		if err == nil {
+			return
+		}
+		rmErr := injected(faultRemoveAll)
+		if rmErr == nil {
+			rmErr = os.RemoveAll(tmp)
+		}
+		if rmErr != nil {
+			err = leftBehind(err, tmp, rmErr)
 		}
 	}()
 	made := map[string]struct{}{tmp: {}}
 	for _, of := range files {
 		full := filepath.Join(tmp, filepath.FromSlash(of.Path))
 		if err = mkdirOwner(filepath.Dir(full), made); err != nil {
-			return err
+			return &OutputError{Err: err}
 		}
 		if err = writeNewFile(full, of.Data); err != nil {
-			return err
+			return &OutputError{Err: err}
 		}
 	}
 	if err = refuseExisting(dest); err != nil {
-		return err
+		return outputPathErr(err)
 	}
-	if err = os.Rename(tmp, dest); err != nil {
-		return fmt.Errorf("edition: putting the output in place: %w", err)
+	if err = injected(faultRename); err == nil {
+		err = os.Rename(tmp, dest)
+	}
+	if err != nil {
+		// A directory that another process made at dest in the meantime and that is not empty is
+		// refused by rename(2) with EEXIST or ENOTEMPTY (both are fs.ErrExist): dest exists.
+		if errors.Is(err, fs.ErrExist) {
+			return &InputError{Msg: "the output", Err: ErrOutputExists}
+		}
+		return &OutputError{Err: fmt.Errorf("edition: putting the output in place: %w", err)}
 	}
 	return nil
 }
@@ -294,6 +421,9 @@ func writeNewFile(p string, data []byte) (err error) {
 	}()
 	if err := assertMode(f, outputFileMode); err != nil {
 		return err
+	}
+	if err := injected(faultWrite); err != nil {
+		return fmt.Errorf("edition: writing a file of the output: %w", err)
 	}
 	if _, err := f.Write(data); err != nil {
 		return fmt.Errorf("edition: writing a file of the output: %w", err)

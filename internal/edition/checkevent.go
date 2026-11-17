@@ -36,8 +36,13 @@ package edition
 //
 //   - an *InputError is a usage error or an input that cannot be read or is not in its form
 //     (exit 2): nothing was decided about the event;
-//   - anything else is the refusal of a rule of D10, a *Violation or an errors.Join of them
-//     (exit 1): the input was read and a rule refused it.
+//   - a refusal of a rule of D10 is a *Violation or an errors.Join of them (exit 1): the input
+//     was read and a rule refused it. Every rule's refusal here is one (the readers' collector
+//     holds *Violation only, and an error of another kind is classify's *InputError).
+//
+// The command gives any other error exit 2 too (amendment 13 as revised: an error that is not
+// classified is not taken for a rule's refusal), and the failure to write the digests file of
+// an accepted event, WriteDigestsFile's *OutputError, exit 3.
 //
 // Nothing here names a value, a key, a word of a vocabulary or a byte of a bundle: a violation
 // names a rule, a seat, a challenge, a question, a slot, a file and a position's number.

@@ -1,20 +1,28 @@
 package main
 
-// editioncmd.go is `scoreboard edition ...` (ADR-0056 D20, D19 A4e-2): the arguments of
-// `edition check`, the call of edition.CheckEvent, the exit code and what is printed. main()
-// reaches it only when os.Args[1] is `edition`, before anything of the server is built, so a
-// subcommand never starts the server and the server's path never reaches this file
-// (editioncmd_source_test.go fixes both by reading the sources).
+// editioncmd.go is `scoreboard edition ...` (ADR-0056 D20, D19 A4e-2 and A4e-3): the arguments
+// of `edition check` and `edition render`, the call of edition.CheckEvent and of
+// edition.RenderEvent, the exit code and what is printed. main() reaches it only when
+// os.Args[1] is `edition`, before anything of the server is built, so a subcommand never starts
+// the server and the server's path never reaches this file (editioncmd_source_test.go fixes
+// both by reading the sources).
 //
 // Layers (D20): this file reads no file and writes none (it imports no `os`): the readers and
-// the writers are internal/edition's, and it is given the two output streams. It prints
-// identifiers only: a rule, a seat, a challenge, a question, a file name, a position's number, a
-// line number and B4's overlap numbers. No value, key, vocabulary or bundle content is in any
-// error the library returns, and nothing here adds one.
+// the writers are internal/edition's, the guard of `--out` included, and it is given the two
+// output streams. It prints identifiers only: a rule, a seat, a challenge, a question, a file
+// name, a position's number, a line number, B4's overlap numbers, a temporary name that was
+// left (cut short by the library) and, on the one line of success, the run id and the key's
+// fingerprint. No value, key, vocabulary or bundle content is in any error the library returns,
+// and nothing here adds one.
 //
-// Exit codes: 0 = accepted (the digests file is written), 1 = a rule of D10 refused what was
-// read (nothing is written), 2 = a usage error or an input that cannot be read (nothing is
-// written). `edition render` is A4e-3: until it lands it is a usage error.
+// Exit codes (D20, amendment 13 as revised; editionExitCode): 0 = accepted (the output is
+// written; a temporary name that could not be removed after the commit point is printed and is
+// not a failure), 1 = a rule of D10 refused what was read (every leaf of the error is a
+// *Violation; nothing is written), 2 = a usage error, an input that cannot be read or is not in
+// its form, an output that already exists, an error of no kind the library gives, or a mix of
+// kinds (nothing is written), 3 = every check passed and the output could not be put in place
+// (the output's environment; nothing is at the output, and the same input can be given again).
+// `edition render --practice` is A4e-3b: until it lands it is a usage error.
 
 import (
 	"errors"
@@ -27,9 +35,10 @@ import (
 
 // The exit codes of D20.
 const (
-	exitAccepted = 0
-	exitRefused  = 1
-	exitUsage    = 2
+	exitAccepted    = 0
+	exitRefused     = 1
+	exitUsage       = 2
+	exitWriteFailed = 3
 )
 
 // maxListedViolations is how many violations are printed; the rest are counted (D20).
@@ -60,81 +69,105 @@ var checkFlags = []string{
 	"--evidence-root", "--seats", "--edition-root", "--previous-digests", "--digests-out",
 }
 
-// parseCheckArgs reads the arguments of `edition check` (`--name value` or `--name=value`) into
-// a CheckInput. A missing argument, a repeated one, an unknown one, a value that is missing, a
-// positional argument, `--previous-digests` with `--no-previous` (or neither) and no `--corpus`
-// are errors. Nothing is opened: this only reads the words.
-func parseCheckArgs(args []string) (edition.CheckInput, error) {
-	var in edition.CheckInput
-	values := map[string]string{}
+// editionArgs are the words of a subcommand's arguments as readEditionArgs read them: the value
+// of each argument that takes one, the values of the one argument that may be given again, and
+// whether the one argument that takes no value was given.
+type editionArgs struct {
+	values   map[string]string
+	repeated []string
+	flag     bool
+}
+
+// readEditionArgs reads `--name value` and `--name=value` words: valued are the names that take
+// one value once, repeated is the name that takes one value and may be given again ("" for
+// none), flag is the name that takes no value. An unknown name, a repeated one (other than
+// repeated), a value that is missing or empty, a flag with a value or given twice and a
+// positional word are errors. Nothing is opened: this only reads the words.
+func readEditionArgs(args, valued []string, repeated, flag string) (editionArgs, error) {
+	w := editionArgs{values: map[string]string{}}
 	for i := 0; i < len(args); i++ {
 		name, val, hasVal := strings.Cut(args[i], "=")
 		switch {
 		case !strings.HasPrefix(name, "--"):
-			return in, errors.New("a positional argument is not allowed (every argument is a --name)")
-		case name == "--no-previous":
+			return w, errors.New("a positional argument is not allowed (every argument is a --name)")
+		case name == flag:
 			if hasVal {
-				return in, errors.New("--no-previous takes no value")
+				return w, errors.New(flag + " takes no value")
 			}
-			if in.NoPrevious {
-				return in, errors.New("--no-previous is given twice")
+			if w.flag {
+				return w, errors.New(flag + " is given twice")
 			}
-			in.NoPrevious = true
+			w.flag = true
 			continue
-		case name != "--corpus" && !isCheckFlag(name):
-			return in, errors.New("an unknown argument " + shownArg(name))
+		case name != repeated && !isArgName(name, valued):
+			return w, errors.New("an unknown argument " + shownArg(name))
 		}
 		if !hasVal {
 			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "--") {
-				return in, errors.New(name + " needs a value")
+				return w, errors.New(name + " needs a value")
 			}
 			i++
 			val = args[i]
 		}
 		if val == "" {
-			return in, errors.New(name + " has an empty value")
+			return w, errors.New(name + " has an empty value")
 		}
-		if name == "--corpus" {
-			in.CorpusDirs = append(in.CorpusDirs, val)
+		if name == repeated {
+			w.repeated = append(w.repeated, val)
 			continue
 		}
-		if _, dup := values[name]; dup {
-			return in, errors.New(name + " is given twice")
+		if _, dup := w.values[name]; dup {
+			return w, errors.New(name + " is given twice")
 		}
-		values[name] = val
+		w.values[name] = val
 	}
+	return w, nil
+}
+
+// isArgName reports whether name is one of names.
+func isArgName(name string, names []string) bool {
+	for _, n := range names {
+		if n == name {
+			return true
+		}
+	}
+	return false
+}
+
+// parseCheckArgs reads the arguments of `edition check` into a CheckInput. A missing argument,
+// a repeated one, an unknown one, a value that is missing, a positional argument,
+// `--previous-digests` with `--no-previous` (or neither) and no `--corpus` are errors.
+func parseCheckArgs(args []string) (edition.CheckInput, error) {
+	var in edition.CheckInput
+	w, err := readEditionArgs(args, checkFlags, "--corpus", "--no-previous")
+	if err != nil {
+		return in, err
+	}
+	in.NoPrevious = w.flag
+	in.CorpusDirs = w.repeated
 	for _, name := range checkFlags {
-		if _, ok := values[name]; !ok && name != "--previous-digests" {
+		if _, ok := w.values[name]; !ok && name != "--previous-digests" {
 			return in, errors.New(name + " is required")
 		}
 	}
 	if len(in.CorpusDirs) == 0 {
 		return in, errors.New("--corpus is required (at least one directory)")
 	}
-	_, hasPrevious := values["--previous-digests"]
+	_, hasPrevious := w.values["--previous-digests"]
 	if hasPrevious == in.NoPrevious {
 		return in, errors.New("exactly one of --previous-digests and --no-previous is required")
 	}
-	in.Challenges = values["--challenges"]
-	in.ScenarioFile = values["--scenario"]
-	in.FlagsFile = values["--flags-file"]
-	in.AnswersFile = values["--answers"]
-	in.RenderRecordFile = values["--render-record"]
-	in.EvidenceRoot = values["--evidence-root"]
-	in.SeatsFile = values["--seats"]
-	in.EditionRoot = values["--edition-root"]
-	in.PreviousDigestsFile = values["--previous-digests"]
-	in.DigestsOut = values["--digests-out"]
+	in.Challenges = w.values["--challenges"]
+	in.ScenarioFile = w.values["--scenario"]
+	in.FlagsFile = w.values["--flags-file"]
+	in.AnswersFile = w.values["--answers"]
+	in.RenderRecordFile = w.values["--render-record"]
+	in.EvidenceRoot = w.values["--evidence-root"]
+	in.SeatsFile = w.values["--seats"]
+	in.EditionRoot = w.values["--edition-root"]
+	in.PreviousDigestsFile = w.values["--previous-digests"]
+	in.DigestsOut = w.values["--digests-out"]
 	return in, nil
-}
-
-func isCheckFlag(name string) bool {
-	for _, f := range checkFlags {
-		if f == name {
-			return true
-		}
-	}
-	return false
 }
 
 // shownArg is an unknown argument's name as a message shows it: cut short and quoted, so that
@@ -157,19 +190,108 @@ func runEditionCheck(args []string, stdout, stderr io.Writer) int {
 	ev, report, err := edition.CheckEvent(in)
 	printOverlap(stderr, report)
 	if err != nil {
-		printRefusal(stderr, err)
-		var input *edition.InputError
-		if errors.As(err, &input) {
-			return exitUsage
-		}
-		return exitRefused
+		return finishRefusal(stderr, err)
 	}
-	if err := edition.WriteDigestsFile(in.DigestsOut, ev); err != nil {
-		fmt.Fprintln(stderr, "edition check: the digests file was not written: "+err.Error())
-		return exitUsage
+	left, err := edition.WriteDigestsFile(in.DigestsOut, ev)
+	if err != nil {
+		fmt.Fprintln(stderr, "edition check: the digests file was not written")
+		return finishRefusal(stderr, err)
 	}
+	printLeftWarning(stderr, "edition check", left)
 	fmt.Fprintf(stdout, "ok run=%s seats=%d challenges=%d\n", ev.RunID(), ev.Seats(), ev.Challenges())
 	return exitAccepted
+}
+
+// finishRefusal prints err (printRefusal) and the temporary names its *edition.OutputError
+// could not remove, and returns its exit code.
+func finishRefusal(w io.Writer, err error) int {
+	printRefusal(w, err)
+	for _, name := range leftNamesOf(err) {
+		fmt.Fprintln(w, "a temporary name could not be removed and is left beside the output (remove it): "+name)
+	}
+	return editionExitCode(err)
+}
+
+// printLeftWarning prints the temporary names that the writer could not remove AFTER the output
+// was put in place (the commit point): the output is whole, the exit code is 0, and the
+// operator removes the name.
+func printLeftWarning(w io.Writer, cmd string, left []string) {
+	for _, name := range left {
+		fmt.Fprintln(w, cmd+": the output is in place; a temporary name beside it could not be removed (remove it): "+name)
+	}
+}
+
+// editionExitCode is the exit code of an error of internal/edition (D20, amendment 13 as
+// revised): 1 when every leaf of it is a rule's refusal (an *edition.Violation, or the count that
+// closes a bounded list of them, an *edition.MoreViolations); 3 when every leaf is an
+// *edition.OutputError (every check passed and the output could not be put in place); 2
+// otherwise: an *edition.InputError, an error of no kind the library gives (an error that is
+// not classified is never taken for a rule's refusal), and any mix of kinds (a join of a rule's
+// refusal with a usage error says that not every check ran, so its list is not whole).
+func editionExitCode(err error) int {
+	if err == nil {
+		return exitAccepted
+	}
+	var k leafKinds
+	k.count(err)
+	switch {
+	case k.other == 0 && k.output == 0 && k.violation > 0:
+		return exitRefused
+	case k.other == 0 && k.violation == 0 && k.output > 0:
+		return exitWriteFailed
+	}
+	return exitUsage
+}
+
+// leafKinds counts the leaves of an error by kind.
+type leafKinds struct{ violation, output, other int }
+
+// count walks err: the three kinds of the library are leaves (whatever they wrap), a join is its
+// parts, a single wrap is what it wraps, and anything else is a leaf of no kind.
+func (k *leafKinds) count(err error) {
+	switch err.(type) {
+	case *edition.Violation, *edition.MoreViolations:
+		k.violation++
+		return
+	case *edition.OutputError:
+		k.output++
+		return
+	case *edition.InputError:
+		k.other++
+		return
+	}
+	if m, ok := err.(interface{ Unwrap() []error }); ok {
+		parts := m.Unwrap()
+		if len(parts) == 0 {
+			k.other++
+		}
+		for _, e := range parts {
+			if e != nil {
+				k.count(e)
+			}
+		}
+		return
+	}
+	if inner := errors.Unwrap(err); inner != nil {
+		k.count(inner)
+		return
+	}
+	k.other++
+}
+
+// leftNamesOf is the temporary names that every *edition.OutputError among the leaves of err
+// lists as left behind.
+func leftNamesOf(err error) []string {
+	var leaves []error
+	collectLeaves(err, &leaves)
+	var out []string
+	for _, e := range leaves {
+		var oe *edition.OutputError
+		if errors.As(e, &oe) {
+			out = append(out, oe.Left...)
+		}
+	}
+	return out
 }
 
 // printOverlap prints B4's two largest overlaps, whether the event was accepted or not (D20):
@@ -225,15 +347,16 @@ func printRefusal(w io.Writer, err error) {
 // collectLeaves flattens err: an errors.Join (anything with `Unwrap() []error`) into its
 // parts, and a plain single wrap whose inner error is one of those (the prefix of a wrap such
 // as "edition: answers table: ..." says nothing the violations do not) into the parts of the
-// inner error. A *edition.Violation and an *edition.InputError are never flattened away, whatever
-// their cause is: the rule's name and the usage error's message are what is printed. Any other
-// error is one leaf, with its whole message.
+// inner error. A *edition.Violation, an *edition.InputError and an *edition.OutputError are
+// never flattened away, whatever their cause is: the rule's name, the usage error's message and
+// the failed write's message are what is printed. Any other error is one leaf, with its whole
+// message.
 func collectLeaves(err error, out *[]error) {
 	if err == nil {
 		return
 	}
 	switch err.(type) {
-	case *edition.Violation, *edition.InputError:
+	case *edition.Violation, *edition.InputError, *edition.OutputError:
 		*out = append(*out, err)
 		return
 	}

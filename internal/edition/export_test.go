@@ -1,6 +1,9 @@
 package edition
 
-import "slices"
+import (
+	"slices"
+	"testing"
+)
 
 // export_test.go is compiled into the package's TEST binary only: it hands the external tests
 // (package edition_test) the two values that production code can make through one door each,
@@ -26,4 +29,24 @@ func CheckedTableForTest(t *Table) *CheckedTable { return &CheckedTable{table: t
 // CheckEvent, which makes one only after every check of D20.)
 func CheckedEventForTest(runID string, rows []DigestRow) *CheckedEvent {
 	return &CheckedEvent{runID: runID, rows: slices.Clone(rows)}
+}
+
+// The steps of atomicwrite.go's seam writeFault (ADR-0056 V87, V92), for the external tests of
+// the writers' failures: the write of a file's data, the link and the remove of the single
+// file, the rename and the remove of a tree.
+const (
+	FaultWriteForTest     = faultWrite
+	FaultLinkForTest      = faultLink
+	FaultRemoveForTest    = faultRemove
+	FaultRenameForTest    = faultRename
+	FaultRemoveAllForTest = faultRemoveAll
+)
+
+// SetWriteFaultForTest makes the steps of fail fail with their error until the test ends (the
+// seam is put back to nil by the test's cleanup). No test of this package runs in parallel, so
+// the seam is the test's own while it runs.
+func SetWriteFaultForTest(t testing.TB, fail map[string]error) {
+	t.Helper()
+	writeFault = func(step string) error { return fail[step] }
+	t.Cleanup(func() { writeFault = nil })
 }

@@ -48,8 +48,8 @@ func TestCheckEvent_TheDigestsFileOfAnAcceptedEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CheckEvent: %v", err)
 	}
-	if err := edition.WriteDigestsFile(f.in.DigestsOut, ev); err != nil {
-		t.Fatalf("WriteDigestsFile: %v", err)
+	if left, err := edition.WriteDigestsFile(f.in.DigestsOut, ev); err != nil || len(left) != 0 {
+		t.Fatalf("WriteDigestsFile: (%v, %v), want no name left and no error", left, err)
 	}
 	info, err := os.Stat(f.in.DigestsOut)
 	if err != nil || info.Mode().Perm() != 0o600 {
@@ -62,8 +62,8 @@ func TestCheckEvent_TheDigestsFileOfAnAcceptedEvent(t *testing.T) {
 	}
 	// V87: the output that already exists is refused and stays as it was, and nothing is left
 	// beside it.
-	if err := edition.WriteDigestsFile(f.in.DigestsOut, ev); !errors.Is(err, edition.ErrOutputExists) {
-		t.Errorf("a second write = %v, want ErrOutputExists", err)
+	if _, err := edition.WriteDigestsFile(f.in.DigestsOut, ev); !errors.Is(err, edition.ErrOutputExists) || !isInputErr(err) {
+		t.Errorf("a second write = %v, want an *InputError of ErrOutputExists (exit 2)", err)
 	}
 	if got := f.read("out/digests.tsv"); got != string(data) {
 		t.Error("the existing digests file changed")
@@ -72,14 +72,81 @@ func TestCheckEvent_TheDigestsFileOfAnAcceptedEvent(t *testing.T) {
 		t.Errorf("the output directory holds %v; want the digests file only", names)
 	}
 	// a destination in a directory that does not exist: an error, nothing made
-	if err := edition.WriteDigestsFile(f.path("out/missing/digests.tsv"), ev); err == nil {
+	if _, err := edition.WriteDigestsFile(f.path("out/missing/digests.tsv"), ev); err == nil {
 		t.Error("a destination in a missing directory was written")
 	}
-	if err := edition.WriteDigestsFile(f.path("out/other.tsv"), nil); err == nil {
+	if _, err := edition.WriteDigestsFile(f.path("out/other.tsv"), nil); err == nil {
 		t.Error("a nil event was written")
 	}
 	if names := listNames(t, f.path("out")); !slices.Equal(names, []string{"digests.tsv"}) {
 		t.Errorf("after the refusals the output directory holds %v; want the digests file only", names)
+	}
+}
+
+// V87 and V92 (ADR-0056 D20, amendment 13 as revised): the writer of --digests-out, after every
+// check passed, around its commit point (the link). Before it, a failure is an
+// *edition.OutputError (exit 3) and nothing is at --digests-out; a cleanup that fails too lists
+// the temporary name, and the same write given again succeeds. After it, a temporary name that
+// cannot be removed is a warning, and the file holds the expected bytes. The failures come from
+// the seam (export_test.go), never from a permission.
+func TestCheckEvent_TheWriteOfTheDigestsFileAroundItsCommitPoint(t *testing.T) {
+	f := newGoodCevFix(t)
+	ev, _, err := f.check()
+	if err != nil {
+		t.Fatalf("CheckEvent: %v", err)
+	}
+	var want bytes.Buffer
+	if err := edition.WriteDigests(&want, ev); err != nil {
+		t.Fatal(err)
+	}
+	outputErr := func(err error) *edition.OutputError {
+		var oe *edition.OutputError
+		if !errors.As(err, &oe) || isInputErr(err) {
+			return nil
+		}
+		return oe
+	}
+
+	// the link fails: exit 3, nothing left
+	edition.SetWriteFaultForTest(t, map[string]error{edition.FaultLinkForTest: syscall.EPERM})
+	left, err := edition.WriteDigestsFile(f.in.DigestsOut, ev)
+	if oe := outputErr(err); oe == nil || len(oe.Left) != 0 || len(left) != 0 {
+		t.Errorf("the link fails: (%v, %v), want an *OutputError with no name left", left, err)
+	}
+	if names := listNames(t, f.path("out")); len(names) != 0 {
+		t.Errorf("the link fails: the output directory holds %v, want nothing", names)
+	}
+
+	// the write fails (no space) and so does the cleanup: exit 3, the name is listed
+	edition.SetWriteFaultForTest(t, map[string]error{edition.FaultWriteForTest: syscall.ENOSPC, edition.FaultRemoveForTest: syscall.EIO})
+	left, err = edition.WriteDigestsFile(f.in.DigestsOut, ev)
+	oe := outputErr(err)
+	if oe == nil || !errors.Is(err, syscall.ENOSPC) || len(oe.Left) != 1 || len(left) != 0 {
+		t.Fatalf("the write and the cleanup fail: (%v, %v), want an *OutputError of ENOSPC with one name left", left, err)
+	}
+	names := listNames(t, f.path("out"))
+	if len(names) != 1 || !strings.Contains(oe.Left[0], names[0]) || slices.Contains(names, "digests.tsv") {
+		t.Errorf("the output directory holds %v and the error lists %v; want the one temporary name and no digests file", names, oe.Left)
+	}
+	f.noValue("a name left", strings.Join(oe.Left, " "), err.Error())
+
+	// the same write again: accepted, the name left does not stand in its way
+	edition.SetWriteFaultForTest(t, nil)
+	if left, err := edition.WriteDigestsFile(f.in.DigestsOut, ev); err != nil || len(left) != 0 {
+		t.Fatalf("the same write again: (%v, %v), want it to succeed", left, err)
+	}
+	if got := f.read("out/digests.tsv"); got != want.String() {
+		t.Errorf("the digests file holds %q, want %q", got, want.String())
+	}
+
+	// after the commit point: the temporary name cannot be removed: a warning, the file is whole
+	edition.SetWriteFaultForTest(t, map[string]error{edition.FaultRemoveForTest: syscall.EIO})
+	left, err = edition.WriteDigestsFile(f.path("out/second.tsv"), ev)
+	if err != nil || len(left) != 1 {
+		t.Fatalf("the cleanup after the link fails: (%v, %v), want no error and one name left", left, err)
+	}
+	if got := f.read("out/second.tsv"); got != want.String() {
+		t.Errorf("the digests file holds %q, want %q", got, want.String())
 	}
 }
 

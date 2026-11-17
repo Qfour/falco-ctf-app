@@ -93,13 +93,18 @@ func WriteDigests(w io.Writer, ev *CheckedEvent) error {
 // WriteDigestsFile writes the digests file of ev to dest (a path that does not exist, in a
 // directory that does) as one output: the bytes of WriteDigests go to a temporary file beside
 // dest (0600, synced), which is then linked to dest, so dest is all of the file or does not
-// exist, and an existing dest is refused (ErrOutputExists) and left as it was (atomicwrite.go).
-// It is what `edition check` writes `--digests-out` with, so the command opens and writes no
-// file by itself (D20: the readers and the writers are this package's).
-func WriteDigestsFile(dest string, ev *CheckedEvent) error {
+// exist, and an existing dest is refused (an *InputError that wraps ErrOutputExists) and left as
+// it was (atomicwrite.go). It is what `edition check` writes `--digests-out` with, so the command
+// opens and writes no file by itself (D20: the readers and the writers are this package's).
+//
+// The commit point is the link (D20, amendment 13 as revised): a failure before it is an
+// *OutputError (exit 3, dest not made, Left the temporary names that could not be removed), and
+// after it the file is in place and the result is no error; left is then the temporary name that
+// could not be removed, if any, a warning the command prints before it exits 0.
+func WriteDigestsFile(dest string, ev *CheckedEvent) (left []string, err error) {
 	var buf bytes.Buffer
 	if err := WriteDigests(&buf, ev); err != nil {
-		return err
+		return nil, err
 	}
 	return writeFileAtomic(dest, buf.Bytes())
 }

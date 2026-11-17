@@ -30,9 +30,9 @@ import (
 //     A4e-2 or A4e-3 (the key, the seats, the previous list, the digests) has to go through
 //     them. The scan reads the identifiers `os` and `ioutil`, so no non-test file imports
 //     either under another name (an alias, a dot, a blank);
-//   - safeopen.go's seam for the tests, afterLstat, and atomicwrite.go's, beforeLink, are
-//     assigned by no non-test file and named by none but their own file, so they are nil in
-//     every build of the program;
+//   - safeopen.go's seam for the tests, afterLstat, and atomicwrite.go's, beforeLink and
+//     writeFault (the failures of exit 3, A4e-3a), are assigned by no non-test file and named by
+//     none but their own file, so they are nil in every build of the program;
 //   - writeFileAtomic and writeNewFile call Sync on the file after its last write, in their
 //     own bodies: the data of every output file is synced before the output is put in place.
 
@@ -324,6 +324,11 @@ func beforeLinkViolations(files map[string]string) (violations []string, names i
 	return seamViolations(files, "beforeLink", atomicwriteFilePath)
 }
 
+// writeFaultViolations is the same for the seam writeFault of atomicwrite.go (A4e-3a).
+func writeFaultViolations(files map[string]string) (violations []string, names int) {
+	return seamViolations(files, "writeFault", atomicwriteFilePath)
+}
+
 // seamViolations lists, in the non-test files of package edition (slash path -> source), each
 // use of the name `seam` outside home and each assignment to it in home. names is how many
 // times home names it.
@@ -512,6 +517,40 @@ func TestTheBeforeLinkSeamIsAssignedByTestsOnly(t *testing.T) {
 		files := rdCopyFiles(base)
 		files[c.path] = c.src
 		if v, _ := beforeLinkViolations(files); len(v) == 0 {
+			t.Errorf("%s: no violation was reported", name)
+		}
+	}
+}
+
+// writeFault, the seam of atomicwrite.go's failures (ADR-0056 V87, V92: exit 3 is made to
+// happen in the tests without a permission, which a test that runs as root would not feel), is
+// held the same way: assigned by test files only, named by no other non-test file. atomicwrite.go
+// names it three times (the declaration, the nil test in injected and the call).
+func TestTheWriteFaultSeamIsAssignedByTestsOnly(t *testing.T) {
+	violations, names := writeFaultViolations(nonTestSources(t))
+	for _, v := range violations {
+		t.Error(v)
+	}
+	if names != 3 {
+		t.Errorf("atomicwrite.go names writeFault %d times, want 3 (its declaration, the nil test and the call): the scan does not see the seam", names)
+	}
+
+	const writeSrc = "package edition\n\nvar writeFault func(string) error\n\nfunc injected(step string) error {\n\tif writeFault == nil {\n\t\treturn nil\n\t}\n\treturn writeFault(step)\n}\n"
+	base := map[string]string{atomicwriteFilePath: writeSrc}
+	if v, n := writeFaultViolations(base); len(v) != 0 || n != 3 {
+		t.Fatalf("the allowed shape: violations %v, names %d, want none and 3", v, n)
+	}
+	for name, c := range map[string]struct{ path, src string }{
+		"an assignment in another file":   {"internal/edition/other.go", "package edition\n\nfunc f() { writeFault = nil }\n"},
+		"a read in another file":          {"internal/edition/other.go", "package edition\n\nfunc f() { _ = writeFault }\n"},
+		"a call in the renderer's file":   {"internal/edition/eventrender.go", "package edition\n\nfunc f() { _ = writeFault(\"x\") }\n"},
+		"an assignment in atomicwrite.go": {atomicwriteFilePath, writeSrc + "\nfunc g() { writeFault = func(string) error { return nil } }\n"},
+		"an assignment inside a literal":  {atomicwriteFilePath, writeSrc + "\nvar _ = func() int { writeFault = nil; return 0 }()\n"},
+		"a file that does not parse":      {"internal/edition/other.go", "package edition\n\nfunc ("},
+	} {
+		files := rdCopyFiles(base)
+		files[c.path] = c.src
+		if v, _ := writeFaultViolations(files); len(v) == 0 {
 			t.Errorf("%s: no violation was reported", name)
 		}
 	}
