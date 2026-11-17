@@ -86,7 +86,7 @@ func TestWriteFileAtomic_WritesTheFileWithModeAndLeavesNothing(t *testing.T) {
 			if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
 				t.Errorf("umask %#o: the file has mode %v, want a regular file of 0600", mask, info.Mode())
 			}
-			if got := dirNames(t,dir); !slices.Equal(got, []string{"digests.tsv"}) {
+			if got := dirNames(t, dir); !slices.Equal(got, []string{"digests.tsv"}) {
 				t.Errorf("umask %#o: the directory holds %v, want the output only (no temporary left)", mask, got)
 			}
 		})
@@ -102,17 +102,90 @@ func TestWriteFileAtomic_RefusesWhatExistsAndWritesNothing(t *testing.T) {
 	if err := os.Symlink(filepath.Join(dir, "nowhere"), filepath.Join(dir, "dangling.tsv")); err != nil {
 		t.Fatal(err)
 	}
-	before := dirNames(t,dir)
+	before := dirNames(t, dir)
 	for _, name := range []string{"file.tsv", "dir.tsv", "dangling.tsv"} {
 		if err := writeFileAtomic(filepath.Join(dir, name), []byte("new")); !errors.Is(err, ErrOutputExists) {
 			t.Errorf("%s: err = %v, want ErrOutputExists", name, err)
 		}
 	}
-	if got := dirNames(t,dir); !slices.Equal(got, before) {
+	if got := dirNames(t, dir); !slices.Equal(got, before) {
 		t.Errorf("the directory holds %v after the refusals, want %v (nothing made, nothing left)", got, before)
 	}
 	if got, _ := os.ReadFile(filepath.Join(dir, "file.tsv")); string(got) != "an earlier output" {
 		t.Errorf("the earlier output was changed: %q", got)
+	}
+}
+
+// withBeforeLink sets the seam of writeFileAtomic for the length of the test.
+func withBeforeLink(t *testing.T, hook func(dest string)) {
+	t.Helper()
+	beforeLink = hook
+	t.Cleanup(func() { beforeLink = nil })
+}
+
+// A destination that another process creates AFTER the check and before the output is put in
+// place is refused, never replaced (os.Link fails with EEXIST), and the temporary is removed.
+func TestWriteFileAtomic_RefusesADestinationCreatedAfterTheCheck(t *testing.T) {
+	cases := []struct {
+		name   string
+		create func(t *testing.T, dest string)
+		check  func(t *testing.T, dest string)
+	}{
+		{
+			"a file",
+			func(t *testing.T, dest string) { filesWrite(t, dest, "made by another process") },
+			func(t *testing.T, dest string) {
+				if got, err := os.ReadFile(dest); err != nil || string(got) != "made by another process" {
+					t.Errorf("the file made by the other process holds (%q, %v), want it unchanged", got, err)
+				}
+			},
+		},
+		{
+			"a directory",
+			func(t *testing.T, dest string) {
+				if err := os.Mkdir(dest, 0o755); err != nil {
+					t.Error(err)
+				}
+			},
+			func(t *testing.T, dest string) {
+				if info, err := os.Lstat(dest); err != nil || !info.IsDir() {
+					t.Errorf("the directory made by the other process is (%v, %v), want it unchanged", info, err)
+				}
+			},
+		},
+		{
+			"a dangling link",
+			func(t *testing.T, dest string) {
+				if err := os.Symlink(filepath.Join(filepath.Dir(dest), "nowhere"), dest); err != nil {
+					t.Error(err)
+				}
+			},
+			func(t *testing.T, dest string) {
+				if info, err := os.Lstat(dest); err != nil || info.Mode()&fs.ModeSymlink == 0 {
+					t.Errorf("the link made by the other process is (%v, %v), want it unchanged", info, err)
+				}
+			},
+		},
+	}
+	for _, c := range cases {
+		dir := t.TempDir()
+		dest := filepath.Join(dir, "digests.tsv")
+		calls := 0
+		withBeforeLink(t, func(path string) {
+			calls++
+			c.create(t, path)
+		})
+		err := writeFileAtomic(dest, []byte("new output"))
+		if calls != 1 {
+			t.Fatalf("%s: the seam was called %d times, want once (after the check, before the put-in-place)", c.name, calls)
+		}
+		if !errors.Is(err, ErrOutputExists) {
+			t.Errorf("%s: err = %v, want ErrOutputExists (the destination made after the check is refused, not replaced)", c.name, err)
+		}
+		c.check(t, dest)
+		if got := dirNames(t, dir); !slices.Equal(got, []string{"digests.tsv"}) {
+			t.Errorf("%s: the directory holds %v, want the other process's path only (the temporary is removed)", c.name, got)
+		}
 	}
 }
 
@@ -140,7 +213,7 @@ func TestWriteTreeAtomic_WritesTheTreeWithModesAndLeavesNothing(t *testing.T) {
 			if err := writeTreeAtomic(dest, files); err != nil {
 				t.Fatalf("umask %#o: writeTreeAtomic: %v", mask, err)
 			}
-			if got := dirNames(t,parent); !slices.Equal(got, []string{"out"}) {
+			if got := dirNames(t, parent); !slices.Equal(got, []string{"out"}) {
 				t.Errorf("umask %#o: the parent holds %v, want the output only (no temporary left)", mask, got)
 			}
 			for _, f := range files {
@@ -177,17 +250,17 @@ func TestWriteTreeAtomic_RefusesWhatExistsAndWritesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	filesWrite(t, filepath.Join(parent, "file"), "x")
-	before := dirNames(t,parent)
+	before := dirNames(t, parent)
 	files := []outputFile{{Path: "a.txt", Data: []byte("a")}}
 	for _, name := range []string{"out", "file"} {
 		if err := writeTreeAtomic(filepath.Join(parent, name), files); !errors.Is(err, ErrOutputExists) {
 			t.Errorf("%s: err = %v, want ErrOutputExists", name, err)
 		}
 	}
-	if got := dirNames(t,parent); !slices.Equal(got, before) {
+	if got := dirNames(t, parent); !slices.Equal(got, before) {
 		t.Errorf("the parent holds %v after the refusals, want %v", got, before)
 	}
-	if got := dirNames(t,filepath.Join(parent, "out")); len(got) != 0 {
+	if got := dirNames(t, filepath.Join(parent, "out")); len(got) != 0 {
 		t.Errorf("the existing directory was written into: %v", got)
 	}
 }
@@ -205,7 +278,7 @@ func TestWriteTreeAtomic_AFailurePartWayLeavesNothing(t *testing.T) {
 	if err == nil {
 		t.Fatal("a file that cannot be created did not fail the write")
 	}
-	if got := dirNames(t,parent); len(got) != 0 {
+	if got := dirNames(t, parent); len(got) != 0 {
 		t.Errorf("the parent holds %v after the failure, want nothing (the temporary tree is removed)", got)
 	}
 }
@@ -235,7 +308,7 @@ func TestWriteTreeAtomic_RefusesBadPathsBeforeMakingAnything(t *testing.T) {
 		if err := writeTreeAtomic(filepath.Join(parent, "out"), c.files); err == nil {
 			t.Errorf("%s: was written", c.name)
 		}
-		if got := dirNames(t,parent); len(got) != 0 {
+		if got := dirNames(t, parent); len(got) != 0 {
 			t.Errorf("%s: the parent holds %v after the refusal, want nothing", c.name, got)
 		}
 	}
@@ -250,13 +323,13 @@ func TestWriteFileAtomic_AUmaskThatTakesTheOwnersBitsFailsAndLeavesNothing(t *te
 		if err := writeFileAtomic(filepath.Join(dir, "out.tsv"), []byte("x")); err == nil {
 			t.Error("a file of mode 0400 was left in place of one of 0600")
 		}
-		if got := dirNames(t,dir); len(got) != 0 {
+		if got := dirNames(t, dir); len(got) != 0 {
 			t.Errorf("the directory holds %v after the failure, want nothing", got)
 		}
 		if err := writeTreeAtomic(filepath.Join(dir, "out"), []outputFile{{Path: "a.txt", Data: []byte("x")}}); err == nil {
 			t.Error("a tree of directories of mode 0500 was left in place of ones of 0700")
 		}
-		if got := dirNames(t,dir); len(got) != 0 {
+		if got := dirNames(t, dir); len(got) != 0 {
 			t.Errorf("the directory holds %v after the failure, want nothing", got)
 		}
 	})

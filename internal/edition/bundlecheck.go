@@ -64,9 +64,18 @@ type BundleInput struct {
 // run id of the answers table it was checked against (ADR-0056 D9 M2, D20, D19 A4e-1). It is
 // made by CheckBundles and by nothing else (its fields are unexported, and
 // validator_door_source_test.go fixes that no other non-test file builds one): WriteDigests
-// takes it and nothing weaker, so a digests file is written only for a tree that went through
-// B1 to B9's checks, and carries the run id of the table the tree was held to (D9: a digests
-// file whose run id is not the table's is a table and a bundle from two different renders).
+// takes it and nothing weaker, so the digests are written only for a tree that went through the
+// rules of CheckBundles (B1, B2, B3, B5, B6 and B9), and carry the run id of the table the tree
+// was held to (D9: a digests file whose run id is not the table's is a table and a bundle from
+// two different renders).
+//
+// That is all the type says. It does NOT say that the event was accepted: B4 (the practice
+// editions), B7 and B8 (the decoys and the spaces of the values) and B10 (the continuity with
+// the previous digests) are other functions' rules, and E1 and E2 are the edition files'. The
+// event's digests may be written only when every check of D20's `CheckEvent` has passed (E1,
+// E2, B4, B7, B8 and B10 included, in the order D20 gives), and the order and that gate are
+// `CheckEvent`'s (A4e-2), not this type's: a caller that has a *CheckedBundles and has not run
+// them has digests that no rule other than CheckBundles's has accepted.
 type CheckedBundles struct {
 	runID string
 	rows  []DigestRow

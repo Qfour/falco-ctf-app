@@ -28,7 +28,10 @@ import (
 // scoreboard starts with and the table the validator accepts. The two differ in what they
 // carry away (a Judge here, a *CheckedTable there) and in how the file is opened (the
 // start-up follows the links of a Kubernetes Secret volume, openFollowing; the validator
-// refuses one, openRegular). Load's behaviour and its refusals are what they were.
+// refuses one, openRegular). Load's refusals are what they were, with one difference: the
+// image's own practice answers (loadPractice, which both doors call) are opened by openRegular
+// in both, so a file that is swapped for a link or another inode between practiceEntry's Lstat
+// and the open is refused at the start-up too (a link was already refused by the Lstat).
 //
 // scored is what catalog.LoadScored returned, and the ONLY input about the catalog
 // and the tree (ADR-0056 D19 A4a-3; there is no separate challenges directory
@@ -133,6 +136,14 @@ func loadChecked(scored catalog.Scored, answersFile string, eventMode bool, open
 // (ADR-0056 D9 M2, D20, D19 A4e-1). It is made by LoadEventTable and by nothing else (its
 // fields are unexported, and validator_door_source_test.go fixes that no other non-test file
 // builds one), so a function that takes a *CheckedTable has a table that went through Check.
+//
+// LoadEventTable also reads the practice editions' files (readPracticeFiles), so a B2 defect
+// of a practice edition's file (a bundle or a template) is refused as a defect of the table's
+// door too, though the answers table itself is sound: the operator must not read it as a defect
+// of the event's table. The message says which: a defect of a practice edition begins
+// "edition: practice evidence of <cid>", "edition: practice template of <cid>" or "edition:
+// practice answers", where a defect of the event's table begins "edition: answers table" or
+// "edition: answers file".
 //
 // It holds plaintext values and prints as a fixed string under every fmt verb and under
 // encoding/json, like a Table.

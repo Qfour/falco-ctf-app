@@ -14,17 +14,33 @@ package edition
 //     a bit of it, and an output of the operator's secrets that is not 0600 is refused, not
 //     left (the result does not depend on the umask: 0700 and 0600 keep the owner's bits under
 //     the usual ones, and an unusual umask that takes them makes the write fail);
-//   - when every file is written, the temporary is renamed to the destination. The destination
-//     must not exist (an existing file, directory or link, even a dangling link, is refused
-//     before anything is made), so an earlier output is never replaced;
+//   - every file is synced (f.Sync, after its last write and before it is closed) before the
+//     output is put in place: the single file of writeFileAtomic and every file of a tree
+//     (writeNewFile). safeopen_source_test.go pins the two calls. No directory is synced, neither the
+//     temporary tree's nor the parent of the destination, so a crash can lose the output
+//     as a whole (it is then not at the destination), and what is at the destination has
+//     the data of its files on disk;
+//   - when every file is written, the temporary is put at the destination, and the
+//     destination must not exist (an existing file, directory or link, even a dangling link,
+//     is refused before anything is made, so an earlier output is never replaced). A single
+//     file is put there with os.Link (the temporary's name is removed after it), which fails
+//     with EEXIST when the destination exists: a path that another process creates between
+//     the check and the link is refused, not replaced. A tree is put there with os.Rename
+//     (see below);
 //   - when anything fails, the temporary file or tree is removed and nothing is left at the
 //     destination or beside it.
 //
-// What this does not do: the check that the destination does not exist and the rename are
-// two steps, so a path created by another process in between could be replaced by the rename
-// of a file (a directory is not: rename refuses a directory that is not empty); the output
-// directory belongs to the one operator who runs the command. The data is synced before the
-// rename and the parent directory is not.
+// What this does not do:
+//   - A tree: os.Rename of a directory replaces an EMPTY directory that another process made
+//     at the destination between the check and the rename (it refuses a file, a link and a
+//     directory that is not empty). Linux's renameat2 with RENAME_NOREPLACE would close it,
+//     but it is Linux only, and golang.org/x/sys is not a direct dependency of this module,
+//     so it is not used. The parent directory of the destination belongs to the one operator
+//     who runs the command, and nothing else writes in it (ADR-0056 D20): that is the
+//     assumption of this case.
+//   - A single file: os.Link needs a file system that has hard links. One that has none (or
+//     a parent directory that refuses them) is an error, not a fallback to a rename that
+//     would replace.
 
 import (
 	"crypto/rand"
@@ -50,6 +66,13 @@ const (
 
 // ErrOutputExists is the refusal of a destination that already exists.
 var ErrOutputExists = errors.New("edition: the output path already exists")
+
+// beforeLink is a seam for the tests of the single file's put-in-place: when it is not nil,
+// writeFileAtomic calls it between its last check of the destination and the os.Link, which is
+// where another process would create the destination. Nothing but a test file assigns it
+// (safeopen_source_test.go reads the sources for that), it is nil in every build of the
+// program, and a test that sets it does not run in parallel with another one.
+var beforeLink func(dest string)
 
 // outputFile is one file of a tree that writeTreeAtomic writes: Path is slash-separated,
 // relative, with no `.`, `..` or empty element (fs.ValidPath), and the directories above the
@@ -87,11 +110,22 @@ func writeFileAtomic(dest string, data []byte) (err error) {
 	if err = f.Close(); err != nil {
 		return fmt.Errorf("edition: closing the output: %w", err)
 	}
-	if err = refuseExisting(dest); err != nil {
-		return err
+	if beforeLink != nil {
+		beforeLink(dest)
 	}
-	if err = os.Rename(tmp, dest); err != nil {
+	// os.Link is the check and the put-in-place in one step: it fails with EEXIST when anything
+	// is at dest (a file, a directory, a link, a dangling link: link(2) does not follow one).
+	if err = os.Link(tmp, dest); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return ErrOutputExists
+		}
 		return fmt.Errorf("edition: putting the output in place: %w", err)
+	}
+	// The output is in place and whole. Its temporary name is a second name of the same file;
+	// when it cannot be removed it is an error, so that nothing is left beside the destination
+	// without the operator being told (the deferred cleanup tries to remove it once more).
+	if err = os.Remove(tmp); err != nil {
+		return fmt.Errorf("edition: the output is in place, but its temporary name could not be removed: %w", err)
 	}
 	return nil
 }
@@ -246,8 +280,8 @@ func mkdirOwner(dir string, made map[string]struct{}) error {
 	return assertDirMode(dir)
 }
 
-// writeNewFile creates the file at p (0600, O_CREAT|O_EXCL|O_NOFOLLOW), holds its mode and
-// writes data to it.
+// writeNewFile creates the file at p (0600, O_CREAT|O_EXCL|O_NOFOLLOW), holds its mode,
+// writes data to it and syncs it before it is closed.
 func writeNewFile(p string, data []byte) (err error) {
 	f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, outputFileMode)
 	if err != nil {
@@ -263,6 +297,9 @@ func writeNewFile(p string, data []byte) (err error) {
 	}
 	if _, err := f.Write(data); err != nil {
 		return fmt.Errorf("edition: writing a file of the output: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("edition: syncing a file of the output: %w", err)
 	}
 	return nil
 }

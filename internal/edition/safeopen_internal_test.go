@@ -16,6 +16,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // withAfterLstat sets the seam for the length of the test.
@@ -114,6 +115,60 @@ func TestOpenRegular_RefusesAFileSwappedForALinkAfterTheLstat(t *testing.T) {
 	}
 	if !errors.Is(err, syscall.ELOOP) {
 		t.Errorf("err = %v, want the operating system's refusal of O_NOFOLLOW (ELOOP)", err)
+	}
+}
+
+// V57, the FIFO case: the file is swapped for a FIFO after the Lstat. open(2) of a FIFO for
+// reading waits for a writer, so without O_NONBLOCK the open would block for ever and never
+// reach the Stat that refuses it. The open runs in a goroutine, and the test fails after a
+// timeout instead of hanging; a FIFO that is there from the start is refused by the Lstat.
+func TestOpenRegular_RefusesAFileSwappedForAFIFOAfterTheLstatWithoutBlocking(t *testing.T) {
+	dir := t.TempDir()
+	direct := filepath.Join(dir, "fifo")
+	if err := syscall.Mkfifo(direct, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if f, err := openRegular(direct); f != nil || !errors.Is(err, errNotRegular) {
+		t.Errorf("openRegular of a FIFO = (%v, %v), want no file and errNotRegular", f, err)
+	}
+
+	p := filepath.Join(dir, "a.txt")
+	filesWrite(t, p, "the file that was looked at")
+	withAfterLstat(t, func(path string) {
+		if path != p {
+			return
+		}
+		if err := os.Remove(path); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := syscall.Mkfifo(path, 0o600); err != nil {
+			t.Error(err)
+		}
+	})
+	type result struct {
+		f   *os.File
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		f, err := openRegular(p)
+		done <- result{f, err}
+	}()
+	select {
+	case r := <-done:
+		if r.f != nil {
+			r.f.Close()
+		}
+		if r.f != nil || !errors.Is(r.err, errNotRegular) {
+			t.Fatalf("openRegular of a file swapped for a FIFO = (%v, %v), want no file and errNotRegular", r.f, r.err)
+		}
+	case <-time.After(5 * time.Second):
+		// A writer lets the blocked open of the reader return, so the goroutine does not outlive the test.
+		if w, err := os.OpenFile(p, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
+			w.Close()
+		}
+		t.Fatal("openRegular blocked on a path that became a FIFO after the Lstat: the open does not use O_NONBLOCK")
 	}
 }
 

@@ -104,7 +104,7 @@ func TestCheckedValuesAreMadeOnlyByTheirDoors(t *testing.T) {
 	}
 	// A type of another package with the name, a pointer, a parameter and a receiver make none.
 	for name, c := range map[string]struct{ path, src string }{
-		"another package's type": {"internal/contracttable/x.go", "package contracttable\n\ntype CheckedTable struct{}\n\nfunc f() *CheckedTable { return &CheckedTable{} }\n"},
+		"another package's type":                {"internal/contracttable/x.go", "package contracttable\n\ntype CheckedTable struct{}\n\nfunc f() *CheckedTable { return &CheckedTable{} }\n"},
 		"a pointer, a parameter and a receiver": {"internal/edition/other.go", "package edition\n\nfunc (t *CheckedTable) M() {}\n\nfunc g(b *CheckedBundles, t *CheckedTable) *CheckedBundles { var p *CheckedTable; _ = p; return b }\n"},
 	} {
 		files := rdCopyFiles(base)
@@ -326,7 +326,7 @@ func TestHintleakScopeIsImportedAsHlscope(t *testing.T) {
 		return "package edition\n\nimport " + name + " \"" + hlscopeImportPath + "\"\n"
 	}
 	for name, src := range map[string]string{
-		"an import with the alias hlscope": imp("hlscope"),
+		"an import with the alias hlscope":   imp("hlscope"),
 		"another package under its own name": "package edition\n\nimport \"github.com/Qfour/falco-ctf-app/internal/hintleak\"\n",
 	} {
 		if v := scopeImportViolations(map[string]string{"internal/edition/x.go": src}); len(v) != 0 {

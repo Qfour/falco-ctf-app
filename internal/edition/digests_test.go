@@ -76,7 +76,9 @@ func TestWriteDigests_WritesTheCanonicalFile(t *testing.T) {
 }
 
 func TestWriteDigests_Refuses(t *testing.T) {
-	row := func(seat, cid, d string) []edition.DigestRow { return []edition.DigestRow{{Seat: seat, CID: cid, Digest: d}} }
+	row := func(seat, cid, d string) []edition.DigestRow {
+		return []edition.DigestRow{{Seat: seat, CID: cid, Digest: d}}
+	}
 	cases := []struct {
 		name  string
 		runID string

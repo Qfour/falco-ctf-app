@@ -9,9 +9,19 @@ package edition
 //   - Lstat the path first (no link is followed) and refuse what is not a regular file: a
 //     link, a directory, a special file;
 //   - open it with O_NOFOLLOW, so that a path that became a link after the Lstat is refused by
-//     the operating system and is never followed;
+//     the operating system and is never followed, and with O_NONBLOCK, so that a path that
+//     became a FIFO after the Lstat does not block the open forever (open(2) of a FIFO for
+//     reading waits for a writer): the open returns, and the Stat below refuses it. O_NONBLOCK
+//     does nothing to the read of a regular file;
 //   - Stat the OPEN descriptor, and hold it to the Lstat: a regular file, and the same device
 //     and inode. A path that was replaced by another regular file between the two is refused.
+//
+// What this covers, and what it does not: O_NOFOLLOW and the Lstat / SameFile comparison
+// concern the LAST element of the path only. A directory above it (a seat's directory, a
+// challenge's directory) that is replaced by a link is followed. That is not defended here: it
+// is the assumption of D20 that the input tree is the operator's own and is mounted read-only
+// into the validator's container, so nobody who is not the operator can make or change a
+// directory of it while the validator runs.
 //
 // Every reader of a file of the validator's input uses it: the answers table (readTable), the
 // files of a bundle, of a template and of the corpus (readCapped), and the practice answers
@@ -61,7 +71,7 @@ func openRegular(path string) (*os.File, error) {
 	if afterLstat != nil {
 		afterLstat(path)
 	}
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
 	}
