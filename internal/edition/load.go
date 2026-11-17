@@ -15,13 +15,23 @@ import (
 // Load is the ONE way the scoreboard obtains an answers table (ADR-0056 D8 (iii)
 // and (iv), D19 A2b, A4a-1, A4a-2): it reads the file, Parses it, runs ModeCheck and
 // Check, and hands back a Judge. Parse and NewJudge are called from here and nowhere
-// else in the program (Parse also from loadPractice below, NewJudge also from
-// practiceJudge below; Load is the only caller of practiceJudge, and calls it only
+// else in the program (Parse also from loadChecked and loadPractice below, NewJudge also
+// from practiceJudge below; Load is the only caller of practiceJudge, and calls it only
 // when eventMode is false), and Load is called from cmd/scoreboard once
 // (load_source_test.go fixes all of it by reading the sources, the way ADR-0033 D6
 // does for the flags file). The plaintext Table never leaves this function: the
 // caller gets the Judge (HMACs of the values under a per-process key) and the run id
 // (D9), nothing else.
+//
+// The validator's door, LoadEventTable (below), reads the same file through the same
+// function, loadChecked (read, Parse, loadPractice, Check): one Check for the table the
+// scoreboard starts with and the table the validator accepts. The two differ in what they
+// carry away (a Judge here, a *CheckedTable there) and in how the file is opened (the
+// start-up follows the links of a Kubernetes Secret volume, openFollowing; the validator
+// refuses one, openRegular). Load's refusals are what they were, with one difference: the
+// image's own practice answers (loadPractice, which both doors call) are opened by openRegular
+// in both, so a file that is swapped for a link or another inode between practiceEntry's Lstat
+// and the open is refused at the start-up too (a link was already refused by the Lstat).
 //
 // scored is what catalog.LoadScored returned, and the ONLY input about the catalog
 // and the tree (ADR-0056 D19 A4a-3; there is no separate challenges directory
@@ -68,31 +78,126 @@ func Load(scored catalog.Scored, answersFile string, eventMode bool) (*Judge, st
 		}
 		return nil, "", nil
 	}
-	data, err := readTable(answersFile)
+	t, _, _, err := loadChecked(scored, answersFile, eventMode, openFollowing)
 	if err != nil {
 		return nil, "", err
-	}
-	t, err := Parse(data)
-	if err != nil {
-		return nil, "", fmt.Errorf("edition: answers table: %w", err)
-	}
-	practice, _, _, err := loadPractice(scored)
-	if err != nil {
-		return nil, "", err
-	}
-	opts := Options{
-		EventMode:  eventMode,
-		Practice:   practice,
-		FlagValues: flagValues(cat),
-	}
-	if err := Check(t, scope, opts); err != nil {
-		return nil, "", fmt.Errorf("edition: answers table: %w", err)
 	}
 	j, err := NewJudge(t)
 	if err != nil {
 		return nil, "", fmt.Errorf("edition: answers table: %w", err)
 	}
 	return j, t.RunID(), nil
+}
+
+// loadChecked is the one function that turns an answers file into a table that Check
+// accepted (ADR-0056 D20, D19 A4e-1, review: one Check for the start-up and the validator):
+// it reads the file (at most MaxTableBytes+1 bytes, through open), Parses it, reads the
+// practice answers of the image (loadPractice) and runs Check on the table with the scope
+// and the flag values of scored.Catalog, in the event mode when eventMode says so. Its
+// callers are Load (the start-up: eventMode as the environment gives it, openFollowing) and
+// LoadEventTable (the validator: the event mode, openRegular), and nothing else
+// (load_source_test.go); Parse and Check are called from here and from loadPractice /
+// practiceJudge only.
+//
+// It returns the table (plaintext values: the caller keeps it only as long as it needs it),
+// the practice set T6 used and where the practice editions are (loadPractice's results, for
+// the validator, which reads their files; Load discards them). The errors are the ones Load
+// always returned, in the same order: the file's, Parse's and Check's wrapped as "edition:
+// answers table: ...", and loadPractice's as they are. An error names a rule, a line and a
+// seat / cid / qid, never a value.
+func loadChecked(scored catalog.Scored, answersFile string, eventMode bool, open fileOpener) (*Table, PracticeSet, practiceDirs, error) {
+	cat := scored.Catalog
+	data, err := readTable(answersFile, open)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	t, err := Parse(data)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("edition: answers table: %w", err)
+	}
+	practice, _, dirs, err := loadPractice(scored)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	opts := Options{
+		EventMode:  eventMode,
+		Practice:   practice,
+		FlagValues: flagValues(cat),
+	}
+	if err := Check(t, ScopeOf(cat), opts); err != nil {
+		return nil, nil, nil, fmt.Errorf("edition: answers table: %w", err)
+	}
+	return t, practice, dirs, nil
+}
+
+// CheckedTable is an answers table that every rule of the event mode accepted (T3 to T8,
+// T6 against the practice answers of the image), together with what the validator's later
+// steps need from the same read: the practice set and the files of the practice editions
+// (ADR-0056 D9 M2, D20, D19 A4e-1). It is made by LoadEventTable and by nothing else (its
+// fields are unexported, and validator_door_source_test.go fixes that no other non-test file
+// builds one), so a function that takes a *CheckedTable has a table that went through Check.
+//
+// LoadEventTable also reads the practice editions' files (readPracticeFiles), so a B2 defect
+// of a practice edition's file (a bundle or a template) is refused as a defect of the table's
+// door too, though the answers table itself is sound: the operator must not read it as a defect
+// of the event's table. The message says which: a defect of a practice edition begins
+// "edition: practice evidence of <cid>", "edition: practice template of <cid>" or "edition:
+// practice answers", where a defect of the event's table begins "edition: answers table" or
+// "edition: answers file".
+//
+// It holds plaintext values and prints as a fixed string under every fmt verb and under
+// encoding/json, like a Table.
+type CheckedTable struct {
+	table *Table
+	// practice is the practice answers T6 compared with (loadPractice).
+	practice PracticeSet
+	// files are the files of the practice editions, read for the validator's path only
+	// (readPracticeFiles): B4's input.
+	files practiceFiles
+}
+
+// Format, String, GoString and MarshalJSON make a CheckedTable print as a fixed string under
+// every fmt verb and under encoding/json (value receivers, so a copy does too).
+func (CheckedTable) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, redactedChecked) }
+
+// String: see Format.
+func (CheckedTable) String() string { return redactedChecked }
+
+// GoString: see Format.
+func (CheckedTable) GoString() string { return redactedChecked }
+
+// MarshalJSON: see Format.
+func (CheckedTable) MarshalJSON() ([]byte, error) { return []byte(`"` + redactedChecked + `"`), nil }
+
+const redactedChecked = "edition.CheckedTable{redacted}"
+
+// LoadEventTable is the validator's door to the answers table (ADR-0056 D20 `edition check`,
+// step 2; D9 M2; D19 A4e-1): it reads answersFile as the scoreboard's start-up reads it in the
+// event mode (loadChecked: the same read, Parse and Check, so the two cannot accept different
+// tables), refuses a link (openRegular, V57), and, on top of that, reads the files of the
+// image's practice editions (readPracticeFiles: their bundle and their template, which only
+// this path reads: the scoreboard's start-up opens none of them). scored is what
+// catalog.LoadScored returned, as for Load. An empty answersFile is ErrTableMissing: the
+// validator has no table-less mode.
+//
+// The results are the *CheckedTable, the run id of the table (D9) and an error, which is
+// Load's error for the same defect (a rule, a line, a seat / cid / qid, never a value), or a
+// B2 violation of a practice edition's file, or the file's own. Its one caller is the `edition
+// check` command of cmd/scoreboard (A4e-2: today it has none; load_source_test.go fixes the
+// calls of it by reading the sources).
+func LoadEventTable(scored catalog.Scored, answersFile string) (*CheckedTable, string, error) {
+	if answersFile == "" {
+		return nil, "", ErrTableMissing
+	}
+	t, practice, dirs, err := loadChecked(scored, answersFile, true, openRegular)
+	if err != nil {
+		return nil, "", err
+	}
+	files, err := readPracticeFiles(dirs)
+	if err != nil {
+		return nil, "", err
+	}
+	return &CheckedTable{table: t, practice: practice, files: files}, t.RunID(), nil
 }
 
 // practiceJudge is the practice mode's Judge (ADR-0056 D8 (iv), D19 A4a-2): the
@@ -149,7 +254,7 @@ func scopePracticeTable(scope Scope, tables map[string]*Table) (*Table, error) {
 	for _, cid := range cids {
 		src, ok := tables[cid]
 		if !ok {
-			missing.add(newViolation(RuleComplete, "an investigate challenge of the scope has no practice answers (edition/practice/answers.tsv)", 0, cell{cid: cid}, nil))
+			missing.add(newViolation(RuleComplete, "an investigate challenge of the scope has no practice answers ("+EditionDirName+"/"+PracticeDirName+"/"+PracticeAnswersFileName+")", 0, cell{cid: cid}, nil))
 			continue
 		}
 		picked = append(picked, src)
@@ -160,11 +265,11 @@ func scopePracticeTable(scope Scope, tables map[string]*Table) (*Table, error) {
 	return joinPractice(picked)
 }
 
-// readTable reads the answers file, at most MaxTableBytes+1 bytes (so that an
-// unbounded file is never loaded; Parse refuses the one byte over). The error
+// readTable reads the answers file, opened by open, at most MaxTableBytes+1 bytes (so
+// that an unbounded file is never loaded; Parse refuses the one byte over). The error
 // names the path and the operating system's reason, not the file's content.
-func readTable(path string) ([]byte, error) {
-	f, err := os.Open(path)
+func readTable(path string, open fileOpener) ([]byte, error) {
+	f, err := open(path)
 	if err != nil {
 		return nil, fmt.Errorf("edition: answers file: %w", err)
 	}
@@ -184,12 +289,7 @@ func readTable(path string) ([]byte, error) {
 }
 
 // Where a practice edition lives under a challenge (ADR-0056 D8):
-// <challengesDir>/<id>/edition/practice/answers.tsv.
-const (
-	editionDirName  = "edition"
-	practiceDirName = "practice"
-	practiceTable   = "answers.tsv"
-)
+// <challengesDir>/<id>/edition/practice/answers.tsv. The names are practicelayout.go's.
 
 // loadPractice is the practice answers of the image: the set T6 compares an event
 // table with (ADR-0056 D8 (iii), D10 T6, D19 A4a-1) and the parsed table of each
@@ -246,7 +346,7 @@ func loadPractice(scored catalog.Scored) (PracticeSet, map[string]*Table, practi
 	dirs := make(practiceDirs)
 	for _, id := range full.IDs() {
 		ch := full[id]
-		editionDir := filepath.Join(challengesDir, ch.Dir(), editionDirName)
+		editionDir := filepath.Join(challengesDir, ch.Dir(), EditionDirName)
 		ok, err := practiceEntry(editionDir, true)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("edition: practice answers of %s: %w", id, err)
@@ -255,22 +355,24 @@ func loadPractice(scored catalog.Scored) (PracticeSet, map[string]*Table, practi
 			continue
 		}
 		if ch.Type != catalog.TypeInvestigate {
-			return nil, nil, nil, fmt.Errorf("edition: practice answers of %s: an %s/ directory belongs to an investigate challenge only, not to type %q", id, editionDirName, ch.Type)
+			return nil, nil, nil, fmt.Errorf("edition: practice answers of %s: an %s/ directory belongs to an investigate challenge only, not to type %q", id, EditionDirName, ch.Type)
 		}
 		dirs[id] = editionDir
-		practiceDir := filepath.Join(editionDir, practiceDirName)
+		practiceDir := filepath.Join(editionDir, PracticeDirName)
 		if ok, err = practiceEntry(practiceDir, true); err != nil {
 			return nil, nil, nil, fmt.Errorf("edition: practice answers of %s: %w", id, err)
 		} else if !ok {
 			continue
 		}
-		path := filepath.Join(practiceDir, practiceTable)
+		path := filepath.Join(practiceDir, PracticeAnswersFileName)
 		if ok, err = practiceEntry(path, false); err != nil {
 			return nil, nil, nil, fmt.Errorf("edition: practice answers of %s: %w", id, err)
 		} else if !ok {
 			continue
 		}
-		data, err := readTable(path)
+		// openRegular: the image's own file, which practiceEntry has just found to be a
+		// regular file; the link and the swap it could not see are refused (V57).
+		data, err := readTable(path, openRegular)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("edition: practice answers of %s: %w", id, err)
 		}

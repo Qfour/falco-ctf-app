@@ -15,6 +15,16 @@
 // called by the validator (A4e) and by nothing in the scoreboard, and hold no table
 // of their own: the Table they check came from Parse, in Load or in the validator.
 //
+// A4e-1 adds the validator's side of the doors (ADR-0056 D20): LoadEventTable (load.go) reads
+// and checks the answers file through the function that Load shares, so the table the
+// scoreboard starts with and the table the validator accepts go through the same Check, and
+// hands back a *CheckedTable; CheckBundles takes that and gives a *CheckedBundles, which is
+// all WriteDigests accepts. The files of the validator's input are opened by one function
+// (safeopen.go: O_NOFOLLOW, and the open descriptor's Stat held to the Lstat), an output is
+// written by one pair of functions (atomicwrite.go: a temporary sibling, 0700 / 0600, then a
+// rename) and the names of an edition's directory are defined once (practicelayout.go). The
+// commands that use them, `edition check` and `edition render`, are A4e-2 and A4e-3.
+//
 // Every rule that is decided here is decided ONCE and from the existing
 // definitions: the answer formats and their normalisation are
 // internal/catalog/answerformat, the seat grammar is identity.ValidSeat

@@ -72,12 +72,28 @@ func checkDigestRow(r DigestRow, line int) error {
 	return nil
 }
 
-// WriteDigests writes the digests file for runID: the header, then the rows in byte
-// order of (seat, cid), so one set of rows is one file. It refuses a run id that is not
-// 32 lower-case hex digits or is all zeros (a digests file exists only for an event:
-// the practice mode has none), no row, a row that is not in its grammar and a repeated
-// (seat, cid). Nothing is written when it refuses.
-func WriteDigests(w io.Writer, runID string, rows []DigestRow) error {
+// WriteDigests writes the digests file of a tree of bundles that went through the rules of
+// CheckBundles (B1, B2, B3, B5, B6 and B9): the header with the run id of the answers table the
+// tree was checked against (cb.RunID), then the rows in byte order of (seat, cid), so one set
+// of rows is one file. It takes a *CheckedBundles and nothing weaker (ADR-0056 D9 M2, D19
+// A4e-1): there is no way to write a digests file for rows that CheckBundles did not give, or
+// under another run id than the table's. That is all the type guarantees: the event's digests
+// may be written only when every check of D20's CheckEvent has passed (E1, E2, B4, B7, B8 and
+// B10 included), and that order and gate are CheckEvent's (A4e-2), not this function's. It
+// still refuses what it always refused, so that the one writer cannot make a file
+// the readers refuse: a run id that is not 32 lower-case hex digits or is all zeros (a
+// digests file exists only for an event: the practice mode has none), no row, a row that is
+// not in its grammar and a repeated (seat, cid); and a nil cb. Nothing is written when it
+// refuses.
+func WriteDigests(w io.Writer, cb *CheckedBundles) error {
+	if cb == nil {
+		return newViolation(RuleDigests, "there is no checked set of bundles to write the digests of", 0, cell{}, nil)
+	}
+	return writeDigestRows(w, cb.runID, cb.rows)
+}
+
+// writeDigestRows is WriteDigests's body: the rows and the run id of a CheckedBundles.
+func writeDigestRows(w io.Writer, runID string, rows []DigestRow) error {
 	if !validRunID(runID) || runID == PracticeRunID {
 		return newViolation(RuleDigests, "the run id must be 32 lower-case hex digits and not all zeros", 0, cell{}, nil)
 	}
@@ -103,6 +119,46 @@ func WriteDigests(w io.Writer, runID string, rows []DigestRow) error {
 			return newViolation(RuleDigests, "a (seat, cid) has two digest rows", 0, k, nil)
 		}
 		seen[k] = struct{}{}
+		sb.WriteString(r.Seat + "\t" + r.CID + "\t" + r.Digest + "\n")
+	}
+	_, err := io.WriteString(w, sb.String())
+	return err
+}
+
+// WritePracticeDigests writes the digests file of a practice edition (practice/digests.tsv,
+// D8, D9): the v1 header with the run id of all zeros, and a row  *  TAB  cid  TAB  digest
+// for each challenge, in byte order of the cid. It asks for the run id of all zeros and the
+// seat * and refuses everything else: those are the two things the event's WriteDigests
+// refuses, so a file of one cannot be written by the other. It also refuses no row, a cid
+// or a digest outside its grammar, and a cid twice. Nothing is written when it refuses.
+// (It is the practice edition's door; the event's, WriteDigests, takes a *CheckedBundles.
+// Its reader, ParsePracticeDigests, is A5c-2's.)
+func WritePracticeDigests(w io.Writer, runID string, rows []DigestRow) error {
+	if runID != PracticeRunID {
+		return newViolation(RuleDigests, "a practice digests file carries the run id of all zeros and no other", 0, cell{}, nil)
+	}
+	if len(rows) == 0 {
+		return newViolation(RuleDigests, "there is no digest row", 0, cell{}, nil)
+	}
+	sorted := slices.Clone(rows)
+	slices.SortFunc(sorted, func(a, b DigestRow) int { return strings.Compare(a.CID, b.CID) })
+	var sb strings.Builder
+	sb.WriteString(digestsHeaderPrefix + runID + "\n")
+	seen := make(map[string]struct{}, len(sorted))
+	for _, r := range sorted {
+		c := cell{seat: r.Seat, cid: r.CID}
+		switch {
+		case r.Seat != AnySeat:
+			return newViolation(RuleDigests, "a practice digests file has the seat * only", 0, c, nil)
+		case !challengeid.Valid(r.CID):
+			return newViolation(RuleDigests, "cid is not a challenge id", 0, c, nil)
+		case !ValidDigest(r.Digest):
+			return newViolation(RuleDigests, "digest is not 64 lower-case hex digits", 0, c, nil)
+		}
+		if _, dup := seen[r.CID]; dup {
+			return newViolation(RuleDigests, "a cid has two digest rows", 0, c, nil)
+		}
+		seen[r.CID] = struct{}{}
 		sb.WriteString(r.Seat + "\t" + r.CID + "\t" + r.Digest + "\n")
 	}
 	_, err := io.WriteString(w, sb.String())

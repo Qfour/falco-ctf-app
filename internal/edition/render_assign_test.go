@@ -245,8 +245,9 @@ func TestSpecCheckSeatSpace_IsOneComparisonForTheRendererAndTheValidator(t *test
 	}
 }
 
-// V74: the previous seat list. It is required, an empty one is the first render, and the new
-// list must extend the previous one at its end; the check is before anything is drawn.
+// V74: the previous seat list. It is required, the first render is NoPreviousSeats and nothing
+// else (an empty list is "not given", ADR-0056 D20), and the new list must extend the
+// previous one at its end; the check is before anything is drawn.
 func TestRender_PreviousSeatsMustBeExtendedAtTheEnd(t *testing.T) {
 	seats := []string{"seat-a", "seat-b", "seat-c", "seat-d"}
 	with := func(prev edition.PreviousSeats, list ...string) edition.RenderInput {
@@ -263,7 +264,8 @@ func TestRender_PreviousSeatsMustBeExtendedAtTheEnd(t *testing.T) {
 	}{
 		{"not given (the zero value)", notGiven, false},
 		{"the first render (an empty list)", with(edition.NoPreviousSeats(), seats...), true},
-		{"an empty previous list is the first render too", with(edition.PreviousSeatsOf(nil), seats...), true},
+		{"an empty previous list is not the first render: it is not given (D20)", with(edition.PreviousSeatsOf(nil), seats...), false},
+		{"an empty, non-nil previous list is not given either", with(edition.PreviousSeatsOf([]string{}), seats...), false},
 		{"the same list", with(edition.PreviousSeatsOf(seats), seats...), true},
 		{"a seat added at the end", with(edition.PreviousSeatsOf(seats[:3]), seats...), true},
 		{"two seats swapped", with(edition.PreviousSeatsOf([]string{"seat-b", "seat-a"}), seats...), false},

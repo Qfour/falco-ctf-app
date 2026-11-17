@@ -288,9 +288,12 @@ func readBundleDir(dir, seat, cid string, budget *seatBudget, c *collector) *Bun
 }
 
 // readCapped reads path, refusing a file of more than limit bytes (it never holds
-// more than limit+1 in memory).
+// more than limit+1 in memory). The file is opened by openRegular (safeopen.go): a link, a
+// file that is not a regular one and a file that was swapped after it was looked at are
+// refused (ADR-0056 V57). It is the one reader of the files of a bundle, of a template and of
+// the corpus.
 func readCapped(path string, limit int64) ([]byte, error) {
-	f, err := os.Open(path)
+	f, err := openRegular(path)
 	if err != nil {
 		return nil, err
 	}

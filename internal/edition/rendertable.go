@@ -9,11 +9,11 @@ package edition
 // file builds no Table (table.go makes them, and load_source_test.go keeps it so): it
 // makes bytes.
 //
-// The digests file has two doors (D9): the event's WriteDigests / ParseDigests (digests.go,
-// not changed here) refuse the run id of all zeros and the seat *, and WritePracticeDigests
-// is the practice edition's, which asks for exactly those two and nothing else. A file of
-// one is refused by the other's reader (V66's Go side; the practice reader,
-// ParsePracticeDigests, is A5c-2's).
+// The digests file has two doors (D9), both in digests.go: the event's WriteDigests /
+// ParseDigests refuse the run id of all zeros and the seat *, and WritePracticeDigests is the
+// practice edition's, which asks for exactly those two and nothing else. A file of one is
+// refused by the other's reader (V66's Go side; the practice reader, ParsePracticeDigests,
+// is A5c-2's). PracticeOutput below calls WritePracticeDigests.
 
 import (
 	"bytes"
@@ -91,44 +91,6 @@ func checkAnswerRow(r AnswerRow, practice bool) error {
 		return newViolation(RuleShape, "a value holds an invisible or bidi control character", 0, c, nil)
 	}
 	return nil
-}
-
-// WritePracticeDigests writes the digests file of a practice edition (practice/digests.tsv,
-// D8, D9): the v1 header with the run id of all zeros, and a row  *  TAB  cid  TAB  digest
-// for each challenge, in byte order of the cid. It asks for the run id of all zeros and the
-// seat * and refuses everything else: those are the two things the event's WriteDigests
-// refuses, so a file of one cannot be written by the other. It also refuses no row, a cid
-// or a digest outside its grammar, and a cid twice. Nothing is written when it refuses.
-func WritePracticeDigests(w io.Writer, runID string, rows []DigestRow) error {
-	if runID != PracticeRunID {
-		return newViolation(RuleDigests, "a practice digests file carries the run id of all zeros and no other", 0, cell{}, nil)
-	}
-	if len(rows) == 0 {
-		return newViolation(RuleDigests, "there is no digest row", 0, cell{}, nil)
-	}
-	sorted := slices.Clone(rows)
-	slices.SortFunc(sorted, func(a, b DigestRow) int { return strings.Compare(a.CID, b.CID) })
-	var sb strings.Builder
-	sb.WriteString(digestsHeaderPrefix + runID + "\n")
-	seen := make(map[string]struct{}, len(sorted))
-	for _, r := range sorted {
-		c := cell{seat: r.Seat, cid: r.CID}
-		switch {
-		case r.Seat != AnySeat:
-			return newViolation(RuleDigests, "a practice digests file has the seat * only", 0, c, nil)
-		case !challengeid.Valid(r.CID):
-			return newViolation(RuleDigests, "cid is not a challenge id", 0, c, nil)
-		case !ValidDigest(r.Digest):
-			return newViolation(RuleDigests, "digest is not 64 lower-case hex digits", 0, c, nil)
-		}
-		if _, dup := seen[r.CID]; dup {
-			return newViolation(RuleDigests, "a cid has two digest rows", 0, c, nil)
-		}
-		seen[r.CID] = struct{}{}
-		sb.WriteString(r.Seat + "\t" + r.CID + "\t" + r.Digest + "\n")
-	}
-	_, err := io.WriteString(w, sb.String())
-	return err
 }
 
 // PracticeFiles is what practice/ of a challenge holds (D8, amendment 9): the bundle of

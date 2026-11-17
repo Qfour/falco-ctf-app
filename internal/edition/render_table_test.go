@@ -265,7 +265,7 @@ func TestDigestDoors_NeitherAcceptsTheOthersInput(t *testing.T) {
 	}
 
 	var event bytes.Buffer
-	if err := edition.WriteDigests(&event, runA, seat); err != nil {
+	if err := edition.WriteDigests(&event, edition.CheckedBundlesForTest(runA, seat)); err != nil {
 		t.Fatalf("WriteDigests: %v", err)
 	}
 	if _, _, err := edition.ParseDigests(event.Bytes()); err != nil {
@@ -273,11 +273,15 @@ func TestDigestDoors_NeitherAcceptsTheOthersInput(t *testing.T) {
 	}
 
 	for name, f := range map[string]func(w *bytes.Buffer) error{
-		"WriteDigests with the practice run id and the seat *":      func(w *bytes.Buffer) error { return edition.WriteDigests(w, edition.PracticeRunID, star) },
-		"WriteDigests with an event run id and the seat *":          func(w *bytes.Buffer) error { return edition.WriteDigests(w, runA, star) },
-		"WriteDigests with the practice run id and a seat":          func(w *bytes.Buffer) error { return edition.WriteDigests(w, edition.PracticeRunID, seat) },
-		"WritePracticeDigests with an event run id and the seat *":  func(w *bytes.Buffer) error { return edition.WritePracticeDigests(w, runA, star) },
-		"WritePracticeDigests with an event run id and a seat":      func(w *bytes.Buffer) error { return edition.WritePracticeDigests(w, runA, seat) },
+		"WriteDigests with the practice run id and the seat *": func(w *bytes.Buffer) error {
+			return edition.WriteDigests(w, edition.CheckedBundlesForTest(edition.PracticeRunID, star))
+		},
+		"WriteDigests with an event run id and the seat *": func(w *bytes.Buffer) error { return edition.WriteDigests(w, edition.CheckedBundlesForTest(runA, star)) },
+		"WriteDigests with the practice run id and a seat": func(w *bytes.Buffer) error {
+			return edition.WriteDigests(w, edition.CheckedBundlesForTest(edition.PracticeRunID, seat))
+		},
+		"WritePracticeDigests with an event run id and the seat *": func(w *bytes.Buffer) error { return edition.WritePracticeDigests(w, runA, star) },
+		"WritePracticeDigests with an event run id and a seat":     func(w *bytes.Buffer) error { return edition.WritePracticeDigests(w, runA, seat) },
 		"WritePracticeDigests with the practice run id and a seat": func(w *bytes.Buffer) error { return edition.WritePracticeDigests(w, edition.PracticeRunID, seat) },
 	} {
 		var out bytes.Buffer

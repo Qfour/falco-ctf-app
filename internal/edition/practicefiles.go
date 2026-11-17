@@ -22,13 +22,9 @@ import (
 	"slices"
 )
 
-const (
-	// practiceEvidenceDirName is edition/practice/evidence/ (D8, addendum 9): the practice
-	// bundle, the only part of practice/ that a seat ever receives.
-	practiceEvidenceDirName = "evidence"
-	// templateDirName is edition/template/ (D8): a flat directory of template files.
-	templateDirName = "template"
-)
+// The names of edition/practice/evidence/ (the practice bundle, the only part of practice/
+// that a seat ever receives) and of edition/template/ (a flat directory of template files)
+// are practicelayout.go's (D8, addendum 9).
 
 // practiceDirs is where the practice editions of the image are: challenge id -> its
 // edition/ directory, for every challenge that has one (loadPractice makes it).
@@ -57,11 +53,11 @@ func readPracticeFiles(dirs practiceDirs) (practiceFiles, error) {
 	out := make(practiceFiles, len(dirs))
 	for _, id := range slices.Sorted(maps.Keys(dirs)) {
 		editionDir := dirs[id]
-		ev, err := readFlatDir(id, filepath.Join(editionDir, practiceDirName), practiceEvidenceDirName)
+		ev, err := readFlatDir(id, filepath.Join(editionDir, PracticeDirName), PracticeEvidenceDirName)
 		if err != nil {
 			return nil, fmt.Errorf("edition: practice evidence of %s: %w", id, err)
 		}
-		tpl, err := readFlatDir(id, editionDir, templateDirName)
+		tpl, err := readFlatDir(id, editionDir, TemplateDirName)
 		if err != nil {
 			return nil, fmt.Errorf("edition: practice template of %s: %w", id, err)
 		}

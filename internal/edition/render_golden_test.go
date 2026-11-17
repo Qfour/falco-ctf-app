@@ -38,12 +38,15 @@ import (
 	"github.com/Qfour/falco-ctf-app/internal/edition"
 )
 
+// The names of the layout are the package's (practicelayout.go: the one definition), not a
+// copy of them: goldenEditionDir and goldenPracticeDir are its names, and the rest of the
+// layout is used by name below.
 const (
 	goldenUpdateEnv   = "FALCO_EDITION_GOLDEN_UPDATE"
 	goldenFixtureDir  = "testdata/render-golden"
 	goldenRealDir     = "../../challenges"
-	goldenEditionDir  = "edition"
-	goldenPracticeDir = "practice"
+	goldenEditionDir  = edition.EditionDirName
+	goldenPracticeDir = edition.PracticeDirName
 )
 
 // goldenInputs are edition/edition.yaml (parsed) and the files of edition/template/ of the
@@ -51,7 +54,7 @@ const (
 func goldenInputs(t *testing.T, treeDir string, ch catalog.Challenge) (*edition.Spec, []edition.BundleFile) {
 	t.Helper()
 	ed := filepath.Join(treeDir, ch.Dir(), goldenEditionDir)
-	raw, err := os.ReadFile(filepath.Join(ed, "edition.yaml"))
+	raw, err := os.ReadFile(filepath.Join(ed, edition.SpecFileName))
 	if err != nil {
 		t.Fatalf("%s: %v", ch.ID, err)
 	}
@@ -59,16 +62,16 @@ func goldenInputs(t *testing.T, treeDir string, ch catalog.Challenge) (*edition.
 	if err != nil {
 		t.Fatalf("%s: edition.yaml: %v", ch.ID, err)
 	}
-	entries, err := os.ReadDir(filepath.Join(ed, "template"))
+	entries, err := os.ReadDir(filepath.Join(ed, edition.TemplateDirName))
 	if err != nil {
-		t.Fatalf("%s: template/: %v", ch.ID, err)
+		t.Fatalf("%s: %s/: %v", ch.ID, edition.TemplateDirName, err)
 	}
 	var files []edition.BundleFile
 	for _, e := range entries {
 		if !e.Type().IsRegular() {
-			t.Fatalf("%s: template/%s is not a regular file (the template is flat)", ch.ID, e.Name())
+			t.Fatalf("%s: %s/%s is not a regular file (the template is flat)", ch.ID, edition.TemplateDirName, e.Name())
 		}
-		data, err := os.ReadFile(filepath.Join(ed, "template", e.Name()))
+		data, err := os.ReadFile(filepath.Join(ed, edition.TemplateDirName, e.Name()))
 		if err != nil {
 			t.Fatalf("%s: %v", ch.ID, err)
 		}
@@ -101,24 +104,24 @@ func goldenRender(t *testing.T, treeDir string, ch catalog.Challenge) *edition.P
 // goldenOnDisk is the practice/ that the challenge at editionDir commits.
 func goldenOnDisk(editionDir string) (*edition.PracticeFiles, error) {
 	pdir := filepath.Join(editionDir, goldenPracticeDir)
-	answers, err := os.ReadFile(filepath.Join(pdir, "answers.tsv"))
+	answers, err := os.ReadFile(filepath.Join(pdir, edition.PracticeAnswersFileName))
 	if err != nil {
 		return nil, err
 	}
-	digests, err := os.ReadFile(filepath.Join(pdir, "digests.tsv"))
+	digests, err := os.ReadFile(filepath.Join(pdir, edition.PracticeDigestsFileName))
 	if err != nil {
 		return nil, err
 	}
-	entries, err := os.ReadDir(filepath.Join(pdir, "evidence"))
+	entries, err := os.ReadDir(filepath.Join(pdir, edition.PracticeEvidenceDirName))
 	if err != nil {
 		return nil, err
 	}
 	pf := &edition.PracticeFiles{Answers: answers, Digests: digests}
 	for _, e := range entries {
 		if !e.Type().IsRegular() {
-			return nil, fmt.Errorf("evidence/%s is not a regular file", e.Name())
+			return nil, fmt.Errorf("%s/%s is not a regular file", edition.PracticeEvidenceDirName, e.Name())
 		}
-		data, err := os.ReadFile(filepath.Join(pdir, "evidence", e.Name()))
+		data, err := os.ReadFile(filepath.Join(pdir, edition.PracticeEvidenceDirName, e.Name()))
 		if err != nil {
 			return nil, err
 		}
@@ -132,10 +135,10 @@ func goldenOnDisk(editionDir string) (*edition.PracticeFiles, error) {
 func goldenDiff(want, got *edition.PracticeFiles) []string {
 	var out []string
 	if !bytes.Equal(want.Answers, got.Answers) {
-		out = append(out, "answers.tsv differs")
+		out = append(out, edition.PracticeAnswersFileName+" differs")
 	}
 	if !bytes.Equal(want.Digests, got.Digests) {
-		out = append(out, "digests.tsv differs")
+		out = append(out, edition.PracticeDigestsFileName+" differs")
 	}
 	index := func(files []edition.BundleFile) map[string][]byte {
 		m := make(map[string][]byte, len(files))
@@ -148,14 +151,14 @@ func goldenDiff(want, got *edition.PracticeFiles) []string {
 	for name, data := range w {
 		switch gd, ok := g[name]; {
 		case !ok:
-			out = append(out, "evidence/"+name+" is missing")
+			out = append(out, edition.PracticeEvidenceDirName+"/"+name+" is missing")
 		case !bytes.Equal(data, gd):
-			out = append(out, "evidence/"+name+" differs")
+			out = append(out, edition.PracticeEvidenceDirName+"/"+name+" differs")
 		}
 	}
 	for name := range g {
 		if _, ok := w[name]; !ok {
-			out = append(out, "evidence/"+name+" is not rendered")
+			out = append(out, edition.PracticeEvidenceDirName+"/"+name+" is not rendered")
 		}
 	}
 	slices.Sort(out)
@@ -246,14 +249,14 @@ func TestGolden_DiffSeesAHandEditedCopy(t *testing.T) {
 		change func(c *edition.PracticeFiles)
 		want   string
 	}{
-		{"a byte of answers.tsv", func(c *edition.PracticeFiles) { flip(c.Answers) }, "answers.tsv differs"},
-		{"a byte of digests.tsv", func(c *edition.PracticeFiles) { flip(c.Digests) }, "digests.tsv differs"},
-		{"a byte of an evidence file", func(c *edition.PracticeFiles) { flip(c.Evidence[0].Data) }, "evidence/" + want.Evidence[0].Name + " differs"},
-		{"an evidence file removed", func(c *edition.PracticeFiles) { c.Evidence = c.Evidence[1:] }, "evidence/" + want.Evidence[0].Name + " is missing"},
+		{"a byte of answers.tsv", func(c *edition.PracticeFiles) { flip(c.Answers) }, edition.PracticeAnswersFileName + " differs"},
+		{"a byte of digests.tsv", func(c *edition.PracticeFiles) { flip(c.Digests) }, edition.PracticeDigestsFileName + " differs"},
+		{"a byte of an evidence file", func(c *edition.PracticeFiles) { flip(c.Evidence[0].Data) }, edition.PracticeEvidenceDirName + "/" + want.Evidence[0].Name + " differs"},
+		{"an evidence file removed", func(c *edition.PracticeFiles) { c.Evidence = c.Evidence[1:] }, edition.PracticeEvidenceDirName + "/" + want.Evidence[0].Name + " is missing"},
 		{"an evidence file added", func(c *edition.PracticeFiles) {
 			c.Evidence = append(c.Evidence, edition.BundleFile{Name: "extra.txt", Data: []byte("x")})
-		}, "evidence/extra.txt is not rendered"},
-		{"an evidence file renamed", func(c *edition.PracticeFiles) { c.Evidence[0].Name = "renamed.txt" }, "evidence/renamed.txt is not rendered"},
+		}, edition.PracticeEvidenceDirName + "/extra.txt is not rendered"},
+		{"an evidence file renamed", func(c *edition.PracticeFiles) { c.Evidence[0].Name = "renamed.txt" }, edition.PracticeEvidenceDirName + "/renamed.txt is not rendered"},
 	}
 	for _, c := range cases {
 		got := clone()
@@ -288,7 +291,7 @@ func TestGolden_WriteTheFixture(t *testing.T) {
 	if err := os.RemoveAll(pdir); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(pdir, "evidence"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(pdir, edition.PracticeEvidenceDirName), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	write := func(path string, data []byte) {
@@ -296,10 +299,10 @@ func TestGolden_WriteTheFixture(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write(filepath.Join(pdir, "answers.tsv"), pf.Answers)
-	write(filepath.Join(pdir, "digests.tsv"), pf.Digests)
+	write(filepath.Join(pdir, edition.PracticeAnswersFileName), pf.Answers)
+	write(filepath.Join(pdir, edition.PracticeDigestsFileName), pf.Digests)
 	for _, f := range pf.Evidence {
-		write(filepath.Join(pdir, "evidence", f.Name), f.Data)
+		write(filepath.Join(pdir, edition.PracticeEvidenceDirName, f.Name), f.Data)
 	}
 	t.Logf("wrote %s: answers.tsv, digests.tsv and %d evidence files", pdir, len(pf.Evidence))
 }
