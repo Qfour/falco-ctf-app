@@ -254,7 +254,10 @@ func (s *edSource) subcommands() (map[string]string, error) {
 	return words, nil
 }
 
-// edMainWord is the word of main.go's branch `os.Args[1] == "<word>"`, which must be there once.
+// edMainWord is the word of main.go's edition branch: the `if` whose body calls runEdition, and
+// whose condition compares os.Args[1] with the word (`os.Args[1] == "<word>"`). There must be
+// exactly one such comparison in such an `if`; a branch of another subcommand (an `if` that does
+// not call runEdition) is not looked at.
 func edMainWord(src string) (string, error) {
 	f, err := parser.ParseFile(token.NewFileSet(), edMainPath, src, 0)
 	if err != nil {
@@ -262,6 +265,38 @@ func edMainWord(src string) (string, error) {
 	}
 	var found []string
 	ast.Inspect(f, func(n ast.Node) bool {
+		ifs, ok := n.(*ast.IfStmt)
+		if !ok || !edCallsRunEdition(ifs.Body) {
+			return true
+		}
+		found = append(found, edArgsWords(ifs.Cond)...)
+		return true
+	})
+	if len(found) != 1 {
+		return "", fmt.Errorf("%s has %d comparisons of os.Args[1] with a string in an if whose body calls runEdition, want 1 (the edition branch); if main.go's edition branch changed its shape, change this reader (edMainWord) with it: the word the contract table quotes is read from that branch", edMainPath, len(found))
+	}
+	return found[0], nil
+}
+
+// edCallsRunEdition reports whether the block calls runEdition.
+func edCallsRunEdition(b *ast.BlockStmt) bool {
+	calls := false
+	ast.Inspect(b, func(n ast.Node) bool {
+		if c, ok := n.(*ast.CallExpr); ok {
+			if id, ok := c.Fun.(*ast.Ident); ok && id.Name == "runEdition" {
+				calls = true
+			}
+		}
+		return true
+	})
+	return calls
+}
+
+// edArgsWords are the strings that the expression compares os.Args[1] with (`os.Args[1] ==
+// "<word>"`), wherever they are in it.
+func edArgsWords(e ast.Expr) []string {
+	var found []string
+	ast.Inspect(e, func(n ast.Node) bool {
 		b, ok := n.(*ast.BinaryExpr)
 		if !ok || b.Op != token.EQL {
 			return true
@@ -289,10 +324,7 @@ func edMainWord(src string) (string, error) {
 		}
 		return true
 	})
-	if len(found) != 1 {
-		return "", fmt.Errorf("%s compares os.Args[1] with a string %d times, want once (the edition branch)", edMainPath, len(found))
-	}
-	return found[0], nil
+	return found
 }
 
 // edReadCLI reads the command from the sources of editioncmd.go and main.go.
@@ -801,6 +833,20 @@ func TestEditionRows(t *testing.T) {
 		}
 		if !slices.Equal(sorted(c.practice.valued), []string{"--challenges", "--cid"}) {
 			t.Errorf("the arguments of render --practice read are %q", c.practice.valued)
+		}
+		// A branch of another subcommand in main.go (one that does not call runEdition) does not
+		// change the word read, and a second comparison in the edition branch is refused.
+		const branch = `if len(os.Args) > 1 && os.Args[1] == "edition" {`
+		if n := strings.Count(mainSrc, branch); n != 1 {
+			t.Fatalf("main.go has the edition branch %d times, want once: the cases below do not test what they say", n)
+		}
+		other := strings.Replace(mainSrc, branch, "if len(os.Args) > 1 && os.Args[1] == \"other\" {\n\t\treturn\n\t}\n\t"+branch, 1)
+		if w, err := edMainWord(other); err != nil || w != "edition" {
+			t.Errorf("with a branch of another subcommand, the word read is %q (%v), want edition", w, err)
+		}
+		twice := strings.Replace(mainSrc, branch, `if len(os.Args) > 1 && (os.Args[1] == "edition" || os.Args[1] == "editions") {`, 1)
+		if _, err := edMainWord(twice); err == nil {
+			t.Error("an edition branch with two words was read as one word")
 		}
 		if c.exits != [4]int{0, 1, 2, 3} {
 			t.Errorf("the exit codes read are %v", c.exits)
