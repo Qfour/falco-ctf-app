@@ -63,7 +63,8 @@ package edition
 // tree to practice/ (the COMMIT POINT) and removes what was moved aside. A failure before the
 // commit point moves the earlier practice/ back, so practice/ is as it was, byte for byte (V81),
 // and is an *OutputError (exit 3); an earlier practice/ that cannot be moved back is named in the
-// error's Left (it is the name beside practice/ that holds it). After the commit point, a moved
+// error's Restore, not its Left (it is the name beside practice/ that holds it, to be moved back,
+// not a temporary to be removed). After the commit point, a moved
 // aside practice/ that cannot be removed is a warning (left), as for the single file. A practice
 // edition is the public repository's: its directories are 0755 and its files 0644 (D20), set
 // after the creation (fchmod of the open file, chmod of the directory just made) so that they do
@@ -116,10 +117,15 @@ var ErrOutputExists = errors.New("edition: the output path already exists")
 // can be given again as it is once the output's environment is fixed. Err is the cause (the
 // operating system's reason; never a byte of the output). Left are the temporary names beside
 // the destination that could not be removed, as a message shows a file name (cut short and
-// quoted: shownName), for the command to print.
+// quoted: shownName), for the command to print: each is a temporary that may be removed.
+// Restore are the names that hold an EARLIER output which was moved aside to be replaced and
+// could not be moved back (replaceTreeAtomic, the practice edition's practice/): they are not
+// temporaries, and the command tells the operator to move them back in place of the output, not
+// to remove them.
 type OutputError struct {
-	Err  error
-	Left []string
+	Err     error
+	Left    []string
+	Restore []string
 }
 
 func (e *OutputError) Error() string {
@@ -336,7 +342,7 @@ func writeTreeAtomic(dest string, files []outputFile) (err error) {
 // a link, even to a directory) is an *InputError and nothing is made: what is replaced is a
 // directory, and a link is never followed. Every other failure before the commit point is an
 // *OutputError: the new tree is removed (a name of it that is left is in Left) and the earlier
-// directory is moved back to dest (when it cannot be, its name beside dest is in Left, and dest
+// directory is moved back to dest (when it cannot be, its name beside dest is in Restore, and dest
 // does not exist). left is not empty only when err is nil: the new tree is at dest and the
 // earlier one, moved aside, could not be removed after the commit point (a warning).
 func replaceTreeAtomic(dest string, files []outputFile) (left []string, err error) {
@@ -361,8 +367,8 @@ func replaceTreeAtomic(dest string, files []outputFile) (left []string, err erro
 			if bErr := putBack(aside, dest); bErr != nil {
 				var oe *OutputError
 				if errors.As(err, &oe) {
-					oe.Err = errors.Join(oe.Err, fmt.Errorf("edition: the earlier output could not be moved back (it is the name left beside it): %w", bErr))
-					oe.Left = append(oe.Left, shownName(filepath.Base(aside)))
+					oe.Err = errors.Join(oe.Err, fmt.Errorf("edition: the earlier output could not be moved back (it is the name to restore beside it): %w", bErr))
+					oe.Restore = append(oe.Restore, shownName(filepath.Base(aside)))
 				}
 			}
 		}

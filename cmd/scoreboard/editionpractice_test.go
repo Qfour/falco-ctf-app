@@ -10,6 +10,8 @@ package main
 // the error to the exit code is editioncmd_source_test.go's.
 
 import (
+	"bytes"
+	"errors"
 	"io/fs"
 	"maps"
 	"os"
@@ -198,6 +200,9 @@ func TestEditionRenderPractice_RefusalsLeavePracticeAsItWas(t *testing.T) {
 			if c.rule != "" && !strings.Contains(stderr, c.rule) {
 				t.Errorf("stderr = %q; want the rule %s named", stderr, c.rule)
 			}
+			if strings.Contains(stderr, practiceNotReplacedLine) {
+				t.Errorf("stderr = %q; the line of exit 3 is printed for a refusal of exit %d", stderr, code)
+			}
 			if got := f.practice(); !maps.Equal(got, before) {
 				t.Error("practice/ changed after a refusal")
 			}
@@ -205,5 +210,45 @@ func TestEditionRenderPractice_RefusalsLeavePracticeAsItWas(t *testing.T) {
 				t.Errorf("edition/ holds %v; want nothing left beside practice/", names)
 			}
 		})
+	}
+}
+
+// V92 and #658 (R2#2): the names of an *edition.OutputError are told apart. A temporary (Left) is
+// to be removed; a name that holds the earlier output moved aside (Restore) is to be moved back
+// and never removed, and its line does not say to remove it. The exit is 3.
+func TestFinishRefusalTellsARemoveFromAMoveBack(t *testing.T) {
+	var w bytes.Buffer
+	err := &edition.OutputError{Err: errors.New("a placeholder failure"), Left: []string{".practice.tmp-0001"}, Restore: []string{".practice.old-0002"}}
+	if code := finishRefusal(&w, err); code != exitWriteFailed {
+		t.Errorf("exit %d, want 3", code)
+	}
+	var tmpLines, oldLines []string
+	for _, ln := range strings.Split(w.String(), "\n") {
+		switch {
+		case strings.HasSuffix(ln, ".practice.tmp-0001"):
+			tmpLines = append(tmpLines, ln)
+		case strings.HasSuffix(ln, ".practice.old-0002"):
+			oldLines = append(oldLines, ln)
+		}
+	}
+	if len(tmpLines) != 1 || !strings.Contains(tmpLines[0], "(remove it)") {
+		t.Errorf("the temporary's lines are %q; want one that says to remove it", tmpLines)
+	}
+	if len(oldLines) != 1 || !strings.HasPrefix(oldLines[0], restoreLine) || strings.Contains(oldLines[0], "(remove it)") || !strings.Contains(oldLines[0], "do NOT remove it") {
+		t.Errorf("the earlier output's lines are %q; want one that says to move it back and not to remove it", oldLines)
+	}
+}
+
+// The line of exit 3 of `edition render --practice` is printed for exit 3 only (the refusals of
+// exit 1 and 2 above do not print it; exit 3 itself cannot be caused from this package, which
+// cannot reach internal/edition's seam): the source holds the test of the exit code around it.
+func TestThePracticeLineOfExit3IsForExit3Only(t *testing.T) {
+	src := readNonTest(t)[cmdFile]
+	const guarded = "\t\tif editionExitCode(err) == exitWriteFailed {\n\t\t\tfmt.Fprintln(stderr, practiceNotReplacedLine)\n\t\t}\n\t\treturn finishRefusal(stderr, err)\n"
+	if strings.Count(src, guarded) != 1 {
+		t.Errorf("%s does not print practiceNotReplacedLine under `if editionExitCode(err) == exitWriteFailed`, just before finishRefusal, exactly once", cmdFile)
+	}
+	if n := strings.Count(src, "practiceNotReplacedLine"); n != 2 {
+		t.Errorf("%s names practiceNotReplacedLine %d times, want 2 (its declaration and the guarded line)", cmdFile, n)
 	}
 }

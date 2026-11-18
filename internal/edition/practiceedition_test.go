@@ -235,17 +235,18 @@ func TestRenderPracticeEdition_AFailureBeforeTheCommitPointLeavesPracticeAsItWas
 }
 
 // The commit point fails and the earlier practice/ cannot be moved back either: still exit 3,
-// and the name that holds the earlier practice/ is listed (practice/ is not there, and that name
-// holds its bytes). A write that fails with a cleanup that fails lists the temporary tree, and
-// practice/ is as it was.
+// and the name that holds the earlier practice/ is listed as the one to RESTORE (Restore), not as
+// a temporary to remove (Left: the new tree, which was removed, leaves nothing there): practice/
+// is not there, and that name holds its bytes. A write that fails with a cleanup that fails lists
+// the temporary tree in Left, nothing in Restore, and practice/ is as it was.
 func TestRenderPracticeEdition_TheNamesLeftBeforeTheCommitPointAreListed(t *testing.T) {
 	f := newPfFix(t)
 	before := treeOf(t, f.practiceDir())
 	edition.SetWriteFaultForTest(t, map[string]error{edition.FaultRenameForTest: syscall.EXDEV, edition.FaultRestoreForTest: syscall.EIO})
 	_, err := f.render()
 	var oe *edition.OutputError
-	if !errors.As(err, &oe) || isInputErr(err) || len(oe.Left) != 1 || !strings.Contains(oe.Left[0], ".practice.old-") {
-		t.Fatalf("err = %v; want an *OutputError that lists the name moved aside", err)
+	if !errors.As(err, &oe) || isInputErr(err) || len(oe.Left) != 0 || len(oe.Restore) != 1 || !strings.Contains(oe.Restore[0], ".practice.old-") {
+		t.Fatalf("err = %v; want an *OutputError whose Restore is the name moved aside and whose Left is empty", err)
 	}
 	if _, err := os.Lstat(f.practiceDir()); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("practice/ is there (%v), but it could not be moved back", err)
@@ -258,8 +259,8 @@ func TestRenderPracticeEdition_TheNamesLeftBeforeTheCommitPointAreListed(t *test
 			t.Errorf("edition/ holds %s, which is neither the edition nor the name moved aside", n)
 		}
 	}
-	if len(aside) != 1 || !strings.Contains(oe.Left[0], aside[0]) {
-		t.Fatalf("edition/ holds %v moved aside and the error lists %v; want the one name", aside, oe.Left)
+	if len(aside) != 1 || !strings.Contains(oe.Restore[0], aside[0]) {
+		t.Fatalf("edition/ holds %v moved aside and the error lists %v to restore; want the one name", aside, oe.Restore)
 	}
 	if got := treeOf(t, filepath.Join(f.editionDir(), aside[0])); !maps.Equal(got, before) {
 		t.Error("the name moved aside does not hold the earlier practice/")
@@ -269,8 +270,8 @@ func TestRenderPracticeEdition_TheNamesLeftBeforeTheCommitPointAreListed(t *test
 	before = treeOf(t, g.practiceDir())
 	edition.SetWriteFaultForTest(t, map[string]error{edition.FaultWriteForTest: syscall.ENOSPC, edition.FaultRemoveAllForTest: syscall.EIO})
 	_, err = g.render()
-	if !errors.As(err, &oe) || isInputErr(err) || len(oe.Left) != 1 || !strings.Contains(oe.Left[0], ".practice.tmp-") {
-		t.Fatalf("err = %v; want an *OutputError that lists the temporary tree", err)
+	if !errors.As(err, &oe) || isInputErr(err) || len(oe.Left) != 1 || !strings.Contains(oe.Left[0], ".practice.tmp-") || len(oe.Restore) != 0 {
+		t.Fatalf("err = %v; want an *OutputError that lists the temporary tree in Left and nothing to restore", err)
 	}
 	if got := treeOf(t, g.practiceDir()); !maps.Equal(got, before) {
 		t.Error("practice/ changed after a failure before the commit point")
@@ -345,6 +346,13 @@ func TestRenderPracticeEdition_RefusalsLeavePracticeAsItWas(t *testing.T) {
 			if err := os.Symlink(moved, f.practiceDir()); err != nil {
 				f.t.Fatal(err)
 			}
+			return f.challenges(), editiontest.CID
+		}, true, ""},
+		{"a practice that is a regular file", func(f *pfFix) (string, string) {
+			if err := os.RemoveAll(f.practiceDir()); err != nil {
+				f.t.Fatal(err)
+			}
+			f.tree.Put(editiontest.ChallengesRel+"/"+editiontest.CID+"/"+edition.EditionDirName+"/"+edition.PracticeDirName, "not a directory\n")
 			return f.challenges(), editiontest.CID
 		}, true, ""},
 	}

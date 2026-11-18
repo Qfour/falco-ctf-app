@@ -203,15 +203,22 @@ func runEditionCheck(args []string, stdout, stderr io.Writer) int {
 	return exitAccepted
 }
 
-// finishRefusal prints err (printRefusal) and the temporary names its *edition.OutputError
-// could not remove, and returns its exit code.
+// finishRefusal prints err (printRefusal), the temporary names its *edition.OutputError could
+// not remove (to be removed) and the names that hold an earlier output it could not move back (to
+// be moved back, never removed), and returns its exit code.
 func finishRefusal(w io.Writer, err error) int {
 	printRefusal(w, err)
 	for _, name := range leftNamesOf(err) {
 		fmt.Fprintln(w, "a temporary name could not be removed and is left beside the output (remove it): "+name)
 	}
+	for _, name := range restoreNamesOf(err) {
+		fmt.Fprintln(w, restoreLine+name)
+	}
 	return editionExitCode(err)
 }
+
+// restoreLine is the start of the line that names an earlier output that could not be moved back.
+const restoreLine = "the earlier output was moved aside and could not be moved back: it is this name beside the output (move it back in place of the output; do NOT remove it): "
 
 // printLeftWarning prints the temporary names that the writer could not remove AFTER the output
 // was put in place (the commit point): the output is whole, the exit code is 0, and the
@@ -290,6 +297,21 @@ func leftNamesOf(err error) []string {
 		var oe *edition.OutputError
 		if errors.As(e, &oe) {
 			out = append(out, oe.Left...)
+		}
+	}
+	return out
+}
+
+// restoreNamesOf is the names that every *edition.OutputError among the leaves of err lists as
+// holding an earlier output that could not be moved back (its Restore).
+func restoreNamesOf(err error) []string {
+	var leaves []error
+	collectLeaves(err, &leaves)
+	var out []string
+	for _, e := range leaves {
+		var oe *edition.OutputError
+		if errors.As(e, &oe) {
+			out = append(out, oe.Restore...)
 		}
 	}
 	return out
@@ -456,6 +478,9 @@ func runEditionRender(args []string, stdout, stderr io.Writer) int {
 // takes no value.
 const practiceFlag = "--practice"
 
+// The line of exit 3 of `edition render --practice` (printed before finishRefusal's lines).
+const practiceNotReplacedLine = "edition render --practice: every check passed and practice/ was not replaced (the output's environment failed): practice/ is as it was, unless a name is listed below to move back"
+
 // practiceFlags are the arguments of `edition render --practice` that take one value. Both are
 // required, and nothing else is taken: the practice edition is the same for every seat, so it
 // has no key, no seats, no previous list and no --out (D20).
@@ -504,7 +529,8 @@ func parsePracticeArgs(args []string) (challenges, cid string, err error) {
 // in place of its practice/) and, when the new practice/ is in place, prints the name that could
 // not be removed after the commit point (the earlier practice/, moved aside), if any, and the one
 // line of success. Its error goes to finishRefusal (the exit code, and the names an
-// *edition.OutputError lists as left).
+// *edition.OutputError lists as left or to restore); when every check passed and the output's
+// environment failed (exit 3), a line before it says that practice/ was not replaced.
 func runEditionRenderPractice(args []string, stdout, stderr io.Writer) int {
 	challenges, cid, err := parsePracticeArgs(args)
 	if err != nil {
@@ -513,7 +539,9 @@ func runEditionRenderPractice(args []string, stdout, stderr io.Writer) int {
 	}
 	left, err := edition.RenderPracticeEdition(challenges, cid)
 	if err != nil {
-		fmt.Fprintln(stderr, "edition render --practice: practice/ was not replaced (a name .practice.old-... listed below as left holds the earlier practice/: move it back rather than remove it)")
+		if editionExitCode(err) == exitWriteFailed {
+			fmt.Fprintln(stderr, practiceNotReplacedLine)
+		}
 		return finishRefusal(stderr, err)
 	}
 	printLeftWarning(stderr, "edition render --practice", left)

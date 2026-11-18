@@ -49,7 +49,7 @@ help:
 	@echo "  gen-values      — regenerate challenge values.yaml / values-all.yaml / values-scenario-<name>.yaml from plant.sh + scenarios/"
 	@echo "  gen-attack      — regenerate ATT&CK Navigator layer + coverage table from falco-rule.yaml attack: blocks"
 	@echo "  edition-practice — CID=<cid>: re-render challenges/<cid>/edition/practice/ from its edition.yaml + template/ with scoreboard edition render --practice in Dockerfile.edition-practice (no Go on the host; ADR-0056 D20); commits nothing"
-	@echo "  check-flags     — fail if real flags leak into tracked files or values are stale; + deploy-user.sh --flags-file validation tests + deploy-time missions allowlist (ADR-0026 V4, 3-8) selftest; + self-tests of the shared shell case-table reader scripts/lib/casetable.sh and the deploy-user.sh stub harness scripts/lib/deploy-user-harness.sh (app#509); + deploy-user.sh seat-grammar check against the shared case table (app#480); + deploy-user.sh challenge-id / scenario-name grammar check against their shared case tables (app#494); + the shell evidence-bundle digest against the shared case table and deploy-user.sh --evidence-dir / --evidence-digests with stub kubectl / helm (ADR-0056 V16 / V17 / V49 / V50); + fail on any tracked email outside the reserved domains (ADR-0034 V17)"
+	@echo "  check-flags     — fail if real flags leak into tracked files or values are stale; + deploy-user.sh --flags-file validation tests + deploy-time missions allowlist (ADR-0026 V4, 3-8) selftest; + self-tests of the shared shell case-table reader scripts/lib/casetable.sh and the deploy-user.sh stub harness scripts/lib/deploy-user-harness.sh (app#509); + deploy-user.sh seat-grammar check against the shared case table (app#480); + deploy-user.sh challenge-id / scenario-name grammar check against their shared case tables (app#494); + the shell evidence-bundle digest against the shared case table and deploy-user.sh --evidence-dir / --evidence-digests with stub kubectl / helm (ADR-0056 V16 / V17 / V49 / V50); + fail on any tracked email outside the reserved domains (ADR-0034 V17); + fail on a tracked file with the header of an event's render output (scripts/check-edition-headers.sh + its self-test, ADR-0056 V84)"
 	@echo "  check-template-hex — fail if a raw hex color literal appears under view/templates/ (recursive: index.html + portal/*.tmpl; app#116 — single design-token source is static/tokens.css)"
 	@echo "  check-portal-render — (macOS, optional; not in CI) run the portal evade-card render functions under jsc and assert ADR-0027 D6 (no clean claim for a non-current evade; dirty always shown; escaping)"
 	@echo "  check-rules     — fail if a challenge references a non-existent Falco rule"
@@ -283,20 +283,41 @@ gen-values:
 # `make gen` does; no Go on the host, no network in the build of the binary or in the render).
 # The export goes to a new temporary directory and not to `-o .`: an export is written over what
 # is there and removes nothing, so a file the new render no longer makes would stay behind in
-# practice/. Only after the build succeeded is the host's practice/ replaced by the exported one.
+# practice/. Only after the build succeeded is the host's practice/ replaced by the exported one,
+# by the steps of internal/edition's replaceTreeAtomic: the export is moved to a temporary name in
+# challenges/<cid>/edition/ (the same directory, so the last step is a rename), the practice/
+# that is there is moved aside to a second name, the new one is renamed to practice/, and what was
+# moved aside is removed. A failure on the way moves it back (practice/ is as it was), and a
+# practice/ that was not there is made. Each step tests its own status (the recipe has no -e).
 # CID is checked here for an early, readable error; the command checks it again. Nothing is
 # committed: review `git diff`, then commit by hand.
 edition-practice:
 	@case "$(CID)" in ''|-*|*[!a-z0-9-]*) echo "error: CID=<challenge id> is required (an investigate challenge with challenges/<cid>/edition/)" >&2; exit 2;; esac
 	@test -d "challenges/$(CID)/edition" || { echo "error: challenges/$(CID)/edition/ does not exist" >&2; exit 2; }
-	@out="$$(mktemp -d)" || exit 1; \
-	trap 'rm -rf "$$out"' EXIT; \
+	@ed="challenges/$(CID)/edition"; dest="$$ed/practice"; \
+	tmp="$$ed/.practice.tmp-make-$$$$"; old="$$ed/.practice.old-make-$$$$"; \
+	out="$$(mktemp -d)" || exit 1; \
+	if [ -z "$$out" ] || [ ! -d "$$out" ]; then echo "error: no temporary directory for the export" >&2; exit 1; fi; \
+	trap 'rm -rf "$$out" "$$tmp"' EXIT; \
 	docker build -f Dockerfile.edition-practice --target export --build-arg CID="$(CID)" -o "$$out" . || exit 1; \
 	new="$$out/challenges/$(CID)/edition/practice"; \
 	if [ ! -d "$$new" ] || [ -z "$$(ls -A "$$new")" ]; then echo "error: the export holds no practice/ of $(CID)" >&2; exit 1; fi; \
-	rm -rf "challenges/$(CID)/edition/practice" || exit 1; \
-	mv "$$new" "challenges/$(CID)/edition/practice" || { echo "error: practice/ was removed and the new one could not be moved in (git checkout -- challenges/$(CID)/edition/practice restores it)" >&2; exit 1; }; \
-	echo "== challenges/$(CID)/edition/practice/ is the new render: review git diff, then commit it =="
+	for p in "$$tmp" "$$old"; do if [ -e "$$p" ] || [ -L "$$p" ]; then echo "error: $$p is in the way (remove it)" >&2; exit 1; fi; done; \
+	mv "$$new" "$$tmp" || { echo "error: the export could not be moved beside practice/; practice/ is as it was" >&2; exit 1; }; \
+	had=0; \
+	if [ -e "$$dest" ] || [ -L "$$dest" ]; then \
+	  if [ -L "$$dest" ] || [ ! -d "$$dest" ]; then echo "error: $$dest is not a directory (a link or a file is not replaced)" >&2; exit 1; fi; \
+	  mv "$$dest" "$$old" || { echo "error: practice/ could not be moved aside; it is as it was" >&2; exit 1; }; \
+	  had=1; \
+	fi; \
+	if [ -e "$$dest" ] || [ -L "$$dest" ] || ! mv "$$tmp" "$$dest"; then \
+	  if [ "$$had" = 1 ]; then \
+	    if [ -e "$$dest" ] || [ -L "$$dest" ] || ! mv "$$old" "$$dest"; then echo "error: the earlier practice/ could not be moved back: it is $$old (move it back to $$dest, do not remove it)" >&2; exit 1; fi; \
+	  fi; \
+	  echo "error: the new practice/ could not be put in place; practice/ is as it was" >&2; exit 1; \
+	fi; \
+	if [ "$$had" = 1 ] && ! rm -rf "$$old"; then echo "warning: practice/ is the new render; the earlier one, moved aside, could not be removed (remove it): $$old" >&2; fi; \
+	echo "== $$dest/ is the new render: review git diff, then commit it =="
 
 # Regenerates challenges/attack-navigator-layer.json + challenges/ATTACK-COVERAGE.md
 # from the attack: blocks in challenges/*/falco-rule.yaml (single source). Idempotent.

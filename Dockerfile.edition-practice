@@ -31,7 +31,12 @@ FROM build AS render
 # refuses an id outside the grammar of internal/catalog/challengeid.
 ARG CID
 COPY challenges ./challenges
+# The practice/ that COPY brought in is removed first: it sits in a lower image layer, and
+# moving a lower-layer directory aside (the command's replace) fails on overlayfs with EXDEV
+# (exit 3). The render here always writes a fresh practice/; the host's copy is replaced by
+# the Makefile, which keeps the earlier one until the new one is in place.
 RUN --network=none case "${CID}" in ''|*[!a-z0-9-]*) echo "error: CID=<challenge id> is required (the build-arg)" >&2; exit 2;; esac \
+ && rm -rf "/src/challenges/${CID}/edition/practice" \
  && /out/scoreboard edition render --practice --challenges /src/challenges --cid "${CID}"
 
 FROM scratch AS export
