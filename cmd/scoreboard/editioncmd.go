@@ -22,7 +22,9 @@ package main
 // its form, an output that already exists, an error of no kind the library gives, or a mix of
 // kinds (nothing is written), 3 = every check passed and the output could not be put in place
 // (the output's environment; nothing is at the output, and the same input can be given again).
-// `edition render --practice` is A4e-3b: until it lands it is a usage error.
+// `edition render --practice` (A4e-3b) has the same codes: 0 = the challenge's practice/ is the
+// new render (an earlier practice/ moved aside that could not be removed is printed), 1 and 2 as
+// above, 3 = practice/ was not replaced and is as it was (or the name that holds it is printed).
 
 import (
 	"errors"
@@ -201,15 +203,22 @@ func runEditionCheck(args []string, stdout, stderr io.Writer) int {
 	return exitAccepted
 }
 
-// finishRefusal prints err (printRefusal) and the temporary names its *edition.OutputError
-// could not remove, and returns its exit code.
+// finishRefusal prints err (printRefusal), the temporary names its *edition.OutputError could
+// not remove (to be removed) and the names that hold an earlier output it could not move back (to
+// be moved back, never removed), and returns its exit code.
 func finishRefusal(w io.Writer, err error) int {
 	printRefusal(w, err)
 	for _, name := range leftNamesOf(err) {
 		fmt.Fprintln(w, "a temporary name could not be removed and is left beside the output (remove it): "+name)
 	}
+	for _, name := range restoreNamesOf(err) {
+		fmt.Fprintln(w, restoreLine+name)
+	}
 	return editionExitCode(err)
 }
+
+// restoreLine is the start of the line that names an earlier output that could not be moved back.
+const restoreLine = "the earlier output was moved aside and could not be moved back: it is this name beside the output (move it back in place of the output; do NOT remove it): "
 
 // printLeftWarning prints the temporary names that the writer could not remove AFTER the output
 // was put in place (the commit point): the output is whole, the exit code is 0, and the
@@ -288,6 +297,21 @@ func leftNamesOf(err error) []string {
 		var oe *edition.OutputError
 		if errors.As(e, &oe) {
 			out = append(out, oe.Left...)
+		}
+	}
+	return out
+}
+
+// restoreNamesOf is the names that every *edition.OutputError among the leaves of err lists as
+// holding an earlier output that could not be moved back (its Restore).
+func restoreNamesOf(err error) []string {
+	var leaves []error
+	collectLeaves(err, &leaves)
+	var out []string
+	for _, e := range leaves {
+		var oe *edition.OutputError
+		if errors.As(e, &oe) {
+			out = append(out, oe.Restore...)
 		}
 	}
 	return out
@@ -428,13 +452,11 @@ func parseRenderArgs(args []string) (edition.RenderEventInput, error) {
 // and, when the output is in place, prints the one line of success. Its error goes to
 // finishRefusal (the exit code, and the temporary names an *edition.OutputError lists as left:
 // the commit point of a tree is its rename, so a render leaves no name after it and has no
-// warning of its own). `--practice` is the next stage.
+// warning of its own). With `--practice` among the arguments it is the practice edition's
+// command instead (runEditionRenderPractice), whose arguments are its own.
 func runEditionRender(args []string, stdout, stderr io.Writer) int {
-	for _, a := range args {
-		if name, _, _ := strings.Cut(a, "="); name == "--practice" {
-			fmt.Fprintln(stderr, "edition render --practice is the next stage (ADR-0056 D19 A4e-3b) and is not in this build")
-			return exitUsage
-		}
+	if hasPracticeArg(args) {
+		return runEditionRenderPractice(args, stdout, stderr)
 	}
 	in, err := parseRenderArgs(args)
 	if err != nil {
@@ -447,5 +469,82 @@ func runEditionRender(args []string, stdout, stderr io.Writer) int {
 		return finishRefusal(stderr, err)
 	}
 	fmt.Fprintf(stdout, "ok run=%s seats=%d challenges=%d key-fingerprint=%s\n", ev.RunID(), ev.Seats(), ev.Challenges(), ev.KeyFingerprint())
+	return exitAccepted
+}
+
+// ---- edition render --practice (the practice edition's; ADR-0056 D20, D19 A4e-3b) ----
+
+// practiceFlag is the argument that makes `edition render` the practice edition's command. It
+// takes no value.
+const practiceFlag = "--practice"
+
+// The line of exit 3 of `edition render --practice` (printed before finishRefusal's lines).
+const practiceNotReplacedLine = "edition render --practice: every check passed and practice/ was not replaced (the output's environment failed): practice/ is as it was, unless a name is listed below to move back"
+
+// practiceFlags are the arguments of `edition render --practice` that take one value. Both are
+// required, and nothing else is taken: the practice edition is the same for every seat, so it
+// has no key, no seats, no previous list and no --out (D20).
+var practiceFlags = []string{"--challenges", "--cid"}
+
+// hasPracticeArg reports whether a word of args is --practice (with a value or not: a value is
+// refused by parsePracticeArgs).
+func hasPracticeArg(args []string) bool {
+	for _, a := range args {
+		if name, _, _ := strings.Cut(a, "="); name == practiceFlag {
+			return true
+		}
+	}
+	return false
+}
+
+// parsePracticeArgs reads the arguments of `edition render --practice`: the challenges tree and
+// the challenge id. An argument of the event's render (a key, the seats, the previous seats or
+// --no-previous, the event edition, the scenario, the flags or --out) is refused by name, and so
+// is anything readEditionArgs refuses (a missing, repeated or unknown argument, a value that is
+// missing, --practice with a value or twice, a positional word).
+func parsePracticeArgs(args []string) (challenges, cid string, err error) {
+	for _, a := range args {
+		name, _, _ := strings.Cut(a, "=")
+		if !isArgName(name, practiceFlags) && (name == "--no-previous" || isArgName(name, renderFlags)) {
+			return "", "", errors.New(name + " is an argument of the event's render: with --practice only --challenges and --cid are taken (the practice edition is the same for every seat: no key, no seats, no previous list, no --out)")
+		}
+	}
+	w, err := readEditionArgs(args, practiceFlags, "", practiceFlag)
+	if err != nil {
+		return "", "", err
+	}
+	if !w.flag {
+		return "", "", errors.New(practiceFlag + " is required")
+	}
+	for _, name := range practiceFlags {
+		if _, ok := w.values[name]; !ok {
+			return "", "", errors.New(name + " is required")
+		}
+	}
+	return w.values["--challenges"], w.values["--cid"], nil
+}
+
+// runEditionRenderPractice is `scoreboard edition render --practice`: it reads the arguments,
+// calls RenderPracticeEdition (which renders the practice edition of the challenge and puts it
+// in place of its practice/) and, when the new practice/ is in place, prints the name that could
+// not be removed after the commit point (the earlier practice/, moved aside), if any, and the one
+// line of success. Its error goes to finishRefusal (the exit code, and the names an
+// *edition.OutputError lists as left or to restore); when every check passed and the output's
+// environment failed (exit 3), a line before it says that practice/ was not replaced.
+func runEditionRenderPractice(args []string, stdout, stderr io.Writer) int {
+	challenges, cid, err := parsePracticeArgs(args)
+	if err != nil {
+		fmt.Fprintln(stderr, "edition render --practice: "+err.Error())
+		return exitUsage
+	}
+	left, err := edition.RenderPracticeEdition(challenges, cid)
+	if err != nil {
+		if editionExitCode(err) == exitWriteFailed {
+			fmt.Fprintln(stderr, practiceNotReplacedLine)
+		}
+		return finishRefusal(stderr, err)
+	}
+	printLeftWarning(stderr, "edition render --practice", left)
+	fmt.Fprintf(stdout, "ok practice cid=%s\n", cid)
 	return exitAccepted
 }

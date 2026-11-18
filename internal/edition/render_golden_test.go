@@ -36,6 +36,7 @@ import (
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/edition"
+	"github.com/Qfour/falco-ctf-app/internal/edition/editiontest"
 )
 
 // The names of the layout are the package's (practicelayout.go: the one definition), not a
@@ -307,11 +308,90 @@ func TestGolden_WriteTheFixture(t *testing.T) {
 	t.Logf("wrote %s: answers.tsv, digests.tsv and %d evidence files", pdir, len(pf.Evidence))
 }
 
-// V11 / V67 on the real tree: every investigate challenge that has an edition/ is compared
-// with its committed practice/. The tree has none until ADR-0056 A7, so this compares 0
-// editions and passes today. That is stated here and not hidden: A7 puts the first
-// challenge in, and flips this to "at least one" in the same PR (V47 does the same for the
-// practice answers).
+// practiceRendered is the files of practice/ that edition.yaml and template/ of the challenge
+// ch of the tree at treeDir render (ParseSpec, RenderPractice, PracticeOutput), as an error and
+// not a test failure, so that practiceStale can report every challenge.
+func practiceRendered(treeDir string, ch catalog.Challenge) (*edition.PracticeFiles, error) {
+	ed := filepath.Join(treeDir, ch.Dir(), goldenEditionDir)
+	raw, err := os.ReadFile(filepath.Join(ed, edition.SpecFileName))
+	if err != nil {
+		return nil, err
+	}
+	spec, err := edition.ParseSpec(raw)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(filepath.Join(ed, edition.TemplateDirName))
+	if err != nil {
+		return nil, err
+	}
+	var files []edition.BundleFile
+	for _, e := range entries {
+		if !e.Type().IsRegular() {
+			return nil, fmt.Errorf("%s/%s is not a regular file (the template is flat)", edition.TemplateDirName, e.Name())
+		}
+		data, err := os.ReadFile(filepath.Join(ed, edition.TemplateDirName, e.Name()))
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, edition.BundleFile{Name: e.Name(), Data: data})
+	}
+	r, err := edition.RenderPractice(ch.ID, spec, ch.Investigate.Questions, files)
+	if err != nil {
+		return nil, err
+	}
+	return edition.PracticeOutput(r)
+}
+
+// practiceStale compares, for every challenge of the tree at treeDir that has an edition/, the
+// committed practice/ with what its edition.yaml and template/ render, byte for byte (the set of
+// the files and their content: goldenDiff). compared is how many challenges have an edition/;
+// stale has one line per challenge whose practice/ is not the render (or that cannot be
+// rendered, or that has an edition/ and is not an investigate challenge), and the line says what
+// to run. err is a tree that cannot be read at all.
+func practiceStale(treeDir string) (compared int, stale []string, err error) {
+	cat, err := catalog.Load(treeDir)
+	if err != nil {
+		return 0, nil, err
+	}
+	for _, id := range cat.IDs() {
+		ch := cat[id]
+		editionDir := filepath.Join(treeDir, ch.Dir(), goldenEditionDir)
+		if _, err := os.Lstat(editionDir); err != nil {
+			if os.IsNotExist(err) {
+				continue // a challenge with no edition: TestPracticeEditions_EveryInvestigateChallengeHasOne's
+			}
+			return compared, stale, err
+		}
+		compared++
+		run := " (run `make edition-practice CID=" + id + "` and commit its practice/)"
+		if ch.Type != catalog.TypeInvestigate || ch.Investigate == nil {
+			stale = append(stale, id+": has an edition/ and is not an investigate challenge")
+			continue
+		}
+		want, err := practiceRendered(treeDir, ch)
+		if err != nil {
+			stale = append(stale, id+": edition.yaml and template/ do not render: "+err.Error())
+			continue
+		}
+		got, err := goldenOnDisk(editionDir)
+		if err != nil {
+			stale = append(stale, id+": the committed practice/ cannot be read ("+err.Error()+")"+run)
+			continue
+		}
+		if d := goldenDiff(want, got); len(d) != 0 {
+			stale = append(stale, id+": the committed practice/ is not what edition.yaml and template/ render: "+strings.Join(d, ", ")+run)
+		}
+	}
+	return compared, stale, nil
+}
+
+// V11 / V67 on the real tree, and #658 (R4#2): practice/ is a generated file that is committed,
+// so an edition.yaml or a template/ changed without `make edition-practice` is red here (in
+// `make test`, the required check). Every challenge under challenges/ that has an edition/ is
+// compared. The tree has none until ADR-0056 A7, so this compares 0 editions and passes today.
+// That is stated here and not hidden: A7 puts the first challenge in, and flips this to "at least
+// one" in the same PR (V47 does the same for the practice answers).
 func TestGolden_EveryEditionOfTheImageMatchesItsPracticeDir(t *testing.T) {
 	cat, err := catalog.Load(goldenRealDir)
 	if err != nil {
@@ -320,30 +400,51 @@ func TestGolden_EveryEditionOfTheImageMatchesItsPracticeDir(t *testing.T) {
 	if len(cat) == 0 {
 		t.Fatalf("catalog.Load(%s) found no challenge: the path is wrong", goldenRealDir)
 	}
-	compared := 0
-	for _, id := range cat.IDs() {
-		ch := cat[id]
-		if ch.Type != catalog.TypeInvestigate {
-			continue
-		}
-		editionDir := filepath.Join(goldenRealDir, ch.Dir(), goldenEditionDir)
-		if _, err := os.Lstat(editionDir); err != nil {
-			if os.IsNotExist(err) {
-				continue // an investigate challenge with no edition: TestPracticeEditions_EveryInvestigateChallengeHasOne's
-			}
-			t.Fatalf("%s: %v", id, err)
-		}
-		compared++
-		t.Run(id, func(t *testing.T) {
-			want := goldenRender(t, goldenRealDir, ch)
-			got, err := goldenOnDisk(editionDir)
-			if err != nil {
-				t.Fatalf("the committed practice/ of %s cannot be read: %v", id, err)
-			}
-			if d := goldenDiff(want, got); len(d) != 0 {
-				t.Errorf("the committed practice/ of %s is not what the renderer gives: %v", id, d)
-			}
-		})
+	compared, stale, err := practiceStale(goldenRealDir)
+	if err != nil {
+		t.Fatalf("the tree %s cannot be read: %v", goldenRealDir, err)
+	}
+	for _, s := range stale {
+		t.Error(s)
 	}
 	t.Logf("%d practice editions of the real tree were compared (0 until ADR-0056 A7)", compared)
+}
+
+// The comparison of the real tree can fail: on a copy of the golden fixture's challenge, the
+// committed practice/ is accepted as it is, and a template with one more line, or a practice/
+// that is gone, is reported with what to run.
+func TestGolden_TheStalenessCheckSeesAStalePracticeDir(t *testing.T) {
+	ch := goldenFixture(t)
+	tplRel := "challenges/" + ch.Dir() + "/" + goldenEditionDir + "/" + edition.TemplateDirName
+	fresh := func() *editiontest.Tree {
+		tree := editiontest.NewTree(t)
+		tree.CopyTree(goldenFixtureDir, "challenges")
+		return tree
+	}
+
+	tree := fresh()
+	compared, stale, err := practiceStale(tree.Path("challenges"))
+	if err != nil || compared != 1 || len(stale) != 0 {
+		t.Fatalf("a copy of the fixture: compared %d, stale %v, err %v; want 1, none, nil", compared, stale, err)
+	}
+
+	tree = fresh()
+	entries, err := os.ReadDir(tree.Path(tplRel))
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("the template of the copy: %v, %v", entries, err)
+	}
+	name := tplRel + "/" + entries[0].Name()
+	tree.Put(name, tree.Read(name)+"x\n")
+	compared, stale, err = practiceStale(tree.Path("challenges"))
+	if err != nil || compared != 1 || len(stale) != 1 || !strings.Contains(stale[0], "make edition-practice CID="+ch.ID) {
+		t.Errorf("a template with one more line: compared %d, stale %v, err %v; want one line that says to run make edition-practice", compared, stale, err)
+	}
+
+	tree = fresh()
+	if err := os.RemoveAll(tree.Path("challenges/" + ch.Dir() + "/" + goldenEditionDir + "/" + goldenPracticeDir)); err != nil {
+		t.Fatal(err)
+	}
+	if _, stale, err = practiceStale(tree.Path("challenges")); err != nil || len(stale) != 1 || !strings.Contains(stale[0], "make edition-practice CID="+ch.ID) {
+		t.Errorf("no practice/: stale %v, err %v; want one line that says to run make edition-practice", stale, err)
+	}
 }

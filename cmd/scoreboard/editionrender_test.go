@@ -160,9 +160,10 @@ func TestEditionRender_TheRoundTripThroughEditionCheck(t *testing.T) {
 	}
 }
 
-// V80: every usage error is exit 2, prints nothing on stdout and writes nothing: each argument
-// missing, the two previous arguments both or neither, an unknown or repeated one, --practice
-// (the next stage, A4e-3b).
+// V80 and V81: every usage error is exit 2, prints nothing on stdout and writes nothing: each
+// argument missing, the two previous arguments both or neither, an unknown or repeated one, and
+// --practice with the event's arguments (or with a value). The practice edition's own cases are
+// editionpractice_test.go's.
 func TestEditionRender_UsageErrorsAreExit2(t *testing.T) {
 	f := newErFix(t)
 	good := f.args(f.out())
@@ -179,8 +180,8 @@ func TestEditionRender_UsageErrorsAreExit2(t *testing.T) {
 		tc{"both --previous-seats and --no-previous", "exactly one", append(slices.Clone(good), "--previous-seats", f.tree.Path(editiontest.SeatsRel))},
 		tc{"an unknown argument", "unknown", append(slices.Clone(good), "--key", "x")},
 		tc{"a repeated argument", "twice", append(slices.Clone(good), "--seats", f.tree.Path(editiontest.SeatsRel))},
-		tc{"--practice (the next stage)", "next stage", append(slices.Clone(good), "--practice")},
-		tc{"--practice with a value", "next stage", []string{"--practice=yes"}},
+		tc{"--practice with the event's arguments", "an argument of the event's render", append(slices.Clone(good), "--practice")},
+		tc{"--practice with a value", "takes no value", []string{"--practice=yes"}},
 		tc{"no argument", "required", nil},
 	)
 	for _, c := range cases {
@@ -214,6 +215,23 @@ func TestEditionRender_RefusalsWriteNothing(t *testing.T) {
 		}, exitUsage, ""},
 		{"a key of mode 0644", func(f *erFix) string {
 			f.tree.PlaceKey(editiontest.KeyRel, hexKey+"\n", 0o644)
+			return f.out()
+		}, exitUsage, ""},
+		// D20 / amendment 14: lower-case hex on one line and one final LF, nothing else.
+		{"a key that ends with CRLF", func(f *erFix) string {
+			f.tree.PlaceKey(editiontest.KeyRel, hexKey+"\r\n", 0o600)
+			return f.out()
+		}, exitUsage, ""},
+		{"a key with a second line", func(f *erFix) string {
+			f.tree.PlaceKey(editiontest.KeyRel, hexKey+"\n\n", 0o600)
+			return f.out()
+		}, exitUsage, ""},
+		{"a key with a space before it", func(f *erFix) string {
+			f.tree.PlaceKey(editiontest.KeyRel, " "+hexKey+"\n", 0o600)
+			return f.out()
+		}, exitUsage, ""},
+		{"a key with a space after it", func(f *erFix) string {
+			f.tree.PlaceKey(editiontest.KeyRel, hexKey+" \n", 0o600)
 			return f.out()
 		}, exitUsage, ""},
 		{"a key that is a link", func(f *erFix) string {

@@ -525,3 +525,36 @@ func TestWriteTreeAtomic_AFailureBeforeTheRenameIsAnOutputError(t *testing.T) {
 		t.Errorf("the output holds (%q, %v)", got, err)
 	}
 }
+
+// replaceTreeAtomic replaces a directory only (replaceableDir): a destination that is a regular
+// file is an *InputError and is left as it was, with nothing made beside it; a destination that
+// cannot be looked at (its Lstat fails with something else than "does not exist": here ENOTDIR,
+// a path under a regular file, which needs no permission to cause) is an *OutputError, and
+// nothing is made either.
+func TestReplaceTreeAtomic_RefusesWhatIsNotADirectory(t *testing.T) {
+	files := []outputFile{{Path: "answers.tsv", Data: []byte("a")}}
+
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "practice")
+	filesWrite(t, dest, "a file where the directory would be\n")
+	left, err := replaceTreeAtomic(dest, files)
+	if !isInput(err) || isOutput(err) || len(left) != 0 {
+		t.Errorf("a regular file at the destination: (%v, %v), want an *InputError", left, err)
+	}
+	if got, rerr := os.ReadFile(dest); rerr != nil || string(got) != "a file where the directory would be\n" {
+		t.Errorf("the file at the destination is (%q, %v), want it as it was", got, rerr)
+	}
+	if got := dirNames(t, dir); !slices.Equal(got, []string{"practice"}) {
+		t.Errorf("the directory holds %v, want the file only (nothing made beside it)", got)
+	}
+
+	dir = t.TempDir()
+	filesWrite(t, filepath.Join(dir, "edition"), "a file where the edition directory would be\n")
+	left, err = replaceTreeAtomic(filepath.Join(dir, "edition", "practice"), files)
+	if !isOutput(err) || isInput(err) || len(left) != 0 || !errors.Is(err, syscall.ENOTDIR) {
+		t.Errorf("a destination under a regular file: (%v, %v), want an *OutputError of ENOTDIR", left, err)
+	}
+	if got := dirNames(t, dir); !slices.Equal(got, []string{"edition"}) {
+		t.Errorf("the directory holds %v, want the file only", got)
+	}
+}

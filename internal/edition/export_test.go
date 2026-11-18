@@ -33,13 +33,16 @@ func CheckedEventForTest(runID string, rows []DigestRow) *CheckedEvent {
 
 // The steps of atomicwrite.go's seam writeFault (ADR-0056 V87, V92), for the external tests of
 // the writers' failures: the write of a file's data, the link and the remove of the single
-// file, the rename and the remove of a tree.
+// file, the rename and the remove of a tree, and the two renames of a replacement (the earlier
+// tree moved aside, and moved back: V81).
 const (
 	FaultWriteForTest     = faultWrite
 	FaultLinkForTest      = faultLink
 	FaultRemoveForTest    = faultRemove
 	FaultRenameForTest    = faultRename
 	FaultRemoveAllForTest = faultRemoveAll
+	FaultBackupForTest    = faultBackup
+	FaultRestoreForTest   = faultRestore
 )
 
 // SetWriteFaultForTest makes the steps of fail fail with their error until the test ends (the
