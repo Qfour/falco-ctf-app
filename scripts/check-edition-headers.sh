@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Public-repo guard of ADR-0056 V84 (D20, A4e-3b): no tracked file carries one of the THREE
+# Public-repo guard of ADR-0056 V84 (D20, A4e-3b) and V93 (A4e-3c, the second check below).
+# V84: no tracked file carries one of the THREE
 # version headers of an EVENT's `scoreboard edition render` / `edition check` output: the header
 # of the event's answers table, of its bundle digests file and of its render record (the Go
 # definitions: internal/edition/table.go headerPrefix, digests.go digestsHeaderPrefix,
@@ -19,23 +20,37 @@
 # not the practice form and is refused (fail-closed). Every tracked file is read, a binary one
 # as text (-a), and only tracked files: an untracked render output is not in the repository yet.
 #
-# What this does NOT cover: an event's output that has none of the three headers. The bundles of
-# a render (`--out`/evidence/<seat>/<cid>/<file>) are plain files with no header, so a commit of
-# those files alone is not seen here. What keeps them out is `edition render` itself (its --out
-# is refused inside a git worktree or inside the challenges tree: D20) and the platform's check on
-# the host side of the mount (ADR-0056 V83). A check of committed evidence files on their own is
-# for a later amendment of ADR-0056.
+# The second check (ADR-0056 V93, A4e-3c): the bundles of an event's render
+# (`--out`/evidence/<seat>/<cid>/<file>) are plain files with no header, so the check above does
+# not see a commit of those files alone, and one bundle is a leak of answers. So no tracked PATH
+# may hold, at any depth, the segments `evidence/<seat>/<cid>/` followed by one segment or more
+# (a nested <file> too). Each of the three is matched as a WHOLE segment: `evidence` is the
+# event's evidence directory name (EVIDENCE_DIR), <seat> is in the seat grammar of ADR-0042
+# (SEAT_PATTERN) and <cid> in the challenge id grammar (CHALLENGE_ID_PATTERN); `myevidence/...`,
+# or a segment of which only a part has the shape of a seat, is not a match. The practice
+# edition's flat bundle (challenges/<cid>/edition/practice/evidence/<file>) has no seat
+# directory and does not match; a seat-shaped nesting under it does, and is refused. Any other
+# nesting there is an error of the practice layout, which internal/edition (practicelayout.go,
+# V11, V81) refuses: this script keeps no second definition of that layout. A tracked path that
+# must have the shape (a test fixture) is named in EVIDENCE_ALLOWED_PATHS, one tracked regular
+# file an entry, as for ALLOWED_PATHS (today: none). Not covered: a bundle committed under a
+# renamed evidence directory, or the seat directory alone; `edition render` refuses an --out in
+# a git worktree or in the challenges tree (D20), and the platform checks the host side of the
+# mount (ADR-0056 V83).
 #
-# The four constants and the list ALLOWED_PATHS below are held to the Go definitions (and the
-# list to its one entry) by internal/edition/flagguard_headers_internal_test.go, which also holds
-# scripts/check-flags.sh to running both modes of this script.
+# The four header constants and the list ALLOWED_PATHS below are held to the Go definitions (and
+# the list to its one entry) by internal/edition/flagguard_headers_internal_test.go, which also
+# holds scripts/check-flags.sh to running both modes of this script. The three parts of the path
+# rule, the way scan_evidence joins them and the empty EVIDENCE_ALLOWED_PATHS are held by
+# internal/edition/flagguard_evidence_internal_test.go.
 #
 # Usage: bash scripts/check-edition-headers.sh             scan the tracked files of the work tree
 #        bash scripts/check-edition-headers.sh --selftest  the scan can fail (scratch repositories)
 #   CHECK_EDITION_HEADERS_ROOT=<dir>  scan that git work tree instead (the selftest uses it)
 # (The file's mode is 0644: it is run through bash.)
 # Exit: 0 clean, 1 violation(s), 2 the scan itself failed or was misused (fail-closed: a broken
-# `git grep` is not "no header found").
+# `git grep` or `git ls-files` is not "nothing found"). Both checks run on every scan; the exit
+# is the larger of their two.
 # Run by scripts/check-flags.sh (make check-flags; CI flag-guard), both modes.
 set -euo pipefail
 
@@ -45,6 +60,20 @@ RECORD_HEADER='# falco-ctf render-record v1'
 PRACTICE_RUN_ID='00000000000000000000000000000000'
 ALLOWED_PATHS=(
   'internal/edition/testdata/digests-golden/digests.tsv'
+)
+
+# The three parts of the path rule of V93, byte for byte the Go definitions: EventEvidenceDirName
+# (internal/edition/practicelayout.go), identity.SeatPattern (internal/identity/seat.go, the
+# grammar of ADR-0042) and challengeid.Pattern (internal/catalog/challengeid). The two Go
+# patterns are POSIX EREs as they stand, with the same language: they use only bracket
+# expressions of ASCII ranges with a last literal `-`, a bounded repetition {m,n}, a group and
+# `?`, which mean the same in an ERE and in Go's syntax, and scan_evidence matches under
+# LC_ALL=C, where a range is a range of bytes. So no translation is kept here: the copy is the
+# definition's text, and grammar_body only takes the anchors off to put the body between `/`.
+EVIDENCE_DIR='evidence'
+SEAT_PATTERN='^[a-z0-9]([a-z0-9-]{0,51}[a-z0-9])?$'
+CHALLENGE_ID_PATTERN='^[0-9]{2}-[a-z0-9-]{1,60}$'
+EVIDENCE_ALLOWED_PATHS=(
 )
 
 # literal_ok: the header constants are spliced into an extended regular expression, so they may
@@ -151,6 +180,135 @@ scan() {
   return "$rc"
 }
 
+# grammar_body <pattern>: the pattern without its one leading `^` and one trailing `$`, printed,
+# so that it can stand between two `/` of the path rule. It fails (prints nothing) when the
+# pattern is not anchored at both ends, or its body is empty or holds `^`, `$`, `/`, `.` or a
+# backslash: an anchor, a negated class or a `.` there could match a `/` or the edge of the path
+# and stop the body from being one whole segment, and a backslash is not taken alike by every
+# ERE. (A top-level `|` cannot leak: scan_evidence puts each body in a group.)
+grammar_body() {
+  local p="$1" b
+  case "$p" in
+    '^'*'$') ;;
+    *) return 1 ;;
+  esac
+  b="${p#^}"
+  b="${b%\$}"
+  case "$b" in
+    '' | *'^'* | *'$'* | *'/'* | *'.'* | *'\'*) return 1 ;;
+  esac
+  printf '%s\n' "$b"
+}
+
+# evidence_hits <ere> <list>: prints (shell-quoted, one a line) each path of the NUL-separated
+# list whose form "/<path>" the ERE matches, and returns 0 when it printed one, 1 when none
+# matched, 2 when the ERE is broken: it must take its own example and refuse two near misses
+# first, and a match that is neither a hit nor a miss ([[ =~ ]] exit 2) is not a miss. The caller
+# runs it in a subshell with LC_ALL=C, so that a bracket range is a range of bytes and no byte of
+# a path is an invalid character.
+evidence_hits() {
+  local re="$1" list="$2" p m hit=1
+  if ! [[ "/${EVIDENCE_DIR}/user1/01-demo/f" =~ $re ]]; then
+    return 2
+  fi
+  if [[ "/${EVIDENCE_DIR}/user1/01-demo" =~ $re ]] || [[ "/x${EVIDENCE_DIR}/user1/01-demo/f" =~ $re ]]; then
+    return 2
+  fi
+  while IFS= read -r -d '' p || [ -n "$p" ]; do
+    m=0
+    # shellcheck disable=SC2319  # the status of [[ =~ ]] itself is wanted: 1 = no match, 2 = a broken ERE
+    [[ "/$p" =~ $re ]] || m=$?
+    case "$m" in
+      0)
+        printf '%q\n' "$p"
+        hit=0
+        ;;
+      1) ;;
+      *) return 2 ;;
+    esac
+  done <"$list"
+  return "$hit"
+}
+
+# scan_evidence <root> [allowed...]: the check of V93 on the tracked paths of the git work tree
+# at <root>. Each allowed entry is held to allowed_entry_ok (one tracked regular file at that
+# very path) and excluded as a literal pathspec. The main scan passes EVIDENCE_ALLOWED_PATHS.
+# A tracked path, here, is a line of `git ls-files -z`: read up to each NUL, so a path with a
+# space or a newline is one path.
+scan_evidence() {
+  local root="$1" p rc=0 hrc listf errf found seat_body cid_body evidence_ere
+  shift
+  case "$EVIDENCE_DIR" in
+    '' | *[!a-z0-9_-]*)
+      echo "FAIL: EVIDENCE_DIR holds a character a regular expression would not take literally" >&2
+      return 2
+      ;;
+  esac
+  if ! seat_body="$(grammar_body "$SEAT_PATTERN")" || ! cid_body="$(grammar_body "$CHALLENGE_ID_PATTERN")"; then
+    echo "FAIL: SEAT_PATTERN or CHALLENGE_ID_PATTERN is not an anchored pattern whose body can stand for one segment" >&2
+    return 2
+  fi
+  # `evidence`, a seat and a challenge id, each a whole segment (the path is matched as
+  # "/<path>", so the first `/` is the start of a segment), then one more segment.
+  evidence_ere="/${EVIDENCE_DIR}/(${seat_body})/(${cid_body})/[^/]"
+  if ! git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "FAIL: $root is not a git work tree; the evidence scan did not run" >&2
+    return 2
+  fi
+
+  local excludes=()
+  for p in ${1+"$@"}; do
+    if allowed_entry_ok "$root" "$p"; then
+      excludes+=(":(exclude,literal)$p")
+    else
+      rc=1
+    fi
+  done
+
+  echo "==> scanning tracked paths for the layout of an event's evidence bundles (ADR-0056 V93)"
+  if ! listf="$(mktemp)"; then
+    echo "FAIL: no temporary file for the list of tracked paths; the scan did not run" >&2
+    return 2
+  fi
+  if ! errf="$(mktemp)"; then
+    rm -f "$listf"
+    echo "FAIL: no temporary file for the scan's errors; the scan did not run" >&2
+    return 2
+  fi
+  if ! git -C "$root" ls-files -z -- . ${excludes[@]+"${excludes[@]}"} >"$listf" 2>"$errf"; then
+    echo "FAIL: git ls-files failed; the scan did not run, which is not clean:" >&2
+    sed 's/^/  /' "$errf" >&2
+    rm -f "$listf" "$errf"
+    return 2
+  fi
+  set +e
+  found="$(
+    export LC_ALL=C
+    evidence_hits "$evidence_ere" "$listf"
+  )"
+  hrc=$?
+  set -e
+  rm -f "$listf" "$errf"
+  case "$hrc" in
+    0)
+      echo "FAIL: a tracked path has the layout of an event's evidence bundle (evidence/<seat>/<cid>/<file>):" >&2
+      printf '%s\n' "$found" | cut -c1-200 | sed 's/^/  /' >&2
+      echo "  -> one bundle is a seat's answers: an event's render output is the operator's, never the public repository's (ADR-0056 D20, V93): remove it from git." >&2
+      echo "     A practice bundle is flat (edition/practice/evidence/<file>); a test fixture that needs the shape is named in EVIDENCE_ALLOWED_PATHS." >&2
+      rc=1
+      ;;
+    1) ;;
+    *)
+      echo "FAIL: the path rule did not match as it must (exit $hrc); the scan did not run, which is not clean" >&2
+      return 2
+      ;;
+  esac
+  if [ "$rc" -eq 0 ]; then
+    echo "  ok: no tracked path has the layout of an event's evidence bundle"
+  fi
+  return "$rc"
+}
+
 # ---- the selftest: scratch repositories with one planted file each ----
 #
 # The selftest runs as the condition of an `if`, where errexit does not stop anything, so every
@@ -216,8 +374,53 @@ st_entry() {
   fi
 }
 
+# st_call <name> <want-exit> <command...>: the command (a function of this script) exits with
+# want. It runs in a subshell, so a constant it changes does not reach the next case.
+st_call() {
+  local name="$1" want="$2" got
+  shift 2
+  SELFTEST_CASES=$((SELFTEST_CASES + 1))
+  set +e
+  ("$@") >/dev/null 2>&1
+  got=$?
+  set -e
+  if [ "$got" -eq "$want" ]; then
+    echo "  ok:   $name (exit $got)"
+  else
+    echo "  FAIL: $name: exit $got, want $want" >&2
+    SELFTEST_FAILED=1
+  fi
+}
+
+# Copies of the path rule with one part broken: each must stop the scan (exit 2), not run it.
+st_unanchored_seat() {
+  SEAT_PATTERN='[a-z0-9]+'
+  scan_evidence "$1"
+}
+st_dot_challenge_id() {
+  CHALLENGE_ID_PATTERN='^[0-9]{2}-.+$'
+  scan_evidence "$1"
+}
+st_unbalanced_seat() {
+  SEAT_PATTERN='^[a-z0-9]([a-z0-9-]{0,51}[a-z0-9]?$'
+  scan_evidence "$1"
+}
+
+# st_evidence <name> <want-exit> <path>...: a scratch repository (with the allowed fixture of
+# V84, so that only the evidence check can fail) that tracks a file at each path; the scan of
+# the whole script exits with want.
+st_evidence() {
+  local name="$1" want="$2" r p
+  shift 2
+  r="$(st_repo "ev-$SELFTEST_CASES")" || st_die "$name"
+  for p in "$@"; do
+    st_put "$r" "$p" "a placeholder bundle file"
+  done
+  st_expect "$name" "$want" "$r"
+}
+
 selftest() {
-  local r row
+  local r row seat53 seat54 slug60 slug61
   if ! SELFTEST_WORK="$(mktemp -d)" || [ -z "$SELFTEST_WORK" ] || [ ! -d "$SELFTEST_WORK" ]; then
     echo "FAIL: check-edition-headers.sh self-test: no scratch directory (mktemp -d)" >&2
     exit 2
@@ -297,9 +500,62 @@ selftest() {
   st_entry "an entry that is a tracked link is refused" 1 "$r" internal/edition/testdata/digests-golden/link.tsv
   st_entry "an entry that is not tracked is refused" 1 "$r" internal/edition/testdata/digests-golden/missing.tsv
 
+  # V93: the layout of an event's evidence bundles, evidence/<seat>/<cid>/<file>, at any depth.
+  seat53="a$(printf '%051d' 0)b"
+  seat54="a$(printf '%052d' 0)b"
+  slug60="$(printf '%060d' 0)"
+  slug61="$(printf '%061d' 0)"
+  st_evidence "an event bundle file evidence/<seat>/<cid>/<file> fails" 1 \
+    evidence/user1/01-demo/answer.txt
+  st_evidence "an event bundle one directory down (x/evidence/...) fails" 1 \
+    x/evidence/user1/01-demo/answer.txt
+  st_evidence "a nested <file> (evidence/<seat>/<cid>/a/b) fails" 1 \
+    evidence/user1/01-demo/a/b
+  st_evidence "a seat-shaped nesting under the practice bundle fails" 1 \
+    challenges/01-demo/edition/practice/evidence/user1/01-demo/answer.txt
+  st_evidence "an event bundle at the edges of both grammars, with spaces in the path, fails" 1 \
+    "out dir/evidence/$seat53/01-$slug60/my file.txt"
+  st_evidence "an event bundle under a directory whose name holds a newline fails" 1 \
+    $'line\nbreak/evidence/user1/01-demo/f'
+  st_evidence "the flat practice bundle passes" 0 \
+    challenges/01-demo/edition/practice/evidence/a.txt
+  st_evidence "a nesting under the practice bundle that is not seat/cid passes (the practice layout's own check)" 0 \
+    challenges/01-demo/edition/practice/evidence/Sub_Dir/01-demo/f \
+    challenges/01-demo/edition/practice/evidence/notes/readme.txt
+  st_evidence "evidence as a part of a segment (myevidence/, evidence-x/) passes" 0 \
+    myevidence/user1/01-demo/f evidence-x/user1/01-demo/f
+  st_evidence "a segment outside the seat grammar (a capital, an end hyphen, 54 characters) passes" 0 \
+    evidence/User1/01-demo/f evidence/user1-/01-demo/f "evidence/$seat54/01-demo/f"
+  st_evidence "a segment outside the challenge id grammar (one digit, a capital, a 61-character slug) passes" 0 \
+    evidence/user1/1-demo/f evidence/user1/01-Demo/f "evidence/user1/01-$slug61/f"
+  st_evidence "a seat segment that ends in a newline passes (the segment is not a seat)" 0 \
+    $'evidence/user1\n/01-demo/f'
+  st_evidence "a path that ends at <cid> (no segment after it) passes" 0 \
+    evidence/user1/01-demo
+
+  r="$(st_repo ev-untracked)" || st_die ev-untracked
+  mkdir -p "$r/evidence/user1/01-demo" || st_die "the directory of the untracked bundle"
+  printf 'x\n' >"$r/evidence/user1/01-demo/f" || st_die "the untracked bundle file"
+  st_expect "an untracked event bundle passes (only tracked paths are the repository's)" 0 "$r"
+
+  # The named exclusion, called with a list of its own (EVIDENCE_ALLOWED_PATHS is empty).
+  r="$(st_repo ev-allowed)" || st_die ev-allowed
+  st_put "$r" x/evidence/user1/01-demo/f "a fixture that needs the shape"
+  st_call "a path named as an allowed entry passes" 0 scan_evidence "$r" x/evidence/user1/01-demo/f
+  st_call "the same tree without the entry fails" 1 scan_evidence "$r"
+  st_call "an allowed entry that is a directory is refused and excludes nothing" 1 scan_evidence "$r" x/evidence
+  st_call "an allowed entry that is not tracked is refused" 1 scan_evidence "$r" x/evidence/user1/01-demo/f x/evidence/user1/01-demo/g
+
+  r="$(st_repo ev-empty nobase)" || st_die ev-empty
+  st_call "a tree with no tracked path passes (the scan still runs)" 0 scan_evidence "$r"
+  st_call "a seat pattern without its anchors stops the scan" 2 st_unanchored_seat "$r"
+  st_call "a challenge id pattern with a . stops the scan" 2 st_dot_challenge_id "$r"
+  st_call "a seat pattern that is not a regular expression stops the scan" 2 st_unbalanced_seat "$r"
+
   # A scan that cannot run is NOT clean: point it at a directory that is not a repository.
   mkdir -p "$SELFTEST_WORK/not-a-repo" || st_die not-a-repo
   st_expect "a root that is not a git work tree does not pass" 2 "$SELFTEST_WORK/not-a-repo"
+  st_call "the evidence scan of a root that is not a git work tree does not pass" 2 scan_evidence "$SELFTEST_WORK/not-a-repo"
 
   if [ "$SELFTEST_FAILED" -ne 0 ]; then
     echo "FAIL: check-edition-headers.sh self-test ($SELFTEST_CASES cases)" >&2
@@ -335,8 +591,12 @@ elif ! root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
   echo "FAIL: not inside a git work tree; the scan did not run" >&2
   exit 2
 fi
-if scan "$root"; then
-  exit 0
-else
-  exit $?
+# Both checks run whatever the first gives; the exit is the larger status (2 over 1 over 0).
+rc=0
+scan "$root" || rc=$?
+erc=0
+scan_evidence "$root" ${EVIDENCE_ALLOWED_PATHS[@]+"${EVIDENCE_ALLOWED_PATHS[@]}"} || erc=$?
+if [ "$erc" -gt "$rc" ]; then
+  rc="$erc"
 fi
+exit "$rc"
