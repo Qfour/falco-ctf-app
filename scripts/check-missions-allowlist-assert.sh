@@ -21,7 +21,8 @@
 #   truncated probe output          -> exit != 0   (3-0: no PROBE_END sentinel)
 #   no catalog id in the checkout   -> exit != 0   (an empty expectation never matches)
 #   scenario mode                   -> exactly the scenario's ids; one extra id fails
-#   3-9 / 3-10 (ADR-0056 D11 "3-x" items (1)(2) only, A5d; V8, V2): over values that
+#   3-9 / 3-10 (ADR-0056 D11 "3-x" items (1)(2), A5d; V8, V2; item (3) = 3-11 is
+#   the A5e block below): over values that
 #   challenges/gen-values.sh itself generates for two investigate challenges, a
 #   clean root and the expected Secrets pass in all / scenario / single mode, and
 #   the evidence scope the assert reads is the one deploy-user.sh's
@@ -31,9 +32,24 @@
 #   a Secret of another type, an unreadable listing, a failed `kubectl get`, a
 #   missing values file and an evidence entry not in gen-values.sh's form each
 #   exit != 0 with their own diagnostic
+#   A5e (ADR-0056 V94 / V95, 3-x item (3) = 3-11): the assert reads the values file
+#   it is GIVEN (two candidates in one checkout: the given one is used; no 5th
+#   argument or an empty one: exit 2); the keys of each ctf-evidence-<cid> equal the
+#   <cid>/<name> arguments (one key more / fewer / different / unreadable / outside
+#   the key character set: red); the name arguments themselves are checked; an image
+#   pull Secret (kubernetes.io/dockerconfigjson) is outside the closed set (3-10);
+#   two mutants of the assert (3-11 off, the values file optional) let a case through;
+#   deploy-user.sh's call gives the values file it gave helm (static: its stub harness
+#   stops at helm upgrade)
+#
+# Every call gives the assert all five arguments: the values file is the one
+# deploy-user.sh would give helm for the mode (values_for), unless a case sets
+# ASSERT_VALUES; the <cid>/<name> arguments and the keys the stub serves follow from it.
 #
 # The stub kubectl answers `get secrets` with FAKE_SECRETS (name TAB type lines;
-# default: ctf-flags and one Helm release record) or fails with FAKE_SECRETS_FAIL=1.
+# default: ctf-flags and one Helm release record) or fails with FAKE_SECRETS_FAIL=1, and
+# `get secret <name>` (3-11, the keys-only go-template and nothing else) with the keys
+# FAKE_EVIDENCE_KEYS lists for <name>.
 #
 # Usage: ./scripts/check-missions-allowlist-assert.sh   (make check-flags; CI flag-guard)
 set -euo pipefail
@@ -63,6 +79,25 @@ cat >"${WORK}/bin/kubectl" <<'STUB'
 set -euo pipefail
 [[ "${FAKE_KUBECTL_FAIL:-0}" != 1 ]] || { echo "stub kubectl: forced failure" >&2; exit 1; }
 # `-n <ns> get secrets -o jsonpath=...` (3-10): name TAB type, one Secret per line
+# `-n <ns> get secret <name> -o go-template=...` (3-11): the KEYS of one Secret. The
+# template must be exactly the keys-only one (the stub refuses any other, so a change
+# that would fetch a value is red here); the keys come from FAKE_EVIDENCE_KEYS
+# ("<secret> TAB <key>" lines); a Secret it does not list is NotFound (exit 1);
+# FAKE_EVIDENCE_KEYS_FAIL=1 fails every such read.
+if [[ "${3:-}" == get && "${4:-}" == secret ]]; then
+  want_tpl='go-template={{range $k, $v := .data}}{{$k}}{{"\n"}}{{end}}'
+  [[ "${6:-}" == -o && "${7:-}" == "${want_tpl}" && "$#" -eq 7 ]] || { echo "stub kubectl: get secret is not the keys-only go-template read: $*" >&2; exit 2; }
+  [[ "${FAKE_EVIDENCE_KEYS_FAIL:-0}" != 1 ]] || { echo "stub kubectl: forced get secret failure" >&2; exit 1; }
+  found=0
+  while IFS=$'\t' read -r sname skey; do
+    if [[ -n "${sname}" && "${sname}" == "${5}" ]]; then
+      found=1
+      printf '%s\n' "${skey}"
+    fi
+  done <<<"${FAKE_EVIDENCE_KEYS:-}"
+  [[ "${found}" -eq 1 ]] || { echo "Error from server (NotFound): secrets \"${5}\" not found" >&2; exit 1; }
+  exit 0
+fi
 if [[ "${3:-}" == get ]]; then
   [[ "${4:-}" == secrets ]] || { echo "stub kubectl: unexpected get '${4:-}'" >&2; exit 2; }
   [[ "${FAKE_SECRETS_FAIL:-0}" != 1 ]] || { echo "stub kubectl: forced get failure" >&2; exit 1; }
@@ -154,21 +189,38 @@ newroot() {
   printf '%s' "${root}"
 }
 
+# The values file a case gives the assert (ADR-0056 A5e: the assert is given the file,
+# it never chooses one). By default the one deploy-user.sh would give helm for the mode
+# (values_for, the test's own statement of deploy-user.sh's choice); ASSERT_VALUES set
+# and non-empty overrides it for one case. ASSERT_NAMES: the <cid>/<name> arguments.
+# values_for only picks the fixtures' file; that deploy-user.sh really gives the assert
+# helm's file is held by scripts/check-deploy-user-evidence.sh (A5e, the behaviour case).
+ASSERT_VALUES=""
+ASSERT_NAMES=()
+values_for() { # <challenges-dir> <challenge-id> -> the values file path, or -
+  case "$2" in
+    all) printf '%s' "$1/values-all.yaml" ;;
+    scenario:*) printf '%s' "$1/values-scenario-${2#scenario:}.yaml" ;;
+    *) if [[ -f "$1/$2/values.yaml" ]]; then printf '%s' "$1/$2/values.yaml"; else printf '%s' -; fi ;;
+  esac
+}
+
 # expect <accept|reject> <label> <needle> <root> <challenges-dir> <challenge-id> [scenarios-dir]
 expect() {
   local verdict="$1" label="$2" needle="$3" root="$4" chdir="$5" cid="$6" scdir="${7:-}"
-  local out="${WORK}/out.$$" rc
+  local out="${WORK}/out.$$" rc vf
+  vf="${ASSERT_VALUES:-$(values_for "${chdir}" "${cid}")}"
   CASES=$((CASES + 1))
   set +e
   PATH="${WORK}/bin:${PATH}" FAKE_ROOT="${root}" \
-    "${ASSERT}" ns-test "${chdir}" "${cid}" ${scdir:+"${scdir}"} >"${out}" 2>&1
+    "${ASSERT}" ns-test "${chdir}" "${cid}" "${scdir}" "${vf}" ${ASSERT_NAMES[@]+"${ASSERT_NAMES[@]}"} >"${out}" 2>&1
   rc=$?
   set -e
   if [[ "${verdict}" == accept ]]; then
     if [[ "${rc}" -ne 0 ]]; then
       fail "${label}: expected exit 0, got ${rc}: $(tr '\n' ' ' <"${out}")"
-    elif ! grep -qF 'OK — 3-1..3-10 clean' "${out}"; then
-      fail "${label}: exit 0 but no '3-1..3-10 clean' line: $(tr '\n' ' ' <"${out}")"
+    elif ! grep -qF 'OK — 3-1..3-11 clean' "${out}"; then
+      fail "${label}: exit 0 but no '3-1..3-11 clean' line: $(tr '\n' ' ' <"${out}")"
     else
       pass "${label}"
     fi
@@ -281,7 +333,7 @@ expect reject "all: file name forging the id list of a missing id" 'not a plain 
 r="$(newroot good-kubectl-fail 01-alpha 02-beta 03-gamma)"
 CASES=$((CASES + 1))
 set +e
-PATH="${WORK}/bin:${PATH}" FAKE_ROOT="$r" FAKE_KUBECTL_FAIL=1 "${ASSERT}" ns-test "${CH}" all >"${WORK}/out.$$" 2>&1
+PATH="${WORK}/bin:${PATH}" FAKE_ROOT="$r" FAKE_KUBECTL_FAIL=1 "${ASSERT}" ns-test "${CH}" all '' "${CH}/values-all.yaml" >"${WORK}/out.$$" 2>&1
 rc=$?
 set -e
 if [[ "${rc}" -ne 0 ]]; then pass "all: kubectl exec failure -> exit ${rc}"; else fail "all: kubectl exec failure exited 0"; fi
@@ -290,7 +342,7 @@ if [[ "${rc}" -ne 0 ]]; then pass "all: kubectl exec failure -> exit ${rc}"; els
 r="$(newroot good-truncated 01-alpha 02-beta 03-gamma)"
 CASES=$((CASES + 1))
 set +e
-PATH="${WORK}/bin:${PATH}" FAKE_ROOT="$r" FAKE_TRUNCATE=1 "${ASSERT}" ns-test "${CH}" all >"${WORK}/out.$$" 2>&1
+PATH="${WORK}/bin:${PATH}" FAKE_ROOT="$r" FAKE_TRUNCATE=1 "${ASSERT}" ns-test "${CH}" all '' "${CH}/values-all.yaml" >"${WORK}/out.$$" 2>&1
 rc=$?
 set -e
 if [[ "${rc}" -ne 0 ]] && grep -qF '3-0: probe output incomplete' "${WORK}/out.$$"; then
@@ -371,7 +423,7 @@ r="$(newroot esc 01-alpha 02-beta 03-gamma)"
 CASES=$((CASES + 1))
 set +e
 PATH="${WORK}/bin:${PATH}" FAKE_ROOT="$r" FAKE_EXTRA_LINES="$(printf 'MISSIONS_LIST=*\nMISSIONS_BAD=\033]0;pwned\007')" \
-  "${ASSERT}" ns-test "${CH}" all >"${WORK}/out.$$" 2>&1
+  "${ASSERT}" ns-test "${CH}" all '' "${CH}/values-all.yaml" >"${WORK}/out.$$" 2>&1
 rc=$?
 set -e
 if [[ "${rc}" -ne 0 ]] && grep -qF '3-0: probe field MISSIONS_LIST' "${WORK}/out.$$" \
@@ -429,11 +481,42 @@ evroot() {
   printf 'x\n' >"${r}${EV_DIR_B}/b.txt"
   printf '%s' "${r}"
 }
+# ev_name <cid>: the one bundle file name the fixtures give a challenge (the file evroot
+# puts in its mount directory)
+ev_name() {
+  case "$1" in
+    40-ev) printf 'a.log' ;;
+    41-ev) printf 'b.txt' ;;
+    *) printf 'x.log' ;;
+  esac
+}
 # expect_ev <verdict> <label> <needle> <secrets listing> <root> <challenges-dir> <challenge-id> [scenarios-dir]
+# The <cid>/<name> arguments (as deploy-user.sh passes them) and the keys the stub serves
+# for each ctf-evidence-<cid> follow from the investigate challenges of the values file
+# the case gives the assert: one name per challenge (ev_name), its Secret holding exactly
+# that key. EV_NAMES_OVERRIDE (set, an array spec "a b ...") and EV_KEYS_OVERRIDE (set)
+# replace them for one case.
 expect_ev() {
+  local vf cids c
+  vf="${ASSERT_VALUES:-$(values_for "$6" "$7")}"
+  ASSERT_NAMES=()
+  local keys=""
+  if [[ "${vf}" != - ]] && cids="$(evidence_scope_cids "${vf}" 2>/dev/null)"; then
+    for c in ${cids}; do
+      ASSERT_NAMES+=("${c}/$(ev_name "${c}")")
+      keys="${keys}ctf-evidence-${c}${TAB}$(ev_name "${c}")${LF}"
+    done
+  fi
+  if [[ -n "${EV_NAMES_OVERRIDE+x}" ]]; then
+    # shellcheck disable=SC2206  # the override is a space-joined list on purpose
+    ASSERT_NAMES=(${EV_NAMES_OVERRIDE})
+  fi
+  if [[ -n "${EV_KEYS_OVERRIDE+x}" ]]; then keys="${EV_KEYS_OVERRIDE}"; fi
   export FAKE_SECRETS="$4"
+  export FAKE_EVIDENCE_KEYS="${keys}"
   expect "$1" "$2" "$3" "${@:5}"
-  unset FAKE_SECRETS
+  unset FAKE_SECRETS FAKE_EVIDENCE_KEYS
+  ASSERT_NAMES=()
 }
 # ev_tree <dir> <values text>: a checkout holding 01-alpha, 40-ev and 41-ev, with <values text>
 # as its values-all.yaml
@@ -523,14 +606,15 @@ if [[ "${EVFX_OK}" -eq 1 ]]; then
   expect_ev reject "all: kubectl get secrets fails" '3-10: kubectl get secrets failed' "${SEC_ALL}" "$r" "${EVCH}" all
   unset FAKE_SECRETS_FAIL
 
-  # the scope's values file: required in all / scenario mode, and only gen-values.sh's form
+  # the scope's values file: the one given must exist (A5e: a path that is not a file is
+  # refused, never replaced by another), and only gen-values.sh's form
   r="$(evroot ev-values "${EV_IDS[@]}")"
   ev_tree "${WORK}/ev-novalues" ''
   rm -f "${WORK}/ev-novalues/values-all.yaml"
-  expect_ev reject "all: the values file of the scope is missing" 'the values file of this scope is missing' "${SEC_ALL}" "$r" "${WORK}/ev-novalues" all
+  expect_ev reject "all: the values file given does not exist" 'the values file given is not a file' "${SEC_ALL}" "$r" "${WORK}/ev-novalues" all
   mkdir -p "${EVSC}/nov"
   printf 'name: nov\nchallenges:\n  - 01-alpha\n' >"${EVSC}/nov/scenario.yaml"
-  expect_ev reject "scenario:nov: its values file is missing" 'the values file of this scope is missing' "${SEC_ALL}" "$r" "${EVCH}" scenario:nov "${EVSC}"
+  expect_ev reject "scenario:nov: the values file given does not exist" 'the values file given is not a file' "${SEC_ALL}" "$r" "${EVCH}" scenario:nov "${EVSC}"
   ev_tree "${WORK}/ev-quoted" "$(ev_values "${EV_DIR_A}" 40-ev | sed 's/evidence: true/evidence: "true"/')"$'\n'
   expect_ev reject "all: an evidence entry not in gen-values.sh's form" 'an evidence key that is not' "${SEC_ALL}" "$r" "${WORK}/ev-quoted" all
   ev_tree "${WORK}/ev-nochallenge" "$(ev_values "${EV_DIR_A}" 40-ev "${EV_DIR_B}" 41-ev | sed '/challenge: 40-ev/d')"$'\n'
@@ -539,6 +623,178 @@ if [[ "${EVFX_OK}" -eq 1 ]]; then
   expect_ev reject "all: one challenge with two evidence entries" 'has a second evidence entry' "${SEC_ALL}" "$r" "${WORK}/ev-dup" all
   ev_tree "${WORK}/ev-badpath" "$(ev_values "/opt/fx/a'b" 40-ev)"$'\n'
   expect_ev reject "all: a mount directory with a quote" 'is not a clean path' "${SEC_ALL}" "$r" "${WORK}/ev-badpath" all
+
+  echo "==> A5e (ADR-0056 V94 / V95): the values file is given, 3-11 (the keys of each ctf-evidence-<cid>)"
+  # V94: two candidate values files in one checkout (values-all.yaml: 40-ev and 41-ev;
+  # 40-ev/values.yaml: 40-ev alone). In `all` mode the assert uses the one it is GIVEN.
+  r="$(evroot a5e-given "${EV_IDS[@]}")"
+  ASSERT_VALUES="${EVCH}/40-ev/values.yaml"
+  expect_ev accept "V94: all mode given 40-ev/values.yaml reads that file (scope 40-ev)" '' "${SEC_A}" "$r" "${EVCH}" all
+  CASES=$((CASES + 1))
+  if grep -qF 'evidence scope [40-ev], Opaque Secrets [ctf-flags ctf-evidence-40-ev]' "${WORK}/out.$$"; then
+    pass "V94: the scope read is the given file's ([40-ev]), not values-all.yaml's"
+  else
+    fail "V94: the assert did not read the given file: $(tr '\n' ' ' <"${WORK}/out.$$")"
+  fi
+  # the same Secrets against the other candidate: its scope wants ctf-evidence-41-ev too
+  ASSERT_VALUES="${EVCH}/values-all.yaml"
+  expect_ev reject "V94: the same deploy given values-all.yaml wants that file's scope" '3-10: the Opaque Secrets of ns-test are' "${SEC_A}" "$r" "${EVCH}" all
+  ASSERT_VALUES=""
+  # `-` = helm was given no values file: no investigate challenge, so only ctf-flags
+  ASSERT_VALUES=-
+  expect_ev accept "V94: - (no values file) in single mode, only ctf-flags" '' "ctf-flags${TAB}Opaque${LF}${SEC_HELM}" "$r" "${EVCH}" 01-alpha
+  ASSERT_VALUES=""
+  # `-` where deploy-user.sh always gives helm a file (all, scenario): exit 2
+  ASSERT_VALUES=-
+  expect_ev reject "V94: - in all mode (deploy-user.sh always gives values-all.yaml there)" 'challenge-id all is always deployed with a values file, but - (none) was given' "ctf-flags${TAB}Opaque" "$r" "${EVCH}" all
+  expect_ev reject "V94: - in scenario mode" 'challenge-id scenario:one is always deployed with a values file, but - (none) was given' "ctf-flags${TAB}Opaque" "$r" "${EVCH}" scenario:one "${EVSC}"
+  ASSERT_VALUES=""
+  # no 5th argument: exit 2, nothing defaulted. One command line (a checkout with no
+  # investigate challenge, so a defaulted values-all.yaml WOULD pass), run here against
+  # the assert and below against the mutant that defaults the file.
+  NOARG_ROOT="$(newroot v94-noarg 01-alpha 02-beta 03-gamma)"
+  v94_noarg() { # <assert> -> exit status of the no-5th-argument run; output in out.$$
+    local rc
+    set +e
+    PATH="${WORK}/bin:${PATH}" FAKE_ROOT="${NOARG_ROOT}" "$1" ns-test "${CH}" all '' >"${WORK}/out.$$" 2>&1
+    rc=$?
+    set -e
+    return "${rc}"
+  }
+  CASES=$((CASES + 1))
+  rc=0
+  v94_noarg "${ASSERT}" || rc=$?
+  if [[ "${rc}" -eq 2 ]] && grep -qF 'the 5th, the values file helm was given or -, is required' "${WORK}/out.$$"; then
+    pass "V94: without the values file argument -> exit 2 (no default)"
+  else
+    fail "V94: without the values file argument: rc=${rc}: $(tr '\n' ' ' <"${WORK}/out.$$")"
+  fi
+  CASES=$((CASES + 1))
+  set +e
+  PATH="${WORK}/bin:${PATH}" FAKE_ROOT="$r" "${ASSERT}" ns-test "${EVCH}" all '' '' >"${WORK}/out.$$" 2>&1
+  rc=$?
+  set -e
+  if [[ "${rc}" -eq 2 ]] && grep -qF 'the values file argument is empty' "${WORK}/out.$$"; then
+    pass "V94: an empty values file argument -> exit 2"
+  else
+    fail "V94: an empty values file argument: rc=${rc}: $(tr '\n' ' ' <"${WORK}/out.$$")"
+  fi
+
+  # V94: the key set of ctf-evidence-<cid> against the names (one more, one fewer: red)
+  r="$(evroot a5e-keys "${EV_IDS[@]}")"
+  EV_KEYS_OVERRIDE="ctf-evidence-40-ev${TAB}a.log${LF}ctf-evidence-41-ev${TAB}b.txt${LF}ctf-evidence-41-ev${TAB}extra.txt"
+  expect_ev reject "V94: ctf-evidence-41-ev has one key more than its names" '3-11: the keys of ctf-evidence-41-ev are [b.txt extra.txt], expected exactly the names the chart was given [b.txt]' "${SEC_ALL}" "$r" "${EVCH}" all
+  EV_KEYS_OVERRIDE="ctf-evidence-40-ev${TAB}a.log${LF}ctf-evidence-41-ev${TAB}b.txt"
+  EV_NAMES_OVERRIDE="40-ev/a.log 41-ev/b.txt 41-ev/c.txt"
+  expect_ev reject "V94: ctf-evidence-41-ev has one key fewer than its names" '3-11: the keys of ctf-evidence-41-ev are [b.txt], expected exactly the names the chart was given [b.txt c.txt]' "${SEC_ALL}" "$r" "${EVCH}" all
+  EV_KEYS_OVERRIDE="ctf-evidence-40-ev${TAB}a.log${LF}ctf-evidence-41-ev${TAB}b.txt${LF}ctf-evidence-41-ev${TAB}d.txt"
+  expect_ev reject "V94: a key that is not a name of the chart (same count)" '3-11: the keys of ctf-evidence-41-ev are [b.txt d.txt], expected exactly the names the chart was given [b.txt c.txt]' "${SEC_ALL}" "$r" "${EVCH}" all
+  unset EV_NAMES_OVERRIDE
+  EV_KEYS_OVERRIDE="ctf-evidence-40-ev${TAB}a.log${LF}ctf-evidence-41-ev${TAB}"
+  expect_ev reject "V94: ctf-evidence-41-ev holds no key" '3-11: the keys of ctf-evidence-41-ev are [], expected exactly the names the chart was given [b.txt]' "${SEC_ALL}" "$r" "${EVCH}" all
+  EV_KEYS_OVERRIDE="ctf-evidence-40-ev${TAB}a.log${LF}ctf-evidence-41-ev${TAB}b.txt${LF}ctf-evidence-41-ev${TAB}bad key"
+  expect_ev reject "V94: a key outside a Secret key's character set" '3-11: 1 key(s) of ctf-evidence-41-ev are outside' "${SEC_ALL}" "$r" "${EVCH}" all
+  EV_KEYS_OVERRIDE="ctf-evidence-40-ev${TAB}a.log"
+  expect_ev reject "V94: the keys of one Secret cannot be read (NotFound)" '3-11: the keys of the Secret ctf-evidence-41-ev could not be read' "${SEC_ALL}" "$r" "${EVCH}" all
+  unset EV_KEYS_OVERRIDE
+  export FAKE_EVIDENCE_KEYS_FAIL=1
+  expect_ev reject "V94: kubectl get secret fails" '3-11: the keys of the Secret ctf-evidence-40-ev could not be read' "${SEC_ALL}" "$r" "${EVCH}" all
+  unset FAKE_EVIDENCE_KEYS_FAIL
+  # the <cid>/<name> arguments themselves
+  EV_NAMES_OVERRIDE="40-ev/a.log"
+  expect_ev reject "V94: an investigate challenge of the scope with no name argument" 'the investigate challenge 41-ev of this scope has no <cid>/<name> argument' "${SEC_ALL}" "$r" "${EVCH}" all
+  EV_NAMES_OVERRIDE="40-ev/a.log 41-ev/b.txt 99-zz/x.log"
+  expect_ev reject "V94: a name argument for a challenge outside the scope" 'names a challenge that is not an investigate challenge of this scope' "${SEC_ALL}" "$r" "${EVCH}" all
+  EV_NAMES_OVERRIDE="40-ev/a.log 41-ev/b.txt 41-ev/b.txt"
+  expect_ev reject "V94: a name argument given twice" 'repeats argument' "${SEC_ALL}" "$r" "${EVCH}" all
+  EV_NAMES_OVERRIDE="40-ev/a.log 41-ev"
+  expect_ev reject "V94: a name argument without a /" 'is not <cid>/<name>' "${SEC_ALL}" "$r" "${EVCH}" all
+  EV_NAMES_OVERRIDE="40-ev/a.log 41-ev/b,txt"
+  expect_ev reject "V94: a name argument outside the key character set" 'has a name outside [A-Za-z0-9._-]' "${SEC_ALL}" "$r" "${EVCH}" all
+  unset EV_NAMES_OVERRIDE
+  ASSERT_VALUES=-
+  EV_NAMES_OVERRIDE="40-ev/a.log"
+  expect_ev reject "V94: a name argument with - (no values file, no scope)" 'names a challenge that is not an investigate challenge of this scope' "ctf-flags${TAB}Opaque" "$r" "${EVCH}" 01-alpha
+  unset EV_NAMES_OVERRIDE
+  ASSERT_VALUES=""
+
+  # V95 (3-10), the case #663's tests did not have: an image pull Secret is outside the
+  # closed set (the others are above: an Opaque of another name, a missing
+  # ctf-evidence-<cid>, Helm's records counted apart in every accept case)
+  r="$(evroot a5e-pull "${EV_IDS[@]}")"
+  expect_ev reject "V95: a kubernetes.io/dockerconfigjson Secret in the seat's namespace" '3-10: Secret(s) of a type other than Opaque and helm.sh/release.v1 in ns-test: [regcred (kubernetes.io/dockerconfigjson)]' "${SEC_ALL}${LF}regcred${TAB}kubernetes.io/dockerconfigjson" "$r" "${EVCH}" all
+
+  # mutants: a copy of the assert with the 3-11 judgment switched off, and one that lets
+  # the values file argument be left out, must each let a case above through (so those
+  # cases are what stops such a change)
+  MUT="${WORK}/mutant"
+  mkdir -p "${MUT}"
+  # mutate <label> <old> <new> [<old> <new>...]: ${MUT}/assert-flag-isolation.sh, each old
+  # text replaced, each found exactly once in the real assert; rc 1 (after a fail) if not
+  mutate() {
+    local label="$1" src old new rest
+    shift
+    src="$(cat "${ASSERT}")"
+    while [[ "$#" -ge 2 ]]; do
+      old="$1"
+      new="$2"
+      shift 2
+      rest="${src#*"${old}"}"
+      if [[ "${rest}" == "${src}" || "${rest}" == *"${old}"* ]]; then
+        fail "mutant ${label}: the text to replace is not in the assert exactly once (the assert changed: update the mutant): ${old}"
+        return 1
+      fi
+      src="${src%%"${old}"*}${new}${rest}"
+    done
+    printf '%s\n' "${src}" >"${MUT}/assert-flag-isolation.sh"
+    chmod +x "${MUT}/assert-flag-isolation.sh"
+  }
+  REAL_ASSERT="${ASSERT}"
+  if mutate "3-11 off" '  if [ "${KEYS_OK}" != yes ]' '  if false'; then
+    ASSERT="${MUT}/assert-flag-isolation.sh"
+    EV_KEYS_OVERRIDE="ctf-evidence-40-ev${TAB}a.log${LF}ctf-evidence-41-ev${TAB}b.txt${LF}ctf-evidence-41-ev${TAB}extra.txt"
+    expect_ev accept "mutant (3-11 off): the one-key-more case passes on it, so that case is what goes red" '' "${SEC_ALL}" "$r" "${EVCH}" all
+    unset EV_KEYS_OVERRIDE
+    ASSERT="${REAL_ASSERT}"
+  fi
+  # the mutant reads a default file when the 5th is left out (the rule A5e removed)
+  if mutate "values file optional" 'if [ "$#" -lt 5 ]' 'if [ "$#" -lt 4 ]' 'SCOPE_VALUES_ARG="${5}"' 'SCOPE_VALUES_ARG="${5:-${CHALLENGES_DIR}/values-all.yaml}"' 'shift 5' 'shift "$#"'; then
+    CASES=$((CASES + 1))
+    rc=0
+    v94_noarg "${MUT}/assert-flag-isolation.sh" || rc=$?
+    if [[ "${rc}" -eq 0 ]]; then
+      pass "mutant (values file optional): the no-argument run passes on it, so the V94 no-argument case is what goes red"
+    else
+      fail "mutant (values file optional): the no-argument run still fails (rc=${rc}), so the V94 case does not tell it apart: $(tr '\n' ' ' <"${WORK}/out.$$")"
+    fi
+  fi
+fi
+
+echo "==> A5e (V94): deploy-user.sh gives the assert the values file it gave helm (static)"
+# The stub harness of deploy-user.sh stops at `helm upgrade` (exit 97), so the call is held
+# by its text: the file helm is given (-f, VALUES_ARGS[1]) is SCOPE_VALUES_FILE, helm gets
+# VALUES_ARGS, and the assert gets SCOPE_VALUES_FILE (- when none) and the names.
+DU="${REPO_ROOT}/charts/ctf-user/deploy-user.sh"
+for want_line in \
+  '  SCOPE_VALUES_FILE="${VALUES_ARGS[1]}"' \
+  '  ${VALUES_ARGS:+"${VALUES_ARGS[@]}"} \' \
+  '    ASSERT_NAME_ARGS+=("${cid}/${name}")' \
+  '"${CHART_DIR}/assert-flag-isolation.sh" "${NS}" "${CHALLENGES_DIR}" "${CHALLENGE_ID}" "${SCENARIOS_DIR}" "${SCOPE_VALUES_FILE:--}" ${ASSERT_NAME_ARGS[@]+"${ASSERT_NAME_ARGS[@]}"}'
+do
+  CASES=$((CASES + 1))
+  n="$(grep -cxF -- "${want_line}" "${DU}" || true)"
+  if [[ "${n}" == 1 ]]; then
+    pass "deploy-user.sh has the line once: ${want_line}"
+  else
+    fail "deploy-user.sh has the line ${n:-0} times, want once: ${want_line}"
+  fi
+done
+CASES=$((CASES + 1))
+n="$(grep -c 'assert-flag-isolation.sh"' "${DU}" || true)"
+if [[ "${n}" == 1 ]]; then
+  pass "deploy-user.sh calls the assert once"
+else
+  fail "deploy-user.sh calls the assert ${n:-0} times, want once (every call must give the values file)"
 fi
 
 echo "==> the assert's reader of the values file vs deploy-user.sh's (evidence_scope_cids): parity"
@@ -571,21 +827,32 @@ secrets_for() {
   for c in ${cids}; do s="${s}${LF}ctf-evidence-${c}${TAB}Opaque"; done
   printf '%s' "${s}"
 }
-# assert_scope_verdict <checkout> <challenge-id> <scenarios-dir or ''> <root> <secrets>
-#   -> "accept [<cids>]" (exit 0), "reject" (the reader refused: "cannot judge 3-9 / 3-10"),
+# assert_scope_verdict <checkout> <challenge-id> <scenarios-dir or ''> <root> <secrets> <values file>
+#   -> "accept [<cids>]" (exit 0), "reject" (the reader refused: its own message, "the
+#      evidence entries must be in the form gen-values.sh writes ... 3-9 / 3-10 / 3-11"),
 #      or "error: ..." (anything else: the case is broken, not a verdict)
+#   The values file is given (A5e). The <cid>/<name> arguments and the keys the stub
+#   serves are one name per challenge evidence_scope_cids reads (k.log): the table is
+#   about the readers, and 3-11 must not be what refuses an input.
 assert_scope_verdict() {
-  local out="${WORK}/parity.out" rc line
+  local out="${WORK}/parity.out" rc line cids c keys=""
+  local -a names=()
+  if cids="$(evidence_scope_cids "$6" 2>/dev/null)"; then
+    for c in ${cids}; do
+      names+=("${c}/k.log")
+      keys="${keys}ctf-evidence-${c}${TAB}k.log${LF}"
+    done
+  fi
   set +e
-  PATH="${WORK}/bin:${PATH}" FAKE_ROOT="$4" FAKE_SECRETS="$5" \
-    "${ASSERT}" ns-test "$1" "$2" ${3:+"$3"} >"${out}" 2>&1
+  PATH="${WORK}/bin:${PATH}" FAKE_ROOT="$4" FAKE_SECRETS="$5" FAKE_EVIDENCE_KEYS="${keys}" \
+    "${ASSERT}" ns-test "$1" "$2" "$3" "$6" ${names[@]+"${names[@]}"} >"${out}" 2>&1
   rc=$?
   set -e
   if [[ "${rc}" -eq 0 ]]; then
     line="$(grep -F 'evidence scope [' "${out}" || true)"
     line="${line#*evidence scope [}"
     printf 'accept [%s]\n' "${line%%]*}"
-  elif grep -qF 'cannot judge 3-9 / 3-10' "${out}"; then
+  elif grep -qF '(the evidence entries must be in the form gen-values.sh writes) — cannot judge 3-9 / 3-10 / 3-11' "${out}"; then
     echo reject
   else
     printf 'error: exit %s: %s\n' "${rc}" "$(tr '\n' ' ' <"${out}" | cut -c1-300)"
@@ -607,7 +874,7 @@ parity_case() {
   shift
   printf '%s\n' "$@" >"${PCH}/values-all.yaml"
   d="$(deploy_scope_verdict "${PCH}/values-all.yaml")"
-  a="$(assert_scope_verdict "${PCH}" all '' "${PROOT}" "$(secrets_for "${d}")")"
+  a="$(assert_scope_verdict "${PCH}" all '' "${PROOT}" "$(secrets_for "${d}")" "${PCH}/values-all.yaml")"
   CASES=$((CASES + 1))
   if [[ "${a}" == "${d}" ]]; then
     pass "parity: ${label} (both: ${d})"
@@ -655,7 +922,7 @@ parity_stricter() {
   shift
   printf '%s\n' "$@" >"${PCH}/values-all.yaml"
   d="$(deploy_scope_verdict "${PCH}/values-all.yaml")"
-  a="$(assert_scope_verdict "${PCH}" all '' "${PROOT}" "$(secrets_for "${d}")")"
+  a="$(assert_scope_verdict "${PCH}" all '' "${PROOT}" "$(secrets_for "${d}")" "${PCH}/values-all.yaml")"
   CASES=$((CASES + 1))
   if [[ "${d}" == accept* && "${a}" == reject ]]; then
     pass "parity, the documented difference: ${label} (deploy-user.sh's reader: ${d}; the assert: reject)"
@@ -700,7 +967,7 @@ parity_real() {
   shift 4
   d="$(deploy_scope_verdict "${vf}")"
   r="$(real_root "parity-real-root" "$@")"
-  a="$(assert_scope_verdict "${RCH}" "${cid}" "${scd}" "${r}" "$(secrets_for "${d}")")"
+  a="$(assert_scope_verdict "${RCH}" "${cid}" "${scd}" "${r}" "$(secrets_for "${d}")" "${vf}")"
   CASES=$((CASES + 1))
   if [[ "${a}" != "${d}" ]]; then
     fail "parity, committed ${label}: deploy-user.sh's reader says '${d}', the assert's says '${a}'"
