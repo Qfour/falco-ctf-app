@@ -8,7 +8,10 @@ package edition
 //	# falco-ctf evidence-digests v1 run=<32 lower-case hex digits>
 //	<seat> TAB <cid> TAB <digest>          one row per (seat, challenge), digest = BundleDigest
 //
-// WriteDigests and ParseDigests are its two ends in Go; CheckDigestSet is V48's Go side:
+// WriteDigests and ParseDigests are its two ends in Go (a practice edition's file, the run id
+// of all zeros and the seat *, has its own two: WritePracticeDigests and ParsePracticeDigests,
+// over the same reader and the same row grammar; deploy-user.sh's practice path reads that
+// file, ADR-0056 A5c-2); CheckDigestSet is V48's Go side:
 // the (seat, cid) pairs of the rows are exactly the seats x the investigate challenges of
 // the scope. The run id is the answers table's (D9): a digests file whose run id is not
 // the table's is a table and a bundle from two different renders.
@@ -44,6 +47,41 @@ type DigestRow struct {
 
 // ValidDigest reports whether s is a digest: 64 lower-case hex digits.
 func ValidDigest(s string) bool { return len(s) == digestHexLen && lowerHex(s) }
+
+// digestsRunIDAllowed is the one rule of the run id of a digests file, for its two doors
+// (D9): an event's is 32 lower-case hex digits and not all zeros, a practice edition's is
+// the run id of all zeros and no other. The writers and the readers of both doors use it.
+func digestsRunIDAllowed(runID string, practice bool) bool {
+	if practice {
+		return runID == PracticeRunID
+	}
+	return validRunID(runID) && runID != PracticeRunID
+}
+
+// checkDigestRowOf is the shape of one row for the door named by practice: checkDigestRow
+// for an event, checkPracticeDigestRow for a practice edition.
+func checkDigestRowOf(r DigestRow, line int, practice bool) error {
+	if practice {
+		return checkPracticeDigestRow(r, line)
+	}
+	return checkDigestRow(r, line)
+}
+
+// checkPracticeDigestRow is the shape of one row of a practice digests file: the seat * and
+// no other, a challenge id and a digest in their grammars. line is 0 for a row that was not
+// read from a file.
+func checkPracticeDigestRow(r DigestRow, line int) error {
+	c := cell{seat: r.Seat, cid: r.CID}
+	switch {
+	case r.Seat != AnySeat:
+		return newViolation(RuleDigests, "a practice digests file has the seat * only", line, c, nil)
+	case !challengeid.Valid(r.CID):
+		return newViolation(RuleDigests, "cid is not a challenge id", line, c, nil)
+	case !ValidDigest(r.Digest):
+		return newViolation(RuleDigests, "digest is not 64 lower-case hex digits", line, c, nil)
+	}
+	return nil
+}
 
 // checkDigestRow is the shape of one row: a seat (never the practice seat *), a
 // challenge id and a digest, each in its own grammar. line is 0 for a row that was not
@@ -100,7 +138,7 @@ func WriteDigestsFile(dest string, ev *CheckedEvent) (left []string, err error) 
 
 // writeDigestRows is WriteDigests's body: the rows and the run id of a CheckedEvent.
 func writeDigestRows(w io.Writer, runID string, rows []DigestRow) error {
-	if !validRunID(runID) || runID == PracticeRunID {
+	if !digestsRunIDAllowed(runID, false) {
 		return newViolation(RuleDigests, "the run id must be 32 lower-case hex digits and not all zeros", 0, cell{}, nil)
 	}
 	if len(rows) == 0 {
@@ -138,9 +176,9 @@ func writeDigestRows(w io.Writer, runID string, rows []DigestRow) error {
 // refuses, so a file of one cannot be written by the other. It also refuses no row, a cid
 // or a digest outside its grammar, and a cid twice. Nothing is written when it refuses.
 // (It is the practice edition's door; the event's, WriteDigests, takes a *CheckedEvent.
-// Its reader, ParsePracticeDigests, is A5c-2's.)
+// Its reader is ParsePracticeDigests.)
 func WritePracticeDigests(w io.Writer, runID string, rows []DigestRow) error {
-	if runID != PracticeRunID {
+	if !digestsRunIDAllowed(runID, true) {
 		return newViolation(RuleDigests, "a practice digests file carries the run id of all zeros and no other", 0, cell{}, nil)
 	}
 	if len(rows) == 0 {
@@ -153,13 +191,8 @@ func WritePracticeDigests(w io.Writer, runID string, rows []DigestRow) error {
 	seen := make(map[string]struct{}, len(sorted))
 	for _, r := range sorted {
 		c := cell{seat: r.Seat, cid: r.CID}
-		switch {
-		case r.Seat != AnySeat:
-			return newViolation(RuleDigests, "a practice digests file has the seat * only", 0, c, nil)
-		case !challengeid.Valid(r.CID):
-			return newViolation(RuleDigests, "cid is not a challenge id", 0, c, nil)
-		case !ValidDigest(r.Digest):
-			return newViolation(RuleDigests, "digest is not 64 lower-case hex digits", 0, c, nil)
+		if err := checkPracticeDigestRow(r, 0); err != nil {
+			return err
 		}
 		if _, dup := seen[r.CID]; dup {
 			return newViolation(RuleDigests, "a cid has two digest rows", 0, c, nil)
@@ -177,8 +210,31 @@ func WritePracticeDigests(w io.Writer, runID string, rows []DigestRow) error {
 // a double quote, a rune sourcehygiene.Hidden reports, a missing final newline, a row of
 // another width or with an empty column, a row outside its grammar (checkDigestRow), a
 // repeated (seat, cid) and a file with no row. The order of the rows is not constrained.
-// It returns the run id and the rows in file order.
+// It returns the run id and the rows in file order. A practice edition's digests file (the
+// run id of all zeros, the seat *) is refused: its reader is ParsePracticeDigests.
 func ParseDigests(data []byte) (string, []DigestRow, error) {
+	return parseDigestsFile(data, false)
+}
+
+// ParsePracticeDigests reads the digests file of a practice edition (practice/digests.tsv,
+// D8, D9 and amendment 9): the v1 header with the run id of all zeros and no other, then one
+// row  *  TAB  cid  TAB  digest  per line. Everything else ParseDigests refuses it refuses
+// the same way (it is the same reader, parseDigestsFile); the two rules that differ are the
+// two that tell the doors apart: an event's run id (not all zeros) and a seat of the seat
+// grammar are refused here, as the practice run id and the seat * are refused there. So a
+// file of one door is never read by the other. It returns the rows in file order; the run
+// id is PracticeRunID whenever it returns no error. Which challenges the rows must be for
+// is the caller's to check (a practice edition's file has one row, its own challenge's).
+func ParsePracticeDigests(data []byte) ([]DigestRow, error) {
+	_, rows, err := parseDigestsFile(data, true)
+	return rows, err
+}
+
+// parseDigestsFile is the one reader of a digests file, for both doors: the size, the bytes,
+// the header prefix, the three non-empty columns, a repeated (seat, cid) and at least one row
+// are the same; practice picks the run id the header may carry (digestsRunIDAllowed) and the
+// shape of a row (checkDigestRowOf).
+func parseDigestsFile(data []byte, practice bool) (string, []DigestRow, error) {
 	shape := func(msg string, line int) error {
 		return newViolation(RuleDigests, msg, line, cell{}, nil)
 	}
@@ -204,7 +260,10 @@ func ParseDigests(data []byte) (string, []DigestRow, error) {
 	}
 	lines := strings.Split(string(data[:len(data)-1]), "\n")
 	id, ok := strings.CutPrefix(lines[0], digestsHeaderPrefix)
-	if !ok || !validRunID(id) || id == PracticeRunID {
+	if !ok || !digestsRunIDAllowed(id, practice) {
+		if practice {
+			return "", nil, shape("first line must be the v1 header with the run id of all zeros (a practice digests file)", 1)
+		}
 		return "", nil, shape("first line must be the v1 header with a 32-digit lower-case hex run id that is not all zeros", 1)
 	}
 	var rows []DigestRow
@@ -221,7 +280,7 @@ func ParseDigests(data []byte) (string, []DigestRow, error) {
 			}
 		}
 		r := DigestRow{Seat: cols[0], CID: cols[1], Digest: cols[2]}
-		if err := checkDigestRow(r, lineNo); err != nil {
+		if err := checkDigestRowOf(r, lineNo, practice); err != nil {
 			return "", nil, err
 		}
 		k := cell{seat: r.Seat, cid: r.CID}
