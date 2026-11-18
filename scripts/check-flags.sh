@@ -6,8 +6,10 @@
 #      (scratch/PoC files accidentally staged and committed), or
 #   4. any tracked file carries the header of an EVENT's render output (an answers
 #      table or a digests file whose run id is not the practice one, or a render
-#      record): scripts/check-edition-headers.sh (ADR-0056 V84), whose self-test
-#      runs here too, so the guard is shown able to fail on every run.
+#      record), or any tracked path has the layout of an event's evidence bundle
+#      (evidence/<seat>/<cid>/<file>): scripts/check-edition-headers.sh (ADR-0056
+#      V84 / V93), whose self-test runs here too, so the guard is shown able to fail
+#      on every run.
 #
 # Allowed flag forms (these are not secrets):
 #   FALCO{dev-<slug>}   local-dev / test placeholders
