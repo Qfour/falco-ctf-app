@@ -109,20 +109,20 @@ func Check(in Input) ([]Violation, error) {
 
 	hintGrams := map[string][]string{} // gram -> hint sources
 	for _, it := range in.Hints {
-		for g := range gramSet(it.Text) {
+		for g := range GramSet(it.Text) {
 			hintGrams[g] = append(hintGrams[g], it.Source)
 		}
 	}
 	free := map[string]struct{}{}
 	for _, it := range in.Free {
-		for g := range gramSet(it.Text) {
+		for g := range GramSet(it.Text) {
 			free[g] = struct{}{}
 		}
 	}
 
 	var out []Violation
 	for _, f := range in.Targets {
-		for g := range gramSet(f.Text) {
+		for g := range GramSet(f.Text) {
 			srcs, isHint := hintGrams[g]
 			if !isHint {
 				continue
@@ -147,12 +147,10 @@ func Check(in Input) ([]Violation, error) {
 // Normalize is the normalisation of the rule (ADR-0026 D5-2): it returns the
 // runes of text with every rune for which [unicode.IsSpace] is true removed, in
 // order. Nothing else changes: no NFC/NFKC, no case folding, no punctuation
-// stripping. Windows of [GramRunes] runes (D5-3) are cut from the result.
-//
-// It is exported so that any other comparison that must agree with this rule on
-// what a "run of runes" is (ADR-0056 D10 B4: the 10-rune shingles of an event
-// bundle against a practice bundle) calls this function and keeps no second
-// definition of the normalisation. text is read as UTF-8; a byte that is not
+// stripping. Windows of [GramRunes] runes (D5-3) are cut from the result by
+// [GramSet], the one function that does both; a comparison that needs the
+// shingles (ADR-0056 D10 B4) calls GramSet, and calls Normalize only if it needs
+// the runes themselves. text is read as UTF-8; a byte that is not
 // valid UTF-8 becomes U+FFFD, as in a range over a string, so a caller that
 // needs an error for non-UTF-8 text checks [utf8.ValidString] first, as [Check]
 // does. The result is a new slice the caller may modify.
@@ -166,8 +164,16 @@ func Normalize(text string) []rune {
 	return runes
 }
 
-// gramSet returns the distinct n-grams of one item (D5-2, D5-3).
-func gramSet(text string) map[string]struct{} {
+// GramSet returns the distinct n-grams of one item (D5-2, D5-3): [Normalize] the
+// text, then every window of [GramRunes] consecutive runes of the result. A text
+// with fewer than GramRunes runes after normalisation has none (the set is empty,
+// never nil). It is the one definition of the window and of what is cut: [Check]
+// calls it for every hint, free and target item, and every other comparison that
+// must agree with the rule on a shingle (ADR-0056 D10 B4: the shingles of an event
+// bundle against a practice bundle, V73) calls it too and keeps no loop of its own.
+// Like [Normalize] it reads text as UTF-8 and does not check it ([Check] does). The
+// result is a new map the caller may modify.
+func GramSet(text string) map[string]struct{} {
 	runes := Normalize(text)
 	set := map[string]struct{}{}
 	for i := 0; i+GramRunes <= len(runes); i++ {

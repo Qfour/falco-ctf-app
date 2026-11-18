@@ -14,8 +14,8 @@ package edition
 //     per-seat format is searched in every spelling that grading accepts (answerformat.Fold);
 //     the others have no fold and their normalised value is searched as it is (a short value
 //     can be a false hit, which is on the refusing side);
-//   - shingles: the 10-rune shingles (hintleak.GramRunes, cut from hintleak.Normalize, the
-//     rule of ADR-0026 D5 itself) of an event bundle against those of each practice bundle
+//   - shingles: the 10-rune shingles (hintleak.GramSet: the normalisation and the window of
+//     hintleak.GramRunes, the rule of ADR-0026 D5 itself) of an event bundle against those of each practice bundle
 //     (1, the outputs), and of an event template against each practice template (2, with the
 //     slot marks {{ctf:...}} removed first: a filler that differs per seat lowers (1) and
 //     leaves (2) alone, so a copied public template is caught by (2) only). The overlap of
@@ -365,10 +365,10 @@ func checkEmptyPracticeAnswers(c *collector, answers PracticeSet) {
 // A `{{ctf:` that is not a mark makes the whole call fail (nil set and the first fault, in
 // the order of files): a template that cannot be read is never shingled with the text left
 // in or with the text guessed out. Without stripMarks the files are not scanned, and the
-// fault is always nil. The windows are hintleak's (hintleak.Normalize, then windows of
-// hintleak.GramRunes runes): there is no second definition of what a run of runes is, only
-// this loop over its result. The loop cuts the windows the way hintleak's gramSet does; a
-// parity test that ties the two together is for the next change to hintleak.
+// fault is always nil. The windows are hintleak's: hintleak.GramSet is the one function that
+// normalises a text and cuts the windows of hintleak.GramRunes runes (and the one hintleak.Check
+// uses), so there is no second definition of a shingle here, only the union of its results over
+// the files (ADR-0056 V73; a source test reads this file for it).
 func shingleSet(files []BundleFile, stripMarks bool) (map[string]struct{}, *markFault) {
 	set := make(map[string]struct{})
 	for _, f := range files {
@@ -391,9 +391,8 @@ func shingleSet(files []BundleFile, stripMarks bool) (map[string]struct{}, *mark
 			}
 			text = string(lits)
 		}
-		runes := hintleak.Normalize(text)
-		for i := 0; i+hintleak.GramRunes <= len(runes); i++ {
-			set[string(runes[i:i+hintleak.GramRunes])] = struct{}{}
+		for g := range hintleak.GramSet(text) {
+			set[g] = struct{}{}
 		}
 	}
 	return set, nil
