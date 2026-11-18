@@ -1181,5 +1181,20 @@ green "  ✓ ready — http://${HOST}/"
 # script (Cross-repo 契約: deploy-user.sh's non-zero exit is a fail-closed
 # contract the caller must not swallow; deploy-event-workspaces.sh collects
 # per-user exit status on the platform side).
+#
+# ADR-0056 A5e (V94): the assert is given the values file helm was given
+# (SCOPE_VALUES_FILE, the `-f` of VALUES_ARGS; `-` when helm was given none), so the
+# rule that picks it lives here only, and the names the chart was given, one
+# <cid>/<name> per name (EVIDENCE_NAMES, the list behind EVIDENCE_NAMES_ARGS), for
+# its key-set check of each ctf-evidence-<cid> (3-11).
+ASSERT_NAME_ARGS=()
+evidence_idx=0
+for cid in ${EVIDENCE_CIDS[@]+"${EVIDENCE_CIDS[@]}"}; do
+  while IFS= read -r name; do
+    if [[ -z "${name}" ]]; then continue; fi
+    ASSERT_NAME_ARGS+=("${cid}/${name}")
+  done <<< "${EVIDENCE_NAMES[evidence_idx]}"
+  evidence_idx=$((evidence_idx + 1))
+done
 info "[6/${LAST_STEP}] assert flag isolation (ADR-0001 Verification 3)"
-"${CHART_DIR}/assert-flag-isolation.sh" "${NS}" "${CHALLENGES_DIR}" "${CHALLENGE_ID}" "${SCENARIOS_DIR}"
+"${CHART_DIR}/assert-flag-isolation.sh" "${NS}" "${CHALLENGES_DIR}" "${CHALLENGE_ID}" "${SCENARIOS_DIR}" "${SCOPE_VALUES_FILE:--}" ${ASSERT_NAME_ARGS[@]+"${ASSERT_NAME_ARGS[@]}"}

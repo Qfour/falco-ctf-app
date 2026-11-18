@@ -39,18 +39,23 @@
 #        as the operator, outside the workspace (no process in the Pod).
 #        The Secrets of a seat's namespace are a CLOSED set: flags, bundles and
 #        Helm's release records only; a Secret of any other type fails the deploy.
-#        That is a constraint on the platform, to be written into the next ADR-0056
-#        addendum and the contract table.
-#   D11's "3-x" has four items; this script has (1) and (2) only. (3) (the key set
-#   of each ctf-evidence-<cid> equals the names given to the chart) and (4) (the
-#   sentinel check of the Helm release record at deploy time) are NOT here: the
-#   next ADR-0056 addendum assigns them a stage.
+#        That is a constraint on the platform (ADR-0056 D11 and D19's P1b-3; the
+#        contract table's wording 2 at A4e-4).
+#   3-11 ADR-0056 D11 "3-x" item (3) (A5e, V94): for every investigate challenge of
+#        the scope, the KEY set of the Secret ctf-evidence-<cid> equals the names the
+#        chart was given for it (the <cid>/<name> arguments; an extra key or a
+#        missing one fails). Only the keys are read (`kubectl get secret -o
+#        go-template` over `.data` printing the key alone): no value, no byte of a
+#        bundle, is fetched or printed. Operator-side, like 3-10.
+#   D11's "3-x" has four items; this script has (1), (2) and (3). (4) (no bundle
+#   content in the Helm release record) is not a deploy-time automatic check
+#   (ADR-0056 D11): V50 holds it in CI and V51 measures it at a rehearsal.
 #
-# The scope's values file is the one deploy-user.sh gives helm: values-all.yaml
-# (`all`), values-scenario-<name>.yaml (`scenario:<name>`), both required, or
-# <id>/values.yaml when it exists (single mission). Its evidence entries must be in
-# the exact form challenges/gen-values.sh writes (an `evidence` key in any other form
-# stops the assert, fail-closed, as deploy-user.sh's evidence_scope_cids does).
+# The scope's values file is NOT chosen here: it is the 5th argument, the file
+# deploy-user.sh gave helm (ADR-0056 A5e; the rule that picks it lives in
+# deploy-user.sh only). Its evidence entries must be in the exact form
+# challenges/gen-values.sh writes (an `evidence` key in any other form stops the
+# assert, fail-closed, as deploy-user.sh's evidence_scope_cids does).
 #
 # WHAT 3-8 does and does not prove: it is a deploy-moment check of the image
 # the Pod actually started from (a tag mix-up, an image older than the
@@ -117,7 +122,16 @@
 # mechanism count?".
 #
 # Usage:
-#   assert-flag-isolation.sh <namespace> <challenges-dir> <challenge-id> [<scenarios-dir>]
+#   assert-flag-isolation.sh <namespace> <challenges-dir> <challenge-id> \
+#       <scenarios-dir> <values-file> [<cid>/<name>...]
+#
+# All five are required (ADR-0056 A5e: fewer is exit 2, never a default):
+# <scenarios-dir> may be the empty string outside scenario mode; <values-file> is
+# the values file deploy-user.sh gave helm, or `-` when it gave helm none (a
+# single challenge with no values overlay). Each <cid>/<name> is one evidence file
+# name the chart was given for <cid> (evidence.challenges.<cid>.names): every
+# investigate challenge of <values-file> must have at least one, and none may name
+# another challenge (exit 1, before the probe).
 #
 # <challenge-id> is one of three shapes, matching what was passed to
 # deploy-user.sh: the literal string `all` (roster / all-missions deploys —
@@ -224,11 +238,27 @@ fi
 # Argument parsing
 # ---------------------------------------------------------------------------
 
-USAGE_MSG='usage: assert-flag-isolation.sh <namespace> <challenges-dir> <challenge-id> [<scenarios-dir>]'
+USAGE_MSG='usage: assert-flag-isolation.sh <namespace> <challenges-dir> <challenge-id> <scenarios-dir> <values-file|-> [<cid>/<name>...]'
+# ADR-0056 A5e: all five positional arguments are required. In particular the values
+# file is never defaulted: without it, exit 2 (the file is the one helm was given,
+# and only deploy-user.sh knows which one that is).
+if [ "$#" -lt 5 ]
+then
+  printf '%s\n  (%d argument(s) given; the 5th, the values file helm was given or -, is required: ADR-0056 A5e)\n' "${USAGE_MSG}" "$#" >&2
+  exit 2
+fi
 NS="${1:?${USAGE_MSG}}"
 CHALLENGES_DIR="${2:?${USAGE_MSG}}"
 CHALLENGE_ID="${3:?${USAGE_MSG}}"
-SCENARIOS_DIR="${4:-}"
+SCENARIOS_DIR="${4}"
+SCOPE_VALUES_ARG="${5}"
+shift 5
+# the <cid>/<name> arguments (checked against the scope once it is read, below)
+EVIDENCE_NAME_ARGS=()
+for _a in "$@"
+do
+  EVIDENCE_NAME_ARGS+=("${_a}")
+done
 
 if [ ! -d "${CHALLENGES_DIR}" ]
 then
@@ -428,7 +458,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 3-9 / 3-10 expectations (ADR-0056 D11 "3-x" items (1)(2), A5d): the
+# 3-9 / 3-10 / 3-11 expectations (ADR-0056 D11 "3-x" items (1)(2)(3), A5d / A5e): the
 # investigate challenges of this scope and their evidence mount directories, read
 # from the scope's values file (the file deploy-user.sh gives helm; see the
 # header). WHY a third reader of that file (after gen-values.sh, which writes it,
@@ -452,22 +482,25 @@ fi
 
 EVIDENCE_SCOPE_CIDS=()
 EVIDENCE_SCOPE_DIRS=()
+# ADR-0056 A5e: the values file is the one given (5th argument), never one chosen here.
 SCOPE_VALUES_FILE=""
-if [ "${CHALLENGE_ID}" = "all" ]
-then
-  SCOPE_VALUES_FILE="${CHALLENGES_DIR}/values-all.yaml"
-elif [ "${SCENARIO_MODE}" = yes ]
-then
-  SCOPE_VALUES_FILE="${CHALLENGES_DIR}/values-scenario-${SCENARIO_NAME}.yaml"
-elif [ -f "${CHALLENGES_DIR}/${CHALLENGE_ID}/values.yaml" ]
-then
-  SCOPE_VALUES_FILE="${CHALLENGES_DIR}/${CHALLENGE_ID}/values.yaml"
-fi
-if [ -n "${SCOPE_VALUES_FILE}" ] && [ ! -f "${SCOPE_VALUES_FILE}" ]
-then
-  printf 'assert-flag-isolation.sh: the values file of this scope is missing: %s — cannot judge 3-9 / 3-10\n' "${SCOPE_VALUES_FILE}" >&2
-  exit 1
-fi
+case "${SCOPE_VALUES_ARG}" in
+  -)
+    # helm was given no values file: no investigate challenge in this scope
+    ;;
+  '')
+    printf 'assert-flag-isolation.sh: the values file argument is empty (give the file helm was given, or -) — cannot judge 3-9 / 3-10 / 3-11\n' >&2
+    exit 2
+    ;;
+  *)
+    if [ ! -f "${SCOPE_VALUES_ARG}" ]
+    then
+      printf 'assert-flag-isolation.sh: the values file given is not a file: %s — cannot judge 3-9 / 3-10 / 3-11\n' "${SCOPE_VALUES_ARG}" >&2
+      exit 1
+    fi
+    SCOPE_VALUES_FILE="${SCOPE_VALUES_ARG}"
+    ;;
+esac
 
 evidence_scope_reject() { # $1 = line number, $2 = what is wrong
   printf 'assert-flag-isolation.sh: %s line %s: %s (the evidence entries must be in the form gen-values.sh writes) — cannot judge 3-9 / 3-10\n' \
@@ -545,6 +578,67 @@ EXPECTED_SECRET_NAMES=(ctf-flags)
 for _c in ${EVIDENCE_SCOPE_CIDS[@]+"${EVIDENCE_SCOPE_CIDS[@]}"}
 do
   EXPECTED_SECRET_NAMES+=("ctf-evidence-${_c}")
+done
+
+# 3-11 expectations (ADR-0056 D11 "3-x" item (3), A5e): the names the chart was
+# given, from the <cid>/<name> arguments (deploy-user.sh passes exactly the names it
+# gave helm as evidence.challenges.<cid>.names). Each one names a challenge of the
+# scope read above and a name of [A-Za-z0-9._-] (a Secret key's character set; B2's
+# grammar itself was deploy-user.sh's check before it made the Secret); none is
+# given twice; every challenge of the scope has at least one. Anything else stops
+# the assert before the probe (exit 1). An argument is never echoed (only its
+# position), since it is not held to a character set until here.
+evidence_names_reject() { # $1 = what is wrong
+  printf 'assert-flag-isolation.sh: the evidence name arguments: %s — cannot judge 3-11\n' "$1" >&2
+  exit 1
+}
+_i=0
+for _a in ${EVIDENCE_NAME_ARGS[@]+"${EVIDENCE_NAME_ARGS[@]}"}
+do
+  _i=$((_i + 1))
+  case "${_a}" in
+    */*)
+      _ac="${_a%%/*}"
+      _an="${_a#*/}"
+      ;;
+    *)
+      evidence_names_reject "argument #${_i} after the values file is not <cid>/<name>"
+      ;;
+  esac
+  case "${_an}" in
+    '' | *[!A-Za-z0-9._-]*)
+      evidence_names_reject "argument #${_i} after the values file has a name outside [A-Za-z0-9._-]"
+      ;;
+  esac
+  _found=0
+  for _c in ${EVIDENCE_SCOPE_CIDS[@]+"${EVIDENCE_SCOPE_CIDS[@]}"}
+  do
+    if [ "${_c}" = "${_ac}" ]
+    then
+      _found=1
+    fi
+  done
+  [ "${_found}" -eq 1 ] || evidence_names_reject "argument #${_i} after the values file names a challenge that is not an investigate challenge of this scope"
+  _j=0
+  for _b in ${EVIDENCE_NAME_ARGS[@]+"${EVIDENCE_NAME_ARGS[@]}"}
+  do
+    _j=$((_j + 1))
+    if [ "${_j}" -gt "${_i}" ] && [ "${_b}" = "${_a}" ]
+    then
+      evidence_names_reject "argument #${_j} after the values file repeats argument #${_i}"
+    fi
+  done
+done
+for _c in ${EVIDENCE_SCOPE_CIDS[@]+"${EVIDENCE_SCOPE_CIDS[@]}"}
+do
+  _found=0
+  for _a in ${EVIDENCE_NAME_ARGS[@]+"${EVIDENCE_NAME_ARGS[@]}"}
+  do
+    case "${_a}" in
+      "${_c}/"*) _found=1 ;;
+    esac
+  done
+  [ "${_found}" -eq 1 ] || evidence_names_reject "the investigate challenge ${_c} of this scope has no <cid>/<name> argument"
 done
 
 # ---------------------------------------------------------------------------
@@ -784,6 +878,31 @@ if ! SECRETS_LISTING="$(kubectl -n "${NS}" get secrets -o 'jsonpath={range .item
 then
   SECRETS_LISTED=no
 fi
+
+# ---------------------------------------------------------------------------
+# 3-11 (ADR-0056 D11 "3-x" item (3), A5e): the KEYS of each ctf-evidence-<cid> of
+# the scope, read by the operator, one `kubectl get secret` per challenge. The
+# go-template ranges over `.data` and prints the key alone: the value is bound to a
+# variable that is never printed, so no byte of a bundle leaves the API server's
+# answer as anything but a key name. A failed read is recorded per challenge and is
+# a violation, never "no key".
+# ---------------------------------------------------------------------------
+
+EVIDENCE_KEYS_READ=()   # per EVIDENCE_SCOPE_CIDS entry: yes / no
+EVIDENCE_KEYS=()        # per EVIDENCE_SCOPE_CIDS entry: the key names, one per line
+for _c in ${EVIDENCE_SCOPE_CIDS[@]+"${EVIDENCE_SCOPE_CIDS[@]}"}
+do
+  _keys=""
+  # shellcheck disable=SC2016  # the $k / $v are the go-template's own variables
+  if _keys="$(kubectl -n "${NS}" get secret "ctf-evidence-${_c}" -o 'go-template={{range $k, $v := .data}}{{$k}}{{"\n"}}{{end}}')"
+  then
+    EVIDENCE_KEYS_READ+=(yes)
+  else
+    EVIDENCE_KEYS_READ+=(no)
+    _keys=""
+  fi
+  EVIDENCE_KEYS+=("${_keys}")
+done
 
 # ---------------------------------------------------------------------------
 # Parse OBSERVED (fixed set of KEY=VALUE lines, one per probe field) and
@@ -1075,6 +1194,82 @@ else
   fi
 fi
 
+# 3-11 (ADR-0056 D11 "3-x" item (3), A5e, V94): for each investigate challenge of
+# the scope, the key set of ctf-evidence-<cid> equals the names the chart was given
+# for it (both directions). A key outside a Secret key's character set is
+# discarded (never echoed) and fails.
+_idx=0
+for _c in ${EVIDENCE_SCOPE_CIDS[@]+"${EVIDENCE_SCOPE_CIDS[@]}"}
+do
+  if [ "${EVIDENCE_KEYS_READ[_idx]}" != yes ]
+  then
+    VIOLATIONS+=("3-11: the keys of the Secret ctf-evidence-${_c} could not be read (kubectl get secret failed)")
+    _idx=$((_idx + 1))
+    continue
+  fi
+  _obs=()
+  _badkeys=0
+  while IFS= read -r _k || [ -n "${_k}" ]
+  do
+    [ -n "${_k}" ] || continue
+    case "${_k}" in
+      *[!A-Za-z0-9._-]*)
+        _badkeys=$((_badkeys + 1))
+        continue
+        ;;
+    esac
+    _obs+=("${_k}")
+  done <<< "${EVIDENCE_KEYS[_idx]}"
+  _want=()
+  for _a in ${EVIDENCE_NAME_ARGS[@]+"${EVIDENCE_NAME_ARGS[@]}"}
+  do
+    case "${_a}" in
+      "${_c}/"*) _want+=("${_a#*/}") ;;
+    esac
+  done
+  KEYS_OK=yes
+  if [ "${_badkeys}" -gt 0 ]
+  then
+    VIOLATIONS+=("3-11: ${_badkeys} key(s) of ctf-evidence-${_c} are outside a Secret key's character set (discarded)")
+    KEYS_OK=no
+  fi
+  if [ "${#_obs[@]}" -ne "${#_want[@]}" ]
+  then
+    KEYS_OK=no
+  fi
+  for _w in "${_want[@]}"
+  do
+    found=0
+    for _o in ${_obs[@]+"${_obs[@]}"}
+    do
+      if [ "${_o}" = "${_w}" ]
+      then
+        found=1
+        break
+      fi
+    done
+    [ "${found}" -eq 1 ] || KEYS_OK=no
+  done
+  for _o in ${_obs[@]+"${_obs[@]}"}
+  do
+    found=0
+    for _w in "${_want[@]}"
+    do
+      if [ "${_o}" = "${_w}" ]
+      then
+        found=1
+        break
+      fi
+    done
+    [ "${found}" -eq 1 ] || KEYS_OK=no
+  done
+  if [ "${KEYS_OK}" != yes ]
+  then
+    VIOLATIONS+=("3-11: the keys of ctf-evidence-${_c} are [${_obs[*]+${_obs[*]}}], expected exactly the names the chart was given [${_want[*]}]")
+  fi
+  _idx=$((_idx + 1))
+done
+
 if [ "${#VIOLATIONS[@]}" -gt 0 ]
 then
   printf 'assert-flag-isolation.sh: FAIL (%d violation(s)) for namespace %s (challenge-id=%s):\n' \
@@ -1086,8 +1281,8 @@ then
   exit 1
 fi
 
-CHECKS_RUN="3-1..3-10"
-# 3-9 / 3-10 are ADR-0056 D11 "3-x" items (1)(2) only (see the header). The
+CHECKS_RUN="3-1..3-11"
+# 3-9 / 3-10 / 3-11 are ADR-0056 D11 "3-x" items (1)(2)(3) (see the header). The
 # evidence scope is printed so that a test can hold it to evidence_scope_cids.
 printf 'assert-flag-isolation.sh: OK — %s clean for namespace %s (challenge-id=%s): evidence scope [%s], Opaque Secrets [%s], %d Helm release record(s)\n' \
   "${CHECKS_RUN}" "${NS}" "${CHALLENGE_ID}" "${EVIDENCE_SCOPE_CIDS[*]+${EVIDENCE_SCOPE_CIDS[*]}}" "${EXPECTED_SECRET_NAMES[*]}" "${OBS_HELM_RELEASES}"
