@@ -1,7 +1,7 @@
 # ADR-0056: 調査型の課題を足す — 答えは閉じた形式の設問とし、scoreboard の Grader 1 点で「回数を加算してから比較」で判定する。イベント版の痕跡束 (席ごとの値と囮) は seat の Secret → plant → seed → 宣言した mount で、答え表は scoreboard の process だけに注入する。練習版は公開し、イベントのモード (`FLAGS_FILE`) では使わない
 
 - Status: **Proposed** (起草 2026-11-16)
-  - Accepted の条件: (1) 段階 A1〜A5 の app PR と P1 の platform PR が merge されている、(2) V1〜V6・V8〜V11・V15〜V92 のうち app の部分が required check (`test` / `flag-guard` / `chart-lint`) の上で緑 (除くのは、platform の部分 = V15・V32・V75・V76・V83 の platform 側と、実機の V51)、(3) security-engineer の R1 の記録 (A1〜A5・P1。private) と CTO の承認の記録がある、(4) (2) で除いた platform と実機の V を、人が merge か rehearsal の時に確かめた記録がある (private)。
+  - Accepted の条件: (1) 段階 A1〜A5 の app PR と P1 の platform PR が merge されている、(2) V1〜V6・V8〜V11・V15〜V93 のうち app の部分が required check (`test` / `flag-guard` / `chart-lint`) の上で緑 (除くのは、platform の部分 = V15・V32・V75・V76・V83 の platform 側と、実機の V51)、(3) security-engineer の R1 の記録 (A1〜A5・P1。private) と CTO の承認の記録がある、(4) (2) で除いた platform と実機の V を、人が merge か rehearsal の時に確かめた記録がある (private)。
   - D14 (detect の hold-out) は、本 ADR の Accepted を待たない独立の段階 (D1)。前提は #341 の merge と detect 有効化の R1。
 - Date / Deciders: 2026-11-16 / CEO (秘匿 = 版を分ける。回答型は ADR-0056。利用形態の順 = イベント → 研修 → 自習 → デモ。イベント後の公開は都度 CEO)、CTO 代行 = CoS (席ごとの値 + 囮の位置 K。detect の応答の区別を潰すのは hold-out の変種だけ。I6 の解釈 = イベント版は flags と同じ「イベントのデータ」)、security-engineer (CISO 直下。5 点とも条件付きで可、2026-11-16)、architect (起草)
 - 関連: product brief ws#185 (`docs/briefs/ir-scenario.md` §5.2・§5.3・§8)、ADR-0055 (Proposed、app#604。D6 の `requirements.answers`)、ADR-0001 / 0005 / 0007 / 0020 / 0026 / 0027 / 0029 / 0033 / 0037 / 0039 / 0042、`docs/detect-challenge-design.md`、REFACTORING.md の新フェーズ (番号は CoS が決める)、app#341
@@ -640,7 +640,10 @@ security の要件 3 は「起動拒否」と書いている。束の項目は�
 | A4e-3 (分割前の記述。実績は下の A4e-3a-i #654・A4e-3a-ii #655・A4e-3b の行) | `scoreboard edition render` と `--practice` (D20 の引数・出力の layout・手順、一時 dir → rename、自己検査、event の出力に digests を含めない、`--out` の git と `--challenges` の guard)、鍵の reader (`openRegular`。D20 の鍵の形と mode)、cmd の写像を、`*Violation` だけ 1・`*InputError` と未分類の error を 2・検査を全部通った後の書き出しの失敗だけ 3 に変える (render と check の両方。今の check は `*InputError` だけ 2、それ以外は 1、`WriteDigestsFile` の失敗は 2。`errors.Join` に 2 にあたる error と `*Violation` が混ざれば 2。追補 13 と改訂)、commit の後の後始末の失敗は exit 0 で残った名前を stderr に出す (D20 の exit 3 の節、追補 13 の改訂)、`RenderEvent` の呼び手の pin (V78)、`make edition-practice CID=<cid>` (export stage)、flag-guard の event の header の検査 (`scripts/check-flags.sh` の作法、R1) | 要 | CLI は先に merge してよい (platform はまだ呼ばない) | V67、V80、V81、V84、V87 (exit 3)、V92 (検証: CI) |
 | A4e-3a-i (#654、済み) | check の側の exit 3 と commit の点: `writeFileAtomic` (一時 file → 書く → sync → `os.Link` → 一時名を消す) と `writeTreeAtomic` (一時 dir → rename) で、commit の前の失敗 (書き出しの失敗の型と、残った名前) と、commit の後の後始末の失敗 (警告) を分ける。cmd の写像 (`*Violation` だけ 1、書き出しの失敗だけ 3、それ以外は 2)。commit の後の後始末の失敗は exit 0 + stderr | 要 | — | V87 (exit 3)、V92 (check の分。library の seam の test と cmd の配線の source test の組) (検証: CI) |
 | A4e-3a-ii (#655、済み) | `edition render` の event の分: `RenderEvent` (`eventrender.go`)、鍵の reader (D20 の鍵の形)、`--out` の guard (git の worktree の中・`--challenges` の中)、往復の test (render → check で exit 0)、`RenderEvent` の呼び手の pin | 要 | CLI は先に merge してよい (platform はまだ呼ばない) | V78 (`RenderEvent`)、V80、V92 (render の event の分) (検証: CI) |
-| A4e-3b (作業中) | `edition render --practice` (renderer を呼んでよい 2 つ目の非 test の file。D20 の到達範囲)、`make edition-practice CID=<cid>`、`Dockerfile.edition-practice` (export stage)、flag-guard の event の header の検査 (`scripts/check-flags.sh` の作法)。V84 は、A4e-3 の分割でどの段にも割り当てられていなかったので、ここに置く (#655 R4#1、追補 14)。実績 (engineer の報告。PR は review の後): 実装の file は `internal/edition/practiceedition.go` (`RenderPracticeEdition(challenges, cid)`)、cmd は `runEditionRenderPractice`。置き換えは `replaceTreeAtomic` (一時 dir → 既存の `practice/` を退避 → rename = commit の点 → 退避を消す。commit の前の失敗は退避を戻す)。flag-guard は `scripts/check-edition-headers.sh` (`--selftest` つき) を `check-flags.sh` から呼ぶ (追跡中の file の行頭が V84 の event の header なら拒否する。練習版 = 全部 0 の run id は除く。除外は `internal/edition/testdata/digests-golden/digests.tsv` の名指しの 1 件)。`make edition-practice` は、export を一時 dir に出してから host の `practice/` を置き換える (`-o .` だと古い file が残るため)。`RenderEvent` の自己検査の配線の source test (V78) も、この段で足す (#656 R4#1) | 要 (Dockerfile・flag-guard) | — | V67、V78 (`RenderPracticeEdition` の呼び手と `RenderEvent` の自己検査の配線)、V80 (鍵の負の case のうち #655 に無い分)、V81、V84、V92 (`--practice` の分) (検証: CI) |
+| A4e-3b (分割前の記述。実績は下の A4e-3b-i #657・A4e-3b-ii #658 の行) | `edition render --practice` (renderer を呼んでよい 2 つ目の非 test の file。D20 の到達範囲)、`make edition-practice CID=<cid>`、`Dockerfile.edition-practice` (export stage)、flag-guard の event の header の検査 (`scripts/check-flags.sh` の作法)。V84 は、A4e-3 の分割でどの段にも割り当てられていなかったので、ここに置く (#655 R4#1、追補 14)。実績 (engineer の報告。PR は review の後): 実装の file は `internal/edition/practiceedition.go` (`RenderPracticeEdition(challenges, cid)`)、cmd は `runEditionRenderPractice`。置き換えは `replaceTreeAtomic` (一時 dir → 既存の `practice/` を退避 → rename = commit の点 → 退避を消す。commit の前の失敗は退避を戻す)。flag-guard は `scripts/check-edition-headers.sh` (`--selftest` つき) を `check-flags.sh` から呼ぶ (追跡中の file の行頭が V84 の event の header なら拒否する。練習版 = 全部 0 の run id は除く。除外は `internal/edition/testdata/digests-golden/digests.tsv` の名指しの 1 件)。`make edition-practice` は、export を一時 dir に出してから host の `practice/` を置き換える (`-o .` だと古い file が残るため)。`RenderEvent` の自己検査の配線の source test (V78) も、この段で足す (#656 R4#1) | 要 (Dockerfile・flag-guard) | — | V67、V78 (`RenderPracticeEdition` の呼び手と `RenderEvent` の自己検査の配線)、V80 (鍵の負の case のうち #655 に無い分)、V81、V84、V92 (`--practice` の分) (検証: CI) |
+| A4e-3b-i (#657、済み) | header の guard: `scripts/check-edition-headers.sh` (`--selftest` つき) を `check-flags.sh` から呼ぶ。追跡中の file の行頭が V84 の event の header なら拒否する (練習版 = 全部 0 の run id は除く)。除外は `internal/edition/testdata/digests-golden/digests.tsv` の名指しの 1 件。header の無い束 (evidence だけ) の混入は見ない (#657 R4#1。A4e-3c で覆う) | 要 (flag-guard) | — | V84 (検証: flag-guard の CI) |
+| A4e-3b-ii (#658、済み) | `edition render --practice` (`internal/edition/practiceedition.go` の `RenderPracticeEdition`、cmd は `runEditionRenderPractice`、置き換えは `replaceTreeAtomic`)、`make edition-practice CID=<cid>` と `Dockerfile.edition-practice` (D20 の実際の形)、`RenderEvent` の自己検査の配線の pin、鍵の負の case、`OutputError` の `Left` / `Restore`、commit された `practice/` の鮮度の test (`render_golden_test.go` の `practiceStale`) | 要 (Dockerfile) | — | V67、V78、V80 (鍵の負の case)、V81、V92 (`--practice` の分) (検証: CI) |
+| A4e-3c | evidence だけの混入の guard (追補 15、#657 R4#1): 追跡中の path に、event の `--out` の layout の `evidence/<seat>/<cid>/<file>` (seat は ADR-0042 の文法、cid は `challengeid.Pattern`) が現れたら、flag-guard が赤にする。練習版の layout (`practice/evidence/<file>`、席の dir が無い) はこの形に合わない。一致は部分一致: path の中のどの位置でも、segment の並び `evidence/<seat>/<cid>/` の後に 1 つ以上の segment が続けば赤 (`<file>` の入れ子を含む。`evidence`・seat・cid は segment の全体で照らす)。練習版の `practice/evidence/` の下の seat の形の入れ子も、同じ規則で赤。それ以外の入れ子は練習版の layout の誤りで、`practicelayout.go`・V11 (B2)・V81 (`practiceStale`) が持つ (shell に練習版の layout の 2 つ目の定義を作らない)。script の pattern の 3 つの部品 (evidence の dir 名・cid・seat の文法) は、Go の test が Go の定義と照らす (V93 の parity)。除外は名指しの testdata だけ。この PR に、app の `.claude/rules/dev-flow.md` の D (image) の行への `Dockerfile.edition-practice` の追記を同梱する (`.claude/rules/**` は Edit の deny の外。#659 R4#2)。`check-edition-headers.sh` に足すか隣の script にし、`check-flags.sh` から呼ぶ。A7 の前、A4e-4 と独立 | 要 (flag-guard) | — | V93 (検証: flag-guard の CI) |
 | A4e-4 | 行に入れるものは、D20 の「契約の分け方」の一覧 (追補 14)。 契約表の文面 2 の確定版の行 (D20 の CLI・file の形・痕跡束の部分。A5c-1 で後回しにした分を含む) と `internal/contracttable` の固定 | 要 (contracttable) | P1b-2・P1b-3 と同時に open し、app の行を先に merge | V59、V82、V85 (検証: CI) |
 | A4e (分割前の記述。廃止、D20 と A4e-1〜4 が正典。以下の旧文は参照しない) | `scoreboard edition check|render` の subcommand: 引数、exit 0/1/2、stderr に値を出さない、`--digests-out` (run id と digest)、表と digests の run id の一致、HTTP の path から render に届かないソース検査。答え表は M2 の入口 (`LoadEventTable` → `CheckedTable`) からだけ得る。B5 の入力は `internal/hintleak/scope` で組む。reader を O_NOFOLLOW + 開いた descriptor の `Stat` の照合にする (M2)。文面 2 の CLI の部分。digests の header と列の形を契約表と `internal/contracttable` で照らし合わせる。#640 から送られた 3 項目: (1) 練習版の file と PracticeSet を `CheckedTable` に載せる、(2) `checkPracticeOverlap` を validator の経路に配線する、(3) 重なり率を stderr に出す。加えて、調査型の課題が無い image で B4 を呼ばない判断、`edition render` を render の唯一の呼び手として source test に足す。`--previous-digests` (必須) と B10、B8 (a2) (S ≥ 2N を `--seats` の数で判定)、B7 の席の間の検査に template の lexer を渡す。前提は A4b-2・A4c-1・A4c-2b・A4d-2a〜c | 要 | CLI ↔ P1b-2 | V3 (B の CLI)、V15 (check) (検証: Go は CI、`docker run` の経路は手元不可 = P1b-2 の stub の selftest だけ) |
 | A4 (分割前の記述) | `internal/edition` の束の検査 (B1〜B9)・renderer・`edition check|render` の subcommand・testdata | 要 | CLI ↔ P1b | V3 (B)、V4、V6 (b)、V11、V15 (check)、V16 (Go)、V18、V19 |
@@ -652,7 +655,7 @@ security の要件 3 は「起動拒否」と書いている。束の項目は�
 | A5d | `assert-flag-isolation.sh` の 3-x (`mountDir` の中の symlink が 0 で通常 file だけ、seat の ns の Secret 名 = {ctf-flags} ∪ {ctf-evidence-<cid> | cid はスコープの調査型})。V53 (catalog の mountDir の集合と commit 済みの生成物の `evidence: true` の path の集合の一致、Go の test)。`check-flag-isolation.sh` の実 scope (values-all・scenario) に調査型が入ったときの `names` の出所 = その課題の公開の練習版の束 (`challenges/<cid>/edition/practice/evidence/` の file 名。`answers.tsv` と `digests.tsv` は束ではないので入らない) と、scope ごとの期待する `ctf-evidence-*` の集合の導出。challenge から `/opt/ctf/evidence-src` が見えないことの実行時の assert (`assert-flag-isolation.sh`、3-4 と同じ作法) は A5c。A5b の後 | 要 | — | V8 (3-x)、V2 (Secret 名) (検証: stub の test は CI、実 cluster は実機でのみ) |
 | A5 (分割前の記述) | ctf-user の `ctf-evidence`、plant の一般化、gen-values の 2-7、3-x、deploy-user の `--evidence-*`、helm の `fail`、契約表の新しい行。gen-values の `--check` に `mountDir` の検査 (sensitive_dir_prefixes の外であること、全 plant-target の書き込み先と file が互いに素であること (ADR-0055 C4 (ii)。先に着地した側の検査を 1 つの実装として使う)) を入れる。`reservedMountRoots` と gen-values の SEED_ROOT / SNAPSHOT_ROOT の parity の test | 要 | 行 ↔ P1b | V2 (ctf-user)、V8、V16 (shell)、V17、V28、V29 |
 | A6 (#626) | portal の回答欄 (application-engineer)。未到達 (locked) の課題でも回答できる (ADR-0027 の free browsing。既存の flag 欄と同じ。CoS の決定、test で固定)。前提は A3b-1〜3 (#620〜#622) で、満たした。範囲は次のとおり。prompt は `esc()` を通す。`status` (と `correct` / `solved` / `remaining`) だけで分岐し、文言は portal が持つ。正解済みで未 solve の設問には再提出の口を残す (D5 の 5)。400 (形式が違う、回数は減らない)・429・500 をそれぞれ表示する。500 の表示は「採点できなかった。回数は消費済みのことがある」とし、再描画 (journey) で実際の残りを見せる (D5 の 3〜5 に合わせる。文言は portal の実装が正)。journey の 500 (H2) では、前の表示を残す。local で通しで確かめるには A4a-2 が要る | — | — | V40 (検証: 生成型と template の test、goja = ADR-0035) |
-| A7 | **前提**: merge 済みは A1d #611・A1e #612・A1f #618・A3b-1〜5 #620〜#622・#627・#625・A4a-1 #628・A4a-2 #630・A4a-3 #631・A5a-1 #619・A5a-2 #629・A5b #632・A4b-1 #633・A6 #626。残りは A4c-3・A4e-3b・A4e-4・A5c-2・A5d (V53 が緑)・V51 の実測 (設問に `technique` を使うなら A1c も。済んだのは A4b-2 #634・A4c-1 #635・A4d-1a #636・A4d-1b #637・A5c-1 #638・A4c-2a #639・A4c-2b #640・A4d-2a #642・A4d-2b #643・A4d-2c #644・A4e-1 #646・A4e-2a #648・A4e-2b #649・F-fmt #650・A4e-2d #652・A4e-2c #653・A4e-3a-i #654・A4e-3a-ii #655)。A7 の課題の `practice/` は、`edition render --practice` (A4e-3b) で作る。A7 の課題は `edition/practice/` を追補 9 の layout で持ち、V67 (golden) が緑。A5c の merge までは、調査型の課題を main に置かず、イベントの values に `evidence.challenges` を渡さない (Secret を作る者がいないので Pod が起動しない)。platform が `evidence` を渡す P1b-3 は A5c の後。A7 では V47 の実 tree の検査を非空の要求に反転させる。課題を置くコースは V39 を満たす。**課題 id は、全 evade の課題の id より大きくする**。scenario の無い順序 (課題 id の順) でも `LoadScored` が拒否するため (今の evade は 03・05・10)。調査型の課題を main に置く前に、platform の P1b-2 (イベントで (5) の run id が全部 0 なら FAIL) と P1b-1b (render gate) を merge する (イベントで `FLAGS_FILE` が空のまま起動すると、公開の練習版の答えで採点が始まる誤設定を、platform の側で止めるため)。新しい課題の練習版 (content-engineer) | 要 (fixtures と同じ扱い) | — | V11 (golden)、V3 を練習版で緑、V22 (実課題の `edition/**` が image に無い)、V27 を反転 |
+| A7 | **前提**: merge 済みは A1d #611・A1e #612・A1f #618・A3b-1〜5 #620〜#622・#627・#625・A4a-1 #628・A4a-2 #630・A4a-3 #631・A5a-1 #619・A5a-2 #629・A5b #632・A4b-1 #633・A6 #626。残りは A4c-3・A4e-3c・A4e-4・A5c-2・A5d (V53 が緑)・V51 の実測 (設問に `technique` を使うなら A1c も。済んだのは A4b-2 #634・A4c-1 #635・A4d-1a #636・A4d-1b #637・A5c-1 #638・A4c-2a #639・A4c-2b #640・A4d-2a #642・A4d-2b #643・A4d-2c #644・A4e-1 #646・A4e-2a #648・A4e-2b #649・F-fmt #650・A4e-2d #652・A4e-2c #653・A4e-3a-i #654・A4e-3a-ii #655・A4e-3b-i #657・A4e-3b-ii #658)。A7 の課題の `practice/` は、`edition render --practice` (A4e-3b-ii #658) で作る。A7 の課題は `edition/practice/` を追補 9 の layout で持ち、V67 (golden) が緑。A5c の merge までは、調査型の課題を main に置かず、イベントの values に `evidence.challenges` を渡さない (Secret を作る者がいないので Pod が起動しない)。platform が `evidence` を渡す P1b-3 は A5c の後。A7 では V47 の実 tree の検査を非空の要求に反転させる。課題を置くコースは V39 を満たす。**課題 id は、全 evade の課題の id より大きくする**。scenario の無い順序 (課題 id の順) でも `LoadScored` が拒否するため (今の evade は 03・05・10)。調査型の課題を main に置く前に、platform の P1b-2 (イベントで (5) の run id が全部 0 なら FAIL) と P1b-1b (render gate) を merge する (イベントで `FLAGS_FILE` が空のまま起動すると、公開の練習版の答えで採点が始まる誤設定を、platform の側で止めるため)。新しい課題の練習版 (content-engineer) | 要 (fixtures と同じ扱い) | — | V11 (golden)、V3 を練習版で緑、V22 (実課題の `edition/**` が image に無い)、V27 を反転 |
 | P1a (platform#332) | `verify.sh` の `[flags]`: (4) があれば FAIL。(5) の最新の 1 行の `run_id` が 32 桁の小文字 hex でなければ FAIL、正しければ報告する。(5) が無いときは、Deployment に `ANSWERS_FILE` が無ければ「表が要らない起動」、あれば「未検証」、env を読めなければ「未検証」とし、失敗にはしない。digests の run id との照合は P1b-2 | 要 | app#613 と対 (P1a が先) | V32 |
 | P1b-1a | helmfile: イベントの設定で明示したときだけ `answersSecret` を有効にする (Secret 名と key は契約表の「答え表」の行)。ここでは render gate を持たない。調査型があるのに表が無い場合の fail-closed は、scoreboard の起動時の拒否 (D8 (i)) と P1a の (4) の FAIL が担う | 要 | A4-0 と同時 | V12 (有効化の部分) |
 | P1b-1b | helmfile: local 以外で `requirements.answers` が空でないのに `answersSecret` が無効なら、render を失敗させる (D8)。前提: ADR-0055 S3 の生成物の `requirements:` が app にあること (main にはまだ無い)。S3 の後に入れる | 要 | ADR-0055 S3 の app PR の後 | V12 (render gate) |
@@ -663,10 +666,10 @@ security の要件 3 は「起動拒否」と書いている。束の項目は�
 | D1 | detect の hold-out (app + platform)。#341 の後 | 要 | detect-grader の行 | V7 |
 
 - 順序 (2026-11-16 時点)
-  - merge 済み: A0 #605 → A1a #606 → A1b #607 → A2a #610 → A1d #611 → A1e #612 → A2b-go #613 (P1a = platform#332 が先) → A2b-chart #614 → A3a-1 #615 → A3a-2 #616 → 追補 3 #617 → A1f #618 → A5a-1 #619 → A3b-1 #620 → A3b-2 #621 → A3b-3 #622 → 追補 4 → A4-0 #624 → A3b-5 #625 → A6 #626 → A3b-4 #627 → A4a-1 #628 → 追補 5 → A5a-2 #629 → A4a-2 #630 → A4a-3 #631 → 追補 6 と A5b #632 → A4b-1 #633 → 追補 7 と A4b-2 #634 → A4c-1 #635 → 追補 8・9 と A4d-1a #636 → A4d-1b #637 → A5c-1 #638 → A4c-2a #639 → A4c-2b #640 → 追補 10 と改訂 #641 → A4d-2a #642 → A4d-2b #643 → A4d-2c #644 → 追補 11 と改訂 #645 → A4e-1 #646 → 追補 12 #647 → A4e-2a #648 → A4e-2b #649 → F-fmt #650 → 追補 13 と改訂 #651 → A4e-2d #652 → A4e-2c #653 → A4e-3a-i #654 → A4e-3a-ii #655 → 追補 14。platform の P1b-1a #334 も merge 済み。
+  - merge 済み: A0 #605 → A1a #606 → A1b #607 → A2a #610 → A1d #611 → A1e #612 → A2b-go #613 (P1a = platform#332 が先) → A2b-chart #614 → A3a-1 #615 → A3a-2 #616 → 追補 3 #617 → A1f #618 → A5a-1 #619 → A3b-1 #620 → A3b-2 #621 → A3b-3 #622 → 追補 4 → A4-0 #624 → A3b-5 #625 → A6 #626 → A3b-4 #627 → A4a-1 #628 → 追補 5 → A5a-2 #629 → A4a-2 #630 → A4a-3 #631 → 追補 6 と A5b #632 → A4b-1 #633 → 追補 7 と A4b-2 #634 → A4c-1 #635 → 追補 8・9 と A4d-1a #636 → A4d-1b #637 → A5c-1 #638 → A4c-2a #639 → A4c-2b #640 → 追補 10 と改訂 #641 → A4d-2a #642 → A4d-2b #643 → A4d-2c #644 → 追補 11 と改訂 #645 → A4e-1 #646 → 追補 12 #647 → A4e-2a #648 → A4e-2b #649 → F-fmt #650 → 追補 13 と改訂 #651 → A4e-2d #652 → A4e-2c #653 → A4e-3a-i #654 → A4e-3a-ii #655 → 追補 14 と改訂 #656 → A4e-3b-i #657 → A4e-3b-ii #658 → 追補 15。platform の P1b-1a #334 も merge 済み。
   - 残りは 3 列で進める (並列は WIP の枠と stacked の深さ 2 の範囲で)。
     - (列 1) 完了 (A6 #626・A3b-4 #627・A3b-5 #625)。
-    - (列 2) A4e-3b → A4e-4 (+ P1b-2・P1b-3 と同時)。F-fmt は #650 で済んだ。A4e-2d は #652、A4e-2c は #653、A4e-3a は #654・#655 で済んだ。A4c-3 は A4e と独立で、A7 の前 (A4c-3 と A4e-2c はどちらも hintleak の R1 の path なので、同じ file を触るなら直列)。A4e-1 は #646、A4e-2 は #648・#649 で済んだ。
+    - (列 2) A4e-4 (+ P1b-2・P1b-3 と同時に open。platform の CI が止まっている間の扱いは、D20 の契約の分け方)。A4e-3c は A4e-4 と独立で、A7 の前。A4e-3b は #657・#658 で済んだ。F-fmt は #650 で済んだ。A4e-2d は #652、A4e-2c は #653、A4e-3a は #654・#655 で済んだ。A4c-3 は A4e と独立で、A7 の前 (A4c-3 と A4e-2c はどちらも hintleak の R1 の path なので、同じ file を触るなら直列)。A4e-1 は #646、A4e-2 は #648・#649 で済んだ。
     - (列 3) A5c-1 (A4b-1 の後、+ P1b-3。V58 を含む) → A5c-2 (練習版の経路) → A5d → V51 の実測 (P1b-3 の rehearsal)。A5b は #632 で済んだ。
   - 最後に A7 → platform の `APP_PIN` の bump。A1c は `technique` を使うときだけ、A7 の前に入れる。
 - (分割前の順序): A1a → A1b → A1d / A1e (触る file が別なので並行してよい) → A2a → A2b (+ P1a) → A3a → A4 (+ P1b) → A5 (+ P1b) → A3b → A6 → A7 → platform の `APP_PIN` の bump。A1c は `technique` を使うときだけ、A7 の前に入れる。
@@ -711,7 +714,10 @@ D9・D11・D12・D16 の「A4e に送る」は、すべてここに集める。�
   - `<challenges>/<cid>/edition/{edition.yaml,template/}` を読み、`RenderPractice` → `PracticeOutput` の結果で `<challenges>/<cid>/edition/practice/` を置き換える。
     - 置き換えの手順: 一時 dir に作る → 既存の `practice/` があれば退避の名前に rename → 一時 dir を `practice/` に rename → 退避を消す。途中で失敗したら、退避を `practice/` に戻す。
     - 練習版は公開の版なので、mode は通常 (dir 0755・file 0644)、`--out` の guard は当てない。
-    - 実行の経路は `make edition-practice CID=<cid>` (A4e-3)。`make gen` と同じ export stage の型 (`Dockerfile.edition-practice --target export -o . .`) を使う。
+    - 実行の経路は `make edition-practice CID=<cid>` (A4e-3b-ii #658)。
+      - container の中で render し、export を一時 dir に出す (`-o .` に直接出すと、置き換え先の古い file が残るため)。
+      - host の `practice/` は次の順で置き換える: 置き換え先と同じ dir の一時の名前に移す → 既存を退避 → mv → 退避を消す。失敗したら退避を戻す (#658 R3#3)。
+      - container の中では、COPY で入った既存の `practice/` を render の前に消す。`edition render --practice` を、既存の `practice/` が image の下の layer にある container の中で直接走らせると、退避の rename が overlayfs で EXDEV になり、exit 3 で止まる。`make edition-practice` は、それを避ける形になっている (追補 15)。
   - golden の test (V67) と実課題の再生成は、この 1 つの経路を通る。出力の answers.tsv は `Parse` と `Check` (EventMode false) と `MaxTableBytes` を通る (#643 の LOW)。
 
 **`edition check`** (validator)
@@ -751,6 +757,9 @@ D9・D11・D12・D16 の「A4e に送る」は、すべてここに集める。�
 - 3 = 環境の失敗 (追補 13)。検査を全部通った後の出力の書き出しの失敗が、これにあたる。
   - check では `--digests-out` の一時 file の作成・書き込み・sync・`os.Link` の失敗 (ENOSPC・EACCES・hard link を作れない filesystem・長すぎる名前など)。render では、自己検査の後の一時 dir の書き出しと rename の失敗、`--practice` の置き換えの失敗。
   - 出力の commit の点は、check では `os.Link` の成功、render では `--out` (か `practice/`) への rename の成功 (追補 13 の改訂、#651 R2#1)。commit の前の失敗は exit 3 で、出力先は作られていない。後始末 (一時 file・一時 dir の削除) は best-effort で、消せなかった一時の名前を stderr に出す (48 文字で切る。値は出さない)。一時の名前は出力先と別で、O_EXCL で毎回新しく作るので、再実行を妨げない。
+    - 書き出しの失敗の型 `OutputError` は、2 つの名前を分けて持つ。cmd は、それぞれに合う指示を stderr に出す (#658 R2#2、追補 15)。
+      - `Left`: 消してよい一時の名前。指示は「消してよい」。
+      - `Restore`: 戻すべき退避の名前 (`--practice` で、退避を `practice/` に戻せなかったとき)。指示は「この名前を `practice/` に戻す」。
   - commit の後の後始末の失敗 (check の一時名の `os.Remove`、`--practice` の退避の削除) は exit 0 とする (出力先は sync 済みの完全な内容で、置き直しは要らない)。残った名前を stderr で知らせる。巻き戻して exit 3 にする形は採らない (出力先の削除も同じ dir の同じ原因で失敗しうるので、両方が残り、再実行が EEXIST の 2 になる)。
   - 入力は受理できる状態なので、exit 3 のとき platform は入力を作り直さず、出力先の環境 (mount・filesystem・`--user`) を直して同じ入力で再実行する。platform は exit code に依らず、実行の後に作業の dir を丸ごと消す (成功のときは sops で包んだ後。残った一時の名前と平文を残さない。P1b-2)。
   - 書き出しの時の EEXIST は 3 ではなく 2 (既にある出力先)。入力を読む段の I/O の失敗は 2 のまま。
@@ -761,7 +770,7 @@ D9・D11・D12・D16 の「A4e に送る」は、すべてここに集める。�
 **練習版と B7 / B8 (b)**: 席 `*` の束を `CheckDecoySpread` / `CheckOutputSpace` に渡すと拒否する (呼び手の誤り。#644)。練習版には当てない、という D10 の規則の機械の形。
 
 **到達範囲 (V78)**
-- renderer の関数を呼んでよい非 test の file は、閉じた一覧の 2 つ。`eventrender.go` (`RenderEvent`) と、A4e-3b が作る `internal/edition/practiceedition.go` (`RenderPracticeEdition`) = `--practice` の実装の 1 file (CoS = CTO 代行の決定、#655 R4#2。追補 14)。一覧は `render_reach_test.go` の `renderCallers` が固定する。event と練習版の経路を同じ file に混ぜない。
+- renderer の関数を呼んでよい非 test の file は、閉じた一覧の 2 つ。`eventrender.go` (`RenderEvent`) と、A4e-3b-ii (#658) が作った `internal/edition/practiceedition.go` (`RenderPracticeEdition`) = `--practice` の実装の 1 file (CoS = CTO 代行の決定、#655 R4#2。追補 14)。一覧は `render_reach_test.go` の `renderCallers` が固定する。event と練習版の経路を同じ file に混ぜない。
 - `RenderEvent` の呼び手は `edition render` の 1 か所。`RenderPractice` の呼び手は `edition render --practice` と test。
 - `LoadEventTable` の呼び手は `CheckEvent` の 1 か所。`CheckEvent` と `WriteDigestsFile` (`--digests-out` の writer) の呼び手は、`cmd/scoreboard/editioncmd.go` の `runEditionCheck` の 1 か所 (#648・#649)。正典の source test は `internal/edition/load_source_test.go` の `doorViolations` の 1 つ (#649 の review で、cmd の側の pin をここに寄せた)。
 - `CheckedTable` / `CheckedBundles` / `CheckedEvent` は、それぞれ load.go / bundlecheck.go / checkevent.go の外で作れない。
@@ -772,7 +781,13 @@ D9・D11・D12・D16 の「A4e に送る」は、すべてここに集める。�
 
 **契約の分け方**
 - app の CLI (A4e-1〜3) は、platform がまだ呼ばないので先に merge してよい。
-- 契約表の確定版の行 (A4e-4) は、P1b-2・P1b-3 と同時に open し、app の行を先に merge する (行が描くのは main にある CLI)。
+- 契約表の確定版の行 (A4e-4) は、P1b-2・P1b-3 と同時に open し、app の行を先に merge する (行が描くのは main にある CLI)。「同時」は、open と相互リンクが同時という意味で、merge が同時という意味ではない (追補 15)。
+  - platform の CI が課金で止まっている間も、次を満たせば app の行を先に merge してよい。
+    - (i) P1b-2・P1b-3 の PR が open (draft でよい) で、本文が app の PR と相互にリンクしている。
+    - (ii) 行が描く CLI が全部 main にある (A4e-3 で満たした)。
+    - (iii) platform は P1b-2 の merge まで CLI を呼ばない。
+  - platform の PR の merge は、V83 の selftest を人が手元か self-hosted runner で走らせ、結果を PR に貼ってから行う (platform には required check が無い)。
+  - 契約表の file は app の `.claude/rules/falco-ctf-app-conventions.md` で、これまでの行は通常の app PR で足した (A4-0 #624、ADR-0054 #597、A2b #613 など)。user settings の Edit の deny は `.claude/` の agents・commands・hooks・settings・skills・workflows で、`.claude/rules/**` は入っていない (CoS が確かめた。追補 15 の改訂、#659 R4#2)。だから A4e-4 は、engineer が通常の app PR で編集する。classifier に止められたときだけ、同じ操作を別の形で再試行せず、CEO の手にする。
   - 行に入れるもの (追補 14)。各項の [ ] は、契約表で code span にして `internal/contracttable` が app の定数と照らすもの (V82) か、散文で検査の対象外のものか、を表す (追補 14 の改訂、#656 R4#2)。照らし合わせの無い code span は、契約表に置かない:
     - [code span。V82 が `cmd/scoreboard` の定数と照らす] subcommand の名前と、引数の全体 (`--key-file`・`--previous-*` / `--no-previous`・`--digests-out`・`--out` を含む)。
     - [exit の値は code span で、V82 が cmd の exit の定数と照らす。同じ項の「stdout は契約ではない」は散文で、V92 が `ok run=` の code span が 0 件であることを確かめる] exit の 4 値と意味 (0 受理 / 1 規則の違反 / 2 使い方の誤り・読めない入力・形の誤り・混在 / 3 検査の後の書き出しの失敗)。stdout は契約ではない。
@@ -808,7 +823,7 @@ D9・D11・D12・D16 の「A4e に送る」は、すべてここに集める。�
   - I16: 束は image の外。
   - I13b: `mountDir` の制約による。
 - **runbook (COO)**: DB の版 3 からの rollback は、`user_version = 2` と `DELETE FROM answer_attempts` を同時に行う (platform#333。stand-up の前に PVC の写しでリハーサルする)。render → check → 払い出しの順。予備の席。予備を超えたときの再起動 (I1 の Recreate で短い全断)。tag を上げる前に表を検査する (ADR-0033 と同じ注意)。
-- **統治文書 (CEO)**: `ORGANIZATION.md:198` の「端末に載る唯一の課題ファイル」に痕跡束を足す。CLAUDE.md の R1 一覧に行を足す。
+- **統治文書 (CEO)**: `ORGANIZATION.md:198` の「端末に載る唯一の課題ファイル」に痕跡束を足す。CLAUDE.md の R1 一覧に行を足す。(app の `.claude/rules/dev-flow.md` の D (image) の行への `Dockerfile.edition-practice` の追記 (#658 R3#1) は、統治文書ではない。`.claude/rules/**` は Edit の deny の外なので、通常の app PR = A4e-3c に同梱する。追補 15 の改訂、#659 R4#2)
 - **follow-up (LOW)**: `x-ctf-authz: self` を他の書き込み route へ広げるかの検討 (今は変えない)。
 
 ## Signposts
@@ -909,7 +924,7 @@ D9・D11・D12・D16 の「A4e に送る」は、すべてここに集める。�
   - `RenderEvent` の自己検査の配線 (正の pin、source test): `RenderEvent` が自己検査の段で、cid ごとに `CheckDecoySpread` と `CheckOutputSpace` を呼び、その結果を拒否 (exit 1) に入れる。呼び出しの抽出が 0 件なら赤。どちらかの呼び出しを消したコピーと、結果を捨てたコピーでも赤 (A4e-3b。#656 R4#1。B7 は renderer の入力からは破れないので、この配線は source test が守る)。
   - `CheckedTable` / `CheckedBundles` / `CheckedEvent` の composite literal が、それぞれ load.go / bundlecheck.go / checkevent.go の外に無い。
   - `WriteDigests` の引数の型が `*CheckedEvent` である (A4e-2 で `*CheckedBundles` から変える)。
-  - 正の pin のうち、`CheckEvent` / `WriteDigestsFile` の呼び手 (`runEditionCheck`)・server の path から subcommand に届かない・`hlscope` の import は、A4e-2 (#648・#649) が足した。`RenderEvent` の呼び手は A4e-3a-ii (#655) が足した。`RenderPracticeEdition` の呼び手 (`runEditionRenderPractice` の 1 か所) は A4e-3b が足す。
+  - 正の pin のうち、`CheckEvent` / `WriteDigestsFile` の呼び手 (`runEditionCheck`)・server の path から subcommand に届かない・`hlscope` の import は、A4e-2 (#648・#649) が足した。`RenderEvent` の呼び手は A4e-3a-ii (#655) が足した。`RenderPracticeEdition` の呼び手 (`runEditionRenderPractice` の 1 か所) は A4e-3b-ii (#658) が足した。
   - `cmd/scoreboard` の server の path (subcommand に分かれない側) から subcommand の関数に届かない。
   - edition の中の hintleak の `scope` の import 名が `hlscope`。
   - `internal/edition` の非 test の Go の file のうち `practicelayout.go` の外に、`practice/` の file 名と dir 名の string literal が無い (comment は対象外)。
@@ -920,19 +935,19 @@ D9・D11・D12・D16 の「A4e に送る」は、すべてここに集める。�
   - render-record と表の run id の不一致で exit 1 (規則名は B11。V90)。
   - 違反が 21 件以上なら 20 件と残りの件数。
   - 成功で `--digests-out` が一時 file → `os.Link` で作られ (追補 12)、stdout が 1 行 (形は人のための表示で、契約ではない。追補 13)。
-- **V80 (A4e-3a-ii #655。鍵の負の case の一部は A4e-3b、`edition render`)**: 次を確かめる。
-  - 鍵の file が無い / 63 桁 / hex でない / mode 0644 / 末尾の LF が無い / CRLF / 2 行目がある / 4 KiB を超える で、それぞれ exit 2。どの message にも鍵の bytes (sentinel) が 0 件。ちょうど 64 桁 + LF は受理する。#655 にある case は、LF なし・4 KiB 超・64 桁の受理。CRLF と 2 行目の case が無ければ A4e-3b で足す (追補 14 の改訂、#656 R2#3)。既にある `--out` で exit 2。
+- **V80 (A4e-3a-ii #655。鍵の負の case の一部は A4e-3b-ii #658、`edition render`)**: 次を確かめる。
+  - 鍵の file が無い / 63 桁 / hex でない / mode 0644 / 末尾の LF が無い / CRLF / 2 行目がある / 4 KiB を超える で、それぞれ exit 2。どの message にも鍵の bytes (sentinel) が 0 件。ちょうど 64 桁 + LF は受理する。#655 にある case は、LF なし・4 KiB 超・64 桁の受理。CRLF と 2 行目の case は、A4e-3b-ii (#658) で足した (追補 14 の改訂、#656 R2#3)。既にある `--out` で exit 2。
   - 2 つ目の課題で E3 を起こす fixture で exit 1、`--out` も一時 dir も残らない。
   - 自己検査は多重の守り (renderer の構成で成り立つ性質を、出力の上で確かめ直す)。test で破れるのは次の 2 つで、どちらも exit 1、何も書かれない (#655)。
     - B8 (b): 別々の token が足りない template。
     - T6: 固定の設問の答えを、練習版と同じにした `edition.yaml`。
-  - B7 (decoy の数と席の間の重複) と T7 (答えが flag と一致) は、renderer が受ける入力からは構成上作れない (decoy の印・位置・席ごとの値は renderer が作る。flag は `FALCO{...}` の形で、どの answerformat の値にも `{` が入らない)。この 2 つは validator の側 (V86 の fixture) で破る (追補 14)。T7 が構成上作れないのは、flag が `FALCO{...}` の形である前提が成り立つ限りである。この前提を、event の flags file について app の loader が強制しているかは確かめていない (app の `scripts/check-flags.sh` が強制するのは、追跡中の file の flag の literal の形 = `FALCO{dev-...}` だけ)。だから renderer の自己検査の T7 は、前提が崩れたとき (`{` を含まない flag など) の歯止めとして残す (多重の守り。#656 R1#1)。loader が flag の形を強制しないなら、`fixed` の答えと同じ値の flag を渡す case で自己検査の T7 が exit 1 になることを、A4e-3b で test にする (強制するなら、その強制の点を PR に書き、この case は置かない)。
+  - B7 (decoy の数と席の間の重複) と T7 (答えが flag と一致) は、renderer が受ける入力からは構成上作れない (decoy の印・位置・席ごとの値は renderer が作る。flag は `FALCO{...}` の形で、どの answerformat の値にも `{` が入らない)。この 2 つは validator の側 (V86 の fixture) で破る (追補 14)。T7 が構成上作れないのは、flag が `FALCO{...}` の形である前提が成り立つ限りである。この前提は、event の flags file について app の loader が強制する (`internal/catalog/flags.go` の検査 = `FALCO{...}` の形で、括弧の中は英数字・`_`・`-` だけ。追補 15)。だから、追加の case は置かない。renderer の自己検査の T7 は、loader の検査が将来ゆるんだときの歯止めとして残す (多重の守り。#656 R1#1)。
   - `--edition-root` の余分な `<cid>` の dir と欠けた `<cid>` の dir で、それぞれ E2 (exit 1)。`<cid>` の entry が file か link なら exit 2。どれも `--out` は作られない。
   - 往復の test: render の出力 (answers・evidence・render-record) を、edition root・seats・corpus と一緒に `edition check` に渡して exit 0、`--digests-out` ができる。render の出力に `digests.tsv` が無い。
   - `--out` の木の mode: dir が 0700、file が 0600 (umask 022 と 077 の両方で走らせる)。
   - 奇数桁の鍵、header だけの `--previous-seats` で exit 2。`--out` が git の worktree の中 (`.git` が dir のときと file のとき)、`--challenges` の中で exit 2。
   - run id は全部 0 でなく、2 回の render で違う。render-record が D20 の 3 行の形。
-- **V81 (A4e-3b、`--practice`)**: `edition render --practice` の出力が、commit した `practice/` と byte で一致する (V67 と同じ fixture)。鍵・seats・`--out` を渡すと exit 2。出力の answers.tsv が `Parse`・`Check` (EventMode false)・`MaxTableBytes` を通る。置き換えの途中 (退避の後、rename の前) に失敗を注入すると、既存の `practice/` が byte で不変。
+- **V81 (A4e-3b-ii #658、`--practice`)**: `edition render --practice` の出力が、commit した `practice/` と byte で一致する (V67 と同じ fixture)。鍵・seats・`--out` を渡すと exit 2。出力の answers.tsv が `Parse`・`Check` (EventMode false)・`MaxTableBytes` を通る。置き換えの途中 (退避の後、rename の前) に失敗を注入すると、既存の `practice/` が byte で不変。退避を戻せなかったときは、`OutputError` の `Restore` の名前が stderr に出る (#658 R2#2)。commit されている `practice/` が、`edition.yaml` + `template/` の新しい render と byte で一致することを、required の test (`internal/edition/render_golden_test.go` の `practiceStale`) が照らす。対象は `challenges/` の中で `edition/` を持つ課題の全部 (今は 0 件。A7 の最初の課題から働き、A7 で非空の要求に反転させる = V47 と同じ。#658 R4#2、追補 15)。
 - **V82 (A4e-4、契約表)**: `internal/contracttable` の test が、契約表の文面 2 の確定版の行の code span (subcommand 名・引数の名前・exit code の 4 値・4 つの file の header・鍵の形の数値 (桁と上限)・出力の mode の値。D20 の「契約の分け方」で [code span] と印を付けた項。追補 14 の改訂) を、`cmd/scoreboard` と `internal/edition` の定数と照らし合わせる。どれか 1 つを変えたコピーで赤になる。契約表の文面 2 の行が 0 件なら赤 (空の検査で緑にしない。V59 の digests の header と列もここで照らす)。
 - **V83 (P1b-2 / P1b-3、platform)**: D20 の「契約の分け方」の platform の要件のそれぞれに、selftest の case を 1 つ置く (前回の list・digests の欠けと、`--no-previous` との両方 / どちらも無し、指紋の台帳との一致、`:ro` でない mount、mount 点そのものを出力先に渡す形、平文の `--out` が運用者だけの場所でない、出力先の親 dir が hard link を作れない filesystem、`--user` の無い `docker run` (image の既定の 65532 で動く形)、`id -u` が 0 の運用者 (docker を呼ぶ前に FAIL)、出力先が host の git の worktree の中 (docker を呼ぶ前に FAIL。container の中の `--out` の guard からは見えない)、`openssl rand -hex 32` で作った鍵を `edition render` が受理すること (D20 の鍵の形との parity)、0 でない exit の後と、exit 0 で stderr に残った名前が出た後の作業の dir (どちらも、実行の後に一時の名前と平文が 0 件)、exit 3 の stub (環境の失敗として報告し、何も apply せず、入力を作り直さない)、stdout の形を変えた stub (platform は stdout を読まないので、結果が変わらない)、Secret の作成の順)。rehearsal では実際の mount で 1 回、0600 の鍵が `--user` つきで読めること、0644 の鍵が exit 2 になること、`--digests-out` が置けることを確かめる (bind mount の種類で、mode と hard link の扱いが変わるため。実機でのみ確認可)。
 - **V86 (A4e-2、`CheckedEvent`)**: 次を確かめる。
@@ -954,7 +969,7 @@ D9・D11・D12・D16 の「A4e に送る」は、すべてここに集める。�
   - `--edition-root` の余分な `<cid>` の dir と、欠けた `<cid>` の dir → それぞれ E2。`<cid>` の entry が file か link なら exit 2 (E2 ではない)。
   - template の印の lexer の失敗 → E3。`RuleTemplateMark` と `RuleSpecRender` の値の一致の test が残っている。
 - **V91 (A4e-2d、test の支援 package)**: source test が、module の非 test の Go の file のうち支援 package を import するものが 0 件であることを確かめる。支援 package の file に renderer の関数の識別子が 0 件 (呼び出しも関数の値も) で、`render_reach_test.go` の `renderCallers` は変えずに緑 (追補 13 の改訂、#651 R4#1)。import する `_test.go` の抽出は、`cmd/scoreboard` と `internal/edition` の両方を含む 1 件以上で、0 件なら赤。支援 package で組んだ正の fixture を、`CheckEvent` が受理し、`edition check` が exit 0 で返す。
-- **V92 (分担: check の分 = A4e-3a-i #654、render の event の分 = A4e-3a-ii #655、`--practice` の分 = A4e-3b、契約表の分 = A4e-4、exit 3 と stdout)**: 次を確かめる。
+- **V92 (分担: check の分 = A4e-3a-i #654、render の event の分 = A4e-3a-ii #655、`--practice` の分 = A4e-3b-ii #658、契約表の分 = A4e-4、exit 3 と stdout)**: 次を確かめる。
   - check: 検査を全部通った後の書き出しの失敗 (test の hook で `os.Link` の失敗と ENOSPC) で exit 3 になり、一時 file も `--digests-out` も残らず、stderr に値が 0 件。引数の段の確認の後、書き出しの前に `--digests-out` を作る hook では、EEXIST で exit 2。
   - render: 自己検査の後の一時 dir の書き出しの失敗と rename の失敗で exit 3 になり、`--out` も一時 dir も残らない。`--practice` で退避の後に失敗すると exit 3 で、`practice/` は byte で不変 (V81)。
   - 入力を読む段の失敗 (読めない file) は 2 のまま。
@@ -965,10 +980,18 @@ D9・D11・D12・D16 の「A4e に送る」は、すべてここに集める。�
   - check の commit の前: 書き出しが失敗し、後始末の `os.Remove` も失敗する hook で exit 3。`--digests-out` は無く、stderr に残った一時の名前が出る。同じ入力でもう 1 度実行すると exit 0 (残った一時の名前が再実行を妨げない)。
   - render: 一時 dir の書き出しの失敗と後始末の `RemoveAll` の失敗が重なる hook で exit 3、`--out` は無い。`--practice` で rename が成功し、退避の削除が失敗する hook で exit 0。`practice/` は新しい内容で、stderr に退避の名前が出る。
   - (A4e-4) 契約表の文面 2 の確定版の行に exit code の 4 値があり、stdout の形 (`ok run=`) の code span が 0 件 (V82 の test に足す)。
-- **V84 (A4e-3b。`scripts/check-edition-headers.sh` (`--selftest` つき) を `check-flags.sh` から呼ぶ。除外は `internal/edition/testdata/digests-golden/digests.tsv` の名指しの 1 件、flag-guard)**: 公開リポへの混入の guard を確かめる。
+- **V84 (A4e-3b-i #657。`scripts/check-edition-headers.sh` (`--selftest` つき) を `check-flags.sh` から呼ぶ。除外は `internal/edition/testdata/digests-golden/digests.tsv` の名指しの 1 件、flag-guard)**: 公開リポへの混入の guard を確かめる。
   - tracked file に、run id が全部 0 でない `# falco-ctf answers v1 run=` / `# falco-ctf evidence-digests v1 run=` の header、または `# falco-ctf render-record v1` の header を足した木で、flag-guard が赤になる。
   - 練習版 (run id が全部 0) の `practice/` は緑のまま。
   - 抽出が 0 件の木でも、検査そのものは走る (exit status で判定する)。
+- **V93 (A4e-3c、evidence だけの混入)**: 次を確かめる。
+  - 追跡中の path に `evidence/<seat>/<cid>/<file>` の形 (seat は ADR-0042 の文法、cid は `challengeid.Pattern`) を 1 つ足した木で、flag-guard が赤になる。
+  - 一致は部分一致 (A4e-3c の行の規則)。先頭を 1 段下げた path (`x/evidence/<seat>/<cid>/<file>`) と、`<file>` を入れ子にした path (`evidence/<seat>/<cid>/a/b`) でも赤。`evidence`・seat・cid が segment の一部だけに一致する path (`myevidence/…`) は緑。
+  - 練習版の入れ子: `challenges/<cid>/edition/practice/evidence/<seat>/<cid>/<file>` (seat の形) は赤。`practice/evidence/` の下の seat の形でない入れ子は、この guard では緑 (練習版の layout の誤りは、V11 と V81 が持つ)。
+  - parity (#659 R4#1): Go の test が、script の pattern の 3 つの部品 (event の `--out` の evidence の dir 名、cid の文法、seat の文法) を、それぞれ `practicelayout.go` の event の名前の定数・`challengeid.Pattern`・ADR-0042 の seat の文法の Go の定義と照らす。V84 の `flagguard_headers_internal_test.go` と同じ作法にする。部品を 1 つ変えたコピーで赤、部品の抽出が 0 件でも赤。
+  - `challenges/<cid>/edition/practice/evidence/<file>` (練習版の平らな layout) と名指しの testdata は、緑のまま。selftest に、ここまでの赤と緑の case を全部置く (先頭を 1 段下げた path、入れ子の `<file>`、segment の一部の一致、練習版の seat の形の入れ子とそれ以外の入れ子を含む)。
+  - 対象の path が 0 件の木でも、検査そのものは走る (exit status で判定する)。
+  - 覆わない範囲: `evidence/` の dir 名を変えた混入と、席の dir だけの混入。この 2 つの歯止めは、`--out` の guard と platform の V83。
 - **V85 (A4e-4 / A5c-2・A5d、layout の parity)**: test が、A5c-2 / A5d の shell が使う `practice/` の dir 名と file 名を、`practicelayout.go` の定数と照らし合わせる。片方だけを変えたコピーで赤になる。platform には required check が無いので、merge の時に人が確かめる。
 - **V18**: K の式を pin する (attempts が 1 / 2 / 5 のとき K が 4 / 4 / 10)。`decoys` が K − 1 の edition.yaml を E2 が拒否する。decoy の slot を宣言で書こうとする (`role: decoy` や、decoy に vocab を書く) と E1 が拒否する (同一性は構成で成り立つ)。E12 の長さ接頭辞の test。
 - **V19**: θ を未設定 (0 / NaN / 1.5) にした build で、B4 は skip せずに拒否する。練習版のテンプレートの filler だけを変えたイベント版で、(1) は通り、(2) が赤。stderr には重なり率の数値と組の id だけが出て、本文の bytes は 0 件。event の束がある課題の練習版の template を消した木、練習版が 0 件の木 (比較の件数 0) で、B4 が違反を返す。席ごとでない format の練習版の答えを event の束の本文に置くと、B4 が拒否する (全 format)。
@@ -1111,6 +1134,17 @@ D9・D11・D12・D16 の「A4e に送る」は、すべてここに集める。�
   - token の定義と `CandidateFactor = 10` は採用。B7 は席ごとの検査に変えた。
   - 鍵は 32 byte 以上で、版の label を足し、run id は入れない。rejection sampling は採用。`RND` は E3 にした。
   - 分割は A4d-2a / 2b / 2c。
+- review-5x T2 の #659 (追補 15。R4 MED 1・LOW 2、R2 LOW 2) と CoS (`.claude/rules/**` が Edit の deny の外であることの照合)、architect (追補 15 の改訂)
+  - V93 に parity を足した (script の pattern の 3 つの部品を Go の定義と照らす)。
+  - 一致の規則を部分一致にした (segment の全体で照らす)。練習版の seat の形でない入れ子は、練習版の layout の持ち主に任せる。
+  - 段の名前と未来形を、b-i / b-ii の実績に直した。
+  - dev-flow.md の D の行は、統治文書ではなく A4e-3c の PR に同梱する。契約表の編集の手順も、事実の文にした。
+- software-engineer (A4e-3b-i = #657、A4e-3b-ii = #658) と review-5x (#657 R4#1、#658 R2#2・R3#1・R3#3・R4#2)、CoS (flags の loader の形の照合)、architect (追補 15)
+  - A4e-3 が全部 main 入り。A4e-3b を b-i / b-ii として記録した。
+  - evidence だけの混入は、path の規則 (A4e-3c、V93) で止める。理由: B6 によって、束 1 つが答えの漏えいになる。
+  - T7 は loader (`internal/catalog/flags.go`) が flag の形を強制するので、追加の case は置かない。
+  - `make edition-practice` の実際の形と、container の中の EXDEV を記録した。`OutputError` の `Left` / `Restore`、`practiceStale` も記録した。
+  - A4e-4 は、platform の CI が止まっている間も、3 つの条件を満たせば app の行を先に merge してよい。
 - review-5x T2 の #656 (追補 14。R4 MED 1・LOW 5) と software-engineer (A4e-3b の実績)、architect (追補 14 の改訂)
   - `RenderEvent` の自己検査の配線を、V78 の正の pin (source test) で守る (B7 は renderer の入力から破れないため)。
   - T7 は「flag の形の前提が崩れたときの歯止め」として残し、loader が形を強制しないなら A4e-3b で case を足す。
