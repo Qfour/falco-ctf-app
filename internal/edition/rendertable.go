@@ -12,8 +12,8 @@ package edition
 // The digests file has two doors (D9), both in digests.go: the event's WriteDigests /
 // ParseDigests refuse the run id of all zeros and the seat *, and WritePracticeDigests is the
 // practice edition's, which asks for exactly those two and nothing else. A file of one is
-// refused by the other's reader (V66's Go side; the practice reader, ParsePracticeDigests,
-// is A5c-2's). PracticeOutput below calls WritePracticeDigests.
+// refused by the other's reader (V66's Go side; the practice reader is ParsePracticeDigests).
+// PracticeOutput below calls WritePracticeDigests.
 
 import (
 	"bytes"

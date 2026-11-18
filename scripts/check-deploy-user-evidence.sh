@@ -20,9 +20,16 @@
 #              + 1, a bundle of 512 KiB + 1 in two files, a seat of 2 MiB + 1, 65 files, a
 #              name outside B2, a link, a subdirectory, an empty bundle) and the shape of
 #              the digests file. The limits themselves pass (exactly 64 files, 512 KiB, 2 MiB).
+#   practice (V65 / V66, A5c-2): none of the three arguments -> the practice edition's path:
+#              the Secrets come from <cid>/edition/practice/evidence/ only (the golden
+#              fixture's edition and one built here), the names in byte order, no answers.tsv /
+#              digests.tsv / content in any call; each of V66's trees (a byte changed, a run id
+#              that is not all zeros, no practice/, a link, a name outside B2, ...) and an
+#              event's digests file of the practice shape are refused with no call.
 #   self-test: copies of deploy-user.sh with ONE guard removed or moved (a limit one too
-#              wide, the digest comparison, the label-selector delete) must turn the case
-#              that guard is about red, or this check proves nothing.
+#              wide, the digest comparison, the label-selector delete, the practice path's
+#              run id / seat / link / bundle dir) must turn the case that guard is about red,
+#              or this check proves nothing.
 #
 # The bundles are placeholders (`x`, SENTINEL-AAA, the case table's files). The digest used
 # to build a digests file for a fixture is the library's (evidence-bundle.sh), which
@@ -240,7 +247,7 @@ good_setup
 check_reject "--flags-file without --evidence-dir and --evidence-digests (V17 a)" 2 'both are required' --flags-file "${FLAGS}"
 check_reject "--evidence-dir alone (V17 b)" 2 'go together' --evidence-dir "${EVD}"
 check_reject "--evidence-digests alone (V17 c)" 2 'go together' --evidence-digests "${DG}"
-check_reject "neither argument with investigate challenges in scope: the practice-edition deploy is A5c-2's" 2 'practice-edition deploy is implemented in A5c-2'
+check_reject "neither argument, no practice edition in the tree (V17, V66)" 1 'has no practice edition'
 write_values
 check_reject "arguments, but no investigate challenge in scope" 2 'has no investigate challenge' --evidence-dir "${EVD}" --evidence-digests "${DG}"
 
@@ -485,6 +492,198 @@ case_lockdown_one_arg() {
 case_lockdown_digest
 case_lockdown_one_arg
 
+# --- V65 / V66: the practice edition's path (A5c-2) ------------------------------------------
+# None of --flags-file / --evidence-dir / --evidence-digests, investigate challenges in scope:
+# each challenge's <cid>/edition/practice/ of the challenges dir is the bundle (evidence/) and
+# its digests file (digests.tsv: run id all zeros, seat *). 01-demo is the golden fixture's
+# edition as committed (internal/edition/testdata/render-golden/01-demo/edition: a Go test holds
+# it to the renderer, V67, and reads its digests file with ParsePracticeDigests); 41-ev is built
+# here, with names whose byte order (LC_ALL=C) is not the order of an English locale, and its
+# digests by the library. Both trees are temporary and flat (no seat-shaped path is tracked).
+echo "==> V65: the practice edition's path (none of the three arguments), the golden tree"
+GOLDEN_EDITION="${REPO_ROOT}/internal/edition/testdata/render-golden/01-demo/edition"
+PHEADER='# falco-ctf evidence-digests v1 run=00000000000000000000000000000000'
+# names of 41-ev's practice bundle, in the order deploy-user.sh must give them (byte order)
+PRACTICE_41_NAMES='a-b a.b a0 a_b x'
+# write_practice_digests <cid> [header] [seat]: the practice digests file of <cid>, one row
+write_practice_digests() {
+  local p="${CDIR}/$1/edition/practice"
+  {
+    printf '%s\n' "${2:-${PHEADER}}"
+    printf '%s\t%s\t%s\n' "${3:-*}" "$1" "$(evidence_bundle_digest "${p}/evidence")"
+  } > "${p}/digests.tsv"
+}
+practice_setup() {
+  local p n
+  rm -rf "${CDIR}" "${SDIR}" "${EVD}"
+  mkdir -p "${CDIR}/03-fx" "${CDIR}/01-demo" "${SDIR}"
+  printf 'challengeId: 03-fx\ntype: evade\nexpectedFlag: FALCO{dev-fx-default}\n' > "${CDIR}/03-fx/falco-rule.yaml"
+  printf 'flags:\n  03-fx: FALCO{dev-fx-rotated}\n' > "${FLAGS}"
+  write_values 01-demo 41-ev
+  cp -R "${GOLDEN_EDITION}" "${CDIR}/01-demo/edition"
+  p="${CDIR}/41-ev/edition/practice"
+  mkdir -p "${p}/evidence"
+  for n in x a_b a0 a.b a-b; do printf 'SENTINEL-PRA %s\n' "${n}" > "${p}/evidence/${n}"; done
+  printf 'SENTINEL-ANS\n' > "${p}/answers.tsv"
+  write_practice_digests 41-ev
+}
+case_practice_accept() {
+  local cdir ev01 ev41 create01 create41 l_ns l_del l_c01 l_c41 l_helm helm_line s n i tok name path ok
+  practice_setup
+  run_deploy
+  ct_check_reached_upgrade "practice accept" || { RC=1; return 0; }
+  cdir="$(cd "${CDIR}" && pwd)"
+  ev01="${cdir}/01-demo/edition/practice/evidence"
+  ev41="${cdir}/41-ev/edition/practice/evidence"
+  create01="kubectl -n ctf-user1 create secret generic ctf-evidence-01-demo --from-file=a.txt=${ev01}/a.txt --from-file=b.txt=${ev01}/b.txt"
+  create41="kubectl -n ctf-user1 create secret generic ctf-evidence-41-ev"
+  for n in ${PRACTICE_41_NAMES}; do create41="${create41} --from-file=${n}=${ev41}/${n}"; done
+  l_c01="$(line_no "${create01}")"
+  l_c41="$(line_no "${create41}")"
+  l_del="$(line_no 'kubectl -n ctf-user1 delete secret -l app.kubernetes.io/managed-by=deploy-user,falco-ctf/evidence-of,falco-ctf/evidence-of notin (01-demo,41-ev)')"
+  l_ns="$(line_no 'kubectl create namespace ctf-user1 --dry-run=client -o yaml')"
+  l_helm="$(grep -n '^helm upgrade ' "${CT_CALLS}" | head -n 1 | cut -d: -f1)"
+  if [[ "${l_c01}" -eq 0 || "${l_c41}" -eq 0 ]]; then
+    fail "practice accept: the Secrets are not made from practice/evidence/ by name, in byte order: $(grep -F 'create secret' "${CT_CALLS}" | cut -c1-300)"; return 0
+  fi
+  if ! [[ "${l_ns}" -gt 0 && "${l_ns}" -lt "${l_del}" && "${l_del}" -lt "${l_c01}" && "${l_c01}" -lt "${l_c41}" && "${l_c41}" -lt "${l_helm}" ]]; then
+    fail "practice accept: the order is not namespace (${l_ns}) < delete by label (${l_del}) < create 01 (${l_c01}) < create 41 (${l_c41}) < helm (${l_helm})"; return 0
+  fi
+  # every --from-file is <name>=<a practice evidence/ dir>/<name>, and there are 2 + 5 of them
+  grep -oE -- '--from-file=[^ ]*' "${CT_CALLS}" > "${WORK}/from-file" || true
+  n=0
+  while IFS= read -r tok; do
+    n=$((n + 1))
+    tok="${tok#--from-file=}"
+    name="${tok%%=*}"
+    path="${tok#*=}"
+    ok=0
+    if [[ "${path}" == "${ev01}/${name}" || "${path}" == "${ev41}/${name}" ]]; then ok=1; fi
+    if [[ "${ok}" -ne 1 ]]; then fail "practice accept: a --from-file outside practice/evidence/ or not by its own name: ${tok}"; return 0; fi
+  done < "${WORK}/from-file"
+  if [[ "${n}" -ne 7 ]]; then fail "practice accept: ${n} --from-file arguments, want 7 (the files of the two evidence/ dirs)"; return 0; fi
+  # neither answers.tsv nor digests.tsv reaches a call (a --from-file or a name)
+  if grep -qE 'answers\.tsv|digests\.tsv' "${CT_CALLS}"; then
+    fail "practice accept: answers.tsv or digests.tsv reached a kubectl / helm call: $(grep -E 'answers\.tsv|digests\.tsv' "${CT_CALLS}" | cut -c1-200)"; return 0
+  fi
+  helm_line="$(grep '^helm upgrade ' "${CT_CALLS}" | head -n 1)"
+  for s in ' --set-string evidence.challenges.01-demo.names[0]=a.txt ' ' --set-string evidence.challenges.01-demo.names[1]=b.txt '; do
+    case "${helm_line}" in *"${s}"*) ;; *) fail "practice accept: helm upgrade lacks '${s}'"; return 0 ;; esac
+  done
+  i=0
+  for name in ${PRACTICE_41_NAMES}; do
+    s=" --set-string evidence.challenges.41-ev.names[${i}]=${name} "
+    case "${helm_line}" in *"${s}"*) ;; *) fail "practice accept: helm upgrade lacks '${s}' (the names in byte order)"; return 0 ;; esac
+    i=$((i + 1))
+  done
+  for s in 'evidence.challenges.01-demo.names[2]=' 'evidence.challenges.41-ev.names[5]=' 'challenge.flags.'; do
+    case "${helm_line}" in *"${s}"*) fail "practice accept: helm upgrade has '${s}'"; return 0 ;; esac
+  done
+  n="$(grep -c 'SENTINEL' "${CT_CALLS}" "${CT_RUN_OUT}" "${CT_RUN_ERR}" | cut -d: -f2 | tr -d '\n' || true)"
+  if [[ "${n}" != "000" ]]; then fail "practice accept: a bundle's or answers.tsv's content reached a call or an output (${n})"; return 0; fi
+  n="$(grep -c 'deploying the practice edition of 01-demo 41-ev' "${CT_RUN_ERR}" || true)"
+  if [[ "${n}" != "1" ]]; then fail "practice accept: stderr says the practice path was taken ${n} times, want once"; return 0; fi
+  pass "practice accept: ctf-evidence-<cid> from practice/evidence/ only (golden 01-demo and a built 41-ev), names in byte order, no answers.tsv / digests.tsv / content in any call, one stderr line (V65)"
+}
+case_practice_accept
+
+echo "==> V66: the practice edition's path is fail-closed (exit 1, no kubectl / helm call)"
+# practice_reject_with <label> <marker> <mutation function>
+practice_reject_with() {
+  local label="$1" marker="$2" mut="$3"
+  practice_setup
+  "${mut}"
+  check_reject "practice: ${label}" 1 "${marker}"
+}
+P41="${CDIR}/41-ev/edition/practice"
+pm_byte() { printf '\001' | dd of="${CDIR}/01-demo/edition/practice/evidence/a.txt" bs=1 seek=0 conv=notrunc 2>/dev/null; }
+pm_append() { printf 'x' >> "${P41}/evidence/x"; }
+pm_rename() { mv "${P41}/evidence/x" "${P41}/evidence/y"; }
+pm_run_event() { write_practice_digests 41-ev "# falco-ctf evidence-digests v1 run=${RUN_ID}"; }
+pm_run_one() { write_practice_digests 41-ev "# falco-ctf evidence-digests v1 run=$(printf '%031d' 0)1"; }
+pm_header_v2() { write_practice_digests 41-ev '# falco-ctf evidence-digests v2 run=00000000000000000000000000000000'; }
+pm_seat_user() { write_practice_digests 41-ev "" user1; }
+pm_seat_two_stars() { write_practice_digests 41-ev "" '**'; }
+pm_other_cid() { sed "s/${TAB}41-ev${TAB}/${TAB}01-demo${TAB}/" "${P41}/digests.tsv" > "${WORK}/d.new"; cat "${WORK}/d.new" > "${P41}/digests.tsv"; }
+pm_extra_row() { printf '*\t01-demo\t%s\n' "$(printf '%064d' 0)" >> "${P41}/digests.tsv"; }
+pm_dup_row() { sed -n '2p' "${P41}/digests.tsv" > "${WORK}/d.new"; cat "${WORK}/d.new" >> "${P41}/digests.tsv"; }
+pm_header_only() { printf '%s\n' "${PHEADER}" > "${P41}/digests.tsv"; }
+pm_no_lf() { printf '%s\n*\t41-ev\t%s' "${PHEADER}" "$(evidence_bundle_digest "${P41}/evidence")" > "${P41}/digests.tsv"; }
+pm_no_practice() { rm -rf "${P41}"; }
+pm_no_edition() { rm -rf "${CDIR}/41-ev/edition"; }
+pm_no_cid_dir() { rm -rf "${CDIR}/41-ev"; }
+pm_no_evidence() { rm -rf "${P41}/evidence"; }
+pm_no_digests() { rm -f "${P41}/digests.tsv"; }
+pm_digests_dir() { rm -f "${P41}/digests.tsv"; mkdir "${P41}/digests.tsv"; }
+pm_digests_link() { mv "${P41}/digests.tsv" "${WORK}/elsewhere.tsv"; ln -s "${WORK}/elsewhere.tsv" "${P41}/digests.tsv"; }
+pm_practice_link() { rm -rf "${WORK}/elsewhere"; mv "${P41}" "${WORK}/elsewhere"; ln -s "${WORK}/elsewhere" "${P41}"; }
+pm_evidence_link() { rm -rf "${WORK}/elsewhere"; mv "${P41}/evidence" "${WORK}/elsewhere"; ln -s "${WORK}/elsewhere" "${P41}/evidence"; }
+pm_edition_link() { rm -rf "${WORK}/elsewhere"; mv "${CDIR}/41-ev/edition" "${WORK}/elsewhere"; ln -s "${WORK}/elsewhere" "${CDIR}/41-ev/edition"; }
+pm_file_link() { ln -s x "${P41}/evidence/l"; }
+pm_subdir() { mkdir "${P41}/evidence/sub"; }
+pm_upper_name() { : > "${P41}/evidence/Upper"; }
+pm_dot_name() { : > "${P41}/evidence/.hid"; }
+pm_space_name() { : > "${P41}/evidence/a b"; }
+pm_65() { local i; rm -f "${P41}/evidence"/*; for i in $(seq 1 65); do : > "${P41}/evidence/f${i}"; done; write_practice_digests 41-ev; }
+pm_file_over() { rm -f "${P41}/evidence"/*; mkbytes "${P41}/evidence/big" 524289; write_practice_digests 41-ev; }
+pm_empty_bundle() { rm -f "${P41}/evidence"/*; write_practice_digests 41-ev; }
+practice_reject_with "a byte of the golden evidence/ changed: the digest is not the row (V66)" 'is not the row of the practice digests file of 01-demo' pm_byte
+practice_reject_with "a byte appended to a file of evidence/" 'is not the row of the practice digests file of 41-ev' pm_append
+practice_reject_with "a renamed file of evidence/ (the name is in the digest)" 'is not the row of the practice digests file of 41-ev' pm_rename
+practice_reject_with "digests.tsv with an event run id (V66)" 'the run id is not all zeros' pm_run_event
+practice_reject_with "digests.tsv with 31 zeros and a one" 'the run id is not all zeros' pm_run_one
+practice_reject_with "digests.tsv header v2" 'line 1 is not the v1 header' pm_header_v2
+practice_reject_with "digests.tsv with a seat of the seat grammar" 'the seat is not *' pm_seat_user
+practice_reject_with "digests.tsv with the seat **" 'the seat is not *' pm_seat_two_stars
+practice_reject_with "digests.tsv whose row is another challenge's" 'which is not the challenge of this practice edition' pm_other_cid
+practice_reject_with "digests.tsv with a second row for another challenge" 'which is not the challenge of this practice edition' pm_extra_row
+practice_reject_with "digests.tsv with its row twice" 'has a second row' pm_dup_row
+practice_reject_with "digests.tsv with a header and no row" 'empty or has no row' pm_header_only
+practice_reject_with "digests.tsv with no final newline" 'does not end with a newline' pm_no_lf
+practice_reject_with "no practice/ (V66)" 'has no practice edition' pm_no_practice
+practice_reject_with "no edition/" 'has no practice edition' pm_no_edition
+practice_reject_with "no <cid>/ in the challenges dir" 'has no practice edition' pm_no_cid_dir
+practice_reject_with "no practice/evidence/" 'has no practice edition' pm_no_evidence
+practice_reject_with "no digests.tsv" 'has no digests file' pm_no_digests
+practice_reject_with "digests.tsv is a directory" 'has no digests file' pm_digests_dir
+practice_reject_with "digests.tsv is a link" 'has no digests file' pm_digests_link
+practice_reject_with "practice/ is a link" 'is a link' pm_practice_link
+practice_reject_with "practice/evidence/ is a link" 'is a link' pm_evidence_link
+practice_reject_with "edition/ is a link" 'is a link' pm_edition_link
+practice_reject_with "a link in evidence/ (V66)" 'is not a regular file' pm_file_link
+practice_reject_with "a directory in evidence/" 'is not a regular file' pm_subdir
+practice_reject_with "a name with a capital in evidence/ (outside B2, V66)" 'outside ^[a-z0-9]' pm_upper_name
+practice_reject_with "a name starting with a dot in evidence/" 'outside ^[a-z0-9]' pm_dot_name
+practice_reject_with "a name with a space in evidence/" 'outside ^[a-z0-9]' pm_space_name
+practice_reject_with "65 files in evidence/" 'at most 64 files' pm_65
+practice_reject_with "a file of 512 KiB + 1 byte in evidence/" 'larger than 524288 bytes' pm_file_over
+practice_reject_with "an empty evidence/" 'holds no file' pm_empty_bundle
+
+echo "==> V66: some of the three arguments with a practice tree in scope: the practice path is not taken"
+case_practice_partial() {
+  practice_setup
+  check_reject "practice tree, --flags-file only (V66: not the practice path)" 2 'both are required' --flags-file "${FLAGS}"
+  practice_setup
+  check_reject "practice tree, --evidence-dir only" 2 'go together' --evidence-dir "${P41}/evidence"
+  practice_setup
+  check_reject "practice tree, --evidence-digests only (the practice digests file itself)" 2 'go together' --evidence-digests "${P41}/digests.tsv"
+  if grep -q 'deploying the practice edition' "${CT_RUN_ERR}"; then fail "practice tree, one argument: stderr says the practice path was taken"; fi
+}
+case_practice_partial
+
+echo "==> V66: an event's digests file of the practice edition's shape is refused"
+case_event_practice_digests() {
+  good_setup
+  cp "${GOLDEN_EDITION}/practice/digests.tsv" "${DG}"
+  set_evflags
+  check_reject "event: the golden practice digests.tsv as --evidence-digests (run id all zeros, V66)" 1 'the run id is all zeros' "${EVFLAGS[@]}"
+}
+m_star_rows() { sed "s/^user1${TAB}/*${TAB}/" "${DG}" > "${DG}.new"; cat "${DG}.new" > "${DG}"; }
+m_star_extra() { printf '*\t40-ev\t%s\n' "$(printf '%064d' 0)" >> "${DG}"; }
+case_event_practice_digests
+reject_with "event: every row of the seat * (V66)" 'the seat is outside the seat grammar' m_star_rows
+reject_with "event: the rows of user1 and one row of the seat *" 'line 4: the seat is outside the seat grammar' m_star_extra
+
 # --- self-test ---------------------------------------------------------------------------
 echo "==> self-test: a deploy-user.sh with one guard removed turns its case red"
 # mutant <label> <text to replace> <replacement>: sets DEPLOY to the copy (next to the files
@@ -529,5 +728,15 @@ if mutant_deploy scope-key '/evidence["\047[:space:]]*:/ {' '/^ *evidence:/ {' e
 if mutant_deploy early-lookup 'API_SERVER_CLUSTER_IP=""' 'API_SERVER_CLUSTER_IP=""; kubectl get svc kubernetes -n default > /dev/null' ; then go_red early-lookup case_lockdown_digest; fi
 if mutant_deploy label-cleanup 'if kubectl -n "${NS}" delete secret "ctf-evidence-${cid}" --ignore-not-found >/dev/null; then' 'if true; then'; then go_red label-cleanup case_label_fails; fi
 if mutant_deploy apply 'create secret generic "ctf-evidence-${cid}" "${FROM_FILE_ARGS[@]}"' 'create secret generic "ctf-evidence-${cid}" --from-file="${EVIDENCE_DIR}/${cid}"'; then go_red dir-argument case_accept; fi
+# the practice path (A5c-2): each of its own guards, removed, turns its case red
+case_practice_run() { practice_reject_with "x" 'not all zeros' pm_run_event; }
+case_practice_seat() { practice_reject_with "x" 'the seat is not' pm_seat_user; }
+case_practice_link() { practice_reject_with "x" 'is a link' pm_practice_link; }
+case_practice_byte() { practice_reject_with "x" 'is not the row' pm_byte; }
+if mutant_deploy practice-run 'if [[ "${line}" != "${EVIDENCE_DIGESTS_PREFIX}${EVIDENCE_PRACTICE_RUN_ID}" ]]; then' 'if false; then'; then go_red practice-run case_practice_run; fi
+if mutant_deploy practice-seat '[[ "${seat}" == "${EVIDENCE_PRACTICE_SEAT}" ]] ||' 'true ||'; then go_red practice-seat case_practice_seat; fi
+if mutant_deploy practice-link 'if [[ -L "$2" ]]; then' 'if false; then'; then go_red practice-link case_practice_link; fi
+if mutant_deploy practice-bundle-dir 'EVIDENCE_BUNDLE_DIRS+=("${root}/${EVIDENCE_PRACTICE_EVIDENCE_DIR}")' 'EVIDENCE_BUNDLE_DIRS+=("${root}")'; then go_red practice-bundle-dir case_practice_accept; fi
+if mutant_deploy practice-digest '[[ "${got}" == "${want}" ]] ||' 'true ||'; then go_red practice-digest case_practice_byte; fi
 
 ct_finish "deploy-user evidence check"

@@ -63,8 +63,8 @@
 #   generated values mark a plant.mounts entry `evidence: true`), and nothing else. Fail-
 #   closed, before any kubectl / helm call (exit 2 for a missing / extra argument, 1 for
 #   the content): a scope with an investigate challenge needs BOTH arguments (--flags-file
-#   without them, one of the two alone, or neither: the practice-edition deploy is A5c-2's,
-#   not yet implemented); a scope without one takes neither; the <cid>/ set equals the scope;
+#   without them, or one of the two alone, is refused; NONE of the three is the practice
+#   edition's path, below); a scope without one takes neither; the <cid>/ set equals the scope;
 #   every file is a regular file named as B2 (EVIDENCE_NAME_PATTERN), at most
 #   EVIDENCE_MAX_FILES per challenge, EVIDENCE_MAX_BUNDLE_BYTES per challenge and
 #   EVIDENCE_MAX_SEAT_BYTES for the seat; the digests file (line 1 `# falco-ctf
@@ -77,6 +77,18 @@
 #   a helm argument or a values file. The digest and the limits' literals: see below.
 #   --evidence-dir is a tree the operator owns: it must not be rewritten between the check
 #   and the Secret's creation (the same files are read twice, never copied).
+#
+# The practice edition (ADR-0056 D11 amendment 9, A5c-2; the local default): with NONE of
+#   --flags-file / --evidence-dir / --evidence-digests and an investigate challenge in scope,
+#   each such challenge's practice bundle is deployed from the challenges dir:
+#   <cid>/edition/practice/evidence/ is the bundle (the same B2 names, kinds and limits as an
+#   event's) and <cid>/edition/practice/digests.tsv its digests file (run id all zeros, one
+#   row `*` TAB <cid> TAB digest), held to D9's digest exactly as an event's is. Every
+#   directory on the way must be one and not a link; the digests file a regular file. The
+#   Secret ctf-evidence-<cid> and the names are made from evidence/ alone (answers.tsv and
+#   digests.tsv never). An event's digests file with the run id of all zeros or a `*` row is
+#   refused, and so is a practice file with any other run id or seat. One line on stderr
+#   says this path was taken.
 #
 # --frame-ancestors <value>: CSP `frame-ancestors` source the ttyd-proxy
 #   sidecar (P23-3) stamps on every ttyd response. Set this to the portal's
@@ -614,6 +626,18 @@ EVIDENCE_DIGESTS_PREFIX='# falco-ctf evidence-digests v1 run='
 EVIDENCE_DIGESTS_HEADER_RE='^# falco-ctf evidence-digests v1 run=[0-9a-f]{32}$'
 EVIDENCE_PRACTICE_RUN_ID='00000000000000000000000000000000'
 EVIDENCE_DIGEST_RE='^[0-9a-f]{64}$'
+# The practice edition's layout and seat (ADR-0056 D8 / amendment 9, A5c-2): a challenge's
+# <cid>/edition/practice/ holds evidence/<file> (the practice bundle, the only part a seat
+# receives), digests.tsv (its digest, run id all zeros, seat *) and answers.tsv (never read
+# here). The names are internal/edition/practicelayout.go's (EditionDirName, PracticeDirName,
+# PracticeEvidenceDirName, PracticeDigestsFileName) and the seat is AnySeat (table.go);
+# internal/edition/practice_deploy_layout_test.go (V85) holds these five literals to them
+# and holds that no other line of this script spells one of the names as a path.
+EVIDENCE_EDITION_DIR='edition'
+EVIDENCE_PRACTICE_DIR='practice'
+EVIDENCE_PRACTICE_EVIDENCE_DIR='evidence'
+EVIDENCE_PRACTICE_DIGESTS='digests.tsv'
+EVIDENCE_PRACTICE_SEAT='*'
 
 # evidence_reject <exit status> <message>: the message carries ids, names and line numbers
 # only, never a byte of a bundle.
@@ -663,12 +687,37 @@ if [[ -n "${SCOPE_VALUES_FILE}" ]]; then
   fi
 fi
 
+EVIDENCE_MODE=""          # event (--evidence-dir / --evidence-digests) or practice (A5c-2)
+EVIDENCE_BUNDLE_DIRS=()   # per EVIDENCE_CIDS entry: the directory its bundle is read from
+EVIDENCE_PRACTICE_DIGESTS_FILES=()  # practice: per EVIDENCE_CIDS entry, its digests file
 EVIDENCE_NAMES=()        # per EVIDENCE_CIDS entry: its file names, byte order, one per line
 EVIDENCE_NAMES_ARGS=()   # helm: the names only
 
-# evidence_verify: the tree, the limits, the digests (see the top of the file).
+# evidence_in_list <value> <item>...: rc 0 when the value is one of the items
+evidence_in_list() {
+  local x="$1" c
+  shift
+  for c in "$@"; do
+    if [[ "${c}" == "${x}" ]]; then return 0; fi
+  done
+  return 1
+}
+# evidence_bundle_dir_of <cid>: the EVIDENCE_BUNDLE_DIRS entry of the challenge (rc 1: none)
+evidence_bundle_dir_of() {
+  local c i=0
+  for c in "${EVIDENCE_CIDS[@]}"; do
+    if [[ "${c}" == "$1" ]]; then
+      printf '%s\n' "${EVIDENCE_BUNDLE_DIRS[i]}"
+      return 0
+    fi
+    i=$((i + 1))
+  done
+  return 1
+}
+
+# evidence_verify: the event's tree, the limits, the digests (see the top of the file).
 evidence_verify() {
-  local cid name p size n bundle_bytes seat_bytes=0 root_ok idx
+  local cid name root_ok
   [[ -d "${EVIDENCE_DIR}" ]] || evidence_reject 1 "evidence dir not found: $(evidence_shown "${EVIDENCE_DIR}")"
   [[ -f "${EVIDENCE_DIGESTS}" ]] || evidence_reject 1 "evidence digests file not found: $(evidence_shown "${EVIDENCE_DIGESTS}")"
   EVIDENCE_DIR="$(cd "${EVIDENCE_DIR}" && pwd)" || evidence_reject 1 "cannot enter the evidence dir"
@@ -687,17 +736,79 @@ evidence_verify() {
       if [[ "${name}" == "${cid}" ]]; then root_ok=1; fi
     done
     [[ "${root_ok}" -eq 1 ]] || evidence_reject 1 "no ${cid}/ directory in the evidence dir for the investigate challenge ${cid}"
+    EVIDENCE_BUNDLE_DIRS+=("${EVIDENCE_DIR}/${cid}")
   done
 
-  # 2. Each bundle: count, names, regular files, bytes. Counted here, before any cluster call.
+  # 2. Each bundle: count, names, regular files, bytes.
+  evidence_check_bundles
+
+  # 3. The digests file: its shape, then this seat's rows against the scope, then each
+  # bundle's digest (D9's definition, evidence_bundle_digest) against its row.
+  evidence_check_digests "${EVIDENCE_DIGESTS}" "the digests file" "${USERNAME}" "${EVIDENCE_CIDS[@]}"
+  evidence_list_names
+}
+
+# evidence_verify_practice: the practice edition's path (ADR-0056 D11, amendment 9, A5c-2),
+# taken when none of --flags-file / --evidence-dir / --evidence-digests is given (the local
+# default; --flags-file is the event's signal, as for scoreboard's D8). For each investigate
+# challenge of the scope, its <cid>/edition/practice/ of CHALLENGES_DIR (the names: the
+# EVIDENCE_EDITION_DIR ... literals above): each directory on the way is a directory and not a
+# link, and the digests file a regular file and not a link. Then the SAME code as the event's
+# path: the bundle (evidence/ only) through evidence_check_bundles, the digests file through
+# evidence_check_digests, with the two practice rules of D9 in place of the event's (the run
+# id of all zeros, the seat * only) and exactly one row, the challenge's own. The Secret and
+# the names are made from evidence/ alone: answers.tsv and the digests file are never a file
+# of the bundle. One line on stderr says the path was taken (ids only).
+evidence_verify_practice() {
+  local cid root digests idx
+  printf 'deploy-user.sh: none of --flags-file / --evidence-dir / --evidence-digests: deploying the practice edition of %s (ADR-0056 D11)\n' "${EVIDENCE_CIDS[*]}" >&2
   for cid in "${EVIDENCE_CIDS[@]}"; do
-    evidence_read_entries "${EVIDENCE_DIR}/${cid}" || evidence_reject 1 "the bundle ${cid} cannot be read"
+    root="${CHALLENGES_DIR}/${cid}/${EVIDENCE_EDITION_DIR}/${EVIDENCE_PRACTICE_DIR}"
+    evidence_practice_dir "${cid}" "${CHALLENGES_DIR}/${cid}" ""
+    evidence_practice_dir "${cid}" "${CHALLENGES_DIR}/${cid}/${EVIDENCE_EDITION_DIR}" "${EVIDENCE_EDITION_DIR}/"
+    evidence_practice_dir "${cid}" "${root}" "${EVIDENCE_EDITION_DIR}/${EVIDENCE_PRACTICE_DIR}/"
+    evidence_practice_dir "${cid}" "${root}/${EVIDENCE_PRACTICE_EVIDENCE_DIR}" "${EVIDENCE_EDITION_DIR}/${EVIDENCE_PRACTICE_DIR}/${EVIDENCE_PRACTICE_EVIDENCE_DIR}/"
+    digests="${root}/${EVIDENCE_PRACTICE_DIGESTS}"
+    if [[ -L "${digests}" || ! -f "${digests}" ]]; then
+      evidence_reject 1 "the practice edition of ${cid} has no digests file ${cid}/${EVIDENCE_EDITION_DIR}/${EVIDENCE_PRACTICE_DIR}/${EVIDENCE_PRACTICE_DIGESTS} (a regular file; a link is refused)"
+    fi
+    EVIDENCE_BUNDLE_DIRS+=("${root}/${EVIDENCE_PRACTICE_EVIDENCE_DIR}")
+    EVIDENCE_PRACTICE_DIGESTS_FILES+=("${digests}")
+  done
+  evidence_check_bundles
+  idx=0
+  for cid in "${EVIDENCE_CIDS[@]}"; do
+    evidence_check_digests "${EVIDENCE_PRACTICE_DIGESTS_FILES[idx]}" "the practice digests file of ${cid}" "${EVIDENCE_PRACTICE_SEAT}" "${cid}"
+    idx=$((idx + 1))
+  done
+  evidence_list_names
+}
+
+# evidence_practice_dir <cid> <path> <shown, relative to <cid>/>: a directory on the way to the
+# practice bundle, and not a link
+evidence_practice_dir() {
+  if [[ -L "$2" ]]; then
+    evidence_reject 1 "the practice edition of $1: $1/$3 is a link (refused)"
+  fi
+  [[ -d "$2" ]] || evidence_reject 1 "the investigate challenge $1 has no practice edition: $1/$3 is not a directory of the challenges dir"
+}
+
+# evidence_check_bundles: each bundle of EVIDENCE_BUNDLE_DIRS (one per EVIDENCE_CIDS entry, in
+# that order): count, names, regular files, bytes. Counted here, before any cluster call. The
+# event's bundles and the practice edition's go through this one function (D11: the same
+# rules on both paths).
+evidence_check_bundles() {
+  local cid dir name p size n bundle_bytes seat_bytes=0 idx=0
+  for cid in "${EVIDENCE_CIDS[@]}"; do
+    dir="${EVIDENCE_BUNDLE_DIRS[idx]}"
+    idx=$((idx + 1))
+    evidence_read_entries "${dir}" || evidence_reject 1 "the bundle ${cid} cannot be read"
     n="${#EVIDENCE_ENTRIES[@]}"
     [[ "${n}" -ge 1 ]] || evidence_reject 1 "the bundle ${cid} holds no file"
     [[ "${n}" -le "${EVIDENCE_MAX_FILES}" ]] || evidence_reject 1 "the bundle ${cid} holds ${n} entries; at most ${EVIDENCE_MAX_FILES} files"
     bundle_bytes=0
     for name in "${EVIDENCE_ENTRIES[@]}"; do
-      p="${EVIDENCE_DIR}/${cid}/${name}"
+      p="${dir}/${name}"
       evidence_match "${name}" "${EVIDENCE_NAME_PATTERN}" || evidence_reject 1 "the bundle ${cid} holds the file name $(evidence_shown "${name}"), outside ${EVIDENCE_NAME_PATTERN}"
       if [[ -L "${p}" || ! -f "${p}" ]]; then
         evidence_reject 1 "${cid}/${name} is not a regular file (a link or a directory is refused)"
@@ -715,77 +826,99 @@ evidence_verify() {
       evidence_reject 1 "the bundles of this seat are larger than ${EVIDENCE_MAX_SEAT_BYTES} bytes together"
     fi
   done
+}
 
-  # 3. The digests file: its shape, then this seat's rows against the scope, then each
-  # bundle's digest (D9's definition, evidence_bundle_digest) against its row.
-  evidence_check_digests
-  idx=0
+# evidence_list_names: EVIDENCE_NAMES from EVIDENCE_BUNDLE_DIRS (after every check passed).
+evidence_list_names() {
+  local cid idx=0
   for cid in "${EVIDENCE_CIDS[@]}"; do
-    EVIDENCE_NAMES[idx]="$(evidence_sorted_names "${EVIDENCE_DIR}/${cid}")" || evidence_reject 1 "the bundle ${cid} cannot be listed"
+    EVIDENCE_NAMES[idx]="$(evidence_sorted_names "${EVIDENCE_BUNDLE_DIRS[idx]}")" || evidence_reject 1 "the bundle ${cid} cannot be listed"
     idx=$((idx + 1))
   done
 }
 
-# evidence_check_digests: the digests file is `# falco-ctf evidence-digests v1 run=<32 hex,
-# not all zero>` and one `seat TAB cid TAB digest` row per line, nothing else (the shape
-# internal/edition.ParseDigests reads; a CR, a quote or a stray byte fails the column
-# grammars below). This seat must have exactly one row per challenge of the scope and none
-# for another challenge; a repeated (seat, cid) anywhere is refused.
+# evidence_check_digests <file> <what> <seat> <cid>...: the digests file is `# falco-ctf
+# evidence-digests v1 run=<32 hex>` and one `seat TAB cid TAB digest` row per line, nothing
+# else (the shape internal/edition reads: ParseDigests for an event, ParsePracticeDigests for
+# a practice edition; a CR, a quote or a stray byte fails the column grammars below). It is
+# ONE code path for both (D9): EVIDENCE_MODE picks the two rules that differ, the event's
+# (the run id is not all zeros, a seat is of the seat grammar) or the practice edition's (the
+# run id is all zeros, the seat is * and nothing else). <seat> must have exactly one row per
+# <cid> and none for another challenge; a repeated (seat, cid) anywhere is refused; each
+# row's digest must be D9's digest of its challenge's bundle (EVIDENCE_BUNDLE_DIRS). <what>
+# names the file in the messages.
 evidence_check_digests() {
-  local line="" lineno=0 seat cid rest digest key seen=$'\n' mine=$'\n' c got want rows
-  if ! (set -o pipefail; LC_ALL=C tr -d '\000' < "${EVIDENCE_DIGESTS}" | cmp -s - "${EVIDENCE_DIGESTS}"); then
-    evidence_reject 1 "the digests file holds a NUL byte or cannot be read"
+  local file="$1" what="$2" want_seat="$3" line="" lineno=0 seat cid rest digest key seen=$'\n' mine=$'\n' c got want rows dir not_in count_text
+  shift 3
+  if [[ "${EVIDENCE_MODE}" == practice ]]; then
+    not_in="the challenge of this practice edition"
+    count_text="want exactly $#"
+  else
+    not_in="an investigate challenge of this scope"
+    count_text="this scope has $# investigate challenges"
+  fi
+  if ! (set -o pipefail; LC_ALL=C tr -d '\000' < "${file}" | cmp -s - "${file}"); then
+    evidence_reject 1 "${what} holds a NUL byte or cannot be read"
   fi
   while IFS= read -r line; do
     lineno=$((lineno + 1))
     if [[ "${lineno}" -eq 1 ]]; then
-      evidence_match "${line}" "${EVIDENCE_DIGESTS_HEADER_RE}" || evidence_reject 1 "the digests file: line 1 is not the v1 header with a 32-digit lower-case hex run id"
-      if [[ "${line}" == "${EVIDENCE_DIGESTS_PREFIX}${EVIDENCE_PRACTICE_RUN_ID}" ]]; then
-        evidence_reject 1 "the digests file: the run id is all zeros (that is the practice edition's)"
+      evidence_match "${line}" "${EVIDENCE_DIGESTS_HEADER_RE}" || evidence_reject 1 "${what}: line 1 is not the v1 header with a 32-digit lower-case hex run id"
+      if [[ "${EVIDENCE_MODE}" == practice ]]; then
+        if [[ "${line}" != "${EVIDENCE_DIGESTS_PREFIX}${EVIDENCE_PRACTICE_RUN_ID}" ]]; then
+          evidence_reject 1 "${what}: the run id is not all zeros (a practice edition's digests carry the run id of all zeros only)"
+        fi
+      elif [[ "${line}" == "${EVIDENCE_DIGESTS_PREFIX}${EVIDENCE_PRACTICE_RUN_ID}" ]]; then
+        evidence_reject 1 "${what}: the run id is all zeros (that is the practice edition's)"
       fi
       continue
     fi
     case "${line}" in
       *$'\t'*$'\t'*) ;;
-      *) evidence_reject 1 "the digests file: line ${lineno} does not have three columns" ;;
+      *) evidence_reject 1 "${what}: line ${lineno} does not have three columns" ;;
     esac
     seat="${line%%$'\t'*}"
     rest="${line#*$'\t'}"
     cid="${rest%%$'\t'*}"
     digest="${rest#*$'\t'}"
     case "${digest}" in
-      *$'\t'*) evidence_reject 1 "the digests file: line ${lineno} has more than three columns" ;;
+      *$'\t'*) evidence_reject 1 "${what}: line ${lineno} has more than three columns" ;;
     esac
-    evidence_match "${seat}" "${SEAT_PATTERN}" || evidence_reject 1 "the digests file: line ${lineno}: the seat is outside the seat grammar"
-    evidence_match "${cid}" "${CHALLENGE_ID_PATTERN}" || evidence_reject 1 "the digests file: line ${lineno}: the challenge id is outside its grammar"
-    evidence_match "${digest}" "${EVIDENCE_DIGEST_RE}" || evidence_reject 1 "the digests file: line ${lineno}: the digest is not 64 lower-case hex digits"
+    if [[ "${EVIDENCE_MODE}" == practice ]]; then
+      [[ "${seat}" == "${EVIDENCE_PRACTICE_SEAT}" ]] || evidence_reject 1 "${what}: line ${lineno}: the seat is not ${EVIDENCE_PRACTICE_SEAT} (a practice edition's digests have the seat ${EVIDENCE_PRACTICE_SEAT} only)"
+    else
+      evidence_match "${seat}" "${SEAT_PATTERN}" || evidence_reject 1 "${what}: line ${lineno}: the seat is outside the seat grammar"
+    fi
+    evidence_match "${cid}" "${CHALLENGE_ID_PATTERN}" || evidence_reject 1 "${what}: line ${lineno}: the challenge id is outside its grammar"
+    evidence_match "${digest}" "${EVIDENCE_DIGEST_RE}" || evidence_reject 1 "${what}: line ${lineno}: the digest is not 64 lower-case hex digits"
     key="${seat}"$'\t'"${cid}"
     case "${seen}" in
-      *$'\n'"${key}"$'\n'*) evidence_reject 1 "the digests file: line ${lineno}: the (seat, challenge) ${seat} ${cid} has a second row" ;;
+      *$'\n'"${key}"$'\n'*) evidence_reject 1 "${what}: line ${lineno}: the (seat, challenge) ${seat} ${cid} has a second row" ;;
     esac
     seen="${seen}${key}"$'\n'
-    if [[ "${seat}" == "${USERNAME}" ]]; then
+    if [[ "${seat}" == "${want_seat}" ]]; then
       mine="${mine}${cid}"$'\t'"${digest}"$'\n'
     fi
-  done < "${EVIDENCE_DIGESTS}"
+  done < "${file}"
   # a last line without its LF is left in ${line} by the failed read
-  [[ -z "${line}" ]] || evidence_reject 1 "the digests file does not end with a newline"
-  [[ "${lineno}" -ge 2 ]] || evidence_reject 1 "the digests file is empty or has no row"
+  [[ -z "${line}" ]] || evidence_reject 1 "${what} does not end with a newline"
+  [[ "${lineno}" -ge 2 ]] || evidence_reject 1 "${what} is empty or has no row"
   rows=0
   while IFS=$'\t' read -r cid digest; do
     if [[ -z "${cid}" ]]; then continue; fi
-    evidence_in_scope "${cid}" || evidence_reject 1 "the digests file has a row for seat ${USERNAME} and ${cid}, which is not an investigate challenge of this scope"
+    evidence_in_list "${cid}" "$@" || evidence_reject 1 "${what} has a row for seat ${want_seat} and ${cid}, which is not ${not_in}"
     rows=$((rows + 1))
   done <<< "${mine}"
-  [[ "${rows}" -eq "${#EVIDENCE_CIDS[@]}" ]] || evidence_reject 1 "the digests file has ${rows} rows for seat ${USERNAME}; this scope has ${#EVIDENCE_CIDS[@]} investigate challenges"
-  for c in "${EVIDENCE_CIDS[@]}"; do
+  [[ "${rows}" -eq "$#" ]] || evidence_reject 1 "${what} has ${rows} rows for seat ${want_seat}; ${count_text}"
+  for c in "$@"; do
     want=""
     while IFS=$'\t' read -r cid digest; do
       if [[ "${cid}" == "${c}" ]]; then want="${digest}"; fi
     done <<< "${mine}"
-    [[ -n "${want}" ]] || evidence_reject 1 "the digests file has no row for seat ${USERNAME} and ${c}"
-    got="$(evidence_bundle_digest "${EVIDENCE_DIR}/${c}")" || evidence_reject 1 "the digest of the bundle ${c} cannot be computed"
-    [[ "${got}" == "${want}" ]] || evidence_reject 1 "the digest of the bundle ${c} is not the row of the digests file for seat ${USERNAME}"
+    [[ -n "${want}" ]] || evidence_reject 1 "${what} has no row for seat ${want_seat} and ${c}"
+    dir="$(evidence_bundle_dir_of "${c}")" || evidence_reject 1 "the bundle ${c} has no directory"
+    got="$(evidence_bundle_digest "${dir}")" || evidence_reject 1 "the digest of the bundle ${c} cannot be computed"
+    [[ "${got}" == "${want}" ]] || evidence_reject 1 "the digest of the bundle ${c} is not the row of ${what} for seat ${want_seat}"
   done
 }
 
@@ -794,11 +927,14 @@ if [[ "${#EVIDENCE_CIDS[@]}" -gt 0 ]]; then
     if [[ -n "${FLAGS_FILE}" ]]; then
       evidence_reject 2 "an event deploy (--flags-file) of a scope with investigate challenges needs --evidence-dir and --evidence-digests (both are required)"
     fi
-    evidence_reject 2 "this scope has investigate challenges and none of --flags-file / --evidence-dir / --evidence-digests: the practice-edition deploy is implemented in A5c-2 (ADR-0056), not yet"
+    EVIDENCE_MODE=practice
+    evidence_verify_practice
   elif [[ -z "${EVIDENCE_DIR}" || -z "${EVIDENCE_DIGESTS}" ]]; then
     evidence_reject 2 "--evidence-dir and --evidence-digests go together: one of them is missing"
+  else
+    EVIDENCE_MODE=event
+    evidence_verify
   fi
-  evidence_verify
 elif [[ -n "${EVIDENCE_DIR}" || -n "${EVIDENCE_DIGESTS}" ]]; then
   evidence_reject 2 "--evidence-dir / --evidence-digests are given, but this scope has no investigate challenge"
 fi
@@ -934,7 +1070,7 @@ for cid in ${EVIDENCE_CIDS[@]+"${EVIDENCE_CIDS[@]}"}; do
   FROM_FILE_ARGS=()
   while IFS= read -r name; do
     if [[ -z "${name}" ]]; then continue; fi
-    FROM_FILE_ARGS+=("--from-file=${name}=${EVIDENCE_DIR}/${cid}/${name}")
+    FROM_FILE_ARGS+=("--from-file=${name}=${EVIDENCE_BUNDLE_DIRS[evidence_idx]}/${name}")
   done <<< "${EVIDENCE_NAMES[evidence_idx]}"
   kubectl -n "${NS}" delete secret "ctf-evidence-${cid}" --ignore-not-found >/dev/null
   kubectl -n "${NS}" create secret generic "ctf-evidence-${cid}" "${FROM_FILE_ARGS[@]}" >/dev/null
