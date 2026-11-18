@@ -940,13 +940,18 @@ elif [[ -n "${EVIDENCE_DIR}" || -n "${EVIDENCE_DIGESTS}" ]]; then
 fi
 
 # The names, and only the names, go to helm (--set-string: a name such as `null` stays a
-# string, and EVIDENCE_NAME_PATTERN holds no `,` or `=`).
+# string, and EVIDENCE_NAME_PATTERN holds no `,` or `=`). ADR-0056 A5e: the same name, in
+# the same step, also becomes the assert's <cid>/<name> argument (ASSERT_NAME_ARGS, its
+# 3-11 key-set check), so "the names the chart was given" and the assert's expectation
+# have one derivation.
+ASSERT_NAME_ARGS=()
 evidence_idx=0
 for cid in ${EVIDENCE_CIDS[@]+"${EVIDENCE_CIDS[@]}"}; do
   evidence_i=0
   while IFS= read -r name; do
     if [[ -z "${name}" ]]; then continue; fi
     EVIDENCE_NAMES_ARGS+=(--set-string "evidence.challenges.${cid}.names[${evidence_i}]=${name}")
+    ASSERT_NAME_ARGS+=("${cid}/${name}")
     evidence_i=$((evidence_i + 1))
   done <<< "${EVIDENCE_NAMES[evidence_idx]}"
   evidence_idx=$((evidence_idx + 1))
@@ -1185,16 +1190,7 @@ green "  ✓ ready — http://${HOST}/"
 # ADR-0056 A5e (V94): the assert is given the values file helm was given
 # (SCOPE_VALUES_FILE, the `-f` of VALUES_ARGS; `-` when helm was given none), so the
 # rule that picks it lives here only, and the names the chart was given, one
-# <cid>/<name> per name (EVIDENCE_NAMES, the list behind EVIDENCE_NAMES_ARGS), for
-# its key-set check of each ctf-evidence-<cid> (3-11).
-ASSERT_NAME_ARGS=()
-evidence_idx=0
-for cid in ${EVIDENCE_CIDS[@]+"${EVIDENCE_CIDS[@]}"}; do
-  while IFS= read -r name; do
-    if [[ -z "${name}" ]]; then continue; fi
-    ASSERT_NAME_ARGS+=("${cid}/${name}")
-  done <<< "${EVIDENCE_NAMES[evidence_idx]}"
-  evidence_idx=$((evidence_idx + 1))
-done
+# <cid>/<name> per name (ASSERT_NAME_ARGS, made in the same loop as EVIDENCE_NAMES_ARGS,
+# above), for its key-set check of each ctf-evidence-<cid> (3-11).
 info "[6/${LAST_STEP}] assert flag isolation (ADR-0001 Verification 3)"
 "${CHART_DIR}/assert-flag-isolation.sh" "${NS}" "${CHALLENGES_DIR}" "${CHALLENGE_ID}" "${SCENARIOS_DIR}" "${SCOPE_VALUES_FILE:--}" ${ASSERT_NAME_ARGS[@]+"${ASSERT_NAME_ARGS[@]}"}

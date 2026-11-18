@@ -26,6 +26,11 @@
 #              digests.tsv / content in any call; each of V66's trees (a byte changed, a run id
 #              that is not all zeros, no practice/, a link, a name outside B2, ...) and an
 #              event's digests file of the practice shape are refused with no call.
+#   A5e (V94): with the stub helm letting `helm upgrade` through (that one block only) and
+#              the assert replaced by an argv recorder in a scratch copy of the chart dir,
+#              in all / scenario / single-challenge (with and without a values file) mode:
+#              the assert runs after helm, its 5th argument is helm's -f file (- for none)
+#              and its <cid>/<name> arguments are helm's names[i] values, as a set.
 #   self-test: copies of deploy-user.sh with ONE guard removed or moved (a limit one too
 #              wide, the digest comparison, the label-selector delete, the practice path's
 #              run id / seat / link / bundle dir) must turn the case that guard is about red,
@@ -684,6 +689,132 @@ case_event_practice_digests
 reject_with "event: every row of the seat * (V66)" 'the seat is outside the seat grammar' m_star_rows
 reject_with "event: the rows of user1 and one row of the seat *" 'line 4: the seat is outside the seat grammar' m_star_extra
 
+# --- A5e (ADR-0056 V94): what deploy-user.sh gives the assert ------------------------------
+echo "==> A5e (V94): the assert is given helm's -f and the chart's names (helm upgrade let through)"
+# Everything above stops at `helm upgrade` (the stub exits 97), so deploy-user.sh's call of
+# the assert is never reached there. Here, and only here: (1) the stub helm lets `upgrade`
+# through (CT_HELM_UPGRADE_PASS=1, exported around one ct_run); (2) deploy-user.sh runs
+# from a scratch copy of its directory (the directory of ${DEPLOY}: the real one, or a
+# mutant's below) whose assert-flag-isolation.sh only records its argv. The real assert
+# is neither run nor replaced; after this block a deploy stops at 97 again (checked).
+A5E_ARGV="${WORK}/a5e-argv"
+A5E_DEPLOY=""
+a5e_tree() {
+  local src root="${WORK}/a5e-tree"
+  src="$(cd "$(dirname "${DEPLOY}")" && pwd)"
+  rm -rf "${root}"
+  mkdir -p "${root}/charts/ctf-user"
+  cp -p "${src}"/*.sh "${src}/values.yaml" "${root}/charts/ctf-user/"
+  # the recorder: line 1 says whether `helm upgrade` was already called, then one line per argument
+  cat > "${root}/charts/ctf-user/assert-flag-isolation.sh" <<'REC'
+#!/usr/bin/env bash
+if grep -q '^helm upgrade ' "${CALLS_LOG}"; then echo after-helm=yes; else echo after-helm=no; fi > "${A5E_ARGV}"
+for a in "$@"; do printf '%s\n' "${a}"; done >> "${A5E_ARGV}"
+exit 0
+REC
+  chmod +x "${root}/charts/ctf-user/assert-flag-isolation.sh"
+  A5E_DEPLOY="${root}/charts/ctf-user/deploy-user.sh"
+}
+# a5e_run <challenge-id> [deploy flags...]
+a5e_run() {
+  local cid="$1"
+  shift
+  rm -f "${A5E_ARGV}"
+  export A5E_ARGV
+  export CT_HELM_UPGRADE_PASS=1
+  ct_run "${A5E_DEPLOY}" --challenges-dir "${CDIR}" --scenarios-dir "${SDIR}" ${1+"$@"} -- user1 "${cid}"
+  unset CT_HELM_UPGRADE_PASS
+}
+# a5e_check <label>: deploy-user.sh exited 0; the assert was called once helm upgrade had
+# been; its 5th argument is the file after helm's -f (- when helm got none); its
+# <cid>/<name> arguments are, as a set, helm's evidence.challenges.<cid>.names[<i>] values
+a5e_check() {
+  local label="$1" helm_line want_vf tok c want_names="" got_names="" l i
+  local -a av=()
+  if [[ "${RUN_STATUS}" -ne 0 ]]; then
+    fail "${label}: deploy-user.sh exited ${RUN_STATUS}: $(tr '\n' ' ' < "${CT_RUN_ERR}" | cut -c1-200)"; return 0
+  fi
+  helm_line="$(grep '^helm upgrade ' "${CT_CALLS}" | head -n 1 || true)"
+  if [[ -z "${helm_line}" ]]; then fail "${label}: no helm upgrade was recorded"; return 0; fi
+  if [[ ! -f "${A5E_ARGV}" ]]; then fail "${label}: the assert was not called"; return 0; fi
+  while IFS= read -r l; do av+=("${l}"); done < "${A5E_ARGV}"
+  if [[ "${av[0]:-}" != after-helm=yes ]]; then fail "${label}: the assert was called before helm upgrade (${av[0]:-})"; return 0; fi
+  if [[ "${#av[@]}" -lt 6 ]]; then fail "${label}: the assert was given $(( ${#av[@]} - 1 )) arguments, want at least 5"; return 0; fi
+  case "${helm_line}" in
+    *" -f "*) want_vf="${helm_line#* -f }"; want_vf="${want_vf%% *}" ;;
+    *) want_vf=- ;;
+  esac
+  if [[ "${av[5]}" != "${want_vf}" ]]; then
+    fail "${label}: the assert's 5th argument is '${av[5]}', helm upgrade was given -f '${want_vf}'"; return 0
+  fi
+  set -f
+  for tok in ${helm_line}; do
+    case "${tok}" in
+      evidence.challenges.*.names\[*\]=*)
+        c="${tok#evidence.challenges.}"
+        c="${c%%.names\[*}"
+        want_names="${want_names}${c}/${tok#*=}${CT_LF}"
+        ;;
+    esac
+  done
+  set +f
+  i=6
+  while [[ "${i}" -lt "${#av[@]}" ]]; do
+    got_names="${got_names}${av[i]}${CT_LF}"
+    i=$((i + 1))
+  done
+  want_names="$(printf '%s' "${want_names}" | LC_ALL=C sort)"
+  got_names="$(printf '%s' "${got_names}" | LC_ALL=C sort)"
+  if [[ "${got_names}" != "${want_names}" ]]; then
+    fail "${label}: the assert's names [${got_names//${CT_LF}/ }] are not helm's [${want_names//${CT_LF}/ }]"; return 0
+  fi
+  pass "${label} (values ${want_vf##*/}, names [${got_names//${CT_LF}/ }])"
+}
+case_a5e_assert_args() {
+  a5e_tree
+  # all: values-all.yaml, both challenges' names
+  good_setup
+  set_evflags
+  a5e_run all "${EVFLAGS[@]}"
+  a5e_check "A5e all: the assert gets helm's values-all.yaml and the names"
+  # scenario:<name>: values-scenario-<name>.yaml
+  good_setup
+  mkdir -p "${SDIR}/sc1"
+  printf 'id: sc1\ntitle: sc1\nchallenges:\n  - 40-ev\n  - 41-ev\n' > "${SDIR}/sc1/scenario.yaml"
+  cp "${CDIR}/values-all.yaml" "${CDIR}/values-scenario-sc1.yaml"
+  set_evflags
+  a5e_run scenario:sc1 "${EVFLAGS[@]}"
+  a5e_check "A5e scenario: the assert gets helm's values-scenario-sc1.yaml and the names"
+  # one challenge with its values.yaml (40-ev alone; values-all.yaml stays a second candidate)
+  good_setup
+  rm -rf "${EVD}/41-ev"
+  write_digests
+  mkdir -p "${CDIR}/40-ev"
+  write_values 40-ev
+  cp "${CDIR}/values-all.yaml" "${CDIR}/40-ev/values.yaml"
+  write_values 40-ev 41-ev
+  set_evflags
+  a5e_run 40-ev "${EVFLAGS[@]}"
+  a5e_check "A5e single challenge: the assert gets helm's 40-ev/values.yaml, not values-all.yaml"
+  # one challenge with no values.yaml: helm gets no -f, the assert gets -
+  good_setup
+  mkdir -p "${CDIR}/02-tr"
+  printf 'challengeId: 02-tr\ntype: trigger\nexpectedRules: [r]\n' > "${CDIR}/02-tr/falco-rule.yaml"
+  a5e_run 02-tr
+  a5e_check "A5e single challenge with no values file: the assert gets -"
+}
+case_a5e_assert_args
+# the stub's pass mode did not leak: a deploy stops at helm upgrade (97) again, and the
+# real assert is still the real one
+good_setup
+set_evflags
+check_reached "after the A5e block, helm upgrade stops the run again (exit 97)" "${EVFLAGS[@]}"
+if [[ -n "${CT_HELM_UPGRADE_PASS+x}" ]] || ! grep -q '^self_check_builtin_only()' "${REPO_ROOT}/charts/ctf-user/assert-flag-isolation.sh"; then
+  fail "the A5e block leaked: CT_HELM_UPGRADE_PASS is still set, or the real assert was replaced"
+else
+  pass "the A5e block left the stub helm and the real assert as they were"
+fi
+
 # --- self-test ---------------------------------------------------------------------------
 echo "==> self-test: a deploy-user.sh with one guard removed turns its case red"
 # mutant <label> <text to replace> <replacement>: sets DEPLOY to the copy (next to the files
@@ -738,5 +869,10 @@ if mutant_deploy practice-seat '[[ "${seat}" == "${EVIDENCE_PRACTICE_SEAT}" ]] |
 if mutant_deploy practice-link 'if [[ -L "$2" ]]; then' 'if false; then'; then go_red practice-link case_practice_link; fi
 if mutant_deploy practice-bundle-dir 'EVIDENCE_BUNDLE_DIRS+=("${root}/${EVIDENCE_PRACTICE_EVIDENCE_DIR}")' 'EVIDENCE_BUNDLE_DIRS+=("${root}")'; then go_red practice-bundle-dir case_practice_accept; fi
 if mutant_deploy practice-digest '[[ "${got}" == "${want}" ]] ||' 'true ||'; then go_red practice-digest case_practice_byte; fi
+# A5e (V94): the assert's call removed, its 5th argument another file, its names from
+# another spelling than helm's: each turns the behaviour case red
+if mutant_deploy a5e-no-assert '"${CHART_DIR}/assert-flag-isolation.sh" "${NS}"' ': "${NS}"'; then go_red a5e-no-assert case_a5e_assert_args; fi
+if mutant_deploy a5e-other-values '"${SCOPE_VALUES_FILE:--}"' '"${CHALLENGES_DIR}/values-all.yaml"'; then go_red a5e-other-values case_a5e_assert_args; fi
+if mutant_deploy a5e-other-names 'ASSERT_NAME_ARGS+=("${cid}/${name}")' 'ASSERT_NAME_ARGS+=("${cid}/x${name}")'; then go_red a5e-other-names case_a5e_assert_args; fi
 
 ct_finish "deploy-user evidence check"

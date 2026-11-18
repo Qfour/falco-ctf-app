@@ -21,7 +21,8 @@
 #   truncated probe output          -> exit != 0   (3-0: no PROBE_END sentinel)
 #   no catalog id in the checkout   -> exit != 0   (an empty expectation never matches)
 #   scenario mode                   -> exactly the scenario's ids; one extra id fails
-#   3-9 / 3-10 (ADR-0056 D11 "3-x" items (1)(2) only, A5d; V8, V2): over values that
+#   3-9 / 3-10 (ADR-0056 D11 "3-x" items (1)(2), A5d; V8, V2; item (3) = 3-11 is
+#   the A5e block below): over values that
 #   challenges/gen-values.sh itself generates for two investigate challenges, a
 #   clean root and the expected Secrets pass in all / scenario / single mode, and
 #   the evidence scope the assert reads is the one deploy-user.sh's
@@ -192,6 +193,8 @@ newroot() {
 # it never chooses one). By default the one deploy-user.sh would give helm for the mode
 # (values_for, the test's own statement of deploy-user.sh's choice); ASSERT_VALUES set
 # and non-empty overrides it for one case. ASSERT_NAMES: the <cid>/<name> arguments.
+# values_for only picks the fixtures' file; that deploy-user.sh really gives the assert
+# helm's file is held by scripts/check-deploy-user-evidence.sh (A5e, the behaviour case).
 ASSERT_VALUES=""
 ASSERT_NAMES=()
 values_for() { # <challenges-dir> <challenge-id> -> the values file path, or -
@@ -641,12 +644,26 @@ if [[ "${EVFX_OK}" -eq 1 ]]; then
   ASSERT_VALUES=-
   expect_ev accept "V94: - (no values file) in single mode, only ctf-flags" '' "ctf-flags${TAB}Opaque${LF}${SEC_HELM}" "$r" "${EVCH}" 01-alpha
   ASSERT_VALUES=""
-  # no 5th argument / an empty one: exit 2, nothing defaulted
+  # `-` where deploy-user.sh always gives helm a file (all, scenario): exit 2
+  ASSERT_VALUES=-
+  expect_ev reject "V94: - in all mode (deploy-user.sh always gives values-all.yaml there)" 'challenge-id all is always deployed with a values file, but - (none) was given' "ctf-flags${TAB}Opaque" "$r" "${EVCH}" all
+  expect_ev reject "V94: - in scenario mode" 'challenge-id scenario:one is always deployed with a values file, but - (none) was given' "ctf-flags${TAB}Opaque" "$r" "${EVCH}" scenario:one "${EVSC}"
+  ASSERT_VALUES=""
+  # no 5th argument: exit 2, nothing defaulted. One command line (a checkout with no
+  # investigate challenge, so a defaulted values-all.yaml WOULD pass), run here against
+  # the assert and below against the mutant that defaults the file.
+  NOARG_ROOT="$(newroot v94-noarg 01-alpha 02-beta 03-gamma)"
+  v94_noarg() { # <assert> -> exit status of the no-5th-argument run; output in out.$$
+    local rc
+    set +e
+    PATH="${WORK}/bin:${PATH}" FAKE_ROOT="${NOARG_ROOT}" "$1" ns-test "${CH}" all '' >"${WORK}/out.$$" 2>&1
+    rc=$?
+    set -e
+    return "${rc}"
+  }
   CASES=$((CASES + 1))
-  set +e
-  PATH="${WORK}/bin:${PATH}" FAKE_ROOT="$r" "${ASSERT}" ns-test "${EVCH}" all '' >"${WORK}/out.$$" 2>&1
-  rc=$?
-  set -e
+  rc=0
+  v94_noarg "${ASSERT}" || rc=$?
   if [[ "${rc}" -eq 2 ]] && grep -qF 'the 5th, the values file helm was given or -, is required' "${WORK}/out.$$"; then
     pass "V94: without the values file argument -> exit 2 (no default)"
   else
@@ -740,12 +757,11 @@ if [[ "${EVFX_OK}" -eq 1 ]]; then
     unset EV_KEYS_OVERRIDE
     ASSERT="${REAL_ASSERT}"
   fi
-  if mutate "values file optional" 'if [ "$#" -lt 5 ]' 'if [ "$#" -lt 4 ]' 'SCOPE_VALUES_ARG="${5}"' 'SCOPE_VALUES_ARG="${5:--}"' 'shift 5' 'shift "$#"'; then
+  # the mutant reads a default file when the 5th is left out (the rule A5e removed)
+  if mutate "values file optional" 'if [ "$#" -lt 5 ]' 'if [ "$#" -lt 4 ]' 'SCOPE_VALUES_ARG="${5}"' 'SCOPE_VALUES_ARG="${5:-${CHALLENGES_DIR}/values-all.yaml}"' 'shift 5' 'shift "$#"'; then
     CASES=$((CASES + 1))
-    set +e
-    PATH="${WORK}/bin:${PATH}" FAKE_ROOT="$(newroot mut-noarg 01-alpha 02-beta 03-gamma)" "${MUT}/assert-flag-isolation.sh" ns-test "${CH}" all '' >"${WORK}/out.$$" 2>&1
-    rc=$?
-    set -e
+    rc=0
+    v94_noarg "${MUT}/assert-flag-isolation.sh" || rc=$?
     if [[ "${rc}" -eq 0 ]]; then
       pass "mutant (values file optional): the no-argument run passes on it, so the V94 no-argument case is what goes red"
     else
@@ -812,7 +828,8 @@ secrets_for() {
   printf '%s' "${s}"
 }
 # assert_scope_verdict <checkout> <challenge-id> <scenarios-dir or ''> <root> <secrets> <values file>
-#   -> "accept [<cids>]" (exit 0), "reject" (the reader refused: "cannot judge 3-9 / 3-10"),
+#   -> "accept [<cids>]" (exit 0), "reject" (the reader refused: its own message, "the
+#      evidence entries must be in the form gen-values.sh writes ... 3-9 / 3-10 / 3-11"),
 #      or "error: ..." (anything else: the case is broken, not a verdict)
 #   The values file is given (A5e). The <cid>/<name> arguments and the keys the stub
 #   serves are one name per challenge evidence_scope_cids reads (k.log): the table is
@@ -835,7 +852,7 @@ assert_scope_verdict() {
     line="$(grep -F 'evidence scope [' "${out}" || true)"
     line="${line#*evidence scope [}"
     printf 'accept [%s]\n' "${line%%]*}"
-  elif grep -qF 'cannot judge 3-9 / 3-10' "${out}"; then
+  elif grep -qF '(the evidence entries must be in the form gen-values.sh writes) — cannot judge 3-9 / 3-10 / 3-11' "${out}"; then
     echo reject
   else
     printf 'error: exit %s: %s\n' "${rc}" "$(tr '\n' ' ' <"${out}" | cut -c1-300)"

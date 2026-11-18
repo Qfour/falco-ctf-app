@@ -486,7 +486,15 @@ EVIDENCE_SCOPE_DIRS=()
 SCOPE_VALUES_FILE=""
 case "${SCOPE_VALUES_ARG}" in
   -)
-    # helm was given no values file: no investigate challenge in this scope
+    # helm was given no values file: no investigate challenge in this scope. Only a
+    # single challenge can be deployed so: deploy-user.sh refuses `all` without
+    # values-all.yaml and `scenario:<name>` without values-scenario-<name>.yaml, so a
+    # `-` there would make the bundle scope empty unchecked (exit 2).
+    if [ "${CHALLENGE_ID}" = "all" ] || [ "${SCENARIO_MODE}" = yes ]
+    then
+      printf 'assert-flag-isolation.sh: challenge-id %s is always deployed with a values file, but - (none) was given — cannot judge 3-9 / 3-10 / 3-11\n' "${CHALLENGE_ID}" >&2
+      exit 2
+    fi
     ;;
   '')
     printf 'assert-flag-isolation.sh: the values file argument is empty (give the file helm was given, or -) — cannot judge 3-9 / 3-10 / 3-11\n' >&2
@@ -503,7 +511,7 @@ case "${SCOPE_VALUES_ARG}" in
 esac
 
 evidence_scope_reject() { # $1 = line number, $2 = what is wrong
-  printf 'assert-flag-isolation.sh: %s line %s: %s (the evidence entries must be in the form gen-values.sh writes) — cannot judge 3-9 / 3-10\n' \
+  printf 'assert-flag-isolation.sh: %s line %s: %s (the evidence entries must be in the form gen-values.sh writes) — cannot judge 3-9 / 3-10 / 3-11\n' \
     "${SCOPE_VALUES_FILE}" "$1" "$2" >&2
   exit 1
 }

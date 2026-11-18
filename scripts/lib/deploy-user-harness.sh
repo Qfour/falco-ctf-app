@@ -29,6 +29,8 @@
 #                                    The env CT_KUBECTL_FAIL=<text>, set for one ct_run, makes
 #                                    every kubectl call whose argv holds <text> exit 1 (after it
 #                                    is recorded): a failure the script under test must handle
+#                                    The env CT_HELM_UPGRADE_PASS=1, exported around one
+#                                    ct_run, makes `helm upgrade` exit 0 (recorded first)
 #   ct_upgrade_call                  prints the first recorded `helm upgrade ...` line
 #   ct_check_reached_upgrade <where> the run exited CT_UPGRADE_EXIT (the stub's `helm upgrade`)
 #   ct_check_reject <where> <arg as given> <stderr marker>
@@ -52,6 +54,14 @@ ct_write_stubs() {
   cat > "${CT_STUB_BIN}/helm" <<'STUB'
 #!/usr/bin/env bash
 printf 'helm %s\n' "$*" >> "${CALLS_LOG}"
+# CT_HELM_UPGRADE_PASS=1 (exported around one ct_run only): `helm upgrade` succeeds instead
+# of exiting 97, so the script under test goes on past it (ADR-0056 A5e: what deploy-user.sh
+# gives the assert after helm). Unset, nothing changes.
+if [[ "${CT_HELM_UPGRADE_PASS:-0}" == 1 ]]; then
+  for a in "$@"; do
+    if [[ "${a}" == upgrade ]]; then exit 0; fi
+  done
+fi
 for a in "$@"; do
   case "${a}" in
     status) exit 1 ;;
