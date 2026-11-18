@@ -929,6 +929,7 @@ assert_evidence_copy() { # $1=label $2=the plant container's block
 SCOPE_EVIDENCE_ARGS=()
 scope_practice_evidence() { # $1=values file $2=challenges root
   local values="$1" root="$2" cids cid bundle names n i
+  local -a nm=()
   SCOPE_EVIDENCE_ARGS=()
   EXPECTED_EVIDENCE_SECRETS=""
   if ! cids="$(evidence_scope_cids "$values")"; then
@@ -954,12 +955,30 @@ scope_practice_evidence() { # $1=values file $2=challenges root
       violation A5d-names "the practice bundle of ${cid} holds no file"
       return 1
     fi
-    i=0
+    # Before a name becomes a helm argument (a `,` or `=` in it would set another value):
+    # every entry is a regular file, not a link or a directory (evidence_bundle_digest,
+    # the definition deploy-user.sh's digest check uses, refuses anything else), and every
+    # name is of B2's grammar (asked of gen-values.sh: EVIDENCE_NAME_RE, which V52 holds to
+    # edition.NamePattern, the definition deploy-user.sh's EVIDENCE_NAME_PATTERN is held to
+    # by V58). Neither rule is written here.
+    if ! evidence_bundle_digest "$bundle" >/dev/null; then
+      violation A5d-names "the practice bundle of ${cid} holds an entry that is not a regular file (a link or a directory)"
+      return 1
+    fi
+    nm=()
     while IFS= read -r n; do
       [ -n "$n" ] || continue
+      nm+=("$n")
+    done <<<"$names"
+    if ! "$GEN_VALUES" --check-evidence-names "${nm[@]}"; then
+      violation A5d-names "the practice bundle of ${cid} holds a file name outside ADR-0056 B2's grammar (see above)"
+      return 1
+    fi
+    i=0
+    for n in "${nm[@]}"; do
       SCOPE_EVIDENCE_ARGS+=(--set-string "evidence.challenges.${cid}.names[${i}]=${n}")
       i=$((i + 1))
-    done <<<"$names"
+    done
     EXPECTED_EVIDENCE_SECRETS="${EXPECTED_EVIDENCE_SECRETS:+${EXPECTED_EVIDENCE_SECRETS} }ctf-evidence-${cid}"
   done <<<"$cids"
   return 0
@@ -1314,6 +1333,25 @@ run_evidence_fixtures() {
   expect_names_refused "an empty practice bundle" "holds no file" "${EVF_TMP}/values.yaml" "${EVF_TMP}/pr-empty"
   printf 'plant:\n  mounts:\n    - path: /opt/fx/evidence-a\n      readOnly: true\n      evidence: "true"\n      challenge: 40-ev\n' >"${EVF_TMP}/badscope.yaml"
   expect_names_refused "a values file whose evidence entry is not in gen-values.sh's form" "is not in the form gen-values.sh writes" "${EVF_TMP}/badscope.yaml" "${EVF_TMP}/pr"
+  # a name that would set another helm value, or is outside B2; an entry that is not a
+  # regular file: refused before any name becomes an argument
+  ev_practice_tree 40-ev "${EVF_TMP}/pr-comma" a.log
+  ev_practice_tree 41-ev "${EVF_TMP}/pr-comma" 'b.txt,plant.seedScript[2]=x'
+  expect_names_refused "a practice file name with a comma" "outside ADR-0056 B2's grammar" "${EVF_TMP}/values.yaml" "${EVF_TMP}/pr-comma"
+  ev_practice_tree 40-ev "${EVF_TMP}/pr-equals" a.log
+  ev_practice_tree 41-ev "${EVF_TMP}/pr-equals" 'b=x.txt'
+  expect_names_refused "a practice file name with an equals sign" "outside ADR-0056 B2's grammar" "${EVF_TMP}/values.yaml" "${EVF_TMP}/pr-equals"
+  ev_practice_tree 40-ev "${EVF_TMP}/pr-upper" a.log
+  ev_practice_tree 41-ev "${EVF_TMP}/pr-upper" B.txt
+  expect_names_refused "a practice file name outside B2 (upper case)" "outside ADR-0056 B2's grammar" "${EVF_TMP}/values.yaml" "${EVF_TMP}/pr-upper"
+  ev_practice_tree 40-ev "${EVF_TMP}/pr-symlink" a.log
+  ev_practice_tree 41-ev "${EVF_TMP}/pr-symlink" b.txt
+  ln -s b.txt "${EVF_TMP}/pr-symlink/41-ev/${EVIDENCE_EDITION_DIR}/${EVIDENCE_PRACTICE_DIR}/${EVIDENCE_PRACTICE_EVIDENCE_DIR}/c.txt"
+  expect_names_refused "a symlink in a practice bundle" "is not a regular file" "${EVF_TMP}/values.yaml" "${EVF_TMP}/pr-symlink"
+  ev_practice_tree 40-ev "${EVF_TMP}/pr-subdir" a.log
+  ev_practice_tree 41-ev "${EVF_TMP}/pr-subdir" b.txt
+  mkdir -p "${EVF_TMP}/pr-subdir/41-ev/${EVIDENCE_EDITION_DIR}/${EVIDENCE_PRACTICE_DIR}/${EVIDENCE_PRACTICE_EVIDENCE_DIR}/sub"
+  expect_names_refused "a directory in a practice bundle" "is not a regular file" "${EVF_TMP}/values.yaml" "${EVF_TMP}/pr-subdir"
 
   # negative: the chart's `fail`s (V8, V43)
   { ev_header; ev_block 40-ev x.log; ev_block 42-xx y.log; } >"${EVF_TMP}/shifted.yaml"

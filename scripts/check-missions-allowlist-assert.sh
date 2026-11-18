@@ -21,7 +21,7 @@
 #   truncated probe output          -> exit != 0   (3-0: no PROBE_END sentinel)
 #   no catalog id in the checkout   -> exit != 0   (an empty expectation never matches)
 #   scenario mode                   -> exactly the scenario's ids; one extra id fails
-#   3-9 / 3-10 (ADR-0056 D11 "3-x", A5d; V8, V2): over values that
+#   3-9 / 3-10 (ADR-0056 D11 "3-x" items (1)(2) only, A5d; V8, V2): over values that
 #   challenges/gen-values.sh itself generates for two investigate challenges, a
 #   clean root and the expected Secrets pass in all / scenario / single mode, and
 #   the evidence scope the assert reads is the one deploy-user.sh's
@@ -98,8 +98,19 @@ payload="${payload//\/var\/run\/secrets/${FAKE_ROOT}/var/run/secrets}"
 payload="${payload//\/proc\/1\/environ/${FAKE_ROOT}/proc1-environ}"
 payload="${payload//\/plant-seed/${FAKE_ROOT}/plant-seed}"
 payload="${payload//\/opt\/ctf\/evidence-src/${FAKE_ROOT}/opt/ctf/evidence-src}"
-# the evidence mount directories of the fixtures (3-9), sent on the payload's first line
-payload="${payload//\/opt\/fx/${FAKE_ROOT}/opt/fx}"
+# the evidence mount directories (3-9) are the payload's first line,
+# EVIDENCE_MOUNT_DIRS='<dir> <dir>...': each one is moved under $FAKE_ROOT, whatever it is
+first="${payload%%$'\n'*}"
+case "${first}" in
+  "EVIDENCE_MOUNT_DIRS='"*"'")
+    dirs="${first#EVIDENCE_MOUNT_DIRS=\'}"
+    dirs="${dirs%\'}"
+    moved=""
+    for d in ${dirs}; do moved="${moved:+${moved} }${FAKE_ROOT}${d}"; done
+    payload="EVIDENCE_MOUNT_DIRS='${moved}'"$'\n'"${payload#*$'\n'}"
+    ;;
+  *) echo "stub kubectl: the payload does not start with the EVIDENCE_MOUNT_DIRS line" >&2; exit 2 ;;
+esac
 if [[ -n "${FAKE_EXTRA_LINES:-}" ]]; then
   sh -c "${payload}"
   printf '%s\n' "${FAKE_EXTRA_LINES}"
@@ -156,8 +167,8 @@ expect() {
   if [[ "${verdict}" == accept ]]; then
     if [[ "${rc}" -ne 0 ]]; then
       fail "${label}: expected exit 0, got ${rc}: $(tr '\n' ' ' <"${out}")"
-    elif ! grep -qF 'OK — 3-1..3-8 clean' "${out}"; then
-      fail "${label}: exit 0 but no '3-1..3-8 clean' line: $(tr '\n' ' ' <"${out}")"
+    elif ! grep -qF 'OK — 3-1..3-10 clean' "${out}"; then
+      fail "${label}: exit 0 but no '3-1..3-10 clean' line: $(tr '\n' ' ' <"${out}")"
     else
       pass "${label}"
     fi
@@ -528,6 +539,209 @@ if [[ "${EVFX_OK}" -eq 1 ]]; then
   expect_ev reject "all: one challenge with two evidence entries" 'has a second evidence entry' "${SEC_ALL}" "$r" "${WORK}/ev-dup" all
   ev_tree "${WORK}/ev-badpath" "$(ev_values "/opt/fx/a'b" 40-ev)"$'\n'
   expect_ev reject "all: a mount directory with a quote" 'is not a clean path' "${SEC_ALL}" "$r" "${WORK}/ev-badpath" all
+fi
+
+echo "==> the assert's reader of the values file vs deploy-user.sh's (evidence_scope_cids): parity"
+# The assert keeps a builtin-only reader of the scope's values file (read_evidence_scope)
+# beside deploy-user.sh's evidence_scope_cids (awk). Every input below goes to both: no
+# input may be accepted by one and refused by the other, and an accepted one must give
+# the same challenges. deploy-user.sh's reading is evidence_scope_cids plus its refusal of
+# a challenge listed twice (deploy-user.sh: "is listed twice in the values of this
+# scope"). The one documented difference (the assert also needs the entry's `- path:`,
+# which it sends to the probe) is pinned at the end, as such.
+TAB=$'\t'
+LF=$'\n'
+# deploy_scope_verdict <values file> -> "accept [<cids>]" or "reject"
+deploy_scope_verdict() {
+  local out
+  if ! out="$(evidence_scope_cids "$1")"; then
+    echo reject
+    return 0
+  fi
+  if [[ -n "${out}" && -n "$(printf '%s\n' "${out}" | LC_ALL=C sort | uniq -d)" ]]; then
+    echo reject
+    return 0
+  fi
+  printf 'accept [%s]\n' "${out//${LF}/ }"
+}
+# secrets_for <"accept [<cids>]">: the listing the assert must see for those challenges
+secrets_for() {
+  local cids="${1#accept [}" c s="ctf-flags${TAB}Opaque"
+  cids="${cids%]}"
+  for c in ${cids}; do s="${s}${LF}ctf-evidence-${c}${TAB}Opaque"; done
+  printf '%s' "${s}"
+}
+# assert_scope_verdict <checkout> <challenge-id> <scenarios-dir or ''> <root> <secrets>
+#   -> "accept [<cids>]" (exit 0), "reject" (the reader refused: "cannot judge 3-9 / 3-10"),
+#      or "error: ..." (anything else: the case is broken, not a verdict)
+assert_scope_verdict() {
+  local out="${WORK}/parity.out" rc line
+  set +e
+  PATH="${WORK}/bin:${PATH}" FAKE_ROOT="$4" FAKE_SECRETS="$5" \
+    "${ASSERT}" ns-test "$1" "$2" ${3:+"$3"} >"${out}" 2>&1
+  rc=$?
+  set -e
+  if [[ "${rc}" -eq 0 ]]; then
+    line="$(grep -F 'evidence scope [' "${out}" || true)"
+    line="${line#*evidence scope [}"
+    printf 'accept [%s]\n' "${line%%]*}"
+  elif grep -qF 'cannot judge 3-9 / 3-10' "${out}"; then
+    echo reject
+  else
+    printf 'error: exit %s: %s\n' "${rc}" "$(tr '\n' ' ' <"${out}" | cut -c1-300)"
+  fi
+}
+# a checkout (01-alpha, 40-ev, 41-ev) and a root whose two mount directories hold a file
+PCH="${WORK}/parity-challenges"
+for id in 01-alpha 40-ev 41-ev; do
+  mkdir -p "${PCH}/${id}"
+  printf 'challengeId: %s\n' "${id}" >"${PCH}/${id}/falco-rule.yaml"
+done
+PROOT="$(newroot parity-root 01-alpha 40-ev 41-ev)"
+mkdir -p "${PROOT}/opt/fx/p40" "${PROOT}/opt/fx/p41"
+printf 'x\n' >"${PROOT}/opt/fx/p40/a.log"
+printf 'x\n' >"${PROOT}/opt/fx/p41/b.log"
+# parity_case <label> <line>...: both readers agree on the file of these lines
+parity_case() {
+  local label="$1" d a
+  shift
+  printf '%s\n' "$@" >"${PCH}/values-all.yaml"
+  d="$(deploy_scope_verdict "${PCH}/values-all.yaml")"
+  a="$(assert_scope_verdict "${PCH}" all '' "${PROOT}" "$(secrets_for "${d}")")"
+  CASES=$((CASES + 1))
+  if [[ "${a}" == "${d}" ]]; then
+    pass "parity: ${label} (both: ${d})"
+  else
+    fail "parity: ${label}: deploy-user.sh's reader says '${d}', the assert's says '${a}'"
+  fi
+}
+P40='    - path: /opt/fx/p40'
+P41='    - path: /opt/fx/p41'
+RO='      readOnly: true'
+EVT='      evidence: true'
+C40='      challenge: 40-ev'
+C41='      challenge: 41-ev'
+HEAD_LINES=(plant: '  mounts:')
+parity_case "one entry" "${HEAD_LINES[@]}" "${P40}" "${RO}" "${EVT}" "${C40}"
+parity_case "two entries" "${HEAD_LINES[@]}" "${P40}" "${RO}" "${EVT}" "${C40}" "${P41}" "${RO}" "${EVT}" "${C41}"
+parity_case "no evidence entry" "${HEAD_LINES[@]}" "${P40}" "${RO}"
+parity_case "an empty file" ''
+parity_case "a commented-out key" "${HEAD_LINES[@]}" "${P40}" "${RO}" '      # evidence: true' '# evidence: true'
+parity_case "the seed script's own words (a comment, a path)" 'plant:' '  seedScript:' '    - |' '      # evidence bundle (ADR-0056 D11): x' '      cp "/opt/ctf/evidence-src/40-ev/a" "x"' '  mounts: []'
+parity_case "evidence: true and then another key" "${HEAD_LINES[@]}" "${P40}" "${EVT}" '      path: /x'
+parity_case "evidence: true at the end of the file" "${HEAD_LINES[@]}" "${P40}" "${EVT}"
+parity_case "evidence at 4 spaces" "${HEAD_LINES[@]}" "${P40}" '    evidence: true' '    challenge: 40-ev'
+parity_case "evidence at 8 spaces" "${HEAD_LINES[@]}" "${P40}" '        evidence: true' '        challenge: 40-ev'
+parity_case "evidence: \"true\"" "${HEAD_LINES[@]}" "${P40}" '      evidence: "true"' "${C40}"
+parity_case "evidence: true with a comment" "${HEAD_LINES[@]}" "${P40}" '      evidence: true # c' "${C40}"
+parity_case "evidence: True" "${HEAD_LINES[@]}" "${P40}" '      evidence: True' "${C40}"
+parity_case "evidence: false" "${HEAD_LINES[@]}" "${P40}" '      evidence: false' "${C40}"
+parity_case "a quoted key" "${HEAD_LINES[@]}" "${P40}" '      "evidence": true' "${C40}"
+parity_case "the key in a flow mapping" "${HEAD_LINES[@]}" '    - {path: /opt/fx/p40, evidence: true, challenge: 40-ev}'
+parity_case "a top-level evidence key (the chart's values shape)" 'evidence:' '  challenges: {}'
+parity_case "a comment between the two lines" "${HEAD_LINES[@]}" "${P40}" "${EVT}" '      # c' "${C40}"
+parity_case "two evidence lines in a row" "${HEAD_LINES[@]}" "${P40}" "${EVT}" "${EVT}" "${C40}"
+parity_case "challenge: with an underscore" "${HEAD_LINES[@]}" "${P40}" "${EVT}" '      challenge: 40_ev'
+parity_case "challenge: with a capital" "${HEAD_LINES[@]}" "${P40}" "${EVT}" '      challenge: 40-EV'
+parity_case "challenge: without the two digits" "${HEAD_LINES[@]}" "${P40}" "${EVT}" '      challenge: 4-ev'
+parity_case "one challenge with two evidence entries" "${HEAD_LINES[@]}" "${P40}" "${EVT}" "${C40}" "${P41}" "${EVT}" "${C40}"
+
+# The documented difference, pinned: an entry the assert cannot send to the probe (no
+# `- path:` of its own, or a path outside [A-Za-z0-9._/-]) is refused by the assert and
+# read by evidence_scope_cids (deploy-user.sh does not read the path; the chart's `fail`
+# refuses such a path at render, so such a file does not deploy either way).
+parity_stricter() {
+  local label="$1" d a
+  shift
+  printf '%s\n' "$@" >"${PCH}/values-all.yaml"
+  d="$(deploy_scope_verdict "${PCH}/values-all.yaml")"
+  a="$(assert_scope_verdict "${PCH}" all '' "${PROOT}" "$(secrets_for "${d}")")"
+  CASES=$((CASES + 1))
+  if [[ "${d}" == accept* && "${a}" == reject ]]; then
+    pass "parity, the documented difference: ${label} (deploy-user.sh's reader: ${d}; the assert: reject)"
+  else
+    fail "parity, the documented difference: ${label}: deploy-user.sh's reader says '${d}', the assert's says '${a}' (want accept / reject)"
+  fi
+}
+parity_stricter "an evidence entry without its own '- path:'" "${HEAD_LINES[@]}" "${EVT}" "${C40}"
+parity_stricter "a mount directory with a quote" "${HEAD_LINES[@]}" "    - path: /opt/fx/a'b" "${EVT}" "${C40}"
+
+# The committed values files: both readers read the same scope from values-all.yaml and
+# from every values-scenario-*.yaml (no investigate challenge in the repo yet, so today
+# that scope is empty, and that is held too).
+RCH="${WORK}/parity-real"
+mkdir -p "${RCH}"
+prl_ids=()
+for d in "${REPO_ROOT}"/challenges/*/; do
+  [[ -f "${d}falco-rule.yaml" ]] || continue
+  id="$(basename "${d}")"
+  prl_ids+=("${id}")
+  mkdir -p "${RCH}/${id}"
+  cp "${d}falco-rule.yaml" "${RCH}/${id}/falco-rule.yaml"
+done
+if ! prl_dirs="$("${REPO_ROOT}/challenges/gen-values.sh" --list-evidence-mount-dirs)"; then
+  fail "gen-values.sh --list-evidence-mount-dirs failed over the real tree"
+  prl_dirs=""
+fi
+# real_root <name> <ids...>: a root holding those ids and every real evidence mount directory
+real_root() {
+  local r md
+  r="$(newroot "$@")"
+  while IFS= read -r md; do
+    [[ -n "${md}" ]] || continue
+    mkdir -p "${r}${md}"
+    printf 'x\n' >"${r}${md}/placeholder.txt"
+  done <<<"${prl_dirs}"
+  printf '%s' "${r}"
+}
+# parity_real <label> <values file> <challenge-id> <scenarios-dir or ''> <ids...>
+parity_real() {
+  local label="$1" vf="$2" cid="$3" scd="$4" d a r
+  shift 4
+  d="$(deploy_scope_verdict "${vf}")"
+  r="$(real_root "parity-real-root" "$@")"
+  a="$(assert_scope_verdict "${RCH}" "${cid}" "${scd}" "${r}" "$(secrets_for "${d}")")"
+  CASES=$((CASES + 1))
+  if [[ "${a}" != "${d}" ]]; then
+    fail "parity, committed ${label}: deploy-user.sh's reader says '${d}', the assert's says '${a}'"
+  elif [[ -z "${prl_dirs}" && "${d}" != 'accept []' ]]; then
+    fail "parity, committed ${label}: the repo has no investigate challenge, but the scope read is '${d}' (want an empty one)"
+  else
+    pass "parity, committed ${label}: both read ${d}"
+  fi
+}
+if [[ "${#prl_ids[@]}" -lt 1 ]]; then
+  fail "parity, committed values: no challenges/*/falco-rule.yaml found"
+else
+  cp "${REPO_ROOT}/challenges/values-all.yaml" "${RCH}/values-all.yaml"
+  parity_real "values-all.yaml" "${RCH}/values-all.yaml" all '' "${prl_ids[@]}"
+  prl_n=0
+  for sv in "${REPO_ROOT}"/challenges/values-scenario-*.yaml; do
+    [[ -f "${sv}" ]] || continue
+    sname="${sv##*/values-scenario-}"
+    sname="${sname%.yaml}"
+    [[ -f "${REPO_ROOT}/scenarios/${sname}/scenario.yaml" ]] || { fail "parity, committed ${sv##*/}: no scenarios/${sname}/scenario.yaml"; continue; }
+    cp "${sv}" "${RCH}/${sv##*/}"
+    sids=()
+    while IFS= read -r x; do
+      [[ -n "${x}" ]] && sids+=("${x}")
+    done < <(awk '
+      /^challenges:/ { inblock=1; next }
+      inblock && /^[^[:space:]]/ { inblock=0 }
+      inblock && /^[[:space:]]*-[[:space:]]*/ {
+        line=$0
+        sub(/^[[:space:]]*-[[:space:]]*/, "", line)
+        sub(/[[:space:]]*#.*$/, "", line)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+        if (line != "") print line
+      }
+    ' "${REPO_ROOT}/scenarios/${sname}/scenario.yaml")
+    parity_real "${sv##*/}" "${RCH}/${sv##*/}" "scenario:${sname}" "${REPO_ROOT}/scenarios" "${sids[@]}"
+    prl_n=$((prl_n + 1))
+  done
+  if [[ "${prl_n}" -lt 1 ]]; then
+    fail "parity, committed values: no challenges/values-scenario-*.yaml was compared"
+  fi
 fi
 
 echo

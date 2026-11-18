@@ -2041,6 +2041,11 @@ EOF" "fx-quoted-heredoc" >/dev/null 2>&1; then
 #       writes <dir>/tree (two investigate challenges, 40-ev and 41-ev, no plant.sh),
 #       <dir>/values.yaml (the `plant:` block this script generates for them) and
 #       <dir>/map (their evidence map)
+#   --check-evidence-names <file name>...
+#       rc 0 iff every name matches EVIDENCE_NAME_RE (ADR-0056 B2's file-name grammar,
+#       held to edition.NamePattern by V52) in the C locale; rc 1 naming each one that
+#       does not (%q-escaped); rc 2 for no name (ADR-0056 A5d: check-flag-isolation.sh
+#       holds a practice bundle's names to the grammar before they become helm args)
 # ---------------------------------------------------------------------------
 
 entry_usage() {
@@ -2084,6 +2089,17 @@ case "${1:-}" in
     render_plant_block "${PLANT_IDS[@]}" > "$2/values.yaml"
     evidence_map_for "${PLANT_IDS[@]}" > "$2/map"
     exit 0
+    ;;
+  --check-evidence-names)
+    [ "$#" -ge 2 ] || entry_usage "$1" "want <file name>..."
+    names_rc=0
+    for n in "${@:2}"; do
+      if ! (export LC_ALL=C; [[ "${n}" =~ ${EVIDENCE_NAME_RE} ]]); then
+        printf 'gen-values.sh --check-evidence-names: the file name %s is outside %s (ADR-0056 B2)\n' "$(export LC_ALL=C; printf '%q' "${n}")" "${EVIDENCE_NAME_RE}" >&2
+        names_rc=1
+      fi
+    done
+    exit "${names_rc}"
     ;;
 esac
 

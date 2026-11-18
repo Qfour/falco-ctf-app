@@ -25,18 +25,26 @@
 #        one a real directory, and each <id>/ holds nothing but a real
 #        `fixtures` directory (fixtures' own contents are never opened).
 #        Dot entries are enumerated too. See the 3-8 judgment block below.
-#   3-9  ADR-0056 D11 "3-x" (A5d, V8): inside each evidence mount directory of the
-#        scope (the `mountDir` of every investigate challenge, read from the values
-#        file helm was given: the plant.mounts entries marked `evidence: true`), as
-#        `challenge` sees it: it is a real directory, holds at least one entry, and
-#        every entry (dot entries too) is a regular file and not a symlink. Entries
-#        are tested with `[ -L ]` / `[ -f ]` only, never opened.
-#   3-10 ADR-0056 D11 "3-x" (A5d, V2): the names of the namespace's Secrets of type
-#        Opaque are exactly {ctf-flags} plus ctf-evidence-<cid> for every
-#        investigate challenge of the scope (an extra one or a missing one fails).
-#        Helm's release records (type helm.sh/release.v1) are counted apart; a
-#        Secret of any other type fails. This runs `kubectl get secrets` as the
-#        operator, outside the workspace (no process in the Pod).
+#   3-9  ADR-0056 D11 "3-x" item (1) (A5d, V8): inside each evidence mount directory
+#        of the scope (the `mountDir` of every investigate challenge, read from the
+#        values file helm was given: the plant.mounts entries marked `evidence:
+#        true`), as `challenge` sees it: it is a real directory, holds at least one
+#        entry, and every entry (dot entries too) is a regular file and not a
+#        symlink. Entries are tested with `[ -L ]` / `[ -f ]` only, never opened.
+#   3-10 ADR-0056 D11 "3-x" item (2) (A5d, V2): the names of the namespace's
+#        Secrets of type Opaque are exactly {ctf-flags} plus ctf-evidence-<cid> for
+#        every investigate challenge of the scope (an extra one or a missing one
+#        fails). Helm's release records (type helm.sh/release.v1) are counted
+#        apart; a Secret of any other type fails. This runs `kubectl get secrets`
+#        as the operator, outside the workspace (no process in the Pod).
+#        The Secrets of a seat's namespace are a CLOSED set: flags, bundles and
+#        Helm's release records only; a Secret of any other type fails the deploy.
+#        That is a constraint on the platform, to be written into the next ADR-0056
+#        addendum and the contract table.
+#   D11's "3-x" has four items; this script has (1) and (2) only. (3) (the key set
+#   of each ctf-evidence-<cid> equals the names given to the chart) and (4) (the
+#   sentinel check of the Helm release record at deploy time) are NOT here: the
+#   next ADR-0056 addendum assigns them a stage.
 #
 # The scope's values file is the one deploy-user.sh gives helm: values-all.yaml
 # (`all`), values-scenario-<name>.yaml (`scenario:<name>`), both required, or
@@ -420,13 +428,18 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 3-9 / 3-10 expectations (ADR-0056 D11 "3-x", A5d): the investigate challenges
-# of this scope and their evidence mount directories, read from the scope's
-# values file (the file deploy-user.sh gives helm; see the header). Builtin-only
-# like the rest of this file: deploy-user.sh reads the same entries with
-# evidence_scope_cids (charts/ctf-user/evidence-bundle.sh, awk), and this reader
-# accepts exactly that form. scripts/check-missions-allowlist-assert.sh runs both
-# readers over challenges/gen-values.sh's own output and holds them equal.
+# 3-9 / 3-10 expectations (ADR-0056 D11 "3-x" items (1)(2), A5d): the
+# investigate challenges of this scope and their evidence mount directories, read
+# from the scope's values file (the file deploy-user.sh gives helm; see the
+# header). WHY a third reader of that file (after gen-values.sh, which writes it,
+# and deploy-user.sh's evidence_scope_cids in charts/ctf-user/evidence-bundle.sh):
+# this file is builtin-only (see the header), and that reader is awk. HOW they are
+# kept equal: scripts/check-missions-allowlist-assert.sh runs both over
+# gen-values.sh's own output, over every committed values-all.yaml /
+# values-scenario-*.yaml, and over a table of accepted and refused inputs, and
+# fails on any input one of them accepts and the other refuses. This reader is
+# stricter in one documented way: it also needs the entry's `- path:` (it sends
+# the directory to the probe), which deploy-user.sh does not read.
 #   - a non-comment line naming an `evidence` key (any quoting / spacing before
 #     the `:`) must be exactly `      evidence: true`;
 #   - the very next line must be `      challenge: <NN-slug>`;
@@ -668,7 +681,7 @@ then
   done
 fi
 
-# 3-9 (ADR-0056 D11 "3-x", A5d): EVIDENCE_MOUNT_DIRS is set by the one line the
+# 3-9 (ADR-0056 D11 "3-x" item (1), A5d): EVIDENCE_MOUNT_DIRS is set by the one line the
 # operator side puts before this payload (the scope's evidence mount directories,
 # space-joined, each already held to [A-Za-z0-9._/-]; empty without an
 # investigate challenge). Glob and `[ ]` only, nothing is opened: every entry of
@@ -760,7 +773,7 @@ then
 fi
 
 # ---------------------------------------------------------------------------
-# 3-10 (ADR-0056 D11 "3-x", A5d): the namespace's Secrets, listed by the
+# 3-10 (ADR-0056 D11 "3-x" item (2), A5d): the namespace's Secrets, listed by the
 # operator (`kubectl get`, not an exec: nothing runs in the Pod). One line per
 # Secret, name TAB type. A failed listing is a violation, never "no Secret".
 # ---------------------------------------------------------------------------
@@ -961,7 +974,7 @@ then
   VIOLATIONS+=("3-8: an <id>/ directory holds something other than a plain fixtures/ directory: [${OBS_MISSIONS_SUBBAD}]")
 fi
 
-# 3-9 (ADR-0056 D11 "3-x", A5d, V8): every evidence mount directory of the scope
+# 3-9 (ADR-0056 D11 "3-x" item (1), A5d, V8): every evidence mount directory of the scope
 # is a real directory of regular files only (no symlink), and the probe judged
 # all of them (a probe that saw fewer than it was sent is not clean).
 if [ -n "${OBS_EVIDENCE_BAD}" ]
@@ -973,10 +986,12 @@ then
   VIOLATIONS+=("3-9: the probe judged ${OBS_EVIDENCE_DIRS_SEEN:-no} of the ${#EVIDENCE_SCOPE_DIRS[@]} evidence mount director(ies) [${EVIDENCE_MOUNT_DIRS_WIRE}] of this scope")
 fi
 
-# 3-10 (ADR-0056 D11 "3-x", A5d, V2): the Opaque Secrets are exactly
+# 3-10 (ADR-0056 D11 "3-x" item (2), A5d, V2): the Opaque Secrets are exactly
 # EXPECTED_SECRET_NAMES (both directions); Helm's release records are counted
 # apart; any other type, and a line outside the character sets of a Secret's
-# name / type (it is discarded, never echoed), fails.
+# name / type (it is discarded, never echoed), fails. The seat's Secrets are a
+# closed set (flags, bundles, Helm's records): a constraint on the platform, for
+# the next ADR-0056 addendum and the contract table.
 OBS_OPAQUE_SECRETS=()
 OBS_OTHER_SECRETS=()
 OBS_HELM_RELEASES=0
@@ -1071,8 +1086,8 @@ then
   exit 1
 fi
 
-CHECKS_RUN="3-1..3-8"
-# 3-9 / 3-10 (ADR-0056 "3-x") are named after the existing range, on the same line;
-# the evidence scope is printed so that a test can hold it to evidence_scope_cids.
-printf 'assert-flag-isolation.sh: OK — %s clean for namespace %s (challenge-id=%s); 3-9 / 3-10 clean: evidence scope [%s], Opaque Secrets [%s], %d Helm release record(s)\n' \
+CHECKS_RUN="3-1..3-10"
+# 3-9 / 3-10 are ADR-0056 D11 "3-x" items (1)(2) only (see the header). The
+# evidence scope is printed so that a test can hold it to evidence_scope_cids.
+printf 'assert-flag-isolation.sh: OK — %s clean for namespace %s (challenge-id=%s): evidence scope [%s], Opaque Secrets [%s], %d Helm release record(s)\n' \
   "${CHECKS_RUN}" "${NS}" "${CHALLENGE_ID}" "${EVIDENCE_SCOPE_CIDS[*]+${EVIDENCE_SCOPE_CIDS[*]}}" "${EXPECTED_SECRET_NAMES[*]}" "${OBS_HELM_RELEASES}"
