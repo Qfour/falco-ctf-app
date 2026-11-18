@@ -46,6 +46,19 @@ const (
 // maxListedViolations is how many violations are printed; the rest are counted (D20).
 const maxListedViolations = 20
 
+// The words of `scoreboard edition ...` that the contract table quotes (ADR-0056 D16 and D20,
+// A4e-4): the two subcommands, and the two arguments that readEditionArgs is given by name (the
+// one of `edition check` that may be repeated, and the one that takes no value). The lists of the
+// arguments that take one value are checkFlags, renderFlags and practiceFlags below.
+// internal/contracttable/editionrow_test.go reads these names, the lists and the exit codes
+// from this file's source and holds the contract table's row to them (V82).
+const (
+	subcommandCheck  = "check"
+	subcommandRender = "render"
+	corpusFlag       = "--corpus"
+	noPreviousFlag   = "--no-previous"
+)
+
 // runEdition is `scoreboard edition <subcommand> ...`; args are what follows `edition`. It
 // returns the exit code and starts nothing.
 func runEdition(args []string, stdout, stderr io.Writer) int {
@@ -54,9 +67,9 @@ func runEdition(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	switch args[0] {
-	case "check":
+	case subcommandCheck:
 		return runEditionCheck(args[1:], stdout, stderr)
-	case "render":
+	case subcommandRender:
 		return runEditionRender(args[1:], stdout, stderr)
 	}
 	fmt.Fprintln(stderr, "unknown subcommand of edition (want check or render)")
@@ -140,7 +153,7 @@ func isArgName(name string, names []string) bool {
 // `--previous-digests` with `--no-previous` (or neither) and no `--corpus` are errors.
 func parseCheckArgs(args []string) (edition.CheckInput, error) {
 	var in edition.CheckInput
-	w, err := readEditionArgs(args, checkFlags, "--corpus", "--no-previous")
+	w, err := readEditionArgs(args, checkFlags, corpusFlag, noPreviousFlag)
 	if err != nil {
 		return in, err
 	}
@@ -422,7 +435,7 @@ var renderFlags = []string{
 // `--previous-seats` with `--no-previous` (or neither) are errors.
 func parseRenderArgs(args []string) (edition.RenderEventInput, error) {
 	var in edition.RenderEventInput
-	w, err := readEditionArgs(args, renderFlags, "", "--no-previous")
+	w, err := readEditionArgs(args, renderFlags, "", noPreviousFlag)
 	if err != nil {
 		return in, err
 	}
@@ -505,7 +518,7 @@ func hasPracticeArg(args []string) bool {
 func parsePracticeArgs(args []string) (challenges, cid string, err error) {
 	for _, a := range args {
 		name, _, _ := strings.Cut(a, "=")
-		if !isArgName(name, practiceFlags) && (name == "--no-previous" || isArgName(name, renderFlags)) {
+		if !isArgName(name, practiceFlags) && (name == noPreviousFlag || isArgName(name, renderFlags)) {
 			return "", "", errors.New(name + " is an argument of the event's render: with --practice only --challenges and --cid are taken (the practice edition is the same for every seat: no key, no seats, no previous list, no --out)")
 		}
 	}

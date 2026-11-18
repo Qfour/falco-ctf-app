@@ -60,8 +60,10 @@ import (
 )
 
 const (
-	// maxKeyFileBytes bounds the key file, which is one line of hex.
-	maxKeyFileBytes = 4 << 10
+	// MaxKeyFileBytes bounds the key file, which is one line of hex (D20: 4 KiB). It is
+	// exported for the test that holds the contract table's row to it (ADR-0056 V82,
+	// internal/contracttable/editionrow_test.go); nothing else outside the package uses it.
+	MaxKeyFileBytes = 4 << 10
 	// keyFileOthersBits are the permission bits of the group and of others: a key file has none
 	// of them (D20: mode & 0o077 == 0).
 	keyFileOthersBits fs.FileMode = 0o077
@@ -176,10 +178,10 @@ func pathWithin(base, p string) bool {
 // readKeyFile reads `--key-file` (D20): a regular file opened by openRegular (no link is
 // followed), whose group and others have no permission bit (the mode of the open descriptor),
 // of one line that is an even number of lower-case hex digits, at least 2 x MinMasterKeyBytes,
-// ending with a newline, and at most maxKeyFileBytes. Every defect is an *InputError whose
+// ending with a newline, and at most MaxKeyFileBytes. Every defect is an *InputError whose
 // message names no byte of the file.
 //
-// The copies of the key: the file is read into one buffer of maxKeyFileBytes+1 bytes (no
+// The copies of the key: the file is read into one buffer of MaxKeyFileBytes+1 bytes (no
 // growing buffer leaves an earlier copy behind), its form is checked on those bytes (no string
 // is made of them), and they are decoded into a second buffer; both are cleared before it
 // returns. What is left is the copy NewMasterKey makes, which the MasterKey holds for the render
@@ -199,7 +201,7 @@ func readKeyFile(path string) (MasterKey, error) {
 	if perm := info.Mode().Perm(); perm&keyFileOthersBits != 0 {
 		return MasterKey{}, bad(fmt.Sprintf("has mode %#o: its group and others must have no permission on it (0600 or 0400)", perm))
 	}
-	buf := make([]byte, maxKeyFileBytes+1)
+	buf := make([]byte, MaxKeyFileBytes+1)
 	defer clear(buf)
 	n, err := io.ReadFull(f, buf)
 	switch {
