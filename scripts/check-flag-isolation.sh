@@ -37,7 +37,11 @@
 #     referenced one is volume-mounted by `plant` only, readOnly, at
 #     /opt/ctf/evidence-src/<cid>, and named nowhere else (assert_evidence_scope).
 #     The repo's scopes reference none (no investigate challenge exists yet), so
-#     there it is "no such Secret, no such mount". V50 (a bundle's content never
+#     there it is "no such Secret, no such mount". Once a real scope (values-all, a
+#     scenario) holds an investigate challenge (A5d), it is rendered with the names of
+#     that challenge's public practice bundle and the Secrets it must reference are
+#     ctf-evidence-<cid> of exactly the scope's investigate challenges
+#     (scope_practice_evidence). V50 (a bundle's content never
 #     reaches the Helm release record): a values file that carries content is
 #     refused without echoing it (the chart takes names only); a sentinel check on
 #     the fixture's own values and output is only a guard of how it is built.
@@ -76,6 +80,21 @@ RC=0
 EXPECTED_SCENARIO_MISSIONS=""
 # ADR-0056 A5b. challenges/gen-values.sh is asked, not sourced (see above).
 GEN_VALUES="challenges/gen-values.sh"
+# ADR-0056 A5d: the reader of a values file's investigate scope (evidence_scope_cids) and
+# the lister of a bundle's names (evidence_sorted_names) are deploy-user.sh's own, from the
+# helpers it sources; scope_practice_evidence below uses them and writes neither rule again.
+# shellcheck source=charts/ctf-user/evidence-bundle.sh
+source charts/ctf-user/evidence-bundle.sh
+# The practice edition's layout (internal/edition/practicelayout.go: EditionDirName,
+# PracticeDirName, PracticeEvidenceDirName, PracticeAnswersFileName, PracticeDigestsFileName).
+# internal/edition/practice_flagisolation_layout_test.go (V85) holds these five literals to
+# the Go definitions, the lines that build the paths from them, and that no other line of
+# this script spells one of the names as a path.
+EVIDENCE_EDITION_DIR='edition'
+EVIDENCE_PRACTICE_DIR='practice'
+EVIDENCE_PRACTICE_EVIDENCE_DIR='evidence'
+EVIDENCE_PRACTICE_ANSWERS='answers.tsv'
+EVIDENCE_PRACTICE_DIGESTS='digests.tsv'
 # Set by run_evidence_fixtures() around its scopes, empty (the default) everywhere
 # else, which makes the checks they feed a "no evidence expected" check:
 #   EXPECTED_EVIDENCE_SECRETS  the Secret names the Pod must reference, space-joined
@@ -893,6 +912,116 @@ assert_evidence_copy() { # $1=label $2=the plant container's block
   esac
 }
 
+# ADR-0056 A5d: a real scope (values-all, a scenario) whose values file marks an
+# investigate challenge is rendered with the names of that challenge's PUBLIC practice
+# bundle, the bundle deploy-user.sh's practice path deploys:
+# <root>/<cid>/<edition>/<practice>/<evidence>/ (the literals above; answers.tsv and
+# digests.tsv beside that directory are not the bundle, so they are never a name). Neither
+# rule is written here again: the scope is read by evidence_scope_cids and the names are
+# listed (byte order) by evidence_sorted_names, the two functions deploy-user.sh uses, and
+# the names reach the chart in the form deploy-user.sh passes them
+# (--set-string evidence.challenges.<cid>.names[<i>]). The Secrets the Pod must reference
+# are then ctf-evidence-<cid> for exactly those challenges (assert_evidence_scope). Which
+# challenges ARE investigate is gen-values.sh's derivation, written into the values file;
+# V53 (internal/catalog/evidence_mount_parity_test.go) holds it to the Go catalog.
+# Sets SCOPE_EVIDENCE_ARGS and EXPECTED_EVIDENCE_SECRETS (both empty for a scope without an
+# investigate challenge); rc 1 after a violation (the scope is then not rendered).
+SCOPE_EVIDENCE_ARGS=()
+scope_practice_evidence() { # $1=values file $2=challenges root
+  local values="$1" root="$2" cids cid bundle names n i
+  local -a nm=()
+  SCOPE_EVIDENCE_ARGS=()
+  EXPECTED_EVIDENCE_SECRETS=""
+  if ! cids="$(evidence_scope_cids "$values")"; then
+    violation A5d-names "an evidence entry of ${values} is not in the form gen-values.sh writes, so the investigate challenges of the scope cannot be read"
+    return 1
+  fi
+  while IFS= read -r cid; do
+    [ -n "$cid" ] || continue
+    bundle="${root}/${cid}/${EVIDENCE_EDITION_DIR}/${EVIDENCE_PRACTICE_DIR}/${EVIDENCE_PRACTICE_EVIDENCE_DIR}"
+    if [ -L "$bundle" ]; then
+      violation A5d-names "the practice bundle of ${cid} (${bundle}) is a link (refused)"
+      return 1
+    fi
+    if [ ! -d "$bundle" ]; then
+      violation A5d-names "the investigate challenge ${cid} of this scope has no practice bundle (${bundle} is not a directory)"
+      return 1
+    fi
+    if ! names="$(evidence_sorted_names "$bundle")"; then
+      violation A5d-names "the practice bundle of ${cid} cannot be listed (a name holds a TAB or a LF)"
+      return 1
+    fi
+    if [ -z "$names" ]; then
+      violation A5d-names "the practice bundle of ${cid} holds no file"
+      return 1
+    fi
+    # Before a name becomes a helm argument (a `,` or `=` in it would set another value):
+    # every entry is a regular file, not a link or a directory (evidence_bundle_digest,
+    # the definition deploy-user.sh's digest check uses, refuses anything else), and every
+    # name is of B2's grammar (asked of gen-values.sh: EVIDENCE_NAME_RE, which V52 holds to
+    # edition.NamePattern, the definition deploy-user.sh's EVIDENCE_NAME_PATTERN is held to
+    # by V58). Neither rule is written here.
+    if ! evidence_bundle_digest "$bundle" >/dev/null; then
+      violation A5d-names "the practice bundle of ${cid} holds an entry that is not a regular file (a link or a directory)"
+      return 1
+    fi
+    nm=()
+    while IFS= read -r n; do
+      [ -n "$n" ] || continue
+      nm+=("$n")
+    done <<<"$names"
+    if ! "$GEN_VALUES" --check-evidence-names "${nm[@]}"; then
+      violation A5d-names "the practice bundle of ${cid} holds a file name outside ADR-0056 B2's grammar (see above)"
+      return 1
+    fi
+    i=0
+    for n in "${nm[@]}"; do
+      SCOPE_EVIDENCE_ARGS+=(--set-string "evidence.challenges.${cid}.names[${i}]=${n}")
+      i=$((i + 1))
+    done
+    EXPECTED_EVIDENCE_SECRETS="${EXPECTED_EVIDENCE_SECRETS:+${EXPECTED_EVIDENCE_SECRETS} }ctf-evidence-${cid}"
+  done <<<"$cids"
+  return 0
+}
+
+# ev_practice_tree <cid> <root> <file name>...: a practice edition of <cid> under <root>, the
+# bundle files under its evidence directory and the two files beside it that are not the
+# bundle (placeholders only)
+ev_practice_tree() {
+  local f pd
+  pd="${2}/${1}/${EVIDENCE_EDITION_DIR}/${EVIDENCE_PRACTICE_DIR}"
+  mkdir -p "${pd}/${EVIDENCE_PRACTICE_EVIDENCE_DIR}"
+  shift 2
+  for f in "$@"; do printf 'placeholder %s\n' "$f" >"${pd}/${EVIDENCE_PRACTICE_EVIDENCE_DIR}/${f}"; done
+  printf 'placeholder, not the bundle\n' >"${pd}/${EVIDENCE_PRACTICE_ANSWERS}"
+  printf 'placeholder, not the bundle\n' >"${pd}/${EVIDENCE_PRACTICE_DIGESTS}"
+}
+
+# expect_names_refused <label> <marker> <values file> <practice root>: scope_practice_evidence
+# refuses, with a FAIL line that says <marker>; the RC of the run is left as it was
+expect_names_refused() {
+  local label="$1" marker="$2" saved="$RC" out line found=0
+  out="$(mktemp "${EVF_TMP}/names.XXXXXX")"
+  RC=0
+  if scope_practice_evidence "$3" "$4" 2>"$out"; then
+    RC="$saved"
+    violation A5d "${label}: the names were derived (want a refusal saying '${marker}')"
+    return 0
+  fi
+  while IFS= read -r line; do
+    case "$line" in *'FAIL ['*"$marker"*) found=1 ;; esac
+  done <"$out"
+  if [ "$RC" -eq 0 ] || [ "$found" -eq 0 ]; then
+    RC="$saved"
+    violation A5d "${label}: refused, but not with a FAIL line saying '${marker}':"$'\n'"$(head -5 "$out")"
+  else
+    RC="$saved"
+    ok A5d "${label}: refused (${marker})"
+  fi
+  SCOPE_EVIDENCE_ARGS=()
+  EXPECTED_EVIDENCE_SECRETS=""
+}
+
 # ---------------------------------------------------------------------------
 # negative tests (template must FAIL): 1-12
 # ---------------------------------------------------------------------------
@@ -1149,6 +1278,81 @@ run_evidence_fixtures() {
   EVIDENCE_FIXTURE_FILES=""
   EVIDENCE_TREE=""
 
+  # A5d: the names of a real scope come from the practice bundles (scope_practice_evidence),
+  # exercised here over the generated fixture's values (no investigate challenge is in the
+  # repo yet, so the real scopes above derive nothing). The bundle's names are passed, in
+  # byte order, and the two files beside the bundle are not; the Secrets expected are
+  # exactly the scope's; the render with those names passes every assertion above,
+  # including the copy lines.
+  local want_args a leaked=0
+  ev_practice_tree 40-ev "${EVF_TMP}/pr" a_b.log a.log a-b.log a1.log
+  ev_practice_tree 41-ev "${EVF_TMP}/pr" b.txt a.txt
+  want_args="--set-string evidence.challenges.40-ev.names[0]=a-b.log --set-string evidence.challenges.40-ev.names[1]=a.log --set-string evidence.challenges.40-ev.names[2]=a1.log --set-string evidence.challenges.40-ev.names[3]=a_b.log --set-string evidence.challenges.41-ev.names[0]=a.txt --set-string evidence.challenges.41-ev.names[1]=b.txt"
+  if scope_practice_evidence "${EVF_TMP}/values.yaml" "${EVF_TMP}/pr"; then
+    for a in ${SCOPE_EVIDENCE_ARGS[@]+"${SCOPE_EVIDENCE_ARGS[@]}"}; do
+      case "$a" in *"=${EVIDENCE_PRACTICE_ANSWERS}" | *"=${EVIDENCE_PRACTICE_DIGESTS}") leaked=1 ;; esac
+    done
+    if [ "$leaked" -ne 0 ]; then
+      violation A5d "a file beside the practice bundle (${EVIDENCE_PRACTICE_ANSWERS} / ${EVIDENCE_PRACTICE_DIGESTS}) became a name"
+    elif [ "${SCOPE_EVIDENCE_ARGS[*]+${SCOPE_EVIDENCE_ARGS[*]}}" != "$want_args" ]; then
+      violation A5d "the names derived from the practice bundles are not the bundles' files in byte order:"$'\n'"got:  ${SCOPE_EVIDENCE_ARGS[*]+${SCOPE_EVIDENCE_ARGS[*]}}"$'\n'"want: ${want_args}"
+    else
+      ok A5d "the names are the practice bundles' files in byte order, the files beside the bundle are not among them"
+    fi
+    # shellcheck disable=SC2086  # the names hold no blanks; split on purpose
+    if [ "$(norm_set $EXPECTED_EVIDENCE_SECRETS)" != "$(norm_set ctf-evidence-40-ev ctf-evidence-41-ev)" ]; then
+      violation A5d "the Secrets expected of the scope are [${EXPECTED_EVIDENCE_SECRETS}], want exactly ctf-evidence-40-ev ctf-evidence-41-ev"
+    else
+      ok A5d "the Secrets expected of the scope are ctf-evidence-<cid> of exactly its investigate challenges"
+    fi
+    EVIDENCE_FIXTURE_DIR="$EVF_TMP"
+    EVIDENCE_FIXTURE_FILES="40-ev"$'\t'"a_b.log a.log a-b.log a1.log"$'\n'"41-ev"$'\t'"b.txt a.txt"
+    EVIDENCE_TREE="${EVF_TMP}/tree"
+    if ! manifest="$(helm template "$CHART_DIR" "${base[@]}" ${SCOPE_EVIDENCE_ARGS[@]+"${SCOPE_EVIDENCE_ARGS[@]}"} 2>&1)"; then
+      violation RENDER "helm template failed for the practice names of the evidence fixture:"$'\n'"$manifest"
+    else
+      check_scope_manifest "evidence fixture, names from the practice bundles (A5d)" "$manifest"
+    fi
+  fi
+  SCOPE_EVIDENCE_ARGS=()
+  EXPECTED_EVIDENCE_SECRETS=""
+  EVIDENCE_FIXTURE_DIR=""
+  EVIDENCE_FIXTURE_FILES=""
+  EVIDENCE_TREE=""
+  # and it refuses, for its own reason each: a challenge of the scope with no practice
+  # bundle, a bundle that is a link, an empty bundle, a values file it cannot read
+  ev_practice_tree 40-ev "${EVF_TMP}/pr-one" a.log
+  expect_names_refused "a challenge of the scope with no practice bundle" "has no practice bundle" "${EVF_TMP}/values.yaml" "${EVF_TMP}/pr-one"
+  ev_practice_tree 40-ev "${EVF_TMP}/pr-link" a.log
+  ev_practice_tree 41-ev "${EVF_TMP}/pr-link" b.txt
+  rm -rf "${EVF_TMP}/pr-link/41-ev/${EVIDENCE_EDITION_DIR}/${EVIDENCE_PRACTICE_DIR}/${EVIDENCE_PRACTICE_EVIDENCE_DIR}"
+  ln -s "${EVF_TMP}/pr-link/40-ev/${EVIDENCE_EDITION_DIR}/${EVIDENCE_PRACTICE_DIR}/${EVIDENCE_PRACTICE_EVIDENCE_DIR}" "${EVF_TMP}/pr-link/41-ev/${EVIDENCE_EDITION_DIR}/${EVIDENCE_PRACTICE_DIR}/${EVIDENCE_PRACTICE_EVIDENCE_DIR}"
+  expect_names_refused "a practice bundle that is a link" "is a link" "${EVF_TMP}/values.yaml" "${EVF_TMP}/pr-link"
+  ev_practice_tree 40-ev "${EVF_TMP}/pr-empty" a.log
+  ev_practice_tree 41-ev "${EVF_TMP}/pr-empty"
+  expect_names_refused "an empty practice bundle" "holds no file" "${EVF_TMP}/values.yaml" "${EVF_TMP}/pr-empty"
+  printf 'plant:\n  mounts:\n    - path: /opt/fx/evidence-a\n      readOnly: true\n      evidence: "true"\n      challenge: 40-ev\n' >"${EVF_TMP}/badscope.yaml"
+  expect_names_refused "a values file whose evidence entry is not in gen-values.sh's form" "is not in the form gen-values.sh writes" "${EVF_TMP}/badscope.yaml" "${EVF_TMP}/pr"
+  # a name that would set another helm value, or is outside B2; an entry that is not a
+  # regular file: refused before any name becomes an argument
+  ev_practice_tree 40-ev "${EVF_TMP}/pr-comma" a.log
+  ev_practice_tree 41-ev "${EVF_TMP}/pr-comma" 'b.txt,plant.seedScript[2]=x'
+  expect_names_refused "a practice file name with a comma" "outside ADR-0056 B2's grammar" "${EVF_TMP}/values.yaml" "${EVF_TMP}/pr-comma"
+  ev_practice_tree 40-ev "${EVF_TMP}/pr-equals" a.log
+  ev_practice_tree 41-ev "${EVF_TMP}/pr-equals" 'b=x.txt'
+  expect_names_refused "a practice file name with an equals sign" "outside ADR-0056 B2's grammar" "${EVF_TMP}/values.yaml" "${EVF_TMP}/pr-equals"
+  ev_practice_tree 40-ev "${EVF_TMP}/pr-upper" a.log
+  ev_practice_tree 41-ev "${EVF_TMP}/pr-upper" B.txt
+  expect_names_refused "a practice file name outside B2 (upper case)" "outside ADR-0056 B2's grammar" "${EVF_TMP}/values.yaml" "${EVF_TMP}/pr-upper"
+  ev_practice_tree 40-ev "${EVF_TMP}/pr-symlink" a.log
+  ev_practice_tree 41-ev "${EVF_TMP}/pr-symlink" b.txt
+  ln -s b.txt "${EVF_TMP}/pr-symlink/41-ev/${EVIDENCE_EDITION_DIR}/${EVIDENCE_PRACTICE_DIR}/${EVIDENCE_PRACTICE_EVIDENCE_DIR}/c.txt"
+  expect_names_refused "a symlink in a practice bundle" "is not a regular file" "${EVF_TMP}/values.yaml" "${EVF_TMP}/pr-symlink"
+  ev_practice_tree 40-ev "${EVF_TMP}/pr-subdir" a.log
+  ev_practice_tree 41-ev "${EVF_TMP}/pr-subdir" b.txt
+  mkdir -p "${EVF_TMP}/pr-subdir/41-ev/${EVIDENCE_EDITION_DIR}/${EVIDENCE_PRACTICE_DIR}/${EVIDENCE_PRACTICE_EVIDENCE_DIR}/sub"
+  expect_names_refused "a directory in a practice bundle" "is not a regular file" "${EVF_TMP}/values.yaml" "${EVF_TMP}/pr-subdir"
+
   # negative: the chart's `fail`s (V8, V43)
   { ev_header; ev_block 40-ev x.log; ev_block 42-xx y.log; } >"${EVF_TMP}/shifted.yaml"
   expect_render_fail "a values key moved off its mount's challenge (41-ev -> 42-xx)" "are not the same set" "${base[@]}" -f "${EVF_TMP}/shifted.yaml"
@@ -1247,12 +1451,19 @@ fi
 echo "ADR-0001 Verification 1 — render matrix (5 fixed scopes + P27-1 scenario scopes)"
 echo
 
-# 1. all-missions (production default)
-run_scope "values-all (challengeId=all)" \
-  -f challenges/values-all.yaml --set challengeId=all \
-  --set-string challenge.flags.03-stealth-read="$PROBE_FLAG" \
-  --set-string challenge.flags.05-silent-search="$PROBE_FLAG" \
-  --set-string challenge.flags.10-final-exfil="$PROBE_FLAG"
+# 1. all-missions (production default). ADR-0056 A5d: an investigate challenge of the
+# scope is rendered with its practice bundle's names, and its Secret is expected
+# (scope_practice_evidence; nothing while the repo has no investigate challenge).
+if scope_practice_evidence challenges/values-all.yaml challenges; then
+  run_scope "values-all (challengeId=all)" \
+    -f challenges/values-all.yaml --set challengeId=all \
+    --set-string challenge.flags.03-stealth-read="$PROBE_FLAG" \
+    --set-string challenge.flags.05-silent-search="$PROBE_FLAG" \
+    --set-string challenge.flags.10-final-exfil="$PROBE_FLAG" \
+    ${SCOPE_EVIDENCE_ARGS[@]+"${SCOPE_EVIDENCE_ARGS[@]}"}
+fi
+SCOPE_EVIDENCE_ARGS=()
+EXPECTED_EVIDENCE_SECRETS=""
 echo
 
 # 2-4. single-mission overlays for every evade mission
@@ -1323,9 +1534,15 @@ for sfile in scenarios/*/scenario.yaml; do
   # never contains whitespace (see assert-flag-isolation.sh's own probe),
   # so this is a safe wire format.
   EXPECTED_SCENARIO_MISSIONS="${all_ids[*]}"
-  run_scope "scenario (challengeId=scenario:${sname})" \
-    -f "$svalues" --set "challengeId=scenario:${sname}" \
-    ${flag_args:+"${flag_args[@]}"}
+  # ADR-0056 A5d: the scenario's investigate challenges, as for values-all above
+  if scope_practice_evidence "$svalues" challenges; then
+    run_scope "scenario (challengeId=scenario:${sname})" \
+      -f "$svalues" --set "challengeId=scenario:${sname}" \
+      ${flag_args:+"${flag_args[@]}"} \
+      ${SCOPE_EVIDENCE_ARGS[@]+"${SCOPE_EVIDENCE_ARGS[@]}"}
+  fi
+  SCOPE_EVIDENCE_ARGS=()
+  EXPECTED_EVIDENCE_SECRETS=""
   EXPECTED_SCENARIO_MISSIONS=""
   echo
 done

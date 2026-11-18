@@ -25,6 +25,32 @@
 #        one a real directory, and each <id>/ holds nothing but a real
 #        `fixtures` directory (fixtures' own contents are never opened).
 #        Dot entries are enumerated too. See the 3-8 judgment block below.
+#   3-9  ADR-0056 D11 "3-x" item (1) (A5d, V8): inside each evidence mount directory
+#        of the scope (the `mountDir` of every investigate challenge, read from the
+#        values file helm was given: the plant.mounts entries marked `evidence:
+#        true`), as `challenge` sees it: it is a real directory, holds at least one
+#        entry, and every entry (dot entries too) is a regular file and not a
+#        symlink. Entries are tested with `[ -L ]` / `[ -f ]` only, never opened.
+#   3-10 ADR-0056 D11 "3-x" item (2) (A5d, V2): the names of the namespace's
+#        Secrets of type Opaque are exactly {ctf-flags} plus ctf-evidence-<cid> for
+#        every investigate challenge of the scope (an extra one or a missing one
+#        fails). Helm's release records (type helm.sh/release.v1) are counted
+#        apart; a Secret of any other type fails. This runs `kubectl get secrets`
+#        as the operator, outside the workspace (no process in the Pod).
+#        The Secrets of a seat's namespace are a CLOSED set: flags, bundles and
+#        Helm's release records only; a Secret of any other type fails the deploy.
+#        That is a constraint on the platform, to be written into the next ADR-0056
+#        addendum and the contract table.
+#   D11's "3-x" has four items; this script has (1) and (2) only. (3) (the key set
+#   of each ctf-evidence-<cid> equals the names given to the chart) and (4) (the
+#   sentinel check of the Helm release record at deploy time) are NOT here: the
+#   next ADR-0056 addendum assigns them a stage.
+#
+# The scope's values file is the one deploy-user.sh gives helm: values-all.yaml
+# (`all`), values-scenario-<name>.yaml (`scenario:<name>`), both required, or
+# <id>/values.yaml when it exists (single mission). Its evidence entries must be in
+# the exact form challenges/gen-values.sh writes (an `evidence` key in any other form
+# stops the assert, fail-closed, as deploy-user.sh's evidence_scope_cids does).
 #
 # WHAT 3-8 does and does not prove: it is a deploy-moment check of the image
 # the Pod actually started from (a tag mix-up, an image older than the
@@ -402,9 +428,130 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# The in-workspace probe (3-1..3-6). Builtin-only — see header. Sent
-# verbatim as the `sh -c` payload via `kubectl exec`; runs as a single `sh`
-# process inside the `challenge` container, spawns nothing else.
+# 3-9 / 3-10 expectations (ADR-0056 D11 "3-x" items (1)(2), A5d): the
+# investigate challenges of this scope and their evidence mount directories, read
+# from the scope's values file (the file deploy-user.sh gives helm; see the
+# header). WHY a third reader of that file (after gen-values.sh, which writes it,
+# and deploy-user.sh's evidence_scope_cids in charts/ctf-user/evidence-bundle.sh):
+# this file is builtin-only (see the header), and that reader is awk. HOW they are
+# kept equal: scripts/check-missions-allowlist-assert.sh runs both over
+# gen-values.sh's own output, over every committed values-all.yaml /
+# values-scenario-*.yaml, and over a table of accepted and refused inputs, and
+# fails on any input one of them accepts and the other refuses. This reader is
+# stricter in one documented way: it also needs the entry's `- path:` (it sends
+# the directory to the probe), which deploy-user.sh does not read.
+#   - a non-comment line naming an `evidence` key (any quoting / spacing before
+#     the `:`) must be exactly `      evidence: true`;
+#   - the very next line must be `      challenge: <NN-slug>`;
+#   - the entry must have its own `    - path: <dir>` line before them, and <dir>
+#     must be an absolute, clean path of [A-Za-z0-9._-] elements (it is written
+#     into the probe's payload below).
+# Anything else stops the assert before the probe (exit 1). A duplicate challenge
+# or mount directory stops it too.
+# ---------------------------------------------------------------------------
+
+EVIDENCE_SCOPE_CIDS=()
+EVIDENCE_SCOPE_DIRS=()
+SCOPE_VALUES_FILE=""
+if [ "${CHALLENGE_ID}" = "all" ]
+then
+  SCOPE_VALUES_FILE="${CHALLENGES_DIR}/values-all.yaml"
+elif [ "${SCENARIO_MODE}" = yes ]
+then
+  SCOPE_VALUES_FILE="${CHALLENGES_DIR}/values-scenario-${SCENARIO_NAME}.yaml"
+elif [ -f "${CHALLENGES_DIR}/${CHALLENGE_ID}/values.yaml" ]
+then
+  SCOPE_VALUES_FILE="${CHALLENGES_DIR}/${CHALLENGE_ID}/values.yaml"
+fi
+if [ -n "${SCOPE_VALUES_FILE}" ] && [ ! -f "${SCOPE_VALUES_FILE}" ]
+then
+  printf 'assert-flag-isolation.sh: the values file of this scope is missing: %s — cannot judge 3-9 / 3-10\n' "${SCOPE_VALUES_FILE}" >&2
+  exit 1
+fi
+
+evidence_scope_reject() { # $1 = line number, $2 = what is wrong
+  printf 'assert-flag-isolation.sh: %s line %s: %s (the evidence entries must be in the form gen-values.sh writes) — cannot judge 3-9 / 3-10\n' \
+    "${SCOPE_VALUES_FILE}" "$1" "$2" >&2
+  exit 1
+}
+
+read_evidence_scope() { # $1 = values file -> EVIDENCE_SCOPE_CIDS / EVIDENCE_SCOPE_DIRS
+  local f="$1" line trimmed lineno=0 want=0 item_path="" entry_path="" cid rest x
+  local key_re='evidence["'"'"'[:space:]]*:'
+  while IFS= read -r line || [ -n "${line}" ]
+  do
+    lineno=$((lineno + 1))
+    if [ "${want}" -eq 1 ]
+    then
+      want=0
+      case "${line}" in
+        '      challenge: '*) cid="${line#'      challenge: '}" ;;
+        *) evidence_scope_reject "${lineno}" "the line after 'evidence: true' is not '      challenge: <id>'" ;;
+      esac
+      case "${cid}" in
+        [0-9][0-9]-?*) rest="${cid#??-}" ;;
+        *) evidence_scope_reject "${lineno}" "the challenge is not of the form NN-slug" ;;
+      esac
+      case "${rest}" in
+        *[!abcdefghijklmnopqrstuvwxyz0123456789-]*) evidence_scope_reject "${lineno}" "the challenge is not of the form NN-slug" ;;
+      esac
+      for x in ${EVIDENCE_SCOPE_CIDS[@]+"${EVIDENCE_SCOPE_CIDS[@]}"}
+      do
+        [ "${x}" != "${cid}" ] || evidence_scope_reject "${lineno}" "the challenge ${cid} has a second evidence entry"
+      done
+      for x in ${EVIDENCE_SCOPE_DIRS[@]+"${EVIDENCE_SCOPE_DIRS[@]}"}
+      do
+        [ "${x}" != "${entry_path}" ] || evidence_scope_reject "${lineno}" "the mount directory ${entry_path} has a second evidence entry"
+      done
+      EVIDENCE_SCOPE_CIDS+=("${cid}")
+      EVIDENCE_SCOPE_DIRS+=("${entry_path}")
+      continue
+    fi
+    trimmed="${line#"${line%%[![:space:]]*}"}"
+    case "${trimmed}" in
+      '#'*) continue ;;
+    esac
+    case "${line}" in
+      '    - path: '*) item_path="${line#'    - path: '}" ;;
+      '    - '*) item_path="" ;;
+    esac
+    if [[ "${line}" =~ ${key_re} ]]
+    then
+      [ "${line}" = '      evidence: true' ] || evidence_scope_reject "${lineno}" "an evidence key that is not '      evidence: true'"
+      [ -n "${item_path}" ] || evidence_scope_reject "${lineno}" "an evidence entry without its own '    - path:' line"
+      case "${item_path}" in
+        /*) ;;
+        *) evidence_scope_reject "${lineno}" "the mount directory is not an absolute path" ;;
+      esac
+      case "${item_path}" in
+        *[!A-Za-z0-9._/-]* | */ | *//* | */./* | */. | */../* | */..)
+          evidence_scope_reject "${lineno}" "the mount directory is not a clean path of [A-Za-z0-9._-] elements"
+          ;;
+      esac
+      entry_path="${item_path}"
+      want=1
+    fi
+  done < "${f}"
+  [ "${want}" -eq 0 ] || evidence_scope_reject "${lineno}" "'evidence: true' is the last line"
+}
+
+if [ -n "${SCOPE_VALUES_FILE}" ]
+then
+  read_evidence_scope "${SCOPE_VALUES_FILE}"
+fi
+
+# 3-10: the Opaque Secrets this namespace must hold, exactly
+EXPECTED_SECRET_NAMES=(ctf-flags)
+for _c in ${EVIDENCE_SCOPE_CIDS[@]+"${EVIDENCE_SCOPE_CIDS[@]}"}
+do
+  EXPECTED_SECRET_NAMES+=("ctf-evidence-${_c}")
+done
+
+# ---------------------------------------------------------------------------
+# The in-workspace probe (3-1..3-6, 3-8, 3-9). Builtin-only — see header. Sent
+# verbatim as the `sh -c` payload via `kubectl exec`, after one assignment line
+# (EVIDENCE_MOUNT_DIRS, 3-9); runs as a single `sh` process inside the
+# `challenge` container, spawns nothing else.
 #
 # Deliberately observation-only: it reports raw facts (env/proc1/mount/line
 # counts), never judges pass/fail itself — all comparison against the
@@ -534,6 +681,57 @@ then
   done
 fi
 
+# 3-9 (ADR-0056 D11 "3-x" item (1), A5d): EVIDENCE_MOUNT_DIRS is set by the one line the
+# operator side puts before this payload (the scope's evidence mount directories,
+# space-joined, each already held to [A-Za-z0-9._/-]; empty without an
+# investigate challenge). Glob and `[ ]` only, nothing is opened: every entry of
+# each directory (dot entries too) must be a regular file and not a symlink, and
+# the directory must be a real directory with at least one file.
+#   EVIDENCE_DIRS_SEEN  how many of the directories were real directories (the
+#                       operator side compares it with how many it sent, so a
+#                       probe that skipped this loop is not "clean")
+#   EVIDENCE_BAD        "<n>:not-a-dir", "<n>:empty", "<n>/<entry>:link" or
+#                       "<n>/<entry>:not-a-file" (<n> = the n-th directory sent;
+#                       an entry name outside [A-Za-z0-9._-] is <bad-name>)
+EVIDENCE_DIRS_SEEN=0
+EVIDENCE_BAD=""
+_ei=0
+for _ed in ${EVIDENCE_MOUNT_DIRS:-}
+do
+  _ei=$((_ei + 1))
+  if [ -L "${_ed}" ] || [ ! -d "${_ed}" ]
+  then
+    EVIDENCE_BAD="${EVIDENCE_BAD:+${EVIDENCE_BAD} }${_ei}:not-a-dir"
+    continue
+  fi
+  EVIDENCE_DIRS_SEEN=$((EVIDENCE_DIRS_SEEN + 1))
+  _en=0
+  for _ef in "${_ed}"/* "${_ed}"/.[!.]* "${_ed}"/..?*
+  do
+    if [ ! -e "${_ef}" ] && [ ! -L "${_ef}" ]
+    then
+      continue
+    fi
+    _eb="${_ef##*/}"
+    case "${_eb}" in
+      *[!A-Za-z0-9._-]*) _eb="<bad-name>" ;;
+    esac
+    if [ -L "${_ef}" ]
+    then
+      EVIDENCE_BAD="${EVIDENCE_BAD:+${EVIDENCE_BAD} }${_ei}/${_eb}:link"
+    elif [ ! -f "${_ef}" ]
+    then
+      EVIDENCE_BAD="${EVIDENCE_BAD:+${EVIDENCE_BAD} }${_ei}/${_eb}:not-a-file"
+    else
+      _en=$((_en + 1))
+    fi
+  done
+  if [ "${_en}" -eq 0 ]
+  then
+    EVIDENCE_BAD="${EVIDENCE_BAD:+${EVIDENCE_BAD} }${_ei}:empty"
+  fi
+done
+
 printf 'PLANT_SEED_ROOT_EXISTS=%s\n' "${PLANT_SEED_ROOT_EXISTS}"
 printf 'EVIDENCE_SRC_ROOT_EXISTS=%s\n' "${EVIDENCE_SRC_ROOT_EXISTS}"
 printf 'SA_TOKEN_EXISTS=%s\n' "${SA_TOKEN_EXISTS}"
@@ -544,8 +742,15 @@ printf 'SSH_KEY_EXISTS=%s\n' "${SSH_KEY_EXISTS}"
 printf 'MISSIONS_LIST=%s\n' "${MISSIONS_LIST}"
 printf 'MISSIONS_BAD=%s\n' "${MISSIONS_BAD}"
 printf 'MISSIONS_SUBBAD=%s\n' "${MISSIONS_SUBBAD}"
+printf 'EVIDENCE_DIRS_SEEN=%s\n' "${EVIDENCE_DIRS_SEEN}"
+printf 'EVIDENCE_BAD=%s\n' "${EVIDENCE_BAD}"
 printf 'PROBE_END=yes\n'
 PROBE_EOF
+
+# 3-9: the one line put before the payload. The directories were held to
+# [A-Za-z0-9._/-] by read_evidence_scope, so a single quote cannot be among them.
+EVIDENCE_MOUNT_DIRS_WIRE="${EVIDENCE_SCOPE_DIRS[*]+${EVIDENCE_SCOPE_DIRS[*]}}"
+PROBE_PAYLOAD="EVIDENCE_MOUNT_DIRS='${EVIDENCE_MOUNT_DIRS_WIRE}'"$'\n'"${PROBE_PAYLOAD}"
 
 run_probe() { # prints the probe's stdout, or aborts (set -e) on kubectl failure
   kubectl -n "${NS}" exec workspace -c challenge -- sh -c "${PROBE_PAYLOAD}"
@@ -568,6 +773,19 @@ then
 fi
 
 # ---------------------------------------------------------------------------
+# 3-10 (ADR-0056 D11 "3-x" item (2), A5d): the namespace's Secrets, listed by the
+# operator (`kubectl get`, not an exec: nothing runs in the Pod). One line per
+# Secret, name TAB type. A failed listing is a violation, never "no Secret".
+# ---------------------------------------------------------------------------
+
+SECRETS_LISTED=yes
+SECRETS_LISTING=""
+if ! SECRETS_LISTING="$(kubectl -n "${NS}" get secrets -o 'jsonpath={range .items[*]}{.metadata.name}{"\t"}{.type}{"\n"}{end}')"
+then
+  SECRETS_LISTED=no
+fi
+
+# ---------------------------------------------------------------------------
 # Parse OBSERVED (fixed set of KEY=VALUE lines, one per probe field) and
 # judge against the expectations computed above.
 # ---------------------------------------------------------------------------
@@ -582,6 +800,8 @@ OBS_SSH_KEY_EXISTS=""
 OBS_MISSIONS_LIST=""
 OBS_MISSIONS_BAD=""
 OBS_MISSIONS_SUBBAD=""
+OBS_EVIDENCE_DIRS_SEEN=""
+OBS_EVIDENCE_BAD=""
 OBS_PROBE_END=""
 
 while IFS='=' read -r key val
@@ -597,6 +817,8 @@ do
     MISSIONS_LIST)          OBS_MISSIONS_LIST="${val}" ;;
     MISSIONS_BAD)           OBS_MISSIONS_BAD="${val}" ;;
     MISSIONS_SUBBAD)        OBS_MISSIONS_SUBBAD="${val}" ;;
+    EVIDENCE_DIRS_SEEN)     OBS_EVIDENCE_DIRS_SEEN="${val}" ;;
+    EVIDENCE_BAD)           OBS_EVIDENCE_BAD="${val}" ;;
     PROBE_END)              OBS_PROBE_END="${val}" ;;
   esac
 done <<< "${OBSERVED}"
@@ -611,12 +833,13 @@ VIOLATIONS=()
 # MISSIONS_LIST is ids only; BAD / SUBBAD also carry '/', ':' and the
 # <bad-name> placeholder.
 for _v in OBS_PLANT_SEED_ROOT_EXISTS OBS_EVIDENCE_SRC_ROOT_EXISTS OBS_SA_TOKEN_EXISTS OBS_ENV_HAS_CTF_FLAG OBS_PROC1_HAS_CTF_FLAG \
-          OBS_SHADOW_FALCO_LINES OBS_SSH_KEY_EXISTS OBS_MISSIONS_LIST OBS_MISSIONS_BAD OBS_MISSIONS_SUBBAD OBS_PROBE_END
+          OBS_SHADOW_FALCO_LINES OBS_SSH_KEY_EXISTS OBS_MISSIONS_LIST OBS_MISSIONS_BAD OBS_MISSIONS_SUBBAD \
+          OBS_EVIDENCE_DIRS_SEEN OBS_EVIDENCE_BAD OBS_PROBE_END
 do
   _val="${!_v}"
   _bad=no
   case "${_v}" in
-    OBS_MISSIONS_BAD|OBS_MISSIONS_SUBBAD)
+    OBS_MISSIONS_BAD|OBS_MISSIONS_SUBBAD|OBS_EVIDENCE_BAD)
       case "${_val}" in *[!A-Za-z0-9._/:\<\>\ -]*) _bad=yes ;; esac ;;
     *)
       case "${_val}" in *[!A-Za-z0-9._\ -]*) _bad=yes ;; esac ;;
@@ -751,6 +974,107 @@ then
   VIOLATIONS+=("3-8: an <id>/ directory holds something other than a plain fixtures/ directory: [${OBS_MISSIONS_SUBBAD}]")
 fi
 
+# 3-9 (ADR-0056 D11 "3-x" item (1), A5d, V8): every evidence mount directory of the scope
+# is a real directory of regular files only (no symlink), and the probe judged
+# all of them (a probe that saw fewer than it was sent is not clean).
+if [ -n "${OBS_EVIDENCE_BAD}" ]
+then
+  VIOLATIONS+=("3-9: an evidence mount directory is not a real directory of regular files only: [${OBS_EVIDENCE_BAD}] (<n> is the n-th of [${EVIDENCE_MOUNT_DIRS_WIRE}])")
+fi
+if [ "${OBS_EVIDENCE_DIRS_SEEN}" != "${#EVIDENCE_SCOPE_DIRS[@]}" ]
+then
+  VIOLATIONS+=("3-9: the probe judged ${OBS_EVIDENCE_DIRS_SEEN:-no} of the ${#EVIDENCE_SCOPE_DIRS[@]} evidence mount director(ies) [${EVIDENCE_MOUNT_DIRS_WIRE}] of this scope")
+fi
+
+# 3-10 (ADR-0056 D11 "3-x" item (2), A5d, V2): the Opaque Secrets are exactly
+# EXPECTED_SECRET_NAMES (both directions); Helm's release records are counted
+# apart; any other type, and a line outside the character sets of a Secret's
+# name / type (it is discarded, never echoed), fails. The seat's Secrets are a
+# closed set (flags, bundles, Helm's records): a constraint on the platform, for
+# the next ADR-0056 addendum and the contract table.
+OBS_OPAQUE_SECRETS=()
+OBS_OTHER_SECRETS=()
+OBS_HELM_RELEASES=0
+SECRETS_BAD_LINES=0
+if [ "${SECRETS_LISTED}" != yes ]
+then
+  VIOLATIONS+=("3-10: kubectl get secrets failed in ${NS}, so the Secret names of the namespace could not be judged")
+else
+  while IFS= read -r _sline || [ -n "${_sline}" ]
+  do
+    [ -n "${_sline}" ] || continue
+    case "${_sline}" in
+      *$'\t'*) ;;
+      *)
+        SECRETS_BAD_LINES=$((SECRETS_BAD_LINES + 1))
+        continue
+        ;;
+    esac
+    _sname="${_sline%%$'\t'*}"
+    _stype="${_sline#*$'\t'}"
+    case "${_sname}" in
+      '' | *[!a-z0-9.-]*)
+        SECRETS_BAD_LINES=$((SECRETS_BAD_LINES + 1))
+        continue
+        ;;
+    esac
+    case "${_stype}" in
+      '' | *[!A-Za-z0-9./_-]*)
+        SECRETS_BAD_LINES=$((SECRETS_BAD_LINES + 1))
+        continue
+        ;;
+    esac
+    case "${_stype}" in
+      Opaque) OBS_OPAQUE_SECRETS+=("${_sname}") ;;
+      helm.sh/release.v1) OBS_HELM_RELEASES=$((OBS_HELM_RELEASES + 1)) ;;
+      *) OBS_OTHER_SECRETS+=("${_sname} (${_stype})") ;;
+    esac
+  done <<< "${SECRETS_LISTING}"
+  if [ "${SECRETS_BAD_LINES}" -gt 0 ]
+  then
+    VIOLATIONS+=("3-10: ${SECRETS_BAD_LINES} line(s) of the Secret listing are outside the character set of a name TAB a type (discarded)")
+  fi
+  if [ "${#OBS_OTHER_SECRETS[@]}" -gt 0 ]
+  then
+    VIOLATIONS+=("3-10: Secret(s) of a type other than Opaque and helm.sh/release.v1 in ${NS}: [${OBS_OTHER_SECRETS[*]}]")
+  fi
+  SECRETS_OK=yes
+  if [ "${#OBS_OPAQUE_SECRETS[@]}" -ne "${#EXPECTED_SECRET_NAMES[@]}" ]
+  then
+    SECRETS_OK=no
+  fi
+  for _e in "${EXPECTED_SECRET_NAMES[@]}"
+  do
+    found=0
+    for _o in ${OBS_OPAQUE_SECRETS[@]+"${OBS_OPAQUE_SECRETS[@]}"}
+    do
+      if [ "${_o}" = "${_e}" ]
+      then
+        found=1
+        break
+      fi
+    done
+    [ "${found}" -eq 1 ] || SECRETS_OK=no
+  done
+  for _o in ${OBS_OPAQUE_SECRETS[@]+"${OBS_OPAQUE_SECRETS[@]}"}
+  do
+    found=0
+    for _e in "${EXPECTED_SECRET_NAMES[@]}"
+    do
+      if [ "${_o}" = "${_e}" ]
+      then
+        found=1
+        break
+      fi
+    done
+    [ "${found}" -eq 1 ] || SECRETS_OK=no
+  done
+  if [ "${SECRETS_OK}" != yes ]
+  then
+    VIOLATIONS+=("3-10: the Opaque Secrets of ${NS} are [${OBS_OPAQUE_SECRETS[*]+${OBS_OPAQUE_SECRETS[*]}}], expected exactly [${EXPECTED_SECRET_NAMES[*]}] (ctf-flags and ctf-evidence-<cid> of this scope's investigate challenges)")
+  fi
+fi
+
 if [ "${#VIOLATIONS[@]}" -gt 0 ]
 then
   printf 'assert-flag-isolation.sh: FAIL (%d violation(s)) for namespace %s (challenge-id=%s):\n' \
@@ -762,6 +1086,8 @@ then
   exit 1
 fi
 
-CHECKS_RUN="3-1..3-8"
-printf 'assert-flag-isolation.sh: OK — %s clean for namespace %s (challenge-id=%s)\n' \
-  "${CHECKS_RUN}" "${NS}" "${CHALLENGE_ID}"
+CHECKS_RUN="3-1..3-10"
+# 3-9 / 3-10 are ADR-0056 D11 "3-x" items (1)(2) only (see the header). The
+# evidence scope is printed so that a test can hold it to evidence_scope_cids.
+printf 'assert-flag-isolation.sh: OK — %s clean for namespace %s (challenge-id=%s): evidence scope [%s], Opaque Secrets [%s], %d Helm release record(s)\n' \
+  "${CHECKS_RUN}" "${NS}" "${CHALLENGE_ID}" "${EVIDENCE_SCOPE_CIDS[*]+${EVIDENCE_SCOPE_CIDS[*]}}" "${EXPECTED_SECRET_NAMES[*]}" "${OBS_HELM_RELEASES}"
