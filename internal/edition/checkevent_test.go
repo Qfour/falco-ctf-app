@@ -191,11 +191,18 @@ func TestCheckEvent_EachCheckBrokenAloneRefusesTheEvent(t *testing.T) {
 		}, wantRules: []string{"B8"}, onlyRules: true, wantSubstr: "(51)"},
 		{name: "B11: the render record has another run id", brk: func(f *cevFix) {
 			var b bytes.Buffer
-			if err := edition.WriteRenderRecord(&b, "fedcba9876543210fedcba9876543210", f.key); err != nil {
+			if err := edition.WriteRenderRecord(&b, "fedcba9876543210fedcba9876543210", f.key, f.scope); err != nil {
 				f.t.Fatal(err)
 			}
 			f.put("render-record.tsv", b.String())
 		}, wantRules: []string{edition.RuleRunID}, onlyRules: true},
+		{name: "B12: the render record is of another scope", brk: func(f *cevFix) {
+			var b bytes.Buffer
+			if err := edition.WriteRenderRecord(&b, runA, f.key, []string{demoCID}); err != nil {
+				f.t.Fatal(err)
+			}
+			f.put("render-record.tsv", b.String())
+		}, wantRules: []string{edition.RuleScope}, onlyRules: true},
 		{name: "T8: two seats share a per-seat value", brk: func(f *cevFix) {
 			f.rewrite("answers.tsv", func(s string) string {
 				return strings.Replace(s, "seat-b\t"+demoCID+"\tq1\t"+f.answers["seat-b/q1"], "seat-b\t"+demoCID+"\tq1\t"+f.answers["seat-a/q1"], 1)

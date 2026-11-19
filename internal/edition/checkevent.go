@@ -15,8 +15,10 @@ package edition
 //	    input, so a rule's refusal in an earlier step can come before it;
 //	1.  catalog.LoadScored; a scope with no investigate challenge is a usage error and B4 is not
 //	    called (V72);
+//	1b. the render record (read here, once; a form error is a usage error) and B12: its scope
+//	    digest is ScopeDigest of the scope of step 1 (amendment 19);
 //	2.  LoadEventTable: T3 to T8, T6 against the practice answers, the practice files;
-//	3.  B11: the run id of the render record is the table's;
+//	3.  B11: the run id of the render record (of step 1b) is the table's;
 //	4.  the set of the challenge directories of the edition root (E2; an entry named like a
 //	    challenge id that is not a directory, or is a link, is a usage error), then per
 //	    challenge: E1 (ParseSpec), E2 and B8 (a1) (CheckQuestions), B8 (a2) (CheckSeatSpace,
@@ -66,6 +68,12 @@ const RuleContinuity = "B10"
 // render record whose form is wrong is an *InputError, not B11, and T3, the form of a table
 // (which the scoreboard's start-up applies too), is not used for this comparison.
 const RuleRunID = "B11"
+
+// RuleScope is D10 B12 (amendment 19, A4e-6): the scope digest of the render record is the
+// digest of the check's own scope (ScopeDigest of the ids catalog.LoadScored returned, in their
+// order), so the render and the check were given one scope. It is the validator's only (D20 step
+// 1b, before the table is read). A render record whose form is wrong is an *InputError, not B12.
+const RuleScope = "B12"
 
 // RuleTemplateMark is D10 E3 as the validator names it: a template with a mark outside the
 // grammar (V69: the validator refuses with the renderer's own lexer, ScanMarks). It is the value
@@ -212,8 +220,9 @@ type CheckReport struct {
 }
 
 // CheckedEvent is an event edition that every check of D20 accepted (ADR-0056 amendment 12): E1,
-// E2, E3, B8 (a1) and (a2), B1 to B10 and B11 (the run id of the render record). It carries what the
-// digests file and the command's one line need: the run id of the answers table, the digest of
+// E2, E3, B8 (a1) and (a2), B1 to B10, B11 (the run id of the render record) and B12 (its scope
+// digest). It carries what the digests file and the command's one line need: the run id of the
+// answers table, the digest of
 // every bundle, and how many seats and challenges were checked. It is made by CheckEvent and by
 // nothing else (its fields are unexported, and validator_door_source_test.go fixes that no other
 // non-test file builds one), and WriteDigests takes it and nothing weaker.
@@ -267,18 +276,26 @@ func CheckEvent(in CheckInput) (*CheckedEvent, CheckReport, error) {
 		return nil, report, inputErr("the scenario has no investigate challenge, so there is no edition to check (B4 is not called)")
 	}
 
+	// 1b. The render record, read once, and the scope it was rendered for is this check's
+	// (B12). It is before the table is read, so a scope that differs is named by its cause and not
+	// by its symptoms in the table (an unknown challenge, a missing row).
+	record, err := readRenderRecord(in.RenderRecordFile)
+	if err != nil {
+		return nil, report, err
+	}
+	if record.scope != ScopeDigest(scored.Order) {
+		// D10 B12 (ADR-0056 amendment 19, A4e-6).
+		return nil, report, newViolation(RuleScope, "the scope digest of the render record is not the digest of this check's scope (the render and the check were given two scopes: other challenges, or the same in another order)", 0, cell{}, nil)
+	}
+
 	// 2. The answers table.
 	table, runID, err := LoadEventTable(scored, in.AnswersFile)
 	if err != nil {
 		return nil, report, classify("the answers table cannot be loaded", err)
 	}
 
-	// 3. The render record is the table's.
-	recordRunID, err := readRenderRecord(in.RenderRecordFile)
-	if err != nil {
-		return nil, report, err
-	}
-	if recordRunID != runID {
+	// 3. The render record (read in step 1b) is the table's.
+	if record.runID != runID {
 		// D10 B11 (ADR-0056 amendment 13; A4e-2c gave it its name, which was T3 before).
 		return nil, report, newViolation(RuleRunID, "the run id of the render record is not the answers table's (the table and the record are of two renders)", 0, cell{}, nil)
 	}

@@ -135,8 +135,8 @@ func treeOf(t *testing.T, root string) map[string]string {
 }
 
 // V80: the output of a render is what `edition check` accepts (the first check), it has the
-// three parts of D20 and no digests file, the render record is D20's three lines with the run
-// id, and nothing in the error-free path names a value.
+// three parts of D20 and no digests file, the render record is D20's four lines (v2) with the run
+// id and the scope digest, and nothing in the error-free path names a value.
 func TestRenderEvent_TheOutputIsWhatEditionCheckAccepts(t *testing.T) {
 	f := newRfFix(t)
 	ev, err := edition.RenderEvent(f.in)
@@ -156,7 +156,8 @@ func TestRenderEvent_TheOutputIsWhatEditionCheckAccepts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "# falco-ctf render-record v1\nrun-id\t" + ev.RunID() + "\nkey-fingerprint\t" + ev.KeyFingerprint() + "\n"; string(record) != want {
+	scope := edition.ScopeDigest([]string{editiontest.Evade, editiontest.CID}) // the fixture's scenario, in its order
+	if want := "# falco-ctf render-record v2\nrun-id\t" + ev.RunID() + "\nkey-fingerprint\t" + ev.KeyFingerprint() + "\nscope\t" + scope + "\n"; string(record) != want {
 		t.Errorf("the render record is %q, want %q", record, want)
 	}
 	values := f.answerValues()

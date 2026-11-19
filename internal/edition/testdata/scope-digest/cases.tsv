@@ -1,0 +1,24 @@
+# ADR-0056 D10 B12 / V98 (amendment 19, A4e-6): the golden of the digest of a scope.
+# Go runs it (internal/edition, scopedigest_test.go). This table is plain ASCII,
+# TAB-separated, no quoting.
+#
+# A row is   case<TAB>digest<TAB>ids<TAB>input
+#
+#   case    a name for the row.
+#   ids     the ids of the scope, in its order, separated by commas (an id is in the
+#           grammar of challengeid.Pattern: it holds no comma and no LF). They are
+#           synthetic ids of that grammar, not challenges of the repository.
+#   input   the exact bytes the digest is the sha256 of, spelled for printf: \n is LF,
+#           nothing else is escaped. The bytes are the label falco-ctf/edition/scope/v1,
+#           one LF, and then every id of the scope in its order, each followed by one LF.
+#   digest  lower-case hex of the sha256 of those bytes. It is NOT copied from the output
+#           of the code under test: it is computed from the input column alone, with
+#           printf '<input column>' | shasum -a 256
+#           (the input holds no percent sign, so the column is a safe printf format).
+#
+# The test reads the table three ways: the digest column is the sha256 of the input
+# column; the input column is what the definition makes of the ids; and
+# edition.ScopeDigest of the ids is the digest column.
+one	20f8fc9af004467e596dd5e1b716cca13b30aba98c6b9898f1c19ec3f28d1e76	91-synthetic-a	falco-ctf/edition/scope/v1\n91-synthetic-a\n
+two	b0db17949c17c2c0f82e2b7ae0bba7c68d856b67f07336dcf303e47525fc9b95	91-synthetic-a,92-synthetic-b	falco-ctf/edition/scope/v1\n91-synthetic-a\n92-synthetic-b\n
+two-swapped	d81c3193bf235244f804636c87c1fde7c652ae75f8afa34b38c5e2c33bd41c06	92-synthetic-b,91-synthetic-a	falco-ctf/edition/scope/v1\n92-synthetic-b\n91-synthetic-a\n
