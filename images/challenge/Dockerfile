@@ -90,6 +90,7 @@ FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cab
 #     含まれる — 上流 CHANGES.md の 3.5.7→3.5.8 節が 3.5.9 に残ることを aports と
 #     併せて確認済み (5x R1)。3.5.9 自体も追加の CVE 修正を含む
 #     (High は CVE-2026-84782))
+#   re-pin 2026-11-19: 3.24/main が 3.5.9-r1 に上がり r0 が index から外れた (`apk add` が `breaks: world[libcrypto3=3.5.9-r0]` で落ちた。PR CI の build で検知)。→ 3.5.9-r1 (追跡先は app#291)
 # zlib 1.4-r0 (2026-11-10: 3.24/main から 1.3.2-r1 が外れ再 pin (app#583)。`apk policy zlib`
 #   実測で index の提供版が 1.4-r0 (base の zlib は 1.3.2-r0)。re-pin 履歴: 10-13 (base digest を
 #   3.24 の最新 294b683c へ更新。base の zlib が 1.3.2-r0 のままで Sysdig が High を出すため
@@ -104,7 +105,7 @@ FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cab
 # jq は pin していないため 3.24/main の更新で 1.8.2-r0 (CVE-2026-49839 の fix 版、
 # `apk policy jq` 実測で唯一の提供版) へ自動で上がり、残存から外れた (2026-10-05)。
 # CVE feed の drift (pin 版が後から High 扱いになる) の追跡先は app#291。
-RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 zlib=1.4-r0 musl-utils=1.2.6-r3 \
+RUN apk add --no-cache --upgrade libssl3=3.5.9-r1 libcrypto3=3.5.9-r1 zlib=1.4-r0 musl-utils=1.2.6-r3 \
  && apk add --no-cache \
         bash \
         coreutils \
