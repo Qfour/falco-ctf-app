@@ -57,7 +57,7 @@ FROM nginxinc/nginx-unprivileged:1.30-alpine-slim@sha256:5d8bb9437d74a600ec5dbf9
 # a pin like this is dropped as soon as the base carries that version): zlib 1.3.2-r0 in the base, 1.4-r0 is what v3.24/main serves
 # (`apk policy zlib`, 2026-11-10, app#583; re-pinned from 1.3.2-r1, which the index dropped; 1.3.2-r1 was measured 2026-10-19). pcre2 is at
 # the version v3.24/main serves, so it needs no pin. libssl3 / libcrypto3 3.5.9-r1: the base (even after the
-# 2026-11-20 digest bump) has 3.5.9-r0, which the docs scan flags High (fix 3.5.9-r1, app#670); v3.24/main serves
+# 2026-11-19 digest bump) has 3.5.9-r0, which the docs scan flags High (fix 3.5.9-r1, app#670); v3.24/main serves
 # 3.5.9-r1 (the same pin as challenge / ttyd, app#669). musl-utils 1.2.6-r3 (2026-11-10: the
 # base's 1.2.6-r2 carries a Critical, Sysdig's suggested fix; app#583 / app#591). Exit condition: drop
 # a pin from this line when the base digest carries that package's pinned version or newer.
