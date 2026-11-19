@@ -47,16 +47,31 @@ const (
 const maxListedViolations = 20
 
 // The words of `scoreboard edition ...` that the contract table quotes (ADR-0056 D16 and D20,
-// A4e-4): the two subcommands, and the two arguments that readEditionArgs is given by name (the
-// one of `edition check` that may be repeated, and the one that takes no value). The lists of the
-// arguments that take one value are checkFlags, renderFlags and practiceFlags below.
-// internal/contracttable/editionrow_test.go reads these names, the lists and the exit codes
-// from this file's source and holds the contract table's row to them (V82).
+// A4e-4 and A4e-5): the two subcommands, the argument of `edition check` that may be repeated,
+// and the arguments that take no value. The lists of the arguments that take one value are
+// checkFlags, renderFlags and practiceFlags below, and those of the arguments that take none
+// checkSwitches, renderSwitches and practiceSwitches. internal/contracttable/editionrow_test.go
+// reads these names, the lists and the exit codes from this file's source and holds the contract
+// table's row to them (V82).
 const (
-	subcommandCheck  = "check"
-	subcommandRender = "render"
-	corpusFlag       = "--corpus"
-	noPreviousFlag   = "--no-previous"
+	subcommandCheck   = "check"
+	subcommandRender  = "render"
+	corpusFlag        = "--corpus"
+	noPreviousFlag    = "--no-previous"
+	allChallengesFlag = "--all-challenges"
+)
+
+// scenarioFlag is the scope of a scenario file; exactly one of it and allChallengesFlag (every
+// challenge: catalog.LoadScored with no scenario, as a scoreboard whose SCENARIO_FILE is empty)
+// is given to `edition check` and `edition render` (ADR-0056 amendment 18, A4e-5).
+const scenarioFlag = "--scenario"
+
+// checkSwitches and renderSwitches are the arguments of `edition check` and of `edition render`
+// that take no value, practiceSwitches that of `edition render --practice`.
+var (
+	checkSwitches    = []string{noPreviousFlag, allChallengesFlag}
+	renderSwitches   = []string{noPreviousFlag, allChallengesFlag}
+	practiceSwitches = []string{practiceFlag}
 )
 
 // runEdition is `scoreboard edition <subcommand> ...`; args are what follows `edition`. It
@@ -77,41 +92,41 @@ func runEdition(args []string, stdout, stderr io.Writer) int {
 }
 
 // checkFlags are the arguments of `edition check` that take one value; --corpus takes a
-// value and may be given again, --no-previous takes none.
+// value and may be given again, checkSwitches take none.
 var checkFlags = []string{
-	"--challenges", "--scenario", "--flags-file", "--answers", "--render-record",
+	"--challenges", scenarioFlag, "--flags-file", "--answers", "--render-record",
 	"--evidence-root", "--seats", "--edition-root", "--previous-digests", "--digests-out",
 }
 
 // editionArgs are the words of a subcommand's arguments as readEditionArgs read them: the value
 // of each argument that takes one, the values of the one argument that may be given again, and
-// whether the one argument that takes no value was given.
+// which of the arguments that take no value were given.
 type editionArgs struct {
 	values   map[string]string
 	repeated []string
-	flag     bool
+	flags    map[string]bool
 }
 
 // readEditionArgs reads `--name value` and `--name=value` words: valued are the names that take
 // one value once, repeated is the name that takes one value and may be given again ("" for
-// none), flag is the name that takes no value. An unknown name, a repeated one (other than
+// none), flags are the names that take no value. An unknown name, a repeated one (other than
 // repeated), a value that is missing or empty, a flag with a value or given twice and a
 // positional word are errors. Nothing is opened: this only reads the words.
-func readEditionArgs(args, valued []string, repeated, flag string) (editionArgs, error) {
-	w := editionArgs{values: map[string]string{}}
+func readEditionArgs(args, valued []string, repeated string, flags []string) (editionArgs, error) {
+	w := editionArgs{values: map[string]string{}, flags: map[string]bool{}}
 	for i := 0; i < len(args); i++ {
 		name, val, hasVal := strings.Cut(args[i], "=")
 		switch {
 		case !strings.HasPrefix(name, "--"):
 			return w, errors.New("a positional argument is not allowed (every argument is a --name)")
-		case name == flag:
+		case isArgName(name, flags):
 			if hasVal {
-				return w, errors.New(flag + " takes no value")
+				return w, errors.New(name + " takes no value")
 			}
-			if w.flag {
-				return w, errors.New(flag + " is given twice")
+			if w.flags[name] {
+				return w, errors.New(name + " is given twice")
 			}
-			w.flag = true
+			w.flags[name] = true
 			continue
 		case name != repeated && !isArgName(name, valued):
 			return w, errors.New("an unknown argument " + shownArg(name))
@@ -148,21 +163,36 @@ func isArgName(name string, names []string) bool {
 	return false
 }
 
+// scopeArgErr is the usage error of the scope (ADR-0056 amendment 18): exactly one of
+// --scenario <file> and --all-challenges. An empty --scenario is refused before, by
+// readEditionArgs (an empty value is never "every challenge").
+func scopeArgErr(w editionArgs) error {
+	if _, hasScenario := w.values[scenarioFlag]; hasScenario == w.flags[allChallengesFlag] {
+		return errors.New("exactly one of " + scenarioFlag + " and " + allChallengesFlag + " is required")
+	}
+	return nil
+}
+
 // parseCheckArgs reads the arguments of `edition check` into a CheckInput. A missing argument,
 // a repeated one, an unknown one, a value that is missing, a positional argument,
-// `--previous-digests` with `--no-previous` (or neither) and no `--corpus` are errors.
+// `--scenario` with `--all-challenges` (or neither), `--previous-digests` with `--no-previous`
+// (or neither) and no `--corpus` are errors.
 func parseCheckArgs(args []string) (edition.CheckInput, error) {
 	var in edition.CheckInput
-	w, err := readEditionArgs(args, checkFlags, corpusFlag, noPreviousFlag)
+	w, err := readEditionArgs(args, checkFlags, corpusFlag, checkSwitches)
 	if err != nil {
 		return in, err
 	}
-	in.NoPrevious = w.flag
+	in.NoPrevious = w.flags[noPreviousFlag]
+	in.AllChallenges = w.flags[allChallengesFlag]
 	in.CorpusDirs = w.repeated
 	for _, name := range checkFlags {
-		if _, ok := w.values[name]; !ok && name != "--previous-digests" {
+		if _, ok := w.values[name]; !ok && name != "--previous-digests" && name != scenarioFlag {
 			return in, errors.New(name + " is required")
 		}
+	}
+	if err := scopeArgErr(w); err != nil {
+		return in, err
 	}
 	if len(in.CorpusDirs) == 0 {
 		return in, errors.New("--corpus is required (at least one directory)")
@@ -172,7 +202,7 @@ func parseCheckArgs(args []string) (edition.CheckInput, error) {
 		return in, errors.New("exactly one of --previous-digests and --no-previous is required")
 	}
 	in.Challenges = w.values["--challenges"]
-	in.ScenarioFile = w.values["--scenario"]
+	in.ScenarioFile = w.values[scenarioFlag]
 	in.FlagsFile = w.values["--flags-file"]
 	in.AnswersFile = w.values["--answers"]
 	in.RenderRecordFile = w.values["--render-record"]
@@ -421,40 +451,45 @@ func holdsJoin(err error) bool {
 
 // ---- edition render (the event's; ADR-0056 D20, D19 A4e-3a) ----
 
-// renderFlags are the arguments of `edition render` that take one value; --no-previous takes
-// none. Every one is required, but exactly one of --previous-seats and --no-previous. The key is
-// given as a file and only as a file (--key-file): no argument and no environment variable
-// carries its value.
+// renderFlags are the arguments of `edition render` that take one value; renderSwitches take
+// none. Every one is required, but exactly one of --scenario and --all-challenges, and exactly
+// one of --previous-seats and --no-previous. The key is given as a file and only as a file
+// (--key-file): no argument and no environment variable carries its value.
 var renderFlags = []string{
-	"--challenges", "--scenario", "--flags-file", "--edition-root", "--seats",
+	"--challenges", scenarioFlag, "--flags-file", "--edition-root", "--seats",
 	"--previous-seats", "--key-file", "--out",
 }
 
 // parseRenderArgs reads the arguments of `edition render` into a RenderEventInput. A missing
-// argument, a repeated one, an unknown one, a value that is missing, a positional argument and
-// `--previous-seats` with `--no-previous` (or neither) are errors.
+// argument, a repeated one, an unknown one, a value that is missing, a positional argument,
+// `--scenario` with `--all-challenges` (or neither) and `--previous-seats` with `--no-previous`
+// (or neither) are errors.
 func parseRenderArgs(args []string) (edition.RenderEventInput, error) {
 	var in edition.RenderEventInput
-	w, err := readEditionArgs(args, renderFlags, "", noPreviousFlag)
+	w, err := readEditionArgs(args, renderFlags, "", renderSwitches)
 	if err != nil {
 		return in, err
 	}
 	for _, name := range renderFlags {
-		if _, ok := w.values[name]; !ok && name != "--previous-seats" {
+		if _, ok := w.values[name]; !ok && name != "--previous-seats" && name != scenarioFlag {
 			return in, errors.New(name + " is required")
 		}
 	}
+	if err := scopeArgErr(w); err != nil {
+		return in, err
+	}
 	_, hasPrevious := w.values["--previous-seats"]
-	if hasPrevious == w.flag {
+	if hasPrevious == w.flags[noPreviousFlag] {
 		return in, errors.New("exactly one of --previous-seats and --no-previous is required")
 	}
 	in.Challenges = w.values["--challenges"]
-	in.ScenarioFile = w.values["--scenario"]
+	in.ScenarioFile = w.values[scenarioFlag]
+	in.AllChallenges = w.flags[allChallengesFlag]
 	in.FlagsFile = w.values["--flags-file"]
 	in.EditionRoot = w.values["--edition-root"]
 	in.SeatsFile = w.values["--seats"]
 	in.PreviousSeatsFile = w.values["--previous-seats"]
-	in.NoPrevious = w.flag
+	in.NoPrevious = w.flags[noPreviousFlag]
 	in.KeyFile = w.values["--key-file"]
 	in.Out = w.values["--out"]
 	return in, nil
@@ -522,11 +557,11 @@ func parsePracticeArgs(args []string) (challenges, cid string, err error) {
 			return "", "", errors.New(name + " is an argument of the event's render: with --practice only --challenges and --cid are taken (the practice edition is the same for every seat: no key, no seats, no previous list, no --out)")
 		}
 	}
-	w, err := readEditionArgs(args, practiceFlags, "", practiceFlag)
+	w, err := readEditionArgs(args, practiceFlags, "", practiceSwitches)
 	if err != nil {
 		return "", "", err
 	}
-	if !w.flag {
+	if !w.flags[practiceFlag] {
 		return "", "", errors.New(practiceFlag + " is required")
 	}
 	for _, name := range practiceFlags {

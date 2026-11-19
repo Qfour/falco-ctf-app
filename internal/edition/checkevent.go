@@ -111,8 +111,9 @@ func classify(msg string, err error) error {
 }
 
 // CheckInput is what `edition check` is given: the paths of its arguments (D20). Every one is
-// required, except that exactly one of PreviousDigestsFile and NoPrevious is given. The files
-// are opened by this package's readers (safeopen.go), never by the caller.
+// required, except that exactly one of ScenarioFile and AllChallenges, and exactly one of
+// PreviousDigestsFile and NoPrevious, is given. The files are opened by this package's readers
+// (safeopen.go), never by the caller.
 type CheckInput struct {
 	// Challenges (`--challenges`), ScenarioFile and FlagsFile are catalog.LoadScored's inputs,
 	// and nothing else uses the challenges path: after LoadScored the tree is the one the
@@ -120,6 +121,11 @@ type CheckInput struct {
 	Challenges   string
 	ScenarioFile string
 	FlagsFile    string
+	// AllChallenges says the scope is every challenge of the tree (`--all-challenges`, ADR-0056
+	// amendment 18, A4e-5): catalog.LoadScored with no scenario, the scope of a scoreboard whose
+	// SCENARIO_FILE is empty. It and ScenarioFile are one of the two and not both, so that an
+	// empty scenario path is never read as "every challenge".
+	AllChallenges bool
 	// AnswersFile is the answers table (`--answers`), RenderRecordFile the record of the render
 	// that made it and the bundles (`--render-record`), EvidenceRoot the tree
 	// <seat>/<cid>/<file> of the bundles (`--evidence-root`), SeatsFile the ordered list of the
@@ -145,13 +151,15 @@ type CheckInput struct {
 	DigestsOut string
 }
 
-// validate is the usage errors that need no file: an argument that is empty, the two previous
-// arguments that are not exactly one, no corpus, and an output that is already there or has
-// no directory.
+// validate is the usage errors that need no file: an argument that is empty, the scope and the
+// two previous arguments that are not exactly one each, no corpus, and an output that is already
+// there or has no directory.
 func (in CheckInput) validate() error {
+	if err := scopeArgsErr(in.ScenarioFile, in.AllChallenges); err != nil {
+		return err
+	}
 	for _, a := range []struct{ name, val string }{
 		{"challenges", in.Challenges},
-		{"scenario", in.ScenarioFile},
 		{"flags-file", in.FlagsFile},
 		{"answers", in.AnswersFile},
 		{"render-record", in.RenderRecordFile},
@@ -178,6 +186,16 @@ func (in CheckInput) validate() error {
 	}
 	if info, err := os.Stat(filepath.Dir(in.DigestsOut)); err != nil || !info.IsDir() {
 		return inputErr("the directory of the digests output does not exist")
+	}
+	return nil
+}
+
+// scopeArgsErr is the usage error of the scope of `edition check` and `edition render` (ADR-0056
+// D20, amendment 18): exactly one of a scenario file and every challenge. Neither (an empty
+// scenario path included: it is not "every challenge") and both are an *InputError.
+func scopeArgsErr(scenarioFile string, allChallenges bool) error {
+	if (scenarioFile != "") == allChallenges {
+		return inputErr("exactly one of scenario and all-challenges is required (an empty scenario is not every challenge)")
 	}
 	return nil
 }
