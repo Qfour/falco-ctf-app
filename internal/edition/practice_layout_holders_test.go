@@ -34,11 +34,19 @@ package edition_test
 // the self-test red in its own CI job (the file must name the script; see the entry for the names
 // it covers).
 //
-// Out of the scope (not scanned; a follow-up): the Makefile's recipe of `make edition-practice` and
-// Dockerfile.edition-practice spell the practice layout too, and so do Go files (layout_source_test.go
-// holds those of package edition). Which files are listed, and why, is in the PR of A4e-4.
+// The two files that are not shell and spell the practice layout, the recipe of `make
+// edition-practice` (the Makefile's edition-practice target) and Dockerfile.edition-practice, are
+// in the scope too (ADR-0056 amendment 19, A4e-6b): no CI job runs them, so a rename in
+// practicelayout.go would leave them broken without a red. No other test holds them, so this test
+// holds their spellings to the constants itself (practiceRecipeProblems): every path of the
+// challenge's edition they build is the layout's (EditionDirName, then PracticeDirName), and each
+// file still spells both (a file that no longer builds that path is red: it is no longer the
+// practice edition's path, and the scope must be changed with it). Go files are not in the scope
+// (layout_source_test.go holds those of package edition). Which files are listed, and why, is in the
+// PR of A4e-4.
 
 import (
+	"fmt"
 	"io/fs"
 	"maps"
 	"os"
@@ -48,6 +56,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/Qfour/falco-ctf-app/internal/edition"
 )
 
 // layoutHolder is what holds one shell file's spelling of the layout: exactly one of parity (a
@@ -359,5 +369,174 @@ func TestPracticeLayoutHolders_IsShellFile(t *testing.T) {
 		if got := isShellFile(c.path, []byte(c.data)); got != c.want {
 			t.Errorf("isShellFile(%q, %q) = %v, want %v", c.path, c.data, got, c.want)
 		}
+	}
+}
+
+// ---- the recipe of `make edition-practice` and Dockerfile.edition-practice (A4e-6b) ----
+
+const (
+	practiceDockerfile = "Dockerfile.edition-practice"
+	practiceMakeTarget = "edition-practice"
+)
+
+// practiceRecipePath is a path of a challenge's edition that the two files build: the challenge,
+// written ${CID} (the Dockerfile's build-arg) or $(CID) (the Makefile's variable), followed by the
+// segments of its edition's directory; or the recipe's $$ed (that edition directory, in the
+// recipe's shell) followed by the segments under it. A segment begins with no dot, so a temporary
+// name beside practice/ (.practice.tmp-...) is not a path of the layout.
+var practiceRecipePath = regexp.MustCompile(`(\$\{CID\}|\$\(CID\)|\$\$ed)((?:/[A-Za-z0-9_-][A-Za-z0-9_.-]*)+)`)
+
+// makeRecipe is the recipe of target in makefile: the lines after the line `<target>:` that begin
+// with a tab. The target must be there once and have a recipe.
+func makeRecipe(makefile, target string) (string, error) {
+	lines := strings.Split(makefile, "\n")
+	at := -1
+	for i, ln := range lines {
+		if ln == target+":" {
+			if at >= 0 {
+				return "", fmt.Errorf("the Makefile has the target %s twice", target)
+			}
+			at = i
+		}
+	}
+	if at < 0 {
+		return "", fmt.Errorf("the Makefile has no target %s: if `make %s` is gone, take it out of the scope of this test", target, target)
+	}
+	var recipe []string
+	for _, ln := range lines[at+1:] {
+		if !strings.HasPrefix(ln, "\t") {
+			break
+		}
+		recipe = append(recipe, ln)
+	}
+	if len(recipe) == 0 {
+		return "", fmt.Errorf("the target %s of the Makefile has no recipe", target)
+	}
+	return strings.Join(recipe, "\n"), nil
+}
+
+// practiceRecipeProblems holds the paths that text (the file what) builds to the layout of
+// practicelayout.go, given as editionDir and practiceDir: after the challenge, the segments are
+// editionDir and then practiceDir (or the first of them only); after the recipe's edition
+// directory, practiceDir. The file must build at least one such path and spell both names (a file
+// that no longer does is red: it is no longer the practice edition's path).
+func practiceRecipeProblems(what, text, editionDir, practiceDir string) []string {
+	var out []string
+	seen := map[string]bool{}
+	n := 0
+	for i, ln := range strings.Split(text, "\n") {
+		if strings.HasPrefix(strings.TrimLeft(ln, " \t"), "#") {
+			continue
+		}
+		for _, m := range practiceRecipePath.FindAllStringSubmatch(ln, -1) {
+			n++
+			want := []string{editionDir, practiceDir}
+			if m[1] == "$$ed" {
+				want = []string{practiceDir}
+			}
+			segs := strings.Split(strings.TrimPrefix(m[2], "/"), "/")
+			if len(segs) > len(want) || !slices.Equal(segs, want[:len(segs)]) {
+				out = append(out, what+":"+strconv.Itoa(i+1)+" builds "+strconv.Quote(m[0])+", which is not the layout of practicelayout.go ("+editionDir+"/"+practiceDir+"/)")
+				continue
+			}
+			for _, s := range segs {
+				seen[s] = true
+			}
+		}
+	}
+	if n == 0 {
+		return append(out, what+" builds no path of a challenge's edition: if it no longer renders the practice edition, take it out of the scope of this test")
+	}
+	for _, name := range []string{editionDir, practiceDir} {
+		if !seen[name] {
+			out = append(out, what+" never spells "+name+" in a path of a challenge's edition: the practice edition's path is "+editionDir+"/"+practiceDir+"/")
+		}
+	}
+	return out
+}
+
+// practiceRecipes are the recipe of `make edition-practice` and Dockerfile.edition-practice, as
+// (what, text) pairs.
+func practiceRecipes(t *testing.T) [][2]string {
+	t.Helper()
+	read := func(name string) string {
+		t.Helper()
+		b, err := os.ReadFile(filepath.Join("..", "..", name))
+		if err != nil {
+			t.Fatalf("%s: %v (is it in the test build context?)", name, err)
+		}
+		return string(b)
+	}
+	recipe, err := makeRecipe(read("Makefile"), practiceMakeTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return [][2]string{{"the recipe of make " + practiceMakeTarget, recipe}, {practiceDockerfile, read(practiceDockerfile)}}
+}
+
+func TestPracticeLayoutHolders_MakeRecipeAndDockerfileSpellTheConstants(t *testing.T) {
+	for _, r := range practiceRecipes(t) {
+		for _, p := range practiceRecipeProblems(r[0], r[1], edition.EditionDirName, edition.PracticeDirName) {
+			t.Error(p)
+		}
+	}
+}
+
+// The check must be able to fail: a constant changed (the files keep the old spelling), a segment
+// of a path changed in a copy of either file, a file that no longer builds the path or spells only
+// one of the names, and a Makefile without the target are each red; a comment is not a path.
+func TestPracticeLayoutHolders_MakeRecipeAndDockerfileCheckFails(t *testing.T) {
+	recipes := practiceRecipes(t)
+	for _, r := range recipes {
+		if p := practiceRecipeProblems(r[0], r[1], edition.EditionDirName, edition.PracticeDirName); len(p) != 0 {
+			t.Fatalf("the real files already have problems, so the cases below prove nothing: %v", p)
+		}
+		for name, names := range map[string][2]string{
+			"EditionDirName changed":  {edition.EditionDirName + "s", edition.PracticeDirName},
+			"PracticeDirName changed": {edition.EditionDirName, "public"},
+		} {
+			if len(practiceRecipeProblems(r[0], r[1], names[0], names[1])) == 0 {
+				t.Errorf("%s, %s: no problem was reported", r[0], name)
+			}
+		}
+	}
+	recipe, docker := recipes[0][1], recipes[1][1]
+	replaceOnce := func(src, old, repl string) string {
+		t.Helper()
+		if n := strings.Count(src, old); n != 1 {
+			t.Fatalf("%q is in the file %d times, want once: the case would not change what it says", old, n)
+		}
+		return strings.Replace(src, old, repl, 1)
+	}
+	replaceAll := func(src, old, repl string) string {
+		t.Helper()
+		if strings.Count(src, old) == 0 {
+			t.Fatalf("%q is not in the file: the case would not change what it says", old)
+		}
+		return strings.ReplaceAll(src, old, repl)
+	}
+	for _, c := range []struct{ name, what, text string }{
+		{"a segment of the Dockerfile's path changed", practiceDockerfile, replaceOnce(docker, `/edition/practice"`, `/edition/practise"`)},
+		{"the recipe's practice/ changed", "recipe", replaceOnce(recipe, `dest="$$ed/practice"`, `dest="$$ed/practise"`)},
+		{"the recipe's edition/ changed", "recipe", replaceOnce(recipe, `new="$$out/challenges/$(CID)/edition/practice"`, `new="$$out/challenges/$(CID)/editions/practice"`)},
+		{"the Dockerfile no longer builds the path", practiceDockerfile, replaceAll(docker, "${CID}/edition/practice", "${CID}")},
+		{"the recipe spells edition/ only", "recipe", replaceAll(recipe, "/practice", "")},
+	} {
+		if len(practiceRecipeProblems(c.what, c.text, edition.EditionDirName, edition.PracticeDirName)) == 0 {
+			t.Errorf("%s: no problem was reported", c.name)
+		}
+	}
+	if p := practiceRecipeProblems("recipe", recipe+"\n\t# ${CID}/elsewhere/x", edition.EditionDirName, edition.PracticeDirName); len(p) != 0 {
+		t.Errorf("a comment was read as a path: %v", p)
+	}
+	makefile, err := os.ReadFile(filepath.Join("..", "..", "Makefile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := makeRecipe(replaceOnce(string(makefile), "\n"+practiceMakeTarget+":\n", "\nedition-practise:\n"), practiceMakeTarget); err == nil {
+		t.Error("a Makefile without the target: no error")
+	}
+	if _, err := makeRecipe(string(makefile)+"\n"+practiceMakeTarget+":\n\t@true\n", practiceMakeTarget); err == nil {
+		t.Error("a Makefile with the target twice: no error")
 	}
 }
