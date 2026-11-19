@@ -391,7 +391,9 @@ func RenderEvent(in RenderEventInput) (*RenderedEvent, error) {
 		return nil, err
 	}
 	var record bytes.Buffer
-	if err := WriteRenderRecord(&record, runID, key); err != nil {
+	// The scope is the ordered ids LoadScored returned (B12: the check computes the same digest
+	// of its own scope).
+	if err := WriteRenderRecord(&record, runID, key, scored.Order); err != nil {
 		return nil, err
 	}
 

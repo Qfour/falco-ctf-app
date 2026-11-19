@@ -51,20 +51,24 @@ RUN for mode in participant admin; do \
 # (`docker buildx imagetools inspect`, 2026-10-19).
 # This removes a source of forced bumps from an image that app#293 (A-3) retires
 # altogether; it does not change #293's decision.
-FROM nginxinc/nginx-unprivileged:1.30-alpine-slim@sha256:4ac59c85c8c46d9e91eaabd2122cda4923ba380cf11f4138e389f069bcdc77a3
+FROM nginxinc/nginx-unprivileged:1.30-alpine-slim@sha256:5d8bb9437d74a600ec5dbf90c035451c724dc33eac8d3a71078f6f8612c345f6
 
 # The pins that are left (packages the base already has, raised to the fixed build;
 # a pin like this is dropped as soon as the base carries that version): zlib 1.3.2-r0 in the base, 1.4-r0 is what v3.24/main serves
 # (`apk policy zlib`, 2026-11-10, app#583; re-pinned from 1.3.2-r1, which the index dropped; 1.3.2-r1 was measured 2026-10-19). pcre2 is at
-# the version v3.24/main serves, so it needs no pin. libssl3 / libcrypto3 are 3.5.9-r0 in the base; v3.24/main moved to
-# 3.5.9-r1 on 2026-11-19 (the challenge / ttyd pins failed to resolve, app#291). Not pinned here: the docs scan failure
-# of that day is the base's nginx package (fixed by a base digest bump, app#670). musl-utils 1.2.6-r3 (2026-11-10: the
+# the version v3.24/main serves, so it needs no pin. libssl3 / libcrypto3 3.5.9-r1: the base (even after the
+# 2026-11-19 digest bump) has 3.5.9-r0, which the docs scan flags High (fix 3.5.9-r1, app#670); v3.24/main serves
+# 3.5.9-r1 (the same pin as challenge / ttyd, app#669). musl-utils 1.2.6-r3 (2026-11-10: the
 # base's 1.2.6-r2 carries a Critical, Sysdig's suggested fix; app#583 / app#591). Exit condition: drop
 # a pin from this line when the base digest carries that package's pinned version or newer.
+# NOT raised here: nginx (the base's 1.30.6-r1, High, fix 1.30.7). nginx comes from the nginx.org
+# repository, not v3.24/main, and raising it in this file would need `-X` / `--repository` and the
+# nginx.org signing key under /etc/apk/keys, both of which ADR-0036 D1 forbids (security condition 4,
+# #382 F4). It waits for upstream to publish a 1.30.7 alpine-slim image, then a digest bump (app#670).
 # apk writes /lib/apk/db as root; the base's Config.User is 101 (non-root), so wrap
 # the apk call in USER root / USER 101 and the image still runs as 101.
 USER root
-RUN apk add --no-cache --upgrade zlib=1.4-r0 musl-utils=1.2.6-r3
+RUN apk add --no-cache --upgrade libssl3=3.5.9-r1 libcrypto3=3.5.9-r1 zlib=1.4-r0 musl-utils=1.2.6-r3
 USER 101
 
 # --chmod: the non-root nginx user (uid 101) must read the config regardless of

@@ -5,7 +5,8 @@ package edition
 // event's answers table, digests file or render record. Its constants are copies of this
 // package's definitions (a shell script cannot import them), so this test holds the copies to
 // the definitions: the answers table's header (table.go), the digests file's (digests.go), the
-// render record's (renderrecord.go) and the practice run id (table.go). A header that changed on
+// render record's in its two forms, v2 and v1 (renderrecord.go: ADR-0056 A4e-6 keeps refusing
+// the first form), and the practice run id (table.go). A header that changed on
 // one side only would leave the guard looking for a header no file has: it is red here.
 //
 // Two more pins (#657 review): the script's ALLOWED_PATHS is exactly the list below (an entry
@@ -165,10 +166,13 @@ func TestCheckFlagsRunsTheHeaderGuardAndItsSelftest(t *testing.T) {
 // flagGuardConstants are the script's constants and the definitions they copy.
 func flagGuardConstants() map[string]string {
 	return map[string]string{
-		"ANSWERS_PREFIX":  headerPrefix,
-		"DIGESTS_PREFIX":  digestsHeaderPrefix,
-		"RECORD_HEADER":   renderRecordHeader,
-		"PRACTICE_RUN_ID": PracticeRunID,
+		"ANSWERS_PREFIX": headerPrefix,
+		"DIGESTS_PREFIX": digestsHeaderPrefix,
+		"RECORD_HEADER":  renderRecordHeader,
+		// the first form of the render record, which no reader takes (A4e-6) and which the
+		// guard still refuses
+		"RECORD_HEADER_V1": renderRecordHeaderV1,
+		"PRACTICE_RUN_ID":  PracticeRunID,
 	}
 }
 
