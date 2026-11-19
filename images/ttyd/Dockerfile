@@ -55,7 +55,7 @@ FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cab
 # https://dl-cdn.alpinelinux.org/alpine/v3.24/main (community は ttyd/tini/vim
 # 系) を `docker run alpine@<digest> apk policy` で実測して確認した版数
 # (2026-09-01):
-#   libssl3/libcrypto3 3.5.9-r0 (2026-10-05: 3.24/main から 3.5.8-r0 が外れ apk
+#   libssl3/libcrypto3 3.5.9-r1 (2026-10-05: 3.24/main から 3.5.8-r0 が外れ apk
 #     resolve が failing していたため再 pin。`apk policy libssl3 libcrypto3` 実測で
 #     3.24/main の唯一の提供版が 3.5.9-r0。base に焼き込まれた 3.5.7-r0 からの
 #     明示 upgrade は引き続き必要。3.5.8-r0 の secfix [CVE-2026-63072..63076/
@@ -63,6 +63,7 @@ FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cab
 #     含まれる — 上流 CHANGES.md の 3.5.7→3.5.8 節が 3.5.9 に残ることを aports と
 #     併せて確認済み (5x R1)。3.5.9 自体も追加の CVE 修正を含む
 #     (High は CVE-2026-84782))
+#   re-pin 2026-11-19: 3.24/main が 3.5.9-r1 に上がり r0 が index から外れた (`apk add` が `breaks: world[libcrypto3=3.5.9-r0]` で落ちた。PR CI の build で検知)。→ 3.5.9-r1 (追跡先は app#291)
 #   ca-certificates は **入れない** (app#517、2026-10-26。以前は 20261020-r0 を pin
 #     していたが、10-05 と 10-25 の drift 2 回の原因だった)。runtime に消費者が無い:
 #     (a) kubectl は in-cluster config の CAFile に SA の ca.crt を使い system の CA store を
@@ -83,7 +84,7 @@ FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cab
 # musl-utils 1.2.6-r3 (2026-11-10: base の 1.2.6-r2 に Critical、Sysdig の suggested fix。app#583 / app#591)
 # kubectl (Go toolchain High) は本 alpine bump のスコープ外 — バージョン選定の
 # 経緯は上の ARG KUBECTL_VERSION 直下のコメント (workspace#33) を参照。
-RUN apk add --no-cache --upgrade libssl3=3.5.9-r0 libcrypto3=3.5.9-r0 zlib=1.4-r0 musl-utils=1.2.6-r3 \
+RUN apk add --no-cache --upgrade libssl3=3.5.9-r1 libcrypto3=3.5.9-r1 zlib=1.4-r0 musl-utils=1.2.6-r3 \
  && apk add --no-cache \
         "ttyd=1.7.7-r0" \
         "tini=0.19.0-r3" \
