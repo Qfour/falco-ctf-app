@@ -82,7 +82,7 @@ FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cab
 # (`make check-apk-pins-lint` が、許可表にも `--upgrade` にも当たらない pin を落とす)。
 # 以下は引き上げる package の実測 (`docker run alpine@<digest> apk policy`、
 # https://dl-cdn.alpinelinux.org/alpine/v3.24/main):
-#   libssl3/libcrypto3 3.5.9-r1 (2026-10-05: 3.24/main から 3.5.8-r0 が外れ apk
+#   libssl3/libcrypto3 3.5.9-r0 (2026-10-05: 3.24/main から 3.5.8-r0 が外れ apk
 #     resolve が failing していたため再 pin。`apk policy libssl3 libcrypto3` 実測で
 #     3.24/main の唯一の提供版が 3.5.9-r0。base に焼き込まれた 3.5.7-r0 からの
 #     明示 upgrade は引き続き必要。3.5.8-r0 の secfix [CVE-2026-63072..63076/
