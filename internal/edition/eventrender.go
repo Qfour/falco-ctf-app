@@ -76,14 +76,18 @@ const (
 )
 
 // RenderEventInput is what `edition render` (the event's) is given: the paths of its arguments
-// (D20). Every one is required, except that exactly one of PreviousSeatsFile and NoPrevious is
-// given. The files are opened by this package's readers (safeopen.go), never by the caller.
+// (D20). Every one is required, except that exactly one of ScenarioFile and AllChallenges, and
+// exactly one of PreviousSeatsFile and NoPrevious, is given. The files are opened by this
+// package's readers (safeopen.go), never by the caller.
 type RenderEventInput struct {
 	// Challenges (`--challenges`), ScenarioFile and FlagsFile are catalog.LoadScored's inputs.
 	// The flags are this event's (T7 and B3 of the self check).
 	Challenges   string
 	ScenarioFile string
 	FlagsFile    string
+	// AllChallenges says the scope is every challenge of the tree (`--all-challenges`, ADR-0056
+	// amendment 18, A4e-5), as CheckInput.AllChallenges: one of it and ScenarioFile, not both.
+	AllChallenges bool
 	// EditionRoot is the tree <cid>/{edition.yaml, template/<file>} of the event edition
 	// (`--edition-root`), SeatsFile the ordered list of the seats (`--seats`).
 	EditionRoot string
@@ -104,9 +108,11 @@ type RenderEventInput struct {
 
 // validate is step (0): the usage errors that need no file but the guard of the output path.
 func (in RenderEventInput) validate() error {
+	if err := scopeArgsErr(in.ScenarioFile, in.AllChallenges); err != nil {
+		return err
+	}
 	for _, a := range []struct{ name, val string }{
 		{"challenges", in.Challenges},
-		{"scenario", in.ScenarioFile},
 		{"flags-file", in.FlagsFile},
 		{"edition-root", in.EditionRoot},
 		{"seats", in.SeatsFile},

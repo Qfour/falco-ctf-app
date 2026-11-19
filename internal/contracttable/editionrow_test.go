@@ -58,14 +58,14 @@ var edGolden = filepath.Join("..", "edition", "testdata", "render-golden", editi
 // ---- the command, as cmd/scoreboard/editioncmd.go has it ----
 
 // edArgs is one form of the command: the subcommand's word, the arguments that take a value (the
-// one that may be given again among them) and the one argument that takes none.
+// one that may be given again among them) and the arguments that take none.
 type edArgs struct {
 	word   string
 	valued []string
-	flag   string
+	flags  []string
 }
 
-func (a edArgs) names() []string { return append(slices.Clone(a.valued), a.flag) }
+func (a edArgs) names() []string { return slices.Concat(a.valued, a.flags) }
 
 // edCLI is the command: main.go's word, the three forms and the exit codes (accepted, refused,
 // usage, write failed, in that order).
@@ -76,7 +76,8 @@ type edCLI struct {
 }
 
 // edSource is what one Go file declares at its top level, as far as this test reads it: string
-// and integer constants of a literal, []string variables of string literals, and functions.
+// and integer constants of a literal, []string variables whose elements are string literals or
+// names of string constants of the file, and functions.
 type edSource struct {
 	strs  map[string]string
 	ints  map[string]int
@@ -90,20 +91,26 @@ func edParse(name, src string) (*edSource, error) {
 		return nil, err
 	}
 	s := &edSource{strs: map[string]string{}, ints: map[string]int{}, lists: map[string][]string{}, funcs: map[string]*ast.FuncDecl{}}
-	for _, d := range f.Decls {
-		switch d := d.(type) {
-		case *ast.FuncDecl:
-			if d.Recv == nil {
-				s.funcs[d.Name.Name] = d
-			}
-		case *ast.GenDecl:
-			for _, spec := range d.Specs {
-				vs, ok := spec.(*ast.ValueSpec)
-				if !ok || len(vs.Values) != len(vs.Names) {
+	// The constants first, so that a list may name a constant declared after it.
+	for _, tok := range []token.Token{token.CONST, token.VAR} {
+		for _, d := range f.Decls {
+			switch d := d.(type) {
+			case *ast.FuncDecl:
+				if d.Recv == nil && tok == token.CONST {
+					s.funcs[d.Name.Name] = d
+				}
+			case *ast.GenDecl:
+				if d.Tok != tok {
 					continue
 				}
-				for i, n := range vs.Names {
-					s.add(d.Tok, n.Name, vs.Values[i])
+				for _, spec := range d.Specs {
+					vs, ok := spec.(*ast.ValueSpec)
+					if !ok || len(vs.Values) != len(vs.Names) {
+						continue
+					}
+					for i, n := range vs.Names {
+						s.add(d.Tok, n.Name, vs.Values[i])
+					}
 				}
 			}
 		}
@@ -133,6 +140,14 @@ func (s *edSource) add(tok token.Token, name string, v ast.Expr) {
 		}
 		var words []string
 		for _, e := range x.Elts {
+			if id, ok := e.(*ast.Ident); ok {
+				w, ok := s.strs[id.Name]
+				if !ok {
+					return
+				}
+				words = append(words, w)
+				continue
+			}
 			lit, ok := e.(*ast.BasicLit)
 			if !ok || lit.Kind != token.STRING {
 				return
@@ -160,13 +175,12 @@ func (s *edSource) constWord(e ast.Expr) (string, error) {
 	return w, nil
 }
 
-// argsOf reads the one call readEditionArgs(args, list, repeated, flag) of the function fn: the
-// list is a []string variable of the file, repeated the name of a constant or "" (none), and flag
-// the name of a constant.
-func (s *edSource) argsOf(fn string) (valued []string, flag string, err error) {
+// argsOf reads the one call readEditionArgs(args, list, repeated, flags) of the function fn: the
+// list and flags are []string variables of the file, repeated the name of a constant or "" (none).
+func (s *edSource) argsOf(fn string) (valued, flags []string, err error) {
 	d := s.funcs[fn]
 	if d == nil || d.Body == nil {
-		return nil, "", fmt.Errorf("func %s is not in %s", fn, edCmdPath)
+		return nil, nil, fmt.Errorf("func %s is not in %s", fn, edCmdPath)
 	}
 	var calls []*ast.CallExpr
 	ast.Inspect(d.Body, func(n ast.Node) bool {
@@ -178,26 +192,26 @@ func (s *edSource) argsOf(fn string) (valued []string, flag string, err error) {
 		return true
 	})
 	if len(calls) != 1 || len(calls[0].Args) != 4 {
-		return nil, "", fmt.Errorf("func %s does not call readEditionArgs(args, list, repeated, flag) exactly once", fn)
+		return nil, nil, fmt.Errorf("func %s does not call readEditionArgs(args, list, repeated, flags) exactly once", fn)
 	}
 	a := calls[0].Args
 	list, ok := a[1].(*ast.Ident)
 	if !ok || s.lists[list.Name] == nil {
-		return nil, "", fmt.Errorf("func %s does not give readEditionArgs a []string variable of the file", fn)
+		return nil, nil, fmt.Errorf("func %s does not give readEditionArgs a []string variable of the file", fn)
 	}
 	valued = slices.Clone(s.lists[list.Name])
 	if lit, ok := a[2].(*ast.BasicLit); !ok || lit.Kind != token.STRING || lit.Value != `""` {
 		rep, err := s.constWord(a[2])
 		if err != nil {
-			return nil, "", fmt.Errorf("func %s: the argument that may be given again %v", fn, err)
+			return nil, nil, fmt.Errorf("func %s: the argument that may be given again %v", fn, err)
 		}
 		valued = append(valued, rep)
 	}
-	flag, err = s.constWord(a[3])
-	if err != nil {
-		return nil, "", fmt.Errorf("func %s: the argument that takes no value %v", fn, err)
+	fl, ok := a[3].(*ast.Ident)
+	if !ok || s.lists[fl.Name] == nil {
+		return nil, nil, fmt.Errorf("func %s does not give readEditionArgs its arguments that take no value as a []string variable of the file", fn)
 	}
-	return valued, flag, nil
+	return valued, slices.Clone(s.lists[fl.Name]), nil
 }
 
 // subcommands reads the switch of runEdition: the word of each case (a constant of the file) by
@@ -356,11 +370,11 @@ func edReadCLI(cmdSrc, mainSrc string) (edCLI, error) {
 		{"parseRenderArgs", renderWord, &c.render},
 		{"parsePracticeArgs", renderWord, &c.practice},
 	} {
-		valued, flag, err := s.argsOf(f.fn)
+		valued, flags, err := s.argsOf(f.fn)
 		if err != nil {
 			return c, err
 		}
-		*f.into = edArgs{word: f.word, valued: valued, flag: flag}
+		*f.into = edArgs{word: f.word, valued: valued, flags: flags}
 	}
 	for i, name := range []string{"exitAccepted", "exitRefused", "exitUsage", "exitWriteFailed"} {
 		v, ok := s.ints[name]
@@ -669,7 +683,7 @@ func edForm(span string, c edCLI) (string, error) {
 	switch {
 	case words[1] == c.check.word:
 		kind, a = "check", c.check
-	case words[1] == c.render.word && len(rest) > 0 && rest[0] == c.practice.flag:
+	case words[1] == c.render.word && len(rest) > 0 && slices.Contains(c.practice.flags, rest[0]):
 		kind, a = "practice", c.practice
 	case words[1] == c.render.word:
 		kind, a = "render", c.render
@@ -684,7 +698,7 @@ func edForm(span string, c edCLI) (string, error) {
 		if strings.HasPrefix(w, "--") {
 			got = append(got, w)
 			takesValue := i+1 < len(rest) && !strings.HasPrefix(rest[i+1], "--")
-			if takesValue != (w != a.flag) {
+			if takesValue == slices.Contains(a.flags, w) {
 				how := "without a value"
 				if takesValue {
 					how = "with a value"
@@ -822,8 +836,12 @@ func TestEditionRows(t *testing.T) {
 		if c.edition != "edition" || c.check.word != "check" || c.render.word != "render" || c.practice.word != "render" {
 			t.Errorf("the words read are %q %q %q %q", c.edition, c.check.word, c.render.word, c.practice.word)
 		}
-		if c.check.flag != "--no-previous" || c.render.flag != "--no-previous" || c.practice.flag != "--practice" {
-			t.Errorf("the arguments that take no value read are %q %q %q", c.check.flag, c.render.flag, c.practice.flag)
+		switches := []string{"--all-challenges", "--no-previous"}
+		if !slices.Equal(sorted(c.check.flags), switches) || !slices.Equal(sorted(c.render.flags), switches) || !slices.Equal(c.practice.flags, []string{"--practice"}) {
+			t.Errorf("the arguments that take no value read are %q %q %q", c.check.flags, c.render.flags, c.practice.flags)
+		}
+		if !slices.Contains(c.check.valued, "--scenario") || !slices.Contains(c.render.valued, "--scenario") {
+			t.Errorf("--scenario is not read as an argument of check and render: %q %q", c.check.valued, c.render.valued)
 		}
 		if len(c.check.valued) != 11 || !slices.Contains(c.check.valued, "--corpus") || !slices.Contains(c.check.valued, "--digests-out") {
 			t.Errorf("the arguments of check read are %q", c.check.valued)
@@ -912,6 +930,9 @@ func TestEditionRows(t *testing.T) {
 			{"an argument dropped from the render synopsis", " --key-file <file>", ""},
 			{"an argument added to the check synopsis", " --digests-out <file>`", " --digests-out <file> --force`"},
 			{"the argument without a value given one", "--no-previous --corpus", "--no-previous <x> --corpus"},
+			{"--all-challenges dropped from the render synopsis", "<file> --all-challenges --flags-file <file> --edition-root", "<file> --flags-file <file> --edition-root"},
+			{"--all-challenges given a value in the check synopsis", "--all-challenges --flags-file <file> --answers", "--all-challenges <x> --flags-file <file> --answers"},
+			{"--scenario dropped from the check synopsis", "`edition check --challenges <dir> --scenario <file>", "`edition check --challenges <dir>"},
 			{"an argument added to the practice synopsis", "--cid <cid>`", "--cid <cid> --out <dir>`"},
 			{"a subcommand renamed", "`edition check --challenges", "`edition verify --challenges"},
 			{"a name of the output layout", "`render-record.tsv`", "`render-record.txt`"},
@@ -953,7 +974,9 @@ func TestEditionRows(t *testing.T) {
 				c.render.valued = slices.DeleteFunc(slices.Clone(c.render.valued), func(s string) bool { return s == "--key-file" })
 			}},
 			{"an argument of check added", func(c *edCLI, _ *edFiles) { c.check.valued = append(slices.Clone(c.check.valued), "--force") }},
-			{"the practice argument renamed", func(c *edCLI, _ *edFiles) { c.practice.flag = "--practise" }},
+			{"the practice argument renamed", func(c *edCLI, _ *edFiles) { c.practice.flags = []string{"--practise"} }},
+			{"--all-challenges taken out of check", func(c *edCLI, _ *edFiles) { c.check.flags = []string{"--no-previous"} }},
+			{"an argument without a value added to render", func(c *edCLI, _ *edFiles) { c.render.flags = append(slices.Clone(c.render.flags), "--every") }},
 			{"an exit code changed", func(c *edCLI, _ *edFiles) { c.exits[3] = 4 }},
 			{"two exit codes swapped", func(c *edCLI, _ *edFiles) { c.exits[1], c.exits[2] = c.exits[2], c.exits[1] }},
 			{"the seats header", func(_ *edCLI, f *edFiles) { f.seatsHeader += "x" }},
@@ -999,9 +1022,12 @@ func TestEditionRows(t *testing.T) {
 		}{
 			{"an argument of check renamed", repl(cmdSrc, `"--digests-out",`, `"--digest-out",`), mainSrc},
 			{"an exit code changed", repl(cmdSrc, "exitWriteFailed = 3", "exitWriteFailed = 4"), mainSrc},
-			{"the render subcommand renamed", repl(cmdSrc, `subcommandRender = "render"`, `subcommandRender = "draw"`), mainSrc},
+			{"the render subcommand renamed", repl(cmdSrc, `subcommandRender  = "render"`, `subcommandRender  = "draw"`), mainSrc},
 			{"a case of a literal, not a constant", repl(cmdSrc, "case subcommandCheck:", `case "check":`), mainSrc},
-			{"the repeated argument of check dropped", repl(cmdSrc, "readEditionArgs(args, checkFlags, corpusFlag, noPreviousFlag)", `readEditionArgs(args, checkFlags, "", noPreviousFlag)`), mainSrc},
+			{"the repeated argument of check dropped", repl(cmdSrc, "readEditionArgs(args, checkFlags, corpusFlag, checkSwitches)", `readEditionArgs(args, checkFlags, "", checkSwitches)`), mainSrc},
+			{"--all-challenges taken out of check", repl(cmdSrc, "checkSwitches    = []string{noPreviousFlag, allChallengesFlag}", "checkSwitches    = []string{noPreviousFlag}"), mainSrc},
+			{"--all-challenges renamed", repl(cmdSrc, `allChallengesFlag = "--all-challenges"`, `allChallengesFlag = "--every-challenge"`), mainSrc},
+			{"--scenario renamed", repl(cmdSrc, `const scenarioFlag = "--scenario"`, `const scenarioFlag = "--scenario-file"`), mainSrc},
 			{"main.go's word", cmdSrc, repl(mainSrc, `os.Args[1] == "edition"`, `os.Args[1] == "editions"`)},
 			{"no editioncmd.go", "", mainSrc},
 			{"no main.go", cmdSrc, ""},
