@@ -60,6 +60,7 @@ const (
 	// EventEvidenceDirName is <--out>/evidence/: the bundles, <seat>/<cid>/<file> under it.
 	EventEvidenceDirName = "evidence"
 	// EventRenderRecordFileName is <--out>/render-record.tsv: the record of the render
-	// (WriteRenderRecord): the run id and the key's fingerprint, no key and no value.
+	// (WriteRenderRecord): the run id, the key's fingerprint and the digest of the scope,
+	// no key and no value.
 	EventRenderRecordFileName = "render-record.tsv"
 )
