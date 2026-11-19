@@ -55,8 +55,10 @@ FROM nginxinc/nginx-unprivileged:1.30-alpine-slim@sha256:4ac59c85c8c46d9e91eaabd
 
 # The pins that are left (packages the base already has, raised to the fixed build;
 # a pin like this is dropped as soon as the base carries that version): zlib 1.3.2-r0 in the base, 1.4-r0 is what v3.24/main serves
-# (`apk policy zlib`, 2026-11-10, app#583; re-pinned from 1.3.2-r1, which the index dropped; 1.3.2-r1 was measured 2026-10-19). libssl3 / libcrypto3 (3.5.9-r0) and pcre2 are at
-# the version v3.24/main serves, so they need no pin. musl-utils 1.2.6-r3 (2026-11-10: the
+# (`apk policy zlib`, 2026-11-10, app#583; re-pinned from 1.3.2-r1, which the index dropped; 1.3.2-r1 was measured 2026-10-19). pcre2 is at
+# the version v3.24/main serves, so it needs no pin. libssl3 / libcrypto3 are 3.5.9-r0 in the base; v3.24/main moved to
+# 3.5.9-r1 on 2026-11-19 (the challenge / ttyd pins failed to resolve, app#291). Not pinned here: the docs scan failure
+# of that day is the base's nginx package (fixed by a base digest bump, app#670). musl-utils 1.2.6-r3 (2026-11-10: the
 # base's 1.2.6-r2 carries a Critical, Sysdig's suggested fix; app#583 / app#591). Exit condition: drop
 # a pin from this line when the base digest carries that package's pinned version or newer.
 # apk writes /lib/apk/db as root; the base's Config.User is 101 (non-root), so wrap
