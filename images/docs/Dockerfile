@@ -51,7 +51,7 @@ RUN for mode in participant admin; do \
 # (`docker buildx imagetools inspect`, 2026-10-19).
 # This removes a source of forced bumps from an image that app#293 (A-3) retires
 # altogether; it does not change #293's decision.
-FROM nginxinc/nginx-unprivileged:1.30-alpine-slim@sha256:4ac59c85c8c46d9e91eaabd2122cda4923ba380cf11f4138e389f069bcdc77a3
+FROM nginxinc/nginx-unprivileged:1.30-alpine-slim@sha256:5d8bb9437d74a600ec5dbf90c035451c724dc33eac8d3a71078f6f8612c345f6
 
 # The pins that are left (packages the base already has, raised to the fixed build;
 # a pin like this is dropped as soon as the base carries that version): zlib 1.3.2-r0 in the base, 1.4-r0 is what v3.24/main serves
