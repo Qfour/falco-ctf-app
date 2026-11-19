@@ -62,43 +62,61 @@ func TestParseSeats(t *testing.T) {
 func TestParseRenderRecord(t *testing.T) {
 	const run = "0123456789abcdef0123456789abcdef"
 	fp := strings.Repeat("ab", 32)
-	rec := func(h, r, f string) string { return h + "\n" + r + "\n" + f + "\n" }
-	goodRec := rec(renderRecordHeader, renderRecordRunID+"\t"+run, renderRecordFingerprint+"\t"+fp)
-	if id, err := parseRenderRecord([]byte(goodRec)); err != nil || id != run {
-		t.Fatalf("a good record: (%q, %v)", id, err)
+	sc := strings.Repeat("cd", 32)
+	runLine, fpLine, scLine := renderRecordRunID+"\t"+run, renderRecordFingerprint+"\t"+fp, renderRecordScope+"\t"+sc
+	rec := func(lines ...string) string { return strings.Join(lines, "\n") + "\n" }
+	goodRec := rec(renderRecordHeader, runLine, fpLine, scLine)
+	if got, err := parseRenderRecord([]byte(goodRec)); err != nil || got.runID != run || got.scope != sc {
+		t.Fatalf("a good record: (%+v, %v)", got, err)
 	}
-	// the writer's own output is what the reader accepts
+	// the writer's own output is what the reader accepts, with the scope digest of its scope
 	key, err := NewMasterKey([]byte(strings.Repeat("test-only-key-", 4)))
 	if err != nil {
 		t.Fatal(err)
 	}
+	scope := []string{"00-evade", "01-demo"}
 	var w strings.Builder
-	if err := WriteRenderRecord(&w, run, key); err != nil {
+	if err := WriteRenderRecord(&w, run, key, scope); err != nil {
 		t.Fatal(err)
 	}
-	if id, err := parseRenderRecord([]byte(w.String())); err != nil || id != run {
-		t.Errorf("WriteRenderRecord's output: (%q, %v), want the run id", id, err)
+	if got, err := parseRenderRecord([]byte(w.String())); err != nil || got.runID != run || got.scope != ScopeDigest(scope) {
+		t.Errorf("WriteRenderRecord's output: (%+v, %v), want the run id and the scope digest", got, err)
 	}
+	// ADR-0056 V98: the v1 record and every form error of a v2 one are exit 2 (the reader does not
+	// go on to B12). The same set as platform's V99 cases, and a few more.
 	bad := map[string]string{
-		"empty":                 "",
-		"another header":        rec("# falco-ctf render-record v2", renderRecordRunID+"\t"+run, renderRecordFingerprint+"\t"+fp),
-		"the run id all zeros":  rec(renderRecordHeader, renderRecordRunID+"\t"+PracticeRunID, renderRecordFingerprint+"\t"+fp),
-		"a short run id":        rec(renderRecordHeader, renderRecordRunID+"\t"+run[:31], renderRecordFingerprint+"\t"+fp),
-		"an upper-case run id":  rec(renderRecordHeader, renderRecordRunID+"\t"+strings.ToUpper(run), renderRecordFingerprint+"\t"+fp),
-		"a short fingerprint":   rec(renderRecordHeader, renderRecordRunID+"\t"+run, renderRecordFingerprint+"\t"+fp[:63]),
-		"the keys swapped":      rec(renderRecordHeader, renderRecordFingerprint+"\t"+fp, renderRecordRunID+"\t"+run),
-		"a space for the tab":   rec(renderRecordHeader, renderRecordRunID+" "+run, renderRecordFingerprint+"\t"+fp),
-		"a fourth line":         goodRec + "extra\n",
-		"two lines":             renderRecordHeader + "\n" + renderRecordRunID + "\t" + run + "\n",
-		"CRLF":                  strings.ReplaceAll(goodRec, "\n", "\r\n"),
-		"no final newline":      strings.TrimSuffix(goodRec, "\n"),
-		"the run id of a table": "# falco-ctf answers v1 run=" + run + "\n",
+		"empty":                                      "",
+		"the first form (v1, three lines)":           rec(renderRecordHeaderV1, runLine, fpLine),
+		"the first form with a scope line":           rec(renderRecordHeaderV1, runLine, fpLine, scLine),
+		"another header":                             rec("# falco-ctf render-record v3", runLine, fpLine, scLine),
+		"v2 with no scope line (three lines)":        rec(renderRecordHeader, runLine, fpLine),
+		"five lines":                                 rec(renderRecordHeader, runLine, fpLine, scLine, "extra"),
+		"the scope line twice (five lines)":          rec(renderRecordHeader, runLine, fpLine, scLine, scLine),
+		"the scope line in place of the fingerprint": rec(renderRecordHeader, runLine, scLine, scLine),
+		"a scope of 63 digits":                       rec(renderRecordHeader, runLine, fpLine, renderRecordScope+"\t"+sc[:63]),
+		"a scope of 65 digits":                       rec(renderRecordHeader, runLine, fpLine, scLine+"c"),
+		"an upper-case scope":                        rec(renderRecordHeader, runLine, fpLine, renderRecordScope+"\t"+strings.ToUpper(sc)),
+		"a scope that is not hex":                    rec(renderRecordHeader, runLine, fpLine, renderRecordScope+"\t"+strings.Repeat("g", 64)),
+		"another name for the scope":                 rec(renderRecordHeader, runLine, fpLine, "scope-digest\t"+sc),
+		"an empty scope":                             rec(renderRecordHeader, runLine, fpLine, renderRecordScope+"\t"),
+		"the scope before the fingerprint":           rec(renderRecordHeader, runLine, scLine, fpLine),
+		"the run id all zeros":                       rec(renderRecordHeader, renderRecordRunID+"\t"+PracticeRunID, fpLine, scLine),
+		"a short run id":                             rec(renderRecordHeader, renderRecordRunID+"\t"+run[:31], fpLine, scLine),
+		"an upper-case run id":                       rec(renderRecordHeader, renderRecordRunID+"\t"+strings.ToUpper(run), fpLine, scLine),
+		"a short fingerprint":                        rec(renderRecordHeader, runLine, renderRecordFingerprint+"\t"+fp[:63], scLine),
+		"the keys swapped":                           rec(renderRecordHeader, fpLine, runLine, scLine),
+		"a space for the tab":                        rec(renderRecordHeader, renderRecordRunID+" "+run, fpLine, scLine),
+		"a space for the tab of the scope":           rec(renderRecordHeader, runLine, fpLine, renderRecordScope+" "+sc),
+		"two lines":                                  rec(renderRecordHeader, runLine),
+		"CRLF":                                       strings.ReplaceAll(goodRec, "\n", "\r\n"),
+		"no final newline":                           strings.TrimSuffix(goodRec, "\n"),
+		"the run id of a table":                      "# falco-ctf answers v1 run=" + run + "\n",
 	}
 	for name, in := range bad {
-		id, err := parseRenderRecord([]byte(in))
+		got, err := parseRenderRecord([]byte(in))
 		var ie *InputError
 		if err == nil || !errors.As(err, &ie) {
-			t.Errorf("%s: (%q, %v), want an InputError (the form of an input file is wrong: exit 2)", name, id, err)
+			t.Errorf("%s: (%+v, %v), want an InputError (the form of an input file is wrong: exit 2)", name, got, err)
 		}
 	}
 }

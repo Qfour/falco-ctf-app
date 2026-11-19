@@ -59,6 +59,7 @@ type cevFix struct {
 	in      edition.CheckInput
 	seats   []string
 	key     edition.MasterKey
+	scope   []string // the ordered ids of the render's scope (catalog.LoadScored's Order)
 	values  []string
 	answers map[string]string // "<seat>/<qid>" -> value
 	spec    string
@@ -125,7 +126,8 @@ func newCevFix(t *testing.T, o cevOpts) *cevFix {
 	if err := edition.WriteAnswers(&table, runA, r.Rows); err != nil {
 		t.Fatalf("WriteAnswers: %v", err)
 	}
-	if err := edition.WriteRenderRecord(&record, runA, key); err != nil {
+	f.scope = scored.Order
+	if err := edition.WriteRenderRecord(&record, runA, key, f.scope); err != nil {
 		t.Fatalf("WriteRenderRecord: %v", err)
 	}
 	f.tree.PlaceAnswers(table.String(), record.String())

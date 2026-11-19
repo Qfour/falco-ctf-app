@@ -311,6 +311,17 @@ func TestRender_PreviousSeatsMustBeExtendedAtTheEnd(t *testing.T) {
 			t.Errorf("the bundle of %s changed when a seat was added at the end", seats[i])
 		}
 	}
+	// The same list as the previous one (an extension by no seat: the render made again after the
+	// image changed, ADR-0056 amendment 19) passes and keeps every value, byte for byte.
+	same := rdRender(t, with(edition.PreviousSeatsOf(seats[:3]), seats[:3]...))
+	if len(same.Bundles) != 3 {
+		t.Fatalf("the render of the same list has %d bundles, want 3", len(same.Bundles))
+	}
+	for i := 0; i < 3; i++ {
+		if !rdSameBundle(before.Bundles[i], same.Bundles[i]) {
+			t.Errorf("the bundle of %s changed when the list was the previous one again", seats[i])
+		}
+	}
 }
 
 // V74 (E3, the marks): the mark of an answer or a decoy that has a token byte next to it is E3,
@@ -344,10 +355,11 @@ func TestKeyFingerprintAndRenderRecord(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := edition.WriteRenderRecord(&buf, runA, a); err != nil {
+	scope := []string{"00-evade", demoCID}
+	if err := edition.WriteRenderRecord(&buf, runA, a, scope); err != nil {
 		t.Fatalf("WriteRenderRecord: %v", err)
 	}
-	want := "# falco-ctf render-record v1\nrun-id\t" + runA + "\nkey-fingerprint\t" + a.Fingerprint() + "\n"
+	want := "# falco-ctf render-record v2\nrun-id\t" + runA + "\nkey-fingerprint\t" + a.Fingerprint() + "\nscope\t" + edition.ScopeDigest(scope) + "\n"
 	if buf.String() != want {
 		t.Errorf("the record is %q, want %q", buf.String(), want)
 	}
@@ -361,14 +373,18 @@ func TestKeyFingerprintAndRenderRecord(t *testing.T) {
 	for name, c := range map[string]struct {
 		runID string
 		key   edition.MasterKey
+		scope []string
 	}{
-		"the practice run id": {edition.PracticeRunID, a},
-		"a short run id":      {"0123", a},
-		"no key":              {runA, edition.MasterKey{}},
-		"the practice key":    {runA, edition.PracticeMasterKey()},
+		"the practice run id":          {edition.PracticeRunID, a, scope},
+		"a short run id":               {"0123", a, scope},
+		"no key":                       {runA, edition.MasterKey{}, scope},
+		"the practice key":             {runA, edition.PracticeMasterKey(), scope},
+		"no scope":                     {runA, a, nil},
+		"an id outside the grammar":    {runA, a, []string{"00-evade", "Demo"}},
+		"an id with a line feed in it": {runA, a, []string{"00-evade\n01-demo"}},
 	} {
 		var out bytes.Buffer
-		err := edition.WriteRenderRecord(&out, c.runID, c.key)
+		err := edition.WriteRenderRecord(&out, c.runID, c.key, c.scope)
 		if err == nil || out.Len() != 0 {
 			t.Errorf("%s: err = %v, %d bytes written; want a refusal and nothing", name, err, out.Len())
 		}

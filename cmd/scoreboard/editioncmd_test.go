@@ -40,6 +40,16 @@ func ecSpec() string { return editiontest.GoodSpec() }
 
 func ecTemplate() string { return editiontest.GoodTemplate() }
 
+// ecScope is the scope digest of the fixture's scenario (the evade challenge, then the
+// investigate one: the order of the scenario file).
+func ecScope() string { return edition.ScopeDigest([]string{ecEvade, ecCID}) }
+
+// ecRecord is a render record of the second form (v2) with the run id run and the scope digest
+// scope, and a fingerprint that is a placeholder.
+func ecRecord(run, scope string) string {
+	return "# falco-ctf render-record v2\nrun-id\t" + run + "\nkey-fingerprint\t" + strings.Repeat("ab", 32) + "\nscope\t" + scope + "\n"
+}
+
 // ecFix is one event on disk: its tree, and the answers the renderer drew (none may be
 // printed).
 type ecFix struct {
@@ -94,7 +104,7 @@ func newEcFix(t *testing.T) *ecFix {
 	if err := edition.WriteAnswers(&table, ecRunID, r.Rows); err != nil {
 		t.Fatal(err)
 	}
-	if err := edition.WriteRenderRecord(&record, ecRunID, key); err != nil {
+	if err := edition.WriteRenderRecord(&record, ecRunID, key, scored.Order); err != nil {
 		t.Fatal(err)
 	}
 	f.tree.PlaceAnswers(table.String(), record.String())
@@ -376,8 +386,13 @@ func TestEditionCheck_ARuleOfD10IsExit1(t *testing.T) {
 		// V90: the run id of the render record that is not the table's is B11 (amendment 13),
 		// not T3 (the form of a table, which the scoreboard's start-up applies too).
 		{"B11: the render record is of another run", func(f *ecFix) {
-			f.put("render-record.tsv", "# falco-ctf render-record v1\nrun-id\tfedcba9876543210fedcba9876543210\nkey-fingerprint\t"+strings.Repeat("ab", 32)+"\n")
+			f.put("render-record.tsv", ecRecord("fedcba9876543210fedcba9876543210", ecScope()))
 		}, "B11:", "T3:"},
+		// V98: the scope digest of the render record that is not the check's scope is B12, before
+		// the table is read (so not B11, and not a rule of the table).
+		{"B12: the render record is of another scope", func(f *ecFix) {
+			f.put("render-record.tsv", ecRecord(ecRunID, edition.ScopeDigest([]string{ecCID})))
+		}, "B12:", "B11:"},
 		{"E2: decoys below K", func(f *ecFix) {
 			f.put("edition-root/"+ecCID+"/edition.yaml", strings.ReplaceAll(ecSpec(), "decoys: 9", "decoys: 3"))
 		}, "E2:", ""},
@@ -426,7 +441,14 @@ func TestEditionCheck_ABadFormOfAnInputFileIsExit2(t *testing.T) {
 	}{
 		{"a render record that is not a record", func(f *ecFix) { f.put("render-record.tsv", "not a render record\n") }},
 		{"a render record with a run id of all zeros", func(f *ecFix) {
-			f.put("render-record.tsv", "# falco-ctf render-record v1\nrun-id\t"+edition.PracticeRunID+"\nkey-fingerprint\t"+strings.Repeat("ab", 32)+"\n")
+			f.put("render-record.tsv", ecRecord(edition.PracticeRunID, ecScope()))
+		}},
+		// V98: a record of the first form, and a v2 record with no scope line, are exit 2 (not B12).
+		{"a render record of the first form (v1)", func(f *ecFix) {
+			f.put("render-record.tsv", "# falco-ctf render-record v1\nrun-id\t"+ecRunID+"\nkey-fingerprint\t"+strings.Repeat("ab", 32)+"\n")
+		}},
+		{"a v2 render record with no scope line", func(f *ecFix) {
+			f.put("render-record.tsv", strings.TrimSuffix(ecRecord(ecRunID, ecScope()), "scope\t"+ecScope()+"\n"))
 		}},
 		{"a link in the template directory", func(f *ecFix) {
 			dir := f.path("edition-root/" + ecCID + "/template")

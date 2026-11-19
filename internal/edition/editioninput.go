@@ -35,7 +35,7 @@ import (
 const (
 	// seatsHeader is the first line of a seats file (D20).
 	seatsHeader = "# falco-ctf seats v1"
-	// maxRenderRecordBytes bounds the render record, which is three short lines.
+	// maxRenderRecordBytes bounds the render record, which is four short lines.
 	maxRenderRecordBytes = 4 << 10
 )
 
@@ -120,22 +120,30 @@ func readPreviousDigests(path string) ([]DigestRow, error) {
 	return rows, nil
 }
 
-// readRenderRecord reads `--render-record` and returns its run id. A file that cannot be read,
-// and a record that is not D20's three lines (the header, run-id TAB a run id that is not all
-// zeros, key-fingerprint TAB 64 hex digits; the names are renderrecord.go's, which writes
-// them), are an *InputError (exit 2: the form of an input file is wrong).
-func readRenderRecord(path string) (string, error) {
+// renderRecord is what `edition check` reads of a render record: the run id (B11, step 3) and the
+// digest of the scope the render was given (B12, step 1b).
+type renderRecord struct {
+	runID string
+	scope string
+}
+
+// readRenderRecord reads `--render-record`. A file that cannot be read, and a record that is not
+// D20's four lines of the second form (the v2 header, run-id TAB a run id that is not all zeros,
+// key-fingerprint TAB 64 lower-case hex digits, scope TAB 64 lower-case hex digits; the names are
+// renderrecord.go's, which writes them), are an *InputError (exit 2: the form of an input file is
+// wrong). A record of the first form (v1) is one of them: no reader takes it (amendment 19).
+func readRenderRecord(path string) (renderRecord, error) {
 	data, err := readCapped(path, maxRenderRecordBytes)
 	if err != nil {
-		return "", &InputError{Msg: "the render record cannot be read", Err: err}
+		return renderRecord{}, &InputError{Msg: "the render record cannot be read", Err: err}
 	}
 	return parseRenderRecord(data)
 }
 
-func parseRenderRecord(data []byte) (string, error) {
+func parseRenderRecord(data []byte) (renderRecord, error) {
 	// A record that is not in its form is an input whose form is wrong (D20: exit 2), like a
-	// seats file or a key; the run id it holds not matching the table's is a rule's refusal
-	// (CheckEvent, step 3).
+	// seats file or a key; the scope digest it holds not being the check's is a rule's refusal
+	// (CheckEvent, step 1b, B12), and so is its run id not being the table's (step 3, B11).
 	bad := func(msg string, line int) error {
 		if line > 0 {
 			msg += " (line " + strconv.Itoa(line) + ")"
@@ -144,23 +152,29 @@ func parseRenderRecord(data []byte) (string, error) {
 	}
 	text, err := controlText(data)
 	if err != nil {
-		return "", bad("the render record is not in its form: "+err.Error(), 0)
+		return renderRecord{}, bad("the render record is not in its form: "+err.Error(), 0)
 	}
 	lines := strings.Split(text, "\n")
-	if len(lines) != 3 {
-		return "", bad("the render record is three lines: the header, the run id and the key fingerprint", 0)
-	}
-	if lines[0] != renderRecordHeader {
-		return "", bad("the first line of the render record must be the render-record v1 header", 1)
+	switch {
+	case lines[0] == renderRecordHeaderV1:
+		return renderRecord{}, bad("the render record is of the first form (render-record v1), which is not read: render the event again", 1)
+	case lines[0] != renderRecordHeader:
+		return renderRecord{}, bad("the first line of the render record must be the render-record v2 header", 1)
+	case len(lines) != 4:
+		return renderRecord{}, bad("the render record is four lines: the header, the run id, the key fingerprint and the scope digest", 0)
 	}
 	id, ok := strings.CutPrefix(lines[1], renderRecordRunID+"\t")
 	if !ok || !validRunID(id) || id == PracticeRunID {
-		return "", bad("the second line of the render record must be the run id: 32 lower-case hex digits, not all zeros", 2)
+		return renderRecord{}, bad("the second line of the render record must be the run id: 32 lower-case hex digits, not all zeros", 2)
 	}
 	if fp, ok := strings.CutPrefix(lines[2], renderRecordFingerprint+"\t"); !ok || !ValidDigest(fp) {
-		return "", bad("the third line of the render record must be the key fingerprint: 64 lower-case hex digits", 3)
+		return renderRecord{}, bad("the third line of the render record must be the key fingerprint: 64 lower-case hex digits", 3)
 	}
-	return id, nil
+	scope, ok := strings.CutPrefix(lines[3], renderRecordScope+"\t")
+	if !ok || !ValidDigest(scope) {
+		return renderRecord{}, bad("the fourth line of the render record must be the scope digest: 64 lower-case hex digits", 4)
+	}
+	return renderRecord{runID: id, scope: scope}, nil
 }
 
 // eventEdition is the event edition of one challenge as `--edition-root` holds it:

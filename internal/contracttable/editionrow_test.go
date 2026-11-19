@@ -40,6 +40,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Qfour/falco-ctf-app/internal/catalog"
 	"github.com/Qfour/falco-ctf-app/internal/edition"
 	"github.com/Qfour/falco-ctf-app/internal/edition/editiontest"
 )
@@ -389,15 +390,15 @@ func edReadCLI(cmdSrc, mainSrc string) (edCLI, error) {
 // ---- the files, as a real render and check of the fixture's event wrote them ----
 
 // edFiles are the code spans of the files: the headers and the columns (with the placeholders
-// the row writes: <run id>, <fingerprint>, <TAB>), the key's numbers, the modes of the output and
-// the names of the layouts.
+// the row writes: <run id>, <fingerprint>, <scope digest>, <TAB>), the key's numbers, the modes of
+// the output and the names of the layouts.
 type edFiles struct {
 	seatsHeader    string
 	answersHeader  string
 	answersColumns string
 	digestsHeader  string
 	digestsColumns string
-	record         [3]string
+	record         [4]string
 	keyDigits      int
 	keyFileBytes   int
 	outDir         fs.FileMode
@@ -566,13 +567,18 @@ func edReadFiles(t *testing.T) edFiles {
 	}
 
 	record := edLines(t, "the render record", tree.Read(editiontest.RenderOutRel+"/"+edition.EventRenderRecordFileName))
-	if len(record) != 3 {
-		t.Fatalf("the render record has %d lines, want 3", len(record))
+	if len(record) != 4 {
+		t.Fatalf("the render record has %d lines, want 4", len(record))
 	}
-	f.record = [3]string{
+	scored, err := catalog.LoadScored(rp.Challenges, rp.Scenario, rp.Flags)
+	if err != nil {
+		t.Fatalf("the scope of the fixture's event: %v", err)
+	}
+	f.record = [4]string{
 		record[0],
 		edLabeled(t, "the render record", record[1], run, "<run id>"),
 		edLabeled(t, "the render record", record[2], rendered.KeyFingerprint(), "<fingerprint>"),
+		edLabeled(t, "the render record", record[3], edition.ScopeDigest(scored.Order), "<scope digest>"),
 	}
 
 	f.keyDigits = 2 * edition.MinMasterKeyBytes
@@ -744,7 +750,7 @@ func edRowMismatch(conventions string, c edCLI, f edFiles) error {
 	want := map[string]bool{}
 	for _, s := range []string{
 		f.seatsHeader, f.answersHeader, f.answersColumns, f.digestsHeader, f.digestsColumns,
-		f.record[0], f.record[1], f.record[2],
+		f.record[0], f.record[1], f.record[2], f.record[3],
 		strconv.Itoa(f.keyDigits), strconv.Itoa(f.keyFileBytes),
 		edOctal(f.outDir), edOctal(f.outFile), edOctal(f.digestsFile),
 		f.outAnswers, f.outEvidence, f.outRecord, f.specFile, f.templateFile, f.practiceDir,
@@ -878,7 +884,7 @@ func TestEditionRows(t *testing.T) {
 		if f.answersColumns != "seat<TAB>cid<TAB>qid<TAB>value" || f.digestsColumns != "seat<TAB>cid<TAB>digest" {
 			t.Errorf("the columns read are %q and %q", f.answersColumns, f.digestsColumns)
 		}
-		if f.record[1] != "run-id<TAB><run id>" || f.record[2] != "key-fingerprint<TAB><fingerprint>" {
+		if f.record[0] != "# falco-ctf render-record v2" || f.record[1] != "run-id<TAB><run id>" || f.record[2] != "key-fingerprint<TAB><fingerprint>" || f.record[3] != "scope<TAB><scope digest>" {
 			t.Errorf("the lines of the render record read are %q", f.record)
 		}
 		cli, _, err := edRows(conv)
@@ -921,6 +927,9 @@ func TestEditionRows(t *testing.T) {
 			{"the digests header", "`# falco-ctf evidence-digests v1 run=<run id>`", "`# falco-ctf evidence-digests v1 run=<id>`"},
 			{"the digests columns", "`seat<TAB>cid<TAB>digest`", "`cid<TAB>seat<TAB>digest`"},
 			{"the fingerprint line", "`key-fingerprint<TAB><fingerprint>`", "`key-fingerprint <fingerprint>`"},
+			{"the render record's header back to v1", "`# falco-ctf render-record v2`", "`# falco-ctf render-record v1`"},
+			{"the scope line", "`scope<TAB><scope digest>`", "`scope <scope digest>`"},
+			{"the scope line dropped to prose", "`scope<TAB><scope digest>`", "scope<TAB><scope digest>"},
 			{"the key's digits", "`64`", "`62`"},
 			{"the key file's limit", "`4096`", "`4095`"},
 			{"the order of the exit codes", "`0`, `1`, `2`, `3`", "`0`, `2`, `1`, `3`"},
@@ -986,6 +995,8 @@ func TestEditionRows(t *testing.T) {
 			{"the digests columns", func(_ *edCLI, f *edFiles) { f.digestsColumns = "seat<TAB>digest<TAB>cid" }},
 			{"the render record's header", func(_ *edCLI, f *edFiles) { f.record[0] += "x" }},
 			{"the render record's run id line", func(_ *edCLI, f *edFiles) { f.record[1] = "run<TAB><run id>" }},
+			{"the render record's header of v1", func(_ *edCLI, f *edFiles) { f.record[0] = strings.Replace(f.record[0], "v2", "v1", 1) }},
+			{"the render record's scope line", func(_ *edCLI, f *edFiles) { f.record[3] = "scope-digest<TAB><scope digest>" }},
 			{"the key's digits", func(_ *edCLI, f *edFiles) { f.keyDigits = 62 }},
 			{"the key file's limit", func(_ *edCLI, f *edFiles) { f.keyFileBytes = 8192 }},
 			{"the mode of --out's directories", func(_ *edCLI, f *edFiles) { f.outDir = 0o755 }},

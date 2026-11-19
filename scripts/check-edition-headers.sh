@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Public-repo guard of ADR-0056 V84 (D20, A4e-3b) and V93 (A4e-3c, the second check below).
-# V84: no tracked file carries one of the THREE
+# V84: no tracked file carries one of the
 # version headers of an EVENT's `scoreboard edition render` / `edition check` output: the header
-# of the event's answers table, of its bundle digests file and of its render record (the Go
-# definitions: internal/edition/table.go headerPrefix, digests.go digestsHeaderPrefix,
-# renderrecord.go renderRecordHeader). A line of a tracked file that BEGINS with one of them is
-# refused, except:
+# of the event's answers table, of its bundle digests file and of its render record, in the
+# record's current form (v2) and in its first form (v1, which no reader takes since ADR-0056
+# A4e-6 and which is still refused here) (the Go definitions: internal/edition/table.go
+# headerPrefix, digests.go digestsHeaderPrefix, renderrecord.go renderRecordHeader and
+# renderRecordHeaderV1). A line of a tracked file that BEGINS with one of them is refused, except:
 #   - the practice edition's answers table and digests file, whose header carries the practice
 #     run id (32 zeros) and nothing after it: `edition render --practice` writes them into
 #     challenges/<cid>/edition/practice/, and they are public by design (ADR-0056 D8);
@@ -38,7 +39,7 @@
 # a git worktree or in the challenges tree (D20), and the platform checks the host side of the
 # mount (ADR-0056 V83).
 #
-# The four header constants and the list ALLOWED_PATHS below are held to the Go definitions (and
+# The five header constants and the list ALLOWED_PATHS below are held to the Go definitions (and
 # the list to its one entry) by internal/edition/flagguard_headers_internal_test.go, which also
 # holds scripts/check-flags.sh to running both modes of this script. The three parts of the path
 # rule, the way scan_evidence joins them and the empty EVIDENCE_ALLOWED_PATHS are held by
@@ -56,7 +57,8 @@ set -euo pipefail
 
 ANSWERS_PREFIX='# falco-ctf answers v1 run='
 DIGESTS_PREFIX='# falco-ctf evidence-digests v1 run='
-RECORD_HEADER='# falco-ctf render-record v1'
+RECORD_HEADER='# falco-ctf render-record v2'
+RECORD_HEADER_V1='# falco-ctf render-record v1'
 PRACTICE_RUN_ID='00000000000000000000000000000000'
 ALLOWED_PATHS=(
   'internal/edition/testdata/digests-golden/digests.tsv'
@@ -119,7 +121,7 @@ allowed_entry_ok() {
 # scan <root>: the check of the header on the tracked files of the git work tree at <root>.
 scan() {
   local root="$1" v p rc grc found errf
-  for v in "$ANSWERS_PREFIX" "$DIGESTS_PREFIX" "$RECORD_HEADER"; do
+  for v in "$ANSWERS_PREFIX" "$DIGESTS_PREFIX" "$RECORD_HEADER" "$RECORD_HEADER_V1"; do
     if ! literal_ok "$v"; then
       echo "FAIL: a header constant holds a character a regular expression would not take literally" >&2
       return 2
@@ -155,6 +157,7 @@ scan() {
   set +e
   found="$(git -C "$root" grep -n -a -E \
     -e "^${RECORD_HEADER}" \
+    --or -e "^${RECORD_HEADER_V1}" \
     --or '(' -e "^${ANSWERS_PREFIX}" --and --not -e "^${ANSWERS_PREFIX}${PRACTICE_RUN_ID}\$" ')' \
     --or '(' -e "^${DIGESTS_PREFIX}" --and --not -e "^${DIGESTS_PREFIX}${PRACTICE_RUN_ID}\$" ')' \
     -- . ${excludes[@]+"${excludes[@]}"} 2>"$errf")"
@@ -440,8 +443,16 @@ selftest() {
   st_expect "a tracked event digests file fails" 1 "$r"
 
   r="$(st_repo render-record)" || st_die render-record
-  st_put "$r" out/render-record.tsv "$(printf '%s\nrun-id\t%s' "$RECORD_HEADER" "$ST_EVENT_RUN")"
-  st_expect "a tracked render record fails" 1 "$r"
+  st_put "$r" out/render-record.tsv "$(printf '%s\nrun-id\t%s\nscope\t%s' "$RECORD_HEADER" "$ST_EVENT_RUN" "$ST_DIGEST")"
+  st_expect "a tracked render record (v2) fails" 1 "$r"
+
+  r="$(st_repo render-record-v1)" || st_die render-record-v1
+  st_put "$r" out/render-record.tsv "$(printf '%s\nrun-id\t%s' "$RECORD_HEADER_V1" "$ST_EVENT_RUN")"
+  st_expect "a tracked render record of the first form (v1) fails" 1 "$r"
+
+  r="$(st_repo render-record-v1-crlf)" || st_die render-record-v1-crlf
+  st_put "$r" out/render-record.tsv "$(printf '%s\r\nrun-id\t%s\r' "$RECORD_HEADER_V1" "$ST_EVENT_RUN")"
+  st_expect "a tracked render record of the first form (v1) with CRLF line ends fails" 1 "$r"
 
   r="$(st_repo render-record-crlf)" || st_die render-record-crlf
   st_put "$r" out/render-record.tsv "$(printf '%s\r\nrun-id\t%s\r' "$RECORD_HEADER" "$ST_EVENT_RUN")"
@@ -475,7 +486,7 @@ selftest() {
   st_expect "a practice header with something after the run id fails" 1 "$r"
 
   r="$(st_repo mid-line)" || st_die mid-line
-  st_put "$r" docs/x.md "$(printf 'the header is `%s%s` and `%s`' "$ANSWERS_PREFIX" "$ST_EVENT_RUN" "$RECORD_HEADER")"
+  st_put "$r" docs/x.md "$(printf 'the header is `%s%s`, `%s` and `%s`' "$ANSWERS_PREFIX" "$ST_EVENT_RUN" "$RECORD_HEADER" "$RECORD_HEADER_V1")"
   st_expect "a header in the middle of a line (a document) passes" 0 "$r"
 
   r="$(st_repo untracked)" || st_die untracked
