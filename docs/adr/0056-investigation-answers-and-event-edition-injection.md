@@ -557,7 +557,7 @@ security の要件 3 は「起動拒否」と書いている。束の項目は�
   - 文面 1「答え表」は main にある app の挙動を記述する。platform が使う前に要るので、A4-0 (P1b-1 と同時に open し、先に merge) で入れる。
   - 文面 2「痕跡束と版の検査」は、A4e が CLI の部分を (P1b-2 と対で)、A5c が痕跡束の部分を (P1b-3 と対で) 入れる。どちらも両リポ同時 PR。
 - 「scoreboard の起動ログ」行に (4) を足す。`msg="edition check failed"` (level ERROR、`os.Exit(1)` の直前に 1 回、値は出さない)。platform の `verify.sh` が読み、`bootlog_contract_test.go` が literal で固定する。
-- 同じ行に (5) も足す。`msg="edition loaded"` (level INFO、1 起動に 1 回、属性は `run_id` だけ)。platform の verify は、この run id が払い出しに使った digests の run id と一致することを確かめる (D9)。追補 22: stand-up の step 7 も、払い出しの前にこの run id を gate の pin と照らす (P1b-3d、platform#350)。読み手が 2 本になり、record の欠落で stand-up が止まるので、契約表の (5) の行の条件に当たる。architect の合意で期限つきの例外とし、起動時の gauge へ移す (期限と閉じる条件は、契約表の (5) の行)。
+- 同じ行に (5) も足す。`msg="edition loaded"` (level INFO、1 起動に 1 回、属性は `run_id` だけ)。platform の verify は、この run id が払い出しに使った digests の run id と一致することを確かめる (D9)。追補 22: stand-up の step 7 も、払い出しの前にこの run id を gate の pin と照らす (P1b-3d、platform#350)。読み手が 2 本になり、record の欠落で stand-up が止まるので、契約表の (5) の行の条件に当たる。architect の合意と CTO の承認 (記録は private の側) で期限つきの例外とし、起動時の gauge へ移す (期限と閉じる条件は、契約表の (5) の行)。
 - 「detect-grader Job」行の (5) は D14。
 - Flags 行は変えない (答えは `FALCO{...}` の文法に合わない)。
 
