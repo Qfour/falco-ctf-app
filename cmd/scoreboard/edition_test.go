@@ -83,8 +83,16 @@ func edAnswersFile(t *testing.T, runID string, rows []string) string {
 // it, and returns what it logged.
 func bootEdition(t *testing.T, cfg catalogEnv, scored catalog.Scored) (*edition.Judge, string, []map[string]any, error) {
 	t.Helper()
+	j, _, text, recs, err := bootEditionRunID(t, cfg, scored)
+	return j, text, recs, err
+}
+
+// bootEditionRunID is bootEdition with the run id startEdition returned (what main()
+// hands to scoreboard.WithEditionRunID).
+func bootEditionRunID(t *testing.T, cfg catalogEnv, scored catalog.Scored) (*edition.Judge, string, string, []map[string]any, error) {
+	t.Helper()
 	var buf bytes.Buffer
-	j, err := startEdition(slog.New(slog.NewJSONHandler(&buf, nil)), cfg, scored)
+	j, runID, err := startEdition(slog.New(slog.NewJSONHandler(&buf, nil)), cfg, scored)
 	text := buf.String()
 	var recs []map[string]any
 	if strings.TrimSpace(text) != "" {
@@ -96,7 +104,7 @@ func bootEdition(t *testing.T, cfg catalogEnv, scored catalog.Scored) (*edition.
 			recs = append(recs, m)
 		}
 	}
-	return j, text, recs, err
+	return j, runID, text, recs, err
 }
 
 func noValueInLog(t *testing.T, what, text string) {

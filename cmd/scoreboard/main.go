@@ -239,8 +239,10 @@ func main() {
 	// challenges. startEdition (edition.go) logs the refusal, which platform
 	// scripts/verify.sh reads (contract-table row "scoreboard の起動ログ"), and this
 	// exits right after it; nothing is logged when there is no table and none is
-	// needed. The Judge goes to the handler, which hands it to the Grader (A3a).
-	editionJudge, err := startEdition(logger, catCfg, scored)
+	// needed. The Judge goes to the handler, which hands it to the Grader (A3a); the
+	// run id (the variable of the `edition loaded` record) goes with it, for the gauge
+	// scoreboard_edition_loaded_info (A4f).
+	editionJudge, editionRunID, err := startEdition(logger, catCfg, scored)
 	if err != nil {
 		os.Exit(1)
 	}
@@ -333,6 +335,7 @@ func main() {
 		scoreboard.WithBoard(boardSt),
 		scoreboard.WithWebhookSecret(webhookSharedSecret, webhookSecretMode),
 		scoreboard.WithEditionJudge(editionJudge),
+		scoreboard.WithEditionRunID(editionRunID),
 	)
 
 	// Auto-solve sweeper (P16): re-derives exfil-delivered-but-unsolved evade

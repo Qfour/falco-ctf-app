@@ -70,6 +70,7 @@ type ibBooted struct {
 	journeys catalog.Journeys
 	rules    catalog.FalcoRuleExcerpts
 	judge    *edition.Judge
+	runID    string // startEdition's, as main() hands it to scoreboard.WithEditionRunID
 	log      string
 	recs     []map[string]any
 	err      error // startEdition's
@@ -91,12 +92,12 @@ func ibStart(t *testing.T, env map[string]string) ibBooted {
 	if b.rules, err = catalog.LoadRuleExcerpts(b.cfg.challengesDir, b.scored.Catalog); err != nil {
 		t.Fatalf("LoadRuleExcerpts: %v", err)
 	}
-	b.judge, b.log, b.recs, b.err = bootEdition(t, b.cfg, b.scored)
+	b.judge, b.runID, b.log, b.recs, b.err = bootEditionRunID(t, b.cfg, b.scored)
 	return b
 }
 
 // ibHandler is the handler main() builds from a booted scoreboard (only the options
-// this test needs). A nil Judge is passed as main() passes it.
+// this test needs). A nil Judge is passed as main() passes it, and so is the run id.
 func ibHandler(t *testing.T, b ibBooted) (*scoreboard.Handler, *store.Store) {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "ib.db"))
@@ -111,6 +112,7 @@ func ibHandler(t *testing.T, b ibBooted) (*scoreboard.Handler, *store.Store) {
 		scoreboard.WithExpectedEmailDomain("ctf.local"),
 		scoreboard.WithAllowedOrigins([]string{ibOrigin}),
 		scoreboard.WithEditionJudge(b.judge),
+		scoreboard.WithEditionRunID(b.runID),
 	)
 	return h, st
 }

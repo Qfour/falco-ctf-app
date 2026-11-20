@@ -83,6 +83,11 @@ type Handler struct {
 	// passes it into the single Grader (scoring.Grader.WithAnswers, A3a); nothing
 	// reads it at request time.
 	editionJudge *edition.Judge
+	// editionRunID is the run id edition.Load returned with that Judge ("" = none) —
+	// see WithEditionRunID. A WIRING-TIME TRANSFER ONLY: NewHandler puts it in the
+	// gauge scoreboard_edition_loaded_info (ADR-0056 A4f); nothing reads it at
+	// request time, and it plays no part in grading.
+	editionRunID string
 	// routes is the FULL, flattened route table this binary registers —
 	// this package's own /healthz + /metrics rows, plus ingest's, api's and
 	// view's Routes() (ADR-0005 V2). Stored so Routes() can return it to the
@@ -224,6 +229,29 @@ func WithEditionJudge(j *edition.Judge) Option {
 	return func(h *Handler) { h.editionJudge = j }
 }
 
+// WithEditionRunID hands the handler the run id that edition.Load returned with the
+// Judge of WithEditionJudge: cmd/scoreboard's startEdition returns the variable its
+// `edition loaded` record carries, and main passes that same variable here. It feeds
+// only the gauge scoreboard_edition_loaded_info (ADR-0056 A4f, editionLoadedLabel);
+// grading never reads it. Unset (every fixture that does not call it) = "".
+func WithEditionRunID(runID string) Option {
+	return func(h *Handler) { h.editionRunID = runID }
+}
+
+// editionLoadedLabel is the run_id of scoreboard_edition_loaded_info (ADR-0056 A4f):
+// the run id when a Judge is wired and the run id has the form of one (32 lower-case
+// hex digits; the practice edition's is 32 zeros), else metrics.EditionNone. So the
+// gauge names a run id only when this handler grades with a Judge, and a run id
+// handed over without a Judge, or a Judge without a run id of that form, reads as
+// none: platform's reader of an event with an answers table FAILs on none, so a
+// wiring mistake is loud at stand-up, never a run id the handler does not grade by.
+func editionLoadedLabel(j *edition.Judge, runID string) string {
+	if j == nil || !edition.ValidRunID(runID) {
+		return metrics.EditionNone
+	}
+	return runID
+}
+
 func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts ...Option) *Handler {
 	h := &Handler{
 		cat:    cat,
@@ -257,6 +285,13 @@ func NewHandler(cat catalog.Catalog, s *store.Store, logger *slog.Logger, opts .
 	if h.editionJudge != nil {
 		grader.WithAnswers(s, h.editionJudge, logger)
 	}
+	// ADR-0056 A4f (V105): the generation of the answers table this handler grades
+	// with, as the gauge scoreboard_edition_loaded_info{run_id}, set here, in the
+	// assembly, before any request (ADR-0040's info kind: internal/contractmetrics
+	// assembles the scoreboard through this function and finds the family after it).
+	// Every assembly replaces the one series (SetEditionLoaded resets first), so the
+	// family has exactly one series in any process; production assembles once.
+	metrics.SetEditionLoaded(editionLoadedLabel(h.editionJudge, h.editionRunID))
 	// The sweeper bumps the same evade solve metric a manual submit would, so an
 	// auto-solve is indistinguishable from a manual one on the dashboard.
 	h.sweeper = scoring.NewSweeper(grader, scoring.DefaultSweepCadence, logger, func(r scoring.SweepResult) {

@@ -13,8 +13,11 @@ package contractmetrics_test
 //     which never counts it would also run);
 //  4. the owner is assembled as production does, up to the first request
 //     (scoreboard.NewHandler), and the default registry is gathered: each family is
-//     there, with exactly the labels of the span and exactly the declared children, all
-//     at 0.
+//     there, with exactly the labels of the span, and then by the kind column of the
+//     owning table: a counter has exactly the declared children, all at 0; an info
+//     gauge (ADR-0040's limited extension, ADR-0056 A4f) has exactly one child, at 1,
+//     whose label values are the owning table's expectation (what the assembly's input
+//     gives: assembleScoreboard wires no answers table, so `none`).
 //
 // The file is in the Docker test context only because .dockerignore re-includes the
 // conventions file (`.claude` is otherwise excluded): a missing file FAILS, never skips.
@@ -48,16 +51,31 @@ const (
 	placeAssembly = "assembly" // created when the owner wires the part that counts (several binaries link the package)
 )
 
-// owned is the table of the contract families: label names, the owning binary, where
-// the children are created, and the children (label values, in the order of labels)
-// that must exist at start. The label VALUES of a child are not the table's contract
-// except where listed here (ADR-0040 D5 (c): `caller` and `gate` are for display).
+// The kind column (ADR-0040's limited extension, 2026-11-20): what "exists from the
+// start" means for the family.
+const (
+	kindCounter = "counter" // the declared children exist, every one at 0 (ADR-0040 D1)
+	kindInfo    = "info"    // exactly one child, at 1, label values set by the assembly
+)
+
+// assembledEdition is the run_id the scoreboard's info gauge carries after
+// assembleScoreboard: it wires no answers table (no WithEditionJudge), so none is
+// needed.
+const assembledEdition = metrics.EditionNone
+
+// owned is the table of the contract families: label names, the owning binary, the
+// kind, where the children are created, and the children (label values, in the order
+// of labels) that must exist at start. The label VALUES of a child are not the table's
+// contract except where listed here (ADR-0040 D5 (c): `caller` and `gate` are for
+// display). For an info family, children is the ONE child the assembly must leave,
+// with the label values the assembly's input gives.
 type owned struct {
 	name      string
 	labels    []string // sorted
 	binary    string
+	kind      string // kindCounter or kindInfo
 	placement string
-	children  [][]string // label values, in the order of labels; all at 0 at start
+	children  [][]string // label values, in the order of labels; all at 0 at start (counter), or the one child at 1 (info)
 	// rowTokens are values the family's row of the contract table must name as code
 	// spans because platform reads them (the identity reasons).
 	rowTokens []string
@@ -92,10 +110,15 @@ func ownedTableFor(declared []identityobs.Pair) []owned {
 	}
 	const metricsPkg = "internal/scoreboard/metrics"
 	return []owned{
-		{"scoreboard_identity_denials_total", []string{"gate", "reason"}, "scoreboard", placeInit, identity, reasonTokens, "internal/scoreboard/identityobs", ""},
-		{"scoreboard_ingest_falco_events_scoring_overflow_total", []string{"ns"}, "scoreboard", placeInit, [][]string{{metrics.OtherNS}}, nil, metricsPkg, ""},
-		{"scoreboard_ingest_falco_events_rate_limited_total", []string{"ns"}, "scoreboard", placeInit, [][]string{{metrics.OtherNS}}, nil, metricsPkg, ""},
-		{"ratelimit_client_ip_source_total", []string{"caller", "source"}, "scoreboard", placeAssembly, clientIP, []string{"cf_connecting_ip", "x_forwarded_for", "remote_addr"}, "", "ClientIPKeyed"},
+		{"scoreboard_identity_denials_total", []string{"gate", "reason"}, "scoreboard", kindCounter, placeInit, identity, reasonTokens, "internal/scoreboard/identityobs", ""},
+		{"scoreboard_ingest_falco_events_scoring_overflow_total", []string{"ns"}, "scoreboard", kindCounter, placeInit, [][]string{{metrics.OtherNS}}, nil, metricsPkg, ""},
+		{"scoreboard_ingest_falco_events_rate_limited_total", []string{"ns"}, "scoreboard", kindCounter, placeInit, [][]string{{metrics.OtherNS}}, nil, metricsPkg, ""},
+		{"ratelimit_client_ip_source_total", []string{"caller", "source"}, "scoreboard", kindCounter, placeAssembly, clientIP, []string{"cf_connecting_ip", "x_forwarded_for", "remote_addr"}, "", "ClientIPKeyed"},
+		// ADR-0056 A4f: the generation of the answers table, set in scoreboard.NewHandler
+		// (metrics.SetEditionLoaded): no series before the assembly, one after it. The
+		// row names `none` because platform's reader tells it apart (P1b-3f: FAIL in an
+		// event with an answers table).
+		{"scoreboard_edition_loaded_info", []string{"run_id"}, "scoreboard", kindInfo, placeAssembly, [][]string{{assembledEdition}}, []string{metrics.EditionNone}, "", "SetEditionLoaded"},
 	}
 }
 
@@ -197,7 +220,8 @@ func tableProblems(spans []span, table []owned) []string {
 
 // children gathers g and returns, for the family name, its label names (sorted) and
 // its children as "v1\x00v2" keys (values in label-name order of `labels`) with their
-// values, and its metric type. found=false when the family is not exposed.
+// values (a gauge's value for a GAUGE family, else the counter's), and its metric
+// type. found=false when the family is not exposed.
 func children(t *testing.T, g prometheus.Gatherer, name string, labels []string) (found bool, typ string, gotLabels []string, vals map[string]float64) {
 	t.Helper()
 	mfs, err := g.Gather()
@@ -222,7 +246,11 @@ func children(t *testing.T, g prometheus.Gatherer, name string, labels []string)
 			for _, l := range labels {
 				key = append(key, byName[l])
 			}
-			vals[strings.Join(key, "\x00")] = m.GetCounter().GetValue()
+			v := m.GetCounter().GetValue()
+			if typ == "GAUGE" {
+				v = m.GetGauge().GetValue()
+			}
+			vals[strings.Join(key, "\x00")] = v
 		}
 		for l := range lset {
 			gotLabels = append(gotLabels, l)
@@ -266,6 +294,56 @@ func startProblems(t *testing.T, g prometheus.Gatherer, o owned) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// infoProblems is how the info family o departs from "exposed, a gauge, with the span's
+// labels and exactly one child, at 1, whose label values are the owning table's
+// expectation" (ADR-0040's info kind (1)(3)(5)). The counter's "every child at 0" is
+// not applied.
+func infoProblems(t *testing.T, g prometheus.Gatherer, o owned) []string {
+	t.Helper()
+	if len(o.children) != 1 {
+		return []string{fmt.Sprintf("%s: the owning table declares %d expected children for an info family, want exactly 1", o.name, len(o.children))}
+	}
+	found, typ, labels, vals := children(t, g, o.name, o.labels)
+	if !found {
+		return []string{o.name + " is not exposed after the assembly: an info family is present from the assembly on (ADR-0040's info kind (3)); absent reads as renamed or an older image"}
+	}
+	var out []string
+	if typ != "GAUGE" {
+		out = append(out, fmt.Sprintf("%s is a %s, want a GAUGE (an info family)", o.name, typ))
+	}
+	if strings.Join(labels, ",") != strings.Join(o.labels, ",") {
+		out = append(out, fmt.Sprintf("%s has labels {%s}, want {%s}", o.name, strings.Join(labels, ", "), strings.Join(o.labels, ", ")))
+	}
+	if len(vals) != 1 {
+		out = append(out, fmt.Sprintf("%s has %d children, want exactly 1 (an info family has one series)", o.name, len(vals)))
+	}
+	k := strings.Join(o.children[0], "\x00")
+	v, ok := vals[k]
+	switch {
+	case !ok:
+		out = append(out, fmt.Sprintf("%s: no child %q (the label values the assembly's input gives)", o.name, o.children[0]))
+	case v != 1:
+		out = append(out, fmt.Sprintf("%s: the child %q is %v, want 1", o.name, o.children[0], v))
+	}
+	sort.Strings(out)
+	return out
+}
+
+// familyProblems checks o by its kind column: a counter by startProblems, an info gauge
+// by infoProblems. A row with no kind, or another one, is a problem itself: the kind
+// decides what "exists from the start" means, so it is not defaulted.
+func familyProblems(t *testing.T, g prometheus.Gatherer, o owned) []string {
+	t.Helper()
+	switch o.kind {
+	case kindCounter:
+		return startProblems(t, g, o)
+	case kindInfo:
+		return infoProblems(t, g, o)
+	default:
+		return []string{fmt.Sprintf("%s: the owning table's kind is %q, want %q or %q", o.name, o.kind, kindCounter, kindInfo)}
+	}
 }
 
 // beforeProblems: a family created at assembly has no child before the owner is
@@ -314,7 +392,9 @@ func readConventions(t *testing.T) string {
 }
 
 // assembleScoreboard builds the scoreboard as cmd/scoreboard does, up to the first
-// request (no request is made, so no counter moves).
+// request (no request is made, so no counter moves). It wires no answers table (no
+// WithEditionJudge / WithEditionRunID): the info gauge's expected run_id is therefore
+// assembledEdition (`none`).
 func assembleScoreboard(t *testing.T) {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "scoreboard.db"))
@@ -424,7 +504,7 @@ func TestContractMetricFamiliesExistFromStart(t *testing.T) {
 		if o.binary != "scoreboard" {
 			t.Fatalf("%s is owned by %q: this test assembles only the scoreboard", o.name, o.binary)
 		}
-		if p := startProblems(t, prometheus.DefaultGatherer, o); len(p) != 0 {
+		if p := familyProblems(t, prometheus.DefaultGatherer, o); len(p) != 0 {
 			t.Errorf("after assembling the scoreboard:\n  %s", strings.Join(p, "\n  "))
 		}
 	}
@@ -462,6 +542,16 @@ func TestContractCheck_CatchesDriftInTheTable(t *testing.T) {
 			t.Fatal("a row without the reason `mismatch` was not flagged")
 		}
 	})
+	t.Run("`none` dropped from the edition row", func(t *testing.T) {
+		row := rowOf(doc, "scoreboard_edition_loaded_info")
+		if row == "" || !strings.Contains(row, "`none`") {
+			t.Fatal("the edition row, or its `none`, is not in the table: the case would test nothing")
+		}
+		mutated := strings.Replace(doc, row, strings.ReplaceAll(row, "`none`", "none"), 1)
+		if p := rowTokenProblems(mutated, table); len(p) == 0 {
+			t.Fatal("an edition row without the code span `none` was not flagged")
+		}
+	})
 	if len(spans) != len(table) {
 		t.Fatalf("%d spans for %d owned families", len(spans), len(table))
 	}
@@ -470,6 +560,8 @@ func TestContractCheck_CatchesDriftInTheTable(t *testing.T) {
 		{"the {labels} dropped from a span", "`scoreboard_ingest_falco_events_rate_limited_total{ns}`", "`scoreboard_ingest_falco_events_rate_limited_total`"},
 		{"a label added", "`ratelimit_client_ip_source_total{caller, source}`", "`ratelimit_client_ip_source_total{caller, source, route}`"},
 		{"a label renamed", "`scoreboard_ingest_falco_events_scoring_overflow_total{ns}`", "`scoreboard_ingest_falco_events_scoring_overflow_total{namespace}`"},
+		{"the info family's label renamed", "`scoreboard_edition_loaded_info{run_id}`", "`scoreboard_edition_loaded_info{run}`"},
+		{"the info family's span dropped to prose", "`scoreboard_edition_loaded_info{run_id}`", "scoreboard_edition_loaded_info{run_id}"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mutated := strings.ReplaceAll(doc, tc.old, tc.new)
@@ -574,6 +666,84 @@ func TestContractCheck_CatchesAFamilyThatIsNotACounter(t *testing.T) {
 	g.WithLabelValues("p")
 	if p := startProblems(t, reg, o); len(p) == 0 {
 		t.Fatal("a gauge in place of the counter was not flagged")
+	}
+}
+
+// --- the info kind is not vacuous (ADR-0040's limited extension, ADR-0056 V105) ---
+
+// syntheticInfo builds a fresh registry holding o as a gauge with the given labels and
+// children, each at the given value (the family is registered even with no child).
+func syntheticInfo(t *testing.T, o owned, labels []string, create [][]string, value float64) *prometheus.Registry {
+	t.Helper()
+	reg := prometheus.NewRegistry()
+	v := prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: o.name, Help: "synthetic"}, labels)
+	reg.MustRegister(v)
+	for _, c := range create {
+		v.WithLabelValues(c...).Set(value)
+	}
+	return reg
+}
+
+func TestContractCheck_InfoKindCatchesDrift(t *testing.T) {
+	var info owned
+	for _, o := range ownedTable() {
+		if o.kind == kindInfo {
+			info = o
+		}
+	}
+	if info.name != "scoreboard_edition_loaded_info" || len(info.children) != 1 {
+		t.Fatalf("the owning table's info family is %+v, want scoreboard_edition_loaded_info with one expected child: the cases below would test nothing", info)
+	}
+	good := syntheticInfo(t, info, info.labels, info.children, 1)
+	if p := familyProblems(t, good, info); len(p) != 0 {
+		t.Fatalf("a correct info family is flagged: %v", p)
+	}
+
+	// Copies of the owning table's row, against the correct registry.
+	for _, tc := range []struct {
+		name   string
+		change func(o *owned)
+	}{
+		{"the kind column removed", func(o *owned) { o.kind = "" }},
+		{"the info family expected as a counter (every child at 0)", func(o *owned) { o.kind = kindCounter }},
+		{"another expected label value", func(o *owned) { o.children = [][]string{{"0123456789abcdef0123456789abcdef"}} }},
+		{"two expected children", func(o *owned) { o.children = append(append([][]string(nil), o.children...), []string{"other"}) }},
+		{"no expected child", func(o *owned) { o.children = nil }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := info
+			tc.change(&o)
+			if p := familyProblems(t, good, o); len(p) == 0 {
+				t.Fatal("not flagged")
+			}
+		})
+	}
+
+	// The registry drifted, the row real.
+	for _, tc := range []struct {
+		name string
+		reg  *prometheus.Registry
+	}{
+		{"two children (a second set without the Reset)", syntheticInfo(t, info, info.labels, append(append([][]string(nil), info.children...), []string{"0123456789abcdef0123456789abcdef"}), 1)},
+		{"the one child at 0", syntheticInfo(t, info, info.labels, info.children, 0)},
+		{"another label value only", syntheticInfo(t, info, info.labels, [][]string{{"0123456789abcdef0123456789abcdef"}}, 1)},
+		{"no child (the family absent)", syntheticInfo(t, info, info.labels, nil, 1)},
+		{"a label added", syntheticInfo(t, info, []string{"run_id", "seat"}, [][]string{{info.children[0][0], "x"}}, 1)},
+		{"a counter in place of the gauge", synthetic(t, info, info.children, 1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if p := familyProblems(t, tc.reg, info); len(p) == 0 {
+				t.Fatal("not flagged")
+			}
+		})
+	}
+
+	// Its placement is the assembly: a child before the assembly is flagged.
+	if p := beforeProblems(t, good, []owned{info}); len(p) == 0 {
+		t.Fatal("an info child before the assembly was not flagged")
+	}
+	if p := beforeProblems(t, syntheticInfo(t, info, info.labels, nil, 1), []owned{info}); len(p) != 0 {
+		t.Fatalf("an info family with no child before the assembly is flagged: %v", p)
 	}
 }
 

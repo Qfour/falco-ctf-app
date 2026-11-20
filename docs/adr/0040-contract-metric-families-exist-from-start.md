@@ -1,11 +1,22 @@
 # ADR-0040: 契約表で名指しした metric family は所有 binary の起動直後から存在させる (family が無いことは「改名か旧 image」で、0 とは読まない)。事前生成の置き場は package を link する binary の数で決め、契約表から導いた表駆動の test 1 本で確かめる
 
-- Status: **Accepted** (2026-10-19、VP 承認。S1 = app PR の merge 前に昇格)。2026-10-19 起草。**限定の拡張 (ADR-0056 追補 23 の改訂、2026-11-20。本文は書き換えない)**: D1・D2・D4 に、info 型の gauge の kind を足す。info の kind = (1) 子はちょうど 1 本で、値は 1。(2) label の値は宣言せず、所有 binary が組み立て時 (D2 の「組み立て時」) に決める。(3) 組み立ての前は family が無く、組み立ての後は必ずある (D1 の「起動直後」= 組み立ての後、最初の要求の前)。(4) 契約表には D3 の形 `<family>{<label>, …}` で書く。(5) D4 の test は、所有の表に kind の欄 (counter / info) を足し、info の family については「子がちょうど 1 本・値が 1・label 名の集合が code span と等しい・label の値が所有の表の期待 (test の組み立ての入力から決まる値)」を確かめる。counter の kind の「どの子も 0」は info に当てない。最初の info の family は、ADR-0056 A4f の起動時の gauge。
+- Status: **Accepted** (2026-10-19、VP 承認。S1 = app PR の merge 前に昇格)。2026-10-19 起草。限定の拡張が 1 つある (2026-11-20。下の「限定の拡張」の bullet)。
   - Accepted 化は VP が行う (時限承認: workspace `ORGANIZATION.md:470-472`。S1 の merge より前)。
   - クロスリポ契約表に、全行に効く一般則 (D1) と metric の名指し方 (D3) を足し、「Rate-limit client-IP ヘッダ」の行の metric 名を訂正する (D5)。だから architect 合意 + VP 承認が要る (`ORGANIZATION.md` §4)。
   - HTTP の status と body は変えない。`/metrics` に 0 の系列が 6 本増えるだけ (D5)。
   - 新 image・新サービス・Dockerfile・Hard Invariant に触れないので、CEO 判断を要さない。
   - 実装は Proposed のまま始めてよい。
+- **限定の拡張 (2026-11-20、ADR-0056 追補 23 の改訂)**: D1・D2・D4 に、info 型の gauge の kind を足す。D1・D4 には pointer の 1 行だけを足し、D1〜D6 の規則は書き換えない。counter の family には何も変わらない。
+  - **どちらが正か**: info の kind の規則の正は、この bullet (ADR-0040) である。ADR-0056 (まだ **Proposed**) は最初の使い手で、その A4f の行と D18 はここを指すだけで、規則を持たない。ADR-0056 の Status が変わっても、この規則は変わらない。
+  - **効き始める時点**: `internal/contractmetrics` の所有の表に kind の欄 (counter / info) を足す PR (ADR-0056 A4f の PR) の merge。それより前は、info の family は契約表に書けない (書けば D4 の test が counter として照らして赤になる)。
+  - info の kind の規則:
+    - (1) 子はちょうど 1 本で、値は 1。
+    - (2) label の値は宣言せず、所有 binary が組み立て時 (D2 の「組み立て時」) に決める。
+    - (3) 組み立ての前は family が無く、組み立ての後は必ずある (D1 の「起動直後」= 組み立ての後、最初の要求の前)。置き場は D2 の「組み立て時」で、set は D4 の test が行う production の組み立て (scoreboard なら `scoreboard.NewHandler`) の中に置く。`cmd/*` の main だけで set すると、test の組み立てでは現れない。
+    - (4) 契約表には D3 の形 `<family>{<label>, …}` で書く。
+    - (5) D4 の test は、所有の表に kind の欄 (counter / info) を足し、info の family については「子がちょうど 1 本・値が 1・label 名の集合が code span と等しい・label の値が所有の表の期待 (test の組み立ての入力から決まる値)」を確かめる。counter の kind の「どの子も 0」は info に当てない。kind の欄が無い行は赤 (既定の kind を持たせない)。
+  - **default registry との関係 (C5)**: D4 の test の process は組み立てを 1 回だけ行う。ほかの package の test は同じ process の default registry で組み立てを何度も行うので、info の gauge は組み立てのたびに series を入れ替える (Reset してから 1 本を set する)。production は 1 回しか組み立てないので、挙動は同じ。「ちょうど 1 本」は、何回組み立てても成り立つ。
+  - 最初の info の family は、ADR-0056 A4f の起動時の gauge `scoreboard_edition_loaded_info{run_id}`。
 - Date / Deciders: 2026-10-19 / VP (承認) + architect (起草・契約表の規則と行の訂正への同意) / 実装: software-engineer (S1)、qa-engineer (V3 の変異)、sre-engineer (platform#245 / #247 の「family 無し = rc 2」への切替と、platform の文書の metric 名の訂正)
 - 関連:
   - Issue #450 (発注元。#448 review-5x R4#1 / R3#2 / R4#2)
@@ -81,6 +92,7 @@
 - 契約表 (`conventions` の「Cross-repo 契約」) で名指しした metric family は、所有 binary の起動直後から存在する。
   - 「起動直後」は、production の組み立て (scoreboard なら `cmd/scoreboard/main.go:302` の `scoreboard.NewHandler`) を終え、最初の要求を受ける前。Recreate の後も同じ。
   - 「存在する」は、所有 binary の `/metrics` にその family の子の系列が 1 本以上あり、起動直後はどの子も 0 であること。label の付いた family は子が無いと現れないので (C2 (a))、子を 0 で作る (事前生成)。
+  - kind = info の family は、限定の拡張 (Status の下の bullet) に従う (子はちょうど 1 本で値は 1。「どの子も 0」は当てない)。
 - **family が無いことは「改名か旧い image」であって、0 とは読まない。** platform が「無い = 読めない (rc 2)」と読めるのは、この保証があるから (C2 (a)。platform#245 / #247)。
 - 事前生成する子は、宣言した値と sentinel だけで、要求からは作らない (C6)。今の 4 family では次のとおり。
   - identity: 宣言した 8 組 (`0038:72-79`)
@@ -111,6 +123,7 @@
   2. test の中の所有の表 (family → 所有 binary の組み立て・置き場 (init か組み立て時)・事前生成する子) と、1 の集合を双方向に比べる (`specparity.CoverageDiff` と同じ形)。契約表にあって所有の表に無いもの、またはその逆は赤。
   3. 置き場が組み立て時の family は、組み立ての前に gather して、子が無いことを確かめる。
   4. 所有 binary ごとに、production の組み立てを要求の前まで行い (scoreboard は `scoreboard.NewHandler`)、default registry を gather する。各 family について次を確かめる: family がある / label 名の集合が code span と等しい / 所有の表の事前生成する子がすべてある / どの子も 0。
+     - kind = info の family は、限定の拡張 (Status の下の bullet) の (5) に従う (子がちょうど 1 本・値 1・label の値が所有の表の期待)。
   5. 置き場が init の family は、定義する package が所有 binary の閉包にだけあることを確かめる (V2)。
 - 行ごとの 2 本 (`identityobs/contract_test.go`・`metrics/contract_test.go`) は、この test に畳んで消す。行に固有の検査は、所有の表の欄として持つ。
   - identity: reason の値 `no_identity` / `non_canonical` / `mismatch` が、行に code span としてある。
