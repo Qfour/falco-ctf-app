@@ -1,6 +1,6 @@
 # ADR-0040: 契約表で名指しした metric family は所有 binary の起動直後から存在させる (family が無いことは「改名か旧 image」で、0 とは読まない)。事前生成の置き場は package を link する binary の数で決め、契約表から導いた表駆動の test 1 本で確かめる
 
-- Status: **Accepted** (2026-10-19、VP 承認。S1 = app PR の merge 前に昇格)。2026-10-19 起草。
+- Status: **Accepted** (2026-10-19、VP 承認。S1 = app PR の merge 前に昇格)。2026-10-19 起草。**限定の拡張 (ADR-0056 追補 23 の改訂、2026-11-20。本文は書き換えない)**: D1・D2・D4 に、info 型の gauge の kind を足す。info の kind = (1) 子はちょうど 1 本で、値は 1。(2) label の値は宣言せず、所有 binary が組み立て時 (D2 の「組み立て時」) に決める。(3) 組み立ての前は family が無く、組み立ての後は必ずある (D1 の「起動直後」= 組み立ての後、最初の要求の前)。(4) 契約表には D3 の形 `<family>{<label>, …}` で書く。(5) D4 の test は、所有の表に kind の欄 (counter / info) を足し、info の family については「子がちょうど 1 本・値が 1・label 名の集合が code span と等しい・label の値が所有の表の期待 (test の組み立ての入力から決まる値)」を確かめる。counter の kind の「どの子も 0」は info に当てない。最初の info の family は、ADR-0056 A4f の起動時の gauge。
   - Accepted 化は VP が行う (時限承認: workspace `ORGANIZATION.md:470-472`。S1 の merge より前)。
   - クロスリポ契約表に、全行に効く一般則 (D1) と metric の名指し方 (D3) を足し、「Rate-limit client-IP ヘッダ」の行の metric 名を訂正する (D5)。だから architect 合意 + VP 承認が要る (`ORGANIZATION.md` §4)。
   - HTTP の status と body は変えない。`/metrics` に 0 の系列が 6 本増えるだけ (D5)。
