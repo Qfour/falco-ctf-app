@@ -6,7 +6,7 @@
   - HTTP の status と body は変えない。`/metrics` に 0 の系列が 6 本増えるだけ (D5)。
   - 新 image・新サービス・Dockerfile・Hard Invariant に触れないので、CEO 判断を要さない。
   - 実装は Proposed のまま始めてよい。
-- **限定の拡張 (2026-11-20、ADR-0056 追補 23 の改訂)**: D1・D2・D4 に、info 型の gauge の kind を足す。本文の D1〜D6 は書き換えず、counter の family には何も変わらない。
+- **限定の拡張 (2026-11-20、ADR-0056 追補 23 の改訂)**: D1・D2・D4 に、info 型の gauge の kind を足す。D1・D4 には pointer の 1 行だけを足し、D1〜D6 の規則は書き換えない。counter の family には何も変わらない。
   - **どちらが正か**: info の kind の規則の正は、この bullet (ADR-0040) である。ADR-0056 (まだ **Proposed**) は最初の使い手で、その A4f の行と D18 はここを指すだけで、規則を持たない。ADR-0056 の Status が変わっても、この規則は変わらない。
   - **効き始める時点**: `internal/contractmetrics` の所有の表に kind の欄 (counter / info) を足す PR (ADR-0056 A4f の PR) の merge。それより前は、info の family は契約表に書けない (書けば D4 の test が counter として照らして赤になる)。
   - info の kind の規則:
