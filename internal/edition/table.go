@@ -230,6 +230,12 @@ func lineAt(data []byte, i int) int { return 1 + bytes.Count(data[:i], []byte{'\
 
 func validRunID(s string) bool { return len(s) == runIDLen && lowerHex(s) }
 
+// ValidRunID reports whether s has the form of a run id: 32 lower-case hex digits
+// (PracticeRunID among them). It is validRunID, for the one caller outside the package:
+// the scoreboard's gauge of the loaded edition (ADR-0056 A4f), which names a run id only
+// in this form.
+func ValidRunID(s string) bool { return validRunID(s) }
+
 // lowerHex reports whether s is lower-case hex digits only (an empty s is). It is the one
 // definition of the digits of a run id, of a digest (ValidDigest) and of the key file of
 // `edition render` (readKeyFile, which checks the bytes it read without making a string of them).

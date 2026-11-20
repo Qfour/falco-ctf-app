@@ -228,6 +228,14 @@ paths:
               collector's, `httpx.MethodLabel`).
           - `scoreboard_csp_violation_reports_total{outcome}` (Issue #95)
               outcome in {accepted, bad_content_type, too_large, decode_error}
+          - `scoreboard_edition_loaded_info{run_id}` (ADR-0056 A4f; a gauge,
+              always 1, exactly one series, set when the handler is assembled)
+              run_id = the run id of the answers table the scoreboard loaded
+              (32 lower-case hex digits), 32 zeros for the practice edition, or
+              `none` when no table is needed (no investigate challenge in
+              scope). It never carries an answer, a seat or a challenge id.
+              Cross-repo contract: the row "scoreboard の edition の読み込みの
+              metric" of .claude/rules/falco-ctf-app-conventions.md.
       responses:
         "200":
           description: Prometheus exposition

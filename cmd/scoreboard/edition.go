@@ -41,14 +41,19 @@ import (
 // answers of every challenge of the whole tree it carries (its full catalog and its
 // directory, which this package never reads itself) for T6 (A4a-1), so an event table that repeats a published practice answer is refused
 // here, at start-up. There is no separate directory argument to get wrong.
-func startEdition(logger *slog.Logger, cfg catalogEnv, scored catalog.Scored) (*edition.Judge, error) {
+//
+// It also returns the run id, the same variable the `edition loaded` record carries
+// ("" when there is no Judge): main hands it to the handler (scoreboard.WithEditionRunID),
+// which puts it in the gauge scoreboard_edition_loaded_info (ADR-0056 A4f), so the record
+// and the gauge name one run id (edition_gauge_test.go).
+func startEdition(logger *slog.Logger, cfg catalogEnv, scored catalog.Scored) (*edition.Judge, string, error) {
 	judge, runID, err := edition.Load(scored, cfg.answersFile, cfg.flagsFile != "")
 	if err != nil {
 		logger.Error("edition check failed", "err", err)
-		return nil, err
+		return nil, "", err
 	}
 	if judge != nil {
 		logger.Info("edition loaded", "run_id", runID)
 	}
-	return judge, nil
+	return judge, runID, nil
 }
