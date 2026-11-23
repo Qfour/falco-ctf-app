@@ -6,10 +6,11 @@
 
 本リポ (`falco-ctf-app`) は再利用可能な CTF キットであり、**公開 contract**
 (`POST /falco/events` webhook payload / image 命名 / challenges スキーマ) を持つ。
-**外部クライアント (将来 Roblox 等) は SemVer タグで contract 対応版を判断する。**
+**外部クライアント (将来 Roblox 等) は、release タグと、その版の節の契約への影響の記載で contract 対応版を判断する。**
 
-バージョニングは [Semantic Versioning](https://semver.org/lang/ja/) に従う。
-bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
+版名は calver `vYYYY.M.D` (月・日は 0 埋めしない。[Semantic Versioning](https://semver.org/lang/ja/) の厳格な形に合わせるが、
+版の数字は日付で、契約の互換を表さない)。契約の互換は各版の節の項目で示す。版名の規則と、
+契約への影響の区分 (MAJOR / MINOR / PATCH) の書き方は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
 
 ## [Unreleased]
 
@@ -93,6 +94,7 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
   - **Upgrade note**: この変更を含む tag の challenge image は、版を書かない 7 package の版が index から外れても build が止まらない代わりに、同じ SHA を build し直すと中身が変わる (CI で build した版と release で build した版が同じとは限らない)。CVE の下限は PR の image scan と release の scan (platform の release 手順 = ADR-WS-0010) が守る。release は image ごとの digest と `apk info -v` を記録すること (ADR-0036 Consequences の条件 3)。この変更を含まない tag (app#601 までの tag を含む) は、index の更新で再び challenge image を build できなくなりうる。tag は CEO。
   - 出荷する image の中身は、build のたびに index の現行版に動く以外は同じ (RUN 行の構造・順序・他の package・base digest は不変)。公開 contract は不変。platform の対の PR は不要 (image tag だけを参照する)。
 - **ADR-0036 Accepted、契約表に release scan gate の読み取り面 (PATCH)**: apk の exact pin を「版が振る舞いに効く package」と「base を引き上げる一時的な pin」だけにする方針 (ADR-0036) を Accepted にした (security は条件付き同意。条件 1〜3 は platform#285 = ADR-WS-0010 の実装、条件 4 は app#505、条件 5 は本改訂)。契約表 (conventions) の Image naming 行に、platform の release scan gate が `Makefile` の `IMAGES :=` の 1 行 (継続行・行末コメント無し) を release の image 集合として読むことを足した。形式や意味を変える PR は両リポ同時。`internal/contracttable` の test が、その 1 行の形と、I5 の 8 image との一致を固定する。`dev-flow.md` と `ci.yaml` の「`make scan TAG=local` が唯一の preventive gate」は「PR 前の検査。release の gate は platform の `scripts/scan-release-images.sh`」に改めた。
+- **release の tag の文法を calver `vYYYY.M.D` (厳格 SemVer の形、月・日は 0 埋めしない) の 1 形に限定した (PATCH。過去の release の tag と版は変わらない)**。`.github/workflows/release.yml` は、厳格 SemVer の検査の後に `calver=` の行の検査を足し、calver の形でない SemVer の tag (`v1.2.3`、範囲外の月・日、`+build` 付き) を fail にする (Release は作られない)。suffix 付き (`-rc1` など) は今までどおり prerelease。同じ日の 2 本目は `.N` を付けず、未使用の最小の後の日付で切る。契約表 (conventions) に「Release tag の文法」の行を足した (他リポが読む面 = `release.yml` の `semver=` と `calver=` の 2 行)。`docs/RELEASING.md` の「SemVer bump 基準」は「版名」と「契約への影響の区分」に分け、契約の互換は版の数字ではなく CHANGELOG の各版の節で示すことにした。**両リポ同時 PR** (対 = 下流の側の、prod の pin と release の scan の受理集合の変更)。
 
 ### Fixed
 
@@ -339,7 +341,7 @@ bump 基準は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
 - **tracked file の生の不可視文字と、印字可能 ASCII でない tracked path を `make test` で禁止した (app#511、#508 の続き、PATCH、挙動の変更なし)**。`internal/sourcehygiene/invisible.go` の表 (`invisibleRanges` = Cf ∪ Default_Ignorable ∪ C0 / C1 ∪ U+2028 / U+2029 ∪ 単独の CR) と文脈規則 (非 ASCII の So の直後の U+FE0F、絵文字列の内側の U+200D、先頭の BOM、CRLF は可) を、bidi と同じ 1 回の walk・同じ file 集合・canary (AGENTS.md、CLAUDE.md、journey.yaml、ADR を追加) で適用する。例外は `testdata/invisible-allowlist.txt` の閉集合 (code point 単位、今は `flags-parity` の fixture 10 行、理由付き)。表の被覆 (Cf / Variation_Selector / Other_Default_Ignorable の全 rune) は meta test が固定し、Go の Unicode の版が上がって増えれば赤になる。`bidi-allowlist.txt` のヘッダの「NUL は走査しない」を実装 (NUL があっても走査する) に合わせて直した。
 
 <!--
-  compare リンク参照定義。リリース時に vX.Y.Z を最新タグへ更新すること
+  compare リンク参照定義。リリース時に vYYYY.M.D を最新タグへ更新すること
   (docs/RELEASING.md の手順参照)。初期は最初のタグを打つまでプレースホルダ。
 -->
 [Unreleased]: https://github.com/Qfour/falco-ctf-app/compare/v2026.11.1...HEAD

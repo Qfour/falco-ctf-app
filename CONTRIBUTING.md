@@ -47,7 +47,8 @@ Hard Invariants (I1–I10) を破らないこと (`.claude/rules/*-conventions.m
 
 ## バージョニング / リリース
 
-版・contract の正典は **SemVer タグ** です。bump 基準とリリース手順は
+版・contract の正典は **release タグ** (calver `vYYYY.M.D`、厳格 SemVer の形) です。契約の互換は
+版の数字ではなく CHANGELOG の各版の節で示します。版名の規則・契約への影響の区分・リリース手順は
 [`docs/RELEASING.md`](docs/RELEASING.md) を参照してください。タグ打ち・Release publish は
 **CEO のみ** が行います。
 

@@ -25,12 +25,12 @@ GitHub Security Advisory 経由で **非公開** に報告してください:
 
 ## 対象バージョン
 
-サポート対象は **最新の SemVer リリース** (最新 `vX.Y.Z` タグ) です。版・contract の
-正典は SemVer タグであり、リリース運用は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
+サポート対象は **最新のリリース** (版の順で最新の `vYYYY.M.D` タグ。suffix 付きの prerelease は含まない) です。
+版・contract の正典は release タグであり、リリース運用は [`docs/RELEASING.md`](docs/RELEASING.md) を参照。
 
 | バージョン | サポート |
 |---|---|
-| 最新リリース (`vX.Y.Z`) | ✅ |
+| 最新リリース (`vYYYY.M.D`) | ✅ |
 | それ以前 | ❌ |
 
 ## 対応フロー
