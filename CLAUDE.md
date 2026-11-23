@@ -135,13 +135,13 @@ gitGraph
    commit id: "fix"
    checkout main
    merge feature/topic id: "squash merge (CI green)"
-   commit id: "release" tag: "v2026.06.01-ctf"
+   commit id: "release" tag: "v2026.6.1"
 ```
 
 - **feature ブランチ命名**: `feature/<topic>` / `fix/<topic>` / `chal/<NN>-<slug>`
 - **PR**: main への squash merge。CI (`test` / `chart-lint` / `flag-guard` /
   `build (<image>)` × 7 / `shellcheck` / `challenge-rules`) が必須 gate
-- **リリース**: `git tag -a v<YYYY.MM.DD>[-<suffix>] -m "<message>"` → push
+- **リリース**: `git tag -a v<YYYY>.<M>.<D> -m "<message>"` → push (月・日は 0 埋めしない = 厳格 SemVer。例 `v2026.11.1`。suffix 付きは prerelease で prod の pin にならない。同じ日の 2 本目は未使用の最小の後の日付。正典は `.claude/rules/falco-ctf-app-conventions.md` の「Release tag の文法」行)
   - **`v*` タグ push は CI を発火させない** (Issue #37。CI trigger は main push /
     PR のみ)。タグは GitHub Release ノート生成 (`gh release create --generate-notes`
     が `.github/release.yml` のラベル分類を消費) のためだけに使う
@@ -150,7 +150,7 @@ gitGraph
     charts=local clone で運用中 (`project_ci_free_prod` 決定)
   - tag = 本番 deploy に使う image tag の記録用途 (Hard Invariant I4 は
     「git SHA を tag として使う」ことが本体で、release tag そのものではない)
-- **hotfix**: `fix/<topic>` ブランチ → PR → squash → 新 tag を打ち直す
+- **hotfix**: `fix/<topic>` ブランチ → PR → squash → 新しい tag を切る (既存の tag は付け替えない・消さない。同じ日なら後の日付)
 
 ## Claude Code Workflow
 
