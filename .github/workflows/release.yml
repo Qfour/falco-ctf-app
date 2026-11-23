@@ -30,9 +30,10 @@ jobs:
       GITHUB_REPOSITORY: ${{ github.repository }}
     steps:
       # ----------------------------------------------------------------
-      # SemVer タグ検証。逸脱タグ (`1.0`, `foo` 等) は fail させる。
+      # SemVer + calver のタグ検証。厳格 SemVer の後に calver の形 (vYYYY.M.D[-pre]) を検査し、
+      # どちらかに合わないタグ (`1.0`, `foo`, `v1.2.3`, `v2026.11.01`, `+build` 付き等) は fail させる。
       # ----------------------------------------------------------------
-      - name: Validate SemVer tag
+      - name: Validate SemVer + calver tag
         run: |
           set -euo pipefail
           # 厳格 SemVer: leading zero 不可。逸脱タグは fail。
@@ -45,10 +46,10 @@ jobs:
           # calver の形 (vYYYY.M.D[-pre]、0 埋めなし)。文法の正典は
           # .claude/rules/falco-ctf-app-conventions.md の契約表「Release tag の文法」行。
           if [[ ! "$GITHUB_REF_NAME" =~ $calver ]]; then
-            echo "::error::tag is not a calver release tag (vYYYY.M.D[-pre])"
+            echo "::error::tag '$GITHUB_REF_NAME' is not a calver release tag (vYYYY.M.D[-pre])"
             exit 1
           fi
-          echo "SemVer tag OK: $GITHUB_REF_NAME"
+          echo "SemVer + calver tag OK: $GITHUB_REF_NAME"
 
       # ----------------------------------------------------------------
       # Release 自動生成。--generate-notes が .github/release.yml の
@@ -59,6 +60,8 @@ jobs:
         run: |
           set -euo pipefail
           # プレリリース判定は build metadata (+...) を除いた core の '-' で行う (SemVer 準拠)。
+          # calver の検査が `+build` を拒むので、`+` を除く処理は calver の検査の後は到達しない
+          # (多重の防御として残す)。
           core="${GITHUB_REF_NAME%%+*}"
           args=(release create "$GITHUB_REF_NAME"
             --repo "$GITHUB_REPOSITORY"
