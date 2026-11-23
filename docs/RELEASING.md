@@ -21,11 +21,14 @@ platform の `events/<回>/versions.yaml` の `app.ref` と一致させる。外
 CI は非稼働 (CI-free 恒久方針) だが、**リリース時には必ずタグを打つ**。タグ = contract 版の
 公開点であり、CI の有無とは独立に運用する (image ビルド/push は別途 platform 側の手動手順)。
 
-## SemVer bump 基準
+## 版名 (calver を厳格 SemVer の形で)
 
-- **MAJOR (`X`)** — 公開 contract の破壊的変更 (`/falco/events` payload・image 命名・challenges スキーマ)。
-- **MINOR (`Y`)** — 後方互換の機能追加。
-- **PATCH (`Z`)** — 後方互換のバグ修正・軽微改善。
+- 版名は `vYYYY.M.D` の 1 形 (月・日は 0 埋めしない。`v2026.11.1`、`v2026.12.24`)。厳格 SemVer の形なので `release.yml` を通る。文法の正典は `.claude/rules/falco-ctf-app-conventions.md` の契約表「Release tag の文法」行。
+- 日付は tag を切る日 (JST) か、それより後の日。既存のどの release tag よりも版の順で大きくする。**同じ日の 2 本目は `.N` を付けず、未使用の最小の後の日付で切る** (4 つ目の数字は SemVer の外で Release が作られず、platform も release と認めない)。
+- suffix 付き (`v2026.12.24-rc1` など) は GitHub では prerelease になる。platform の prod の pin と release の scan は **suffix なしだけ**を release と認める。
+- 並べるときは版の順 (`git tag --sort=v:refname` / `sort -V`)。文字列の順 (`v2026.11.20` < `v2026.11.3`) は誤る。
+- **公開 contract の破壊的変更は版の数字ではなく CHANGELOG の該当節に明記する** (MAJOR は年で、契約の互換を表さない)。
+- 形の外れた過去の tag (`v2026.08.31`・`v2026.09.02`・`v2026.09.03`・`v2026.09.03.1`) は消さず、release としては扱わない。
 
 ## 手順
 
@@ -39,20 +42,19 @@ CI は非稼働 (CI-free 恒久方針) だが、**リリース時には必ずタ
    step 1 と分けて独立に確認する (リンク更新漏れは Release ノートには現れず気付きにくいため)。
 3. **タグを打って push する (CEO)**
    ```sh
-   git tag vX.Y.Z
-   git push origin vX.Y.Z
+   git tag -a vYYYY.M.D -m "<message>"
+   git push origin vYYYY.M.D
    ```
    > ⚠️ **タグ名は厳格 SemVer** (`release.yml` の検証: 各数字に leading zero 不可)。日付型なら `v2026.11.1` と書く。`v2026.11.01` は fail する (2026-11-01 に踏んだ)。
-   > ⚠️ **タグ push は CEO のみ。** G1 の tag ruleset (`v*`) で非 CEO の作成/更新は拒否される。
+   > ⚠️ **タグ push は CEO のみ (運用の規律)。** origin の tag ruleset (`v*`) は **削除と付け替えを拒否する**が、**作成は制限しない** (repo の書き込み権を持つ account は 1 つで、作者で区別できない)。prod に使う tag の作者の証明は、運営の端末での CEO の署名で行う (platform の運用手順)。
 4. **Release は自動生成される (`.github/workflows/release.yml`)**
    `vX.Y.Z` タグを push すると `release.yml` ワークフローが発火し、Release を **自動生成する**。
    手動の `gh release create` は不要になった。ワークフローの動作:
-   - **SemVer 検証**: タグが `vX.Y.Z[-pre][+build]` (SemVer) に一致しないと fail する
-     (不正タグ `1.0` / `foo` などは弾かれ、Release は作られない)。
+   - **SemVer と calver の検証**: タグが厳格 SemVer に一致し、かつ calver の形 `vYYYY.M.D[-pre]` (0 埋めなし) でないと fail する
+     (不正タグ `1.0` / `foo`、calver でない `v1.2.3`、0 埋めの `v2026.11.01`、build metadata 付きなどは弾かれ、Release は作られない)。
    - **Release 生成**: `gh release create "$TAG" --generate-notes --verify-tag` 相当を実行。
-     プレリリース判定は build metadata (`+...`) を除いた **core の最初の `-`** で行う (SemVer 準拠)。
-     例: `v1.2.0-rc1` は prerelease、`v1.0.0+build-9` は build metadata の `-` を無視して
-     **通常リリース**扱いになる。
+     プレリリース判定は **core の最初の `-`** で行う (SemVer 準拠)。
+     例: `v2026.12.24-rc1` は prerelease、`v2026.12.24` は通常リリース。
    - **カテゴリ分類**: `--generate-notes` が `.github/release.yml` の分類に従い、マージ済み PR を
      ラベル別 (Features / Fixes / UX / Security / Docs / Infra) にグルーピングする。PR には
      **必ず `.github/labels.yml` の `type:*` ラベルを付けてからマージすること** (未付与は Other に入る)。
@@ -116,4 +118,4 @@ add-to-project 自体は冪等なので、同一 Issue が複数回発火して�
 ## 補足
 
 - contract に触れる変更は platform 側と同時 PR。CHANGELOG の該当節にも contract 影響を明記する。
-- 外部クライアントは MAJOR 差分を見て contract 対応版を判断する (CHANGELOG ヘッダ参照)。
+- 外部クライアントは CHANGELOG の各版の contract 影響の記載で対応版を判断する (版の数字は日付で、MAJOR は契約の互換を表さない)。
