@@ -60,7 +60,11 @@ func LoadScenario(path string) (Scenario, error) {
 //     derives a workspace's scope from the directory name: two directories
 //     answering to one id make "which scenario is this" ambiguous);
 //   - no manifest at all is an error (a wrong root must not read as "nothing
-//     to check").
+//     to check);
+//   - a manifest whose id is not the name of the directory that holds it is an
+//     error naming both (ADR-0055 V1 / D2: the directory name is the scenario's
+//     name everywhere else, so an id that differs is two names for one scenario).
+//     The check is idIsDir, the one module.yaml and course.yaml are held to.
 func LoadScenarios(root string) ([]Scenario, error) {
 	paths, err := filepath.Glob(filepath.Join(root, "*", "scenario.yaml"))
 	if err != nil {
@@ -85,6 +89,15 @@ func LoadScenarios(root string) ([]Scenario, error) {
 		}
 		firstPath[s.ID] = p
 		out = append(out, s)
+	}
+	// A second pass, after every manifest is read, so two directories that answer to
+	// one id still get the message that names both paths above. Once every id is its
+	// directory's name the duplicate check cannot fire (directory names are distinct);
+	// it is kept for that message, not as a second line of defence.
+	for i, s := range out {
+		if err := idIsDir(s.ID, paths[i]); err != nil {
+			return nil, fmt.Errorf("scenario %q: %w", paths[i], err)
+		}
 	}
 	return out, nil
 }

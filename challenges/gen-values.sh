@@ -283,7 +283,10 @@ fi
 #     this list (fixtures/README isolation, not just flags).
 # Fail-closed (same discipline as catalog.Restrict(), Go side): a scenario
 # manifest referencing an id with no matching challenges/ directory is a
-# hard error, not a silently-dropped mission.
+# hard error, not a silently-dropped mission. So is a scenario whose `id:` is
+# not the name of its directory, and a challenge id listed twice in one scenario
+# (ADR-0055 V1; scripts/test-gen-values-scenarios.sh runs each refusal on a
+# synthetic tree).
 # ---------------------------------------------------------------------------
 
 SCENARIOS_DIR='../scenarios'   # this script cd'd into challenges/ above
@@ -334,6 +337,34 @@ scenario_challenge_ids() {
 # `helm template`/`helm upgrade` directly, bypassing this script).
 CHALLENGE_ID_RE='^[0-9]{2}-[a-z0-9-]{1,60}$'
 
+# ADR-0055 V1 / D2: a scenario's `id:` is the name of the directory that holds it
+# (internal/catalog LoadScenarios holds the same rule: idIsDir). scenario_id prints
+# the top-level `id:` value (a quoted value unquoted, a trailing comment dropped),
+# or nothing when there is none. The two quote characters are passed in, so that no
+# quote has to be written inside the awk program.
+scenario_id() { # <scenario.yaml> -> the declared id, or nothing
+  awk -v q1='"' -v q2="'" '
+    /^id:/ {
+      line=$0
+      sub(/^id:[[:space:]]*/, "", line)
+      sub(/[[:space:]]+#.*$/, "", line)
+      gsub(/[[:space:]]+$/, "", line)
+      n=length(line)
+      if (n >= 2) {
+        f=substr(line, 1, 1); l=substr(line, n, 1)
+        if ((f == q1 || f == q2) && f == l) line=substr(line, 2, n - 2)
+      }
+      print line
+      exit
+    }
+  ' "$1"
+}
+
+# SCENARIO_ERRORS is printed with `printf %b` below, which reads backslash escapes
+# in the text it prints, so a declared id is echoed only when it is plain.
+SCENARIO_ID_ECHO_RE='^[A-Za-z0-9._-]{1,64}$'
+NL=$'\n'
+
 SCENARIO_ERRORS=""
 while IFS= read -r sdir; do
   [ -z "${sdir}" ] && continue
@@ -343,7 +374,19 @@ while IFS= read -r sdir; do
     SCENARIO_ERRORS="${SCENARIO_ERRORS}scenario '${sid}' has no scenario.yaml at ${sfile}\n"
     continue
   fi
+  sdecl="$(scenario_id "${sfile}")"
+  if [ -z "${sdecl}" ]; then
+    SCENARIO_ERRORS="${SCENARIO_ERRORS}ADR-0055 V1 VIOLATION: scenario '${sid}': ${sfile} has no top-level 'id:' (it must be '${sid}', the name of its directory)\n"
+  elif [ "${sdecl}" != "${sid}" ]; then
+    if [[ "${sdecl}" =~ ${SCENARIO_ID_ECHO_RE} ]]; then
+      sshown="'${sdecl}'"
+    else
+      sshown="(a value outside ${SCENARIO_ID_ECHO_RE}, not echoed)"
+    fi
+    SCENARIO_ERRORS="${SCENARIO_ERRORS}ADR-0055 V1 VIOLATION: scenario directory '${sid}' declares id ${sshown} in ${sfile}, want '${sid}' (the id is the name of its directory, ADR-0055 D2)\n"
+  fi
   scount=0
+  sseen="${NL}"
   while IFS= read -r cid; do
     [ -z "${cid}" ] && continue
     scount=$((scount + 1))
@@ -351,6 +394,15 @@ while IFS= read -r sdir; do
       SCENARIO_ERRORS="${SCENARIO_ERRORS}scenario '${sid}': challenge #${scount} is not a valid challenge id (${CHALLENGE_ID_RE}; the value is not echoed — app#207 shell-metacharacter guard, app#437 grammar)\n"
       continue
     fi
+    # ADR-0055 V1: a challenge listed twice would be walked twice in the order while
+    # the restricted catalog holds it once (internal/catalog LoadScenario refuses it
+    # too). Only an id that passed the grammar above is compared and echoed.
+    case "${sseen}" in
+      *"${NL}${cid}${NL}"*)
+        SCENARIO_ERRORS="${SCENARIO_ERRORS}ADR-0055 V1 VIOLATION: scenario '${sid}': challenge '${cid}' is listed more than once in ${sfile}\n"
+        ;;
+    esac
+    sseen="${sseen}${cid}${NL}"
     if [ ! -d "${cid}" ]; then
       SCENARIO_ERRORS="${SCENARIO_ERRORS}scenario '${sid}' references unknown challenge '${cid}' (no such directory under challenges/)\n"
     fi
