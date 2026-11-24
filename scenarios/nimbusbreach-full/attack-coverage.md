@@ -19,11 +19,3 @@
 | 08 | C2 Beacon | Command and Control | `T1095` | Non-Application Layer Protocol |
 | 09 | Hidden Cache | Stealth | `T1564` | Hide Artifacts |
 | 10 | The Final Exfil (Boss) | Exfiltration | `T1041` | Exfiltration Over C2 Channel |
-
-## 宣言 tactics (scenario.yaml) との一致
-
-宣言: Discovery, Credential Access, Stealth, Execution, Command and Control, Exfiltration
-
-実際: Discovery, Credential Access, Stealth, Execution, Command and Control, Exfiltration
-
-一致 (advisory チェック済み — 詳細は `make gen-attack` の標準出力)。

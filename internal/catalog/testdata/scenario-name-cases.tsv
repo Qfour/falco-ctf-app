@@ -26,6 +26,7 @@
 # --- baseline: the real scenarios
 nimbusbreach-full	accept
 nimbusbreach-with-tutorial	accept
+onboarding	accept
 tutorial-intro	accept
 # --- shape
 a	accept

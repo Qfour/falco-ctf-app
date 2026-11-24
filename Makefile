@@ -282,9 +282,9 @@ gen-tutorial-fragments:
 # gen-home-fragments does; no Go on the host, no network in the generator's build or run).
 # A directory with neither source is left alone. Run it before gen-values, which reads the
 # generated files. Commit the result. check-gen-scenarios is the same run with --check.
-# Both stay green on today's tree, which has no source yet: the Dockerfile passes
-# --allow-no-source until the migration (S2b-2) removes it (the generator itself refuses
-# zero sources, so a wrong root does not read as "nothing to generate").
+# Since the migration (S2b-2) every scenario has a source, and both fail on a tree with none
+# (a wrong root does not read as "nothing to generate"). `go test ./...` runs the same --check
+# on the committed tree (cmd/gen-scenarios/realtree_test.go), in the required test job.
 gen-scenarios:
 	docker build -f Dockerfile.gen-scenarios --target export -o . .
 

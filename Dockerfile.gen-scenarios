@@ -15,10 +15,9 @@
 #   check   the generator with --check: writes nothing, fails naming each stale scenario.yaml
 #   export  scratch with what gen wrote (scenarios/<id>/scenario.yaml), nothing else
 #
-# --allow-no-source: until ADR-0055 S2b-2 migrates the tree there is no module.yaml or
-# course.yaml, and the generator refuses zero sources (a wrong root must not read as "nothing
-# to generate"). The flag keeps both targets green on today's tree; the migration PR removes
-# it from both RUN lines.
+# Neither target passes --allow-no-source (ADR-0055 S2b-2 migrated the tree): a context with
+# no module.yaml or course.yaml fails both, as a wrong root must not read as "nothing to
+# generate". The same --check also runs in `go test ./...` (cmd/gen-scenarios/realtree_test.go).
 FROM golang:1.26.11-alpine@sha256:ae52b5bc6ed045a9ed26ab03dc19327a802a9cc9aa8b27ed57f5c6b60579b0bb AS build
 WORKDIR /src
 
@@ -33,12 +32,10 @@ COPY challenges ./challenges
 COPY scenarios ./scenarios
 
 FROM build AS gen
-# /gen is made first: with no source the generator writes nothing, and the export's COPY
-# needs the directory to exist.
-RUN --network=none mkdir -p /gen && /out/gen-scenarios --allow-no-source --out /gen /src
+RUN --network=none mkdir -p /gen && /out/gen-scenarios --out /gen /src
 
 FROM build AS check
-RUN --network=none /out/gen-scenarios --check --allow-no-source /src
+RUN --network=none /out/gen-scenarios --check /src
 
 FROM scratch AS export
 COPY --from=gen /gen/ /

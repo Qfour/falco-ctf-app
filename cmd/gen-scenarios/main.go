@@ -30,8 +30,8 @@
 // a directory). --check fails on such a scenario.yaml when it starts with this generator's
 // header: the source was removed and its output is left behind. No source at all is an
 // error, since a wrong root must not read as "nothing to generate"; --allow-no-source
-// accepts it, for the Makefile only until the tree is migrated (S2b-2; see
-// Dockerfile.gen-scenarios).
+// accepts it. Since the tree was migrated (S2b-2) neither the Makefile nor
+// Dockerfile.gen-scenarios passes it; realtree_test.go runs --check on the real tree.
 package main
 
 import (

@@ -177,7 +177,7 @@ func TestCheck_OneByteEditIsRed(t *testing.T) {
 	}
 }
 
-// Acceptance 3: no source fails, unless --allow-no-source (the Makefile, until S2b-2).
+// Acceptance 3: no source fails, unless --allow-no-source (no caller passes it since S2b-2).
 func TestNoSource(t *testing.T) {
 	root := t.TempDir()
 	put(t, root, "challenges/01-a/falco-rule.yaml", "type: trigger\nexpectedRules: [r]\n")

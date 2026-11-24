@@ -1,0 +1,10 @@
+# The course nimbusbreach-with-tutorial (ADR-0055 D4, D9): the onboarding module (00) and
+# then the full killchain (01→10), for events that show the 0問目 beside the full arc. It has
+# no flags, challenges or hints of its own. scenario.yaml beside this file is generated from
+# it: edit this file, then run make gen-scenarios (and make gen-values).
+id: nimbusbreach-with-tutorial
+title: "CTF Company — Full Scenario + Tutorial (11 missions)"
+timebox: {minutes: 170, introMinutes: 30, closingMinutes: 0}
+modules:
+  - id: onboarding
+  - id: nimbusbreach-full

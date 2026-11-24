@@ -64,6 +64,9 @@ var evadePins = map[string]map[string][]string{
 	// API Server From Container") come before the only evade challenge, 03, which
 	// forbids only "Read sensitive file untrusted": no shared fire.
 	"tutorial-intro": {"03-stealth-read": nil},
+	// onboarding (ADR-0055 D9) is 00-tutorial alone: a trigger and no evade challenge,
+	// so there is no entry to pin. The row is still required (there is no default).
+	"onboarding": {},
 }
 
 // evadeIntersections returns, for every evade challenge named in order, the
