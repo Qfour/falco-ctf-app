@@ -1,0 +1,20 @@
+# The module tutorial-intro (ADR-0055 D3): the 「遊び方」 introduction, 0問目 (00) and two
+# example missions, a trigger (01) and an evade (03), in the order 00→01→03. It is a separate
+# module from the scored nimbusbreach-full. scenario.yaml beside this file is generated from
+# it: edit this file, then run make gen-scenarios (and make gen-values).
+id: tutorial-intro
+title: "遊び方チュートリアル — 導入コース (0問目 + 例題)"
+summary: >-
+  「遊び方」を掴むための導入コース。0問目 (00) と例題 (01・03) で、
+  trigger と evade の両方の流れを体験する。
+outcomes:
+  - trigger 課題が Falco ルールの発火で自動クリアになる流れを体験する
+  - 段階ヒント (気付き → 概要 → 解答) を順に開いて進める
+  - evade 課題で flag を取り出し、提出フォームから提出する流れを体験する
+version: 1
+level: 2
+duration: {handsOnMinutes: 30, debriefMinutes: 0}
+missions:
+  - 00-tutorial
+  - 01-initial-recon
+  - 03-stealth-read

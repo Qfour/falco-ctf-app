@@ -1,8 +1,10 @@
 package catalog_test
 
 // app#494: a scenario name (scenarios/<name>/, `scenario:<name>` in
-// charts/ctf-user/deploy-user.sh) has no Go definition: deploy-user.sh is the only
-// code that takes one from an operator, and it checks it with SCENARIO_PATTERN
+// charts/ctf-user/deploy-user.sh) is checked in Go only by catalog.ValidScenarioName
+// (ADR-0055 S2a, the id of a module or a course; module_test.go runs this table through
+// it). deploy-user.sh is the only code that takes one from an operator, and it checks it
+// with SCENARIO_PATTERN
 // before any kubectl / helm call. This test holds that shell literal equal to the
 // header of the shared case table (internal/catalog/testdata/scenario-name-cases.tsv),
 // runs every row through it, and requires every real scenarios/<name>/ to be

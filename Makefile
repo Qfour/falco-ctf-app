@@ -18,7 +18,7 @@ SYSDIG_URL   ?= https://app.au1.sysdig.com
 # host repo are not shared into the VM.
 GO_IMAGE ?= golang:1.26-alpine
 
-.PHONY: help dev dev-down build push load-colima deploy-local helm-dep-build lint check-seccomp check-chartparse check-flag-isolation check-namespace-ownership check-answers-secret check-answers-secret-selftest check-image-hygiene check-image-hygiene-selftest check-image-type-rule test e2e e2e-serve check-e2e-verdict tidy gen gen-home-fragments gen-tutorial-fragments gen-values gen-attack check-flags check-template-hex check-portal-render check-rules check-freshness check-adr check-dockerignore check-build-context check-go-base-digest check-apk-pins check-apk-pins-selftest clean scan check-apk-pins-lint fmt-check edition-practice
+.PHONY: help dev dev-down build push load-colima deploy-local helm-dep-build lint check-seccomp check-chartparse check-flag-isolation check-namespace-ownership check-answers-secret check-answers-secret-selftest check-image-hygiene check-image-hygiene-selftest check-image-type-rule test e2e e2e-serve check-e2e-verdict tidy gen gen-home-fragments gen-tutorial-fragments gen-scenarios check-gen-scenarios gen-values gen-attack check-flags check-template-hex check-portal-render check-rules check-freshness check-adr check-dockerignore check-build-context check-go-base-digest check-apk-pins check-apk-pins-selftest clean scan check-apk-pins-lint fmt-check edition-practice
 
 help:
 	@echo "Targets:"
@@ -46,6 +46,8 @@ help:
 	@echo "  gen             — regenerate Go types from OpenAPI specs (docs/openapi-*.yaml)"
 	@echo "  gen-home-fragments — regenerate Portal Home tab HTML fragments (docs-site/home-fragments.yaml)"
 	@echo "  gen-tutorial-fragments — regenerate Portal Tutorial tab HTML fragments (docs-site/tutorial-chapters.yaml)"
+	@echo "  gen-scenarios   — regenerate scenarios/<id>/scenario.yaml from its module.yaml / course.yaml (ADR-0055 D5; run before gen-values)"
+	@echo "  check-gen-scenarios — fail naming each scenarios/<id>/scenario.yaml that differs from what its source generates (writes nothing)"
 	@echo "  gen-values      — regenerate challenge values.yaml / values-all.yaml / values-scenario-<name>.yaml from plant.sh + scenarios/"
 	@echo "  gen-attack      — regenerate ATT&CK Navigator layer + coverage table from falco-rule.yaml attack: blocks"
 	@echo "  edition-practice — CID=<cid>: re-render challenges/<cid>/edition/practice/ from its edition.yaml + template/ with scoreboard edition render --practice in Dockerfile.edition-practice (no Go on the host; ADR-0056 D20); commits nothing"
@@ -274,6 +276,20 @@ gen-home-fragments:
 # the result.
 gen-tutorial-fragments:
 	docker build -f Dockerfile.gen-tutorial-fragments --target export -o . .
+
+# ADR-0055 D5 (S2b-1): scenarios/<id>/scenario.yaml from that directory's module.yaml or
+# course.yaml, by cmd/gen-scenarios in Dockerfile.gen-scenarios (the export stage, as
+# gen-home-fragments does; no Go on the host, no network in the generator's build or run).
+# A directory with neither source is left alone. Run it before gen-values, which reads the
+# generated files. Commit the result. check-gen-scenarios is the same run with --check.
+# Since the migration (S2b-2) every scenario has a source, and both fail on a tree with none
+# (a wrong root does not read as "nothing to generate"). `go test ./...` runs the same --check
+# on the committed tree (cmd/gen-scenarios/realtree_test.go), in the required test job.
+gen-scenarios:
+	docker build -f Dockerfile.gen-scenarios --target export -o . .
+
+check-gen-scenarios:
+	docker build -f Dockerfile.gen-scenarios --target check --progress=plain .
 
 gen-values:
 	./challenges/gen-values.sh

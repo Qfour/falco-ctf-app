@@ -68,6 +68,9 @@ var evadePins = map[string]map[string][]string{
 	// to pin, and an evade challenge added to it would have no entry (and would also be
 	// refused by V39 if it came after the investigate challenge).
 	"ir-nimbus-desk": {},
+	// onboarding (ADR-0055 D9) is 00-tutorial alone: a trigger and no evade challenge,
+	// so there is no entry to pin. The row is still required (there is no default).
+	"onboarding": {},
 }
 
 // evadeIntersections returns, for every evade challenge named in order, the
