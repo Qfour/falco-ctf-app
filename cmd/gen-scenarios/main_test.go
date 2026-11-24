@@ -117,7 +117,7 @@ func TestGenerate_Deterministic(t *testing.T) {
 	root := newTree(t)
 	var first []genFile
 	for i := 0; i < 20; i++ {
-		files, err := generate(root)
+		files, _, err := generate(root)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -220,6 +220,109 @@ func TestInvalidSource_WritesNothing(t *testing.T) {
 	}
 }
 
+// --out is the one way Dockerfile.gen-scenarios writes (its export stage copies /gen): the
+// files land under <out>/scenarios/<id>/, and nothing is written in the root.
+func TestGenerate_OutDir(t *testing.T) {
+	root, out := newTree(t), t.TempDir()
+	if code, _, stderr := gen(t, "--out", out, root); code != exitOK {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	if got := read(t, out, "scenarios/course-x/scenario.yaml"); got != goldenCourse {
+		t.Fatalf("<out>/scenarios/course-x/scenario.yaml =\n%s\nwant\n%s", got, goldenCourse)
+	}
+	for _, id := range []string{"mod-a", "mod-b", "course-x"} {
+		if _, err := os.Lstat(filepath.Join(root, "scenarios", id, "scenario.yaml")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("scenarios/%s/scenario.yaml was written in the root (%v)", id, err)
+		}
+	}
+	if got := read(t, root, "scenarios/legacy/scenario.yaml"); got != legacyScenario {
+		t.Fatalf("rewritten: %s", got)
+	}
+	if _, err := os.Lstat(filepath.Join(out, "scenarios", "legacy")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a directory without a source was written under --out (%v)", err)
+	}
+}
+
+// A symlink directly under scenarios/ is refused (exit 3); a generated path that is a
+// symlink or a directory is not the generated file (--check, exit 1).
+func TestSymlinkAndNotRegular(t *testing.T) {
+	root := newTree(t)
+	if err := os.Symlink(filepath.Join(root, "scenarios", "mod-a"), filepath.Join(root, "scenarios", "zz-link")); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, stderr := gen(t, root); code != exitFail || !strings.Contains(stderr, "zz-link is a symlink") {
+		t.Fatalf("symlinked scenario directory: exit %d, stderr %q", code, stderr)
+	}
+	const rel = "scenarios/course-x/scenario.yaml"
+	for _, name := range []string{"symlink", "directory"} {
+		t.Run(name, func(t *testing.T) {
+			root := newTree(t)
+			if code, _, stderr := gen(t, root); code != exitOK {
+				t.Fatalf("generate: exit %d: %s", code, stderr)
+			}
+			p := filepath.Join(root, filepath.FromSlash(rel))
+			if err := os.Rename(p, p+".real"); err != nil {
+				t.Fatal(err)
+			}
+			var err error
+			if name == "symlink" {
+				err = os.Symlink(p+".real", p) // the target holds the right bytes
+			} else {
+				err = os.Mkdir(p, 0o755)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if code, _, stderr := gen(t, "--check", root); code != exitStale || !strings.Contains(stderr, rel+" is not a regular file") {
+				t.Fatalf("exit %d, stderr %q", code, stderr)
+			}
+		})
+	}
+}
+
+// A generated scenario.yaml left in a directory whose source was removed fails --check; the
+// hand-written one beside it (scenarios/legacy) passes, and generating does not remove it.
+func TestCheck_LeftoverGeneratedFile(t *testing.T) {
+	root := newTree(t)
+	put(t, root, "scenarios/solo/module.yaml", moduleYAML("solo", "1", "01-a"))
+	if code, _, stderr := gen(t, root); code != exitOK {
+		t.Fatalf("generate: exit %d: %s", code, stderr)
+	}
+	if code, _, stderr := gen(t, "--check", root); code != exitOK {
+		t.Fatalf("the untouched tree (hand-written legacy included): exit %d: %s", code, stderr)
+	}
+	if err := os.Remove(filepath.Join(root, "scenarios", "solo", "module.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	code, _, stderr := gen(t, "--check", root)
+	if code != exitStale || !strings.Contains(stderr, "scenarios/solo/scenario.yaml was generated") || strings.Contains(stderr, "legacy") {
+		t.Fatalf("exit %d, stderr %q: want %d naming scenarios/solo/scenario.yaml only", code, stderr, exitStale)
+	}
+	if code, _, stderr := gen(t, root); code != exitOK {
+		t.Fatalf("generate: exit %d: %s", code, stderr)
+	}
+	if !strings.HasPrefix(read(t, root, "scenarios/solo/scenario.yaml"), headerPrefix) {
+		t.Fatal("generating touched the leftover file")
+	}
+}
+
+// A title gen-attack-layer.py would read otherwise than YAML does is refused (exit 3); the
+// golden's quoted title is read the same by both (TestGenerate_GoldenAndUntouched).
+func TestRender_AttackReaderTitle(t *testing.T) {
+	for _, title := range []string{`'quoted'`, `say "a: b"`, `back\slash: x`, "bell\x07"} {
+		t.Run(title, func(t *testing.T) {
+			root := newTree(t)
+			put(t, root, "scenarios/course-x/course.yaml", strings.Replace(courseYAML, `"Course X: two modules"`, scalar(title), 1))
+			if code, _, stderr := gen(t, root); code != exitFail || !strings.Contains(stderr, "gen-attack-layer.py") {
+				t.Fatalf("exit %d, stderr %q", code, stderr)
+			}
+		})
+	}
+	if got := attackRead(scalar("Course X: two modules")); got != "Course X: two modules" {
+		t.Fatalf("attackRead = %q", got)
+	}
+}
+
 func TestUsage(t *testing.T) {
 	for _, args := range [][]string{nil, {"a", "b"}, {"--check", "--out", "x", "a"}, {"--nope", "a"}} {
 		if code, _, _ := gen(t, args...); code != exitUsage {
@@ -237,7 +340,12 @@ func TestUsage(t *testing.T) {
 //     starting with challenges:, skips an empty line, takes an indented line starting
 //     with - (# and spaces cut), closes at any other line;
 //   - charts/ctf-user/deploy-user.sh:517-528 only tests that the file exists, and reads
-//     the list through validate-flags-file.sh (:583) and assert-flag-isolation.sh (:1196).
+//     the list through validate-flags-file.sh (:583) and assert-flag-isolation.sh (:1196);
+//   - and a fifth, not shell: scripts/gen-attack-layer.py load_scenarios (:280-309) reads
+//     the list with _yaml_block_list (:259-277: opens at ^challenges:\s*$, skips a blank
+//     line, takes a line starting with -, closes at any other) and id / title with
+//     _yaml_scalar (:233-238), which strips quotes and unescapes nothing: render refuses
+//     a value it would read otherwise (TestRender_AttackReaderTitle).
 //
 // In this form (one line that is exactly "challenges:", then "  - <id>" lines of the
 // challengeid grammar, no #, no quote, then a key at column 0; LF only) every reader
@@ -278,7 +386,7 @@ func readerShape(data string) ([]string, error) {
 // list from it; the Go reader (catalog.LoadScenario) reads the same id and list.
 func TestGenerated_ReaderShape(t *testing.T) {
 	root := newTree(t)
-	files, err := generate(root)
+	files, _, err := generate(root)
 	if err != nil {
 		t.Fatal(err)
 	}
