@@ -32,6 +32,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Qfour/falco-ctf-app/internal/catalog/catalogtest"
 	"github.com/Qfour/falco-ctf-app/internal/edition"
 )
 
@@ -62,8 +63,11 @@ const (
 	// ChallengesRel is the image's challenges tree.
 	ChallengesRel = "challenges"
 
-	// ScenarioRel is the scenario file.
-	ScenarioRel = "scenario/scenario.yaml"
+	// ScenarioID is the fixture's scenario: the name of its directory (ADR-0055 D2).
+	ScenarioID = "scenario"
+
+	// ScenarioRel is the scenario file (PutScenario writes it and its module.yaml).
+	ScenarioRel = ScenarioID + "/scenario.yaml"
 
 	// FlagsRel is the flags file.
 	FlagsRel = "flags/flags.yaml"
@@ -238,6 +242,14 @@ func (tr *Tree) Put(rel, content string) {
 	}
 }
 
+// PutScenario writes the scenario id of the challenges, in that order, at the root of the tree
+// (id/scenario.yaml and the module.yaml it is generated from: catalog.LoadScenario takes
+// nothing else, ADR-0055 S2c) and returns the scenario file's path.
+func (tr *Tree) PutScenario(id string, challenges ...string) string {
+	tr.T.Helper()
+	return catalogtest.WriteScenario(tr.T, tr.Root, id, challenges...)
+}
+
 // Read is the text of the file rel.
 func (tr *Tree) Read(rel string) string {
 	tr.T.Helper()
@@ -297,7 +309,7 @@ func (tr *Tree) PlaceInputs(in Inputs) {
 	tr.Put(ChallengesRel+"/"+Evade+"/falco-rule.yaml", EvadeRule)
 	tr.CopyTree(in.Golden, ChallengesRel+"/"+CID)
 	tr.Put(ChallengesRel+"/"+CID+"/journey.yaml", Journey)
-	tr.Put(ScenarioRel, "id: fixture\ntitle: Fixture\nchallenges: ["+Evade+", "+CID+"]\n")
+	tr.PutScenario(ScenarioID, Evade, CID)
 	tr.Put(FlagsRel, "flags:\n  "+Evade+": "+Flag+"\n")
 	tr.Put(CorpusRel+"/public.txt", "placeholder text of the image's public files\n")
 	tr.Put(EditionRootRel+"/"+CID+"/"+edition.SpecFileName, in.Spec)

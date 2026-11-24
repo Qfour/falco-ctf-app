@@ -91,7 +91,7 @@ func TestEditionScope_ExactlyOneOfScenarioAndAllChallenges(t *testing.T) {
 // flags), the call of a scoreboard whose SCENARIO_FILE is empty (cmd/scoreboard/catalog.go).
 func TestEditionScope_AllChallengesIsTheScopeOfNoScenario(t *testing.T) {
 	f := newErFix(t)
-	f.tree.Put(editiontest.ScenarioRel, "id: fixture\ntitle: Fixture\nchallenges: ["+editiontest.Evade+"]\n")
+	f.tree.PutScenario(editiontest.ScenarioID, editiontest.Evade)
 	p := f.tree.Paths()
 	all, err := catalog.LoadScored(p.Challenges, "", p.Flags)
 	if err != nil {

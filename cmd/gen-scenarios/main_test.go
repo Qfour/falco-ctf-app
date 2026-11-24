@@ -38,8 +38,6 @@ source:
       version: 2
 `
 
-const legacyScenario = "id: legacy\ntitle: Legacy\nchallenges:\n  - 01-a # hand-written\n"
-
 func moduleYAML(id string, version string, missions ...string) string {
 	return "id: " + id + "\ntitle: Title " + id + "\nsummary: s\noutcomes: [a, b, c]\nversion: " + version +
 		"\nlevel: 1\nduration: {handsOnMinutes: 10, debriefMinutes: 5}\n" +
@@ -70,8 +68,8 @@ func read(t *testing.T, root, rel string) string {
 	return string(b)
 }
 
-// newTree is a pool of three trigger challenges, two modules, a course over both, a
-// directory with no source (a hand-written scenario.yaml) and a README.
+// newTree is a pool of three trigger challenges, two modules, a course over both and a
+// README.
 func newTree(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -81,7 +79,6 @@ func newTree(t *testing.T) string {
 	put(t, root, "scenarios/mod-a/module.yaml", moduleYAML("mod-a", "1", "01-a", "02-b"))
 	put(t, root, "scenarios/mod-b/module.yaml", moduleYAML("mod-b", "2", "03-c", "02-b"))
 	put(t, root, "scenarios/course-x/course.yaml", courseYAML)
-	put(t, root, "scenarios/legacy/scenario.yaml", legacyScenario)
 	put(t, root, "scenarios/README.md", "readme\n")
 	return root
 }
@@ -104,9 +101,6 @@ func TestGenerate_GoldenAndUntouched(t *testing.T) {
 	if got := read(t, root, "scenarios/mod-b/scenario.yaml"); !strings.Contains(got, "challenges:\n  - 03-c\n  - 02-b\nsource:\n  kind: module\n") {
 		t.Fatalf("solo course of mod-b =\n%s", got)
 	}
-	if got := read(t, root, "scenarios/legacy/scenario.yaml"); got != legacyScenario {
-		t.Fatalf("a directory without a source was rewritten:\n%s", got)
-	}
 	if got := read(t, root, "scenarios/README.md"); got != "readme\n" {
 		t.Fatalf("scenarios/README.md was rewritten: %q", got)
 	}
@@ -117,7 +111,7 @@ func TestGenerate_Deterministic(t *testing.T) {
 	root := newTree(t)
 	var first []genFile
 	for i := 0; i < 20; i++ {
-		files, _, err := generate(root)
+		files, err := generate(root)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -177,21 +171,18 @@ func TestCheck_OneByteEditIsRed(t *testing.T) {
 	}
 }
 
-// Acceptance 3: no source fails, unless --allow-no-source (no caller passes it since S2b-2).
+// Acceptance 3: no source at all fails, in both modes (there is no flag that accepts it).
 func TestNoSource(t *testing.T) {
 	root := t.TempDir()
 	put(t, root, "challenges/01-a/falco-rule.yaml", "type: trigger\nexpectedRules: [r]\n")
-	put(t, root, "scenarios/legacy/scenario.yaml", legacyScenario)
+	put(t, root, "scenarios/README.md", "readme\n")
 	for _, args := range [][]string{{root}, {"--check", root}} {
 		if code, _, stderr := gen(t, args...); code != exitFail || !strings.Contains(stderr, "no module.yaml or course.yaml") {
 			t.Fatalf("%v: exit %d, stderr %q", args, code, stderr)
 		}
-		if code, _, stderr := gen(t, append([]string{"--allow-no-source"}, args...)...); code != exitOK {
-			t.Fatalf("--allow-no-source %v: exit %d, stderr %q", args, code, stderr)
-		}
 	}
-	if got := read(t, root, "scenarios/legacy/scenario.yaml"); got != legacyScenario {
-		t.Fatalf("rewritten: %s", got)
+	if code, _, _ := gen(t, "--allow-no-source", root); code != exitUsage {
+		t.Fatalf("--allow-no-source: exit %d, want %d (the flag is gone)", code, exitUsage)
 	}
 }
 
@@ -235,12 +226,6 @@ func TestGenerate_OutDir(t *testing.T) {
 			t.Fatalf("scenarios/%s/scenario.yaml was written in the root (%v)", id, err)
 		}
 	}
-	if got := read(t, root, "scenarios/legacy/scenario.yaml"); got != legacyScenario {
-		t.Fatalf("rewritten: %s", got)
-	}
-	if _, err := os.Lstat(filepath.Join(out, "scenarios", "legacy")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("a directory without a source was written under --out (%v)", err)
-	}
 }
 
 // A symlink directly under scenarios/ is refused (exit 3); a generated path that is a
@@ -280,29 +265,48 @@ func TestSymlinkAndNotRegular(t *testing.T) {
 	}
 }
 
-// A generated scenario.yaml left in a directory whose source was removed fails --check; the
-// hand-written one beside it (scenarios/legacy) passes, and generating does not remove it.
-func TestCheck_LeftoverGeneratedFile(t *testing.T) {
-	root := newTree(t)
-	put(t, root, "scenarios/solo/module.yaml", moduleYAML("solo", "1", "01-a"))
-	if code, _, stderr := gen(t, root); code != exitOK {
-		t.Fatalf("generate: exit %d: %s", code, stderr)
+// ADR-0055 D2 / S2c: a directory of scenarios/ with no source fails both modes (exit 3),
+// is named, and nothing is written: a hand-written scenario.yaml, a generated one whose
+// source was removed, and a directory with nothing in it. The tree is green before each.
+func TestDirectoryWithoutSource(t *testing.T) {
+	cases := map[string]func(t *testing.T, root string){
+		"a hand-written scenario.yaml": func(t *testing.T, root string) {
+			put(t, root, "scenarios/legacy/scenario.yaml", "id: legacy\ntitle: Legacy\nchallenges:\n  - 01-a # hand-written\n")
+		},
+		"a generated scenario.yaml whose source was removed": func(t *testing.T, root string) {
+			out := t.TempDir()
+			put(t, root, "scenarios/legacy/module.yaml", moduleYAML("legacy", "1", "01-a"))
+			if code, _, stderr := gen(t, "--out", out, root); code != exitOK {
+				t.Fatalf("generate: exit %d: %s", code, stderr)
+			}
+			put(t, root, "scenarios/legacy/scenario.yaml", read(t, out, "scenarios/legacy/scenario.yaml"))
+			if err := os.Remove(filepath.Join(root, "scenarios", "legacy", "module.yaml")); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"an empty directory": func(t *testing.T, root string) {
+			if err := os.MkdirAll(filepath.Join(root, "scenarios", "legacy"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		},
 	}
-	if code, _, stderr := gen(t, "--check", root); code != exitOK {
-		t.Fatalf("the untouched tree (hand-written legacy included): exit %d: %s", code, stderr)
-	}
-	if err := os.Remove(filepath.Join(root, "scenarios", "solo", "module.yaml")); err != nil {
-		t.Fatal(err)
-	}
-	code, _, stderr := gen(t, "--check", root)
-	if code != exitStale || !strings.Contains(stderr, "scenarios/solo/scenario.yaml was generated") || strings.Contains(stderr, "legacy") {
-		t.Fatalf("exit %d, stderr %q: want %d naming scenarios/solo/scenario.yaml only", code, stderr, exitStale)
-	}
-	if code, _, stderr := gen(t, root); code != exitOK {
-		t.Fatalf("generate: exit %d: %s", code, stderr)
-	}
-	if !strings.HasPrefix(read(t, root, "scenarios/solo/scenario.yaml"), headerPrefix) {
-		t.Fatal("generating touched the leftover file")
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			root := newTree(t)
+			if code, _, stderr := gen(t, "--out", t.TempDir(), root); code != exitOK {
+				t.Fatalf("the tree before: exit %d: %s", code, stderr)
+			}
+			mutate(t, root)
+			for _, args := range [][]string{{root}, {"--check", root}} {
+				code, _, stderr := gen(t, args...)
+				if code != exitFail || !strings.Contains(stderr, "legacy") || !strings.Contains(stderr, "holds neither module.yaml nor course.yaml") {
+					t.Fatalf("%v: exit %d, stderr %q; want %d naming scenarios/legacy", args, code, stderr, exitFail)
+				}
+			}
+			if _, err := os.Lstat(filepath.Join(root, "scenarios", "course-x", "scenario.yaml")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("a scenario.yaml was written (%v)", err)
+			}
+		})
 	}
 }
 
@@ -386,7 +390,7 @@ func readerShape(data string) ([]string, error) {
 // list from it; the Go reader (catalog.LoadScenario) reads the same id and list.
 func TestGenerated_ReaderShape(t *testing.T) {
 	root := newTree(t)
-	files, _, err := generate(root)
+	files, err := generate(root)
 	if err != nil {
 		t.Fatal(err)
 	}

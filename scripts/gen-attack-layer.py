@@ -19,10 +19,9 @@ scenarios/<name>/scenario.yaml found:
   scenarios/<name>/attack-coverage.md      — same table, scoped to that
                                               scenario's `challenges:` list
 
-scenario.yaml may optionally declare a `tactics:` list (advisory — Go's
-catalog.go ignores it, non-strict yaml.v3). When present, this script compares
-it against the tactics actually exercised by the scenario's challenges and
-prints a non-blocking warning (stdout, exit code unchanged) on any mismatch.
+A scenario's tactics are derived from its challenges here, and only here: the
+generated scenario.yaml declares none (ADR-0055 D6; the Go loader refuses a
+`tactics:` key).
 
 The run is idempotent: running twice produces a zero diff. Regenerate with
 `make gen-attack` after changing any attack: block or any scenario.yaml.
@@ -278,9 +277,8 @@ def _yaml_block_list(lines, key):
 
 
 def load_scenarios(root):
-    """Return [{dir, id, title, challenges, tactics_declared}] for each
-    scenarios/<name>/scenario.yaml. `tactics_declared` is [] when the
-    optional `tactics:` field is absent."""
+    """Return [{dir, id, title, challenges}] for each
+    scenarios/<name>/scenario.yaml."""
     scen_root = os.path.join(root, "scenarios")
     if not os.path.isdir(scen_root):
         return []
@@ -304,7 +302,6 @@ def load_scenarios(root):
             "id": sid,
             "title": title,
             "challenges": _yaml_block_list(lines, "challenges"),
-            "tactics_declared": _yaml_block_list(lines, "tactics"),
         })
     return scenarios
 
@@ -333,47 +330,7 @@ def build_scenario_coverage_md(scenario, selected_missions):
             f"`{m['techniqueId']}` | {m['techniqueName']} |"
         )
     lines.append("")
-
-    declared = scenario["tactics_declared"]
-    if declared:
-        # First-occurrence order over selected_missions, de-duplicated.
-        actual_ordered = []
-        seen = set()
-        for m in selected_missions:
-            if m["tactic"] not in seen:
-                seen.add(m["tactic"])
-                actual_ordered.append(m["tactic"])
-        lines.append("## 宣言 tactics (scenario.yaml) との一致")
-        lines.append("")
-        lines.append(f"宣言: {', '.join(declared)}")
-        lines.append("")
-        lines.append(f"実際: {', '.join(actual_ordered)}")
-        lines.append("")
-        if set(declared) == set(actual_ordered):
-            lines.append("一致 (advisory チェック済み — 詳細は `make gen-attack` の標準出力)。")
-        else:
-            lines.append("**不一致あり** — 詳細は `make gen-attack` 実行時の標準出力 warning を参照。")
-        lines.append("")
     return "\n".join(lines)
-
-
-def warn_tactic_mismatch(scenario, selected_missions):
-    """Advisory only: print (not fail) if declared tactics: drifts from the
-    tactics actually exercised by the scenario's challenges. Non-blocking —
-    never changes the process exit code."""
-    declared = scenario["tactics_declared"]
-    if not declared:
-        return
-    declared_set = set(declared)
-    actual_set = {m["tactic"] for m in selected_missions}
-    missing = sorted(declared_set - actual_set)
-    undeclared = sorted(actual_set - declared_set)
-    if missing:
-        print(f"warning: scenarios/{scenario['dir']}/scenario.yaml declares tactics: "
-              f"with no covering challenge: {missing}")
-    if undeclared:
-        print(f"warning: scenarios/{scenario['dir']}/scenario.yaml's challenges cover "
-              f"tactics not declared in tactics:: {undeclared}")
 
 
 def main():
@@ -412,8 +369,6 @@ def main():
         with open(scen_cov_path, "w", encoding="utf-8") as f:
             f.write(build_scenario_coverage_md(scenario, selected))
         print(f"wrote {os.path.relpath(scen_cov_path, root)} ({len(selected)} challenges)")
-
-        warn_tactic_mismatch(scenario, selected)
 
 
 if __name__ == "__main__":
