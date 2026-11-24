@@ -110,6 +110,68 @@ func TestLoadScenarios_DistinctIDsLoadInPathOrder(t *testing.T) {
 	}
 }
 
+// A manifest whose id is not the name of its directory is refused, naming both
+// (ADR-0055 V1). Each row is the only scenario of its root, so the duplicate-id
+// check cannot be what refuses it. The control row has id == directory name and
+// must load: the check is not simply red. The last row is the real shape of a
+// slip: a good sibling next to a manifest copied from it with the id left behind.
+func TestLoadScenarios_IDMustBeTheDirectoryName(t *testing.T) {
+	tests := []struct {
+		name    string
+		dirs    map[string]string // directory name -> scenario.yaml body
+		wantErr []string          // empty: must load
+	}{
+		{
+			name: "id equals the directory name loads (control)",
+			dirs: map[string]string{"alpha": "id: alpha\ntitle: A\nchallenges:\n  - 01-a\n"},
+		},
+		{
+			name:    "an id that is another name is refused, naming the id and the directory",
+			dirs:    map[string]string{"alpha": "id: beta\ntitle: A\nchallenges:\n  - 01-a\n"},
+			wantErr: []string{`"beta"`, `"alpha"`, "is not the name of its directory"},
+		},
+		{
+			name:    "an id that differs only in case is refused",
+			dirs:    map[string]string{"alpha": "id: Alpha\ntitle: A\nchallenges:\n  - 01-a\n"},
+			wantErr: []string{`"Alpha"`, `"alpha"`, "is not the name of its directory"},
+		},
+		{
+			name: "a copied manifest whose id was not changed is refused next to its good sibling",
+			dirs: map[string]string{
+				"alpha": "id: alpha\ntitle: A\nchallenges:\n  - 01-a\n",
+				"gamma": "id: alpha-copy\ntitle: G\nchallenges:\n  - 02-b\n",
+			},
+			wantErr: []string{`"alpha-copy"`, `"gamma"`, "is not the name of its directory"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			for name, body := range tc.dirs {
+				writeScenarioDir(t, root, name, body)
+			}
+			got, err := LoadScenarios(root)
+			if len(tc.wantErr) == 0 {
+				if err != nil {
+					t.Fatalf("a scenario whose id is its directory name was rejected: %v", err)
+				}
+				if len(got) != len(tc.dirs) {
+					t.Fatalf("want %d scenarios, got %+v", len(tc.dirs), got)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected an error, loaded %+v", got)
+			}
+			for _, want := range tc.wantErr {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error %q does not contain %q", err, want)
+				}
+			}
+		})
+	}
+}
+
 func TestLoadScenarios_EmptyIDFails(t *testing.T) {
 	root := t.TempDir()
 	writeScenarioDir(t, root, "noid", "title: No id\nchallenges:\n  - 01-a\n")

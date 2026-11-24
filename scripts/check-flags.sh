@@ -9,7 +9,10 @@
 #      record), or any tracked path has the layout of an event's evidence bundle
 #      (evidence/<seat>/<cid>/<file>): scripts/check-edition-headers.sh (ADR-0056
 #      V84 / V93), whose self-test runs here too, so the guard is shown able to fail
-#      on every run.
+#      on every run, or
+#   5. the scenario checks of challenges/gen-values.sh (an id that is not its directory's
+#      name, a challenge listed twice; ADR-0055 V1) cannot be shown to fail:
+#      scripts/test-gen-values-scenarios.sh.
 #
 # Allowed flag forms (these are not secrets):
 #   FALCO{dev-<slug>}   local-dev / test placeholders
@@ -76,6 +79,16 @@ fi
 echo "==> checking generated challenge values are in sync"
 if ! ./challenges/gen-values.sh --check; then
   echo "  → run 'make gen-values' and commit the result" >&2
+  rc=1
+fi
+
+# ADR-0055 V1: gen-values.sh refuses a scenario whose id is not its directory's name and a
+# challenge listed twice in one scenario. This runs each refusal (and its control) on a
+# copy of the tree, so the checks are shown able to fail on every run. Run through bash so
+# that the file mode does not decide whether it runs.
+echo "==> gen-values.sh scenario checks can fail (ADR-0055 V1 self-test)"
+if ! bash ./scripts/test-gen-values-scenarios.sh; then
+  echo "FAIL: the self-test of gen-values.sh's scenario checks (scripts/test-gen-values-scenarios.sh)" >&2
   rc=1
 fi
 
