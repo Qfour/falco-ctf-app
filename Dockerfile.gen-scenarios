@@ -1,0 +1,44 @@
+# Generates scenarios/<id>/scenario.yaml from each scenarios/<id>/module.yaml or course.yaml
+# (ADR-0055 D5, cmd/gen-scenarios) without a Go toolchain on the host and without bind
+# mounts (Colima does not share the host repo path into its VM), as Dockerfile.gen-home-fragments
+# does. It is NOT one of the I5 images: never pushed, not in the Makefile's IMAGES; its only
+# output is files.
+#
+#   docker build -f Dockerfile.gen-scenarios --target export -o . .   (make gen-scenarios)
+#   docker build -f Dockerfile.gen-scenarios --target check .         (make check-gen-scenarios)
+#
+# Stages
+#   build   the base of Dockerfile.test (the same golang image, pinned by digest) and its
+#           module cache (`go mod download`, the one step that reaches the network), then the
+#           generator, built with no network, and the build context's challenges/ and scenarios/
+#   gen     the generator writes into /gen only (--out), with no network
+#   check   the generator with --check: writes nothing, fails naming each stale scenario.yaml
+#   export  scratch with what gen wrote (scenarios/<id>/scenario.yaml), nothing else
+#
+# --allow-no-source: until ADR-0055 S2b-2 migrates the tree there is no module.yaml or
+# course.yaml, and the generator refuses zero sources (a wrong root must not read as "nothing
+# to generate"). The flag keeps both targets green on today's tree; the migration PR removes
+# it from both RUN lines.
+FROM golang:1.26.11-alpine@sha256:ae52b5bc6ed045a9ed26ab03dc19327a802a9cc9aa8b27ed57f5c6b60579b0bb AS build
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY cmd/gen-scenarios ./cmd/gen-scenarios
+COPY internal ./internal
+RUN --network=none CGO_ENABLED=0 go build -trimpath -o /out/gen-scenarios ./cmd/gen-scenarios
+
+COPY challenges ./challenges
+COPY scenarios ./scenarios
+
+FROM build AS gen
+# /gen is made first: with no source the generator writes nothing, and the export's COPY
+# needs the directory to exist.
+RUN --network=none mkdir -p /gen && /out/gen-scenarios --allow-no-source --out /gen /src
+
+FROM build AS check
+RUN --network=none /out/gen-scenarios --check --allow-no-source /src
+
+FROM scratch AS export
+COPY --from=gen /gen/ /
