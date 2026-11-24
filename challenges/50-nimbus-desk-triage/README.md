@@ -69,14 +69,28 @@ template の時刻のうち、席ごとに値が変わるのは Q1 の slot `fir
 
 ## 囮とノイズ (設計)
 
-- Q1: 同じ 10 分の窓に、**同じ rule** (Run shell untrusted) の別の container のアラートが 10 件
+- Q1: 同じ 10 分の窓に、**同じ rule・同じ node** (node-b) の別の Pod のアラートが 10 件
   (legacy-status・status-page・docs-portal の httpd の下の health / 保守の script)。窓の前にも
-  legacy-status の 1 件。container で絞らないと、最も早いものは答えにならない。export は node
-  ごとに連結され、時刻順でない。
-- Q2: 資格情報の file の候補 11 個 (答え + 囮 10) が目録にあり、囮 10 個はすべて、同じ Pod の中で
-  読まれてアラートになっている: 7 個はサイドカー desk-keyrotate (別の container、読み取りの時刻が
-  侵入者の読み取りに近いものを含む)、3 個は再起動の時の desk-migrate (**同じ container**、親
-  desk-init)。container で絞っても足りず、親 (sh) まで見ないと区別できない。
+  legacy-status の 1 件。node や rule だけでは絞れず、container で絞って初めて決まる。container
+  だけで「最も早い」を取ると、16:00 の desk-migrate の読み取りになる (rule も要る)。export は
+  時刻順でない。
+- Q2: 資格情報の file の候補 11 個 (答え + 囮 10) が目録にあり、11 個とも、同じ Pod の中で何度も
+  読まれてアラートになっている: desk-migrate (**同じ container**、親 desk-init) が 16:00 と再起動の時に
+  11 個すべて、サイドカー desk-keyrotate が侵入者の読み取りの約 1 分後の sweep で 11 個すべて。
+  node・container・rule・時刻のどれ 1 つで絞っても 11 個が残り、親 (sh) まで見て初めて決まる。
+
+### 手がかり 1 つだけで絞ったときに残る候補 (答えを含む件数)
+
+| 手がかり | Q1 first-shell | Q2 cred-file | Q3 bundle-file |
+|---|---|---|---|
+| node だけ (node-b) | 11 (窓の中の shell の起動) | 11 | — (目録は 1 container) / 11 |
+| container だけ (nimbus-desk) | 11 以上 (別々の時刻) | 11 | 11 |
+| rule の種類だけ | 11 (窓の中) | 11 | — (アラートなし) / 11 |
+| 時刻の窓だけ (17:00〜17:31) | 16 (窓 17:00〜17:10) | 11 (sweep) | 11 |
+| path の dir だけ | — | 11 (conf でない) | 11 (/tmp の下) + 1 |
+
+1 つで決まってしまう手がかり (残り): Q2 の `proc.name` (cat) は親の process と同じ系統の手がかり、
+Q3 の「container の log に対応する行が無い」は L2 の学びそのもの (どちらも意図して残している)。
 - Q3: /tmp の候補 11 個。囮 10 個は、すべて同じ時間帯 (17:00〜17:29) に web service 自身が書いた
   一時 file で、読み取りから拒否までの間 (17:19:02〜17:23:40) の外にあり、container の log に
   同じ時刻・同じ bytes の行がある。直前と直後の囮は答えから 1〜3 分しか離れていない。

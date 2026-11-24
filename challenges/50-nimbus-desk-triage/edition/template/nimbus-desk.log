@@ -1,4 +1,6 @@
 2026-10-21T16:00:04Z level=info msg="request" method=GET path=/healthz status=200 client=192.0.2.10 dur_ms=1
+2026-10-21T16:00:30Z level=info component=desk-init msg="daily check" step=desk-migrate mode=check-only
+2026-10-21T16:00:33Z level=info component=desk-migrate msg="schema up to date" checked=3
 2026-10-21T16:02:44Z level=info msg="mail queued" ticket=T-48812 to_domain=customer.example relay=smtp.mail.example
 2026-10-21T16:04:19Z level=info msg="request" method=GET path=/api/tickets status=200 client=198.51.100.44 dur_ms=18
 2026-10-21T16:07:51Z level=info msg="request" method=POST path=/api/tickets status=201 client=198.51.100.71 dur_ms=42
@@ -41,7 +43,7 @@
 2026-10-21T17:25:59Z level=info msg="request" method=GET path=/api/tickets status=200 client=198.51.100.44 dur_ms=17
 2026-10-21T17:26:44Z level=info msg="attachment stored" ticket=T-48818 bytes=4410
 2026-10-21T17:28:20Z level=warn msg="worker slow" worker=2 queue=41
-2026-10-21T17:28:21Z level=info msg="session cache flushed" entries=61
+2026-10-21T17:28:21Z level=info msg="session cache flushed" bytes=61
 2026-10-21T17:30:04Z level=info msg="request" method=GET path=/healthz status=200 client=192.0.2.10 dur_ms=1
 2026-10-21T17:30:58Z level=error msg="worker exited unexpectedly" worker=2 code=2
 2026-10-21T17:31:03Z level=error msg="worker exited unexpectedly" worker=3 code=2
@@ -58,6 +60,6 @@
 2026-10-21T17:42:37Z level=info msg="request" method=POST path=/api/tickets/T-48812/comments status=201 client=198.51.100.71 dur_ms=39
 2026-10-21T17:44:50Z level=info msg="attachment stored" ticket=T-48819 bytes=2770
 2026-10-21T17:46:29Z level=info msg="webhook sent" target=hooks.partner.example event=ticket.created status=200
-2026-10-21T17:49:27Z level=info msg="session cache flushed" entries=18
+2026-10-21T17:49:27Z level=info msg="session cache flushed" bytes=18
 2026-10-21T17:50:04Z level=info msg="request" method=GET path=/healthz status=200 client=192.0.2.10 dur_ms=1
 2026-10-21T17:51:40Z level=info msg="tickets db checkpoint" wal_bytes=4120672

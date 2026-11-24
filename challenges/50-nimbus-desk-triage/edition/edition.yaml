@@ -19,19 +19,20 @@ fixed:
   event-order: "shell-start,api-probe,secret-read,bundle-write,egress-fail,app-restart"
 slots:
   # Q1 first-shell: the time of the earliest Run shell untrusted alert of the nimbus-desk
-  # container. The 10 decoys are Run shell untrusted alerts of OTHER containers (health and
-  # maintenance scripts under httpd) in the same window: the same rule as the answer, so only
-  # the container tells them apart.
+  # container. The 10 decoys are Run shell untrusted alerts of OTHER pods ON THE SAME NODE
+  # (health and maintenance scripts under httpd) in the same window: the same rule and the
+  # same node as the answer, so only the container / pod tells them apart.
   - name: first
     role: answer
     question: first-shell
     decoys: 10
     window: {from: 0, to: 600}
   # Q2 cred-file: the credential file the shell read. 1 x 1 x 8 x 8 x 10 = 640 paths.
-  # The 10 decoys are the other credential files of the inventory, and every one of them is
-  # also read in the same Pod with an alert: 7 by the key-rotation sidecar (another
-  # container), 3 by desk-migrate at the restart (the SAME container, parent desk-init), so
-  # only the process lineage (parent sh) tells the answer apart.
+  # The 10 decoys are the other credential files of the inventory. desk-migrate (the SAME
+  # container, parent desk-init) opens all 11 files, the answer included, at 16:00 and at
+  # the restart, and the key-rotation sidecar opens all 11 in a sweep a minute after the
+  # shell's read. Node, container, rule or time alone leave all 11; only the process lineage
+  # (parent sh) tells the answer apart.
   - name: cred
     role: answer
     question: cred-file
