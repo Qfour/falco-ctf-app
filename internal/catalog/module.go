@@ -5,10 +5,12 @@ package catalog
 // generator (S2b) and the strict LoadScenario (S2c) are later PRs, so LoadScenario,
 // LoadScored and the shipped scenario.yaml files are untouched by this one.
 //
-// Both files are decoded strictly, as edition.ParseSpec decodes edition.yaml: one
-// document, no anchor, alias or merge key, and an unknown or repeated key at any depth is
-// an error. A module or a course has no flags, challenges or hints key, so a file that
-// writes one is refused by the same decode (C6).
+// Both files are decoded strictly: a regular file (not a symlink), one document, no
+// anchor, alias or merge key, and an unknown or repeated key at any depth is an error.
+// Those rules are the ones edition.ParseSpec applies to edition.yaml; its size limit,
+// UTF-8 check and invisible / bidi character check (sourcehygiene.Hidden) are NOT applied
+// here. A module or a course has no flags, challenges or hints key, so a file that writes
+// one is refused by the same decode (C6).
 
 import (
 	"bytes"
@@ -207,8 +209,16 @@ func LoadCourse(path string) (Course, error) {
 	return c, nil
 }
 
-// readSource reads path and decodes it strictly into out.
+// readSource reads path, which must be a regular file (a symlink is refused, whichever of
+// LoadSource, LoadModule and LoadCourse is the entry), and decodes it strictly into out.
 func readSource(path string, out any) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("read %q: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("read %q: not a regular file (a symlink is refused)", path)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read %q: %w", path, err)
@@ -241,7 +251,8 @@ func decodeSource(data []byte, out any) error {
 }
 
 // findAnchorOrAlias is the first node, in document order, that carries an anchor, is an
-// alias, or is a merge key (the same rule as internal/edition's, which is unexported).
+// alias, or is a merge key. It is a copy of internal/edition's findAnchorOrAlias (which is
+// unexported); a shared helper is a follow-up.
 func findAnchorOrAlias(n *yaml.Node) *yaml.Node {
 	if n.Kind == yaml.AliasNode || n.Anchor != "" || (n.Kind == yaml.ScalarNode && n.ShortTag() == "!!merge") {
 		return n
@@ -292,7 +303,7 @@ func (m Module) validate() error {
 	}
 	for _, name := range slices.Sorted(maps.Keys(m.Editions)) {
 		e := m.Editions[name]
-		if err := checkName("edition", name); err != nil {
+		if err := checkEditionName(name); err != nil {
 			return err
 		}
 		if err := checkDuration(fmt.Sprintf("editions %q", name), e.Duration); err != nil {
@@ -338,7 +349,7 @@ func (c Course) validate() error {
 			return err
 		}
 		if m.Edition != "" {
-			if err := checkName("edition", m.Edition); err != nil {
+			if err := checkEditionName(m.Edition); err != nil {
 				return err
 			}
 		}
@@ -355,6 +366,16 @@ func checkName(what, s string) error {
 	if !ValidScenarioName(s) {
 		return fmt.Errorf("%s %q is not a scenario name (1 to %d of a-z, 0-9 and -, the first and the last a letter or digit: scenario-name-cases.tsv)",
 			what, s, MaxScenarioNameLen)
+	}
+	return nil
+}
+
+// checkEditionName is an error naming s when s is not an edition name. ADR-0055 gives an
+// edition name no grammar of its own; this one borrows the scenario name's.
+func checkEditionName(s string) error {
+	if !ValidScenarioName(s) {
+		return fmt.Errorf("edition name %q is not valid (1 to %d of a-z, 0-9 and -, the first and the last a letter or digit)",
+			s, MaxScenarioNameLen)
 	}
 	return nil
 }

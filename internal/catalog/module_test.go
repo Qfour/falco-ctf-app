@@ -95,6 +95,10 @@ func TestLoadModule_OneDefectOneCase(t *testing.T) {
 		{"flags key (C6)", "missions:", "flags: {}\nmissions:", "missions:", "flags"},
 		{"repeated key", "level: 2\n", "level: 2\nlevel: 3\n", "level: 2\n", "level"},
 		{"anchor", "duration: {", "duration: &d {", "duration: {", "anchor"},
+		{"merge key without an anchor", "duration: {handsOnMinutes: 30, debriefMinutes: 10}",
+			"duration:\n  <<: {handsOnMinutes: 30, debriefMinutes: 10}", "duration:\n  handsOnMinutes: 30\n  debriefMinutes: 10",
+			"an anchor, an alias or a merge key"},
+		{"edition name outside the grammar", "  2h: {", "  2H: {", "  3h: {", `edition name "2H" is not valid`},
 		{"second document", "  - 02-b\n", "  - 02-b\n---\nid: mod-a\n", "  - 02-b\n", "more than one document"},
 		{"id outside the grammar", "id: mod-a\n", "id: Mod-A\n", "id: mod-a\n", "not a scenario name"},
 		{"id is not the directory", "id: mod-a\n", "id: mod-b\n", "id: mod-a\n", `id "mod-b" is not the name of its directory "mod-a"`},
@@ -121,6 +125,9 @@ func TestLoadCourse_OneDefectOneCase(t *testing.T) {
 		{"flags key in a module entry (C6)", "  - id: mod-b\n", "  - id: mod-b\n    flags: {}\n", "  - id: mod-b\n", "flags"},
 		{"id is not the directory", "id: course-x\n", "id: course-y\n", "id: course-x\n", `id "course-y" is not the name`},
 		{"timebox of 0 minutes", "minutes: 120,", "minutes: 0,", "minutes: 1,", "timebox: minutes"},
+		{"merge key without an anchor", "timebox: {minutes: 120, introMinutes: 5, closingMinutes: 5}",
+			"timebox:\n  <<: {minutes: 120, introMinutes: 5, closingMinutes: 5}", "timebox:\n  minutes: 120\n  introMinutes: 5\n  closingMinutes: 5",
+			"an anchor, an alias or a merge key"},
 		{"no modules", "modules:\n  - id: mod-a\n    edition: 2h\n  - id: mod-b\n", "modules: []\n", "modules: [{id: mod-b}]\n", "modules is empty"},
 		{"module twice", "  - id: mod-b\n", "  - id: mod-b\n  - id: mod-a\n", "  - id: mod-b\n  - id: mod-c\n", `module "mod-a" is listed more than once`},
 		{"shared id twice", "  - 02-b\n", "  - 02-b\n  - 02-b\n", "  - 02-b\n  - 03-c\n", `shared id "02-b" is listed more than once`},
@@ -148,9 +155,32 @@ func TestLoadSource_ExactlyOneOfModuleAndCourse(t *testing.T) {
 	}
 }
 
-// C6 / V4: the keys are exactly D3's and D4's, and the composed scenario's are D5's
-// without tactics (edit 4). A flags, challenges, hints or tactics field added to any of
-// these types would make the strict decode accept it, or the generator write it.
+// A symlink is refused whichever loader is the entry; the file it points at loads.
+func TestLoadModuleAndCourse_RefuseASymlink(t *testing.T) {
+	for _, c := range []struct {
+		dir, file, body string
+		load            func(string) error
+	}{
+		{"mod-a", ModuleFile, moduleBase, func(p string) error { _, err := LoadModule(p); return err }},
+		{"course-x", CourseFile, courseBase, func(p string) error { _, err := LoadCourse(p); return err }},
+	} {
+		target := writeSource(t, c.dir, "target.yaml", c.body)
+		if err := c.load(target); err != nil {
+			t.Fatalf("%s: the regular file was rejected: %v", c.file, err)
+		}
+		link := filepath.Join(filepath.Dir(target), c.file)
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.load(link); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+			t.Fatalf("%s as a symlink: %v", c.file, err)
+		}
+	}
+}
+
+// C6 / V4: the keys are exactly D3's and D4's at every depth, and the composed scenario's
+// are D5's, which has no tactics (D5, D6). A flags, challenges, hints or tactics field added
+// to any of these types would make the strict decode accept it, or the generator write it.
 func TestSourceSchemas_AreTheADRKeys(t *testing.T) {
 	for _, c := range []struct {
 		typ  reflect.Type
@@ -159,7 +189,13 @@ func TestSourceSchemas_AreTheADRKeys(t *testing.T) {
 		{reflect.TypeOf(Module{}), []string{"id", "title", "summary", "outcomes", "version", "level", "duration", "editions", "requires", "missions"}},
 		{reflect.TypeOf(Course{}), []string{"id", "title", "timebox", "modules", "shared"}},
 		{reflect.TypeOf(CourseModule{}), []string{"id", "edition"}},
+		{reflect.TypeOf(Duration{}), []string{"handsOnMinutes", "debriefMinutes"}},
+		{reflect.TypeOf(Edition{}), []string{",inline", "playbook"}},
+		{reflect.TypeOf(Requires{}), []string{"modules"}},
+		{reflect.TypeOf(Timebox{}), []string{"minutes", "introMinutes", "closingMinutes"}},
 		{reflect.TypeOf(Composed{}), []string{"id", "title", "challenges", "source"}},
+		{reflect.TypeOf(ComposedSource{}), []string{"kind", "modules"}},
+		{reflect.TypeOf(ComposedModule{}), []string{"id", "version", "edition"}},
 	} {
 		var got []string
 		for i := range c.typ.NumField() {
