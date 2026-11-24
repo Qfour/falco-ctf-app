@@ -18,11 +18,14 @@ files
   process-list.txt     processes of the container at capture time.
 
 containers of the pod
-  nimbus-desk      the web service (uid 10001, user desk)
+  nimbus-desk      the web service (uid 10001, user desk). Its init process desk-init runs
+                   desk-migrate (a schema check that opens the credential files) before it
+                   starts or restarts the web service process.
   desk-keyrotate   sidecar that checks the age of the credential files (uid 10002, user rotator)
   desk-logship     sidecar that ships and truncates the access log
 
 local Falco tuning (CTF Company ops, in place since 2026-10-14)
   - nimbus-desk is in the list of programs that must not spawn a shell.
   - the config file and the credential files of nimbus-desk are in the list of sensitive files.
-  - the reads by nimbus-desk itself are excepted; the reads by desk-keyrotate are not (known noise).
+  - the reads by nimbus-desk itself are excepted; the reads by desk-keyrotate and by
+    desk-migrate are not (known noise).

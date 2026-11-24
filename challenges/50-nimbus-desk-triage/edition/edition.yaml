@@ -3,21 +3,35 @@ version: 1
 # relative to it: the first shell (slot first) lies in [base, base + 600 s), and every
 # later event of the incident is a literal time after base + 600 s, so the order of the
 # incident does not depend on the drawn value.
+#
+# KEEP time.base AS IT IS. Only the slot `first` moves with it: every other time in
+# template/ is a literal string. If time.base is changed, shift EVERY time in template/
+# by the same amount, so that the window [base, base + 600 s) still lies before the next
+# fixed event of the nimbus-desk container. With this base: the window is
+# 17:00:00..17:09:59 (UTC, 2026-10-21); the next fixed shell alert of nimbus-desk is
+# 17:11:48 (Q1 "first" needs window end < it, margin 108 s) and the next label event
+# (api-probe) is 17:15:32 (event-order needs window end < it). Nothing checks this by
+# machine: a base moved later without the template makes event-order unanswerable.
+# The same holds for an event edition that copies this file (see README.md).
 time:
   base: "2026-10-21T17:00:00Z"
 fixed:
   event-order: "shell-start,api-probe,secret-read,bundle-write,egress-fail,app-restart"
 slots:
   # Q1 first-shell: the time of the earliest Run shell untrusted alert of the nimbus-desk
-  # container. The decoys are the times of alerts of OTHER containers in the same window.
+  # container. The 10 decoys are Run shell untrusted alerts of OTHER containers (health and
+  # maintenance scripts under httpd) in the same window: the same rule as the answer, so only
+  # the container tells them apart.
   - name: first
     role: answer
     question: first-shell
     decoys: 10
     window: {from: 0, to: 600}
   # Q2 cred-file: the credential file the shell read. 1 x 1 x 8 x 8 x 10 = 640 paths.
-  # The decoys are the other credential files of the inventory (some of them read by the
-  # key-rotation sidecar, which is another container).
+  # The 10 decoys are the other credential files of the inventory, and every one of them is
+  # also read in the same Pod with an alert: 7 by the key-rotation sidecar (another
+  # container), 3 by desk-migrate at the restart (the SAME container, parent desk-init), so
+  # only the process lineage (parent sh) tells the answer apart.
   - name: cred
     role: answer
     question: cred-file
@@ -30,8 +44,9 @@ slots:
       - [smtp-relay.token, db-primary.pass, db-replica.pass, search-api.key, webhook-sign.key,
          oauth-client.json, session-hmac.key, billing-api.token, ldap-bind.pass, object-store.key]
   # Q3 bundle-file: the file the read contents were gathered into. 1 x 16 x 32 = 512 paths.
-  # The decoys are the web service's own temporary files, written outside the incident's
-  # window and of other sizes.
+  # The 10 decoys are the web service's own temporary files, all written between 17:00 and
+  # 17:29 (the incident's hour) but outside the read-to-deny interval, each with a matching
+  # line in nimbus-desk.log, and of other sizes.
   - name: bundle
     role: answer
     question: bundle-file
