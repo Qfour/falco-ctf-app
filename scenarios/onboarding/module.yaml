@@ -1,0 +1,17 @@
+# The module onboarding (ADR-0055 D3, D9): the 0問目 alone, a trigger that does not count
+# towards the score, to learn how submitting, hints and progress work. The course
+# nimbusbreach-with-tutorial puts it before nimbusbreach-full. scenario.yaml beside this
+# file is generated from it: edit this file, then run make gen-scenarios (and make gen-values).
+id: onboarding
+title: "チュートリアル (遊び方 / 0問目)"
+summary: >-
+  提出・ヒント・進行の流れを、採点に影響しない 1 問で体験する。
+outcomes:
+  - ワークスペース端末 (ttyd) でコマンドを実行できる状態にする
+  - trigger 課題が Falco ルールの発火で自動クリアになる流れを確かめる
+  - 段階ヒント (気付き → 概要 → 解答) の見方を確かめる
+version: 1
+level: 1
+duration: {handsOnMinutes: 10, debriefMinutes: 0}
+missions:
+  - 00-tutorial

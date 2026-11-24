@@ -1,0 +1,30 @@
+# The module nimbusbreach-full (ADR-0055 D3): the CTF Company killchain, all 10 missions in
+# the canonical 01→10 order. Never reorder the missions (scenarios/README.md "Ordering
+# principle"). scenario.yaml beside this file is generated from it: edit this file, then
+# run make gen-scenarios (and make gen-values).
+id: nimbusbreach-full
+title: "CTF Company — Full Scenario (10 missions)"
+summary: >-
+  CTF Company の 10 ミッションを正準 01→10 の順にたどる攻撃キルチェーン
+  (偵察 → 資格情報アクセス → 回避 → 資格情報収集 → 回避 → Web RCE → 永続化 → C2 → 隠蔽 → exfil (boss))。
+outcomes:
+  - trigger 課題で Falco ルールを発火させ、evade 課題でルールを発火させずに目的を達成する
+  - ルールの condition が syscall のフィールド (fd.name / proc.pname / proc.cmdline) に文字列や集合でマッチすることを説明できる
+  - 文字列や単一条件の検知には回避の余地があることを、回避で示せる
+  - 防御はルールを重ね、inode / fd ベースや egress 制限などの多層で攻撃のコストを上げることを説明できる
+version: 1
+level: 5
+duration: {handsOnMinutes: 100, debriefMinutes: 30}
+editions:
+  2h: {handsOnMinutes: 60, debriefMinutes: 30, playbook: playbook-2h.md}
+missions:
+  - 01-initial-recon
+  - 02-credential-files
+  - 03-stealth-read
+  - 04-key-search
+  - 05-silent-search
+  - 06-web-rce-shell
+  - 07-persist
+  - 08-c2-beacon
+  - 09-hidden-cache
+  - 10-final-exfil

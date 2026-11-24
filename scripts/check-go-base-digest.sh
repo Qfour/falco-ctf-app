@@ -2,7 +2,7 @@
 # check-go-base-digest.sh — every `golang:<tag>@sha256:<digest>` in a Dockerfile or
 # a workflow must be the SAME string (app#499 / #500, review-5x 64 R4#3 = R1#2).
 #
-# WHY: the Go builder is written 13 times (10 Dockerfiles + 3 `container.image` in
+# WHY: the Go builder is written 15 times (12 Dockerfiles + 3 `container.image` in
 # checks.yaml). When one copy lags, `make test`/`build` use Go N while the
 # `go-vulncheck` job scans with Go N-1 (or the reverse), and a fixed stdlib
 # advisory stays red or, worse, stays green on the wrong toolchain (app#78/#87/#88).
