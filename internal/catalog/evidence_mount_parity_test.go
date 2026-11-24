@@ -19,11 +19,12 @@ package catalog_test
 // (V53's wording) and so is which challenge each path belongs to (the chart mounts the
 // Secret ctf-evidence-<cid> of the entry's `challenge`).
 //
-// As of A5d no challenge under challenges/ is of the investigate type: every scope compares
-// an empty map with an empty map. The real-tree test therefore only proves that the files
-// were found and read (a non-empty count of mounts); it starts to bite with the first
-// investigate challenge (A7). TestEvidenceMounts_ParityFailsOnOneSideChanged shows on a
-// synthetic tree that the rule turns red when one side alone changes.
+// From A5d to A7 no challenge under challenges/ was of the investigate type and every scope
+// compared an empty map with an empty map. Since A7 (50-nimbus-desk-triage) the real-tree test
+// also requires at least one evidence mount to have been compared, so a tree that lost its
+// investigate challenges on both sides at once is red, not "no difference".
+// TestEvidenceMounts_ParityFailsOnOneSideChanged shows on a synthetic tree that the rule turns
+// red when one side alone changes.
 
 import (
 	"errors"
@@ -125,6 +126,9 @@ func sameMounts(a, b map[string]string) bool {
 type parityRead struct {
 	files  int
 	mounts int
+
+	// evidence is how many evidence mounts the files held in all (every scope counted).
+	evidence int
 }
 
 // evidenceMountParity is V53's whole rule over one tree. It returns the first difference.
@@ -154,6 +158,7 @@ func evidenceMountParity(challengesDir, scenariosDir string) (parityRead, error)
 		}
 		read.files++
 		read.mounts += n
+		read.evidence += len(got)
 		if !sameMounts(got, want) {
 			return fmt.Errorf("%s: %s has the evidence mounts %s, the catalog's investigate challenges of this scope have %s", label, file, mountsText(got), mountsText(want))
 		}
@@ -216,6 +221,12 @@ func TestEvidenceMounts_GeneratedValuesMatchTheCatalog(t *testing.T) {
 	// something. Not pinned to today's numbers (adding a challenge must not turn this red).
 	if read.files < 2 || read.mounts < 1 {
 		t.Fatalf("V53 read %d values file(s) holding %d plant.mounts entries: the generated files were not found or not decoded, so the comparison is vacuous", read.files, read.mounts)
+	}
+	// ADR-0056 A7 (V53 made non-empty): the real tree has an investigate challenge, so the
+	// comparison must have held at least one evidence mount on each side. 0 here means both
+	// sides lost the investigate challenges together, which "no difference" would hide.
+	if read.evidence < 1 {
+		t.Fatalf("V53 compared %d values file(s) and found no evidence mount: the real tree's investigate challenges (ADR-0056 A7) are missing from both the catalog and the generated values", read.files)
 	}
 }
 

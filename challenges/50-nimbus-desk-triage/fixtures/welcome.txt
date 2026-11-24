@@ -1,0 +1,38 @@
+┌──────────────────────────────────────────────────────────────────┐
+│ CTF Company · 事案調査 — nimbus-desk (調査 A)                    │
+│ Type: INVESTIGATE · 難易度: ★★☆☆☆                                │
+│ 調べる場所: /srv/ir/evidence/                                    │
+└──────────────────────────────────────────────────────────────────┘
+
+# このミッションについて
+
+防御側の課題。架空の事案で、CTF Company の公開の問い合わせ窓口 nimbus-desk
+が夜間に侵入された後の「保全された痕跡」を調べる。あなたは事案対応の担当で、
+自分で攻撃の操作をする必要はない。痕跡を読み、設問 4 つに答える。
+
+# 目的
+
+**INVESTIGATE 課題** — ポータルの Story タブにある回答欄で、4 つの設問に
+答える。全問に正解すると CLEARED になる。Falco のルールを発火させる必要はない。
+
+# 攻略ヒント
+
+手順とコマンドは、ポータルの **Story タブ**（Journey UI）にある段階ヒント
+「気付き → 概要 → 解答」から開く（開示するとスコアが段階的に減点される）。
+この端末はコマンドを実行する場所で、攻略手順そのものはここには置かない。
+
+# クリア条件
+
+4 つの設問すべてに正解する → 自動で CLEARED。設問ごとの回答は 5 回まで。
+形式に合わない入力 (時刻の形・絶対 path でない・知らないラベル) は回数を
+消費しない。
+
+# 環境にあるもの
+
+  /opt/ctf/missions/50-nimbus-desk-triage/fixtures/welcome.txt   ← このファイル
+  /srv/ir/evidence/preservation-note.txt   保全の記録 (最初に読む)
+  /srv/ir/evidence/falco-events.jsonl      Falco のアラートの export
+  /srv/ir/evidence/fs-inventory.tsv        container の file の目録
+  /srv/ir/evidence/nimbus-desk.log         container の log
+  /srv/ir/evidence/egress-gateway.log      外向きの通信の判定の記録
+  /srv/ir/evidence/process-list.txt        保全した時点の process の一覧

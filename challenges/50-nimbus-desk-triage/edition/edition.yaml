@@ -1,0 +1,48 @@
+version: 1
+# The practice edition's base time (public). Every literal time in template/ is written
+# relative to it: the first shell (slot first) lies in [base, base + 600 s), and every
+# later event of the incident is a literal time after base + 600 s, so the order of the
+# incident does not depend on the drawn value.
+time:
+  base: "2026-10-21T17:00:00Z"
+fixed:
+  event-order: "shell-start,api-probe,secret-read,bundle-write,egress-fail,app-restart"
+slots:
+  # Q1 first-shell: the time of the earliest Run shell untrusted alert of the nimbus-desk
+  # container. The decoys are the times of alerts of OTHER containers in the same window.
+  - name: first
+    role: answer
+    question: first-shell
+    decoys: 10
+    window: {from: 0, to: 600}
+  # Q2 cred-file: the credential file the shell read. 1 x 1 x 8 x 8 x 10 = 640 paths.
+  # The decoys are the other credential files of the inventory (some of them read by the
+  # key-rotation sidecar, which is another container).
+  - name: cred
+    role: answer
+    question: cred-file
+    decoys: 10
+    vocab:
+      - [srv]
+      - [nimbus-desk]
+      - [secrets, keys, vault, creds, tokens, auth, private, keyring]
+      - [prod, prod-eu, prod-ap, shared, mail, search, billing, legacy]
+      - [smtp-relay.token, db-primary.pass, db-replica.pass, search-api.key, webhook-sign.key,
+         oauth-client.json, session-hmac.key, billing-api.token, ldap-bind.pass, object-store.key]
+  # Q3 bundle-file: the file the read contents were gathered into. 1 x 16 x 32 = 512 paths.
+  # The decoys are the web service's own temporary files, written outside the incident's
+  # window and of other sizes.
+  - name: bundle
+    role: answer
+    question: bundle-file
+    decoys: 10
+    vocab:
+      - [tmp]
+      - [.desk-cache, upload-spool, render-work, thumbs, pdf-work, mail-queue, export, import,
+         scratch, attach-tmp, previews, spool, .session, sync, index-work, report-tmp]
+      - [blob-3a1.bin, blob-7c2.bin, chunk-0004.tmp, chunk-0019.tmp, chunk-0113.tmp, job-5521.tmp,
+         job-6017.tmp, job-7340.tmp, msg-20431.eml, msg-20498.eml, page-001.png, page-014.png,
+         sess-9f2c.dat, sess-b41e.dat, sess-c07a.dat, tile-08.webp, tile-33.webp, up-4417.part,
+         up-5092.part, up-8730.part, cache-a1.idx, cache-c3.idx, cache-f9.idx, out-221.pdf,
+         out-874.pdf, rpt-q3.csv, rpt-q4.csv, x-0001.tmp, x-0042.tmp, x-0377.tmp, wrk-12.bin,
+         wrk-91.bin]

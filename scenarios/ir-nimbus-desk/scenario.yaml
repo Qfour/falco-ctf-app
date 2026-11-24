@@ -1,0 +1,17 @@
+# 防御側モジュール「事案を調べる」(IR シナリオ) の最初の版: 調査 A の 1 課題だけ。
+# 手書きの scenario.yaml。ADR-0055 の module.yaml が入ったら、同じ missions の
+# module.yaml に置き換える (architect の段取り、2026-11-24)。
+#
+# 自己完結: 50-nimbus-desk-triage の文面は他の課題を参照せず、他の課題が残した状態にも
+# 依存しない。調査型の課題なので、この後ろに evade の課題を置かない (ADR-0056 V39)。
+# 幕 1 (trigger) と幕 3 (detect) は、この scope に入れない。
+id: ir-nimbus-desk
+title: "事案調査 — nimbus-desk (防御側・調査 A)"
+challenges:
+  - 50-nimbus-desk-triage   # 調査 A (investigate): 保全された痕跡を読み、4 問に答える
+# Advisory only (P27-3): the tactic of the challenge's attack: block. The tactics the
+# incident's story walks through (Discovery, Credential Access, Collection, Exfiltration)
+# are read in the evidence, not tagged: ADR-0015 tags only what Falco observed and the
+# brief keeps one attack: entry per challenge.
+tactics:
+  - Execution

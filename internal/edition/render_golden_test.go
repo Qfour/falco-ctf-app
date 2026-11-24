@@ -12,9 +12,8 @@ package edition_test
 //     edition of placeholders, there to run the mechanism before any real challenge has an
 //     edition (TestGolden_FixtureMatchesItsPracticeDir);
 //   - the REAL tree, challenges/: every investigate challenge that has an edition/ is
-//     compared (TestGolden_EveryEditionOfTheImageMatchesItsPracticeDir). Today the tree has no
-//     investigate challenge, so the check compares 0 editions and passes; ADR-0056 A7 puts
-//     the first one there and the same test then runs on it (A7 adds the "at least one").
+//     compared (TestGolden_EveryEditionOfTheImageMatchesItsPracticeDir). ADR-0056 A7 put the
+//     first one there (50-nimbus-desk-triage), and the test requires at least one since.
 //
 // The expected files of the fixture are HMAC outputs, which nobody writes by hand: they are
 // written by a test, once, and committed. The update is
@@ -389,9 +388,9 @@ func practiceStale(treeDir string) (compared int, stale []string, err error) {
 // V11 / V67 on the real tree, and #658 (R4#2): practice/ is a generated file that is committed,
 // so an edition.yaml or a template/ changed without `make edition-practice` is red here (in
 // `make test`, the required check). Every challenge under challenges/ that has an edition/ is
-// compared. The tree has none until ADR-0056 A7, so this compares 0 editions and passes today.
-// That is stated here and not hidden: A7 puts the first challenge in, and flips this to "at least
-// one" in the same PR (V47 does the same for the practice answers).
+// compared. Until ADR-0056 A7 the tree had none and this compared 0 editions; A7 put the first
+// challenge in (50-nimbus-desk-triage) and flipped this to "at least one" (V47 does the same for
+// the practice answers).
 func TestGolden_EveryEditionOfTheImageMatchesItsPracticeDir(t *testing.T) {
 	cat, err := catalog.Load(goldenRealDir)
 	if err != nil {
@@ -407,7 +406,10 @@ func TestGolden_EveryEditionOfTheImageMatchesItsPracticeDir(t *testing.T) {
 	for _, s := range stale {
 		t.Error(s)
 	}
-	t.Logf("%d practice editions of the real tree were compared (0 until ADR-0056 A7)", compared)
+	if compared < 1 {
+		t.Errorf("no practice edition of the real tree was compared: ADR-0056 A7 put the first investigate challenge with an edition/ in %s", goldenRealDir)
+	}
+	t.Logf("%d practice editions of the real tree were compared", compared)
 }
 
 // The comparison of the real tree can fail: on a copy of the golden fixture's challenge, the

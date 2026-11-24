@@ -1,0 +1,9 @@
+# process list of container nimbus-desk (3f9a1c2b7d4e), pod desk-prod/nimbus-desk-7c9d5f6b8-x2k4q
+# captured 2026-10-21T17:52:30Z, after the pod was isolated (all ingress and egress denied)
+PID   PPID  USER   STARTED_UTC            COMMAND
+1     0     desk   2026-10-14T03:12:40Z   desk-init --child /srv/nimbus-desk/bin/nimbus-desk
+29    1     desk   2026-10-21T17:31:12Z   nimbus-desk --config /srv/nimbus-desk/conf/desk.yaml
+31    29    desk   2026-10-21T17:31:13Z   nimbus-desk worker 1
+32    29    desk   2026-10-21T17:31:13Z   nimbus-desk worker 2
+33    29    desk   2026-10-21T17:31:13Z   nimbus-desk worker 3
+34    29    desk   2026-10-21T17:31:13Z   nimbus-desk worker 4

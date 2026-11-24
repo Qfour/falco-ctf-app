@@ -111,8 +111,11 @@ fi
 # 02-credential-files (trigger) and 03-stealth-read (evade) both display the
 # "Read sensitive file untrusted" upstream rule — 02 shows the trigger path,
 # 03 shows the evade path, but it's the same rule text either way.
+# 06-web-rce-shell (trigger) and 50-nimbus-desk-triage (investigate) both display
+# "Run shell untrusted": 06 fires it, 50 reads its alerts in a preserved export.
 RULE_YAML_SYNC_GROUPS=(
   "02-credential-files 03-stealth-read"
+  "06-web-rce-shell 50-nimbus-desk-triage"
 )
 
 echo "==> checking rule.yaml sync groups (byte-identical display excerpts)"

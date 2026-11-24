@@ -1,0 +1,18 @@
+# GENERATED from 50-nimbus-desk-triage/falco-rule.yaml (type: investigate) by gen-values.sh — DO NOT EDIT.
+# Run `make gen-values` after editing falco-rule.yaml.
+plant:
+  seedScript:
+    - sh
+    - -c
+    - |
+      set -eu
+      PLANT_SEED_ROOT=/plant-seed
+
+      # ---- 50-nimbus-desk-triage ----
+      # evidence bundle (ADR-0056 D11): /srv/ir/evidence is where the bundle files are copied by name from /opt/ctf/evidence-src/50-nimbus-desk-triage/ (the ctf-evidence-50-nimbus-desk-triage Secret, mounted in this initContainer only)
+      mkdir -p "${PLANT_SEED_ROOT}/srv/ir/evidence"
+  mounts:
+    - path: /srv/ir/evidence
+      readOnly: true
+      evidence: true
+      challenge: 50-nimbus-desk-triage
