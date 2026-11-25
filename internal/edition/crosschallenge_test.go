@@ -225,6 +225,27 @@ func TestCrossChallenge_EachDefectIsRefusedByItsRule(t *testing.T) {
 		{"a literal time in the window, in A's template", edition.RuleCrossWindow, func(t *testing.T, chs map[string]*edition.CrossChallenge) {
 			appendTo(cxFile(t, chs[cxA].Template, "events.log"), "2001-01-01T00:05:00Z health check on node-a\n")
 		}},
+		{"the first second of the window is in it (half-open: from is in)", edition.RuleCrossWindow, func(t *testing.T, chs map[string]*edition.CrossChallenge) {
+			appendTo(cxFile(t, chs[cxA].Template, "events.log"), "2001-01-01T00:00:00Z node-a booted\n")
+		}},
+		// A word outside every mark that is an RFC 3339 time in another spelling: refused (B16),
+		// in A (an answer window, no timeline) and in B (a timeline, no answer window) alike. The
+		// times are outside A's window, so only the spelling is refused.
+		{"an RFC 3339 time with +00:00", edition.RuleCrossWindow, func(t *testing.T, chs map[string]*edition.CrossChallenge) {
+			appendTo(cxFile(t, chs[cxA].Template, "events.log"), "seen 2001-01-01T00:45:00+00:00 on node-a\n")
+		}},
+		{"an RFC 3339 time with a fraction of a second", edition.RuleCrossWindow, func(t *testing.T, chs map[string]*edition.CrossChallenge) {
+			appendTo(cxFile(t, chs[cxA].Template, "events.log"), "seen 2001-01-01T00:45:00.5Z on node-a\n")
+		}},
+		{"an RFC 3339 time with +09:00", edition.RuleCrossWindow, func(t *testing.T, chs map[string]*edition.CrossChallenge) {
+			appendTo(cxFile(t, chs[cxB].Template, "dns.log"), "seen 2001-01-01T09:45:00+09:00 by pod-b\n")
+		}},
+		{"an RFC 3339 time with a lower-case z", edition.RuleCrossWindow, func(t *testing.T, chs map[string]*edition.CrossChallenge) {
+			appendTo(cxFile(t, chs[cxB].Template, "dns.log"), "seen 2001-01-01T00:45:00z by pod-b\n")
+		}},
+		{"an RFC 3339 time with a lower-case t", edition.RuleCrossWindow, func(t *testing.T, chs map[string]*edition.CrossChallenge) {
+			appendTo(cxFile(t, chs[cxA].Template, "events.log"), "seen 2001-01-01t00:45:00Z on node-a\n")
+		}},
 		{"no edition.yaml", edition.RuleCrossWindow, func(t *testing.T, chs map[string]*edition.CrossChallenge) {
 			chs[cxB].Spec = nil
 		}},

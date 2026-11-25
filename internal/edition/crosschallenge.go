@@ -23,11 +23,17 @@ package edition
 //   - B15: when Y declares the timeline of X (catalog.Evidence.Timeline), every literal time of
 //     Y's template is a literal time of X's template, as a string. A literal time is a word (B7's
 //     TOKEN, templateTokens) outside every mark that is a timestamp word (isTimestampWord: RFC
-//     3339, UTC, at second precision). A time written otherwise is not one (amendment 28: it is
+//     3339, UTC, at second precision). A word outside every mark that is an RFC 3339 time in
+//     another spelling (an offset, a fraction of a second, a lower-case t or z) is refused as B16,
+//     in the template of every challenge of the scope: B15 and B16 could not compare it. A time
+//     that is not RFC 3339 at all (no offset, a space for the T) is not read (amendment 28: it is
 //     the review's to keep such a time out of a record the timeline depends on).
 //   - B16: no literal time of a challenge's template, nor of the template of a challenge it shares
 //     a timeline with (either side of a declaration of B15), lies in the window
-//     [time.base + from, time.base + to) of one of its answer slots.
+//     [time.base + from, time.base + to) of one of its answer slots. The catalog holds the
+//     declarations to a star (a challenge a timeline names declares none itself,
+//     catalog.checkEvidencePartners), so the direct partners are the whole timeline: a leaf's
+//     times are all the root's (B15), and the root is every leaf's partner.
 //
 // A declaration that names a challenge outside the scope is not compared, and is not a refusal:
 // that challenge is not played in the event, and no seat has a bundle of it (B1 refuses a bundle of
@@ -123,10 +129,18 @@ func CheckCrossChallenge(chs map[string]*CrossChallenge) (CrossReport, error) {
 	// the marks refuses has none that can be known: it is refused, and left out of B15 and B16.
 	lits := make(map[string][]literalTime, len(ids))
 	for _, id := range ids {
-		l, bad := literalTimes(chs[id].Template)
+		l, odd, bad := literalTimes(chs[id].Template)
 		if bad != "" {
 			c.add(newBundleViolation(RuleCrossWindow, "the template has a "+MarkOpen+" that is not a mark, so its literal times cannot be read (B15 and B16 cannot run on it)", cell{cid: id}, bad))
 			continue
+		}
+		// Every challenge of the scope, whether it has an answer window or a timeline or not: its
+		// literal times are compared with the windows of the challenges it shares a timeline with,
+		// and a time B16 cannot read is not a time B16 may leave out.
+		for _, o := range odd {
+			v := newBundleViolation(RuleCrossWindow, "a word of the template outside every mark is an RFC 3339 time that is not in the timestamp format's normal form (UTC, Z, whole seconds), so B15 and B16 cannot compare it: write it in the normal form, or as a slot", cell{cid: id}, o.file)
+			v.Line = o.line
+			c.add(v)
 		}
 		lits[id] = l
 	}
@@ -356,35 +370,69 @@ type literalTime struct {
 	line int
 }
 
-// literalTimes is the literal times of a template: every word (templateTokens) outside every mark
-// that is a timestamp word, with its file and line. A file the lexer of the marks refuses makes
-// the call fail: its name is returned (and no times), since the times of that file are not known.
-func literalTimes(template []BundleFile) ([]literalTime, string) {
-	var out []literalTime
+// literalTimes is the literal times of a template: every word (B7's TOKEN, as readMarkedText cuts
+// a text: the one mapping from a mark to its word) outside every mark that is a timestamp word,
+// with its file and line. odd is where a word outside every mark is an RFC 3339 time that is not
+// in that normal form (isRFC3339Like: an offset, a fraction of a second, a lower-case t or z): B15
+// and B16 cannot compare such a time, so it is refused rather than left out (fail-closed). A `+`
+// is not a token byte, so a time with a `+hh:mm` offset is two words, the time and the offset,
+// and is read as the two joined. A file the lexer of the marks refuses makes the call fail: its
+// name is returned (and no times), since the times of that file are not known.
+func literalTimes(template []BundleFile) (times, odd []literalTime, bad string) {
 	for _, f := range template {
 		if _, err := ScanMarks(f.Data); err != nil {
-			return nil, f.Name
+			return nil, nil, f.Name
 		}
 		for li, line := range templateLines(f.Data) {
-			toks, err := templateTokens(line)
+			mt, err := readMarkedText(line)
 			if err != nil {
-				return nil, f.Name
+				return nil, nil, f.Name
 			}
-			for _, t := range toks {
-				if len(t.slots) != 0 || !isTimestampWord(t.lit) {
+			marked := make([]bool, len(mt.spans))
+			for _, m := range mt.marks {
+				marked[m.token] = true
+			}
+			for ti, sp := range mt.spans {
+				if marked[ti] {
 					continue
 				}
-				// A timestamp word is answerformat's canonical RFC 3339 form, which time.Parse
-				// reads; a word it does not read is a fault, not a time to leave out.
-				at, err := time.Parse(time.RFC3339, string(t.lit))
-				if err != nil {
-					return nil, f.Name
+				word := mt.pseudo[sp[0]:sp[1]]
+				if isTimestampWord(word) {
+					// A timestamp word is answerformat's canonical RFC 3339 form, which time.Parse
+					// reads; a word it does not read is a fault, not a time to leave out.
+					at, err := time.Parse(time.RFC3339, string(word))
+					if err != nil {
+						return nil, nil, f.Name
+					}
+					times = append(times, literalTime{word: string(word), at: at, file: f.Name, line: li + 1})
+					continue
 				}
-				out = append(out, literalTime{word: string(t.lit), at: at, file: f.Name, line: li + 1})
+				joined := word
+				if e := sp[1]; ti+1 < len(mt.spans) && !marked[ti+1] && e < len(mt.pseudo) && mt.pseudo[e] == '+' && mt.spans[ti+1][0] == e+1 {
+					joined = mt.pseudo[sp[0]:mt.spans[ti+1][1]]
+				}
+				if isRFC3339Like(word) || isRFC3339Like(joined) {
+					odd = append(odd, literalTime{file: f.Name, line: li + 1})
+				}
 			}
 		}
 	}
-	return out, ""
+	return times, odd, ""
+}
+
+// isRFC3339Like reports whether a word, its ASCII letters in upper case, is an RFC 3339 time
+// (time.RFC3339Nano, which takes a fraction of a second or none, and any offset). It is asked of
+// a word that is not a timestamp word, to find the times of another spelling.
+func isRFC3339Like(word []byte) bool {
+	up := make([]byte, len(word))
+	for i, b := range word {
+		if b >= 'a' && b <= 'z' {
+			b -= 'a' - 'A'
+		}
+		up[i] = b
+	}
+	_, err := time.Parse(time.RFC3339Nano, string(up))
+	return err == nil
 }
 
 // checkCrossTimelines is B15. A challenge whose template could not be read is refused already

@@ -92,6 +92,40 @@ func TestLoad_EvidenceDecls_Rejected(t *testing.T) {
 	}
 }
 
+// A timeline is a star (the review's R4#1): the challenge a timeline names declares none itself.
+// A chain and a cycle are refused; two challenges that name one root are accepted.
+func TestLoad_EvidenceDecls_TimelineIsAStar(t *testing.T) {
+	const evZ = "52-ev-z"
+	tl := func(cid string) string {
+		return "    timeline: " + cid + "\n"
+	}
+	cases := []struct {
+		name       string
+		x, y, z    string // the extra lines of each challenge's evidence block
+		wantRefuse bool
+	}{
+		{"a chain z -> y -> x", "", tl(evX), tl(evY), true},
+		{"a cycle x -> y -> x", tl(evY), tl(evX), "", true},
+		{"two challenges that name one root", "", tl(evX), tl(evX), false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeChallenge(t, dir, evX, evWith("/srv/ev-x", c.x))
+			writeChallenge(t, dir, evY, evWith("/srv/ev-y", c.y))
+			writeChallenge(t, dir, evZ, evWith("/srv/ev-z", c.z))
+			_, err := catalog.Load(dir)
+			if !c.wantRefuse {
+				if err != nil {
+					t.Fatalf("Load: %v", err)
+				}
+				return
+			}
+			wantLoadError(t, err, "a timeline is a star")
+		})
+	}
+}
+
 // The real tree: 51-nimbus-desk-egress declares what it shares with 50-nimbus-desk-triage, and the
 // catalog loads it. The declaration is the fact B14 and B15 are held to (internal/edition).
 func TestLoad_EvidenceDecls_TheRealTree(t *testing.T) {

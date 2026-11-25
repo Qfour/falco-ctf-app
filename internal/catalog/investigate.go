@@ -244,7 +244,7 @@ func validateEvidenceDecls(id string, ev Evidence) error {
 
 // checkEvidencePartners is the part of `shares` and `timeline` that needs the whole catalog (Load
 // calls it once every file is read): every challenge they name is an investigate challenge of the
-// catalog. A declaration whose partner is not in the scope of an event (LoadScored keeps the
+// catalog, and the challenge a timeline names declares no timeline itself. A declaration whose partner is not in the scope of an event (LoadScored keeps the
 // declaration as it is) names a challenge that no seat plays: B13 to B16 compare the challenges of
 // one scope with each other (internal/edition), so such a declaration has nothing to compare.
 func checkEvidencePartners(cat Catalog) error {
@@ -264,6 +264,15 @@ func checkEvidencePartners(cat Catalog) error {
 		for _, p := range names {
 			if other, ok := cat[p]; !ok || other.Type != TypeInvestigate {
 				return fmt.Errorf("%s challenge %q: evidence names %q, which is not an investigate challenge of the catalog", TypeInvestigate, id, p)
+			}
+		}
+		// A timeline is a star: the challenge it names declares no timeline of its own. B16
+		// compares a challenge with the challenges it shares a timeline with directly, so a chain
+		// (C -> B -> A) would leave A's times out of C's windows; a cycle is refused by the same
+		// rule.
+		if ev.Timeline != "" {
+			if root := cat[ev.Timeline].Investigate; root != nil && root.Evidence.Timeline != "" {
+				return fmt.Errorf("%s challenge %q: evidence.timeline names %q, which declares a timeline of its own (a timeline is a star: the challenge it names declares none)", TypeInvestigate, id, ev.Timeline)
 			}
 		}
 	}
