@@ -44,10 +44,12 @@ const (
 // specEdit, when it is not nil, is applied to the edition.yaml before it is placed AND before the
 // render, so the bundles are the renderer's output of the edition that CheckEvent is given (a
 // block's lines are ordered by the render: an edition changed after the render is not one).
+// tmplEdit is the same for the template file.
 type cevOpts struct {
 	nameWords int
 	decoys    int
 	specEdit  func(string) string
+	tmplEdit  func(string) string
 }
 
 // cevSpec is the edition.yaml of the event edition.
@@ -98,6 +100,9 @@ func newCevFix(t *testing.T, o cevOpts) *cevFix {
 	f.spec, f.tmpl = cevSpec(o), editiontest.TemplateText(o.decoys)
 	if o.specEdit != nil {
 		f.spec = o.specEdit(f.spec)
+	}
+	if o.tmplEdit != nil {
+		f.tmpl = o.tmplEdit(f.tmpl)
 	}
 
 	// the image's tree, the event edition, the seats and the output directory

@@ -192,18 +192,60 @@ func SpecText(nameWords, decoys int) string {
 	fmt.Fprintf(&b, "  - name: tag\n    role: answer\n    question: q3\n    decoys: %d\n", decoys)
 	fmt.Fprintf(&b, "  - name: when\n    role: answer\n    question: q4\n    decoys: %d\n    window: {from: 0, to: 3600}\n", decoys)
 	b.WriteString("  - name: other\n    role: filler\n    format: name\n    vocab:\n      - [n0, n1, n2]\n")
+	// The time of each line of the groups of who, where and tag (when's lines are timed by their
+	// own marks): one filler per line, all of one window after when's.
+	for _, g := range Groups[:3] {
+		for j := 0; j <= decoys; j++ {
+			fmt.Fprintf(&b, "  - {name: %s-t%d, role: filler, format: timestamp, window: {from: 7200, to: 10800}}\n", g, j)
+		}
+	}
+	// One block per group (ADR-0056 amendment 28, B17): blocks is the last key, so a case can add
+	// an entry to its list.
+	b.WriteString("blocks:\n")
+	for _, g := range Groups {
+		from, to := BlockLines(decoys, g)
+		fmt.Fprintf(&b, "  - {file: %s, from: %d, to: %d}\n", TemplateName, from, to)
+	}
 	return b.String()
 }
 
-// TemplateText is the template of the event edition: one line per slot, the mark alone as a
-// token (a space before it, a line break after it), and decoys candidate lines per answer.
+// Groups are the answer slots of the event edition, in the order of their blocks in the template.
+var Groups = []string{"who", "where", "tag", "when"}
+
+// BlockLines is the first and the last line (1-based) of the block of group g in TemplateText(decoys):
+// the answer's line and one line of each decoy, after the template's first line.
+func BlockLines(decoys int, g string) (int, int) {
+	for i, s := range Groups {
+		if s == g {
+			from := 2 + i*(decoys+1)
+			return from, from + decoys
+		}
+	}
+	return 0, 0
+}
+
+// TimeField is the index of the time among the fields (strings.Fields) of a line of a block of
+// TemplateText, in the template's text and in a bundle's.
+const TimeField = 3
+
+// TemplateText is the template of the event edition: the first line, then one block per answer
+// slot (Groups, BlockLines) whose lines are the same but for their marks (B17): the answer's line
+// and one line of each decoy, each with a time of its own (a filler, or the mark of when's group
+// itself), the marks alone as tokens. A line of a filler ends it.
 func TemplateText(decoys int) string {
 	var b strings.Builder
 	b.WriteString("fixture record, placeholder text only\n")
-	for _, s := range []string{"who", "where", "tag", "when"} {
-		fmt.Fprintf(&b, "%s-answer = {{ctf:%s}}\n", s, s)
-		for j := 1; j <= decoys; j++ {
-			fmt.Fprintf(&b, "%s-candidate-%d = {{ctf:%s-d%d}}\n", s, j, s, j)
+	for _, g := range Groups {
+		for j := 0; j <= decoys; j++ {
+			slot := g
+			if j > 0 {
+				slot = fmt.Sprintf("%s-d%d", g, j)
+			}
+			if g == "when" {
+				fmt.Fprintf(&b, "when record at {{ctf:%s}}\n", slot)
+				continue
+			}
+			fmt.Fprintf(&b, "%s record at {{ctf:%s-t%d}} holds {{ctf:%s}}\n", g, g, j, slot)
 		}
 	}
 	b.WriteString("side-note = {{ctf:other}}\n")

@@ -28,12 +28,14 @@ package edition
 //	7.  B7 (CheckDecoySpread) and B8 (b) (CheckOutputSpace);
 //	7b. B13 to B16, the rules between the investigate challenges of the scope
 //	    (CheckCrossChallenge, ADR-0056 amendment 26, A7-x PR 3);
+//	7c. B17 and B19, the lines of an answer's group in the event's template (CheckRowRules,
+//	    amendments 27 and 28, A7-x PR 4);
 //	8.  B10, the continuity with the previous digests.
 //
 // A step that cannot be run (an input is missing, unreadable or malformed) stops the check
 // (fail-closed): no later step is skipped silently. A step that finds violations stops it
-// when the later steps need what it checks (1 to 5); steps 6, 7, 7b and 8 do not depend on each
-// other, so all four are run and their violations listed together, and the overlap numbers
+// when the later steps need what it checks (1 to 5); steps 6, 7, 7b, 7c and 8 do not depend on
+// each other, so all five are run and their violations listed together, and the overlap numbers
 // of B4 are in the CheckReport whether the event is accepted or not.
 //
 // The errors are of two kinds, which the command turns into two exit codes (D20):
@@ -223,7 +225,8 @@ type CheckReport struct {
 
 // CheckedEvent is an event edition that every check of D20 accepted (ADR-0056 amendment 12): E1,
 // E2, E3, B8 (a1) and (a2), B1 to B10, B11 (the run id of the render record), B12 (its scope
-// digest) and B13 to B16 (between the challenges of the scope). It carries what the digests file and the command's one line need: the run id of the
+// digest), B13 to B16 (between the challenges of the scope) and B17 and B19 (the lines of an
+// answer's group). It carries what the digests file and the command's one line need: the run id of the
 // answers table, the digest of
 // every bundle, and how many seats and challenges were checked. It is made by CheckEvent and by
 // nothing else (its fields are unexported, and validator_door_source_test.go fixes that no other
@@ -333,8 +336,8 @@ func CheckEvent(in CheckInput) (*CheckedEvent, CheckReport, error) {
 		return nil, report, classify("the evidence root cannot be read", err)
 	}
 
-	// 6, 7, 7b and 8 do not need each other's result: all four run, and what they found is listed
-	// together.
+	// 6, 7, 7b, 7c and 8 do not need each other's result: all five run, and what they found is
+	// listed together.
 	var refusals []error
 	var b4 collector
 	report.OverlapRan = true
@@ -346,6 +349,7 @@ func CheckEvent(in CheckInput) (*CheckedEvent, CheckReport, error) {
 	refusals = append(refusals, b4.err())
 	refusals = append(refusals, checkSpreads(scope, editions, bundles.bundles, table))
 	refusals = append(refusals, checkCrossChallenges(scope, scored.Catalog, editions, bundles.bundles, table))
+	refusals = append(refusals, checkRowRules(scope, editions))
 	refusals = append(refusals, checkContinuity(bundles.rows, previous, !in.NoPrevious))
 	if err := errors.Join(refusals...); err != nil {
 		return nil, report, err
@@ -473,6 +477,20 @@ func checkCrossChallenges(scope Scope, cat catalog.Catalog, editions map[string]
 	}
 	_, err := CheckCrossChallenge(chs)
 	return err
+}
+
+// checkRowRules is step 7c: B17 and B19 (CheckRowRules, ADR-0056 amendments 27 and 28) on the
+// event edition of every challenge of the scope, in the order of the challenge ids (step 4 parsed
+// every edition.yaml and held it to E2, or the check stopped there). It lists what every challenge
+// has.
+func checkRowRules(scope Scope, editions map[string]*eventEdition) error {
+	var errs []error
+	for _, cid := range scope.sortedCIDs() {
+		ed := editions[cid]
+		_, err := ed.spec.CheckRowRules(cid, scope[cid], ed.template)
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
 }
 
 // seatAnswersOf is the rows of challenge cid in the answers table, in the form B7 reads them.

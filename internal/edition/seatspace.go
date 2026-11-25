@@ -58,11 +58,7 @@ func (s *Spec) CheckSeatSpace(cid string, qs []catalog.Question, template []Bund
 		need := big.NewInt(2 * int64(seats))
 		msg := fmt.Sprintf("the answer space of the slot is below 2 x the number of seats (%d), so each seat cannot have a value of its own (B8 (a2))", seats)
 		if blocked[sl.Name] || unread {
-			k := DecoyK(q.Attempts)
-			if sl.Decoys != nil && *sl.Decoys > k {
-				k = *sl.Decoys
-			}
-			need.Mul(need, big.NewInt(int64(k)+1))
+			need.Mul(need, big.NewInt(int64(groupDecoys(q.Attempts, sl))+1))
 			msg = fmt.Sprintf("the answer space of the slot, whose group is in a block, is below 2 x the number of seats (%d) x (the decoys + 1), so the values of the group cannot all differ between the seats (B8 (a2), amendment 28)", seats)
 		}
 		n, err := answerformat.Space(q.Format, q.Params)
@@ -75,4 +71,16 @@ func (s *Spec) CheckSeatSpace(cid string, qs []catalog.Question, template []Bund
 		c.add(newSpecViolation(rule, msg, 0, cid, q.ID, sl.Name, fmt.Sprintf("slots[%d]", i), nil))
 	}
 	return c.err()
+}
+
+// groupDecoys is k of an answer slot's group: the larger of K (DecoyK of the question's attempts)
+// and the decoys the slot declares (E2 holds the second to at least the first). B8 (a2)'s bound of
+// a group in a block and B19's threshold (k + 1, rowsymmetry.go) read it from here, the one
+// place it is taken.
+func groupDecoys(attempts int, sl *Slot) int {
+	k := DecoyK(attempts)
+	if sl.Decoys != nil && *sl.Decoys > k {
+		k = *sl.Decoys
+	}
+	return k
 }

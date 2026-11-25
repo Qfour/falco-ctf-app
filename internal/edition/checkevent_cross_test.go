@@ -53,21 +53,31 @@ func ccRule(noShares bool) string {
 	return "type: " + catalog.TypeInvestigate + "\ninvestigate:\n" + ev + "  questions:\n    - id: q1\n      format: name\n      attempts: 1\n"
 }
 
-// ccSpec is an edition.yaml of 02-demo: one answer slot of 9 decoys, a vocabulary of 100 words.
-func ccSpec(prefix string) string {
+// ccSpec is an edition.yaml of 02-demo: one answer slot of 9 decoys, a vocabulary of 100 words, the
+// time of each line of its group (fillers, after 01-demo's answer window), and the block of the
+// group over the lines of file (B17).
+func ccSpec(prefix, file string) string {
 	words := make([]string, 100)
 	for i := range words {
 		words[i] = fmt.Sprintf("%s%03d", prefix, i)
 	}
-	return "version: 1\nslots:\n  - name: peer\n    role: answer\n    question: q1\n    decoys: 9\n    vocab:\n      - [" + strings.Join(words, ", ") + "]\n"
+	var b strings.Builder
+	b.WriteString("version: 1\ntime:\n  base: \"2001-01-01T00:00:00Z\"\nslots:\n")
+	b.WriteString("  - name: peer\n    role: answer\n    question: q1\n    decoys: 9\n    vocab:\n      - [" + strings.Join(words, ", ") + "]\n")
+	for j := 0; j <= 9; j++ {
+		fmt.Fprintf(&b, "  - {name: pt%d, role: filler, format: timestamp, window: {from: 10800, to: 14400}}\n", j)
+	}
+	fmt.Fprintf(&b, "blocks:\n  - {file: %s, from: 1, to: 10}\n", file)
+	return b.String()
 }
 
-// ccTemplate is a template file of 02-demo: one line per slot, lead before the mark.
+// ccTemplate is a template file of 02-demo: the block of the group, one line per slot, the same
+// but for the marks (lead, a time, the value).
 func ccTemplate(lead string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s 00 -> {{ctf:peer}}\n", lead)
+	fmt.Fprintf(&b, "%s at {{ctf:pt0}} -> {{ctf:peer}}\n", lead)
 	for j := 1; j <= 9; j++ {
-		fmt.Fprintf(&b, "%s %02d -> {{ctf:peer-d%d}}\n", lead, j, j)
+		fmt.Fprintf(&b, "%s at {{ctf:pt%d}} -> {{ctf:peer-d%d}}\n", lead, j, j)
 	}
 	return b.String()
 }
@@ -93,7 +103,7 @@ func newCrossCevFix(t *testing.T, o ccOpts) *ccFix {
 	img := editiontest.ChallengesRel + "/" + ccB
 	tr.Put(img+"/falco-rule.yaml", ccRule(o.noShares))
 	tr.Put(img+"/journey.yaml", ccJourney)
-	pSpecText, pTmpl := ccSpec("p"), ccTemplate("v=")
+	pSpecText, pTmpl := ccSpec("p", "c.txt"), ccTemplate("v=")
 	pSpec, err := edition.ParseSpec([]byte(pSpecText))
 	if err != nil {
 		t.Fatalf("ParseSpec (practice of %s): %v", ccB, err)
@@ -118,7 +128,7 @@ func newCrossCevFix(t *testing.T, o ccOpts) *ccFix {
 	tr.PutScenario(editiontest.ScenarioID, editiontest.Evade, editiontest.CID, ccB)
 
 	// The event edition of the second challenge.
-	bSpecText, bTmpl := ccSpec("r"), ccTemplate("line of the peer list")+o.bExtra
+	bSpecText, bTmpl := ccSpec("r", ccPeers), ccTemplate("line of the peer list")+o.bExtra
 	tr.Put(editiontest.EditionRootRel+"/"+ccB+"/"+edition.SpecFileName, bSpecText)
 	tr.Put(editiontest.EditionRootRel+"/"+ccB+"/"+edition.TemplateDirName+"/"+ccPeers, bTmpl)
 	tr.Put(editiontest.EditionRootRel+"/"+ccB+"/"+edition.TemplateDirName+"/"+ccShared, ccSharedText)
