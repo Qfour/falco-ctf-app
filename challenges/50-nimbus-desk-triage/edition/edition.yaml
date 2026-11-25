@@ -65,14 +65,15 @@ slots:
   # Q4 survey-file: the file the intruder's shell wrote what it found into, before the
   # config and credential reads (no alert, no line in nimbus-desk.log). 1 x 1 x 16 x 32 = 512
   # paths. The 20 decoys are the web service's own files under the same home directory:
-  #   - 9 before 17:00 (before any seat's first shell), without a log line;
-  #   - 9 between 17:10 and the config read (17:18:44), so after every seat's first shell,
-  #     each with a line of nimbus-desk.log of the same time and the same bytes;
+  #   - 9 between the first unusual request of the log (16:55:12) and 17:00, so after the
+  #     start of the incident but before any seat's first shell, without a log line;
+  #   - 9 between the API probe (17:15:32) and the config read (17:18:44), so after every
+  #     seat's first shell, each with a line of nimbus-desk.log of the same time and bytes;
   #   - 2 after the first refused send (17:23:40), without a log line.
-  # None lies in Q3's read-to-deny interval. With the prompt's "before the config read": the
-  # directory leaves 19, "after the first shell" and the directory leave 10, "no log line" and
-  # the directory leave 10. Only the order (after the first shell, before the config read)
-  # together with the log (no line of the same time and bytes) leaves one.
+  # None lies in Q3's read-to-deny interval. Counted from every fixed point (the start of the
+  # incident, the shells, the probe, the config read, the first refused send, the isolation),
+  # "after / before it" with one more clue leaves 10 or more; only the order against the first
+  # shell (or a later step of the intruder) together with the log leaves fewer.
   - name: survey
     role: answer
     question: survey-file

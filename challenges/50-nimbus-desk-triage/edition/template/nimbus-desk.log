@@ -32,20 +32,20 @@
 {{ctf:q1w-request}} level=info msg="request" method=GET path=/api/tickets status=200 client=198.51.100.44 dur_ms=19
 {{ctf:q1w-attach-2}} level=info msg="attachment stored" ticket=T-48815 bytes=4096
 2026-10-21T17:10:04Z level=info msg="request" method=GET path=/healthz status=200 client=192.0.2.10 dur_ms=1
-2026-10-21T17:10:37Z level=info msg="spellcheck cache saved" bytes=1206
-2026-10-21T17:11:19Z level=info msg="search index segment flushed" bytes=40960
 2026-10-21T17:12:30Z level=info msg="request" method=GET path=/api/tickets/T-48799/preview status=200 client=198.51.100.130 dur_ms=12
 2026-10-21T17:12:31Z level=info msg="preview rendered" job=pv-88127 pages=1 bytes=3967
-2026-10-21T17:12:58Z level=info msg="rate-limit state saved" bytes=517
-2026-10-21T17:13:40Z level=info msg="template cache saved" bytes=3304
-2026-10-21T17:14:31Z level=info msg="font cache rebuilt" bytes=8811
-2026-10-21T17:15:07Z level=info msg="lock refreshed" bytes=156
-2026-10-21T17:15:58Z level=info msg="session map saved" bytes=2473
+2026-10-21T17:15:41Z level=info msg="spellcheck cache saved" bytes=1206
+2026-10-21T17:15:58Z level=info msg="search index segment flushed" bytes=40960
 2026-10-21T17:16:08Z level=info msg="request" method=POST path=/api/tickets status=201 client=198.51.100.71 dur_ms=45
 2026-10-21T17:16:09Z level=info msg="attachment stored" ticket=T-48816 bytes=8192
-2026-10-21T17:17:24Z level=info msg="kv snapshot saved" bytes=12800
+2026-10-21T17:16:22Z level=info msg="rate-limit state saved" bytes=517
+2026-10-21T17:16:37Z level=info msg="template cache saved" bytes=3304
+2026-10-21T17:17:06Z level=info msg="font cache rebuilt" bytes=8811
+2026-10-21T17:17:24Z level=info msg="lock refreshed" bytes=156
+2026-10-21T17:17:49Z level=info msg="session map saved" bytes=2473
 2026-10-21T17:18:02Z level=info msg="preview rendered" job=pv-88128 pages=1 bytes=1519
-2026-10-21T17:18:13Z level=info msg="user prefs saved" bytes=690
+2026-10-21T17:18:13Z level=info msg="kv snapshot saved" bytes=12800
+2026-10-21T17:18:29Z level=info msg="user prefs saved" bytes=690
 2026-10-21T17:20:04Z level=info msg="request" method=GET path=/healthz status=200 client=192.0.2.10 dur_ms=1
 2026-10-21T17:22:47Z level=info msg="mail queued" ticket=T-48816 to_domain=customer.example relay=smtp.mail.example
 2026-10-21T17:24:37Z level=info msg="attachment stored" ticket=T-48817 bytes=20480

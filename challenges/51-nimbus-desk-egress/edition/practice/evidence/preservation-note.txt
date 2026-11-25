@@ -8,7 +8,9 @@ times      every time in these files is UTC, RFC 3339, second precision
 files
   falco-alerts.jsonl   a SELECTION of Falco alerts: the alerts of one shell process tree in
                        container nimbus-desk that the responder linked to the ticket. Not the
-                       full export (other alerts of the night are not in this file).
+                       full export (other alerts of the night are not in this file). The
+                       site's Falco does not put the rule tags in its JSON output, so the
+                       alerts have no "tags" field.
   egress-gateway.log   verdicts of the egress gateway for connections that leave the cluster
                        directly. dst_name is the TLS server name the gateway saw; "-" when the
                        connection was refused before any name was sent.
