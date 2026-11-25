@@ -137,6 +137,9 @@ func (s *Spec) CheckPracticeClues(cid string, qs []catalog.Question, template []
 		p, ok := pr[sl.Question]
 		switch {
 		case !ok:
+			// A guard: readRows gave both editions to CheckQuestions with the same qs, which asks
+			// each for an answer slot of every question an event answer slot can name, so a
+			// practice that got here has one. Kept, fail-closed, for a caller that is not that.
 			c.add(refuse("the image's practice edition has no answer slot of the question, so B18 cannot compare its clue words (fail-closed)", sl.Question))
 		case ev[sl.Question].holds(p):
 			c.add(refuse("the clue words of the event's answer hold every clue word of the practice edition's answer of the same question (a grep with the practice's clues would reach the event's answer; a practice answer with no clue word is held by every event)", sl.Question))

@@ -230,9 +230,9 @@ type CheckReport struct {
 // CheckedEvent is an event edition that every check of D20 accepted (ADR-0056 amendment 12): E1,
 // E2, E3, B8 (a1) and (a2), B1 to B10, B11 (the run id of the render record), B12 (its scope
 // digest), B13 to B16 (between the challenges of the scope), B17 and B19 (the lines of an
-// answer's group) and B18 (the clue words of an answer against the practice's). It carries what the digests file and the command's one line need: the run id of the
-// answers table, the digest of
-// every bundle, and how many seats and challenges were checked. It is made by CheckEvent and by
+// answer's group) and B18 (the clue words of an answer against the practice's). It carries what
+// the digests file and the command's one line need: the run id of the answers table, the digest
+// of every bundle, and how many seats and challenges were checked. It is made by CheckEvent and by
 // nothing else (its fields are unexported, and validator_door_source_test.go fixes that no other
 // non-test file builds one), and WriteDigests takes it and nothing weaker.
 type CheckedEvent struct {

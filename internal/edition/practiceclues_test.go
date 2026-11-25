@@ -147,6 +147,11 @@ func TestPracticeClues_RefusesWhatItCannotRead(t *testing.T) {
 		{"a practice edition that does not hold to E2 (decoys below K)", []byte(strings.Replace(string(goodSpec), "    decoys: 4\n", "    decoys: 3\n", 1)), goodTmpl, "does not hold to E2"},
 		{"a practice edition whose group in a block declares no clue (E2 (e1))", noClueSpec, goodTmpl, "does not hold to E2"},
 		{"a practice template with a mark opener that is not a mark", goodSpec, append(slices.Clone(goodTmpl), edition.BundleFile{Name: "c.log", Data: []byte("broken {{ctf: mark\n")}), "that is not a mark"},
+		// The practice's answer slot is of q2, not of the event's q1: the practice edition has no
+		// answer slot of q1. It is refused at E2 (CheckQuestions, given the event's questions, asks
+		// for an answer slot of q1 and has no q2), before B18 compares; so the branch of B18 for a
+		// question the practice has no answer slot of is not reached by a practice that holds to E2.
+		{"a practice edition whose answer slot is of another question than the event's (no answer slot of q1)", []byte(strings.Replace(string(goodSpec), "    question: q1\n", "    question: q2\n", 1)), goodTmpl, "does not hold to E2"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

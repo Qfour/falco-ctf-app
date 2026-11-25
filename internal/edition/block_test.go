@@ -367,6 +367,7 @@ func TestBlock_O1O2AnUnorderedOrChangedBlockIsRed(t *testing.T) {
 // V113 (o3): where a clue tells the lines apart, the answer on a decoy's line (the two values of
 // the column swapped, the times kept) is red; where no clue does, the same swap says nothing (the
 // two lines have one signature).
+// The (o3) before its replacement: PR 4c makes it the match of the key words (ADR-0056 amend. 31).
 func TestBlock_O3TheAnswerOnADecoysLine(t *testing.T) {
 	for _, c := range []struct {
 		name string
