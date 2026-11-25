@@ -10,6 +10,7 @@ package edition_test
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"maps"
 	"os"
@@ -176,6 +177,61 @@ func TestRenderEvent_TheOutputIsWhatEditionCheckAccepts(t *testing.T) {
 	}
 	if checked.RunID() != ev.RunID() || checked.Seats() != 3 || checked.Challenges() != 1 {
 		t.Errorf("the checked event is run %q, %d seats, %d challenges; want the render's", checked.RunID(), checked.Seats(), checked.Challenges())
+	}
+}
+
+// A7-x PR 2 (ADR-0056 amendment 28 as revised), end to end: an event edition with a block over
+// the lines of when's group (with a clue of when, and without) goes through RenderEvent, whose
+// self check runs B7's block form with the answers of the rows it writes; the block of every
+// seat's bundle is in strictly ascending time; and `edition check` accepts the output.
+func TestRenderEvent_AnEditionWithABlockGoesThroughTheSelfCheckAndTheCheck(t *testing.T) {
+	from, to := 0, 0
+	for i, ln := range strings.Split(editiontest.GoodTemplate(), "\n") {
+		if strings.HasPrefix(ln, "when-") {
+			if from == 0 {
+				from = i + 1
+			}
+			to = i + 1
+		}
+	}
+	if from == 0 || to-from != editiontest.GoodDecoys {
+		t.Fatalf("the lines of when's group are %d..%d: the fixture's template changed", from, to)
+	}
+	for _, clue := range []bool{true, false} {
+		t.Run(fmt.Sprintf("clue=%v", clue), func(t *testing.T) {
+			spec := editiontest.GoodSpec()
+			if clue {
+				spec = strings.Replace(spec, "    question: q4\n", "    question: q4\n    clues: [when-answer]\n", 1)
+				if !strings.Contains(spec, "clues: [when-answer]") {
+					t.Fatal("the clue was not written: the test does not test")
+				}
+			}
+			spec += fmt.Sprintf("blocks:\n  - {file: %s, from: %d, to: %d}\n", editiontest.TemplateName, from, to)
+			f := newRfFix(t)
+			f.tree.Put(editiontest.EditionRootRel+"/"+editiontest.CID+"/"+edition.SpecFileName, spec)
+			ev, err := edition.RenderEvent(f.in)
+			if err != nil || ev == nil {
+				t.Fatalf("RenderEvent of an edition with a block = (%v, %v); want the event", ev, err)
+			}
+			for _, seat := range editiontest.Seats() {
+				data, err := os.ReadFile(f.outFile(edition.EventEvidenceDirName + "/" + seat + "/" + editiontest.CID + "/" + editiontest.TemplateName))
+				if err != nil {
+					t.Fatal(err)
+				}
+				prev := ""
+				for _, ln := range strings.Split(string(data), "\n")[from-1 : to] {
+					_, v, ok := strings.Cut(ln, " = ")
+					if !ok || v <= prev {
+						t.Fatalf("seat %s: the block of the output is not in strictly ascending time", seat)
+					}
+					prev = v
+				}
+			}
+			checked, _, err := edition.CheckEvent(f.checkInput())
+			if err != nil || checked == nil {
+				t.Fatalf("CheckEvent of the output of an edition with a block = (%v, %v); want it accepted", checked, err)
+			}
+		})
 	}
 }
 

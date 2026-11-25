@@ -5,17 +5,21 @@ package edition
 // "a seat's bundle holds enough decoys that look like the answer", and B8 (b), "a seat's
 // bundle holds enough candidates of a question's format". The inputs are the bundles
 // themselves (and, for B7, the template and the spec, which say where the decoys are), so
-// the same two functions run on a render in the tests and, once the bundles are read from
-// disk, in the validator (A4e; no caller yet). Neither applies to a practice edition (the
-// seat *, which is public): the seat grammar refuses it here, so a caller that passes one
-// gets a refusal and not a pass.
+// the same two functions run on a render (the self check of `edition render`, RenderEvent) and
+// on the bundles read from disk (`edition check`, CheckEvent). Neither applies to a practice
+// edition (the seat *, which is public): the seat grammar refuses it here, so a caller that passes
+// one gets a refusal and not a pass.
 //
 // This file is NOT a part of the renderer (it is not named render*.go, and
-// render_reach_test.go does not count it as one): the validator does not trust the renderer,
-// so what it calls holds no key and no answer. It reads the bundles and the template, takes the
-// positions from slotmark.go (LayoutOf) and the formats from answerformat, and refers to
-// nothing that render*.go declares (MasterKey, Render, the random source). A source test
-// (spread_source_test.go) fixes that.
+// render_reach_test.go does not count it as one): the validator does not trust the renderer.
+// B7 and B8 (b) hold no key, call nothing of the renderer and open no answers table of their own.
+// B7 is given the plaintext answers of a challenge by its caller (SeatAnswers: the answers table
+// of `edition check`, or the rows of `edition render`'s self check, which both callers hold
+// already), reads them for a group in a block only, keeps nothing of them after it returns, and
+// never writes one into a message. Who may call it is fixed (spread_source_test.go). It reads the
+// bundles and the template, takes the positions from slotmark.go (LayoutOf) and the formats from
+// answerformat, and refers to nothing that render*.go declares (MasterKey, Render, the random
+// source). A source test (spread_source_test.go) fixes that.
 //
 // A TOKEN is the unit both rules count: a maximal run of the bytes a value of the
 // per-seat formats is made of, [A-Za-z0-9._:/-] (a name, a path, a hexid and a timestamp

@@ -18,7 +18,8 @@ import (
 // What they declare is the renderer: the master key and the render functions, and what the
 // later files of the stage add (the answers writer): all of it holds or produces the
 // event's answers. B7 and B8 (b) of the validator (A4d-2c) are NOT of the stage: they hold
-// no key and no answer, so they are in spread.go, which is not named render*.go
+// no key and draw no answer (B7 is given the answers its caller holds, for a group in a block,
+// and keeps none), so they are in spread.go, which is not named render*.go
 // (spread_source_test.go fixes that), and `edition check` reaches them as it reaches any other
 // check of the package. The rule:
 //

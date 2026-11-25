@@ -12,6 +12,7 @@ package edition_test
 // (TestCheckSeatSpace_AGroupInABlockNeedsTwiceTheSeatsTimesTheGroup).
 
 import (
+	"encoding/json"
 	"fmt"
 	"maps"
 	"math/bits"
@@ -485,5 +486,80 @@ func TestBlock_ThePracticeDigestIsOfTheOrderedBytes(t *testing.T) {
 	}
 	if want := "*\t" + demoCID + "\t" + edition.BundleDigest(pf.Evidence) + "\n"; !strings.Contains(string(pf.Digests), want) {
 		t.Errorf("the digests file does not hold the digest of the ordered bundle")
+	}
+}
+
+// The answers RenderEvent's self check hands B7 are the rows it writes (seatAnswersOfRows): with
+// all of them B7 passes the render, and with one seat's answer of the block's question taken out
+// it refuses that seat (fail-closed), naming no value.
+func TestBlock_TheSelfChecksAnswersAreTheRows(t *testing.T) {
+	spec, tmpl, r := bkRender(t, bkDoc(bkDay, true, false), bkPlain, "seat-a", "seat-b")
+	all := edition.SeatAnswersOfRowsForTest(r.Rows)[demoCID]
+	if err := bkCheck(spec, tmpl, r.Bundles, all); err != nil {
+		t.Fatalf("B7 with the answers of the rows: %v", err)
+	}
+	delete(all["seat-b"], "q2")
+	bkWantOne(t, bkCheck(spec, tmpl, r.Bundles, all), "seat-b", "have no value", r)
+}
+
+// SeatAnswers holds plaintext answers: it prints as a fixed string under every fmt verb and under
+// encoding/json, alone, through a pointer, as a field, in a map and in a slice. Reading it is
+// not changed (B7 reads the map).
+func TestSeatAnswers_PrintsNoValue(t *testing.T) {
+	const secret = "/SECRET-answer/0001"
+	a := edition.SeatAnswers{"seat-a": {"q2": secret}}
+	type holder struct{ A edition.SeatAnswers }
+	for name, v := range map[string]any{
+		"the value":   a,
+		"a pointer":   &a,
+		"in a struct": holder{A: a},
+		"in a map":    map[string]edition.SeatAnswers{demoCID: a},
+		"in a slice":  []edition.SeatAnswers{a},
+	} {
+		for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%X", "%d"} {
+			if out := fmt.Sprintf(verb, v); strings.Contains(out, "SECRET") {
+				t.Errorf("%s under %s prints a value: %q", name, verb, out)
+			}
+		}
+		b, err := json.Marshal(v)
+		if err != nil {
+			t.Errorf("%s: json.Marshal: %v", name, err)
+		}
+		if strings.Contains(string(b), "SECRET") {
+			t.Errorf("%s: json.Marshal prints a value: %s", name, b)
+		}
+	}
+	if a.String() != a.GoString() || !strings.Contains(a.String(), "redacted") {
+		t.Errorf("String %q and GoString %q, want one fixed string that says it is redacted", a.String(), a.GoString())
+	}
+	if a["seat-a"]["q2"] != secret {
+		t.Error("the value cannot be read back: the redaction is of printing only")
+	}
+}
+
+// R2's question (review of #698): an answer slot or a decoy written both in its block and on a
+// line outside it (so that some of a question's marks would be read by position and the others
+// in the block, and K counted twice or in part) is not an edition: E2 refuses it (a mark of a
+// group that has a block is on no line outside its blocks), the renderer refuses it with E2, and
+// B7 refuses to run on it. A second answer slot of one question is CheckQuestions's (E2:
+// exactly one answer slot per per-seat question).
+func TestBlock_AGroupBothInAndOutOfItsBlockIsRefused(t *testing.T) {
+	spec, tmpl, r := bkRender(t, bkDoc(bkDay, true, false), bkPlain, "seat-a")
+	for _, mark := range []string{"where", "where-d1"} {
+		t.Run(mark, func(t *testing.T) {
+			mixed := slices.Clone(tmpl)
+			mixed[0] = edition.BundleFile{Name: mixed[0].Name, Data: append(slices.Clone(mixed[0].Data), []byte("again={{ctf:"+mark+"}}\n")...)}
+			sbWantOne(t, spec.CheckBlocksAndClues(demoCID, mixed), edition.RuleSpecQuestion)
+			_, err := edition.Render(edition.RenderInput{
+				CID: demoCID, Questions: rdQuestions(), Spec: spec, Template: mixed,
+				Key: rdKey(t, rdKeyText), Seats: []string{"seat-a"}, Previous: edition.NoPreviousSeats(),
+			})
+			specWantRules(t, err, edition.RuleSpecQuestion)
+			err = bkCheck(spec, mixed, r.Bundles, bkAnswers(r))
+			specWantRules(t, err, edition.RuleDecoySpread)
+			if !strings.Contains(err.Error(), "do not hold to E2") {
+				t.Errorf("B7 on the mixed template: %v", err)
+			}
+		})
 	}
 }
