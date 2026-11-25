@@ -18,7 +18,12 @@
 #      helm/kubectl call and shows the validator's reason; a complete file
 #      reaches `helm upgrade` carrying exactly the in-scope id=value pairs;
 #      no --flags-file behaves as before (no validation, no challenge.flags
-#      override).
+#      override). A scope of the real tree that holds investigate challenges
+#      (ADR-0056 D11: all, scenario ir-nimbus-desk, a single investigate
+#      challenge) is an event deploy only with the event's evidence too:
+#      --flags-file alone (or with half of the evidence arguments) exits 2 with
+#      no helm/kubectl call; with a synthetic event bundle built here it reaches
+#      `helm upgrade` by the event path (never the practice one).
 #
 # Part B's stub helm / kubectl, the runner and the "reached `helm upgrade`" status
 # are scripts/lib/deploy-user-harness.sh (app#521: this script held the third copy
@@ -36,6 +41,9 @@ REPO_ROOT="$(pwd)"
 source "${REPO_ROOT}/scripts/lib/casetable.sh"
 # shellcheck source=lib/deploy-user-harness.sh
 source "${REPO_ROOT}/scripts/lib/deploy-user-harness.sh"
+# The digest of an evidence bundle (ADR-0056 D9), for the synthetic event bundles of part B.
+# shellcheck source=../charts/ctf-user/evidence-bundle.sh
+source "${REPO_ROOT}/charts/ctf-user/evidence-bundle.sh"
 
 VALIDATE="${REPO_ROOT}/charts/ctf-user/validate-flags-file.sh"
 DEPLOY="${REPO_ROOT}/charts/ctf-user/deploy-user.sh"
@@ -64,6 +72,54 @@ for d in "${D03}" "${D10}"; do
     *) echo "FAIL: could not read a repository default from challenges/*/falco-rule.yaml" >&2; exit 1 ;;
   esac
 done
+
+# Investigate challenges (ADR-0056) of the real tree: falco-rule.yaml `type: investigate`
+# (the pattern of challenges/gen-values.sh's is_investigate_file). Read here, NOT through
+# deploy-user.sh's scope reader (evidence_scope_cids over the generated values), so a
+# values file that lost its `evidence: true` marks turns the event cases of part B red
+# instead of being followed. An investigate challenge has no flag (it is scored by its
+# answers table): validate-flags-file.sh never requires one and refuses an entry for one.
+INVESTIGATE_TYPE_RE="^type:[[:space:]]*[\"']?investigate[\"']?[[:space:]]*(#.*)?\$"
+IR_SCENARIO='ir-nimbus-desk'
+# investigate_among <id>...: the investigate challenges among the ids, one per line, in order
+investigate_among() {
+  local id
+  for id in "$@"; do
+    if [[ -f "${CHALLENGES}/${id}/falco-rule.yaml" ]] && grep -qE -- "${INVESTIGATE_TYPE_RE}" "${CHALLENGES}/${id}/falco-rule.yaml"; then
+      printf '%s\n' "${id}"
+    fi
+  done
+}
+# scenario_challenges <name>: the `challenges:` list of scenarios/<name>/scenario.yaml (the
+# same reading as validate-flags-file.sh and gen-values.sh's scenario_challenge_ids)
+scenario_challenges() {
+  awk '
+    /^challenges:/ { inblock=1; next }
+    inblock && /^[^[:space:]]/ { inblock=0 }
+    inblock && /^[[:space:]]*-[[:space:]]*/ {
+      line=$0
+      sub(/^[[:space:]]*-[[:space:]]*/, "", line)
+      sub(/[[:space:]]*#.*$/, "", line)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+      if (line != "") print line
+    }' "${SCENARIOS}/$1/scenario.yaml"
+}
+ALL_IDS=()
+for d in "${CHALLENGES}"/*/; do
+  d="${d%/}"
+  ALL_IDS+=("${d##*/}")
+done
+IR_IDS=()
+while IFS= read -r id; do
+  if [[ -n "${id}" ]]; then IR_IDS+=("${id}"); fi
+done < <(scenario_challenges "${IR_SCENARIO}")
+ALL_INVESTIGATE="$(investigate_among "${ALL_IDS[@]}")"
+IR_INVESTIGATE="$(investigate_among ${IR_IDS[@]+"${IR_IDS[@]}"})"
+if [[ -z "${ALL_INVESTIGATE}" || -z "${IR_INVESTIGATE}" ]]; then
+  echo "FAIL: no investigate challenge read from challenges/*/falco-rule.yaml (all: [$(printf '%s' "${ALL_INVESTIGATE}" | tr '\n' ' ')], scenario ${IR_SCENARIO}: [$(printf '%s' "${IR_INVESTIGATE}" | tr '\n' ' ')]); the event cases of part B expect the real tree to hold some (ADR-0056)" >&2
+  exit 1
+fi
+FIRST_INVESTIGATE="${ALL_INVESTIGATE%%$'\n'*}"
 
 # leaks_value <file...> -> 0 if any file contains one of the flag values this
 # test feeds in (messages must name challenge ids only).
@@ -104,6 +160,7 @@ COMMA="$(write_flags comma 03-stealth-read 'FALCO{dev-rotated,for-test-03}' 05-s
 DEFAULT03="$(write_flags default03 03-stealth-read "${D03}" 05-silent-search "${V05}" 10-final-exfil "${V10}")"
 UNKNOWN="$(write_flags unknown 03-stealth-read "${V03}" 05-silent-search "${V05}" 10-final-exfil "${V10}" 99-nope 'FALCO{dev-rotated-for-test-99}')"
 TRIGGER="$(write_flags trigger 03-stealth-read "${V03}" 05-silent-search "${V05}" 10-final-exfil "${V10}" 01-initial-recon 'FALCO{dev-rotated-for-test-01}')"
+INVESTIGATE_ENTRY="$(write_flags investigate-entry 03-stealth-read "${V03}" 05-silent-search "${V05}" 10-final-exfil "${V10}" "${FIRST_INVESTIGATE}" 'FALCO{dev-rotated-for-test-investigate}')"
 MALFORMED="$(write_flags malformed 03-stealth-read not-a-flag 05-silent-search "${V05}" 10-final-exfil "${V10}")"
 DUPLICATE="$(write_flags duplicate 03-stealth-read "${V03}" 03-stealth-read "${V03}" 05-silent-search "${V05}" 10-final-exfil "${V10}")"
 EMPTY="${WORK}/empty.yaml"
@@ -170,6 +227,11 @@ expect_validate reject "scenario tutorial-intro: out-of-scope entry equals defau
 # onboarding (ADR-0055 S2b-2) holds no evade challenge: no flag is required, and the full
 # event file's entries are out of scope (checked, not applied).
 expect_validate accept "scenario onboarding: no evade challenge, nothing required (full event file)" '' "${FULL}" "${CHALLENGES}" scenario:onboarding "${SCENARIOS}"
+# ir-nimbus-desk (ADR-0056) holds investigate challenges only: they have no flag, so nothing
+# is required here either; an entry for one is refused like any id that is not an evade
+# challenge (the flags file has no line for 50-/51-*; their evidence is part B's business).
+expect_validate accept "scenario ${IR_SCENARIO}: investigate challenges only, nothing required (full event file)" '' "${FULL}" "${CHALLENGES}" "scenario:${IR_SCENARIO}" "${SCENARIOS}"
+expect_validate reject "all: entry for an investigate challenge" "${FIRST_INVESTIGATE}: not an evade challenge" "${INVESTIGATE_ENTRY}" "${CHALLENGES}" all
 
 expect_validate accept "single evade challenge: its own flag only" '' "${ONLY03}" "${CHALLENGES}" 03-stealth-read
 expect_validate accept "single evade challenge: full event file reused" '' "${FULL}" "${CHALLENGES}" 03-stealth-read
@@ -231,6 +293,8 @@ expect_stdout "single trigger challenge, full event file: stdout is empty" "" \
   "${FULL}" "${CHALLENGES}" 01-initial-recon
 expect_stdout "scenario onboarding, full event file: stdout is empty" "" \
   "${FULL}" "${CHALLENGES}" scenario:onboarding "${SCENARIOS}"
+expect_stdout "scenario ${IR_SCENARIO}, full event file: stdout is empty" "" \
+  "${FULL}" "${CHALLENGES}" "scenario:${IR_SCENARIO}" "${SCENARIOS}"
 
 echo "==> P. shared parity cases (internal/catalog/testdata/flags-parity)"
 PARITY="${REPO_ROOT}/internal/catalog/testdata/flags-parity"
@@ -295,12 +359,25 @@ run_deploy() {
 
 # expect_deploy_rejected <label> <stderr-must-contain> <deploy-user.sh args...>
 expect_deploy_rejected() {
-  local label="$1" needle="$2"
-  shift 2
+  deploy_rejected '' "$@"
+}
+# expect_deploy_rejected_exit <exit status> <label> <stderr-must-contain> <deploy-user.sh args...>:
+# the same, and the exit status is exactly the one given
+expect_deploy_rejected_exit() {
+  deploy_rejected "$@"
+}
+# deploy_rejected <exit status or ''> <label> <stderr-must-contain> <deploy-user.sh args...>
+deploy_rejected() {
+  local want="$1" label="$2" needle="$3"
+  shift 3
   CASES=$((CASES + 1))
   run_deploy "$@"
   if [[ "${RUN_STATUS}" -eq 0 || "${RUN_STATUS}" -eq "${CT_UPGRADE_EXIT}" ]]; then
     fail "${label}: expected a non-zero exit before helm upgrade, got ${RUN_STATUS}"
+    return
+  fi
+  if [[ -n "${want}" && "${RUN_STATUS}" -ne "${want}" ]]; then
+    fail "${label}: expected exit ${want}, got ${RUN_STATUS}: $(tr '\n' ' ' < "${CT_RUN_ERR}" | cut -c1-200)"
     return
   fi
   if [[ -s "${CT_CALLS}" ]]; then
@@ -326,36 +403,124 @@ expect_deploy_reaches_helm() {
   shift 2
   CASES=$((CASES + 1))
   run_deploy "$@"
+  reached_helm_with_flags "${label}" "${want_pairs}" || return 0
+  pass "${label} (helm upgrade reached, ${GOT_FLAGS} flag override(s), values verbatim)"
+}
+
+# reached_helm_with_flags <label> <expected id=value pairs>: after run_deploy, rc 0 when
+# `helm upgrade` was reached carrying exactly these challenge.flags overrides (fail and rc 1
+# otherwise). Sets UPGRADE_LINE and GOT_FLAGS.
+reached_helm_with_flags() {
+  local label="$1" want_pairs="$2" want_flags=0 pair
+  UPGRADE_LINE=""
+  GOT_FLAGS=0
   if ! ct_check_reached_upgrade "${label}"; then
     fail "${label}: did not reach helm upgrade"
-    return
+    return 1
   fi
-  local upgrade_line got_flags want_flags=0 pair
-  upgrade_line="$(ct_upgrade_call)"
-  if [[ -z "${upgrade_line}" ]]; then
+  UPGRADE_LINE="$(ct_upgrade_call)"
+  if [[ -z "${UPGRADE_LINE}" ]]; then
     fail "${label}: exit ${CT_UPGRADE_EXIT} but no 'helm upgrade' call was recorded"
-    return
+    return 1
   fi
   while IFS= read -r pair; do
     [[ -z "${pair}" ]] && continue
     want_flags=$((want_flags + 1))
-    case " ${upgrade_line} " in
+    case " ${UPGRADE_LINE} " in
       *" --set-string challenge.flags.${pair} "*) ;;
       *)
         fail "${label}: helm upgrade does not carry the expected override for ${pair%%=*}"
-        return
+        return 1
         ;;
     esac
   done <<< "${want_pairs}"
   # grep exits 1 on "no match" (the expected result when no pair is
   # expected); only the count matters here.
-  got_flags="$(printf '%s\n' "${upgrade_line}" | { grep -oE 'challenge\.flags\.[^=]+=' || true; } | wc -l | tr -d ' ')"
-  if [[ "${got_flags}" -ne "${want_flags}" ]]; then
-    fail "${label}: helm upgrade carried ${got_flags} challenge.flags override(s), expected ${want_flags}"
-    return
+  GOT_FLAGS="$(printf '%s\n' "${UPGRADE_LINE}" | { grep -oE 'challenge\.flags\.[^=]+=' || true; } | wc -l | tr -d ' ')"
+  if [[ "${GOT_FLAGS}" -ne "${want_flags}" ]]; then
+    fail "${label}: helm upgrade carried ${GOT_FLAGS} challenge.flags override(s), expected ${want_flags}"
+    return 1
   fi
-  pass "${label} (helm upgrade reached, ${got_flags} flag override(s), values verbatim)"
+  return 0
 }
+
+# The event's evidence (ADR-0056 D11) for the scopes of the real tree that hold investigate
+# challenges. SYNTHETIC and built here: never the tracked practice bundle
+# (<cid>/edition/practice/) passed off as an event's. Placeholders only (public repo).
+EVENT_RUN_ID='0123456789abcdef0123456789abcdef'
+EVENT_EVIDENCE_NAME='event-bundle.txt'
+# make_event_evidence <name> <cids, one per line>: <WORK>/<name>-evidence/<cid>/ holding one
+# placeholder file EVENT_EVIDENCE_NAME per cid, and <WORK>/<name>-digests.tsv: the v1 header
+# with a run id that is not all zeros (all zeros is the practice edition's), then one
+# `user1 TAB cid TAB digest` row per cid, the digest by charts/ctf-user/evidence-bundle.sh
+# (which scripts/check-evidence-digest.sh holds to the Go case table). Sets EV_DIR / EV_DIGESTS.
+make_event_evidence() {
+  local cid digest
+  EV_DIR="${WORK}/$1-evidence"
+  EV_DIGESTS="${WORK}/$1-digests.tsv"
+  rm -rf "${EV_DIR}"
+  mkdir -p "${EV_DIR}"
+  printf '# falco-ctf evidence-digests v1 run=%s\n' "${EVENT_RUN_ID}" > "${EV_DIGESTS}"
+  while IFS= read -r cid; do
+    if [[ -z "${cid}" ]]; then continue; fi
+    mkdir -p "${EV_DIR}/${cid}"
+    printf 'synthetic event evidence of %s (test placeholder)\n' "${cid}" > "${EV_DIR}/${cid}/${EVENT_EVIDENCE_NAME}"
+    if ! digest="$(evidence_bundle_digest "${EV_DIR}/${cid}")"; then
+      echo "FAIL: could not compute the digest of the synthetic bundle ${cid}" >&2
+      exit 1
+    fi
+    printf 'user1\t%s\t%s\n' "${cid}" "${digest}" >> "${EV_DIGESTS}"
+  done <<< "$2"
+}
+
+# expect_event_deploy_reaches_helm <label> <expected id=value pairs> <investigate cids, one per
+# line> <evidence dir> <deploy-user.sh args...>: reached `helm upgrade` with exactly the pairs,
+# by the EVENT path: no practice-edition line on stderr, ctf-evidence-<cid> made from the
+# evidence dir's file (one --from-file=<name>=<path>), and helm given exactly the one name
+# per cid (evidence.challenges.<cid>.names[0]) and no other evidence value.
+expect_event_deploy_reaches_helm() {
+  local label="$1" want_pairs="$2" cids="$3" evdir cid want_ev=0 got_ev
+  evdir="$(cd "$4" && pwd)"
+  shift 4
+  CASES=$((CASES + 1))
+  run_deploy "$@"
+  reached_helm_with_flags "${label}" "${want_pairs}" || return 0
+  if grep -qF 'deploying the practice edition' "${CT_RUN_ERR}"; then
+    fail "${label}: the practice edition's path was taken although the event's evidence was given"
+    return 0
+  fi
+  while IFS= read -r cid; do
+    if [[ -z "${cid}" ]]; then continue; fi
+    want_ev=$((want_ev + 1))
+    if ! grep -qxF -- "kubectl -n ctf-user1 create secret generic ctf-evidence-${cid} --from-file=${EVENT_EVIDENCE_NAME}=${evdir}/${cid}/${EVENT_EVIDENCE_NAME}" "${CT_CALLS}"; then
+      fail "${label}: ctf-evidence-${cid} is not made from the event's bundle: $(grep -F "ctf-evidence-${cid} --from-file" "${CT_CALLS}" | cut -c1-200)"
+      return 0
+    fi
+    case " ${UPGRADE_LINE} " in
+      *" --set-string evidence.challenges.${cid}.names[0]=${EVENT_EVIDENCE_NAME} "*) ;;
+      *)
+        fail "${label}: helm upgrade does not carry the event bundle's name for ${cid}"
+        return 0
+        ;;
+    esac
+  done <<< "${cids}"
+  got_ev="$(printf '%s\n' "${UPGRADE_LINE}" | { grep -oE 'evidence\.challenges\.[^ ]+=' || true; } | wc -l | tr -d ' ')"
+  if [[ "${want_ev}" -lt 1 || "${got_ev}" -ne "${want_ev}" ]]; then
+    fail "${label}: helm upgrade carried ${got_ev} evidence value(s), expected ${want_ev} (one name per investigate challenge)"
+    return 0
+  fi
+  pass "${label} (helm upgrade reached by the event path, ${GOT_FLAGS} flag override(s), ${got_ev} evidence name(s))"
+}
+
+make_event_evidence all "${ALL_INVESTIGATE}"
+ALL_EV_DIR="${EV_DIR}"
+ALL_EV_DIGESTS="${EV_DIGESTS}"
+make_event_evidence "${IR_SCENARIO}" "${IR_INVESTIGATE}"
+IR_EV_DIR="${EV_DIR}"
+IR_EV_DIGESTS="${EV_DIGESTS}"
+make_event_evidence single "${FIRST_INVESTIGATE}"
+ONE_EV_DIR="${EV_DIR}"
+ONE_EV_DIGESTS="${EV_DIGESTS}"
 
 P03="03-stealth-read=${V03}"
 P05="05-silent-search=${V05}"
@@ -375,20 +540,36 @@ expect_deploy_rejected "flags file does not exist" 'flags file not found' --flag
 # itself; nothing may reach helm/kubectl.
 expect_deploy_rejected "--display-name (separate value) is removed" '--display-name was removed' --display-name 'Alice' --flags-file "${FULL}" user1 all
 expect_deploy_rejected "--display-name=value is removed" '--display-name was removed' --display-name=Alice --flags-file "${FULL}" user1 scenario:tutorial-intro
+# ADR-0056 D11: a scope of the real tree with investigate challenges (all, scenario
+# ir-nimbus-desk, a single investigate challenge) is an event deploy (--flags-file) only with
+# BOTH --evidence-dir and --evidence-digests. A complete flags file alone, or with one of the
+# two, exits 2 before any helm/kubectl call (and is not the practice edition's path).
+expect_deploy_rejected_exit 2 "all: complete file, no evidence arguments (investigate challenges in scope)" 'both are required' --flags-file "${FULL}" user1 all
+expect_deploy_rejected_exit 2 "all: complete file and --evidence-dir alone" 'go together' --flags-file "${FULL}" --evidence-dir "${ALL_EV_DIR}" user1 all
+expect_deploy_rejected_exit 2 "scenario ${IR_SCENARIO}: flags file, no evidence arguments" 'both are required' --flags-file "${FULL}" user1 "scenario:${IR_SCENARIO}"
+expect_deploy_rejected_exit 2 "single investigate challenge: flags file, no evidence arguments" 'both are required' --flags-file "${FULL}" user1 "${FIRST_INVESTIGATE}"
 
-expect_deploy_reaches_helm "all: complete file" "${ALL_PAIRS}" --flags-file "${FULL}" user1 all
+expect_event_deploy_reaches_helm "all: complete file and the event's evidence" "${ALL_PAIRS}" "${ALL_INVESTIGATE}" "${ALL_EV_DIR}" \
+  --flags-file "${FULL}" --evidence-dir "${ALL_EV_DIR}" --evidence-digests "${ALL_EV_DIGESTS}" user1 all
+expect_event_deploy_reaches_helm "scenario ${IR_SCENARIO}: flags file and the event's evidence (no evade flag in scope)" "" "${IR_INVESTIGATE}" "${IR_EV_DIR}" \
+  --flags-file "${FULL}" --evidence-dir "${IR_EV_DIR}" --evidence-digests "${IR_EV_DIGESTS}" user1 "scenario:${IR_SCENARIO}"
+expect_event_deploy_reaches_helm "single investigate challenge: flags file and its event evidence (no flag)" "" "${FIRST_INVESTIGATE}" "${ONE_EV_DIR}" \
+  --flags-file "${FULL}" --evidence-dir "${ONE_EV_DIR}" --evidence-digests "${ONE_EV_DIGESTS}" user1 "${FIRST_INVESTIGATE}"
 expect_deploy_reaches_helm "scenario nimbusbreach-full: complete file" "${ALL_PAIRS}" --flags-file "${FULL}" user1 scenario:nimbusbreach-full
 expect_deploy_reaches_helm "scenario tutorial-intro: only its own flag" "${P03}" --flags-file "${ONLY03}" user1 scenario:tutorial-intro
 expect_deploy_reaches_helm "scenario tutorial-intro, full event file: only its own flag reaches helm" "${P03}" --flags-file "${FULL}" user1 scenario:tutorial-intro
 expect_deploy_reaches_helm "single evade challenge: its own flag" "${P03}" --flags-file "${ONLY03}" user1 03-stealth-read
 expect_deploy_reaches_helm "single evade challenge, full event file: only its own flag reaches helm" "${P05}" --flags-file "${FULL}" user1 05-silent-search
 expect_deploy_reaches_helm "single trigger challenge, full event file: no flag reaches helm" "" --flags-file "${FULL}" user1 01-initial-recon
+# (all with no argument at all is the local default: the investigate challenges in it take
+# the practice edition's path, ADR-0056 D11 amendment 9; scripts/check-deploy-user-evidence.sh
+# holds that path. Only the absence of a flag override is held here.)
 expect_deploy_reaches_helm "no --flags-file (local dev): unchanged, no override" "" user1 all
 expect_deploy_reaches_helm "no --flags-file, scenario mode: unchanged, no override" "" user1 scenario:nimbusbreach-full
 
 echo "==> ${CASES} case(s) run"
 # A run that executed no cases proves nothing.
-if [[ "${CASES}" -lt 125 ]]; then
+if [[ "${CASES}" -lt 142 ]]; then
   echo "FAIL: only ${CASES} case(s) ran — the test list was truncated" >&2
   RC=1
 fi

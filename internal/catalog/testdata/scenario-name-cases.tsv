@@ -24,6 +24,7 @@
 # (exit 2, `scenario:` alone).
 
 # --- baseline: the real scenarios
+ir-nimbus-desk	accept
 nimbusbreach-full	accept
 nimbusbreach-with-tutorial	accept
 onboarding	accept

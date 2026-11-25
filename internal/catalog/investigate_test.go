@@ -332,11 +332,14 @@ func TestLoadScored_AcceptsAnInvestigateChallengeInScope(t *testing.T) {
 	}
 }
 
-// Regression: the real challenges and every real scenario load exactly as before
-// (none of them uses the new type or block yet). V27: the number of real
-// challenges is not pinned (adding a mission must not turn this red); only "not
-// empty" and "no investigate challenge" are. A7 flips the second into "contains
-// the A7 challenge".
+// a7Challenge is the first investigate challenge of the real tree (ADR-0056 A7).
+const a7Challenge = "50-nimbus-desk-triage"
+
+// Regression: the real challenges and every real scenario load. V27: the number of
+// real challenges is not pinned (adding a mission must not turn this red); only "not
+// empty" is, and, since A7, "contains the A7 challenge as an investigate challenge"
+// (it was "no investigate challenge" before A7). The investigate block is only on
+// investigate challenges (the decode refuses it elsewhere, so this holds the tree).
 func TestRealTree_LoadsUnchangedByTheNewType(t *testing.T) {
 	cat, err := catalog.Load("../../challenges")
 	if err != nil {
@@ -345,9 +348,16 @@ func TestRealTree_LoadsUnchangedByTheNewType(t *testing.T) {
 	if len(cat) == 0 {
 		t.Fatal("the real challenge tree loaded as empty: the path is wrong or the catalog was emptied")
 	}
+	a7, ok := cat[a7Challenge]
+	switch {
+	case !ok:
+		t.Errorf("the real tree has no %s (ADR-0056 A7)", a7Challenge)
+	case a7.Type != catalog.TypeInvestigate || a7.Investigate == nil:
+		t.Errorf("%s is type %q, want an investigate challenge with its block (ADR-0056 A7)", a7Challenge, a7.Type)
+	}
 	for id, ch := range cat {
-		if ch.Type == catalog.TypeInvestigate || ch.Investigate != nil {
-			t.Errorf("%s unexpectedly uses the investigate type", id)
+		if (ch.Type == catalog.TypeInvestigate) != (ch.Investigate != nil) {
+			t.Errorf("%s: type %q and investigate block present = %v disagree", id, ch.Type, ch.Investigate != nil)
 		}
 	}
 	scenarios, err := filepath.Glob("../../scenarios/*/scenario.yaml")

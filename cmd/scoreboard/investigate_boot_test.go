@@ -413,27 +413,43 @@ func TestBoot_InvestigateScope_EventModeNeverUsesThePracticeEdition(t *testing.T
 	noPracticeValueInLog(t, "refused", b.log)
 }
 
-// The real catalog (no investigate challenge, no scenario, no table) starts exactly
-// as before: the same steps, no Judge, no error, not one boot record from
-// startEdition, with and without the event mode.
+// The real catalog with no scenario (ADR-0056 A7: it holds 50-nimbus-desk-triage, an
+// investigate challenge, and the committed practice edition of it). Not the event mode
+// and no table: startEdition builds the practice Judge from the image's practice
+// editions and logs `edition loaded` once with the run id of 32 zeros (D8 (iv)). The
+// event mode with no table is refused (D8 (i)) and never falls back to the practice
+// edition. Before A7 the real catalog had no investigate challenge and this test
+// required nothing at all from startEdition.
 func TestBoot_RealCatalog_UnchangedByAcceptingTheInvestigateType(t *testing.T) {
 	cfg, scored, err := scoredFromEnv(fakeEnv(map[string]string{"CHALLENGES_DIR": "../../challenges"}))
 	if err != nil {
 		t.Fatalf("scoredFromEnv on the real tree: %v", err)
 	}
+	investigate := 0
 	for _, c := range scored.Catalog {
 		if c.Type == catalog.TypeInvestigate {
-			t.Fatalf("%s is an investigate challenge: this test is about a tree without one (A7 changes it)", c.ID)
+			investigate++
 		}
 	}
-	for name, event := range map[string]bool{"not the event mode": false, "the event mode": true} {
-		c := cfg
-		if event {
-			c.flagsFile = "flags.yaml" // only "is it set" matters to startEdition
-		}
-		j, text, recs, err := bootEdition(t, c, scored)
-		if err != nil || j != nil || len(recs) != 0 {
-			t.Errorf("%s: judge %v, err %v, log %q; want nothing at all", name, j, err, text)
-		}
+	if investigate == 0 {
+		t.Fatal("the real catalog has no investigate challenge: ADR-0056 A7 put 50-nimbus-desk-triage there")
+	}
+
+	j, text, recs, err := bootEdition(t, cfg, scored)
+	if err != nil || j == nil {
+		t.Fatalf("not the event mode: judge %v, err %v, log %q; want the practice Judge", j, err, text)
+	}
+	if len(recs) != 1 || recs[0]["msg"] != "edition loaded" || recs[0]["level"] != "INFO" || recs[0]["run_id"] != ibZeroRunID {
+		t.Errorf("not the event mode: want exactly one INFO record \"edition loaded\" with run_id %s, got %s", ibZeroRunID, text)
+	}
+
+	c := cfg
+	c.flagsFile = "flags.yaml" // only "is it set" matters to startEdition
+	j, text, recs, err = bootEdition(t, c, scored)
+	if !errors.Is(err, edition.ErrTableMissing) || j != nil {
+		t.Fatalf("the event mode: judge %v, err %v; want ErrTableMissing and no judge", j, err)
+	}
+	if len(recs) != 1 || recs[0]["msg"] != "edition check failed" || recs[0]["level"] != "ERROR" {
+		t.Errorf("the event mode: want exactly one ERROR record \"edition check failed\", got %s", text)
 	}
 }

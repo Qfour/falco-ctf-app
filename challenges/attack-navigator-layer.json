@@ -12,7 +12,7 @@
       "techniqueID": "T1059.004",
       "score": 100,
       "color": "#e60d0d",
-      "comment": "00-tutorial チュートリアル (遊び方 / 0問目) — Command and Scripting Interpreter: Unix Shell; 06-web-rce-shell Web RCE Shell — Command and Scripting Interpreter: Unix Shell",
+      "comment": "00-tutorial チュートリアル (遊び方 / 0問目) — Command and Scripting Interpreter: Unix Shell; 06-web-rce-shell Web RCE Shell — Command and Scripting Interpreter: Unix Shell; 50-nimbus-desk-triage nimbus-desk Triage (調査 A) — Command and Scripting Interpreter: Unix Shell; 51-nimbus-desk-egress nimbus-desk Egress (調査 B) — Command and Scripting Interpreter: Unix Shell",
       "enabled": true
     },
     {

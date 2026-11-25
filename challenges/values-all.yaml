@@ -172,8 +172,24 @@ plant:
       # ctf-flags Secret.
       mkdir -p "${PLANT_SEED_ROOT}/opt/nimbus/vault"
       printf '%s\n' "${CTF_FLAG_10_FINAL_EXFIL:?flag env not set by ctf-user chart}" > "${PLANT_SEED_ROOT}/opt/nimbus/vault/master.key"
+
+      # ---- 50-nimbus-desk-triage ----
+      # evidence bundle (ADR-0056 D11): /srv/ir/evidence is where the bundle files are copied by name from /opt/ctf/evidence-src/50-nimbus-desk-triage/ (the ctf-evidence-50-nimbus-desk-triage Secret, mounted in this initContainer only)
+      mkdir -p "${PLANT_SEED_ROOT}/srv/ir/evidence"
+
+      # ---- 51-nimbus-desk-egress ----
+      # evidence bundle (ADR-0056 D11): /srv/ir/evidence-b is where the bundle files are copied by name from /opt/ctf/evidence-src/51-nimbus-desk-egress/ (the ctf-evidence-51-nimbus-desk-egress Secret, mounted in this initContainer only)
+      mkdir -p "${PLANT_SEED_ROOT}/srv/ir/evidence-b"
   mounts:
     - path: /opt/nimbus/vault
       readOnly: true
     - path: /root/.ssh
       readOnly: true
+    - path: /srv/ir/evidence
+      readOnly: true
+      evidence: true
+      challenge: 50-nimbus-desk-triage
+    - path: /srv/ir/evidence-b
+      readOnly: true
+      evidence: true
+      challenge: 51-nimbus-desk-egress

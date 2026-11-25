@@ -200,12 +200,23 @@ func TestPracticeEditions_EveryInvestigateChallengeHasOne(t *testing.T) {
 	// scoreboard does. Load makes the practice Judge of every investigate challenge
 	// (T4: a row for every question), so a challenge whose practice edition lacks a
 	// question, not only one that has no file, is red here.
-	// The real tree has 0 investigate challenges today, so this passes on 0 (Load
-	// returns no Judge, no error). From A7 (the first investigate challenge) this test
-	// must also require a non-empty set: count the investigate challenges of cat and fail
-	// on 0, so that a tree that lost them all cannot pass.
-	if _, _, err := Load(treeScored(t, realTree), "", false); err != nil {
+	// Since A7 (the first investigate challenge, 50-nimbus-desk-triage) the set must not
+	// be empty: a tree that lost every investigate challenge would pass the checks above
+	// on 0, so it is red here, and so is a practice mode that builds no Judge for them.
+	investigate := 0
+	for _, id := range cat.IDs() {
+		if cat[id].Type == catalog.TypeInvestigate {
+			investigate++
+		}
+	}
+	if investigate == 0 {
+		t.Errorf("catalog.Load(%s) has no investigate challenge: ADR-0056 A7 put the first one there (V47 is non-empty since A7)", realTree)
+	}
+	j, _, err := Load(treeScored(t, realTree), "", false)
+	if err != nil {
 		t.Errorf("the practice mode does not accept the image's own tree: %v", err)
+	} else if investigate > 0 && j == nil {
+		t.Errorf("the practice mode built no Judge for the %d investigate challenge(s) of the image's own tree", investigate)
 	}
 
 	// The check itself, on a tree with one edition and one without.

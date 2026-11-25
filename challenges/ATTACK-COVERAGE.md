@@ -23,6 +23,8 @@ MITRE ATT&CK Enterprise (v19) 対応表。Navigator レイヤは `attack-navigat
 | 11 | Cloud Cred Hunt (クラウド脅威検知・疑似版 / bonus) | Credential Access | `T1552.001` | Unsecured Credentials: Credentials In Files |
 | 12 | Cover Tracks (ログ消去検知 / bonus) | Defense Impairment | `T1685.006` | Disable or Modify Tools: Clear Linux or Mac System Logs |
 | 13 | Archive Loot (収集データの圧縮検知 / bonus) | Collection | `T1560.001` | Archive Collected Data: Archive via Utility |
+| 50 | nimbus-desk Triage (調査 A) | Execution | `T1059.004` | Command and Scripting Interpreter: Unix Shell |
+| 51 | nimbus-desk Egress (調査 B) | Execution | `T1059.004` | Command and Scripting Interpreter: Unix Shell |
 
 ## 意図的に扱わない領域 (カバレッジの穴)
 

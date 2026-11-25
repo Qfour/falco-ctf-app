@@ -1,0 +1,74 @@
+2026-10-21T16:00:04Z level=info msg="request" method=GET path=/healthz status=200 client=192.0.2.10 dur_ms=1
+2026-10-21T16:00:30Z level=info component=desk-init msg="daily check" step=desk-migrate mode=check-only
+2026-10-21T16:00:33Z level=info component=desk-migrate msg="schema up to date" checked=3
+2026-10-21T16:02:44Z level=info msg="mail queued" ticket=T-48812 to_domain=customer.example relay=smtp.mail.example
+2026-10-21T16:04:19Z level=info msg="request" method=GET path=/api/tickets status=200 client=198.51.100.44 dur_ms=18
+2026-10-21T16:07:51Z level=info msg="request" method=POST path=/api/tickets status=201 client=198.51.100.71 dur_ms=42
+2026-10-21T16:10:04Z level=info msg="request" method=GET path=/healthz status=200 client=192.0.2.10 dur_ms=1
+2026-10-21T16:12:09Z level=info msg="attachment stored" ticket=T-48813 bytes=2304
+2026-10-21T16:15:36Z level=info msg="request" method=GET path=/api/tickets/T-48790 status=200 client=198.51.100.44 dur_ms=11
+2026-10-21T16:20:04Z level=info msg="request" method=GET path=/healthz status=200 client=192.0.2.10 dur_ms=1
+2026-10-21T16:24:58Z level=info msg="request" method=GET path=/static/js/desk.js status=304 client=198.51.100.130 dur_ms=2
+2026-10-21T16:29:13Z level=info msg="webhook sent" target=hooks.partner.example event=ticket.updated status=200
+2026-10-21T16:30:04Z level=info msg="request" method=GET path=/healthz status=200 client=192.0.2.10 dur_ms=1
+2026-10-21T16:35:22Z level=info msg="request" method=POST path=/api/tickets/T-48801/comments status=201 client=198.51.100.71 dur_ms=37
+2026-10-21T16:40:04Z level=info msg="request" method=GET path=/healthz status=200 client=192.0.2.10 dur_ms=1
+2026-10-21T16:43:10Z level=info msg="mail queued" ticket=T-48801 to_domain=customer.example relay=smtp.mail.example
+2026-10-21T16:50:04Z level=info msg="request" method=GET path=/healthz status=200 client=192.0.2.10 dur_ms=1
+2026-10-21T16:53:31Z level=info msg="request" method=GET path=/api/tickets status=200 client=198.51.100.44 dur_ms=16
+2026-10-21T16:55:12Z level=warn msg="request" method=POST path=/api/attachments/preview status=500 client=203.0.113.9 dur_ms=2140
+2026-10-21T16:55:40Z level=error msg="preview render failed" job=pv-88117 err="renderer timeout"
+2026-10-21T16:56:03Z level=warn msg="request" method=POST path=/api/attachments/preview status=500 client=203.0.113.9 dur_ms=2206
+2026-10-21T16:57:18Z level=warn msg="request" method=POST path=/api/attachments/preview status=500 client=203.0.113.9 dur_ms=1987
+2026-10-21T16:58:44Z level=warn msg="request" method=POST path=/api/attachments/preview status=500 client=203.0.113.9 dur_ms=2311
+2026-10-21T16:59:27Z level=error msg="preview render failed" job=pv-88121 err="renderer timeout"
+{{ctf:q1w-health}} level=info msg="request" method=GET path=/healthz status=200 client=192.0.2.10 dur_ms=1
+{{ctf:q1w-preview-1}} level=warn msg="request" method=POST path=/api/attachments/preview status=500 client=203.0.113.9 dur_ms=2264
+{{ctf:q1w-attach-1}} level=info msg="attachment stored" ticket=T-48814 bytes=12288
+{{ctf:q1w-preview-2}} level=warn msg="request" method=POST path=/api/attachments/preview status=200 client=203.0.113.9 dur_ms=3015
+{{ctf:q1w-render-1}} level=info msg="preview rendered" job=pv-88124 pages=2 bytes=734
+{{ctf:q1w-preview-3}} level=warn msg="request" method=POST path=/api/attachments/preview status=200 client=203.0.113.9 dur_ms=2950
+{{ctf:q1w-export}} level=info msg="export finished" report=hourly-queue rows=1932 bytes=52011
+{{ctf:q1w-request}} level=info msg="request" method=GET path=/api/tickets status=200 client=198.51.100.44 dur_ms=19
+{{ctf:q1w-attach-2}} level=info msg="attachment stored" ticket=T-48815 bytes=4096
+2026-10-21T17:10:04Z level=info msg="request" method=GET path=/healthz status=200 client=192.0.2.10 dur_ms=1
+2026-10-21T17:12:30Z level=info msg="request" method=GET path=/api/tickets/T-48799/preview status=200 client=198.51.100.130 dur_ms=12
+2026-10-21T17:12:31Z level=info msg="preview rendered" job=pv-88127 pages=1 bytes=3967
+2026-10-21T17:15:41Z level=info msg="spellcheck cache saved" bytes=1206
+2026-10-21T17:15:58Z level=info msg="search index segment flushed" bytes=40960
+2026-10-21T17:16:08Z level=info msg="request" method=POST path=/api/tickets status=201 client=198.51.100.71 dur_ms=45
+2026-10-21T17:16:09Z level=info msg="attachment stored" ticket=T-48816 bytes=8192
+2026-10-21T17:16:22Z level=info msg="rate-limit state saved" bytes=517
+2026-10-21T17:16:37Z level=info msg="template cache saved" bytes=3304
+2026-10-21T17:17:06Z level=info msg="font cache rebuilt" bytes=8811
+2026-10-21T17:17:24Z level=info msg="lock refreshed" bytes=156
+2026-10-21T17:17:49Z level=info msg="session map saved" bytes=2473
+2026-10-21T17:18:02Z level=info msg="preview rendered" job=pv-88128 pages=1 bytes=1519
+2026-10-21T17:18:13Z level=info msg="kv snapshot saved" bytes=12800
+2026-10-21T17:18:29Z level=info msg="user prefs saved" bytes=690
+2026-10-21T17:20:04Z level=info msg="request" method=GET path=/healthz status=200 client=192.0.2.10 dur_ms=1
+2026-10-21T17:22:47Z level=info msg="mail queued" ticket=T-48816 to_domain=customer.example relay=smtp.mail.example
+2026-10-21T17:24:37Z level=info msg="attachment stored" ticket=T-48817 bytes=20480
+2026-10-21T17:25:59Z level=info msg="request" method=GET path=/api/tickets status=200 client=198.51.100.44 dur_ms=17
+2026-10-21T17:26:44Z level=info msg="attachment stored" ticket=T-48818 bytes=4410
+2026-10-21T17:28:20Z level=warn msg="worker slow" worker=2 queue=41
+2026-10-21T17:28:21Z level=info msg="session cache flushed" bytes=61
+2026-10-21T17:30:04Z level=info msg="request" method=GET path=/healthz status=200 client=192.0.2.10 dur_ms=1
+2026-10-21T17:30:58Z level=error msg="worker exited unexpectedly" worker=2 code=2
+2026-10-21T17:31:03Z level=error msg="worker exited unexpectedly" worker=3 code=2
+2026-10-21T17:31:09Z level=fatal msg="supervisor: too many worker failures, exiting" code=2
+2026-10-21T17:31:09Z level=error component=desk-init msg="child exited" child=nimbus-desk pid=7 code=2
+2026-10-21T17:31:10Z level=info component=desk-init msg="pre-start step" step=desk-migrate mode=check-only
+2026-10-21T17:31:11Z level=info component=desk-migrate msg="schema up to date" checked=3
+2026-10-21T17:31:11Z level=info component=desk-init msg="restarting child" child=nimbus-desk attempt=1
+2026-10-21T17:31:12Z level=info msg="nimbus-desk starting" version=4.2.1 config=/srv/nimbus-desk/conf/desk.yaml
+2026-10-21T17:31:13Z level=info msg="workers started" count=4
+2026-10-21T17:31:14Z level=info msg="listening" addr=:8080
+2026-10-21T17:35:06Z level=info msg="request" method=GET path=/api/tickets status=200 client=198.51.100.44 dur_ms=21
+2026-10-21T17:40:04Z level=info msg="request" method=GET path=/healthz status=200 client=192.0.2.10 dur_ms=1
+2026-10-21T17:42:37Z level=info msg="request" method=POST path=/api/tickets/T-48812/comments status=201 client=198.51.100.71 dur_ms=39
+2026-10-21T17:44:50Z level=info msg="attachment stored" ticket=T-48819 bytes=2770
+2026-10-21T17:46:29Z level=info msg="webhook sent" target=hooks.partner.example event=ticket.created status=200
+2026-10-21T17:49:27Z level=info msg="session cache flushed" bytes=18
+2026-10-21T17:50:04Z level=info msg="request" method=GET path=/healthz status=200 client=192.0.2.10 dur_ms=1
+2026-10-21T17:51:40Z level=info msg="tickets db checkpoint" wal_bytes=4120672

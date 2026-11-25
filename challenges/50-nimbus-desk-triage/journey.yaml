@@ -1,0 +1,105 @@
+# Journey content for the /journey UI. Schema: internal/catalog/journey.go.
+# Participant-facing narrative only — never influences scoring. An investigate
+# challenge's journey.yaml is decoded strictly (ADR-0056 D1, V25): no key outside the
+# schema. The answers are never here (they are rendered per edition, ADR-0056 D12):
+# neither the prompts nor the hints carry a value that answers a question.
+challengeId: 50-nimbus-desk-triage
+title: 事案調査 — nimbus-desk の夜 (調査 A)
+tagline: 保全された痕跡から、何が・いつ・どの順に起きたかを組み立てろ
+briefing: >-
+  架空の事案。CTF Company は、顧客の問い合わせを受け付ける公開の web service「nimbus-desk」を、
+  単一の container で動かしている。ある夜、運用の担当が、nimbus-desk の process が異常終了して
+  再起動したことを container の log で見つけた。同じ時間帯に Falco のアラートが数件出ていたため、
+  担当は Pod を外から切り離し、その時点の状態を保全した。あなたは CTF Company の事案対応の担当として、
+  保全された痕跡 (/srv/ir/evidence/) を自分の terminal で調べ、何が・いつ・どの順に起きたかを
+  報告する。アラートは流れの一部にしか出ていない。痕跡の時刻はすべて UTC。
+steps:
+  - label: 保全の記録を読む
+    detail: |
+      /srv/ir/evidence/ に 6 つの file がある。最初に preservation-note.txt を読むと、各 file が
+      何の記録か、Pod の中の container (nimbus-desk・desk-keyrotate・desk-logship) の役割、
+      運用チームが Falco に足していた設定が分かる。
+        ls -l /srv/ir/evidence/
+        cat /srv/ir/evidence/preservation-note.txt
+      残りの file: falco-events.jsonl (Falco のアラート) / fs-inventory.tsv (file の目録) /
+      nimbus-desk.log (container の log) / egress-gateway.log (外向きの通信の判定) /
+      process-list.txt (保全した時点の process)
+  - label: Falco のアラートの記録の形
+    detail: |
+      falco-events.jsonl は 1 行 1 件の JSON。1 行の形 (一部の key だけ):
+        {"hostname": "node-b", "output_fields": {"container.name": "nimbus-desk", "fd.name": "...", "proc.cmdline": "...", "proc.name": "...", "proc.pname": "..."}, "priority": "...", "rule": "...", "time": "..."}
+      "rule" の値は "Run shell untrusted"・"Read sensitive file untrusted"・
+      "Contact K8S API Server From Container"・"Clear Log Activities"・
+      "Drop and execute new binary in container" の 5 種。output_fields の proc.name は
+      process の名前、proc.pname は親の process の名前、container.name は container の名前。
+      jq で読める:
+        jq -c . /srv/ir/evidence/falco-events.jsonl | less
+  - label: 残りの記録の形
+    detail: |
+      fs-inventory.tsv は container の file の目録 (path・mtime_utc・size・uid・mode の TAB 区切り)、
+      nimbus-desk.log は container の標準出力、egress-gateway.log は外向きの接続ごとの verdict、
+      process-list.txt は保全した時点の process。どの file の時刻も UTC の RFC 3339
+      (YYYY-MM-DDThh:mm:ssZ)。
+  - label: 回答する
+    detail: |
+      ポータルの Story タブの回答欄に入れる。設問ごとに 5 回まで。形式に合わない入力は 400 に
+      なり、回数を消費しない。時刻は YYYY-MM-DDThh:mm:ssZ (UTC・秒まで)、path は / で始まる
+      絶対 path (大文字小文字を区別する)。
+questions:
+  - id: first-shell
+    prompt: >-
+      web service (nimbus-desk) の process の子として shell が起動したことを、Falco が最初に
+      記録した時刻は? UTC・秒まで、YYYY-MM-DDThh:mm:ssZ の形で答えよ。
+  - id: cred-file
+    prompt: >-
+      侵入者の操作で、nimbus-desk の設定の file とは別に、資格情報が置かれた file が 1 つ
+      読まれている。その file の絶対 path は?
+  - id: bundle-file
+    prompt: >-
+      読まれた内容をまとめた file が、nimbus-desk の container の中に 1 つ作られている。
+      Falco のアラートには出ていない。その file の絶対 path は?
+  - id: survey-file
+    prompt: >-
+      侵入者は、設定の file と資格情報の file を読むより前に、container の中を調べた結果を
+      1 つの file に書き出している。Falco のアラートには出ていない。その file の絶対 path は?
+      (web service 自身も同じ場所に file を書いている。別々の記録の時刻を 1 本に並べて決めること)
+hints:
+  - kind: rule
+    text: >-
+      気付き。Q1: web service の process の子として shell が起きると、Falco は
+      Run shell untrusted を出す。ただし export には別の container の同じ rule も混ざっていて、
+      時刻の順にも並んでいない。Q2: 読み取りのアラート Read sensitive file untrusted は 1 件では
+      なく、読んだ process も container も 1 つではない。nimbus-desk の container の、shell から
+      続いた読み取りに絞ったとき、「設定」と「資格情報」は何で見分けられるか。Q3: 内容をまとめて
+      書く操作はアラートにならない。アラートの無い時間帯に、何が作られたか。Q4: 侵入者の操作の
+      流れには、アラートになった段とならなかった段が混ざっている。アラートの時刻を区切りにして、
+      その間に file の目録で何が変わったかを見る。
+    ruleRefs: [Run shell untrusted]
+  - kind: command
+    text: >-
+      概要。Q1: jq で、rule が Run shell untrusted で、output_fields の container.name が
+      nimbus-desk の行だけを選び、time を並べて最も早いものを取る。Q2: rule を
+      Read sensitive file untrusted にし、読んだ process の親の名前 proc.pname が shell の行に絞ると、
+      侵入者が読んだ file の fd.name が残る (同じ container の中にも、親が shell でない読み取りが
+      ある)。それぞれを fs-inventory.tsv で引き、置き場所の directory と mode を比べる。Q3:
+      fs-inventory.tsv を
+      mtime の列で並べ、資格情報が読まれた時刻より後で、egress-gateway.log で nimbus-desk の Pod の
+      送信が拒否された時刻より前に変わった file を探す。nimbus-desk.log に対応する行が無いこと、
+      size も手がかりになる。Q4: nimbus-desk の container のアラート (shell の起動・API server への
+      接続・file の読み取り) の時刻と、fs-inventory.tsv の mtime を 1 本の時系列に並べる。最初の shell
+      から設定の file の読み取りまでの間に変わった file のうち、nimbus-desk.log に同じ時刻の行が無い
+      もの。
+  - kind: solution
+    text: >-
+      解答の手順 (値はイベントごとに違うので、ここには書かない)。Q1:
+      jq -r 'select(.rule == "Run shell untrusted" and .output_fields["container.name"] == "nimbus-desk") | .time' falco-events.jsonl | sort | head -n 1
+      の 1 行が答え。Q2:
+      jq -r 'select(.rule == "Read sensitive file untrusted" and .output_fields["proc.pname"] == "sh") | .output_fields["fd.name"]' falco-events.jsonl
+      で 2 行出る。conf の下の設定の file でない方が答え。Q3:
+      sort -t "$(printf '\t')" -k2,2 fs-inventory.tsv で mtime の順に並べ、Q2 の 2 つ目の
+      アラートの時刻と、egress-gateway.log で nimbus-desk の Pod が最初に拒否された時刻の間に mtime が
+      ある file が答え。その size は、Q2 で読まれた 2 つの file の size の和に等しい。Q4: 同じく
+      mtime の順に並べた目録で、Q1 の時刻 (最初の shell) より後で、Q2 の 2 件のアラートのうち早い方
+      (設定の file の読み取り) の time より前に mtime がある行を取り出す。そのうち、nimbus-desk.log に
+      同じ時刻・同じ bytes の行がある行は、web service 自身が書いた file。残る 1 行の path が答え。
+docsUrl: /missions/50-nimbus-desk-triage/

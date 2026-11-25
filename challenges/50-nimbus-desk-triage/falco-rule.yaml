@@ -1,0 +1,46 @@
+challengeId: 50-nimbus-desk-triage
+# ADR-0056 D1: an investigate challenge. The participant reads a preserved evidence
+# bundle (mounted read-only at evidence.mountDir) and answers the questions below in the
+# portal. Only the SHAPE of the questions is here; the answers are never in this file or
+# in journey.yaml. The practice answers are rendered into edition/practice/ by
+# `make edition-practice CID=50-nimbus-desk-triage`; an event's answers are rendered on
+# the platform side (ADR-0056 D8 / D12). Every question varies per seat: there is no
+# fixed answer that the public practice edition would give away.
+#
+# The id is in the 50+ band: an investigate challenge must sort after every evade
+# challenge when no scenario gives the order (ADR-0056 V39 / V45).
+type: investigate
+investigate:
+  evidence:
+    mountDir: /srv/ir/evidence
+  questions:
+    # Q1 (per seat): the time Falco first recorded a shell under the web service process.
+    - id: first-shell
+      format: timestamp
+      attempts: 5
+      params: {windowSeconds: 600}
+    # Q2 (per seat): the credential file that was read (besides the config file).
+    - id: cred-file
+      format: path
+      attempts: 5
+    # Q3 (per seat): the file the read contents were gathered into (no alert).
+    - id: bundle-file
+      format: path
+      attempts: 5
+    # Q4 (per seat): the file the intruder's shell wrote its findings into, before the
+    # config and credential reads (no alert). Only the order of the incident, built across
+    # the alerts, the inventory and the log, tells it from its decoys. It replaces a fixed
+    # `sequence` of the events (ADR-0056 amendment 26: a fixed answer must be able to differ
+    # from the public practice edition, which the order of the story cannot).
+    - id: survey-file
+      format: path
+      attempts: 5
+# ATT&CK mapping — canonical source for docs/Navigator layer (make gen-attack).
+# The behaviour Falco observed in the evidence that the first question is about: a
+# Unix shell spawned below the web service process (the same technique as
+# 06-web-rce-shell). Provisional: the brief (§4) leaves the Technique ID column to the
+# CEO, and gen-attack-layer.py requires one complete attack: block per challenge.
+attack:
+  tactic: "Execution"
+  techniqueId: "T1059.004"
+  techniqueName: "Command and Scripting Interpreter: Unix Shell"

@@ -1,0 +1,36 @@
+CTF Company incident response - preservation record
+case       IR-2026-1021-01 (nimbus-desk)
+system     desk-prod/nimbus-desk-7c9d5f6b8-x2k4q, container nimbus-desk (3f9a1c2b7d4e), node node-b
+isolated   2026-10-21T17:49:50Z (network policy: all ingress and egress of the pod denied)
+captured   2026-10-21T17:52:30Z
+times      every time in these files is UTC, RFC 3339, second precision
+
+files
+  falco-events.jsonl   Falco alerts of the cluster, 16:00 to 17:52, exported from the alert store,
+                       one JSON object per line. The export is assembled from the per-node
+                       outputs and is NOT in time order. The store keeps seconds only.
+                       The site's Falco does not put the rule tags in its JSON output, so
+                       the alerts have no "tags" field.
+  fs-inventory.tsv     regular files of the container under /etc /home /srv /tmp:
+                       path, mtime, size, uid, mode (walk order, not sorted).
+  nimbus-desk.log      stdout and stderr of the container: the web service and its init process
+                       (desk-init restarts the web service process when it exits).
+  egress-gateway.log   verdicts of the egress gateway for connections that leave the cluster.
+                       dst_name is the TLS server name the gateway saw; "-" when the
+                       connection was refused before any name was sent.
+  process-list.txt     processes of the container at capture time.
+
+containers of the pod
+  nimbus-desk      the web service (uid 10001, user desk). Its init process desk-init runs
+                   desk-migrate (a schema check that opens every credential file) before it
+                   starts or restarts the web service process, and once a day at 16:00.
+  desk-keyrotate   sidecar that checks the age of the credential files (uid 10002, user rotator):
+                   it checks the config file now and then and opens every credential file in
+                   a sweep every two hours at :20.
+  desk-logship     sidecar that ships and truncates the access log
+
+local Falco tuning (CTF Company ops, in place since 2026-10-14)
+  - nimbus-desk is in the list of programs that must not spawn a shell.
+  - the config file and the credential files of nimbus-desk are in the list of sensitive files.
+  - the reads by nimbus-desk itself are excepted; the reads by desk-keyrotate and by
+    desk-migrate are not (known noise).

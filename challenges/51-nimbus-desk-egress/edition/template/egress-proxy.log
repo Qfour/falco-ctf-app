@@ -1,0 +1,15 @@
+2026-10-21T16:15:36Z client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host=help.customer-a.example port=443 status=200 bytes_out=14102 rule=preview-fetch
+2026-10-21T16:20:04Z client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host=portal.customer-c.example port=443 status=403 bytes_out=0 rule=category-blocked
+2026-10-21T16:50:04Z client=198.51.100.64 pod=web-docs/docs-portal-58c7d-r2t6m method=CONNECT host=docs.customer-d.example port=443 status=200 bytes_out=88410 rule=docs-crawl
+2026-10-21T16:53:31Z client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host=status.customer-b.example port=443 status=200 bytes_out=6230 rule=preview-fetch
+{{ctf:px-d1}} client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host={{ctf:dest-d1}} port=443 status=200 bytes_out=18233 rule=preview-fetch
+{{ctf:px-d2}} client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host={{ctf:dest-d2}} port=443 status=200 bytes_out=9120 rule=preview-fetch
+{{ctf:px-d3}} client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host={{ctf:dest-d3}} port=443 status=403 bytes_out=0 rule=category-blocked
+{{ctf:px-d5}} client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host={{ctf:dest-d5}} port=443 status=200 bytes_out=5518 rule=preview-fetch
+{{ctf:px-d6}} client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host={{ctf:dest-d6}} port=443 status=200 bytes_out=31002 rule=preview-fetch
+{{ctf:px-d7}} client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host={{ctf:dest-d7}} port=443 status=403 bytes_out=0 rule=category-blocked
+{{ctf:px-d4}} client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host={{ctf:dest-d4}} port=443 status=200 bytes_out=27764 rule=preview-fetch
+{{ctf:px-d8}} client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host={{ctf:dest-d8}} port=443 status=200 bytes_out=12045 rule=preview-fetch
+{{ctf:px-d9}} client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host={{ctf:dest-d9}} port=443 status=200 bytes_out=7391 rule=preview-fetch
+{{ctf:px-d10}} client=198.51.100.23 pod=desk-prod/nimbus-desk-7c9d5f6b8-x2k4q method=CONNECT host={{ctf:dest-d10}} port=443 status=200 bytes_out=16608 rule=preview-fetch
+{{ctf:px-docs-e}} client=198.51.100.64 pod=web-docs/docs-portal-58c7d-r2t6m method=CONNECT host=docs.customer-e.example port=443 status=200 bytes_out=40917 rule=docs-crawl

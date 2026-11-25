@@ -63,6 +63,10 @@ var evadePins = map[string]map[string][]string{
 	// API Server From Container") come before the only evade challenge, 03, which
 	// forbids only "Read sensitive file untrusted": no shared fire.
 	"tutorial-intro": {"03-stealth-read": nil},
+	// One investigate challenge (50-nimbus-desk-triage) and no evade challenge: nothing
+	// to pin, and an evade challenge added to it would have no entry (and would also be
+	// refused by V39 if it came after the investigate challenge).
+	"ir-nimbus-desk": {},
 	// onboarding (ADR-0055 D9) is 00-tutorial alone: a trigger and no evade challenge,
 	// so there is no entry to pin. The row is still required (there is no default).
 	"onboarding": {},

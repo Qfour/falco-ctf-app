@@ -359,6 +359,11 @@ func TestLoad_RealChallenges(t *testing.T) {
 		"11-cloud-cred-hunt",
 		"12-cover-tracks",
 		"13-archive-loot",
+		// ADR-0056 A7: the first investigate challenge, in the 50+ band (it sorts
+		// after every evade challenge, V45), scenario ir-nimbus-desk only.
+		"50-nimbus-desk-triage",
+		// ADR-0056: the second investigate challenge of the module ir-nimbus-desk (調査 B).
+		"51-nimbus-desk-egress",
 	}
 	// ADR-0026 interpretation 1 (app#320): challengeId == directory name for every
 	// real challenge (Load already rejects a mismatch; this pins it on the real tree).
