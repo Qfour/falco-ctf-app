@@ -40,9 +40,14 @@ const (
 // cevOpts are the two knobs of the event edition that cases turn: the words of the name
 // vocabulary of the first answer slot (its space is the number of words) and the decoys of
 // each answer slot (B8 (b) needs 10 candidates per question, so 9 decoys and the answer).
+//
+// specEdit, when it is not nil, is applied to the edition.yaml before it is placed AND before the
+// render, so the bundles are the renderer's output of the edition that CheckEvent is given (a
+// block's lines are ordered by the render: an edition changed after the render is not one).
 type cevOpts struct {
 	nameWords int
 	decoys    int
+	specEdit  func(string) string
 }
 
 // cevSpec is the edition.yaml of the event edition.
@@ -91,6 +96,9 @@ func newCevFix(t *testing.T, o cevOpts) *cevFix {
 	t.Helper()
 	f := &cevFix{t: t, tree: editiontest.NewTree(t), seats: editiontest.Seats(), answers: map[string]string{}}
 	f.spec, f.tmpl = cevSpec(o), editiontest.TemplateText(o.decoys)
+	if o.specEdit != nil {
+		f.spec = o.specEdit(f.spec)
+	}
 
 	// the image's tree, the event edition, the seats and the output directory
 	f.tree.PlaceInputs(editiontest.Inputs{Golden: cevGold, Spec: f.spec, Template: f.tmpl, Seats: f.seats})

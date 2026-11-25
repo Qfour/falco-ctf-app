@@ -5,10 +5,9 @@ package edition
 // template/. Their schema and their shape (E1) are spec.go. B8 (a2)'s bound for a group in a
 // block is seatspace.go's, which reads the groups of the blocks with blockGroups below.
 //
-// This stage declares and checks only. The renderer does not read `blocks` (it does not put
-// the lines of a block in the order of their times: that is the next PR of A7-x), and nothing
-// reads `clues` but this check (B17 and B19 are a later PR). So a template with blocks and
-// clues renders to the same bytes as without them, and the practice golden (V67) does not move.
+// The renderer and B7 read the blocks this check accepted with blockForms (blockorder.go, A7-x
+// PR 2: the lines of a block in the order of their times, and B7 on the set of a block's lines).
+// Nothing reads `clues` but this check yet (B17 and B19 are a later PR).
 //
 // It is not a render file: it holds no answer and no key, and it reads the template with the
 // lexer of the marks (slotmark.go, ScanMarks and tokenSpans), so `edition check` calls it as the

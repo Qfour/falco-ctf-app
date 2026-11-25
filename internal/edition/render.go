@@ -32,8 +32,19 @@ package edition
 // of at least 2 x the number of seats at each position (B8 (a)): a smaller one is E3, and
 // so is a draw that cannot be made within maxDistinctTries.
 //
+// A block (ADR-0056 amendment 28, as revised) changes three things, and only for its own group
+// and lines. (r1) the position a group in a block is assigned at is the group: each of its
+// values differs from every value of the group in the earlier seats, so the columns of two seats
+// have no value in common (S >= 2N(k + 1), B8 (a2), is held before anything is drawn). (r2) a time
+// slot of a block differs from the other times of its block in the seat, drawn again within the
+// same budget. And once the marks are filled, the lines of the block are put in the strictly
+// ascending order of their times (orderBlocks), so the line of the answer is at no fixed place of
+// the block. An edition without blocks is drawn and written as before them, byte for byte.
+//
 // The marks of a template and the rules that refuse a template are rendertemplate.go; their
-// lexer is slotmark.go (the one definition, shared with B4 and not a part of the renderer).
+// lexer is slotmark.go (the one definition, shared with B4 and not a part of the renderer). How
+// the lines of a block are read (their time, their signature) is blockorder.go, which B7 reads
+// too.
 //
 // Reach (D9, D13): the renderer is not a part of the scoreboard's HTTP side. Every file of
 // this stage is named render*.go, and render_reach_test.go fixes by reading the sources
@@ -273,8 +284,8 @@ func render(in RenderInput) (*Rendered, error) {
 	if err := in.Spec.CheckQuestions(in.CID, in.Questions); err != nil {
 		return nil, err
 	}
-	// E2 of `blocks` and `clues` (amendment 28). The render does not read them: a block's
-	// lines are not reordered yet (A7-x PR 2), so the output is the same with or without them.
+	// E2 of `blocks` and `clues` (amendment 28). The blocks are read below, for (r1), (r2) and the
+	// order of their lines; `clues` is not read by the renderer.
 	if err := in.Spec.CheckBlocksAndClues(in.CID, in.Template); err != nil {
 		return nil, err
 	}
@@ -290,18 +301,25 @@ func render(in RenderInput) (*Rendered, error) {
 	if err != nil {
 		return nil, err
 	}
+	forms, err := in.Spec.blockForms(in.Template)
+	if err != nil {
+		return nil, newViolation(RuleSpecRender, "a block cannot be read as the lines of one group", 0, cell{cid: in.CID}, err)
+	}
+	plan := newBlockPlan(forms)
+	tmpl.blocks = plan.byFile
 	var base time.Time
 	if in.Spec.Time.Base != "" {
 		if base, err = time.Parse(time.RFC3339, in.Spec.Time.Base); err != nil {
 			return nil, newViolation(RuleSpecRender, "time.base is not an RFC 3339 time", 0, cell{cid: in.CID}, nil)
 		}
 	}
-	// earlier[slot] is the values the seats before this one got at that position (U2). A
+	// earlier[slot] is the values the seats before this one got at that position (U2), and
+	// earlier[groupPosition(g)] the values they got in any slot of g, a group in a block (r1). A
 	// seat's draws read it and add to it, so a seat depends on the seats before it only.
 	earlier := make(map[string]map[string]struct{}, len(slots))
 	out := &Rendered{}
 	for _, seat := range in.Seats {
-		values, err := drawSeat(in, slots, base, seat, earlier)
+		values, err := drawSeat(in, slots, base, seat, earlier, plan)
 		if err != nil {
 			return nil, err
 		}
@@ -390,11 +408,61 @@ func hasWords(vocab [][]string) bool {
 	return true
 }
 
+// blockPlan is what the draws and the fill read of the blocks (ADR-0056 amendment 28, as
+// revised): the blocks of each file, the groups that are in a block, and for each time slot of a
+// block the other time slots of the blocks it is in. An edition without blocks has an empty plan,
+// and then nothing below reads it: its draws and its bytes are the ones of a render before blocks.
+type blockPlan struct {
+	byFile  map[string][]blockForm
+	blocked map[string]bool
+	mates   map[string][]string
+}
+
+func newBlockPlan(forms []blockForm) blockPlan {
+	p := blockPlan{byFile: map[string][]blockForm{}, blocked: map[string]bool{}, mates: map[string][]string{}}
+	for _, f := range forms {
+		p.byFile[f.file] = append(p.byFile[f.file], f)
+		p.blocked[f.group] = true
+		for i, k := range f.keys {
+			for j, m := range f.keys {
+				if i != j {
+					p.mates[k] = append(p.mates[k], m)
+				}
+			}
+		}
+	}
+	return p
+}
+
+// timesBeside is the values already drawn in this seat of the other time slots of the blocks the
+// slot is a time slot of ((r2): no two lines of a block have one time), or nil when it is none.
+func (p blockPlan) timesBeside(slot string, values map[string]string) map[string]struct{} {
+	ms := p.mates[slot]
+	if len(ms) == 0 {
+		return nil
+	}
+	out := make(map[string]struct{}, len(ms))
+	for _, m := range ms {
+		if v, ok := values[m]; ok {
+			out[v] = struct{}{}
+		}
+	}
+	return out
+}
+
+// groupPosition is the key of earlier that a group in a block shares among all its slots (r1).
+// A slot name has no `/` (answerformat.IDPattern), so it is the key of no slot.
+func groupPosition(group string) string { return group + "/" }
+
 // drawSeat is the value of every slot for one seat, by slot name. The slots of a group
 // (an answer slot and its decoys) are drawn to differ from each other, and each of them to
 // differ from the values the seats before this one got at the same position (earlier, which
-// it adds this seat's values to). A filler is drawn as it comes.
-func drawSeat(in RenderInput, slots []*renderSlot, base time.Time, seat string, earlier map[string]map[string]struct{}) (map[string]string, error) {
+// it adds this seat's values to). For a group in a block (r1), the position is the group: each of
+// its slots differs from the values the earlier seats got in ANY slot of the group, so the column
+// of the block holds no value of another seat's column. A time slot of a block (r2) is also drawn
+// to differ from the times of the other lines of its blocks that are drawn already. A filler is
+// otherwise drawn as it comes.
+func drawSeat(in RenderInput, slots []*renderSlot, base time.Time, seat string, earlier map[string]map[string]struct{}, plan blockPlan) (map[string]string, error) {
 	values := make(map[string]string, len(slots))
 	taken := make(map[string]map[string]struct{})
 	for _, s := range slots {
@@ -404,12 +472,16 @@ func drawSeat(in RenderInput, slots []*renderSlot, base time.Time, seat string, 
 				taken[s.group] = make(map[string]struct{})
 			}
 			seen = taken[s.group]
-			if earlier[s.name] == nil {
-				earlier[s.name] = make(map[string]struct{})
+			at := s.name
+			if plan.blocked[s.group] {
+				at = groupPosition(s.group)
 			}
-			before = earlier[s.name]
+			if earlier[at] == nil {
+				earlier[at] = make(map[string]struct{})
+			}
+			before = earlier[at]
 		}
-		v, err := s.drawDistinct(newDRBG(in.Key, seat, in.CID, s.name), base, seen, before)
+		v, err := s.drawAvoiding(newDRBG(in.Key, seat, in.CID, s.name), base, seen, before, plan.timesBeside(s.name, values))
 		if err != nil {
 			viol := newViolation(RuleSpecRender, "a value could not be drawn for the slot", 0, cell{seat: seat, cid: in.CID}, err)
 			if answerformat.ValidID(s.name) {
@@ -429,6 +501,18 @@ func drawSeat(in RenderInput, slots []*renderSlot, base time.Time, seat string, 
 // value is added to the maps that are not nil. An error describes the rule that failed,
 // never the value.
 func (s *renderSlot) drawDistinct(d *drbg, base time.Time, seen, before map[string]struct{}) (string, error) {
+	return s.drawAvoiding(d, base, seen, before, nil)
+}
+
+// drawAvoiding is drawDistinct that also throws away a draw in avoid (the times of the other
+// lines of a block, (r2)), which it reads and does not add to. The three reasons share ONE loop
+// and one budget of maxDistinctTries: a draw that hits any of them is the next draw of the same
+// stream, and a slot that cannot get past them all within the budget fails the render (E3,
+// fail-closed). With avoid nil it is drawDistinct exactly (the same draws, the same value). The
+// budget holds for the two together: a time slot of a block is either a slot of the block's group
+// (then avoid is the values of the group in this seat, which seen holds already, so it rejects
+// nothing more) or a filler (then seen and before are nil, and avoid holds at most k values).
+func (s *renderSlot) drawAvoiding(d *drbg, base time.Time, seen, before, avoid map[string]struct{}) (string, error) {
 	for try := 0; try < maxDistinctTries; try++ {
 		v, err := s.draw(d, base)
 		if err != nil {
@@ -443,6 +527,9 @@ func (s *renderSlot) drawDistinct(d *drbg, base time.Time, seen, before map[stri
 		if _, taken := before[v]; taken {
 			continue
 		}
+		if _, taken := avoid[v]; taken {
+			continue
+		}
 		if seen != nil {
 			seen[v] = struct{}{}
 		}
@@ -450,6 +537,9 @@ func (s *renderSlot) drawDistinct(d *drbg, base time.Time, seen, before map[stri
 			before[v] = struct{}{}
 		}
 		return v, nil
+	}
+	if avoid != nil {
+		return "", errors.New("no value of the slot differs from the others of its group, from the earlier seats' and from the other times of its block (the space or the window is too small)")
 	}
 	return "", errors.New("no value of the slot differs from the others of its group and from the earlier seats' (the space is too small for the seats)")
 }

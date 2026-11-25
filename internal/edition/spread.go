@@ -5,17 +5,21 @@ package edition
 // "a seat's bundle holds enough decoys that look like the answer", and B8 (b), "a seat's
 // bundle holds enough candidates of a question's format". The inputs are the bundles
 // themselves (and, for B7, the template and the spec, which say where the decoys are), so
-// the same two functions run on a render in the tests and, once the bundles are read from
-// disk, in the validator (A4e; no caller yet). Neither applies to a practice edition (the
-// seat *, which is public): the seat grammar refuses it here, so a caller that passes one
-// gets a refusal and not a pass.
+// the same two functions run on a render (the self check of `edition render`, RenderEvent) and
+// on the bundles read from disk (`edition check`, CheckEvent). Neither applies to a practice
+// edition (the seat *, which is public): the seat grammar refuses it here, so a caller that passes
+// one gets a refusal and not a pass.
 //
 // This file is NOT a part of the renderer (it is not named render*.go, and
-// render_reach_test.go does not count it as one): the validator does not trust the renderer,
-// so what it calls holds no key and no answer. It reads the bundles and the template, takes the
-// positions from slotmark.go (LayoutOf) and the formats from answerformat, and refers to
-// nothing that render*.go declares (MasterKey, Render, the random source). A source test
-// (spread_source_test.go) fixes that.
+// render_reach_test.go does not count it as one): the validator does not trust the renderer.
+// B7 and B8 (b) hold no key, call nothing of the renderer and open no answers table of their own.
+// B7 is given the plaintext answers of a challenge by its caller (SeatAnswers: the answers table
+// of `edition check`, or the rows of `edition render`'s self check, which both callers hold
+// already), reads them for a group in a block only, keeps nothing of them after it returns, and
+// never writes one into a message. Who may call it is fixed (spread_source_test.go). It reads the
+// bundles and the template, takes the positions from slotmark.go (LayoutOf) and the formats from
+// answerformat, and refers to nothing that render*.go declares (MasterKey, Render, the random
+// source). A source test (spread_source_test.go) fixes that.
 //
 // A TOKEN is the unit both rules count: a maximal run of the bytes a value of the
 // per-seat formats is made of, [A-Za-z0-9._:/-] (a name, a path, a hexid and a timestamp
@@ -45,6 +49,12 @@ package edition
 // does not have the template's files and number of tokens was not made from the template and
 // cannot be read by position: a violation too (fail-closed), left out of the part between
 // seats.
+//
+// A group in a block (ADR-0056 amendment 28, as revised) is the exception: the renderer orders
+// the lines of a block by their times, so its marks are not at the template's positions in a
+// bundle, and B7 reads them as the set of the block's lines (spreadblock.go) and not by position.
+// B8 (b) needs nothing of the kind: it counts the distinct tokens of a bundle, which an order of
+// its lines does not change (a token never holds a line feed).
 //
 // Nothing here names a value: a violation names a rule, a seat, a challenge, a question, a
 // slot, a file and a position's number, never a token or a byte of a file.
@@ -84,12 +94,13 @@ func fitsFormat(q catalog.Question, tok string) bool {
 	return answerformat.Canonical(q.Format, q.Params, tok) == nil
 }
 
-// spreadSeat is a Bundle read once: its files in byte order of the names, and the tokens
-// of each.
+// spreadSeat is a Bundle read once: its files in byte order of the names, the tokens of each,
+// and their bytes (the lines of a block are read from them, spreadblock.go).
 type spreadSeat struct {
 	seat   string
 	names  []string
 	tokens [][]string
+	data   [][]byte
 }
 
 func (s *spreadSeat) distinct() map[string]struct{} {
@@ -167,6 +178,7 @@ func prepareSpread(rule, cid string, qs []catalog.Question, bundles []*Bundle) (
 		for _, f := range files {
 			rs.names = append(rs.names, f.Name)
 			rs.tokens = append(rs.tokens, fileTokens(f.Data))
+			rs.data = append(rs.data, f.Data)
 		}
 		out = append(out, rs)
 	}
@@ -289,6 +301,13 @@ func templateLayout(spec *Spec, template []BundleFile) (names []string, counts [
 // bundles are the bundles of the challenge cid, one per seat (a bundle of another challenge is
 // refused). spec must be a Spec that ParseSpec returned (a Spec made by hand is refused).
 //
+// The marks of a group in a block (ADR-0056 amendment 28, as revised) are not read by position:
+// the renderer orders the lines of a block by their times, so their places differ from seat to
+// seat. They are B7's block form (spreadblock.go), which reads the seat's answer from answers (the
+// answers table of the render or of `edition check`). Every other position is read as above, and
+// an edition without blocks is judged exactly as before blocks; answers is not read then (nil is
+// fine).
+//
 // A template whose mark of an answer or a decoy is buried in a token (a byte glued to it) is
 // refused as a whole: its positions cannot be located, so the rule cannot be run on it. This
 // is stronger than ADR-0056 V69's first item, which says such a position is "short of K" and
@@ -296,7 +315,7 @@ func templateLayout(spec *Spec, template []BundleFile) (names []string, counts [
 // files or number of tokens differ from the template's was not made from it and cannot be read
 // by position: a violation, left out of the second part. The result lists every seat and
 // question that is short, bounded like Check's list. The cost is O(seats x bundle).
-func CheckDecoySpread(cid string, spec *Spec, qs []catalog.Question, template []BundleFile, bundles []*Bundle) error {
+func CheckDecoySpread(cid string, spec *Spec, qs []catalog.Question, template []BundleFile, bundles []*Bundle, answers SeatAnswers) error {
 	prep, per, err := prepareSpread(RuleDecoySpread, cid, qs, bundles)
 	if err != nil {
 		return err
@@ -308,6 +327,12 @@ func CheckDecoySpread(cid string, spec *Spec, qs []catalog.Question, template []
 	if err != nil {
 		return err
 	}
+	blocks, err := blockSpreadOf(cid, spec, template)
+	if err != nil {
+		return err
+	}
+	// skip is the questions B7 reads in blocks only; positions keeps every other position.
+	positions, skip := blocks.outside(positions)
 	var c collector
 	// held[i] is the tokens the seats so far hold at positions[i].
 	held := make([]map[string]struct{}, len(positions))
@@ -321,10 +346,13 @@ func CheckDecoySpread(cid string, spec *Spec, qs []catalog.Question, template []
 			continue
 		}
 		for _, q := range per {
-			answers := make(map[string]struct{})
+			if skip[q.ID] {
+				continue
+			}
+			own := make(map[string]struct{})
 			for _, p := range positions {
 				if p.qid == q.ID && !p.decoy {
-					answers[s.tokens[p.file][p.token]] = struct{}{}
+					own[s.tokens[p.file][p.token]] = struct{}{}
 				}
 			}
 			got := make(map[string]struct{})
@@ -333,7 +361,7 @@ func CheckDecoySpread(cid string, spec *Spec, qs []catalog.Question, template []
 					continue
 				}
 				tok := s.tokens[p.file][p.token]
-				if _, isAnswer := answers[tok]; isAnswer {
+				if _, isAnswer := own[tok]; isAnswer {
 					v := spreadViolation(RuleDecoySpread,
 						fmt.Sprintf("a decoy holds the same token as the answer of the same question in the seat (token %d of the file), so it is not a decoy", p.token),
 						s.seat, cid, p.qid)
@@ -369,6 +397,7 @@ func CheckDecoySpread(cid string, spec *Spec, qs []catalog.Question, template []
 			}
 			held[pi][tok] = struct{}{}
 		}
+		blocks.checkSeat(&c, s, per, answers)
 	}
 	return c.err()
 }

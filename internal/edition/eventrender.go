@@ -129,6 +129,22 @@ func (in RenderEventInput) validate() error {
 	return checkRenderOut(in.Out, in.Challenges)
 }
 
+// seatAnswersOfRows is the answer rows of a render by challenge, in the form B7 reads them
+// (SeatAnswers: seat -> question -> value).
+func seatAnswersOfRows(rows []AnswerRow) map[string]SeatAnswers {
+	out := make(map[string]SeatAnswers)
+	for _, r := range rows {
+		if out[r.CID] == nil {
+			out[r.CID] = SeatAnswers{}
+		}
+		if out[r.CID][r.Seat] == nil {
+			out[r.CID][r.Seat] = map[string]string{}
+		}
+		out[r.CID][r.Seat][r.QID] = r.Value
+	}
+	return out
+}
+
 // checkRenderOut is the guard of `--out` (D20): out does not exist (in any form: a dangling link
 // is a path that exists), the directory of out exists, and neither a .git (a directory or a
 // file) in that directory or in one above it, once its links are resolved (filepath.Abs, and
@@ -373,11 +389,13 @@ func RenderEvent(in RenderEventInput) (*RenderedEvent, error) {
 	}
 
 	// 4. The self check: what is about to be written is held to the validator's own rules of
-	// the output, and the table to the one Parse and Check of the program.
+	// the output, and the table to the one Parse and Check of the program. B7 reads the answers
+	// of the rows about to be written (a group in a block needs them, spreadblock.go).
+	answers := seatAnswersOfRows(rows)
 	for _, cid := range cids {
 		ed := editions[cid]
 		refusals = append(refusals,
-			CheckDecoySpread(cid, ed.spec, scope[cid], ed.template, bundles[cid]),
+			CheckDecoySpread(cid, ed.spec, scope[cid], ed.template, bundles[cid], answers[cid]),
 			CheckOutputSpace(cid, scope[cid], bundles[cid]))
 	}
 	var table bytes.Buffer
