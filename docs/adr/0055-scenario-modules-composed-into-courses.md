@@ -170,8 +170,9 @@
   - `detect`: スコープに `type: detect` があるか。
   - `exfil`: スコープに exfil を採点に使う課題があるか。
   - `rules`: スコープの課題の `expectedRules ∪ forbiddenRules` の rule 名の集合。app は default ruleset と customRules の区別を持たない。名前が解決できるかの照合は platform が行う。
-  - `plantMountDirs`。
   - `answers`: スコープの調査型の課題 id の、並べ替えた集合 (ADR-0056 D17)。A1b (#607) は merge 済みなので、S3a で最初から出す。ADR-0056 の P1b-1b (platform の render gate) がこれを読む。P1b-1b は、調査型の課題を main に置く A7 の前提である。
+- `plantMountDirs` は `requirements` に入れない (CTO の決定 2026-11-25。起草の時点では項目にあった)。今の code では課題の catalog から導出できず (`plant.sh` の header からしか分からない)、読み手が居ないため。要る場合は Signpost 5。
+- **形と検査 (S3a で決めた細部)**: 4 つの key を `answers`・`detect`・`exfil`・`rules` の順で必ず書く。一覧は byte 順に並べ、同じ値を 2 回書かない。空の一覧は `[]` の 1 行、空でなければ block の列 (1 行に `    - <値>`。YAML の plain で読めない値だけ double-quote)。`exfil` は `requireExfil: true` の課題が scope にあるか (型を問わない)。導出の関数は 1 つ (`catalog.DeriveRequirements`) で、生成器 (`Compose` / `ComposeSolo`、したがって `--check`) と起動 (`catalog.LoadScored`) が呼ぶ。起動は、scope に Restrict した catalog から導出し直し、file の値と違えば起動しない。scope の catalog だけで導出できるので、D5 の「起動時に定義から生成し直さない」(コースの合成には全モジュールが要る) とは別の検査である。strict decode は、`requirements` の欠落、4 つの key の欠落と null、未知の key・重複・型の違い、並びの乱れと重複、scenario の `challenges` に無い `answers` を拒否する (古い image は `requirements` を未知の key として拒否する = image と app の checkout は同じ SHA)。
 - Lv の母数 (= `challenges` の数) と、合計時間 (D7 の C2 の左辺)。
 - solo course: module.yaml を持つ dir は、それ自体がモジュール単体のコースになる。生成器が `scenario.yaml` を出すので、course.yaml を宣言させない。
 
@@ -218,7 +219,7 @@
 |---|---|---|
 | **S1 (済み = app#604・platform#331・#688 (V1 の残り = id と dir 名の一致、gen-values での重複の拒否))** | app: I11 の交差 test を全 `scenarios/*` に (C5)、scenario の id と、scenario の中の課題 id の重複を拒否 (C1 の一部)、契約表 (a) の行。platform: 導出の fail-closed (C3 を塞ぐ)。範囲の正は各 PR の本文。本 ADR は V1-V3 の性質だけを求める | V1・V2・V3 |
 | **S2 (済み = S2a #687・S2b-1 #689・S2b-2 #690・S2c #692)** | S2a = parser と合成 (`shared` を含む C1、C6)。S2b = 生成器と移行 (module.yaml ×3・course.yaml ×1・golden)。S2c = `LoadScenario` を strict に、source の無い dir を拒否 | V4・V5 |
-| S3a | 生成物の `requirements:` (D6 の全項目)、C7 の起動時の拒否、契約表 (b) の行 (両リポ同時。platform の対 = ADR-0056 P1b-1b と V8 の verify) | V7・V8 |
+| S3a (実装中。app の最初の PR は `requirements:` の生成と起動時の照合まで。C7 の `DETECT_RUNNER` の起動時の拒否 (V7) は後続の app の PR。済みにするのは両方と platform の対が入ってから) | 生成物の `requirements:` (D6 の全項目)、C7 の起動時の拒否、契約表 (b) の行 (両リポ同時。platform の対 = ADR-0056 P1b-1b と V8 の verify) | V7・V8 |
 | S3b | C2・C3 (C4 (ii) は ADR-0056 A5a-1 で済み) | V6 |
 | S4 | overlay の 3 層 (D10)、C8 | V9 |
 | S5 | solo course が全モジュールにあることの CI の規則、local / 常設の runbook (COO) | V10 |
@@ -258,6 +259,7 @@
 2. 同じ Pod に同居できないモジュールの組がコースに要る (同じ file、別の NetworkPolicy、同名 rule の別条件)。1 seat に複数 Pod を置く設計に進む。
 3. 1 cluster で 2 つ以上のコースを同時に常設したい (研修の複数 cohort など)。store の次元と I1 の再訪。
 4. app の外 (非公開・第三者) でモジュールを書く要求が持続する (I6 と公開境界の再訪。ADR-0056 の秘匿の S3 案が要ると判定された場合を含む)。
+5. platform が、コースの plant の mount dir を読む必要が出る (D6 で外した `plantMountDirs`)。先に mount dir を課題の catalog から導出できるようにし (今は `plant.sh` の header だけが持つ)、そのあと `requirements` に足す (契約表の (b) の行と両リポ同時)。
 
 ## Verification
 - **V1 (S1)**: scenario の中で課題 id が重複すると、`LoadScenario` と `gen-values --check` の両方が非ゼロになる。id と dir 名の不一致、全 scenario での id の重複も同じ。testdata の負の case を恒久 test にする。

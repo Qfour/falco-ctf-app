@@ -10,12 +10,15 @@ package main
 //     catalog.LoadScenario reads the same id and list from it;
 //   - the migration golden: the three scenarios that existed before the migration keep the
 //     title and the scope catalog.LoadScored read from their hand-written scenario.yaml
-//     (main 88159c3).
+//     (main 88159c3);
+//   - the requirements golden (S3a): each shipped scenario's requirements block is pinned by
+//     hand, and the start derives the same.
 
 import (
 	"bytes"
 	"path"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -109,6 +112,68 @@ var migrationGolden = []struct {
 		order:  []string{"00-tutorial", "01-initial-recon", "03-stealth-read"},
 		digest: "b330f742e89f03c73c1eeca2f0a222dd433b95c1d5329d57766ed5373c2edc6a",
 	},
+}
+
+// requirementsGolden is the requirements block (ADR-0055 D6, S3a) of each shipped scenario,
+// the block the platform reads before an event (C7, V8). It is written here by hand from the
+// challenges' falco-rule.yaml (main ae2eca9: 10-final-exfil is the one requireExfil, no
+// challenge is detect or investigate), never computed. A row is never edited to make the test
+// pass: a difference is a change of what the platform verifies, and is reviewed as one.
+var requirementsGolden = map[string]catalog.ScenarioRequirements{
+	"nimbusbreach-full": {Answers: []string{}, Exfil: true, Rules: []string{
+		"Contact K8S API Server From Container",
+		"Create Hardlink Over Sensitive Files",
+		"Drop and execute new binary in container",
+		"Nimbus Vault Master Key Read",
+		"Read sensitive file untrusted",
+		"Redirect STDOUT/STDIN to Network Connection in Container",
+		"Run shell untrusted",
+		"Search Private Keys or Passwords",
+		"Shell Redirected Private Key Read",
+	}},
+	"nimbusbreach-with-tutorial": {Answers: []string{}, Exfil: true, Rules: []string{
+		"Contact K8S API Server From Container",
+		"Create Hardlink Over Sensitive Files",
+		"Drop and execute new binary in container",
+		"Execution from /dev/shm",
+		"Nimbus Vault Master Key Read",
+		"Read sensitive file untrusted",
+		"Redirect STDOUT/STDIN to Network Connection in Container",
+		"Run shell untrusted",
+		"Search Private Keys or Passwords",
+		"Shell Redirected Private Key Read",
+	}},
+	"onboarding": {Answers: []string{}, Rules: []string{"Execution from /dev/shm"}},
+	"tutorial-intro": {Answers: []string{}, Rules: []string{
+		"Contact K8S API Server From Container",
+		"Execution from /dev/shm",
+		"Read sensitive file untrusted",
+	}},
+}
+
+// The committed scenario.yaml of each pinned scenario holds the pinned block, and the start
+// (catalog.LoadScored, which derives it again from the scope) loads it. Every pinned row is a
+// generated scenario (a row with no file is red, not skipped).
+func TestRealTree_RequirementsArePinned(t *testing.T) {
+	challenges := filepath.Join(realRoot, "challenges")
+	if len(requirementsGolden) != 4 {
+		t.Fatalf("%d pinned rows, want the 4 shipped scenarios", len(requirementsGolden))
+	}
+	for id, want := range requirementsGolden {
+		t.Run(id, func(t *testing.T) {
+			file := filepath.Join(realRoot, filepath.FromSlash(path.Join("scenarios", id, "scenario.yaml")))
+			s, err := catalog.LoadScenario(file)
+			if err != nil {
+				t.Fatalf("LoadScenario(%s): %v", file, err)
+			}
+			if !reflect.DeepEqual(s.Requirements, want) {
+				t.Errorf("requirements = %#v\nwant the pinned %#v", s.Requirements, want)
+			}
+			if _, err := catalog.LoadScored(challenges, file, ""); err != nil {
+				t.Errorf("LoadScored(%s): %v", file, err)
+			}
+		})
+	}
 }
 
 func TestRealTree_MigrationKeepsEachScope(t *testing.T) {

@@ -11,3 +11,11 @@ source:
   modules:
     - id: tutorial-intro
       version: 1
+requirements:
+  answers: []
+  detect: false
+  exfil: false
+  rules:
+    - Contact K8S API Server From Container
+    - Execution from /dev/shm
+    - Read sensitive file untrusted

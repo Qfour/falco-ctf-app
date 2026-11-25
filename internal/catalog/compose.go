@@ -25,6 +25,8 @@ const (
 //   - C1: every mission is a challenge of cat; a challenge two modules hold is shown once,
 //     at its first place, and only when c lists it in shared; a shared id that no two
 //     modules hold is an error too.
+//
+// The requirements are DeriveRequirements of cat restricted to the flattened challenges (D6).
 func Compose(c Course, modules map[string]Module, cat Catalog) (Scenario, error) {
 	if err := c.validate(); err != nil {
 		return Scenario{}, fmt.Errorf("course %q: %w", c.ID, err)
@@ -49,7 +51,11 @@ func Compose(c Course, modules map[string]Module, cat Catalog) (Scenario, error)
 	if err != nil {
 		return Scenario{}, fmt.Errorf("course %q: %w", c.ID, err)
 	}
-	return Scenario{ID: c.ID, Title: c.Title, Challenges: challenges, Source: src}, nil
+	req, err := requirementsOf(cat, challenges)
+	if err != nil {
+		return Scenario{}, fmt.Errorf("course %q: %w", c.ID, err)
+	}
+	return Scenario{ID: c.ID, Title: c.Title, Challenges: challenges, Source: src, Requirements: req}, nil
 }
 
 // ComposeSolo is the course of module m alone (D6): its directory's own scenario.
@@ -58,8 +64,12 @@ func ComposeSolo(m Module, cat Catalog) (Scenario, error) {
 	if err != nil {
 		return Scenario{}, err
 	}
+	req, err := requirementsOf(cat, challenges)
+	if err != nil {
+		return Scenario{}, fmt.Errorf("module %q: %w", m.ID, err)
+	}
 	src := ScenarioSource{Kind: KindModule, Modules: []ScenarioModule{{ID: m.ID, Version: m.Version}}}
-	return Scenario{ID: m.ID, Title: m.Title, Challenges: challenges, Source: src}, nil
+	return Scenario{ID: m.ID, Title: m.Title, Challenges: challenges, Source: src, Requirements: req}, nil
 }
 
 // flatten is the missions of parts in order, each challenge once (C1).

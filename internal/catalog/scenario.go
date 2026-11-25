@@ -18,12 +18,14 @@ const ScenarioFile = "scenario.yaml"
 // module.yaml or course.yaml (Compose, ComposeSolo). It is the one type of that file: the
 // generator decodes what it rendered with DecodeScenario, and LoadScenario (the scoreboard,
 // LoadScored) reads the file with the same function. It has no tactics (D6:
-// gen-attack-layer.py is the one derivation), no flags (C6) and no requirements (S3a).
+// gen-attack-layer.py is the one derivation) and no flags (C6). Its requirements (D6, S3a)
+// are derived from the scope's catalog (DeriveRequirements, requirements.go).
 type Scenario struct {
-	ID         string         `yaml:"id"`
-	Title      string         `yaml:"title"`
-	Challenges []string       `yaml:"challenges"`
-	Source     ScenarioSource `yaml:"source"`
+	ID           string               `yaml:"id"`
+	Title        string               `yaml:"title"`
+	Challenges   []string             `yaml:"challenges"`
+	Source       ScenarioSource       `yaml:"source"`
+	Requirements ScenarioRequirements `yaml:"requirements"`
 }
 
 // ScenarioSource is D5's `source`: what the scenario was composed from.
@@ -42,20 +44,33 @@ type ScenarioModule struct {
 
 // DecodeScenario decodes a scenario.yaml strictly (decodeSource, the rules of module.yaml
 // and course.yaml: one document, no anchor, alias or merge key, no unknown or repeated key
-// at any depth, so a tactics, flags or requirements key is an error) and holds it to the
-// shape Compose gives:
+// at any depth, so a tactics or flags key is an error, and so is an unknown key of
+// requirements) and holds it to the shape Compose gives:
 //   - id is a scenario name, title is not empty;
 //   - challenges lists one or more challenge ids, none twice (a duplicate would put the
 //     mission twice in the order the scoreboard walks while the restricted catalog holds
 //     it once: C1);
 //   - source.kind is module or course, source.modules lists one or more modules, each with
 //     a scenario name, a version of at least 1 and an empty or valid edition, none twice;
-//     a module's own scenario has exactly that module, with no edition (D6).
+//     a module's own scenario has exactly that module, with no edition (D6);
+//   - requirements and its four keys are written, none null (a file without them is
+//     refused, not read as "nothing required"), in the one form the generator writes
+//     (requirementsShape: detect and exfil a plain true or false, answers and rules lists
+//     of strings), and each list is in DeriveRequirements' form: answers are challenge ids
+//     of challenges, rules are rule names, both sorted with nothing twice. Whether the
+//     values are the scope's is LoadScored's.
 //
 // It does not look at the comment lines (the generator's header).
 func DecodeScenario(data []byte) (Scenario, error) {
+	doc, err := sourceDocument(data)
+	if err != nil {
+		return Scenario{}, err
+	}
+	if err := requirementsShape(doc); err != nil {
+		return Scenario{}, err
+	}
 	var s Scenario
-	if err := decodeSource(data, &s); err != nil {
+	if err := decodeStrictBytes(data, &s); err != nil {
 		return Scenario{}, err
 	}
 	if err := s.validate(); err != nil {
@@ -110,7 +125,7 @@ func (s Scenario) validate() error {
 	if src.Kind == KindModule && (len(src.Modules) != 1 || src.Modules[0].ID != s.ID || src.Modules[0].Edition != "") {
 		return fmt.Errorf("source.kind %s: source.modules must be the module %q alone, with no edition (ADR-0055 D6)", KindModule, s.ID)
 	}
-	return nil
+	return s.Requirements.validate(s.Challenges)
 }
 
 // LoadScenario reads the scenario at path, which is scenarios/<id>/scenario.yaml. It is
@@ -127,7 +142,8 @@ func (s Scenario) validate() error {
 // --check does that, in the required test job (cmd/gen-scenarios/realtree_test.go), and a
 // course's composition needs every module of scenarios/, which the scoreboard does not read.
 // Nor does it look for the generator's header: the source file is what makes a scenario
-// generated.
+// generated. Nor does it compare the requirements with the scope (it has no catalog):
+// LoadScored does, from the scope's catalog alone.
 func LoadScenario(path string) (Scenario, error) {
 	data, err := readRegular(path)
 	if err != nil {
