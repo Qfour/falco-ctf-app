@@ -5,9 +5,9 @@ challengeId: 51-nimbus-desk-egress
 # may not share or nest a mount directory (D1 (b)), and the bundle is per (seat, challenge)
 # (D11, the Secret ctf-evidence-<cid>). The bundle carries no value that is a per-seat
 # answer of 50, and 50's bundle carries none of this one (ADR-0056 amendment 26, B13). Every
-# literal time of this bundle is one of 50's (B15); egress-gateway.log is byte-identical to 50's
-# and carries no slot mark (B14; its declaration investigate.evidence.shares is added with A7-x,
-# when the catalog has the key).
+# literal time of this bundle is one of 50's (B15, declared by investigate.evidence.timeline);
+# egress-gateway.log is byte-identical to 50's and carries no slot mark (B14, declared by
+# investigate.evidence.shares).
 #
 # Only the SHAPE of the questions is here; the answers are rendered into edition/practice/
 # by `make edition-practice CID=51-nimbus-desk-egress` (practice) or on the platform side.
@@ -16,6 +16,10 @@ type: investigate
 investigate:
   evidence:
     mountDir: /srv/ir/evidence-b
+    shares:
+      - with: 50-nimbus-desk-triage
+        file: egress-gateway.log
+    timeline: 50-nimbus-desk-triage
   questions:
     # Q5 (per seat): the host name the refused connection was meant for.
     - id: dest-host

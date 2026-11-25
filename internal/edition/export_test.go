@@ -37,6 +37,13 @@ func SeatAnswersOfRowsForTest(rows []AnswerRow) map[string]SeatAnswers {
 	return seatAnswersOfRows(rows)
 }
 
+// SeatAnswersOfTableForTest is the answers of challenge cid in a table that Parse read, in the form
+// `edition check` hands B7 and B13 to B16 (seatAnswersOf), for the test that applies B13 to B16 to
+// the practice editions of the image (their answers.tsv, seat *).
+func SeatAnswersOfTableForTest(tb *Table, cid string) SeatAnswers {
+	return seatAnswersOf(tb, cid)
+}
+
 // The steps of atomicwrite.go's seam writeFault (ADR-0056 V87, V92), for the external tests of
 // the writers' failures: the write of a file's data, the link and the remove of the single
 // file, the rename and the remove of a tree, and the two renames of a replacement (the earlier

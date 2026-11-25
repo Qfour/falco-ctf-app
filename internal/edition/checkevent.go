@@ -26,12 +26,14 @@ package edition
 //	5.  CheckBundles (B1, B2, B3, B5, B6, B9); B5's Hints and Free are hlscope.Assemble's;
 //	6.  B4 (checkPracticeOverlap, OverlapTheta);
 //	7.  B7 (CheckDecoySpread) and B8 (b) (CheckOutputSpace);
+//	7b. B13 to B16, the rules between the investigate challenges of the scope
+//	    (CheckCrossChallenge, ADR-0056 amendment 26, A7-x PR 3);
 //	8.  B10, the continuity with the previous digests.
 //
 // A step that cannot be run (an input is missing, unreadable or malformed) stops the check
 // (fail-closed): no later step is skipped silently. A step that finds violations stops it
-// when the later steps need what it checks (1 to 5); steps 6, 7 and 8 do not depend on each
-// other, so all three are run and their violations listed together, and the overlap numbers
+// when the later steps need what it checks (1 to 5); steps 6, 7, 7b and 8 do not depend on each
+// other, so all four are run and their violations listed together, and the overlap numbers
 // of B4 are in the CheckReport whether the event is accepted or not.
 //
 // The errors are of two kinds, which the command turns into two exit codes (D20):
@@ -220,8 +222,8 @@ type CheckReport struct {
 }
 
 // CheckedEvent is an event edition that every check of D20 accepted (ADR-0056 amendment 12): E1,
-// E2, E3, B8 (a1) and (a2), B1 to B10, B11 (the run id of the render record) and B12 (its scope
-// digest). It carries what the digests file and the command's one line need: the run id of the
+// E2, E3, B8 (a1) and (a2), B1 to B10, B11 (the run id of the render record), B12 (its scope
+// digest) and B13 to B16 (between the challenges of the scope). It carries what the digests file and the command's one line need: the run id of the
 // answers table, the digest of
 // every bundle, and how many seats and challenges were checked. It is made by CheckEvent and by
 // nothing else (its fields are unexported, and validator_door_source_test.go fixes that no other
@@ -331,7 +333,7 @@ func CheckEvent(in CheckInput) (*CheckedEvent, CheckReport, error) {
 		return nil, report, classify("the evidence root cannot be read", err)
 	}
 
-	// 6, 7 and 8 do not need each other's result: all three run, and what they found is listed
+	// 6, 7, 7b and 8 do not need each other's result: all four run, and what they found is listed
 	// together.
 	var refusals []error
 	var b4 collector
@@ -343,6 +345,7 @@ func CheckEvent(in CheckInput) (*CheckedEvent, CheckReport, error) {
 	}, OverlapTheta)
 	refusals = append(refusals, b4.err())
 	refusals = append(refusals, checkSpreads(scope, editions, bundles.bundles, table))
+	refusals = append(refusals, checkCrossChallenges(scope, scored.Catalog, editions, bundles.bundles, table))
 	refusals = append(refusals, checkContinuity(bundles.rows, previous, !in.NoPrevious))
 	if err := errors.Join(refusals...); err != nil {
 		return nil, report, err
@@ -446,6 +449,30 @@ func checkSpreads(scope Scope, editions map[string]*eventEdition, read *Bundles,
 			CheckOutputSpace(cid, scope[cid], ofChallenge))
 	}
 	return errors.Join(errs...)
+}
+
+// checkCrossChallenges is step 7b: B13 to B16 (CheckCrossChallenge, ADR-0056 amendment 26) over
+// the investigate challenges of the scope, with the catalog's declarations of what they share
+// (cat is the scope's catalog, catalog.Scored.Catalog), the event's templates and edition.yaml
+// (step 4 parsed every one, or the check stopped there), the bundles CheckBundles accepted and the
+// answers table.
+func checkCrossChallenges(scope Scope, cat catalog.Catalog, editions map[string]*eventEdition, read *Bundles, table *CheckedTable) error {
+	chs := make(map[string]*CrossChallenge, len(scope))
+	for _, cid := range scope.sortedCIDs() {
+		ed := editions[cid]
+		ch := &CrossChallenge{Questions: scope[cid], Spec: ed.spec, Template: ed.template, Answers: seatAnswersOf(table.table, cid)}
+		if inv := cat[cid].Investigate; inv != nil {
+			ch.Evidence = inv.Evidence
+		}
+		for _, b := range read.All() {
+			if b.CID == cid {
+				ch.Bundles = append(ch.Bundles, b)
+			}
+		}
+		chs[cid] = ch
+	}
+	_, err := CheckCrossChallenge(chs)
+	return err
 }
 
 // seatAnswersOf is the rows of challenge cid in the answers table, in the form B7 reads them.

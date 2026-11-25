@@ -73,15 +73,16 @@ jq -r 'select(.output_fields["container.name"] == "nimbus-desk") | [.time, .rule
   拒否する)。イベント版の原稿は書き直しが前提。`time.base` を
   動かすなら、この課題と 51 の template の literal の時刻をすべて同じだけずらし、51 の `time.base` も
   同じ値にする。ずらさずに `time.base` だけを動かすと、窓が literal の時刻を含み、B16 で止まる
-  (検査は A7-x で入る。今は機械の検査が無い)。
+  (`edition check` の B16 が検査する。A7-x の PR 3)。
 
 ## 51 と揃えているもの (追補 26 の B13〜B15)
 
 - B13: この課題の席ごとの答え (最初の shell の時刻、資格情報・まとめた file・調べた結果の file の
   path) は、51 の束に出ない。51 の答え (host 名) は、この束に出ない。
 - B14: `egress-gateway.log` は 51 と byte で同じ内容で、slot の印を持たない。宣言
-  (`investigate.evidence.shares`) は A7-x で catalog に key が入ってから 51 の側に足す (今は load が
-  未知の key を拒否する)。
+  (`investigate.evidence.shares`) は 51 の側に在る (A7-x の PR 3)。ただし、この課題の `falco-events.jsonl`
+  と 51 の `falco-alerts.jsonl` が同じアラートの行を逐語で持ち、B14 の shingle の規則を満たさない
+  (既知の違反。51 の書き直し = PR 6 で直す)。
 - B15: 51 の template の literal の時刻は、すべてこの template の literal の時刻のどれかと同じ文字列。
 
 ## 囮とノイズ (設計)

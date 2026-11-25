@@ -123,8 +123,9 @@ default の rule の tags には Tactic の名前が入るので、残すと「T
   記録は無い)。
 - 2 つの束の `egress-gateway.log` は byte で同じ内容で、slot の印を持たない (B14)。調査 A の束の
   gateway の記録は、拒否の行の `dst_name` が `-` (名前なし) なので、この課題の答えを導けない。共有の
-  宣言 (`investigate.evidence.shares` と `investigate.evidence.timeline`) は、A7-x で catalog に key が
-  入ってから、この課題の `falco-rule.yaml` に足す (今は load が未知の key を拒否する)。
+  宣言 (`investigate.evidence.shares` と `investigate.evidence.timeline`) は、この課題の
+  `falco-rule.yaml` で宣言済み (A7-x の PR 3)。ただし `falco-alerts.jsonl` は 50 の `falco-events.jsonl` と
+  同じアラートの行を逐語で持つので、B14 の shingle の規則 (追補 28) を満たさない (既知の違反。PR 6 で直す)。
 
 ## 解説
 
