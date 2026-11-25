@@ -421,38 +421,22 @@ type templateToken struct {
 }
 
 // templateTokens is the tokens of a template text, in order (ScanMarks, so a `{{ctf:` that is
-// not a mark is a *MarkError).
+// not a mark is a *MarkError). The token of each mark is readMarkedText's, the one mapping that
+// LayoutOf reads too (slotmark.go), so the two never place a mark differently.
 func templateTokens(data []byte) ([]templateToken, error) {
-	parts, err := ScanMarks(data)
+	mt, err := readMarkedText(data)
 	if err != nil {
 		return nil, err
 	}
-	// pseudo is the text with each mark one token byte, and offs where each mark is in it.
-	var pseudo []byte
-	var offs []int
-	var slots []string
-	for _, p := range parts {
-		pseudo = append(pseudo, p.Lit...)
-		if p.Slot == "" {
-			continue
-		}
-		offs = append(offs, len(pseudo))
-		slots = append(slots, p.Slot)
-		pseudo = append(pseudo, 'M')
+	out := make([]templateToken, len(mt.spans))
+	for _, m := range mt.marks {
+		out[m.token].slots = append(out[m.token].slots, m.slot)
 	}
-	spans := tokenSpans(pseudo)
-	out := make([]templateToken, len(spans))
-	mi := 0
-	for ti, sp := range spans {
-		// The byte of a mark is a token byte, so it is inside a span, and the spans are in order.
-		for mi < len(offs) && offs[mi] < sp[1] {
-			out[ti].slots = append(out[ti].slots, slots[mi])
-			mi++
-		}
+	for ti, sp := range mt.spans {
 		if len(out[ti].slots) == 0 {
-			out[ti].lit = pseudo[sp[0]:sp[1]]
+			out[ti].lit = mt.pseudo[sp[0]:sp[1]]
 		}
-		out[ti].alone = len(out[ti].slots) == 1 && sp[1]-sp[0] == 1
+		out[ti].alone = len(out[ti].slots) == 1 && mt.alone(ti)
 	}
 	return out, nil
 }
