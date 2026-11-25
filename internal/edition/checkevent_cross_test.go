@@ -53,9 +53,10 @@ func ccRule(noShares bool) string {
 	return "type: " + catalog.TypeInvestigate + "\ninvestigate:\n" + ev + "  questions:\n    - id: q1\n      format: name\n      attempts: 1\n"
 }
 
-// ccSpec is an edition.yaml of 02-demo: one answer slot of 9 decoys, a vocabulary of 100 words, the
-// time of each line of its group (fillers, after 01-demo's answer window), and the block of the
-// group over the lines of file (B17).
+// ccSpec is an edition.yaml of 02-demo: one answer slot of 9 decoys, a vocabulary of 100 words, its
+// clues (editiontest.Clues of the prefix), the time and the key of each line of its group
+// (fillers, after 01-demo's answer window), and the block of the group over the lines of file
+// (B17, amendment 31's two-step shape).
 func ccSpec(prefix, file string) string {
 	words := make([]string, 100)
 	for i := range words {
@@ -63,21 +64,27 @@ func ccSpec(prefix, file string) string {
 	}
 	var b strings.Builder
 	b.WriteString("version: 1\ntime:\n  base: \"2001-01-01T00:00:00Z\"\nslots:\n")
-	b.WriteString("  - name: peer\n    role: answer\n    question: q1\n    decoys: 9\n    vocab:\n      - [" + strings.Join(words, ", ") + "]\n")
+	b.WriteString("  - name: peer\n    role: answer\n    question: q1\n    decoys: 9\n    clues: " + editiontest.Clues(prefix) + "\n    vocab:\n      - [" + strings.Join(words, ", ") + "]\n")
 	for j := 0; j <= 9; j++ {
 		fmt.Fprintf(&b, "  - {name: pt%d, role: filler, format: timestamp, window: {from: 10800, to: 14400}}\n", j)
+		fmt.Fprintf(&b, "  - {name: pk%d, role: filler, format: name, vocab: [[ka, kb, kc]]}\n", j)
 	}
 	fmt.Fprintf(&b, "blocks:\n  - {file: %s, from: 1, to: 10}\n", file)
 	return b.String()
 }
 
 // ccTemplate is a template file of 02-demo: the block of the group, one line per slot, the same
-// but for the marks (lead, a time, the value).
-func ccTemplate(lead string) string {
+// but for the marks (lead, a time, the value, a key), then the clue line of each key (its clue
+// columns editiontest.ClueTuple of the prefix).
+func ccTemplate(lead, prefix string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s at {{ctf:pt0}} -> {{ctf:peer}}\n", lead)
+	fmt.Fprintf(&b, "%s at {{ctf:pt0}} -> {{ctf:peer}} key {{ctf:pk0}}\n", lead)
 	for j := 1; j <= 9; j++ {
-		fmt.Fprintf(&b, "%s at {{ctf:pt%d}} -> {{ctf:peer-d%d}}\n", lead, j, j)
+		fmt.Fprintf(&b, "%s at {{ctf:pt%d}} -> {{ctf:peer-d%d}} key {{ctf:pk%d}}\n", lead, j, j, j)
+	}
+	for j := 0; j <= 9; j++ {
+		w1, w2 := editiontest.ClueTuple(prefix, j)
+		fmt.Fprintf(&b, "%s key {{ctf:pk%d}} from %s via %s\n", lead, j, w1, w2)
 	}
 	return b.String()
 }
@@ -103,7 +110,7 @@ func newCrossCevFix(t *testing.T, o ccOpts) *ccFix {
 	img := editiontest.ChallengesRel + "/" + ccB
 	tr.Put(img+"/falco-rule.yaml", ccRule(o.noShares))
 	tr.Put(img+"/journey.yaml", ccJourney)
-	pSpecText, pTmpl := ccSpec("p", "c.txt"), ccTemplate("v=")
+	pSpecText, pTmpl := ccSpec("p", "c.txt"), ccTemplate("v=", "p")
 	pSpec, err := edition.ParseSpec([]byte(pSpecText))
 	if err != nil {
 		t.Fatalf("ParseSpec (practice of %s): %v", ccB, err)
@@ -128,7 +135,7 @@ func newCrossCevFix(t *testing.T, o ccOpts) *ccFix {
 	tr.PutScenario(editiontest.ScenarioID, editiontest.Evade, editiontest.CID, ccB)
 
 	// The event edition of the second challenge.
-	bSpecText, bTmpl := ccSpec("r", ccPeers), ccTemplate("line of the peer list")+o.bExtra
+	bSpecText, bTmpl := ccSpec("r", ccPeers), ccTemplate("line of the peer list", "r")+o.bExtra
 	tr.Put(editiontest.EditionRootRel+"/"+ccB+"/"+edition.SpecFileName, bSpecText)
 	tr.Put(editiontest.EditionRootRel+"/"+ccB+"/"+edition.TemplateDirName+"/"+ccPeers, bTmpl)
 	tr.Put(editiontest.EditionRootRel+"/"+ccB+"/"+edition.TemplateDirName+"/"+ccShared, ccSharedText)

@@ -193,7 +193,12 @@ func TestCheckEvent_EachCheckBrokenAloneRefusesTheEvent(t *testing.T) {
 		}, wantRules: []string{"E2"}, onlyRules: true},
 		{name: "E2: a clue that is not a word of the template (amendment 28)", brk: func(f *cevFix) {
 			f.rewrite("edition-root/"+demoCID+"/"+edition.SpecFileName, func(s string) string {
-				return strings.Replace(s, "    question: q4\n", "    question: q4\n    clues: [no-such-word]\n", 1)
+				// when declares its clues (amendment 31): the word joins them.
+				old := "    clues: " + editiontest.Clues("when") + "\n"
+				if !strings.Contains(s, old) {
+					f.t.Fatal("the fixture's edition.yaml declares no clues of when: the test does not test")
+				}
+				return strings.Replace(s, old, "    clues: "+strings.TrimSuffix(editiontest.Clues("when"), "]")+", no-such-word]\n", 1)
 			})
 		}, wantRules: []string{"E2"}, onlyRules: true},
 		{name: "E2: a filler of one word (amendment 28 (c))", brk: func(f *cevFix) {
@@ -250,9 +255,11 @@ func TestCheckEvent_EachCheckBrokenAloneRefusesTheEvent(t *testing.T) {
 		{name: "B9: an answer is in a public file", brk: func(f *cevFix) {
 			f.put("corpus/leak.txt", "a public file that holds "+f.answers["seat-a/q1"]+"\n")
 		}, wantRules: []string{"B9"}, onlyRules: true},
+		// B18 too: the practice's answer lines (now the event's text in a.txt) lose their clue
+		// words, and a practice answer with no clue word is held by every event (fail-closed).
 		{name: "B4: the event template is the practice template", brk: func(f *cevFix) {
 			f.put("challenges/"+demoCID+"/edition/template/a.txt", f.tmpl)
-		}, wantRules: []string{"B4"}, onlyRules: true, wantB4Ran: true},
+		}, wantRules: []string{edition.RulePracticeClues, "B4"}, onlyRules: true, wantB4Ran: true},
 		{name: "B7: two seats hold the same token at a decoy's position", brk: func(f *cevFix) {
 			f.copyDecoyLine()
 		}, wantRules: []string{"B7"}, wantB4Ran: true},
@@ -327,9 +334,10 @@ func TestCheckEvent_StepsSixToEightAreAllRun(t *testing.T) {
 	// B7: two seats hold the same token at a decoy's position
 	f.copyDecoyLine()
 
-	err, report := f.refused("B4, B7 and B10 together")
-	if got := cevRuleSet(err); !slices.Equal(got, []string{"B10", "B4", "B7"}) || !report.OverlapRan {
-		t.Errorf("rules %v, report %+v; want B10, B4 and B7 together and B4's numbers (err: %v)", got, report, err)
+	// (the practice template replaced, the practice's answer lines have no clue word: B18 too)
+	err, report := f.refused("B4, B7, B10 and B18 together")
+	if got := cevRuleSet(err); !slices.Equal(got, []string{"B10", "B18", "B4", "B7"}) || !report.OverlapRan {
+		t.Errorf("rules %v, report %+v; want B10, B18, B4 and B7 together and B4's numbers (err: %v)", got, report, err)
 	}
 }
 

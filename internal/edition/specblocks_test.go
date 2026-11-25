@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/Qfour/falco-ctf-app/internal/edition"
+	"github.com/Qfour/falco-ctf-app/internal/edition/editiontest"
 )
 
 // sbGroup is the slots of the group of an answer slot with n decoys: the answer, then d1..dn.
@@ -73,6 +74,42 @@ func sbWithFillers(d specDoc, fillers ...specSlot) specDoc {
 
 func sbTick(name, window string) specSlot {
 	return specSlot{name: name, role: "filler", format: "timestamp", window: window}
+}
+
+// sbKeyed is lines with the n lines of a block from line from (1-based) put in the two-step shape
+// (ADR-0056 amendment 31): each ends with a key of its own (<kp>-k<i>), and the clue line of each
+// key (its clue columns editiontest.ClueTuple of the group g, the answer's first) is added after
+// the last line.
+func sbKeyed(lines []string, g, kp string, from, n int) []string {
+	out := slices.Clone(lines)
+	for i := range n {
+		out[from-1+i] += fmt.Sprintf(" {{ctf:%s-k%d}}", kp, i)
+	}
+	for i := range n {
+		w1, w2 := editiontest.ClueTuple(g, i)
+		out = append(out, fmt.Sprintf("clue {{ctf:%s-k%d}} %s %s", kp, i, w1, w2))
+	}
+	return out
+}
+
+// sbWithKeys is d with the clues of the answer slot of index i set to editiontest.Clues(g) and
+// the keys <kp>-k0 .. <kp>-k<n-1> declared (sbKeyed's).
+func sbWithKeys(d specDoc, i int, g, kp string, n int) specDoc {
+	d = d.with(i, func(s *specSlot) { s.clues = editiontest.Clues(g) })
+	for j := range n {
+		d = sbWithFillers(d, specSlot{name: fmt.Sprintf("%s-k%d", kp, j), role: "filler", format: "name", vocab: "[[ka, kb, kc]]"})
+	}
+	return d
+}
+
+// sbKeyedDoc is sbDoc in the two-step shape: when's clues and keys wk-k0 .. wk-k4.
+func sbKeyedDoc() specDoc {
+	return sbWithKeys(sbDoc(), slotWhen, "when", "wk", 5)
+}
+
+// sbKeyedLines is sbLines in the two-step shape (sbKeyedDoc's).
+func sbKeyedLines(lines []string) []string {
+	return sbKeyed(lines, "when", "wk", 2, 5)
 }
 
 // sbWhereDoc is specGoodDoc with one block over where's group in sbWhereLines and its fillers:
@@ -276,32 +313,32 @@ func TestParseSpec_AClueViolationNamesItsPlaceNotTheClue(t *testing.T) {
 	}
 }
 
-// E2: what fits the template is accepted.
+// E2: what fits the template is accepted. Every group in a block is in the two-step shape
+// (amendment 31: (e1) to (e4)), its clue lines after the lines of the file.
 func TestCheckBlocksAndClues_Accepts(t *testing.T) {
 	when, where := sbLines(), sbWhereLines()
 	withOther := append([]string{sbHead}, sbGroupLines("when", 4, func(i int, s string) string {
 		return fmt.Sprintf("{{ctf:other}} {{ctf:%s}} pod-%c shell", s, 'a'+i)
 	})...)
 	twoGroups := append(slices.Clone(when), where[1:]...) // when's on lines 2-6, where's on 7-11
+	whereDoc := sbWithKeys(sbWhereDoc(), slotWhere, "where", "rk", 5)
 	cases := []struct {
 		name string
 		doc  specDoc
 		tmpl []edition.BundleFile
 	}{
-		{"when's group in a block (the group's marks are the time slots)", sbDoc(), sbTemplate(when)},
-		{"where's group in a block (each line has a time filler of its own, of one window)", sbWhereDoc(), sbTemplate(where)},
+		{"when's group in a block (the group's marks are the time slots)", sbKeyedDoc(), sbTemplate(sbKeyedLines(when))},
+		{"where's group in a block (each line has a time filler of its own, of one window)", whereDoc, sbTemplate(sbKeyed(where, "where", "rk", 2, 5))},
 		{"no blocks and no clues, whatever the template", specGoodDoc(), sbTemplate([]string{"x"})},
-		{"a file whose last line has no line feed", sbDoc(), []edition.BundleFile{{Name: "log.txt", Data: []byte(strings.Join(when, "\n"))}}},
-		{"a literal time after the time slot", sbDoc(), sbTemplate(sbLinesWith(when, 3, "{{ctf:when-d1}} pod-b 2000-01-01T00:00:01Z"))},
-		{"the mark of a name slot, alone, before the time slot in every line", sbDoc(), sbTemplate(withOther)},
+		{"a file whose last line has no line feed", sbKeyedDoc(), []edition.BundleFile{{Name: "log.txt", Data: []byte(strings.Join(sbKeyedLines(when), "\n"))}}},
+		{"a literal time after the time slot", sbKeyedDoc(), sbTemplate(sbKeyedLines(sbLinesWith(when, 3, "{{ctf:when-d1}} pod-b 2000-01-01T00:00:01Z")))},
+		{"the mark of a name slot, alone, before the time slot in every line", sbKeyedDoc(), sbTemplate(sbKeyedLines(withOther))},
 		{"two groups, each in a block of its own, in one file",
-			sbWhereDoc().withBlocks("[{file: log.txt, from: 2, to: 6}, {file: log.txt, from: 7, to: 11}]").with(slotWhen, func(s *specSlot) { s.clues = "[pod-a]" }),
-			sbTemplate(twoGroups)},
-		{"one group in two blocks of two files (a block for each place it is written)",
-			sbDoc().withBlocks("[{file: log.txt, from: 2, to: 6}, {file: copy.txt, from: 1, to: 5}]"),
-			append(sbTemplate(when), sbFile("copy.txt", when[1:]))},
-		{"a clue in another file of the template", sbDoc().with(slotWhen, func(s *specSlot) { s.clues = "[desk-x]" }),
-			append(sbTemplate(when), sbFile("notes.txt", []string{"seen on desk-x"}))},
+			sbWithKeys(whereDoc.withBlocks("[{file: log.txt, from: 2, to: 6}, {file: log.txt, from: 7, to: 11}]"), slotWhen, "when", "wk", 5),
+			sbTemplate(sbKeyed(sbKeyed(twoGroups, "when", "wk", 2, 5), "where", "rk", 7, 5))},
+		{"one group in two blocks of two files (a block for each place it is written, each line with its own clue line)",
+			sbWithKeys(sbKeyedDoc().withBlocks("[{file: log.txt, from: 2, to: 6}, {file: copy.txt, from: 1, to: 5}]"), slotWhen, "when", "ck", 5),
+			append(sbTemplate(sbKeyedLines(when)), sbFile("copy.txt", sbKeyed(when[1:], "when", "ck", 1, 5)))},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -363,6 +400,11 @@ func TestCheckBlocksAndClues_Refusals(t *testing.T) {
 		{"a clue that is a slot name inside a mark", sbDoc().with(slotWhen, func(s *specSlot) { s.clues = "[when-d1]" }), sbTemplate(when)},
 		{"a clue glued to a mark", sbDoc().with(slotWhen, func(s *specSlot) { s.clues = "[pod-q]" }), sbTemplate(sbLinesWith(when, 7, "pod-q{{ctf:other}}"))},
 		{"the sentinel as a clue that is not in the template", sbDoc().with(slotWhen, func(s *specSlot) { s.clues = "[" + sentinel + "]" }), sbTemplate(when)},
+
+		// the clue lines (amendment 31; the rest of their rules: rowsymmetry_test.go)
+		{"a clue in another file of the template, not on the answer's clue line (e3)", sbKeyedDoc().with(slotWhen, func(s *specSlot) { s.clues = "[desk-x]" }),
+			append(sbTemplate(sbKeyedLines(when)), sbFile("notes.txt", []string{"seen on desk-x"}))},
+		{"a group in a block with no clue (e1)", sbDoc().with(slotWhen, func(s *specSlot) { s.clues = "" }), sbTemplate(when)},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -421,12 +463,14 @@ func TestCheckBlocksAndClues_ASpecNotFromParseSpecIsRefused(t *testing.T) {
 
 // sbRenderTemplate is the template of rdDoc's slots with when's group in c.txt, a line per slot
 // (its first token a literal word, its mark alone, so each line's time slot is its own), and
-// every other slot in a.txt, one line `<slot>={{ctf:<slot>}}` each. It returns the number of
-// lines of c.txt.
+// every other slot in a.txt, one line `<slot>={{ctf:<slot>}}` each. When the spec declares the
+// keys wk0 .. (sbRenderKeys), each line of c.txt ends with its own, and k.txt holds the clue line
+// of each (amendment 31's two-step shape). It returns the number of lines of c.txt.
 func sbRenderTemplate(spec *edition.Spec) ([]edition.BundleFile, int) {
+	keyed := slices.ContainsFunc(spec.Slots, func(s edition.Slot) bool { return s.Name == "wk0" })
 	var a []string
 	for _, s := range spec.Slots {
-		if s.Name != "when" {
+		if s.Name != "when" && !strings.HasPrefix(s.Name, "wk") {
 			a = append(a, fmt.Sprintf("%s={{ctf:%s}}", s.Name, s.Name))
 		}
 	}
@@ -439,9 +483,29 @@ func sbRenderTemplate(spec *edition.Spec) ([]edition.BundleFile, int) {
 		}
 	}
 	c := sbGroupLines("when", len(group), func(i int, s string) string {
+		if keyed {
+			return fmt.Sprintf("%s={{ctf:%s}} pod-%d shell {{ctf:wk%d}}", s, s, i, i)
+		}
 		return fmt.Sprintf("%s={{ctf:%s}} pod-%d shell", s, s, i)
 	})
-	return []edition.BundleFile{sbFile("a.txt", a), sbFile("c.txt", c)}, len(c)
+	files := []edition.BundleFile{sbFile("a.txt", a), sbFile("c.txt", c)}
+	if keyed {
+		var k []string
+		for i := range c {
+			w1, w2 := editiontest.ClueTuple("when", i)
+			k = append(k, fmt.Sprintf("clue {{ctf:wk%d}} %s %s", i, w1, w2))
+		}
+		files = append(files, sbFile("k.txt", k))
+	}
+	return files, len(c)
+}
+
+// sbRenderKeys is d with the keys wk0 .. wk<n-1> of sbRenderTemplate declared.
+func sbRenderKeys(d specDoc, n int) specDoc {
+	for j := range n {
+		d = sbWithFillers(d, specSlot{name: fmt.Sprintf("wk%d", j), role: "filler", format: "name", vocab: "[[ka, kb, kc]]"})
+	}
+	return d
 }
 
 // sbLineTime is the time of a line of sbRenderTemplate's c.txt (`<slot>=<time> pod-<i> shell`).
@@ -462,13 +526,14 @@ func sbLineTime(t *testing.T, line string) string {
 // whom no earlier seat constrains (r1), gets the same values, and its block holds the same lines,
 // put in the order of their times.
 func TestRender_ABlockChangesOnlyItsGroupAndItsLines(t *testing.T) {
-	plain := rdDoc()
+	_, n := sbRenderTemplate(rdSpec(t, rdDoc()))
+	plain := sbRenderKeys(rdDoc(), n)
 	tmpl, lines := sbRenderTemplate(rdSpec(t, plain))
 	declared := plain.
 		withBlocks(fmt.Sprintf("[{file: c.txt, from: 1, to: %d}]", lines)).
-		with(slotWhen, func(s *specSlot) { s.clues = "[pod-0]" })
-	if spec := rdSpec(t, declared); len(spec.Blocks) != 1 || len(spec.Slots[slotWhen].Clues) != 1 {
-		t.Fatal("the declared edition has no block or no clue: the test does not test")
+		with(slotWhen, func(s *specSlot) { s.clues = editiontest.Clues("when") })
+	if spec := rdSpec(t, declared); len(spec.Blocks) != 1 || len(spec.Slots[slotWhen].Clues) != 2 || len(tmpl) != 3 {
+		t.Fatal("the declared edition has no block, no clues or no clue lines: the test does not test")
 	}
 	run := func(d specDoc) *edition.Rendered {
 		t.Helper()

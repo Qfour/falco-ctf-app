@@ -232,6 +232,37 @@ func TestLoad_PracticeModeDoesNotReadTheBundleOrTheTemplate(t *testing.T) {
 	}
 }
 
+// B18's input (ADR-0056 amendment 30, A7-x PR 4b): readPracticeFiles reads each practice
+// edition's edition.yaml as bytes, and one it cannot read (missing, a link, over the size
+// limit) is no bytes, not an error of the table's door (B18 refuses it, fail-closed).
+func TestReadPracticeFiles_ReadsTheSpecForB18(t *testing.T) {
+	dir := filesTree(t, map[string]map[string]string{
+		"01-demo":  {"edition/edition.yaml": "version: 1\n", "edition/template/page.txt": "template page"},
+		"02-bare":  {"edition/template/only.txt": "template only"},
+		"03-large": {"edition/edition.yaml": strings.Repeat("#", MaxSpecBytes+2), "edition/template/x.txt": "x"},
+		"04-link":  {"edition/template/y.txt": "y"},
+	})
+	filesWrite(t, filepath.Join(dir, "outside.yaml"), "version: 1\n")
+	if err := os.Symlink(filepath.Join(dir, "outside.yaml"), filepath.Join(dir, "04-link", EditionDirName, SpecFileName)); err != nil {
+		t.Fatal(err)
+	}
+	files, err := readPracticeFilesOf(t, dir)
+	if err != nil {
+		t.Fatalf("readPracticeFiles: %v (an edition.yaml it cannot read is B18's, not the door's)", err)
+	}
+	if got := string(files["01-demo"].Spec); got != "version: 1\n" {
+		t.Errorf("the edition.yaml of 01-demo = %q, want its bytes", got)
+	}
+	for _, id := range []string{"02-bare", "03-large", "04-link"} {
+		switch pe := files[id]; {
+		case pe == nil:
+			t.Errorf("%s: no practice edition was read", id)
+		case pe.Spec != nil:
+			t.Errorf("%s: Spec holds %d bytes, want nil (missing, over the limit, a link)", id, len(pe.Spec))
+		}
+	}
+}
+
 func readPracticeFilesOf(t *testing.T, dir string) (practiceFiles, error) {
 	t.Helper()
 	_, _, dirs, err := loadPractice(treeScored(t, dir))

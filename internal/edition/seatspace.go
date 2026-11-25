@@ -75,8 +75,8 @@ func (s *Spec) CheckSeatSpace(cid string, qs []catalog.Question, template []Bund
 
 // groupDecoys is k of an answer slot's group: the larger of K (DecoyK of the question's attempts)
 // and the decoys the slot declares (E2 holds the second to at least the first). B8 (a2)'s bound of
-// a group in a block and B19's threshold (k + 1, rowsymmetry.go) read it from here, the one
-// place it is taken.
+// a group in a block reads it from here, the one place it is taken. (B19's threshold was k + 1
+// until amendment 31, which made it 2 x attempts: clueSpaceThreshold, rowsymmetry.go.)
 func groupDecoys(attempts int, sl *Slot) int {
 	k := DecoyK(attempts)
 	if sl.Decoys != nil && *sl.Decoys > k {
