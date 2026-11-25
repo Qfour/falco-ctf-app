@@ -17,13 +17,13 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
+	"github.com/Qfour/falco-ctf-app/internal/catalog/catalogtest"
 )
 
 // nimbusbreachArcPins is the intersection set of the canonical 01 to 10 arc
@@ -205,23 +205,12 @@ func TestDiffEvadePins_NegativeCases(t *testing.T) {
 	}
 }
 
-// writeGuardScenario writes <root>/<name>/scenario.yaml with the given ordered
-// challenges. Fixtures stay under t.TempDir(); the real scenarios/ tree is
-// never touched.
+// writeGuardScenario writes <root>/<name>/ with the given ordered challenges
+// (catalogtest: a module.yaml and its scenario.yaml). Fixtures stay under
+// t.TempDir(); the real scenarios/ tree is never touched.
 func writeGuardScenario(t *testing.T, root, name string, challenges ...string) {
 	t.Helper()
-	dir := filepath.Join(root, name)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "id: %s\ntitle: %s\nchallenges:\n", name, name)
-	for _, c := range challenges {
-		fmt.Fprintf(&b, "  - %s\n", c)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "scenario.yaml"), []byte(b.String()), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	catalogtest.WriteScenario(t, root, name, challenges...)
 }
 
 // End to end on a synthetic tree, through the same calls the real test makes

@@ -318,14 +318,6 @@ func (f *rfFix) addExtraEvade() {
 	f.tree.Put(editiontest.FlagsRel, "flags:\n  "+editiontest.Evade+": "+editiontest.Flag+"\n  "+scopeExtraEvade+": FALCO{dev-fixture-02}\n")
 }
 
-// scopeScenario writes a scenario file of the ids, in that order, at rel of the tree, and returns
-// its path.
-func scopeScenario(tree *editiontest.Tree, rel string, ids ...string) string {
-	tree.T.Helper()
-	tree.Put(rel, "id: fixture\ntitle: Fixture\nchallenges: ["+strings.Join(ids, ", ")+"]\n")
-	return tree.Path(rel)
-}
-
 // expectB12 runs the check and wants no event, a rule's refusal (not a usage error), and B12
 // alone.
 func expectB12(t *testing.T, what string, in edition.CheckInput) {
@@ -349,7 +341,7 @@ func TestScopeB12_TheRecordHoldsTheScopeAndAnotherOrderIsRefused(t *testing.T) {
 	f := newRfFix(t)
 	f.addExtraEvade()
 	order := []string{editiontest.Evade, scopeExtraEvade, editiontest.CID}
-	f.in.ScenarioFile = scopeScenario(f.tree, editiontest.ScenarioRel, order...)
+	f.in.ScenarioFile = f.tree.PutScenario(editiontest.ScenarioID, order...)
 	if _, err := edition.RenderEvent(f.in); err != nil {
 		t.Fatalf("RenderEvent: %v", err)
 	}
@@ -379,7 +371,7 @@ func TestScopeB12_TheRecordHoldsTheScopeAndAnotherOrderIsRefused(t *testing.T) {
 		t.Fatalf("the check with the render's own scope = (%v, %v); want it accepted (the cases below would prove nothing)", ev, err)
 	}
 	in := f.checkInput()
-	in.ScenarioFile = scopeScenario(f.tree, "scenario/swapped.yaml", scopeExtraEvade, editiontest.Evade, editiontest.CID)
+	in.ScenarioFile = f.tree.PutScenario("swapped", scopeExtraEvade, editiontest.Evade, editiontest.CID)
 	expectB12(t, "the same challenges in another order", in)
 }
 
@@ -395,7 +387,7 @@ func TestScopeB12_AnEvadeChallengeAdded(t *testing.T) {
 		t.Fatalf("the check with the render's own scope = (%v, %v); want it accepted", ev, err)
 	}
 	in := f.checkInput()
-	in.ScenarioFile = scopeScenario(f.tree, "scenario/plus-evade.yaml", editiontest.Evade, scopeExtraEvade, editiontest.CID)
+	in.ScenarioFile = f.tree.PutScenario("plus-evade", editiontest.Evade, scopeExtraEvade, editiontest.CID)
 	expectB12(t, "an evade challenge added", in)
 }
 
@@ -416,7 +408,7 @@ func TestScopeB12_AnInvestigateChallengeLeftOut(t *testing.T) {
 	tree.Put(editiontest.ChallengesRel+"/"+second+"/journey.yaml", strings.Replace(editiontest.Journey, "challengeId: "+editiontest.CID, "challengeId: "+second, 1))
 	tree.Put(editiontest.EditionRootRel+"/"+second+"/"+edition.SpecFileName, editiontest.GoodSpec())
 	tree.Put(editiontest.EditionRootRel+"/"+second+"/"+edition.TemplateDirName+"/"+editiontest.TemplateName, editiontest.GoodTemplate())
-	scopeScenario(tree, editiontest.ScenarioRel, editiontest.Evade, editiontest.CID, second)
+	tree.PutScenario(editiontest.ScenarioID, editiontest.Evade, editiontest.CID, second)
 
 	// The render of the two (the renderer's own output, as checkevent_helpers_test.go makes it).
 	p := tree.Paths()
@@ -468,7 +460,7 @@ func TestScopeB12_AnInvestigateChallengeLeftOut(t *testing.T) {
 
 	in := edition.CheckInput{
 		Challenges:       p.Challenges,
-		ScenarioFile:     scopeScenario(tree, "scenario/without-second.yaml", editiontest.Evade, editiontest.CID),
+		ScenarioFile:     tree.PutScenario("without-second", editiontest.Evade, editiontest.CID),
 		FlagsFile:        p.Flags,
 		AnswersFile:      p.Answers,
 		RenderRecordFile: p.RenderRecord,

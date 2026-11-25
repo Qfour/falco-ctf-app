@@ -193,9 +193,9 @@ func TestSourceSchemas_AreTheADRKeys(t *testing.T) {
 		{reflect.TypeOf(Edition{}), []string{",inline", "playbook"}},
 		{reflect.TypeOf(Requires{}), []string{"modules"}},
 		{reflect.TypeOf(Timebox{}), []string{"minutes", "introMinutes", "closingMinutes"}},
-		{reflect.TypeOf(Composed{}), []string{"id", "title", "challenges", "source"}},
-		{reflect.TypeOf(ComposedSource{}), []string{"kind", "modules"}},
-		{reflect.TypeOf(ComposedModule{}), []string{"id", "version", "edition"}},
+		{reflect.TypeOf(Scenario{}), []string{"id", "title", "challenges", "source"}},
+		{reflect.TypeOf(ScenarioSource{}), []string{"kind", "modules"}},
+		{reflect.TypeOf(ScenarioModule{}), []string{"id", "version", "edition"}},
 	} {
 		var got []string
 		for i := range c.typ.NumField() {
