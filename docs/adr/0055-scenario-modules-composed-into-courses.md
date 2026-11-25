@@ -170,7 +170,7 @@
   - `detect`: スコープに `type: detect` があるか。
   - `exfil`: スコープに exfil を採点に使う課題があるか。
   - `rules`: スコープの課題の `expectedRules ∪ forbiddenRules` の rule 名の集合。app は default ruleset と customRules の区別を持たない。名前が解決できるかの照合は platform が行う。
-  - `answers`: スコープの調査型の課題 id の、並べ替えた集合 (ADR-0056 D17)。A1b (#607) は merge 済みなので、S3a で最初から出す。ADR-0056 の P1b-1b (platform の render gate) がこれを読む。P1b-1b は、調査型の課題を main に置く A7 の前提である。
+  - `answers`: スコープの調査型の課題 id の、並べ替えた集合 (ADR-0056 D17)。A1b (#607) は merge 済みなので、S3a で最初から出す。ADR-0056 の P1b-1b (platform の stand-up の課金の前の gate。ADR-0056 追補 25) がこれを読む。P1b-1b は、調査型の課題を main に置く A7 の前提である。
 - **(2026-11-25 追補、決定 = CTO) `plantMountDirs` を `requirements` の項目から外した。** 元の記述 = 上の一覧の `rules` と `answers` の間にあった 1 項目 `` - `plantMountDirs`。 `` (説明の文は無かった)。理由 = 今の code では課題の catalog から導出できず (`plant.sh` の header からしか分からない)、読み手が居ない。要る場合は Signpost 5。
 - **形と検査 (S3a で決めた細部)**: 4 つの key を `answers`・`detect`・`exfil`・`rules` の順で必ず書く。一覧は byte 順に並べ、同じ値を 2 回書かない。空の一覧は `[]` の 1 行、空でなければ block の列 (1 行に `    - <値>`。YAML の plain で読めない値だけ double-quote)。`exfil` は `requireExfil: true` の課題が scope にあるか (型を問わない)。導出の関数は 1 つ (`catalog.DeriveRequirements`) で、生成器 (`Compose` / `ComposeSolo`、したがって `--check`) と起動 (`catalog.LoadScored`) が呼ぶ。起動は、scope に Restrict した catalog から導出し直し、file の値と違えば起動しない。scope の catalog だけで導出できるので、D5 の「起動時に定義から生成し直さない」(コースの合成には全モジュールが要る) とは別の検査である。strict decode は、`requirements` の欠落、4 つの key の欠落と null、未知の key・重複・型の違い、並びの乱れと重複、scenario の `challenges` に無い `answers` を拒否する (古い image は `requirements` を未知の key として拒否する = image と app の checkout は同じ SHA)。
 - Lv の母数 (= `challenges` の数) と、合計時間 (D7 の C2 の左辺)。
@@ -270,7 +270,9 @@
 - **V5 (S2)**: `gen-scenarios --check` が required check の job で走る。生成物を 1 byte 手で直したコピーで赤になる。3 つの既存 scenario の `challenges` が、literal で pin した移行前の一覧と一致する。
 - **V6 (S3b)**: C2・C3・C4 (ii) に、それぞれ故意の違反 1 件の負の case を置く。C4 (ii) は gen-values の `--check` の内部 fixture で検査する (ADR-0007 V2 と同じ)。C4 (ii) の負の case は ADR-0056 A5a-1 (app#619) の `verify_claims_negative_tests` に既にある (ADR-0056 V42)。S3 で足すのは C2・C3 だけ。
 - **V7 (S3a)**: detect を含む scenario で `DETECT_RUNNER=off` なら、scoreboard が非ゼロ終了する (test)。
-- **V8 (S3a、platform)**: 生成物の `requirements.rules` から customRules の 1 名を消した環境で、verify が課金の前に止まる。`APP_PIN` の app に `requirements:` が無い ref でも止まる。platform の tree に rule 名の写しが無い (grep 0 件)。
+- **V8 (S3a、platform)**: 2 つに分ける (2026-11-25 の注記、ADR-0056 追補 25)。
+  - V8a (`answers`、platform#369): scope に調査型の課題があり `answersSecret` が無効なら、stand-up の課金の前の gate が止まる (ADR-0056 V12)。scenario を設定した回で、clone に `requirements:` が無い (S3a より前の app) ときも止まる。
+  - V8b (`rules`・`detect`、後続): 生成物の `requirements.rules` から customRules の 1 名を消した環境で、課金の前に止まる。platform の tree に rule 名の写しが無い (grep 0 件)。
 - **V9 (S4)**: 3 層の優先と丸ごとの置き換えの単体 test。範囲外を指す overlay と、外の課題を参照する文で赤になる。
 - **V10 (S5)**: module.yaml の集合 ⊆ 生成された scenario の集合 (CI)。runbook の部分は機械の確認が「無し」。
 
