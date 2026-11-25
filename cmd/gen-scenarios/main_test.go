@@ -1,6 +1,6 @@
 package main
 
-// ADR-0055 S2b-1 (V5 on a synthetic tree): every tree here is built under t.TempDir(); the
+// ADR-0055 S2b / S2c (V5 on a synthetic tree): every tree here is built under t.TempDir(); the
 // real scenarios/ and challenges/ are not read.
 
 import (
@@ -15,6 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Qfour/falco-ctf-app/internal/catalog"
+	"github.com/Qfour/falco-ctf-app/internal/catalog/catalogtest"
 	"github.com/Qfour/falco-ctf-app/internal/catalog/challengeid"
 )
 
@@ -327,6 +328,30 @@ func TestRender_AttackReaderTitle(t *testing.T) {
 	}
 }
 
+// The tests' fixture helper (catalogtest) writes what this generator writes: the rendering of
+// ComposeSolo(catalogtest.Module(...)) is byte for byte catalogtest.Scenario(...).
+func TestRender_IsTheFixtureHelpersScenario(t *testing.T) {
+	const id = "demo"
+	challenges := []string{"02-b", "01-a"}
+	root := t.TempDir()
+	put(t, root, id+"/"+catalog.ModuleFile, catalogtest.Module(id, challenges...))
+	m, err := catalog.LoadModule(filepath.Join(root, id, catalog.ModuleFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := catalog.ComposeSolo(m, catalog.Catalog{"01-a": {ID: "01-a"}, "02-b": {ID: "02-b"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := render(c, "scenarios/"+id+"/"+catalog.ModuleFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := catalogtest.Scenario(id, challenges...); string(got) != want {
+		t.Fatalf("render =\n%s\ncatalogtest.Scenario =\n%s", got, want)
+	}
+}
+
 func TestUsage(t *testing.T) {
 	for _, args := range [][]string{nil, {"a", "b"}, {"--check", "--out", "x", "a"}, {"--nope", "a"}} {
 		if code, _, _ := gen(t, args...); code != exitUsage {
@@ -345,10 +370,10 @@ func TestUsage(t *testing.T) {
 //     with - (# and spaces cut), closes at any other line;
 //   - charts/ctf-user/deploy-user.sh:517-528 only tests that the file exists, and reads
 //     the list through validate-flags-file.sh (:583) and assert-flag-isolation.sh (:1196);
-//   - and a fifth, not shell: scripts/gen-attack-layer.py load_scenarios (:280-309) reads
-//     the list with _yaml_block_list (:259-277: opens at ^challenges:\s*$, skips a blank
-//     line, takes a line starting with -, closes at any other) and id / title with
-//     _yaml_scalar (:233-238), which strips quotes and unescapes nothing: render refuses
+//   - and a fifth, not shell: scripts/gen-attack-layer.py load_scenarios reads the list
+//     with _yaml_block_list (opens at ^challenges:\s*$, skips a blank line, takes a line
+//     starting with -, closes at any other) and id / title with _yaml_scalar, which
+//     strips quotes and unescapes nothing: render refuses
 //     a value it would read otherwise (TestRender_AttackReaderTitle).
 //
 // In this form (one line that is exactly "challenges:", then "  - <id>" lines of the

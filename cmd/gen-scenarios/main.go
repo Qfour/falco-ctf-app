@@ -1,4 +1,4 @@
-// Command gen-scenarios is the generator of ADR-0055 D5 (stage S2b-1). It writes each
+// Command gen-scenarios is the generator of ADR-0055 D5 (stages S2b and S2c). It writes each
 // scenarios/<id>/scenario.yaml from that directory's module.yaml or course.yaml, read
 // by internal/catalog's strict parser and flattened by catalog.Compose / ComposeSolo
 // over the challenge pool challenges/ (catalog.Load): the code the runtime uses, not a

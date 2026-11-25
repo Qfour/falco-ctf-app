@@ -35,17 +35,17 @@ func Scenario(id string, challenges ...string) string {
 		"source:\n  kind: module\n  modules:\n    - id: " + id + "\n      version: 1\n"
 }
 
-// WriteScenario writes <root>/<id>/module.yaml and <root>/<id>/scenario.yaml of the
-// challenges, in that order (replacing them when they are there), and returns the path of
-// the scenario.yaml. root is a directory the test owns (t.TempDir()), never scenarios/.
+// WriteScenario writes <root>/<id>/module.yaml, then <root>/<id>/scenario.yaml, of the
+// challenges in that order (replacing the files when they are there), and returns the path
+// of the scenario.yaml. root is a directory the test owns (t.TempDir()), never scenarios/.
 func WriteScenario(t testing.TB, root, id string, challenges ...string) string {
 	t.Helper()
 	dir := filepath.Join(root, id)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for name, body := range map[string]string{"module.yaml": Module(id, challenges...), "scenario.yaml": Scenario(id, challenges...)} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+	for _, f := range [][2]string{{"module.yaml", Module(id, challenges...)}, {"scenario.yaml", Scenario(id, challenges...)}} {
+		if err := os.WriteFile(filepath.Join(dir, f[0]), []byte(f[1]), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}

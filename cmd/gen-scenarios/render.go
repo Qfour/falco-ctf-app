@@ -66,8 +66,8 @@ func render(c catalog.Scenario, src string) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-// attackRead is the value scripts/gen-attack-layer.py's _yaml_scalar (:233-238, called by
-// load_scenarios :295-301) takes from the line "<key>: v": v without the blanks around it,
+// attackRead is the value scripts/gen-attack-layer.py's _yaml_scalar (called by
+// load_scenarios) takes from the line "<key>: v": v without the blanks around it,
 // then without every " at either end, then without every ' at either end. It unescapes
 // nothing, so a value it reads otherwise than YAML does is refused by render.
 func attackRead(v string) string {
