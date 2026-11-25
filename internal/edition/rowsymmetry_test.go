@@ -34,6 +34,8 @@ type rsOpts struct {
 	noBlocks bool
 	// k3 replaces the declaration of the filler k3 (the key of the third decoy's line).
 	k3 string
+	// clues replaces the clues of when (alpha, sh, root).
+	clues string
 }
 
 // rsSpec is the synthetic edition.yaml: the answer `when` with 4 decoys and the clues alpha, sh and
@@ -42,7 +44,10 @@ func rsSpec(o rsOpts) string {
 	var b strings.Builder
 	b.WriteString("version: 1\ntime:\n  base: \"2001-01-01T00:00:00Z\"\nslots:\n")
 	b.WriteString("  - name: when\n    role: answer\n    question: q1\n    decoys: 4\n    window: {from: 0, to: 3600}\n")
-	if !o.noClues {
+	switch {
+	case o.clues != "":
+		b.WriteString("    clues: " + o.clues + "\n")
+	case !o.noClues:
 		b.WriteString("    clues: [alpha, sh, root]\n")
 	}
 	for i := range 5 {
@@ -240,6 +245,32 @@ func TestRowRules_EachBrokenCopyIsRefused(t *testing.T) {
 			}
 			rsNoValue(t, r.err)
 		})
+	}
+}
+
+// B19 at its bound (the review's R2#2): a slot of one clue has one proper subset, the empty one, so
+// every line of the template is counted. With the answer and its 4 decoys and no other time, that is
+// k + 1 = 5 values and B19 is silent; with one decoy's line gone (no block declares the group, so E2
+// does not ask for it; B17 refuses that, and only B19 is looked at here), it is k = 4 and B19
+// refuses.
+func TestRowRules_B19AtItsBoundWithOneClue(t *testing.T) {
+	var clueLines strings.Builder
+	for i := range 5 {
+		fmt.Fprintf(&clueLines, "key {{ctf:k%d}} user root\n", i)
+	}
+	full := rsBlock()
+	short := strings.Replace(full, "at {{ctf:when-d4}} seen key {{ctf:k4}}\n", "", 1)
+	if short == full {
+		t.Fatal("the line of the fourth decoy was not taken out: the test does not test")
+	}
+	spec := rsSpec(rsOpts{noBlocks: true, clues: "[root]"})
+	at := rsCheck(t, spec, full, clueLines.String())
+	if slices.Contains(rules(at.err), edition.RuleClueSpace) || at.rep.ClueSets != 1 {
+		t.Errorf("k + 1 values with the empty subset: (%+v, %v); want one subset counted and no B19", at.rep, at.err)
+	}
+	below := rsCheck(t, spec, short, clueLines.String())
+	if !slices.Contains(rules(below.err), edition.RuleClueSpace) || !strings.Contains(fmt.Sprint(below.err), "hold 4 values") {
+		t.Errorf("k values with the empty subset: %v; want B19, 4 values", below.err)
 	}
 }
 
