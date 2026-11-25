@@ -4,7 +4,10 @@ challengeId: 51-nimbus-desk-egress
 # 50-nimbus-desk-triage, but its own evidence bundle and its own mountDir: two challenges
 # may not share or nest a mount directory (D1 (b)), and the bundle is per (seat, challenge)
 # (D11, the Secret ctf-evidence-<cid>). The bundle carries no value that is a per-seat
-# answer of 50, and 50's bundle carries none of this one (D1 (ii)).
+# answer of 50, and 50's bundle carries none of this one (ADR-0056 amendment 26, B13). Every
+# literal time of this bundle is one of 50's (B15); egress-gateway.log is byte-identical to 50's
+# and carries no slot mark (B14; its declaration investigate.evidence.shares is added with A7-x,
+# when the catalog has the key).
 #
 # Only the SHAPE of the questions is here; the answers are rendered into edition/practice/
 # by `make edition-practice CID=51-nimbus-desk-egress` (practice) or on the platform side.
@@ -18,16 +21,14 @@ investigate:
     - id: dest-host
       format: name
       attempts: 5
-    # Q6 (fixed): the Tactics of the five stages, in the order the stages happened. 5 of 10
-    # labels: 10!/5! = 30240 arrangements (D3 (a)). The labels are listed in alphabetical
-    # order, not in the answer's order. Tactic names only (no technique ids: the technique
-    # format is refused until ADR-0056 A1c).
-    - id: tactic-order
-      format: sequence
+    # Q6 (per seat): the name the intruder looked up in the cluster DNS in the stage that is
+    # ATT&CK Discovery. The prompt names the Tactic only: which stage it is, and so which
+    # record and which address to join, is the participant's to decide (L3). It replaces a
+    # fixed `sequence` of the Tactics (ADR-0056 amendment 26: a fixed answer must be able to
+    # differ from the public practice edition, which the order of the story cannot).
+    - id: lookup-name
+      format: name
       attempts: 5
-      params:
-        length: 5
-        labels: [c2-exfiltration, collection, credential-access, discovery, execution, impact, lateral-movement, persistence, privilege-escalation, stealth]
 # ATT&CK mapping — canonical source for docs/Navigator layer (make gen-attack).
 # Provisional (the brief leaves the Technique ID column to the CEO; gen-attack-layer.py needs
 # one complete block). The Falco-observed behaviour in this bundle is the shell under the web

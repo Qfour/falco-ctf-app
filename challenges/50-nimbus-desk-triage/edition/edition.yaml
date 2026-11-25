@@ -1,22 +1,21 @@
 version: 1
-# The practice edition's base time (public). Every literal time in template/ is written
-# relative to it: the first shell (slot first) lies in [base, base + 600 s), and every
-# later event of the incident is a literal time after base + 600 s, so the order of the
-# incident does not depend on the drawn value.
+# The practice edition's base time (public). The first shell (slot first) lies in the
+# answer window [base, base + 600 s) = 17:00:00..17:09:59 (UTC, 2026-10-21).
 #
-# KEEP time.base AS IT IS. Only the slot `first` moves with it: every other time in
-# template/ is a literal string. If time.base is changed, shift EVERY time in template/
-# by the same amount, so that the window [base, base + 600 s) still lies before the next
-# fixed event of the nimbus-desk container. With this base: the window is
-# 17:00:00..17:09:59 (UTC, 2026-10-21); the next fixed shell alert of nimbus-desk is
-# 17:11:48 (Q1 "first" needs window end < it, margin 108 s) and the next label event
-# (api-probe) is 17:15:32 (event-order needs window end < it). Nothing checks this by
-# machine: a base moved later without the template makes event-order unanswerable.
-# The same holds for an event edition that copies this file (see README.md).
+# ADR-0056 amendment 26, B16: no LITERAL time of this template, nor of the template of
+# 51-nimbus-desk-egress (which shares this timeline), lies in that window. Every record of
+# the window that is not the answer or one of its decoys is a filler slot (q1w-*) with its own
+# small window, so the order of the window's noise is kept and every fixed event of the
+# incident is after the window for every seat: the next shell alert of nimbus-desk is the
+# literal 17:11:48 (Q1 "first": margin 108 s after the window's last second).
+#
+# There is no fixed question (amendment 26: a fixed `sequence` cannot differ from the public
+# practice edition without rewriting the story), so an event edition copies template/ and the
+# slots of this file as they are; nothing of the story has to be rewritten per edition. If it
+# moves time.base, it moves EVERY literal time of this template and of 51's template by the
+# same amount, and 51's time.base with it (B15, B16).
 time:
   base: "2026-10-21T17:00:00Z"
-fixed:
-  event-order: "shell-start,api-probe,secret-read,bundle-write,egress-fail,app-restart"
 slots:
   # Q1 first-shell: the time of the earliest Run shell untrusted alert of the nimbus-desk
   # container. The 10 decoys are Run shell untrusted alerts of OTHER pods ON THE SAME NODE
@@ -62,3 +61,44 @@ slots:
          up-5092.part, up-8730.part, cache-a1.idx, cache-c3.idx, cache-f9.idx, out-221.pdf,
          out-874.pdf, rpt-q3.csv, rpt-q4.csv, x-0001.tmp, x-0042.tmp, x-0377.tmp, wrk-12.bin,
          wrk-91.bin]
+  # Q4 survey-file: the file the intruder's shell wrote what it found into, before the
+  # config and credential reads (no alert, no line in nimbus-desk.log). 1 x 1 x 16 x 32 = 512
+  # paths. The 12 decoys are the web service's own cache files under the same home directory,
+  # also without a log line: 2 before 17:00 (before any first shell) and 10 after the first
+  # refused send (17:23:40), so none lies between the first shell and the config read, and
+  # none in Q3's read-to-deny interval. The only file of this shape between the first shell
+  # and the config read is the answer; the three /tmp files there have their log lines. So the
+  # order of the incident, built across the alerts, the inventory and the log, decides.
+  - name: survey
+    role: answer
+    question: survey-file
+    decoys: 12
+    vocab:
+      - [home]
+      - [desk]
+      - [.cache, .local, .config, .state, .desk, .run, .spool, .work, .tmp, .var, .data, .lib,
+         .share, .queue, .index, .scratch]
+      - [dict-01.bin, dict-07.bin, fonts-2.cache, fonts-9.cache, glyph-11.idx, glyph-42.idx,
+         hist-3.db, hist-8.db, kv-104.dat, kv-377.dat, lock-5.pid, lock-6.pid, map-21.json,
+         map-88.json, note-4.txt, note-9.txt, out-12.log, out-57.log, pref-a.ini, pref-c.ini,
+         q-0031.tmp, q-0217.tmp, ring-2.buf, ring-7.buf, seg-14.part, seg-63.part, snap-1.gz,
+         snap-5.gz, tbl-30.csv, tbl-71.csv, word-0.lst, word-3.lst]
+  # B16 fillers: the noise of Q1's window, each in its own window (seconds after time.base)
+  # inside [0, 600). Alerts of other containers (falco-events.jsonl):
+  - {name: q1w-metrics-a1, role: filler, format: timestamp, window: {from: 60, to: 120}}
+  - {name: q1w-logship, role: filler, format: timestamp, window: {from: 150, to: 210}}
+  - {name: q1w-metrics-a2, role: filler, format: timestamp, window: {from: 320, to: 380}}
+  - {name: q1w-build, role: filler, format: timestamp, window: {from: 390, to: 450}}
+  - {name: q1w-metrics-b, role: filler, format: timestamp, window: {from: 530, to: 590}}
+  # Lines of nimbus-desk.log, in the order of the log (the windows do not overlap). The four
+  # q1w-attach-* / q1w-render-1 / q1w-export are also the mtimes of Q3's decoys bundle-d1..d4
+  # in fs-inventory.tsv (the same mark, so the same value: a decoy keeps its matching line).
+  - {name: q1w-health, role: filler, format: timestamp, window: {from: 1, to: 8}}
+  - {name: q1w-preview-1, role: filler, format: timestamp, window: {from: 20, to: 45}}
+  - {name: q1w-attach-1, role: filler, format: timestamp, window: {from: 50, to: 70}}
+  - {name: q1w-preview-2, role: filler, format: timestamp, window: {from: 90, to: 130}}
+  - {name: q1w-render-1, role: filler, format: timestamp, window: {from: 180, to: 230}}
+  - {name: q1w-preview-3, role: filler, format: timestamp, window: {from: 250, to: 290}}
+  - {name: q1w-export, role: filler, format: timestamp, window: {from: 300, to: 330}}
+  - {name: q1w-request, role: filler, format: timestamp, window: {from: 350, to: 400}}
+  - {name: q1w-attach-2, role: filler, format: timestamp, window: {from: 430, to: 500}}

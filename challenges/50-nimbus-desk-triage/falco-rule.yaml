@@ -4,7 +4,8 @@ challengeId: 50-nimbus-desk-triage
 # portal. Only the SHAPE of the questions is here; the answers are never in this file or
 # in journey.yaml. The practice answers are rendered into edition/practice/ by
 # `make edition-practice CID=50-nimbus-desk-triage`; an event's answers are rendered on
-# the platform side (ADR-0056 D8 / D12).
+# the platform side (ADR-0056 D8 / D12). Every question varies per seat: there is no
+# fixed answer that the public practice edition would give away.
 #
 # The id is in the 50+ band: an investigate challenge must sort after every evade
 # challenge when no scenario gives the order (ADR-0056 V39 / V45).
@@ -26,15 +27,14 @@ investigate:
     - id: bundle-file
       format: path
       attempts: 5
-    # Q4 (fixed): 6 of the 7 labels, in the order the events happened. 7!/1! = 5040
-    # arrangements (ADR-0056 D3 (a): >= 100 x attempts). The labels are listed in
-    # alphabetical order, not in the answer's order.
-    - id: event-order
-      format: sequence
+    # Q4 (per seat): the file the intruder's shell wrote its findings into, before the
+    # config and credential reads (no alert). Only the order of the incident, built across
+    # the alerts, the inventory and the log, tells it from its decoys. It replaces a fixed
+    # `sequence` of the events (ADR-0056 amendment 26: a fixed answer must be able to differ
+    # from the public practice edition, which the order of the story cannot).
+    - id: survey-file
+      format: path
       attempts: 5
-      params:
-        length: 6
-        labels: [api-probe, app-restart, binary-drop, bundle-write, egress-fail, secret-read, shell-start]
 # ATT&CK mapping — canonical source for docs/Navigator layer (make gen-attack).
 # The behaviour Falco observed in the evidence that the first question is about: a
 # Unix shell spawned below the web service process (the same technique as

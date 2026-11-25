@@ -44,7 +44,7 @@ steps:
     detail: |
       ポータルの Story タブの回答欄に入れる。設問ごとに 5 回まで。形式に合わない入力は 400 に
       なり、回数を消費しない。時刻は YYYY-MM-DDThh:mm:ssZ (UTC・秒まで)、path は / で始まる
-      絶対 path (大文字小文字を区別する)、並べる設問はラベルを , で区切り、空白を入れない。
+      絶対 path (大文字小文字を区別する)。
 questions:
   - id: first-shell
     prompt: >-
@@ -58,17 +58,11 @@ questions:
     prompt: >-
       読まれた内容をまとめた file が、nimbus-desk の container の中に 1 つ作られている。
       Falco のアラートには出ていない。その file の絶対 path は?
-  - id: event-order
+  - id: survey-file
     prompt: >-
-      次の 7 つの出来事のうち、nimbus-desk で実際に起きた 6 つを、起きた順に並べよ。
-      ラベルを , でつなぎ、空白を入れずに答える。
-      api-probe = container の中から Kubernetes の API server への接続が試みられた /
-      app-restart = web service の process が異常終了し、再起動した /
-      binary-drop = 新しい実行 file が container に置かれ、実行された /
-      bundle-write = 読まれた内容が 1 つの file にまとめられた /
-      egress-fail = 外の宛先への送信が試みられ、拒否された /
-      secret-read = 侵入者の操作で、設定の file と資格情報の file が読まれた /
-      shell-start = web service の process の子として shell が起動した
+      侵入者は、設定の file と資格情報の file を読むより前に、container の中を調べた結果を
+      1 つの file に書き出している。Falco のアラートには出ていない。その file の絶対 path は?
+      (web service 自身も同じ場所に file を書いている。別々の記録の時刻を 1 本に並べて決めること)
 hints:
   - kind: rule
     text: >-
@@ -77,8 +71,9 @@ hints:
       時刻の順にも並んでいない。Q2: 読み取りのアラート Read sensitive file untrusted は 1 件では
       なく、読んだ process も container も 1 つではない。nimbus-desk の container の、shell から
       続いた読み取りに絞ったとき、「設定」と「資格情報」は何で見分けられるか。Q3: 内容をまとめて
-      書く操作はアラートにならない。アラートの無い時間帯に、何が作られたか。Q4: 6 つの出来事は、
-      それぞれどこかの file に時刻を残している。
+      書く操作はアラートにならない。アラートの無い時間帯に、何が作られたか。Q4: 侵入者の操作の
+      流れには、アラートになった段とならなかった段が混ざっている。アラートの時刻を区切りにして、
+      その間に file の目録で何が変わったかを見る。
     ruleRefs: [Run shell untrusted]
   - kind: command
     text: >-
@@ -90,8 +85,10 @@ hints:
       fs-inventory.tsv を
       mtime の列で並べ、資格情報が読まれた時刻より後で、egress-gateway.log で nimbus-desk の Pod の
       送信が拒否された時刻より前に変わった file を探す。nimbus-desk.log に対応する行が無いこと、
-      size も手がかりになる。Q4: 各出来事の根拠の行 (アラート・目録の mtime・通信の記録・container の
-      log) の時刻を書き出し、1 本に並べる。根拠が nimbus-desk の container に無い出来事が 1 つある。
+      size も手がかりになる。Q4: nimbus-desk の container のアラート (shell の起動・API server への
+      接続・file の読み取り) の時刻と、fs-inventory.tsv の mtime を 1 本の時系列に並べる。最初の shell
+      から設定の file の読み取りまでの間に変わった file のうち、nimbus-desk.log に同じ時刻の行が無い
+      もの。
   - kind: solution
     text: >-
       解答の手順 (値はイベントごとに違うので、ここには書かない)。Q1:
@@ -101,9 +98,9 @@ hints:
       で 2 行出る。conf の下の設定の file でない方が答え。Q3:
       sort -t "$(printf '\t')" -k2,2 fs-inventory.tsv で mtime の順に並べ、Q2 の 2 つ目の
       アラートの時刻と、egress-gateway.log で nimbus-desk の Pod が最初に拒否された時刻の間に mtime が
-      ある file が答え。その size は、Q2 で読まれた 2 つの file の size の和に等しい。Q4: shell-start は
-      Q1 の時刻、api-probe は nimbus-desk の container の Contact K8S API Server From Container、
-      secret-read は Q2 のアラート、bundle-write は Q3 の mtime、egress-fail は egress-gateway.log の
-      nimbus-desk の拒否、app-restart は nimbus-desk.log の異常終了と再起動の行。binary-drop の根拠は
-      nimbus-desk の container に無い。残る 6 つを時刻の順に , でつなぐ。
+      ある file が答え。その size は、Q2 で読まれた 2 つの file の size の和に等しい。Q4: 同じく
+      mtime の順に並べた目録で、Q1 の時刻 (最初の shell) より後で、Q2 の 2 件のアラートのうち早い方
+      (設定の file の読み取り) の time より前に mtime がある行を取り出す。そのうち /tmp の下の行は、
+      nimbus-desk.log に同じ時刻・同じ bytes の行がある (web service 自身の一時 file)。残る 1 行の
+      path が答え。
 docsUrl: /missions/50-nimbus-desk-triage/

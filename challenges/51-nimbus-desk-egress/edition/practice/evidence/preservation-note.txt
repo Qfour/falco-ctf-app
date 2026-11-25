@@ -14,7 +14,8 @@ files
                        connection was refused before any name was sent.
   cluster-dns.log      queries to the cluster DNS, by client. A client is a pod: every container
                        of a pod shares the pod's IP, so a query does not say which container
-                       or process asked.
+                       or process asked. Names under int.example are endpoints inside the
+                       cluster; the pods resolve them as part of their normal work.
   egress-proxy.log     the egress proxy, the sanctioned path for the link previews of the web
                        service. When a ticket is saved, the web service checks the host of each
                        link in it with a DNS lookup (to refuse private addresses); the preview

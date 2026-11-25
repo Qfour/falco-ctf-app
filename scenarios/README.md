@@ -101,9 +101,10 @@ later evade challenge forbids taints nobody (ADR-0003 W2). The scoreboard refuse
 start on such an order (`catalog.LoadScored`, with or without `SCENARIO_FILE`: with
 no scenario the order is the sorted challenge ids), and
 `internal/catalog/scenario_guard_test.go` checks every `scenarios/*/scenario.yaml`.
-The first investigate challenge is `50-nimbus-desk-triage` (ADR-0056 A7), the only
-challenge of `ir-nimbus-desk`; its id is in the 50+ band so that it also sorts after
-every evade challenge when no scenario gives the order. Every scenario here satisfies
+The investigate challenges are `50-nimbus-desk-triage` (ADR-0056 A7) and
+`51-nimbus-desk-egress`, the two challenges of `ir-nimbus-desk`; their ids are in the
+50+ band so that they also sort after every evade challenge when no scenario gives the
+order. Every scenario here satisfies
 the rule.
 
 ## How the scoreboard uses it

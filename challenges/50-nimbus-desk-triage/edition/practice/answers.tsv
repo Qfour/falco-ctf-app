@@ -1,5 +1,5 @@
 # falco-ctf answers v1 run=00000000000000000000000000000000
 *	50-nimbus-desk-triage	bundle-file	/tmp/scratch/chunk-0113.tmp
 *	50-nimbus-desk-triage	cred-file	/srv/nimbus-desk/secrets/prod-ap/db-replica.pass
-*	50-nimbus-desk-triage	event-order	shell-start,api-probe,secret-read,bundle-write,egress-fail,app-restart
 *	50-nimbus-desk-triage	first-shell	2026-10-21T17:02:44Z
+*	50-nimbus-desk-triage	survey-file	/home/desk/.share/out-12.log

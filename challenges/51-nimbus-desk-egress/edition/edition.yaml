@@ -1,11 +1,20 @@
 version: 1
-# No timestamp slot: every time in template/ is a literal string. They are the times of the
-# same incident as 50-nimbus-desk-triage (its practice time.base 2026-10-21T17:00:00Z) and
-# must stay equal to the literal times of 50's template: the refused connection 17:23:40,
-# 17:23:55, 17:24:11; the shell tree's alerts 17:14:07, 17:15:32, 17:18:44; the restart
-# 17:31:09. An edition that shifts 50's times shifts these by the same amount (README.md).
-fixed:
-  tactic-order: "execution,discovery,credential-access,collection,c2-exfiltration"
+# The same incident and the same timeline as 50-nimbus-desk-triage (ADR-0056 amendment 26,
+# B15): every LITERAL time of template/ is one of the literal times of 50's template (the
+# shared egress-gateway.log, the three alerts 17:14:07 / 17:15:32 / 17:18:44, the
+# preservation times, and the DNS / proxy lines of the shared world, which are written at the
+# second of the 50 record they belong with). Every instant that exists in this bundle only (the
+# web service's link-preview checks, the internal lookups, the intruder's lookup, the proxy
+# fetches) is a filler slot (dns-* / px-*), drawn per seat in its own window.
+#
+# time.base is 50's (the same string): the windows are seconds after it. No window starts
+# before 600 (17:10:00): 50's answer window is [17:00:00, 17:10:00), and a value drawn there
+# could equal 50's answer of the same seat (B13). If an edition moves 50's time.base and its
+# literal times, it moves this time.base and these literal times by the same amount.
+#
+# No fixed question (amendment 26): both questions vary per seat.
+time:
+  base: "2026-10-21T17:00:00Z"
 slots:
   # Q5 dest-host: the host name the shell's connection to 203.0.113.77 was meant for. It is
   # only in cluster-dns.log (the gateway refused the connection before any name was sent).
@@ -83,3 +92,138 @@ slots:
          xfer-32.example, xfer-36.example, xfer-40.example, xfer-43.example, xfer-47.example, xfer-51.example, xfer-54.example, xfer-58.example,
          xfer-62.example, xfer-65.example, xfer-69.example, xfer-73.example, xfer-76.example, xfer-80.example, xfer-84.example, xfer-87.example,
          xfer-91.example, xfer-95.example, xfer-102.example, xfer-118.example, xfer-134.example, xfer-151.example, xfer-167.example, xfer-183.example]
+  # Q6 lookup-name: the name the intruder's shell looked up in the cluster DNS in the stage
+  # that is ATT&CK Discovery (the probe of the Kubernetes API server, 17:15:32). Its answer is
+  # the API server's address 192.0.2.1, the destination of that alert. The 14 decoys are
+  # internal names of the same shape (*.int.example, answers 192.0.2.2..16, the API's
+  # neighbours included) that the web service and the other pods resolve: 9 of them inside the
+  # stage (17:14:07 to 17:18:44, 6 of them from the same pod), so "the lookups of the stage"
+  # leave 10 and "the same pod in the stage" leaves 7. The last lookup of the same pod before
+  # the probe is a decoy, so "just before the connection" does not decide either. Only the
+  # DNS answer = the alert's destination decides. The vocabulary is disjoint from dest's (no cross-question collision:
+  # the renderer keeps values apart within a slot group only). 16 x 32 = 512 names.
+  - name: peer
+    role: answer
+    question: lookup-name
+    decoys: 14
+    vocab:
+      - [ctl-03.int.example, ctl-07.int.example, ctl-11.int.example, ctl-14.int.example, ctl-18.int.example, ctl-21.int.example, ctl-25.int.example, ctl-29.int.example,
+         ctl-32.int.example, ctl-36.int.example, ctl-40.int.example, ctl-43.int.example, ctl-47.int.example, ctl-51.int.example, ctl-54.int.example, ctl-58.int.example,
+         ctl-62.int.example, ctl-65.int.example, ctl-69.int.example, ctl-73.int.example, ctl-76.int.example, ctl-80.int.example, ctl-84.int.example, ctl-87.int.example,
+         ctl-91.int.example, ctl-95.int.example, ctl-102.int.example, ctl-118.int.example, ctl-134.int.example, ctl-151.int.example, ctl-167.int.example, ctl-183.int.example,
+         core-03.int.example, core-07.int.example, core-11.int.example, core-14.int.example, core-18.int.example, core-21.int.example, core-25.int.example, core-29.int.example,
+         core-32.int.example, core-36.int.example, core-40.int.example, core-43.int.example, core-47.int.example, core-51.int.example, core-54.int.example, core-58.int.example,
+         core-62.int.example, core-65.int.example, core-69.int.example, core-73.int.example, core-76.int.example, core-80.int.example, core-84.int.example, core-87.int.example,
+         core-91.int.example, core-95.int.example, core-102.int.example, core-118.int.example, core-134.int.example, core-151.int.example, core-167.int.example, core-183.int.example,
+         hub-03.int.example, hub-07.int.example, hub-11.int.example, hub-14.int.example, hub-18.int.example, hub-21.int.example, hub-25.int.example, hub-29.int.example,
+         hub-32.int.example, hub-36.int.example, hub-40.int.example, hub-43.int.example, hub-47.int.example, hub-51.int.example, hub-54.int.example, hub-58.int.example,
+         hub-62.int.example, hub-65.int.example, hub-69.int.example, hub-73.int.example, hub-76.int.example, hub-80.int.example, hub-84.int.example, hub-87.int.example,
+         hub-91.int.example, hub-95.int.example, hub-102.int.example, hub-118.int.example, hub-134.int.example, hub-151.int.example, hub-167.int.example, hub-183.int.example,
+         edge-03.int.example, edge-07.int.example, edge-11.int.example, edge-14.int.example, edge-18.int.example, edge-21.int.example, edge-25.int.example, edge-29.int.example,
+         edge-32.int.example, edge-36.int.example, edge-40.int.example, edge-43.int.example, edge-47.int.example, edge-51.int.example, edge-54.int.example, edge-58.int.example,
+         edge-62.int.example, edge-65.int.example, edge-69.int.example, edge-73.int.example, edge-76.int.example, edge-80.int.example, edge-84.int.example, edge-87.int.example,
+         edge-91.int.example, edge-95.int.example, edge-102.int.example, edge-118.int.example, edge-134.int.example, edge-151.int.example, edge-167.int.example, edge-183.int.example,
+         mesh-03.int.example, mesh-07.int.example, mesh-11.int.example, mesh-14.int.example, mesh-18.int.example, mesh-21.int.example, mesh-25.int.example, mesh-29.int.example,
+         mesh-32.int.example, mesh-36.int.example, mesh-40.int.example, mesh-43.int.example, mesh-47.int.example, mesh-51.int.example, mesh-54.int.example, mesh-58.int.example,
+         mesh-62.int.example, mesh-65.int.example, mesh-69.int.example, mesh-73.int.example, mesh-76.int.example, mesh-80.int.example, mesh-84.int.example, mesh-87.int.example,
+         mesh-91.int.example, mesh-95.int.example, mesh-102.int.example, mesh-118.int.example, mesh-134.int.example, mesh-151.int.example, mesh-167.int.example, mesh-183.int.example,
+         node-03.int.example, node-07.int.example, node-11.int.example, node-14.int.example, node-18.int.example, node-21.int.example, node-25.int.example, node-29.int.example,
+         node-32.int.example, node-36.int.example, node-40.int.example, node-43.int.example, node-47.int.example, node-51.int.example, node-54.int.example, node-58.int.example,
+         node-62.int.example, node-65.int.example, node-69.int.example, node-73.int.example, node-76.int.example, node-80.int.example, node-84.int.example, node-87.int.example,
+         node-91.int.example, node-95.int.example, node-102.int.example, node-118.int.example, node-134.int.example, node-151.int.example, node-167.int.example, node-183.int.example,
+         zone-03.int.example, zone-07.int.example, zone-11.int.example, zone-14.int.example, zone-18.int.example, zone-21.int.example, zone-25.int.example, zone-29.int.example,
+         zone-32.int.example, zone-36.int.example, zone-40.int.example, zone-43.int.example, zone-47.int.example, zone-51.int.example, zone-54.int.example, zone-58.int.example,
+         zone-62.int.example, zone-65.int.example, zone-69.int.example, zone-73.int.example, zone-76.int.example, zone-80.int.example, zone-84.int.example, zone-87.int.example,
+         zone-91.int.example, zone-95.int.example, zone-102.int.example, zone-118.int.example, zone-134.int.example, zone-151.int.example, zone-167.int.example, zone-183.int.example,
+         gate-03.int.example, gate-07.int.example, gate-11.int.example, gate-14.int.example, gate-18.int.example, gate-21.int.example, gate-25.int.example, gate-29.int.example,
+         gate-32.int.example, gate-36.int.example, gate-40.int.example, gate-43.int.example, gate-47.int.example, gate-51.int.example, gate-54.int.example, gate-58.int.example,
+         gate-62.int.example, gate-65.int.example, gate-69.int.example, gate-73.int.example, gate-76.int.example, gate-80.int.example, gate-84.int.example, gate-87.int.example,
+         gate-91.int.example, gate-95.int.example, gate-102.int.example, gate-118.int.example, gate-134.int.example, gate-151.int.example, gate-167.int.example, gate-183.int.example,
+         apex-03.int.example, apex-07.int.example, apex-11.int.example, apex-14.int.example, apex-18.int.example, apex-21.int.example, apex-25.int.example, apex-29.int.example,
+         apex-32.int.example, apex-36.int.example, apex-40.int.example, apex-43.int.example, apex-47.int.example, apex-51.int.example, apex-54.int.example, apex-58.int.example,
+         apex-62.int.example, apex-65.int.example, apex-69.int.example, apex-73.int.example, apex-76.int.example, apex-80.int.example, apex-84.int.example, apex-87.int.example,
+         apex-91.int.example, apex-95.int.example, apex-102.int.example, apex-118.int.example, apex-134.int.example, apex-151.int.example, apex-167.int.example, apex-183.int.example,
+         axis-03.int.example, axis-07.int.example, axis-11.int.example, axis-14.int.example, axis-18.int.example, axis-21.int.example, axis-25.int.example, axis-29.int.example,
+         axis-32.int.example, axis-36.int.example, axis-40.int.example, axis-43.int.example, axis-47.int.example, axis-51.int.example, axis-54.int.example, axis-58.int.example,
+         axis-62.int.example, axis-65.int.example, axis-69.int.example, axis-73.int.example, axis-76.int.example, axis-80.int.example, axis-84.int.example, axis-87.int.example,
+         axis-91.int.example, axis-95.int.example, axis-102.int.example, axis-118.int.example, axis-134.int.example, axis-151.int.example, axis-167.int.example, axis-183.int.example,
+         base-03.int.example, base-07.int.example, base-11.int.example, base-14.int.example, base-18.int.example, base-21.int.example, base-25.int.example, base-29.int.example,
+         base-32.int.example, base-36.int.example, base-40.int.example, base-43.int.example, base-47.int.example, base-51.int.example, base-54.int.example, base-58.int.example,
+         base-62.int.example, base-65.int.example, base-69.int.example, base-73.int.example, base-76.int.example, base-80.int.example, base-84.int.example, base-87.int.example,
+         base-91.int.example, base-95.int.example, base-102.int.example, base-118.int.example, base-134.int.example, base-151.int.example, base-167.int.example, base-183.int.example,
+         beam-03.int.example, beam-07.int.example, beam-11.int.example, beam-14.int.example, beam-18.int.example, beam-21.int.example, beam-25.int.example, beam-29.int.example,
+         beam-32.int.example, beam-36.int.example, beam-40.int.example, beam-43.int.example, beam-47.int.example, beam-51.int.example, beam-54.int.example, beam-58.int.example,
+         beam-62.int.example, beam-65.int.example, beam-69.int.example, beam-73.int.example, beam-76.int.example, beam-80.int.example, beam-84.int.example, beam-87.int.example,
+         beam-91.int.example, beam-95.int.example, beam-102.int.example, beam-118.int.example, beam-134.int.example, beam-151.int.example, beam-167.int.example, beam-183.int.example,
+         link-03.int.example, link-07.int.example, link-11.int.example, link-14.int.example, link-18.int.example, link-21.int.example, link-25.int.example, link-29.int.example,
+         link-32.int.example, link-36.int.example, link-40.int.example, link-43.int.example, link-47.int.example, link-51.int.example, link-54.int.example, link-58.int.example,
+         link-62.int.example, link-65.int.example, link-69.int.example, link-73.int.example, link-76.int.example, link-80.int.example, link-84.int.example, link-87.int.example,
+         link-91.int.example, link-95.int.example, link-102.int.example, link-118.int.example, link-134.int.example, link-151.int.example, link-167.int.example, link-183.int.example,
+         rack-03.int.example, rack-07.int.example, rack-11.int.example, rack-14.int.example, rack-18.int.example, rack-21.int.example, rack-25.int.example, rack-29.int.example,
+         rack-32.int.example, rack-36.int.example, rack-40.int.example, rack-43.int.example, rack-47.int.example, rack-51.int.example, rack-54.int.example, rack-58.int.example,
+         rack-62.int.example, rack-65.int.example, rack-69.int.example, rack-73.int.example, rack-76.int.example, rack-80.int.example, rack-84.int.example, rack-87.int.example,
+         rack-91.int.example, rack-95.int.example, rack-102.int.example, rack-118.int.example, rack-134.int.example, rack-151.int.example, rack-167.int.example, rack-183.int.example,
+         grid-03.int.example, grid-07.int.example, grid-11.int.example, grid-14.int.example, grid-18.int.example, grid-21.int.example, grid-25.int.example, grid-29.int.example,
+         grid-32.int.example, grid-36.int.example, grid-40.int.example, grid-43.int.example, grid-47.int.example, grid-51.int.example, grid-54.int.example, grid-58.int.example,
+         grid-62.int.example, grid-65.int.example, grid-69.int.example, grid-73.int.example, grid-76.int.example, grid-80.int.example, grid-84.int.example, grid-87.int.example,
+         grid-91.int.example, grid-95.int.example, grid-102.int.example, grid-118.int.example, grid-134.int.example, grid-151.int.example, grid-167.int.example, grid-183.int.example,
+         pier-03.int.example, pier-07.int.example, pier-11.int.example, pier-14.int.example, pier-18.int.example, pier-21.int.example, pier-25.int.example, pier-29.int.example,
+         pier-32.int.example, pier-36.int.example, pier-40.int.example, pier-43.int.example, pier-47.int.example, pier-51.int.example, pier-54.int.example, pier-58.int.example,
+         pier-62.int.example, pier-65.int.example, pier-69.int.example, pier-73.int.example, pier-76.int.example, pier-80.int.example, pier-84.int.example, pier-87.int.example,
+         pier-91.int.example, pier-95.int.example, pier-102.int.example, pier-118.int.example, pier-134.int.example, pier-151.int.example, pier-167.int.example, pier-183.int.example]
+  # Fillers: the times of the lines that exist in this bundle only (B15), in seconds after
+  # time.base. The windows of cluster-dns.log do not overlap and follow the order of its lines,
+  # and so do those of egress-proxy.log; a proxy fetch is after the DNS check of its host. The
+  # fixed points they sit between: 17:10:00 (600) a refused legacy-status connection, 17:14:07
+  # (847) the shell, 17:15:32 (932) the API probe, 17:18:44 (1124) the config read, 17:22:47
+  # (1367) a mail, 17:23:40 / 17:23:55 / 17:24:11 (1420 / 1435 / 1451) the refused sends.
+  # cluster-dns.log:
+  - {name: dns-d1, role: filler, format: timestamp, window: {from: 605, to: 625}}
+  - {name: dns-d11, role: filler, format: timestamp, window: {from: 630, to: 650}}
+  - {name: dns-d2, role: filler, format: timestamp, window: {from: 655, to: 675}}
+  - {name: dns-d13, role: filler, format: timestamp, window: {from: 680, to: 700}}
+  - {name: dns-d3, role: filler, format: timestamp, window: {from: 705, to: 725}}
+  - {name: dns-p1, role: filler, format: timestamp, window: {from: 740, to: 770}}
+  - {name: dns-p2, role: filler, format: timestamp, window: {from: 850, to: 862}}
+  - {name: dns-p3, role: filler, format: timestamp, window: {from: 863, to: 874}}
+  - {name: dns-peer, role: filler, format: timestamp, window: {from: 876, to: 925}}
+  - {name: dns-p4, role: filler, format: timestamp, window: {from: 926, to: 931}}
+  - {name: dns-p5, role: filler, format: timestamp, window: {from: 935, to: 955}}
+  - {name: dns-d12, role: filler, format: timestamp, window: {from: 960, to: 980}}
+  - {name: dns-p6, role: filler, format: timestamp, window: {from: 985, to: 1005}}
+  - {name: dns-d5, role: filler, format: timestamp, window: {from: 1010, to: 1030}}
+  - {name: dns-p7, role: filler, format: timestamp, window: {from: 1035, to: 1055}}
+  - {name: dns-d14, role: filler, format: timestamp, window: {from: 1060, to: 1075}}
+  - {name: dns-p8, role: filler, format: timestamp, window: {from: 1076, to: 1090}}
+  - {name: dns-d6, role: filler, format: timestamp, window: {from: 1091, to: 1100}}
+  - {name: dns-p9, role: filler, format: timestamp, window: {from: 1101, to: 1110}}
+  - {name: dns-p10, role: filler, format: timestamp, window: {from: 1111, to: 1122}}
+  - {name: dns-d7, role: filler, format: timestamp, window: {from: 1130, to: 1150}}
+  - {name: dns-d15, role: filler, format: timestamp, window: {from: 1160, to: 1190}}
+  - {name: dns-d16, role: filler, format: timestamp, window: {from: 1200, to: 1240}}
+  - {name: dns-d4, role: filler, format: timestamp, window: {from: 1250, to: 1290}}
+  - {name: dns-p11, role: filler, format: timestamp, window: {from: 1300, to: 1360}}
+  - {name: dns-d8, role: filler, format: timestamp, window: {from: 1368, to: 1380}}
+  - {name: dns-d17, role: filler, format: timestamp, window: {from: 1385, to: 1400}}
+  - {name: dns-dest, role: filler, format: timestamp, window: {from: 1405, to: 1420}}
+  - {name: dns-d18, role: filler, format: timestamp, window: {from: 1421, to: 1435}}
+  - {name: dns-d9, role: filler, format: timestamp, window: {from: 1452, to: 1480}}
+  - {name: dns-d19, role: filler, format: timestamp, window: {from: 1500, to: 1560}}
+  - {name: dns-p12, role: filler, format: timestamp, window: {from: 1570, to: 1610}}
+  - {name: dns-d10, role: filler, format: timestamp, window: {from: 1620, to: 1680}}
+  - {name: dns-d20, role: filler, format: timestamp, window: {from: 1720, to: 1780}}
+  - {name: dns-p13, role: filler, format: timestamp, window: {from: 1800, to: 1850}}
+  - {name: dns-p14, role: filler, format: timestamp, window: {from: 2150, to: 2300}}
+  - {name: dns-docs-e, role: filler, format: timestamp, window: {from: 2410, to: 2470}}
+  # egress-proxy.log:
+  - {name: px-d1, role: filler, format: timestamp, window: {from: 626, to: 640}}
+  - {name: px-d2, role: filler, format: timestamp, window: {from: 676, to: 700}}
+  - {name: px-d3, role: filler, format: timestamp, window: {from: 726, to: 739}}
+  - {name: px-d5, role: filler, format: timestamp, window: {from: 1031, to: 1090}}
+  - {name: px-d6, role: filler, format: timestamp, window: {from: 1101, to: 1128}}
+  - {name: px-d7, role: filler, format: timestamp, window: {from: 1151, to: 1159}}
+  - {name: px-d4, role: filler, format: timestamp, window: {from: 1291, to: 1299}}
+  - {name: px-d8, role: filler, format: timestamp, window: {from: 1381, to: 1384}}
+  - {name: px-d9, role: filler, format: timestamp, window: {from: 1481, to: 1499}}
+  - {name: px-d10, role: filler, format: timestamp, window: {from: 1681, to: 1719}}
+  - {name: px-docs-e, role: filler, format: timestamp, window: {from: 2471, to: 2520}}
